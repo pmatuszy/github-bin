@@ -14,6 +14,15 @@
 # also this:
 # https://unix.stackexchange.com/questions/541463/how-to-prevent-disk-i-o-timeouts-which-cause-disks-to-disconnect-and-data-corrup
 
+# Redhat support (you need to log in) https://access.redhat.com/documentation/en-us/red_hat_enterprise_linux/6/html/6.5_release_notes/kernel
+# Configurable Timeout for Unresponsive Devices
+# In certain storage configurations (for example, configurations with many LUNs), the SCSI error handling code can spend 
+# a large amount of time issuing commands such as TEST UNIT READY to unresponsive storage devices. A new sysfs parameter, eh_timeout,
+# has been added to the SCSI device object, which allows configuration of the timeout value for TEST UNIT READY and REQUEST SENSE 
+# commands used by the SCSI error handling code. This decreases the amount of time spent checking these unresponsive devices. 
+# The default value of eh_timeout is 10 seconds, which was the timeout value used prior to adding this functionality.
+
+
 timeout=3600
 eh_timeout=3600
 queue_depth=1
