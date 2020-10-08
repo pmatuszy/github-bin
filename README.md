@@ -4,4 +4,4 @@ git clone git+ssh://git@github.com/pmatuszy/github-bin.git ;
 
 cp -v github-bin/* $HOME/bin ;
 
-git status ; git commit -m "`date`"
+git status ; git commit -m "\`date\`"
