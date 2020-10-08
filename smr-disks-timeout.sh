@@ -52,13 +52,6 @@ for p in /dev/sd{a..z} ; do
   fi
 done
 
-for p in {a..z} ; do
-  if [ -b /dev/sd$p ]; then
-    echo -n "/dev/sd$p "
-    cat /sys/block/sd${p}/device/timeout
-  fi
-done
-
 echo '/-------------\'
 echo '| po zmianach |'
 echo '\-------------/'
