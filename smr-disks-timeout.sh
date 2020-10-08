@@ -14,13 +14,28 @@
 # also this:
 # https://unix.stackexchange.com/questions/541463/how-to-prevent-disk-i-o-timeouts-which-cause-disks-to-disconnect-and-data-corrup
 
-
 timeout=3600
+eh_timeout=3600
+queue_depth=1
+nr_requests=4
 
-for p in {a..z} ; do 
+echo '/----------------\'
+echo '| przed zmianami |'
+echo '\----------------/'
+
+for p in {a..z} ; do
   if [ -b /dev/sd$p ]; then
-    echo -n "/dev/sd$p "
-    cat /sys/block/sd${p}/device/timeout
+    echo "========== /dev/sd${p} ============"
+      for r in device/timeout device/eh_timeout device/queue_depth queue/scheduler queue/nr_requests ; do
+        if [ -f /sys/block/sd${p}/${r} ]; then
+          printf "%35s =" /sys/block/sd${p}/${r}
+          printf "%20s\n"  "`cat /sys/block/sd${p}/${r}`"
+        fi 
+      done
+    echo $timeout > /sys/block/sd${p}/device/timeout
+    echo ${eh_timeout} > /sys/block/sd${p}/device/eh_timeout
+#    echo ${queue_depth} > /sys/block/sd${p}/device/queue_depth
+    echo ${nr_requests} > /sys/block/sd${p}/queue/nr_requests
   fi
 done
 
@@ -41,6 +56,26 @@ for p in {a..z} ; do
   if [ -b /dev/sd$p ]; then
     echo -n "/dev/sd$p "
     cat /sys/block/sd${p}/device/timeout
+  fi
+done
+
+echo '/-------------\'
+echo '| po zmianach |'
+echo '\-------------/'
+
+for p in {a..z} ; do
+  if [ -b /dev/sd$p ]; then
+    echo "========== /dev/sd${p} ============"
+      for r in device/timeout device/eh_timeout device/queue_depth queue/scheduler queue/nr_requests ; do
+        if [ -f /sys/block/sd${p}/${r} ]; then
+          printf "%35s =" /sys/block/sd${p}/${r}
+          printf "%20s\n"  "`cat /sys/block/sd${p}/${r}`"
+        fi
+      done
+    echo $timeout > /sys/block/sd${p}/device/timeout
+    echo ${eh_timeout} > /sys/block/sd${p}/device/eh_timeout
+#    echo ${queue_depth} > /sys/block/sd${p}/device/queue_depth
+    echo ${nr_requests} > /sys/block/sd${p}/queue/nr_requests
   fi
 done
 
