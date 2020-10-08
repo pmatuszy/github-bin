@@ -11,8 +11,11 @@
 # and the FireCuda line seems all CMR at the moment (I guess these will be a bit like the Red Pros, 
 # the CMR equivalent of the BarraCuda).
 
+# also this:
+# https://unix.stackexchange.com/questions/541463/how-to-prevent-disk-i-o-timeouts-which-cause-disks-to-disconnect-and-data-corrup
 
-timeout=600
+
+timeout=3600
 
 for p in {a..z} ; do 
   if [ -b /dev/sd$p ]; then
