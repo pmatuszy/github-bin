@@ -1,5 +1,4 @@
-zpool export zfs_encrypted_file
-sleep 1
+zpool export zfs_encrypted_file 2>/dev/null
 zpool import -d /encrypted.zfs -l -a
 
 zpool status -v
