@@ -2,9 +2,6 @@ if [ ! -h /etc/os-release ] ; then
   echo nie wiem co to za OS - wychodze
   echo nie wiem co to za OS - wychodze
   echo nie wiem co to za OS - wychodze
-  echo nie wiem co to za OS - wychodze
-  echo nie wiem co to za OS - wychodze
-  echo nie wiem co to za OS - wychodze
   echo
   exit 1
 fi
