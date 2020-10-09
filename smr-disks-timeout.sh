@@ -1,7 +1,6 @@
 #!/bin/bash
-
-# v.1.1 - 2020.10.08 - showing timeouts before the setting them
-# v.1.0 - 2020.10.04 - added timeout variable and increased value of it from 180 to 300s
+# 2020.10.08 - v.1.1 - showing timeouts before the setting them
+# 2020.10.04 - v.1.0 - added timeout variable and increased value of it from 180 to 300s
 
 # good reading: https://raid.wiki.kernel.org/index.php/Timeout_Mismatch
 # "In 2019, a new technology called shingled magnetic recording (SMR) started becoming mainstream"
