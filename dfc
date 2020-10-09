@@ -1,3 +1,6 @@
+#!/bin/bash
+# 201x.xx.xx - v. 0.1 - initial release (date unknown)
+
 export LANG_temp="${LANG}"
 export LANG=en_US.utf8
 
