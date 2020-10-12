@@ -27,7 +27,7 @@ zfs mount -a
 
 df -h
 
-# zfs set sharenfs="rw=@192.168.200.138/32,rw=192.168.200.109/32" zfs-raid1/podsync-hdd
+zfs set sharenfs="rw=@192.168.200.138/32,rw=@192.168.200.109/32,no_root_squash" zfs-raid1/podsync-hdd
 
 mount -o bind /mnt/zfs-raid1/replication1/rclone_user /rclone-jail/storage-master/replication1
 mount -o bind /mnt/zfs-raid1/backup1/rclone_user /rclone-jail/storage-master/backup1
