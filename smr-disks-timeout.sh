@@ -1,4 +1,5 @@
 #!/bin/bash
+# 2020.10.08 - v.1.2 - male zmiany w sposobie wyswietlania 
 # 2020.10.08 - v.1.1 - showing timeouts before the setting them
 # 2020.10.04 - v.1.0 - added timeout variable and increased value of it from 180 to 300s
 
@@ -27,17 +28,19 @@ eh_timeout=3600
 queue_depth=1
 nr_requests=4
 
+echo
 echo '/----------------\'
 echo '| przed zmianami |'
 echo '\----------------/'
 
 for p in {a..z} ; do
   if [ -b /dev/sd$p ]; then
+    echo
     echo "========== /dev/sd${p} ============"
       for r in device/timeout device/eh_timeout device/queue_depth queue/scheduler queue/nr_requests ; do
         if [ -f /sys/block/sd${p}/${r} ]; then
-          printf "%35s =" /sys/block/sd${p}/${r}
-          printf "%20s\n"  "`cat /sys/block/sd${p}/${r}`"
+          printf "%s = " /sys/block/sd${p}/${r}
+          printf "%s, "  "`cat /sys/block/sd${p}/${r}`"
         fi 
       done
     echo $timeout > /sys/block/sd${p}/device/timeout
@@ -46,6 +49,8 @@ for p in {a..z} ; do
     echo ${nr_requests} > /sys/block/sd${p}/queue/nr_requests
   fi
 done
+
+echo
 
 for p in /dev/sd{a..z} ; do
   if [ -b $p ]; then
@@ -60,17 +65,19 @@ for p in /dev/sd{a..z} ; do
   fi
 done
 
+echo
 echo '/-------------\'
 echo '| po zmianach |'
 echo '\-------------/'
 
 for p in {a..z} ; do
   if [ -b /dev/sd$p ]; then
+    echo
     echo "========== /dev/sd${p} ============"
       for r in device/timeout device/eh_timeout device/queue_depth queue/scheduler queue/nr_requests ; do
         if [ -f /sys/block/sd${p}/${r} ]; then
-          printf "%35s =" /sys/block/sd${p}/${r}
-          printf "%20s\n"  "`cat /sys/block/sd${p}/${r}`"
+          printf "%s = " /sys/block/sd${p}/${r}
+          printf "%s, "  "`cat /sys/block/sd${p}/${r}`"
         fi
       done
     echo $timeout > /sys/block/sd${p}/device/timeout
@@ -79,4 +86,6 @@ for p in {a..z} ; do
     echo ${nr_requests} > /sys/block/sd${p}/queue/nr_requests
   fi
 done
+
+echo
 
