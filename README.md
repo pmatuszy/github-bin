@@ -7,7 +7,7 @@ cp -v github-bin/* $HOME/bin ;
 git status ; git commit -m "\`date\`"
 
 
-**** jedna linia: ****
-
+## jedna linia: 
+```
 cd $HOME ; rm -rf $HOME/github-bin; git clone git+ssh://git@github.com/pmatuszy/github-bin.git ; cp -v github-bin/* $HOME/bin
-
+```
