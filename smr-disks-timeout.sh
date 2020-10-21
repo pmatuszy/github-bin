@@ -22,9 +22,8 @@
 # commands used by the SCSI error handling code. This decreases the amount of time spent checking these unresponsive devices. 
 # The default value of eh_timeout is 10 seconds, which was the timeout value used prior to adding this functionality.
 
-
-timeout=3600
-eh_timeout=3600
+timeout=7200
+eh_timeout=7200
 queue_depth=1
 nr_requests=4
 
