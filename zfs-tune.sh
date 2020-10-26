@@ -18,3 +18,26 @@ echo 1 >/sys/module/zfs/parameters/zfs_nocacheflush
 echo cat /sys/module/zfs/parameters/zfs_nocacheflush
 cat /sys/module/zfs/parameters/zfs_nocacheflush
 
+
+###############################################################
+echo
+echo
+
+echo cat /sys/module/zfs/parameters/zfs_arc_min
+cat /sys/module/zfs/parameters/zfs_arc_min
+echo 536870912 > /sys/module/zfs/parameters/zfs_arc_min
+
+echo cat /sys/module/zfs/parameters/zfs_arc_min
+cat /sys/module/zfs/parameters/zfs_arc_min
+
+###############################################################
+echo
+echo
+
+echo cat /sys/module/zfs/parameters/zfs_arc_max
+cat /sys/module/zfs/parameters/zfs_arc_max
+echo 644245094 > /sys/module/zfs/parameters/zfs_arc_max
+
+echo cat /sys/module/zfs/parameters/zfs_arc_max
+cat /sys/module/zfs/parameters/zfs_arc_max
+
