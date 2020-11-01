@@ -18,6 +18,15 @@ echo 1 >/sys/module/zfs/parameters/zfs_nocacheflush
 echo cat /sys/module/zfs/parameters/zfs_nocacheflush
 cat /sys/module/zfs/parameters/zfs_nocacheflush
 
+###############################################################
+echo
+echo
+echo cat /sys/module/zfs/parameters/zfs_vdev_scheduler
+cat /sys/module/zfs/parameters/zfs_vdev_scheduler
+echo none >/sys/module/zfs/parameters/zfs_vdev_scheduler
+
+echo cat /sys/module/zfs/parameters/zfs_vdev_scheduler
+cat /sys/module/zfs/parameters/zfs_vdev_scheduler
 
 ###############################################################
 echo

@@ -1,4 +1,5 @@
 #!/bin/bash
+# 2020.11.01 - v. 0.5 - remove zfs_usb reference
 # 2020.10.21 - v. 0.4 - added comment about import with rewind
 # 2020.10.13 - v. 0.3 - exporting all zpools and then importing them
 # 2020.10.09 - v. 0.2 - small cosmetic changes
@@ -21,7 +22,7 @@ echo "nacisnij <ENTER>"
 read r
 
 set +x
-zpool export zfs_usb   2>/dev/null
+#zpool export zfs_usb   2>/dev/null
 zpool export zfs-raid1 2>/dev/null
 
 zpool import -d /dev/disk/by-id -l -a
