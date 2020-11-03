@@ -11,4 +11,4 @@ zfs mount zfs_encrypted_file/encrypted
 df -h /encrypted
 
 cryptsetup luksOpen /dev/vg_crypto/lv_do_luksa luks-on-lv
-mount -o noatime/dev/mapper/luks-on-lv /mnt/luks-raid1
+mount -o noatime /dev/mapper/luks-on-lv /mnt/luks-raid1
