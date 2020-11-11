@@ -46,7 +46,8 @@ for p in {a..z} ; do
     echo $timeout > /sys/block/sd${p}/device/timeout
     echo ${eh_timeout} > /sys/block/sd${p}/device/eh_timeout
 #    echo ${queue_depth} > /sys/block/sd${p}/device/queue_depth
-    echo ${nr_requests} > /sys/block/sd${p}/queue/nr_requests
+# jesli scheduler = none to ponizsza linia zwraca blad
+#    echo ${nr_requests} > /sys/block/sd${p}/queue/nr_requests
 
    # ze strony: https://wiki.ubuntu.com/Kernel/Reference/IOSchedulers
    #none (Multiqueue)
