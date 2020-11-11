@@ -12,3 +12,7 @@ df -h /encrypted
 
 cryptsetup luksOpen /dev/vg_crypto/lv_do_luksa luks-on-lv
 mount -o noatime /dev/mapper/luks-on-lv /mnt/luks-raid1
+
+df -h /mnt/luks-raid1
+
+exportfs -a
