@@ -12,6 +12,6 @@ df -h /encrypted
 
 
 cryptsetup luksOpen /dev/vg_crypto/lv_do_luksa luks-on-lv
-mount /dev/mapper/luks-on-lv /mnt/luks-raid1-enclosure-b
+mount -o noatime /dev/mapper/luks-on-lv /mnt/luks-raid1-enclosure-b
 
-mount -o bind /mnt/luks-raid1-enclosure-b/replication/rclone-user /rclone-jail/storage-master/replication
+mount -o bind,noatime /mnt/luks-raid1-enclosure-b/replication/rclone-user /rclone-jail/storage-master/replication
