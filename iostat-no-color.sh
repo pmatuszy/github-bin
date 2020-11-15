@@ -1,8 +1,9 @@
 #!/bin/bash
+# 2020.11.15 - v. 0.2 - removed stats for dm- devicse and -x option (not needed usually)
 # 2020.11.11 - v. 0.1 - initial release
 
 export S_COLORS=never 
-iostat -x 1  -cd -t |grep -v '^loop'
+iostat 1  -cd -t |egrep -v '^loop|^dm-'
 
 # -c     Display the CPU utilization report.
 # -d     Display the device utilization report.
