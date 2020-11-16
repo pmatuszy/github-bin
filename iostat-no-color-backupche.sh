@@ -1,10 +1,11 @@
 #!/bin/bash
+# 2020.11.16 - v. 0.3 - version for backupche server (specific groups of disks are named there)
 # 2020.11.15 - v. 0.2 - removed stats for dm- devicse and -x option (not needed usually)
 # 2020.11.11 - v. 0.1 - initial release
 
 export S_COLORS=never 
 
-iostat -cHd -t 1 -g luks-raid1-16tb sda sdb -g "luks-raid1     " sdc sdd -N
+iostat --dec=0  -cHd -t 1 -g luks-R1-16TB sda sdb -g "luks-R1-8TB " sdc sdd -N
 
 # -c     Display the CPU utilization report.
 # -d     Display the device utilization report.
