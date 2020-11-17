@@ -1,4 +1,5 @@
 #!/bin/bash
+# 2020.11.18 - v.1.4 - zmienna scheduler - wystarczy odkomentowac, ktorego nalezy uzywac, bug fixes
 # 2020.11.11 - v.1.3 - zmiana schedulera z mq-deadline na none
 # 2020.10.08 - v.1.2 - male zmiany w sposobie wyswietlania 
 # 2020.10.08 - v.1.1 - showing timeouts before the setting them
@@ -27,6 +28,8 @@ timeout=7200
 eh_timeout=7200
 queue_depth=1
 nr_requests=4
+scheduler='none'
+# scheduler='mq-deadline'
 
 echo
 echo '/----------------\'
@@ -46,13 +49,17 @@ for p in {a..z} ; do
     echo $timeout > /sys/block/sd${p}/device/timeout
     echo ${eh_timeout} > /sys/block/sd${p}/device/eh_timeout
 #    echo ${queue_depth} > /sys/block/sd${p}/device/queue_depth
-# jesli scheduler = none to ponizsza linia zwraca blad
-#    echo ${nr_requests} > /sys/block/sd${p}/queue/nr_requests
 
    # ze strony: https://wiki.ubuntu.com/Kernel/Reference/IOSchedulers
    #none (Multiqueue)
    # The multi-queue no-op I/O scheduler. Does no reordering of requests, minimal overhead. Ideal for fast random I/O devices such as NVME.
-    echo 'none' > /sys/block/sd${p}/queue/scheduler
+    echo "$scheduler" > /sys/block/sd${p}/queue/scheduler
+
+# jesli scheduler = none to ponizsza linia zwraca blad
+   if [ $scheduler != "none" ]; then
+     echo "${nr_requests}" > /sys/block/sd${p}/queue/nr_requests
+   fi
+
   fi
 done
 
