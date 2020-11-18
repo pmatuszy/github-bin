@@ -28,8 +28,8 @@ timeout=7200
 eh_timeout=7200
 queue_depth=1
 nr_requests=4
-scheduler='none'
-# scheduler='mq-deadline'
+# scheduler='none'
+scheduler='mq-deadline'
 
 echo
 echo '/----------------\'
