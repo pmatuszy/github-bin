@@ -8,4 +8,7 @@ if [ "${p}" == 'y' -o  "${p}" == 'y' ]; then
   git add *
   git commit -m \""new push from `hostname` @ `date '+%Y.%m.%d %H:%M:%S'`"\"
   git push
+else
+  echo "no means no - I am exiting..."
+  exit 1
 fi  
