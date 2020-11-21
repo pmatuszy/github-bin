@@ -16,7 +16,7 @@ jd.sh
 echo "nacisnij <ENTER>"
 read r
 
-dmesg
+dmesg -T
 
 echo "nacisnij <ENTER>"
 read r
