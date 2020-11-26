@@ -5,7 +5,7 @@
 
 export S_COLORS=never 
 
-iostat --dec=0  -cHd -t 1 -g luks-R1-16TB sda sdb -g "luks-R1-8TB " sdc sdd -N
+iostat --dec=0  -cHd -t 1 -g 16TB sda sdb -g "16TB_another" sdc sdd -N
 
 # -c     Display the CPU utilization report.
 # -d     Display the device utilization report.
