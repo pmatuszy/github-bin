@@ -15,11 +15,17 @@ mount -o noatime /dev/mapper/luks-on-lv /mnt/luks-raid1
 
 cryptsetup luksOpen /dev/vg_crypto/lv_do_luksa_16tb luks16tb-on-lv
 
-set +x
-fsck /dev/mapper/luks16tb-on-lv
+echo
+echo time for fsck ...
+echo echo
+
 fsck /dev/mapper/luks16tb-on-lv
 
-set -x
+echo
+echo ... and once again fsck
+echo
+echo
+fsck /dev/mapper/luks16tb-on-lv
 
 mount -o noatime /dev/mapper/luks16tb-on-lv /mnt/luks-raid1-16tb
 
