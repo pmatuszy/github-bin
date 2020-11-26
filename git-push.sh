@@ -20,7 +20,6 @@ read -t 5 -n 1 p     # read one character (-n) with timeout of 5 seconds
 echo
 echo
 if [ "${p}" == 'y' -o  "${p}" == 'y' ]; then
-
   cd $HOME
   rm -rf $HOME/github-bin
   git clone git+ssh://git@github.com/pmatuszy/github-bin.git
