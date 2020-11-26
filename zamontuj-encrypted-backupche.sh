@@ -1,4 +1,5 @@
 #!/bin/bash
+# 2020.11.26 - v. 0.2 - added fsck before mounting the disks
 # 2020.0x.xx - v. 0.1 - initial release (date unknown)
 
 zpool export zfs_encrypted_file 2>/dev/null
