@@ -23,6 +23,7 @@ echo
 if [ "${p}" == 'y' -o  "${p}" == 'y' ]; then
   cd $HOME
   rm -rf $HOME/github-bin/*
+  rm -rf $HOME/github-bin/.git
   git clone git+ssh://git@github.com/pmatuszy/github-bin.git
   cp -v github-bin/* $HOME/bin
   cd github-bin
