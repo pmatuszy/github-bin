@@ -1,3 +1,4 @@
+# 2020.11.27 - v. 0.3 - changed rm to remove files from the directory not the whole directory
 # 2020.11.26 - v. 0.2 - added second section with 'git pull'
 # 2020.10.20 - v. 0.1 - initial release
 
@@ -21,7 +22,7 @@ echo
 echo
 if [ "${p}" == 'y' -o  "${p}" == 'y' ]; then
   cd $HOME
-  rm -rf $HOME/github-bin
+  rm -rf $HOME/github-bin/*
   git clone git+ssh://git@github.com/pmatuszy/github-bin.git
   cp -v github-bin/* $HOME/bin
   cd github-bin
