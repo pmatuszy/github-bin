@@ -15,7 +15,7 @@ if [[ `cat /etc/os-release |grep -qi centos ; echo $?` == 0 ]] ; then
   echo "~~~~~~~~~~~~~ CENTOS ~~~~~~~~~~~~~"
   echo "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"
   for p in `fdisk -l|grep 'Disk /dev'|egrep -v 'mapper|/md|/ram|mmcb|/dev/loop'|sort|tr -d :`;do
-     echo `gdisk -l $p |grep "Disk /dev"` "   " `hdparm -I $p | grep 'Serial\ Number'`
+     echo `gdisk -l $p |grep "Disk /dev"` "   " `hdparm -I $p 2>/dev/null | grep 'Serial\ Number'`
   done
 
   echo
@@ -27,7 +27,7 @@ else
   
 #  fdisk -l|grep 'Disk /dev'|egrep -v 'mapper|/md|/ram|mmcb|/dev/loop'|sort
   for p in `fdisk -l|grep 'Disk /dev'|egrep -v 'mapper|/md|/ram|mmcb|/dev/loop'|awk '{print $2}'|sort|tr -d :`;do
-     echo `gdisk -l $p |grep "Disk /dev"` "   " `hdparm -I $p | grep 'Serial\ Number'`
+     echo `gdisk -l $p |grep "Disk /dev"` "   " `hdparm -I $p 2>/dev/null | grep 'Serial\ Number'`
   done
 
   echo
