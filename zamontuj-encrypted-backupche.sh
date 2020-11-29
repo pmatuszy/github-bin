@@ -36,6 +36,7 @@ fsck /dev/mapper/luks16tb-on-lv
 mount -o noatime /dev/mapper/luks16tb-on-lv /mnt/luks-raid1-16tb
 
 mount -o bind,noatime /mnt/luks-raid1-16tb/backup1/rclone_user/_restic /rclone-jail/storage-master/backup1
+mount -o bind,noatime /mnt/luks-raid1-16tb/replication1/rclone_user/_rclone/ /rclone-jail/storage-master/replication1
 
 df -h /mnt/luks-raid1 /mnt/luks-raid1-16tb
 
