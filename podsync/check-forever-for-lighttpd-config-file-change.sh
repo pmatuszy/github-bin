@@ -13,7 +13,7 @@ if [ ! -f ${plik_template} ]; then
   exit 2
 fi
 
-opoznienie=1    # opoznienie w sekundach
+opoznienie=120    # opoznienie w sekundach
 
 while : ; do
     inotifywait -q -e modify ${plik}
