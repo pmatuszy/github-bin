@@ -1,4 +1,5 @@
 #!/bin/bash
+# 2020.12.03 - v.1.6 - zmiania sposobu wyswietlania (by output byl troche wezszy na ekranie)
 # 2020.12.03 - v.1.5 - dodane wyswietlanie numeru seryjnego dyskow
 # 2020.11.18 - v.1.4 - zmienna scheduler - wystarczy odkomentowac, ktorego nalezy uzywac, bug fixes
 # 2020.11.11 - v.1.3 - zmiana schedulera z mq-deadline na none
@@ -37,16 +38,17 @@ echo '/----------------\'
 echo '| przed zmianami |'
 echo '\----------------/'
 
+echo "   disk  |  /sys/block/sd?/device/timeout  |/sys/block/sd?/device/eh_timeout |/sys/block/sd?/device/queue_depth|  /sys/block/sd?/queue/scheduler |/sys/block/sdr?queue/nr_requests |"
+echo "=========+=================================+=================================+=================================+=================================+=================================+"
 for p in {a..z} ; do
   if [ -b /dev/sd$p ]; then
+    printf "%8s | " /dev/sd${p}
+    for r in device/timeout device/eh_timeout device/queue_depth queue/scheduler queue/nr_requests ; do
+      if [ -f /sys/block/sd${p}/${r} ]; then
+        printf "%31s | "  "`cat /sys/block/sd${p}/${r}`"
+      fi
+    done
     echo
-    echo "========== /dev/sd${p} ============"
-      for r in device/timeout device/eh_timeout device/queue_depth queue/scheduler queue/nr_requests ; do
-        if [ -f /sys/block/sd${p}/${r} ]; then
-          printf "%s = " /sys/block/sd${p}/${r}
-          printf "%s, "  "`cat /sys/block/sd${p}/${r}`"
-        fi 
-      done
     echo $timeout > /sys/block/sd${p}/device/timeout
     echo ${eh_timeout} > /sys/block/sd${p}/device/eh_timeout
 #    echo ${queue_depth} > /sys/block/sd${p}/device/queue_depth
@@ -60,7 +62,6 @@ for p in {a..z} ; do
    if [ $scheduler != "none" ]; then
      echo "${nr_requests}" > /sys/block/sd${p}/queue/nr_requests
    fi
-
   fi
 done
 
@@ -85,16 +86,18 @@ echo '/-------------\'
 echo '| po zmianach |'
 echo '\-------------/'
 
+echo "   disk  |  /sys/block/sd?/device/timeout  |/sys/block/sd?/device/eh_timeout |/sys/block/sd?/device/queue_depth|  /sys/block/sd?/queue/scheduler |/sys/block/sdr?queue/nr_requests |"
+echo "=========+=================================+=================================+=================================+=================================+=================================+"
+
 for p in {a..z} ; do
   if [ -b /dev/sd$p ]; then
-    echo
-    echo "========== /dev/sd${p} ============"
+    printf "%8s | " /dev/sd${p}
       for r in device/timeout device/eh_timeout device/queue_depth queue/scheduler queue/nr_requests ; do
         if [ -f /sys/block/sd${p}/${r} ]; then
-          printf "%s = " /sys/block/sd${p}/${r}
-          printf "%s, "  "`cat /sys/block/sd${p}/${r}`"
+          printf "%31s | "  "`cat /sys/block/sd${p}/${r}`"
         fi
       done
+    echo
     echo $timeout > /sys/block/sd${p}/device/timeout
     echo ${eh_timeout} > /sys/block/sd${p}/device/eh_timeout
 #    echo ${queue_depth} > /sys/block/sd${p}/device/queue_depth
