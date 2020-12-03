@@ -1,4 +1,4 @@
-# 2020.12.03 - v. 0.1 - initial release, program nie generuje zadnego output na ekran....
+# 2020.12.03 - v. 0.1 - initial release, program nie generuje zadnego output na ekran.
 
 plik=/etc/lighttpd/lighttpd.conf
 plik_template=/etc/lighttpd/lighttpd.conf.dobry-dziala
