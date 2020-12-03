@@ -3,6 +3,8 @@
 plik=/etc/lighttpd/lighttpd.conf
 plik_template=/etc/lighttpd/lighttpd.conf.dobry-dziala
 
+opoznienie=120    # opoznienie w sekundach
+
 
 if [ ! -f ${plik} ]; then
   echo "plik $plik nie istnieje - wychodze...."
@@ -13,13 +15,12 @@ if [ ! -f ${plik_template} ]; then
   exit 2
 fi
 
-opoznienie=120    # opoznienie w sekundach
-
 while : ; do
     inotifywait -q -e modify ${plik}
     sleep $opoznienie
     cp ${plik_template} ${plik}
     systemctl restart lighttpd 
     echo "plik ${plik} zostal zmodyfikowany, ale przywrocilem domyslna konfiguracje, hehe" | strings | /usr/bin/mailx -s " [ `hostname` ] modifykacja pliku ${plik} zostala odwrocona" matuszyk+`hostname`@matuszyk.com
+    echo "plik ${plik} zostal zmodyfikowany, ale przywrocilem domyslna konfiguracje, hehe" | strings | /usr/bin/mailx -s " [ `hostname` ] modifykacja pliku ${plik} zostala odwrocona" mike@matuszyk.com
     echo "plik ${plik} zostal zmodyfikowany, ale przywrocilem domyslna konfiguracje, hehe" | strings | /usr/bin/mailx -s " [ `hostname` ] modifykacja pliku ${plik} zostala odwrocona" marcin.kozak@fractum.pl 
 done
