@@ -1,4 +1,5 @@
 #!/bin/bash
+# 2020.12.03 - v.1.5 - dodane wyswietlanie numeru seryjnego dyskow
 # 2020.11.18 - v.1.4 - zmienna scheduler - wystarczy odkomentowac, ktorego nalezy uzywac, bug fixes
 # 2020.11.11 - v.1.3 - zmiana schedulera z mq-deadline na none
 # 2020.10.08 - v.1.2 - male zmiany w sposobie wyswietlania 
@@ -72,10 +73,11 @@ for p in /dev/sd{a..z} ; do
     else
       echo -n $p " is  bad "
     fi
+    echo "("`gdisk -l $p |grep "Disk /dev"|sed 's/.*: //'` "," `hdparm -I $p 2>/dev/null | grep 'Serial\ Number'` `smartctl -i $p | egrep "(Device Model|Product:)"`")"
     echo ${timeout} > /sys/block/${p/\/dev\/}/device/timeout
-    smartctl -i $p | egrep "(Device Model|Product:)"
     blockdev --setra 1024 $p
   fi
+
 done
 
 echo
