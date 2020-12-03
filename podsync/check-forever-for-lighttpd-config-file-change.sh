@@ -1,4 +1,4 @@
-# 2020.12.03 - v. 0.1 - initial release
+# 2020.12.03 - v. 0.1 - initial release, program nie generuje zadnego output na ekran....
 
 plik=/etc/lighttpd/lighttpd.conf
 plik_template=/etc/lighttpd/lighttpd.conf.dobry-dziala
@@ -17,7 +17,6 @@ opoznienie=1    # opoznienie w sekundach
 
 while : ; do
     inotifywait -q -e modify ${plik}
-    echo wyszedlem
     sleep $opoznienie
     cp ${plik_template} ${plik}
     systemctl restart lighttpd 
