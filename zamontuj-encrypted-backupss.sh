@@ -11,13 +11,18 @@ zfs mount zfs_encrypted_file/encrypted
 
 df -h /encrypted
 
+# cryptsetup luksOpen /dev/vg_crypto/lv_do_luksa luks-on-lv
 
-cryptsetup luksOpen /dev/vg_crypto/lv_do_luksa luks-on-lv
+cryptsetup luksOpen /dev/vg_crypto_encA luks-on-lv_encA
+cryptsetup luksOpen /dev/vg_crypto_encB luks-on-lv_encB
 mount -o noatime /dev/mapper/luks-on-lv_encA /mnt/luks-raid1-encA
 mount -o noatime /dev/mapper/luks-on-lv_encB /mnt/luks-raid1-encB
 
 mount -o bind,noatime /mnt/luks-raid1-encA/replication/rclone-user/_rclone /rclone-jail/storage-master/replicationA
 mount -o bind,noatime /mnt/luks-raid1-encB/replication/rclone-user/_rclone /rclone-jail/storage-master/replicationB
-mount -o bind,noatime /mnt/luks-raid1-encA/backup/rclone-user              /rclone-jail/storage-master/backupA
-mount -o bind,noatime /mnt/luks-raid1-encB/backup/rclone-user              /rclone-jail/storage-master/backupB
+mount -o bind,noatime /mnt/luks-raid1-encA/backup/rclone-user/_restic      /rclone-jail/storage-master/backupA
+mount -o bind,noatime /mnt/luks-raid1-encB/backup/rclone-user/_restic      /rclone-jail/storage-master/backupB
 
+df -h /mnt/luks-raid1-encA /mnt/luks-raid1-encB
+df -h /rclone-jail/storage-master/backupA /rclone-jail/storage-master/replicationA
+df -h /rclone-jail/storage-master/backupB /rclone-jail/storage-master/replicationB
