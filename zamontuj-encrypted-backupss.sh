@@ -7,14 +7,16 @@ zpool import -d /encrypted.zfs -l -a
 
 zpool status -v
 
-zfs mount zfs_encrypted_file/encrypted
+#zfs mount zfs_encrypted_file/encrypted
+zfs mount zfs_encrypted_file
 
 df -h /encrypted
 
 # cryptsetup luksOpen /dev/vg_crypto/lv_do_luksa luks-on-lv
 
-cryptsetup luksOpen /dev/vg_crypto_encA luks-on-lv_encA
-cryptsetup luksOpen /dev/vg_crypto_encB luks-on-lv_encB
+cryptsetup luksOpen /dev/vg_crypto_encA/lv_do_luksa_encA luks-on-lv_encA
+cryptsetup luksOpen /dev/vg_crypto_encB/lv_do_luksa_encB luks-on-lv_encB
+
 mount -o noatime /dev/mapper/luks-on-lv_encA /mnt/luks-raid1-encA
 mount -o noatime /dev/mapper/luks-on-lv_encB /mnt/luks-raid1-encB
 
@@ -24,5 +26,8 @@ mount -o bind,noatime /mnt/luks-raid1-encA/backup/rclone-user/_restic      /rclo
 mount -o bind,noatime /mnt/luks-raid1-encB/backup/rclone-user/_restic      /rclone-jail/storage-master/backupB
 
 df -h /mnt/luks-raid1-encA /mnt/luks-raid1-encB
+echo
 df -h /rclone-jail/storage-master/backupA /rclone-jail/storage-master/replicationA
+echo
 df -h /rclone-jail/storage-master/backupB /rclone-jail/storage-master/replicationB
+echo
