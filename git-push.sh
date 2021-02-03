@@ -8,6 +8,7 @@ read -t 5 -n 1 p     # read one character (-n) with timeout of 5 seconds
 echo
 echo
 if [ "${p}" == 'y' -o  "${p}" == 'y' ]; then
+  git add *
   git commit -a -m \""new push from `hostname` @ `date '+%Y.%m.%d %H:%M:%S'`"\"
   git push
 else
