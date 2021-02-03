@@ -1,14 +1,19 @@
 #!/bin/bash
+# 2021.02.03 - v. 0.3 - replace zfs with luks2 /encrypted directory
 # 2021.01.06 - v. 0.2 - added additional bind mountpoints
 # 2020.0x.xx - v. 0.1 - initial release (date unknown)
 
-zpool export zfs_encrypted_file 2>/dev/null
-zpool import -d /encrypted.zfs -l -a
+# zpool export zfs_encrypted_file 2>/dev/null
+# zpool import -d /encrypted.zfs -l -a
 
-zpool status -v
+# zpool status -v
 
-#zfs mount zfs_encrypted_file/encrypted
-zfs mount zfs_encrypted_file
+# zfs mount zfs_encrypted_file/encrypted
+# zfs mount zfs_encrypted_file
+
+nazwa_pliku=/encrypted.luks2
+cryptsetup luksOpen ${nazwa_pliku} encrypted_luks_file_in_root
+mount -o noatime /dev/mapper/encrypted_luks_file_in_root 
 
 df -h /encrypted
 
