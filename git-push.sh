@@ -1,3 +1,4 @@
+# 2021.02.03 - v. 0.4 - added commit "-a" option so deleted files will be deleted from repo as well
 # 2020.11.27 - v. 0.3 - changed rm to remove files from the directory not the whole directory
 # 2020.11.26 - v. 0.2 - added second section with 'git pull'
 # 2020.10.20 - v. 0.1 - initial release
@@ -7,7 +8,6 @@ read -t 5 -n 1 p     # read one character (-n) with timeout of 5 seconds
 echo
 echo
 if [ "${p}" == 'y' -o  "${p}" == 'y' ]; then
-  # git add *
   git commit -a -m \""new push from `hostname` @ `date '+%Y.%m.%d %H:%M:%S'`"\"
   git push
 else
