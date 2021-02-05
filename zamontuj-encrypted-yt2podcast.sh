@@ -6,7 +6,6 @@ nazwa_pliku=/encrypted.luks2
 
 cryptsetup luksOpen ${nazwa_pliku} encrypted_luks_file_in_root
 
--- mkfs.ext4 /dev/mapper/encrypted_luks_file_in_root
 mount -o noatime /dev/mapper/encrypted_luks_file_in_root /encrypted
 
 df -h /encrypted
