@@ -1,4 +1,6 @@
-# 2021.02.05 - v. 0.5 - git add --all *
+# 2021.02.07 - v. 0.6 - git add --all * .[a-zA-Z]* , git remote set-url origin git+ssh: to not have
+#                       password prompts during pushes
+# 2021.02.05 - v. 0.5 - git add --all * .[a-zA-Z]* 
 # 2021.02.03 - v. 0.4 - added commit "-a" option so deleted files will be deleted from repo as well
 # 2020.11.27 - v. 0.3 - changed rm to remove files from the directory not the whole directory
 # 2020.11.26 - v. 0.2 - added second section with 'git pull'
