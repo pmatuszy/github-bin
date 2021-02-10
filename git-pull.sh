@@ -7,6 +7,7 @@ echo
 echo
 if [ "${p}" == 'y' -o  "${p}" == 'y' ]; then
   cd $HOME
+  mkdir -p $HOME/bin
   rm -rf $HOME/github-bin/*
   rm -rf $HOME/github-bin/.git
   git clone git+ssh://git@github.com/pmatuszy/github-bin.git
