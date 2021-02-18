@@ -1,4 +1,6 @@
 #!/bin/bash
+
+# 2021.02.18 - v. 0.4 - bugfix - added /encrypted at the end of mount -o noatime command
 # 2021.02.03 - v. 0.3 - replace zfs with luks2 /encrypted directory
 # 2021.01.06 - v. 0.2 - added additional bind mountpoints
 # 2020.0x.xx - v. 0.1 - initial release (date unknown)
@@ -13,7 +15,7 @@
 
 nazwa_pliku=/encrypted.luks2
 cryptsetup luksOpen ${nazwa_pliku} encrypted_luks_file_in_root
-mount -o noatime /dev/mapper/encrypted_luks_file_in_root 
+mount -o noatime /dev/mapper/encrypted_luks_file_in_root /encrypted
 
 df -h /encrypted
 
