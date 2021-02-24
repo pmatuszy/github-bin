@@ -29,6 +29,7 @@ echo
 echo "replace in /etc/default/grub : "
 echo GRUB_CMDLINE_LINUX_DEFAULT="transparent_hugepage=never nosplash "
 echo
+echo "then run: update-grub"
 echo
 
 
