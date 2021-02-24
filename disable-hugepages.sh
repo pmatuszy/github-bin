@@ -24,6 +24,13 @@ echo "Current setting for /sys/kernel/mm/transparent_hugepage/enabled"
 cat /sys/kernel/mm/transparent_hugepage/enabled
 echo "===================================================================="
 
+echo
+echo
+echo "replace in /etc/default/grub : "
+echo GRUB_CMDLINE_LINUX_DEFAULT="transparent_hugepage=never nosplash "
+echo
+echo
+
 
 ###############################
 # further links for hugepages #
