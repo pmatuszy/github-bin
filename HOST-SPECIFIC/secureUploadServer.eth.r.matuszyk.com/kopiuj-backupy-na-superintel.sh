@@ -1,3 +1,10 @@
+
+
+# 2021.02.05 - v. 0.1 - initial release
+
+
+
+
 source_dropbox="/mnt/server/DyskN/_backupy/DropBox"
 destination_dropbox="/mnt/superintel/DyskS/____z_DyskU/_backupy-1dyne_kopie/DropBox"
 
