@@ -1,3 +1,4 @@
+# 2021.04.08 - v. 0.8 - now calling git-pull.sh instead of duplicating its functionality here
 # 2021.02.18 - v. 0.7 - added exit code check after git push
 # 2021.02.07 - v. 0.6 - git add --all * .[a-zA-Z]* , git remote set-url origin git+ssh: to not have
 # 2021.02.07 - v. 0.6 - git add --all * .[a-zA-Z]* , git remote set-url origin git+ssh: to not have
