@@ -1,3 +1,4 @@
+# 2021.04.08 - v. 0.2 - added HOST-SPECIFIC directory copy
 # 2020.11.27 - v. 0.1 - initial release
 
 echo
@@ -12,7 +13,7 @@ if [ "${p}" == 'y' -o  "${p}" == 'y' ]; then
   rm -rf $HOME/github-bin/.git
   git clone git+ssh://git@github.com/pmatuszy/github-bin.git
   cp -v github-bin/* $HOME/bin
-  cp -v github-bin/`hostname`/* $HOME/bin
+  cp -v github-bin/HOST-SPECIFIC/`hostname`/* $HOME/bin
   cd github-bin
   git status
 else
