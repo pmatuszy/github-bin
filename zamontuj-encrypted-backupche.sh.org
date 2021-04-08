@@ -2,16 +2,12 @@
 # 2020.11.26 - v. 0.2 - added fsck before mounting the disks
 # 2020.0x.xx - v. 0.1 - initial release (date unknown)
 
-# zpool export zfs_encrypted_file 2>/dev/null
-# zpool import -d /encrypted.zfs -l -a
+zpool export zfs_encrypted_file 2>/dev/null
+zpool import -d /encrypted.zfs -l -a
 
-# zpool status -v
+zpool status -v
 
-# zfs mount zfs_encrypted_file/encrypted
-
-nazwa_pliku=/encrypted.luks2
-cryptsetup luksOpen ${nazwa_pliku} encrypted_luks_file_in_root
-mount -o noatime /dev/mapper/encrypted_luks_file_in_root /encrypted
+zfs mount zfs_encrypted_file/encrypted
 
 df -h /encrypted
 
