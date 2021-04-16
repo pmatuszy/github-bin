@@ -1,16 +1,17 @@
 #!/bin/bash
+# 2021.04.16 - v. 0.4 - checking if it is redhat system
 # 2020.11.27 - v. 0.3 - added printing of the disk serial numbers
 # 2020.10.09 - v. 0.2 - small cosmetic modifications
 # 2020.0x.xx - v. 0.1 - initial release (date unknown)
 
-if [ ! -h /etc/os-release ] ; then
+if [[ ! -h /etc/os-release && ! -h /etc/redhat-release ]] ; then
   echo
   echo "nie wiem co to za OS - wychodze..."
   echo
   exit 1
 fi
 
-if [[ `cat /etc/os-release |grep -qi centos ; echo $?` == 0 ]] ; then
+if [[ `cat /etc/os-release /etc/redhat-release 2>/dev/null |grep -qi centos ; echo $?` == 0 ]] ; then
   echo "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"
   echo "~~~~~~~~~~~~~ CENTOS ~~~~~~~~~~~~~"
   echo "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"
