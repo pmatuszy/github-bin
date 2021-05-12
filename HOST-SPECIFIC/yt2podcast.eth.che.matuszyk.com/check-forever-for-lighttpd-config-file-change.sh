@@ -3,7 +3,7 @@
 # 2021.01.13 - v. 0.2 - added "-e attrib" to inotifywait 
 # 2020.12.03 - v. 0.1 - initial release, program nie generuje zadnego output na ekran.
 
-. /root/_script_header.sh
+. /root/bin/_script_header.sh
 
 plik=/etc/lighttpd/lighttpd.conf
 plik_template=/etc/lighttpd/lighttpd.conf.dobry-dziala
@@ -39,4 +39,4 @@ while : ; do
     fi
 done
 
-. /root/_script_footer.sh
+. /root/bin/_script_footer.sh
