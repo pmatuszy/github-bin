@@ -7,7 +7,7 @@
 
 plik=/etc/lighttpd/lighttpd.conf
 plik_template=/etc/lighttpd/lighttpd.conf.dobry-dziala
-md5_template=bd89b2e88bc14e61b9232829bd53fa8d
+md5_template=d2e9b08556ae7cf7aa46167182434196
 
 opoznienie=300    # opoznienie w sekundach po ktorych dopiero odwracamy zmiane pliku (by np. update skonczyl sie)
                   # bylo 120s ale chyba to za malo bo 2x skrypt wyslal maila w dniu 20.01.2021
@@ -33,7 +33,7 @@ while : ; do
       sleep $opoznienie
       cp ${plik_template} ${plik}
       systemctl restart lighttpd 
-      echo "$tresc_maila" | strings | /usr/bin/mailx -s " ( `hostname` - `date '+%Y.%m.%d %H:%M:%S'` ) modifykacja pliku ${plik} zostala odwrocona" matuszyk+`hostname`@matuszyk.com
+      echo "$tresc_maila" | strings | /usr/bin/mailx -s "(`hostname`-`date '+%Y.%m.%d %H:%M:%S'`) modifykacja pliku ${plik} zostala odwrocona" matuszyk+`hostname`@matuszyk.com
     else
        sleep $co_ile_spr
     fi
