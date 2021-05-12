@@ -15,7 +15,7 @@ if [ "${p}" == 'y' -o  "${p}" == 'y' ]; then
   git clone git+ssh://git@github.com/pmatuszy/github-bin.git
   cp -v github-bin/* $HOME/bin
   cp -v github-bin/HOST-SPECIFIC/`hostname`/* $HOME/bin
-  cp -v github-bin/HOST-SPECIFIC/`hostname`/.[a-zA-Z0-9] $HOME/bin
+  cp -v github-bin/HOST-SPECIFIC/`hostname`/.[a-zA-Z0-9]* $HOME/bin
   cd github-bin
   git status
 else
