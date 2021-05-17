@@ -7,7 +7,7 @@
 
 plik=/etc/lighttpd/lighttpd.conf
 plik_template=/etc/lighttpd/lighttpd.conf.dobry-dziala
-md5_template=d2e9b08556ae7cf7aa46167182434196
+md5_template=be8db743dcf07244f674d5c4820fb889
 
 opoznienie=300    # opoznienie w sekundach po ktorych dopiero odwracamy zmiane pliku (by np. update skonczyl sie)
                   # bylo 120s ale chyba to za malo bo 2x skrypt wyslal maila w dniu 20.01.2021
