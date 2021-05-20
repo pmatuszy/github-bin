@@ -10,4 +10,4 @@ if [ ! -f /opt/signal-cli/bin/signal-cli ];then
   exit 1
 fi
 
-time /opt/signal-cli/bin/signal-cli send -m "test from `/bin/hostname`" --note-to-self
+time /opt/signal-cli/bin/signal-cli send -m "test from `hostname` @ `date '+%Y.%m.%d %H:%M:%S'`" --note-to-self
