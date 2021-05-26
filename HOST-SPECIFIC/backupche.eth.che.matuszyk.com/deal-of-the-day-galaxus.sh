@@ -1,8 +1,9 @@
 #!/bin/bash
-# 2021.05.26 - v. 0.2 - added XDG_RUNTIME_DIR
+# 2021.05.26 - v. 0.2 - added XDG_RUNTIME_DIR,XDG_DATA_DIR
 # 2021.05.20 - v. 0.1 - initial release (date unknown)
 
-XDG_RUNTIME_DIR=/encrypted/root/XDG_DATA_HOME
+export XDG_DATA_DIR=/encrypted/root/XDG_DATA_HOME
+export XDG_RUNTIME_DIR=/run/user/0
 
 plik_bez_cropa=`mktemp --dry-run --suffix=-bez-cropa.jpg`
 plik_po_cropie=`mktemp --dry-run --suffix=-po-cropie.jpg`
