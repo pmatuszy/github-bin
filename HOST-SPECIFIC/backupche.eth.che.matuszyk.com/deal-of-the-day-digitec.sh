@@ -16,7 +16,7 @@ echo "https://www.digitec.ch/en/LiveShopping" > "${zawartosc_maila}"
 
 mpack -s "(`date '+%Y.%m.%d %H:%M'`) digitec.ch-Deal of the Day" -c image/jpeg "${plik_po_cropie}" -d "${zawartosc_maila}" matuszyk@matuszyk.com
 
-/opt/signal-cli/bin/signal-cli send -m "(`date '+%Y.%m.%d %H:%M'`) digitec.ch-Deal of the Day, https://www.digitec.ch/en/LiveShopping" -a "${plik_po_cropie}" --note-to-self >/dev/null
+/opt/signal-cli/bin/signal-cli -U +41763691467 send -m "(`date '+%Y.%m.%d %H:%M'`) digitec.ch-Deal of the Day, https://www.digitec.ch/en/LiveShopping" -a "${plik_po_cropie}" --note-to-self >/dev/null
 
 rm "${plik_po_cropie}" "${plik_bez_cropa}"
 
