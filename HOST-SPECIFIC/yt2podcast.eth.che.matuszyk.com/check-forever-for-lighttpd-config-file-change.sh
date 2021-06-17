@@ -1,3 +1,4 @@
+# 2021.06.17 - v. 0.5 - najpierw jest przeliczana md5 suma pliku plik_template
 # 2021.02.02 - v. 0.4 - added call for script header and footer
 # 2021.01.17 - v. 0.3 - changed from inotifywait to md5sum change detection
 # 2021.01.13 - v. 0.2 - added "-e attrib" to inotifywait 
@@ -7,7 +8,7 @@
 
 plik=/etc/lighttpd/lighttpd.conf
 plik_template=/etc/lighttpd/lighttpd.conf.dobry-dziala
-md5_template=be8db743dcf07244f674d5c4820fb889
+md5_template=`md5sum /etc/lighttpd/lighttpd.conf.dobry-dziala|awk '{print $1}'`
 
 opoznienie=300    # opoznienie w sekundach po ktorych dopiero odwracamy zmiane pliku (by np. update skonczyl sie)
                   # bylo 120s ale chyba to za malo bo 2x skrypt wyslal maila w dniu 20.01.2021
