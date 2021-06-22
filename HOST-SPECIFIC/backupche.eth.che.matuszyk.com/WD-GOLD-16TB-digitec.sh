@@ -7,6 +7,8 @@ export XDG_DATA_DIR=/encrypted/root/XDG_DATA_HOME
 export XDG_RUNTIME_DIR=/run/user/0
 
 export URL="https://www.digitec.ch/en/s1/product/wd-gold-16tb-35-hard-drives-13424026"
+timeout=300
+kill_after=310
 
 plik_bez_cropa=`mktemp --dry-run --suffix=-bez-cropa.jpg`
 plik_po_cropie=`mktemp --dry-run --suffix=-po-cropie.jpg`
@@ -19,6 +21,6 @@ echo "${URL}" > "${zawartosc_maila}"
 
 mpack -s "(`date '+%Y.%m.%d %H:%M'`)digitec.ch-WD GOLD 16TB" -c image/jpeg "${plik_po_cropie}" -d "${zawartosc_maila}" matuszyk@matuszyk.com
 
-/usr/bin/timeout --preserve-status --kill-after=10 10 /opt/signal-cli/bin/signal-cli -u +41763691467 send -m "(`date '+%Y.%m.%d %H:%M'`) digitec.ch-Deal of the Day, ${URL}" -a "${plik_po_cropie}" --note-to-self >/dev/null
+/usr/bin/timeout --preserve-status /usr/bin/timeout --preserve-status --kill-after=$kill_after $timeout /opt/signal-cli/bin/signal-cli -u +41763691467 send -m "(`date '+%Y.%m.%d %H:%M'`) digitec.ch-Deal of the Day, ${URL}" -a "${plik_po_cropie}" --note-to-self >/dev/null
 
 rm "${plik_po_cropie}" "${plik_bez_cropa}"
