@@ -6,7 +6,7 @@
 export XDG_DATA_DIR=/encrypted/root/XDG_DATA_HOME
 export XDG_RUNTIME_DIR=/run/user/0
 
-export URL="https://www.digitec.ch/en/LiveShopping"A
+export URL="https://www.digitec.ch/en/LiveShopping"
 timeout=300
 kill_after=310
 
