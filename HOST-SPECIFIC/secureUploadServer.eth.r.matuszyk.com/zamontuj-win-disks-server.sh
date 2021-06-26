@@ -2,7 +2,7 @@
 # 2021.04.20 - v. 0.1 - zmiana, by bylo jedno tylko pytanie o haslo
 # 2020.xx.xx - v. 0.1 - initial release
 
-. /root/_script_header.sh
+. /root/bin/_script_header.sh
 
 set +x 
 
@@ -25,4 +25,4 @@ mount.cifs -o user=administrator,password=$PASSWD //server.int.matuszyk.com/Dysk
 
 # set +x
 
-. /root/_script_footer.sh
+. /root/bin/_script_footer.sh
