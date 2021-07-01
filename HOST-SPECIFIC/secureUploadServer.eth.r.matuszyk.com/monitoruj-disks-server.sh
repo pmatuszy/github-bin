@@ -1,4 +1,4 @@
-. /root/_script_header.sh
+. /root/bin/_script_header.sh
 
 while : ; do 
   ls -l /mnt/server/DyskC/* > /dev/null 2>/dev/null
@@ -10,4 +10,4 @@ while : ; do
   sleep 14.98
 done
 
-. /root/_script_footer.sh
+. /root/bin/_script_footer.sh
