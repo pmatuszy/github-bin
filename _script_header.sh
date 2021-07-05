@@ -31,4 +31,5 @@ function ctrl_c() {
  exit
 }
 
+echo
 figlet -w 280 $0
