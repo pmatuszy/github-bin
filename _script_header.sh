@@ -31,4 +31,4 @@ function ctrl_c() {
  exit
 }
 
-figlet $0
+figlet -w 180 $0
