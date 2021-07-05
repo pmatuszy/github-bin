@@ -1,3 +1,4 @@
+# 2021.07.05 - v. 0.3 - added figlet displaying the current script name
 # 2020.09.15 - v. 0.2 - initial release
 # 2020.09.15 - v. 0.1 - initial release
 
@@ -30,3 +31,4 @@ function ctrl_c() {
  exit
 }
 
+figlet $0
