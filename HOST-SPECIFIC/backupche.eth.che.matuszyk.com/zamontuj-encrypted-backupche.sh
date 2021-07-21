@@ -71,3 +71,18 @@ mount -o noatime /dev/mapper/luks16tb-on-lv_another /mnt/luks-raid1-16tb_another
 mount -o bind,noatime /mnt/luks-raid1-16tb_another/backup2/rclone_user/_restic /rclone-jail/storage-master/backup2
 mount -o bind,noatime /mnt/luks-raid1-16tb_another/replication2/rclone_user/_rclone/ /rclone-jail/storage-master/replication2
 
+sleep 2 
+
+nohup rclone --config /root/rclone.conf mount --daemon --allow-other --read-only local-crypt-local-replication1-rclone:/server/MASTER_SOURCE-BBC /mnt/minidlna/MASTER_SOURCE-BBC &
+sleep 3
+nohup rclone --config /root/rclone.conf mount --daemon --allow-other --read-only local-crypt-local-replication1-rclone:/server/MASTER_SOURCE-SkyPlus /mnt/minidlna/MASTER_SOURCE-SkyPlus &
+sleep 3
+nohup rclone --config /root/rclone.conf mount --daemon --allow-other --read-only local-crypt-local-replication2-rclone:/server/DivX /mnt/minidlna/DivX &
+sleep 3
+
+service minidlna restart
+
+echo rescan minidlna
+sudo -u minidlna /usr/sbin/minidlnad -r
+sleep 2 
+
