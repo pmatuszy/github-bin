@@ -1,4 +1,5 @@
 #!/bin/bash
+# 2021.08.06 - v. 0.4 - sending dbus signal message
 # 2021.06.22 - v. 0.3 - URL set and used throughout the script, added timeout as signal-cli can be run in the background and this script would never finish
 # 2021.05.26 - v. 0.2 - added XDG_RUNTIME_DIR,XDG_DATA_DIR, added -u option
 # 2021.05.20 - v. 0.1 - initial release (date unknown)
@@ -22,6 +23,8 @@ echo "${URL}" > "${zawartosc_maila}"
 mpack -s "(`date '+%Y.%m.%d %H:%M'`) galaxus.ch-Deal of the Day" -c image/jpeg "${plik_po_cropie}" -d "${zawartosc_maila}" matuszyk@matuszyk.com
 
 /usr/bin/timeout --preserve-status /usr/bin/timeout --preserve-status --kill-after=$kill_after $timeout /opt/signal-cli/bin/signal-cli -u +41763691467 send -m "(`date '+%Y.%m.%d %H:%M'`) Galaxus.ch-Deal of the Day, ${URL}" -a "${plik_po_cropie}" --note-to-self 2>/dev/null
+
+/usr/bin/timeout --preserve-status /usr/bin/timeout --preserve-status --kill-after=$kill_after $timeout /usr/bin/dbus-send --session --type=method_call --print-reply --dest="org.asamk.Signal" /org/asamk/Signal org.asamk.Signal.sendMessage string:"[`date '+%Y.%m.%d %H:%M:%S'`]" array:string:"${plik_po_cropie}" string:+41763691467
 
 rm "${plik_po_cropie}" "${plik_bez_cropa}"
 
