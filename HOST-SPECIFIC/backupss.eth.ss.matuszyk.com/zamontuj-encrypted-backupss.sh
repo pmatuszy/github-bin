@@ -38,3 +38,9 @@ df -h /rclone-jail/storage-master/backupA /rclone-jail/storage-master/replicatio
 echo
 df -h /rclone-jail/storage-master/backupB /rclone-jail/storage-master/replicationB
 echo
+
+echo startuje vpnserver
+
+/encrypted/root/vpnserver/vpnserver start
+
+
