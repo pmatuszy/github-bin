@@ -1,4 +1,5 @@
 #!/bin/bash
+# 2021.08.29 - v. 0.4 - exportfs po zamontowaniu obu duzych volumentow, dodano montowanie dla minidlna i restart tego serwisu
 # 2021.04.09 - v. 0.3 - bug fix: nie montowane byly backup2 i replication2 w jailu...
 # 2020.11.26 - v. 0.2 - added fsck before mounting the disks
 # 2020.0x.xx - v. 0.1 - initial release (date unknown)
@@ -45,8 +46,6 @@ mount -o bind,noatime /mnt/luks-raid1-16tb/replication1/rclone_user/_rclone/ /rc
 
 df -h /mnt/luks-raid1 /mnt/luks-raid1-16tb
 
-exportfs -a
-
 echo
 echo
 echo '########## /dev/vg_crypto/lv_do_luksa_16tb_another ==> /mnt/luks-raid1-16tb_another'
@@ -67,6 +66,8 @@ echo
 fsck /dev/mapper/luks16tb-on-lv_another
 
 mount -o noatime /dev/mapper/luks16tb-on-lv_another /mnt/luks-raid1-16tb_another
+
+exportfs -a
 
 mount -o bind,noatime /mnt/luks-raid1-16tb_another/backup2/rclone_user/_restic /rclone-jail/storage-master/backup2
 mount -o bind,noatime /mnt/luks-raid1-16tb_another/replication2/rclone_user/_rclone/ /rclone-jail/storage-master/replication2
