@@ -15,3 +15,7 @@ echo startuje vpnserver
 
 /encrypted/vpnserver/vpnserver start
 
+echo ; echo
+ps -ef |grep vpnserver
+echo ; echo
+
