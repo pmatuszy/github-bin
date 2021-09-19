@@ -41,6 +41,5 @@ echo
 
 echo startuje vpnserver
 
-/encrypted/root/vpnserver/vpnserver start
-
+/encrypted/vpnserver/vpnserver start
 
