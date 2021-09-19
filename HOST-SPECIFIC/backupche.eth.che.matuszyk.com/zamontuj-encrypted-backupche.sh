@@ -80,6 +80,9 @@ sleep 3
 nohup rclone --config /root/rclone.conf mount --daemon --allow-other --read-only local-crypt-local-replication2-rclone:/server/DivX /mnt/minidlna/DivX &
 sleep 3
 
+# odczekamy dodatkowe 15s bo rclone mount troche trwa
+sleep 15
+
 service minidlna restart
 
 echo rescan minidlna
