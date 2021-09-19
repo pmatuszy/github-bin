@@ -69,12 +69,15 @@ mount -o bind,noatime /mnt/luks-raid1-16tb_another/replication2/rclone_user/_rcl
 
 df -h /encrypted /mnt/luks-raid1 /mnt/luks-raid1-16tb 
 
-echo
+echo ; echo 
 echo "restart nfs servera, bo zwykle jest problem polegajacy na tym, ze service nie startuje od razu, bo nie sa zamontowane exportowane fs'y"
 echo "wiec teraz po ich zamontowaniu, restartujemy serwis..."
+echo ; echo 
 systemctl restart nfs-kernel-server
 
+echo 
 exportfs -av
+echo
 
 sleep 2 
 
@@ -86,7 +89,7 @@ nohup rclone --config /root/rclone.conf mount --daemon --allow-other --read-only
 sleep 3
 
 # odczekamy dodatkowe 15s bo rclone mount troche trwa
-echo "odczekamy dodatkowe 15s bo rclone mount troche trwa"
+echo ; echo ; echo "odczekamy dodatkowe 15s bo rclone mount troche trwa" ; echo
 sleep 15
 
 service minidlna restart
