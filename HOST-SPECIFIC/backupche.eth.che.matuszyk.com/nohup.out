@@ -1,0 +1,14 @@
+2021/09/19 17:28:32 NOTICE: Config file "/root/rclone.conf" not found - using defaults
+2021/09/19 17:28:32 Failed to create file system for "local-crypt-local-replication1-rclone:/server/MASTER_SOURCE-BBC": didn't find section in config file
+2021/09/19 17:28:32 NOTICE: Config file "/root/rclone.conf" not found - using defaults
+2021/09/19 17:28:32 Failed to create file system for "local-crypt-local-replication1-rclone:/server/MASTER_SOURCE-SkyPlus": didn't find section in config file
+2021/09/19 17:28:32 NOTICE: Config file "/root/rclone.conf" not found - using defaults
+2021/09/19 17:28:32 Failed to create file system for "local-crypt-local-replication2-rclone:/server/DivX": didn't find section in config file
+2021/09/19 17:37:39 NOTICE: Config file "/root/rclone.conf" not found - using defaults
+2021/09/19 17:37:39 Failed to create file system for "local-crypt-local-replication1-rclone:/server/MASTER_SOURCE-BBC": didn't find section in config file
+2021/09/19 17:37:41 NOTICE: Config file "/root/rclone.conf" not found - using defaults
+2021/09/19 17:37:41 Failed to create file system for "local-crypt-local-replication1-rclone:/server/MASTER_SOURCE-SkyPlus": didn't find section in config file
+2021/09/19 17:37:44 NOTICE: Config file "/root/rclone.conf" not found - using defaults
+2021/09/19 17:37:44 Failed to create file system for "local-crypt-local-replication2-rclone:/server/DivX": didn't find section in config file
+2021/09/19 17:41:18 NOTICE: Config file "/root/rclone.conf" not found - using defaults
+2021/09/19 17:41:18 Failed to create file system for "local-crypt-local-replication1-rclone:/server/MASTER_SOURCE-BBC": didn't find section in config file

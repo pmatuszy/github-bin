@@ -1,4 +1,6 @@
 #!/bin/bash
+
+# 2021.09.19 - v. 0.5 - zmiana w fsck, dodana funkcja zrob_fsck
 # 2021.08.29 - v. 0.4 - exportfs po zamontowaniu obu duzych volumentow, dodano montowanie dla minidlna i restart tego serwisu
 # 2021.04.09 - v. 0.3 - bug fix: nie montowane byly backup2 i replication2 w jailu...
 # 2020.11.26 - v. 0.2 - added fsck before mounting the disks
@@ -11,66 +13,63 @@
 
 # zfs mount zfs_encrypted_file/encrypted
 
-nazwa_pliku=/encrypted.luks2
-cryptsetup luksOpen ${nazwa_pliku} encrypted_luks_file_in_root
-mount -o noatime /dev/mapper/encrypted_luks_file_in_root /encrypted
-
-df -h /encrypted
-
-# cryptsetup luksOpen /dev/vg_crypto/lv_do_luksa luks-on-lv
-# mount -o noatime /dev/mapper/luks-on-lv /mnt/luks-raid1
-
 echo
+read -r -p "Wpisz haslo: " -s PASSWD
 echo
-echo '########## /dev/vg_crypto/lv_do_luksa_16tb ==> /mnt/luks-raid1-16tb'
-echo
-echo
-cryptsetup luksOpen /dev/vg_crypto/lv_do_luksa_16tb luks16tb-on-lv
 
-echo
-echo time for fsck ...
-echo echo
+################################################################################
+zrob_fsck() {
+################################################################################
 
-fsck /dev/mapper/luks16tb-on-lv
+echo "################################################################################"
+echo
+echo czas na fsck $1 ...
+echo
+echo "################################################################################"
+
+fsck -C -M -R -T -V $1
 
 echo
 echo ... and once again fsck
 echo
+fsck $1
+}
+################################################################################
+
+nazwa_pliku=/encrypted.luks2
+
+echo -n "$PASSWD" | cryptsetup luksOpen ${nazwa_pliku} encrypted_luks_file_in_root -d -
+zrob_fsck /dev/mapper/encrypted_luks_file_in_root
+
 echo
-fsck /dev/mapper/luks16tb-on-lv
+echo '########## /dev/vg_crypto/lv_do_luksa_16tb ==> /mnt/luks-raid1-16tb'
+echo
+echo -n "$PASSWD" | cryptsetup luksOpen /dev/vg_crypto/lv_do_luksa_16tb luks16tb-on-lv -d -
+
+zrob_fsck /dev/mapper/luks16tb-on-lv
+
+echo
+echo '########## /dev/vg_crypto/lv_do_luksa_16tb_another ==> /mnt/luks-raid1-16tb_another'
+echo
+echo -n "$PASSWD" | cryptsetup luksOpen /dev/vg_crypto/lv_do_luksa_16tb_another luks16tb-on-lv_another -d -
+
+zrob_fsck /dev/mapper/luks16tb-on-lv_another
+
+
+mount -o noatime /dev/mapper/encrypted_luks_file_in_root /encrypted
 
 mount -o noatime /dev/mapper/luks16tb-on-lv /mnt/luks-raid1-16tb
+mount -o noatime /dev/mapper/luks16tb-on-lv_another /mnt/luks-raid1-16tb_another
 
 mount -o bind,noatime /mnt/luks-raid1-16tb/backup1/rclone_user/_restic /rclone-jail/storage-master/backup1
 mount -o bind,noatime /mnt/luks-raid1-16tb/replication1/rclone_user/_rclone/ /rclone-jail/storage-master/replication1
 
-df -h /mnt/luks-raid1 /mnt/luks-raid1-16tb
-
-echo
-echo
-echo '########## /dev/vg_crypto/lv_do_luksa_16tb_another ==> /mnt/luks-raid1-16tb_another'
-echo
-echo
-cryptsetup luksOpen /dev/vg_crypto/lv_do_luksa_16tb_another luks16tb-on-lv_another
-
-echo
-echo time for fsck ...
-echo echo
-
-fsck /dev/mapper/luks16tb-on-lv_another
-
-echo
-echo ... and once again fsck
-echo
-echo
-fsck /dev/mapper/luks16tb-on-lv_another
-
-mount -o noatime /dev/mapper/luks16tb-on-lv_another /mnt/luks-raid1-16tb_another
-
-exportfs -a
-
 mount -o bind,noatime /mnt/luks-raid1-16tb_another/backup2/rclone_user/_restic /rclone-jail/storage-master/backup2
 mount -o bind,noatime /mnt/luks-raid1-16tb_another/replication2/rclone_user/_rclone/ /rclone-jail/storage-master/replication2
+
+df -h /encrypted /mnt/luks-raid1 /mnt/luks-raid1-16tb 
+
+exportfs -a
 
 sleep 2 
 
