@@ -15,7 +15,7 @@ md5_template=`md5sum /etc/lighttpd/lighttpd.conf.dobry-dziala|awk '{print $1}'`
 
 opoznienie=300    # opoznienie w sekundach po ktorych dopiero odwracamy zmiane pliku (by np. update skonczyl sie)
                   # bylo 120s ale chyba to za malo bo 2x skrypt wyslal maila w dniu 20.01.2021
-co_ile_spr=10
+co_ile_spr=30
 co_ile_wypisac_date=200
 
 tresc_maila="plik ${plik} zostal zmodyfikowany, ale przywrocilem domyslna konfiguracje, hehe"
