@@ -26,7 +26,7 @@ xvfb-run --server-args="-screen 0, ${rozmiar_x_ekran}x${rozmiar_y_ekran}x24" cut
 
 convert "${plik_bez_cropa}" -crop 800x800+3+5 "${plik_po_cropie}"
 
-echo "${URL}" | aha | > "${zawartosc_maila}"
+echo "${URL}" > "${zawartosc_maila}"
 
 mpack -s "(`date '+%Y.%m.%d %H:%M'`) digitec.ch-Deal of the Day" -c image/jpeg "${plik_po_cropie}" -d "${zawartosc_maila}" matuszyk@matuszyk.com
 
