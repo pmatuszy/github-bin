@@ -9,4 +9,4 @@ CPUtemp=`argonone-cli --decode|grep "System Temperature "|sed 's/System Temperat
 
 # echo "fan_speed = $fan_speed CPUtemp = $CPUtemp"
 
-curl --data "api_key=$api_key&field1=$fan_speed&field2=$CPUtemp" https://api.thingspeak.com/update
+curl --silent --data "api_key=$api_key&field1=$fan_speed&field2=$CPUtemp" https://api.thingspeak.com/update
