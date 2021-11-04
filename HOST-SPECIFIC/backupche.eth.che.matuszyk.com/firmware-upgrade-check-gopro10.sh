@@ -17,8 +17,8 @@ rozmiar_x_ekran=900
 rozmiar_y_ekran=700
 rozmiar_x_crop=800
 rozmiar_y_crop=800
-rozmiar_x_crop_offset=200
-rozmiar_y_crop_offset=50
+rozmiar_x_crop_offset=260
+rozmiar_y_crop_offset=90
 
 max_wait_na_strone=30000       # w ms
 delay_po_wczytaniu_strony=1000 # w ms
