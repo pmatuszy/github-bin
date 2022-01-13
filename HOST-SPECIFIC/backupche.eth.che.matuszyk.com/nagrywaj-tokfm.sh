@@ -3,6 +3,12 @@ DOKAD=/worek-samba/TokFM-nagrania/tokFM-`date '+%Y.%m.%d__%H%M%S'`.mp3
 
 timeout=24h
 kill_after=1441m
+wlasciciel_pliku="che:che"
+
+czas_nagrywania="24:01:00"
+# czas_nagrywania="00:00:15"
 
 # /usr/bin/timeout --preserve-status --kill-after=$kill_after $timeout ffmpeg -hide_banner -i "$SKAD" "$DOKAD"
-ffmpeg -hide_banner -t 24:00:30 -i "$SKAD" "$DOKAD"
+
+ffmpeg -hide_banner -loglevel quiet -t "${czas_nagrywania}" -i "$SKAD" "$DOKAD"
+chown "${wlasciciel_pliku}" "${DOKAD}"
