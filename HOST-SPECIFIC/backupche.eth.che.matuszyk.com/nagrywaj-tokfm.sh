@@ -1,7 +1,8 @@
 #!/bin/bash
 # 2022.01.13 - v. 0.1 - initial release (date unknown)
 
-SKAD="http://gdansk1-1.radio.pionier.net.pl:8000/pl/tuba10-1.mp3"
+# SKAD="http://gdansk1-1.radio.pionier.net.pl:8000/pl/tuba10-1.mp3"
+SKAD="http://poznan5-4.radio.pionier.net.pl:8000/tuba10-1.mp3"
 DOKAD=/worek-samba/nagrania/TokFM-nagrania/tokFM-`date '+%Y.%m.%d__%H%M%S'`.mp3
 
 timeout=24h
