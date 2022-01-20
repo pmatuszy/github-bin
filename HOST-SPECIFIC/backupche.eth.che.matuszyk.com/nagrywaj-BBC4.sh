@@ -22,6 +22,7 @@ czas_nagrywania="24:01:00"
 ffmpeg -hide_banner -loglevel quiet -t "${czas_nagrywania}" -i "$SKAD" "$DOKAD"
 chown "${wlasciciel_pliku}" "${DOKAD}"
 
-if [ ! -z $STY ]; then    # checking if we are running within screen
-  echo koniec wykonywanie $0 | strings | aha | mailx -s "$0 (`/bin/hostname`-`date '+\%Y.\%m.\%d \%H:\%M:\%S'`)" matuszyk@matuszyk.com
-fi
+# if [ ! -z $STY ]; then    # checking if we are running within screen
+
+(echo "koniec wykonywania $0" && ls -lt `dirname "${DOKAD}"`) | strings | aha | mailx -r root@`hostname` -a 'Content-Type: text/html' -s "$0 (`/bin/hostname`-`date '+\%Y.\%m.\%d \%H:\%M:\%S'`)" matuszyk@matuszyk.com
+# fi
