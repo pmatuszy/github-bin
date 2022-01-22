@@ -24,5 +24,5 @@ chown "${wlasciciel_pliku}" "${DOKAD}"
 
 # if [ ! -z $STY ]; then    # checking if we are running within screen
 
-(echo "koniec wykonywania $0" && ls -lt `dirname "${DOKAD}"`) | strings | aha | mailx -r root@`hostname` -a 'Content-Type: text/html' -s "$0 (`/bin/hostname`-`date '+\%Y.\%m.\%d \%H:\%M:\%S'`)" matuszyk@matuszyk.com
+(echo "koniec wykonywania $0" && ls -lr `dirname "${DOKAD}"`) | strings | aha | mailx -r root@`hostname` -a 'Content-Type: text/html' -s "$0 (`/bin/hostname`-`date '+%Y.%m.%d %H:%M:%S'`)" matuszyk@matuszyk.com
 # fi
