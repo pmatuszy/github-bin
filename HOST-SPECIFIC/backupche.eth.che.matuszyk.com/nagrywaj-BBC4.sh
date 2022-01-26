@@ -18,7 +18,6 @@ secs_to_midnight=$((($(date -d "tomorrow 00:00" +%s)-$(date +%s))))
 while (( $secs_to_midnight > 200 )) ; do
   secs_to_midnight=$((($(date -d "tomorrow 00:00" +%s)-$(date +%s))))
   let secs_nagrywania=secs_to_midnight+60
-  echo $secs_to_midnight $secs_nagrywania
   DOKAD="${DOKAD_PREFIX}-`date '+%Y.%m.%d__%H%M%S'`.mp3"
   ffmpeg -hide_banner -loglevel quiet -t "${secs_nagrywania}" -i "$SKAD" "$DOKAD"
   kod_powrotu=$?
