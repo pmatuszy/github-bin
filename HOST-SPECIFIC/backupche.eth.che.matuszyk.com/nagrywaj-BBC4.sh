@@ -1,4 +1,5 @@
 #!/bin/bash
+# 2022.01.26 - v. 0.2 - jak ffmpeg sie skonczy wczesniej to restartujemy nagrywanie do polnocy + 1 minuta
 # 2022.01.13 - v. 0.1 - initial release (date unknown)
 
 # dobre zroda sa tutaj:
@@ -8,21 +9,26 @@
 # SKAD="http://stream.live.vc.bbcmedia.co.uk/bbc_radio_fourfm?s=1642067029&e=1642081429&h=b27ba5e1db5ba2f56beacf6d37b8abea"
 
 SKAD="http://stream.live.vc.bbcmedia.co.uk/bbc_radio_fourfm"
-DOKAD=/worek-samba/nagrania/BBC4/BBC4-`date '+%Y.%m.%d__%H%M%S'`.mp3
+DOKAD_PREFIX="/worek-samba/nagrania/BBC4/BBC4"
 
-timeout=24h
-kill_after=1441m
 wlasciciel_pliku="che:che"
 
-czas_nagrywania="24:01:00"
-# czas_nagrywania="00:00:15"
+secs_to_midnight=$((($(date -d "tomorrow 00:00" +%s)-$(date +%s))))
 
-# /usr/bin/timeout --preserve-status --kill-after=$kill_after $timeout ffmpeg -hide_banner -i "$SKAD" "$DOKAD"
+while (( $secs_to_midnight > 200 )) ; do
+  secs_to_midnight=$((($(date -d "tomorrow 00:00" +%s)-$(date +%s))))
+  let secs_nagrywania=secs_to_midnight+60
+  echo $secs_to_midnight $secs_nagrywania
+  DOKAD="${DOKAD_PREFIX}-`date '+%Y.%m.%d__%H%M%S'`.mp3"
+  ffmpeg -hide_banner -loglevel quiet -t "${secs_nagrywania}" -i "$SKAD" "$DOKAD"
+  kod_powrotu=$?
+  chown "${wlasciciel_pliku}" "${DOKAD}"
+  if (( $kod_powrotu == 0 ));then
+    break
+  fi
+done
 
-ffmpeg -hide_banner -loglevel quiet -t "${czas_nagrywania}" -i "$SKAD" "$DOKAD"
-chown "${wlasciciel_pliku}" "${DOKAD}"
-
-# if [ ! -z $STY ]; then    # checking if we are running within screen
-
-(echo "koniec wykonywania $0" && ls -lr `dirname "${DOKAD}"`) | strings | aha | mailx -r root@`hostname` -a 'Content-Type: text/html' -s "$0 (`/bin/hostname`-`date '+%Y.%m.%d %H:%M:%S'`)" matuszyk@matuszyk.com
-# fi
+if [ ! -z $STY ]; then    # checking if we are running within screen
+  (echo "koniec wykonywania $0" && ls -lr `dirname "${DOKAD}"`) | strings | aha | \
+      mailx -r root@`hostname` -a 'Content-Type: text/html' -s "$0 (`/bin/hostname`-`date '+%Y.%m.%d %H:%M:%S'`)" matuszyk@matuszyk.com
+fi
