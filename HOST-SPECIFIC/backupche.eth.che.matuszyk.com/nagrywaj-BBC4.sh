@@ -1,4 +1,5 @@
 #!/bin/bash
+# 2022.01.30 - v. 0.3 - zmiana sprawdzania czy dzialamy interaktywnie
 # 2022.01.26 - v. 0.2 - jak ffmpeg sie skonczy wczesniej to restartujemy nagrywanie do polnocy + 1 minuta
 # 2022.01.13 - v. 0.1 - initial release (date unknown)
 
@@ -27,7 +28,7 @@ while (( $secs_to_midnight > 200 )) ; do
   fi
 done
 
-if [ ! -z $STY ]; then    # checking if we are running within screen
+if [ -z $PS1 ]; then    # checking if we are running interactively
   (echo "koniec wykonywania $0" && ls -lr `dirname "${DOKAD}"`) | strings | aha | \
       mailx -r root@`hostname` -a 'Content-Type: text/html' -s "$0 (`/bin/hostname`-`date '+%Y.%m.%d %H:%M:%S'`)" matuszyk@matuszyk.com
 fi
