@@ -1,4 +1,5 @@
 #!/bin/bash
+# 2022.02.04 - v. 0.4 - jak ffmpeg skonczy sie przedwczesnie to wprowadzilem opoznienie 60s, by nie podejmowac proby od razu po niepowodzeniu
 # 2022.01.30 - v. 0.3 - zmiana sprawdzania czy dzialamy interaktywnie
 # 2022.01.26 - v. 0.2 - jak ffmpeg sie skonczy wczesniej to restartujemy nagrywanie do polnocy + 1 minuta
 # 2022.01.13 - v. 0.1 - initial release (date unknown)
@@ -21,6 +22,7 @@ while (( $secs_to_midnight > 200 )) ; do
   if (( $kod_powrotu == 0 ));then
     break
   fi
+  sleep 60 # opozniamy bo jak sa problemy z siecia, to by nie startowac od razu z nastepna proba...
 done
 
 if [ -z $PS1 ]; then    # checking if we are running interactively
