@@ -35,7 +35,7 @@ echo -n "$PASSWD" | cryptsetup luksOpen ${nazwa_pliku} encrypted_luks_file_in_ro
 zrob_fsck /dev/mapper/encrypted_luks_file_in_root
 
 echo
-echo '########## /dev/vg_crypto_buffalo2/lv_do_luksa_buffalo2 ==> /mnt/luks-buffalo2"
+echo '########## /dev/vg_crypto_buffalo2/lv_do_luksa_buffalo2 ==> /mnt/luks-buffalo2'
 echo
 echo -n "$PASSWD" | cryptsetup luksOpen /dev/vg_crypto/lv_do_luksa_16tb luks16tb-on-lv -d -
 
