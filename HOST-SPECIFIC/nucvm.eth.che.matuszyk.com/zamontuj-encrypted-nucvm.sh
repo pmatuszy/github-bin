@@ -37,14 +37,14 @@ zrob_fsck /dev/mapper/encrypted_luks_file_in_root
 echo
 echo '########## /dev/vg_crypto_buffalo2/lv_do_luksa_buffalo2 ==> /mnt/luks-buffalo2'
 echo
-echo -n "$PASSWD" | cryptsetup luksOpen /dev/vg_crypto/lv_do_luksa_16tb luks16tb-on-lv -d -
+echo -n "$PASSWD" | cryptsetup luksOpen  /dev/vg_crypto_buffalo2/lv_do_luksa_buffalo2 luks_buffalo2 -d -
 
 zrob_fsck /dev/mapper/luks_buffalo2
 
 echo
 echo '########## /dev/vg-crypto-temp-raidsonic/lv_do_luks_temp-raidsonic  ==> /mnt/luks_temp-raidsonic'
 echo
-echo -n "$PASSWD" | cryptsetup luksOpen /dev/vg_crypto/lv_do_luksa_16tb_another luks16tb-on-lv_another -d -
+echo -n "$PASSWD" | cryptsetup luksOpen /dev/vg-crypto-temp-raidsonic/lv_do_luks_temp-raidsonic luks_temp-raidsonic -d -
 
 zrob_fsck /dev/mapper/luks_temp-raidsonic
 
