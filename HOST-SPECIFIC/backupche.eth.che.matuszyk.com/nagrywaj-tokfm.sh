@@ -1,4 +1,5 @@
 #!/bin/bash
+# 2022.02.09 - v. 0.5 - zmiany w logice wykrywania czasu nagrywania
 # 2022.02.04 - v. 0.4 - jak ffmpeg skonczy sie przedwczesnie to wprowadzilem opoznienie 60s, by nie podejmowac proby od razu po niepowodzeniu
 # 2022.01.30 - v. 0.3 - zmiana sprawdzania czy dzialamy interaktywnie
 # 2022.01.26 - v. 0.2 - jak ffmpeg sie skonczy wczesniej to restartujemy nagrywanie do polnocy + 1 minuta
@@ -15,7 +16,7 @@ czas_startu_skryptu=`date '+%s'`
 secs_to_midnight=$((($(date -d "tomorrow 00:00" +%s)-$czas_startu_skryptu)))
 let max_timestamp_dzialania_skryptu=$((($(date +%s)+$secs_to_midnight+120)))
 
-echo "czas_startu_skryptu        = $czas_startu_skryptu (`date -d @$czas_startu_skryptu`), max_timestamp_dzialania_skryptu = $max_timestamp_dzialania_skryptu (`date -d @$max_timestamp_dzialania_skryptu`), aktualny czas: $(date +%s) (`date`)"
+# echo "czas_startu_skryptu        = $czas_startu_skryptu (`date -d @$czas_startu_skryptu`), max_timestamp_dzialania_skryptu = $max_timestamp_dzialania_skryptu (`date -d @$max_timestamp_dzialania_skryptu`), aktualny czas: $(date +%s) (`date`)"
 
 while (( $(date +%s) - $max_timestamp_dzialania_skryptu <= 0 )) ; do      # spr czy akt sekunda jest mniejsza niz max sekunda, kiedy moze dzialas skrypt
   let secs_nagrywania=secs_to_midnight+60
