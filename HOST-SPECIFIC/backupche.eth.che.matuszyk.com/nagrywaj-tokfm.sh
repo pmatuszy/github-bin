@@ -19,16 +19,16 @@ let max_timestamp_dzialania_skryptu=$((($(date +%s)+$secs_to_midnight+120)))
 # echo "czas_startu_skryptu        = $czas_startu_skryptu (`date -d @$czas_startu_skryptu`), max_timestamp_dzialania_skryptu = $max_timestamp_dzialania_skryptu (`date -d @$max_timestamp_dzialania_skryptu`), aktualny czas: $(date +%s) (`date`)"
 
 while (( $(date +%s) - $max_timestamp_dzialania_skryptu <= 0 )) ; do      # spr czy akt sekunda jest mniejsza niz max sekunda, kiedy moze dzialas skrypt
+  (echo "POCZATEK wykonywania $0" && ls -lr `dirname "${DOKAD}"`) | strings | aha | \
+      mailx -r root@`hostname` -a 'Content-Type: text/html' -s "$0 (`/bin/hostname`-`date '+%Y.%m.%d %H:%M:%S'`)" matuszyk@matuszyk.com
   let secs_nagrywania=secs_to_midnight+60
   DOKAD="${DOKAD_PREFIX}-`date '+%Y.%m.%d__%H%M%S'`.mp3"
   timeout --preserve-status --signal=HUP --kill-after=$((secs_nagrywania+120)) $((secs_nagrywania+60)) ffmpeg -hide_banner -loglevel quiet -t "${secs_nagrywania}" -i "$SKAD" "$DOKAD"
+
   chown "${wlasciciel_pliku}" "${DOKAD}"
   sleep 10 # opozniamy bo jak sa problemy z siecia, to by nie startowac od razu z nastepna proba...
-
   secs_to_midnight=$((($(date -d "tomorrow 00:00" +%s)-$(date +%s))))
-#  echo "czas_startu_skryptu        = $czas_startu_skryptu (`date -d @$czas_startu_skryptu`), max_timestamp_dzialania_skryptu = $max_timestamp_dzialania_skryptu (`date -d @$max_timestamp_dzialania_skryptu`), aktualny czas: $(date +%s) (`date`)"
-#  let a=$(date +%s)-$max_timestamp_dzialania_skryptu
-#  echo $a
+
 done
 
 if [ -z $PS1 ]; then    # checking if we are running interactively
