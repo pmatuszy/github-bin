@@ -1,4 +1,5 @@
 #!/bin/bash
+# 2022.02.27 - v. 0.6 - max czas dzialania to 20s po najblizszej polnocy
 # 2022.02.09 - v. 0.5 - zmiany w logice wykrywania czasu nagrywania
 # 2022.02.04 - v. 0.4 - jak ffmpeg skonczy sie przedwczesnie to wprowadzilem opoznienie 60s, by nie podejmowac proby od razu po niepowodzeniu
 # 2022.01.30 - v. 0.3 - zmiana sprawdzania czy dzialamy interaktywnie
@@ -14,7 +15,7 @@ wlasciciel_pliku="che:che"
 czas_startu_skryptu=`date '+%s'`
 
 secs_to_midnight=$((($(date -d "tomorrow 00:00" +%s)-$czas_startu_skryptu)))
-let max_timestamp_dzialania_skryptu=$((($(date +%s)+$secs_to_midnight+120)))
+let max_timestamp_dzialania_skryptu=$((($(date +%s)+$secs_to_midnight+20)))
 
 # echo "czas_startu_skryptu        = $czas_startu_skryptu (`date -d @$czas_startu_skryptu`), max_timestamp_dzialania_skryptu = $max_timestamp_dzialania_skryptu (`date -d @$max_timestamp_dzialania_skryptu`), aktualny czas: $(date +%s) (`date`)"
 
