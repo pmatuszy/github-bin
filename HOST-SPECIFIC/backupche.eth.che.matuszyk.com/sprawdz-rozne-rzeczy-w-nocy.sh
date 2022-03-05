@@ -1,7 +1,7 @@
 #!/bin/bash
 # 2022.03.05 - v. 0.1 - initial release (date unknown)
 
-odstep_miedzy_wywolaniami=6m
+odstep_miedzy_wywolaniami=4m
 
 for p in /root/bin/deal-of-the-day-digitec.sh \
          /root/bin/deal-of-the-day-galaxus.sh \
