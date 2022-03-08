@@ -7,8 +7,8 @@
 # 2022.01.13 - v. 0.1 - initial release (date unknown)
 
 # SKAD="http://gdansk1-1.radio.pionier.net.pl:8000/pl/tuba10-1.mp3"
-SKAD="http://poznan5-4.radio.pionier.net.pl:8000/tuba10-1.mp3"
-DOKAD_PREFIX="/worek-samba/nagrania/TokFM-nagrania/tokFM"
+export SKAD="http://poznan5-4.radio.pionier.net.pl:8000/tuba10-1.mp3"
+export DOKAD_PREFIX="/worek-samba/nagrania/TokFM-nagrania/tokFM"
 
 wlasciciel_pliku="che:che"
 
