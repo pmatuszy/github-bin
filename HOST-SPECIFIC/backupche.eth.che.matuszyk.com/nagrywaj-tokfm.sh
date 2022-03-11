@@ -1,4 +1,5 @@
 #!/bin/bash
+# 2022.03.11 - v. 0.7 - bug fix DOKAD ==> DOKAD_PREFIX
 # 2022.02.27 - v. 0.6 - max czas dzialania to 20s po najblizszej polnocy
 # 2022.02.09 - v. 0.5 - zmiany w logice wykrywania czasu nagrywania
 # 2022.02.04 - v. 0.4 - jak ffmpeg skonczy sie przedwczesnie to wprowadzilem opoznienie 60s, by nie podejmowac proby od razu po niepowodzeniu
@@ -20,7 +21,7 @@ let max_timestamp_dzialania_skryptu=$((($(date +%s)+$secs_to_midnight+20)))
 # echo "czas_startu_skryptu        = $czas_startu_skryptu (`date -d @$czas_startu_skryptu`), max_timestamp_dzialania_skryptu = $max_timestamp_dzialania_skryptu (`date -d @$max_timestamp_dzialania_skryptu`), aktualny czas: $(date +%s) (`date`)"
 
 while (( $(date +%s) - $max_timestamp_dzialania_skryptu <= 0 )) ; do      # spr czy akt sekunda jest mniejsza niz max sekunda, kiedy moze dzialas skrypt
-  (echo "POCZATEK wykonywania $0" && ls -lr `dirname "${DOKAD}"`) | strings | aha | \
+  (echo "POCZATEK wykonywania $0" && ls -lr `dirname "${DOKAD_PREFIX}"`) | strings | aha | \
       mailx -r root@`hostname` -a 'Content-Type: text/html' -s "$0 (`/bin/hostname`-`date '+%Y.%m.%d %H:%M:%S'`)" matuszyk@matuszyk.com
   let secs_nagrywania=secs_to_midnight+60
   DOKAD="${DOKAD_PREFIX}-`date '+%Y.%m.%d__%H%M%S'`.mp3"
@@ -33,7 +34,7 @@ while (( $(date +%s) - $max_timestamp_dzialania_skryptu <= 0 )) ; do      # spr 
 done
 
 if [ -z $PS1 ]; then    # checking if we are running interactively
-  (echo "koniec wykonywania $0" && ls -lr `dirname "${DOKAD}"`) | strings | aha | \
+  (echo "koniec wykonywania $0" && ls -lr `dirname "${DOKAD_PREFIX}"`) | strings | aha | \
       mailx -r root@`hostname` -a 'Content-Type: text/html' -s "$0 (`/bin/hostname`-`date '+%Y.%m.%d %H:%M:%S'`)" matuszyk@matuszyk.com
 fi
 
