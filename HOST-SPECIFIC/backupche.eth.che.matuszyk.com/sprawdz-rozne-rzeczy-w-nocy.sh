@@ -2,7 +2,7 @@
 # 2022.03.29 - v. 0.2 - zmiana na krotsze nazwy skrypow bo screen sobie z dlugimi nie radzi, skrocony czas miedzy wywolaniami screena z 4m do 10s
 # 2022.03.05 - v. 0.1 - initial release (date unknown)
 
-odstep_miedzy_wywolaniami=5s
+odstep_miedzy_wywolaniami=10s
 
 for p in /root/bin/deal-of-the-day-digitec.sh \
          /root/bin/deal-of-the-day-galaxus.sh \
@@ -15,7 +15,6 @@ for p in /root/bin/deal-of-the-day-digitec.sh \
          /root/bin/spr-nucvm.sh \
          /root/bin/sprawdz-aktualizacje-veracrypt.sh 
   do
-
   /usr/bin/screen -c /dev/null -dmS "$(basename $p)" "$p"
   sleep ${odstep_miedzy_wywolaniami}
 done
