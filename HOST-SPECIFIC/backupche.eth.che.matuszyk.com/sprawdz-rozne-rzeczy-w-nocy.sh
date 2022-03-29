@@ -6,7 +6,7 @@ odstep_miedzy_wywolaniami=10s
 
 for p in /root/bin/deal-of-the-day-digitec.sh \
          /root/bin/deal-of-the-day-galaxus.sh \
-         /root/bin/WD-GOLD-16TB-digitec.sh \
+         /root/bin/spr-WD-GOLD-16TB-digitec.sh \
          /root/bin/spr-gopro4.sh \
          /root/bin/spr-gopro7.sh \
          /root/bin/spr-gopro10.sh \
