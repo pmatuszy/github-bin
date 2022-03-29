@@ -12,8 +12,8 @@ export XDG_RUNTIME_DIR=/run/user/0
 export URL="https://www8.garmin.com/support/download_details.jsp?id=14337"
 temat_maila="(`date '+%Y.%m.%d %H:%M'`) GPSMAP 66 firmware update"
 
-timeout=80
-kill_after=85
+timeout=300
+kill_after=310
 rozmiar_x_ekran=1200
 rozmiar_y_ekran=1100
 rozmiar_x_crop=810

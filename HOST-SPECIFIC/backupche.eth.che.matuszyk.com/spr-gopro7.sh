@@ -12,8 +12,8 @@ export XDG_RUNTIME_DIR=/run/user/0
 export URL="https://gopro.com/en/ch/update/hero7-black"
 temat_maila="(`date '+%Y.%m.%d %H:%M'`) GoPro7 firmware update"
 
-timeout=80
-kill_after=85
+timeout=300
+kill_after=310
 rozmiar_x_ekran=1100
 rozmiar_y_ekran=900
 rozmiar_x_crop=710
@@ -27,8 +27,6 @@ delay_po_wczytaniu_strony=1000 # w ms
 plik_bez_cropa=`TMPDIR=$(pwd) mktemp --dry-run --suffix=-bez-cropa.jpg`
 plik_po_cropie=`mktemp --dry-run --suffix=-po-cropie.jpg`
 zawartosc_maila=`mktemp --dry-run --suffix=.txt`
-
-export DISPLAY=
 
 /usr/bin/timeout --preserve-status --kill-after=$kill_after $timeout chromium --headless --no-sandbox --disable-gpu --ignore-certificate-error --ignore-ssl-errors --hide-scrollbars --window-size="${rozmiar_x_ekran},${rozmiar_y_ekran}" --screenshot="${plik_bez_cropa}" "${URL}" 2>/dev/null
 

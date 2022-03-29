@@ -12,8 +12,8 @@ export XDG_RUNTIME_DIR=/run/user/0
 export URL="https://www.intel.com/content/www/us/en/download/17536/bios-update-wylpt10h.html"
 temat_maila="(`date '+%Y.%m.%d %H:%M'`) nucvm firmware update (D54250WYK)"
 
-timeout=80
-kill_after=85
+timeout=300
+kill_after=310
 rozmiar_x_ekran=900
 rozmiar_y_ekran=800
 rozmiar_x_crop=740
