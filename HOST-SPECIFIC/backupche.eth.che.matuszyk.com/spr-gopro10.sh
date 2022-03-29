@@ -24,6 +24,7 @@ rozmiar_y_crop_offset=180
 max_wait_na_strone=30000       # w ms
 delay_po_wczytaniu_strony=1000 # w ms
 
+cd /tmp
 plik_bez_cropa=`TMPDIR=$(pwd) mktemp --dry-run --suffix=-bez-cropa.jpg`
 plik_po_cropie=`mktemp --dry-run --suffix=-po-cropie.jpg`
 zawartosc_maila=`mktemp --dry-run --suffix=.txt`
