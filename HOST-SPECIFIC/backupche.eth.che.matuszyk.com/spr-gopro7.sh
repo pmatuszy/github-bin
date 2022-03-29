@@ -28,9 +28,9 @@ plik_bez_cropa=`TMPDIR=$(pwd) mktemp --dry-run --suffix=-bez-cropa.jpg`
 plik_po_cropie=`mktemp --dry-run --suffix=-po-cropie.jpg`
 zawartosc_maila=`mktemp --dry-run --suffix=.txt`
 
-/usr/bin/timeout --preserve-status --kill-after=$kill_after $timeout chromium --headless --no-sandbox --disable-gpu --ignore-certificate-error --ignore-ssl-errors --hide-scrollbars --window-size="${rozmiar_x_ekran},${rozmiar_y_ekran}" --screenshot="${plik_bez_cropa}" "${URL}" 2>/dev/null
+/usr/bin/timeout --preserve-status --kill-after=$kill_after $timeout chromium --user-data-dir=/tmp --headless --no-sandbox --disable-gpu --ignore-certificate-error --ignore-ssl-errors --hide-scrollbars --window-size="${rozmiar_x_ekran},${rozmiar_y_ekran}" --screenshot="${plik_bez_cropa}" "${URL}" 2>/dev/null
 
-convert "${plik_bez_cropa}" -crop ${rozmiar_x_crop}x${rozmiar_y_crop}+${rozmiar_x_crop_offset}+${rozmiar_y_crop_offset} "${plik_po_cropie}"
+convert "/tmp/snap.chromium${plik_bez_cropa}" -crop ${rozmiar_x_crop}x${rozmiar_y_crop}+${rozmiar_x_crop_offset}+${rozmiar_y_crop_offset} "${plik_po_cropie}"
 
 echo "${URL}" > "${zawartosc_maila}"
 
