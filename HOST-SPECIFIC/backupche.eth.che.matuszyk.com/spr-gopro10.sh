@@ -1,4 +1,5 @@
 #!/bin/bash
+# 2022.04.13 - v. 0.7 - specyfikacja pelnej sciezki do chromium (wtedy dziala z crontaba)
 # 2022.01.05 - v. 0.6 - zmiana cutycapt na firefoxa bo nie generowala sie strona ladnie
 # 2021.11.04 - v. 0.5 - dodanie *crop_offset i temat_maila
 # 2021.08.06 - v. 0.4 - sending dbus signal message
@@ -29,9 +30,7 @@ plik_bez_cropa=`TMPDIR=$(pwd) mktemp --dry-run --suffix=-bez-cropa.jpg`
 plik_po_cropie=`mktemp --dry-run --suffix=-po-cropie.jpg`
 zawartosc_maila=`mktemp --dry-run --suffix=.txt`
 
-export DISPLAY=:0
-
-/usr/bin/timeout --preserve-status --kill-after=$kill_after $timeout chromium --user-data-dir=/tmp --headless --no-sandbox --disable-gpu --ignore-certificate-error --ignore-ssl-errors --hide-scrollbars --window-size="${rozmiar_x_ekran},${rozmiar_y_ekran}" --screenshot="${plik_bez_cropa}" "${URL}" 2>/dev/null
+/usr/bin/timeout --preserve-status --kill-after=$kill_after $timeout /snap/bin/chromium --user-data-dir=/tmp --headless --no-sandbox --disable-gpu --ignore-certificate-error --ignore-ssl-errors --hide-scrollbars --window-size="${rozmiar_x_ekran},${rozmiar_y_ekran}" --screenshot="${plik_bez_cropa}" "${URL}" 2>/dev/null
 
 convert "/tmp/snap.chromium${plik_bez_cropa}" -crop ${rozmiar_x_crop}x${rozmiar_y_crop}+${rozmiar_x_crop_offset}+${rozmiar_y_crop_offset} "${plik_po_cropie}"
 
