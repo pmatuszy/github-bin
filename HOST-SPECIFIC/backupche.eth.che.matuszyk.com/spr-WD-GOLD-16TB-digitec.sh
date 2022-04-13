@@ -13,12 +13,12 @@ temat_maila="(`date '+%Y.%m.%d %H:%M'`) digitec.ch-Deal of the Day"
 
 timeout=300
 kill_after=310
-rozmiar_x_ekran=900
-rozmiar_y_ekran=900
-rozmiar_x_crop=800
-rozmiar_y_crop=800
-rozmiar_x_crop_offset=3
-rozmiar_y_crop_offset=120
+rozmiar_x_ekran=1150
+rozmiar_y_ekran=800
+rozmiar_x_crop=725
+rozmiar_y_crop=700
+rozmiar_x_crop_offset=300
+rozmiar_y_crop_offset=180
 max_wait_na_strone=30000       # w ms
 delay_po_wczytaniu_strony=1000 # w ms
 
@@ -36,7 +36,7 @@ echo "${URL}" > "${zawartosc_maila}"
 mpack -s "${temat_maila}" -c image/jpeg "${plik_po_cropie}" -d "${zawartosc_maila}" matuszyk@matuszyk.com
 
 # /usr/bin/timeout --preserve-status --kill-after=$kill_after $timeout /opt/signal-cli/bin/signal-cli -u +41763691467 send -m "(`date '+%Y.%m.%d %H:%M'`) digitec.ch-Deal of the Day, ${URL}" -a "${plik_po_cropie}" --note-to-self 2>&1 > /dev/null
-/usr/bin/timeout --preserve-status --kill-after=$kill_after $timeout /usr/bin/dbus-send --session --type=method_call --print-reply --dest="org.asamk.Signal" /org/asamk/Signal org.asamk.Signal.sendMessage string:"[`date '+%Y.%m.%d %H:%M:%S'`] ${URL}" array:string:"${plik_po_cropie}" string:+41763691467
+/usr/bin/timeout --preserve-status --kill-after=$kill_after $timeout /usr/bin/dbus-send --session --type=method_call --print-reply --dest="org.asamk.Signal" /org/asamk/Signal org.asamk.Signal.sendMessage string:"[`date '+%Y.%m.%d %H:%M:%S'`] ${URL}" array:string:"${plik_po_cropie}" string:+41763691467 2>/dev/null >/dev/null
 
 rm "${plik_po_cropie}" "${plik_bez_cropa}"
 

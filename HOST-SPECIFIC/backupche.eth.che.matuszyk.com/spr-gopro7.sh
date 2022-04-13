@@ -40,4 +40,4 @@ mpack -s "${temat_maila}" -c image/jpeg "${plik_po_cropie}" -d "${zawartosc_mail
 # /usr/bin/timeout --preserve-status --kill-after=$kill_after $timeout /opt/signal-cli/bin/signal-cli -u +41763691467 send -m "(`date '+%Y.%m.%d %H:%M'`) digitec.ch-Deal of the Day, ${URL}" -a "${plik_po_cropie}" --note-to-self 2>&1 > /dev/null
 /usr/bin/timeout --preserve-status --kill-after=$kill_after $timeout /usr/bin/dbus-send --session --type=method_call --print-reply --dest="org.asamk.Signal" /org/asamk/Signal org.asamk.Signal.sendMessage string:"[`date '+%Y.%m.%d %H:%M:%S'`] ${URL}" array:string:"${plik_po_cropie}" string:+41763691467
 
-rm "/tmp/snap.chromium${plik_po_cropie}" "${plik_bez_cropa}" "${zawartosc_maila}"
+rm "/tmp/snap.chromium${plik_po_cropie}" "/tmp/snap.chromium${plik_bez_cropa}" "${zawartosc_maila}"
