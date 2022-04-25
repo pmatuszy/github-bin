@@ -13,11 +13,11 @@ temat_maila="(`date '+%Y.%m.%d %H:%M'`) digitec.ch-Deal of the Day"
 
 timeout=300
 kill_after=310
-rozmiar_x_ekran=1150
+rozmiar_x_ekran=950
 rozmiar_y_ekran=800
-rozmiar_x_crop=725
-rozmiar_y_crop=700
-rozmiar_x_crop_offset=300
+rozmiar_x_crop=780
+rozmiar_y_crop=600
+rozmiar_x_crop_offset=0
 rozmiar_y_crop_offset=180
 max_wait_na_strone=30000       # w ms
 delay_po_wczytaniu_strony=1000 # w ms
