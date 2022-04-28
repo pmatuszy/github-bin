@@ -16,12 +16,12 @@ kill_after=310
 
 timeout=300
 kill_after=310
-rozmiar_x_ekran=1250
-rozmiar_y_ekran=800
-rozmiar_x_crop=820
-rozmiar_y_crop=800
-rozmiar_x_crop_offset=320
-rozmiar_y_crop_offset=120
+rozmiar_x_ekran=1150
+rozmiar_y_ekran=600
+rozmiar_x_crop=950
+rozmiar_y_crop=600
+rozmiar_x_crop_offset=300
+rozmiar_y_crop_offset=180
 max_wait_na_strone=30000       # w ms
 delay_po_wczytaniu_strony=1000 # w ms
 
