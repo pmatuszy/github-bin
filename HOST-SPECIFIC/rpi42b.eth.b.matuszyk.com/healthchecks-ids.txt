@@ -1,0 +1,2 @@
+ping	https://healthchecks.matuszyk.com:8000/ping/aac1fa7b-4417-430c-a762-3f3f6d1ecd44
+backup	https://healthchecks.matuszyk.com:8000/ping/c426dc25-75aa-44f5-bf2b-16df970c3a9d
