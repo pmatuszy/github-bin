@@ -1,2 +1,3 @@
-ping	https://healthchecks.matuszyk.com:8000/ping/aac1fa7b-4417-430c-a762-3f3f6d1ecd44
-backup	https://healthchecks.matuszyk.com:8000/ping/c426dc25-75aa-44f5-bf2b-16df970c3a9d
+ping	  https://healthchecks.matuszyk.com:8000/ping/aac1fa7b-4417-430c-a762-3f3f6d1ecd44
+backup	  https://healthchecks.matuszyk.com:8000/ping/c426dc25-75aa-44f5-bf2b-16df970c3a9d
+ssd-trim  https://healthchecks.matuszyk.com:8000/ping/692a48b6-e9f2-4b26-a38d-425f4dbb6971

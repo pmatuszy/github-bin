@@ -33,3 +33,6 @@ function ctrl_c() {
 }
 
 echo
+
+export HEALTHCHECKS_FILE=/root/bin/healthchecks-ids.txt
+
