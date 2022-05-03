@@ -32,7 +32,4 @@ function ctrl_c() {
  exit
 }
 
-echo
-
 export HEALTHCHECKS_FILE=/root/bin/healthchecks-ids.txt
-
