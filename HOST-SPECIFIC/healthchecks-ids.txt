@@ -2,3 +2,4 @@ ping
 backup	  
 ssd-trim.sh  					
 sprawdz-czy-dziala-strona-yt2podcast.com.sh     
+sprawdz-czy-dziala-server-vpn.sh                
