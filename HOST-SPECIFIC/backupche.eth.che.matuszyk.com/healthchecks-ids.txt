@@ -1,3 +1,4 @@
-ping	  https://healthchecks.matuszyk.com:8000/ping/6ec2e65a-f239-4ebd-9cb7-956cc021508f
+ping	  					https://healthchecks.matuszyk.com:8000/ping/6ec2e65a-f239-4ebd-9cb7-956cc021508f
 backup	  
-ssd-trim  https://healthchecks.matuszyk.com:8000/ping/009b42d5-fb52-4f1a-a8dd-78f6e8705c72
+ssd-trim  					https://healthchecks.matuszyk.com:8000/ping/009b42d5-fb52-4f1a-a8dd-78f6e8705c72
+sprawdz-czy-dziala-strona-yt2podcast.com.sh     https://healthchecks.matuszyk.com:8000/ping/9b0282f9-d096-4023-b192-3b07d7d0d30b
