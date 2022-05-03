@@ -13,3 +13,16 @@ if [ `ps -ef|grep vpnserver | awk '{print $8}'|grep -v grep|uniq|wc -l` -eq 0 ];
 else
   /usr/bin/curl -fsS -m 10 --retry 5 --retry-delay 5 -o /dev/null "$HEALTHCHECK_URL" 2>/dev/null
 fi
+
+exit
+#####
+# new crontab entry
+
+*/3 * * * * /root/bin/sprawdz-czy-dziala-server-vpn.sh
+
+# old crontab entry
+# spr. czy dziala vpn
+#5 */6 * * * if [ `ps -ef|grep vpnserver | awk '{print $8}'|grep -v grep|uniq|wc -l` -eq 0 ];then (echo "vpn na `hostname` NIE dziala" | mailx -r root@`hostname` -a 'Content-Type: text/html' -s "(`/bin/hostname`-`date '+\%Y.\%m.\%d \%H:\%M:\%S'`) vpn nie dziala" matuszyk+`/bin/hostname`@matuszyk.com) ; fi
+
+~
+
