@@ -10,9 +10,9 @@ ile_max_by_nie_raportowac=40
 
 /usr/bin/apt-get update 2>&1 >/dev/null
 
-ile_jest_do_upgradeowania=$(/usr/bin/apt list --upgradable 2>/dev/null|wc -l)
+ile_jest_do_upgradeowania=$(/usr/bin/apt list --upgradable 2>/dev/null | grep -v "Listing..." |wc -l)
 
-m=$(echo ile_jest_do_upgradeowania = $ile_jest_do_upgradeowania ; echo ile_max_by_nie_raportowac = $ile_max_by_nie_raportowac ; /usr/bin/apt list --upgradable 2>&1)
+m=$(echo ile_jest_do_upgradeowania = $ile_jest_do_upgradeowania ; echo ile_max_by_nie_raportowac = $ile_max_by_nie_raportowac ; /usr/bin/apt list --upgradable 2>&1|egrep -v "WARNING: apt does not have a stable CLI interface. Use with caution in scripts.|Listing...")
 
 if [ $ile_jest_do_upgradeowania -gt $ile_max_by_nie_raportowac ];then
   /usr/bin/curl -fsS -m 10 --retry 5 --retry-delay 5 --data-raw "$m" -o /dev/null "$HEALTHCHECK_URL"/fail 2>/dev/null
