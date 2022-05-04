@@ -24,4 +24,5 @@ exit
 #####
 # new crontab entry
 
+@reboot ( sleep 60 && /root/bin/sprawdz-ile-apt-list--upgradable.sh ) 2>&1
 2 */6 * * * /root/bin/sprawdz-ile-apt-list--upgradable.sh
