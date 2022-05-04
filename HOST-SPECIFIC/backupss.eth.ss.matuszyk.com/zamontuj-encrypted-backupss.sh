@@ -74,4 +74,4 @@ echo
 echo startuje vpnserver
 
 /encrypted/vpnserver/vpnserver start
-
+/root/bin/sprawdz-czy-dziala-server-vpn.sh
