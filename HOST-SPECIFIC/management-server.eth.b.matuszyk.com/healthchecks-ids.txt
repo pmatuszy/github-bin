@@ -1,0 +1,9 @@
+ping	  					https://healthchecks.matuszyk.com:8000/ping/b724a082-68c7-410c-aa59-16ded0f26cbe
+backup	  
+ssd-trim.sh  					
+sprawdz-czy-dziala-strona-yt2podcast.com.sh     
+sprawdz-czy-dziala-server-vpn.sh                
+sprawdz-ile-apt-list--upgradable.sh		https://healthchecks.matuszyk.com:8000/ping/125b25a3-2e3f-43c4-8bd0-fcd1d152289e
+restic-backup-SS.sh				
+restic-backup-BXL.sh				
+restic-backup-CHE.sh				
