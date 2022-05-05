@@ -2,3 +2,4 @@ ping                                            https://healthchecks.matuszyk.co
 backup
 ssd-trim.sh                                     https://healthchecks.matuszyk.com:8000/ping/6cb77b0e-0006-4ef8-94d9-0ba19dd3e972
 sprawdz-czy-dziala-strona-yt2podcast.com.sh     
+sprawdz-ile-apt-list--upgradable.sh		https://healthchecks.matuszyk.com:8000/ping/24be8f32-7b16-475b-b683-76441119a08b
