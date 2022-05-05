@@ -3,7 +3,7 @@ backup
 ssd-trim.sh  					
 sprawdz-czy-dziala-strona-yt2podcast.com.sh     
 sprawdz-czy-dziala-server-vpn.sh                
-sprawdz-ile-apt-list--upgradable.sh		https://healthchecks.matuszyk.com:8000/ping/17ac17b6-2d2f-49d7-ad75-c3f9f531cd1ahttps://healthchecks.matuszyk.com:8000/ping/17ac17b6-2d2f-49d7-ad75-c3f9f531cd1a
+sprawdz-ile-apt-list--upgradable.sh		https://healthchecks.matuszyk.com:8000/ping/17ac17b6-2d2f-49d7-ad75-c3f9f531cd1a
 restic-backup-SS.sh				
 restic-backup-BXL.sh				
 restic-backup-CHE.sh				
