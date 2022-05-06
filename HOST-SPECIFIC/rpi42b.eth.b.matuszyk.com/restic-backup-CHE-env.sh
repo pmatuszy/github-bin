@@ -3,8 +3,8 @@ export RESTIC_BACKUP_NAME=restic_backup_BXL
 export WHAT_TO_BACKUP_ON_TOP_OF_ROOT=""
 export RESTIC_REPOSITORY=rclone:crypt-sftp-CHE-ext-backup2-restic:/rpi42b.eth.b.matuszyk.com
 export RCLONE_CONFIG=/root/rclone.conf
-MY_EXCLUDES='{/dev,/media,/mnt,/proc,/run,/sys,/tmp,/var/tmp,/veracrypt.vc,/encrypted.luks2,/rclone-jail,$XDG_CACHE_HOME,/root/.cache}'
-RESTIC_BIN=/usr/bin/restic
+export MY_EXCLUDES='{/dev,/media,/mnt,/proc,/run,/sys,/tmp,/var/tmp,/veracrypt.vc,/encrypted.luks2,/rclone-jail,$XDG_CACHE_HOME,/root/.cache}'
+export RESTIC_BIN=/usr/bin/restic
 
 export RCLONE_CHECKERS=2
 export RCLONE_TRANSFERS=2
