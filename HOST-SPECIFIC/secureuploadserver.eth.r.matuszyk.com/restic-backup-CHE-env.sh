@@ -6,9 +6,9 @@ export RESTIC_REPOSITORY=rclone:crypt-sftp-CHE-ext-backup2-restic:/SecureUploadS
 
 export RCLONE_CONFIG=/root/rclone.conf
 
-MY_EXCLUDES='{/dev,/media,/mnt,/proc,/run,/sys,/tmp,/var/tmp,/veracrypt.vc,/encrypted.luks2,/rclone-jail,$XDG_CACHE_HOME,/root/.cache}'
+export MY_EXCLUDES='{/dev,/media,/mnt,/proc,/run,/sys,/tmp,/var/tmp,/veracrypt.vc,/encrypted.luks2,/rclone-jail,$XDG_CACHE_HOME,/root/.cache}'
 
-RESTIC_BIN=/usr/bin/restic
+export RESTIC_BIN=/usr/bin/restic
 
 export RCLONE_CHECKERS=5
 export RCLONE_TRANSFERS=2
