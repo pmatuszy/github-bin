@@ -4,6 +4,6 @@ ssd-trim.sh
 sprawdz-czy-dziala-strona-yt2podcast.com.sh     
 sprawdz-czy-dziala-server-vpn.sh                
 sprawdz-ile-apt-list--upgradable.sh		
-restic-backup-SS.sh				
-restic-backup-BXL.sh				
-restic-backup-CHE.sh				
+restic_backup_SS				
+restic_backup_BXL				
+restic_backup_CHE				

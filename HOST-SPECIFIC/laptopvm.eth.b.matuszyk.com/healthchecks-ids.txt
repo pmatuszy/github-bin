@@ -1,6 +1,4 @@
-ping	  					
+ping	  					https://healthchecks.matuszyk.com:8000/ping/b1923530-668c-4cb9-8e13-ad4478052fc0
 ssd-trim.sh  					
 sprawdz-ile-apt-list--upgradable.sh		https://healthchecks.matuszyk.com:8000/ping/d151ec70-80ed-490b-99c5-aa3606d792d9
-restic-backup-SS.sh				
-restic-backup-BXL.sh				
-restic-backup-CHE.sh				
+restic_backup_SS				
