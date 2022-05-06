@@ -1,5 +1,5 @@
 ping	  					https://healthchecks.matuszyk.com:8000/ping/db59ea5d-8a69-492c-bb7f-8dec097443a1
-backup	  
+restic_backup_CHE				https://healthchecks.matuszyk.com:8000/ping/a62687e4-416d-400a-9f30-6f93dfec2228	  
 ssd-trim.sh  					https://healthchecks.matuszyk.com:8000/ping/2d93f484-08f5-44d1-be1d-7dce5ff73467
 sprawdz-czy-dziala-strona-yt2podcast.com.sh     
 sprawdz-czy-dziala-server-vpn.sh		https://healthchecks.matuszyk.com:8000/ping/4d6433ac-de31-48a8-b04c-526c451bf950
