@@ -84,9 +84,9 @@ if [ ! -d "$XDG_CACHE_HOME" ] ; then
 fi
 
 /usr/bin/curl -fsS -m 10 --retry 5 --retry-delay 5 -o /dev/null "$HEALTHCHECK_URL"/start 2>/dev/null
-echo ; echo "RESTIC_REPOSITORY = $RESTIC_REPOSITORY" ; echo
 
-backup_log=$(eval ${RESTIC_BIN} --cleanup-cache --iexclude=${MY_EXCLUDES} --iexclude-file=${MY_EXCLUDE_FILE} backup / $WHAT_TO_BACKUP_ON_TOP_OF_ROOT )
+backup_log=$( echo ; echo "RESTIC_REPOSITORY = $RESTIC_REPOSITORY" ; echo ;
+    eval ${RESTIC_BIN} --cleanup-cache --iexclude=${MY_EXCLUDES} --iexclude-file=${MY_EXCLUDE_FILE} backup / $WHAT_TO_BACKUP_ON_TOP_OF_ROOT )
 kod_powrotu=$?
 
 m=$( echo ; echo "RESTIC_REPOSITORY = $RESTIC_REPOSITORY" ; echo ; echo "~~~~~~~~~~~~~~~~~~~~~~~~~"
