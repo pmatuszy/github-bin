@@ -1,0 +1,7 @@
+/mnt/luks_temp-raidsonic*/**/*vmdk
+/mnt/luks_temp-raidsonic*/**/*vmram
+/mnt/luks_temp-raidsonic*/**/*vmsn
+/mnt/luks_temp-raidsonic*/**/*vmem
+/mnt/luks_temp-raidsonic*/**/*vmss
+/mnt/luks_temp-raidsonic*/**/*nvram
+/mnt/luks_temp-raidsonic*/**/*iso
