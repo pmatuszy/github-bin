@@ -1,0 +1,2 @@
+export RESTIC_BACKUP_NAME=restic_backup_CHE
+export WHAT_TO_BACKUP_ON_TOP_OF_ROOT=""
