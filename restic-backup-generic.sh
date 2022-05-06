@@ -1,4 +1,5 @@
 #!/bin/bash
+# 2022.05.06 - v. 1.4 - added RUN_BEFORE_BACKUP and RUN_AFTER_BACKUP
 # 2022.05.06 - v. 1.3 - added check if we are run from CRON
 # 2022.05.04 - v. 1.2 - added healthcheck support, remove sensitive data from the script itself
 # 2021.04.16 - v. 1.1 - small change to exit message when XDG_CACHE_HOME is not defined
@@ -11,6 +12,9 @@ set -o nounset
 set -o pipefail
 
 . "${RESTIC_BACKUP_ENV_FILE}"
+
+RUN_BEFORE_BACKUP=''
+RUN_AFTER_BACKUP=''
 
 . /root/bin/_script_header.sh
 
@@ -92,9 +96,13 @@ fi
 
 /usr/bin/curl -fsS -m 10 --retry 5 --retry-delay 5 -o /dev/null "$HEALTHCHECK_URL"/start 2>/dev/null
 
+eval $RUN_BEFORE_BACKUP
+
 backup_log=$( echo ; echo "RESTIC_REPOSITORY = $RESTIC_REPOSITORY" ; echo ;
     eval ${RESTIC_BIN} --cleanup-cache --iexclude=${MY_EXCLUDES} --iexclude-file=${MY_EXCLUDE_FILE} backup / $WHAT_TO_BACKUP_ON_TOP_OF_ROOT )
 kod_powrotu=$?
+
+eval $RUN_AFTER_BACKUP
 
 m=$( echo ; echo "~~~~~~~~~~~~~~~~~~~~~~~~~"
      echo kod powrotu z backupu: $kod_powrotu ; echo "~~~~~~~~~~~~~~~~~~~~~~~~~" ; echo ;
