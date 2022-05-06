@@ -4,7 +4,7 @@ export WHAT_TO_BACKUP_ON_TOP_OF_ROOT=""
 export RESTIC_REPOSITORY=rclone:crypt-sftp-CHE-ext-backup2-restic:/rpi42b.eth.b.matuszyk.com
 export RCLONE_CONFIG=/root/rclone.conf
 export MY_EXCLUDES='{/dev,/media,/mnt,/proc,/run,/sys,/tmp,/var/tmp,/veracrypt.vc,/encrypted.luks2,/rclone-jail,$XDG_CACHE_HOME,/root/.cache}'
-export MY_EXCLUDE_FILE=/root/restic_iexclude_file.txt
+export MY_EXCLUDE_FILE=/root/bin/restic_iexclude_file.txt
 export RESTIC_BIN=/usr/bin/restic
 
 export RCLONE_CHECKERS=2
