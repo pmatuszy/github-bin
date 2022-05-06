@@ -1,3 +1,5 @@
+export RESTIC_BACKUP_NAME=restic_backup_CHE
+
 export RESTIC_REPOSITORY=rclone:crypt-sftp-CHE-ext-backup2-restic:/lublin.eth.b.matuszyk.com
 
 export RCLONE_CONFIG=/root/rclone.conf
