@@ -9,6 +9,8 @@ export XDG_CACHE_HOME="/root/restic-cache-dir"
 
 export MY_EXCLUDES='{/dev,/media,/mnt,/proc,/run,/sys,/tmp,/var/tmp,/veracrypt.vc,/encrypted.luks2,/rclone-jail,$XDG_CACHE_HOME,/root/.cache,/snap}'
 
+export RESTIC_BIN=/usr/bin/restic
+
 export RCLONE_CHECKERS=10
 export RCLONE_TRANSFERS=20
 export RCLONE_BUFFER_SIZE=512M
