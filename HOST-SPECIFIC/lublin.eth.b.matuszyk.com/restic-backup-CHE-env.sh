@@ -2,10 +2,10 @@ export RESTIC_REPOSITORY=rclone:crypt-sftp-CHE-ext-backup2-restic:/lublin.eth.b.
 
 export RCLONE_CONFIG=/root/rclone.conf
 
-MY_EXCLUDES='{/dev,/media,/mnt,/proc,/run,/sys,/tmp,/var/tmp,/veracrypt.vc,/encrypted.luks2,/rclone-jail,$XDG_CACHE_HOME,/root/.cache,/snap/**/*,/podsync-hdd/_montowanie,/podsync-hdd/_Mikey,/podsync-hdd}'
-MY_EXCLUDE_FILE=/root/restic_iexclude_file.txt
+export MY_EXCLUDES='{/dev,/media,/mnt,/proc,/run,/sys,/tmp,/var/tmp,/veracrypt.vc,/encrypted.luks2,/rclone-jail,$XDG_CACHE_HOME,/root/.cache,/snap/**/*,/podsync-hdd/_montowanie,/podsync-hdd/_Mikey,/podsync-hdd}'
+export MY_EXCLUDE_FILE=/root/restic_iexclude_file.txt
 
-RESTIC_BIN=/usr/bin/restic
+export RESTIC_BIN=/usr/bin/restic
 
 export RCLONE_CHECKERS=2
 export RCLONE_TRANSFERS=2
