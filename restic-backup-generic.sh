@@ -18,7 +18,14 @@ if [ -f "$HEALTHCHECKS_FILE" ];then
   HEALTHCHECK_URL=$(cat "$HEALTHCHECKS_FILE" |grep "^${RESTIC_BACKUP_NAME}"|awk '{print $2}')
 fi
 
-REPO_PASS_INFO=/encrypted/root/scripts/repo-pass-info.sh
+if [ -f /encrypted/root/scripts/repo-pass-info.sh ];then
+  REPO_PASS_INFO=/encrypted/root/scripts/repo-pass-info.sh
+fi
+
+if [ -f /root/repo-pass-info.sh ];then
+  REPO_PASS_INFO=/root/repo-pass-info.sh
+fi
+
 if [ -f "$REPO_PASS_INFO" ]; then
   . "$REPO_PASS_INFO"
 else
