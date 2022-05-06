@@ -1,9 +1,6 @@
 ping	  					https://healthchecks.matuszyk.com:8000/ping/54bb4b40-95c6-4cb4-bada-c6f0d596c437
-backup	  
 ssd-trim.sh  					
 sprawdz-czy-dziala-strona-yt2podcast.com.sh     
 sprawdz-czy-dziala-server-vpn.sh                
 sprawdz-ile-apt-list--upgradable.sh		https://healthchecks.matuszyk.com:8000/ping/d43ecd43-acd1-4956-b242-583c39210743
-restic-backup-SS.sh				
-restic-backup-BXL.sh				
-restic-backup-CHE.sh				
+restic_backup_CHE.sh				https://healthchecks.matuszyk.com:8000/ping/609cea59-2d8f-4b03-9896-7a61d1df4c57
