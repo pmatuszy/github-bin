@@ -1,4 +1,4 @@
-export RESTIC_BACKUP_NAME=restic_backup_BXL
+export RESTIC_BACKUP_NAME=restic_backup_CHE
 
 export WHAT_TO_BACKUP_ON_TOP_OF_ROOT=""
 export RESTIC_REPOSITORY=rclone:crypt-sftp-CHE-ext-backup2-restic:/rpi42b.eth.b.matuszyk.com
