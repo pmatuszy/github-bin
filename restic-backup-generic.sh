@@ -89,7 +89,7 @@ echo ; echo "RESTIC_REPOSITORY = $RESTIC_REPOSITORY" ; echo
 backup_log=$(eval ${RESTIC_BIN} --cleanup-cache --iexclude=${MY_EXCLUDES} --iexclude-file=${MY_EXCLUDE_FILE} backup / $WHAT_TO_BACKUP_ON_TOP_OF_ROOT )
 kod_powrotu=$?
 
-m=$( echo "RESTIC_REPOSITORY = $RESTIC_REPOSITORY" ; echo ; echo "~~~~~~~~~~~~~~~~~~~~~~~~~"
+m=$( echo ; echo "RESTIC_REPOSITORY = $RESTIC_REPOSITORY" ; echo ; echo "~~~~~~~~~~~~~~~~~~~~~~~~~"
      echo kod powrotu z backupu: $kod_powrotu ; echo "~~~~~~~~~~~~~~~~~~~~~~~~~" ; echo ;
      ${RESTIC_BIN} --cleanup-cache                          snapshots 2>&1 )
 
