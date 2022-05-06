@@ -13,7 +13,7 @@ if (( $? == 0 )); then
   figlet -w 280 $0
 fi
 
-if [ ! -z $STY ]; then    # checking if we are running within screen
+if [ ! -z ${STY:-} ]; then    # checking if we are running within screen
   # I am setting the screen window title to the script name
   echo -ne "${tcScrTitleStart}${0}${tcScrTitleEnd}"
 fi
