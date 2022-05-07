@@ -2,4 +2,4 @@ ping                                            https://healthchecks.matuszyk.co
 ssd-trim.sh                                     https://healthchecks.matuszyk.com:8000/ping/6cb77b0e-0006-4ef8-94d9-0ba19dd3e972
 sprawdz-ile-apt-list--upgradable.sh		https://healthchecks.matuszyk.com:8000/ping/24be8f32-7b16-475b-b683-76441119a08b
 restic_backup_SS				https://healthchecks.matuszyk.com:8000/ping/af9b42cf-f353-4c6d-b9cd-fd7e9fe9a5f8
-sprawdz-czy-encrypted-jest-zamontowany.sh       
+sprawdz-czy-encrypted-jest-zamontowany.sh       https://healthchecks.matuszyk.com:8000/ping/b2512f59-d0a9-478f-9be2-589902b753c6
