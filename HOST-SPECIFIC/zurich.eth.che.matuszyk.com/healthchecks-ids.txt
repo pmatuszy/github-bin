@@ -5,4 +5,4 @@ sprawdz-czy-dziala-strona-yt2podcast.com.sh
 sprawdz-czy-dziala-server-vpn.sh                https://healthchecks.matuszyk.com:8000/ping/ef0de80f-f6ae-449a-bf03-b3c6ec275093
 sprawdz-ile-apt-list--upgradable.sh		https://healthchecks.matuszyk.com:8000/ping/baf1dd88-f200-4fe2-99e6-a4b8f00d49b6
 sprawdz-czy-dziala-tor-relay.sh			https://healthchecks.matuszyk.com:8000/ping/1d32b995-587f-4737-aae6-e04fb8b32649
-sprawdz-czy-encrypted-jest-zamontowany.sh       
+sprawdz-czy-encrypted-jest-zamontowany.sh       https://healthchecks.matuszyk.com:8000/ping/88d505a5-5621-48bf-a3dd-0dd790aeac2d
