@@ -4,3 +4,4 @@ ssd-trim.sh  					https://healthchecks.matuszyk.com:8000/ping/2d93f484-08f5-44d1
 sprawdz-czy-dziala-strona-yt2podcast.com.sh     
 sprawdz-czy-dziala-server-vpn.sh		https://healthchecks.matuszyk.com:8000/ping/4d6433ac-de31-48a8-b04c-526c451bf950
 sprawdz-ile-apt-list--upgradable.sh		https://healthchecks.matuszyk.com:8000/ping/7fda08a5-c289-4ff4-9b6b-acba32e2bff1
+sprawdz-czy-encrypted-jest-zamontowany.sh	https://healthchecks.matuszyk.com:8000/ping/a492bba1-d6f0-4d11-89b6-e94296096d56

@@ -1,3 +1,4 @@
 ping	  					https://healthchecks.matuszyk.com:8000/ping/ef9c7d21-ae37-4531-be33-d5fe378c55c6
 sprawdz-ile-apt-list--upgradable.sh		https://healthchecks.matuszyk.com:8000/ping/14c33e86-a155-49ef-a2c8-c5f748b45afa
 restic_backup_SS				https://healthchecks.matuszyk.com:8000/ping/cb4ae624-7884-46dd-ac45-783e148048aa
+sprawdz-czy-encrypted-jest-zamontowany.sh       
