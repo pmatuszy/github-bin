@@ -9,7 +9,7 @@ if [ -f "$HEALTHCHECKS_FILE" ];then
 fi
 
 # spr. czy nie ma bledow
-if [ $(/usr/bin/env apcaccess | egrep "STATUS   : ONLINE *"|wc -l) -eq 0 ];then
+if [ $(/usr/bin/env apcaccess | egrep "STATUS   : ONLINE *$"|wc -l) -eq 0 ];then
   m=$( /usr/bin/env apcaccess 2>&1)
   /usr/bin/curl -fsS -m 10 --retry 5 --retry-delay 5 --data-raw "$m" -o /dev/null "$HEALTHCHECK_URL"/fail 2>/dev/null
 else
