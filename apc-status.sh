@@ -21,4 +21,7 @@ fi
 
 exit
 
+
+# wysylanie info o statusie APC ups'a
 0 */1 * * *    sleep $((RANDOM % 60)) && /root/bin/apc-status.sh
+
