@@ -8,3 +8,4 @@ restic_backup_SS
 restic_backup_BXL				
 restic_backup_CHE				
 sprawdz-czy-encrypted-jest-zamontowany.sh	
+apc-status.sh                                   

@@ -5,3 +5,4 @@ sprawdz-czy-dziala-strona-yt2podcast.com.sh     https://healthchecks.matuszyk.co
 sprawdz-ile-apt-list--upgradable.sh		https://healthchecks.matuszyk.com:8000/ping/be5d3d8c-2cfd-4c55-b19a-36252f5e93cf
 restic_backup_BXL				https://healthchecks.matuszyk.com:8000/ping/f2340a02-4a3e-4dd6-bb40-bbbbb80e4610
 sprawdz-czy-encrypted-jest-zamontowany.sh       https://healthchecks.matuszyk.com:8000/ping/2c77d8dc-2486-4160-ba07-88336a271a11
+apc-status.sh					https://healthchecks.matuszyk.com:8000/ping/8d7ce79b-a81d-4963-aa39-19620e8f67b6
