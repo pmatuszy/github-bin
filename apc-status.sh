@@ -2,8 +2,6 @@
 
 # 2022.05.09 - v. 0.1 - initial release
 
-/usr/sbin/apcaccess
-
 . /root/bin/_script_header.sh
 
 if [ -f "$HEALTHCHECKS_FILE" ];then
