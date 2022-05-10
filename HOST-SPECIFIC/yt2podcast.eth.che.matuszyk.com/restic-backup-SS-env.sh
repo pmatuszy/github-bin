@@ -1,14 +1,14 @@
 export RESTIC_BACKUP_NAME=restic_backup_SS
 
-WHAT_TO_BACKUP_ON_TOP_OF_ROOT=""
+export WHAT_TO_BACKUP_ON_TOP_OF_ROOT=""
 
 export RESTIC_REPOSITORY=rclone:crypt-sftp-SS-ext-backupA:/yt2podcast.eth.che.matuszyk.com
 
 export RCLONE_CONFIG=/root/rclone.conf
 
-MY_EXCLUDES='{/dev,/media,/mnt,/proc,/run,/sys,/tmp,/var/tmp,/veracrypt.vc,/encrypted.luks2,/rclone-jail,$XDG_CACHE_HOME,/root/.cache,/podsync-hdd/_montowanie,/podsync-hdd/_Mikey,/podsync-hdd,/snap/**/*}'
+export MY_EXCLUDES='{/dev,/media,/mnt,/proc,/run,/sys,/tmp,/var/tmp,/veracrypt.vc,/encrypted.luks2,/rclone-jail,$XDG_CACHE_HOME,/root/.cache,/podsync-hdd/_montowanie,/podsync-hdd/_Mikey,/podsync-hdd,/snap/**/*}'
 
-RESTIC_BIN=/usr/bin/restic
+export RESTIC_BIN=/usr/bin/restic
 
 export RCLONE_CHECKERS=2
 export RCLONE_TRANSFERS=2
