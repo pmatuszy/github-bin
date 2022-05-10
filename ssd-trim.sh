@@ -17,7 +17,6 @@ if [ -f "$HEALTHCHECKS_FILE" ];then
   /usr/bin/curl -fsS -m 10 --retry 5 --retry-delay 5 --data-raw "$m" -o /dev/null "$HEALTHCHECK_URL" 2>/dev/null
 fi
 
-echo
 . /root/bin/_script_footer.sh
 
 exit
