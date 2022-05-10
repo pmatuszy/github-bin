@@ -7,6 +7,7 @@ export RESTIC_REPOSITORY=rclone:crypt-sftp-SS-ext-backupA:/yt2podcast.eth.che.ma
 export RCLONE_CONFIG=/root/rclone.conf
 
 export MY_EXCLUDES='{/dev,/media,/mnt,/proc,/run,/sys,/tmp,/var/tmp,/veracrypt.vc,/encrypted.luks2,/rclone-jail,$XDG_CACHE_HOME,/root/.cache,/podsync-hdd/_montowanie,/podsync-hdd/_Mikey,/podsync-hdd,/snap/**/*}'
+export MY_EXCLUDE_FILE="/root/bin/restic_iexclude_file.txt"
 
 export RESTIC_BIN=/usr/bin/restic
 
