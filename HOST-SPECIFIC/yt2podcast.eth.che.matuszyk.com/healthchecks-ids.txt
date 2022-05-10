@@ -1,6 +1,6 @@
 ping	  					https://healthchecks.matuszyk.com:8000/ping/2a01f582-c7f5-4014-84e2-3d2101514ad7
-backup	  
 ssd-trim.sh  					https://healthchecks.matuszyk.com:8000/ping/b89f48fb-4ec4-494b-afbc-1047e7ee0abc
 sprawdz-czy-dziala-strona-yt2podcast.com.sh     https://healthchecks.matuszyk.com:8000/ping/2248307a-5b7a-46fb-99e4-64a8a74f9376
 sprawdz-ile-apt-list--upgradable.sh		https://healthchecks.matuszyk.com:8000/ping/7c1ee501-db1a-42a8-90bc-4ff4a5e3c4e7
 sprawdz-czy-encrypted-jest-zamontowany.sh       https://healthchecks.matuszyk.com:8000/ping/15f4f191-0aad-44d2-903c-edb8ce171f76
+restic_backup_SS				https://healthchecks.matuszyk.com:8000/ping/f20187e9-79e0-49ed-bea6-ce8306df9520
