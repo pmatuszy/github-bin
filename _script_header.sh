@@ -1,9 +1,14 @@
+#!/bin/bash
+# 2022.05.11 - v. 0.4 - set set -o options
 # 2021.07.05 - v. 0.3 - added figlet displaying the current script name
 # 2020.09.15 - v. 0.2 - initial release
 # 2020.09.15 - v. 0.1 - initial release
 
-# if we are run non-interactively - do not set the terminal title
+# exit when your script tries to use undeclared variables
+set -o nounset
+set -o pipefail
 
+# if we are run non-interactively - do not set the terminal title
 export tcScrTitleStart="\ek"
 export tcScrTitleEnd="\e\134"
 
