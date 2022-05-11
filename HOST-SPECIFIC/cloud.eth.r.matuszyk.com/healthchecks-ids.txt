@@ -5,3 +5,4 @@ sprawdz-czy-dziala-server-vpn.sh
 sprawdz-ile-apt-list--upgradable.sh		https://healthchecks.matuszyk.com:8000/ping/17ac17b6-2d2f-49d7-ad75-c3f9f531cd1a
 restic_backup_CHE.sh				https://healthchecks.matuszyk.com:8000/ping/778e1518-dd24-4ea2-b69a-9b6c16cd2d11
 sprawdz-czy-encrypted-jest-zamontowany.sh       
+update-restic.sh                                

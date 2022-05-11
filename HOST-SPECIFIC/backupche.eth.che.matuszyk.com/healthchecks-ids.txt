@@ -7,3 +7,4 @@ restic_backup_BXL				https://healthchecks.matuszyk.com:8000/ping/f2340a02-4a3e-4
 sprawdz-czy-encrypted-jest-zamontowany.sh       https://healthchecks.matuszyk.com:8000/ping/2c77d8dc-2486-4160-ba07-88336a271a11
 apc-status.sh					https://healthchecks.matuszyk.com:8000/ping/8d7ce79b-a81d-4963-aa39-19620e8f67b6
 nagrywaj-BBC4.sh				https://healthchecks.matuszyk.com:8000/ping/224be066-473d-4fa2-8bb6-c60f5a281d2d
+update-restic.sh                                

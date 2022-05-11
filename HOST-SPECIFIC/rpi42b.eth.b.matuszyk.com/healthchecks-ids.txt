@@ -3,3 +3,4 @@ ssd-trim.sh  					https://healthchecks.matuszyk.com:8000/ping/692a48b6-e9f2-4b26
 sprawdz-ile-apt-list--upgradable.sh		https://healthchecks.matuszyk.com:8000/ping/4f7292a1-a7c2-4289-9ac7-a1832bf26bbf
 restic_backup_CHE				https://healthchecks.matuszyk.com:8000/ping/c426dc25-75aa-44f5-bf2b-16df970c3a9d
 sprawdz-czy-encrypted-jest-zamontowany.sh       https://healthchecks.matuszyk.com:8000/ping/6e22dcf6-01fa-46c0-8742-654f5a4c9465
+update-restic.sh                                
