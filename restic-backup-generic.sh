@@ -48,8 +48,8 @@ CRON=$(pstree -s $$ | grep -q cron && echo true || echo false)
 
 if $CRON ; then
   mail_subject=" ( `/bin/hostname`  - `date '+%Y.%m.%d %H:%M:%S'`) $(basename $0)"
-  mail_adressee=matuszyk+`/bin/hostname`@matuszyk.com
-  exec 2>&1 > >( strings | aha | /usr/bin/mailx -r root@`hostname` -a 'Content-Type: text/html' -s "$mail_subject" "$mail_adressee")
+  # mail_adressee=matuszyk+`/bin/hostname`@matuszyk.com
+  # exec 2>&1 > >( strings | aha | /usr/bin/mailx -r root@`hostname` -a 'Content-Type: text/html' -s "$mail_subject" "$mail_adressee")
 fi
 
 if [ ! -f "$RESTIC_BIN" ]; then
