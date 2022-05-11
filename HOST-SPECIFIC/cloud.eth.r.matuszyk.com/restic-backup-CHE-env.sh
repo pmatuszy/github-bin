@@ -9,7 +9,7 @@ export RCLONE_CONFIG=/root/rclone.conf
 
 MY_EXCLUDES='{/dev,/media,/mnt,/proc,/run,/sys,/tmp,/var/tmp,/veracrypt.vc,/encrypted.luks2,/rclone-jail,$XDG_CACHE_HOME,/root/.cache}'
 
-RESTIC_BIN=/usr/bin/restic
+export RESTIC_BIN=$(type -fP restic)
 
 export RCLONE_CHECKERS=4
 export RCLONE_TRANSFERS=2

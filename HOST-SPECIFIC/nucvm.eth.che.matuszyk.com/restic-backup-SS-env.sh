@@ -3,12 +3,11 @@ export WHAT_TO_BACKUP_ON_TOP_OF_ROOT=""
 export MY_EXCLUDE_FILE="/root/bin/restic_iexclude_file.txt"
 
 export RESTIC_REPOSITORY=rclone:crypt-sftp-SS-ext-backupA:/nucvm
-
 export RCLONE_CONFIG=/root/rclone.conf
 
-MY_EXCLUDES='{/dev,/media,/mnt,/proc,/run,/sys,/tmp,/var/tmp,/veracrypt.vc,/encrypted.luks2,/rclone-jail,$XDG_CACHE_HOME,/root/.cache,/podsync-hdd/_montowanie,/podsync-hdd/_Mikey,/podsync-hdd,/snap/**/*,/mnt/luks-buffalo2,/mnt/luks_temp-raidsonic,/encrypted/vmware-in-encrypted,/swapfile}'
+export MY_EXCLUDES='{/dev,/media,/mnt,/proc,/run,/sys,/tmp,/var/tmp,/veracrypt.vc,/encrypted.luks2,/rclone-jail,$XDG_CACHE_HOME,/root/.cache,/podsync-hdd/_montowanie,/podsync-hdd/_Mikey,/podsync-hdd,/snap/**/*,/mnt/luks-buffalo2,/mnt/luks_temp-raidsonic,/encrypted/vmware-in-encrypted,/swapfile}'
 
-export RESTIC_BIN=/usr/bin/restic
+export RESTIC_BIN=$(type -fP restic)
 
 export RCLONE_CHECKERS=4
 export RCLONE_TRANSFERS=2

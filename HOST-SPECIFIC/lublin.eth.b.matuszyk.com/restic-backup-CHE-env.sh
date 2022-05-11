@@ -1,14 +1,13 @@
 export RESTIC_BACKUP_NAME=restic_backup_CHE
 
 export RESTIC_REPOSITORY=rclone:crypt-sftp-CHE-ext-backup2-restic:/lublin.eth.b.matuszyk.com
-
 export RCLONE_CONFIG=/root/rclone.conf
 
 export MY_EXCLUDES='{/dev,/media,/mnt,/proc,/run,/sys,/tmp,/var/tmp,/veracrypt.vc,/encrypted.luks2,/rclone-jail,$XDG_CACHE_HOME,/root/.cache,/snap/**/*,/podsync-hdd/_montowanie,/podsync-hdd/_Mikey,/podsync-hdd}'
 export MY_EXCLUDE_FILE=/root/restic_iexclude_file.txt
 export WHAT_TO_BACKUP_ON_TOP_OF_ROOT=""
 
-export RESTIC_BIN=/usr/bin/restic
+export RESTIC_BIN=$(type -fP restic)
 
 export RCLONE_CHECKERS=2
 export RCLONE_TRANSFERS=2
