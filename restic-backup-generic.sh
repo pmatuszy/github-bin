@@ -1,4 +1,5 @@
 #!/bin/bash
+# 2022.05.12 - v. 1.5 - commented out echos for sending emails (they are no longer needed)
 # 2022.05.06 - v. 1.4 - added RUN_BEFORE_BACKUP and RUN_AFTER_BACKUP
 # 2022.05.06 - v. 1.3 - added check if we are run from CRON
 # 2022.05.04 - v. 1.2 - added healthcheck support, remove sensitive data from the script itself
@@ -109,9 +110,9 @@ m=$( echo ; echo "~~~~~~~~~~~~~~~~~~~~~~~~~"
      ${RESTIC_BIN} --cleanup-cache                          snapshots 2>&1 )
 
 # by output poszedl mailem...
-echo "$backup_log"
-echo "###########################################################"
-echo "$m"
+# echo "$backup_log"
+# echo "###########################################################"
+# echo "$m"
 
 if (( $kod_powrotu != 0 )); then
   /usr/bin/curl -fsS -m 10 --retry 5 --retry-delay 5 --data-raw "$backup_log $m" -o /dev/null "$HEALTHCHECK_URL"/fail 2>/dev/null
