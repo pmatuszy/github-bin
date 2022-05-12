@@ -1,5 +1,6 @@
 #!/bin/bash
 # 2022.05.12 - v. 1.5 - commented out echos for sending emails (they are no longer needed)
+#                       added stderr redirection to stdout in restic invocation
 # 2022.05.06 - v. 1.4 - added RUN_BEFORE_BACKUP and RUN_AFTER_BACKUP
 # 2022.05.06 - v. 1.3 - added check if we are run from CRON
 # 2022.05.04 - v. 1.2 - added healthcheck support, remove sensitive data from the script itself
@@ -100,7 +101,7 @@ fi
 eval $RUN_BEFORE_BACKUP
 
 backup_log=$( echo ; echo "RESTIC_REPOSITORY = $RESTIC_REPOSITORY" ; echo ;
-    eval ${RESTIC_BIN} --cleanup-cache --iexclude=${MY_EXCLUDES} --iexclude-file=${MY_EXCLUDE_FILE} backup / $WHAT_TO_BACKUP_ON_TOP_OF_ROOT )
+              eval ${RESTIC_BIN} --cleanup-cache --iexclude=${MY_EXCLUDES} --iexclude-file=${MY_EXCLUDE_FILE} backup / $WHAT_TO_BACKUP_ON_TOP_OF_ROOT 2>&1 )
 kod_powrotu=$?
 
 eval $RUN_AFTER_BACKUP
