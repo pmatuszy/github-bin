@@ -22,15 +22,23 @@ if pgrep -f "${RCLONE_BIN}" > /dev/null ; then
 fi
 
 wersja_przed=$(echo " " ; echo " " ; echo "wersja przed: " ; "${RCLONE_BIN}" version 2>&1; echo " " )
+wersja_przed_short=$(echo " " ; echo " " ; echo "wersja: " ; "${RCLONE_BIN}" version|head -n 1 2>&1; echo " " )
 m=$( echo " "; "${RCLONE_BIN}" selfupdate 2>&1; exit $?)
 kod_powrotu=$?
-wersja_po=$(echo " " ; echo "wersja po: "; "${RCLONE_BIN}" version 2>&1; echo " " ; echo " ")
+
+wiadomosc=""
+if [ $(echo "$m" |grep "NOTICE: rclone is up to date" | wc -l) -eq 1 ];then
+  wiadomosc=$(echo "$m" |grep "NOTICE: rclone is up to date" ; "${RCLONE_BIN}" version|head -n 1)
+else
+  wersja_po=$(echo " " ; echo "wersja po: "; "${RCLONE_BIN}" version 2>&1; echo " " ; echo " ")
+  wiadomosc="$m $wersja_przed $wersja_po"
+fi
 
 if [ $kod_powrotu -ne 0 ]; then
-  /usr/bin/curl -fsS -m 10 --retry 5 --retry-delay 5 --data-raw "$m $wersja_przed $wersja_po" -o /dev/null "$HEALTHCHECK_URL"/fail 2>/dev/null
+  /usr/bin/curl -fsS -m 10 --retry 5 --retry-delay 5 --data-raw "$wiadomosc" -o /dev/null "$HEALTHCHECK_URL"/fail 2>/dev/null
   exit $kod_powrotu # cos poszlo nie tak
 else
-  /usr/bin/curl -fsS -m 10 --retry 5 --retry-delay 5 --data-raw "$m $wersja_przed $wersja_po" -o /dev/null "$HEALTHCHECK_URL" 2>/dev/null
+  /usr/bin/curl -fsS -m 10 --retry 5 --retry-delay 5 --data-raw "$wiadomosc" -o /dev/null "$HEALTHCHECK_URL" 2>/dev/null
 fi
 
 . /root/bin/_script_footer.sh

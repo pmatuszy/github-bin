@@ -27,11 +27,19 @@ m=$( echo " "; "${RESTIC_BIN}" self-update 2>&1 ; exit $?)
 kod_powrotu=$?
 wersja_po=$(echo " " ; echo "wersja po: "; "${RESTIC_BIN}" version 2>&1; echo " " ; echo " ")
 
+wiadomosc=""
+if [ $(echo "$m" |grep "restic is up to date" | wc -l) -eq 1 ];then
+  wiadomosc=$(echo "$m" |grep "restic is up to date" ; "${RESTIC_BIN}" version|head -n 1)
+else
+  wersja_po=$(echo " " ; echo "wersja po: "; "${RESTIC_BIN}" version 2>&1; echo " " ; echo " ")
+  wiadomosc="$m $wersja_przed $wersja_po"
+fi
+
 if [ $kod_powrotu -ne 0 ]; then
-  /usr/bin/curl -fsS -m 10 --retry 5 --retry-delay 5 --data-raw "$m $wersja_przed $wersja_po" -o /dev/null "$HEALTHCHECK_URL"/fail 2>/dev/null
+  /usr/bin/curl -fsS -m 10 --retry 5 --retry-delay 5 --data-raw "$wiadomosc" -o /dev/null "$HEALTHCHECK_URL"/fail 2>/dev/null
   exit $kod_powrotu # cos poszlo nie tak
 else
-  /usr/bin/curl -fsS -m 10 --retry 5 --retry-delay 5 --data-raw "$m $wersja_przed $wersja_po" -o /dev/null "$HEALTHCHECK_URL" 2>/dev/null
+  /usr/bin/curl -fsS -m 10 --retry 5 --retry-delay 5 --data-raw "$wiadomosc" -o /dev/null "$HEALTHCHECK_URL" 2>/dev/null
 fi
 
 . /root/bin/_script_footer.sh
