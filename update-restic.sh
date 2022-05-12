@@ -22,10 +22,10 @@ if pgrep -f "${RESTIC_BIN}" > /dev/null ; then
   exit 1
 fi
 
-wersja_przed=$(echo " " ; echo " " ; echo "wersja przed: " ; ${RESTIC_BIN} version ; echo " ")
-m=$( echo " "; "${RESTIC_BIN}" self-update ; exit $?)
+wersja_przed=$(echo " " ; echo " " ; echo "wersja przed: " ; ${RESTIC_BIN} version 2>&1; echo " ")
+m=$( echo " "; "${RESTIC_BIN}" self-update 2>&1 ; exit $?)
 kod_powrotu=$?
-wersja_po=$(echo " " ; echo "wersja po: "; "${RESTIC_BIN}" version ; echo " " ; echo " ")
+wersja_po=$(echo " " ; echo "wersja po: "; "${RESTIC_BIN}" version 2>&1; echo " " ; echo " ")
 
 if [ $kod_powrotu -ne 0 ]; then
   /usr/bin/curl -fsS -m 10 --retry 5 --retry-delay 5 --data-raw "$m $wersja_przed $wersja_po" -o /dev/null "$HEALTHCHECK_URL"/fail 2>/dev/null

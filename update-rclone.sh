@@ -21,10 +21,10 @@ if pgrep -f "${RCLONE_BIN}" > /dev/null ; then
   exit 1
 fi
 
-wersja_przed=$(echo " " ; echo " " ; echo "wersja przed: " ; "${RCLONE_BIN}" version ; echo " ")
-m=$( echo " "; "${RCLONE_BIN}" selfupdate ; exit $?)
+wersja_przed=$(echo " " ; echo " " ; echo "wersja przed: " ; "${RCLONE_BIN}" version 2>&1; echo " " )
+m=$( echo " "; "${RCLONE_BIN}" selfupdate 2>&1; exit $?)
 kod_powrotu=$?
-wersja_po=$(echo " " ; echo "wersja po: "; "${RCLONE_BIN}" version ; echo " " ; echo " ")
+wersja_po=$(echo " " ; echo "wersja po: "; "${RCLONE_BIN}" version 2>&1; echo " " ; echo " ")
 
 if [ $kod_powrotu -ne 0 ]; then
   /usr/bin/curl -fsS -m 10 --retry 5 --retry-delay 5 --data-raw "$m $wersja_przed $wersja_po" -o /dev/null "$HEALTHCHECK_URL"/fail 2>/dev/null
