@@ -1,4 +1,4 @@
-ping	  					https://healthchecks.matuszyk.com:8000/ping/5411bcb0-36f1-469e-befd-88e773d7d62f
+healthchecks-ping.sh				https://healthchecks.matuszyk.com:8000/ping/5411bcb0-36f1-469e-befd-88e773d7d62f
 ssd-trim.sh  					https://healthchecks.matuszyk.com:8000/ping/6cb77b0e-0006-4ef8-94d9-0ba19dd3e972
 sprawdz-czy-dziala-strona-yt2podcast.com.sh     https://healthchecks.matuszyk.com:8000/ping/ef3198df-6dda-4f0b-8375-16c837bb8ede
 sprawdz-ile-apt-list--upgradable.sh		https://healthchecks.matuszyk.com:8000/ping/0cf2fd7d-755d-44bd-9dcf-31d6b9c10eb4

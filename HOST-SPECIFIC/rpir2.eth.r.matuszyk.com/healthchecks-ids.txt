@@ -1,4 +1,4 @@
-ping	  					https://healthchecks.matuszyk.com:8000/ping/0b6ea5e7-1b98-403c-bc5f-5cb38939ba39
+healthchecks-ping.sh				https://healthchecks.matuszyk.com:8000/ping/0b6ea5e7-1b98-403c-bc5f-5cb38939ba39
 backup	  					https://healthchecks.matuszyk.com:8000/ping/a9f91f36-bda7-4e69-9fd5-d3ad1e3278ca
 ssd-trim.sh  					https://healthchecks.matuszyk.com:8000/ping/fbae2ffa-4096-44c9-a9a7-42b74aa05dda
 sprawdz-ile-apt-list--upgradable.sh		https://healthchecks.matuszyk.com:8000/ping/0bb22066-6290-4f4c-af25-e7a9d740cc99

@@ -1,8 +1,4 @@
-ping	  					https://healthchecks.matuszyk.com:8000/ping/9aead858-1b8f-4946-af0c-0816a4e35dcb
-ssd-trim.sh  					
-sprawdz-czy-dziala-strona-yt2podcast.com.sh     
-sprawdz-czy-dziala-server-vpn.sh                
+healthchecks-ping.sh				https://healthchecks.matuszyk.com:8000/ping/9aead858-1b8f-4946-af0c-0816a4e35dcb
 sprawdz-ile-apt-list--upgradable.sh		https://healthchecks.matuszyk.com:8000/ping/09e10794-dbad-4669-a9dc-4b9dc6182d5a
 restic_backup_CHE				https://healthchecks.matuszyk.com:8000/ping/d4c99e25-6224-42e9-9799-951b74205f8d
-sprawdz-czy-encrypted-jest-zamontowany.sh       
 update-restic.sh                                
