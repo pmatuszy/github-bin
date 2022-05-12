@@ -7,3 +7,4 @@ sprawdz-czy-encrypted-jest-zamontowany.sh       https://healthchecks.matuszyk.co
 apc-status.sh					https://healthchecks.matuszyk.com:8000/ping/8d7ce79b-a81d-4963-aa39-19620e8f67b6
 nagrywaj-BBC4.sh				https://healthchecks.matuszyk.com:8000/ping/224be066-473d-4fa2-8bb6-c60f5a281d2d
 update-restic.sh                                https://healthchecks.matuszyk.com:8000/ping/168ab20b-2858-41a6-b029-7f956e6953b5
+update-rclone.sh                                https://healthchecks.matuszyk.com:8000/ping/eb9cb95c-4623-4c79-ba37-6f60997ac2a8

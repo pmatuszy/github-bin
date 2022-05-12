@@ -4,3 +4,4 @@ sprawdz-ile-apt-list--upgradable.sh		https://healthchecks.matuszyk.com:8000/ping
 restic_backup_CHE				https://healthchecks.matuszyk.com:8000/ping/ef7608cc-e8cb-4825-bf2f-7f11f495f7a7
 sprawdz-czy-encrypted-jest-zamontowany.sh       https://healthchecks.matuszyk.com:8000/ping/5a674842-c373-47c5-b115-f44999e3add6
 update-restic.sh                                https://healthchecks.matuszyk.com:8000/ping/2900caa4-8ec1-4c97-a7a3-c2e3a426f069
+update-rclone.sh                                https://healthchecks.matuszyk.com:8000/ping/72fc215e-0918-4537-85dc-c0efa13d9f14

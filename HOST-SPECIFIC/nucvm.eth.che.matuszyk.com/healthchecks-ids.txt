@@ -5,3 +5,4 @@ restic_backup_SS				https://healthchecks.matuszyk.com:8000/ping/af9b42cf-f353-4c
 sprawdz-czy-encrypted-jest-zamontowany.sh       https://healthchecks.matuszyk.com:8000/ping/b2512f59-d0a9-478f-9be2-589902b753c6
 apc-status.sh					https://healthchecks.matuszyk.com:8000/ping/b45f124c-bf36-45ad-8ff7-8408c089ed7a
 update-restic.sh                                https://healthchecks.matuszyk.com:8000/ping/0f514cc4-a7b1-434d-971a-20b56a14f3d1
+update-rclone.sh                                https://healthchecks.matuszyk.com:8000/ping/a506ee4d-b27e-47b0-b52d-368b9c810cc9
