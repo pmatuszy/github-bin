@@ -21,8 +21,8 @@ if pgrep -f "${RCLONE_BIN}" > /dev/null ; then
   exit 1
 fi
 
-wersja_przed=$(echo " " ; echo " " ; echo "wersja przed: " ; ${RCLONE_BIN} version ; echo " ")
-m=$( echo " "; ${RCLONE_BIN}" selfupdate ; exit $?)
+wersja_przed=$(echo " " ; echo " " ; echo "wersja przed: " ; "${RCLONE_BIN}" version ; echo " ")
+m=$( echo " "; "${RCLONE_BIN}" selfupdate ; exit $?)
 kod_powrotu=$?
 wersja_po=$(echo " " ; echo "wersja po: "; "${RCLONE_BIN}" version ; echo " " ; echo " ")
 
