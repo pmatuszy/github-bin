@@ -33,7 +33,7 @@ while (( $(date +%s) - $max_timestamp_dzialania_skryptu <= 0 )) ; do      # spr 
 
 done
 
-if [ -z $PS1 ]; then    # checking if we are running interactively
+if [ -z ${STY:-} ]; then    # checking if we are running interactively
   (echo "koniec wykonywania $0" && ls -lr `dirname "${DOKAD_PREFIX}"`) | strings | aha | \
       mailx -r root@`hostname` -a 'Content-Type: text/html' -s "$0 (`/bin/hostname`-`date '+%Y.%m.%d %H:%M:%S'`)" matuszyk@matuszyk.com
 fi

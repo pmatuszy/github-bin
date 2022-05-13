@@ -42,7 +42,7 @@ while (( $secs_to_midnight > 200 )) ; do
   sleep 60 # opozniamy bo jak sa problemy z siecia, to by nie startowac od razu z nastepna proba...
 done
 
-if [ -z $PS1 ]; then    # checking if we are running interactively
+if [ -z ${STY:-} ]; then    # checking if we are running interactively
 #  (echo "koniec wykonywania $0" && ls -lr `dirname "${DOKAD}"`) | strings | aha | \
 #      mailx -r root@`hostname` -a 'Content-Type: text/html' -s "$0 (`/bin/hostname`-`date '+%Y.%m.%d %H:%M:%S'`)" matuszyk@matuszyk.com
    log=$(echo;echo;echo "koniec wykonywania $0" && ls -lr `dirname "${DOKAD}"`;echo;echo)
