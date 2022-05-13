@@ -100,7 +100,7 @@ fi
 
 eval $RUN_BEFORE_BACKUP
 
-backup_log=$( echo ; echo "RESTIC_REPOSITORY = $RESTIC_REPOSITORY" ; echo ;
+backup_log=$( echo ; echo "RESTIC_REPOSITORY = $RESTIC_REPOSITORY" ; echo ; date '+%Y.%m.%d %H:%M' ; echo ;
               eval ${RESTIC_BIN} --cleanup-cache --iexclude=${MY_EXCLUDES} --iexclude-file=${MY_EXCLUDE_FILE} backup / $WHAT_TO_BACKUP_ON_TOP_OF_ROOT 2>&1 )
 kod_powrotu=$?
 
