@@ -11,3 +11,4 @@ sprawdz-czy-encrypted-jest-zamontowany.sh
 apc-status.sh                                   
 update-restic.sh			        
 update-rclone.sh			        
+healthchecks-smartd.sh
