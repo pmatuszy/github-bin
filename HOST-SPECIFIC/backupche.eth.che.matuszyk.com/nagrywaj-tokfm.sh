@@ -1,4 +1,5 @@
 #!/bin/bash
+# 2022.05.16 - v. 0.6 - chown redirection to dev null
 # 2022.03.11 - v. 0.7 - bug fix DOKAD ==> DOKAD_PREFIX
 # 2022.02.27 - v. 0.6 - max czas dzialania to 20s po najblizszej polnocy
 # 2022.02.09 - v. 0.5 - zmiany w logice wykrywania czasu nagrywania
@@ -27,7 +28,7 @@ while (( $(date +%s) - $max_timestamp_dzialania_skryptu <= 0 )) ; do      # spr 
   DOKAD="${DOKAD_PREFIX}-`date '+%Y.%m.%d__%H%M%S'`.mp3"
   timeout --preserve-status --signal=HUP --kill-after=$((secs_nagrywania+120)) $((secs_nagrywania+60)) ffmpeg -hide_banner -loglevel quiet -t "${secs_nagrywania}" -i "$SKAD" "$DOKAD"
 
-  chown "${wlasciciel_pliku}" "${DOKAD}"
+  chown "${wlasciciel_pliku}" "${DOKAD}" 2>/dev/null
   sleep 10 # opozniamy bo jak sa problemy z siecia, to by nie startowac od razu z nastepna proba...
   secs_to_midnight=$((($(date -d "tomorrow 00:00" +%s)-$(date +%s))))
 
