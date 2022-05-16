@@ -1,4 +1,5 @@
 #!/bin/bash
+# 2022.05.16 - v. 0.5 - small bug fix with STY unbound variable
 # 2022.05.11 - v. 0.4 - set set -o options
 # 2021.07.05 - v. 0.3 - added figlet displaying the current script name
 # 2020.09.15 - v. 0.2 - initial release
@@ -30,7 +31,7 @@ function ctrl_c() {
  echo
  echo "** Trapped CTRL-C - cleaning up...."
  echo
- if [ ! -zwhy $STY ]; then    # checking if we are running within screen
+ if [ ! -zwhy ${STY:-} ]; then    # checking if we are running within screen
     # I am setting the screen window title to the script name
     echo -ne "${tcScrTitleStart}${0}${tcScrTitleEnd}"
  fi
