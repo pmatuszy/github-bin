@@ -45,7 +45,6 @@ if [ -z ${STY:-} ]; then    # checking if we are running interactively
 #  (echo "koniec wykonywania $0" && ls -lr `dirname "${DOKAD}"`) | strings | aha | \
 #      mailx -r root@`hostname` -a 'Content-Type: text/html' -s "$0 (`/bin/hostname`-`date '+%Y.%m.%d %H:%M:%S'`)" matuszyk@matuszyk.com
    log=$(echo;echo;echo "koniec wykonywania $0" && ls -lr `dirname "${DOKAD}"`;echo;echo)
-    /usr/bin/curl -fsS -m 10 --retry 5 --retry-delay 5 --data-raw "$log $m" -o /dev/null "$HEALTHCHECK_URL"
+   /usr/bin/curl -fsS -m 10 --retry 5 --retry-delay 5 --data-raw "$log $m" -o /dev/null "$HEALTHCHECK_URL"
 fi
 . /root/bin/_script_footer.sh
-
