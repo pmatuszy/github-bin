@@ -84,7 +84,7 @@ if [ ! -d "$XDG_CACHE_HOME" ] ; then
    exit 4
 fi
 
-if pgrep -f "${RESTIC_BIN}" > /dev/null ; then
+if pgrep -x "${RESTIC_BIN}" > /dev/null ; then
   m=$(
     echo '#####################################################'
     echo '#####################################################'
