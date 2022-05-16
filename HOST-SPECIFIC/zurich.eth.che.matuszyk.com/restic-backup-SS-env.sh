@@ -1,5 +1,5 @@
 export RESTIC_BACKUP_NAME=restic_backup_SS
-export WHAT_TO_BACKUP_ON_TOP_OF_ROOT=""
+export WHAT_TO_BACKUP_ON_TOP_OF_ROOT="/opt/minecraft"
 export MY_EXCLUDE_FILE="/root/bin/restic_iexclude_file.txt"
 
 export RESTIC_REPOSITORY=rclone:crypt-sftp-SS-ext-backupA:/zurich.eth.che.matuszyk.com
@@ -20,3 +20,6 @@ export RCLONE_STATS=1s
 
 # export RCLONE_BWLIMIT=30M
 export RCLONE_BWLIMIT='Mon-01:00,5M Mon-07:00,3M Tue-01:00,5M Tue-07:00,3M Wed-01:00,5M Wed-07:00,3M Thu-01:00,5M Thu-07:00,3M Fri-01:00,5M Fri-07:00,3M Sat-01:00,5M Sat-07:00,3M Sun-01:00,5M Sun-08:00,3M'
+
+RUN_BEFORE_BACKUP="su - minecraft -c '/opt/minecraft/server/stop.sh'"
+RUN_AFTER_BACKUP="su - minecraft -c '/opt/minecraft/server/start.sh'"
