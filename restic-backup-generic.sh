@@ -90,6 +90,7 @@ if pgrep -f "${RESTIC_BIN}" > /dev/null ; then
     echo '#####################################################'
     echo
     echo "${RESTIC_BIN} dziala, wiec nie startuje nowej instancji a po prostu koncze dzialanie skryptu"
+    echo ; ps -ef|grep "${RESTIC_BIN}" ; echo
     echo
     echo '#####################################################'
     echo '#####################################################' )
