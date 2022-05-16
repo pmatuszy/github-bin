@@ -1,0 +1,3 @@
+/worek/bitcoin/.bitcoin/blocks/**/*
+/worek/bitcoin/.bitcoin/chainstate/**/*
+/worek/litecoincash/litecoincash-data/**/*
