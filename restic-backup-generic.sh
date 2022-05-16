@@ -1,4 +1,5 @@
 #!/bin/bash
+# 2022.05.16 - v. 1.7 - changed pgrep -f to pgrep -x
 # 2022.05.16 - v. 1.6 - a lot of changes in functionality and integration with healthchecks
 # 2022.05.12 - v. 1.5 - commented out echos for sending emails (they are no longer needed)
 #                       added stderr redirection to stdout in restic invocation
