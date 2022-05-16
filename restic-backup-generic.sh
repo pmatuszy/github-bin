@@ -1,4 +1,5 @@
 #!/bin/bash
+# 2022.05.16 - v. 1.6 - a lot of changes in functionality and integration with healthchecks
 # 2022.05.12 - v. 1.5 - commented out echos for sending emails (they are no longer needed)
 #                       added stderr redirection to stdout in restic invocation
 # 2022.05.06 - v. 1.4 - added RUN_BEFORE_BACKUP and RUN_AFTER_BACKUP
@@ -8,10 +9,6 @@
 # 2021.04.14 - v. 1.0 - added checks for RESTIC_BIN and XDG_CACHE_HOME, overhauld of the script
 # 2021.04.11 - v. 0.2 - added /bin/bash as the first line of the script
 # 2021.04.10 - v. 0.1 - initial release
-
-# exit when your script tries to use undeclared variables
-set -o nounset
-set -o pipefail
 
 . "${RESTIC_BACKUP_ENV_FILE}"
 
@@ -35,13 +32,15 @@ fi
 if [ -f "$REPO_PASS_INFO" ]; then
   . "$REPO_PASS_INFO"
 else
-  echo '#####################################################'
-  echo '#####################################################'
-  echo
-  echo "${REPO_PASS_INFO} nie moze byc znaleziony. Wychodze"
-  echo
-  echo '#####################################################'
-  echo '#####################################################'
+  m=$(
+    echo '#####################################################'
+    echo '#####################################################'
+    echo
+    echo "${REPO_PASS_INFO} nie moze byc znaleziony. Wychodze"
+    echo
+    echo '#####################################################'
+    echo '#####################################################' )
+  /usr/bin/curl -fsS -m 10 --retry 5 --retry-delay 5 --data-raw "$m" -o /dev/null "$HEALTHCHECK_URL"/fail 2>/dev/null
   exit 4
 fi
 
@@ -54,14 +53,18 @@ if $CRON ; then
   # exec 2>&1 > >( strings | aha | /usr/bin/mailx -r root@`hostname` -a 'Content-Type: text/html' -s "$mail_subject" "$mail_adressee")
 fi
 
+export RESTIC_BIN=$(type -fP restic)
+
 if [ ! -f "$RESTIC_BIN" ]; then
-  echo '#####################################################'
-  echo '#####################################################'
-  echo
-  echo "restic binary defined as ${RESTIC_BIN} nie moze byc znaleziony. Wychodze"
-  echo
-  echo '#####################################################'
-  echo '#####################################################'
+  m=$(
+    echo '#####################################################'
+    echo '#####################################################'
+    echo
+    echo "restic binary defined as ${RESTIC_BIN} nie moze byc znaleziony. Wychodze"
+    echo
+    echo '#####################################################'
+    echo '#####################################################' )
+  /usr/bin/curl -fsS -m 10 --retry 5 --retry-delay 5 --data-raw "$m" -o /dev/null "$HEALTHCHECK_URL"/fail 2>/dev/null
   exit 2
 fi
 
@@ -74,26 +77,32 @@ if [ -d "/encrypted/root/restic-cache-dir" ]; then
 fi
 
 if [ ! -d "$XDG_CACHE_HOME" ] ; then
+   m=$(
    echo "XDG_CACHE_HOME ($XDG_CACHE_HOME)  nie istnieje"
-   echo "WYCHODZE ..."
+   echo "WYCHODZE ..." )
+   /usr/bin/curl -fsS -m 10 --retry 5 --retry-delay 5 --data-raw "$m" -o /dev/null "$HEALTHCHECK_URL"/fail 2>/dev/null
    exit 4
 fi
 
 if pgrep -f "${RESTIC_BIN}" > /dev/null ; then
-  echo '#####################################################'
-  echo '#####################################################'
-  echo
-  echo "${RESTIC_BIN} dziala, wiec nie startuje nowej instancji a po prostu koncze dzialanie skryptu"
-  echo
-  echo '#####################################################'
-  echo '#####################################################'
+  m=$(
+    echo '#####################################################'
+    echo '#####################################################'
+    echo
+    echo "${RESTIC_BIN} dziala, wiec nie startuje nowej instancji a po prostu koncze dzialanie skryptu"
+    echo
+    echo '#####################################################'
+    echo '#####################################################' )
+  /usr/bin/curl -fsS -m 10 --retry 5 --retry-delay 5 --data-raw "$m" -o /dev/null "$HEALTHCHECK_URL"/fail 2>/dev/null
   exit 2
 fi
 
 if [ ! -d "$XDG_CACHE_HOME" ] ; then
-   echo "$XDG_CACHE_HOME nie istnieje"
-   echo "WYCHODZE ..."
-   exit 1
+  m=$(
+    echo "$XDG_CACHE_HOME nie istnieje"
+    echo "WYCHODZE ..." )
+  /usr/bin/curl -fsS -m 10 --retry 5 --retry-delay 5 --data-raw "$m" -o /dev/null "$HEALTHCHECK_URL"/fail 2>/dev/null
+  exit 1
 fi
 
 /usr/bin/curl -fsS -m 10 --retry 5 --retry-delay 5 -o /dev/null "$HEALTHCHECK_URL"/start 2>/dev/null
