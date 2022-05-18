@@ -1,3 +1,7 @@
+#!/bin/bash
+
+# 2022.05.18 - v. 0.8 - added set -o options at the beginning
+# 2021.04.08 - v. 0.8 - now calling git-pull.sh instead of duplicating its functionality here
 # 2021.04.08 - v. 0.8 - now calling git-pull.sh instead of duplicating its functionality here
 # 2021.02.18 - v. 0.7 - added exit code check after git push
 # 2021.02.07 - v. 0.6 - git add --all * .[a-zA-Z]* , git remote set-url origin git+ssh: to not have
@@ -8,6 +12,10 @@
 # 2020.11.27 - v. 0.3 - changed rm to remove files from the directory not the whole directory
 # 2020.11.26 - v. 0.2 - added second section with 'git pull'
 # 2020.10.20 - v. 0.1 - initial release
+
+# exit when your script tries to use undeclared variables
+set -o nounset
+set -o pipefail
 
 github_project_name=`pwd`
 github_project_name=`basename $github_project_name`
