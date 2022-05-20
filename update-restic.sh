@@ -1,4 +1,5 @@
 #!/bin/bash
+# 2022.05.20 - v. 0.3 - dodalem wypisywanie aktualnej daty
 # 2022.05.12 - v. 0.2 - small bux fix (use RESTIC_BIN intsead of /usr/bin/restic)
 # 2022.05.11 - v. 0.1 - initial release (date unknown)
 
@@ -23,7 +24,7 @@ if pgrep -f "${RESTIC_BIN}" > /dev/null ; then
 fi
 
 wersja_przed=$(echo " " ; echo " " ; echo "wersja przed: " ; ${RESTIC_BIN} version 2>&1; echo " ")
-m=$( echo " "; "${RESTIC_BIN}" self-update 2>&1 ; exit $?)
+m=$( echo " "; echo "aktualna data: `date '+%Y.%m.%d %H:%M'`" ; echo ; "${RESTIC_BIN}" self-update 2>&1 ; exit $?)
 kod_powrotu=$?
 wersja_po=$(echo " " ; echo "wersja po: "; "${RESTIC_BIN}" version 2>&1; echo " " ; echo " ")
 

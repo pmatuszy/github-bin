@@ -1,4 +1,5 @@
 #!/bin/bash
+# 2022.05.20 - v. 0.2 - dodalem wypisywanie aktualnej daty
 # 2022.05.11 - v. 0.1 - initial release (date unknown)
 
 . /root/bin/_script_header.sh
@@ -29,7 +30,7 @@ export RCLONE_BIN=$(type -fP rclone)
 
 wersja_przed=$(echo " " ; echo " " ; echo "wersja przed: " ; "${RCLONE_BIN}" version 2>&1; echo " " )
 wersja_przed_short=$(echo " " ; echo " " ; echo "wersja: " ; "${RCLONE_BIN}" version|head -n 1 2>&1; echo " " )
-m=$( echo " "; "${RCLONE_BIN}" selfupdate 2>&1; exit $?)
+m=$( echo " "; echo "aktualna data: `date '+%Y.%m.%d %H:%M'`" ; echo ; "${RCLONE_BIN}" selfupdate 2>&1; exit $?)
 kod_powrotu=$?
 
 wiadomosc=""
