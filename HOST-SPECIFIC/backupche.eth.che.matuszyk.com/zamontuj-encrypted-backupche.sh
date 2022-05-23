@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2022.05.23 - v. 0.6 - dodane wywolanie healthchecka na koncu
 # 2021.09.19 - v. 0.5 - zmiana w fsck, dodana funkcja zrob_fsck
 # 2021.08.29 - v. 0.4 - exportfs po zamontowaniu obu duzych volumentow, dodano montowanie dla minidlna i restart tego serwisu
 # 2021.04.09 - v. 0.3 - bug fix: nie montowane byly backup2 i replication2 w jailu...
@@ -98,3 +99,4 @@ echo rescan minidlna
 sudo -u minidlna /usr/sbin/minidlnad -r
 sleep 2 
 
+/root/bin/sprawdz-czy-encrypted-jest-zamontowany.sh
