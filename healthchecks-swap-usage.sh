@@ -31,7 +31,7 @@ m=$( echo " "; echo "aktualna data: `date '+%Y.%m.%d %H:%M'`" ; echo ;
 
        exit 1
      else
-       echo "MAX_DOPUSZCZALNA_ZAJETOSC_SWAP = MAX_DOPUSZCZALNA_ZAJETOSC_SWAP wiec nie trzeba nic robic ..."
+       echo "MAX_DOPUSZCZALNA_ZAJETOSC_SWAP ($MAX_DOPUSZCZALNA_ZAJETOSC_SWAP) > ile_zajetego_SWAP ($ile_zajetego_SWAP) wiec nie trzeba nic robic ..."
        printf "ile_wolnego_RAM    = %5d [MiB]\n" $ile_wolnego_RAM
        printf "ile_zajetego_SWAP  = %5d [MiB]\n" $ile_zajetego_SWAP
        printf "czy_jest_wolny_ram = %5d [MiB]\n" $czy_jest_wolny_ram
