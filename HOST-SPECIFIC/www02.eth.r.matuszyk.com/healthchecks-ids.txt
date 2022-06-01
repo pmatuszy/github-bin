@@ -3,4 +3,4 @@ sprawdz-ile-apt-list--upgradable.sh		https://healthchecks.matuszyk.com:8000/ping
 restic_backup_CHE				https://healthchecks.matuszyk.com:8000/ping/d4c99e25-6224-42e9-9799-951b74205f8d
 update-restic.sh                                https://healthchecks.matuszyk.com:8000/ping/9f354923-a556-4c83-a336-547bdcb28f16
 update-rclone.sh                                https://healthchecks.matuszyk.com:8000/ping/57a81c8e-5656-43fb-8913-6d57b3b4f3ad
-healthchecks-swap-usage.sh                            
+healthchecks-swap-usage.sh                      https://healthchecks.matuszyk.com:8000/ping/199cefe1-678e-413d-8bc1-b42001ef2697
