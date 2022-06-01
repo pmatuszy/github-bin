@@ -8,13 +8,15 @@ if [ -f "$HEALTHCHECKS_FILE" ];then
 fi
 
 export MAX_DOPUSZCZALNA_ZAJETOSC_SWAP=100     # w MB
+export MIN_RAM_FREE=100     # w MB
 
 m=$( echo " "; echo "aktualna data: `date '+%Y.%m.%d %H:%M'`" ; echo ; 
      ile_wolnego_RAM=$(free -m|grep '^Mem:'|awk '{print $7}');
      ile_zajetego_SWAP=$(free -m|grep '^Swap:'|awk '{print $3}');
      let czy_jest_wolny_ram=$ile_wolnego_RAM-$ile_zajetego_SWAP;
-     if (( $czy_jest_wolny_ram > 2000 && $ile_zajetego_SWAP > ${MAX_DOPUSZCZALNA_ZAJETOSC_SWAP} ));then
-       echo "wymuszam zmniejszenie zajetosci SWAPa bo MAX_DOPUSZCZALNA_ZAJETOSC_SWAP ($MAX_DOPUSZCZALNA_ZAJETOSC_SWAP) < ile_zajetego_SWAP ($ile_zajetego_SWAP)"
+     if (( $czy_jest_wolny_ram >= $MIN_RAM_FREE && $ile_zajetego_SWAP > ${MAX_DOPUSZCZALNA_ZAJETOSC_SWAP} ));then
+       echo "wymuszam zmniejszenie zajetosci SWAPa,"
+       echo "bo MAX_DOPUSZCZALNA_ZAJETOSC_SWAP ($MAX_DOPUSZCZALNA_ZAJETOSC_SWAP) < ile_zajetego_SWAP ($ile_zajetego_SWAP)"
        echo "~~~~~~~~ PRZED ~~~~~~~~"
        printf "ile_wolnego_RAM    = %5d [MiB]\n" $ile_wolnego_RAM
        printf "ile_zajetego_SWAP  = %5d [MiB]\n" $ile_zajetego_SWAP
