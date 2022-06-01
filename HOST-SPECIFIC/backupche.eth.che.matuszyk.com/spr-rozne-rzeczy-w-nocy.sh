@@ -13,6 +13,8 @@ for p in /root/bin/spr-deal-of-the-day-digitec.sh \
          /root/bin/spr-GPSMAP-66.sh \
          /root/bin/spr-nuci7.sh \
          /root/bin/spr-nucvm.sh \
+         /root/bin/spr-fenix.sh \
+         /root/bin/spr-fenix-inny.sh \
          /root/bin/spr-veracrypt.sh 
   do
   /usr/bin/screen -c /dev/null -dmS "$(basename $p)" "$p"
