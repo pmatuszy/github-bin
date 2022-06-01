@@ -17,6 +17,7 @@ m=$( echo " "; echo "aktualna data: `date '+%Y.%m.%d %H:%M'`" ; echo ;
      if (( $czy_jest_wolny_ram >= $MIN_RAM_FREE && $ile_zajetego_SWAP > ${MAX_DOPUSZCZALNA_ZAJETOSC_SWAP} ));then
        echo "wymuszam zmniejszenie zajetosci SWAPa,"
        echo "bo MAX_DOPUSZCZALNA_ZAJETOSC_SWAP ($MAX_DOPUSZCZALNA_ZAJETOSC_SWAP) < ile_zajetego_SWAP ($ile_zajetego_SWAP)"
+       echo "RAM tez jest wolny ile_wolnego_RAM ($ile_wolnego_RAM) > MIN_RAM_FREE ($MIN_RAM_FREE)"
        echo "~~~~~~~~ PRZED ~~~~~~~~"
        printf "ile_wolnego_RAM    = %5d [MiB]\n" $ile_wolnego_RAM
        printf "ile_zajetego_SWAP  = %5d [MiB]\n" $ile_zajetego_SWAP
