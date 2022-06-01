@@ -54,4 +54,6 @@ exit
 ######
 template crontab entry:
 
+@reboot ( sleep 15 && /root/bin/healthchecks-swap-usage.sh) 2>&1
+
 1 */12 * * *  sleep $((RANDOM \% 60)) && /root/bin/healthchecks-swap-usage.sh
