@@ -23,6 +23,10 @@ m=$( echo " "; echo "aktualna data: `date '+%Y.%m.%d %H:%M'`" ; echo ;
 
        swapoff -a ; sleep 2; swapon -a 
 
+       ile_wolnego_RAM=$(free -m|grep '^Mem:'|awk '{print $7}');
+       ile_zajetego_SWAP=$(free -m|grep '^Swap:'|awk '{print $3}');
+       let czy_jest_wolny_ram=$ile_wolnego_RAM-$ile_zajetego_SWAP;
+
        echo "~~~~~~~~ PO    ~~~~~~~~"
        printf "ile_wolnego_RAM    = %5d [MiB]\n" $ile_wolnego_RAM
        printf "ile_zajetego_SWAP  = %5d [MiB]\n" $ile_zajetego_SWAP
