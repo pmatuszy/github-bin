@@ -9,3 +9,4 @@ apc-status.sh					https://healthchecks.matuszyk.com:8000/ping/51ba6382-8185-4168
 update-restic.sh                                https://healthchecks.matuszyk.com:8000/ping/de89894d-efcc-4aa5-adb6-b38639e0ba42
 update-rclone.sh                                https://healthchecks.matuszyk.com:8000/ping/cd77c370-c27e-477d-95b4-31b13cc258be
 healthchecks-swap-usage.sh                      https://healthchecks.matuszyk.com:8000/ping/836e76df-d37f-4783-a9f1-eaf271c7d3b4
+healthchecks-smartd.sh				https://healthchecks.matuszyk.com:8000/ping/ab62163c-c980-4cad-acb8-8dff3975ca62
