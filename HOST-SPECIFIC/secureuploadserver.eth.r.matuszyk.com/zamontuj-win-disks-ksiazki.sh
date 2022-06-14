@@ -4,18 +4,13 @@
 
 . /root/bin/_script_header.sh
 
-loc_dir_name="/mnt/rsync-master-archiwum"
-rem_dir_name="//lublin.eth.b.matuszyk.com/buffalo1/_z_servera/O/archiwum"
-
-set +x 
+loc_dir_name="/mnt/rsync-master-ksiazki"
+rem_dir_name="//laptopvm.eth.b.matuszyk.com/ksiazki"
 
 echo 
+echo "skad  : $rem_dir_name"
+echo "dokad : $loc_dir_name"
 echo 
-echo  server 
-echo 
-echo 
-
-#set -x
 
 read -p "Wpisz haslo: " -s PASSWD
 
@@ -23,7 +18,5 @@ umount "${loc_dir_name}" 2>/dev/null  # just in case sa zamontowane, by nie dost
 
 mount.cifs -o user=p,password=$PASSWD "${rem_dir_name}" "${loc_dir_name}" 
 df -hP "${loc_dir_name}"
-
-# set +x
 
 . /root/bin/_script_footer.sh
