@@ -1,4 +1,5 @@
 #!/bin/bash
+# 2022.06.15 - v. 0.3 - zmiana limitu MAX_DOPUSZCZALNA_ZAJETOSC_SWAP 400 ==> 600
 # 2022.06.06 - v. 0.2 - zmiana limitu MAX_DOPUSZCZALNA_ZAJETOSC_SWAP 100 ==> 400
 # 2022.06.01 - v. 0.1 - initial release
 
@@ -8,7 +9,7 @@ if [ -f "$HEALTHCHECKS_FILE" ];then
   HEALTHCHECK_URL=$(cat "$HEALTHCHECKS_FILE" |grep "^`basename $0`"|awk '{print $2}')
 fi
 
-export MAX_DOPUSZCZALNA_ZAJETOSC_SWAP=400     # w MB
+export MAX_DOPUSZCZALNA_ZAJETOSC_SWAP=600     # w MB
 export MIN_RAM_FREE=100     # w MB
 
 m=$( echo " "; echo "aktualna data: `date '+%Y.%m.%d %H:%M'`" ; echo ; 
