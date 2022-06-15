@@ -8,3 +8,5 @@ rclone-sync-archiwum-crypt-sftp-CHE.sh		https://healthchecks.matuszyk.com:8000/p
 rclone-sync-archiwum-crypt-sftp-BXL.sh		https://healthchecks.matuszyk.com:8000/ping/945e58f7-96ff-47d8-84f2-20c68e58506b
 rclone-sync-ksiazki-SS.sh			https://healthchecks.matuszyk.com:8000/ping/1b9b4ab8-3d4b-4ba5-93eb-576cf1d5ec64
 rclone-sync-ksiazki-CHE.sh			https://healthchecks.matuszyk.com:8000/ping/c991fc0e-8193-46dd-836f-1539f3fc0c71
+rclone-sync-DivX-CHE.sh				https://healthchecks.matuszyk.com:8000/ping/e719dd09-1a09-4f1f-afd0-396591b4b92c
+rclone-sync-DivX-SS.sh				https://healthchecks.matuszyk.com:8000/ping/1b139088-6700-4c6b-990d-6781ce7883ed
