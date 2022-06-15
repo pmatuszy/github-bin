@@ -1,4 +1,5 @@
 #!/bin/bash
+# 2022.06.15 - v. 0.3 - dodanie czekania jesli apt-get update jest wykonywany w tym samym czasie przez inny proces
 # 2022.05.05 - v. 0.2 - dodany uptime i hostname
 # 2022.05.03 - v. 0.1 - initial release (date unknown)
 
@@ -7,9 +8,22 @@ if [ -f "$HEALTHCHECKS_FILE" ];then
   HEALTHCHECK_URL=$(cat "$HEALTHCHECKS_FILE" |grep "^`basename $0`"|awk '{print $2}')
 fi
 
-ile_max_by_nie_raportowac=40
+ile_max_by_nie_raportowac=45
 
-/usr/bin/apt-get update 2>&1 >/dev/null
+/usr/bin/apt-get update &>/dev/null      # &> filename redirects STDOUT and STDERR to filename
+kod_powrotu=$?
+if [ $kod_powrotu -ne 0 ]; then
+  sleep 100
+fi
+
+# let's give it another chance
+/usr/bin/apt-get update &>/dev/null      # &> filename redirects STDOUT and STDERR to filename
+kod_powrotu=$?
+if [ $kod_powrotu -ne 0 ]; then
+   m="apt update jest uruchomione na innym terminalu i nie moge dostac locka wiec wychodze"
+  /usr/bin/curl -fsS -m 10 --retry 5 --retry-delay 5 --data-raw "${m}" -o /dev/null "$HEALTHCHECK_URL"/fail 2>/dev/null
+  exit 2
+fi
 
 ile_jest_do_upgradeowania=$(/usr/bin/apt list --upgradable 2>/dev/null | grep -v "Listing..." |wc -l)
 
