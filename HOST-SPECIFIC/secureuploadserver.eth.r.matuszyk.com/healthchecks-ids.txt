@@ -10,3 +10,4 @@ rclone-sync-ksiazki-SS.sh			https://healthchecks.matuszyk.com:8000/ping/1b9b4ab8
 rclone-sync-ksiazki-CHE.sh			https://healthchecks.matuszyk.com:8000/ping/c991fc0e-8193-46dd-836f-1539f3fc0c71
 rclone-sync-DivX-CHE.sh				https://healthchecks.matuszyk.com:8000/ping/e719dd09-1a09-4f1f-afd0-396591b4b92c
 rclone-sync-DivX-SS.sh				https://healthchecks.matuszyk.com:8000/ping/1b139088-6700-4c6b-990d-6781ce7883ed
+rclone-sync-DVDs-SS.sh				https://healthchecks.matuszyk.com:8000/ping/7c74cc6a-3834-4ca2-92d1-2a181b65eab9
