@@ -13,8 +13,8 @@
 
 . "${RESTIC_BACKUP_ENV_FILE}"
 
-RUN_BEFORE_BACKUP=''
-RUN_AFTER_BACKUP=''
+export RUN_BEFORE_BACKUP="${RUN_BEFORE_BACKUP:-}"
+export RUN_AFTER_BACKUP="${RUN_AFTER_BACKUP:-}"
 
 . /root/bin/_script_header.sh
 
@@ -109,27 +109,22 @@ fi
 
 /usr/bin/curl -fsS -m 10 --retry 5 --retry-delay 5 -o /dev/null "$HEALTHCHECK_URL"/start 2>/dev/null
 
-eval $RUN_BEFORE_BACKUP
+export run_before_backup_log=$( eval $RUN_BEFORE_BACKUP 2>&1 ) 
 
 backup_log=$( echo ; echo "RESTIC_REPOSITORY = $RESTIC_REPOSITORY" ; echo ; date '+%Y.%m.%d %H:%M' ; echo ;
-              eval ${RESTIC_BIN} --cleanup-cache --iexclude=${MY_EXCLUDES} --iexclude-file=${MY_EXCLUDE_FILE} backup / $WHAT_TO_BACKUP_ON_TOP_OF_ROOT 2>&1 )
+              eval ${RESTIC_BIN} --cleanup-cache --iexclude=${MY_EXCLUDES} --iexclude-file=${MY_EXCLUDE_FILE} backup / $WHAT_TO_BACKUP_ON_TOP_OF_ROOT 2>&1 ; exit $? )
 kod_powrotu=$?
 
-eval $RUN_AFTER_BACKUP
+export run_after_backup_log=$( eval $RUN_AFTER_BACKUP 2>&1 )
 
 m=$( echo ; echo "~~~~~~~~~~~~~~~~~~~~~~~~~"
      echo kod powrotu z backupu: $kod_powrotu ; echo "~~~~~~~~~~~~~~~~~~~~~~~~~" ; echo ;
      ${RESTIC_BIN} --cleanup-cache                          snapshots 2>&1 )
 
-# by output poszedl mailem...
-# echo "$backup_log"
-# echo "###########################################################"
-# echo "$m"
-
 if (( $kod_powrotu != 0 )); then
-  /usr/bin/curl -fsS -m 10 --retry 5 --retry-delay 5 --data-raw "$backup_log $m" -o /dev/null "$HEALTHCHECK_URL"/fail 2>/dev/null
+  /usr/bin/curl -fsS -m 10 --retry 5 --retry-delay 5 --data-raw "$run_before_backup_log $backup_log $m $run_after_backup_log" -o /dev/null "$HEALTHCHECK_URL"/fail 2>/dev/null
 else
-  /usr/bin/curl -fsS -m 10 --retry 5 --retry-delay 5 --data-raw "$backup_log $m" -o /dev/null "$HEALTHCHECK_URL" 2>/dev/null
+  /usr/bin/curl -fsS -m 10 --retry 5 --retry-delay 5 --data-raw "$run_before_backup_log $backup_log $m $run_after_backup_log" -o /dev/null "$HEALTHCHECK_URL" 2>/dev/null
 fi
 
 . /root/bin/_script_footer.sh
