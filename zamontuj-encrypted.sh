@@ -1,3 +1,5 @@
+#!/bin/bash
+
 # 2022.06.21 - v. 0.3 - dodalem obsluge healthcheckow
 # 2021.09.19 - v. 0.2 - dodana funkcja fsck, czytanie hasla do zmiennej
 # 2021.01.30 - v. 0.1 - initial release (date unknown)
