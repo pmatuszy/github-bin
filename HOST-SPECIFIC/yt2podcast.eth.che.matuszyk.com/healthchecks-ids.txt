@@ -7,3 +7,4 @@ restic_backup_SS				https://healthchecks.matuszyk.com:8000/ping/f20187e9-79e0-49
 update-restic.sh                                https://healthchecks.matuszyk.com:8000/ping/d8874692-7007-43ea-befb-0263e0f0576d
 update-rclone.sh                                https://healthchecks.matuszyk.com:8000/ping/6e1dd3f7-950c-49d5-87b6-78d17b10d6e8
 healthchecks-swap-usage.sh                      https://healthchecks.matuszyk.com:8000/ping/ef2582d2-b1df-4c66-9db9-be92a48ac3db
+zamontuj-encrypted.sh				https://healthchecks.matuszyk.com:8000/ping/15f4f191-0aad-44d2-903c-edb8ce171f76
