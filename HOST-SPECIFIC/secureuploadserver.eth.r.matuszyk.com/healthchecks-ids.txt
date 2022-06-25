@@ -6,6 +6,7 @@ update-rclone.sh                                https://healthchecks.matuszyk.co
 healthchecks-swap-usage.sh                      https://healthchecks.matuszyk.com:8000/ping/a2a8e9c4-6b64-4abf-9d7f-e7e4a03aade0
 rclone-sync-archiwum-crypt-sftp-CHE.sh		https://healthchecks.matuszyk.com:8000/ping/64834214-25ec-487d-8bd8-0aee037da416
 rclone-sync-archiwum-crypt-sftp-BXL.sh		https://healthchecks.matuszyk.com:8000/ping/945e58f7-96ff-47d8-84f2-20c68e58506b
+rclone-sync-archiwum-crypt-sftp-SS.sh		https://healthchecks.matuszyk.com:8000/ping/2bf6ed9c-c0a9-4799-8f89-92b6c21a335f
 rclone-sync-ksiazki-SS.sh			https://healthchecks.matuszyk.com:8000/ping/1b9b4ab8-3d4b-4ba5-93eb-576cf1d5ec64
 rclone-sync-ksiazki-CHE.sh			https://healthchecks.matuszyk.com:8000/ping/c991fc0e-8193-46dd-836f-1539f3fc0c71
 rclone-sync-DivX-CHE.sh				https://healthchecks.matuszyk.com:8000/ping/e719dd09-1a09-4f1f-afd0-396591b4b92c
