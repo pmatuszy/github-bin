@@ -16,3 +16,5 @@ rclone-sync-mp3-crypt-sftp-SS.sh		https://healthchecks.matuszyk.com:8000/ping/6c
 rclone-sync-mp3-crypt-sftp-CHE.sh		https://healthchecks.matuszyk.com:8000/ping/f3d01e4a-6042-4f27-9778-499f59fd4f86
 rclone-sync-na_DVD-crypt-sftp-CHE.sh		https://healthchecks.matuszyk.com:8000/ping/39ef80b6-20e6-48ba-89c8-a2559096344e
 rclone-sync-na_DVD-crypt-sftp-SS.sh		https://healthchecks.matuszyk.com:8000/ping/60fbe6f2-2d27-4721-8412-a5addb5891ac
+rclone-sync--SkyPlus-CHE.sh			https://healthchecks.matuszyk.com:8000/ping/0cbf7fec-f055-4457-a012-bffa76b1ad86
+rclone-sync-BBC-CHE.sh				https://healthchecks.matuszyk.com:8000/ping/ab82df65-c50a-4010-b77e-9c17a71f3222
