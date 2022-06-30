@@ -3,6 +3,7 @@ ssd-trim.sh  					https://healthchecks.matuszyk.com:8000/ping/009b42d5-fb52-4f1a
 sprawdz-czy-dziala-strona-yt2podcast.com.sh     https://healthchecks.matuszyk.com:8000/ping/9b0282f9-d096-4023-b192-3b07d7d0d30b
 sprawdz-ile-apt-list--upgradable.sh		https://healthchecks.matuszyk.com:8000/ping/be5d3d8c-2cfd-4c55-b19a-36252f5e93cf
 restic_backup_BXL				https://healthchecks.matuszyk.com:8000/ping/f2340a02-4a3e-4dd6-bb40-bbbbb80e4610
+restic_backup_SS				https://healthchecks.matuszyk.com:8000/ping/9f6cd83b-ddfe-425b-917e-7635c024aa51
 sprawdz-czy-encrypted-jest-zamontowany.sh       https://healthchecks.matuszyk.com:8000/ping/2c77d8dc-2486-4160-ba07-88336a271a11
 apc-status.sh					https://healthchecks.matuszyk.com:8000/ping/8d7ce79b-a81d-4963-aa39-19620e8f67b6
 nagrywaj-BBC4.sh				https://healthchecks.matuszyk.com:8000/ping/224be066-473d-4fa2-8bb6-c60f5a281d2d
