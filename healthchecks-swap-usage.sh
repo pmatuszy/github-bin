@@ -1,4 +1,6 @@
 #!/bin/bash
+# 2022.07.01 - v. 0.4 - dodalem trimowanie swapa mimo, ze nie przekracza limitu, ale jest mimo wszystko troche juz jego zaalokowanego
+#                       w ten sposob swap jest zwalniany ale nie jest generowany alert do healthchecka
 # 2022.06.15 - v. 0.3 - zmiana limitu MAX_DOPUSZCZALNA_ZAJETOSC_SWAP 400 ==> 600
 # 2022.06.06 - v. 0.2 - zmiana limitu MAX_DOPUSZCZALNA_ZAJETOSC_SWAP 100 ==> 400
 # 2022.06.01 - v. 0.1 - initial release
