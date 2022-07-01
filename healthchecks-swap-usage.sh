@@ -10,7 +10,8 @@ if [ -f "$HEALTHCHECKS_FILE" ];then
 fi
 
 export MAX_DOPUSZCZALNA_ZAJETOSC_SWAP=600     # w MB
-export MIN_RAM_FREE=100     # w MB
+export MIN_RAM_FREE=100                       # w MB
+export MAX_USED_SWAP_TO_TRIM_ANYWAY=50        # w MB by zrobic trim ale zwrocic status ok a nie fail
 
 m=$( echo " "; echo "aktualna data: `date '+%Y.%m.%d %H:%M'`" ; echo ; 
      ile_wolnego_RAM=$(free -m|grep '^Mem:'|awk '{print $7}');
@@ -39,7 +40,30 @@ m=$( echo " "; echo "aktualna data: `date '+%Y.%m.%d %H:%M'`" ; echo ;
        echo
 
        exit 1
-     else
+     else  # nie ma krytycznej sytuacji, sprawdzamy wiec inne kryteria
+       if (( $czy_jest_wolny_ram >= $MIN_RAM_FREE && $ile_zajetego_SWAP > $MAX_USED_SWAP_TO_TRIM_ANYWAY )); then
+         echo "trimujemy SWAPa bo troche jest zajetego, ale nie przekracza MAX_DOPUSZCZALNA_ZAJETOSC_SWAP ($MAX_DOPUSZCZALNA_ZAJETOSC_SWAP)"
+         echo "RAM tez jest wolny ile_wolnego_RAM ($ile_wolnego_RAM) > MIN_RAM_FREE ($MIN_RAM_FREE)"
+         echo "~~~~~~~~ PRZED ~~~~~~~~"
+         printf "ile_wolnego_RAM    = %5d [MiB]\n" $ile_wolnego_RAM
+         printf "ile_zajetego_SWAP  = %5d [MiB]\n" $ile_zajetego_SWAP
+         printf "czy_jest_wolny_ram = %5d [MiB]\n" $czy_jest_wolny_ram
+         echo
+
+         swapoff -a ; sleep 2; swapon -a
+
+         ile_wolnego_RAM=$(free -m|grep '^Mem:'|awk '{print $7}');
+         ile_zajetego_SWAP=$(free -m|grep '^Swap:'|awk '{print $3}');
+         let czy_jest_wolny_ram=$ile_wolnego_RAM-$ile_zajetego_SWAP;
+
+         echo "~~~~~~~~ PO    ~~~~~~~~"
+         printf "ile_wolnego_RAM    = %5d [MiB]\n" $ile_wolnego_RAM
+         printf "ile_zajetego_SWAP  = %5d [MiB]\n" $ile_zajetego_SWAP
+         printf "czy_jest_wolny_ram = %5d [MiB]\n" $czy_jest_wolny_ram
+         echo
+         exit 0
+
+       fi
        echo "MAX_DOPUSZCZALNA_ZAJETOSC_SWAP ($MAX_DOPUSZCZALNA_ZAJETOSC_SWAP) > ile_zajetego_SWAP ($ile_zajetego_SWAP) wiec nie trzeba nic robic ..."
        printf "ile_wolnego_RAM    = %5d [MiB]\n" $ile_wolnego_RAM
        printf "ile_zajetego_SWAP  = %5d [MiB]\n" $ile_zajetego_SWAP
