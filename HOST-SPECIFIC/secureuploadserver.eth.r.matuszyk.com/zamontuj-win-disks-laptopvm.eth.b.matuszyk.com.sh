@@ -1,6 +1,5 @@
 #!/bin/bash
-# 2021.04.20 - v. 0.1 - zmiana, by bylo jedno tylko pytanie o haslo
-# 2020.xx.xx - v. 0.1 - initial release
+# 2022.07.30 - v. 0.1 - initial release
 
 . /root/bin/_script_header.sh
 
@@ -16,7 +15,7 @@ echo
 
 #set -x
 
-read -p "Wpisz haslo: " -s PASSWDa
+read -p "Wpisz haslo: " -s PASSWD
 
 
 loc_dir_name="/mnt/rsync-master-DivX"
