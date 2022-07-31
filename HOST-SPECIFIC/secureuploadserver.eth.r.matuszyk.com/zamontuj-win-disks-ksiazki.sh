@@ -7,10 +7,12 @@
 loc_dir_name="/mnt/rsync-master-ksiazki"
 rem_dir_name="//laptopvm.eth.b.matuszyk.com/ksiazki"
 
-echo 
+echo
+echo
 echo "skad  : $rem_dir_name"
 echo "dokad : $loc_dir_name"
-echo 
+echo
+echo
 
 read -p "Wpisz haslo: " -s PASSWD
 

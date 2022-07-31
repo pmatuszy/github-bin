@@ -7,10 +7,12 @@
 loc_dir_name="/mnt/rsync-master-DivX"
 rem_dir_name="//laptopvm.eth.b.matuszyk.com/DivX"
 
-echo 
+echo
+echo
 echo "skad  : $rem_dir_name"
 echo "dokad : $loc_dir_name"
-echo 
+echo
+echo
 
 read -p "Wpisz haslo: " -s PASSWD
 

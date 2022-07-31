@@ -9,11 +9,12 @@ rem_dir_name="//laptopvm.eth.b.matuszyk.com/_na_DVD-MASTER-SOURCE"
 
 set +x 
 
-echo 
-echo 
-echo  server 
-echo 
-echo 
+echo
+echo
+echo "skad  : $rem_dir_name"
+echo "dokad : $loc_dir_name"
+echo
+echo
 
 #set -x
 

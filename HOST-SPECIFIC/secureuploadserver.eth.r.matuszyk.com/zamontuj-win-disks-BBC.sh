@@ -9,11 +9,12 @@ rem_dir_name="//lublin.eth.b.matuszyk.com/BBC-MASTER-SOURCE"
 
 set +x 
 
-echo 
-echo 
-echo  "//lublin.eth.b.matuszyk.com/BBC-MASTER-SOURCE"
-echo 
-echo 
+echo
+echo
+echo "skad  : $rem_dir_name"
+echo "dokad : $loc_dir_name"
+echo
+echo
 
 #set -x
 

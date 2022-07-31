@@ -11,7 +11,8 @@ set +x
 
 echo 
 echo 
-echo  server 
+echo "skad  : $rem_dir_name"
+echo "dokad : $loc_dir_name"
 echo 
 echo 
 
