@@ -15,7 +15,7 @@ echo
 
 #set -x
 
-read -p "Wpisz haslo: " -s PASSWD
+read -p "Wpisz haslo: " -s PASSWD ; echo 
 
 
 
