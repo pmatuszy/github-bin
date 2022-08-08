@@ -21,7 +21,7 @@ fi
 kod_powrotu=$?
 if [ $kod_powrotu -ne 0 ]; then
    m="apt update jest uruchomione na innym terminalu i nie moge dostac locka wiec wychodze"
-  /usr/bin/curl -fsS -m 10 --retry 5 --retry-delay 5 --data-raw "${m}" -o /dev/null "$HEALTHCHECK_URL"/fail 2>/dev/null
+  /usr/bin/curl -fsS -m 100 --retry 10 --retry-delay 10 --data-raw "${m}" -o /dev/null "$HEALTHCHECK_URL"/fail 2>/dev/null
   exit 2
 fi
 
@@ -32,9 +32,9 @@ m=$(echo ile_jest_do_upgradeowania = $ile_jest_do_upgradeowania ; echo ile_max_b
     /usr/bin/apt list --upgradable 2>&1|egrep -v "WARNING: apt does not have a stable CLI interface. Use with caution in scripts.|Listing...")
 
 if [ $ile_jest_do_upgradeowania -gt $ile_max_by_nie_raportowac ];then
-  /usr/bin/curl -fsS -m 10 --retry 5 --retry-delay 5 --data-raw "$m" -o /dev/null "$HEALTHCHECK_URL"/fail 2>/dev/null
+  /usr/bin/curl -fsS -m 100 --retry 10 --retry-delay 10 --data-raw "$m" -o /dev/null "$HEALTHCHECK_URL"/fail 2>/dev/null
 else
-  /usr/bin/curl -fsS -m 10 --retry 5 --retry-delay 5 --data-raw "$m" -o /dev/null "$HEALTHCHECK_URL" 2>/dev/null
+  /usr/bin/curl -fsS -m 100 --retry 10 --retry-delay 10 --data-raw "$m" -o /dev/null "$HEALTHCHECK_URL" 2>/dev/null
 fi
 
 exit

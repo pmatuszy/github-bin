@@ -24,7 +24,7 @@ export RCLONE_BIN=$(type -fP rclone)
 #   echo
 #   echo '#####################################################'
 #   echo '#####################################################' )
-#   /usr/bin/curl -fsS -m 10 --retry 5 --retry-delay 5 --data-raw "$m" -o /dev/null "$HEALTHCHECK_URL"/fail 2>/dev/null
+#   /usr/bin/curl -fsS -m 100 --retry 10 --retry-delay 10 --data-raw "$m" -o /dev/null "$HEALTHCHECK_URL"/fail 2>/dev/null
 #   exit 1
 # fi
 
@@ -42,10 +42,10 @@ else
 fi
 
 if [ $kod_powrotu -ne 0 ]; then
-  /usr/bin/curl -fsS -m 10 --retry 5 --retry-delay 5 --data-raw "$wiadomosc" -o /dev/null "$HEALTHCHECK_URL"/fail 2>/dev/null
+  /usr/bin/curl -fsS -m 100 --retry 10 --retry-delay 10 --data-raw "$wiadomosc" -o /dev/null "$HEALTHCHECK_URL"/fail 2>/dev/null
   exit $kod_powrotu # cos poszlo nie tak
 else
-  /usr/bin/curl -fsS -m 10 --retry 5 --retry-delay 5 --data-raw "$wiadomosc" -o /dev/null "$HEALTHCHECK_URL" 2>/dev/null
+  /usr/bin/curl -fsS -m 100 --retry 10 --retry-delay 10 --data-raw "$wiadomosc" -o /dev/null "$HEALTHCHECK_URL" 2>/dev/null
 fi
 
 . /root/bin/_script_footer.sh

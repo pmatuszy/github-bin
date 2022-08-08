@@ -43,10 +43,10 @@ zrob_fsck /dev/mapper/encrypted_luks_file_in_root
 mount -o noatime /dev/mapper/encrypted_luks_file_in_root /encrypted
 kod_powrotu=$?
 if [ $kod_powrotu -ne 0 ]; then
-  /usr/bin/curl -fsS -m 10 --retry 5 --retry-delay 5 -o /dev/null "$HEALTHCHECK_URL"/fail 2>/dev/null
+  /usr/bin/curl -fsS -m 100 --retry 10 --retry-delay 10 -o /dev/null "$HEALTHCHECK_URL"/fail 2>/dev/null
   exit $kod_powrotu # cos poszlo nie tak
 else
-  /usr/bin/curl -fsS -m 10 --retry 5 --retry-delay 5 -o /dev/null "$HEALTHCHECK_URL" 2>/dev/null
+  /usr/bin/curl -fsS -m 100 --retry 10 --retry-delay 10 -o /dev/null "$HEALTHCHECK_URL" 2>/dev/null
 fi
 
 df -h /encrypted
