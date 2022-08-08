@@ -1,5 +1,5 @@
 #!/bin/bash
-# 2022.08.09 - v. 1.r - added retry attempts for the backups in case something goes wrong
+# 2022.08.09 - v. 1.9 - added retry attempts for the backups in case something goes wrong
 # 2022.06.16 - v. 1.8 - bugfixes with RUN_BEFORE_BACKUP and RUN_AFTER_BACKUP commands
 # 2022.05.16 - v. 1.7 - changed pgrep -f to pgrep -x
 # 2022.05.16 - v. 1.6 - a lot of changes in functionality and integration with healthchecks
@@ -116,7 +116,8 @@ fi
 
 export run_before_backup_log=$( eval $RUN_BEFORE_BACKUP 2>&1 ) 
 
-backup_log=$( echo ; echo "aktualna data: `date '+%Y.%m.%d %H:%M'`" ; echo ; echo "RESTIC_REPOSITORY = $RESTIC_REPOSITORY" ; echo ; echo ; 
+backup_log=$( echo ; echo "aktualna data: `date '+%Y.%m.%d %H:%M'`" ; echo ; echo "RESTIC_REPOSITORY = $RESTIC_REPOSITORY" ; echo ; echo ;
+              cat  $0|grep -e '2022'|head -n 1 | awk '{print "script version: " $5 " (dated "$2")"}' ; echo ; echo 
               kod_powrotu=999
               for (( p=1; p<=$max_liczba_ponowien_backupow; p++ )); do 
               if (( $p > 1 )) ; then echo ; echo "aktualna data: `date '+%Y.%m.%d %H:%M'`" ; echo ; fi
