@@ -4,3 +4,4 @@ restic_backup_CHE				https://healthchecks.matuszyk.com:8000/ping/d4c99e25-6224-4
 update-restic.sh                                https://healthchecks.matuszyk.com:8000/ping/9f354923-a556-4c83-a336-547bdcb28f16
 update-rclone.sh                                https://healthchecks.matuszyk.com:8000/ping/57a81c8e-5656-43fb-8913-6d57b3b4f3ad
 healthchecks-swap-usage.sh                      https://healthchecks.matuszyk.com:8000/ping/199cefe1-678e-413d-8bc1-b42001ef2697
+healthchecks-geoipupdate.sh			https://healthchecks.matuszyk.com:8000/ping/97d0a4a6-c334-47f2-91a7-906ebbb59095
