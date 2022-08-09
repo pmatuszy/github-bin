@@ -1,4 +1,5 @@
 #!/bin/bash
+# 2022.08.10 - v. 2.0 - small bux fix with env variable upercase name
 # 2022.08.09 - v. 1.9 - added retry attempts for the backups in case something goes wrong
 # 2022.06.16 - v. 1.8 - bugfixes with RUN_BEFORE_BACKUP and RUN_AFTER_BACKUP commands
 # 2022.05.16 - v. 1.7 - changed pgrep -f to pgrep -x
@@ -119,7 +120,7 @@ export run_before_backup_log=$( eval $RUN_BEFORE_BACKUP 2>&1 )
 backup_log=$( echo ; echo "aktualna data: `date '+%Y.%m.%d %H:%M'`" ; echo ; echo "RESTIC_REPOSITORY = $RESTIC_REPOSITORY" ; echo ; echo ;
               cat  $0|grep -e '2022'|head -n 1 | awk '{print "script version: " $5 " (dated "$2")"}' ; echo ; echo 
               kod_powrotu=999
-              for (( p=1; p<=$max_liczba_ponowien_backupow; p++ )); do 
+              for (( p=1 ; p<=$MAX_LICZBA_PONOWIEN_BACKUPOW ; p++ )); do 
               if (( $p > 1 )) ; then echo ; echo "aktualna data: `date '+%Y.%m.%d %H:%M'`" ; echo ; fi
                 eval ${RESTIC_BIN} --cleanup-cache --iexclude=${MY_EXCLUDES} --iexclude-file=${MY_EXCLUDE_FILE} backup / $WHAT_TO_BACKUP_ON_TOP_OF_ROOT 2>&1
                 kod_powrotu=$?
