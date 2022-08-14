@@ -1,4 +1,5 @@
 #!/bin/bash
+# 2022.08.11 - v. 2.1 - changed LICZBA_SEKUND_MIEDZY_PONOWIENIAMI_BACKUPOW ze 180 do 600
 # 2022.08.10 - v. 2.0 - small bux fix with env variable upercase name
 # 2022.08.09 - v. 1.9 - added retry attempts for the backups in case something goes wrong
 # 2022.06.16 - v. 1.8 - bugfixes with RUN_BEFORE_BACKUP and RUN_AFTER_BACKUP commands
@@ -19,8 +20,8 @@
 export RUN_BEFORE_BACKUP="${RUN_BEFORE_BACKUP:-}"
 export RUN_AFTER_BACKUP="${RUN_AFTER_BACKUP:-}"
 
-export MAX_LICZBA_PONOWIEN_BACKUPOW=4
-export LICZBA_SEKUND_MIEDZY_PONOWIENIAMI_BACKUPOW=180
+export MAX_LICZBA_PONOWIEN_BACKUPOW=5
+export LICZBA_SEKUND_MIEDZY_PONOWIENIAMI_BACKUPOW=600
 
 . /root/bin/_script_header.sh
 
