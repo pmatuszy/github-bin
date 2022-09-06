@@ -42,17 +42,17 @@ echo -n "$PASSWD" | cryptsetup luksOpen  /dev/vg_crypto_buffalo2/lv_do_luksa_buf
 zrob_fsck /dev/mapper/luks_buffalo2
 
 echo
-echo '########## /dev/vg-crypto-temp-raidsonic/lv_do_luks_temp-raidsonic  ==> /mnt/luks_temp-raidsonic'
+echo '########## /dev/vg_crypto_raidsonic/lv_do_luksa_raidsonic  ==> /mnt/luks-raidsonic'
 echo
-echo -n "$PASSWD" | cryptsetup luksOpen /dev/vg-crypto-temp-raidsonic/lv_do_luks_temp-raidsonic luks_temp-raidsonic -d -
+echo -n "$PASSWD" | cryptsetup luksOpen /dev/vg_crypto_raidsonic/lv_do_luksa_raidsonic luks-on-lv-raidsonic -d -
 
-zrob_fsck /dev/mapper/luks_temp-raidsonic
+zrob_fsck /dev/mapper/luks-on-lv-raidsonic
 
 mount -o noatime /dev/mapper/encrypted_luks_file_in_root /encrypted
 mount -o noatime /dev/mapper/luks_buffalo2 /mnt/luks-buffalo2
-mount -o noatime /dev/mapper/luks_temp-raidsonic /mnt/luks_temp-raidsonic
+mount -o noatime /dev/mapper/luks-on-lv-raidsonic /mnt/luks-raidsonic
 
-df -h /encrypted /mnt/luks-buffalo2 /mnt/luks_temp-raidsonic
+df -h /encrypted /mnt/luks-buffalo2 /mnt/luks-raidsonic
 
 echo ; echo 
 echo "restart nfs servera, bo zwykle jest problem polegajacy na tym, ze service nie startuje od razu, bo nie sa zamontowane exportowane fs'y"
