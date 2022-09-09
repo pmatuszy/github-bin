@@ -88,9 +88,14 @@ systemctl restart keepalived
 echo "restart of postgresql service ..."
 systemctl restart postgresql
 
+# wylaczone - dzialaja, ale nie sa montowane (kabel USB jest wyjety z huba USB
 zamontuj_fs_MASTER /dev/vg_crypto_buffalo1/lv_do_luksa_buffalo1               /mnt/luks-buffalo1   noatime
+
 zamontuj_fs_MASTER /dev/vg_crypto_20221208_RaidSonicA/lv_20221208_RaidSonicA  /mnt/luks-RaidSonicA noatime
 zamontuj_fs_MASTER /dev/vg_crypto_20221209_RaidSonicB/lv_20221209_RaidSonicB  /mnt/luks-RaidSonicB noatime
+
+
+
 # zamontuj_fs_MASTER /dev/vg_crypto_20221114_DyskD/lv_20221114_DyskD          /mnt/luks-dyskD      noatime,data=writeback,barrier=0,nobh,errors=remount-ro
 
 echo
