@@ -1,3 +1,4 @@
+# 2022.09.30 - v. 0.5 - checking if we have access to remote repo
 # 2022.05.18 - v. 0.4 - added removing git-pull.sh and gill-push.sh from $HOME/bin
 #                       added set -o options at the beginning
 # 2021.05.12 - v. 0.3 - added copying .[a-zA-Z0-9]
@@ -16,6 +17,15 @@ echo
 if [ "${p}" == 'y' -o  "${p}" == 'y' ]; then
   cd $HOME
   mkdir -p $HOME/bin
+
+
+  # sprawdzam, czy mam dostep do zdalnego repo
+  git ls-remote git+ssh://git@github.com/pmatuszy/github-bin.git
+  if (( $? <> 0 )); then
+    echo  ; echo ; echo "Nie mam dostepu do zdalnego repozytorium.... WYCHODZE" ; echo ; echo
+    exit 2
+  fi
+
   rm -rf $HOME/github-bin/*
   rm -rf $HOME/github-bin/.git
   git clone git+ssh://git@github.com/pmatuszy/github-bin.git
