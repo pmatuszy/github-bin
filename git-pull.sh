@@ -20,7 +20,7 @@ if [ "${p}" == 'y' -o  "${p}" == 'y' ]; then
 
 
   # sprawdzam, czy mam dostep do zdalnego repo
-  git ls-remote git+ssh://git@github.com/pmatuszy/github-bin.git
+  git ls-remote git+ssh://git@github.com/pmatuszy/github-bin.git 2>&1 >/dev/null
   if (( $? != 0 )); then
     echo  ; echo ; echo "Nie mam dostepu do zdalnego repozytorium.... WYCHODZE" ; echo ; echo
     exit 2
