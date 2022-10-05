@@ -45,7 +45,7 @@ mount.cifs -o user=p,password=$PASSWD "${rem_dir_name}" "${loc_dir_name}"
 
 
 loc_dir_name="/mnt/rsync-master-mp3"
-rem_dir_name="//laptopvm.eth.b.matuszyk.com/mp3-MASTER-SOURCE"
+rem_dir_name="//laptopvm.eth.b.matuszyk.com/mp3-MASTER-SOURCE_read_only"
 
 umount "${loc_dir_name}" 2>/dev/null  # just in case sa zamontowane, by nie dostawac komunikatu "mount error(16): Device or resource busy"
 mount.cifs -o user=p,password=$PASSWD "${rem_dir_name}" "${loc_dir_name}"
