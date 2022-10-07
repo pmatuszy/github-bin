@@ -21,7 +21,7 @@ read -p "Wpisz haslo: " -s PASSWD ; echo
 
 
 loc_dir_name="/mnt/rsync-master-DivX"
-rem_dir_name="//laptopvm.eth.b.matuszyk.com/DivX"
+rem_dir_name="//laptopvm.eth.b.matuszyk.com/DivX-MASTER-SOURCE_read_only"
 
 umount "${loc_dir_name}" 2>/dev/null  # just in case sa zamontowane, by nie dostawac komunikatu "mount error(16): Device or resource busy"
 mount.cifs -o user=p,password=$PASSWD "${rem_dir_name}" "${loc_dir_name}"
@@ -29,7 +29,7 @@ mount.cifs -o user=p,password=$PASSWD "${rem_dir_name}" "${loc_dir_name}"
 
 
 loc_dir_name="/mnt/rsync-master-DVDs"
-rem_dir_name="//laptopvm.eth.b.matuszyk.com/DVDs"
+rem_dir_name="//laptopvm.eth.b.matuszyk.com/DVDs-MASTER-SOURCE_read_only"
 
 umount "${loc_dir_name}" 2>/dev/null  # just in case sa zamontowane, by nie dostawac komunikatu "mount error(16): Device or resource busy"
 mount.cifs -o user=p,password=$PASSWD "${rem_dir_name}" "${loc_dir_name}"
@@ -37,7 +37,7 @@ mount.cifs -o user=p,password=$PASSWD "${rem_dir_name}" "${loc_dir_name}"
 
 
 loc_dir_name="/mnt/rsync-master-ksiazki"
-rem_dir_name="//laptopvm.eth.b.matuszyk.com/ksiazki"
+rem_dir_name="//laptopvm.eth.b.matuszyk.com/ksiazki-MASTER-SOURCE_read_only"
 
 umount "${loc_dir_name}" 2>/dev/null  # just in case sa zamontowane, by nie dostawac komunikatu "mount error(16): Device or resource busy"
 mount.cifs -o user=p,password=$PASSWD "${rem_dir_name}" "${loc_dir_name}"
@@ -53,7 +53,7 @@ mount.cifs -o user=p,password=$PASSWD "${rem_dir_name}" "${loc_dir_name}"
 
 
 loc_dir_name="/mnt/rsync-master-_na_DVD"
-rem_dir_name="//laptopvm.eth.b.matuszyk.com/_na_DVD-MASTER-SOURCE"
+rem_dir_name="//laptopvm.eth.b.matuszyk.com/_na_DVD-MASTER-SOURCE_read_only"
 
 umount "${loc_dir_name}" 2>/dev/null  # just in case sa zamontowane, by nie dostawac komunikatu "mount error(16): Device or resource busy"
 mount.cifs -o user=p,password=$PASSWD "${rem_dir_name}" "${loc_dir_name}"
@@ -61,7 +61,7 @@ mount.cifs -o user=p,password=$PASSWD "${rem_dir_name}" "${loc_dir_name}"
 
 
 loc_dir_name="/mnt/rsync-master-SkyPlus"
-rem_dir_name="//laptopvm.eth.b.matuszyk.com/SkyPlus-MASTER-SOURCE"
+rem_dir_name="//laptopvm.eth.b.matuszyk.com/SkyPlus-MASTER-SOURCE_read_only"
 
 umount "${loc_dir_name}" 2>/dev/null  # just in case sa zamontowane, by nie dostawac komunikatu "mount error(16): Device or resource busy"
 mount.cifs -o user=p,password=$PASSWD "${rem_dir_name}" "${loc_dir_name}"
