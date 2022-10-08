@@ -16,11 +16,25 @@ echo
 
 mkdir -p /mnt/pgm-che/DyskC /mnt/pgm-che/DyskD /mnt/pgm-che/DyskE /mnt/pgm-che/DyskF
 
-set -x
+read -p "Wpisz haslo: " -s PASSWD ; echo
 
-mount.cifs -o user=administrator //pgm-che.eth.che.matuszyk.com/DyskC /mnt/pgm-che/DyskC ; df -hP /mnt/desktopche/DyskC
-mount.cifs -o user=administrator //pgm-che.eth.che.matuszyk.com/DyskD /mnt/pgm-che/DyskD ; df -hP /mnt/desktopche/DyskD
-mount.cifs -o user=administrator //pgm-che.eth.che.matuszyk.com/DyskE /mnt/pgm-che/DyskE ; df -hP /mnt/desktopche/DyskE
+
+loc_dir_name="/mnt/pgm-che/DyskC"
+rem_dir_name="//pgm-che.eth.che.matuszyk.com/DyskC"
+umount "${loc_dir_name}" 2>/dev/null  # just in case sa zamontowane, by nie dostawac komunikatu "mount error(16): Device or resource busy"
+mount.cifs -o user=p,password=$PASSWD "${rem_dir_name}" "${loc_dir_name}"
+
+loc_dir_name="/mnt/pgm-che/DyskD"
+rem_dir_name="//pgm-che.eth.che.matuszyk.com/DyskD"
+umount "${loc_dir_name}" 2>/dev/null  # just in case sa zamontowane, by nie dostawac komunikatu "mount error(16): Device or resource busy"
+mount.cifs -o user=p,password=$PASSWD "${rem_dir_name}" "${loc_dir_name}"
+
+loc_dir_name="/mnt/pgm-che/DyskE"
+rem_dir_name="//pgm-che.eth.che.matuszyk.com/DyskE"
+umount "${loc_dir_name}" 2>/dev/null  # just in case sa zamontowane, by nie dostawac komunikatu "mount error(16): Device or resource busy"
+mount.cifs -o user=p,password=$PASSWD "${rem_dir_name}" "${loc_dir_name}"
+
+df -hP |egrep 'Filesystem|pgm-che.eth.che.matuszyk.com'
 
 set +x
 
