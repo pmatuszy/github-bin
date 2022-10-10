@@ -19,22 +19,11 @@ echo ; echo "w KeePassie:" ; echo  "Samba (p @ lublin.eth.b.matuszyk.com)"
 
 read -p "Wpisz haslo: " -s PASSWD ; echo 
 
-
-
 loc_dir_name="/mnt/rsync-master-archiwum"
 rem_dir_name="//lublin.eth.b.matuszyk.com/archiwum-MASTER-SOURCE_read_only"
 
 umount "${loc_dir_name}" 2>/dev/null  # just in case sa zamontowane, by nie dostawac komunikatu "mount error(16): Device or resource busy"
 mount.cifs -o user=p,password=$PASSWD "${rem_dir_name}" "${loc_dir_name}"
-# df -hP "${loc_dir_name}"
-
-
-loc_dir_name="/mnt/rsync-master-BBC"
-rem_dir_name="//lublin.eth.b.matuszyk.com/BBC-MASTER-SOURCE_read_only"
-
-umount "${loc_dir_name}" 2>/dev/null  # just in case sa zamontowane, by nie dostawac komunikatu "mount error(16): Device or resource busy"
-mount.cifs -o user=p,password=$PASSWD "${rem_dir_name}" "${loc_dir_name}"
-# df -hP "${loc_dir_name}"
 
 df -hP |egrep 'Filesystem|lublin.eth.b.matuszyk.com'
 
