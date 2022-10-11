@@ -34,8 +34,14 @@ fi
 
 $SMARTCTL_BIN $DEVICE_TYPE --info $1 2>&1 > /dev/null
 if (( $? == 1 ));then 
-  echo  ; echo "I don't know which device type (-d), so I am quitting" ; echo ; echo exit 1
+  echo  ; echo "I don't know which device type (-d), so I am quitting" ; echo ; echo exit 1 ; echo 
   exit 1
+fi
+
+$SMARTCTL_BIN $DEVICE_TYPE --info $1 2>&1 > /dev/null
+if (( $? == 2 ));then
+  echo  ; echo "No such a device, I am exiting " ; echo ; echo exit 2 ; echo
+  exit 2
 fi
 
 czy_seagate=$($SMARTCTL_BIN  $DEVICE_TYPE --info $1|grep -i seagate | wc -l)
