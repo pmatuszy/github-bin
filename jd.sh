@@ -1,4 +1,5 @@
 #!/bin/bash
+# 2022.10.11 - v. 0.5 - discovery if it is x86 or raspberry pi
 # 2021.04.16 - v. 0.4 - checking if it is redhat system
 # 2020.11.27 - v. 0.3 - added printing of the disk serial numbers
 # 2020.10.09 - v. 0.2 - small cosmetic modifications
@@ -11,22 +12,29 @@ if [[ ! -h /etc/os-release && ! -h /etc/redhat-release ]] ; then
   exit 1
 fi
 
+echo 
+
 if [[ `cat /etc/os-release /etc/redhat-release 2>/dev/null |grep -qi centos ; echo $?` == 0 ]] ; then
-  echo "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"
-  echo "~~~~~~~~~~~~~ CENTOS ~~~~~~~~~~~~~"
-  echo "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"
+  echo CENTOS | boxes -s 40x5 -a c ; echo 
   for p in `fdisk -l|grep 'Disk /dev'|egrep -v 'mapper|/md|/ram|mmcb|/dev/loop'|sort|tr -d :`;do
      echo `gdisk -l $p |grep "Disk /dev"` "   " `hdparm -I $p 2>/dev/null | grep 'Serial\ Number'`
   done
 
   echo
   fdisk -l|grep 'Disk /dev'|egrep -v 'mapper|/md|/ram|mmcb|/dev/loop'|sort | wc -l
-else
-  echo "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"
-  echo "~~~~~~~~~~~~~ PI  ~~~~~~~~~~~~~"
-  echo "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"
+fi
+
+hardware_type=""
+if [[ $(uname --machine) == "x86_64" ]] ; then
+   hardware_type="Intel"
+fi
+if [[ $(uname --machine) == "aarch64" ]] ; then
+   hardware_type="PI"
+fi
+
+if [[ `cat /etc/os-release /etc/redhat-release 2>/dev/null |grep -qi ubuntu ; echo $?` == 0 ]] ; then
+  echo $hardware_type | boxes -s 40x5 -a c ; echo 
   
-#  fdisk -l|grep 'Disk /dev'|egrep -v 'mapper|/md|/ram|mmcb|/dev/loop'|sort
   for p in `fdisk -l|grep 'Disk /dev'|egrep -v 'mapper|/md|/ram|mmcb|/dev/loop'|awk '{print $2}'|sort|tr -d :`;do
      echo `gdisk -l $p |grep "Disk /dev"` "   " `hdparm -I $p 2>/dev/null | grep 'Serial\ Number'`
   done
