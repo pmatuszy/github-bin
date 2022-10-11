@@ -54,9 +54,11 @@ let last_extended_offline_ago=power_on_hours-last_extended_offline_test
 let last_conveyance_offline_ago=power_on_hours-last_conveyance_offline_test
 echo
 
-echo "power_on_hours               = $power_on_hours" ; echo
-echo "last_short_offline_ago       = $last_short_offline_ago"
-echo "last_extended_offline_test   = $last_extended_offline_ago"
-echo "last_conveyance_offline_test = $last_conveyance_offline_ago"
-echo ; echo 
 $SMARTCTL_BIN $DEVICE_TYPE $VENDOR_ATTRIBUTE $SUBCOMMAND $1
+echo ; echo 
+printf -- '-----> power_on_hours               = %5i\n\n' $power_on_hours
+printf -- '-----> last_short_offline_ago       = %5i\n'   $last_short_offline_ago
+printf -- '-----> last_extended_offline_test   = %5i\n'   $last_extended_offline_ago
+printf -- '-----> last_conveyance_offline_test = %5i\n\n' $last_conveyance_offline_ago
+
+
