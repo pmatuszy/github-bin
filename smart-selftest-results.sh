@@ -55,7 +55,8 @@ let last_conveyance_offline_ago=power_on_hours-last_conveyance_offline_test
 echo
 
 $SMARTCTL_BIN $DEVICE_TYPE $VENDOR_ATTRIBUTE $SUBCOMMAND $1 |sed 's|\(.*failure.*\)|\1                             < ----- ! ! ! ! ! ! ! FAILURE ! ! ! ! ! ! !|g'
-echo ; echo 
+
+echo
 printf -- '-----> power_on_hours               = %5i\n\n' $power_on_hours
 printf -- '-----> last_short_offline_ago       = %5i\n'   $last_short_offline_ago
 printf -- '-----> last_extended_offline_test   = %5i\n'   $last_extended_offline_ago
