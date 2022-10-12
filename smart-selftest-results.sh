@@ -1,5 +1,5 @@
 #!/bin/bash
-
+# 2022.10.12 - v. 0.2 - small fix to power_on_hours display 
 # 2022.10.11 - v. 0.1 - initial release
 
 # exit when your script tries to use undeclared variables
@@ -13,6 +13,8 @@ if [ ! -z ${STY:-} ]; then    # checking if we are running within screen
   # I am setting the screen window title to the script name
   echo -ne "${tcScrTitleStart}${0}${tcScrTitleEnd}"
 fi
+
+echo ; echo ; cat  $0|grep -e '2022'|head -n 1 | awk '{print "script version: " $5 " (dated "$2")"}'
 
 if [ $# -eq 0 ]
   then
@@ -50,7 +52,7 @@ if (( $czy_seagate > 0 ));then
   VENDOR_ATTRIBUTE="-v 1,raw48:54 -v 7,raw48:54 -v 187,raw48:54  -v 188,raw48:54 -v 195,raw48:54"
 fi
 
-export power_on_hours=$($SMARTCTL_BIN $DEVICE_TYPE $VENDOR_ATTRIBUTE -A $1 | egrep '^  9' | awk '{print $10}')
+export power_on_hours=$($SMARTCTL_BIN $DEVICE_TYPE $VENDOR_ATTRIBUTE -A $1 | egrep '^  9' | awk '{print $10}'|sed 's|[hms].*||g')     # ost sed zostawia tylko 24979 z "24979h+00m+00.000s"
 export last_short_offline_test=$($SMARTCTL_BIN $DEVICE_TYPE $VENDOR_ATTRIBUTE $SUBCOMMAND $1 | grep -i 'Short offline'|head -1|sed 's|.*% *||g' | awk '{print $1}')
 export last_extended_offline_test=$($SMARTCTL_BIN $DEVICE_TYPE $VENDOR_ATTRIBUTE $SUBCOMMAND $1 | grep -i 'Extended offline'|head -1|sed 's|.*% *||g' | awk '{print $1}')
 export last_conveyance_offline_test=$($SMARTCTL_BIN $DEVICE_TYPE $VENDOR_ATTRIBUTE $SUBCOMMAND $1 | grep -i 'Conveyance offline'|head -1|sed 's|.*% *||g' | awk '{print $1}')

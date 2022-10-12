@@ -14,6 +14,8 @@ if [ ! -z ${STY:-} ]; then    # checking if we are running within screen
   echo -ne "${tcScrTitleStart}${0}${tcScrTitleEnd}"
 fi
 
+echo ; echo ; cat  $0|grep -e '2022'|head -n 1 | awk '{print "script version: " $5 " (dated "$2")"}
+
 echo ; echo
 update-smart-drivedb
 echo ; echo 
