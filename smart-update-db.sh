@@ -16,7 +16,6 @@ fi
 
 echo ; echo ; cat  $0|grep -e '2022'|head -n 1 | awk '{print "script version: " $5 " (dated "$2")"}'; echo
 
-echo ; echo
+echo
 update-smart-drivedb
-echo ; echo 
-
+echo 
