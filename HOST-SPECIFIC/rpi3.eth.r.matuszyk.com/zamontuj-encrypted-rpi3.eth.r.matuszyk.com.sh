@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2022.10.19 - v. 0.3 - dodane sprawdzenie czy dziala server vpn
 # 2022.09.30 - v. 0.2 - dodane wsparcie dla healthcheckow
 # 2021.09.06 - v. 0.1 - initial release (date unknown)
 
@@ -20,5 +21,6 @@ echo startuje vpnserver
 /encrypted/vpnserver/vpnserver start
 
 /root/bin/sprawdz-czy-encrypted-jest-zamontowany.sh
+/root/bin/sprawdz-czy-dziala-server-vpn.sh
 
 . /root/bin/_script_footer.sh
