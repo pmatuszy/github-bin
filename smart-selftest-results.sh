@@ -68,21 +68,23 @@ $SMARTCTL_BIN $DEVICE_TYPE $VENDOR_ATTRIBUTE $SUBCOMMAND $1 |sed 's|\(.*failure.
 echo
 
 if (( $power_on_hours > 65535 ));then
-  printf -- '-----> power_on_hours               = %5i (possible wrap around as it is more than 65535 hours.... )\n\n' $power_on_hours
+  printf -- '-----> power_on_hours               = %5i hours, %2.2f years (possible wrap around as it is more than 65535 hours.... )\n\n' $power_on_hours $(echo "scale=2; $power_on_hours/24/365.25"|bc)
   echo "RAW values calculation:"
-  printf -- '-----> last_short_offline_ago       = %5i\n'   $last_short_offline_ago
-  printf -- '-----> last_extended_offline_test   = %5i\n'   $last_extended_offline_ago
-  printf -- '-----> last_conveyance_offline_test = %5i\n\n' $last_conveyance_offline_ago
+  printf -- '-----> last_short_offline_ago       = %5i hours ago\n'   $last_short_offline_ago
+  printf -- '-----> last_extended_offline_test   = %5i hours ago\n'   $last_extended_offline_ago
+  printf -- '-----> last_conveyance_offline_test = %5i hours ago\n\n' $last_conveyance_offline_ago
   echo
   echo "ADJUSTED values calculation:"
-  printf -- '-----> last_short_offline_ago       = %5i\n'   $(($last_short_offline_ago-65535))
-  printf -- '-----> last_extended_offline_test   = %5i\n'   $(($last_extended_offline_ago-65535))
-  printf -- '-----> last_conveyance_offline_test = %5i\n\n' $(($last_conveyance_offline_ago-65535))
+  printf -- '-----> last_short_offline_ago       = %5i hours ago\n'   $(($last_short_offline_ago-65535))
+  printf -- '-----> last_extended_offline_test   = %5i hours ago\n'   $(($last_extended_offline_ago-65535))
+  printf -- '-----> last_conveyance_offline_test = %5i hours ago\n\n' $(($last_conveyance_offline_ago-65535))
 else
   printf -- '-----> power_on_hours               = %5i\n\n' $power_on_hours
-  printf -- '-----> last_short_offline_ago       = %5i\n'   $last_short_offline_ago
-  printf -- '-----> last_extended_offline_test   = %5i\n'   $last_extended_offline_ago
-  printf -- '-----> last_conveyance_offline_test = %5i\n\n' $last_conveyance_offline_ago
+  printf -- '-----> power_on_hours               = %5i hours, %2.2f years\n\n' $power_on_hours $(echo "scale=2; $power_on_hours/24/365.25"|bc)
+
+  printf -- '-----> last_short_offline_ago       = %5i hours ago\n'   $last_short_offline_ago
+  printf -- '-----> last_extended_offline_test   = %5i hours ago\n'   $last_extended_offline_ago
+  printf -- '-----> last_conveyance_offline_test = %5i hours ago\n\n' $last_conveyance_offline_ago
 fi
 
 
