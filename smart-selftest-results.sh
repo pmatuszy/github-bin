@@ -1,4 +1,5 @@
 #!/bin/bash
+# 2022.10.27 - v. 0.5 - added support for SSD disks
 # 2022.10.27 - v. 0.4 - added support for conveyance tests (foreground tests instead of ones run in the background)
 # 2022.10.27 - v. 0.3 - printing correct values when power on hours > 65535
 # 2022.10.12 - v. 0.2 - small fix to power_on_hours display 
@@ -62,31 +63,34 @@ $SMARTCTL_BIN $DEVICE_TYPE $VENDOR_ATTRIBUTE $SUBCOMMAND $1 |sed 's|\(.*failure.
 
 echo
 
-if (( $power_on_hours > 65535 ));then
-  printf -- '-----> power_on_hours               = %5i hours, %2.2f years (possible wrap around as it is more than 65535 hours.... )\n\n' $power_on_hours $(echo "scale=2; $power_on_hours/24/365.25"|bc)
-  echo "RAW values calculation:"
-  printf -- '-----> last_short_offline_ago       = %5i hours ago\n'   $last_short_offline_ago
-  printf -- '-----> last_extended_offline_test   = %5i hours ago\n'   $last_extended_offline_ago
-  printf -- '-----> last_conveyance_offline_test = %5i hours ago\n\n' $last_conveyance_offline_ago
-  if (( $(($last_short_offline_ago-65535)) > 0 || $(($last_extended_offline_ago-65535)) > 0 || $(($last_conveyance_offline_ago-65535)) > 0 ));then
-    echo
-    echo "ADJUSTED values calculation:"
-    if (( $(($last_short_offline_ago-65535)) > 0 ));then
-      printf -- '-----> last_short_offline_ago       = %5i hours ago\n'   $(($last_short_offline_ago-65535))
-    fi
-    if (( $(($last_extended_offline_ago-65535)) > 0 ));then
-      printf -- '-----> last_extended_offline_test   = %5i hours ago\n'   $(($last_extended_offline_ago-65535))
-    fi
-    if (( $(($last_conveyance_offline_ago-65535)) > 0 ));then
-      printf -- '-----> last_conveyance_offline_test = %5i hours ago\n\n' $(($last_conveyance_offline_ago-65535))
-    fi
-  fi
+if (( $($SMARTCTL_BIN $DEVICE_TYPE $VENDOR_ATTRIBUTE --info $1|grep -i SSD | wc -l) > 0 ));then
+  echo -e "Looks like SSD drive and this one has no POWER ON HOURS S.M.A.R.T. attribute available." |boxes -s 95x5 -a c ; echo 
 else
-  printf -- '-----> power_on_hours               = %5i hours, %2.2f years\n\n' $power_on_hours $(echo "scale=2; $power_on_hours/24/365.25"|bc)
-
-  printf -- '-----> last_short_offline_ago       = %5i hours ago\n'   $last_short_offline_ago
-  printf -- '-----> last_extended_offline_test   = %5i hours ago\n'   $last_extended_offline_ago
-  printf -- '-----> last_conveyance_offline_test = %5i hours ago\n\n' $last_conveyance_offline_ago
+  if (( ${power_on_hours} > 65535 )) ; then
+    printf -- '-----> power_on_hours               = %5i hours, %2.2f years (possible wrap around as it is more than 65535 hours.... )\n\n' $power_on_hours $(echo "scale=2; $power_on_hours/24/365.25"|bc)
+    echo "RAW values calculation:"
+    printf -- '-----> last_short_offline_ago       = %5i hours ago\n'   $last_short_offline_ago
+    printf -- '-----> last_extended_offline_test   = %5i hours ago\n'   $last_extended_offline_ago
+    printf -- '-----> last_conveyance_offline_test = %5i hours ago\n\n' $last_conveyance_offline_ago
+    if (( $(($last_short_offline_ago-65535)) > 0 || $(($last_extended_offline_ago-65535)) > 0 || $(($last_conveyance_offline_ago-65535)) > 0 ));then
+      echo
+      echo "ADJUSTED values calculation:"
+      if (( $(($last_short_offline_ago-65535)) > 0 ));then
+        printf -- '-----> last_short_offline_ago       = %5i hours ago\n'   $(($last_short_offline_ago-65535))
+      fi
+      if (( $(($last_extended_offline_ago-65535)) > 0 ));then
+        printf -- '-----> last_extended_offline_test   = %5i hours ago\n'   $(($last_extended_offline_ago-65535))
+      fi
+      if (( $(($last_conveyance_offline_ago-65535)) > 0 ));then
+        printf -- '-----> last_conveyance_offline_test = %5i hours ago\n\n' $(($last_conveyance_offline_ago-65535))
+      fi
+    fi
+  else
+    printf -- '-----> power_on_hours               = %5i hours, %2.2f years\n\n' $power_on_hours $(echo "scale=2; $power_on_hours/24/365.25"|bc)
+    printf -- '-----> last_short_offline_ago       = %5i hours ago\n'   $last_short_offline_ago
+    printf -- '-----> last_extended_offline_test   = %5i hours ago\n'   $last_extended_offline_ago
+    printf -- '-----> last_conveyance_offline_test = %5i hours ago\n\n' $last_conveyance_offline_ago
+  fi
 fi
 
 . /root/bin/_script_footer.sh
