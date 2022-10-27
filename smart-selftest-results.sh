@@ -73,16 +73,18 @@ if (( $power_on_hours > 65535 ));then
   printf -- '-----> last_short_offline_ago       = %5i hours ago\n'   $last_short_offline_ago
   printf -- '-----> last_extended_offline_test   = %5i hours ago\n'   $last_extended_offline_ago
   printf -- '-----> last_conveyance_offline_test = %5i hours ago\n\n' $last_conveyance_offline_ago
-  echo
-  echo "ADJUSTED values calculation:"
-  if (( $(($last_short_offline_ago-65535)) > 0 ));then
-    printf -- '-----> last_short_offline_ago       = %5i hours ago\n'   $(($last_short_offline_ago-65535))
-  fi
-  if (( $(($last_extended_offline_ago-65535)) > 0 ));then
-    printf -- '-----> last_extended_offline_test   = %5i hours ago\n'   $(($last_extended_offline_ago-65535))
-  fi
-  if (( $(($last_conveyance_offline_ago-65535)) > 0 ));then
-    printf -- '-----> last_conveyance_offline_test = %5i hours ago\n\n' $(($last_conveyance_offline_ago-65535))
+  if (( $(($last_short_offline_ago-65535)) > 0 || $(($last_extended_offline_ago-65535)) > 0 || $(($last_conveyance_offline_ago-65535)) > 0 ));then
+    echo
+    echo "ADJUSTED values calculation:"
+    if (( $(($last_short_offline_ago-65535)) > 0 ));then
+      printf -- '-----> last_short_offline_ago       = %5i hours ago\n'   $(($last_short_offline_ago-65535))
+    fi
+    if (( $(($last_extended_offline_ago-65535)) > 0 ));then
+      printf -- '-----> last_extended_offline_test   = %5i hours ago\n'   $(($last_extended_offline_ago-65535))
+    fi
+    if (( $(($last_conveyance_offline_ago-65535)) > 0 ));then
+      printf -- '-----> last_conveyance_offline_test = %5i hours ago\n\n' $(($last_conveyance_offline_ago-65535))
+    fi
   fi
 else
   printf -- '-----> power_on_hours               = %5i hours, %2.2f years\n\n' $power_on_hours $(echo "scale=2; $power_on_hours/24/365.25"|bc)
