@@ -1,4 +1,5 @@
 #!/bin/bash
+# 2022.10.27 - v. 0.3 - printing correct values when power on hours > 65535
 # 2022.10.12 - v. 0.2 - small fix to power_on_hours display 
 # 2022.10.11 - v. 0.1 - initial release
 
@@ -14,7 +15,7 @@ if [ ! -z ${STY:-} ]; then    # checking if we are running within screen
   echo -ne "${tcScrTitleStart}${0}${tcScrTitleEnd}"
 fi
 
-echo ; echo ; cat  $0|grep -e '2022'|head -n 1 | awk '{print "script version: " $5 " (dated "$2")"}'; echo
+echo ; cat  $0|grep -e '2022'|head -n 1 | awk '{print "script version: " $5 " (dated "$2")"}'
 
 if [ $# -eq 0 ]
   then
@@ -65,9 +66,23 @@ echo
 $SMARTCTL_BIN $DEVICE_TYPE $VENDOR_ATTRIBUTE $SUBCOMMAND $1 |sed 's|\(.*failure.*\)|\1                             < ----- ! ! ! ! ! ! ! FAILURE ! ! ! ! ! ! !|g'
 
 echo
-printf -- '-----> power_on_hours               = %5i\n\n' $power_on_hours
-printf -- '-----> last_short_offline_ago       = %5i\n'   $last_short_offline_ago
-printf -- '-----> last_extended_offline_test   = %5i\n'   $last_extended_offline_ago
-printf -- '-----> last_conveyance_offline_test = %5i\n\n' $last_conveyance_offline_ago
+
+if (( $power_on_hours > 65535 ));then
+  printf -- '-----> power_on_hours               = %5i (possible wrap around as it is more than 65535 hours.... )\n\n' $power_on_hours
+  echo "RAW values calculation:"
+  printf -- '-----> last_short_offline_ago       = %5i\n'   $last_short_offline_ago
+  printf -- '-----> last_extended_offline_test   = %5i\n'   $last_extended_offline_ago
+  printf -- '-----> last_conveyance_offline_test = %5i\n\n' $last_conveyance_offline_ago
+  echo
+  echo "ADJUSTED values calculation:"
+  printf -- '-----> last_short_offline_ago       = %5i\n'   $(($last_short_offline_ago-65535))
+  printf -- '-----> last_extended_offline_test   = %5i\n'   $(($last_extended_offline_ago-65535))
+  printf -- '-----> last_conveyance_offline_test = %5i\n\n' $(($last_conveyance_offline_ago-65535))
+else
+  printf -- '-----> power_on_hours               = %5i\n\n' $power_on_hours
+  printf -- '-----> last_short_offline_ago       = %5i\n'   $last_short_offline_ago
+  printf -- '-----> last_extended_offline_test   = %5i\n'   $last_extended_offline_ago
+  printf -- '-----> last_conveyance_offline_test = %5i\n\n' $last_conveyance_offline_ago
+fi
 
 
