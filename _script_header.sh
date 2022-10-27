@@ -1,4 +1,5 @@
 #!/bin/bash
+# 2022.10.27 - v. 0.6 - but fix for "tcScrTitleEnd" variable
 # 2022.05.16 - v. 0.5 - small bug fix with STY unbound variable
 # 2022.05.11 - v. 0.4 - set set -o options
 # 2021.07.05 - v. 0.3 - added figlet displaying the current script name
@@ -11,7 +12,7 @@ set -o pipefail
 
 # if we are run non-interactively - do not set the terminal title
 export tcScrTitleStart="\ek"
-export tcScrTitleEnd="\e\134"
+export tcScrTitleEnd="\033\\"
 
 tty 2>&1 >/dev/null
 if (( $? == 0 )); then
