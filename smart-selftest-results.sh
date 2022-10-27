@@ -1,4 +1,5 @@
 #!/bin/bash
+# 2022.10.27 - v. 0.4 - added support for conveyance tests (foreground tests instead of ones run in the background)
 # 2022.10.27 - v. 0.3 - printing correct values when power on hours > 65535
 # 2022.10.12 - v. 0.2 - small fix to power_on_hours display 
 # 2022.10.11 - v. 0.1 - initial release
@@ -54,9 +55,9 @@ if (( $czy_seagate > 0 ));then
 fi
 
 export power_on_hours=$($SMARTCTL_BIN $DEVICE_TYPE $VENDOR_ATTRIBUTE -A $1 | egrep '^  9' | awk '{print $10}'|sed 's|[hms].*||g')     # ost sed zostawia tylko 24979 z "24979h+00m+00.000s"
-export last_short_offline_test=$($SMARTCTL_BIN $DEVICE_TYPE $VENDOR_ATTRIBUTE $SUBCOMMAND $1 | grep -i 'Short offline'|head -1|sed 's|.*% *||g' | awk '{print $1}')
-export last_extended_offline_test=$($SMARTCTL_BIN $DEVICE_TYPE $VENDOR_ATTRIBUTE $SUBCOMMAND $1 | grep -i 'Extended offline'|head -1|sed 's|.*% *||g' | awk '{print $1}')
-export last_conveyance_offline_test=$($SMARTCTL_BIN $DEVICE_TYPE $VENDOR_ATTRIBUTE $SUBCOMMAND $1 | grep -i 'Conveyance offline'|head -1|sed 's|.*% *||g' | awk '{print $1}')
+export last_short_offline_test=$($SMARTCTL_BIN $DEVICE_TYPE $VENDOR_ATTRIBUTE $SUBCOMMAND $1 | egrep -i 'Short offline|Short captive'|head -1|sed 's|.*% *||g' | awk '{print $1}')
+export last_extended_offline_test=$($SMARTCTL_BIN $DEVICE_TYPE $VENDOR_ATTRIBUTE $SUBCOMMAND $1 | egrep -i 'Extended offline|Extended captive'|head -1|sed 's|.*% *||g' | awk '{print $1}')
+export last_conveyance_offline_test=$($SMARTCTL_BIN $DEVICE_TYPE $VENDOR_ATTRIBUTE $SUBCOMMAND $1 | egrep -i 'Conveyance offline|Conveyance captive'|head -1|sed 's|.*% *||g' | awk '{print $1}')
 
 let last_short_offline_ago=power_on_hours-last_short_offline_test
 let last_extended_offline_ago=power_on_hours-last_extended_offline_test

@@ -1,5 +1,5 @@
 #!/bin/bash
-
+# 2022.10.27 - v. 0.9 - added printing of the script version
 # 2022.05.18 - v. 0.8 - added set -o options at the beginning
 # 2021.04.08 - v. 0.8 - now calling git-pull.sh instead of duplicating its functionality here
 # 2021.04.08 - v. 0.8 - now calling git-pull.sh instead of duplicating its functionality here
@@ -21,6 +21,8 @@ github_project_name=`pwd`
 github_project_name=`basename $github_project_name`
 
 echo ; echo "github_project_name = $github_project_name"; echo
+
+echo echo ; cat  $0|grep -e '2022'|head -n 1 | awk '{print "script version: " $5 " (dated "$2")"}';echo ;echo
 
 git remote set-url origin git+ssh://git@github.com/pmatuszy/${github_project_name}.git
 
