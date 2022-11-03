@@ -6,3 +6,4 @@ update-restic.sh                                https://healthchecks.matuszyk.co
 update-rclone.sh                                https://healthchecks.matuszyk.com:8000/ping/a98be12e-0ad1-4585-9234-92aa933653e2
 healthchecks-swap-usage.sh                      https://healthchecks.matuszyk.com:8000/ping/a273082e-1b31-4706-9b01-0b415ac6abb8
 healthchecks-geoipupdate.sh			https://healthchecks.matuszyk.com:8000/ping/080d6901-3a23-4ff6-b174-66873bb80b2d
+sprawdz-czy-reboot-required.sh			https://healthchecks.matuszyk.com:8000/ping/0b53c02d-f03e-4d01-9e77-ab46aefeeb06
