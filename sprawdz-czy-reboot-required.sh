@@ -18,5 +18,5 @@ exit
 #####
 # new crontab entry
 
-*/3 * * * * /root/bin/sprawdz-czy-reboot-required.sh
+1 * * * * sleep $((RANDOM \% 50)) && /root/bin/sprawdz-czy-reboot-required.sh
 
