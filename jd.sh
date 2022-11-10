@@ -47,7 +47,7 @@ if [[ `cat /etc/os-release /etc/redhat-release 2>/dev/null |egrep -qi "ubuntu|Ra
   done
 
   echo
-  fdisk -l|grep 'Disk /dev'|egrep -v 'mapper|/md|/ram|mmcb|/dev/loop'|sort | wc -l
+  echo "# of disks in the system: "$(fdisk -l|grep 'Disk /dev'|egrep -v 'mapper|/md|/ram|mmcb|/dev/loop'|sort | wc -l)
 fi
 
 echo

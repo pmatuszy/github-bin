@@ -1,4 +1,5 @@
 #!/bin/bash
+# 2022.11.10 - v. 0.6 - added support for NVME disks
 # 2022.10.27 - v. 0.5 - added support for SSD disks
 # 2022.10.27 - v. 0.4 - added support for conveyance tests (foreground tests instead of ones run in the background)
 # 2022.10.27 - v. 0.3 - printing correct values when power on hours > 65535
@@ -59,11 +60,24 @@ let last_extended_offline_ago=power_on_hours-last_extended_offline_test
 let last_conveyance_offline_ago=power_on_hours-last_conveyance_offline_test
 echo
 
-$SMARTCTL_BIN $DEVICE_TYPE $VENDOR_ATTRIBUTE $SUBCOMMAND $1 |sed 's|\(.*failure.*\)|\1                             < ----- ! ! ! ! ! ! ! FAILURE ! ! ! ! ! ! !|g'
+export czy_nvme_disk=$(nvme list 2>/dev/null| grep $1 |wc -l)
+
+if (( $czy_nvme_disk == 1 ));then
+  nvme self-test-log $1
+else
+  $SMARTCTL_BIN $DEVICE_TYPE $VENDOR_ATTRIBUTE $SUBCOMMAND $1 2>/dev/null |sed 's|\(.*failure.*\)|\1                             < ----- ! ! ! ! ! ! ! FAILURE ! ! ! ! ! ! !|g'
+fi
 
 echo
 
-if (( $($SMARTCTL_BIN $DEVICE_TYPE $VENDOR_ATTRIBUTE --info $1|grep -i SSD | wc -l) > 0 ));then
+# in case of some SSD there is Power on Hours in form of 'Power On Hours:' or 'Power_On_Hours'
+if (( $($SMARTCTL_BIN $DEVICE_TYPE -x $1 2>/dev/null | egrep -i 'Power.On.Hours' | wc -l) > 0 ));then
+  export power_on_hours=$($SMARTCTL_BIN $DEVICE_TYPE -x $1| egrep -i 'Power.On.Hours' | sed 's|.* ||g'|tr -d ',' | sed 's|Hours||g')
+fi
+
+echo power_on_hours = $power_on_hours
+
+if (( $power_on_hours < 1 )) && (( $($SMARTCTL_BIN $DEVICE_TYPE $VENDOR_ATTRIBUTE --info $1|grep -i SSD | wc -l) > 0 ));then
   echo -e "Looks like SSD drive and this one has no POWER ON HOURS S.M.A.R.T. attribute available." |boxes -s 95x5 -a c ; echo 
 else
   if (( ${power_on_hours} > 65535 )) ; then
