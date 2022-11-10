@@ -26,7 +26,7 @@ hardware_type=""
 if [[ $(uname --machine) == "x86_64" ]] ; then
    hardware_type="Intel"
 fi
-if [[ $(uname --machine) == "aarch64" || $(uname --machine) == "armv7l" ]] ; then
+if [[ $(uname --machine) == "aarch64" || $(uname --machine) == "armv7l" || $(uname --machine)  == "armv6l" ]] ; then
    hardware_type="PI"
 fi
 
