@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2022.11.14 - v. 0.5 - dodalem pbzip2 do monitorowanych komend
 # 2022.09.05 - v. 0.4 - dodalem mc do monitorowanych komend
 # 2022.06.08 - v. 0.3 - dodalem par2 do monitorowanych komend
 # 2021.11.04 - v. 0.2 - zmiana watch na "progress -M"
