@@ -6,4 +6,4 @@
 # 2021.11.04 - v. 0.2 - zmiana watch na "progress -M"
 # 2021.09.19 - v. 0.1 - inicjalna wersja skryptu
 
-progress --monitor-continuously --additional-command par2 --additional-command restic --additional-command mc --additional-command rclone --wait --wait-delay 0.5
+progress --monitor-continuously --additional-command pbzip2 --additional-command par2 --additional-command restic --additional-command mc --additional-command rclone --wait --wait-delay 0.5
