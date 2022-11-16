@@ -1,4 +1,5 @@
 #!/bin/bash
+# 2022.11.16 - v. 0.7 - bugfix with power_on_hours 
 # 2022.11.10 - v. 0.6 - added support for NVME disks
 # 2022.10.27 - v. 0.5 - added support for SSD disks
 # 2022.10.27 - v. 0.4 - added support for conveyance tests (foreground tests instead of ones run in the background)
@@ -72,7 +73,7 @@ echo
 
 # in case of some SSD there is Power on Hours in form of 'Power On Hours:' or 'Power_On_Hours'
 if (( $($SMARTCTL_BIN $DEVICE_TYPE -x $1 2>/dev/null | egrep -i 'Power.On.Hours' | wc -l) > 0 ));then
-  export power_on_hours=$($SMARTCTL_BIN $DEVICE_TYPE -x $1| egrep -i 'Power.On.Hours' | sed 's|.* ||g'|tr -d ',' | sed 's|Hours||g')
+  export power_on_hours=$($SMARTCTL_BIN $DEVICE_TYPE -x $1| egrep -i 'Power.On.Hours' | sed 's|.* ||g'|tr -d ',' | sed 's|Hours||g' | sed 's|[hms].*||g')
 fi
 
 echo power_on_hours = $power_on_hours
