@@ -1,4 +1,5 @@
 #!/bin/bash
+# 2022.11.20 - v  0.3 - added mounting dyskD
 # 2022.10.11 - v  0.2 - added healthcheck support 
 # 2022.07.30 - v. 0.1 - initial release (date unknown)
 
@@ -49,8 +50,16 @@ echo -n "$PASSWD" | cryptsetup luksOpen /dev/vg_crypto_buffalo1/lv_do_luksa_buff
 zrob_fsck /dev/vg_crypto_buffalo1/lv_do_luksa_buffalo1
 mount -o noatime /dev/mapper/luks-on-lv-buffalo1 /mnt/luks-buffalo1
 
-df -h /encrypted
+
 echo
-df -h /mnt/luks-buffalo1
+echo '########## /dev/vg_crypto_20221114_DyskD/lv_20221114_DyskD ==> /mnt/luks-dyskD'
+echo
+echo -n "$PASSWD" | cryptsetup luksOpen /dev/vg_crypto_20221114_DyskD/lv_20221114_DyskD luks-on-lv_20221114_DyskD -d -
 
+zrob_fsck /dev/vg_crypto_20221114_DyskD/lv_20221114_DyskD
+mount -o noatime,data=writeback,barrier=0,nobh,errors=remount-ro /dev/mapper/luks-on-lv_20221114_DyskD /mnt/luks-dyskD
 
+echo
+df -h /encrypted /mnt/luks-buffalo1 /mnt/luks-dyskD
+
+/root/bin/sprawdz-czy-encrypted-jest-zamontowany.sh
