@@ -1,9 +1,13 @@
 #!/bin/bash
+# 2022.11.20 - v  0.4 - added vgchange -a y
+# 2022.11.20 - v  0.3 - added mounting dyskD
 # 2022.11.20 - v  0.3 - added mounting dyskD
 # 2022.10.11 - v  0.2 - added healthcheck support 
 # 2022.07.30 - v. 0.1 - initial release (date unknown)
 
 . /root/bin/_script_header.sh
+
+cat  $0|grep -e '2022'|head -n 1 | awk '{print "script version: " $5 " (dated "$2")"}' ; echo ; echo
 
 if [ -f "$HEALTHCHECKS_FILE" ];then
   HEALTHCHECK_URL=$(cat "$HEALTHCHECKS_FILE" |grep "^`basename $0`"|awk '{print $2}')
@@ -32,6 +36,8 @@ fsck $1
 }
 ################################################################################
 
+vgchange -a y
+sleep 1
 
 nazwa_pliku=/encrypted.luks2
 
