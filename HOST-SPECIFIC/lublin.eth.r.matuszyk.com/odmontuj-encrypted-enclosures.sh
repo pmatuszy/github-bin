@@ -45,16 +45,5 @@ echo "<== ########## odmontuj_fs_MASTER($1)"
 }
 ################################################################################
 
-odmontuj_fs_MASTER /encrypted
 odmontuj_fs_MASTER /mnt/luks-dyskD
-
-exit
-
-# zamontuj_fs_MASTER /encrypted.luks2                                /encrypted          noatime
-# zamontuj_fs_MASTER /dev/vg_crypto_buffalo1/lv_do_luksa_buffalo1    /mnt/luks-buffalo1  noatime
-zamontuj_fs_MASTER /dev/vg_crypto_20221114_DyskD/lv_20221114_DyskD /mnt/luks-dyskD     noatime,data=writeback,barrier=0,nobh,errors=remount-ro
-
-echo
-df -h /encrypted /mnt/luks-buffalo1 /mnt/luks-dyskD
-
-/root/bin/sprawdz-czy-encrypted-jest-zamontowany.sh
+odmontuj_fs_MASTER /mnt/luks-buffalo1
