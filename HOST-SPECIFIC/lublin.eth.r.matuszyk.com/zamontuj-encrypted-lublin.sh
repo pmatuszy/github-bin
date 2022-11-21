@@ -59,7 +59,7 @@ echo -n "$PASSWD" | cryptsetup luksOpen "${1}" encrypted_luks_device_"$(basename
 if (( $? != 0 ));then
   echo  ; echo "NIE MOGE ZAMONTOWAC $1 pod $2 !!!!!!!"; echo "wychodze ..."
   echo "<== ########## zamontuj_fs_MASTER($1, $2, $3)"
-  exit 1
+  return
 fi
 
 zrob_fsck /dev/mapper/encrypted_luks_device_"$(basename ${1})"
