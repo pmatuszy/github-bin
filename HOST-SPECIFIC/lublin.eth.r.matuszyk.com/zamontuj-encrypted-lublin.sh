@@ -1,4 +1,5 @@
 #!/bin/bash
+# 2022.11.21 - v  0.5 - a lot of changes - too many to describe here :-)
 # 2022.11.20 - v  0.4 - added vgchange -a y
 # 2022.11.20 - v  0.3 - added mounting dyskD
 # 2022.11.20 - v  0.3 - added mounting dyskD
@@ -20,50 +21,60 @@ echo
 ################################################################################
 zrob_fsck() {
 ################################################################################
+echo ; echo "==> ########## zrob_fsck($1)"
 
-echo "################################################################################"
-echo
 echo czas na fsck $1 ...
-echo
-echo "################################################################################"
 
-fsck -C -M -R -T -V $1
+if [ $(lsblk -no FSTYPE /dev/mapper/encrypted_luks_device_encrypted.luks2) == 'ext4' ];then
+  fsck.ext4 -f $1
+else
+  fsck      -C -M -R -T $1
+fi
+echo "kod powrotu z fsck to $?"
 
 echo
 echo ... and once again fsck
 echo
-fsck $1
+
+if [ $(lsblk -no FSTYPE /dev/mapper/encrypted_luks_device_encrypted.luks2) == 'ext4' ];then
+  fsck.ext4 -f $1
+else
+  fsck      -C -M -R -T $1
+fi
+echo "kod powrotu z fsck to $?"
+echo "<== ########## zrob_fsck($1)"
+}
+################################################################################
+zamontuj_fs_MASTER() {
+echo ; echo "==> ########## zamontuj_fs_MASTER($1, $2, $3)"
+
+if [ $(mountpoint -q $2 ; echo $?) -eq 0 ] ; then
+   echo $1 jest juz zamontowany ... wychodze
+   echo "<== ########## zamontuj_fs_MASTER($1, $2, $3)"
+   return 
+fi
+
+echo -n "$PASSWD" | cryptsetup luksOpen "${1}" encrypted_luks_device_"$(basename ${1})" -d -
+
+if (( $? != 0 ));then
+  echo  ; echo "NIE MOGE ZAMONTOWAC $1 pod $2 !!!!!!!"; echo "wychodze ..."
+  echo "<== ########## zamontuj_fs_MASTER($1, $2, $3)"
+  exit 1
+fi
+
+zrob_fsck /dev/mapper/encrypted_luks_device_"$(basename ${1})"
+mount -o $3 /dev/mapper/encrypted_luks_device_"$(basename ${1})" "${2}"
+
+echo "<== ########## zamontuj_fs_MASTER($1, $2, $3)"
 }
 ################################################################################
 
 vgchange -a y
 sleep 1
 
-nazwa_pliku=/encrypted.luks2
-
-echo
-echo '########## /encrypted.luks2 ==> /encrypted'
-echo
-echo -n "$PASSWD" | cryptsetup luksOpen ${nazwa_pliku} encrypted_luks_file_in_root -d -
-zrob_fsck /dev/mapper/encrypted_luks_file_in_root
-mount -o noatime /dev/mapper/encrypted_luks_file_in_root /encrypted
-
-echo
-echo '########## /dev/vg_crypto_buffalo1/lv_do_luksa_buffalo1 ==> /mnt/luks-buffalo1'
-echo
-echo -n "$PASSWD" | cryptsetup luksOpen /dev/vg_crypto_buffalo1/lv_do_luksa_buffalo1 luks-on-lv-buffalo1 -d -
-
-zrob_fsck /dev/vg_crypto_buffalo1/lv_do_luksa_buffalo1
-mount -o noatime /dev/mapper/luks-on-lv-buffalo1 /mnt/luks-buffalo1
-
-
-echo
-echo '########## /dev/vg_crypto_20221114_DyskD/lv_20221114_DyskD ==> /mnt/luks-dyskD'
-echo
-echo -n "$PASSWD" | cryptsetup luksOpen /dev/vg_crypto_20221114_DyskD/lv_20221114_DyskD luks-on-lv_20221114_DyskD -d -
-
-zrob_fsck /dev/vg_crypto_20221114_DyskD/lv_20221114_DyskD
-mount -o noatime,data=writeback,barrier=0,nobh,errors=remount-ro /dev/mapper/luks-on-lv_20221114_DyskD /mnt/luks-dyskD
+zamontuj_fs_MASTER /encrypted.luks2                                /encrypted          noatime
+zamontuj_fs_MASTER /dev/vg_crypto_buffalo1/lv_do_luksa_buffalo1    /mnt/luks-buffalo1  noatime
+zamontuj_fs_MASTER /dev/vg_crypto_20221114_DyskD/lv_20221114_DyskD /mnt/luks-dyskD     noatime,data=writeback,barrier=0,nobh,errors=remount-ro
 
 echo
 df -h /encrypted /mnt/luks-buffalo1 /mnt/luks-dyskD
