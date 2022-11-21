@@ -30,18 +30,24 @@ if [ $(lsblk -no FSTYPE /dev/mapper/encrypted_luks_device_encrypted.luks2) == 'e
 else
   fsck      -C -M -R -T $1
 fi
-echo "kod powrotu z fsck to $?"
 
-echo
-echo ... and once again fsck
-echo
+kod_powrotu=$?
+echo "kod powrotu z fsck to $kod_powrotu"
 
-if [ $(lsblk -no FSTYPE /dev/mapper/encrypted_luks_device_encrypted.luks2) == 'ext4' ];then
-  fsck.ext4 -f $1
+if (( $? != 0 ));then
+  echo
+  echo ... and once again fsck
+  echo
+
+  if [ $(lsblk -no FSTYPE /dev/mapper/encrypted_luks_device_encrypted.luks2) == 'ext4' ];then
+    fsck.ext4 -f $1
+  else
+    fsck      -C -M -R -T $1
+  fi
+  echo "kod powrotu z fsck to $?"
 else
-  fsck      -C -M -R -T $1
+  echo "fsck zrobiony"
 fi
-echo "kod powrotu z fsck to $?"
 echo "<== ########## zrob_fsck($1)"
 }
 ################################################################################
