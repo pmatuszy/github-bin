@@ -1,4 +1,5 @@
 #!/bin/bash
+# 2022.11.24 - v  0.6 - added restart of postgress and keepalived
 # 2022.11.21 - v  0.5 - a lot of changes - too many to describe here :-)
 # 2022.11.20 - v  0.4 - added vgchange -a y
 # 2022.11.20 - v  0.3 - added mounting dyskD
@@ -79,6 +80,10 @@ vgchange -a y
 sleep 1
 
 zamontuj_fs_MASTER /encrypted.luks2                                /encrypted          noatime
+
+systemctl restart keepalived
+systemctl restart postgresql
+
 zamontuj_fs_MASTER /dev/vg_crypto_buffalo1/lv_do_luksa_buffalo1    /mnt/luks-buffalo1  noatime
 zamontuj_fs_MASTER /dev/vg_crypto_20221114_DyskD/lv_20221114_DyskD /mnt/luks-dyskD     noatime,data=writeback,barrier=0,nobh,errors=remount-ro
 
