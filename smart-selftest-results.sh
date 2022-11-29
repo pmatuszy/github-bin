@@ -1,4 +1,5 @@
 #!/bin/bash
+# 2022.11.29 - v. 0.8 - bugfix with power_on_hours (if not available I set it to -1)
 # 2022.11.16 - v. 0.7 - bugfix with power_on_hours 
 # 2022.11.10 - v. 0.6 - added support for NVME disks
 # 2022.10.27 - v. 0.5 - added support for SSD disks
@@ -76,9 +77,14 @@ if (( $($SMARTCTL_BIN $DEVICE_TYPE -x $1 2>/dev/null | egrep -i 'Power.On.Hours'
   export power_on_hours=$($SMARTCTL_BIN $DEVICE_TYPE -x $1| egrep -i 'Power.On.Hours' | sed 's|.* ||g'|tr -d ',' | sed 's|Hours||g' | sed 's|[hms].*||g')
 fi
 
-echo power_on_hours = $power_on_hours
+# echo power_on_hours = $power_on_hours
 
-if (( $power_on_hours < 1 )) && (( $($SMARTCTL_BIN $DEVICE_TYPE $VENDOR_ATTRIBUTE --info $1|grep -i SSD | wc -l) > 0 ));then
+if [ -z ${power_on_hours:-} ];then   # sometimes there is on power on hours in SMART attribues so I set it to -1
+  power_on_hours=-1
+fi
+
+# if (( $power_on_hours < 1 )) && (( $($SMARTCTL_BIN $DEVICE_TYPE $VENDOR_ATTRIBUTE --info $1|grep -i SSD | wc -l) > 0 ));then
+if (( $($SMARTCTL_BIN $DEVICE_TYPE $VENDOR_ATTRIBUTE --info $1|grep -i SSD | wc -l) > 0 )) && (( ${power_on_hours} < 1 )) ;then
   echo -e "Looks like SSD drive and this one has no POWER ON HOURS S.M.A.R.T. attribute available." |boxes -s 95x5 -a c ; echo 
 else
   if (( ${power_on_hours} > 65535 )) ; then
