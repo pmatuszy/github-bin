@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2022.12.01 - v. 0.1 - zmieniona zrob_fsck na nowsza - i wymuszenie fsck -y
 # 2022.05.23 - v. 0.6 - dodane wywolanie healthchecka na koncu
 # 2021.09.19 - v. 0.5 - zmiana w fsck, dodana funkcja zrob_fsck
 # 2021.08.29 - v. 0.4 - exportfs po zamontowaniu obu duzych volumentow, dodano montowanie dla minidlna i restart tego serwisu
@@ -22,19 +23,36 @@ echo
 zrob_fsck() {
 ################################################################################
 
-echo "################################################################################"
-echo
+echo ; echo "==> ########## zrob_fsck($1)"
+
 echo czas na fsck $1 ...
-echo
-echo "################################################################################"
 
-fsck -C -M -R -T -V $1
+if [ $(lsblk -no FSTYPE /dev/mapper/encrypted_luks_device_encrypted.luks2) == 'ext4' ];then
+  fsck.ext4 -f $1
+else
+  fsck      -C -M -R -T $1
+fi
 
-echo
-echo ... and once again fsck
-echo
-fsck $1
+kod_powrotu=$?
+echo "kod powrotu z fsck to $kod_powrotu"
+
+if (( $? != 0 ));then
+  echo
+  echo ... and once again fsck
+  echo
+
+  if [ $(lsblk -no FSTYPE /dev/mapper/encrypted_luks_device_encrypted.luks2) == 'ext4' ];then
+    fsck.ext4 -f $1
+  else
+    fsck      -C -M -R -T $1
+  fi
+  echo "kod powrotu z fsck to $?"
+else
+  echo "fsck zrobiony"
+fi
+echo "<== ########## zrob_fsck($1)"
 }
+
 ################################################################################
 
 nazwa_pliku=/encrypted.luks2
