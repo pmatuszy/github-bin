@@ -16,7 +16,7 @@ fi
 
 echo 
 
-cat  $0|grep -e '2022'|head -n 1 | awk '{print "script version: " $5 " (dated "$2")"}' ; echo 
+cat  $0|grep -e '# *20[123][0-9]'|head -n 1 | awk '{print "script version: " $5 " (dated "$2")"}' ; echo ; echo
 
 if [[ `cat /etc/os-release /etc/redhat-release 2>/dev/null |grep -qi centos ; echo $?` == 0 ]] ; then
   echo CENTOS | boxes -s 40x5 -a c ; echo 

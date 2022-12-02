@@ -14,7 +14,7 @@ set -o pipefail
 
 . /root/bin/_script_header.sh
 
-echo ; cat  $0|grep -e '2022'|head -n 1 | awk '{print "script version: " $5 " (dated "$2")"}'
+echo ; cat  $0|grep -e '# *20[123][0-9]'|head -n 1 | awk '{print "script version: " $5 " (dated "$2")"}' ; 
 
 if [ $# -eq 0 ]
   then

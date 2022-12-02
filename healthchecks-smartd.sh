@@ -9,7 +9,7 @@ fi
 
 
 m=$( echo ; echo "aktualna data: `date '+%Y.%m.%d %H:%M'`" ; echo ; echo ;
-     cat  $0|grep -e '2022'|head -n 1 | awk '{print "script version: " $5 " (dated "$2")"}' ; echo ; echo
+     cat  $0|grep -e '# *20[123][0-9]'|head -n 1 | awk '{print "script version: " $5 " (dated "$2")"}' ; echo ; echo
      systemctl restart smartd --no-pager  ; sleep 5 ; echo ; echo "STATUS PO RESTARCIE SERWISU: " ; echo
      systemctl status smartd --no-pager ; echo )
 
