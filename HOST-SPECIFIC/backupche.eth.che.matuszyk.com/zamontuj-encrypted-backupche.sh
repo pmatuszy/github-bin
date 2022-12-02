@@ -79,29 +79,29 @@ echo "<== ########## zamontuj_fs_MASTER($1, $2, $3)"
 
 ################################################################################
 
-nazwa_pliku=/encrypted.luks2
+#nazwa_pliku=/encrypted.luks2
 
-echo -n "$PASSWD" | cryptsetup luksOpen ${nazwa_pliku} encrypted_luks_file_in_root -d -
-zrob_fsck /dev/mapper/encrypted_luks_file_in_root
+#echo -n "$PASSWD" | cryptsetup luksOpen ${nazwa_pliku} encrypted_luks_file_in_root -d -
+#zrob_fsck /dev/mapper/encrypted_luks_file_in_root
 
-echo
-echo '########## /dev/vg_crypto/lv_do_luksa_16tb ==> /mnt/luks-raid1-16tb'
-echo
-echo -n "$PASSWD" | cryptsetup luksOpen /dev/vg_crypto/lv_do_luksa_16tb luks16tb-on-lv -d -
+# echo
+# echo '########## /dev/vg_crypto/lv_do_luksa_16tb ==> /mnt/luks-raid1-16tb'
+# echo
+# echo -n "$PASSWD" | cryptsetup luksOpen /dev/vg_crypto/lv_do_luksa_16tb luks16tb-on-lv -d -
 
-zrob_fsck /dev/mapper/luks16tb-on-lv
+# zrob_fsck /dev/mapper/luks16tb-on-lv
 
-echo
-echo '########## /dev/vg_crypto/lv_do_luksa_16tb_another ==> /mnt/luks-raid1-16tb_another'
-echo
-echo -n "$PASSWD" | cryptsetup luksOpen /dev/vg_crypto/lv_do_luksa_16tb_another luks16tb-on-lv_another -d -
+# echo
+# echo '########## /dev/vg_crypto/lv_do_luksa_16tb_another ==> /mnt/luks-raid1-16tb_another'
+# echo
+# echo -n "$PASSWD" | cryptsetup luksOpen /dev/vg_crypto/lv_do_luksa_16tb_another luks16tb-on-lv_another -d -
 
-zrob_fsck /dev/mapper/luks16tb-on-lv_another
+# zrob_fsck /dev/mapper/luks16tb-on-lv_another
 
 
-zamontuj_fs_MASTER /encrypted.luks2                     /encrypted 			noatime
-zamontuj_fs_MASTER /dev/vg_crypto/lv_do_luksa_16tb      /mnt/luks-raid1-16tb		noatime
-zamontuj_fs_MASTER /dev/mapper/luks16tb-on-lv_another	/mnt/luks-raid1-16tb_another	noatime
+zamontuj_fs_MASTER /encrypted.luks2                     	/encrypted 			noatime
+zamontuj_fs_MASTER /dev/vg_crypto/lv_do_luksa_16tb      	/mnt/luks-raid1-16tb		noatime
+zamontuj_fs_MASTER /dev/vg_crypto/lv_do_luksa_16tb_another 	/mnt/luks-raid1-16tb_another 	noatime
 
 
 # mount -o noatime /dev/mapper/encrypted_luks_file_in_root /encrypted

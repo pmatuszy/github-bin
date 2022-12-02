@@ -1,4 +1,5 @@
 #!/bin/bash
+# 2022.12.02 - v  0.7 - bugfix with fsck return code
 # 2022.11.24 - v  0.6 - added restart of postgress and keepalived
 # 2022.11.21 - v  0.5 - a lot of changes - too many to describe here :-)
 # 2022.11.20 - v  0.4 - added vgchange -a y
@@ -33,9 +34,9 @@ else
 fi
 
 kod_powrotu=$?
-echo "kod powrotu z fsck to $kod_powrotu"
+echo "kod powrotu z fsck to $kod_powrotu (przebieg 1-szy)"
 
-if (( $? != 0 ));then
+if (( $kod_powrotu != 0 ));then
   echo
   echo ... and once again fsck
   echo
@@ -45,7 +46,7 @@ if (( $? != 0 ));then
   else
     fsck      -C -M -R -T $1
   fi
-  echo "kod powrotu z fsck to $?"
+  echo "kod powrotu z fsck to $? (przebieg 2-gi)"
 else
   echo "fsck zrobiony"
 fi
