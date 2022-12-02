@@ -22,8 +22,7 @@ echo
 ################################################################################
 zrob_fsck() {
 ################################################################################
-
-echo ; echo "==> ########## zrob_fsck($1)"
+echo ; echo "==> ###### zrob_fsck($1)"
 
 echo czas na fsck $1 ...
 
@@ -50,11 +49,13 @@ if (( $? != 0 ));then
 else
   echo "fsck zrobiony"
 fi
-echo "<== ########## zrob_fsck($1)"
+echo "<== ###### zrob_fsck($1)"
 }
 ################################################################################
 zamontuj_fs_MASTER() {
 ################################################################################
+echo ; echo "==> ########## zamontuj_fs_MASTER($1, $2, $3)"
+echo ; echo "==> ########## zamontuj_fs_MASTER($1, $2, $3)"
 echo ; echo "==> ########## zamontuj_fs_MASTER($1, $2, $3)"
 
 if [ $(mountpoint -q $2 ; echo $?) -eq 0 ] ; then
@@ -74,6 +75,7 @@ fi
 zrob_fsck /dev/mapper/encrypted_luks_device_"$(basename ${1})"
 mount -o $3 /dev/mapper/encrypted_luks_device_"$(basename ${1})" "${2}"
 
+echo "<== ########## zamontuj_fs_MASTER($1, $2, $3)"
 echo "<== ########## zamontuj_fs_MASTER($1, $2, $3)"
 }
 
