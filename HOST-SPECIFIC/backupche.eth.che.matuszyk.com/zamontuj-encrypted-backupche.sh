@@ -15,6 +15,8 @@
 
 # zfs mount zfs_encrypted_file/encrypted
 
+echo ; cat  $0|grep -e '2022'|head -n 1 | awk '{print "script version: " $5 " (dated "$2")"}'; echo
+
 echo
 read -r -p "Wpisz haslo: " -s PASSWD
 echo
@@ -55,8 +57,8 @@ echo "<== ###### zrob_fsck($1)"
 zamontuj_fs_MASTER() {
 ################################################################################
 echo ; echo "==> ########## zamontuj_fs_MASTER($1, $2, $3)"
-echo ; echo "==> ########## zamontuj_fs_MASTER($1, $2, $3)"
-echo ; echo "==> ########## zamontuj_fs_MASTER($1, $2, $3)"
+       echo "==> ########## zamontuj_fs_MASTER($1, $2, $3)"
+       echo "==> ########## zamontuj_fs_MASTER($1, $2, $3)"
 
 if [ $(mountpoint -q $2 ; echo $?) -eq 0 ] ; then
    echo $1 jest juz zamontowany ... wychodze
@@ -117,7 +119,7 @@ mount -o bind,noatime /mnt/luks-raid1-16tb/replication1/rclone_user/_rclone/ /rc
 mount -o bind,noatime /mnt/luks-raid1-16tb_another/backup2/rclone_user/_restic /rclone-jail/storage-master/backup2
 mount -o bind,noatime /mnt/luks-raid1-16tb_another/replication2/rclone_user/_rclone/ /rclone-jail/storage-master/replication2
 
-df -h /encrypted /mnt/luks-raid1 /mnt/luks-raid1-16tb 
+df -h /encrypted /mnt/luks-raid1-16tb /mnt/luks-raid1-16tb_another
 
 nohup rclone --config /root/rclone.conf mount --daemon --allow-other --read-only local-crypt-local-replication1-rclone:/server/MASTER_SOURCE-BBC /mnt/minidlna/MASTER_SOURCE-BBC &
 sleep 3
