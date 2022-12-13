@@ -1,5 +1,5 @@
 healthchecks-ping.sh				https://healthchecks.matuszyk.com:8000/ping/71316826-50f3-4ba3-97e8-06e65a0e7359
-ssd-trim.sh  					
+ssd-trim.sh  					https://healthchecks.matuszyk.com:8000/ping/ef944e6f-c65b-42b3-a9dc-22d1424cf2db
 sprawdz-czy-dziala-strona-yt2podcast.com.sh     
 sprawdz-ile-apt-list--upgradable.sh		https://healthchecks.matuszyk.com:8000/ping/6a544cf4-f04e-4bb5-9019-82489dcd4b39
 restic_backup_SS				
