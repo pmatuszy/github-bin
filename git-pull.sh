@@ -36,8 +36,13 @@ if [ "${p}" == 'y' -o  "${p}" == 'y' ]; then
   rm -rf $HOME/github-bin/.git
   git clone git+ssh://git@github.com/pmatuszy/github-bin.git
   cp -v github-bin/* $HOME/bin
-  cp -v github-bin/HOST-SPECIFIC/`hostname`*/* $HOME/bin
+
+  cp -v github-bin/HOST-SPECIFIC/`hostname`/* $HOME/bin
+  cp -v github-bin/HOST-SPECIFIC/`hostname`.*/* $HOME/bin
+ 
   cp -v github-bin/HOST-SPECIFIC/`hostname`*/.[a-zA-Z0-9]* $HOME   2>/dev/null
+  cp -v github-bin/HOST-SPECIFIC/`hostname`.*/.[a-zA-Z0-9]* $HOME   2>/dev/null
+
   rm $HOME/bin/git-pull.sh $HOME/bin/git-push.sh
   cd github-bin
   git status
