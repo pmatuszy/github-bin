@@ -19,3 +19,4 @@ rclone-sync-na_DVD-crypt-sftp-SS.sh		https://healthchecks.matuszyk.com:8000/ping
 rclone-sync-SkyPlus-CHE.sh			https://healthchecks.matuszyk.com:8000/ping/0cbf7fec-f055-4457-a012-bffa76b1ad86
 rclone-sync-BBC-CHE.sh				https://healthchecks.matuszyk.com:8000/ping/ab82df65-c50a-4010-b77e-9c17a71f3222
 healthchecks-geoipupdate.sh			https://healthchecks.matuszyk.com:8000/ping/b87a1538-d26a-490c-9882-9f1a710fb486
+sprawdz-czy-reboot-required.sh			https://healthchecks.matuszyk.com:8000/ping/fb874678-58c7-4f11-9c49-fc9fae63f8ff
