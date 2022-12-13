@@ -6,5 +6,5 @@ restic_backup_SS
 prawdz-czy-encrypted-jest-zamontowany.sh        
 update-restic.sh                                https://healthchecks.matuszyk.com:8000/ping/ebfc7ae9-281c-4e52-9bfc-e189684ed72c
 update-rclone.sh                                https://healthchecks.matuszyk.com:8000/ping/d8e9f01d-11bd-497c-b12b-80f2bde67120
-healthchecks-swap-usage.sh                      
+healthchecks-swap-usage.sh                      https://healthchecks.matuszyk.com:8000/ping/50981226-962b-4ef7-ad37-4239b30bfb85
 healthchecks-smartd.sh				
