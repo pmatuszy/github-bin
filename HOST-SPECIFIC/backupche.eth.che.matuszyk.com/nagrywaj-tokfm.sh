@@ -1,4 +1,5 @@
 #!/bin/bash
+# 2022.12.14 - v. 0.7 - dodalem zmiena opoznienie_miedzy_wywolaniami zamiast hardcoded 10s
 # 2022.05.16 - v. 0.6 - chown redirection to dev null
 # 2022.03.11 - v. 0.7 - bug fix DOKAD ==> DOKAD_PREFIX
 # 2022.02.27 - v. 0.6 - max czas dzialania to 20s po najblizszej polnocy
@@ -13,6 +14,7 @@ export SKAD="http://poznan5-4.radio.pionier.net.pl:8000/tuba10-1.mp3"
 export DOKAD_PREFIX="/worek-samba/nagrania/TokFM-nagrania/tokFM"
 
 wlasciciel_pliku="che:che"
+opoznienie_miedzy_wywolaniami=20s
 
 czas_startu_skryptu=`date '+%s'`
 
@@ -29,7 +31,7 @@ while (( $(date +%s) - $max_timestamp_dzialania_skryptu <= 0 )) ; do      # spr 
   timeout --preserve-status --signal=HUP --kill-after=$((secs_nagrywania+120)) $((secs_nagrywania+60)) ffmpeg -hide_banner -loglevel quiet -t "${secs_nagrywania}" -i "$SKAD" "$DOKAD"
 
   chown "${wlasciciel_pliku}" "${DOKAD}" 2>/dev/null
-  sleep 10 # opozniamy bo jak sa problemy z siecia, to by nie startowac od razu z nastepna proba...
+  sleep $opoznienie_miedzy_wywolaniami # opozniamy bo jak sa problemy z siecia, to by nie startowac od razu z nastepna proba...
   secs_to_midnight=$((($(date -d "tomorrow 00:00" +%s)-$(date +%s))))
 
 done
