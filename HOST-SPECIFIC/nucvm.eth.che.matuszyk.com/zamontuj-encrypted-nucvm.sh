@@ -74,9 +74,6 @@ sleep 1
 
 zamontuj_fs_MASTER /encrypted.luks2                                /encrypted          noatime
 
-systemctl restart keepalived
-systemctl restart postgresql
-
 zamontuj_fs_MASTER /dev/vg_crypto_raidsonic/lv_do_luksa_raidsonic  /mnt/luks-raidsonic noatime
 
 # !!! buffalo2 ma SMR dyski, wiec inaczej je montujemy !!!!
