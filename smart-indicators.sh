@@ -18,9 +18,11 @@ echo ; echo ; cat  $0|grep -e '# *20[123][0-9]'|head -n 1 | awk '{print "script 
 
 if [ $# -eq 0 ]
   then
-    echo ; echo ; echo "No arguments supplied, exiting..."
-    echo "$0 disk_name" ; echo ; echo 
-    exit 1
+    echo ; echo ; echo "No arguments supplied, I will run the script against ALL disks found on this systems..."
+    echo "searching for disks..."
+    disks=$(jd.sh |grep Disk |sed 's|:.*||g'|sed 's|Disk ||g')
+else
+  disks=$1
 fi
 
 DEVICE_TYPE=""
@@ -28,26 +30,32 @@ VENDOR_ATTRIBUTE=""
 SUBCOMMAND="-A "
 export SMARTCTL_BIN=$(type -fP smartctl)
 
-$SMARTCTL_BIN  --info $1 2>&1 > /dev/null
+for p in $disks ; do
+  echo;echo
+  echo $p | boxes -s 40x5 -a c ; echo
 
-if (( $? == 1 ));then 
-  DEVICE_TYPE='-d sat'
-fi
 
-$SMARTCTL_BIN $DEVICE_TYPE --info $1 2>&1 > /dev/null
-if (( $? == 1 ));then 
-  echo  ; echo "I don't know which device type (-d), so I am quitting" ; echo ; echo exit 1 ; echo 
-  exit 1
-fi
+  $SMARTCTL_BIN  --info $p 2>&1 > /dev/null
+  
+  if (( $? == 1 ));then 
+    DEVICE_TYPE='-d sat'
+  fi
 
-$SMARTCTL_BIN $DEVICE_TYPE --info $1 2>&1 > /dev/null
-if (( $? == 2 ));then
-  echo  ; echo "No such a device, I am exiting " ; echo ; echo exit 2 ; echo
-  exit 2
-fi
+  $SMARTCTL_BIN $DEVICE_TYPE --info $p 2>&1 > /dev/null
+  if (( $? == 1 ));then 
+    echo  ; echo "I don't know which device type (-d), so I am quitting" ; echo ; echo exit 1 ; echo 
+    exit 1
+  fi
 
-czy_seagate=$($SMARTCTL_BIN  $DEVICE_TYPE --info $1|grep -i seagate | wc -l)
-if (( $czy_seagate > 0 ));then
-  VENDOR_ATTRIBUTE="-v 1,raw48:54 -v 7,raw48:54 -v 187,raw48:54  -v 188,raw48:54 -v 195,raw48:54"
-fi 
-$SMARTCTL_BIN $DEVICE_TYPE $VENDOR_ATTRIBUTE $SUBCOMMAND $1
+  $SMARTCTL_BIN $DEVICE_TYPE --info $p 2>&1 > /dev/null
+  if (( $? == 2 ));then
+    echo  ; echo "No such a device, I am exiting " ; echo ; echo exit 2 ; echo
+    exit 2
+  fi
+
+  czy_seagate=$($SMARTCTL_BIN  $DEVICE_TYPE --info $p|grep -i seagate | wc -l)
+  if (( $czy_seagate > 0 ));then
+    VENDOR_ATTRIBUTE="-v 1,raw48:54 -v 7,raw48:54 -v 187,raw48:54  -v 188,raw48:54 -v 195,raw48:54"
+  fi 
+  $SMARTCTL_BIN $DEVICE_TYPE $VENDOR_ATTRIBUTE $SUBCOMMAND $p
+done
