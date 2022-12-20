@@ -35,18 +35,13 @@ kod_powrotu=$?
 
 WHAT_DATABASES_WE_HAVE=$(/usr/bin/mysqlshow -u "${MYSQL_USER}")
 OUTPUT_FILE=$(ls -ltr ${BACKUP_DESTINATION})
-LAST_BACKUP_FILES=$(ls -l $(dirname ${BACKUP_DESTINATION}) | wc -l $LIMIT_NUMBER_OF_LAST_BACKUPS_TO_LIST)
-wiadomosc=$(echo -e "$SCRIPT_VERSION\n\n$WHAT_DATABASES_WE_HAVE\n\n$m\n\n$OUTPUT_FILE\n\nALL BACKUP FILES:\n$LAST_BACKUP_FILES")
-
-echo aaa $HEALTHCHECK_URL $HEALTHCHECKS_FILE $kod_powrotu
-
-echo "$wiadomosc" | wc 
+LAST_BACKUP_FILES=$(ls -l $(dirname ${BACKUP_DESTINATION}) | tail -n $LIMIT_NUMBER_OF_LAST_BACKUPS_TO_LIST)
+wiadomosc=$(echo -e "$SCRIPT_VERSION\n\n$WHAT_DATABASES_WE_HAVE\n\n$m\n\n$OUTPUT_FILE\n\nLAST $LIMIT_NUMBER_OF_LAST_BACKUPS_TO_LIST BACKUP FILES:\n$LAST_BACKUP_FILES")
 
 if (( $kod_powrotu != 0 )); then
   /usr/bin/curl -fsS -m 100 --retry 10 --retry-delay 10 --data-raw "$wiadomosc" -o /dev/null "$HEALTHCHECK_URL"/fail 2>/dev/null
 else
-  echo /usr/bin/curl -fsS -m 100 --retry 10 --retry-delay 10 --data-raw '$wiadomosc' -o /dev/null "$HEALTHCHECK_URL" 2>/dev/null
-       /usr/bin/curl -fsS -m 100 --retry 10 --retry-delay 10 --data-raw "$wiadomosc" -o /dev/null "$HEALTHCHECK_URL" 2>/dev/null
+  /usr/bin/curl -fsS -m 100 --retry 10 --retry-delay 10 --data-raw "$wiadomosc" -o /dev/null "$HEALTHCHECK_URL" 2>/dev/null
 fi
 
 exit
