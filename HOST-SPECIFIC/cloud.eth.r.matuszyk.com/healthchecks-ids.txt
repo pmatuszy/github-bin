@@ -5,3 +5,4 @@ update-restic.sh                                https://healthchecks.matuszyk.co
 update-rclone.sh                                https://healthchecks.matuszyk.com:8000/ping/0180448a-6db5-45be-94b6-06a34196b0c4
 healthchecks-swap-usage.sh                      https://healthchecks.matuszyk.com:8000/ping/3570f9bc-6d2d-42fb-975e-613194e0ec1a
 sprawdz-czy-reboot-required.sh			https://healthchecks.matuszyk.com:8000/ping/cbc4a84b-18bb-4504-a902-f1d6c6d8407b
+backup-mysql.sh					https://healthchecks.matuszyk.com:8000/ping/11d4363a-5e3a-4e6b-9235-68faea7e4081
