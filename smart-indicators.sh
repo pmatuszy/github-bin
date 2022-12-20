@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2022.12.20 - v. 0.2 - now printing info about the disk as well
 # 2022.10.11 - v. 0.1 - initial release
 
 # exit when your script tries to use undeclared variables
@@ -27,13 +28,12 @@ fi
 
 DEVICE_TYPE=""
 VENDOR_ATTRIBUTE=""
-SUBCOMMAND="-A "
+SUBCOMMAND="--info -A "
 export SMARTCTL_BIN=$(type -fP smartctl)
 
 for p in $disks ; do
   echo;echo
   echo $p | boxes -s 40x5 -a c ; echo
-
 
   $SMARTCTL_BIN  --info $p 2>&1 > /dev/null
   
