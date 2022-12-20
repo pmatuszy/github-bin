@@ -17,6 +17,7 @@ if (( $? != 0 )); then      # we set RANDOM_DELAY only when running NOT from ter
 fi
 
 /usr/bin/nice -19 /usr/bin/mysqldump -u${MYSQL_USER} --all-databases | /usr/bin/nice -19 /usr/bin/pbzip2 -9qc -p2 > "${BACKUP_DESTINATION}"
+echo $?
 
 exit
 #####
