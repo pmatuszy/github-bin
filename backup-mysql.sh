@@ -20,7 +20,9 @@ else
 fi
 
 SCRIPT_VERSION=$(echo ; cat $0|grep -e '# *20[123][0-9]'|head -n 1 | awk '{print "script version: " $5 " (dated "$2")"}' ; 
-                 echo " "; echo "aktualna data: `date '+%Y.%m.%d %H:%M'`" ; echo ; echo)
+                 echo " "; echo "aktualna data: `date '+%Y.%m.%d %H:%M'`" ; echo ;
+                 echo "script is run on `hostname`" ; echo
+                 )
 
 /usr/bin/mysqlshow -u "${MYSQL_USER}" > /dev/null 2>&1
 if (( $? != 0 )); then
