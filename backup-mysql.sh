@@ -7,6 +7,7 @@ if [ -f "$HEALTHCHECKS_FILE" ];then
 fi
 
 echo basename $0
+echo $HEALTHCHECKS_FILE
 echo $HEALTHCHECK_URL
 
 export BACKUP_DESTINATION=${BACKUP_DESTINATION:-"/var/www/$(date '+%Y.%m.%d_%H%M%S')_cr_mysqldump-all-databases.sql.pbz2"}
