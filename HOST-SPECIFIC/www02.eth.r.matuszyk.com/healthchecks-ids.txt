@@ -6,3 +6,4 @@ update-rclone.sh                                https://healthchecks.matuszyk.co
 healthchecks-swap-usage.sh                      https://healthchecks.matuszyk.com:8000/ping/199cefe1-678e-413d-8bc1-b42001ef2697
 healthchecks-geoipupdate.sh			https://healthchecks.matuszyk.com:8000/ping/97d0a4a6-c334-47f2-91a7-906ebbb59095
 backup-mysql.sh					https://healthchecks.matuszyk.com:8000/ping/b2627622-30b4-4c7d-97d1-8375c2335e32
+sprawdz-czy-reboot-required.sh			https://healthchecks.matuszyk.com:8000/ping/eb1f1b51-5954-405a-a170-ee6141c2be79
