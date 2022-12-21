@@ -1,4 +1,5 @@
 #!/bin/bash
+# 2022.12.21 - v. 2.2 - added interactive mode
 # 2022.08.11 - v. 2.1 - changed LICZBA_SEKUND_MIEDZY_PONOWIENIAMI_BACKUPOW ze 180 do 600
 # 2022.08.10 - v. 2.0 - small bux fix with env variable upercase name
 # 2022.08.09 - v. 1.9 - added retry attempts for the backups in case something goes wrong
@@ -20,8 +21,8 @@
 export RUN_BEFORE_BACKUP="${RUN_BEFORE_BACKUP:-}"
 export RUN_AFTER_BACKUP="${RUN_AFTER_BACKUP:-}"
 
-export MAX_LICZBA_PONOWIEN_BACKUPOW=5
-export LICZBA_SEKUND_MIEDZY_PONOWIENIAMI_BACKUPOW=600
+export MAX_LICZBA_PONOWIEN_BACKUPOW="${MAX_LICZBA_PONOWIEN_BACKUPOW:-5}"
+export LICZBA_SEKUND_MIEDZY_PONOWIENIAMI_BACKUPOW="${LICZBA_SEKUND_MIEDZY_PONOWIENIAMI_BACKUPOW:-600}"
 
 . /root/bin/_script_header.sh
 
@@ -118,30 +119,61 @@ fi
 
 export run_before_backup_log=$( eval $RUN_BEFORE_BACKUP 2>&1 ) 
 
-backup_log=$( echo ; echo "aktualna data: `date '+%Y.%m.%d %H:%M'`" ; echo ; echo "RESTIC_REPOSITORY = $RESTIC_REPOSITORY" ; echo ; echo ;
-              cat  $0|grep -e '# *20[123][0-9]'|head -n 1 | awk '{print "script version: " $5 " (dated "$2")"}' ; echo ; echo
-              kod_powrotu=999
-              for (( p=1 ; p<=$MAX_LICZBA_PONOWIEN_BACKUPOW ; p++ )); do 
-              if (( $p > 1 )) ; then echo ; echo "aktualna data: `date '+%Y.%m.%d %H:%M'`" ; echo ; fi
-                eval ${RESTIC_BIN} --cleanup-cache --iexclude=${MY_EXCLUDES} --iexclude-file=${MY_EXCLUDE_FILE} backup / $WHAT_TO_BACKUP_ON_TOP_OF_ROOT 2>&1
-                kod_powrotu=$?
-                if (( $kod_powrotu != 0 )); then
-                  echo ; echo "blad backupu - sprobujemy jeszcze raz - czekam ${LICZBA_SEKUND_MIEDZY_PONOWIENIAMI_BACKUPOW}"
-                  sleep ${LICZBA_SEKUND_MIEDZY_PONOWIENIAMI_BACKUPOW}
-                  continue
-		else
-		  break
-                fi
-              done
-              exit $kod_powrotu
-            )
+tty 2>&1 >/dev/null
+if (( $? == 0 )); then      # if we are running in the termina - lets print the output to the terminal
+   
+  backup_log=""
+  ( echo ; echo "aktualna data: `date '+%Y.%m.%d %H:%M'`" ; echo ; echo "RESTIC_REPOSITORY = $RESTIC_REPOSITORY" ; echo ; echo ;
+    cat  $0|grep -e '# *20[123][0-9]'|head -n 1 | awk '{print "script version: " $5 " (dated "$2")"}' ; echo ; echo
+    kod_powrotu=999
+    for (( p=1 ; p<=$MAX_LICZBA_PONOWIEN_BACKUPOW ; p++ )); do
+    if (( $p > 1 )) ; then echo ; echo "aktualna data: `date '+%Y.%m.%d %H:%M'`" ; echo ; fi
+      eval ${RESTIC_BIN} --cleanup-cache --iexclude=${MY_EXCLUDES} --iexclude-file=${MY_EXCLUDE_FILE} backup / $WHAT_TO_BACKUP_ON_TOP_OF_ROOT 2>&1
+      kod_powrotu=$?
+      if (( $kod_powrotu != 0 )); then
+        echo ; echo "blad backupu - sprobujemy jeszcze raz - czekam 2 sekundy"
+        sleep 2
+        continue
+      else
+        break
+      fi
+    done
+    exit $kod_powrotu
+  )
+else
+  backup_log=$( echo ; echo "aktualna data: `date '+%Y.%m.%d %H:%M'`" ; echo ; echo "RESTIC_REPOSITORY = $RESTIC_REPOSITORY" ; echo ; echo ;
+                cat  $0|grep -e '# *20[123][0-9]'|head -n 1 | awk '{print "script version: " $5 " (dated "$2")"}' ; echo ; echo
+                kod_powrotu=999
+                for (( p=1 ; p<=$MAX_LICZBA_PONOWIEN_BACKUPOW ; p++ )); do 
+                if (( $p > 1 )) ; then echo ; echo "aktualna data: `date '+%Y.%m.%d %H:%M'`" ; echo ; fi
+                  eval ${RESTIC_BIN} --cleanup-cache --iexclude=${MY_EXCLUDES} --iexclude-file=${MY_EXCLUDE_FILE} backup / $WHAT_TO_BACKUP_ON_TOP_OF_ROOT 2>&1
+                  kod_powrotu=$?
+                  if (( $kod_powrotu != 0 )); then
+                    echo ; echo "blad backupu - sprobujemy jeszcze raz - czekam ${LICZBA_SEKUND_MIEDZY_PONOWIENIAMI_BACKUPOW}"
+                    sleep ${LICZBA_SEKUND_MIEDZY_PONOWIENIAMI_BACKUPOW}
+                    continue
+                  else
+		    break
+                  fi
+                done
+                exit $kod_powrotu
+              )
+fi
 kod_powrotu=$?
 
 export run_after_backup_log=$( eval $RUN_AFTER_BACKUP 2>&1 )
 
-m=$( echo ; echo "~~~~~~~~~~~~~~~~~~~~~~~~~"
-     echo kod powrotu z backupu: $kod_powrotu ; echo "~~~~~~~~~~~~~~~~~~~~~~~~~" ; echo ;
-     ${RESTIC_BIN} --cleanup-cache                          snapshots 2>&1 )
+tty 2>&1 >/dev/null
+if (( $? == 0 )); then      # if we are running in the termina - lets print the output to the terminal
+  m="PGM: emtpy as run interactively"
+  echo ; echo "~~~~~~~~~~~~~~~~~~~~~~~~~"
+  echo kod powrotu z backupu: $kod_powrotu ; echo "~~~~~~~~~~~~~~~~~~~~~~~~~" ; echo ;
+  ${RESTIC_BIN} --cleanup-cache                          snapshots 2>&1 
+else
+  m=$( echo ; echo "~~~~~~~~~~~~~~~~~~~~~~~~~"
+       echo kod powrotu z backupu: $kod_powrotu ; echo "~~~~~~~~~~~~~~~~~~~~~~~~~" ; echo ;
+       ${RESTIC_BIN} --cleanup-cache                          snapshots 2>&1 )
+fi
 
 if (( $kod_powrotu != 0 )); then
   /usr/bin/curl -fsS -m 100 --retry 10 --retry-delay 10 --data-raw "$run_before_backup_log $backup_log $m $run_after_backup_log" -o /dev/null "$HEALTHCHECK_URL"/fail 2>/dev/null
