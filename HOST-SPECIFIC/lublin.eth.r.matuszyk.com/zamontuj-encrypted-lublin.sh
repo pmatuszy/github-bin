@@ -80,15 +80,17 @@ echo "<== ########## zamontuj_fs_MASTER($1, $2, $3)"
 vgchange -a y
 sleep 1
 
-zamontuj_fs_MASTER /encrypted.luks2                                /encrypted          noatime
+zamontuj_fs_MASTER /encrypted.luks2                                /encrypted           noatime
 
 systemctl restart keepalived
 systemctl restart postgresql
 
-zamontuj_fs_MASTER /dev/vg_crypto_buffalo1/lv_do_luksa_buffalo1    /mnt/luks-buffalo1  noatime
-zamontuj_fs_MASTER /dev/vg_crypto_20221114_DyskD/lv_20221114_DyskD /mnt/luks-dyskD     noatime,data=writeback,barrier=0,nobh,errors=remount-ro
+zamontuj_fs_MASTER /dev/vg_crypto_buffalo1/lv_do_luksa_buffalo1    /mnt/luks-buffalo1   noatime
+# zamontuj_fs_MASTER /dev/vg_crypto_20221114_DyskD/lv_20221114_DyskD /mnt/luks-dyskD      noatime,data=writeback,barrier=0,nobh,errors=remount-ro
+zamontuj_fs_MASTER /dev/mapper/luks-on-lv_20221208_RaidSonicA      /mnt/luks-RaidSonicA noatime
+zamontuj_fs_MASTER /dev/mapper/luks-on-lv_20221209_RaidSonicB      /mnt/luks-RaidSonicB noatime
 
 echo
-df -h /encrypted /mnt/luks-buffalo1 /mnt/luks-dyskD
+df -h /encrypted /mnt/luks-buffalo1 /mnt/luks-RaidSonicA /mnt/luks-RaidSonicB
 
 /root/bin/sprawdz-czy-encrypted-jest-zamontowany.sh
