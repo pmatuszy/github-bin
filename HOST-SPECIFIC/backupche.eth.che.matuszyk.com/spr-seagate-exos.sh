@@ -9,6 +9,7 @@ export XDG_DATA_DIR=/encrypted/root/XDG_DATA_HOME
 export XDG_RUNTIME_DIR=/run/user/0
 
 export URL="https://www.digitec.ch/en/s1/product/garmin-fenix-7x-sapphire-solar-51-mm-titanium-sports-watches-smartwatches-18358594?ip=fenix+7x"
+export URL="https://www.digitec.ch/en/s1/product/seagate-exos-x18-18-tb-35-cmr-hard-drives-13961890"
 temat_maila="(`date '+%Y.%m.%d %H:%M'`) digitec.ch-Deal of the Day"
 
 timeout=300

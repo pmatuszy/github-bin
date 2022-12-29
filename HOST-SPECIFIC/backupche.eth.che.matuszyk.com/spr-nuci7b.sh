@@ -8,20 +8,20 @@
 export XDG_DATA_DIR=/encrypted/root/XDG_DATA_HOME
 export XDG_RUNTIME_DIR=/run/user/0
 
-export URL="https://www8.garmin.com/support/download_details.jsp?id=14337"
-temat_maila="(`date '+%Y.%m.%d %H:%M'`) GPSMAP 66 firmware update"
+export URL="https://www.intel.com/content/www/us/en/download/19517/bios-update-pnwhl57v.html"
+temat_maila="(`date '+%Y.%m.%d %H:%M'`) nuci7b BIOS updates"
 
 timeout=300
 kill_after=310
-rozmiar_x_ekran=1200
-rozmiar_y_ekran=1100
-rozmiar_x_crop=810
-rozmiar_y_crop=1200
-rozmiar_x_crop_offset=120
-rozmiar_y_crop_offset=120
+rozmiar_x_ekran=900
+rozmiar_y_ekran=900
+rozmiar_x_crop=750
+rozmiar_y_crop=800
+rozmiar_x_crop_offset=80
+rozmiar_y_crop_offset=150
 
 max_wait_na_strone=30000       # w ms
-delay_po_wczytaniu_strony=1000 # w ms
+delay_po_wczytaniu_strony=5000 # w ms
 
 javascript=off
 

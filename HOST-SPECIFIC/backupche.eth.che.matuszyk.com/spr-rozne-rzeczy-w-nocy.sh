@@ -10,9 +10,10 @@ for p in /root/bin/spr-deal-of-the-day-digitec.sh \
          /root/bin/spr-gopro10.sh \
          /root/bin/spr-GPSMAP-66.sh \
          /root/bin/spr-nuci7.sh \
+         /root/bin/spr-nuci7b.sh \
          /root/bin/spr-nucvm.sh \
          /root/bin/spr-fenix.sh \
-         /root/bin/spr-fenix-inny.sh \
+         /root/bin/spr-seagate-exos.sh \
          /root/bin/spr-veracrypt.sh 
 
 
