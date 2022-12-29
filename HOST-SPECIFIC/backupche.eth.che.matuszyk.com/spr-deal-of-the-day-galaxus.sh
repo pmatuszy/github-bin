@@ -9,21 +9,19 @@ export XDG_DATA_DIR=/encrypted/root/XDG_DATA_HOME
 export XDG_RUNTIME_DIR=/run/user/0
 
 export URL="https://www.galaxus.ch/en/LiveShopping"
+export URL="https://www.galaxus.ch/en/daily-deal"
 temat_maila="(`date '+%Y.%m.%d %H:%M'`) galaxus.ch-Deal of the Day"
 
 timeout=300
 kill_after=310
-
-timeout=300
-kill_after=310
-rozmiar_x_ekran=1150
-rozmiar_y_ekran=600
+rozmiar_x_ekran=950
+rozmiar_y_ekran=800
 rozmiar_x_crop=950
-rozmiar_y_crop=600
-rozmiar_x_crop_offset=300
-rozmiar_y_crop_offset=180
+rozmiar_y_crop=800
+rozmiar_x_crop_offset=1
+rozmiar_y_crop_offset=1
 max_wait_na_strone=30000       # w ms
-delay_po_wczytaniu_strony=1000 # w ms
+delay_po_wczytaniu_strony=3000 # w ms
 
 javascript=off
 

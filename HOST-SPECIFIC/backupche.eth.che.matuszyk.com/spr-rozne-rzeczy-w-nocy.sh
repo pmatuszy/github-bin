@@ -20,8 +20,6 @@ for p in /root/bin/spr-deal-of-the-day-digitec.sh \
 #         /root/bin/spr-gopro4.sh \
 #         /root/bin/spr-gopro7.sh \
 
-
-
   do
   /usr/bin/screen -c /dev/null -dmS "$(basename $p)" "$p"
   sleep ${odstep_miedzy_wywolaniami}
