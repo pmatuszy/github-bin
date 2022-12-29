@@ -10,4 +10,4 @@ healthchecks-swap-usage.sh                      https://healthchecks.matuszyk.co
 healthchecks-smartd.sh				https://healthchecks.matuszyk.com:8000/ping/784e2c97-6c72-44ad-87e4-f852be854e65
 healthchecks-geoipupdate.sh			https://healthchecks.matuszyk.com:8000/ping/4909f038-1283-40d0-b302-c24c9577ffaf
 sprawdz-czy-reboot-required.sh			https://healthchecks.matuszyk.com:8000/ping/8f338831-2a7f-4c5e-b575-83e96972e133
-healthchecks-lvs-sync-status.sh                 
+healthchecks-lvs-sync-status.sh                 https://healthchecks.matuszyk.com:8000/ping/2a40cc28-f671-4d50-bd34-a288a2f1ccb0
