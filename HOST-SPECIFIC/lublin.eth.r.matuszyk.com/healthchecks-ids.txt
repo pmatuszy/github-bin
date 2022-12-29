@@ -8,3 +8,4 @@ update-rclone.sh                                https://healthchecks.matuszyk.co
 healthchecks-smartd.sh				https://healthchecks.matuszyk.com:8000/ping/464e77cd-2315-47fa-a729-c4917f5242c1
 healthchecks-swap-usage.sh                      https://healthchecks.matuszyk.com:8000/ping/86ba3907-4bd8-4f14-9857-e9e0d1e0e1af
 sprawdz-czy-reboot-required.sh			https://healthchecks.matuszyk.com:8000/ping/e4f0a743-4c84-4101-8603-a6659de0cab1
+healthchecks-lvs-sync-status.sh                 
