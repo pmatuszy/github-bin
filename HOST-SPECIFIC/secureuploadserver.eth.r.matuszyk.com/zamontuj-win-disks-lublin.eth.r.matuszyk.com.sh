@@ -34,7 +34,7 @@ fi
 ###############################################################################################################
 
 zamontuj_via_nfs "//lublin.eth.r.matuszyk.com/archiwum-MASTER-SOURCE_read_only"  "/mnt/rsync-master-archiwum"
-zamontuj_via_nfs "//lublin.eth.r.matuszyk.com/rsync-master-BBC_read_only"        "/mnt/rsync-master-BBC"
+zamontuj_via_nfs "//lublin.eth.r.matuszyk.com/BBC-MASTER-SOURCE_read_only"       "/mnt/rsync-master-BBC"
 zamontuj_via_nfs "//lublin.eth.r.matuszyk.com/DivX-MASTER-SOURCE_read_only"      "/mnt/rsync-master-DivX"
 zamontuj_via_nfs "//lublin.eth.r.matuszyk.com/DVDs-MASTER-SOURCE_read_only"      "/mnt/rsync-master-DVDs"
 zamontuj_via_nfs "//lublin.eth.r.matuszyk.com/ksiazki-MASTER-SOURCE_read_only"   "/mnt/rsync-master-ksiazki"
