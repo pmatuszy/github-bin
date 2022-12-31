@@ -36,4 +36,7 @@ exit
 #####
 # new crontab entry
 
+@reboot /root/bin/healthchecks-lvs-sync-status.sh
+
 0 * * * * /root/bin/healthchecks-lvs-sync-status.sh
+
