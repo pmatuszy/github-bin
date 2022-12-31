@@ -1,4 +1,5 @@
 #!/bin/bash
+# 2022.12.31 - v. 0.3 - this script should mount nothing from now on
 # 2022.09.11 - v. 0.2 - zmiany kosmetyczne o KeePassie
 # 2022.07.30 - v. 0.1 - initial release
 
@@ -6,15 +7,23 @@
 
 remote_server=laptopvm.eth.b.matuszyk.com
 
-set +x 
-
 echo 
 echo 
 echo  "remote_server = $remote_server"
 echo 
 echo 
 
-#set -x
+
+echo NIC NIE MONTUJEMY Z TEGO SERWERA !!!!
+echo NIC NIE MONTUJEMY Z TEGO SERWERA !!!!
+echo NIC NIE MONTUJEMY Z TEGO SERWERA !!!!
+echo NIC NIE MONTUJEMY Z TEGO SERWERA !!!!
+echo NIC NIE MONTUJEMY Z TEGO SERWERA !!!!
+echo NIC NIE MONTUJEMY Z TEGO SERWERA !!!!
+echo NIC NIE MONTUJEMY Z TEGO SERWERA !!!!
+echo NIC NIE MONTUJEMY Z TEGO SERWERA !!!!
+exit 1
+
 
 echo ; echo "w KeePassie:" ; echo "Samba (p @ laptopvm.eth.b.matuszyk.com)"
 read -p "Wpisz haslo: " -s PASSWD ; echo 
