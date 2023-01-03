@@ -1,4 +1,6 @@
 #!/bin/bash
+
+# 2023.01.03 - v. 0.2 - dodano random delay jesli skrypt jest wywolywany nieinteraktywnie
 # 2022.05.18 - v. 0.1 - initial release
 
 . /root/bin/_script_header.sh
@@ -7,6 +9,14 @@ if [ -f "$HEALTHCHECKS_FILE" ];then
   HEALTHCHECK_URL=$(cat "$HEALTHCHECKS_FILE" |grep "^`basename $0`"|awk '{print $2}')
 fi
 
+export MAX_RANDOM_DELAY_IN_SEC=${MAX_RANDOM_DELAY_IN_SEC:-50}
+tty 2>&1 >/dev/null
+if (( $? != 0 )); then      # we set RANDOM_DELAY only when running NOT from terminal
+  export RANDOM_DELAY=$((RANDOM % $MAX_RANDOM_DELAY_IN_SEC ))
+  sleep $RANDOM_DELAY
+else
+  echo ; echo "Interactive session detected: I will NOT introduce RANDOM_DELAY..."
+fi
 
 m=$( echo ; echo "aktualna data: `date '+%Y.%m.%d %H:%M'`" ; echo ; echo ;
      cat  $0|grep -e '# *20[123][0-9]'|head -n 1 | awk '{print "script version: " $5 " (dated "$2")"}' ; echo ; echo
