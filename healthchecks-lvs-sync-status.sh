@@ -1,4 +1,5 @@
 #!/bin/bash
+# 2023.01.03 - v. 0.2 - bug fixed - when no lvs'm the status should be ok
 # 2022.12.29 - v. 0.1 - initial release
 
 . /root/bin/_script_header.sh
@@ -17,9 +18,14 @@ else
 fi
 
 m=$( echo " "; echo "aktualna data: `date '+%Y.%m.%d %H:%M'`" ; echo ; 
-     cat  $0|grep -e '# *20[123][0-9]'|head -n 1 | awk '{print "script version: " $5 " (dated "$2")"}' ; echo ; echo
+     cat $0|grep -e '# *20[123][0-9]'|head -n 1 | awk '{print "script version: " $5 " (dated "$2")"}' ; echo ; echo
      lvs
-     lvs -o sync_percent|grep -v "Cpy%Sync"|sort|uniq|grep 100.00|wc -l 2>&1; exit $?
+
+     if [ $(lvs -o 'sync_percent' |sort|uniq|grep -v -e '^[[:space:]]*$'| grep -v 100.00|wc -l) -eq 1 ];then
+       exit 0
+     else
+       exit 1
+     fi
    )
 kod_powrotu=$?
 
