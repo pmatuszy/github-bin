@@ -8,4 +8,4 @@ update-restic.sh                                https://healthchecks.matuszyk.co
 restic_backup_SS				https://healthchecks.matuszyk.com:8000/ping/e9cf10a3-266c-48fa-8608-ce538add187b
 update-rclone.sh                                https://healthchecks.matuszyk.com:8000/ping/27874c16-ca0b-463c-8d5b-0261c18ffb12
 healthchecks-swap-usage.sh                      https://healthchecks.matuszyk.com:8000/ping/8f4e0d66-fea6-435b-a795-58a46e30ff9e
-healthchecks-lvs-sync-status.sh                 
+healthchecks-lvs-sync-status.sh                 https://healthchecks.matuszyk.com:8000/ping/79bc3488-6bbf-48e7-8f2b-602e603b2a42
