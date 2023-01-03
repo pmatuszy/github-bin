@@ -1,4 +1,6 @@
 #!/bin/bash
+
+# 2023.01.03 - v. 0.4 - dodano random delay jesli skrypt jest wywolywany nieinteraktywnie
 # 2022.05.20 - v. 0.3 - dodalem wypisywanie aktualnej daty
 # 2022.05.12 - v. 0.2 - small bux fix (use RESTIC_BIN intsead of /usr/bin/restic)
 # 2022.05.11 - v. 0.1 - initial release (date unknown)

@@ -1,4 +1,6 @@
 #!/bin/bash
+
+# 2023.01.03 - v. 0.3 - dodano random delay jesli skrypt jest wywolywany nieinteraktywnie
 # 2022.05.20 - v. 0.2 - dodalem wypisywanie aktualnej daty
 # 2022.05.11 - v. 0.1 - initial release (date unknown)
 

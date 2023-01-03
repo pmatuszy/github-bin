@@ -1,4 +1,6 @@
 #!/bin/bash
+
+# 2023.01.03 - v. 0.4 - dodano random delay jesli skrypt jest wywolywany nieinteraktywnie
 # 2022.06.15 - v. 0.3 - dodanie czekania jesli apt-get update jest wykonywany w tym samym czasie przez inny proces
 # 2022.05.05 - v. 0.2 - dodany uptime i hostname
 # 2022.05.03 - v. 0.1 - initial release (date unknown)

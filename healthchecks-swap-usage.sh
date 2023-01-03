@@ -1,4 +1,6 @@
 #!/bin/bash
+
+# 2023.01.03 - v. 0.5 - dodano random delay jesli skrypt jest wywolywany nieinteraktywnie
 # 2022.07.01 - v. 0.4 - dodalem trimowanie swapa mimo, ze nie przekracza limitu, ale jest mimo wszystko troche juz jego zaalokowanego
 #                       w ten sposob swap jest zwalniany ale nie jest generowany alert do healthchecka
 # 2022.06.15 - v. 0.3 - zmiana limitu MAX_DOPUSZCZALNA_ZAJETOSC_SWAP 400 ==> 600
