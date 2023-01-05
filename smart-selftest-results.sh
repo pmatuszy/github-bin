@@ -1,4 +1,6 @@
 #!/bin/bash
+
+# 2023.01.05 - v. 0.91- added detection of ST18000NM000J-2TV103 drives as Seagate ones
 # 2022.12.20 - v. 0.9 - now printing info about the disk as well
 # 2022.11.29 - v. 0.8 - bugfix with power_on_hours (if not available I set it to -1)
 # 2022.11.16 - v. 0.7 - bugfix with power_on_hours 
@@ -54,9 +56,11 @@ for p in $disks ; do
     exit 2
   fi
   
-  czy_seagate=$($SMARTCTL_BIN  $DEVICE_TYPE --info $p|grep -i seagate | wc -l)
+  czy_seagate=$($SMARTCTL_BIN  $DEVICE_TYPE --info $p|egrep -i 'seagate|ST18000NM000J' | wc -l)
   if (( $czy_seagate > 0 ));then
     VENDOR_ATTRIBUTE="-v 1,raw48:54 -v 7,raw48:54 -v 187,raw48:54  -v 188,raw48:54 -v 195,raw48:54"
+    echo "* * * * * * This is Seagate drive (PGM) * * * * * *"
+
   fi
   
   export power_on_hours=$($SMARTCTL_BIN $DEVICE_TYPE $VENDOR_ATTRIBUTE -A $p | egrep '^  9' | awk '{print $10}'|sed 's|[hms].*||g')     # ost sed zostawia tylko 24979 z "24979h+00m+00.000s"

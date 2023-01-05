@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2023.01.05 - v. 0.3 - added detection of ST18000NM000J-2TV103 drives as Seagate ones
 # 2022.12.20 - v. 0.2 - now printing info about the disk as well
 # 2022.10.11 - v. 0.1 - initial release
 
@@ -53,9 +54,10 @@ for p in $disks ; do
     exit 2
   fi
 
-  czy_seagate=$($SMARTCTL_BIN  $DEVICE_TYPE --info $p|grep -i seagate | wc -l)
+  czy_seagate=$($SMARTCTL_BIN  $DEVICE_TYPE --info $p|egrep -i 'seagate|ST18000NM000J' | wc -l)
   if (( $czy_seagate > 0 ));then
     VENDOR_ATTRIBUTE="-v 1,raw48:54 -v 7,raw48:54 -v 187,raw48:54  -v 188,raw48:54 -v 195,raw48:54"
+    echo "* * * * * * This is Seagate drive (PGM) * * * * * *"
   fi 
   $SMARTCTL_BIN $DEVICE_TYPE $VENDOR_ATTRIBUTE $SUBCOMMAND $p
 done
