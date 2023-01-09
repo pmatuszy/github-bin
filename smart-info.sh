@@ -63,8 +63,18 @@ for p in $disks ; do
 
   $SMARTCTL_BIN $DEVICE_TYPE --info $p 2>&1 > /dev/null
   if (( $? == 2 ));then
-    echo  ; echo "No such a device, I am exiting " ; echo ; echo exit 2 ; echo 
-    exit 2
+    echo  ; echo "No such a device, I am exiting " ; echo
+    # exit 2
+    if (( INTERACTIVE_SESSION ));then
+       echo "Press <ENTER> to continue or q/Q to quit"
+       input_from_user=""
+       read -t 300 -n 1 input_from_user
+       if [ "${input_from_user}" == 'q' -o  $"{input_from_user}" == 'Q' ]; then
+         echo
+         exit
+       fi
+    fi
+    continue
   fi
 
   czy_seagate=$($SMARTCTL_BIN  $DEVICE_TYPE --info $p| egrep -i 'seagate|ST18000NM000J'| wc -l)
