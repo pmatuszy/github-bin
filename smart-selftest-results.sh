@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2023.01.09 - v. 0.3 - interactive session with clear screen
 # 2023.01.05 - v. 0.91- added detection of ST18000NM000J-2TV103 drives as Seagate ones
 # 2022.12.20 - v. 0.9 - now printing info about the disk as well
 # 2022.11.29 - v. 0.8 - bugfix with power_on_hours (if not available I set it to -1)
@@ -24,8 +25,15 @@ if [ $# -eq 0 ]
     echo ; echo ; echo "No arguments supplied, I will run the script against ALL disks found on this systems..."
     echo "searching for disks..."
     disks=$(jd.sh |grep Disk |sed 's|:.*||g'|sed 's|Disk ||g')
+    sleep 3
 else
   disks=$1
+fi
+
+INTERACTIVE_SESSION=0
+tty 2>&1 >/dev/null
+if (( $? == 0 )); then
+  INTERACTIVE_SESSION=1
 fi
 
 DEVICE_TYPE=""
@@ -35,6 +43,9 @@ SUBCOMMAND="--info -l selftest"
 export SMARTCTL_BIN=$(type -fP smartctl)
 
 for p in $disks ; do
+  if (( INTERACTIVE_SESSION ));then
+     clear
+  fi
   echo;echo
   echo $p | boxes -s 40x5 -a c ; echo
 
@@ -60,7 +71,6 @@ for p in $disks ; do
   if (( $czy_seagate > 0 ));then
     VENDOR_ATTRIBUTE="-v 1,raw48:54 -v 7,raw48:54 -v 187,raw48:54  -v 188,raw48:54 -v 195,raw48:54"
     echo "* * * * * * This is Seagate drive (PGM) * * * * * *"
-
   fi
   
   export power_on_hours=$($SMARTCTL_BIN $DEVICE_TYPE $VENDOR_ATTRIBUTE -A $p | egrep '^  9' | awk '{print $10}'|sed 's|[hms].*||g')     # ost sed zostawia tylko 24979 z "24979h+00m+00.000s"
@@ -123,6 +133,15 @@ for p in $disks ; do
       printf -- '-----> last_extended_offline_test   = %5i hours ago\n'   $last_extended_offline_ago
       printf -- '-----> last_conveyance_offline_test = %5i hours ago\n\n' $last_conveyance_offline_ago
     fi
+  fi
+  if (( INTERACTIVE_SESSION ));then
+     echo "Press <ENTER> to continue or q/Q to quit"
+     input_from_user=""
+     read -t 300 -n 1 input_from_user
+     if [ "${input_from_user}" == 'q' -o  $"{input_from_user}" == 'Q' ]; then 
+       echo
+       exit
+     fi
   fi
 done
 
