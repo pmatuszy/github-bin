@@ -1,4 +1,5 @@
 #!/bin/bash
+# 2023.01.09 - v. 0.2 - small changes (along with the random delay) and a new crontab entry after the reboot
 # 2022.11.03 - v. 0.1 - initial release (date unknown)
 
 . /root/bin/_script_header.sh
@@ -27,5 +28,6 @@ exit
 #####
 # new crontab entry
 
-1 * * * * sleep $((RANDOM \% 50)) && /root/bin/sprawdz-czy-reboot-required.sh
+@reboot ( /root/bin/sprawdz-czy-reboot-required.sh ) 2>&1
 
+1 * * * * sleep $((RANDOM \% 50)) && /root/bin/sprawdz-czy-reboot-required.sh
