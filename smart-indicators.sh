@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2023.01.10 - v. 0.4 - added printing time with Linux units utility
 # 2023.01.09 - v. 0.3 - interactive session with clear screen, added power on hours calculations
 # 2023.01.05 - v. 0.3 - added detection of ST18000NM000J-2TV103 drives as Seagate ones
 # 2022.12.20 - v. 0.2 - now printing info about the disk as well
@@ -100,14 +101,16 @@ for p in $disks ; do
     echo -e "Looks like SSD drive and this one has no POWER ON HOURS S.M.A.R.T. attribute available." |boxes -s 95x5 -a c ; echo
   else
     if (( ${power_on_hours} > 65535 )) ; then
-      printf -- '-----> power_on_hours               = %5i hours, %2.2f years (possible wrap around as it is more than 65535 hours.... )\n\n' $power_on_hours $(echo "scale=2; $power_on_hours/24/365.25"|bc)
+      printf -- '-----> power_on_hours               = %5i hours, %2.2f years (possible wrap around as it is more than 65535 hours.... )' $power_on_hours $(echo "scale=2; $power_on_hours/24/365.25"|bc)
+      echo -e " (" $(units "${power_on_hours} hours" time |sed 's|hr .*|hr|g') ")\n"
       echo "RAW values calculation:"
       if (( $(($last_short_offline_ago-65535)) > 0 || $(($last_extended_offline_ago-65535)) > 0 || $(($last_conveyance_offline_ago-65535)) > 0 ));then
         echo
         echo "ADJUSTED values calculation:"
       fi
     else
-      printf -- '-----> power_on_hours               = %5i hours, %2.2f years\n\n' $power_on_hours $(echo "scale=2; $power_on_hours/24/365.25"|bc)
+      printf -- '-----> power_on_hours               = %5i hours, %2.2f years' $power_on_hours $(echo "scale=2; $power_on_hours/24/365.25"|bc)
+      echo -e " (" $(units "${power_on_hours} hours" time |sed 's|hr .*|hr|g') ")\n"
     fi
   fi
 
