@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2023.01.11 - v. 0.5 - prompt for a new page is only displayed if there are no arguments on the command line
 # 2023.01.10 - v. 0.4 - added printing time with Linux units utility
 # 2023.01.09 - v. 0.3 - interactive session with clear screen
 # 2023.01.05 - v. 0.91- added detection of ST18000NM000J-2TV103 drives as Seagate ones
@@ -147,7 +148,7 @@ for p in $disks ; do
       echo -e " (" $(units "${last_conveyance_offline_ago} hours" time |sed 's|hr .*|hr|g') ")\n"
     fi
   fi
-  if (( INTERACTIVE_SESSION ));then
+  if (( INTERACTIVE_SESSION )) && (( $# != 1 )) ;then
      echo "Press <ENTER> to continue or q/Q to quit"
      input_from_user=""
      read -t 300 -n 1 input_from_user
