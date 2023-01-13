@@ -47,10 +47,8 @@ if [ "${p}" == 'y' -o  "${p}" == 'y' ]; then
   fi
 
   cp -v ./* $HOME/bin
+  cp -v ./HOST-SPECIFIC/`hostname`*/* $HOME/bin
 
-  cp -v ./HOST-SPECIFIC/`hostname`/* $HOME/bin
-  cp -v ./HOST-SPECIFIC/`hostname`.*/* $HOME/bin
- 
   cp -v ./HOST-SPECIFIC/`hostname`*/.[a-zA-Z0-9]* $HOME   2>/dev/null
 
   rm $HOME/bin/git-pull.sh $HOME/bin/git-push.sh
