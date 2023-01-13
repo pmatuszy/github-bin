@@ -1,4 +1,6 @@
 #!/bin/bash
+
+# 2023.01.13 - v  0.8 - a nicer display of the mount command status
 # 2022.12.02 - v  0.7 - bugfix with fsck return code
 # 2022.11.24 - v  0.6 - added restart of postgress and keepalived
 # 2022.11.21 - v  0.5 - a lot of changes - too many to describe here :-)
@@ -72,6 +74,9 @@ fi
 
 zrob_fsck /dev/mapper/encrypted_luks_device_"$(basename ${1})"
 mount -o $3 /dev/mapper/encrypted_luks_device_"$(basename ${1})" "${2}"
+if (( $? == 0 ));then
+  echo ; echo "mount of $1 under $2 was SUCCESSFUL" ; echo
+fi
 
 echo "<== ########## zamontuj_fs_MASTER($1, $2, $3)"
 }
@@ -89,12 +94,10 @@ echo "restart of postgresql service ..."
 systemctl restart postgresql
 
 # wylaczone - dzialaja, ale nie sa montowane (kabel USB jest wyjety z huba USB
-zamontuj_fs_MASTER /dev/vg_crypto_buffalo1/lv_do_luksa_buffalo1               /mnt/luks-buffalo1   noatime
+######## zamontuj_fs_MASTER /dev/vg_crypto_buffalo1/lv_do_luksa_buffalo1               /mnt/luks-buffalo1   noatime
 
 zamontuj_fs_MASTER /dev/vg_crypto_20221208_RaidSonicA/lv_20221208_RaidSonicA  /mnt/luks-RaidSonicA noatime
 zamontuj_fs_MASTER /dev/vg_crypto_20221209_RaidSonicB/lv_20221209_RaidSonicB  /mnt/luks-RaidSonicB noatime
-
-
 
 # zamontuj_fs_MASTER /dev/vg_crypto_20221114_DyskD/lv_20221114_DyskD          /mnt/luks-dyskD      noatime,data=writeback,barrier=0,nobh,errors=remount-ro
 
