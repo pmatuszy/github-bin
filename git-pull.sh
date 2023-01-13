@@ -53,7 +53,9 @@ if [ "${p}" == 'y' -o  "${p}" == 'y' ]; then
   cp -v ./HOST-SPECIFIC/`hostname`*/.[a-zA-Z0-9]* $HOME   2>/dev/null
 
   rm $HOME/bin/git-pull.sh $HOME/bin/git-push.sh $HOME/bin/git-fetch.sh
-  echo git status | boxes
+  echo 
+  echo git status | boxes -s 40x5 -a c
+  echo 
   git status
 else
   echo "no means no - I am exiting..."
