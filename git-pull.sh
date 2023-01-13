@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2023.01.13 - v. 0.7 - git clone is replaced with git pull
 # 2022.12.13 - v. 0.6 - hostname specified with start (works with or without domainaname)
 # 2022.09.30 - v. 0.5 - checking if we have access to remote repo
 # 2022.05.18 - v. 0.4 - added removing git-pull.sh and gill-push.sh from $HOME/bin
