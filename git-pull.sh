@@ -46,11 +46,11 @@ if [ "${p}" == 'y' -o  "${p}" == 'y' ]; then
     exit 3
   fi
 
-  cp -v ./* $HOME/bin
-  cp -v ./HOST-SPECIFIC/`hostname`*/* $HOME/bin
+  cp ./* $HOME/bin
+  cp ./HOST-SPECIFIC/`hostname`*/* $HOME/bin
 
   # we copy hidden files to $HOME
-  cp -v ./HOST-SPECIFIC/`hostname`*/.[a-zA-Z0-9]* $HOME   2>/dev/null
+  cp ./HOST-SPECIFIC/`hostname`*/.[a-zA-Z0-9]* $HOME   2>/dev/null
 
   rm $HOME/bin/git-pull.sh $HOME/bin/git-push.sh $HOME/bin/git-fetch.sh
   echo 
