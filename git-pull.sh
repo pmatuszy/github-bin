@@ -32,9 +32,9 @@ if [ "${p}" == 'y' -o  "${p}" == 'y' ]; then
     exit 2
   fi
 
-  rm -rf $HOME/github-bin/*
-  rm -rf $HOME/github-bin/.git
-  git clone git+ssh://git@github.com/pmatuszy/github-bin.git
+#  rm -rf $HOME/github-bin/*
+#  rm -rf $HOME/github-bin/.git
+  git pull git+ssh://git@github.com/pmatuszy/github-bin.git
   cp -v github-bin/* $HOME/bin
 
   cp -v github-bin/HOST-SPECIFIC/`hostname`/* $HOME/bin
