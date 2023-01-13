@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2023.01.13 - v. 0.7 - git clone is replaced with git pull
 # 2022.12.13 - v. 0.6 - hostname specified with start (works with or without domainaname)
 # 2022.09.30 - v. 0.5 - checking if we have access to remote repo
 # 2022.05.18 - v. 0.4 - added removing git-pull.sh and gill-push.sh from $HOME/bin
@@ -12,18 +13,20 @@
 set -o nounset
 set -o pipefail
 
+
+export GIT_REPO_DIRECTORY=/root/github-bin
+
 echo
 cat  $0|grep -e '# *20[123][0-9]'|head -n 1 | awk '{print "script version: " $5 " (dated "$2")"}' ; echo ; echo
 
 echo
 echo "Do you want to do kind of git pull and configure local scripts? [y/N]"
-read -t 60 -n 1 p     # read one character (-n) with timeout of 5 seconds
+read -t 300 -n 1 p     # read one character (-n) with timeout of 5 seconds
 echo
 echo
 if [ "${p}" == 'y' -o  "${p}" == 'y' ]; then
   cd $HOME
   mkdir -p $HOME/bin
-
 
   # sprawdzam, czy mam dostep do zdalnego repo
   git ls-remote git+ssh://git@github.com/pmatuszy/github-bin.git 2>&1 >/dev/null
@@ -34,17 +37,24 @@ if [ "${p}" == 'y' -o  "${p}" == 'y' ]; then
 
 #  rm -rf $HOME/github-bin/*
 #  rm -rf $HOME/github-bin/.git
-  git pull git+ssh://git@github.com/pmatuszy/github-bin.git
-  cp -v github-bin/* $HOME/bin
 
-  cp -v github-bin/HOST-SPECIFIC/`hostname`/* $HOME/bin
-  cp -v github-bin/HOST-SPECIFIC/`hostname`.*/* $HOME/bin
+  cd "${GIT_REPO_DIRECTORY}"
+
+  git pull git+ssh://git@github.com/pmatuszy/github-bin.git
+  if (( $? != 0 )); then
+    echo  ; echo ; echo "Pull was not successful... WYCHODZE" ; echo ; echo
+    exit 3
+  fi
+
+  cp -v ./* $HOME/bin
+
+  cp -v ./HOST-SPECIFIC/`hostname`/* $HOME/bin
+  cp -v ./HOST-SPECIFIC/`hostname`.*/* $HOME/bin
  
-  cp -v github-bin/HOST-SPECIFIC/`hostname`*/.[a-zA-Z0-9]* $HOME   2>/dev/null
-  cp -v github-bin/HOST-SPECIFIC/`hostname`.*/.[a-zA-Z0-9]* $HOME   2>/dev/null
+  cp -v ./HOST-SPECIFIC/`hostname`*/.[a-zA-Z0-9]* $HOME   2>/dev/null
 
   rm $HOME/bin/git-pull.sh $HOME/bin/git-push.sh
-  cd github-bin
+  # cd github-bin
   git status
 else
   echo "no means no - I am exiting..."
