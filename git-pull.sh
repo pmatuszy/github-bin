@@ -18,7 +18,7 @@ cat  $0|grep -e '# *20[123][0-9]'|head -n 1 | awk '{print "script version: " $5 
 
 echo
 echo "Do you want to do kind of git pull and configure local scripts? [y/N]"
-read -t 60 -n 1 p     # read one character (-n) with timeout of 5 seconds
+read -t 300 -n 1 p     # read one character (-n) with timeout of 5 seconds
 echo
 echo
 if [ "${p}" == 'y' -o  "${p}" == 'y' ]; then
@@ -36,6 +36,12 @@ if [ "${p}" == 'y' -o  "${p}" == 'y' ]; then
 #  rm -rf $HOME/github-bin/*
 #  rm -rf $HOME/github-bin/.git
   git pull git+ssh://git@github.com/pmatuszy/github-bin.git
+
+  if (( $? != 0 )); then
+    echo  ; echo ; echo "Pull was not successful... WYCHODZE" ; echo ; echo
+    exit 3
+  fi
+
   cp -v github-bin/* $HOME/bin
 
   cp -v github-bin/HOST-SPECIFIC/`hostname`/* $HOME/bin
