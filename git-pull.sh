@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# 2023.01.13 - v. 0.7 - git clone is replaced with git pull
+# 2023.01.13 - v. 0.7 - git clone is replaced with git pull, some small changes 
 # 2022.12.13 - v. 0.6 - hostname specified with start (works with or without domainaname)
 # 2022.09.30 - v. 0.5 - checking if we have access to remote repo
 # 2022.05.18 - v. 0.4 - added removing git-pull.sh and gill-push.sh from $HOME/bin
@@ -49,10 +49,11 @@ if [ "${p}" == 'y' -o  "${p}" == 'y' ]; then
   cp -v ./* $HOME/bin
   cp -v ./HOST-SPECIFIC/`hostname`*/* $HOME/bin
 
+  # we copy hidden files to $HOME
   cp -v ./HOST-SPECIFIC/`hostname`*/.[a-zA-Z0-9]* $HOME   2>/dev/null
 
-  rm $HOME/bin/git-pull.sh $HOME/bin/git-push.sh
-  # cd github-bin
+  rm $HOME/bin/git-pull.sh $HOME/bin/git-push.sh $HOME/bin/git-fetch.sh
+  echo git status | boxes
   git status
 else
   echo "no means no - I am exiting..."
