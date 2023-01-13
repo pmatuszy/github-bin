@@ -29,7 +29,7 @@ echo ; echo "github_project_name = $github_project_name"; echo
 git remote set-url origin git+ssh://git@github.com/pmatuszy/${github_project_name}.git
 
 echo "Do you want to do git push? [y/N]"
-read -t 60 -n 1 p     # read one character (-n) with timeout of 5 seconds
+read -t 300 -n 1 p     # read one character (-n) with timeout of 5 seconds
 echo
 echo
 if [ "${p}" == 'y' -o  "${p}" == 'y' ]; then
