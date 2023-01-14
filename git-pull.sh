@@ -35,9 +35,6 @@ if [ "${p}" == 'y' -o  "${p}" == 'y' ]; then
     exit 2
   fi
 
-#  rm -rf $HOME/github-bin/*
-#  rm -rf $HOME/github-bin/.git
-
   cd "${GIT_REPO_DIRECTORY}"
 
   git pull git+ssh://git@github.com/pmatuszy/github-bin.git
@@ -47,7 +44,8 @@ if [ "${p}" == 'y' -o  "${p}" == 'y' ]; then
   fi
 
   cp ./* $HOME/bin
-  cp ./HOST-SPECIFIC/`hostname`*/* $HOME/bin
+  cp ./HOST-SPECIFIC/`hostname`/* $HOME/bin
+  cp ./HOST-SPECIFIC/`hostname`.*/* $HOME/bin 2>/dev/null
 
   # we copy hidden files to $HOME
   cp ./HOST-SPECIFIC/`hostname`*/.[a-zA-Z0-9]* $HOME   2>/dev/null
