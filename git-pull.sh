@@ -43,7 +43,7 @@ if [ "${p}" == 'y' -o  "${p}" == 'y' ]; then
     exit 3
   fi
 
-  cp ./* $HOME/bin
+  cp ./* $HOME/bin 2>/dev/null
   cp ./HOST-SPECIFIC/`hostname`/* $HOME/bin
   cp ./HOST-SPECIFIC/`hostname`.*/* $HOME/bin 2>/dev/null
 
