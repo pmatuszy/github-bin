@@ -20,6 +20,8 @@ clear
 set -o nounset
 set -o pipefail
 
+. /root/bin/_script_header.sh
+
 github_project_name=`pwd`
 github_project_name=`basename $github_project_name`
 
@@ -51,3 +53,6 @@ echo
 echo
 
 ./git-pull.sh
+
+. /root/bin/_script_footer.sh
+
