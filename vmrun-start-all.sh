@@ -9,6 +9,7 @@ VM_LOCATIONS="/vmware /vmware-nvme /encrypted/vmware-in-encrypted /mnt/luks-raid
 cat  $0|grep -e '# *20[123][0-9]'|head -n 1 | awk '{print "script version: " $5 " (dated "$2")"}' ; echo 
 
 echo vmrun list | boxes -s 40x5 -a c
+vmrun list
 echo;
 
 echo ; echo "All VMs on that host (running and not running):" ; echo 
