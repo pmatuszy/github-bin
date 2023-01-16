@@ -36,6 +36,8 @@ if [ "${p}" == 'y' -o  "${p}" == 'y' ]; then
 
   cd "${GIT_REPO_DIRECTORY}"
 
+  echo git pull git+ssh://git@github.com/pmatuszy/github-bin.git | boxes -s 40x5 -a c
+
   git pull git+ssh://git@github.com/pmatuszy/github-bin.git
   if (( $? != 0 )); then
     echo  ; echo ; echo "Pull was not successful... WYCHODZE" ; echo ; echo
