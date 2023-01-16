@@ -16,8 +16,11 @@ find $VM_LOCATIONS -type f -name \*vmx 2>/dev/null
 echo ; echo 
 
 for p in $VM_LOCATIONS ; do 
-  for vm in $(ls -1 "${p}"/*/*vmx 2>/dev/null| egrep -v "$(echo $(vmrun list|grep -v 'Total running VMs:')|sed 's/ /|/g')"|sort|uniq);do    # we ask if we want to start only vms 
-                                                                                                          # which are not currently running
+  for vm in $(ls -1 "${p}"/*/*vmx 2>/dev/null);do
+    if (( $(vmrun list |grep -v "Total running VMs:" | grep "$vm"| wc -l) != 0 ))  ;then
+      echo "(PGM) machine $vm is running so we don't want to start it again...";echo 
+      continue
+    fi
     echo $vm | boxes -s 40x5 -a c
     ls -ld $vm `dirname $vm`/*lck 2>/dev/null
     
@@ -30,13 +33,16 @@ for p in $VM_LOCATIONS ; do
       exit 1
     fi
     if [ "${input_from_user}" == 'y' -o  $"{input_from_user}" == 'Y' ]; then
-      echo "(PGM) removing lck directory as it exists..."
-      rm -rfv "${vm}.lck"
-      echo ; echo "starting $vm (PGM)";echo 
+      if [ -d "${vm}.lck" ]; then
+        echo "(PGM) removing lck directory as it exists..."
+        rm -rfv "${vm}.lck"
+      fi
+      echo "* * * starting $vm (PGM) * * *";echo 
       vmrun start $vm nogui
       echo $?
       vmrun list
     fi
+    echo 
   done
 done
 
