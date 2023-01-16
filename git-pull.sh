@@ -18,7 +18,7 @@ set -o pipefail
 export GIT_REPO_DIRECTORY=/root/github-bin
 
 echo
-cat  $0|grep -e '# *20[123][0-9]'|head -n 1 | awk '{print "script version: " $5 " (dated "$2")"}' ; echo ; echo
+cat  $0|grep -e '# *20[123][0-9]'|head -n 1 | awk '{print "script version: " $5 " (dated "$2")"}' 
 
 echo
 echo "Do you want to do kind of git pull and configure local scripts? [y/N]"
