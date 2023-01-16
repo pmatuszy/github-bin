@@ -13,6 +13,8 @@
 set -o nounset
 set -o pipefail
 
+. /root/bin/_script_header.sh
+
 export GIT_REPO_DIRECTORY=/root/github-bin
 
 echo
@@ -61,3 +63,6 @@ else
   echo "no means no - I am exiting..."
   exit 1
 fi
+
+. /root/bin/_script_footer.sh
+
