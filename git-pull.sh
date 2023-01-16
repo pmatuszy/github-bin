@@ -49,7 +49,7 @@ if [ "${p}" == 'y' -o  "${p}" == 'y' ]; then
 
   cp ./* $HOME/bin 2>/dev/null
   cp ./HOST-SPECIFIC/`hostname`/* $HOME/bin
-  cp ./HOST-SPECIFIC/`hostname`*com/* $HOME/bin 2>/dev/null
+  cp ./HOST-SPECIFIC/`hostname`.*com/* $HOME/bin 2>/dev/null
 
   # we copy hidden files to $HOME
   cp ./HOST-SPECIFIC/`hostname`*/.[a-zA-Z0-9]* $HOME   2>/dev/null
