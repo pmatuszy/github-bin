@@ -13,15 +13,27 @@ if (( $? != 0 )); then
   exit 1
 fi
 
+export DISPLAY=
+
 echo vmrun list | boxes -s 40x5 -a c
 echo;
 vmrun list
 echo
 
 for p in `vmrun list|grep vmx`;do
-  echo ; echo "* * * Suspending $p * * *"
-  vmrun suspend $p nogui 
-  sleep 1 ;
+  echo ; echo -n "Do you want to SUSPEND $p [y/N/q]: "
+  input_from_user=""
+  read -t 300 -n 1 input_from_user
+  echo
+  if [ "${input_from_user}" == 'q' -o  $"{input_from_user}" == 'Q' ]; then
+    echo
+    exit 1
+  fi
+  if [ "${input_from_user}" == 'y' -o  $"{input_from_user}" == 'Y' ]; then
+    echo "* * * suspending $p (PGM) * * *";echo
+    vmrun suspend $p nogui
+  fi
+  sleep 0.5 ;
 done;
 
 echo ; 

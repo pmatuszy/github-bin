@@ -8,6 +8,8 @@ VM_LOCATIONS="/vmware /vmware-nvme /encrypted/vmware-in-encrypted /mnt/luks-raid
 
 cat  $0|grep -e '# *20[123][0-9]'|head -n 1 | awk '{print "script version: " $5 " (dated "$2")"}' ; echo 
 
+export DISPLAY=
+
 type -fP vmrun 2>/dev/null
 if (( $? != 0 )); then
   echo ; echo "(PGM) I can't find vmrum utility... exiting ..."; echo 
