@@ -4,7 +4,7 @@
 
 . /root/bin/_script_header.sh
 
-VM_LOCATIONS="/vmware /vmware-nvme"
+VM_LOCATIONS="/vmware /vmware-nvme /encrypted/vmware-in-encrypted /mnt/luks-raidsonic"
 
 cat  $0|grep -e '# *20[123][0-9]'|head -n 1 | awk '{print "script version: " $5 " (dated "$2")"}' ; echo 
 
