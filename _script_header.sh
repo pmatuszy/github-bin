@@ -17,7 +17,7 @@ export tcScrTitleEnd="\033\\"
 tty 2>&1 >/dev/null
 if (( $? == 0 )); then
   echo -ne "\033]0;`hostname` - $0\007";\
-  figlet -w 280 $0
+  figlet -w 280 `basename $0`
 fi
 
 if [ ! -z ${STY:-} ]; then    # checking if we are running within screen
