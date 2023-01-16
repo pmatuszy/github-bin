@@ -48,8 +48,6 @@ for p in $VM_LOCATIONS ; do
       fi
       echo "* * * starting $vm (PGM) * * *";echo 
       vmrun start $vm nogui
-      echo $?
-      vmrun list
     fi
     echo 
   done
