@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2023.01.16 - v. 0.4 - enable SMR script, starting vpn just after mouting /encrypted and before other volumes
 # 2023.01.05 - v. 0.3 - a lot of changes - too many to describe here :-)
 # 2022.06.24 - v. 0.2 - dodano obsluge healthcheckow i grep -v grep 
 # 2021.01.30 - v. 0.1 - initial release (date unknown)
@@ -77,17 +78,18 @@ vgchange -a y
 sleep 1
 
 zamontuj_fs_MASTER /encrypted.luks2                                /encrypted            noatime
+
+echo ; echo startuje vpnserver
+/encrypted/vpnserver/vpnserver start
+echo ; echo 
+ps -ef |grep vpnserver | grep -v grep
+echo ; echo
+
+/root/bin/smr-disks-timeout.sh
+
 zamontuj_fs_MASTER /dev/vg_crypto_20221114_DyskD/lv_20221114_DyskD /mnt/luks-lv-icybox-A noatime,data=writeback,barrier=0,nobh,errors=remount-ro
 
 df -h /encrypted /mnt/luks-lv-icybox-A
-
-echo ; echo startuje vpnserver
-
-/encrypted/vpnserver/vpnserver start
-
-echo ; echo
-ps -ef |grep vpnserver | grep -v grep
-echo ; echo
 
 /root/bin/sprawdz-czy-encrypted-jest-zamontowany.sh
 /root/bin/sprawdz-czy-dziala-server-vpn.sh
