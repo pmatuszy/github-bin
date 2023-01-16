@@ -13,7 +13,6 @@
 set -o nounset
 set -o pipefail
 
-
 export GIT_REPO_DIRECTORY=/root/github-bin
 
 echo
