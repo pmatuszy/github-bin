@@ -10,7 +10,7 @@ cat  $0|grep -e '# *20[123][0-9]'|head -n 1 | awk '{print "script version: " $5 
 
 export DISPLAY=
 
-type -fP vmrun 2>/dev/null
+type -fP vmrun 2>&1 > /dev/null
 if (( $? != 0 )); then
   echo ; echo "(PGM) I can't find vmrum utility... exiting ..."; echo 
   exit 1
@@ -24,18 +24,19 @@ echo ; echo "All VMs on that host (running and not running):" ; echo
 find $VM_LOCATIONS -type f -name \*vmx 2>/dev/null
 echo ; echo 
 
+export OIFS="$IFS"
+
 for p in $VM_LOCATIONS ; do 
-  for vm in $(ls -1 "${p}"/*/*vmx 2>/dev/null);do
+  export IFS=$'\n'
+  for vm in $(find $p -type f -name "*.vmx" -print 2>/dev/null);do 
     if (( $(vmrun list |grep -v "Total running VMs:" | grep "$vm"| wc -l) != 0 ))  ;then
       echo "(PGM) machine $vm is running so we don't want to start it again...";echo 
       continue
     fi
     echo $vm | boxes -s 40x5 -a c
     ls -ld $vm `dirname $vm`/*lck 2>/dev/null
-    
-    echo ; echo -n "Do you want to start $(ls -1 $vm) [y/N/q]: "
     input_from_user=""
-    read -t 300 -n 1 input_from_user
+    IFS="$OIFS" read -t 300 -n 1 -p "Do you want to start [y/N/q]: " input_from_user
     echo
     if [ "${input_from_user}" == 'q' -o  $"{input_from_user}" == 'Q' ]; then
       echo
