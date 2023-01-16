@@ -1,4 +1,6 @@
 #!/bin/bash
+
+# 2023.01.15 - v. 0.7 - change $0 to basename $0 to have a shorter line
 # 2022.10.27 - v. 0.6 - but fix for "tcScrTitleEnd" variable
 # 2022.05.16 - v. 0.5 - small bug fix with STY unbound variable
 # 2022.05.11 - v. 0.4 - set set -o options
