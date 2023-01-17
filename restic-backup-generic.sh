@@ -1,4 +1,6 @@
 #!/bin/bash
+
+# 2023.01.17 - v. 2.3 - dodano random delay jesli skrypt jest wywolywany nieinteraktywnie
 # 2022.12.21 - v. 2.2 - added interactive mode
 # 2022.08.11 - v. 2.1 - changed LICZBA_SEKUND_MIEDZY_PONOWIENIAMI_BACKUPOW ze 180 do 600
 # 2022.08.10 - v. 2.0 - small bux fix with env variable upercase name
@@ -28,6 +30,15 @@ export LICZBA_SEKUND_MIEDZY_PONOWIENIAMI_BACKUPOW="${LICZBA_SEKUND_MIEDZY_PONOWI
 
 if [ -f "$HEALTHCHECKS_FILE" ];then
   HEALTHCHECK_URL=$(cat "$HEALTHCHECKS_FILE" |grep "^${RESTIC_BACKUP_NAME}"|awk '{print $2}')
+fi
+
+export MAX_RANDOM_DELAY_IN_SEC=${MAX_RANDOM_DELAY_IN_SEC:-50}
+tty 2>&1 >/dev/null
+if (( $? != 0 )); then      # we set RANDOM_DELAY only when running NOT from terminal
+  export RANDOM_DELAY=$((RANDOM % $MAX_RANDOM_DELAY_IN_SEC ))
+  sleep $RANDOM_DELAY
+else
+  echo ; echo "Interactive session detected: I will NOT introduce RANDOM_DELAY..."
 fi
 
 if [ -f /encrypted/root/scripts/repo-pass-info.sh ];then
