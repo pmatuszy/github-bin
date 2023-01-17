@@ -70,6 +70,10 @@ fi
 zrob_fsck /dev/mapper/encrypted_luks_device_"$(basename ${1})"
 mount -o $3 /dev/mapper/encrypted_luks_device_"$(basename ${1})" "${2}"
 
+if (( $? == 0 ));then
+  echo ; echo "mount of $1 under $2 was SUCCESSFUL" ; echo
+fi
+
 echo "<== ########## zamontuj_fs_MASTER($1, $2, $3)"
 }
 ################################################################################
