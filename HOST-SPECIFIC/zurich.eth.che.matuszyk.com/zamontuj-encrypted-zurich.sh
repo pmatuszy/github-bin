@@ -87,6 +87,14 @@ echo ; echo
 
 /root/bin/smr-disks-timeout.sh
 
+input_from_user=""
+IFS="$OIFS" read -t 300 -n 1 -p "Do you want to mount main encrypted volumes? [Y/n/q]: " input_from_user
+echo
+if [ "${input_from_user}" == 'q' -o  $"{input_from_user}" == 'Q' -o "${input_from_user}" == 'n' -o  $"{input_from_user}" == 'N' ]; then
+  echo "nie to nie.... wychodze"
+  exit 1
+fi
+
 zamontuj_fs_MASTER /dev/vg_crypto_20221114_DyskD/lv_20221114_DyskD /mnt/luks-lv-icybox-A noatime,data=writeback,barrier=0,nobh,errors=remount-ro
 
 df -h /encrypted /mnt/luks-lv-icybox-A
