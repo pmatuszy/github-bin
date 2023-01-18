@@ -92,7 +92,7 @@ input_from_user=""
 read -t 300 -n 1 -p "Do you want to mount main encrypted volumes? [Y/n/q]: " input_from_user
 echo
 if [ "${input_from_user}" == 'q' -o  $"{input_from_user}" == 'Q' -o "${input_from_user}" == 'n' -o  $"{input_from_user}" == 'N' ]; then
-  echo "nie to nie.... wychodze"
+  echo  ; echo "nie to nie.... wychodze" ; echo 
   exit 1
 fi
 
