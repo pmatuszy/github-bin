@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2023.01.20 - v. 0.2 - added status reporting after starting the vm
 # 2023.01.16 - v. 0.1 - initial release
 
 . /root/bin/_script_header.sh
@@ -49,6 +50,12 @@ for p in $VM_LOCATIONS ; do
       fi
       echo "* * * starting $vm (PGM) * * *";echo 
       vmrun start $vm nogui
+      if (( $? == 0 )); then
+        echo ; echo "(PGM) vmrun finished SUCCESSFULLY"; echo
+      else
+        echo ; echo "(PGM) vmrun finished with ERRORS !!!!!!"; echo
+
+      fi       
     fi
     echo 
   done
