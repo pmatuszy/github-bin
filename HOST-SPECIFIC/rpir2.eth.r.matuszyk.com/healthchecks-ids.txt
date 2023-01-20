@@ -9,3 +9,4 @@ update-restic.sh                                https://healthchecks.matuszyk.co
 update-rclone.sh                                https://healthchecks.matuszyk.com:8000/ping/1e0099d8-6dae-4cb6-8ba3-4d99f0a1a853
 healthchecks-swap-usage.sh                      https://healthchecks.matuszyk.com:8000/ping/4b09583f-aa5e-4317-853b-f16b6af89219
 healthchecks-lvs-sync-status.sh                 
+sprawdz-czy-reboot-required.sh 			https://healthchecks.matuszyk.com:8000/ping/7b8fdcf9-affb-4ca9-b2bf-9597566b0030
