@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2023.01.20 - v. 0.3 - added status reporting after starting the vm
 # 2023.01.16 - v. 0.2 - small changes to the way things are displayed
 # 2023.01.14 - v. 0.1 - initial release
 
@@ -34,6 +35,11 @@ for p in `vmrun list|grep vmx`;do
   if [ "${input_from_user}" == 'y' -o  $"{input_from_user}" == 'Y' ]; then
     echo "* * * suspending $p (PGM) * * *"
     vmrun suspend $p nogui
+    if (( $? == 0 )); then
+      echo ; echo "(PGM) vmrun finished SUCCESSFULLY"; echo
+    else
+      echo ; echo "(PGM) vmrun finished with ERRORS !!!!!!"; echo
+    fi
   fi
   sleep 0.5 ;
 done;
