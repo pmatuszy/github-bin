@@ -31,7 +31,7 @@ if [ "${p}" == 'y' -o  "${p}" == 'y' ]; then
   mkdir -p $HOME/bin
 
   # sprawdzam, czy mam dostep do zdalnego repo
-  echo git ls-remote git+ssh://git@github.com/pmatuszy/github-bin.git | boxes -s 40x5 -a c
+  echo git ls-remote git+ssh://git@github.com/pmatuszy/github-bin.git | boxes -s 140x5 -a c
   git ls-remote git+ssh://git@github.com/pmatuszy/github-bin.git 2>&1 >/dev/null
   if (( $? != 0 )); then
     echo  ; echo ; echo "Nie mam dostepu do zdalnego repozytorium.... WYCHODZE" ; echo ; echo
@@ -40,7 +40,7 @@ if [ "${p}" == 'y' -o  "${p}" == 'y' ]; then
 
   cd "${GIT_REPO_DIRECTORY}"
 
-  echo git pull git+ssh://git@github.com/pmatuszy/github-bin.git | boxes -s 40x5 -a c
+  echo git pull git+ssh://git@github.com/pmatuszy/github-bin.git | boxes -s 140x5 -a c
 
   git pull git+ssh://git@github.com/pmatuszy/github-bin.git
   if (( $? != 0 )); then
