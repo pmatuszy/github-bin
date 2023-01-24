@@ -8,3 +8,4 @@ healthchecks-swap-usage.sh                      https://healthchecks.matuszyk.co
 healthchecks-lvs-sync-status.sh                 
 sprawdz-czy-dziala-bitcoin-daemon.sh		https://healthchecks.matuszyk.com:8000/ping/c6c16238-4e76-4344-8a88-77338d09e2d7
 sprawdz-czy-dziala-litecoincash-daemon.sh	https://healthchecks.matuszyk.com:8000/ping/450c1a6b-3779-49b0-ac90-b758e4a9d926
+sprawdz-czy-reboot-required.sh			https://healthchecks.matuszyk.com:8000/ping/ac36fe38-e653-4936-a421-88b8b918130f
