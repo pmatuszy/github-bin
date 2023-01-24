@@ -16,8 +16,8 @@ else
   echo ; echo "Interactive session detected: I will NOT introduce RANDOM_DELAY..."
 fi
 
-# spr. czy dziala tor relay
-if [ $(/bin/systemctl status tor|grep "Active: active"|wc -l) -eq 0 ];then 
+# spr. czy dziala demon litecoincash
+if [ $(pgrep -u litecoincash litecoincashd -c) -eq 0 ];then
   /usr/bin/curl -fsS -m 10 --retry 5 --retry-delay 5 -o /dev/null "$HEALTHCHECK_URL"/fail 2>/dev/null
 else
   /usr/bin/curl -fsS -m 10 --retry 5 --retry-delay 5 -o /dev/null "$HEALTHCHECK_URL" 2>/dev/null
@@ -27,5 +27,7 @@ exit
 #####
 # new crontab entry
 
-3 * * * * /root/bin/sprawdz-czy-dziala-tor-relay.sh
+@reboot ( sleep 60 && /root/bin/sprawdz-czy-dziala-litecoincash-daemon.sh ) 2>&1
+
+0 7-22 * * * /root/bin/sprawdz-czy-dziala-litecoincash-daemon.sh
 
