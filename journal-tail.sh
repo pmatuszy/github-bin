@@ -1,8 +1,10 @@
 #!/bin/bash
+
+# 2023.01.24 - v. 0.3 - grep changed to a regexp instead of hardcoded 2022
 # 2022.12.02 - v. 0.2 - better detection of journalctl binary location with type
 # 2022.11.25 - v. 0.1 - initial release
 
-echo ; cat  $0|grep -e '2022'|head -n 1 | awk '{print "script version: " $5 " (dated "$2")"}' ; echo ; echo
+echo ; cat  $0|grep -e '# *20[123][0-9]'|head -n 1 | awk '{print "script version: " $5 " (dated "$2")"}' ; echo ; echo
 
 figlet -w 120 logs from systemd
 sleep 1.5s
