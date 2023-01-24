@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2023.01.24 - v. 0.8 - added 2>/dev/null to one of the cp commands
 # 2023.01.13 - v. 0.7 - git clone is replaced with git pull, some small changes 
 # 2022.12.13 - v. 0.6 - hostname specified with start (works with or without domainaname)
 # 2022.09.30 - v. 0.5 - checking if we have access to remote repo
@@ -48,7 +49,7 @@ if [ "${p}" == 'y' -o  "${p}" == 'y' ]; then
   fi
 
   cp ./* $HOME/bin 2>/dev/null
-  cp ./HOST-SPECIFIC/`hostname`/* $HOME/bin
+  cp ./HOST-SPECIFIC/`hostname`/* $HOME/bin 2>/dev/null
   cp ./HOST-SPECIFIC/`hostname`.*com/* $HOME/bin 2>/dev/null
 
   # we copy hidden files to $HOME
