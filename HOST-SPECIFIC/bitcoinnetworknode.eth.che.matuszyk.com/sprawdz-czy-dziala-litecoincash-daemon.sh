@@ -27,7 +27,4 @@ exit
 #####
 # new crontab entry
 
-@reboot ( sleep 60 && /root/bin/sprawdz-czy-dziala-litecoincash-daemon.sh ) 2>&1
-
 0 7-22 * * * /root/bin/sprawdz-czy-dziala-litecoincash-daemon.sh
-
