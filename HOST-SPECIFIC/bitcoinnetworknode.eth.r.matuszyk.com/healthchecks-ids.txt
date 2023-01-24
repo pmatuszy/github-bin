@@ -6,3 +6,5 @@ update-restic.sh				https://healthchecks.matuszyk.com:8000/ping/e3d7939f-c3d3-4c
 update-rclone.sh                                https://healthchecks.matuszyk.com:8000/ping/c0797350-9224-4f58-b386-2823900f2aa2
 healthchecks-swap-usage.sh                      https://healthchecks.matuszyk.com:8000/ping/b24059dc-9aa2-43c9-8bb1-a91e4aaf3ba3
 healthchecks-lvs-sync-status.sh                 
+sprawdz-czy-dziala-bitcoin-daemon.sh		https://healthchecks.matuszyk.com:8000/ping/c6c16238-4e76-4344-8a88-77338d09e2d7
+sprawdz-czy-dziala-litecoincash-daemon.sh	https://healthchecks.matuszyk.com:8000/ping/450c1a6b-3779-49b0-ac90-b758e4a9d926
