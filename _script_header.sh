@@ -46,6 +46,7 @@ function ctrl_c() {
 export HEALTHCHECKS_FILE=/root/bin/healthchecks-ids.txt
 export kod_powrotu=123      # bezsensowny jakis, ale wazne, by zmienna byla zdefiniowana
 export RANDOM_DELAY=0
+export MAX_RANDOM_DELAY_IN_SEC=${MAX_RANDOM_DELAY_IN_SEC:-50}
 
 export script_is_run_interactively=0
 
