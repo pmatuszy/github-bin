@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2023.01.25 - v. 2.5 - added script_is_run_interactively env check (which is set in _script_header.sh)
 # 2023.01.17 - v. 2.3 - dodano random delay jesli skrypt jest wywolywany nieinteraktywnie
 # 2022.12.21 - v. 2.2 - added interactive mode
 # 2022.08.11 - v. 2.1 - changed LICZBA_SEKUND_MIEDZY_PONOWIENIAMI_BACKUPOW ze 180 do 600
@@ -130,9 +131,7 @@ fi
 
 export run_before_backup_log=$( eval $RUN_BEFORE_BACKUP 2>&1 ) 
 
-tty 2>&1 >/dev/null
-if (( $? == 0 )); then      # if we are running in the termina - lets print the output to the terminal
-   
+if (( $script_is_run_interactively == 1 )); then
   backup_log=""
   ( echo ; echo "aktualna data: `date '+%Y.%m.%d %H:%M'`" ; echo ; echo "RESTIC_REPOSITORY = $RESTIC_REPOSITORY" ; echo ; echo ;
     cat  $0|grep -e '# *20[123][0-9]'|head -n 1 | awk '{print "script version: " $5 " (dated "$2")"}' ; echo ; echo
@@ -174,8 +173,7 @@ kod_powrotu=$?
 
 export run_after_backup_log=$( eval $RUN_AFTER_BACKUP 2>&1 )
 
-tty 2>&1 >/dev/null
-if (( $? == 0 )); then      # if we are running in the termina - lets print the output to the terminal
+if (( $script_is_run_interactively == 1 )); then
   m="PGM: emtpy as run interactively"
   echo ; echo "~~~~~~~~~~~~~~~~~~~~~~~~~"
   echo kod powrotu z backupu: $kod_powrotu ; echo "~~~~~~~~~~~~~~~~~~~~~~~~~" ; echo ;
