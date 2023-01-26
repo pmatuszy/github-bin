@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2023.01.26 - v  0.9 - added . /root/bin/_script_footer.sh as it was not there...
 # 2023.01.13 - v  0.8 - a nicer display of the mount command status
 # 2022.12.02 - v  0.7 - bugfix with fsck return code
 # 2022.11.24 - v  0.6 - added restart of postgress and keepalived
@@ -105,3 +106,5 @@ echo
 df -h /encrypted /mnt/luks-buffalo1 /mnt/luks-RaidSonicA /mnt/luks-RaidSonicB
 
 /root/bin/sprawdz-czy-encrypted-jest-zamontowany.sh
+
+. /root/bin/_script_footer.sh
