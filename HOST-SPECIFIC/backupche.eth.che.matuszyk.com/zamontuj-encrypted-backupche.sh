@@ -1,6 +1,7 @@
 #!/bin/bash
 
-# 2022.12.01 - v. 0.1 - zmieniona zrob_fsck na nowsza - i wymuszenie fsck -y
+# 2023.01.26 - v. 0.8 - added script version print
+# 2022.12.01 - v. 0.7 - zmieniona zrob_fsck na nowsza - i wymuszenie fsck -y
 # 2022.05.23 - v. 0.6 - dodane wywolanie healthchecka na koncu
 # 2021.09.19 - v. 0.5 - zmiana w fsck, dodana funkcja zrob_fsck
 # 2021.08.29 - v. 0.4 - exportfs po zamontowaniu obu duzych volumentow, dodano montowanie dla minidlna i restart tego serwisu
@@ -15,7 +16,7 @@
 
 # zfs mount zfs_encrypted_file/encrypted
 
-echo ; cat  $0|grep -e '2022'|head -n 1 | awk '{print "script version: " $5 " (dated "$2")"}'; echo
+echo ; cat  $0|grep -e '# *20[123][0-9]'|head -n 1 | awk '{print "script version: " $5 " (dated "$2")"}' ; echo
 
 echo
 read -r -p "Wpisz haslo: " -s PASSWD
