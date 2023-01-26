@@ -1,9 +1,11 @@
 #!/bin/bash
+
+# 2023.01.26 - v. 0.2 - added script version print
 # 2022.11.21 - v. 0.1 - initial release
 
 . /root/bin/_script_header.sh
 
-cat  $0|grep -e '2022'|head -n 1 | awk '{print "script version: " $5 " (dated "$2")"}' ; echo ; echo
+cat  $0|grep -e '# *20[123][0-9]'|head -n 1 | awk '{print "script version: " $5 " (dated "$2")"}' ; echo ; echo 
 
 ################################################################################
 odmontuj_fs_MASTER() {

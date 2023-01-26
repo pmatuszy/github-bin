@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# 2023.01.26 - v  0.9 - added . /root/bin/_script_footer.sh as it was not there...
+# 2023.01.26 - v  0.9 - added . /root/bin/_script_footer.sh as it was not there..., fixed script version print
 # 2023.01.13 - v  0.8 - a nicer display of the mount command status
 # 2022.12.02 - v  0.7 - bugfix with fsck return code
 # 2022.11.24 - v  0.6 - added restart of postgress and keepalived
@@ -13,7 +13,7 @@
 
 . /root/bin/_script_header.sh
 
-cat  $0|grep -e '2022'|head -n 1 | awk '{print "script version: " $5 " (dated "$2")"}' ; echo ; echo
+cat  $0|grep -e '# *20[123][0-9]'|head -n 1 | awk '{print "script version: " $5 " (dated "$2")"}' ; echo ; echo
 
 if [ -f "$HEALTHCHECKS_FILE" ];then
   HEALTHCHECK_URL=$(cat "$HEALTHCHECKS_FILE" |grep "^`basename $0`"|awk '{print $2}')
