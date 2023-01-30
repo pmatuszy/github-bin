@@ -10,7 +10,7 @@ export SKAD_DIR="/worek-samba/nagrania/Kijow-webcamy"
 export DOKAD="/mnt/luks-lv-icybox-A/video-1dyne-kopie/Kijow-webcamy-ARCHIWUM/"
 
 echo ; echo "SKAD  = $SKAD_HOST:$SKAD_DIR" ; echo "DOKAD = $DOKAD" ; echo ; echo
-std_options="-a -v --stats --bwlimit=90000 --no-compress --progress --info=progress1 --partial  --inplace --remove-source-files "
+std_options='-a -v --stats --bwlimit=90000 --no-compress --progress --info=progress1 --partial  --inplace --remove-source-files'
 
 echo "Wszystkie pliki:"
 ssh "${SKAD_HOST}" "cd ${SKAD_DIR} ; /bin/ls -1tr"
@@ -29,6 +29,6 @@ echo ; df -h $DOKAD ; echo
 
 echo "Poczatek kopiowania: $(date '+%Y.%m.%d %H:%M:%S')" ; echo 
 
-rsync $std_options --files-from=<(ssh $SKAD_HOST "cd ${SKAD_DIR} ; /bin/ls -1tr | head -n-1" ) "${SKAD_HOST}:${SKAD_DIR}" "${DOKAD}"
+rsync $std_options -e "ssh -T -o Compression=no -x" --files-from=<(ssh $SKAD_HOST "cd ${SKAD_DIR} ; /bin/ls -1tr | head -n-1" ) "${SKAD_HOST}:${SKAD_DIR}" "${DOKAD}"
 
 echo "koniec: $(date '+%Y.%m.%d %H:%M:%S')" ; echo
