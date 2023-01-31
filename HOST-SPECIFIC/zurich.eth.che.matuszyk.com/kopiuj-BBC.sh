@@ -24,13 +24,13 @@ ssh "${SKAD_HOST}" "cd ${SKAD_DIR} ; /bin/ls -1tr | head -n-1"
 echo ; echo "Plik do zostawienia:"
 ssh "${SKAD_HOST}" "cd ${SKAD_DIR} ; /bin/ls -1tr | tail -n-1"
 
-echo -n "skopiujemy "
-
-ssh "${SKAD_HOST}" "cd ${SKAD_DIR} ; /bin/ls -1tr | tail -n-1 | awk '{print $5}'" | awk 'BEGIN {$suma=0} {$Suma=$suma+$0} END {print $suma/1024/1024 " MB danych"}'
+echo ; echo -n "Skopiujemy "
+ssh "${SKAD_HOST}" "cd ${SKAD_DIR} ; /bin/ls -ltr | head -n-1 " | awk 'BEGIN {$suma=0} {$Suma=$suma+$5} END {print $suma/1024/1024 " MB danych"}'
 
 echo ; df -h $DOKAD ; echo
-echo "Poczatek kopiowania: $(date '+%Y.%m.%d %H:%M:%S')" ; echo 
+echo "Poczatek kopiowania: $(date '+%Y.%m.%d %H:%M:%S')" ; echo
 
 rsync $std_options -e "ssh -T -o Compression=no -x" --files-from=<(ssh $SKAD_HOST "cd ${SKAD_DIR} ; /bin/ls -1tr | head -n-1" ) "${SKAD_HOST}:${SKAD_DIR}" "${DOKAD}"
 
 echo "koniec: $(date '+%Y.%m.%d %H:%M:%S')" ; echo
+
