@@ -6,6 +6,8 @@ export SKAD_HOST="backupche.eth.che.matuszyk.com"
 export SKAD_DIR="/worek-samba/nagrania/TokFM-nagrania"
 export DOKAD="/mnt/luks-lv-icybox-A/video-1dyne-kopie/TokFM-nagrania-ARCHIWUM"
 
+cat  $0|grep -e '# *20[123][0-9]'|head -n 1 | awk '{print "script version: " $5 " (dated "$2")"}' ; echo
+
 echo ; echo "SKAD  = $SKAD_HOST:$SKAD_DIR" ; echo "DOKAD = $DOKAD" ; echo ; echo
 std_options='-a -v --stats --bwlimit=90000 --no-compress --progress --info=progress1 --partial  --inplace --remove-source-files'
 
