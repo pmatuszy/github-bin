@@ -1,14 +1,10 @@
 #!/bin/bash
 
-# 2023.01.31 - v. 0.5 - if no files to copy, the script is finished earlier
-# 2023.01.30 - v. 0.4 - beautify output, rsync is called once
-# 2023.01.16 - v. 0.3 - addd sleep 0.5
-# 2023.01.10 - v. 0.2 - print files on the source file
-# 2023.01.09 - v. 0.1 - initial release
+# 2023.01.31 - v. 0.1 - initial release
 
 export SKAD_HOST="backupche.eth.che.matuszyk.com"
-export SKAD_DIR="/worek-samba/nagrania/Kijow-webcamy"
-export DOKAD="/mnt/luks-lv-icybox-A/video-1dyne-kopie/Kijow-webcamy-ARCHIWUM/"
+export SKAD_DIR="/worek-samba/nagrania/BBC4"
+export DOKAD="/mnt/luks-lv-icybox-A/video-1dyne-kopie/BBC4-ARCHIWUM"
 
 cat  $0|grep -e '# *20[123][0-9]'|head -n 1 | awk '{print "script version: " $5 " (dated "$2")"}' ; echo
 
