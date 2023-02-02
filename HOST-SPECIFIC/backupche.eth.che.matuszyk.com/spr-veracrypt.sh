@@ -1,4 +1,6 @@
 #!/bin/bash
+
+# 2023.02.02 - v. 0.5 - added --foreground option to be able to use Ctrl-C
 # 2021.08.06 - v. 0.4 - sending dbus signal message
 # 2021.06.22 - v. 0.3 - URL set and used throughout the script, added timeout as signal-cli can be run in the background and this script would never finish
 # 2021.05.26 - v. 0.2 - added XDG_RUNTIME_DIR,XDG_DATA_DIR, ,added -u option
@@ -35,7 +37,6 @@ echo "${URL}" > "${zawartosc_maila}"
 
 # mpack -s "${temat_maila}" -c image/jpeg "${plik_po_cropie}" -d "${zawartosc_maila}" matuszyk@matuszyk.com
 
-# /usr/bin/timeout --preserve-status --kill-after=$kill_after $timeout /opt/signal-cli/bin/signal-cli -u +41763691467 send -m "(`date '+%Y.%m.%d %H:%M'`) digitec.ch-Deal of the Day, ${URL}" -a "${plik_po_cropie}" --note-to-self 2>&1 > /dev/null
-/usr/bin/timeout --preserve-status --kill-after=$kill_after $timeout /usr/bin/dbus-send --session --type=method_call --print-reply --dest="org.asamk.Signal" /org/asamk/Signal org.asamk.Signal.sendMessage string:"${temat_maila}" array:string:"${plik_po_cropie}" string:+41763691467
+/usr/bin/timeout --foreground --preserve-status --kill-after=$kill_after $timeout /usr/bin/dbus-send --session --type=method_call --print-reply --dest="org.asamk.Signal" /org/asamk/Signal org.asamk.Signal.sendMessage string:"${temat_maila}" array:string:"${plik_po_cropie}" string:+41763691467
 
 rm "${plik_po_cropie}" "${plik_bez_cropa}"

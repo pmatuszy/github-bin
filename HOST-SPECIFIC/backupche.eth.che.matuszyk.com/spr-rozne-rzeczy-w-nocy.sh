@@ -1,4 +1,6 @@
 #!/bin/bash
+
+
 # 2022.03.29 - v. 0.2 - zmiana na krotsze nazwy skrypow bo screen sobie z dlugimi nie radzi, skrocony czas miedzy wywolaniami screena z 4m do 45s
 # 2022.03.05 - v. 0.1 - initial release (date unknown)
 
@@ -15,7 +17,6 @@ for p in /root/bin/spr-deal-of-the-day-digitec.sh \
          /root/bin/spr-fenix.sh \
          /root/bin/spr-seagate-exos.sh \
          /root/bin/spr-veracrypt.sh 
-
 
 #         /root/bin/spr-gopro4.sh \
 #         /root/bin/spr-gopro7.sh \
