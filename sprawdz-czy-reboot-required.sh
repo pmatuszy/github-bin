@@ -30,4 +30,5 @@ exit
 
 @reboot ( /root/bin/sprawdz-czy-reboot-required.sh ) 2>&1
 
-1 * * * * sleep $((RANDOM \% 50)) && /root/bin/sprawdz-czy-reboot-required.sh
+0 7-22 * * * /root/bin/sprawdz-czy-reboot-required.sh
+
