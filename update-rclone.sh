@@ -65,4 +65,4 @@ exit
 #####
 # new crontab entry
 
-5 20 * * * sleep $((RANDOM \% 60)) && /root/bin/update-rclone.sh
+5 20 * * * /root/bin/update-rclone.sh

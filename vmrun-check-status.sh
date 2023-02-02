@@ -4,8 +4,6 @@
 
 . /root/bin/_script_header.sh
 
-echo ; echo ; cat  $0|grep -e '# *20[123][0-9]'|head -n 1 | awk '{print "script version: " $5 " (dated "$2")"}' ; echo
-
 type -fP vmrun 2>&1 > /dev/null
 if (( $? != 0 )); then
   echo ; echo "(PGM) I can't find vmrum utility... exiting ..."; echo
@@ -66,25 +64,47 @@ spr_vmware_tools() {
 
 export DISPLAY=
 
-echo vmrun list | boxes -s 40x5 -a c
-echo;
-vmrun list
-echo
 
-export IFS=$'\n'
-
-for p in `vmrun list|grep vmx`;do
+m=$(
+  cat  $0|grep -e '# *20[123][0-9]'|head -n 1 | awk '{print "script version: " $5 " (dated "$2")"}' ; echo
+  echo vmrun list | boxes -s 40x5 -a c
+  echo;
+  vmrun list
   echo
-  echo "* * * checking $p (PGM) * * *"
-  spr_ip_address   $p
-  spr_vmware_tools $p
-  sleep 0.2 ;
-done;
+
+  export IFS=$'\n'
+
+  for p in `vmrun list|grep vmx`;do
+    echo
+    echo "* * * checking $p (PGM) * * *"
+    spr_ip_address   $p
+    spr_vmware_tools $p
+    sleep 0.2 ;
+  done;
+
+  if [ "${HEALTHCHECK_STATUS}" = "BAD" ];then
+    /usr/bin/curl -fsS -m 100 --retry 10 --retry-delay 10 -o /dev/null "$HEALTHCHECK_URL"/fail 2>/dev/null
+  else
+    /usr/bin/curl -fsS -m 100 --retry 10 --retry-delay 10 -o /dev/null "$HEALTHCHECK_URL" 2>/dev/null
+  fi
+  )
+
+if (( $script_is_run_interactively == 1 )); then
+  echo "$m"
+fi
 
 if [ "${HEALTHCHECK_STATUS}" = "BAD" ];then
-  /usr/bin/curl -fsS -m 100 --retry 10 --retry-delay 10 -o /dev/null "$HEALTHCHECK_URL"/fail 2>/dev/null
+  echo "$m" | /usr/bin/curl -fsS -m 100 --retry 10 --retry-delay 10 --data-binary @- -o /dev/null "$HEALTHCHECK_URL"/fail 2>/dev/null
 else
-  /usr/bin/curl -fsS -m 100 --retry 10 --retry-delay 10 -o /dev/null "$HEALTHCHECK_URL" 2>/dev/null
+  echo "$m" | /usr/bin/curl -fsS -m 100 --retry 10 --retry-delay 10 --data-binary @- -o /dev/null "$HEALTHCHECK_URL" 2>/dev/null
 fi
 
 . /root/bin/_script_footer.sh
+
+exit
+
+#####
+# new crontab entry
+
+0 * * * * /root/bin/update-restic.sh
+

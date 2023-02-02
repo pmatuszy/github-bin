@@ -60,4 +60,4 @@ exit
 #####
 # new crontab entry
 
-0 20 * * * sleep $((RANDOM \% 60)) && /root/bin/update-restic.sh
+0 20 * * * /root/bin/update-restic.sh
