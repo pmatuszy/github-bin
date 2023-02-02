@@ -10,3 +10,5 @@ healthchecks-swap-usage.sh                      https://healthchecks.matuszyk.co
 healthchecks-smartd.sh				
 sprawdz-czy-reboot-required.sh			https://healthchecks.matuszyk.com:8000/ping/b476c601-8c6b-4e54-b5e6-ad5c645479bc
 healthchecks-lvs-sync-status.sh                 
+vmrun-check-status.sh				https://healthchecks.matuszyk.com:8000/ping/6d7459de-6ced-4893-9dc5-44a6fadab273	
+
