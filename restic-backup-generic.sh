@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2023.02.02 - v. 2.6 - added support for /root/SECRET subdirectory
 # 2023.01.25 - v. 2.5 - added script_is_run_interactively env check (which is set in _script_header.sh)
 # 2023.01.17 - v. 2.3 - dodano random delay jesli skrypt jest wywolywany nieinteraktywnie
 # 2022.12.21 - v. 2.2 - added interactive mode
@@ -37,8 +38,8 @@ if [ -f /encrypted/root/scripts/repo-pass-info.sh ];then
   REPO_PASS_INFO=/encrypted/root/scripts/repo-pass-info.sh
 fi
 
-if [ -f /root/repo-pass-info.sh ];then
-  REPO_PASS_INFO=/root/repo-pass-info.sh
+if [ -f /root/SECRET/repo-pass-info.sh ];then
+  REPO_PASS_INFO=/root/SECRET/repo-pass-info.sh
 fi
 
 if [ -f "$REPO_PASS_INFO" ]; then
