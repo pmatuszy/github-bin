@@ -100,5 +100,5 @@ exit
 #####
 # new crontab entry
 
-0 * * * * /root/bin/update-restic.sh
+0 * * * * /root/bin/vmrun-check-status.sh
 
