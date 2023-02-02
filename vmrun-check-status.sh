@@ -35,13 +35,12 @@ spr_ip_address() {
     HEALTHCHECK_STATUS=BAD
   fi
   if [[ "${address}" =~ "Error" ]];then
-    echo cos nie tak
+    echo "cos nie tak - wynik: $address"
     HEALTHCHECK_STATUS=BAD
   else
     echo "IP Address = $address (PGM)"
   fi
 }
-
 #########################################################################################################
 spr_vmware_tools() {
   if [ ! -z "${TPM_PASS:-}" ];then
@@ -55,7 +54,7 @@ spr_vmware_tools() {
   fi
 
   if [ "${status}" != "running" ];then
-    echo cos nie tak
+    echo "cos nie tak - wynik: $status"
     HEALTHCHECK_STATUS=BAD
   else
     echo "vmare Tools are running (OK) (PGM)"
