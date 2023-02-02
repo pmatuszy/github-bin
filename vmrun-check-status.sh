@@ -68,7 +68,8 @@ m=$(
   cat  $0|grep -e '# *20[123][0-9]'|head -n 1 | awk '{print "script version: " $5 " (dated "$2")"}' ; echo
   echo vmrun list | boxes -s 40x5 -a c
   echo;
-  vmrun list
+  vmrun list | grep Total
+  vmrun list | grep -v Total | sort
   echo
 
   export IFS=$'\n'
