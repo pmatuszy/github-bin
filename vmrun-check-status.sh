@@ -18,9 +18,6 @@ if [ -f /root/SECRET/vmware-pass.sh ];then
   . /root/SECRET/vmware-pass.sh
 fi
 
-# we set HEALTHCHECK_STATUS initially to OK - if anything goes wrong I will flip it to BAD
-export HEALTHCHECK_STATUS=OK
-
 #########################################################################################################
 spr_ip_address() {
   if [ ! -z "${TPM_PASS:-}" ];then
@@ -30,11 +27,11 @@ spr_ip_address() {
   fi
   if (( $? != 0 )); then
     echo ; echo "(PGM) vmrun finished with ERRORS !!!!!!"; echo
-    HEALTHCHECK_STATUS=BAD
+    cos_nie_tak=1
   fi
   if [[ "${address}" =~ "Error" ]];then
-    echo "cos nie tak - wynik: $address"
-    HEALTHCHECK_STATUS=BAD
+    echo "  spr_ip_address(): cos nie tak - wynik: $address"
+    cos_nie_tak=1
   else
     echo "IP Address = $address (PGM)"
   fi
@@ -48,12 +45,12 @@ spr_vmware_tools() {
   fi
   if (( $? != 0 )); then
     echo ; echo "(PGM) vmrun finished with ERRORS !!!!!!"; echo
-    HEALTHCHECK_STATUS=BAD
+    cos_nie_tak=1
   fi
 
   if [ "${status}" != "running" ];then
-    echo "cos nie tak - wynik: $status"
-    HEALTHCHECK_STATUS=BAD
+    echo "spr_vmware_tools(): cos nie tak - wynik: $status"
+    cos_nie_tak=1
   else
     echo "vmare Tools are running (OK) (PGM)"
   fi
@@ -65,6 +62,7 @@ spr_vmware_tools() {
 export DISPLAY=
 
 m=$(
+  cos_nie_tak=0
   cat  $0|grep -e '# *20[123][0-9]'|head -n 1 | awk '{print "script version: " $5 " (dated "$2")"}' ; echo
   echo vmrun list | boxes -s 40x5 -a c
   echo;
@@ -79,21 +77,17 @@ m=$(
     echo "* * * checking $p (PGM) * * *"
     spr_ip_address   $p
     spr_vmware_tools $p
-    sleep 0.2 ;
   done;
-
-  if [ "${HEALTHCHECK_STATUS}" = "BAD" ];then
-    /usr/bin/curl -fsS -m 100 --retry 10 --retry-delay 10 -o /dev/null "$HEALTHCHECK_URL"/fail 2>/dev/null
-  else
-    /usr/bin/curl -fsS -m 100 --retry 10 --retry-delay 10 -o /dev/null "$HEALTHCHECK_URL" 2>/dev/null
-  fi
+  exit $cos_nie_tak
   )
+
+kod_powrotu=$?
 
 if (( $script_is_run_interactively == 1 )); then
   echo "$m"
 fi
 
-if [ "${HEALTHCHECK_STATUS}" = "BAD" ];then
+if [ $kod_powrotu != 0 ];then
   echo "$m" | /usr/bin/curl -fsS -m 100 --retry 10 --retry-delay 10 --data-binary @- -o /dev/null "$HEALTHCHECK_URL"/fail 2>/dev/null
 else
   echo "$m" | /usr/bin/curl -fsS -m 100 --retry 10 --retry-delay 10 --data-binary @- -o /dev/null "$HEALTHCHECK_URL" 2>/dev/null
