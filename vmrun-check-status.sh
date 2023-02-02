@@ -64,7 +64,6 @@ spr_vmware_tools() {
 
 export DISPLAY=
 
-
 m=$(
   cat  $0|grep -e '# *20[123][0-9]'|head -n 1 | awk '{print "script version: " $5 " (dated "$2")"}' ; echo
   echo vmrun list | boxes -s 40x5 -a c
@@ -74,7 +73,7 @@ m=$(
 
   export IFS=$'\n'
 
-  for p in `vmrun list|grep vmx`;do
+  for p in `vmrun list|grep vmx|sort`;do
     echo
     echo "* * * checking $p (PGM) * * *"
     spr_ip_address   $p
