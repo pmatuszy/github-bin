@@ -4,9 +4,9 @@
 
 . /root/bin/_script_header.sh
 
-opoznienie=10
+opoznienie=15
 
-for p in {1..6};do 
+for p in {1..8};do 
   wakeonlan -i 192.168.200.255 04:D9:F5:60:42:4A
   echo opoznienie $opoznienie
   sleep $opoznienie
