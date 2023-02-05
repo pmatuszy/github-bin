@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2023.02.05 - v. 0.4 - added encrypted vm support
 # 2023.01.20 - v. 0.3 - added status reporting after starting the vm
 # 2023.01.16 - v. 0.2 - small changes to the way things are displayed
 # 2023.01.14 - v. 0.1 - initial release
@@ -15,6 +16,10 @@ if (( $? != 0 )); then
 fi
 
 export DISPLAY=
+
+if [ -f /root/SECRET/vmware-pass.sh ];then
+  . /root/SECRET/vmware-pass.sh
+fi
 
 echo vmrun list | boxes -s 40x5 -a c
 echo;
@@ -34,7 +39,11 @@ for p in `vmrun list|grep vmx`;do
   fi
   if [ "${input_from_user}" == 'y' -o  $"{input_from_user}" == 'Y' ]; then
     echo "* * * suspending $p (PGM) * * *"
-    vmrun suspend $p nogui
+    if [ ! -z "${TPM_PASS:-}" ];then
+      vmrun -vp "${TPM_PASS}" suspend $vm nogui
+    else
+      vmrun suspend $vm nogui
+    fi
     if (( $? == 0 )); then
       echo ; echo "(PGM) vmrun finished SUCCESSFULLY"; echo
     else

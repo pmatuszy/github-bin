@@ -54,7 +54,6 @@ for p in $VM_LOCATIONS ; do
         rm -rfv "${vm}.lck"
       fi
       echo "* * * starting $vm (PGM) * * *";echo 
-      vmrun start $vm nogui
       if [ ! -z "${TPM_PASS:-}" ];then
         vmrun -vp "${TPM_PASS}" start $vm nogui
       else
