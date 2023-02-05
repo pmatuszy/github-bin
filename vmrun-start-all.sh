@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2023.02.05 - v. 0.3 - added encrypted vm support
 # 2023.01.20 - v. 0.2 - added status reporting after starting the vm
 # 2023.01.16 - v. 0.1 - initial release
 
@@ -10,6 +11,10 @@ VM_LOCATIONS="/vmware /vmware-nvme /encrypted/vmware-in-encrypted /mnt/luks-raid
 cat  $0|grep -e '# *20[123][0-9]'|head -n 1 | awk '{print "script version: " $5 " (dated "$2")"}' ; echo 
 
 export DISPLAY=
+
+if [ -f /root/SECRET/vmware-pass.sh ];then
+  . /root/SECRET/vmware-pass.sh
+fi
 
 type -fP vmrun 2>&1 > /dev/null
 if (( $? != 0 )); then
@@ -50,6 +55,11 @@ for p in $VM_LOCATIONS ; do
       fi
       echo "* * * starting $vm (PGM) * * *";echo 
       vmrun start $vm nogui
+      if [ ! -z "${TPM_PASS:-}" ];then
+        vmrun -vp "${TPM_PASS}" start $vm nogui
+      else
+        vmrun start $vm nogui
+      fi
       if (( $? == 0 )); then
         echo ; echo "(PGM) vmrun finished SUCCESSFULLY"; echo
       else
