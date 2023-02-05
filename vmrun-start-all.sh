@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2023.02.05 - v. 0.4 - added printing current date and time
 # 2023.02.05 - v. 0.3 - added encrypted vm support
 # 2023.01.20 - v. 0.2 - added status reporting after starting the vm
 # 2023.01.16 - v. 0.1 - initial release
@@ -9,6 +10,7 @@
 VM_LOCATIONS="/vmware /vmware-nvme /encrypted/vmware-in-encrypted /mnt/luks-raidsonic"
 
 cat  $0|grep -e '# *20[123][0-9]'|head -n 1 | awk '{print "script version: " $5 " (dated "$2")"}' ; echo 
+echo " "; echo "aktualna data: `date '+%Y.%m.%d %H:%M'`" ; echo ;
 
 export DISPLAY=
 

@@ -1,8 +1,13 @@
 #!/bin/bash
 
+# 2023.02.05 - v. 0.2 - added how_many_retries retry_delay - sometimes retry helps to check statuses
+#                       added printing of the current date and time
 # 2023.02.02 - v. 0.1 - initial release
 
 . /root/bin/_script_header.sh
+
+how_many_retries=3
+retry_delay=5
 
 type -fP vmrun 2>&1 > /dev/null
 if (( $? != 0 )); then
@@ -17,43 +22,48 @@ fi
 if [ -f /root/SECRET/vmware-pass.sh ];then
   . /root/SECRET/vmware-pass.sh
 fi
-
 #########################################################################################################
 spr_ip_address() {
-  if [ ! -z "${TPM_PASS:-}" ];then
-    address=$(vmrun -vp "${TPM_PASS}" getGuestIPAddress $p nogui)
-  else
-    address=$(vmrun getGuestIPAddress $p nogui)
-  fi
-  if (( $? != 0 )); then
-    echo ; echo "(PGM) vmrun finished with ERRORS !!!!!!"; echo
-    cos_nie_tak=1
-  fi
-  if [[ "${address}" =~ "Error" ]];then
-    echo "  spr_ip_address(): cos nie tak - wynik: $address"
-    cos_nie_tak=1
-  else
-    echo "IP Address = $address (PGM)"
-  fi
+  for ((retry=0 ; retry<$how_many_retries ; retry++));do
+    if [ ! -z "${TPM_PASS:-}" ];then
+      address=$(vmrun -vp "${TPM_PASS}" getGuestIPAddress $p nogui)
+    else
+      address=$(vmrun getGuestIPAddress $p nogui)
+    fi
+    if (( $? != 0 )); then
+      echo ; echo "(PGM) vmrun finished with ERRORS !!!!!!"; echo
+      cos_nie_tak=1
+    fi
+    if [[ "${address}" =~ "Error" ]];then
+      echo "  spr_ip_address(): cos nie tak - wynik: $address"
+      cos_nie_tak=1
+    else
+      echo "IP Address = $address (PGM)"
+      return 0
+    fi
+    sleep $retry_delay
+  done
 }
 #########################################################################################################
 spr_vmware_tools() {
-  if [ ! -z "${TPM_PASS:-}" ];then
-    status=$(vmrun -vp "${TPM_PASS}" checkToolsState $p nogui)
-  else
-    status=$(vmrun checkToolsState $p nogui)
-  fi
-  if (( $? != 0 )); then
-    echo ; echo "(PGM) vmrun finished with ERRORS !!!!!!"; echo
-    cos_nie_tak=1
-  fi
-
-  if [ "${status}" != "running" ];then
-    echo "spr_vmware_tools(): cos nie tak - wynik: $status"
-    cos_nie_tak=1
-  else
-    echo "vmare Tools are running (OK) (PGM)"
-  fi
+  for ((retry=0 ; retry<$how_many_retries ; retry++));do
+    if [ ! -z "${TPM_PASS:-}" ];then
+      status=$(vmrun -vp "${TPM_PASS}" checkToolsState $p nogui)
+    else
+      status=$(vmrun checkToolsState $p nogui)
+    fi
+    if (( $? != 0 )); then
+      echo ; echo "(PGM) vmrun finished with ERRORS !!!!!!"; echo
+      cos_nie_tak=1
+    fi
+    if [ "${status}" != "running" ];then
+      echo "spr_vmware_tools(): cos nie tak - wynik: $status"
+      cos_nie_tak=1
+    else
+      echo "vmare Tools are running (OK) (PGM)"
+      return 0
+    fi
+  done
 }
 #########################################################################################################
 #########################################################################################################
@@ -64,6 +74,7 @@ export DISPLAY=
 m=$(
   cos_nie_tak=0
   cat  $0|grep -e '# *20[123][0-9]'|head -n 1 | awk '{print "script version: " $5 " (dated "$2")"}' ; echo
+  echo " "; echo "aktualna data: `date '+%Y.%m.%d %H:%M'`" ; echo ;
   echo vmrun list | boxes -s 40x5 -a c
   echo;
   vmrun list | grep Total

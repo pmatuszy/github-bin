@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2023.02.05 - v. 0.5 - added printing current date and time
 # 2023.02.05 - v. 0.4 - added encrypted vm support
 # 2023.01.20 - v. 0.3 - added status reporting after starting the vm
 # 2023.01.16 - v. 0.2 - small changes to the way things are displayed
@@ -8,6 +9,7 @@
 . /root/bin/_script_header.sh
 
 echo ; echo ; cat  $0|grep -e '# *20[123][0-9]'|head -n 1 | awk '{print "script version: " $5 " (dated "$2")"}' ; echo
+echo " "; echo "aktualna data: `date '+%Y.%m.%d %H:%M'`" ; echo ;
 
 type -fP vmrun 2>&1 > /dev/null
 if (( $? != 0 )); then
