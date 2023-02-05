@@ -42,9 +42,9 @@ for p in `vmrun list|grep vmx`;do
   if [ "${input_from_user}" == 'y' -o  $"{input_from_user}" == 'Y' ]; then
     echo "* * * suspending $p (PGM) * * *"
     if [ ! -z "${TPM_PASS:-}" ];then
-      vmrun -vp "${TPM_PASS}" suspend $vm nogui
+      vmrun -vp "${TPM_PASS}" suspend $p nogui
     else
-      vmrun suspend $vm nogui
+      vmrun suspend $p nogui
     fi
     if (( $? == 0 )); then
       echo ; echo "(PGM) vmrun finished SUCCESSFULLY"; echo

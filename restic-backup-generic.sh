@@ -42,14 +42,14 @@ if [ -f /root/SECRET/repo-pass-info.sh ];then
   REPO_PASS_INFO=/root/SECRET/repo-pass-info.sh
 fi
 
-if [ -f "$REPO_PASS_INFO" ]; then
+if [ -f "${REPO_PASS_INFO:-}" ]; then
   . "$REPO_PASS_INFO"
 else
   m=$(
     echo '#####################################################'
     echo '#####################################################'
     echo
-    echo "${REPO_PASS_INFO} nie moze byc znaleziony. Wychodze"
+    echo "\$REPO_PASS_INFO nie moze byc znaleziony. Wychodze"
     echo
     echo '#####################################################'
     echo '#####################################################' )
