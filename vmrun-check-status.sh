@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2023.02.06 - v. 0.3 - small bug fix cos_nie_tak=0 after successful run is set now
 # 2023.02.05 - v. 0.2 - added how_many_retries retry_delay - sometimes retry helps to check statuses
 #                       added printing of the current date and time
 # 2023.02.02 - v. 0.1 - initial release
@@ -39,6 +40,7 @@ spr_ip_address() {
       cos_nie_tak=1
     else
       echo "IP Address = $address (PGM)"
+      cos_nie_tak=0
       return 0
     fi
     sleep $retry_delay
@@ -61,6 +63,7 @@ spr_vmware_tools() {
       cos_nie_tak=1
     else
       echo "vmare Tools are running (OK) (PGM)"
+      cos_nie_tak=0
       return 0
     fi
   done
