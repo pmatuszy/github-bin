@@ -15,7 +15,6 @@
 # 2020.11.26 - v. 0.2 - added second section with 'git pull'
 # 2020.10.20 - v. 0.1 - initial release
 
-
 clear 
 
 # exit when your script tries to use undeclared variables
@@ -58,4 +57,3 @@ echo
 ./git-pull.sh
 
 . /root/bin/_script_footer.sh
-
