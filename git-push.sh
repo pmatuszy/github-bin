@@ -31,15 +31,7 @@ if [ ! -d "${GIT_REPO_DIRECTORY}" ];then
   exit 1
 fi
 
-#pidof ssh-agent >/dev/null 2>&1
-
-#if [ $? -eq 0 ] ; then
-#  echo ; echo '(PGM) ssh-agent is NOT started.... Sorry, Quitting...' ; echo
-#  exit 22
-#else
-#  eval "$(ssh-agent -s )" >/dev/null 2>&1
-#fi
-
+check_if_installed keychain
 keychain
 
 batch_mode=0
