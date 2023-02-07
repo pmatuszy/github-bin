@@ -31,7 +31,7 @@ if [ ! -d "${GIT_REPO_DIRECTORY}" ];then
   exit 1
 fi
 
-pidof ssh-agent 2>/dev/null
+pidof ssh-agent >/dev/null 2>&1
 
 if [ $? -ne 0 ] ; then
   echo ; echo '(PGM) ssh-agent is NOT started.... Sorry, Quitting...' ; echo
