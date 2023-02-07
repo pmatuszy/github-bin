@@ -20,7 +20,8 @@ set -o pipefail
 export GIT_REPO_DIRECTORY=/root/github-bin
 
 check_if_installed keychain
-keychain
+
+eval $(keychain -q --eval id_rsa)
 
 batch_mode=0
 
