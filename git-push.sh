@@ -33,6 +33,12 @@ fi
 
 /usr/bin/ssh-agent >/dev/null 
 
+
+
+ps -p $SSH_AGENT_PID > /dev/null || eval "$(ssh-agent -s)"
+
+pidof ssh-agent 2>/dev/null
+
 if [ $? -ne 0 ] ; then
   echo ; echo '(PGM) ssh-agent is NOT started.... Sorry, Quitting...' ; echo
   exit 22
