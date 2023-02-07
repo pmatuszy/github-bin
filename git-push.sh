@@ -40,6 +40,8 @@ fi
 #  eval "$(ssh-agent -s )" >/dev/null 2>&1
 #fi
 
+keychain
+
 batch_mode=0
 
 if (( $# != 0 )) && [ "${1-nonbatch}" == "batch" ]; then
