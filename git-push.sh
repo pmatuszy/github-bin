@@ -31,8 +31,6 @@ if [ ! -d "${GIT_REPO_DIRECTORY}" ];then
   exit 1
 fi
 
-/usr/bin/ssh-agent >/dev/null 
-
 pidof ssh-agent 2>/dev/null
 
 if [ $? -ne 0 ] ; then
