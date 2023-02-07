@@ -33,7 +33,7 @@ fi
 
 ssh-agent >/dev/null 
 
-if (( $? != 0 )); then
+if ( $? != 0 ) ; then
   echo ; echo '(PGM) ssh-agent is NOT started.... Sorry, Quitting...' ; echo
   exit 22
 else
