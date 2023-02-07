@@ -63,6 +63,7 @@ echo "Do you want to do git push? [y/N]"
 if (( $batch_mode == 0 ));then
   read -t 300 -n 1 p     # read one character (-n) with timeout of 300 seconds
 else
+  echo "y"
   p=y # batch mode ==> we set the answer to 'y'
 fi
 
