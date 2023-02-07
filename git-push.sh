@@ -26,9 +26,6 @@ set -o pipefail
 github_project_name=`pwd`
 github_project_name=`basename $github_project_name`
 
-echo ; cat  $0|grep -e '# *20[123][0-9]'|head -n 1 | awk '{print "script version: " $5 " (dated "$2")"}' ; echo
-echo " "; echo "aktualna data: `date '+%Y.%m.%d %H:%M'`" ; echo ;
-
 echo ; echo "github_project_name = $github_project_name"; echo
 
 git remote set-url origin git+ssh://git@github.com/pmatuszy/${github_project_name}.git

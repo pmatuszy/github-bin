@@ -8,9 +8,6 @@
 
 . /root/bin/_script_header.sh
 
-echo ; echo ; cat  $0|grep -e '# *20[123][0-9]'|head -n 1 | awk '{print "script version: " $5 " (dated "$2")"}' ; echo
-echo " "; echo "aktualna data: `date '+%Y.%m.%d %H:%M'`" ; echo ;
-
 type -fP vmrun 2>&1 > /dev/null
 if (( $? != 0 )); then
   echo ; echo "(PGM) I can't find vmrum utility... exiting ..."; echo
