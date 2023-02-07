@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2023.02.07 - v. 1.1 - added batch mode
 # 2023.01.26 - v. 1.0 - fixed script version print
 # 2022.10.27 - v. 0.9 - added printing of the script version
 # 2022.05.18 - v. 0.8 - added set -o options at the beginning
@@ -23,6 +24,13 @@ set -o pipefail
 
 . /root/bin/_script_header.sh
 
+batch_mode=0
+
+if (( $# != 0 )) && [ "${1-nonbatch}" == "batch" ]; then
+  echo ; echo "(PGM) enabling batch mode (no questions asked)"
+  batch_mode=1
+fi
+
 github_project_name=`pwd`
 github_project_name=`basename $github_project_name`
 
@@ -31,7 +39,12 @@ echo ; echo "github_project_name = $github_project_name"; echo
 git remote set-url origin git+ssh://git@github.com/pmatuszy/${github_project_name}.git
 
 echo "Do you want to do git push? [y/N]"
-read -t 300 -n 1 p     # read one character (-n) with timeout of 5 seconds
+if (( $batch_mode == 0 ));then
+  read -t 300 -n 1 p     # read one character (-n) with timeout of 300 seconds
+else
+  p=y # batch mode ==> we set the answer to 'y'
+fi
+
 echo
 echo
 if [ "${p}" == 'y' -o  "${p}" == 'y' ]; then
@@ -52,6 +65,10 @@ fi
 echo
 echo
 
-./git-pull.sh
+if (( $batch_mode == 0 ));then
+  ./git-pull.sh
+else
+  ./git-pull.sh batch
+fi
 
 . /root/bin/_script_footer.sh

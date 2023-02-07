@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2023.02.07 - v. 0.9 - added batch mode
 # 2023.01.24 - v. 0.8 - added 2>/dev/null to one of the cp commands, size of the boxes width changed from 40 to 70
 # 2023.01.13 - v. 0.7 - git clone is replaced with git pull, some small changes 
 # 2022.12.13 - v. 0.6 - hostname specified with start (works with or without domainaname)
@@ -18,8 +19,6 @@ set -o pipefail
 
 batch_mode=0
 
-echo $#
-
 if (( $# != 0 )) && [ "${1-nonbatch}" == "batch" ]; then
   echo ; echo "(PGM) enabling batch mode (no questions asked)"
   batch_mode=1
@@ -31,9 +30,9 @@ echo
 echo "Do you want to do kind of git pull and configure local scripts? [y/N]"
 
 if (( $batch_mode == 0 ));then
-  read -t 300 -n 1 p     # read one character (-n) with timeout of 5 seconds
+  read -t 300 -n 1 p     # read one character (-n) with timeout of 300 seconds
 else
-  p=y
+  p=y # batch mode ==> we set the answer to 'y'
 fi
 echo
 echo
