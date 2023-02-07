@@ -16,11 +16,23 @@ set -o pipefail
 
 . /root/bin/_script_header.sh
 
+batch_mode=0
+
+if (( $# != 0 )); then
+  echo ; echo "(PGM) enabling batch mode (no questions asked)";echo
+  batch_mode=1
+fi
+
 export GIT_REPO_DIRECTORY=/root/github-bin
 
 echo
 echo "Do you want to do kind of git pull and configure local scripts? [y/N]"
-read -t 300 -n 1 p     # read one character (-n) with timeout of 5 seconds
+
+if (( $batch_mode == 0 ));then
+  read -t 300 -n 1 p     # read one character (-n) with timeout of 5 seconds
+else
+  p=y
+fi
 echo
 echo
 if [ "${p}" == 'y' -o  "${p}" == 'y' ]; then
