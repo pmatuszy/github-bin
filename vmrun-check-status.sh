@@ -115,4 +115,3 @@ exit
 # new crontab entry
 
 0 * * * * /root/bin/vmrun-check-status.sh
-
