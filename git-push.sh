@@ -40,8 +40,8 @@ else
   eval "$(ssh-agent -s )" >/dev/null 2>&1
 fi
 
-echo "SSH_AUTH_SOCK = $SSH_AUTH_SOCK"
-echo "SSH_AGENT_PID = $SSH_AGENT_PID"
+#echo "SSH_AUTH_SOCK = $SSH_AUTH_SOCK"
+#echo "SSH_AGENT_PID = $SSH_AGENT_PID"
 
 batch_mode=0
 
