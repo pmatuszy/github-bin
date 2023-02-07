@@ -17,14 +17,14 @@ set -o pipefail
 
 . /root/bin/_script_header.sh
 
+export GIT_REPO_DIRECTORY=/root/github-bin
+
 batch_mode=0
 
 if (( $# != 0 )) && [ "${1-nonbatch}" == "batch" ]; then
   echo ; echo "(PGM) enabling batch mode (no questions asked)"
   batch_mode=1
 fi
-
-export GIT_REPO_DIRECTORY=/root/github-bin
 
 echo
 echo "Do you want to do kind of git pull and configure local scripts? [y/N]"

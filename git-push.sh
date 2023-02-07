@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# 2023.02.07 - v. 1.1 - added batch mode
+# 2023.02.07 - v. 1.1 - added batch mode, added GIT_REPO_DIRECTORY variable
 # 2023.01.26 - v. 1.0 - fixed script version print
 # 2022.10.27 - v. 0.9 - added printing of the script version
 # 2022.05.18 - v. 0.8 - added set -o options at the beginning
@@ -23,6 +23,8 @@ set -o nounset
 set -o pipefail
 
 . /root/bin/_script_header.sh
+
+export GIT_REPO_DIRECTORY=/root/github-bin
 
 batch_mode=0
 
@@ -48,6 +50,7 @@ fi
 echo
 echo
 if [ "${p}" == 'y' -o  "${p}" == 'y' ]; then
+  cd "${GIT_REPO_DIRECTORY}"
   git add --all * .[a-zA-Z]*
   git commit -a -m \""new push from `hostname` @ `date '+%Y.%m.%d %H:%M:%S'`"\"
 
