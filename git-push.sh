@@ -26,6 +26,10 @@ set -o pipefail
 
 export GIT_REPO_DIRECTORY=/root/github-bin
 
+SSH_AUTH_SOCK=/tmp/ssh-XXXXXXm3uKhq/agent.86099; export SSH_AUTH_SOCK;
+SSH_AGENT_PID=86100; export SSH_AGENT_PID;
+echo Agent pid 86100;
+
 batch_mode=0
 
 if (( $# != 0 )) && [ "${1-nonbatch}" == "batch" ]; then
