@@ -70,13 +70,13 @@ function throttledToText {
 # Main script, kill sysbench when interrupted
 trap 'kill -HUP 0' EXIT
 
-check_if_installed(sysbench)
+check_if_installed sysbench
 
-type -fP "${1}" &>/dev/null
+type -fP vcgencmd &>/dev/null
 
 if (( $? != 0 ));then
-  echo "(PGM) ${1} not found - I will install it..."
-  apt-get -y install "${1}"
+  echo ;  echo "(PGM) vcgencmd not found - are we run on Raspberry PI hardware????" ; echo 
+  exit 1
 fi
 
 
