@@ -50,7 +50,7 @@ if (( $# != 0 )) && [ "${1-nonbatch}" == "batch" ]; then
   batch_mode=1
 fi
 
-cd "${GIT_REPO_DIRECTORY}"
+cd "${GIT_REPO_DIRECTORY}" || exit 2
 
 github_project_name=`pwd`
 github_project_name=`basename $github_project_name`
