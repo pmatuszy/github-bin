@@ -70,8 +70,8 @@ if (( $? != 0 )); then      # we set RANDOM_DELAY only when running NOT from ter
 else
   echo ; echo "Interactive session detected: I will NOT introduce RANDOM_DELAY..."
   script_is_run_interactively=1
-  echo ; cat  $0|grep -e '# *20[123][0-9]'|head -n 1 | awk '{print "script version: " $5 " (dated "$2")"}' ; echo
-  echo " "; echo "aktualna data: `date '+%Y.%m.%d %H:%M'`" ; echo 
+  echo ; cat  $0|grep -e '# *20[123][0-9]'|head -n 1 | awk '{print "script version: " $5 " (dated "$2")"}'
+  echo ; echo "aktualna data: `date '+%Y.%m.%d %H:%M'`" ; echo 
 fi
 
 check_if_installed boxes
