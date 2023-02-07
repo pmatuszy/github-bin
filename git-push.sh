@@ -26,6 +26,11 @@ set -o pipefail
 
 export GIT_REPO_DIRECTORY=/root/github-bin
 
+if [ ! -d "${GIT_REPO_DIRECTORY}" ];then
+  echo ; echo "(PGM) GIT_REPO_DIRECTORY = $GIT_REPO_DIRECTORY doesn't exist. Quitting..." ; echo
+  exit 1
+fi
+
 batch_mode=0
 
 if (( $# != 0 )) && [ "${1-nonbatch}" == "batch" ]; then
