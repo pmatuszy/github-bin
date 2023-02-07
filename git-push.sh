@@ -26,16 +26,14 @@ set -o pipefail
 
 export GIT_REPO_DIRECTORY=/root/github-bin
 
-#export SSH_AUTH_SOCK=/tmp/ssh-XXXXXXm3uKhq/agent.86099; export SSH_AUTH_SOCK;
-#export SSH_AGENT_PID=86100; export SSH_AGENT_PID;
-#echo Agent pid 86100;
-
 batch_mode=0
 
 if (( $# != 0 )) && [ "${1-nonbatch}" == "batch" ]; then
   echo ; echo "(PGM) enabling batch mode (no questions asked)"
   batch_mode=1
 fi
+
+cd "${GIT_REPO_DIRECTORY}"
 
 github_project_name=`pwd`
 github_project_name=`basename $github_project_name`
@@ -54,7 +52,6 @@ fi
 echo
 echo
 if [ "${p}" == 'y' -o  "${p}" == 'y' ]; then
-  cd "${GIT_REPO_DIRECTORY}"
   git add --all * .[a-zA-Z]*
   git commit -a -m \""new push from `hostname` @ `date '+%Y.%m.%d %H:%M:%S'`"\"
 
