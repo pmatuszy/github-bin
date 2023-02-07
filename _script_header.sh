@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2023.02.07 - v. 1.0 - added check_if_installed function
 # 2023.01.25 - v. 0.9 - added script_is_run_interactively env variable
 # 2023.01.24 - v. 0.8 - added kod_powrotu environment variable
 # 2023.01.15 - v. 0.7 - change $0 to basename $0 to have a shorter line
@@ -32,6 +33,7 @@ fi
 # trap ctrl-c and call ctrl_c()
 trap ctrl_c INT
 
+##############################################################################################################################################################################
 function ctrl_c() {
  echo
  echo "** Trapped CTRL-C - cleaning up...."
@@ -42,6 +44,16 @@ function ctrl_c() {
  fi
  exit
 }
+#######################################################################################
+function check_if_installed() {
+type -fP "${1}" &>/dev/null
+
+if (( $? != 0 ));then
+  echo "(PGM) ${1} not found - I will install it..."
+  apt-get -y install "${1}"
+fi
+}
+#######################################################################################
 
 export HEALTHCHECKS_FILE=/root/bin/healthchecks-ids.txt
 export kod_powrotu=123      # bezsensowny jakis, ale wazne, by zmienna byla zdefiniowana

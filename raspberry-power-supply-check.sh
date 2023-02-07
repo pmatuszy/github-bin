@@ -1,5 +1,8 @@
 #!/bin/bash
 
+# 2023.02.07 - v. 0.2 - added check if sysbench is installed
+# 20xx.xx.xx - v. 0.1 - initial release (date unknown)
+
 # Before running this script, make sure you have sysbench installed:
 #           sudo apt-get install sysbench
 #
@@ -36,6 +39,8 @@ function throttleCodeMask {
   perl -e "printf \"%s\", $1 & $2 ? \"$3\" : \"$4\""
 }
 
+#######################################################################################
+
 # Make the throttled code readable
 #
 # See https://github.com/raspberrypi/documentation/blob/JamesH65-patch-vcgencmd-vcdbg-docs/raspbian/applications/vcgencmd.md
@@ -60,8 +65,21 @@ function throttledToText {
   throttleCodeMask $throttledCode 0x1 "Soft temperature limit has occurred, " ""
 }
 
+. /root/bin/_script_header.sh
+
 # Main script, kill sysbench when interrupted
 trap 'kill -HUP 0' EXIT
+
+check_if_installed(sysbench)
+
+type -fP "${1}" &>/dev/null
+
+if (( $? != 0 ));then
+  echo "(PGM) ${1} not found - I will install it..."
+  apt-get -y install "${1}"
+fi
+
+
 sysbench --test=cpu --cpu-max-prime=10000000 --num-threads=4 run > /dev/null &
 maxfreq=$(( $(awk '{printf ("%0.0f",$1/1000); }' < /sys/devices/system/cpu/cpu0/cpufreq/scaling_max_freq) -15 ))
 
@@ -75,4 +93,6 @@ while true; do
   echo "$temp $sys_clock_speed / $real_clock_speed MHz $voltage - $throttled_text"
   sleep 5
 done
+
+. /root/bin/_script_footer.sh
 
