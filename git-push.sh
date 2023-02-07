@@ -55,7 +55,7 @@ cd "${GIT_REPO_DIRECTORY}"
 github_project_name=`pwd`
 github_project_name=`basename $github_project_name`
 
-echo ; echo "github_project_name = $github_project_name"; echo
+echo "github_project_name = $github_project_name"; echo
 
 git remote set-url origin git+ssh://git@github.com/pmatuszy/${github_project_name}.git
 
