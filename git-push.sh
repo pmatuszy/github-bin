@@ -31,17 +31,14 @@ if [ ! -d "${GIT_REPO_DIRECTORY}" ];then
   exit 1
 fi
 
-pidof ssh-agent >/dev/null 2>&1
+#pidof ssh-agent >/dev/null 2>&1
 
-if [ $? -ne 0 ] ; then
-  echo ; echo '(PGM) ssh-agent is NOT started.... Sorry, Quitting...' ; echo
-  exit 22
-else
-  eval "$(ssh-agent -s )" >/dev/null 2>&1
-fi
-
-#echo "SSH_AUTH_SOCK = $SSH_AUTH_SOCK"
-#echo "SSH_AGENT_PID = $SSH_AGENT_PID"
+#if [ $? -eq 0 ] ; then
+#  echo ; echo '(PGM) ssh-agent is NOT started.... Sorry, Quitting...' ; echo
+#  exit 22
+#else
+#  eval "$(ssh-agent -s )" >/dev/null 2>&1
+#fi
 
 batch_mode=0
 
