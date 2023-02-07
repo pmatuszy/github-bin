@@ -32,7 +32,6 @@ if [ ! -d "${GIT_REPO_DIRECTORY}" ];then
 fi
 
 check_if_installed keychain
-keychain
 
 batch_mode=0
 
