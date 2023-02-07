@@ -37,7 +37,7 @@ if ( $? != 0 ) ; then
   echo ; echo '(PGM) ssh-agent is NOT started.... Sorry, Quitting...' ; echo
   exit 22
 else
-  eval /usr/bin/ssh-agent >/dev/null
+  eval "$(ssh-agent)"
 fi
 
 echo "SSH_AUTH_SOCK = $SSH_AUTH_SOCK"
