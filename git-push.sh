@@ -40,6 +40,9 @@ else
   eval /usr/bin/ssh-agent >/dev/null
 fi
 
+echo "SSH_AUTH_SOCK = $SSH_AUTH_SOCK"
+echo "SSH_AGENT_PID = $SSH_AGENT_PID"
+
 batch_mode=0
 
 if (( $# != 0 )) && [ "${1-nonbatch}" == "batch" ]; then
