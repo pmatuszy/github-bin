@@ -31,13 +31,13 @@ if [ ! -d "${GIT_REPO_DIRECTORY}" ];then
   exit 1
 fi
 
-ssh-agent >/dev/null 2>&1
+ssh-agent >/dev/null 
 
 if (( $? != 0 )); then
   echo ; echo '(PGM) ssh-agent is NOT started.... Sorry, Quitting...' ; echo
   exit 22
 else
-  eval ssh-agent 2>/dev/null
+  eval ssh-agent >/dev/null
 fi
 
 batch_mode=0
