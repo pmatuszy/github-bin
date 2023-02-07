@@ -35,7 +35,7 @@ fi
 
 
 
-ps -p $SSH_AGENT_PID > /dev/null || eval "$(ssh-agent -s)"
+ps -p ${SSH_AGENT_PID:-xxxx} > /dev/null || eval "$(ssh-agent -s)"
 
 pidof ssh-agent 2>/dev/null
 
