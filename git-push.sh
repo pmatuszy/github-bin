@@ -45,7 +45,7 @@ cd "${GIT_REPO_DIRECTORY}" || exit 2
 github_project_name=`pwd`
 github_project_name=`basename $github_project_name`
 
-eval $(keychain --eval id_rsa)
+eval $(keychain -q --eval id_rsa)
 
 echo "github_project_name = $github_project_name"; echo
 
