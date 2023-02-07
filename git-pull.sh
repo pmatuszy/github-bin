@@ -19,6 +19,9 @@ set -o pipefail
 
 export GIT_REPO_DIRECTORY=/root/github-bin
 
+check_if_installed keychain
+keychain
+
 batch_mode=0
 
 if (( $# != 0 )) && [ "${1-nonbatch}" == "batch" ]; then
