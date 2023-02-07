@@ -1,6 +1,6 @@
 #!/bin/bash
 
-
+# 2023.02.07 - v. 0.6 - added _script_header.sh and _script_footer.sh
 # 2023.01.11 - v. 0.5 - prompt for a new page is only displayed if there are no arguments on the command line
 # 2023.01.10 - v. 0.4 - added printing time with Linux units utility
 # 2023.01.09 - v. 0.3 - interactive session with clear screen, added power on hours calculations
@@ -8,25 +8,7 @@
 # 2022.12.20 - v. 0.2 - now printing info about the disk as well
 # 2022.10.11 - v. 0.1 - initial release
 
-# exit when your script tries to use undeclared variables
-set -o nounset
-set -o pipefail
-# if we are run non-interactively - do not set the terminal title
-export tcScrTitleStart="\ek"
-export tcScrTitleEnd="\e\134"
-
-if [ ! -z ${STY:-} ]; then    # checking if we are running within screen
-  # I am setting the screen window title to the script name
-  echo -ne "${tcScrTitleStart}${0}${tcScrTitleEnd}"
-fi
-
-INTERACTIVE_SESSION=0
-tty 2>&1 >/dev/null
-if (( $? == 0 )); then
-  INTERACTIVE_SESSION=1
-fi
-
-echo ; echo ; cat  $0|grep -e '# *20[123][0-9]'|head -n 1 | awk '{print "script version: " $5 " (dated "$2")"}' ; echo 
+. /root/bin/_script_header.sh
 
 if [ $# -eq 0 ]
   then
@@ -44,7 +26,7 @@ SUBCOMMAND="--info -A "
 export SMARTCTL_BIN=$(type -fP smartctl)
 
 for p in $disks ; do
-  if (( INTERACTIVE_SESSION ));then
+  if (( script_is_run_interactively ));then
      clear
   fi
   echo;echo
@@ -66,7 +48,7 @@ for p in $disks ; do
   if (( $? == 2 ));then
     echo  ; echo "No such a device, I am exiting " ; echo
     # exit 2
-    if (( INTERACTIVE_SESSION ));then
+    if (( script_is_run_interactively ));then
        echo "Press <ENTER> to continue or q/Q to quit"
        input_from_user=""
        read -t 300 -n 1 input_from_user
@@ -116,7 +98,7 @@ for p in $disks ; do
     fi
   fi
 
-  if (( INTERACTIVE_SESSION )) && (( $# != 1 )) ;then
+  if (( script_is_run_interactively )) && (( $# != 1 )) ;then
      echo "Press <ENTER> to continue or q/Q to quit"
      input_from_user=""
      read -t 300 -n 1 input_from_user
@@ -126,3 +108,6 @@ for p in $disks ; do
      fi
   fi
 done
+
+. /root/bin/_script_footer.sh
+

@@ -20,8 +20,6 @@ set -o pipefail
 
 . /root/bin/_script_header.sh
 
-echo ; cat  $0|grep -e '# *20[123][0-9]'|head -n 1 | awk '{print "script version: " $5 " (dated "$2")"}' ; 
-
 if [ $# -eq 0 ]
   then
     echo ; echo ; echo "No arguments supplied, I will run the script against ALL disks found on this systems..."
@@ -32,12 +30,6 @@ else
   disks=$1
 fi
 
-INTERACTIVE_SESSION=0
-tty 2>&1 >/dev/null
-if (( $? == 0 )); then
-  INTERACTIVE_SESSION=1
-fi
-
 DEVICE_TYPE=""
 VENDOR_ATTRIBUTE=""
 SUBCOMMAND="--info -l selftest"
@@ -45,7 +37,7 @@ SUBCOMMAND="--info -l selftest"
 export SMARTCTL_BIN=$(type -fP smartctl)
 
 for p in $disks ; do
-  if (( INTERACTIVE_SESSION ));then
+  if (( script_is_run_interactively ));then
      clear
   fi
   echo;echo
@@ -148,7 +140,7 @@ for p in $disks ; do
       echo -e " (" $(units "${last_conveyance_offline_ago} hours" time |sed 's|hr .*|hr|g') ")\n"
     fi
   fi
-  if (( INTERACTIVE_SESSION )) && (( $# != 1 )) ;then
+  if (( script_is_run_interactively )) && (( $# != 1 )) ;then
      echo "Press <ENTER> to continue or q/Q to quit"
      input_from_user=""
      read -t 300 -n 1 input_from_user
