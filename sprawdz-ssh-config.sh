@@ -1,7 +1,6 @@
 #!/bin/bash
 
-# 2023.01.03 - v. 0.2 - dodano random delay jesli skrypt jest wywolywany nieinteraktywnie
-# 20xx.xx.xx - v. 0.1 - initial release (date unknown)
+# 2023.02.08 - v. 0.1 - initial release
 
 . /root/bin/_script_header.sh
 if [ -f "$HEALTHCHECKS_FILE" ];then
