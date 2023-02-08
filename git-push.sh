@@ -32,7 +32,7 @@ if [ ! -d "${GIT_REPO_DIRECTORY}" ];then
 fi
 
 check_if_installed keychain
-eval $(keychain -q --eval id_rsa)
+eval $(keychain -q --eval id_ed25519 id_SSH_ed25519_20230207_OpenSSH)
 
 batch_mode=0
 
