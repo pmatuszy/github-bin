@@ -32,8 +32,6 @@ if [ "${p}" != 'y' -o  "${p}" != 'y' ]; then
   exit 1
 fi
 
-exit
-
 apt install -y gcc build-essential linux-headers-generic linux-headers-$(uname -r) ;
 
 vmware-modconfig --console --install-all ;
