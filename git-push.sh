@@ -16,15 +16,10 @@
 # 2020.11.26 - v. 0.2 - added second section with 'git pull'
 # 2020.10.20 - v. 0.1 - initial release
 
-clear 
-
-# exit when your script tries to use undeclared variables
-set -o nounset
-set -o pipefail
-
 . /root/bin/_script_header.sh
 
-export GIT_REPO_DIRECTORY=/root/github-bin
+export github_project_name=github-bin
+export GIT_REPO_DIRECTORY=/root/"${github_project_name}"
 
 if [ ! -d "${GIT_REPO_DIRECTORY}" ];then
   echo ; echo "(PGM) GIT_REPO_DIRECTORY = $GIT_REPO_DIRECTORY doesn't exist. Quitting..." ; echo
@@ -42,9 +37,6 @@ if (( $# != 0 )) && [ "${1-nonbatch}" == "batch" ]; then
 fi
 
 cd "${GIT_REPO_DIRECTORY}" || exit 2
-
-github_project_name=`pwd`
-github_project_name=`basename $github_project_name`
 
 echo "github_project_name = $github_project_name"; echo
 
