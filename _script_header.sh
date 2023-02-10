@@ -51,7 +51,7 @@ type -fP "${1}" &>/dev/null
 if (( $? != 0 ));then
   echo ; echo "#######################################################"
   echo "(PGM) ${1} not found - I will install it..."
-  if [ "${2:-BRAK}" -ne "BRAK" ];then
+  if [ "${2:-BRAK}" = "BRAK" ];then
     apt-get -y install "${2}"
   else
     apt-get -y install "${1}"
