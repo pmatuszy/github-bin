@@ -125,7 +125,7 @@ export run_before_backup_log=$( eval $RUN_BEFORE_BACKUP 2>&1 )
 
 if (( $script_is_run_interactively == 1 )); then
   backup_log=""
-  ( echo ; echo "aktualna data: `date '+%Y.%m.%d %H:%M'`" ; echo ; echo "RESTIC_REPOSITORY = $RESTIC_REPOSITORY" ; echo ; echo ;
+  ( echo ; ; echo "RESTIC_REPOSITORY = $RESTIC_REPOSITORY" ; echo ; echo ;
     cat  $0|grep -e '# *20[123][0-9]'|head -n 1 | awk '{print "script version: " $5 " (dated "$2")"}' ; echo ; echo
     kod_powrotu=999
     for (( p=1 ; p<=$MAX_LICZBA_PONOWIEN_BACKUPOW ; p++ )); do
