@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2023.02.10 - v. 1.1 - changed check_if_installed with the option to provide the package name to be installed
 # 2023.02.07 - v. 1.0 - added check_if_installed function and checks for figlet and boxes utils
 # 2023.01.25 - v. 0.9 - added script_is_run_interactively env variable
 # 2023.01.24 - v. 0.8 - added kod_powrotu environment variable

@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2023.02.10 - v. 0.6 - added check for smartmontools package
 # 2023.01.11 - v. 0.5 - prompt for a new page is only displayed if there are no arguments on the command line
 # 2023.01.10 - v. 0.4 - added printing time with Linux units utility
 # 2023.01.09 - v. 0.3 - interactive session with clear screen
@@ -14,11 +15,9 @@
 # 2022.10.12 - v. 0.2 - small fix to power_on_hours display 
 # 2022.10.11 - v. 0.1 - initial release
 
-# exit when your script tries to use undeclared variables
-set -o nounset
-set -o pipefail
-
 . /root/bin/_script_header.sh
+
+check_if_installed smartctl smartmontools
 
 if [ $# -eq 0 ]
   then
