@@ -9,16 +9,13 @@ export mail_recipient=matuszyk+`/bin/hostname`@matuszyk.com
 export details_level=${1:-low}
 export range="${2:-yesterday and today}"
 
-echo $range
-
 {
-
 check_if_installed mailx
 check_if_installed strings
 check_if_installed aha
 
-/usr/sbin/logwatch --detail "${details_level}" range="${range}"
-} | strings | aha | mailx -a 'Content-Type: text/html' -s "${mail_subject}"  ${mail_recipient}
+/usr/sbin/logwatch --detail "${details_level}" --range="${range}"
+} | strings | aha | mailx -a 'Content-Type: text/html' -s "${mail_subject}" "${mail_recipient}"
 
 . /root/bin/_script_footer.sh
 
