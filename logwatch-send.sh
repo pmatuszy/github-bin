@@ -4,10 +4,10 @@
 
 . /root/bin/_script_header.sh
 
-mail_subject="(`/bin/hostname`-`date '+%Y.%m.%d %H:%M:%S'`) logwatch"
-mail_recipient=matuszyk+`/bin/hostname`@matuszyk.com
-details_level=${1:-low}
-range="${2:-yesterday and today}"
+export mail_subject="(`/bin/hostname`-`date '+%Y.%m.%d %H:%M:%S'`) logwatch"
+export mail_recipient=matuszyk+`/bin/hostname`@matuszyk.com
+export details_level=${1:-low}
+export range="${2:-yesterday and today}"
 
 echo $range
 
