@@ -7,6 +7,8 @@
 
 . /root/bin/_script_header.sh
 
+check_if_installed smartctl smartmontools
+
 export disks=""
 
 if [ $# -eq 0 ]
