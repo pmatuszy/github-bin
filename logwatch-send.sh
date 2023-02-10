@@ -9,6 +9,8 @@ mail_recipient=matuszyk+`/bin/hostname`@matuszyk.com
 details_level=${1:-low}
 range="${2:-yesterday and today}"
 
+echo $range
+
 {
 
 check_if_installed mailx
