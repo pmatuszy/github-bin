@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2023.02.11 - v. 1.2 - added GIT_SSH_COMMAND
 # 2023.02.07 - v. 1.1 - added batch mode, added GIT_REPO_DIRECTORY variable
 # 2023.01.26 - v. 1.0 - fixed script version print
 # 2022.10.27 - v. 0.9 - added printing of the script version
@@ -20,6 +21,7 @@
 
 export github_project_name=github-bin
 export GIT_REPO_DIRECTORY=/root/"${github_project_name}"
+export GIT_SSH_COMMAND='ssh -i $HOME/.ssh/id_SSH_ed25519_20230207_OpenSSH'
 
 if [ ! -d "${GIT_REPO_DIRECTORY}" ];then
   echo ; echo "(PGM) GIT_REPO_DIRECTORY = $GIT_REPO_DIRECTORY doesn't exist. Quitting..." ; echo
