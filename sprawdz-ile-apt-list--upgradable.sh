@@ -40,7 +40,7 @@ else
   /usr/bin/curl -fsS -m 100 --retry 10 --retry-delay 10 --data-raw "$m" -o /dev/null "$HEALTHCHECK_URL" 2>/dev/null
 fi
 
-/root/bin/_script_footer.sh
+. /root/bin/_script_footer.sh
 
 exit
 #####
