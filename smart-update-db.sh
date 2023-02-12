@@ -25,3 +25,11 @@ else
 fi 
 
 . /root/bin/_script_footer.sh
+
+exit
+
+#####
+# new crontab entry
+
+1 0 1 * *    /root/bin/smart-update-db.sh
+
