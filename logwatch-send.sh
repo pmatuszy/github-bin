@@ -7,7 +7,7 @@
 export mail_subject="(`/bin/hostname`-`date '+%Y.%m.%d %H:%M:%S'`) logwatch"
 export mail_recipient=matuszyk+`/bin/hostname`@matuszyk.com
 export details_level=${1:-low}
-export range="${2:-yesterday and today}"
+export range="${2:-yesterday}"
 
 {
 check_if_installed mailx
