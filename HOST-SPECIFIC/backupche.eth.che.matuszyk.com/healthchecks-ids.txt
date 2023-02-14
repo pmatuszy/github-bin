@@ -12,4 +12,5 @@ update-rclone.sh                                https://healthchecks.matuszyk.co
 healthchecks-smartd.sh				https://healthchecks.matuszyk.com:8000/ping/24f98cf0-58e9-45a0-ad46-3336918d0f85
 healthchecks-swap-usage.sh                      https://healthchecks.matuszyk.com:8000/ping/8d335193-1a8e-4946-ade8-994130834a68 
 healthchecks-lvs-sync-status.sh                 https://healthchecks.matuszyk.com:8000/ping/30f4a9ac-7000-42bd-ad6f-33c6ce67230c
-nagrywaj-kijow-sprawdz-status.sh		https://healthchecks.matuszyk.com:8000/ping/1580a845-2f8b-471e-a9f4-051f05732e14	
+nagrywaj-kijow-sprawdz-status.sh		https://healthchecks.matuszyk.com:8000/ping/1580a845-2f8b-471e-a9f4-051f05732e14
+nagrywaj-BBC-sprawdz-status.sh			https://healthchecks.matuszyk.com:8000/ping/224be066-473d-4fa2-8bb6-c60f5a281d2d
