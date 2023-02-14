@@ -1,4 +1,6 @@
 #!/bin/bash
+
+# 2023.02.14 - v. 0.8 - removed sending of healthchecks status
 # 2022.05.23 - v. 0.7 - dodane 2>/dev/null po wywolaniu curl by nie dostawac maili z crona o timeoucie
 # 2022.05.16 - v. 0.6 - eliminacja curla by nie startowac "$url/start" 2x, poprawne badanie kodu powrotu ffmpeg przez dodanie exit $?
 # 2022.05.10 - v. 0.5 - dodalem obsluge healthchecks
@@ -42,10 +44,4 @@ while (( $secs_to_midnight > 200 )) ; do
   sleep 60 # opozniamy bo jak sa problemy z siecia, to by nie startowac od razu z nastepna proba...
 done
 
-if [ -z ${STY:-} ]; then    # checking if we are running interactively
-#  (echo "koniec wykonywania $0" && ls -lr `dirname "${DOKAD}"`) | strings | aha | \
-#      mailx -r root@`hostname` -a 'Content-Type: text/html' -s "$0 (`/bin/hostname`-`date '+%Y.%m.%d %H:%M:%S'`)" matuszyk@matuszyk.com
-   log=$(echo;echo;echo "koniec wykonywania $0" && ls -lr `dirname "${DOKAD}"`;echo;echo)
-   /usr/bin/curl -fsS -m 10 --retry 5 --retry-delay 5 --data-raw "$log $m" -o /dev/null "$HEALTHCHECK_URL" 2>/dev/null
-fi
 . /root/bin/_script_footer.sh
