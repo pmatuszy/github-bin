@@ -11,19 +11,21 @@ if [ -f "$HEALTHCHECKS_FILE" ];then
   HEALTHCHECK_URL=$(cat "$HEALTHCHECKS_FILE" |grep "^`basename $0`"|awk '{print $2}')
 fi
 
-ile_plikow=$(find "${DIR}" -type f -name "${maska_plikow}" -mmin -${jak_nowe_pliki_min} | wc -l)
+ile_plikow=$(find . -type f -name "${maska_plikow}" -mmin -${jak_nowe_pliki_min} | wc -l)
 
 HC_message=$(
    echo ; echo "aktualna data: `date '+%Y.%m.%d %H:%M'`" ; echo ; 
    cat  $0|grep -e '# *20[123][0-9]'|head -n 1 | awk '{print "script version: " $5 " (dated "$2")"}' ;echo 
+   echo "katalog: $DIR" ;echo 
+   cd "${DIR}"
    
-   echo "Pliki nowsze niz $jak_nowe_pliki_min minuty: ( $(find "${DIR}" -type f -name "${maska_plikow}" -mmin -${jak_nowe_pliki_min} | wc -l) szt.)" \
+   echo "Pliki nowsze niz $jak_nowe_pliki_min minuty: ( $(find . -type f -name "${maska_plikow}" -mmin -${jak_nowe_pliki_min} | wc -l) szt.)" \
         | boxes -s 60x5 -a c
-   find "${DIR}" -type f -name "${maska_plikow}" -mmin -${jak_nowe_pliki_min} | sort -r
+   find . -type f -name "${maska_plikow}" -mmin -${jak_nowe_pliki_min} | sort -r
    echo ;
-   echo "Pliki starsze niz $jak_nowe_pliki_min minuty: ( $(find "${DIR}" -type f -name "${maska_plikow}" -mmin +${jak_nowe_pliki_min} | wc -l) szt.)" \
+   echo "Pliki starsze niz $jak_nowe_pliki_min minuty: ( $(find . -type f -name "${maska_plikow}" -mmin +${jak_nowe_pliki_min} | wc -l) szt.)" \
         | boxes -s 60x5 -a c
-   find "${DIR}" -type f -name "${maska_plikow}" -mmin +${jak_nowe_pliki_min} | sort -r
+   find . -type f -name "${maska_plikow}" -mmin +${jak_nowe_pliki_min} | sort -r
   )
 
 if (( ${ile_plikow} > 0 ))  ;then
@@ -33,3 +35,10 @@ else
 fi
 
 . /root/bin/_script_footer.sh
+
+exit
+
+#####
+# new crontab entry
+
+0 * * * *    /root/bin/nagrywaj-kijow-sprawdz-status.sh
