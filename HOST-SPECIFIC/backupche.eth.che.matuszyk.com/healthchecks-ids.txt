@@ -14,3 +14,4 @@ healthchecks-swap-usage.sh                      https://healthchecks.matuszyk.co
 healthchecks-lvs-sync-status.sh                 https://healthchecks.matuszyk.com:8000/ping/30f4a9ac-7000-42bd-ad6f-33c6ce67230c
 nagrywaj-kijow-sprawdz-status.sh		https://healthchecks.matuszyk.com:8000/ping/1580a845-2f8b-471e-a9f4-051f05732e14
 nagrywaj-BBC-sprawdz-status.sh			https://healthchecks.matuszyk.com:8000/ping/224be066-473d-4fa2-8bb6-c60f5a281d2d
+nagrywaj-tokfm-sprawdz-status.sh		https://healthchecks.matuszyk.com:8000/ping/6e10bac7-f46e-4ec8-bb6a-8a54916046cc
