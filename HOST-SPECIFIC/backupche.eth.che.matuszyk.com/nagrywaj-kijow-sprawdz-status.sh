@@ -11,7 +11,7 @@ if [ -f "$HEALTHCHECKS_FILE" ];then
   HEALTHCHECK_URL=$(cat "$HEALTHCHECKS_FILE" |grep "^`basename $0`"|awk '{print $2}')
 fi
 
-ile_plikow=$(find . -type f -name "${maska_plikow}" -mmin -${jak_nowe_pliki_min} | wc -l)
+ile_plikow=$(find "${DIR}" -type f -name "${maska_plikow}" -mmin -${jak_nowe_pliki_min} | wc -l)
 
 HC_message=$(
    echo ; echo "aktualna data: `date '+%Y.%m.%d %H:%M'`" ; echo ; 
