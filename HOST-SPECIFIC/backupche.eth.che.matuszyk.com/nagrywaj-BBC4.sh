@@ -15,16 +15,15 @@
 # SKAD="http://open.live.bbc.co.uk/mediaselector/5/select/version/2.0/mediaset/http-icy-mp3-a/vpid/bbc_radio_fourfm/format/pls.pls"
 # SKAD="http://stream.live.vc.bbcmedia.co.uk/bbc_radio_fourfm?s=1642067029&e=1642081429&h=b27ba5e1db5ba2f56beacf6d37b8abea"
 
+. /root/bin/_script_header.sh
+
 SKAD="http://stream.live.vc.bbcmedia.co.uk/bbc_radio_fourfm"
 DOKAD_PREFIX="/worek-samba/nagrania/BBC4/BBC4"
 
 wlasciciel_pliku="che:che"
+opoznienie_miedzy_wywolaniami=60s
 
 . /root/bin/_script_header.sh
-
-if [ -f "$HEALTHCHECKS_FILE" ];then
-  HEALTHCHECK_URL=$(cat "$HEALTHCHECKS_FILE" |grep "^`basename $0`"|awk '{print $2}')
-fi
 
 secs_to_midnight=$((($(date -d "tomorrow 00:00" +%s)-$(date +%s))))
 
@@ -32,16 +31,14 @@ while (( $secs_to_midnight > 200 )) ; do
   secs_to_midnight=$((($(date -d "tomorrow 00:00" +%s)-$(date +%s))))
   let secs_nagrywania=secs_to_midnight+60
   DOKAD="${DOKAD_PREFIX}-`date '+%Y.%m.%d__%H%M%S'`.mp3"
-  /usr/bin/curl -fsS -m 10 --retry 5 --retry-delay 5 -o /dev/null "$HEALTHCHECK_URL"/start 2>/dev/null
 
-  m=$( ffmpeg -hide_banner -loglevel quiet -t "${secs_nagrywania}" -i "$SKAD" "$DOKAD" 2>&1 ; exit $?)
+  ffmpeg -hide_banner -loglevel quiet -t "${secs_nagrywania}" -i "$SKAD" "$DOKAD" 2>&1
   kod_powrotu=$?
   chown "${wlasciciel_pliku}" "${DOKAD}"
   if (( $kod_powrotu == 0 ));then
     break
   fi
-  /usr/bin/curl -fsS -m 10 --retry 5 --retry-delay 5 --data-raw "$m" -o /dev/null "$HEALTHCHECK_URL"/fail 2>/dev/null
-  sleep 60 # opozniamy bo jak sa problemy z siecia, to by nie startowac od razu z nastepna proba...
+  sleep ${opoznienie_miedzy_wywolaniami} # opozniamy bo jak sa problemy z siecia, to by nie startowac od razu z nastepna proba...
 done
 
 . /root/bin/_script_footer.sh

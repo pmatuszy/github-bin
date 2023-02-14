@@ -5,7 +5,7 @@
 export url="https://www.youtube.com/watch?v=e2gC37ILQmk"
 export DOKAD_PREFIX="/worek-samba/nagrania/Kijow-webcamy"
 
-opoznienie_miedzy_wywolaniami=20s
+opoznienie_miedzy_wywolaniami=60s
 wlasciciel_pliku="che:che"
 
 while : ; do 
