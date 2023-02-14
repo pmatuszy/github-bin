@@ -41,4 +41,4 @@ exit
 #####
 # new crontab entry
 
-0 * * * *    /root/bin/nagrywaj-tokfm-sprawdz-status.sh
+*/5 * * * *  /root/bin/nagrywaj-tokfm-sprawdz-status.sh

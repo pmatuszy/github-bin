@@ -41,4 +41,4 @@ exit
 #####
 # new crontab entry
 
-0 * * * *    /root/bin/nagrywaj-kijow-sprawdz-status.sh
+*/5 * * * *  /root/bin/nagrywaj-kijow-sprawdz-status.sh
