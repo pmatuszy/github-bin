@@ -11,15 +11,6 @@ if [ -f "$HEALTHCHECKS_FILE" ];then
   /usr/bin/curl -fsS -m 100 --retry 10 --retry-delay 10 -o /dev/null "$HEALTHCHECK_URL"/start 2>/dev/null
 fi
 
-export MAX_RANDOM_DELAY_IN_SEC=${MAX_RANDOM_DELAY_IN_SEC:-50}
-tty 2>&1 >/dev/null
-if (( $? != 0 )); then      # we set RANDOM_DELAY only when running NOT from terminal
-  export RANDOM_DELAY=$((RANDOM % $MAX_RANDOM_DELAY_IN_SEC ))
-  sleep $RANDOM_DELAY
-else
-  echo ; echo "Interactive session detected: I will NOT introduce RANDOM_DELAY..."
-fi
-
 m=$( /sbin/fstrim  --verbose --all 2>&1)
 
 if [ -f "$HEALTHCHECKS_FILE" ];then

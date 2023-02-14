@@ -11,14 +11,6 @@ export MYSQL_USER=${MYSQL_USER:-root}
 export MAX_RANDOM_DELAY_IN_SEC=${MAX_RANDOM_DELAY_IN_SEC:-50}
 export LIMIT_NUMBER_OF_LAST_BACKUPS_TO_LIST=100
 
-tty 2>&1 >/dev/null
-if (( $? != 0 )); then      # we set RANDOM_DELAY only when running NOT from terminal
-  export RANDOM_DELAY=$((RANDOM % $MAX_RANDOM_DELAY_IN_SEC ))
-  sleep $RANDOM_DELAY
-else
-  echo ; echo "Interactive session detected: I will NOT introduce RANDOM_DELAY..."
-fi
-
 SCRIPT_VERSION=$(echo ; cat $0|grep -e '# *20[123][0-9]'|head -n 1 | awk '{print "script version: " $5 " (dated "$2")"}' ; 
                  echo " "; echo "aktualna data: `date '+%Y.%m.%d %H:%M'`" ; echo ;
                  echo "script is run on `hostname`" ; echo
