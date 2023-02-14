@@ -3,7 +3,7 @@
 
 . /root/bin/_script_header.sh
 
-export DIR="/worek-samba/nagrania/BBC4/BBC4"
+export DIR="/worek-samba/nagrania/BBC4"
 export jak_nowe_pliki_min=2
 export maska_plikow="BBC4-*.mp3"
 
