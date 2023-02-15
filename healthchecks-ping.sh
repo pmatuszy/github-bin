@@ -10,10 +10,14 @@ if [ -f "$HEALTHCHECKS_FILE" ];then
 fi
 
 /usr/bin/curl -fsS -m 100 --retry 10 --retry-delay 10 -o /dev/null "$HEALTHCHECK_URL" 2>/dev/null
+
 . /root/bin/_script_footer.sh
+
 exit
 
 ######
 template crontab entry:
 
-* * * * *   sleep $((RANDOM \% 60)) && /root/bin/healthchecks-ping.sh
+@reboot ( sleep 25 && /root/bin/healthchecks-ping.sh ) 2>&1
+
+*/5 * * * *   /root/bin/healthchecks-ping.sh

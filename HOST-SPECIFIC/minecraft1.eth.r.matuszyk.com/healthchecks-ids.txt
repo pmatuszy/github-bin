@@ -1,0 +1,16 @@
+healthchecks-ping.sh				https://healthchecks.matuszyk.com:8000/ping/d7186a18-cd67-44c4-a920-835e1adec030	
+ssd-trim.sh  					
+sprawdz-czy-dziala-strona-yt2podcast.com.sh     
+sprawdz-ile-apt-list--upgradable.sh		
+restic_backup_BXL				
+restic_backup_SS				
+sprawdz-czy-encrypted-jest-zamontowany.sh      
+apc-status.sh					
+update-restic.sh                               
+update-rclone.sh                               
+healthchecks-smartd.sh				
+healthchecks-swap-usage.sh                      
+healthchecks-lvs-sync-status.sh                 
+nagrywaj-kijow-sprawdz-status.sh		
+nagrywaj-BBC-sprawdz-status.sh			
+nagrywaj-tokfm-sprawdz-status.sh		
