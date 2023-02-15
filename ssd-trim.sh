@@ -24,5 +24,5 @@ exit
 ######
 template crontab entry:
 
-@reboot ( sleep 45 && /root/bin/ssd-trim.sh) 2>&1
-0 */4 * * *    sleep $((RANDOM \% 60)) &&  /root/bin/ssd-trim.sh
+@reboot        ( sleep 45 && /root/bin/ssd-trim.sh) 2>&1
+0 */4 * * *    /root/bin/ssd-trim.sh
