@@ -6,8 +6,8 @@ restic_backup_BXL
 restic_backup_SS				
 sprawdz-czy-encrypted-jest-zamontowany.sh      
 apc-status.sh					
-update-restic.sh                               
-update-rclone.sh                               
+update-restic.sh                               https://healthchecks.matuszyk.com:8000/ping/42250c01-acbe-4b5e-8a50-7f56fd1ecff5	
+update-rclone.sh                               https://healthchecks.matuszyk.com:8000/ping/27874c16-ca0b-463c-8d5b-0261c18ffb12	
 healthchecks-smartd.sh				
 healthchecks-swap-usage.sh                      
 healthchecks-lvs-sync-status.sh                 
