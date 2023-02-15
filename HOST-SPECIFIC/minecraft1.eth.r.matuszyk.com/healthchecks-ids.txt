@@ -1,7 +1,7 @@
 healthchecks-ping.sh				https://healthchecks.matuszyk.com:8000/ping/d7186a18-cd67-44c4-a920-835e1adec030	
 ssd-trim.sh  					
 sprawdz-czy-dziala-strona-yt2podcast.com.sh     
-sprawdz-ile-apt-list--upgradable.sh		
+sprawdz-ile-apt-list--upgradable.sh		https://healthchecks.matuszyk.com:8000/ping/cad54ea9-f89e-4e1a-95e6-44847f563f13	
 restic_backup_BXL				
 restic_backup_SS				
 sprawdz-czy-encrypted-jest-zamontowany.sh      
