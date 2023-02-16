@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2023.02.17 - v. 1.2 - added SCRIPT_VERSION env variable
 # 2023.02.10 - v. 1.1 - changed check_if_installed with the option to provide the package name to be installed
 # 2023.02.07 - v. 1.0 - added check_if_installed function and checks for figlet and boxes utils
 # 2023.01.25 - v. 0.9 - added script_is_run_interactively env variable
@@ -15,24 +16,6 @@
 # exit when your script tries to use undeclared variables
 set -o nounset
 set -o pipefail
-
-# if we are run non-interactively - do not set the terminal title
-export tcScrTitleStart="\ek"
-export tcScrTitleEnd="\033\\"
-
-tty 2>&1 >/dev/null
-if (( $? == 0 )); then
-  echo -ne "\033]0;`hostname` - $0\007";\
-  figlet -w 280 `basename $0`
-fi
-
-if [ ! -z ${STY:-} ]; then    # checking if we are running within screen
-  # I am setting the screen window title to the script name
-  echo -ne "${tcScrTitleStart}${0}${tcScrTitleEnd}"
-fi
-
-# trap ctrl-c and call ctrl_c()
-trap ctrl_c INT
 
 ##############################################################################################################################################################################
 function ctrl_c() {
@@ -67,6 +50,27 @@ fi
 }
 #######################################################################################
 
+# if we are run non-interactively - do not set the terminal title
+export tcScrTitleStart="\ek"
+export tcScrTitleEnd="\033\\"
+
+check_if_installed boxes
+check_if_installed figlet
+
+tty 2>&1 >/dev/null
+if (( $? == 0 )); then
+  echo -ne "\033]0;`hostname` - $0\007";\
+  figlet -w 280 `basename $0`
+fi
+
+if [ ! -z ${STY:-} ]; then    # checking if we are running within screen
+  # I am setting the screen window title to the script name
+  echo -ne "${tcScrTitleStart}${0}${tcScrTitleEnd}"
+fi
+
+# trap ctrl-c and call ctrl_c()
+trap ctrl_c INT
+
 export HEALTHCHECKS_FILE=/root/bin/healthchecks-ids.txt
 export kod_powrotu=123      # bezsensowny jakis, ale wazne, by zmienna byla zdefiniowana
 export RANDOM_DELAY=0
@@ -74,19 +78,20 @@ export MAX_RANDOM_DELAY_IN_SEC=${MAX_RANDOM_DELAY_IN_SEC:-50}
 
 export script_is_run_interactively=0
 
+export SCRIPT_VERSION_TMP=$(cat $0|grep -e '# *20[123][0-9]'|head -n 1 | awk '{print "script version: " $5 " (dated "$2")"}' ;
+                 echo "current date : `date '+%Y.%m.%d %H:%M'`"
+                 echo "script is run on `hostname`" ; echo ; echo
+                 )
+
+export SCRIPT_VERSION=$(echo "${SCRIPT_VERSION_TMP}"  | boxes -s 50x3 -a c -d ada-box )
+
 tty 2>&1 >/dev/null
 if (( $? != 0 )); then      # we set RANDOM_DELAY only when running NOT from terminal
   script_is_run_interactively=0
   export RANDOM_DELAY=$((RANDOM % $MAX_RANDOM_DELAY_IN_SEC ))
   sleep $RANDOM_DELAY
 else
-  echo ; echo "Interactive session detected: I will NOT introduce RANDOM_DELAY..."
+  echo "Interactive session detected: I will NOT introduce RANDOM_DELAY...";echo
   script_is_run_interactively=1
-  echo ; cat  $0|grep -e '# *20[123][0-9]'|head -n 1 | awk '{print "script version: " $5 " (dated "$2")"}'
-  echo "aktualna data: `date '+%Y.%m.%d %H:%M'`" ; echo 
+  echo "${SCRIPT_VERSION}" ; echo
 fi
-
-check_if_installed boxes
-check_if_installed figlet
-
-
