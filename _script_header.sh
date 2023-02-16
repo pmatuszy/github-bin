@@ -78,10 +78,12 @@ export MAX_RANDOM_DELAY_IN_SEC=${MAX_RANDOM_DELAY_IN_SEC:-50}
 
 export script_is_run_interactively=0
 
-export SCRIPT_VERSION=$(cat $0|grep -e '# *20[123][0-9]'|head -n 1 | awk '{print "script version: " $5 " (dated "$2")"}' ;
+export SCRIPT_VERSION_TMP=$(cat $0|grep -e '# *20[123][0-9]'|head -n 1 | awk '{print "script version: " $5 " (dated "$2")"}' ;
                  echo "current date : `date '+%Y.%m.%d %H:%M'`"
                  echo "script is run on `hostname`" ; echo ; echo
                  )
+
+export SCRIPT_VERSION=$(echo "${SCRIPT_VERSION_TMP}"  | boxes -s 50x3 -a c -d ada-box )
 
 tty 2>&1 >/dev/null
 if (( $? != 0 )); then      # we set RANDOM_DELAY only when running NOT from terminal
