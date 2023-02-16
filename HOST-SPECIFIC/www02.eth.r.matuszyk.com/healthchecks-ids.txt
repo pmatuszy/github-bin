@@ -10,4 +10,5 @@ sprawdz-czy-reboot-required.sh			https://healthchecks.matuszyk.com:8000/ping/eb1
 healthchecks-lvs-sync-status.sh                 
 sprawdz-czy-dziala-strona-www.anna.matuszyk.com.sh      
 sprawdz-czy-dziala-strona-www.ontsolutions.com.sh       
-ssh-keychain.sh
+ssh-keychain.sh						https://healthchecks.matuszyk.com:8000/ping/23221586-4a92-4e65-8505-8e3ec93ae957	
+
