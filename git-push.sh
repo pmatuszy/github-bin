@@ -21,7 +21,7 @@
 
 export github_project_name=github-bin
 export GIT_REPO_DIRECTORY=/root/"${github_project_name}"
-export GIT_SSH_COMMAND='ssh -i $HOME/.ssh/id_SSH_ed25519_20230207_OpenSSH'
+# export GIT_SSH_COMMAND='ssh -i $HOME/.ssh/id_SSH_ed25519_20230207_OpenSSH'
 
 if [ ! -d "${GIT_REPO_DIRECTORY}" ];then
   echo ; echo "(PGM) GIT_REPO_DIRECTORY = $GIT_REPO_DIRECTORY doesn't exist. Quitting..." ; echo
