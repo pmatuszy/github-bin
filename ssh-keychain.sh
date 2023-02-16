@@ -46,9 +46,13 @@ keychain --nogui --noask --nocolor -L
 exit $warnings_and_errors
 )
 
-echo "$HC_message"
+kod_powrotu=$?
 
-if (( $? == 0 ));then
+if (( script_is_run_interactively )) ;then
+  echo "$HC_message"
+fi
+
+if (( $kod_powrotu == 0 ));then
   echo "$HC_message" | /usr/bin/curl -fsS -m 100 --retry 10 --retry-delay 10 --data-binary @- -o /dev/null "$HEALTHCHECK_URL" 2>/dev/null
 else 
   echo "$HC_message" | /usr/bin/curl -fsS -m 100 --retry 10 --retry-delay 10 --data-binary @- -o /dev/null "$HEALTHCHECK_URL"/fail 2>/dev/null
