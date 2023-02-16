@@ -21,3 +21,6 @@ rclone-sync-BBC-CHE.sh				https://healthchecks.matuszyk.com:8000/ping/ab82df65-c
 healthchecks-geoipupdate.sh			https://healthchecks.matuszyk.com:8000/ping/b87a1538-d26a-490c-9882-9f1a710fb486
 sprawdz-czy-reboot-required.sh			https://healthchecks.matuszyk.com:8000/ping/fb874678-58c7-4f11-9c49-fc9fae63f8ff
 healthchecks-lvs-sync-status.sh                 
+sprawdz-czy-dziala-strona-www.anna.matuszyk.com.sh      
+sprawdz-czy-dziala-strona-www.ontsolutions.com.sh       
+ssh-keychain.sh

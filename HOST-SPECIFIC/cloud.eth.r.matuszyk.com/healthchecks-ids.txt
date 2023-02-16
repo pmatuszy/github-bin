@@ -7,3 +7,6 @@ healthchecks-swap-usage.sh                      https://healthchecks.matuszyk.co
 sprawdz-czy-reboot-required.sh			https://healthchecks.matuszyk.com:8000/ping/cbc4a84b-18bb-4504-a902-f1d6c6d8407b
 backup-mysql.sh					https://healthchecks.matuszyk.com:8000/ping/11d4363a-5e3a-4e6b-9235-68faea7e4081
 healthchecks-lvs-sync-status.sh                 
+sprawdz-czy-dziala-strona-www.anna.matuszyk.com.sh      
+sprawdz-czy-dziala-strona-www.ontsolutions.com.sh       
+ssh-keychain.sh
