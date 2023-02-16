@@ -30,13 +30,13 @@ fi
 
 check_if_installed keychain
 
-eval keychain -q --nogui --nocolor --eval id_rsa id_ed25519 id_SSH_ed25519_20230207_OpenSSH >/dev/null 2>&1
+# eval keychain -q --nogui --nocolor --eval id_rsa id_ed25519 id_SSH_ed25519_20230207_OpenSSH >/dev/null 2>&1
 
 if [ -f $HOME/.keychain/$HOSTNAME-sh ];then
   . $HOME/.keychain/$HOSTNAME-sh
 fi
 
-keychain --nogui --nocolor id_SSH_ed25519_20230207_OpenSSH
+# keychain --nogui --nocolor id_SSH_ed25519_20230207_OpenSSH
 
 batch_mode=0
 
