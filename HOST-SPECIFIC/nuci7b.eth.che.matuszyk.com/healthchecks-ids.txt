@@ -13,4 +13,5 @@ healthchecks-lvs-sync-status.sh
 vmrun-check-status.sh				https://healthchecks.matuszyk.com:8000/ping/6d7459de-6ced-4893-9dc5-44a6fadab273	
 sprawdz-czy-dziala-strona-www.anna.matuszyk.com.sh      
 sprawdz-czy-dziala-strona-www.ontsolutions.com.sh       
-ssh-keychain.sh
+ssh-keychain.sh						https://healthchecks.matuszyk.com:8000/ping/11dba566-7630-43ae-aa04-5a0c54a62150
+
