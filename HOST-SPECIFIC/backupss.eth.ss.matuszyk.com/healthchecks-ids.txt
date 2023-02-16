@@ -13,4 +13,5 @@ healthchecks-lvs-sync-status.sh				https://healthchecks.matuszyk.com:8000/ping/0
 sprawdz-czy-dziala-strona-yt2podcast.com.sh             https://healthchecks.matuszyk.com:8000/ping/fcc30010-48e0-4354-a630-03bb5228bf5f
 sprawdz-czy-dziala-strona-www.anna.matuszyk.com.sh      https://healthchecks.matuszyk.com:8000/ping/a522844f-8fc8-4bdb-bfc2-f044212b9547
 sprawdz-czy-dziala-strona-www.ontsolutions.com.sh       https://healthchecks.matuszyk.com:8000/ping/dcafe285-f34d-4bfc-9251-6399871dbe06
-ssh-keychain.sh                                 	
+ssh-keychain.sh                                 	https://healthchecks.matuszyk.com:8000/ping/7eb3be0c-8fb8-435b-98a7-cb815dcdbcad
+
