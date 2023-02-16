@@ -36,7 +36,7 @@ if [ -f $HOME/.keychain/$HOSTNAME-sh ];then
   . $HOME/.keychain/$HOSTNAME-sh
 fi
 
-keychain --nogui --nocolor id_SSH_ed25519_20230207_OpenSSH 
+keychain --nogui --nocolor id_rsa id_ed25519 id_SSH_ed25519_20230207_OpenSSH
 
 batch_mode=0
 
