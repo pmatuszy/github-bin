@@ -41,7 +41,7 @@ HC_message=$(
   
   echo ; echo ; echo
   echo keychain --nogui --noask --nocolor -l | boxes -s 50x3 -a c -d ada-box
-  keychain --nogui --noask --nocolor -l
+  keychain --nogui --noask --nocolor -l 2>&1
   echo
   exit $warnings_and_errors
 )
