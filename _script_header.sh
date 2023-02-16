@@ -21,6 +21,9 @@ set -o pipefail
 export tcScrTitleStart="\ek"
 export tcScrTitleEnd="\033\\"
 
+check_if_installed boxes
+check_if_installed figlet
+
 tty 2>&1 >/dev/null
 if (( $? == 0 )); then
   echo -ne "\033]0;`hostname` - $0\007";\
@@ -90,7 +93,3 @@ else
   script_is_run_interactively=1
   echo "${SCRIPT_VERSION}" ; echo
 fi
-
-check_if_installed boxes
-check_if_installed figlet
-
