@@ -13,7 +13,7 @@ HC_message=$(
   
   check_if_installed keychain
   eval $(keychain -q --nogui --nocolor --eval id_rsa id_ed25519 id_SSH_ed25519_20230207_OpenSSH 2>&1 ) 2>&1 | egrep -iq "warning|error"
-  keychain  --nocolor id_rsa id_ed25519 id_SSH_ed25519_20230207_OpenSSH | egrep -iq "warning|error"
+  keychain  --nocolor id_rsa id_ed25519 id_SSH_ed25519_20230207_OpenSSH 2>&1 | egrep -iq "warning|error"
   
   if (( $? == 0 )); then               # exit status = 0 oznacza, ze linie ZNALEZIONO, wiec jest blad
     let warnings_and_errors=warnings_and_errors+1
