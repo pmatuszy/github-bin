@@ -1,5 +1,5 @@
 healthchecks-ping.sh				https://healthchecks.matuszyk.com:8000/ping/5411bcb0-36f1-469e-befd-88e773d7d62f
-ssd-trim.sh  					https://healthchecks.matuszyk.com:8000/ping/6cb77b0e-0006-4ef8-94d9-0ba19dd3e972
+ssd-trim.sh  					https://healthchecks.matuszyk.com:8000/ping/cec62cb1-747a-4a20-9240-d51a4c205c99	
 sprawdz-czy-dziala-strona-yt2podcast.com.sh     https://healthchecks.matuszyk.com:8000/ping/ef3198df-6dda-4f0b-8375-16c837bb8ede
 sprawdz-ile-apt-list--upgradable.sh		https://healthchecks.matuszyk.com:8000/ping/0cf2fd7d-755d-44bd-9dcf-31d6b9c10eb4
 restic_backup_SS				https://healthchecks.matuszyk.com:8000/ping/086dca2e-cd00-4490-a612-9d54af237009
@@ -14,4 +14,4 @@ vmrun-check-status.sh				https://healthchecks.matuszyk.com:8000/ping/50150be2-30
 ssh-keychain.sh					https://healthchecks.matuszyk.com:8000/ping/1bcc0bd0-b255-45d4-899d-8b2cd7206230	
 sprawdz-czy-dziala-strona-www.anna.matuszyk.com.sh      
 sprawdz-czy-dziala-strona-www.ontsolutions.com.sh       
-ssh-keychain.sh
+ssh-keychain.sh						https://healthchecks.matuszyk.com:8000/ping/1bcc0bd0-b255-45d4-899d-8b2cd7206230	
