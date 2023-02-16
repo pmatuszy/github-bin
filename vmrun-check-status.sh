@@ -99,7 +99,7 @@ m=$(
 
   for p in `vmrun list|grep vmx|sort`;do
     echo
-    echo "* * * checking $p (PGM) * * *" | boxes -s 40x5 -a c
+    echo "checking $p (PGM)" | boxes -s 40x5 -a c
     spr_ip_address   $p
     spr_vmware_tools $p
   done;
