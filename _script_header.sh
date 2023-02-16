@@ -91,5 +91,5 @@ if (( $? != 0 )); then      # we set RANDOM_DELAY only when running NOT from ter
 else
   echo "Interactive session detected: I will NOT introduce RANDOM_DELAY...";echo
   script_is_run_interactively=1
-  echo "${SCRIPT_VERSION}" ; echo
+  echo "${SCRIPT_VERSION}" | boxes -s 50x3 -a c -d ada-box ; echo
 fi
