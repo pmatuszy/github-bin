@@ -18,7 +18,7 @@ HC_message=$(
   )
 
 if [ -f "$HEALTHCHECKS_FILE" ];then
-  echo "$HC_message" | /usr/bin/curl -fsS -m 100 --retry 10 --retry-delay 10 --data-binary @- -o /dev/null "$HEALTHCHECK_URL"/fail 2>/dev/null
+  echo "$HC_message" | /usr/bin/curl -fsS -m 100 --retry 10 --retry-delay 10 --data-binary @- -o /dev/null "$HEALTHCHECK_URL" 2>/dev/null
 fi
 
 . /root/bin/_script_footer.sh
