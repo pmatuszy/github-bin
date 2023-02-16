@@ -58,7 +58,7 @@ if [ "${p}" == 'y' -o  "${p}" == 'y' ]; then
   git add --all * .[a-zA-Z]*
   git commit -a -m \""new push from `hostname` @ `date '+%Y.%m.%d %H:%M:%S'`"\"
 
-  echo git push | boxes -s 40x5 -a c
+  echo git push | boxes -s 40x3 -a c
   git push 
   if (( $? != 0 )); then
     echo ; echo '(PGM) nie moge zrobic pusha - wychodze' ; echo

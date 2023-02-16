@@ -45,7 +45,7 @@ if [ "${p}" == 'y' -o  "${p}" == 'y' ]; then
   mkdir -p $HOME/bin
 
   # sprawdzam, czy mam dostep do zdalnego repo
-  echo git ls-remote git+ssh://git@github.com/pmatuszy/"${github_project_name}".git | boxes -s 70x5 -a c
+  echo git ls-remote git+ssh://git@github.com/pmatuszy/"${github_project_name}".git | boxes -s 70x3 -a c
   git ls-remote git+ssh://git@github.com/pmatuszy/"${github_project_name}".git 2>&1 >/dev/null
   if (( $? != 0 )); then
     echo  ; echo ; echo "Nie mam dostepu do zdalnego repozytorium.... WYCHODZE" ; echo ; echo
@@ -54,7 +54,7 @@ if [ "${p}" == 'y' -o  "${p}" == 'y' ]; then
 
   cd "${GIT_REPO_DIRECTORY}"
 
-  echo git pull git+ssh://git@github.com/pmatuszy/"${github_project_name}".git | boxes -s 70x5 -a c
+  echo git pull git+ssh://git@github.com/pmatuszy/"${github_project_name}".git | boxes -s 70x3 -a c
 
   git pull git+ssh://git@github.com/pmatuszy/"${github_project_name}".git
   if (( $? != 0 )); then
@@ -71,7 +71,7 @@ if [ "${p}" == 'y' -o  "${p}" == 'y' ]; then
 
   rm $HOME/bin/git-pull.sh $HOME/bin/git-push.sh $HOME/bin/git-fetch.sh
   echo 
-  echo git status | boxes -s 40x5 -a c
+  echo git status | boxes -s 40x3 -a c
   echo 
   git status
 else
