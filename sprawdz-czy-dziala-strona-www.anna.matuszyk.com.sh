@@ -1,9 +1,6 @@
 #!/bin/bash
 
-# 2023.01.17 - v. 0.5 - dodano random delay jesli skrypt jest wywolywany nieinteraktywnie
-# 2022.05.16 - v. 0.3 - commented out sending emails sections
-# 2022.05.03 - v. 0.2 - added healthcheck support
-# 2021.xx.xx - v. 0.1 - initial release
+# 2023.02.16 - v. 0.1 - initial release
 
 . /root/bin/_script_header.sh
 
@@ -11,7 +8,7 @@ if [ -f "$HEALTHCHECKS_FILE" ];then
   HEALTHCHECK_URL=$(cat "$HEALTHCHECKS_FILE" |grep "^`basename $0`"|awk '{print $2}')
 fi
 
-if [ `wget yt2podcast.com:8080 -qO - |grep .xml|wc -l` -gt 0 ];then 
+if [ $(wget www.anna.matuszyk.com -qO - |grep "In Short"|wc -l) -gt 0 ];then 
    /usr/bin/curl -fsS -m 100 --retry 10 --retry-delay 10 -o /dev/null "$HEALTHCHECK_URL" 2>/dev/null
 else 
    /usr/bin/curl -fsS -m 100 --retry 10 --retry-delay 10 -o /dev/null "$HEALTHCHECK_URL"/fail 2>/dev/null
@@ -24,4 +21,4 @@ exit
 #####
 # new crontab entry
 
-*/5 * * * * /root/bin/sprawdz-czy-dziala-strona-yt2podcast.com.sh
+*/5 * * * * /root/bin/sprawdz-czy-dziala-strona-www.anna.matuszyk.com.sh
