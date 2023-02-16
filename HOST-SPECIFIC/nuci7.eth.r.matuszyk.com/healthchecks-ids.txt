@@ -11,3 +11,5 @@ healthchecks-smartd.sh				https://healthchecks.matuszyk.com:8000/ping/d03b26e1-a
 sprawdz-czy-reboot-required.sh			https://healthchecks.matuszyk.com:8000/ping/266007a1-2383-4a3e-9913-af7c7c1cc427
 healthchecks-lvs-sync-status.sh                 https://healthchecks.matuszyk.com:8000/ping/ec5df8a3-a12a-4f0c-9f2b-1b1e766a1600
 vmrun-check-status.sh				https://healthchecks.matuszyk.com:8000/ping/50150be2-307d-4748-9388-924ec43356d9
+ssh-keychain.sh					https://healthchecks.matuszyk.com:8000/ping/1bcc0bd0-b255-45d4-899d-8b2cd7206230	
+
