@@ -17,7 +17,7 @@
 export github_project_name=github-bin
 export GIT_REPO_DIRECTORY=/root/"${github_project_name}"
 
-# export GIT_SSH_COMMAND='ssh -i $HOME/.ssh/id_SSH_ed25519_20230207_OpenSSH'
+export GIT_SSH_COMMAND='ssh -i $HOME/.ssh/id_SSH_ed25519_20230207_OpenSSH'
 
 check_if_installed keychain
 
