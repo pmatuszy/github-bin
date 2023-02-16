@@ -75,6 +75,11 @@ export MAX_RANDOM_DELAY_IN_SEC=${MAX_RANDOM_DELAY_IN_SEC:-50}
 
 export script_is_run_interactively=0
 
+export SCRIPT_VERSION=$(cat $0|grep -e '# *20[123][0-9]'|head -n 1 | awk '{print "script version: " $5 " (dated "$2")"}' ;
+                 echo "current date : `date '+%Y.%m.%d %H:%M'`"
+                 echo "script is run on `hostname`" ; echo ; echo
+                 )
+
 tty 2>&1 >/dev/null
 if (( $? != 0 )); then      # we set RANDOM_DELAY only when running NOT from terminal
   script_is_run_interactively=0
@@ -83,16 +88,9 @@ if (( $? != 0 )); then      # we set RANDOM_DELAY only when running NOT from ter
 else
   echo ; echo "Interactive session detected: I will NOT introduce RANDOM_DELAY..."
   script_is_run_interactively=1
-  echo ; cat  $0|grep -e '# *20[123][0-9]'|head -n 1 | awk '{print "script version: " $5 " (dated "$2")"}'
-  echo "current date: `date '+%Y.%m.%d %H:%M'`" ; echo 
+  echo "${SCRIPT_VERSION}" ; echo
 fi
-
-export SCRIPT_VERSION=$(cat $0|grep -e '# *20[123][0-9]'|head -n 1 | awk '{print "script version: " $5 " (dated "$2")"}' ;
-                 echo "current date : `date '+%Y.%m.%d %H:%M'`"
-                 echo "script is run on `hostname`" ; echo ; echo
-                 )
 
 check_if_installed boxes
 check_if_installed figlet
-
 
