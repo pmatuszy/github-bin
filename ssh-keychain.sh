@@ -8,11 +8,13 @@ if [ -f "$HEALTHCHECKS_FILE" ];then
   HEALTHCHECK_URL=$(cat "$HEALTHCHECKS_FILE" |grep "^`basename $0`"|awk '{print $2}')
 fi
 export warnings_and_errors=0
+
+eval keychain -q --nogui --nocolor --eval id_rsa id_ed25519 id_SSH_ed25519_20230207_OpenSSH >/dev/null 2>&1
+
 HC_message=$(
   warnings_and_errors=0
   
   check_if_installed keychain
-  eval $(keychain -q --nogui --nocolor --eval id_rsa id_ed25519 id_SSH_ed25519_20230207_OpenSSH 2>&1 ) 2>&1 | egrep -iq "warning|error"
   keychain  --nocolor id_rsa id_ed25519 id_SSH_ed25519_20230207_OpenSSH 2>&1 | egrep -iq "warning|error"
   
   if (( $? == 0 )); then               # exit status = 0 oznacza, ze linie ZNALEZIONO, wiec jest blad
@@ -27,7 +29,7 @@ HC_message=$(
   echo
   echo "keychain --nogui --nocolor id_rsa id_ed25519 id_SSH_ed25519_20230207_OpenSSH"
   echo
-  keychain --nogui --nocolor id_rsa id_ed25519 id_SSH_ed25519_20230207_OpenSSH 2>&1
+        keychain --nogui --nocolor id_rsa id_ed25519 id_SSH_ed25519_20230207_OpenSSH 2>&1
   
   how_many=$(keychain --nogui --nocolor id_rsa id_ed25519 id_SSH_ed25519_20230207_OpenSSH 2>&1 | \
              egrep -i "Known ssh key: .*/id_rsa|Known ssh key: .*/id_SSH_ed25519_20230207_OpenSSH|Known ssh key: .*/id_ed25519" | wc -l)
@@ -39,9 +41,12 @@ HC_message=$(
     echo "(PGM) all 3 keys are known - looks GOOD" | boxes -s 50x3 -a c -d ada-box
   fi
   
-  echo ; echo ; echo
+  echo ; echo
+
+  echo cc
   echo keychain --nogui --nocolor -l | boxes -s 50x3 -a c -d ada-box
-  keychain --nogui --nocolor -l 2>&1
+       keychain --nogui --nocolor -l 2>&1
+  echo dd
   echo
   exit $warnings_and_errors
 )
