@@ -9,9 +9,10 @@ if [ -f "$HEALTHCHECKS_FILE" ];then
 fi
 
 check_if_installed keychain
-eval $(keychain -q --eval id_rsa id_SSH_ed25519_20230207_OpenSSH)
+eval $(keychain -q --nocolor --eval id_rsa id_SSH_ed25519_20230207_OpenSSH)
 
-keychain --nocolor
+keychain --nocolor id_ed25519 id_SSH_ed25519_20230207_OpenSSH
+echo $?
 
 keychain --nocolor -l
 echo
