@@ -29,7 +29,7 @@ if [ ! -d "${GIT_REPO_DIRECTORY}" ];then
 fi
 
 check_if_installed keychain
-keychain --nogui --nocolor id_ed25519 id_SSH_ed25519_20230207_OpenSSH
+keychain --nogui --nocolor id_SSH_ed25519_20230207_OpenSSH
 
 batch_mode=0
 
