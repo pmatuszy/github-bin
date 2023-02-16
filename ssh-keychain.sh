@@ -11,9 +11,11 @@ fi
 check_if_installed keychain
 eval $(keychain -q --eval id_rsa id_SSH_ed25519_20230207_OpenSSH)
 
-keychain -l
+keychain --nocolor
+
+keychain --nocolor -l
 echo
-keychain -L
+keychain --nocolor -L
 
 . /root/bin/_script_footer.sh
 exit
