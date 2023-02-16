@@ -17,27 +17,6 @@
 set -o nounset
 set -o pipefail
 
-# if we are run non-interactively - do not set the terminal title
-export tcScrTitleStart="\ek"
-export tcScrTitleEnd="\033\\"
-
-check_if_installed boxes
-check_if_installed figlet
-
-tty 2>&1 >/dev/null
-if (( $? == 0 )); then
-  echo -ne "\033]0;`hostname` - $0\007";\
-  figlet -w 280 `basename $0`
-fi
-
-if [ ! -z ${STY:-} ]; then    # checking if we are running within screen
-  # I am setting the screen window title to the script name
-  echo -ne "${tcScrTitleStart}${0}${tcScrTitleEnd}"
-fi
-
-# trap ctrl-c and call ctrl_c()
-trap ctrl_c INT
-
 ##############################################################################################################################################################################
 function ctrl_c() {
  echo
@@ -70,6 +49,27 @@ if (( $? != 0 )); then
 fi
 }
 #######################################################################################
+
+# if we are run non-interactively - do not set the terminal title
+export tcScrTitleStart="\ek"
+export tcScrTitleEnd="\033\\"
+
+check_if_installed boxes
+check_if_installed figlet
+
+tty 2>&1 >/dev/null
+if (( $? == 0 )); then
+  echo -ne "\033]0;`hostname` - $0\007";\
+  figlet -w 280 `basename $0`
+fi
+
+if [ ! -z ${STY:-} ]; then    # checking if we are running within screen
+  # I am setting the screen window title to the script name
+  echo -ne "${tcScrTitleStart}${0}${tcScrTitleEnd}"
+fi
+
+# trap ctrl-c and call ctrl_c()
+trap ctrl_c INT
 
 export HEALTHCHECKS_FILE=/root/bin/healthchecks-ids.txt
 export kod_powrotu=123      # bezsensowny jakis, ale wazne, by zmienna byla zdefiniowana
