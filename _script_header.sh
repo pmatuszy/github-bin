@@ -86,7 +86,7 @@ if (( $? != 0 )); then      # we set RANDOM_DELAY only when running NOT from ter
   export RANDOM_DELAY=$((RANDOM % $MAX_RANDOM_DELAY_IN_SEC ))
   sleep $RANDOM_DELAY
 else
-  echo ; echo "Interactive session detected: I will NOT introduce RANDOM_DELAY..."
+  echo "Interactive session detected: I will NOT introduce RANDOM_DELAY...";echo
   script_is_run_interactively=1
   echo "${SCRIPT_VERSION}" ; echo
 fi
