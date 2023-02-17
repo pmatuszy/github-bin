@@ -14,6 +14,12 @@ rm /tmp/VMwareTools-* 2>/dev/null
 )
 umount /mnt
 cd /tmp/vmware-tools-distrib
-./vmware-install.pl --default
+
+if (( $# != 0 )) && [ "${1-xxx}" == "manual" ]; then
+  echo ; echo "(PGM) enabling manual mode"
+  ./vmware-install.pl 
+else
+  ./vmware-install.pl --default
+fi
 
 . /root/bin/_script_footer.sh
