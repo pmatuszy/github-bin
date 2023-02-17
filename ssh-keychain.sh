@@ -77,4 +77,6 @@ exit $?
 #####
 # new crontab entry
 
+@reboot ( sleep 55 && /root/bin/ssh-keychain.sh )
+
 0 * * * *    /root/bin/ssh-keychain.sh
