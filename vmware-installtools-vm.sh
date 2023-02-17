@@ -4,14 +4,16 @@
 
 . /root/bin/_script_header.sh
 
-mount /dev/cdrom /mnt || exit 2
+mkdir -p /mnt/tmp
+mount /dev/cdrom /mnt/tmp || exit 2
 
 (
 rm /tmp/VMwareTools-* 2>/dev/null
-cp -fv /mnt/VMwareTools-* /tmp
+cp -fv /mnt/tmp/VMwareTools-* /tmp
 cd /tmp ; tar xzvf VMwareTools-*
 rm /tmp/VMwareTools-* 2>/dev/null
 )
+
 umount /mnt
 cd /tmp/vmware-tools-distrib
 
