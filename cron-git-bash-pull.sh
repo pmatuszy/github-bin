@@ -25,4 +25,4 @@ exit $?
 #####
 # new crontab entry
 
-1 7 * * * /root/bin/cron-git-bash-pull.sh
+1 7 * * *   /root/bin/cron-git-bash-pull.sh

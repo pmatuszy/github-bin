@@ -8,14 +8,12 @@ if [ -f "$HEALTHCHECKS_FILE" ];then
 fi
 
 HC_message=$(/root/github-bin/git-push.sh batch 2>&1 ; exit $?)
-
 kod_powrotu=$?
 
 if (( script_is_run_interactively ));then
    echo "${HC_message}"
 fi
 
-# spr. czy dziala vpn
 if (( $kod_powrotu != 0 ));then 
   echo "$HC_message" | /usr/bin/curl -fsS -m 100 --retry 10 --retry-delay 10 --data-binary @- -o /dev/null "$HEALTHCHECK_URL"/fail 2>/dev/null
 else
