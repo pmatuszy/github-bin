@@ -17,5 +17,5 @@ nagrywaj-tokfm-sprawdz-status.sh
 ssh-keychain.sh					https://healthchecks.matuszyk.com:8000/ping/9e418a0f-dad0-4227-a154-187df909bdc7	
 cron-git-bash-pull.sh				https://healthchecks.matuszyk.com:8000/ping/fa00280b-4626-4880-9043-fb5f130b8894	
 cron-git-bash-push.sh				https://healthchecks.matuszyk.com:8000/ping/fd8fd17d-bbcd-4938-8524-66926f9f9ac9	
-cron-git-bin-pull.sh
-cron-git-bin-push.sh
+cron-git-bin-pull.sh				https://healthchecks.matuszyk.com:8000/ping/6abe620f-faa5-4ae5-a828-c78bd4e7b1bb	
+cron-git-bin-push.sh				https://healthchecks.matuszyk.com:8000/ping/ecee5993-980c-46e6-8f50-1bd289a7e5bb	

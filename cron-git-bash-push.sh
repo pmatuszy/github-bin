@@ -27,4 +27,4 @@ exit $?
 #####
 # new crontab entry
 
-1 7 * * * /root/bin/cron-git-bash_profile-push.sh
+2 7 * * * /root/bin/cron-git-bash_profile-push.sh
