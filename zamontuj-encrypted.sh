@@ -55,5 +55,5 @@ echo
 /root/bin/sprawdz-czy-encrypted-jest-zamontowany.sh
 
 . /root/bin/_script_footer.sh
-exit
+exit $?
 

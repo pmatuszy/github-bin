@@ -19,7 +19,7 @@ check_if_installed aha
 
 . /root/bin/_script_footer.sh
 
-exit
+exit $?
 #####
 # new crontab entry
 
