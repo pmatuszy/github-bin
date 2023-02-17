@@ -7,7 +7,7 @@ if [ -f "$HEALTHCHECKS_FILE" ];then
   HEALTHCHECK_URL=$(cat "$HEALTHCHECKS_FILE" |grep "^`basename $0`"|awk '{print $2}')
 fi
 
-HC_message=$(/root/github-bin/git-pull.sh batch 2>&1 ; exit $?)
+HC_message=$(/root/github-bash_profile/git-pull.sh batch 2>&1 ; exit $?)
 kod_powrotu=$?
 
 if (( script_is_run_interactively ));then
@@ -27,4 +27,4 @@ exit
 #####
 # new crontab entry
 
-1 7 * * * /root/bin/cron-git-bin-pull.sh
+1 7 * * * /root/bin/cron-git-bash-pull.sh
