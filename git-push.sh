@@ -62,11 +62,10 @@ fi
 echo
 echo
 if [ "${p}" == 'y' -o  "${p}" == 'y' ]; then
-  echo tutaj
   git add --all * .[a-zA-Z]*
-  echo tam
+  echo "++++++++++++++++++++++++++++++++++++++++";echo
   git commit -a -m \""new push from `hostname` @ `date '+%Y.%m.%d %H:%M:%S'`"\"
-  echo owam
+  echo "++++++++++++++++++++++++++++++++++++++++";echo
   echo git push | boxes -s 40x3 -a c
   git push 
   if (( $? != 0 )); then
