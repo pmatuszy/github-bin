@@ -64,7 +64,7 @@ echo
 if [ "${p}" == 'y' -o  "${p}" == 'y' ]; then
   git add --all * .[a-zA-Z]*
   echo "++++++++++++++++++++++++++++++++++++++++";echo
-  git commit -a -m \""new push from `hostname` @ `date '+%Y.%m.%d %H:%M:%S'`"\"
+  git commit -a -m \""new push from `hostname` @ `date '+%Y.%m.%d %H:%M:%S'`"\" | boxes -s 40x3 -a l
   echo "++++++++++++++++++++++++++++++++++++++++";echo
   echo git push | boxes -s 40x3 -a c
   git push 
