@@ -19,6 +19,10 @@
 
 . /root/bin/_script_header.sh
 
+if (( ! script_is_run_interactively ));then    # jesli nie interaktywnie, to chcemy wyswietlic info, by poszlo do logow
+  echo "${SCRIPT_VERSION}";echo
+fi
+
 export github_project_name=github-bin
 export GIT_REPO_DIRECTORY=/root/"${github_project_name}"
 export GIT_SSH_COMMAND='ssh -i $HOME/.ssh/id_SSH_ed25519_20230207_OpenSSH'
