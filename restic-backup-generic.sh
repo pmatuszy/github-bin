@@ -143,7 +143,7 @@ if (( $script_is_run_interactively == 1 )); then
   )
 else
   backup_log=$( echo "${SCRIPT_VERSION}" ; echo 
-                ; echo "RESTIC_REPOSITORY = $RESTIC_REPOSITORY" ; echo 
+                echo "RESTIC_REPOSITORY = $RESTIC_REPOSITORY" ; echo 
                 kod_powrotu=999
                 for (( p=1 ; p<=$MAX_LICZBA_PONOWIEN_BACKUPOW ; p++ )); do 
                 if (( $p > 1 )) ; then echo ; echo "aktualna data: `date '+%Y.%m.%d %H:%M'`" ; echo ; fi
