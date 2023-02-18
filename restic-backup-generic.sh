@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2023.02.18 - v. 2.7 - fix a bug in curl "/usr/bin/curl: Argument list too long" by echoing HC_message in pipe to curl
 # 2023.02.02 - v. 2.6 - added support for /root/SECRET subdirectory
 # 2023.01.25 - v. 2.5 - added script_is_run_interactively env check (which is set in _script_header.sh)
 # 2023.01.17 - v. 2.3 - dodano random delay jesli skrypt jest wywolywany nieinteraktywnie
@@ -175,10 +176,12 @@ else
        ${RESTIC_BIN} --cleanup-cache                          snapshots 2>&1 )
 fi
 
+HC_message="$run_before_backup_log $backup_log $m $run_after_backup_log"
+
 if (( $kod_powrotu != 0 )); then
-  /usr/bin/curl -fsS -m 100 --retry 10 --retry-delay 10 --data-raw "$run_before_backup_log $backup_log $m $run_after_backup_log" -o /dev/null "$HEALTHCHECK_URL"/fail 2>/dev/null
+  echo "$HC_message" | /usr/bin/curl -fsS -m 100 --retry 10 --retry-delay 10 --data-binary @- -o /dev/null "$HEALTHCHECK_URL"/fail 2>/dev/null
 else
-  /usr/bin/curl -fsS -m 100 --retry 10 --retry-delay 10 --data-raw "$run_before_backup_log $backup_log $m $run_after_backup_log" -o /dev/null "$HEALTHCHECK_URL" 2>/dev/null
+  echo "$HC_message" | /usr/bin/curl -fsS -m 100 --retry 10 --retry-delay 10 --data-binary @- -o /dev/null "$HEALTHCHECK_URL" 2>/dev/null
 fi
 
 . /root/bin/_script_footer.sh
