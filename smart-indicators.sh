@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2023.02.10 - v. 0.6 - added check for smartmontools package
 # 2023.02.07 - v. 0.6 - added _script_header.sh and _script_footer.sh
 # 2023.01.11 - v. 0.5 - prompt for a new page is only displayed if there are no arguments on the command line
 # 2023.01.10 - v. 0.4 - added printing time with Linux units utility
@@ -9,6 +10,8 @@
 # 2022.10.11 - v. 0.1 - initial release
 
 . /root/bin/_script_header.sh
+
+check_if_installed smartctl smartmontools
 
 if [ $# -eq 0 ]
   then

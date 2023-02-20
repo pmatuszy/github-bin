@@ -8,3 +8,6 @@ apc-status.sh					https://healthchecks.matuszyk.com:8000/ping/d1011fb8-dd09-4284
 update-rclone.sh                                https://healthchecks.matuszyk.com:8000/ping/9fa0befd-ef28-4b08-830b-4add1acfa62c
 healthchecks-swap-usage.sh                      https://healthchecks.matuszyk.com:8000/ping/d1e49e8c-42f0-442d-8d06-d509f6d1b479
 healthchecks-lvs-sync-status.sh                 
+sprawdz-czy-dziala-strona-www.anna.matuszyk.com.sh      
+sprawdz-czy-dziala-strona-www.ontsolutions.com.sh       
+ssh-keychain.sh

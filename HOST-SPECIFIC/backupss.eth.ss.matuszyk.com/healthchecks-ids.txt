@@ -1,14 +1,17 @@
-healthchecks-ping.sh				https://healthchecks.matuszyk.com:8000/ping/67ce2fc0-7689-4473-9819-3f8426463797
-ssd-trim.sh  					https://healthchecks.matuszyk.com:8000/ping/3ff2038b-307f-4174-bb6e-cf11b340712e
-sprawdz-czy-dziala-strona-yt2podcast.com.sh     https://healthchecks.matuszyk.com:8000/ping/fcc30010-48e0-4354-a630-03bb5228bf5f
-sprawdz-czy-dziala-server-vpn.sh		https://healthchecks.matuszyk.com:8000/ping/6682173f-5769-40bb-90ac-e068e2e0b79d
-sprawdz-ile-apt-list--upgradable.sh		https://healthchecks.matuszyk.com:8000/ping/51f974f8-1db3-43c7-9991-cc0c0cda330c
-restic_backup_CHE				https://healthchecks.matuszyk.com:8000/ping/52199840-f382-4812-b906-2a7919b6f5b8
-sprawdz-czy-encrypted-jest-zamontowany.sh       https://healthchecks.matuszyk.com:8000/ping/aff00cf2-ba8b-44db-9a2c-2f7ad10c41b6
-apc-status.sh					https://healthchecks.matuszyk.com:8000/ping/51ba6382-8185-4168-9564-143ce7ccb000
-update-restic.sh                                https://healthchecks.matuszyk.com:8000/ping/de89894d-efcc-4aa5-adb6-b38639e0ba42
-update-rclone.sh                                https://healthchecks.matuszyk.com:8000/ping/cd77c370-c27e-477d-95b4-31b13cc258be
-healthchecks-swap-usage.sh                      https://healthchecks.matuszyk.com:8000/ping/836e76df-d37f-4783-a9f1-eaf271c7d3b4
-healthchecks-smartd.sh				https://healthchecks.matuszyk.com:8000/ping/ab62163c-c980-4cad-acb8-8dff3975ca62
-healthchecks-lvs-sync-status.sh			https://healthchecks.matuszyk.com:8000/ping/0ff45d65-8287-4963-bb5a-8bb6c6906445
-healthchecks-lvs-sync-status.sh                 
+healthchecks-ping.sh					https://healthchecks.matuszyk.com:8000/ping/67ce2fc0-7689-4473-9819-3f8426463797
+ssd-trim.sh  						https://healthchecks.matuszyk.com:8000/ping/3ff2038b-307f-4174-bb6e-cf11b340712e
+sprawdz-czy-dziala-server-vpn.sh			https://healthchecks.matuszyk.com:8000/ping/6682173f-5769-40bb-90ac-e068e2e0b79d
+sprawdz-ile-apt-list--upgradable.sh			https://healthchecks.matuszyk.com:8000/ping/51f974f8-1db3-43c7-9991-cc0c0cda330c
+restic_backup_CHE					https://healthchecks.matuszyk.com:8000/ping/52199840-f382-4812-b906-2a7919b6f5b8
+sprawdz-czy-encrypted-jest-zamontowany.sh       	https://healthchecks.matuszyk.com:8000/ping/aff00cf2-ba8b-44db-9a2c-2f7ad10c41b6
+apc-status.sh						https://healthchecks.matuszyk.com:8000/ping/51ba6382-8185-4168-9564-143ce7ccb000
+update-restic.sh                                	https://healthchecks.matuszyk.com:8000/ping/de89894d-efcc-4aa5-adb6-b38639e0ba42
+update-rclone.sh                                	https://healthchecks.matuszyk.com:8000/ping/cd77c370-c27e-477d-95b4-31b13cc258be
+healthchecks-swap-usage.sh                      	https://healthchecks.matuszyk.com:8000/ping/836e76df-d37f-4783-a9f1-eaf271c7d3b4
+healthchecks-smartd.sh					https://healthchecks.matuszyk.com:8000/ping/ab62163c-c980-4cad-acb8-8dff3975ca62
+healthchecks-lvs-sync-status.sh				https://healthchecks.matuszyk.com:8000/ping/0ff45d65-8287-4963-bb5a-8bb6c6906445
+sprawdz-czy-dziala-strona-yt2podcast.com.sh             https://healthchecks.matuszyk.com:8000/ping/fcc30010-48e0-4354-a630-03bb5228bf5f
+sprawdz-czy-dziala-strona-www.anna.matuszyk.com.sh      https://healthchecks.matuszyk.com:8000/ping/a522844f-8fc8-4bdb-bfc2-f044212b9547
+sprawdz-czy-dziala-strona-www.ontsolutions.com.sh       https://healthchecks.matuszyk.com:8000/ping/dcafe285-f34d-4bfc-9251-6399871dbe06
+ssh-keychain.sh                                 	https://healthchecks.matuszyk.com:8000/ping/7eb3be0c-8fb8-435b-98a7-cb815dcdbcad
+

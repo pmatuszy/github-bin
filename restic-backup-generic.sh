@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2023.02.18 - v. 2.7 - fix a bug in curl "/usr/bin/curl: Argument list too long" by echoing HC_message in pipe to curl
 # 2023.02.02 - v. 2.6 - added support for /root/SECRET subdirectory
 # 2023.01.25 - v. 2.5 - added script_is_run_interactively env check (which is set in _script_header.sh)
 # 2023.01.17 - v. 2.3 - dodano random delay jesli skrypt jest wywolywany nieinteraktywnie
@@ -125,8 +126,7 @@ export run_before_backup_log=$( eval $RUN_BEFORE_BACKUP 2>&1 )
 
 if (( $script_is_run_interactively == 1 )); then
   backup_log=""
-  ( echo ; echo "aktualna data: `date '+%Y.%m.%d %H:%M'`" ; echo ; echo "RESTIC_REPOSITORY = $RESTIC_REPOSITORY" ; echo ; echo ;
-    cat  $0|grep -e '# *20[123][0-9]'|head -n 1 | awk '{print "script version: " $5 " (dated "$2")"}' ; echo ; echo
+  ( echo "${SCRIPT_VERSION}" ; echo ; echo "RESTIC_REPOSITORY = $RESTIC_REPOSITORY" ; echo ;
     kod_powrotu=999
     for (( p=1 ; p<=$MAX_LICZBA_PONOWIEN_BACKUPOW ; p++ )); do
     if (( $p > 1 )) ; then echo ; echo "aktualna data: `date '+%Y.%m.%d %H:%M'`" ; echo ; fi
@@ -143,8 +143,8 @@ if (( $script_is_run_interactively == 1 )); then
     exit $kod_powrotu
   )
 else
-  backup_log=$( echo ; echo "aktualna data: `date '+%Y.%m.%d %H:%M'`" ; echo ; echo "RESTIC_REPOSITORY = $RESTIC_REPOSITORY" ; echo ; echo ;
-                cat  $0|grep -e '# *20[123][0-9]'|head -n 1 | awk '{print "script version: " $5 " (dated "$2")"}' ; echo ; echo
+  backup_log=$( echo "${SCRIPT_VERSION}" ; echo 
+                echo "RESTIC_REPOSITORY = $RESTIC_REPOSITORY" ; echo 
                 kod_powrotu=999
                 for (( p=1 ; p<=$MAX_LICZBA_PONOWIEN_BACKUPOW ; p++ )); do 
                 if (( $p > 1 )) ; then echo ; echo "aktualna data: `date '+%Y.%m.%d %H:%M'`" ; echo ; fi
@@ -176,10 +176,12 @@ else
        ${RESTIC_BIN} --cleanup-cache                          snapshots 2>&1 )
 fi
 
+HC_message="$run_before_backup_log $backup_log $m $run_after_backup_log"
+
 if (( $kod_powrotu != 0 )); then
-  /usr/bin/curl -fsS -m 100 --retry 10 --retry-delay 10 --data-raw "$run_before_backup_log $backup_log $m $run_after_backup_log" -o /dev/null "$HEALTHCHECK_URL"/fail 2>/dev/null
+  echo "$HC_message" | /usr/bin/curl -fsS -m 100 --retry 10 --retry-delay 10 --data-binary @- -o /dev/null "$HEALTHCHECK_URL"/fail 2>/dev/null
 else
-  /usr/bin/curl -fsS -m 100 --retry 10 --retry-delay 10 --data-raw "$run_before_backup_log $backup_log $m $run_after_backup_log" -o /dev/null "$HEALTHCHECK_URL" 2>/dev/null
+  echo "$HC_message" | /usr/bin/curl -fsS -m 100 --retry 10 --retry-delay 10 --data-binary @- -o /dev/null "$HEALTHCHECK_URL" 2>/dev/null
 fi
 
 . /root/bin/_script_footer.sh

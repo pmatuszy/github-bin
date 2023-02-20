@@ -10,3 +10,7 @@ update-rclone.sh                                https://healthchecks.matuszyk.co
 healthchecks-swap-usage.sh                      https://healthchecks.matuszyk.com:8000/ping/4b09583f-aa5e-4317-853b-f16b6af89219
 healthchecks-lvs-sync-status.sh                 
 sprawdz-czy-reboot-required.sh 			https://healthchecks.matuszyk.com:8000/ping/7b8fdcf9-affb-4ca9-b2bf-9597566b0030
+sprawdz-czy-dziala-strona-www.anna.matuszyk.com.sh      
+sprawdz-czy-dziala-strona-www.ontsolutions.com.sh       
+ssh-keychain.sh						https://healthchecks.matuszyk.com:8000/ping/a8ced6d5-dad0-4030-8cb3-c8c1b12c3707	
+

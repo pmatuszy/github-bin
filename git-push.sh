@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2023.02.11 - v. 1.2 - added GIT_SSH_COMMAND
 # 2023.02.07 - v. 1.1 - added batch mode, added GIT_REPO_DIRECTORY variable
 # 2023.01.26 - v. 1.0 - fixed script version print
 # 2022.10.27 - v. 0.9 - added printing of the script version
@@ -16,15 +17,15 @@
 # 2020.11.26 - v. 0.2 - added second section with 'git pull'
 # 2020.10.20 - v. 0.1 - initial release
 
-clear 
-
-# exit when your script tries to use undeclared variables
-set -o nounset
-set -o pipefail
-
 . /root/bin/_script_header.sh
 
-export GIT_REPO_DIRECTORY=/root/github-bin
+if (( ! script_is_run_interactively ));then    # jesli nie interaktywnie, to chcemy wyswietlic info, by poszlo do logow
+  echo "${SCRIPT_VERSION}";echo
+fi
+
+export github_project_name=github-bin
+export GIT_REPO_DIRECTORY=/root/"${github_project_name}"
+export GIT_SSH_COMMAND='ssh -i $HOME/.ssh/id_SSH_ed25519_20230207_OpenSSH'
 
 if [ ! -d "${GIT_REPO_DIRECTORY}" ];then
   echo ; echo "(PGM) GIT_REPO_DIRECTORY = $GIT_REPO_DIRECTORY doesn't exist. Quitting..." ; echo
@@ -32,7 +33,14 @@ if [ ! -d "${GIT_REPO_DIRECTORY}" ];then
 fi
 
 check_if_installed keychain
-keychain --nocolor id_ed25519 id_SSH_ed25519_20230207_OpenSSH
+
+eval keychain -q --nogui --nocolor --eval id_rsa id_ed25519 id_SSH_ed25519_20230207_OpenSSH >/dev/null 2>&1
+
+if [ -f $HOME/.keychain/$HOSTNAME-sh ];then
+  . $HOME/.keychain/$HOSTNAME-sh
+fi
+
+keychain --nogui --nocolor id_rsa id_ed25519 id_SSH_ed25519_20230207_OpenSSH
 
 batch_mode=0
 
@@ -42,9 +50,6 @@ if (( $# != 0 )) && [ "${1-nonbatch}" == "batch" ]; then
 fi
 
 cd "${GIT_REPO_DIRECTORY}" || exit 2
-
-github_project_name=`pwd`
-github_project_name=`basename $github_project_name`
 
 echo "github_project_name = $github_project_name"; echo
 
@@ -62,9 +67,8 @@ echo
 echo
 if [ "${p}" == 'y' -o  "${p}" == 'y' ]; then
   git add --all * .[a-zA-Z]*
-  git commit -a -m \""new push from `hostname` @ `date '+%Y.%m.%d %H:%M:%S'`"\"
-
-  echo git push | boxes -s 40x5 -a c
+  git commit -a -m \""new push from `hostname` @ `date '+%Y.%m.%d %H:%M:%S'`"\" | boxes -s 90x6 -a l -d ada-box
+  echo git push | boxes -s 40x3 -a c
   git push 
   if (( $? != 0 )); then
     echo ; echo '(PGM) nie moge zrobic pusha - wychodze' ; echo

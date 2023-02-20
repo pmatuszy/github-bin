@@ -1,5 +1,7 @@
 #!/bin/bash
 
+# 2023.02.18 - v. 1.0 - some minor changes like printing script version in non-interactive mode
+# 2023.02.11 - v. 1.0 - added GIT_SSH_COMMAND
 # 2023.02.07 - v. 0.9 - added batch mode
 # 2023.01.24 - v. 0.8 - added 2>/dev/null to one of the cp commands, size of the boxes width changed from 40 to 70
 # 2023.01.13 - v. 0.7 - git clone is replaced with git pull, some small changes 
@@ -11,16 +13,24 @@
 # 2021.04.08 - v. 0.2 - added HOST-SPECIFIC directory copy
 # 2020.11.27 - v. 0.1 - initial release
 
-# exit when your script tries to use undeclared variables
-set -o nounset
-set -o pipefail
-
 . /root/bin/_script_header.sh
 
-export GIT_REPO_DIRECTORY=/root/github-bin
+if (( ! script_is_run_interactively ));then    # jesli nie interaktywnie, to chcemy wyswietlic info, by poszlo do logow
+  echo "${SCRIPT_VERSION}";echo 
+fi
+
+export github_project_name=github-bin
+export GIT_REPO_DIRECTORY=/root/"${github_project_name}"
+
+export GIT_SSH_COMMAND='ssh -i $HOME/.ssh/id_SSH_ed25519_20230207_OpenSSH'
 
 check_if_installed keychain
-keychain --nocolor id_ed25519 id_SSH_ed25519_20230207_OpenSSH
+
+eval keychain -q --nogui --nocolor --eval id_rsa id_ed25519 id_SSH_ed25519_20230207_OpenSSH 2>&1
+
+if [ -f $HOME/.keychain/$HOSTNAME-sh ];then
+  . $HOME/.keychain/$HOSTNAME-sh
+fi
 
 batch_mode=0
 
@@ -45,8 +55,8 @@ if [ "${p}" == 'y' -o  "${p}" == 'y' ]; then
   mkdir -p $HOME/bin
 
   # sprawdzam, czy mam dostep do zdalnego repo
-  echo git ls-remote git+ssh://git@github.com/pmatuszy/github-bin.git | boxes -s 70x5 -a c
-  git ls-remote git+ssh://git@github.com/pmatuszy/github-bin.git 2>&1 >/dev/null
+  echo git ls-remote git+ssh://git@github.com/pmatuszy/"${github_project_name}".git | boxes -s 70x3 -a c
+  git ls-remote git+ssh://git@github.com/pmatuszy/"${github_project_name}".git 2>&1 >/dev/null
   if (( $? != 0 )); then
     echo  ; echo ; echo "Nie mam dostepu do zdalnego repozytorium.... WYCHODZE" ; echo ; echo
     exit 2
@@ -54,9 +64,9 @@ if [ "${p}" == 'y' -o  "${p}" == 'y' ]; then
 
   cd "${GIT_REPO_DIRECTORY}"
 
-  echo git pull git+ssh://git@github.com/pmatuszy/github-bin.git | boxes -s 70x5 -a c
+  echo git pull git+ssh://git@github.com/pmatuszy/"${github_project_name}".git | boxes -s 70x3 -a c
 
-  git pull git+ssh://git@github.com/pmatuszy/github-bin.git
+  git pull git+ssh://git@github.com/pmatuszy/"${github_project_name}".git
   if (( $? != 0 )); then
     echo  ; echo ; echo "Pull was not successful... WYCHODZE" ; echo ; echo
     exit 3
@@ -71,7 +81,7 @@ if [ "${p}" == 'y' -o  "${p}" == 'y' ]; then
 
   rm $HOME/bin/git-pull.sh $HOME/bin/git-push.sh $HOME/bin/git-fetch.sh
   echo 
-  echo git status | boxes -s 40x5 -a c
+  echo git status | boxes -s 40x3 -a c
   echo 
   git status
 else

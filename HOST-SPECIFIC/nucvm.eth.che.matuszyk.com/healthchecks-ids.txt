@@ -12,3 +12,7 @@ healthchecks-geoipupdate.sh			https://healthchecks.matuszyk.com:8000/ping/4909f0
 sprawdz-czy-reboot-required.sh			https://healthchecks.matuszyk.com:8000/ping/8f338831-2a7f-4c5e-b575-83e96972e133
 healthchecks-lvs-sync-status.sh                 https://healthchecks.matuszyk.com:8000/ping/2a40cc28-f671-4d50-bd34-a288a2f1ccb0
 vmrun-check-status.sh				https://healthchecks.matuszyk.com:8000/ping/15de789a-d5be-4c01-b46f-3999bfa6537e	
+sprawdz-czy-dziala-strona-www.anna.matuszyk.com.sh      
+sprawdz-czy-dziala-strona-www.ontsolutions.com.sh       
+ssh-keychain.sh						https://healthchecks.matuszyk.com:8000/ping/300c170f-f84f-44ec-a6dd-d6601bf9f7ae	
+

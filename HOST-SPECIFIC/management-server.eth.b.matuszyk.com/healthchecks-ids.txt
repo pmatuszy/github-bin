@@ -8,3 +8,7 @@ healthchecks-swap-usage.sh                      https://healthchecks.matuszyk.co
 healthchecks-geoipupdate.sh			https://healthchecks.matuszyk.com:8000/ping/080d6901-3a23-4ff6-b174-66873bb80b2d
 sprawdz-czy-reboot-required.sh			https://healthchecks.matuszyk.com:8000/ping/0b53c02d-f03e-4d01-9e77-ab46aefeeb06
 healthchecks-lvs-sync-status.sh                 
+sprawdz-czy-dziala-strona-www.anna.matuszyk.com.sh      
+sprawdz-czy-dziala-strona-www.ontsolutions.com.sh       
+ssh-keychain.sh						https://healthchecks.matuszyk.com:8000/ping/0181a981-851b-4324-9208-a0a086cda7e9	
+

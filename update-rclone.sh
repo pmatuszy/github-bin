@@ -10,15 +10,6 @@ if [ -f "$HEALTHCHECKS_FILE" ];then
   HEALTHCHECK_URL=$(cat "$HEALTHCHECKS_FILE" |grep "^`basename $0`"|awk '{print $2}')
 fi
 
-export MAX_RANDOM_DELAY_IN_SEC=${MAX_RANDOM_DELAY_IN_SEC:-50}
-tty 2>&1 >/dev/null
-if (( $? != 0 )); then      # we set RANDOM_DELAY only when running NOT from terminal
-  export RANDOM_DELAY=$((RANDOM % $MAX_RANDOM_DELAY_IN_SEC ))
-  sleep $RANDOM_DELAY
-else
-  echo ; echo "Interactive session detected: I will NOT introduce RANDOM_DELAY..."
-fi
-
 export RCLONE_BIN=$(type -fP rclone)
 
 # nie badamy czy rclone jest uruchomiony, bo moze byc rclone mount i on jest zawsze uruchomiony. My updateujemy mimo to
@@ -61,7 +52,7 @@ fi
 
 . /root/bin/_script_footer.sh
 
-exit
+exit $?
 #####
 # new crontab entry
 

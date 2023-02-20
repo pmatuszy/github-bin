@@ -1,4 +1,5 @@
 #!/bin/bash
+
 # 2020.0x.xx - v. 0.1 - initial release (date unknown)
 
 . /root/bin/_script_header.sh

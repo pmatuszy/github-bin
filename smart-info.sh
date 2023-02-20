@@ -1,11 +1,14 @@
 #!/bin/bash
 
+# 2023.02.10 - v. 0.5 - added check for smartmontools package
 # 2023.02.07 - v. 0.4 - added _script_header.sh and _script_footer.sh
 # 2023.01.09 - v. 0.3 - interactive session with clear screen, better seagate drive detection
 # 2022.12.20 - v. 0.2 - check if any command line arguments were provided...
 # 2022.10.11 - v. 0.1 - initial release
 
 . /root/bin/_script_header.sh
+
+check_if_installed smartctl smartmontools
 
 export disks=""
 

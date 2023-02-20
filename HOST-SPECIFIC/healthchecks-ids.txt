@@ -13,3 +13,8 @@ update-restic.sh
 update-rclone.sh			        
 healthchecks-smartd.sh
 healthchecks-swap-usage.sh
+ssh-keychain.sh                                 
+cron-git-bash-pull.sh                           
+cron-git-bash-push.sh				
+cron-git-bin-pull.sh				
+cron-git-bin-push.sh				
