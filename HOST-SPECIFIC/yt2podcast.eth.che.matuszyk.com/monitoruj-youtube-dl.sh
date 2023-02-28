@@ -2,7 +2,7 @@
 
 # (C) Paul G. Matuszyk 2020.04.20
 # first production version
-# v. 1.6 - 2023.02.28 - zmiana formatu linii dla grep bo podnioslem wersje podsynca i zmienil sie message...
+# 2023.02.28 - v. 1.6 - zmiana formatu linii dla grep bo podnioslem wersje podsynca i zmienil sie message...
 #                       added _script_header and _script_footer calls
 # v. 1.5 - 2022.02.10 - lowered sleep_1dyncze_opoznienie from 0.2 to 0.1
 # v. 1.4 - 2021.01.29 - added maska_logow and ffmpeg_path instead of absolute paths 
