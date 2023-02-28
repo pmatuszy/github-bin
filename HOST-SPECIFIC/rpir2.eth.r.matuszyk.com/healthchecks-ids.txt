@@ -13,4 +13,8 @@ sprawdz-czy-reboot-required.sh 			https://healthchecks.matuszyk.com:8000/ping/7b
 sprawdz-czy-dziala-strona-www.anna.matuszyk.com.sh      
 sprawdz-czy-dziala-strona-www.ontsolutions.com.sh       
 ssh-keychain.sh						https://healthchecks.matuszyk.com:8000/ping/a8ced6d5-dad0-4030-8cb3-c8c1b12c3707	
+cron-git-bash-pull.sh                                   https://healthchecks.matuszyk.com:8000/ping/4516b0c3-84ff-47bb-bd50-606eb3a84b00
+cron-git-bash-push.sh                                   https://healthchecks.matuszyk.com:8000/ping/a187df7a-76f7-41d9-81a1-6a32543222c9
+cron-git-bin-pull.sh                                    https://healthchecks.matuszyk.com:8000/ping/4e30a5c3-f27c-4e57-97c4-42ccb0726c7a
+cron-git-bin-push.sh                                    https://healthchecks.matuszyk.com:8000/ping/ae34a8e2-2661-4821-9a03-ea18f8d8db7a
 

@@ -14,4 +14,8 @@ sprawdz-czy-dziala-strona-yt2podcast.com.sh             https://healthchecks.mat
 sprawdz-czy-dziala-strona-www.anna.matuszyk.com.sh      https://healthchecks.matuszyk.com:8000/ping/a522844f-8fc8-4bdb-bfc2-f044212b9547
 sprawdz-czy-dziala-strona-www.ontsolutions.com.sh       https://healthchecks.matuszyk.com:8000/ping/dcafe285-f34d-4bfc-9251-6399871dbe06
 ssh-keychain.sh                                 	https://healthchecks.matuszyk.com:8000/ping/7eb3be0c-8fb8-435b-98a7-cb815dcdbcad
+cron-git-bash-pull.sh                                   https://healthchecks.matuszyk.com:8000/ping/0c92db60-f852-49b6-87d4-1e9c4139f86a
+cron-git-bash-push.sh                                   https://healthchecks.matuszyk.com:8000/ping/d2e8f44d-ad60-44a5-845c-70614b4f3893
+cron-git-bin-pull.sh                                    https://healthchecks.matuszyk.com:8000/ping/8529d30b-1e82-4033-a65d-88c7043e1ea2
+cron-git-bin-push.sh                                    https://healthchecks.matuszyk.com:8000/ping/896f8240-783d-49f7-90d3-52ba2b3a9ee7
 
