@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2023.02.28 - v. 0.5 - curl with kod_powrotu
 # 2023.01.03 - v. 0.4 - dodano random delay jesli skrypt jest wywolywany nieinteraktywnie
 # 2022.05.20 - v. 0.3 - dodalem wypisywanie aktualnej daty
 # 2022.05.12 - v. 0.2 - small bux fix (use RESTIC_BIN intsead of /usr/bin/restic)
@@ -38,16 +39,11 @@ else
   wiadomosc="$m $wersja_przed $wersja_po"
 fi
 
-if [ $kod_powrotu -ne 0 ]; then
-  /usr/bin/curl -fsS -m 100 --retry 10 --retry-delay 10 --data-raw "$wiadomosc" -o /dev/null "$HEALTHCHECK_URL"/fail 2>/dev/null
-  exit $kod_powrotu # cos poszlo nie tak
-else
-  /usr/bin/curl -fsS -m 100 --retry 10 --retry-delay 10 --data-raw "$wiadomosc" -o /dev/null "$HEALTHCHECK_URL" 2>/dev/null
-fi
+/usr/bin/curl -fsS -m 100 --retry 10 --retry-delay 10 --data-raw "$wiadomosc" -o /dev/null "$HEALTHCHECK_URL"/${kod_powrotu} 2>/dev/null
 
 . /root/bin/_script_footer.sh
 
-exit $?
+exit ${kod_powrotu}
 #####
 # new crontab entry
 

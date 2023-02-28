@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2023.02.28 - v. 0.4 - curl with kod_powrotu
 # 2023.01.09 - v. 0.3 - added random delay support
 # 2022.08.09 - v. 0.2 - added info about script version to the output 
 # 2022.07.04 - v. 0.1 - initial release
@@ -16,16 +17,11 @@ m=$( echo " "; echo "aktualna data: `date '+%Y.%m.%d %H:%M'`" ; echo ;
    )
 kod_powrotu=$?
 
-if [ $kod_powrotu -ne 0 ]; then
-  /usr/bin/curl -fsS -m 10 --retry 5 --retry-delay 5 --data-raw "$m" -o /dev/null "$HEALTHCHECK_URL"/fail 2>/dev/null
-  exit $kod_powrotu # cos poszlo nie tak
-else
-  /usr/bin/curl -fsS -m 10 --retry 5 --retry-delay 5 --data-raw "$m" -o /dev/null "$HEALTHCHECK_URL" 2>/dev/null
-fi
+/usr/bin/curl -fsS -m 10 --retry 5 --retry-delay 5 --data-raw "$m" -o /dev/null "$HEALTHCHECK_URL"/${kod_powrotu} 2>/dev/null
 
 . /root/bin/_script_footer.sh
 
-exit $?
+exit ${kod_powrotu}
 #####
 # new crontab entry
 

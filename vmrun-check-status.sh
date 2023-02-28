@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2023.02.28 - v. 0.5 - curl with kod_powrotu
 # 2023.02.15 - v. 0.4 - bug fixes for wrong status (was OK instead of PROBLEM)
 # 2023.02.06 - v. 0.3 - small bug fix cos_nie_tak=0 after successful run is set now
 # 2023.02.05 - v. 0.2 - added how_many_retries retry_delay - sometimes retry helps to check statuses
@@ -116,15 +117,11 @@ if (( $script_is_run_interactively == 1 )); then
   echo "$m"
 fi
 
-if [ $kod_powrotu != 0 ];then
-  echo "$m" | /usr/bin/curl -fsS -m 100 --retry 10 --retry-delay 10 --data-binary @- -o /dev/null "$HEALTHCHECK_URL"/fail 2>/dev/null
-else
-  echo "$m" | /usr/bin/curl -fsS -m 100 --retry 10 --retry-delay 10 --data-binary @- -o /dev/null "$HEALTHCHECK_URL" 2>/dev/null
-fi
+echo "$m" | /usr/bin/curl -fsS -m 100 --retry 10 --retry-delay 10 --data-binary @- -o /dev/null "$HEALTHCHECK_URL"/${kod_powrotu} 2>/dev/null
 
 . /root/bin/_script_footer.sh
 
-exit $?
+exit ${kod_powrotu}
 
 #####
 # new crontab entry

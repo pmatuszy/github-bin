@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2023.02.28 - v. 0.3 - curl with kod_powrotu
 # 2023.02.16 - v. 0.2 - major overhaul of the script 
 # 2023.02.08 - v. 0.1 - initial release
 
@@ -64,15 +65,11 @@ if (( script_is_run_interactively )) ;then
   echo "$HC_message"
 fi
 
-if (( $kod_powrotu == 0 ));then
-  echo "$HC_message" | /usr/bin/curl -fsS -m 100 --retry 10 --retry-delay 10 --data-binary @- -o /dev/null "$HEALTHCHECK_URL" 2>/dev/null
-else 
-  echo "$HC_message" | /usr/bin/curl -fsS -m 100 --retry 10 --retry-delay 10 --data-binary @- -o /dev/null "$HEALTHCHECK_URL"/fail 2>/dev/null
-fi
+echo "$HC_message" | /usr/bin/curl -fsS -m 100 --retry 10 --retry-delay 10 --data-binary @- -o /dev/null "$HEALTHCHECK_URL"/${kod_powrotu} 2>/dev/null
 
 . /root/bin/_script_footer.sh
 
-exit $?
+exit ${kod_powrotu}
 
 #####
 # new crontab entry
