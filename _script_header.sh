@@ -23,7 +23,8 @@ function ctrl_c() {
  echo "** Trapped CTRL-C - cleaning up...."
  echo
  echo $STY
- if [ ! -zwhy "${STY:-XXXX}" ]; then    # checking if we are running within screen
+ # if [ ! -zwhy "${STY:-XXXX}" ]; then    # checking if we are running within screen
+ if [ ! -z "${STY:-XXXX}" ]; then    # checking if we are running within screen
     # I am setting the screen window title to the script name
     echo -ne "${tcScrTitleStart}${0}${tcScrTitleEnd}"
  fi
