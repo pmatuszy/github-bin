@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2023.02.28 - v. 0.5 - curl with kod_powrotu
 # 2022.07.01 - v. 0.4 - dodalem wywolanie /root/bin/sprawdz-czy-encrypted-jest-zamontowany.sh na koncu
 # 2022.06.21 - v. 0.3 - dodalem obsluge healthcheckow
 # 2021.09.19 - v. 0.2 - dodana funkcja fsck, czytanie hasla do zmiennej
@@ -42,12 +43,8 @@ zrob_fsck /dev/mapper/encrypted_luks_file_in_root
 
 mount -o noatime /dev/mapper/encrypted_luks_file_in_root /encrypted
 kod_powrotu=$?
-if [ $kod_powrotu -ne 0 ]; then
-  /usr/bin/curl -fsS -m 100 --retry 10 --retry-delay 10 -o /dev/null "$HEALTHCHECK_URL"/fail 2>/dev/null
-  exit $kod_powrotu # cos poszlo nie tak
-else
-  /usr/bin/curl -fsS -m 100 --retry 10 --retry-delay 10 -o /dev/null "$HEALTHCHECK_URL" 2>/dev/null
-fi
+
+/usr/bin/curl -fsS -m 100 --retry 10 --retry-delay 10 -o /dev/null "$HEALTHCHECK_URL"/${kod_powrotu} 2>/dev/null
 
 df -h /encrypted
 echo
@@ -55,5 +52,4 @@ echo
 /root/bin/sprawdz-czy-encrypted-jest-zamontowany.sh
 
 . /root/bin/_script_footer.sh
-exit $?
-
+exit ${kod_powrotu}

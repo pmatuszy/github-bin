@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2023.02.28 - v. 0.6 - curl with kod_powrotu
 # 2023.01.03 - v. 0.5 - dodano random delay jesli skrypt jest wywolywany nieinteraktywnie
 # 2022.07.01 - v. 0.4 - dodalem trimowanie swapa mimo, ze nie przekracza limitu, ale jest mimo wszystko troche juz jego zaalokowanego
 #                       w ten sposob swap jest zwalniany ale nie jest generowany alert do healthchecka
@@ -79,16 +80,11 @@ m=$( echo " "; echo "aktualna data: `date '+%Y.%m.%d %H:%M'`" ; echo ;
 
 kod_powrotu=$?
 
-if [ $kod_powrotu -ne 0 ]; then
-  /usr/bin/curl -fsS -m 100 --retry 10 --retry-delay 10 --data-raw "$m" -o /dev/null "$HEALTHCHECK_URL"/fail 2>/dev/null
-  exit $kod_powrotu # cos poszlo nie tak
-else
-  /usr/bin/curl -fsS -m 100 --retry 10 --retry-delay 10 --data-raw "$m" -o /dev/null "$HEALTHCHECK_URL" 2>/dev/null
-fi
+/usr/bin/curl -fsS -m 100 --retry 10 --retry-delay 10 --data-raw "$m" -o /dev/null "$HEALTHCHECK_URL"/${kod_powrotu} 2>/dev/null
 
 . /root/bin/_script_footer.sh
 
-exit $?
+exit ${kod_powrotu}
 
 ######
 template crontab entry:
