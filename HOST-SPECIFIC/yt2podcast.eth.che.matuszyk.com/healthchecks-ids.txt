@@ -12,7 +12,7 @@ sprawdz-czy-reboot-required.sh			https://healthchecks.matuszyk.com:8000/ping/8b7
 healthchecks-lvs-sync-status.sh                 
 sprawdz-czy-dziala-strona-www.anna.matuszyk.com.sh      
 sprawdz-czy-dziala-strona-www.ontsolutions.com.sh       
-ssh-keychain.sh						
+ssh-keychain.sh						https://healthchecks.matuszyk.com:8000/ping/1d6d6234-6dc3-482a-a1b1-bc0fdea7ebe1
 cron-git-bash-pull.sh                                   https://healthchecks.matuszyk.com:8000/ping/92fc55f6-6c23-4d9e-8c3d-a5337e5acb1b
 cron-git-bash-push.sh                                   https://healthchecks.matuszyk.com:8000/ping/ee20659a-5418-4bc8-9d9d-3cb7dedac0aa
 cron-git-bin-pull.sh                                    https://healthchecks.matuszyk.com:8000/ping/9245105c-ff47-4772-a651-0aee33cf9bf6
