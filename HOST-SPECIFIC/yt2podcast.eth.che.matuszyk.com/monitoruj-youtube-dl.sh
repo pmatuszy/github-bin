@@ -3,6 +3,7 @@
 # (C) Paul G. Matuszyk 2020.04.20
 # first production version
 # v. 1.6 - 2023.02.28 - zmiana formatu linii dla grep bo podnioslem wersje podsynca i zmienil sie message...
+#                       added _script_header and _script_footer calls
 # v. 1.5 - 2022.02.10 - lowered sleep_1dyncze_opoznienie from 0.2 to 0.1
 # v. 1.4 - 2021.01.29 - added maska_logow and ffmpeg_path instead of absolute paths 
 # v. 1.3 - 2020.09.14 - nice tiles for screen session
@@ -13,6 +14,8 @@
 # v. 1.2 - 2020.06.11 - added wolne kb and % of free space
 # v. 1.1 - 2020.04.21 - added feature that not restart is done until all ffmpeg processes are gone...
 # v. 1.0 - 2020.04.20 - initial release
+
+. /root/bin/_script_header.sh
 
 czy_wysylac_maile=0
 opoznienie=120
@@ -150,3 +153,5 @@ while : ; do
      fi
   fi
 done
+
+. /root/bin/_script_footer.sh
