@@ -1,5 +1,8 @@
+#!/bin/bash
+
 # (C) Paul G. Matuszyk 2020.04.20
 # first production version
+# v. 1.6 - 2023.02.28 - zmiana formatu linii dla grep bo podnioslem wersje podsynca i zmienil sie message...
 # v. 1.5 - 2022.02.10 - lowered sleep_1dyncze_opoznienie from 0.2 to 0.1
 # v. 1.4 - 2021.01.29 - added maska_logow and ffmpeg_path instead of absolute paths 
 # v. 1.3 - 2020.09.14 - nice tiles for screen session
@@ -25,7 +28,6 @@ tcScrTitleStart="\ek"
 tcScrTitleEnd="\e\134"
 echo -ne "$tcScrTitleStart $0 $tcScrTitleEnd"
 
-
 pierwszy_raz=1
 echo "[`date '+%Y.%m.%d %H:%M:%S'`] zaczynamy dzialac, opoznienie=$opoznienie , max_liczba_linii=$max_liczba_linii"
 pop=`( du -ks /podsync-hdd |awk '{print $1}' ) 2>/dev/null`
@@ -35,17 +37,19 @@ if [ $czy_wysylac_maile -ne 0 ] ; then
   echo Manualnie startuje feedy podsynca | mutt -s "[ `hostname` ] reczny restart podsynca (`date '+%Y.%m.%d %H:%M:%S'`)" `hostname`@matuszyk.com
 fi
 
-
 while : ; do
-  if [ `grep 'got too many requests error, will retry download next time' ${maska_logow}|wc -l` -gt $max_liczba_linii ] ; then
+  # if [ `grep 'got too many requests error, will retry download next time' ${maska_logow}|wc -l` -gt $max_liczba_linii ] ; then
+  if [ `grep "server responded with a 'Too Many Requests' error" ${maska_logow}|wc -l` -gt $max_liczba_linii ] ; then
      echo '#####################################################################################################'
      echo '#####################################################################################################'
      echo '###################################### RESTART ######################################################'
      echo '#####################################################################################################'
      echo '#####################################################################################################'
      echo 
-     echo "[`date '+%Y.%m.%d %H:%M:%S'`] liczba linii z 'got too many requests error, will retry download next time' wiec restartniemy sie"
-     echo "                      liczba blednych linii w logach to: "`grep 'got too many requests error, will retry download next time' ${maska_logow}|wc -l`
+     # echo "[`date '+%Y.%m.%d %H:%M:%S'`] liczba linii z 'got too many requests error, will retry download next time' wiec restartniemy sie"
+     echo "[`date '+%Y.%m.%d %H:%M:%S'`] liczba linii z 'server responded with a 'Too Many Requests' error' wiec restartniemy sie"
+     # echo "                      liczba blednych linii w logach to: "`grep 'got too many requests error, will retry download next time' ${maska_logow}|wc -l`
+     echo "                      liczba blednych linii w logach to: "`grep "server responded with a 'Too Many Requests' error" ${maska_logow}|wc -l`
      if [ $czy_wysylac_maile -ne 0 ] ; then
        echo restartuje feedy podsynca | mutt -s "[ `hostname` ] restart podsynca (`date '+%Y.%m.%d %H:%M:%S'`)" `hostname`@matuszyk.com
      fi
@@ -76,7 +80,8 @@ while : ; do
        sleep 1
      done
      echo
-     if [ `grep 'got too many requests error, will retry download next time' ${maska_logow}|wc -l` -gt $max_liczba_linii ] ; then
+     # if [ `grep 'got too many requests error, will retry download next time' ${maska_logow}|wc -l` -gt $max_liczba_linii ] ; then
+     if [ `grep "server responded with a 'Too Many Requests' error" ${maska_logow}|wc -l` -gt $max_liczba_linii ] ; then
         echo "po restarcie dalej sa problemy z podlaczeniem ==> inicjuje nowy restart"
         echo "po restarcie dalej sa problemy z podlaczeniem ==> inicjuje nowy restart"
         echo "po restarcie dalej sa problemy z podlaczeniem ==> inicjuje nowy restart"
@@ -89,8 +94,10 @@ while : ; do
            break
          else
            sleep $sleep_1dyncze_opoznienie
-           echo -en "\r[`date '+%Y.%m.%d %H:%M:%S'`] (liczba bledow w logach: `grep 'got too many requests error, will retry download next time' ${maska_logow}|wc -l`)"
-           if [ `grep 'got too many requests error, will retry download next time' ${maska_logow}|wc -l` -gt $max_liczba_linii ] ; then
+           # echo -en "\r[`date '+%Y.%m.%d %H:%M:%S'`] (liczba bledow w logach: `grep 'got too many requests error, will retry download next time' ${maska_logow}|wc -l`)"
+           echo -en "\r[`date '+%Y.%m.%d %H:%M:%S'`] (liczba bledow w logach: `grep "server responded with a 'Too Many Requests' error" ${maska_logow}|wc -l`)"
+           # if [ `grep 'got too many requests error, will retry download next time' ${maska_logow}|wc -l` -gt $max_liczba_linii ] ; then
+           if [ `grep "server responded with a 'Too Many Requests' error" ${maska_logow}|wc -l` -gt $max_liczba_linii ] ; then
              echo " (troche za duzo bo max., ktory dopuszczam to $max_liczba_linii) ==> inicjuje nowy restart"
              break
            fi
@@ -109,9 +116,9 @@ while : ; do
      jest_wolne_kb=`eLC_NUMERIC=en_US printf "%'.f\n" $jest_wolne_kb`
      jest_wolne_pc=`/bin/df --output=pcent /podsync-hdd|tail -1`
      
-     if [ `grep 'got too many requests error, will retry download next time' ${maska_logow}|wc -l` -le $max_liczba_linii ] ; then
+     if [ `grep "server responded with a 'Too Many Requests' error" ${maska_logow}|wc -l` -le $max_liczba_linii ] ; then
        echo -n "[`date '+%Y.%m.%d %H:%M:%S'`] Dziala. " 
-       echo -n "# linii z bledami w logach : `grep 'got too many requests error, will retry download next time' ${maska_logow}|wc -l`"
+       echo -n "# linii z bledami w logach : `grep "server responded with a 'Too Many Requests' error" ${maska_logow}|wc -l`"
        echo -n ". Przybylo `echo $roznica|awk '{printf "%7.0f\n",$1}'` kB w /podsync-hdd (BYLO zajete: "$bylo_zajete kB", JEST zajete: $jest_zajete kB, wolne kB: $jest_wolne_kb,${jest_wolne_pc}). "
      fi
      pop=$nast
@@ -120,17 +127,17 @@ while : ; do
         sleep $opoznienie_1szy_raz 
         pierwszy_raz=0
      else
-       if [ `grep 'got too many requests error, will retry download next time' ${maska_logow}|wc -l` -le $max_liczba_linii ] ; then
+       if [ `grep "server responded with a 'Too Many Requests' error" ${maska_logow}|wc -l` -le $max_liczba_linii ] ; then
          echo "Czekam min. ${opoznienie}s."
        fi
       liczba_iteracji=`echo "(${opoznienie}-50)/$sleep_1dyncze_opoznienie"| bc` # czekamy liczba_iteracji-20s by nie przeskoczyc nastepnej pelnej minuty ... ;-)
 #      echo "(${opoznienie}-60)/$sleep_1dyncze_opoznienie"
 #      echo liczba_iteracji $liczba_iteracji opoznienie = ${opoznienie} 
        for (( c=0; c<$liczba_iteracji; c++ )); do
-         # echo -en "\r[`date '+%Y.%m.%d %H:%M:%S'`] $c $liczba_iteracji"
-         echo -en "\r[`date '+%Y.%m.%d %H:%M:%S'`] (liczba bledow w logach: `grep 'got too many requests error, will retry download next time' ${maska_logow}|wc -l`)"
-         # echo -en "\r[`date '+%Y.%m.%d %H:%M:%S'`] (liczba bledow w logach: `grep 'got too many requests error, will retry download next time' ${maska_logow}|wc -l`) $c $liczba_iteracji               " 
-         if [ `grep 'got too many requests error, will retry download next time' ${maska_logow}|wc -l` -gt $max_liczba_linii ] ; then
+         # echo -en "\r[`date '+%Y.%m.%d %H:%M:%S'`] (liczba bledow w logach: `grep 'got too many requests error, will retry download next time' ${maska_logow}|wc -l`)"
+         echo -en "\r[`date '+%Y.%m.%d %H:%M:%S'`] (liczba bledow w logach: `grep "server responded with a 'Too Many Requests' error" ${maska_logow}|wc -l`)"
+         # if [ `grep 'got too many requests error, will retry download next time' ${maska_logow}|wc -l` -gt $max_liczba_linii ] ; then
+         if [ `grep "server responded with a 'Too Many Requests' error" ${maska_logow}|wc -l` -gt $max_liczba_linii ] ; then
            echo " (troche za duzo bo max., ktory dopuszczam to $max_liczba_linii) ==> inicjuje nowy restart"
            break
          fi
