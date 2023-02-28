@@ -20,7 +20,7 @@
 czy_wysylac_maile=0
 opoznienie=120
 opoznienie_1szy_raz=0.1
-max_liczba_linii=1
+max_liczba_linii=6
 sleep_1dyncze_opoznienie=0.4
 maska_logow='/ramdisk/podsync-*.log'
 
