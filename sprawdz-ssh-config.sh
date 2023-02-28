@@ -25,18 +25,20 @@ function spr_zaladowanie_klucze() {
 spr_czy_agent_is_running() {
   pgrep  ssh-agent >/dev/null
   if [ $? -ne 0 ];then
-    HC_message="${HC_message}""$(echo -e "\n(PGM) PROBLEM - ssh-agent is not running")"
+    echo "(PGM) PROBLEM - ssh-agent is not running"
     agent_status="PROBLEM"
   else
-    HC_message="${HC_message}""$(echo -e "\n(PGM) OK - ssh-agent is running")"
+    echo "(PGM) OK - ssh-agent is running"
     agent_status="OK"
   fi
 }
 ##########################################################################################################
 export agent_status="PROBLEM"
-key1_status=0
-key2_status=0
-export HC_message=""
+export key1_status="PROBLEM"
+export key2_status="PROBLEM"
+
+export HC_MESSAGE=""
+HC_MESSAGE=$(
 cat  $0|grep -e '# *20[123][0-9]'|head -n 1 | awk '{print "script version: " $5 " (dated "$2")"}'
 echo "aktualna data: `date '+%Y.%m.%d %H:%M'`"
 
@@ -51,20 +53,20 @@ if spr_zaladowanie_klucze id_SSH_ed25519_20230207_OpenSSH ; then
 else
   key2_status="PROBLEM"
 fi
+)
 
-echo "====== HC_message START"
-echo "$HC_message"
-echo "====== HC_message FINISH"
+echo "====== HC_MESSAGE START"
+echo "$HC_MESSAGE"
+echo "====== HC_MESSAGE FINISH"
 
-echo "$key1_status"
-echo "$key2_status"
+echo $agent_status $key1_status $key2_status
 
 if [[ $agent_status == "OK" ]] && [[ "$key1_status" == "OK" ]] && [[ "$key2_status" == "OK" ]] ;then
   [ $script_is_run_interactively == 1 ] && echo "(PGM) all is good "
-  echo "$HC_message" | /usr/bin/curl -fsS -m 100 --retry 10 --retry-delay 10 --data-binary @- -o /dev/null "$HEALTHCHECK_URL" 2>/dev/null
+  echo "$HC_MESSAGE" | /usr/bin/curl -fsS -m 100 --retry 10 --retry-delay 10 --data-binary @- -o /dev/null "$HEALTHCHECK_URL" 2>/dev/null
 else
-  [ $script_is_run_interactively == 1 ] && echo "(PGM) PROBLEM - agent is NOT running"
-  echo "$HC_message" | /usr/bin/curl -fsS -m 100 --retry 10 --retry-delay 10 --data-binary @- -o /dev/null "$HEALTHCHECK_URL"/fail 2>/dev/null
+  [ $script_is_run_interactively == 1 ] && echo "(PGM) PROBLEM - OVERALL status is BAD"
+  echo "aa $HC_MESSAGE" | /usr/bin/curl -fsS -m 100 --retry 10 --retry-delay 10 --data-binary @- -o /dev/null "$HEALTHCHECK_URL"/fail 2>/dev/null
 fi
 
 exit $?

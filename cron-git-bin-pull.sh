@@ -25,6 +25,4 @@ exit $?
 #####
 # new crontab entry
 
-@reboot ( sleep 3m && /root/bin/cron-git-bin-pull.sh )
-
 1 7 * * * /root/bin/cron-git-bin-pull.sh

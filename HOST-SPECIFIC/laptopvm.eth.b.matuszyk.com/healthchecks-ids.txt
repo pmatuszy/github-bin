@@ -12,4 +12,4 @@ vmrun-check-status.sh				https://healthchecks.matuszyk.com:8000/ping/38588786-68
 sprawdz-czy-dziala-strona-www.anna.matuszyk.com.sh      
 sprawdz-czy-dziala-strona-www.ontsolutions.com.sh       
 ssh-keychain.sh						https://healthchecks.matuszyk.com:8000/ping/77e39901-f1ed-47cd-88d9-0f0836287a47
-
+sprawdz-czy-reboot-required.sh				https://healthchecks.matuszyk.com:8000/ping/9546e8da-6e88-4609-8de8-5da169f96f3e	
