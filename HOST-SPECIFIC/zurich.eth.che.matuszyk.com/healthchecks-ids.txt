@@ -14,3 +14,8 @@ sprawdz-ssh-config.sh				https://healthchecks.matuszyk.com:8000/ping/86da3b65-d1
 sprawdz-czy-dziala-strona-www.anna.matuszyk.com.sh      
 sprawdz-czy-dziala-strona-www.ontsolutions.com.sh       
 ssh-keychain.sh					https://healthchecks.matuszyk.com:8000/ping/86da3b65-d1c0-4523-851a-35e60e0a5cdd
+cron-git-bash-pull.sh                                   https://healthchecks.matuszyk.com:8000/ping/88cfb101-64db-419d-ab17-f479c52dc676
+cron-git-bash-push.sh                                   https://healthchecks.matuszyk.com:8000/ping/f2628c5b-e996-4863-9a4d-831e126a7af7
+cron-git-bin-pull.sh                                    https://healthchecks.matuszyk.com:8000/ping/52340930-d9f0-4495-b69e-cb1f151edefb
+cron-git-bin-push.sh                                    https://healthchecks.matuszyk.com:8000/ping/37466a02-58a5-44a0-bbdd-ddb509d4d014
+
