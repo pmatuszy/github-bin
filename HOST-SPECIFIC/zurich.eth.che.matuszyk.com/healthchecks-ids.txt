@@ -13,4 +13,4 @@ healthchecks-smartd.sh				https://healthchecks.matuszyk.com:8000/ping/09e57300-a
 sprawdz-ssh-config.sh				https://healthchecks.matuszyk.com:8000/ping/86da3b65-d1c0-4523-851a-35e60e0a5cdd	
 sprawdz-czy-dziala-strona-www.anna.matuszyk.com.sh      
 sprawdz-czy-dziala-strona-www.ontsolutions.com.sh       
-ssh-keychain.sh
+ssh-keychain.sh					https://healthchecks.matuszyk.com:8000/ping/86da3b65-d1c0-4523-851a-35e60e0a5cdd
