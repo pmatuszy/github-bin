@@ -31,8 +31,10 @@ spr_ip_address() {
 
   for ((retry=0 ; retry<$how_many_retries ; retry++));do
     if [ ! -z "${TPM_PASS:-}" ];then
+      echo "vmrun -vp ********** getGuestIPAddress $p nogui"
       address=$(vmrun -vp "${TPM_PASS}" getGuestIPAddress $p nogui)
     else
+      echo "vmrun getGuestIPAddress $p nogui"
       address=$(vmrun getGuestIPAddress $p nogui)
     fi
     if (( $? != 0 )); then
@@ -59,8 +61,10 @@ spr_vmware_tools() {
 
   for ((retry=0 ; retry<$how_many_retries ; retry++));do
     if [ ! -z "${TPM_PASS:-}" ];then
+      echo "vmrun -vp ********** checkToolsState $p nogui"
       status=$(vmrun -vp "${TPM_PASS}" checkToolsState $p nogui)
     else
+      echo "vmrun checkToolsState $p nogui"
       status=$(vmrun checkToolsState $p nogui)
     fi
     if (( $? != 0 )); then

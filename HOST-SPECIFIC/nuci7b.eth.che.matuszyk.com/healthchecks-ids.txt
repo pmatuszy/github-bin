@@ -14,4 +14,8 @@ vmrun-check-status.sh				https://healthchecks.matuszyk.com:8000/ping/6d7459de-6c
 sprawdz-czy-dziala-strona-www.anna.matuszyk.com.sh      
 sprawdz-czy-dziala-strona-www.ontsolutions.com.sh       
 ssh-keychain.sh						https://healthchecks.matuszyk.com:8000/ping/11dba566-7630-43ae-aa04-5a0c54a62150
+cron-git-bash-pull.sh                                   https://healthchecks.matuszyk.com:8000/ping/3139ed58-c55b-424a-aa27-51767e205d97
+cron-git-bash-push.sh                                   https://healthchecks.matuszyk.com:8000/ping/0a1fde06-c89f-483c-a1a3-985fce23489a
+cron-git-bin-pull.sh                                    https://healthchecks.matuszyk.com:8000/ping/06bd08a0-adb6-4f74-976f-cf0c1fe4e94c
+cron-git-bin-push.sh                                    https://healthchecks.matuszyk.com:8000/ping/a1f6c0a4-2134-4038-9b4b-80a847d6dffe
 
