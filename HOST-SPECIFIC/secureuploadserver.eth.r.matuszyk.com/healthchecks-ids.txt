@@ -24,4 +24,8 @@ healthchecks-lvs-sync-status.sh
 sprawdz-czy-dziala-strona-www.anna.matuszyk.com.sh      
 sprawdz-czy-dziala-strona-www.ontsolutions.com.sh       
 ssh-keychain.sh						https://healthchecks.matuszyk.com:8000/ping/04efcaa3-bf38-4163-b908-bab33bf26afa
+cron-git-bash-pull.sh                                   https://healthchecks.matuszyk.com:8000/ping/9a5fb10a-321a-4607-9341-53a225606b71
+cron-git-bash-push.sh                                   https://healthchecks.matuszyk.com:8000/ping/7997bae7-b1ef-4a22-948e-0f217be1675d
+cron-git-bin-pull.sh                                    https://healthchecks.matuszyk.com:8000/ping/385a2c9c-c8c4-4e8d-aa64-73bd8abbb1fb
+cron-git-bin-push.sh                                    https://healthchecks.matuszyk.com:8000/ping/71d1db68-ff58-467f-b980-fa5d15b914e7
 

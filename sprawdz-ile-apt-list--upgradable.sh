@@ -42,7 +42,7 @@ fi
 
 . /root/bin/_script_footer.sh
 
-exit
+exit $?
 #####
 # new crontab entry
 

@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2023.02.18 - v. 1.0 - some minor changes like printing script version in non-interactive mode
 # 2023.02.11 - v. 1.0 - added GIT_SSH_COMMAND
 # 2023.02.07 - v. 0.9 - added batch mode
 # 2023.01.24 - v. 0.8 - added 2>/dev/null to one of the cp commands, size of the boxes width changed from 40 to 70
@@ -13,6 +14,10 @@
 # 2020.11.27 - v. 0.1 - initial release
 
 . /root/bin/_script_header.sh
+
+if (( ! script_is_run_interactively ));then    # jesli nie interaktywnie, to chcemy wyswietlic info, by poszlo do logow
+  echo "${SCRIPT_VERSION}";echo 
+fi
 
 export github_project_name=github-bin
 export GIT_REPO_DIRECTORY=/root/"${github_project_name}"

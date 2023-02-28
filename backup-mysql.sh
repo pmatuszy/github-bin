@@ -38,7 +38,7 @@ else
   /usr/bin/curl -fsS -m 100 --retry 10 --retry-delay 10 --data-raw "$wiadomosc" -o /dev/null "$HEALTHCHECK_URL" 2>/dev/null
 fi
 
-exit
+exit $?
 #####
 # new crontab entry
 

@@ -20,8 +20,8 @@ fi
 
 . /root/bin/_script_footer.sh
 
-exit
+exit $?
 
 
 # wysylanie info o statusie APC ups'a
-0 * * * *    sleep $((RANDOM \% 60)) && /root/bin/apc-status.sh
+0 * * * *    /root/bin/apc-status.sh

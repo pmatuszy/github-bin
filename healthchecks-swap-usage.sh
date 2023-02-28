@@ -87,7 +87,8 @@ else
 fi
 
 . /root/bin/_script_footer.sh
-exit
+
+exit $?
 
 ######
 template crontab entry:

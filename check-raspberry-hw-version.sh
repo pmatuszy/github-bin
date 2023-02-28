@@ -1,4 +1,5 @@
 #!/bin/bash
+
 # 2020.12.08 - v. 0.2 - adding info about total RAM
 # 2020.0x.xx - v. 0.1 - initial release (date unknown)
 

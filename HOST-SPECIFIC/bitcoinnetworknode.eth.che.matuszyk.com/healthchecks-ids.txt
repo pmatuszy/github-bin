@@ -10,4 +10,7 @@ sprawdz-czy-dziala-bitcoin-daemon.sh		https://healthchecks.matuszyk.com:8000/pin
 sprawdz-czy-dziala-litecoincash-daemon.sh	https://healthchecks.matuszyk.com:8000/ping/450c1a6b-3779-49b0-ac90-b758e4a9d926
 sprawdz-czy-reboot-required.sh			https://healthchecks.matuszyk.com:8000/ping/ac36fe38-e653-4936-a421-88b8b918130f
 ssh-keychain.sh					https://healthchecks.matuszyk.com:8000/ping/bf4862eb-0898-43f2-86fd-1dedaa2afeb7	
-
+cron-git-bash-pull.sh                                   https://healthchecks.matuszyk.com:8000/ping/7d23d9ce-b259-4602-9f10-5991c1104c23
+cron-git-bash-push.sh                                   https://healthchecks.matuszyk.com:8000/ping/968def35-42f2-4e8b-87b6-6c360b68d395
+cron-git-bin-pull.sh                                    https://healthchecks.matuszyk.com:8000/ping/b2b2fad4-b392-45d4-87e3-7cd91a0435e6
+cron-git-bin-push.sh                                    https://healthchecks.matuszyk.com:8000/ping/73e648b9-9ff0-4d90-b03c-797927c68a54

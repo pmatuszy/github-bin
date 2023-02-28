@@ -19,6 +19,10 @@
 
 . /root/bin/_script_header.sh
 
+if (( ! script_is_run_interactively ));then    # jesli nie interaktywnie, to chcemy wyswietlic info, by poszlo do logow
+  echo "${SCRIPT_VERSION}";echo
+fi
+
 export github_project_name=github-bin
 export GIT_REPO_DIRECTORY=/root/"${github_project_name}"
 export GIT_SSH_COMMAND='ssh -i $HOME/.ssh/id_SSH_ed25519_20230207_OpenSSH'
@@ -63,8 +67,7 @@ echo
 echo
 if [ "${p}" == 'y' -o  "${p}" == 'y' ]; then
   git add --all * .[a-zA-Z]*
-  git commit -a -m \""new push from `hostname` @ `date '+%Y.%m.%d %H:%M:%S'`"\"
-
+  git commit -a -m \""new push from `hostname` @ `date '+%Y.%m.%d %H:%M:%S'`"\" | boxes -s 90x6 -a l -d ada-box
   echo git push | boxes -s 40x3 -a c
   git push 
   if (( $? != 0 )); then
