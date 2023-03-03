@@ -24,7 +24,7 @@ cd /tmp ; tar xzf VMwareTools-*
 rm /tmp/VMwareTools-* 2>/dev/null
 }
 
-umount /mnt
+umount /mnt/tmp
 cd /tmp/vmware-tools-distrib
 
 if (( $# != 0 )) && [ "${1-xxx}" == "manual" ]; then
