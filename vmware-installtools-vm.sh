@@ -1,11 +1,14 @@
 #!/bin/bash
 
+# 2023.03.03 - v. 0.2 - if cdrom is already mounted under /mnt/tmp we do not remount it again....
 # 2023.02.17 - v. 0.1 - initial release
 
 . /root/bin/_script_header.sh
 
-mkdir -p /mnt/tmp
-mount /dev/cdrom /mnt/tmp || exit 2
+if [ ! -f  /mnt/tmp/vmware-tools-upgrader-64 ];then
+  mkdir -p /mnt/tmp
+  mount /dev/cdrom /mnt/tmp || exit 2
+fi
 
 {
 rm /tmp/VMwareTools-* 2>/dev/null
