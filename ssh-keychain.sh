@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2023.03.03 - v. 0.4 - added sleep 1 as sometimes checking keychain shows nothing...
 # 2023.02.28 - v. 0.3 - curl with kod_powrotu
 # 2023.02.16 - v. 0.2 - major overhaul of the script 
 # 2023.02.08 - v. 0.1 - initial release
@@ -52,7 +53,7 @@ HC_message=$(
   fi
   
   echo ; echo
-
+  sleep 1
   echo keychain --nogui --nocolor -l | boxes -s 50x3 -a c -d ada-box
        keychain --nogui --nocolor -l 2>&1
   echo
