@@ -7,12 +7,12 @@
 mkdir -p /mnt/tmp
 mount /dev/cdrom /mnt/tmp || exit 2
 
-(
+{
 rm /tmp/VMwareTools-* 2>/dev/null
 cp -fv /mnt/tmp/VMwareTools-* /tmp
 cd /tmp ; tar xzvf VMwareTools-*
 rm /tmp/VMwareTools-* 2>/dev/null
-)
+}
 
 umount /mnt
 cd /tmp/vmware-tools-distrib
