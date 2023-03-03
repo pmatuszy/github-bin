@@ -14,7 +14,7 @@ fi
 if [ $(dpkg -s open-vm-tools >/dev/null 2>&1 ) ];then    # openvm tools are NOT installed
   echo "usuwam open-vm-tools, bo nie chce uzywac tego pakietu" | boxes -s 50x3 -a c -d ada-box
   echo apt remove -y open-vm-tools | boxes -s 50x3 -a c -d ada-box
-  apt remove -y open-vm-tools >/dev/null 2>&1
+  apt remove -y --purge open-vm-tools >/dev/null 2>&1
 fi
 
 {
