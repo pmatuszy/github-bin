@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2023.03.07 - v. 0.6 - added check if fstrim is installed
 # 2023.02.28 - v. 0.5 - curl with kod_powrotu
 # 2023.02.16 - v. 0.4 - added script version and current time
 # 2023.01.03 - v. 0.3 - dodano random delay jesli skrypt jest wywolywany nieinteraktywnie
@@ -12,6 +13,8 @@ if [ -f "$HEALTHCHECKS_FILE" ];then
   HEALTHCHECK_URL=$(cat "$HEALTHCHECKS_FILE" |grep "^`basename $0`"|awk '{print $2}')
   /usr/bin/curl -fsS -m 100 --retry 10 --retry-delay 10 -o /dev/null "$HEALTHCHECK_URL"/start 2>/dev/null
 fi
+
+check_if_installed fstrim util-linux
 
 HC_message=$( 
   echo "${SCRIPT_VERSION}" ; echo 
