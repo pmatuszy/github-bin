@@ -9,6 +9,7 @@
 # 2020.10.09 - v. 0.2 - small cosmetic modifications
 # 2020.0x.xx - v. 0.1 - initial release (date unknown)
 
+set -x
 . /root/bin/_script_header.sh
 
 if [[ ! -h /etc/os-release && ! -h /etc/redhat-release ]] ; then
@@ -33,8 +34,10 @@ if [[ $(uname --machine) == "aarch64" || $(uname --machine) == "armv7l" || $(una
 fi
 
 echo $hardware_type | boxes -s 40x5 -a c ; echo 
+cat /etc/os-release /etc/redhat-release 2>/dev/null |egrep -qi "ubuntu|Raspbian" 
+echo $?
 
-if [[ `cat /etc/os-release /etc/redhat-release 2>/dev/null |egrep -qi "ubuntu|Raspbian" ; echo $?` == 0 ]] ; then
+if [[ $? == 0 ]] ; then
   for p in `fdisk -l|grep 'Disk /dev'|egrep -v 'mapper|/md|/ram|mmcb|/dev/loop'|awk '{print $2}'|sort|tr -d :`;do
      if [[ `hdparm -I $p 2>/dev/null | grep 'Serial\ Number'|wc -l` == 0 ]]; then   # no S/N - I assume it is NVME disk...
        printf "%-45s" "`gdisk -l $p |grep "Disk /dev"`"
