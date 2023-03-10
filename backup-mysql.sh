@@ -1,5 +1,6 @@
 #!/bin/bash
-# 2022.12.20 - v. 0.1 - initial release (date unknown)
+
+# 2022.12.20 - v. 0.1 - initial release
 
 . /root/bin/_script_header.sh
 if [ -f "$HEALTHCHECKS_FILE" ];then
