@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2023.03.12 - v. 0.5 - added possibility to load more keys (variable klucze)
 # 2023.03.03 - v. 0.4 - added sleep 1 as sometimes checking keychain shows nothing...
 # 2023.02.28 - v. 0.3 - curl with kod_powrotu
 # 2023.02.16 - v. 0.2 - major overhaul of the script 
@@ -20,29 +21,36 @@ fi
 
 check_if_installed keychain
 
+klucze=""
+
+if [ -f $HOME/.ssh/id_backupy_ed25519 ]; then
+  klucze="id_backupy_ed25519 id_rsa id_ed25519 id_SSH_ed25519_20230207_OpenSSH"
+else
+  klucze="id_rsa id_ed25519 id_SSH_ed25519_20230207_OpenSSH"
+fi
+
+export klucze
+
 HC_message=$(
   warnings_and_errors=0
 
   cat  $0|grep -e '# *20[123][0-9]'|head -n 1 | awk '{print "script version: " $5 " (dated "$2")"}'
   echo "aktualna data: `date '+%Y.%m.%d %H:%M'`" ; echo ;
-
-  keychain  --nocolor id_rsa id_ed25519 id_SSH_ed25519_20230207_OpenSSH 2>&1 | egrep -iq "warning|error"
+  keychain  --nocolor ${klucze} 2>&1 | egrep -iq "warning|error"
   
   if (( $? == 0 )); then               # exit status = 0 oznacza, ze linie ZNALEZIONO, wiec jest blad
     let warnings_and_errors=warnings_and_errors+1
-    keychain --nogui --nocolor id_rsa id_ed25519 id_SSH_ed25519_20230207_OpenSSH 2>&1 | egrep -i "warning|error"
+    keychain  --nocolor  ${klucze} 2>&1 | egrep -i "warning|error"
     echo "(PGM) NOT all 3 keys are loaded - PROBLEM " | boxes -s 50x3 -a c -d ada-box
     echo ;  echo
   else
     echo "(PGM) 3 keys are loaded - looks GOOD" | boxes -s 50x3 -a c -d ada-box
   fi
+
+  echo "keychain --nogui --nocolor ${klucze}"
+        keychain --nogui --nocolor ${klucze} 2>&1
   
-  echo
-  echo "keychain --nogui --nocolor id_rsa id_ed25519 id_SSH_ed25519_20230207_OpenSSH"
-  echo
-        keychain --nogui --nocolor id_rsa id_ed25519 id_SSH_ed25519_20230207_OpenSSH 2>&1
-  
-  how_many=$(keychain --nogui --nocolor id_rsa id_ed25519 id_SSH_ed25519_20230207_OpenSSH 2>&1 | \
+  how_many=$(keychain --nogui --nocolor ${klucze} 2>&1 | \
              egrep -i "Known ssh key: .*/id_rsa|Known ssh key: .*/id_SSH_ed25519_20230207_OpenSSH|Known ssh key: .*/id_ed25519" | wc -l)
   
   if (( $how_many != 3 )); then
@@ -52,14 +60,13 @@ HC_message=$(
     echo "(PGM) all 3 keys are known - looks GOOD" | boxes -s 50x3 -a c -d ada-box
   fi
   
-  echo ; echo
+  echo ; echo 
   sleep 1
   echo keychain --nogui --nocolor -l | boxes -s 50x3 -a c -d ada-box
        keychain --nogui --nocolor -l 2>&1
   echo
   exit $warnings_and_errors
 )
-
 kod_powrotu=$?
 
 if (( script_is_run_interactively )) ;then
