@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2023.03.12 - v. 0.2 - added chmod command to limit backup visibility
 # 2022.12.20 - v. 0.1 - initial release
 
 . /root/bin/_script_header.sh
@@ -25,8 +26,9 @@ if (( $? != 0 )); then
    exit 2
 fi
 m=$( { /usr/bin/nice -19 /usr/bin/mysqldump -u ${MYSQL_USER} --verbose --all-databases | /usr/bin/nice -19 /usr/bin/pbzip2 -9qc -p2 > "${BACKUP_DESTINATION}" ; } 2>&1 ; exit $?)
-#m=$( { /usr/bin/nice -19 echo abc ; } 2>&1 ; exit $?)
 kod_powrotu=$?
+
+chmod 600 ${BACKUP_DESTINATION}
 
 WHAT_DATABASES_WE_HAVE=$(/usr/bin/mysqlshow -u "${MYSQL_USER}")
 OUTPUT_FILE=$(ls -ltr ${BACKUP_DESTINATION})
