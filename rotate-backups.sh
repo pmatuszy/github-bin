@@ -8,7 +8,7 @@ if [ -f "$HEALTHCHECKS_FILE" ];then
   HEALTHCHECK_URL=$(cat "$HEALTHCHECKS_FILE" |grep "^`basename $0`"|awk '{print $2}')
 fi
 
-if [ ! -z "${HEALTHCHECKS_FORCE_ID":-}" ];then
+if [ ! -z "${HEALTHCHECKS_FORCE_ID:-}" ]; then
   HEALTHCHECK_URL=$(cat "$HEALTHCHECKS_FILE" |grep "^$HEALTHCHECKS_FORCE_ID"|awk '{print $2}')
 fi
 
