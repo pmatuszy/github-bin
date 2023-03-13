@@ -7,74 +7,35 @@
 if [ -f "$HEALTHCHECKS_FILE" ];then
   HEALTHCHECK_URL=$(cat "$HEALTHCHECKS_FILE" |grep "^`basename $0`"|awk '{print $2}')
 fi
-export warnings_and_errors=0
-
 
 check_if_installed pip python3-pip
 
-if (( $# != 2 )) ; then
-  echo ; echo "(PGM) wrong # of command line arguments... (must be precisely 2 but you provided $#)" ; echo 
+if (( $# < 2 )) ; then
+  echo ; echo "(PGM) wrong # of command line arguments... (must be more than 1)" ; echo 
   exit 1
 fi
 
-exit
-
-
-HC_message=$(
-  warnings_and_errors=0
-
-  cat  $0|grep -e '# *20[123][0-9]'|head -n 1 | awk '{print "script version: " $5 " (dated "$2")"}'
-  echo "aktualna data: `date '+%Y.%m.%d %H:%M'`" ; echo ;
-
-  keychain  --nocolor id_rsa id_ed25519 id_SSH_ed25519_20230207_OpenSSH 2>&1 | egrep -iq "warning|error"
-  
-  if (( $? == 0 )); then               # exit status = 0 oznacza, ze linie ZNALEZIONO, wiec jest blad
-    let warnings_and_errors=warnings_and_errors+1
-    keychain --nogui --nocolor id_rsa id_ed25519 id_SSH_ed25519_20230207_OpenSSH 2>&1 | egrep -i "warning|error"
-    echo "(PGM) NOT all 3 keys are loaded - PROBLEM " | boxes -s 50x3 -a c -d ada-box
-    echo ;  echo
-  else
-    echo "(PGM) 3 keys are loaded - looks GOOD" | boxes -s 50x3 -a c -d ada-box
-  fi
-  
-  echo
-  echo "keychain --nogui --nocolor id_rsa id_ed25519 id_SSH_ed25519_20230207_OpenSSH"
-  echo
-        keychain --nogui --nocolor id_rsa id_ed25519 id_SSH_ed25519_20230207_OpenSSH 2>&1
-  
-  how_many=$(keychain --nogui --nocolor id_rsa id_ed25519 id_SSH_ed25519_20230207_OpenSSH 2>&1 | \
-             egrep -i "Known ssh key: .*/id_rsa|Known ssh key: .*/id_SSH_ed25519_20230207_OpenSSH|Known ssh key: .*/id_ed25519" | wc -l)
-  
-  if (( $how_many != 3 )); then
-    let warnings_and_errors=warnings_and_errors+1
-    echo "(PGM) NOT all 3 keys are known - PROBLEM" | boxes -s 50x3 -a c -d ada-box
-  else
-    echo "(PGM) all 3 keys are known - looks GOOD" | boxes -s 50x3 -a c -d ada-box
-  fi
-  
-  echo ; echo
-  sleep 1
-  echo keychain --nogui --nocolor -l | boxes -s 50x3 -a c -d ada-box
-       keychain --nogui --nocolor -l 2>&1
-  echo
-  exit $warnings_and_errors
-)
-
-kod_powrotu=$?
-
-if (( script_is_run_interactively )) ;then
-  echo "$HC_message"
+if [ ! -d "${@:$#}" ];then
+  echo ; echo "(PGM) Directory $1 doesn't exist..." ; echo
+  exit 2
 fi
 
-echo "$HC_message" | /usr/bin/curl -fsS -m 100 --retry 10 --retry-delay 10 --data-binary @- -o /dev/null "$HEALTHCHECK_URL"/${kod_powrotu} 2>/dev/null
+CMD=$(type -fP rotate-backups )
 
-. /root/bin/_script_footer.sh
+if [ ! $? ] ; then     # if binary can't be found we do not continue
+  echo ; echo "rotate-backups can't be located...";echo
+  exit 3
+fi
 
-exit ${kod_powrotu}
+echo $CMD $*
+HC_MESSAGE=$($CMD $*  2>&1 |sed 's|^.* INFO ||g' ; exit $?)
 
+echo "$HC_MESSAGE" | /usr/bin/curl -fsS -m 100 --retry 10 --retry-delay 10 --data-binary @- -o /dev/null "$HEALTHCHECK_URL"/$? 2>/dev/null
+
+exit $?
 #####
 # new crontab entry
 
-@reboot ( sleep 55 && /root/bin/ssh-keychain.sh )
+@reboot ( sleep 3m && /root/bin/rotate-backups.sh )
 
-1 0 * * *    /root/bin/rotate-backups.sh 
+1 0 * * *    /root/bin/rotate-backups.sh --dry-run --syslog=no --relaxed --hourly=24*2 XXXXXXXXXXXX/XXXXXXXXXX

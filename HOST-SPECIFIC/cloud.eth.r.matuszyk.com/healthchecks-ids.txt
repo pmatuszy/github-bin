@@ -14,3 +14,4 @@ cron-git-bash-pull.sh                                   https://healthchecks.mat
 cron-git-bash-push.sh                                   https://healthchecks.matuszyk.com:8000/ping/ac02355a-645e-43bc-81a7-9829ba7c90f6
 cron-git-bin-pull.sh                                    https://healthchecks.matuszyk.com:8000/ping/753835fe-3fa4-4376-ba3e-cd4188e9ce7b
 cron-git-bin-push.sh                                    https://healthchecks.matuszyk.com:8000/ping/d5092ef2-4169-41ff-b58c-2d66fcccd211
+rotate-backups.sh					https://healthchecks.matuszyk.com:8000/ping/14c8ff84-3f36-4714-8bea-532eef2074b3

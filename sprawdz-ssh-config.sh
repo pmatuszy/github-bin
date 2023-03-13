@@ -66,7 +66,7 @@ if [[ $agent_status == "OK" ]] && [[ "$key1_status" == "OK" ]] && [[ "$key2_stat
   echo "$HC_MESSAGE" | /usr/bin/curl -fsS -m 100 --retry 10 --retry-delay 10 --data-binary @- -o /dev/null "$HEALTHCHECK_URL" 2>/dev/null
 else
   [ $script_is_run_interactively == 1 ] && echo "(PGM) PROBLEM - OVERALL status is BAD"
-  echo "aa $HC_MESSAGE" | /usr/bin/curl -fsS -m 100 --retry 10 --retry-delay 10 --data-binary @- -o /dev/null "$HEALTHCHECK_URL"/fail 2>/dev/null
+  echo "$HC_MESSAGE" | /usr/bin/curl -fsS -m 100 --retry 10 --retry-delay 10 --data-binary @- -o /dev/null "$HEALTHCHECK_URL"/fail 2>/dev/null
 fi
 
 exit $?
