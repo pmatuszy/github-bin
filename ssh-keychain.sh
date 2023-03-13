@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2023.03.13 - v. 0.6 - bugfix for a number of known kesy (!= changed to < )
 # 2023.03.12 - v. 0.5 - added possibility to load more keys (variable klucze)
 # 2023.03.03 - v. 0.4 - added sleep 1 as sometimes checking keychain shows nothing...
 # 2023.02.28 - v. 0.3 - curl with kod_powrotu
@@ -23,8 +24,8 @@ check_if_installed keychain
 
 klucze=""
 
-if [ -f $HOME/.ssh/id_backupy_ed25519 ]; then
-  klucze="id_backupy_ed25519 id_rsa id_ed25519 id_SSH_ed25519_20230207_OpenSSH"
+if [ -f $HOME/.ssh/id_ed25519_backupy ]; then
+  klucze="id_ed25519_backupy id_rsa id_ed25519 id_SSH_ed25519_20230207_OpenSSH"
 else
   klucze="id_rsa id_ed25519 id_SSH_ed25519_20230207_OpenSSH"
 fi
@@ -53,7 +54,7 @@ HC_message=$(
   how_many=$(keychain --nogui --nocolor ${klucze} 2>&1 | \
              egrep -i "Known ssh key: .*/id_rsa|Known ssh key: .*/id_SSH_ed25519_20230207_OpenSSH|Known ssh key: .*/id_ed25519" | wc -l)
   
-  if (( $how_many != 3 )); then
+  if (( $how_many < 3 )); then
     let warnings_and_errors=warnings_and_errors+1
     echo "(PGM) NOT all 3 keys are known - PROBLEM" | boxes -s 50x3 -a c -d ada-box
   else
