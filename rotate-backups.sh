@@ -50,7 +50,8 @@ exit $?
 #####
 # new crontab entry
 
-@reboot ( sleep 3m && /root/bin/rotate-backups.sh  --dry-run --syslog=no --relaxed --hourly=24*2 --daily=10 /xxxx/yyyy )
-1 0 * * *    /root/bin/rotate-backups.sh --dry-run --syslog=no --relaxed --hourly=24*2 --daily=10 /xxxx/yyyy
-rotate-backups --dry-run --relaxed --hourly="20*24" --daily=366 --weekly=56 --monthly=24 --yearly=always --ionice=idle /xxxx/yyyy
+@reboot ( sleep 3m && /root/bin/rotate-backups.sh --dry-run --syslog=no --relaxed --hourly=24*7 /xxx/xxx )
+1 0 * * *    /root/bin/rotate-backups.sh --dry-run --syslog=no --relaxed --hourly=24*7 /xxx/xxx
+
+#rotate-backups --dry-run --relaxed --hourly="20*24" --daily=366 --weekly=56 --monthly=24 --yearly=always --ionice=idle /xxxx/yyyy
 
