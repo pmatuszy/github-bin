@@ -46,7 +46,7 @@ TEMP_MESSAGE=$(
    fi
    echo ; echo "command to be run:"
    echo $CMD $*  2>&1 |sed 's|^.* INFO ||g' ; echo 
-        $CMD $*  2>&1 |sed 's|^.* INFO ||g' 
+        $CMD $*  2>&1 |sed 's|^.* INFO ||g' | sed "s|"${@:$#}"/||g" 
    exit $?
    )
 
