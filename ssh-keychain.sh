@@ -23,8 +23,8 @@ check_if_installed keychain
 
 klucze=""
 
-if [ -f $HOME/.ssh/id_backupy_ed25519 ]; then
-  klucze="id_backupy_ed25519 id_rsa id_ed25519 id_SSH_ed25519_20230207_OpenSSH"
+if [ -f $HOME/.ssh/id_ed25519_backupy ]; then
+  klucze="id_ed25519_backupy id_rsa id_ed25519 id_SSH_ed25519_20230207_OpenSSH"
 else
   klucze="id_rsa id_ed25519 id_SSH_ed25519_20230207_OpenSSH"
 fi
