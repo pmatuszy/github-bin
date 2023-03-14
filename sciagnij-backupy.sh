@@ -12,8 +12,13 @@ if [ ! -z "${HEALTHCHECKS_FORCE_ID:-}" ]; then
   HEALTHCHECK_URL=$(cat "$HEALTHCHECKS_FILE" |grep "^$HEALTHCHECKS_FORCE_ID"|awk '{print $2}')
 fi
 
+if [ -f $HOME/.keychain/$HOSTNAME-sh ];then
+  . $HOME/.keychain/$HOSTNAME-sh
+fi
+
 check_if_installed curl
 check_if_installed rsync
+check_if_installed scp openssh-client
 
 if (( $# != 2 )) ; then
   echo ; echo "(PGM) wrong # of command line arguments... (must be exactly 2)" ; echo 
@@ -27,19 +32,19 @@ fi
 
 export SKAD=$1
 export DOKAD="$2"
-export rsync_option="-a -v --stats --bwlimit=990000 --no-compress --progress --info=progress1 --partial  --inplace --remove-source-files"
-export rsync_options="-a -v --stats --bwlimit=990000 --no-compress --progress --info=progress1 --partial  --inplace "
+
+#### export rsync_option="-a -v --stats --bwlimit=990000 --no-compress --progress --info=progress1 --partial  --inplace --remove-source-files"
+
+export rsync_options="-a -v --stats --bwlimit=990000 --no-compress --partial  --inplace "
 
 HC_MESSAGE=$(
    cat  $0|grep -e '# *20[123][0-9]'|head -n 1 | awk '{print "script version: " $5 " (dated "$2")"}'
    echo ; echo "aktualna data: `date '+%Y.%m.%d %H:%M'`" ; echo ;
    
    echo ; echo  ; echo "SKAD  = $SKAD" ; echo "DOKAD = $DOKAD" ; echo 
-   eval rsync $rsync_options ${SKAD} "${DOKAD}"
-
    echo ; echo "command to be run:"
-   echo $CMD $*  2>&1 |sed 's|^.* INFO ||g' ; echo 
-        $CMD $*  2>&1 |sed 's|^.* INFO ||g' | sed "s|"${@:$#}"/||g" 
+   echo rsync $rsync_options ${SKAD} "${DOKAD}"
+   eval rsync $rsync_options ${SKAD} "${DOKAD}"
    exit $?
    )
 
