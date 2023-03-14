@@ -26,7 +26,7 @@ if (( $# != 2 )) ; then
 fi
 
 if [ ! -d "${@:$#}" ];then
-  echo ; echo "(PGM) Directory $2 doesn't exist..." ; echo
+  echo ; echo "(PGM) Directory ${@:$#} doesn't exist..." ; echo
   exit 2
 fi
 
@@ -56,7 +56,3 @@ fi
 echo "$HC_MESSAGE" | /usr/bin/curl -fsS -m 100 --retry 10 --retry-delay 10 --data-binary @- -o /dev/null "$HEALTHCHECK_URL"/$kod_powrotu 2>/dev/null
 
 exit $?
-
-#####
-# new crontab entry
-

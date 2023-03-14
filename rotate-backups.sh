@@ -21,7 +21,7 @@ if (( $# < 2 )) ; then
 fi
 
 if [ ! -d "${@:$#}" ];then
-  echo ; echo "(PGM) Directory $1 doesn't exist..." ; echo
+  echo ; echo "(PGM) Directory ${@:$#} doesn't exist..." ; echo
   exit 2
 fi
 
@@ -36,8 +36,8 @@ TEMP_MESSAGE=$(
    cat  $0|grep -e '# *20[123][0-9]'|head -n 1 | awk '{print "script version: " $5 " (dated "$2")"}'
    echo ; echo "aktualna data: `date '+%Y.%m.%d %H:%M'`" ; echo ;
 
-   echo "Numbers of files to be preserved: PRESERVED_PLACEMARK"
-   echo "Numbers of files to be deleted  : DELETED_PLACEMARK"
+   echo "Numbers of files to be preserved : PRESERVED_PLACEMARK"
+   echo "Numbers of files to be deleted   : DELETED_PLACEMARK"
    echo $* | grep -qi -- "--dry-run"
    if (( $? == 0 ));then
      echo "dry run: ON"  | boxes -s 50x3 -a c -d ada-box
@@ -63,12 +63,3 @@ fi
 echo "$HC_MESSAGE" | /usr/bin/curl -fsS -m 100 --retry 10 --retry-delay 10 --data-binary @- -o /dev/null "$HEALTHCHECK_URL"/$kod_powrotu 2>/dev/null
 
 exit $?
-
-#####
-# new crontab entry
-
-@reboot ( sleep 3m && /root/bin/rotate-backups.sh --dry-run --syslog=no --relaxed --hourly=24*7 /xxx/xxx )
-1 0 * * *    /root/bin/rotate-backups.sh --dry-run --syslog=no --relaxed --hourly=24*7 /xxx/xxx
-
-#rotate-backups --dry-run --relaxed --hourly="20*24" --daily=366 --weekly=56 --monthly=24 --yearly=always --ionice=idle /xxxx/yyyy
-
