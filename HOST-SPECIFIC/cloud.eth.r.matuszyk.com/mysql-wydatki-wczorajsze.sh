@@ -1,6 +1,7 @@
 #!/bin/bash
 
-# 2023.03.11 - v. 0.2 - added messages to Ania
+# 2023.03.14 - v. 0.2 - removing national characters
+# 2023.03.11 - v. 0.2 - added messages to A.
 # 2023.03.10 - v. 0.1 - initial release
 
 . /root/bin/_script_header.sh
@@ -29,7 +30,7 @@ and timestamp > unix_timestamp(subdate(current_date,1))
 order by b.timestamp;
 END
 )
-message=$(echo "$wydatki_Ani" | sed 'y/āáǎàēéěèīíǐìōóǒòūúǔùǖǘǚǜĀÁǍÀĒÉĚÈĪÍǏÌŌÓǑÒŪÚǓÙǕǗǙǛ/aaaaeeeeiiiioooouuuuüüüüAAAAEEEEIIIIOOOOUUUUÜÜÜÜ/')
+message=$(echo "$wydatki_Ani" | sed 'y/ąężźćńłóĄĘŻŹĆŃŁÓ/aezzcnloAEZZCNLO/g')
 echo "${message}" | strings | /opt/signal-cli/bin/signal-cli send --message-from-stdin  $tel_p >/dev/null 2>&1
 echo "${message}" | strings | /opt/signal-cli/bin/signal-cli send --message-from-stdin  $tel_a >/dev/null 2>&1
 
@@ -47,7 +48,7 @@ and timestamp > unix_timestamp(subdate(current_date,1))
 order by b.timestamp;
 END
 )
-message=$(echo "$wydatki_Pawla" | sed 'y/āáǎàēéěèīíǐìōóǒòūúǔùǖǘǚǜĀÁǍÀĒÉĚÈĪÍǏÌŌÓǑÒŪÚǓÙǕǗǙǛ/aaaaeeeeiiiioooouuuuüüüüAAAAEEEEIIIIOOOOUUUUÜÜÜÜ/')
+message=$(echo "$wydatki_Pawla" | sed 'y/ąężźćńłóĄĘŻŹĆŃŁÓ/aezzcnloAEZZCNLO/g')
 echo "${message}" | strings | /opt/signal-cli/bin/signal-cli send --message-from-stdin  $tel_p >/dev/null 2>&1
 echo "${message}" | strings | /opt/signal-cli/bin/signal-cli send --message-from-stdin  $tel_a >/dev/null 2>&1
 
