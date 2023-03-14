@@ -18,4 +18,5 @@ cron-git-bash-pull.sh                                   https://healthchecks.mat
 cron-git-bash-push.sh                                   https://healthchecks.matuszyk.com:8000/ping/d2e8f44d-ad60-44a5-845c-70614b4f3893
 cron-git-bin-pull.sh                                    https://healthchecks.matuszyk.com:8000/ping/8529d30b-1e82-4033-a65d-88c7043e1ea2
 cron-git-bin-push.sh                                    https://healthchecks.matuszyk.com:8000/ping/896f8240-783d-49f7-90d3-52ba2b3a9ee7
+sprawdz-czy-reboot-required.sh				https://healthchecks.matuszyk.com:8000/ping/2695c4fd-89e1-4c4e-a41a-81ccdb845216
 
