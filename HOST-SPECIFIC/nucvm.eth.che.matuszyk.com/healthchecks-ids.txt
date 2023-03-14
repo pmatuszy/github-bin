@@ -21,4 +21,5 @@ cron-git-bin-pull.sh                                    https://healthchecks.mat
 cron-git-bin-push.sh                                    https://healthchecks.matuszyk.com:8000/ping/82ceff94-94f4-4005-a4d4-7fe8f3851cb7
 rotate-backups.sh-www02					https://healthchecks.matuszyk.com:8000/ping/74ec3059-6961-4ad7-b9d8-c4261e9bd8a2
 rotate-backups.sh-cloud					https://healthchecks.matuszyk.com:8000/ping/1e0b9d0f-4b76-4691-b112-2f17e500876c
-sciagnij-backupy.sh-www02				https://healthchecks.matuszyk.com:8000/ping/cf7f00f1-0b3e-4f0f-a2e1-c10c4c880f4c
+sciagnij-backupy.sh-www02				https://healthchecks.matuszyk.com:8000/ping/46b0dab8-d77b-45da-9c97-8e3e347cd86b
+sciagnij-backupy.sh-cloud				https://healthchecks.matuszyk.com:8000/ping/cf7f00f1-0b3e-4f0f-a2e1-c10c4c880f4c

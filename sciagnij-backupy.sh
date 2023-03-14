@@ -47,7 +47,6 @@ HC_MESSAGE=$(
    eval rsync $rsync_options ${SKAD} "${DOKAD}"
    exit $?
    )
-
 kod_powrotu=$?
 
 if (( $script_is_run_interactively == 1 )); then
