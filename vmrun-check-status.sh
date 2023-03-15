@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2023.03.15 - v. 0.6 - bugfix: if ip address is 'unknown' then we raise the error
 # 2023.02.28 - v. 0.5 - curl with kod_powrotu
 # 2023.02.15 - v. 0.4 - bug fixes for wrong status (was OK instead of PROBLEM)
 # 2023.02.06 - v. 0.3 - small bug fix cos_nie_tak=0 after successful run is set now
@@ -8,6 +9,8 @@
 # 2023.02.02 - v. 0.1 - initial release
 
 . /root/bin/_script_header.sh
+
+check_if_installed curl
 
 how_many_retries=3
 retry_delay=2
@@ -42,7 +45,7 @@ spr_ip_address() {
       echo ; echo "(PGM) vmrun finished with ERRORS !!!!!!"; echo
       blad=1
     fi
-    if [[ "${address}" =~ "Error" ]];then
+    if [[ "${address}" =~ "Error" ]] || [[ "${address}" =~ "unknown" ]] ;then
       echo "  spr_ip_address(): cos nie tak - wynik: $address"
       blad=1
     else
