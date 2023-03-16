@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2023.03.16 - v. 0.6 - bugfix: wrong awk sum calculation
 # 2023.01.31 - v. 0.5 - if no files to copy, the script is finished earlier
 # 2023.01.30 - v. 0.4 - beautify output, rsync is called once
 # 2023.01.16 - v. 0.3 - addd sleep 0.5
@@ -32,7 +33,7 @@ echo ; echo "Plik do zostawienia:"
 ssh "${SKAD_HOST}" "cd ${SKAD_DIR} ; /bin/ls -1tr | tail -n-1"
 
 echo ; echo -n "Skopiujemy "
-ssh "${SKAD_HOST}" "cd ${SKAD_DIR} ; /bin/ls -ltr | head -n-1 " | awk 'BEGIN {$suma=0} {$Suma=$suma+$5} END {print $suma/1024/1024 " MB danych"}'
+ssh "${SKAD_HOST}" "cd ${SKAD_DIR} ; /bin/ls -ltr | head -n-1 " | awk 'BEGIN {suma=0} {suma=suma+$5} END {print suma/1024/1024 " MB danych"}'
 
 echo ; df -h $DOKAD ; echo
 echo "Poczatek kopiowania: $(date '+%Y.%m.%d %H:%M:%S')" ; echo
