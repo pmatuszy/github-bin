@@ -9,7 +9,6 @@
 # 2020.10.09 - v. 0.2 - small cosmetic modifications
 # 2020.0x.xx - v. 0.1 - initial release (date unknown)
 
-set -x
 . /root/bin/_script_header.sh
 
 if [[ ! -h /etc/os-release && ! -h /etc/redhat-release ]] ; then
