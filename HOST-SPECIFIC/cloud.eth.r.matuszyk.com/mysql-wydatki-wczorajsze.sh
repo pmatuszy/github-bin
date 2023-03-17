@@ -30,7 +30,8 @@ and timestamp > unix_timestamp(subdate(current_date,1))
 order by b.timestamp;
 END
 )
-message=$(echo "$wydatki_Ani" | sed 'y/ąężźćńłóĄĘŻŹĆŃŁÓ/aezzcnloAEZZCNLO/g')
+
+message=$(echo "$wydatki_Ani" | sed 's|ąężźćńłóĄĘŻŹĆŃŁÓ|aezzcnloAEZZCNLO|g')
 echo "${message}" | strings | /opt/signal-cli/bin/signal-cli send --message-from-stdin  $tel_p >/dev/null 2>&1
 echo "${message}" | strings | /opt/signal-cli/bin/signal-cli send --message-from-stdin  $tel_a >/dev/null 2>&1
 
@@ -48,7 +49,7 @@ and timestamp > unix_timestamp(subdate(current_date,1))
 order by b.timestamp;
 END
 )
-message=$(echo "$wydatki_Pawla" | sed 'y/ąężźćńłóĄĘŻŹĆŃŁÓ/aezzcnloAEZZCNLO/g')
+message=$(echo "$wydatki_Pawla" | sed 's|ąężźćńłóĄĘŻŹĆŃŁÓ|aezzcnloAEZZCNLO|g')
 echo "${message}" | strings | /opt/signal-cli/bin/signal-cli send --message-from-stdin  $tel_p >/dev/null 2>&1
 echo "${message}" | strings | /opt/signal-cli/bin/signal-cli send --message-from-stdin  $tel_a >/dev/null 2>&1
 
