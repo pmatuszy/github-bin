@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2023.03.20 - v. 0.9 - bugfix with kod_powrotu
 # 2023.01.26 - v. 0.8 - added script version print
 # 2022.12.01 - v. 0.7 - zmieniona zrob_fsck na nowsza - i wymuszenie fsck -y
 # 2022.05.23 - v. 0.6 - dodane wywolanie healthchecka na koncu
@@ -15,6 +16,8 @@
 # zpool status -v
 
 # zfs mount zfs_encrypted_file/encrypted
+
+. /root/bin/_script_header.sh
 
 echo ; cat  $0|grep -e '# *20[123][0-9]'|head -n 1 | awk '{print "script version: " $5 " (dated "$2")"}' ; echo
 
@@ -38,10 +41,8 @@ fi
 kod_powrotu=$?
 echo "kod powrotu z fsck to $kod_powrotu"
 
-if (( $? != 0 ));then
-  echo
-  echo ... and once again fsck
-  echo
+if (( $kod_powrotu != 0 ));then
+  echo ; echo "... and once again fsck " ; echo
 
   if [ $(lsblk -no FSTYPE /dev/mapper/encrypted_luks_device_encrypted.luks2) == 'ext4' ];then
     fsck.ext4 -f $1
@@ -140,3 +141,5 @@ sudo -u minidlna /usr/sbin/minidlnad -r
 sleep 2 
 
 /root/bin/sprawdz-czy-encrypted-jest-zamontowany.sh
+
+. /root/bin/_script_footer.sh
