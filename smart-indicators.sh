@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2023.03.21 - v. 0.7 - bugfix - the whole section of the footer about tests was missing and test time variables were NOT initiated
 # 2023.02.10 - v. 0.6 - added check for smartmontools package
 # 2023.02.07 - v. 0.6 - added _script_header.sh and _script_footer.sh
 # 2023.01.11 - v. 0.5 - prompt for a new page is only displayed if there are no arguments on the command line
@@ -63,6 +64,17 @@ for p in $disks ; do
     continue
   fi
 
+  export power_on_hours=$($SMARTCTL_BIN $DEVICE_TYPE $VENDOR_ATTRIBUTE -A $p | egrep '^  9' | awk '{print $10}'|sed 's|[hms].*||g')     # ost sed zostawia tylko 24979 z "24979h+00m+00.000s"
+  export last_short_offline_test=$($SMARTCTL_BIN $DEVICE_TYPE $VENDOR_ATTRIBUTE $SUBCOMMAND $p | egrep -i 'Short offline|Short captive'|head -1|sed 's|.*% *||g' | awk '{print $1}')
+  export last_extended_offline_test=$($SMARTCTL_BIN $DEVICE_TYPE $VENDOR_ATTRIBUTE $SUBCOMMAND $p | egrep -i 'Extended offline|Extended captive'|head -1|sed 's|.*% *||g' | awk '{print $1}')
+  export last_conveyance_offline_test=$($SMARTCTL_BIN $DEVICE_TYPE $VENDOR_ATTRIBUTE $SUBCOMMAND $p | egrep -i 'Conveyance offline|Conveyance captive'|head -1|sed 's|.*% *||g' | awk '{print $1}')
+
+  let last_short_offline_ago=power_on_hours-last_short_offline_test
+  let last_extended_offline_ago=power_on_hours-last_extended_offline_test
+  let last_conveyance_offline_ago=power_on_hours-last_conveyance_offline_test
+  echo
+
+
   czy_seagate=$($SMARTCTL_BIN  $DEVICE_TYPE --info $p|egrep -i 'seagate|ST18000NM000J' | wc -l)
   if (( $czy_seagate > 0 ));then
     VENDOR_ATTRIBUTE="-v 1,raw48:54 -v 7,raw48:54 -v 187,raw48:54  -v 188,raw48:54 -v 195,raw48:54"
@@ -91,13 +103,38 @@ for p in $disks ; do
       printf -- '-----> power_on_hours               = %5i hours, %2.2f years (possible wrap around as it is more than 65535 hours.... )' $power_on_hours $(echo "scale=2; $power_on_hours/24/365.25"|bc)
       echo -e " (" $(units "${power_on_hours} hours" time |sed 's|hr .*|hr|g') ")\n"
       echo "RAW values calculation:"
+      printf -- '-----> last_short_offline_ago       = %5i hours ago\n'   $last_short_offline_ago
+      printf -- '-----> last_extended_offline_test   = %5i hours ago\n'   $last_extended_offline_ago
+      printf -- '-----> last_conveyance_offline_test = %5i hours ago\n\n' $last_conveyance_offline_ago
       if (( $(($last_short_offline_ago-65535)) > 0 || $(($last_extended_offline_ago-65535)) > 0 || $(($last_conveyance_offline_ago-65535)) > 0 ));then
         echo
         echo "ADJUSTED values calculation:"
+        if (( $(($last_short_offline_ago-65535)) > 0 ));then
+          printf -- '-----> last_short_offline_ago       = %5i hours ago'   $(($last_short_offline_ago-65535))
+          echo -e " (" $(units " $(($last_short_offline_ago-65535))hours" time |sed 's|hr .*|hr|g') ")"
+        fi
+        if (( $(($last_extended_offline_ago-65535)) > 0 ));then
+          printf -- '-----> last_extended_offline_test   = %5i hours ago'   $(($last_extended_offline_ago-65535))
+          echo -e " (" $(units "$(($last_extended_offline_ago-65535)) hours" time |sed 's|hr .*|hr|g') ")"
+        fi
+        if (( $(($last_conveyance_offline_ago-65535)) > 0 ));then
+          printf -- '-----> last_conveyance_offline_test = %5i hours ago' $(($last_conveyance_offline_ago-65535))
+          echo -e " (" $(units "$(($last_conveyance_offline_ago-65535)) hours" time |sed 's|hr .*|hr|g') ")\n"
+        fi
       fi
     else
       printf -- '-----> power_on_hours               = %5i hours, %2.2f years' $power_on_hours $(echo "scale=2; $power_on_hours/24/365.25"|bc)
       echo -e " (" $(units "${power_on_hours} hours" time |sed 's|hr .*|hr|g') ")\n"
+
+      printf -- '-----> last_short_offline_ago       = %5i hours ago'   $last_short_offline_ago
+      echo -e " (" $(units "${last_short_offline_ago} hours" time |sed 's|hr .*|hr|g') ")"
+
+      printf -- '-----> last_extended_offline_test   = %5i hours ago'   $last_extended_offline_ago
+      echo -e " (" $(units "${last_extended_offline_ago} hours" time |sed 's|hr .*|hr|g') ")"
+
+
+      printf -- '-----> last_conveyance_offline_test = %5i hours ago' $last_conveyance_offline_ago
+      echo -e " (" $(units "${last_conveyance_offline_ago} hours" time |sed 's|hr .*|hr|g') ")\n"
     fi
   fi
 
