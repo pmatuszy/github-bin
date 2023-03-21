@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2023.03.21 - v. 0.5 - small cosmetic changes, like adding _script_footer.sh execution
 # 2023.01.26 - v. 0.5 - added script version print
 # 2023.01.16 - v. 0.4 - enable SMR script, starting vpn just after mouting /encrypted and before other volumes
 # 2023.01.05 - v. 0.3 - a lot of changes - too many to describe here :-)
@@ -87,6 +88,9 @@ echo ; echo
 ps -ef |grep vpnserver | grep -v grep
 echo ; echo
 
+/root/bin/sprawdz-czy-encrypted-jest-zamontowany.sh
+/root/bin/sprawdz-czy-dziala-server-vpn.sh
+
 /root/bin/smr-disks-timeout.sh
 
 input_from_user=""
@@ -94,6 +98,7 @@ read -t 300 -n 1 -p "Do you want to mount main encrypted volumes? [Y/n/q]: " inp
 echo
 if [ "${input_from_user}" == 'q' -o  $"{input_from_user}" == 'Q' -o "${input_from_user}" == 'n' -o  $"{input_from_user}" == 'N' ]; then
   echo  ; echo "nie to nie.... wychodze" ; echo 
+  . /root/bin/_script_footer.sh
   exit 1
 fi
 
@@ -104,5 +109,6 @@ zamontuj_fs_MASTER /dev/vg_crypto_20221114_DyskD/lv_20221114_DyskD /mnt/luks-lv-
 
 df -h /encrypted /mnt/luks-lv-icybox-A
 
-/root/bin/sprawdz-czy-encrypted-jest-zamontowany.sh
-/root/bin/sprawdz-czy-dziala-server-vpn.sh
+. /root/bin/_script_footer.sh
+
+
