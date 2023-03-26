@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2023.03.26 - v. 0.4 - added ile_prob i odstepy_miedzy_probami_sek
 # 2023.01.03 - v. 0.3 - dodano random delay jesli skrypt jest wywolywany nieinteraktywnie
 # 2022.05.20 - v. 0.2 - dodalem wypisywanie aktualnej daty
 # 2022.05.11 - v. 0.1 - initial release (date unknown)
@@ -9,6 +10,9 @@
 if [ -f "$HEALTHCHECKS_FILE" ];then
   HEALTHCHECK_URL=$(cat "$HEALTHCHECKS_FILE" |grep "^`basename $0`"|awk '{print $2}')
 fi
+
+export ile_prob=10
+export odstepy_miedzy_probami_sek=20
 
 export RCLONE_BIN=$(type -fP rclone)
 
@@ -32,7 +36,19 @@ export RCLONE_BIN=$(type -fP rclone)
 
 wersja_przed=$(echo " " ; echo " " ; echo "wersja przed: " ; "${RCLONE_BIN}" version 2>&1; echo " " )
 wersja_przed_short=$(echo " " ; echo " " ; echo "wersja: " ; "${RCLONE_BIN}" version|head -n 1 2>&1; echo " " )
-m=$( echo " "; echo "aktualna data: `date '+%Y.%m.%d %H:%M'`" ; echo ; "${RCLONE_BIN}" selfupdate 2>&1; exit $?)
+m=$( echo " "; echo "aktualna data: `date '+%Y.%m.%d %H:%M'`" ; echo ; 
+     for (( p=1 ; p<=$ile_prob;p++)) ;do
+       "${RCLONE_BIN}" selfupdate 2>&1; 
+       if (( $? == 0 )); then
+         echo "Update done with no problems"
+         exit 0
+       else
+         echo "$(date '+%Y.%m.%d %H:%M') Update unsucessful - retrying in $odstepy_miedzy_probami_sek seconds)"
+         sleep $odstepy_miedzy_probami_sek
+       fi
+     done
+     exit $?
+   )
 kod_powrotu=$?
 
 wiadomosc=""
