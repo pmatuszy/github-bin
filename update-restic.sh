@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2023.03.26 - v. 0.6 - added ile_prob i odstepy_miedzy_probami_sek
 # 2023.02.28 - v. 0.5 - curl with kod_powrotu
 # 2023.01.03 - v. 0.4 - dodano random delay jesli skrypt jest wywolywany nieinteraktywnie
 # 2022.05.20 - v. 0.3 - dodalem wypisywanie aktualnej daty
@@ -12,22 +13,38 @@ if [ -f "$HEALTHCHECKS_FILE" ];then
   HEALTHCHECK_URL=$(cat "$HEALTHCHECKS_FILE" |grep "^`basename $0`"|awk '{print $2}')
 fi
 
+export ile_prob=10
+export odstepy_miedzy_probami_sek=20
+
 export RESTIC_BIN=$(type -fP restic)
 if pgrep -f "${RESTIC_BIN}" > /dev/null ; then
   m=$(
-  echo '#####################################################'
-  echo '#####################################################'
-  echo
-  echo "${RESTIC_BIN} dziala, wiec nie startuje nowej instancji a po prostu koncze dzialanie skryptu"
-  echo
-  echo '#####################################################'
-  echo '#####################################################' )
+    echo '#####################################################'
+    echo '#####################################################'
+    echo
+    echo "${RESTIC_BIN} dziala, wiec nie startuje nowej instancji a po prostu koncze dzialanie skryptu"
+    echo
+    echo '#####################################################'
+    echo '#####################################################' i
+    )
   /usr/bin/curl -fsS -m 100 --retry 10 --retry-delay 10 --data-raw "$m" -o /dev/null "$HEALTHCHECK_URL"/fail 2>/dev/null
   exit 1
 fi
 
 wersja_przed=$(echo " " ; echo " " ; echo "wersja przed: " ; ${RESTIC_BIN} version 2>&1; echo " ")
-m=$( echo " "; echo "aktualna data: `date '+%Y.%m.%d %H:%M'`" ; echo ; "${RESTIC_BIN}" self-update 2>&1 ; exit $?)
+m=$( echo " "; echo "aktualna data: `date '+%Y.%m.%d %H:%M'`" ; echo ; 
+     for (( p=1 ; p<=$ile_prob;p++)) ;do
+       "${RESTIC_BIN}" self-update 2>&1 
+       if (( $? == 0 )); then
+         echo "Update done with no problems"
+         exit 0
+       else
+         echo "$(date '+%Y.%m.%d %H:%M') Update unsucessful - retrying in $odstepy_miedzy_probami_sek seconds)"
+         sleep $odstepy_miedzy_probami_sek
+       fi
+     done
+     exit $? 
+   )
 kod_powrotu=$?
 wersja_po=$(echo " " ; echo "wersja po: "; "${RESTIC_BIN}" version 2>&1; echo " " ; echo " ")
 
