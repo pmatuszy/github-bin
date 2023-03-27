@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2023.03.27 - v. 0.6 - bugfix with fsck (instead of hardcoded /dev/mapper/encrypted_luks_device_encrypted.luks2 will use $1)
 # 2023.03.21 - v. 0.5 - small cosmetic changes, like adding _script_footer.sh execution
 # 2023.01.26 - v. 0.5 - added script version print
 # 2023.01.16 - v. 0.4 - enable SMR script, starting vpn just after mouting /encrypted and before other volumes
@@ -26,7 +27,7 @@ echo ; echo "==> ########## zrob_fsck($1)"
 
 echo czas na fsck $1 ...
 
-if [ $(lsblk -no FSTYPE /dev/mapper/encrypted_luks_device_encrypted.luks2) == 'ext4' ];then
+if [ $(lsblk -no FSTYPE $1) == 'ext4' ];then
   fsck.ext4 -f $1
 else
   fsck      -C -M -R -T $1
@@ -40,7 +41,7 @@ if (( $kod_powrotu != 0 ));then
   echo ... and once again fsck
   echo
 
-  if [ $(lsblk -no FSTYPE /dev/mapper/encrypted_luks_device_encrypted.luks2) == 'ext4' ];then
+  if [ $(lsblk -no FSTYPE $1) == 'ext4' ];then
     fsck.ext4 -f $1
   else
     fsck      -C -M -R -T $1
@@ -90,6 +91,26 @@ echo ; echo
 
 /root/bin/sprawdz-czy-encrypted-jest-zamontowany.sh
 /root/bin/sprawdz-czy-dziala-server-vpn.sh
+
+
+
+exit
+
+########## wychodze, bo to co ponizej to jest dla dyskow zewnetrznych a te przepialem do nuci7b w dniu 27.03.2023
+########## wychodze, bo to co ponizej to jest dla dyskow zewnetrznych a te przepialem do nuci7b w dniu 27.03.2023
+########## wychodze, bo to co ponizej to jest dla dyskow zewnetrznych a te przepialem do nuci7b w dniu 27.03.2023
+########## wychodze, bo to co ponizej to jest dla dyskow zewnetrznych a te przepialem do nuci7b w dniu 27.03.2023
+########## wychodze, bo to co ponizej to jest dla dyskow zewnetrznych a te przepialem do nuci7b w dniu 27.03.2023
+########## wychodze, bo to co ponizej to jest dla dyskow zewnetrznych a te przepialem do nuci7b w dniu 27.03.2023
+########## wychodze, bo to co ponizej to jest dla dyskow zewnetrznych a te przepialem do nuci7b w dniu 27.03.2023
+########## wychodze, bo to co ponizej to jest dla dyskow zewnetrznych a te przepialem do nuci7b w dniu 27.03.2023
+########## wychodze, bo to co ponizej to jest dla dyskow zewnetrznych a te przepialem do nuci7b w dniu 27.03.2023
+########## wychodze, bo to co ponizej to jest dla dyskow zewnetrznych a te przepialem do nuci7b w dniu 27.03.2023
+########## wychodze, bo to co ponizej to jest dla dyskow zewnetrznych a te przepialem do nuci7b w dniu 27.03.2023
+########## wychodze, bo to co ponizej to jest dla dyskow zewnetrznych a te przepialem do nuci7b w dniu 27.03.2023
+########## wychodze, bo to co ponizej to jest dla dyskow zewnetrznych a te przepialem do nuci7b w dniu 27.03.2023
+########## wychodze, bo to co ponizej to jest dla dyskow zewnetrznych a te przepialem do nuci7b w dniu 27.03.2023
+
 
 /root/bin/smr-disks-timeout.sh
 
