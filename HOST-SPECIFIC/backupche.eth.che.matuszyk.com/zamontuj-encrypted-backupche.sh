@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2023.03.27 - v. 1.0 - bugfix with fsck (instead of hardcoded /dev/mapper/encrypted_luks_device_encrypted.luks2 will use $1)
 # 2023.03.20 - v. 0.9 - bugfix with kod_powrotu
 # 2023.01.26 - v. 0.8 - added script version print
 # 2022.12.01 - v. 0.7 - zmieniona zrob_fsck na nowsza - i wymuszenie fsck -y
@@ -32,7 +33,7 @@ echo ; echo "==> ###### zrob_fsck($1)"
 
 echo czas na fsck $1 ...
 
-if [ $(lsblk -no FSTYPE /dev/mapper/encrypted_luks_device_encrypted.luks2) == 'ext4' ];then
+if [ $(lsblk -no FSTYPE $1) == 'ext4' ];then
   fsck.ext4 -f $1
 else
   fsck      -C -M -R -T $1
@@ -44,7 +45,7 @@ echo "kod powrotu z fsck to $kod_powrotu"
 if (( $kod_powrotu != 0 ));then
   echo ; echo "... and once again fsck " ; echo
 
-  if [ $(lsblk -no FSTYPE /dev/mapper/encrypted_luks_device_encrypted.luks2) == 'ext4' ];then
+  if [ $(lsblk -no FSTYPE $1) == 'ext4' ];then
     fsck.ext4 -f $1
   else
     fsck      -C -M -R -T $1
