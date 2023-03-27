@@ -10,4 +10,5 @@ healthchecks-swap-usage.sh                      https://healthchecks.matuszyk.co
 healthchecks-lvs-sync-status.sh                 
 sprawdz-czy-dziala-strona-www.anna.matuszyk.com.sh      
 sprawdz-czy-dziala-strona-www.ontsolutions.com.sh       
-ssh-keychain.sh
+ssh-keychain.sh						https://healthchecks.matuszyk.com:8000/ping/1de58555-bbe8-4075-a59a-11dbd0bcd9be
+sprawdz-czy-reboot-required.sh				https://healthchecks.matuszyk.com:8000/ping/065022f8-e51b-494d-af7e-2cf4dfaf4c4a
