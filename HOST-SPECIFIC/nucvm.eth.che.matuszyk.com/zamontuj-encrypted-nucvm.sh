@@ -79,7 +79,7 @@ sleep 1
 zamontuj_fs_MASTER /encrypted.luks2                                /encrypted          noatime
 
 # w dniu 2023.03.27 zostal przepiety do nuci7b.eth.che.matuszyk.com
-# zamontuj_fs_MASTER /dev/vg_crypto_raidsonic/lv_do_luksa_raidsonic  /mnt/luks-raidsonic noatime
+zamontuj_fs_MASTER /dev/vg_crypto_raidsonic/lv_do_luksa_raidsonic  /mnt/luks-raidsonic noatime
 
 # !!! buffalo2 ma SMR dyski, wiec inaczej je montujemy !!!!
 zamontuj_fs_MASTER /dev/vg_crypto_buffalo2/lv_do_luksa_buffalo2    /mnt/luks-buffalo2  noatime,data=writeback,barrier=0,nobh,errors=remount-ro
