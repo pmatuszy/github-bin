@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2023.03.03 - v. 0.2 - bugfix release: awk calculation fix
 # 2023.01.31 - v. 0.1 - initial release
 
 export SKAD_HOST="backupche.eth.che.matuszyk.com"
@@ -28,7 +29,7 @@ echo ; echo "Plik do zostawienia:"
 ssh "${SKAD_HOST}" "cd ${SKAD_DIR} ; /bin/ls -1tr | tail -n-1"
 
 echo ; echo -n "Skopiujemy "
-ssh "${SKAD_HOST}" "cd ${SKAD_DIR} ; /bin/ls -ltr | head -n-1 " | awk 'BEGIN {$suma=0} {$Suma=$suma+$5} END {print $suma/1024/1024 " MB danych"}'
+ssh "${SKAD_HOST}" "cd ${SKAD_DIR} ; /bin/ls -ltr | head -n-1 " | awk 'BEGIN {suma=0} {suma=suma+$5} END {print suma/1024/1024 " MB danych"}'
 
 echo ; df -h $DOKAD ; echo
 echo "Poczatek kopiowania: $(date '+%Y.%m.%d %H:%M:%S')" ; echo 
