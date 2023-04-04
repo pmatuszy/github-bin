@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2023.04.04 - v. 1.0 - bugfix with fsck (instead of hardcoded /dev/mapper/encrypted_luks_device_encrypted.luks2 will use $1)
 # 2023.01.26 - v  0.9 - added . /root/bin/_script_footer.sh as it was not there..., fixed script version print
 # 2023.01.13 - v  0.8 - a nicer display of the mount command status
 # 2022.12.02 - v  0.7 - bugfix with fsck return code
@@ -30,7 +31,7 @@ echo ; echo "==> ########## zrob_fsck($1)"
 
 echo czas na fsck $1 ...
 
-if [ $(lsblk -no FSTYPE /dev/mapper/encrypted_luks_device_encrypted.luks2) == 'ext4' ];then
+if [ $(lsblk -no FSTYPE $1) == 'ext4' ];then
   fsck.ext4 -f $1
 else
   fsck      -C -M -R -T $1
@@ -44,7 +45,7 @@ if (( $kod_powrotu != 0 ));then
   echo ... and once again fsck
   echo
 
-  if [ $(lsblk -no FSTYPE /dev/mapper/encrypted_luks_device_encrypted.luks2) == 'ext4' ];then
+  if [ $(lsblk -no FSTYPE $1) == 'ext4' ];then
     fsck.ext4 -f $1
   else
     fsck      -C -M -R -T $1
