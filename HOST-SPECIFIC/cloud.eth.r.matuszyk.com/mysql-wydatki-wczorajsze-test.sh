@@ -1,7 +1,6 @@
 #!/bin/bash
 
-# 2023.04.11 - v. 0.4 - bugfix: removing national characters
-# 2023.03.14 - v. 0.3 - removing national characters
+# 2023.03.14 - v. 0.2 - removing national characters
 # 2023.03.11 - v. 0.2 - added messages to A.
 # 2023.03.10 - v. 0.1 - initial release
 
@@ -27,15 +26,17 @@ where
 upper(m.name) like '%ANIA%'
 and p.id=b.projectid and p.name='wydatki - Pawel'
 and b.payerid=m.id
-and timestamp > unix_timestamp(subdate(current_date,1))
+and timestamp > unix_timestamp(subdate(current_date,30))
 and timestamp < unix_timestamp(subdate(current_date,0))
 order by b.timestamp;
 END
 )
 
 message=$(echo "$wydatki_Ani" | iconv -f utf8 -t ascii//TRANSLIT)
+echo "${message}"
+
 echo "${message}" | strings | /opt/signal-cli/bin/signal-cli send --message-from-stdin  $tel_p >/dev/null 2>&1
-echo "${message}" | strings | /opt/signal-cli/bin/signal-cli send --message-from-stdin  $tel_a >/dev/null 2>&1
+
 
 wydatki_Pawla=$(
 echo wczorajsze i dzisiejsze wydatki Pawla
@@ -47,14 +48,14 @@ where
 upper(m.name) like '%PAWEL%' 
 and p.id=b.projectid and p.name='wydatki - Pawel'
 and b.payerid=m.id
-and timestamp > unix_timestamp(subdate(current_date,1))
+and timestamp > unix_timestamp(subdate(current_date,30))
 and timestamp < unix_timestamp(subdate(current_date,0))
 order by b.timestamp;
 END
 )
 message=$(echo "$wydatki_Pawla" | iconv -f utf8 -t ascii//TRANSLIT )
+
 echo "${message}" | strings | /opt/signal-cli/bin/signal-cli send --message-from-stdin  $tel_p >/dev/null 2>&1
-echo "${message}" | strings | /opt/signal-cli/bin/signal-cli send --message-from-stdin  $tel_a >/dev/null 2>&1
 
 exit $?
 #####
