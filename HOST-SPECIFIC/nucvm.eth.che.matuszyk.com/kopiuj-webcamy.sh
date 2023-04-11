@@ -27,7 +27,7 @@ if (( $kod_powrotu != 0 ));then
   exit 2
 fi
 
-ile_plikow=$(ssh "${SKAD_HOST}" "cd ${SKAD_DIR} 2>/dev/null || echo -1 && exit 1 ; /bin/ls -1tr | wc -l")
+ile_plikow=$(ssh "${SKAD_HOST}" "cd ${SKAD_DIR} 2>/dev/null ; /bin/ls -1tr" | wc -l)
 
 if (( $ile_plikow == 1 )) ; then
   echo ; echo "nie ma plikow do skopiowania, wychodze...";echo

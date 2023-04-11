@@ -16,14 +16,15 @@ std_options='-a -v --stats --bwlimit=90000 --no-compress --progress --info=progr
 
 echo "Wszystkie pliki:"
 ssh "${SKAD_HOST}" "cd ${SKAD_DIR} 2>/dev/null || exit 1; /bin/ls -1tr"
-kod_powrotu=$?
 
-if (( $kod_powrotu != 0 ));then
+if (( $? != 0 ));then
   echo ; echo "Nie moge zmienic katalogu na $DOKAD na serwerze $SKAD_HOST ...";echo
   exit 2
 fi
 
-ile_plikow=$(ssh "${SKAD_HOST}" "cd ${SKAD_DIR} 2>/dev/null || echo -1 && exit 1 ; /bin/ls -1tr | wc -l")
+ile_plikow=$(ssh "${SKAD_HOST}" "cd ${SKAD_DIR} 2>/dev/null ; /bin/ls -1tr | wc -l")
+
+echo "ile_plikow $ile_plikow"
 
 if (( $ile_plikow == 1 )) ; then
   echo ; echo "nie ma plikow do skopiowania, wychodze...";echo
