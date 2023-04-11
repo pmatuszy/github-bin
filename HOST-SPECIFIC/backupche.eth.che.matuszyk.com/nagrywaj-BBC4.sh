@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2023.04.11 - v. 0.9 - bugfix: removed second invocation of /root/bin/_script_header.sh
 # 2023.02.14 - v. 0.8 - removed sending of healthchecks status
 # 2022.05.23 - v. 0.7 - dodane 2>/dev/null po wywolaniu curl by nie dostawac maili z crona o timeoucie
 # 2022.05.16 - v. 0.6 - eliminacja curla by nie startowac "$url/start" 2x, poprawne badanie kodu powrotu ffmpeg przez dodanie exit $?
@@ -22,8 +23,6 @@ DOKAD_PREFIX="/worek-samba/nagrania/BBC4/BBC4"
 
 wlasciciel_pliku="che:che"
 opoznienie_miedzy_wywolaniami=60s
-
-. /root/bin/_script_header.sh
 
 secs_to_midnight=$((($(date -d "tomorrow 00:00" +%s)-$(date +%s))))
 

@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2023.04.11 - v. 1.3 - added printing of the script name
 # 2023.02.17 - v. 1.2 - added SCRIPT_VERSION env variable
 # 2023.02.10 - v. 1.1 - changed check_if_installed with the option to provide the package name to be installed
 # 2023.02.07 - v. 1.0 - added check_if_installed function and checks for figlet and boxes utils
@@ -79,7 +80,9 @@ export MAX_RANDOM_DELAY_IN_SEC=${MAX_RANDOM_DELAY_IN_SEC:-50}
 
 export script_is_run_interactively=0
 
-export SCRIPT_VERSION_TMP=$(cat $0|grep -e '# *20[123][0-9]'|head -n 1 | awk '{print "script version: " $5 " (dated "$2")"}' ;
+export SCRIPT_VERSION_TMP=$(
+                 echo "script name: $0" ; 
+                 cat $0|grep -e '# *20[123][0-9]'|head -n 1 | awk '{print "script version: " $5 " (dated "$2")"}' ;
                  echo "current date : `date '+%Y.%m.%d %H:%M'`"
                  echo "script is run on `hostname`" ; echo ; echo
                  )
