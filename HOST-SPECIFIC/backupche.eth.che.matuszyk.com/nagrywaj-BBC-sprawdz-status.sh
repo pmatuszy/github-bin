@@ -1,4 +1,6 @@
 #!/bin/bash
+
+# 2023.04.11 - v. 0.2 - added printing script name
 # 2023.02.14 - v. 0.1 - initial release
 
 . /root/bin/_script_header.sh
@@ -14,8 +16,9 @@ fi
 ile_plikow=$(find "${DIR}" -type f -name "${maska_plikow}" -mmin -${jak_nowe_pliki_min} | wc -l)
 
 HC_message=$(
-   echo ; echo "aktualna data: `date '+%Y.%m.%d %H:%M'`" ; echo ; 
-   cat  $0|grep -e '# *20[123][0-9]'|head -n 1 | awk '{print "script version: " $5 " (dated "$2")"}' ;echo 
+   echo "script name: $0"
+   echo ; echo "aktualna data: `date '+%Y.%m.%d %H:%M'`" ; 
+   cat  $0|grep -e '# *20[123][0-9]'|head -n 1 | awk '{print "script version: " $5 " (dated "$2")"}' ; 
    echo "katalog: $DIR" ;echo 
    cd "${DIR}"
    
