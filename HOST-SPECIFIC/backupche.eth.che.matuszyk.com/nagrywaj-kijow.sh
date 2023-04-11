@@ -1,8 +1,11 @@
 #!/bin/bash
 
+# 2023.04.11 - v. 0.4 - added invocation of _script_header.sh and _script_footer.sh
 # 2023.02.17 - v. 0.3 - added yt_bin variable
 # 2022.12.15 - v. 0.2 - bugfix - changed ls -l to point to the proper directory
 # 2022.12.14 - v. 0.1 - initial release
+
+. /root/bin/_script_header.sh
 
 export url="https://www.youtube.com/watch?v=e2gC37ILQmk"
 export DOKAD_PREFIX="/worek-samba/nagrania/Kijow-webcamy"
@@ -21,3 +24,5 @@ while : ; do
 #      mailx -r root@`hostname` -a 'Content-Type: text/html' -s "$0 (`/bin/hostname`-`date '+%Y.%m.%d %H:%M:%S'`)" matuszyk@matuszyk.com
   sleep ${opoznienie_miedzy_wywolaniami}
 done
+
+. /root/bin/_script_footer.sh
