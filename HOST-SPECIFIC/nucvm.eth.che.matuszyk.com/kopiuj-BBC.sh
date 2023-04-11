@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2023.04.11 - v. 0.3 - bugfix: if source catalog doesn't exists we do not try to copy stuff
 # 2023.03.03 - v. 0.2 - bugfix release: awk calculation fix
 # 2023.01.31 - v. 0.1 - initial release
 
@@ -14,7 +15,14 @@ echo ; echo "SKAD  = $SKAD_HOST:$SKAD_DIR" ; echo "DOKAD = $DOKAD" ; echo ; echo
 std_options='-a -v --stats --bwlimit=90000 --no-compress --progress --info=progress1 --partial  --inplace --remove-source-files'
 
 echo "Wszystkie pliki:"
-ssh "${SKAD_HOST}" "cd ${SKAD_DIR} ; /bin/ls -1tr"
+ssh "${SKAD_HOST}" "cd ${SKAD_DIR} 2>/dev/null || exit 1; /bin/ls -1tr"
+kod_powrotu=$?
+
+if (( $kod_powrotu != 0 ));then
+  echo ; echo "Nie moge zmienic katalogu na $DOKAD na serwerze $SKAD_HOST ...";echo
+  exit 2
+fi
+
 ile_plikow=$(ssh "${SKAD_HOST}" "cd ${SKAD_DIR} ; /bin/ls -1tr" | wc -l)
 
 if (( $ile_plikow == 1 )) ; then
