@@ -17,7 +17,7 @@ ile_plikow=$(find "${DIR}" -type f -name "${maska_plikow}" -mmin -${jak_nowe_pli
 
 HC_message=$(
    echo "script name: $0"
-   echo ; echo "aktualna data: `date '+%Y.%m.%d %H:%M'`" ;
+   echo "aktualna data: `date '+%Y.%m.%d %H:%M'`" ;
    cat  $0|grep -e '# *20[123][0-9]'|head -n 1 | awk '{print "script version: " $5 " (dated "$2")"}'
    echo "katalog: $DIR" ;echo 
    cd "${DIR}"
