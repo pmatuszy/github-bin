@@ -35,31 +35,3 @@ END
 message=$(echo "$wydatki_Ani" | iconv -f utf8 -t ascii//TRANSLIT)
 echo "${message}"
 
-echo "${message}" | strings | /opt/signal-cli/bin/signal-cli send --message-from-stdin  $tel_p >/dev/null 2>&1
-
-
-wydatki_Pawla=$(
-echo wczorajsze i dzisiejsze wydatki Pawla
-mysql -u ${MYSQL_USER} --table --database=nextcloud_matuszyk_com <<END
--- wczorajsze wydatki Pawla
-select what "co",round(amount,2) "ile CHF)", from_unixtime(b.timestamp) "timestamp"
-from oc_cospend_bills b, oc_cospend_members m, oc_cospend_projects p
-where
-upper(m.name) like '%PAWEL%' 
-and p.id=b.projectid and p.name='wydatki - Pawel'
-and b.payerid=m.id
-and timestamp > unix_timestamp(subdate(current_date,30))
-and timestamp < unix_timestamp(subdate(current_date,0))
-order by b.timestamp;
-END
-)
-message=$(echo "$wydatki_Pawla" | iconv -f utf8 -t ascii//TRANSLIT )
-
-echo "${message}" | strings | /opt/signal-cli/bin/signal-cli send --message-from-stdin  $tel_p >/dev/null 2>&1
-
-exit $?
-#####
-# new crontab entry
-
-1 6 * * * /root/bin/mysql-wydatki-wczorajsze.sh
-
