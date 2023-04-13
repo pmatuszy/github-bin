@@ -14,8 +14,8 @@ fi
 
 url=yt2podcast.com:8080
 blad=1
-how_many_retries=5
-retry_delay=5
+how_many_retries=6
+retry_delay=10
 
 while (( $blad != 0 && $how_many_retries != 0 )) ; do
   if [ `wget $url -qO - |grep .xml|wc -l` -gt 0 ];then 
