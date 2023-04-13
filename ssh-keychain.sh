@@ -62,7 +62,7 @@ HC_message=$(
   fi
   
   echo ; echo 
-  sleep 1
+  sleep 3
   echo keychain --nogui --nocolor -l | boxes -s 50x3 -a c -d ada-box
        keychain --nogui --nocolor -l 2>&1
   echo
