@@ -31,10 +31,12 @@ while (( $secs_to_midnight > 200 )) ; do
   kod_powrotu=$?
   chown "${wlasciciel_pliku}" "${DOKAD}"
   if (( $kod_powrotu == 0 ));then
-    break
+    echo "`date '+%Y.%m.%d__%H%M%S'` koniec wykonywania bo kod powrotu jest 0"
+    continue
   fi
   sleep ${opoznienie_miedzy_wywolaniami} # opozniamy bo jak sa problemy z siecia, to by nie startowac od razu z nastepna proba...
 done
 
+echo koniec skryptu o `date '+%Y.%m.%d__%H%M%S'`
 . /root/bin/_script_footer.sh
 
