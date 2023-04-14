@@ -78,7 +78,7 @@ sleep 1
 
 zamontuj_fs_MASTER /encrypted.luks2                                /encrypted          noatime
 
-zamontuj_fs_MASTER /dev/vg_crypto_20221114_DyskD/lv_20221114_DyskD /mnt/luks-icybox10  noatime
+zamontuj_fs_MASTER /dev/vg_crypto_icybox10/lv_luks_icybox10 /mnt/luks-icybox10  noatime
 
 # !!! buffalo2 ma SMR dyski, wiec inaczej je montujemy !!!!
 zamontuj_fs_MASTER /dev/vg_crypto_buffalo2/lv_do_luksa_buffalo2    /mnt/luks-buffalo2  noatime,data=writeback,barrier=0,nobh,errors=remount-ro
