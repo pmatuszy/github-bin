@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2023.04.22 - v. 0.9 - added secs_to_midnight before continue ...
 # 2023.04.11 - v. 0.8 - almost new version of the script (like BBC one)
 # 2022.12.14 - v. 0.7 - dodalem zmiena opoznienie_miedzy_wywolaniami zamiast hardcoded 10s
 # 2022.05.16 - v. 0.6 - chown redirection to dev null
@@ -33,6 +34,7 @@ while (( $secs_to_midnight > 200 )) ; do
   chown "${wlasciciel_pliku}" "${DOKAD}"
   if (( $kod_powrotu == 0 ));then
     echo "`date '+%Y.%m.%d__%H%M%S'` koniec wykonywania bo kod powrotu jest 0"
+    secs_to_midnight=$((($(date -d "tomorrow 00:00" +%s)-$(date +%s))))
     continue
   fi
   sleep ${opoznienie_miedzy_wywolaniami} # opozniamy bo jak sa problemy z siecia, to by nie startowac od razu z nastepna proba...
