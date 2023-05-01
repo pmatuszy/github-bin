@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2023.05.01 - v. 0.7 - extended sleep from 3 to 6s 
 # 2023.03.13 - v. 0.6 - bugfix for a number of known kesy (!= changed to < )
 # 2023.03.12 - v. 0.5 - added possibility to load more keys (variable klucze)
 # 2023.03.03 - v. 0.4 - added sleep 1 as sometimes checking keychain shows nothing...
