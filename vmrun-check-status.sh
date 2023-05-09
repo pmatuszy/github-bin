@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2023.05.09 - v. 0.7 - added checking if the script is run on the physical machine
 # 2023.03.15 - v. 0.6 - bugfix: if ip address is 'unknown' then we raise the error
 # 2023.02.28 - v. 0.5 - curl with kod_powrotu
 # 2023.02.15 - v. 0.4 - bug fixes for wrong status (was OK instead of PROBLEM)
@@ -11,6 +12,12 @@
 . /root/bin/_script_header.sh
 
 check_if_installed curl
+check_if_installed virt-what
+
+if (( $(virt-what | wc -l) != 0 ));then
+  echo ; echo "host is NOT a physical machine ... exiting...";echo
+  exit 1
+fi
 
 how_many_retries=3
 retry_delay=2

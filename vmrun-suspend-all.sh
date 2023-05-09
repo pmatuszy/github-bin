@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2023.05.09 - v. 0.6 - added checking if the script is run on the physical machine
 # 2023.02.05 - v. 0.5 - added printing current date and time
 # 2023.02.05 - v. 0.4 - added encrypted vm support
 # 2023.01.20 - v. 0.3 - added status reporting after starting the vm
@@ -7,6 +8,12 @@
 # 2023.01.14 - v. 0.1 - initial release
 
 . /root/bin/_script_header.sh
+
+check_if_installed virt-what
+if (( $(virt-what | wc -l) != 0 ));then
+  echo ; echo "host is NOT a physical machine ... exiting...";echo
+  exit 1
+fi
 
 type -fP vmrun 2>&1 > /dev/null
 if (( $? != 0 )); then

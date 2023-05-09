@@ -8,12 +8,10 @@
 . /root/bin/_script_header.sh
 
 check_if_installed virt-what
-
 if (( $(virt-what | wc -l) == 0 ));then
   echo ; echo "host is NOT a vm... exiting...";echo
   exit 1
 fi
-
 
 if [ ! -f  /mnt/tmp/vmware-tools-upgrader-64 ];then
   mkdir -p /mnt/tmp
