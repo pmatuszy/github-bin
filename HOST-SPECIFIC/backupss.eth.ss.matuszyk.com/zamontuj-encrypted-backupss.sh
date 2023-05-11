@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2023.05.11 - v. 0.6 - wylaczenie startowania uslugi VPN
 # 2021.09.19 - v. 0.5 - zmiana sciezki do vpnservera, zmieny w fsck, dodana funkcja zrob_fsck
 # 2021.02.18 - v. 0.4 - bugfix - added /encrypted at the end of mount -o noatime command
 # 2021.02.03 - v. 0.3 - replace zfs with luks2 /encrypted directory
@@ -73,5 +74,11 @@ echo
 
 echo startuje vpnserver
 
-/encrypted/vpnserver/vpnserver start
+#/encrypted/vpnserver/vpnserver start
+#/encrypted/vpnserver/vpnserver start
+#/encrypted/vpnserver/vpnserver start
+#/encrypted/vpnserver/vpnserver start
+#/encrypted/vpnserver/vpnserver start
+
+
 /root/bin/sprawdz-czy-dziala-server-vpn.sh
