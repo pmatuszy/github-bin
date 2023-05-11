@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2023.05.16 - v. 0.6 - wylaczone wysylanie wiadomosci na tel_a
 # 2023.04.15 - v. 0.5 - bugfix: small change to the description within messages sent
 # 2023.04.11 - v. 0.4 - bugfix: removing national characters
 # 2023.03.14 - v. 0.3 - removing national characters
@@ -15,7 +16,7 @@ if [ ! -f "/root/SECRET/telefony.txt" ];then
   exit 2
 fi
 
-tel_a=$(cat /root/SECRET/telefony.txt | grep " a$" | awk '{print $1}')
+# tel_a=$(cat /root/SECRET/telefony.txt | grep " a$" | awk '{print $1}')
 tel_p=$(cat /root/SECRET/telefony.txt | grep " p$" | awk '{print $1}')
 
 export wydatki_Ani=$(
@@ -36,7 +37,7 @@ END
 
 message=$(echo "$wydatki_Ani" | iconv -f utf8 -t ascii//TRANSLIT)
 echo "${message}" | strings | /opt/signal-cli/bin/signal-cli send --message-from-stdin  $tel_p >/dev/null 2>&1
-echo "${message}" | strings | /opt/signal-cli/bin/signal-cli send --message-from-stdin  $tel_a >/dev/null 2>&1
+# echo "${message}" | strings | /opt/signal-cli/bin/signal-cli send --message-from-stdin  $tel_a >/dev/null 2>&1
 
 wydatki_Pawla=$(
 echo wczorajsze wydatki Pawla
@@ -55,7 +56,7 @@ END
 )
 message=$(echo "$wydatki_Pawla" | iconv -f utf8 -t ascii//TRANSLIT )
 echo "${message}" | strings | /opt/signal-cli/bin/signal-cli send --message-from-stdin  $tel_p >/dev/null 2>&1
-echo "${message}" | strings | /opt/signal-cli/bin/signal-cli send --message-from-stdin  $tel_a >/dev/null 2>&1
+# echo "${message}" | strings | /opt/signal-cli/bin/signal-cli send --message-from-stdin  $tel_a >/dev/null 2>&1
 
 exit $?
 #####
