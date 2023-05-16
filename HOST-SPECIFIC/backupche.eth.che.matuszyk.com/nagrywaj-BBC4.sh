@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2023.05.16 - v. 1.1 - bugfix: functional change of the script
 # 2023.05.15 - v. 1.0 - bugfix: functional change of the script
 # 2023.04.11 - v. 0.9 - bugfix: removed second invocation of /root/bin/_script_header.sh
 # 2023.02.14 - v. 0.8 - removed sending of healthchecks status
