@@ -31,24 +31,18 @@ secs_to_midnight=$((($(date -d "tomorrow 00:00" +%s)-$(date +%s))))
 echo "1. secs_to_midnight = $secs_to_midnight"
 
 while (( $secs_to_midnight > $ile_sek_przed_polnoca_nie_nagrywamy_juz )) ; do
-  secs_to_midnight=$((($(date -d "tomorrow 00:00" +%s)-$(date +%s))))
-  echo "2. (w petli) secs_to_midnight = $secs_to_midnight"
+  echo "2. (na poczatku petli) secs_to_midnight = $secs_to_midnight"
 
   let secs_nagrywania=secs_to_midnight+ile_wiecej_sek_nagrywac
   DOKAD="${DOKAD_PREFIX}-`date '+%Y.%m.%d__%H%M%S'`.mp3"
   echo "linia komend ffmpeg -hide_banner -loglevel quiet -t "${secs_nagrywania}" -i \"$SKAD\" \"$DOKAD\""
   ffmpeg -hide_banner -loglevel quiet -t "${secs_nagrywania}" -i "$SKAD" "$DOKAD" 2>&1
+
   kod_powrotu=$?
   chown "${wlasciciel_pliku}" "${DOKAD}"
-  if (( $kod_powrotu == 0 ));then
-    echo "`date '+%Y.%m.%d__%H%M%S'` koniec wykonywania bo kod powrotu jest = 0"
-    secs_to_midnight=$((($(date -d "tomorrow 00:00" +%s)-$(date +%s))))
-    break
-  else
-    echo "`date '+%Y.%m.%d__%H%M%S'` koniec wykonywania bo kod powrotu jest <> 0"
-    secs_to_midnight=$((($(date -d "tomorrow 00:00" +%s)-$(date +%s))))
-    continue
-  fi
+  echo "`date '+%Y.%m.%d__%H%M%S'` kod powrotu to $kod_powrotu"
+  secs_to_midnight=$((($(date -d "tomorrow 00:00" +%s)-$(date +%s))))
+  echo "3. (na koncu petli) secs_to_midnight = $secs_to_midnight"
   sleep ${opoznienie_miedzy_wywolaniami} # opozniamy bo jak sa problemy z siecia, to by nie startowac od razu z nastepna proba...
 done
 
