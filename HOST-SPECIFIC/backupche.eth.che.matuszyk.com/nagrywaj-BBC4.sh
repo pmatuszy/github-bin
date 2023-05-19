@@ -30,10 +30,13 @@ opoznienie_miedzy_wywolaniami=60s
 ile_wiecej_sek_nagrywac=10
 ile_sek_przed_polnoca_nie_nagrywamy_juz=600
 
+dzien_wywolania=$(date '+%d')
+aktualny_dzien=$dzien_wywolania
+
 secs_to_midnight=$((($(date -d "tomorrow 00:00" +%s)-$(date +%s))))
 echo "1. `date '+%Y.%m.%d__%H:%M:%S'` secs_to_midnight = $secs_to_midnight" | tee -a $log_file
 
-while (( $secs_to_midnight > $ile_sek_przed_polnoca_nie_nagrywamy_juz )) ; do
+while (( $secs_to_midnight > $ile_ek_przed_polnoca_nie_nagrywamy_juz )) && (( $dzien_wywolania == $aktualny_dzien )); do
   echo "2. `date '+%Y.%m.%d__%H:%M:%S'` (na poczatku petli) secs_to_midnight = $secs_to_midnight" | tee -a $log_file
 
   let secs_nagrywania=secs_to_midnight+ile_wiecej_sek_nagrywac
@@ -47,6 +50,7 @@ while (( $secs_to_midnight > $ile_sek_przed_polnoca_nie_nagrywamy_juz )) ; do
   secs_to_midnight=$((($(date -d "tomorrow 00:00" +%s)-$(date +%s))))
   echo "3. `date '+%Y.%m.%d__%H:%M:%S'` (na koncu petli) secs_to_midnight = $secs_to_midnight" | tee -a $log_file
   sleep ${opoznienie_miedzy_wywolaniami} # opozniamy bo jak sa problemy z siecia, to by nie startowac od razu z nastepna proba...
+  aktualny_dzien=$(date '+%d')
 done
 
 echo "`date '+%Y.%m.%d__%H:%M:%S'` koniec wykonywania $0" | tee -a $log_file
