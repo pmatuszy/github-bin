@@ -33,11 +33,15 @@ ile_sek_przed_polnoca_nie_nagrywamy_juz=600
 dzien_wywolania=$(date '+%d')
 aktualny_dzien=$dzien_wywolania
 
+echo "0. `date '+%Y.%m.%d__%H:%M:%S'` dzien_wywolania = $dzien_wywolania , aktualny_dzien = $aktualny_dzien"
+
+
 secs_to_midnight=$((($(date -d "tomorrow 00:00" +%s)-$(date +%s))))
 echo "1. `date '+%Y.%m.%d__%H:%M:%S'` secs_to_midnight = $secs_to_midnight" | tee -a $log_file
 
 while (( $secs_to_midnight > $ile_ek_przed_polnoca_nie_nagrywamy_juz )) && (( $dzien_wywolania == $aktualny_dzien )); do
   echo "2. `date '+%Y.%m.%d__%H:%M:%S'` (na poczatku petli) secs_to_midnight = $secs_to_midnight" | tee -a $log_file
+  echo "2. `date '+%Y.%m.%d__%H:%M:%S'` dzien_wywolania = $dzien_wywolania , aktualny_dzien = $aktualny_dzien"
 
   let secs_nagrywania=secs_to_midnight+ile_wiecej_sek_nagrywac
   DOKAD="${DOKAD_PREFIX}-`date '+%Y.%m.%d__%H%M%S'`.mp3"
@@ -51,6 +55,7 @@ while (( $secs_to_midnight > $ile_ek_przed_polnoca_nie_nagrywamy_juz )) && (( $d
   echo "3. `date '+%Y.%m.%d__%H:%M:%S'` (na koncu petli) secs_to_midnight = $secs_to_midnight" | tee -a $log_file
   sleep ${opoznienie_miedzy_wywolaniami} # opozniamy bo jak sa problemy z siecia, to by nie startowac od razu z nastepna proba...
   aktualny_dzien=$(date '+%d')
+  echo "4. `date '+%Y.%m.%d__%H:%M:%S'` dzien_wywolania = $dzien_wywolania , aktualny_dzien = $aktualny_dzien"
 done
 
 echo "`date '+%Y.%m.%d__%H:%M:%S'` koniec wykonywania $0" | tee -a $log_file
