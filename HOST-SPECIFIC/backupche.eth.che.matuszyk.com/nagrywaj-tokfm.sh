@@ -1,12 +1,12 @@
 #!/bin/bash
 
-# 2023.04.22 - v. 0.9 - added secs_to_midnight before continue ...
-# 2023.04.11 - v. 0.8 - almost new version of the script (like BBC one)
-# 2022.12.14 - v. 0.7 - dodalem zmiena opoznienie_miedzy_wywolaniami zamiast hardcoded 10s
-# 2022.05.16 - v. 0.6 - chown redirection to dev null
-# 2022.03.11 - v. 0.7 - bug fix DOKAD ==> DOKAD_PREFIX
-# 2022.02.27 - v. 0.6 - max czas dzialania to 20s po najblizszej polnocy
-# 2022.02.09 - v. 0.5 - zmiany w logice wykrywania czasu nagrywania
+# 2023.05.16 - v. 1.1 - bugfix: functional change of the script
+# 2023.05.15 - v. 1.0 - bugfix: functional change of the script
+# 2023.04.11 - v. 0.9 - bugfix: removed second invocation of /root/bin/_script_header.sh
+# 2023.02.14 - v. 0.8 - removed sending of healthchecks status
+# 2022.05.23 - v. 0.7 - dodane 2>/dev/null po wywolaniu curl by nie dostawac maili z crona o timeoucie
+# 2022.05.16 - v. 0.6 - eliminacja curla by nie startowac "$url/start" 2x, poprawne badanie kodu powrotu ffmpeg przez dodanie exit $?
+# 2022.05.10 - v. 0.5 - dodalem obsluge healthchecks
 # 2022.02.04 - v. 0.4 - jak ffmpeg skonczy sie przedwczesnie to wprowadzilem opoznienie 60s, by nie podejmowac proby od razu po niepowodzeniu
 # 2022.01.30 - v. 0.3 - zmiana sprawdzania czy dzialamy interaktywnie
 # 2022.01.26 - v. 0.2 - jak ffmpeg sie skonczy wczesniej to restartujemy nagrywanie do polnocy + 1 minuta
@@ -15,31 +15,44 @@
 . /root/bin/_script_header.sh
 
 # SKAD="http://gdansk1-1.radio.pionier.net.pl:8000/pl/tuba10-1.mp3"
-export SKAD="http://poznan5-4.radio.pionier.net.pl:8000/tuba10-1.mp3"
+SKAD="http://poznan5-4.radio.pionier.net.pl:8000/tuba10-1.mp3"
 export DOKAD_PREFIX="/worek-samba/nagrania/TokFM-nagrania/tokFM"
 
+log_file=/tmp/`basename $0`_`date '+%Y.%m.%d__%H%M%S'`.log
+
 wlasciciel_pliku="che:che"
-opoznienie_miedzy_wywolaniami=40s
+opoznienie_miedzy_wywolaniami=60s
+ile_wiecej_sek_nagrywac=10
+ile_sek_przed_polnoca_nie_nagrywamy_juz=600
+
+dzien_wywolania=$(date '+%d')
+aktualny_dzien=$dzien_wywolania
+
+echo "0. `date '+%Y.%m.%d__%H:%M:%S'` dzien_wywolania = $dzien_wywolania , aktualny_dzien = $aktualny_dzien"
+
 
 secs_to_midnight=$((($(date -d "tomorrow 00:00" +%s)-$(date +%s))))
+echo "1. `date '+%Y.%m.%d__%H:%M:%S'` secs_to_midnight = $secs_to_midnight" | tee -a $log_file
 
-while (( $secs_to_midnight > 200 )) ; do
-  secs_to_midnight=$((($(date -d "tomorrow 00:00" +%s)-$(date +%s))))
-  echo "secs_to_midnight = $secs_to_midnight"
-  let secs_nagrywania=secs_to_midnight+60
+while (( $secs_to_midnight > $ile_sek_przed_polnoca_nie_nagrywamy_juz )) && (( $dzien_wywolania == $aktualny_dzien )); do
+  echo "2. `date '+%Y.%m.%d__%H:%M:%S'` (na poczatku petli) secs_to_midnight = $secs_to_midnight" | tee -a $log_file
+  echo "2. `date '+%Y.%m.%d__%H:%M:%S'` dzien_wywolania = $dzien_wywolania , aktualny_dzien = $aktualny_dzien"
+
+  let secs_nagrywania=secs_to_midnight+ile_wiecej_sek_nagrywac
   DOKAD="${DOKAD_PREFIX}-`date '+%Y.%m.%d__%H%M%S'`.mp3"
-
+  echo "linia komend ffmpeg -hide_banner -loglevel quiet -t "${secs_nagrywania}" -i \"$SKAD\" \"$DOKAD\"" | tee -a $log_file
   ffmpeg -hide_banner -loglevel quiet -t "${secs_nagrywania}" -i "$SKAD" "$DOKAD" 2>&1
+
   kod_powrotu=$?
   chown "${wlasciciel_pliku}" "${DOKAD}"
-  if (( $kod_powrotu == 0 ));then
-    echo "`date '+%Y.%m.%d__%H%M%S'` koniec wykonywania bo kod powrotu jest 0"
-    secs_to_midnight=$((($(date -d "tomorrow 00:00" +%s)-$(date +%s))))
-    continue
-  fi
+  echo "`date '+%Y.%m.%d__%H:%M:%S'` kod powrotu to $kod_powrotu" | tee -a $log_file
+  secs_to_midnight=$((($(date -d "tomorrow 00:00" +%s)-$(date +%s))))
+  echo "3. `date '+%Y.%m.%d__%H:%M:%S'` (na koncu petli) secs_to_midnight = $secs_to_midnight" | tee -a $log_file
   sleep ${opoznienie_miedzy_wywolaniami} # opozniamy bo jak sa problemy z siecia, to by nie startowac od razu z nastepna proba...
+  aktualny_dzien=$(date '+%d')
+  echo "4. `date '+%Y.%m.%d__%H:%M:%S'` dzien_wywolania = $dzien_wywolania , aktualny_dzien = $aktualny_dzien"
 done
 
-echo koniec skryptu o `date '+%Y.%m.%d__%H%M%S'`
+echo "`date '+%Y.%m.%d__%H:%M:%S'` koniec wykonywania $0" | tee -a $log_file
 . /root/bin/_script_footer.sh
 
