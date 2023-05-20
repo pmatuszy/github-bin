@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2023.05.20 - v. 0.9 - bugfix: added that in ssh key: / is optional (with /?, it was / before)
 # 2023.05.09 - v. 0.8 - changed sleep from 6 to 3 but added execution of $HOSTNAME-sh before that
 # 2023.05.01 - v. 0.7 - extended sleep from 3 to 6s 
 # 2023.03.13 - v. 0.6 - bugfix for a number of known kesy (!= changed to < )
