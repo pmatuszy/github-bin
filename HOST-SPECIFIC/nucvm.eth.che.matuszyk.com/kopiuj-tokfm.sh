@@ -7,6 +7,10 @@
 
 . /root/bin/_script_header.sh
 
+if [ -f $HOME/.keychain/$HOSTNAME-sh ];then
+  . $HOME/.keychain/$HOSTNAME-sh
+fi
+
 export SKAD_HOST="backupche.eth.che.matuszyk.com"
 export SKAD_DIR="/worek-samba/nagrania/TokFM-nagrania"
 export DOKAD="/mnt/luks-icybox10/video-1dyne-kopie/TokFM-nagrania-ARCHIWUM"
