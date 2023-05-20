@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2023.05.20 - v. 1.0 - added feature that more than 3 keys can be loaded (ile_kluczy_powinno_byc_zaladowanych)
 # 2023.05.20 - v. 0.9 - bugfix: added that in ssh key: / is optional (with /?, it was / before)
 # 2023.05.09 - v. 0.8 - changed sleep from 6 to 3 but added execution of $HOSTNAME-sh before that
 # 2023.05.01 - v. 0.7 - extended sleep from 3 to 6s 
@@ -33,7 +34,13 @@ else
   klucze="id_rsa id_ed25519 id_SSH_ed25519_20230207_OpenSSH"
 fi
 
+if [ -f $HOME/.ssh/id_ed25519_kopiowanie_scp ]; then
+  klucze="$klucze id_ed25519_kopiowanie_scp" 
+fi
+
 export klucze
+
+ile_kluczy_powinno_byc_zaladowanych=$(echo $klucze | wc -w)
 
 HC_message=$(
   warnings_and_errors=0
@@ -57,11 +64,11 @@ HC_message=$(
   how_many=$(keychain --nogui --nocolor ${klucze} 2>&1 | \
              egrep -i "Known ssh key: .*/?id_rsa|Known ssh key: .*/?id_SSH_ed25519_20230207_OpenSSH|Known ssh key: .*/?id_ed25519" | wc -l)
   
-  if (( $how_many < 3 )); then
+  if (( $how_many < $ile_kluczy_powinno_byc_zaladowanych )); then
     let warnings_and_errors=warnings_and_errors+1
-    echo "(PGM) NOT all 3 keys are known - PROBLEM" | boxes -s 50x3 -a c -d ada-box
+    echo "(PGM) NOT all $ile_kluczy_powinno_byc_zaladowanych keys are known - PROBLEM" | boxes -s 50x3 -a c -d ada-box
   else
-    echo "(PGM) all 3 keys are known - looks GOOD" | boxes -s 50x3 -a c -d ada-box
+    echo "(PGM) all $ile_kluczy_powinno_byc_zaladowanych keys are known - looks GOOD" | boxes -s 50x3 -a c -d ada-box
   fi
   
   echo ; echo 
