@@ -54,7 +54,7 @@ HC_message=$(
         keychain --nogui --nocolor ${klucze} 2>&1
   
   how_many=$(keychain --nogui --nocolor ${klucze} 2>&1 | \
-             egrep -i "Known ssh key: .*/id_rsa|Known ssh key: .*/id_SSH_ed25519_20230207_OpenSSH|Known ssh key: .*/id_ed25519" | wc -l)
+             egrep -i "Known ssh key: .*/id_rsa|Known ssh key: .*/?id_SSH_ed25519_20230207_OpenSSH|Known ssh key: .*/id_ed25519" | wc -l)
   
   if (( $how_many < 3 )); then
     let warnings_and_errors=warnings_and_errors+1
