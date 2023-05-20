@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2023.05.20 - v. 0.9 - allow script to use keychain
 # 2023.05.20 - v. 0.8 - added calls for _script_header and _script_footer
 # 2023.04.11 - v. 0.7 - bugfix: if source catalog doesn't exists we do not try to copy stuff
 # 2023.03.16 - v. 0.6 - bugfix: wrong awk sum calculation
@@ -10,6 +11,10 @@
 # 2023.01.09 - v. 0.1 - initial release
 
 . /root/bin/_script_header.sh
+
+if [ -f $HOME/.keychain/$HOSTNAME-sh ];then
+  . $HOME/.keychain/$HOSTNAME-sh
+fi
 
 export SKAD_HOST="backupche.eth.che.matuszyk.com"
 export SKAD_DIR="/worek-samba/nagrania/Kijow-webcamy"
