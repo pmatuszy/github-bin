@@ -111,7 +111,6 @@ if [ $# -ne 0 ];then      # if there is an argument supplied we gonna check what
          FORCE_NO_STARTUP_DELAY_var=1
        ;;
     *)
-       echo
        ;;
   esac
 fi
