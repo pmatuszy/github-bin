@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2023.05.22 - v. 0.6 - std_options are different for interactive and non-interactive session
 # 2023.05.20 - v. 0.5 - allow script to use keychain
 # 2023.05.20 - v. 0.4 - added calls for _script_header and _script_footer
 # 2023.04.11 - v. 0.3 - bugfix: if source catalog doesn't exists we do not try to copy stuff
@@ -20,7 +21,12 @@ cat  $0|grep -e '# *20[123][0-9]'|head -n 1 | awk '{print "script version: " $5 
 echo " "; echo "aktualna data: `date '+%Y.%m.%d %H:%M'`" ; echo ;
 
 echo ; echo "SKAD  = $SKAD_HOST:$SKAD_DIR" ; echo "DOKAD = $DOKAD" ; echo ; echo
-std_options='-a -v --stats --bwlimit=90000 --no-compress --progress --info=progress1 --partial  --inplace --remove-source-files'
+
+if (( $script_is_run_interactively == 1 )); then
+  std_options='-a -v --stats --bwlimit=90000 --no-compress --progress --info=progress1 --partial  --inplace --remove-source-files'
+else
+  std_options='-a -v --stats --bwlimit=90000 --no-compress --partial  --inplace --remove-source-files'
+fi
 
 echo "Wszystkie pliki:"
 ssh "${SKAD_HOST}" "cd ${SKAD_DIR} 2>/dev/null || exit 1; /bin/ls -1tr"
