@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2023.05.22 - v. 1.2 - added NO_STARTUP_DELAY parameters to /root/bin/_script_header.sh
 # 2023.05.16 - v. 1.1 - bugfix: functional change of the script
 # 2023.05.15 - v. 1.0 - bugfix: functional change of the script
 # 2023.04.11 - v. 0.9 - bugfix: removed second invocation of /root/bin/_script_header.sh
@@ -12,7 +13,7 @@
 # 2022.01.26 - v. 0.2 - jak ffmpeg sie skonczy wczesniej to restartujemy nagrywanie do polnocy + 1 minuta
 # 2022.01.13 - v. 0.1 - initial release (date unknown)
 
-. /root/bin/_script_header.sh
+. /root/bin/_script_header.sh NO_STARTUP_DELAY
 
 # SKAD="http://gdansk1-1.radio.pionier.net.pl:8000/pl/tuba10-1.mp3"
 SKAD="http://poznan5-4.radio.pionier.net.pl:8000/tuba10-1.mp3"
@@ -22,8 +23,8 @@ log_file=/tmp/`basename $0`_`date '+%Y.%m.%d__%H%M%S'`.log
 
 wlasciciel_pliku="che:che"
 opoznienie_miedzy_wywolaniami=60s
-ile_wiecej_sek_nagrywac=10
-ile_sek_przed_polnoca_nie_nagrywamy_juz=600
+ile_wiecej_sek_nagrywac=120
+ile_sek_przed_polnoca_nie_nagrywamy_juz=10
 
 dzien_wywolania=$(date '+%d')
 aktualny_dzien=$dzien_wywolania

@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2023.05.22 - v. 1.2 - added NO_STARTUP_DELAY parameters to /root/bin/_script_header.sh
 # 2023.05.16 - v. 1.1 - bugfix: functional change of the script
 # 2023.05.15 - v. 1.0 - bugfix: functional change of the script
 # 2023.04.11 - v. 0.9 - bugfix: removed second invocation of /root/bin/_script_header.sh
@@ -18,7 +19,7 @@
 # SKAD="http://open.live.bbc.co.uk/mediaselector/5/select/version/2.0/mediaset/http-icy-mp3-a/vpid/bbc_radio_fourfm/format/pls.pls"
 # SKAD="http://stream.live.vc.bbcmedia.co.uk/bbc_radio_fourfm?s=1642067029&e=1642081429&h=b27ba5e1db5ba2f56beacf6d37b8abea"
 
-. /root/bin/_script_header.sh
+. /root/bin/_script_header.sh NO_STARTUP_DELAY
 
 SKAD="http://stream.live.vc.bbcmedia.co.uk/bbc_radio_fourfm"
 DOKAD_PREFIX="/worek-samba/nagrania/BBC4/BBC4"
@@ -27,14 +28,13 @@ log_file=/tmp/`basename $0`_`date '+%Y.%m.%d__%H%M%S'`.log
 
 wlasciciel_pliku="che:che"
 opoznienie_miedzy_wywolaniami=60s
-ile_wiecej_sek_nagrywac=10
-ile_sek_przed_polnoca_nie_nagrywamy_juz=600
+ile_wiecej_sek_nagrywac=120
+ile_sek_przed_polnoca_nie_nagrywamy_juz=10
 
 dzien_wywolania=$(date '+%d')
 aktualny_dzien=$dzien_wywolania
 
 echo "0. `date '+%Y.%m.%d__%H:%M:%S'` dzien_wywolania = $dzien_wywolania , aktualny_dzien = $aktualny_dzien"
-
 
 secs_to_midnight=$((($(date -d "tomorrow 00:00" +%s)-$(date +%s))))
 echo "1. `date '+%Y.%m.%d__%H:%M:%S'` secs_to_midnight = $secs_to_midnight" | tee -a $log_file
