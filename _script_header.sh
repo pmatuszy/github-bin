@@ -21,8 +21,6 @@ if [[ "$0" = "/bin/bash" ]] || [[ "$0" = "/usr/bin/bash" ]] || [[ "$0" = "/usr/l
   return 1
 fi
 
-echo $0
-
 # exit when your script tries to use undeclared variables
 set -o nounset
 set -o pipefail
