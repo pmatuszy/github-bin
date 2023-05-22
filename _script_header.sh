@@ -123,10 +123,7 @@ if (( $? != 0 )) ; then      # we set RANDOM_DELAY only when running NOT from te
   script_is_run_interactively=0
   export RANDOM_DELAY=$((RANDOM % $MAX_RANDOM_DELAY_IN_SEC ))
   if (( $FORCE_NO_STARTUP_DELAY_var != 1 )); then # we do the delay only when is it NOT requested by command line parameter...
-    echo delay
     sleep $RANDOM_DELAY
-  else
-    echo nodelay
   fi
 else
   echo "Interactive session detected: I will NOT introduce RANDOM_DELAY...";echo
