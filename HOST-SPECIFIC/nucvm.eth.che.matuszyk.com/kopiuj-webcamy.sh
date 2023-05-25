@@ -17,12 +17,16 @@ if [ -f $HOME/.keychain/$HOSTNAME-sh ];then
   . $HOME/.keychain/$HOSTNAME-sh
 fi
 
+if [ -f "$HEALTHCHECKS_FILE" ];then
+  HEALTHCHECK_URL=$(cat "$HEALTHCHECKS_FILE" |grep "^`basename $0`"|awk '{print $2}')
+fi
+
 export SKAD_HOST="backupche.eth.che.matuszyk.com"
 export SKAD_DIR="/worek-samba/nagrania/Kijow-webcamy"
 export DOKAD="/mnt/luks-icybox10/video-1dyne-kopie/Kijow-webcamy-ARCHIWUM/"
 
 cat  $0|grep -e '# *20[123][0-9]'|head -n 1 | awk '{print "script version: " $5 " (dated "$2")"}' ; echo
-echo " "; echo "aktualna data: `date '+%Y.%m.%d %H:%M'`" ; echo ;
+echo " "; echo "aktualna data: `date '+%Y.%m.%d %H:%M:%S'`" ; echo ;
 
 echo ; echo "SKAD  = $SKAD_HOST:$SKAD_DIR" ; echo "DOKAD = $DOKAD" ; echo ; echo
 
@@ -49,9 +53,11 @@ if (( $ile_plikow == 1 )) ; then
 fi
 
 echo ; echo "Pliki do skopiowania:"
+       echo "~~~~~~~~~~~~~~~~~~~~~"
 ssh "${SKAD_HOST}" "cd ${SKAD_DIR} ; /bin/ls -1tr | head -n-1"
 
 echo ; echo "Plik do zostawienia:"
+       echo "~~~~~~~~~~~~~~~~~~~~"
 ssh "${SKAD_HOST}" "cd ${SKAD_DIR} ; /bin/ls -1tr | tail -n-1"
 
 echo ; echo -n "Skopiujemy "

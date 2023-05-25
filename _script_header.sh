@@ -96,7 +96,7 @@ export script_is_run_interactively=0
 export SCRIPT_VERSION_TMP=$(
                  echo "script name: $0" ; 
                  cat $0|grep -e '# *20[123][0-9]'|head -n 1 | awk '{print "script version: " $5 " (dated "$2")"}' ;
-                 echo "current date : `date '+%Y.%m.%d %H:%M'`"
+                 echo "current date : `date '+%Y.%m.%d %H:%M:%S'`"
                  echo "script is run on `hostname`" ; echo ; echo
                  )
 
