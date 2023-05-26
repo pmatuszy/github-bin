@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2023.05.26 - v. 0.2 - sending statuses to healthcheck servers before executing exit
 # 2023.03.12 - v. 0.1 - initial release
 
 . /root/bin/_script_header.sh
@@ -17,11 +18,13 @@ check_if_installed curl
 
 if (( $# < 2 )) ; then
   echo ; echo "(PGM) wrong # of command line arguments... (must be more than 1)" ; echo 
+         echo "(PGM) wrong # of command line arguments... (must be more than 1)" | /usr/bin/curl -fsS -m 100 --retry 10 --retry-delay 10 --data-binary @- -o /dev/null "$HEALTHCHECK_URL"/fail 2>/dev/null
   exit 1
 fi
 
 if [ ! -d "${@:$#}" ];then
   echo ; echo "(PGM) Directory ${@:$#} doesn't exist..." ; echo
+         echo "(PGM) Directory ${@:$#} doesn't exist..." | /usr/bin/curl -fsS -m 100 --retry 10 --retry-delay 10 --data-binary @- -o /dev/null "$HEALTHCHECK_URL"/fail 2>/dev/null
   exit 2
 fi
 
@@ -29,6 +32,7 @@ CMD=$(type -fP rotate-backups )
 
 if [ ! $? ] ; then     # if binary can't be found we do not continue
   echo ; echo "rotate-backups can't be located...";echo
+         echo "rotate-backups can't be located..." | /usr/bin/curl -fsS -m 100 --retry 10 --retry-delay 10 --data-binary @- -o /dev/null "$HEALTHCHECK_URL"/fail 2>/dev/null
   exit 3
 fi
 
