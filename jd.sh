@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2023.06.21 - v. 0.9 - check if nvme is installed
 # 2023.03.07 - v. 0.8 - added script_header and footer calls
 # 2022.11.10 - v. 0.7 - added S/N printing for NVME devices and replaced echo with printf to beautify output
 # 2022.10.27 - v. 0.6 - bugfixes, added support for Raspbian, small changes in print format output,added printing of the script version
@@ -17,6 +18,8 @@ if [[ ! -h /etc/os-release && ! -h /etc/redhat-release ]] ; then
   echo
   exit 1
 fi
+
+check_if_installed nvme nvme-cli
 
 echo 
 
