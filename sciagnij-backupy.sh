@@ -30,10 +30,6 @@ if [ ! -d "${1}" ];then
   echo ; echo "(PGM) Directory ${1} doesn't exist..." ; echo
   exit 2
 fi
-if [ ! -d "${2}" ];then
-  echo ; echo "(PGM) Directory ${2} doesn't exist..." ; echo
-  exit 3
-fi
 
 export rsync_extra_option=""
 if (( $# == 3 )) ; then
