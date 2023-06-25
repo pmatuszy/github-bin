@@ -35,7 +35,7 @@ fi
 
 export rsync_extra_option=""
 if (( $# == 3 )) ; then
-  "${RSYNC_BIN}" --help | grep -- "$3"
+  "${RSYNC_BIN}" --help | grep -- "$3" >/dev/null 2>&1
   if (( $? != 0 ));then
     echo ; echo "(PGM) Unknown rsync parameter passed as 3rd parameter of the script ($3) ..." ; echo
     echo "(PGM) Unknown rsync parameter passed as 3rd parameter of the script ($3) ..." | /usr/bin/curl -fsS -m 100 --retry 10 --retry-delay 10 --data-binary @- -o /dev/null "$HEALTHCHECK_URL"/$kod_powrotu 2>/dev/null
