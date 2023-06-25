@@ -21,6 +21,8 @@ check_if_installed curl
 check_if_installed rsync
 check_if_installed scp openssh-client
 
+RSYNC_BIN="$(type -Pf rsync)"
+
 if (( $# != 2 ))  && (( $# != 3 )) ; then
   echo ; echo "(PGM) wrong # of command line arguments... (must be 2 or 3)" ; echo 
   exit 1
@@ -33,8 +35,8 @@ fi
 
 export rsync_extra_option=""
 if (( $# == 3 )) ; then
-  rsync --help | grep -- "$3"
-  rsync --help | grep -q -- "$3"
+  "${RSYNC_BIN}" --help | grep -- "$3"
+  "${RSYNC_BIN}" --help | grep -q -- "$3"
   if (( $? != 0 ));then
     echo ; echo "(PGM) Unknown rsync parameter passed as 3rd parameter of the script ($3) ..." ; echo
     exit 4
@@ -56,7 +58,7 @@ HC_MESSAGE=$(
    echo ; echo  ; echo "SKAD  = $SKAD" ; echo "DOKAD = $DOKAD" ; echo 
    echo ; echo "command to be run:"
    echo rsync $rsync_options ${SKAD} "${DOKAD}"
-   eval rsync $rsync_options ${SKAD} "${DOKAD}"
+   eval "${RSYNC_BIN}" $rsync_options ${SKAD} "${DOKAD}"
    exit $?
    )
 kod_powrotu=$?
