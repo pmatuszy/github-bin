@@ -74,6 +74,7 @@ kod_2=$?
 echo "$HC_MESSAGE" | egrep -q "^Number of regular files transferred: 0$"
 kod_3=$?
 
+# if rsync exit code is 23 and no files are transferred / created  we treat it as successful run
 if (( $kod_powrotu == 23 )) && (( $kod_1 == 0 )) &&  (( $kod_2 == 0 )) && (( $kod_3 == 0 )) ;then
   echo "$HC_MESSAGE" | /usr/bin/curl -fsS -m 100 --retry 10 --retry-delay 10 --data-binary @- -o /dev/null "$HEALTHCHECK_URL" 2>/dev/null
 else
