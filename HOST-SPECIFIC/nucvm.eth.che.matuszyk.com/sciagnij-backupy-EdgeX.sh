@@ -40,6 +40,8 @@ SKAD=192.168.200.1:/config/ARCHIWUM_CONFIGOW-EdgeCHE/config.boot-Edge*
 DOKAD=/mnt/luks-buffalo2/_backupy-1dyne_kopie/UBNT/EdgeCHE/EdgeCHE-root_config/ARCHIWUM_CONFIGOW-EdgeCHE
 eval /root/bin/sciagnij-backupy.sh $SKAD $DOKAD --remove-source-files
 
+exit
+
 #########
 # EdgeR #
 #########
