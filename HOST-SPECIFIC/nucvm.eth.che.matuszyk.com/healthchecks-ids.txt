@@ -23,7 +23,9 @@ rotate-backups.sh-www02					https://healthchecks.matuszyk.com:8000/ping/74ec3059
 rotate-backups.sh-cloud					https://healthchecks.matuszyk.com:8000/ping/1e0b9d0f-4b76-4691-b112-2f17e500876c
 sciagnij-backupy.sh-www02				https://healthchecks.matuszyk.com:8000/ping/46b0dab8-d77b-45da-9c97-8e3e347cd86b
 sciagnij-backupy.sh-cloud				https://healthchecks.matuszyk.com:8000/ping/cf7f00f1-0b3e-4f0f-a2e1-c10c4c880f4c
-sciagnij-backupy.sh-EdgeSS                              https://healthchecks.matuszyk.com:8000/ping/cffc1f7b-c47e-4e46-b6a9-85ecdc807836
+sciagnij-backupy.sh-EdgeSS_kat1                         https://healthchecks.matuszyk.com:8000/ping/cffc1f7b-c47e-4e46-b6a9-85ecdc807836
+sciagnij-backupy.sh-EdgeSS_kat2                         https://healthchecks.matuszyk.com:8000/ping/0380dd8a-8879-4911-b69a-77853bd0f47d
+sciagnij-backupy.sh-EdgeSS_kat3                         https://healthchecks.matuszyk.com:8000/ping/3149db3a-1aaf-43b1-8468-c3e0ffc5ec48
 sciagnij-backupy.sh-EdgeCHE                             https://healthchecks.matuszyk.com:8000/ping/b5c1f1b3-31fd-42b1-b47e-1f8da58610f5
 sciagnij-backupy.sh-EdgeR                               https://healthchecks.matuszyk.com:8000/ping/c28b3821-2c3a-4e21-8c5f-dd66229be516
 kopiuj-BBC4.sh
