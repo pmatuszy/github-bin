@@ -33,6 +33,7 @@ fi
 
 export rsync_extra_option=""
 if (( $# == 3 )) ; then
+  rsync --help | grep -- "$3"
   rsync --help | grep -q -- "$3"
   if (( $? != 0 ));then
     echo ; echo "(PGM) Unknown rsync parameter passed as 3rd parameter of the script ($3) ..." ; echo
