@@ -2,11 +2,9 @@
 
 # 2023.03.14 - v. 0.1 - initial release
 
-
-
------------
--- EdgeR --
------------
+#########
+# EdgeR #
+#########
 
 export HEALTHCHECKS_FORCE_ID=sciagnij-backupy.sh-EdgeR
 
