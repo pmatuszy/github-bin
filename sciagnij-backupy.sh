@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2023.06.25 - v. 0.2 - added optional parameter $3 e.g. --remove-source-files which will be passed to rsync as a parameter
 # 2023.03.13 - v. 0.1 - initial release
 
 . /root/bin/_script_header.sh
@@ -20,14 +21,28 @@ check_if_installed curl
 check_if_installed rsync
 check_if_installed scp openssh-client
 
-if (( $# != 2 )) ; then
-  echo ; echo "(PGM) wrong # of command line arguments... (must be exactly 2)" ; echo 
+if (( $# != 2 ))  && (( $# != 3 )) ; then
+  echo ; echo "(PGM) wrong # of command line arguments... (must be 2 or 3)" ; echo 
   exit 1
 fi
 
-if [ ! -d "${@:$#}" ];then
-  echo ; echo "(PGM) Directory ${@:$#} doesn't exist..." ; echo
+if [ ! -d "${1}" ];then
+  echo ; echo "(PGM) Directory ${1} doesn't exist..." ; echo
   exit 2
+fi
+if [ ! -d "${2}" ];then
+  echo ; echo "(PGM) Directory ${2} doesn't exist..." ; echo
+  exit 3
+fi
+
+export rsync_extra_option=""
+if (( $# == 3 )) ; then
+  rsync --help | grep -q -- "$3"
+  if (( $? != 0 ));then
+    echo ; echo "(PGM) Unknown rsync parameter passed as 3rd parameter of the script ($3) ..." ; echo
+    exit 4
+  fi
+  export rsync_extra_option="${3}"
 fi
 
 export SKAD=$1
@@ -35,7 +50,11 @@ export DOKAD="$2"
 
 #### export rsync_option="-a -v --stats --bwlimit=990000 --no-compress --progress --info=progress1 --partial  --inplace --remove-source-files"
 
-export rsync_options="-a -v --stats --bwlimit=990000 --no-compress --partial  --inplace "
+export rsync_options="-a -v --stats --bwlimit=990000 --no-compress --partial  --inplace ${rsync_extra_option}"
+
+echo $rsync_options
+
+exit
 
 HC_MESSAGE=$(
    cat  $0|grep -e '# *20[123][0-9]'|head -n 1 | awk '{print "script version: " $5 " (dated "$2")"}'
