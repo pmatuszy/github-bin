@@ -38,6 +38,7 @@ if (( $# == 3 )) ; then
   "${RSYNC_BIN}" --help | grep -- "$3"
   "${RSYNC_BIN}" --help | grep -q -- "$3"
   exit_code=$?
+  echo "exit_code = $exit_code"
   if (( $exit_code != 0 ));then
     echo ; echo "(PGM) Unknown rsync parameter passed as 3rd parameter of the script ($3) ..." ; echo
     exit 4
