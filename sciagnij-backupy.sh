@@ -62,6 +62,7 @@ kod_powrotu=$?
 
 if (( $script_is_run_interactively == 1 )); then
   echo "$HC_MESSAGE"
+  echo "kod_powrotu = $kod_powrotu"
 fi
 
 echo "$HC_MESSAGE" | /usr/bin/curl -fsS -m 100 --retry 10 --retry-delay 10 --data-binary @- -o /dev/null "$HEALTHCHECK_URL"/$kod_powrotu 2>/dev/null
