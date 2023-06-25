@@ -65,6 +65,22 @@ if (( $script_is_run_interactively == 1 )); then
   echo "kod_powrotu = $kod_powrotu"
 fi
 
-echo "$HC_MESSAGE" | /usr/bin/curl -fsS -m 100 --retry 10 --retry-delay 10 --data-binary @- -o /dev/null "$HEALTHCHECK_URL"/$kod_powrotu 2>/dev/null
+echo "$HC_MESSAGE" | egrep -q "^Number of files: 0$"
+kod_1=$?
+
+echo "$HC_MESSAGE" | egrep -q "^Number of created files: 0$"
+kod_2=$?
+
+echo "$HC_MESSAGE" | egrep -q "^Number of deleted files: 0$"
+kod_3=$?
+
+echo "$HC_MESSAGE" | egrep -q "^Number of regular files transferred: 0$"
+kod_4=$?
+
+if (( $kod_powrotu == 23 )) && (( $kod_1 == 0 )) &&  (( $kod_2 == 0 )) && (( $kod_3 == 0 )) && (( $kod_4 == 0 )) ;then
+  echo "$HC_MESSAGE" | /usr/bin/curl -fsS -m 100 --retry 10 --retry-delay 10 --data-binary @- -o /dev/null "$HEALTHCHECK_URL" 2>/dev/null
+else
+  echo "$HC_MESSAGE" | /usr/bin/curl -fsS -m 100 --retry 10 --retry-delay 10 --data-binary @- -o /dev/null "$HEALTHCHECK_URL"/$kod_powrotu 2>/dev/null
+fi
 
 exit $?
