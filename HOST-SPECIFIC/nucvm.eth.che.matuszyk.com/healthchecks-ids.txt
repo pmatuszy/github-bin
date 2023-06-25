@@ -26,7 +26,9 @@ sciagnij-backupy.sh-cloud				https://healthchecks.matuszyk.com:8000/ping/cf7f00f
 sciagnij-backupy.sh-EdgeSS_kat1                         https://healthchecks.matuszyk.com:8000/ping/cffc1f7b-c47e-4e46-b6a9-85ecdc807836
 sciagnij-backupy.sh-EdgeSS_kat2                         https://healthchecks.matuszyk.com:8000/ping/0380dd8a-8879-4911-b69a-77853bd0f47d
 sciagnij-backupy.sh-EdgeSS_kat3                         https://healthchecks.matuszyk.com:8000/ping/3149db3a-1aaf-43b1-8468-c3e0ffc5ec48
-sciagnij-backupy.sh-EdgeCHE                             https://healthchecks.matuszyk.com:8000/ping/b5c1f1b3-31fd-42b1-b47e-1f8da58610f5
+sciagnij-backupy.sh-EdgeCHE_kat1                        https://healthchecks.matuszyk.com:8000/ping/b5c1f1b3-31fd-42b1-b47e-1f8da58610f5
+sciagnij-backupy.sh-EdgeCHE_kat2                        https://healthchecks.matuszyk.com:8000/ping/53607cc3-7109-4d43-b7d4-8c6b2e228a70
+sciagnij-backupy.sh-EdgeCHE_kat3                        https://healthchecks.matuszyk.com:8000/ping/f798c9bd-3a19-447b-ba36-e7b6c278286d
 sciagnij-backupy.sh-EdgeR                               https://healthchecks.matuszyk.com:8000/ping/c28b3821-2c3a-4e21-8c5f-dd66229be516
 kopiuj-BBC4.sh
 kopiuj-tokfm.sh
