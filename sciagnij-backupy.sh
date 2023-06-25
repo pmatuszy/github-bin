@@ -79,7 +79,8 @@ kod_3=$?
 
 # if rsync exit code is 23 and no files are transferred / created  we treat it as successful run
 if (( $kod_powrotu == 23 )) && (( $kod_1 == 0 )) &&  (( $kod_2 == 0 )) && (( $kod_3 == 0 )) ;then
-  echo "$HC_MESSAGE" | /usr/bin/curl -fsS -m 100 --retry 10 --retry-delay 10 --data-binary @- -o /dev/null "$HEALTHCHECK_URL" 2>/dev/null
+  # we do nothing here - we don't even run curl - if nothing was fetched we do not provide status (neither ok nor error)
+  echo > /dev/null
 else
   echo "$HC_MESSAGE" | /usr/bin/curl -fsS -m 100 --retry 10 --retry-delay 10 --data-binary @- -o /dev/null "$HEALTHCHECK_URL"/$kod_powrotu 2>/dev/null
 fi
