@@ -130,7 +130,7 @@ if (( $script_is_run_interactively == 1 )); then
     kod_powrotu=999
     for (( p=1 ; p<=$MAX_LICZBA_PONOWIEN_BACKUPOW ; p++ )); do
     if (( $p > 1 )) ; then echo ; echo "aktualna data: `date '+%Y.%m.%d %H:%M'`" ; echo ; fi
-      eval ${RESTIC_BIN} --cleanup-cache --iexclude=${MY_EXCLUDES} --iexclude-file=${MY_EXCLUDE_FILE} backup / $WHAT_TO_BACKUP_ON_TOP_OF_ROOT 2>&1
+      eval ${RESTIC_BIN} --no-cache --cleanup-cache --iexclude=${MY_EXCLUDES} --iexclude-file=${MY_EXCLUDE_FILE} backup / $WHAT_TO_BACKUP_ON_TOP_OF_ROOT 2>&1
       kod_powrotu=$?
       if (( $kod_powrotu != 0 )); then
         echo ; echo "blad backupu - sprobujemy jeszcze raz - czekam 2 sekundy"
@@ -148,7 +148,7 @@ else
                 kod_powrotu=999
                 for (( p=1 ; p<=$MAX_LICZBA_PONOWIEN_BACKUPOW ; p++ )); do 
                 if (( $p > 1 )) ; then echo ; echo "aktualna data: `date '+%Y.%m.%d %H:%M'`" ; echo ; fi
-                  eval ${RESTIC_BIN} --cleanup-cache --iexclude=${MY_EXCLUDES} --iexclude-file=${MY_EXCLUDE_FILE} backup / $WHAT_TO_BACKUP_ON_TOP_OF_ROOT 2>&1
+                  eval ${RESTIC_BIN} --no-cache --cleanup-cache --iexclude=${MY_EXCLUDES} --iexclude-file=${MY_EXCLUDE_FILE} backup / $WHAT_TO_BACKUP_ON_TOP_OF_ROOT 2>&1
                   kod_powrotu=$?
                   if (( $kod_powrotu != 0 )); then
                     echo ; echo "blad backupu - sprobujemy jeszcze raz - czekam ${LICZBA_SEKUND_MIEDZY_PONOWIENIAMI_BACKUPOW}"
