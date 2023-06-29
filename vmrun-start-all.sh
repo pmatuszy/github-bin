@@ -14,7 +14,7 @@ if (( $(virt-what | wc -l) != 0 ));then
   exit 1
 fi
 
-VM_LOCATIONS="/vmware /vmware-nvme /encrypted/vmware-in-encrypted /mnt/luks-raidsonic /mnt/luks-icybox10/vmware"
+VM_LOCATIONS="/vmware /vmware-nvme /encrypted/vmware-in-encrypted /mnt/luks-raidsonic /mnt/luks-icybox10/vmware /mnt/luks-buffalo2/vmware"
 
 export DISPLAY=
 
