@@ -35,3 +35,4 @@ sciagnij-backupy.sh-EdgeR_kat3                          https://healthchecks.mat
 kopiuj-BBC4.sh
 kopiuj-tokfm.sh
 kopiuj-webcamy.sh
+spr-pptp-asus-CHE.sh                                    https://healthchecks.matuszyk.com:8000/ping/ae10993e-0436-4903-8fbc-6346fbff6d41
