@@ -24,6 +24,8 @@
 SKAD="http://stream.live.vc.bbcmedia.co.uk/bbc_radio_fourfm"
 DOKAD_PREFIX="/worek-samba/nagrania/BBC4/BBC4"
 
+# export http_proxy=http://localhost:9080
+
 log_file=/tmp/`basename $0`_`date '+%Y.%m.%d__%H%M%S'`.log
 
 wlasciciel_pliku="che:che"
