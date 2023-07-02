@@ -34,7 +34,7 @@ HC_MESSAGE=$(
    fi
 
    echo ; echo -n "checking if 192.168.1.1 is pingable... "
-   timeout --preserve-status --kill-after=15 --signal=SIGKILL 10s ssh admin@192.168.200.230 "ping -c 1 -W 2 -q 192.168.1.1 " | grep -vq ", 0 packets received"    # jesli znajdzie taka linie to kod powrotu bedzie <> 0
+   timeout --preserve-status --kill-after=15 --signal=SIGKILL 10s ssh admin@192.168.200.230 "ping -c 3 -W 5 -q 192.168.1.1 " | grep -vq ", 0 packets received"    # jesli znajdzie taka linie to kod powrotu bedzie <> 0
    exit_code_2=$?
    if (( $exit_code_2 == 0 ));then
      echo "GOOD"
