@@ -39,7 +39,7 @@ if (( $# != 0 )) && [ "${1-xxx}" == "manual" ]; then
   echo ; echo "(PGM) enabling manual mode"
   ./vmware-install.pl 
 else
-  ./vmware-install.pl --force-install # install even if open-vm-tools packages are available for this distribution.
+  ./vmware-install.pl --default --force-install # install even if open-vm-tools packages are available for this distribution.
 fi
 
 . /root/bin/_script_footer.sh
