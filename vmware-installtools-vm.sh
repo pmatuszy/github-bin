@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2023.07.03 - v. 0.5 - force installation of tools from vmware...
 # 2023.05.09 - v. 0.4 - added checking if the script is run on the virtual machine
 # 2023.03.03 - v. 0.3 - if open-vm-tools is installed we will uninstall it
 # 2023.03.03 - v. 0.2 - if cdrom is already mounted under /mnt/tmp we do not remount it again....
@@ -38,7 +39,7 @@ if (( $# != 0 )) && [ "${1-xxx}" == "manual" ]; then
   echo ; echo "(PGM) enabling manual mode"
   ./vmware-install.pl 
 else
-  ./vmware-install.pl --default
+  ./vmware-install.pl --force-install # install even if open-vm-tools packages are available for this distribution.
 fi
 
 . /root/bin/_script_footer.sh
