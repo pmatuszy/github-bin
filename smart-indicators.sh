@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2023.07.03 - v. 0.6 - bugfix: last_short_offline_test, last_extended_offline_test, last_conveyance_offline_test calculation
 # 2023.03.21 - v. 0.7 - bugfix - the whole section of the footer about tests was missing and test time variables were NOT initiated
 # 2023.02.10 - v. 0.6 - added check for smartmontools package
 # 2023.02.07 - v. 0.6 - added _script_header.sh and _script_footer.sh
@@ -18,7 +19,7 @@ if [ $# -eq 0 ]
   then
     echo ; echo ; echo "No arguments supplied, I will run the script against ALL disks found on this systems..."
     echo "searching for disks..."
-    disks=$(jd.sh |grep Disk |sed 's|:.*||g'|sed 's|Disk ||g')
+    disks=$(jd.sh 2>/dev/null |grep Disk |sed 's|:.*||g'|sed 's|Disk ||g')
     sleep 2
 else
   disks=$1
@@ -64,16 +65,20 @@ for p in $disks ; do
     continue
   fi
 
+  czy_seagate=$($SMARTCTL_BIN  $DEVICE_TYPE --info $p|egrep -i 'seagate|ST18000NM000J' | wc -l)
+  if (( $czy_seagate > 0 ));then
+    VENDOR_ATTRIBUTE="-v 1,raw48:54 -v 7,raw48:54 -v 187,raw48:54  -v 188,raw48:54 -v 195,raw48:54"
+    echo "* * * * * * This is Seagate drive (PGM) * * * * * *"
+  fi
+
   export power_on_hours=$($SMARTCTL_BIN $DEVICE_TYPE $VENDOR_ATTRIBUTE -A $p | egrep '^  9' | awk '{print $10}'|sed 's|[hms].*||g')     # ost sed zostawia tylko 24979 z "24979h+00m+00.000s"
-  export last_short_offline_test=$($SMARTCTL_BIN $DEVICE_TYPE $VENDOR_ATTRIBUTE $SUBCOMMAND $p | egrep -i 'Short offline|Short captive'|head -1|sed 's|.*% *||g' | awk '{print $1}')
-  export last_extended_offline_test=$($SMARTCTL_BIN $DEVICE_TYPE $VENDOR_ATTRIBUTE $SUBCOMMAND $p | egrep -i 'Extended offline|Extended captive'|head -1|sed 's|.*% *||g' | awk '{print $1}')
-  export last_conveyance_offline_test=$($SMARTCTL_BIN $DEVICE_TYPE $VENDOR_ATTRIBUTE $SUBCOMMAND $p | egrep -i 'Conveyance offline|Conveyance captive'|head -1|sed 's|.*% *||g' | awk '{print $1}')
+  export last_short_offline_test=$($SMARTCTL_BIN $DEVICE_TYPE $VENDOR_ATTRIBUTE --info -l selftest $p | egrep -i 'Short offline|Short captive'|head -1|sed 's|.*% *||g' | awk '{print $1}')
+  export last_extended_offline_test=$($SMARTCTL_BIN $DEVICE_TYPE $VENDOR_ATTRIBUTE --info -l selftest $p | egrep -i 'Extended offline|Extended captive'|head -1|sed 's|.*% *||g' | awk '{print $1}')
+  export last_conveyance_offline_test=$($SMARTCTL_BIN $DEVICE_TYPE $VENDOR_ATTRIBUTE --info -l selftest $p | egrep -i 'Conveyance offline|Conveyance captive'|head -1|sed 's|.*% *||g' | awk '{print $1}')
 
   let last_short_offline_ago=power_on_hours-last_short_offline_test
   let last_extended_offline_ago=power_on_hours-last_extended_offline_test
   let last_conveyance_offline_ago=power_on_hours-last_conveyance_offline_test
-  echo
-
 
   czy_seagate=$($SMARTCTL_BIN  $DEVICE_TYPE --info $p|egrep -i 'seagate|ST18000NM000J' | wc -l)
   if (( $czy_seagate > 0 ));then

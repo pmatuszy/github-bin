@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2023.07.03 - v. 0.6 - bugfix: jd.sh 2> redirection to /dev/null
 # 2023.02.10 - v. 0.5 - added check for smartmontools package
 # 2023.02.07 - v. 0.4 - added _script_header.sh and _script_footer.sh
 # 2023.01.09 - v. 0.3 - interactive session with clear screen, better seagate drive detection
@@ -16,7 +17,7 @@ if [ $# -eq 0 ]
   then
     echo ; echo ; echo "No arguments supplied, I will run the script against ALL disks found on this systems..."
     echo "searching for disks..."
-    disks=$(jd.sh |grep Disk |sed 's|:.*||g'|sed 's|Disk ||g')
+    disks=$(jd.sh 2>/dev/null |grep Disk |sed 's|:.*||g'|sed 's|Disk ||g')
     sleep 3
 else
   disks=$1
