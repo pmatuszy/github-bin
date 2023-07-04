@@ -15,3 +15,10 @@ find /podsync-hdd/ -type f ! -group www-data -regex '.*\.\(mp3\|mp4\|webm\|xml\|
 find /podsync-hdd/ -type f ! -perm 640       -regex '.*\.\(mp3\|mp4\|webm\|xml\|m4a\)' -exec chmod -v 640 {} \;      2>/dev/null
 find /podsync-hdd/ -type d ! -wholename \*_temp\* ! -perm 750       -exec chmod 750 -v {} \;                         2>/dev/null
 find /podsync-hdd/ -type d ! -wholename \*_temp\* ! -group www-data -exec chgrp www-data -v {} \;                    2>/dev/null
+
+
+exit 
+
+#### cron entry ####
+* * * * *     ( /usr/bin/flock --nonblock --exclusive /root/bin/zmien-uprawnienia-podsync-hdd.sh -c /root/bin/zmien-uprawnienia-podsync-hdd.sh ) 2>&1 > /dev/null
+
