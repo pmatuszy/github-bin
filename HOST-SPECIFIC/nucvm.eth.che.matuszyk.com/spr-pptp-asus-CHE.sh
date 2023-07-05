@@ -46,7 +46,7 @@ HC_MESSAGE=$(
    timeout --preserve-status --kill-after=15 --signal=SIGKILL 10s ssh admin@192.168.200.230 "/usr/sbin/curl --silent ifconfig.me | grep -q ${adres_publiczny_z_pl}"
    exit_code_3=$?
    if (( $exit_code_3 == 0 ));then
-     echo "GOOD"
+     echo "GOOD (`timeout --preserve-status --kill-after=15 --signal=SIGKILL 10s ssh admin@192.168.200.230 "/usr/sbin/curl --silent ifconfig.me`)"
    else
      echo "NOT good (`timeout --preserve-status --kill-after=15 --signal=SIGKILL 10s ssh admin@192.168.200.230 "/usr/sbin/curl --silent ifconfig.me`)"
    fi
