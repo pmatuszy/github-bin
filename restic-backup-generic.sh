@@ -185,3 +185,12 @@ else
 fi
 
 . /root/bin/_script_footer.sh
+
+exit
+
+#######################
+
+export RESTIC_BACKUP_ENV_FILE=/root/bin/restic-backup-BXL-env.sh && /usr/bin/flock --nonblock --exclusive /root/bin/restic-backup-generic.sh -c /root/bin/restic-backup-generic.sh
+export RESTIC_BACKUP_ENV_FILE=/root/bin/restic-backup-SS-env.sh  && /usr/bin/flock --nonblock --exclusive /root/bin/restic-backup-generic.sh -c /root/bin/restic-backup-generic.sh
+export RESTIC_BACKUP_ENV_FILE=/root/bin/restic-backup-CHE-env.sh  && /usr/bin/flock --nonblock --exclusive /root/bin/restic-backup-generic.sh -c /root/bin/restic-backup-generic.sh
+
