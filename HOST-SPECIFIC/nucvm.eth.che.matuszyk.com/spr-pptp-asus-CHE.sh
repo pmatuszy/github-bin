@@ -1,9 +1,9 @@
 #!/bin/bash
 
+# 2023.07.05 - v. 0.2 - added printing of the public IP address if there is a problem
 # 2023.06.29 - v. 0.1 - initial release
 
 . /root/bin/_script_header.sh
-
 
 export adres_publiczny_z_pl="31.179.173.42"
 
@@ -48,7 +48,7 @@ HC_MESSAGE=$(
    if (( $exit_code_3 == 0 ));then
      echo "GOOD"
    else
-     echo "NOT good"
+     echo "NOT good (`timeout --preserve-status --kill-after=15 --signal=SIGKILL 10s ssh admin@192.168.200.230 "/usr/sbin/curl --silent ifconfig.me`)"
    fi
 
    let final_exit_code=exit_code_1+exit_code_2+exit_code_3
