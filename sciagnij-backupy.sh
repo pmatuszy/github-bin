@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2023.07.06 - v. 0.3 - added --no-motd
 # 2023.06.25 - v. 0.2 - added optional parameter $3 e.g. --remove-source-files which will be passed to rsync as a parameter
 # 2023.03.13 - v. 0.1 - initial release
 
@@ -49,7 +50,7 @@ export DOKAD="$2"
 
 #### export rsync_option="-a -v --stats --bwlimit=990000 --no-compress --progress --info=progress1 --partial  --inplace --remove-source-files"
 
-export rsync_options="-a -v --stats --bwlimit=990000 --no-compress --partial  --inplace ${rsync_extra_option}"
+export rsync_options="--no-motd -a -v --stats --bwlimit=990000 --no-compress --partial  --inplace ${rsync_extra_option}"
 
 HC_MESSAGE=$(
    cat  $0|grep -e '# *20[123][0-9]'|head -n 1 | awk '{print "script version: " $5 " (dated "$2")"}'
