@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2023.07.08 - v. 1.3 - bugfix: forced aktualny dzien to be a number in 10 base
 # 2023.05.22 - v. 1.2 - added NO_STARTUP_DELAY parameters to /root/bin/_script_header.sh
 # 2023.05.16 - v. 1.1 - bugfix: functional change of the script
 # 2023.05.15 - v. 1.0 - bugfix: functional change of the script
@@ -35,7 +36,8 @@ echo "0. `date '+%Y.%m.%d__%H:%M:%S'` dzien_wywolania = $dzien_wywolania , aktua
 secs_to_midnight=$((($(date -d "tomorrow 00:00" +%s)-$(date +%s))))
 echo "1. `date '+%Y.%m.%d__%H:%M:%S'` secs_to_midnight = $secs_to_midnight" | tee -a $log_file
 
-while (( $secs_to_midnight > $ile_sek_przed_polnoca_nie_nagrywamy_juz )) && (( 10#$dzien_wywolania == 10#$aktualny_dzien )); do
+while (( $secs_to_midnight > $ile_sek_przed_polnoca_nie_nagrywamy_juz )) && (( 10#$dzien_wywolania == 10#$aktualny_dzien )); do # 10# forces a number to be in 10 base
+                                                                       # without this on the 8th of the month I got this error line 38: ((: 08: value too great for base (error token is "08")
   echo "2. `date '+%Y.%m.%d__%H:%M:%S'` (na poczatku petli) secs_to_midnight = $secs_to_midnight" | tee -a $log_file
   echo "2. `date '+%Y.%m.%d__%H:%M:%S'` dzien_wywolania = $dzien_wywolania , aktualny_dzien = $aktualny_dzien"
 
