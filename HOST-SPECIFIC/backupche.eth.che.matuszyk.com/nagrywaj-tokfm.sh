@@ -35,7 +35,7 @@ echo "0. `date '+%Y.%m.%d__%H:%M:%S'` dzien_wywolania = $dzien_wywolania , aktua
 secs_to_midnight=$((($(date -d "tomorrow 00:00" +%s)-$(date +%s))))
 echo "1. `date '+%Y.%m.%d__%H:%M:%S'` secs_to_midnight = $secs_to_midnight" | tee -a $log_file
 
-while (( $secs_to_midnight > $ile_sek_przed_polnoca_nie_nagrywamy_juz )) && (( $dzien_wywolania == $aktualny_dzien )); do
+while (( $secs_to_midnight > $ile_sek_przed_polnoca_nie_nagrywamy_juz )) && (( "$dzien_wywolania" == "$aktualny_dzien" )); do
   echo "2. `date '+%Y.%m.%d__%H:%M:%S'` (na poczatku petli) secs_to_midnight = $secs_to_midnight" | tee -a $log_file
   echo "2. `date '+%Y.%m.%d__%H:%M:%S'` dzien_wywolania = $dzien_wywolania , aktualny_dzien = $aktualny_dzien"
 
