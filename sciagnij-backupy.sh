@@ -59,7 +59,7 @@ HC_MESSAGE=$(
    echo ; echo  ; echo "SKAD  = $SKAD" ; echo "DOKAD = $DOKAD" ; echo 
    echo ; echo "command to be run:"
    echo rsync $rsync_options ${SKAD} "${DOKAD}"
-   eval "${RSYNC_BIN}" $rsync_options ${SKAD} "${DOKAD}"
+   eval "${RSYNC_BIN}" $rsync_options ${SKAD} "${DOKAD}" 2>&1
    exit $?
    )
 kod_powrotu=$?
