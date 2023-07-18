@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2023.07.18 - v. 0.4 - bugfix: redirected 2> to stdout
 # 2023.02.28 - v. 0.3 - curl with kod_powrotu
 # 2023.01.03 - v. 0.2 - bug fixed - when no lvs'm the status should be ok
 # 2022.12.29 - v. 0.1 - initial release
@@ -12,9 +13,9 @@ fi
 
 m=$( echo " "; echo "aktualna data: `date '+%Y.%m.%d %H:%M'`" ; echo ; 
      cat $0|grep -e '# *20[123][0-9]'|head -n 1 | awk '{print "script version: " $5 " (dated "$2")"}' ; echo ; echo
-     lvs
+     lvs 2>&1
 
-     if [ $(lvs -o 'sync_percent' |sort|uniq|grep -v -e '^[[:space:]]*$'| grep -v 100.00|wc -l) -eq 1 ];then
+     if [ $(lvs -o 'sync_percent' 2>&1 |sort|uniq|grep -v -e '^[[:space:]]*$'| grep -v 100.00|wc -l) -eq 1 ];then
        exit 0
      else
        exit 1
