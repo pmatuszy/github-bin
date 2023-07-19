@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2023.07.19 - v. 1.1 - bugfix: handling wrong partition table (it was prompted, now it is removed with echo q
 # 2023.07.19 - v. 1.0 - bugfix: egrep and $? checking 
 # 2023.06.21 - v. 0.9 - check if nvme is installed
 # 2023.03.07 - v. 0.8 - added script_header and footer calls
@@ -45,7 +46,7 @@ if [[ $? == 0 ]] ; then
        printf "%-45s" "`gdisk -l $p |grep "Disk /dev"`"
        printf "  Serial Number: %-20s\n" "$(nvme list | grep $p | awk '{print $2}')"
      else
-       printf "%-45s" "`gdisk -l $p |grep "Disk /dev"`"
+       printf "%-45s" "` echo q | gdisk -l $p 2>/dev/null |grep "Disk /dev"`" |sed 's|Your answer: ||g';
        printf "%-45s\n" "$(hdparm -I $p 2>/dev/null | grep 'Serial\ Number')" | sed 's|  *| |g'
      fi
   done
