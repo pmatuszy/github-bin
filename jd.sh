@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2023.07.19 - v. 1.0 - bugfix: egrep and $? checking 
 # 2023.06.21 - v. 0.9 - check if nvme is installed
 # 2023.03.07 - v. 0.8 - added script_header and footer calls
 # 2022.11.10 - v. 0.7 - added S/N printing for NVME devices and replaced echo with printf to beautify output
@@ -36,8 +37,7 @@ if [[ $(uname --machine) == "aarch64" || $(uname --machine) == "armv7l" || $(una
 fi
 
 echo $hardware_type | boxes -s 40x5 -a c ; echo 
-cat /etc/os-release /etc/redhat-release 2>/dev/null |egrep -qi "ubuntu|Raspbian" 
-echo $?
+egrep -qi "ubuntu|Raspbian" /etc/os-release /etc/redhat-release
 
 if [[ $? == 0 ]] ; then
   for p in `fdisk -l|grep 'Disk /dev'|egrep -v 'mapper|/md|/ram|mmcb|/dev/loop'|awk '{print $2}'|sort|tr -d :`;do
