@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2023.07.27 - v. 0.3 - bugfix: added ssh 2>/dev/null redirection in case the script is not able to connect
 # 2023.07.05 - v. 0.2 - added printing of the public IP address if there is a problem
 # 2023.06.29 - v. 0.1 - initial release
 
@@ -24,7 +25,7 @@ HC_MESSAGE=$(
 
    echo ; echo "checking if ppp interface is up..."
    echo ssh  admin@192.168.200.230 "ifconfig -a" | sed -n '/^ppp[0-9]/,/^$/p'
-   timeout --preserve-status --kill-after=15 --signal=SIGKILL 10s ssh admin@192.168.200.230 "ifconfig -a" | sed -n '/^ppp[0-9]/,/^$/p'
+   timeout --preserve-status --kill-after=15 --signal=SIGKILL 10s ssh admin@192.168.200.230 "ifconfig -a" 2>/dev/null | sed -n '/^ppp[0-9]/,/^$/p'
    exit_code_1=$?
 
    if (( $exit_code_1 == 0 ));then
@@ -34,7 +35,7 @@ HC_MESSAGE=$(
    fi
 
    echo ; echo -n "checking if 192.168.1.1 is pingable... "
-   timeout --preserve-status --kill-after=15 --signal=SIGKILL 10s ssh admin@192.168.200.230 "ping -c 3 -W 5 -q 192.168.1.1 " | grep -vq ", 0 packets received"    # jesli znajdzie taka linie to kod powrotu bedzie <> 0
+   timeout --preserve-status --kill-after=15 --signal=SIGKILL 10s ssh admin@192.168.200.230 "ping -c 3 -W 5 -q 192.168.1.1 " 2>/dev/null | grep -vq ", 0 packets received"    # jesli znajdzie taka linie to kod powrotu bedzie <> 0
    exit_code_2=$?
    if (( $exit_code_2 == 0 ));then
      echo "GOOD"
@@ -43,12 +44,12 @@ HC_MESSAGE=$(
    fi
 
    echo ; echo -n "checking if our public IP address is from PL... "
-   timeout --preserve-status --kill-after=15 --signal=SIGKILL 10s ssh admin@192.168.200.230 "/usr/sbin/curl --silent ifconfig.me | grep -q ${adres_publiczny_z_pl}"
+   timeout --preserve-status --kill-after=15 --signal=SIGKILL 10s ssh admin@192.168.200.230 "/usr/sbin/curl --silent ifconfig.me 2>/dev/null | grep -q ${adres_publiczny_z_pl}"
    exit_code_3=$?
    if (( $exit_code_3 == 0 ));then
-     echo "GOOD (`timeout --preserve-status --kill-after=15 --signal=SIGKILL 10s ssh admin@192.168.200.230 /usr/sbin/curl --silent ifconfig.me`)"
+     echo "GOOD (`timeout --preserve-status --kill-after=15 --signal=SIGKILL 10s ssh admin@192.168.200.230 /usr/sbin/curl --silent ifconfig.me 2>/dev/null`)"
    else
-     echo "NOT good (`timeout --preserve-status --kill-after=15 --signal=SIGKILL 10s ssh admin@192.168.200.230 /usr/sbin/curl --silent ifconfig.me`)"
+     echo "NOT good (`timeout --preserve-status --kill-after=15 --signal=SIGKILL 10s ssh admin@192.168.200.230 /usr/sbin/curl --silent ifconfig.me 2>/dev/null`)"
    fi
 
    let final_exit_code=exit_code_1+exit_code_2+exit_code_3
