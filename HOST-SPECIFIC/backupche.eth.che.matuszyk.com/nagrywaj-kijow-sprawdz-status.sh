@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2023.07.31 - v. 0.3 - bugfix: better error handling (cd command, find command)
 # 2023.04.11 - v. 0.2 - added printing script name
 # 2023.02.14 - v. 0.1 - initial release
 
@@ -13,14 +14,19 @@ if [ -f "$HEALTHCHECKS_FILE" ];then
   HEALTHCHECK_URL=$(cat "$HEALTHCHECKS_FILE" |grep "^`basename $0`"|awk '{print $2}')
 fi
 
-ile_plikow=$(find "${DIR}" -type f -name "${maska_plikow}" -mmin -${jak_nowe_pliki_min} | wc -l)
+ile_plikow=$(find "${DIR}" -type f -name "${maska_plikow}" -mmin -${jak_nowe_pliki_min} 2>/dev/null | wc -l)
 
 HC_message=$(
    echo "script name: $0"
    echo "aktualna data: `date '+%Y.%m.%d %H:%M'`" ; 
    cat  $0|grep -e '# *20[123][0-9]'|head -n 1 | awk '{print "script version: " $5 " (dated "$2")"}' ;
    echo "katalog: $DIR" ;echo 
-   cd "${DIR}"
+   cd "${DIR}" 2>/dev/null
+
+   if (( $? != 0 ));then
+     echo "(PGM) Nie moge zmienic katalogu na ${DIR}  - moze nie jest zamontowany fs?. PRZERYWAM DZIALANIE"
+     exit 1
+   fi
    
    echo "Pliki nowsze niz $jak_nowe_pliki_min minuty: ( $(find . -type f -name "${maska_plikow}" -mmin -${jak_nowe_pliki_min} | wc -l) szt.)" \
         | boxes -s 60x5 -a c
