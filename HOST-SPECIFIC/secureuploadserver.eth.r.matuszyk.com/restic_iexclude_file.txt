@@ -1,0 +1,6 @@
+/vmware*/**/*vmdk
+/worek/**/*jpg
+/worek/**/*jpeg
+/worek/**/*mp3
+/worek/**/*mp4
+/worek/**/*mov

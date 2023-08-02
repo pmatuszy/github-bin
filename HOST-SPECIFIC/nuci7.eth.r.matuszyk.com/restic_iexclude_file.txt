@@ -5,3 +5,10 @@
 /vmware*/**/*vmss
 /vmware*/**/*nvram
 /vmware*/**/*iso
+/mnt/luks_*/**/*vmdk
+/mnt/luks_*/**/*vmram
+/mnt/luks_*/**/*vmsn
+/mnt/luks_*/**/*vmem
+/mnt/luks_*/**/*vmss
+/mnt/luks_*/**/*nvram
+/mnt/luks_*/**/*iso
