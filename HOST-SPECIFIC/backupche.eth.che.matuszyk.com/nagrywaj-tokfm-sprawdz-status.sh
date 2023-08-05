@@ -21,7 +21,7 @@ HC_message=$(
    echo "aktualna data: `date '+%Y.%m.%d %H:%M'`" ;
    cat  $0|grep -e '# *20[123][0-9]'|head -n 1 | awk '{print "script version: " $5 " (dated "$2")"}'
    echo "katalog: $DIR" ;echo 
-   cd "${DIR}"
+   cd "${DIR}" 2>/dev/null
 
    if (( $? != 0 ));then
      echo "(PGM) Nie moge zmienic katalogu na ${DIR}  - moze nie jest zamontowany fs?. PRZERYWAM DZIALANIE"
