@@ -19,7 +19,7 @@ fi
 
 export SKAD_HOST="backupche.eth.che.matuszyk.com"
 export SKAD_DIR="/worek-samba/nagrania/BBC4"
-export DOKAD="/mnt/luks-icybox10/video-1dyne-kopie/BBC4-ARCHIWUM"
+export DOKAD="/mnt/raid1-A/video-1dyne-kopie/BBC4-ARCHIWUM"
 
 cat  $0|grep -e '# *20[123][0-9]'|head -n 1 | awk '{print "script version: " $5 " (dated "$2")"}' ; echo
 echo " "; echo "aktualna data: `date '+%Y.%m.%d %H:%M:%S'`" ; echo ;
