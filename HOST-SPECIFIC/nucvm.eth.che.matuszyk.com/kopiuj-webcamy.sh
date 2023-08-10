@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2023.08.10 - v. 1.1 - bugfix: checking if ${DOKAD} exists and if not exiting
 # 2023.05.22 - v. 1.0 - std_options are different for interactive and non-interactive session
 # 2023.05.20 - v. 0.9 - allow script to use keychain
 # 2023.05.20 - v. 0.8 - added calls for _script_header and _script_footer
@@ -34,6 +35,11 @@ if (( $script_is_run_interactively == 1 )); then
   std_options='-a -v --stats --bwlimit=90000 --no-compress --progress --info=progress1 --partial  --inplace --remove-source-files'
 else
   std_options='-a -v --stats --bwlimit=90000 --no-compress --partial  --inplace --remove-source-files'
+fi
+
+if [ ! -d "${DOKAD}" ];then
+  echo "(PGM) ${DOKAD} doesn't exist"
+  exit 1
 fi
 
 echo "Wszystkie pliki:"
