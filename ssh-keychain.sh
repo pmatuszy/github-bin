@@ -23,8 +23,6 @@ else
   . /root/bin/_script_header.sh
 fi
 
-. /root/bin/_script_header.sh
-
 if [ -f "$HEALTHCHECKS_FILE" ];then
   HEALTHCHECK_URL=$(cat "$HEALTHCHECKS_FILE" |grep "^`basename $0`"|awk '{print $2}')
 fi
