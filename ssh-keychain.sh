@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2023.08.21 - v. 1.1 - added feature batchmode (parameter: batch)
 # 2023.05.20 - v. 1.0 - added feature that more than 3 keys can be loaded (ile_kluczy_powinno_byc_zaladowanych)
 # 2023.05.20 - v. 0.9 - bugfix: added that in ssh key: / is optional (with /?, it was / before)
 # 2023.05.09 - v. 0.8 - changed sleep from 6 to 3 but added execution of $HOSTNAME-sh before that
@@ -10,6 +11,17 @@
 # 2023.02.28 - v. 0.3 - curl with kod_powrotu
 # 2023.02.16 - v. 0.2 - major overhaul of the script 
 # 2023.02.08 - v. 0.1 - initial release
+
+
+batch_mode=0
+
+if (( $# != 0 )) && [ "${1-nonbatch}" == "batch" ]; then
+  echo ; echo "(PGM) enabling batch mode (no questions asked)"
+  batch_mode=1
+  . /root/bin/_script_header.sh NO_STARTUP_DELAY
+else
+  . /root/bin/_script_header.sh
+fi
 
 . /root/bin/_script_header.sh
 
