@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2023.08.31 - v. 0.7 - bugfix: poweronhours detection for SSD 
 # 2023.07.03 - v. 0.6 - bugfix: last_short_offline_test, last_extended_offline_test, last_conveyance_offline_test calculation
 # 2023.03.21 - v. 0.7 - bugfix - the whole section of the footer about tests was missing and test time variables were NOT initiated
 # 2023.02.10 - v. 0.6 - added check for smartmontools package
@@ -71,7 +72,7 @@ for p in $disks ; do
     echo "* * * * * * This is Seagate drive (PGM) * * * * * *"
   fi
 
-  export power_on_hours=$($SMARTCTL_BIN $DEVICE_TYPE $VENDOR_ATTRIBUTE -A $p | egrep '^  9' | awk '{print $10}'|sed 's|[hms].*||g')     # ost sed zostawia tylko 24979 z "24979h+00m+00.000s"
+  export power_on_hours=$($SMARTCTL_BIN $DEVICE_TYPE $VENDOR_ATTRIBUTE -A $p | egrep '^  9' | awk '{print $10}'|sed 's|[hms].*||g' )     # ost sed zostawia tylko 24979 z "24979h+00m+00.000s"
   export last_short_offline_test=$($SMARTCTL_BIN $DEVICE_TYPE $VENDOR_ATTRIBUTE --info -l selftest $p | egrep -i 'Short offline|Short captive'|head -1|sed 's|.*% *||g' | awk '{print $1}')
   export last_extended_offline_test=$($SMARTCTL_BIN $DEVICE_TYPE $VENDOR_ATTRIBUTE --info -l selftest $p | egrep -i 'Extended offline|Extended captive'|head -1|sed 's|.*% *||g' | awk '{print $1}')
   export last_conveyance_offline_test=$($SMARTCTL_BIN $DEVICE_TYPE $VENDOR_ATTRIBUTE --info -l selftest $p | egrep -i 'Conveyance offline|Conveyance captive'|head -1|sed 's|.*% *||g' | awk '{print $1}')
@@ -90,11 +91,9 @@ for p in $disks ; do
   echo
 
   # in case of some SSD there is Power on Hours in form of 'Power On Hours:' or 'Power_On_Hours'
-  if (( $($SMARTCTL_BIN $DEVICE_TYPE -x $p 2>/dev/null | egrep -i 'Power.On.Hours' | wc -l) > 0 ));then
-    export power_on_hours=$($SMARTCTL_BIN $DEVICE_TYPE -x $p| egrep -i 'Power.On.Hours' | sed 's|.* ||g'|tr -d ',' | sed 's|Hours||g' | sed 's|[hms].*||g')
+  if (( $($SMARTCTL_BIN $DEVICE_TYPE -x $p 2>/dev/null | egrep -i '^Power.On.Hours' | wc -l) > 0 ));then
+    export power_on_hours=$($SMARTCTL_BIN $DEVICE_TYPE -x $p| egrep -i '^Power.On.Hours' | sed 's|.* ||g'|tr -d ',' | sed 's|Hours||g' | sed 's|[hms].*||g' | awk '{print $1}')
   fi
-
-  # echo power_on_hours = $power_on_hours
 
   if [ -z ${power_on_hours:-} ];then   # sometimes there is on power on hours in SMART attribues so I set it to -1
     power_on_hours=-1
