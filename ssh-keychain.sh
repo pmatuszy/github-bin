@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2023.09.01 - v. 1.2 - added id_ed25519_nucvm_adminkey 
 # 2023.08.21 - v. 1.1 - added feature batchmode (parameter: batch)
 # 2023.05.20 - v. 1.0 - added feature that more than 3 keys can be loaded (ile_kluczy_powinno_byc_zaladowanych)
 # 2023.05.20 - v. 0.9 - bugfix: added that in ssh key: / is optional (with /?, it was / before)
@@ -46,6 +47,10 @@ fi
 
 if [ -f $HOME/.ssh/id_ed25519_kopiowanie_scp ]; then
   klucze="$klucze id_ed25519_kopiowanie_scp" 
+fi
+
+if [ -f $HOME/.ssh/id_ed25519_nucvm_adminkey ]; then
+  klucze="$klucze id_ed25519_nucvm_adminkey"
 fi
 
 export klucze
