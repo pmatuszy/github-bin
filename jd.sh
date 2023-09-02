@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2023.09.02 - v. 1.2 - bugfix: better OS detection 
 # 2023.07.19 - v. 1.1 - bugfix: handling wrong partition table (it was prompted, now it is removed with echo q
 # 2023.07.19 - v. 1.0 - bugfix: egrep and $? checking 
 # 2023.06.21 - v. 0.9 - check if nvme is installed
@@ -14,10 +15,8 @@
 
 . /root/bin/_script_header.sh
 
-if [[ ! -h /etc/os-release && ! -h /etc/redhat-release ]] ; then
-  echo
-  echo "nie wiem co to za OS - wychodze..."
-  echo
+if [[ ! -f /etc/os-release && ! -f /etc/redhat-release ]] ; then
+  echo ; echo "(PGM) I don't know what OS is that - I am exiting..." ; echo
   exit 1
 fi
 
