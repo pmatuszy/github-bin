@@ -24,7 +24,7 @@ fi
 
 export SKAD_HOST="backupche.eth.che.matuszyk.com"
 export SKAD_DIR="/worek-samba/nagrania/Kijow-webcamy"
-export DOKAD="/mnt/raid1-A/video-1dyne-kopie/Kijow-webcamy-ARCHIWUM/"
+export DOKAD="/mnt/luks-raid1-A/video-1dyne-kopie/Kijow-webcamy-ARCHIWUM/"
 
 cat  $0|grep -e '# *20[123][0-9]'|head -n 1 | awk '{print "script version: " $5 " (dated "$2")"}' ; echo
 echo " "; echo "aktualna data: `date '+%Y.%m.%d %H:%M:%S'`" ; echo ;
