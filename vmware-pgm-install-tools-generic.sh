@@ -54,16 +54,13 @@ if (( $? != 0 )) ; then
   exit 3
 fi
 
-
-#{
+{
 echo -n "vm ip address (info from vmrun)         : " ;  vmrun getGuestIPAddress "${VM_PATH}"
 echo -n "vm vmware tools state (info from vmrun) : " ;  vmrun checkToolsState "${VM_PATH}"
 vmrun installtools "${VM_PATH}" >/dev/null & 
-#}
+}
 
 {
-#vmrun getGuestIPAddress "${VM_PATH}"
-#vmrun checkToolsState "${VM_PATH}"
 echo ; echo "Please wait for the script (/root/bin/vmware-installtools-vm.sh) to finish"
 echo ; 
 ssh -o ConnectTimeout=${SSH_CONN_TIMEOUT}  ${VM_IP} "/root/bin/vmware-installtools-vm.sh" >/dev/null
