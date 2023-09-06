@@ -99,8 +99,8 @@ for p in $disks ; do
   echo
   
   # in case of some SSD there is Power on Hours in form of 'Power On Hours:' or 'Power_On_Hours'
-  if (( $($SMARTCTL_BIN $DEVICE_TYPE -x $p 2>/dev/null | egrep -i 'Power.On.Hours' | wc -l) > 0 ));then
-    export power_on_hours=$($SMARTCTL_BIN $DEVICE_TYPE -x $p| egrep -i 'Power.On.Hours' | sed 's|.* ||g'|tr -d ',' | sed 's|Hours||g' | sed 's|[hms].*||g')
+  if (( $($SMARTCTL_BIN $DEVICE_TYPE -x $p 2>/dev/null | egrep -i '^Power.On.Hours' | wc -l) > 0 ));then
+    export power_on_hours=$($SMARTCTL_BIN $DEVICE_TYPE -x $p| egrep -i '^Power.On.Hours' | sed 's|.* ||g'|tr -d ',' | sed 's|Hours||g' | sed 's|[hms].*||g')
   fi
   
   # echo power_on_hours = $power_on_hours
