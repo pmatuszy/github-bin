@@ -80,7 +80,7 @@ if [ "${p}" == 'y' -o  "${p}" == 'y' ]; then
   cp ./HOST-SPECIFIC/`hostname`*/.[a-zA-Z0-9]* $HOME   2>/dev/null
 
   # cleanup
-  rm -v $HOME/bin/git-pull.sh $HOME/bin/git-push.sh $HOME/bin/git-fetch.sh $HOME/bin/vmware-fix.sh 
+  rm -v $HOME/bin/git-pull.sh $HOME/bin/git-push.sh $HOME/bin/git-fetch.sh $HOME/bin/vmware-fix.sh $HOME/bin/65535
   echo 
   echo git status | boxes -s 40x3 -a c
   echo 
