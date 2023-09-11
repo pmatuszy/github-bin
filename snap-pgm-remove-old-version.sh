@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2023.09.11 - v. 0.4 - if none of snaps are disabled there is no prompt - the scripts just ends...
 # 2023.08.01 - v. 0.3 - added batchmode and prompt
 # 2023.07.31 - v. 0.2 - added check for snap command (and if it is not there then install it)
 # 2023.07.31 - v. 0.1 - initial release
@@ -25,6 +26,13 @@ echo
 echo "(PGM) Snap released disabled which will be removed:" | boxes -a c -d stone
 snap list --all | grep disabled
 echo 
+
+snap list --all |grep -q disabled 
+
+if (( $? != 0 )); then
+  echo NONE; echo
+  exit 0
+fi
 
 echo "Do you want to do remove disabled packages? [y/N]"
 if (( $batch_mode == 0 ));then
