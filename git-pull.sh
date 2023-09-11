@@ -81,6 +81,7 @@ if [ "${p}" == 'y' -o  "${p}" == 'y' ]; then
 
   # cleanup
   rm -v $HOME/bin/git-pull.sh $HOME/bin/git-push.sh $HOME/bin/git-fetch.sh $HOME/bin/vmware-fix.sh $HOME/bin/65535 2>/dev/null
+  rm -v $HOME/bin/*talled*client 2>/dev/null
   echo 
   echo git status | boxes -s 40x3 -a c
   echo 
