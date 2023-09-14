@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2023.09.14 - v. 0.7 - small change - if # of args = 1 then there is no prompt at the end of the script
 # 2023.07.03 - v. 0.6 - bugfix: jd.sh 2> redirection to /dev/null
 # 2023.02.10 - v. 0.5 - added check for smartmontools package
 # 2023.02.07 - v. 0.4 - added _script_header.sh and _script_footer.sh
@@ -69,7 +70,8 @@ for p in $disks ; do
     echo ; echo "* * * * * * This is Seagate drive (PGM) * * * * * *" ; echo 
   fi 
   $SMARTCTL_BIN $DEVICE_TYPE $VENDOR_ATTRIBUTE $SUBCOMMAND $p
-  if (( script_is_run_interactively ));then
+
+  if (( script_is_run_interactively )) && (( $# != 1 )) ;then
      echo "Press <ENTER> to continue or q/Q to quit"
      input_from_user=""
      read -t 300 -n 1 input_from_user
@@ -78,6 +80,7 @@ for p in $disks ; do
        exit
      fi
   fi
+
 done
 
 . /root/bin/_script_footer.sh
