@@ -66,7 +66,7 @@ for p in $disks ; do
     continue
   fi
 
-  czy_seagate=$($SMARTCTL_BIN  $DEVICE_TYPE --info $p|egrep -i 'seagate|ST18000NM000J' | wc -l)
+  czy_seagate=$($SMARTCTL_BIN  $DEVICE_TYPE --info $p|egrep -i 'seagate|ST18000NM000J|ST20000NM007D' | wc -l)
   if (( $czy_seagate > 0 ));then
     VENDOR_ATTRIBUTE="-v 1,raw48:54 -v 7,raw48:54 -v 187,raw48:54  -v 188,raw48:54 -v 195,raw48:54"
     echo "* * * * * * This is Seagate drive (PGM) * * * * * *"
@@ -81,7 +81,7 @@ for p in $disks ; do
   let last_extended_offline_ago=power_on_hours-last_extended_offline_test
   let last_conveyance_offline_ago=power_on_hours-last_conveyance_offline_test
 
-  czy_seagate=$($SMARTCTL_BIN  $DEVICE_TYPE --info $p|egrep -i 'seagate|ST18000NM000J' | wc -l)
+  czy_seagate=$($SMARTCTL_BIN  $DEVICE_TYPE --info $p|egrep -i 'seagate|ST18000NM000J|ST20000NM007D' | wc -l)
   if (( $czy_seagate > 0 ));then
     VENDOR_ATTRIBUTE="-v 1,raw48:54 -v 7,raw48:54 -v 187,raw48:54  -v 188,raw48:54 -v 195,raw48:54"
     echo ; echo "* * * * * * This is Seagate drive (PGM) * * * * * *" ; echo 
