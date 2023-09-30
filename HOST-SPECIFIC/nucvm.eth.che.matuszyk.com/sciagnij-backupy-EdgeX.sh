@@ -18,7 +18,7 @@ DOKAD=/mnt/luks-buffalo2/_backupy-1dyne_kopie/UBNT/EdgeSS/EdgeSS-root-adresy-ip-
 eval /root/bin/sciagnij-backupy.sh $SKAD $DOKAD --remove-source-files >/dev/null 2>&1
 
 export HEALTHCHECKS_FORCE_ID=sciagnij-backupy.sh-EdgeSS_kat3
-SKAD=192.168.17.1:/config/ARCHIWUM_CONFIGOW-EdgeSS/config.boot-Edge*
+SKAD=192.168.17.1:/config/ARCHIWUM_CONFIGOW-EdgeSS/
 DOKAD=/mnt/luks-buffalo2/_backupy-1dyne_kopie/UBNT/EdgeSS/EdgeSS-root_config/ARCHIWUM_CONFIGOW-EdgeSS
 eval /root/bin/sciagnij-backupy.sh $SKAD $DOKAD --remove-source-files >/dev/null 2>&1
 
@@ -37,7 +37,7 @@ DOKAD=/mnt/luks-buffalo2/_backupy-1dyne_kopie/UBNT/EdgeCHE/EdgeCHE-root-adresy-i
 eval /root/bin/sciagnij-backupy.sh $SKAD $DOKAD --remove-source-files >/dev/null 2>&1
 
 export HEALTHCHECKS_FORCE_ID=sciagnij-backupy.sh-EdgeCHE_kat3
-SKAD=192.168.200.1:/config/ARCHIWUM_CONFIGOW-EdgeCHE/config.boot-Edge*
+SKAD=192.168.200.1:/config/ARCHIWUM_CONFIGOW-EdgeCHE/
 DOKAD=/mnt/luks-buffalo2/_backupy-1dyne_kopie/UBNT/EdgeCHE/EdgeCHE-root_config/ARCHIWUM_CONFIGOW-EdgeCHE
 eval /root/bin/sciagnij-backupy.sh $SKAD $DOKAD --remove-source-files >/dev/null 2>&1
 
@@ -56,6 +56,6 @@ DOKAD=/mnt/luks-buffalo2/_backupy-1dyne_kopie/UBNT/EdgeR/EdgeR-root-adresy-ip-hi
 eval /root/bin/sciagnij-backupy.sh $SKAD $DOKAD --remove-source-files >/dev/null 2>&1
 
 export HEALTHCHECKS_FORCE_ID=sciagnij-backupy.sh-EdgeR_kat3
-SKAD=192.168.1.1:/config/ARCHIWUM_CONFIGOW-EdgeR/config.boot-Edge*
+SKAD=192.168.1.1:/config/ARCHIWUM_CONFIGOW-EdgeR/
 DOKAD=/mnt/luks-buffalo2/_backupy-1dyne_kopie/UBNT/EdgeR/EdgeR-root_config/ARCHIWUM_CONFIGOW-EdgeR
 eval /root/bin/sciagnij-backupy.sh $SKAD $DOKAD --remove-source-files >/dev/null 2>&1
