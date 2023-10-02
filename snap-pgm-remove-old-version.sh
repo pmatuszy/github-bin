@@ -30,7 +30,7 @@ echo
 
 snap list --all |grep -q disabled 
 
-if (( $? == 0 )); then
+if (( $? != 0 )); then
   echo NONE; echo
   exit 0
 fi
