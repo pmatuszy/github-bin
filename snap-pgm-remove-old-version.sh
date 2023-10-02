@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2023.10.02 - v. 0.5 - bugfix - prompt logic reverse (if there are snaps to be removed no prompt was displayed)
 # 2023.09.11 - v. 0.4 - if none of snaps are disabled there is no prompt - the scripts just ends...
 # 2023.08.01 - v. 0.3 - added batchmode and prompt
 # 2023.07.31 - v. 0.2 - added check for snap command (and if it is not there then install it)
@@ -29,7 +30,7 @@ echo
 
 snap list --all |grep -q disabled 
 
-if (( $? != 0 )); then
+if (( $? == 0 )); then
   echo NONE; echo
   exit 0
 fi
