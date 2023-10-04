@@ -10,7 +10,7 @@ export XDG_DATA_DIR=/encrypted/root/XDG_DATA_HOME
 export XDG_RUNTIME_DIR=/run/user/0
 
 export URL="https://sklep.vivamix.pl/mlynek-do-kawy-artisan-5kcg8433-id-948"
-temat_maila="(`date '+%Y.%m.%d %H:%M'`) Kitchenaid mlynek"
+temat_maila="(`date '+%Y.%m.%d %H:%M'`) Kitchenaid mlynek $URL"
 
 timeout=300
 kill_after=310

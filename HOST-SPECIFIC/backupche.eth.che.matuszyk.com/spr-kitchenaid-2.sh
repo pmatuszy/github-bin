@@ -10,7 +10,7 @@ export XDG_DATA_DIR=/encrypted/root/XDG_DATA_HOME
 export XDG_RUNTIME_DIR=/run/user/0
 
 export URL="https://sklep.vivamix.pl/ekspres-cisnieniowy-artisan-5kes6503-id-946"
-temat_maila="(`date '+%Y.%m.%d %H:%M'`) Kitchenaid xpress kolbowy"
+temat_maila="(`date '+%Y.%m.%d %H:%M'`) Kitchenaid xpress kolbowy $URL"
 
 timeout=300
 kill_after=310
