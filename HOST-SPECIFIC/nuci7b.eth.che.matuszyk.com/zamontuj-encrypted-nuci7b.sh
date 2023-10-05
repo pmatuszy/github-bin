@@ -18,7 +18,7 @@ echo czas na fsck $1 ...
 if [ $(lsblk -no FSTYPE $1) == 'ext4' ];then
   fsck.ext4 -f $1
 else
-  fsck      -C -M -R -T $1
+  fsck      -C -M -R -T -p $1
 fi
 
 kod_powrotu=$?
@@ -32,7 +32,7 @@ if (( $kod_powrotu != 0 ));then
   if [ $(lsblk -no FSTYPE $1) == 'ext4' ];then
     fsck.ext4 -f $1
   else
-    fsck      -C -M -R -T $1
+    fsck      -C -M -R -T -p $1
   fi
   echo "kod powrotu z fsck to $? (przebieg 2-gi)"
 else
@@ -69,7 +69,6 @@ echo "<== ########## zamontuj_fs_MASTER($1, $2, $3)"
 }
 ################################################################################
 
-
 vgchange -a y
 sleep 1
 
@@ -79,7 +78,7 @@ zamontuj_fs_MASTER /dev/vg_20230906_skasujto/lv_20230906_skasujto  /mnt/luks-tem
 zamontuj_fs_MASTER /dev/vg_crypto_20230925/lv_crypto_20230925      /mnt/luks-worek noatime
 
 echo
-df -h /encrypted /mnt/luks-raidsonic 
+df -h /encrypted /mnt/luks-temp /mnt/luks-worek
 
 . /root/bin/_script_footer.sh
 
