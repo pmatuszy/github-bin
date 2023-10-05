@@ -32,8 +32,6 @@ snap list --all |grep -q disabled
 
 kod_powrotu=$?
 
-echo kod_powrotu $kod_powrotu
-
 if (( $kod_powrotu == 0 )); then
   echo NONE; echo
   exit 0
