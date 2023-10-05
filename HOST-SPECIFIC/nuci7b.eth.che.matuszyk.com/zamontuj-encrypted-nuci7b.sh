@@ -73,7 +73,10 @@ echo "<== ########## zamontuj_fs_MASTER($1, $2, $3)"
 vgchange -a y
 sleep 1
 
-zamontuj_fs_MASTER /dev/vg_crypto_raidsonic/lv_do_luksa_raidsonic  /mnt/luks-raidsonic noatime
+# zamontuj_fs_MASTER /dev/vg_crypto_raidsonic/lv_do_luksa_raidsonic  /mnt/luks-raidsonic noatime
+
+zamontuj_fs_MASTER /dev/vg_20230906_skasujto/lv_20230906_skasujto  /mnt/luks-temp  noatime
+zamontuj_fs_MASTER /dev/vg_crypto_20230925/lv_crypto_20230925      /mnt/luks-worek noatime
 
 echo
 df -h /encrypted /mnt/luks-raidsonic 
