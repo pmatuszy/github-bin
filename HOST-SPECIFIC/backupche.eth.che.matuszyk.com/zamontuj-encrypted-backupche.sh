@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2023.10.05 - v. 1.1 - added vgchange with 1s delay
 # 2023.03.27 - v. 1.0 - bugfix with fsck (instead of hardcoded /dev/mapper/encrypted_luks_device_encrypted.luks2 will use $1)
 # 2023.03.20 - v. 0.9 - bugfix with kod_powrotu
 # 2023.01.26 - v. 0.8 - added script version print
@@ -105,16 +106,12 @@ echo "<== ########## zamontuj_fs_MASTER($1, $2, $3)"
 
 # zrob_fsck /dev/mapper/luks16tb-on-lv_another
 
+vgchange -a y
+sleep 1
 
 zamontuj_fs_MASTER /encrypted.luks2                     	/encrypted 			noatime
 zamontuj_fs_MASTER /dev/vg_crypto/lv_do_luksa_16tb      	/mnt/luks-raid1-16tb		noatime
 zamontuj_fs_MASTER /dev/vg_crypto/lv_do_luksa_16tb_another 	/mnt/luks-raid1-16tb_another 	noatime
-
-
-# mount -o noatime /dev/mapper/encrypted_luks_file_in_root /encrypted
-
-#mount -o noatime /dev/mapper/luks16tb-on-lv /mnt/luks-raid1-16tb
-#mount -o noatime /dev/mapper/luks16tb-on-lv_another /mnt/luks-raid1-16tb_another
 
 mount -o bind,noatime /mnt/luks-raid1-16tb/backup1/rclone_user/_restic /rclone-jail/storage-master/backup1
 mount -o bind,noatime /mnt/luks-raid1-16tb/replication1/rclone_user/_rclone/ /rclone-jail/storage-master/replication1
