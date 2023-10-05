@@ -16,9 +16,9 @@ echo ; echo "==> ########## zrob_fsck($1)"
 echo czas na fsck $1 ...
 
 if [ $(lsblk -no FSTYPE $1) == 'ext4' ];then
-  fsck.ext4 -f $1
+  fsck.ext4 -f -p $1
 else
-  fsck      -C -M -R -T -p $1
+  fsck      -C -M -R -T $1
 fi
 
 kod_powrotu=$?
@@ -30,9 +30,9 @@ if (( $kod_powrotu != 0 ));then
   echo
 
   if [ $(lsblk -no FSTYPE $1) == 'ext4' ];then
-    fsck.ext4 -f $1
+    fsck.ext4 -f -p $1
   else
-    fsck      -C -M -R -T -p $1
+    fsck      -C -M -R -T $1
   fi
   echo "kod powrotu z fsck to $? (przebieg 2-gi)"
 else
