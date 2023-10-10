@@ -1,25 +1,25 @@
-healthchecks-ping.sh				https://healthchecks.matuszyk.com:8000/ping/54bb4b40-95c6-4cb4-bada-c6f0d596c437
-sprawdz-ile-apt-list--upgradable.sh		https://healthchecks.matuszyk.com:8000/ping/d43ecd43-acd1-4956-b242-583c39210743
-restic_backup_SS.sh				https://healthchecks.matuszyk.com:8000/ping/609cea59-2d8f-4b03-9896-7a61d1df4c57
-update-restic.sh                                https://healthchecks.matuszyk.com:8000/ping/8ae69ab8-d54a-49f4-bf97-eb2e77e3d0c0
-update-rclone.sh                                https://healthchecks.matuszyk.com:8000/ping/5510d2b8-13ba-4773-8415-9d5116b38fa6
-healthchecks-swap-usage.sh                      https://healthchecks.matuszyk.com:8000/ping/a2a8e9c4-6b64-4abf-9d7f-e7e4a03aade0
-rclone-sync-archiwum-crypt-sftp-CHE.sh		https://healthchecks.matuszyk.com:8000/ping/64834214-25ec-487d-8bd8-0aee037da416
-rclone-sync-archiwum-crypt-sftp-BXL.sh		https://healthchecks.matuszyk.com:8000/ping/945e58f7-96ff-47d8-84f2-20c68e58506b
-rclone-sync-archiwum-crypt-sftp-SS.sh		https://healthchecks.matuszyk.com:8000/ping/2bf6ed9c-c0a9-4799-8f89-92b6c21a335f
-rclone-sync-ksiazki-SS.sh			https://healthchecks.matuszyk.com:8000/ping/1b9b4ab8-3d4b-4ba5-93eb-576cf1d5ec64
-rclone-sync-ksiazki-CHE.sh			https://healthchecks.matuszyk.com:8000/ping/c991fc0e-8193-46dd-836f-1539f3fc0c71
-rclone-sync-DivX-CHE.sh				https://healthchecks.matuszyk.com:8000/ping/e719dd09-1a09-4f1f-afd0-396591b4b92c
-rclone-sync-DivX-SS.sh				https://healthchecks.matuszyk.com:8000/ping/1b139088-6700-4c6b-990d-6781ce7883ed
-rclone-sync-DVDs-SS.sh				https://healthchecks.matuszyk.com:8000/ping/7c74cc6a-3834-4ca2-92d1-2a181b65eab9
-rclone-sync-mp3-crypt-sftp-SS.sh		https://healthchecks.matuszyk.com:8000/ping/6c6876a2-2ab3-4f53-a30a-25e693079965
-rclone-sync-mp3-crypt-sftp-CHE.sh		https://healthchecks.matuszyk.com:8000/ping/f3d01e4a-6042-4f27-9778-499f59fd4f86
-rclone-sync-na_DVD-crypt-sftp-CHE.sh		https://healthchecks.matuszyk.com:8000/ping/39ef80b6-20e6-48ba-89c8-a2559096344e
-rclone-sync-na_DVD-crypt-sftp-SS.sh		https://healthchecks.matuszyk.com:8000/ping/60fbe6f2-2d27-4721-8412-a5addb5891ac
-rclone-sync-SkyPlus-CHE.sh			https://healthchecks.matuszyk.com:8000/ping/0cbf7fec-f055-4457-a012-bffa76b1ad86
-rclone-sync-BBC-CHE.sh				https://healthchecks.matuszyk.com:8000/ping/ab82df65-c50a-4010-b77e-9c17a71f3222
-healthchecks-geoipupdate.sh			https://healthchecks.matuszyk.com:8000/ping/b87a1538-d26a-490c-9882-9f1a710fb486
-sprawdz-czy-reboot-required.sh			https://healthchecks.matuszyk.com:8000/ping/fb874678-58c7-4f11-9c49-fc9fae63f8ff
+healthchecks-ping.sh	        			https://healthchecks.matuszyk.com:8000/ping/54bb4b40-95c6-4cb4-bada-c6f0d596c437
+sprawdz-ile-apt-list--upgradable.sh     		https://healthchecks.matuszyk.com:8000/ping/d43ecd43-acd1-4956-b242-583c39210743
+restic_backup_SS.sh			        	https://healthchecks.matuszyk.com:8000/ping/609cea59-2d8f-4b03-9896-7a61d1df4c57
+update-restic.sh                                        https://healthchecks.matuszyk.com:8000/ping/8ae69ab8-d54a-49f4-bf97-eb2e77e3d0c0
+update-rclone.sh                                        https://healthchecks.matuszyk.com:8000/ping/5510d2b8-13ba-4773-8415-9d5116b38fa6
+healthchecks-swap-usage.sh                              https://healthchecks.matuszyk.com:8000/ping/a2a8e9c4-6b64-4abf-9d7f-e7e4a03aade0
+rclone-sync-archiwum-crypt-sftp-CHE.sh		        https://healthchecks.matuszyk.com:8000/ping/64834214-25ec-487d-8bd8-0aee037da416
+rclone-sync-archiwum-crypt-sftp-BXL.sh		        https://healthchecks.matuszyk.com:8000/ping/945e58f7-96ff-47d8-84f2-20c68e58506b
+rclone-sync-archiwum-crypt-sftp-SS.sh		        https://healthchecks.matuszyk.com:8000/ping/2bf6ed9c-c0a9-4799-8f89-92b6c21a335f
+rclone-sync-ksiazki-SS.sh       			https://healthchecks.matuszyk.com:8000/ping/1b9b4ab8-3d4b-4ba5-93eb-576cf1d5ec64
+rclone-sync-ksiazki-CHE.sh	        		https://healthchecks.matuszyk.com:8000/ping/c991fc0e-8193-46dd-836f-1539f3fc0c71
+rclone-sync-DivX-CHE.sh			        	https://healthchecks.matuszyk.com:8000/ping/e719dd09-1a09-4f1f-afd0-396591b4b92c
+rclone-sync-DivX-SS.sh				        https://healthchecks.matuszyk.com:8000/ping/1b139088-6700-4c6b-990d-6781ce7883ed
+rclone-sync-DVDs-SS.sh  				https://healthchecks.matuszyk.com:8000/ping/7c74cc6a-3834-4ca2-92d1-2a181b65eab9
+rclone-sync-mp3-crypt-sftp-SS.sh	        	https://healthchecks.matuszyk.com:8000/ping/6c6876a2-2ab3-4f53-a30a-25e693079965
+rclone-sync-mp3-crypt-sftp-CHE.sh		        https://healthchecks.matuszyk.com:8000/ping/f3d01e4a-6042-4f27-9778-499f59fd4f86
+rclone-sync-na_DVD-crypt-sftp-CHE.sh	        	https://healthchecks.matuszyk.com:8000/ping/39ef80b6-20e6-48ba-89c8-a2559096344e
+rclone-sync-na_DVD-crypt-sftp-SS.sh     		https://healthchecks.matuszyk.com:8000/ping/60fbe6f2-2d27-4721-8412-a5addb5891ac
+rclone-sync-SkyPlus-CHE.sh      			https://healthchecks.matuszyk.com:8000/ping/0cbf7fec-f055-4457-a012-bffa76b1ad86
+rclone-sync-BBC-CHE.sh		        		https://healthchecks.matuszyk.com:8000/ping/ab82df65-c50a-4010-b77e-9c17a71f3222
+healthchecks-geoipupdate.sh		        	https://healthchecks.matuszyk.com:8000/ping/b87a1538-d26a-490c-9882-9f1a710fb486
+sprawdz-czy-reboot-required.sh			        https://healthchecks.matuszyk.com:8000/ping/fb874678-58c7-4f11-9c49-fc9fae63f8ff
 healthchecks-lvs-sync-status.sh                 
 sprawdz-czy-dziala-strona-www.anna.matuszyk.com.sh      
 sprawdz-czy-dziala-strona-www.ontsolutions.com.sh       
@@ -28,4 +28,4 @@ cron-git-bash-pull.sh                                   https://healthchecks.mat
 cron-git-bash-push.sh                                   https://healthchecks.matuszyk.com:8000/ping/7997bae7-b1ef-4a22-948e-0f217be1675d
 cron-git-bin-pull.sh                                    https://healthchecks.matuszyk.com:8000/ping/385a2c9c-c8c4-4e8d-aa64-73bd8abbb1fb
 cron-git-bin-push.sh                                    https://healthchecks.matuszyk.com:8000/ping/71d1db68-ff58-467f-b980-fa5d15b914e7
-
+healthchecks-aptitude.sh                                https://healthchecks.matuszyk.com:8000/ping/34f94b82-52af-4602-8672-7b36b3298f39
