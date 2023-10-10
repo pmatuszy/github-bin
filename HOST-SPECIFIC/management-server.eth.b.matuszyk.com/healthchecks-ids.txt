@@ -1,12 +1,12 @@
-healthchecks-ping.sh				https://healthchecks.matuszyk.com:8000/ping/b724a082-68c7-410c-aa59-16ded0f26cbe
-sprawdz-ile-apt-list--upgradable.sh		https://healthchecks.matuszyk.com:8000/ping/125b25a3-2e3f-43c4-8bd0-fcd1d152289e
-restic_backup_SS.sh				https://healthchecks.matuszyk.com:8000/ping/99a25120-a45b-4f76-bc0e-e06a4d03bb05
+healthchecks-ping.sh		        		https://healthchecks.matuszyk.com:8000/ping/b724a082-68c7-410c-aa59-16ded0f26cbe
+sprawdz-ile-apt-list--upgradable.sh	        	https://healthchecks.matuszyk.com:8000/ping/125b25a3-2e3f-43c4-8bd0-fcd1d152289e
+restic_backup_SS.sh				        https://healthchecks.matuszyk.com:8000/ping/99a25120-a45b-4f76-bc0e-e06a4d03bb05
 sprawdz-czy-encrypted-jest-zamontowany.sh       
-update-restic.sh                                https://healthchecks.matuszyk.com:8000/ping/db5f5063-5bd5-4247-951b-553b581e4e09
-update-rclone.sh                                https://healthchecks.matuszyk.com:8000/ping/a98be12e-0ad1-4585-9234-92aa933653e2
-healthchecks-swap-usage.sh                      https://healthchecks.matuszyk.com:8000/ping/a273082e-1b31-4706-9b01-0b415ac6abb8
-healthchecks-geoipupdate.sh			https://healthchecks.matuszyk.com:8000/ping/080d6901-3a23-4ff6-b174-66873bb80b2d
-sprawdz-czy-reboot-required.sh			https://healthchecks.matuszyk.com:8000/ping/0b53c02d-f03e-4d01-9e77-ab46aefeeb06
+update-restic.sh                                        https://healthchecks.matuszyk.com:8000/ping/db5f5063-5bd5-4247-951b-553b581e4e09
+update-rclone.sh                                        https://healthchecks.matuszyk.com:8000/ping/a98be12e-0ad1-4585-9234-92aa933653e2
+healthchecks-swap-usage.sh                              https://healthchecks.matuszyk.com:8000/ping/a273082e-1b31-4706-9b01-0b415ac6abb8
+healthchecks-geoipupdate.sh		        	https://healthchecks.matuszyk.com:8000/ping/080d6901-3a23-4ff6-b174-66873bb80b2d
+sprawdz-czy-reboot-required.sh			        https://healthchecks.matuszyk.com:8000/ping/0b53c02d-f03e-4d01-9e77-ab46aefeeb06
 healthchecks-lvs-sync-status.sh                 
 sprawdz-czy-dziala-strona-www.anna.matuszyk.com.sh      
 sprawdz-czy-dziala-strona-www.ontsolutions.com.sh       
@@ -15,3 +15,4 @@ cron-git-bash-pull.sh                                   https://healthchecks.mat
 cron-git-bash-push.sh                                   https://healthchecks.matuszyk.com:8000/ping/f65179fd-db8b-451f-af23-907529f01248
 cron-git-bin-pull.sh                                    https://healthchecks.matuszyk.com:8000/ping/245cc0f7-b98d-4aed-9711-7f354a483ee8
 cron-git-bin-push.sh                                    https://healthchecks.matuszyk.com:8000/ping/cadeeae3-b19c-4175-b919-99ae13739536
+healthchecks-apti5tude.sh                               https://healthchecks.matuszyk.com:8000/ping/17c69cfe-f7d3-47df-b3dd-a509a320998d
