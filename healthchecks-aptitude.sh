@@ -13,11 +13,14 @@ check_if_installed aptitude
 check_if_installed boxes
 
 m=$( echo "${SCRIPT_VERSION}";echo
-     echo $(type -fP aptitude) -y --no-gui update | boxes -a c -d stone
-     $(type -fP aptitude) -y --no-gui update 
+     echo $(type -fP aptitude) -y -q --no-gui update | boxes -a c -d stone
+          $(type -fP aptitude) -y -q --no-gui update 
      echo ; echo
-     echo $(type -fP aptitude) -y --no-gui safe-upgrade | boxes -a c -d stone 
-     $(type -fP aptitude) -y --no-gui safe-upgrade     # "safe-upgrade" will skip kernel updates and distribution upgrades
+     echo $(type -fP aptitude) -y -q --no-gui safe-upgrade | boxes -a c -d stone 
+          $(type -fP aptitude) -y -q --no-gui safe-upgrade       # "safe-upgrade" will skip kernel updates and distribution upgrades
+     echo ; echo
+     echo $(type -fP aptitude) -y -q --no-gui autoclean | boxes -a c -d stone 
+          $(type -fP aptitude) -y -q --no-gui autoclean     
     )
 
 kod_powrotu=$?
