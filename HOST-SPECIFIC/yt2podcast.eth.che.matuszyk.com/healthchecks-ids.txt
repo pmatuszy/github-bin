@@ -1,14 +1,14 @@
-healthchecks-ping.sh				https://healthchecks.matuszyk.com:8000/ping/2a01f582-c7f5-4014-84e2-3d2101514ad7
-ssd-trim.sh  					https://healthchecks.matuszyk.com:8000/ping/b89f48fb-4ec4-494b-afbc-1047e7ee0abc
-sprawdz-czy-dziala-strona-yt2podcast.com.sh     https://healthchecks.matuszyk.com:8000/ping/2248307a-5b7a-46fb-99e4-64a8a74f9376
-sprawdz-ile-apt-list--upgradable.sh		https://healthchecks.matuszyk.com:8000/ping/7c1ee501-db1a-42a8-90bc-4ff4a5e3c4e7
-sprawdz-czy-encrypted-jest-zamontowany.sh       https://healthchecks.matuszyk.com:8000/ping/15f4f191-0aad-44d2-903c-edb8ce171f76
-restic_backup_SS				https://healthchecks.matuszyk.com:8000/ping/f20187e9-79e0-49ed-bea6-ce8306df9520
-update-restic.sh                                https://healthchecks.matuszyk.com:8000/ping/d8874692-7007-43ea-befb-0263e0f0576d
-update-rclone.sh                                https://healthchecks.matuszyk.com:8000/ping/6e1dd3f7-950c-49d5-87b6-78d17b10d6e8
-healthchecks-swap-usage.sh                      https://healthchecks.matuszyk.com:8000/ping/ef2582d2-b1df-4c66-9db9-be92a48ac3db
-zamontuj-encrypted.sh				https://healthchecks.matuszyk.com:8000/ping/15f4f191-0aad-44d2-903c-edb8ce171f76
-sprawdz-czy-reboot-required.sh			https://healthchecks.matuszyk.com:8000/ping/8b724c49-f77d-44ef-903b-5484aec162b0
+healthchecks-ping.sh	        			https://healthchecks.matuszyk.com:8000/ping/2a01f582-c7f5-4014-84e2-3d2101514ad7
+ssd-trim.sh  	        				https://healthchecks.matuszyk.com:8000/ping/b89f48fb-4ec4-494b-afbc-1047e7ee0abc
+sprawdz-czy-dziala-strona-yt2podcast.com.sh             https://healthchecks.matuszyk.com:8000/ping/2248307a-5b7a-46fb-99e4-64a8a74f9376
+sprawdz-ile-apt-list--upgradable.sh     	       	https://healthchecks.matuszyk.com:8000/ping/7c1ee501-db1a-42a8-90bc-4ff4a5e3c4e7
+sprawdz-czy-encrypted-jest-zamontowany.sh               https://healthchecks.matuszyk.com:8000/ping/15f4f191-0aad-44d2-903c-edb8ce171f76
+restic_backup_SS				        https://healthchecks.matuszyk.com:8000/ping/f20187e9-79e0-49ed-bea6-ce8306df9520
+update-restic.sh                                        https://healthchecks.matuszyk.com:8000/ping/d8874692-7007-43ea-befb-0263e0f0576d
+update-rclone.sh                                        https://healthchecks.matuszyk.com:8000/ping/6e1dd3f7-950c-49d5-87b6-78d17b10d6e8
+healthchecks-swap-usage.sh                              https://healthchecks.matuszyk.com:8000/ping/ef2582d2-b1df-4c66-9db9-be92a48ac3db
+zamontuj-encrypted.sh			        	https://healthchecks.matuszyk.com:8000/ping/15f4f191-0aad-44d2-903c-edb8ce171f76
+sprawdz-czy-reboot-required.sh	        		https://healthchecks.matuszyk.com:8000/ping/8b724c49-f77d-44ef-903b-5484aec162b0
 healthchecks-lvs-sync-status.sh                 
 sprawdz-czy-dziala-strona-www.anna.matuszyk.com.sh      
 sprawdz-czy-dziala-strona-www.ontsolutions.com.sh       
@@ -17,4 +17,4 @@ cron-git-bash-pull.sh                                   https://healthchecks.mat
 cron-git-bash-push.sh                                   https://healthchecks.matuszyk.com:8000/ping/ee20659a-5418-4bc8-9d9d-3cb7dedac0aa
 cron-git-bin-pull.sh                                    https://healthchecks.matuszyk.com:8000/ping/9245105c-ff47-4772-a651-0aee33cf9bf6
 cron-git-bin-push.sh                                    https://healthchecks.matuszyk.com:8000/ping/0da27da8-b6e4-46df-adef-cc8fa6018327
-
+healthchecks-aptitude.sh                                
