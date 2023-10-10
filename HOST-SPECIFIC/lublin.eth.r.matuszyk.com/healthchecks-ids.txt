@@ -1,4 +1,4 @@
-healthchecks-ping.sh				https://healthchecks.matuszyk.com:8000/ping/7aa34a1d-039b-4524-8ff2-174ebe1d73ea
+healthchecks-ping.sh		                https://healthchecks.matuszyk.com:8000/ping/7aa34a1d-039b-4524-8ff2-174ebe1d73ea
 ssd-trim.sh  					https://healthchecks.matuszyk.com:8000/ping/7873c9ae-e215-464c-ad7c-f7685cb18b57
 sprawdz-ile-apt-list--upgradable.sh		https://healthchecks.matuszyk.com:8000/ping/eed44c01-67b4-45b6-b82d-3c9a82f81c74
 restic_backup_CHE				https://healthchecks.matuszyk.com:8000/ping/ef7608cc-e8cb-4825-bf2f-7f11f495f7a7
@@ -10,8 +10,8 @@ healthchecks-swap-usage.sh                      https://healthchecks.matuszyk.co
 sprawdz-czy-reboot-required.sh			https://healthchecks.matuszyk.com:8000/ping/e4f0a743-4c84-4101-8603-a6659de0cab1
 healthchecks-lvs-sync-status.sh                 https://healthchecks.matuszyk.com:8000/ping/2bb40078-8085-49ba-928c-c9798b12c007
 ssh-keychain.sh                                 https://healthchecks.matuszyk.com:8000/ping/ca522dc9-5c68-4d6d-99c2-ac1cd5dcef12
-cron-git-bash-pull.sh                                   https://healthchecks.matuszyk.com:8000/ping/068a9d76-38b2-4004-bb9e-a0137f5b6385
-cron-git-bash-push.sh                                   https://healthchecks.matuszyk.com:8000/ping/d7e99cdb-1bf3-4831-9b3c-889cab6b4be9
-cron-git-bin-pull.sh                                    https://healthchecks.matuszyk.com:8000/ping/4336e412-06d2-4c40-9ae8-cb4c1ad54ec1
-cron-git-bin-push.sh                                    https://healthchecks.matuszyk.com:8000/ping/7da5a11a-a34e-4384-9431-15f0166a0f90
-
+cron-git-bash-pull.sh                           https://healthchecks.matuszyk.com:8000/ping/068a9d76-38b2-4004-bb9e-a0137f5b6385
+cron-git-bash-push.sh                           https://healthchecks.matuszyk.com:8000/ping/d7e99cdb-1bf3-4831-9b3c-889cab6b4be9
+cron-git-bin-pull.sh                            https://healthchecks.matuszyk.com:8000/ping/4336e412-06d2-4c40-9ae8-cb4c1ad54ec1
+cron-git-bin-push.sh                            https://healthchecks.matuszyk.com:8000/ping/7da5a11a-a34e-4384-9431-15f0166a0f90
+healthchecks-aptitude.sh                        https://healthchecks.matuszyk.com:8000/ping/aa95520d-3353-40bb-b8d3-692bf57dec32
