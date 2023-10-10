@@ -1,15 +1,15 @@
-healthchecks-ping.sh				https://healthchecks.matuszyk.com:8000/ping/0b6ea5e7-1b98-403c-bc5f-5cb38939ba39
-backup	  					https://healthchecks.matuszyk.com:8000/ping/a9f91f36-bda7-4e69-9fd5-d3ad1e3278ca
-ssd-trim.sh  					https://healthchecks.matuszyk.com:8000/ping/fbae2ffa-4096-44c9-a9a7-42b74aa05dda
-sprawdz-ile-apt-list--upgradable.sh		https://healthchecks.matuszyk.com:8000/ping/0bb22066-6290-4f4c-af25-e7a9d740cc99
-restic_backup_SS				https://healthchecks.matuszyk.com:8000/ping/a9f91f36-bda7-4e69-9fd5-d3ad1e3278ca
-sprawdz-czy-encrypted-jest-zamontowany.sh       https://healthchecks.matuszyk.com:8000/ping/f263e1cb-8e90-426a-af07-0ebc6062960e
-apc-status.sh					https://healthchecks.matuszyk.com:8000/ping/8d7ce79b-a81d-4963-aa39-19620e8f67b6
-update-restic.sh                                https://healthchecks.matuszyk.com:8000/ping/c199ae12-ab95-44f0-82ee-9dc211f5b0b8
-update-rclone.sh                                https://healthchecks.matuszyk.com:8000/ping/1e0099d8-6dae-4cb6-8ba3-4d99f0a1a853
-healthchecks-swap-usage.sh                      https://healthchecks.matuszyk.com:8000/ping/4b09583f-aa5e-4317-853b-f16b6af89219
+healthchecks-ping.sh	        			https://healthchecks.matuszyk.com:8000/ping/0b6ea5e7-1b98-403c-bc5f-5cb38939ba39
+backup	  			        		https://healthchecks.matuszyk.com:8000/ping/a9f91f36-bda7-4e69-9fd5-d3ad1e3278ca
+ssd-trim.sh  				        	https://healthchecks.matuszyk.com:8000/ping/fbae2ffa-4096-44c9-a9a7-42b74aa05dda
+sprawdz-ile-apt-list--upgradable.sh		        https://healthchecks.matuszyk.com:8000/ping/0bb22066-6290-4f4c-af25-e7a9d740cc99
+restic_backup_SS        				https://healthchecks.matuszyk.com:8000/ping/a9f91f36-bda7-4e69-9fd5-d3ad1e3278ca
+sprawdz-czy-encrypted-jest-zamontowany.sh               https://healthchecks.matuszyk.com:8000/ping/f263e1cb-8e90-426a-af07-0ebc6062960e
+apc-status.sh		        			https://healthchecks.matuszyk.com:8000/ping/8d7ce79b-a81d-4963-aa39-19620e8f67b6
+update-restic.sh                                        https://healthchecks.matuszyk.com:8000/ping/c199ae12-ab95-44f0-82ee-9dc211f5b0b8
+update-rclone.sh                                        https://healthchecks.matuszyk.com:8000/ping/1e0099d8-6dae-4cb6-8ba3-4d99f0a1a853
+healthchecks-swap-usage.sh                              https://healthchecks.matuszyk.com:8000/ping/4b09583f-aa5e-4317-853b-f16b6af89219
 healthchecks-lvs-sync-status.sh                 
-sprawdz-czy-reboot-required.sh 			https://healthchecks.matuszyk.com:8000/ping/7b8fdcf9-affb-4ca9-b2bf-9597566b0030
+sprawdz-czy-reboot-required.sh 			        https://healthchecks.matuszyk.com:8000/ping/7b8fdcf9-affb-4ca9-b2bf-9597566b0030
 sprawdz-czy-dziala-strona-www.anna.matuszyk.com.sh      
 sprawdz-czy-dziala-strona-www.ontsolutions.com.sh       
 ssh-keychain.sh						https://healthchecks.matuszyk.com:8000/ping/a8ced6d5-dad0-4030-8cb3-c8c1b12c3707	
@@ -17,4 +17,4 @@ cron-git-bash-pull.sh                                   https://healthchecks.mat
 cron-git-bash-push.sh                                   https://healthchecks.matuszyk.com:8000/ping/a187df7a-76f7-41d9-81a1-6a32543222c9
 cron-git-bin-pull.sh                                    https://healthchecks.matuszyk.com:8000/ping/4e30a5c3-f27c-4e57-97c4-42ccb0726c7a
 cron-git-bin-push.sh                                    https://healthchecks.matuszyk.com:8000/ping/ae34a8e2-2661-4821-9a03-ea18f8d8db7a
-
+healthchecks-aptitude.sh                                https://healthchecks.matuszyk.com:8000/ping/383395fb-e8ee-44a1-9899-85d0de5d1ffe
