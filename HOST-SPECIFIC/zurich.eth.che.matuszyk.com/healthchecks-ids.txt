@@ -1,21 +1,22 @@
-healthchecks-ping.sh				https://healthchecks.matuszyk.com:8000/ping/f0a6654c-802b-4a8d-8fdf-7821911d60ad
-ssd-trim.sh  					https://healthchecks.matuszyk.com:8000/ping/203eadb9-300c-44bf-a3a7-b24300504fd4
-sprawdz-czy-dziala-server-vpn.sh                https://healthchecks.matuszyk.com:8000/ping/ef0de80f-f6ae-449a-bf03-b3c6ec275093
-sprawdz-ile-apt-list--upgradable.sh		https://healthchecks.matuszyk.com:8000/ping/baf1dd88-f200-4fe2-99e6-a4b8f00d49b6
-sprawdz-czy-dziala-tor-relay.sh			https://healthchecks.matuszyk.com:8000/ping/1d32b995-587f-4737-aae6-e04fb8b32649
-sprawdz-czy-encrypted-jest-zamontowany.sh       https://healthchecks.matuszyk.com:8000/ping/88d505a5-5621-48bf-a3dd-0dd790aeac2d
-update-restic.sh                                https://healthchecks.matuszyk.com:8000/ping/5c2adccc-aa91-41eb-9266-ff9b019f7e8c
-restic_backup_SS				https://healthchecks.matuszyk.com:8000/ping/e9cf10a3-266c-48fa-8608-ce538add187b
-update-rclone.sh                                https://healthchecks.matuszyk.com:8000/ping/27874c16-ca0b-463c-8d5b-0261c18ffb12
-healthchecks-swap-usage.sh                      https://healthchecks.matuszyk.com:8000/ping/8f4e0d66-fea6-435b-a795-58a46e30ff9e
-healthchecks-lvs-sync-status.sh                 https://healthchecks.matuszyk.com:8000/ping/79bc3488-6bbf-48e7-8f2b-602e603b2a42
-healthchecks-smartd.sh				https://healthchecks.matuszyk.com:8000/ping/09e57300-a480-4017-9939-6500d23ce799
-sprawdz-ssh-config.sh				https://healthchecks.matuszyk.com:8000/ping/86da3b65-d1c0-4523-851a-35e60e0a5cdd	
+healthchecks-ping.sh		        		https://healthchecks.matuszyk.com:8000/ping/f0a6654c-802b-4a8d-8fdf-7821911d60ad
+ssd-trim.sh  		        			https://healthchecks.matuszyk.com:8000/ping/203eadb9-300c-44bf-a3a7-b24300504fd4
+sprawdz-czy-dziala-server-vpn.sh                        https://healthchecks.matuszyk.com:8000/ping/ef0de80f-f6ae-449a-bf03-b3c6ec275093
+sprawdz-ile-apt-list--upgradable.sh	        	https://healthchecks.matuszyk.com:8000/ping/baf1dd88-f200-4fe2-99e6-a4b8f00d49b6
+sprawdz-czy-dziala-tor-relay.sh	        		https://healthchecks.matuszyk.com:8000/ping/1d32b995-587f-4737-aae6-e04fb8b32649
+sprawdz-czy-encrypted-jest-zamontowany.sh               https://healthchecks.matuszyk.com:8000/ping/88d505a5-5621-48bf-a3dd-0dd790aeac2d
+update-restic.sh                                        https://healthchecks.matuszyk.com:8000/ping/5c2adccc-aa91-41eb-9266-ff9b019f7e8c
+restic_backup_SS				        https://healthchecks.matuszyk.com:8000/ping/e9cf10a3-266c-48fa-8608-ce538add187b
+update-rclone.sh                                        https://healthchecks.matuszyk.com:8000/ping/27874c16-ca0b-463c-8d5b-0261c18ffb12
+healthchecks-swap-usage.sh                              https://healthchecks.matuszyk.com:8000/ping/8f4e0d66-fea6-435b-a795-58a46e30ff9e
+healthchecks-lvs-sync-status.sh                         https://healthchecks.matuszyk.com:8000/ping/79bc3488-6bbf-48e7-8f2b-602e603b2a42
+healthchecks-smartd.sh  				https://healthchecks.matuszyk.com:8000/ping/09e57300-a480-4017-9939-6500d23ce799
+sprawdz-ssh-config.sh				        https://healthchecks.matuszyk.com:8000/ping/86da3b65-d1c0-4523-851a-35e60e0a5cdd	
 sprawdz-czy-dziala-strona-www.anna.matuszyk.com.sh      
 sprawdz-czy-dziala-strona-www.ontsolutions.com.sh       
-ssh-keychain.sh					https://healthchecks.matuszyk.com:8000/ping/86da3b65-d1c0-4523-851a-35e60e0a5cdd
+ssh-keychain.sh					        https://healthchecks.matuszyk.com:8000/ping/86da3b65-d1c0-4523-851a-35e60e0a5cdd
 cron-git-bash-pull.sh                                   https://healthchecks.matuszyk.com:8000/ping/88cfb101-64db-419d-ab17-f479c52dc676
 cron-git-bash-push.sh                                   https://healthchecks.matuszyk.com:8000/ping/f2628c5b-e996-4863-9a4d-831e126a7af7
 cron-git-bin-pull.sh                                    https://healthchecks.matuszyk.com:8000/ping/52340930-d9f0-4495-b69e-cb1f151edefb
 cron-git-bin-push.sh                                    https://healthchecks.matuszyk.com:8000/ping/37466a02-58a5-44a0-bbdd-ddb509d4d014
 sprawdz-czy-reboot-required.sh				https://healthchecks.matuszyk.com:8000/ping/48479152-2318-499d-ba05-0c9b8371172f
+healthchecks-aptitude.sh                                https://healthchecks.matuszyk.com:8000/ping/3ae2f9c4-e74a-4ef2-9010-af527ab9dccb
