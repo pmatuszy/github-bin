@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2023.10.10 - v. 1.5 - bugfix: removed hardcoded HEALTHCHECKS_FILE
 # 2023.05.22 - v. 1.4 - added printing of the script name, added NO_STARTUP_DELAY startup parameter
 # 2023.04.11 - v. 1.3 - added printing of the script name
 # 2023.02.17 - v. 1.2 - added SCRIPT_VERSION env variable
