@@ -13,7 +13,8 @@ screen -t top 0 top
 screen -t "vnstat -l"                          1 vnstat -l
 screen -t iostat                               2 iostat --no-color 1
 screen -t "nagrywaj-tokfm.sh"                  3 /root/bin/nagrywaj-tokfm.sh
-screen -t "signal-daemon-log-TO-URUCHAMIAC.sh" 4 /root/bin/signal-daemon-log-TO-URUCHAMIAC.sh
+screen -t "nagrywaj-kijow.sh"                  4 /root/bin/nagrywaj-kijow.sh
+screen -t "signal-daemon-log-TO-URUCHAMIAC.sh" 5 /root/bin/signal-daemon-log-TO-URUCHAMIAC.sh
 
 bindkey -k F2 next
 bindkey -k F1 prev
