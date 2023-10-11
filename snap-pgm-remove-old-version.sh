@@ -28,7 +28,7 @@ echo "(PGM) Snap released disabled which will be removed:" | boxes -a c -d stone
 snap list --all | grep disabled
 echo 
 
-snap list --all |grep -q disabled 
+snap list --all | strings | grep -q disabled 
 
 kod_powrotu=$?
 
