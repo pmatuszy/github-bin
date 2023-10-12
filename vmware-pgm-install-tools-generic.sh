@@ -53,9 +53,9 @@ if (( $? != 0 )) ; then
 fi
 
 {
-echo -n "vm ip address (info from vmrun)         : " ;  vmrun getGuestIPAddress "${VM_PATH}"
-echo -n "vm vmware tools state (info from vmrun) : " ;  vmrun checkToolsState "${VM_PATH}"
-vmrun installtools "${VM_PATH}" >/dev/null & 
+echo -n "vm ip address (info from vmrun)         : " ;  vmrun getGuestIPAddress "${VM_PATH}" ; echo $?
+echo -n "vm vmware tools state (info from vmrun) : " ;  vmrun checkToolsState "${VM_PATH}" ; $?
+# vmrun installtools "${VM_PATH}" >/dev/null & 
 }
 
 {
@@ -63,8 +63,8 @@ echo ; echo "Please wait for the script (/root/bin/vmware-installtools-vm.sh) to
 echo ; 
 ssh -o ConnectTimeout=${SSH_CONN_TIMEOUT}  ${VM_IP} "/root/bin/vmware-installtools-vm.sh" >/dev/null
 echo ; echo 
-echo -n "vm ip address (info from vmrun)         : " ;  vmrun getGuestIPAddress "${VM_PATH}"
-echo -n "vm vmware tools state (info from vmrun) : " ;  vmrun checkToolsState "${VM_PATH}"
+echo -n "vm ip address (info from vmrun)         : " ;  vmrun getGuestIPAddress "${VM_PATH}" ; echo $?
+echo -n "vm vmware tools state (info from vmrun) : " ;  vmrun checkToolsState "${VM_PATH}" ; echo $?
 echo
 }
 
