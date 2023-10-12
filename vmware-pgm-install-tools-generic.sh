@@ -53,9 +53,17 @@ if (( $? != 0 )) ; then
 fi
 
 {
-echo -n "vm ip address (info from vmrun)         : " ;  vmrun getGuestIPAddress "${VM_PATH}" ; echo $?
-echo -n "vm vmware tools state (info from vmrun) : " ;  vmrun checkToolsState "${VM_PATH}" ; echo $?
-# vmrun installtools "${VM_PATH}" >/dev/null & 
+echo -n "vm ip address (info from vmrun)         : " ;  vmrun getGuestIPAddress "${VM_PATH}"
+return_code1=$?
+echo -n "vm vmware tools state (info from vmrun) : " ;  vmrun checkToolsState "${VM_PATH}"
+return_code2=$?
+
+if (( $return_code1 > 0 )) ||  (( $return_code2 > 0 ));then
+  vmrun installtools "${VM_PATH}" >/dev/null & 
+else
+  echo "(PGM) No need to install vmware tools as the status is good..."
+  exit 0
+fi
 }
 
 {
@@ -63,8 +71,10 @@ echo ; echo "Please wait for the script (/root/bin/vmware-installtools-vm.sh) to
 echo ; 
 # ssh -o ConnectTimeout=${SSH_CONN_TIMEOUT}  ${VM_IP} "/root/bin/vmware-installtools-vm.sh" >/dev/null
 echo ; echo 
-echo -n "vm ip address (info from vmrun)         : " ;  vmrun getGuestIPAddress "${VM_PATH}" ; echo $?
-echo -n "vm vmware tools state (info from vmrun) : " ;  vmrun checkToolsState "${VM_PATH}" ; echo $?
+echo -n "vm ip address (info from vmrun)         : " ;  vmrun getGuestIPAddress "${VM_PATH}"
+return_code1=$?
+echo -n "vm vmware tools state (info from vmrun) : " ;  vmrun checkToolsState "${VM_PATH}"
+return_code2=$?
 echo
 }
 
