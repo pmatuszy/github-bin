@@ -32,7 +32,7 @@ snap list --all | strings | grep -q disabled
 
 kod_powrotu=$?
 
-if (( $kod_powrotu == 0 )); then
+if (( $kod_powrotu != 0 )); then
   echo NONE; echo
   exit 0
 fi
