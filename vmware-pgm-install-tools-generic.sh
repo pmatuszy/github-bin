@@ -61,7 +61,7 @@ echo -n "vm vmware tools state (info from vmrun) : " ;  vmrun checkToolsState "$
 {
 echo ; echo "Please wait for the script (/root/bin/vmware-installtools-vm.sh) to finish"
 echo ; 
-ssh -o ConnectTimeout=${SSH_CONN_TIMEOUT}  ${VM_IP} "/root/bin/vmware-installtools-vm.sh" >/dev/null
+# ssh -o ConnectTimeout=${SSH_CONN_TIMEOUT}  ${VM_IP} "/root/bin/vmware-installtools-vm.sh" >/dev/null
 echo ; echo 
 echo -n "vm ip address (info from vmrun)         : " ;  vmrun getGuestIPAddress "${VM_PATH}" ; echo $?
 echo -n "vm vmware tools state (info from vmrun) : " ;  vmrun checkToolsState "${VM_PATH}" ; echo $?
