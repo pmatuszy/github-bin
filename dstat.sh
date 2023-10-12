@@ -14,6 +14,6 @@ fi
 
 clear 
 
-dstat -tcdnmg -D mmcblk0,nvme0n1 -N ens33,eth0,eno1 -C total --top-cpu --top-io --top-mem --cpufreq --bw -f 5
+dstat -tcdnmg -D mmcblk0,nvme0n1,/dev/sd* -N ens33,eth0,eno1 -C total --top-cpu --top-io --top-mem --cpufreq --bw -f 5
 
 . /root/bin/_script_footer.sh
