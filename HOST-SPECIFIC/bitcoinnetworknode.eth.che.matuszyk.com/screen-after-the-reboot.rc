@@ -13,7 +13,7 @@ screen -t top 0 top
 screen -t "vnstat -l"              1 vnstat -l
 screen -t iostat                   2 iostat --no-color 1
 screen -t "tail bitcoin"           3 tail -F /worek/litecoincash/litecoincash-data/debug.log
-screen -t "run bitcoin"            4 su - bitcoin"     -c "./run-bitcoinnet.sh"
+screen -t "run bitcoin"            4 su - bitcoin      -c "./run-bitcoinnet.sh"
 screen -t "tail litecoincash"      5 tail -F /worek/litecoincash/litecoincash-data/debug.log
 screen -t "run litecoincash"       6 su - litecoincash -c "./run-litecoincash.sh"
 
