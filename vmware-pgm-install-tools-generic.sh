@@ -20,8 +20,6 @@ if (( $? != 0 )); then
   exit 1
 fi
 
-
-
 if [ -f /root/SECRET/vmware-pass.sh ];then
   . /root/SECRET/vmware-pass.sh
 fi

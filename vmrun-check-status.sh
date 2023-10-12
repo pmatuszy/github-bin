@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2023.10.12 - v. 0.8 - output is beautified
 # 2023.05.09 - v. 0.7 - added checking if the script is run on the physical machine
 # 2023.03.15 - v. 0.6 - bugfix: if ip address is 'unknown' then we raise the error
 # 2023.02.28 - v. 0.5 - curl with kod_powrotu
@@ -39,25 +40,28 @@ fi
 spr_ip_address() {
  
   blad=0
+  if [ ! -z "${TPM_PASS:-}" ];then
+    echo "vmrun -vp ********** getGuestIPAddress $p nogui" | boxes -a l -d ada-cmt ; echo 
+  else
+    echo "vmrun getGuestIPAddress $p nogui" | boxes -a l -d ada-cmt ; echo 
+  fi
 
   for ((retry=0 ; retry<$how_many_retries ; retry++));do
     if [ ! -z "${TPM_PASS:-}" ];then
-      echo "vmrun -vp ********** getGuestIPAddress $p nogui"
       address=$(vmrun -vp "${TPM_PASS}" getGuestIPAddress $p nogui)
     else
-      echo "vmrun getGuestIPAddress $p nogui"
       address=$(vmrun getGuestIPAddress $p nogui)
     fi
-    if (( $? != 0 )); then
-      echo ; echo "(PGM) vmrun finished with ERRORS !!!!!!"; echo
+    if (( $? != 0 )) && (( retry == $how_many_retries-1 )); then
+      echo "(PGM) vmrun finished with ERRORS !!!!!!"
+      echo "  $address" ; echo 
       blad=1
     fi
     if [[ "${address}" =~ "Error" ]] || [[ "${address}" =~ "unknown" ]] ;then
-      echo "  spr_ip_address(): cos nie tak - wynik: $address"
       blad=1
     else
-      echo "IP Address = $address (PGM)"
-      return 0
+      echo "IP Address = $address (PGM)" ; echo
+      break
     fi
     sleep $retry_delay
   done
@@ -70,20 +74,24 @@ spr_vmware_tools() {
  
   blad=0
 
+  if [ ! -z "${TPM_PASS:-}" ];then
+    echo "vmrun -vp ********** checkToolsState $p nogui"  | boxes -a l -d ada-cmt ; echo
+  else
+    echo "vmrun checkToolsState $p nogui"  | boxes -a l -d ada-cmt ; echo
+  fi
+
   for ((retry=0 ; retry<$how_many_retries ; retry++));do
     if [ ! -z "${TPM_PASS:-}" ];then
-      echo "vmrun -vp ********** checkToolsState $p nogui"
       status=$(vmrun -vp "${TPM_PASS}" checkToolsState $p nogui)
     else
-      echo "vmrun checkToolsState $p nogui"
       status=$(vmrun checkToolsState $p nogui)
     fi
     if (( $? != 0 )); then
       echo ; echo "(PGM) vmrun finished with ERRORS !!!!!!"; echo
       blad=1
     fi
-    if [ "${status}" != "running" ];then
-      echo "spr_vmware_tools(): cos nie tak - wynik: $status"
+    if [[ "${status}" != "running" ]] && (( retry == $how_many_retries-1 )) ;then
+      echo "  $status" ; echo 
       blad=1
     else
       echo "vmare Tools are running (OK) (PGM)"
@@ -101,7 +109,7 @@ spr_vmware_tools() {
 export DISPLAY=
 
 m=$(
-  cos_nie_tak=0
+  export cos_nie_tak=0
   cat  $0|grep -e '# *20[123][0-9]'|head -n 1 | awk '{print "script version: " $5 " (dated "$2")"}' ; echo
   echo " "; echo "aktualna data: `date '+%Y.%m.%d %H:%M'`" ; echo ;
   echo vmrun list | boxes -s 40x5 -a c
@@ -114,10 +122,10 @@ m=$(
 
   for p in `vmrun list|grep vmx|sort`;do
     echo
-    echo "checking $p (PGM)" | boxes -s 40x5 -a c
-    spr_ip_address   $p
+    echo "checking $p (PGM)" | boxes -a l -d stone
+    spr_ip_address   $p 
     spr_vmware_tools $p
-  done;
+  done; 
   exit $cos_nie_tak
   )
 
