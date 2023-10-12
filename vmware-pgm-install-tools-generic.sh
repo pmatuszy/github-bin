@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2023.10.12 - v. 0.2 - if status is good there is no need to reinstall 
 # 2023.09.06 - v. 0.1 - initial release
 
 . /root/bin/_script_header.sh
