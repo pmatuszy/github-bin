@@ -14,7 +14,7 @@ fi
 
 clear 
 
-if (( $# == 0 ))7;then
+if (( $# == 0 ));then
  dstat -tcdnmg -D mmcblk0,nvme0n1,/dev/sd* -N ens33,eth0,eno1 -C total --top-cpu --top-io --top-mem --cpufreq -C total --bw --nocolor -f 1
 else
  dstat -tcdnmg -D mmcblk0,nvme0n1,/dev/sd* -N ens33,eth0,eno1 -C total --top-cpu --top-io --top-mem --cpufreq -C total --bw --nocolor --noupdates -f $1
