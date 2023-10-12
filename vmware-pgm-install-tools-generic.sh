@@ -54,7 +54,7 @@ fi
 
 {
 echo -n "vm ip address (info from vmrun)         : " ;  vmrun getGuestIPAddress "${VM_PATH}" ; echo $?
-echo -n "vm vmware tools state (info from vmrun) : " ;  vmrun checkToolsState "${VM_PATH}" ; $?
+echo -n "vm vmware tools state (info from vmrun) : " ;  vmrun checkToolsState "${VM_PATH}" ; echo $?
 # vmrun installtools "${VM_PATH}" >/dev/null & 
 }
 
