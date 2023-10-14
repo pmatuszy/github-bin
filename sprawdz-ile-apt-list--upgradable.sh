@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2023.10.14 - v. 0.5 - increased sleep delay from 100 to 600s
 # 2023.01.03 - v. 0.4 - dodano random delay jesli skrypt jest wywolywany nieinteraktywnie
 # 2022.06.15 - v. 0.3 - dodanie czekania jesli apt-get update jest wykonywany w tym samym czasie przez inny proces
 # 2022.05.05 - v. 0.2 - dodany uptime i hostname
@@ -16,7 +17,7 @@ ile_max_by_nie_raportowac=45
 /usr/bin/apt-get update &>/dev/null      # &> filename redirects STDOUT and STDERR to filename
 kod_powrotu=$?
 if [ $kod_powrotu -ne 0 ]; then
-  sleep 100
+  sleep 600
 fi
 
 # let's give it another chance
