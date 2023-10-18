@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2023.10.18 - v. 0.4 - added possibility to pause checking until a specific date
 # 2023.07.27 - v. 0.3 - bugfix: added ssh 2>/dev/null redirection in case the script is not able to connect
 # 2023.07.05 - v. 0.2 - added printing of the public IP address if there is a problem
 # 2023.06.29 - v. 0.1 - initial release
@@ -8,6 +9,11 @@
 
 export adres_publiczny_z_pl="31.179.173.42"
 export ROUTER_IP="192.168.200.230"
+export PAUSE_UP_TO_DATE="202311101"     # bez kropek YYYYMMDD
+
+if (( "$(date +%Y%m%d)" <= "${PAUSE_UP_TO_DATE}" ));then
+  exit 0
+fi
 
 if [ -f "$HEALTHCHECKS_FILE" ];then
   HEALTHCHECK_URL=$(cat "$HEALTHCHECKS_FILE" |grep "^`basename $0`"|awk '{print $2}')
