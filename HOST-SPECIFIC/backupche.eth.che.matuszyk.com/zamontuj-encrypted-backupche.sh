@@ -111,7 +111,8 @@ sleep 1
 
 zamontuj_fs_MASTER /encrypted.luks2                     	/encrypted 			noatime
 zamontuj_fs_MASTER /dev/vg_crypto/lv_do_luksa_16tb      	/mnt/luks-raid1-16tb		noatime
-zamontuj_fs_MASTER /dev/vg_crypto/lv_do_luksa_16tb_another 	/mnt/luks-raid1-16tb_another 	noatime
+# zamontuj_fs_MASTER /dev/vg_crypto/lv_do_luksa_16tb_another 	/mnt/luks-raid1-16tb_another 	noatime
+zamontuj_fs_MASTER /dev/vg_crypto_20230925/lv_crypto_20230925 	/mnt/luks-raid1-16tb_another 	noatime
 
 mount -o bind,noatime /mnt/luks-raid1-16tb/backup1/rclone_user/_restic /rclone-jail/storage-master/backup1
 mount -o bind,noatime /mnt/luks-raid1-16tb/replication1/rclone_user/_rclone/ /rclone-jail/storage-master/replication1
