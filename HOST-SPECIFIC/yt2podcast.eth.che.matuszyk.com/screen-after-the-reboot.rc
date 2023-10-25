@@ -11,10 +11,10 @@ screen -t "vnstat -l"                                         1 vnstat -l
 # screen -t "arc_summary -s arc"                              2 arc_summary -s arc
 screen -t iostat                                              3 iostat --no-color 1
 screen -t "bmon -p eth0"                                      4 bmon -p eth0
-screen -t "jproc-watch.sh"                                    5 /bin/bash -c /root/bin/jproc-watch.sh
-screen -t "check-forever-for-lighttpd-config-file-change.sh"  6 /bin/bash -c check-forever-for-lighttpd-config-file-change.sh
-screen -t "podsync"                                           7 /bin/bash -c "su - podsync"
-screen -t "monitoruj-youtube-dl.sh"                           8 /bin/bash -c "/root/bin/monitoruj-youtube-dl.sh"
+screen -t "jproc-watch.sh"                                    5 /bin/bash -c    /root/bin/jproc-watch.sh
+screen -t "check-forever-for-lighttpd-config-file-change.sh"  6 /bin/bash -c    check-forever-for-lighttpd-config-file-change.sh
+screen -t "podsync"                                           7 su - podsync -c "/home/podsync/bin/feeds-start.sh"
+screen -t "monitoruj-youtube-dl.sh"                           8 /bin/bash -c    "/root/bin/monitoruj-youtube-dl.sh"
 
 bindkey -k F2 next
 bindkey -k F1 prev
