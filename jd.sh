@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2023.10.25 - v. 1.3 - added check if hdparm is installed
 # 2023.09.02 - v. 1.2 - bugfix: better OS detection 
 # 2023.07.19 - v. 1.1 - bugfix: handling wrong partition table (it was prompted, now it is removed with echo q
 # 2023.07.19 - v. 1.0 - bugfix: egrep and $? checking 
@@ -21,6 +22,7 @@ if [[ ! -f /etc/os-release && ! -f /etc/redhat-release ]] ; then
 fi
 
 check_if_installed nvme nvme-cli
+check_if_installed hdparm
 
 echo 
 
