@@ -39,8 +39,8 @@ echo "${URL}" > "${zawartosc_maila}"
 
 /usr/bin/timeout --foreground --preserve-status --kill-after=$kill_after $timeout /usr/bin/dbus-send --session --type=method_call --print-reply --dest="org.asamk.Signal" /org/asamk/Signal org.asamk.Signal.sendMessage string:"${temat_maila}" array:string:"${plik_po_cropie}" string:+41763691467
 
-/usr/bin/timeout --foreground --preserve-status --kill-after=$kill_after $timeout /usr/bin/dbus-send --session --type=method_call --print-reply --dest="org.asamk.Signal" /org/asamk/Signal org.asamk.Signal.sendMessage string:"${temat_maila}" array:string:"${plik_po_cropie}" string:+48732250516
+# /usr/bin/timeout --foreground --preserve-status --kill-after=$kill_after $timeout /usr/bin/dbus-send --session --type=method_call --print-reply --dest="org.asamk.Signal" /org/asamk/Signal org.asamk.Signal.sendMessage string:"${temat_maila}" array:string:"${plik_po_cropie}" string:+48732250516
 
-/usr/bin/timeout --foreground --preserve-status --kill-after=$kill_after $timeout /usr/bin/dbus-send --session --type=method_call --print-reply --dest="org.asamk.Signal" /org/asamk/Signal org.asamk.Signal.sendMessage string:"${temat_maila}" array:string:"${plik_po_cropie}" string:+48667734457
+# /usr/bin/timeout --foreground --preserve-status --kill-after=$kill_after $timeout /usr/bin/dbus-send --session --type=method_call --print-reply --dest="org.asamk.Signal" /org/asamk/Signal org.asamk.Signal.sendMessage string:"${temat_maila}" array:string:"${plik_po_cropie}" string:+48667734457
 
 rm "${plik_po_cropie}" "${plik_bez_cropa}"
