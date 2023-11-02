@@ -81,7 +81,6 @@ zamontuj_fs_MASTER /encrypted.luks2                                /encrypted   
 # icybox zostal zniszczony 07.08.2023
 # zamontuj_fs_MASTER /dev/vg_crypto_icybox10/lv_luks_icybox10 /mnt/luks-icybox10  noatime
 
-
 zamontuj_fs_MASTER /dev/vg_crypto_20230807/lv_luks_20230807   /mnt/luks-raid1-A  noatime
 
 # !!! buffalo2 ma SMR dyski, wiec inaczej je montujemy !!!!
