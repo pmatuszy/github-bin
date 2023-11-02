@@ -73,12 +73,27 @@ vgchange -a y
 sleep 1
 
 # zamontuj_fs_MASTER /dev/vg_crypto_raidsonic/lv_do_luksa_raidsonic  /mnt/luks-raidsonic noatime
+# zamontuj_fs_MASTER /dev/vg_20230906_skasujto/lv_20230906_skasujto  /mnt/luks-temp  noatime
+# zamontuj_fs_MASTER /dev/vg_crypto_20230925/lv_crypto_20230925      /mnt/luks-worek noatime
 
-zamontuj_fs_MASTER /dev/vg_20230906_skasujto/lv_20230906_skasujto  /mnt/luks-temp  noatime
-zamontuj_fs_MASTER /dev/vg_crypto_20230925/lv_crypto_20230925      /mnt/luks-worek noatime
+zamontuj_fs_MASTER /dev/vg_crypto_20230807/lv_luks_20230807   /mnt/luks-raid1-A  noatime
+
+# !!! buffalo2 ma SMR dyski, wiec inaczej je montujemy !!!!
+zamontuj_fs_MASTER /dev/vg_crypto_buffalo2/lv_do_luksa_buffalo2    /mnt/luks-buffalo2  noatime,data=writeback,barrier=0,nobh,errors=remount-ro
+
 
 echo
-df -h /encrypted /mnt/luks-temp /mnt/luks-worek
+df -h /encrypted /mnt/luks-buffalo2 /mnt/luks-raidsonic
+
+echo ; echo
+echo "restart nfs servera, bo zwykle jest problem polegajacy na tym, ze service nie startuje od razu, bo nie sa zamontowane exportowane fs'y"
+echo "wiec teraz po ich zamontowaniu, restartujemy serwis..."
+echo ; echo
+systemctl restart nfs-kernel-server
+
+echo
+exportfs -av
+echo
 
 . /root/bin/_script_footer.sh
 
