@@ -9,7 +9,7 @@
 
 export adres_publiczny_z_pl="31.179.173.42"
 export ROUTER_IP="192.168.200.230"
-export PAUSE_UP_TO_DATE="202311101"     # bez kropek YYYYMMDD
+export PAUSE_UP_TO_DATE="20231102"     # bez kropek YYYYMMDD
 
 if (( "$(date +%Y%m%d)" <= "${PAUSE_UP_TO_DATE}" ));then
   exit 0
