@@ -22,5 +22,4 @@ cron-git-bin-push.sh                                    https://healthchecks.mat
 kopiuj-BBC4.sh
 kopiuj-tokfm.sh
 kopiuj-webcamy.sh
-spr-pptp-asus-CHE.sh                                    https://healthchecks.matuszyk.com:8000/ping/ae10993e-0436-4903-8fbc-6346fbff6d41
 healthchecks-aptitude.sh                                https://healthchecks.matuszyk.com:8000/ping/5665d073-e3ce-484c-959c-0e7f3d774fe1
