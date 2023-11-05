@@ -33,4 +33,4 @@ sciagnij-backupy.sh-EdgeR_kat1                       https://healthchecks.matusz
 sciagnij-backupy.sh-EdgeR_kat2                       https://healthchecks.matuszyk.com:8000/ping/bd202d2d-33f9-4022-b6f5-6b05988259bf
 sciagnij-backupy.sh-EdgeR_kat3                       https://healthchecks.matuszyk.com:8000/ping/8e28c6b7-b7f9-4d14-9e39-28db718b3cb4
 spr-pptp-asus-CHE.sh                                 https://healthchecks.matuszyk.com:8000/ping/ae10993e-0436-4903-8fbc-6346fbff6d41
-
+apc-status.sh                                        https://healthchecks.matuszyk.com:8000/ping/b45f124c-bf36-45ad-8ff7-8408c089ed7a
