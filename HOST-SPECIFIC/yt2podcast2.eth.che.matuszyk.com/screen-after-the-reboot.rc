@@ -13,7 +13,7 @@ screen -t iostat                                              3 iostat --no-colo
 screen -t "bmon -p eth0"                                      4 bmon -p ens32
 screen -t "jproc-watch.sh"                                    5 /bin/bash -c    /root/bin/jproc-watch.sh
 screen -t "check-forever-for-lighttpd-config-file-change.sh"  6 /bin/bash -c    check-forever-for-lighttpd-config-file-change.sh
-screen -t "podsync"                                           7 su - podsync -P -c "/home/podsync/bin/feeds-start.sh"
+screen -t "podsync"                                           7 su - podsync    -c "/home/podsync/bin/feeds-start.sh"
 screen -t "monitoruj-youtube-dl.sh"                           8 /bin/bash -c    "/root/bin/monitoruj-youtube-dl.sh"
 screen -t "nyx (tor)"                                         9 /usr/bin/nyx
 
