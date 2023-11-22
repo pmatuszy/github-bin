@@ -22,7 +22,7 @@ opoznienie=120
 opoznienie_1szy_raz=0.1
 max_liczba_linii=1
 sleep_1dyncze_opoznienie=0.4
-maska_logow='/ramdisk/podsync-*.log'
+maska_logow='/home/podsync/logs/podsync-*.log'
 
 ffmpeg_path=/usr/bin/ffmpeg
 
