@@ -9,7 +9,7 @@ hardstatus string '%{= kG}[ %{G}%H %{g}][%= %{= kw}%?%-Lw%?%{r}(%{W}%n*%f%t%?(%u
 screen -t htop                                                0 htop
 screen -t "vnstat -l"                                         1 vnstat -l
 screen -t "iostat-no-color.sh"                                2 /bin/bash -c    /root/bin/iostat-no-color.sh
-screen -t "bmon -p eno1"                                      3 bmon -p ens32
+screen -t "bmon -p eno1"                                      3 bmon
 screen -t "dmesg-tail.sh"                                     4 /bin/bash -c    /root/bin/dmesg-tail.sh
 screen -t "journal-tail.sh"                                   5 /bin/bash -c    /root/bin/journal-tail.sh
 
