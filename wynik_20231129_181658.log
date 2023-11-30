@@ -1,0 +1,129 @@
++----------------------------------+
+| 2023.11.29 18:16:58 - przebieg 1 |
++----------------------------------+
+dd: error writing '/dev/disk/by-id/usb-Samsung_Flash_Drive_FIT_0318823030000218-0:0': No space left on device
+0+3916041 records in
+0+3916040 records out
+256641603584 bytes (257 GB, 239 GiB) copied, 2344.21 s, 109 MB/s
++----------------------------------+
+| 2023.11.29 18:56:03 - przebieg 2 |
++----------------------------------+
+dd: error writing '/dev/disk/by-id/usb-Samsung_Flash_Drive_FIT_0318823030000218-0:0': No space left on device
+0+3916041 records in
+0+3916040 records out
+256641603584 bytes (257 GB, 239 GiB) copied, 2297.16 s, 112 MB/s
++----------------------------------+
+| 2023.11.29 19:34:20 - przebieg 3 |
++----------------------------------+
+dd: error writing '/dev/disk/by-id/usb-Samsung_Flash_Drive_FIT_0318823030000218-0:0': No space left on device
+0+3916041 records in
+0+3916040 records out
+256641603584 bytes (257 GB, 239 GiB) copied, 2325.1 s, 110 MB/s
++----------------------------------+
+| 2023.11.29 20:13:05 - przebieg 4 |
++----------------------------------+
+dd: error writing '/dev/disk/by-id/usb-Samsung_Flash_Drive_FIT_0318823030000218-0:0': No space left on device
+0+3916041 records in
+0+3916040 records out
+256641603584 bytes (257 GB, 239 GiB) copied, 2290.9 s, 112 MB/s
++----------------------------------+
+| 2023.11.29 20:51:16 - przebieg 5 |
++----------------------------------+
+dd: error writing '/dev/disk/by-id/usb-Samsung_Flash_Drive_FIT_0318823030000218-0:0': No space left on device
+0+3916041 records in
+0+3916040 records out
+256641603584 bytes (257 GB, 239 GiB) copied, 2306.68 s, 111 MB/s
++----------------------------------+
+| 2023.11.29 21:29:42 - przebieg 6 |
++----------------------------------+
+dd: error writing '/dev/disk/by-id/usb-Samsung_Flash_Drive_FIT_0318823030000218-0:0': No space left on device
+0+3916041 records in
+0+3916040 records out
+256641603584 bytes (257 GB, 239 GiB) copied, 2320.69 s, 111 MB/s
++----------------------------------+
+| 2023.11.29 22:08:23 - przebieg 7 |
++----------------------------------+
+dd: error writing '/dev/disk/by-id/usb-Samsung_Flash_Drive_FIT_0318823030000218-0:0': No space left on device
+0+3916041 records in
+0+3916040 records out
+256641603584 bytes (257 GB, 239 GiB) copied, 2294.42 s, 112 MB/s
++----------------------------------+
+| 2023.11.29 22:46:38 - przebieg 8 |
++----------------------------------+
+dd: error writing '/dev/disk/by-id/usb-Samsung_Flash_Drive_FIT_0318823030000218-0:0': No space left on device
+0+3916041 records in
+0+3916040 records out
+256641603584 bytes (257 GB, 239 GiB) copied, 2309.62 s, 111 MB/s
++----------------------------------+
+| 2023.11.29 23:25:07 - przebieg 9 |
++----------------------------------+
+dd: error writing '/dev/disk/by-id/usb-Samsung_Flash_Drive_FIT_0318823030000218-0:0': No space left on device
+0+3916041 records in
+0+3916040 records out
+256641603584 bytes (257 GB, 239 GiB) copied, 2304.72 s, 111 MB/s
++-----------------------------------+
+| 2023.11.30 00:03:32 - przebieg 10 |
++-----------------------------------+
+dd: error writing '/dev/disk/by-id/usb-Samsung_Flash_Drive_FIT_0318823030000218-0:0': No space left on device
+0+3916041 records in
+0+3916040 records out
+256641603584 bytes (257 GB, 239 GiB) copied, 2323.19 s, 110 MB/s
++-----------------------------------+
+| 2023.11.30 00:42:15 - przebieg 11 |
++-----------------------------------+
+dd: error writing '/dev/disk/by-id/usb-Samsung_Flash_Drive_FIT_0318823030000218-0:0': No space left on device
+0+3916041 records in
+0+3916040 records out
+256641603584 bytes (257 GB, 239 GiB) copied, 2328.82 s, 110 MB/s
++-----------------------------------+
+| 2023.11.30 01:21:04 - przebieg 12 |
++-----------------------------------+
+dd: error writing '/dev/disk/by-id/usb-Samsung_Flash_Drive_FIT_0318823030000218-0:0': No space left on device
+0+3916041 records in
+0+3916040 records out
+256641603584 bytes (257 GB, 239 GiB) copied, 2309.61 s, 111 MB/s
++-----------------------------------+
+| 2023.11.30 01:59:34 - przebieg 13 |
++-----------------------------------+
+dd: error writing '/dev/disk/by-id/usb-Samsung_Flash_Drive_FIT_0318823030000218-0:0': No space left on device
+0+3916041 records in
+0+3916040 records out
+256641603584 bytes (257 GB, 239 GiB) copied, 2327.46 s, 110 MB/s
++-----------------------------------+
+| 2023.11.30 02:38:21 - przebieg 14 |
++-----------------------------------+
+dd: error writing '/dev/disk/by-id/usb-Samsung_Flash_Drive_FIT_0318823030000218-0:0': No space left on device
+0+3916041 records in
+0+3916040 records out
+256641603584 bytes (257 GB, 239 GiB) copied, 2351.16 s, 109 MB/s
++-----------------------------------+
+| 2023.11.30 03:17:32 - przebieg 15 |
++-----------------------------------+
+dd: error writing '/dev/disk/by-id/usb-Samsung_Flash_Drive_FIT_0318823030000218-0:0': No space left on device
+0+3916041 records in
+0+3916040 records out
+256641603584 bytes (257 GB, 239 GiB) copied, 2302.84 s, 111 MB/s
++-----------------------------------+
+| 2023.11.30 03:55:55 - przebieg 16 |
++-----------------------------------+
+dd: error writing '/dev/disk/by-id/usb-Samsung_Flash_Drive_FIT_0318823030000218-0:0': No space left on device
+0+3916041 records in
+0+3916040 records out
+256641603584 bytes (257 GB, 239 GiB) copied, 2314.59 s, 111 MB/s
++-----------------------------------+
+| 2023.11.30 04:34:30 - przebieg 17 |
++-----------------------------------+
+dd: error writing '/dev/disk/by-id/usb-Samsung_Flash_Drive_FIT_0318823030000218-0:0': No space left on device
+0+3916041 records in
+0+3916040 records out
+256641603584 bytes (257 GB, 239 GiB) copied, 2314.37 s, 111 MB/s
++-----------------------------------+
+| 2023.11.30 05:13:04 - przebieg 18 |
++-----------------------------------+
+dd: error writing '/dev/disk/by-id/usb-Samsung_Flash_Drive_FIT_0318823030000218-0:0': No space left on device
+0+3916041 records in
+0+3916040 records out
+256641603584 bytes (257 GB, 239 GiB) copied, 2358.27 s, 109 MB/s
++-----------------------------------+
+| 2023.11.30 05:52:22 - przebieg 19 |
++-----------------------------------+
