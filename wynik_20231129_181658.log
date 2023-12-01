@@ -127,3 +127,262 @@ dd: error writing '/dev/disk/by-id/usb-Samsung_Flash_Drive_FIT_0318823030000218-
 +-----------------------------------+
 | 2023.11.30 05:52:22 - przebieg 19 |
 +-----------------------------------+
+dd: error writing '/dev/disk/by-id/usb-Samsung_Flash_Drive_FIT_0318823030000218-0:0': No space left on device
+0+3916041 records in
+0+3916040 records out
+256641603584 bytes (257 GB, 239 GiB) copied, 2314.04 s, 111 MB/s
++-----------------------------------+
+| 2023.11.30 06:30:56 - przebieg 20 |
++-----------------------------------+
+dd: error writing '/dev/disk/by-id/usb-Samsung_Flash_Drive_FIT_0318823030000218-0:0': No space left on device
+0+3916041 records in
+0+3916040 records out
+256641603584 bytes (257 GB, 239 GiB) copied, 2320.98 s, 111 MB/s
++-----------------------------------+
+| 2023.11.30 07:09:37 - przebieg 21 |
++-----------------------------------+
+dd: error writing '/dev/disk/by-id/usb-Samsung_Flash_Drive_FIT_0318823030000218-0:0': No space left on device
+0+3916041 records in
+0+3916040 records out
+256641603584 bytes (257 GB, 239 GiB) copied, 2313.92 s, 111 MB/s
++-----------------------------------+
+| 2023.11.30 07:48:11 - przebieg 22 |
++-----------------------------------+
+dd: error writing '/dev/disk/by-id/usb-Samsung_Flash_Drive_FIT_0318823030000218-0:0': No space left on device
+0+3916041 records in
+0+3916040 records out
+256641603584 bytes (257 GB, 239 GiB) copied, 2269.02 s, 113 MB/s
++-----------------------------------+
+| 2023.11.30 08:26:00 - przebieg 23 |
++-----------------------------------+
+dd: error writing '/dev/disk/by-id/usb-Samsung_Flash_Drive_FIT_0318823030000218-0:0': No space left on device
+0+3916041 records in
+0+3916040 records out
+256641603584 bytes (257 GB, 239 GiB) copied, 2326.02 s, 110 MB/s
++-----------------------------------+
+| 2023.11.30 09:05:45 - przebieg 24 |
++-----------------------------------+
+dd: error writing '/dev/disk/by-id/usb-Samsung_Flash_Drive_FIT_0318823030000218-0:0': No space left on device
+0+3916041 records in
+0+3916040 records out
+256641603584 bytes (257 GB, 239 GiB) copied, 2327.25 s, 110 MB/s
++-----------------------------------+
+| 2023.11.30 09:44:33 - przebieg 25 |
++-----------------------------------+
+dd: error writing '/dev/disk/by-id/usb-Samsung_Flash_Drive_FIT_0318823030000218-0:0': No space left on device
+0+3916041 records in
+0+3916040 records out
+256641603584 bytes (257 GB, 239 GiB) copied, 2339.35 s, 110 MB/s
++-----------------------------------+
+| 2023.11.30 10:23:32 - przebieg 26 |
++-----------------------------------+
+dd: error writing '/dev/disk/by-id/usb-Samsung_Flash_Drive_FIT_0318823030000218-0:0': No space left on device
+0+3916041 records in
+0+3916040 records out
+256641603584 bytes (257 GB, 239 GiB) copied, 2346.08 s, 109 MB/s
++-----------------------------------+
+| 2023.11.30 11:02:38 - przebieg 27 |
++-----------------------------------+
+dd: error writing '/dev/disk/by-id/usb-Samsung_Flash_Drive_FIT_0318823030000218-0:0': No space left on device
+0+3916041 records in
+0+3916040 records out
+256641603584 bytes (257 GB, 239 GiB) copied, 2308.07 s, 111 MB/s
++-----------------------------------+
+| 2023.11.30 11:41:06 - przebieg 28 |
++-----------------------------------+
+dd: error writing '/dev/disk/by-id/usb-Samsung_Flash_Drive_FIT_0318823030000218-0:0': No space left on device
+0+3916041 records in
+0+3916040 records out
+256641603584 bytes (257 GB, 239 GiB) copied, 2325.44 s, 110 MB/s
++-----------------------------------+
+| 2023.11.30 12:19:52 - przebieg 29 |
++-----------------------------------+
+dd: error writing '/dev/disk/by-id/usb-Samsung_Flash_Drive_FIT_0318823030000218-0:0': No space left on device
+0+3916041 records in
+0+3916040 records out
+256641603584 bytes (257 GB, 239 GiB) copied, 2332.2 s, 110 MB/s
++-----------------------------------+
+| 2023.11.30 12:58:44 - przebieg 30 |
++-----------------------------------+
+dd: error writing '/dev/disk/by-id/usb-Samsung_Flash_Drive_FIT_0318823030000218-0:0': No space left on device
+0+3916041 records in
+0+3916040 records out
+256641603584 bytes (257 GB, 239 GiB) copied, 2309.14 s, 111 MB/s
++-----------------------------------+
+| 2023.11.30 13:37:13 - przebieg 31 |
++-----------------------------------+
+dd: error writing '/dev/disk/by-id/usb-Samsung_Flash_Drive_FIT_0318823030000218-0:0': No space left on device
+0+3916041 records in
+0+3916040 records out
+256641603584 bytes (257 GB, 239 GiB) copied, 2319.02 s, 111 MB/s
++-----------------------------------+
+| 2023.11.30 14:15:52 - przebieg 32 |
++-----------------------------------+
+dd: error writing '/dev/disk/by-id/usb-Samsung_Flash_Drive_FIT_0318823030000218-0:0': No space left on device
+0+3916041 records in
+0+3916040 records out
+256641603584 bytes (257 GB, 239 GiB) copied, 2308.29 s, 111 MB/s
++-----------------------------------+
+| 2023.11.30 14:54:20 - przebieg 33 |
++-----------------------------------+
+dd: error writing '/dev/disk/by-id/usb-Samsung_Flash_Drive_FIT_0318823030000218-0:0': No space left on device
+0+3916041 records in
+0+3916040 records out
+256641603584 bytes (257 GB, 239 GiB) copied, 2316.61 s, 111 MB/s
++-----------------------------------+
+| 2023.11.30 15:32:57 - przebieg 34 |
++-----------------------------------+
+dd: error writing '/dev/disk/by-id/usb-Samsung_Flash_Drive_FIT_0318823030000218-0:0': No space left on device
+0+3916041 records in
+0+3916040 records out
+256641603584 bytes (257 GB, 239 GiB) copied, 2329.46 s, 110 MB/s
++-----------------------------------+
+| 2023.11.30 16:11:46 - przebieg 35 |
++-----------------------------------+
+dd: error writing '/dev/disk/by-id/usb-Samsung_Flash_Drive_FIT_0318823030000218-0:0': No space left on device
+0+3916041 records in
+0+3916040 records out
+256641603584 bytes (257 GB, 239 GiB) copied, 2305.19 s, 111 MB/s
++-----------------------------------+
+| 2023.11.30 16:50:12 - przebieg 36 |
++-----------------------------------+
+dd: error writing '/dev/disk/by-id/usb-Samsung_Flash_Drive_FIT_0318823030000218-0:0': No space left on device
+0+3916041 records in
+0+3916040 records out
+256641603584 bytes (257 GB, 239 GiB) copied, 2330.32 s, 110 MB/s
++-----------------------------------+
+| 2023.11.30 17:29:02 - przebieg 37 |
++-----------------------------------+
+dd: error writing '/dev/disk/by-id/usb-Samsung_Flash_Drive_FIT_0318823030000218-0:0': No space left on device
+0+3916041 records in
+0+3916040 records out
+256641603584 bytes (257 GB, 239 GiB) copied, 2302.38 s, 111 MB/s
++-----------------------------------+
+| 2023.11.30 18:07:24 - przebieg 38 |
++-----------------------------------+
+dd: error writing '/dev/disk/by-id/usb-Samsung_Flash_Drive_FIT_0318823030000218-0:0': No space left on device
+0+3916041 records in
+0+3916040 records out
+256641603584 bytes (257 GB, 239 GiB) copied, 2304.69 s, 111 MB/s
++-----------------------------------+
+| 2023.11.30 18:45:49 - przebieg 39 |
++-----------------------------------+
+dd: error writing '/dev/disk/by-id/usb-Samsung_Flash_Drive_FIT_0318823030000218-0:0': No space left on device
+0+3916041 records in
+0+3916040 records out
+256641603584 bytes (257 GB, 239 GiB) copied, 2316.45 s, 111 MB/s
++-----------------------------------+
+| 2023.11.30 19:24:25 - przebieg 40 |
++-----------------------------------+
+dd: error writing '/dev/disk/by-id/usb-Samsung_Flash_Drive_FIT_0318823030000218-0:0': No space left on device
+0+3916041 records in
+0+3916040 records out
+256641603584 bytes (257 GB, 239 GiB) copied, 2322.43 s, 111 MB/s
++-----------------------------------+
+| 2023.11.30 20:03:08 - przebieg 41 |
++-----------------------------------+
+dd: error writing '/dev/disk/by-id/usb-Samsung_Flash_Drive_FIT_0318823030000218-0:0': No space left on device
+0+3916041 records in
+0+3916040 records out
+256641603584 bytes (257 GB, 239 GiB) copied, 2291.26 s, 112 MB/s
++-----------------------------------+
+| 2023.11.30 20:41:19 - przebieg 42 |
++-----------------------------------+
+dd: error writing '/dev/disk/by-id/usb-Samsung_Flash_Drive_FIT_0318823030000218-0:0': No space left on device
+0+3916041 records in
+0+3916040 records out
+256641603584 bytes (257 GB, 239 GiB) copied, 2297.42 s, 112 MB/s
++-----------------------------------+
+| 2023.11.30 21:19:37 - przebieg 43 |
++-----------------------------------+
+dd: error writing '/dev/disk/by-id/usb-Samsung_Flash_Drive_FIT_0318823030000218-0:0': No space left on device
+0+3916041 records in
+0+3916040 records out
+256641603584 bytes (257 GB, 239 GiB) copied, 2337.49 s, 110 MB/s
++-----------------------------------+
+| 2023.11.30 21:58:34 - przebieg 44 |
++-----------------------------------+
+dd: error writing '/dev/disk/by-id/usb-Samsung_Flash_Drive_FIT_0318823030000218-0:0': No space left on device
+0+3916041 records in
+0+3916040 records out
+256641603584 bytes (257 GB, 239 GiB) copied, 2293.14 s, 112 MB/s
++-----------------------------------+
+| 2023.11.30 22:36:47 - przebieg 45 |
++-----------------------------------+
+dd: error writing '/dev/disk/by-id/usb-Samsung_Flash_Drive_FIT_0318823030000218-0:0': No space left on device
+0+3916041 records in
+0+3916040 records out
+256641603584 bytes (257 GB, 239 GiB) copied, 2304.32 s, 111 MB/s
++-----------------------------------+
+| 2023.11.30 23:15:12 - przebieg 46 |
++-----------------------------------+
+dd: error writing '/dev/disk/by-id/usb-Samsung_Flash_Drive_FIT_0318823030000218-0:0': No space left on device
+0+3916041 records in
+0+3916040 records out
+256641603584 bytes (257 GB, 239 GiB) copied, 2318.25 s, 111 MB/s
++-----------------------------------+
+| 2023.11.30 23:53:50 - przebieg 47 |
++-----------------------------------+
+dd: error writing '/dev/disk/by-id/usb-Samsung_Flash_Drive_FIT_0318823030000218-0:0': No space left on device
+0+3916041 records in
+0+3916040 records out
+256641603584 bytes (257 GB, 239 GiB) copied, 2313.17 s, 111 MB/s
++-----------------------------------+
+| 2023.12.01 00:32:23 - przebieg 48 |
++-----------------------------------+
+dd: error writing '/dev/disk/by-id/usb-Samsung_Flash_Drive_FIT_0318823030000218-0:0': No space left on device
+0+3916041 records in
+0+3916040 records out
+256641603584 bytes (257 GB, 239 GiB) copied, 2330.67 s, 110 MB/s
++-----------------------------------+
+| 2023.12.01 01:11:14 - przebieg 49 |
++-----------------------------------+
+dd: error writing '/dev/disk/by-id/usb-Samsung_Flash_Drive_FIT_0318823030000218-0:0': No space left on device
+0+3916041 records in
+0+3916040 records out
+256641603584 bytes (257 GB, 239 GiB) copied, 2325.99 s, 110 MB/s
++-----------------------------------+
+| 2023.12.01 01:50:00 - przebieg 50 |
++-----------------------------------+
+dd: error writing '/dev/disk/by-id/usb-Samsung_Flash_Drive_FIT_0318823030000218-0:0': No space left on device
+0+3916041 records in
+0+3916040 records out
+256641603584 bytes (257 GB, 239 GiB) copied, 2309.39 s, 111 MB/s
++-----------------------------------+
+| 2023.12.01 02:28:29 - przebieg 51 |
++-----------------------------------+
+dd: error writing '/dev/disk/by-id/usb-Samsung_Flash_Drive_FIT_0318823030000218-0:0': No space left on device
+0+3916041 records in
+0+3916040 records out
+256641603584 bytes (257 GB, 239 GiB) copied, 2353.8 s, 109 MB/s
++-----------------------------------+
+| 2023.12.01 03:07:43 - przebieg 52 |
++-----------------------------------+
+dd: error writing '/dev/disk/by-id/usb-Samsung_Flash_Drive_FIT_0318823030000218-0:0': No space left on device
+0+3916041 records in
+0+3916040 records out
+256641603584 bytes (257 GB, 239 GiB) copied, 2310.9 s, 111 MB/s
++-----------------------------------+
+| 2023.12.01 03:46:14 - przebieg 53 |
++-----------------------------------+
+dd: error writing '/dev/disk/by-id/usb-Samsung_Flash_Drive_FIT_0318823030000218-0:0': No space left on device
+0+3916041 records in
+0+3916040 records out
+256641603584 bytes (257 GB, 239 GiB) copied, 2309.3 s, 111 MB/s
++-----------------------------------+
+| 2023.12.01 04:24:43 - przebieg 54 |
++-----------------------------------+
+dd: error writing '/dev/disk/by-id/usb-Samsung_Flash_Drive_FIT_0318823030000218-0:0': No space left on device
+0+3916041 records in
+0+3916040 records out
+256641603584 bytes (257 GB, 239 GiB) copied, 2329.69 s, 110 MB/s
++-----------------------------------+
+| 2023.12.01 05:03:33 - przebieg 55 |
++-----------------------------------+
+dd: error writing '/dev/disk/by-id/usb-Samsung_Flash_Drive_FIT_0318823030000218-0:0': No space left on device
+0+3916041 records in
+0+3916040 records out
+256641603584 bytes (257 GB, 239 GiB) copied, 2329.7 s, 110 MB/s
++-----------------------------------+
+| 2023.12.01 05:42:23 - przebieg 56 |
++-----------------------------------+
