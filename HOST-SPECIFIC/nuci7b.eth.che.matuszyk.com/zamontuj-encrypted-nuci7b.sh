@@ -18,7 +18,10 @@ echo czas na fsck $1 ...
 if [ $(lsblk -no FSTYPE $1) == 'ext4' ];then
   fsck.ext4 -f -p $1
 else
-  fsck      -C -M -R -T $1
+  # -C: Display the progress, so you know that something is happening.
+  # -M: Don't do anything if the partition is mounted
+  # -f: Force a check even if the system thinks that it's not needed.
+  fsck      -C -M -R -T -y $1
 fi
 
 kod_powrotu=$?
@@ -32,7 +35,10 @@ if (( $kod_powrotu != 0 ));then
   if [ $(lsblk -no FSTYPE $1) == 'ext4' ];then
     fsck.ext4 -f -p $1
   else
-    fsck      -C -M -R -T $1
+     # -C: Display the progress, so you know that something is happening.
+     # -M: Don't do anything if the partition is mounted
+     # -f: Force a check even if the system thinks that it's not needed.
+    fsck      -C -M -R -T -y $1
   fi
   echo "kod powrotu z fsck to $? (przebieg 2-gi)"
 else
