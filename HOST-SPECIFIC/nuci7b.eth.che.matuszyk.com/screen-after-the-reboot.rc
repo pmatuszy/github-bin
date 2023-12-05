@@ -6,12 +6,15 @@ hardstatus             alwayslastline
 #hardstatus string '%{= mK}%-Lw%{= KW}%50>%n%f* %t%{= mK}%+Lw%< %{= kG}%-=%D %d %M %Y %c:%s%{-}'
 hardstatus string '%{= kG}[ %{G}%H %{g}][%= %{= kw}%?%-Lw%?%{r}(%{W}%n*%f%t%?(%u)%?%{r})%{w}%?%+Lw%?%?%= %{g}][%{B} %d/%m %{W}%c %{g} ]'
 
-screen -t htop                                                0 htop --no-color
-screen -t "vnstat -l"                                         1 vnstat -l
-screen -t "iostat-no-color.sh"                                2 /bin/bash -c    /root/bin/iostat-no-color.sh
-screen -t "bmon -p eno1"                                      3 bmon
-screen -t "dmesg-tail.sh"                                     4 /bin/bash -c    /root/bin/dmesg-tail.sh
-screen -t "journal-tail.sh"                                   5 /bin/bash -c    /root/bin/journal-tail.sh
+screen -t htop                      0 htop --no-color
+screen -t "vnstat -l"               1 vnstat -l
+screen -t "iostat-no-color.sh"      2 /bin/bash -c  /root/bin/iostat-no-color.sh
+screen -t "bmon -p eno1"            3 bmon
+screen -t "dmesg-tail.sh"           4 /bin/bash -c  /root/bin/dmesg-tail.sh
+screen -t "journal-tail.sh"         5 /bin/bash -c  /root/bin/journal-tail.sh
+screen -t "watch-progress.sh"       6 /bin/bash -c  /root/bin/watch-progress.sh
+screen -t "pmove"                   7 /bin/bash -c  "while : ; do echo `date` `lvs -a -o+devices|grep -- '\[pvmove'` ; sleep 2m ; done"
+screen -t "ssh-keychain-daemon.sh"  8 /bin/bash -c  /root/bin/ssh-keychain-daemon.sh
 
 bindkey -k F2 next
 bindkey -k F1 prev
