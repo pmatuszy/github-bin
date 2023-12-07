@@ -16,7 +16,7 @@ echo ; echo "==> ########## zrob_fsck($1)"
 echo czas na fsck $1 ...
 
 if [ $(lsblk -no FSTYPE $1) == 'ext4' ];then
-  fsck.ext4 -f -p $1
+  fsck.ext4 -f -p -y $1
 else
   # -C: Display the progress, so you know that something is happening.
   # -M: Don't do anything if the partition is mounted
@@ -33,7 +33,7 @@ if (( $kod_powrotu != 0 ));then
   echo
 
   if [ $(lsblk -no FSTYPE $1) == 'ext4' ];then
-    fsck.ext4 -f -p $1
+    fsck.ext4 -f -p -y $1
   else
      # -C: Display the progress, so you know that something is happening.
      # -M: Don't do anything if the partition is mounted
@@ -82,11 +82,12 @@ sleep 1
 # zamontuj_fs_MASTER /dev/vg_20230906_skasujto/lv_20230906_skasujto  /mnt/luks-temp  noatime
 # zamontuj_fs_MASTER /dev/vg_crypto_20230925/lv_crypto_20230925      /mnt/luks-worek noatime
 
-zamontuj_fs_MASTER /dev/vg_crypto_20230807/lv_luks_20230807   /mnt/luks-raid1-A  noatime
+# zamontuj_fs_MASTER /dev/vg_crypto_20230807/lv_luks_20230807   /mnt/luks-raid1-A  noatime
+zamontuj_fs_MASTER /dev/mapper/luks-on-lv_crypto_20231205   /mnt/luks-raid1-A  noatime
 
 # !!! buffalo2 ma SMR dyski, wiec inaczej je montujemy !!!!
 zamontuj_fs_MASTER /dev/vg_crypto_buffalo2/lv_do_luksa_buffalo2    /mnt/luks-buffalo2  noatime,data=writeback,barrier=0,nobh,errors=remount-ro
-
+dd
 
 echo
 df -h /encrypted /mnt/luks-buffalo2 /mnt/luks-raidsonic
