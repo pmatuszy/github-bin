@@ -16,7 +16,7 @@ echo ; echo "==> ########## zrob_fsck($1)"
 echo czas na fsck $1 ...
 
 if [ $(lsblk -no FSTYPE $1) == 'ext4' ];then
-  fsck.ext4 -f -p -y $1
+  fsck.ext4 -f -y $1
 else
   # -C: Display the progress, so you know that something is happening.
   # -M: Don't do anything if the partition is mounted
@@ -33,7 +33,7 @@ if (( $kod_powrotu != 0 ));then
   echo
 
   if [ $(lsblk -no FSTYPE $1) == 'ext4' ];then
-    fsck.ext4 -f -p -y $1
+    fsck.ext4 -f -y $1
   else
      # -C: Display the progress, so you know that something is happening.
      # -M: Don't do anything if the partition is mounted
