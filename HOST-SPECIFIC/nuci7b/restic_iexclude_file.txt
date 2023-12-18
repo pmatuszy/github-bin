@@ -1,0 +1,7 @@
+/vmware*/**/*vmdk
+/vmware*/**/*vmram
+/vmware*/**/*vmsn
+/vmware*/**/*vmem
+/vmware*/**/*vmss
+/vmware*/**/*nvram
+/vmware*/**/*iso
