@@ -6,7 +6,7 @@ hardstatus             alwayslastline
 #hardstatus string '%{= mK}%-Lw%{= KW}%50>%n%f* %t%{= mK}%+Lw%< %{= kG}%-=%D %d %M %Y %c:%s%{-}'
 hardstatus string '%{= kG}[ %{G}%H %{g}][%= %{= kw}%?%-Lw%?%{r}(%{W}%n*%f%t%?(%u)%?%{r})%{w}%?%+Lw%?%?%= %{g}][%{B} %d/%m %{W}%c %{g} ]'
 
-screen -t htop                                                0 htop
+screen -t htop                                                0 htop  --no-color
 screen -t "vnstat -l"                                         1 vnstat -l
 # screen -t "arc_summary -s arc"                              2 arc_summary -s arc
 screen -t iostat                                              3 iostat --no-color 1
