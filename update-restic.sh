@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2023.12.18 - v. 0.7 - bugfix: check if restic is installed
 # 2023.03.26 - v. 0.6 - added ile_prob i odstepy_miedzy_probami_sek
 # 2023.02.28 - v. 0.5 - curl with kod_powrotu
 # 2023.01.03 - v. 0.4 - dodano random delay jesli skrypt jest wywolywany nieinteraktywnie
