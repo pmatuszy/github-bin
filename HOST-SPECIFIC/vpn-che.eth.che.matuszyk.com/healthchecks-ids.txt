@@ -1,0 +1,20 @@
+healthchecks-ping.sh	  					https://healthchecks.matuszyk.com:8000/ping/a77cb89c-77ab-4100-9e2f-4be074449ed4
+backup	  
+ssd-trim.sh  					
+sprawdz-czy-dziala-strona-yt2podcast.com.sh     
+sprawdz-czy-dziala-server-vpn.sh                
+sprawdz-ile-apt-list--upgradable.sh		
+restic_backup_SS				
+restic_backup_BXL				
+restic_backup_CHE				
+sprawdz-czy-encrypted-jest-zamontowany.sh	
+apc-status.sh                                   
+update-restic.sh			        
+update-rclone.sh			        
+healthchecks-smartd.sh
+healthchecks-swap-usage.sh
+ssh-keychain.sh                                 
+cron-git-bash-pull.sh                           
+cron-git-bash-push.sh				
+cron-git-bin-pull.sh				
+cron-git-bin-push.sh				
