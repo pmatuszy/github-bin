@@ -2,7 +2,7 @@ healthchecks-ping.sh	  					https://healthchecks.matuszyk.com:8000/ping/a77cb89c
 backup	  
 ssd-trim.sh  					
 sprawdz-czy-dziala-strona-yt2podcast.com.sh     
-sprawdz-czy-dziala-server-vpn.sh                
+sprawdz-czy-dziala-server-vpn.sh                                https://healthchecks.matuszyk.com:8000/ping/9b44efe3-8cee-4aed-925f-77dd36d7a07d
 sprawdz-ile-apt-list--upgradable.sh		                https://healthchecks.matuszyk.com:8000/ping/cc2e167c-414f-4ef6-850f-7d1ba061fb3d
 restic_backup_SS				
 restic_backup_BXL				
@@ -19,4 +19,3 @@ cron-git-bash-push.sh
 cron-git-bin-pull.sh				
 cron-git-bin-push.sh				
 sprawdz-czy-reboot-required.sh                                  https://healthchecks.matuszyk.com:8000/ping/c5c4eabf-d8b6-4a92-8d99-cbd64d739025
-healthchecks-aptitude.sh                                        https://healthchecks.matuszyk.com:8000/ping/7c7f8456-9f7b-4f03-9606-7e8b0c54a663
