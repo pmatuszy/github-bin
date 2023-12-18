@@ -16,7 +16,23 @@ fi
 export ile_prob=10
 export odstepy_miedzy_probami_sek=20
 
+check_if_installed restic
+
 export RESTIC_BIN=$(type -fP restic)
+
+if [ -z "${RESTIC_BIN}" ] ; then
+  m=$(
+    echo '#####################################################'
+    echo '#####################################################'
+    echo
+    echo "Restic is not installed"
+    echo
+    echo '#####################################################'
+    echo '#####################################################' 
+    )
+  /usr/bin/curl -fsS -m 100 --retry 10 --retry-delay 10 --data-raw "$m" -o /dev/null "$HEALTHCHECK_URL"/fail 2>/dev/null
+  exit 8
+fi
 if pgrep -f "${RESTIC_BIN}" > /dev/null ; then
   m=$(
     echo '#####################################################'
@@ -25,7 +41,7 @@ if pgrep -f "${RESTIC_BIN}" > /dev/null ; then
     echo "${RESTIC_BIN} dziala, wiec nie startuje nowej instancji a po prostu koncze dzialanie skryptu"
     echo
     echo '#####################################################'
-    echo '#####################################################' i
+    echo '#####################################################' 
     )
   /usr/bin/curl -fsS -m 100 --retry 10 --retry-delay 10 --data-raw "$m" -o /dev/null "$HEALTHCHECK_URL"/fail 2>/dev/null
   exit 1
