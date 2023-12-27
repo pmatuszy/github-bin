@@ -18,4 +18,4 @@ cron-git-bash-pull.sh
 cron-git-bash-push.sh				
 cron-git-bin-pull.sh				
 cron-git-bin-push.sh				
-sprawdz-ile-apt-list--upgradable.sh                     https://healthchecks.matuszyk.com:8000/ping/de181a20-7751-41b4-8351-0756e51d93b8
+sprawdz-ile-apt-list--upgradable.sh                     https://healthchecks.matuszyk.com:8000/ping/4c999284-3cde-4495-91a5-57b71a6470c4
