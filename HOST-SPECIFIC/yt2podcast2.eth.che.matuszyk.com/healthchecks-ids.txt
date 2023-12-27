@@ -12,7 +12,7 @@ apc-status.sh
 update-restic.sh			        
 update-rclone.sh			        
 healthchecks-smartd.sh
-healthchecks-swap-usage.sh
+healthchecks-swap-usage.sh                              https://healthchecks.matuszyk.com:8000/ping/2398048b-116f-4886-8dc5-aec3a12fcaad
 ssh-keychain.sh                                 
 cron-git-bash-pull.sh                           
 cron-git-bash-push.sh				
