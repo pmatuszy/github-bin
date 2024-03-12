@@ -9,17 +9,25 @@ if [ -f "$HEALTHCHECKS_FILE" ];then
   HEALTHCHECK_URL=$(cat "$HEALTHCHECKS_FILE" |grep "^`basename $0`"|awk '{print $2}')
 fi
 
+URL=www.ontsolutions.com  ; export URL
 blad=1
 how_many_retries=10
 retry_delay=15
 
 while (( $blad != 0 && $how_many_retries != 0 )) ; do
-  if [ $(wget www.ontsolutions.com -qO - |grep "Rozpocznij z ONT"|wc -l) -gt 0 ];then 
-   /usr/bin/curl -fsS -m 100 --retry 10 --retry-delay 10 -o /dev/null "$HEALTHCHECK_URL" 2>/dev/null
-  else 
-   /usr/bin/curl -fsS -m 100 --retry 10 --retry-delay 10 -o /dev/null "$HEALTHCHECK_URL"/fail 2>/dev/null
+  if [ $(wget $URL -qO - |grep "In Short"|wc -l) -gt 0 ];then
+    /usr/bin/curl -fsS -m 100 --retry 10 --retry-delay 10 -o /dev/null "$HEALTHCHECK_URL" 2>/dev/nulla
+    blad=0
+    break
+  else
+    sleep $retry_delay
   fi
 done
+
+if (( $blad != 0 ));then
+   /usr/bin/curl -fsS -m 100 --retry 10 --retry-delay 10 -o /dev/null "$HEALTHCHECK_URL"/fail 2>/dev/null
+
+fi
 
 . /root/bin/_script_footer.sh
 
