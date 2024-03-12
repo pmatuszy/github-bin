@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# 2024.03.12 - v. 0.1 - added how_many_retries and retry_delay
+# 2024.03.12 - v. 0.2 - added how_many_retries and retry_delay
 # 2023.02.16 - v. 0.1 - initial release
 
 . /root/bin/_script_header.sh
@@ -10,8 +10,8 @@ if [ -f "$HEALTHCHECKS_FILE" ];then
 fi
 
 blad=1
-how_many_retries=6
-retry_delay=10
+how_many_retries=10
+retry_delay=15
 
 while (( $blad != 0 && $how_many_retries != 0 )) ; do
   if [ $(wget www.anna.matuszyk.com -qO - |grep "In Short"|wc -l) -gt 0 ];then 
