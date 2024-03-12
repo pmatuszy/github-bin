@@ -12,7 +12,7 @@ if [ -f "$HEALTHCHECKS_FILE" ];then
   HEALTHCHECK_URL=$(cat "$HEALTHCHECKS_FILE" |grep "^`basename $0`"|awk '{print $2}')
 fi
 
-URL=yt2podcast.com:8080  ; export URL
+URL="yt2podcast.com:8080"  ; export URL
 blad=1
 how_many_retries=10
 retry_delay=15
