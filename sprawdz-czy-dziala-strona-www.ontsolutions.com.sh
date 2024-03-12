@@ -26,7 +26,6 @@ done
 
 if (( $blad != 0 ));then
    /usr/bin/curl -fsS -m 100 --retry 10 --retry-delay 10 -o /dev/null "$HEALTHCHECK_URL"/fail 2>/dev/null
-
 fi
 
 . /root/bin/_script_footer.sh
