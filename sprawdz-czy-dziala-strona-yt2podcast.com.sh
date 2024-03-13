@@ -18,8 +18,8 @@ how_many_retries=10
 retry_delay=15
 
 while (( $blad != 0 && $how_many_retries != 0 )) ; do
-  if [ $(wget $URL -qO - |grep "In Short"|wc -l) -gt 0 ];then
-    /usr/bin/curl -fsS -m 100 --retry 10 --retry-delay 10 -o /dev/null "$HEALTHCHECK_URL" 2>/dev/nulla
+  if [ $(wget $URL -qO - |grep "Directory Listing"|wc -l) -gt 0 ];then
+    /usr/bin/curl -fsS -m 100 --retry 10 --retry-delay 10 -o /dev/null "$HEALTHCHECK_URL" 2>/dev/null
     blad=0
     break
   else
