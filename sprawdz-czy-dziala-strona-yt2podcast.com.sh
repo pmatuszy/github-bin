@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2024.04.02 - v. 0.7 - added timeout command (as curl sometimes doesn't timeout )
 # 2023.04.13 - v. 0.6 - added how_many_retries and retry_delay
 # 2023.01.17 - v. 0.5 - dodano random delay jesli skrypt jest wywolywany nieinteraktywnie
 # 2022.05.16 - v. 0.3 - commented out sending emails sections
@@ -17,18 +18,27 @@ blad=1
 how_many_retries=10
 retry_delay=15
 
+curl_retry=1
+curl_retry_delay=3
+
+export timeout=20
+export kill_after=30
+
 while (( $blad != 0 && $how_many_retries != 0 )) ; do
-  if [ $(wget $URL -qO - |grep "Directory Listing"|wc -l) -gt 0 ];then
-    /usr/bin/curl -fsS -m 100 --retry 10 --retry-delay 10 -o /dev/null "$HEALTHCHECK_URL" 2>/dev/null
+  if [ $(/usr/bin/timeout --foreground --preserve-status --kill-after=$kill_after $timeout wget $URL -qO - |grep "Directory Listing"|wc -l) -gt 0 ];then
+    /usr/bin/timeout --foreground --preserve-status --kill-after=$kill_after $timeout /usr/bin/curl -fsS -m 100 --retry $curl_retry --retry-delay $curl_retry_delay -o /dev/null "$HEALTHCHECK_URL" 2>/dev/null
     blad=0
     break
   else
     sleep $retry_delay
+    if (( script_is_run_interactively == 1 ));then
+       echo sleeping for $retry_delay
+    fi
   fi
 done
 
 if (( $blad != 0 ));then
-   /usr/bin/curl -fsS -m 100 --retry 10 --retry-delay 10 -o /dev/null "$HEALTHCHECK_URL"/fail 2>/dev/null
+   /usr/bin/timeout --foreground --preserve-status --kill-after=$kill_after $timeout /usr/bin/curl -fsS -m 100 --retry $how_many_retries  --retry-delay $retry_delay -o /dev/null "$HEALTHCHECK_URL"/fail 2>/dev/null
 fi
 
 . /root/bin/_script_footer.sh
