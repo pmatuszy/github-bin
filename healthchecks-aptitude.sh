@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2025.04.26 - v. 0.2 - added multiple retries
 # 2023.10.10 - v. 0.1 - initial release
 
 . /root/bin/_script_header.sh
@@ -12,7 +13,12 @@ check_if_installed curl
 check_if_installed aptitude
 check_if_installed boxes
 
-m=$( echo "${SCRIPT_VERSION}";echo
+blad=1
+how_many_retries=10
+retry_delay=15
+
+while (( $blad != 0 && $how_many_retries != 0 )) ; do
+  m=$( echo "${SCRIPT_VERSION}";echo
      echo $(type -fP aptitude) -y -q --no-gui update | boxes -a c -d stone
           $(type -fP aptitude) -y -q --no-gui update 2>&1
      echo ; echo
@@ -26,12 +32,17 @@ m=$( echo "${SCRIPT_VERSION}";echo
 
     exit $exit_code
     )
-
-kod_powrotu=$?
-
-if [ $script_is_run_interactively == 1 ]; then
-  echo "$m"
-fi
+  kod_powrotu=$?
+  if [ $script_is_run_interactively == 1 ]; then
+    echo "$m"
+  fi
+  if (( $kod_powrotu == 0 ));then
+     blad=0
+     break
+  else
+     sleep $retry_delay
+  fi
+done
 
 /usr/bin/curl -fsS -m 100 --retry 10 --retry-delay 10 --data-raw "$m" -o /dev/null "$HEALTHCHECK_URL"/${kod_powrotu} 2>/dev/null
 
