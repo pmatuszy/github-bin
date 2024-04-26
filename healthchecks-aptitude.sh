@@ -16,6 +16,7 @@ check_if_installed boxes
 blad=1
 how_many_retries=10
 retry_delay=15
+kod_powrotu=xxx
 
 while (( $blad != 0 && $how_many_retries != 0 )) ; do
   m=$( echo "${SCRIPT_VERSION}";echo
@@ -44,6 +45,7 @@ while (( $blad != 0 && $how_many_retries != 0 )) ; do
   fi
 done
 
+echo /usr/bin/curl -fsS -m 100 --retry 10 --retry-delay 10 --data-raw "$m" -o /dev/null "$HEALTHCHECK_URL"/${kod_powrotu} 2>/dev/null
 /usr/bin/curl -fsS -m 100 --retry 10 --retry-delay 10 --data-raw "$m" -o /dev/null "$HEALTHCHECK_URL"/${kod_powrotu} 2>/dev/null
 
 . /root/bin/_script_footer.sh
