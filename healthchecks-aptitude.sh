@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2025.04.28 - v. 0.21- bugfix edition - script was too verbose 
 # 2025.04.26 - v. 0.2 - added multiple retries
 # 2023.10.10 - v. 0.1 - initial release
 
@@ -45,7 +46,6 @@ while (( $blad != 0 && $how_many_retries != 0 )) ; do
   fi
 done
 
-echo /usr/bin/curl -fsS -m 100 --retry 10 --retry-delay 10 --data-raw "$m" -o /dev/null "$HEALTHCHECK_URL"/${kod_powrotu} 2>/dev/null
 /usr/bin/curl -fsS -m 100 --retry 10 --retry-delay 10 --data-raw "$m" -o /dev/null "$HEALTHCHECK_URL"/${kod_powrotu} 2>/dev/null
 
 . /root/bin/_script_footer.sh
