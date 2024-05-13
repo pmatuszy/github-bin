@@ -10,7 +10,7 @@ restic_backup_CHE
 sprawdz-czy-encrypted-jest-zamontowany.sh	
 apc-status.sh                                   
 update-restic.sh			        
-update-rclone.sh			        
+update-rclone.sh			                https://healthchecks.matuszyk.com:8000/ping/5ecbd2aa-6564-4f79-b111-1776b5dc36d7
 healthchecks-smartd.sh
 healthchecks-swap-usage.sh                              https://healthchecks.matuszyk.com:8000/ping/2398048b-116f-4886-8dc5-aec3a12fcaad
 ssh-keychain.sh                                 
