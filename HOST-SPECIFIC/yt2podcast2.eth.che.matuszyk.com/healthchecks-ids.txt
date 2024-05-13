@@ -13,7 +13,7 @@ update-restic.sh			                https://healthchecks.matuszyk.com:8000/ping/3
 update-rclone.sh			                https://healthchecks.matuszyk.com:8000/ping/5ecbd2aa-6564-4f79-b111-1776b5dc36d7
 healthchecks-smartd.sh
 healthchecks-swap-usage.sh                              https://healthchecks.matuszyk.com:8000/ping/2398048b-116f-4886-8dc5-aec3a12fcaad
-ssh-keychain.sh                                 
+ssh-keychain.sh                                         https://healthchecks.matuszyk.com:8000/ping/f5a8ba5c-4554-4989-9d97-5dd10cc0e1ae
 cron-git-bash-pull.sh                           
 cron-git-bash-push.sh				
 cron-git-bin-pull.sh				
