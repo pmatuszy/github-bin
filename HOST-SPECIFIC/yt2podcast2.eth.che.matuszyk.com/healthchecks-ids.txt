@@ -19,3 +19,4 @@ cron-git-bash-push.sh
 cron-git-bin-pull.sh				
 cron-git-bin-push.sh				
 healthchecks-aptitude.sh                                https://healthchecks.matuszyk.com:8000/ping/de181a20-7751-41b4-8351-0756e51d93b8
+sprawdz-czy-reboot-required.sh                          https://healthchecks.matuszyk.com:8000/ping/e57e1ec2-44ef-423a-9100-b5c128174f09
