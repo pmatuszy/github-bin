@@ -1,0 +1,22 @@
+healthchecks-ping.sh	  			        https://healthchecks.matuszyk.com:8000/ping/19ec68ef-f15e-47c7-a926-3da250f16c53	
+backup	  
+ssd-trim.sh  					
+sprawdz-czy-dziala-strona-yt2podcast.com.sh     
+sprawdz-czy-dziala-server-vpn.sh                
+sprawdz-ile-apt-list--upgradable.sh		        https://healthchecks.matuszyk.com:8000/ping/4c999284-3cde-4495-91a5-57b71a6470c4
+restic_backup_SS				
+restic_backup_BXL				
+restic_backup_CHE				
+sprawdz-czy-encrypted-jest-zamontowany.sh	
+apc-status.sh                                   
+update-restic.sh			                https://healthchecks.matuszyk.com:8000/ping/38391850-d89d-4a23-890e-ead963cad5b1
+update-rclone.sh			                https://healthchecks.matuszyk.com:8000/ping/5ecbd2aa-6564-4f79-b111-1776b5dc36d7
+healthchecks-smartd.sh
+healthchecks-swap-usage.sh                              https://healthchecks.matuszyk.com:8000/ping/2398048b-116f-4886-8dc5-aec3a12fcaad
+ssh-keychain.sh                                         https://healthchecks.matuszyk.com:8000/ping/f5a8ba5c-4554-4989-9d97-5dd10cc0e1ae
+cron-git-bash-pull.sh                           
+cron-git-bash-push.sh				
+cron-git-bin-pull.sh				
+cron-git-bin-push.sh				
+healthchecks-aptitude.sh                                https://healthchecks.matuszyk.com:8000/ping/de181a20-7751-41b4-8351-0756e51d93b8
+sprawdz-czy-reboot-required.sh                          https://healthchecks.matuszyk.com:8000/ping/e57e1ec2-44ef-423a-9100-b5c128174f09

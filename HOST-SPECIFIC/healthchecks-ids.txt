@@ -18,3 +18,5 @@ cron-git-bash-pull.sh
 cron-git-bash-push.sh				
 cron-git-bin-pull.sh				
 cron-git-bin-push.sh				
+sprawdz-czy-reboot-required.sh  
+healthchecks-aptitude.sh

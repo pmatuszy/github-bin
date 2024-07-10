@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2023.12.27 - v. 0.9 - stderr redirection
 # 2023.10.12 - v. 0.8 - output is beautified
 # 2023.05.09 - v. 0.7 - added checking if the script is run on the physical machine
 # 2023.03.15 - v. 0.6 - bugfix: if ip address is 'unknown' then we raise the error
@@ -48,9 +49,9 @@ spr_ip_address() {
 
   for ((retry=0 ; retry<$how_many_retries ; retry++));do
     if [ ! -z "${TPM_PASS:-}" ];then
-      address=$(vmrun -vp "${TPM_PASS}" getGuestIPAddress $p nogui)
+      address=$(vmrun -vp "${TPM_PASS}" getGuestIPAddress $p nogui 2>&1)
     else
-      address=$(vmrun getGuestIPAddress $p nogui)
+      address=$(vmrun getGuestIPAddress $p nogui 2>&1)
     fi
     if (( $? != 0 )) && (( retry == $how_many_retries-1 )); then
       echo "(PGM) vmrun finished with ERRORS !!!!!!"
@@ -82,9 +83,9 @@ spr_vmware_tools() {
 
   for ((retry=0 ; retry<$how_many_retries ; retry++));do
     if [ ! -z "${TPM_PASS:-}" ];then
-      status=$(vmrun -vp "${TPM_PASS}" checkToolsState $p nogui)
+      status=$(vmrun -vp "${TPM_PASS}" checkToolsState $p nogui 2>&1)
     else
-      status=$(vmrun checkToolsState $p nogui)
+      status=$(vmrun checkToolsState $p nogui 2>&1)
     fi
     if (( $? != 0 )); then
       echo ; echo "(PGM) vmrun finished with ERRORS !!!!!!"; echo
@@ -114,13 +115,13 @@ m=$(
   echo " "; echo "aktualna data: `date '+%Y.%m.%d %H:%M'`" ; echo ;
   echo vmrun list | boxes -s 40x5 -a c
   echo;
-  vmrun list | grep Total
-  vmrun list | grep -v Total | sort
+  vmrun list 2> /dev/null | grep Total 
+  vmrun list 2> /dev/null | grep -v Total | sort
   echo
 
   export IFS=$'\n'
 
-  for p in `vmrun list|grep vmx|sort`;do
+  for p in `vmrun list 2>/dev/null|grep vmx|sort`;do
     echo
     echo "checking $p (PGM)" | boxes -a l -d stone
     spr_ip_address   $p 

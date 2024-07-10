@@ -1,19 +1,8 @@
 #!/bin/bash
 
-# 2023.05.11 - v. 0.6 - wylaczenie startowania uslugi VPN
-# 2021.09.19 - v. 0.5 - zmiana sciezki do vpnservera, zmieny w fsck, dodana funkcja zrob_fsck
-# 2021.02.18 - v. 0.4 - bugfix - added /encrypted at the end of mount -o noatime command
-# 2021.02.03 - v. 0.3 - replace zfs with luks2 /encrypted directory
-# 2021.01.06 - v. 0.2 - added additional bind mountpoints
-# 2020.0x.xx - v. 0.1 - initial release (date unknown)
+# 2023.03.27 - v. 0.1 - initial release
 
-# zpool export zfs_encrypted_file 2>/dev/null
-# zpool import -d /encrypted.zfs -l -a
-
-# zpool status -v
-
-# zfs mount zfs_encrypted_file/encrypted
-# zfs mount zfs_encrypted_file
+. /root/bin/_script_header.sh
 
 echo
 read -r -p "Wpisz haslo: " -s PASSWD
@@ -22,58 +11,92 @@ echo
 ################################################################################
 zrob_fsck() {
 ################################################################################
+echo ; echo "==> ########## zrob_fsck($1)"
 
-echo "################################################################################"
-
-echo
 echo czas na fsck $1 ...
-echo 
-echo "################################################################################"
 
-fsck -C -M -R -T -V $1
+if [ $(lsblk -no FSTYPE $1) == 'ext4' ];then
+  fsck.ext4 -f -y $1
+else
+  # -C: Display the progress, so you know that something is happening.
+  # -M: Don't do anything if the partition is mounted
+  # -f: Force a check even if the system thinks that it's not needed.
+  fsck      -C -M -R -T -y $1
+fi
 
-echo
-echo ... and once again fsck
-echo
-fsck $1
+kod_powrotu=$?
+echo "kod powrotu z fsck to $kod_powrotu (przebieg 1-szy)"
+
+if (( $kod_powrotu != 0 ));then
+  echo
+  echo ... and once again fsck
+  echo
+
+  if [ $(lsblk -no FSTYPE $1) == 'ext4' ];then
+    fsck.ext4 -f -y $1
+  else
+     # -C: Display the progress, so you know that something is happening.
+     # -M: Don't do anything if the partition is mounted
+     # -f: Force a check even if the system thinks that it's not needed.
+    fsck      -C -M -R -T -y $1
+  fi
+  echo "kod powrotu z fsck to $? (przebieg 2-gi)"
+else
+  echo "fsck zrobiony"
+fi
+echo "<== ########## zrob_fsck($1)"
+}
+################################################################################
+zamontuj_fs_MASTER() {
+echo ; echo "==> ########## zamontuj_fs_MASTER($1, $2, $3)"
+
+if [ $(mountpoint -q $2 ; echo $?) -eq 0 ] ; then
+   echo $1 jest juz zamontowany ... wychodze
+   echo "<== ########## zamontuj_fs_MASTER($1, $2, $3)"
+   return
+fi
+
+echo -n "$PASSWD" | cryptsetup luksOpen "${1}" encrypted_luks_device_"$(basename ${1})" -d -
+
+if (( $? != 0 ));then
+  echo  ; echo "NIE MOGE ZAMONTOWAC $1 pod $2 !!!!!!!"; echo "wychodze ..."
+  echo "<== ########## zamontuj_fs_MASTER($1, $2, $3)"
+  return
+fi
+
+zrob_fsck /dev/mapper/encrypted_luks_device_"$(basename ${1})"
+mount -o $3 /dev/mapper/encrypted_luks_device_"$(basename ${1})" "${2}"
+
+if (( $? == 0 ));then
+  echo ; echo "mount of $1 under $2 was SUCCESSFUL" ; echo
+fi
+
+echo "<== ########## zamontuj_fs_MASTER($1, $2, $3)"
 }
 ################################################################################
 
-nazwa_pliku=/encrypted.luks2
+vgchange -a y
+sleep 1
 
-echo -n "$PASSWD" | cryptsetup luksOpen ${nazwa_pliku} encrypted_luks_file_in_root -d -
-zrob_fsck /dev/mapper/encrypted_luks_file_in_root
+zamontuj_fs_MASTER /encrypted.luks2                         /encrypted            noatime
+zamontuj_fs_MASTER /dev/vg_crypto_encA/lv_do_luksa_encA     /mnt/luks-raid1-encA  noatime
+zamontuj_fs_MASTER /dev/vg_crypto_encB/lv_do_luksa_encB     /mnt/luks-raid1-encB  noatime
 
-echo -n "$PASSWD" | cryptsetup luksOpen /dev/vg_crypto_encA/lv_do_luksa_encA luks-on-lv_encA -d -
-zrob_fsck /dev/mapper/luks-on-lv_encA
-
-echo -n "$PASSWD" | cryptsetup luksOpen /dev/vg_crypto_encB/lv_do_luksa_encB luks-on-lv_encB -d -
-zrob_fsck /dev/mapper/luks-on-lv_encB
-
-################################################################################
-
-echo "################################################################################"
-
-mount -o noatime /dev/mapper/encrypted_luks_file_in_root /encrypted
-mount -o noatime /dev/mapper/luks-on-lv_encA /mnt/luks-raid1-encA
-mount -o noatime /dev/mapper/luks-on-lv_encB /mnt/luks-raid1-encB
+sleep 1
 
 mount -o bind,noatime /mnt/luks-raid1-encA/replication/rclone-user/_rclone /rclone-jail/storage-master/replicationA
 mount -o bind,noatime /mnt/luks-raid1-encB/replication/rclone-user/_rclone /rclone-jail/storage-master/replicationB
 mount -o bind,noatime /mnt/luks-raid1-encA/backup/rclone-user/_restic      /rclone-jail/storage-master/backupA
 mount -o bind,noatime /mnt/luks-raid1-encB/backup/rclone-user/_restic      /rclone-jail/storage-master/backupB
 
-df -h /encrypted
 echo
-df -h /mnt/luks-raid1-encA /mnt/luks-raid1-encB
-echo
-df -h /rclone-jail/storage-master/backupA /rclone-jail/storage-master/replicationA
-echo
-df -h /rclone-jail/storage-master/backupB /rclone-jail/storage-master/replicationB
-echo
+df -h /encrypted /mnt/luks-raid1-encA /mnt/luks-raid1-encB \
+      /rclone-jail/storage-master/replicationA /rclone-jail/storage-master/replicationB \
+      /rclone-jail/storage-master/backupA /rclone-jail/storage-master/backupB
 
-echo startuje vpnserver
-
+echo ; echo startuje vpnserver ; echo
 /encrypted/vpnserver/vpnserver start
-
 /root/bin/sprawdz-czy-dziala-server-vpn.sh
+/root/bin/healthchecks-smartd.sh
+
+. /root/bin/_script_footer.sh

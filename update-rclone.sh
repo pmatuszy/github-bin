@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2023.12.18 - v. 0.5 - bugfix: check if rclone is installed
 # 2023.03.26 - v. 0.4 - added ile_prob i odstepy_miedzy_probami_sek
 # 2023.01.03 - v. 0.3 - dodano random delay jesli skrypt jest wywolywany nieinteraktywnie
 # 2022.05.20 - v. 0.2 - dodalem wypisywanie aktualnej daty
@@ -15,6 +16,20 @@ export ile_prob=10
 export odstepy_miedzy_probami_sek=20
 
 export RCLONE_BIN=$(type -fP rclone)
+
+if [ -z "${RCLONE_BIN}" ] ; then
+  m=$(
+    echo '#####################################################'
+    echo '#####################################################'
+    echo
+    echo "rclone is not installed"
+    echo
+    echo '#####################################################'
+    echo '#####################################################'
+    )
+  /usr/bin/curl -fsS -m 100 --retry 10 --retry-delay 10 --data-raw "$m" -o /dev/null "$HEALTHCHECK_URL"/fail 2>/dev/null
+  exit 8
+fi
 
 # nie badamy czy rclone jest uruchomiony, bo moze byc rclone mount i on jest zawsze uruchomiony. My updateujemy mimo to
 # nie badamy czy rclone jest uruchomiony, bo moze byc rclone mount i on jest zawsze uruchomiony. My updateujemy mimo to
