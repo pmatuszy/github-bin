@@ -15,4 +15,4 @@ cron-git-bash-push.sh
 cron-git-bin-pull.sh                                    
 cron-git-bin-push.sh                                    
 rotate-backups.sh					
-healthchecks-aptitude.sh                                
+healthchecks-aptitude.sh                                https://healthchecks.matuszyk.com:8000/ping/23d35cd7-2229-43c0-85d4-6d5b34a1ea16
