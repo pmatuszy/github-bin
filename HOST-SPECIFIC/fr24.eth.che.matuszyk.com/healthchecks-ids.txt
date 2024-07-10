@@ -1,5 +1,5 @@
 healthchecks-ping.sh					https://healthchecks.matuszyk.com:8000/ping/dd1ed075-1577-4f8c-b2bc-40ec0975fe1d
-sprawdz-ile-apt-list--upgradable.sh			
+sprawdz-ile-apt-list--upgradable.sh			https://healthchecks.matuszyk.com:8000/ping/0d74b0fc-b3aa-4117-9c21-9b3e55fc9a57
 restic_backup_CHE.sh					
 update-restic.sh                    	        	
 update-rclone.sh                                	
