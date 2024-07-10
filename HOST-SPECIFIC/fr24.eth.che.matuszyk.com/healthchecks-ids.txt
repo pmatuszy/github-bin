@@ -3,7 +3,7 @@ sprawdz-ile-apt-list--upgradable.sh
 restic_backup_CHE.sh					
 update-restic.sh                    	        	
 update-rclone.sh                                	
-healthchecks-swap-usage.sh                 	     	
+healthchecks-swap-usage.sh                 	     	https://healthchecks.matuszyk.com:8000/ping/8c981074-7a98-4957-aec9-744e8ed4d831
 sprawdz-czy-reboot-required.sh				
 backup-mysql.sh						
 healthchecks-lvs-sync-status.sh                 
