@@ -4,7 +4,7 @@ restic_backup_CHE.sh
 update-restic.sh                    	        	
 update-rclone.sh                                	
 healthchecks-swap-usage.sh                 	     	https://healthchecks.matuszyk.com:8000/ping/8c981074-7a98-4957-aec9-744e8ed4d831
-sprawdz-czy-reboot-required.sh				
+sprawdz-czy-reboot-required.sh				https://healthchecks.matuszyk.com:8000/ping/c465bed3-3143-4627-a45c-047e2e7eaab7
 backup-mysql.sh						
 healthchecks-lvs-sync-status.sh                 
 sprawdz-czy-dziala-strona-www.anna.matuszyk.com.sh      
