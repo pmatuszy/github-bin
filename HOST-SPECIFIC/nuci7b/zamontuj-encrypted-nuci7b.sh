@@ -84,7 +84,6 @@ zamontuj_fs_MASTER /dev/vg_crypto_buffalo2/lv_do_luksa_buffalo2 /mnt/luks-buffal
 # /mnt/luks-NO-MIRROR SMR !!!!!!
 zamontuj_fs_MASTER /dev/vg_crypto_20240714_NO-MIRRROR/lv_crypto_20240714_NO-MIRRROR /mnt/luks-NO-MIRROR noatime,data=writeback,barrier=0,nobh,errors=remount-ro
 
-
 echo
 df -h /encrypted /mnt/luks-buffalo2 /mnt/luks-raidsonic
 
