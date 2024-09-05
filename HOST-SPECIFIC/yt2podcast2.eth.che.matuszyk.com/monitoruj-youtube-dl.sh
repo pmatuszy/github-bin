@@ -41,18 +41,15 @@ if [ $czy_wysylac_maile -ne 0 ] ; then
 fi
 
 while : ; do
-  # if [ `grep 'got too many requests error, will retry download next time' ${maska_logow}|wc -l` -gt $max_liczba_linii ] ; then
-  if [ `grep "server responded with a 'Too Many Requests' error" ${maska_logow}|wc -l` -gt $max_liczba_linii ] ; then
+  if [ `egrep "server responded with a 'Too Many Requests' error|Sign in to confirm youâ not a bot" ${maska_logow}|wc -l` -gt $max_liczba_linii ] ; then
      echo '#####################################################################################################'
      echo '#####################################################################################################'
      echo '###################################### RESTART ######################################################'
      echo '#####################################################################################################'
      echo '#####################################################################################################'
      echo 
-     # echo "[`date '+%Y.%m.%d %H:%M:%S'`] liczba linii z 'got too many requests error, will retry download next time' wiec restartniemy sie"
-     echo "[`date '+%Y.%m.%d %H:%M:%S'`] liczba linii z 'server responded with a 'Too Many Requests' error' wiec restartniemy sie"
-     # echo "                      liczba blednych linii w logach to: "`grep 'got too many requests error, will retry download next time' ${maska_logow}|wc -l`
-     echo "                      liczba blednych linii w logach to: "`grep "server responded with a 'Too Many Requests' error" ${maska_logow}|wc -l`
+     echo "[`date '+%Y.%m.%d %H:%M:%S'`] liczba linii z bledami, wiec restartniemy sie"
+     echo "                      liczba blednych linii w logach to: "`egrep "server responded with a 'Too Many Requests' error|Sign in to confirm youâ not a bot" ${maska_logow}|wc -l`
      if [ $czy_wysylac_maile -ne 0 ] ; then
        echo restartuje feedy podsynca | mutt -s "[ `hostname` ] restart podsynca (`date '+%Y.%m.%d %H:%M:%S'`)" `hostname`@matuszyk.com
      fi
@@ -83,8 +80,7 @@ while : ; do
        sleep 1
      done
      echo
-     # if [ `grep 'got too many requests error, will retry download next time' ${maska_logow}|wc -l` -gt $max_liczba_linii ] ; then
-     if [ `grep "server responded with a 'Too Many Requests' error" ${maska_logow}|wc -l` -gt $max_liczba_linii ] ; then
+     if [ `egrep "server responded with a 'Too Many Requests' error|Sign in to confirm youâ not a bot" ${maska_logow}|wc -l` -gt $max_liczba_linii ] ; then
         echo "po restarcie dalej sa problemy z podlaczeniem ==> inicjuje nowy restart"
         echo "po restarcie dalej sa problemy z podlaczeniem ==> inicjuje nowy restart"
         echo "po restarcie dalej sa problemy z podlaczeniem ==> inicjuje nowy restart"
@@ -97,10 +93,8 @@ while : ; do
            break
          else
            sleep $sleep_1dyncze_opoznienie
-           # echo -en "\r[`date '+%Y.%m.%d %H:%M:%S'`] (liczba bledow w logach: `grep 'got too many requests error, will retry download next time' ${maska_logow}|wc -l`)"
-           echo -en "\r[`date '+%Y.%m.%d %H:%M:%S'`] (liczba bledow w logach: `grep "server responded with a 'Too Many Requests' error" ${maska_logow}|wc -l`)"
-           # if [ `grep 'got too many requests error, will retry download next time' ${maska_logow}|wc -l` -gt $max_liczba_linii ] ; then
-           if [ `grep "server responded with a 'Too Many Requests' error" ${maska_logow}|wc -l` -gt $max_liczba_linii ] ; then
+           echo -en "\r[`date '+%Y.%m.%d %H:%M:%S'`] (liczba bledow w logach: `egrep "server responded with a 'Too Many Requests' error|Sign in to confirm youâ not a bot" ${maska_logow}|wc -l`)"
+           if [ `egrep "server responded with a 'Too Many Requests' error|Sign in to confirm youâ not a bot" ${maska_logow}|wc -l` -gt $max_liczba_linii ] ; then
              echo " (troche za duzo bo max., ktory dopuszczam to $max_liczba_linii) ==> inicjuje nowy restart"
              break
            fi
@@ -119,9 +113,9 @@ while : ; do
      jest_wolne_kb=`eLC_NUMERIC=en_US printf "%'.f\n" $jest_wolne_kb`
      jest_wolne_pc=`/bin/df --output=pcent /podsync-hdd|tail -1`
      
-     if [ `grep "server responded with a 'Too Many Requests' error" ${maska_logow}|wc -l` -le $max_liczba_linii ] ; then
+     if [ `egrep "server responded with a 'Too Many Requests' error|Sign in to confirm youâ not a bot" ${maska_logow}|wc -l` -le $max_liczba_linii ] ; then
        echo -n "[`date '+%Y.%m.%d %H:%M:%S'`] Dziala. " 
-       echo -n "# linii z bledami w logach : `grep "server responded with a 'Too Many Requests' error" ${maska_logow}|wc -l`"
+       echo -n "# linii z bledami w logach : `egrep "server responded with a 'Too Many Requests' error|Sign in to confirm youâ not a bot" ${maska_logow}|wc -l`"
        echo -n ". Przybylo `echo $roznica|awk '{printf "%7.0f\n",$1}'` kB w /podsync-hdd (BYLO zajete: "$bylo_zajete kB", JEST zajete: $jest_zajete kB, wolne kB: $jest_wolne_kb,${jest_wolne_pc}). "
      fi
      pop=$nast
@@ -130,23 +124,16 @@ while : ; do
         sleep $opoznienie_1szy_raz 
         pierwszy_raz=0
      else
-       if [ `grep "server responded with a 'Too Many Requests' error" ${maska_logow}|wc -l` -le $max_liczba_linii ] ; then
+       if [ `egrep "server responded with a 'Too Many Requests' error|Sign in to confirm youâ not a bot" ${maska_logow}|wc -l` -le $max_liczba_linii ] ; then
          echo "Czekam min. ${opoznienie}s."
        fi
       liczba_iteracji=`echo "(${opoznienie}-50)/$sleep_1dyncze_opoznienie"| bc` # czekamy liczba_iteracji-20s by nie przeskoczyc nastepnej pelnej minuty ... ;-)
-#      echo "(${opoznienie}-60)/$sleep_1dyncze_opoznienie"
-#      echo liczba_iteracji $liczba_iteracji opoznienie = ${opoznienie} 
        for (( c=0; c<$liczba_iteracji; c++ )); do
-         # echo -en "\r[`date '+%Y.%m.%d %H:%M:%S'`] (liczba bledow w logach: `grep 'got too many requests error, will retry download next time' ${maska_logow}|wc -l`)"
-         echo -en "\r[`date '+%Y.%m.%d %H:%M:%S'`] (liczba bledow w logach: `grep "server responded with a 'Too Many Requests' error" ${maska_logow}|wc -l`)"
-         # if [ `grep 'got too many requests error, will retry download next time' ${maska_logow}|wc -l` -gt $max_liczba_linii ] ; then
-         if [ `grep "server responded with a 'Too Many Requests' error" ${maska_logow}|wc -l` -gt $max_liczba_linii ] ; then
+         echo -en "\r[`date '+%Y.%m.%d %H:%M:%S'`] (liczba bledow w logach: `egrep "server responded with a 'Too Many Requests' error|Sign in to confirm youâ not a bot" ${maska_logow}|wc -l`)"
+         if [ `egrep "server responded with a 'Too Many Requests' error|Sign in to confirm youâ not a bot" ${maska_logow}|wc -l` -gt $max_liczba_linii ] ; then
            echo " (troche za duzo bo max., ktory dopuszczam to $max_liczba_linii) ==> inicjuje nowy restart"
            break
          fi
-#         if [ `date '+%S'` -eq 0 ] ;then
-#            echo ; echo zero  sekund a liczba_iteracji do zrobionia $c ; echo
-#         fi
          sleep $sleep_1dyncze_opoznienie
        done
        echo -en '\r'
