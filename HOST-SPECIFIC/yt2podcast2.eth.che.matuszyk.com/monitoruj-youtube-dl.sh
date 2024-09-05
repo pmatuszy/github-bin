@@ -2,7 +2,7 @@
 
 # (C) Paul G. Matuszyk 2020.04.20
 # first production version
-# 2024.09.05 - v. 1.7 - dodano obsluge bledow gdy yt wypisuje "Sign in to confirm youâ not a bot"
+# 2024.09.05 - v. 1.7 - dodano obsluge bledow gdy yt wypisuje "Sign in to confirm you.*re not a bot"
 # 2023.02.28 - v. 1.6 - zmiana formatu linii dla grep bo podnioslem wersje podsynca i zmienil sie message...
 #                       added _script_header and _script_footer calls
 # v. 1.5 - 2022.02.10 - lowered sleep_1dyncze_opoznienie from 0.2 to 0.1
@@ -42,7 +42,7 @@ if [ $czy_wysylac_maile -ne 0 ] ; then
 fi
 
 while : ; do
-  if [ `egrep "server responded with a 'Too Many Requests' error|Sign in to confirm youâ not a bot" ${maska_logow}|wc -l` -gt $max_liczba_linii ] ; then
+  if [ `egrep "server responded with a 'Too Many Requests' error|Sign in to confirm you.*re not a bot" ${maska_logow}|wc -l` -gt $max_liczba_linii ] ; then
      echo '#####################################################################################################'
      echo '#####################################################################################################'
      echo '###################################### RESTART ######################################################'
@@ -50,7 +50,7 @@ while : ; do
      echo '#####################################################################################################'
      echo 
      echo "[`date '+%Y.%m.%d %H:%M:%S'`] liczba linii z bledami, wiec restartniemy sie"
-     echo "                      liczba blednych linii w logach to: "`egrep "server responded with a 'Too Many Requests' error|Sign in to confirm youâ not a bot" ${maska_logow}|wc -l`
+     echo "                      liczba blednych linii w logach to: "`egrep "server responded with a 'Too Many Requests' error|Sign in to confirm you.*re not a bot" ${maska_logow}|wc -l`
      if [ $czy_wysylac_maile -ne 0 ] ; then
        echo restartuje feedy podsynca | mutt -s "[ `hostname` ] restart podsynca (`date '+%Y.%m.%d %H:%M:%S'`)" `hostname`@matuszyk.com
      fi
@@ -81,7 +81,7 @@ while : ; do
        sleep 1
      done
      echo
-     if [ `egrep "server responded with a 'Too Many Requests' error|Sign in to confirm youâ not a bot" ${maska_logow}|wc -l` -gt $max_liczba_linii ] ; then
+     if [ `egrep "server responded with a 'Too Many Requests' error|Sign in to confirm you.*re not a bot" ${maska_logow}|wc -l` -gt $max_liczba_linii ] ; then
         echo "po restarcie dalej sa problemy z podlaczeniem ==> inicjuje nowy restart"
         echo "po restarcie dalej sa problemy z podlaczeniem ==> inicjuje nowy restart"
         echo "po restarcie dalej sa problemy z podlaczeniem ==> inicjuje nowy restart"
@@ -94,8 +94,8 @@ while : ; do
            break
          else
            sleep $sleep_1dyncze_opoznienie
-           echo -en "\r[`date '+%Y.%m.%d %H:%M:%S'`] (liczba bledow w logach: `egrep "server responded with a 'Too Many Requests' error|Sign in to confirm youâ not a bot" ${maska_logow}|wc -l`)"
-           if [ `egrep "server responded with a 'Too Many Requests' error|Sign in to confirm youâ not a bot" ${maska_logow}|wc -l` -gt $max_liczba_linii ] ; then
+           echo -en "\r[`date '+%Y.%m.%d %H:%M:%S'`] (liczba bledow w logach: `egrep "server responded with a 'Too Many Requests' error|Sign in to confirm you.*re not a bot" ${maska_logow}|wc -l`)"
+           if [ `egrep "server responded with a 'Too Many Requests' error|Sign in to confirm you.*re not a bot" ${maska_logow}|wc -l` -gt $max_liczba_linii ] ; then
              echo " (troche za duzo bo max., ktory dopuszczam to $max_liczba_linii) ==> inicjuje nowy restart"
              break
            fi
@@ -114,9 +114,9 @@ while : ; do
      jest_wolne_kb=`eLC_NUMERIC=en_US printf "%'.f\n" $jest_wolne_kb`
      jest_wolne_pc=`/bin/df --output=pcent /podsync-hdd|tail -1`
      
-     if [ `egrep "server responded with a 'Too Many Requests' error|Sign in to confirm youâ not a bot" ${maska_logow}|wc -l` -le $max_liczba_linii ] ; then
+     if [ `egrep "server responded with a 'Too Many Requests' error|Sign in to confirm you.*re not a bot" ${maska_logow}|wc -l` -le $max_liczba_linii ] ; then
        echo -n "[`date '+%Y.%m.%d %H:%M:%S'`] Dziala. " 
-       echo -n "# linii z bledami w logach : `egrep "server responded with a 'Too Many Requests' error|Sign in to confirm youâ not a bot" ${maska_logow}|wc -l`"
+       echo -n "# linii z bledami w logach : `egrep "server responded with a 'Too Many Requests' error|Sign in to confirm you.*re not a bot" ${maska_logow}|wc -l`"
        echo -n ". Przybylo `echo $roznica|awk '{printf "%7.0f\n",$1}'` kB w /podsync-hdd (BYLO zajete: "$bylo_zajete kB", JEST zajete: $jest_zajete kB, wolne kB: $jest_wolne_kb,${jest_wolne_pc}). "
      fi
      pop=$nast
@@ -125,13 +125,13 @@ while : ; do
         sleep $opoznienie_1szy_raz 
         pierwszy_raz=0
      else
-       if [ `egrep "server responded with a 'Too Many Requests' error|Sign in to confirm youâ not a bot" ${maska_logow}|wc -l` -le $max_liczba_linii ] ; then
+       if [ `egrep "server responded with a 'Too Many Requests' error|Sign in to confirm you.*re not a bot" ${maska_logow}|wc -l` -le $max_liczba_linii ] ; then
          echo "Czekam min. ${opoznienie}s."
        fi
       liczba_iteracji=`echo "(${opoznienie}-50)/$sleep_1dyncze_opoznienie"| bc` # czekamy liczba_iteracji-20s by nie przeskoczyc nastepnej pelnej minuty ... ;-)
        for (( c=0; c<$liczba_iteracji; c++ )); do
-         echo -en "\r[`date '+%Y.%m.%d %H:%M:%S'`] (liczba bledow w logach: `egrep "server responded with a 'Too Many Requests' error|Sign in to confirm youâ not a bot" ${maska_logow}|wc -l`)"
-         if [ `egrep "server responded with a 'Too Many Requests' error|Sign in to confirm youâ not a bot" ${maska_logow}|wc -l` -gt $max_liczba_linii ] ; then
+         echo -en "\r[`date '+%Y.%m.%d %H:%M:%S'`] (liczba bledow w logach: `egrep "server responded with a 'Too Many Requests' error|Sign in to confirm you.*re not a bot" ${maska_logow}|wc -l`)"
+         if [ `egrep "server responded with a 'Too Many Requests' error|Sign in to confirm you.*re not a bot" ${maska_logow}|wc -l` -gt $max_liczba_linii ] ; then
            echo " (troche za duzo bo max., ktory dopuszczam to $max_liczba_linii) ==> inicjuje nowy restart"
            break
          fi
