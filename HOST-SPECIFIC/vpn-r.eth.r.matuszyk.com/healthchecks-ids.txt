@@ -1,4 +1,4 @@
-healthchecks-ping.sh	  				        https://healthchecks.matuszyk.com:8000/ping/e9fff8f1-cd18-46e8-b244-935b41f1afd4
+healthchecks-ping.sh	  				        https://healthchecks.matuszyk.com:8000/ping/70f529b6-5407-491f-ae04-a44655bf0050
 backup	  
 ssd-trim.sh  					
 sprawdz-czy-dziala-strona-yt2podcast.com.sh     
