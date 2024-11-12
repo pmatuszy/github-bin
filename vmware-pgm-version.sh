@@ -1,10 +1,18 @@
 #!/bin/bash
 
-# 2023.05.09 - v. 0.2 - added checking if the script is run on the physical machine
-# 2023.02.09 - v. 0.1 - initial release
+# 2024.11.12 - v. 0.1 - initial release
 
 . /root/bin/_script_header.sh
 
-DISPLAY= vmware --version
+check_if_installed virt-what
+if (( $(virt-what | wc -l) != 0 ));then
+  echo ; echo "host is NOT a physical machine ... exiting...";echo
+  exit 1
+fi
 
-. /root/bin/_script_footer.sh
+export DISPLAY=
+
+echo vmware --version
+echo ; echo 
+vmware --version
+echo
