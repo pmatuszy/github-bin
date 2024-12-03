@@ -14,7 +14,7 @@ opoznienie_miedzy_wywolaniami=60s
 wlasciciel_pliku="che:che"
 
 yt_bin=/usr/local/bin/youtube-dl
-yt_bin=/snap/youtube-dl/current/bin/youtube-dl
+# yt_bin=/snap/youtube-dl/current/bin/youtube-dl
 
 while : ; do 
   nazwa_pliku="Kijow-livecam_$(date '+%Y%m%d_%H%M%S').mp4"
