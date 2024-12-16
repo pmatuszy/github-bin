@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2024.12.16 - v. 2.8 - bugfix: pgrep changed from pgrep -x to pgrep -xf
 # 2023.02.18 - v. 2.7 - fix a bug in curl "/usr/bin/curl: Argument list too long" by echoing HC_message in pipe to curl
 # 2023.02.02 - v. 2.6 - added support for /root/SECRET subdirectory
 # 2023.01.25 - v. 2.5 - added script_is_run_interactively env check (which is set in _script_header.sh)
@@ -98,7 +99,7 @@ if [ ! -d "$XDG_CACHE_HOME" ] ; then
    exit 4
 fi
 
-if pgrep -x "${RESTIC_BIN}" > /dev/null ; then
+if pgrep -fx "${RESTIC_BIN}" > /dev/null ; then
   m=$(
     echo '#####################################################'
     echo '#####################################################'
