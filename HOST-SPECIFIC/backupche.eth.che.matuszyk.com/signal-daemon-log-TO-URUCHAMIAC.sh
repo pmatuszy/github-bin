@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2024.12.18 - v. 0.5 - changed opoznienie_miedzy_wywolaniami 5 ==> 30
 # 2024.04.11 - v. 0.4 - added --dbus as required by a new version of the daemon
 # 2023.02.02 - v. 0.3 - added --foreground option to be able to use Ctrl-C 
 # 2023.02.01 - v. 0.2 - added restart once a day
@@ -10,7 +11,7 @@
 czas_startu_skryptu=$(date '+%s')
 secs_to_midnight=$((($(date -d "tomorrow 00:00" +%s)-$czas_startu_skryptu)))
 let max_timestamp_dzialania_skryptu=$((($(date +%s)+$secs_to_midnight+20)))
-opoznienie_miedzy_wywolaniami=5s
+opoznienie_miedzy_wywolaniami=30s
 
 while : ; do
   let secs_nagrywania=secs_to_midnight+60
