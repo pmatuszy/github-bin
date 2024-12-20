@@ -10,10 +10,10 @@
 check_if_installed wakeonlan
 
 opoznienie=2
-IP=192.168.200.255
+IP=192.168.200.220
 MAC="c0:3f:d5:60:73:6b"
 
-ping -c 2  -W 2 -q "${IP}" >/dev/null
+ping -c 2  -W 2 -b -q "${IP}" >/dev/null
 
 if (( $? == 0 ));then
   echo ; echo "(PGM) Host $IP is already up. No need to start it again...";echo
@@ -26,6 +26,6 @@ for p in {1..5};do
   sleep $opoznienie
 done
 
-ping -c 40 -W 1 $IP
+ping -c 3 -W 1 $IP
 
 . /root/bin/_script_footer.sh
