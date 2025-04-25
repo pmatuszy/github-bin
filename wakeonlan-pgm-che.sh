@@ -28,7 +28,7 @@ for p in {1..20};do
   sleep $delay
 done
 
-if ping -c 3 -W 1 "$IP" > /dev/null; then
+if ping -c 3 -W 1 "$IP" ; then
   echo "(PGM) Host $IP successfully woke up."
 else
   echo "(PGM) Host $IP did not respond after WOL attempts."
