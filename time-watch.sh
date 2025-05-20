@@ -7,6 +7,6 @@
 check_if_installed figlet watch
 
 #watch -t -n1 "date '+%Y.%m.%d %H:%M:%S'|figlet -f banner"
-watch -t -n1 "date '+%Y.%m.%d %H:%M:%S' | figlet -f big"
+watch -t -n0.1 "date '+%Y.%m.%d %H:%M:%S' | figlet -f big"
 
 . /root/bin/_script_footer.sh
