@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2025.07.06 - v. 0.8 - bugfix - how_many_retries was not decremented... so script was running sometimes forever
 # 2024.04.02 - v. 0.7 - added timeout command (as curl sometimes doesn't timeout )
 # 2023.04.13 - v. 0.6 - added how_many_retries and retry_delay
 # 2023.01.17 - v. 0.5 - dodano random delay jesli skrypt jest wywolywany nieinteraktywnie
@@ -31,6 +32,7 @@ while (( $blad != 0 && $how_many_retries != 0 )) ; do
     break
   else
     sleep $retry_delay
+    ((how_many_retries--))
     if (( script_is_run_interactively == 1 ));then
        echo sleeping for $retry_delay
     fi
@@ -48,4 +50,4 @@ exit $?
 #####
 # new crontab entry
 
-*/5 * * * * /root/bin/sprawdz-czy-dziala-strona-yt2podcast.com.sh
+*/5 * * * *  /usr/bin/flock --nonblock --exclusive /root/bin/sprawdz-czy-dziala-strona-yt2podcast.com.sh -c /root/bin/sprawdz-czy-dziala-strona-yt2podcast.com.sh
