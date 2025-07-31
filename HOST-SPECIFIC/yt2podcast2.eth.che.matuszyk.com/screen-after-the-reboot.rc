@@ -16,6 +16,8 @@ screen -t "check-forever-for-lighttpd-config-file-change.sh"  6 /bin/bash -c    
 screen -t "podsync"                                           7 su - podsync    -c "/home/podsync/bin/feeds-start.sh"
 screen -t "monitoruj-youtube-dl.sh"                           8 /bin/bash -c    "/root/bin/monitoruj-youtube-dl.sh"
 screen -t "nyx (tor)"                                         9 /usr/bin/nyx
+screen -t "dmesg-tail.sh"                                     10 /bin/bash -c  /root/bin/dmesg-tail.sh
+
 
 bindkey -k F2 next
 bindkey -k F1 prev
