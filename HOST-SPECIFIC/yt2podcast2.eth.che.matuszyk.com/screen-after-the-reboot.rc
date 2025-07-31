@@ -17,7 +17,10 @@ screen -t "podsync"                                           7 su - podsync    
 screen -t "monitoruj-youtube-dl.sh"                           8 /bin/bash -c    "/root/bin/monitoruj-youtube-dl.sh"
 screen -t "nyx (tor)"                                         9 /usr/bin/nyx
 screen -t "dmesg-tail.sh"                                     10 /bin/bash -c  /root/bin/dmesg-tail.sh
-
+screen -t "journal-tail.sh"                                   11 /bin/bash -c  /root/bin/journal-tail.sh
+screen -t "watch-progress.sh"                                 12 /bin/bash -c  /root/bin/watch-progress.sh
+screen -t "pmove"                                             13 /bin/bash -c  "while : ; do echo `date` `lvs -a -o+devices|grep -- '\[pvmove'` ; sleep 2m ; done"
+screen -t "iostat-no-color.sh"                                14 /bin/bash -c  /root/bin/iostat-no-color.sh
 
 bindkey -k F2 next
 bindkey -k F1 prev
