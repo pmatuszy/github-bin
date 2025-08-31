@@ -11,7 +11,8 @@ check_if_installed wakeonlan
 
 opoznienie=2
 IP=192.168.200.250
-MAC="D4:BE:D9:5C:57:FC"
+# MAC="D4:BE:D9:5C:57:FC"      # starty lapek Dell
+MAC="A0-29-19-CB-37-CF"      # nowy lapek Dell
 
 ping -c 2  -W 2 -b -q "${IP}" >/dev/null
 
