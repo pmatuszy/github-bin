@@ -14,7 +14,7 @@ check_if_installed wakeonlan
 
 delay=2
 max_attempts=30
-IP=pgm-che.eth.che.matuszyk.com
+IP=192.168.200.190
 MAC="A0:29:19:CB:37:CF"      # nowy lapek Dell
 BROADCAST="192.168.200.255"
 
