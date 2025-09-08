@@ -17,8 +17,8 @@ fi
 
 export URL="www.anna.matuszyk.com"
 blad=1
-how_many_retries=10
-retry_delay=15
+how_many_retries=30
+retry_delay=20
 
 curl_retry=1
 curl_retry_delay=3
