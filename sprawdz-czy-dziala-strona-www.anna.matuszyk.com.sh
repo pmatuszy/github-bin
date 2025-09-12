@@ -1,5 +1,7 @@
 #!/bin/bash
 
+# 2025.09.12 - v  1.0 - bugfix - added to curl Uses https:// + -L to follow redirects and -4 to avoid IPv6 edge cases.
+#                       --fail-with-body ensures non-2xx/3xx responses are treated as errors.
 # 2025.07.03 - v  0.9 - bugfix - curl OK removal from output and one more 
 # 2025.07.06 - v. 0.8 - bugfix - how_many_retries was not decremented... so script was running sometimes forever
 # 2024.04.02 - v. 0.7 - added timeout command (as curl sometimes doesn't timeout )
@@ -15,21 +17,22 @@ if [ -f "$HEALTHCHECKS_FILE" ]; then
   HEALTHCHECK_URL=$(grep "^$(basename "$0")" "$HEALTHCHECKS_FILE" | awk '{print $2}')
 fi
 
-export URL="www.anna.matuszyk.com"
+export URL="https://www.anna.matuszyk.com"
 blad=1
 how_many_retries=30
 retry_delay=20
 
-curl_retry=1
-curl_retry_delay=3
+curl_retry=2
+curl_retry_delay=5
 
 export timeout=20
 export kill_after=30
 
 while (( blad != 0 && how_many_retries != 0 )); do
-  if wget -qO - "$URL" | grep -q "In Short"; then
+#   if wget -qO - "$URL" | grep -q "In Short"; then
+  if curl -fsL "$URL" 2>/dev/null | grep -qm1 "In Short"; then
     /usr/bin/timeout --foreground --preserve-status --kill-after="$kill_after" "$timeout" \
-      /usr/bin/curl -fsS -m 100 --retry "$curl_retry" --retry-delay "$curl_retry_delay" "$HEALTHCHECK_URL" > /dev/null 2>&1
+      /usr/bin/curl -fsS -m 100 --fail-with-body -L -4 --retry "$curl_retry" --retry-delay "$curl_retry_delay" "$HEALTHCHECK_URL" > /dev/null 2>&1
     blad=0
     break
   else
