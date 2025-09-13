@@ -22,8 +22,8 @@ blad=1
 how_many_retries=30
 retry_delay=20
 
-curl_retry=2
-curl_retry_delay=5
+curl_retry=3
+curl_retry_delay=10
 
 export timeout=20
 export kill_after=30
