@@ -16,7 +16,9 @@ delay=2
 max_attempts=30
 IP=192.168.200.190
 MAC="A0:29:19:CB:37:CF"      # nowy lapek Dell
+MAC="F4:26:79:EF:74:2D"      # nowy lapek Dell 2025 wifi
 BROADCAST="192.168.200.255"
+BROADCAST="192.168.1.255"
 
 # Check if already up
 ping -c 2 -W 2 -q "${IP}" >/dev/null
