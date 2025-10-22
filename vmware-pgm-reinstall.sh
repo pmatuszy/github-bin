@@ -53,7 +53,7 @@ boxes <<< "${installer_full_path} --list-components --console"
 "${installer_full_path}" --list-components --console ; echo
 
 boxes <<< "${installer_full_path} --uninstall-product=vmware-workstation --required  --console"
-"${installer_full_path}" --uninstall-product=vmware-workstation --required  --console
+"${installer_full_path}" --uninstall-product=vmware-workstation --required  --console ; echo
 
 boxes <<< "${installer_full_path} --list-products --console"
 "${installer_full_path}" --list-products --console ; echo
@@ -62,7 +62,7 @@ boxes <<< "${installer_full_path} --list-components --console"
 "${installer_full_path}" --list-components --console ; echo
 
 boxes <<< "${installer_full_path} --required --eulas-agreed --console"
-"${installer_full_path}" --required --eulas-agreed --console
+"${installer_full_path}" --required --eulas-agreed --console ; echo
 
 boxes <<< "${installer_full_path} --list-products --console"
 "${installer_full_path}" --list-products --console ; echo
