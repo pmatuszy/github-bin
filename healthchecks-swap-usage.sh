@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2025.10.22 - v. 0.7 - zmiana limitu MAX_DOPUSZCZALNA_ZAJETOSC_SWAP 600 ==> 950
 # 2023.02.28 - v. 0.6 - curl with kod_powrotu
 # 2023.01.03 - v. 0.5 - dodano random delay jesli skrypt jest wywolywany nieinteraktywnie
 # 2022.07.01 - v. 0.4 - dodalem trimowanie swapa mimo, ze nie przekracza limitu, ale jest mimo wszystko troche juz jego zaalokowanego
@@ -14,7 +15,7 @@ if [ -f "$HEALTHCHECKS_FILE" ];then
   HEALTHCHECK_URL=$(cat "$HEALTHCHECKS_FILE" |grep "^`basename $0`"|awk '{print $2}')
 fi
 
-export MAX_DOPUSZCZALNA_ZAJETOSC_SWAP=600     # w MB
+export MAX_DOPUSZCZALNA_ZAJETOSC_SWAP=950     # w MB
 export MIN_RAM_FREE=100                       # w MB
 export MAX_USED_SWAP_TO_TRIM_ANYWAY=50        # w MB by zrobic trim ale zwrocic status ok a nie fail
 
