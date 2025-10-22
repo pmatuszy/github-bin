@@ -1,7 +1,8 @@
 #!/bin/bash
 
-# 2025.10.22 - v. 0.2 - bugfix: added check if vmware utility exists
-# 2024.11.12 - v. 0.1 - initial release
+# 2025.10.22 - v. 0.21 - small enhancement to display a command using boxes
+# 2025.10.22 - v. 0.2  - bugfix: added check if vmware utility exists
+# 2024.11.12 - v. 0.1  - initial release
 
 . /root/bin/_script_header.sh
 
@@ -19,7 +20,8 @@ if (( $? != 0 )); then
   exit 1
 fi
 
-echo vmware --version
+boxes <<< "vmware --version"
+
 echo ; echo 
 vmware --version
 echo
