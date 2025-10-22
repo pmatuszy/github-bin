@@ -22,7 +22,7 @@ if (( $? != 0 )); then
   exit 1
 fi
 
-boxes <<<"vmrun list"
+boxes <<< "vmrun list"
 vmrun list
 
 export DISPLAY=
@@ -38,9 +38,31 @@ if [ "${p}" != 'y' -o  "${p}" != 'y' ]; then
   exit 1
 fi
 
-(
-/vmware/VMware-Workstation-Full-17.6.4-24832109.x86_64.bundle --uninstall-product=vmware-workstation --required  --console
-/vmware/VMware-Workstation-Full-17.6.4-24832109.x86_64.bundle --required --eulas-agreed --console
-)
+installer_full_path="/vmware/VMware-Workstation-Full-17.6.4-24832109.x86_64.bundle"
+
+boxes <<< "${installer_full_path} --list-products --console"
+"${installer_full_path}" --list-products --console ; echo 
+
+boxes <<< "${installer_full_path} --list-components --console"
+"${installer_full_path}" --list-components --console ; echo
+
+boxes <<< "${installer_full_path} --uninstall-product=vmware-workstation --required  --console"
+"${installer_full_path}" --uninstall-product=vmware-workstation --required  --console
+
+boxes <<< "${installer_full_path} --list-products --console"
+"${installer_full_path}" --list-products --console ; echo
+
+boxes <<< "${installer_full_path} --list-components --console"
+"${installer_full_path}" --list-components --console ; echo
+
+boxes <<< "${installer_full_path} --required --eulas-agreed --console"
+"${installer_full_path}" --required --eulas-agreed --console
+
+boxes <<< "${installer_full_path} --list-products --console"
+"${installer_full_path}" --list-products --console ; echo
+
+boxes <<< "${installer_full_path} --list-components --console"
+"${installer_full_path}" --list-components --console ; echo
+
 
 . /root/bin/_script_footer.sh
