@@ -4,6 +4,8 @@
 
 . /root/bin/_script_header.sh
 
+installer_full_path="/vmware/VMware-Workstation-Full-17.6.4-24832109.x86_64.bundle"
+
 check_if_installed virt-what
 if (( $(virt-what | wc -l) != 0 ));then
   echo ; echo "host is NOT a physical machine ... exiting...";echo
@@ -38,7 +40,12 @@ if [ "${p}" != 'y' -o  "${p}" != 'y' ]; then
   exit 1
 fi
 
-installer_full_path="/vmware/VMware-Workstation-Full-17.6.4-24832109.x86_64.bundle"
+type -fP "${installer_full_path}" 2>&1 > /dev/null
+if (( $? != 0 )); then
+  echo ; echo "(PGM) I can't find ${installer_full_path} installer... exiting ..."; echo
+  exit 1
+fi
+
 
 boxes <<< "${installer_full_path} --list-products --console"
 "${installer_full_path}" --list-products --console ; echo 
