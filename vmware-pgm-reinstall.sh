@@ -46,7 +46,6 @@ if (( $? != 0 )); then
   exit 1
 fi
 
-
 boxes <<< "${installer_full_path} --list-products --console"
 "${installer_full_path}" --list-products --console ; echo 
 
