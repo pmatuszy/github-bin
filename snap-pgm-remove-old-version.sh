@@ -33,8 +33,6 @@ echo
 snap list --all | strings | grep -q disabled 
 kod_powrotu=${PIPESTATUS[2]}   # index 0=snap, 1=strings, 2=grep
 
-echo $kod_powrotu
-
 if (( $kod_powrotu != 0 )); then
   echo NONE; echo
   . /root/bin/_script_footer.sh
