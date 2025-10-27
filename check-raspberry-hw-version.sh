@@ -6,7 +6,17 @@
 
 # tr -d '\0'` below is to get rid of the message "warning: command substitution: ignored null byte in input"
 
+. /root/bin/_script_header.sh
+
+if (( ! script_is_run_interactively ));then    # jesli nie interaktywnie, to chcemy wyswietlic info, by poszlo do logow
+  echo "${SCRIPT_VERSION}";echo
+fi
+
+
 echo
 echo "$(tr -d '\0' </proc/device-tree/model),   $(awk '/MemTotal/ {printf "Total RAM: %.2f GB", $2/1024/1024}' /proc/meminfo)"
 #echo `cat /proc/device-tree/model|tr -d '\0'` ",   " `cat /proc/meminfo |grep MemTotal|awk '{printf ("Total RAM: %.0f GB", $2/1024/1024)}'`
 echo
+
+. /root/bin/_script_footer.sh
+
