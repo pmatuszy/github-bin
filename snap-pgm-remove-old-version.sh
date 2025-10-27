@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2025.10.27 - v. 0.52- bugfix - with ChatGPT fix for kod_powrotu
 # 2025.10.27 - v. 0.51- bugfix - small cosmetic display change
 # 2023.10.02 - v. 0.5 - bugfix - prompt logic reverse (if there are snaps to be removed no prompt was displayed)
 # 2023.09.11 - v. 0.4 - if none of snaps are disabled there is no prompt - the scripts just ends...
@@ -30,8 +31,9 @@ snap list --all | grep disabled
 echo 
 
 snap list --all | strings | grep -q disabled 
+kod_powrotu=${PIPESTATUS[2]}   # index 0=snap, 1=strings, 2=grep
 
-kod_powrotu=$?
+echo $kod_powrotu
 
 if (( $kod_powrotu != 0 )); then
   echo NONE; echo
