@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2025.10.28 - v. 1.51- now we set LC_ALL for scripts to have proper separators in numbers (like ,.)
 # 2023.10.10 - v. 1.5 - bugfix: removed hardcoded HEALTHCHECKS_FILE
 # 2023.05.22 - v. 1.4 - added printing of the script name, added NO_STARTUP_DELAY startup parameter
 # 2023.04.11 - v. 1.3 - added printing of the script name
@@ -26,7 +27,7 @@ fi
 set -o nounset
 set -o pipefail
 
-
+# set this to get proper numbers with separators - especially for smart*sh scripts which do calculations
 export LC_ALL=C
 
 #######################################################################################

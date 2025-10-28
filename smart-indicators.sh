@@ -81,11 +81,6 @@ for p in $disks ; do
   let last_extended_offline_ago=power_on_hours-last_extended_offline_test
   let last_conveyance_offline_ago=power_on_hours-last_conveyance_offline_test
 
-  # let's keep only numbers - sometimes I get numbers like  8’001’563’222’016
-  last_short_offline_ago=${last_short_offline_ago//[^0-9]/}
-  last_extended_offline_ago=${last_extended_offline_ago//[^0-9]/}
-  last_conveyance_offline_ago=${last_conveyance_offline_ago//[^0-9]/}
-
   czy_seagate=$($SMARTCTL_BIN  $DEVICE_TYPE --info $p|egrep -i 'seagate|ST18000NM000J|ST20000NM007D' | wc -l)
   if (( $czy_seagate > 0 ));then
     VENDOR_ATTRIBUTE="-v 1,raw48:54 -v 7,raw48:54 -v 187,raw48:54  -v 188,raw48:54 -v 195,raw48:54"
@@ -103,9 +98,6 @@ for p in $disks ; do
   if [ -z ${power_on_hours:-} ];then   # sometimes there is on power on hours in SMART attribues so I set it to -1
     power_on_hours=-1
   fi
-
-  
-  power_on_hours=${power_on_hours//[^0-9]/}
 
   # if (( $power_on_hours < 1 )) && (( $($SMARTCTL_BIN $DEVICE_TYPE $VENDOR_ATTRIBUTE --info $p|grep -i SSD | wc -l) > 0 ));then
   if (( $($SMARTCTL_BIN $DEVICE_TYPE $VENDOR_ATTRIBUTE --info $p|grep -i SSD | wc -l) > 0 )) && (( ${power_on_hours} < 1 )) ;then
