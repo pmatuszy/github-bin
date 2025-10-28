@@ -26,6 +26,9 @@ fi
 set -o nounset
 set -o pipefail
 
+
+export LC_ALL=C
+
 #######################################################################################
 function ctrl_c() {
  echo
