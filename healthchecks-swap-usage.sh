@@ -16,9 +16,9 @@ if [ -f "$HEALTHCHECKS_FILE" ];then
   HEALTHCHECK_URL=$(cat "$HEALTHCHECKS_FILE" |grep "^`basename $0`"|awk '{print $2}')
 fi
 
-export MAX_DOPUSZCZALNA_ZAJETOSC_SWAP=50  # w MB
-export MIN_RAM_FREE=100                   # w MB
-export MAX_USED_SWAP_TO_TRIM_ANYWAY=1500  # w MB by zrobic trim ale zwrocic status ok a nie fail
+export MAX_DOPUSZCZALNA_ZAJETOSC_SWAP=1900 # w MB
+export MIN_RAM_FREE=100                    # w MB
+export MAX_USED_SWAP_TO_TRIM_ANYWAY=50     # w MB by zrobic trim ale zwrocic status ok a nie fail
 
 m=$( echo " "; echo "aktualna data: `date '+%Y.%m.%d %H:%M'`" ; echo ; 
      cat  $0|grep -e '# *20[123][0-9]'|head -n 1 | awk '{print "script version: " $5 " (dated "$2")"}' ; echo ; echo
