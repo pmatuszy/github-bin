@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# 2025.11.03 - v. 1.) - added optional exluded vms that the status won't be checked ($profile_location_dir/bin/vmware-exclude-from-checks.txt)
+# 2025.11.03 - v. 1.) - added optional exluded vms that the status won't be checked (/root/bin/vmware-exclude-from-checks.txt)
 # 2023.12.27 - v. 0.9 - stderr redirection
 # 2023.10.12 - v. 0.8 - output is beautified
 # 2023.05.09 - v. 0.7 - added checking if the script is run on the physical machine
@@ -122,7 +122,7 @@ m=$(
 
   export IFS=$'\n'
 
-  exclude_file="$profile_location_dir/bin/vmware-exclude-from-checks.txt"
+  exclude_file="/root/bin/vmware-exclude-from-checks.txt"
   
   # Build list of running VMs
   vm_all=$(vmrun list 2>/dev/null | grep '\.vmx' | sort)
