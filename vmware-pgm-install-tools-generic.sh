@@ -17,7 +17,7 @@ fi
 
 type -fP vmrun 2>&1 > /dev/null
 if (( $? != 0 )); then
-  echo ; echo "(PGM) I can't find vmrum utility... exiting ..."; echo
+  echo ; echo "(PGM) I can't find vmrun utility... exiting ..."; echo
   exit 1
 fi
 
