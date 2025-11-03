@@ -29,8 +29,8 @@ export timeout=20
 export kill_after=30
 
 while (( blad != 0 && how_many_retries != 0 )); do
-#   if wget -qO - "$URL" | grep -q "In Short"; then
-  if curl -fsL "$URL" 2>/dev/null | grep -qm1 "In Short"; then
+  # Below - that way you treat 23 the same as .success..
+  if curl -fsL "$URL" 2>/dev/null | grep -qm1 "In Short" || [[ $? -eq 23 ]]; then
     /usr/bin/timeout --foreground --preserve-status --kill-after="$kill_after" "$timeout" \
       /usr/bin/curl -fsS -m 100 --fail-with-body -L -4 --retry "$curl_retry" --retry-delay "$curl_retry_delay" "$HEALTHCHECK_URL" > /dev/null 2>&1
     blad=0
