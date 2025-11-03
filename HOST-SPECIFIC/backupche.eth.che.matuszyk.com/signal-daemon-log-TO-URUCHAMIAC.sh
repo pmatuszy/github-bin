@@ -19,8 +19,6 @@ boxes <<< "/opt/signal-cli/bin/signal-cli version"
 /opt/signal-cli/bin/signal-cli version
 echo 
 
-exit
-
 while : ; do
   let secs_nagrywania=secs_to_midnight+60
 
