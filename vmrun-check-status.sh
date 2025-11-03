@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2025.11.03 - v. 1.) - added optional exluded vms that the status won't be checked ($profile_location_dir/bin/vmware-exclude-from-checks.txt)
 # 2023.12.27 - v. 0.9 - stderr redirection
 # 2023.10.12 - v. 0.8 - output is beautified
 # 2023.05.09 - v. 0.7 - added checking if the script is run on the physical machine
@@ -121,13 +122,45 @@ m=$(
 
   export IFS=$'\n'
 
-  for p in `vmrun list 2>/dev/null|grep vmx|sort`;do
+  exclude_file="$profile_location_dir/bin/vmware-exclude-from-checks.txt"
+  
+  # Build list of running VMs
+  vm_all=$(vmrun list 2>/dev/null | grep '\.vmx' | sort)
+  
+  if [[ -f "$exclude_file" ]]; then
+    # Clean exclude file (ignore empty lines and comments)
+    exclude_clean=$(grep -vE '^\s*(#|$)' "$exclude_file")
+    echo "Excluding VMs listed in $exclude_file:"
+    echo "$exclude_clean" | sed 's/^/  - /'
+    echo
+  
+    # Separate included and excluded VMs
+    vm_excluded=$(echo "$vm_all" | grep -f <(echo "$exclude_clean") || true)
+    vm_list=$(echo "$vm_all" | grep -v -f <(echo "$exclude_clean") || true)
+  else
+    vm_list="$vm_all"
+    vm_excluded=""
+  fi
+  
+  # --- Main check loop ---
+  for p in $vm_list; do
     echo
     echo "checking $p (PGM)" | boxes -a l -d stone
-    spr_ip_address   $p 
-    spr_vmware_tools $p
-  done; 
-  exit $cos_nie_tak
+    spr_ip_address   "$p"
+    spr_vmware_tools "$p"
+  done
+  
+  # --- Report skipped VMs ---
+  if [[ -n "$vm_excluded" ]]; then
+    echo
+    echo "The following VMs are running but were excluded from checks (per $exclude_file):"
+    echo "$vm_excluded" | while read -r p; do
+      echo "  - $p (status not checked)"
+    done
+  fi
+  
+  exit "$cos_nie_tak"
+
   )
 
 kod_powrotu=$?
