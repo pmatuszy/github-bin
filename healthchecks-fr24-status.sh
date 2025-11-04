@@ -1,0 +1,49 @@
+#!/bin/bash
+#
+# 2025.11.04 - v. 0.1 - initial release for monitoring fr24feed service
+
+. /root/bin/_script_header.sh
+
+# --- read Healthchecks URL for this script name ---
+if [ -f "$HEALTHCHECKS_FILE" ]; then
+  HEALTHCHECK_URL=$(grep "^$(basename $0)" "$HEALTHCHECKS_FILE" | awk '{print $2}')
+fi
+
+m=$(
+  echo
+  echo "aktualna data: $(date '+%Y.%m.%d %H:%M')"
+  echo
+  grep -E '^# *20[0-9]{2}\.' "$0" | head -n 1 | awk '{print "script version: " $5 " (dated "$2")"}'
+  echo
+
+  echo "---- systemctl status fr24feed ----"
+  systemctl status fr24feed --no-pager -l | head -n 25
+  echo "-----------------------------------"
+  echo
+
+  # --- check if service is running ---
+  if ! systemctl is-active --quiet fr24feed; then
+    echo ". ERROR: fr24feed service is NOT running!"
+    exit 1
+  fi
+
+  # --- check for recent upload activity in logs ---
+  if journalctl -u fr24feed --since "10 minutes ago" 2>/dev/null | \
+        grep -qE "sent [0-9,]+ AC|ping|syncing stream"; then
+    echo ". Detected upload activity in the last 10 minutes."
+    exit 0
+  else
+    echo "..  WARNING: No upload activity detected in the last 10 minutes!"
+    exit 2
+  fi
+)
+
+kod_powrotu=$?
+
+/usr/bin/curl -fsS -m 10 --retry 5 --retry-delay 5 \
+  --data-raw "$m" -o /dev/null "${HEALTHCHECK_URL}/${kod_powrotu}" 2>/dev/null
+
+. /root/bin/_script_footer.sh
+
+exit $kod_powrotu
+
