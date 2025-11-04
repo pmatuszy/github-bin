@@ -11,10 +11,6 @@ fi
 
 m=$( echo "${SCRIPT_VERSION}";echo
   echo
-  echo "aktualna data: $(date '+%Y.%m.%d %H:%M')"
-  echo
-  grep -E '^# *20[0-9]{2}\.' "$0" | head -n 1 | awk '{print "script version: " $5 " (dated "$2")"}'
-  echo
 
   echo "---- systemctl status fr24feed ----"
   systemctl status fr24feed --no-pager -l | head -n 25
@@ -32,7 +28,7 @@ kod_powrotu=$?
 
   # --- check for recent upload activity in logs ---
   if (( $kod_powrotu != 0 )); then 
-    echo ". Detected upload activity in the last 10 minutes."
+    echo ". Detected upload activity in the last 60 minutes."
     exit 0
   else
     echo "..  WARNING: No upload activity detected in the last 10 minutes!"
@@ -55,4 +51,3 @@ exit $kod_powrotu
 @reboot ( sleep 3m ; /root/bin/healthchecks-fr24-status.sh >/dev/null 2>&1)
 
 0 7-23 * * * /root/bin/healthchecks-fr24-status.sh
-
