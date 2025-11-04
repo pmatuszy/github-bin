@@ -52,7 +52,7 @@ exit $kod_powrotu
 #####
 # new crontab entry
 
-@reboot /root/bin/healthchecks-fr24-status.sh
+@reboot ( sleep 3m ; /root/bin/healthchecks-fr24-status.sh >/dev/null 2>&1)
 
 0 7-23 * * * /root/bin/healthchecks-fr24-status.sh
 
