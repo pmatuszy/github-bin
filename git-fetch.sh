@@ -1,5 +1,5 @@
 #!/bin/bash
-
+ 
 # 2023.01.13 - v. 0.1 - initial release
 
 # exit when your script tries to use undeclared variables
