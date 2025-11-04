@@ -27,9 +27,11 @@ m=$(
     exit 1
   fi
 
+journalctl -u fr24feed --since "60 minutes ago" 2>/dev/null | grep -qE "sent [0-9,]+ AC|ping|syncing stream" 
+kod_powrotu=$?
+
   # --- check for recent upload activity in logs ---
-  if journalctl -u fr24feed --since "10 minutes ago" 2>/dev/null | \
-        grep -qE "sent [0-9,]+ AC|ping|syncing stream"; then
+  if (( $kod_powrotu != 0 )); then 
     echo ". Detected upload activity in the last 10 minutes."
     exit 0
   else
@@ -46,4 +48,11 @@ kod_powrotu=$?
 . /root/bin/_script_footer.sh
 
 exit $kod_powrotu
+
+#####
+# new crontab entry
+
+@reboot /root/bin/healthchecks-fr24-status.sh
+
+0 7-23 * * * /root/bin/healthchecks-fr24-status.sh
 
