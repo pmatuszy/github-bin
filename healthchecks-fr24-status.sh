@@ -9,7 +9,7 @@ if [ -f "$HEALTHCHECKS_FILE" ]; then
   HEALTHCHECK_URL=$(grep "^$(basename $0)" "$HEALTHCHECKS_FILE" | awk '{print $2}')
 fi
 
-m=$(
+m=$( echo "${SCRIPT_VERSION}";echo
   echo
   echo "aktualna data: $(date '+%Y.%m.%d %H:%M')"
   echo
