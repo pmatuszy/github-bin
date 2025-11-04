@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2025.11.04 - v. 0.1 - changed -y to -p in fsck.ext4
 # 2023.03.27 - v. 0.1 - initial release
 
 . /root/bin/_script_header.sh
@@ -16,7 +17,7 @@ echo ; echo "==> ########## zrob_fsck($1)"
 echo czas na fsck $1 ...
 
 if [ $(lsblk -no FSTYPE $1) == 'ext4' ];then
-  fsck.ext4 -f -y $1
+  fsck.ext4 -f -p $1
 else
   # -C: Display the progress, so you know that something is happening.
   # -M: Don't do anything if the partition is mounted
@@ -33,7 +34,7 @@ if (( $kod_powrotu != 0 ));then
   echo
 
   if [ $(lsblk -no FSTYPE $1) == 'ext4' ];then
-    fsck.ext4 -f -y $1
+    fsck.ext4 -f -p $1
   else
      # -C: Display the progress, so you know that something is happening.
      # -M: Don't do anything if the partition is mounted
