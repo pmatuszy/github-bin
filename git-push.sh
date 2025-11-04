@@ -1,5 +1,5 @@
 #!/bin/bash
-
+ 
 # 2023.02.11 - v. 1.2 - added GIT_SSH_COMMAND
 # 2023.02.07 - v. 1.1 - added batch mode, added GIT_REPO_DIRECTORY variable
 # 2023.01.26 - v. 1.0 - fixed script version print
