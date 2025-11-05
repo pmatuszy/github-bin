@@ -14,31 +14,35 @@ if [ -f "$HEALTHCHECKS_FILE" ];then
 fi
 
 m=$( echo "${SCRIPT_VERSION}";echo
-     ile_vol=$(lvs 2>&1 | grep -v LSize | wc -l)
+     ile_vol=$(lvs --noheadings 2>&1 | wc -l)
      if (( $ile_vol == 0 ));then    # if there are no lvs we exit with no error code
        lvs --segments
        exit 0
      fi
 
+     boxes <<< "lvs -o lv_name,sync_percent" ;  echo
+     lvs -o lv_name,sync_percent
+     echo
+
+     boxes <<< "lvs " ;  echo
+     lvs
+     echo
+     boxes <<< "lvs --segments" ;  echo
+     lvs --segments
+     echo
+
+     boxes <<< "vgs" ;  echo
+     vgs
+     echo
+
+     boxes <<< "pvs" ;  echo
+     pvs
+     echo
+
+     boxes <<< "pvs --segments -v" ;  echo
+     pvs --segments -v
+
      if [ $(lvs -o 'sync_percent' 2>&1 |sort|uniq|grep -v -e '^[[:space:]]*$'| grep -v 100.00|wc -l) -eq 1 ];then
-       boxes <<< "lvs " ;  echo
-       lvs 
-       echo
-       boxes <<< "lvs --segments" ;  echo 
-       lvs --segments
-       echo
-
-       boxes <<< "vgs" ;  echo
-       vgs
-       echo 
-
-       boxes <<< "pvs" ;  echo
-       pvs
-       echo
-
-       boxes <<< "pvs --segments -v" ;  echo
-       pvs --segments -v
-
        exit 0
      else
        exit 1
