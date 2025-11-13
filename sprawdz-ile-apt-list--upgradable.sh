@@ -21,8 +21,8 @@ ile_max_by_nie_raportowac=45
 # Retry loop for apt-get update (instead of two attempts + sleep 600)
 ###############################################################################
 blad=1
-how_many_retries=10
-retry_delay=15
+how_many_retries=20
+retry_delay=60
 kod_powrotu=999
 
 while (( blad != 0 && how_many_retries != 0 )); do
