@@ -47,7 +47,7 @@ fi
 if [ -f "${REPO_PASS_INFO:-}" ]; then
   . "$REPO_PASS_INFO"
 else
-  m=$(
+  m=$( echo "${SCRIPT_VERSION}";echo ;
     echo '#####################################################'
     echo '#####################################################'
     echo
@@ -71,7 +71,7 @@ fi
 export RESTIC_BIN=$(type -fP restic)
 
 if [ ! -f "$RESTIC_BIN" ]; then
-  m=$(
+  m=$( echo "${SCRIPT_VERSION}";echo ;
     echo '#####################################################'
     echo '#####################################################'
     echo
@@ -92,7 +92,7 @@ if [ -d "/encrypted/root/restic-cache-dir" ]; then
 fi
 
 if [ ! -d "$XDG_CACHE_HOME" ] ; then
-   m=$(
+   m=$( echo "${SCRIPT_VERSION}";echo ;
    echo "XDG_CACHE_HOME ($XDG_CACHE_HOME)  nie istnieje"
    echo "WYCHODZE ..." )
    /usr/bin/curl -fsS -m 100 --retry 10 --retry-delay 10 --data-raw "$m" -o /dev/null "$HEALTHCHECK_URL"/fail 2>/dev/null
@@ -100,7 +100,7 @@ if [ ! -d "$XDG_CACHE_HOME" ] ; then
 fi
 
 if pgrep -fx "${RESTIC_BIN}" > /dev/null ; then
-  m=$(
+  m=$( echo "${SCRIPT_VERSION}";echo ;
     echo '#####################################################'
     echo '#####################################################'
     echo
@@ -114,7 +114,7 @@ if pgrep -fx "${RESTIC_BIN}" > /dev/null ; then
 fi
 
 if [ ! -d "$XDG_CACHE_HOME" ] ; then
-  m=$(
+  m=$( echo "${SCRIPT_VERSION}";echo ;
     echo "$XDG_CACHE_HOME nie istnieje"
     echo "WYCHODZE ..." )
   /usr/bin/curl -fsS -m 100 --retry 10 --retry-delay 10 --data-raw "$m" -o /dev/null "$HEALTHCHECK_URL"/fail 2>/dev/null
@@ -167,12 +167,12 @@ kod_powrotu=$?
 export run_after_backup_log=$( eval $RUN_AFTER_BACKUP 2>&1 )
 
 if (( $script_is_run_interactively == 1 )); then
-  m="PGM: emtpy as run interactively"
+  m="echo "${SCRIPT_VERSION}";echo ; PGM: emtpy as run interactively"
   echo ; echo "~~~~~~~~~~~~~~~~~~~~~~~~~"
   echo kod powrotu z backupu: $kod_powrotu ; echo "~~~~~~~~~~~~~~~~~~~~~~~~~" ; echo ;
   ${RESTIC_BIN} --cleanup-cache                          snapshots 2>&1 
 else
-  m=$( echo ; echo "~~~~~~~~~~~~~~~~~~~~~~~~~"
+  m=$( echo "${SCRIPT_VERSION}";echo ; echo ; echo "~~~~~~~~~~~~~~~~~~~~~~~~~"
        echo kod powrotu z backupu: $kod_powrotu ; echo "~~~~~~~~~~~~~~~~~~~~~~~~~" ; echo ;
        ${RESTIC_BIN} --cleanup-cache                          snapshots 2>&1 )
 fi

@@ -14,10 +14,10 @@ check_if_installed apcupsd
 
 # spr. czy nie ma bledow
 if [ $(/usr/bin/env apcaccess | egrep "STATUS   : ONLINE *$"|wc -l) -eq 0 ];then
-  m=$( /usr/bin/env apcaccess 2>&1)
+  m=$( echo "${SCRIPT_VERSION}";echo ;/usr/bin/env apcaccess 2>&1)
   /usr/bin/curl -fsS -m 100 --retry 10 --retry-delay 10 --data-raw "$m" -o /dev/null "$HEALTHCHECK_URL"/fail 2>/dev/null
 else
-  m=$( /usr/bin/env apcaccess 2>&1| egrep "STATUS   : ONLINE *")
+  m=$(echo "${SCRIPT_VERSION}";echo ; /usr/bin/env apcaccess 2>&1| egrep "STATUS   : ONLINE *")
   /usr/bin/curl -fsS -m 100 --retry 10 --retry-delay 10 --data-raw "$m" -o /dev/null "$HEALTHCHECK_URL" 2>/dev/null
 fi
 
