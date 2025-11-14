@@ -1,5 +1,6 @@
 #!/bin/bash
 #
+# 2025.11.14 - v. 0.2 - added status from /usr/bin/fr24feed-status command output
 # 2025.11.04 - v. 0.1 - initial release for monitoring fr24feed service
 
 . /root/bin/_script_header.sh
@@ -11,10 +12,15 @@ fi
 
 m=$( echo "${SCRIPT_VERSION}";echo
   echo
+  echo ; 
+  boxes <<< "/usr/bin/fr24feed-status" ; echo 
+  /usr/bin/fr24feed-status
+  echo ;
 
-  echo "---- systemctl status fr24feed ----"
+  echo ;
+  boxes <<< "systemctl status fr24feed"  ; echo
+
   systemctl status fr24feed --no-pager -l | head -n 25
-  echo "-----------------------------------"
   echo
 
   # --- check if service is running ---
