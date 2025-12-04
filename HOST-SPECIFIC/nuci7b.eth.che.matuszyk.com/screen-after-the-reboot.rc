@@ -15,6 +15,7 @@ screen -t "journal-tail.sh"         5 /bin/bash -c  /root/bin/journal-tail.sh
 screen -t "watch-progress.sh"       6 /bin/bash -c  /root/bin/watch-progress.sh
 screen -t "pmove"                   7 /bin/bash -c  "while : ; do echo `date` `lvs -a -o+devices|grep -- '\[pvmove'` ; sleep 2m ; done"
 screen -t "ssh-keychain-daemon.sh"  8 /bin/bash -c  /root/bin/ssh-keychain-daemon.sh
+screen -t "sincona"                 9 /bin/bash -c  /root/sincona/get-quotes.sh
 
 bindkey -k F2 next
 bindkey -k F1 prev
