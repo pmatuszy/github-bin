@@ -25,22 +25,20 @@ elif [[ "$input" =~ [Nn] ]]; then
     use_colors=no
 fi
 
-# -------- COLORS SETUP --------
+# -------- COLORS SETUP (NO ANSI STORED IN DATA) --------
 if [[ "$use_colors" == "yes" ]]; then
     RED='\e[31m'
     GREEN='\e[32m'
     CYAN='\e[36m'
     RESET='\e[0m'
-    ARROW="→"
-    ARROW_RED="${RED}${ARROW}${RESET}"
 else
     RED=''
     GREEN=''
     CYAN=''
     RESET=''
-    ARROW="→"
-    ARROW_RED="$ARROW"
 fi
+
+ARROW="→"
 
 # ============================================================
 # MODE SELECTION
@@ -76,6 +74,8 @@ files_affected=0
 files_skipped=0
 stopped_by_user=no
 rename_all=no
+
+# store as "old|new" (plain text only!)
 declare -a renamed_list
 
 # ============================================================
@@ -109,7 +109,7 @@ for f in *; do
         echo -e "${GREEN}NEW:${RESET} $new"
         echo "----------------------------------------"
         ((files_affected++))
-        renamed_list+=("$f ${ARROW_RED} $new")
+        renamed_list+=("$f|$new")
         continue
     fi
 
@@ -121,7 +121,7 @@ for f in *; do
     if [[ "$rename_all" == "yes" ]]; then
         if mv -i -- "$f" "$new"; then
             ((files_affected++))
-            renamed_list+=("$f ${ARROW_RED} $new")
+            renamed_list+=("$f|$new")
         else
             ((files_skipped++))
         fi
@@ -140,7 +140,7 @@ for f in *; do
         y|Y)
             if mv -i -- "$f" "$new"; then
                 ((files_affected++))
-                renamed_list+=("$f ${ARROW_RED} $new")
+                renamed_list+=("$f|$new")
             else
                 ((files_skipped++))
             fi
@@ -156,7 +156,7 @@ for f in *; do
                 rename_all=yes
                 if mv -i -- "$f" "$new"; then
                     ((files_affected++))
-                    renamed_list+=("$f ${ARROW_RED} $new")
+                    renamed_list+=("$f|$new")
                 else
                     ((files_skipped++))
                 fi
@@ -172,7 +172,7 @@ for f in *; do
 done
 
 # ============================================================
-# SUMMARY
+# SUMMARY (ANSI SAFE)
 # ============================================================
 echo
 echo "========= SUMMARY ========="
@@ -187,7 +187,12 @@ if (( files_affected > 0 )); then
     echo
     echo "Affected files:"
     for r in "${renamed_list[@]}"; do
-        echo "  $r"
+        old=${r%%|*}
+        new=${r#*|}
+        printf "  %s %b%s%b %s\n" \
+            "$old" \
+            "$RED" "$ARROW" "$RESET" \
+            "$new"
     done
 fi
 echo "==========================="
