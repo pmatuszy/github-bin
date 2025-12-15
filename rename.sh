@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 
+# 2025.12.15 - v. 0.1 - initial release (some work with ChatGPT)
+
 shopt -s nullglob
 
 # ============================================================
