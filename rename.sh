@@ -50,7 +50,7 @@ echo "  [R] Real rename (interactive)"
 echo "  [Q] Quit"
 echo -n "Choice [D/r/q]: "
 
-mode="dry"
+mode="dry-run"
 input=""
 
 read -t 60 -n 1 input
@@ -103,7 +103,7 @@ for f in *; do
     [[ "$f" == "$new" ]] && { ((files_skipped++)); continue; }
 
     # -------- DRY-RUN MODE --------
-    if [[ "$mode" == "dry" ]]; then
+    if [[ "$mode" == "dry-run" ]]; then
         echo
         echo -e "${RED}OLD:${RESET} $f"
         echo -e "${GREEN}NEW:${RESET} $new"
