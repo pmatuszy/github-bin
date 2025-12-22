@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 
+# 2025.12.22 - v. 0.2 - Bash-only version, UTF-8 safe (no perl, no tr on diacritics)
 # 2025.12.15 - v. 0.1 - initial release (some work with ChatGPT)
 
 shopt -s nullglob
@@ -77,7 +78,6 @@ files_skipped=0
 stopped_by_user=no
 rename_all=no
 
-# store as "old|new" (plain text only!)
 declare -a renamed_list
 
 # ============================================================
@@ -87,15 +87,36 @@ for f in *; do
     ((files_examined++))
     new="$f"
 
-    # -------- TRANSFORMATIONS --------
-    new=$(printf '%s' "$new" | perl -pe '
-        s/!/./g;
-        tr/ĘĆÓŁĄŚŻŹŃęćółąśżźń/ECOŁASZZNecołaszzn/;
+    # -------- POLISH DIACRITICS (UTF-8 SAFE) --------
+    new="${new//ą/a}"
+    new="${new//ć/c}"
+    new="${new//ę/e}"
+    new="${new//ł/l}"
+    new="${new//ń/n}"
+    new="${new//ó/o}"
+    new="${new//ś/s}"
+    new="${new//ż/z}"
+    new="${new//ź/z}"
+
+    new="${new//Ą/A}"
+    new="${new//Ć/C}"
+    new="${new//Ę/E}"
+    new="${new//Ł/L}"
+    new="${new//Ń/N}"
+    new="${new//Ó/O}"
+    new="${new//Ś/S}"
+    new="${new//Ż/Z}"
+    new="${new//Ź/Z}"
+
+    # -------- OTHER NORMALIZATION --------
+    new="${new//!/.}"
+    new="${new// /_}"
+    new="${new//\'/_}"
+    new="${new//&/_and_}"
+    new="${new//•/-}"
+
+    new=$(printf '%s' "$new" | sed -E '
         s/[{}\[\]\(\),]/_/g;
-        s/'\''/_/g;
-        s/&/_and_/g;
-        s/•/-/g;
-        s/ /_/g;
         s/__+/_/g;
         s/_\././g;
         s/_$//;
@@ -174,7 +195,7 @@ for f in *; do
 done
 
 # ============================================================
-# SUMMARY (ANSI SAFE)
+# SUMMARY
 # ============================================================
 echo
 echo "========= SUMMARY ========="
