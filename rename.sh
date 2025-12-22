@@ -28,7 +28,7 @@ elif [[ "$input" =~ [Nn] ]]; then
     use_colors=no
 fi
 
-# -------- COLORS SETUP (NO ANSI STORED IN DATA) --------
+# -------- COLORS SETUP --------
 if [[ "$use_colors" == "yes" ]]; then
     RED='\e[31m'
     GREEN='\e[32m'
@@ -48,7 +48,7 @@ ARROW="→"
 # ============================================================
 echo
 echo "Select mode:"
-echo "  [D] Dry-run (default, preview only)"
+echo "  [D] Dry-run (default)"
 echo "  [R] Real rename (interactive)"
 echo "  [Q] Quit"
 echo -n "Choice [D/r/q]: "
@@ -108,6 +108,15 @@ for f in *; do
     new="${new//Ż/Z}"
     new="${new//Ź/Z}"
 
+    # -------- STRUCTURAL CHARACTERS --------
+    new="${new//(/_}"
+    new="${new//)/_}"
+    new="${new//\{/_}"
+    new="${new//\}/_}"
+    new="${new//\[/_}"
+    new="${new//\]/_}"
+    new="${new//,/_}"
+
     # -------- OTHER NORMALIZATION --------
     new="${new//!/.}"
     new="${new// /_}"
@@ -115,8 +124,8 @@ for f in *; do
     new="${new//&/_and_}"
     new="${new//•/-}"
 
+    # -------- CLEANUP --------
     new=$(printf '%s' "$new" | sed -E '
-        s/[{}\[\]\(\),]/_/g;
         s/__+/_/g;
         s/_\././g;
         s/_$//;
@@ -125,7 +134,7 @@ for f in *; do
 
     [[ "$f" == "$new" ]] && { ((files_skipped++)); continue; }
 
-    # -------- DRY-RUN MODE --------
+    # -------- DRY-RUN --------
     if [[ "$mode" == "dry-run" ]]; then
         echo
         echo -e "${RED}OLD:${RESET} $f"
@@ -170,7 +179,7 @@ for f in *; do
             ;;
         a|A)
             echo
-            echo "⚠️  This will rename ALL remaining files without asking."
+            echo "⚠️  This will rename ALL remaining files."
             echo -n "Are you sure? [y/N]: "
             read -n 1 confirm
             echo
@@ -184,7 +193,6 @@ for f in *; do
                     ((files_skipped++))
                 fi
             else
-                echo "Rename-all cancelled."
                 ((files_skipped++))
             fi
             ;;
