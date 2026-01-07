@@ -5,6 +5,7 @@
 . /root/bin/_script_header.sh
 
 installer_full_path="/vmware/VMware-Workstation-Full-17.6.4-24832109.x86_64.bundle"
+installer_full_path="/vmware/VMware-Workstation-Full-25H2-24995812.x86_64.bundle"
 
 check_if_installed virt-what
 if (( $(virt-what | wc -l) != 0 ));then
