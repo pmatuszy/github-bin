@@ -12,6 +12,9 @@ TEMP_NAME="yt-dlp_skasuj"
 PREFIX="yt-dlp_linux-"
 SLEEP_SECONDS=5
 
+# wait at most 2 hours for youtube-dl to be released
+MAX_WAIT_SECONDS=$(( 2 * 60 * 60 ))   # 2 hours
+
 GITHUB_LATEST_API="https://api.github.com/repos/yt-dlp/yt-dlp/releases/latest"
 
 APPLY=0
@@ -60,6 +63,7 @@ get_latest_version_github() {
 
   tag="$(printf '%s\n' "$json" | grep -m1 -E '"tag_name"' \
         | sed -E 's/.*"tag_name"\s*:\s*"([^"]+)".*/\1/')"
+  [[ -n "$tag" ]] || return 1
   printf '%s\n' "$tag"
 }
 
@@ -71,10 +75,25 @@ else
   log "Starting yt-dlp updater in APPLY mode"
 fi
 
-# --- wait for fuser
+# --- wait for fuser with timeout and visibility
+WAITED=0
+
 while fuser "$SYMLINK_NAME" >/dev/null 2>&1; do
-  log "In use: $SYMLINK_NAME. Waiting ${SLEEP_SECONDS}s..."
+  PIDS="$(fuser "$SYMLINK_NAME" 2>/dev/null | xargs)"
+  REMAINING=$(( MAX_WAIT_SECONDS - WAITED ))
+
+  log "In use: $SYMLINK_NAME by PIDs: ${PIDS:-unknown}"
+  log "Waited: ${WAITED}s / ${MAX_WAIT_SECONDS}s  |  Remaining: ${REMAINING}s"
+  log "Sleeping ${SLEEP_SECONDS}s..."
+
   sleep "$SLEEP_SECONDS"
+  WAITED=$(( WAITED + SLEEP_SECONDS ))
+
+  if (( WAITED >= MAX_WAIT_SECONDS )); then
+    log "ERROR: Timeout after ${MAX_WAIT_SECONDS}s waiting for $SYMLINK_NAME to be released."
+    log "Still held by PIDs: ${PIDS:-unknown}"
+    exit 1
+  fi
 done
 
 log "Not in use: $SYMLINK_NAME. Continuing."
@@ -83,6 +102,9 @@ CURRENT_TARGET="$(readlink "$SYMLINK_NAME")"
 log "Current target: $CURRENT_TARGET"
 
 CURRENT_VERSION="$(version_from_name "$CURRENT_TARGET" || true)"
+if [[ -z "$CURRENT_VERSION" && -x "$CURRENT_TARGET" ]]; then
+  CURRENT_VERSION="$("$CURRENT_TARGET" --version | head -n1 | tr -d '\r' | xargs || true)"
+fi
 [[ -n "$CURRENT_VERSION" ]] && log "Current version: $CURRENT_VERSION"
 
 if (( ! FORCE )); then
@@ -92,7 +114,7 @@ if (( ! FORCE )); then
   if [[ "$LATEST_VERSION" =~ ^[0-9]{4}\.[0-9]{2}\.[0-9]{2}$ ]]; then
     log "Latest version: $LATEST_VERSION"
 
-    if [[ -n "$CURRENT_VERSION" ]] && \
+    if [[ -n "$CURRENT_VERSION" && "$CURRENT_VERSION" =~ ^[0-9]{4}\.[0-9]{2}\.[0-9]{2}$ ]] && \
        ! is_older_version "$CURRENT_VERSION" "$LATEST_VERSION"; then
       log "No newer version available. Exiting."
       exit 0
@@ -115,7 +137,12 @@ if (( DRY_RUN )); then
 else
   log "./$TEMP_NAME --update"
   "./$TEMP_NAME" --update
-  VERSION_RAW="$("./$TEMP_NAME" --version | head -n1 | xargs)"
+  VERSION_RAW="$("./$TEMP_NAME" --version | head -n1 | tr -d '\r' | xargs)"
+fi
+
+if [[ ! "$VERSION_RAW" =~ ^[0-9]{4}\.[0-9]{2}\.[0-9]{2}$ ]]; then
+  log "ERROR: Version '$VERSION_RAW' invalid"
+  exit 1
 fi
 
 NEW_NAME="${PREFIX}${VERSION_RAW}"
