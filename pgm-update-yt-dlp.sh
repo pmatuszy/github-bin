@@ -6,6 +6,46 @@
 
 set -euo pipefail
 
+# --- output handling: screen if interactive, mail report if not ---
+
+if [[ -t 1 ]]; then
+  # Interactive run . just print to terminal
+  :
+else
+  # Non-interactive (cron) . capture output and mail it as HTML
+
+  MAIL_TO="matuszyk+$(/bin/hostname)@matuszyk.com"
+  MAIL_FROM="root@$(/bin/hostname)"
+  MAIL_SUBJECT_PREFIX="kopiuj-BBC4"
+
+  LOGFILE="$(mktemp /tmp/pgm-update-yt-dlp.XXXXXX.log)"
+
+  send_mail_report() {
+    local exit_code=$?
+    local ts host subject
+
+    ts="$(date '+%Y.%m.%d %H:%M:%S')"
+    host="$(/bin/hostname)"
+    subject="(${host}-${ts}) ${MAIL_SUBJECT_PREFIX} (exit=${exit_code})"
+
+    cat "$LOGFILE" \
+      | strings \
+      | aha \
+      | /usr/bin/mailx -r "$MAIL_FROM" \
+          -a 'Content-Type: text/html' \
+          -s "$subject" \
+          "$MAIL_TO" \
+      || true
+  }
+
+  trap send_mail_report EXIT
+
+  exec > >(tee -a "$LOGFILE") 2>&1
+fi
+
+# --- end output handling ---
+
+
 BIN_DIR="/usr/local/bin"
 SYMLINK_NAME="youtube-dl"
 TEMP_NAME="yt-dlp_skasuj"
