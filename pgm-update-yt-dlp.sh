@@ -16,7 +16,7 @@ else
 
   MAIL_TO="matuszyk+$(/bin/hostname)@matuszyk.com"
   MAIL_FROM="root@$(/bin/hostname)"
-  MAIL_SUBJECT_PREFIX="kopiuj-BBC4"
+  MAIL_SUBJECT_PREFIX="/root/bin/pgm-update-yt-dlp.sh"
 
   LOGFILE="$(mktemp /tmp/pgm-update-yt-dlp.XXXXXX.log)"
 
