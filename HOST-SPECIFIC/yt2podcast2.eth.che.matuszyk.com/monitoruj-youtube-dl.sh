@@ -27,6 +27,8 @@ maska_logow='/home/podsync/logs/podsync-*.log'
 
 ffmpeg_path=/usr/bin/ffmpeg
 
+shopt -s nullglob
+
 
 tcScrTitleStart="\ek"
 tcScrTitleEnd="\e\134"
@@ -42,6 +44,19 @@ if [ $czy_wysylac_maile -ne 0 ] ; then
 fi
 
 while : ; do
+
+  while : ; do
+    logi=( ${maska_logow} )
+    if [ ${#logi[@]} -gt 0 ] ; then
+      break
+    fi
+    echo "[`date '+%Y.%m.%d %H:%M:%S'`] brak plikow logow (${maska_logow}) - spie 10s"
+    sleep 10
+  done
+
+  # tutaj juz na pewno sa logi
+  # dalsza logika...
+
   if [ `egrep "server responded with a 'Too Many Requests' error|Sign in to confirm you.*re not a bot" ${maska_logow}|wc -l` -gt $max_liczba_linii ] ; then
      echo '#####################################################################################################'
      echo '#####################################################################################################'
@@ -108,10 +123,10 @@ while : ; do
      nast=`( du -ks /podsync-hdd |awk '{print $1}' ) 2>/dev/null`
      roznica=`echo ${nast}-${pop}|bc`
 
-     bylo_zajete=`eLC_NUMERIC=en_US printf "%'.f\n" ${pop}`
-     jest_zajete=`eLC_NUMERIC=en_US printf "%'.f\n" $nast`
+     bylo_zajete=`LC_NUMERIC=en_US printf "%'.f\n" ${pop}`
+     jest_zajete=`LC_NUMERIC=en_US printf "%'.f\n" $nast`
      jest_wolne_kb=`/bin/df --output=avail /podsync-hdd|tail -1`
-     jest_wolne_kb=`eLC_NUMERIC=en_US printf "%'.f\n" $jest_wolne_kb`
+     jest_wolne_kb=`LC_NUMERIC=en_US printf "%'.f\n" $jest_wolne_kb`
      jest_wolne_pc=`/bin/df --output=pcent /podsync-hdd|tail -1`
      
      if [ `egrep "server responded with a 'Too Many Requests' error|Sign in to confirm you.*re not a bot" ${maska_logow}|wc -l` -le $max_liczba_linii ] ; then
