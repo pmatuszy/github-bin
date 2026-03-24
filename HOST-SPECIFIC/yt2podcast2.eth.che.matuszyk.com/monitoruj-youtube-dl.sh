@@ -2,6 +2,7 @@
 
 # (C) Paul G. Matuszyk 2020.04.20
 # first production version
+# 2026.03.24 - v. 1.8 - if log files don't exist, we pause for a couple of seconds
 # 2024.09.05 - v. 1.7 - dodano obsluge bledow gdy yt wypisuje "Sign in to confirm you.*re not a bot"
 # 2023.02.28 - v. 1.6 - zmiana formatu linii dla grep bo podnioslem wersje podsynca i zmienil sie message...
 #                       added _script_header and _script_footer calls
