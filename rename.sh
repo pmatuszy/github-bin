@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # 2026.03.27 - v. 1.2 - added many changes about media files
 # 2026.03.27 - v. 1.3 - fixed top-level path handling: keep ./ prefix in transform_name()
+# 2026.03.27 - v. 1.4 - apply special media renames after basic normalization
 
 # 2026.02.26 - v. 1.1 - Restored full-feature script (counters/summary/rename_all/processed); REAL sha: ask->verify(before)->rename+update->verify(after) + progress msg
 # 2026.02.26 - v. 1.0 - REAL mode: verify BEFORE rename and AFTER rename (full integrity check); ask before hashing; show progress messages
@@ -94,7 +95,55 @@ is_excluded_path() {
 transform_basename() {
     local new="$1"
 
-    # -------- SPECIAL MEDIA RENAMES --------
+    # -------- BASIC NORMALIZATION FIRST --------
+
+    # Polish diacritics
+    new="${new//ą/a}"
+    new="${new//ć/c}"
+    new="${new//ę/e}"
+    new="${new//ł/l}"
+    new="${new//ń/n}"
+    new="${new//ó/o}"
+    new="${new//ś/s}"
+    new="${new//ż/z}"
+    new="${new//ź/z}"
+
+    new="${new//Ą/A}"
+    new="${new//Ć/C}"
+    new="${new//Ę/E}"
+    new="${new//Ł/L}"
+    new="${new//Ń/N}"
+    new="${new//Ó/O}"
+    new="${new//Ś/S}"
+    new="${new//Ż/Z}"
+    new="${new//Ź/Z}"
+
+    # structural chars
+    new="${new//(/_}"
+    new="${new//)/_}"
+    new="${new//\{/_}"
+    new="${new//\}/_}"
+    new="${new//\[/_}"
+    new="${new//\]/_}"
+    new="${new//,/_}"
+
+    # other normalization
+    new="${new//!/.}"
+    new="${new// /_}"
+    new="${new//\'/_}"
+    new="${new//&/_and_}"
+    new="${new//•/-}"
+
+    # cleanup
+    new=$(printf '%s' "$new" | sed -E '
+        s/__+/_/g;
+        s/_\././g;
+        s/_$//;
+        s/\.$//;
+    ')
+
+    # -------- SPECIAL MEDIA RENAMES AFTER BASIC NORMALIZATION --------
+
     if [[ "$new" =~ ^signal-([0-9]{4})-([0-9]{2})-([0-9]{2})-([0-9]{2})-([0-9]{2})-([0-9]{2})-[0-9]+(\.[^.]+)$ ]]; then
         printf '%s%s%s_%s%s%s-signal%s' \
             "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}" "${BASH_REMATCH[3]}" \
@@ -152,51 +201,6 @@ transform_basename() {
             "${BASH_REMATCH[5]}"
         return
     fi
-
-    # -------- POLISH DIACRITICS (UTF-8 SAFE) --------
-    new="${new//ą/a}"
-    new="${new//ć/c}"
-    new="${new//ę/e}"
-    new="${new//ł/l}"
-    new="${new//ń/n}"
-    new="${new//ó/o}"
-    new="${new//ś/s}"
-    new="${new//ż/z}"
-    new="${new//ź/z}"
-
-    new="${new//Ą/A}"
-    new="${new//Ć/C}"
-    new="${new//Ę/E}"
-    new="${new//Ł/L}"
-    new="${new//Ń/N}"
-    new="${new//Ó/O}"
-    new="${new//Ś/S}"
-    new="${new//Ż/Z}"
-    new="${new//Ź/Z}"
-
-    # -------- STRUCTURAL CHARACTERS --------
-    new="${new//(/_}"
-    new="${new//)/_}"
-    new="${new//\{/_}"
-    new="${new//\}/_}"
-    new="${new//\[/_}"
-    new="${new//\]/_}"
-    new="${new//,/_}"
-
-    # -------- OTHER NORMALIZATION --------
-    new="${new//!/.}"
-    new="${new// /_}"
-    new="${new//\'/_}"
-    new="${new//&/_and_}"
-    new="${new//•/-}"
-
-    # -------- CLEANUP --------
-    new=$(printf '%s' "$new" | sed -E '
-        s/__+/_/g;
-        s/_\././g;
-        s/_$//;
-        s/\.$//;
-    ')
 
     printf '%s' "$new"
 }
