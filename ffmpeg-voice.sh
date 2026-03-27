@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 2026.03.27 - v. 1.3 - side-by-side boxes for prompting summary, fewer empty lines
+# 2026.03.27 - v. 1.4 - pressing q quits immediately
 
 set -euo pipefail
 shopt -s nullglob nocaseglob
@@ -384,7 +384,6 @@ if [[ "$mode" == "dry-run" ]]; then
 else
     total_files=${#all_files[@]}
     idx=0
-    stop_after_current_batch=no
 
     while (( idx < total_files )); do
         declare -a batch_originals=()
@@ -423,8 +422,9 @@ else
             case "$input" in
                 q|Q)
                     stopped_by_user=yes
-                    stop_after_current_batch=yes
-                    break
+                    echo
+                    echo "Quitting."
+                    exit 0
                     ;;
                 n|N)
                     batch_selected+=("no")
@@ -461,10 +461,6 @@ else
                     process_one_file "${batch_originals[$i]}" "${batch_newins[$i]}" "${batch_outputs[$i]}"
                 fi
             done
-        fi
-
-        if [[ "$stop_after_current_batch" == "yes" ]]; then
-            break
         fi
     done
 fi
