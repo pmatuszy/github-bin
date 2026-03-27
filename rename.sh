@@ -6,7 +6,7 @@
 # 2026.03.27 - v. 1.6 - in real mode, default answer is YES for rename prompts
 # 2026.03.27 - v. 1.7 - made Sprache/Voice/Screen_Recording patterns tolerant to -/_ after normalization
 # 2026.03.27 - v. 1.8 - added Call_recording rule
-# 2026.03.27 - v. 1.9 - added Call_recording_NAME_YYMMDD_HHMMSS rule
+# 2026.03.27 - v. 2.0 - preserve original top-level path style (with or without ./) in transform_name()
 
 set -euo pipefail
 shopt -s nullglob
@@ -256,7 +256,11 @@ transform_name() {
     newbase="$(transform_basename "$base")"
 
     if [[ "$dir" == "." ]]; then
-        printf './%s' "$newbase"
+        if [[ "$f" == ./* ]]; then
+            printf './%s' "$newbase"
+        else
+            printf '%s' "$newbase"
+        fi
     else
         printf '%s/%s' "$dir" "$newbase"
     fi
