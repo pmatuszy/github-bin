@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 2026.03.27 - v. 2.0 - use /bin/df for free-space check
+# 2026.03.27 - v. 2.1 - backfill sha512 for existing _ORG/_OUTPUT pairs and *_EXCLUDE.* files
 
 set -euo pipefail
 shopt -s nullglob nocaseglob
@@ -326,6 +326,41 @@ verify_sha512_file() {
     sha512sum -c --quiet -- "$sha_file"
 }
 
+backfill_existing_pair_sha() {
+    local org_file="$1"
+    local out_file="$2"
+    local sha_file="$3"
+
+    if [[ -e "$sha_file" ]]; then
+        return 0
+    fi
+
+    if [[ "$mode" == "dry-run" ]]; then
+        echo
+        print_sha_block "$sha_file" "$org_file" "$out_file"
+        echo "sha512sum -- \"$org_file\" \"$out_file\" > \"$sha_file\""
+        echo "sha512sum -c --quiet -- \"$sha_file\""
+        echo "----------------------------------------"
+        ((++files_affected))
+        return 0
+    fi
+
+    check_free_space_or_exit "."
+
+    echo
+    print_sha_block "$sha_file" "$org_file" "$out_file"
+    create_sha512_pair_file "$sha_file" "$org_file" "$out_file"
+
+    if verify_sha512_file "$sha_file"; then
+        echo -e "${CYAN}SHA512 VERIFIED:${RESET} $sha_file"
+    else
+        echo -e "${YELLOW}SHA512 VERIFY FAILED:${RESET} $sha_file"
+        exit 1
+    fi
+
+    ((++files_affected))
+}
+
 # ============================================================
 # STATE
 # ============================================================
@@ -444,9 +479,6 @@ process_exclude_sha_only() {
     sha_file="$(sha_file_from_single "$excluded_file")"
 
     if [[ -e "$sha_file" ]]; then
-        echo
-        echo -e "${YELLOW}SKIP:${RESET} SHA512 already exists for excluded file: $sha_file"
-        ((++files_skipped))
         return 0
     fi
 
@@ -477,11 +509,14 @@ process_exclude_sha_only() {
 }
 
 # ============================================================
-# BUILD FILE LIST
+# BUILD FILE LIST + DETECT EXISTING PAIRS / EXCLUDES
 # ============================================================
 declare -a discovered_files=()
 declare -a all_files=()
 declare -a exclude_files=()
+declare -a existing_pair_orgs=()
+declare -a existing_pair_outs=()
+declare -a existing_pair_shas=()
 
 for f in *.wav *.mp3 *.m4a *.flac *.ogg *.opus *.aac *.mp4; do
     [[ -e "$f" ]] || continue
@@ -492,14 +527,11 @@ if (( ${#discovered_files[@]} > 0 )); then
     mapfile -t all_files < <(printf '%s\n' "${discovered_files[@]}" | LC_ALL=C sort)
 fi
 
+declare -A seen_pair_stems=()
 declare -a filtered_files=()
+
 for f in "${all_files[@]}"; do
     ((++files_examined))
-
-    if [[ "$f" == *_ORG.* || "$f" == *_OUTPUT.* ]]; then
-        ((++files_skipped))
-        continue
-    fi
 
     if [[ "$f" == *_EXCLUDE.* ]]; then
         exclude_files+=("$f")
@@ -507,9 +539,44 @@ for f in "${all_files[@]}"; do
         continue
     fi
 
+    if [[ "$f" == *_ORG.* ]]; then
+        stem="${f%.*}"
+        stem="${stem%_ORG}"
+        out="${stem}_OUTPUT.flac"
+        sha="${stem}.sha512"
+
+        if [[ -e "$out" && -z "${seen_pair_stems[$stem]+x}" ]]; then
+            existing_pair_orgs+=("$f")
+            existing_pair_outs+=("$out")
+            existing_pair_shas+=("$sha")
+            seen_pair_stems["$stem"]=1
+        fi
+
+        ((++files_skipped))
+        continue
+    fi
+
+    if [[ "$f" == *_OUTPUT.flac ]]; then
+        ((++files_skipped))
+        continue
+    fi
+
     filtered_files+=("$f")
 done
+
 all_files=("${filtered_files[@]}")
+
+# ============================================================
+# BACKFILL SHA512 FOR EXISTING _ORG + _OUTPUT PAIRS
+# ============================================================
+if (( ${#existing_pair_orgs[@]} > 0 )); then
+    for i in "${!existing_pair_orgs[@]}"; do
+        backfill_existing_pair_sha \
+            "${existing_pair_orgs[$i]}" \
+            "${existing_pair_outs[$i]}" \
+            "${existing_pair_shas[$i]}"
+    done
+fi
 
 # ============================================================
 # HANDLE *_EXCLUDE.* SHA512 FILES
@@ -550,10 +617,6 @@ if [[ "$mode" == "dry-run" ]]; then
         ((++files_affected))
         record_change "$original_in" "$new_in" "$out"
     done
-
-# ============================================================
-# REAL MODE - ASK IN BATCHES, THEN PROCESS BATCH
-# ============================================================
 else
     total_files=${#all_files[@]}
     idx=0
