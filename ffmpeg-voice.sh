@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 2026.03.27 - v. 1.5 - exclude files matching *_EXCLUDE.*
+# 2026.03.27 - v. 1.8 - create and verify sha512 also for *_EXCLUDE.* files
 
 set -euo pipefail
 shopt -s nullglob nocaseglob
@@ -8,6 +8,7 @@ shopt -s nullglob nocaseglob
 # DEFAULT SETTINGS
 # ============================================================
 BATCH_SIZE=10
+MIN_FREE_KB=1048576   # 1 GiB
 
 # ============================================================
 # COLOR SELECTION
@@ -115,14 +116,32 @@ print_file_block() {
 
     if [[ "$have_boxes" == "yes" ]]; then
         {
-            printf "INPUT:  %s\n" "$original_in"
-            printf "RENAME: %s %s %s\n" "$original_in" "$ARROW" "$new_in"
-            printf "OUTPUT: %s\n" "$out"
+            printf "INPUT:   %s\n" "$original_in"
+            printf "RENAME:  %s %s %s\n" "$original_in" "$ARROW" "$new_in"
+            printf "OUTPUT:  %s\n" "$out"
         } | boxes -d stone
     else
-        echo -e "${RED}INPUT:${RESET}  $original_in"
-        echo -e "${GREEN}RENAME:${RESET} $original_in $ARROW $new_in"
-        echo -e "${GREEN}OUTPUT:${RESET} $out"
+        echo -e "${RED}INPUT:${RESET}   $original_in"
+        echo -e "${GREEN}RENAME:${RESET}  $original_in $ARROW $new_in"
+        echo -e "${GREEN}OUTPUT:${RESET}  $out"
+    fi
+}
+
+print_sha_block() {
+    local sha_file="$1"
+    local entry1="$2"
+    local entry2="${3:-}"
+
+    if [[ "$have_boxes" == "yes" ]]; then
+        {
+            printf "SHA512:  %s\n" "$sha_file"
+            printf "ENTRY 1: %s\n" "$entry1"
+            [[ -n "$entry2" ]] && printf "ENTRY 2: %s\n" "$entry2"
+        } | boxes -d stone
+    else
+        echo -e "${CYAN}SHA512:${RESET}  $sha_file"
+        echo -e "${CYAN}ENTRY 1:${RESET} $entry1"
+        [[ -n "$entry2" ]] && echo -e "${CYAN}ENTRY 2:${RESET} $entry2"
     fi
 }
 
@@ -230,6 +249,82 @@ print_restore_block() {
     fi
 }
 
+print_low_space_block() {
+    local avail_kb="$1"
+    local path="$2"
+    local need_kb="$3"
+
+    if [[ "$have_boxes" == "yes" ]]; then
+        {
+            echo "LOW DISK SPACE"
+            printf "PATH: %s\n" "$path"
+            printf "AVAILABLE: %s KB\n" "$avail_kb"
+            printf "REQUIRED MINIMUM: %s KB\n" "$need_kb"
+            echo "EXITING."
+        } | boxes -d stone
+    else
+        echo -e "${YELLOW}LOW DISK SPACE${RESET}"
+        echo "PATH: $path"
+        echo "AVAILABLE: $avail_kb KB"
+        echo "REQUIRED MINIMUM: $need_kb KB"
+        echo "EXITING."
+    fi
+}
+
+check_free_space_or_exit() {
+    local target_path="$1"
+    local avail_kb
+
+    avail_kb="$(df -Pk -- "$target_path" | awk 'NR==2 {print $4}')"
+
+    if [[ -z "$avail_kb" ]]; then
+        echo
+        echo "Could not determine free disk space. Exiting."
+        exit 1
+    fi
+
+    if (( avail_kb < MIN_FREE_KB )); then
+        echo
+        print_low_space_block "$avail_kb" "$target_path" "$MIN_FREE_KB"
+        exit 1
+    fi
+}
+
+sha_file_from_pair() {
+    local new_in="$1"
+    local base_no_ext stem
+    base_no_ext="${new_in%.*}"
+    stem="${base_no_ext%_ORG}"
+    printf '%s.sha512' "$stem"
+}
+
+sha_file_from_single() {
+    local file="$1"
+    local stem
+    stem="${file%.*}"
+    printf '%s.sha512' "$stem"
+}
+
+create_sha512_pair_file() {
+    local sha_file="$1"
+    local org_file="$2"
+    local out_file="$3"
+
+    sha512sum -- "$org_file" "$out_file" > "$sha_file"
+}
+
+create_sha512_single_file() {
+    local sha_file="$1"
+    local file="$2"
+
+    sha512sum -- "$file" > "$sha_file"
+}
+
+verify_sha512_file() {
+    local sha_file="$1"
+    sha512sum -c --quiet -- "$sha_file"
+}
+
 # ============================================================
 # STATE
 # ============================================================
@@ -282,6 +377,11 @@ process_one_file() {
     local original_in="$1"
     local new_in="$2"
     local out="$3"
+    local sha_file
+
+    check_free_space_or_exit "."
+
+    sha_file="$(sha_file_from_pair "$new_in")"
 
     if [[ -e "$out" ]]; then
         echo
@@ -290,9 +390,9 @@ process_one_file() {
         return 0
     fi
 
-    if [[ -e "$new_in" || -e "$out" ]]; then
+    if [[ -e "$new_in" || -e "$out" || -e "$sha_file" ]]; then
         echo
-        echo -e "${YELLOW}SKIP:${RESET} Target exists: '$new_in' or '$out'"
+        echo -e "${YELLOW}SKIP:${RESET} Target exists: '$new_in' or '$out' or '$sha_file'"
         ((++files_skipped))
         return 0
     fi
@@ -316,6 +416,17 @@ process_one_file() {
 
     touch -r "$new_in" "$out"
 
+    echo
+    print_sha_block "$sha_file" "$new_in" "$out"
+    create_sha512_pair_file "$sha_file" "$new_in" "$out"
+
+    if verify_sha512_file "$sha_file"; then
+        echo -e "${CYAN}SHA512 VERIFIED:${RESET} $sha_file"
+    else
+        echo -e "${YELLOW}SHA512 VERIFY FAILED:${RESET} $sha_file"
+        exit 1
+    fi
+
     record_change "$original_in" "$new_in" "$out"
     ((++files_affected))
 
@@ -325,11 +436,51 @@ process_one_file() {
     current_renamed=no
 }
 
+process_exclude_sha_only() {
+    local excluded_file="$1"
+    local sha_file
+
+    sha_file="$(sha_file_from_single "$excluded_file")"
+
+    if [[ -e "$sha_file" ]]; then
+        echo
+        echo -e "${YELLOW}SKIP:${RESET} SHA512 already exists for excluded file: $sha_file"
+        ((++files_skipped))
+        return 0
+    fi
+
+    if [[ "$mode" == "dry-run" ]]; then
+        echo
+        print_sha_block "$sha_file" "$excluded_file"
+        echo "sha512sum -- \"$excluded_file\" > \"$sha_file\""
+        echo "sha512sum -c --quiet -- \"$sha_file\""
+        echo "----------------------------------------"
+        ((++files_affected))
+        return 0
+    fi
+
+    check_free_space_or_exit "."
+
+    echo
+    print_sha_block "$sha_file" "$excluded_file"
+    create_sha512_single_file "$sha_file" "$excluded_file"
+
+    if verify_sha512_file "$sha_file"; then
+        echo -e "${CYAN}SHA512 VERIFIED:${RESET} $sha_file"
+    else
+        echo -e "${YELLOW}SHA512 VERIFY FAILED:${RESET} $sha_file"
+        exit 1
+    fi
+
+    ((++files_affected))
+}
+
 # ============================================================
 # BUILD FILE LIST
 # ============================================================
 declare -a discovered_files=()
 declare -a all_files=()
+declare -a exclude_files=()
 
 for f in *.wav *.mp3 *.m4a *.flac *.ogg *.opus *.aac *.mp4; do
     [[ -e "$f" ]] || continue
@@ -343,13 +494,30 @@ fi
 declare -a filtered_files=()
 for f in "${all_files[@]}"; do
     ((++files_examined))
-    if [[ "$f" == *_ORG.* || "$f" == *_OUTPUT.* || "$f" == *_EXCLUDE.* ]]; then
+
+    if [[ "$f" == *_ORG.* || "$f" == *_OUTPUT.* ]]; then
         ((++files_skipped))
         continue
     fi
+
+    if [[ "$f" == *_EXCLUDE.* ]]; then
+        exclude_files+=("$f")
+        ((++files_skipped))
+        continue
+    fi
+
     filtered_files+=("$f")
 done
 all_files=("${filtered_files[@]}")
+
+# ============================================================
+# HANDLE *_EXCLUDE.* SHA512 FILES
+# ============================================================
+if (( ${#exclude_files[@]} > 0 )); then
+    for excluded_file in "${exclude_files[@]}"; do
+        process_exclude_sha_only "$excluded_file"
+    done
+fi
 
 # ============================================================
 # DRY-RUN
@@ -360,6 +528,7 @@ if [[ "$mode" == "dry-run" ]]; then
         base="${new_in%.*}"
         base="${base%_ORG}"
         out="${base}_OUTPUT.flac"
+        sha_file="$(sha_file_from_pair "$new_in")"
 
         if [[ -e "$out" ]]; then
             echo
@@ -372,6 +541,9 @@ if [[ "$mode" == "dry-run" ]]; then
         print_file_block "$original_in" "$new_in" "$out"
         echo "ffmpeg -hide_banner -y -i \"$new_in\" -map 0:a:0 -vn -af \"silenceremove=start_periods=1:start_silence=0.9:start_threshold=-50dB:stop_periods=-1:stop_silence=0.8:stop_threshold=-45dB,highpass=f=80,acompressor=threshold=-18dB:ratio=3:attack=20:release=250:makeup=4,dynaudnorm=f=150:g=11\" -c:a flac -compression_level 12 \"$out\""
         echo "touch -r \"$new_in\" \"$out\""
+        print_sha_block "$sha_file" "$new_in" "$out"
+        echo "sha512sum -- \"$new_in\" \"$out\" > \"$sha_file\""
+        echo "sha512sum -c --quiet -- \"$sha_file\""
         echo "----------------------------------------"
 
         ((++files_affected))
