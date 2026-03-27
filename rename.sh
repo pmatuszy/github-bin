@@ -2,18 +2,8 @@
 # 2026.03.27 - v. 1.2 - added many changes about media files
 # 2026.03.27 - v. 1.3 - fixed top-level path handling: keep ./ prefix in transform_name()
 # 2026.03.27 - v. 1.4 - apply special media renames after basic normalization
-
-# 2026.02.26 - v. 1.1 - Restored full-feature script (counters/summary/rename_all/processed); REAL sha: ask->verify(before)->rename+update->verify(after) + progress msg
-# 2026.02.26 - v. 1.0 - REAL mode: verify BEFORE rename and AFTER rename (full integrity check); ask before hashing; show progress messages
-# 2026.02.26 - v. 0.9 - Ask first in REAL mode (verify only if user agrees); show "sha512 check in progress..."
-# 2026.02.26 - v. 0.8 - Fix real-mode ordering for naming: skip normal rename if sibling "${base}.sha512" exists
-# 2026.02.26 - v. 0.7 - Fix real-mode ordering: normal files with matching .sha512 skipped (pair handled only via .sha512)
-# 2026.02.26 - v. 0.6 - Dry-run sha512 verification is read-only (CRLF stripped in-memory); real mode normalizes on-disk w/ timestamp preserved
-# 2026.02.26 - v. 0.5 - Fix set -e + ((var++)) issue (use ++var)
-# 2026.02.26 - v. 0.4 - Preserve sha512 timestamps when normalizing/updating
-# 2026.02.26 - v. 0.3 - Added sha512 pair verification + rename + update sha content + CRLF normalize (real mode only)
-# 2025.12.22 - v. 0.2 - Bash-only version, UTF-8 safe (no perl, no tr on diacritics)
-# 2025.12.15 - v. 0.1 - initial release (some work with ChatGPT)
+# 2026.03.27 - v. 1.5 - added question: current directory only vs also subdirectories
+# 2026.03.27 - v. 1.6 - in real mode, default answer is YES for rename prompts
 
 set -euo pipefail
 shopt -s nullglob
@@ -81,6 +71,31 @@ elif [[ "$input" =~ [Rr] ]]; then
 fi
 
 echo -e "Mode selected: ${CYAN}$mode${RESET}"
+
+# ============================================================
+# DIRECTORY SCOPE SELECTION
+# ============================================================
+echo
+echo "What should be processed?"
+echo "  [C] Current directory only (default)"
+echo "  [S] Also subdirectories"
+echo "  [Q] Quit"
+echo -n "Choice [C/s/q]: "
+
+process_scope="current"
+input=""
+
+read -t 60 -n 1 input || true
+echo
+
+if [[ "$input" =~ [Qq] ]]; then
+    echo "Quitting."
+    exit 0
+elif [[ "$input" =~ [Ss] ]]; then
+    process_scope="subdirs"
+fi
+
+echo -e "Scope selected: ${CYAN}$process_scope${RESET}"
 sleep 1
 
 # ============================================================
@@ -300,7 +315,11 @@ record_rename() {
 # ============================================================
 # MAIN LOOP
 # ============================================================
-mapfile -d '' -t all_paths < <(find . -depth -mindepth 1 -print0)
+if [[ "$process_scope" == "current" ]]; then
+    mapfile -d '' -t all_paths < <(find . -mindepth 1 -maxdepth 1 -print0)
+else
+    mapfile -d '' -t all_paths < <(find . -depth -mindepth 1 -print0)
+fi
 
 for f in "${all_paths[@]}"; do
     [[ -n "${processed[$f]+x}" ]] && continue
@@ -311,9 +330,6 @@ for f in "${all_paths[@]}"; do
         continue
     fi
 
-    # ------------------------------------------------------------
-    # SPECIAL CASE: .sha512 files (pair handling)
-    # ------------------------------------------------------------
     if [[ -f "$f" && "$f" == *.sha512 ]]; then
         sha_file="$f"
 
@@ -400,7 +416,7 @@ for f in "${all_paths[@]}"; do
         if [[ "$rename_all" == "yes" ]]; then
             do_rename=yes
         else
-            echo -n "Rename this sha512 + referenced file(s)? [y/N/a/q]: "
+            echo -n "Rename this sha512 + referenced file(s)? [Y/n/a/q]: "
             read -t 300 -n 1 input || true
             echo
 
@@ -409,8 +425,9 @@ for f in "${all_paths[@]}"; do
                     stopped_by_user=yes
                     break
                     ;;
-                y|Y)
-                    do_rename=yes
+                n|N)
+                    ((++files_skipped))
+                    do_rename=no
                     ;;
                 a|A)
                     echo
@@ -427,8 +444,7 @@ for f in "${all_paths[@]}"; do
                     fi
                     ;;
                 *)
-                    ((++files_skipped))
-                    do_rename=no
+                    do_rename=yes
                     ;;
             esac
         fi
@@ -505,9 +521,6 @@ for f in "${all_paths[@]}"; do
         continue
     fi
 
-    # ------------------------------------------------------------
-    # NORMAL FILES AND DIRECTORIES
-    # ------------------------------------------------------------
     if [[ -f "$f" ]]; then
         base="${f%.*}"
         if [[ -e "$base.sha512" ]]; then
@@ -543,7 +556,7 @@ for f in "${all_paths[@]}"; do
         continue
     fi
 
-    echo -n "Rename this entry? [y/N/a/q]: "
+    echo -n "Rename this entry? [Y/n/a/q]: "
     read -t 300 -n 1 input || true
     echo
 
@@ -552,13 +565,8 @@ for f in "${all_paths[@]}"; do
             stopped_by_user=yes
             break
             ;;
-        y|Y)
-            if mv -i -- "$f" "$new"; then
-                ((++files_affected))
-                record_rename "$f" "$new"
-            else
-                ((++files_skipped))
-            fi
+        n|N)
+            ((++files_skipped))
             ;;
         a|A)
             echo
@@ -580,7 +588,12 @@ for f in "${all_paths[@]}"; do
             fi
             ;;
         *)
-            ((++files_skipped))
+            if mv -i -- "$f" "$new"; then
+                ((++files_affected))
+                record_rename "$f" "$new"
+            else
+                ((++files_skipped))
+            fi
             ;;
     esac
 done
@@ -592,6 +605,7 @@ echo
 echo "========= SUMMARY ========="
 echo "Mode:                  $mode"
 echo "Colors enabled:        $use_colors"
+echo "Scope:                 $process_scope"
 echo "Entries examined:      $files_examined"
 echo "Entries affected:      $files_affected"
 echo "Entries skipped:       $files_skipped"
