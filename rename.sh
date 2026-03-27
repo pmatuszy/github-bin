@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 
+# 2026.03.27 - v. 1.2 - added many changes about media files
 # 2026.02.26 - v. 1.1 - Restored full-feature script (counters/summary/rename_all/processed); REAL sha: ask->verify(before)->rename+update->verify(after) + progress msg
 # 2026.02.26 - v. 1.0 - REAL mode: verify BEFORE rename and AFTER rename (full integrity check); ask before hashing; show progress messages
 # 2026.02.26 - v. 0.9 - Ask first in REAL mode (verify only if user agrees); show "sha512 check in progress..."
@@ -85,9 +86,73 @@ sleep 1
 # HELPERS
 # ============================================================
 
+is_excluded_path() {
+    local p="$1"
+    [[ "$p" == "[Originals]" || "$p" == "[Originals]/"* ]]
+}
+
 transform_name() {
     local f="$1"
     local new="$f"
+
+    # -------- SPECIAL MEDIA RENAMES --------
+    if [[ "$new" =~ ^signal-([0-9]{4})-([0-9]{2})-([0-9]{2})-([0-9]{2})-([0-9]{2})-([0-9]{2})-[0-9]+(\.[^.]+)$ ]]; then
+        printf '%s%s%s_%s%s%s-signal%s' \
+            "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}" "${BASH_REMATCH[3]}" \
+            "${BASH_REMATCH[4]}" "${BASH_REMATCH[5]}" "${BASH_REMATCH[6]}" \
+            "${BASH_REMATCH[7]}"
+        return
+    fi
+
+    if [[ "$new" =~ ^Screenshot_([0-9]{8}_[0-9]{6}_.+)(\.[^.]+)$ ]]; then
+        printf '%s-screenshot%s' \
+            "${BASH_REMATCH[1]}" \
+            "${BASH_REMATCH[2]}"
+        return
+    fi
+
+    if [[ "$new" =~ ^Screen_Recording_([0-9]{8})_([0-9]{6})_(.+)(\.[^.]+)$ ]]; then
+        printf '%s_%s_-_%s_Screen_Recording%s' \
+            "${BASH_REMATCH[1]}" \
+            "${BASH_REMATCH[2]}" \
+            "${BASH_REMATCH[3]}" \
+            "${BASH_REMATCH[4]}"
+        return
+    fi
+
+    if [[ "$new" =~ ^Sprache_([0-9]{2})([0-9]{2})([0-9]{2})_([0-9]{6})_(.+)(\.[^.]+)$ ]]; then
+        printf '20%s%s%s_%s_-_VoiceRecorder_-_%s%s' \
+            "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}" "${BASH_REMATCH[3]}" \
+            "${BASH_REMATCH[4]}" \
+            "${BASH_REMATCH[5]}" \
+            "${BASH_REMATCH[6]}"
+        return
+    fi
+
+    if [[ "$new" =~ ^Sprache_([0-9]{2})([0-9]{2})([0-9]{2})_([0-9]{6})(\.[^.]+)$ ]]; then
+        printf '20%s%s%s_%s_-_VoiceRecorder%s' \
+            "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}" "${BASH_REMATCH[3]}" \
+            "${BASH_REMATCH[4]}" \
+            "${BASH_REMATCH[5]}"
+        return
+    fi
+
+    if [[ "$new" =~ ^Voice_([0-9]{2})([0-9]{2})([0-9]{2})_([0-9]{6})_(.+)(\.[^.]+)$ ]]; then
+        printf '20%s%s%s_%s_-_VoiceRecorder_-_%s%s' \
+            "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}" "${BASH_REMATCH[3]}" \
+            "${BASH_REMATCH[4]}" \
+            "${BASH_REMATCH[5]}" \
+            "${BASH_REMATCH[6]}"
+        return
+    fi
+
+    if [[ "$new" =~ ^Voice_([0-9]{2})([0-9]{2})([0-9]{2})_([0-9]{6})(\.[^.]+)$ ]]; then
+        printf '20%s%s%s_%s_-_VoiceRecorder%s' \
+            "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}" "${BASH_REMATCH[3]}" \
+            "${BASH_REMATCH[4]}" \
+            "${BASH_REMATCH[5]}"
+        return
+    fi
 
     # -------- POLISH DIACRITICS (UTF-8 SAFE) --------
     new="${new//ą/a}"
@@ -217,7 +282,7 @@ files_skipped=0
 stopped_by_user=no
 rename_all=no
 
-declare -a renamed_list
+declare -a renamed_list=()
 declare -A recorded
 declare -A processed
 
@@ -236,44 +301,48 @@ for f in *; do
     [[ -n "${processed[$f]+x}" ]] && continue
     ((++files_examined))
 
+    if is_excluded_path "$f"; then
+        ((++files_skipped))
+        continue
+    fi
+
     # ------------------------------------------------------------
     # SPECIAL CASE: .sha512 files (pair handling)
     # ------------------------------------------------------------
     if [[ "$f" == *.sha512 ]]; then
         sha_file="$f"
 
-        # Read referenced files (fast)
         mapfile -t refs < <(extract_refs_from_sha512 "$sha_file")
 
-        # If empty/invalid sha file, just skip it quietly
         if (( ${#refs[@]} == 0 )) || [[ -z "${refs[0]}" ]]; then
             ((++files_skipped))
             processed["$sha_file"]=1
             continue
         fi
 
-        # Check referenced files exist (fast)
         missing=no
         for ref in "${refs[@]}"; do
+            if is_excluded_path "$ref"; then
+                missing=yes
+                break
+            fi
             [[ -e "$ref" ]] || { missing=yes; break; }
         done
 
         if [[ "$missing" == "yes" ]]; then
             echo
-            echo -e "${YELLOW}SHA512 SKIP:${RESET} '$sha_file' references missing file(s)."
+            echo -e "${YELLOW}SHA512 SKIP:${RESET} '$sha_file' references missing or excluded file(s)."
             ((++files_skipped))
             processed["$sha_file"]=1
             continue
         fi
 
-        # Compute new names (fast)
         new_sha="$(transform_name "$sha_file")"
         declare -a new_refs=()
         for ref in "${refs[@]}"; do
             new_refs+=( "$(transform_name "$ref")" )
         done
 
-        # Nothing changes? Skip
         nothing_changes=yes
         [[ "$new_sha" != "$sha_file" ]] && nothing_changes=no
         for i in "${!refs[@]}"; do
@@ -286,7 +355,6 @@ for f in *; do
             continue
         fi
 
-        # DRY-RUN: verify (read-only) + preview
         if [[ "$mode" == "dry-run" ]]; then
             echo
             echo -e "${CYAN}SHA512 check in progress...${RESET} $sha_file"
@@ -319,7 +387,6 @@ for f in *; do
             continue
         fi
 
-        # REAL MODE: show plan, ask first, then verify before+after
         echo
         echo -e "${RED}OLD SHA:${RESET} $sha_file"
         echo -e "${GREEN}NEW SHA:${RESET} $new_sha"
@@ -371,7 +438,6 @@ for f in *; do
             continue
         fi
 
-        # Verify BEFORE rename (slow)
         echo -e "${CYAN}SHA512 check (before rename) in progress...${RESET} $sha_file"
         if ! sha512_check "$sha_file"; then
             echo -e "${YELLOW}SHA512 FAIL:${RESET} checksum mismatch for '$sha_file' (won't rename pair)"
@@ -381,22 +447,23 @@ for f in *; do
         fi
         echo -e "${CYAN}SHA512 VERIFIED (before rename):${RESET} $sha_file"
 
-        # Collision check before doing anything destructive
         collision=no
         [[ "$new_sha" != "$sha_file" && -e "$new_sha" ]] && collision=yes
         for i in "${!refs[@]}"; do
+            if is_excluded_path "${new_refs[$i]}"; then
+                collision=yes
+            fi
             [[ "${new_refs[$i]}" != "${refs[$i]}" && -e "${new_refs[$i]}" ]] && collision=yes
         done
 
         if [[ "$collision" == "yes" ]]; then
-            echo -e "${YELLOW}SKIP:${RESET} Target file already exists (collision)."
+            echo -e "${YELLOW}SKIP:${RESET} Target file already exists or is excluded."
             ((++files_skipped))
             processed["$sha_file"]=1
             for ref in "${refs[@]}"; do processed["$ref"]=1; done
             continue
         fi
 
-        # 1) Rename payload(s) first
         for i in "${!refs[@]}"; do
             if [[ "${new_refs[$i]}" != "${refs[$i]}" ]]; then
                 mv -i -- "${refs[$i]}" "${new_refs[$i]}"
@@ -407,14 +474,12 @@ for f in *; do
             fi
         done
 
-        # 2) Update sha content (timestamps preserved)
         for i in "${!refs[@]}"; do
             if [[ "${new_refs[$i]}" != "${refs[$i]}" ]]; then
                 update_sha512_content_refs "$sha_file" "${refs[$i]}" "${new_refs[$i]}"
             fi
         done
 
-        # 3) Rename sha file
         final_sha="$sha_file"
         if [[ "$new_sha" != "$sha_file" ]]; then
             mv -i -- "$sha_file" "$new_sha"
@@ -425,7 +490,6 @@ for f in *; do
             ((++files_skipped))
         fi
 
-        # Verify AFTER rename (slow)
         echo -e "${CYAN}SHA512 check (after rename) in progress...${RESET} $final_sha"
         if sha512_check "$final_sha"; then
             echo -e "${CYAN}SHA512 VERIFIED (after rename):${RESET} $final_sha"
@@ -444,11 +508,13 @@ for f in *; do
     fi
 
     # ------------------------------------------------------------
-    # NORMAL FILES (your original behavior)
+    # NORMAL FILES
     # ------------------------------------------------------------
+    if [[ -d "$f" ]]; then
+        ((++files_skipped))
+        continue
+    fi
 
-    # IMPORTANT: if sibling "${base}.sha512" exists (your naming), skip normal rename.
-    # Example: "egzamin - DB12c 2015.07.rar" -> base="egzamin - DB12c 2015.07" -> sibling "base.sha512".
     base="${f%.*}"
     if [[ -e "$base.sha512" ]]; then
         ((++files_skipped))
@@ -458,7 +524,6 @@ for f in *; do
     new="$(transform_name "$f")"
     [[ "$f" == "$new" ]] && { ((++files_skipped)); continue; }
 
-    # -------- DRY-RUN --------
     if [[ "$mode" == "dry-run" ]]; then
         echo
         echo -e "${RED}OLD:${RESET} $f"
@@ -469,7 +534,6 @@ for f in *; do
         continue
     fi
 
-    # -------- REAL MODE --------
     echo
     echo -e "${RED}OLD:${RESET} $f"
     echo -e "${GREEN}NEW:${RESET} $new"
