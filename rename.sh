@@ -6,6 +6,7 @@
 # 2026.03.27 - v. 1.6 - in real mode, default answer is YES for rename prompts
 # 2026.03.27 - v. 1.7 - made Sprache/Voice/Screen_Recording patterns tolerant to -/_ after normalization
 # 2026.03.27 - v. 1.8 - added Call_recording rule
+# 2026.03.27 - v. 1.9 - added Call_recording_NAME_YYMMDD_HHMMSS rule
 
 set -euo pipefail
 shopt -s nullglob
@@ -184,6 +185,16 @@ transform_basename() {
             "${BASH_REMATCH[2]}" \
             "${BASH_REMATCH[3]}" \
             "${BASH_REMATCH[4]}"
+        return
+    fi
+
+    # accept Call_recording_NAME_YYMMDD_HHMMSS.ext
+    if [[ "$new" =~ ^Call_recording_(.+)_([0-9]{2})([0-9]{2})([0-9]{2})_([0-9]{6})(\.[^.]+)$ ]]; then
+        printf '20%s%s%s_%s_-_Call_recording_-_%s%s' \
+            "${BASH_REMATCH[2]}" "${BASH_REMATCH[3]}" "${BASH_REMATCH[4]}" \
+            "${BASH_REMATCH[5]}" \
+            "${BASH_REMATCH[1]}" \
+            "${BASH_REMATCH[6]}"
         return
     fi
 
