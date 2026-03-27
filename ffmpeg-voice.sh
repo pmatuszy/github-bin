@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 2026.03.27 - v. 1.4 - pressing q quits immediately
+# 2026.03.27 - v. 1.5 - exclude files matching *_EXCLUDE.*
 
 set -euo pipefail
 shopt -s nullglob nocaseglob
@@ -343,7 +343,7 @@ fi
 declare -a filtered_files=()
 for f in "${all_files[@]}"; do
     ((++files_examined))
-    if [[ "$f" == *_ORG.* || "$f" == *_OUTPUT.* ]]; then
+    if [[ "$f" == *_ORG.* || "$f" == *_OUTPUT.* || "$f" == *_EXCLUDE.* ]]; then
         ((++files_skipped))
         continue
     fi
