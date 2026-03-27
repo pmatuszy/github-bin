@@ -39,7 +39,6 @@ elif [[ "$input" =~ [Nn] ]]; then
     use_colors=no
 fi
 
-# -------- COLORS SETUP --------
 if [[ "$use_colors" == "yes" ]]; then
     RED='\e[31m'
     GREEN='\e[32m'
@@ -88,12 +87,11 @@ sleep 1
 
 is_excluded_path() {
     local p="$1"
-    [[ "$p" == "[Originals]" || "$p" == "[Originals]/"* ]]
+    [[ "$(basename -- "$p")" == "[Originals]" ]]
 }
 
-transform_name() {
-    local f="$1"
-    local new="$f"
+transform_basename() {
+    local new="$1"
 
     # -------- SPECIAL MEDIA RENAMES --------
     if [[ "$new" =~ ^signal-([0-9]{4})-([0-9]{2})-([0-9]{2})-([0-9]{2})-([0-9]{2})-([0-9]{2})-[0-9]+(\.[^.]+)$ ]]; then
@@ -202,7 +200,21 @@ transform_name() {
     printf '%s' "$new"
 }
 
-# Preserve atime+mtime across an in-place modification
+transform_name() {
+    local f="$1"
+    local dir base newbase
+
+    dir="$(dirname -- "$f")"
+    base="$(basename -- "$f")"
+    newbase="$(transform_basename "$base")"
+
+    if [[ "$dir" == "." ]]; then
+        printf '%s' "$newbase"
+    else
+        printf '%s/%s' "$dir" "$newbase"
+    fi
+}
+
 preserve_timestamps_inplace() {
     local file="$1"; shift
     local ref
@@ -213,7 +225,6 @@ preserve_timestamps_inplace() {
     rm -f "$ref"
 }
 
-# Normalize sha file line endings (CRLF -> LF) ON DISK, preserving timestamps.
 normalize_sha_file() {
     local sha_file="$1"
 
@@ -224,9 +235,6 @@ normalize_sha_file() {
     fi
 }
 
-# sha512 verification:
-# - dry-run: do NOT touch files; strip CRLF in-memory only
-# - real: normalize on disk (timestamp preserved), then verify
 sha512_check() {
     local sha_file="$1"
     if [[ "$mode" == "dry-run" ]]; then
@@ -237,29 +245,19 @@ sha512_check() {
     fi
 }
 
-# Extract referenced filename(s) from sha512 file (supports multiple lines).
-# Handles:
-#   HASH *filename
-#   HASH  filename
-# Also strips trailing CR in-memory.
 extract_refs_from_sha512() {
     local sha_file="$1"
     sed -E 's/^[0-9a-fA-F]+[[:space:]]+\*?//; s/\r$//' -- "$sha_file"
 }
 
-# Escape a string for sed regex
 sed_escape_regex() {
     printf '%s' "$1" | sed -e 's/[.[\*^$()+?{}|\\/]/\\&/g'
 }
 
-# Escape replacement string for sed replacement
 sed_escape_repl() {
     printf '%s' "$1" | sed -e 's/[&\\/]/\\&/g'
 }
 
-# Update sha512 file content so any line referencing old name now references new name.
-# Preserves "*old" vs " old" by capturing the optional "*".
-# Preserves original timestamps.
 update_sha512_content_refs() {
     local sha_file="$1"
     local old_name="$2"
@@ -297,7 +295,9 @@ record_rename() {
 # ============================================================
 # MAIN LOOP
 # ============================================================
-for f in *; do
+mapfile -d '' -t all_paths < <(find . -depth -mindepth 1 -print0)
+
+for f in "${all_paths[@]}"; do
     [[ -n "${processed[$f]+x}" ]] && continue
     ((++files_examined))
 
@@ -309,7 +309,7 @@ for f in *; do
     # ------------------------------------------------------------
     # SPECIAL CASE: .sha512 files (pair handling)
     # ------------------------------------------------------------
-    if [[ "$f" == *.sha512 ]]; then
+    if [[ -f "$f" && "$f" == *.sha512 ]]; then
         sha_file="$f"
 
         mapfile -t refs < <(extract_refs_from_sha512 "$sha_file")
@@ -322,16 +322,12 @@ for f in *; do
 
         missing=no
         for ref in "${refs[@]}"; do
-            if is_excluded_path "$ref"; then
-                missing=yes
-                break
-            fi
             [[ -e "$ref" ]] || { missing=yes; break; }
         done
 
         if [[ "$missing" == "yes" ]]; then
             echo
-            echo -e "${YELLOW}SHA512 SKIP:${RESET} '$sha_file' references missing or excluded file(s)."
+            echo -e "${YELLOW}SHA512 SKIP:${RESET} '$sha_file' references missing file(s)."
             ((++files_skipped))
             processed["$sha_file"]=1
             continue
@@ -413,7 +409,7 @@ for f in *; do
                     ;;
                 a|A)
                     echo
-                    echo "⚠️  This will rename ALL remaining files."
+                    echo "⚠️  This will rename ALL remaining files/directories."
                     echo -n "Are you sure? [y/N]: "
                     read -n 1 confirm || true
                     echo
@@ -450,14 +446,11 @@ for f in *; do
         collision=no
         [[ "$new_sha" != "$sha_file" && -e "$new_sha" ]] && collision=yes
         for i in "${!refs[@]}"; do
-            if is_excluded_path "${new_refs[$i]}"; then
-                collision=yes
-            fi
             [[ "${new_refs[$i]}" != "${refs[$i]}" && -e "${new_refs[$i]}" ]] && collision=yes
         done
 
         if [[ "$collision" == "yes" ]]; then
-            echo -e "${YELLOW}SKIP:${RESET} Target file already exists or is excluded."
+            echo -e "${YELLOW}SKIP:${RESET} Target file already exists."
             ((++files_skipped))
             processed["$sha_file"]=1
             for ref in "${refs[@]}"; do processed["$ref"]=1; done
@@ -508,17 +501,14 @@ for f in *; do
     fi
 
     # ------------------------------------------------------------
-    # NORMAL FILES
+    # NORMAL FILES AND DIRECTORIES
     # ------------------------------------------------------------
-    if [[ -d "$f" ]]; then
-        ((++files_skipped))
-        continue
-    fi
-
-    base="${f%.*}"
-    if [[ -e "$base.sha512" ]]; then
-        ((++files_skipped))
-        continue
+    if [[ -f "$f" ]]; then
+        base="${f%.*}"
+        if [[ -e "$base.sha512" ]]; then
+            ((++files_skipped))
+            continue
+        fi
     fi
 
     new="$(transform_name "$f")"
@@ -548,7 +538,7 @@ for f in *; do
         continue
     fi
 
-    echo -n "Rename this file? [y/N/a/q]: "
+    echo -n "Rename this entry? [y/N/a/q]: "
     read -t 300 -n 1 input || true
     echo
 
@@ -567,7 +557,7 @@ for f in *; do
             ;;
         a|A)
             echo
-            echo "⚠️  This will rename ALL remaining files."
+            echo "⚠️  This will rename ALL remaining files/directories."
             echo -n "Are you sure? [y/N]: "
             read -n 1 confirm || true
             echo
@@ -597,14 +587,14 @@ echo
 echo "========= SUMMARY ========="
 echo "Mode:                  $mode"
 echo "Colors enabled:        $use_colors"
-echo "Files examined:        $files_examined"
-echo "Files affected:        $files_affected"
-echo "Files skipped:         $files_skipped"
+echo "Entries examined:      $files_examined"
+echo "Entries affected:      $files_affected"
+echo "Entries skipped:       $files_skipped"
 echo "Stopped by user:       $stopped_by_user"
 
 if (( files_affected > 0 )); then
     echo
-    echo "Affected files:"
+    echo "Affected entries:"
     for r in "${renamed_list[@]}"; do
         old=${r%%|*}
         new=${r#*|}
