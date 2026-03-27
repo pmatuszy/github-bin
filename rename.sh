@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # 2026.03.27 - v. 1.2 - added many changes about media files
+# 2026.03.27 - v. 1.3 - fixed top-level path handling: keep ./ prefix in transform_name()
 
 # 2026.02.26 - v. 1.1 - Restored full-feature script (counters/summary/rename_all/processed); REAL sha: ask->verify(before)->rename+update->verify(after) + progress msg
 # 2026.02.26 - v. 1.0 - REAL mode: verify BEFORE rename and AFTER rename (full integrity check); ask before hashing; show progress messages
@@ -209,7 +210,7 @@ transform_name() {
     newbase="$(transform_basename "$base")"
 
     if [[ "$dir" == "." ]]; then
-        printf '%s' "$newbase"
+        printf './%s' "$newbase"
     else
         printf '%s/%s' "$dir" "$newbase"
     fi
