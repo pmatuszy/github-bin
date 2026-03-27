@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 2026.03.27 - v. 1.9 - clean copy after local paste/corruption issue
+# 2026.03.27 - v. 2.0 - use /bin/df for free-space check
 
 set -euo pipefail
 shopt -s nullglob nocaseglob
@@ -275,9 +275,12 @@ check_free_space_or_exit() {
     local target_path="$1"
     local avail_kb
 
-    avail_kb="$(df -Pk -- "$target_path" | awk 'NR==2 {print $4}')"
+    avail_kb="$(
+        LC_ALL=C /bin/df -Pk -- "$target_path" 2>/dev/null \
+        | awk 'NR==2 {gsub(/[^0-9]/, "", $4); print $4}'
+    )"
 
-    if [[ -z "$avail_kb" ]]; then
+    if [[ -z "$avail_kb" || ! "$avail_kb" =~ ^[0-9]+$ ]]; then
         echo
         echo "Could not determine free disk space. Exiting."
         exit 1
@@ -547,6 +550,10 @@ if [[ "$mode" == "dry-run" ]]; then
         ((++files_affected))
         record_change "$original_in" "$new_in" "$out"
     done
+
+# ============================================================
+# REAL MODE - ASK IN BATCHES, THEN PROCESS BATCH
+# ============================================================
 else
     total_files=${#all_files[@]}
     idx=0
