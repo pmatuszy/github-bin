@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 2026.03.27 - v. 1.1 - show prompting/processing counters in boxes
+# 2026.03.27 - v. 1.2 - show planned process/skip counts after each answer
 
 set -euo pipefail
 shopt -s nullglob nocaseglob
@@ -108,22 +108,12 @@ if command -v boxes >/dev/null 2>&1; then
     have_boxes=yes
 fi
 
-print_box_or_plain() {
-    local content="$1"
-
-    echo
-    if [[ "$have_boxes" == "yes" ]]; then
-        printf "%s\n" "$content" | boxes -d stone
-    else
-        printf "%s\n" "$content"
-    fi
-}
-
 print_file_block() {
     local original_in="$1"
     local new_in="$2"
     local out="$3"
 
+    echo
     if [[ "$have_boxes" == "yes" ]]; then
         {
             printf "INPUT:  %s\n" "$original_in"
@@ -132,7 +122,6 @@ print_file_block() {
         } | boxes -d stone
         echo
     else
-        echo
         echo -e "${RED}INPUT:${RESET}  $original_in"
         echo -e "${GREEN}RENAME:${RESET} $original_in $ARROW $new_in"
         echo -e "${GREEN}OUTPUT:${RESET} $out"
@@ -146,6 +135,7 @@ print_prompt_progress() {
     local total_files="$4"
     local still_after_this="$5"
 
+    echo
     if [[ "$have_boxes" == "yes" ]]; then
         {
             printf "PROMPTING: batch file %s/%s\n" "$batch_pos" "$batch_size_now"
@@ -154,10 +144,33 @@ print_prompt_progress() {
         } | boxes -d stone
         echo
     else
-        echo
         echo -e "${CYAN}PROMPTING:${RESET} batch file $batch_pos/$batch_size_now"
         echo -e "${CYAN}OVERALL:${RESET}   file $overall_pos/$total_files"
         echo -e "${CYAN}LEFT TO ASK AFTER THIS:${RESET} $still_after_this"
+    fi
+}
+
+print_decision_summary() {
+    local batch_size_now="$1"
+    local yes_count="$2"
+    local no_count="$3"
+
+    local undecided
+    undecided=$(( batch_size_now - yes_count - no_count ))
+    (( undecided < 0 )) && undecided=0
+
+    echo
+    if [[ "$have_boxes" == "yes" ]]; then
+        {
+            printf "WILL BE PROCESSED IN THIS BATCH: %s\n" "$yes_count"
+            printf "WILL BE SKIPPED IN THIS BATCH:   %s\n" "$no_count"
+            printf "ANSWERS STILL MISSING:           %s\n" "$undecided"
+        } | boxes -d stone
+        echo
+    else
+        echo -e "${GREEN}WILL BE PROCESSED IN THIS BATCH:${RESET} $yes_count"
+        echo -e "${YELLOW}WILL BE SKIPPED IN THIS BATCH:${RESET}   $no_count"
+        echo -e "${CYAN}ANSWERS STILL MISSING:${RESET}           $undecided"
     fi
 }
 
@@ -167,6 +180,7 @@ print_processing_progress() {
     local selected_left_after="$3"
     local overall_total="$4"
 
+    echo
     if [[ "$have_boxes" == "yes" ]]; then
         {
             printf "PROCESSING: selected file %s/%s in current batch\n" "$selected_pos" "$selected_total"
@@ -175,7 +189,6 @@ print_processing_progress() {
         } | boxes -d stone
         echo
     else
-        echo
         echo -e "${CYAN}PROCESSING:${RESET} selected file $selected_pos/$selected_total in current batch"
         echo -e "${CYAN}REMAINING SELECTED IN THIS BATCH AFTER THIS:${RESET} $selected_left_after"
         echo -e "${CYAN}TOTAL ELIGIBLE FILES:${RESET} $overall_total"
@@ -186,6 +199,7 @@ print_restore_block() {
     local removed_msg="$1"
     local restored_msg="$2"
 
+    echo
     if [[ "$have_boxes" == "yes" ]]; then
         {
             echo "RESTORING: current file state"
@@ -194,7 +208,6 @@ print_restore_block() {
         } | boxes -d stone
         echo
     else
-        echo
         echo -e "${YELLOW}INTERRUPTED:${RESET} restoring current file state..."
         [[ -n "$removed_msg" ]] && echo -e "${YELLOW}${removed_msg}${RESET}"
         [[ -n "$restored_msg" ]] && echo -e "${YELLOW}${restored_msg}${RESET}"
@@ -360,12 +373,13 @@ else
         declare -a batch_outputs=()
         declare -a batch_selected=()
 
-        batch_start_idx=$idx
         remaining_total=$(( total_files - idx ))
         batch_size_now=$BATCH_SIZE
         (( remaining_total < batch_size_now )) && batch_size_now=$remaining_total
 
         batch_count=0
+        batch_yes=0
+        batch_no=0
 
         while (( idx < total_files && batch_count < BATCH_SIZE )); do
             original_in="${all_files[$idx]}"
@@ -393,15 +407,19 @@ else
                 n|N)
                     batch_selected+=("no")
                     ((++files_skipped))
+                    ((++batch_no))
                     ;;
                 *)
                     batch_selected+=("yes")
+                    ((++batch_yes))
                     ;;
             esac
 
             batch_originals+=("$original_in")
             batch_newins+=("$new_in")
             batch_outputs+=("$out")
+
+            print_decision_summary "$batch_size_now" "$batch_yes" "$batch_no"
 
             ((idx+=1))
             ((batch_count+=1))
