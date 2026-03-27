@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 2026.03.27 - v. 1.2 - show planned process/skip counts after each answer
+# 2026.03.27 - v. 1.3 - side-by-side boxes for prompting summary, fewer empty lines
 
 set -euo pipefail
 shopt -s nullglob nocaseglob
@@ -113,14 +113,12 @@ print_file_block() {
     local new_in="$2"
     local out="$3"
 
-    echo
     if [[ "$have_boxes" == "yes" ]]; then
         {
             printf "INPUT:  %s\n" "$original_in"
             printf "RENAME: %s %s %s\n" "$original_in" "$ARROW" "$new_in"
             printf "OUTPUT: %s\n" "$out"
         } | boxes -d stone
-        echo
     else
         echo -e "${RED}INPUT:${RESET}  $original_in"
         echo -e "${GREEN}RENAME:${RESET} $original_in $ARROW $new_in"
@@ -128,29 +126,21 @@ print_file_block() {
     fi
 }
 
-print_prompt_progress() {
+print_prompt_progress_box() {
     local batch_pos="$1"
     local batch_size_now="$2"
     local overall_pos="$3"
     local total_files="$4"
     local still_after_this="$5"
 
-    echo
-    if [[ "$have_boxes" == "yes" ]]; then
-        {
-            printf "PROMPTING: batch file %s/%s\n" "$batch_pos" "$batch_size_now"
-            printf "OVERALL:   file %s/%s\n" "$overall_pos" "$total_files"
-            printf "STILL TO BE ASKED AFTER THIS ONE: %s\n" "$still_after_this"
-        } | boxes -d stone
-        echo
-    else
-        echo -e "${CYAN}PROMPTING:${RESET} batch file $batch_pos/$batch_size_now"
-        echo -e "${CYAN}OVERALL:${RESET}   file $overall_pos/$total_files"
-        echo -e "${CYAN}LEFT TO ASK AFTER THIS:${RESET} $still_after_this"
-    fi
+    {
+        printf "PROMPTING: batch file %s/%s\n" "$batch_pos" "$batch_size_now"
+        printf "OVERALL:   file %s/%s\n" "$overall_pos" "$total_files"
+        printf "STILL TO BE ASKED AFTER THIS ONE: %s\n" "$still_after_this"
+    }
 }
 
-print_decision_summary() {
+print_decision_summary_box() {
     local batch_size_now="$1"
     local yes_count="$2"
     local no_count="$3"
@@ -159,15 +149,45 @@ print_decision_summary() {
     undecided=$(( batch_size_now - yes_count - no_count ))
     (( undecided < 0 )) && undecided=0
 
-    echo
+    {
+        printf "WILL BE PROCESSED IN THIS BATCH: %s\n" "$yes_count"
+        printf "WILL BE SKIPPED IN THIS BATCH:   %s\n" "$no_count"
+        printf "ANSWERS STILL MISSING:           %s\n" "$undecided"
+    }
+}
+
+print_prompt_and_decision_summary() {
+    local batch_pos="$1"
+    local batch_size_now="$2"
+    local overall_pos="$3"
+    local total_files="$4"
+    local still_after_this="$5"
+    local yes_count="$6"
+    local no_count="$7"
+
     if [[ "$have_boxes" == "yes" ]]; then
-        {
-            printf "WILL BE PROCESSED IN THIS BATCH: %s\n" "$yes_count"
-            printf "WILL BE SKIPPED IN THIS BATCH:   %s\n" "$no_count"
-            printf "ANSWERS STILL MISSING:           %s\n" "$undecided"
-        } | boxes -d stone
-        echo
+        local left right
+        left="$(mktemp)"
+        right="$(mktemp)"
+
+        print_prompt_progress_box \
+            "$batch_pos" "$batch_size_now" "$overall_pos" "$total_files" "$still_after_this" \
+            | boxes -d stone > "$left"
+
+        print_decision_summary_box \
+            "$batch_size_now" "$yes_count" "$no_count" \
+            | boxes -d stone > "$right"
+
+        paste -d ' ' "$left" "$right"
+        rm -f "$left" "$right"
     else
+        local undecided
+        undecided=$(( batch_size_now - yes_count - no_count ))
+        (( undecided < 0 )) && undecided=0
+
+        echo -e "${CYAN}PROMPTING:${RESET} batch file $batch_pos/$batch_size_now"
+        echo -e "${CYAN}OVERALL:${RESET}   file $overall_pos/$total_files"
+        echo -e "${CYAN}LEFT TO ASK AFTER THIS:${RESET} $still_after_this"
         echo -e "${GREEN}WILL BE PROCESSED IN THIS BATCH:${RESET} $yes_count"
         echo -e "${YELLOW}WILL BE SKIPPED IN THIS BATCH:${RESET}   $no_count"
         echo -e "${CYAN}ANSWERS STILL MISSING:${RESET}           $undecided"
@@ -180,14 +200,12 @@ print_processing_progress() {
     local selected_left_after="$3"
     local overall_total="$4"
 
-    echo
     if [[ "$have_boxes" == "yes" ]]; then
         {
             printf "PROCESSING: selected file %s/%s in current batch\n" "$selected_pos" "$selected_total"
             printf "REMAINING SELECTED IN THIS BATCH AFTER THIS ONE: %s\n" "$selected_left_after"
             printf "TOTAL ELIGIBLE FILES: %s\n" "$overall_total"
         } | boxes -d stone
-        echo
     else
         echo -e "${CYAN}PROCESSING:${RESET} selected file $selected_pos/$selected_total in current batch"
         echo -e "${CYAN}REMAINING SELECTED IN THIS BATCH AFTER THIS:${RESET} $selected_left_after"
@@ -199,14 +217,12 @@ print_restore_block() {
     local removed_msg="$1"
     local restored_msg="$2"
 
-    echo
     if [[ "$have_boxes" == "yes" ]]; then
         {
             echo "RESTORING: current file state"
             [[ -n "$removed_msg" ]] && echo "$removed_msg"
             [[ -n "$restored_msg" ]] && echo "$restored_msg"
         } | boxes -d stone
-        echo
     else
         echo -e "${YELLOW}INTERRUPTED:${RESET} restoring current file state..."
         [[ -n "$removed_msg" ]] && echo -e "${YELLOW}${removed_msg}${RESET}"
@@ -251,6 +267,7 @@ cleanup_current_file() {
             restored_msg="RESTORED: $current_new_in $ARROW $current_original_in"
         fi
 
+        echo
         print_restore_block "$removed_msg" "$restored_msg"
     fi
 
@@ -280,6 +297,7 @@ process_one_file() {
         return 0
     fi
 
+    echo
     print_file_block "$original_in" "$new_in" "$out"
 
     current_original_in="$original_in"
@@ -350,6 +368,7 @@ if [[ "$mode" == "dry-run" ]]; then
             continue
         fi
 
+        echo
         print_file_block "$original_in" "$new_in" "$out"
         echo "ffmpeg -hide_banner -y -i \"$new_in\" -map 0:a:0 -vn -af \"silenceremove=start_periods=1:start_silence=0.9:start_threshold=-50dB:stop_periods=-1:stop_silence=0.8:stop_threshold=-45dB,highpass=f=80,acompressor=threshold=-18dB:ratio=3:attack=20:release=250:makeup=4,dynaudnorm=f=150:g=11\" -c:a flac -compression_level 12 \"$out\""
         echo "touch -r \"$new_in\" \"$out\""
@@ -392,7 +411,10 @@ else
             batch_pos=$(( batch_count + 1 ))
             still_after_this=$(( total_files - overall_pos ))
 
-            print_prompt_progress "$batch_pos" "$batch_size_now" "$overall_pos" "$total_files" "$still_after_this"
+            echo
+            print_prompt_and_decision_summary \
+                "$batch_pos" "$batch_size_now" "$overall_pos" "$total_files" "$still_after_this" \
+                "$batch_yes" "$batch_no"
             print_file_block "$original_in" "$new_in" "$out"
             echo -n "Process this file later in this batch? [Y/n/q]: "
             read -t 300 -n 1 input || true
@@ -419,8 +441,6 @@ else
             batch_newins+=("$new_in")
             batch_outputs+=("$out")
 
-            print_decision_summary "$batch_size_now" "$batch_yes" "$batch_no"
-
             ((idx+=1))
             ((batch_count+=1))
         done
@@ -436,6 +456,7 @@ else
                 if [[ "${batch_selected[$i]}" == "yes" ]]; then
                     ((selected_pos+=1))
                     selected_left_after=$(( selected_total - selected_pos ))
+                    echo
                     print_processing_progress "$selected_pos" "$selected_total" "$selected_left_after" "$total_files"
                     process_one_file "${batch_originals[$i]}" "${batch_newins[$i]}" "${batch_outputs[$i]}"
                 fi
