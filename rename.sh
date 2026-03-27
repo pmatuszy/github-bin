@@ -4,6 +4,7 @@
 # 2026.03.27 - v. 1.4 - apply special media renames after basic normalization
 # 2026.03.27 - v. 1.5 - added question: current directory only vs also subdirectories
 # 2026.03.27 - v. 1.6 - in real mode, default answer is YES for rename prompts
+# 2026.03.27 - v. 1.7 - made Sprache/Voice/Screen_Recording patterns tolerant to -/_ after normalization
 
 set -euo pipefail
 shopt -s nullglob
@@ -174,7 +175,9 @@ transform_basename() {
         return
     fi
 
-    if [[ "$new" =~ ^Screen_Recording_([0-9]{8})_([0-9]{6})_(.+)(\.[^.]+)$ ]]; then
+    # accept Screen_Recording_YYYYMMDD_HHMMSS_rest.ext
+    # and also Screen_Recording_YYYYMMDD-HHMMSS-rest.ext after normalization
+    if [[ "$new" =~ ^Screen_Recording_([0-9]{8})[-_]([0-9]{6})[-_](.+)(\.[^.]+)$ ]]; then
         printf '%s_%s_-_Screen_Recording_-_%s%s' \
             "${BASH_REMATCH[1]}" \
             "${BASH_REMATCH[2]}" \
@@ -183,7 +186,8 @@ transform_basename() {
         return
     fi
 
-    if [[ "$new" =~ ^Sprache_([0-9]{2})([0-9]{2})([0-9]{2})_([0-9]{6})_(.+)(\.[^.]+)$ ]]; then
+    # accept Sprache_YYMMDD_HHMMSS_rest.ext and Sprache_YYMMDD_HHMMSS-rest.ext
+    if [[ "$new" =~ ^Sprache_([0-9]{2})([0-9]{2})([0-9]{2})_([0-9]{6})[-_](.+)(\.[^.]+)$ ]]; then
         printf '20%s%s%s_%s_-_VoiceRecorder_-_%s%s' \
             "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}" "${BASH_REMATCH[3]}" \
             "${BASH_REMATCH[4]}" \
@@ -200,7 +204,8 @@ transform_basename() {
         return
     fi
 
-    if [[ "$new" =~ ^Voice_([0-9]{2})([0-9]{2})([0-9]{2})_([0-9]{6})_(.+)(\.[^.]+)$ ]]; then
+    # accept Voice_YYMMDD_HHMMSS_rest.ext and Voice_YYMMDD_HHMMSS-rest.ext
+    if [[ "$new" =~ ^Voice_([0-9]{2})([0-9]{2})([0-9]{2})_([0-9]{6})[-_](.+)(\.[^.]+)$ ]]; then
         printf '20%s%s%s_%s_-_VoiceRecorder_-_%s%s' \
             "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}" "${BASH_REMATCH[3]}" \
             "${BASH_REMATCH[4]}" \
