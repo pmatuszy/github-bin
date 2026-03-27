@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 2026.03.27 - v. 1.8 - create and verify sha512 also for *_EXCLUDE.* files
+# 2026.03.27 - v. 1.9 - clean copy after local paste/corruption issue
 
 set -euo pipefail
 shopt -s nullglob nocaseglob
@@ -309,14 +309,12 @@ create_sha512_pair_file() {
     local sha_file="$1"
     local org_file="$2"
     local out_file="$3"
-
     sha512sum -- "$org_file" "$out_file" > "$sha_file"
 }
 
 create_sha512_single_file() {
     local sha_file="$1"
     local file="$2"
-
     sha512sum -- "$file" > "$sha_file"
 }
 
@@ -549,10 +547,6 @@ if [[ "$mode" == "dry-run" ]]; then
         ((++files_affected))
         record_change "$original_in" "$new_in" "$out"
     done
-
-# ============================================================
-# REAL MODE - ASK IN BATCHES, THEN PROCESS BATCH
-# ============================================================
 else
     total_files=${#all_files[@]}
     idx=0
