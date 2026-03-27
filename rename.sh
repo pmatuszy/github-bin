@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-
 # 2026.03.27 - v. 1.2 - added many changes about media files
+
 # 2026.02.26 - v. 1.1 - Restored full-feature script (counters/summary/rename_all/processed); REAL sha: ask->verify(before)->rename+update->verify(after) + progress msg
 # 2026.02.26 - v. 1.0 - REAL mode: verify BEFORE rename and AFTER rename (full integrity check); ask before hashing; show progress messages
 # 2026.02.26 - v. 0.9 - Ask first in REAL mode (verify only if user agrees); show "sha512 check in progress..."
@@ -112,7 +112,7 @@ transform_name() {
     fi
 
     if [[ "$new" =~ ^Screen_Recording_([0-9]{8})_([0-9]{6})_(.+)(\.[^.]+)$ ]]; then
-        printf '%s_%s_-_%s_Screen_Recording%s' \
+        printf '%s_%s_-_Screen_Recording_-_%s%s' \
             "${BASH_REMATCH[1]}" \
             "${BASH_REMATCH[2]}" \
             "${BASH_REMATCH[3]}" \
