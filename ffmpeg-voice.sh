@@ -1,4 +1,13 @@
 #!/usr/bin/env bash
+# 2026.03.30 - v. 3.1 - default batch size changed to 50
+# 2026.03.30 - v. 3.0 - add [a] accept-all-remaining-in-batch to main file-processing prompts too
+# 2026.03.30 - v. 2.9 - add [a] answer for transcription batch prompts to accept all remaining in current batch
+# 2026.03.30 - v. 2.8 - remove extra blank line before missing transcript messages
+# 2026.03.30 - v. 2.7 - check transcription host reachability before running transcription
+# 2026.03.30 - v. 2.6 - batch prompting for missing transcriptions in real mode; change history kept only in script comments
+# 2026.03.30 - v. 2.5 - Ctrl-C cleanup removes empty or tiny partial transcript files
+# 2026.03.30 - v. 2.4 - per-missing-transcript prompt in real mode, cleanup empty transcript on Ctrl-C
+# 2026.03.30 - v. 2.3 - transcript file mapped to *_OUTPUT.txt, transcription prompt default yes, append transcript sha512
 # 2026.03.27 - v. 2.1 - backfill sha512 for existing _ORG/_OUTPUT pairs and *_EXCLUDE.* files
 
 set -euo pipefail
@@ -7,8 +16,12 @@ shopt -s nullglob nocaseglob
 # ============================================================
 # DEFAULT SETTINGS
 # ============================================================
-BATCH_SIZE=10
+BATCH_SIZE=50
 MIN_FREE_KB=1048576   # 1 GiB
+DO_TRANSCRIPTION=yes
+TRANSCRIBE_CMD="/mnt/temp/whisper.cpp/transcribe-server.sh"
+TRANSCRIBE_HOST="192.168.200.134"
+PARTIAL_TXT_DELETE_MAX_BYTES=127
 
 # ============================================================
 # COLOR SELECTION
@@ -75,25 +88,56 @@ fi
 echo -e "Mode selected: ${CYAN}$mode${RESET}"
 
 # ============================================================
+# TRANSCRIPTION SELECTION
+# ============================================================
+echo
+if [[ "$mode" == "real" ]]; then
+    echo "Enable transcription flow for missing *_OUTPUT.txt files?"
+    echo "  [Y] Yes (default)"
+    echo "  [N] No"
+    echo "  [Q] Quit"
+    echo -n "Choice [Y/n/q]: "
+else
+    echo "Include transcription step in dry-run for missing *_OUTPUT.txt files?"
+    echo "  [Y] Yes (default)"
+    echo "  [N] No"
+    echo "  [Q] Quit"
+    echo -n "Choice [Y/n/q]: "
+fi
+
+input=""
+read -t 60 -n 1 input || true
+echo
+
+if [[ "$input" =~ [Qq] ]]; then
+    echo "Quitting."
+    exit 0
+elif [[ "$input" =~ [Nn] ]]; then
+    DO_TRANSCRIPTION=no
+fi
+
+echo -e "Transcription enabled: ${CYAN}$DO_TRANSCRIPTION${RESET}"
+
+# ============================================================
 # BATCH SIZE - ONLY FOR REAL MODE
 # ============================================================
 if [[ "$mode" == "real" ]]; then
     echo
     echo "Batch size for asking before processing?"
-    echo "  Default: 10"
+    echo "  Default: 50"
     echo "  Enter a positive number, or press Enter for default."
-    echo -n "Batch size [10]: "
+    echo -n "Batch size [50]: "
 
     input=""
     IFS= read -r -t 60 input || true
 
     if [[ -z "$input" ]]; then
-        BATCH_SIZE=10
+        BATCH_SIZE=50
     elif [[ "$input" =~ ^[1-9][0-9]*$ ]]; then
         BATCH_SIZE="$input"
     else
-        echo "Invalid batch size. Using default: 10"
-        BATCH_SIZE=10
+        echo "Invalid batch size. Using default: 50"
+        BATCH_SIZE=50
     fi
 
     echo -e "Batch size selected: ${CYAN}$BATCH_SIZE${RESET}"
@@ -235,17 +279,20 @@ print_processing_progress() {
 print_restore_block() {
     local removed_msg="$1"
     local restored_msg="$2"
+    local txt_removed_msg="$3"
 
     if [[ "$have_boxes" == "yes" ]]; then
         {
             echo "RESTORING: current file state"
             [[ -n "$removed_msg" ]] && echo "$removed_msg"
             [[ -n "$restored_msg" ]] && echo "$restored_msg"
+            [[ -n "$txt_removed_msg" ]] && echo "$txt_removed_msg"
         } | boxes -d stone
     else
         echo -e "${YELLOW}INTERRUPTED:${RESET} restoring current file state..."
         [[ -n "$removed_msg" ]] && echo -e "${YELLOW}${removed_msg}${RESET}"
         [[ -n "$restored_msg" ]] && echo -e "${YELLOW}${restored_msg}${RESET}"
+        [[ -n "$txt_removed_msg" ]] && echo -e "${YELLOW}${txt_removed_msg}${RESET}"
     fi
 }
 
@@ -271,6 +318,24 @@ print_low_space_block() {
     fi
 }
 
+print_transcription_file_block() {
+    local out_file="$1"
+    local txt_file="$2"
+    local sha_file="$3"
+
+    if [[ "$have_boxes" == "yes" ]]; then
+        {
+            printf "SOURCE AUDIO: %s\n" "$out_file"
+            printf "TRANSCRIPT:   %s\n" "$txt_file"
+            printf "SHA512 FILE:  %s\n" "$sha_file"
+        } | boxes -d stone
+    else
+        echo -e "${CYAN}SOURCE AUDIO:${RESET} $out_file"
+        echo -e "${CYAN}TRANSCRIPT:${RESET}   $txt_file"
+        echo -e "${CYAN}SHA512 FILE:${RESET}  $sha_file"
+    fi
+}
+
 check_free_space_or_exit() {
     local target_path="$1"
     local avail_kb
@@ -291,6 +356,19 @@ check_free_space_or_exit() {
         print_low_space_block "$avail_kb" "$target_path" "$MIN_FREE_KB"
         exit 1
     fi
+}
+
+check_transcribe_host_or_exit() {
+    [[ "$DO_TRANSCRIPTION" == "yes" ]] || return 0
+
+    if ping -c 1 -W 1 "$TRANSCRIBE_HOST" >/dev/null 2>&1; then
+        return 0
+    fi
+
+    echo
+    echo -e "${YELLOW}TRANSCRIPTION UNAVAILABLE:${RESET} host not reachable: $TRANSCRIBE_HOST"
+    echo "Cannot continue because transcription cannot be done."
+    exit 1
 }
 
 sha_file_from_pair() {
@@ -326,12 +404,251 @@ verify_sha512_file() {
     sha512sum -c --quiet -- "$sha_file"
 }
 
+txt_file_from_output() {
+    local out_file="$1"
+    printf '%s\n' "${out_file%.*}.txt"
+}
+
+sha_file_has_entry() {
+    local sha_file="$1"
+    local target_file="$2"
+
+    [[ -e "$sha_file" ]] || return 1
+    grep -Fq "  $target_file" "$sha_file"
+}
+
+append_sha512_for_file_if_missing() {
+    local sha_file="$1"
+    local target_file="$2"
+
+    [[ -e "$target_file" ]] || return 1
+
+    if sha_file_has_entry "$sha_file" "$target_file"; then
+        return 0
+    fi
+
+    sha512sum -- "$target_file" >> "$sha_file"
+}
+
+file_size_bytes() {
+    local file="$1"
+    local size
+
+    size="$(wc -c < "$file" 2>/dev/null | tr -d '[:space:]')"
+
+    if [[ -z "$size" || ! "$size" =~ ^[0-9]+$ ]]; then
+        echo 0
+        return 0
+    fi
+
+    echo "$size"
+}
+
+should_delete_partial_txt_on_interrupt() {
+    local txt_file="$1"
+    local size_bytes
+
+    [[ -e "$txt_file" ]] || return 1
+
+    size_bytes="$(file_size_bytes "$txt_file")"
+    (( size_bytes <= PARTIAL_TXT_DELETE_MAX_BYTES ))
+}
+
+run_one_transcription() {
+    local out_file="$1"
+    local sha_file="$2"
+    local txt_file="$3"
+
+    if [[ -e "$txt_file" ]]; then
+        append_sha512_for_file_if_missing "$sha_file" "$txt_file"
+        return 0
+    fi
+
+    if [[ ! -x "$TRANSCRIBE_CMD" ]]; then
+        echo -e "${YELLOW}TRANSCRIPTION SKIPPED:${RESET} command not found or not executable: $TRANSCRIBE_CMD"
+        return 0
+    fi
+
+    check_transcribe_host_or_exit
+    check_free_space_or_exit "."
+
+    current_txt_file="$txt_file"
+
+    "$TRANSCRIBE_CMD" "$out_file"
+
+    if [[ ! -e "$txt_file" ]]; then
+        echo -e "${YELLOW}TRANSCRIPTION FAILED:${RESET} expected transcript not found: $txt_file"
+        exit 1
+    fi
+
+    append_sha512_for_file_if_missing "$sha_file" "$txt_file"
+
+    if verify_sha512_file "$sha_file"; then
+        echo -e "${CYAN}SHA512 VERIFIED:${RESET} $sha_file"
+    else
+        echo -e "${YELLOW}SHA512 VERIFY FAILED:${RESET} $sha_file"
+        exit 1
+    fi
+
+    current_txt_file=""
+}
+
+queue_or_print_missing_transcription() {
+    local out_file="$1"
+    local sha_file="$2"
+    local txt_file
+
+    [[ "$DO_TRANSCRIPTION" == "yes" ]] || return 0
+
+    txt_file="$(txt_file_from_output "$out_file")"
+
+    if [[ -e "$txt_file" ]]; then
+        append_sha512_for_file_if_missing "$sha_file" "$txt_file"
+        return 0
+    fi
+
+    echo -e "${CYAN}TRANSCRIPTION:${RESET} Missing transcript: $txt_file"
+
+    if [[ "$mode" == "dry-run" ]]; then
+        echo "ping -c 1 -W 1 \"$TRANSCRIBE_HOST\""
+        echo "\"$TRANSCRIBE_CMD\" \"$out_file\""
+        echo "sha512sum -- \"$txt_file\" >> \"$sha_file\""
+        echo "sha512sum -c --quiet -- \"$sha_file\""
+        echo "----------------------------------------"
+        return 0
+    fi
+
+    transcribe_queue_outs+=("$out_file")
+    transcribe_queue_shas+=("$sha_file")
+    transcribe_queue_txts+=("$txt_file")
+}
+
+process_transcription_queue() {
+    [[ "$DO_TRANSCRIPTION" == "yes" ]] || return 0
+    [[ "$mode" == "real" ]] || return 0
+
+    local total_files idx
+    total_files=${#transcribe_queue_outs[@]}
+    idx=0
+
+    while (( idx < total_files )); do
+        declare -a batch_outs=()
+        declare -a batch_shas=()
+        declare -a batch_txts=()
+        declare -a batch_selected=()
+
+        local remaining_total batch_size_now batch_count batch_yes batch_no accept_all_remaining
+        remaining_total=$(( total_files - idx ))
+        batch_size_now=$BATCH_SIZE
+        (( remaining_total < batch_size_now )) && batch_size_now=$remaining_total
+
+        batch_count=0
+        batch_yes=0
+        batch_no=0
+        accept_all_remaining=no
+
+        while (( idx < total_files && batch_count < batch_size_now )); do
+            local out_file sha_file txt_file overall_pos batch_pos still_after_this
+
+            out_file="${transcribe_queue_outs[$idx]}"
+            sha_file="${transcribe_queue_shas[$idx]}"
+            txt_file="${transcribe_queue_txts[$idx]}"
+
+            overall_pos=$(( idx + 1 ))
+            batch_pos=$(( batch_count + 1 ))
+            still_after_this=$(( total_files - overall_pos ))
+
+            if [[ "$accept_all_remaining" == "yes" ]]; then
+                batch_selected+=("yes")
+                ((++batch_yes))
+                batch_outs+=("$out_file")
+                batch_shas+=("$sha_file")
+                batch_txts+=("$txt_file")
+                ((idx+=1))
+                ((batch_count+=1))
+                continue
+            fi
+
+            echo
+            print_prompt_and_decision_summary \
+                "$batch_pos" "$batch_size_now" "$overall_pos" "$total_files" "$still_after_this" \
+                "$batch_yes" "$batch_no"
+            print_transcription_file_block "$out_file" "$txt_file" "$sha_file"
+            echo "Do transcription later in this batch?"
+            echo "  [Y] Yes (default)"
+            echo "  [N] No"
+            echo "  [A] Yes for all remaining in this batch"
+            echo "  [Q] Quit"
+            echo -n "Choice [Y/n/a/q]: "
+            read -t 300 -n 1 input || true
+            echo
+
+            case "$input" in
+                q|Q)
+                    stopped_by_user=yes
+                    echo
+                    echo "Quitting."
+                    exit 0
+                    ;;
+                n|N)
+                    batch_selected+=("no")
+                    ((++files_skipped))
+                    ((++batch_no))
+                    ;;
+                a|A)
+                    batch_selected+=("yes")
+                    ((++batch_yes))
+                    accept_all_remaining=yes
+                    ;;
+                *)
+                    batch_selected+=("yes")
+                    ((++batch_yes))
+                    ;;
+            esac
+
+            batch_outs+=("$out_file")
+            batch_shas+=("$sha_file")
+            batch_txts+=("$txt_file")
+
+            ((idx+=1))
+            ((batch_count+=1))
+        done
+
+        if (( ${#batch_outs[@]} > 0 )); then
+            local selected_total selected_pos
+            selected_total=0
+            for decision in "${batch_selected[@]}"; do
+                [[ "$decision" == "yes" ]] && ((selected_total+=1))
+            done
+
+            selected_pos=0
+            for i in "${!batch_outs[@]}"; do
+                if [[ "${batch_selected[$i]}" == "yes" ]]; then
+                    local selected_left_after
+                    ((selected_pos+=1))
+                    selected_left_after=$(( selected_total - selected_pos ))
+
+                    echo
+                    print_processing_progress "$selected_pos" "$selected_total" "$selected_left_after" "$total_files"
+                    print_transcription_file_block "${batch_outs[$i]}" "${batch_txts[$i]}" "${batch_shas[$i]}"
+                    run_one_transcription "${batch_outs[$i]}" "${batch_shas[$i]}" "${batch_txts[$i]}"
+                fi
+            done
+        fi
+    done
+
+    transcribe_queue_outs=()
+    transcribe_queue_shas=()
+    transcribe_queue_txts=()
+}
+
 backfill_existing_pair_sha() {
     local org_file="$1"
     local out_file="$2"
     local sha_file="$3"
 
     if [[ -e "$sha_file" ]]; then
+        queue_or_print_missing_transcription "$out_file" "$sha_file"
         return 0
     fi
 
@@ -340,6 +657,7 @@ backfill_existing_pair_sha() {
         print_sha_block "$sha_file" "$org_file" "$out_file"
         echo "sha512sum -- \"$org_file\" \"$out_file\" > \"$sha_file\""
         echo "sha512sum -c --quiet -- \"$sha_file\""
+        queue_or_print_missing_transcription "$out_file" "$sha_file"
         echo "----------------------------------------"
         ((++files_affected))
         return 0
@@ -358,6 +676,8 @@ backfill_existing_pair_sha() {
         exit 1
     fi
 
+    queue_or_print_missing_transcription "$out_file" "$sha_file"
+
     ((++files_affected))
 }
 
@@ -370,11 +690,15 @@ files_skipped=0
 stopped_by_user=no
 
 declare -a affected_list=()
+declare -a transcribe_queue_outs=()
+declare -a transcribe_queue_shas=()
+declare -a transcribe_queue_txts=()
 
 current_original_in=""
 current_new_in=""
 current_out=""
 current_renamed=no
+current_txt_file=""
 
 record_change() {
     local old="$1"
@@ -384,10 +708,18 @@ record_change() {
 }
 
 cleanup_current_file() {
-    if [[ "$current_renamed" == "yes" ]]; then
-        local removed_msg=""
-        local restored_msg=""
+    local removed_msg=""
+    local restored_msg=""
+    local txt_removed_msg=""
 
+    if [[ -n "$current_txt_file" ]] && should_delete_partial_txt_on_interrupt "$current_txt_file"; then
+        local txt_size
+        txt_size="$(file_size_bytes "$current_txt_file")"
+        rm -f -- "$current_txt_file"
+        txt_removed_msg="REMOVED PARTIAL TRANSCRIPT: $current_txt_file (${txt_size} bytes)"
+    fi
+
+    if [[ "$current_renamed" == "yes" ]]; then
         if [[ -n "$current_out" && -e "$current_out" ]]; then
             rm -f -- "$current_out"
             removed_msg="REMOVED: $current_out"
@@ -397,10 +729,10 @@ cleanup_current_file() {
             mv -f -- "$current_new_in" "$current_original_in"
             restored_msg="RESTORED: $current_new_in $ARROW $current_original_in"
         fi
-
-        echo
-        print_restore_block "$removed_msg" "$restored_msg"
     fi
+
+    echo
+    print_restore_block "$removed_msg" "$restored_msg" "$txt_removed_msg"
 
     echo
     echo "Aborted by Ctrl-C."
@@ -463,6 +795,8 @@ process_one_file() {
         exit 1
     fi
 
+    queue_or_print_missing_transcription "$out" "$sha_file"
+
     record_change "$original_in" "$new_in" "$out"
     ((++files_affected))
 
@@ -470,6 +804,7 @@ process_one_file() {
     current_new_in=""
     current_out=""
     current_renamed=no
+    current_txt_file=""
 }
 
 process_exclude_sha_only() {
@@ -578,6 +913,10 @@ if (( ${#existing_pair_orgs[@]} > 0 )); then
     done
 fi
 
+if [[ "$mode" == "real" ]]; then
+    process_transcription_queue
+fi
+
 # ============================================================
 # HANDLE *_EXCLUDE.* SHA512 FILES
 # ============================================================
@@ -597,6 +936,7 @@ if [[ "$mode" == "dry-run" ]]; then
         base="${base%_ORG}"
         out="${base}_OUTPUT.flac"
         sha_file="$(sha_file_from_pair "$new_in")"
+        txt_file="$(txt_file_from_output "$out")"
 
         if [[ -e "$out" ]]; then
             echo
@@ -612,6 +952,12 @@ if [[ "$mode" == "dry-run" ]]; then
         print_sha_block "$sha_file" "$new_in" "$out"
         echo "sha512sum -- \"$new_in\" \"$out\" > \"$sha_file\""
         echo "sha512sum -c --quiet -- \"$sha_file\""
+        if [[ "$DO_TRANSCRIPTION" == "yes" ]]; then
+            echo "ping -c 1 -W 1 \"$TRANSCRIBE_HOST\""
+            echo "\"$TRANSCRIBE_CMD\" \"$out\""
+            echo "sha512sum -- \"$txt_file\" >> \"$sha_file\""
+            echo "sha512sum -c --quiet -- \"$sha_file\""
+        fi
         echo "----------------------------------------"
 
         ((++files_affected))
@@ -634,13 +980,25 @@ else
         batch_count=0
         batch_yes=0
         batch_no=0
+        accept_all_remaining=no
 
-        while (( idx < total_files && batch_count < BATCH_SIZE )); do
+        while (( idx < total_files && batch_count < batch_size_now )); do
             original_in="${all_files[$idx]}"
             new_in="${original_in%.*}_ORG.${original_in##*.}"
             base="${new_in%.*}"
             base="${base%_ORG}"
             out="${base}_OUTPUT.flac"
+
+            if [[ "$accept_all_remaining" == "yes" ]]; then
+                batch_selected+=("yes")
+                ((++batch_yes))
+                batch_originals+=("$original_in")
+                batch_newins+=("$new_in")
+                batch_outputs+=("$out")
+                ((idx+=1))
+                ((batch_count+=1))
+                continue
+            fi
 
             overall_pos=$(( idx + 1 ))
             batch_pos=$(( batch_count + 1 ))
@@ -651,7 +1009,12 @@ else
                 "$batch_pos" "$batch_size_now" "$overall_pos" "$total_files" "$still_after_this" \
                 "$batch_yes" "$batch_no"
             print_file_block "$original_in" "$new_in" "$out"
-            echo -n "Process this file later in this batch? [Y/n/q]: "
+            echo "Process this file later in this batch?"
+            echo "  [Y] Yes (default)"
+            echo "  [N] No"
+            echo "  [A] Yes for all remaining in this batch"
+            echo "  [Q] Quit"
+            echo -n "Choice [Y/n/a/q]: "
             read -t 300 -n 1 input || true
             echo
 
@@ -666,6 +1029,11 @@ else
                     batch_selected+=("no")
                     ((++files_skipped))
                     ((++batch_no))
+                    ;;
+                a|A)
+                    batch_selected+=("yes")
+                    ((++batch_yes))
+                    accept_all_remaining=yes
                     ;;
                 *)
                     batch_selected+=("yes")
@@ -698,6 +1066,8 @@ else
                 fi
             done
         fi
+
+        process_transcription_queue
     done
 fi
 
@@ -717,6 +1087,8 @@ if [[ "$mode" == "real" ]]; then
 fi
 echo "Boxes available:       $have_boxes"
 echo "Colors enabled:        $use_colors"
+echo "Transcription enabled: $DO_TRANSCRIPTION"
+echo "Transcription host:    $TRANSCRIBE_HOST"
 echo "Files examined:        $files_examined"
 echo "Files affected:        $files_affected"
 echo "Files skipped:         $files_skipped"
