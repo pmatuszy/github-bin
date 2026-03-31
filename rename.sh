@@ -27,12 +27,12 @@
 # 2026.03.31 - v. 3.8 - added ERR trap to show line number, exit code, and failed command
 # 2026.03.31 - v. 3.9 - fast same-directory recovery for normalized missing checksum refs
 # 2026.03.31 - v. 4.0 - removed slow whole-tree recovery fallback; only fast same-directory recovery is used
+# 2026.03.31 - v. 4.1 - verbose logs go to stderr so command substitutions are not corrupted
 
 set -Eeuo pipefail
 shopt -s nullglob
 
 VERBOSE=0
-VERBOSE_PROGRESS_EVERY=500
 VERBOSE_MAIN_EVERY=200
 
 on_err() {
@@ -110,7 +110,7 @@ ARROW="→"
 
 vlog() {
     (( VERBOSE == 1 )) || return 0
-    echo -e "${CYAN}[VERBOSE]${RESET} $*"
+    echo -e "${CYAN}[VERBOSE]${RESET} $*" >&2
 }
 
 echo
@@ -631,7 +631,6 @@ find_best_path_for_missing_ref() {
 
     vlog "Trying to recover missing ref '$missing_ref' (expected hash: ${expected_hash:-none})"
 
-    # Fast path only: same directory + normalized filename
     fast_base="$wanted_norm"
     fast_path="${missing_dir}/${fast_base}"
 
