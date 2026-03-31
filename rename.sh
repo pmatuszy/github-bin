@@ -7,11 +7,14 @@
 # 2026.03.27 - v. 1.7 - made Sprache/Voice/Screen_Recording patterns tolerant to -/_ after normalization
 # 2026.03.27 - v. 1.8 - added Call_recording rule
 # 2026.03.27 - v. 2.0 - preserve original top-level path style (with or without ./) in transform_name()
-# 2026.03.31 - v. 2.1 - pre-scan sha512 refs so referenced files are only handled through sha groups
-# 2026.03.31 - v. 2.2 - warn clearly when grouped ORG/OUTPUT/EXCLUDE sha references are missing
-# 2026.03.31 - v. 2.3 - resolve sha512 references relative to sha file so sha groups are renamed reliably
-# 2026.03.31 - v. 2.4 - dry-run shows only planned actions; real run verifies sha512 before and after rename
-# 2026.03.31 - v. 2.5 - update sha512 content correctly for both plain and ./ path forms
+# 2026.03.31 - v. 2.1 - pre-scan checksum refs so referenced files are only handled through checksum groups
+# 2026.03.31 - v. 2.2 - warn clearly when grouped ORG/OUTPUT/EXCLUDE checksum references are missing
+# 2026.03.31 - v. 2.3 - resolve checksum references relative to checksum file so groups are renamed reliably
+# 2026.03.31 - v. 2.4 - dry-run shows only planned actions; real run verifies checksums before and after rename
+# 2026.03.31 - v. 2.5 - update checksum content correctly for both plain and ./ path forms
+# 2026.03.31 - v. 2.6 - add .md5 support with before/after verification and content updates
+# 2026.03.31 - v. 2.7 - stop the whole script immediately when checksum verification fails
+# 2026.03.31 - v. 2.8 - treat .sha512 and .md5 with exactly the same logic
 
 set -euo pipefail
 shopt -s nullglob
@@ -113,6 +116,43 @@ sleep 1
 is_excluded_path() {
     local p="$1"
     [[ "$(basename -- "$p")" == "[Originals]" ]]
+}
+
+is_checksum_file() {
+    local p="$1"
+    [[ "$p" == *.sha512 || "$p" == *.md5 ]]
+}
+
+checksum_kind() {
+    local p="$1"
+    if [[ "$p" == *.sha512 ]]; then
+        printf 'sha512'
+    elif [[ "$p" == *.md5 ]]; then
+        printf 'md5'
+    else
+        return 1
+    fi
+}
+
+checksum_label() {
+    local p="$1"
+    local kind
+    kind="$(checksum_kind "$p")"
+    case "$kind" in
+        sha512) printf 'SHA512' ;;
+        md5)    printf 'MD5' ;;
+    esac
+}
+
+stop_on_checksum_failure() {
+    local sum_file="$1"
+    local phase="$2"
+    local label
+    label="$(checksum_label "$sum_file")"
+
+    echo -e "${RED}${label} ERROR:${RESET} ${label} verification ${phase} failed for '$sum_file'."
+    echo -e "${RED}STOPPING:${RESET} Script execution aborted because ${label} is incorrect."
+    exit 1
 }
 
 transform_basename() {
@@ -275,29 +315,38 @@ preserve_timestamps_inplace() {
     rm -f "$ref"
 }
 
-normalize_sha_file() {
-    local sha_file="$1"
+normalize_checksum_file() {
+    local sum_file="$1"
 
     if command -v dos2unix >/dev/null 2>&1; then
-        preserve_timestamps_inplace "$sha_file" dos2unix -q -- "$sha_file"
+        preserve_timestamps_inplace "$sum_file" dos2unix -q -- "$sum_file"
     else
-        preserve_timestamps_inplace "$sha_file" sed -i 's/\r$//' -- "$sha_file"
+        preserve_timestamps_inplace "$sum_file" sed -i 's/\r$//' -- "$sum_file"
     fi
 }
 
-sha512_check() {
-    local sha_file="$1"
+checksum_check() {
+    local sum_file="$1"
+    local kind
+    kind="$(checksum_kind "$sum_file")"
+
     if [[ "$mode" == "dry-run" ]]; then
-        sha512sum -c --quiet -- <(sed 's/\r$//' -- "$sha_file")
+        case "$kind" in
+            sha512) sha512sum -c --quiet -- <(sed 's/\r$//' -- "$sum_file") ;;
+            md5)    md5sum -c --quiet -- <(sed 's/\r$//' -- "$sum_file") ;;
+        esac
     else
-        normalize_sha_file "$sha_file"
-        sha512sum -c --quiet -- "$sha_file"
+        normalize_checksum_file "$sum_file"
+        case "$kind" in
+            sha512) sha512sum -c --quiet -- "$sum_file" ;;
+            md5)    md5sum -c --quiet -- "$sum_file" ;;
+        esac
     fi
 }
 
-extract_refs_from_sha512() {
-    local sha_file="$1"
-    sed -E 's/^[0-9a-fA-F]+[[:space:]]+\*?//; s/\r$//' -- "$sha_file"
+extract_refs_from_checksum() {
+    local sum_file="$1"
+    sed -E 's/^[0-9a-fA-F]+[[:space:]]+\*?//; s/\r$//' -- "$sum_file"
 }
 
 sed_escape_regex() {
@@ -313,8 +362,8 @@ strip_leading_dot_slash() {
     printf '%s' "${p#./}"
 }
 
-update_sha512_content_refs() {
-    local sha_file="$1"
+update_checksum_content_refs() {
+    local sum_file="$1"
     local old_name="$2"
     local new_name="$3"
 
@@ -325,19 +374,19 @@ update_sha512_content_refs() {
     old_re2="$(sed_escape_regex "$(strip_leading_dot_slash "$old_name")")"
     new_re2="$(sed_escape_repl "$(strip_leading_dot_slash "$new_name")")"
 
-    preserve_timestamps_inplace "$sha_file" \
+    preserve_timestamps_inplace "$sum_file" \
         sed -i -E \
             -e "s|([[:space:]]\\*?)${old_re1}\$|\\1${new_re1}|g" \
             -e "s|([[:space:]]\\*?)${old_re2}\$|\\1${new_re2}|g" \
-            -- "$sha_file"
+            -- "$sum_file"
 }
 
-resolve_sha_ref_path() {
-    local sha_file="$1"
+resolve_checksum_ref_path() {
+    local sum_file="$1"
     local ref="$2"
-    local sha_dir candidate
+    local sum_dir candidate
 
-    sha_dir="$(dirname -- "$sha_file")"
+    sum_dir="$(dirname -- "$sum_file")"
 
     if [[ "$ref" == /* ]]; then
         printf '%s' "$ref"
@@ -345,22 +394,22 @@ resolve_sha_ref_path() {
     fi
 
     if [[ "$ref" == ./* ]]; then
-        if [[ "$sha_dir" == "." ]]; then
+        if [[ "$sum_dir" == "." ]]; then
             printf '%s' "$ref"
         else
-            printf '%s/%s' "$sha_dir" "${ref#./}"
+            printf '%s/%s' "$sum_dir" "${ref#./}"
         fi
         return
     fi
 
-    if [[ "$sha_dir" == "." ]]; then
+    if [[ "$sum_dir" == "." ]]; then
         if [[ -e "./$ref" ]]; then
             printf './%s' "$ref"
         else
             printf '%s' "$ref"
         fi
     else
-        candidate="$sha_dir/$ref"
+        candidate="$sum_dir/$ref"
         printf '%s' "$candidate"
     fi
 }
@@ -380,8 +429,8 @@ variant_family_info() {
     return 1
 }
 
-print_grouped_sha_missing_warning() {
-    local sha_file="$1"
+print_grouped_checksum_missing_warning() {
+    local sum_file="$1"
     shift
     local -a refs=( "$@" )
 
@@ -403,7 +452,7 @@ print_grouped_sha_missing_warning() {
 
     [[ "$found_group" == "yes" ]] || return 0
 
-    echo -e "${YELLOW}SHA512 GROUP WARNING:${RESET} '$sha_file' contains grouped ORG/OUTPUT/EXCLUDE-style references."
+    echo -e "${YELLOW}CHECKSUM GROUP WARNING:${RESET} '$sum_file' contains grouped ORG/OUTPUT/EXCLUDE-style references."
 
     local family present_variants expected_variants expected_variant token found_any
     for family in "${!family_variants[@]}"; do
@@ -448,7 +497,7 @@ rename_all=no
 declare -a renamed_list=()
 declare -A recorded
 declare -A processed
-declare -A sha_ref_to_sha
+declare -A checksum_ref_to_sum
 
 record_rename() {
     local old="$1" new="$2"
@@ -468,13 +517,15 @@ else
 fi
 
 for p in "${all_paths[@]}"; do
-    [[ -f "$p" && "$p" == *.sha512 ]] || continue
+    [[ -f "$p" ]] || continue
+    is_checksum_file "$p" || continue
+
     while IFS= read -r ref; do
         [[ -n "$ref" ]] || continue
-        resolved_ref="$(resolve_sha_ref_path "$p" "$ref")"
-        sha_ref_to_sha["$resolved_ref"]="$p"
-        sha_ref_to_sha["$(strip_leading_dot_slash "$resolved_ref")"]="$p"
-    done < <(extract_refs_from_sha512 "$p")
+        resolved_ref="$(resolve_checksum_ref_path "$p" "$ref")"
+        checksum_ref_to_sum["$resolved_ref"]="$p"
+        checksum_ref_to_sum["$(strip_leading_dot_slash "$resolved_ref")"]="$p"
+    done < <(extract_refs_from_checksum "$p")
 done
 
 for f in "${all_paths[@]}"; do
@@ -486,19 +537,20 @@ for f in "${all_paths[@]}"; do
         continue
     fi
 
-    if [[ -f "$f" && "$f" == *.sha512 ]]; then
-        sha_file="$f"
+    if [[ -f "$f" ]] && is_checksum_file "$f"; then
+        sum_file="$f"
+        label="$(checksum_label "$sum_file")"
 
-        mapfile -t refs_raw < <(extract_refs_from_sha512 "$sha_file")
+        mapfile -t refs_raw < <(extract_refs_from_checksum "$sum_file")
         refs=()
         for ref in "${refs_raw[@]}"; do
             [[ -n "$ref" ]] || continue
-            refs+=( "$(resolve_sha_ref_path "$sha_file" "$ref")" )
+            refs+=( "$(resolve_checksum_ref_path "$sum_file" "$ref")" )
         done
 
         if (( ${#refs[@]} == 0 )) || [[ -z "${refs[0]}" ]]; then
             ((++files_skipped))
-            processed["$sha_file"]=1
+            processed["$sum_file"]=1
             continue
         fi
 
@@ -513,61 +565,61 @@ for f in "${all_paths[@]}"; do
 
         if [[ "$missing" == "yes" ]]; then
             echo
-            echo -e "${YELLOW}SHA512 SKIP:${RESET} '$sha_file' references missing file(s)."
+            echo -e "${YELLOW}${label} SKIP:${RESET} '$sum_file' references missing file(s)."
             for ref in "${missing_refs[@]}"; do
                 echo -e "  ${YELLOW}MISSING:${RESET} $ref"
             done
-            print_grouped_sha_missing_warning "$sha_file" "${refs[@]}"
+            print_grouped_checksum_missing_warning "$sum_file" "${refs[@]}"
             ((++files_skipped))
-            processed["$sha_file"]=1
+            processed["$sum_file"]=1
             continue
         fi
 
-        new_sha="$(transform_name "$sha_file")"
+        new_sum="$(transform_name "$sum_file")"
         declare -a new_refs=()
         for ref in "${refs[@]}"; do
             new_refs+=( "$(transform_name "$ref")" )
         done
 
         nothing_changes=yes
-        [[ "$new_sha" != "$sha_file" ]] && nothing_changes=no
+        [[ "$new_sum" != "$sum_file" ]] && nothing_changes=no
         for i in "${!refs[@]}"; do
             [[ "${new_refs[$i]}" != "${refs[$i]}" ]] && nothing_changes=no
         done
         if [[ "$nothing_changes" == "yes" ]]; then
             ((++files_skipped))
-            processed["$sha_file"]=1
+            processed["$sum_file"]=1
             for ref in "${refs[@]}"; do processed["$ref"]=1; done
             continue
         fi
 
         if [[ "$mode" == "dry-run" ]]; then
             echo
-            echo -e "${CYAN}[DRY-RUN] Would check SHA512 before rename:${RESET} $sha_file"
-            echo -e "${RED}OLD SHA:${RESET} $sha_file"
-            echo -e "${GREEN}NEW SHA:${RESET} $new_sha"
+            echo -e "${CYAN}[DRY-RUN] Would check ${label} before rename:${RESET} $sum_file"
+            echo -e "${RED}OLD ${label}:${RESET} $sum_file"
+            echo -e "${GREEN}NEW ${label}:${RESET} $new_sum"
             for i in "${!refs[@]}"; do
                 echo -e "${RED}OLD FILE:${RESET} ${refs[$i]}"
                 echo -e "${GREEN}NEW FILE:${RESET} ${new_refs[$i]}"
             done
-            echo -e "${CYAN}[DRY-RUN] Would update sha512 content references inside:${RESET} $sha_file"
-            echo -e "${CYAN}[DRY-RUN] Would check SHA512 after rename:${RESET} $new_sha"
+            echo -e "${CYAN}[DRY-RUN] Would update ${label,,} content references inside:${RESET} $sum_file"
+            echo -e "${CYAN}[DRY-RUN] Would check ${label} after rename:${RESET} $new_sum"
             echo "----------------------------------------"
 
             ((++files_affected))
-            record_rename "$sha_file" "$new_sha"
+            record_rename "$sum_file" "$new_sum"
             for i in "${!refs[@]}"; do
                 record_rename "${refs[$i]}" "${new_refs[$i]}"
             done
 
-            processed["$sha_file"]=1
+            processed["$sum_file"]=1
             for ref in "${refs[@]}"; do processed["$ref"]=1; done
             continue
         fi
 
         echo
-        echo -e "${RED}OLD SHA:${RESET} $sha_file"
-        echo -e "${GREEN}NEW SHA:${RESET} $new_sha"
+        echo -e "${RED}OLD ${label}:${RESET} $sum_file"
+        echo -e "${GREEN}NEW ${label}:${RESET} $new_sum"
         for i in "${!refs[@]}"; do
             echo -e "${RED}OLD FILE:${RESET} ${refs[$i]}"
             echo -e "${GREEN}NEW FILE:${RESET} ${new_refs[$i]}"
@@ -577,7 +629,7 @@ for f in "${all_paths[@]}"; do
         if [[ "$rename_all" == "yes" ]]; then
             do_rename=yes
         else
-            echo -n "Rename this sha512 + referenced file(s)? [Y/n/a/q]: "
+            echo -n "Rename this ${label,,} + referenced file(s)? [Y/n/a/q]: "
             read -t 300 -n 1 input || true
             echo
 
@@ -611,22 +663,20 @@ for f in "${all_paths[@]}"; do
         fi
 
         if [[ "$do_rename" != "yes" ]]; then
-            processed["$sha_file"]=1
+            processed["$sum_file"]=1
             for ref in "${refs[@]}"; do processed["$ref"]=1; done
             continue
         fi
 
-        echo -e "${CYAN}SHA512 check (before rename) in progress...${RESET} $sha_file"
-        if ! sha512_check "$sha_file"; then
-            echo -e "${YELLOW}SHA512 FAIL:${RESET} checksum mismatch for '$sha_file' (won't rename pair)"
-            ((++files_skipped))
-            processed["$sha_file"]=1
-            continue
+        echo -e "${CYAN}${label} check (before rename) in progress...${RESET} $sum_file"
+        if ! checksum_check "$sum_file"; then
+            echo -e "${YELLOW}${label} FAIL:${RESET} checksum mismatch for '$sum_file' (won't rename pair)"
+            stop_on_checksum_failure "$sum_file" "before rename"
         fi
-        echo -e "${CYAN}SHA512 VERIFIED (before rename):${RESET} $sha_file"
+        echo -e "${CYAN}${label} VERIFIED (before rename):${RESET} $sum_file"
 
         collision=no
-        [[ "$new_sha" != "$sha_file" && -e "$new_sha" ]] && collision=yes
+        [[ "$new_sum" != "$sum_file" && -e "$new_sum" ]] && collision=yes
         for i in "${!refs[@]}"; do
             [[ "${new_refs[$i]}" != "${refs[$i]}" && -e "${new_refs[$i]}" ]] && collision=yes
         done
@@ -634,7 +684,7 @@ for f in "${all_paths[@]}"; do
         if [[ "$collision" == "yes" ]]; then
             echo -e "${YELLOW}SKIP:${RESET} Target file already exists."
             ((++files_skipped))
-            processed["$sha_file"]=1
+            processed["$sum_file"]=1
             for ref in "${refs[@]}"; do processed["$ref"]=1; done
             continue
         fi
@@ -651,31 +701,32 @@ for f in "${all_paths[@]}"; do
 
         for i in "${!refs[@]}"; do
             if [[ "${new_refs[$i]}" != "${refs[$i]}" ]]; then
-                update_sha512_content_refs "$sha_file" "${refs[$i]}" "${new_refs[$i]}"
+                update_checksum_content_refs "$sum_file" "${refs[$i]}" "${new_refs[$i]}"
             fi
         done
 
-        final_sha="$sha_file"
-        if [[ "$new_sha" != "$sha_file" ]]; then
-            mv -i -- "$sha_file" "$new_sha"
+        final_sum="$sum_file"
+        if [[ "$new_sum" != "$sum_file" ]]; then
+            mv -i -- "$sum_file" "$new_sum"
             ((++files_affected))
-            record_rename "$sha_file" "$new_sha"
-            final_sha="$new_sha"
+            record_rename "$sum_file" "$new_sum"
+            final_sum="$new_sum"
         else
             ((++files_skipped))
         fi
 
-        echo -e "${CYAN}SHA512 check (after rename) in progress...${RESET} $final_sha"
-        if sha512_check "$final_sha"; then
-            echo -e "${CYAN}SHA512 VERIFIED (after rename):${RESET} $final_sha"
+        echo -e "${CYAN}${label} check (after rename) in progress...${RESET} $final_sum"
+        if checksum_check "$final_sum"; then
+            echo -e "${CYAN}${label} VERIFIED (after rename):${RESET} $final_sum"
+            echo -e "${GREEN}${label} OK:${RESET} referenced file name(s) were updated inside '$final_sum' and ${label,,} checksum(s) are correct."
         else
-            echo -e "${YELLOW}SHA512 FAIL (after rename):${RESET} '$final_sha' does not validate."
+            echo -e "${YELLOW}${label} FAIL (after rename):${RESET} '$final_sum' does not validate."
             echo -e "${YELLOW}NOTE:${RESET} Files were renamed, but checksum verification after update failed."
-            ((++files_skipped))
+            stop_on_checksum_failure "$final_sum" "after rename"
         fi
 
-        processed["$sha_file"]=1
-        processed["$final_sha"]=1
+        processed["$sum_file"]=1
+        processed["$final_sum"]=1
         for ref in "${refs[@]}"; do processed["$ref"]=1; done
         for ref in "${new_refs[@]}"; do processed["$ref"]=1; done
 
@@ -683,13 +734,13 @@ for f in "${all_paths[@]}"; do
     fi
 
     if [[ -f "$f" ]]; then
-        if [[ -n "${sha_ref_to_sha[$f]+x}" || -n "${sha_ref_to_sha[$(strip_leading_dot_slash "$f")]+x}" ]]; then
+        if [[ -n "${checksum_ref_to_sum[$f]+x}" || -n "${checksum_ref_to_sum[$(strip_leading_dot_slash "$f")]+x}" ]]; then
             ((++files_skipped))
             continue
         fi
 
         base="${f%.*}"
-        if [[ -e "$base.sha512" ]]; then
+        if [[ -e "$base.sha512" || -e "$base.md5" ]]; then
             ((++files_skipped))
             continue
         fi
