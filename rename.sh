@@ -18,6 +18,8 @@
 # 2026.03.31 - v. 2.9 - if checksum file points to missing files, try to find them in scope and update the checksum file
 # 2026.03.31 - v. 3.0 - always normalize checksum files from CRLF to LF before any checks in real mode
 # 2026.03.31 - v. 3.1 - print clear info after Windows to Unix checksum file conversion was actually done
+# 2026.03.31 - v. 3.2 - recover missing checksum refs also by normalized filename + matching checksum
+# 2026.03.31 - v. 3.3 - verify checksum files from their own directory
 
 set -euo pipefail
 shopt -s nullglob
@@ -144,6 +146,14 @@ checksum_label() {
     case "$kind" in
         sha512) printf 'SHA512' ;;
         md5)    printf 'MD5' ;;
+    esac
+}
+
+checksum_cmd() {
+    local p="$1"
+    case "$(checksum_kind "$p")" in
+        sha512) printf 'sha512sum' ;;
+        md5)    printf 'md5sum' ;;
     esac
 }
 
@@ -341,29 +351,53 @@ ensure_checksum_file_unix_format() {
     fi
 }
 
+extract_checksum_entries() {
+    local sum_file="$1"
+    sed -E 's/\r$//' -- "$sum_file" | while IFS= read -r line; do
+        [[ -n "$line" ]] || continue
+        if [[ "$line" =~ ^([0-9a-fA-F]+)[[:space:]]+\*?(.*)$ ]]; then
+            printf '%s\t%s\n' "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}"
+        fi
+    done
+}
+
 checksum_check() {
     local sum_file="$1"
-    local kind
+    local kind cmd sum_dir sum_base
     kind="$(checksum_kind "$sum_file")"
+    cmd="$(checksum_cmd "$sum_file")"
+    sum_dir="$(dirname -- "$sum_file")"
+    sum_base="$(basename -- "$sum_file")"
 
     ensure_checksum_file_unix_format "$sum_file"
 
     if [[ "$mode" == "dry-run" ]]; then
-        case "$kind" in
-            sha512) sha512sum -c --quiet -- <(sed 's/\r$//' -- "$sum_file") ;;
-            md5)    md5sum -c --quiet -- <(sed 's/\r$//' -- "$sum_file") ;;
-        esac
+        (
+            cd "$sum_dir"
+            case "$kind" in
+                sha512) sha512sum -c --quiet -- <(sed 's/\r$//' -- "$sum_base") ;;
+                md5)    md5sum    -c --quiet -- <(sed 's/\r$//' -- "$sum_base") ;;
+            esac
+        )
     else
-        case "$kind" in
-            sha512) sha512sum -c --quiet -- "$sum_file" ;;
-            md5)    md5sum -c --quiet -- "$sum_file" ;;
-        esac
+        (
+            cd "$sum_dir"
+            case "$kind" in
+                sha512) sha512sum -c --quiet -- "$sum_base" ;;
+                md5)    md5sum    -c --quiet -- "$sum_base" ;;
+            esac
+        )
     fi
 }
 
-extract_refs_from_checksum() {
-    local sum_file="$1"
-    sed -E 's/^[0-9a-fA-F]+[[:space:]]+\*?//; s/\r$//' -- "$sum_file"
+checksum_of_file() {
+    local kind="$1"
+    local file="$2"
+
+    case "$kind" in
+        sha512) sha512sum -- "$file" | awk '{print tolower($1)}' ;;
+        md5)    md5sum    -- "$file" | awk '{print tolower($1)}' ;;
+    esac
 }
 
 sed_escape_regex() {
@@ -377,6 +411,42 @@ sed_escape_repl() {
 strip_leading_dot_slash() {
     local p="$1"
     printf '%s' "${p#./}"
+}
+
+relative_path() {
+    local from_dir="$1"
+    local target="$2"
+    python3 - "$from_dir" "$target" <<'PY'
+import os, sys
+from_dir = sys.argv[1]
+target = sys.argv[2]
+print(os.path.relpath(target, from_dir))
+PY
+}
+
+format_ref_for_checksum_file() {
+    local sum_file="$1"
+    local original_ref="$2"
+    local actual_path="$3"
+    local sum_dir rel
+
+    sum_dir="$(dirname -- "$sum_file")"
+
+    if [[ "$original_ref" == /* ]]; then
+        python3 - "$actual_path" <<'PY'
+import os, sys
+print(os.path.abspath(sys.argv[1]))
+PY
+        return
+    fi
+
+    rel="$(relative_path "$sum_dir" "$actual_path")"
+
+    if [[ "$original_ref" == ./* ]]; then
+        printf './%s' "$rel"
+    else
+        printf '%s' "$rel"
+    fi
 }
 
 update_checksum_content_refs() {
@@ -502,26 +572,74 @@ print_grouped_checksum_missing_warning() {
     done
 }
 
-find_unique_path_for_missing_ref() {
+find_best_path_for_missing_ref() {
     local missing_ref="$1"
-    local wanted_base candidate candidate_base
-    local found=""
-    local count=0
+    local expected_hash="$2"
+    local sum_file="$3"
+    local kind wanted_base wanted_norm missing_dir candidate candidate_base candidate_norm
+    local -a exact_candidates=()
+    local -a normalized_candidates=()
+    local -a verified_candidates=()
+    local cand_hash
 
+    kind="$(checksum_kind "$sum_file")"
     wanted_base="$(basename -- "$missing_ref")"
+    wanted_norm="$(transform_basename "$wanted_base")"
+    missing_dir="$(dirname -- "$missing_ref")"
 
     for candidate in "${all_paths[@]}"; do
-        [[ -e "$candidate" ]] || continue
+        [[ -f "$candidate" ]] || continue
         is_checksum_file "$candidate" && continue
-        candidate_base="$(basename -- "$candidate")"
-        [[ "$candidate_base" == "$wanted_base" ]] || continue
 
-        found="$candidate"
-        ((count++))
+        candidate_base="$(basename -- "$candidate")"
+        candidate_norm="$(transform_basename "$candidate_base")"
+
+        if [[ "$candidate_base" == "$wanted_base" ]]; then
+            exact_candidates+=( "$candidate" )
+            continue
+        fi
+
+        if [[ "$candidate_norm" == "$wanted_norm" ]]; then
+            normalized_candidates+=( "$candidate" )
+        fi
     done
 
-    if (( count == 1 )); then
-        printf '%s' "$found"
+    local -a pool=()
+
+    # prefer same directory
+    for candidate in "${exact_candidates[@]}"; do
+        [[ "$(dirname -- "$candidate")" == "$missing_dir" ]] && pool+=( "$candidate" )
+    done
+    if (( ${#pool[@]} == 0 )); then
+        for candidate in "${normalized_candidates[@]}"; do
+            [[ "$(dirname -- "$candidate")" == "$missing_dir" ]] && pool+=( "$candidate" )
+        done
+    fi
+
+    # fallback: anywhere in scope
+    if (( ${#pool[@]} == 0 )); then
+        pool=( "${exact_candidates[@]}" )
+    fi
+    if (( ${#pool[@]} == 0 )); then
+        pool=( "${normalized_candidates[@]}" )
+    fi
+
+    if (( ${#pool[@]} == 0 )); then
+        return 1
+    fi
+
+    if [[ -n "$expected_hash" ]]; then
+        for candidate in "${pool[@]}"; do
+            cand_hash="$(checksum_of_file "$kind" "$candidate")"
+            if [[ "${cand_hash,,}" == "${expected_hash,,}" ]]; then
+                verified_candidates+=( "$candidate" )
+            fi
+        done
+        pool=( "${verified_candidates[@]}" )
+    fi
+
+    if (( ${#pool[@]} == 1 )); then
+        printf '%s' "${pool[0]}"
         return 0
     fi
 
@@ -573,12 +691,12 @@ for p in "${all_paths[@]}"; do
     [[ -f "$p" ]] || continue
     is_checksum_file "$p" || continue
 
-    while IFS= read -r ref; do
+    while IFS=$'\t' read -r hash ref; do
         [[ -n "$ref" ]] || continue
         resolved_ref="$(resolve_checksum_ref_path "$p" "$ref")"
         checksum_ref_to_sum["$resolved_ref"]="$p"
         checksum_ref_to_sum["$(strip_leading_dot_slash "$resolved_ref")"]="$p"
-    done < <(extract_refs_from_checksum "$p")
+    done < <(extract_checksum_entries "$p")
 done
 
 for f in "${ordered_paths[@]}"; do
@@ -596,12 +714,16 @@ for f in "${ordered_paths[@]}"; do
 
         ensure_checksum_file_unix_format "$sum_file"
 
-        mapfile -t refs_raw < <(extract_refs_from_checksum "$sum_file")
+        refs_raw=()
         refs=()
-        for ref in "${refs_raw[@]}"; do
+        expected_hashes=()
+
+        while IFS=$'\t' read -r hash ref; do
             [[ -n "$ref" ]] || continue
+            expected_hashes+=( "$hash" )
+            refs_raw+=( "$ref" )
             refs+=( "$(resolve_checksum_ref_path "$sum_file" "$ref")" )
-        done
+        done < <(extract_checksum_entries "$sum_file")
 
         if (( ${#refs[@]} == 0 )) || [[ -z "${refs[0]}" ]]; then
             ((++files_skipped))
@@ -611,6 +733,7 @@ for f in "${ordered_paths[@]}"; do
 
         declare -a recovered_old_refs=()
         declare -a recovered_new_real_refs=()
+        declare -a recovered_new_written_refs=()
 
         for i in "${!refs[@]}"; do
             ref="${refs[$i]}"
@@ -618,25 +741,29 @@ for f in "${ordered_paths[@]}"; do
                 continue
             fi
 
-            found_ref="$(find_unique_path_for_missing_ref "$ref" || true)"
+            found_ref="$(find_best_path_for_missing_ref "$ref" "${expected_hashes[$i]}" "$sum_file" || true)"
             if [[ -n "$found_ref" ]]; then
-                recovered_old_refs+=( "$ref" )
+                replacement_ref="$(format_ref_for_checksum_file "$sum_file" "${refs_raw[$i]}" "$found_ref")"
+                recovered_old_refs+=( "${refs_raw[$i]}" )
                 recovered_new_real_refs+=( "$found_ref" )
+                recovered_new_written_refs+=( "$replacement_ref" )
+                refs_raw[$i]="$replacement_ref"
                 refs[$i]="$found_ref"
             fi
         done
 
         if (( ${#recovered_old_refs[@]} > 0 )); then
             echo
-            echo -e "${CYAN}${label} RECOVERY:${RESET} '$sum_file' references missing file(s), but unique replacements were found in scope."
+            echo -e "${CYAN}${label} RECOVERY:${RESET} '$sum_file' references missing file(s), but replacement file(s) were found."
             for i in "${!recovered_old_refs[@]}"; do
                 echo -e "  ${RED}OLD REF:${RESET} ${recovered_old_refs[$i]}"
                 echo -e "  ${GREEN}FOUND:${RESET}   ${recovered_new_real_refs[$i]}"
+                echo -e "  ${GREEN}WRITE:${RESET}   ${recovered_new_written_refs[$i]}"
             done
 
             if [[ "$mode" == "real" ]]; then
                 for i in "${!recovered_old_refs[@]}"; do
-                    update_checksum_content_refs "$sum_file" "${recovered_old_refs[$i]}" "${recovered_new_real_refs[$i]}"
+                    update_checksum_content_refs "$sum_file" "${recovered_old_refs[$i]}" "${recovered_new_written_refs[$i]}"
                 done
                 echo -e "${CYAN}${label} RECOVERY UPDATED:${RESET} '$sum_file' was updated to point to the found file(s)."
             else
@@ -791,7 +918,9 @@ for f in "${ordered_paths[@]}"; do
 
         for i in "${!refs[@]}"; do
             if [[ "${new_refs[$i]}" != "${refs[$i]}" ]]; then
-                update_checksum_content_refs "$sum_file" "${refs[$i]}" "${new_refs[$i]}"
+                old_ref_for_write="$(format_ref_for_checksum_file "$sum_file" "${refs_raw[$i]}" "${refs[$i]}")"
+                new_ref_for_write="$(format_ref_for_checksum_file "$sum_file" "${refs_raw[$i]}" "${new_refs[$i]}")"
+                update_checksum_content_refs "$sum_file" "$old_ref_for_write" "$new_ref_for_write"
             fi
         done
 
