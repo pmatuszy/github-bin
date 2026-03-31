@@ -9,6 +9,7 @@
 # 2026.03.27 - v. 2.0 - preserve original top-level path style (with or without ./) in transform_name()
 # 2026.03.31 - v. 2.1 - pre-scan sha512 refs so referenced files are only handled through sha groups
 # 2026.03.31 - v. 2.2 - warn clearly when grouped ORG/OUTPUT/EXCLUDE sha references are missing
+# 2026.03.31 - v. 2.3 - resolve sha512 references relative to sha file so sha groups are renamed reliably
 
 set -euo pipefail
 shopt -s nullglob
@@ -324,6 +325,39 @@ update_sha512_content_refs() {
         sed -i -E "s|([[:space:]]\\*?)${old_re}\$|\\1${new_re}|g" -- "$sha_file"
 }
 
+resolve_sha_ref_path() {
+    local sha_file="$1"
+    local ref="$2"
+    local sha_dir candidate
+
+    sha_dir="$(dirname -- "$sha_file")"
+
+    if [[ "$ref" == /* ]]; then
+        printf '%s' "$ref"
+        return
+    fi
+
+    if [[ "$ref" == ./* ]]; then
+        if [[ "$sha_dir" == "." ]]; then
+            printf '%s' "$ref"
+        else
+            printf '%s/%s' "$sha_dir" "${ref#./}"
+        fi
+        return
+    fi
+
+    if [[ "$sha_dir" == "." ]]; then
+        if [[ -e "./$ref" ]]; then
+            printf './%s' "$ref"
+        else
+            printf '%s' "$ref"
+        fi
+    else
+        candidate="$sha_dir/$ref"
+        printf '%s' "$candidate"
+    fi
+}
+
 strip_leading_dot_slash() {
     local p="$1"
     printf '%s' "${p#./}"
@@ -349,7 +383,7 @@ print_grouped_sha_missing_warning() {
     shift
     local -a refs=( "$@" )
 
-    local ref info stem variant ext key
+    local ref info stem variant ext key rest
     local -A family_variants=()
     local -A family_exts=()
     local found_group=no
@@ -371,7 +405,7 @@ print_grouped_sha_missing_warning() {
 
     echo -e "${YELLOW}SHA512 GROUP WARNING:${RESET} '$sha_file' contains grouped ORG/OUTPUT/EXCLUDE-style references."
 
-    local family present_variants expected_variants expected_variant token expected_path found_any
+    local family present_variants expected_variants expected_variant token found_any
     for family in "${!family_variants[@]}"; do
         present_variants="${family_variants[$family]}"
         expected_variants="ORG OUTPUT"
@@ -438,7 +472,9 @@ for p in "${all_paths[@]}"; do
     [[ -f "$p" && "$p" == *.sha512 ]] || continue
     while IFS= read -r ref; do
         [[ -n "$ref" ]] || continue
-        sha_ref_to_sha["$ref"]="$p"
+        resolved_ref="$(resolve_sha_ref_path "$p" "$ref")"
+        sha_ref_to_sha["$resolved_ref"]="$p"
+        sha_ref_to_sha["$(strip_leading_dot_slash "$resolved_ref")"]="$p"
     done < <(extract_refs_from_sha512 "$p")
 done
 
@@ -454,7 +490,12 @@ for f in "${all_paths[@]}"; do
     if [[ -f "$f" && "$f" == *.sha512 ]]; then
         sha_file="$f"
 
-        mapfile -t refs < <(extract_refs_from_sha512 "$sha_file")
+        mapfile -t refs_raw < <(extract_refs_from_sha512 "$sha_file")
+        refs=()
+        for ref in "${refs_raw[@]}"; do
+            [[ -n "$ref" ]] || continue
+            refs+=( "$(resolve_sha_ref_path "$sha_file" "$ref")" )
+        done
 
         if (( ${#refs[@]} == 0 )) || [[ -z "${refs[0]}" ]]; then
             ((++files_skipped))
@@ -651,7 +692,7 @@ for f in "${all_paths[@]}"; do
     fi
 
     if [[ -f "$f" ]]; then
-        if [[ -n "${sha_ref_to_sha[$f]+x}" ]]; then
+        if [[ -n "${sha_ref_to_sha[$f]+x}" || -n "${sha_ref_to_sha[$(strip_leading_dot_slash "$f")]+x}" ]]; then
             ((++files_skipped))
             continue
         fi
