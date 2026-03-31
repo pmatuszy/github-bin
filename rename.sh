@@ -7,33 +7,22 @@
 # 2026.03.27 - v. 1.7 - made Sprache/Voice/Screen_Recording patterns tolerant to -/_ after normalization
 # 2026.03.27 - v. 1.8 - added Call_recording rule
 # 2026.03.27 - v. 2.0 - preserve original top-level path style (with or without ./) in transform_name()
-# 2026.03.31 - v. 2.1 - pre-scan checksum refs so referenced files are only handled through checksum groups
-# 2026.03.31 - v. 2.2 - warn clearly when grouped ORG/OUTPUT/EXCLUDE checksum references are missing
-# 2026.03.31 - v. 2.3 - resolve checksum references relative to checksum file so groups are renamed reliably
-# 2026.03.31 - v. 2.4 - dry-run shows only planned actions; real run verifies checksums before and after rename
-# 2026.03.31 - v. 2.5 - update checksum content correctly for both plain and ./ path forms
 # 2026.03.31 - v. 2.6 - add .md5 support with before/after verification and content updates
 # 2026.03.31 - v. 2.7 - stop the whole script immediately when checksum verification fails
 # 2026.03.31 - v. 2.8 - treat .sha512 and .md5 with exactly the same logic
-# 2026.03.31 - v. 2.9 - if checksum file points to missing files, try to find them in scope and update the checksum file
 # 2026.03.31 - v. 3.0 - always normalize checksum files from CRLF to LF before any checks in real mode
 # 2026.03.31 - v. 3.1 - print clear info after Windows to Unix checksum file conversion was actually done
-# 2026.03.31 - v. 3.2 - recover missing checksum refs also by normalized filename + matching checksum
 # 2026.03.31 - v. 3.3 - verify checksum files from their own directory
 # 2026.03.31 - v. 3.4 - added -v / --verbose logging
-# 2026.03.31 - v. 3.5 - verbose live progress/heartbeat output for long-running operations
 # 2026.03.31 - v. 3.6 - only do checksum verification when renames or checksum-file modifications are actually needed
-# 2026.03.31 - v. 3.7 - fixed silent exits caused by set -e with post-increment arithmetic
 # 2026.03.31 - v. 3.8 - added ERR trap to show line number, exit code, and failed command
-# 2026.03.31 - v. 3.9 - fast same-directory recovery for normalized missing checksum refs
-# 2026.03.31 - v. 4.0 - removed slow whole-tree recovery fallback; only fast same-directory recovery is used
 # 2026.03.31 - v. 4.1 - verbose logs go to stderr so command substitutions are not corrupted
+# 2026.03.31 - v. 4.2 - removed whole-tree path discovery; use local directory processing only
 
 set -Eeuo pipefail
 shopt -s nullglob
 
 VERBOSE=0
-VERBOSE_MAIN_EVERY=200
 
 on_err() {
     local exit_code="$1"
@@ -183,9 +172,7 @@ checksum_kind() {
 
 checksum_label() {
     local p="$1"
-    local kind
-    kind="$(checksum_kind "$p")"
-    case "$kind" in
+    case "$(checksum_kind "$p")" in
         sha512) printf 'SHA512' ;;
         md5)    printf 'MD5' ;;
     esac
@@ -585,29 +572,10 @@ print_grouped_checksum_missing_warning() {
 
     echo -e "${YELLOW}CHECKSUM GROUP WARNING:${RESET} '$sum_file' contains grouped ORG/OUTPUT/EXCLUDE-style references."
 
-    local family present_variants expected_variants expected_variant token found_any
+    local family present_variants expected_variants expected_variant
     for family in "${!family_variants[@]}"; do
         present_variants="${family_variants[$family]}"
         expected_variants="ORG OUTPUT"
-
-        if [[ "$present_variants" == *"EXCLUDE "* ]]; then
-            expected_variants+=" EXCLUDE"
-        else
-            found_any=no
-            for token in "${refs[@]}"; do
-                local normalized_token dir_token candidate
-                normalized_token="$(strip_leading_dot_slash "$token")"
-                dir_token="$(dirname -- "$normalized_token")"
-                [[ "$dir_token" == "." ]] && dir_token=""
-                if [[ -n "$dir_token" ]]; then
-                    candidate="${dir_token}/${family}_EXCLUDE"
-                else
-                    candidate="${family}_EXCLUDE"
-                fi
-                compgen -G "${candidate}.*" >/dev/null && { found_any=yes; break; }
-            done
-            [[ "$found_any" == "yes" ]] && expected_variants+=" EXCLUDE"
-        fi
 
         for expected_variant in $expected_variants; do
             [[ "$present_variants" == *"${expected_variant} "* ]] && continue
@@ -653,7 +621,7 @@ find_best_path_for_missing_ref() {
         fi
     fi
 
-    vlog "Fast same-directory recovery failed for '$missing_ref'; not doing whole-tree scan"
+    vlog "Fast same-directory recovery failed for '$missing_ref'"
     return 1
 }
 
@@ -666,7 +634,6 @@ rename_all=no
 declare -a renamed_list=()
 declare -A recorded
 declare -A processed
-declare -A checksum_ref_to_sum
 
 record_rename() {
     local old="$1" new="$2"
@@ -677,37 +644,12 @@ record_rename() {
 }
 
 if [[ "$process_scope" == "current" ]]; then
-    mapfile -d '' -t all_paths < <(find . -mindepth 1 -maxdepth 1 -print0)
+    mapfile -d '' -t ordered_paths < <(find . -mindepth 1 -maxdepth 1 -depth -print0)
 else
-    mapfile -d '' -t all_paths < <(find . -depth -mindepth 1 -print0)
+    mapfile -d '' -t ordered_paths < <(find . -depth -mindepth 1 -print0)
 fi
 
-vlog "Total discovered paths: ${#all_paths[@]}"
-
-declare -a ordered_paths=()
-for p in "${all_paths[@]}"; do
-    [[ -f "$p" ]] && is_checksum_file "$p" && ordered_paths+=( "$p" )
-done
-for p in "${all_paths[@]}"; do
-    if ! ([[ -f "$p" ]] && is_checksum_file "$p"); then
-        ordered_paths+=( "$p" )
-    fi
-done
-
-vlog "Checksum files are processed first"
-
-for p in "${all_paths[@]}"; do
-    [[ -f "$p" ]] || continue
-    is_checksum_file "$p" || continue
-
-    while IFS=$'\t' read -r hash ref; do
-        [[ -n "$ref" ]] || continue
-        resolved_ref="$(resolve_checksum_ref_path "$p" "$ref")"
-        checksum_ref_to_sum["$resolved_ref"]="$p"
-        checksum_ref_to_sum["$(strip_leading_dot_slash "$resolved_ref")"]="$p"
-        vlog "Pre-scan map: '$resolved_ref' -> '$p'"
-    done < <(extract_checksum_entries "$p")
-done
+vlog "Discovered entries to process: ${#ordered_paths[@]}"
 
 main_index=0
 for f in "${ordered_paths[@]}"; do
@@ -1003,12 +945,6 @@ for f in "${ordered_paths[@]}"; do
     fi
 
     if [[ -f "$f" ]]; then
-        if [[ -n "${checksum_ref_to_sum[$f]+x}" || -n "${checksum_ref_to_sum[$(strip_leading_dot_slash "$f")]+x}" ]]; then
-            vlog "Skipping '$f' because it belongs to checksum group '${checksum_ref_to_sum[$f]:-${checksum_ref_to_sum[$(strip_leading_dot_slash "$f")]:-unknown}}'"
-            ((++files_skipped))
-            continue
-        fi
-
         base="${f%.*}"
         if [[ -e "$base.sha512" || -e "$base.md5" ]]; then
             vlog "Skipping '$f' because sibling checksum file exists"
