@@ -10,6 +10,7 @@
 # 2026.03.31 - v. 2.1 - pre-scan sha512 refs so referenced files are only handled through sha groups
 # 2026.03.31 - v. 2.2 - warn clearly when grouped ORG/OUTPUT/EXCLUDE sha references are missing
 # 2026.03.31 - v. 2.3 - resolve sha512 references relative to sha file so sha groups are renamed reliably
+# 2026.03.31 - v. 2.4 - dry-run shows only planned actions; real run verifies sha512 before and after rename
 
 set -euo pipefail
 shopt -s nullglob
@@ -385,7 +386,6 @@ print_grouped_sha_missing_warning() {
 
     local ref info stem variant ext key rest
     local -A family_variants=()
-    local -A family_exts=()
     local found_group=no
 
     for ref in "${refs[@]}"; do
@@ -396,7 +396,6 @@ print_grouped_sha_missing_warning() {
             ext="${rest##*|}"
             key="$stem"
             family_variants["$key"]+="${variant} "
-            family_exts["$key"]+="${variant}:${ext} "
             found_group=yes
         fi
     done
@@ -544,23 +543,15 @@ for f in "${all_paths[@]}"; do
 
         if [[ "$mode" == "dry-run" ]]; then
             echo
-            echo -e "${CYAN}SHA512 check in progress...${RESET} $sha_file"
-            if sha512_check "$sha_file"; then
-                echo -e "${CYAN}SHA512 VERIFIED:${RESET} $sha_file"
-            else
-                echo -e "${YELLOW}SHA512 FAIL:${RESET} checksum mismatch for '$sha_file' (won't rename pair)"
-                ((++files_skipped))
-                processed["$sha_file"]=1
-                continue
-            fi
-
+            echo -e "${CYAN}[DRY-RUN] Would check SHA512 before rename:${RESET} $sha_file"
             echo -e "${RED}OLD SHA:${RESET} $sha_file"
             echo -e "${GREEN}NEW SHA:${RESET} $new_sha"
             for i in "${!refs[@]}"; do
                 echo -e "${RED}OLD FILE:${RESET} ${refs[$i]}"
                 echo -e "${GREEN}NEW FILE:${RESET} ${new_refs[$i]}"
             done
-            echo "  (sha512 content will be updated to reference renamed file(s))"
+            echo -e "${CYAN}[DRY-RUN] Would update sha512 content references inside:${RESET} $sha_file"
+            echo -e "${CYAN}[DRY-RUN] Would check SHA512 after rename:${RESET} $new_sha"
             echo "----------------------------------------"
 
             ((++files_affected))
