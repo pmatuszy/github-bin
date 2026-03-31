@@ -24,13 +24,24 @@
 # 2026.03.31 - v. 3.5 - verbose live progress/heartbeat output for long-running operations
 # 2026.03.31 - v. 3.6 - only do checksum verification when renames or checksum-file modifications are actually needed
 # 2026.03.31 - v. 3.7 - fixed silent exits caused by set -e with post-increment arithmetic
+# 2026.03.31 - v. 3.8 - added ERR trap to show line number, exit code, and failed command
 
-set -euo pipefail
+set -Eeuo pipefail
 shopt -s nullglob
 
 VERBOSE=0
 VERBOSE_PROGRESS_EVERY=500
 VERBOSE_MAIN_EVERY=200
+
+on_err() {
+    local exit_code="$1"
+    local line_no="$2"
+    local cmd="$3"
+    echo
+    echo "ERROR: command failed at line $line_no with exit code $exit_code" >&2
+    echo "FAILED COMMAND: $cmd" >&2
+}
+trap 'on_err "$?" "$LINENO" "$BASH_COMMAND"' ERR
 
 usage() {
     cat <<'EOF'
