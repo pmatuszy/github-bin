@@ -1,28 +1,33 @@
 #!/usr/bin/env bash
-# 2026.03.27 - v. 1.2 - added many changes about media files
-# 2026.03.27 - v. 1.3 - fixed top-level path handling: keep ./ prefix in transform_name()
-# 2026.03.27 - v. 1.4 - apply special media renames after basic normalization
-# 2026.03.27 - v. 1.5 - added question: current directory only vs also subdirectories
-# 2026.03.27 - v. 1.6 - in real mode, default answer is YES for rename prompts
-# 2026.03.27 - v. 1.7 - made Sprache/Voice/Screen_Recording patterns tolerant to -/_ after normalization
-# 2026.03.27 - v. 1.8 - added Call_recording rule
-# 2026.03.27 - v. 2.0 - preserve original top-level path style (with or without ./) in transform_name()
-# 2026.03.31 - v. 2.6 - add .md5 support with before/after verification and content updates
-# 2026.03.31 - v. 2.7 - stop the whole script immediately when checksum verification fails
-# 2026.03.31 - v. 2.8 - treat .sha512 and .md5 with exactly the same logic
-# 2026.03.31 - v. 3.0 - always normalize checksum files from CRLF to LF before any checks in real mode
-# 2026.03.31 - v. 3.1 - print clear info after Windows to Unix checksum file conversion was actually done
-# 2026.03.31 - v. 3.3 - verify checksum files from their own directory
-# 2026.03.31 - v. 3.4 - added -v / --verbose logging
-# 2026.03.31 - v. 3.6 - only do checksum verification when renames or checksum-file modifications are actually needed
-# 2026.03.31 - v. 3.8 - added ERR trap to show line number, exit code, and failed command
-# 2026.03.31 - v. 4.1 - verbose logs go to stderr so command substitutions are not corrupted
+# 2026.03.31 - v. 4.3 - fixed missing VERBOSE_MAIN_EVERY variable in verbose mode
 # 2026.03.31 - v. 4.2 - removed whole-tree path discovery; use local directory processing only
+# 2026.03.31 - v. 4.1 - verbose logs go to stderr so command substitutions are not corrupted
+# 2026.03.31 - v. 4.0 - removed slow whole-tree recovery fallback; only fast same-directory recovery is used
+# 2026.03.31 - v. 3.9 - fast same-directory recovery for normalized missing checksum refs
+# 2026.03.31 - v. 3.8 - added ERR trap to show line number, exit code, and failed command
+# 2026.03.31 - v. 3.7 - fixed silent exits caused by set -e with post-increment arithmetic
+# 2026.03.31 - v. 3.6 - only do checksum verification when renames or checksum-file modifications are actually needed
+# 2026.03.31 - v. 3.4 - added -v / --verbose logging
+# 2026.03.31 - v. 3.3 - verify checksum files from their own directory
+# 2026.03.31 - v. 3.1 - print clear info after Windows to Unix checksum file conversion was actually done
+# 2026.03.31 - v. 3.0 - always normalize checksum files from CRLF to LF before any checks in real mode
+# 2026.03.31 - v. 2.8 - treat .sha512 and .md5 with exactly the same logic
+# 2026.03.31 - v. 2.7 - stop the whole script immediately when checksum verification fails
+# 2026.03.31 - v. 2.6 - add .md5 support with before/after verification and content updates
+# 2026.03.27 - v. 2.0 - preserve original top-level path style (with or without ./) in transform_name()
+# 2026.03.27 - v. 1.8 - added Call_recording rule
+# 2026.03.27 - v. 1.7 - made Sprache/Voice/Screen_Recording patterns tolerant to -/_ after normalization
+# 2026.03.27 - v. 1.6 - in real mode, default answer is YES for rename prompts
+# 2026.03.27 - v. 1.5 - added question: current directory only vs also subdirectories
+# 2026.03.27 - v. 1.4 - apply special media renames after basic normalization
+# 2026.03.27 - v. 1.3 - fixed top-level path handling: keep ./ prefix in transform_name()
+# 2026.03.27 - v. 1.2 - added many changes about media files
 
 set -Eeuo pipefail
 shopt -s nullglob
 
 VERBOSE=0
+VERBOSE_MAIN_EVERY=200
 
 on_err() {
     local exit_code="$1"
