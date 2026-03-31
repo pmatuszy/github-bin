@@ -21,11 +21,14 @@
 # 2026.03.31 - v. 3.2 - recover missing checksum refs also by normalized filename + matching checksum
 # 2026.03.31 - v. 3.3 - verify checksum files from their own directory
 # 2026.03.31 - v. 3.4 - added -v / --verbose logging
+# 2026.03.31 - v. 3.5 - verbose live progress/heartbeat output for long-running operations
 
 set -euo pipefail
 shopt -s nullglob
 
 VERBOSE=0
+VERBOSE_PROGRESS_EVERY=500
+VERBOSE_MAIN_EVERY=200
 
 usage() {
     cat <<'EOF'
@@ -53,11 +56,6 @@ for arg in "$@"; do
             ;;
     esac
 done
-
-vlog() {
-    (( VERBOSE == 1 )) || return 0
-    echo -e "${CYAN}[VERBOSE]${RESET} $*"
-}
 
 # ============================================================
 # COLOR SELECTION
@@ -98,7 +96,10 @@ fi
 
 ARROW="→"
 
-vlog "Verbose mode enabled"
+vlog() {
+    (( VERBOSE == 1 )) || return 0
+    echo -e "${CYAN}[VERBOSE]${RESET} $*"
+}
 
 # ============================================================
 # MODE SELECTION
@@ -150,6 +151,8 @@ fi
 
 echo -e "Scope selected: ${CYAN}$process_scope${RESET}"
 sleep 1
+
+vlog "Verbose mode enabled"
 
 # ============================================================
 # HELPERS
@@ -620,6 +623,7 @@ find_best_path_for_missing_ref() {
     local -a normalized_candidates=()
     local -a verified_candidates=()
     local cand_hash
+    local scanned=0
 
     kind="$(checksum_kind "$sum_file")"
     wanted_base="$(basename -- "$missing_ref")"
@@ -629,6 +633,11 @@ find_best_path_for_missing_ref() {
     vlog "Trying to recover missing ref '$missing_ref' (expected hash: ${expected_hash:-none})"
 
     for candidate in "${all_paths[@]}"; do
+        ((scanned++))
+        if (( scanned % VERBOSE_PROGRESS_EVERY == 0 )); then
+            vlog "Recovery scan in progress for '$missing_ref' - scanned $scanned / ${#all_paths[@]} paths"
+        fi
+
         [[ -f "$candidate" ]] || continue
         is_checksum_file "$candidate" && continue
 
@@ -673,7 +682,10 @@ find_best_path_for_missing_ref() {
     fi
 
     if [[ -n "$expected_hash" ]]; then
+        local idx=0
         for candidate in "${pool[@]}"; do
+            ((idx++))
+            vlog "Hashing candidate $idx / ${#pool[@]} for missing ref '$missing_ref': '$candidate'"
             cand_hash="$(checksum_of_file "$kind" "$candidate")"
             vlog "Candidate '$candidate' has $kind=$cand_hash"
             if [[ "${cand_hash,,}" == "${expected_hash,,}" ]]; then
@@ -750,7 +762,13 @@ for p in "${all_paths[@]}"; do
     done < <(extract_checksum_entries "$p")
 done
 
+main_index=0
 for f in "${ordered_paths[@]}"; do
+    ((main_index++))
+    if (( VERBOSE == 1 && main_index % VERBOSE_MAIN_EVERY == 0 )); then
+        vlog "Main loop progress: $main_index / ${#ordered_paths[@]} (current: '$f')"
+    fi
+
     [[ -n "${processed[$f]+x}" ]] && continue
     ((++files_examined))
 
@@ -794,9 +812,11 @@ for f in "${ordered_paths[@]}"; do
         for i in "${!refs[@]}"; do
             ref="${refs[$i]}"
             if [[ -e "$ref" ]]; then
+                vlog "Ref exists already: '$ref'"
                 continue
             fi
 
+            vlog "Ref missing, trying recovery: '$ref'"
             found_ref="$(find_best_path_for_missing_ref "$ref" "${expected_hashes[$i]}" "$sum_file" || true)"
             if [[ -n "$found_ref" ]]; then
                 replacement_ref="$(format_ref_for_checksum_file "$sum_file" "${refs_raw[$i]}" "$found_ref")"
@@ -805,6 +825,9 @@ for f in "${ordered_paths[@]}"; do
                 recovered_new_written_refs+=( "$replacement_ref" )
                 refs_raw[$i]="$replacement_ref"
                 refs[$i]="$found_ref"
+                vlog "Recovery success: '$ref' -> '$found_ref' (write as '$replacement_ref')"
+            else
+                vlog "Recovery failed for '$ref'"
             fi
         done
 
@@ -1004,6 +1027,8 @@ for f in "${ordered_paths[@]}"; do
             echo -e "${YELLOW}NOTE:${RESET} Files were renamed, but checksum verification after update failed."
             stop_on_checksum_failure "$final_sum" "after rename"
         fi
+
+        vlog "Finished checksum group '$sum_file'"
 
         processed["$sum_file"]=1
         processed["$final_sum"]=1
