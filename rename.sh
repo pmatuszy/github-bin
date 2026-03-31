@@ -7,6 +7,8 @@
 # 2026.03.27 - v. 1.7 - made Sprache/Voice/Screen_Recording patterns tolerant to -/_ after normalization
 # 2026.03.27 - v. 1.8 - added Call_recording rule
 # 2026.03.27 - v. 2.0 - preserve original top-level path style (with or without ./) in transform_name()
+# 2026.03.31 - v. 2.1 - pre-scan sha512 refs so referenced files are only handled through sha groups
+# 2026.03.31 - v. 2.2 - warn clearly when grouped ORG/OUTPUT/EXCLUDE sha references are missing
 
 set -euo pipefail
 shopt -s nullglob
@@ -322,6 +324,84 @@ update_sha512_content_refs() {
         sed -i -E "s|([[:space:]]\\*?)${old_re}\$|\\1${new_re}|g" -- "$sha_file"
 }
 
+strip_leading_dot_slash() {
+    local p="$1"
+    printf '%s' "${p#./}"
+}
+
+variant_family_info() {
+    local p="$1"
+    local base stem variant ext
+
+    base="$(basename -- "$p")"
+    if [[ "$base" =~ ^(.+)_((ORG)|(OUTPUT)|(EXCLUDE))(\.[^.]+)$ ]]; then
+        stem="${BASH_REMATCH[1]}"
+        variant="${BASH_REMATCH[2]}"
+        ext="${BASH_REMATCH[6]}"
+        printf '%s|%s|%s' "$stem" "$variant" "$ext"
+        return 0
+    fi
+    return 1
+}
+
+print_grouped_sha_missing_warning() {
+    local sha_file="$1"
+    shift
+    local -a refs=( "$@" )
+
+    local ref info stem variant ext key
+    local -A family_variants=()
+    local -A family_exts=()
+    local found_group=no
+
+    for ref in "${refs[@]}"; do
+        if info="$(variant_family_info "$ref")"; then
+            stem="${info%%|*}"
+            rest="${info#*|}"
+            variant="${rest%%|*}"
+            ext="${rest##*|}"
+            key="$stem"
+            family_variants["$key"]+="${variant} "
+            family_exts["$key"]+="${variant}:${ext} "
+            found_group=yes
+        fi
+    done
+
+    [[ "$found_group" == "yes" ]] || return 0
+
+    echo -e "${YELLOW}SHA512 GROUP WARNING:${RESET} '$sha_file' contains grouped ORG/OUTPUT/EXCLUDE-style references."
+
+    local family present_variants expected_variants expected_variant token expected_path found_any
+    for family in "${!family_variants[@]}"; do
+        present_variants="${family_variants[$family]}"
+        expected_variants="ORG OUTPUT"
+
+        if [[ "$present_variants" == *"EXCLUDE "* ]]; then
+            expected_variants+=" EXCLUDE"
+        else
+            found_any=no
+            for token in "${refs[@]}"; do
+                local normalized_token dir_token candidate
+                normalized_token="$(strip_leading_dot_slash "$token")"
+                dir_token="$(dirname -- "$normalized_token")"
+                [[ "$dir_token" == "." ]] && dir_token=""
+                if [[ -n "$dir_token" ]]; then
+                    candidate="${dir_token}/${family}_EXCLUDE"
+                else
+                    candidate="${family}_EXCLUDE"
+                fi
+                compgen -G "${candidate}.*" >/dev/null && { found_any=yes; break; }
+            done
+            [[ "$found_any" == "yes" ]] && expected_variants+=" EXCLUDE"
+        fi
+
+        for expected_variant in $expected_variants; do
+            [[ "$present_variants" == *"${expected_variant} "* ]] && continue
+            echo -e "  ${YELLOW}Missing reference in group:${RESET} ${family}_${expected_variant}.*"
+        done
+    done
+}
+
 # ============================================================
 # STATE
 # ============================================================
@@ -334,6 +414,7 @@ rename_all=no
 declare -a renamed_list=()
 declare -A recorded
 declare -A processed
+declare -A sha_ref_to_sha
 
 record_rename() {
     local old="$1" new="$2"
@@ -351,6 +432,15 @@ if [[ "$process_scope" == "current" ]]; then
 else
     mapfile -d '' -t all_paths < <(find . -depth -mindepth 1 -print0)
 fi
+
+# Pre-scan all sha512 files so files referenced inside them are not renamed separately
+for p in "${all_paths[@]}"; do
+    [[ -f "$p" && "$p" == *.sha512 ]] || continue
+    while IFS= read -r ref; do
+        [[ -n "$ref" ]] || continue
+        sha_ref_to_sha["$ref"]="$p"
+    done < <(extract_refs_from_sha512 "$p")
+done
 
 for f in "${all_paths[@]}"; do
     [[ -n "${processed[$f]+x}" ]] && continue
@@ -373,13 +463,21 @@ for f in "${all_paths[@]}"; do
         fi
 
         missing=no
+        declare -a missing_refs=()
         for ref in "${refs[@]}"; do
-            [[ -e "$ref" ]] || { missing=yes; break; }
+            if [[ ! -e "$ref" ]]; then
+                missing=yes
+                missing_refs+=( "$ref" )
+            fi
         done
 
         if [[ "$missing" == "yes" ]]; then
             echo
             echo -e "${YELLOW}SHA512 SKIP:${RESET} '$sha_file' references missing file(s)."
+            for ref in "${missing_refs[@]}"; do
+                echo -e "  ${YELLOW}MISSING:${RESET} $ref"
+            done
+            print_grouped_sha_missing_warning "$sha_file" "${refs[@]}"
             ((++files_skipped))
             processed["$sha_file"]=1
             continue
@@ -553,6 +651,11 @@ for f in "${all_paths[@]}"; do
     fi
 
     if [[ -f "$f" ]]; then
+        if [[ -n "${sha_ref_to_sha[$f]+x}" ]]; then
+            ((++files_skipped))
+            continue
+        fi
+
         base="${f%.*}"
         if [[ -e "$base.sha512" ]]; then
             ((++files_skipped))
