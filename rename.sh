@@ -23,6 +23,7 @@
 # 2026.03.31 - v. 3.4 - added -v / --verbose logging
 # 2026.03.31 - v. 3.5 - verbose live progress/heartbeat output for long-running operations
 # 2026.03.31 - v. 3.6 - only do checksum verification when renames or checksum-file modifications are actually needed
+# 2026.03.31 - v. 3.7 - fixed silent exits caused by set -e with post-increment arithmetic
 
 set -euo pipefail
 shopt -s nullglob
@@ -634,7 +635,7 @@ find_best_path_for_missing_ref() {
     vlog "Trying to recover missing ref '$missing_ref' (expected hash: ${expected_hash:-none})"
 
     for candidate in "${all_paths[@]}"; do
-        ((scanned++))
+        ((++scanned))
         if (( scanned % VERBOSE_PROGRESS_EVERY == 0 )); then
             vlog "Recovery scan in progress for '$missing_ref' - scanned $scanned / ${#all_paths[@]} paths"
         fi
@@ -685,7 +686,7 @@ find_best_path_for_missing_ref() {
     if [[ -n "$expected_hash" ]]; then
         local idx=0
         for candidate in "${pool[@]}"; do
-            ((idx++))
+            ((++idx))
             vlog "Hashing candidate $idx / ${#pool[@]} for missing ref '$missing_ref': '$candidate'"
             cand_hash="$(checksum_of_file "$kind" "$candidate")"
             vlog "Candidate '$candidate' has $kind=$cand_hash"
@@ -765,7 +766,7 @@ done
 
 main_index=0
 for f in "${ordered_paths[@]}"; do
-    ((main_index++))
+    ((++main_index))
     if (( VERBOSE == 1 && main_index % VERBOSE_MAIN_EVERY == 0 )); then
         vlog "Main loop progress: $main_index / ${#ordered_paths[@]} (current: '$f')"
     fi
@@ -785,7 +786,6 @@ for f in "${ordered_paths[@]}"; do
 
         vlog "Processing checksum file '$sum_file'"
 
-        # Normalize only when needed later, unless already necessary for reading/updating.
         if [[ "$mode" == "real" ]] && checksum_file_has_crlf "$sum_file"; then
             ensure_checksum_file_unix_format "$sum_file"
         fi
