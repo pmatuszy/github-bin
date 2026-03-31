@@ -15,6 +15,7 @@
 # 2026.03.31 - v. 2.6 - add .md5 support with before/after verification and content updates
 # 2026.03.31 - v. 2.7 - stop the whole script immediately when checksum verification fails
 # 2026.03.31 - v. 2.8 - treat .sha512 and .md5 with exactly the same logic
+# 2026.03.31 - v. 2.9 - if checksum file points to missing files, try to find them in scope and update the checksum file
 
 set -euo pipefail
 shopt -s nullglob
@@ -485,6 +486,32 @@ print_grouped_checksum_missing_warning() {
     done
 }
 
+find_unique_path_for_missing_ref() {
+    local missing_ref="$1"
+    local wanted_base candidate candidate_base
+    local found=""
+    local count=0
+
+    wanted_base="$(basename -- "$missing_ref")"
+
+    for candidate in "${all_paths[@]}"; do
+        [[ -e "$candidate" ]] || continue
+        is_checksum_file "$candidate" && continue
+        candidate_base="$(basename -- "$candidate")"
+        [[ "$candidate_base" == "$wanted_base" ]] || continue
+
+        found="$candidate"
+        ((count++))
+    done
+
+    if (( count == 1 )); then
+        printf '%s' "$found"
+        return 0
+    fi
+
+    return 1
+}
+
 # ============================================================
 # STATE
 # ============================================================
@@ -516,6 +543,16 @@ else
     mapfile -d '' -t all_paths < <(find . -depth -mindepth 1 -print0)
 fi
 
+declare -a ordered_paths=()
+for p in "${all_paths[@]}"; do
+    [[ -f "$p" ]] && is_checksum_file "$p" && ordered_paths+=( "$p" )
+done
+for p in "${all_paths[@]}"; do
+    if ! ([[ -f "$p" ]] && is_checksum_file "$p"); then
+        ordered_paths+=( "$p" )
+    fi
+done
+
 for p in "${all_paths[@]}"; do
     [[ -f "$p" ]] || continue
     is_checksum_file "$p" || continue
@@ -528,7 +565,7 @@ for p in "${all_paths[@]}"; do
     done < <(extract_refs_from_checksum "$p")
 done
 
-for f in "${all_paths[@]}"; do
+for f in "${ordered_paths[@]}"; do
     [[ -n "${processed[$f]+x}" ]] && continue
     ((++files_examined))
 
@@ -554,6 +591,41 @@ for f in "${all_paths[@]}"; do
             continue
         fi
 
+        declare -a recovered_old_refs=()
+        declare -a recovered_new_real_refs=()
+
+        for i in "${!refs[@]}"; do
+            ref="${refs[$i]}"
+            if [[ -e "$ref" ]]; then
+                continue
+            fi
+
+            found_ref="$(find_unique_path_for_missing_ref "$ref" || true)"
+            if [[ -n "$found_ref" ]]; then
+                recovered_old_refs+=( "$ref" )
+                recovered_new_real_refs+=( "$found_ref" )
+                refs[$i]="$found_ref"
+            fi
+        done
+
+        if (( ${#recovered_old_refs[@]} > 0 )); then
+            echo
+            echo -e "${CYAN}${label} RECOVERY:${RESET} '$sum_file' references missing file(s), but unique replacements were found in scope."
+            for i in "${!recovered_old_refs[@]}"; do
+                echo -e "  ${RED}OLD REF:${RESET} ${recovered_old_refs[$i]}"
+                echo -e "  ${GREEN}FOUND:${RESET}   ${recovered_new_real_refs[$i]}"
+            done
+
+            if [[ "$mode" == "real" ]]; then
+                for i in "${!recovered_old_refs[@]}"; do
+                    update_checksum_content_refs "$sum_file" "${recovered_old_refs[$i]}" "${recovered_new_real_refs[$i]}"
+                done
+                echo -e "${CYAN}${label} RECOVERY UPDATED:${RESET} '$sum_file' was updated to point to the found file(s)."
+            else
+                echo -e "${CYAN}[DRY-RUN] Would update ${label,,} content to use the found file(s) above.${RESET}"
+            fi
+        fi
+
         missing=no
         declare -a missing_refs=()
         for ref in "${refs[@]}"; do
@@ -565,7 +637,7 @@ for f in "${all_paths[@]}"; do
 
         if [[ "$missing" == "yes" ]]; then
             echo
-            echo -e "${YELLOW}${label} SKIP:${RESET} '$sum_file' references missing file(s)."
+            echo -e "${YELLOW}${label} SKIP:${RESET} '$sum_file' still references missing file(s)."
             for ref in "${missing_refs[@]}"; do
                 echo -e "  ${YELLOW}MISSING:${RESET} $ref"
             done
