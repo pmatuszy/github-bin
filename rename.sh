@@ -11,6 +11,7 @@
 # 2026.03.31 - v. 2.2 - warn clearly when grouped ORG/OUTPUT/EXCLUDE sha references are missing
 # 2026.03.31 - v. 2.3 - resolve sha512 references relative to sha file so sha groups are renamed reliably
 # 2026.03.31 - v. 2.4 - dry-run shows only planned actions; real run verifies sha512 before and after rename
+# 2026.03.31 - v. 2.5 - update sha512 content correctly for both plain and ./ path forms
 
 set -euo pipefail
 shopt -s nullglob
@@ -181,8 +182,6 @@ transform_basename() {
         return
     fi
 
-    # accept Screen_Recording_YYYYMMDD_HHMMSS_rest.ext
-    # and also Screen_Recording_YYYYMMDD-HHMMSS-rest.ext after normalization
     if [[ "$new" =~ ^Screen_Recording_([0-9]{8})[-_]([0-9]{6})[-_](.+)(\.[^.]+)$ ]]; then
         printf '%s_%s_-_Screen_Recording_-_%s%s' \
             "${BASH_REMATCH[1]}" \
@@ -192,7 +191,6 @@ transform_basename() {
         return
     fi
 
-    # accept Call_recording_NAME_YYMMDD_HHMMSS.ext
     if [[ "$new" =~ ^Call_recording_(.+)_([0-9]{2})([0-9]{2})([0-9]{2})_([0-9]{6})(\.[^.]+)$ ]]; then
         printf '20%s%s%s_%s_-_Call_recording_-_%s%s' \
             "${BASH_REMATCH[2]}" "${BASH_REMATCH[3]}" "${BASH_REMATCH[4]}" \
@@ -202,7 +200,6 @@ transform_basename() {
         return
     fi
 
-    # accept Call_recording_YYMMDD_HHMMSS_rest.ext and Call_recording_YYMMDD_HHMMSS-rest.ext
     if [[ "$new" =~ ^Call_recording_([0-9]{2})([0-9]{2})([0-9]{2})_([0-9]{6})[-_](.+)(\.[^.]+)$ ]]; then
         printf '20%s%s%s_%s_-_Call_recording_-_%s%s' \
             "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}" "${BASH_REMATCH[3]}" \
@@ -212,7 +209,6 @@ transform_basename() {
         return
     fi
 
-    # accept Sprache_YYMMDD_HHMMSS_rest.ext and Sprache_YYMMDD_HHMMSS-rest.ext
     if [[ "$new" =~ ^Sprache_([0-9]{2})([0-9]{2})([0-9]{2})_([0-9]{6})[-_](.+)(\.[^.]+)$ ]]; then
         printf '20%s%s%s_%s_-_VoiceRecorder_-_%s%s' \
             "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}" "${BASH_REMATCH[3]}" \
@@ -230,7 +226,6 @@ transform_basename() {
         return
     fi
 
-    # accept Voice_YYMMDD_HHMMSS_rest.ext and Voice_YYMMDD_HHMMSS-rest.ext
     if [[ "$new" =~ ^Voice_([0-9]{2})([0-9]{2})([0-9]{2})_([0-9]{6})[-_](.+)(\.[^.]+)$ ]]; then
         printf '20%s%s%s_%s_-_VoiceRecorder_-_%s%s' \
             "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}" "${BASH_REMATCH[3]}" \
@@ -313,17 +308,28 @@ sed_escape_repl() {
     printf '%s' "$1" | sed -e 's/[&\\/]/\\&/g'
 }
 
+strip_leading_dot_slash() {
+    local p="$1"
+    printf '%s' "${p#./}"
+}
+
 update_sha512_content_refs() {
     local sha_file="$1"
     local old_name="$2"
     local new_name="$3"
 
-    local old_re new_re
-    old_re="$(sed_escape_regex "$old_name")"
-    new_re="$(sed_escape_repl "$new_name")"
+    local old_re1 new_re1 old_re2 new_re2
+    old_re1="$(sed_escape_regex "$old_name")"
+    new_re1="$(sed_escape_repl "$new_name")"
+
+    old_re2="$(sed_escape_regex "$(strip_leading_dot_slash "$old_name")")"
+    new_re2="$(sed_escape_repl "$(strip_leading_dot_slash "$new_name")")"
 
     preserve_timestamps_inplace "$sha_file" \
-        sed -i -E "s|([[:space:]]\\*?)${old_re}\$|\\1${new_re}|g" -- "$sha_file"
+        sed -i -E \
+            -e "s|([[:space:]]\\*?)${old_re1}\$|\\1${new_re1}|g" \
+            -e "s|([[:space:]]\\*?)${old_re2}\$|\\1${new_re2}|g" \
+            -- "$sha_file"
 }
 
 resolve_sha_ref_path() {
@@ -357,11 +363,6 @@ resolve_sha_ref_path() {
         candidate="$sha_dir/$ref"
         printf '%s' "$candidate"
     fi
-}
-
-strip_leading_dot_slash() {
-    local p="$1"
-    printf '%s' "${p#./}"
 }
 
 variant_family_info() {
@@ -466,7 +467,6 @@ else
     mapfile -d '' -t all_paths < <(find . -depth -mindepth 1 -print0)
 fi
 
-# Pre-scan all sha512 files so files referenced inside them are not renamed separately
 for p in "${all_paths[@]}"; do
     [[ -f "$p" && "$p" == *.sha512 ]] || continue
     while IFS= read -r ref; do
