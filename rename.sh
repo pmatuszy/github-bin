@@ -20,9 +20,44 @@
 # 2026.03.31 - v. 3.1 - print clear info after Windows to Unix checksum file conversion was actually done
 # 2026.03.31 - v. 3.2 - recover missing checksum refs also by normalized filename + matching checksum
 # 2026.03.31 - v. 3.3 - verify checksum files from their own directory
+# 2026.03.31 - v. 3.4 - added -v / --verbose logging
 
 set -euo pipefail
 shopt -s nullglob
+
+VERBOSE=0
+
+usage() {
+    cat <<'EOF'
+Usage: rename.sh [-v|--verbose] [-h|--help]
+
+Options:
+  -v, --verbose   Show extra diagnostic output
+  -h, --help      Show this help
+EOF
+}
+
+for arg in "$@"; do
+    case "$arg" in
+        -v|--verbose)
+            VERBOSE=1
+            ;;
+        -h|--help)
+            usage
+            exit 0
+            ;;
+        *)
+            echo "Unknown option: $arg" >&2
+            usage >&2
+            exit 1
+            ;;
+    esac
+done
+
+vlog() {
+    (( VERBOSE == 1 )) || return 0
+    echo -e "${CYAN}[VERBOSE]${RESET} $*"
+}
 
 # ============================================================
 # COLOR SELECTION
@@ -62,6 +97,8 @@ else
 fi
 
 ARROW="→"
+
+vlog "Verbose mode enabled"
 
 # ============================================================
 # MODE SELECTION
@@ -363,13 +400,13 @@ extract_checksum_entries() {
 
 checksum_check() {
     local sum_file="$1"
-    local kind cmd sum_dir sum_base
+    local kind sum_dir sum_base
     kind="$(checksum_kind "$sum_file")"
-    cmd="$(checksum_cmd "$sum_file")"
     sum_dir="$(dirname -- "$sum_file")"
     sum_base="$(basename -- "$sum_file")"
 
     ensure_checksum_file_unix_format "$sum_file"
+    vlog "Running $(checksum_cmd "$sum_file") check in directory '$sum_dir' for file '$sum_base'"
 
     if [[ "$mode" == "dry-run" ]]; then
         (
@@ -460,6 +497,8 @@ update_checksum_content_refs() {
 
     old_re2="$(sed_escape_regex "$(strip_leading_dot_slash "$old_name")")"
     new_re2="$(sed_escape_repl "$(strip_leading_dot_slash "$new_name")")"
+
+    vlog "Updating checksum content in '$sum_file': '$old_name' -> '$new_name'"
 
     preserve_timestamps_inplace "$sum_file" \
         sed -i -E \
@@ -587,6 +626,8 @@ find_best_path_for_missing_ref() {
     wanted_norm="$(transform_basename "$wanted_base")"
     missing_dir="$(dirname -- "$missing_ref")"
 
+    vlog "Trying to recover missing ref '$missing_ref' (expected hash: ${expected_hash:-none})"
+
     for candidate in "${all_paths[@]}"; do
         [[ -f "$candidate" ]] || continue
         is_checksum_file "$candidate" && continue
@@ -604,9 +645,11 @@ find_best_path_for_missing_ref() {
         fi
     done
 
+    vlog "Exact basename matches: ${#exact_candidates[@]}"
+    vlog "Normalized basename matches: ${#normalized_candidates[@]}"
+
     local -a pool=()
 
-    # prefer same directory
     for candidate in "${exact_candidates[@]}"; do
         [[ "$(dirname -- "$candidate")" == "$missing_dir" ]] && pool+=( "$candidate" )
     done
@@ -616,13 +659,14 @@ find_best_path_for_missing_ref() {
         done
     fi
 
-    # fallback: anywhere in scope
     if (( ${#pool[@]} == 0 )); then
         pool=( "${exact_candidates[@]}" )
     fi
     if (( ${#pool[@]} == 0 )); then
         pool=( "${normalized_candidates[@]}" )
     fi
+
+    vlog "Candidate pool after directory preference: ${#pool[@]}"
 
     if (( ${#pool[@]} == 0 )); then
         return 1
@@ -631,11 +675,13 @@ find_best_path_for_missing_ref() {
     if [[ -n "$expected_hash" ]]; then
         for candidate in "${pool[@]}"; do
             cand_hash="$(checksum_of_file "$kind" "$candidate")"
+            vlog "Candidate '$candidate' has $kind=$cand_hash"
             if [[ "${cand_hash,,}" == "${expected_hash,,}" ]]; then
                 verified_candidates+=( "$candidate" )
             fi
         done
         pool=( "${verified_candidates[@]}" )
+        vlog "Candidates after checksum verification: ${#pool[@]}"
     fi
 
     if (( ${#pool[@]} == 1 )); then
@@ -677,6 +723,8 @@ else
     mapfile -d '' -t all_paths < <(find . -depth -mindepth 1 -print0)
 fi
 
+vlog "Total discovered paths: ${#all_paths[@]}"
+
 declare -a ordered_paths=()
 for p in "${all_paths[@]}"; do
     [[ -f "$p" ]] && is_checksum_file "$p" && ordered_paths+=( "$p" )
@@ -687,6 +735,8 @@ for p in "${all_paths[@]}"; do
     fi
 done
 
+vlog "Checksum files are processed first"
+
 for p in "${all_paths[@]}"; do
     [[ -f "$p" ]] || continue
     is_checksum_file "$p" || continue
@@ -696,6 +746,7 @@ for p in "${all_paths[@]}"; do
         resolved_ref="$(resolve_checksum_ref_path "$p" "$ref")"
         checksum_ref_to_sum["$resolved_ref"]="$p"
         checksum_ref_to_sum["$(strip_leading_dot_slash "$resolved_ref")"]="$p"
+        vlog "Pre-scan map: '$resolved_ref' -> '$p'"
     done < <(extract_checksum_entries "$p")
 done
 
@@ -704,6 +755,7 @@ for f in "${ordered_paths[@]}"; do
     ((++files_examined))
 
     if is_excluded_path "$f"; then
+        vlog "Skipping excluded path '$f'"
         ((++files_skipped))
         continue
     fi
@@ -711,6 +763,8 @@ for f in "${ordered_paths[@]}"; do
     if [[ -f "$f" ]] && is_checksum_file "$f"; then
         sum_file="$f"
         label="$(checksum_label "$sum_file")"
+
+        vlog "Processing checksum file '$sum_file'"
 
         ensure_checksum_file_unix_format "$sum_file"
 
@@ -723,9 +777,11 @@ for f in "${ordered_paths[@]}"; do
             expected_hashes+=( "$hash" )
             refs_raw+=( "$ref" )
             refs+=( "$(resolve_checksum_ref_path "$sum_file" "$ref")" )
+            vlog "Resolved ref '$ref' -> '${refs[-1]}'"
         done < <(extract_checksum_entries "$sum_file")
 
         if (( ${#refs[@]} == 0 )) || [[ -z "${refs[0]}" ]]; then
+            vlog "Checksum file '$sum_file' has no valid refs"
             ((++files_skipped))
             processed["$sum_file"]=1
             continue
@@ -804,6 +860,7 @@ for f in "${ordered_paths[@]}"; do
             [[ "${new_refs[$i]}" != "${refs[$i]}" ]] && nothing_changes=no
         done
         if [[ "$nothing_changes" == "yes" ]]; then
+            vlog "Nothing changes for checksum group '$sum_file'"
             ((++files_skipped))
             processed["$sum_file"]=1
             for ref in "${refs[@]}"; do processed["$ref"]=1; done
@@ -880,6 +937,7 @@ for f in "${ordered_paths[@]}"; do
         fi
 
         if [[ "$do_rename" != "yes" ]]; then
+            vlog "User skipped checksum group '$sum_file'"
             processed["$sum_file"]=1
             for ref in "${refs[@]}"; do processed["$ref"]=1; done
             continue
@@ -900,6 +958,7 @@ for f in "${ordered_paths[@]}"; do
 
         if [[ "$collision" == "yes" ]]; then
             echo -e "${YELLOW}SKIP:${RESET} Target file already exists."
+            vlog "Collision detected in checksum group '$sum_file'"
             ((++files_skipped))
             processed["$sum_file"]=1
             for ref in "${refs[@]}"; do processed["$ref"]=1; done
@@ -908,6 +967,7 @@ for f in "${ordered_paths[@]}"; do
 
         for i in "${!refs[@]}"; do
             if [[ "${new_refs[$i]}" != "${refs[$i]}" ]]; then
+                vlog "Renaming referenced file '${refs[$i]}' -> '${new_refs[$i]}'"
                 mv -i -- "${refs[$i]}" "${new_refs[$i]}"
                 ((++files_affected))
                 record_rename "${refs[$i]}" "${new_refs[$i]}"
@@ -926,6 +986,7 @@ for f in "${ordered_paths[@]}"; do
 
         final_sum="$sum_file"
         if [[ "$new_sum" != "$sum_file" ]]; then
+            vlog "Renaming checksum file '$sum_file' -> '$new_sum'"
             mv -i -- "$sum_file" "$new_sum"
             ((++files_affected))
             record_rename "$sum_file" "$new_sum"
@@ -954,19 +1015,25 @@ for f in "${ordered_paths[@]}"; do
 
     if [[ -f "$f" ]]; then
         if [[ -n "${checksum_ref_to_sum[$f]+x}" || -n "${checksum_ref_to_sum[$(strip_leading_dot_slash "$f")]+x}" ]]; then
+            vlog "Skipping '$f' because it belongs to checksum group '${checksum_ref_to_sum[$f]:-${checksum_ref_to_sum[$(strip_leading_dot_slash "$f")]:-unknown}}'"
             ((++files_skipped))
             continue
         fi
 
         base="${f%.*}"
         if [[ -e "$base.sha512" || -e "$base.md5" ]]; then
+            vlog "Skipping '$f' because sibling checksum file exists"
             ((++files_skipped))
             continue
         fi
     fi
 
     new="$(transform_name "$f")"
-    [[ "$f" == "$new" ]] && { ((++files_skipped)); continue; }
+    [[ "$f" == "$new" ]] && {
+        vlog "No rename needed for '$f'"
+        ((++files_skipped))
+        continue
+    }
 
     if [[ "$mode" == "dry-run" ]]; then
         echo
@@ -983,6 +1050,7 @@ for f in "${ordered_paths[@]}"; do
     echo -e "${GREEN}NEW:${RESET} $new"
 
     if [[ "$rename_all" == "yes" ]]; then
+        vlog "Renaming '$f' -> '$new' due to rename_all"
         if mv -i -- "$f" "$new"; then
             ((++files_affected))
             record_rename "$f" "$new"
@@ -1013,6 +1081,7 @@ for f in "${ordered_paths[@]}"; do
 
             if [[ "$confirm" =~ [Yy] ]]; then
                 rename_all=yes
+                vlog "rename_all enabled by user"
                 if mv -i -- "$f" "$new"; then
                     ((++files_affected))
                     record_rename "$f" "$new"
@@ -1024,6 +1093,7 @@ for f in "${ordered_paths[@]}"; do
             fi
             ;;
         *)
+            vlog "Renaming '$f' -> '$new'"
             if mv -i -- "$f" "$new"; then
                 ((++files_affected))
                 record_rename "$f" "$new"
@@ -1041,6 +1111,7 @@ echo
 echo "========= SUMMARY ========="
 echo "Mode:                  $mode"
 echo "Colors enabled:        $use_colors"
+echo "Verbose:               $VERBOSE"
 echo "Scope:                 $process_scope"
 echo "Entries examined:      $files_examined"
 echo "Entries affected:      $files_affected"
