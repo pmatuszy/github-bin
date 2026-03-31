@@ -16,6 +16,8 @@
 # 2026.03.31 - v. 2.7 - stop the whole script immediately when checksum verification fails
 # 2026.03.31 - v. 2.8 - treat .sha512 and .md5 with exactly the same logic
 # 2026.03.31 - v. 2.9 - if checksum file points to missing files, try to find them in scope and update the checksum file
+# 2026.03.31 - v. 3.0 - always normalize checksum files from CRLF to LF before any checks in real mode
+# 2026.03.31 - v. 3.1 - print clear info after Windows to Unix checksum file conversion was actually done
 
 set -euo pipefail
 shopt -s nullglob
@@ -159,9 +161,6 @@ stop_on_checksum_failure() {
 transform_basename() {
     local new="$1"
 
-    # -------- BASIC NORMALIZATION FIRST --------
-
-    # Polish diacritics
     new="${new//ą/a}"
     new="${new//ć/c}"
     new="${new//ę/e}"
@@ -182,7 +181,6 @@ transform_basename() {
     new="${new//Ż/Z}"
     new="${new//Ź/Z}"
 
-    # structural chars
     new="${new//(/_}"
     new="${new//)/_}"
     new="${new//\{/_}"
@@ -191,22 +189,18 @@ transform_basename() {
     new="${new//\]/_}"
     new="${new//,/_}"
 
-    # other normalization
     new="${new//!/.}"
     new="${new// /_}"
     new="${new//\'/_}"
     new="${new//&/_and_}"
     new="${new//•/-}"
 
-    # cleanup
     new=$(printf '%s' "$new" | sed -E '
         s/__+/_/g;
         s/_\././g;
         s/_$//;
         s/\.$//;
     ')
-
-    # -------- SPECIAL MEDIA RENAMES AFTER BASIC NORMALIZATION --------
 
     if [[ "$new" =~ ^signal-([0-9]{4})-([0-9]{2})-([0-9]{2})-([0-9]{2})-([0-9]{2})-([0-9]{2})-[0-9]+(\.[^.]+)$ ]]; then
         printf '%s%s%s_%s%s%s-signal%s' \
@@ -316,6 +310,11 @@ preserve_timestamps_inplace() {
     rm -f "$ref"
 }
 
+checksum_file_has_crlf() {
+    local sum_file="$1"
+    LC_ALL=C grep -q $'\r' -- "$sum_file"
+}
+
 normalize_checksum_file() {
     local sum_file="$1"
 
@@ -326,10 +325,28 @@ normalize_checksum_file() {
     fi
 }
 
+ensure_checksum_file_unix_format() {
+    local sum_file="$1"
+    local label
+    label="$(checksum_label "$sum_file")"
+
+    if checksum_file_has_crlf "$sum_file"; then
+        if [[ "$mode" == "dry-run" ]]; then
+            echo -e "${CYAN}[DRY-RUN] Would convert ${label} file from CRLF to LF:${RESET} $sum_file"
+        else
+            echo -e "${CYAN}${label} NORMALIZE:${RESET} converting CRLF to LF: $sum_file"
+            normalize_checksum_file "$sum_file"
+            echo -e "${CYAN}${label} NORMALIZE DONE:${RESET} converted from Windows format to Unix format: $sum_file"
+        fi
+    fi
+}
+
 checksum_check() {
     local sum_file="$1"
     local kind
     kind="$(checksum_kind "$sum_file")"
+
+    ensure_checksum_file_unix_format "$sum_file"
 
     if [[ "$mode" == "dry-run" ]]; then
         case "$kind" in
@@ -337,7 +354,6 @@ checksum_check() {
             md5)    md5sum -c --quiet -- <(sed 's/\r$//' -- "$sum_file") ;;
         esac
     else
-        normalize_checksum_file "$sum_file"
         case "$kind" in
             sha512) sha512sum -c --quiet -- "$sum_file" ;;
             md5)    md5sum -c --quiet -- "$sum_file" ;;
@@ -577,6 +593,8 @@ for f in "${ordered_paths[@]}"; do
     if [[ -f "$f" ]] && is_checksum_file "$f"; then
         sum_file="$f"
         label="$(checksum_label "$sum_file")"
+
+        ensure_checksum_file_unix_format "$sum_file"
 
         mapfile -t refs_raw < <(extract_refs_from_checksum "$sum_file")
         refs=()
