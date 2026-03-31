@@ -25,6 +25,8 @@
 # 2026.03.31 - v. 3.6 - only do checksum verification when renames or checksum-file modifications are actually needed
 # 2026.03.31 - v. 3.7 - fixed silent exits caused by set -e with post-increment arithmetic
 # 2026.03.31 - v. 3.8 - added ERR trap to show line number, exit code, and failed command
+# 2026.03.31 - v. 3.9 - fast same-directory recovery for normalized missing checksum refs
+# 2026.03.31 - v. 4.0 - removed slow whole-tree recovery fallback; only fast same-directory recovery is used
 
 set -Eeuo pipefail
 shopt -s nullglob
@@ -70,9 +72,6 @@ for arg in "$@"; do
     esac
 done
 
-# ============================================================
-# COLOR SELECTION
-# ============================================================
 echo
 echo "Use colors?"
 echo "  [Y] Yes (default)"
@@ -114,9 +113,6 @@ vlog() {
     echo -e "${CYAN}[VERBOSE]${RESET} $*"
 }
 
-# ============================================================
-# MODE SELECTION
-# ============================================================
 echo
 echo "Select mode:"
 echo "  [D] Dry-run (default)"
@@ -139,9 +135,6 @@ fi
 
 echo -e "Mode selected: ${CYAN}$mode${RESET}"
 
-# ============================================================
-# DIRECTORY SCOPE SELECTION
-# ============================================================
 echo
 echo "What should be processed?"
 echo "  [C] Current directory only (default)"
@@ -166,10 +159,6 @@ echo -e "Scope selected: ${CYAN}$process_scope${RESET}"
 sleep 1
 
 vlog "Verbose mode enabled"
-
-# ============================================================
-# HELPERS
-# ============================================================
 
 is_excluded_path() {
     local p="$1"
@@ -631,12 +620,9 @@ find_best_path_for_missing_ref() {
     local missing_ref="$1"
     local expected_hash="$2"
     local sum_file="$3"
-    local kind wanted_base wanted_norm missing_dir candidate candidate_base candidate_norm
-    local -a exact_candidates=()
-    local -a normalized_candidates=()
-    local -a verified_candidates=()
-    local cand_hash
-    local scanned=0
+
+    local kind wanted_base wanted_norm missing_dir
+    local fast_base fast_path fast_hash
 
     kind="$(checksum_kind "$sum_file")"
     wanted_base="$(basename -- "$missing_ref")"
@@ -645,81 +631,33 @@ find_best_path_for_missing_ref() {
 
     vlog "Trying to recover missing ref '$missing_ref' (expected hash: ${expected_hash:-none})"
 
-    for candidate in "${all_paths[@]}"; do
-        ((++scanned))
-        if (( scanned % VERBOSE_PROGRESS_EVERY == 0 )); then
-            vlog "Recovery scan in progress for '$missing_ref' - scanned $scanned / ${#all_paths[@]} paths"
-        fi
+    # Fast path only: same directory + normalized filename
+    fast_base="$wanted_norm"
+    fast_path="${missing_dir}/${fast_base}"
 
-        [[ -f "$candidate" ]] || continue
-        is_checksum_file "$candidate" && continue
-
-        candidate_base="$(basename -- "$candidate")"
-        candidate_norm="$(transform_basename "$candidate_base")"
-
-        if [[ "$candidate_base" == "$wanted_base" ]]; then
-            exact_candidates+=( "$candidate" )
-            continue
-        fi
-
-        if [[ "$candidate_norm" == "$wanted_norm" ]]; then
-            normalized_candidates+=( "$candidate" )
-        fi
-    done
-
-    vlog "Exact basename matches: ${#exact_candidates[@]}"
-    vlog "Normalized basename matches: ${#normalized_candidates[@]}"
-
-    local -a pool=()
-
-    for candidate in "${exact_candidates[@]}"; do
-        [[ "$(dirname -- "$candidate")" == "$missing_dir" ]] && pool+=( "$candidate" )
-    done
-    if (( ${#pool[@]} == 0 )); then
-        for candidate in "${normalized_candidates[@]}"; do
-            [[ "$(dirname -- "$candidate")" == "$missing_dir" ]] && pool+=( "$candidate" )
-        done
-    fi
-
-    if (( ${#pool[@]} == 0 )); then
-        pool=( "${exact_candidates[@]}" )
-    fi
-    if (( ${#pool[@]} == 0 )); then
-        pool=( "${normalized_candidates[@]}" )
-    fi
-
-    vlog "Candidate pool after directory preference: ${#pool[@]}"
-
-    if (( ${#pool[@]} == 0 )); then
-        return 1
-    fi
-
-    if [[ -n "$expected_hash" ]]; then
-        local idx=0
-        for candidate in "${pool[@]}"; do
-            ((++idx))
-            vlog "Hashing candidate $idx / ${#pool[@]} for missing ref '$missing_ref': '$candidate'"
-            cand_hash="$(checksum_of_file "$kind" "$candidate")"
-            vlog "Candidate '$candidate' has $kind=$cand_hash"
-            if [[ "${cand_hash,,}" == "${expected_hash,,}" ]]; then
-                verified_candidates+=( "$candidate" )
+    if [[ -f "$fast_path" ]]; then
+        vlog "Fast recovery candidate in same directory: '$fast_path'"
+        if [[ -n "$expected_hash" ]]; then
+            fast_hash="$(checksum_of_file "$kind" "$fast_path")"
+            vlog "Fast recovery candidate has $kind=$fast_hash"
+            if [[ "${fast_hash,,}" == "${expected_hash,,}" ]]; then
+                vlog "Fast recovery candidate checksum matches"
+                printf '%s' "$fast_path"
+                return 0
+            else
+                vlog "Fast recovery candidate checksum does not match"
             fi
-        done
-        pool=( "${verified_candidates[@]}" )
-        vlog "Candidates after checksum verification: ${#pool[@]}"
+        else
+            vlog "Fast recovery candidate accepted (no expected hash available)"
+            printf '%s' "$fast_path"
+            return 0
+        fi
     fi
 
-    if (( ${#pool[@]} == 1 )); then
-        printf '%s' "${pool[0]}"
-        return 0
-    fi
-
+    vlog "Fast same-directory recovery failed for '$missing_ref'; not doing whole-tree scan"
     return 1
 }
 
-# ============================================================
-# STATE
-# ============================================================
 files_examined=0
 files_affected=0
 files_skipped=0
@@ -739,9 +677,6 @@ record_rename() {
     renamed_list+=("$key")
 }
 
-# ============================================================
-# MAIN LOOP
-# ============================================================
 if [[ "$process_scope" == "current" ]]; then
     mapfile -d '' -t all_paths < <(find . -mindepth 1 -maxdepth 1 -print0)
 else
@@ -1159,9 +1094,6 @@ for f in "${ordered_paths[@]}"; do
     esac
 done
 
-# ============================================================
-# SUMMARY
-# ============================================================
 echo
 echo "========= SUMMARY ========="
 echo "Mode:                  $mode"
