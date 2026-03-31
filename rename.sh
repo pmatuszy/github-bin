@@ -22,6 +22,7 @@
 # 2026.03.31 - v. 3.3 - verify checksum files from their own directory
 # 2026.03.31 - v. 3.4 - added -v / --verbose logging
 # 2026.03.31 - v. 3.5 - verbose live progress/heartbeat output for long-running operations
+# 2026.03.31 - v. 3.6 - only do checksum verification when renames or checksum-file modifications are actually needed
 
 set -euo pipefail
 shopt -s nullglob
@@ -784,7 +785,10 @@ for f in "${ordered_paths[@]}"; do
 
         vlog "Processing checksum file '$sum_file'"
 
-        ensure_checksum_file_unix_format "$sum_file"
+        # Normalize only when needed later, unless already necessary for reading/updating.
+        if [[ "$mode" == "real" ]] && checksum_file_has_crlf "$sum_file"; then
+            ensure_checksum_file_unix_format "$sum_file"
+        fi
 
         refs_raw=()
         refs=()
@@ -808,6 +812,7 @@ for f in "${ordered_paths[@]}"; do
         declare -a recovered_old_refs=()
         declare -a recovered_new_real_refs=()
         declare -a recovered_new_written_refs=()
+        checksum_content_modified=no
 
         for i in "${!refs[@]}"; do
             ref="${refs[$i]}"
@@ -825,6 +830,7 @@ for f in "${ordered_paths[@]}"; do
                 recovered_new_written_refs+=( "$replacement_ref" )
                 refs_raw[$i]="$replacement_ref"
                 refs[$i]="$found_ref"
+                checksum_content_modified=yes
                 vlog "Recovery success: '$ref' -> '$found_ref' (write as '$replacement_ref')"
             else
                 vlog "Recovery failed for '$ref'"
@@ -841,6 +847,7 @@ for f in "${ordered_paths[@]}"; do
             done
 
             if [[ "$mode" == "real" ]]; then
+                ensure_checksum_file_unix_format "$sum_file"
                 for i in "${!recovered_old_refs[@]}"; do
                     update_checksum_content_refs "$sum_file" "${recovered_old_refs[$i]}" "${recovered_new_written_refs[$i]}"
                 done
@@ -873,17 +880,23 @@ for f in "${ordered_paths[@]}"; do
 
         new_sum="$(transform_name "$sum_file")"
         declare -a new_refs=()
+        refs_need_rename=no
         for ref in "${refs[@]}"; do
-            new_refs+=( "$(transform_name "$ref")" )
+            new_ref="$(transform_name "$ref")"
+            new_refs+=( "$new_ref" )
+            [[ "$new_ref" != "$ref" ]] && refs_need_rename=yes
         done
 
-        nothing_changes=yes
-        [[ "$new_sum" != "$sum_file" ]] && nothing_changes=no
-        for i in "${!refs[@]}"; do
-            [[ "${new_refs[$i]}" != "${refs[$i]}" ]] && nothing_changes=no
-        done
-        if [[ "$nothing_changes" == "yes" ]]; then
-            vlog "Nothing changes for checksum group '$sum_file'"
+        sum_file_needs_rename=no
+        [[ "$new_sum" != "$sum_file" ]] && sum_file_needs_rename=yes
+
+        action_needed=no
+        [[ "$refs_need_rename" == "yes" ]] && action_needed=yes
+        [[ "$sum_file_needs_rename" == "yes" ]] && action_needed=yes
+        [[ "$checksum_content_modified" == "yes" ]] && action_needed=yes
+
+        if [[ "$action_needed" == "no" ]]; then
+            vlog "All referenced files exist and no rename/update is needed for '$sum_file' - skipping without checksum verification"
             ((++files_skipped))
             processed["$sum_file"]=1
             for ref in "${refs[@]}"; do processed["$ref"]=1; done
@@ -892,7 +905,11 @@ for f in "${ordered_paths[@]}"; do
 
         if [[ "$mode" == "dry-run" ]]; then
             echo
-            echo -e "${CYAN}[DRY-RUN] Would check ${label} before rename:${RESET} $sum_file"
+            if [[ "$checksum_content_modified" == "yes" ]]; then
+                echo -e "${CYAN}[DRY-RUN] Would check ${label} because checksum content would be modified:${RESET} $sum_file"
+            else
+                echo -e "${CYAN}[DRY-RUN] Would check ${label} because rename is needed:${RESET} $sum_file"
+            fi
             echo -e "${RED}OLD ${label}:${RESET} $sum_file"
             echo -e "${GREEN}NEW ${label}:${RESET} $new_sum"
             for i in "${!refs[@]}"; do
@@ -913,6 +930,8 @@ for f in "${ordered_paths[@]}"; do
             for ref in "${refs[@]}"; do processed["$ref"]=1; done
             continue
         fi
+
+        ensure_checksum_file_unix_format "$sum_file"
 
         echo
         echo -e "${RED}OLD ${label}:${RESET} $sum_file"
@@ -1000,9 +1019,9 @@ for f in "${ordered_paths[@]}"; do
         done
 
         for i in "${!refs[@]}"; do
-            if [[ "${new_refs[$i]}" != "${refs[$i]}" ]]; then
-                old_ref_for_write="$(format_ref_for_checksum_file "$sum_file" "${refs_raw[$i]}" "${refs[$i]}")"
-                new_ref_for_write="$(format_ref_for_checksum_file "$sum_file" "${refs_raw[$i]}" "${new_refs[$i]}")"
+            old_ref_for_write="$(format_ref_for_checksum_file "$sum_file" "${refs_raw[$i]}" "${refs[$i]}")"
+            new_ref_for_write="$(format_ref_for_checksum_file "$sum_file" "${refs_raw[$i]}" "${new_refs[$i]}")"
+            if [[ "$old_ref_for_write" != "$new_ref_for_write" ]]; then
                 update_checksum_content_refs "$sum_file" "$old_ref_for_write" "$new_ref_for_write"
             fi
         done
