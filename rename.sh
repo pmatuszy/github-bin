@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.04.01 - v. 4.5 - clarify recovery logging and always normalize hash files to Unix format before checks in real mode
 # 2026.04.01 - v. 4.4 - add rollback of current checksum-group operation on Ctrl-C
 # 2026.03.31 - v. 4.3 - fixed missing VERBOSE_MAIN_EVERY variable in verbose mode
 # 2026.03.31 - v. 4.2 - removed whole-tree path discovery; use local directory processing only
@@ -119,7 +120,7 @@ vlog() {
 }
 
 rollback_current_operation() {
-    local idx old new final_sum
+    local idx old new
 
     (( CURRENT_OP_ACTIVE == 1 )) || return 0
 
@@ -516,7 +517,10 @@ checksum_check() {
     sum_dir="$(dirname -- "$sum_file")"
     sum_base="$(basename -- "$sum_file")"
 
-    ensure_checksum_file_unix_format "$sum_file"
+    if [[ "$mode" == "real" ]]; then
+        ensure_checksum_file_unix_format "$sum_file"
+    fi
+
     vlog "Running $(checksum_cmd "$sum_file") check in directory '$sum_dir' for file '$sum_base'"
 
     if [[ "$mode" == "dry-run" ]]; then
@@ -792,7 +796,7 @@ for f in "${ordered_paths[@]}"; do
 
         vlog "Processing checksum file '$sum_file'"
 
-        if [[ "$mode" == "real" ]] && checksum_file_has_crlf "$sum_file"; then
+        if [[ "$mode" == "real" ]]; then
             ensure_checksum_file_unix_format "$sum_file"
         fi
 
@@ -838,6 +842,7 @@ for f in "${ordered_paths[@]}"; do
                 refs[$i]="$found_ref"
                 checksum_content_modified=yes
                 vlog "Recovery success: '$ref' -> '$found_ref' (write as '$replacement_ref')"
+                echo -e "${CYAN}${label} RECOVERY CANDIDATE VERIFIED:${RESET} '$found_ref' matches the stored ${label,,}."
             else
                 vlog "Recovery failed for '$ref'"
             fi
@@ -858,6 +863,7 @@ for f in "${ordered_paths[@]}"; do
                     update_checksum_content_refs "$sum_file" "${recovered_old_refs[$i]}" "${recovered_new_written_refs[$i]}"
                 done
                 echo -e "${CYAN}${label} RECOVERY UPDATED:${RESET} '$sum_file' was updated to point to the found file(s)."
+                echo -e "${CYAN}${label} RECOVERY NOTE:${RESET} full ${label,,} file verification will follow in normal processing."
             else
                 echo -e "${CYAN}[DRY-RUN] Would update ${label,,} content to use the found file(s) above.${RESET}"
             fi
