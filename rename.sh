@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.04.01 - v. 5.0 - added mojibake replacements for selected broken Polish characters
 # 2026.04.01 - v. 4.9 - process deeper paths first to avoid stale child paths after parent directory renames
 # 2026.04.01 - v. 4.8 - ask before checking large hash files in real mode
 # 2026.04.01 - v. 4.7 - nicer startup banner and flush terminal input buffer before interactive reads
@@ -29,7 +30,7 @@
 # 2026.03.27 - v. 1.3 - fixed top-level path handling: keep ./ prefix in transform_name()
 # 2026.03.27 - v. 1.2 - added many changes about media files
 
-SCRIPT_VERSION="2026.04.01 - v. 4.9"
+SCRIPT_VERSION="2026.04.01 - v. 5.0"
 LARGE_HASHFILE_LINE_THRESHOLD=20
 
 set -Eeuo pipefail
@@ -380,6 +381,13 @@ stop_on_checksum_failure() {
 
 transform_basename() {
     local new="$1"
+
+    # mojibake fixes
+    new="${new//Ă/s}"
+    new="${new//Ĺ›/s}"
+    new="${new//Ăl/o}"
+    new="${new//Ăł/o}"
+    new="${new//Ĺ‚/l}"
 
     new="${new//ą/a}"
     new="${new//ć/c}"
