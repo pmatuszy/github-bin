@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.04.01 - v. 4.6 - sort processed entries alphabetically and print version info at startup
 # 2026.04.01 - v. 4.5 - clarify recovery logging and always normalize hash files to Unix format before checks in real mode
 # 2026.04.01 - v. 4.4 - add rollback of current checksum-group operation on Ctrl-C
 # 2026.03.31 - v. 4.3 - fixed missing VERBOSE_MAIN_EVERY variable in verbose mode
@@ -24,6 +25,8 @@
 # 2026.03.27 - v. 1.4 - apply special media renames after basic normalization
 # 2026.03.27 - v. 1.3 - fixed top-level path handling: keep ./ prefix in transform_name()
 # 2026.03.27 - v. 1.2 - added many changes about media files
+
+SCRIPT_VERSION="2026.04.01 - v. 4.6"
 
 set -Eeuo pipefail
 shopt -s nullglob
@@ -77,6 +80,8 @@ for arg in "$@"; do
             ;;
     esac
 done
+
+echo "# rename.sh ($SCRIPT_VERSION)"
 
 echo
 echo "Use colors?"
@@ -767,9 +772,9 @@ record_rename() {
 }
 
 if [[ "$process_scope" == "current" ]]; then
-    mapfile -d '' -t ordered_paths < <(find . -mindepth 1 -maxdepth 1 -depth -print0)
+    mapfile -d '' -t ordered_paths < <(find . -mindepth 1 -maxdepth 1 -depth -print0 | sort -z)
 else
-    mapfile -d '' -t ordered_paths < <(find . -depth -mindepth 1 -print0)
+    mapfile -d '' -t ordered_paths < <(find . -depth -mindepth 1 -print0 | sort -z)
 fi
 
 vlog "Discovered entries to process: ${#ordered_paths[@]}"
