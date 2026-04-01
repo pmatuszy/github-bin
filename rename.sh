@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.04.01 - v. 4.4 - add rollback of current checksum-group operation on Ctrl-C
 # 2026.03.31 - v. 4.3 - fixed missing VERBOSE_MAIN_EVERY variable in verbose mode
 # 2026.03.31 - v. 4.2 - removed whole-tree path discovery; use local directory processing only
 # 2026.03.31 - v. 4.1 - verbose logs go to stderr so command substitutions are not corrupted
@@ -28,6 +29,16 @@ shopt -s nullglob
 
 VERBOSE=0
 VERBOSE_MAIN_EVERY=200
+
+CURRENT_OP_ACTIVE=0
+CURRENT_OP_LABEL=""
+CURRENT_OP_SUM_OLD=""
+CURRENT_OP_SUM_NEW=""
+CURRENT_OP_SUM_RENAMED=0
+CURRENT_OP_CONTENT_FILE=""
+CURRENT_OP_CONTENT_BACKUP=""
+declare -a CURRENT_OP_FILE_OLDS=()
+declare -a CURRENT_OP_FILE_NEWS=()
 
 on_err() {
     local exit_code="$1"
@@ -105,6 +116,109 @@ ARROW="→"
 vlog() {
     (( VERBOSE == 1 )) || return 0
     echo -e "${CYAN}[VERBOSE]${RESET} $*" >&2
+}
+
+rollback_current_operation() {
+    local idx old new final_sum
+
+    (( CURRENT_OP_ACTIVE == 1 )) || return 0
+
+    echo
+    echo -e "${YELLOW}INTERRUPT:${RESET} Ctrl-C received. Reverting current ${CURRENT_OP_LABEL,,} operation..."
+
+    if [[ -n "$CURRENT_OP_CONTENT_FILE" && -n "$CURRENT_OP_CONTENT_BACKUP" && -e "$CURRENT_OP_CONTENT_BACKUP" ]]; then
+        if [[ -e "$CURRENT_OP_CONTENT_FILE" ]]; then
+            cp -p -- "$CURRENT_OP_CONTENT_BACKUP" "$CURRENT_OP_CONTENT_FILE"
+            echo -e "${CYAN}ROLLBACK:${RESET} restored content of: $CURRENT_OP_CONTENT_FILE"
+        elif [[ "$CURRENT_OP_SUM_RENAMED" -eq 1 && -e "$CURRENT_OP_SUM_NEW" ]]; then
+            cp -p -- "$CURRENT_OP_CONTENT_BACKUP" "$CURRENT_OP_SUM_NEW"
+            echo -e "${CYAN}ROLLBACK:${RESET} restored content of: $CURRENT_OP_SUM_NEW"
+        fi
+    fi
+
+    if [[ "$CURRENT_OP_SUM_RENAMED" -eq 1 && -e "$CURRENT_OP_SUM_NEW" ]]; then
+        mv -f -- "$CURRENT_OP_SUM_NEW" "$CURRENT_OP_SUM_OLD"
+        echo -e "${CYAN}ROLLBACK:${RESET} ${CURRENT_OP_LABEL} file renamed back:"
+        echo "  $CURRENT_OP_SUM_NEW -> $CURRENT_OP_SUM_OLD"
+    fi
+
+    for (( idx=${#CURRENT_OP_FILE_OLDS[@]}-1; idx>=0; idx-- )); do
+        old="${CURRENT_OP_FILE_OLDS[$idx]}"
+        new="${CURRENT_OP_FILE_NEWS[$idx]}"
+        if [[ -e "$new" ]]; then
+            mv -f -- "$new" "$old"
+            echo -e "${CYAN}ROLLBACK:${RESET} referenced file renamed back:"
+            echo "  $new -> $old"
+        fi
+    done
+
+    if [[ -n "$CURRENT_OP_CONTENT_BACKUP" && -e "$CURRENT_OP_CONTENT_BACKUP" ]]; then
+        rm -f -- "$CURRENT_OP_CONTENT_BACKUP"
+    fi
+
+    CURRENT_OP_ACTIVE=0
+    CURRENT_OP_LABEL=""
+    CURRENT_OP_SUM_OLD=""
+    CURRENT_OP_SUM_NEW=""
+    CURRENT_OP_SUM_RENAMED=0
+    CURRENT_OP_CONTENT_FILE=""
+    CURRENT_OP_CONTENT_BACKUP=""
+    CURRENT_OP_FILE_OLDS=()
+    CURRENT_OP_FILE_NEWS=()
+
+    echo -e "${GREEN}ROLLBACK DONE.${RESET}"
+}
+
+on_interrupt() {
+    trap - INT
+    rollback_current_operation
+    exit 130
+}
+trap 'on_interrupt' INT
+
+begin_current_operation() {
+    local label="$1"
+    local sum_old="$2"
+    local sum_new="$3"
+
+    CURRENT_OP_ACTIVE=1
+    CURRENT_OP_LABEL="$label"
+    CURRENT_OP_SUM_OLD="$sum_old"
+    CURRENT_OP_SUM_NEW="$sum_new"
+    CURRENT_OP_SUM_RENAMED=0
+    CURRENT_OP_CONTENT_FILE="$sum_old"
+    CURRENT_OP_CONTENT_BACKUP="$(mktemp)"
+    cp -p -- "$sum_old" "$CURRENT_OP_CONTENT_BACKUP"
+    CURRENT_OP_FILE_OLDS=()
+    CURRENT_OP_FILE_NEWS=()
+}
+
+register_current_file_rename() {
+    local old="$1"
+    local new="$2"
+    CURRENT_OP_FILE_OLDS+=( "$old" )
+    CURRENT_OP_FILE_NEWS+=( "$new" )
+}
+
+mark_current_sum_renamed() {
+    CURRENT_OP_SUM_RENAMED=1
+    CURRENT_OP_CONTENT_FILE="$CURRENT_OP_SUM_NEW"
+}
+
+finish_current_operation() {
+    if [[ -n "$CURRENT_OP_CONTENT_BACKUP" && -e "$CURRENT_OP_CONTENT_BACKUP" ]]; then
+        rm -f -- "$CURRENT_OP_CONTENT_BACKUP"
+    fi
+
+    CURRENT_OP_ACTIVE=0
+    CURRENT_OP_LABEL=""
+    CURRENT_OP_SUM_OLD=""
+    CURRENT_OP_SUM_NEW=""
+    CURRENT_OP_SUM_RENAMED=0
+    CURRENT_OP_CONTENT_FILE=""
+    CURRENT_OP_CONTENT_BACKUP=""
+    CURRENT_OP_FILE_OLDS=()
+    CURRENT_OP_FILE_NEWS=()
 }
 
 echo
@@ -877,6 +991,8 @@ for f in "${ordered_paths[@]}"; do
             continue
         fi
 
+        begin_current_operation "$label" "$sum_file" "$new_sum"
+
         echo -e "${CYAN}${label} check (before rename) in progress...${RESET} $sum_file"
         if ! checksum_check "$sum_file"; then
             echo -e "${YELLOW}${label} FAIL:${RESET} checksum mismatch for '$sum_file' (won't rename pair)"
@@ -893,6 +1009,7 @@ for f in "${ordered_paths[@]}"; do
         if [[ "$collision" == "yes" ]]; then
             echo -e "${YELLOW}SKIP:${RESET} Target file already exists."
             vlog "Collision detected in checksum group '$sum_file'"
+            finish_current_operation
             ((++files_skipped))
             processed["$sum_file"]=1
             for ref in "${refs[@]}"; do processed["$ref"]=1; done
@@ -903,6 +1020,7 @@ for f in "${ordered_paths[@]}"; do
             if [[ "${new_refs[$i]}" != "${refs[$i]}" ]]; then
                 vlog "Renaming referenced file '${refs[$i]}' -> '${new_refs[$i]}'"
                 mv -i -- "${refs[$i]}" "${new_refs[$i]}"
+                register_current_file_rename "${refs[$i]}" "${new_refs[$i]}"
                 ((++files_affected))
                 record_rename "${refs[$i]}" "${new_refs[$i]}"
             else
@@ -922,6 +1040,7 @@ for f in "${ordered_paths[@]}"; do
         if [[ "$new_sum" != "$sum_file" ]]; then
             vlog "Renaming checksum file '$sum_file' -> '$new_sum'"
             mv -i -- "$sum_file" "$new_sum"
+            mark_current_sum_renamed
             ((++files_affected))
             record_rename "$sum_file" "$new_sum"
             final_sum="$new_sum"
@@ -939,6 +1058,7 @@ for f in "${ordered_paths[@]}"; do
             stop_on_checksum_failure "$final_sum" "after rename"
         fi
 
+        finish_current_operation
         vlog "Finished checksum group '$sum_file'"
 
         processed["$sum_file"]=1
