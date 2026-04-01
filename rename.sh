@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.04.01 - v. 4.9 - process deeper paths first to avoid stale child paths after parent directory renames
 # 2026.04.01 - v. 4.8 - ask before checking large hash files in real mode
 # 2026.04.01 - v. 4.7 - nicer startup banner and flush terminal input buffer before interactive reads
 # 2026.04.01 - v. 4.6 - sort processed entries alphabetically and print version info at startup
@@ -28,7 +29,7 @@
 # 2026.03.27 - v. 1.3 - fixed top-level path handling: keep ./ prefix in transform_name()
 # 2026.03.27 - v. 1.2 - added many changes about media files
 
-SCRIPT_VERSION="2026.04.01 - v. 4.8"
+SCRIPT_VERSION="2026.04.01 - v. 4.9"
 LARGE_HASHFILE_LINE_THRESHOLD=20
 
 set -Eeuo pipefail
@@ -827,9 +828,33 @@ record_rename() {
 }
 
 if [[ "$process_scope" == "current" ]]; then
-    mapfile -d '' -t ordered_paths < <(find . -mindepth 1 -maxdepth 1 -depth -print0 | sort -z)
+    mapfile -d '' -t ordered_paths < <(
+        find . -mindepth 1 -maxdepth 1 -depth -print0 |
+        python3 -c '
+import sys
+items = sys.stdin.buffer.read().split(b"\0")
+items = [x for x in items if x]
+def depth(p: bytes) -> int:
+    s = p.decode("utf-8", "surrogateescape")
+    return s.count("/")
+items.sort(key=lambda p: (-depth(p), p))
+sys.stdout.buffer.write(b"\0".join(items) + (b"\0" if items else b""))
+'
+    )
 else
-    mapfile -d '' -t ordered_paths < <(find . -depth -mindepth 1 -print0 | sort -z)
+    mapfile -d '' -t ordered_paths < <(
+        find . -depth -mindepth 1 -print0 |
+        python3 -c '
+import sys
+items = sys.stdin.buffer.read().split(b"\0")
+items = [x for x in items if x]
+def depth(p: bytes) -> int:
+    s = p.decode("utf-8", "surrogateescape")
+    return s.count("/")
+items.sort(key=lambda p: (-depth(p), p))
+sys.stdout.buffer.write(b"\0".join(items) + (b"\0" if items else b""))
+'
+    )
 fi
 
 vlog "Discovered entries to process: ${#ordered_paths[@]}"
