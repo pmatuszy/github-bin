@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.04.01 - v. 4.7 - nicer startup banner and flush terminal input buffer before interactive reads
 # 2026.04.01 - v. 4.6 - sort processed entries alphabetically and print version info at startup
 # 2026.04.01 - v. 4.5 - clarify recovery logging and always normalize hash files to Unix format before checks in real mode
 # 2026.04.01 - v. 4.4 - add rollback of current checksum-group operation on Ctrl-C
@@ -26,7 +27,7 @@
 # 2026.03.27 - v. 1.3 - fixed top-level path handling: keep ./ prefix in transform_name()
 # 2026.03.27 - v. 1.2 - added many changes about media files
 
-SCRIPT_VERSION="2026.04.01 - v. 4.6"
+SCRIPT_VERSION="2026.04.01 - v. 4.7"
 
 set -Eeuo pipefail
 shopt -s nullglob
@@ -64,6 +65,13 @@ Options:
 EOF
 }
 
+flush_stdin() {
+    local discard
+    while IFS= read -r -t 0 -n 1 discard; do
+        :
+    done
+}
+
 for arg in "$@"; do
     case "$arg" in
         -v|--verbose)
@@ -81,7 +89,11 @@ for arg in "$@"; do
     esac
 done
 
-echo "# rename.sh ($SCRIPT_VERSION)"
+echo
+echo "============================================================"
+echo "  rename.sh  •  safe media + checksum rename helper"
+echo "  version: $SCRIPT_VERSION"
+echo "============================================================"
 
 echo
 echo "Use colors?"
@@ -93,6 +105,7 @@ echo -n "Choice [Y/n/q]: "
 use_colors=yes
 input=""
 
+flush_stdin
 read -t 60 -n 1 input || true
 echo
 
@@ -237,6 +250,7 @@ echo -n "Choice [D/r/q]: "
 mode="dry-run"
 input=""
 
+flush_stdin
 read -t 60 -n 1 input || true
 echo
 
@@ -259,6 +273,7 @@ echo -n "Choice [C/s/q]: "
 process_scope="current"
 input=""
 
+flush_stdin
 read -t 60 -n 1 input || true
 echo
 
@@ -963,6 +978,7 @@ for f in "${ordered_paths[@]}"; do
             do_rename=yes
         else
             echo -n "Rename this ${label,,} + referenced file(s)? [Y/n/a/q]: "
+            flush_stdin
             read -t 300 -n 1 input || true
             echo
 
@@ -979,6 +995,7 @@ for f in "${ordered_paths[@]}"; do
                     echo
                     echo "⚠️  This will rename ALL remaining files/directories."
                     echo -n "Are you sure? [y/N]: "
+                    flush_stdin
                     read -n 1 confirm || true
                     echo
                     if [[ "$confirm" =~ [Yy] ]]; then
@@ -1122,6 +1139,7 @@ for f in "${ordered_paths[@]}"; do
     fi
 
     echo -n "Rename this entry? [Y/n/a/q]: "
+    flush_stdin
     read -t 300 -n 1 input || true
     echo
 
@@ -1137,6 +1155,7 @@ for f in "${ordered_paths[@]}"; do
             echo
             echo "⚠️  This will rename ALL remaining files/directories."
             echo -n "Are you sure? [y/N]: "
+            flush_stdin
             read -n 1 confirm || true
             echo
 
