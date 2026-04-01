@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.04.01 - v. 4.8 - ask before checking large hash files in real mode
 # 2026.04.01 - v. 4.7 - nicer startup banner and flush terminal input buffer before interactive reads
 # 2026.04.01 - v. 4.6 - sort processed entries alphabetically and print version info at startup
 # 2026.04.01 - v. 4.5 - clarify recovery logging and always normalize hash files to Unix format before checks in real mode
@@ -27,7 +28,8 @@
 # 2026.03.27 - v. 1.3 - fixed top-level path handling: keep ./ prefix in transform_name()
 # 2026.03.27 - v. 1.2 - added many changes about media files
 
-SCRIPT_VERSION="2026.04.01 - v. 4.7"
+SCRIPT_VERSION="2026.04.01 - v. 4.8"
+LARGE_HASHFILE_LINE_THRESHOLD=20
 
 set -Eeuo pipefail
 shopt -s nullglob
@@ -323,6 +325,44 @@ checksum_cmd() {
     case "$(checksum_kind "$p")" in
         sha512) printf 'sha512sum' ;;
         md5)    printf 'md5sum' ;;
+    esac
+}
+
+count_checksum_entries() {
+    local sum_file="$1"
+    awk 'NF > 0 {count++} END {print count+0}' < <(extract_checksum_entries "$sum_file")
+}
+
+confirm_large_hash_check() {
+    local sum_file="$1"
+    local label="$2"
+    local line_count="$3"
+    local answer=""
+
+    if (( line_count <= LARGE_HASHFILE_LINE_THRESHOLD )); then
+        return 0
+    fi
+
+    echo
+    echo -e "${YELLOW}${label} NOTICE:${RESET} '$sum_file' contains $line_count checksum line(s)."
+    echo "Checking it may take a long time."
+    echo -n "Check this file and continue? [Y/n/q]: "
+
+    flush_stdin
+    read -t 300 -n 1 answer || true
+    echo
+
+    case "$answer" in
+        q|Q)
+            stopped_by_user=yes
+            return 2
+            ;;
+        n|N)
+            return 1
+            ;;
+        *)
+            return 0
+            ;;
     esac
 }
 
@@ -958,6 +998,19 @@ for f in "${ordered_paths[@]}"; do
                 record_rename "${refs[$i]}" "${new_refs[$i]}"
             done
 
+            processed["$sum_file"]=1
+            for ref in "${refs[@]}"; do processed["$ref"]=1; done
+            continue
+        fi
+
+        local_line_count="$(count_checksum_entries "$sum_file")"
+        if ! confirm_large_hash_check "$sum_file" "$label" "$local_line_count"; then
+            rc=$?
+            if [[ $rc -eq 2 ]]; then
+                break
+            fi
+            echo -e "${YELLOW}SKIP:${RESET} User chose not to check large ${label,,} file '$sum_file'."
+            ((++files_skipped))
             processed["$sum_file"]=1
             for ref in "${refs[@]}"; do processed["$ref"]=1; done
             continue
