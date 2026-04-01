@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.04.01 - v. 5.1 - support local exclude filters from _exclude-rename.sh.txt
 # 2026.04.01 - v. 5.0 - added mojibake replacements for selected broken Polish characters
 # 2026.04.01 - v. 4.9 - process deeper paths first to avoid stale child paths after parent directory renames
 # 2026.04.01 - v. 4.8 - ask before checking large hash files in real mode
@@ -30,8 +31,9 @@
 # 2026.03.27 - v. 1.3 - fixed top-level path handling: keep ./ prefix in transform_name()
 # 2026.03.27 - v. 1.2 - added many changes about media files
 
-SCRIPT_VERSION="2026.04.01 - v. 5.0"
+SCRIPT_VERSION="2026.04.01 - v. 5.1"
 LARGE_HASHFILE_LINE_THRESHOLD=20
+EXCLUDE_FILTERS_FILE="./_exclude-rename.sh.txt"
 
 set -Eeuo pipefail
 shopt -s nullglob
@@ -48,6 +50,8 @@ CURRENT_OP_CONTENT_FILE=""
 CURRENT_OP_CONTENT_BACKUP=""
 declare -a CURRENT_OP_FILE_OLDS=()
 declare -a CURRENT_OP_FILE_NEWS=()
+
+declare -a EXCLUDE_FILTERS=()
 
 on_err() {
     local exit_code="$1"
@@ -76,6 +80,30 @@ flush_stdin() {
     done
 }
 
+load_exclude_filters() {
+    local line
+    EXCLUDE_FILTERS=()
+
+    [[ -f "$EXCLUDE_FILTERS_FILE" ]] || return 0
+
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        [[ -n "$line" ]] || continue
+        EXCLUDE_FILTERS+=( "$line" )
+    done < "$EXCLUDE_FILTERS_FILE"
+}
+
+is_excluded_by_filter_file() {
+    local p="$1"
+    local filter
+
+    for filter in "${EXCLUDE_FILTERS[@]}"; do
+        if [[ "$p" == *"$filter"* ]]; then
+            return 0
+        fi
+    done
+    return 1
+}
+
 for arg in "$@"; do
     case "$arg" in
         -v|--verbose)
@@ -93,11 +121,19 @@ for arg in "$@"; do
     esac
 done
 
+load_exclude_filters
+
 echo
 echo "============================================================"
 echo "  rename.sh  •  safe media + checksum rename helper"
 echo "  version: $SCRIPT_VERSION"
 echo "============================================================"
+
+if [[ -f "$EXCLUDE_FILTERS_FILE" ]]; then
+    echo
+    echo "Exclude filter file detected: $EXCLUDE_FILTERS_FILE"
+    echo "Loaded filters: ${#EXCLUDE_FILTERS[@]}"
+fi
 
 echo
 echo "Use colors?"
@@ -876,6 +912,14 @@ for f in "${ordered_paths[@]}"; do
 
     [[ -n "${processed[$f]+x}" ]] && continue
     ((++files_examined))
+
+    if is_excluded_by_filter_file "$f"; then
+        echo -e "${YELLOW}SKIP:${RESET} '$f' was ignored because part of its path matches a filter from $EXCLUDE_FILTERS_FILE."
+        vlog "Excluded by filter file: '$f'"
+        ((++files_skipped))
+        processed["$f"]=1
+        continue
+    fi
 
     if is_excluded_path "$f"; then
         vlog "Skipping excluded path '$f'"
