@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# 2026.04.01 - v. 5.2 - expanded mojibake replacements and kept whole-script delivery
-# 2026.04.01 - v. 5.1 - support local exclude filters from _exclude-rename.sh.txt
+# 2026.04.02 - v. 5.3 - normalize _exclude-rename.sh.txt from CRLF to LF before loading and expand mojibake fixes
+# 2026.04.02 - v. 5.2 - expanded mojibake replacements and kept whole-script delivery
+# 2026.04.02 - v. 5.1 - support local exclude filters from _exclude-rename.sh.txt
 # 2026.04.01 - v. 5.0 - added mojibake replacements for selected broken Polish characters
 # 2026.04.01 - v. 4.9 - process deeper paths first to avoid stale child paths after parent directory renames
 # 2026.04.01 - v. 4.8 - ask before checking large hash files in real mode
@@ -32,7 +33,7 @@
 # 2026.03.27 - v. 1.3 - fixed top-level path handling: keep ./ prefix in transform_name()
 # 2026.03.27 - v. 1.2 - added many changes about media files
 
-SCRIPT_VERSION="2026.04.01 - v. 5.2"
+SCRIPT_VERSION="2026.04.02 - v. 5.3"
 LARGE_HASHFILE_LINE_THRESHOLD=20
 EXCLUDE_FILTERS_FILE="./_exclude-rename.sh.txt"
 
@@ -81,13 +82,51 @@ flush_stdin() {
     done
 }
 
+preserve_timestamps_inplace() {
+    local file="$1"; shift
+    local ref
+    ref="$(mktemp)"
+    touch -r "$file" "$ref"
+    "$@"
+    touch -r "$ref" "$file"
+    rm -f "$ref"
+}
+
+text_file_has_crlf() {
+    local f="$1"
+    LC_ALL=C grep -q $'\r' -- "$f"
+}
+
+normalize_text_file_to_unix() {
+    local f="$1"
+
+    if command -v dos2unix >/dev/null 2>&1; then
+        preserve_timestamps_inplace "$f" dos2unix -q -- "$f"
+    else
+        preserve_timestamps_inplace "$f" sed -i 's/\r$//' -- "$f"
+    fi
+}
+
+normalize_exclude_filters_file_if_needed() {
+    [[ -f "$EXCLUDE_FILTERS_FILE" ]] || return 0
+
+    if text_file_has_crlf "$EXCLUDE_FILTERS_FILE"; then
+        echo "Exclude filter file normalize: converting CRLF to LF: $EXCLUDE_FILTERS_FILE"
+        normalize_text_file_to_unix "$EXCLUDE_FILTERS_FILE"
+        echo "Exclude filter file normalize done: converted from Windows format to Unix format: $EXCLUDE_FILTERS_FILE"
+    fi
+}
+
 load_exclude_filters() {
     local line
     EXCLUDE_FILTERS=()
 
     [[ -f "$EXCLUDE_FILTERS_FILE" ]] || return 0
 
+    normalize_exclude_filters_file_if_needed
+
     while IFS= read -r line || [[ -n "$line" ]]; do
+        line="${line%$'\r'}"
         [[ -n "$line" ]] || continue
         EXCLUDE_FILTERS+=( "$line" )
     done < "$EXCLUDE_FILTERS_FILE"
@@ -427,6 +466,7 @@ transform_basename() {
     new="${new//Ăl/o}"
     new="${new//Ĺ›/s}"
     new="${new//Ä…/a}"
+    new="${new//Ĺş/z}"
     new="${new//Ă/s}"
     new="${new//Ăł/o}"
     new="${new//Ĺ‚/l}"
@@ -570,29 +610,29 @@ transform_name() {
     fi
 }
 
-preserve_timestamps_inplace() {
-    local file="$1"; shift
-    local ref
-    ref="$(mktemp)"
-    touch -r "$file" "$ref"
-    "$@"
-    touch -r "$ref" "$file"
-    rm -f "$ref"
+text_file_has_crlf() {
+    local f="$1"
+    LC_ALL=C grep -q $'\r' -- "$f"
+}
+
+normalize_text_file_to_unix() {
+    local f="$1"
+
+    if command -v dos2unix >/dev/null 2>&1; then
+        preserve_timestamps_inplace "$f" dos2unix -q -- "$f"
+    else
+        preserve_timestamps_inplace "$f" sed -i 's/\r$//' -- "$f"
+    fi
 }
 
 checksum_file_has_crlf() {
     local sum_file="$1"
-    LC_ALL=C grep -q $'\r' -- "$sum_file"
+    text_file_has_crlf "$sum_file"
 }
 
 normalize_checksum_file() {
     local sum_file="$1"
-
-    if command -v dos2unix >/dev/null 2>&1; then
-        preserve_timestamps_inplace "$sum_file" dos2unix -q -- "$sum_file"
-    else
-        preserve_timestamps_inplace "$sum_file" sed -i 's/\r$//' -- "$sum_file"
-    fi
+    normalize_text_file_to_unix "$sum_file"
 }
 
 ensure_checksum_file_unix_format() {
