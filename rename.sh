@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.04.02 - v. 5.4 - added mojibake replacement Ĺ� -> L
 # 2026.04.02 - v. 5.3 - normalize _exclude-rename.sh.txt from CRLF to LF before loading and expand mojibake fixes
 # 2026.04.02 - v. 5.2 - expanded mojibake replacements and kept whole-script delivery
 # 2026.04.02 - v. 5.1 - support local exclude filters from _exclude-rename.sh.txt
@@ -33,7 +34,7 @@
 # 2026.03.27 - v. 1.3 - fixed top-level path handling: keep ./ prefix in transform_name()
 # 2026.03.27 - v. 1.2 - added many changes about media files
 
-SCRIPT_VERSION="2026.04.02 - v. 5.3"
+SCRIPT_VERSION="2026.04.02 - v. 5.4"
 LARGE_HASHFILE_LINE_THRESHOLD=20
 EXCLUDE_FILTERS_FILE="./_exclude-rename.sh.txt"
 
@@ -467,6 +468,7 @@ transform_basename() {
     new="${new//Ĺ›/s}"
     new="${new//Ä…/a}"
     new="${new//Ĺş/z}"
+    new="${new//Ĺ�/L}"
     new="${new//Ă/s}"
     new="${new//Ăł/o}"
     new="${new//Ĺ‚/l}"
