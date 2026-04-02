@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.04.02 - v. 5.5 - support comments in _exclude-rename.sh.txt with lines starting with #
 # 2026.04.02 - v. 5.4 - added mojibake replacement Ĺ� -> L
 # 2026.04.02 - v. 5.3 - normalize _exclude-rename.sh.txt from CRLF to LF before loading and expand mojibake fixes
 # 2026.04.02 - v. 5.2 - expanded mojibake replacements and kept whole-script delivery
@@ -34,7 +35,7 @@
 # 2026.03.27 - v. 1.3 - fixed top-level path handling: keep ./ prefix in transform_name()
 # 2026.03.27 - v. 1.2 - added many changes about media files
 
-SCRIPT_VERSION="2026.04.02 - v. 5.4"
+SCRIPT_VERSION="2026.04.02 - v. 5.5"
 LARGE_HASHFILE_LINE_THRESHOLD=20
 EXCLUDE_FILTERS_FILE="./_exclude-rename.sh.txt"
 
@@ -129,6 +130,7 @@ load_exclude_filters() {
     while IFS= read -r line || [[ -n "$line" ]]; do
         line="${line%$'\r'}"
         [[ -n "$line" ]] || continue
+        [[ "$line" =~ ^# ]] && continue
         EXCLUDE_FILTERS+=( "$line" )
     done < "$EXCLUDE_FILTERS_FILE"
 }
