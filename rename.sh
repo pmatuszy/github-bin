@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.04.02 - v. 6.0 - avoid prompt hangs from repeated keypresses by bounding stdin draining and discarding extra buffered keystrokes
 # 2026.04.02 - v. 5.9 - skip plain entry renames when a local checksum file refers to them; let checksum branch handle the group
 # 2026.04.02 - v. 5.8 - process checksum files before sibling plain entries to avoid stale local hash refs
 # 2026.04.02 - v. 5.7 - remove _OSiOLEK.com and LEK.PL fragments from names
@@ -39,7 +40,7 @@
 # 2026.03.27 - v. 1.3 - fixed top-level path handling: keep ./ prefix in transform_name()
 # 2026.03.27 - v. 1.2 - added many changes about media files
 
-SCRIPT_VERSION="2026.04.02 - v. 5.9"
+SCRIPT_VERSION="2026.04.02 - v. 6.0"
 LARGE_HASHFILE_LINE_THRESHOLD=20
 EXCLUDE_FILTERS_FILE="./_exclude-rename.sh.txt"
 
@@ -83,9 +84,25 @@ EOF
 
 flush_stdin() {
     local discard
-    while IFS= read -r -t 0 -n 1 discard; do
-        :
+    local drained=0
+    local max_drain=256
+
+    while (( drained < max_drain )) && IFS= read -r -t 0.02 -n 1 discard; do
+        ((++drained))
     done
+}
+
+read_single_key() {
+    local __var_name="$1"
+    local __timeout="$2"
+    local __char=""
+
+    IFS= read -r -t "$__timeout" -n 1 __char || true
+    printf -v "$__var_name" '%s' "$__char"
+
+    # Discard any extra buffered keypresses from the same burst so they do not
+    # affect the next prompt or keep the pre-read drain loop busy.
+    flush_stdin
 }
 
 preserve_timestamps_inplace() {
@@ -193,7 +210,7 @@ use_colors=yes
 input=""
 
 flush_stdin
-read -t 60 -n 1 input || true
+read_single_key input 60
 echo
 
 if [[ "$input" =~ [Qq] ]]; then
@@ -338,7 +355,7 @@ mode="dry-run"
 input=""
 
 flush_stdin
-read -t 60 -n 1 input || true
+read_single_key input 60
 echo
 
 if [[ "$input" =~ [Qq] ]]; then
@@ -361,7 +378,7 @@ process_scope="current"
 input=""
 
 flush_stdin
-read -t 60 -n 1 input || true
+read_single_key input 60
 echo
 
 if [[ "$input" =~ [Qq] ]]; then
