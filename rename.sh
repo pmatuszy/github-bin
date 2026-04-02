@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# 2026.04.02 - v. 6.0 - avoid prompt hangs from repeated keypresses by bounding stdin draining and discarding extra buffered keystrokes
+# 2026.04.02 - v. 6.1 - avoid prompt hangs from repeated keypresses by bounding stdin draining and discarding extra buffered keystrokes
+# 2026.04.02 - v. 6.1 - verify only changed checksum references inside checksum groups so stale unrelated refs do not abort
 # 2026.04.02 - v. 5.9 - skip plain entry renames when a local checksum file refers to them; let checksum branch handle the group
 # 2026.04.02 - v. 5.8 - process checksum files before sibling plain entries to avoid stale local hash refs
 # 2026.04.02 - v. 5.7 - remove _OSiOLEK.com and LEK.PL fragments from names
@@ -40,7 +41,7 @@
 # 2026.03.27 - v. 1.3 - fixed top-level path handling: keep ./ prefix in transform_name()
 # 2026.03.27 - v. 1.2 - added many changes about media files
 
-SCRIPT_VERSION="2026.04.02 - v. 6.0"
+SCRIPT_VERSION="2026.04.02 - v. 6.1"
 LARGE_HASHFILE_LINE_THRESHOLD=20
 EXCLUDE_FILTERS_FILE="./_exclude-rename.sh.txt"
 
@@ -722,6 +723,34 @@ checksum_check() {
     fi
 }
 
+verify_single_checksum_target() {
+    local sum_file="$1"
+    local target_ref="$2"
+    local kind sum_dir sum_base target_norm target_re matched_line
+
+    kind="$(checksum_kind "$sum_file")"
+    sum_dir="$(dirname -- "$sum_file")"
+    sum_base="$(basename -- "$sum_file")"
+    target_norm="$(strip_leading_dot_slash "$target_ref")"
+    target_re="$(sed_escape_regex "$target_norm")"
+
+    vlog "Running single-target $(checksum_cmd "$sum_file") check in directory '$sum_dir' for ref '$target_ref' from file '$sum_base'"
+
+    matched_line="$(
+        sed -E 's/\r$//' -- "$sum_file" | grep -E "^[0-9a-fA-F]+[[:space:]]+\*?${target_re}$" | tail -n 1 || true
+    )"
+
+    [[ -n "$matched_line" ]] || return 1
+
+    (
+        cd "$sum_dir"
+        case "$kind" in
+            sha512) printf '%s\n' "$matched_line" | sha512sum -c --quiet --status ;;
+            md5)    printf '%s\n' "$matched_line" | md5sum    -c --quiet --status ;;
+        esac
+    )
+}
+
 checksum_of_file() {
     local kind="$1"
     local file="$2"
@@ -1361,12 +1390,22 @@ for f in "${ordered_paths[@]}"; do
 
         begin_current_operation "$label" "$sum_file" "$new_sum"
 
-        echo -e "${CYAN}${label} check (before rename) in progress...${RESET} $sum_file"
-        if ! checksum_check "$sum_file"; then
-            echo -e "${YELLOW}${label} FAIL:${RESET} checksum mismatch for '$sum_file' (won't rename pair)"
-            stop_on_checksum_failure "$sum_file" "before rename"
+        changed_count=0
+        for i in "${!refs[@]}"; do
+            [[ "${new_refs[$i]}" != "${refs[$i]}" ]] && ((++changed_count))
+        done
+
+        if (( changed_count > 0 )); then
+            echo -e "${CYAN}${label} check (before rename) in progress for changed reference(s)...${RESET} $sum_file"
+            for i in "${!refs[@]}"; do
+                [[ "${new_refs[$i]}" != "${refs[$i]}" ]] || continue
+                if ! verify_single_checksum_target "$sum_file" "${refs_raw[$i]}"; then
+                    echo -e "${YELLOW}${label} FAIL:${RESET} checksum mismatch for reference '${refs_raw[$i]}' in '$sum_file' (won't rename pair)"
+                    stop_on_checksum_failure "$sum_file" "before rename"
+                fi
+            done
+            echo -e "${CYAN}${label} VERIFIED (before rename):${RESET} changed reference(s) in $sum_file"
         fi
-        echo -e "${CYAN}${label} VERIFIED (before rename):${RESET} $sum_file"
 
         collision=no
         [[ "$new_sum" != "$sum_file" && -e "$new_sum" ]] && collision=yes
@@ -1416,14 +1455,19 @@ for f in "${ordered_paths[@]}"; do
             ((++files_skipped))
         fi
 
-        echo -e "${CYAN}${label} check (after rename) in progress...${RESET} $final_sum"
-        if checksum_check "$final_sum"; then
-            echo -e "${CYAN}${label} VERIFIED (after rename):${RESET} $final_sum"
-            echo -e "${GREEN}${label} OK:${RESET} referenced file name(s) were updated inside '$final_sum' and ${label,,} checksum(s) are correct."
-        else
-            echo -e "${YELLOW}${label} FAIL (after rename):${RESET} '$final_sum' does not validate."
-            echo -e "${YELLOW}NOTE:${RESET} Files were renamed, but checksum verification after update failed."
-            stop_on_checksum_failure "$final_sum" "after rename"
+        if (( changed_count > 0 )); then
+            echo -e "${CYAN}${label} check (after rename) in progress for changed reference(s)...${RESET} $final_sum"
+            for i in "${!refs[@]}"; do
+                [[ "${new_refs[$i]}" != "${refs[$i]}" ]] || continue
+                new_ref_for_verify="$(format_ref_for_checksum_file "$final_sum" "${refs_raw[$i]}" "${new_refs[$i]}")"
+                if ! verify_single_checksum_target "$final_sum" "$new_ref_for_verify"; then
+                    echo -e "${YELLOW}${label} FAIL (after rename):${RESET} reference '$new_ref_for_verify' in '$final_sum' does not validate."
+                    echo -e "${YELLOW}NOTE:${RESET} Files were renamed, but checksum verification after update failed."
+                    stop_on_checksum_failure "$final_sum" "after rename"
+                fi
+            done
+            echo -e "${CYAN}${label} VERIFIED (after rename):${RESET} changed reference(s) in $final_sum"
+            echo -e "${GREEN}${label} OK:${RESET} changed reference(s) were updated inside '$final_sum' and ${label,,} checksum(s) are correct."
         fi
 
         finish_current_operation
