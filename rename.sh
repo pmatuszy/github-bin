@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.04.02 - v. 5.8 - process checksum files before sibling plain entries to avoid stale local hash refs
 # 2026.04.02 - v. 5.7 - remove _OSiOLEK.com and LEK.PL fragments from names
 # 2026.04.02 - v. 5.6 - update only local hash files after plain file/directory renames and verify only changed checksum files
 # 2026.04.02 - v. 5.5 - support comments in _exclude-rename.sh.txt with lines starting with #
@@ -37,7 +38,7 @@
 # 2026.03.27 - v. 1.3 - fixed top-level path handling: keep ./ prefix in transform_name()
 # 2026.03.27 - v. 1.2 - added many changes about media files
 
-SCRIPT_VERSION="2026.04.02 - v. 5.7"
+SCRIPT_VERSION="2026.04.02 - v. 5.8"
 LARGE_HASHFILE_LINE_THRESHOLD=20
 EXCLUDE_FILTERS_FILE="./_exclude-rename.sh.txt"
 
@@ -807,7 +808,7 @@ collect_local_checksum_ref_updates() {
         [[ -f "$sum_file" ]] || continue
         is_checksum_file "$sum_file" || continue
 
-        while IFS=$'	' read -r hash ref; do
+        while IFS=$'\t' read -r hash ref; do
             [[ -n "$ref" ]] || continue
             resolved="$(resolve_checksum_ref_path "$sum_file" "$ref")"
 
@@ -1109,7 +1110,10 @@ items = [x for x in items if x]
 def depth(p: bytes) -> int:
     s = p.decode("utf-8", "surrogateescape")
     return s.count("/")
-items.sort(key=lambda p: (-depth(p), p))
+def is_checksum(p: bytes) -> int:
+    s = p.decode("utf-8", "surrogateescape")
+    return 0 if (s.endswith(".sha512") or s.endswith(".md5")) else 1
+items.sort(key=lambda p: (-depth(p), is_checksum(p), p))
 sys.stdout.buffer.write(b"\0".join(items) + (b"\0" if items else b""))
 '
     )
@@ -1123,7 +1127,10 @@ items = [x for x in items if x]
 def depth(p: bytes) -> int:
     s = p.decode("utf-8", "surrogateescape")
     return s.count("/")
-items.sort(key=lambda p: (-depth(p), p))
+def is_checksum(p: bytes) -> int:
+    s = p.decode("utf-8", "surrogateescape")
+    return 0 if (s.endswith(".sha512") or s.endswith(".md5")) else 1
+items.sort(key=lambda p: (-depth(p), is_checksum(p), p))
 sys.stdout.buffer.write(b"\0".join(items) + (b"\0" if items else b""))
 '
     )
@@ -1540,4 +1547,3 @@ if (( files_affected > 0 )); then
     done
 fi
 echo "==========================="
-
