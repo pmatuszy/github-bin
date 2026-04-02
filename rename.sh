@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.04.01 - v. 5.2 - expanded mojibake replacements and kept whole-script delivery
 # 2026.04.01 - v. 5.1 - support local exclude filters from _exclude-rename.sh.txt
 # 2026.04.01 - v. 5.0 - added mojibake replacements for selected broken Polish characters
 # 2026.04.01 - v. 4.9 - process deeper paths first to avoid stale child paths after parent directory renames
@@ -31,7 +32,7 @@
 # 2026.03.27 - v. 1.3 - fixed top-level path handling: keep ./ prefix in transform_name()
 # 2026.03.27 - v. 1.2 - added many changes about media files
 
-SCRIPT_VERSION="2026.04.01 - v. 5.1"
+SCRIPT_VERSION="2026.04.01 - v. 5.2"
 LARGE_HASHFILE_LINE_THRESHOLD=20
 EXCLUDE_FILTERS_FILE="./_exclude-rename.sh.txt"
 
@@ -419,9 +420,14 @@ transform_basename() {
     local new="$1"
 
     # mojibake fixes
-    new="${new//Ă/s}"
-    new="${new//Ĺ›/s}"
+    new="${new//Ä™/e}"
+    new="${new//Ĺ„/n}"
+    new="${new//Ä‡/c}"
+    new="${new//ĹĽ/z}"
     new="${new//Ăl/o}"
+    new="${new//Ĺ›/s}"
+    new="${new//Ä…/a}"
+    new="${new//Ă/s}"
     new="${new//Ăł/o}"
     new="${new//Ĺ‚/l}"
 
