@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.04.02 - v. 5.9 - skip plain entry renames when a local checksum file refers to them; let checksum branch handle the group
 # 2026.04.02 - v. 5.8 - process checksum files before sibling plain entries to avoid stale local hash refs
 # 2026.04.02 - v. 5.7 - remove _OSiOLEK.com and LEK.PL fragments from names
 # 2026.04.02 - v. 5.6 - update only local hash files after plain file/directory renames and verify only changed checksum files
@@ -38,7 +39,7 @@
 # 2026.03.27 - v. 1.3 - fixed top-level path handling: keep ./ prefix in transform_name()
 # 2026.03.27 - v. 1.2 - added many changes about media files
 
-SCRIPT_VERSION="2026.04.02 - v. 5.8"
+SCRIPT_VERSION="2026.04.02 - v. 5.9"
 LARGE_HASHFILE_LINE_THRESHOLD=20
 EXCLUDE_FILTERS_FILE="./_exclude-rename.sh.txt"
 
@@ -808,7 +809,7 @@ collect_local_checksum_ref_updates() {
         [[ -f "$sum_file" ]] || continue
         is_checksum_file "$sum_file" || continue
 
-        while IFS=$'\t' read -r hash ref; do
+        while IFS=$'	' read -r hash ref; do
             [[ -n "$ref" ]] || continue
             resolved="$(resolve_checksum_ref_path "$sum_file" "$ref")"
 
@@ -849,20 +850,49 @@ collect_local_checksum_ref_updates() {
     done
 }
 
+declare -a PLAIN_REF_SUM_FILES=()
+
+collect_local_checksum_ref_summaries() {
+    local target_old="$1"
+    local target_kind="$2"
+
+    local current_dir sum_file hash ref resolved
+    local -A seen=()
+
+    PLAIN_REF_SUM_FILES=()
+    current_dir="$(dirname -- "$target_old")"
+
+    for sum_file in "$current_dir"/*.sha512 "$current_dir"/*.md5; do
+        [[ -f "$sum_file" ]] || continue
+        is_checksum_file "$sum_file" || continue
+
+        while IFS=$'	' read -r hash ref; do
+            [[ -n "$ref" ]] || continue
+            resolved="$(resolve_checksum_ref_path "$sum_file" "$ref")"
+
+            case "$target_kind" in
+                file)
+                    [[ "$resolved" == "$target_old" ]] || continue
+                    ;;
+                directory)
+                    [[ "$resolved" == "$target_old" || "$resolved" == "$target_old/"* ]] || continue
+                    ;;
+                *)
+                    continue
+                    ;;
+            esac
+
+            if [[ -z "${seen[$sum_file]+x}" ]]; then
+                seen["$sum_file"]=1
+                PLAIN_REF_SUM_FILES+=( "$sum_file" )
+            fi
+        done < <(extract_checksum_entries "$sum_file")
+    done
+}
+
 perform_plain_entry_rename() {
     local old="$1"
     local new="$2"
-
-    local path_kind label sum_file backup local_line_count rc
-    local -a backup_files=()
-
-    if [[ -d "$old" ]]; then
-        path_kind="directory"
-    else
-        path_kind="file"
-    fi
-
-    collect_local_checksum_ref_updates "$old" "$new" "$path_kind"
 
     if [[ -e "$new" ]]; then
         echo -e "${YELLOW}SKIP:${RESET} Target file already exists."
@@ -872,87 +902,15 @@ perform_plain_entry_rename() {
     fi
 
     if [[ "$mode" == "dry-run" ]]; then
-        echo
-        echo -e "${RED}OLD:${RESET} $old"
-        echo -e "${GREEN}NEW:${RESET} $new"
-        if (( ${#LOCAL_UPDATE_SUM_FILES[@]} > 0 )); then
-            echo -e "${CYAN}[DRY-RUN] Would update local checksum file(s) in directory:${RESET} $(dirname -- "$old")"
-            for i in "${!LOCAL_UPDATE_SUM_FILES[@]}"; do
-                echo -e "  ${CYAN}HASH FILE:${RESET} ${LOCAL_UPDATE_SUM_FILES[$i]}"
-                echo -e "    ${RED}OLD REF:${RESET} ${LOCAL_UPDATE_OLD_REFS[$i]}"
-                echo -e "    ${GREEN}NEW REF:${RESET} ${LOCAL_UPDATE_NEW_REFS[$i]}"
-            done
-            for sum_file in "${LOCAL_UPDATE_VERIFY_FILES[@]}"; do
-                label="$(checksum_label "$sum_file")"
-                echo -e "${CYAN}[DRY-RUN] Would verify changed ${label} file only:${RESET} $sum_file"
-            done
-        fi
-        echo "----------------------------------------"
+        echo -e "${CYAN}[DRY-RUN] Would rename:${RESET} $old ${ARROW} $new"
         ((++files_affected))
         record_rename "$old" "$new"
         return 0
     fi
 
-    for sum_file in "${LOCAL_UPDATE_VERIFY_FILES[@]}"; do
-        label="$(checksum_label "$sum_file")"
-        local_line_count="$(count_checksum_entries "$sum_file")"
-        if ! confirm_large_hash_check "$sum_file" "$label" "$local_line_count"; then
-            rc=$?
-            if [[ $rc -eq 2 ]]; then
-                stopped_by_user=yes
-                return 1
-            fi
-            echo -e "${YELLOW}SKIP:${RESET} User chose not to check large ${label,,} file '$sum_file'."
-            ((++files_skipped))
-            return 0
-        fi
-
-        ensure_checksum_file_unix_format "$sum_file"
-        echo -e "${CYAN}${label} check (before rename) in progress...${RESET} $sum_file"
-        if ! checksum_check "$sum_file"; then
-            echo -e "${YELLOW}${label} FAIL:${RESET} checksum mismatch for '$sum_file' (won't rename entry)"
-            stop_on_checksum_failure "$sum_file" "before rename"
-        fi
-        echo -e "${CYAN}${label} VERIFIED (before rename):${RESET} $sum_file"
-    done
-
-    for sum_file in "${LOCAL_UPDATE_VERIFY_FILES[@]}"; do
-        backup="$(mktemp)"
-        cp -p -- "$sum_file" "$backup"
-        backup_files+=( "$backup" )
-    done
-
-    if ! mv -i -- "$old" "$new"; then
-        for backup in "${backup_files[@]}"; do rm -f -- "$backup"; done
-        ((++files_skipped))
-        return 0
-    fi
-
+    mv -i -- "$old" "$new"
     ((++files_affected))
     record_rename "$old" "$new"
-
-    for i in "${!LOCAL_UPDATE_SUM_FILES[@]}"; do
-        update_checksum_content_refs "${LOCAL_UPDATE_SUM_FILES[$i]}" "${LOCAL_UPDATE_OLD_REFS[$i]}" "${LOCAL_UPDATE_NEW_REFS[$i]}"
-    done
-
-    for i in "${!LOCAL_UPDATE_VERIFY_FILES[@]}"; do
-        sum_file="${LOCAL_UPDATE_VERIFY_FILES[$i]}"
-        label="$(checksum_label "$sum_file")"
-        echo -e "${CYAN}${label} check (after rename) in progress...${RESET} $sum_file"
-        if checksum_check "$sum_file"; then
-            echo -e "${CYAN}${label} VERIFIED (after rename):${RESET} $sum_file"
-            echo -e "${GREEN}${label} OK:${RESET} local checksum reference(s) were updated inside '$sum_file' and ${label,,} checksum(s) are correct."
-        else
-            echo -e "${YELLOW}${label} FAIL (after rename):${RESET} '$sum_file' does not validate."
-            echo -e "${YELLOW}ROLLBACK:${RESET} restoring checksum file and renamed entry."
-            cp -p -- "${backup_files[$i]}" "$sum_file"
-            mv -f -- "$new" "$old"
-            for backup in "${backup_files[@]}"; do rm -f -- "$backup"; done
-            stop_on_checksum_failure "$sum_file" "after rename"
-        fi
-    done
-
-    for backup in "${backup_files[@]}"; do rm -f -- "$backup"; done
     return 0
 }
 
@@ -1547,3 +1505,4 @@ if (( files_affected > 0 )); then
     done
 fi
 echo "==========================="
+
