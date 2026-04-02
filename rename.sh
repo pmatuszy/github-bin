@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# 2026.04.02 - v. 5.7 - remove _OSiOLEK.com and LEK.PL fragments from names
+# 2026.04.02 - v. 5.6 - update only local hash files after plain file/directory renames and verify only changed checksum files
 # 2026.04.02 - v. 5.5 - support comments in _exclude-rename.sh.txt with lines starting with #
 # 2026.04.02 - v. 5.4 - added mojibake replacement Ĺ� -> L
 # 2026.04.02 - v. 5.3 - normalize _exclude-rename.sh.txt from CRLF to LF before loading and expand mojibake fixes
@@ -35,7 +37,7 @@
 # 2026.03.27 - v. 1.3 - fixed top-level path handling: keep ./ prefix in transform_name()
 # 2026.03.27 - v. 1.2 - added many changes about media files
 
-SCRIPT_VERSION="2026.04.02 - v. 5.5"
+SCRIPT_VERSION="2026.04.02 - v. 5.7"
 LARGE_HASHFILE_LINE_THRESHOLD=20
 EXCLUDE_FILTERS_FILE="./_exclude-rename.sh.txt"
 
@@ -509,6 +511,10 @@ transform_basename() {
     new="${new//&/_and_}"
     new="${new//•/-}"
 
+    # remove unwanted fragments from names
+    new="${new//_OSiOLEK.com/}"
+    new="${new//LEK.PL/}"
+
     new=$(printf '%s' "$new" | sed -E '
         s/__+/_/g;
         s/_\././g;
@@ -921,6 +927,195 @@ record_rename() {
     renamed_list+=("$key")
 }
 
+list_local_checksum_files() {
+    local dir="$1"
+    local -n _out_ref="$2"
+
+    _out_ref=()
+    while IFS= read -r -d '' sum; do
+        _out_ref+=( "$sum" )
+    done < <(find "$dir" -mindepth 1 -maxdepth 1 -type f \( -name '*.sha512' -o -name '*.md5' \) -print0 | sort -z)
+}
+
+collect_checksum_updates_for_path() {
+    local sum_file="$1"
+    local old_path="$2"
+    local new_path="$3"
+    local is_dir_rename="$4"
+
+    local old_abs new_abs sum_dir ref_hash ref_raw ref_resolved ref_abs ref_new ref_new_written
+    local matched=1
+
+    old_abs="$(python3 - "$old_path" <<'PY'
+import os, sys
+print(os.path.abspath(sys.argv[1]))
+PY
+)"
+    new_abs="$(python3 - "$new_path" <<'PY'
+import os, sys
+print(os.path.abspath(sys.argv[1]))
+PY
+)"
+    sum_dir="$(dirname -- "$sum_file")"
+
+    CHECKSUM_UPDATE_OLD_REFS=()
+    CHECKSUM_UPDATE_NEW_REFS=()
+
+    while IFS=$'\t' read -r ref_hash ref_raw; do
+        [[ -n "$ref_raw" ]] || continue
+        ref_resolved="$(resolve_checksum_ref_path "$sum_file" "$ref_raw")"
+        ref_abs="$(python3 - "$ref_resolved" <<'PY'
+import os, sys
+print(os.path.abspath(sys.argv[1]))
+PY
+)"
+
+        if [[ "$is_dir_rename" == "yes" ]]; then
+            if python3 - "$old_abs" "$ref_abs" >/dev/null 2>&1 <<'PY'
+import os, sys
+old_abs = sys.argv[1]
+ref_abs = sys.argv[2]
+try:
+    common = os.path.commonpath([old_abs, ref_abs])
+    ok = (common == old_abs)
+except ValueError:
+    ok = False
+raise SystemExit(0 if ok else 1)
+PY
+            then
+                ref_new="$(python3 - "$old_abs" "$new_abs" "$ref_abs" <<'PY'
+import os, sys
+old_abs, new_abs, ref_abs = sys.argv[1:4]
+rel = os.path.relpath(ref_abs, old_abs)
+print(os.path.normpath(os.path.join(new_abs, rel)))
+PY
+)"
+                ref_new_written="$(format_ref_for_checksum_file "$sum_file" "$ref_raw" "$ref_new")"
+                CHECKSUM_UPDATE_OLD_REFS+=( "$ref_raw" )
+                CHECKSUM_UPDATE_NEW_REFS+=( "$ref_new_written" )
+                matched=0
+            fi
+        else
+            if [[ "$ref_abs" == "$old_abs" ]]; then
+                ref_new_written="$(format_ref_for_checksum_file "$sum_file" "$ref_raw" "$new_path")"
+                CHECKSUM_UPDATE_OLD_REFS+=( "$ref_raw" )
+                CHECKSUM_UPDATE_NEW_REFS+=( "$ref_new_written" )
+                matched=0
+            fi
+        fi
+    done < <(extract_checksum_entries "$sum_file")
+
+    return $matched
+}
+
+verify_single_checksum_target() {
+    local sum_file="$1"
+    local target_ref="$2"
+    local kind sum_dir sum_base target_norm
+
+    kind="$(checksum_kind "$sum_file")"
+    sum_dir="$(dirname -- "$sum_file")"
+    sum_base="$(basename -- "$sum_file")"
+    target_norm="$(strip_leading_dot_slash "$target_ref")"
+
+    vlog "Running single-target $(checksum_cmd "$sum_file") check in '$sum_dir' for ref '$target_ref' from '$sum_base'"
+
+    (
+        cd "$sum_dir"
+        case "$kind" in
+            sha512)
+                sed -E 's/\r$//' -- "$sum_base" | grep -E "[[:space:]]\*?$(sed_escape_regex "$target_norm")$" | sha512sum -c --quiet --status
+                ;;
+            md5)
+                sed -E 's/\r$//' -- "$sum_base" | grep -E "[[:space:]]\*?$(sed_escape_regex "$target_norm")$" | md5sum -c --quiet --status
+                ;;
+        esac
+    )
+}
+
+perform_plain_entry_rename() {
+    local old="$1"
+    local new="$2"
+    local current_dir is_dir_rename
+    local -a local_hash_files=()
+    local -a changed_hash_files=()
+    local -a changed_hash_refs=()
+    local sum_file ref_old ref_new idx label
+
+    current_dir="$(dirname -- "$old")"
+    [[ -d "$old" ]] && is_dir_rename=yes || is_dir_rename=no
+
+    if [[ -e "$new" ]]; then
+        echo -e "${YELLOW}SKIP:${RESET} Target already exists: $new"
+        ((++files_skipped))
+        return 0
+    fi
+
+    list_local_checksum_files "$current_dir" local_hash_files
+
+    for sum_file in "${local_hash_files[@]}"; do
+        if collect_checksum_updates_for_path "$sum_file" "$old" "$new" "$is_dir_rename"; then
+            continue
+        fi
+
+        changed_hash_files+=( "$sum_file" )
+        if [[ "$is_dir_rename" == "yes" ]]; then
+            changed_hash_refs+=( "<directory-update>" )
+        else
+            changed_hash_refs+=( "${CHECKSUM_UPDATE_NEW_REFS[0]}" )
+        fi
+    done
+
+    if [[ "$mode" == "dry-run" ]]; then
+        echo -e "${CYAN}[DRY-RUN] Would rename:${RESET} $old ${ARROW} $new"
+        for idx in "${!changed_hash_files[@]}"; do
+            sum_file="${changed_hash_files[$idx]}"
+            echo -e "${CYAN}[DRY-RUN] Would update local checksum file:${RESET} $sum_file"
+        done
+        ((++files_affected))
+        record_rename "$old" "$new"
+        return 0
+    fi
+
+    mv -i -- "$old" "$new"
+    ((++files_affected))
+    record_rename "$old" "$new"
+
+    for sum_file in "${local_hash_files[@]}"; do
+        if collect_checksum_updates_for_path "$sum_file" "$old" "$new" "$is_dir_rename"; then
+            continue
+        fi
+
+        ensure_checksum_file_unix_format "$sum_file"
+        label="$(checksum_label "$sum_file")"
+
+        for idx in "${!CHECKSUM_UPDATE_OLD_REFS[@]}"; do
+            ref_old="${CHECKSUM_UPDATE_OLD_REFS[$idx]}"
+            ref_new="${CHECKSUM_UPDATE_NEW_REFS[$idx]}"
+            update_checksum_content_refs "$sum_file" "$ref_old" "$ref_new"
+        done
+
+        if [[ "$is_dir_rename" == "yes" ]]; then
+            echo -e "${CYAN}${label} check (after directory rename) in progress...${RESET} $sum_file"
+            if checksum_check "$sum_file"; then
+                echo -e "${GREEN}${label} OK:${RESET} updated local references in '$sum_file' after directory rename."
+            else
+                stop_on_checksum_failure "$sum_file" "after directory rename"
+            fi
+        else
+            ref_new="${CHECKSUM_UPDATE_NEW_REFS[0]}"
+            echo -e "${CYAN}${label} check (after file rename) in progress for changed entry...${RESET} $sum_file -> $ref_new"
+            if verify_single_checksum_target "$sum_file" "$ref_new"; then
+                echo -e "${GREEN}${label} OK:${RESET} updated local reference in '$sum_file' for '$ref_new'."
+            else
+                stop_on_checksum_failure "$sum_file" "after file rename"
+            fi
+        fi
+    done
+
+    return 0
+}
+
 if [[ "$process_scope" == "current" ]]; then
     mapfile -d '' -t ordered_paths < <(
         find . -mindepth 1 -maxdepth 1 -depth -print0 |
@@ -1293,31 +1488,15 @@ for f in "${ordered_paths[@]}"; do
         continue
     }
 
-    if [[ "$mode" == "dry-run" ]]; then
-        echo
-        echo -e "${RED}OLD:${RESET} $f"
-        echo -e "${GREEN}NEW:${RESET} $new"
-        echo "----------------------------------------"
-        ((++files_affected))
-        record_rename "$f" "$new"
+    if [[ "$rename_all" == "yes" ]]; then
+        vlog "Renaming '$f' -> '$new' due to rename_all"
+        perform_plain_entry_rename "$f" "$new" || break
         continue
     fi
 
     echo
     echo -e "${RED}OLD:${RESET} $f"
     echo -e "${GREEN}NEW:${RESET} $new"
-
-    if [[ "$rename_all" == "yes" ]]; then
-        vlog "Renaming '$f' -> '$new' due to rename_all"
-        if mv -i -- "$f" "$new"; then
-            ((++files_affected))
-            record_rename "$f" "$new"
-        else
-            ((++files_skipped))
-        fi
-        continue
-    fi
-
     echo -n "Rename this entry? [Y/n/a/q]: "
     flush_stdin
     read -t 300 -n 1 input || true
@@ -1342,24 +1521,14 @@ for f in "${ordered_paths[@]}"; do
             if [[ "$confirm" =~ [Yy] ]]; then
                 rename_all=yes
                 vlog "rename_all enabled by user"
-                if mv -i -- "$f" "$new"; then
-                    ((++files_affected))
-                    record_rename "$f" "$new"
-                else
-                    ((++files_skipped))
-                fi
+                perform_plain_entry_rename "$f" "$new" || break
             else
                 ((++files_skipped))
             fi
             ;;
         *)
             vlog "Renaming '$f' -> '$new'"
-            if mv -i -- "$f" "$new"; then
-                ((++files_affected))
-                record_rename "$f" "$new"
-            else
-                ((++files_skipped))
-            fi
+            perform_plain_entry_rename "$f" "$new" || break
             ;;
     esac
 done
