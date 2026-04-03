@@ -246,6 +246,36 @@ vlog() {
     echo -e "${CYAN}[VERBOSE]${RESET} $*" >&2
 }
 
+print_progress_box() {
+    local progress="$1"
+    local current="$2"
+    local label1="Progress"
+    local label2="Current"
+    local label_width line1 line2 inner_width border_width border
+
+    label_width=${#label1}
+    (( ${#label2} > label_width )) && label_width=${#label2}
+
+    printf -v line1 "%-*s | %s" "$label_width" "$label1" "$progress"
+    printf -v line2 "%-*s | %s" "$label_width" "$label2" "$current"
+
+    inner_width=${#line1}
+    (( ${#line2} > inner_width )) && inner_width=${#line2}
+
+    border_width=$((inner_width + 2))
+    printf -v border '%*s' "$border_width" ''
+    border=${border// /─}
+
+    printf '┌%s┐
+' "$border" >&2
+    printf '│ %-*s │
+' "$inner_width" "$line1" >&2
+    printf '│ %-*s │
+' "$inner_width" "$line2" >&2
+    printf '└%s┘
+' "$border" >&2
+}
+
 rollback_current_operation() {
     local idx old new
 
@@ -1332,7 +1362,7 @@ main_index=0
 for f in "${ordered_paths[@]}"; do
     ((++main_index))
     if (( VERBOSE == 1 && main_index % VERBOSE_MAIN_EVERY == 0 )); then
-        vlog "Main loop progress: $main_index / ${#ordered_paths[@]} (current: '$f')"
+        print_progress_box "$main_index / ${#ordered_paths[@]}" "$f"
     fi
 
     [[ -n "${processed[$f]+x}" ]] && continue
