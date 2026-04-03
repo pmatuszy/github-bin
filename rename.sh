@@ -1,5 +1,9 @@
 #!/usr/bin/env bash
-# 2026.04.03 - v. 6.8 - wrap long exclude-filter skip messages onto two lines
+# 2026.04.03 - v. 7.0 - E adds exceptions to the exclude file in the script start directory and prints explicit confirmation
+# 2026.04.03 - v. 6.9 - add E option to append current entry basename to the exclude file
+# 2026.04.03 - v. 6.8 - split long exclude-filter SKIP lines into two lines
+# 2026.04.03 - v. 6.7 - verbose progress uses a dynamically sized two-line box
+# 2026.04.03 - v. 6.6 - checksum-group prompt shows the exact hash file path
 # 2026.04.03 - v. 6.5 - checksum-group prompts now show only real renames; unchanged refs are hidden
 # 2026.04.03 - v. 6.4 - do not rename checksum files whose basename starts with __
 # 2026.04.03 - v. 6.3 - ask per .lnk file instead of a global .lnk cleanup question
@@ -46,9 +50,10 @@
 # 2026.03.27 - v. 1.3 - fixed top-level path handling: keep ./ prefix in transform_name()
 # 2026.03.27 - v. 1.2 - added many changes about media files
 
-SCRIPT_VERSION="2026.04.03 - v. 6.8"
+SCRIPT_VERSION="2026.04.03 - v. 7.0"
 LARGE_HASHFILE_LINE_THRESHOLD=20
-EXCLUDE_FILTERS_FILE="./_exclude-rename.sh.txt"
+SCRIPT_START_DIR="$(pwd -P)"
+EXCLUDE_FILTERS_FILE="$SCRIPT_START_DIR/_exclude-rename.sh.txt"
 
 set -Eeuo pipefail
 shopt -s nullglob
@@ -172,6 +177,57 @@ is_excluded_by_filter_file() {
         fi
     done
     return 1
+}
+
+exception_entry_for_path() {
+    local p="$1"
+    local base
+
+    base="$(basename -- "$p")"
+    if [[ -d "$p" ]]; then
+        printf '/%s/' "$base"
+    else
+        printf '/%s' "$base"
+    fi
+}
+
+append_path_to_exclude_filters_file() {
+    local p="$1"
+    local entry tmp_line found=0
+
+    entry="$(exception_entry_for_path "$p")"
+
+    mkdir -p -- "$(dirname -- "$EXCLUDE_FILTERS_FILE")"
+    if [[ ! -e "$EXCLUDE_FILTERS_FILE" ]]; then
+        : > "$EXCLUDE_FILTERS_FILE"
+    fi
+
+    normalize_exclude_filters_file_if_needed
+
+    while IFS= read -r tmp_line || [[ -n "$tmp_line" ]]; do
+        tmp_line="${tmp_line%$'
+'}"
+        [[ -n "$tmp_line" ]] || continue
+        [[ "$tmp_line" =~ ^# ]] && continue
+        if [[ "$tmp_line" == "$entry" ]]; then
+            found=1
+            break
+        fi
+    done < "$EXCLUDE_FILTERS_FILE"
+
+    if (( found == 0 )); then
+        printf '%s
+' "$entry" >> "$EXCLUDE_FILTERS_FILE"
+        echo -e "${CYAN}EXCEPTION ADDED:${RESET}"
+        echo "  entry : $entry"
+        echo "  file  : $EXCLUDE_FILTERS_FILE"
+    else
+        echo -e "${YELLOW}EXCEPTION EXISTS:${RESET}"
+        echo "  entry : $entry"
+        echo "  file  : $EXCLUDE_FILTERS_FILE"
+    fi
+
+    load_exclude_filters
 }
 
 for arg in "$@"; do
@@ -1370,8 +1426,7 @@ for f in "${ordered_paths[@]}"; do
     ((++files_examined))
 
     if is_excluded_by_filter_file "$f"; then
-        echo -e "${YELLOW}SKIP:${RESET} '$f'"
-        echo "      was ignored because part of its path matches a filter from $EXCLUDE_FILTERS_FILE."
+        echo -e "${YELLOW}SKIP:${RESET} '$f' was ignored because part of its path matches a filter from $EXCLUDE_FILTERS_FILE."
         vlog "Excluded by filter file: '$f'"
         ((++files_skipped))
         processed["$f"]=1
@@ -1780,7 +1835,7 @@ for f in "${ordered_paths[@]}"; do
     echo
     echo -e "${RED}OLD:${RESET} $f"
     echo -e "${GREEN}NEW:${RESET} $new"
-    echo -n "Rename this entry? [Y/n/a/q]: "
+    echo -n "Rename this entry? [Y/n/a/E/q]: "
     flush_stdin
     read_single_key input 300
     echo
@@ -1792,6 +1847,11 @@ for f in "${ordered_paths[@]}"; do
             ;;
         n|N)
             ((++files_skipped))
+            ;;
+        E)
+            append_path_to_exclude_filters_file "$f"
+            ((++files_skipped))
+            processed["$f"]=1
             ;;
         a|A)
             echo
@@ -1840,4 +1900,3 @@ if (( files_affected > 0 )); then
     done
 fi
 echo "==========================="
-
