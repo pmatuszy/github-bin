@@ -3,6 +3,7 @@
 # 2026.04.03 - v. 6.2 - add extra mojibake fixes, remove rip.by.Crisp, optional .lnk cleanup, and paired html/_files renames
 # 2026.04.02 - v. 6.1 - avoid prompt hangs from repeated keypresses by bounding stdin draining and discarding extra buffered keystrokes
 # 2026.04.02 - v. 6.1 - verify only changed checksum references inside checksum groups so stale unrelated refs do not abort
+# 2026.04.03 - v. 6.4 - do not rename checksum files whose basename starts with double underscores
 # 2026.04.02 - v. 5.9 - skip plain entry renames when a local checksum file refers to them; let checksum branch handle the group
 # 2026.04.02 - v. 5.8 - process checksum files before sibling plain entries to avoid stale local hash refs
 # 2026.04.02 - v. 5.7 - remove _OSiOLEK.com and LEK.PL fragments from names
@@ -405,6 +406,14 @@ is_excluded_path() {
 is_checksum_file() {
     local p="$1"
     [[ "$p" == *.sha512 || "$p" == *.md5 ]]
+}
+
+is_protected_checksum_name() {
+    local p="$1"
+    local base
+    base="$(basename -- "$p")"
+    is_checksum_file "$p" || return 1
+    [[ "$base" == __* ]]
 }
 
 is_html_file() {
@@ -1427,7 +1436,14 @@ for f in "${ordered_paths[@]}"; do
         done
 
         sum_file_needs_rename=no
-        [[ "$new_sum" != "$sum_file" ]] && sum_file_needs_rename=yes
+        if [[ "$new_sum" != "$sum_file" ]]; then
+            if is_protected_checksum_name "$sum_file"; then
+                vlog "Protected checksum name starts with double underscores, keeping checksum filename unchanged: '$sum_file'"
+                new_sum="$sum_file"
+            else
+                sum_file_needs_rename=yes
+            fi
+        fi
 
         action_needed=no
         [[ "$refs_need_rename" == "yes" ]] && action_needed=yes
