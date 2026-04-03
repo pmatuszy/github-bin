@@ -1535,7 +1535,7 @@ for f in "${ordered_paths[@]}"; do
         if [[ "$rename_all" == "yes" ]]; then
             do_rename=yes
         else
-            echo -n "Rename this ${label,,} + referenced file(s)? [Y/n/a/q]: "
+            echo -n "Rename this ${label,,} group (hash file: $sum_file)? [Y/n/a/q]: "
             flush_stdin
             read_single_key input 300
             echo
