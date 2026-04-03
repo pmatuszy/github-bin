@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
+# 2026.04.03 - v. 6.5 - checksum-group prompts now show only real renames; unchanged refs are hidden
+# 2026.04.03 - v. 6.4 - do not rename checksum files whose basename starts with __
 # 2026.04.03 - v. 6.3 - ask per .lnk file instead of a global .lnk cleanup question
 # 2026.04.03 - v. 6.2 - add extra mojibake fixes, remove rip.by.Crisp, optional .lnk cleanup, and paired html/_files renames
 # 2026.04.02 - v. 6.1 - avoid prompt hangs from repeated keypresses by bounding stdin draining and discarding extra buffered keystrokes
 # 2026.04.02 - v. 6.1 - verify only changed checksum references inside checksum groups so stale unrelated refs do not abort
-# 2026.04.03 - v. 6.4 - do not rename checksum files whose basename starts with double underscores
 # 2026.04.02 - v. 5.9 - skip plain entry renames when a local checksum file refers to them; let checksum branch handle the group
 # 2026.04.02 - v. 5.8 - process checksum files before sibling plain entries to avoid stale local hash refs
 # 2026.04.02 - v. 5.7 - remove _OSiOLEK.com and LEK.PL fragments from names
@@ -44,7 +45,7 @@
 # 2026.03.27 - v. 1.3 - fixed top-level path handling: keep ./ prefix in transform_name()
 # 2026.03.27 - v. 1.2 - added many changes about media files
 
-SCRIPT_VERSION="2026.04.03 - v. 6.3"
+SCRIPT_VERSION="2026.04.03 - v. 6.5"
 LARGE_HASHFILE_LINE_THRESHOLD=20
 EXCLUDE_FILTERS_FILE="./_exclude-rename.sh.txt"
 
@@ -1255,6 +1256,39 @@ record_rename() {
     renamed_list+=("$key")
 }
 
+print_checksum_group_preview() {
+    local label="$1"
+    local sum_old="$2"
+    local sum_new="$3"
+    shift 3
+    local refs_name="$1"
+    shift
+    local new_refs_name="$1"
+
+    local -n _refs="$refs_name"
+    local -n _new_refs="$new_refs_name"
+    local i shown=0
+
+    echo
+
+    if [[ "$sum_old" != "$sum_new" ]]; then
+        echo -e "${RED}OLD ${label}:${RESET} $sum_old"
+        echo -e "${GREEN}NEW ${label}:${RESET} $sum_new"
+        shown=1
+    fi
+
+    for i in "${!_refs[@]}"; do
+        [[ "${_new_refs[$i]}" != "${_refs[$i]}" ]] || continue
+        echo -e "${RED}OLD FILE:${RESET} ${_refs[$i]}"
+        echo -e "${GREEN}NEW FILE:${RESET} ${_new_refs[$i]}"
+        shown=1
+    done
+
+    if (( shown == 0 )); then
+        echo -e "${CYAN}NO VISIBLE RENAME CHANGES:${RESET} checksum content update only for $sum_old"
+    fi
+}
+
 
 if [[ "$process_scope" == "current" ]]; then
     mapfile -d '' -t ordered_paths < <(
@@ -1459,20 +1493,14 @@ for f in "${ordered_paths[@]}"; do
         fi
 
         if [[ "$mode" == "dry-run" ]]; then
-            echo
             if [[ "$checksum_content_modified" == "yes" ]]; then
                 echo -e "${CYAN}[DRY-RUN] Would check ${label} because checksum content would be modified:${RESET} $sum_file"
             else
                 echo -e "${CYAN}[DRY-RUN] Would check ${label} because rename is needed:${RESET} $sum_file"
             fi
-            echo -e "${RED}OLD ${label}:${RESET} $sum_file"
-            echo -e "${GREEN}NEW ${label}:${RESET} $new_sum"
-            for i in "${!refs[@]}"; do
-                echo -e "${RED}OLD FILE:${RESET} ${refs[$i]}"
-                echo -e "${GREEN}NEW FILE:${RESET} ${new_refs[$i]}"
-            done
+            print_checksum_group_preview "$label" "$sum_file" "$new_sum" refs new_refs
             echo -e "${CYAN}[DRY-RUN] Would update ${label,,} content references inside:${RESET} $sum_file"
-            echo -e "${CYAN}[DRY-RUN] Would check ${label} after rename:${RESET} $new_sum"
+            echo -e "${CYAN}[DRY-RUN] Would check changed ${label} reference(s) after rename:${RESET} $new_sum"
             echo "----------------------------------------"
 
             ((++files_affected))
@@ -1501,13 +1529,7 @@ for f in "${ordered_paths[@]}"; do
 
         ensure_checksum_file_unix_format "$sum_file"
 
-        echo
-        echo -e "${RED}OLD ${label}:${RESET} $sum_file"
-        echo -e "${GREEN}NEW ${label}:${RESET} $new_sum"
-        for i in "${!refs[@]}"; do
-            echo -e "${RED}OLD FILE:${RESET} ${refs[$i]}"
-            echo -e "${GREEN}NEW FILE:${RESET} ${new_refs[$i]}"
-        done
+        print_checksum_group_preview "$label" "$sum_file" "$new_sum" refs new_refs
 
         do_rename=no
         if [[ "$rename_all" == "yes" ]]; then
@@ -1786,4 +1808,3 @@ if (( files_affected > 0 )); then
     done
 fi
 echo "==========================="
-
