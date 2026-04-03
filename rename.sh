@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 2026.04.03 - v. 7.6 - optimize --use-db with in-memory cache and batched SQLite writes
+# 2026.04.03 - v. 7.7 - optimize --use-db with in-memory cache and batched SQLite writes
 # 2026.04.03 - v. 7.2 - optional SQLite checked-file cache with --use-db and --force-recheck
 # 2026.04.03 - v. 7.1 - treat _pliki companion directories the same as _files for .htm/.html pairs
 # 2026.04.03 - v. 7.0 - add E option to append basename-based exclude entries into start-directory exclude file and print confirmation
@@ -353,7 +353,10 @@ db_mark_checked() {
 
     sql="INSERT INTO checked_paths(path, kind, size, mtime, status, last_checked) VALUES ('$(sql_escape "$abs")', '$(sql_escape "$kind")', $size, $mtime, '$(sql_escape "$status")', CURRENT_TIMESTAMP) ON CONFLICT(path) DO UPDATE SET kind=excluded.kind, size=excluded.size, mtime=excluded.mtime, status=excluded.status, last_checked=CURRENT_TIMESTAMP;"
     printf '%s\n' "$sql" >> "$DB_PENDING_SQL_FILE"
-    (( ++DB_PENDING_COUNT >= DB_FLUSH_EVERY )) && db_flush_pending
+    (( ++DB_PENDING_COUNT ))
+    if (( DB_PENDING_COUNT >= DB_FLUSH_EVERY )); then
+        db_flush_pending
+    fi
 }
 
 db_mark_many_checked() {
