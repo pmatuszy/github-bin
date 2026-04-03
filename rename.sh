@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 2026.04.03 - v. 7.3 - rename optional SQLite DB file to rename.sh-optional-db.sqlite3
+# 2026.04.03 - v. 7.6 - optimize --use-db with in-memory cache and batched SQLite writes
 # 2026.04.03 - v. 7.2 - optional SQLite checked-file cache with --use-db and --force-recheck
 # 2026.04.03 - v. 7.1 - treat _pliki companion directories the same as _files for .htm/.html pairs
 # 2026.04.03 - v. 7.0 - add E option to append basename-based exclude entries into start-directory exclude file and print confirmation
@@ -52,7 +52,7 @@
 # 2026.03.27 - v. 1.4 - apply special media renames after basic normalization
 # 2026.03.27 - v. 1.3 - fixed top-level path handling: keep ./ prefix in transform_name()
 # 2026.03.27 - v. 1.2 - added many changes about media files
-SCRIPT_VERSION="2026.04.03 - v. 7.3"
+SCRIPT_VERSION="2026.04.03 - v. 7.6"
 LARGE_HASHFILE_LINE_THRESHOLD=20
 START_DIR="$(pwd -P)"
 EXCLUDE_FILTERS_FILE="$START_DIR/_exclude-rename.sh.txt"
@@ -244,20 +244,60 @@ db_require_sqlite() {
 }
 
 db_abs_path() {
-    python3 - "$1" <<'PY'
-import os, sys
-print(os.path.abspath(sys.argv[1]))
-PY
+    local p="$1"
+    if command -v realpath >/dev/null 2>&1; then
+        realpath -e -- "$p"
+    elif command -v readlink >/dev/null 2>&1; then
+        readlink -f -- "$p"
+    else
+        local dir base
+        dir="$(dirname -- "$p")"
+        base="$(basename -- "$p")"
+        ( cd "$dir" && printf '%s/%s\n' "$(pwd -P)" "$base" )
+    fi
 }
 
 db_get_size_mtime() {
     stat -Lc '%s|%Y' -- "$1"
 }
 
+declare -A DB_CACHE_META=()
+DB_PENDING_SQL_FILE=""
+DB_PENDING_COUNT=0
+DB_FLUSH_EVERY=500
+
+db_flush_pending() {
+    (( USE_DB == 1 )) || return 0
+    [[ -n "$DB_PENDING_SQL_FILE" && -s "$DB_PENDING_SQL_FILE" ]] || return 0
+    {
+        printf 'BEGIN IMMEDIATE;\n'
+        cat -- "$DB_PENDING_SQL_FILE"
+        printf 'COMMIT;\n'
+    } | sqlite3 "$DB_FILE" >/dev/null 2>&1 || true
+    : > "$DB_PENDING_SQL_FILE"
+    DB_PENDING_COUNT=0
+}
+
+cleanup_on_exit() {
+    local rc=$?
+    if (( USE_DB == 1 )); then
+        db_flush_pending || true
+        if [[ -n "$DB_PENDING_SQL_FILE" && -e "$DB_PENDING_SQL_FILE" ]]; then
+            rm -f -- "$DB_PENDING_SQL_FILE"
+        fi
+    fi
+    exit $rc
+}
+trap cleanup_on_exit EXIT
+
 db_init() {
     (( USE_DB == 1 )) || return 0
     db_require_sqlite
     sqlite3 "$DB_FILE" <<'SQL'
+PRAGMA journal_mode=WAL;
+PRAGMA synchronous=NORMAL;
+PRAGMA temp_store=MEMORY;
+PRAGMA cache_size=-20000;
 CREATE TABLE IF NOT EXISTS checked_paths (
     path TEXT PRIMARY KEY,
     kind TEXT NOT NULL,
@@ -268,11 +308,16 @@ CREATE TABLE IF NOT EXISTS checked_paths (
 );
 CREATE INDEX IF NOT EXISTS idx_checked_paths_kind ON checked_paths(kind);
 SQL
+    DB_PENDING_SQL_FILE="$(mktemp)"
+    while IFS='|' read -r path size mtime; do
+        [[ -n "$path" ]] || continue
+        DB_CACHE_META["$path"]="$size|$mtime"
+    done < <(sqlite3 -separator '|' "$DB_FILE" 'SELECT path, size, mtime FROM checked_paths;')
 }
 
 db_has_valid_entry() {
     local path="$1"
-    local abs meta size mtime query result
+    local abs meta cached size mtime
 
     (( USE_DB == 1 )) || return 1
     (( FORCE_RECHECK == 0 )) || return 1
@@ -281,12 +326,12 @@ db_has_valid_entry() {
     meta="$(db_get_size_mtime "$path" 2>/dev/null || true)"
     [[ -n "$meta" ]] || return 1
     abs="$(db_abs_path "$path")"
+    cached="${DB_CACHE_META[$abs]-}"
+    [[ -n "$cached" ]] || return 1
     size="${meta%%|*}"
     mtime="${meta##*|}"
 
-    query="SELECT size || '|' || mtime FROM checked_paths WHERE path='$(sql_escape "$abs")' LIMIT 1;"
-    result="$(sqlite3 "$DB_FILE" "$query" 2>/dev/null || true)"
-    [[ "$result" == "$size|$mtime" ]]
+    [[ "$cached" == "$size|$mtime" ]]
 }
 
 db_mark_checked() {
@@ -304,8 +349,11 @@ db_mark_checked() {
     size="${meta%%|*}"
     mtime="${meta##*|}"
 
+    DB_CACHE_META["$abs"]="$size|$mtime"
+
     sql="INSERT INTO checked_paths(path, kind, size, mtime, status, last_checked) VALUES ('$(sql_escape "$abs")', '$(sql_escape "$kind")', $size, $mtime, '$(sql_escape "$status")', CURRENT_TIMESTAMP) ON CONFLICT(path) DO UPDATE SET kind=excluded.kind, size=excluded.size, mtime=excluded.mtime, status=excluded.status, last_checked=CURRENT_TIMESTAMP;"
-    sqlite3 "$DB_FILE" "$sql" >/dev/null 2>&1 || true
+    printf '%s\n' "$sql" >> "$DB_PENDING_SQL_FILE"
+    (( ++DB_PENDING_COUNT >= DB_FLUSH_EVERY )) && db_flush_pending
 }
 
 db_mark_many_checked() {
@@ -317,7 +365,6 @@ db_mark_many_checked() {
         db_mark_checked "$path" "$kind" "$status"
     done
 }
-
 for arg in "$@"; do
     case "$arg" in
         -v|--verbose)
@@ -1579,7 +1626,7 @@ for f in "${ordered_paths[@]}"; do
     fi
 
     if db_has_valid_entry "$f"; then
-        echo -e "${CYAN}DB SKIP:${RESET} '$f' was already checked earlier and metadata still matches."
+        echo -e "${CYAN}DB SKIP:${RESET} '$f'"
         ((++files_skipped))
         processed["$f"]=1
         continue
