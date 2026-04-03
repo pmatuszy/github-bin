@@ -1,9 +1,4 @@
 #!/usr/bin/env bash
-# 2026.04.03 - v. 7.0 - E adds exceptions to the exclude file in the script start directory and prints explicit confirmation
-# 2026.04.03 - v. 6.9 - add E option to append current entry basename to the exclude file
-# 2026.04.03 - v. 6.8 - split long exclude-filter SKIP lines into two lines
-# 2026.04.03 - v. 6.7 - verbose progress uses a dynamically sized two-line box
-# 2026.04.03 - v. 6.6 - checksum-group prompt shows the exact hash file path
 # 2026.04.03 - v. 6.5 - checksum-group prompts now show only real renames; unchanged refs are hidden
 # 2026.04.03 - v. 6.4 - do not rename checksum files whose basename starts with __
 # 2026.04.03 - v. 6.3 - ask per .lnk file instead of a global .lnk cleanup question
@@ -50,10 +45,9 @@
 # 2026.03.27 - v. 1.3 - fixed top-level path handling: keep ./ prefix in transform_name()
 # 2026.03.27 - v. 1.2 - added many changes about media files
 
-SCRIPT_VERSION="2026.04.03 - v. 7.0"
+SCRIPT_VERSION="2026.04.03 - v. 6.5"
 LARGE_HASHFILE_LINE_THRESHOLD=20
-SCRIPT_START_DIR="$(pwd -P)"
-EXCLUDE_FILTERS_FILE="$SCRIPT_START_DIR/_exclude-rename.sh.txt"
+EXCLUDE_FILTERS_FILE="./_exclude-rename.sh.txt"
 
 set -Eeuo pipefail
 shopt -s nullglob
@@ -197,7 +191,6 @@ append_path_to_exclude_filters_file() {
 
     entry="$(exception_entry_for_path "$p")"
 
-    mkdir -p -- "$(dirname -- "$EXCLUDE_FILTERS_FILE")"
     if [[ ! -e "$EXCLUDE_FILTERS_FILE" ]]; then
         : > "$EXCLUDE_FILTERS_FILE"
     fi
@@ -218,13 +211,9 @@ append_path_to_exclude_filters_file() {
     if (( found == 0 )); then
         printf '%s
 ' "$entry" >> "$EXCLUDE_FILTERS_FILE"
-        echo -e "${CYAN}EXCEPTION ADDED:${RESET}"
-        echo "  entry : $entry"
-        echo "  file  : $EXCLUDE_FILTERS_FILE"
+        echo -e "${CYAN}EXCEPTION ADDED:${RESET} $entry ${CYAN}->${RESET} $EXCLUDE_FILTERS_FILE"
     else
-        echo -e "${YELLOW}EXCEPTION EXISTS:${RESET}"
-        echo "  entry : $entry"
-        echo "  file  : $EXCLUDE_FILTERS_FILE"
+        echo -e "${YELLOW}EXCEPTION EXISTS:${RESET} $entry ${CYAN}->${RESET} $EXCLUDE_FILTERS_FILE"
     fi
 
     load_exclude_filters
@@ -510,13 +499,33 @@ is_html_file() {
     [[ "$lower" == *.htm || "$lower" == *.html ]]
 }
 
-html_companion_dir_path() {
+html_companion_dir_path_with_suffix() {
     local html_file="$1"
+    local suffix="$2"
     local dir base stem
     dir="$(dirname -- "$html_file")"
     base="$(basename -- "$html_file")"
     stem="${base%.*}"
-    printf '%s/%s_files' "$dir" "$stem"
+    printf '%s/%s%s' "$dir" "$stem" "$suffix"
+}
+
+find_html_companion_dir() {
+    local html_file="$1"
+    local candidate
+
+    candidate="$(html_companion_dir_path_with_suffix "$html_file" "_files")"
+    if [[ -d "$candidate" ]]; then
+        printf '%s' "$candidate"
+        return 0
+    fi
+
+    candidate="$(html_companion_dir_path_with_suffix "$html_file" "_pliki")"
+    if [[ -d "$candidate" ]]; then
+        printf '%s' "$candidate"
+        return 0
+    fi
+
+    return 1
 }
 
 update_html_companion_reference() {
@@ -1117,12 +1126,17 @@ perform_plain_entry_rename() {
     fi
 
     if is_html_file "$old"; then
-        old_companion_dir="$(html_companion_dir_path "$old")"
-        new_companion_dir="$(html_companion_dir_path "$new")"
-        if [[ ! -d "$old_companion_dir" ]]; then
-            old_companion_dir=""
+        old_companion_dir="$(find_html_companion_dir "$old" || true)"
+        if [[ -z "$old_companion_dir" ]]; then
             new_companion_dir=""
-        elif [[ "$old_companion_dir" != "$new_companion_dir" && -e "$new_companion_dir" ]]; then
+        else
+            old_companion_name="$(basename -- "$old_companion_dir")"
+            old_html_stem="$(basename -- "${old%.*}")"
+            companion_suffix="${old_companion_name#${old_html_stem}}"
+            new_companion_dir="$(html_companion_dir_path_with_suffix "$new" "$companion_suffix")"
+        fi
+
+        if [[ -n "$old_companion_dir" && "$old_companion_dir" != "$new_companion_dir" && -e "$new_companion_dir" ]]; then
             echo -e "${YELLOW}SKIP:${RESET} Target companion directory already exists: $new_companion_dir"
             vlog "Collision detected for companion directory '$old_companion_dir' -> '$new_companion_dir'"
             ((++files_skipped))
@@ -1705,9 +1719,17 @@ for f in "${ordered_paths[@]}"; do
             [[ -e "${new_refs[$i]}" ]] && collision=yes
 
             if is_html_file "${refs[$i]}"; then
-                old_companion_dir="$(html_companion_dir_path "${refs[$i]}")"
-                new_companion_dir="$(html_companion_dir_path "${new_refs[$i]}")"
-                if [[ -d "$old_companion_dir" && "$old_companion_dir" != "$new_companion_dir" ]]; then
+                old_companion_dir="$(find_html_companion_dir "${refs[$i]}" || true)"
+                if [[ -n "$old_companion_dir" ]]; then
+                    old_companion_name="$(basename -- "$old_companion_dir")"
+                    old_html_stem="$(basename -- "${refs[$i]%.*}")"
+                    companion_suffix="${old_companion_name#${old_html_stem}}"
+                    new_companion_dir="$(html_companion_dir_path_with_suffix "${new_refs[$i]}" "$companion_suffix")"
+                else
+                    new_companion_dir=""
+                fi
+
+                if [[ -n "$old_companion_dir" && "$old_companion_dir" != "$new_companion_dir" ]]; then
                     companion_conflict=no
                     for j in "${!refs[@]}"; do
                         if [[ "${refs[$j]}" == "$old_companion_dir" || "${refs[$j]}" == "$old_companion_dir/"* ]]; then
