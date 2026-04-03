@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.04.03 - v. 6.3 - ask per .lnk file instead of a global .lnk cleanup question
 # 2026.04.03 - v. 6.2 - add extra mojibake fixes, remove rip.by.Crisp, optional .lnk cleanup, and paired html/_files renames
 # 2026.04.02 - v. 6.1 - avoid prompt hangs from repeated keypresses by bounding stdin draining and discarding extra buffered keystrokes
 # 2026.04.02 - v. 6.1 - verify only changed checksum references inside checksum groups so stale unrelated refs do not abort
@@ -42,7 +43,7 @@
 # 2026.03.27 - v. 1.3 - fixed top-level path handling: keep ./ prefix in transform_name()
 # 2026.03.27 - v. 1.2 - added many changes about media files
 
-SCRIPT_VERSION="2026.04.03 - v. 6.2"
+SCRIPT_VERSION="2026.04.03 - v. 6.3"
 LARGE_HASHFILE_LINE_THRESHOLD=20
 EXCLUDE_FILTERS_FILE="./_exclude-rename.sh.txt"
 
@@ -392,28 +393,6 @@ fi
 
 echo -e "Scope selected: ${CYAN}$process_scope${RESET}"
 
-echo
-echo "Remove *.lnk files?"
-echo "  [Y] Yes"
-echo "  [N] No (default)"
-echo "  [Q] Quit"
-echo -n "Choice [y/N/q]: "
-
-remove_lnk_files="no"
-input=""
-
-flush_stdin
-read_single_key input 60
-echo
-
-if [[ "$input" =~ [Qq] ]]; then
-    echo "Quitting."
-    exit 0
-elif [[ "$input" =~ [Yy] ]]; then
-    remove_lnk_files="yes"
-fi
-
-echo -e "Remove *.lnk selected: ${CYAN}$remove_lnk_files${RESET}"
 sleep 1
 
 vlog "Verbose mode enabled"
@@ -1215,35 +1194,38 @@ find_best_path_for_missing_ref() {
     return 1
 }
 
-process_lnk_files() {
-    local -a lnk_files=()
-    local find_args=()
-    local f
-
-    if [[ "$process_scope" == "current" ]]; then
-        find_args=( . -mindepth 1 -maxdepth 1 -type f -name '*.lnk' )
-    else
-        find_args=( . -mindepth 1 -type f -name '*.lnk' )
-    fi
-
-    while IFS= read -r -d '' f; do
-        lnk_files+=( "$f" )
-    done < <(find "${find_args[@]}" -print0 | sort -z)
-
-    (( ${#lnk_files[@]} > 0 )) || return 0
+handle_lnk_file() {
+    local f="$1"
+    local answer=""
 
     echo
-    echo -e "${YELLOW}LNK FILES:${RESET} ${#lnk_files[@]} file(s) match '*.lnk'."
+    echo -e "${YELLOW}LNK FILE:${RESET} $f"
+    echo -n "Remove this .lnk file? [y/N/q]: "
 
-    for f in "${lnk_files[@]}"; do
-        if [[ "$mode" == "dry-run" ]]; then
-            echo -e "${CYAN}[DRY-RUN] Would remove:${RESET} $f"
-        else
-            echo -e "${CYAN}REMOVE:${RESET} $f"
-            rm -f -- "$f"
-        fi
-        ((++files_affected))
-    done
+    flush_stdin
+    read_single_key answer 300
+    echo
+
+    case "$answer" in
+        q|Q)
+            stopped_by_user=yes
+            return 1
+            ;;
+        y|Y)
+            if [[ "$mode" == "dry-run" ]]; then
+                echo -e "${CYAN}[DRY-RUN] Would remove:${RESET} $f"
+            else
+                echo -e "${CYAN}REMOVE:${RESET} $f"
+                rm -f -- "$f"
+            fi
+            ((++files_affected))
+            return 0
+            ;;
+        *)
+            ((++files_skipped))
+            return 0
+            ;;
+    esac
 }
 
 files_examined=0
@@ -1264,9 +1246,6 @@ record_rename() {
     renamed_list+=("$key")
 }
 
-if [[ "$remove_lnk_files" == "yes" ]]; then
-    process_lnk_files
-fi
 
 if [[ "$process_scope" == "current" ]]; then
     mapfile -d '' -t ordered_paths < <(
@@ -1327,6 +1306,14 @@ for f in "${ordered_paths[@]}"; do
     if is_excluded_path "$f"; then
         vlog "Skipping excluded path '$f'"
         ((++files_skipped))
+        continue
+    fi
+
+    if [[ -f "$f" && "$f" == *.lnk ]]; then
+        if ! handle_lnk_file "$f"; then
+            break
+        fi
+        processed["$f"]=1
         continue
     fi
 
