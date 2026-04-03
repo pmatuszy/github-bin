@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.04.03 - v. 6.2 - add extra mojibake fixes, remove rip.by.Crisp, optional .lnk cleanup, and paired html/_files renames
 # 2026.04.02 - v. 6.1 - avoid prompt hangs from repeated keypresses by bounding stdin draining and discarding extra buffered keystrokes
 # 2026.04.02 - v. 6.1 - verify only changed checksum references inside checksum groups so stale unrelated refs do not abort
 # 2026.04.02 - v. 5.9 - skip plain entry renames when a local checksum file refers to them; let checksum branch handle the group
@@ -41,7 +42,7 @@
 # 2026.03.27 - v. 1.3 - fixed top-level path handling: keep ./ prefix in transform_name()
 # 2026.03.27 - v. 1.2 - added many changes about media files
 
-SCRIPT_VERSION="2026.04.02 - v. 6.1"
+SCRIPT_VERSION="2026.04.03 - v. 6.2"
 LARGE_HASHFILE_LINE_THRESHOLD=20
 EXCLUDE_FILTERS_FILE="./_exclude-rename.sh.txt"
 
@@ -390,6 +391,29 @@ elif [[ "$input" =~ [Ss] ]]; then
 fi
 
 echo -e "Scope selected: ${CYAN}$process_scope${RESET}"
+
+echo
+echo "Remove *.lnk files?"
+echo "  [Y] Yes"
+echo "  [N] No (default)"
+echo "  [Q] Quit"
+echo -n "Choice [y/N/q]: "
+
+remove_lnk_files="no"
+input=""
+
+flush_stdin
+read_single_key input 60
+echo
+
+if [[ "$input" =~ [Qq] ]]; then
+    echo "Quitting."
+    exit 0
+elif [[ "$input" =~ [Yy] ]]; then
+    remove_lnk_files="yes"
+fi
+
+echo -e "Remove *.lnk selected: ${CYAN}$remove_lnk_files${RESET}"
 sleep 1
 
 vlog "Verbose mode enabled"
@@ -402,6 +426,71 @@ is_excluded_path() {
 is_checksum_file() {
     local p="$1"
     [[ "$p" == *.sha512 || "$p" == *.md5 ]]
+}
+
+is_html_file() {
+    local p="$1"
+    local lower="${p,,}"
+    [[ "$lower" == *.htm || "$lower" == *.html ]]
+}
+
+html_companion_dir_path() {
+    local html_file="$1"
+    local dir base stem
+    dir="$(dirname -- "$html_file")"
+    base="$(basename -- "$html_file")"
+    stem="${base%.*}"
+    printf '%s/%s_files' "$dir" "$stem"
+}
+
+update_html_companion_reference() {
+    local html_file="$1"
+    local old_dir_name="$2"
+    local new_dir_name="$3"
+    local old_re new_re
+
+    [[ -f "$html_file" ]] || return 0
+    old_re="$(sed_escape_regex "$old_dir_name")"
+    new_re="$(sed_escape_repl "$new_dir_name")"
+
+    vlog "Updating HTML companion directory reference in '$html_file': '$old_dir_name' -> '$new_dir_name'"
+    preserve_timestamps_inplace "$html_file"         sed -i -E "s|${old_re}|${new_re}|g" -- "$html_file"
+}
+
+update_checksum_hash_for_ref() {
+    local sum_file="$1"
+    local target_ref="$2"
+    local actual_file="$3"
+    local kind new_hash
+
+    kind="$(checksum_kind "$sum_file")"
+    new_hash="$(checksum_of_file "$kind" "$actual_file")"
+
+    vlog "Updating stored checksum hash in '$sum_file' for ref '$target_ref'"
+
+    preserve_timestamps_inplace "$sum_file"         python3 - "$sum_file" "$target_ref" "$new_hash" <<'PY'
+import re
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+target = sys.argv[2]
+new_hash = sys.argv[3]
+
+lines = path.read_text(encoding="utf-8", errors="surrogateescape").splitlines(True)
+out = []
+updated = False
+
+for line in lines:
+    m = re.match(r'^([0-9A-Fa-f]+)(\s+)(\*?)(.*?)(\r?\n?)$', line)
+    if m and m.group(4) == target and not updated:
+        out.append(new_hash + m.group(2) + m.group(3) + m.group(4) + m.group(5))
+        updated = True
+    else:
+        out.append(line)
+
+path.write_text(''.join(out), encoding="utf-8", errors="surrogateescape")
+PY
 }
 
 checksum_kind() {
@@ -493,6 +582,8 @@ transform_basename() {
     new="${new//Ä…/a}"
     new="${new//Ĺş/z}"
     new="${new//Ĺ�/L}"
+    new="${new//Ĺ»/Z}"
+    new="${new//Ĺš/S}"
     new="${new//Ă/s}"
     new="${new//Ăł/o}"
     new="${new//Ĺ‚/l}"
@@ -534,6 +625,7 @@ transform_basename() {
     # remove unwanted fragments from names
     new="${new//_OSiOLEK.com/}"
     new="${new//LEK.PL/}"
+    new="${new//rip.by.Crisp/}"
 
     new=$(printf '%s' "$new" | sed -E '
         s/__+/_/g;
@@ -939,6 +1031,7 @@ collect_local_checksum_ref_summaries() {
 perform_plain_entry_rename() {
     local old="$1"
     local new="$2"
+    local old_companion_dir="" new_companion_dir="" old_companion_name="" new_companion_name=""
 
     if [[ -e "$new" ]]; then
         echo -e "${YELLOW}SKIP:${RESET} Target file already exists."
@@ -947,16 +1040,52 @@ perform_plain_entry_rename() {
         return 0
     fi
 
+    if is_html_file "$old"; then
+        old_companion_dir="$(html_companion_dir_path "$old")"
+        new_companion_dir="$(html_companion_dir_path "$new")"
+        if [[ ! -d "$old_companion_dir" ]]; then
+            old_companion_dir=""
+            new_companion_dir=""
+        elif [[ "$old_companion_dir" != "$new_companion_dir" && -e "$new_companion_dir" ]]; then
+            echo -e "${YELLOW}SKIP:${RESET} Target companion directory already exists: $new_companion_dir"
+            vlog "Collision detected for companion directory '$old_companion_dir' -> '$new_companion_dir'"
+            ((++files_skipped))
+            return 0
+        fi
+    fi
+
     if [[ "$mode" == "dry-run" ]]; then
         echo -e "${CYAN}[DRY-RUN] Would rename:${RESET} $old ${ARROW} $new"
+        if [[ -n "$old_companion_dir" && "$old_companion_dir" != "$new_companion_dir" ]]; then
+            echo -e "${CYAN}[DRY-RUN] Would rename companion directory:${RESET} $old_companion_dir ${ARROW} $new_companion_dir"
+            echo -e "${CYAN}[DRY-RUN] Would update HTML reference inside:${RESET} $new"
+        fi
         ((++files_affected))
         record_rename "$old" "$new"
+        if [[ -n "$old_companion_dir" && "$old_companion_dir" != "$new_companion_dir" ]]; then
+            record_rename "$old_companion_dir" "$new_companion_dir"
+        fi
         return 0
     fi
 
     mv -i -- "$old" "$new"
     ((++files_affected))
     record_rename "$old" "$new"
+
+    if [[ -n "$old_companion_dir" && "$old_companion_dir" != "$new_companion_dir" ]]; then
+        if mv -i -- "$old_companion_dir" "$new_companion_dir"; then
+            ((++files_affected))
+            record_rename "$old_companion_dir" "$new_companion_dir"
+            old_companion_name="$(basename -- "$old_companion_dir")"
+            new_companion_name="$(basename -- "$new_companion_dir")"
+            update_html_companion_reference "$new" "$old_companion_name" "$new_companion_name"
+        else
+            mv -f -- "$new" "$old"
+            ((++files_skipped))
+            return 0
+        fi
+    fi
+
     return 0
 }
 
@@ -1086,6 +1215,37 @@ find_best_path_for_missing_ref() {
     return 1
 }
 
+process_lnk_files() {
+    local -a lnk_files=()
+    local find_args=()
+    local f
+
+    if [[ "$process_scope" == "current" ]]; then
+        find_args=( . -mindepth 1 -maxdepth 1 -type f -name '*.lnk' )
+    else
+        find_args=( . -mindepth 1 -type f -name '*.lnk' )
+    fi
+
+    while IFS= read -r -d '' f; do
+        lnk_files+=( "$f" )
+    done < <(find "${find_args[@]}" -print0 | sort -z)
+
+    (( ${#lnk_files[@]} > 0 )) || return 0
+
+    echo
+    echo -e "${YELLOW}LNK FILES:${RESET} ${#lnk_files[@]} file(s) match '*.lnk'."
+
+    for f in "${lnk_files[@]}"; do
+        if [[ "$mode" == "dry-run" ]]; then
+            echo -e "${CYAN}[DRY-RUN] Would remove:${RESET} $f"
+        else
+            echo -e "${CYAN}REMOVE:${RESET} $f"
+            rm -f -- "$f"
+        fi
+        ((++files_affected))
+    done
+}
+
 files_examined=0
 files_affected=0
 files_skipped=0
@@ -1103,6 +1263,10 @@ record_rename() {
     recorded["$key"]=1
     renamed_list+=("$key")
 }
+
+if [[ "$remove_lnk_files" == "yes" ]]; then
+    process_lnk_files
+fi
 
 if [[ "$process_scope" == "current" ]]; then
     mapfile -d '' -t ordered_paths < <(
@@ -1348,7 +1512,7 @@ for f in "${ordered_paths[@]}"; do
         else
             echo -n "Rename this ${label,,} + referenced file(s)? [Y/n/a/q]: "
             flush_stdin
-            read -t 300 -n 1 input || true
+            read_single_key input 300
             echo
 
             case "$input" in
@@ -1365,7 +1529,7 @@ for f in "${ordered_paths[@]}"; do
                     echo "⚠️  This will rename ALL remaining files/directories."
                     echo -n "Are you sure? [y/N]: "
                     flush_stdin
-                    read -n 1 confirm || true
+                    read_single_key confirm 300
                     echo
                     if [[ "$confirm" =~ [Yy] ]]; then
                         rename_all=yes
@@ -1407,10 +1571,49 @@ for f in "${ordered_paths[@]}"; do
             echo -e "${CYAN}${label} VERIFIED (before rename):${RESET} changed reference(s) in $sum_file"
         fi
 
+        declare -a html_companion_old_dirs=()
+        declare -a html_companion_new_dirs=()
+        declare -a html_companion_old_names=()
+        declare -a html_companion_new_names=()
+        declare -a html_companion_apply=()
+        declare -a html_hash_needs_refresh=()
+
         collision=no
         [[ "$new_sum" != "$sum_file" && -e "$new_sum" ]] && collision=yes
+
         for i in "${!refs[@]}"; do
-            [[ "${new_refs[$i]}" != "${refs[$i]}" && -e "${new_refs[$i]}" ]] && collision=yes
+            html_companion_old_dirs+=( "" )
+            html_companion_new_dirs+=( "" )
+            html_companion_old_names+=( "" )
+            html_companion_new_names+=( "" )
+            html_companion_apply+=( "no" )
+            html_hash_needs_refresh+=( "no" )
+
+            [[ "${new_refs[$i]}" != "${refs[$i]}" ]] || continue
+            [[ -e "${new_refs[$i]}" ]] && collision=yes
+
+            if is_html_file "${refs[$i]}"; then
+                old_companion_dir="$(html_companion_dir_path "${refs[$i]}")"
+                new_companion_dir="$(html_companion_dir_path "${new_refs[$i]}")"
+                if [[ -d "$old_companion_dir" && "$old_companion_dir" != "$new_companion_dir" ]]; then
+                    companion_conflict=no
+                    for j in "${!refs[@]}"; do
+                        if [[ "${refs[$j]}" == "$old_companion_dir" || "${refs[$j]}" == "$old_companion_dir/"* ]]; then
+                            companion_conflict=yes
+                            break
+                        fi
+                    done
+
+                    if [[ "$companion_conflict" == "no" ]]; then
+                        [[ -e "$new_companion_dir" ]] && collision=yes
+                        html_companion_old_dirs[$i]="$old_companion_dir"
+                        html_companion_new_dirs[$i]="$new_companion_dir"
+                        html_companion_old_names[$i]="$(basename -- "$old_companion_dir")"
+                        html_companion_new_names[$i]="$(basename -- "$new_companion_dir")"
+                        html_companion_apply[$i]="yes"
+                    fi
+                fi
+            fi
         done
 
         if [[ "$collision" == "yes" ]]; then
@@ -1430,6 +1633,16 @@ for f in "${ordered_paths[@]}"; do
                 register_current_file_rename "${refs[$i]}" "${new_refs[$i]}"
                 ((++files_affected))
                 record_rename "${refs[$i]}" "${new_refs[$i]}"
+
+                if [[ "${html_companion_apply[$i]}" == "yes" ]]; then
+                    vlog "Renaming HTML companion directory '${html_companion_old_dirs[$i]}' -> '${html_companion_new_dirs[$i]}'"
+                    mv -i -- "${html_companion_old_dirs[$i]}" "${html_companion_new_dirs[$i]}"
+                    register_current_file_rename "${html_companion_old_dirs[$i]}" "${html_companion_new_dirs[$i]}"
+                    ((++files_affected))
+                    record_rename "${html_companion_old_dirs[$i]}" "${html_companion_new_dirs[$i]}"
+                    update_html_companion_reference "${new_refs[$i]}" "${html_companion_old_names[$i]}" "${html_companion_new_names[$i]}"
+                    html_hash_needs_refresh[$i]="yes"
+                fi
             else
                 ((++files_skipped))
             fi
@@ -1440,6 +1653,10 @@ for f in "${ordered_paths[@]}"; do
             new_ref_for_write="$(format_ref_for_checksum_file "$sum_file" "${refs_raw[$i]}" "${new_refs[$i]}")"
             if [[ "$old_ref_for_write" != "$new_ref_for_write" ]]; then
                 update_checksum_content_refs "$sum_file" "$old_ref_for_write" "$new_ref_for_write"
+            fi
+
+            if [[ "${html_hash_needs_refresh[$i]}" == "yes" ]]; then
+                update_checksum_hash_for_ref "$sum_file" "$new_ref_for_write" "${new_refs[$i]}"
             fi
         done
 
@@ -1508,7 +1725,7 @@ for f in "${ordered_paths[@]}"; do
     echo -e "${GREEN}NEW:${RESET} $new"
     echo -n "Rename this entry? [Y/n/a/q]: "
     flush_stdin
-    read -t 300 -n 1 input || true
+    read_single_key input 300
     echo
 
     case "$input" in
@@ -1524,7 +1741,7 @@ for f in "${ordered_paths[@]}"; do
             echo "⚠️  This will rename ALL remaining files/directories."
             echo -n "Are you sure? [y/N]: "
             flush_stdin
-            read -n 1 confirm || true
+            read_single_key confirm 300
             echo
 
             if [[ "$confirm" =~ [Yy] ]]; then
