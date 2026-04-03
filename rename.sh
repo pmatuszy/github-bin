@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.04.03 - v. 6.8 - wrap long exclude-filter skip messages onto two lines
 # 2026.04.03 - v. 6.5 - checksum-group prompts now show only real renames; unchanged refs are hidden
 # 2026.04.03 - v. 6.4 - do not rename checksum files whose basename starts with __
 # 2026.04.03 - v. 6.3 - ask per .lnk file instead of a global .lnk cleanup question
@@ -45,7 +46,7 @@
 # 2026.03.27 - v. 1.3 - fixed top-level path handling: keep ./ prefix in transform_name()
 # 2026.03.27 - v. 1.2 - added many changes about media files
 
-SCRIPT_VERSION="2026.04.03 - v. 6.5"
+SCRIPT_VERSION="2026.04.03 - v. 6.8"
 LARGE_HASHFILE_LINE_THRESHOLD=20
 EXCLUDE_FILTERS_FILE="./_exclude-rename.sh.txt"
 
@@ -1369,7 +1370,8 @@ for f in "${ordered_paths[@]}"; do
     ((++files_examined))
 
     if is_excluded_by_filter_file "$f"; then
-        echo -e "${YELLOW}SKIP:${RESET} '$f' was ignored because part of its path matches a filter from $EXCLUDE_FILTERS_FILE."
+        echo -e "${YELLOW}SKIP:${RESET} '$f'"
+        echo "      was ignored because part of its path matches a filter from $EXCLUDE_FILTERS_FILE."
         vlog "Excluded by filter file: '$f'"
         ((++files_skipped))
         processed["$f"]=1
@@ -1838,3 +1840,4 @@ if (( files_affected > 0 )); then
     done
 fi
 echo "==========================="
+
