@@ -1,10 +1,18 @@
 #!/usr/bin/env bash
-# 2026.04.03 - v. 6.5 - checksum-group prompts now show only real renames; unchanged refs are hidden
+# 2026.04.03 - v. 7.3 - rename optional SQLite DB file to rename.sh-optional-db.sqlite3
+# 2026.04.03 - v. 7.2 - optional SQLite checked-file cache with --use-db and --force-recheck
+# 2026.04.03 - v. 7.1 - treat _pliki companion directories the same as _files for .htm/.html pairs
+# 2026.04.03 - v. 7.0 - add E option to append basename-based exclude entries into start-directory exclude file and print confirmation
+# 2026.04.03 - v. 6.9 - add E option in per-entry rename prompt to append basename-based exclude entries
+# 2026.04.03 - v. 6.8 - split long exclude-filter SKIP messages into two lines
+# 2026.04.03 - v. 6.7 - show verbose main-loop progress in a dynamically sized two-line box
+# 2026.04.03 - v. 6.6 - include exact hash file path directly in checksum-group prompt text
+# 2026.04.03 - v. 6.5 - hide unchanged OLD/NEW pairs in checksum-group displays and prompts
 # 2026.04.03 - v. 6.4 - do not rename checksum files whose basename starts with __
-# 2026.04.03 - v. 6.3 - ask per .lnk file instead of a global .lnk cleanup question
-# 2026.04.03 - v. 6.2 - add extra mojibake fixes, remove rip.by.Crisp, optional .lnk cleanup, and paired html/_files renames
-# 2026.04.02 - v. 6.1 - avoid prompt hangs from repeated keypresses by bounding stdin draining and discarding extra buffered keystrokes
-# 2026.04.02 - v. 6.1 - verify only changed checksum references inside checksum groups so stale unrelated refs do not abort
+# 2026.04.03 - v. 6.3 - ask per .lnk file whether to remove it instead of using one global question
+# 2026.04.03 - v. 6.2 - add extra mojibake fixes, remove rip.by.Crisp, prompt for .lnk removal, and pair .htm/.html with _files companion dirs
+# 2026.04.03 - v. 6.1 - verify only changed references inside checksum groups instead of requiring whole hash file to be clean
+# 2026.04.03 - v. 6.0 - make prompt input draining bounded and read a single key safely from repeated keypress bursts
 # 2026.04.02 - v. 5.9 - skip plain entry renames when a local checksum file refers to them; let checksum branch handle the group
 # 2026.04.02 - v. 5.8 - process checksum files before sibling plain entries to avoid stale local hash refs
 # 2026.04.02 - v. 5.7 - remove _OSiOLEK.com and LEK.PL fragments from names
@@ -44,10 +52,13 @@
 # 2026.03.27 - v. 1.4 - apply special media renames after basic normalization
 # 2026.03.27 - v. 1.3 - fixed top-level path handling: keep ./ prefix in transform_name()
 # 2026.03.27 - v. 1.2 - added many changes about media files
-
-SCRIPT_VERSION="2026.04.03 - v. 6.5"
+SCRIPT_VERSION="2026.04.03 - v. 7.3"
 LARGE_HASHFILE_LINE_THRESHOLD=20
-EXCLUDE_FILTERS_FILE="./_exclude-rename.sh.txt"
+START_DIR="$(pwd -P)"
+EXCLUDE_FILTERS_FILE="$START_DIR/_exclude-rename.sh.txt"
+USE_DB=0
+FORCE_RECHECK=0
+DB_FILE="$START_DIR/rename.sh-optional-db.sqlite3"
 
 set -Eeuo pipefail
 shopt -s nullglob
@@ -79,10 +90,12 @@ trap 'on_err "$?" "$LINENO" "$BASH_COMMAND"' ERR
 
 usage() {
     cat <<'EOF'
-Usage: rename.sh [-v|--verbose] [-h|--help]
+Usage: rename.sh [-v|--verbose] [--use-db] [--force-recheck] [-h|--help]
 
 Options:
   -v, --verbose   Show extra diagnostic output
+  --use-db        Use SQLite cache in the start directory for already checked files
+  --force-recheck Ignore SQLite cache and recheck everything
   -h, --help      Show this help
 EOF
 }
@@ -219,10 +232,102 @@ append_path_to_exclude_filters_file() {
     load_exclude_filters
 }
 
+sql_escape() {
+    printf "%s" "$1" | sed "s/'/''/g"
+}
+
+db_require_sqlite() {
+    if ! command -v sqlite3 >/dev/null 2>&1; then
+        echo "ERROR: --use-db was requested but sqlite3 is not installed." >&2
+        exit 1
+    fi
+}
+
+db_abs_path() {
+    python3 - "$1" <<'PY'
+import os, sys
+print(os.path.abspath(sys.argv[1]))
+PY
+}
+
+db_get_size_mtime() {
+    stat -Lc '%s|%Y' -- "$1"
+}
+
+db_init() {
+    (( USE_DB == 1 )) || return 0
+    db_require_sqlite
+    sqlite3 "$DB_FILE" <<'SQL'
+CREATE TABLE IF NOT EXISTS checked_paths (
+    path TEXT PRIMARY KEY,
+    kind TEXT NOT NULL,
+    size INTEGER NOT NULL,
+    mtime INTEGER NOT NULL,
+    status TEXT NOT NULL,
+    last_checked TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_checked_paths_kind ON checked_paths(kind);
+SQL
+}
+
+db_has_valid_entry() {
+    local path="$1"
+    local abs meta size mtime query result
+
+    (( USE_DB == 1 )) || return 1
+    (( FORCE_RECHECK == 0 )) || return 1
+    [[ -e "$path" ]] || return 1
+
+    meta="$(db_get_size_mtime "$path" 2>/dev/null || true)"
+    [[ -n "$meta" ]] || return 1
+    abs="$(db_abs_path "$path")"
+    size="${meta%%|*}"
+    mtime="${meta##*|}"
+
+    query="SELECT size || '|' || mtime FROM checked_paths WHERE path='$(sql_escape "$abs")' LIMIT 1;"
+    result="$(sqlite3 "$DB_FILE" "$query" 2>/dev/null || true)"
+    [[ "$result" == "$size|$mtime" ]]
+}
+
+db_mark_checked() {
+    local path="$1"
+    local kind="$2"
+    local status="$3"
+    local abs meta size mtime sql
+
+    (( USE_DB == 1 )) || return 0
+    [[ -e "$path" ]] || return 0
+
+    meta="$(db_get_size_mtime "$path" 2>/dev/null || true)"
+    [[ -n "$meta" ]] || return 0
+    abs="$(db_abs_path "$path")"
+    size="${meta%%|*}"
+    mtime="${meta##*|}"
+
+    sql="INSERT INTO checked_paths(path, kind, size, mtime, status, last_checked) VALUES ('$(sql_escape "$abs")', '$(sql_escape "$kind")', $size, $mtime, '$(sql_escape "$status")', CURRENT_TIMESTAMP) ON CONFLICT(path) DO UPDATE SET kind=excluded.kind, size=excluded.size, mtime=excluded.mtime, status=excluded.status, last_checked=CURRENT_TIMESTAMP;"
+    sqlite3 "$DB_FILE" "$sql" >/dev/null 2>&1 || true
+}
+
+db_mark_many_checked() {
+    local kind="$1"
+    local status="$2"
+    shift 2
+    local path
+    for path in "$@"; do
+        db_mark_checked "$path" "$kind" "$status"
+    done
+}
+
 for arg in "$@"; do
     case "$arg" in
         -v|--verbose)
             VERBOSE=1
+            ;;
+        --use-db)
+            USE_DB=1
+            ;;
+        --force-recheck)
+            FORCE_RECHECK=1
             ;;
         -h|--help)
             usage
@@ -237,12 +342,21 @@ for arg in "$@"; do
 done
 
 load_exclude_filters
+db_init
 
 echo
 echo "============================================================"
 echo "  rename.sh  •  safe media + checksum rename helper"
 echo "  version: $SCRIPT_VERSION"
 echo "============================================================"
+
+if (( USE_DB == 1 )); then
+    echo
+    echo "SQLite cache enabled: $DB_FILE"
+    if (( FORCE_RECHECK == 1 )); then
+        echo "SQLite cache mode: force recheck enabled"
+    fi
+fi
 
 if [[ -f "$EXCLUDE_FILTERS_FILE" ]]; then
     echo
@@ -1161,6 +1275,7 @@ perform_plain_entry_rename() {
     mv -i -- "$old" "$new"
     ((++files_affected))
     record_rename "$old" "$new"
+    db_mark_checked "$new" "plain" "checked"
 
     if [[ -n "$old_companion_dir" && "$old_companion_dir" != "$new_companion_dir" ]]; then
         if mv -i -- "$old_companion_dir" "$new_companion_dir"; then
@@ -1169,6 +1284,7 @@ perform_plain_entry_rename() {
             old_companion_name="$(basename -- "$old_companion_dir")"
             new_companion_name="$(basename -- "$new_companion_dir")"
             update_html_companion_reference "$new" "$old_companion_name" "$new_companion_name"
+            db_mark_checked "$new_companion_dir" "html_companion" "checked"
         else
             mv -f -- "$new" "$old"
             ((++files_skipped))
@@ -1334,6 +1450,7 @@ handle_lnk_file() {
             ;;
         *)
             ((++files_skipped))
+            db_mark_checked "$f" "lnk" "kept"
             return 0
             ;;
     esac
@@ -1457,6 +1574,13 @@ for f in "${ordered_paths[@]}"; do
         if ! handle_lnk_file "$f"; then
             break
         fi
+        processed["$f"]=1
+        continue
+    fi
+
+    if db_has_valid_entry "$f"; then
+        echo -e "${CYAN}DB SKIP:${RESET} '$f' was already checked earlier and metadata still matches."
+        ((++files_skipped))
         processed["$f"]=1
         continue
     fi
@@ -1588,6 +1712,8 @@ for f in "${ordered_paths[@]}"; do
         if [[ "$action_needed" == "no" ]]; then
             vlog "All referenced files exist and no rename/update is needed for '$sum_file' - skipping without checksum verification"
             ((++files_skipped))
+            db_mark_checked "$sum_file" "checksum_group" "checked"
+            db_mark_many_checked "checksum_ref" "checked" "${refs[@]}"
             processed["$sum_file"]=1
             for ref in "${refs[@]}"; do processed["$ref"]=1; done
             continue
@@ -1824,6 +1950,14 @@ for f in "${ordered_paths[@]}"; do
         finish_current_operation
         vlog "Finished checksum group '$sum_file'"
 
+        db_mark_checked "$final_sum" "checksum_group" "checked"
+        db_mark_many_checked "checksum_ref" "checked" "${new_refs[@]}"
+        for i in "${!html_companion_new_dirs[@]}"; do
+            if [[ "${html_companion_apply[$i]}" == "yes" ]]; then
+                db_mark_checked "${html_companion_new_dirs[$i]}" "html_companion" "checked"
+            fi
+        done
+
         processed["$sum_file"]=1
         processed["$final_sum"]=1
         for ref in "${refs[@]}"; do processed["$ref"]=1; done
@@ -1845,6 +1979,7 @@ for f in "${ordered_paths[@]}"; do
     [[ "$f" == "$new" ]] && {
         vlog "No rename needed for '$f'"
         ((++files_skipped))
+        db_mark_checked "$f" "plain" "checked"
         continue
     }
 
@@ -1922,3 +2057,4 @@ if (( files_affected > 0 )); then
     done
 fi
 echo "==========================="
+
