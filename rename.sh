@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.04.03 - v. 7.8 - add optional --fast mode for path-only DB skips and update help/banner text
 # 2026.04.03 - v. 7.7 - optimize --use-db with in-memory cache and batched SQLite writes
 # 2026.04.03 - v. 7.2 - optional SQLite checked-file cache with --use-db and --force-recheck
 # 2026.04.03 - v. 7.1 - treat _pliki companion directories the same as _files for .htm/.html pairs
@@ -52,12 +53,13 @@
 # 2026.03.27 - v. 1.4 - apply special media renames after basic normalization
 # 2026.03.27 - v. 1.3 - fixed top-level path handling: keep ./ prefix in transform_name()
 # 2026.03.27 - v. 1.2 - added many changes about media files
-SCRIPT_VERSION="2026.04.03 - v. 7.6"
+SCRIPT_VERSION="2026.04.03 - v. 7.8"
 LARGE_HASHFILE_LINE_THRESHOLD=20
 START_DIR="$(pwd -P)"
 EXCLUDE_FILTERS_FILE="$START_DIR/_exclude-rename.sh.txt"
 USE_DB=0
 FORCE_RECHECK=0
+FAST_DB=0
 DB_FILE="$START_DIR/rename.sh-optional-db.sqlite3"
 
 set -Eeuo pipefail
@@ -90,11 +92,12 @@ trap 'on_err "$?" "$LINENO" "$BASH_COMMAND"' ERR
 
 usage() {
     cat <<'EOF'
-Usage: rename.sh [-v|--verbose] [--use-db] [--force-recheck] [-h|--help]
+Usage: rename.sh [-v|--verbose] [--use-db] [--fast] [--force-recheck] [-h|--help]
 
 Options:
   -v, --verbose   Show extra diagnostic output
   --use-db        Use SQLite cache in the start directory for already checked files
+  --fast          With --use-db, trust cached paths without checking current size/mtime
   --force-recheck Ignore SQLite cache and recheck everything
   -h, --help      Show this help
 EOF
@@ -323,11 +326,16 @@ db_has_valid_entry() {
     (( FORCE_RECHECK == 0 )) || return 1
     [[ -e "$path" ]] || return 1
 
-    meta="$(db_get_size_mtime "$path" 2>/dev/null || true)"
-    [[ -n "$meta" ]] || return 1
     abs="$(db_abs_path "$path")"
     cached="${DB_CACHE_META[$abs]-}"
     [[ -n "$cached" ]] || return 1
+
+    if (( FAST_DB == 1 )); then
+        return 0
+    fi
+
+    meta="$(db_get_size_mtime "$path" 2>/dev/null || true)"
+    [[ -n "$meta" ]] || return 1
     size="${meta%%|*}"
     mtime="${meta##*|}"
 
@@ -379,6 +387,9 @@ for arg in "$@"; do
         --force-recheck)
             FORCE_RECHECK=1
             ;;
+        --fast)
+            FAST_DB=1
+            ;;
         -h|--help)
             usage
             exit 0
@@ -403,8 +414,13 @@ echo "============================================================"
 if (( USE_DB == 1 )); then
     echo
     echo "SQLite cache enabled: $DB_FILE"
+    if (( FAST_DB == 1 )); then
+        echo "SQLite cache mode: FAST (path-only skips; size/mtime checks disabled)"
+    else
+        echo "SQLite cache mode: SAFE (path + size + mtime must still match)"
+    fi
     if (( FORCE_RECHECK == 1 )); then
-        echo "SQLite cache mode: force recheck enabled"
+        echo "SQLite cache mode override: force recheck enabled"
     fi
 fi
 
