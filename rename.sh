@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.04.03 - v. 8.6 - add --colors, --mode, and --scope command-line options to skip startup questions
 # 2026.04.03 - v. 8.5 - cache checksum files with missing refs in DB and wrap long SKIP lines using MAX_LINE_LENGTH
 # 2026.04.03 - v. 8.4 - print info when .htm/.html files are renamed together with companion _files/_pliki directories
 # 2026.04.03 - v. 8.3 - wrap long single-target checksum verbose lines and remove _www.osiolek.com from filenames
@@ -60,7 +61,7 @@
 # 2026.03.27 - v. 1.4 - apply special media renames after basic normalization
 # 2026.03.27 - v. 1.3 - fixed top-level path handling: keep ./ prefix in transform_name()
 # 2026.03.27 - v. 1.2 - added many changes about media files
-SCRIPT_VERSION="2026.04.03 - v. 8.5"
+SCRIPT_VERSION="2026.04.03 - v. 8.6"
 LARGE_HASHFILE_LINE_THRESHOLD=20
 START_DIR="$(pwd -P)"
 EXCLUDE_FILTERS_FILE="$START_DIR/_exclude-rename.sh.txt"
@@ -75,6 +76,9 @@ shopt -s nullglob
 
 VERBOSE=0
 VERBOSE_MAIN_EVERY=200
+CLI_COLORS=""
+CLI_MODE=""
+CLI_SCOPE=""
 
 CURRENT_OP_ACTIVE=0
 CURRENT_OP_LABEL=""
@@ -100,14 +104,18 @@ trap 'on_err "$?" "$LINENO" "$BASH_COMMAND"' ERR
 
 usage() {
     cat <<'EOF'
-Usage: rename.sh [-v|--verbose] [--use-db] [--fast] [--force-recheck] [-h|--help]
+Usage: rename.sh [-v|--verbose] [--use-db] [--fast] [--force-recheck] [--colors yes|no] [--mode dry-run|real] [--scope current|subdirs] [-h|--help]
 
 Options:
-  -v, --verbose   Show extra diagnostic output
-  --use-db        Use SQLite cache in the start directory (_rename.sh-optional-db.sqlite3)
-  --fast          With --use-db, trust cached paths without checking current size/mtime
-  --force-recheck Ignore SQLite cache and recheck everything
-  -h, --help      Show this help
+  -v, --verbose          Show extra diagnostic output
+  --use-db               Use SQLite cache in the start directory (_rename.sh-optional-db.sqlite3)
+  --fast                 With --use-db, trust cached paths without checking current size/mtime
+  --force-recheck        Ignore SQLite cache and recheck everything
+  --colors yes|no        Skip the startup colors question
+  --mode dry-run|real    Skip the startup mode question
+  --scope current|subdirs
+                         Skip the startup scope question
+  -h, --help             Show this help
 EOF
 }
 
@@ -505,26 +513,54 @@ db_rewrite_subtree() {
         fi
     done
 }
-for arg in "$@"; do
-    case "$arg" in
+while (( $# > 0 )); do
+    case "$1" in
         -v|--verbose)
             VERBOSE=1
+            shift
             ;;
         --use-db)
             USE_DB=1
+            shift
             ;;
         --force-recheck)
             FORCE_RECHECK=1
+            shift
             ;;
         --fast)
             FAST_DB=1
+            shift
+            ;;
+        --colors)
+            [[ $# -ge 2 ]] || { echo "Missing value for --colors" >&2; usage >&2; exit 1; }
+            case "$2" in
+                yes|no) CLI_COLORS="$2" ;;
+                *) echo "Invalid value for --colors: $2 (use yes or no)" >&2; usage >&2; exit 1 ;;
+            esac
+            shift 2
+            ;;
+        --mode)
+            [[ $# -ge 2 ]] || { echo "Missing value for --mode" >&2; usage >&2; exit 1; }
+            case "$2" in
+                dry-run|real) CLI_MODE="$2" ;;
+                *) echo "Invalid value for --mode: $2 (use dry-run or real)" >&2; usage >&2; exit 1 ;;
+            esac
+            shift 2
+            ;;
+        --scope)
+            [[ $# -ge 2 ]] || { echo "Missing value for --scope" >&2; usage >&2; exit 1; }
+            case "$2" in
+                current|subdirs) CLI_SCOPE="$2" ;;
+                *) echo "Invalid value for --scope: $2 (use current or subdirs)" >&2; usage >&2; exit 1 ;;
+            esac
+            shift 2
             ;;
         -h|--help)
             usage
             exit 0
             ;;
         *)
-            echo "Unknown option: $arg" >&2
+            echo "Unknown option: $1" >&2
             usage >&2
             exit 1
             ;;
@@ -559,25 +595,32 @@ if [[ -f "$EXCLUDE_FILTERS_FILE" ]]; then
     echo "Loaded filters: ${#EXCLUDE_FILTERS[@]}"
 fi
 
-echo
-echo "Use colors?"
-echo "  [Y] Yes (default)"
-echo "  [N] No"
-echo "  [Q] Quit"
-echo -n "Choice [Y/n/q]: "
-
 use_colors=yes
 input=""
 
-flush_stdin
-read_single_key input 60
-echo
+if [[ -n "$CLI_COLORS" ]]; then
+    case "$CLI_COLORS" in
+        yes) use_colors=yes ;;
+        no)  use_colors=no ;;
+    esac
+else
+    echo
+    echo "Use colors?"
+    echo "  [Y] Yes (default)"
+    echo "  [N] No"
+    echo "  [Q] Quit"
+    echo -n "Choice [Y/n/q]: "
 
-if [[ "$input" =~ [Qq] ]]; then
-    echo "Quitting."
-    exit 0
-elif [[ "$input" =~ [Nn] ]]; then
-    use_colors=no
+    flush_stdin
+    read_single_key input 60
+    echo
+
+    if [[ "$input" =~ [Qq] ]]; then
+        echo "Quitting."
+        exit 0
+    elif [[ "$input" =~ [Nn] ]]; then
+        use_colors=no
+    fi
 fi
 
 if [[ "$use_colors" == "yes" ]]; then
@@ -763,48 +806,56 @@ finish_current_operation() {
     CURRENT_OP_FILE_NEWS=()
 }
 
-echo
-echo "Select mode:"
-echo "  [D] Dry-run (default)"
-echo "  [R] Real rename (interactive)"
-echo "  [Q] Quit"
-echo -n "Choice [D/r/q]: "
-
 mode="dry-run"
 input=""
 
-flush_stdin
-read_single_key input 60
-echo
+if [[ -n "$CLI_MODE" ]]; then
+    mode="$CLI_MODE"
+else
+    echo
+    echo "Select mode:"
+    echo "  [D] Dry-run (default)"
+    echo "  [R] Real rename (interactive)"
+    echo "  [Q] Quit"
+    echo -n "Choice [D/r/q]: "
 
-if [[ "$input" =~ [Qq] ]]; then
-    echo "Quitting."
-    exit 0
-elif [[ "$input" =~ [Rr] ]]; then
-    mode="real"
+    flush_stdin
+    read_single_key input 60
+    echo
+
+    if [[ "$input" =~ [Qq] ]]; then
+        echo "Quitting."
+        exit 0
+    elif [[ "$input" =~ [Rr] ]]; then
+        mode="real"
+    fi
 fi
 
 echo -e "Mode selected: ${CYAN}$mode${RESET}"
 
-echo
-echo "What should be processed?"
-echo "  [C] Current directory only (default)"
-echo "  [S] Also subdirectories"
-echo "  [Q] Quit"
-echo -n "Choice [C/s/q]: "
-
 process_scope="current"
 input=""
 
-flush_stdin
-read_single_key input 60
-echo
+if [[ -n "$CLI_SCOPE" ]]; then
+    process_scope="$CLI_SCOPE"
+else
+    echo
+    echo "What should be processed?"
+    echo "  [C] Current directory only (default)"
+    echo "  [S] Also subdirectories"
+    echo "  [Q] Quit"
+    echo -n "Choice [C/s/q]: "
 
-if [[ "$input" =~ [Qq] ]]; then
-    echo "Quitting."
-    exit 0
-elif [[ "$input" =~ [Ss] ]]; then
-    process_scope="subdirs"
+    flush_stdin
+    read_single_key input 60
+    echo
+
+    if [[ "$input" =~ [Qq] ]]; then
+        echo "Quitting."
+        exit 0
+    elif [[ "$input" =~ [Ss] ]]; then
+        process_scope="subdirs"
+    fi
 fi
 
 echo -e "Scope selected: ${CYAN}$process_scope${RESET}"
