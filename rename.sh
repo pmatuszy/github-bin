@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# 2026.04.03 - v. 8.2 - rename DB file to _rename.sh-optional-db.sqlite3, migrate legacy DB automatically, and keep DB skip ahead of checksum parsing
+# 2026.04.03 - v. 8.1 - suppress SQLite WAL startup output ('wal') during DB initialization
 # 2026.04.03 - v. 8.0 - when a directory is renamed, update cached DB paths for files under that subtree
 # 2026.04.03 - v. 7.9 - add robust checksum-file DB recognition using checksum-file signature
 # 2026.04.03 - v. 7.8 - add optional --fast mode for path-only DB skips and update help/banner text
@@ -55,14 +57,15 @@
 # 2026.03.27 - v. 1.4 - apply special media renames after basic normalization
 # 2026.03.27 - v. 1.3 - fixed top-level path handling: keep ./ prefix in transform_name()
 # 2026.03.27 - v. 1.2 - added many changes about media files
-SCRIPT_VERSION="2026.04.03 - v. 8.0"
+SCRIPT_VERSION="2026.04.03 - v. 8.2"
 LARGE_HASHFILE_LINE_THRESHOLD=20
 START_DIR="$(pwd -P)"
 EXCLUDE_FILTERS_FILE="$START_DIR/_exclude-rename.sh.txt"
 USE_DB=0
 FORCE_RECHECK=0
 FAST_DB=0
-DB_FILE="$START_DIR/rename.sh-optional-db.sqlite3"
+DB_FILE="$START_DIR/_rename.sh-optional-db.sqlite3"
+LEGACY_DB_FILE="$START_DIR/rename.sh-optional-db.sqlite3"
 
 set -Eeuo pipefail
 shopt -s nullglob
@@ -98,7 +101,7 @@ Usage: rename.sh [-v|--verbose] [--use-db] [--fast] [--force-recheck] [-h|--help
 
 Options:
   -v, --verbose   Show extra diagnostic output
-  --use-db        Use SQLite cache in the start directory for already checked files
+  --use-db        Use SQLite cache in the start directory (_rename.sh-optional-db.sqlite3)
   --fast          With --use-db, trust cached paths without checking current size/mtime
   --force-recheck Ignore SQLite cache and recheck everything
   -h, --help      Show this help
@@ -310,10 +313,20 @@ cleanup_on_exit() {
 }
 trap cleanup_on_exit EXIT
 
+db_migrate_legacy_file() {
+    if [[ -f "$LEGACY_DB_FILE" && ! -f "$DB_FILE" ]]; then
+        mv -f -- "$LEGACY_DB_FILE" "$DB_FILE"
+        [[ -f "${LEGACY_DB_FILE}-wal" ]] && mv -f -- "${LEGACY_DB_FILE}-wal" "${DB_FILE}-wal"
+        [[ -f "${LEGACY_DB_FILE}-shm" ]] && mv -f -- "${LEGACY_DB_FILE}-shm" "${DB_FILE}-shm"
+        echo "SQLite cache migrated: $LEGACY_DB_FILE -> $DB_FILE"
+    fi
+}
+
 db_init() {
+    db_migrate_legacy_file()
     (( USE_DB == 1 )) || return 0
     db_require_sqlite
-    sqlite3 "$DB_FILE" <<'SQL'
+    sqlite3 "$DB_FILE" >/dev/null 2>&1 <<'SQL'
 PRAGMA journal_mode=WAL;
 PRAGMA synchronous=NORMAL;
 PRAGMA temp_store=MEMORY;
