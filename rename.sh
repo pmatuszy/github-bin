@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.04.03 - v. 8.7 - define MAX_LINE_LENGTH early so wrapped messages cannot fail with unbound variable
 # 2026.04.03 - v. 8.6 - add --colors, --mode, and --scope command-line options to skip startup questions
 # 2026.04.03 - v. 8.5 - cache checksum files with missing refs in DB and wrap long SKIP lines using MAX_LINE_LENGTH
 # 2026.04.03 - v. 8.4 - print info when .htm/.html files are renamed together with companion _files/_pliki directories
@@ -61,7 +62,7 @@
 # 2026.03.27 - v. 1.4 - apply special media renames after basic normalization
 # 2026.03.27 - v. 1.3 - fixed top-level path handling: keep ./ prefix in transform_name()
 # 2026.03.27 - v. 1.2 - added many changes about media files
-SCRIPT_VERSION="2026.04.03 - v. 8.6"
+SCRIPT_VERSION="2026.04.03 - v. 8.7"
 LARGE_HASHFILE_LINE_THRESHOLD=20
 START_DIR="$(pwd -P)"
 EXCLUDE_FILTERS_FILE="$START_DIR/_exclude-rename.sh.txt"
