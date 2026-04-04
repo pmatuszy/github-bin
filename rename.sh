@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.04.03 - v. 8.9 - fix wrapped single-target verbose line split and make plain HTML+companion directory rename a single visible prompt/action
 # 2026.04.03 - v. 8.8 - define MAX_LINE_LENGTH early so wrapped output helpers never hit an unbound variable
 # 2026.04.03 - v. 8.7 - define MAX_LINE_LENGTH early so wrapped messages cannot fail with unbound variable
 # 2026.04.03 - v. 8.6 - add --colors, --mode, and --scope command-line options to skip startup questions
@@ -63,7 +64,7 @@
 # 2026.03.27 - v. 1.4 - apply special media renames after basic normalization
 # 2026.03.27 - v. 1.3 - fixed top-level path handling: keep ./ prefix in transform_name()
 # 2026.03.27 - v. 1.2 - added many changes about media files
-SCRIPT_VERSION="2026.04.03 - v. 8.8"
+SCRIPT_VERSION="2026.04.03 - v. 8.9"
 LARGE_HASHFILE_LINE_THRESHOLD=20
 MAX_LINE_LENGTH=200
 START_DIR="$(pwd -P)"
@@ -1303,7 +1304,7 @@ verify_single_checksum_target() {
     target_norm="$(strip_leading_dot_slash "$target_ref")"
     target_re="$(sed_escape_regex "$target_norm")"
 
-    print_wrapped_two_path_verbose "Running single-target $(checksum_cmd "$sum_file") check in directory '"$sum_dir"'" " for ref '"$target_ref"' from file '"$sum_base"'"
+    print_wrapped_two_path_verbose "Running single-target $(checksum_cmd "$sum_file") check in directory '" "$sum_dir" "' for ref '"$target_ref"' from file '"$sum_base"'"
 
     matched_line="$(
         sed -E 's/\r$//' -- "$sum_file" | grep -E "^[0-9a-fA-F]+[[:space:]]+\*?${target_re}$" | tail -n 1 || true
@@ -1562,6 +1563,11 @@ perform_plain_entry_rename() {
     db_mark_checked "$new" "plain" "checked"
 
     if [[ -n "$old_companion_dir" && "$old_companion_dir" != "$new_companion_dir" ]]; then
+        echo -e "${CYAN}HTML PAIR RENAME:${RESET} HTML file and companion directory are being updated together."
+        echo -e "  ${RED}OLD HTML:${RESET} $old"
+        echo -e "  ${GREEN}NEW HTML:${RESET} $new"
+        echo -e "  ${RED}OLD DIR:${RESET}  $old_companion_dir"
+        echo -e "  ${GREEN}NEW DIR:${RESET}  $new_companion_dir"
         if mv -i -- "$old_companion_dir" "$new_companion_dir"; then
             ((++files_affected))
             record_rename "$old_companion_dir" "$new_companion_dir"
@@ -1569,7 +1575,10 @@ perform_plain_entry_rename() {
             old_companion_name="$(basename -- "$old_companion_dir")"
             new_companion_name="$(basename -- "$new_companion_dir")"
             update_html_companion_reference "$new" "$old_companion_name" "$new_companion_name"
+            echo -e "${CYAN}HTML PAIR UPDATED:${RESET} companion reference inside HTML file was updated from '$old_companion_name' to '$new_companion_name'."
             db_mark_checked "$new_companion_dir" "html_companion" "checked"
+            processed["$old_companion_dir"]=1
+            processed["$new_companion_dir"]=1
         else
             mv -f -- "$new" "$old"
             ((++files_skipped))
