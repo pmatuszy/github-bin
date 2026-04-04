@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.04.03 - v. 9.0 - fix long single-target checksum verbose lines by formatting directory, ref, and hash file separately
 # 2026.04.03 - v. 8.9 - fix wrapped single-target verbose line split and make plain HTML+companion directory rename a single visible prompt/action
 # 2026.04.03 - v. 8.8 - define MAX_LINE_LENGTH early so wrapped output helpers never hit an unbound variable
 # 2026.04.03 - v. 8.7 - define MAX_LINE_LENGTH early so wrapped messages cannot fail with unbound variable
@@ -64,7 +65,7 @@
 # 2026.03.27 - v. 1.4 - apply special media renames after basic normalization
 # 2026.03.27 - v. 1.3 - fixed top-level path handling: keep ./ prefix in transform_name()
 # 2026.03.27 - v. 1.2 - added many changes about media files
-SCRIPT_VERSION="2026.04.03 - v. 8.9"
+SCRIPT_VERSION="2026.04.03 - v. 9.0"
 LARGE_HASHFILE_LINE_THRESHOLD=20
 MAX_LINE_LENGTH=200
 START_DIR="$(pwd -P)"
@@ -656,6 +657,25 @@ print_wrapped_two_path_verbose() {
     else
         echo "[VERBOSE] ${prefix}${first_path} " >&2
         echo "${indent}${suffix}" >&2
+    fi
+}
+
+print_single_target_check_verbose() {
+    local tool_name="$1"
+    local sum_dir="$2"
+    local target_ref="$3"
+    local sum_base="$4"
+
+    local line1="Running single-target ${tool_name} check in directory '${sum_dir}'"
+    local line2="          for ref '${target_ref}' from file '${sum_base}'"
+
+    if (( ${#line1} + 11 <= MAX_LINE_LENGTH )) && (( ${#line2} <= MAX_LINE_LENGTH )); then
+        echo "[VERBOSE] ${line1}" >&2
+        echo "${line2}" >&2
+    else
+        echo "[VERBOSE] ${line1}" >&2
+        echo "          for ref '${target_ref}'" >&2
+        echo "          from file '${sum_base}'" >&2
     fi
 }
 
@@ -1304,7 +1324,7 @@ verify_single_checksum_target() {
     target_norm="$(strip_leading_dot_slash "$target_ref")"
     target_re="$(sed_escape_regex "$target_norm")"
 
-    print_wrapped_two_path_verbose "Running single-target $(checksum_cmd "$sum_file") check in directory '" "$sum_dir" "' for ref '"$target_ref"' from file '"$sum_base"'"
+    print_single_target_check_verbose "$(checksum_cmd "$sum_file")" "$sum_dir" "$target_ref" "$sum_base"
 
     matched_line="$(
         sed -E 's/\r$//' -- "$sum_file" | grep -E "^[0-9a-fA-F]+[[:space:]]+\*?${target_re}$" | tail -n 1 || true
