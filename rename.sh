@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# 2026.04.03 - v. 8.4 - print info when .htm/.html files are renamed together with companion _files/_pliki directories
+# 2026.04.03 - v. 8.3 - wrap long single-target checksum verbose lines and remove _www.osiolek.com from filenames
 # 2026.04.03 - v. 8.2 - rename DB file to _rename.sh-optional-db.sqlite3, migrate legacy DB automatically, and keep DB skip ahead of checksum parsing
 # 2026.04.03 - v. 8.1 - suppress SQLite WAL startup output ('wal') during DB initialization
 # 2026.04.03 - v. 8.0 - when a directory is renamed, update cached DB paths for files under that subtree
@@ -57,7 +59,7 @@
 # 2026.03.27 - v. 1.4 - apply special media renames after basic normalization
 # 2026.03.27 - v. 1.3 - fixed top-level path handling: keep ./ prefix in transform_name()
 # 2026.03.27 - v. 1.2 - added many changes about media files
-SCRIPT_VERSION="2026.04.03 - v. 8.2"
+SCRIPT_VERSION="2026.04.03 - v. 8.4"
 LARGE_HASHFILE_LINE_THRESHOLD=20
 START_DIR="$(pwd -P)"
 EXCLUDE_FILTERS_FILE="$START_DIR/_exclude-rename.sh.txt"
@@ -568,6 +570,22 @@ else
 fi
 
 ARROW="→"
+
+print_wrapped_two_path_verbose() {
+    local prefix="$1"
+    local first_path="$2"
+    local suffix="$3"
+
+    local line="${prefix}${first_path}${suffix}"
+    local indent="          "
+
+    if (( ${#line} <= MAX_LINE_LENGTH )); then
+        echo "[VERBOSE] $line" >&2
+    else
+        echo "[VERBOSE] ${prefix}${first_path} " >&2
+        echo "${indent}${suffix}" >&2
+    fi
+}
 
 vlog() {
     (( VERBOSE == 1 )) || return 0
@@ -1193,7 +1211,7 @@ verify_single_checksum_target() {
     target_norm="$(strip_leading_dot_slash "$target_ref")"
     target_re="$(sed_escape_regex "$target_norm")"
 
-    vlog "Running single-target $(checksum_cmd "$sum_file") check in directory '$sum_dir' for ref '$target_ref' from file '$sum_base'"
+    print_wrapped_two_path_verbose "Running single-target $(checksum_cmd "$sum_file") check in directory '"$sum_dir"'" " for ref '"$target_ref"' from file '"$sum_base"'"
 
     matched_line="$(
         sed -E 's/\r$//' -- "$sum_file" | grep -E "^[0-9a-fA-F]+[[:space:]]+\*?${target_re}$" | tail -n 1 || true
@@ -2075,6 +2093,11 @@ for f in "${ordered_paths[@]}"; do
                 record_rename "${refs[$i]}" "${new_refs[$i]}"
 
                 if [[ "${html_companion_apply[$i]}" == "yes" ]]; then
+                    echo -e "${CYAN}HTML PAIR RENAME:${RESET} HTML file and companion directory are being updated together."
+                    echo -e "  ${RED}OLD HTML:${RESET} ${refs[$i]}"
+                    echo -e "  ${GREEN}NEW HTML:${RESET} ${new_refs[$i]}"
+                    echo -e "  ${RED}OLD DIR:${RESET}  ${html_companion_old_dirs[$i]}"
+                    echo -e "  ${GREEN}NEW DIR:${RESET}  ${html_companion_new_dirs[$i]}"
                     vlog "Renaming HTML companion directory '${html_companion_old_dirs[$i]}' -> '${html_companion_new_dirs[$i]}'"
                     mv -i -- "${html_companion_old_dirs[$i]}" "${html_companion_new_dirs[$i]}"
                     db_rewrite_subtree "${html_companion_old_dirs[$i]}" "${html_companion_new_dirs[$i]}"
@@ -2082,6 +2105,7 @@ for f in "${ordered_paths[@]}"; do
                     ((++files_affected))
                     record_rename "${html_companion_old_dirs[$i]}" "${html_companion_new_dirs[$i]}"
                     update_html_companion_reference "${new_refs[$i]}" "${html_companion_old_names[$i]}" "${html_companion_new_names[$i]}"
+                    echo -e "${CYAN}HTML PAIR UPDATED:${RESET} companion reference inside HTML file was updated from '${html_companion_old_names[$i]}' to '${html_companion_new_names[$i]}'."
                     html_hash_needs_refresh[$i]="yes"
                 fi
             else
