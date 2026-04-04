@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# 2026.04.03 - v. 8.0 - when a directory is renamed, update cached DB paths for files under that subtree
+# 2026.04.03 - v. 7.9 - add robust checksum-file DB recognition using checksum-file signature
 # 2026.04.03 - v. 7.8 - add optional --fast mode for path-only DB skips and update help/banner text
 # 2026.04.03 - v. 7.7 - optimize --use-db with in-memory cache and batched SQLite writes
 # 2026.04.03 - v. 7.2 - optional SQLite checked-file cache with --use-db and --force-recheck
@@ -53,7 +55,7 @@
 # 2026.03.27 - v. 1.4 - apply special media renames after basic normalization
 # 2026.03.27 - v. 1.3 - fixed top-level path handling: keep ./ prefix in transform_name()
 # 2026.03.27 - v. 1.2 - added many changes about media files
-SCRIPT_VERSION="2026.04.03 - v. 7.8"
+SCRIPT_VERSION="2026.04.03 - v. 8.0"
 LARGE_HASHFILE_LINE_THRESHOLD=20
 START_DIR="$(pwd -P)"
 EXCLUDE_FILTERS_FILE="$START_DIR/_exclude-rename.sh.txt"
@@ -264,7 +266,22 @@ db_get_size_mtime() {
     stat -Lc '%s|%Y' -- "$1"
 }
 
+db_compute_signature() {
+    local path="$1"
+
+    [[ -f "$path" ]] || return 1
+
+    if command -v sha1sum >/dev/null 2>&1; then
+        sha1sum -- "$path" | awk '{print $1}'
+    elif command -v md5sum >/dev/null 2>&1; then
+        md5sum -- "$path" | awk '{print $1}'
+    else
+        cksum -- "$path" | awk '{print $1 "-" $2}'
+    fi
+}
+
 declare -A DB_CACHE_META=()
+declare -A DB_CACHE_SIG=()
 DB_PENDING_SQL_FILE=""
 DB_PENDING_COUNT=0
 DB_FLUSH_EVERY=500
@@ -311,16 +328,21 @@ CREATE TABLE IF NOT EXISTS checked_paths (
 );
 CREATE INDEX IF NOT EXISTS idx_checked_paths_kind ON checked_paths(kind);
 SQL
+    sqlite3 "$DB_FILE" 'ALTER TABLE checked_paths ADD COLUMN signature TEXT;' >/dev/null 2>&1 || true
+    sqlite3 "$DB_FILE" 'CREATE INDEX IF NOT EXISTS idx_checked_paths_signature ON checked_paths(signature);' >/dev/null 2>&1 || true
     DB_PENDING_SQL_FILE="$(mktemp)"
-    while IFS='|' read -r path size mtime; do
+    while IFS='|' read -r path size mtime signature; do
         [[ -n "$path" ]] || continue
         DB_CACHE_META["$path"]="$size|$mtime"
-    done < <(sqlite3 -separator '|' "$DB_FILE" 'SELECT path, size, mtime FROM checked_paths;')
+        if [[ -n "$signature" ]]; then
+            DB_CACHE_SIG["$signature"]=1
+        fi
+    done < <(sqlite3 -separator '|' "$DB_FILE" 'SELECT path, size, mtime, COALESCE(signature, "") FROM checked_paths;')
 }
 
 db_has_valid_entry() {
     local path="$1"
-    local abs meta cached size mtime
+    local abs meta cached size mtime sig
 
     (( USE_DB == 1 )) || return 1
     (( FORCE_RECHECK == 0 )) || return 1
@@ -328,25 +350,33 @@ db_has_valid_entry() {
 
     abs="$(db_abs_path "$path")"
     cached="${DB_CACHE_META[$abs]-}"
-    [[ -n "$cached" ]] || return 1
 
-    if (( FAST_DB == 1 )); then
-        return 0
+    if [[ -n "$cached" ]]; then
+        if (( FAST_DB == 1 )); then
+            return 0
+        fi
+
+        meta="$(db_get_size_mtime "$path" 2>/dev/null || true)"
+        [[ -n "$meta" ]] || return 1
+        size="${meta%%|*}"
+        mtime="${meta##*|}"
+
+        [[ "$cached" == "$size|$mtime" ]] && return 0
     fi
 
-    meta="$(db_get_size_mtime "$path" 2>/dev/null || true)"
-    [[ -n "$meta" ]] || return 1
-    size="${meta%%|*}"
-    mtime="${meta##*|}"
+    if is_checksum_file "$path"; then
+        sig="$(db_compute_signature "$path" 2>/dev/null || true)"
+        [[ -n "$sig" && -n "${DB_CACHE_SIG[$sig]-}" ]] && return 0
+    fi
 
-    [[ "$cached" == "$size|$mtime" ]]
+    return 1
 }
 
 db_mark_checked() {
     local path="$1"
     local kind="$2"
     local status="$3"
-    local abs meta size mtime sql
+    local abs meta size mtime sig sql sig_sql
 
     (( USE_DB == 1 )) || return 0
     [[ -e "$path" ]] || return 0
@@ -356,10 +386,24 @@ db_mark_checked() {
     abs="$(db_abs_path "$path")"
     size="${meta%%|*}"
     mtime="${meta##*|}"
+    sig=""
+
+    if is_checksum_file "$path"; then
+        sig="$(db_compute_signature "$path" 2>/dev/null || true)"
+        if [[ -n "$sig" ]]; then
+            DB_CACHE_SIG["$sig"]=1
+        fi
+    fi
 
     DB_CACHE_META["$abs"]="$size|$mtime"
 
-    sql="INSERT INTO checked_paths(path, kind, size, mtime, status, last_checked) VALUES ('$(sql_escape "$abs")', '$(sql_escape "$kind")', $size, $mtime, '$(sql_escape "$status")', CURRENT_TIMESTAMP) ON CONFLICT(path) DO UPDATE SET kind=excluded.kind, size=excluded.size, mtime=excluded.mtime, status=excluded.status, last_checked=CURRENT_TIMESTAMP;"
+    if [[ -n "$sig" ]]; then
+        sig_sql="'$(sql_escape "$sig")'"
+    else
+        sig_sql="NULL"
+    fi
+
+    sql="INSERT INTO checked_paths(path, kind, size, mtime, status, last_checked, signature) VALUES ('$(sql_escape "$abs")', '$(sql_escape "$kind")', $size, $mtime, '$(sql_escape "$status")', CURRENT_TIMESTAMP, $sig_sql) ON CONFLICT(path) DO UPDATE SET kind=excluded.kind, size=excluded.size, mtime=excluded.mtime, status=excluded.status, signature=excluded.signature, last_checked=CURRENT_TIMESTAMP;"
     printf '%s\n' "$sql" >> "$DB_PENDING_SQL_FILE"
     (( ++DB_PENDING_COUNT ))
     if (( DB_PENDING_COUNT >= DB_FLUSH_EVERY )); then
@@ -374,6 +418,51 @@ db_mark_many_checked() {
     local path
     for path in "$@"; do
         db_mark_checked "$path" "$kind" "$status"
+    done
+}
+
+db_rewrite_subtree() {
+    local old_path="$1"
+    local new_path="$2"
+    local old_abs new_abs old_prefix new_prefix old_db_path new_db_path suffix sql
+    local -a matched_paths=()
+
+    (( USE_DB == 1 )) || return 0
+    [[ -e "$new_path" ]] || return 0
+
+    old_abs="$(db_abs_path "$old_path" 2>/dev/null || true)"
+    new_abs="$(db_abs_path "$new_path" 2>/dev/null || true)"
+    [[ -n "$old_abs" && -n "$new_abs" ]] || return 0
+
+    old_prefix="${old_abs%/}/"
+    new_prefix="${new_abs%/}/"
+
+    for old_db_path in "${!DB_CACHE_META[@]}"; do
+        if [[ "$old_db_path" == "$old_abs" || "$old_db_path" == "$old_prefix"* ]]; then
+            matched_paths+=( "$old_db_path" )
+        fi
+    done
+
+    (( ${#matched_paths[@]} > 0 )) || return 0
+
+    for old_db_path in "${matched_paths[@]}"; do
+        if [[ "$old_db_path" == "$old_abs" ]]; then
+            new_db_path="$new_abs"
+        else
+            suffix="${old_db_path#"$old_prefix"}"
+            new_db_path="${new_prefix}${suffix}"
+        fi
+
+        DB_CACHE_META["$new_db_path"]="${DB_CACHE_META[$old_db_path]}"
+        unset 'DB_CACHE_META[$old_db_path]'
+
+        sql="INSERT INTO checked_paths(path, kind, size, mtime, status, last_checked, signature) SELECT '$(sql_escape "$new_db_path")', kind, size, mtime, status, last_checked, signature FROM checked_paths WHERE path='$(sql_escape "$old_db_path")' ON CONFLICT(path) DO UPDATE SET kind=excluded.kind, size=excluded.size, mtime=excluded.mtime, status=excluded.status, signature=excluded.signature, last_checked=excluded.last_checked; DELETE FROM checked_paths WHERE path='$(sql_escape "$old_db_path")';"
+        printf '%s
+' "$sql" >> "$DB_PENDING_SQL_FILE"
+        (( ++DB_PENDING_COUNT ))
+        if (( DB_PENDING_COUNT >= DB_FLUSH_EVERY )); then
+            db_flush_pending
+        fi
     done
 }
 for arg in "$@"; do
@@ -1338,15 +1427,22 @@ perform_plain_entry_rename() {
         return 0
     fi
 
+    old_was_dir=no
+    [[ -d "$old" ]] && old_was_dir=yes
+
     mv -i -- "$old" "$new"
     ((++files_affected))
     record_rename "$old" "$new"
+    if [[ "$old_was_dir" == "yes" ]]; then
+        db_rewrite_subtree "$old" "$new"
+    fi
     db_mark_checked "$new" "plain" "checked"
 
     if [[ -n "$old_companion_dir" && "$old_companion_dir" != "$new_companion_dir" ]]; then
         if mv -i -- "$old_companion_dir" "$new_companion_dir"; then
             ((++files_affected))
             record_rename "$old_companion_dir" "$new_companion_dir"
+            db_rewrite_subtree "$old_companion_dir" "$new_companion_dir"
             old_companion_name="$(basename -- "$old_companion_dir")"
             new_companion_name="$(basename -- "$new_companion_dir")"
             update_html_companion_reference "$new" "$old_companion_name" "$new_companion_name"
@@ -1954,8 +2050,13 @@ for f in "${ordered_paths[@]}"; do
 
         for i in "${!refs[@]}"; do
             if [[ "${new_refs[$i]}" != "${refs[$i]}" ]]; then
+                ref_was_dir=no
+                [[ -d "${refs[$i]}" ]] && ref_was_dir=yes
                 vlog "Renaming referenced file '${refs[$i]}' -> '${new_refs[$i]}'"
                 mv -i -- "${refs[$i]}" "${new_refs[$i]}"
+                if [[ "$ref_was_dir" == "yes" ]]; then
+                    db_rewrite_subtree "${refs[$i]}" "${new_refs[$i]}"
+                fi
                 register_current_file_rename "${refs[$i]}" "${new_refs[$i]}"
                 ((++files_affected))
                 record_rename "${refs[$i]}" "${new_refs[$i]}"
@@ -1963,6 +2064,7 @@ for f in "${ordered_paths[@]}"; do
                 if [[ "${html_companion_apply[$i]}" == "yes" ]]; then
                     vlog "Renaming HTML companion directory '${html_companion_old_dirs[$i]}' -> '${html_companion_new_dirs[$i]}'"
                     mv -i -- "${html_companion_old_dirs[$i]}" "${html_companion_new_dirs[$i]}"
+                    db_rewrite_subtree "${html_companion_old_dirs[$i]}" "${html_companion_new_dirs[$i]}"
                     register_current_file_rename "${html_companion_old_dirs[$i]}" "${html_companion_new_dirs[$i]}"
                     ((++files_affected))
                     record_rename "${html_companion_old_dirs[$i]}" "${html_companion_new_dirs[$i]}"
