@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.04.03 - v. 8.5 - cache checksum files with missing refs in DB and wrap long SKIP lines using MAX_LINE_LENGTH
 # 2026.04.03 - v. 8.4 - print info when .htm/.html files are renamed together with companion _files/_pliki directories
 # 2026.04.03 - v. 8.3 - wrap long single-target checksum verbose lines and remove _www.osiolek.com from filenames
 # 2026.04.03 - v. 8.2 - rename DB file to _rename.sh-optional-db.sqlite3, migrate legacy DB automatically, and keep DB skip ahead of checksum parsing
@@ -59,7 +60,7 @@
 # 2026.03.27 - v. 1.4 - apply special media renames after basic normalization
 # 2026.03.27 - v. 1.3 - fixed top-level path handling: keep ./ prefix in transform_name()
 # 2026.03.27 - v. 1.2 - added many changes about media files
-SCRIPT_VERSION="2026.04.03 - v. 8.4"
+SCRIPT_VERSION="2026.04.03 - v. 8.5"
 LARGE_HASHFILE_LINE_THRESHOLD=20
 START_DIR="$(pwd -P)"
 EXCLUDE_FILTERS_FILE="$START_DIR/_exclude-rename.sh.txt"
@@ -286,7 +287,9 @@ db_compute_signature() {
 }
 
 declare -A DB_CACHE_META=()
+declare -A DB_CACHE_STATUS=()
 declare -A DB_CACHE_SIG=()
+declare -A DB_CACHE_SIG_STATUS=()
 DB_PENDING_SQL_FILE=""
 DB_PENDING_COUNT=0
 DB_FLUSH_EVERY=500
@@ -346,18 +349,20 @@ SQL
     sqlite3 "$DB_FILE" 'ALTER TABLE checked_paths ADD COLUMN signature TEXT;' >/dev/null 2>&1 || true
     sqlite3 "$DB_FILE" 'CREATE INDEX IF NOT EXISTS idx_checked_paths_signature ON checked_paths(signature);' >/dev/null 2>&1 || true
     DB_PENDING_SQL_FILE="$(mktemp)"
-    while IFS='|' read -r path size mtime signature; do
+    while IFS='|' read -r path size mtime status signature; do
         [[ -n "$path" ]] || continue
         DB_CACHE_META["$path"]="$size|$mtime"
+        DB_CACHE_STATUS["$path"]="$status"
         if [[ -n "$signature" ]]; then
             DB_CACHE_SIG["$signature"]=1
+            DB_CACHE_SIG_STATUS["$signature"]="$status"
         fi
-    done < <(sqlite3 -separator '|' "$DB_FILE" 'SELECT path, size, mtime, COALESCE(signature, "") FROM checked_paths;')
+    done < <(sqlite3 -separator '|' "$DB_FILE" 'SELECT path, size, mtime, COALESCE(status, ""), COALESCE(signature, "") FROM checked_paths;')
 }
 
 db_has_valid_entry() {
     local path="$1"
-    local abs meta cached size mtime sig
+    local abs meta cached status size mtime sig sig_status
 
     (( USE_DB == 1 )) || return 1
     (( FORCE_RECHECK == 0 )) || return 1
@@ -365,6 +370,7 @@ db_has_valid_entry() {
 
     abs="$(db_abs_path "$path")"
     cached="${DB_CACHE_META[$abs]-}"
+    status="${DB_CACHE_STATUS[$abs]-}"
 
     if [[ -n "$cached" ]]; then
         if (( FAST_DB == 1 )); then
@@ -376,12 +382,29 @@ db_has_valid_entry() {
         size="${meta%%|*}"
         mtime="${meta##*|}"
 
-        [[ "$cached" == "$size|$mtime" ]] && return 0
+        if [[ "$cached" == "$size|$mtime" ]]; then
+            return 0
+        fi
     fi
 
     if is_checksum_file "$path"; then
         sig="$(db_compute_signature "$path" 2>/dev/null || true)"
-        [[ -n "$sig" && -n "${DB_CACHE_SIG[$sig]-}" ]] && return 0
+        sig_status="${DB_CACHE_SIG_STATUS[$sig]-}"
+        if [[ -n "$sig" && -n "${DB_CACHE_SIG[$sig]-}" ]]; then
+            if (( FAST_DB == 1 )); then
+                return 0
+            fi
+            meta="$(db_get_size_mtime "$path" 2>/dev/null || true)"
+            [[ -n "$meta" ]] || return 1
+            size="${meta%%|*}"
+            mtime="${meta##*|}"
+            if [[ -n "$cached" && "$cached" == "$size|$mtime" ]]; then
+                return 0
+            fi
+            if [[ "$sig_status" == "missing_refs" || "$sig_status" == "checked" ]]; then
+                return 0
+            fi
+        fi
     fi
 
     return 1
@@ -407,10 +430,12 @@ db_mark_checked() {
         sig="$(db_compute_signature "$path" 2>/dev/null || true)"
         if [[ -n "$sig" ]]; then
             DB_CACHE_SIG["$sig"]=1
+            DB_CACHE_SIG_STATUS["$sig"]="$status"
         fi
     fi
 
     DB_CACHE_META["$abs"]="$size|$mtime"
+    DB_CACHE_STATUS["$abs"]="$status"
 
     if [[ -n "$sig" ]]; then
         sig_sql="'$(sql_escape "$sig")'"
@@ -584,6 +609,19 @@ print_wrapped_two_path_verbose() {
     else
         echo "[VERBOSE] ${prefix}${first_path} " >&2
         echo "${indent}${suffix}" >&2
+    fi
+}
+
+print_skip_path_reason() {
+    local path="$1"
+    local reason="$2"
+    local line="SKIP: '$path' $reason"
+
+    if (( ${#line} <= MAX_LINE_LENGTH )); then
+        echo -e "${YELLOW}SKIP:${RESET} '$path' $reason"
+    else
+        echo -e "${YELLOW}SKIP:${RESET} '$path'"
+        echo "      $reason"
     fi
 }
 
@@ -1750,7 +1788,7 @@ for f in "${ordered_paths[@]}"; do
     ((++files_examined))
 
     if is_excluded_by_filter_file "$f"; then
-        echo -e "${YELLOW}SKIP:${RESET} '$f' was ignored because part of its path matches a filter from $EXCLUDE_FILTERS_FILE."
+        print_skip_path_reason "$f" "was ignored because part of its path matches a filter from $EXCLUDE_FILTERS_FILE."
         vlog "Excluded by filter file: '$f'"
         ((++files_skipped))
         processed["$f"]=1
@@ -1873,6 +1911,7 @@ for f in "${ordered_paths[@]}"; do
                 echo -e "  ${YELLOW}MISSING:${RESET} $ref"
             done
             print_grouped_checksum_missing_warning "$sum_file" "${refs[@]}"
+            db_mark_checked "$sum_file" "checksum_group" "missing_refs"
             ((++files_skipped))
             processed["$sum_file"]=1
             continue
