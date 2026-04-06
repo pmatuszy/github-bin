@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.04.03 - v. 9.1 - add Å¼->z, remove ._osloskop.net, collapse double dots, and wrap long checksum-update verbose lines
 # 2026.04.03 - v. 9.0 - fix long single-target checksum verbose lines by formatting directory, ref, and hash file separately
 # 2026.04.03 - v. 8.9 - fix wrapped single-target verbose line split and make plain HTML+companion directory rename a single visible prompt/action
 # 2026.04.03 - v. 8.8 - define MAX_LINE_LENGTH early so wrapped output helpers never hit an unbound variable
@@ -65,7 +66,7 @@
 # 2026.03.27 - v. 1.4 - apply special media renames after basic normalization
 # 2026.03.27 - v. 1.3 - fixed top-level path handling: keep ./ prefix in transform_name()
 # 2026.03.27 - v. 1.2 - added many changes about media files
-SCRIPT_VERSION="2026.04.03 - v. 9.0"
+SCRIPT_VERSION="2026.04.03 - v. 9.1"
 LARGE_HASHFILE_LINE_THRESHOLD=20
 MAX_LINE_LENGTH=200
 START_DIR="$(pwd -P)"
@@ -679,6 +680,23 @@ print_single_target_check_verbose() {
     fi
 }
 
+print_checksum_update_verbose() {
+    local sum_file="$1"
+    local old_name="$2"
+    local new_name="$3"
+
+    local line1="Updating checksum content in '${sum_file}': '${old_name}'"
+    local line2="          -> '${new_name}'"
+
+    if (( ${#line1} + 11 <= MAX_LINE_LENGTH )) && (( ${#line2} <= MAX_LINE_LENGTH )); then
+        echo "[VERBOSE] ${line1}" >&2
+        echo "${line2}" >&2
+    else
+        echo "[VERBOSE] ${line1}" >&2
+        echo "${line2}" >&2
+    fi
+}
+
 print_skip_path_reason() {
     local path="$1"
     local reason="$2"
@@ -1082,6 +1100,7 @@ transform_basename() {
     new="${new//Ĺ�/L}"
     new="${new//Ĺ»/Z}"
     new="${new//Ĺš/S}"
+    new="${new//Å¼/z}"
     new="${new//Ă/s}"
     new="${new//Ăł/o}"
     new="${new//Ĺ‚/l}"
@@ -1124,8 +1143,10 @@ transform_basename() {
     new="${new//_OSiOLEK.com/}"
     new="${new//LEK.PL/}"
     new="${new//rip.by.Crisp/}"
+    new="${new//._osloskop.net/}"
 
     new=$(printf '%s' "$new" | sed -E '
+        s/\.\.+/./g;
         s/__+/_/g;
         s/_\././g;
         s/_$//;
@@ -1412,7 +1433,9 @@ update_checksum_content_refs() {
     old_re2="$(sed_escape_regex "$(strip_leading_dot_slash "$old_name")")"
     new_re2="$(sed_escape_repl "$(strip_leading_dot_slash "$new_name")")"
 
-    vlog "Updating checksum content in '$sum_file': '$old_name' -> '$new_name'"
+    if (( VERBOSE == 1 )); then
+        print_checksum_update_verbose "$sum_file" "$old_name" "$new_name"
+    fi
 
     preserve_timestamps_inplace "$sum_file" \
         sed -i -E \
