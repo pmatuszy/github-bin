@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# 2026.04.03 - v. 9.4 - fix syntax error in handle_lnk_file() function header; preserve full script history
+# 2026.04.07 - v. 9.5 - wrap long protected-checksum, no-action checksum, and missing-ref verbose lines into cleaner two-line output
+# 2026.04.07 - v. 9.4 - fix syntax error in handle_lnk_file() function header; preserve full script history
 # 2026.04.03 - v. 9.3 - add more filename cleanups and search missing checksum refs in the hash-file directory subtree
 # 2026.04.03 - v. 9.2 - wrap long verbose resolved-ref lines into two lines using MAX_LINE_LENGTH
 # 2026.04.03 - v. 9.1 - add Å¼->z, remove ._osloskop.net, collapse double dots, and wrap long checksum-update verbose lines
@@ -69,7 +70,7 @@
 # 2026.03.27 - v. 1.4 - apply special media renames after basic normalization
 # 2026.03.27 - v. 1.3 - fixed top-level path handling: keep ./ prefix in transform_name()
 # 2026.03.27 - v. 1.2 - added many changes about media files
-SCRIPT_VERSION="2026.04.03 - v. 9.4"
+SCRIPT_VERSION="2026.04.07 - v. 9.5"
 LARGE_HASHFILE_LINE_THRESHOLD=20
 MAX_LINE_LENGTH=200
 START_DIR="$(pwd -P)"
@@ -703,6 +704,50 @@ print_checksum_update_verbose() {
 
     local line1="Updating checksum content in '${sum_file}': '${old_name}'"
     local line2="          -> '${new_name}'"
+
+    if (( ${#line1} + 11 <= MAX_LINE_LENGTH )) && (( ${#line2} <= MAX_LINE_LENGTH )); then
+        echo "[VERBOSE] ${line1}" >&2
+        echo "${line2}" >&2
+    else
+        echo "[VERBOSE] ${line1}" >&2
+        echo "${line2}" >&2
+    fi
+}
+
+print_protected_checksum_verbose() {
+    local sum_file="$1"
+    local line1="Protected checksum name starts with double underscores"
+    local line2="          keeping checksum filename unchanged: '${sum_file}'"
+
+    if (( ${#line1} + 11 <= MAX_LINE_LENGTH )) && (( ${#line2} <= MAX_LINE_LENGTH )); then
+        echo "[VERBOSE] ${line1}" >&2
+        echo "${line2}" >&2
+    else
+        echo "[VERBOSE] ${line1}" >&2
+        echo "${line2}" >&2
+    fi
+}
+
+print_checksum_no_action_verbose() {
+    local sum_file="$1"
+    local line1="All referenced files exist and no rename/update is needed"
+    local line2="          for '${sum_file}' - skipping without checksum verification"
+
+    if (( ${#line1} + 11 <= MAX_LINE_LENGTH )) && (( ${#line2} <= MAX_LINE_LENGTH )); then
+        echo "[VERBOSE] ${line1}" >&2
+        echo "${line2}" >&2
+    else
+        echo "[VERBOSE] ${line1}" >&2
+        echo "${line2}" >&2
+    fi
+}
+
+print_try_recover_missing_ref_verbose() {
+    local missing_ref="$1"
+    local expected_hash="$2"
+
+    local line1="Trying to recover missing ref '${missing_ref}'"
+    local line2="          (expected hash: ${expected_hash:-none})"
 
     if (( ${#line1} + 11 <= MAX_LINE_LENGTH )) && (( ${#line2} <= MAX_LINE_LENGTH )); then
         echo "[VERBOSE] ${line1}" >&2
@@ -1754,7 +1799,7 @@ find_best_path_for_missing_ref() {
     missing_dir="$(dirname -- "$missing_ref")"
     search_root="$(dirname -- "$sum_file")"
 
-    vlog "Trying to recover missing ref '$missing_ref' (expected hash: ${expected_hash:-none})"
+    print_try_recover_missing_ref_verbose "$missing_ref" "${expected_hash:-none}"
 
     fast_base="$wanted_norm"
     fast_path="${missing_dir}/${fast_base}"
@@ -2084,7 +2129,7 @@ for f in "${ordered_paths[@]}"; do
         sum_file_needs_rename=no
         if [[ "$new_sum" != "$sum_file" ]]; then
             if is_protected_checksum_name "$sum_file"; then
-                vlog "Protected checksum name starts with double underscores, keeping checksum filename unchanged: '$sum_file'"
+                print_protected_checksum_verbose "$sum_file"
                 new_sum="$sum_file"
             else
                 sum_file_needs_rename=yes
@@ -2097,7 +2142,7 @@ for f in "${ordered_paths[@]}"; do
         [[ "$checksum_content_modified" == "yes" ]] && action_needed=yes
 
         if [[ "$action_needed" == "no" ]]; then
-            vlog "All referenced files exist and no rename/update is needed for '$sum_file' - skipping without checksum verification"
+            print_checksum_no_action_verbose "$sum_file"
             ((++files_skipped))
             db_mark_checked "$sum_file" "checksum_group" "checked"
             db_mark_many_checked "checksum_ref" "checked" "${refs[@]}"
