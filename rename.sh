@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# 2026.04.07 - v. 9.9 - add checksum-based subtree fallback for missing hash references after directory and filename renames
+# 2026.04.07 - v. 9.8 - fix remaining wrapped verbose helper functions that still bypassed the VERBOSE flag
 # 2026.04.07 - v. 9.7 - fix remaining wrapped 'no rename/update is needed' messages so they only print in verbose mode
 # 2026.04.07 - v. 9.6 - fix wrapped verbose helper functions so they respect VERBOSE=0 unless -v/--verbose is used
 # 2026.04.07 - v. 9.5 - wrap long protected-checksum, no-action checksum, and missing-ref verbose lines into cleaner two-line output
@@ -72,7 +74,7 @@
 # 2026.03.27 - v. 1.4 - apply special media renames after basic normalization
 # 2026.03.27 - v. 1.3 - fixed top-level path handling: keep ./ prefix in transform_name()
 # 2026.03.27 - v. 1.2 - added many changes about media files
-SCRIPT_VERSION="2026.04.07 - v. 9.7"
+SCRIPT_VERSION="2026.04.07 - v. 9.9"
 LARGE_HASHFILE_LINE_THRESHOLD=20
 MAX_LINE_LENGTH=200
 START_DIR="$(pwd -P)"
@@ -703,6 +705,7 @@ print_resolved_ref_verbose() {
 }
 
 print_checksum_update_verbose() {
+    (( VERBOSE == 1 )) || return 0
     local sum_file="$1"
     local old_name="$2"
     local new_name="$3"
@@ -720,6 +723,7 @@ print_checksum_update_verbose() {
 }
 
 print_protected_checksum_verbose() {
+    (( VERBOSE == 1 )) || return 0
     local sum_file="$1"
     local line1="Protected checksum name starts with double underscores"
     local line2="          keeping checksum filename unchanged: '${sum_file}'"
@@ -734,6 +738,7 @@ print_protected_checksum_verbose() {
 }
 
 print_checksum_no_action_verbose() {
+    (( VERBOSE == 1 )) || return 0
     local sum_file="$1"
     local line1="All referenced files exist and no rename/update is needed"
     local line2="          for '${sum_file}' - skipping without checksum verification"
@@ -748,6 +753,7 @@ print_checksum_no_action_verbose() {
 }
 
 print_try_recover_missing_ref_verbose() {
+    (( VERBOSE == 1 )) || return 0
     local missing_ref="$1"
     local expected_hash="$2"
 
@@ -1796,7 +1802,7 @@ find_best_path_for_missing_ref() {
 
     local kind wanted_base wanted_norm missing_dir search_root
     local fast_base fast_path fast_hash
-    local candidate candidate_hash
+    local candidate candidate_hash candidate_name
     local -a candidate_names=()
 
     kind="$(checksum_kind "$sum_file")"
@@ -1837,26 +1843,39 @@ find_best_path_for_missing_ref() {
 
     for candidate_name in "${candidate_names[@]}"; do
         while IFS= read -r -d '' candidate; do
-            vlog "Subtree recovery candidate: '$candidate'"
+            vlog "Subtree recovery candidate by name: '$candidate'"
             if [[ -n "$expected_hash" ]]; then
                 candidate_hash="$(checksum_of_file "$kind" "$candidate")"
-                vlog "Subtree recovery candidate has $kind=$candidate_hash"
+                vlog "Subtree recovery candidate by name has $kind=$candidate_hash"
                 if [[ "${candidate_hash,,}" == "${expected_hash,,}" ]]; then
-                    vlog "Subtree recovery candidate checksum matches"
+                    vlog "Subtree recovery candidate by name checksum matches"
                     printf '%s' "$candidate"
                     return 0
                 fi
             else
-                vlog "Subtree recovery candidate accepted (no expected hash available)"
+                vlog "Subtree recovery candidate by name accepted (no expected hash available)"
                 printf '%s' "$candidate"
                 return 0
             fi
         done < <(find "$search_root" -type f -name "$candidate_name" -print0 2>/dev/null)
     done
 
+    if [[ -n "$expected_hash" ]]; then
+        print_checksum_update_verbose "Name-based subtree recovery failed; scanning all files by checksum under '$search_root'" "$expected_hash"
+        while IFS= read -r -d '' candidate; do
+            candidate_hash="$(checksum_of_file "$kind" "$candidate")"
+            if [[ "${candidate_hash,,}" == "${expected_hash,,}" ]]; then
+                vlog "Subtree recovery candidate by checksum matches: '$candidate'"
+                printf '%s' "$candidate"
+                return 0
+            fi
+        done < <(find "$search_root" -type f -print0 2>/dev/null)
+    fi
+
     vlog "Subtree recovery failed for '$missing_ref' under '$search_root'"
     return 1
 }
+
 
 handle_lnk_file() {
     local f="$1"
