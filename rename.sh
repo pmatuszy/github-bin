@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.04.07 - v. 10.2 - add per-directory auto-yes option (d) for rename prompts and replace one-line prompt text with explained multi-line menus
 # 2026.04.07 - v. 10.1 - keep wrapped checksum-update verbose messages as two-liners after the missing-ref helper fix
 # 2026.04.07 - v. 10.0 - fix unbound $3 in wrapped checksum-update verbose helper during missing-ref recovery
 # 2026.04.07 - v. 9.9 - add checksum-based subtree fallback for missing hash references after directory and filename renames
@@ -76,7 +77,7 @@
 # 2026.03.27 - v. 1.4 - apply special media renames after basic normalization
 # 2026.03.27 - v. 1.3 - fixed top-level path handling: keep ./ prefix in transform_name()
 # 2026.03.27 - v. 1.2 - added many changes about media files
-SCRIPT_VERSION="2026.04.07 - v. 10.1"
+SCRIPT_VERSION="2026.04.07 - v. 10.2"
 LARGE_HASHFILE_LINE_THRESHOLD=20
 MAX_LINE_LENGTH=200
 START_DIR="$(pwd -P)"
@@ -1917,6 +1918,7 @@ files_affected=0
 files_skipped=0
 stopped_by_user=no
 rename_all=no
+AUTO_RENAME_DIR=""
 
 declare -a renamed_list=()
 declare -A recorded
@@ -1928,6 +1930,36 @@ record_rename() {
     [[ -n "${recorded[$key]+x}" ]] && return 0
     recorded["$key"]=1
     renamed_list+=("$key")
+}
+
+auto_yes_current_dir_matches() {
+    local path="$1"
+    local path_dir
+    path_dir="$(dirname -- "$path")"
+    [[ -n "$AUTO_RENAME_DIR" && "$path_dir" == "$AUTO_RENAME_DIR" ]]
+}
+
+print_rename_prompt_menu() {
+    local kind_label="$1"
+    echo "Rename this ${kind_label}?"
+    echo "  [Y] Yes (default)"
+    echo "  [N] No"
+    echo "  [A] All remaining"
+    echo "  [D] Yes for this directory"
+    echo "  [E] Add exception (plain entries only)"
+    echo "  [Q] Quit"
+    echo -n "Choice [Y/n/a/d/E/q]: "
+}
+
+print_checksum_prompt_menu() {
+    local label_lower="$1"
+    echo "Rename this ${label_lower} group?"
+    echo "  [Y] Yes (default)"
+    echo "  [N] No"
+    echo "  [A] All remaining"
+    echo "  [D] Yes for this directory"
+    echo "  [Q] Quit"
+    echo -n "Choice [Y/n/a/d/q]: "
 }
 
 print_checksum_group_preview() {
@@ -2218,8 +2250,11 @@ for f in "${ordered_paths[@]}"; do
         do_rename=no
         if [[ "$rename_all" == "yes" ]]; then
             do_rename=yes
+        elif auto_yes_current_dir_matches "$sum_file"; then
+            do_rename=yes
         else
-            echo -n "Rename this ${label,,} group (hash file: $sum_file)? [Y/n/a/q]: "
+            print_checksum_prompt_menu "${label,,}"
+            echo "  hash file: $sum_file"
             flush_stdin
             read_single_key input 300
             echo
@@ -2247,6 +2282,10 @@ for f in "${ordered_paths[@]}"; do
                         ((++files_skipped))
                         do_rename=no
                     fi
+                    ;;
+                d|D)
+                    AUTO_RENAME_DIR="$(dirname -- "$sum_file")"
+                    do_rename=yes
                     ;;
                 *)
                     do_rename=yes
@@ -2458,10 +2497,16 @@ for f in "${ordered_paths[@]}"; do
         continue
     fi
 
+    if auto_yes_current_dir_matches "$f"; then
+        vlog "Renaming '$f' -> '$new' due to per-directory auto-yes"
+        perform_plain_entry_rename "$f" "$new" || break
+        continue
+    fi
+
     echo
     echo -e "${RED}OLD:${RESET} $f"
     echo -e "${GREEN}NEW:${RESET} $new"
-    echo -n "Rename this entry? [Y/n/a/E/q]: "
+    print_rename_prompt_menu "entry"
     flush_stdin
     read_single_key input 300
     echo
@@ -2494,6 +2539,11 @@ for f in "${ordered_paths[@]}"; do
             else
                 ((++files_skipped))
             fi
+            ;;
+        d|D)
+            AUTO_RENAME_DIR="$(dirname -- "$f")"
+            vlog "Per-directory auto-yes enabled for '$AUTO_RENAME_DIR'"
+            perform_plain_entry_rename "$f" "$new" || break
             ;;
         *)
             vlog "Renaming '$f' -> '$new'"
