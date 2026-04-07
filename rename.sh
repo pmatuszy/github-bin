@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# 2026.04.07 - v. 10.4 - remove leading exclamation marks from basenames and strip [Audiobook PL] from names
+# 2026.04.07 - v. 10.3 - wrap long verbose rename lines, including the per-directory auto-yes variant, into two lines
 # 2026.04.07 - v. 10.2 - add per-directory auto-yes option (d) for rename prompts and replace one-line prompt text with explained multi-line menus
 # 2026.04.07 - v. 10.1 - keep wrapped checksum-update verbose messages as two-liners after the missing-ref helper fix
 # 2026.04.07 - v. 10.0 - fix unbound $3 in wrapped checksum-update verbose helper during missing-ref recovery
@@ -77,7 +79,7 @@
 # 2026.03.27 - v. 1.4 - apply special media renames after basic normalization
 # 2026.03.27 - v. 1.3 - fixed top-level path handling: keep ./ prefix in transform_name()
 # 2026.03.27 - v. 1.2 - added many changes about media files
-SCRIPT_VERSION="2026.04.07 - v. 10.2"
+SCRIPT_VERSION="2026.04.07 - v. 10.4"
 LARGE_HASHFILE_LINE_THRESHOLD=20
 MAX_LINE_LENGTH=200
 START_DIR="$(pwd -P)"
@@ -1162,6 +1164,11 @@ stop_on_checksum_failure() {
 transform_basename() {
     local new="$1"
 
+    # remove leading exclamation marks from basename
+    while [[ "$new" == '!'* ]]; do
+        new="${new#!}"
+    done
+
     # mojibake fixes
     new="${new//Ä™/e}"
     new="${new//Ĺ„/n}"
@@ -1223,6 +1230,7 @@ transform_basename() {
     new="${new//_www.osiolek.com/}"
     new="${new//www.osiolek.com/}"
     new="${new//_M_and_T_Books/}"
+    new="${new//\[Audiobook PL\]/}"
 
     new=$(printf '%s' "$new" | sed -E '
         s/\.\.+/./g;
@@ -1962,6 +1970,27 @@ print_checksum_prompt_menu() {
     echo -n "Choice [Y/n/a/d/q]: "
 }
 
+print_rename_action_verbose() {
+    (( VERBOSE == 1 )) || return 0
+    local old_path="$1"
+    local new_path="$2"
+    local reason="${3-}"
+
+    local line="[VERBOSE] Renaming '${old_path}' -> '${new_path}'"
+    local second=""
+    if [[ -n "$reason" ]]; then
+        second="due to ${reason}"
+        line="${line} ${second}"
+    fi
+
+    if (( ${#line} <= MAX_LINE_LENGTH )); then
+        echo "$line" >&2
+    else
+        echo "[VERBOSE] Renaming '${old_path}'" >&2
+        echo "          -> '${new_path}'${second:+ ${second}}" >&2
+    fi
+}
+
 print_checksum_group_preview() {
     local label="$1"
     local sum_old="$2"
@@ -2492,13 +2521,13 @@ for f in "${ordered_paths[@]}"; do
     }
 
     if [[ "$rename_all" == "yes" ]]; then
-        vlog "Renaming '$f' -> '$new' due to rename_all"
+        print_rename_action_verbose "$f" "$new" "rename_all"
         perform_plain_entry_rename "$f" "$new" || break
         continue
     fi
 
     if auto_yes_current_dir_matches "$f"; then
-        vlog "Renaming '$f' -> '$new' due to per-directory auto-yes"
+        print_rename_action_verbose "$f" "$new" "per-directory auto-yes"
         perform_plain_entry_rename "$f" "$new" || break
         continue
     fi
@@ -2546,7 +2575,7 @@ for f in "${ordered_paths[@]}"; do
             perform_plain_entry_rename "$f" "$new" || break
             ;;
         *)
-            vlog "Renaming '$f' -> '$new'"
+            print_rename_action_verbose "$f" "$new"
             perform_plain_entry_rename "$f" "$new" || break
             ;;
     esac
