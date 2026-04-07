@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.04.07 - v. 9.6 - fix wrapped verbose helper functions so they respect VERBOSE=0 unless -v/--verbose is used
 # 2026.04.07 - v. 9.5 - wrap long protected-checksum, no-action checksum, and missing-ref verbose lines into cleaner two-line output
 # 2026.04.07 - v. 9.4 - fix syntax error in handle_lnk_file() function header; preserve full script history
 # 2026.04.03 - v. 9.3 - add more filename cleanups and search missing checksum refs in the hash-file directory subtree
@@ -70,7 +71,7 @@
 # 2026.03.27 - v. 1.4 - apply special media renames after basic normalization
 # 2026.03.27 - v. 1.3 - fixed top-level path handling: keep ./ prefix in transform_name()
 # 2026.03.27 - v. 1.2 - added many changes about media files
-SCRIPT_VERSION="2026.04.07 - v. 9.5"
+SCRIPT_VERSION="2026.04.07 - v. 9.6"
 LARGE_HASHFILE_LINE_THRESHOLD=20
 MAX_LINE_LENGTH=200
 START_DIR="$(pwd -P)"
@@ -650,6 +651,7 @@ fi
 ARROW="→"
 
 print_wrapped_two_path_verbose() {
+    (( VERBOSE == 1 )) || return 0
     local prefix="$1"
     local first_path="$2"
     local suffix="$3"
@@ -666,6 +668,7 @@ print_wrapped_two_path_verbose() {
 }
 
 print_single_target_check_verbose() {
+    (( VERBOSE == 1 )) || return 0
     local tool_name="$1"
     local sum_dir="$2"
     local target_ref="$3"
@@ -685,6 +688,7 @@ print_single_target_check_verbose() {
 }
 
 print_resolved_ref_verbose() {
+    (( VERBOSE == 1 )) || return 0
     local ref="$1"
     local resolved="$2"
 
@@ -759,6 +763,7 @@ print_try_recover_missing_ref_verbose() {
 }
 
 print_skip_path_reason() {
+    (( VERBOSE == 1 )) || return 0
     local path="$1"
     local reason="$2"
     local line="SKIP: '$path' $reason"
