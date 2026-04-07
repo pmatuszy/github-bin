@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# 2026.04.07 - v. 10.1 - keep wrapped checksum-update verbose messages as two-liners after the missing-ref helper fix
+# 2026.04.07 - v. 10.0 - fix unbound $3 in wrapped checksum-update verbose helper during missing-ref recovery
 # 2026.04.07 - v. 9.9 - add checksum-based subtree fallback for missing hash references after directory and filename renames
 # 2026.04.07 - v. 9.8 - fix remaining wrapped verbose helper functions that still bypassed the VERBOSE flag
 # 2026.04.07 - v. 9.7 - fix remaining wrapped 'no rename/update is needed' messages so they only print in verbose mode
@@ -74,7 +76,7 @@
 # 2026.03.27 - v. 1.4 - apply special media renames after basic normalization
 # 2026.03.27 - v. 1.3 - fixed top-level path handling: keep ./ prefix in transform_name()
 # 2026.03.27 - v. 1.2 - added many changes about media files
-SCRIPT_VERSION="2026.04.07 - v. 9.9"
+SCRIPT_VERSION="2026.04.07 - v. 10.1"
 LARGE_HASHFILE_LINE_THRESHOLD=20
 MAX_LINE_LENGTH=200
 START_DIR="$(pwd -P)"
@@ -706,21 +708,19 @@ print_resolved_ref_verbose() {
 
 print_checksum_update_verbose() {
     (( VERBOSE == 1 )) || return 0
-    local sum_file="$1"
-    local old_name="$2"
-    local new_name="$3"
+    local first_part="$1"
+    local second_part="$2"
 
-    local line1="Updating checksum content in '${sum_file}': '${old_name}'"
-    local line2="          -> '${new_name}'"
-
-    if (( ${#line1} + 11 <= MAX_LINE_LENGTH )) && (( ${#line2} <= MAX_LINE_LENGTH )); then
-        echo "[VERBOSE] ${line1}" >&2
-        echo "${line2}" >&2
+    local line="[VERBOSE] ${first_part}${second_part}"
+    if (( ${#line} <= MAX_LINE_LENGTH )); then
+        echo "$line" >&2
     else
-        echo "[VERBOSE] ${line1}" >&2
-        echo "${line2}" >&2
+        echo "[VERBOSE] ${first_part}" >&2
+        echo "          ${second_part}" >&2
     fi
 }
+
+
 
 print_protected_checksum_verbose() {
     (( VERBOSE == 1 )) || return 0
