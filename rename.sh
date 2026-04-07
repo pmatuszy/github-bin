@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# 2026.04.03 - v. 9.3 - add more filename cleanups and search missing checksum refs in the hash-file directory subtree
+# 2026.04.03 - v. 9.2 - wrap long verbose resolved-ref lines into two lines using MAX_LINE_LENGTH
 # 2026.04.03 - v. 9.1 - add Å¼->z, remove ._osloskop.net, collapse double dots, and wrap long checksum-update verbose lines
 # 2026.04.03 - v. 9.0 - fix long single-target checksum verbose lines by formatting directory, ref, and hash file separately
 # 2026.04.03 - v. 8.9 - fix wrapped single-target verbose line split and make plain HTML+companion directory rename a single visible prompt/action
@@ -66,7 +68,7 @@
 # 2026.03.27 - v. 1.4 - apply special media renames after basic normalization
 # 2026.03.27 - v. 1.3 - fixed top-level path handling: keep ./ prefix in transform_name()
 # 2026.03.27 - v. 1.2 - added many changes about media files
-SCRIPT_VERSION="2026.04.03 - v. 9.1"
+SCRIPT_VERSION="2026.04.03 - v. 9.3"
 LARGE_HASHFILE_LINE_THRESHOLD=20
 MAX_LINE_LENGTH=200
 START_DIR="$(pwd -P)"
@@ -680,6 +682,19 @@ print_single_target_check_verbose() {
     fi
 }
 
+print_resolved_ref_verbose() {
+    local ref="$1"
+    local resolved="$2"
+
+    local line="[VERBOSE] Resolved ref '${ref}' -> '${resolved}'"
+    if (( ${#line} <= MAX_LINE_LENGTH )); then
+        echo "$line" >&2
+    else
+        echo "[VERBOSE] Resolved ref '${ref}'" >&2
+        echo "          -> '${resolved}'" >&2
+    fi
+}
+
 print_checksum_update_verbose() {
     local sum_file="$1"
     local old_name="$2"
@@ -1144,6 +1159,11 @@ transform_basename() {
     new="${new//LEK.PL/}"
     new="${new//rip.by.Crisp/}"
     new="${new//._osloskop.net/}"
+    new="${new//_eBook.PL/}"
+    new="${new//eBook.PL/}"
+    new="${new//_www.osiolek.com/}"
+    new="${new//www.osiolek.com/}"
+    new="${new//_M_and_T_Books/}"
 
     new=$(printf '%s' "$new" | sed -E '
         s/\.\.+/./g;
@@ -1722,13 +1742,16 @@ find_best_path_for_missing_ref() {
     local expected_hash="$2"
     local sum_file="$3"
 
-    local kind wanted_base wanted_norm missing_dir
+    local kind wanted_base wanted_norm missing_dir search_root
     local fast_base fast_path fast_hash
+    local candidate candidate_hash
+    local -a candidate_names=()
 
     kind="$(checksum_kind "$sum_file")"
     wanted_base="$(basename -- "$missing_ref")"
     wanted_norm="$(transform_basename "$wanted_base")"
     missing_dir="$(dirname -- "$missing_ref")"
+    search_root="$(dirname -- "$sum_file")"
 
     vlog "Trying to recover missing ref '$missing_ref' (expected hash: ${expected_hash:-none})"
 
@@ -1754,11 +1777,36 @@ find_best_path_for_missing_ref() {
         fi
     fi
 
-    vlog "Fast same-directory recovery failed for '$missing_ref'"
+    if [[ "$wanted_base" == "$wanted_norm" ]]; then
+        candidate_names=( "$wanted_base" )
+    else
+        candidate_names=( "$wanted_norm" "$wanted_base" )
+    fi
+
+    for candidate_name in "${candidate_names[@]}"; do
+        while IFS= read -r -d '' candidate; do
+            vlog "Subtree recovery candidate: '$candidate'"
+            if [[ -n "$expected_hash" ]]; then
+                candidate_hash="$(checksum_of_file "$kind" "$candidate")"
+                vlog "Subtree recovery candidate has $kind=$candidate_hash"
+                if [[ "${candidate_hash,,}" == "${expected_hash,,}" ]]; then
+                    vlog "Subtree recovery candidate checksum matches"
+                    printf '%s' "$candidate"
+                    return 0
+                fi
+            else
+                vlog "Subtree recovery candidate accepted (no expected hash available)"
+                printf '%s' "$candidate"
+                return 0
+            fi
+        done < <(find "$search_root" -type f -name "$candidate_name" -print0 2>/dev/null)
+    done
+
+    vlog "Subtree recovery failed for '$missing_ref' under '$search_root'"
     return 1
 }
 
-handle_lnk_file() {
+handle_lnk_file() { {
     local f="$1"
     local answer=""
 
@@ -1941,7 +1989,7 @@ for f in "${ordered_paths[@]}"; do
             expected_hashes+=( "$hash" )
             refs_raw+=( "$ref" )
             refs+=( "$(resolve_checksum_ref_path "$sum_file" "$ref")" )
-            vlog "Resolved ref '$ref' -> '${refs[-1]}'"
+            print_resolved_ref_verbose "$ref" "${refs[-1]}"
         done < <(extract_checksum_entries "$sum_file")
 
         if (( ${#refs[@]} == 0 )) || [[ -z "${refs[0]}" ]]; then
