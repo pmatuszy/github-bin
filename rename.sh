@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.04.07 - v. 10.5 - on plain-file rename collision, allow overwrite when source and destination MD5 checksums are identical
 # 2026.04.07 - v. 10.4 - remove leading exclamation marks from basenames and strip [Audiobook PL] from names
 # 2026.04.07 - v. 10.3 - wrap long verbose rename lines, including the per-directory auto-yes variant, into two lines
 # 2026.04.07 - v. 10.2 - add per-directory auto-yes option (d) for rename prompts and replace one-line prompt text with explained multi-line menus
@@ -79,7 +80,7 @@
 # 2026.03.27 - v. 1.4 - apply special media renames after basic normalization
 # 2026.03.27 - v. 1.3 - fixed top-level path handling: keep ./ prefix in transform_name()
 # 2026.03.27 - v. 1.2 - added many changes about media files
-SCRIPT_VERSION="2026.04.07 - v. 10.4"
+SCRIPT_VERSION="2026.04.07 - v. 10.5"
 LARGE_HASHFILE_LINE_THRESHOLD=20
 MAX_LINE_LENGTH=200
 START_DIR="$(pwd -P)"
@@ -1459,6 +1460,24 @@ checksum_of_file() {
     esac
 }
 
+md5_of_file() {
+    local file="$1"
+    md5sum -- "$file" | awk '{print tolower($1)}'
+}
+
+can_overwrite_collision_with_identical_md5() {
+    local old="$1"
+    local new="$2"
+    local old_md5 new_md5
+
+    [[ -f "$old" && -f "$new" ]] || return 1
+
+    old_md5="$(md5_of_file "$old")"
+    new_md5="$(md5_of_file "$new")"
+
+    [[ "$old_md5" == "$new_md5" ]]
+}
+
 sed_escape_regex() {
     printf '%s' "$1" | sed -e 's/[.[\*^$()+?{}|\\/]/\\&/g'
 }
@@ -1642,10 +1661,21 @@ perform_plain_entry_rename() {
     local old_companion_dir="" new_companion_dir="" old_companion_name="" new_companion_name=""
 
     if [[ -e "$new" ]]; then
-        echo -e "${YELLOW}SKIP:${RESET} Target file already exists."
-        vlog "Collision detected for plain rename '$old' -> '$new'"
-        ((++files_skipped))
-        return 0
+        if can_overwrite_collision_with_identical_md5 "$old" "$new"; then
+            echo -e "${CYAN}COLLISION MD5 MATCH:${RESET} source and destination are identical, overwriting destination: $new"
+            if [[ "$mode" == "dry-run" ]]; then
+                echo -e "${CYAN}[DRY-RUN] Would overwrite identical destination and rename:${RESET} $old ${ARROW} $new"
+                ((++files_affected))
+                record_rename "$old" "$new"
+                return 0
+            fi
+            rm -f -- "$new"
+        else
+            echo -e "${YELLOW}SKIP:${RESET} Target file already exists."
+            vlog "Collision detected for plain rename '$old' -> '$new'"
+            ((++files_skipped))
+            return 0
+        fi
     fi
 
     if is_html_file "$old"; then
