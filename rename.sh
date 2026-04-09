@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.04.09 - v. 10.6 - fix checksum-update/recovery verbose formatting and add extra basename cleanup/removal rules
 # 2026.04.07 - v. 10.5 - on plain-file rename collision, allow overwrite when source and destination MD5 checksums are identical
 # 2026.04.07 - v. 10.4 - remove leading exclamation marks from basenames and strip [Audiobook PL] from names
 # 2026.04.07 - v. 10.3 - wrap long verbose rename lines, including the per-directory auto-yes variant, into two lines
@@ -80,7 +81,7 @@
 # 2026.03.27 - v. 1.4 - apply special media renames after basic normalization
 # 2026.03.27 - v. 1.3 - fixed top-level path handling: keep ./ prefix in transform_name()
 # 2026.03.27 - v. 1.2 - added many changes about media files
-SCRIPT_VERSION="2026.04.07 - v. 10.5"
+SCRIPT_VERSION="2026.04.09 - v. 10.6"
 LARGE_HASHFILE_LINE_THRESHOLD=20
 MAX_LINE_LENGTH=200
 START_DIR="$(pwd -P)"
@@ -712,10 +713,28 @@ print_resolved_ref_verbose() {
 
 print_checksum_update_verbose() {
     (( VERBOSE == 1 )) || return 0
+
+    if (( $# == 3 )); then
+        local sum_file="$1"
+        local old_name="$2"
+        local new_name="$3"
+        local line1="[VERBOSE] Updating checksum content in '${sum_file}': '${old_name}'"
+        local line2="          -> '${new_name}'"
+
+        if (( ${#line1} <= MAX_LINE_LENGTH )) && (( ${#line2} <= MAX_LINE_LENGTH )); then
+            echo "$line1" >&2
+            echo "$line2" >&2
+        else
+            echo "$line1" >&2
+            echo "$line2" >&2
+        fi
+        return 0
+    fi
+
     local first_part="$1"
     local second_part="$2"
-
     local line="[VERBOSE] ${first_part}${second_part}"
+
     if (( ${#line} <= MAX_LINE_LENGTH )); then
         echo "$line" >&2
     else
@@ -723,6 +742,7 @@ print_checksum_update_verbose() {
         echo "          ${second_part}" >&2
     fi
 }
+
 
 
 
@@ -770,6 +790,41 @@ print_try_recover_missing_ref_verbose() {
     else
         echo "[VERBOSE] ${line1}" >&2
         echo "${line2}" >&2
+    fi
+}
+
+print_recovery_success_verbose() {
+    (( VERBOSE == 1 )) || return 0
+    local old_ref="$1"
+    local found_ref="$2"
+    local write_ref="$3"
+
+    local line1="[VERBOSE] Recovery success: '${old_ref}' -> '${found_ref}'"
+    local line2="          (write as '${write_ref}')"
+
+    if (( ${#line1} <= MAX_LINE_LENGTH )) && (( ${#line2} <= MAX_LINE_LENGTH )); then
+        echo "$line1" >&2
+        echo "$line2" >&2
+    else
+        echo "$line1" >&2
+        echo "$line2" >&2
+    fi
+}
+
+print_scan_by_checksum_verbose() {
+    (( VERBOSE == 1 )) || return 0
+    local search_root="$1"
+    local expected_hash="$2"
+
+    local line1="[VERBOSE] Name-based subtree recovery failed under '${search_root}'"
+    local line2="          scanning all files below by checksum (expected hash: ${expected_hash})"
+
+    if (( ${#line1} <= MAX_LINE_LENGTH )) && (( ${#line2} <= MAX_LINE_LENGTH )); then
+        echo "$line1" >&2
+        echo "$line2" >&2
+    else
+        echo "$line1" >&2
+        echo "$line2" >&2
     fi
 }
 
@@ -1183,6 +1238,9 @@ transform_basename() {
     new="${new//Ĺ»/Z}"
     new="${new//Ĺš/S}"
     new="${new//Å¼/z}"
+    new="${new//ê/l}"
+    new="${new//Ñ/a}"
+    new="${new//¥/z}"
     new="${new//Ă/s}"
     new="${new//Ăł/o}"
     new="${new//Ĺ‚/l}"
@@ -1231,9 +1289,16 @@ transform_basename() {
     new="${new//_www.osiolek.com/}"
     new="${new//www.osiolek.com/}"
     new="${new//_M_and_T_Books/}"
+    new="${new//_Audiobook_PL/}"
+    new="${new//\[Audiobook_PL\]/}"
     new="${new//\[Audiobook PL\]/}"
+    new="${new//_audiobook_pl/}"
+    new="${new//audiobook pl/}"
 
     new=$(printf '%s' "$new" | sed -E '
+        s/  +/ /g;
+        s/^ +//;
+        s/ +$//;
         s/\.\.+/./g;
         s/__+/_/g;
         s/_\././g;
@@ -1900,7 +1965,7 @@ find_best_path_for_missing_ref() {
     done
 
     if [[ -n "$expected_hash" ]]; then
-        print_checksum_update_verbose "Name-based subtree recovery failed; scanning all files by checksum under '$search_root'" "$expected_hash"
+        print_scan_by_checksum_verbose "$search_root" "$expected_hash"
         while IFS= read -r -d '' candidate; do
             candidate_hash="$(checksum_of_file "$kind" "$candidate")"
             if [[ "${candidate_hash,,}" == "${expected_hash,,}" ]]; then
@@ -2183,7 +2248,7 @@ for f in "${ordered_paths[@]}"; do
                 refs_raw[$i]="$replacement_ref"
                 refs[$i]="$found_ref"
                 checksum_content_modified=yes
-                vlog "Recovery success: '$ref' -> '$found_ref' (write as '$replacement_ref')"
+                print_recovery_success_verbose "$ref" "$found_ref" "$replacement_ref"
                 echo -e "${CYAN}${label} RECOVERY CANDIDATE VERIFIED:${RESET} '$found_ref' matches the stored ${label,,}."
             else
                 vlog "Recovery failed for '$ref'"
