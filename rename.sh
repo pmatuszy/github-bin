@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.04.11 - v. 13.2 - move summary after affected entries, remove leading underscores from media basenames, and support wildcard exclude masks like *.cpp and *.h
 # 2026.04.11 - v. 13.1 - reuse cached DB file hashes instead of recalculating them unless --force-recheck is used
 # 2026.04.11 - v. 13.0 - add start/finish timestamps and processed/hashed counters to summary, and always print summary on Ctrl-C
 # 2026.04.11 - v. 12.9 - clean up checksum-group prompt layout and use rich collision dialog for checksum-group file collisions too
@@ -106,7 +107,7 @@
 # 2026.03.27 - v. 1.4 - apply special media renames after basic normalization
 # 2026.03.27 - v. 1.3 - fixed top-level path handling: keep ./ prefix in transform_name()
 # 2026.03.27 - v. 1.2 - added many changes about media files
-SCRIPT_VERSION="2026.04.11 - v. 13.1"
+SCRIPT_VERSION="2026.04.11 - v. 13.2"
 LARGE_HASHFILE_LINE_THRESHOLD=20
 MAX_LINE_LENGTH=200
 START_DIR="$(pwd -P)"
@@ -279,10 +280,19 @@ load_exclude_filters() {
 is_excluded_by_filter_file() {
     local p="$1"
     local filter
+    local base
+
+    base="$(basename -- "$p")"
 
     for filter in "${EXCLUDE_FILTERS[@]}"; do
-        if [[ "$p" == *"$filter"* ]]; then
-            return 0
+        if [[ "$filter" == *'*'* || "$filter" == *'?'* || "$filter" == *'['* ]]; then
+            if [[ "$base" == $filter || "$p" == $filter ]]; then
+                return 0
+            fi
+        else
+            if [[ "$p" == *"$filter"* ]]; then
+                return 0
+            fi
         fi
     done
     return 1
@@ -1259,6 +1269,12 @@ is_html_file() {
     [[ "$lower" == *.htm || "$lower" == *.html ]]
 }
 
+is_media_file() {
+    local p="$1"
+    local lower="${p,,}"
+    [[ "$lower" == *.mp3 || "$lower" == *.flac || "$lower" == *.wav || "$lower" == *.m4a || "$lower" == *.aac || "$lower" == *.ogg || "$lower" == *.wma || "$lower" == *.mp4 || "$lower" == *.mkv || "$lower" == *.avi || "$lower" == *.mov || "$lower" == *.wmv || "$lower" == *.mpeg || "$lower" == *.mpg || "$lower" == *.m4v || "$lower" == *.webm || "$lower" == *.ts ]]
+}
+
 html_companion_dir_path_with_suffix() {
     local html_file="$1"
     local suffix="$2"
@@ -1649,6 +1665,13 @@ transform_name() {
 
     dir="$(dirname -- "$f")"
     base="$(basename -- "$f")"
+
+    if is_media_file "$base"; then
+        while [[ "$base" == _* ]]; do
+            base="${base#_}"
+        done
+    fi
+
     newbase="$(transform_basename "$base")"
 
     if [[ -e "$f" ]]; then
@@ -2581,6 +2604,19 @@ print_summary() {
     SCRIPT_FINISH_TIME="${SCRIPT_FINISH_TIME:-$(date '+%Y-%m-%d %H:%M:%S')}"
 
     echo
+    if (( files_affected > 0 )); then
+        echo "Affected entries:"
+        for r in "${renamed_list[@]}"; do
+            old=${r%%|*}
+            new=${r#*|}
+            printf "  %s %b%s%b %s\n" \
+                "$old" \
+                "$RED" "$ARROW" "$RESET" \
+                "$new"
+        done
+        echo
+    fi
+
     echo "========= SUMMARY ========="
     echo "Script start time:     $SCRIPT_START_TIME"
     echo "Script finish time:    $SCRIPT_FINISH_TIME"
@@ -2604,19 +2640,6 @@ print_summary() {
         echo "DB hash lookup misses: $DB_HASH_LOOKUP_MISSES"
     else
         echo "DB used:               no"
-    fi
-
-    if (( files_affected > 0 )); then
-        echo
-        echo "Affected entries:"
-        for r in "${renamed_list[@]}"; do
-            old=${r%%|*}
-            new=${r#*|}
-            printf "  %s %b%s%b %s\n" \
-                "$old" \
-                "$RED" "$ARROW" "$RESET" \
-                "$new"
-        done
     fi
     echo "==========================="
 }
