@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.04.11 - v. 11.1 - timestamp video*.mp4 from the older of file creation time and modification time
 # 2026.04.11 - v. 11.0 - timestamp image*.jpg from the older of file creation time and modification time
 # 2026.04.11 - v. 10.9 - prefix image*.jpg files with YYYYMMDD_HHMMSS_
 # 2026.04.11 - v. 10.8 - rename .jpeg extensions to .jpg and keep header history updated with the current date
@@ -85,7 +86,7 @@
 # 2026.03.27 - v. 1.4 - apply special media renames after basic normalization
 # 2026.03.27 - v. 1.3 - fixed top-level path handling: keep ./ prefix in transform_name()
 # 2026.03.27 - v. 1.2 - added many changes about media files
-SCRIPT_VERSION="2026.04.11 - v. 11.0"
+SCRIPT_VERSION="2026.04.11 - v. 11.1"
 LARGE_HASHFILE_LINE_THRESHOLD=20
 MAX_LINE_LENGTH=200
 START_DIR="$(pwd -P)"
@@ -1422,6 +1423,11 @@ transform_name() {
     newbase="$(transform_basename "$base")"
 
     if [[ "$newbase" =~ ^image.*\.jpg$ ]] && [[ ! "$newbase" =~ ^[0-9]{8}_[0-9]{6}_image.*\.jpg$ ]] && [[ -e "$f" ]]; then
+        ts="$(get_file_oldest_timestamp_yyyymmdd_hhmmss "$f")"
+        newbase="${ts}_${newbase}"
+    fi
+
+    if [[ "$newbase" =~ ^video.*\.mp4$ ]] && [[ ! "$newbase" =~ ^[0-9]{8}_[0-9]{6}_video.*\.mp4$ ]] && [[ -e "$f" ]]; then
         ts="$(get_file_oldest_timestamp_yyyymmdd_hhmmss "$f")"
         newbase="${ts}_${newbase}"
     fi
