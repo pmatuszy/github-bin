@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.04.11 - v. 12.7 - store computed file MD5/SHA512 values in SQLite and use them first for subtree recovery lookups
 # 2026.04.11 - v. 12.6 - add support for filenames starting with YYYY-MM-DD_HH-MM-SS...
 # 2026.04.11 - v. 12.5 - add date normalization rules for YYMMDD_HHMMSS_-_* and YYYYMMDD-HHMMSS_-_* filenames
 # 2026.04.11 - v. 12.4 - fix collision prompt so it displays immediately instead of being swallowed by command substitution
@@ -101,7 +102,7 @@
 # 2026.03.27 - v. 1.4 - apply special media renames after basic normalization
 # 2026.03.27 - v. 1.3 - fixed top-level path handling: keep ./ prefix in transform_name()
 # 2026.03.27 - v. 1.2 - added many changes about media files
-SCRIPT_VERSION="2026.04.11 - v. 12.6"
+SCRIPT_VERSION="2026.04.11 - v. 12.7"
 LARGE_HASHFILE_LINE_THRESHOLD=20
 MAX_LINE_LENGTH=200
 START_DIR="$(pwd -P)"
@@ -420,7 +421,10 @@ CREATE TABLE IF NOT EXISTS checked_paths (
 CREATE INDEX IF NOT EXISTS idx_checked_paths_kind ON checked_paths(kind);
 SQL
     sqlite3 "$DB_FILE" 'ALTER TABLE checked_paths ADD COLUMN signature TEXT;' >/dev/null 2>&1 || true
+    sqlite3 "$DB_FILE" 'ALTER TABLE checked_paths ADD COLUMN file_hash_kind TEXT;' >/dev/null 2>&1 || true
+    sqlite3 "$DB_FILE" 'ALTER TABLE checked_paths ADD COLUMN file_hash TEXT;' >/dev/null 2>&1 || true
     sqlite3 "$DB_FILE" 'CREATE INDEX IF NOT EXISTS idx_checked_paths_signature ON checked_paths(signature);' >/dev/null 2>&1 || true
+    sqlite3 "$DB_FILE" 'CREATE INDEX IF NOT EXISTS idx_checked_paths_file_hash ON checked_paths(file_hash_kind, file_hash);' >/dev/null 2>&1 || true
     DB_PENDING_SQL_FILE="$(mktemp)"
     while IFS='|' read -r path size mtime status signature; do
         [[ -n "$path" ]] || continue
@@ -483,6 +487,43 @@ db_has_valid_entry() {
     return 1
 }
 
+db_record_file_hash() {
+    local path="$1"
+    local hash_kind="$2"
+    local hash_value="$3"
+    local abs sql
+
+    (( USE_DB == 1 )) || return 0
+    [[ -e "$path" && -n "$hash_kind" && -n "$hash_value" ]] || return 0
+
+    abs="$(db_abs_path "$path" 2>/dev/null || true)"
+    [[ -n "$abs" ]] || return 0
+
+    sql="INSERT INTO checked_paths(path, kind, size, mtime, status, last_checked, file_hash_kind, file_hash) VALUES ('$(sql_escape "$abs")', 'file_hash_only', 0, 0, 'hashed', CURRENT_TIMESTAMP, '$(sql_escape "$hash_kind")', '$(sql_escape "$hash_value")') ON CONFLICT(path) DO UPDATE SET file_hash_kind=excluded.file_hash_kind, file_hash=excluded.file_hash, last_checked=CURRENT_TIMESTAMP;"
+    printf '%s\n' "$sql" >> "$DB_PENDING_SQL_FILE"
+    (( ++DB_PENDING_COUNT ))
+    if (( DB_PENDING_COUNT >= DB_FLUSH_EVERY )); then
+        db_flush_pending
+    fi
+}
+
+db_find_path_by_file_hash_in_subtree() {
+    local search_root="$1"
+    local hash_kind="$2"
+    local hash_value="$3"
+    local search_abs row_path
+
+    (( USE_DB == 1 )) || return 1
+    db_flush_pending >/dev/null 2>&1 || true
+
+    search_abs="$(db_abs_path "$search_root" 2>/dev/null || true)"
+    [[ -n "$search_abs" ]] || return 1
+
+    row_path="$(sqlite3 -separator $'\t' "$DB_FILE" "SELECT path FROM checked_paths WHERE file_hash_kind='$(sql_escape "$hash_kind")' AND file_hash='$(sql_escape "$hash_value")' AND path LIKE '$(sql_escape "${search_abs%/}")/%' ORDER BY LENGTH(path) LIMIT 1;" 2>/dev/null | head -n 1)"
+    [[ -n "$row_path" && -e "$row_path" ]] || return 1
+    printf '%s' "$row_path"
+}
+
 db_mark_checked() {
     local path="$1"
     local kind="$2"
@@ -516,7 +557,7 @@ db_mark_checked() {
         sig_sql="NULL"
     fi
 
-    sql="INSERT INTO checked_paths(path, kind, size, mtime, status, last_checked, signature) VALUES ('$(sql_escape "$abs")', '$(sql_escape "$kind")', $size, $mtime, '$(sql_escape "$status")', CURRENT_TIMESTAMP, $sig_sql) ON CONFLICT(path) DO UPDATE SET kind=excluded.kind, size=excluded.size, mtime=excluded.mtime, status=excluded.status, signature=excluded.signature, last_checked=CURRENT_TIMESTAMP;"
+    sql="INSERT INTO checked_paths(path, kind, size, mtime, status, last_checked, signature) VALUES ('$(sql_escape "$abs")', '$(sql_escape "$kind")', $size, $mtime, '$(sql_escape "$status")', CURRENT_TIMESTAMP, $sig_sql) ON CONFLICT(path) DO UPDATE SET kind=excluded.kind, size=excluded.size, mtime=excluded.mtime, status=excluded.status, signature=excluded.signature, last_checked=CURRENT_TIMESTAMP, file_hash_kind=COALESCE(file_hash_kind, excluded.file_hash_kind), file_hash=COALESCE(file_hash, excluded.file_hash);"
     printf '%s\n' "$sql" >> "$DB_PENDING_SQL_FILE"
     (( ++DB_PENDING_COUNT ))
     if (( DB_PENDING_COUNT >= DB_FLUSH_EVERY )); then
@@ -1659,16 +1700,24 @@ verify_single_checksum_target() {
 checksum_of_file() {
     local kind="$1"
     local file="$2"
+    local out
 
     case "$kind" in
-        sha512) sha512sum -- "$file" | awk '{print tolower($1)}' ;;
-        md5)    md5sum    -- "$file" | awk '{print tolower($1)}' ;;
+        sha512) out="$(sha512sum -- "$file" | awk '{print tolower($1)}')" ;;
+        md5)    out="$(md5sum -- "$file" | awk '{print tolower($1)}')" ;;
+        *) return 1 ;;
     esac
+
+    db_record_file_hash "$file" "$kind" "$out"
+    printf '%s\n' "$out"
 }
 
 md5_of_file() {
     local file="$1"
-    md5sum -- "$file" | awk '{print tolower($1)}'
+    local out
+    out="$(md5sum -- "$file" | awk '{print tolower($1)}')"
+    db_record_file_hash "$file" "md5" "$out"
+    printf '%s\n' "$out"
 }
 
 format_bytes_human() {
@@ -2225,6 +2274,13 @@ find_best_path_for_missing_ref() {
     done
 
     if [[ -n "$expected_hash" ]]; then
+        candidate="$(db_find_path_by_file_hash_in_subtree "$search_root" "$kind" "$expected_hash" || true)"
+        if [[ -n "$candidate" ]]; then
+            vlog "Subtree recovery candidate by DB hash matches: '$candidate'"
+            printf '%s' "$candidate"
+            return 0
+        fi
+
         print_scan_by_checksum_verbose "$search_root" "$expected_hash"
         while IFS= read -r -d '' candidate; do
             candidate_hash="$(checksum_of_file "$kind" "$candidate")"
