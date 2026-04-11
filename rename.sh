@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# 2026.04.11 - v. 13.1 - reuse cached DB file hashes instead of recalculating them unless --force-recheck is used
+# 2026.04.11 - v. 13.0 - add start/finish timestamps and processed/hashed counters to summary, and always print summary on Ctrl-C
+# 2026.04.11 - v. 12.9 - clean up checksum-group prompt layout and use rich collision dialog for checksum-group file collisions too
 # 2026.04.11 - v. 12.8 - make recovery outcome explicit and add DB hash/cache accounting in logs and summary
 # 2026.04.11 - v. 12.7 - store computed file MD5/SHA512 values in SQLite and use them first for subtree recovery lookups
 # 2026.04.11 - v. 12.6 - add support for filenames starting with YYYY-MM-DD_HH-MM-SS...
@@ -103,7 +106,7 @@
 # 2026.03.27 - v. 1.4 - apply special media renames after basic normalization
 # 2026.03.27 - v. 1.3 - fixed top-level path handling: keep ./ prefix in transform_name()
 # 2026.03.27 - v. 1.2 - added many changes about media files
-SCRIPT_VERSION="2026.04.11 - v. 12.8"
+SCRIPT_VERSION="2026.04.11 - v. 13.1"
 LARGE_HASHFILE_LINE_THRESHOLD=20
 MAX_LINE_LENGTH=200
 START_DIR="$(pwd -P)"
@@ -139,6 +142,11 @@ CURRENT_OP_SUM_RENAMED=0
 CURRENT_OP_CONTENT_FILE=""
 CURRENT_OP_CONTENT_BACKUP=""
 COLLISION_OTHER_PATH=""
+COLLISION_RENAMED_TARGET=""
+SCRIPT_START_TIME="$(date '+%Y-%m-%d %H:%M:%S')"
+SCRIPT_FINISH_TIME=""
+SUMMARY_PRINTED=0
+FILES_HASHED=0
 declare -a CURRENT_OP_FILE_OLDS=()
 declare -a CURRENT_OP_FILE_NEWS=()
 
@@ -552,6 +560,27 @@ db_find_path_by_file_hash_in_subtree() {
     print_db_hash_lookup_verbose "miss" "$search_root" "$hash_kind" "$hash_value"
     return 1
 }
+
+db_get_cached_file_hash() {
+    local path="$1"
+    local hash_kind="$2"
+    local abs row
+
+    (( USE_DB == 1 )) || return 1
+    (( FORCE_RECHECK == 0 )) || return 1
+    [[ -e "$path" ]] || return 1
+
+    db_flush_pending >/dev/null 2>&1 || true
+
+    abs="$(db_abs_path "$path" 2>/dev/null || true)"
+    [[ -n "$abs" ]] || return 1
+
+    row="$(sqlite3 -separator $'\t' "$DB_FILE" "SELECT file_hash FROM checked_paths WHERE path='$(sql_escape "$abs")' AND file_hash_kind='$(sql_escape "$hash_kind")' AND file_hash IS NOT NULL AND file_hash != '' LIMIT 1;" 2>/dev/null | head -n 1)"
+    [[ -n "$row" ]] || return 1
+
+    printf '%s' "$row"
+}
+
 
 db_mark_checked() {
     local path="$1"
@@ -1772,22 +1801,37 @@ verify_single_checksum_target() {
 checksum_of_file() {
     local kind="$1"
     local file="$2"
-    local out
+    local out cached
+
+    cached="$(db_get_cached_file_hash "$file" "$kind" || true)"
+    if [[ -n "$cached" ]]; then
+        printf '%s\n' "$cached"
+        return 0
+    fi
 
     case "$kind" in
         sha512) out="$(sha512sum -- "$file" | awk '{print tolower($1)}')" ;;
-        md5)    out="$(md5sum -- "$file" | awk '{print tolower($1)}')" ;;
+        md5)    out="$(md5sum    -- "$file" | awk '{print tolower($1)}')" ;;
         *) return 1 ;;
     esac
 
+    ((++FILES_HASHED))
     db_record_file_hash "$file" "$kind" "$out"
     printf '%s\n' "$out"
 }
 
 md5_of_file() {
     local file="$1"
-    local out
+    local out cached
+
+    cached="$(db_get_cached_file_hash "$file" "md5" || true)"
+    if [[ -n "$cached" ]]; then
+        printf '%s\n' "$cached"
+        return 0
+    fi
+
     out="$(md5sum -- "$file" | awk '{print tolower($1)}')"
+    ((++FILES_HASHED))
     db_record_file_hash "$file" "md5" "$out"
     printf '%s\n' "$out"
 }
@@ -1845,6 +1889,36 @@ make_other_suffix_path() {
         stem="${stem}_OTHER"
     done
     printf '%s' "$candidate"
+}
+
+handle_existing_target_collision() {
+    local old="$1"
+    local new="$2"
+
+    COLLISION_RENAMED_TARGET=""
+
+    if [[ "$mode" == "dry-run" ]]; then
+        echo -e "${YELLOW}COLLISION:${RESET} Target file already exists."
+        echo -e "${CYAN}[DRY-RUN] Would compare MD5, size, and timestamps of source/destination and ask what to do:${RESET} $old ${ARROW} $new"
+        return 1
+    fi
+
+    can_overwrite_collision_with_identical_md5 "$old" "$new"
+    collision_decision_rc=$?
+
+    if [[ $collision_decision_rc -eq 0 ]]; then
+        echo -e "${CYAN}OVERWRITE:${RESET} removing destination and continuing rename: $new"
+        rm -f -- "$new"
+        return 0
+    elif [[ $collision_decision_rc -eq 2 ]]; then
+        return 2
+    elif [[ $collision_decision_rc -eq 3 ]]; then
+        echo -e "${CYAN}RENAME WITH _OTHER:${RESET} source will be renamed to: $COLLISION_OTHER_PATH"
+        COLLISION_RENAMED_TARGET="$COLLISION_OTHER_PATH"
+        return 3
+    else
+        return 1
+    fi
 }
 
 can_overwrite_collision_with_identical_md5() {
@@ -2098,24 +2172,15 @@ perform_plain_entry_rename() {
     local old_companion_dir="" new_companion_dir="" old_companion_name="" new_companion_name=""
 
     if [[ -e "$new" ]]; then
-        if [[ "$mode" == "dry-run" ]]; then
-            echo -e "${YELLOW}COLLISION:${RESET} Target file already exists."
-            echo -e "${CYAN}[DRY-RUN] Would compare MD5, size, and timestamps of source/destination and ask what to do:${RESET} $old ${ARROW} $new"
-            ((++files_skipped))
-            return 0
-        fi
-
-        can_overwrite_collision_with_identical_md5 "$old" "$new"
+        handle_existing_target_collision "$old" "$new"
         collision_decision_rc=$?
 
         if [[ $collision_decision_rc -eq 0 ]]; then
-            echo -e "${CYAN}OVERWRITE:${RESET} removing destination and continuing rename: $new"
-            rm -f -- "$new"
+            :
         elif [[ $collision_decision_rc -eq 2 ]]; then
             return 1
         elif [[ $collision_decision_rc -eq 3 ]]; then
-            echo -e "${CYAN}RENAME WITH _OTHER:${RESET} source will be renamed to: $COLLISION_OTHER_PATH"
-            new="$COLLISION_OTHER_PATH"
+            new="$COLLISION_RENAMED_TARGET"
         else
             echo -e "${YELLOW}SKIP:${RESET} Target file already exists."
             vlog "Collision detected for plain rename '$old' -> '$new'"
@@ -2444,7 +2509,9 @@ print_rename_prompt_menu() {
 
 print_checksum_prompt_menu() {
     local label_lower="$1"
+    local hash_file="$2"
     echo "Rename this ${label_lower} group?"
+    echo "  hash file: $hash_file"
     echo "  [Y] Yes (default)"
     echo "  [N] No"
     echo "  [A] All remaining"
@@ -2507,6 +2574,63 @@ print_checksum_group_preview() {
     fi
 }
 
+
+print_summary() {
+    (( SUMMARY_PRINTED == 0 )) || return 0
+    SUMMARY_PRINTED=1
+    SCRIPT_FINISH_TIME="${SCRIPT_FINISH_TIME:-$(date '+%Y-%m-%d %H:%M:%S')}"
+
+    echo
+    echo "========= SUMMARY ========="
+    echo "Script start time:     $SCRIPT_START_TIME"
+    echo "Script finish time:    $SCRIPT_FINISH_TIME"
+    echo "Mode:                  $mode"
+    echo "Colors enabled:        $use_colors"
+    echo "Verbose:               $VERBOSE"
+    echo "Scope:                 $process_scope"
+    echo "Entries examined:      $files_examined"
+    echo "Files processed:       $files_examined"
+    echo "Files hashed:          $FILES_HASHED"
+    echo "Entries affected:      $files_affected"
+    echo "Entries skipped:       $files_skipped"
+    echo "Stopped by user:       $stopped_by_user"
+    if (( USE_DB == 1 )); then
+        echo "DB used:               yes"
+        echo "DB hashes added:       $DB_HASHES_ADDED"
+        echo "DB rows new:           $DB_ROWS_NEW"
+        echo "DB rows updated:       $DB_ROWS_UPDATED"
+        echo "DB rows removed:       $DB_ROWS_REMOVED"
+        echo "DB hash lookup hits:   $DB_HASH_LOOKUP_HITS"
+        echo "DB hash lookup misses: $DB_HASH_LOOKUP_MISSES"
+    else
+        echo "DB used:               no"
+    fi
+
+    if (( files_affected > 0 )); then
+        echo
+        echo "Affected entries:"
+        for r in "${renamed_list[@]}"; do
+            old=${r%%|*}
+            new=${r#*|}
+            printf "  %s %b%s%b %s\n" \
+                "$old" \
+                "$RED" "$ARROW" "$RESET" \
+                "$new"
+        done
+    fi
+    echo "==========================="
+}
+
+on_interrupt() {
+    stopped_by_user=yes
+    SCRIPT_FINISH_TIME="$(date '+%Y-%m-%d %H:%M:%S')"
+    echo
+    echo "Interrupted by user (Ctrl-C)."
+    print_summary
+    exit 130
+}
+
+trap on_interrupt INT
 
 if [[ "$process_scope" == "current" ]]; then
     mapfile -d '' -t ordered_paths < <(
@@ -2767,8 +2891,7 @@ for f in "${ordered_paths[@]}"; do
         elif auto_yes_current_dir_matches "$sum_file"; then
             do_rename=yes
         else
-            print_checksum_prompt_menu "${label,,}"
-            echo "  hash file: $sum_file"
+            print_checksum_prompt_menu "${label,,}" "$sum_file"
             flush_stdin
             read_single_key input 300
             echo
@@ -3066,39 +3189,6 @@ for f in "${ordered_paths[@]}"; do
     esac
 done
 
-echo
-echo "========= SUMMARY ========="
-echo "Mode:                  $mode"
-echo "Colors enabled:        $use_colors"
-echo "Verbose:               $VERBOSE"
-echo "Scope:                 $process_scope"
-echo "Entries examined:      $files_examined"
-echo "Entries affected:      $files_affected"
-echo "Entries skipped:       $files_skipped"
-echo "Stopped by user:       $stopped_by_user"
-if (( USE_DB == 1 )); then
-    echo "DB used:               yes"
-    echo "DB hashes added:       $DB_HASHES_ADDED"
-    echo "DB rows new:           $DB_ROWS_NEW"
-    echo "DB rows updated:       $DB_ROWS_UPDATED"
-    echo "DB rows removed:       $DB_ROWS_REMOVED"
-    echo "DB hash lookup hits:   $DB_HASH_LOOKUP_HITS"
-    echo "DB hash lookup misses: $DB_HASH_LOOKUP_MISSES"
-else
-    echo "DB used:               no"
-fi
-
-if (( files_affected > 0 )); then
-    echo
-    echo "Affected entries:"
-    for r in "${renamed_list[@]}"; do
-        old=${r%%|*}
-        new=${r#*|}
-        printf "  %s %b%s%b %s\n" \
-            "$old" \
-            "$RED" "$ARROW" "$RESET" \
-            "$new"
-    done
-fi
-echo "==========================="
+SCRIPT_FINISH_TIME="$(date '+%Y-%m-%d %H:%M:%S')"
+print_summary
 
