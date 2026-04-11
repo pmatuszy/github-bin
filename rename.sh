@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.04.11 - v. 12.0 - restore -v/--verbose as verbose mode and keep --version for version/help output
 # 2026.04.11 - v. 11.9 - include DB filename and exclude file path in --version / -v output
 # 2026.04.11 - v. 11.8 - make --version and -v print version plus usage/help and exit immediately
 # 2026.04.11 - v. 11.7 - add support for signal-YYYY-MM-DD-HHMMSS.ext filenames without an extra suffix
@@ -94,7 +95,7 @@
 # 2026.03.27 - v. 1.4 - apply special media renames after basic normalization
 # 2026.03.27 - v. 1.3 - fixed top-level path handling: keep ./ prefix in transform_name()
 # 2026.03.27 - v. 1.2 - added many changes about media files
-SCRIPT_VERSION="2026.04.11 - v. 11.9"
+SCRIPT_VERSION="2026.04.11 - v. 12.0"
 LARGE_HASHFILE_LINE_THRESHOLD=20
 MAX_LINE_LENGTH=200
 START_DIR="$(pwd -P)"
@@ -138,10 +139,11 @@ trap 'on_err "$?" "$LINENO" "$BASH_COMMAND"' ERR
 
 usage() {
     cat <<'EOF'
-Usage: rename.sh [--use-db] [--fast] [--force-recheck] [--colors yes|no] [--mode dry-run|real] [--scope current|subdirs] [--version|-v] [-h|--help]
+Usage: rename.sh [-v|--verbose] [--use-db] [--fast] [--force-recheck] [--colors yes|no] [--mode dry-run|real] [--scope current|subdirs] [--version] [-h|--help]
 
 Options:
-  --version, -v          Print version plus this usage/help and exit
+  -v, --verbose          Show extra diagnostic output
+  --version              Print version plus this usage/help and exit
   --use-db               Use SQLite cache in the start directory (_rename.sh-optional-db.sqlite3)
   --fast                 With --use-db, trust cached paths without checking current size/mtime
   --force-recheck        Ignore SQLite cache and recheck everything
@@ -564,7 +566,7 @@ db_rewrite_subtree() {
 }
 while (( $# > 0 )); do
     case "$1" in
-        --version|-v)
+        --version)
             echo "rename.sh"
             echo "version: $SCRIPT_VERSION"
             echo "db file (if used): $DB_FILE"
@@ -572,6 +574,10 @@ while (( $# > 0 )); do
             echo
             usage
             exit 0
+            ;;
+        -v|--verbose)
+            VERBOSE=1
+            shift
             ;;
         --use-db)
             USE_DB=1
