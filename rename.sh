@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.04.11 - v. 12.8 - make recovery outcome explicit and add DB hash/cache accounting in logs and summary
 # 2026.04.11 - v. 12.7 - store computed file MD5/SHA512 values in SQLite and use them first for subtree recovery lookups
 # 2026.04.11 - v. 12.6 - add support for filenames starting with YYYY-MM-DD_HH-MM-SS...
 # 2026.04.11 - v. 12.5 - add date normalization rules for YYMMDD_HHMMSS_-_* and YYYYMMDD-HHMMSS_-_* filenames
@@ -102,7 +103,7 @@
 # 2026.03.27 - v. 1.4 - apply special media renames after basic normalization
 # 2026.03.27 - v. 1.3 - fixed top-level path handling: keep ./ prefix in transform_name()
 # 2026.03.27 - v. 1.2 - added many changes about media files
-SCRIPT_VERSION="2026.04.11 - v. 12.7"
+SCRIPT_VERSION="2026.04.11 - v. 12.8"
 LARGE_HASHFILE_LINE_THRESHOLD=20
 MAX_LINE_LENGTH=200
 START_DIR="$(pwd -P)"
@@ -112,6 +113,14 @@ FORCE_RECHECK=0
 FAST_DB=0
 DB_FILE="$START_DIR/_rename.sh-optional-db.sqlite3"
 LEGACY_DB_FILE="$START_DIR/rename.sh-optional-db.sqlite3"
+DB_HASHES_ADDED=0
+DB_ROWS_NEW=0
+DB_ROWS_UPDATED=0
+DB_ROWS_REMOVED=0
+DB_HASH_LOOKUP_HITS=0
+DB_HASH_LOOKUP_MISSES=0
+DB_HASH_RECORD_STATUS=""
+DB_RECOVERY_RESULT=""
 
 set -Eeuo pipefail
 shopt -s nullglob
@@ -491,7 +500,7 @@ db_record_file_hash() {
     local path="$1"
     local hash_kind="$2"
     local hash_value="$3"
-    local abs sql
+    local abs sql existing_path
 
     (( USE_DB == 1 )) || return 0
     [[ -e "$path" && -n "$hash_kind" && -n "$hash_value" ]] || return 0
@@ -499,12 +508,24 @@ db_record_file_hash() {
     abs="$(db_abs_path "$path" 2>/dev/null || true)"
     [[ -n "$abs" ]] || return 0
 
+    existing_path="$(sqlite3 "$DB_FILE" "SELECT path FROM checked_paths WHERE path='$(sql_escape "$abs")' LIMIT 1;" 2>/dev/null || true)"
+    if [[ -n "$existing_path" ]]; then
+        DB_HASH_RECORD_STATUS="updated"
+        ((++DB_ROWS_UPDATED))
+    else
+        DB_HASH_RECORD_STATUS="new"
+        ((++DB_ROWS_NEW))
+    fi
+    ((++DB_HASHES_ADDED))
+
     sql="INSERT INTO checked_paths(path, kind, size, mtime, status, last_checked, file_hash_kind, file_hash) VALUES ('$(sql_escape "$abs")', 'file_hash_only', 0, 0, 'hashed', CURRENT_TIMESTAMP, '$(sql_escape "$hash_kind")', '$(sql_escape "$hash_value")') ON CONFLICT(path) DO UPDATE SET file_hash_kind=excluded.file_hash_kind, file_hash=excluded.file_hash, last_checked=CURRENT_TIMESTAMP;"
     printf '%s\n' "$sql" >> "$DB_PENDING_SQL_FILE"
     (( ++DB_PENDING_COUNT ))
     if (( DB_PENDING_COUNT >= DB_FLUSH_EVERY )); then
         db_flush_pending
     fi
+
+    print_db_hash_record_verbose "$path" "$hash_kind" "$DB_HASH_RECORD_STATUS"
 }
 
 db_find_path_by_file_hash_in_subtree() {
@@ -520,8 +541,16 @@ db_find_path_by_file_hash_in_subtree() {
     [[ -n "$search_abs" ]] || return 1
 
     row_path="$(sqlite3 -separator $'\t' "$DB_FILE" "SELECT path FROM checked_paths WHERE file_hash_kind='$(sql_escape "$hash_kind")' AND file_hash='$(sql_escape "$hash_value")' AND path LIKE '$(sql_escape "${search_abs%/}")/%' ORDER BY LENGTH(path) LIMIT 1;" 2>/dev/null | head -n 1)"
-    [[ -n "$row_path" && -e "$row_path" ]] || return 1
-    printf '%s' "$row_path"
+    if [[ -n "$row_path" && -e "$row_path" ]]; then
+        ((++DB_HASH_LOOKUP_HITS))
+        print_db_hash_lookup_verbose "hit" "$search_root" "$hash_kind" "$hash_value" "$row_path"
+        printf '%s' "$row_path"
+        return 0
+    fi
+
+    ((++DB_HASH_LOOKUP_MISSES))
+    print_db_hash_lookup_verbose "miss" "$search_root" "$hash_kind" "$hash_value"
+    return 1
 }
 
 db_mark_checked() {
@@ -923,6 +952,49 @@ print_scan_by_checksum_verbose() {
         echo "$line2" >&2
     fi
 }
+
+
+print_recovery_final_status_verbose() {
+    (( VERBOSE == 1 )) || return 0
+    local missing_ref="$1"
+    local status="$2"
+
+    if [[ "$status" == "success" ]]; then
+        echo "[VERBOSE] Recovery FINAL STATUS: SUCCESS for '${missing_ref}'" >&2
+    else
+        echo "[VERBOSE] Recovery FINAL STATUS: FAILED for '${missing_ref}'" >&2
+    fi
+}
+
+print_db_hash_record_verbose() {
+    (( VERBOSE == 1 )) || return 0
+    local path="$1"
+    local hash_kind="$2"
+    local status="$3"
+
+    if [[ "$status" == "new" ]]; then
+        echo "[VERBOSE] DB hash stored for NEW file entry: '${path}' (${hash_kind})" >&2
+    else
+        echo "[VERBOSE] DB hash updated for EXISTING file entry: '${path}' (${hash_kind})" >&2
+    fi
+}
+
+print_db_hash_lookup_verbose() {
+    (( VERBOSE == 1 )) || return 0
+    local status="$1"
+    local search_root="$2"
+    local hash_kind="$3"
+    local expected_hash="$4"
+    local found_path="${5-}"
+
+    if [[ "$status" == "hit" ]]; then
+        echo "[VERBOSE] DB hash lookup HIT under '${search_root}' for ${hash_kind}=${expected_hash}" >&2
+        echo "          matched path: '${found_path}'" >&2
+    else
+        echo "[VERBOSE] DB hash lookup MISS under '${search_root}' for ${hash_kind}=${expected_hash}" >&2
+    fi
+}
+
 
 print_skip_path_reason() {
     (( VERBOSE == 1 )) || return 0
@@ -2565,9 +2637,11 @@ for f in "${ordered_paths[@]}"; do
                 refs[$i]="$found_ref"
                 checksum_content_modified=yes
                 print_recovery_success_verbose "$ref" "$found_ref" "$replacement_ref"
+                print_recovery_final_status_verbose "$ref" "success"
                 echo -e "${CYAN}${label} RECOVERY CANDIDATE VERIFIED:${RESET} '$found_ref' matches the stored ${label,,}."
             else
                 vlog "Recovery failed for '$ref'"
+                print_recovery_final_status_verbose "$ref" "failed"
             fi
         done
 
@@ -3002,6 +3076,17 @@ echo "Entries examined:      $files_examined"
 echo "Entries affected:      $files_affected"
 echo "Entries skipped:       $files_skipped"
 echo "Stopped by user:       $stopped_by_user"
+if (( USE_DB == 1 )); then
+    echo "DB used:               yes"
+    echo "DB hashes added:       $DB_HASHES_ADDED"
+    echo "DB rows new:           $DB_ROWS_NEW"
+    echo "DB rows updated:       $DB_ROWS_UPDATED"
+    echo "DB rows removed:       $DB_ROWS_REMOVED"
+    echo "DB hash lookup hits:   $DB_HASH_LOOKUP_HITS"
+    echo "DB hash lookup misses: $DB_HASH_LOOKUP_MISSES"
+else
+    echo "DB used:               no"
+fi
 
 if (( files_affected > 0 )); then
     echo
