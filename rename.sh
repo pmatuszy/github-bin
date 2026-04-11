@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.04.11 - v. 12.4 - fix collision prompt so it displays immediately instead of being swallowed by command substitution
 # 2026.04.11 - v. 12.3 - enrich plain-file collision dialog with size/timestamps and add rename-with-_OTHER option
 # 2026.04.11 - v. 12.2 - on plain-file collision, compare MD5 of source and destination and ask what to do instead of auto-skipping
 # 2026.04.11 - v. 12.1 - normalize IMG_/PXL_/received_ media filenames using embedded timestamps or older of creation/modification time
@@ -98,7 +99,7 @@
 # 2026.03.27 - v. 1.4 - apply special media renames after basic normalization
 # 2026.03.27 - v. 1.3 - fixed top-level path handling: keep ./ prefix in transform_name()
 # 2026.03.27 - v. 1.2 - added many changes about media files
-SCRIPT_VERSION="2026.04.11 - v. 12.3"
+SCRIPT_VERSION="2026.04.11 - v. 12.4"
 LARGE_HASHFILE_LINE_THRESHOLD=20
 MAX_LINE_LENGTH=200
 START_DIR="$(pwd -P)"
@@ -125,6 +126,7 @@ CURRENT_OP_SUM_NEW=""
 CURRENT_OP_SUM_RENAMED=0
 CURRENT_OP_CONTENT_FILE=""
 CURRENT_OP_CONTENT_BACKUP=""
+COLLISION_OTHER_PATH=""
 declare -a CURRENT_OP_FILE_OLDS=()
 declare -a CURRENT_OP_FILE_NEWS=()
 
@@ -1703,6 +1705,7 @@ can_overwrite_collision_with_identical_md5() {
     local old_size new_size old_btime new_btime old_mtime new_mtime
     local old_other_path
 
+    COLLISION_OTHER_PATH=""
     [[ -f "$old" && -f "$new" ]] || return 1
 
     old_md5="$(md5_of_file "$old")"
@@ -1754,8 +1757,7 @@ can_overwrite_collision_with_identical_md5() {
             return 0
             ;;
         r|R)
-            printf '%s
-' "$old_other_path"
+            COLLISION_OTHER_PATH="$old_other_path"
             return 3
             ;;
         *)
@@ -1954,7 +1956,7 @@ perform_plain_entry_rename() {
             return 0
         fi
 
-        collision_other_path="$(can_overwrite_collision_with_identical_md5 "$old" "$new")"
+        can_overwrite_collision_with_identical_md5 "$old" "$new"
         collision_decision_rc=$?
 
         if [[ $collision_decision_rc -eq 0 ]]; then
@@ -1963,8 +1965,8 @@ perform_plain_entry_rename() {
         elif [[ $collision_decision_rc -eq 2 ]]; then
             return 1
         elif [[ $collision_decision_rc -eq 3 ]]; then
-            echo -e "${CYAN}RENAME WITH _OTHER:${RESET} source will be renamed to: $collision_other_path"
-            new="$collision_other_path"
+            echo -e "${CYAN}RENAME WITH _OTHER:${RESET} source will be renamed to: $COLLISION_OTHER_PATH"
+            new="$COLLISION_OTHER_PATH"
         else
             echo -e "${YELLOW}SKIP:${RESET} Target file already exists."
             vlog "Collision detected for plain rename '$old' -> '$new'"
