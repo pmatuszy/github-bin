@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.04.11 - v. 13.3 - strip leading underscores from final media basenames and update/add DB rows for renamed files so DB summary reflects renames
 # 2026.04.11 - v. 13.2 - move summary after affected entries, remove leading underscores from media basenames, and support wildcard exclude masks like *.cpp and *.h
 # 2026.04.11 - v. 13.1 - reuse cached DB file hashes instead of recalculating them unless --force-recheck is used
 # 2026.04.11 - v. 13.0 - add start/finish timestamps and processed/hashed counters to summary, and always print summary on Ctrl-C
@@ -107,7 +108,7 @@
 # 2026.03.27 - v. 1.4 - apply special media renames after basic normalization
 # 2026.03.27 - v. 1.3 - fixed top-level path handling: keep ./ prefix in transform_name()
 # 2026.03.27 - v. 1.2 - added many changes about media files
-SCRIPT_VERSION="2026.04.11 - v. 13.2"
+SCRIPT_VERSION="2026.04.11 - v. 13.3"
 LARGE_HASHFILE_LINE_THRESHOLD=20
 MAX_LINE_LENGTH=200
 START_DIR="$(pwd -P)"
@@ -686,6 +687,47 @@ db_rewrite_subtree() {
             db_flush_pending
         fi
     done
+}
+
+db_rewrite_single_path() {
+    local old_path="$1"
+    local new_path="$2"
+    local old_abs new_abs sql
+
+    (( USE_DB == 1 )) || return 0
+
+    old_abs="$(db_abs_path "$old_path" 2>/dev/null || true)"
+    new_abs="$(db_abs_path "$new_path" 2>/dev/null || true)"
+    [[ -n "$old_abs" && -n "$new_abs" ]] || return 0
+
+    sql="UPDATE checked_paths SET path='$(sql_escape "$new_abs")', last_checked=CURRENT_TIMESTAMP WHERE path='$(sql_escape "$old_abs")';"
+    printf '%s\n' "$sql" >> "$DB_PENDING_SQL_FILE"
+    (( ++DB_PENDING_COUNT ))
+    if (( DB_PENDING_COUNT >= DB_FLUSH_EVERY )); then
+        db_flush_pending
+    fi
+
+    # Best-effort cache move for already loaded metadata/status
+    if [[ -n "${DB_CACHE_META[$old_abs]-}" ]]; then
+        DB_CACHE_META["$new_abs"]="${DB_CACHE_META[$old_abs]}"
+        unset 'DB_CACHE_META[$old_abs]'
+        ((++DB_ROWS_UPDATED))
+        ((++DB_ROWS_REMOVED))
+    else
+        ((++DB_ROWS_NEW))
+    fi
+    if [[ -n "${DB_CACHE_STATUS[$old_abs]-}" ]]; then
+        DB_CACHE_STATUS["$new_abs"]="${DB_CACHE_STATUS[$old_abs]}"
+        unset 'DB_CACHE_STATUS[$old_abs]'
+    fi
+}
+
+db_mark_renamed_path_checked() {
+    local path="$1"
+    local kind="$2"
+    (( USE_DB == 1 )) || return 0
+    [[ -e "$path" ]] || return 0
+    db_mark_checked "$path" "$kind" "checked"
 }
 while (( $# > 0 )); do
     case "$1" in
@@ -1696,6 +1738,12 @@ transform_name() {
             ts="$(get_file_oldest_timestamp_compact "$f")"
             newbase="${ts}-img${BASH_REMATCH[1]}"
         fi
+    fi
+
+    if is_media_file "$newbase"; then
+        while [[ "$newbase" == _* ]]; do
+            newbase="${newbase#_}"
+        done
     fi
 
     if [[ "$dir" == "." ]]; then
@@ -3064,6 +3112,7 @@ for f in "${ordered_paths[@]}"; do
                     vlog "Renaming HTML companion directory '${html_companion_old_dirs[$i]}' -> '${html_companion_new_dirs[$i]}'"
                     mv -i -- "${html_companion_old_dirs[$i]}" "${html_companion_new_dirs[$i]}"
                     db_rewrite_subtree "${html_companion_old_dirs[$i]}" "${html_companion_new_dirs[$i]}"
+                    db_mark_renamed_path_checked "${html_companion_new_dirs[$i]}" "plain"
                     register_current_file_rename "${html_companion_old_dirs[$i]}" "${html_companion_new_dirs[$i]}"
                     ((++files_affected))
                     record_rename "${html_companion_old_dirs[$i]}" "${html_companion_new_dirs[$i]}"
