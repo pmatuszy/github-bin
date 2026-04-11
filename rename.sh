@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.04.11 - v. 12.1 - normalize IMG_/PXL_/received_ media filenames using embedded timestamps or older of creation/modification time
 # 2026.04.11 - v. 12.0 - restore -v/--verbose as verbose mode and keep --version for version/help output
 # 2026.04.11 - v. 11.9 - include DB filename and exclude file path in --version / -v output
 # 2026.04.11 - v. 11.8 - make --version and -v print version plus usage/help and exit immediately
@@ -95,7 +96,7 @@
 # 2026.03.27 - v. 1.4 - apply special media renames after basic normalization
 # 2026.03.27 - v. 1.3 - fixed top-level path handling: keep ./ prefix in transform_name()
 # 2026.03.27 - v. 1.2 - added many changes about media files
-SCRIPT_VERSION="2026.04.11 - v. 12.0"
+SCRIPT_VERSION="2026.04.11 - v. 12.1"
 LARGE_HASHFILE_LINE_THRESHOLD=20
 MAX_LINE_LENGTH=200
 START_DIR="$(pwd -P)"
@@ -201,6 +202,13 @@ get_file_oldest_timestamp_yyyymmdd_hhmmss() {
     fi
 
     date -d "@$epoch" +%Y%m%d_%H%M%S
+}
+
+get_file_oldest_timestamp_compact() {
+    local file="$1"
+    local ts
+    ts="$(get_file_oldest_timestamp_yyyymmdd_hhmmss "$file")"
+    printf '%s' "${ts:0:8}_${ts:9:6}"
 }
 
 text_file_has_crlf() {
@@ -1469,14 +1477,28 @@ transform_name() {
     base="$(basename -- "$f")"
     newbase="$(transform_basename "$base")"
 
-    if [[ "$newbase" =~ ^image.*\.jpg$ ]] && [[ ! "$newbase" =~ ^[0-9]{8}_[0-9]{6}_image.*\.jpg$ ]] && [[ -e "$f" ]]; then
-        ts="$(get_file_oldest_timestamp_yyyymmdd_hhmmss "$f")"
-        newbase="${ts}_${newbase}"
-    fi
+    if [[ -e "$f" ]]; then
+        if [[ "$newbase" =~ ^image.*\.jpg$ ]] && [[ ! "$newbase" =~ ^[0-9]{8}_[0-9]{6}_image.*\.jpg$ ]]; then
+            ts="$(get_file_oldest_timestamp_yyyymmdd_hhmmss "$f")"
+            newbase="${ts}_${newbase}"
+        fi
 
-    if [[ "$newbase" =~ ^video.*\.mp4$ ]] && [[ ! "$newbase" =~ ^[0-9]{8}_[0-9]{6}_video.*\.mp4$ ]] && [[ -e "$f" ]]; then
-        ts="$(get_file_oldest_timestamp_yyyymmdd_hhmmss "$f")"
-        newbase="${ts}_${newbase}"
+        if [[ "$newbase" =~ ^video.*\.mp4$ ]] && [[ ! "$newbase" =~ ^[0-9]{8}_[0-9]{6}_video.*\.mp4$ ]]; then
+            ts="$(get_file_oldest_timestamp_yyyymmdd_hhmmss "$f")"
+            newbase="${ts}_${newbase}"
+        fi
+
+        if [[ "$newbase" =~ ^IMG_([0-9]{8})_([0-9]{6})(\..+)$ ]]; then
+            newbase="${BASH_REMATCH[1]}_${BASH_REMATCH[2]}-img${BASH_REMATCH[3]}"
+        elif [[ "$newbase" =~ ^PXL_([0-9]{8})_([0-9]{6})[0-9]*(\..+)$ ]]; then
+            newbase="${BASH_REMATCH[1]}_${BASH_REMATCH[2]}-pxl${BASH_REMATCH[3]}"
+        elif [[ "$newbase" =~ ^received_[0-9]+(\..+)$ ]]; then
+            ts="$(get_file_oldest_timestamp_compact "$f")"
+            newbase="${ts}-received${BASH_REMATCH[1]}"
+        elif [[ "$newbase" =~ ^IMG_[0-9]+(\..+)$ ]]; then
+            ts="$(get_file_oldest_timestamp_compact "$f")"
+            newbase="${ts}-img${BASH_REMATCH[1]}"
+        fi
     fi
 
     if [[ "$dir" == "." ]]; then
@@ -1489,6 +1511,7 @@ transform_name() {
         printf '%s/%s' "$dir" "$newbase"
     fi
 }
+
 
 text_file_has_crlf() {
     local f="$1"
