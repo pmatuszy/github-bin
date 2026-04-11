@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.04.11 - v. 12.2 - on plain-file collision, compare MD5 of source and destination and ask what to do instead of auto-skipping
 # 2026.04.11 - v. 12.1 - normalize IMG_/PXL_/received_ media filenames using embedded timestamps or older of creation/modification time
 # 2026.04.11 - v. 12.0 - restore -v/--verbose as verbose mode and keep --version for version/help output
 # 2026.04.11 - v. 11.9 - include DB filename and exclude file path in --version / -v output
@@ -96,7 +97,7 @@
 # 2026.03.27 - v. 1.4 - apply special media renames after basic normalization
 # 2026.03.27 - v. 1.3 - fixed top-level path handling: keep ./ prefix in transform_name()
 # 2026.03.27 - v. 1.2 - added many changes about media files
-SCRIPT_VERSION="2026.04.11 - v. 12.1"
+SCRIPT_VERSION="2026.04.11 - v. 12.2"
 LARGE_HASHFILE_LINE_THRESHOLD=20
 MAX_LINE_LENGTH=200
 START_DIR="$(pwd -P)"
@@ -1642,14 +1643,48 @@ md5_of_file() {
 can_overwrite_collision_with_identical_md5() {
     local old="$1"
     local new="$2"
-    local old_md5 new_md5
+    local old_md5 new_md5 answer=""
 
     [[ -f "$old" && -f "$new" ]] || return 1
 
     old_md5="$(md5_of_file "$old")"
     new_md5="$(md5_of_file "$new")"
 
-    [[ "$old_md5" == "$new_md5" ]]
+    echo
+    echo -e "${YELLOW}COLLISION:${RESET} target file already exists."
+    echo -e "  ${RED}SOURCE:${RESET}      $old"
+    echo -e "  ${GREEN}DESTINATION:${RESET} $new"
+    echo -e "  ${CYAN}SOURCE MD5:${RESET}      $old_md5"
+    echo -e "  ${CYAN}DESTINATION MD5:${RESET} $new_md5"
+
+    if [[ "$old_md5" == "$new_md5" ]]; then
+        echo "Files are identical."
+    else
+        echo "Files are different."
+    fi
+
+    echo "What should be done?"
+    echo "  [O] Overwrite destination and continue rename"
+    echo "  [S] Skip (default)"
+    echo "  [Q] Quit"
+    echo -n "Choice [o/S/q]: "
+
+    flush_stdin
+    read_single_key answer 300
+    echo
+
+    case "$answer" in
+        q|Q)
+            stopped_by_user=yes
+            return 2
+            ;;
+        o|O)
+            return 0
+            ;;
+        *)
+            return 1
+            ;;
+    esac
 }
 
 sed_escape_regex() {
@@ -1835,15 +1870,21 @@ perform_plain_entry_rename() {
     local old_companion_dir="" new_companion_dir="" old_companion_name="" new_companion_name=""
 
     if [[ -e "$new" ]]; then
-        if can_overwrite_collision_with_identical_md5 "$old" "$new"; then
-            echo -e "${CYAN}COLLISION MD5 MATCH:${RESET} source and destination are identical, overwriting destination: $new"
-            if [[ "$mode" == "dry-run" ]]; then
-                echo -e "${CYAN}[DRY-RUN] Would overwrite identical destination and rename:${RESET} $old ${ARROW} $new"
-                ((++files_affected))
-                record_rename "$old" "$new"
-                return 0
-            fi
+        if [[ "$mode" == "dry-run" ]]; then
+            echo -e "${YELLOW}COLLISION:${RESET} Target file already exists."
+            echo -e "${CYAN}[DRY-RUN] Would compare MD5 of source/destination and ask what to do:${RESET} $old ${ARROW} $new"
+            ((++files_skipped))
+            return 0
+        fi
+
+        can_overwrite_collision_with_identical_md5 "$old" "$new"
+        collision_decision_rc=$?
+
+        if [[ $collision_decision_rc -eq 0 ]]; then
+            echo -e "${CYAN}OVERWRITE:${RESET} removing destination and continuing rename: $new"
             rm -f -- "$new"
+        elif [[ $collision_decision_rc -eq 2 ]]; then
+            return 1
         else
             echo -e "${YELLOW}SKIP:${RESET} Target file already exists."
             vlog "Collision detected for plain rename '$old' -> '$new'"
