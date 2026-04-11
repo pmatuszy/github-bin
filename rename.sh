@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.04.11 - v. 12.3 - enrich plain-file collision dialog with size/timestamps and add rename-with-_OTHER option
 # 2026.04.11 - v. 12.2 - on plain-file collision, compare MD5 of source and destination and ask what to do instead of auto-skipping
 # 2026.04.11 - v. 12.1 - normalize IMG_/PXL_/received_ media filenames using embedded timestamps or older of creation/modification time
 # 2026.04.11 - v. 12.0 - restore -v/--verbose as verbose mode and keep --version for version/help output
@@ -97,7 +98,7 @@
 # 2026.03.27 - v. 1.4 - apply special media renames after basic normalization
 # 2026.03.27 - v. 1.3 - fixed top-level path handling: keep ./ prefix in transform_name()
 # 2026.03.27 - v. 1.2 - added many changes about media files
-SCRIPT_VERSION="2026.04.11 - v. 12.2"
+SCRIPT_VERSION="2026.04.11 - v. 12.3"
 LARGE_HASHFILE_LINE_THRESHOLD=20
 MAX_LINE_LENGTH=200
 START_DIR="$(pwd -P)"
@@ -1640,22 +1641,91 @@ md5_of_file() {
     md5sum -- "$file" | awk '{print tolower($1)}'
 }
 
+format_bytes_human() {
+    local bytes="$1"
+    awk -v b="$bytes" 'BEGIN {
+        kb = b / 1024.0;
+        mb = b / 1048576.0;
+        printf "%d bytes | %.2f kB | %.2f MB", b, kb, mb
+    }'
+}
+
+get_file_birth_epoch() {
+    local file="$1"
+    stat -c %W -- "$file" 2>/dev/null || echo 0
+}
+
+get_file_mtime_epoch() {
+    local file="$1"
+    stat -c %Y -- "$file" 2>/dev/null || echo 0
+}
+
+get_file_size_bytes() {
+    local file="$1"
+    stat -c %s -- "$file" 2>/dev/null || echo 0
+}
+
+format_epoch_human() {
+    local epoch="$1"
+    if [[ "$epoch" =~ ^[0-9]+$ ]] && (( epoch > 0 )); then
+        date -d "@$epoch" "+%Y-%m-%d %H:%M:%S"
+    else
+        printf '%s' "unavailable"
+    fi
+}
+
+make_other_suffix_path() {
+    local path="$1"
+    local dir base stem ext candidate
+    dir="$(dirname -- "$path")"
+    base="$(basename -- "$path")"
+
+    if [[ "$base" == *.* ]]; then
+        stem="${base%.*}"
+        ext=".${base##*.}"
+    else
+        stem="$base"
+        ext=""
+    fi
+
+    candidate="${dir}/${stem}_OTHER${ext}"
+    while [[ -e "$candidate" ]]; do
+        candidate="${dir}/${stem}_OTHER${ext}"
+        stem="${stem}_OTHER"
+    done
+    printf '%s' "$candidate"
+}
+
 can_overwrite_collision_with_identical_md5() {
     local old="$1"
     local new="$2"
     local old_md5 new_md5 answer=""
+    local old_size new_size old_btime new_btime old_mtime new_mtime
+    local old_other_path
 
     [[ -f "$old" && -f "$new" ]] || return 1
 
     old_md5="$(md5_of_file "$old")"
     new_md5="$(md5_of_file "$new")"
+    old_size="$(get_file_size_bytes "$old")"
+    new_size="$(get_file_size_bytes "$new")"
+    old_btime="$(get_file_birth_epoch "$old")"
+    new_btime="$(get_file_birth_epoch "$new")"
+    old_mtime="$(get_file_mtime_epoch "$old")"
+    new_mtime="$(get_file_mtime_epoch "$new")"
 
     echo
     echo -e "${YELLOW}COLLISION:${RESET} target file already exists."
     echo -e "  ${RED}SOURCE:${RESET}      $old"
+    echo -e "    size:       $(format_bytes_human "$old_size")"
+    echo -e "    created:    $(format_epoch_human "$old_btime")"
+    echo -e "    modified:   $(format_epoch_human "$old_mtime")"
+    echo -e "    md5:        $old_md5"
     echo -e "  ${GREEN}DESTINATION:${RESET} $new"
-    echo -e "  ${CYAN}SOURCE MD5:${RESET}      $old_md5"
-    echo -e "  ${CYAN}DESTINATION MD5:${RESET} $new_md5"
+    echo -e "    size:       $(format_bytes_human "$new_size")"
+    echo -e "    created:    $(format_epoch_human "$new_btime")"
+    echo -e "    modified:   $(format_epoch_human "$new_mtime")"
+    echo -e "    md5:        $new_md5"
 
     if [[ "$old_md5" == "$new_md5" ]]; then
         echo "Files are identical."
@@ -1663,11 +1733,13 @@ can_overwrite_collision_with_identical_md5() {
         echo "Files are different."
     fi
 
+    old_other_path="$(make_other_suffix_path "$new")"
     echo "What should be done?"
     echo "  [O] Overwrite destination and continue rename"
+    echo "  [R] Rename source with suffix _OTHER -> $(basename -- "$old_other_path")"
     echo "  [S] Skip (default)"
     echo "  [Q] Quit"
-    echo -n "Choice [o/S/q]: "
+    echo -n "Choice [o/r/S/q]: "
 
     flush_stdin
     read_single_key answer 300
@@ -1680,6 +1752,11 @@ can_overwrite_collision_with_identical_md5() {
             ;;
         o|O)
             return 0
+            ;;
+        r|R)
+            printf '%s
+' "$old_other_path"
+            return 3
             ;;
         *)
             return 1
@@ -1872,12 +1949,12 @@ perform_plain_entry_rename() {
     if [[ -e "$new" ]]; then
         if [[ "$mode" == "dry-run" ]]; then
             echo -e "${YELLOW}COLLISION:${RESET} Target file already exists."
-            echo -e "${CYAN}[DRY-RUN] Would compare MD5 of source/destination and ask what to do:${RESET} $old ${ARROW} $new"
+            echo -e "${CYAN}[DRY-RUN] Would compare MD5, size, and timestamps of source/destination and ask what to do:${RESET} $old ${ARROW} $new"
             ((++files_skipped))
             return 0
         fi
 
-        can_overwrite_collision_with_identical_md5 "$old" "$new"
+        collision_other_path="$(can_overwrite_collision_with_identical_md5 "$old" "$new")"
         collision_decision_rc=$?
 
         if [[ $collision_decision_rc -eq 0 ]]; then
@@ -1885,6 +1962,9 @@ perform_plain_entry_rename() {
             rm -f -- "$new"
         elif [[ $collision_decision_rc -eq 2 ]]; then
             return 1
+        elif [[ $collision_decision_rc -eq 3 ]]; then
+            echo -e "${CYAN}RENAME WITH _OTHER:${RESET} source will be renamed to: $collision_other_path"
+            new="$collision_other_path"
         else
             echo -e "${YELLOW}SKIP:${RESET} Target file already exists."
             vlog "Collision detected for plain rename '$old' -> '$new'"
