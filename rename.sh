@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.04.11 - v. 10.8 - rename .jpeg extensions to .jpg and keep header history updated with the current date
 # 2026.04.07 - v. 10.7 - only initialize or migrate SQLite when --use-db is explicitly enabled
 # 2026.04.09 - v. 10.6 - fix checksum-update/recovery verbose formatting and add extra basename cleanup/removal rules
 # 2026.04.07 - v. 10.5 - on plain-file rename collision, allow overwrite when source and destination MD5 checksums are identical
@@ -82,7 +83,7 @@
 # 2026.03.27 - v. 1.4 - apply special media renames after basic normalization
 # 2026.03.27 - v. 1.3 - fixed top-level path handling: keep ./ prefix in transform_name()
 # 2026.03.27 - v. 1.2 - added many changes about media files
-SCRIPT_VERSION="2026.04.07 - v. 10.7"
+SCRIPT_VERSION="2026.04.11 - v. 10.8"
 LARGE_HASHFILE_LINE_THRESHOLD=20
 MAX_LINE_LENGTH=200
 START_DIR="$(pwd -P)"
@@ -1281,6 +1282,13 @@ transform_basename() {
     new="${new//\'/_}"
     new="${new//&/_and_}"
     new="${new//•/-}"
+
+    # normalize jpeg extension to jpg
+    if [[ "$new" =~ \.jpeg$ ]]; then
+        new="${new%.jpeg}.jpg"
+    elif [[ "$new" =~ \.JPEG$ ]]; then
+        new="${new%.JPEG}.jpg"
+    fi
 
     # remove unwanted fragments from names
     new="${new//_OSiOLEK.com/}"
