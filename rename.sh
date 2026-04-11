@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.04.11 - v. 11.0 - timestamp image*.jpg from the older of file creation time and modification time
 # 2026.04.11 - v. 10.9 - prefix image*.jpg files with YYYYMMDD_HHMMSS_
 # 2026.04.11 - v. 10.8 - rename .jpeg extensions to .jpg and keep header history updated with the current date
 # 2026.04.07 - v. 10.7 - only initialize or migrate SQLite when --use-db is explicitly enabled
@@ -84,7 +85,7 @@
 # 2026.03.27 - v. 1.4 - apply special media renames after basic normalization
 # 2026.03.27 - v. 1.3 - fixed top-level path handling: keep ./ prefix in transform_name()
 # 2026.03.27 - v. 1.2 - added many changes about media files
-SCRIPT_VERSION="2026.04.11 - v. 10.9"
+SCRIPT_VERSION="2026.04.11 - v. 11.0"
 LARGE_HASHFILE_LINE_THRESHOLD=20
 MAX_LINE_LENGTH=200
 START_DIR="$(pwd -P)"
@@ -174,6 +175,21 @@ preserve_timestamps_inplace() {
     "$@"
     touch -r "$ref" "$file"
     rm -f "$ref"
+}
+
+get_file_oldest_timestamp_yyyymmdd_hhmmss() {
+    local file="$1"
+    local mtime epoch btime
+
+    mtime="$(stat -c %Y -- "$file" 2>/dev/null || echo 0)"
+    btime="$(stat -c %W -- "$file" 2>/dev/null || echo 0)"
+
+    epoch="$mtime"
+    if [[ "$btime" =~ ^[0-9]+$ ]] && (( btime > 0 )) && (( btime < epoch )); then
+        epoch="$btime"
+    fi
+
+    date -d "@$epoch" +%Y%m%d_%H%M%S
 }
 
 text_file_has_crlf() {
@@ -1326,11 +1342,6 @@ transform_basename() {
         return
     fi
 
-    if [[ "$new" =~ ^(image.*)\.jpg$ ]]; then
-        printf '%s_%s.jpg' "$(date +%Y%m%d)" "$(date +%H%M%S)_${BASH_REMATCH[1]}"
-        return
-    fi
-
     if [[ "$new" =~ ^Screenshot_([0-9]{8}_[0-9]{6}_.+)(\.[^.]+)$ ]]; then
         printf '%s-screenshot%s' \
             "${BASH_REMATCH[1]}" \
@@ -1404,11 +1415,16 @@ transform_basename() {
 
 transform_name() {
     local f="$1"
-    local dir base newbase
+    local dir base newbase ts
 
     dir="$(dirname -- "$f")"
     base="$(basename -- "$f")"
     newbase="$(transform_basename "$base")"
+
+    if [[ "$newbase" =~ ^image.*\.jpg$ ]] && [[ ! "$newbase" =~ ^[0-9]{8}_[0-9]{6}_image.*\.jpg$ ]] && [[ -e "$f" ]]; then
+        ts="$(get_file_oldest_timestamp_yyyymmdd_hhmmss "$f")"
+        newbase="${ts}_${newbase}"
+    fi
 
     if [[ "$dir" == "." ]]; then
         if [[ "$f" == ./* ]]; then
