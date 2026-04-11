@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.04.11 - v. 11.5 - add support for signal-YYYY-MM-DD-HHMMSS_... filenames
 # 2026.04.11 - v. 11.4 - rename filenames starting with YYYY-MM-DD-HH-MM-SS-... to YYYYMMDD_HHMMSS-...
 # 2026.04.11 - v. 11.3 - generalize signal filename renaming so any suffix after the timestamp becomes YYYYMMDD_HHMMSS-signal-<suffix>
 # 2026.04.11 - v. 11.2 - support signal filenames with extra numeric suffixes like signal-YYYY-MM-DD-HH-MM-SS-823-2.jpg
@@ -89,7 +90,7 @@
 # 2026.03.27 - v. 1.4 - apply special media renames after basic normalization
 # 2026.03.27 - v. 1.3 - fixed top-level path handling: keep ./ prefix in transform_name()
 # 2026.03.27 - v. 1.2 - added many changes about media files
-SCRIPT_VERSION="2026.04.11 - v. 11.4"
+SCRIPT_VERSION="2026.04.11 - v. 11.5"
 LARGE_HASHFILE_LINE_THRESHOLD=20
 MAX_LINE_LENGTH=200
 START_DIR="$(pwd -P)"
@@ -1344,6 +1345,15 @@ transform_basename() {
             "${BASH_REMATCH[4]}" "${BASH_REMATCH[5]}" "${BASH_REMATCH[6]}" \
             "${BASH_REMATCH[7]}" \
             "${BASH_REMATCH[8]}"
+        return
+    fi
+
+    if [[ "$new" =~ ^signal-([0-9]{4})-([0-9]{2})-([0-9]{2})-([0-9]{6})_(.+)(\.[^.]+)$ ]]; then
+        printf '%s%s%s_%s-signal-%s%s' \
+            "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}" "${BASH_REMATCH[3]}" \
+            "${BASH_REMATCH[4]}" \
+            "${BASH_REMATCH[5]}" \
+            "${BASH_REMATCH[6]}"
         return
     fi
 
