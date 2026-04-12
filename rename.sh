@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.04.11 - v. 13.4 - add more mojibake fixes, zero-pad numeric media basenames, update/check .m3u playlists, limit affected list to last 100, and remove more ebook markers
 # 2026.04.11 - v. 13.3 - strip leading underscores from final media basenames and update/add DB rows for renamed files so DB summary reflects renames
 # 2026.04.11 - v. 13.2 - move summary after affected entries, remove leading underscores from media basenames, and support wildcard exclude masks like *.cpp and *.h
 # 2026.04.11 - v. 13.1 - reuse cached DB file hashes instead of recalculating them unless --force-recheck is used
@@ -108,7 +109,7 @@
 # 2026.03.27 - v. 1.4 - apply special media renames after basic normalization
 # 2026.03.27 - v. 1.3 - fixed top-level path handling: keep ./ prefix in transform_name()
 # 2026.03.27 - v. 1.2 - added many changes about media files
-SCRIPT_VERSION="2026.04.11 - v. 13.3"
+SCRIPT_VERSION="2026.04.11 - v. 13.4"
 LARGE_HASHFILE_LINE_THRESHOLD=20
 MAX_LINE_LENGTH=200
 START_DIR="$(pwd -P)"
@@ -1317,6 +1318,86 @@ is_media_file() {
     [[ "$lower" == *.mp3 || "$lower" == *.flac || "$lower" == *.wav || "$lower" == *.m4a || "$lower" == *.aac || "$lower" == *.ogg || "$lower" == *.wma || "$lower" == *.mp4 || "$lower" == *.mkv || "$lower" == *.avi || "$lower" == *.mov || "$lower" == *.wmv || "$lower" == *.mpeg || "$lower" == *.mpg || "$lower" == *.m4v || "$lower" == *.webm || "$lower" == *.ts ]]
 }
 
+is_m3u_file() {
+    local p="$1"
+    local lower="${p,,}"
+    [[ "$lower" == *.m3u ]]
+}
+
+update_m3u_references_in_file() {
+    local m3u_file="$1"
+    local old_path="$2"
+    local new_path="$3"
+    local tmp old_base new_base
+
+    [[ -f "$m3u_file" ]] || return 0
+    tmp="$(mktemp)"
+    old_base="$(basename -- "$old_path")"
+    new_base="$(basename -- "$new_path")"
+
+    python3 - "$m3u_file" "$tmp" "$old_path" "$new_path" "$old_base" "$new_base" <<'PY'
+import sys
+src, dst, old_path, new_path, old_base, new_base = sys.argv[1:]
+with open(src, 'r', encoding='utf-8', errors='surrogateescape') as f:
+    lines = f.readlines()
+out = []
+changed = False
+for line in lines:
+    nl = line
+    stripped = line.rstrip('\n')
+    if stripped == old_path:
+        nl = line.replace(old_path, new_path)
+        changed = True
+    elif stripped == old_base:
+        nl = line.replace(old_base, new_base)
+        changed = True
+    out.append(nl)
+with open(dst, 'w', encoding='utf-8', errors='surrogateescape') as f:
+    f.writelines(out)
+sys.exit(0 if changed else 3)
+PY
+    rc=$?
+    if [[ $rc -eq 0 ]]; then
+        mv -- "$tmp" "$m3u_file"
+        echo -e "${CYAN}M3U UPDATED:${RESET} $m3u_file"
+    else
+        rm -f -- "$tmp"
+    fi
+}
+
+update_all_m3u_files_for_rename() {
+    local old_path="$1"
+    local new_path="$2"
+    local start="${START_DIR:-.}"
+    while IFS= read -r -d '' m3u; do
+        update_m3u_references_in_file "$m3u" "$old_path" "$new_path"
+    done < <(find "$start" -type f -iname '*.m3u' -print0 2>/dev/null)
+}
+
+check_m3u_targets() {
+    local m3u_file="$1"
+    local dir line target
+    dir="$(dirname -- "$m3u_file")"
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        [[ -z "$line" || "$line" == \#* ]] && continue
+        if [[ "$line" = /* ]]; then
+            target="$line"
+        else
+            target="$dir/$line"
+        fi
+        if [[ ! -e "$target" ]]; then
+            echo -e "${YELLOW}M3U MISSING:${RESET} $m3u_file -> $line"
+        fi
+    done < "$m3u_file"
+}
+
+check_all_m3u_files() {
+    local start="${START_DIR:-.}"
+    while IFS= read -r -d '' m3u; do
+        check_m3u_targets "$m3u"
+    done < <(find "$start" -type f -iname '*.m3u' -print0 2>/dev/null)
+}
+
 html_companion_dir_path_with_suffix() {
     local html_file="$1"
     local suffix="$2"
@@ -1496,6 +1577,11 @@ transform_basename() {
     new="${new//ê/l}"
     new="${new//Ñ/a}"
     new="${new//¥/z}"
+    new="${new//®/ln}"
+    new="${new//\`/e }"
+    new="${new//Ŕ/c}"
+    new="${new//ŕ/c }"
+    new="${new//ă/sc}"
     new="${new//Ă/s}"
     new="${new//Ăł/o}"
     new="${new//Ĺ‚/l}"
@@ -1556,6 +1642,10 @@ transform_basename() {
     new="${new//\[Audiobook PL\]/}"
     new="${new//_audiobook_pl/}"
     new="${new//audiobook pl/}"
+    new="${new//\[eksiążki PL\]/}"
+    new="${new//\[eksiazki PL\]/}"
+    new="${new//_eksiazki PL_/}"
+    new="${new//_eksiazki_PL_/}"
 
     new=$(printf '%s' "$new" | sed -E '
         s/--+/-/g;
@@ -1744,6 +1834,9 @@ transform_name() {
         while [[ "$newbase" == _* ]]; do
             newbase="${newbase#_}"
         done
+        if [[ "$newbase" =~ ^([0-9])\.(mp3|mp4|m4a|flac)$ ]]; then
+            newbase="0${BASH_REMATCH[1]}.${BASH_REMATCH[2]}"
+        fi
     fi
 
     if [[ "$dir" == "." ]]; then
@@ -2653,8 +2746,14 @@ print_summary() {
 
     echo
     if (( files_affected > 0 )); then
-        echo "Affected entries:"
-        for r in "${renamed_list[@]}"; do
+        echo "Affected entries (last 100):"
+        start_idx=0
+        total_renamed=${#renamed_list[@]}
+        if (( total_renamed > 100 )); then
+            start_idx=$(( total_renamed - 100 ))
+        fi
+        for (( idx=start_idx; idx<total_renamed; idx++ )); do
+            r="${renamed_list[$idx]}"
             old=${r%%|*}
             new=${r#*|}
             printf "  %s %b%s%b %s\n" \
@@ -3261,6 +3360,7 @@ for f in "${ordered_paths[@]}"; do
     esac
 done
 
+check_all_m3u_files
 SCRIPT_FINISH_TIME="$(date '+%Y-%m-%d %H:%M:%S')"
 print_summary
 
