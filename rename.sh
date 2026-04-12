@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.04.11 - v. 13.8 - show ŕ and ® mapping choices reliably during startup before any file processing begins
 # 2026.04.11 - v. 13.7 - make ŕ and ® mappings selectable at startup and keep si`/Ä/% and media-only @ normalization rules
 # 2026.04.11 - v. 13.6 - lowercase file extensions and add more filename normalization rules including media-only @ -> a
 # 2026.04.11 - v. 13.5 - undo backtick replacement and change ŕ mapping to 's ' instead of 'c '
@@ -112,7 +113,7 @@
 # 2026.03.27 - v. 1.4 - apply special media renames after basic normalization
 # 2026.03.27 - v. 1.3 - fixed top-level path handling: keep ./ prefix in transform_name()
 # 2026.03.27 - v. 1.2 - added many changes about media files
-SCRIPT_VERSION="2026.04.11 - v. 13.7"
+SCRIPT_VERSION="2026.04.11 - v. 13.8"
 LARGE_HASHFILE_LINE_THRESHOLD=20
 MAX_LINE_LENGTH=200
 START_DIR="$(pwd -P)"
@@ -1288,6 +1289,39 @@ else
 fi
 
 echo -e "Scope selected: ${CYAN}$process_scope${RESET}"
+
+echo
+echo "Choose mapping for ŕ:"
+echo "  [1] c (default)"
+echo "  [2] s"
+echo "  [3] c and space"
+echo "  [4] s and space"
+echo -n "Choice [1/2/3/4]: "
+flush_stdin
+read_single_key input 300
+echo
+case "$input" in
+    2) MAP_R_ACUTE="s" ;;
+    3) MAP_R_ACUTE="c " ;;
+    4) MAP_R_ACUTE="s " ;;
+    *) MAP_R_ACUTE="c" ;;
+esac
+echo -e "ŕ mapping selected: ${CYAN}${MAP_R_ACUTE@Q}${RESET}"
+
+echo
+echo "Choose mapping for ®:"
+echo "  [1] z (default)"
+echo "  [2] l"
+echo -n "Choice [1/2]: "
+flush_stdin
+read_single_key input 300
+echo
+case "$input" in
+    2) MAP_REGISTERED="l" ;;
+    *) MAP_REGISTERED="z" ;;
+esac
+echo -e "® mapping selected: ${CYAN}${MAP_REGISTERED@Q}${RESET}"
+
 
 sleep 1
 
