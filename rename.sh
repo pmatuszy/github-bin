@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.04.11 - v. 13.9 - move ŕ and ® mapping choices from startup to per-file prompts so they can be chosen case by case
 # 2026.04.11 - v. 13.8 - show ŕ and ® mapping choices reliably during startup before any file processing begins
 # 2026.04.11 - v. 13.7 - make ŕ and ® mappings selectable at startup and keep si`/Ä/% and media-only @ normalization rules
 # 2026.04.11 - v. 13.6 - lowercase file extensions and add more filename normalization rules including media-only @ -> a
@@ -113,7 +114,7 @@
 # 2026.03.27 - v. 1.4 - apply special media renames after basic normalization
 # 2026.03.27 - v. 1.3 - fixed top-level path handling: keep ./ prefix in transform_name()
 # 2026.03.27 - v. 1.2 - added many changes about media files
-SCRIPT_VERSION="2026.04.11 - v. 13.8"
+SCRIPT_VERSION="2026.04.11 - v. 13.9"
 LARGE_HASHFILE_LINE_THRESHOLD=20
 MAX_LINE_LENGTH=200
 START_DIR="$(pwd -P)"
@@ -1592,9 +1593,62 @@ stop_on_checksum_failure() {
     exit 1
 }
 
+choose_r_acute_mapping_for_file() {
+    local path="$1"
+    local answer=""
+    echo
+    echo "Filename contains ŕ:"
+    echo "  $path"
+    echo "Choose mapping for ŕ in this file:"
+    echo "  [1] c (default)"
+    echo "  [2] s"
+    echo "  [3] c and space"
+    echo "  [4] s and space"
+    echo -n "Choice [1/2/3/4]: "
+    flush_stdin
+    read_single_key answer 300
+    echo
+    case "$answer" in
+        2) printf '%s' "s" ;;
+        3) printf '%s' "c " ;;
+        4) printf '%s' "s " ;;
+        *) printf '%s' "c" ;;
+    esac
+}
+
+choose_registered_mapping_for_file() {
+    local path="$1"
+    local answer=""
+    echo
+    echo "Filename contains ®:"
+    echo "  $path"
+    echo "Choose mapping for ® in this file:"
+    echo "  [1] z (default)"
+    echo "  [2] l"
+    echo -n "Choice [1/2]: "
+    flush_stdin
+    read_single_key answer 300
+    echo
+    case "$answer" in
+        2) printf '%s' "l" ;;
+        *) printf '%s' "z" ;;
+    esac
+}
+
 transform_basename() {
     local new="$1"
-    local stem ext
+    local original_path="${2-}"
+    local stem ext local_r_acute local_registered
+
+    local_r_acute="$MAP_R_ACUTE"
+    local_registered="$MAP_REGISTERED"
+
+    if [[ -n "$original_path" && "$new" == *"ŕ"* ]]; then
+        local_r_acute="$(choose_r_acute_mapping_for_file "$original_path")"
+    fi
+    if [[ -n "$original_path" && "$new" == *"®"* ]]; then
+        local_registered="$(choose_registered_mapping_for_file "$original_path")"
+    fi
 
     # remove leading exclamation marks from basename
     while [[ "$new" == '!'* ]]; do
@@ -1625,8 +1679,8 @@ transform_basename() {
     new="${new//Å¼/z}"
     new="${new//ê/l}"
     new="${new//Ñ/a}"
-    new="${new//®/$MAP_REGISTERED}"
-    new="${new//ŕ/$MAP_R_ACUTE}"
+    new="${new//®/$local_registered}"
+    new="${new//ŕ/$local_r_acute}"
     new="${new//¥/z}"
     new="${new//Ŕ/c}"
     new="${new//ă/sc}"
@@ -1856,7 +1910,7 @@ transform_name() {
         base="${base//@/a}"
     fi
 
-    newbase="$(transform_basename "$base")"
+    newbase="$(transform_basename "$base" "$f")"
 
     if [[ -e "$f" ]]; then
         if [[ "$newbase" =~ ^image.*\.jpg$ ]] && [[ ! "$newbase" =~ ^[0-9]{8}_[0-9]{6}_image.*\.jpg$ ]]; then
