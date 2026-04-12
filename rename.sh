@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.04.11 - v. 14.5 - preserve _-_ separators in transformed names and replace fragile sed-based m3u key normalization with a python implementation
 # 2026.04.11 - v. 14.4 - search .m3u missing entries in the playlist subtree by similar name and show OLD/NEW before updating playlist references
 # 2026.04.11 - v. 14.3 - add per-file choices for @ and Ŕ, add €->c and si@->sie, and lowercase extensions only for actual files
 # 2026.04.11 - v. 14.1 - fix per-file ŕ/® choice prompts so only the selected mapping goes to stdout and prompt text no longer pollutes filenames
@@ -118,7 +119,7 @@
 # 2026.03.27 - v. 1.4 - apply special media renames after basic normalization
 # 2026.03.27 - v. 1.3 - fixed top-level path handling: keep ./ prefix in transform_name()
 # 2026.03.27 - v. 1.2 - added many changes about media files
-SCRIPT_VERSION="2026.04.11 - v. 14.4"
+SCRIPT_VERSION="2026.04.11 - v. 14.5"
 LARGE_HASHFILE_LINE_THRESHOLD=20
 MAX_LINE_LENGTH=200
 START_DIR="$(pwd -P)"
@@ -1390,10 +1391,14 @@ update_all_m3u_files_for_rename() {
 
 normalize_m3u_candidate_key() {
     local s="$1"
-    s="$(basename -- "$s")"
-    s="${s,,}"
-    s="$(printf '%s' "$s" | sed -E 's/\.[^.]+$//; s/[[:space:]_.,;:()'"'"'\[\]{}+-]+//g')"
-    printf '%s' "$s"
+    python3 - "$s" <<'PY'
+import os, re, sys
+s = sys.argv[1]
+s = os.path.basename(s).lower()
+s = re.sub(r'\.[^.]+$', '', s)
+s = re.sub(r'[\s_.,;:()\[\]{}+\-]+', '', s)
+print(s, end='')
+PY
 }
 
 find_best_m3u_subtree_match() {
@@ -1916,10 +1921,40 @@ transform_basename() {
         local stem ext
         stem="${new%.*}"
         ext=".${new##*.}"
-        stem=$(printf '%s' "$stem" | sed -E 's/[[:space:][:punct:]]+/_/g; s/^_+//; s/_+$//; s/_+/_/g')
+        stem=$(printf '%s' "$stem" | sed -E '
+            s/[[:space:]]+/_/g;
+            s/,+/_/g;
+            s/;+/_/g;
+            s/:+/_/g;
+            s/\(+/_/g;
+            s/\)+/_/g;
+            s/\[+/_/g;
+            s/\]+/_/g;
+            s/\{+/_/g;
+            s/\}+/_/g;
+            s/"|'\''/_/g;
+            s/_+/_/g;
+            s/^_+//;
+            s/_+$//;
+        ')
         printf '%s%s' "$stem" "$ext"
     else
-        printf '%s' "$(printf '%s' "$new" | sed -E 's/[[:space:][:punct:]]+/_/g; s/^_+//; s/_+$//; s/_+/_/g')"
+        printf '%s' "$(printf '%s' "$new" | sed -E '
+            s/[[:space:]]+/_/g;
+            s/,+/_/g;
+            s/;+/_/g;
+            s/:+/_/g;
+            s/\(+/_/g;
+            s/\)+/_/g;
+            s/\[+/_/g;
+            s/\]+/_/g;
+            s/\{+/_/g;
+            s/\}+/_/g;
+            s/"|'\''/_/g;
+            s/_+/_/g;
+            s/^_+//;
+            s/_+$//;
+        ')"
     fi
 }
 
