@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.04.11 - v. 14.4 - search .m3u missing entries in the playlist subtree by similar name and show OLD/NEW before updating playlist references
 # 2026.04.11 - v. 14.3 - add per-file choices for @ and Ŕ, add €->c and si@->sie, and lowercase extensions only for actual files
 # 2026.04.11 - v. 14.1 - fix per-file ŕ/® choice prompts so only the selected mapping goes to stdout and prompt text no longer pollutes filenames
 # 2026.04.11 - v. 14.0 - remove leftover startup mapping prompts so ŕ and ® choices are only asked per file
@@ -117,7 +118,7 @@
 # 2026.03.27 - v. 1.4 - apply special media renames after basic normalization
 # 2026.03.27 - v. 1.3 - fixed top-level path handling: keep ./ prefix in transform_name()
 # 2026.03.27 - v. 1.2 - added many changes about media files
-SCRIPT_VERSION="2026.04.11 - v. 14.3"
+SCRIPT_VERSION="2026.04.11 - v. 14.4"
 LARGE_HASHFILE_LINE_THRESHOLD=20
 MAX_LINE_LENGTH=200
 START_DIR="$(pwd -P)"
@@ -1387,9 +1388,71 @@ update_all_m3u_files_for_rename() {
     done < <(find "$start" -type f -iname '*.m3u' -print0 2>/dev/null)
 }
 
+normalize_m3u_candidate_key() {
+    local s="$1"
+    s="$(basename -- "$s")"
+    s="${s,,}"
+    s="$(printf '%s' "$s" | sed -E 's/\.[^.]+$//; s/[[:space:]_.,;:()'"'"'\[\]{}+-]+//g')"
+    printf '%s' "$s"
+}
+
+find_best_m3u_subtree_match() {
+    local m3u_file="$1"
+    local missing_entry="$2"
+    local playlist_dir candidate wanted_key candidate_key best=""
+    playlist_dir="$(dirname -- "$m3u_file")"
+    wanted_key="$(normalize_m3u_candidate_key "$missing_entry")"
+    [[ -n "$wanted_key" ]] || return 1
+
+    while IFS= read -r -d '' candidate; do
+        candidate_key="$(normalize_m3u_candidate_key "$candidate")"
+        if [[ "$candidate_key" == "$wanted_key" ]]; then
+            best="$candidate"
+            break
+        fi
+    done < <(find "$playlist_dir" -type f -print0 2>/dev/null)
+
+    [[ -n "$best" ]] || return 1
+    printf '%s' "$best"
+}
+
+replace_single_m3u_entry() {
+    local m3u_file="$1"
+    local old_entry="$2"
+    local new_entry="$3"
+    local tmp
+
+    tmp="$(mktemp)"
+    python3 - "$m3u_file" "$tmp" "$old_entry" "$new_entry" <<'PY'
+import sys
+src, dst, old_entry, new_entry = sys.argv[1:]
+with open(src, 'r', encoding='utf-8', errors='surrogateescape') as f:
+    lines = f.readlines()
+out = []
+changed = False
+for line in lines:
+    stripped = line.rstrip('\n')
+    if stripped == old_entry:
+        out.append(new_entry + '\n')
+        changed = True
+    else:
+        out.append(line)
+with open(dst, 'w', encoding='utf-8', errors='surrogateescape') as f:
+    f.writelines(out)
+sys.exit(0 if changed else 3)
+PY
+    rc=$?
+    if [[ $rc -eq 0 ]]; then
+        mv -- "$tmp" "$m3u_file"
+        return 0
+    fi
+    rm -f -- "$tmp"
+    return 1
+}
+
 check_m3u_targets() {
     local m3u_file="$1"
-    local dir line target
+    local dir line target found replacement
     dir="$(dirname -- "$m3u_file")"
     while IFS= read -r line || [[ -n "$line" ]]; do
         [[ -z "$line" || "$line" == \#* ]] && continue
@@ -1399,7 +1462,21 @@ check_m3u_targets() {
             target="$dir/$line"
         fi
         if [[ ! -e "$target" ]]; then
-            echo -e "${YELLOW}M3U MISSING:${RESET} $m3u_file -> $line"
+            found="$(find_best_m3u_subtree_match "$m3u_file" "$line" || true)"
+            if [[ -n "$found" ]]; then
+                replacement="${found#$dir/}"
+                [[ "$replacement" == "$found" ]] && replacement="$(basename -- "$found")"
+                echo
+                echo "OLD: $line"
+                echo "NEW: $replacement"
+                if replace_single_m3u_entry "$m3u_file" "$line" "$replacement"; then
+                    echo -e "${CYAN}M3U UPDATED:${RESET} $m3u_file"
+                else
+                    echo -e "${YELLOW}M3U SKIP:${RESET} could not update entry in $m3u_file -> $line"
+                fi
+            else
+                echo -e "${YELLOW}M3U MISSING:${RESET} $m3u_file -> $line"
+            fi
         fi
     done < "$m3u_file"
 }
@@ -1410,6 +1487,7 @@ check_all_m3u_files() {
         check_m3u_targets "$m3u"
     done < <(find "$start" -type f -iname '*.m3u' -print0 2>/dev/null)
 }
+
 
 html_companion_dir_path_with_suffix() {
     local html_file="$1"
