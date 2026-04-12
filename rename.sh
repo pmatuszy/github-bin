@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.04.11 - v. 14.1 - fix per-file ŕ/® choice prompts so only the selected mapping goes to stdout and prompt text no longer pollutes filenames
 # 2026.04.11 - v. 14.0 - remove leftover startup mapping prompts so ŕ and ® choices are only asked per file
 # 2026.04.11 - v. 13.9 - move ŕ and ® mapping choices from startup to per-file prompts so they can be chosen case by case
 # 2026.04.11 - v. 13.8 - show ŕ and ® mapping choices reliably during startup before any file processing begins
@@ -115,7 +116,7 @@
 # 2026.03.27 - v. 1.4 - apply special media renames after basic normalization
 # 2026.03.27 - v. 1.3 - fixed top-level path handling: keep ./ prefix in transform_name()
 # 2026.03.27 - v. 1.2 - added many changes about media files
-SCRIPT_VERSION="2026.04.11 - v. 14.0"
+SCRIPT_VERSION="2026.04.11 - v. 14.1"
 LARGE_HASHFILE_LINE_THRESHOLD=20
 MAX_LINE_LENGTH=200
 START_DIR="$(pwd -P)"
@@ -1565,18 +1566,18 @@ stop_on_checksum_failure() {
 choose_r_acute_mapping_for_file() {
     local path="$1"
     local answer=""
-    echo
-    echo "Filename contains ŕ:"
-    echo "  $path"
-    echo "Choose mapping for ŕ in this file:"
-    echo "  [1] c (default)"
-    echo "  [2] s"
-    echo "  [3] c and space"
-    echo "  [4] s and space"
-    echo -n "Choice [1/2/3/4]: "
+    echo >&2
+    echo "Filename contains ŕ:" >&2
+    echo "  $path" >&2
+    echo "Choose mapping for ŕ in this file:" >&2
+    echo "  [1] c (default)" >&2
+    echo "  [2] s" >&2
+    echo "  [3] c and space" >&2
+    echo "  [4] s and space" >&2
+    echo -n "Choice [1/2/3/4]: " >&2
     flush_stdin
     read_single_key answer 300
-    echo
+    echo >&2
     case "$answer" in
         2) printf '%s' "s" ;;
         3) printf '%s' "c " ;;
@@ -1588,16 +1589,16 @@ choose_r_acute_mapping_for_file() {
 choose_registered_mapping_for_file() {
     local path="$1"
     local answer=""
-    echo
-    echo "Filename contains ®:"
-    echo "  $path"
-    echo "Choose mapping for ® in this file:"
-    echo "  [1] z (default)"
-    echo "  [2] l"
-    echo -n "Choice [1/2]: "
+    echo >&2
+    echo "Filename contains ®:" >&2
+    echo "  $path" >&2
+    echo "Choose mapping for ® in this file:" >&2
+    echo "  [1] z (default)" >&2
+    echo "  [2] l" >&2
+    echo -n "Choice [1/2]: " >&2
     flush_stdin
     read_single_key answer 300
-    echo
+    echo >&2
     case "$answer" in
         2) printf '%s' "l" ;;
         *) printf '%s' "z" ;;
