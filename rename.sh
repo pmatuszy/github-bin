@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.04.11 - v. 14.2 - add per-file choices for @ and Ŕ mappings, add €->c and si@->sie, and lowercase extensions only for real files
 # 2026.04.11 - v. 14.1 - fix per-file ŕ/® choice prompts so only the selected mapping goes to stdout and prompt text no longer pollutes filenames
 # 2026.04.11 - v. 14.0 - remove leftover startup mapping prompts so ŕ and ® choices are only asked per file
 # 2026.04.11 - v. 13.9 - move ŕ and ® mapping choices from startup to per-file prompts so they can be chosen case by case
@@ -116,7 +117,7 @@
 # 2026.03.27 - v. 1.4 - apply special media renames after basic normalization
 # 2026.03.27 - v. 1.3 - fixed top-level path handling: keep ./ prefix in transform_name()
 # 2026.03.27 - v. 1.2 - added many changes about media files
-SCRIPT_VERSION="2026.04.11 - v. 14.1"
+SCRIPT_VERSION="2026.04.11 - v. 14.2"
 LARGE_HASHFILE_LINE_THRESHOLD=20
 MAX_LINE_LENGTH=200
 START_DIR="$(pwd -P)"
@@ -145,6 +146,8 @@ CLI_MODE=""
 CLI_SCOPE=""
 MAP_R_ACUTE="c"
 MAP_REGISTERED="z"
+MAP_AT_SIGN="a"
+MAP_R_GRAVE="c"
 
 CURRENT_OP_ACTIVE=0
 CURRENT_OP_LABEL=""
@@ -1605,6 +1608,44 @@ choose_registered_mapping_for_file() {
     esac
 }
 
+choose_at_sign_mapping_for_file() {
+    local path="$1"
+    local answer=""
+    echo >&2
+    echo "Filename contains @ (media file):" >&2
+    echo "  $path" >&2
+    echo "Choose mapping for @ in this file:" >&2
+    echo "  [1] a (default)" >&2
+    echo "  [2] e" >&2
+    echo -n "Choice [1/2]: " >&2
+    flush_stdin
+    read_single_key answer 300
+    echo >&2
+    case "$answer" in
+        2) printf '%s' "e" ;;
+        *) printf '%s' "a" ;;
+    esac
+}
+
+choose_r_grave_mapping_for_file() {
+    local path="$1"
+    local answer=""
+    echo >&2
+    echo "Filename contains Ŕ:" >&2
+    echo "  $path" >&2
+    echo "Choose mapping for Ŕ in this file:" >&2
+    echo "  [1] c (default)" >&2
+    echo "  [2] s" >&2
+    echo -n "Choice [1/2]: " >&2
+    flush_stdin
+    read_single_key answer 300
+    echo >&2
+    case "$answer" in
+        2) printf '%s' "s" ;;
+        *) printf '%s' "c" ;;
+    esac
+}
+
 transform_basename() {
     local new="$1"
     local original_path="${2-}"
@@ -1651,11 +1692,18 @@ transform_basename() {
     new="${new//Ñ/a}"
     new="${new//®/$local_registered}"
     new="${new//ŕ/$local_r_acute}"
+    if [[ -n "$original_path" ]]; then
+        if is_media_file "$original_path"; then
+            new="${new//@/$local_at_sign}"
+        fi
+    fi
     new="${new//¥/z}"
-    new="${new//Ŕ/c}"
+    new="${new//Ŕ/$local_r_grave}"
     new="${new//ă/sc}"
     new="${new//si\`/sie_}"
+    new="${new//si@/sie}"
     new="${new//Ä/s}"
+    new="${new//€/c}"
     new="${new//%/ze}"
     new="${new//Ă/s}"
     new="${new//Ăł/o}"
@@ -1868,7 +1916,7 @@ transform_basename() {
 
 transform_name() {
     local f="$1"
-    local dir base newbase ts
+    local dir base newbase ts stem ext
 
     dir="$(dirname -- "$f")"
     base="$(basename -- "$f")"
@@ -1877,7 +1925,6 @@ transform_name() {
         while [[ "$base" == _* ]]; do
             base="${base#_}"
         done
-        base="${base//@/a}"
     fi
 
     newbase="$(transform_basename "$base" "$f")"
@@ -1912,6 +1959,14 @@ transform_name() {
         done
         if [[ "$newbase" =~ ^([0-9])\.(mp3|mp4|m4a|flac)$ ]]; then
             newbase="0${BASH_REMATCH[1]}.${BASH_REMATCH[2]}"
+        fi
+    fi
+
+    if [[ ! -d "$f" && "$newbase" == *.* ]]; then
+        stem="${newbase%.*}"
+        ext="${newbase##*.}"
+        if [[ "$ext" != "${ext,,}" ]]; then
+            newbase="${stem}.${ext,,}"
         fi
     fi
 
