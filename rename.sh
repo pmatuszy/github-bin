@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.04.11 - v. 13.5 - undo backtick replacement and change ŕ mapping to 's ' instead of 'c '
 # 2026.04.11 - v. 13.4 - add more mojibake fixes, zero-pad numeric media basenames, update/check .m3u playlists, limit affected list to last 100, and remove more ebook markers
 # 2026.04.11 - v. 13.3 - strip leading underscores from final media basenames and update/add DB rows for renamed files so DB summary reflects renames
 # 2026.04.11 - v. 13.2 - move summary after affected entries, remove leading underscores from media basenames, and support wildcard exclude masks like *.cpp and *.h
@@ -109,7 +110,7 @@
 # 2026.03.27 - v. 1.4 - apply special media renames after basic normalization
 # 2026.03.27 - v. 1.3 - fixed top-level path handling: keep ./ prefix in transform_name()
 # 2026.03.27 - v. 1.2 - added many changes about media files
-SCRIPT_VERSION="2026.04.11 - v. 13.4"
+SCRIPT_VERSION="2026.04.11 - v. 13.5"
 LARGE_HASHFILE_LINE_THRESHOLD=20
 MAX_LINE_LENGTH=200
 START_DIR="$(pwd -P)"
@@ -1578,9 +1579,8 @@ transform_basename() {
     new="${new//Ñ/a}"
     new="${new//¥/z}"
     new="${new//®/ln}"
-    new="${new//\`/e }"
     new="${new//Ŕ/c}"
-    new="${new//ŕ/c }"
+    new="${new//ŕ/s }"
     new="${new//ă/sc}"
     new="${new//Ă/s}"
     new="${new//Ăł/o}"
