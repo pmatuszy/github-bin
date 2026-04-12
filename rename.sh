@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 2026.04.11 - v. 14.2 - add per-file choices for @ and Ŕ mappings, add €->c and si@->sie, and lowercase extensions only for real files
+# 2026.04.11 - v. 14.3 - add per-file choices for @ and Ŕ, add €->c and si@->sie, and lowercase extensions only for actual files
 # 2026.04.11 - v. 14.1 - fix per-file ŕ/® choice prompts so only the selected mapping goes to stdout and prompt text no longer pollutes filenames
 # 2026.04.11 - v. 14.0 - remove leftover startup mapping prompts so ŕ and ® choices are only asked per file
 # 2026.04.11 - v. 13.9 - move ŕ and ® mapping choices from startup to per-file prompts so they can be chosen case by case
@@ -117,7 +117,7 @@
 # 2026.03.27 - v. 1.4 - apply special media renames after basic normalization
 # 2026.03.27 - v. 1.3 - fixed top-level path handling: keep ./ prefix in transform_name()
 # 2026.03.27 - v. 1.2 - added many changes about media files
-SCRIPT_VERSION="2026.04.11 - v. 14.2"
+SCRIPT_VERSION="2026.04.11 - v. 14.3"
 LARGE_HASHFILE_LINE_THRESHOLD=20
 MAX_LINE_LENGTH=200
 START_DIR="$(pwd -P)"
@@ -1649,10 +1649,12 @@ choose_r_grave_mapping_for_file() {
 transform_basename() {
     local new="$1"
     local original_path="${2-}"
-    local stem ext local_r_acute local_registered
+    local local_r_acute local_registered local_at_sign local_r_grave
 
-    local_r_acute="$MAP_R_ACUTE"
-    local_registered="$MAP_REGISTERED"
+    local_r_acute="${MAP_R_ACUTE:-c}"
+    local_registered="${MAP_REGISTERED:-z}"
+    local_at_sign="${MAP_AT_SIGN:-a}"
+    local_r_grave="${MAP_R_GRAVE:-c}"
 
     if [[ -n "$original_path" && "$new" == *"ŕ"* ]]; then
         local_r_acute="$(choose_r_acute_mapping_for_file "$original_path")"
@@ -1660,22 +1662,19 @@ transform_basename() {
     if [[ -n "$original_path" && "$new" == *"®"* ]]; then
         local_registered="$(choose_registered_mapping_for_file "$original_path")"
     fi
+    if [[ -n "$original_path" && "$new" == *"Ŕ"* ]]; then
+        local_r_grave="$(choose_r_grave_mapping_for_file "$original_path")"
+    fi
+    if [[ -n "$original_path" && "$new" == *"@"* ]]; then
+        if is_media_file "$original_path"; then
+            local_at_sign="$(choose_at_sign_mapping_for_file "$original_path")"
+        fi
+    fi
 
-    # remove leading exclamation marks from basename
     while [[ "$new" == '!'* ]]; do
         new="${new#!}"
     done
 
-    # lowercase file extension
-    if [[ "$new" == *.* ]]; then
-        stem="${new%.*}"
-        ext="${new##*.}"
-        if [[ "$ext" != "${ext,,}" ]]; then
-            new="${stem}.${ext,,}"
-        fi
-    fi
-
-    # mojibake fixes
     new="${new//Ä™/e}"
     new="${new//Ĺ„/n}"
     new="${new//Ä‡/c}"
@@ -1690,21 +1689,21 @@ transform_basename() {
     new="${new//Å¼/z}"
     new="${new//ê/l}"
     new="${new//Ñ/a}"
-    new="${new//®/$local_registered}"
-    new="${new//ŕ/$local_r_acute}"
-    if [[ -n "$original_path" ]]; then
-        if is_media_file "$original_path"; then
-            new="${new//@/$local_at_sign}"
-        fi
-    fi
     new="${new//¥/z}"
+    new="${new//®/$local_registered}"
     new="${new//Ŕ/$local_r_grave}"
+    new="${new//ŕ/$local_r_acute}"
     new="${new//ă/sc}"
     new="${new//si\`/sie_}"
     new="${new//si@/sie}"
     new="${new//Ä/s}"
     new="${new//€/c}"
     new="${new//%/ze}"
+    if [[ -n "$original_path" ]]; then
+        if is_media_file "$original_path"; then
+            new="${new//@/$local_at_sign}"
+        fi
+    fi
     new="${new//Ă/s}"
     new="${new//Ăł/o}"
     new="${new//Ĺ‚/l}"
@@ -1716,9 +1715,8 @@ transform_basename() {
     new="${new//ń/n}"
     new="${new//ó/o}"
     new="${new//ś/s}"
-    new="${new//ż/z}"
     new="${new//ź/z}"
-
+    new="${new//ż/z}"
     new="${new//Ą/A}"
     new="${new//Ć/C}"
     new="${new//Ę/E}"
@@ -1726,31 +1724,17 @@ transform_basename() {
     new="${new//Ń/N}"
     new="${new//Ó/O}"
     new="${new//Ś/S}"
-    new="${new//Ż/Z}"
     new="${new//Ź/Z}"
+    new="${new//Ż/Z}"
 
-    new="${new//(/_}"
-    new="${new//)/_}"
-    new="${new//\{/_}"
-    new="${new//\}/_}"
-    new="${new//\[/_}"
-    new="${new//\]/_}"
-    new="${new//,/_}"
-
-    new="${new//!/.}"
-    new="${new// /_}"
-    new="${new//\'/_}"
-    new="${new//&/_and_}"
     new="${new//•/-}"
 
-    # normalize jpeg extension to jpg
     if [[ "$new" =~ \.jpeg$ ]]; then
         new="${new%.jpeg}.jpg"
     elif [[ "$new" =~ \.JPEG$ ]]; then
         new="${new%.JPEG}.jpg"
     fi
 
-    # remove unwanted fragments from names
     new="${new//_OSiOLEK.com/}"
     new="${new//LEK.PL/}"
     new="${new//rip.by.Crisp/}"
@@ -1769,18 +1753,6 @@ transform_basename() {
     new="${new//\[eksiazki PL\]/}"
     new="${new//_eksiazki PL_/}"
     new="${new//_eksiazki_PL_/}"
-
-    new=$(printf '%s' "$new" | sed -E '
-        s/--+/-/g;
-        s/  +/ /g;
-        s/^ +//;
-        s/ +$//;
-        s/\.\.+/./g;
-        s/__+/_/g;
-        s/_\././g;
-        s/_$//;
-        s/\.$//;
-    ')
 
     if [[ "$new" =~ ^([0-9]{2})([0-9]{2})([0-9]{2})_([0-9]{6})_-_(.+)(\.[^.]+)$ ]]; then
         printf '20%s%s%s_%s_-_%s%s' \
@@ -1850,68 +1822,27 @@ transform_basename() {
         return
     fi
 
-    if [[ "$new" =~ ^Screen_Recording_([0-9]{8})[-_]([0-9]{6})[-_](.+)(\.[^.]+)$ ]]; then
-        printf '%s_%s_-_Screen_Recording_-_%s%s' \
-            "${BASH_REMATCH[1]}" \
-            "${BASH_REMATCH[2]}" \
-            "${BASH_REMATCH[3]}" \
-            "${BASH_REMATCH[4]}"
-        return
-    fi
+    new=$(printf '%s' "$new" | sed -E '
+        s/--+/-/g;
+        s/  +/ /g;
+        s/^ +//;
+        s/ +$//;
+        s/\.\.+/./g;
+        s/__+/_/g;
+        s/_\././g;
+        s/_$//;
+        s/\.$//;
+    ')
 
-    if [[ "$new" =~ ^Call_recording_(.+)_([0-9]{2})([0-9]{2})([0-9]{2})_([0-9]{6})(\.[^.]+)$ ]]; then
-        printf '20%s%s%s_%s_-_Call_recording_-_%s%s' \
-            "${BASH_REMATCH[2]}" "${BASH_REMATCH[3]}" "${BASH_REMATCH[4]}" \
-            "${BASH_REMATCH[5]}" \
-            "${BASH_REMATCH[1]}" \
-            "${BASH_REMATCH[6]}"
-        return
+    if [[ "$new" == *.* ]]; then
+        local stem ext
+        stem="${new%.*}"
+        ext=".${new##*.}"
+        stem=$(printf '%s' "$stem" | sed -E 's/[[:space:][:punct:]]+/_/g; s/^_+//; s/_+$//; s/_+/_/g')
+        printf '%s%s' "$stem" "$ext"
+    else
+        printf '%s' "$(printf '%s' "$new" | sed -E 's/[[:space:][:punct:]]+/_/g; s/^_+//; s/_+$//; s/_+/_/g')"
     fi
-
-    if [[ "$new" =~ ^Call_recording_([0-9]{2})([0-9]{2})([0-9]{2})_([0-9]{6})[-_](.+)(\.[^.]+)$ ]]; then
-        printf '20%s%s%s_%s_-_Call_recording_-_%s%s' \
-            "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}" "${BASH_REMATCH[3]}" \
-            "${BASH_REMATCH[4]}" \
-            "${BASH_REMATCH[5]}" \
-            "${BASH_REMATCH[6]}"
-        return
-    fi
-
-    if [[ "$new" =~ ^Sprache_([0-9]{2})([0-9]{2})([0-9]{2})_([0-9]{6})[-_](.+)(\.[^.]+)$ ]]; then
-        printf '20%s%s%s_%s_-_VoiceRecorder_-_%s%s' \
-            "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}" "${BASH_REMATCH[3]}" \
-            "${BASH_REMATCH[4]}" \
-            "${BASH_REMATCH[5]}" \
-            "${BASH_REMATCH[6]}"
-        return
-    fi
-
-    if [[ "$new" =~ ^Sprache_([0-9]{2})([0-9]{2})([0-9]{2})_([0-9]{6})(\.[^.]+)$ ]]; then
-        printf '20%s%s%s_%s_-_VoiceRecorder%s' \
-            "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}" "${BASH_REMATCH[3]}" \
-            "${BASH_REMATCH[4]}" \
-            "${BASH_REMATCH[5]}"
-        return
-    fi
-
-    if [[ "$new" =~ ^Voice_([0-9]{2})([0-9]{2})([0-9]{2})_([0-9]{6})[-_](.+)(\.[^.]+)$ ]]; then
-        printf '20%s%s%s_%s_-_VoiceRecorder_-_%s%s' \
-            "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}" "${BASH_REMATCH[3]}" \
-            "${BASH_REMATCH[4]}" \
-            "${BASH_REMATCH[5]}" \
-            "${BASH_REMATCH[6]}"
-        return
-    fi
-
-    if [[ "$new" =~ ^Voice_([0-9]{2})([0-9]{2})([0-9]{2})_([0-9]{6})(\.[^.]+)$ ]]; then
-        printf '20%s%s%s_%s_-_VoiceRecorder%s' \
-            "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}" "${BASH_REMATCH[3]}" \
-            "${BASH_REMATCH[4]}" \
-            "${BASH_REMATCH[5]}"
-        return
-    fi
-
-    printf '%s' "$new"
 }
 
 transform_name() {
