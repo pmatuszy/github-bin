@@ -132,7 +132,7 @@
 # 2026.03.27 - v. 1.4 - apply special media renames after basic normalization
 # 2026.03.27 - v. 1.3 - fixed top-level path handling: keep ./ prefix in transform_name()
 # 2026.03.27 - v. 1.2 - added many changes about media files
-SCRIPT_VERSION="2026.04.13 - v. 16.1"
+SCRIPT_VERSION="2026.04.13 - v. 16.2"
 LARGE_HASHFILE_LINE_THRESHOLD=20
 MAX_LINE_LENGTH=200
 START_DIR="$(pwd -P)"
@@ -740,6 +740,43 @@ db_get_cached_file_hash() {
     [[ -n "$row" ]] || return 1
 
     printf '%s' "$row"
+}
+
+
+db_backfill_missing_hashes_for_existing_file() {
+    local path="$1"
+    local abs row md5_hash sha512_hash sql
+
+    (( USE_DB == 1 )) || return 0
+    [[ -f "$path" ]] || return 0
+    is_checksum_file "$path" && return 0
+
+    abs="$(db_abs_path "$path" 2>/dev/null || true)"
+    [[ -n "$abs" ]] || return 0
+
+    db_flush_pending >/dev/null 2>&1 || true
+
+    row="$(sqlite3 -separator $'\t' "$DB_FILE" "SELECT COALESCE(file_md5,''), COALESCE(file_sha512,''), COALESCE(file_hash_kind,''), COALESCE(file_hash,'') FROM checked_paths WHERE path='$(sql_escape "$abs")' LIMIT 1;" 2>/dev/null | head -n 1)"
+    [[ -n "$row" ]] || return 0
+
+    md5_hash="$(printf '%s' "$row" | awk -F '\t' '{print $1}')"
+    sha512_hash="$(printf '%s' "$row" | awk -F '\t' '{print $2}')"
+
+    if [[ -z "$md5_hash" ]]; then
+        md5_hash="$(md5_of_file "$path")"
+    fi
+
+    if [[ -z "$sha512_hash" ]]; then
+        sha512_hash="$(checksum_of_file sha512 "$path")"
+    fi
+
+    sql="UPDATE checked_paths SET file_md5='$(sql_escape "$md5_hash")', file_sha512='$(sql_escape "$sha512_hash")', last_checked=CURRENT_TIMESTAMP WHERE path='$(sql_escape "$abs")';"
+    printf '%s\n' "$sql" >> "$DB_PENDING_SQL_FILE"
+    (( ++DB_PENDING_COUNT ))
+    (( ++DB_ROWS_UPDATED ))
+    if (( DB_PENDING_COUNT >= DB_FLUSH_EVERY )); then
+        db_flush_pending
+    fi
 }
 
 
