@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.04.11 - v. 15.1 - skip immediately when an exception already exists and fix the E prompt text
 # 2026.04.11 - v. 15.0 - fix .m3u CRLF updates, handle backslash paths in subtree matching, and avoid UnicodeEncodeError when printing odd playlist entries
 # 2026.04.11 - v. 14.9 - skip final .m3u checks/fixes when interrupted with Ctrl-C and exit immediately after summary
 # 2026.04.11 - v. 14.8 - make .m3u skip messages explicit: distinguish no match, identical replacement, and write failure
@@ -124,7 +125,7 @@
 # 2026.03.27 - v. 1.4 - apply special media renames after basic normalization
 # 2026.03.27 - v. 1.3 - fixed top-level path handling: keep ./ prefix in transform_name()
 # 2026.03.27 - v. 1.2 - added many changes about media files
-SCRIPT_VERSION="2026.04.11 - v. 15.0"
+SCRIPT_VERSION="2026.04.11 - v. 15.1"
 LARGE_HASHFILE_LINE_THRESHOLD=20
 MAX_LINE_LENGTH=200
 START_DIR="$(pwd -P)"
@@ -329,6 +330,20 @@ exception_entry_for_path() {
     else
         printf '/%s' "$base"
     fi
+}
+
+exception_exists_for_path() {
+    local path="$1"
+    local entry=""
+    local existing
+
+    entry="$(path_to_exclude_entry "$path")"
+    [[ -n "$entry" ]] || return 1
+
+    for existing in "${EXCLUDE_FILTERS[@]}"; do
+        [[ "$existing" == "$entry" ]] && return 0
+    done
+    return 1
 }
 
 append_path_to_exclude_filters_file() {
@@ -2878,7 +2893,7 @@ print_rename_prompt_menu() {
     echo "  [N] No"
     echo "  [A] All remaining"
     echo "  [D] Yes for this directory"
-    echo "  [E] Add exception (plain entries only)"
+    echo "  [E] Add exception"
     echo "  [Q] Quit"
     echo -n "Choice [Y/n/a/d/E/q]: "
 }
@@ -3528,6 +3543,14 @@ for f in "${ordered_paths[@]}"; do
     if auto_yes_current_dir_matches "$f"; then
         print_rename_action_verbose "$f" "$new" "per-directory auto-yes"
         perform_plain_entry_rename "$f" "$new" || break
+        continue
+    fi
+
+    if exception_exists_for_path "$f"; then
+        echo -e "${YELLOW}EXCEPTION EXISTS:${RESET} $(path_to_exclude_entry "$f") -> $EXCLUDE_FILTERS_FILE"
+        ((++files_skipped))
+        processed["$f"]=1
+        db_mark_checked "$f" "plain" "checked"
         continue
     fi
 
