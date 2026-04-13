@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.04.13 - v. 15.4 - show explicit startup progress for exclude loading and SQLite cache warmup, and keep downloadable filename aligned with script version
 # 2026.04.13 - v. 15.3 - fix CRLF-sensitive M3U entry replacement so prepared updates actually get written
 # 2026.04.13 - v. 15.2 - fix protected internal files, make M3U single-entry replacement more robust, and count DB row operations in summary
 # 2026.04.11 - v. 15.1 - skip immediately when an exception already exists and fix the E prompt text
@@ -127,7 +128,7 @@
 # 2026.03.27 - v. 1.4 - apply special media renames after basic normalization
 # 2026.03.27 - v. 1.3 - fixed top-level path handling: keep ./ prefix in transform_name()
 # 2026.03.27 - v. 1.2 - added many changes about media files
-SCRIPT_VERSION="2026.04.13 - v. 15.3"
+SCRIPT_VERSION="2026.04.13 - v. 15.4"
 LARGE_HASHFILE_LINE_THRESHOLD=20
 MAX_LINE_LENGTH=200
 START_DIR="$(pwd -P)"
@@ -203,6 +204,10 @@ Options:
                          Skip the startup scope question
   -h, --help             Show this help
 EOF
+}
+
+startup_progress() {
+    echo "[STARTUP] $*"
 }
 
 flush_stdin() {
@@ -467,8 +472,11 @@ db_migrate_legacy_file() {
 }
 
 db_init() {
+    local warmed_rows=0
+
     db_migrate_legacy_file()
     (( USE_DB == 1 )) || return 0
+    startup_progress "Preparing SQLite cache: $DB_FILE"
     db_require_sqlite
     sqlite3 "$DB_FILE" >/dev/null 2>&1 <<'SQL'
 PRAGMA journal_mode=WAL;
@@ -491,6 +499,8 @@ SQL
     sqlite3 "$DB_FILE" 'CREATE INDEX IF NOT EXISTS idx_checked_paths_signature ON checked_paths(signature);' >/dev/null 2>&1 || true
     sqlite3 "$DB_FILE" 'CREATE INDEX IF NOT EXISTS idx_checked_paths_file_hash ON checked_paths(file_hash_kind, file_hash);' >/dev/null 2>&1 || true
     DB_PENDING_SQL_FILE="$(mktemp)"
+
+    startup_progress "Loading cached rows from SQLite into memory..."
     while IFS='|' read -r path size mtime status signature; do
         [[ -n "$path" ]] || continue
         DB_CACHE_META["$path"]="$size|$mtime"
@@ -499,7 +509,13 @@ SQL
             DB_CACHE_SIG["$signature"]=1
             DB_CACHE_SIG_STATUS["$signature"]="$status"
         fi
+        ((++warmed_rows))
+        if (( warmed_rows % 50000 == 0 )); then
+            startup_progress "SQLite warmup progress: $warmed_rows rows loaded..."
+        fi
     done < <(sqlite3 -separator '|' "$DB_FILE" 'SELECT path, size, mtime, COALESCE(status, ""), COALESCE(signature, "") FROM checked_paths;')
+
+    startup_progress "SQLite cache warmup done: $warmed_rows rows loaded"
 }
 
 db_has_valid_entry() {
@@ -842,10 +858,15 @@ while (( $# > 0 )); do
     esac
 done
 
+startup_progress "Scanning startup directory: $START_DIR"
+startup_progress "Loading exclude filters from: $EXCLUDE_FILTERS_FILE"
 load_exclude_filters
+startup_progress "Exclude filters loaded: ${#EXCLUDE_FILTERS[@]}"
 if (( USE_DB == 1 )); then
+    startup_progress "Initializing SQLite support..."
     db_init
 fi
+startup_progress "Startup preparation finished"
 
 echo
 echo "============================================================"
