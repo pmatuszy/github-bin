@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 2026.04.13 - v. 15.3 - add total DB lookup statistics and count every DB/cache lookup in the summary
+# 2026.04.13 - v. 15.3 - fix CRLF-sensitive M3U entry replacement so prepared updates actually get written
 # 2026.04.13 - v. 15.2 - fix protected internal files, make M3U single-entry replacement more robust, and count DB row operations in summary
 # 2026.04.11 - v. 15.1 - skip immediately when an exception already exists and fix the E prompt text
 # 2026.04.11 - v. 15.0 - fix .m3u CRLF updates, handle backslash paths in subtree matching, and avoid UnicodeEncodeError when printing odd playlist entries
@@ -143,9 +143,6 @@ DB_ROWS_UPDATED=0
 DB_ROWS_REMOVED=0
 DB_HASH_LOOKUP_HITS=0
 DB_HASH_LOOKUP_MISSES=0
-DB_LOOKUPS_TOTAL=0
-DB_LOOKUP_HITS=0
-DB_LOOKUP_MISSES=0
 DB_HASH_RECORD_STATUS=""
 DB_RECOVERY_RESULT=""
 
@@ -505,25 +502,9 @@ SQL
     done < <(sqlite3 -separator '|' "$DB_FILE" 'SELECT path, size, mtime, COALESCE(status, ""), COALESCE(signature, "") FROM checked_paths;')
 }
 
-db_note_lookup() {
-    local result="$1"
-
-    (( USE_DB == 1 )) || return 0
-
-    ((++DB_LOOKUPS_TOTAL))
-    case "$result" in
-        hit)
-            ((++DB_LOOKUP_HITS))
-            ;;
-        miss)
-            ((++DB_LOOKUP_MISSES))
-            ;;
-    esac
-}
-
 db_has_valid_entry() {
     local path="$1"
-    local abs meta cached size mtime sig sig_status
+    local abs meta cached status size mtime sig sig_status
 
     (( USE_DB == 1 )) || return 1
     (( FORCE_RECHECK == 0 )) || return 1
@@ -531,10 +512,10 @@ db_has_valid_entry() {
 
     abs="$(db_abs_path "$path")"
     cached="${DB_CACHE_META[$abs]-}"
+    status="${DB_CACHE_STATUS[$abs]-}"
 
     if [[ -n "$cached" ]]; then
         if (( FAST_DB == 1 )); then
-            db_note_lookup hit
             return 0
         fi
 
@@ -544,18 +525,15 @@ db_has_valid_entry() {
         mtime="${meta##*|}"
 
         if [[ "$cached" == "$size|$mtime" ]]; then
-            db_note_lookup hit
             return 0
         fi
     fi
-    db_note_lookup miss
 
     if is_checksum_file "$path"; then
         sig="$(db_compute_signature "$path" 2>/dev/null || true)"
         sig_status="${DB_CACHE_SIG_STATUS[$sig]-}"
         if [[ -n "$sig" && -n "${DB_CACHE_SIG[$sig]-}" ]]; then
             if (( FAST_DB == 1 )); then
-                db_note_lookup hit
                 return 0
             fi
             meta="$(db_get_size_mtime "$path" 2>/dev/null || true)"
@@ -563,15 +541,12 @@ db_has_valid_entry() {
             size="${meta%%|*}"
             mtime="${meta##*|}"
             if [[ -n "$cached" && "$cached" == "$size|$mtime" ]]; then
-                db_note_lookup hit
                 return 0
             fi
             if [[ "$sig_status" == "missing_refs" || "$sig_status" == "checked" ]]; then
-                db_note_lookup hit
                 return 0
             fi
         fi
-        db_note_lookup miss
     fi
 
     return 1
@@ -591,11 +566,9 @@ db_record_file_hash() {
 
     existing_path="$(sqlite3 "$DB_FILE" "SELECT path FROM checked_paths WHERE path='$(sql_escape "$abs")' LIMIT 1;" 2>/dev/null || true)"
     if [[ -n "$existing_path" ]]; then
-        db_note_lookup hit
         DB_HASH_RECORD_STATUS="updated"
         ((++DB_ROWS_UPDATED))
     else
-        db_note_lookup miss
         DB_HASH_RECORD_STATUS="new"
         ((++DB_ROWS_NEW))
     fi
@@ -625,14 +598,12 @@ db_find_path_by_file_hash_in_subtree() {
 
     row_path="$(sqlite3 -separator $'\t' "$DB_FILE" "SELECT path FROM checked_paths WHERE file_hash_kind='$(sql_escape "$hash_kind")' AND file_hash='$(sql_escape "$hash_value")' AND path LIKE '$(sql_escape "${search_abs%/}")/%' ORDER BY LENGTH(path) LIMIT 1;" 2>/dev/null | head -n 1)"
     if [[ -n "$row_path" && -e "$row_path" ]]; then
-        db_note_lookup hit
         ((++DB_HASH_LOOKUP_HITS))
         print_db_hash_lookup_verbose "hit" "$search_root" "$hash_kind" "$hash_value" "$row_path"
         printf '%s' "$row_path"
         return 0
     fi
 
-    db_note_lookup miss
     ((++DB_HASH_LOOKUP_MISSES))
     print_db_hash_lookup_verbose "miss" "$search_root" "$hash_kind" "$hash_value"
     return 1
@@ -1540,14 +1511,23 @@ replace_single_m3u_entry() {
     local new_entry="$3"
     local tmp rc
 
-    tmp="$(mktemp)"
+    old_entry="${old_entry%$'
+'}"
+    new_entry="${new_entry%$'
+'}"
+    tmp="$(mktemp --tmpdir="$(dirname -- "$m3u_file")" .m3u-update.XXXXXX)"
     python3 - "$m3u_file" "$tmp" "$old_entry" "$new_entry" <<'PY'
 import sys
-
 src, dst, old_entry, new_entry = sys.argv[1:]
+old_entry = old_entry.rstrip('
+')
+new_entry = new_entry.rstrip('
+')
 
 def norm(value: str) -> str:
-    value = value.replace('\\', '/')
+    value = value.rstrip('
+')
+    value = value.replace('\', '/')
     while value.startswith('./'):
         value = value[2:]
     return value
@@ -1559,8 +1539,13 @@ old_norm = norm(old_entry)
 out = []
 changed = False
 for line in lines:
-    nl = '\r\n' if line.endswith('\r\n') else ('\n' if line.endswith('\n') else '')
-    stripped = line.rstrip('\r\n')
+    nl = '
+' if line.endswith('
+') else ('
+' if line.endswith('
+') else '')
+    stripped = line.rstrip('
+')
     stripped_norm = norm(stripped)
 
     if stripped == old_entry or stripped_norm == old_norm:
@@ -3099,9 +3084,6 @@ print_summary() {
     echo "Stopped by user:       $stopped_by_user"
     if (( USE_DB == 1 )); then
         echo "DB used:               yes"
-        echo "DB lookups total:      $DB_LOOKUPS_TOTAL"
-        echo "DB lookup hits:        $DB_LOOKUP_HITS"
-        echo "DB lookup misses:      $DB_LOOKUP_MISSES"
         echo "DB hashes added:       $DB_HASHES_ADDED"
         echo "DB rows new:           $DB_ROWS_NEW"
         echo "DB rows updated:       $DB_ROWS_UPDATED"
