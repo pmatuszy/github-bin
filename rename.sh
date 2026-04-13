@@ -132,7 +132,7 @@
 # 2026.03.27 - v. 1.4 - apply special media renames after basic normalization
 # 2026.03.27 - v. 1.3 - fixed top-level path handling: keep ./ prefix in transform_name()
 # 2026.03.27 - v. 1.2 - added many changes about media files
-SCRIPT_VERSION="2026.04.13 - v. 16.2"
+SCRIPT_VERSION="2026.04.13 - v. 16.3"
 LARGE_HASHFILE_LINE_THRESHOLD=20
 MAX_LINE_LENGTH=200
 START_DIR="$(pwd -P)"
@@ -756,22 +756,25 @@ db_backfill_missing_hashes_for_existing_file() {
 
     db_flush_pending >/dev/null 2>&1 || true
 
-    row="$(sqlite3 -separator $'\t' "$DB_FILE" "SELECT COALESCE(file_md5,''), COALESCE(file_sha512,''), COALESCE(file_hash_kind,''), COALESCE(file_hash,'') FROM checked_paths WHERE path='$(sql_escape "$abs")' LIMIT 1;" 2>/dev/null | head -n 1)"
+    row="$(sqlite3 -separator $'	' "$DB_FILE" "SELECT COALESCE(file_md5,''), COALESCE(file_sha512,''), COALESCE(file_hash_kind,''), COALESCE(file_hash,'') FROM checked_paths WHERE path='$(sql_escape "$abs")' LIMIT 1;" 2>/dev/null | head -n 1)"
     [[ -n "$row" ]] || return 0
 
-    md5_hash="$(printf '%s' "$row" | awk -F '\t' '{print $1}')"
-    sha512_hash="$(printf '%s' "$row" | awk -F '\t' '{print $2}')"
+    md5_hash="$(printf '%s' "$row" | awk -F '	' '{print $1}')"
+    sha512_hash="$(printf '%s' "$row" | awk -F '	' '{print $2}')"
 
-    if [[ -z "$md5_hash" ]]; then
-        md5_hash="$(md5_of_file "$path")"
+    # Performance rule: when a file is skipped because the DB entry is already
+    # valid, do not recompute hashes if at least one cached hash is already
+    # present. Only backfill when both hashes are missing.
+    if [[ -n "$md5_hash" || -n "$sha512_hash" ]]; then
+        return 0
     fi
 
-    if [[ -z "$sha512_hash" ]]; then
-        sha512_hash="$(checksum_of_file sha512 "$path")"
-    fi
+    md5_hash="$(md5_of_file "$path")"
+    sha512_hash="$(checksum_of_file sha512 "$path")"
 
     sql="UPDATE checked_paths SET file_md5='$(sql_escape "$md5_hash")', file_sha512='$(sql_escape "$sha512_hash")', last_checked=CURRENT_TIMESTAMP WHERE path='$(sql_escape "$abs")';"
-    printf '%s\n' "$sql" >> "$DB_PENDING_SQL_FILE"
+    printf '%s
+' "$sql" >> "$DB_PENDING_SQL_FILE"
     (( ++DB_PENDING_COUNT ))
     (( ++DB_ROWS_UPDATED ))
     if (( DB_PENDING_COUNT >= DB_FLUSH_EVERY )); then
