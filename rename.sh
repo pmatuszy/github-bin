@@ -131,7 +131,7 @@
 # 2026.03.27 - v. 1.4 - apply special media renames after basic normalization
 # 2026.03.27 - v. 1.3 - fixed top-level path handling: keep ./ prefix in transform_name()
 # 2026.03.27 - v. 1.2 - added many changes about media files
-SCRIPT_VERSION="2026.04.13 - v. 15.7"
+SCRIPT_VERSION="2026.04.13 - v. 15.9"
 LARGE_HASHFILE_LINE_THRESHOLD=20
 MAX_LINE_LENGTH=200
 START_DIR="$(pwd -P)"
@@ -220,14 +220,29 @@ print_prompt_wait_description() {
 }
 
 print_startup_banner() {
-    cat <<EOF
-============================================================
- rename.sh
- Version: $SCRIPT_VERSION
- Start dir: $START_DIR
- Prompt wait: $(print_prompt_wait_description)
-============================================================
-EOF
+    local width=60
+    local line1="rename.sh"
+    local line2="safe media + checksum rename helper"
+    local line3="Version     : $SCRIPT_VERSION"
+    local line4="Start dir   : $START_DIR"
+    local line5="Prompt wait : $(print_prompt_wait_description)"
+
+    printf '┌%*s┐
+' "$width" '' | tr ' ' '─'
+    printf '│ %-*.*s │
+' $((width - 2)) $((width - 2)) "$line1"
+    printf '│ %-*.*s │
+' $((width - 2)) $((width - 2)) "$line2"
+    printf '├%*s┤
+' "$width" '' | tr ' ' '─'
+    printf '│ %-*.*s │
+' $((width - 2)) $((width - 2)) "$line3"
+    printf '│ %-*.*s │
+' $((width - 2)) $((width - 2)) "$line4"
+    printf '│ %-*.*s │
+' $((width - 2)) $((width - 2)) "$line5"
+    printf '└%*s┘
+' "$width" '' | tr ' ' '─'
 }
 
 startup_progress() {
@@ -927,12 +942,6 @@ fi
 startup_progress "Startup preparation finished"
 startup_progress "Interactive prompt wait: $(print_prompt_wait_description)"
 
-echo
-echo "============================================================"
-echo "  rename.sh  •  safe media + checksum rename helper"
-echo "  version: $SCRIPT_VERSION"
-echo "  prompt wait: $(print_prompt_wait_description)"
-echo "============================================================"
 
 if (( USE_DB == 1 )); then
     echo
@@ -1590,25 +1599,26 @@ replace_single_m3u_entry() {
     local m3u_file="$1"
     local old_entry="$2"
     local new_entry="$3"
-    local tmp rc
+    local tmp rc m3u_dir
 
-    old_entry="${old_entry%$'
-'}"
-    new_entry="${new_entry%$'
-'}"
-    tmp="$(mktemp --tmpdir="$(dirname -- "$m3u_file")" .m3u-update.XXXXXX)"
+    old_entry="${old_entry%$'\r'}"
+    old_entry="${old_entry%$'\n'}"
+    new_entry="${new_entry%$'\r'}"
+    new_entry="${new_entry%$'\n'}"
+
+    m3u_dir="$(dirname -- "$m3u_file")"
+    tmp="$(mktemp --tmpdir="$m3u_dir" .m3u-update.XXXXXX)"
     python3 - "$m3u_file" "$tmp" "$old_entry" "$new_entry" <<'PY'
 import sys
+
 src, dst, old_entry, new_entry = sys.argv[1:]
-old_entry = old_entry.rstrip('
-')
-new_entry = new_entry.rstrip('
-')
+
+old_entry = old_entry.rstrip('\r\n')
+new_entry = new_entry.rstrip('\r\n')
 
 def norm(value: str) -> str:
-    value = value.rstrip('
-')
-    value = value.replace('\', '/')
+    value = value.rstrip('\r\n')
+    value = value.replace('\\', '/')
     while value.startswith('./'):
         value = value[2:]
     return value
@@ -1619,14 +1629,18 @@ with open(src, 'r', encoding='utf-8', errors='surrogateescape', newline='') as f
 old_norm = norm(old_entry)
 out = []
 changed = False
+
 for line in lines:
-    nl = '
-' if line.endswith('
-') else ('
-' if line.endswith('
-') else '')
-    stripped = line.rstrip('
-')
+    if line.endswith('\r\n'):
+        nl = '\r\n'
+    elif line.endswith('\n'):
+        nl = '\n'
+    elif line.endswith('\r'):
+        nl = '\r'
+    else:
+        nl = ''
+
+    stripped = line.rstrip('\r\n')
     stripped_norm = norm(stripped)
 
     if stripped == old_entry or stripped_norm == old_norm:
@@ -1649,7 +1663,6 @@ PY
     rm -f -- "$tmp"
     return 1
 }
-
 
 check_m3u_targets() {
     local m3u_file="$1"
@@ -3774,3 +3787,4 @@ if [[ "$stopped_by_user" != "yes" ]]; then
 fi
 SCRIPT_FINISH_TIME="$(date '+%Y-%m-%d %H:%M:%S')"
 print_summary
+
