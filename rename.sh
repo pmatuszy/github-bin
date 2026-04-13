@@ -132,7 +132,7 @@
 # 2026.03.27 - v. 1.4 - apply special media renames after basic normalization
 # 2026.03.27 - v. 1.3 - fixed top-level path handling: keep ./ prefix in transform_name()
 # 2026.03.27 - v. 1.2 - added many changes about media files
-SCRIPT_VERSION="2026.04.13 - v. 16.0"
+SCRIPT_VERSION="2026.04.13 - v. 16.1"
 LARGE_HASHFILE_LINE_THRESHOLD=20
 MAX_LINE_LENGTH=200
 START_DIR="$(pwd -P)"
@@ -3325,6 +3325,7 @@ for f in "${ordered_paths[@]}"; do
     fi
 
     if db_has_valid_entry "$f"; then
+        db_backfill_missing_hashes_for_existing_file "$f"
         echo -e "${CYAN}DB SKIP:${RESET} '$f'"
         ((++files_skipped))
         processed["$f"]=1
@@ -3745,6 +3746,7 @@ for f in "${ordered_paths[@]}"; do
 
     if is_internal_protected_path "$f"; then
         vlog "Protected internal file, no rename needed for '$f'"
+        db_backfill_missing_hashes_for_existing_file "$f"
         ((++files_skipped))
         db_mark_checked "$f" "plain" "checked"
         continue
@@ -3754,6 +3756,7 @@ for f in "${ordered_paths[@]}"; do
 
     if is_protected_par2_name "$f"; then
         vlog "Protected .par2 basename starts with underscore, no rename needed for '$f'"
+        db_backfill_missing_hashes_for_existing_file "$f"
         ((++files_skipped))
         db_mark_checked "$f" "plain" "checked"
         continue
@@ -3761,6 +3764,7 @@ for f in "${ordered_paths[@]}"; do
 
     [[ "$f" == "$new" ]] && {
         vlog "No rename needed for '$f'"
+        db_backfill_missing_hashes_for_existing_file "$f"
         ((++files_skipped))
         db_mark_checked "$f" "plain" "checked"
         continue
