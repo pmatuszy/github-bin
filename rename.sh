@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.04.13 - v. 15.3 - add total DB lookup statistics and count every DB/cache lookup in the summary
 # 2026.04.13 - v. 15.2 - fix protected internal files, make M3U single-entry replacement more robust, and count DB row operations in summary
 # 2026.04.11 - v. 15.1 - skip immediately when an exception already exists and fix the E prompt text
 # 2026.04.11 - v. 15.0 - fix .m3u CRLF updates, handle backslash paths in subtree matching, and avoid UnicodeEncodeError when printing odd playlist entries
@@ -126,7 +127,7 @@
 # 2026.03.27 - v. 1.4 - apply special media renames after basic normalization
 # 2026.03.27 - v. 1.3 - fixed top-level path handling: keep ./ prefix in transform_name()
 # 2026.03.27 - v. 1.2 - added many changes about media files
-SCRIPT_VERSION="2026.04.13 - v. 15.2"
+SCRIPT_VERSION="2026.04.13 - v. 15.3"
 LARGE_HASHFILE_LINE_THRESHOLD=20
 MAX_LINE_LENGTH=200
 START_DIR="$(pwd -P)"
@@ -142,6 +143,9 @@ DB_ROWS_UPDATED=0
 DB_ROWS_REMOVED=0
 DB_HASH_LOOKUP_HITS=0
 DB_HASH_LOOKUP_MISSES=0
+DB_LOOKUPS_TOTAL=0
+DB_LOOKUP_HITS=0
+DB_LOOKUP_MISSES=0
 DB_HASH_RECORD_STATUS=""
 DB_RECOVERY_RESULT=""
 
@@ -501,9 +505,25 @@ SQL
     done < <(sqlite3 -separator '|' "$DB_FILE" 'SELECT path, size, mtime, COALESCE(status, ""), COALESCE(signature, "") FROM checked_paths;')
 }
 
+db_note_lookup() {
+    local result="$1"
+
+    (( USE_DB == 1 )) || return 0
+
+    ((++DB_LOOKUPS_TOTAL))
+    case "$result" in
+        hit)
+            ((++DB_LOOKUP_HITS))
+            ;;
+        miss)
+            ((++DB_LOOKUP_MISSES))
+            ;;
+    esac
+}
+
 db_has_valid_entry() {
     local path="$1"
-    local abs meta cached status size mtime sig sig_status
+    local abs meta cached size mtime sig sig_status
 
     (( USE_DB == 1 )) || return 1
     (( FORCE_RECHECK == 0 )) || return 1
@@ -511,10 +531,10 @@ db_has_valid_entry() {
 
     abs="$(db_abs_path "$path")"
     cached="${DB_CACHE_META[$abs]-}"
-    status="${DB_CACHE_STATUS[$abs]-}"
 
     if [[ -n "$cached" ]]; then
         if (( FAST_DB == 1 )); then
+            db_note_lookup hit
             return 0
         fi
 
@@ -524,15 +544,18 @@ db_has_valid_entry() {
         mtime="${meta##*|}"
 
         if [[ "$cached" == "$size|$mtime" ]]; then
+            db_note_lookup hit
             return 0
         fi
     fi
+    db_note_lookup miss
 
     if is_checksum_file "$path"; then
         sig="$(db_compute_signature "$path" 2>/dev/null || true)"
         sig_status="${DB_CACHE_SIG_STATUS[$sig]-}"
         if [[ -n "$sig" && -n "${DB_CACHE_SIG[$sig]-}" ]]; then
             if (( FAST_DB == 1 )); then
+                db_note_lookup hit
                 return 0
             fi
             meta="$(db_get_size_mtime "$path" 2>/dev/null || true)"
@@ -540,12 +563,15 @@ db_has_valid_entry() {
             size="${meta%%|*}"
             mtime="${meta##*|}"
             if [[ -n "$cached" && "$cached" == "$size|$mtime" ]]; then
+                db_note_lookup hit
                 return 0
             fi
             if [[ "$sig_status" == "missing_refs" || "$sig_status" == "checked" ]]; then
+                db_note_lookup hit
                 return 0
             fi
         fi
+        db_note_lookup miss
     fi
 
     return 1
@@ -565,9 +591,11 @@ db_record_file_hash() {
 
     existing_path="$(sqlite3 "$DB_FILE" "SELECT path FROM checked_paths WHERE path='$(sql_escape "$abs")' LIMIT 1;" 2>/dev/null || true)"
     if [[ -n "$existing_path" ]]; then
+        db_note_lookup hit
         DB_HASH_RECORD_STATUS="updated"
         ((++DB_ROWS_UPDATED))
     else
+        db_note_lookup miss
         DB_HASH_RECORD_STATUS="new"
         ((++DB_ROWS_NEW))
     fi
@@ -597,12 +625,14 @@ db_find_path_by_file_hash_in_subtree() {
 
     row_path="$(sqlite3 -separator $'\t' "$DB_FILE" "SELECT path FROM checked_paths WHERE file_hash_kind='$(sql_escape "$hash_kind")' AND file_hash='$(sql_escape "$hash_value")' AND path LIKE '$(sql_escape "${search_abs%/}")/%' ORDER BY LENGTH(path) LIMIT 1;" 2>/dev/null | head -n 1)"
     if [[ -n "$row_path" && -e "$row_path" ]]; then
+        db_note_lookup hit
         ((++DB_HASH_LOOKUP_HITS))
         print_db_hash_lookup_verbose "hit" "$search_root" "$hash_kind" "$hash_value" "$row_path"
         printf '%s' "$row_path"
         return 0
     fi
 
+    db_note_lookup miss
     ((++DB_HASH_LOOKUP_MISSES))
     print_db_hash_lookup_verbose "miss" "$search_root" "$hash_kind" "$hash_value"
     return 1
@@ -3069,6 +3099,9 @@ print_summary() {
     echo "Stopped by user:       $stopped_by_user"
     if (( USE_DB == 1 )); then
         echo "DB used:               yes"
+        echo "DB lookups total:      $DB_LOOKUPS_TOTAL"
+        echo "DB lookup hits:        $DB_LOOKUP_HITS"
+        echo "DB lookup misses:      $DB_LOOKUP_MISSES"
         echo "DB hashes added:       $DB_HASHES_ADDED"
         echo "DB rows new:           $DB_ROWS_NEW"
         echo "DB rows updated:       $DB_ROWS_UPDATED"
