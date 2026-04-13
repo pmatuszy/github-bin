@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.04.13 - v. 15.7 - add --wait-seconds prompt timeout control and print current interactive wait behavior
 # 2026.04.13 - v. 15.6 - show SQLite warmup percentages together with row counts during startup
 # 2026.04.13 - v. 15.5 - restore a nice startup banner before startup progress lines and keep downloadable filename aligned with script version
 # 2026.04.13 - v. 15.4 - show explicit startup progress for exclude loading and SQLite cache warmup, and keep downloadable filename aligned with script version
@@ -130,7 +131,7 @@
 # 2026.03.27 - v. 1.4 - apply special media renames after basic normalization
 # 2026.03.27 - v. 1.3 - fixed top-level path handling: keep ./ prefix in transform_name()
 # 2026.03.27 - v. 1.2 - added many changes about media files
-SCRIPT_VERSION="2026.04.13 - v. 15.6"
+SCRIPT_VERSION="2026.04.13 - v. 15.7"
 LARGE_HASHFILE_LINE_THRESHOLD=20
 MAX_LINE_LENGTH=200
 START_DIR="$(pwd -P)"
@@ -157,6 +158,7 @@ VERBOSE_MAIN_EVERY=200
 CLI_COLORS=""
 CLI_MODE=""
 CLI_SCOPE=""
+PROMPT_WAIT_SECONDS=0
 MAP_R_ACUTE="c"
 MAP_REGISTERED="z"
 MAP_AT_SIGN="a"
@@ -192,7 +194,7 @@ trap 'on_err "$?" "$LINENO" "$BASH_COMMAND"' ERR
 
 usage() {
     cat <<'EOF'
-Usage: rename.sh [-v|--verbose] [--use-db] [--fast] [--force-recheck] [--colors yes|no] [--mode dry-run|real] [--scope current|subdirs] [--version] [-h|--help]
+Usage: rename.sh [-v|--verbose] [--use-db] [--fast] [--force-recheck] [--colors yes|no] [--mode dry-run|real] [--scope current|subdirs] [--wait-seconds N] [--version] [-h|--help]
 
 Options:
   -v, --verbose          Show extra diagnostic output
@@ -204,8 +206,17 @@ Options:
   --mode dry-run|real    Skip the startup mode question
   --scope current|subdirs
                          Skip the startup scope question
+  --wait-seconds N       Wait N seconds for each interactive answer; 0 means wait forever
   -h, --help             Show this help
 EOF
+}
+
+print_prompt_wait_description() {
+    if (( PROMPT_WAIT_SECONDS == 0 )); then
+        printf '%s' 'infinite (wait until user enters a response)'
+    else
+        printf '%s' "${PROMPT_WAIT_SECONDS} second(s)"
+    fi
 }
 
 print_startup_banner() {
@@ -214,6 +225,7 @@ print_startup_banner() {
  rename.sh
  Version: $SCRIPT_VERSION
  Start dir: $START_DIR
+ Prompt wait: $(print_prompt_wait_description)
 ============================================================
 EOF
 }
@@ -237,7 +249,11 @@ read_single_key() {
     local __timeout="$2"
     local __char=""
 
-    IFS= read -r -t "$__timeout" -n 1 __char || true
+    if [[ "$__timeout" =~ ^[0-9]+$ ]] && (( __timeout == 0 )); then
+        IFS= read -r -n 1 __char || true
+    else
+        IFS= read -r -t "$__timeout" -n 1 __char || true
+    fi
     printf -v "$__var_name" '%s' "$__char"
 
     # Discard any extra buffered keypresses from the same burst so they do not
@@ -836,6 +852,7 @@ while (( $# > 0 )); do
             echo "version: $SCRIPT_VERSION"
             echo "db file (if used): $DB_FILE"
             echo "exclude file: $EXCLUDE_FILTERS_FILE"
+            echo "prompt wait: $(print_prompt_wait_description)"
             echo
             usage
             exit 0
@@ -880,6 +897,12 @@ while (( $# > 0 )); do
             esac
             shift 2
             ;;
+        --wait-seconds)
+            [[ $# -ge 2 ]] || { echo "Missing value for --wait-seconds" >&2; usage >&2; exit 1; }
+            [[ "$2" =~ ^[0-9]+$ ]] || { echo "Invalid value for --wait-seconds: $2 (use 0 or a positive integer)" >&2; usage >&2; exit 1; }
+            PROMPT_WAIT_SECONDS="$2"
+            shift 2
+            ;;
         -h|--help)
             usage
             exit 0
@@ -902,11 +925,13 @@ if (( USE_DB == 1 )); then
     db_init
 fi
 startup_progress "Startup preparation finished"
+startup_progress "Interactive prompt wait: $(print_prompt_wait_description)"
 
 echo
 echo "============================================================"
 echo "  rename.sh  •  safe media + checksum rename helper"
 echo "  version: $SCRIPT_VERSION"
+echo "  prompt wait: $(print_prompt_wait_description)"
 echo "============================================================"
 
 if (( USE_DB == 1 )); then
@@ -945,7 +970,7 @@ else
     echo -n "Choice [Y/n/q]: "
 
     flush_stdin
-    read_single_key input 60
+    read_single_key input "$PROMPT_WAIT_SECONDS"
     echo
 
     if [[ "$input" =~ [Qq] ]]; then
@@ -1349,7 +1374,7 @@ else
     echo -n "Choice [D/r/q]: "
 
     flush_stdin
-    read_single_key input 60
+    read_single_key input "$PROMPT_WAIT_SECONDS"
     echo
 
     if [[ "$input" =~ [Qq] ]]; then
@@ -1376,7 +1401,7 @@ else
     echo -n "Choice [C/s/q]: "
 
     flush_stdin
-    read_single_key input 60
+    read_single_key input "$PROMPT_WAIT_SECONDS"
     echo
 
     if [[ "$input" =~ [Qq] ]]; then
@@ -1848,7 +1873,7 @@ choose_r_acute_mapping_for_file() {
     echo "  [4] s and space" >&2
     echo -n "Choice [1/2/3/4]: " >&2
     flush_stdin
-    read_single_key answer 300
+    read_single_key answer "$PROMPT_WAIT_SECONDS"
     echo >&2
     case "$answer" in
         2) printf '%s' "s" ;;
@@ -1869,7 +1894,7 @@ choose_registered_mapping_for_file() {
     echo "  [2] l" >&2
     echo -n "Choice [1/2]: " >&2
     flush_stdin
-    read_single_key answer 300
+    read_single_key answer "$PROMPT_WAIT_SECONDS"
     echo >&2
     case "$answer" in
         2) printf '%s' "l" ;;
@@ -1888,7 +1913,7 @@ choose_at_sign_mapping_for_file() {
     echo "  [2] e" >&2
     echo -n "Choice [1/2]: " >&2
     flush_stdin
-    read_single_key answer 300
+    read_single_key answer "$PROMPT_WAIT_SECONDS"
     echo >&2
     case "$answer" in
         2) printf '%s' "e" ;;
@@ -1907,7 +1932,7 @@ choose_r_grave_mapping_for_file() {
     echo "  [2] s" >&2
     echo -n "Choice [1/2]: " >&2
     flush_stdin
-    read_single_key answer 300
+    read_single_key answer "$PROMPT_WAIT_SECONDS"
     echo >&2
     case "$answer" in
         2) printf '%s' "s" ;;
@@ -2493,7 +2518,7 @@ can_overwrite_collision_with_identical_md5() {
     echo -n "Choice [o/r/S/q]: "
 
     flush_stdin
-    read_single_key answer 300
+    read_single_key answer "$PROMPT_WAIT_SECONDS"
     echo
 
     case "$answer" in
@@ -2968,7 +2993,7 @@ handle_lnk_file() {
     echo -n "Remove this .lnk file? [y/N/q]: "
 
     flush_stdin
-    read_single_key answer 300
+    read_single_key answer "$PROMPT_WAIT_SECONDS"
     echo
 
     case "$answer" in
@@ -3424,7 +3449,7 @@ for f in "${ordered_paths[@]}"; do
         else
             print_checksum_prompt_menu "${label,,}" "$sum_file"
             flush_stdin
-            read_single_key input 300
+            read_single_key input "$PROMPT_WAIT_SECONDS"
             echo
 
             case "$input" in
@@ -3441,7 +3466,7 @@ for f in "${ordered_paths[@]}"; do
                     echo "⚠️  This will rename ALL remaining files/directories."
                     echo -n "Are you sure? [y/N]: "
                     flush_stdin
-                    read_single_key confirm 300
+                    read_single_key confirm "$PROMPT_WAIT_SECONDS"
                     echo
                     if [[ "$confirm" =~ [Yy] ]]; then
                         rename_all=yes
@@ -3700,7 +3725,7 @@ for f in "${ordered_paths[@]}"; do
     echo -e "${GREEN}NEW:${RESET} $new"
     print_rename_prompt_menu "entry"
     flush_stdin
-    read_single_key input 300
+    read_single_key input "$PROMPT_WAIT_SECONDS"
     echo
 
     case "$input" in
@@ -3721,7 +3746,7 @@ for f in "${ordered_paths[@]}"; do
             echo "⚠️  This will rename ALL remaining files/directories."
             echo -n "Are you sure? [y/N]: "
             flush_stdin
-            read_single_key confirm 300
+            read_single_key confirm "$PROMPT_WAIT_SECONDS"
             echo
 
             if [[ "$confirm" =~ [Yy] ]]; then
@@ -3749,4 +3774,3 @@ if [[ "$stopped_by_user" != "yes" ]]; then
 fi
 SCRIPT_FINISH_TIME="$(date '+%Y-%m-%d %H:%M:%S')"
 print_summary
-
