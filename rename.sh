@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.04.13 - v. 15.2 - fix protected internal files, make M3U single-entry replacement more robust, and count DB row operations in summary
 # 2026.04.11 - v. 15.1 - skip immediately when an exception already exists and fix the E prompt text
 # 2026.04.11 - v. 15.0 - fix .m3u CRLF updates, handle backslash paths in subtree matching, and avoid UnicodeEncodeError when printing odd playlist entries
 # 2026.04.11 - v. 14.9 - skip final .m3u checks/fixes when interrupted with Ctrl-C and exit immediately after summary
@@ -125,7 +126,7 @@
 # 2026.03.27 - v. 1.4 - apply special media renames after basic normalization
 # 2026.03.27 - v. 1.3 - fixed top-level path handling: keep ./ prefix in transform_name()
 # 2026.03.27 - v. 1.2 - added many changes about media files
-SCRIPT_VERSION="2026.04.11 - v. 15.1"
+SCRIPT_VERSION="2026.04.13 - v. 15.2"
 LARGE_HASHFILE_LINE_THRESHOLD=20
 MAX_LINE_LENGTH=200
 START_DIR="$(pwd -P)"
@@ -632,7 +633,7 @@ db_mark_checked() {
     local path="$1"
     local kind="$2"
     local status="$3"
-    local abs meta size mtime sig sql sig_sql
+    local abs meta size mtime sig sql sig_sql existing_row=0
 
     (( USE_DB == 1 )) || return 0
     [[ -e "$path" ]] || return 0
@@ -644,6 +645,10 @@ db_mark_checked() {
     mtime="${meta##*|}"
     sig=""
 
+    if [[ -n "${DB_CACHE_META[$abs]-}" || -n "${DB_CACHE_STATUS[$abs]-}" ]]; then
+        existing_row=1
+    fi
+
     if is_checksum_file "$path"; then
         sig="$(db_compute_signature "$path" 2>/dev/null || true)"
         if [[ -n "$sig" ]]; then
@@ -654,6 +659,12 @@ db_mark_checked() {
 
     DB_CACHE_META["$abs"]="$size|$mtime"
     DB_CACHE_STATUS["$abs"]="$status"
+
+    if (( existing_row == 1 )); then
+        ((++DB_ROWS_UPDATED))
+    else
+        ((++DB_ROWS_NEW))
+    fi
 
     if [[ -n "$sig" ]]; then
         sig_sql="'$(sql_escape "$sig")'"
@@ -713,10 +724,16 @@ db_rewrite_subtree() {
 
         DB_CACHE_META["$new_db_path"]="${DB_CACHE_META[$old_db_path]}"
         unset 'DB_CACHE_META[$old_db_path]'
+        if [[ -n "${DB_CACHE_STATUS[$old_db_path]-}" ]]; then
+            DB_CACHE_STATUS["$new_db_path"]="${DB_CACHE_STATUS[$old_db_path]}"
+            unset 'DB_CACHE_STATUS[$old_db_path]'
+        fi
+
+        ((++DB_ROWS_NEW))
+        ((++DB_ROWS_REMOVED))
 
         sql="INSERT INTO checked_paths(path, kind, size, mtime, status, last_checked, signature) SELECT '$(sql_escape "$new_db_path")', kind, size, mtime, status, last_checked, signature FROM checked_paths WHERE path='$(sql_escape "$old_db_path")' ON CONFLICT(path) DO UPDATE SET kind=excluded.kind, size=excluded.size, mtime=excluded.mtime, status=excluded.status, signature=excluded.signature, last_checked=excluded.last_checked; DELETE FROM checked_paths WHERE path='$(sql_escape "$old_db_path")';"
-        printf '%s
-' "$sql" >> "$DB_PENDING_SQL_FILE"
+        printf '%s\n' "$sql" >> "$DB_PENDING_SQL_FILE"
         (( ++DB_PENDING_COUNT ))
         if (( DB_PENDING_COUNT >= DB_FLUSH_EVERY )); then
             db_flush_pending
@@ -747,9 +764,6 @@ db_rewrite_single_path() {
         DB_CACHE_META["$new_abs"]="${DB_CACHE_META[$old_abs]}"
         unset 'DB_CACHE_META[$old_abs]'
         ((++DB_ROWS_UPDATED))
-        ((++DB_ROWS_REMOVED))
-    else
-        ((++DB_ROWS_NEW))
     fi
     if [[ -n "${DB_CACHE_STATUS[$old_abs]-}" ]]; then
         DB_CACHE_STATUS["$new_abs"]="${DB_CACHE_STATUS[$old_abs]}"
@@ -1367,6 +1381,40 @@ is_protected_par2_name() {
     [[ "$base" == _* && "$lower" == *.par2 ]]
 }
 
+path_to_exclude_entry() {
+    exception_entry_for_path "$1"
+}
+
+is_internal_protected_path() {
+    local p="$1"
+    local abs start_abs
+
+    [[ -n "$p" ]] || return 1
+
+    abs="$(db_abs_path "$p" 2>/dev/null || true)"
+    start_abs="$(db_abs_path "$START_DIR" 2>/dev/null || true)"
+
+    [[ -n "$abs" && -n "$start_abs" ]] || return 1
+
+    if [[ "$abs" == "$start_abs/_exclude-rename.sh.txt" ]]; then
+        return 0
+    fi
+    if [[ "$abs" == "$start_abs/_rename.sh-optional-db.sqlite3" ]]; then
+        return 0
+    fi
+    if [[ "$abs" == "$start_abs/rename.sh-optional-db.sqlite3" ]]; then
+        return 0
+    fi
+    if [[ "$abs" == "$start_abs/_rename.sh-optional-db.sqlite3-wal" || "$abs" == "$start_abs/_rename.sh-optional-db.sqlite3-shm" ]]; then
+        return 0
+    fi
+    if [[ "$abs" == "$start_abs/rename.sh-optional-db.sqlite3-wal" || "$abs" == "$start_abs/rename.sh-optional-db.sqlite3-shm" ]]; then
+        return 0
+    fi
+
+    return 1
+}
+
 update_m3u_references_in_file() {
     local m3u_file="$1"
     local old_path="$2"
@@ -1460,32 +1508,47 @@ replace_single_m3u_entry() {
     local m3u_file="$1"
     local old_entry="$2"
     local new_entry="$3"
-    local tmp
+    local tmp rc
 
     tmp="$(mktemp)"
     python3 - "$m3u_file" "$tmp" "$old_entry" "$new_entry" <<'PY'
 import sys
+
 src, dst, old_entry, new_entry = sys.argv[1:]
+
+def norm(value: str) -> str:
+    value = value.replace('\\', '/')
+    while value.startswith('./'):
+        value = value[2:]
+    return value
+
 with open(src, 'r', encoding='utf-8', errors='surrogateescape', newline='') as f:
     lines = f.readlines()
+
+old_norm = norm(old_entry)
 out = []
 changed = False
 for line in lines:
-    nl = '\r\n' if line.endswith('\r\n') else '\n'
+    nl = '\r\n' if line.endswith('\r\n') else ('\n' if line.endswith('\n') else '')
     stripped = line.rstrip('\r\n')
-    if stripped == old_entry:
+    stripped_norm = norm(stripped)
+
+    if stripped == old_entry or stripped_norm == old_norm:
         out.append(new_entry + nl)
         changed = True
     else:
         out.append(line)
+
 with open(dst, 'w', encoding='utf-8', errors='surrogateescape', newline='') as f:
     f.writelines(out)
+
 sys.exit(0 if changed else 3)
 PY
     rc=$?
     if [[ $rc -eq 0 ]]; then
-        mv -- "$tmp" "$m3u_file"
-        return 0
+        if mv -- "$tmp" "$m3u_file"; then
+            return 0
+        fi
     fi
     rm -f -- "$tmp"
     return 1
@@ -3516,6 +3579,13 @@ for f in "${ordered_paths[@]}"; do
             ((++files_skipped))
             continue
         fi
+    fi
+
+    if is_internal_protected_path "$f"; then
+        vlog "Protected internal file, no rename needed for '$f'"
+        ((++files_skipped))
+        db_mark_checked "$f" "plain" "checked"
+        continue
     fi
 
     new="$(transform_name "$f")"
