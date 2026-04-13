@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.04.13 - v. 16.0 - skip slash-only M3U rewrites, persist per-kind hashes in DB, and remove stale DB rows missing on disk
 # 2026.04.13 - v. 15.7 - add --wait-seconds prompt timeout control and print current interactive wait behavior
 # 2026.04.13 - v. 15.6 - show SQLite warmup percentages together with row counts during startup
 # 2026.04.13 - v. 15.5 - restore a nice startup banner before startup progress lines and keep downloadable filename aligned with script version
@@ -131,7 +132,7 @@
 # 2026.03.27 - v. 1.4 - apply special media renames after basic normalization
 # 2026.03.27 - v. 1.3 - fixed top-level path handling: keep ./ prefix in transform_name()
 # 2026.03.27 - v. 1.2 - added many changes about media files
-SCRIPT_VERSION="2026.04.13 - v. 15.9"
+SCRIPT_VERSION="2026.04.13 - v. 16.0"
 LARGE_HASHFILE_LINE_THRESHOLD=20
 MAX_LINE_LENGTH=200
 START_DIR="$(pwd -P)"
@@ -149,6 +150,7 @@ DB_HASH_LOOKUP_HITS=0
 DB_HASH_LOOKUP_MISSES=0
 DB_HASH_RECORD_STATUS=""
 DB_RECOVERY_RESULT=""
+DB_STALE_ROWS_REMOVED=0
 
 set -Eeuo pipefail
 shopt -s nullglob
@@ -539,8 +541,12 @@ SQL
     sqlite3 "$DB_FILE" 'ALTER TABLE checked_paths ADD COLUMN signature TEXT;' >/dev/null 2>&1 || true
     sqlite3 "$DB_FILE" 'ALTER TABLE checked_paths ADD COLUMN file_hash_kind TEXT;' >/dev/null 2>&1 || true
     sqlite3 "$DB_FILE" 'ALTER TABLE checked_paths ADD COLUMN file_hash TEXT;' >/dev/null 2>&1 || true
+    sqlite3 "$DB_FILE" 'ALTER TABLE checked_paths ADD COLUMN file_md5 TEXT;' >/dev/null 2>&1 || true
+    sqlite3 "$DB_FILE" 'ALTER TABLE checked_paths ADD COLUMN file_sha512 TEXT;' >/dev/null 2>&1 || true
     sqlite3 "$DB_FILE" 'CREATE INDEX IF NOT EXISTS idx_checked_paths_signature ON checked_paths(signature);' >/dev/null 2>&1 || true
     sqlite3 "$DB_FILE" 'CREATE INDEX IF NOT EXISTS idx_checked_paths_file_hash ON checked_paths(file_hash_kind, file_hash);' >/dev/null 2>&1 || true
+    sqlite3 "$DB_FILE" 'CREATE INDEX IF NOT EXISTS idx_checked_paths_file_md5 ON checked_paths(file_md5);' >/dev/null 2>&1 || true
+    sqlite3 "$DB_FILE" 'CREATE INDEX IF NOT EXISTS idx_checked_paths_file_sha512 ON checked_paths(file_sha512);' >/dev/null 2>&1 || true
     DB_PENDING_SQL_FILE="$(mktemp)"
 
     local total_cached_rows=0
@@ -637,7 +643,7 @@ db_record_file_hash() {
     local path="$1"
     local hash_kind="$2"
     local hash_value="$3"
-    local abs sql existing_path
+    local abs sql existing_path specific_sql
 
     (( USE_DB == 1 )) || return 0
     [[ -e "$path" && -n "$hash_kind" && -n "$hash_value" ]] || return 0
@@ -655,7 +661,13 @@ db_record_file_hash() {
     fi
     ((++DB_HASHES_ADDED))
 
-    sql="INSERT INTO checked_paths(path, kind, size, mtime, status, last_checked, file_hash_kind, file_hash) VALUES ('$(sql_escape "$abs")', 'file_hash_only', 0, 0, 'hashed', CURRENT_TIMESTAMP, '$(sql_escape "$hash_kind")', '$(sql_escape "$hash_value")') ON CONFLICT(path) DO UPDATE SET file_hash_kind=excluded.file_hash_kind, file_hash=excluded.file_hash, last_checked=CURRENT_TIMESTAMP;"
+    case "$hash_kind" in
+        md5) specific_sql="file_md5='$(sql_escape "$hash_value")'" ;;
+        sha512) specific_sql="file_sha512='$(sql_escape "$hash_value")'" ;;
+        *) specific_sql="" ;;
+    esac
+
+    sql="INSERT INTO checked_paths(path, kind, size, mtime, status, last_checked, file_hash_kind, file_hash, file_md5, file_sha512) VALUES ('$(sql_escape "$abs")', 'file_hash_only', 0, 0, 'hashed', CURRENT_TIMESTAMP, '$(sql_escape "$hash_kind")', '$(sql_escape "$hash_value")', $( [[ "$hash_kind" == "md5" ]] && printf "'%s'" "$(sql_escape "$hash_value")" || printf "NULL" ), $( [[ "$hash_kind" == "sha512" ]] && printf "'%s'" "$(sql_escape "$hash_value")" || printf "NULL" )) ON CONFLICT(path) DO UPDATE SET file_hash_kind=excluded.file_hash_kind, file_hash=excluded.file_hash, last_checked=CURRENT_TIMESTAMP${specific_sql:+, $specific_sql};"
     printf '%s\n' "$sql" >> "$DB_PENDING_SQL_FILE"
     (( ++DB_PENDING_COUNT ))
     if (( DB_PENDING_COUNT >= DB_FLUSH_EVERY )); then
@@ -669,7 +681,7 @@ db_find_path_by_file_hash_in_subtree() {
     local search_root="$1"
     local hash_kind="$2"
     local hash_value="$3"
-    local search_abs row_path
+    local search_abs row_path query
 
     (( USE_DB == 1 )) || return 1
     db_flush_pending >/dev/null 2>&1 || true
@@ -677,12 +689,28 @@ db_find_path_by_file_hash_in_subtree() {
     search_abs="$(db_abs_path "$search_root" 2>/dev/null || true)"
     [[ -n "$search_abs" ]] || return 1
 
-    row_path="$(sqlite3 -separator $'\t' "$DB_FILE" "SELECT path FROM checked_paths WHERE file_hash_kind='$(sql_escape "$hash_kind")' AND file_hash='$(sql_escape "$hash_value")' AND path LIKE '$(sql_escape "${search_abs%/}")/%' ORDER BY LENGTH(path) LIMIT 1;" 2>/dev/null | head -n 1)"
-    if [[ -n "$row_path" && -e "$row_path" ]]; then
-        ((++DB_HASH_LOOKUP_HITS))
-        print_db_hash_lookup_verbose "hit" "$search_root" "$hash_kind" "$hash_value" "$row_path"
-        printf '%s' "$row_path"
-        return 0
+    case "$hash_kind" in
+        md5) query="SELECT path FROM checked_paths WHERE ((file_md5='$(sql_escape "$hash_value")') OR (file_hash_kind='md5' AND file_hash='$(sql_escape "$hash_value")')) AND path LIKE '$(sql_escape "${search_abs%/}")/%' ORDER BY LENGTH(path) LIMIT 1;" ;;
+        sha512) query="SELECT path FROM checked_paths WHERE ((file_sha512='$(sql_escape "$hash_value")') OR (file_hash_kind='sha512' AND file_hash='$(sql_escape "$hash_value")')) AND path LIKE '$(sql_escape "${search_abs%/}")/%' ORDER BY LENGTH(path) LIMIT 1;" ;;
+        *) return 1 ;;
+    esac
+
+    row_path="$(sqlite3 -separator $'\t' "$DB_FILE" "$query" 2>/dev/null | head -n 1)"
+    if [[ -n "$row_path" ]]; then
+        if [[ -e "$row_path" ]]; then
+            ((++DB_HASH_LOOKUP_HITS))
+            print_db_hash_lookup_verbose "hit" "$search_root" "$hash_kind" "$hash_value" "$row_path"
+            printf '%s' "$row_path"
+            return 0
+        fi
+
+        printf "DELETE FROM checked_paths WHERE path='%s';\n" "$(sql_escape "$row_path")" >> "$DB_PENDING_SQL_FILE"
+        (( ++DB_PENDING_COUNT ))
+        (( ++DB_ROWS_REMOVED ))
+        (( ++DB_STALE_ROWS_REMOVED ))
+        if (( DB_PENDING_COUNT >= DB_FLUSH_EVERY )); then
+            db_flush_pending
+        fi
     fi
 
     ((++DB_HASH_LOOKUP_MISSES))
@@ -704,7 +732,11 @@ db_get_cached_file_hash() {
     abs="$(db_abs_path "$path" 2>/dev/null || true)"
     [[ -n "$abs" ]] || return 1
 
-    row="$(sqlite3 -separator $'\t' "$DB_FILE" "SELECT file_hash FROM checked_paths WHERE path='$(sql_escape "$abs")' AND file_hash_kind='$(sql_escape "$hash_kind")' AND file_hash IS NOT NULL AND file_hash != '' LIMIT 1;" 2>/dev/null | head -n 1)"
+    case "$hash_kind" in
+        md5) row="$(sqlite3 -separator $'\t' "$DB_FILE" "SELECT COALESCE(NULLIF(file_md5,''), CASE WHEN file_hash_kind='md5' THEN file_hash ELSE '' END) FROM checked_paths WHERE path='$(sql_escape "$abs")' LIMIT 1;" 2>/dev/null | head -n 1)" ;;
+        sha512) row="$(sqlite3 -separator $'\t' "$DB_FILE" "SELECT COALESCE(NULLIF(file_sha512,''), CASE WHEN file_hash_kind='sha512' THEN file_hash ELSE '' END) FROM checked_paths WHERE path='$(sql_escape "$abs")' LIMIT 1;" 2>/dev/null | head -n 1)" ;;
+        *) row="" ;;
+    esac
     [[ -n "$row" ]] || return 1
 
     printf '%s' "$row"
@@ -1510,12 +1542,18 @@ update_m3u_references_in_file() {
     local m3u_file="$1"
     local old_path="$2"
     local new_path="$3"
-    local tmp old_base new_base
+    local tmp old_base new_base old_norm new_norm
 
     [[ -f "$m3u_file" ]] || return 0
-    tmp="$(mktemp)"
     old_base="$(basename -- "$old_path")"
     new_base="$(basename -- "$new_path")"
+    old_norm="$(normalize_m3u_entry_for_compare "$old_path")"
+    new_norm="$(normalize_m3u_entry_for_compare "$new_path")"
+    if [[ "$old_norm" == "$new_norm" ]]; then
+        return 1
+    fi
+
+    tmp="$(mktemp)"
 
     python3 - "$m3u_file" "$tmp" "$old_path" "$new_path" "$old_base" "$new_base" <<'PY'
 import sys
@@ -1594,6 +1632,20 @@ find_best_m3u_subtree_match() {
     printf '%s' "$best"
 }
 
+
+
+normalize_m3u_entry_for_compare() {
+    local s="$1"
+    s="${s%$'
+'}"
+    s="${s%$'
+'}"
+    s="${s//\//}"
+    while [[ "$s" == ./* ]]; do
+        s="${s#./}"
+    done
+    printf '%s' "$s"
+}
 
 replace_single_m3u_entry() {
     local m3u_file="$1"
@@ -1682,7 +1734,7 @@ check_m3u_targets() {
                 replacement="${found#$dir/}"
                 [[ "$replacement" == "$found" ]] && replacement="$(basename -- "$found")"
 
-                if [[ "$replacement" == "$line" ]]; then
+                if [[ "$(normalize_m3u_entry_for_compare "$replacement")" == "$(normalize_m3u_entry_for_compare "$line")" ]]; then
                     printf '%s\n' "M3U SKIP: similar file search did not produce a better playlist entry."
                     printf '%s\n' "  FILE:  $m3u_file"
                     printf '%s\n' "  ENTRY: $display_entry"
@@ -3182,6 +3234,7 @@ print_summary() {
         echo "DB rows new:           $DB_ROWS_NEW"
         echo "DB rows updated:       $DB_ROWS_UPDATED"
         echo "DB rows removed:       $DB_ROWS_REMOVED"
+        echo "DB stale rows removed: $DB_STALE_ROWS_REMOVED"
         echo "DB hash lookup hits:   $DB_HASH_LOOKUP_HITS"
         echo "DB hash lookup misses: $DB_HASH_LOOKUP_MISSES"
     else
