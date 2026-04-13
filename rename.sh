@@ -1,4 +1,8 @@
 #!/usr/bin/env bash
+# 2026.04.11 - v. 14.9 - skip final .m3u checks/fixes when interrupted with Ctrl-C and exit immediately after summary
+# 2026.04.11 - v. 14.8 - make .m3u skip messages explicit: distinguish no match, identical replacement, and write failure
+# 2026.04.11 - v. 14.7 - do not prompt to rename .par2 files whose basename starts with an underscore
+# 2026.04.11 - v. 14.6 - treat both e and E as 'add exception' in the plain-entry prompt
 # 2026.04.11 - v. 14.5 - preserve _-_ separators in transformed names and replace fragile sed-based m3u key normalization with a python implementation
 # 2026.04.11 - v. 14.4 - search .m3u missing entries in the playlist subtree by similar name and show OLD/NEW before updating playlist references
 # 2026.04.11 - v. 14.3 - add per-file choices for @ and Ŕ, add €->c and si@->sie, and lowercase extensions only for actual files
@@ -119,7 +123,7 @@
 # 2026.03.27 - v. 1.4 - apply special media renames after basic normalization
 # 2026.03.27 - v. 1.3 - fixed top-level path handling: keep ./ prefix in transform_name()
 # 2026.03.27 - v. 1.2 - added many changes about media files
-SCRIPT_VERSION="2026.04.11 - v. 14.5"
+SCRIPT_VERSION="2026.04.11 - v. 14.9"
 LARGE_HASHFILE_LINE_THRESHOLD=20
 MAX_LINE_LENGTH=200
 START_DIR="$(pwd -P)"
@@ -1339,6 +1343,14 @@ is_m3u_file() {
     [[ "$lower" == *.m3u ]]
 }
 
+is_protected_par2_name() {
+    local p="$1"
+    local base lower
+    base="$(basename -- "$p")"
+    lower="${base,,}"
+    [[ "$base" == _* && "$lower" == *.par2 ]]
+}
+
 update_m3u_references_in_file() {
     local m3u_file="$1"
     local old_path="$2"
@@ -1471,16 +1483,29 @@ check_m3u_targets() {
             if [[ -n "$found" ]]; then
                 replacement="${found#$dir/}"
                 [[ "$replacement" == "$found" ]] && replacement="$(basename -- "$found")"
+
+                if [[ "$replacement" == "$line" ]]; then
+                    echo -e "${YELLOW}M3U SKIP:${RESET} similar file search did not produce a better playlist entry."
+                    echo "  FILE:  $m3u_file"
+                    echo "  ENTRY: $line"
+                    continue
+                fi
+
                 echo
                 echo "OLD: $line"
                 echo "NEW: $replacement"
                 if replace_single_m3u_entry "$m3u_file" "$line" "$replacement"; then
                     echo -e "${CYAN}M3U UPDATED:${RESET} $m3u_file"
                 else
-                    echo -e "${YELLOW}M3U SKIP:${RESET} could not update entry in $m3u_file -> $line"
+                    echo -e "${YELLOW}M3U SKIP:${RESET} replacement was prepared but updating the playlist file failed."
+                    echo "  FILE: $m3u_file"
+                    echo "  OLD:  $line"
+                    echo "  NEW:  $replacement"
                 fi
             else
-                echo -e "${YELLOW}M3U MISSING:${RESET} $m3u_file -> $line"
+                echo -e "${YELLOW}M3U SKIP:${RESET} no similar file was found in the playlist subtree."
+                echo "  FILE:  $m3u_file"
+                echo "  ENTRY: $line"
             fi
         fi
     done < "$m3u_file"
@@ -3467,6 +3492,14 @@ for f in "${ordered_paths[@]}"; do
     fi
 
     new="$(transform_name "$f")"
+
+    if is_protected_par2_name "$f"; then
+        vlog "Protected .par2 basename starts with underscore, no rename needed for '$f'"
+        ((++files_skipped))
+        db_mark_checked "$f" "plain" "checked"
+        continue
+    fi
+
     [[ "$f" == "$new" ]] && {
         vlog "No rename needed for '$f'"
         ((++files_skipped))
@@ -3502,7 +3535,7 @@ for f in "${ordered_paths[@]}"; do
         n|N)
             ((++files_skipped))
             ;;
-        E)
+        e|E)
             append_path_to_exclude_filters_file "$f"
             ((++files_skipped))
             processed["$f"]=1
@@ -3535,7 +3568,9 @@ for f in "${ordered_paths[@]}"; do
     esac
 done
 
-check_all_m3u_files
+if [[ "$stopped_by_user" != "yes" ]]; then
+    check_all_m3u_files
+fi
 SCRIPT_FINISH_TIME="$(date '+%Y-%m-%d %H:%M:%S')"
 print_summary
 
