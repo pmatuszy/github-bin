@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.04.11 - v. 15.0 - fix .m3u CRLF updates, handle backslash paths in subtree matching, and avoid UnicodeEncodeError when printing odd playlist entries
 # 2026.04.11 - v. 14.9 - skip final .m3u checks/fixes when interrupted with Ctrl-C and exit immediately after summary
 # 2026.04.11 - v. 14.8 - make .m3u skip messages explicit: distinguish no match, identical replacement, and write failure
 # 2026.04.11 - v. 14.7 - do not prompt to rename .par2 files whose basename starts with an underscore
@@ -123,7 +124,7 @@
 # 2026.03.27 - v. 1.4 - apply special media renames after basic normalization
 # 2026.03.27 - v. 1.3 - fixed top-level path handling: keep ./ prefix in transform_name()
 # 2026.03.27 - v. 1.2 - added many changes about media files
-SCRIPT_VERSION="2026.04.11 - v. 14.9"
+SCRIPT_VERSION="2026.04.11 - v. 15.0"
 LARGE_HASHFILE_LINE_THRESHOLD=20
 MAX_LINE_LENGTH=200
 START_DIR="$(pwd -P)"
@@ -1406,12 +1407,15 @@ normalize_m3u_candidate_key() {
     python3 - "$s" <<'PY'
 import os, re, sys
 s = sys.argv[1]
+s = s.replace('\\', '/')
 s = os.path.basename(s).lower()
 s = re.sub(r'\.[^.]+$', '', s)
-s = re.sub(r'[\s_.,;:()\[\]{}+\-]+', '', s)
+s = s.replace('&', 'and')
+s = re.sub(r'[\s_.,;:()\[\]{}+\-!]+', '', s)
 print(s, end='')
 PY
 }
+
 
 find_best_m3u_subtree_match() {
     local m3u_file="$1"
@@ -1427,11 +1431,15 @@ find_best_m3u_subtree_match() {
             best="$candidate"
             break
         fi
+        if [[ -z "$best" && -n "$candidate_key" && ( "$candidate_key" == *"$wanted_key"* || "$wanted_key" == *"$candidate_key"* ) ]]; then
+            best="$candidate"
+        fi
     done < <(find "$playlist_dir" -type f -print0 2>/dev/null)
 
     [[ -n "$best" ]] || return 1
     printf '%s' "$best"
 }
+
 
 replace_single_m3u_entry() {
     local m3u_file="$1"
@@ -1443,18 +1451,19 @@ replace_single_m3u_entry() {
     python3 - "$m3u_file" "$tmp" "$old_entry" "$new_entry" <<'PY'
 import sys
 src, dst, old_entry, new_entry = sys.argv[1:]
-with open(src, 'r', encoding='utf-8', errors='surrogateescape') as f:
+with open(src, 'r', encoding='utf-8', errors='surrogateescape', newline='') as f:
     lines = f.readlines()
 out = []
 changed = False
 for line in lines:
-    stripped = line.rstrip('\n')
+    nl = '\r\n' if line.endswith('\r\n') else '\n'
+    stripped = line.rstrip('\r\n')
     if stripped == old_entry:
-        out.append(new_entry + '\n')
+        out.append(new_entry + nl)
         changed = True
     else:
         out.append(line)
-with open(dst, 'w', encoding='utf-8', errors='surrogateescape') as f:
+with open(dst, 'w', encoding='utf-8', errors='surrogateescape', newline='') as f:
     f.writelines(out)
 sys.exit(0 if changed else 3)
 PY
@@ -1467,16 +1476,18 @@ PY
     return 1
 }
 
+
 check_m3u_targets() {
     local m3u_file="$1"
-    local dir line target found replacement
+    local dir line target found replacement display_entry
     dir="$(dirname -- "$m3u_file")"
     while IFS= read -r line || [[ -n "$line" ]]; do
         [[ -z "$line" || "$line" == \#* ]] && continue
+        display_entry="$line"
         if [[ "$line" = /* ]]; then
             target="$line"
         else
-            target="$dir/$line"
+            target="$dir/${line//\\//}"
         fi
         if [[ ! -e "$target" ]]; then
             found="$(find_best_m3u_subtree_match "$m3u_file" "$line" || true)"
@@ -1485,31 +1496,32 @@ check_m3u_targets() {
                 [[ "$replacement" == "$found" ]] && replacement="$(basename -- "$found")"
 
                 if [[ "$replacement" == "$line" ]]; then
-                    echo -e "${YELLOW}M3U SKIP:${RESET} similar file search did not produce a better playlist entry."
-                    echo "  FILE:  $m3u_file"
-                    echo "  ENTRY: $line"
+                    printf '%s\n' "M3U SKIP: similar file search did not produce a better playlist entry."
+                    printf '%s\n' "  FILE:  $m3u_file"
+                    printf '%s\n' "  ENTRY: $display_entry"
                     continue
                 fi
 
                 echo
-                echo "OLD: $line"
-                echo "NEW: $replacement"
+                printf '%s\n' "OLD: $display_entry"
+                printf '%s\n' "NEW: $replacement"
                 if replace_single_m3u_entry "$m3u_file" "$line" "$replacement"; then
                     echo -e "${CYAN}M3U UPDATED:${RESET} $m3u_file"
                 else
-                    echo -e "${YELLOW}M3U SKIP:${RESET} replacement was prepared but updating the playlist file failed."
-                    echo "  FILE: $m3u_file"
-                    echo "  OLD:  $line"
-                    echo "  NEW:  $replacement"
+                    printf '%s\n' "M3U SKIP: replacement was prepared but updating the playlist file failed."
+                    printf '%s\n' "  FILE: $m3u_file"
+                    printf '%s\n' "  OLD:  $display_entry"
+                    printf '%s\n' "  NEW:  $replacement"
                 fi
             else
-                echo -e "${YELLOW}M3U SKIP:${RESET} no similar file was found in the playlist subtree."
-                echo "  FILE:  $m3u_file"
-                echo "  ENTRY: $line"
+                printf '%s\n' "M3U SKIP: no similar file was found in the playlist subtree."
+                printf '%s\n' "  FILE:  $m3u_file"
+                printf '%s\n' "  ENTRY: $display_entry"
             fi
         fi
     done < "$m3u_file"
 }
+
 
 check_all_m3u_files() {
     local start="${START_DIR:-.}"
