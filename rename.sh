@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # 2026.04.14 - v. 16.8 - suppress no-op M3U UPDATED lines in both direct and subtree playlist rewrites, and skip identical replacement entries cleanly
 # 2026.04.14 - v. 16.6 - fix fake no-op M3U UPDATED logs, make M3U key normalization safe for broken playlist bytes, and normalize apostrophes in playlist matching
+# 2026.04.14 - v. 16.9 - fix broken quote normalization in M3U candidate matching and keep binary-safe playlist key output
 # 2026.04.13 - v. 16.0 - skip slash-only M3U rewrites, persist per-kind hashes in DB, and remove stale DB rows missing on disk
 # 2026.04.13 - v. 15.7 - add --wait-seconds prompt timeout control and print current interactive wait behavior
 # 2026.04.13 - v. 15.6 - show SQLite warmup percentages together with row counts during startup
@@ -134,7 +135,7 @@
 # 2026.03.27 - v. 1.4 - apply special media renames after basic normalization
 # 2026.03.27 - v. 1.3 - fixed top-level path handling: keep ./ prefix in transform_name()
 # 2026.03.27 - v. 1.2 - added many changes about media files
-SCRIPT_VERSION="2026.04.14 - v. 16.6"
+SCRIPT_VERSION="2026.04.14 - v. 16.9"
 LARGE_HASHFILE_LINE_THRESHOLD=20
 MAX_LINE_LENGTH=200
 START_DIR="$(pwd -P)"
@@ -1668,7 +1669,10 @@ s = s.replace('\\', '/')
 s = os.path.basename(s).lower()
 s = re.sub(r'\.[^.]+$', '', s)
 s = s.replace('&', 'and')
-s = re.sub(r"[\s_.,;:()\[\]{}+\-!'`"´’‘]+", '', s)
+quote_chars = "'`\"´’‘"
+remove_chars = " _.,;:()[]{}+-!\t\r\n" + quote_chars
+translate_map = {ord(ch): None for ch in remove_chars}
+s = s.translate(translate_map)
 
 sys.stdout.buffer.write(s.encode('utf-8', 'surrogateescape'))
 PY
