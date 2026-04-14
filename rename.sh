@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 2026.04.14 - v. 16.5 - avoid false M3U UPDATED logs when only basename matches unchanged, improve M3U candidate normalization for apostrophes, and keep header history updated with the current date
+# 2026.04.14 - v. 16.6 - fix fake no-op M3U UPDATED logs, make M3U key normalization safe for broken playlist bytes, and normalize apostrophes in playlist matching
 # 2026.04.13 - v. 16.0 - skip slash-only M3U rewrites, persist per-kind hashes in DB, and remove stale DB rows missing on disk
 # 2026.04.13 - v. 15.7 - add --wait-seconds prompt timeout control and print current interactive wait behavior
 # 2026.04.13 - v. 15.6 - show SQLite warmup percentages together with row counts during startup
@@ -133,7 +133,7 @@
 # 2026.03.27 - v. 1.4 - apply special media renames after basic normalization
 # 2026.03.27 - v. 1.3 - fixed top-level path handling: keep ./ prefix in transform_name()
 # 2026.03.27 - v. 1.2 - added many changes about media files
-SCRIPT_VERSION="2026.04.14 - v. 16.5"
+SCRIPT_VERSION="2026.04.14 - v. 16.6"
 LARGE_HASHFILE_LINE_THRESHOLD=20
 MAX_LINE_LENGTH=200
 START_DIR="$(pwd -P)"
@@ -1583,14 +1583,17 @@ update_m3u_references_in_file() {
     local m3u_file="$1"
     local old_path="$2"
     local new_path="$3"
-    local tmp old_base new_base old_norm new_norm
+    local tmp old_base new_base old_norm new_norm old_base_norm new_base_norm
 
     [[ -f "$m3u_file" ]] || return 0
     old_base="$(basename -- "$old_path")"
     new_base="$(basename -- "$new_path")"
     old_norm="$(normalize_m3u_entry_for_compare "$old_path")"
     new_norm="$(normalize_m3u_entry_for_compare "$new_path")"
-    if [[ "$old_norm" == "$new_norm" ]]; then
+    old_base_norm="$(normalize_m3u_entry_for_compare "$old_base")"
+    new_base_norm="$(normalize_m3u_entry_for_compare "$new_base")"
+
+    if [[ "$old_norm" == "$new_norm" && "$old_base_norm" == "$new_base_norm" ]]; then
         return 1
     fi
 
@@ -1604,34 +1607,32 @@ src, dst, old_path, new_path, old_base, new_base = sys.argv[1:]
 with open(src, 'r', encoding='utf-8', errors='surrogateescape', newline='') as f:
     lines = f.readlines()
 
+basename_change_needed = (old_base != new_base)
+
 out = []
 changed = False
 
 for line in lines:
+    nl = line
     if line.endswith('\r\n'):
-        nl = '\r\n'
-        stripped = line[:-2]
+        eol = '\r\n'
     elif line.endswith('\n'):
-        nl = '\n'
-        stripped = line[:-1]
+        eol = '\n'
     elif line.endswith('\r'):
-        nl = '\r'
-        stripped = line[:-1]
+        eol = '\r'
     else:
-        nl = ''
-        stripped = line
+        eol = ''
 
-    replacement = None
-    if stripped == old_path and new_path != old_path:
-        replacement = new_path
-    elif stripped == old_base and new_base != old_base:
-        replacement = new_base
+    stripped = line.rstrip('\r\n')
 
-    if replacement is not None:
-        out.append(replacement + nl)
+    if stripped == old_path and old_path != new_path:
+        nl = new_path + eol
         changed = True
-    else:
-        out.append(line)
+    elif basename_change_needed and stripped == old_base:
+        nl = new_base + eol
+        changed = True
+
+    out.append(nl)
 
 with open(dst, 'w', encoding='utf-8', errors='surrogateescape', newline='') as f:
     f.writelines(out)
@@ -1640,14 +1641,11 @@ sys.exit(0 if changed else 3)
 PY
     rc=$?
     if [[ $rc -eq 0 ]]; then
-        if mv -- "$tmp" "$m3u_file"; then
-            echo -e "${CYAN}M3U UPDATED:${RESET} $m3u_file"
-            return 0
-        fi
+        mv -- "$tmp" "$m3u_file"
+        echo -e "${CYAN}M3U UPDATED:${RESET} $m3u_file"
+    else
+        rm -f -- "$tmp"
     fi
-
-    rm -f -- "$tmp"
-    return 1
 }
 
 update_all_m3u_files_for_rename() {
@@ -1663,15 +1661,15 @@ normalize_m3u_candidate_key() {
     local s="$1"
     python3 - "$s" <<'PY'
 import os, re, sys
+
 s = sys.argv[1]
 s = s.replace('\\', '/')
 s = os.path.basename(s).lower()
 s = re.sub(r'\.[^.]+$', '', s)
 s = s.replace('&', 'and')
-s = s.replace("'", '')
-s = s.replace('’', '')
-s = re.sub(r'[\s_.,;:()\[\]{}+\-!]+', '', s)
-print(s, end='')
+s = re.sub(r"[\s_.,;:()\[\]{}+\-!'`"´’‘]+", '', s)
+
+sys.stdout.buffer.write(s.encode('utf-8', 'surrogateescape'))
 PY
 }
 
@@ -1821,8 +1819,9 @@ check_m3u_targets() {
                 fi
             else
                 printf '%s\n' "M3U SKIP: no similar file was found in the playlist subtree."
-                printf '%s\n' "  FILE:  $m3u_file"
-                printf '%s\n' "  ENTRY: $display_entry"
+                printf '%s\n' "  FILE:         $m3u_file"
+                printf '%s\n' "  ENTRY:        $display_entry"
+                printf '%s\n' "  TARGET PATH:  $target"
             fi
         fi
     done < "$m3u_file"
