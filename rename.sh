@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.04.14 - v. 16.4 - fix M3U apostrophe-aware subtree matching, show clearer M3U skip diagnostics, and keep header history updated with the current date
 # 2026.04.13 - v. 16.0 - skip slash-only M3U rewrites, persist per-kind hashes in DB, and remove stale DB rows missing on disk
 # 2026.04.13 - v. 15.7 - add --wait-seconds prompt timeout control and print current interactive wait behavior
 # 2026.04.13 - v. 15.6 - show SQLite warmup percentages together with row counts during startup
@@ -132,7 +133,7 @@
 # 2026.03.27 - v. 1.4 - apply special media renames after basic normalization
 # 2026.03.27 - v. 1.3 - fixed top-level path handling: keep ./ prefix in transform_name()
 # 2026.03.27 - v. 1.2 - added many changes about media files
-SCRIPT_VERSION="2026.04.13 - v. 16.3"
+SCRIPT_VERSION="2026.04.14 - v. 16.4"
 LARGE_HASHFILE_LINE_THRESHOLD=20
 MAX_LINE_LENGTH=200
 START_DIR="$(pwd -P)"
@@ -1637,13 +1638,15 @@ update_all_m3u_files_for_rename() {
 normalize_m3u_candidate_key() {
     local s="$1"
     python3 - "$s" <<'PY'
-import os, re, sys
+import os, re, sys, unicodedata
 s = sys.argv[1]
 s = s.replace('\\', '/')
 s = os.path.basename(s).lower()
 s = re.sub(r'\.[^.]+$', '', s)
 s = s.replace('&', 'and')
-s = re.sub(r'[\s_.,;:()\[\]{}+\-!]+', '', s)
+s = unicodedata.normalize('NFKD', s)
+s = ''.join(ch for ch in s if not unicodedata.combining(ch))
+s = re.sub(r"[\s_.,;:()\[\]{}+\-!'`\"“”„’]+", '', s)
 print(s, end='')
 PY
 }
@@ -1652,26 +1655,50 @@ PY
 find_best_m3u_subtree_match() {
     local m3u_file="$1"
     local missing_entry="$2"
-    local playlist_dir candidate wanted_key candidate_key best=""
+    local playlist_dir candidate wanted_key candidate_key best="" best_key="" best_mode="" score best_score=-1
     playlist_dir="$(dirname -- "$m3u_file")"
     wanted_key="$(normalize_m3u_candidate_key "$missing_entry")"
     [[ -n "$wanted_key" ]] || return 1
 
     while IFS= read -r -d '' candidate; do
         candidate_key="$(normalize_m3u_candidate_key "$candidate")"
+        [[ -n "$candidate_key" ]] || continue
+
         if [[ "$candidate_key" == "$wanted_key" ]]; then
-            best="$candidate"
-            break
+            printf '%s\t%s\texact' "$candidate" "$candidate_key"
+            return 0
         fi
-        if [[ -z "$best" && -n "$candidate_key" && ( "$candidate_key" == *"$wanted_key"* || "$wanted_key" == *"$candidate_key"* ) ]]; then
+
+        score=-1
+        if [[ "$candidate_key" == *"$wanted_key"* || "$wanted_key" == *"$candidate_key"* ]]; then
+            score=3
+        else
+            local common_prefix_len=0 max_common=${#candidate_key}
+            (( ${#wanted_key} < max_common )) && max_common=${#wanted_key}
+            while (( common_prefix_len < max_common )); do
+                [[ "${candidate_key:common_prefix_len:1}" == "${wanted_key:common_prefix_len:1}" ]] || break
+                (( common_prefix_len++ ))
+            done
+            if (( common_prefix_len >= 8 )); then
+                score=$common_prefix_len
+            fi
+        fi
+
+        if (( score > best_score )); then
+            best_score=$score
             best="$candidate"
+            best_key="$candidate_key"
+            if (( score == 3 )); then
+                best_mode="contains"
+            else
+                best_mode="prefix"
+            fi
         fi
     done < <(find "$playlist_dir" -type f -print0 2>/dev/null)
 
     [[ -n "$best" ]] || return 1
-    printf '%s' "$best"
+    printf '%s\t%s\t%s' "$best" "$best_key" "$best_mode"
 }
-
 
 
 normalize_m3u_entry_for_compare() {
@@ -1758,11 +1785,12 @@ PY
 
 check_m3u_targets() {
     local m3u_file="$1"
-    local dir line target found replacement display_entry
+    local dir line target found found_path found_key found_mode replacement display_entry wanted_key
     dir="$(dirname -- "$m3u_file")"
     while IFS= read -r line || [[ -n "$line" ]]; do
         [[ -z "$line" || "$line" == \#* ]] && continue
         display_entry="$line"
+        wanted_key="$(normalize_m3u_candidate_key "$line")"
         if [[ "$line" = /* ]]; then
             target="$line"
         else
@@ -1771,13 +1799,19 @@ check_m3u_targets() {
         if [[ ! -e "$target" ]]; then
             found="$(find_best_m3u_subtree_match "$m3u_file" "$line" || true)"
             if [[ -n "$found" ]]; then
-                replacement="${found#$dir/}"
-                [[ "$replacement" == "$found" ]] && replacement="$(basename -- "$found")"
+                IFS=$'\t' read -r found_path found_key found_mode <<< "$found"
+                replacement="${found_path#$dir/}"
+                [[ "$replacement" == "$found_path" ]] && replacement="$(basename -- "$found_path")"
 
                 if [[ "$(normalize_m3u_entry_for_compare "$replacement")" == "$(normalize_m3u_entry_for_compare "$line")" ]]; then
-                    printf '%s\n' "M3U SKIP: similar file search did not produce a better playlist entry."
-                    printf '%s\n' "  FILE:  $m3u_file"
-                    printf '%s\n' "  ENTRY: $display_entry"
+                    printf '%s\n' "M3U SKIP: candidate was found, but it would not change the playlist entry."
+                    printf '%s\n' "  PLAYLIST:      $m3u_file"
+                    printf '%s\n' "  MISSING ENTRY: $display_entry"
+                    printf '%s\n' "  MISSING PATH:  $target"
+                    printf '%s\n' "  MATCH MODE:    ${found_mode:-unknown}"
+                    printf '%s\n' "  NORMALIZED:    $wanted_key"
+                    printf '%s\n' "  CANDIDATE:     $found_path"
+                    printf '%s\n' "  CANDIDATE KEY: ${found_key:-}"
                     continue
                 fi
 
@@ -1788,14 +1822,18 @@ check_m3u_targets() {
                     echo -e "${CYAN}M3U UPDATED:${RESET} $m3u_file"
                 else
                     printf '%s\n' "M3U SKIP: replacement was prepared but updating the playlist file failed."
-                    printf '%s\n' "  FILE: $m3u_file"
-                    printf '%s\n' "  OLD:  $display_entry"
-                    printf '%s\n' "  NEW:  $replacement"
+                    printf '%s\n' "  PLAYLIST:      $m3u_file"
+                    printf '%s\n' "  OLD ENTRY:     $display_entry"
+                    printf '%s\n' "  OLD PATH:      $target"
+                    printf '%s\n' "  NEW ENTRY:     $replacement"
+                    printf '%s\n' "  CANDIDATE:     $found_path"
                 fi
             else
                 printf '%s\n' "M3U SKIP: no similar file was found in the playlist subtree."
-                printf '%s\n' "  FILE:  $m3u_file"
-                printf '%s\n' "  ENTRY: $display_entry"
+                printf '%s\n' "  PLAYLIST:      $m3u_file"
+                printf '%s\n' "  MISSING ENTRY: $display_entry"
+                printf '%s\n' "  MISSING PATH:  $target"
+                printf '%s\n' "  NORMALIZED:    $wanted_key"
             fi
         fi
     done < "$m3u_file"
@@ -3884,4 +3922,5 @@ if [[ "$stopped_by_user" != "yes" ]]; then
 fi
 SCRIPT_FINISH_TIME="$(date '+%Y-%m-%d %H:%M:%S')"
 print_summary
+
 
