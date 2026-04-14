@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # 2026.04.14 - v. 16.6 - fix fake no-op M3U UPDATED logs, make M3U key normalization safe for broken playlist bytes, and normalize apostrophes in playlist matching
+# 2026.04.14 - v. 16.7 - fix broken quote regex in M3U candidate normalization, keep binary-safe playlist key output, and preserve no-op M3U update skips
 # 2026.04.13 - v. 16.0 - skip slash-only M3U rewrites, persist per-kind hashes in DB, and remove stale DB rows missing on disk
 # 2026.04.13 - v. 15.7 - add --wait-seconds prompt timeout control and print current interactive wait behavior
 # 2026.04.13 - v. 15.6 - show SQLite warmup percentages together with row counts during startup
@@ -1660,14 +1661,18 @@ update_all_m3u_files_for_rename() {
 normalize_m3u_candidate_key() {
     local s="$1"
     python3 - "$s" <<'PY'
-import os, re, sys
+import os
+import re
+import sys
 
 s = sys.argv[1]
 s = s.replace('\\', '/')
 s = os.path.basename(s).lower()
 s = re.sub(r'\.[^.]+$', '', s)
 s = s.replace('&', 'and')
-s = re.sub(r"[\s_.,;:()\[\]{}+\-!'`"´’‘]+", '', s)
+quote_chars = "'`\"´’‘"
+pattern = r"[\\s_.,;:()\\[\\]{}+\\-" + re.escape(quote_chars) + r"]+"
+s = re.sub(pattern, '', s)
 
 sys.stdout.buffer.write(s.encode('utf-8', 'surrogateescape'))
 PY
