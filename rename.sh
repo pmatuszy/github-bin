@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
+# 2026.04.15 - v. 17.2 - simplify no-op M3U messages to checked/no update needed and avoid OLD/NEW noise for effectively matching playlist entries
 # 2026.04.14 - v. 16.8 - suppress no-op M3U UPDATED lines in both direct and subtree playlist rewrites, and skip identical replacement entries cleanly
 # 2026.04.14 - v. 16.6 - fix fake no-op M3U UPDATED logs, make M3U key normalization safe for broken playlist bytes, and normalize apostrophes in playlist matching
 # 2026.04.14 - v. 16.9 - fix broken quote normalization in M3U candidate matching and keep binary-safe playlist key output
+# 2026.04.14 - v. 17.0 - show the startup banner before usage when -h or --help is used
 # 2026.04.13 - v. 16.0 - skip slash-only M3U rewrites, persist per-kind hashes in DB, and remove stale DB rows missing on disk
 # 2026.04.13 - v. 15.7 - add --wait-seconds prompt timeout control and print current interactive wait behavior
 # 2026.04.13 - v. 15.6 - show SQLite warmup percentages together with row counts during startup
@@ -135,7 +137,7 @@
 # 2026.03.27 - v. 1.4 - apply special media renames after basic normalization
 # 2026.03.27 - v. 1.3 - fixed top-level path handling: keep ./ prefix in transform_name()
 # 2026.03.27 - v. 1.2 - added many changes about media files
-SCRIPT_VERSION="2026.04.14 - v. 16.9"
+SCRIPT_VERSION="2026.04.15 - v. 17.2"
 LARGE_HASHFILE_LINE_THRESHOLD=20
 MAX_LINE_LENGTH=200
 START_DIR="$(pwd -P)"
@@ -994,6 +996,8 @@ while (( $# > 0 )); do
             shift 2
             ;;
         -h|--help)
+            print_startup_banner
+            echo
             usage
             exit 0
             ;;
