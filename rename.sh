@@ -137,7 +137,8 @@
 # 2026.03.27 - v. 1.4 - apply special media renames after basic normalization
 # 2026.03.27 - v. 1.3 - fixed top-level path handling: keep ./ prefix in transform_name()
 # 2026.03.27 - v. 1.2 - added many changes about media files
-SCRIPT_VERSION="2026.04.15 - v. 17.2"
+# 2026.04.15 - v. 17.3 - escape control characters in logged paths and warn explicitly about filenames containing them
+SCRIPT_VERSION="2026.04.15 - v. 17.4"
 LARGE_HASHFILE_LINE_THRESHOLD=20
 MAX_LINE_LENGTH=200
 START_DIR="$(pwd -P)"
@@ -1296,16 +1297,49 @@ print_db_hash_lookup_verbose() {
 }
 
 
+path_has_control_chars() {
+    local s="$1"
+    [[ "$s" == *$'\n'* || "$s" == *$'\r'* || "$s" == *$'\t'* ]] && return 0
+    LC_ALL=C printf '%s' "$s" | grep -q '[[:cntrl:]]'
+}
+
+format_path_for_log() {
+    local s="$1"
+    s=${s//$'\\'/\\\\}
+    s=${s//$'\n'/\\n}
+    s=${s//$'\r'/\\r}
+    s=${s//$'\t'/\\t}
+    printf '%s' "$s"
+}
+
+sanitize_basename_control_chars() {
+    local s="$1"
+    printf '%s' "$s" | LC_ALL=C tr -d '\000-\037\177'
+}
+
+print_control_char_warning() {
+    local path="$1"
+    local shown
+    shown="$(format_path_for_log "$path")"
+    echo -e "${YELLOW}WARNING:${RESET} path contains control character(s): '$shown'"
+}
+
 print_skip_path_reason() {
     (( VERBOSE == 1 )) || return 0
     local path="$1"
     local reason="$2"
-    local line="SKIP: '$path' $reason"
+    local shown
+    shown="$(format_path_for_log "$path")"
+    local line="SKIP: '$shown' $reason"
+
+    if path_has_control_chars "$path"; then
+        print_control_char_warning "$path"
+    fi
 
     if (( ${#line} <= MAX_LINE_LENGTH )); then
-        echo -e "${YELLOW}SKIP:${RESET} '$path' $reason"
+        echo -e "${YELLOW}SKIP:${RESET} '$shown' $reason"
     else
-        echo -e "${YELLOW}SKIP:${RESET} '$path'"
+        echo -e "${YELLOW}SKIP:${RESET} '$shown'"
         echo "      $reason"
     fi
 }
@@ -1792,14 +1826,21 @@ PY
         if mv -- "$tmp" "$m3u_file"; then
             return 0
         fi
+        rm -f -- "$tmp"
+        return 1
     fi
     rm -f -- "$tmp"
-    return 1
+    return "$rc"
+}
+
+print_m3u_no_update_needed() {
+    local m3u_file="$1"
+    printf '%s\n' "M3U CHECK: no update needed: $m3u_file"
 }
 
 check_m3u_targets() {
     local m3u_file="$1"
-    local dir line target found replacement display_entry
+    local dir line target found replacement display_entry rc
     dir="$(dirname -- "$m3u_file")"
     while IFS= read -r line || [[ -n "$line" ]]; do
         [[ -z "$line" || "$line" == \#* ]] && continue
@@ -1807,7 +1848,7 @@ check_m3u_targets() {
         if [[ "$line" = /* ]]; then
             target="$line"
         else
-            target="$dir/${line//\\//}"
+            target="$dir/${line//\//}"
         fi
         if [[ ! -e "$target" ]]; then
             found="$(find_best_m3u_subtree_match "$m3u_file" "$line" || true)"
@@ -1816,28 +1857,45 @@ check_m3u_targets() {
                 [[ "$replacement" == "$found" ]] && replacement="$(basename -- "$found")"
 
                 if [[ "$(normalize_m3u_entry_for_compare "$replacement")" == "$(normalize_m3u_entry_for_compare "$line")" ]]; then
-                    printf '%s\n' "M3U SKIP: similar file search did not produce a better playlist entry."
-                    printf '%s\n' "  FILE:  $m3u_file"
-                    printf '%s\n' "  ENTRY: $display_entry"
+                    print_m3u_no_update_needed "$m3u_file"
                     continue
                 fi
 
-                echo
-                printf '%s\n' "OLD: $display_entry"
-                printf '%s\n' "NEW: $replacement"
-                if replace_single_m3u_entry "$m3u_file" "$line" "$replacement"; then
+                replace_single_m3u_entry "$m3u_file" "$line" "$replacement"
+                rc=$?
+                if [[ $rc -eq 0 ]]; then
+                    echo
+                    printf '%s
+' "OLD: $display_entry"
+                    printf '%s
+' "NEW: $replacement"
                     echo -e "${CYAN}M3U UPDATED:${RESET} $m3u_file"
+                elif [[ $rc -eq 3 ]]; then
+                    print_m3u_no_update_needed "$m3u_file"
                 else
-                    printf '%s\n' "M3U SKIP: replacement was identical after normalization; playlist entry already effectively matches."
-                    printf '%s\n' "  FILE:         $m3u_file"
-                    printf '%s\n' "  ENTRY:        $display_entry"
-                    printf '%s\n' "  REPLACEMENT:  $replacement"
+                    echo
+                    printf '%s
+' "OLD: $display_entry"
+                    printf '%s
+' "NEW: $replacement"
+                    printf '%s
+' "M3U SKIP: replacement was prepared but updating the playlist file failed."
+                    printf '%s
+' "  FILE:         $m3u_file"
+                    printf '%s
+' "  ENTRY:        $display_entry"
+                    printf '%s
+' "  REPLACEMENT:  $replacement"
                 fi
             else
-                printf '%s\n' "M3U SKIP: no similar file was found in the playlist subtree."
-                printf '%s\n' "  FILE:         $m3u_file"
-                printf '%s\n' "  ENTRY:        $display_entry"
-                printf '%s\n' "  TARGET PATH:  $target"
+                printf '%s
+' "M3U SKIP: no similar file was found in the playlist subtree."
+                printf '%s
+' "  FILE:         $m3u_file"
+                printf '%s
+' "  ENTRY:        $display_entry"
+                printf '%s
+' "  TARGET PATH:  $target"
             fi
         fi
     done < "$m3u_file"
@@ -2322,6 +2380,10 @@ transform_name() {
 
     dir="$(dirname -- "$f")"
     base="$(basename -- "$f")"
+
+    if path_has_control_chars "$base"; then
+        base="$(sanitize_basename_control_chars "$base")"
+    fi
 
     if is_media_file "$base"; then
         while [[ "$base" == _* ]]; do
@@ -3406,9 +3468,12 @@ for f in "${ordered_paths[@]}"; do
         continue
     fi
 
-    if db_has_valid_entry "$f"; then
+    if db_has_valid_entry "$f" && ! path_has_control_chars "$f"; then
         db_backfill_missing_hashes_for_existing_file "$f"
-        echo -e "${CYAN}DB SKIP:${RESET} '$f'"
+        if path_has_control_chars "$f"; then
+            print_control_char_warning "$f"
+        fi
+        echo -e "${CYAN}DB SKIP:${RESET} '$(format_path_for_log "$f")'"
         ((++files_skipped))
         processed["$f"]=1
         continue
