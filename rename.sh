@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.04.15 - v. 17.6 - treat M3U helper exit code 3 as no-change under set -e and do not abort in wrapper/caller paths
 # 2026.04.15 - v. 17.5 - treat no-change Python M3U helper exits as normal results under set -e and avoid aborting on no-update playlist checks
 # 2026.04.15 - v. 17.2 - simplify no-op M3U messages to checked/no update needed and avoid OLD/NEW noise for effectively matching playlist entries
 # 2026.04.14 - v. 16.8 - suppress no-op M3U UPDATED lines in both direct and subtree playlist rewrites, and skip identical replacement entries cleanly
@@ -139,7 +140,7 @@
 # 2026.03.27 - v. 1.3 - fixed top-level path handling: keep ./ prefix in transform_name()
 # 2026.03.27 - v. 1.2 - added many changes about media files
 # 2026.04.15 - v. 17.3 - escape control characters in logged paths and warn explicitly about filenames containing them
-SCRIPT_VERSION="2026.04.15 - v. 17.5"
+SCRIPT_VERSION="2026.04.15 - v. 17.6"
 LARGE_HASHFILE_LINE_THRESHOLD=20
 MAX_LINE_LENGTH=200
 START_DIR="$(pwd -P)"
@@ -1839,7 +1840,10 @@ PY
         return 1
     fi
     rm -f -- "$tmp"
-    return "$rc"
+    if [[ $rc -eq 3 ]]; then
+        return 3
+    fi
+    return 1
 }
 
 print_m3u_no_update_needed() {
@@ -1870,8 +1874,11 @@ check_m3u_targets() {
                     continue
                 fi
 
-                replace_single_m3u_entry "$m3u_file" "$line" "$replacement"
-                rc=$?
+                if replace_single_m3u_entry "$m3u_file" "$line" "$replacement"; then
+                    rc=0
+                else
+                    rc=$?
+                fi
                 if [[ $rc -eq 0 ]]; then
                     echo
                     printf '%s
