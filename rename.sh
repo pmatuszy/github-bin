@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.04.18 - v. 17.7 - rename Screen_Recording_YYYYMMDD_HHMMSS_Signal media files to timestamped screen_recording-signal names
 # 2026.04.15 - v. 17.6 - treat M3U helper exit code 3 as no-change under set -e and do not abort in wrapper/caller paths
 # 2026.04.15 - v. 17.5 - treat no-change Python M3U helper exits as normal results under set -e and avoid aborting on no-update playlist checks
 # 2026.04.15 - v. 17.2 - simplify no-op M3U messages to checked/no update needed and avoid OLD/NEW noise for effectively matching playlist entries
@@ -2430,6 +2431,8 @@ transform_name() {
         elif [[ "$newbase" =~ ^IMG_[0-9]+(\..+)$ ]]; then
             ts="$(get_file_oldest_timestamp_compact "$f")"
             newbase="${ts}-img${BASH_REMATCH[1]}"
+        elif [[ "$newbase" =~ ^Screen_Recording_([0-9]{8})_([0-9]{6})_Signal(\..+)$ ]]; then
+            newbase="${BASH_REMATCH[1]}_${BASH_REMATCH[2]}-screen_recording-signal${BASH_REMATCH[3]}"
         fi
     fi
 
