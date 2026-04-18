@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.04.18 - v. 17.8 - generalize Screen_Recording_YYYYMMDD_HHMMSS_suffix media renaming to timestamped screen_recording-<suffix> names
 # 2026.04.18 - v. 17.7 - rename Screen_Recording_YYYYMMDD_HHMMSS_Signal media files to timestamped screen_recording-signal names
 # 2026.04.15 - v. 17.6 - treat M3U helper exit code 3 as no-change under set -e and do not abort in wrapper/caller paths
 # 2026.04.15 - v. 17.5 - treat no-change Python M3U helper exits as normal results under set -e and avoid aborting on no-update playlist checks
@@ -2431,8 +2432,16 @@ transform_name() {
         elif [[ "$newbase" =~ ^IMG_[0-9]+(\..+)$ ]]; then
             ts="$(get_file_oldest_timestamp_compact "$f")"
             newbase="${ts}-img${BASH_REMATCH[1]}"
-        elif [[ "$newbase" =~ ^Screen_Recording_([0-9]{8})_([0-9]{6})_Signal(\..+)$ ]]; then
-            newbase="${BASH_REMATCH[1]}_${BASH_REMATCH[2]}-screen_recording-signal${BASH_REMATCH[3]}"
+        elif [[ "$newbase" =~ ^Screen_Recording_([0-9]{8})_([0-9]{6})_(.+)(\..+)$ ]]; then
+            local screen_suffix
+            screen_suffix="${BASH_REMATCH[3]}"
+            screen_suffix=$(printf '%s' "$screen_suffix" | tr '[:upper:]' '[:lower:]')
+            screen_suffix=$(printf '%s' "$screen_suffix" | sed -E 's/[^[:alnum:]]+/-/g; s/^-+//; s/-+$//; s/-+/-/g')
+            if [[ -n "$screen_suffix" ]]; then
+                newbase="${BASH_REMATCH[1]}_${BASH_REMATCH[2]}-screen_recording-${screen_suffix}${BASH_REMATCH[4]}"
+            else
+                newbase="${BASH_REMATCH[1]}_${BASH_REMATCH[2]}-screen_recording${BASH_REMATCH[4]}"
+            fi
         fi
     fi
 
