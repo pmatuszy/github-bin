@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.04.18 - v. 17.9 - rename Sprache_YYMMDD_HHMMSS_suffix and Voice_YYMMDD_HHMMSS_suffix media files to timestamped sprache/voice names
 # 2026.04.18 - v. 17.8 - generalize Screen_Recording_YYYYMMDD_HHMMSS_suffix media renaming to timestamped screen_recording-<suffix> names
 # 2026.04.18 - v. 17.7 - rename Screen_Recording_YYYYMMDD_HHMMSS_Signal media files to timestamped screen_recording-signal names
 # 2026.04.15 - v. 17.6 - treat M3U helper exit code 3 as no-change under set -e and do not abort in wrapper/caller paths
@@ -2394,7 +2395,7 @@ transform_basename() {
 
 transform_name() {
     local f="$1"
-    local dir base newbase ts stem ext
+    local dir base newbase ts stem ext media_suffix media_date media_time media_kind yy
 
     dir="$(dirname -- "$f")"
     base="$(basename -- "$f")"
@@ -2441,6 +2442,20 @@ transform_name() {
                 newbase="${BASH_REMATCH[1]}_${BASH_REMATCH[2]}-screen_recording-${screen_suffix}${BASH_REMATCH[4]}"
             else
                 newbase="${BASH_REMATCH[1]}_${BASH_REMATCH[2]}-screen_recording${BASH_REMATCH[4]}"
+            fi
+        elif [[ "$newbase" =~ ^(Sprache|Voice)_([0-9]{6})_([0-9]{6})_(.+)(\..+)$ ]]; then
+            media_kind="${BASH_REMATCH[1]}"
+            yy="${BASH_REMATCH[2]:0:2}"
+            media_date="20${BASH_REMATCH[2]}"
+            media_time="${BASH_REMATCH[3]}"
+            media_suffix="${BASH_REMATCH[4]}"
+            media_kind=$(printf '%s' "$media_kind" | tr '[:upper:]' '[:lower:]')
+            media_suffix=$(printf '%s' "$media_suffix" | tr '[:upper:]' '[:lower:]')
+            media_suffix=$(printf '%s' "$media_suffix" | sed -E 's/[^[:alnum:]]+/-/g; s/^-+//; s/-+$//; s/-+/-/g')
+            if [[ -n "$media_suffix" ]]; then
+                newbase="${media_date}_${media_time}-${media_kind}-${media_suffix}${BASH_REMATCH[5]}"
+            else
+                newbase="${media_date}_${media_time}-${media_kind}${BASH_REMATCH[5]}"
             fi
         fi
     fi
