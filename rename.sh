@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.04.18 - v. 18.0 - broaden transform_name timestamp-style media renames to common audio extensions
 # 2026.04.18 - v. 17.9 - rename Sprache_YYMMDD_HHMMSS_suffix and Voice_YYMMDD_HHMMSS_suffix media files to timestamped sprache/voice names
 # 2026.04.18 - v. 17.8 - generalize Screen_Recording_YYYYMMDD_HHMMSS_suffix media renaming to timestamped screen_recording-<suffix> names
 # 2026.04.18 - v. 17.7 - rename Screen_Recording_YYYYMMDD_HHMMSS_Signal media files to timestamped screen_recording-signal names
@@ -2396,9 +2397,12 @@ transform_basename() {
 transform_name() {
     local f="$1"
     local dir base newbase ts stem ext media_suffix media_date media_time media_kind yy
+    local audio_ext_re common_media_ext_re
 
     dir="$(dirname -- "$f")"
     base="$(basename -- "$f")"
+    audio_ext_re='(mp3|aac|m4a|flac|ogg|oga|opus|wav|wma|alac|aiff|ape|mka|mp2|mp1|ac3)'
+    common_media_ext_re='(mp3|aac|m4a|flac|ogg|oga|opus|wav|wma|alac|aiff|ape|mka|mp2|mp1|ac3|mp4|m4v|mov|mkv|webm|avi)'
 
     if path_has_control_chars "$base"; then
         base="$(sanitize_basename_control_chars "$base")"
@@ -2445,7 +2449,6 @@ transform_name() {
             fi
         elif [[ "$newbase" =~ ^(Sprache|Voice)_([0-9]{6})_([0-9]{6})_(.+)(\..+)$ ]]; then
             media_kind="${BASH_REMATCH[1]}"
-            yy="${BASH_REMATCH[2]:0:2}"
             media_date="20${BASH_REMATCH[2]}"
             media_time="${BASH_REMATCH[3]}"
             media_suffix="${BASH_REMATCH[4]}"
@@ -2457,6 +2460,17 @@ transform_name() {
             else
                 newbase="${media_date}_${media_time}-${media_kind}${BASH_REMATCH[5]}"
             fi
+        elif [[ "$newbase" =~ ^([0-9]{4})-([0-9]{2})-([0-9]{2})_([0-9]{2})-([0-9]{2})-([0-9]{2})(\.${audio_ext_re})$ ]]; then
+            newbase="${BASH_REMATCH[1]}${BASH_REMATCH[2]}${BASH_REMATCH[3]}_${BASH_REMATCH[4]}${BASH_REMATCH[5]}${BASH_REMATCH[6]}${BASH_REMATCH[7]}"
+        elif [[ "$newbase" =~ ^([0-9]{8})-([0-9]{6})_(.+)(\.${common_media_ext_re})$ ]]; then
+            media_suffix="${BASH_REMATCH[3]}"
+            media_suffix=$(printf '%s' "$media_suffix" | tr '[:upper:]' '[:lower:]')
+            media_suffix=$(printf '%s' "$media_suffix" | sed -E 's/[^[:alnum:]]+/-/g; s/^-+//; s/-+$//; s/-+/-/g')
+            if [[ -n "$media_suffix" ]]; then
+                newbase="${BASH_REMATCH[1]}_${BASH_REMATCH[2]}-${media_suffix}${BASH_REMATCH[4]}"
+            else
+                newbase="${BASH_REMATCH[1]}_${BASH_REMATCH[2]}${BASH_REMATCH[4]}"
+            fi
         fi
     fi
 
@@ -2464,7 +2478,7 @@ transform_name() {
         while [[ "$newbase" == _* ]]; do
             newbase="${newbase#_}"
         done
-        if [[ "$newbase" =~ ^([0-9])\.(mp3|mp4|m4a|flac)$ ]]; then
+        if [[ "$newbase" =~ ^([0-9])\.(mp3|aac|m4a|flac|ogg|oga|opus|wav|wma|alac|aiff|ape|mka|mp2|mp1|ac3|mp4|m4v|mov|mkv|webm|avi)$ ]]; then
             newbase="0${BASH_REMATCH[1]}.${BASH_REMATCH[2]}"
         fi
     fi
