@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.04.19 - v. 18.19 - make --run-db-maintenance imply DB mode and exit cleanly when DB file is missing
 # 2026.04.19 - v. 18.18 - make DB maintenance manual-only via --run-db-maintenance and show verbose command steps
 # 2026.04.19 - v. 18.17 - add SQLite maintenance modes (auto/off/full) with periodic optimize/checkpoint metadata
 # 2026.04.19 - v. 18.16 - make early resume prompt quit option exit immediately
@@ -257,7 +258,7 @@ Options:
   --use-db               Use SQLite cache in the start directory (_rename.sh-optional-db.sqlite3)
   --fast                 With --use-db, trust cached paths without checking current size/mtime
   --force-recheck        Ignore SQLite cache and recheck everything
-  --run-db-maintenance   Run DB maintenance and exit (manual invocation)
+  --run-db-maintenance   Run DB maintenance and exit (manual invocation; implies --use-db)
   --db-maintenance auto|[full]
                          auto: lightweight optimize/checkpoint profile
                          [full]: optimize + analyze + reindex + WAL truncate profile
@@ -275,7 +276,7 @@ Options:
 Example:
   rename.sh -v --use-db --colors yes --mode real --scope subdirs
   rename.sh -v --use-db --fast --colors yes --mode real --scope subdirs
-  rename.sh --use-db --run-db-maintenance --db-maintenance full
+  rename.sh --run-db-maintenance --db-maintenance full
   rename.sh --resume-state ask --use-db --mode real --scope subdirs
 EOF
 }
@@ -1201,6 +1202,7 @@ while (( $# > 0 )); do
             ;;
         --run-db-maintenance)
             RUN_DB_MAINTENANCE=1
+            USE_DB=1
             shift
             ;;
         --db-maintenance)
@@ -1276,17 +1278,22 @@ startup_progress "Loading exclude filters from: $EXCLUDE_FILTERS_FILE"
 load_exclude_filters
 startup_progress "Exclude filters loaded: ${#EXCLUDE_FILTERS[@]}"
 if (( USE_DB == 1 )); then
-    startup_progress "Initializing SQLite support..."
-    db_init
     if (( RUN_DB_MAINTENANCE == 1 )); then
+        startup_progress "Preparing SQLite maintenance support..."
+        db_require_sqlite
+        db_migrate_legacy_file
+        if [[ ! -f "$DB_FILE" ]]; then
+            echo "SQLite maintenance skipped: DB file not found: $DB_FILE"
+            exit 0
+        fi
         startup_progress "Running manual SQLite maintenance profile: $CLI_DB_MAINTENANCE"
         db_run_maintenance "$CLI_DB_MAINTENANCE"
         echo "SQLite maintenance finished: $DB_FILE"
         exit 0
     fi
-elif (( RUN_DB_MAINTENANCE == 1 )); then
-    echo "ERROR: --run-db-maintenance requires --use-db." >&2
-    exit 1
+
+    startup_progress "Initializing SQLite support..."
+    db_init
 fi
 startup_progress "Startup preparation finished"
 startup_progress "Interactive prompt wait: $(print_prompt_wait_description)"
