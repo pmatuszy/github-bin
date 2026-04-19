@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.04.19 - v. 18.10 - mark default values in help option choices with [ ]
 # 2026.04.19 - v. 18.9 - add interrupt checkpoint resume support with --resume-state mode
 # 2026.04.19 - v. 18.8 - wrap long checksum verbose lines using MAX_LINE_LENGTH without splitting filenames
 # 2026.04.19 - v. 18.7 - speed up DB hash cache lookups and avoid repeated subtree find scans during missing-ref recovery
@@ -237,7 +238,7 @@ debug_log() {
 
 usage() {
     cat <<'EOF'
-Usage: rename.sh [-v|--verbose] [--use-db] [--fast] [--force-recheck] [--colors yes|no] [--mode real|dry-run] [--scope subdirs|current] [--resume-state fresh|ask|resume] [--wait-seconds N] [--version] [-h|--help]
+Usage: rename.sh [-v|--verbose] [--use-db] [--fast] [--force-recheck] [--colors [yes]|no] [--mode real|[dry-run]] [--scope subdirs|[current]] [--resume-state ask|[fresh]|resume] [--wait-seconds [0]|N] [--version] [-h|--help]
 
 Options:
   -v, --verbose          Show extra diagnostic output
@@ -245,15 +246,15 @@ Options:
   --use-db               Use SQLite cache in the start directory (_rename.sh-optional-db.sqlite3)
   --fast                 With --use-db, trust cached paths without checking current size/mtime
   --force-recheck        Ignore SQLite cache and recheck everything
-  --colors yes|no        Skip the startup colors question
-  --mode real|dry-run    Skip the startup mode question
-  --scope subdirs|current
+  --colors [yes]|no      Skip the startup colors question
+  --mode real|[dry-run]  Skip the startup mode question
+  --scope subdirs|[current]
                          Skip the startup scope question
-  --resume-state fresh|ask|resume
-                         fresh: always start from beginning (default)
+  --resume-state ask|[fresh]|resume
                          ask: if checkpoint exists, ask to resume or restart
+                         [fresh]: always start from beginning (default)
                          resume: automatically resume from checkpoint if it exists
-  --wait-seconds N       Wait N seconds for each interactive answer; 0 means wait forever
+  --wait-seconds [0]|N   Wait N seconds for each interactive answer; 0 means wait forever
   -h, --help             Show this help
 
 Example:
