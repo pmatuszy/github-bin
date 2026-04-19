@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.04.19 - v. 18.7 - speed up DB hash cache lookups and avoid repeated subtree find scans during missing-ref recovery
 # 2026.04.19 - v. 18.6 - bump script version
 # 2026.04.19 - v. 18.5 - in verbose mode print a boxed startup summary of effective options with explanations
 # 2026.04.19 - v. 18.3 - add a help example line and reorder displayed --mode/--scope option choices
@@ -575,6 +576,9 @@ declare -A DB_CACHE_META=()
 declare -A DB_CACHE_STATUS=()
 declare -A DB_CACHE_SIG=()
 declare -A DB_CACHE_SIG_STATUS=()
+declare -A DB_CACHE_HASH_MD5=()
+declare -A DB_CACHE_HASH_SHA512=()
+declare -A DB_CACHE_ROW_EXISTS=()
 DB_PENDING_SQL_FILE=""
 DB_PENDING_COUNT=0
 DB_FLUSH_EVERY=500
@@ -614,6 +618,7 @@ db_migrate_legacy_file() {
 
 db_init() {
     local warmed_rows=0
+    local md5_hash sha512_hash file_hash_kind file_hash
 
     db_migrate_legacy_file()
     (( USE_DB == 1 )) || return 0
@@ -658,13 +663,26 @@ SQL
         startup_progress "Loading cached rows from SQLite into memory..."
     fi
 
-    while IFS='|' read -r path size mtime status signature; do
+    while IFS='|' read -r path size mtime status signature md5_hash sha512_hash file_hash_kind file_hash; do
         [[ -n "$path" ]] || continue
         DB_CACHE_META["$path"]="$size|$mtime"
         DB_CACHE_STATUS["$path"]="$status"
+        DB_CACHE_ROW_EXISTS["$path"]=1
         if [[ -n "$signature" ]]; then
             DB_CACHE_SIG["$signature"]=1
             DB_CACHE_SIG_STATUS["$signature"]="$status"
+        fi
+        if [[ -z "$md5_hash" && "$file_hash_kind" == "md5" ]]; then
+            md5_hash="$file_hash"
+        fi
+        if [[ -z "$sha512_hash" && "$file_hash_kind" == "sha512" ]]; then
+            sha512_hash="$file_hash"
+        fi
+        if [[ -n "$md5_hash" ]]; then
+            DB_CACHE_HASH_MD5["$path"]="$md5_hash"
+        fi
+        if [[ -n "$sha512_hash" ]]; then
+            DB_CACHE_HASH_SHA512["$path"]="$sha512_hash"
         fi
         ((++warmed_rows))
         if (( total_cached_rows > 0 )); then
@@ -676,7 +694,7 @@ SQL
         elif (( warmed_rows % 50000 == 0 )); then
             startup_progress "SQLite warmup progress: $warmed_rows rows loaded..."
         fi
-    done < <(sqlite3 -separator '|' "$DB_FILE" 'SELECT path, size, mtime, COALESCE(status, ""), COALESCE(signature, "") FROM checked_paths;')
+    done < <(sqlite3 -separator '|' "$DB_FILE" 'SELECT path, size, mtime, COALESCE(status, ""), COALESCE(signature, ""), COALESCE(file_md5, ""), COALESCE(file_sha512, ""), COALESCE(file_hash_kind, ""), COALESCE(file_hash, "") FROM checked_paths;')
 
     if (( total_cached_rows > 0 )); then
         startup_progress "SQLite cache warmup done: 100% ($warmed_rows / $total_cached_rows rows loaded)"
@@ -739,7 +757,7 @@ db_record_file_hash() {
     local path="$1"
     local hash_kind="$2"
     local hash_value="$3"
-    local abs sql existing_path specific_sql
+    local abs sql specific_sql
 
     (( USE_DB == 1 )) || return 0
     [[ -e "$path" && -n "$hash_kind" && -n "$hash_value" ]] || return 0
@@ -747,8 +765,7 @@ db_record_file_hash() {
     abs="$(db_abs_path "$path" 2>/dev/null || true)"
     [[ -n "$abs" ]] || return 0
 
-    existing_path="$(sqlite3 "$DB_FILE" "SELECT path FROM checked_paths WHERE path='$(sql_escape "$abs")' LIMIT 1;" 2>/dev/null || true)"
-    if [[ -n "$existing_path" ]]; then
+    if [[ -n "${DB_CACHE_ROW_EXISTS[$abs]-}" ]]; then
         DB_HASH_RECORD_STATUS="updated"
         ((++DB_ROWS_UPDATED))
     else
@@ -765,6 +782,12 @@ db_record_file_hash() {
 
     sql="INSERT INTO checked_paths(path, kind, size, mtime, status, last_checked, file_hash_kind, file_hash, file_md5, file_sha512) VALUES ('$(sql_escape "$abs")', 'file_hash_only', 0, 0, 'hashed', CURRENT_TIMESTAMP, '$(sql_escape "$hash_kind")', '$(sql_escape "$hash_value")', $( [[ "$hash_kind" == "md5" ]] && printf "'%s'" "$(sql_escape "$hash_value")" || printf "NULL" ), $( [[ "$hash_kind" == "sha512" ]] && printf "'%s'" "$(sql_escape "$hash_value")" || printf "NULL" )) ON CONFLICT(path) DO UPDATE SET file_hash_kind=excluded.file_hash_kind, file_hash=excluded.file_hash, last_checked=CURRENT_TIMESTAMP${specific_sql:+, $specific_sql};"
     printf '%s\n' "$sql" >> "$DB_PENDING_SQL_FILE"
+    DB_CACHE_ROW_EXISTS["$abs"]=1
+    if [[ "$hash_kind" == "md5" ]]; then
+        DB_CACHE_HASH_MD5["$abs"]="$hash_value"
+    elif [[ "$hash_kind" == "sha512" ]]; then
+        DB_CACHE_HASH_SHA512["$abs"]="$hash_value"
+    fi
     (( ++DB_PENDING_COUNT ))
     if (( DB_PENDING_COUNT >= DB_FLUSH_EVERY )); then
         db_flush_pending
@@ -801,6 +824,11 @@ db_find_path_by_file_hash_in_subtree() {
         fi
 
         printf "DELETE FROM checked_paths WHERE path='%s';\n" "$(sql_escape "$row_path")" >> "$DB_PENDING_SQL_FILE"
+        unset 'DB_CACHE_META[$row_path]'
+        unset 'DB_CACHE_STATUS[$row_path]'
+        unset 'DB_CACHE_HASH_MD5[$row_path]'
+        unset 'DB_CACHE_HASH_SHA512[$row_path]'
+        unset 'DB_CACHE_ROW_EXISTS[$row_path]'
         (( ++DB_PENDING_COUNT ))
         (( ++DB_ROWS_REMOVED ))
         (( ++DB_STALE_ROWS_REMOVED ))
@@ -817,31 +845,31 @@ db_find_path_by_file_hash_in_subtree() {
 db_get_cached_file_hash() {
     local path="$1"
     local hash_kind="$2"
-    local abs row
+    local abs cached
 
     (( USE_DB == 1 )) || return 1
     (( FORCE_RECHECK == 0 )) || return 1
     [[ -e "$path" ]] || return 1
 
-    db_flush_pending >/dev/null 2>&1 || true
-
     abs="$(db_abs_path "$path" 2>/dev/null || true)"
     [[ -n "$abs" ]] || return 1
 
-    case "$hash_kind" in
-        md5) row="$(sqlite3 -separator $'\t' "$DB_FILE" "SELECT COALESCE(NULLIF(file_md5,''), CASE WHEN file_hash_kind='md5' THEN file_hash ELSE '' END) FROM checked_paths WHERE path='$(sql_escape "$abs")' LIMIT 1;" 2>/dev/null | head -n 1)" ;;
-        sha512) row="$(sqlite3 -separator $'\t' "$DB_FILE" "SELECT COALESCE(NULLIF(file_sha512,''), CASE WHEN file_hash_kind='sha512' THEN file_hash ELSE '' END) FROM checked_paths WHERE path='$(sql_escape "$abs")' LIMIT 1;" 2>/dev/null | head -n 1)" ;;
-        *) row="" ;;
-    esac
-    [[ -n "$row" ]] || return 1
+    [[ -n "${DB_CACHE_ROW_EXISTS[$abs]-}" ]] || return 1
 
-    printf '%s' "$row"
+    case "$hash_kind" in
+        md5) cached="${DB_CACHE_HASH_MD5[$abs]-}" ;;
+        sha512) cached="${DB_CACHE_HASH_SHA512[$abs]-}" ;;
+        *) cached="" ;;
+    esac
+    [[ -n "$cached" ]] || return 1
+
+    printf '%s' "$cached"
 }
 
 
 db_backfill_missing_hashes_for_existing_file() {
     local path="$1"
-    local abs row md5_hash sha512_hash sql
+    local abs md5_hash sha512_hash sql
 
     (( USE_DB == 1 )) || return 0
     [[ -f "$path" ]] || return 0
@@ -850,13 +878,9 @@ db_backfill_missing_hashes_for_existing_file() {
     abs="$(db_abs_path "$path" 2>/dev/null || true)"
     [[ -n "$abs" ]] || return 0
 
-    db_flush_pending >/dev/null 2>&1 || true
-
-    row="$(sqlite3 -separator $'	' "$DB_FILE" "SELECT COALESCE(file_md5,''), COALESCE(file_sha512,''), COALESCE(file_hash_kind,''), COALESCE(file_hash,'') FROM checked_paths WHERE path='$(sql_escape "$abs")' LIMIT 1;" 2>/dev/null | head -n 1)"
-    [[ -n "$row" ]] || return 0
-
-    md5_hash="$(printf '%s' "$row" | awk -F '	' '{print $1}')"
-    sha512_hash="$(printf '%s' "$row" | awk -F '	' '{print $2}')"
+    [[ -n "${DB_CACHE_ROW_EXISTS[$abs]-}" ]] || return 0
+    md5_hash="${DB_CACHE_HASH_MD5[$abs]-}"
+    sha512_hash="${DB_CACHE_HASH_SHA512[$abs]-}"
 
     # Performance rule: when a file is skipped because the DB entry is already
     # valid, do not recompute hashes if at least one cached hash is already
@@ -867,6 +891,8 @@ db_backfill_missing_hashes_for_existing_file() {
 
     md5_hash="$(md5_of_file "$path")"
     sha512_hash="$(checksum_of_file sha512 "$path")"
+    DB_CACHE_HASH_MD5["$abs"]="$md5_hash"
+    DB_CACHE_HASH_SHA512["$abs"]="$sha512_hash"
 
     sql="UPDATE checked_paths SET file_md5='$(sql_escape "$md5_hash")', file_sha512='$(sql_escape "$sha512_hash")', last_checked=CURRENT_TIMESTAMP WHERE path='$(sql_escape "$abs")';"
     printf '%s
@@ -895,7 +921,7 @@ db_mark_checked() {
     mtime="${meta##*|}"
     sig=""
 
-    if [[ -n "${DB_CACHE_META[$abs]-}" || -n "${DB_CACHE_STATUS[$abs]-}" ]]; then
+    if [[ -n "${DB_CACHE_ROW_EXISTS[$abs]-}" || -n "${DB_CACHE_META[$abs]-}" || -n "${DB_CACHE_STATUS[$abs]-}" ]]; then
         existing_row=1
     fi
 
@@ -909,6 +935,7 @@ db_mark_checked() {
 
     DB_CACHE_META["$abs"]="$size|$mtime"
     DB_CACHE_STATUS["$abs"]="$status"
+    DB_CACHE_ROW_EXISTS["$abs"]=1
 
     if (( existing_row == 1 )); then
         ((++DB_ROWS_UPDATED))
@@ -978,6 +1005,18 @@ db_rewrite_subtree() {
             DB_CACHE_STATUS["$new_db_path"]="${DB_CACHE_STATUS[$old_db_path]}"
             unset 'DB_CACHE_STATUS[$old_db_path]'
         fi
+        if [[ -n "${DB_CACHE_HASH_MD5[$old_db_path]-}" ]]; then
+            DB_CACHE_HASH_MD5["$new_db_path"]="${DB_CACHE_HASH_MD5[$old_db_path]}"
+            unset 'DB_CACHE_HASH_MD5[$old_db_path]'
+        fi
+        if [[ -n "${DB_CACHE_HASH_SHA512[$old_db_path]-}" ]]; then
+            DB_CACHE_HASH_SHA512["$new_db_path"]="${DB_CACHE_HASH_SHA512[$old_db_path]}"
+            unset 'DB_CACHE_HASH_SHA512[$old_db_path]'
+        fi
+        if [[ -n "${DB_CACHE_ROW_EXISTS[$old_db_path]-}" ]]; then
+            DB_CACHE_ROW_EXISTS["$new_db_path"]=1
+            unset 'DB_CACHE_ROW_EXISTS[$old_db_path]'
+        fi
 
         ((++DB_ROWS_NEW))
         ((++DB_ROWS_REMOVED))
@@ -1018,6 +1057,18 @@ db_rewrite_single_path() {
     if [[ -n "${DB_CACHE_STATUS[$old_abs]-}" ]]; then
         DB_CACHE_STATUS["$new_abs"]="${DB_CACHE_STATUS[$old_abs]}"
         unset 'DB_CACHE_STATUS[$old_abs]'
+    fi
+    if [[ -n "${DB_CACHE_HASH_MD5[$old_abs]-}" ]]; then
+        DB_CACHE_HASH_MD5["$new_abs"]="${DB_CACHE_HASH_MD5[$old_abs]}"
+        unset 'DB_CACHE_HASH_MD5[$old_abs]'
+    fi
+    if [[ -n "${DB_CACHE_HASH_SHA512[$old_abs]-}" ]]; then
+        DB_CACHE_HASH_SHA512["$new_abs"]="${DB_CACHE_HASH_SHA512[$old_abs]}"
+        unset 'DB_CACHE_HASH_SHA512[$old_abs]'
+    fi
+    if [[ -n "${DB_CACHE_ROW_EXISTS[$old_abs]-}" ]]; then
+        DB_CACHE_ROW_EXISTS["$new_abs"]=1
+        unset 'DB_CACHE_ROW_EXISTS[$old_abs]'
     fi
 }
 
@@ -3312,6 +3363,34 @@ print_grouped_checksum_missing_warning() {
     done
 }
 
+declare -A RECOVERY_INDEX_READY=()
+declare -A RECOVERY_INDEX_BY_BASENAME=()
+declare -A RECOVERY_INDEX_ALL_FILES=()
+
+build_recovery_file_index() {
+    local search_root="$1"
+    local candidate base key
+
+    [[ -n "${RECOVERY_INDEX_READY[$search_root]-}" ]] && return 0
+
+    while IFS= read -r -d '' candidate; do
+        base="$(basename -- "$candidate")"
+        key="${search_root}"$'\x1f'"${base}"
+        if [[ -n "${RECOVERY_INDEX_BY_BASENAME[$key]-}" ]]; then
+            RECOVERY_INDEX_BY_BASENAME["$key"]+=$'\n'"$candidate"
+        else
+            RECOVERY_INDEX_BY_BASENAME["$key"]="$candidate"
+        fi
+        if [[ -n "${RECOVERY_INDEX_ALL_FILES[$search_root]-}" ]]; then
+            RECOVERY_INDEX_ALL_FILES["$search_root"]+=$'\n'"$candidate"
+        else
+            RECOVERY_INDEX_ALL_FILES["$search_root"]="$candidate"
+        fi
+    done < <(find "$search_root" -type f -print0 2>/dev/null)
+
+    RECOVERY_INDEX_READY["$search_root"]=1
+}
+
 find_best_path_for_missing_ref() {
     local missing_ref="$1"
     local expected_hash="$2"
@@ -3319,7 +3398,7 @@ find_best_path_for_missing_ref() {
 
     local kind wanted_base wanted_norm missing_dir search_root
     local fast_base fast_path fast_hash
-    local candidate candidate_hash candidate_name
+    local candidate candidate_hash candidate_name indexed_candidates index_key all_candidates
     local -a candidate_names=()
 
     kind="$(checksum_kind "$sum_file")"
@@ -3358,8 +3437,14 @@ find_best_path_for_missing_ref() {
         candidate_names=( "$wanted_norm" "$wanted_base" )
     fi
 
+    build_recovery_file_index "$search_root"
+
     for candidate_name in "${candidate_names[@]}"; do
-        while IFS= read -r -d '' candidate; do
+        index_key="${search_root}"$'\x1f'"${candidate_name}"
+        indexed_candidates="${RECOVERY_INDEX_BY_BASENAME[$index_key]-}"
+        [[ -n "$indexed_candidates" ]] || continue
+        while IFS= read -r candidate; do
+            [[ -n "$candidate" ]] || continue
             vlog "Subtree recovery candidate by name: '$candidate'"
             if [[ -n "$expected_hash" ]]; then
                 candidate_hash="$(checksum_of_file "$kind" "$candidate")"
@@ -3374,7 +3459,7 @@ find_best_path_for_missing_ref() {
                 printf '%s' "$candidate"
                 return 0
             fi
-        done < <(find "$search_root" -type f -name "$candidate_name" -print0 2>/dev/null)
+        done <<< "$indexed_candidates"
     done
 
     if [[ -n "$expected_hash" ]]; then
@@ -3386,14 +3471,16 @@ find_best_path_for_missing_ref() {
         fi
 
         print_scan_by_checksum_verbose "$search_root" "$expected_hash"
-        while IFS= read -r -d '' candidate; do
+        all_candidates="${RECOVERY_INDEX_ALL_FILES[$search_root]-}"
+        while IFS= read -r candidate; do
+            [[ -n "$candidate" ]] || continue
             candidate_hash="$(checksum_of_file "$kind" "$candidate")"
             if [[ "${candidate_hash,,}" == "${expected_hash,,}" ]]; then
                 vlog "Subtree recovery candidate by checksum matches: '$candidate'"
                 printf '%s' "$candidate"
                 return 0
             fi
-        done < <(find "$search_root" -type f -print0 2>/dev/null)
+        done <<< "$all_candidates"
     fi
 
     vlog "Subtree recovery failed for '$missing_ref' under '$search_root'"
