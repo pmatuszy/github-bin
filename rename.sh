@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.04.19 - v. 18.27 - add startup transfer-to-shell progress after sorting so large handoff phase is visible
 # 2026.04.19 - v. 18.26 - add verbose checkpoint-restore progress and periodic main-loop heartbeat to show activity
 # 2026.04.19 - v. 18.25 - add richer verbose startup progress (buffered size + elapsed time) for long discovery/sort phase
 # 2026.04.19 - v. 18.24 - wrap checksum-group referenced-file rename verbose lines using MAX_LINE_LENGTH helper
@@ -4154,9 +4155,30 @@ if verbose:
     ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     sort_elapsed = time.monotonic() - sort_start
     total_elapsed = time.monotonic() - start
-    sys.stderr.write(f"[STARTUP {ts}] Sorting done in {sort_elapsed:.1f}s (total startup discovery/sort: {total_elapsed:.1f}s).\n")
+    sys.stderr.write(f"[STARTUP {ts}] Sorting done in {sort_elapsed:.1f}s (total startup discovery/sort: {total_elapsed:.1f}s). Starting transfer to shell...\n")
     sys.stderr.flush()
-sys.stdout.buffer.write(b"\0".join(items) + (b"\0" if items else b""))
+total_items = len(items)
+chunk_items = 50000
+report_every = 200000
+next_report = report_every
+written = 0
+for i in range(0, total_items, chunk_items):
+    chunk_items_list = items[i:i + chunk_items]
+    if not chunk_items_list:
+        continue
+    sys.stdout.buffer.write(b"\0".join(chunk_items_list) + b"\0")
+    written += len(chunk_items_list)
+    if verbose:
+        while written >= next_report:
+            ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            pct = (written * 100.0 / total_items) if total_items else 100.0
+            sys.stderr.write(f"[STARTUP {ts}] Transfer progress: {written}/{total_items} entries ({pct:.1f}%)...\n")
+            sys.stderr.flush()
+            next_report += report_every
+if verbose:
+    ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    sys.stderr.write(f"[STARTUP {ts}] Transfer to shell complete: {written}/{total_items} entries.\n")
+    sys.stderr.flush()
 ' "$VERBOSE"
     )
 else
@@ -4203,9 +4225,30 @@ if verbose:
     ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     sort_elapsed = time.monotonic() - sort_start
     total_elapsed = time.monotonic() - start
-    sys.stderr.write(f"[STARTUP {ts}] Sorting done in {sort_elapsed:.1f}s (total startup discovery/sort: {total_elapsed:.1f}s).\n")
+    sys.stderr.write(f"[STARTUP {ts}] Sorting done in {sort_elapsed:.1f}s (total startup discovery/sort: {total_elapsed:.1f}s). Starting transfer to shell...\n")
     sys.stderr.flush()
-sys.stdout.buffer.write(b"\0".join(items) + (b"\0" if items else b""))
+total_items = len(items)
+chunk_items = 50000
+report_every = 200000
+next_report = report_every
+written = 0
+for i in range(0, total_items, chunk_items):
+    chunk_items_list = items[i:i + chunk_items]
+    if not chunk_items_list:
+        continue
+    sys.stdout.buffer.write(b"\0".join(chunk_items_list) + b"\0")
+    written += len(chunk_items_list)
+    if verbose:
+        while written >= next_report:
+            ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            pct = (written * 100.0 / total_items) if total_items else 100.0
+            sys.stderr.write(f"[STARTUP {ts}] Transfer progress: {written}/{total_items} entries ({pct:.1f}%)...\n")
+            sys.stderr.flush()
+            next_report += report_every
+if verbose:
+    ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    sys.stderr.write(f"[STARTUP {ts}] Transfer to shell complete: {written}/{total_items} entries.\n")
+    sys.stderr.flush()
 ' "$VERBOSE"
     )
 fi
