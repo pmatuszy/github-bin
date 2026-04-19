@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.04.19 - v. 18.20 - print verbose timestamp before every interactive read_single_key prompt
 # 2026.04.19 - v. 18.19 - make --run-db-maintenance imply DB mode and exit cleanly when DB file is missing
 # 2026.04.19 - v. 18.18 - make DB maintenance manual-only via --run-db-maintenance and show verbose command steps
 # 2026.04.19 - v. 18.17 - add SQLite maintenance modes (auto/off/full) with periodic optimize/checkpoint metadata
@@ -338,7 +339,18 @@ flush_stdin() {
 read_single_key() {
     local __var_name="$1"
     local __timeout="$2"
+    local __prompt_text="${3-}"
     local __char=""
+    local __ts=""
+
+    if (( VERBOSE == 1 )); then
+        __ts="$(date '+%Y-%m-%d %H:%M:%S')"
+        if [[ -n "$__prompt_text" ]]; then
+            echo "[VERBOSE] [${__ts}] Awaiting user input: ${__prompt_text}" >&2
+        else
+            echo "[VERBOSE] [${__ts}] Awaiting user input" >&2
+        fi
+    fi
 
     if [[ "$__timeout" =~ ^[0-9]+$ ]] && (( __timeout == 0 )); then
         IFS= read -r -n 1 __char || true
