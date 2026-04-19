@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# 2026.04.19 - v. 18.5 - in verbose mode print a boxed startup summary of effective options with explanations
+# 2026.04.19 - v. 18.3 - add a help example line and reorder displayed --mode/--scope option choices
 # 2026.04.19 - v. 18.2 - derive SCRIPT_VERSION automatically from the first history line instead of hardcoding it
 # 2026.04.18 - v. 18.1 - add exact path exceptions so a directory can be protected from rename while its subtree is still checked
 # 2026.04.18 - v. 18.0 - broaden transform_name timestamp-style media renames to common audio extensions
@@ -210,7 +212,7 @@ trap 'on_err "$?" "$LINENO" "$BASH_COMMAND"' ERR
 
 usage() {
     cat <<'EOF'
-Usage: rename.sh [-v|--verbose] [--use-db] [--fast] [--force-recheck] [--colors yes|no] [--mode dry-run|real] [--scope current|subdirs] [--wait-seconds N] [--version] [-h|--help]
+Usage: rename.sh [-v|--verbose] [--use-db] [--fast] [--force-recheck] [--colors yes|no] [--mode real|dry-run] [--scope subdirs|current] [--wait-seconds N] [--version] [-h|--help]
 
 Options:
   -v, --verbose          Show extra diagnostic output
@@ -219,11 +221,15 @@ Options:
   --fast                 With --use-db, trust cached paths without checking current size/mtime
   --force-recheck        Ignore SQLite cache and recheck everything
   --colors yes|no        Skip the startup colors question
-  --mode dry-run|real    Skip the startup mode question
-  --scope current|subdirs
+  --mode real|dry-run    Skip the startup mode question
+  --scope subdirs|current
                          Skip the startup scope question
   --wait-seconds N       Wait N seconds for each interactive answer; 0 means wait forever
   -h, --help             Show this help
+
+Example:
+  rename.sh -v --use-db --colors yes --mode real --scope subdirs
+  rename.sh -v --use-db --fast --colors yes --mode real --scope subdirs
 EOF
 }
 
@@ -1037,7 +1043,7 @@ while (( $# > 0 )); do
             [[ $# -ge 2 ]] || { echo "Missing value for --mode" >&2; usage >&2; exit 1; }
             case "$2" in
                 dry-run|real) CLI_MODE="$2" ;;
-                *) echo "Invalid value for --mode: $2 (use dry-run or real)" >&2; usage >&2; exit 1 ;;
+                *) echo "Invalid value for --mode: $2 (use real or dry-run)" >&2; usage >&2; exit 1 ;;
             esac
             shift 2
             ;;
@@ -1045,7 +1051,7 @@ while (( $# > 0 )); do
             [[ $# -ge 2 ]] || { echo "Missing value for --scope" >&2; usage >&2; exit 1; }
             case "$2" in
                 current|subdirs) CLI_SCOPE="$2" ;;
-                *) echo "Invalid value for --scope: $2 (use current or subdirs)" >&2; usage >&2; exit 1 ;;
+                *) echo "Invalid value for --scope: $2 (use subdirs or current)" >&2; usage >&2; exit 1 ;;
             esac
             shift 2
             ;;
@@ -1144,6 +1150,66 @@ else
 fi
 
 ARROW="→"
+
+print_verbose_options_box() {
+    (( VERBOSE == 1 )) || return 0
+
+    local -a lines=()
+    local box_width=0
+    local line db_mode scope_text color_text prompt_text
+
+    if (( USE_DB == 1 )); then
+        if (( FAST_DB == 1 )); then
+            db_mode="enabled, FAST - trust cached paths without current size/mtime checks"
+        else
+            db_mode="enabled, SAFE - require cached path, size, and mtime to still match"
+        fi
+        if (( FORCE_RECHECK == 1 )); then
+            db_mode="${db_mode}; force recheck active"
+        fi
+    else
+        db_mode="disabled - always inspect files directly"
+    fi
+
+    if [[ "$use_colors" == "yes" ]]; then
+        color_text="yes - colored output is enabled"
+    else
+        color_text="no - plain output without ANSI colors"
+    fi
+
+    if [[ "$process_scope" == "subdirs" ]]; then
+        scope_text="subdirs - process the current directory and all subdirectories"
+    else
+        scope_text="current - process only the current directory"
+    fi
+
+    if (( PROMPT_WAIT_SECONDS == 0 )); then
+        prompt_text="0 - wait forever for each interactive answer"
+    else
+        prompt_text="${PROMPT_WAIT_SECONDS} - timeout for each interactive answer in seconds"
+    fi
+
+    lines+=("Verbose        : on - print extra diagnostic information")
+    lines+=("Colors         : ${color_text}")
+    lines+=("Mode           : ${mode} - $( [[ "$mode" == "real" ]] && printf '%s' 'perform interactive real renames' || printf '%s' 'show planned changes only' )")
+    lines+=("Scope          : ${scope_text}")
+    lines+=("SQLite cache   : ${db_mode}")
+    lines+=("Prompt wait    : ${prompt_text}")
+    lines+=("Start dir      : ${START_DIR} - root path used for this run")
+    lines+=("Exclude file   : ${EXCLUDE_FILTERS_FILE} - local exception/filter definitions")
+
+    for line in "${lines[@]}"; do
+        (( ${#line} > box_width )) && box_width=${#line}
+    done
+
+    printf '┌%*s┐\n' $((box_width + 2)) '' | tr ' ' '─'
+    printf '│ %-*s │\n' "$box_width" "Effective options (verbose mode)"
+    printf '├%*s┤\n' $((box_width + 2)) '' | tr ' ' '─'
+    for line in "${lines[@]}"; do
+        printf '│ %-*s │\n' "$box_width" "$line"
+    done
+    printf '└%*s┘\n' $((box_width + 2)) '' | tr ' ' '─'
+}
 
 print_wrapped_two_path_verbose() {
     (( VERBOSE == 1 )) || return 0
@@ -1599,6 +1665,7 @@ echo -e "Scope selected: ${CYAN}$process_scope${RESET}"
 sleep 1
 
 vlog "Verbose mode enabled"
+print_verbose_options_box
 
 is_excluded_path() {
     local p="$1"
@@ -4111,5 +4178,4 @@ if [[ "$stopped_by_user" != "yes" ]]; then
 fi
 SCRIPT_FINISH_TIME="$(date '+%Y-%m-%d %H:%M:%S')"
 print_summary
-
 
