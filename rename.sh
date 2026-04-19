@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# 2026.04.19 - v. 18.24 - wrap checksum-group referenced-file rename verbose lines using MAX_LINE_LENGTH helper
+# 2026.04.19 - v. 18.23 - include timestamps in startup tags as [STARTUP YYYY-MM-DD HH:MM:SS]
 # 2026.04.19 - v. 18.22 - show startup discovery/sort progress with verbose dots so long scans do not look stuck
 # 2026.04.19 - v. 18.21 - show verbose timestamps on actual question lines (not after choice prompt)
 # 2026.04.19 - v. 18.20 - print verbose timestamp before every interactive read_single_key prompt
@@ -325,7 +327,9 @@ print_startup_banner() {
 }
 
 startup_progress() {
-    echo "[STARTUP] $*"
+    local ts
+    ts="$(date '+%Y-%m-%d %H:%M:%S')"
+    echo "[STARTUP ${ts}] $*"
 }
 
 flush_stdin() {
@@ -4089,6 +4093,7 @@ if [[ "$process_scope" == "current" ]]; then
         find . -mindepth 1 -maxdepth 1 -depth -print0 |
         python3 -c '
 import sys
+from datetime import datetime
 verbose = (len(sys.argv) > 1 and sys.argv[1] == "1")
 buf = bytearray()
 dot_every = 8 * 1024 * 1024
@@ -4107,7 +4112,8 @@ if verbose and len(buf) >= dot_every:
     sys.stderr.write("\n")
     sys.stderr.flush()
 if verbose:
-    sys.stderr.write(f"[STARTUP] Sorting discovered entries: {len(items)}...\n")
+    ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    sys.stderr.write(f"[STARTUP {ts}] Sorting discovered entries: {len(items)}...\n")
     sys.stderr.flush()
 def depth(p: bytes) -> int:
     s = p.decode("utf-8", "surrogateescape")
@@ -4117,7 +4123,8 @@ def is_checksum(p: bytes) -> int:
     return 0 if (s.endswith(".sha512") or s.endswith(".md5")) else 1
 items.sort(key=lambda p: (-depth(p), is_checksum(p), p))
 if verbose:
-    sys.stderr.write("[STARTUP] Sorting done.\n")
+    ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    sys.stderr.write(f"[STARTUP {ts}] Sorting done.\n")
     sys.stderr.flush()
 sys.stdout.buffer.write(b"\0".join(items) + (b"\0" if items else b""))
 ' "$VERBOSE"
@@ -4127,6 +4134,7 @@ else
         find . -depth -mindepth 1 -print0 |
         python3 -c '
 import sys
+from datetime import datetime
 verbose = (len(sys.argv) > 1 and sys.argv[1] == "1")
 buf = bytearray()
 dot_every = 8 * 1024 * 1024
@@ -4145,7 +4153,8 @@ if verbose and len(buf) >= dot_every:
     sys.stderr.write("\n")
     sys.stderr.flush()
 if verbose:
-    sys.stderr.write(f"[STARTUP] Sorting discovered entries: {len(items)}...\n")
+    ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    sys.stderr.write(f"[STARTUP {ts}] Sorting discovered entries: {len(items)}...\n")
     sys.stderr.flush()
 def depth(p: bytes) -> int:
     s = p.decode("utf-8", "surrogateescape")
@@ -4155,7 +4164,8 @@ def is_checksum(p: bytes) -> int:
     return 0 if (s.endswith(".sha512") or s.endswith(".md5")) else 1
 items.sort(key=lambda p: (-depth(p), is_checksum(p), p))
 if verbose:
-    sys.stderr.write("[STARTUP] Sorting done.\n")
+    ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    sys.stderr.write(f"[STARTUP {ts}] Sorting done.\n")
     sys.stderr.flush()
 sys.stdout.buffer.write(b"\0".join(items) + (b"\0" if items else b""))
 ' "$VERBOSE"
@@ -4524,7 +4534,7 @@ for f in "${ordered_paths[@]}"; do
             if [[ "${new_refs[$i]}" != "${refs[$i]}" ]]; then
                 ref_was_dir=no
                 [[ -d "${refs[$i]}" ]] && ref_was_dir=yes
-                vlog "Renaming referenced file '${refs[$i]}' -> '${new_refs[$i]}'"
+                print_rename_action_verbose "${refs[$i]}" "${new_refs[$i]}" "checksum group rename"
                 mv -i -- "${refs[$i]}" "${new_refs[$i]}"
                 if [[ "$ref_was_dir" == "yes" ]]; then
                     db_rewrite_subtree "${refs[$i]}" "${new_refs[$i]}"
@@ -4539,7 +4549,7 @@ for f in "${ordered_paths[@]}"; do
                     echo -e "  ${GREEN}NEW HTML:${RESET} ${new_refs[$i]}"
                     echo -e "  ${RED}OLD DIR:${RESET}  ${html_companion_old_dirs[$i]}"
                     echo -e "  ${GREEN}NEW DIR:${RESET}  ${html_companion_new_dirs[$i]}"
-                    vlog "Renaming HTML companion directory '${html_companion_old_dirs[$i]}' -> '${html_companion_new_dirs[$i]}'"
+                    print_rename_action_verbose "${html_companion_old_dirs[$i]}" "${html_companion_new_dirs[$i]}" "html companion rename"
                     mv -i -- "${html_companion_old_dirs[$i]}" "${html_companion_new_dirs[$i]}"
                     db_rewrite_subtree "${html_companion_old_dirs[$i]}" "${html_companion_new_dirs[$i]}"
                     db_mark_renamed_path_checked "${html_companion_new_dirs[$i]}" "plain"
