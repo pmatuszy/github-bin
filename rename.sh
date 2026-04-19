@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.04.19 - v. 18.9 - add interrupt checkpoint resume support with --resume-state mode
 # 2026.04.19 - v. 18.8 - wrap long checksum verbose lines using MAX_LINE_LENGTH without splitting filenames
 # 2026.04.19 - v. 18.7 - speed up DB hash cache lookups and avoid repeated subtree find scans during missing-ref recovery
 # 2026.04.19 - v. 18.6 - bump script version
@@ -184,6 +185,7 @@ VERBOSE_MAIN_EVERY=200
 CLI_COLORS=""
 CLI_MODE=""
 CLI_SCOPE=""
+CLI_RESUME_STATE="fresh"
 PROMPT_WAIT_SECONDS=0
 MAP_R_ACUTE="c"
 MAP_REGISTERED="z"
@@ -203,6 +205,8 @@ SCRIPT_START_TIME="$(date '+%Y-%m-%d %H:%M:%S')"
 SCRIPT_FINISH_TIME=""
 SUMMARY_PRINTED=0
 FILES_HASHED=0
+RESUME_STATE_FILE="$START_DIR/_rename.sh.resume-state.json"
+RESUME_STATE_WAS_LOADED=0
 declare -a CURRENT_OP_FILE_OLDS=()
 declare -a CURRENT_OP_FILE_NEWS=()
 
@@ -233,7 +237,7 @@ debug_log() {
 
 usage() {
     cat <<'EOF'
-Usage: rename.sh [-v|--verbose] [--use-db] [--fast] [--force-recheck] [--colors yes|no] [--mode real|dry-run] [--scope subdirs|current] [--wait-seconds N] [--version] [-h|--help]
+Usage: rename.sh [-v|--verbose] [--use-db] [--fast] [--force-recheck] [--colors yes|no] [--mode real|dry-run] [--scope subdirs|current] [--resume-state fresh|ask|resume] [--wait-seconds N] [--version] [-h|--help]
 
 Options:
   -v, --verbose          Show extra diagnostic output
@@ -245,12 +249,17 @@ Options:
   --mode real|dry-run    Skip the startup mode question
   --scope subdirs|current
                          Skip the startup scope question
+  --resume-state fresh|ask|resume
+                         fresh: always start from beginning (default)
+                         ask: if checkpoint exists, ask to resume or restart
+                         resume: automatically resume from checkpoint if it exists
   --wait-seconds N       Wait N seconds for each interactive answer; 0 means wait forever
   -h, --help             Show this help
 
 Example:
   rename.sh -v --use-db --colors yes --mode real --scope subdirs
   rename.sh -v --use-db --fast --colors yes --mode real --scope subdirs
+  rename.sh --resume-state ask --use-db --mode real --scope subdirs
 EOF
 }
 
@@ -1135,6 +1144,14 @@ while (( $# > 0 )); do
             esac
             shift 2
             ;;
+        --resume-state)
+            [[ $# -ge 2 ]] || { echo "Missing value for --resume-state" >&2; usage >&2; exit 1; }
+            case "$2" in
+                fresh|ask|resume) CLI_RESUME_STATE="$2" ;;
+                *) echo "Invalid value for --resume-state: $2 (use fresh, ask, or resume)" >&2; usage >&2; exit 1 ;;
+            esac
+            shift 2
+            ;;
         --wait-seconds)
             [[ $# -ge 2 ]] || { echo "Missing value for --wait-seconds" >&2; usage >&2; exit 1; }
             [[ "$2" =~ ^[0-9]+$ ]] || { echo "Invalid value for --wait-seconds: $2 (use 0 or a positive integer)" >&2; usage >&2; exit 1; }
@@ -1277,6 +1294,7 @@ print_verbose_options_box() {
     lines+=("Mode           : ${mode} - $( [[ "$mode" == "real" ]] && printf '%s' 'perform interactive real renames' || printf '%s' 'show planned changes only' )")
     lines+=("Scope          : ${scope_text}")
     lines+=("SQLite cache   : ${db_mode}")
+    lines+=("Resume state   : ${CLI_RESUME_STATE} - checkpoint behavior after Ctrl-C")
     lines+=("Prompt wait    : ${prompt_text}")
     lines+=("Start dir      : ${START_DIR} - root path used for this run")
     lines+=("Exclude file   : ${EXCLUDE_FILTERS_FILE} - local exception/filter definitions")
@@ -3550,6 +3568,202 @@ declare -a renamed_list=()
 declare -A recorded
 declare -A processed
 
+clear_resume_state_file() {
+    [[ -f "$RESUME_STATE_FILE" ]] || return 0
+    rm -f -- "$RESUME_STATE_FILE"
+}
+
+save_resume_checkpoint() {
+    local tmp_processed tmp_renamed
+    local p r
+
+    if ! command -v python3 >/dev/null 2>&1; then
+        return 0
+    fi
+
+    tmp_processed="$(mktemp)"
+    tmp_renamed="$(mktemp)"
+
+    for p in "${!processed[@]}"; do
+        printf '%s\0' "$p" >> "$tmp_processed"
+    done
+    for r in "${renamed_list[@]}"; do
+        printf '%s\0' "$r" >> "$tmp_renamed"
+    done
+
+    if ! python3 - "$RESUME_STATE_FILE" "$tmp_processed" "$tmp_renamed" \
+        "$SCRIPT_VERSION" "$START_DIR" "$mode" "$process_scope" \
+        "$USE_DB" "$FAST_DB" "$FORCE_RECHECK" "$PROMPT_WAIT_SECONDS" \
+        "$files_examined" "$files_affected" "$files_skipped" "$FILES_HASHED" \
+        "$SCRIPT_START_TIME" <<'PY'
+import json
+import pathlib
+import sys
+
+state_path = pathlib.Path(sys.argv[1])
+processed_path = pathlib.Path(sys.argv[2])
+renamed_path = pathlib.Path(sys.argv[3])
+
+def read_null_file(path: pathlib.Path):
+    data = path.read_bytes()
+    if not data:
+        return []
+    return [x.decode("utf-8", "surrogateescape") for x in data.split(b"\0") if x]
+
+payload = {
+    "scriptVersion": sys.argv[4],
+    "startDir": sys.argv[5],
+    "mode": sys.argv[6],
+    "scope": sys.argv[7],
+    "useDb": int(sys.argv[8]),
+    "fastDb": int(sys.argv[9]),
+    "forceRecheck": int(sys.argv[10]),
+    "promptWaitSeconds": int(sys.argv[11]),
+    "filesExamined": int(sys.argv[12]),
+    "filesAffected": int(sys.argv[13]),
+    "filesSkipped": int(sys.argv[14]),
+    "filesHashed": int(sys.argv[15]),
+    "scriptStartTime": sys.argv[16],
+    "processed": read_null_file(processed_path),
+    "renamedList": read_null_file(renamed_path),
+}
+
+state_path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+PY
+    then
+        rm -f -- "$tmp_processed" "$tmp_renamed"
+        return 0
+    fi
+
+    rm -f -- "$tmp_processed" "$tmp_renamed"
+}
+
+load_resume_checkpoint() {
+    local tmp_processed tmp_renamed meta
+    local prev_processed_count=0
+    local path entry
+
+    [[ -f "$RESUME_STATE_FILE" ]] || return 1
+    if ! command -v python3 >/dev/null 2>&1; then
+        echo "Resume checkpoint found but python3 is unavailable; starting from scratch."
+        return 1
+    fi
+
+    tmp_processed="$(mktemp)"
+    tmp_renamed="$(mktemp)"
+    if ! meta="$(python3 - "$RESUME_STATE_FILE" "$tmp_processed" "$tmp_renamed" "$START_DIR" "$mode" "$process_scope" "$USE_DB" "$FAST_DB" "$FORCE_RECHECK" "$PROMPT_WAIT_SECONDS" <<'PY'
+import json
+import pathlib
+import sys
+
+state_path = pathlib.Path(sys.argv[1])
+processed_out = pathlib.Path(sys.argv[2])
+renamed_out = pathlib.Path(sys.argv[3])
+
+data = json.loads(state_path.read_text(encoding="utf-8"))
+
+checks = [
+    ("startDir", sys.argv[4]),
+    ("mode", sys.argv[5]),
+    ("scope", sys.argv[6]),
+]
+for key, expected in checks:
+    if str(data.get(key, "")) != expected:
+        print(f"mismatch:{key}")
+        sys.exit(2)
+
+numeric_checks = [
+    ("useDb", int(sys.argv[7])),
+    ("fastDb", int(sys.argv[8])),
+    ("forceRecheck", int(sys.argv[9])),
+    ("promptWaitSeconds", int(sys.argv[10])),
+]
+for key, expected in numeric_checks:
+    if int(data.get(key, -1)) != expected:
+        print(f"mismatch:{key}")
+        sys.exit(2)
+
+processed = data.get("processed", [])
+renamed = data.get("renamedList", [])
+if not isinstance(processed, list) or not isinstance(renamed, list):
+    print("invalid:lists")
+    sys.exit(3)
+
+processed_out.write_bytes(b"\0".join(s.encode("utf-8", "surrogateescape") for s in processed) + (b"\0" if processed else b""))
+renamed_out.write_bytes(b"\0".join(s.encode("utf-8", "surrogateescape") for s in renamed) + (b"\0" if renamed else b""))
+
+fields = [
+    str(int(data.get("filesExamined", 0))),
+    str(int(data.get("filesAffected", 0))),
+    str(int(data.get("filesSkipped", 0))),
+    str(int(data.get("filesHashed", 0))),
+    str(data.get("scriptStartTime", "")),
+]
+print("\t".join(fields))
+PY
+)"; then
+        rm -f -- "$tmp_processed" "$tmp_renamed"
+        if [[ "$meta" == mismatch:* ]]; then
+            echo "Resume checkpoint exists but options differ from the previous run; starting from scratch."
+        else
+            echo "Resume checkpoint is invalid; starting from scratch."
+        fi
+        return 1
+    fi
+
+    IFS=$'\t' read -r files_examined files_affected files_skipped FILES_HASHED SCRIPT_START_TIME <<< "$meta"
+
+    unset processed
+    declare -gA processed=()
+    while IFS= read -r -d '' path; do
+        processed["$path"]=1
+        ((++prev_processed_count))
+    done < "$tmp_processed"
+
+    renamed_list=()
+    unset recorded
+    declare -gA recorded=()
+    while IFS= read -r -d '' entry; do
+        renamed_list+=( "$entry" )
+        recorded["$entry"]=1
+    done < "$tmp_renamed"
+
+    rm -f -- "$tmp_processed" "$tmp_renamed"
+    RESUME_STATE_WAS_LOADED=1
+    echo "Resume checkpoint loaded: $prev_processed_count entries marked as already processed."
+    return 0
+}
+
+maybe_resume_from_checkpoint() {
+    local answer=""
+
+    [[ -f "$RESUME_STATE_FILE" ]] || return 0
+
+    case "$CLI_RESUME_STATE" in
+        fresh)
+            return 0
+            ;;
+        resume)
+            load_resume_checkpoint || true
+            return 0
+            ;;
+        ask)
+            echo
+            echo "Checkpoint found from an interrupted run: $RESUME_STATE_FILE"
+            echo "Resume from checkpoint?"
+            echo "  [Y] Resume"
+            echo "  [N] Start from the beginning (default)"
+            echo -n "Choice [y/N]: "
+            flush_stdin
+            read_single_key answer "$PROMPT_WAIT_SECONDS"
+            echo
+            if [[ "$answer" =~ [Yy] ]]; then
+                load_resume_checkpoint || true
+            fi
+            ;;
+    esac
+}
+
 record_rename() {
     local old="$1" new="$2"
     local key="$old|$new"
@@ -3702,8 +3916,10 @@ print_summary() {
 on_interrupt() {
     stopped_by_user=yes
     SCRIPT_FINISH_TIME="$(date '+%Y-%m-%d %H:%M:%S')"
+    save_resume_checkpoint
     echo
     echo "Interrupted by user (Ctrl-C)."
+    echo "Checkpoint saved: $RESUME_STATE_FILE"
     print_summary
     exit 130
 }
@@ -3747,6 +3963,7 @@ sys.stdout.buffer.write(b"\0".join(items) + (b"\0" if items else b""))
 fi
 
 vlog "Discovered entries to process: ${#ordered_paths[@]}"
+maybe_resume_from_checkpoint
 
 main_index=0
 for f in "${ordered_paths[@]}"; do
@@ -4308,6 +4525,7 @@ for f in "${ordered_paths[@]}"; do
 done
 
 if [[ "$stopped_by_user" != "yes" ]]; then
+    clear_resume_state_file
     check_all_m3u_files
 fi
 SCRIPT_FINISH_TIME="$(date '+%Y-%m-%d %H:%M:%S')"
