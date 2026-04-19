@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.04.19 - v. 18.26 - add verbose checkpoint-restore progress and periodic main-loop heartbeat to show activity
 # 2026.04.19 - v. 18.25 - add richer verbose startup progress (buffered size + elapsed time) for long discovery/sort phase
 # 2026.04.19 - v. 18.24 - wrap checksum-group referenced-file rename verbose lines using MAX_LINE_LENGTH helper
 # 2026.04.19 - v. 18.23 - include timestamps in startup tags as [STARTUP YYYY-MM-DD HH:MM:SS]
@@ -366,6 +367,14 @@ verbose_question_timestamp() {
     local ts
     ts="$(date '+%Y-%m-%d %H:%M:%S')"
     echo "[VERBOSE] [${ts}] ${question}" >&2
+}
+
+verbose_status_timestamp() {
+    (( VERBOSE == 1 )) || return 0
+    local msg="$1"
+    local ts
+    ts="$(date '+%Y-%m-%d %H:%M:%S')"
+    echo "[VERBOSE] [${ts}] ${msg}" >&2
 }
 
 prompt_resume_choice_early() {
@@ -3789,6 +3798,7 @@ PY
 load_resume_checkpoint() {
     local tmp_processed tmp_renamed meta
     local prev_processed_count=0
+    local prev_renamed_count=0
     local path entry
 
     [[ -f "$RESUME_STATE_FILE" ]] || return 1
@@ -3799,6 +3809,7 @@ load_resume_checkpoint() {
 
     tmp_processed="$(mktemp)"
     tmp_renamed="$(mktemp)"
+    verbose_status_timestamp "Loading resume checkpoint metadata from: $RESUME_STATE_FILE"
     if ! meta="$(python3 - "$RESUME_STATE_FILE" "$tmp_processed" "$tmp_renamed" "$START_DIR" "$mode" "$process_scope" "$USE_DB" "$FAST_DB" "$FORCE_RECHECK" "$PROMPT_WAIT_SECONDS" <<'PY'
 import json
 import pathlib
@@ -3863,21 +3874,31 @@ PY
 
     unset processed
     declare -gA processed=()
+    verbose_status_timestamp "Restoring processed-entry state from checkpoint..."
     while IFS= read -r -d '' path; do
         processed["$path"]=1
         ((++prev_processed_count))
+        if (( VERBOSE == 1 && prev_processed_count % 100000 == 0 )); then
+            verbose_status_timestamp "Resume restore progress: ${prev_processed_count} processed entries loaded..."
+        fi
     done < "$tmp_processed"
 
     renamed_list=()
     unset recorded
     declare -gA recorded=()
+    verbose_status_timestamp "Restoring renamed-entry history from checkpoint..."
     while IFS= read -r -d '' entry; do
         renamed_list+=( "$entry" )
         recorded["$entry"]=1
+        ((++prev_renamed_count))
+        if (( VERBOSE == 1 && prev_renamed_count % 50000 == 0 )); then
+            verbose_status_timestamp "Resume restore progress: ${prev_renamed_count} renamed entries loaded..."
+        fi
     done < "$tmp_renamed"
 
     rm -f -- "$tmp_processed" "$tmp_renamed"
     RESUME_STATE_WAS_LOADED=1
+    verbose_status_timestamp "Resume checkpoint restore complete: processed=${prev_processed_count}, renamed=${prev_renamed_count}"
     echo "Resume checkpoint loaded: $prev_processed_count entries marked as already processed."
     return 0
 }
@@ -4196,10 +4217,18 @@ vlog "Progress box updates every ${VERBOSE_MAIN_EVERY} iterations; already-proce
 maybe_resume_from_checkpoint
 
 main_index=0
+loop_heartbeat_last_epoch="$(date +%s)"
 for f in "${ordered_paths[@]}"; do
     ((++main_index))
     if (( VERBOSE == 1 && main_index % VERBOSE_MAIN_EVERY == 0 )); then
         print_progress_box "$main_index / ${#ordered_paths[@]}" "$f"
+    fi
+    if (( VERBOSE == 1 )); then
+        loop_heartbeat_now_epoch="$(date +%s)"
+        if (( loop_heartbeat_now_epoch - loop_heartbeat_last_epoch >= 15 )); then
+            verbose_status_timestamp "Main loop heartbeat: iter=${main_index}/${#ordered_paths[@]}, examined=${files_examined}, skipped=${files_skipped}, affected=${files_affected}, current='$(format_path_for_log "$f")'"
+            loop_heartbeat_last_epoch="$loop_heartbeat_now_epoch"
+        fi
     fi
 
     [[ -n "${processed[$f]+x}" ]] && continue
