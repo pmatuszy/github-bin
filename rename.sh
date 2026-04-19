@@ -167,6 +167,11 @@ DB_HASH_LOOKUP_MISSES=0
 DB_HASH_RECORD_STATUS=""
 DB_RECOVERY_RESULT=""
 DB_STALE_ROWS_REMOVED=0
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+WORKSPACE_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd -P)"
+DEBUG_LOG_PATH="${DEBUG_LOG_PATH:-$WORKSPACE_ROOT/debug-8439cd.log}"
+DEBUG_SESSION_ID="8439cd"
+DEBUG_RUN_ID="${DEBUG_RUN_ID:-pre-fix}"
 
 set -Eeuo pipefail
 shopt -s nullglob
@@ -210,6 +215,19 @@ on_err() {
 }
 trap 'on_err "$?" "$LINENO" "$BASH_COMMAND"' ERR
 
+debug_log() {
+    local hypothesis_id="$1"
+    local location="$2"
+    local message="$3"
+    local data="$4"
+    local timestamp
+    local log_id
+    timestamp="$(date +%s%3N 2>/dev/null || printf '%s000' "$(date +%s)")"
+    log_id="log_${timestamp}_$$"
+    printf '{"sessionId":"%s","id":"%s","timestamp":%s,"location":"%s","message":"%s","data":%s,"runId":"%s","hypothesisId":"%s"}\n' \
+        "$DEBUG_SESSION_ID" "$log_id" "$timestamp" "$location" "$message" "$data" "$DEBUG_RUN_ID" "$hypothesis_id" >> "$DEBUG_LOG_PATH"
+}
+
 usage() {
     cat <<'EOF'
 Usage: rename.sh [-v|--verbose] [--use-db] [--fast] [--force-recheck] [--colors yes|no] [--mode real|dry-run] [--scope subdirs|current] [--wait-seconds N] [--version] [-h|--help]
@@ -248,6 +266,12 @@ print_startup_banner() {
     local line3="Version     : $SCRIPT_VERSION"
     local line4="Start dir   : $START_DIR"
     local line5="Prompt wait : $(print_prompt_wait_description)"
+    local charmap
+
+    charmap="$(locale charmap 2>/dev/null || printf 'unknown')"
+    #region agent log
+    debug_log "H1" "rename.sh:print_startup_banner" "About to print banner characters" "{\"charmap\":\"${charmap}\",\"lang\":\"${LANG:-unset}\",\"lc_all\":\"${LC_ALL:-unset}\",\"term\":\"${TERM:-unset}\"}"
+    #endregion
 
     printf '┌%*s┐
 ' "$width" '' | tr ' ' '─'
@@ -1004,6 +1028,9 @@ db_mark_renamed_path_checked() {
     db_mark_checked "$path" "$kind" "checked"
 }
 while (( $# > 0 )); do
+    #region agent log
+    debug_log "H4" "rename.sh:arg_parse" "Parsing CLI argument token" "{\"token\":\"$1\",\"remaining\":$#}"
+    #endregion
     case "$1" in
         --version)
             echo "rename.sh"
@@ -1062,6 +1089,9 @@ while (( $# > 0 )); do
             shift 2
             ;;
         -h|--help)
+            #region agent log
+            debug_log "H2" "rename.sh:arg_parse_help" "Help option selected; will print banner and usage" "{\"token\":\"$1\"}"
+            #endregion
             print_startup_banner
             echo
             usage
