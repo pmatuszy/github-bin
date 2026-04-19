@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.04.19 - v. 18.25 - add richer verbose startup progress (buffered size + elapsed time) for long discovery/sort phase
 # 2026.04.19 - v. 18.24 - wrap checksum-group referenced-file rename verbose lines using MAX_LINE_LENGTH helper
 # 2026.04.19 - v. 18.23 - include timestamps in startup tags as [STARTUP YYYY-MM-DD HH:MM:SS]
 # 2026.04.19 - v. 18.22 - show startup discovery/sort progress with verbose dots so long scans do not look stuck
@@ -4094,26 +4095,31 @@ if [[ "$process_scope" == "current" ]]; then
         python3 -c '
 import sys
 from datetime import datetime
+import time
 verbose = (len(sys.argv) > 1 and sys.argv[1] == "1")
 buf = bytearray()
-dot_every = 8 * 1024 * 1024
-next_dot = dot_every
+progress_every = 64 * 1024 * 1024
+next_progress = progress_every
+start = time.monotonic()
 while True:
     chunk = sys.stdin.buffer.read(1024 * 1024)
     if not chunk:
         break
     buf.extend(chunk)
-    if verbose and len(buf) >= next_dot:
-        sys.stderr.write(".")
+    if verbose and len(buf) >= next_progress:
+        ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        mb = len(buf) / (1024.0 * 1024.0)
+        elapsed = time.monotonic() - start
+        sys.stderr.write(f"[STARTUP {ts}] Discovery buffered: {mb:.1f} MB in {elapsed:.1f}s...\n")
         sys.stderr.flush()
-        next_dot += dot_every
+        while len(buf) >= next_progress:
+            next_progress += progress_every
 items = [x for x in bytes(buf).split(b"\0") if x]
-if verbose and len(buf) >= dot_every:
-    sys.stderr.write("\n")
-    sys.stderr.flush()
 if verbose:
     ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    sys.stderr.write(f"[STARTUP {ts}] Sorting discovered entries: {len(items)}...\n")
+    mb = len(buf) / (1024.0 * 1024.0)
+    elapsed = time.monotonic() - start
+    sys.stderr.write(f"[STARTUP {ts}] Discovery done: {len(items)} entries buffered ({mb:.1f} MB) in {elapsed:.1f}s. Starting sort...\n")
     sys.stderr.flush()
 def depth(p: bytes) -> int:
     s = p.decode("utf-8", "surrogateescape")
@@ -4121,10 +4127,13 @@ def depth(p: bytes) -> int:
 def is_checksum(p: bytes) -> int:
     s = p.decode("utf-8", "surrogateescape")
     return 0 if (s.endswith(".sha512") or s.endswith(".md5")) else 1
+sort_start = time.monotonic()
 items.sort(key=lambda p: (-depth(p), is_checksum(p), p))
 if verbose:
     ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    sys.stderr.write(f"[STARTUP {ts}] Sorting done.\n")
+    sort_elapsed = time.monotonic() - sort_start
+    total_elapsed = time.monotonic() - start
+    sys.stderr.write(f"[STARTUP {ts}] Sorting done in {sort_elapsed:.1f}s (total startup discovery/sort: {total_elapsed:.1f}s).\n")
     sys.stderr.flush()
 sys.stdout.buffer.write(b"\0".join(items) + (b"\0" if items else b""))
 ' "$VERBOSE"
@@ -4135,26 +4144,31 @@ else
         python3 -c '
 import sys
 from datetime import datetime
+import time
 verbose = (len(sys.argv) > 1 and sys.argv[1] == "1")
 buf = bytearray()
-dot_every = 8 * 1024 * 1024
-next_dot = dot_every
+progress_every = 64 * 1024 * 1024
+next_progress = progress_every
+start = time.monotonic()
 while True:
     chunk = sys.stdin.buffer.read(1024 * 1024)
     if not chunk:
         break
     buf.extend(chunk)
-    if verbose and len(buf) >= next_dot:
-        sys.stderr.write(".")
+    if verbose and len(buf) >= next_progress:
+        ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        mb = len(buf) / (1024.0 * 1024.0)
+        elapsed = time.monotonic() - start
+        sys.stderr.write(f"[STARTUP {ts}] Discovery buffered: {mb:.1f} MB in {elapsed:.1f}s...\n")
         sys.stderr.flush()
-        next_dot += dot_every
+        while len(buf) >= next_progress:
+            next_progress += progress_every
 items = [x for x in bytes(buf).split(b"\0") if x]
-if verbose and len(buf) >= dot_every:
-    sys.stderr.write("\n")
-    sys.stderr.flush()
 if verbose:
     ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    sys.stderr.write(f"[STARTUP {ts}] Sorting discovered entries: {len(items)}...\n")
+    mb = len(buf) / (1024.0 * 1024.0)
+    elapsed = time.monotonic() - start
+    sys.stderr.write(f"[STARTUP {ts}] Discovery done: {len(items)} entries buffered ({mb:.1f} MB) in {elapsed:.1f}s. Starting sort...\n")
     sys.stderr.flush()
 def depth(p: bytes) -> int:
     s = p.decode("utf-8", "surrogateescape")
@@ -4162,18 +4176,23 @@ def depth(p: bytes) -> int:
 def is_checksum(p: bytes) -> int:
     s = p.decode("utf-8", "surrogateescape")
     return 0 if (s.endswith(".sha512") or s.endswith(".md5")) else 1
+sort_start = time.monotonic()
 items.sort(key=lambda p: (-depth(p), is_checksum(p), p))
 if verbose:
     ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    sys.stderr.write(f"[STARTUP {ts}] Sorting done.\n")
+    sort_elapsed = time.monotonic() - sort_start
+    total_elapsed = time.monotonic() - start
+    sys.stderr.write(f"[STARTUP {ts}] Sorting done in {sort_elapsed:.1f}s (total startup discovery/sort: {total_elapsed:.1f}s).\n")
     sys.stderr.flush()
 sys.stdout.buffer.write(b"\0".join(items) + (b"\0" if items else b""))
 ' "$VERBOSE"
     )
 fi
 startup_progress "Entry discovery and sort complete: ${#ordered_paths[@]} entries"
+startup_progress "Entering main processing loop..."
 
 vlog "Discovered entries to process: ${#ordered_paths[@]}"
+vlog "Progress box updates every ${VERBOSE_MAIN_EVERY} iterations; already-processed entries may be skipped quickly."
 maybe_resume_from_checkpoint
 
 main_index=0
