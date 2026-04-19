@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.04.19 - v. 18.28 - remove periodic main-loop heartbeat verbose lines while keeping startup and resume progress logs
 # 2026.04.19 - v. 18.27 - add startup transfer-to-shell progress after sorting so large handoff phase is visible
 # 2026.04.19 - v. 18.26 - add verbose checkpoint-restore progress and periodic main-loop heartbeat to show activity
 # 2026.04.19 - v. 18.25 - add richer verbose startup progress (buffered size + elapsed time) for long discovery/sort phase
@@ -4260,18 +4261,10 @@ vlog "Progress box updates every ${VERBOSE_MAIN_EVERY} iterations; already-proce
 maybe_resume_from_checkpoint
 
 main_index=0
-loop_heartbeat_last_epoch="$(date +%s)"
 for f in "${ordered_paths[@]}"; do
     ((++main_index))
     if (( VERBOSE == 1 && main_index % VERBOSE_MAIN_EVERY == 0 )); then
         print_progress_box "$main_index / ${#ordered_paths[@]}" "$f"
-    fi
-    if (( VERBOSE == 1 )); then
-        loop_heartbeat_now_epoch="$(date +%s)"
-        if (( loop_heartbeat_now_epoch - loop_heartbeat_last_epoch >= 15 )); then
-            verbose_status_timestamp "Main loop heartbeat: iter=${main_index}/${#ordered_paths[@]}, examined=${files_examined}, skipped=${files_skipped}, affected=${files_affected}, current='$(format_path_for_log "$f")'"
-            loop_heartbeat_last_epoch="$loop_heartbeat_now_epoch"
-        fi
     fi
 
     [[ -n "${processed[$f]+x}" ]] && continue
