@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# 2026.04.19 - v. 18.18 - make DB maintenance manual-only via --run-db-maintenance and show verbose command steps
+# 2026.04.19 - v. 18.17 - add SQLite maintenance modes (auto/off/full) with periodic optimize/checkpoint metadata
 # 2026.04.19 - v. 18.16 - make early resume prompt quit option exit immediately
 # 2026.04.19 - v. 18.15 - add quit option [q] to resume prompt flow
 # 2026.04.19 - v. 18.14 - make ask-mode resume prompt default to resume ([Y/n]) to match default resume behavior
@@ -193,6 +195,8 @@ CLI_COLORS=""
 CLI_MODE=""
 CLI_SCOPE=""
 CLI_RESUME_STATE="resume"
+CLI_DB_MAINTENANCE="full"
+RUN_DB_MAINTENANCE=0
 PROMPT_WAIT_SECONDS=0
 MAP_R_ACUTE="c"
 MAP_REGISTERED="z"
@@ -245,7 +249,7 @@ debug_log() {
 
 usage() {
     cat <<'EOF'
-Usage: rename.sh [-v|--verbose] [--use-db] [--fast] [--force-recheck] [--colors [yes]|no] [--mode real|[dry-run]] [--scope subdirs|[current]] [--resume-state [resume]|ask|fresh] [--wait-seconds [0]|N] [--version] [-h|--help]
+Usage: rename.sh [-v|--verbose] [--use-db] [--fast] [--force-recheck] [--run-db-maintenance] [--db-maintenance auto|[full]] [--colors [yes]|no] [--mode real|[dry-run]] [--scope subdirs|[current]] [--resume-state [resume]|ask|fresh] [--wait-seconds [0]|N] [--version] [-h|--help]
 
 Options:
   -v, --verbose          Show extra diagnostic output
@@ -253,6 +257,10 @@ Options:
   --use-db               Use SQLite cache in the start directory (_rename.sh-optional-db.sqlite3)
   --fast                 With --use-db, trust cached paths without checking current size/mtime
   --force-recheck        Ignore SQLite cache and recheck everything
+  --run-db-maintenance   Run DB maintenance and exit (manual invocation)
+  --db-maintenance auto|[full]
+                         auto: lightweight optimize/checkpoint profile
+                         [full]: optimize + analyze + reindex + WAL truncate profile
   --colors [yes]|no      Skip the startup colors question
   --mode real|[dry-run]  Skip the startup mode question
   --scope subdirs|[current]
@@ -267,6 +275,7 @@ Options:
 Example:
   rename.sh -v --use-db --colors yes --mode real --scope subdirs
   rename.sh -v --use-db --fast --colors yes --mode real --scope subdirs
+  rename.sh --use-db --run-db-maintenance --db-maintenance full
   rename.sh --resume-state ask --use-db --mode real --scope subdirs
 EOF
 }
@@ -659,6 +668,41 @@ db_migrate_legacy_file() {
         [[ -f "${LEGACY_DB_FILE}-shm" ]] && mv -f -- "${LEGACY_DB_FILE}-shm" "${DB_FILE}-shm"
         echo "SQLite cache migrated: $LEGACY_DB_FILE -> $DB_FILE"
     fi
+}
+
+db_run_maintenance() {
+    local mode="$1"
+
+    (( USE_DB == 1 )) || return 0
+    case "$mode" in
+        auto|full) ;;
+        *) return 0 ;;
+    esac
+
+    if [[ "$mode" == "auto" ]]; then
+        startup_progress "SQLite maintenance: running AUTO profile..."
+        (( VERBOSE == 1 )) && echo "[VERBOSE] SQLite maintenance command: PRAGMA optimize;" >&2
+        (( VERBOSE == 1 )) && echo "[VERBOSE] SQLite maintenance command: PRAGMA wal_checkpoint(PASSIVE);" >&2
+        sqlite3 "$DB_FILE" >/dev/null 2>&1 <<'SQL'
+PRAGMA optimize;
+PRAGMA wal_checkpoint(PASSIVE);
+SQL
+        startup_progress "SQLite maintenance: AUTO profile finished"
+        return 0
+    fi
+
+    startup_progress "SQLite maintenance: running FULL profile..."
+    (( VERBOSE == 1 )) && echo "[VERBOSE] SQLite maintenance command: PRAGMA optimize;" >&2
+    (( VERBOSE == 1 )) && echo "[VERBOSE] SQLite maintenance command: ANALYZE;" >&2
+    (( VERBOSE == 1 )) && echo "[VERBOSE] SQLite maintenance command: REINDEX checked_paths;" >&2
+    (( VERBOSE == 1 )) && echo "[VERBOSE] SQLite maintenance command: PRAGMA wal_checkpoint(TRUNCATE);" >&2
+    sqlite3 "$DB_FILE" >/dev/null 2>&1 <<'SQL'
+PRAGMA optimize;
+ANALYZE;
+REINDEX checked_paths;
+PRAGMA wal_checkpoint(TRUNCATE);
+SQL
+    startup_progress "SQLite maintenance: FULL profile finished"
 }
 
 db_init() {
@@ -1155,6 +1199,18 @@ while (( $# > 0 )); do
             FAST_DB=1
             shift
             ;;
+        --run-db-maintenance)
+            RUN_DB_MAINTENANCE=1
+            shift
+            ;;
+        --db-maintenance)
+            [[ $# -ge 2 ]] || { echo "Missing value for --db-maintenance" >&2; usage >&2; exit 1; }
+            case "$2" in
+                auto|full) CLI_DB_MAINTENANCE="$2" ;;
+                *) echo "Invalid value for --db-maintenance: $2 (use auto or full)" >&2; usage >&2; exit 1 ;;
+            esac
+            shift 2
+            ;;
         --colors)
             [[ $# -ge 2 ]] || { echo "Missing value for --colors" >&2; usage >&2; exit 1; }
             case "$2" in
@@ -1210,7 +1266,9 @@ while (( $# > 0 )); do
     esac
 done
 
-prompt_resume_choice_early
+if (( RUN_DB_MAINTENANCE == 0 )); then
+    prompt_resume_choice_early
+fi
 
 print_startup_banner
 startup_progress "Scanning startup directory: $START_DIR"
@@ -1220,6 +1278,15 @@ startup_progress "Exclude filters loaded: ${#EXCLUDE_FILTERS[@]}"
 if (( USE_DB == 1 )); then
     startup_progress "Initializing SQLite support..."
     db_init
+    if (( RUN_DB_MAINTENANCE == 1 )); then
+        startup_progress "Running manual SQLite maintenance profile: $CLI_DB_MAINTENANCE"
+        db_run_maintenance "$CLI_DB_MAINTENANCE"
+        echo "SQLite maintenance finished: $DB_FILE"
+        exit 0
+    fi
+elif (( RUN_DB_MAINTENANCE == 1 )); then
+    echo "ERROR: --run-db-maintenance requires --use-db." >&2
+    exit 1
 fi
 startup_progress "Startup preparation finished"
 startup_progress "Interactive prompt wait: $(print_prompt_wait_description)"
@@ -1236,6 +1303,10 @@ if (( USE_DB == 1 )); then
     if (( FORCE_RECHECK == 1 )); then
         echo "SQLite cache mode override: force recheck enabled"
     fi
+    case "$CLI_DB_MAINTENANCE" in
+        auto) echo "SQLite maintenance profile: AUTO (optimize/checkpoint) [manual with --run-db-maintenance]" ;;
+        full) echo "SQLite maintenance profile: FULL (optimize + analyze + reindex + WAL truncate) [manual with --run-db-maintenance]" ;;
+    esac
 fi
 
 if [[ -f "$EXCLUDE_FILTERS_FILE" ]]; then
@@ -1293,7 +1364,7 @@ print_verbose_options_box() {
 
     local -a lines=()
     local box_width=0
-    local line db_mode scope_text color_text prompt_text
+    local line db_mode scope_text color_text prompt_text db_maintenance_text
 
     if (( USE_DB == 1 )); then
         if (( FAST_DB == 1 )); then
@@ -1304,8 +1375,14 @@ print_verbose_options_box() {
         if (( FORCE_RECHECK == 1 )); then
             db_mode="${db_mode}; force recheck active"
         fi
+        case "$CLI_DB_MAINTENANCE" in
+            auto) db_maintenance_text="auto - lightweight optimize/checkpoint profile for --run-db-maintenance" ;;
+            full) db_maintenance_text="full - optimize + analyze + reindex + WAL truncate profile for --run-db-maintenance" ;;
+            *)    db_maintenance_text="$CLI_DB_MAINTENANCE" ;;
+        esac
     else
         db_mode="disabled - always inspect files directly"
+        db_maintenance_text="$CLI_DB_MAINTENANCE (available when --use-db is enabled)"
     fi
 
     if [[ "$use_colors" == "yes" ]]; then
@@ -1331,6 +1408,7 @@ print_verbose_options_box() {
     lines+=("Mode           : ${mode} - $( [[ "$mode" == "real" ]] && printf '%s' 'perform interactive real renames' || printf '%s' 'show planned changes only' )")
     lines+=("Scope          : ${scope_text}")
     lines+=("SQLite cache   : ${db_mode}")
+    lines+=("DB maintenance : ${db_maintenance_text}")
     lines+=("Resume state   : ${CLI_RESUME_STATE} - checkpoint behavior after Ctrl-C")
     lines+=("Prompt wait    : ${prompt_text}")
     lines+=("Start dir      : ${START_DIR} - root path used for this run")
