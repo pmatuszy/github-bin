@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.04.19 - v. 18.22 - show startup discovery/sort progress with verbose dots so long scans do not look stuck
 # 2026.04.19 - v. 18.21 - show verbose timestamps on actual question lines (not after choice prompt)
 # 2026.04.19 - v. 18.20 - print verbose timestamp before every interactive read_single_key prompt
 # 2026.04.19 - v. 18.19 - make --run-db-maintenance imply DB mode and exit cleanly when DB file is missing
@@ -4082,13 +4083,32 @@ on_interrupt() {
 
 trap on_interrupt INT
 
+startup_progress "Discovering and sorting entries for selected scope (this can take time on large trees)..."
 if [[ "$process_scope" == "current" ]]; then
     mapfile -d '' -t ordered_paths < <(
         find . -mindepth 1 -maxdepth 1 -depth -print0 |
         python3 -c '
 import sys
-items = sys.stdin.buffer.read().split(b"\0")
-items = [x for x in items if x]
+verbose = (len(sys.argv) > 1 and sys.argv[1] == "1")
+buf = bytearray()
+dot_every = 8 * 1024 * 1024
+next_dot = dot_every
+while True:
+    chunk = sys.stdin.buffer.read(1024 * 1024)
+    if not chunk:
+        break
+    buf.extend(chunk)
+    if verbose and len(buf) >= next_dot:
+        sys.stderr.write(".")
+        sys.stderr.flush()
+        next_dot += dot_every
+items = [x for x in bytes(buf).split(b"\0") if x]
+if verbose and len(buf) >= dot_every:
+    sys.stderr.write("\n")
+    sys.stderr.flush()
+if verbose:
+    sys.stderr.write(f"[STARTUP] Sorting discovered entries: {len(items)}...\n")
+    sys.stderr.flush()
 def depth(p: bytes) -> int:
     s = p.decode("utf-8", "surrogateescape")
     return s.count("/")
@@ -4096,16 +4116,37 @@ def is_checksum(p: bytes) -> int:
     s = p.decode("utf-8", "surrogateescape")
     return 0 if (s.endswith(".sha512") or s.endswith(".md5")) else 1
 items.sort(key=lambda p: (-depth(p), is_checksum(p), p))
+if verbose:
+    sys.stderr.write("[STARTUP] Sorting done.\n")
+    sys.stderr.flush()
 sys.stdout.buffer.write(b"\0".join(items) + (b"\0" if items else b""))
-'
+' "$VERBOSE"
     )
 else
     mapfile -d '' -t ordered_paths < <(
         find . -depth -mindepth 1 -print0 |
         python3 -c '
 import sys
-items = sys.stdin.buffer.read().split(b"\0")
-items = [x for x in items if x]
+verbose = (len(sys.argv) > 1 and sys.argv[1] == "1")
+buf = bytearray()
+dot_every = 8 * 1024 * 1024
+next_dot = dot_every
+while True:
+    chunk = sys.stdin.buffer.read(1024 * 1024)
+    if not chunk:
+        break
+    buf.extend(chunk)
+    if verbose and len(buf) >= next_dot:
+        sys.stderr.write(".")
+        sys.stderr.flush()
+        next_dot += dot_every
+items = [x for x in bytes(buf).split(b"\0") if x]
+if verbose and len(buf) >= dot_every:
+    sys.stderr.write("\n")
+    sys.stderr.flush()
+if verbose:
+    sys.stderr.write(f"[STARTUP] Sorting discovered entries: {len(items)}...\n")
+    sys.stderr.flush()
 def depth(p: bytes) -> int:
     s = p.decode("utf-8", "surrogateescape")
     return s.count("/")
@@ -4113,10 +4154,14 @@ def is_checksum(p: bytes) -> int:
     s = p.decode("utf-8", "surrogateescape")
     return 0 if (s.endswith(".sha512") or s.endswith(".md5")) else 1
 items.sort(key=lambda p: (-depth(p), is_checksum(p), p))
+if verbose:
+    sys.stderr.write("[STARTUP] Sorting done.\n")
+    sys.stderr.flush()
 sys.stdout.buffer.write(b"\0".join(items) + (b"\0" if items else b""))
-'
+' "$VERBOSE"
     )
 fi
+startup_progress "Entry discovery and sort complete: ${#ordered_paths[@]} entries"
 
 vlog "Discovered entries to process: ${#ordered_paths[@]}"
 maybe_resume_from_checkpoint
