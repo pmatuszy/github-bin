@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.04.19 - v. 18.6 - bump script version
 # 2026.04.19 - v. 18.5 - in verbose mode print a boxed startup summary of effective options with explanations
 # 2026.04.19 - v. 18.3 - add a help example line and reorder displayed --mode/--scope option choices
 # 2026.04.19 - v. 18.2 - derive SCRIPT_VERSION automatically from the first history line instead of hardcoding it
