@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.04.19 - v. 18.16 - make early resume prompt quit option exit immediately
 # 2026.04.19 - v. 18.15 - add quit option [q] to resume prompt flow
 # 2026.04.19 - v. 18.14 - make ask-mode resume prompt default to resume ([Y/n]) to match default resume behavior
 # 2026.04.19 - v. 18.13 - show resume first in --resume-state help values
@@ -359,7 +360,8 @@ prompt_resume_choice_early() {
     echo
 
     if [[ "$answer" =~ [Qq] ]]; then
-        EARLY_RESUME_DECISION="quit"
+        echo "Quitting."
+        exit 0
     elif [[ "$answer" =~ [Nn] ]]; then
         EARLY_RESUME_DECISION="fresh"
     else
