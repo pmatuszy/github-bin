@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# 2026.04.19 - v. 18.13 - show resume first in --resume-state help values
+# 2026.04.19 - v. 18.12 - make resume-state default to automatic resume and reflect it in help text
+# 2026.04.19 - v. 18.11 - ask for resume immediately after CLI parsing and before startup preparation
 # 2026.04.19 - v. 18.10 - mark default values in help option choices with [ ]
 # 2026.04.19 - v. 18.9 - add interrupt checkpoint resume support with --resume-state mode
 # 2026.04.19 - v. 18.8 - wrap long checksum verbose lines using MAX_LINE_LENGTH without splitting filenames
@@ -186,7 +189,7 @@ VERBOSE_MAIN_EVERY=200
 CLI_COLORS=""
 CLI_MODE=""
 CLI_SCOPE=""
-CLI_RESUME_STATE="fresh"
+CLI_RESUME_STATE="resume"
 PROMPT_WAIT_SECONDS=0
 MAP_R_ACUTE="c"
 MAP_REGISTERED="z"
@@ -208,6 +211,7 @@ SUMMARY_PRINTED=0
 FILES_HASHED=0
 RESUME_STATE_FILE="$START_DIR/_rename.sh.resume-state.json"
 RESUME_STATE_WAS_LOADED=0
+EARLY_RESUME_DECISION=""
 declare -a CURRENT_OP_FILE_OLDS=()
 declare -a CURRENT_OP_FILE_NEWS=()
 
@@ -238,7 +242,7 @@ debug_log() {
 
 usage() {
     cat <<'EOF'
-Usage: rename.sh [-v|--verbose] [--use-db] [--fast] [--force-recheck] [--colors [yes]|no] [--mode real|[dry-run]] [--scope subdirs|[current]] [--resume-state ask|[fresh]|resume] [--wait-seconds [0]|N] [--version] [-h|--help]
+Usage: rename.sh [-v|--verbose] [--use-db] [--fast] [--force-recheck] [--colors [yes]|no] [--mode real|[dry-run]] [--scope subdirs|[current]] [--resume-state [resume]|ask|fresh] [--wait-seconds [0]|N] [--version] [-h|--help]
 
 Options:
   -v, --verbose          Show extra diagnostic output
@@ -250,10 +254,10 @@ Options:
   --mode real|[dry-run]  Skip the startup mode question
   --scope subdirs|[current]
                          Skip the startup scope question
-  --resume-state ask|[fresh]|resume
+  --resume-state [resume]|ask|fresh
+                         [resume]: automatically resume from checkpoint if it exists (default)
                          ask: if checkpoint exists, ask to resume or restart
-                         [fresh]: always start from beginning (default)
-                         resume: automatically resume from checkpoint if it exists
+                         fresh: always start from beginning
   --wait-seconds [0]|N   Wait N seconds for each interactive answer; 0 means wait forever
   -h, --help             Show this help
 
@@ -333,6 +337,29 @@ read_single_key() {
     # Discard any extra buffered keypresses from the same burst so they do not
     # affect the next prompt or keep the pre-read drain loop busy.
     flush_stdin
+}
+
+prompt_resume_choice_early() {
+    local answer=""
+
+    [[ "$CLI_RESUME_STATE" == "ask" ]] || return 0
+    [[ -f "$RESUME_STATE_FILE" ]] || return 0
+
+    echo
+    echo "Checkpoint found from an interrupted run: $RESUME_STATE_FILE"
+    echo "Resume from checkpoint?"
+    echo "  [Y] Resume"
+    echo "  [N] Start from the beginning (default)"
+    echo -n "Choice [y/N]: "
+    flush_stdin
+    read_single_key answer "$PROMPT_WAIT_SECONDS"
+    echo
+
+    if [[ "$answer" =~ [Yy] ]]; then
+        EARLY_RESUME_DECISION="resume"
+    else
+        EARLY_RESUME_DECISION="fresh"
+    fi
 }
 
 preserve_timestamps_inplace() {
@@ -1175,6 +1202,8 @@ while (( $# > 0 )); do
             ;;
     esac
 done
+
+prompt_resume_choice_early
 
 print_startup_banner
 startup_progress "Scanning startup directory: $START_DIR"
@@ -3749,17 +3778,21 @@ maybe_resume_from_checkpoint() {
             return 0
             ;;
         ask)
-            echo
-            echo "Checkpoint found from an interrupted run: $RESUME_STATE_FILE"
-            echo "Resume from checkpoint?"
-            echo "  [Y] Resume"
-            echo "  [N] Start from the beginning (default)"
-            echo -n "Choice [y/N]: "
-            flush_stdin
-            read_single_key answer "$PROMPT_WAIT_SECONDS"
-            echo
-            if [[ "$answer" =~ [Yy] ]]; then
+            if [[ "$EARLY_RESUME_DECISION" == "resume" ]]; then
                 load_resume_checkpoint || true
+            elif [[ "$EARLY_RESUME_DECISION" != "fresh" ]]; then
+                echo
+                echo "Checkpoint found from an interrupted run: $RESUME_STATE_FILE"
+                echo "Resume from checkpoint?"
+                echo "  [Y] Resume"
+                echo "  [N] Start from the beginning (default)"
+                echo -n "Choice [y/N]: "
+                flush_stdin
+                read_single_key answer "$PROMPT_WAIT_SECONDS"
+                echo
+                if [[ "$answer" =~ [Yy] ]]; then
+                    load_resume_checkpoint || true
+                fi
             fi
             ;;
     esac
