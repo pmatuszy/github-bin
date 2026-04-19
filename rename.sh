@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.04.19 - v. 18.8 - wrap long checksum verbose lines using MAX_LINE_LENGTH without splitting filenames
 # 2026.04.19 - v. 18.7 - speed up DB hash cache lookups and avoid repeated subtree find scans during missing-ref recovery
 # 2026.04.19 - v. 18.6 - bump script version
 # 2026.04.19 - v. 18.5 - in verbose mode print a boxed startup summary of effective options with explanations
@@ -1358,7 +1359,8 @@ print_checksum_update_verbose() {
             echo "$line1" >&2
             echo "$line2" >&2
         else
-            echo "$line1" >&2
+            echo "[VERBOSE] Updating checksum content in '${sum_file}':" >&2
+            echo "          '${old_name}'" >&2
             echo "$line2" >&2
         fi
         return 0
@@ -1373,6 +1375,20 @@ print_checksum_update_verbose() {
     else
         echo "[VERBOSE] ${first_part}" >&2
         echo "          ${second_part}" >&2
+    fi
+}
+
+print_checksum_file_rename_verbose() {
+    (( VERBOSE == 1 )) || return 0
+    local old_sum="$1"
+    local new_sum="$2"
+    local line="[VERBOSE] Renaming checksum file '${old_sum}' -> '${new_sum}'"
+
+    if (( ${#line} <= MAX_LINE_LENGTH )); then
+        echo "$line" >&2
+    else
+        echo "[VERBOSE] Renaming checksum file '${old_sum}'" >&2
+        echo "          -> '${new_sum}'" >&2
     fi
 }
 
@@ -4134,7 +4150,7 @@ for f in "${ordered_paths[@]}"; do
 
         final_sum="$sum_file"
         if [[ "$new_sum" != "$sum_file" ]]; then
-            vlog "Renaming checksum file '$sum_file' -> '$new_sum'"
+            print_checksum_file_rename_verbose "$sum_file" "$new_sum"
             mv -i -- "$sum_file" "$new_sum"
             mark_current_sum_renamed
             ((++files_affected))
