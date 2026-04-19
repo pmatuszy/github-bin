@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.04.19 - v. 18.21 - show verbose timestamps on actual question lines (not after choice prompt)
 # 2026.04.19 - v. 18.20 - print verbose timestamp before every interactive read_single_key prompt
 # 2026.04.19 - v. 18.19 - make --run-db-maintenance imply DB mode and exit cleanly when DB file is missing
 # 2026.04.19 - v. 18.18 - make DB maintenance manual-only via --run-db-maintenance and show verbose command steps
@@ -339,18 +340,7 @@ flush_stdin() {
 read_single_key() {
     local __var_name="$1"
     local __timeout="$2"
-    local __prompt_text="${3-}"
     local __char=""
-    local __ts=""
-
-    if (( VERBOSE == 1 )); then
-        __ts="$(date '+%Y-%m-%d %H:%M:%S')"
-        if [[ -n "$__prompt_text" ]]; then
-            echo "[VERBOSE] [${__ts}] Awaiting user input: ${__prompt_text}" >&2
-        else
-            echo "[VERBOSE] [${__ts}] Awaiting user input" >&2
-        fi
-    fi
 
     if [[ "$__timeout" =~ ^[0-9]+$ ]] && (( __timeout == 0 )); then
         IFS= read -r -n 1 __char || true
@@ -364,6 +354,14 @@ read_single_key() {
     flush_stdin
 }
 
+verbose_question_timestamp() {
+    (( VERBOSE == 1 )) || return 0
+    local question="$1"
+    local ts
+    ts="$(date '+%Y-%m-%d %H:%M:%S')"
+    echo "[VERBOSE] [${ts}] ${question}" >&2
+}
+
 prompt_resume_choice_early() {
     local answer=""
 
@@ -372,6 +370,7 @@ prompt_resume_choice_early() {
 
     echo
     echo "Checkpoint found from an interrupted run: $RESUME_STATE_FILE"
+    verbose_question_timestamp "Resume from checkpoint?"
     echo "Resume from checkpoint?"
     echo "  [Y] Resume (default)"
     echo "  [N] Start from the beginning"
@@ -1344,6 +1343,7 @@ if [[ -n "$CLI_COLORS" ]]; then
     esac
 else
     echo
+    verbose_question_timestamp "Use colors?"
     echo "Use colors?"
     echo "  [Y] Yes (default)"
     echo "  [N] No"
@@ -1864,6 +1864,7 @@ if [[ -n "$CLI_MODE" ]]; then
     mode="$CLI_MODE"
 else
     echo
+    verbose_question_timestamp "Select mode:"
     echo "Select mode:"
     echo "  [D] Dry-run (default)"
     echo "  [R] Real rename (interactive)"
@@ -1891,6 +1892,7 @@ if [[ -n "$CLI_SCOPE" ]]; then
     process_scope="$CLI_SCOPE"
 else
     echo
+    verbose_question_timestamp "What should be processed?"
     echo "What should be processed?"
     echo "  [C] Current directory only (default)"
     echo "  [S] Also subdirectories"
@@ -2461,6 +2463,7 @@ choose_r_acute_mapping_for_file() {
     echo >&2
     echo "Filename contains ŕ:" >&2
     echo "  $path" >&2
+    verbose_question_timestamp "Choose mapping for ŕ in this file:"
     echo "Choose mapping for ŕ in this file:" >&2
     echo "  [1] c (default)" >&2
     echo "  [2] s" >&2
@@ -2484,6 +2487,7 @@ choose_registered_mapping_for_file() {
     echo >&2
     echo "Filename contains ®:" >&2
     echo "  $path" >&2
+    verbose_question_timestamp "Choose mapping for ® in this file:"
     echo "Choose mapping for ® in this file:" >&2
     echo "  [1] z (default)" >&2
     echo "  [2] l" >&2
@@ -2503,6 +2507,7 @@ choose_at_sign_mapping_for_file() {
     echo >&2
     echo "Filename contains @ (media file):" >&2
     echo "  $path" >&2
+    verbose_question_timestamp "Choose mapping for @ in this file:"
     echo "Choose mapping for @ in this file:" >&2
     echo "  [1] a (default)" >&2
     echo "  [2] e" >&2
@@ -2522,6 +2527,7 @@ choose_r_grave_mapping_for_file() {
     echo >&2
     echo "Filename contains Ŕ:" >&2
     echo "  $path" >&2
+    verbose_question_timestamp "Choose mapping for Ŕ in this file:"
     echo "Choose mapping for Ŕ in this file:" >&2
     echo "  [1] c (default)" >&2
     echo "  [2] s" >&2
@@ -3146,6 +3152,7 @@ can_overwrite_collision_with_identical_md5() {
     fi
 
     old_other_path="$(make_other_suffix_path "$new")"
+    verbose_question_timestamp "What should be done?"
     echo "What should be done?"
     echo "  [O] Overwrite destination and continue rename"
     echo "  [R] Rename source with suffix _OTHER -> $(basename -- "$old_other_path")"
@@ -3662,6 +3669,7 @@ handle_lnk_file() {
 
     echo
     echo -e "${YELLOW}LNK FILE:${RESET} $f"
+    verbose_question_timestamp "Remove this .lnk file? [y/N/q]:"
     echo -n "Remove this .lnk file? [y/N/q]: "
 
     flush_stdin
@@ -3890,6 +3898,7 @@ maybe_resume_from_checkpoint() {
             elif [[ "$EARLY_RESUME_DECISION" != "fresh" ]]; then
                 echo
                 echo "Checkpoint found from an interrupted run: $RESUME_STATE_FILE"
+                verbose_question_timestamp "Resume from checkpoint?"
                 echo "Resume from checkpoint?"
                 echo "  [Y] Resume (default)"
                 echo "  [N] Start from the beginning"
@@ -3926,6 +3935,7 @@ auto_yes_current_dir_matches() {
 
 print_rename_prompt_menu() {
     local kind_label="$1"
+    verbose_question_timestamp "Rename this ${kind_label}?"
     echo "Rename this ${kind_label}?"
     echo "  [Y] Yes (default)"
     echo "  [N] No"
@@ -3940,6 +3950,7 @@ print_rename_prompt_menu() {
 print_checksum_prompt_menu() {
     local label_lower="$1"
     local hash_file="$2"
+    verbose_question_timestamp "Rename this ${label_lower} group?"
     echo "Rename this ${label_lower} group?"
     echo "  hash file: $hash_file"
     echo "  [Y] Yes (default)"
@@ -4351,6 +4362,7 @@ for f in "${ordered_paths[@]}"; do
                     ;;
                 a|A)
                     echo
+                    verbose_question_timestamp "Are you sure? [y/N]:"
                     echo "⚠️  This will rename ALL remaining files/directories."
                     echo -n "Are you sure? [y/N]: "
                     flush_stdin
@@ -4643,6 +4655,7 @@ for f in "${ordered_paths[@]}"; do
             ;;
         a|A)
             echo
+            verbose_question_timestamp "Are you sure? [y/N]:"
             echo "⚠️  This will rename ALL remaining files/directories."
             echo -n "Are you sure? [y/N]: "
             flush_stdin
