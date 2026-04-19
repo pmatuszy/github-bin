@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# 2026.04.19 - v. 18.15 - add quit option [q] to resume prompt flow
+# 2026.04.19 - v. 18.14 - make ask-mode resume prompt default to resume ([Y/n]) to match default resume behavior
 # 2026.04.19 - v. 18.13 - show resume first in --resume-state help values
 # 2026.04.19 - v. 18.12 - make resume-state default to automatic resume and reflect it in help text
 # 2026.04.19 - v. 18.11 - ask for resume immediately after CLI parsing and before startup preparation
@@ -348,17 +350,20 @@ prompt_resume_choice_early() {
     echo
     echo "Checkpoint found from an interrupted run: $RESUME_STATE_FILE"
     echo "Resume from checkpoint?"
-    echo "  [Y] Resume"
-    echo "  [N] Start from the beginning (default)"
-    echo -n "Choice [y/N]: "
+    echo "  [Y] Resume (default)"
+    echo "  [N] Start from the beginning"
+    echo "  [Q] Quit"
+    echo -n "Choice [Y/n/q]: "
     flush_stdin
     read_single_key answer "$PROMPT_WAIT_SECONDS"
     echo
 
-    if [[ "$answer" =~ [Yy] ]]; then
-        EARLY_RESUME_DECISION="resume"
-    else
+    if [[ "$answer" =~ [Qq] ]]; then
+        EARLY_RESUME_DECISION="quit"
+    elif [[ "$answer" =~ [Nn] ]]; then
         EARLY_RESUME_DECISION="fresh"
+    else
+        EARLY_RESUME_DECISION="resume"
     fi
 }
 
@@ -3778,19 +3783,26 @@ maybe_resume_from_checkpoint() {
             return 0
             ;;
         ask)
-            if [[ "$EARLY_RESUME_DECISION" == "resume" ]]; then
+            if [[ "$EARLY_RESUME_DECISION" == "quit" ]]; then
+                echo "Quitting."
+                exit 0
+            elif [[ "$EARLY_RESUME_DECISION" == "resume" ]]; then
                 load_resume_checkpoint || true
             elif [[ "$EARLY_RESUME_DECISION" != "fresh" ]]; then
                 echo
                 echo "Checkpoint found from an interrupted run: $RESUME_STATE_FILE"
                 echo "Resume from checkpoint?"
-                echo "  [Y] Resume"
-                echo "  [N] Start from the beginning (default)"
-                echo -n "Choice [y/N]: "
+                echo "  [Y] Resume (default)"
+                echo "  [N] Start from the beginning"
+                echo "  [Q] Quit"
+                echo -n "Choice [Y/n/q]: "
                 flush_stdin
                 read_single_key answer "$PROMPT_WAIT_SECONDS"
                 echo
-                if [[ "$answer" =~ [Yy] ]]; then
+                if [[ "$answer" =~ [Qq] ]]; then
+                    echo "Quitting."
+                    exit 0
+                elif [[ ! "$answer" =~ [Nn] ]]; then
                     load_resume_checkpoint || true
                 fi
             fi
