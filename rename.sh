@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.04.20 - v. 18.46 - force checksum file processing when cached refs still need rename; defer sibling files explicitly to checksum workflow
 # 2026.04.20 - v. 18.45 - in verbose mode, print whether DB row was inserted or updated right after plain file rename
 # 2026.04.20 - v. 18.44 - add verbose DB subtree rewrite summary lines showing how many cached paths were remapped
 # 2026.04.20 - v. 18.43 - preserve hash columns when rewriting DB paths and move DB row on plain file rename
@@ -1426,6 +1427,26 @@ db_mark_renamed_path_checked() {
     [[ -e "$path" ]] || return 0
     db_mark_checked "$path" "$kind" "checked"
 }
+
+checksum_file_has_renamable_refs() {
+    local sum_file="$1"
+    local ref_hash ref_raw resolved_ref transformed_ref
+
+    [[ -f "$sum_file" ]] || return 1
+    is_checksum_file "$sum_file" || return 1
+
+    while IFS=$'\t' read -r ref_hash ref_raw; do
+        [[ -n "$ref_raw" ]] || continue
+        resolved_ref="$(resolve_checksum_ref_path "$sum_file" "$ref_raw")"
+        transformed_ref="$(transform_name "$resolved_ref")"
+        if [[ "$resolved_ref" != "$transformed_ref" ]]; then
+            return 0
+        fi
+    done < <(extract_checksum_entries "$sum_file")
+
+    return 1
+}
+
 while (( $# > 0 )); do
     #region agent log
     debug_log "H4" "rename.sh:arg_parse" "Parsing CLI argument token" "{\"token\":\"$1\",\"remaining\":$#}"
@@ -4587,6 +4608,8 @@ for f in "${ordered_paths[@]}"; do
         precomputed_new="$(transform_name "$f")"
         if [[ "$f" != "$precomputed_new" ]]; then
             vlog "DB cache hit for '$f' but rename is still needed; processing entry."
+        elif [[ -f "$f" ]] && is_checksum_file "$f" && checksum_file_has_renamable_refs "$f"; then
+            vlog "DB cache hit for '$f' but referenced checksum entries still need rename; processing checksum file."
         else
         db_backfill_missing_hashes_for_existing_file "$f"
         if path_has_control_chars "$f"; then
@@ -5006,7 +5029,7 @@ for f in "${ordered_paths[@]}"; do
     if [[ -f "$f" ]]; then
         base="${f%.*}"
         if [[ -e "$base.sha512" || -e "$base.md5" ]]; then
-            vlog "Skipping '$f' because sibling checksum file exists"
+            vlog "Deferring '$f' to sibling checksum workflow because '$base.sha512' or '$base.md5' exists"
             ((++files_skipped))
             continue
         fi
