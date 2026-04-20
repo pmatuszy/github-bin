@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.04.20 - v. 18.51 - in FULL DB maintenance, backfill any missing md5/sha512 for existing file rows with progress and summary stats
 # 2026.04.20 - v. 18.50 - do not defer plain-file renames because of checksum siblings; rename now and let checksum workflow update refs later
 # 2026.04.20 - v. 18.49 - defer to checksum workflow only when sibling checksum files actually reference the file being renamed
 # 2026.04.20 - v. 18.48 - defer to checksum workflow only when rename is needed and print only checksum siblings that actually exist
@@ -216,6 +217,10 @@ DB_MARK_CHECKED_RESULT=""
 DB_MAINT_ROWS_CHECKED=0
 DB_MAINT_ROWS_MISSING=0
 DB_MAINT_ROWS_REMOVED=0
+DB_MAINT_HASH_ROWS_SCANNED=0
+DB_MAINT_HASH_ROWS_UPDATED=0
+DB_MAINT_HASH_MD5_FILLED=0
+DB_MAINT_HASH_SHA512_FILLED=0
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 WORKSPACE_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd -P)"
 DEBUG_LOG_PATH="${DEBUG_LOG_PATH:-$WORKSPACE_ROOT/debug-8439cd.log}"
@@ -803,6 +808,7 @@ REINDEX checked_paths;
 PRAGMA wal_checkpoint(TRUNCATE);
 SQL
     db_prune_missing_paths
+    db_maintenance_backfill_missing_hashes
     startup_progress "SQLite maintenance: FULL profile finished"
 }
 
@@ -911,6 +917,112 @@ db_prune_missing_paths() {
     fi
 
     startup_progress "SQLite maintenance: filesystem check finished (checked: $DB_MAINT_ROWS_CHECKED, missing: $DB_MAINT_ROWS_MISSING, removed: $DB_MAINT_ROWS_REMOVED)"
+}
+
+print_db_maintenance_hash_backfill_verbose() {
+    (( VERBOSE == 1 )) || return 0
+    local path="$1"
+    local added_desc="$2"
+    local line="[VERBOSE] SQLite maintenance hash backfill updated '$path' (added: $added_desc)"
+
+    if (( ${#line} <= MAX_LINE_LENGTH )); then
+        echo "$line" >&2
+    else
+        echo "[VERBOSE] SQLite maintenance hash backfill updated '$path'" >&2
+        echo "          added: $added_desc" >&2
+    fi
+}
+
+db_maintenance_backfill_missing_hashes() {
+    local path abs md5_hash sha512_hash sql
+    local new_md5 new_sha512 added_desc
+    local total_candidates=0
+    local progress_pct=0
+    local next_progress_pct=5
+    local next_progress_count=500
+    local progress_printed_by_count=0
+    local updated_this_row=0
+
+    DB_MAINT_HASH_ROWS_SCANNED=0
+    DB_MAINT_HASH_ROWS_UPDATED=0
+    DB_MAINT_HASH_MD5_FILLED=0
+    DB_MAINT_HASH_SHA512_FILLED=0
+
+    startup_progress "SQLite maintenance: backfilling missing md5/sha512 for existing file rows..."
+    total_candidates="$(sqlite3 "$DB_FILE" "SELECT COUNT(*) FROM checked_paths WHERE COALESCE(file_md5,'')='' OR COALESCE(file_sha512,'');" 2>/dev/null || echo 0)"
+    [[ "$total_candidates" =~ ^[0-9]+$ ]] || total_candidates=0
+
+    if (( total_candidates > 0 )); then
+        startup_progress "SQLite maintenance: hash backfill progress 0% (0 / $total_candidates scanned)..."
+    fi
+
+    while IFS='|' read -r path md5_hash sha512_hash; do
+        [[ -n "$path" ]] || continue
+        (( ++DB_MAINT_HASH_ROWS_SCANNED ))
+
+        if (( total_candidates > 0 )); then
+            progress_pct=$(( DB_MAINT_HASH_ROWS_SCANNED * 100 / total_candidates ))
+            progress_printed_by_count=0
+            if (( DB_MAINT_HASH_ROWS_SCANNED >= next_progress_count )); then
+                startup_progress "SQLite maintenance: hash backfill progress ${progress_pct}% ($DB_MAINT_HASH_ROWS_SCANNED / $total_candidates scanned, $DB_MAINT_HASH_ROWS_UPDATED updated)..."
+                next_progress_count=$((next_progress_count + 500))
+                progress_printed_by_count=1
+                while (( next_progress_pct <= progress_pct )) && (( next_progress_pct <= 100 )); do
+                    next_progress_pct=$((next_progress_pct + 5))
+                done
+            fi
+            if (( progress_printed_by_count == 0 )); then
+                while (( progress_pct >= next_progress_pct )) && (( next_progress_pct <= 100 )); do
+                    startup_progress "SQLite maintenance: hash backfill progress ${next_progress_pct}% ($DB_MAINT_HASH_ROWS_SCANNED / $total_candidates scanned, $DB_MAINT_HASH_ROWS_UPDATED updated)..."
+                    next_progress_pct=$((next_progress_pct + 5))
+                done
+            fi
+        fi
+
+        [[ -f "$path" ]] || continue
+        is_checksum_file "$path" && continue
+
+        abs="$(db_abs_path "$path" 2>/dev/null || true)"
+        [[ -n "$abs" ]] || continue
+
+        new_md5="$md5_hash"
+        new_sha512="$sha512_hash"
+        added_desc=""
+        updated_this_row=0
+
+        if [[ -z "$md5_hash" ]]; then
+            new_md5="$(md5_of_file "$path")"
+            DB_CACHE_HASH_MD5["$abs"]="$new_md5"
+            (( ++DB_MAINT_HASH_MD5_FILLED ))
+            added_desc="md5"
+            updated_this_row=1
+        fi
+        if [[ -z "$sha512_hash" ]]; then
+            new_sha512="$(checksum_of_file sha512 "$path")"
+            DB_CACHE_HASH_SHA512["$abs"]="$new_sha512"
+            (( ++DB_MAINT_HASH_SHA512_FILLED ))
+            if [[ -n "$added_desc" ]]; then
+                added_desc="${added_desc}+sha512"
+            else
+                added_desc="sha512"
+            fi
+            updated_this_row=1
+        fi
+
+        if (( updated_this_row == 1 )); then
+            sql="UPDATE checked_paths SET file_md5='$(sql_escape "$new_md5")', file_sha512='$(sql_escape "$new_sha512")', last_checked=CURRENT_TIMESTAMP WHERE path='$(sql_escape "$abs")';"
+            printf '%s\n' "$sql" >> "$DB_PENDING_SQL_FILE"
+            (( ++DB_PENDING_COUNT ))
+            (( ++DB_ROWS_UPDATED ))
+            (( ++DB_MAINT_HASH_ROWS_UPDATED ))
+            print_db_maintenance_hash_backfill_verbose "$path" "$added_desc"
+            if (( DB_PENDING_COUNT >= DB_FLUSH_EVERY )); then
+                db_flush_pending
+            fi
+        fi
+    done < <(sqlite3 -separator '|' "$DB_FILE" "SELECT path, COALESCE(file_md5,''), COALESCE(file_sha512,'') FROM checked_paths WHERE COALESCE(file_md5,'')='' OR COALESCE(file_sha512,'');")
+
+    startup_progress "SQLite maintenance: hash backfill finished (scanned: $DB_MAINT_HASH_ROWS_SCANNED, updated: $DB_MAINT_HASH_ROWS_UPDATED, md5 filled: $DB_MAINT_HASH_MD5_FILLED, sha512 filled: $DB_MAINT_HASH_SHA512_FILLED)"
 }
 
 print_db_maintenance_missing_verbose() {
@@ -1595,6 +1707,11 @@ if (( USE_DB == 1 )); then
         echo "  DB rows checked: $DB_MAINT_ROWS_CHECKED"
         echo "  DB rows missing in filesystem: $DB_MAINT_ROWS_MISSING"
         echo "  DB rows removed from DB: $DB_MAINT_ROWS_REMOVED"
+        echo "SQLite maintenance hash backfill:"
+        echo "  rows scanned: $DB_MAINT_HASH_ROWS_SCANNED"
+        echo "  rows updated: $DB_MAINT_HASH_ROWS_UPDATED"
+        echo "  md5 filled: $DB_MAINT_HASH_MD5_FILLED"
+        echo "  sha512 filled: $DB_MAINT_HASH_SHA512_FILLED"
         echo "SQLite maintenance finished: $DB_FILE"
         exit 0
     fi
