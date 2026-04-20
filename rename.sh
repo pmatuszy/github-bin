@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.04.20 - v. 18.30 - fix manual rename-by-editing output stream so prompt text is not captured as destination path
 # 2026.04.19 - v. 18.29 - add manual "rename by editing" option with readline editing keys in plain rename prompt
 # 2026.04.19 - v. 18.28 - remove periodic main-loop heartbeat verbose lines while keeping startup and resume progress logs
 # 2026.04.19 - v. 18.27 - add startup transfer-to-shell progress after sorting so large handoff phase is visible
@@ -4000,14 +4001,14 @@ choose_custom_rename_target() {
     dir="$(dirname -- "$old_path")"
     suggested_base="$(basename -- "$suggested_path")"
 
-    echo
+    echo >&2
     verbose_question_timestamp "Rename by editing target filename"
-    echo "Rename by editing target filename (basename only):"
-    echo "  Use arrows/Home/End for cursor movement and editing."
-    echo "  Current suggestion: $suggested_base"
-    echo -n "New basename: "
+    echo "Rename by editing target filename (basename only):" >&2
+    echo "  Use arrows/Home/End for cursor movement and editing." >&2
+    echo "  Current suggestion: $suggested_base" >&2
+    echo -n "New basename: " >&2
     read_line_editable edited_base "$PROMPT_WAIT_SECONDS" "$suggested_base"
-    echo
+    echo >&2
 
     if [[ -z "$edited_base" ]]; then
         edited_base="$suggested_base"
