@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.04.19 - v. 18.29 - add manual "rename by editing" option with readline editing keys in plain rename prompt
 # 2026.04.19 - v. 18.28 - remove periodic main-loop heartbeat verbose lines while keeping startup and resume progress logs
 # 2026.04.19 - v. 18.27 - add startup transfer-to-shell progress after sorting so large handoff phase is visible
 # 2026.04.19 - v. 18.26 - add verbose checkpoint-restore progress and periodic main-loop heartbeat to show activity
@@ -361,6 +362,20 @@ read_single_key() {
     # Discard any extra buffered keypresses from the same burst so they do not
     # affect the next prompt or keep the pre-read drain loop busy.
     flush_stdin
+}
+
+read_line_editable() {
+    local __var_name="$1"
+    local __timeout="$2"
+    local __initial="${3-}"
+    local __line=""
+
+    if [[ "$__timeout" =~ ^[0-9]+$ ]] && (( __timeout == 0 )); then
+        IFS= read -r -e -i "$__initial" __line || true
+    else
+        IFS= read -r -e -t "$__timeout" -i "$__initial" __line || true
+    fi
+    printf -v "$__var_name" '%s' "$__line"
 }
 
 verbose_question_timestamp() {
@@ -3968,12 +3983,50 @@ print_rename_prompt_menu() {
     echo "Rename this ${kind_label}?"
     echo "  [Y] Yes (default)"
     echo "  [N] No"
+    echo "  [M] Rename by editing target filename"
     echo "  [A] All remaining"
     echo "  [D] Yes for this directory"
     echo "  [E] Add exception (skip this path and its subtree by filter match)"
     echo "  [X] Exact exception (do not rename only this exact path; still check subtree)"
     echo "  [Q] Quit"
-    echo -n "Choice [Y/n/a/d/E/x/q]: "
+    echo -n "Choice [Y/n/m/a/d/E/x/q]: "
+}
+
+choose_custom_rename_target() {
+    local old_path="$1"
+    local suggested_path="$2"
+    local dir suggested_base edited_base
+
+    dir="$(dirname -- "$old_path")"
+    suggested_base="$(basename -- "$suggested_path")"
+
+    echo
+    verbose_question_timestamp "Rename by editing target filename"
+    echo "Rename by editing target filename (basename only):"
+    echo "  Use arrows/Home/End for cursor movement and editing."
+    echo "  Current suggestion: $suggested_base"
+    echo -n "New basename: "
+    read_line_editable edited_base "$PROMPT_WAIT_SECONDS" "$suggested_base"
+    echo
+
+    if [[ -z "$edited_base" ]]; then
+        edited_base="$suggested_base"
+    fi
+
+    if [[ "$edited_base" == *"/"* ]]; then
+        echo -e "${YELLOW}SKIP:${RESET} Edited name must be a basename only (no '/')."
+        return 1
+    fi
+    if [[ "$edited_base" == "." || "$edited_base" == ".." ]]; then
+        echo -e "${YELLOW}SKIP:${RESET} Invalid edited basename: '$edited_base'"
+        return 1
+    fi
+
+    if [[ "$dir" == "." ]]; then
+        printf './%s' "$edited_base"
+    else
+        printf '%s/%s' "$dir" "$edited_base"
+    fi
 }
 
 print_checksum_prompt_menu() {
@@ -4781,6 +4834,18 @@ for f in "${ordered_paths[@]}"; do
             ;;
         n|N)
             ((++files_skipped))
+            ;;
+        m|M)
+            custom_new="$(choose_custom_rename_target "$f" "$new" || true)"
+            if [[ -z "$custom_new" ]]; then
+                ((++files_skipped))
+            elif [[ "$custom_new" == "$f" ]]; then
+                vlog "Edited rename target matches current name, skipping '$f'"
+                ((++files_skipped))
+            else
+                print_rename_action_verbose "$f" "$custom_new" "manual edit"
+                perform_plain_entry_rename "$f" "$custom_new" || break
+            fi
             ;;
         e|E)
             append_path_to_exclude_filters_file "$f"
