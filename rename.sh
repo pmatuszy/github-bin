@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# 2026.04.20 - v. 18.50 - do not defer plain-file renames because of checksum siblings; rename now and let checksum workflow update refs later
+# 2026.04.20 - v. 18.49 - defer to checksum workflow only when sibling checksum files actually reference the file being renamed
 # 2026.04.20 - v. 18.48 - defer to checksum workflow only when rename is needed and print only checksum siblings that actually exist
 # 2026.04.20 - v. 18.47 - split long sibling-checksum defer verbose output into readable multi-line format
 # 2026.04.20 - v. 18.46 - force checksum file processing when cached refs still need rename; defer sibling files explicitly to checksum workflow
@@ -1449,15 +1451,14 @@ checksum_file_has_renamable_refs() {
     return 1
 }
 
-print_checksum_sibling_defer_verbose() {
+print_checksum_sibling_notice_verbose() {
     (( VERBOSE == 1 )) || return 0
     local file_path="$1"
     local sha_path="$2"
     local md5_path="$3"
     local has_any=0
 
-    echo "[VERBOSE] Deferring '$file_path'" >&2
-    echo "          to sibling checksum workflow because checksum sibling(s) exist:" >&2
+    echo "[VERBOSE] Renaming '$file_path' now (checksum sibling(s) exist):" >&2
     if [[ -e "$sha_path" ]]; then
         echo "          sha512: '$sha_path'" >&2
         has_any=1
@@ -1466,8 +1467,8 @@ print_checksum_sibling_defer_verbose() {
         echo "          md5:    '$md5_path'" >&2
         has_any=1
     fi
-    if (( has_any == 0 )); then
-        echo "          (no checksum sibling exists at decision time)" >&2
+    if (( has_any == 1 )); then
+        echo "          checksum references will be updated when checksum file is processed." >&2
     fi
 }
 
@@ -5059,9 +5060,7 @@ for f in "${ordered_paths[@]}"; do
             precomputed_new="$new"
         fi
         if [[ "$f" != "$new" && ( -e "$base.sha512" || -e "$base.md5" ) ]]; then
-            print_checksum_sibling_defer_verbose "$f" "$base.sha512" "$base.md5"
-            ((++files_skipped))
-            continue
+            print_checksum_sibling_notice_verbose "$f" "$base.sha512" "$base.md5"
         fi
     fi
 
