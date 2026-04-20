@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.04.20 - v. 18.41 - avoid duplicate crosscheck/delete progress lines when count and percent thresholds coincide
 # 2026.04.20 - v. 18.40 - add explicit delete-phase progress for DB maintenance missing-row cleanup
 # 2026.04.20 - v. 18.39 - print DB maintenance crosscheck percent and absolute counters together in one progress line
 # 2026.04.20 - v. 18.38 - increase DB maintenance crosscheck progress cadence to every 5% and every 500 checked paths
@@ -801,11 +802,13 @@ db_prune_missing_paths() {
     local progress_pct=0
     local next_progress_pct=5
     local next_progress_count=500
+    local progress_printed_by_count=0
     local delete_total=0
     local delete_processed=0
     local delete_progress_pct=0
     local delete_next_progress_pct=5
     local delete_next_progress_count=500
+    local delete_progress_printed_by_count=0
     local delete_chunk_size=500
     local start_idx=0
     local end_idx=0
@@ -835,14 +838,21 @@ db_prune_missing_paths() {
 
         if (( total_db_rows > 0 )); then
             progress_pct=$(( DB_MAINT_ROWS_CHECKED * 100 / total_db_rows ))
+            progress_printed_by_count=0
             if (( DB_MAINT_ROWS_CHECKED >= next_progress_count )); then
                 startup_progress "SQLite maintenance: crosscheck progress ${progress_pct}% ($DB_MAINT_ROWS_CHECKED / $total_db_rows checked, $DB_MAINT_ROWS_MISSING missing)..."
                 next_progress_count=$((next_progress_count + 500))
+                progress_printed_by_count=1
+                while (( next_progress_pct <= progress_pct )) && (( next_progress_pct <= 100 )); do
+                    next_progress_pct=$((next_progress_pct + 5))
+                done
             fi
-            while (( progress_pct >= next_progress_pct )) && (( next_progress_pct <= 100 )); do
-                startup_progress "SQLite maintenance: crosscheck progress ${next_progress_pct}% ($DB_MAINT_ROWS_CHECKED / $total_db_rows checked, $DB_MAINT_ROWS_MISSING missing)..."
-                next_progress_pct=$((next_progress_pct + 5))
-            done
+            if (( progress_printed_by_count == 0 )); then
+                while (( progress_pct >= next_progress_pct )) && (( next_progress_pct <= 100 )); do
+                    startup_progress "SQLite maintenance: crosscheck progress ${next_progress_pct}% ($DB_MAINT_ROWS_CHECKED / $total_db_rows checked, $DB_MAINT_ROWS_MISSING missing)..."
+                    next_progress_pct=$((next_progress_pct + 5))
+                done
+            fi
         elif (( DB_MAINT_ROWS_CHECKED >= next_progress_count )); then
             startup_progress "SQLite maintenance: crosscheck progress ($DB_MAINT_ROWS_CHECKED checked, $DB_MAINT_ROWS_MISSING missing)..."
             next_progress_count=$((next_progress_count + 500))
@@ -871,14 +881,21 @@ db_prune_missing_paths() {
 
             delete_processed=$end_idx
             delete_progress_pct=$(( delete_processed * 100 / delete_total ))
+            delete_progress_printed_by_count=0
             if (( delete_processed >= delete_next_progress_count )); then
                 startup_progress "SQLite maintenance: delete progress ${delete_progress_pct}% ($delete_processed / $delete_total removed from DB)..."
                 delete_next_progress_count=$((delete_next_progress_count + 500))
+                delete_progress_printed_by_count=1
+                while (( delete_next_progress_pct <= delete_progress_pct )) && (( delete_next_progress_pct <= 100 )); do
+                    delete_next_progress_pct=$((delete_next_progress_pct + 5))
+                done
             fi
-            while (( delete_progress_pct >= delete_next_progress_pct )) && (( delete_next_progress_pct <= 100 )); do
-                startup_progress "SQLite maintenance: delete progress ${delete_next_progress_pct}% ($delete_processed / $delete_total removed from DB)..."
-                delete_next_progress_pct=$((delete_next_progress_pct + 5))
-            done
+            if (( delete_progress_printed_by_count == 0 )); then
+                while (( delete_progress_pct >= delete_next_progress_pct )) && (( delete_next_progress_pct <= 100 )); do
+                    startup_progress "SQLite maintenance: delete progress ${delete_next_progress_pct}% ($delete_processed / $delete_total removed from DB)..."
+                    delete_next_progress_pct=$((delete_next_progress_pct + 5))
+                done
+            fi
         done
         DB_MAINT_ROWS_REMOVED="$delete_processed"
     fi
