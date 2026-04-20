@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.04.20 - v. 18.48 - defer to checksum workflow only when rename is needed and print only checksum siblings that actually exist
 # 2026.04.20 - v. 18.47 - split long sibling-checksum defer verbose output into readable multi-line format
 # 2026.04.20 - v. 18.46 - force checksum file processing when cached refs still need rename; defer sibling files explicitly to checksum workflow
 # 2026.04.20 - v. 18.45 - in verbose mode, print whether DB row was inserted or updated right after plain file rename
@@ -1453,11 +1454,21 @@ print_checksum_sibling_defer_verbose() {
     local file_path="$1"
     local sha_path="$2"
     local md5_path="$3"
+    local has_any=0
 
     echo "[VERBOSE] Deferring '$file_path'" >&2
     echo "          to sibling checksum workflow because checksum sibling(s) exist:" >&2
-    echo "          sha512: '$sha_path'" >&2
-    echo "          md5:    '$md5_path'" >&2
+    if [[ -e "$sha_path" ]]; then
+        echo "          sha512: '$sha_path'" >&2
+        has_any=1
+    fi
+    if [[ -e "$md5_path" ]]; then
+        echo "          md5:    '$md5_path'" >&2
+        has_any=1
+    fi
+    if (( has_any == 0 )); then
+        echo "          (no checksum sibling exists at decision time)" >&2
+    fi
 }
 
 while (( $# > 0 )); do
@@ -5041,7 +5052,13 @@ for f in "${ordered_paths[@]}"; do
 
     if [[ -f "$f" ]]; then
         base="${f%.*}"
-        if [[ -e "$base.sha512" || -e "$base.md5" ]]; then
+        if [[ -n "$precomputed_new" ]]; then
+            new="$precomputed_new"
+        else
+            new="$(transform_name "$f")"
+            precomputed_new="$new"
+        fi
+        if [[ "$f" != "$new" && ( -e "$base.sha512" || -e "$base.md5" ) ]]; then
             print_checksum_sibling_defer_verbose "$f" "$base.sha512" "$base.md5"
             ((++files_skipped))
             continue
