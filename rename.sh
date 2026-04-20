@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.04.20 - v. 18.47 - split long sibling-checksum defer verbose output into readable multi-line format
 # 2026.04.20 - v. 18.46 - force checksum file processing when cached refs still need rename; defer sibling files explicitly to checksum workflow
 # 2026.04.20 - v. 18.45 - in verbose mode, print whether DB row was inserted or updated right after plain file rename
 # 2026.04.20 - v. 18.44 - add verbose DB subtree rewrite summary lines showing how many cached paths were remapped
@@ -1445,6 +1446,18 @@ checksum_file_has_renamable_refs() {
     done < <(extract_checksum_entries "$sum_file")
 
     return 1
+}
+
+print_checksum_sibling_defer_verbose() {
+    (( VERBOSE == 1 )) || return 0
+    local file_path="$1"
+    local sha_path="$2"
+    local md5_path="$3"
+
+    echo "[VERBOSE] Deferring '$file_path'" >&2
+    echo "          to sibling checksum workflow because checksum sibling(s) exist:" >&2
+    echo "          sha512: '$sha_path'" >&2
+    echo "          md5:    '$md5_path'" >&2
 }
 
 while (( $# > 0 )); do
@@ -5029,7 +5042,7 @@ for f in "${ordered_paths[@]}"; do
     if [[ -f "$f" ]]; then
         base="${f%.*}"
         if [[ -e "$base.sha512" || -e "$base.md5" ]]; then
-            vlog "Deferring '$f' to sibling checksum workflow because '$base.sha512' or '$base.md5' exists"
+            print_checksum_sibling_defer_verbose "$f" "$base.sha512" "$base.md5"
             ((++files_skipped))
             continue
         fi
