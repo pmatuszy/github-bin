@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# 2026.04.20 - v. 18.45 - in verbose mode, print whether DB row was inserted or updated right after plain file rename
+# 2026.04.20 - v. 18.44 - add verbose DB subtree rewrite summary lines showing how many cached paths were remapped
 # 2026.04.20 - v. 18.43 - preserve hash columns when rewriting DB paths and move DB row on plain file rename
 # 2026.04.20 - v. 18.42 - prevent DB cache skip when transform_name indicates rename is still required (e.g. .WnA. cleanup)
 # 2026.04.20 - v. 18.41 - avoid duplicate crosscheck/delete progress lines when count and percent thresholds coincide
@@ -205,6 +207,7 @@ DB_HASH_LOOKUP_MISSES=0
 DB_HASH_RECORD_STATUS=""
 DB_RECOVERY_RESULT=""
 DB_STALE_ROWS_REMOVED=0
+DB_MARK_CHECKED_RESULT=""
 DB_MAINT_ROWS_CHECKED=0
 DB_MAINT_ROWS_MISSING=0
 DB_MAINT_ROWS_REMOVED=0
@@ -1274,8 +1277,10 @@ db_mark_checked() {
 
     if (( existing_row == 1 )); then
         ((++DB_ROWS_UPDATED))
+        DB_MARK_CHECKED_RESULT="updated"
     else
         ((++DB_ROWS_NEW))
+        DB_MARK_CHECKED_RESULT="inserted"
     fi
 
     if [[ -n "$sig" ]]; then
@@ -1306,6 +1311,7 @@ db_rewrite_subtree() {
     local old_path="$1"
     local new_path="$2"
     local old_abs new_abs old_prefix new_prefix old_db_path new_db_path suffix sql
+    local rewritten_count=0
     local -a matched_paths=()
 
     (( USE_DB == 1 )) || return 0
@@ -1324,7 +1330,10 @@ db_rewrite_subtree() {
         fi
     done
 
-    (( ${#matched_paths[@]} > 0 )) || return 0
+    if (( ${#matched_paths[@]} == 0 )); then
+        vlog "DB subtree rewrite summary: 0 cached path(s) matched for '$old_abs' -> '$new_abs'"
+        return 0
+    fi
 
     for old_db_path in "${matched_paths[@]}"; do
         if [[ "$old_db_path" == "$old_abs" ]]; then
@@ -1362,7 +1371,10 @@ db_rewrite_subtree() {
         if (( DB_PENDING_COUNT >= DB_FLUSH_EVERY )); then
             db_flush_pending
         fi
+        (( ++rewritten_count ))
     done
+
+    vlog "DB subtree rewrite summary: ${rewritten_count} cached path(s) updated for '$old_abs' -> '$new_abs'"
 }
 
 db_rewrite_single_path() {
@@ -3681,6 +3693,7 @@ perform_plain_entry_rename() {
         db_rewrite_single_path "$old" "$new"
     fi
     db_mark_checked "$new" "plain" "checked"
+    vlog "DB row ${DB_MARK_CHECKED_RESULT:-updated} after rename: '$new' (plain/checked)"
 
     if [[ -n "$old_companion_dir" && "$old_companion_dir" != "$new_companion_dir" ]]; then
         echo -e "${CYAN}HTML PAIR RENAME:${RESET} HTML file and companion directory are being updated together."
