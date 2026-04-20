@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.04.20 - v. 18.53 - fix FULL maintenance hash backfill runtime by using inline md5/sha512 commands without late function dependencies
 # 2026.04.20 - v. 18.52 - fix FULL maintenance hash backfill runtime by avoiding pre-definition call to is_checksum_file()
 # 2026.04.20 - v. 18.51 - in FULL DB maintenance, backfill any missing md5/sha512 for existing file rows with progress and summary stats
 # 2026.04.20 - v. 18.50 - do not defer plain-file renames because of checksum siblings; rename now and let checksum workflow update refs later
@@ -992,14 +993,32 @@ db_maintenance_backfill_missing_hashes() {
         updated_this_row=0
 
         if [[ -z "$md5_hash" ]]; then
-            new_md5="$(md5_of_file "$path")"
+            if command -v md5sum >/dev/null 2>&1; then
+                new_md5="$(md5sum -- "$path" | awk '{print tolower($1)}')"
+            elif command -v md5 >/dev/null 2>&1; then
+                new_md5="$(md5 -q -- "$path" | awk '{print tolower($1)}')"
+            elif command -v openssl >/dev/null 2>&1; then
+                new_md5="$(openssl dgst -md5 -- "$path" | awk '{print tolower($NF)}')"
+            else
+                echo "ERROR: no md5 hash command available for maintenance backfill." >&2
+                exit 1
+            fi
             DB_CACHE_HASH_MD5["$abs"]="$new_md5"
             (( ++DB_MAINT_HASH_MD5_FILLED ))
             added_desc="md5"
             updated_this_row=1
         fi
         if [[ -z "$sha512_hash" ]]; then
-            new_sha512="$(checksum_of_file sha512 "$path")"
+            if command -v sha512sum >/dev/null 2>&1; then
+                new_sha512="$(sha512sum -- "$path" | awk '{print tolower($1)}')"
+            elif command -v shasum >/dev/null 2>&1; then
+                new_sha512="$(shasum -a 512 -- "$path" | awk '{print tolower($1)}')"
+            elif command -v openssl >/dev/null 2>&1; then
+                new_sha512="$(openssl dgst -sha512 -- "$path" | awk '{print tolower($NF)}')"
+            else
+                echo "ERROR: no sha512 hash command available for maintenance backfill." >&2
+                exit 1
+            fi
             DB_CACHE_HASH_SHA512["$abs"]="$new_sha512"
             (( ++DB_MAINT_HASH_SHA512_FILLED ))
             if [[ -n "$added_desc" ]]; then
