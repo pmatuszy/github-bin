@@ -1,4 +1,8 @@
 #!/usr/bin/env bash
+# 2026.04.20 - v. 18.36 - wrap verbose DB-maintenance missing-file removal messages into clean two-line output
+# 2026.04.20 - v. 18.35 - in verbose DB maintenance, state that missing filesystem files are removed from DB entries
+# 2026.04.20 - v. 18.34 - in DB maintenance, verify cached paths exist on disk, remove missing rows, and print prune stats
+# 2026.04.20 - v. 18.33 - remove .WnA. marker fragments from filenames during normalization
 # 2026.04.20 - v. 18.32 - prompt before replacing existing DB hash values (Y/n/q) and log skip decisions explicitly
 # 2026.04.20 - v. 18.31 - make DB hash verbose messages distinguish backfilled hashes from updated existing hashes
 # 2026.04.20 - v. 18.30 - fix manual rename-by-editing output stream so prompt text is not captured as destination path
@@ -194,6 +198,9 @@ DB_HASH_LOOKUP_MISSES=0
 DB_HASH_RECORD_STATUS=""
 DB_RECOVERY_RESULT=""
 DB_STALE_ROWS_REMOVED=0
+DB_MAINT_ROWS_CHECKED=0
+DB_MAINT_ROWS_MISSING=0
+DB_MAINT_ROWS_REMOVED=0
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 WORKSPACE_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd -P)"
 DEBUG_LOG_PATH="${DEBUG_LOG_PATH:-$WORKSPACE_ROOT/debug-8439cd.log}"
@@ -764,6 +771,7 @@ db_run_maintenance() {
 PRAGMA optimize;
 PRAGMA wal_checkpoint(PASSIVE);
 SQL
+        db_prune_missing_paths
         startup_progress "SQLite maintenance: AUTO profile finished"
         return 0
     fi
@@ -779,7 +787,56 @@ ANALYZE;
 REINDEX checked_paths;
 PRAGMA wal_checkpoint(TRUNCATE);
 SQL
+    db_prune_missing_paths
     startup_progress "SQLite maintenance: FULL profile finished"
+}
+
+db_prune_missing_paths() {
+    local path escaped_path
+    local -a missing_paths=()
+
+    DB_MAINT_ROWS_CHECKED=0
+    DB_MAINT_ROWS_MISSING=0
+    DB_MAINT_ROWS_REMOVED=0
+
+    startup_progress "SQLite maintenance: checking DB paths against filesystem..."
+    while IFS= read -r path; do
+        [[ -n "$path" ]] || continue
+        (( ++DB_MAINT_ROWS_CHECKED ))
+        if [[ ! -e "$path" ]]; then
+            (( ++DB_MAINT_ROWS_MISSING ))
+            missing_paths+=("$path")
+            print_db_maintenance_missing_verbose "$path"
+        fi
+    done < <(sqlite3 "$DB_FILE" 'SELECT path FROM checked_paths;')
+
+    if (( DB_MAINT_ROWS_MISSING > 0 )); then
+        (( VERBOSE == 1 )) && echo "[VERBOSE] SQLite maintenance command: delete rows for missing filesystem paths" >&2
+        {
+            printf 'BEGIN IMMEDIATE;\n'
+            for path in "${missing_paths[@]}"; do
+                escaped_path="$(sql_escape "$path")"
+                printf "DELETE FROM checked_paths WHERE path='%s';\n" "$escaped_path"
+            done
+            printf 'COMMIT;\n'
+        } | sqlite3 "$DB_FILE" >/dev/null 2>&1
+        DB_MAINT_ROWS_REMOVED="${#missing_paths[@]}"
+    fi
+
+    startup_progress "SQLite maintenance: filesystem check finished (checked: $DB_MAINT_ROWS_CHECKED, missing: $DB_MAINT_ROWS_MISSING, removed: $DB_MAINT_ROWS_REMOVED)"
+}
+
+print_db_maintenance_missing_verbose() {
+    (( VERBOSE == 1 )) || return 0
+    local path="$1"
+    local line="[VERBOSE] SQLite maintenance: DB entry exists for '$path' but file is missing in filesystem; removing row from DB."
+
+    if (( ${#line} <= MAX_LINE_LENGTH )); then
+        echo "$line" >&2
+    else
+        echo "[VERBOSE] SQLite maintenance: DB entry exists for '$path'" >&2
+        echo "          but file is missing in filesystem; removing row from DB." >&2
+    fi
 }
 
 db_init() {
@@ -1397,6 +1454,10 @@ if (( USE_DB == 1 )); then
         fi
         startup_progress "Running manual SQLite maintenance profile: $CLI_DB_MAINTENANCE"
         db_run_maintenance "$CLI_DB_MAINTENANCE"
+        echo "SQLite maintenance filesystem check:"
+        echo "  DB rows checked: $DB_MAINT_ROWS_CHECKED"
+        echo "  DB rows missing in filesystem: $DB_MAINT_ROWS_MISSING"
+        echo "  DB rows removed from DB: $DB_MAINT_ROWS_REMOVED"
         echo "SQLite maintenance finished: $DB_FILE"
         exit 0
     fi
@@ -2751,6 +2812,7 @@ transform_basename() {
     new="${new//eBook.PL/}"
     new="${new//_www.osiolek.com/}"
     new="${new//www.osiolek.com/}"
+    new="${new//.WnA./.}"
     new="${new//_M_and_T_Books/}"
     new="${new//_Audiobook_PL/}"
     new="${new//\[Audiobook_PL\]/}"
