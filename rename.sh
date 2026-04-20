@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# 2026.04.20 - v. 18.38 - increase DB maintenance crosscheck progress cadence to every 5% and every 500 checked paths
+# 2026.04.20 - v. 18.37 - add DB maintenance crosscheck progress updates every 10% and every 1000 checked paths
 # 2026.04.20 - v. 18.36 - wrap verbose DB-maintenance missing-file removal messages into clean two-line output
 # 2026.04.20 - v. 18.35 - in verbose DB maintenance, state that missing filesystem files are removed from DB entries
 # 2026.04.20 - v. 18.34 - in DB maintenance, verify cached paths exist on disk, remove missing rows, and print prune stats
@@ -793,6 +795,10 @@ SQL
 
 db_prune_missing_paths() {
     local path escaped_path
+    local total_db_rows=0
+    local progress_pct=0
+    local next_progress_pct=5
+    local next_progress_count=500
     local -a missing_paths=()
 
     DB_MAINT_ROWS_CHECKED=0
@@ -800,6 +806,13 @@ db_prune_missing_paths() {
     DB_MAINT_ROWS_REMOVED=0
 
     startup_progress "SQLite maintenance: checking DB paths against filesystem..."
+    total_db_rows="$(sqlite3 "$DB_FILE" 'SELECT COUNT(*) FROM checked_paths;' 2>/dev/null || echo 0)"
+    [[ "$total_db_rows" =~ ^[0-9]+$ ]] || total_db_rows=0
+
+    if (( total_db_rows > 0 )); then
+        startup_progress "SQLite maintenance: crosscheck progress 0% (0 / $total_db_rows checked)..."
+    fi
+
     while IFS= read -r path; do
         [[ -n "$path" ]] || continue
         (( ++DB_MAINT_ROWS_CHECKED ))
@@ -807,6 +820,19 @@ db_prune_missing_paths() {
             (( ++DB_MAINT_ROWS_MISSING ))
             missing_paths+=("$path")
             print_db_maintenance_missing_verbose "$path"
+        fi
+
+        if (( DB_MAINT_ROWS_CHECKED >= next_progress_count )); then
+            startup_progress "SQLite maintenance: crosscheck progress ($DB_MAINT_ROWS_CHECKED checked, $DB_MAINT_ROWS_MISSING missing)..."
+            next_progress_count=$((next_progress_count + 500))
+        fi
+
+        if (( total_db_rows > 0 )); then
+            progress_pct=$(( DB_MAINT_ROWS_CHECKED * 100 / total_db_rows ))
+            while (( progress_pct >= next_progress_pct )) && (( next_progress_pct <= 100 )); do
+                startup_progress "SQLite maintenance: crosscheck progress ${next_progress_pct}% ($DB_MAINT_ROWS_CHECKED / $total_db_rows checked)..."
+                next_progress_pct=$((next_progress_pct + 5))
+            done
         fi
     done < <(sqlite3 "$DB_FILE" 'SELECT path FROM checked_paths;')
 
