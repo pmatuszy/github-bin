@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.04.20 - v. 18.43 - preserve hash columns when rewriting DB paths and move DB row on plain file rename
 # 2026.04.20 - v. 18.42 - prevent DB cache skip when transform_name indicates rename is still required (e.g. .WnA. cleanup)
 # 2026.04.20 - v. 18.41 - avoid duplicate crosscheck/delete progress lines when count and percent thresholds coincide
 # 2026.04.20 - v. 18.40 - add explicit delete-phase progress for DB maintenance missing-row cleanup
@@ -1355,7 +1356,7 @@ db_rewrite_subtree() {
         ((++DB_ROWS_NEW))
         ((++DB_ROWS_REMOVED))
 
-        sql="INSERT INTO checked_paths(path, kind, size, mtime, status, last_checked, signature) SELECT '$(sql_escape "$new_db_path")', kind, size, mtime, status, last_checked, signature FROM checked_paths WHERE path='$(sql_escape "$old_db_path")' ON CONFLICT(path) DO UPDATE SET kind=excluded.kind, size=excluded.size, mtime=excluded.mtime, status=excluded.status, signature=excluded.signature, last_checked=excluded.last_checked; DELETE FROM checked_paths WHERE path='$(sql_escape "$old_db_path")';"
+        sql="INSERT INTO checked_paths(path, kind, size, mtime, status, last_checked, signature, file_hash_kind, file_hash, file_md5, file_sha512) SELECT '$(sql_escape "$new_db_path")', kind, size, mtime, status, last_checked, signature, file_hash_kind, file_hash, file_md5, file_sha512 FROM checked_paths WHERE path='$(sql_escape "$old_db_path")' ON CONFLICT(path) DO UPDATE SET kind=excluded.kind, size=excluded.size, mtime=excluded.mtime, status=excluded.status, signature=excluded.signature, last_checked=excluded.last_checked, file_hash_kind=COALESCE(excluded.file_hash_kind, checked_paths.file_hash_kind), file_hash=COALESCE(excluded.file_hash, checked_paths.file_hash), file_md5=COALESCE(excluded.file_md5, checked_paths.file_md5), file_sha512=COALESCE(excluded.file_sha512, checked_paths.file_sha512); DELETE FROM checked_paths WHERE path='$(sql_escape "$old_db_path")';"
         printf '%s\n' "$sql" >> "$DB_PENDING_SQL_FILE"
         (( ++DB_PENDING_COUNT ))
         if (( DB_PENDING_COUNT >= DB_FLUSH_EVERY )); then
@@ -1375,7 +1376,7 @@ db_rewrite_single_path() {
     new_abs="$(db_abs_path "$new_path" 2>/dev/null || true)"
     [[ -n "$old_abs" && -n "$new_abs" ]] || return 0
 
-    sql="UPDATE checked_paths SET path='$(sql_escape "$new_abs")', last_checked=CURRENT_TIMESTAMP WHERE path='$(sql_escape "$old_abs")';"
+    sql="INSERT INTO checked_paths(path, kind, size, mtime, status, last_checked, signature, file_hash_kind, file_hash, file_md5, file_sha512) SELECT '$(sql_escape "$new_abs")', kind, size, mtime, status, CURRENT_TIMESTAMP, signature, file_hash_kind, file_hash, file_md5, file_sha512 FROM checked_paths WHERE path='$(sql_escape "$old_abs")' ON CONFLICT(path) DO UPDATE SET kind=excluded.kind, size=excluded.size, mtime=excluded.mtime, status=excluded.status, signature=excluded.signature, last_checked=excluded.last_checked, file_hash_kind=COALESCE(excluded.file_hash_kind, checked_paths.file_hash_kind), file_hash=COALESCE(excluded.file_hash, checked_paths.file_hash), file_md5=COALESCE(excluded.file_md5, checked_paths.file_md5), file_sha512=COALESCE(excluded.file_sha512, checked_paths.file_sha512); DELETE FROM checked_paths WHERE path='$(sql_escape "$old_abs")';"
     printf '%s\n' "$sql" >> "$DB_PENDING_SQL_FILE"
     (( ++DB_PENDING_COUNT ))
     if (( DB_PENDING_COUNT >= DB_FLUSH_EVERY )); then
@@ -3676,6 +3677,8 @@ perform_plain_entry_rename() {
     record_rename "$old" "$new"
     if [[ "$old_was_dir" == "yes" ]]; then
         db_rewrite_subtree "$old" "$new"
+    else
+        db_rewrite_single_path "$old" "$new"
     fi
     db_mark_checked "$new" "plain" "checked"
 
