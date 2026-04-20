@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# 2026.04.20 - v. 18.32 - prompt before replacing existing DB hash values (Y/n/q) and log skip decisions explicitly
+# 2026.04.20 - v. 18.31 - make DB hash verbose messages distinguish backfilled hashes from updated existing hashes
 # 2026.04.20 - v. 18.30 - fix manual rename-by-editing output stream so prompt text is not captured as destination path
 # 2026.04.19 - v. 18.29 - add manual "rename by editing" option with readline editing keys in plain rename prompt
 # 2026.04.19 - v. 18.28 - remove periodic main-loop heartbeat verbose lines while keeping startup and resume progress logs
@@ -393,6 +395,36 @@ verbose_status_timestamp() {
     local ts
     ts="$(date '+%Y-%m-%d %H:%M:%S')"
     echo "[VERBOSE] [${ts}] ${msg}" >&2
+}
+
+confirm_db_hash_update_for_existing_entry() {
+    local path="$1"
+    local hash_kind="$2"
+    local old_hash="$3"
+    local new_hash="$4"
+    local answer=""
+
+    echo
+    verbose_question_timestamp "Stored ${hash_kind} hash differs for this entry. Replace it?"
+    echo "DB hash differs for existing entry:"
+    echo "  path:     $path"
+    echo "  kind:     $hash_kind"
+    echo "  stored:   $old_hash"
+    echo "  computed: $new_hash"
+    echo "Replace stored hash with computed value?"
+    echo "  [Y] Yes (default)"
+    echo "  [N] No (keep existing DB hash)"
+    echo "  [Q] Quit"
+    echo -n "Choice [Y/n/q]: "
+    flush_stdin
+    read_single_key answer "$PROMPT_WAIT_SECONDS"
+    echo
+
+    case "$answer" in
+        q|Q) return 2 ;;
+        n|N) return 1 ;;
+        *) return 0 ;;
+    esac
 }
 
 prompt_resume_choice_early() {
@@ -891,7 +923,7 @@ db_record_file_hash() {
     local path="$1"
     local hash_kind="$2"
     local hash_value="$3"
-    local abs sql specific_sql
+    local abs sql specific_sql existing_hash="" write_hash_record=1 confirm_rc=0
 
     (( USE_DB == 1 )) || return 0
     [[ -e "$path" && -n "$hash_kind" && -n "$hash_value" ]] || return 0
@@ -899,14 +931,45 @@ db_record_file_hash() {
     abs="$(db_abs_path "$path" 2>/dev/null || true)"
     [[ -n "$abs" ]] || return 0
 
+    case "$hash_kind" in
+        md5) existing_hash="${DB_CACHE_HASH_MD5[$abs]-}" ;;
+        sha512) existing_hash="${DB_CACHE_HASH_SHA512[$abs]-}" ;;
+        *) existing_hash="" ;;
+    esac
+
     if [[ -n "${DB_CACHE_ROW_EXISTS[$abs]-}" ]]; then
-        DB_HASH_RECORD_STATUS="updated"
-        ((++DB_ROWS_UPDATED))
+        if [[ -z "$existing_hash" ]]; then
+            DB_HASH_RECORD_STATUS="added_missing"
+        elif [[ "$existing_hash" == "$hash_value" ]]; then
+            DB_HASH_RECORD_STATUS="unchanged"
+        else
+            confirm_db_hash_update_for_existing_entry "$path" "$hash_kind" "$existing_hash" "$hash_value"
+            confirm_rc=$?
+            case "$confirm_rc" in
+                0)
+                    DB_HASH_RECORD_STATUS="updated"
+                    ;;
+                1)
+                    DB_HASH_RECORD_STATUS="kept_existing"
+                    write_hash_record=0
+                    ;;
+                2)
+                    echo "Quitting."
+                    exit 0
+                    ;;
+            esac
+        fi
     else
         DB_HASH_RECORD_STATUS="new"
-        ((++DB_ROWS_NEW))
     fi
-    ((++DB_HASHES_ADDED))
+    if (( write_hash_record == 1 )); then
+        if [[ -n "${DB_CACHE_ROW_EXISTS[$abs]-}" ]]; then
+            ((++DB_ROWS_UPDATED))
+        else
+            ((++DB_ROWS_NEW))
+        fi
+        ((++DB_HASHES_ADDED))
+    fi
 
     case "$hash_kind" in
         md5) specific_sql="file_md5='$(sql_escape "$hash_value")'" ;;
@@ -914,17 +977,19 @@ db_record_file_hash() {
         *) specific_sql="" ;;
     esac
 
-    sql="INSERT INTO checked_paths(path, kind, size, mtime, status, last_checked, file_hash_kind, file_hash, file_md5, file_sha512) VALUES ('$(sql_escape "$abs")', 'file_hash_only', 0, 0, 'hashed', CURRENT_TIMESTAMP, '$(sql_escape "$hash_kind")', '$(sql_escape "$hash_value")', $( [[ "$hash_kind" == "md5" ]] && printf "'%s'" "$(sql_escape "$hash_value")" || printf "NULL" ), $( [[ "$hash_kind" == "sha512" ]] && printf "'%s'" "$(sql_escape "$hash_value")" || printf "NULL" )) ON CONFLICT(path) DO UPDATE SET file_hash_kind=excluded.file_hash_kind, file_hash=excluded.file_hash, last_checked=CURRENT_TIMESTAMP${specific_sql:+, $specific_sql};"
-    printf '%s\n' "$sql" >> "$DB_PENDING_SQL_FILE"
-    DB_CACHE_ROW_EXISTS["$abs"]=1
-    if [[ "$hash_kind" == "md5" ]]; then
-        DB_CACHE_HASH_MD5["$abs"]="$hash_value"
-    elif [[ "$hash_kind" == "sha512" ]]; then
-        DB_CACHE_HASH_SHA512["$abs"]="$hash_value"
-    fi
-    (( ++DB_PENDING_COUNT ))
-    if (( DB_PENDING_COUNT >= DB_FLUSH_EVERY )); then
-        db_flush_pending
+    if (( write_hash_record == 1 )); then
+        sql="INSERT INTO checked_paths(path, kind, size, mtime, status, last_checked, file_hash_kind, file_hash, file_md5, file_sha512) VALUES ('$(sql_escape "$abs")', 'file_hash_only', 0, 0, 'hashed', CURRENT_TIMESTAMP, '$(sql_escape "$hash_kind")', '$(sql_escape "$hash_value")', $( [[ "$hash_kind" == "md5" ]] && printf "'%s'" "$(sql_escape "$hash_value")" || printf "NULL" ), $( [[ "$hash_kind" == "sha512" ]] && printf "'%s'" "$(sql_escape "$hash_value")" || printf "NULL" )) ON CONFLICT(path) DO UPDATE SET file_hash_kind=excluded.file_hash_kind, file_hash=excluded.file_hash, last_checked=CURRENT_TIMESTAMP${specific_sql:+, $specific_sql};"
+        printf '%s\n' "$sql" >> "$DB_PENDING_SQL_FILE"
+        DB_CACHE_ROW_EXISTS["$abs"]=1
+        if [[ "$hash_kind" == "md5" ]]; then
+            DB_CACHE_HASH_MD5["$abs"]="$hash_value"
+        elif [[ "$hash_kind" == "sha512" ]]; then
+            DB_CACHE_HASH_SHA512["$abs"]="$hash_value"
+        fi
+        (( ++DB_PENDING_COUNT ))
+        if (( DB_PENDING_COUNT >= DB_FLUSH_EVERY )); then
+            db_flush_pending
+        fi
     fi
 
     print_db_hash_record_verbose "$path" "$hash_kind" "$DB_HASH_RECORD_STATUS"
@@ -1681,11 +1746,26 @@ print_db_hash_record_verbose() {
     local hash_kind="$2"
     local status="$3"
 
-    if [[ "$status" == "new" ]]; then
-        echo "[VERBOSE] DB hash stored for NEW file entry: '${path}' (${hash_kind})" >&2
-    else
-        echo "[VERBOSE] DB hash updated for EXISTING file entry: '${path}' (${hash_kind})" >&2
-    fi
+    case "$status" in
+        new)
+            echo "[VERBOSE] DB hash stored for NEW file entry: '${path}' (${hash_kind})" >&2
+            ;;
+        added_missing)
+            echo "[VERBOSE] DB hash added for EXISTING file entry (missing before): '${path}' (${hash_kind})" >&2
+            ;;
+        unchanged)
+            echo "[VERBOSE] DB hash verified for EXISTING file entry (already present): '${path}' (${hash_kind})" >&2
+            ;;
+        updated)
+            echo "[VERBOSE] DB hash updated for EXISTING file entry: '${path}' (${hash_kind})" >&2
+            ;;
+        kept_existing)
+            echo "[VERBOSE] DB hash kept for EXISTING file entry (user chose not to replace): '${path}' (${hash_kind})" >&2
+            ;;
+        *)
+            echo "[VERBOSE] DB hash recorded for file entry: '${path}' (${hash_kind})" >&2
+            ;;
+    esac
 }
 
 print_db_hash_lookup_verbose() {
