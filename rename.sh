@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.04.20 - v. 18.40 - add explicit delete-phase progress for DB maintenance missing-row cleanup
 # 2026.04.20 - v. 18.39 - print DB maintenance crosscheck percent and absolute counters together in one progress line
 # 2026.04.20 - v. 18.38 - increase DB maintenance crosscheck progress cadence to every 5% and every 500 checked paths
 # 2026.04.20 - v. 18.37 - add DB maintenance crosscheck progress updates every 10% and every 1000 checked paths
@@ -800,6 +801,15 @@ db_prune_missing_paths() {
     local progress_pct=0
     local next_progress_pct=5
     local next_progress_count=500
+    local delete_total=0
+    local delete_processed=0
+    local delete_progress_pct=0
+    local delete_next_progress_pct=5
+    local delete_next_progress_count=500
+    local delete_chunk_size=500
+    local start_idx=0
+    local end_idx=0
+    local i=0
     local -a missing_paths=()
 
     DB_MAINT_ROWS_CHECKED=0
@@ -841,15 +851,36 @@ db_prune_missing_paths() {
 
     if (( DB_MAINT_ROWS_MISSING > 0 )); then
         (( VERBOSE == 1 )) && echo "[VERBOSE] SQLite maintenance command: delete rows for missing filesystem paths" >&2
-        {
-            printf 'BEGIN IMMEDIATE;\n'
-            for path in "${missing_paths[@]}"; do
-                escaped_path="$(sql_escape "$path")"
-                printf "DELETE FROM checked_paths WHERE path='%s';\n" "$escaped_path"
+        delete_total="${#missing_paths[@]}"
+        startup_progress "SQLite maintenance: delete progress 0% (0 / $delete_total removed from DB)..."
+        for (( start_idx=0; start_idx<delete_total; start_idx+=delete_chunk_size )); do
+            end_idx=$((start_idx + delete_chunk_size))
+            if (( end_idx > delete_total )); then
+                end_idx=$delete_total
+            fi
+
+            {
+                printf 'BEGIN IMMEDIATE;\n'
+                for (( i=start_idx; i<end_idx; i++ )); do
+                    path="${missing_paths[$i]}"
+                    escaped_path="$(sql_escape "$path")"
+                    printf "DELETE FROM checked_paths WHERE path='%s';\n" "$escaped_path"
+                done
+                printf 'COMMIT;\n'
+            } | sqlite3 "$DB_FILE" >/dev/null 2>&1
+
+            delete_processed=$end_idx
+            delete_progress_pct=$(( delete_processed * 100 / delete_total ))
+            if (( delete_processed >= delete_next_progress_count )); then
+                startup_progress "SQLite maintenance: delete progress ${delete_progress_pct}% ($delete_processed / $delete_total removed from DB)..."
+                delete_next_progress_count=$((delete_next_progress_count + 500))
+            fi
+            while (( delete_progress_pct >= delete_next_progress_pct )) && (( delete_next_progress_pct <= 100 )); do
+                startup_progress "SQLite maintenance: delete progress ${delete_next_progress_pct}% ($delete_processed / $delete_total removed from DB)..."
+                delete_next_progress_pct=$((delete_next_progress_pct + 5))
             done
-            printf 'COMMIT;\n'
-        } | sqlite3 "$DB_FILE" >/dev/null 2>&1
-        DB_MAINT_ROWS_REMOVED="${#missing_paths[@]}"
+        done
+        DB_MAINT_ROWS_REMOVED="$delete_processed"
     fi
 
     startup_progress "SQLite maintenance: filesystem check finished (checked: $DB_MAINT_ROWS_CHECKED, missing: $DB_MAINT_ROWS_MISSING, removed: $DB_MAINT_ROWS_REMOVED)"
