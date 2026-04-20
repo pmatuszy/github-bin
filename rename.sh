@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# 2026.04.20 - v. 18.56 - print startup banner before early resume question while keeping a single banner print in normal flow
+# 2026.04.20 - v. 18.55 - speed up FULL maintenance hash backfill via SQL candidate filtering, one-time hash backend detection, and missing-hash partial index
 # 2026.04.20 - v. 18.54 - initialize pending SQL temp file in manual maintenance mode so hash backfill updates can be queued safely
 # 2026.04.20 - v. 18.53 - fix FULL maintenance hash backfill runtime by using inline md5/sha512 commands without late function dependencies
 # 2026.04.20 - v. 18.52 - fix FULL maintenance hash backfill runtime by avoiding pre-definition call to is_checksum_file()
@@ -950,14 +952,43 @@ db_maintenance_backfill_missing_hashes() {
     local next_progress_count=500
     local progress_printed_by_count=0
     local updated_this_row=0
+    local md5_backend=""
+    local sha512_backend=""
+    local candidate_where=""
+    local candidate_query=""
 
     DB_MAINT_HASH_ROWS_SCANNED=0
     DB_MAINT_HASH_ROWS_UPDATED=0
     DB_MAINT_HASH_MD5_FILLED=0
     DB_MAINT_HASH_SHA512_FILLED=0
 
+    if command -v md5sum >/dev/null 2>&1; then
+        md5_backend="md5sum"
+    elif command -v md5 >/dev/null 2>&1; then
+        md5_backend="md5"
+    elif command -v openssl >/dev/null 2>&1; then
+        md5_backend="openssl"
+    else
+        echo "ERROR: no md5 hash command available for maintenance backfill." >&2
+        exit 1
+    fi
+
+    if command -v sha512sum >/dev/null 2>&1; then
+        sha512_backend="sha512sum"
+    elif command -v shasum >/dev/null 2>&1; then
+        sha512_backend="shasum"
+    elif command -v openssl >/dev/null 2>&1; then
+        sha512_backend="openssl"
+    else
+        echo "ERROR: no sha512 hash command available for maintenance backfill." >&2
+        exit 1
+    fi
+
+    candidate_where="(COALESCE(file_md5,'')='' OR COALESCE(file_sha512,'')='') AND path NOT LIKE '%.md5' AND path NOT LIKE '%.sha512'"
+    candidate_query="SELECT path, COALESCE(file_md5,''), COALESCE(file_sha512,'') FROM checked_paths WHERE ${candidate_where};"
+
     startup_progress "SQLite maintenance: backfilling missing md5/sha512 for existing file rows..."
-    total_candidates="$(sqlite3 "$DB_FILE" "SELECT COUNT(*) FROM checked_paths WHERE COALESCE(file_md5,'')='' OR COALESCE(file_sha512,'');" 2>/dev/null || echo 0)"
+    total_candidates="$(sqlite3 "$DB_FILE" "SELECT COUNT(*) FROM checked_paths WHERE ${candidate_where};" 2>/dev/null || echo 0)"
     [[ "$total_candidates" =~ ^[0-9]+$ ]] || total_candidates=0
 
     if (( total_candidates > 0 )); then
@@ -988,7 +1019,6 @@ db_maintenance_backfill_missing_hashes() {
         fi
 
         [[ -f "$path" ]] || continue
-        [[ "$path" == *.sha512 || "$path" == *.md5 ]] && continue
 
         abs="$(db_abs_path "$path" 2>/dev/null || true)"
         [[ -n "$abs" ]] || continue
@@ -999,32 +1029,22 @@ db_maintenance_backfill_missing_hashes() {
         updated_this_row=0
 
         if [[ -z "$md5_hash" ]]; then
-            if command -v md5sum >/dev/null 2>&1; then
-                new_md5="$(md5sum -- "$path" | awk '{print tolower($1)}')"
-            elif command -v md5 >/dev/null 2>&1; then
-                new_md5="$(md5 -q -- "$path" | awk '{print tolower($1)}')"
-            elif command -v openssl >/dev/null 2>&1; then
-                new_md5="$(openssl dgst -md5 -- "$path" | awk '{print tolower($NF)}')"
-            else
-                echo "ERROR: no md5 hash command available for maintenance backfill." >&2
-                exit 1
-            fi
+            case "$md5_backend" in
+                md5sum)  new_md5="$(md5sum -- "$path" | awk '{print tolower($1)}')" ;;
+                md5)     new_md5="$(md5 -q -- "$path" | awk '{print tolower($1)}')" ;;
+                openssl) new_md5="$(openssl dgst -md5 -- "$path" | awk '{print tolower($NF)}')" ;;
+            esac
             DB_CACHE_HASH_MD5["$abs"]="$new_md5"
             (( ++DB_MAINT_HASH_MD5_FILLED ))
             added_desc="md5"
             updated_this_row=1
         fi
         if [[ -z "$sha512_hash" ]]; then
-            if command -v sha512sum >/dev/null 2>&1; then
-                new_sha512="$(sha512sum -- "$path" | awk '{print tolower($1)}')"
-            elif command -v shasum >/dev/null 2>&1; then
-                new_sha512="$(shasum -a 512 -- "$path" | awk '{print tolower($1)}')"
-            elif command -v openssl >/dev/null 2>&1; then
-                new_sha512="$(openssl dgst -sha512 -- "$path" | awk '{print tolower($NF)}')"
-            else
-                echo "ERROR: no sha512 hash command available for maintenance backfill." >&2
-                exit 1
-            fi
+            case "$sha512_backend" in
+                sha512sum) new_sha512="$(sha512sum -- "$path" | awk '{print tolower($1)}')" ;;
+                shasum)    new_sha512="$(shasum -a 512 -- "$path" | awk '{print tolower($1)}')" ;;
+                openssl)   new_sha512="$(openssl dgst -sha512 -- "$path" | awk '{print tolower($NF)}')" ;;
+            esac
             DB_CACHE_HASH_SHA512["$abs"]="$new_sha512"
             (( ++DB_MAINT_HASH_SHA512_FILLED ))
             if [[ -n "$added_desc" ]]; then
@@ -1046,7 +1066,7 @@ db_maintenance_backfill_missing_hashes() {
                 db_flush_pending
             fi
         fi
-    done < <(sqlite3 -separator '|' "$DB_FILE" "SELECT path, COALESCE(file_md5,''), COALESCE(file_sha512,'') FROM checked_paths WHERE COALESCE(file_md5,'')='' OR COALESCE(file_sha512,'');")
+    done < <(sqlite3 -separator '|' "$DB_FILE" "$candidate_query")
 
     startup_progress "SQLite maintenance: hash backfill finished (scanned: $DB_MAINT_HASH_ROWS_SCANNED, updated: $DB_MAINT_HASH_ROWS_UPDATED, md5 filled: $DB_MAINT_HASH_MD5_FILLED, sha512 filled: $DB_MAINT_HASH_SHA512_FILLED)"
 }
@@ -1096,6 +1116,7 @@ SQL
     sqlite3 "$DB_FILE" 'CREATE INDEX IF NOT EXISTS idx_checked_paths_file_hash ON checked_paths(file_hash_kind, file_hash);' >/dev/null 2>&1 || true
     sqlite3 "$DB_FILE" 'CREATE INDEX IF NOT EXISTS idx_checked_paths_file_md5 ON checked_paths(file_md5);' >/dev/null 2>&1 || true
     sqlite3 "$DB_FILE" 'CREATE INDEX IF NOT EXISTS idx_checked_paths_file_sha512 ON checked_paths(file_sha512);' >/dev/null 2>&1 || true
+    sqlite3 "$DB_FILE" "CREATE INDEX IF NOT EXISTS idx_checked_paths_missing_hashes ON checked_paths(path) WHERE COALESCE(file_md5,'')='' OR COALESCE(file_sha512,'');" >/dev/null 2>&1 || true
     DB_PENDING_SQL_FILE="$(mktemp)"
 
     local total_cached_rows=0
@@ -1709,11 +1730,12 @@ while (( $# > 0 )); do
     esac
 done
 
+print_startup_banner
+
 if (( RUN_DB_MAINTENANCE == 0 )); then
     prompt_resume_choice_early
 fi
 
-print_startup_banner
 startup_progress "Scanning startup directory: $START_DIR"
 startup_progress "Loading exclude filters from: $EXCLUDE_FILTERS_FILE"
 load_exclude_filters
