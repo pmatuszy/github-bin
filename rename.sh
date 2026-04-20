@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.04.20 - v. 18.54 - initialize pending SQL temp file in manual maintenance mode so hash backfill updates can be queued safely
 # 2026.04.20 - v. 18.53 - fix FULL maintenance hash backfill runtime by using inline md5/sha512 commands without late function dependencies
 # 2026.04.20 - v. 18.52 - fix FULL maintenance hash backfill runtime by avoiding pre-definition call to is_checksum_file()
 # 2026.04.20 - v. 18.51 - in FULL DB maintenance, backfill any missing md5/sha512 for existing file rows with progress and summary stats
@@ -784,6 +785,11 @@ db_run_maintenance() {
         auto|full) ;;
         *) return 0 ;;
     esac
+
+    if [[ -z "$DB_PENDING_SQL_FILE" || ! -e "$DB_PENDING_SQL_FILE" ]]; then
+        DB_PENDING_SQL_FILE="$(mktemp)"
+        DB_PENDING_COUNT=0
+    fi
 
     if [[ "$mode" == "auto" ]]; then
         startup_progress "SQLite maintenance: running AUTO profile..."
