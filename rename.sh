@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.04.20 - v. 18.42 - prevent DB cache skip when transform_name indicates rename is still required (e.g. .WnA. cleanup)
 # 2026.04.20 - v. 18.41 - avoid duplicate crosscheck/delete progress lines when count and percent thresholds coincide
 # 2026.04.20 - v. 18.40 - add explicit delete-phase progress for DB maintenance missing-row cleanup
 # 2026.04.20 - v. 18.39 - print DB maintenance crosscheck percent and absolute counters together in one progress line
@@ -4535,6 +4536,7 @@ maybe_resume_from_checkpoint
 
 main_index=0
 for f in "${ordered_paths[@]}"; do
+    precomputed_new=""
     ((++main_index))
     if (( VERBOSE == 1 && main_index % VERBOSE_MAIN_EVERY == 0 )); then
         print_progress_box "$main_index / ${#ordered_paths[@]}" "$f"
@@ -4566,6 +4568,10 @@ for f in "${ordered_paths[@]}"; do
     fi
 
     if db_has_valid_entry "$f" && ! path_has_control_chars "$f"; then
+        precomputed_new="$(transform_name "$f")"
+        if [[ "$f" != "$precomputed_new" ]]; then
+            vlog "DB cache hit for '$f' but rename is still needed; processing entry."
+        else
         db_backfill_missing_hashes_for_existing_file "$f"
         if path_has_control_chars "$f"; then
             print_control_char_warning "$f"
@@ -4574,6 +4580,7 @@ for f in "${ordered_paths[@]}"; do
         ((++files_skipped))
         processed["$f"]=1
         continue
+        fi
     fi
 
     if [[ -f "$f" ]] && is_checksum_file "$f"; then
@@ -4997,7 +5004,11 @@ for f in "${ordered_paths[@]}"; do
         continue
     fi
 
-    new="$(transform_name "$f")"
+    if [[ -n "$precomputed_new" ]]; then
+        new="$precomputed_new"
+    else
+        new="$(transform_name "$f")"
+    fi
 
     if is_protected_par2_name "$f"; then
         vlog "Protected .par2 basename starts with underscore, no rename needed for '$f'"
