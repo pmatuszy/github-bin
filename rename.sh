@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.04.20 - v. 18.52 - fix FULL maintenance hash backfill runtime by avoiding pre-definition call to is_checksum_file()
 # 2026.04.20 - v. 18.51 - in FULL DB maintenance, backfill any missing md5/sha512 for existing file rows with progress and summary stats
 # 2026.04.20 - v. 18.50 - do not defer plain-file renames because of checksum siblings; rename now and let checksum workflow update refs later
 # 2026.04.20 - v. 18.49 - defer to checksum workflow only when sibling checksum files actually reference the file being renamed
@@ -980,7 +981,7 @@ db_maintenance_backfill_missing_hashes() {
         fi
 
         [[ -f "$path" ]] || continue
-        is_checksum_file "$path" && continue
+        [[ "$path" == *.sha512 || "$path" == *.md5 ]] && continue
 
         abs="$(db_abs_path "$path" 2>/dev/null || true)"
         [[ -n "$abs" ]] || continue
