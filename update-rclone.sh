@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.04.21 - v. 0.6 - after failed selfupdate retries, exit with last rclone rc (not sleep's 0); comment crontab example; tighten up-to-date grep
 # 2023.12.18 - v. 0.5 - bugfix: check if rclone is installed
 # 2023.03.26 - v. 0.4 - added ile_prob i odstepy_miedzy_probami_sek
 # 2023.01.03 - v. 0.3 - dodano random delay jesli skrypt jest wywolywany nieinteraktywnie
@@ -27,14 +28,13 @@ if [ -z "${RCLONE_BIN}" ] ; then
     echo '#####################################################'
     echo '#####################################################'
     )
-  /usr/bin/curl -fsS -m 100 --retry 10 --retry-delay 10 --data-raw "$m" -o /dev/null "$HEALTHCHECK_URL"/fail 2>/dev/null
+  if [[ -n "${HEALTHCHECK_URL:-}" ]]; then
+    /usr/bin/curl -fsS -m 100 --retry 10 --retry-delay 10 --data-raw "$m" -o /dev/null "$HEALTHCHECK_URL"/fail 2>/dev/null
+  fi
   exit 8
 fi
 
-# nie badamy czy rclone jest uruchomiony, bo moze byc rclone mount i on jest zawsze uruchomiony. My updateujemy mimo to
-# nie badamy czy rclone jest uruchomiony, bo moze byc rclone mount i on jest zawsze uruchomiony. My updateujemy mimo to
-# nie badamy czy rclone jest uruchomiony, bo moze byc rclone mount i on jest zawsze uruchomiony. My updateujemy mimo to
-# nie badamy czy rclone jest uruchomiony, bo moze byc rclone mount i on jest zawsze uruchomiony. My updateujemy mimo to
+# Nie sprawdzamy czy rclone jest uruchomiony — np. rclone mount jest ciagle aktywny; selfupdate i tak wykonujemy.
 
 # if pgrep -f "${RCLONE_BIN}" > /dev/null ; then
 #   m=$(
@@ -51,35 +51,39 @@ fi
 
 wersja_przed=$(echo " " ; echo " " ; echo "wersja przed: " ; "${RCLONE_BIN}" version 2>&1; echo " " )
 wersja_przed_short=$(echo " " ; echo " " ; echo "wersja: " ; "${RCLONE_BIN}" version|head -n 1 2>&1; echo " " )
-m=$( echo " "; echo "aktualna data: `date '+%Y.%m.%d %H:%M'`" ; echo ; 
+m=$( echo " "; echo "aktualna data: `date '+%Y.%m.%d %H:%M'`" ; echo ;
+     last_rc=1
      for (( p=1 ; p<=$ile_prob;p++)) ;do
-       "${RCLONE_BIN}" selfupdate 2>&1; 
-       if (( $? == 0 )); then
+       "${RCLONE_BIN}" selfupdate 2>&1
+       last_rc=$?
+       if (( last_rc == 0 )); then
          echo "Update done with no problems"
          exit 0
        else
-         echo "$(date '+%Y.%m.%d %H:%M') Update unsucessful - retrying in $odstepy_miedzy_probami_sek seconds)"
+         echo "$(date '+%Y.%m.%d %H:%M') Update unsuccessful - retrying in $odstepy_miedzy_probami_sek seconds)"
          sleep $odstepy_miedzy_probami_sek
        fi
      done
-     exit $?
+     exit "$last_rc"
    )
 kod_powrotu=$?
 
 wiadomosc=""
-if [ $(echo "$m" |grep "NOTICE: rclone is up to date" | wc -l) -eq 1 ];then
-  wiadomosc=$(echo "$m" |grep "NOTICE: rclone is up to date" ; "${RCLONE_BIN}" version|head -n 1)
+if echo "$m" | grep -q "NOTICE: rclone is up to date"; then
+  wiadomosc=$(echo "$m" | grep "NOTICE: rclone is up to date" ; "${RCLONE_BIN}" version|head -n 1)
 else
   wersja_po=$(echo " " ; echo "wersja po: "; "${RCLONE_BIN}" version 2>&1; echo " " ; echo " ")
   wiadomosc="$m $wersja_przed $wersja_po"
 fi
 
-/usr/bin/curl -fsS -m 100 --retry 10 --retry-delay 10 --data-raw "$wiadomosc" -o /dev/null "$HEALTHCHECK_URL"/${kod_powrotu} 2>/dev/null
+if [[ -n "${HEALTHCHECK_URL:-}" ]]; then
+  /usr/bin/curl -fsS -m 100 --retry 10 --retry-delay 10 --data-raw "$wiadomosc" -o /dev/null "$HEALTHCHECK_URL"/${kod_powrotu} 2>/dev/null
+fi
 
 . /root/bin/_script_footer.sh
 
 exit ${kod_powrotu}
 #####
-# new crontab entry
-
-5 20 * * * /root/bin/update-rclone.sh
+# new crontab entry (example — install with crontab -e, not as shell):
+#
+# 5 20 * * * /root/bin/update-rclone.sh
