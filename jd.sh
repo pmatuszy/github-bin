@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.04.22 - v. 1.7 - serial column width: trim values; max width via value loop (reliable subscripts)
 # 2026.04.22 - v. 1.6 - column widths from longest cell (header + data)
 # 2026.04.22 - v. 1.5 - aligned Device / size / Serial; NVMe SN via nvme id-ctrl
 # 2026.04.22 - v. 1.4 - help/version; root check; grep -E; quoting; disk list for all supported OS; uname -m; kod_powrotu
@@ -149,6 +150,9 @@ for p in "${_jd_disks[@]}"; do
     _jd_desc="${_jd_gline}"
   fi
   [[ -z "${_jd_sn}" ]] && _jd_sn='?'
+  _jd_sn="${_jd_sn#"${_jd_sn%%[![:space:]]*}"}"
+  _jd_sn="${_jd_sn%"${_jd_sn##*[![:space:]]}"}"
+  [[ -z "${_jd_sn}" ]] && _jd_sn='?'
   _jd_c1+=("${p}")
   _jd_c2+=("${_jd_desc}")
   _jd_c3+=("${_jd_sn}")
@@ -160,10 +164,14 @@ _jd_h3='Serial number'
 _jd_w1=${#_jd_h1}
 _jd_w2=${#_jd_h2}
 _jd_w3=${#_jd_h3}
-for _jd_i in "${!_jd_c1[@]}"; do
-  ((${#_jd_c1[_jd_i]} > _jd_w1)) && _jd_w1=${#_jd_c1[_jd_i]}
-  ((${#_jd_c2[_jd_i]} > _jd_w2)) && _jd_w2=${#_jd_c2[_jd_i]}
-  ((${#_jd_c3[_jd_i]} > _jd_w3)) && _jd_w3=${#_jd_c3[_jd_i]}
+for _jd_row in "${_jd_c1[@]}"; do
+  [[ ${#_jd_row} -gt ${_jd_w1} ]] && _jd_w1=${#_jd_row}
+done
+for _jd_row in "${_jd_c2[@]}"; do
+  [[ ${#_jd_row} -gt ${_jd_w2} ]] && _jd_w2=${#_jd_row}
+done
+for _jd_row in "${_jd_c3[@]}"; do
+  [[ ${#_jd_row} -gt ${_jd_w3} ]] && _jd_w3=${#_jd_row}
 done
 
 _jd_sep1=$(printf '%*s' "${_jd_w1}" '' | tr ' ' '-')
