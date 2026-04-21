@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.04.22 - v. 1.11 - --details: physical sector size (blockdev --getpbsz / sysfs)
 # 2026.04.22 - v. 1.10 - --details: tight columns (label width + per-disk value width)
 # 2026.04.22 - v. 1.9 - --details: right-align numeric columns
 # 2026.04.22 - v. 1.8 - --details: sector size + sectors/bytes/kB/MB/GB/TB (SI); expanded --help
@@ -38,11 +39,12 @@ Summary
 Options
   -h, --help       Show this help and exit.
   -v, --version    Print script version and exit.
-  -d, --details    After the table, print per-disk geometry: logical sector size,
-                   sector count (capacity / sector size), capacity in bytes, and
-                   the same capacity in kB, MB, GB, and TB using decimal (SI)
-                   prefixes (powers of 1000). Uses blockdev(8) when available,
-                   otherwise /sys/block/*/size and queue/logical_block_size.
+  -d, --details    After the table, print per-disk geometry: logical and physical
+                   sector sizes, sector count (capacity / logical sector size),
+                   capacity in bytes, and the same capacity in kB, MB, GB, and TB
+                   using decimal (SI) prefixes (powers of 1000). Prefers
+                   blockdev(8); falls back to /sys/block/*/size,
+                   queue/logical_block_size, and queue/physical_block_size.
 
 Examples
   jd.sh
@@ -152,19 +154,21 @@ _jd_nvme_sn() {
   fi
 }
 
-# Sets _jd_bytes, _jd_ss, _jd_sectors for device $1; returns 0 on success.
+# Sets _jd_bytes, _jd_ss, _jd_pbs, _jd_sectors for device $1; returns 0 on success.
 _jd_disk_geom() {
-  local _dev=$1 _base _sz512
+  local _dev=$1 _base _sz512 _pb_try
   _jd_bytes=
   _jd_ss=
+  _jd_pbs=
   _jd_sectors=
+  _base=$(basename "${_dev}")
   if command -v blockdev >/dev/null 2>&1 &&
     _jd_bytes=$(blockdev --getsize64 "${_dev}" 2>/dev/null) &&
     _jd_ss=$(blockdev --getss "${_dev}" 2>/dev/null) &&
     [[ -n "${_jd_bytes}" && -n "${_jd_ss}" ]]; then
-    :
+    _pb_try=$(blockdev --getpbsz "${_dev}" 2>/dev/null)
+    [[ -n "${_pb_try}" && "${_pb_try}" -gt 0 ]] && _jd_pbs=${_pb_try}
   else
-    _base=$(basename "${_dev}")
     if [[ ! -r "/sys/block/${_base}/size" || ! -r "/sys/block/${_base}/queue/logical_block_size" ]]; then
       return 1
     fi
@@ -174,6 +178,10 @@ _jd_disk_geom() {
   fi
   [[ -n "${_jd_bytes}" && -n "${_jd_ss}" ]] || return 1
   ((_jd_ss > 0)) || return 1
+  if [[ -z "${_jd_pbs}" && -r "/sys/block/${_base}/queue/physical_block_size" ]]; then
+    _pb_try=$(<"/sys/block/${_base}/queue/physical_block_size")
+    [[ -n "${_pb_try}" && "${_pb_try}" -gt 0 ]] && _jd_pbs=${_pb_try}
+  fi
   _jd_sectors=$((_jd_bytes / _jd_ss))
   return 0
 }
@@ -242,6 +250,7 @@ if [[ "${_jd_details}" -eq 1 ]]; then
   echo
   _jd_detail_labs=(
     'Logical sector size:'
+    'Physical sector size:'
     'Sectors (capacity / ss):'
     'Bytes:'
     'kB (10^3):'
@@ -263,11 +272,13 @@ if [[ "${_jd_details}" -eq 1 ]]; then
       printf "%.3f\n%.3f\n%.3f\n%.3f\n", b / 1e3, b / 1e6, b / 1e9, b / 1e12
     }')
     _jd_dvw=${#_jd_bytes}
-    for _jd_s in "${_jd_ss}" "${_jd_sectors}" "${_jd_bytes}" "${_jd_si[@]}"; do
+    _jd_pbs_disp=${_jd_pbs:-?}
+    for _jd_s in "${_jd_ss}" "${_jd_pbs_disp}" "${_jd_sectors}" "${_jd_bytes}" "${_jd_si[@]}"; do
       [[ ${#_jd_s} -gt ${_jd_dvw} ]] && _jd_dvw=${#_jd_s}
     done
     printf '%s\n' "${p}"
     printf '  %-*s  %*s bytes\n' "${_jd_dlw}" 'Logical sector size:' "${_jd_dvw}" "${_jd_ss}"
+    printf '  %-*s  %*s bytes\n' "${_jd_dlw}" 'Physical sector size:' "${_jd_dvw}" "${_jd_pbs_disp}"
     printf '  %-*s  %*s\n' "${_jd_dlw}" 'Sectors (capacity / ss):' "${_jd_dvw}" "${_jd_sectors}"
     printf '  %-*s  %*s\n' "${_jd_dlw}" 'Bytes:' "${_jd_dvw}" "${_jd_bytes}"
     printf '  %-*s  %*s\n' "${_jd_dlw}" 'kB (10^3):' "${_jd_dvw}" "${_jd_si[0]}"
