@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.04.21 - v. 0.3 - aligned /proc/meminfo table; bare integers (e.g. HugePages_*) get 3 columns
 # 2026.04.21 - v. 0.2 - ASCII-only user-visible text (avoid ??? in non-UTF-8 / boxes)
 # 2026.04.21 - v. 0.1 - RAM report: /proc/meminfo + free -h, boxed sections; help/version
 
@@ -105,16 +106,32 @@ echo
 
 echo "(PGM) /proc/meminfo - all fields (kB + human)" | boxes -a c -d stone
 {
-  printf '%-30s %16s   %14s\n' "Field" "Value (kB)" "Human"
-  printf '%-30s %16s   %14s\n' "------------------------------" "----------------" "--------------"
+  # Fixed widths: key left, numeric column right, human right (readable in monospace).
+  _mi_kw=38
+  _mi_nw=18
+  _mi_hw=18
+  printf -v _mi_ds '%*s' "$_mi_kw" ''
+  _mi_ds=${_mi_ds// /-}
+  printf -v _mi_dn '%*s' "$_mi_nw" ''
+  _mi_dn=${_mi_dn// /-}
+  printf -v _mi_dh '%*s' "$_mi_hw" ''
+  _mi_dh=${_mi_dh// /-}
+  printf '%-*s %*s %*s\n' "$_mi_kw" "Field" "$_mi_nw" "Value (kB)" "$_mi_hw" "Human"
+  printf '%-*s %*s %*s\n' "$_mi_kw" "$_mi_ds" "$_mi_nw" "$_mi_dn" "$_mi_hw" "$_mi_dh"
   while IFS= read -r line || [[ -n "$line" ]]; do
     [[ -z "$line" ]] && continue
-    if [[ "$line" =~ ^([^:]+):\ +([0-9]+)\ +kB$ ]]; then
+    if [[ "$line" =~ ^([^:]+):[[:space:]]+([0-9]+)[[:space:]]+kB[[:space:]]*$ ]]; then
       key="${BASH_REMATCH[1]}"
       kb="${BASH_REMATCH[2]}"
-      printf '%-30s %16s   %14s\n' "$key" "$kb" "$(_mi_human_kb "$kb")"
-    elif [[ "$line" =~ ^([^:]+):\ +(.*)$ ]]; then
-      printf '%-30s   %s\n' "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}"
+      printf '%-*s %*s %*s\n' "$_mi_kw" "$key" "$_mi_nw" "$kb" "$_mi_hw" "$(_mi_human_kb "$kb")"
+    elif [[ "$line" =~ ^([^:]+):[[:space:]]+([0-9]+)[[:space:]]*$ ]]; then
+      key="${BASH_REMATCH[1]}"
+      val="${BASH_REMATCH[2]}"
+      printf '%-*s %*s %*s\n' "$_mi_kw" "$key" "$_mi_nw" "$val" "$_mi_hw" "pages"
+    elif [[ "$line" =~ ^([^:]+):[[:space:]]+(.*)$ ]]; then
+      key="${BASH_REMATCH[1]}"
+      rest="${BASH_REMATCH[2]}"
+      printf '%-*s %*s %*s\n' "$_mi_kw" "$key" "$_mi_nw" "$rest" "$_mi_hw" "-"
     fi
   done < /proc/meminfo
 } | boxes -a l -d stone
