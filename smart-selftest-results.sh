@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.04.21 - v. 0.8 - no "Press ENTER" after the last disk (still between disks when interactive)
 # 2026.04.21 - v. 0.7 - fix quit test typo (f"); redirect >/dev/null 2>&1; quote devices; grep -F for nvme; pass all CLI disks via "$@"
 # 2023.07.03 - v. 0.6 - bugfix: last_short_offline_test, last_extended_offline_test, last_conveyance_offline_test calculation
 # 2023.02.10 - v. 0.6 - added check for smartmontools package
@@ -38,8 +39,15 @@ SUBCOMMAND="--info -l selftest"
 
 export SMARTCTL_BIN=$(type -fP smartctl)
 
+nonempty_disk_count=0
+for _d in "${disk_array[@]}"; do
+  [[ -n "$_d" ]] && ((nonempty_disk_count++))
+done
+disk_index=0
+
 for p in "${disk_array[@]}"; do
   [[ -n "$p" ]] || continue
+  ((disk_index++))
   if (( script_is_run_interactively ));then
      clear
   fi
@@ -62,7 +70,7 @@ for p in "${disk_array[@]}"; do
   if (( $? == 2 ));then
     echo  ; echo "No such a device, I am exiting " ; echo
     # exit 2
-    if (( script_is_run_interactively ));then
+    if (( script_is_run_interactively )) && (( disk_index < nonempty_disk_count )); then
        echo "Press <ENTER> to continue or q/Q to quit"
        input_from_user=""
        read -t 300 -n 1 input_from_user
@@ -154,7 +162,7 @@ for p in "${disk_array[@]}"; do
       echo -e " (" $(units "${last_conveyance_offline_ago} hours" time |sed 's|hr .*|hr|g') ")\n"
     fi
   fi
-  if (( script_is_run_interactively )) && (( $# != 1 )) ;then
+  if (( script_is_run_interactively )) && (( $# != 1 )) && (( disk_index < nonempty_disk_count )); then
      echo "Press <ENTER> to continue or q/Q to quit"
      input_from_user=""
      read -t 300 -n 1 input_from_user
