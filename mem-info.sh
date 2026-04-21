@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.04.21 - v. 0.2 - ASCII-only user-visible text (avoid ??? in non-UTF-8 / boxes)
 # 2026.04.21 - v. 0.1 - RAM report: /proc/meminfo + free -h, boxed sections; help/version
 
 if [[ "${1:-}" == -h || "${1:-}" == --help ]]; then
@@ -7,10 +8,10 @@ if [[ "${1:-}" == -h || "${1:-}" == --help ]]; then
 Usage: mem-info.sh [-h|--help] [-v|--version]
 
 Print a readable RAM report for the local Linux system: summary (with the
-kernel’s MemAvailable estimate), full free(1) output, and every field from
+kernel's MemAvailable estimate), full free(1) output, and every field from
 /proc/meminfo with kB and human-readable columns.
 
-MemAvailable is usually the best “how much RAM can I use?” number; MemFree
+MemAvailable is usually the best "how much RAM can I use?" number; MemFree
 ignores reclaimable cache.
 
 Options:
@@ -74,7 +75,7 @@ _mi_pct() {
 }
 
 echo
-echo "(PGM) Memory (RAM) report — $(hostname) — $(date '+%Y-%m-%d %H:%M:%S %Z')" | boxes -a c -d stone
+echo "(PGM) Memory (RAM) report - $(hostname) - $(date '+%Y-%m-%d %H:%M:%S %Z')" | boxes -a c -d stone
 echo
 
 mt=$(_mi_kb MemTotal) || mt=0
@@ -85,7 +86,7 @@ sf=$(_mi_kb SwapFree) || sf=0
 
 {
   echo "MemTotal       $mt kB  ($(_mi_human_kb "$mt"))"
-  echo "MemAvailable   $ma kB  ($(_mi_human_kb "$ma"))  ← practical “free” estimate"
+  echo "MemAvailable   $ma kB  ($(_mi_human_kb "$ma"))  <- practical \"free\" estimate"
   echo "MemFree        $mf kB  ($(_mi_human_kb "$mf"))  (unused; cache not counted)"
   echo "Available/Total  $(_mi_pct "$ma" "$mt") of RAM reported usable by kernel"
   if (( st > 0 )); then
@@ -102,7 +103,7 @@ echo "(PGM) free -h" | boxes -a c -d stone
 free -h | boxes -a l -d stone
 echo
 
-echo "(PGM) /proc/meminfo — all fields (kB + human)" | boxes -a c -d stone
+echo "(PGM) /proc/meminfo - all fields (kB + human)" | boxes -a c -d stone
 {
   printf '%-30s %16s   %14s\n' "Field" "Value (kB)" "Human"
   printf '%-30s %16s   %14s\n' "------------------------------" "----------------" "--------------"
