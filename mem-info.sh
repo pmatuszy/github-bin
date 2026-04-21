@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.04.21 - v. 0.11 - pause uses read -n 1 -s (exactly one char, no echo)
 # 2026.04.21 - v. 0.10 - no pause after title; any key continues pause, q/Q quits
 # 2026.04.21 - v. 0.9 - default meminfo table = selected fields only; -f/--full for all lines
 # 2026.04.21 - v. 0.8 - default Enter paging on tty; --no-page; q quits early during pause
@@ -93,7 +94,7 @@ Cached (file cache), and Buffers.
 Paging:
   When stdout is a terminal and /dev/tty can be read, the script pauses
   between sections (after the summary, not after the title) and between
-  meminfo chunks. Press any key to continue, or q or Q to exit early.
+  meminfo chunks. One keypress continues (read -n 1); q or Q exits early.
   Pipe output or use --no-page for a single uninterrupted stream.
 
 Options:
@@ -155,7 +156,7 @@ kod_powrotu=0
 
 _mi_pause_if_needed() {
   if (( _mi_page )) && [[ -t 1 ]] && [[ -r /dev/tty ]]; then
-    IFS= read -r -n 1 -p "(PGM) Press any key for next section (q to quit)... " _mi_in < /dev/tty || true
+    IFS= read -r -n 1 -s -p "(PGM) Press one key for next section (q to quit)... " _mi_in < /dev/tty || true
     echo
     if [[ "${_mi_in:-}" == [qQ] ]]; then
       echo '(PGM) Quitting early.'
