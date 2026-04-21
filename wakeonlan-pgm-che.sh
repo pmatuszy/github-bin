@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.04.21 - v. 0.8 - exit 1 when host still down after WOL; quiet consistent final ping for exit status
 # 2025.05.08 - v. 0.7 - added configurable max_attempts and smarter WOL loop
 # 2025.05.08 - v. 0.6 - improved logic to stop wakeonlan attempts as soon as host responds to ping
 # 2025.04.25 - v. 0.5 - cosmetic improvements
@@ -40,14 +41,17 @@ for ((p=1; p<=max_attempts; p++)); do
   fi
 done
 
-# Final verification
-if ping -c 3 -W 1 "$IP" ; then
+# Final verification (quiet: we only need exit status for automation)
+wol_rc=0
+if ping -c 3 -W 1 -q "$IP" >/dev/null 2>&1; then
   echo "(PGM) Host $IP successfully woke up."
 else
   echo "(PGM) Host $IP did not respond after WOL attempts."
+  wol_rc=1
 fi
 
 logger "WOL script: sent packet to $MAC at $BROADCAST"
 
 . /root/bin/_script_footer.sh
 
+exit "$wol_rc"
