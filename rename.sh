@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.04.21 - v. 18.59 - add prompt to flatten directories that contain only one subdirectory with files
 # 2026.04.21 - v. 18.58 - detect duplicated trailing file extensions (e.g. .mp4.mp4) and normalize to a single extension
 # 2026.04.21 - v. 18.57 - strip repeated adjacent .WnA. marker fragments reliably during normalization
 # 2026.04.20 - v. 18.56 - print startup banner before early resume question while keeping a single banner print in normal flow
@@ -4458,6 +4459,105 @@ print_rename_prompt_menu() {
     echo -n "Choice [Y/n/m/a/d/E/x/q]: "
 }
 
+maybe_prompt_flatten_single_child_dir() {
+    local parent_dir="$1"
+    local -a immediate_entries=() child_dirs=() child_non_dirs=() child_items=()
+    local child_dir="" child_base="" answer="" item="" item_base=""
+    local saved_dotglob saved_nullglob
+
+    [[ -d "$parent_dir" ]] || return 0
+
+    saved_dotglob="$(shopt -p dotglob || true)"
+    saved_nullglob="$(shopt -p nullglob || true)"
+    shopt -s dotglob nullglob
+
+    immediate_entries=( "$parent_dir"/* )
+    eval "$saved_dotglob"
+    eval "$saved_nullglob"
+
+    for item in "${immediate_entries[@]}"; do
+        [[ -e "$item" ]] || continue
+        if [[ -d "$item" ]]; then
+            child_dirs+=( "$item" )
+        else
+            child_non_dirs+=( "$item" )
+        fi
+    done
+
+    (( ${#child_dirs[@]} == 1 )) || return 0
+    (( ${#child_non_dirs[@]} == 0 )) || return 0
+
+    child_dir="${child_dirs[0]}"
+    [[ -d "$child_dir" ]] || return 0
+
+    if ! find "$child_dir" -type f -print -quit | grep -q .; then
+        return 0
+    fi
+
+    echo
+    echo -e "${CYAN}FLATTEN CANDIDATE:${RESET} $parent_dir"
+    echo "Contains exactly one subdirectory with files:"
+    echo "  $child_dir"
+    verbose_question_timestamp "Move child contents one level up and delete this subdirectory?"
+    echo -n "Move child contents one level up and delete this subdirectory? [y/N/q]: "
+    flush_stdin
+    read_single_key answer "$PROMPT_WAIT_SECONDS"
+    echo
+
+    if [[ "$answer" =~ [Qq] ]]; then
+        stopped_by_user=yes
+        return 2
+    fi
+    [[ "$answer" =~ [Yy] ]] || return 0
+
+    saved_dotglob="$(shopt -p dotglob || true)"
+    saved_nullglob="$(shopt -p nullglob || true)"
+    shopt -s dotglob nullglob
+    child_items=( "$child_dir"/* )
+    eval "$saved_dotglob"
+    eval "$saved_nullglob"
+
+    if (( ${#child_items[@]} == 0 )); then
+        return 0
+    fi
+
+    for item in "${child_items[@]}"; do
+        [[ -e "$item" ]] || continue
+        item_base="$(basename -- "$item")"
+        if [[ -e "$parent_dir/$item_base" ]]; then
+            echo -e "${YELLOW}SKIP FLATTEN:${RESET} Target already exists: $parent_dir/$item_base"
+            ((++files_skipped))
+            return 0
+        fi
+    done
+
+    if [[ "$mode" == "dry-run" ]]; then
+        echo -e "${CYAN}[DRY-RUN] Would flatten:${RESET} $child_dir ${ARROW} $parent_dir"
+        ((++files_affected))
+        record_rename "$child_dir" "$parent_dir"
+        return 0
+    fi
+
+    for item in "${child_items[@]}"; do
+        [[ -e "$item" ]] || continue
+        mv -i -- "$item" "$parent_dir/"
+    done
+
+    if rmdir -- "$child_dir"; then
+        ((++files_affected))
+        record_rename "$child_dir" "$parent_dir"
+        db_rewrite_subtree "$child_dir" "$parent_dir"
+        processed["$child_dir"]=1
+        db_mark_checked "$parent_dir" "plain" "checked"
+        vlog "Flattened '$child_dir' into '$parent_dir'"
+    else
+        echo -e "${YELLOW}SKIP FLATTEN:${RESET} Could not remove directory (not empty?): $child_dir"
+        ((++files_skipped))
+    fi
+
+    return 0
+}
+
 choose_custom_rename_target() {
     local old_path="$1"
     local suggested_path="$2"
@@ -4810,6 +4910,14 @@ for f in "${ordered_paths[@]}"; do
         fi
         processed["$f"]=1
         continue
+    fi
+
+    if [[ -d "$f" ]]; then
+        maybe_prompt_flatten_single_child_dir "$f"
+        flatten_rc=$?
+        if (( flatten_rc == 2 )); then
+            break
+        fi
     fi
 
     if db_has_valid_entry "$f" && ! path_has_control_chars "$f"; then
