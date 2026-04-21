@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.04.22 - v. 1.6 - column widths from longest cell (header + data)
 # 2026.04.22 - v. 1.5 - aligned Device / size / Serial; NVMe SN via nvme id-ctrl
 # 2026.04.22 - v. 1.4 - help/version; root check; grep -E; quoting; disk list for all supported OS; uname -m; kod_powrotu
 # 2023.10.25 - v. 1.3 - added check if hdparm is installed
@@ -20,8 +21,9 @@ if [[ "${1:-}" == -h || "${1:-}" == --help ]]; then
   cat <<'EOF'
 Usage: jd.sh [-h|--help] [-v|--version]
 
-Lists whole-disk devices (fdisk) with aligned columns: device, size line from
-gdisk, serial from hdparm or nvme id-ctrl. Intended for Debian/Ubuntu/Raspbian
+Lists whole-disk devices (fdisk) with columns sized to the longest value in each
+column (device, size line from gdisk, serial from hdparm or nvme id-ctrl).
+Intended for Debian/Ubuntu/Raspbian
 and RHEL-family
 systems with /etc/os-release or /etc/redhat-release.
 
@@ -126,8 +128,9 @@ _jd_nvme_sn() {
   fi
 }
 
-printf '%-15s  %-45s  %s\n' "Device" "Sectors / size" "Serial number"
-printf '%-15s  %-45s  %s\n' "---------------" "---------------------------------------------" "--------------------"
+_jd_c1=()
+_jd_c2=()
+_jd_c3=()
 
 for p in "${_jd_disks[@]}"; do
   [[ -z "${p}" ]] && continue
@@ -146,7 +149,31 @@ for p in "${_jd_disks[@]}"; do
     _jd_desc="${_jd_gline}"
   fi
   [[ -z "${_jd_sn}" ]] && _jd_sn='?'
-  printf '%-15s  %-45s  %s\n' "${p}" "${_jd_desc}" "${_jd_sn}"
+  _jd_c1+=("${p}")
+  _jd_c2+=("${_jd_desc}")
+  _jd_c3+=("${_jd_sn}")
+done
+
+_jd_h1='Device'
+_jd_h2='Sectors / size'
+_jd_h3='Serial number'
+_jd_w1=${#_jd_h1}
+_jd_w2=${#_jd_h2}
+_jd_w3=${#_jd_h3}
+for _jd_i in "${!_jd_c1[@]}"; do
+  ((${#_jd_c1[_jd_i]} > _jd_w1)) && _jd_w1=${#_jd_c1[_jd_i]}
+  ((${#_jd_c2[_jd_i]} > _jd_w2)) && _jd_w2=${#_jd_c2[_jd_i]}
+  ((${#_jd_c3[_jd_i]} > _jd_w3)) && _jd_w3=${#_jd_c3[_jd_i]}
+done
+
+_jd_sep1=$(printf '%*s' "${_jd_w1}" '' | tr ' ' '-')
+_jd_sep2=$(printf '%*s' "${_jd_w2}" '' | tr ' ' '-')
+_jd_sep3=$(printf '%*s' "${_jd_w3}" '' | tr ' ' '-')
+
+printf "%-${_jd_w1}s  %-${_jd_w2}s  %-${_jd_w3}s\n" "${_jd_h1}" "${_jd_h2}" "${_jd_h3}"
+printf "%-${_jd_w1}s  %-${_jd_w2}s  %-${_jd_w3}s\n" "${_jd_sep1}" "${_jd_sep2}" "${_jd_sep3}"
+for _jd_i in "${!_jd_c1[@]}"; do
+  printf "%-${_jd_w1}s  %-${_jd_w2}s  %-${_jd_w3}s\n" "${_jd_c1[_jd_i]}" "${_jd_c2[_jd_i]}" "${_jd_c3[_jd_i]}"
 done
 
 echo
