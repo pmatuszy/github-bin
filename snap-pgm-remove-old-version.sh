@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.04.21 - v. 0.57 - align parse locale + disabled probe with pre-edit a0d6a6e (en_US, strings|grep, PIPESTATUS[2])
 # 2026.04.21 - v. 0.56 - wide COLUMNS for parsed snap list (no wrap); numeric revision check; removal attempt count
 # 2026.04.21 - v. 0.55 - removal loop: set +e so first snap failure does not exit script; here-string loop; log each remove
 # 2026.04.21 - v. 0.54 - normalize read answer (strip CR/LF); read -r; case-insensitive y
@@ -28,8 +29,9 @@ fi
 
 # When stdout is not a TTY, snap uses a narrow width and wraps lines — then awk $1/$3 are not Name/Rev.
 # Use a large COLUMNS for any output we parse (override with SNAP_LIST_COLUMNS).
+# Locale matches the last known-good removal line (a0d6a6e): LANG=en_US.UTF-8 snap list --all | awk ...
 snap_list_all_for_parse() {
-  LANG=C.UTF-8 COLUMNS="${SNAP_LIST_COLUMNS:-400}" snap list --all "$@"
+  LANG="${SNAP_LIST_LANG:-en_US.UTF-8}" COLUMNS="${SNAP_LIST_COLUMNS:-400}" snap list --all "$@"
 }
 
 echo "(PGM) All snap releases:" | boxes -a c -d stone
@@ -40,8 +42,9 @@ echo "(PGM) Snap released disabled which will be removed:" | boxes -a c -d stone
 snap list --all | grep disabled
 echo
 
-snap_list_all_for_parse | grep -q disabled
-kod_powrotu=${PIPESTATUS[1]}
+# Same chain as v0.52 (snap | strings | grep) so PIPESTATUS[2] is grep, as before 2026 edits.
+snap_list_all_for_parse | strings | grep -q disabled
+kod_powrotu=${PIPESTATUS[2]}
 
 if (( $kod_powrotu != 0 )); then
   echo NONE; echo
