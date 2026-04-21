@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.04.21 - v. 0.53 - fix confirm test (was != y twice; accept y or Y)
 # 2025.10.27 - v. 0.52- bugfix - with ChatGPT fix for kod_powrotu
 # 2025.10.27 - v. 0.51- bugfix - small cosmetic display change
 # 2023.10.02 - v. 0.5 - bugfix - prompt logic reverse (if there are snaps to be removed no prompt was displayed)
@@ -48,13 +49,14 @@ else
 fi
 
 echo
-if [ "${p}" != 'y' -a  "${p}" != 'y' ]; then
+if [[ "${p}" != 'y' && "${p}" != 'Y' ]]; then
   echo "no means no - I am exiting..."
   exit 1
 fi
 
 LANG=en_US.UTF-8 snap list --all | awk '/disabled/{print $1, $3}' |
-while read pkg revision; do
+while IFS= read -r pkg revision; do
+  [[ -n "$pkg" && -n "$revision" ]] || continue
   sudo snap remove "$pkg" --revision="$revision"
 done
 
