@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.04.21 - v. 18.60 - add flatten-only directory exception option to skip future flatten prompts for exact paths
 # 2026.04.21 - v. 18.59 - add prompt to flatten directories that contain only one subdirectory with files
 # 2026.04.21 - v. 18.58 - detect duplicated trailing file extensions (e.g. .mp4.mp4) and normalize to a single extension
 # 2026.04.21 - v. 18.57 - strip repeated adjacent .WnA. marker fragments reliably during normalization
@@ -610,6 +611,25 @@ exact_exception_entry_for_path() {
     printf '=%s' "$p"
 }
 
+flatten_exception_entry_for_path() {
+    local p="$1"
+    printf 'FLATTEN_EXACT=%s' "$p"
+}
+
+flatten_exception_exists_for_path() {
+    local path="$1"
+    local entry=""
+    local existing
+
+    entry="$(flatten_exception_entry_for_path "$path")"
+    [[ -n "$entry" ]] || return 1
+
+    for existing in "${EXCLUDE_FILTERS[@]}"; do
+        [[ "$existing" == "$entry" ]] && return 0
+    done
+    return 1
+}
+
 exception_exists_for_path() {
     local path="$1"
     local entry=""
@@ -690,6 +710,40 @@ append_exact_path_to_exclude_filters_file() {
         echo -e "${CYAN}EXACT EXCEPTION ADDED:${RESET} $entry ${CYAN}->${RESET} $EXCLUDE_FILTERS_FILE"
     else
         echo -e "${YELLOW}EXACT EXCEPTION EXISTS:${RESET} $entry ${CYAN}->${RESET} $EXCLUDE_FILTERS_FILE"
+    fi
+
+    load_exclude_filters
+}
+
+append_flatten_exception_to_exclude_filters_file() {
+    local p="$1"
+    local entry tmp_line found=0
+
+    entry="$(flatten_exception_entry_for_path "$p")"
+
+    if [[ ! -e "$EXCLUDE_FILTERS_FILE" ]]; then
+        : > "$EXCLUDE_FILTERS_FILE"
+    fi
+
+    normalize_exclude_filters_file_if_needed
+
+    while IFS= read -r tmp_line || [[ -n "$tmp_line" ]]; do
+        tmp_line="${tmp_line%$'
+'}"
+        [[ -n "$tmp_line" ]] || continue
+        [[ "$tmp_line" =~ ^# ]] && continue
+        if [[ "$tmp_line" == "$entry" ]]; then
+            found=1
+            break
+        fi
+    done < "$EXCLUDE_FILTERS_FILE"
+
+    if (( found == 0 )); then
+        printf '%s
+' "$entry" >> "$EXCLUDE_FILTERS_FILE"
+        echo -e "${CYAN}FLATTEN EXCEPTION ADDED:${RESET} $entry ${CYAN}->${RESET} $EXCLUDE_FILTERS_FILE"
+    else
+        echo -e "${YELLOW}FLATTEN EXCEPTION EXISTS:${RESET} $entry ${CYAN}->${RESET} $EXCLUDE_FILTERS_FILE"
     fi
 
     load_exclude_filters
@@ -4466,6 +4520,10 @@ maybe_prompt_flatten_single_child_dir() {
     local saved_dotglob saved_nullglob
 
     [[ -d "$parent_dir" ]] || return 0
+    if flatten_exception_exists_for_path "$parent_dir"; then
+        vlog "Flatten prompt skipped due to flatten exception: '$parent_dir'"
+        return 0
+    fi
 
     saved_dotglob="$(shopt -p dotglob || true)"
     saved_nullglob="$(shopt -p nullglob || true)"
@@ -4499,7 +4557,7 @@ maybe_prompt_flatten_single_child_dir() {
     echo "Contains exactly one subdirectory with files:"
     echo "  $child_dir"
     verbose_question_timestamp "Move child contents one level up and delete this subdirectory?"
-    echo -n "Move child contents one level up and delete this subdirectory? [y/N/q]: "
+    echo -n "Move child contents one level up and delete this subdirectory? [y/N/e/q]: "
     flush_stdin
     read_single_key answer "$PROMPT_WAIT_SECONDS"
     echo
@@ -4507,6 +4565,10 @@ maybe_prompt_flatten_single_child_dir() {
     if [[ "$answer" =~ [Qq] ]]; then
         stopped_by_user=yes
         return 2
+    fi
+    if [[ "$answer" =~ [Ee] ]]; then
+        append_flatten_exception_to_exclude_filters_file "$parent_dir"
+        return 0
     fi
     [[ "$answer" =~ [Yy] ]] || return 0
 
