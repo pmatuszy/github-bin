@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.04.22 - v. 1.9 - --details: right-align numeric columns
 # 2026.04.22 - v. 1.8 - --details: sector size + sectors/bytes/kB/MB/GB/TB (SI); expanded --help
 # 2026.04.22 - v. 1.7 - serial column width: trim values; max width via value loop (reliable subscripts)
 # 2026.04.22 - v. 1.6 - column widths from longest cell (header + data)
@@ -238,6 +239,8 @@ if [[ "${_jd_details}" -eq 1 ]]; then
   echo
   echo "Detailed sizes (kB/MB/GB/TB use decimal SI prefixes, powers of 1000):"
   echo
+  _jd_dlw=30
+  _jd_dvw=26
   for p in "${_jd_disks[@]}"; do
     [[ -z "${p}" ]] && continue
     if ! _jd_disk_geom "${p}"; then
@@ -245,15 +248,15 @@ if [[ "${_jd_details}" -eq 1 ]]; then
       continue
     fi
     printf '%s\n' "${p}"
-    printf '  Logical sector size:      %s bytes\n' "${_jd_ss}"
-    printf '  Sectors (capacity / ss):  %s\n' "${_jd_sectors}"
-    printf '  Bytes:                    %s\n' "${_jd_bytes}"
-    LC_NUMERIC=C awk -v b="${_jd_bytes}" '
+    printf '  %-*s %*s bytes\n' "${_jd_dlw}" 'Logical sector size:' "${_jd_dvw}" "${_jd_ss}"
+    printf '  %-*s %*s\n' "${_jd_dlw}" 'Sectors (capacity / ss):' "${_jd_dvw}" "${_jd_sectors}"
+    printf '  %-*s %*s\n' "${_jd_dlw}" 'Bytes:' "${_jd_dvw}" "${_jd_bytes}"
+    LC_NUMERIC=C awk -v b="${_jd_bytes}" -v lw="${_jd_dlw}" -v vw="${_jd_dvw}" '
       BEGIN {
-        printf "  kB (10^3):                %.3f\n", b / 1e3
-        printf "  MB (10^6):                %.3f\n", b / 1e6
-        printf "  GB (10^9):                %.3f\n", b / 1e9
-        printf "  TB (10^12):               %.3f\n", b / 1e12
+        printf "  %-*s %*s\n", lw, "kB (10^3):", vw, sprintf("%.3f", b / 1e3)
+        printf "  %-*s %*s\n", lw, "MB (10^6):", vw, sprintf("%.3f", b / 1e6)
+        printf "  %-*s %*s\n", lw, "GB (10^9):", vw, sprintf("%.3f", b / 1e9)
+        printf "  %-*s %*s\n", lw, "TB (10^12):", vw, sprintf("%.3f", b / 1e12)
       }'
     echo
   done
