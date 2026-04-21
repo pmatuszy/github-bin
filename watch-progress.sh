@@ -1,11 +1,34 @@
 #!/bin/bash
 
+# 2026.04.21 - v. 0.7 - -h / --help prints usage and exits (before header)
 # 2026.04.21 - v. 0.6 - _script_header/footer, check_if_installed progress; extra commands via WATCH_PROGRESS_EXTRA, WATCH_PROGRESS_WAIT_DELAY, or args
 # 2022.11.14 - v. 0.5 - dodalem pbzip2 do monitorowanych komend
 # 2022.09.05 - v. 0.4 - dodalem mc do monitorowanych komend
 # 2022.06.08 - v. 0.3 - dodalem par2 do monitorowanych komend
 # 2021.11.04 - v. 0.2 - zmiana watch na "progress -M"
 # 2021.09.19 - v. 0.1 - inicjalna wersja skryptu
+
+if [[ "${1:-}" == -h || "${1:-}" == --help ]]; then
+  cat <<'EOF'
+Usage: watch-progress.sh [-h|--help] [PROCESS...]
+
+Runs progress(1) with --monitor-continuously, --wait, and extra
+--additional-command names for common backup/compression tools.
+
+Options:
+  -h, --help    Show this help and exit.
+
+Environment:
+  WATCH_PROGRESS_EXTRA       Space-separated extra process basenames to monitor.
+  WATCH_PROGRESS_WAIT_DELAY  Poll interval in seconds (default: 0.5).
+
+Arguments:
+  Each PROCESS is a process basename (as in ps) added via --additional-command.
+
+Built-in extras include: pbzip2, par2, restic, mc, rclone, zstd, pigz, xz, borg, lz4.
+EOF
+  exit 0
+fi
 
 . /root/bin/_script_header.sh
 
