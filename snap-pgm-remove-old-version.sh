@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# 2026.04.21 - v. 0.55 - single snap list capture (reuse + wide COLUMNS for awk); read -r; check strings; numeric revision guard
+# 2026.04.21 - v. 0.56 - revert v0.55 single-list cache (answered y but no removals); restore per-step snap list like v0.54
 # 2026.04.21 - v. 0.54 - accept Y as yes (prompt text stays [y/N/q]); strip CR on answer
 # 2026.04.21 - v. 0.53 - prompt adds q/Q to quit without removing; quit runs footer and exits 0
 # 2025.10.27 - v. 0.52- bugfix - with ChatGPT fix for kod_powrotu
@@ -15,7 +15,6 @@
 
 check_if_installed snap
 check_if_installed boxes
-check_if_installed strings
 
 batch_mode=0
 
@@ -26,22 +25,16 @@ fi
 
 # from https://askubuntu.com/questions/1371833/howto-free-up-space-properly-on-my-var-lib-snapd-filesystem-when-snapd-is-unava
 
-# One listing for the whole script: avoids four snapd round-trips. Wide COLUMNS keeps one line per snap
-# when output is not a TTY (stable awk $1=Name, $3=Rev). Override: SNAP_LIST_COLUMNS=800
-LANG=en_US.UTF-8 COLUMNS="${SNAP_LIST_COLUMNS:-400}" \
-_snap_list_all="$(snap list --all 2>/dev/null)" || true
-
 echo "(PGM) All snap releases:" | boxes -a c -d stone
-printf '%s\n' "$_snap_list_all"
+snap list --all
 
 echo
 echo "(PGM) Snap released disabled which will be removed:" | boxes -a c -d stone
-# Under set -e, grep must not fail the script when there are zero matching lines (display only).
-printf '%s\n' "$_snap_list_all" | grep disabled || true
-echo
+snap list --all | grep disabled
+echo 
 
-printf '%s\n' "$_snap_list_all" | strings | grep -q disabled
-kod_powrotu=${PIPESTATUS[2]}   # index 0=printf, 1=strings, 2=grep
+snap list --all | strings | grep -q disabled 
+kod_powrotu=${PIPESTATUS[2]}   # index 0=snap, 1=strings, 2=grep
 
 if (( $kod_powrotu != 0 )); then
   echo NONE; echo
@@ -49,12 +42,12 @@ if (( $kod_powrotu != 0 )); then
   exit 0
 fi
 
-echo "Do you want to remove disabled packages? [y/N/q]"
+echo "Do you want to do remove disabled packages? [y/N/q]"
 if (( $batch_mode == 0 ));then
-  read -r -t 300 -n 1 p
+  read -t 300 -n 1 p     # read one character (-n) with timeout of 300 seconds
 else
   echo "y (autoanswer in a batch mode)"
-  p=y
+  p=y # batch mode ==> we set the answer to 'y'
 fi
 
 echo
@@ -69,13 +62,8 @@ if [[ "${p}" != [yY] ]]; then
   exit 1
 fi
 
-printf '%s\n' "$_snap_list_all" | awk '/disabled/{print $1, $3}' |
-while IFS= read -r pkg revision; do
-  [[ -n "$pkg" && -n "$revision" ]] || continue
-  if [[ ! "${revision}" =~ ^[0-9]+$ ]]; then
-    echo "(PGM) skip non-numeric revision for ${pkg}: '${revision}'" >&2
-    continue
-  fi
+LANG=en_US.UTF-8 snap list --all | awk '/disabled/{print $1, $3}' |
+while read pkg revision; do
   sudo snap remove "$pkg" --revision="$revision"
 done
 
