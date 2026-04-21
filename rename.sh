@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.04.21 - v. 18.57 - strip repeated adjacent .WnA. marker fragments reliably during normalization
 # 2026.04.20 - v. 18.56 - print startup banner before early resume question while keeping a single banner print in normal flow
 # 2026.04.20 - v. 18.55 - speed up FULL maintenance hash backfill via SQL candidate filtering, one-time hash backend detection, and missing-hash partial index
 # 2026.04.20 - v. 18.54 - initialize pending SQL temp file in manual maintenance mode so hash backfill updates can be queued safely
@@ -3114,7 +3115,9 @@ transform_basename() {
     new="${new//eBook.PL/}"
     new="${new//_www.osiolek.com/}"
     new="${new//www.osiolek.com/}"
-    new="${new//.WnA./.}"
+    while [[ "$new" == *".WnA."* ]]; do
+        new="${new//.WnA./.}"
+    done
     new="${new//_M_and_T_Books/}"
     new="${new//_Audiobook_PL/}"
     new="${new//\[Audiobook_PL\]/}"
