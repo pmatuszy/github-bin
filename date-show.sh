@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.04.21 - v. 0.3 - help text includes usage examples
 # 2026.04.21 - v. 0.2 - figlet width from COLUMNS; DATE_SHOW_INTERVAL; -u UTC; -h/-v; tput clear; drop redundant figlet check
 # 2025.07.30 - v. 0.1 - initial release
 
@@ -27,6 +28,22 @@ Environment:
 
 Clear:
   Uses tput clear when TERM is set and tput exists; otherwise clear(1).
+
+Examples:
+  date-show.sh
+      Local time, default 1 s refresh, figlet width from COLUMNS.
+
+  date-show.sh -u
+      Clock in UTC.
+
+  TZ=Europe/Warsaw date-show.sh
+      Local time for Warsaw (any IANA zone name works).
+
+  DATE_SHOW_INTERVAL=0.99 date-show.sh
+      Slightly faster refresh (GNU sleep; same as older default cadence).
+
+  COLUMNS=120 DATE_SHOW_INTERVAL=2 date-show.sh -u
+      Wider banner, UTC, update every 2 seconds.
 EOF
       exit 0
       ;;
