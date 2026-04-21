@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.04.21 - v. 0.7 - fix quit test typo (f"); redirect >/dev/null 2>&1; quote devices; grep -F for nvme; pass all CLI disks via "$@"
 # 2023.07.03 - v. 0.6 - bugfix: last_short_offline_test, last_extended_offline_test, last_conveyance_offline_test calculation
 # 2023.02.10 - v. 0.6 - added check for smartmontools package
 # 2023.01.11 - v. 0.5 - prompt for a new page is only displayed if there are no arguments on the command line
@@ -20,14 +21,15 @@
 
 check_if_installed smartctl smartmontools
 
-if [ $# -eq 0 ]
-  then
+declare -a disk_array
+
+if [ $# -eq 0 ]; then
     echo ; echo ; echo "No arguments supplied, I will run the script against ALL disks found on this systems..."
     echo "searching for disks..."
-    disks=$(jd.sh 2>/dev/null |grep Disk |sed 's|:.*||g'|sed 's|Disk ||g')
+    mapfile -t disk_array < <(jd.sh 2>/dev/null | grep Disk | sed 's|:.*||g' | sed 's|Disk ||g' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
     sleep 3
 else
-  disks=$1
+    disk_array=("$@")
 fi
 
 DEVICE_TYPE=""
@@ -36,26 +38,27 @@ SUBCOMMAND="--info -l selftest"
 
 export SMARTCTL_BIN=$(type -fP smartctl)
 
-for p in $disks ; do
+for p in "${disk_array[@]}"; do
+  [[ -n "$p" ]] || continue
   if (( script_is_run_interactively ));then
      clear
   fi
   echo;echo
-  echo $p | boxes -s 40x5 -a c ; echo
+  echo "$p" | boxes -s 40x5 -a c ; echo
 
-  $SMARTCTL_BIN  --info $p 2>&1 > /dev/null
+  $SMARTCTL_BIN --info "$p" >/dev/null 2>&1
   
   if (( $? == 1 ));then
     DEVICE_TYPE='-d sat'
   fi
   
-  $SMARTCTL_BIN $DEVICE_TYPE --info $p 2>&1 > /dev/null
+  $SMARTCTL_BIN $DEVICE_TYPE --info "$p" >/dev/null 2>&1
   if (( $? == 1 ));then
-    echo  ; echo "I don't know which device type (-d), so I am quitting" ; echo ; echo exit 1
+    echo  ; echo "I don't know which device type (-d), so I am quitting" ; echo
     exit 1
   fi
   
-  $SMARTCTL_BIN $DEVICE_TYPE --info $p 2>&1 > /dev/null
+  $SMARTCTL_BIN $DEVICE_TYPE --info "$p" >/dev/null 2>&1
   if (( $? == 2 ));then
     echo  ; echo "No such a device, I am exiting " ; echo
     # exit 2
@@ -63,7 +66,7 @@ for p in $disks ; do
        echo "Press <ENTER> to continue or q/Q to quit"
        input_from_user=""
        read -t 300 -n 1 input_from_user
-       if [ "${input_from_user}" == 'q' -o  $"{input_from_user}" == 'Q' ]; then
+       if [[ "${input_from_user}" == [qQ] ]]; then
          echo
          exit
        fi
@@ -71,16 +74,16 @@ for p in $disks ; do
     continue
   fi
   
-  czy_seagate=$($SMARTCTL_BIN  $DEVICE_TYPE --info $p|egrep -i 'seagate|ST18000NM000J|ST20000NM007D' | wc -l)
+  czy_seagate=$($SMARTCTL_BIN $DEVICE_TYPE --info "$p" | grep -Ei 'seagate|ST18000NM000J|ST20000NM007D' | wc -l)
   if (( $czy_seagate > 0 ));then
     VENDOR_ATTRIBUTE="-v 1,raw48:54 -v 7,raw48:54 -v 187,raw48:54  -v 188,raw48:54 -v 195,raw48:54"
     echo "* * * * * * This is Seagate drive (PGM) * * * * * *"
   fi
   
-  export power_on_hours=$($SMARTCTL_BIN $DEVICE_TYPE $VENDOR_ATTRIBUTE -A $p | egrep '^  9' | awk '{print $10}'|sed 's|[hms].*||g')     # ost sed zostawia tylko 24979 z "24979h+00m+00.000s"
-  export last_short_offline_test=$($SMARTCTL_BIN $DEVICE_TYPE $VENDOR_ATTRIBUTE --info -l selftest $p | egrep -i 'Short offline|Short captive'|head -1|sed 's|.*% *||g' | awk '{print $1}')
-  export last_extended_offline_test=$($SMARTCTL_BIN $DEVICE_TYPE $VENDOR_ATTRIBUTE --info -l selftest $p | egrep -i 'Extended offline|Extended captive'|head -1|sed 's|.*% *||g' | awk '{print $1}')
-  export last_conveyance_offline_test=$($SMARTCTL_BIN $DEVICE_TYPE $VENDOR_ATTRIBUTE --info -l selftest $p | egrep -i 'Conveyance offline|Conveyance captive'|head -1|sed 's|.*% *||g' | awk '{print $1}')
+  export power_on_hours=$($SMARTCTL_BIN $DEVICE_TYPE $VENDOR_ATTRIBUTE -A "$p" | grep -E '^  9' | awk '{print $10}'|sed 's|[hms].*||g')     # ost sed zostawia tylko 24979 z "24979h+00m+00.000s"
+  export last_short_offline_test=$($SMARTCTL_BIN $DEVICE_TYPE $VENDOR_ATTRIBUTE --info -l selftest "$p" | grep -Ei 'Short offline|Short captive'|head -1|sed 's|.*% *||g' | awk '{print $1}')
+  export last_extended_offline_test=$($SMARTCTL_BIN $DEVICE_TYPE $VENDOR_ATTRIBUTE --info -l selftest "$p" | grep -Ei 'Extended offline|Extended captive'|head -1|sed 's|.*% *||g' | awk '{print $1}')
+  export last_conveyance_offline_test=$($SMARTCTL_BIN $DEVICE_TYPE $VENDOR_ATTRIBUTE --info -l selftest "$p" | grep -Ei 'Conveyance offline|Conveyance captive'|head -1|sed 's|.*% *||g' | awk '{print $1}')
 
   let last_short_offline_ago=power_on_hours-last_short_offline_test
   let last_extended_offline_ago=power_on_hours-last_extended_offline_test
@@ -88,19 +91,19 @@ for p in $disks ; do
   
   echo
 
-  export czy_nvme_disk=$(nvme list 2>/dev/null| grep $p |wc -l)
+  export czy_nvme_disk=$(nvme list 2>/dev/null | grep -F -- "$p" | wc -l)
   
   if (( $czy_nvme_disk == 1 ));then
-    nvme self-test-log $p
+    nvme self-test-log "$p"
   else
-    $SMARTCTL_BIN $DEVICE_TYPE $VENDOR_ATTRIBUTE $SUBCOMMAND $p 2>/dev/null |sed 's|\(.*failure.*\)|\1                             < ----- ! ! ! ! ! ! ! FAILURE ! ! ! ! ! ! !|g'
+    $SMARTCTL_BIN $DEVICE_TYPE $VENDOR_ATTRIBUTE $SUBCOMMAND "$p" 2>/dev/null | sed 's|\(.*failure.*\)|\1                             < ----- ! ! ! ! ! ! ! FAILURE ! ! ! ! ! ! !|g'
   fi
   
   echo
   
   # in case of some SSD there is Power on Hours in form of 'Power On Hours:' or 'Power_On_Hours'
-  if (( $($SMARTCTL_BIN $DEVICE_TYPE -x $p 2>/dev/null | egrep -i '^Power.On.Hours' | wc -l) > 0 ));then
-    export power_on_hours=$($SMARTCTL_BIN $DEVICE_TYPE -x $p| egrep -i '^Power.On.Hours' | sed 's|.* ||g'|tr -d ',' | sed 's|Hours||g' | sed 's|[hms].*||g')
+  if (( $($SMARTCTL_BIN $DEVICE_TYPE -x "$p" 2>/dev/null | grep -Ei '^Power.On.Hours' | wc -l) > 0 ));then
+    export power_on_hours=$($SMARTCTL_BIN $DEVICE_TYPE -x "$p" | grep -Ei '^Power.On.Hours' | sed 's|.* ||g'|tr -d ',' | sed 's|Hours||g' | sed 's|[hms].*||g')
   fi
   
   # echo power_on_hours = $power_on_hours
@@ -110,7 +113,7 @@ for p in $disks ; do
   fi
   
   # if (( $power_on_hours < 1 )) && (( $($SMARTCTL_BIN $DEVICE_TYPE $VENDOR_ATTRIBUTE --info $p|grep -i SSD | wc -l) > 0 ));then
-  if (( $($SMARTCTL_BIN $DEVICE_TYPE $VENDOR_ATTRIBUTE --info $p|grep -i SSD | wc -l) > 0 )) && (( ${power_on_hours} < 1 )) ;then
+  if (( $($SMARTCTL_BIN $DEVICE_TYPE $VENDOR_ATTRIBUTE --info "$p" | grep -i SSD | wc -l) > 0 )) && (( ${power_on_hours} < 1 )) ;then
     echo -e "Looks like SSD drive and this one has no POWER ON HOURS S.M.A.R.T. attribute available." |boxes -s 95x5 -a c ; echo
   else
     if (( ${power_on_hours} > 65535 )) ; then
@@ -155,7 +158,7 @@ for p in $disks ; do
      echo "Press <ENTER> to continue or q/Q to quit"
      input_from_user=""
      read -t 300 -n 1 input_from_user
-     if [ "${input_from_user}" == 'q' -o  $"{input_from_user}" == 'Q' ]; then 
+     if [[ "${input_from_user}" == [qQ] ]]; then
        echo
        exit
      fi
