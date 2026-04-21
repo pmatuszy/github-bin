@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.04.21 - v. 0.54 - normalize read answer (strip CR/LF); read -r; case-insensitive y
 # 2026.04.21 - v. 0.53 - fix confirm test (was != y twice; accept y or Y)
 # 2025.10.27 - v. 0.52- bugfix - with ChatGPT fix for kod_powrotu
 # 2025.10.27 - v. 0.51- bugfix - small cosmetic display change
@@ -42,14 +43,18 @@ fi
 
 echo "Do you want to do remove disabled packages? [y/N]"
 if (( $batch_mode == 0 ));then
-  read -t 300 -n 1 p     # read one character (-n) with timeout of 300 seconds
+  # -r: no backslash escapes; strip CR (Windows/Git Bash) so "y" matches
+  read -r -t 300 -n 1 p
 else
   echo "y (autoanswer in a batch mode)"
-  p=y # batch mode ==> we set the answer to 'y'
+  p=y
 fi
 
 echo
-if [[ "${p}" != 'y' && "${p}" != 'Y' ]]; then
+p="${p//$'\r'/}"
+p="${p//$'\n'/}"
+p="${p:0:1}"
+if [[ "${p,,}" != "y" ]]; then
   echo "no means no - I am exiting..."
   exit 1
 fi
