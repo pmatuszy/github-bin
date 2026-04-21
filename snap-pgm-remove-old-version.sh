@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.04.21 - v. 0.55 - removal loop: set +e so first snap failure does not exit script; here-string loop; log each remove
 # 2026.04.21 - v. 0.54 - normalize read answer (strip CR/LF); read -r; case-insensitive y
 # 2026.04.21 - v. 0.53 - fix confirm test (was != y twice; accept y or Y)
 # 2025.10.27 - v. 0.52- bugfix - with ChatGPT fix for kod_powrotu
@@ -59,10 +60,30 @@ if [[ "${p,,}" != "y" ]]; then
   exit 1
 fi
 
-LANG=en_US.UTF-8 snap list --all | awk '/disabled/{print $1, $3}' |
-while IFS= read -r pkg revision; do
-  [[ -n "$pkg" && -n "$revision" ]] || continue
-  sudo snap remove "$pkg" --revision="$revision"
-done
+# With set -e (often from _script_header.sh), a failing `snap remove` in a piped while
+# subshell exits the whole script before _script_footer — looks like "y then nothing".
+_snap_rm_plan=$(LANG=en_US.UTF-8 snap list --all | awk '/disabled/{print $1, $3}')
+if [[ -z "${_snap_rm_plan//[$' \t\r\n']/}" ]]; then
+  echo "(PGM) awk produced no pkg/revision pairs; nothing to remove."
+else
+  _errexit_was_on=0
+  [[ $- == *e* ]] && _errexit_was_on=1
+  set +e
+  remove_failures=0
+  while IFS= read -r pkg revision; do
+    [[ -n "$pkg" && -n "$revision" ]] || continue
+    echo "(PGM) Removing ${pkg} @ revision ${revision} ..."
+    if ! sudo snap remove "${pkg}" --revision="${revision}"; then
+      echo "(PGM) snap remove failed for ${pkg} revision ${revision} (see above)." >&2
+      ((++remove_failures)) || true
+    fi
+  done <<< "${_snap_rm_plan}"
+  ((_errexit_was_on)) && set -e
+  if (( remove_failures > 0 )); then
+    echo "(PGM) Finished with ${remove_failures} removal error(s)." >&2
+  else
+    echo "(PGM) All scheduled removals completed successfully."
+  fi
+fi
 
 . /root/bin/_script_footer.sh
