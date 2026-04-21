@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.04.21 - v. 1.52 - ctrl_c STY guard; quote $0 in version/tty; year-agnostic changelog grep; -n STY; indent; contract blurb
 # 2025.10.28 - v. 1.51- now we set LC_ALL for scripts to have proper separators in numbers (like ,.)
 # 2023.10.10 - v. 1.5 - bugfix: removed hardcoded HEALTHCHECKS_FILE
 # 2023.05.22 - v. 1.4 - added printing of the script name, added NO_STARTUP_DELAY startup parameter
@@ -17,6 +18,9 @@
 # 2020.09.15 - v. 0.2 - initial release
 # 2020.09.15 - v. 0.1 - initial release
 
+# Contract: sourced (not executed) by sibling scripts. Enables nounset and pipefail,
+# sets LC_ALL=C, defines check_if_installed and ctrl_c, installs boxes/figlet when root,
+# sets GNU Screen window title when STY is set, optional RANDOM_DELAY when not on a tty.
 
 if [[ "$0" = "/bin/bash" ]] || [[ "$0" = "/usr/bin/bash" ]] || [[ "$0" = "/usr/local/bin/bash" ]] ; then
   echo do not run the script standalone - only from the script ...
@@ -32,41 +36,40 @@ export LC_ALL=C
 
 #######################################################################################
 function ctrl_c() {
- echo
- echo "** Trapped CTRL-C - cleaning up...."
- echo
- # if [ ! -zwhy "${STY:-XXXX}" ]; then    # checking if we are running within screen
- if [ ! -z "${STY:-XXXX}" ]; then    # checking if we are running within screen
+  echo
+  echo "** Trapped CTRL-C - cleaning up...."
+  echo
+  if [ -n "${STY:-}" ]; then    # checking if we are running within screen
     # I am setting the screen window title to the script name
     echo -ne "${tcScrTitleStart}${0}${tcScrTitleEnd}"
- fi
- exit
+  fi
+  exit
 }
 #######################################################################################
 function check_if_installed() {
 
-if [ "$(id -u)" -ne 0 ]; then
-  # script is not run as root so we don't want to progress with the installation
-  return 1
-fi
-
-type -fP "${1}" &>/dev/null
-
-if (( $? != 0 ));then
-  echo ; echo "#######################################################"
-  echo "(PGM) ${1} not found - I will install it..."
-  if [ "${2:-BRAK}" != "BRAK" ];then
-    apt-get -y install "${2}"
-  else
-    apt-get -y install "${1}"
+  if [ "$(id -u)" -ne 0 ]; then
+    # script is not run as root so we don't want to progress with the installation
+    return 1
   fi
-  echo "#######################################################";echo
-fi
-type -fP "${1}" 2>&1 > /dev/null
-if (( $? != 0 )); then
-  echo ; echo "(PGM) I can't find ${1} utility... exiting ..."; echo
-  exit 1
-fi
+
+  type -fP "${1}" &>/dev/null
+
+  if (( $? != 0 ));then
+    echo ; echo "#######################################################"
+    echo "(PGM) ${1} not found - I will install it..."
+    if [ "${2:-BRAK}" != "BRAK" ];then
+      apt-get -y install "${2}"
+    else
+      apt-get -y install "${1}"
+    fi
+    echo "#######################################################";echo
+  fi
+  type -fP "${1}" 2>&1 > /dev/null
+  if (( $? != 0 )); then
+    echo ; echo "(PGM) I can't find ${1} utility... exiting ..."; echo
+    exit 1
+  fi
 }
 #######################################################################################
 
@@ -79,11 +82,11 @@ check_if_installed figlet
 
 tty 2>&1 >/dev/null
 if (( $? == 0 )); then
-  echo -ne "\033]0;`hostname` - $0\007";\
-  figlet -w 280 `basename $0`
+  echo -ne "\033]0;$(hostname) - ${0}\007";\
+  figlet -w 280 "$(basename "$0")"
 fi
 
-if [ ! -z ${STY:-} ]; then    # checking if we are running within screen
+if [ -n "${STY:-}" ]; then    # checking if we are running within screen
   # I am setting the screen window title to the script name
   echo -ne "${tcScrTitleStart}${0}${tcScrTitleEnd}"
 fi
@@ -99,11 +102,11 @@ export MAX_RANDOM_DELAY_IN_SEC=${MAX_RANDOM_DELAY_IN_SEC:-50}
 export script_is_run_interactively=0
 
 export SCRIPT_VERSION_TMP=$(
-                 echo "script name: $0" ; 
-                 cat $0|grep -e '# *20[123][0-9]'|head -n 1 | awk '{print "script version: " $5 " (dated "$2")"}' ;
-                 echo "current date : `date '+%Y.%m.%d %H:%M:%S'`"
-                 echo "script is run on `hostname`" ; echo ; echo
-                 )
+  echo "script name: ${0}" ;
+  grep -E -m1 '^# *[0-9]{4}\.[0-9]{2}\.[0-9]{2}' "$0" | awk '{print "script version: " $5 " (dated "$2")"}' ;
+  echo "current date : $(date '+%Y.%m.%d %H:%M:%S')"
+  echo "script is run on $(hostname)" ; echo ; echo
+)
 
 export SCRIPT_VERSION=$(echo "${SCRIPT_VERSION_TMP}"  | boxes -s 50x3 -a c -d ada-box )
 
