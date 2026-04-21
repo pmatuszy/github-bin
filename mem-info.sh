@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.04.21 - v. 0.6 - summary: used vs cache (Total-Avail, AnonPages, Cached, Buffers)
 # 2026.04.21 - v. 0.5 - optional -p/--page pauses; -c/--chunk or MEM_INFO_CHUNK_LINES splits meminfo table
 # 2026.04.21 - v. 0.4 - aligned summary box (MemTotal/MemAvailable/...) with printf columns
 # 2026.04.21 - v. 0.3 - aligned /proc/meminfo table; bare integers (e.g. HugePages_*) get 3 columns
@@ -48,11 +49,13 @@ if ((_show_help)); then
 Usage: mem-info.sh [-h|--help] [-v|--version] [-p|--page] [-c N|--chunk N]
 
 Print a readable RAM report for the local Linux system: summary (with the
-kernel's MemAvailable estimate), full free(1) output, and every field from
-/proc/meminfo with kB and human-readable columns.
+kernel's MemAvailable estimate, rough "used" vs page cache), full free(1)
+output, and every field from /proc/meminfo with kB and human-readable columns.
 
 MemAvailable is usually the best "how much RAM can I use?" number; MemFree
-ignores reclaimable cache.
+ignores reclaimable cache. The summary also shows MemTotal-MemAvailable
+(rough "in use" vs MemAvailable), AnonPages (anonymous program memory),
+Cached (file cache), and Buffers.
 
 Options:
   -h, --help     Show this help and exit.
@@ -172,14 +175,23 @@ ma=$(_mi_kb MemAvailable) || ma=0
 mf=$(_mi_kb MemFree) || mf=0
 st=$(_mi_kb SwapTotal) || st=0
 sf=$(_mi_kb SwapFree) || sf=0
+_mi_anon=$(_mi_kb AnonPages) || _mi_anon=0
+_mi_cached=$(_mi_kb Cached) || _mi_cached=0
+_mi_buffers=$(_mi_kb Buffers) || _mi_buffers=0
+_mi_used_na=$((mt - ma))
+((_mi_used_na < 0)) && _mi_used_na=0
 
 {
-  _sl_lw=18
+  _sl_lw=20
   _sl_nw=12
   _sl_hw=14
   printf '%-*s %*s kB  (%*s)\n' "$_sl_lw" "MemTotal" "$_sl_nw" "$mt" "$_sl_hw" "$(_mi_human_kb "$mt")"
   printf '%-*s %*s kB  (%*s)  <- practical "free" estimate\n' "$_sl_lw" "MemAvailable" "$_sl_nw" "$ma" "$_sl_hw" "$(_mi_human_kb "$ma")"
   printf '%-*s %*s kB  (%*s)  (unused; cache not counted)\n' "$_sl_lw" "MemFree" "$_sl_nw" "$mf" "$_sl_hw" "$(_mi_human_kb "$mf")"
+  printf '%-*s %*s kB  (%*s)  (MemTotal-MemAvailable; not in Avail)\n' "$_sl_lw" "Used (approx.)" "$_sl_nw" "$_mi_used_na" "$_sl_hw" "$(_mi_human_kb "$_mi_used_na")"
+  printf '%-*s %*s kB  (%*s)  (anonymous RAM: apps, stacks, etc.)\n' "$_sl_lw" "AnonPages" "$_sl_nw" "$_mi_anon" "$_sl_hw" "$(_mi_human_kb "$_mi_anon")"
+  printf '%-*s %*s kB  (%*s)  (file page cache; reclaimable)\n' "$_sl_lw" "Cached" "$_sl_nw" "$_mi_cached" "$_sl_hw" "$(_mi_human_kb "$_mi_cached")"
+  printf '%-*s %*s kB  (%*s)  (block device buffers)\n' "$_sl_lw" "Buffers" "$_sl_nw" "$_mi_buffers" "$_sl_hw" "$(_mi_human_kb "$_mi_buffers")"
   printf '%-*s %6s  %s\n' "$_sl_lw" "Available/Total" "$(_mi_pct "$ma" "$mt")" "of RAM reported usable by kernel"
   if (( st > 0 )); then
     su=$((st - sf))
