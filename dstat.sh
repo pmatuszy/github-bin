@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.04.22 - v. 0.2 - PYTHONWARNINGS: hide Python 3.12+ SyntaxWarning from /usr/bin/dstat regex strings
 # 2023.10.12 - v. 0.1 - initial release
 
 . /root/bin/_script_header.sh
@@ -12,7 +13,10 @@ if (( $? != 0 )); then
   exit 1
 fi
 
-clear 
+clear
+
+# dstat ships regex as non-raw strings; Python 3.12+ prints SyntaxWarning on \d \( etc.
+export PYTHONWARNINGS="ignore::SyntaxWarning${PYTHONWARNINGS:+,${PYTHONWARNINGS}}"
 
 if (( $# == 0 ));then
  dstat -tcdnmg -D mmcblk0,nvme0n1,/dev/sda -N ens33,eth0,eno1 -C total --top-cpu --top-io --top-mem --cpufreq -C total --bw --nocolor -f 1
