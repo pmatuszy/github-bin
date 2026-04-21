@@ -1,5 +1,7 @@
 #!/bin/bash
 
+# 2026.04.21 - v. 1.2 - clarify bare-metal check: virt-what empty on host, nonempty when virtualized (no wc -l)
+# 2026.04.21 - v. 1.1 - fix vmrun list boxed output; fix VMware Tools retry/success logic; grep -F for exclude paths; local VM path in helpers; comment crontab example block
 # 2025.11.03 - v. 1.0 - added optional exluded vms that the status won't be checked (/root/bin/vmware-exclude-from-checks.txt)
 # 2023.12.27 - v. 0.9 - stderr redirection
 # 2023.10.12 - v. 0.8 - output is beautified
@@ -17,8 +19,15 @@
 check_if_installed curl
 check_if_installed virt-what
 
-if (( $(virt-what | wc -l) != 0 ));then
-  echo ; echo "host is NOT a physical machine ... exiting...";echo
+# virt-what prints nothing on bare metal; otherwise it prints one hypervisor/container tag per line
+# (see man virt-what). Using nonempty stdout is clearer than counting lines with wc.
+virt_what_out=$(virt-what 2>/dev/null) || true
+if [[ -n "${virt_what_out//[[:space:]]/}" ]]; then
+  vw_report="${virt_what_out//$'\n'/, }"
+  vw_report="${vw_report%", "}"
+  echo
+  echo "(PGM) host is NOT a physical machine (virt-what: ${vw_report}) ... exiting ..."
+  echo
   exit 1
 fi
 
@@ -40,7 +49,7 @@ if [ -f /root/SECRET/vmware-pass.sh ];then
 fi
 #########################################################################################################
 spr_ip_address() {
- 
+  local p="$1"
   blad=0
   if [ ! -z "${TPM_PASS:-}" ];then
     echo "vmrun -vp ********** getGuestIPAddress $p nogui" | boxes -a l -d ada-cmt ; echo 
@@ -50,16 +59,16 @@ spr_ip_address() {
 
   for ((retry=0 ; retry<$how_many_retries ; retry++));do
     if [ ! -z "${TPM_PASS:-}" ];then
-      address=$(vmrun -vp "${TPM_PASS}" getGuestIPAddress $p nogui 2>&1)
+      address=$(vmrun -vp "${TPM_PASS}" getGuestIPAddress "$p" nogui 2>&1)
     else
-      address=$(vmrun getGuestIPAddress $p nogui 2>&1)
+      address=$(vmrun getGuestIPAddress "$p" nogui 2>&1)
     fi
     if (( $? != 0 )) && (( retry == $how_many_retries-1 )); then
       echo "(PGM) vmrun finished with ERRORS !!!!!!"
       echo "  $address" ; echo 
       blad=1
     fi
-    if [[ "${address}" =~ "Error" ]] || [[ "${address}" =~ "unknown" ]] ;then
+    if [[ "${address}" =~ Error ]] || [[ "${address}" =~ unknown ]] ;then
       blad=1
     else
       echo "IP Address = $address (PGM)" ; echo
@@ -73,7 +82,7 @@ spr_ip_address() {
 }
 #########################################################################################################
 spr_vmware_tools() {
- 
+  local p="$1"
   blad=0
 
   if [ ! -z "${TPM_PASS:-}" ];then
@@ -84,20 +93,27 @@ spr_vmware_tools() {
 
   for ((retry=0 ; retry<$how_many_retries ; retry++));do
     if [ ! -z "${TPM_PASS:-}" ];then
-      status=$(vmrun -vp "${TPM_PASS}" checkToolsState $p nogui 2>&1)
+      status=$(vmrun -vp "${TPM_PASS}" checkToolsState "$p" nogui 2>&1)
     else
-      status=$(vmrun checkToolsState $p nogui 2>&1)
+      status=$(vmrun checkToolsState "$p" nogui 2>&1)
     fi
     if (( $? != 0 )); then
       echo ; echo "(PGM) vmrun finished with ERRORS !!!!!!"; echo
       blad=1
+      if (( retry < how_many_retries - 1 )); then
+        sleep $retry_delay
+        continue
+      fi
     fi
-    if [[ "${status}" != "running" ]] && (( retry == $how_many_retries-1 )) ;then
-      echo "  $status" ; echo 
+    if [[ "${status}" == "running" ]]; then
+      echo "VMware Tools are running (OK) (PGM)"
+      return 0
+    fi
+    if (( retry == how_many_retries - 1 )); then
+      echo "  $status" ; echo
       blad=1
     else
-      echo "vmare Tools are running (OK) (PGM)"
-      return 0
+      sleep $retry_delay
     fi
   done
   if (( $blad != 0 ));then
@@ -114,7 +130,7 @@ m=$(
   export cos_nie_tak=0
   cat  $0|grep -e '# *20[123][0-9]'|head -n 1 | awk '{print "script version: " $5 " (dated "$2")"}' ; echo
   echo " "; echo "aktualna data: `date '+%Y.%m.%d %H:%M'`" ; echo ;
-  echo vmrun list | boxes -s 40x5 -a c
+  vmrun list 2>/dev/null | boxes -s 40x5 -a c
   echo;
   vmrun list 2> /dev/null | grep Total 
   vmrun list 2> /dev/null | grep -v Total | sort
@@ -135,8 +151,8 @@ m=$(
     echo
   
     # Separate included and excluded VMs
-    vm_excluded=$(echo "$vm_all" | grep -f <(echo "$exclude_clean") || true)
-    vm_list=$(echo "$vm_all" | grep -v -f <(echo "$exclude_clean") || true)
+    vm_excluded=$(echo "$vm_all" | grep -F -f <(echo "$exclude_clean") || true)
+    vm_list=$(echo "$vm_all" | grep -vF -f <(echo "$exclude_clean") || true)
   else
     vm_list="$vm_all"
     vm_excluded=""
@@ -176,6 +192,6 @@ echo "$m" | /usr/bin/curl -fsS -m 100 --retry 10 --retry-delay 10 --data-binary 
 exit ${kod_powrotu}
 
 #####
-# new crontab entry
-
-0 * * * * /root/bin/vmrun-check-status.sh
+# new crontab entry (example — do not run as shell; install with crontab -e):
+#
+# 0 * * * * /root/bin/vmrun-check-status.sh
