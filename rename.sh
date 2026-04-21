@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.04.21 - v. 18.58 - detect duplicated trailing file extensions (e.g. .mp4.mp4) and normalize to a single extension
 # 2026.04.21 - v. 18.57 - strip repeated adjacent .WnA. marker fragments reliably during normalization
 # 2026.04.20 - v. 18.56 - print startup banner before early resume question while keeping a single banner print in normal flow
 # 2026.04.20 - v. 18.55 - speed up FULL maintenance hash backfill via SQL candidate filtering, one-time hash backend detection, and missing-hash partial index
@@ -3253,6 +3254,7 @@ transform_basename() {
 transform_name() {
     local f="$1"
     local dir base newbase ts stem ext media_suffix media_date media_time media_kind yy
+    local dup_stem dup_ext1 dup_ext2
     local audio_ext_re common_media_ext_re
 
     dir="$(dirname -- "$f")"
@@ -3273,6 +3275,19 @@ transform_name() {
     newbase="$(transform_basename "$base" "$f")"
 
     if [[ -e "$f" ]]; then
+        if [[ ! -d "$f" ]]; then
+            while [[ "$newbase" =~ ^(.+)\.([^.]+)\.([^.]+)$ ]]; do
+                dup_stem="${BASH_REMATCH[1]}"
+                dup_ext1="${BASH_REMATCH[2]}"
+                dup_ext2="${BASH_REMATCH[3]}"
+                if [[ "${dup_ext1,,}" == "${dup_ext2,,}" ]]; then
+                    newbase="${dup_stem}.${dup_ext1}"
+                else
+                    break
+                fi
+            done
+        fi
+
         if [[ "$newbase" =~ ^image.*\.jpg$ ]] && [[ ! "$newbase" =~ ^[0-9]{8}_[0-9]{6}_image.*\.jpg$ ]]; then
             ts="$(get_file_oldest_timestamp_yyyymmdd_hhmmss "$f")"
             newbase="${ts}_${newbase}"
