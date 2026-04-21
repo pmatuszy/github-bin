@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.04.21 - v. 0.9 - help text includes usage examples
 # 2026.04.21 - v. 0.8 - -v / --version prints script version and date (before header)
 # 2026.04.21 - v. 0.7 - -h / --help prints usage and exits (before header)
 # 2026.04.21 - v. 0.6 - _script_header/footer, check_if_installed progress; extra commands via WATCH_PROGRESS_EXTRA, WATCH_PROGRESS_WAIT_DELAY, or args
@@ -28,6 +29,22 @@ Arguments:
   Each PROCESS is a process basename (as in ps) added via --additional-command.
 
 Built-in extras include: pbzip2, par2, restic, mc, rclone, zstd, pigz, xz, borg, lz4.
+
+Examples:
+  watch-progress.sh
+      Defaults only; leave running in a screen window while you run backups elsewhere.
+
+  watch-progress.sh gpg 7zz
+      Also watch processes whose ps basename is gpg or 7zz.
+
+  WATCH_PROGRESS_EXTRA="ffmpeg openssl" watch-progress.sh
+      Add more basenames without changing the script (space-separated).
+
+  WATCH_PROGRESS_WAIT_DELAY=1 watch-progress.sh
+      Poll once per second instead of every 0.5 s.
+
+  WATCH_PROGRESS_EXTRA="ffmpeg" watch-progress.sh openssl
+      Env extras plus extra PROCESS names on one line (all get --additional-command).
 EOF
   exit 0
 fi
