@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.04.21 - v. 0.9 - default meminfo table = selected fields only; -f/--full for all lines
 # 2026.04.21 - v. 0.8 - default Enter paging on tty; --no-page; q quits early during pause
 # 2026.04.21 - v. 0.7 - summary box: fixed column for trailing notes (align with MemTotal line)
 # 2026.04.21 - v. 0.6 - summary: used vs cache (Total-Avail, AnonPages, Cached, Buffers)
@@ -10,6 +11,7 @@
 # 2026.04.21 - v. 0.1 - RAM report: /proc/meminfo + free -h, boxed sections; help/version
 
 _mi_chunk=${MEM_INFO_CHUNK_LINES:-0}
+_mi_full_meminfo=0
 _show_help=0
 _show_ver=0
 _mi_page_cli=''
@@ -30,6 +32,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     -n|--no-page)
       _mi_page_cli=off
+      shift
+      ;;
+    -f|--full)
+      _mi_full_meminfo=1
       shift
       ;;
     -c|--chunk)
@@ -68,13 +74,15 @@ case "${_mi_page_cli:-}" in
     ;;
 esac
 
+[[ "${MEM_INFO_MEMINFO_FULL:-0}" == '1' ]] && _mi_full_meminfo=1
+
 if ((_show_help)); then
   cat <<'EOF'
-Usage: mem-info.sh [-h|--help] [-v|--version] [-p|--page] [-n|--no-page] [-c N|--chunk N]
+Usage: mem-info.sh [-h|--help] [-v|--version] [-p|--page] [-n|--no-page] [-f|--full] [-c N|--chunk N]
 
 Print a readable RAM report for the local Linux system: summary (with the
 kernel's MemAvailable estimate, rough "used" vs page cache), full free(1)
-output, and every field from /proc/meminfo with kB and human-readable columns.
+output, and a /proc/meminfo table (selected fields by default; use -f for all).
 
 MemAvailable is usually the best "how much RAM can I use?" number; MemFree
 ignores reclaimable cache. The summary also shows MemTotal-MemAvailable
@@ -92,14 +100,18 @@ Options:
   -v, --version   Print script version and exit.
   -p, --page      Force Enter paging on (even if MEM_INFO_PAGE=0).
   -n, --no-page   Force paging off (full output at once).
+  -f, --full      Print every line from /proc/meminfo (long). Default is a
+                  shorter list of useful fields (active/inactive, slab, huge
+                  pages, commit, direct map, etc.).
   -c N, --chunk N
                   Show at most N meminfo rows per boxed table (header repeated
                   each chunk). N=0 means one box with all rows (default).
 
 Environment:
-  MEM_INFO_PAGE          1 always pause, 0 never pause; unset = auto (pause
-                         when stdout is a tty).
-  MEM_INFO_CHUNK_LINES   Default chunk size before -c overrides (default: 0 = all).
+  MEM_INFO_PAGE            1 always pause, 0 never pause; unset = auto (pause
+                           when stdout is a tty).
+  MEM_INFO_CHUNK_LINES     Default chunk size before -c overrides (default: 0 = all).
+  MEM_INFO_MEMINFO_FULL    If 1, same as -f (full meminfo dump).
 
 Examples:
   mem-info.sh
@@ -112,6 +124,8 @@ Examples:
       Smaller meminfo boxes; still pauses between them on a tty.
   MEM_INFO_CHUNK_LINES=25 MEM_INFO_PAGE=1 mem-info.sh
       Explicit paging + chunk size.
+  mem-info.sh -f
+      Full /proc/meminfo listing (use with -c for smaller boxes).
 EOF
   exit 0
 fi
@@ -181,6 +195,10 @@ _mi_print_meminfo_header() {
   _mi_dh=${_mi_dh// /-}
   printf '%-*s %*s %*s\n' "$_mi_kw" "Field" "$_mi_nw" "Value (kB)" "$_mi_hw" "Human"
   printf '%-*s %*s %*s\n' "$_mi_kw" "$_mi_ds" "$_mi_nw" "$_mi_dn" "$_mi_hw" "$_mi_dh"
+}
+
+_mi_meminfo_fetch_line() {
+  awk -v k="${1}:" '$1==k {print; exit}' /proc/meminfo
 }
 
 _mi_print_meminfo_line() {
@@ -275,11 +293,34 @@ free -h | boxes -a l -d stone
 echo
 _mi_pause_if_needed
 
-mapfile -t _mi_memlines < /proc/meminfo
 _mi_nonempty=()
-for _mi_ln in "${_mi_memlines[@]}"; do
-  [[ -n "$_mi_ln" ]] && _mi_nonempty+=("$_mi_ln")
-done
+if (( _mi_full_meminfo )); then
+  mapfile -t _mi_memlines < /proc/meminfo
+  for _mi_ln in "${_mi_memlines[@]}"; do
+    [[ -n "$_mi_ln" ]] && _mi_nonempty+=("$_mi_ln")
+  done
+else
+  _mi_important_keys=(
+    SwapCached
+    Active Inactive 'Active(anon)' 'Inactive(anon)' 'Active(file)' 'Inactive(file)'
+    Shmem Mapped
+    Dirty Writeback WritebackTmp
+    Slab SReclaimable SUnreclaim KReclaimable
+    KernelStack PageTables NFS_Unstable Bounce
+    CommitLimit Committed_AS
+    HugePages_Total HugePages_Free HugePages_Rsvd HugePages_Surp Hugepagesize Hugetlb
+    DirectMap4k DirectMap2M DirectMap1G
+    Unevictable Mlocked
+    Zswap Zswapped
+    AnonHugePages ShmemHugePages ShmemPmdMapped FileHugePages FilePmdMapped
+    VmallocUsed Percpu HardwareCorrupted Unaccepted
+  )
+  for _mi_k in "${_mi_important_keys[@]}"; do
+    _mi_fln=$(_mi_meminfo_fetch_line "$_mi_k")
+    [[ -n "$_mi_fln" ]] && _mi_nonempty+=("$_mi_fln")
+  done
+fi
+
 _mi_total=${#_mi_nonempty[@]}
 _mi_step=$_mi_chunk
 if (( _mi_step <= 0 || _mi_step > _mi_total )); then
@@ -289,10 +330,18 @@ fi
 for (( _mi_i = 0; _mi_i < _mi_total; )); do
   _mi_end=$((_mi_i + _mi_step))
   ((_mi_end > _mi_total)) && _mi_end=$_mi_total
-  if (( _mi_total == _mi_step )); then
-    _mi_title="(PGM) /proc/meminfo - all fields (kB + human)"
+  if (( _mi_full_meminfo )); then
+    if (( _mi_total == _mi_step )); then
+      _mi_title="(PGM) /proc/meminfo - all fields (kB + human)"
+    else
+      _mi_title="(PGM) /proc/meminfo - fields $((_mi_i + 1))-${_mi_end} of ${_mi_total} (kB + human)"
+    fi
   else
-    _mi_title="(PGM) /proc/meminfo - fields $((_mi_i + 1))-${_mi_end} of ${_mi_total} (kB + human)"
+    if (( _mi_total == _mi_step )); then
+      _mi_title="(PGM) /proc/meminfo - selected fields (kB + human) [-f for all]"
+    else
+      _mi_title="(PGM) /proc/meminfo - selected $((_mi_i + 1))-${_mi_end} of ${_mi_total} (kB + human)"
+    fi
   fi
   echo "$_mi_title" | boxes -a c -d stone
   {
