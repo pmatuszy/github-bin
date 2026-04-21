@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.04.21 - v. 0.8 - default Enter paging on tty; --no-page; q quits early during pause
 # 2026.04.21 - v. 0.7 - summary box: fixed column for trailing notes (align with MemTotal line)
 # 2026.04.21 - v. 0.6 - summary: used vs cache (Total-Avail, AnonPages, Cached, Buffers)
 # 2026.04.21 - v. 0.5 - optional -p/--page pauses; -c/--chunk or MEM_INFO_CHUNK_LINES splits meminfo table
@@ -8,10 +9,10 @@
 # 2026.04.21 - v. 0.2 - ASCII-only user-visible text (avoid ??? in non-UTF-8 / boxes)
 # 2026.04.21 - v. 0.1 - RAM report: /proc/meminfo + free -h, boxed sections; help/version
 
-_mi_page=0
 _mi_chunk=${MEM_INFO_CHUNK_LINES:-0}
 _show_help=0
 _show_ver=0
+_mi_page_cli=''
 
 while [[ $# -gt 0 ]]; do
   case $1 in
@@ -24,7 +25,11 @@ while [[ $# -gt 0 ]]; do
       shift
       ;;
     -p|--page)
-      _mi_page=1
+      _mi_page_cli=on
+      shift
+      ;;
+    -n|--no-page)
+      _mi_page_cli=off
       shift
       ;;
     -c|--chunk)
@@ -43,11 +48,29 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-[[ "${MEM_INFO_PAGE:-0}" == 1 ]] && _mi_page=1
+case "${_mi_page_cli:-}" in
+  on)
+    _mi_page=1
+    ;;
+  off)
+    _mi_page=0
+    ;;
+  *)
+    if [[ "${MEM_INFO_PAGE:-}" == '0' ]]; then
+      _mi_page=0
+    elif [[ "${MEM_INFO_PAGE:-}" == '1' ]]; then
+      _mi_page=1
+    elif [[ -t 1 ]] && [[ -r /dev/tty ]]; then
+      _mi_page=1
+    else
+      _mi_page=0
+    fi
+    ;;
+esac
 
 if ((_show_help)); then
   cat <<'EOF'
-Usage: mem-info.sh [-h|--help] [-v|--version] [-p|--page] [-c N|--chunk N]
+Usage: mem-info.sh [-h|--help] [-v|--version] [-p|--page] [-n|--no-page] [-c N|--chunk N]
 
 Print a readable RAM report for the local Linux system: summary (with the
 kernel's MemAvailable estimate, rough "used" vs page cache), full free(1)
@@ -58,29 +81,37 @@ ignores reclaimable cache. The summary also shows MemTotal-MemAvailable
 (rough "in use" vs MemAvailable), AnonPages (anonymous program memory),
 Cached (file cache), and Buffers.
 
+Paging:
+  When stdout is a terminal and /dev/tty can be read, the script pauses
+  between sections (and between meminfo chunks) and waits for Enter so you
+  do not have to scroll back. Pipe output or use --no-page to get a single
+  uninterrupted stream. During a pause, type q then Enter to exit early.
+
 Options:
-  -h, --help     Show this help and exit.
-  -v, --version  Print script version and exit.
-  -p, --page     Pause between sections (and between meminfo chunks) on an
-                 interactive terminal; press Enter to continue. Reads from
-                 /dev/tty so piping stdout still works.
+  -h, --help      Show this help and exit.
+  -v, --version   Print script version and exit.
+  -p, --page      Force Enter paging on (even if MEM_INFO_PAGE=0).
+  -n, --no-page   Force paging off (full output at once).
   -c N, --chunk N
-                 Show at most N meminfo rows per boxed table (header repeated
-                 each chunk). N=0 means one box with all rows (default).
+                  Show at most N meminfo rows per boxed table (header repeated
+                  each chunk). N=0 means one box with all rows (default).
 
 Environment:
-  MEM_INFO_PAGE         If 1, same as -p.
-  MEM_INFO_CHUNK_LINES  Default chunk size before -c overrides (default: 0 = all).
+  MEM_INFO_PAGE          1 always pause, 0 never pause; unset = auto (pause
+                         when stdout is a tty).
+  MEM_INFO_CHUNK_LINES   Default chunk size before -c overrides (default: 0 = all).
 
 Examples:
   mem-info.sh
+      On a tty: pauses between sections by default.
+  mem-info.sh -n
+      Full report in one go (no Enter prompts).
   mem-info.sh | less -S
-  mem-info.sh -p
-      Pause after each section when stdout is a tty.
-  mem-info.sh -c 20
-      Split /proc/meminfo into boxes of 20 fields (easier to read in screen).
-  MEM_INFO_CHUNK_LINES=25 mem-info.sh -p
-      Combine chunking with paging.
+      No paging (stdout not a tty); scroll in less.
+  mem-info.sh -c 22
+      Smaller meminfo boxes; still pauses between them on a tty.
+  MEM_INFO_CHUNK_LINES=25 MEM_INFO_PAGE=1 mem-info.sh
+      Explicit paging + chunk size.
 EOF
   exit 0
 fi
@@ -109,8 +140,13 @@ kod_powrotu=0
 
 _mi_pause_if_needed() {
   if (( _mi_page )) && [[ -t 1 ]] && [[ -r /dev/tty ]]; then
-    read -r -p "(PGM) Press Enter for next section... " _ < /dev/tty || true
+    IFS= read -r -p "(PGM) Press Enter for next section (q + Enter to quit)... " _mi_in < /dev/tty || true
     echo
+    if [[ "${_mi_in:-}" == [qQ]* ]]; then
+      echo '(PGM) Quitting early.'
+      . /root/bin/_script_footer.sh
+      exit 0
+    fi
   fi
 }
 
