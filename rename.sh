@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.04.21 - v. 18.61 - let user choose flatten result directory name (parent/child/manual edit with readline)
 # 2026.04.21 - v. 18.60 - add flatten-only directory exception option to skip future flatten prompts for exact paths
 # 2026.04.21 - v. 18.59 - add prompt to flatten directories that contain only one subdirectory with files
 # 2026.04.21 - v. 18.58 - detect duplicated trailing file extensions (e.g. .mp4.mp4) and normalize to a single extension
@@ -4516,7 +4517,8 @@ print_rename_prompt_menu() {
 maybe_prompt_flatten_single_child_dir() {
     local parent_dir="$1"
     local -a immediate_entries=() child_dirs=() child_non_dirs=() child_items=()
-    local child_dir="" child_base="" answer="" item="" item_base=""
+    local child_dir="" child_base="" parent_base="" answer="" item="" item_base=""
+    local name_choice="" edited_base="" target_base="" target_dir="" parent_parent_dir=""
     local saved_dotglob saved_nullglob
 
     [[ -d "$parent_dir" ]] || return 0
@@ -4547,6 +4549,9 @@ maybe_prompt_flatten_single_child_dir() {
 
     child_dir="${child_dirs[0]}"
     [[ -d "$child_dir" ]] || return 0
+    child_base="$(basename -- "$child_dir")"
+    parent_base="$(basename -- "$parent_dir")"
+    parent_parent_dir="$(dirname -- "$parent_dir")"
 
     if ! find "$child_dir" -type f -print -quit | grep -q .; then
         return 0
@@ -4572,48 +4577,134 @@ maybe_prompt_flatten_single_child_dir() {
     fi
     [[ "$answer" =~ [Yy] ]] || return 0
 
-    saved_dotglob="$(shopt -p dotglob || true)"
-    saved_nullglob="$(shopt -p nullglob || true)"
-    shopt -s dotglob nullglob
-    child_items=( "$child_dir"/* )
-    eval "$saved_dotglob"
-    eval "$saved_nullglob"
+    echo "Which directory name should remain after flatten?"
+    echo "  [P] Keep parent name: $parent_base (default)"
+    echo "  [C] Keep child name:  $child_base"
+    echo "  [M] Manually edit resulting basename"
+    echo "  [Q] Quit"
+    echo -n "Choice [P/c/m/q]: "
+    flush_stdin
+    read_single_key name_choice "$PROMPT_WAIT_SECONDS"
+    echo
 
-    if (( ${#child_items[@]} == 0 )); then
-        return 0
+    case "$name_choice" in
+        q|Q)
+            stopped_by_user=yes
+            return 2
+            ;;
+        c|C)
+            target_base="$child_base"
+            ;;
+        m|M)
+            echo "Manual basename edit (readline enabled):"
+            echo "  Use arrows/Home/End for cursor movement and editing."
+            echo -n "New basename: "
+            read_line_editable edited_base "$PROMPT_WAIT_SECONDS" "$parent_base"
+            echo
+            if [[ -z "$edited_base" ]]; then
+                edited_base="$parent_base"
+            fi
+            if [[ "$edited_base" == *"/"* || "$edited_base" == "." || "$edited_base" == ".." ]]; then
+                echo -e "${YELLOW}SKIP FLATTEN:${RESET} Invalid basename: '$edited_base'"
+                ((++files_skipped))
+                return 0
+            fi
+            target_base="$edited_base"
+            ;;
+        *)
+            target_base="$parent_base"
+            ;;
+    esac
+
+    if [[ "$parent_parent_dir" == "." ]]; then
+        target_dir="./$target_base"
+    else
+        target_dir="$parent_parent_dir/$target_base"
     fi
 
-    for item in "${child_items[@]}"; do
-        [[ -e "$item" ]] || continue
-        item_base="$(basename -- "$item")"
-        if [[ -e "$parent_dir/$item_base" ]]; then
-            echo -e "${YELLOW}SKIP FLATTEN:${RESET} Target already exists: $parent_dir/$item_base"
+    if [[ "$target_dir" == "$parent_dir" ]]; then
+        saved_dotglob="$(shopt -p dotglob || true)"
+        saved_nullglob="$(shopt -p nullglob || true)"
+        shopt -s dotglob nullglob
+        child_items=( "$child_dir"/* )
+        eval "$saved_dotglob"
+        eval "$saved_nullglob"
+
+        if (( ${#child_items[@]} == 0 )); then
+            return 0
+        fi
+
+        for item in "${child_items[@]}"; do
+            [[ -e "$item" ]] || continue
+            item_base="$(basename -- "$item")"
+            if [[ -e "$parent_dir/$item_base" ]]; then
+                echo -e "${YELLOW}SKIP FLATTEN:${RESET} Target already exists: $parent_dir/$item_base"
+                ((++files_skipped))
+                return 0
+            fi
+        done
+
+        if [[ "$mode" == "dry-run" ]]; then
+            echo -e "${CYAN}[DRY-RUN] Would flatten:${RESET} $child_dir ${ARROW} $parent_dir"
+            ((++files_affected))
+            record_rename "$child_dir" "$parent_dir"
+            return 0
+        fi
+
+        for item in "${child_items[@]}"; do
+            [[ -e "$item" ]] || continue
+            mv -i -- "$item" "$parent_dir/"
+        done
+
+        if rmdir -- "$child_dir"; then
+            ((++files_affected))
+            record_rename "$child_dir" "$parent_dir"
+            db_rewrite_subtree "$child_dir" "$parent_dir"
+            processed["$child_dir"]=1
+            db_mark_checked "$parent_dir" "plain" "checked"
+            vlog "Flattened '$child_dir' into '$parent_dir' (kept parent name)"
+        else
+            echo -e "${YELLOW}SKIP FLATTEN:${RESET} Could not remove directory (not empty?): $child_dir"
             ((++files_skipped))
             return 0
         fi
-    done
 
-    if [[ "$mode" == "dry-run" ]]; then
-        echo -e "${CYAN}[DRY-RUN] Would flatten:${RESET} $child_dir ${ARROW} $parent_dir"
-        ((++files_affected))
-        record_rename "$child_dir" "$parent_dir"
         return 0
     fi
 
-    for item in "${child_items[@]}"; do
-        [[ -e "$item" ]] || continue
-        mv -i -- "$item" "$parent_dir/"
-    done
+    if [[ -e "$target_dir" ]]; then
+        echo -e "${YELLOW}SKIP FLATTEN:${RESET} Target directory already exists: $target_dir"
+        ((++files_skipped))
+        return 0
+    fi
 
-    if rmdir -- "$child_dir"; then
+    if [[ "$mode" == "dry-run" ]]; then
+        echo -e "${CYAN}[DRY-RUN] Would flatten by promoting child directory:${RESET} $child_dir ${ARROW} $target_dir"
         ((++files_affected))
-        record_rename "$child_dir" "$parent_dir"
-        db_rewrite_subtree "$child_dir" "$parent_dir"
-        processed["$child_dir"]=1
-        db_mark_checked "$parent_dir" "plain" "checked"
-        vlog "Flattened '$child_dir' into '$parent_dir'"
+        record_rename "$child_dir" "$target_dir"
+        return 0
+    fi
+
+    if mv -i -- "$child_dir" "$target_dir"; then
+        if rmdir -- "$parent_dir"; then
+            ((++files_affected))
+            record_rename "$child_dir" "$target_dir"
+            db_rewrite_subtree "$child_dir" "$target_dir"
+            processed["$child_dir"]=1
+            processed["$parent_dir"]=1
+            processed["$target_dir"]=1
+            db_mark_checked "$target_dir" "plain" "checked"
+            vlog "Flattened '$parent_dir' by keeping basename '$target_base' -> '$target_dir'"
+        else
+            if mv -i -- "$target_dir" "$child_dir"; then
+                echo -e "${YELLOW}SKIP FLATTEN:${RESET} Could not remove parent directory after promote, reverted move: $parent_dir"
+            else
+                echo -e "${YELLOW}SKIP FLATTEN:${RESET} Could not remove parent directory and failed to rollback move. Current location: $target_dir"
+            fi
+            ((++files_skipped))
+        fi
     else
-        echo -e "${YELLOW}SKIP FLATTEN:${RESET} Could not remove directory (not empty?): $child_dir"
+        echo -e "${YELLOW}SKIP FLATTEN:${RESET} Could not promote '$child_dir' to '$target_dir'"
         ((++files_skipped))
     fi
 
