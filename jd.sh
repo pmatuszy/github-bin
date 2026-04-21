@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.04.22 - v. 1.8 - --details: sector size + sectors/bytes/kB/MB/GB/TB (SI); expanded --help
 # 2026.04.22 - v. 1.7 - serial column width: trim values; max width via value loop (reliable subscripts)
 # 2026.04.22 - v. 1.6 - column widths from longest cell (header + data)
 # 2026.04.22 - v. 1.5 - aligned Device / size / Serial; NVMe SN via nvme id-ctrl
@@ -20,19 +21,30 @@
 
 if [[ "${1:-}" == -h || "${1:-}" == --help ]]; then
   cat <<'EOF'
-Usage: jd.sh [-h|--help] [-v|--version]
+Usage: jd.sh [options]
 
-Lists whole-disk devices (fdisk) with columns sized to the longest value in each
-column (device, size line from gdisk, serial from hdparm or nvme id-ctrl).
-Intended for Debian/Ubuntu/Raspbian
-and RHEL-family
-systems with /etc/os-release or /etc/redhat-release.
+Summary
+  Lists whole-disk block devices (from fdisk -l) in a three-column table: device
+  path, the "Disk ..." size line from gdisk, and the serial from hdparm (SATA/SAS)
+  or nvme id-ctrl (NVMe). Column widths fit the longest value in each column.
 
-Must run as root for reliable fdisk/hdparm output.
+  Intended for Debian/Ubuntu/Raspbian and RHEL-family systems that have
+  /etc/os-release or /etc/redhat-release.
 
-Options:
-  -h, --help     Show this help and exit.
-  -v, --version  Print script version and exit.
+  Run as root so fdisk, hdparm, gdisk, and blockdev behave consistently.
+
+Options
+  -h, --help       Show this help and exit.
+  -v, --version    Print script version and exit.
+  -d, --details    After the table, print per-disk geometry: logical sector size,
+                   sector count (capacity / sector size), capacity in bytes, and
+                   the same capacity in kB, MB, GB, and TB using decimal (SI)
+                   prefixes (powers of 1000). Uses blockdev(8) when available,
+                   otherwise /sys/block/*/size and queue/logical_block_size.
+
+Examples
+  jd.sh
+  jd.sh --details
 EOF
   exit 0
 fi
@@ -55,11 +67,20 @@ if [[ "${1:-}" == -v || "${1:-}" == --version ]]; then
   exit 0
 fi
 
-if [[ $# -gt 0 ]]; then
-  echo "(PGM) Unknown argument: $1" >&2
-  echo "Try: $(basename "$0") --help" >&2
-  exit 1
-fi
+_jd_details=0
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -d | --details)
+      _jd_details=1
+      shift
+      ;;
+    *)
+      echo "(PGM) Unknown argument: $1" >&2
+      echo "Try: $(basename "$0") --help" >&2
+      exit 1
+      ;;
+  esac
+done
 
 . /root/bin/_script_header.sh
 
@@ -129,6 +150,32 @@ _jd_nvme_sn() {
   fi
 }
 
+# Sets _jd_bytes, _jd_ss, _jd_sectors for device $1; returns 0 on success.
+_jd_disk_geom() {
+  local _dev=$1 _base _sz512
+  _jd_bytes=
+  _jd_ss=
+  _jd_sectors=
+  if command -v blockdev >/dev/null 2>&1 &&
+    _jd_bytes=$(blockdev --getsize64 "${_dev}" 2>/dev/null) &&
+    _jd_ss=$(blockdev --getss "${_dev}" 2>/dev/null) &&
+    [[ -n "${_jd_bytes}" && -n "${_jd_ss}" ]]; then
+    :
+  else
+    _base=$(basename "${_dev}")
+    if [[ ! -r "/sys/block/${_base}/size" || ! -r "/sys/block/${_base}/queue/logical_block_size" ]]; then
+      return 1
+    fi
+    _sz512=$(<"/sys/block/${_base}/size")
+    _jd_ss=$(<"/sys/block/${_base}/queue/logical_block_size")
+    _jd_bytes=$((_sz512 * 512))
+  fi
+  [[ -n "${_jd_bytes}" && -n "${_jd_ss}" ]] || return 1
+  ((_jd_ss > 0)) || return 1
+  _jd_sectors=$((_jd_bytes / _jd_ss))
+  return 0
+}
+
 _jd_c1=()
 _jd_c2=()
 _jd_c3=()
@@ -186,6 +233,31 @@ done
 
 echo
 echo "# of disks in the system: ${#_jd_disks[@]}"
+
+if [[ "${_jd_details}" -eq 1 ]]; then
+  echo
+  echo "Detailed sizes (kB/MB/GB/TB use decimal SI prefixes, powers of 1000):"
+  echo
+  for p in "${_jd_disks[@]}"; do
+    [[ -z "${p}" ]] && continue
+    if ! _jd_disk_geom "${p}"; then
+      printf '%s\n  (could not read size / sector size)\n\n' "${p}"
+      continue
+    fi
+    printf '%s\n' "${p}"
+    printf '  Logical sector size:      %s bytes\n' "${_jd_ss}"
+    printf '  Sectors (capacity / ss):  %s\n' "${_jd_sectors}"
+    printf '  Bytes:                    %s\n' "${_jd_bytes}"
+    LC_NUMERIC=C awk -v b="${_jd_bytes}" '
+      BEGIN {
+        printf "  kB (10^3):                %.3f\n", b / 1e3
+        printf "  MB (10^6):                %.3f\n", b / 1e6
+        printf "  GB (10^9):                %.3f\n", b / 1e9
+        printf "  TB (10^12):               %.3f\n", b / 1e12
+      }'
+    echo
+  done
+fi
 
 echo
 
