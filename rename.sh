@@ -1674,8 +1674,14 @@ print_checksum_sibling_notice_verbose() {
     local sha_path="$2"
     local md5_path="$3"
     local has_any=0
+    local line="[VERBOSE] Renaming '$file_path' now (checksum sibling(s) exist):"
 
-    echo "[VERBOSE] Renaming '$file_path' now (checksum sibling(s) exist):" >&2
+    if (( ${#line} <= MAX_LINE_LENGTH )); then
+        echo "$line" >&2
+    else
+        echo "[VERBOSE] Renaming '$file_path'" >&2
+        echo "          now (checksum sibling(s) exist):" >&2
+    fi
     if [[ -e "$sha_path" ]]; then
         echo "          sha512: '$sha_path'" >&2
         has_any=1
@@ -2153,11 +2159,24 @@ print_recovery_final_status_verbose() {
     (( VERBOSE == 1 )) || return 0
     local missing_ref="$1"
     local status="$2"
+    local line=""
 
     if [[ "$status" == "success" ]]; then
-        echo "[VERBOSE] Recovery FINAL STATUS: SUCCESS for '${missing_ref}'" >&2
+        line="[VERBOSE] Recovery FINAL STATUS: SUCCESS for '${missing_ref}'"
+        if (( ${#line} <= MAX_LINE_LENGTH )); then
+            echo "$line" >&2
+        else
+            echo "[VERBOSE] Recovery FINAL STATUS: SUCCESS" >&2
+            echo "          for '${missing_ref}'" >&2
+        fi
     else
-        echo "[VERBOSE] Recovery FINAL STATUS: FAILED for '${missing_ref}'" >&2
+        line="[VERBOSE] Recovery FINAL STATUS: FAILED for '${missing_ref}'"
+        if (( ${#line} <= MAX_LINE_LENGTH )); then
+            echo "$line" >&2
+        else
+            echo "[VERBOSE] Recovery FINAL STATUS: FAILED" >&2
+            echo "          for '${missing_ref}'" >&2
+        fi
     fi
 }
 
@@ -2166,25 +2185,62 @@ print_db_hash_record_verbose() {
     local path="$1"
     local hash_kind="$2"
     local status="$3"
+    local line=""
 
     case "$status" in
         new)
-            echo "[VERBOSE] DB hash stored for NEW file entry: '${path}' (${hash_kind})" >&2
+            line="[VERBOSE] DB hash stored for NEW file entry: '${path}' (${hash_kind})"
+            if (( ${#line} <= MAX_LINE_LENGTH )); then
+                echo "$line" >&2
+            else
+                echo "[VERBOSE] DB hash stored for NEW file entry: '${path}'" >&2
+                echo "          (${hash_kind})" >&2
+            fi
             ;;
         added_missing)
-            echo "[VERBOSE] DB hash added for EXISTING file entry (missing before): '${path}' (${hash_kind})" >&2
+            line="[VERBOSE] DB hash added for EXISTING file entry (missing before): '${path}' (${hash_kind})"
+            if (( ${#line} <= MAX_LINE_LENGTH )); then
+                echo "$line" >&2
+            else
+                echo "[VERBOSE] DB hash added for EXISTING file entry (missing before): '${path}'" >&2
+                echo "          (${hash_kind})" >&2
+            fi
             ;;
         unchanged)
-            echo "[VERBOSE] DB hash verified for EXISTING file entry (already present): '${path}' (${hash_kind})" >&2
+            line="[VERBOSE] DB hash verified for EXISTING file entry (already present): '${path}' (${hash_kind})"
+            if (( ${#line} <= MAX_LINE_LENGTH )); then
+                echo "$line" >&2
+            else
+                echo "[VERBOSE] DB hash verified for EXISTING file entry (already present): '${path}'" >&2
+                echo "          (${hash_kind})" >&2
+            fi
             ;;
         updated)
-            echo "[VERBOSE] DB hash updated for EXISTING file entry: '${path}' (${hash_kind})" >&2
+            line="[VERBOSE] DB hash updated for EXISTING file entry: '${path}' (${hash_kind})"
+            if (( ${#line} <= MAX_LINE_LENGTH )); then
+                echo "$line" >&2
+            else
+                echo "[VERBOSE] DB hash updated for EXISTING file entry: '${path}'" >&2
+                echo "          (${hash_kind})" >&2
+            fi
             ;;
         kept_existing)
-            echo "[VERBOSE] DB hash kept for EXISTING file entry (user chose not to replace): '${path}' (${hash_kind})" >&2
+            line="[VERBOSE] DB hash kept for EXISTING file entry (user chose not to replace): '${path}' (${hash_kind})"
+            if (( ${#line} <= MAX_LINE_LENGTH )); then
+                echo "$line" >&2
+            else
+                echo "[VERBOSE] DB hash kept for EXISTING file entry (user chose not to replace): '${path}'" >&2
+                echo "          (${hash_kind})" >&2
+            fi
             ;;
         *)
-            echo "[VERBOSE] DB hash recorded for file entry: '${path}' (${hash_kind})" >&2
+            line="[VERBOSE] DB hash recorded for file entry: '${path}' (${hash_kind})"
+            if (( ${#line} <= MAX_LINE_LENGTH )); then
+                echo "$line" >&2
+            else
+                echo "[VERBOSE] DB hash recorded for file entry: '${path}'" >&2
+                echo "          (${hash_kind})" >&2
+            fi
             ;;
     esac
 }
@@ -2196,12 +2252,25 @@ print_db_hash_lookup_verbose() {
     local hash_kind="$3"
     local expected_hash="$4"
     local found_path="${5-}"
+    local line=""
 
     if [[ "$status" == "hit" ]]; then
-        echo "[VERBOSE] DB hash lookup HIT under '${search_root}' for ${hash_kind}=${expected_hash}" >&2
+        line="[VERBOSE] DB hash lookup HIT under '${search_root}' for ${hash_kind}=${expected_hash}"
+        if (( ${#line} <= MAX_LINE_LENGTH )); then
+            echo "$line" >&2
+        else
+            echo "[VERBOSE] DB hash lookup HIT under '${search_root}'" >&2
+            echo "          for ${hash_kind}=${expected_hash}" >&2
+        fi
         echo "          matched path: '${found_path}'" >&2
     else
-        echo "[VERBOSE] DB hash lookup MISS under '${search_root}' for ${hash_kind}=${expected_hash}" >&2
+        line="[VERBOSE] DB hash lookup MISS under '${search_root}' for ${hash_kind}=${expected_hash}"
+        if (( ${#line} <= MAX_LINE_LENGTH )); then
+            echo "$line" >&2
+        else
+            echo "[VERBOSE] DB hash lookup MISS under '${search_root}'" >&2
+            echo "          for ${hash_kind}=${expected_hash}" >&2
+        fi
     fi
 }
 
