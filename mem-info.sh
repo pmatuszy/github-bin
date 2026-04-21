@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.04.21 - v. 0.7 - summary box: fixed column for trailing notes (align with MemTotal line)
 # 2026.04.21 - v. 0.6 - summary: used vs cache (Total-Avail, AnonPages, Cached, Buffers)
 # 2026.04.21 - v. 0.5 - optional -p/--page pauses; -c/--chunk or MEM_INFO_CHUNK_LINES splits meminfo table
 # 2026.04.21 - v. 0.4 - aligned summary box (MemTotal/MemAvailable/...) with printf columns
@@ -181,24 +182,53 @@ _mi_buffers=$(_mi_kb Buffers) || _mi_buffers=0
 _mi_used_na=$((mt - ma))
 ((_mi_used_na < 0)) && _mi_used_na=0
 
+# Summary layout (monospace): label(22) + sp + kB(12) + " kB  (" + human(14) + ")  " => notes start at column 59.
+_mi_sl_lw=22
+_mi_sl_nw=12
+_mi_sl_hw=14
+_mi_sl_note_col=59
+
+_mi_sl_pad_to_note() {
+  local printed=$1
+  local pad=$((_mi_sl_note_col - 1 - printed))
+  ((pad < 0)) && pad=0
+  printf '%*s' "$pad" ''
+}
+
 {
-  _sl_lw=20
-  _sl_nw=12
-  _sl_hw=14
-  printf '%-*s %*s kB  (%*s)\n' "$_sl_lw" "MemTotal" "$_sl_nw" "$mt" "$_sl_hw" "$(_mi_human_kb "$mt")"
-  printf '%-*s %*s kB  (%*s)  <- practical "free" estimate\n' "$_sl_lw" "MemAvailable" "$_sl_nw" "$ma" "$_sl_hw" "$(_mi_human_kb "$ma")"
-  printf '%-*s %*s kB  (%*s)  (unused; cache not counted)\n' "$_sl_lw" "MemFree" "$_sl_nw" "$mf" "$_sl_hw" "$(_mi_human_kb "$mf")"
-  printf '%-*s %*s kB  (%*s)  (MemTotal-MemAvailable; not in Avail)\n' "$_sl_lw" "Used (approx.)" "$_sl_nw" "$_mi_used_na" "$_sl_hw" "$(_mi_human_kb "$_mi_used_na")"
-  printf '%-*s %*s kB  (%*s)  (anonymous RAM: apps, stacks, etc.)\n' "$_sl_lw" "AnonPages" "$_sl_nw" "$_mi_anon" "$_sl_hw" "$(_mi_human_kb "$_mi_anon")"
-  printf '%-*s %*s kB  (%*s)  (file page cache; reclaimable)\n' "$_sl_lw" "Cached" "$_sl_nw" "$_mi_cached" "$_sl_hw" "$(_mi_human_kb "$_mi_cached")"
-  printf '%-*s %*s kB  (%*s)  (block device buffers)\n' "$_sl_lw" "Buffers" "$_sl_nw" "$_mi_buffers" "$_sl_hw" "$(_mi_human_kb "$_mi_buffers")"
-  printf '%-*s %6s  %s\n' "$_sl_lw" "Available/Total" "$(_mi_pct "$ma" "$mt")" "of RAM reported usable by kernel"
+  _mi_line=''
+  _mi_line=$(printf '%-*s %*s kB  (%*s)  %s' "$_mi_sl_lw" "MemTotal" "$_mi_sl_nw" "$mt" "$_mi_sl_hw" "$(_mi_human_kb "$mt")" "")
+  echo "$_mi_line"
+  _mi_line=$(printf '%-*s %*s kB  (%*s)  %s' "$_mi_sl_lw" "MemAvailable" "$_mi_sl_nw" "$ma" "$_mi_sl_hw" "$(_mi_human_kb "$ma")" '<- practical "free" estimate')
+  echo "$_mi_line"
+  _mi_line=$(printf '%-*s %*s kB  (%*s)  %s' "$_mi_sl_lw" "MemFree" "$_mi_sl_nw" "$mf" "$_mi_sl_hw" "$(_mi_human_kb "$mf")" '(unused; cache not counted)')
+  echo "$_mi_line"
+  _mi_line=$(printf '%-*s %*s kB  (%*s)  %s' "$_mi_sl_lw" "Used (approx.)" "$_mi_sl_nw" "$_mi_used_na" "$_mi_sl_hw" "$(_mi_human_kb "$_mi_used_na")" '(MemTotal-MemAvailable; not in Avail)')
+  echo "$_mi_line"
+  _mi_line=$(printf '%-*s %*s kB  (%*s)  %s' "$_mi_sl_lw" "AnonPages" "$_mi_sl_nw" "$_mi_anon" "$_mi_sl_hw" "$(_mi_human_kb "$_mi_anon")" '(anonymous RAM: apps, stacks, etc.)')
+  echo "$_mi_line"
+  _mi_line=$(printf '%-*s %*s kB  (%*s)  %s' "$_mi_sl_lw" "Cached" "$_mi_sl_nw" "$_mi_cached" "$_mi_sl_hw" "$(_mi_human_kb "$_mi_cached")" '(file page cache; reclaimable)')
+  echo "$_mi_line"
+  _mi_line=$(printf '%-*s %*s kB  (%*s)  %s' "$_mi_sl_lw" "Buffers" "$_mi_sl_nw" "$_mi_buffers" "$_mi_sl_hw" "$(_mi_human_kb "$_mi_buffers")" '(block device buffers)')
+  echo "$_mi_line"
+  _mi_pt="$(_mi_pct "$ma" "$mt")"
+  _mi_prefix=$(printf '%-*s %*s' "$_mi_sl_lw" "Available/Total" "$_mi_sl_nw" "$_mi_pt")
+  _mi_p=${#_mi_prefix}
+  printf '%s' "$_mi_prefix"
+  _mi_sl_pad_to_note "$_mi_p"
+  echo 'of RAM reported usable by kernel'
   if (( st > 0 )); then
     su=$((st - sf))
-    printf '%-*s %*s kB  (%*s)\n' "$_sl_lw" "SwapTotal" "$_sl_nw" "$st" "$_sl_hw" "$(_mi_human_kb "$st")"
-    printf '%-*s %*s kB  (%*s)  (Swap used: %s kB, %s)\n' "$_sl_lw" "SwapFree" "$_sl_nw" "$sf" "$_sl_hw" "$(_mi_human_kb "$sf")" "$su" "$(_mi_human_kb "$su")"
+    _mi_line=$(printf '%-*s %*s kB  (%*s)  %s' "$_mi_sl_lw" "SwapTotal" "$_mi_sl_nw" "$st" "$_mi_sl_hw" "$(_mi_human_kb "$st")" "")
+    echo "$_mi_line"
+    _mi_line=$(printf '%-*s %*s kB  (%*s)  (Swap used: %s kB, %s)' "$_mi_sl_lw" "SwapFree" "$_mi_sl_nw" "$sf" "$_mi_sl_hw" "$(_mi_human_kb "$sf")" "$su" "$(_mi_human_kb "$su")")
+    echo "$_mi_line"
   else
-    printf '%-*s %s\n' "$_sl_lw" "Swap" "none configured (SwapTotal 0)"
+    _mi_prefix=$(printf '%-*s %*s' "$_mi_sl_lw" "Swap" "$_mi_sl_nw" "")
+    _mi_p=${#_mi_prefix}
+    printf '%s' "$_mi_prefix"
+    _mi_sl_pad_to_note "$_mi_p"
+    echo 'none configured (SwapTotal 0)'
   fi
 } | boxes -a l -d stone
 echo
