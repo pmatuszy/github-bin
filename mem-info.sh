@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.04.21 - v. 0.4 - aligned summary box (MemTotal/MemAvailable/...) with printf columns
 # 2026.04.21 - v. 0.3 - aligned /proc/meminfo table; bare integers (e.g. HugePages_*) get 3 columns
 # 2026.04.21 - v. 0.2 - ASCII-only user-visible text (avoid ??? in non-UTF-8 / boxes)
 # 2026.04.21 - v. 0.1 - RAM report: /proc/meminfo + free -h, boxed sections; help/version
@@ -86,16 +87,19 @@ st=$(_mi_kb SwapTotal) || st=0
 sf=$(_mi_kb SwapFree) || sf=0
 
 {
-  echo "MemTotal       $mt kB  ($(_mi_human_kb "$mt"))"
-  echo "MemAvailable   $ma kB  ($(_mi_human_kb "$ma"))  <- practical \"free\" estimate"
-  echo "MemFree        $mf kB  ($(_mi_human_kb "$mf"))  (unused; cache not counted)"
-  echo "Available/Total  $(_mi_pct "$ma" "$mt") of RAM reported usable by kernel"
+  _sl_lw=18
+  _sl_nw=12
+  _sl_hw=14
+  printf '%-*s %*s kB  (%*s)\n' "$_sl_lw" "MemTotal" "$_sl_nw" "$mt" "$_sl_hw" "$(_mi_human_kb "$mt")"
+  printf '%-*s %*s kB  (%*s)  <- practical "free" estimate\n' "$_sl_lw" "MemAvailable" "$_sl_nw" "$ma" "$_sl_hw" "$(_mi_human_kb "$ma")"
+  printf '%-*s %*s kB  (%*s)  (unused; cache not counted)\n' "$_sl_lw" "MemFree" "$_sl_nw" "$mf" "$_sl_hw" "$(_mi_human_kb "$mf")"
+  printf '%-*s %6s  %s\n' "$_sl_lw" "Available/Total" "$(_mi_pct "$ma" "$mt")" "of RAM reported usable by kernel"
   if (( st > 0 )); then
     su=$((st - sf))
-    echo "SwapTotal      $st kB  ($(_mi_human_kb "$st"))"
-    echo "SwapFree       $sf kB  ($(_mi_human_kb "$sf"))  (Swap used: $su kB, $(_mi_human_kb "$su"))"
+    printf '%-*s %*s kB  (%*s)\n' "$_sl_lw" "SwapTotal" "$_sl_nw" "$st" "$_sl_hw" "$(_mi_human_kb "$st")"
+    printf '%-*s %*s kB  (%*s)  (Swap used: %s kB, %s)\n' "$_sl_lw" "SwapFree" "$_sl_nw" "$sf" "$_sl_hw" "$(_mi_human_kb "$sf")" "$su" "$(_mi_human_kb "$su")"
   else
-    echo "Swap           none configured (SwapTotal 0)"
+    printf '%-*s %s\n' "$_sl_lw" "Swap" "none configured (SwapTotal 0)"
   fi
 } | boxes -a l -d stone
 echo
