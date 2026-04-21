@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.04.22 - v. 1.10 - --details: tight columns (label width + per-disk value width)
 # 2026.04.22 - v. 1.9 - --details: right-align numeric columns
 # 2026.04.22 - v. 1.8 - --details: sector size + sectors/bytes/kB/MB/GB/TB (SI); expanded --help
 # 2026.04.22 - v. 1.7 - serial column width: trim values; max width via value loop (reliable subscripts)
@@ -239,25 +240,40 @@ if [[ "${_jd_details}" -eq 1 ]]; then
   echo
   echo "Detailed sizes (kB/MB/GB/TB use decimal SI prefixes, powers of 1000):"
   echo
-  _jd_dlw=30
-  _jd_dvw=26
+  _jd_detail_labs=(
+    'Logical sector size:'
+    'Sectors (capacity / ss):'
+    'Bytes:'
+    'kB (10^3):'
+    'MB (10^6):'
+    'GB (10^9):'
+    'TB (10^12):'
+  )
+  _jd_dlw=0
+  for _jd_lab in "${_jd_detail_labs[@]}"; do
+    [[ ${#_jd_lab} -gt ${_jd_dlw} ]] && _jd_dlw=${#_jd_lab}
+  done
   for p in "${_jd_disks[@]}"; do
     [[ -z "${p}" ]] && continue
     if ! _jd_disk_geom "${p}"; then
       printf '%s\n  (could not read size / sector size)\n\n' "${p}"
       continue
     fi
+    mapfile -t _jd_si < <(LC_NUMERIC=C awk -v b="${_jd_bytes}" 'BEGIN {
+      printf "%.3f\n%.3f\n%.3f\n%.3f\n", b / 1e3, b / 1e6, b / 1e9, b / 1e12
+    }')
+    _jd_dvw=${#_jd_bytes}
+    for _jd_s in "${_jd_ss}" "${_jd_sectors}" "${_jd_bytes}" "${_jd_si[@]}"; do
+      [[ ${#_jd_s} -gt ${_jd_dvw} ]] && _jd_dvw=${#_jd_s}
+    done
     printf '%s\n' "${p}"
-    printf '  %-*s %*s bytes\n' "${_jd_dlw}" 'Logical sector size:' "${_jd_dvw}" "${_jd_ss}"
-    printf '  %-*s %*s\n' "${_jd_dlw}" 'Sectors (capacity / ss):' "${_jd_dvw}" "${_jd_sectors}"
-    printf '  %-*s %*s\n' "${_jd_dlw}" 'Bytes:' "${_jd_dvw}" "${_jd_bytes}"
-    LC_NUMERIC=C awk -v b="${_jd_bytes}" -v lw="${_jd_dlw}" -v vw="${_jd_dvw}" '
-      BEGIN {
-        printf "  %-*s %*s\n", lw, "kB (10^3):", vw, sprintf("%.3f", b / 1e3)
-        printf "  %-*s %*s\n", lw, "MB (10^6):", vw, sprintf("%.3f", b / 1e6)
-        printf "  %-*s %*s\n", lw, "GB (10^9):", vw, sprintf("%.3f", b / 1e9)
-        printf "  %-*s %*s\n", lw, "TB (10^12):", vw, sprintf("%.3f", b / 1e12)
-      }'
+    printf '  %-*s  %*s bytes\n' "${_jd_dlw}" 'Logical sector size:' "${_jd_dvw}" "${_jd_ss}"
+    printf '  %-*s  %*s\n' "${_jd_dlw}" 'Sectors (capacity / ss):' "${_jd_dvw}" "${_jd_sectors}"
+    printf '  %-*s  %*s\n' "${_jd_dlw}" 'Bytes:' "${_jd_dvw}" "${_jd_bytes}"
+    printf '  %-*s  %*s\n' "${_jd_dlw}" 'kB (10^3):' "${_jd_dvw}" "${_jd_si[0]}"
+    printf '  %-*s  %*s\n' "${_jd_dlw}" 'MB (10^6):' "${_jd_dvw}" "${_jd_si[1]}"
+    printf '  %-*s  %*s\n' "${_jd_dlw}" 'GB (10^9):' "${_jd_dvw}" "${_jd_si[2]}"
+    printf '  %-*s  %*s\n' "${_jd_dlw}" 'TB (10^12):' "${_jd_dvw}" "${_jd_si[3]}"
     echo
   done
 fi
