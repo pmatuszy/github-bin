@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.04.21 - v. 0.56 - wide COLUMNS for parsed snap list (no wrap); numeric revision check; removal attempt count
 # 2026.04.21 - v. 0.55 - removal loop: set +e so first snap failure does not exit script; here-string loop; log each remove
 # 2026.04.21 - v. 0.54 - normalize read answer (strip CR/LF); read -r; case-insensitive y
 # 2026.04.21 - v. 0.53 - fix confirm test (was != y twice; accept y or Y)
@@ -25,16 +26,22 @@ fi
 
 # from https://askubuntu.com/questions/1371833/howto-free-up-space-properly-on-my-var-lib-snapd-filesystem-when-snapd-is-unava
 
+# When stdout is not a TTY, snap uses a narrow width and wraps lines — then awk $1/$3 are not Name/Rev.
+# Use a large COLUMNS for any output we parse (override with SNAP_LIST_COLUMNS).
+snap_list_all_for_parse() {
+  LANG=C.UTF-8 COLUMNS="${SNAP_LIST_COLUMNS:-400}" snap list --all "$@"
+}
+
 echo "(PGM) All snap releases:" | boxes -a c -d stone
 snap list --all
 
 echo
 echo "(PGM) Snap released disabled which will be removed:" | boxes -a c -d stone
 snap list --all | grep disabled
-echo 
+echo
 
-snap list --all | strings | grep -q disabled 
-kod_powrotu=${PIPESTATUS[2]}   # index 0=snap, 1=strings, 2=grep
+snap_list_all_for_parse | grep -q disabled
+kod_powrotu=${PIPESTATUS[1]}
 
 if (( $kod_powrotu != 0 )); then
   echo NONE; echo
@@ -62,7 +69,7 @@ fi
 
 # With set -e (often from _script_header.sh), a failing `snap remove` in a piped while
 # subshell exits the whole script before _script_footer — looks like "y then nothing".
-_snap_rm_plan=$(LANG=en_US.UTF-8 snap list --all | awk '/disabled/{print $1, $3}')
+_snap_rm_plan=$(snap_list_all_for_parse | awk '/disabled/ && $1 != "Name" {print $1, $3}')
 if [[ -z "${_snap_rm_plan//[$' \t\r\n']/}" ]]; then
   echo "(PGM) awk produced no pkg/revision pairs; nothing to remove."
 else
@@ -70,8 +77,14 @@ else
   [[ $- == *e* ]] && _errexit_was_on=1
   set +e
   remove_failures=0
+  remove_attempts=0
   while IFS= read -r pkg revision; do
     [[ -n "$pkg" && -n "$revision" ]] || continue
+    if [[ ! "${revision}" =~ ^[0-9]+$ ]]; then
+      echo "(PGM) skip non-numeric revision (wrapped/bad parse?): ${pkg} '${revision}'" >&2
+      continue
+    fi
+    ((++remove_attempts))
     echo "(PGM) Removing ${pkg} @ revision ${revision} ..."
     if ! sudo snap remove "${pkg}" --revision="${revision}"; then
       echo "(PGM) snap remove failed for ${pkg} revision ${revision} (see above)." >&2
@@ -79,10 +92,13 @@ else
     fi
   done <<< "${_snap_rm_plan}"
   ((_errexit_was_on)) && set -e
-  if (( remove_failures > 0 )); then
-    echo "(PGM) Finished with ${remove_failures} removal error(s)." >&2
+  if (( remove_attempts == 0 )); then
+    echo "(PGM) No removals ran — every parsed row failed revision check or was empty." >&2
+    echo "(PGM) If disabled snaps remain, raise SNAP_LIST_COLUMNS (e.g. 800) or check: snap_list_all_for_parse | awk '/disabled/'" >&2
+  elif (( remove_failures > 0 )); then
+    echo "(PGM) Finished with ${remove_failures} removal error(s) (${remove_attempts} attempt(s))." >&2
   else
-    echo "(PGM) All scheduled removals completed successfully."
+    echo "(PGM) All ${remove_attempts} scheduled removal(s) completed successfully."
   fi
 fi
 
