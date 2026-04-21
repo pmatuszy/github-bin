@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.04.21 - v. 0.8 - -v / --version prints script version and date (before header)
 # 2026.04.21 - v. 0.7 - -h / --help prints usage and exits (before header)
 # 2026.04.21 - v. 0.6 - _script_header/footer, check_if_installed progress; extra commands via WATCH_PROGRESS_EXTRA, WATCH_PROGRESS_WAIT_DELAY, or args
 # 2022.11.14 - v. 0.5 - dodalem pbzip2 do monitorowanych komend
@@ -10,13 +11,14 @@
 
 if [[ "${1:-}" == -h || "${1:-}" == --help ]]; then
   cat <<'EOF'
-Usage: watch-progress.sh [-h|--help] [PROCESS...]
+Usage: watch-progress.sh [-h|--help|-v|--version] [PROCESS...]
 
 Runs progress(1) with --monitor-continuously, --wait, and extra
 --additional-command names for common backup/compression tools.
 
 Options:
-  -h, --help    Show this help and exit.
+  -h, --help       Show this help and exit.
+  -v, --version    Print script version and exit.
 
 Environment:
   WATCH_PROGRESS_EXTRA       Space-separated extra process basenames to monitor.
@@ -27,6 +29,24 @@ Arguments:
 
 Built-in extras include: pbzip2, par2, restic, mc, rclone, zstd, pigz, xz, borg, lz4.
 EOF
+  exit 0
+fi
+
+if [[ "${1:-}" == -v || "${1:-}" == --version ]]; then
+  _wp_ver=unknown
+  _wp_date=
+  while IFS= read -r _wp_line; do
+    if [[ "$_wp_line" =~ ^#\ ([0-9]{4}\.[0-9]{2}\.[0-9]{2})\ -\ v\.\ ([0-9]+(\.[0-9]+)*)\ - ]]; then
+      _wp_date="${BASH_REMATCH[1]}"
+      _wp_ver="${BASH_REMATCH[2]}"
+      break
+    fi
+  done < "$0"
+  if [[ -n "$_wp_date" ]]; then
+    printf '%s version %s (%s)\n' "$(basename "$0")" "$_wp_ver" "$_wp_date"
+  else
+    printf '%s version %s\n' "$(basename "$0")" "$_wp_ver"
+  fi
   exit 0
 fi
 
