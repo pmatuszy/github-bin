@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.04.22 - v. 1.5 - aligned Device / size / Serial; NVMe SN via nvme id-ctrl
 # 2026.04.22 - v. 1.4 - help/version; root check; grep -E; quoting; disk list for all supported OS; uname -m; kod_powrotu
 # 2023.10.25 - v. 1.3 - added check if hdparm is installed
 # 2023.09.02 - v. 1.2 - bugfix: better OS detection
@@ -19,8 +20,9 @@ if [[ "${1:-}" == -h || "${1:-}" == --help ]]; then
   cat <<'EOF'
 Usage: jd.sh [-h|--help] [-v|--version]
 
-Lists whole-disk devices (fdisk) and prints gdisk "Disk" line plus serial
-from hdparm or nvme list. Intended for Debian/Ubuntu/Raspbian and RHEL-family
+Lists whole-disk devices (fdisk) with aligned columns: device, size line from
+gdisk, serial from hdparm or nvme id-ctrl. Intended for Debian/Ubuntu/Raspbian
+and RHEL-family
 systems with /etc/os-release or /etc/redhat-release.
 
 Must run as root for reliable fdisk/hdparm output.
@@ -114,16 +116,37 @@ mapfile -t _jd_disks < <(
     awk '{print $2}' | tr -d ':' | sort -u
 )
 
+_jd_nvme_sn() {
+  local _p=$1
+  if [[ "${_p}" =~ ^(/dev/nvme[0-9]+)n[0-9]+$ ]]; then
+    nvme id-ctrl "${BASH_REMATCH[1]}" 2>/dev/null | grep -i '^sn[[:space:]]*:' | head -1 |
+      sed 's/^[^:]*:[[:space:]]*//' | tr -d '\r'
+  else
+    nvme list 2>/dev/null | awk -v d="${_p}" 'index($0, d) {print $2; exit}'
+  fi
+}
+
+printf '%-15s  %-45s  %s\n' "Device" "Sectors / size" "Serial number"
+printf '%-15s  %-45s  %s\n' "---------------" "---------------------------------------------" "--------------------"
+
 for p in "${_jd_disks[@]}"; do
   [[ -z "${p}" ]] && continue
-  if [[ $(hdparm -I "${p}" 2>/dev/null | grep -c 'Serial Number') -eq 0 ]]; then
-    printf '%-45s' "$(gdisk -l "${p}" 2>/dev/null | grep 'Disk /dev')"
-    _jd_sn=$(nvme list 2>/dev/null | awk -v d="${p}" 'index($0, d) {print $2; exit}')
-    printf '  Serial Number: %-20s\n' "${_jd_sn:-?}"
+  if [[ $(hdparm -I "${p}" 2>/dev/null | grep -c 'Serial Number') -gt 0 ]]; then
+    _jd_gline=$(echo q | gdisk -l "${p}" 2>/dev/null | grep 'Disk /dev')
+    _jd_gline="${_jd_gline//Your answer: /}"
+    _jd_sn=$(hdparm -I "${p}" 2>/dev/null | grep 'Serial Number' | head -1 | sed 's/^[^:]*:[[:space:]]*//' | tr -d '\r' | tr -s ' ')
   else
-    printf '%-45s' "$(echo q | gdisk -l "${p}" 2>/dev/null | grep 'Disk /dev')" | sed 's|Your answer: ||g'
-    printf '%-45s\n' "$(hdparm -I "${p}" 2>/dev/null | grep 'Serial Number')" | sed 's|  *| |g'
+    _jd_gline=$(gdisk -l "${p}" 2>/dev/null | grep 'Disk /dev')
+    _jd_sn=$(_jd_nvme_sn "${p}")
   fi
+  _jd_pref="Disk ${p}: "
+  if [[ "${_jd_gline}" == "${_jd_pref}"* ]]; then
+    _jd_desc="${_jd_gline#"${_jd_pref}"}"
+  else
+    _jd_desc="${_jd_gline}"
+  fi
+  [[ -z "${_jd_sn}" ]] && _jd_sn='?'
+  printf '%-15s  %-45s  %s\n' "${p}" "${_jd_desc}" "${_jd_sn}"
 done
 
 echo
