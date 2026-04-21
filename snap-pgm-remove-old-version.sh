@@ -1,5 +1,7 @@
 #!/bin/bash
 
+# 2026.04.21 - v. 0.54 - accept Y as yes (prompt text stays [y/N/q]); strip CR on answer
+# 2026.04.21 - v. 0.53 - prompt adds q/Q to quit without removing; quit runs footer and exits 0
 # 2025.10.27 - v. 0.52- bugfix - with ChatGPT fix for kod_powrotu
 # 2025.10.27 - v. 0.51- bugfix - small cosmetic display change
 # 2023.10.02 - v. 0.5 - bugfix - prompt logic reverse (if there are snaps to be removed no prompt was displayed)
@@ -39,7 +41,7 @@ if (( $kod_powrotu != 0 )); then
   exit 0
 fi
 
-echo "Do you want to do remove disabled packages? [y/N]"
+echo "Do you want to do remove disabled packages? [y/N/q]"
 if (( $batch_mode == 0 ));then
   read -t 300 -n 1 p     # read one character (-n) with timeout of 300 seconds
 else
@@ -48,7 +50,13 @@ else
 fi
 
 echo
-if [ "${p}" != 'y' -a  "${p}" != 'y' ]; then
+p="${p//$'\r'/}"
+if [[ "${p}" == [qQ] ]]; then
+  echo "(PGM) Quit — no packages removed."
+  . /root/bin/_script_footer.sh
+  exit 0
+fi
+if [[ "${p}" != [yY] ]]; then
   echo "no means no - I am exiting..."
   exit 1
 fi
