@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.04.21 - v. 0.10 - no pause after title; any key continues pause, q/Q quits
 # 2026.04.21 - v. 0.9 - default meminfo table = selected fields only; -f/--full for all lines
 # 2026.04.21 - v. 0.8 - default Enter paging on tty; --no-page; q quits early during pause
 # 2026.04.21 - v. 0.7 - summary box: fixed column for trailing notes (align with MemTotal line)
@@ -91,9 +92,9 @@ Cached (file cache), and Buffers.
 
 Paging:
   When stdout is a terminal and /dev/tty can be read, the script pauses
-  between sections (and between meminfo chunks) and waits for Enter so you
-  do not have to scroll back. Pipe output or use --no-page to get a single
-  uninterrupted stream. During a pause, type q then Enter to exit early.
+  between sections (after the summary, not after the title) and between
+  meminfo chunks. Press any key to continue, or q or Q to exit early.
+  Pipe output or use --no-page for a single uninterrupted stream.
 
 Options:
   -h, --help      Show this help and exit.
@@ -154,9 +155,9 @@ kod_powrotu=0
 
 _mi_pause_if_needed() {
   if (( _mi_page )) && [[ -t 1 ]] && [[ -r /dev/tty ]]; then
-    IFS= read -r -p "(PGM) Press Enter for next section (q + Enter to quit)... " _mi_in < /dev/tty || true
+    IFS= read -r -n 1 -p "(PGM) Press any key for next section (q to quit)... " _mi_in < /dev/tty || true
     echo
-    if [[ "${_mi_in:-}" == [qQ]* ]]; then
+    if [[ "${_mi_in:-}" == [qQ] ]]; then
       echo '(PGM) Quitting early.'
       . /root/bin/_script_footer.sh
       exit 0
@@ -223,7 +224,6 @@ _mi_print_meminfo_line() {
 echo
 echo "(PGM) Memory (RAM) report - $(hostname) - $(date '+%Y-%m-%d %H:%M:%S %Z')" | boxes -a c -d stone
 echo
-_mi_pause_if_needed
 
 mt=$(_mi_kb MemTotal) || mt=0
 ma=$(_mi_kb MemAvailable) || ma=0
