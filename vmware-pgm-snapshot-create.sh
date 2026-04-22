@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.04.22 - v. 0.17 - encrypted vmrun: DISPLAY default :0 (script clears DISPLAY); no bogus nogui on snapshot/listSnapshots
 # 2026.04.22 - v. 0.16 - vmrun listSnapshots/snapshot: always trailing nogui (encrypted and plain)
 # 2026.04.22 - v. 0.15 - encrypted VM: append nogui to snapshot with -vp (headless / empty DISPLAY; matches start/suspend)
 # 2026.04.22 - v. 0.14 - vmrun: invoke /bin/env -u TPM_PASS (not PATH env)
@@ -24,7 +25,10 @@
 #   VMRUN_NO_WS — if non-empty, skip adding -T ws on Linux (default: vmrun -T ws per Workstation examples).
 #   -vp uses a frozen copy of TPM_PASS in PGM_VMRUN_ENC_PASS; vmrun is started with /bin/env -u TPM_PASS so an
 #     exported TPM_PASS (e.g. from vmware-pass.sh) cannot override or confuse the password on the command line.
-#   listSnapshots and snapshot always pass a trailing nogui (headless; same idea as vmrun start … nogui with -vp).
+#   Encrypted (-vp) vmrun: this script sets DISPLAY=; child uses DISPLAY from PGM_VMRUN_DISPLAY, else VMRUN_DISPLAY,
+#     else DISPLAY, else :0 (Linux crypto/UI may need a real display for -vp to work). No trailing nogui on snapshot
+#     or listSnapshots (only start documents gui|nogui; extra tokens can break -vp).
+#   Non-encrypted: listSnapshots/snapshot keep a trailing nogui for headless vmrun.
 
 . /root/bin/_script_header.sh
 
@@ -91,6 +95,11 @@ VMRUN_PREFIX=(vmrun)
 if [[ "$(uname -s)" == Linux && -z "${VMRUN_NO_WS:-}" ]]; then
   VMRUN_PREFIX=(vmrun -T ws)
 fi
+
+# vmrun -vp on Linux often needs a non-empty DISPLAY; this script exports DISPLAY= later.
+_pgm_vmrun_enc_display() {
+  printf '%s' "${PGM_VMRUN_DISPLAY:-${VMRUN_DISPLAY:-${DISPLAY:-:0}}}"
+}
 
 if [[ -n "${VMWARE_VM_SEARCH_DIRS:-}" ]]; then
   VM_LOCATIONS="$VMWARE_VM_SEARCH_DIRS"
@@ -393,6 +402,7 @@ fi
 
 # Before readline snapshot name: freeze encryption secret for -vp only (read -e / exported TPM_PASS must not alter it).
 PGM_VMRUN_ENC_PASS="${TPM_PASS-}"
+_pgm_ed="$(_pgm_vmrun_enc_display)"
 
 _pgm_show_selected_vm_boxed "$choice" "$selected"
 
@@ -406,7 +416,7 @@ echo
 echo "(PGM) Existing snapshots (vmrun listSnapshots) …"
 list_exist_rc=0
 if [[ -n "${PGM_VMRUN_ENC_PASS:-}" ]]; then
-  list_exist_out=$(/bin/env -u TPM_PASS "${VMRUN_PREFIX[@]}" -vp "$PGM_VMRUN_ENC_PASS" listSnapshots "$selected" nogui 2>&1) || list_exist_rc=$?
+  list_exist_out=$(/bin/env -u TPM_PASS DISPLAY="$_pgm_ed" "${VMRUN_PREFIX[@]}" -vp "$PGM_VMRUN_ENC_PASS" listSnapshots "$selected" 2>&1) || list_exist_rc=$?
 else
   list_exist_out=$("${VMRUN_PREFIX[@]}" listSnapshots "$selected" nogui 2>&1) || list_exist_rc=$?
 fi
@@ -454,8 +464,8 @@ echo "  Name:     $snap_name"
 echo
 echo "(PGM) Command to run:"
 if [[ -n "${PGM_VMRUN_ENC_PASS:-}" ]]; then
-  vm_cmd=(/bin/env -u TPM_PASS "${VMRUN_PREFIX[@]}" -vp "$PGM_VMRUN_ENC_PASS" snapshot "$selected" "$snap_name" nogui)
-  printf '  %s\n' "/bin/env -u TPM_PASS ${VMRUN_PREFIX[*]} -vp <PGM_VMRUN_ENC_PASS> snapshot $(printf '%q' "$selected") $(printf '%q' "$snap_name") nogui"
+  vm_cmd=(/bin/env -u TPM_PASS DISPLAY="$_pgm_ed" "${VMRUN_PREFIX[@]}" -vp "$PGM_VMRUN_ENC_PASS" snapshot "$selected" "$snap_name")
+  printf '  %s\n' "/bin/env -u TPM_PASS DISPLAY=$(printf '%q' "$_pgm_ed") ${VMRUN_PREFIX[*]} -vp <PGM_VMRUN_ENC_PASS> snapshot $(printf '%q' "$selected") $(printf '%q' "$snap_name")"
 else
   vm_cmd=("${VMRUN_PREFIX[@]}" snapshot "$selected" "$snap_name" nogui)
   printf '  %s\n' "${VMRUN_PREFIX[*]} snapshot $(printf '%q' "$selected") $(printf '%q' "$snap_name") nogui"

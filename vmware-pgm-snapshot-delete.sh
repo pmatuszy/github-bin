@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.04.22 - v. 0.16 - encrypted vmrun: DISPLAY default :0; no bogus nogui on listSnapshots/deleteSnapshot (-vp)
 # 2026.04.22 - v. 0.15 - vmrun listSnapshots/deleteSnapshot: always trailing nogui (encrypted and plain)
 # 2026.04.22 - v. 0.14 - encrypted VM: append nogui to deleteSnapshot with -vp (headless / empty DISPLAY)
 # 2026.04.22 - v. 0.13 - vmrun: invoke /bin/env -u TPM_PASS (not PATH env)
@@ -23,7 +24,9 @@
 #   VMRUN_NO_WS — if non-empty, skip adding -T ws on Linux.
 #   -vp uses a frozen copy of TPM_PASS in PGM_VMRUN_ENC_PASS; vmrun is started with /bin/env -u TPM_PASS so an
 #     exported TPM_PASS (e.g. from vmware-pass.sh) cannot override or confuse the password on the command line.
-#   listSnapshots and deleteSnapshot always pass a trailing nogui (headless; same idea as vmrun start … nogui with -vp).
+#   Encrypted (-vp) vmrun: DISPLAY from PGM_VMRUN_DISPLAY / VMRUN_DISPLAY / DISPLAY / :0 (script may clear DISPLAY).
+#     No trailing nogui on listSnapshots/deleteSnapshot with -vp (see vmware-pgm-snapshot-create.sh header).
+#   Non-encrypted: trailing nogui on listSnapshots/deleteSnapshot.
 #
 # Note: vmrun deleteSnapshot usually requires the VM to be powered off or suspended (see VMware docs).
 
@@ -91,6 +94,10 @@ VMRUN_PREFIX=(vmrun)
 if [[ "$(uname -s)" == Linux && -z "${VMRUN_NO_WS:-}" ]]; then
   VMRUN_PREFIX=(vmrun -T ws)
 fi
+
+_pgm_vmrun_enc_display() {
+  printf '%s' "${PGM_VMRUN_DISPLAY:-${VMRUN_DISPLAY:-${DISPLAY:-:0}}}"
+}
 
 if [[ -n "${VMWARE_VM_SEARCH_DIRS:-}" ]]; then
   VM_LOCATIONS="$VMWARE_VM_SEARCH_DIRS"
@@ -307,7 +314,7 @@ _pgm_print_remaining_snapshots_for_vmx() {
 
   list_r=0
   if [[ -n "${PGM_VMRUN_ENC_PASS:-}" ]]; then
-    list_o=$(/bin/env -u TPM_PASS "${VMRUN_PREFIX[@]}" -vp "$PGM_VMRUN_ENC_PASS" listSnapshots "$vmx" nogui 2>&1) || list_r=$?
+    list_o=$(/bin/env -u TPM_PASS DISPLAY="$_pgm_ed" "${VMRUN_PREFIX[@]}" -vp "$PGM_VMRUN_ENC_PASS" listSnapshots "$vmx" 2>&1) || list_r=$?
   else
     list_o=$("${VMRUN_PREFIX[@]}" listSnapshots "$vmx" nogui 2>&1) || list_r=$?
   fi
@@ -434,6 +441,7 @@ fi
 
 # Before snapshot menu read: freeze encryption secret for -vp (exported TPM_PASS must not alter vmrun's effective password).
 PGM_VMRUN_ENC_PASS="${TPM_PASS-}"
+_pgm_ed="$(_pgm_vmrun_enc_display)"
 
 _pgm_show_selected_vm_boxed "$choice" "$selected"
 
@@ -447,7 +455,7 @@ echo
 echo "(PGM) Listing snapshots (vmrun listSnapshots) …"
 list_rc=0
 if [[ -n "${PGM_VMRUN_ENC_PASS:-}" ]]; then
-  list_out=$(/bin/env -u TPM_PASS "${VMRUN_PREFIX[@]}" -vp "$PGM_VMRUN_ENC_PASS" listSnapshots "$selected" nogui 2>&1) || list_rc=$?
+  list_out=$(/bin/env -u TPM_PASS DISPLAY="$_pgm_ed" "${VMRUN_PREFIX[@]}" -vp "$PGM_VMRUN_ENC_PASS" listSnapshots "$selected" 2>&1) || list_rc=$?
 else
   list_out=$("${VMRUN_PREFIX[@]}" listSnapshots "$selected" nogui 2>&1) || list_rc=$?
 fi
@@ -508,8 +516,8 @@ echo "  Snapshot:     $snap_del"
 echo
 echo "(PGM) Command to run:"
 if [[ -n "${PGM_VMRUN_ENC_PASS:-}" ]]; then
-  vm_cmd=(/bin/env -u TPM_PASS "${VMRUN_PREFIX[@]}" -vp "$PGM_VMRUN_ENC_PASS" deleteSnapshot "$selected" "$snap_del" nogui)
-  printf '  %s\n' "/bin/env -u TPM_PASS ${VMRUN_PREFIX[*]} -vp <PGM_VMRUN_ENC_PASS> deleteSnapshot $(printf '%q' "$selected") $(printf '%q' "$snap_del") nogui"
+  vm_cmd=(/bin/env -u TPM_PASS DISPLAY="$_pgm_ed" "${VMRUN_PREFIX[@]}" -vp "$PGM_VMRUN_ENC_PASS" deleteSnapshot "$selected" "$snap_del")
+  printf '  %s\n' "/bin/env -u TPM_PASS DISPLAY=$(printf '%q' "$_pgm_ed") ${VMRUN_PREFIX[*]} -vp <PGM_VMRUN_ENC_PASS> deleteSnapshot $(printf '%q' "$selected") $(printf '%q' "$snap_del")"
 else
   vm_cmd=("${VMRUN_PREFIX[@]}" deleteSnapshot "$selected" "$snap_del" nogui)
   printf '  %s\n' "${VMRUN_PREFIX[*]} deleteSnapshot $(printf '%q' "$selected") $(printf '%q' "$snap_del") nogui"
