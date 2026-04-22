@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.04.22 - v. 18.65 - wrap long DB hash verbose lines: put path on continuation when prefix+path exceeds MAX_LINE_LENGTH
 # 2026.04.22 - v. 18.64 - treat _rename.sh.resume-state.json as internal protected (never prompt rename)
 # 2026.04.22 - v. 18.63 - flatten prompt: explain y/N/e/q; skip flatten when sole subdir is VIDEO_TS (DVD layout)
 # 2026.04.22 - v. 18.62 - offer [E]/[X] exception options on checksum-group rename prompt (same as plain entries)
@@ -2183,67 +2184,51 @@ print_recovery_final_status_verbose() {
     fi
 }
 
+# head_msg is the text after "[VERBOSE] " and before ": 'path'..." (same wording as one-line messages).
+print_db_hash_record_verbose_wrapped() {
+    local head_msg="$1"
+    local path="$2"
+    local hash_kind="$3"
+    local full_line="[VERBOSE] ${head_msg}: '${path}' (${hash_kind})"
+    local tail_quoted_kind="'${path}' (${hash_kind})"
+
+    if (( ${#full_line} <= MAX_LINE_LENGTH )); then
+        echo "$full_line" >&2
+        return 0
+    fi
+    echo "[VERBOSE] ${head_msg}:" >&2
+    if (( ${#tail_quoted_kind} <= MAX_LINE_LENGTH )); then
+        echo "          ${tail_quoted_kind}" >&2
+    else
+        echo "          '${path}'" >&2
+        echo "          (${hash_kind})" >&2
+    fi
+}
+
 print_db_hash_record_verbose() {
     (( VERBOSE == 1 )) || return 0
     local path="$1"
     local hash_kind="$2"
     local status="$3"
-    local line=""
 
     case "$status" in
         new)
-            line="[VERBOSE] DB hash stored for NEW file entry: '${path}' (${hash_kind})"
-            if (( ${#line} <= MAX_LINE_LENGTH )); then
-                echo "$line" >&2
-            else
-                echo "[VERBOSE] DB hash stored for NEW file entry: '${path}'" >&2
-                echo "          (${hash_kind})" >&2
-            fi
+            print_db_hash_record_verbose_wrapped "DB hash stored for NEW file entry" "$path" "$hash_kind"
             ;;
         added_missing)
-            line="[VERBOSE] DB hash added for EXISTING file entry (missing before): '${path}' (${hash_kind})"
-            if (( ${#line} <= MAX_LINE_LENGTH )); then
-                echo "$line" >&2
-            else
-                echo "[VERBOSE] DB hash added for EXISTING file entry (missing before): '${path}'" >&2
-                echo "          (${hash_kind})" >&2
-            fi
+            print_db_hash_record_verbose_wrapped "DB hash added for EXISTING file entry (missing before)" "$path" "$hash_kind"
             ;;
         unchanged)
-            line="[VERBOSE] DB hash verified for EXISTING file entry (already present): '${path}' (${hash_kind})"
-            if (( ${#line} <= MAX_LINE_LENGTH )); then
-                echo "$line" >&2
-            else
-                echo "[VERBOSE] DB hash verified for EXISTING file entry (already present): '${path}'" >&2
-                echo "          (${hash_kind})" >&2
-            fi
+            print_db_hash_record_verbose_wrapped "DB hash verified for EXISTING file entry (already present)" "$path" "$hash_kind"
             ;;
         updated)
-            line="[VERBOSE] DB hash updated for EXISTING file entry: '${path}' (${hash_kind})"
-            if (( ${#line} <= MAX_LINE_LENGTH )); then
-                echo "$line" >&2
-            else
-                echo "[VERBOSE] DB hash updated for EXISTING file entry: '${path}'" >&2
-                echo "          (${hash_kind})" >&2
-            fi
+            print_db_hash_record_verbose_wrapped "DB hash updated for EXISTING file entry" "$path" "$hash_kind"
             ;;
         kept_existing)
-            line="[VERBOSE] DB hash kept for EXISTING file entry (user chose not to replace): '${path}' (${hash_kind})"
-            if (( ${#line} <= MAX_LINE_LENGTH )); then
-                echo "$line" >&2
-            else
-                echo "[VERBOSE] DB hash kept for EXISTING file entry (user chose not to replace): '${path}'" >&2
-                echo "          (${hash_kind})" >&2
-            fi
+            print_db_hash_record_verbose_wrapped "DB hash kept for EXISTING file entry (user chose not to replace)" "$path" "$hash_kind"
             ;;
         *)
-            line="[VERBOSE] DB hash recorded for file entry: '${path}' (${hash_kind})"
-            if (( ${#line} <= MAX_LINE_LENGTH )); then
-                echo "$line" >&2
-            else
-                echo "[VERBOSE] DB hash recorded for file entry: '${path}'" >&2
-                echo "          (${hash_kind})" >&2
-            fi
+            print_db_hash_record_verbose_wrapped "DB hash recorded for file entry" "$path" "$hash_kind"
             ;;
     esac
 }
