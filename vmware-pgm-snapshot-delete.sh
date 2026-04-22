@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.04.22 - v. 0.7 - VM/snapshot menu read: read -rs -n 1 + echo digits (fixes TTY line-buffer stall)
 # 2026.04.22 - v. 0.6 - encrypted VM: interactive TPM_PASS with masked input (*) if not already set
 # 2026.04.22 - v. 0.5 - snapshot index menu: same unique-prefix choice as VM menu
 # 2026.04.22 - v. 0.4 - VM menu: unique digit prefix accepts without Enter; ambiguous indices need more digits or Enter
@@ -130,13 +131,13 @@ _pgm_parse_snapshots_from_list_out() {
 _pgm_read_vm_menu_choice() {
   local -n _menu="$1"
   local -n _out_choice="$2"
-  local buf="" key n match
+  local buf="" key n match try_buf _k _ok
   local -a _sorted_idxs=()
 
   mapfile -t _sorted_idxs < <(printf '%s\n' "${!_menu[@]}" | sort -n)
 
   while true; do
-    IFS= read -r -n 1 key || {
+    IFS= read -rs -n 1 key || {
       echo
       _out_choice=""
       return 0
@@ -148,7 +149,15 @@ _pgm_read_vm_menu_choice() {
         _out_choice=""
         return 0
       fi
-      if [[ "$buf" =~ ^[0-9]+$ ]] && [[ -n "${_menu[$buf]+x}" ]]; then
+      buf="${buf//$'\r'/}"
+      _ok=0
+      for _k in "${!_menu[@]}"; do
+        [[ "$_k" == "$buf" ]] && {
+          _ok=1
+          break
+        }
+      done
+      if [[ "$buf" =~ ^[0-9]+$ ]] && ((_ok)); then
         _out_choice="$buf"
         return 0
       fi
@@ -160,38 +169,38 @@ _pgm_read_vm_menu_choice() {
 
     if [[ "$key" == [qQ] ]]; then
       if [[ -z "$buf" ]]; then
-        echo
+        printf '%s\n' "$key"
         _out_choice="q"
         return 0
       fi
-      printf '\b \b'
       continue
     fi
 
     [[ "$key" == [0-9] ]] || continue
 
-    buf+="$key"
-
+    try_buf="${buf}${key}"
     n=0
     match=""
     for match_try in "${_sorted_idxs[@]}"; do
-      if [[ "$match_try" == "$buf"* ]]; then
+      if [[ "$match_try" == "$try_buf"* ]]; then
         ((++n))
         match="$match_try"
       fi
     done
 
-    if ((n == 0)); then
-      buf="${buf%?}"
-      printf '\b \b'
-      continue
-    fi
+    ((n == 0)) && continue
+
+    printf '%s' "$key"
+    buf="$try_buf"
 
     if ((n == 1)); then
       echo
       _out_choice="$match"
       return 0
     fi
+
+    echo
+    echo "(PGM) Prefix ${buf} matches several VMs — press Enter for VM ${buf}, or type another digit." >&2
   done
 }
 
