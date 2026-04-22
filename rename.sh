@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.04.22 - v. 18.62 - offer [E]/[X] exception options on checksum-group rename prompt (same as plain entries)
 # 2026.04.21 - v. 18.61 - let user choose flatten result directory name (parent/child/manual edit with readline)
 # 2026.04.21 - v. 18.60 - add flatten-only directory exception option to skip future flatten prompts for exact paths
 # 2026.04.21 - v. 18.59 - add prompt to flatten directories that contain only one subdirectory with files
@@ -4827,8 +4828,10 @@ print_checksum_prompt_menu() {
     echo "  [N] No"
     echo "  [A] All remaining"
     echo "  [D] Yes for this directory"
+    echo "  [E] Add exception (skip paths matching this hash file basename via exclude filter)"
+    echo "  [X] Exact exception (skip only this hash file path; still check other paths)"
     echo "  [Q] Quit"
-    echo -n "Choice [Y/n/a/d/q]: "
+    echo -n "Choice [Y/n/a/d/E/x/q]: "
 }
 
 print_rename_action_verbose() {
@@ -5375,6 +5378,16 @@ for f in "${ordered_paths[@]}"; do
                 d|D)
                     AUTO_RENAME_DIR="$(dirname -- "$sum_file")"
                     do_rename=yes
+                    ;;
+                e|E)
+                    append_path_to_exclude_filters_file "$sum_file"
+                    ((++files_skipped))
+                    do_rename=no
+                    ;;
+                x|X)
+                    append_exact_path_to_exclude_filters_file "$sum_file"
+                    ((++files_skipped))
+                    do_rename=no
                     ;;
                 *)
                     do_rename=yes
