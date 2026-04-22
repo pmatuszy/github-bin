@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.04.22 - v. 0.2 - after deleteSnapshot: list remaining snapshots
 # 2026.04.22 - v. 0.1 - interactive delete snapshot: pick VM, pick snapshot, show command, [y/N] run
 #
 # Environment:
@@ -93,6 +94,70 @@ _add_unique_vmx_line() {
   [[ -n "${_seen_canon[$c]+x}" ]] && return 0
   _seen_canon[$c]=1
   _vmx_lines+=( "$line" )
+}
+
+# Fills the array named by $2 with names from vmrun listSnapshots stdout in $1.
+# Returns 10 if output contains Total snapshots: 0 (array cleared).
+_pgm_parse_snapshots_from_list_out() {
+  local list_out="$1"
+  local -n _snaps_ref="$2"
+  local line saw_zero=0
+
+  _snaps_ref=()
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    line="${line%$'\r'}"
+    [[ -z "${line//[[:space:]]/}" ]] && continue
+    if [[ "${line}" =~ [Tt]otal[[:space:]]+snapshots: ]]; then
+      if [[ "${line}" =~ [Tt]otal[[:space:]]+snapshots:[[:space:]]*0[[:space:]]*$ ]]; then
+        saw_zero=1
+      fi
+      continue
+    fi
+    _snaps_ref+=("$line")
+  done <<< "$list_out"
+  ((saw_zero == 1)) && return 10
+  return 0
+}
+
+_pgm_print_remaining_snapshots_for_vmx() {
+  local vmx="$1"
+  local list_r list_o snaps=() parse_rc i
+
+  list_r=0
+  if [[ -n "${TPM_PASS:-}" ]]; then
+    list_o=$(vmrun -vp "$TPM_PASS" listSnapshots "$vmx" 2>&1) || list_r=$?
+  else
+    list_o=$(vmrun listSnapshots "$vmx" 2>&1) || list_r=$?
+  fi
+
+  echo
+  echo "(PGM) Remaining snapshots (vmrun listSnapshots) …"
+  if ((list_r != 0)); then
+    echo "(PGM) listSnapshots failed (exit $list_r); cannot show remaining list." >&2
+    echo "$list_o" >&2
+    return 1
+  fi
+
+  _pgm_parse_snapshots_from_list_out "$list_o" snaps
+  parse_rc=$?
+  if ((parse_rc == 10)); then
+    echo "  (none)"
+    return 0
+  fi
+  if ((${#snaps[@]} == 0)); then
+    echo "(PGM) Could not parse snapshot list. Raw output:"
+    echo "$list_o"
+    return 1
+  fi
+
+  echo
+  echo "====================  REMAINING SNAPSHOTS  ========================"
+  i=1
+  for s in "${snaps[@]}"; do
+    printf '  [%2d] %s\n' "$i" "$s"
+    ((++i))
+  done
+  return 0
 }
 
 mapfile -t _running_raw < <(vmrun list 2>/dev/null | grep -E '\.vmx$' | sort -u)
@@ -204,18 +269,12 @@ if ((list_rc != 0)); then
 fi
 
 snapshots=()
-while IFS= read -r line || [[ -n "$line" ]]; do
-  line="${line%$'\r'}"
-  [[ -z "${line//[[:space:]]/}" ]] && continue
-  if [[ "${line}" =~ [Tt]otal[[:space:]]+snapshots: ]]; then
-    if [[ "${line}" =~ [Tt]otal[[:space:]]+snapshots:[[:space:]]*0[[:space:]]*$ ]]; then
-      echo "(PGM) This VM has no snapshots."
-      exit 0
-    fi
-    continue
-  fi
-  snapshots+=("$line")
-done <<< "$list_out"
+_pgm_parse_snapshots_from_list_out "$list_out" snapshots
+parse_rc=$?
+if ((parse_rc == 10)); then
+  echo "(PGM) This VM has no snapshots."
+  exit 0
+fi
 
 if ((${#snapshots[@]} == 0)); then
   echo "(PGM) No snapshot names parsed from vmrun output. Raw output:"
@@ -291,6 +350,8 @@ else
   echo
   echo "(PGM) vmrun deleteSnapshot failed (exit $rc). If the VM is on, power off or suspend and retry." >&2
 fi
+
+_pgm_print_remaining_snapshots_for_vmx "$selected" || true
 
 . /root/bin/_script_footer.sh
 exit "$rc"
