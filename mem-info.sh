@@ -1,5 +1,8 @@
 #!/bin/bash
 
+# 2026.04.22 - v. 0.14 - default meminfo list: drop slab/commit/bounce/vmalloc/percpu and related rows
+# 2026.04.22 - v. 0.13 - free table: build header + human sizes from free -b so columns match
+# 2026.04.22 - v. 0.12 - no blank line before free section; column-align free -h inside box (LC_ALL=C)
 # 2026.04.21 - v. 0.11 - pause uses read -n 1 -s (exactly one char, no echo)
 # 2026.04.21 - v. 0.10 - no pause after title; any key continues pause, q/Q quits
 # 2026.04.21 - v. 0.9 - default meminfo table = selected fields only; -f/--full for all lines
@@ -103,8 +106,8 @@ Options:
   -p, --page      Force Enter paging on (even if MEM_INFO_PAGE=0).
   -n, --no-page   Force paging off (full output at once).
   -f, --full      Print every line from /proc/meminfo (long). Default is a
-                  shorter list of useful fields (active/inactive, slab, huge
-                  pages, commit, direct map, etc.).
+                  shorter list of useful fields (active/inactive, huge pages,
+                  direct map, zswap, etc.).
   -c N, --chunk N
                   Show at most N meminfo rows per boxed table (header repeated
                   each chunk). N=0 means one box with all rows (default).
@@ -164,6 +167,43 @@ _mi_pause_if_needed() {
       exit 0
     fi
   fi
+}
+
+# Same figures as free -h, but header + rows use one fixed width per column (from free -b bytes).
+_mi_print_free_h_aligned() {
+  LC_ALL=C free -b | awk '
+  function hbytes(n, neg, m, k) {
+    n += 0
+    if (n == 0) return "0B"
+    if (n < 0) { n = -n; neg = "-" } else neg = ""
+    if (n >= 1099511627776) return sprintf("%s%.1fTi", neg, n / 1099511627776)
+    if (n >= 1073741824) return sprintf("%s%.1fGi", neg, n / 1073741824)
+    m = n / 1048576
+    if (m >= 1) return sprintf("%s%.0fMi", neg, m)
+    k = n / 1024
+    if (k >= 1) return sprintf("%s%.0fKi", neg, k)
+    return sprintf("%s%.0fB", neg, n)
+  }
+  BEGIN { LBL = 7; CW = 11 }
+  NR == 1 { next }
+  $1 ~ /^Mem:/ {
+    if (!hdr) {
+      printf "%-*s%*s%*s%*s%*s%*s%*s\n", LBL, "", \
+        CW, "total", CW, "used", CW, "free", CW, "shared", CW, "buff/cache", CW, "available"
+      hdr = 1
+    }
+    printf "%-*s", LBL, $1
+    for (i = 2; i <= NF && i <= 7; i++) printf "%*s", CW, hbytes($i)
+    printf "\n"
+    next
+  }
+  $1 ~ /^Swap:/ {
+    printf "%-*s", LBL, $1
+    for (i = 2; i <= NF && i <= 4; i++) printf "%*s", CW, hbytes($i)
+    printf "\n"
+    next
+  }
+  '
 }
 
 _mi_kb() {
@@ -286,11 +326,10 @@ _mi_sl_pad_to_note() {
     echo 'none configured (SwapTotal 0)'
   fi
 } | boxes -a l -d stone
-echo
 _mi_pause_if_needed
 
 echo "(PGM) free -h" | boxes -a c -d stone
-free -h | boxes -a l -d stone
+_mi_print_free_h_aligned | boxes -a l -d stone
 echo
 _mi_pause_if_needed
 
@@ -306,15 +345,12 @@ else
     Active Inactive 'Active(anon)' 'Inactive(anon)' 'Active(file)' 'Inactive(file)'
     Shmem Mapped
     Dirty Writeback WritebackTmp
-    Slab SReclaimable SUnreclaim KReclaimable
-    KernelStack PageTables NFS_Unstable Bounce
-    CommitLimit Committed_AS
+    KernelStack PageTables NFS_Unstable
     HugePages_Total HugePages_Free HugePages_Rsvd HugePages_Surp Hugepagesize Hugetlb
     DirectMap4k DirectMap2M DirectMap1G
-    Unevictable Mlocked
     Zswap Zswapped
-    AnonHugePages ShmemHugePages ShmemPmdMapped FileHugePages FilePmdMapped
-    VmallocUsed Percpu HardwareCorrupted Unaccepted
+    AnonHugePages ShmemHugePages ShmemPmdMapped FileHugePages
+    HardwareCorrupted Unaccepted
   )
   for _mi_k in "${_mi_important_keys[@]}"; do
     _mi_fln=$(_mi_meminfo_fetch_line "$_mi_k")
