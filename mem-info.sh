@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.04.22 - v. 0.19 - free -h: compact table — detect header row, trim CR, portable padding, right-align values
 # 2026.04.22 - v. 0.18 - free -h: tighten columns to max string width per column before boxes
 # 2026.04.22 - v. 0.17 - free -h: expand tabs to spaces before boxes (avoids skewed columns)
 # 2026.04.22 - v. 0.16 - free section: pipe real free -h into boxes (procps alignment); drop custom free -b formatter
@@ -199,25 +200,43 @@ _mi_expand_tabs() {
   fi
 }
 
-# Re-print procps "free -h" (space-separated fields, stdin) with one space between columns
-# and each column only as wide as the longest token in that column.
+# Re-print procps "free -h" (stdin, whitespace-separated after expand): minimal column width
+# per logical column (header = row whose first field is "total" with LC_ALL=C; data = "Label:").
+# Header words left-aligned; numbers right-aligned like free(1). Portable awk (no empty %-s).
 _mi_free_h_compact_columns() {
-  awk '
-    NF == 0 { next }
-    !hdr {
-      nh = NF
-      for (j = 1; j <= nh; j++) hr[j] = $j
-      hdr = 1
-      next
+  LC_ALL=C awk '
+    function tf(f,    s) {
+      s = $(f)
+      gsub(/\r/, "", s)
+      sub(/^[[:space:]]+/, "", s)
+      sub(/[[:space:]]+$/, "", s)
+      return s
     }
+    function blanks(n,    i) {
+      for (i = 1; i <= n; i++) printf " "
+    }
+    NF == 0 { next }
     {
-      n++
-      lb[n] = $1
-      nc[n] = NF - 1
-      for (j = 1; j <= nc[n]; j++) dv[n, j] = $(j + 1)
+      all[++na] = $0
+      if (tf(1) == "total") {
+        nh = NF
+        for (j = 1; j <= nh; j++) hr[j] = tf(j)
+        hdr = 1
+        next
+      }
+      if (tf(1) ~ /:$/) {
+        n++
+        lb[n] = tf(1)
+        nc[n] = NF - 1
+        for (j = 1; j <= nc[n]; j++) dv[n, j] = tf(j + 1)
+        next
+      }
     }
     END {
-      if (!hdr) exit
+      if (!hdr) {
+        for (i = 1; i <= na; i++) print all[i]
+        exit 0
+      }
       w0 = 0
       for (i = 1; i <= n; i++) {
         L = length(lb[i])
@@ -228,12 +247,12 @@ _mi_free_h_compact_columns() {
         for (i = 1; i <= n; i++)
           if (j <= nc[i] && length(dv[i, j]) > w[j]) w[j] = length(dv[i, j])
       }
-      printf "%-*s", w0, ""
+      blanks(w0)
       for (j = 1; j <= nh; j++) printf " %-*s", w[j], hr[j]
       print ""
       for (i = 1; i <= n; i++) {
         printf "%-*s", w0, lb[i]
-        for (j = 1; j <= nc[i]; j++) printf " %-*s", w[j], dv[i, j]
+        for (j = 1; j <= nc[i]; j++) printf " %*s", w[j], dv[i, j]
         print ""
       }
     }
