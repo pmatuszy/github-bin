@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.04.22 - v. 0.18 - free -h: tighten columns to max string width per column before boxes
 # 2026.04.22 - v. 0.17 - free -h: expand tabs to spaces before boxes (avoids skewed columns)
 # 2026.04.22 - v. 0.16 - free section: pipe real free -h into boxes (procps alignment); drop custom free -b formatter
 # 2026.04.22 - v. 0.15 - no pause before free section; free table left-align columns for header/value match
@@ -198,6 +199,47 @@ _mi_expand_tabs() {
   fi
 }
 
+# Re-print procps "free -h" (space-separated fields, stdin) with one space between columns
+# and each column only as wide as the longest token in that column.
+_mi_free_h_compact_columns() {
+  awk '
+    NF == 0 { next }
+    !hdr {
+      nh = NF
+      for (j = 1; j <= nh; j++) hr[j] = $j
+      hdr = 1
+      next
+    }
+    {
+      n++
+      lb[n] = $1
+      nc[n] = NF - 1
+      for (j = 1; j <= nc[n]; j++) dv[n, j] = $(j + 1)
+    }
+    END {
+      if (!hdr) exit
+      w0 = 0
+      for (i = 1; i <= n; i++) {
+        L = length(lb[i])
+        if (L > w0) w0 = L
+      }
+      for (j = 1; j <= nh; j++) {
+        w[j] = length(hr[j])
+        for (i = 1; i <= n; i++)
+          if (j <= nc[i] && length(dv[i, j]) > w[j]) w[j] = length(dv[i, j])
+      }
+      printf "%-*s", w0, ""
+      for (j = 1; j <= nh; j++) printf " %-*s", w[j], hr[j]
+      print ""
+      for (i = 1; i <= n; i++) {
+        printf "%-*s", w0, lb[i]
+        for (j = 1; j <= nc[i]; j++) printf " %-*s", w[j], dv[i, j]
+        print ""
+      }
+    }
+  '
+}
+
 _mi_kb() {
   awk -v k="$1" '$1==k":" {print $2; exit}' /proc/meminfo
 }
@@ -320,8 +362,8 @@ _mi_sl_pad_to_note() {
 } | boxes -a l -d stone
 
 echo "(PGM) free -h" | boxes -a c -d stone
-# Same numbers as free -h; TABs expanded so boxes lines up like the terminal.
-LC_ALL=C free -h | _mi_expand_tabs | boxes -a l -d stone
+# Same fields as free -h; expand TABs, then shrink columns to longest token per column.
+LC_ALL=C free -h | _mi_expand_tabs | _mi_free_h_compact_columns | boxes -a l -d stone
 echo
 _mi_pause_if_needed
 
