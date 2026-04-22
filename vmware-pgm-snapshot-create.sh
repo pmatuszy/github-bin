@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.04.22 - v. 0.4 - after VM choice: df -hT for filesystem holding the .vmx
 # 2026.04.22 - v. 0.3 - before vmrun: print command, [y/N] confirm (default N)
 # 2026.04.22 - v. 0.2 - EXIT banner: script start/stop wall times and elapsed
 # 2026.04.22 - v. 0.1 - interactive snapshot: running vs stopped VMs, readline snapshot name
@@ -180,6 +181,14 @@ if [[ ! -f "$selected" ]]; then
   echo "(PGM) VMX not found: $selected" >&2
   exit 1
 fi
+
+echo
+echo "(PGM) Storage — filesystem containing this VM (same mount as the .vmx path):"
+if ! df -hT -- "$selected" 2>/dev/null; then
+  echo "(PGM) df -hT failed; trying df -h ..." >&2
+  df -h -- "$selected" || echo "(PGM) Could not show disk space for: $selected" >&2
+fi
+echo
 
 default_snap="$(date '+%Y.%m.%d_%H%M%S_-_snapshot')"
 echo "(PGM) Snapshot name (readline: arrows, Home, End; empty line aborts):"
