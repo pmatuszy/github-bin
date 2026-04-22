@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.04.22 - v. 0.27 - free -m: boxed title only; table plain (expand + compact, no boxes)
 # 2026.04.22 - v. 0.26 - free -m: no boxes (revert v0.25); expand + compact only
 # 2026.04.22 - v. 0.25 - free -m: expand + compact aligned table, then pipe to boxes
 # 2026.04.22 - v. 0.24 - free -m: boxed section title only; table stays plain (expand + compact)
@@ -99,7 +100,7 @@ Usage: mem-info.sh [-h|--help] [-v|--version] [-p|--page] [-n|--no-page] [-f|--f
 
 Print a readable RAM report for the local Linux system: summary (with the
 kernel's MemAvailable estimate, rough "used" vs page cache),
-free -m (Mebibytes) as aligned plain text (expand + compact columns; not boxed), and a
+free -m (Mebibytes) with a boxed section title and aligned plain table (no box on the table), and a
 /proc/meminfo table (selected fields by default; use -f for all).
 
 MemAvailable is usually the best "how much RAM can I use?" number; MemFree
@@ -415,8 +416,8 @@ _mi_sl_pad_to_note() {
   fi
 } | boxes -a l -d stone
 
-echo "(PGM) free -m"
-# Expand TABs and compact columns; do not pipe through boxes (layout stays reliable).
+echo "(PGM) free -m" | boxes -a c -d stone
+# Table only: expand + compact — not piped through boxes.
 LC_ALL=C free -m | _mi_expand_tabs | _mi_free_compact_columns
 echo
 _mi_pause_if_needed
