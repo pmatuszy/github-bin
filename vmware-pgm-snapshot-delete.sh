@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.04.22 - v. 0.13 - vmrun: invoke /bin/env -u TPM_PASS (not PATH env)
 # 2026.04.22 - v. 0.12 - vmrun: freeze -vp in PGM_VMRUN_ENC_PASS + env -u TPM_PASS (exported TPM_PASS breaks deleteSnapshot)
 # 2026.04.22 - v. 0.11 - Linux vmrun -T ws + TPM_PASS CR strip (encrypted vmrun auth)
 # 2026.04.22 - v. 0.10 - masked passphrase: treat empty read as Enter (no spurious *)
@@ -18,7 +19,7 @@
 #   TPM_PASS — optional; if set (e.g. via /root/SECRET/vmware-pass.sh), vmrun uses -vp for encrypted VMs.
 #              If unset and the .vmx looks encrypted, you are prompted on a TTY (passphrase shown as *).
 #   VMRUN_NO_WS — if non-empty, skip adding -T ws on Linux.
-#   -vp uses a frozen copy of TPM_PASS in PGM_VMRUN_ENC_PASS; vmrun is started with env -u TPM_PASS so an
+#   -vp uses a frozen copy of TPM_PASS in PGM_VMRUN_ENC_PASS; vmrun is started with /bin/env -u TPM_PASS so an
 #     exported TPM_PASS (e.g. from vmware-pass.sh) cannot override or confuse the password on the command line.
 #
 # Note: vmrun deleteSnapshot usually requires the VM to be powered off or suspended (see VMware docs).
@@ -303,7 +304,7 @@ _pgm_print_remaining_snapshots_for_vmx() {
 
   list_r=0
   if [[ -n "${PGM_VMRUN_ENC_PASS:-}" ]]; then
-    list_o=$(env -u TPM_PASS "${VMRUN_PREFIX[@]}" -vp "$PGM_VMRUN_ENC_PASS" listSnapshots "$vmx" 2>&1) || list_r=$?
+    list_o=$(/bin/env -u TPM_PASS "${VMRUN_PREFIX[@]}" -vp "$PGM_VMRUN_ENC_PASS" listSnapshots "$vmx" 2>&1) || list_r=$?
   else
     list_o=$("${VMRUN_PREFIX[@]}" listSnapshots "$vmx" 2>&1) || list_r=$?
   fi
@@ -443,7 +444,7 @@ echo
 echo "(PGM) Listing snapshots (vmrun listSnapshots) …"
 list_rc=0
 if [[ -n "${PGM_VMRUN_ENC_PASS:-}" ]]; then
-  list_out=$(env -u TPM_PASS "${VMRUN_PREFIX[@]}" -vp "$PGM_VMRUN_ENC_PASS" listSnapshots "$selected" 2>&1) || list_rc=$?
+  list_out=$(/bin/env -u TPM_PASS "${VMRUN_PREFIX[@]}" -vp "$PGM_VMRUN_ENC_PASS" listSnapshots "$selected" 2>&1) || list_rc=$?
 else
   list_out=$("${VMRUN_PREFIX[@]}" listSnapshots "$selected" 2>&1) || list_rc=$?
 fi
@@ -504,8 +505,8 @@ echo "  Snapshot:     $snap_del"
 echo
 echo "(PGM) Command to run:"
 if [[ -n "${PGM_VMRUN_ENC_PASS:-}" ]]; then
-  vm_cmd=(env -u TPM_PASS "${VMRUN_PREFIX[@]}" -vp "$PGM_VMRUN_ENC_PASS" deleteSnapshot "$selected" "$snap_del")
-  printf '  %s\n' "env -u TPM_PASS ${VMRUN_PREFIX[*]} -vp <PGM_VMRUN_ENC_PASS> deleteSnapshot $(printf '%q' "$selected") $(printf '%q' "$snap_del")"
+  vm_cmd=(/bin/env -u TPM_PASS "${VMRUN_PREFIX[@]}" -vp "$PGM_VMRUN_ENC_PASS" deleteSnapshot "$selected" "$snap_del")
+  printf '  %s\n' "/bin/env -u TPM_PASS ${VMRUN_PREFIX[*]} -vp <PGM_VMRUN_ENC_PASS> deleteSnapshot $(printf '%q' "$selected") $(printf '%q' "$snap_del")"
 else
   vm_cmd=("${VMRUN_PREFIX[@]}" deleteSnapshot "$selected" "$snap_del")
   printf '  %s\n' "${VMRUN_PREFIX[*]} deleteSnapshot $(printf '%q' "$selected") $(printf '%q' "$snap_del")"

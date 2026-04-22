@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.04.22 - v. 0.14 - vmrun: invoke /bin/env -u TPM_PASS (not PATH env)
 # 2026.04.22 - v. 0.13 - vmrun: freeze -vp in PGM_VMRUN_ENC_PASS + env -u TPM_PASS (exported TPM_PASS breaks snapshot)
 # 2026.04.22 - v. 0.12 - Linux vmrun: -T ws + normalize TPM_PASS CR; encrypted snapshot/delete auth
 # 2026.04.22 - v. 0.11 - masked passphrase: treat empty read as Enter (no spurious *)
@@ -19,7 +20,7 @@
 #   TPM_PASS — optional; if set (e.g. via /root/SECRET/vmware-pass.sh), vmrun uses -vp for encrypted VMs.
 #              If unset and the .vmx looks encrypted, you are prompted on a TTY (passphrase shown as *).
 #   VMRUN_NO_WS — if non-empty, skip adding -T ws on Linux (default: vmrun -T ws per Workstation examples).
-#   -vp uses a frozen copy of TPM_PASS in PGM_VMRUN_ENC_PASS; vmrun is started with env -u TPM_PASS so an
+#   -vp uses a frozen copy of TPM_PASS in PGM_VMRUN_ENC_PASS; vmrun is started with /bin/env -u TPM_PASS so an
 #     exported TPM_PASS (e.g. from vmware-pass.sh) cannot override or confuse the password on the command line.
 
 . /root/bin/_script_header.sh
@@ -402,7 +403,7 @@ echo
 echo "(PGM) Existing snapshots (vmrun listSnapshots) …"
 list_exist_rc=0
 if [[ -n "${PGM_VMRUN_ENC_PASS:-}" ]]; then
-  list_exist_out=$(env -u TPM_PASS "${VMRUN_PREFIX[@]}" -vp "$PGM_VMRUN_ENC_PASS" listSnapshots "$selected" 2>&1) || list_exist_rc=$?
+  list_exist_out=$(/bin/env -u TPM_PASS "${VMRUN_PREFIX[@]}" -vp "$PGM_VMRUN_ENC_PASS" listSnapshots "$selected" 2>&1) || list_exist_rc=$?
 else
   list_exist_out=$("${VMRUN_PREFIX[@]}" listSnapshots "$selected" 2>&1) || list_exist_rc=$?
 fi
@@ -450,8 +451,8 @@ echo "  Name:     $snap_name"
 echo
 echo "(PGM) Command to run:"
 if [[ -n "${PGM_VMRUN_ENC_PASS:-}" ]]; then
-  vm_cmd=(env -u TPM_PASS "${VMRUN_PREFIX[@]}" -vp "$PGM_VMRUN_ENC_PASS" snapshot "$selected" "$snap_name")
-  printf '  %s\n' "env -u TPM_PASS ${VMRUN_PREFIX[*]} -vp <PGM_VMRUN_ENC_PASS> snapshot $(printf '%q' "$selected") $(printf '%q' "$snap_name")"
+  vm_cmd=(/bin/env -u TPM_PASS "${VMRUN_PREFIX[@]}" -vp "$PGM_VMRUN_ENC_PASS" snapshot "$selected" "$snap_name")
+  printf '  %s\n' "/bin/env -u TPM_PASS ${VMRUN_PREFIX[*]} -vp <PGM_VMRUN_ENC_PASS> snapshot $(printf '%q' "$selected") $(printf '%q' "$snap_name")"
 else
   vm_cmd=("${VMRUN_PREFIX[@]}" snapshot "$selected" "$snap_name")
   printf '  %s\n' "${VMRUN_PREFIX[*]} snapshot $(printf '%q' "$selected") $(printf '%q' "$snap_name")"
