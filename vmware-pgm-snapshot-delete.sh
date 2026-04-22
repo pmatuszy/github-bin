@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.04.22 - v. 0.8 - quieter menu; selected VM in boxes; snapshot prompt shortened
 # 2026.04.22 - v. 0.7 - VM/snapshot menu read: read -rs -n 1 + echo digits (fixes TTY line-buffer stall)
 # 2026.04.22 - v. 0.6 - encrypted VM: interactive TPM_PASS with masked input (*) if not already set
 # 2026.04.22 - v. 0.5 - snapshot index menu: same unique-prefix choice as VM menu
@@ -198,10 +199,21 @@ _pgm_read_vm_menu_choice() {
       _out_choice="$match"
       return 0
     fi
-
-    echo
-    echo "(PGM) Prefix ${buf} matches several VMs — press Enter for VM ${buf}, or type another digit." >&2
   done
+}
+
+_pgm_show_selected_vm_boxed() {
+  local _idx="$1" _vmx="$2"
+
+  echo
+  if type -fP boxes &>/dev/null; then
+    printf 'SELECTED VM  [%s]\n%s\n' "$_idx" "$_vmx" | boxes -s 120x8 -a c -d ada-box
+  else
+    echo "====================  SELECTED VM  ========================"
+    printf '  [%s]  %s\n' "$_idx" "$_vmx"
+    echo "==========================================================="
+  fi
+  echo
 }
 
 _pgm_vmx_likely_encrypted() {
@@ -376,7 +388,6 @@ fi
 
 echo
 echo "(PGM) Enter the VM number to delete a snapshot from, or [q] to quit."
-echo "(PGM) If only one menu index starts with the digits you type (e.g. 3), it is accepted at once; if several match (e.g. 1 vs 10–13), type more digits or press Enter to confirm."
 echo -n "Choice: "
 choice=""
 _pgm_read_vm_menu_choice menu_idx_to_path choice
@@ -401,7 +412,8 @@ if ! _pgm_ensure_tpm_pass_for_vmx "$selected"; then
   exit 1
 fi
 
-echo
+_pgm_show_selected_vm_boxed "$choice" "$selected"
+
 echo "(PGM) Storage — filesystem containing this VM (same mount as the .vmx path):"
 if ! df -hT -- "$selected" 2>/dev/null; then
   echo "(PGM) df -hT failed; trying df -h ..." >&2
@@ -449,7 +461,6 @@ done
 
 echo
 echo "(PGM) Enter the snapshot index to delete, or [q] to quit."
-echo "(PGM) Same prefix rule as the VM list: unique digits accept at once; otherwise type the full index or press Enter to confirm."
 echo "(PGM) Hint: deleteSnapshot usually needs the VM off or suspended."
 echo -n "Choice: "
 schoice=""

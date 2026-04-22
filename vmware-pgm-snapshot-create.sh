@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.04.22 - v. 0.9 - quieter menu (no prefix hints); selected VM shown with boxes
 # 2026.04.22 - v. 0.8 - VM/snapshot menu read: read -rs -n 1 + echo digits (fixes TTY line-buffer stall on ambiguous prefix)
 # 2026.04.22 - v. 0.7 - encrypted VM: interactive TPM_PASS with masked input (asterisks) if not already set
 # 2026.04.22 - v. 0.6 - VM menu: unique digit prefix accepts without Enter (e.g. 3); 1 vs 10–13 needs more keys or Enter
@@ -197,10 +198,21 @@ _pgm_read_vm_menu_choice() {
       _out_choice="$match"
       return 0
     fi
-
-    echo
-    echo "(PGM) Prefix ${buf} matches several VMs — press Enter for VM ${buf}, or type another digit." >&2
   done
+}
+
+_pgm_show_selected_vm_boxed() {
+  local _idx="$1" _vmx="$2"
+
+  echo
+  if type -fP boxes &>/dev/null; then
+    printf 'SELECTED VM  [%s]\n%s\n' "$_idx" "$_vmx" | boxes -s 120x8 -a c -d ada-box
+  else
+    echo "====================  SELECTED VM  ========================"
+    printf '  [%s]  %s\n' "$_idx" "$_vmx"
+    echo "==========================================================="
+  fi
+  echo
 }
 
 _pgm_vmx_likely_encrypted() {
@@ -334,7 +346,6 @@ fi
 
 echo
 echo "(PGM) Enter the VM number, or [q] to quit."
-echo "(PGM) If only one menu index starts with the digits you type (e.g. 3), it is accepted at once; if several match (e.g. 1 vs 10–13), type more digits or press Enter to confirm."
 echo -n "Choice: "
 choice=""
 _pgm_read_vm_menu_choice menu_idx_to_path choice
@@ -359,7 +370,8 @@ if ! _pgm_ensure_tpm_pass_for_vmx "$selected"; then
   exit 1
 fi
 
-echo
+_pgm_show_selected_vm_boxed "$choice" "$selected"
+
 echo "(PGM) Storage — filesystem containing this VM (same mount as the .vmx path):"
 if ! df -hT -- "$selected" 2>/dev/null; then
   echo "(PGM) df -hT failed; trying df -h ..." >&2
