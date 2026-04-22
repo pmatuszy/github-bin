@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.04.22 - v. 0.10 - masked passphrase: treat empty read as Enter (no spurious *)
 # 2026.04.22 - v. 0.9 - menu read: treat empty key as Enter (confirm VM 1 after typing 1)
 # 2026.04.22 - v. 0.8 - quieter menu; selected VM in boxes; snapshot prompt shortened
 # 2026.04.22 - v. 0.7 - VM/snapshot menu read: read -rs -n 1 + echo digits (fixes TTY line-buffer stall)
@@ -244,7 +245,8 @@ _pgm_read_password_masked() {
       echo
       return 1
     }
-    if [[ "$char" == $'\n' || "$char" == $'\r' ]]; then
+    # Return often arrives as \n/\r; some TTYs leave char empty (same as menu read).
+    if [[ "$char" == $'\n' || "$char" == $'\r' || -z "$char" ]]; then
       echo
       break
     fi
