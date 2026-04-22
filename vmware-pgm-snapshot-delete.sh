@@ -1,12 +1,16 @@
 #!/bin/bash
 
+# 2026.04.22 - v. 0.6 - encrypted VM: interactive TPM_PASS with masked input (*) if not already set
+# 2026.04.22 - v. 0.5 - snapshot index menu: same unique-prefix choice as VM menu
+# 2026.04.22 - v. 0.4 - VM menu: unique digit prefix accepts without Enter; ambiguous indices need more digits or Enter
 # 2026.04.22 - v. 0.3 - print deleteSnapshot wall time before script footer
 # 2026.04.22 - v. 0.2 - after deleteSnapshot: list remaining snapshots
 # 2026.04.22 - v. 0.1 - interactive delete snapshot: pick VM, pick snapshot, show command, [y/N] run
 #
 # Environment:
 #   VMWARE_VM_SEARCH_DIRS — optional; if set, replaces the default VM_LOCATIONS below (space-separated roots)
-#   TPM_PASS — optional; if set (e.g. via /root/SECRET/vmware-pass.sh), vmrun uses -vp for encrypted VMs
+#   TPM_PASS — optional; if set (e.g. via /root/SECRET/vmware-pass.sh), vmrun uses -vp for encrypted VMs.
+#              If unset and the .vmx looks encrypted, you are prompted on a TTY (passphrase shown as *).
 #
 # Note: vmrun deleteSnapshot usually requires the VM to be powered off or suspended (see VMware docs).
 
@@ -120,6 +124,142 @@ _pgm_parse_snapshots_from_list_out() {
   return 0
 }
 
+# Reads VM index into nameref $2; associative array $1 is idx -> path.
+# Unique prefix of index digits accepts immediately; else type full number and Enter, or Enter after exact index.
+# q + Enter quits when buffer empty. Output: "", "q", or digits.
+_pgm_read_vm_menu_choice() {
+  local -n _menu="$1"
+  local -n _out_choice="$2"
+  local buf="" key n match
+  local -a _sorted_idxs=()
+
+  mapfile -t _sorted_idxs < <(printf '%s\n' "${!_menu[@]}" | sort -n)
+
+  while true; do
+    IFS= read -r -n 1 key || {
+      echo
+      _out_choice=""
+      return 0
+    }
+
+    if [[ "$key" == $'\n' || "$key" == $'\r' ]]; then
+      echo
+      if [[ -z "$buf" ]]; then
+        _out_choice=""
+        return 0
+      fi
+      if [[ "$buf" =~ ^[0-9]+$ ]] && [[ -n "${_menu[$buf]+x}" ]]; then
+        _out_choice="$buf"
+        return 0
+      fi
+      echo "(PGM) Invalid choice: $(printf '%q' "$buf")" >&2
+      buf=""
+      printf '(PGM) Try again. Choice: '
+      continue
+    fi
+
+    if [[ "$key" == [qQ] ]]; then
+      if [[ -z "$buf" ]]; then
+        echo
+        _out_choice="q"
+        return 0
+      fi
+      printf '\b \b'
+      continue
+    fi
+
+    [[ "$key" == [0-9] ]] || continue
+
+    buf+="$key"
+
+    n=0
+    match=""
+    for match_try in "${_sorted_idxs[@]}"; do
+      if [[ "$match_try" == "$buf"* ]]; then
+        ((++n))
+        match="$match_try"
+      fi
+    done
+
+    if ((n == 0)); then
+      buf="${buf%?}"
+      printf '\b \b'
+      continue
+    fi
+
+    if ((n == 1)); then
+      echo
+      _out_choice="$match"
+      return 0
+    fi
+  done
+}
+
+_pgm_vmx_likely_encrypted() {
+  [[ -f "$1" ]] || return 1
+  if grep -qiE '^encryption\.keySafe[[:space:]]*=' "$1" 2>/dev/null; then
+    return 0
+  fi
+  grep -qiE '^encryptVM\.enabled[[:space:]]*=[[:space:]]*"TRUE"' "$1" 2>/dev/null
+}
+
+# Reads a line into nameref $1; echoes '*' per char; Backspace erases. Uses stdin/stdout TTY.
+_pgm_read_password_masked() {
+  local -n _pw="$1"
+  local prompt="${2:-Passphrase: }"
+  local char
+
+  _pw=""
+  if [[ ! -t 0 ]] || [[ ! -t 1 ]]; then
+    echo "(PGM) Not a TTY; cannot read masked passphrase. Set TPM_PASS or use /root/SECRET/vmware-pass.sh" >&2
+    return 1
+  fi
+
+  printf '%s' "$prompt"
+  while true; do
+    IFS= read -rs -n 1 char || {
+      echo
+      return 1
+    }
+    if [[ "$char" == $'\n' || "$char" == $'\r' ]]; then
+      echo
+      break
+    fi
+    if [[ "$char" == $'\177' || "$char" == $'\b' ]]; then
+      if ((${#_pw} > 0)); then
+        _pw="${_pw%?}"
+        printf '\b \b'
+      fi
+      continue
+    fi
+    if [[ "$char" =~ [^[:print:]] ]]; then
+      continue
+    fi
+    _pw+="$char"
+    printf '*'
+  done
+  return 0
+}
+
+_pgm_ensure_tpm_pass_for_vmx() {
+  local vmx="$1"
+
+  [[ -n "${TPM_PASS:-}" ]] && return 0
+  if ! _pgm_vmx_likely_encrypted "$vmx"; then
+    return 0
+  fi
+  echo
+  echo "(PGM) This VMX appears encrypted. Enter the encryption passphrase (each character shown as *; Backspace corrects)."
+  if ! _pgm_read_password_masked TPM_PASS "Passphrase: "; then
+    echo "(PGM) Passphrase input aborted." >&2
+    return 1
+  fi
+  if [[ -z "${TPM_PASS}" ]]; then
+    echo "(PGM) Empty passphrase — vmrun may still prompt or fail." >&2
+  fi
+  return 0
+}
+
 _pgm_print_remaining_snapshots_for_vmx() {
   local vmx="$1"
   local list_r list_o snaps=() parse_rc i
@@ -226,10 +366,11 @@ else
 fi
 
 echo
-echo "(PGM) Enter the number of the VM to delete a snapshot from, or [q] to quit."
+echo "(PGM) Enter the VM number to delete a snapshot from, or [q] to quit."
+echo "(PGM) If only one menu index starts with the digits you type (e.g. 3), it is accepted at once; if several match (e.g. 1 vs 10–13), type more digits or press Enter to confirm."
 echo -n "Choice: "
-IFS= read -r choice || true
-echo
+choice=""
+_pgm_read_vm_menu_choice menu_idx_to_path choice
 
 if [[ "${choice,,}" == "q" ]] || [[ -z "${choice//[[:space:]]/}" ]]; then
   echo "(PGM) Exiting."
@@ -244,6 +385,10 @@ fi
 selected="${menu_idx_to_path[$choice]}"
 if [[ ! -f "$selected" ]]; then
   echo "(PGM) VMX not found: $selected" >&2
+  exit 1
+fi
+
+if ! _pgm_ensure_tpm_pass_for_vmx "$selected"; then
   exit 1
 fi
 
@@ -294,11 +439,12 @@ for s in "${snapshots[@]}"; do
 done
 
 echo
-echo "(PGM) Enter the number of the snapshot to delete, or [q] to quit."
+echo "(PGM) Enter the snapshot index to delete, or [q] to quit."
+echo "(PGM) Same prefix rule as the VM list: unique digits accept at once; otherwise type the full index or press Enter to confirm."
 echo "(PGM) Hint: deleteSnapshot usually needs the VM off or suspended."
 echo -n "Choice: "
-IFS= read -r schoice || true
-echo
+schoice=""
+_pgm_read_vm_menu_choice snap_idx_to_name schoice
 
 if [[ "${schoice,,}" == "q" ]] || [[ -z "${schoice//[[:space:]]/}" ]]; then
   echo "(PGM) Exiting."
