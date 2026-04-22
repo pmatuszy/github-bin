@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.04.22 - v. 0.3 - before vmrun: print command, [y/N] confirm (default N)
 # 2026.04.22 - v. 0.2 - EXIT banner: script start/stop wall times and elapsed
 # 2026.04.22 - v. 0.1 - interactive snapshot: running vs stopped VMs, readline snapshot name
 #
@@ -197,12 +198,31 @@ echo "(PGM) Creating snapshot:"
 echo "  VM:       $selected"
 echo "  Name:     $snap_name"
 echo
-
+echo "(PGM) Command to run:"
 if [[ -n "${TPM_PASS:-}" ]]; then
-  vmrun -vp "${TPM_PASS}" snapshot "$selected" "$snap_name"
+  vm_cmd=(vmrun -vp "$TPM_PASS" snapshot "$selected" "$snap_name")
+  printf '  %s\n' "vmrun -vp <TPM_PASS> snapshot $(printf '%q' "$selected") $(printf '%q' "$snap_name")"
 else
-  vmrun snapshot "$selected" "$snap_name"
+  vm_cmd=(vmrun snapshot "$selected" "$snap_name")
+  printf '  %s\n' "vmrun snapshot $(printf '%q' "$selected") $(printf '%q' "$snap_name")"
 fi
+echo
+echo -n "(PGM) Run this command? [y/N] "
+IFS= read -r -n 1 -t 300 run_confirm || true
+echo
+case "${run_confirm}" in
+  y|Y) ;;
+  n|N|''|$'\n'|$'\r')
+    echo "(PGM) Command not run (no)."
+    exit 0
+    ;;
+  *)
+    echo "(PGM) Command not run (only y/Y runs the command; n/N, Enter, or other = no)."
+    exit 0
+    ;;
+esac
+
+"${vm_cmd[@]}"
 rc=$?
 
 if ((rc == 0)); then
