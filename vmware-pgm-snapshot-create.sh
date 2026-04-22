@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.04.22 - v. 0.10 - menu read: treat empty key as Enter (TTY quirk after read -rs -n 1)
 # 2026.04.22 - v. 0.9 - quieter menu (no prefix hints); selected VM shown with boxes
 # 2026.04.22 - v. 0.8 - VM/snapshot menu read: read -rs -n 1 + echo digits (fixes TTY line-buffer stall on ambiguous prefix)
 # 2026.04.22 - v. 0.7 - encrypted VM: interactive TPM_PASS with masked input (asterisks) if not already set
@@ -143,7 +144,8 @@ _pgm_read_vm_menu_choice() {
       return 0
     }
 
-    if [[ "$key" == $'\n' || "$key" == $'\r' ]]; then
+    # Many TTYs: Return sends \n or \r; some leave key empty after read -rs -n 1 — treat as Enter.
+    if [[ "$key" == $'\n' || "$key" == $'\r' || -z "$key" ]]; then
       echo
       if [[ -z "$buf" ]]; then
         _out_choice=""
