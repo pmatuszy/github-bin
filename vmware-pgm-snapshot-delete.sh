@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.04.22 - v. 0.3 - print deleteSnapshot wall time before script footer
 # 2026.04.22 - v. 0.2 - after deleteSnapshot: list remaining snapshots
 # 2026.04.22 - v. 0.1 - interactive delete snapshot: pick VM, pick snapshot, show command, [y/N] run
 #
@@ -340,8 +341,21 @@ case "${run_confirm}" in
     ;;
 esac
 
+_delete_start=$(date +%s)
 "${vm_cmd[@]}"
 rc=$?
+_delete_end=$(date +%s)
+_delete_el=$((_delete_end - _delete_start))
+_delete_h=$((_delete_el / 3600))
+_delete_m=$(((_delete_el % 3600) / 60))
+_delete_s=$((_delete_el % 60))
+if ((_delete_h > 0)); then
+  _delete_human="${_delete_h}h ${_delete_m}m ${_delete_s}s"
+elif ((_delete_m > 0)); then
+  _delete_human="${_delete_m}m ${_delete_s}s"
+else
+  _delete_human="${_delete_s}s"
+fi
 
 if ((rc == 0)); then
   echo
@@ -352,6 +366,9 @@ else
 fi
 
 _pgm_print_remaining_snapshots_for_vmx "$selected" || true
+
+echo
+echo "(PGM) vmrun deleteSnapshot wall time: ${_delete_el}s (${_delete_human})"
 
 . /root/bin/_script_footer.sh
 exit "$rc"
