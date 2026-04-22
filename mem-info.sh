@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.04.22 - v. 0.20 - meminfo table: Field column width = max(len keys in chunk, len \"Field\")
 # 2026.04.22 - v. 0.19 - free -h: compact table — detect header row, trim CR, portable padding, right-align values
 # 2026.04.22 - v. 0.18 - free -h: tighten columns to max string width per column before boxes
 # 2026.04.22 - v. 0.17 - free -h: expand tabs to spaces before boxes (avoids skewed columns)
@@ -280,8 +281,21 @@ _mi_pct() {
   }'
 }
 
+# Widest key name in given meminfo lines, at least len("Field") (5).
+_mi_meminfo_field_width() {
+  local _mi_max=5 _mi_ln _mi_k
+  for _mi_ln in "$@"; do
+    [[ -z "$_mi_ln" ]] && continue
+    if [[ "$_mi_ln" =~ ^([^:]+): ]]; then
+      _mi_k="${BASH_REMATCH[1]}"
+      ((${#_mi_k} > _mi_max)) && _mi_max=${#_mi_k}
+    fi
+  done
+  printf '%s\n' "$_mi_max"
+}
+
 _mi_print_meminfo_header() {
-  local _mi_kw=38 _mi_nw=18 _mi_hw=18
+  local _mi_kw=${1:-38} _mi_nw=18 _mi_hw=18
   printf -v _mi_ds '%*s' "$_mi_kw" ''
   _mi_ds=${_mi_ds// /-}
   printf -v _mi_dn '%*s' "$_mi_nw" ''
@@ -297,8 +311,8 @@ _mi_meminfo_fetch_line() {
 }
 
 _mi_print_meminfo_line() {
-  local line=$1
-  local _mi_kw=38 _mi_nw=18 _mi_hw=18
+  local _mi_kw=${1:?} line=$2
+  local _mi_nw=18 _mi_hw=18
   [[ -z "$line" ]] && return
   if [[ "$line" =~ ^([^:]+):[[:space:]]+([0-9]+)[[:space:]]+kB[[:space:]]*$ ]]; then
     local key="${BASH_REMATCH[1]}"
@@ -435,9 +449,10 @@ for (( _mi_i = 0; _mi_i < _mi_total; )); do
   fi
   echo "$_mi_title" | boxes -a c -d stone
   {
-    _mi_print_meminfo_header
+    _mi_fw=$(_mi_meminfo_field_width "${_mi_nonempty[@]:_mi_i:$((_mi_end - _mi_i))}")
+    _mi_print_meminfo_header "$_mi_fw"
     for ((_mi_j = _mi_i; _mi_j < _mi_end; _mi_j++)); do
-      _mi_print_meminfo_line "${_mi_nonempty[_mi_j]}"
+      _mi_print_meminfo_line "$_mi_fw" "${_mi_nonempty[_mi_j]}"
     done
   } | boxes -a l -d stone
   echo
