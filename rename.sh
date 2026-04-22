@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# 2026.04.22 - v. 18.64 - treat _rename.sh.resume-state.json as internal protected (never prompt rename)
+# 2026.04.22 - v. 18.63 - flatten prompt: explain y/N/e/q; skip flatten when sole subdir is VIDEO_TS (DVD layout)
 # 2026.04.22 - v. 18.62 - offer [E]/[X] exception options on checksum-group rename prompt (same as plain entries)
 # 2026.04.21 - v. 18.61 - let user choose flatten result directory name (parent/child/manual edit with readline)
 # 2026.04.21 - v. 18.60 - add flatten-only directory exception option to skip future flatten prompts for exact paths
@@ -2585,6 +2587,9 @@ is_internal_protected_path() {
     if [[ "$abs" == "$start_abs/_exclude-rename.sh.txt" ]]; then
         return 0
     fi
+    if [[ "$abs" == "$start_abs/_rename.sh.resume-state.json" ]]; then
+        return 0
+    fi
     if [[ "$abs" == "$start_abs/_rename.sh-optional-db.sqlite3" ]]; then
         return 0
     fi
@@ -4623,6 +4628,12 @@ maybe_prompt_flatten_single_child_dir() {
     parent_base="$(basename -- "$parent_dir")"
     parent_parent_dir="$(dirname -- "$parent_dir")"
 
+    # DVD VIDEO_TS folder: do not offer to flatten (standard single-subdir layout).
+    if [[ "${child_base,,}" == "video_ts" ]]; then
+        vlog "Flatten prompt skipped: sole subdirectory is VIDEO_TS (DVD layout): '$child_dir'"
+        return 0
+    fi
+
     if ! find "$child_dir" -type f -print -quit | grep -q .; then
         return 0
     fi
@@ -4632,7 +4643,12 @@ maybe_prompt_flatten_single_child_dir() {
     echo "Contains exactly one subdirectory with files:"
     echo "  $child_dir"
     verbose_question_timestamp "Move child contents one level up and delete this subdirectory?"
-    echo -n "Move child contents one level up and delete this subdirectory? [y/N/e/q]: "
+    echo "Move child contents one level up and delete this subdirectory?"
+    echo "  [Y] Yes — flatten (move child contents up, remove subdirectory; then choose folder name)"
+    echo "  [N] No (default) — keep current folder layout"
+    echo "  [E] Add flatten exception — skip flatten prompts for this directory in the future"
+    echo "  [Q] Quit — stop the script"
+    echo -n "Choice [y/N/e/q]: "
     flush_stdin
     read_single_key answer "$PROMPT_WAIT_SECONDS"
     echo
