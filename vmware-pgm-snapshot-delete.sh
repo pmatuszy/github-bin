@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.04.22 - v. 0.11 - Linux vmrun -T ws + TPM_PASS CR strip (encrypted vmrun auth)
 # 2026.04.22 - v. 0.10 - masked passphrase: treat empty read as Enter (no spurious *)
 # 2026.04.22 - v. 0.9 - menu read: treat empty key as Enter (confirm VM 1 after typing 1)
 # 2026.04.22 - v. 0.8 - quieter menu; selected VM in boxes; snapshot prompt shortened
@@ -15,6 +16,7 @@
 #   VMWARE_VM_SEARCH_DIRS — optional; if set, replaces the default VM_LOCATIONS below (space-separated roots)
 #   TPM_PASS — optional; if set (e.g. via /root/SECRET/vmware-pass.sh), vmrun uses -vp for encrypted VMs.
 #              If unset and the .vmx looks encrypted, you are prompted on a TTY (passphrase shown as *).
+#   VMRUN_NO_WS — if non-empty, skip adding -T ws on Linux.
 #
 # Note: vmrun deleteSnapshot usually requires the VM to be powered off or suspended (see VMware docs).
 
@@ -68,6 +70,7 @@ export DISPLAY=
 if [[ -f /root/SECRET/vmware-pass.sh ]]; then
   # shellcheck source=/dev/null
   . /root/SECRET/vmware-pass.sh
+  [[ -n "${TPM_PASS:-}" ]] && TPM_PASS="${TPM_PASS//$'\r'/}"
 fi
 
 if ! type -fP vmrun &>/dev/null; then
@@ -75,6 +78,11 @@ if ! type -fP vmrun &>/dev/null; then
   echo "(PGM) I can't find vmrun utility... exiting ..."
   echo
   exit 1
+fi
+
+VMRUN_PREFIX=(vmrun)
+if [[ "$(uname -s)" == Linux && -z "${VMRUN_NO_WS:-}" ]]; then
+  VMRUN_PREFIX=(vmrun -T ws)
 fi
 
 if [[ -n "${VMWARE_VM_SEARCH_DIRS:-}" ]]; then
@@ -279,6 +287,7 @@ _pgm_ensure_tpm_pass_for_vmx() {
     echo "(PGM) Passphrase input aborted." >&2
     return 1
   fi
+  TPM_PASS="${TPM_PASS//$'\r'/}"
   if [[ -z "${TPM_PASS}" ]]; then
     echo "(PGM) Empty passphrase — vmrun may still prompt or fail." >&2
   fi
@@ -291,9 +300,9 @@ _pgm_print_remaining_snapshots_for_vmx() {
 
   list_r=0
   if [[ -n "${TPM_PASS:-}" ]]; then
-    list_o=$(vmrun -vp "$TPM_PASS" listSnapshots "$vmx" 2>&1) || list_r=$?
+    list_o=$("${VMRUN_PREFIX[@]}" -vp "$TPM_PASS" listSnapshots "$vmx" 2>&1) || list_r=$?
   else
-    list_o=$(vmrun listSnapshots "$vmx" 2>&1) || list_r=$?
+    list_o=$("${VMRUN_PREFIX[@]}" listSnapshots "$vmx" 2>&1) || list_r=$?
   fi
 
   echo
@@ -326,7 +335,7 @@ _pgm_print_remaining_snapshots_for_vmx() {
   return 0
 }
 
-mapfile -t _running_raw < <(vmrun list 2>/dev/null | grep -E '\.vmx$' | sort -u)
+mapfile -t _running_raw < <("${VMRUN_PREFIX[@]}" list 2>/dev/null | grep -E '\.vmx$' | sort -u)
 
 _vmx_lines=()
 declare -A _seen_canon=()
@@ -428,9 +437,9 @@ echo
 echo "(PGM) Listing snapshots (vmrun listSnapshots) …"
 list_rc=0
 if [[ -n "${TPM_PASS:-}" ]]; then
-  list_out=$(vmrun -vp "$TPM_PASS" listSnapshots "$selected" 2>&1) || list_rc=$?
+  list_out=$("${VMRUN_PREFIX[@]}" -vp "$TPM_PASS" listSnapshots "$selected" 2>&1) || list_rc=$?
 else
-  list_out=$(vmrun listSnapshots "$selected" 2>&1) || list_rc=$?
+  list_out=$("${VMRUN_PREFIX[@]}" listSnapshots "$selected" 2>&1) || list_rc=$?
 fi
 
 if ((list_rc != 0)); then
@@ -489,11 +498,11 @@ echo "  Snapshot:     $snap_del"
 echo
 echo "(PGM) Command to run:"
 if [[ -n "${TPM_PASS:-}" ]]; then
-  vm_cmd=(vmrun -vp "$TPM_PASS" deleteSnapshot "$selected" "$snap_del")
-  printf '  %s\n' "vmrun -vp <TPM_PASS> deleteSnapshot $(printf '%q' "$selected") $(printf '%q' "$snap_del")"
+  vm_cmd=("${VMRUN_PREFIX[@]}" -vp "$TPM_PASS" deleteSnapshot "$selected" "$snap_del")
+  printf '  %s\n' "${VMRUN_PREFIX[*]} -vp <TPM_PASS> deleteSnapshot $(printf '%q' "$selected") $(printf '%q' "$snap_del")"
 else
-  vm_cmd=(vmrun deleteSnapshot "$selected" "$snap_del")
-  printf '  %s\n' "vmrun deleteSnapshot $(printf '%q' "$selected") $(printf '%q' "$snap_del")"
+  vm_cmd=("${VMRUN_PREFIX[@]}" deleteSnapshot "$selected" "$snap_del")
+  printf '  %s\n' "${VMRUN_PREFIX[*]} deleteSnapshot $(printf '%q' "$selected") $(printf '%q' "$snap_del")"
 fi
 echo
 echo -n "(PGM) Run this command? [y/N] "

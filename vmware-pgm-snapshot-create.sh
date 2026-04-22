@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.04.22 - v. 0.12 - Linux vmrun: -T ws + normalize TPM_PASS CR; encrypted snapshot/delete auth
 # 2026.04.22 - v. 0.11 - masked passphrase: treat empty read as Enter (no spurious *)
 # 2026.04.22 - v. 0.10 - menu read: treat empty key as Enter (TTY quirk after read -rs -n 1)
 # 2026.04.22 - v. 0.9 - quieter menu (no prefix hints); selected VM shown with boxes
@@ -16,6 +17,7 @@
 #   VMWARE_VM_SEARCH_DIRS — optional; if set, replaces the default VM_LOCATIONS below (space-separated roots)
 #   TPM_PASS — optional; if set (e.g. via /root/SECRET/vmware-pass.sh), vmrun uses -vp for encrypted VMs.
 #              If unset and the .vmx looks encrypted, you are prompted on a TTY (passphrase shown as *).
+#   VMRUN_NO_WS — if non-empty, skip adding -T ws on Linux (default: vmrun -T ws per Workstation examples).
 
 . /root/bin/_script_header.sh
 
@@ -67,6 +69,7 @@ export DISPLAY=
 if [[ -f /root/SECRET/vmware-pass.sh ]]; then
   # shellcheck source=/dev/null
   . /root/SECRET/vmware-pass.sh
+  [[ -n "${TPM_PASS:-}" ]] && TPM_PASS="${TPM_PASS//$'\r'/}"
 fi
 
 if ! type -fP vmrun &>/dev/null; then
@@ -74,6 +77,12 @@ if ! type -fP vmrun &>/dev/null; then
   echo "(PGM) I can't find vmrun utility... exiting ..."
   echo
   exit 1
+fi
+
+# Broadcom / vmrun examples use -T ws on Workstation; on Linux this pairs correctly with -vp for some hosts.
+VMRUN_PREFIX=(vmrun)
+if [[ "$(uname -s)" == Linux && -z "${VMRUN_NO_WS:-}" ]]; then
+  VMRUN_PREFIX=(vmrun -T ws)
 fi
 
 if [[ -n "${VMWARE_VM_SEARCH_DIRS:-}" ]]; then
@@ -278,13 +287,14 @@ _pgm_ensure_tpm_pass_for_vmx() {
     echo "(PGM) Passphrase input aborted." >&2
     return 1
   fi
+  TPM_PASS="${TPM_PASS//$'\r'/}"
   if [[ -z "${TPM_PASS}" ]]; then
     echo "(PGM) Empty passphrase — vmrun may still prompt or fail." >&2
   fi
   return 0
 }
 
-mapfile -t _running_raw < <(vmrun list 2>/dev/null | grep -E '\.vmx$' | sort -u)
+mapfile -t _running_raw < <("${VMRUN_PREFIX[@]}" list 2>/dev/null | grep -E '\.vmx$' | sort -u)
 
 _vmx_lines=()
 declare -A _seen_canon=()
@@ -386,9 +396,9 @@ echo
 echo "(PGM) Existing snapshots (vmrun listSnapshots) …"
 list_exist_rc=0
 if [[ -n "${TPM_PASS:-}" ]]; then
-  list_exist_out=$(vmrun -vp "$TPM_PASS" listSnapshots "$selected" 2>&1) || list_exist_rc=$?
+  list_exist_out=$("${VMRUN_PREFIX[@]}" -vp "$TPM_PASS" listSnapshots "$selected" 2>&1) || list_exist_rc=$?
 else
-  list_exist_out=$(vmrun listSnapshots "$selected" 2>&1) || list_exist_rc=$?
+  list_exist_out=$("${VMRUN_PREFIX[@]}" listSnapshots "$selected" 2>&1) || list_exist_rc=$?
 fi
 
 if ((list_exist_rc != 0)); then
@@ -434,11 +444,11 @@ echo "  Name:     $snap_name"
 echo
 echo "(PGM) Command to run:"
 if [[ -n "${TPM_PASS:-}" ]]; then
-  vm_cmd=(vmrun -vp "$TPM_PASS" snapshot "$selected" "$snap_name")
-  printf '  %s\n' "vmrun -vp <TPM_PASS> snapshot $(printf '%q' "$selected") $(printf '%q' "$snap_name")"
+  vm_cmd=("${VMRUN_PREFIX[@]}" -vp "$TPM_PASS" snapshot "$selected" "$snap_name")
+  printf '  %s\n' "${VMRUN_PREFIX[*]} -vp <TPM_PASS> snapshot $(printf '%q' "$selected") $(printf '%q' "$snap_name")"
 else
-  vm_cmd=(vmrun snapshot "$selected" "$snap_name")
-  printf '  %s\n' "vmrun snapshot $(printf '%q' "$selected") $(printf '%q' "$snap_name")"
+  vm_cmd=("${VMRUN_PREFIX[@]}" snapshot "$selected" "$snap_name")
+  printf '  %s\n' "${VMRUN_PREFIX[*]} snapshot $(printf '%q' "$selected") $(printf '%q' "$snap_name")"
 fi
 echo
 echo -n "(PGM) Run this command? [y/N] "
