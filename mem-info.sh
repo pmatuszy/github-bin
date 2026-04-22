@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.04.22 - v. 0.15 - no pause before free section; free table left-align columns for header/value match
 # 2026.04.22 - v. 0.14 - default meminfo list: drop slab/commit/bounce/vmalloc/percpu and related rows
 # 2026.04.22 - v. 0.13 - free table: build header + human sizes from free -b so columns match
 # 2026.04.22 - v. 0.12 - no blank line before free section; column-align free -h inside box (LC_ALL=C)
@@ -96,8 +97,8 @@ Cached (file cache), and Buffers.
 
 Paging:
   When stdout is a terminal and /dev/tty can be read, the script pauses
-  between sections (after the summary, not after the title) and between
-  meminfo chunks. One keypress continues (read -n 1); q or Q exits early.
+  after the free -h table and between meminfo chunks (not after the title or
+  summary). One keypress continues (read -n 1); q or Q exits early.
   Pipe output or use --no-page for a single uninterrupted stream.
 
 Options:
@@ -120,7 +121,7 @@ Environment:
 
 Examples:
   mem-info.sh
-      On a tty: pauses between sections by default.
+      On a tty: pauses after the free table and between meminfo chunks by default.
   mem-info.sh -n
       Full report in one go (no Enter prompts).
   mem-info.sh | less -S
@@ -169,7 +170,7 @@ _mi_pause_if_needed() {
   fi
 }
 
-# Same figures as free -h, but header + rows use one fixed width per column (from free -b bytes).
+# Same figures as free -h: free -b + human sizes. Left-align each column so headers sit above values.
 _mi_print_free_h_aligned() {
   LC_ALL=C free -b | awk '
   function hbytes(n, neg, m, k) {
@@ -184,22 +185,42 @@ _mi_print_free_h_aligned() {
     if (k >= 1) return sprintf("%s%.0fKi", neg, k)
     return sprintf("%s%.0fB", neg, n)
   }
-  BEGIN { LBL = 7; CW = 11 }
+  function pr_mem_row(lbl, t, u, f, s, bc, av) {
+    printf "%-*s", LBL, lbl
+    printf "%-*s", CW[1], t
+    printf "%-*s", CW[2], u
+    printf "%-*s", CW[3], f
+    printf "%-*s", CW[4], s
+    printf "%-*s", CW[5], bc
+    printf "%-*s", CW[6], av
+    printf "\n"
+  }
+  BEGIN {
+    LBL = 8
+    split("13 13 13 13 13 13", CW, " ")
+    split("total used free shared buff/cache available", H, " ")
+  }
   NR == 1 { next }
   $1 ~ /^Mem:/ {
     if (!hdr) {
-      printf "%-*s%*s%*s%*s%*s%*s%*s\n", LBL, "", \
-        CW, "total", CW, "used", CW, "free", CW, "shared", CW, "buff/cache", CW, "available"
+      printf "%-*s", LBL, ""
+      printf "%-*s", CW[1], H[1]
+      printf "%-*s", CW[2], H[2]
+      printf "%-*s", CW[3], H[3]
+      printf "%-*s", CW[4], H[4]
+      printf "%-*s", CW[5], H[5]
+      printf "%-*s", CW[6], H[6]
+      printf "\n"
       hdr = 1
     }
-    printf "%-*s", LBL, $1
-    for (i = 2; i <= NF && i <= 7; i++) printf "%*s", CW, hbytes($i)
-    printf "\n"
+    pr_mem_row($1, hbytes($2), hbytes($3), hbytes($4), hbytes($5), hbytes($6), hbytes($7))
     next
   }
   $1 ~ /^Swap:/ {
     printf "%-*s", LBL, $1
-    for (i = 2; i <= NF && i <= 4; i++) printf "%*s", CW, hbytes($i)
+    printf "%-*s", CW[1], hbytes($2)
+    printf "%-*s", CW[2], hbytes($3)
+    printf "%-*s", CW[3], hbytes($4)
     printf "\n"
     next
   }
@@ -326,7 +347,6 @@ _mi_sl_pad_to_note() {
     echo 'none configured (SwapTotal 0)'
   fi
 } | boxes -a l -d stone
-_mi_pause_if_needed
 
 echo "(PGM) free -h" | boxes -a c -d stone
 _mi_print_free_h_aligned | boxes -a l -d stone
