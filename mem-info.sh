@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.04.22 - v. 0.23 - free -m: plain aligned output (no boxes); expand + compact only
 # 2026.04.22 - v. 0.22 - free section: use free -m; same expand + compact + boxes pipeline (aligned MiB table)
 # 2026.04.22 - v. 0.21 - meminfo table: Value and Human column widths = max per chunk (like Field)
 # 2026.04.22 - v. 0.20 - meminfo table: Field column width = max(longest key in chunk, width of header word Field)
@@ -95,7 +96,7 @@ Usage: mem-info.sh [-h|--help] [-v|--version] [-p|--page] [-n|--no-page] [-f|--f
 
 Print a readable RAM report for the local Linux system: summary (with the
 kernel's MemAvailable estimate, rough "used" vs page cache), free -m (Mebibytes)
-in a boxed table, and a /proc/meminfo table (selected fields by default; use -f for all).
+as aligned plain text, and a /proc/meminfo table (selected fields by default; use -f for all).
 
 MemAvailable is usually the best "how much RAM can I use?" number; MemFree
 ignores reclaimable cache. The summary also shows MemTotal-MemAvailable
@@ -206,7 +207,7 @@ _mi_expand_tabs() {
 # Re-print procps free output (stdin, whitespace-separated after expand): minimal column width
 # per logical column (header = row whose first field is "total" with LC_ALL=C; data = "Label:").
 # Header words left-aligned; numbers right-aligned like free(1). Portable awk (no empty %-s).
-# Used for free -m (and works for -h): tabs/terminal widths confuse boxes; this normalizes first.
+# Used for free -m (and works for -h): expands tabs and compacts columns for monospace display.
 _mi_free_compact_columns() {
   LC_ALL=C awk '
     function tf(f,    s) {
@@ -410,9 +411,9 @@ _mi_sl_pad_to_note() {
   fi
 } | boxes -a l -d stone
 
-echo "(PGM) free -m" | boxes -a c -d stone
-# Same layout as CLI free -m; expand TABs, compact column widths, then box (boxes is not tab-aware).
-LC_ALL=C free -m | _mi_expand_tabs | _mi_free_compact_columns | boxes -a l -d stone
+echo "(PGM) free -m"
+# Aligned like compact monospace free -m; no boxes (boxes breaks tab-based layout).
+LC_ALL=C free -m | _mi_expand_tabs | _mi_free_compact_columns
 echo
 _mi_pause_if_needed
 
