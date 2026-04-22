@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# 2026.04.22 - v. 0.20 - meminfo table: Field column width = max(len keys in chunk, len \"Field\")
+# 2026.04.22 - v. 0.20 - meminfo table: Field column width = max(longest key in chunk, width of header word Field)
 # 2026.04.22 - v. 0.19 - free -h: compact table — detect header row, trim CR, portable padding, right-align values
 # 2026.04.22 - v. 0.18 - free -h: tighten columns to max string width per column before boxes
 # 2026.04.22 - v. 0.17 - free -h: expand tabs to spaces before boxes (avoids skewed columns)
