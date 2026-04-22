@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.04.22 - v. 0.5 - before new snapshot name: list existing snapshots (listSnapshots)
 # 2026.04.22 - v. 0.4 - after VM choice: df -hT for filesystem holding the .vmx
 # 2026.04.22 - v. 0.3 - before vmrun: print command, [y/N] confirm (default N)
 # 2026.04.22 - v. 0.2 - EXIT banner: script start/stop wall times and elapsed
@@ -96,6 +97,29 @@ _add_unique_vmx_line() {
   _vmx_lines+=( "$line" )
 }
 
+# Fills the array named by $2 with names from vmrun listSnapshots stdout in $1.
+# Returns 10 if output contains Total snapshots: 0 (array cleared).
+_pgm_parse_snapshots_from_list_out() {
+  local list_out="$1"
+  local -n _snaps_ref="$2"
+  local line saw_zero=0
+
+  _snaps_ref=()
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    line="${line%$'\r'}"
+    [[ -z "${line//[[:space:]]/}" ]] && continue
+    if [[ "${line}" =~ [Tt]otal[[:space:]]+snapshots: ]]; then
+      if [[ "${line}" =~ [Tt]otal[[:space:]]+snapshots:[[:space:]]*0[[:space:]]*$ ]]; then
+        saw_zero=1
+      fi
+      continue
+    fi
+    _snaps_ref+=("$line")
+  done <<< "$list_out"
+  ((saw_zero == 1)) && return 10
+  return 0
+}
+
 mapfile -t _running_raw < <(vmrun list 2>/dev/null | grep -E '\.vmx$' | sort -u)
 
 _vmx_lines=()
@@ -187,6 +211,38 @@ echo "(PGM) Storage — filesystem containing this VM (same mount as the .vmx pa
 if ! df -hT -- "$selected" 2>/dev/null; then
   echo "(PGM) df -hT failed; trying df -h ..." >&2
   df -h -- "$selected" || echo "(PGM) Could not show disk space for: $selected" >&2
+fi
+echo
+
+echo "(PGM) Existing snapshots (vmrun listSnapshots) …"
+list_exist_rc=0
+if [[ -n "${TPM_PASS:-}" ]]; then
+  list_exist_out=$(vmrun -vp "$TPM_PASS" listSnapshots "$selected" 2>&1) || list_exist_rc=$?
+else
+  list_exist_out=$(vmrun listSnapshots "$selected" 2>&1) || list_exist_rc=$?
+fi
+
+if ((list_exist_rc != 0)); then
+  echo "(PGM) vmrun listSnapshots failed (exit $list_exist_rc); continuing without listing." >&2
+  echo "$list_exist_out" >&2
+else
+  exist_snaps=()
+  _pgm_parse_snapshots_from_list_out "$list_exist_out" exist_snaps
+  exist_parse_rc=$?
+  echo
+  echo "====================  EXISTING SNAPSHOTS  ========================"
+  if ((exist_parse_rc == 10)); then
+    echo "  (none)"
+  elif ((${#exist_snaps[@]} == 0)); then
+    echo "(PGM) Could not parse snapshot list. Raw output:"
+    echo "$list_exist_out"
+  else
+    exist_i=1
+    for s in "${exist_snaps[@]}"; do
+      printf '  [%2d] %s\n' "$exist_i" "$s"
+      ((++exist_i))
+    done
+  fi
 fi
 echo
 
