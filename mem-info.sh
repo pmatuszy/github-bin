@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.04.22 - v. 0.17 - free -h: expand tabs to spaces before boxes (avoids skewed columns)
 # 2026.04.22 - v. 0.16 - free section: pipe real free -h into boxes (procps alignment); drop custom free -b formatter
 # 2026.04.22 - v. 0.15 - no pause before free section; free table left-align columns for header/value match
 # 2026.04.22 - v. 0.14 - default meminfo list: drop slab/commit/bounce/vmalloc/percpu and related rows
@@ -171,6 +172,32 @@ _mi_pause_if_needed() {
   fi
 }
 
+# boxes treats lines as plain text; procps may use TABs — expand to spaces (8-col stops) like a terminal.
+_mi_expand_tabs() {
+  if command -v expand &>/dev/null; then
+    expand -t 8
+  else
+    awk '{
+      len = length($0)
+      out = ""
+      col = 0
+      for (i = 1; i <= len; i++) {
+        c = substr($0, i, 1)
+        if (c == "\t") {
+          n = 8 - (col % 8)
+          if (n == 0) n = 8
+          for (j = 1; j <= n; j++) out = out " "
+          col += n
+        } else {
+          out = out c
+          col = (c == "\n" ? 0 : col + 1)
+        }
+      }
+      print out
+    }'
+  fi
+}
+
 _mi_kb() {
   awk -v k="$1" '$1==k":" {print $2; exit}' /proc/meminfo
 }
@@ -293,8 +320,8 @@ _mi_sl_pad_to_note() {
 } | boxes -a l -d stone
 
 echo "(PGM) free -h" | boxes -a c -d stone
-# Use procps output as-is (same column widths and rounding as: free -h).
-free -h | boxes -a l -d stone
+# Same numbers as free -h; TABs expanded so boxes lines up like the terminal.
+LC_ALL=C free -h | _mi_expand_tabs | boxes -a l -d stone
 echo
 _mi_pause_if_needed
 
