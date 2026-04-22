@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.04.22 - v. 0.2 - EXIT banner: script start/stop wall times and elapsed
 # 2026.04.22 - v. 0.1 - interactive snapshot: running vs stopped VMs, readline snapshot name
 #
 # Environment:
@@ -7,6 +8,37 @@
 #   TPM_PASS — optional; if set (e.g. via /root/SECRET/vmware-pass.sh), vmrun uses -vp for encrypted VMs
 
 . /root/bin/_script_header.sh
+
+_SCRIPT_START_EPOCH=$(date +%s)
+_SCRIPT_START_FMT=$(date '+%Y-%m-%d %H:%M:%S %Z')
+
+_print_run_timing_banner() {
+  local end_ep end_fmt elapsed h m s human
+
+  end_ep=$(date +%s)
+  end_fmt=$(date '+%Y-%m-%d %H:%M:%S %Z')
+  elapsed=$((end_ep - _SCRIPT_START_EPOCH))
+  h=$((elapsed / 3600))
+  m=$(((elapsed % 3600) / 60))
+  s=$((elapsed % 60))
+  if ((h > 0)); then
+    human="${h}h ${m}m ${s}s"
+  elif ((m > 0)); then
+    human="${m}m ${s}s"
+  else
+    human="${s}s"
+  fi
+
+  echo
+  echo "=========================================="
+  echo "  $(basename "$0") — run timing"
+  echo "  Started: ${_SCRIPT_START_FMT}"
+  echo "  Stopped: ${end_fmt}"
+  echo "  Elapsed: ${elapsed}s (${human})"
+  echo "=========================================="
+}
+
+trap '_print_run_timing_banner' EXIT
 
 check_if_installed virt-what
 
