@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.04.23 - v. 18.87 - wrap sqlite3 -uri fallback WARNING to respect MAX_LINE_LENGTH (two lines when needed)
 # 2026.04.23 - v. 18.86 - sqlite3 without -uri: probe once, fall back to path open (nolock URI unavailable); warn once
 # 2026.04.23 - v. 18.85 - SQLite checked_paths: full column list in CREATE (signature, hashes); batched ALTER migration before WAL; fix warmup SELECT
 # 2026.04.23 - v. 18.84 - db_init: drop EXCLUSIVE/BEGIN IMMEDIATE (breaks CIFS); optional bootstrap via local TMPDIR + mv; then nolock URI
@@ -893,7 +894,14 @@ rename_sqlite3_db_run() {
         else
             if [[ -z "$RENAME_SQLITE3_URI_FALLBACK_WARNED" ]]; then
                 RENAME_SQLITE3_URI_FALLBACK_WARNED=1
-                echo "WARNING: this sqlite3 has no -uri option (need 3.7.13+ for file:...?nolock=1). Opening the cache by filesystem path instead; on CIFS/SMB you may see \"database is locked\" — install a newer sqlite3 or use a local cache directory." >&2
+                local sqlite_uri_warn_msg
+                sqlite_uri_warn_msg="WARNING: this sqlite3 has no -uri option (need 3.7.13+ for file:...?nolock=1). Opening the cache by filesystem path instead; on CIFS/SMB you may see \"database is locked\" — install a newer sqlite3 or use a local cache directory."
+                if (( ${#sqlite_uri_warn_msg} <= MAX_LINE_LENGTH )); then
+                    echo "$sqlite_uri_warn_msg" >&2
+                else
+                    echo "WARNING: this sqlite3 has no -uri option (need 3.7.13+ for file:...?nolock=1). Opening the cache by filesystem path instead;" >&2
+                    echo "          On CIFS/SMB you may see \"database is locked\" — install a newer sqlite3 or use a local cache directory." >&2
+                fi
             fi
             sqlite3 "$DB_FILE" "$@"
         fi
