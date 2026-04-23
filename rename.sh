@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.04.22 - v. 18.73 - do not rename aggregate checksum manifest _sumy_kontrolne.md5 (basename, case-insensitive)
 # 2026.04.22 - v. 18.72 - directories: never stem/ext split (no extensions); normalize full basename like extensionless files
 # 2026.04.22 - v. 18.71 - if last-dot suffix has space or brackets (e.g. Site.PL - rest), normalize whole basename not only stem
 # 2026.04.22 - v. 18.70 - strip Audiobook PL markers case-insensitively ([AudioBook PL], _AudioBook_PL, etc.; GNU sed I)
@@ -2530,10 +2531,13 @@ is_checksum_file() {
 
 is_protected_checksum_name() {
     local p="$1"
-    local base
+    local base lower
     base="$(basename -- "$p")"
+    lower="${base,,}"
     is_checksum_file "$p" || return 1
-    [[ "$base" == __* ]]
+    [[ "$base" == __* ]] && return 0
+    [[ "$lower" == '_sumy_kontrolne.md5' ]] && return 0
+    return 1
 }
 
 is_html_file() {
