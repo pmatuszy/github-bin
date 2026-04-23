@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.04.22 - v. 18.76 - rename menu [L]: session auto-yes when suggestion only lowercases a mixed-case 3-letter alphabetic extension
 # 2026.04.22 - v. 18.75 - rename menu [T]: delete *torrent*.URL shortcuts; allow no-op renames to menu for those; DB row delete on remove
 # 2026.04.22 - v. 18.74 - fix DB path rewrite after mv: resolve old path via parent+basename; checksum file refs + .md5/.sha512 renames update rows
 # 2026.04.22 - v. 18.73 - do not rename aggregate checksum manifest _sumy_kontrolne.md5 (basename, case-insensitive)
@@ -2607,6 +2608,28 @@ is_torrent_url_file() {
     [[ "$lower" == *torrent*.url ]]
 }
 
+# True when old/new differ only by lowercasing a 3-letter alphabetic extension (same dirname and basename stem).
+rename_suggested_only_lowercase_three_letter_ext() {
+    local old_path="$1" new_path="$2"
+    local dir_old dir_new ob nb stem oe ne
+
+    [[ -f "$old_path" ]] || return 1
+    dir_old="$(dirname -- "$old_path")"
+    dir_new="$(dirname -- "$new_path")"
+    [[ "$dir_old" == "$dir_new" ]] || return 1
+    ob="$(basename -- "$old_path")"
+    nb="$(basename -- "$new_path")"
+    [[ "$ob" == *.* && "$nb" == *.* ]] || return 1
+    stem="${ob%.*}"
+    oe="${ob##*.}"
+    ne="${nb##*.}"
+    [[ "${#oe}" -eq 3 && "$oe" =~ ^[[:alpha:]]{3}$ ]] || return 1
+    [[ "$oe" != "${oe,,}" ]] || return 1
+    [[ "$stem" == "${nb%.*}" ]] || return 1
+    [[ "$ne" == "${oe,,}" ]] || return 1
+    return 0
+}
+
 is_protected_par2_name() {
     local p="$1"
     local base lower
@@ -4382,6 +4405,7 @@ files_skipped=0
 stopped_by_user=no
 rename_all=no
 AUTO_RENAME_DIR=""
+AUTO_LOWERCASE_3_EXT_SESSION=no
 
 declare -a renamed_list=()
 declare -A recorded
@@ -4625,7 +4649,8 @@ auto_yes_current_dir_matches() {
 print_rename_prompt_menu() {
     local kind_label="$1"
     local path="${2-}"
-    local choice_hint="Choice [Y/n/m/a/d/E/x/q]: "
+    local suggested_new="${3-}"
+    local choice_hint="Choice [Y/n/m/a/d"
 
     echo -e "${GREEN}Rename this ${kind_label}?${RESET}"
     echo "  [Y] Yes (default)"
@@ -4633,13 +4658,18 @@ print_rename_prompt_menu() {
     echo "  [M] Rename by editing target filename"
     echo "  [A] All remaining"
     echo "  [D] Yes for this directory"
+    if [[ -n "$path" && -n "$suggested_new" ]] && rename_suggested_only_lowercase_three_letter_ext "$path" "$suggested_new"; then
+        echo "  [L] Yes, and auto-approve all such 3-letter extension lowercases for this run (no further prompts)"
+        choice_hint+=/l
+    fi
     if [[ -n "$path" ]] && is_torrent_url_file "$path"; then
         echo "  [T] Delete this torrent .URL shortcut"
-        choice_hint="Choice [Y/n/m/a/d/t/E/x/q]: "
+        choice_hint+=/t
     fi
     echo "  [E] Add exception (skip this path and its subtree by filter match)"
     echo "  [X] Exact exception (do not rename only this exact path; still check subtree)"
     echo "  [Q] Quit"
+    choice_hint+="/E/x/q]: "
     echo -n "$choice_hint"
 }
 
@@ -5729,6 +5759,12 @@ for f in "${ordered_paths[@]}"; do
         continue
     fi
 
+    if [[ "$AUTO_LOWERCASE_3_EXT_SESSION" == "yes" ]] && [[ "$f" != "$new" ]] && rename_suggested_only_lowercase_three_letter_ext "$f" "$new"; then
+        print_rename_action_verbose "$f" "$new" "auto lowercase 3-letter ext (session)"
+        perform_plain_entry_rename "$f" "$new" || break
+        continue
+    fi
+
     torrent_url_noop=
     if is_torrent_url_file "$f" && [[ "$f" == "$new" ]]; then
         torrent_url_noop=1
@@ -5737,7 +5773,7 @@ for f in "${ordered_paths[@]}"; do
     echo
     echo -e "${RED}OLD:${RESET} $f"
     echo -e "${GREEN}NEW:${RESET} $new"
-    print_rename_prompt_menu "entry" "$f"
+    print_rename_prompt_menu "entry" "$f" "$new"
     flush_stdin
     read_single_key input "$PROMPT_WAIT_SECONDS"
     echo
@@ -5816,6 +5852,17 @@ for f in "${ordered_paths[@]}"; do
                 ((++files_affected))
             fi
             processed["$f"]=1
+            ;;
+        l|L)
+            if ! rename_suggested_only_lowercase_three_letter_ext "$f" "$new"; then
+                echo -e "${YELLOW}[L] applies only when the suggestion only lowercases a mixed-case 3-letter alphabetic extension.${RESET}"
+                ((++files_skipped))
+            else
+                AUTO_LOWERCASE_3_EXT_SESSION=yes
+                vlog "Session auto-yes enabled for 3-letter extension lowercasing-only renames"
+                print_rename_action_verbose "$f" "$new" "lowercase 3-letter ext + session auto"
+                perform_plain_entry_rename "$f" "$new" || break
+            fi
             ;;
         *)
             if [[ -n "$torrent_url_noop" ]]; then
