@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.04.23 - v. 18.91 - exclude file: FILE=basename (or FILE=glob) skips renames for that filename in any directory; prompt [F]
 # 2026.04.23 - v. 18.90 - normalize YYYY-MM-DD_at_HH.MM.SS[_tail].ext -> YYYYMMDD_HHMMSS[_tail].ext
 # 2026.04.23 - v. 18.89 - same-inode source/target: no rename prompt (case-insensitive FS); extension-only lowercasing for any ext (.MP4); [L] menu widened
 # 2026.04.23 - v. 18.88 - underscore-leading .par2: allow renames but preserve leading _ in normalize (was: skip rename entirely)
@@ -359,6 +360,10 @@ Options:
   --wait-seconds [0]|N   Wait N seconds for each interactive answer; 0 means wait forever
   -h, --help             Show this help
 
+Optional exclude file in the start directory: _exclude-rename.sh.txt
+  FILE=basename or FILE=wildcard — skip renaming that filename in every subdirectory (not path-specific).
+  [F] at the rename or checksum-group prompt appends FILE=<that file's basename>. See also =full/path, /basename/, globs.
+
 Example:
   rename.sh -v --use-db --colors yes --mode real --scope subdirs
   rename.sh -v --use-db --fast --colors yes --mode real --scope subdirs
@@ -607,10 +612,22 @@ is_excluded_by_filter_file() {
     local filter
     local base
     local exact_target
+    local fn_pat
 
     base="$(basename -- "$p")"
 
     for filter in "${EXCLUDE_FILTERS[@]}"; do
+        if [[ "$filter" == FILE=* ]]; then
+            fn_pat="${filter#FILE=}"
+            [[ -f "$p" ]] || continue
+            if [[ "$fn_pat" == *'*'* || "$fn_pat" == *'?'* || "$fn_pat" == *'['* ]]; then
+                [[ "$base" == $fn_pat ]] && return 0
+            else
+                [[ "$base" == "$fn_pat" ]] && return 0
+            fi
+            continue
+        fi
+
         if [[ "$filter" == =* ]]; then
             exact_target="${filter#=}" 
             if [[ "$p" == "$exact_target" ]]; then
@@ -649,6 +666,13 @@ exact_exception_entry_for_path() {
     printf '=%s' "$p"
 }
 
+# Regular files only: exclude line FILE=basename matches basename in any directory (optional glob after FILE=).
+filename_only_exception_entry_for_path() {
+    local p="$1"
+    [[ -f "$p" ]] || return 1
+    printf 'FILE=%s' "$(basename -- "$p")"
+}
+
 flatten_exception_entry_for_path() {
     local p="$1"
     printf 'FLATTEN_EXACT=%s' "$p"
@@ -672,15 +696,21 @@ exception_exists_for_path() {
     local path="$1"
     local entry=""
     local exact_entry=""
+    local fn_entry=""
     local existing
 
     entry="$(path_to_exclude_entry "$path")"
     exact_entry="$(exact_exception_entry_for_path "$path")"
-    [[ -n "$entry" || -n "$exact_entry" ]] || return 1
+    fn_entry=""
+    if [[ -f "$path" ]]; then
+        fn_entry="$(filename_only_exception_entry_for_path "$path")"
+    fi
+    [[ -n "$entry" || -n "$exact_entry" || -n "$fn_entry" ]] || return 1
 
     for existing in "${EXCLUDE_FILTERS[@]}"; do
         [[ -n "$entry" && "$existing" == "$entry" ]] && return 0
         [[ -n "$exact_entry" && "$existing" == "$exact_entry" ]] && return 0
+        [[ -n "$fn_entry" && "$existing" == "$fn_entry" ]] && return 0
     done
     return 1
 }
@@ -748,6 +778,43 @@ append_exact_path_to_exclude_filters_file() {
         echo -e "${CYAN}EXACT EXCEPTION ADDED:${RESET} $entry ${CYAN}->${RESET} $EXCLUDE_FILTERS_FILE"
     else
         echo -e "${YELLOW}EXACT EXCEPTION EXISTS:${RESET} $entry ${CYAN}->${RESET} $EXCLUDE_FILTERS_FILE"
+    fi
+
+    load_exclude_filters
+}
+
+append_filename_only_exception_to_exclude_filters_file() {
+    local p="$1"
+    local entry tmp_line found=0
+
+    entry="$(filename_only_exception_entry_for_path "$p")" || {
+        echo -e "${YELLOW}SKIP:${RESET} Filename-only exceptions apply to regular files only." >&2
+        return 1
+    }
+
+    if [[ ! -e "$EXCLUDE_FILTERS_FILE" ]]; then
+        : > "$EXCLUDE_FILTERS_FILE"
+    fi
+
+    normalize_exclude_filters_file_if_needed
+
+    while IFS= read -r tmp_line || [[ -n "$tmp_line" ]]; do
+        tmp_line="${tmp_line%$'
+'}"
+        [[ -n "$tmp_line" ]] || continue
+        [[ "$tmp_line" =~ ^# ]] && continue
+        if [[ "$tmp_line" == "$entry" ]]; then
+            found=1
+            break
+        fi
+    done < "$EXCLUDE_FILTERS_FILE"
+
+    if (( found == 0 )); then
+        printf '%s
+' "$entry" >> "$EXCLUDE_FILTERS_FILE"
+        echo -e "${CYAN}FILENAME-ONLY EXCEPTION ADDED:${RESET} $entry ${CYAN}->${RESET} $EXCLUDE_FILTERS_FILE"
+    else
+        echo -e "${YELLOW}FILENAME-ONLY EXCEPTION EXISTS:${RESET} $entry ${CYAN}->${RESET} $EXCLUDE_FILTERS_FILE"
     fi
 
     load_exclude_filters
@@ -2131,7 +2198,7 @@ fi
 if [[ -f "$EXCLUDE_FILTERS_FILE" ]]; then
     echo
     echo "Exclude filter file detected: $EXCLUDE_FILTERS_FILE"
-    echo "Loaded filters: ${#EXCLUDE_FILTERS[@]}"
+    echo "Loaded filters: ${#EXCLUDE_FILTERS[@]} (FILE= lines match basename in any directory)"
 fi
 
 use_colors=yes
@@ -4971,6 +5038,10 @@ print_rename_prompt_menu() {
         echo "  [T] Delete this torrent .URL shortcut"
         choice_hint+=/t
     fi
+    if [[ -n "$path" && -f "$path" ]]; then
+        echo "  [F] Filename-only exception (skip this basename in every directory)"
+        choice_hint+=/f
+    fi
     echo "  [E] Add exception (skip this path and its subtree by filter match)"
     echo "  [X] Exact exception (do not rename only this exact path; still check subtree)"
     echo "  [Q] Quit"
@@ -5238,8 +5309,9 @@ print_checksum_prompt_menu() {
     echo "  [D] Yes for checksum groups in this directory"
     echo "  [E] Add exception (skip paths matching this hash file basename via exclude filter)"
     echo "  [X] Exact exception (skip only this hash file path; still check other paths)"
+    echo "  [F] Filename-only exception (skip this hash file basename in every directory)"
     echo "  [Q] Quit"
-    echo -n "Choice [Y/n/a/d/E/x/q]: "
+    echo -n "Choice [Y/n/a/d/E/x/f/q]: "
 }
 
 print_rename_action_verbose() {
@@ -5800,6 +5872,14 @@ for f in "${ordered_paths[@]}"; do
                     ((++files_skipped))
                     do_rename=no
                     ;;
+                f|F)
+                    if append_filename_only_exception_to_exclude_filters_file "$sum_file"; then
+                        ((++files_skipped))
+                    else
+                        ((++files_skipped))
+                    fi
+                    do_rename=no
+                    ;;
                 *)
                     do_rename=yes
                     ;;
@@ -6064,6 +6144,8 @@ for f in "${ordered_paths[@]}"; do
     if exception_exists_for_path "$f"; then
         if grep -Fxq -- "$(exact_exception_entry_for_path "$f")" "$EXCLUDE_FILTERS_FILE" 2>/dev/null; then
             echo -e "${YELLOW}EXACT EXCEPTION EXISTS:${RESET} $(exact_exception_entry_for_path "$f") -> $EXCLUDE_FILTERS_FILE"
+        elif [[ -f "$f" ]] && grep -Fxq -- "$(filename_only_exception_entry_for_path "$f")" "$EXCLUDE_FILTERS_FILE" 2>/dev/null; then
+            echo -e "${YELLOW}FILENAME-ONLY EXCEPTION EXISTS:${RESET} $(filename_only_exception_entry_for_path "$f") -> $EXCLUDE_FILTERS_FILE"
         else
             echo -e "${YELLOW}EXCEPTION EXISTS:${RESET} $(path_to_exclude_entry "$f") -> $EXCLUDE_FILTERS_FILE"
         fi
@@ -6110,6 +6192,14 @@ for f in "${ordered_paths[@]}"; do
             else
                 print_rename_action_verbose "$f" "$custom_new" "manual edit"
                 perform_plain_entry_rename "$f" "$custom_new" || break
+            fi
+            ;;
+        f|F)
+            if append_filename_only_exception_to_exclude_filters_file "$f"; then
+                ((++files_skipped))
+                processed["$f"]=1
+            else
+                ((++files_skipped))
             fi
             ;;
         e|E)
