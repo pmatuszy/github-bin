@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.04.23 - v. 18.85 - SQLite checked_paths: full column list in CREATE (signature, hashes); batched ALTER migration before WAL; fix warmup SELECT
 # 2026.04.23 - v. 18.84 - db_init: drop EXCLUSIVE/BEGIN IMMEDIATE (breaks CIFS); optional bootstrap via local TMPDIR + mv; then nolock URI
 # 2026.04.23 - v. 18.83 - --db-maintenance implies maintenance-only (like --run-db-maintenance): skip db_init; exit 0 if cache DB missing
 # 2026.04.23 - v. 18.82 - SQLite on broken FS: BEGIN IMMEDIATE schema + optional file URI ?nolock=1 for all DB access (CIFS/NFS SQLITE_BUSY)
@@ -937,6 +938,7 @@ print("file:" + urllib.parse.quote(str(p), safe="/:") + "?nolock=1")
 
 db_init_create_checked_paths_schema_core() {
     # Avoid locking_mode=EXCLUSIVE / BEGIN IMMEDIATE: on SMB/CIFS they often yield SQLITE_BUSY even for a new file.
+    # Include every column the script reads/writes so warmup does not depend on fragile per-invocation ALTERs on network FS.
     rename_sqlite3_db_run -batch >/dev/null 2>&1 <<'SQL'
 PRAGMA busy_timeout=30000;
 CREATE TABLE IF NOT EXISTS checked_paths (
@@ -945,9 +947,36 @@ CREATE TABLE IF NOT EXISTS checked_paths (
     size INTEGER NOT NULL,
     mtime INTEGER NOT NULL,
     status TEXT NOT NULL,
-    last_checked TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    last_checked TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    signature TEXT,
+    file_hash_kind TEXT,
+    file_hash TEXT,
+    file_md5 TEXT,
+    file_sha512 TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_checked_paths_kind ON checked_paths(kind);
+CREATE INDEX IF NOT EXISTS idx_checked_paths_signature ON checked_paths(signature);
+CREATE INDEX IF NOT EXISTS idx_checked_paths_file_hash ON checked_paths(file_hash_kind, file_hash);
+CREATE INDEX IF NOT EXISTS idx_checked_paths_file_md5 ON checked_paths(file_md5);
+CREATE INDEX IF NOT EXISTS idx_checked_paths_file_sha512 ON checked_paths(file_sha512);
+CREATE INDEX IF NOT EXISTS idx_checked_paths_missing_hashes ON checked_paths(path) WHERE COALESCE(file_md5,'')='' OR COALESCE(file_sha512,'');
+SQL
+}
+
+# Older caches only had the base columns; add the rest in one sqlite session (busy_timeout) before WAL/journal tweaks.
+db_upgrade_checked_paths_schema() {
+    rename_sqlite3_db_run -batch >/dev/null 2>&1 <<'SQL' || true
+PRAGMA busy_timeout=30000;
+ALTER TABLE checked_paths ADD COLUMN signature TEXT;
+ALTER TABLE checked_paths ADD COLUMN file_hash_kind TEXT;
+ALTER TABLE checked_paths ADD COLUMN file_hash TEXT;
+ALTER TABLE checked_paths ADD COLUMN file_md5 TEXT;
+ALTER TABLE checked_paths ADD COLUMN file_sha512 TEXT;
+CREATE INDEX IF NOT EXISTS idx_checked_paths_signature ON checked_paths(signature);
+CREATE INDEX IF NOT EXISTS idx_checked_paths_file_hash ON checked_paths(file_hash_kind, file_hash);
+CREATE INDEX IF NOT EXISTS idx_checked_paths_file_md5 ON checked_paths(file_md5);
+CREATE INDEX IF NOT EXISTS idx_checked_paths_file_sha512 ON checked_paths(file_sha512);
+CREATE INDEX IF NOT EXISTS idx_checked_paths_missing_hashes ON checked_paths(path) WHERE COALESCE(file_md5,'')='' OR COALESCE(file_sha512,'');
 SQL
 }
 
@@ -966,9 +995,19 @@ CREATE TABLE IF NOT EXISTS checked_paths (
     size INTEGER NOT NULL,
     mtime INTEGER NOT NULL,
     status TEXT NOT NULL,
-    last_checked TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    last_checked TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    signature TEXT,
+    file_hash_kind TEXT,
+    file_hash TEXT,
+    file_md5 TEXT,
+    file_sha512 TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_checked_paths_kind ON checked_paths(kind);
+CREATE INDEX IF NOT EXISTS idx_checked_paths_signature ON checked_paths(signature);
+CREATE INDEX IF NOT EXISTS idx_checked_paths_file_hash ON checked_paths(file_hash_kind, file_hash);
+CREATE INDEX IF NOT EXISTS idx_checked_paths_file_md5 ON checked_paths(file_md5);
+CREATE INDEX IF NOT EXISTS idx_checked_paths_file_sha512 ON checked_paths(file_sha512);
+CREATE INDEX IF NOT EXISTS idx_checked_paths_missing_hashes ON checked_paths(path) WHERE COALESCE(file_md5,'')='' OR COALESCE(file_sha512,'');
 SQL
     then
         rm -f -- "$tmp"
@@ -1350,30 +1389,31 @@ CREATE TABLE IF NOT EXISTS checked_paths (
     size INTEGER NOT NULL,
     mtime INTEGER NOT NULL,
     status TEXT NOT NULL,
-    last_checked TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    last_checked TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    signature TEXT,
+    file_hash_kind TEXT,
+    file_hash TEXT,
+    file_md5 TEXT,
+    file_sha512 TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_checked_paths_kind ON checked_paths(kind);
+CREATE INDEX IF NOT EXISTS idx_checked_paths_signature ON checked_paths(signature);
+CREATE INDEX IF NOT EXISTS idx_checked_paths_file_hash ON checked_paths(file_hash_kind, file_hash);
+CREATE INDEX IF NOT EXISTS idx_checked_paths_file_md5 ON checked_paths(file_md5);
+CREATE INDEX IF NOT EXISTS idx_checked_paths_file_sha512 ON checked_paths(file_sha512);
+CREATE INDEX IF NOT EXISTS idx_checked_paths_missing_hashes ON checked_paths(path) WHERE COALESCE(file_md5,'')='' OR COALESCE(file_sha512,'');
 SQL
                 exit 1
             fi
         fi
     fi
+    db_upgrade_checked_paths_schema
     rename_sqlite3_db_run >/dev/null 2>&1 <<'SQL' || true
 PRAGMA journal_mode=WAL;
 PRAGMA synchronous=NORMAL;
 PRAGMA temp_store=MEMORY;
 PRAGMA cache_size=-20000;
 SQL
-    rename_sqlite3_db_run 'ALTER TABLE checked_paths ADD COLUMN signature TEXT;' >/dev/null 2>&1 || true
-    rename_sqlite3_db_run 'ALTER TABLE checked_paths ADD COLUMN file_hash_kind TEXT;' >/dev/null 2>&1 || true
-    rename_sqlite3_db_run 'ALTER TABLE checked_paths ADD COLUMN file_hash TEXT;' >/dev/null 2>&1 || true
-    rename_sqlite3_db_run 'ALTER TABLE checked_paths ADD COLUMN file_md5 TEXT;' >/dev/null 2>&1 || true
-    rename_sqlite3_db_run 'ALTER TABLE checked_paths ADD COLUMN file_sha512 TEXT;' >/dev/null 2>&1 || true
-    rename_sqlite3_db_run 'CREATE INDEX IF NOT EXISTS idx_checked_paths_signature ON checked_paths(signature);' >/dev/null 2>&1 || true
-    rename_sqlite3_db_run 'CREATE INDEX IF NOT EXISTS idx_checked_paths_file_hash ON checked_paths(file_hash_kind, file_hash);' >/dev/null 2>&1 || true
-    rename_sqlite3_db_run 'CREATE INDEX IF NOT EXISTS idx_checked_paths_file_md5 ON checked_paths(file_md5);' >/dev/null 2>&1 || true
-    rename_sqlite3_db_run 'CREATE INDEX IF NOT EXISTS idx_checked_paths_file_sha512 ON checked_paths(file_sha512);' >/dev/null 2>&1 || true
-    rename_sqlite3_db_run "CREATE INDEX IF NOT EXISTS idx_checked_paths_missing_hashes ON checked_paths(path) WHERE COALESCE(file_md5,'')='' OR COALESCE(file_sha512,'');" >/dev/null 2>&1 || true
     DB_PENDING_SQL_FILE="$(mktemp)"
 
     local total_cached_rows=0
