@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.04.22 - v. 18.78 - checksum group: clearer preview labels and prompt text (hash file vs referenced files; what Yes does)
 # 2026.04.22 - v. 18.77 - protect .md5/.sha512 whose basename starts with _ or __ from checksum-file rename (keep leading underscores)
 # 2026.04.22 - v. 18.76 - rename menu [L]: session auto-yes when suggestion only lowercases a mixed-case 3-letter alphabetic extension
 # 2026.04.22 - v. 18.75 - rename menu [T]: delete *torrent*.URL shortcuts; allow no-op renames to menu for those; DB row delete on remove
@@ -4932,12 +4933,18 @@ choose_custom_rename_target() {
 print_checksum_prompt_menu() {
     local label_lower="$1"
     local hash_file="$2"
-    echo -e "${GREEN}Rename this ${label_lower} group?${RESET}"
-    echo "  hash file: $hash_file"
-    echo "  [Y] Yes (default)"
-    echo "  [N] No"
-    echo "  [A] All remaining"
-    echo "  [D] Yes for this directory"
+    local label_upper="${label_lower^^}"
+
+    echo -e "${GREEN}Apply this entire ${label_upper} checksum group?${RESET}"
+    echo "  ${label_upper} file (contains hashes and paths): $hash_file"
+    echo "  One confirmation does everything together:"
+    echo "    • Rename each referenced file where OLD referenced file → NEW referenced file was shown above"
+    echo "    • Rename this ${label_upper} file only if OLD ${label_upper} → NEW ${label_upper} was shown above"
+    echo "    • Rewrite path lines inside the ${label_upper} file, then verify checksums"
+    echo "  [Y] Yes — do all of the above (default)"
+    echo "  [N] No — skip this whole group"
+    echo "  [A] All remaining checksum groups (same full treatment)"
+    echo "  [D] Yes for checksum groups in this directory"
     echo "  [E] Add exception (skip paths matching this hash file basename via exclude filter)"
     echo "  [X] Exact exception (skip only this hash file path; still check other paths)"
     echo "  [Q] Quit"
@@ -4979,17 +4986,20 @@ print_checksum_group_preview() {
     local i shown=0
 
     echo
+    echo -e "${CYAN}Checksum group preview (${label}):${RESET} the hash file lists paths to these files on disk."
+    echo -e "${CYAN}If this hash file would be renamed, it appears as OLD/NEW ${label}; otherwise only referenced files are shown.${RESET}"
+    echo
 
     if [[ "$sum_old" != "$sum_new" ]]; then
-        echo -e "${RED}OLD ${label}:${RESET} $sum_old"
-        echo -e "${GREEN}NEW ${label}:${RESET} $sum_new"
+        echo -e "${RED}OLD ${label} (hash file on disk):${RESET} $sum_old"
+        echo -e "${GREEN}NEW ${label} (hash file on disk):${RESET} $sum_new"
         shown=1
     fi
 
     for i in "${!_refs[@]}"; do
         [[ "${_new_refs[$i]}" != "${_refs[$i]}" ]] || continue
-        echo -e "${RED}OLD FILE:${RESET} ${_refs[$i]}"
-        echo -e "${GREEN}NEW FILE:${RESET} ${_new_refs[$i]}"
+        echo -e "${RED}OLD referenced file:${RESET} ${_refs[$i]}"
+        echo -e "${GREEN}NEW referenced file:${RESET} ${_new_refs[$i]}"
         shown=1
     done
 
