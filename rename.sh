@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.04.23 - v. 18.92 - reload _exclude-rename.sh.txt from disk before/after appending exceptions so external edits apply immediately
 # 2026.04.23 - v. 18.91 - exclude file: FILE=basename (or FILE=glob) skips renames for that filename in any directory; prompt [F]
 # 2026.04.23 - v. 18.90 - normalize YYYY-MM-DD_at_HH.MM.SS[_tail].ext -> YYYYMMDD_HHMMSS[_tail].ext
 # 2026.04.23 - v. 18.89 - same-inode source/target: no rename prompt (case-insensitive FS); extension-only lowercasing for any ext (.MP4); [L] menu widened
@@ -717,7 +718,7 @@ exception_exists_for_path() {
 
 append_path_to_exclude_filters_file() {
     local p="$1"
-    local entry tmp_line found=0
+    local entry existing found=0
 
     entry="$(exception_entry_for_path "$p")"
 
@@ -725,18 +726,11 @@ append_path_to_exclude_filters_file() {
         : > "$EXCLUDE_FILTERS_FILE"
     fi
 
-    normalize_exclude_filters_file_if_needed
+    load_exclude_filters
 
-    while IFS= read -r tmp_line || [[ -n "$tmp_line" ]]; do
-        tmp_line="${tmp_line%$'
-'}"
-        [[ -n "$tmp_line" ]] || continue
-        [[ "$tmp_line" =~ ^# ]] && continue
-        if [[ "$tmp_line" == "$entry" ]]; then
-            found=1
-            break
-        fi
-    done < "$EXCLUDE_FILTERS_FILE"
+    for existing in "${EXCLUDE_FILTERS[@]}"; do
+        [[ "$existing" == "$entry" ]] && { found=1; break; }
+    done
 
     if (( found == 0 )); then
         printf '%s
@@ -751,7 +745,7 @@ append_path_to_exclude_filters_file() {
 
 append_exact_path_to_exclude_filters_file() {
     local p="$1"
-    local entry tmp_line found=0
+    local entry existing found=0
 
     entry="$(exact_exception_entry_for_path "$p")"
 
@@ -759,18 +753,11 @@ append_exact_path_to_exclude_filters_file() {
         : > "$EXCLUDE_FILTERS_FILE"
     fi
 
-    normalize_exclude_filters_file_if_needed
+    load_exclude_filters
 
-    while IFS= read -r tmp_line || [[ -n "$tmp_line" ]]; do
-        tmp_line="${tmp_line%$'
-'}"
-        [[ -n "$tmp_line" ]] || continue
-        [[ "$tmp_line" =~ ^# ]] && continue
-        if [[ "$tmp_line" == "$entry" ]]; then
-            found=1
-            break
-        fi
-    done < "$EXCLUDE_FILTERS_FILE"
+    for existing in "${EXCLUDE_FILTERS[@]}"; do
+        [[ "$existing" == "$entry" ]] && { found=1; break; }
+    done
 
     if (( found == 0 )); then
         printf '%s
@@ -785,9 +772,12 @@ append_exact_path_to_exclude_filters_file() {
 
 append_filename_only_exception_to_exclude_filters_file() {
     local p="$1"
-    local entry tmp_line found=0
+    local entry existing found=0
 
     entry="$(filename_only_exception_entry_for_path "$p")" || {
+        if [[ -e "$EXCLUDE_FILTERS_FILE" ]]; then
+            load_exclude_filters
+        fi
         echo -e "${YELLOW}SKIP:${RESET} Filename-only exceptions apply to regular files only." >&2
         return 1
     }
@@ -796,18 +786,11 @@ append_filename_only_exception_to_exclude_filters_file() {
         : > "$EXCLUDE_FILTERS_FILE"
     fi
 
-    normalize_exclude_filters_file_if_needed
+    load_exclude_filters
 
-    while IFS= read -r tmp_line || [[ -n "$tmp_line" ]]; do
-        tmp_line="${tmp_line%$'
-'}"
-        [[ -n "$tmp_line" ]] || continue
-        [[ "$tmp_line" =~ ^# ]] && continue
-        if [[ "$tmp_line" == "$entry" ]]; then
-            found=1
-            break
-        fi
-    done < "$EXCLUDE_FILTERS_FILE"
+    for existing in "${EXCLUDE_FILTERS[@]}"; do
+        [[ "$existing" == "$entry" ]] && { found=1; break; }
+    done
 
     if (( found == 0 )); then
         printf '%s
@@ -822,7 +805,7 @@ append_filename_only_exception_to_exclude_filters_file() {
 
 append_flatten_exception_to_exclude_filters_file() {
     local p="$1"
-    local entry tmp_line found=0
+    local entry existing found=0
 
     entry="$(flatten_exception_entry_for_path "$p")"
 
@@ -830,18 +813,11 @@ append_flatten_exception_to_exclude_filters_file() {
         : > "$EXCLUDE_FILTERS_FILE"
     fi
 
-    normalize_exclude_filters_file_if_needed
+    load_exclude_filters
 
-    while IFS= read -r tmp_line || [[ -n "$tmp_line" ]]; do
-        tmp_line="${tmp_line%$'
-'}"
-        [[ -n "$tmp_line" ]] || continue
-        [[ "$tmp_line" =~ ^# ]] && continue
-        if [[ "$tmp_line" == "$entry" ]]; then
-            found=1
-            break
-        fi
-    done < "$EXCLUDE_FILTERS_FILE"
+    for existing in "${EXCLUDE_FILTERS[@]}"; do
+        [[ "$existing" == "$entry" ]] && { found=1; break; }
+    done
 
     if (( found == 0 )); then
         printf '%s
