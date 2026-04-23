@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.04.23 - v. 18.84 - db_init: drop EXCLUSIVE/BEGIN IMMEDIATE (breaks CIFS); optional bootstrap via local TMPDIR + mv; then nolock URI
 # 2026.04.23 - v. 18.83 - --db-maintenance implies maintenance-only (like --run-db-maintenance): skip db_init; exit 0 if cache DB missing
 # 2026.04.23 - v. 18.82 - SQLite on broken FS: BEGIN IMMEDIATE schema + optional file URI ?nolock=1 for all DB access (CIFS/NFS SQLITE_BUSY)
 # 2026.04.23 - v. 18.81 - db_init: remove orphan -wal/-shm/empty DB before open; busy_timeout + one retry after clearing lock artifacts (SQLITE_BUSY)
@@ -935,10 +936,9 @@ print("file:" + urllib.parse.quote(str(p), safe="/:") + "?nolock=1")
 }
 
 db_init_create_checked_paths_schema_core() {
+    # Avoid locking_mode=EXCLUSIVE / BEGIN IMMEDIATE: on SMB/CIFS they often yield SQLITE_BUSY even for a new file.
     rename_sqlite3_db_run -batch >/dev/null 2>&1 <<'SQL'
-PRAGMA locking_mode=EXCLUSIVE;
-PRAGMA busy_timeout=25000;
-BEGIN IMMEDIATE;
+PRAGMA busy_timeout=30000;
 CREATE TABLE IF NOT EXISTS checked_paths (
     path TEXT PRIMARY KEY,
     kind TEXT NOT NULL,
@@ -948,8 +948,49 @@ CREATE TABLE IF NOT EXISTS checked_paths (
     last_checked TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 CREATE INDEX IF NOT EXISTS idx_checked_paths_kind ON checked_paths(kind);
-COMMIT;
 SQL
+}
+
+# Last resort: build the DB on a local filesystem (TMPDIR), then move into place and use nolock for opens on flaky mounts.
+db_init_create_checked_paths_schema_via_local_tmp() {
+    local tmp="" uri
+    tmp="$(mktemp "${TMPDIR:-/tmp}/rename.sh.sqlite-init.XXXXXX")" || return 1
+    rm -f -- "$tmp"
+    tmp="${tmp}.sqlite3"
+
+    if ! sqlite3 -batch "$tmp" >/dev/null 2>&1 <<'SQL'
+PRAGMA busy_timeout=30000;
+CREATE TABLE IF NOT EXISTS checked_paths (
+    path TEXT PRIMARY KEY,
+    kind TEXT NOT NULL,
+    size INTEGER NOT NULL,
+    mtime INTEGER NOT NULL,
+    status TEXT NOT NULL,
+    last_checked TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_checked_paths_kind ON checked_paths(kind);
+SQL
+    then
+        rm -f -- "$tmp"
+        return 1
+    fi
+
+    db_clear_sqlite_sidecar_files
+    db_remove_stale_sqlite_lock_artifacts
+
+    if ! mv -f -- "$tmp" "$DB_FILE" 2>/dev/null; then
+        rm -f -- "$tmp"
+        return 1
+    fi
+
+    if uri="$(db_sqlite_file_uri_nolock 2>/dev/null)"; then
+        DB_SQLITE_USE_URI=1
+        DB_SQLITE_URI="$uri"
+        (( VERBOSE == 1 )) && echo "[VERBOSE] SQLite cache created under ${TMPDIR:-/tmp} then moved to start dir; further opens use ?nolock=1 on this volume." >&2
+    else
+        (( VERBOSE == 1 )) && echo "[VERBOSE] SQLite cache created under ${TMPDIR:-/tmp} then moved to start dir (nolock URI needs python3 — use one rename.sh per cache if the share still locks)." >&2
+    fi
+    return 0
 }
 
 db_init_create_checked_paths_schema_nolock() {
@@ -1293,6 +1334,8 @@ db_init() {
         if ! db_init_create_checked_paths_schema; then
             if db_init_create_checked_paths_schema_nolock; then
                 (( VERBOSE == 1 )) && echo "[VERBOSE] SQLite cache opened with ?nolock=1 (host FS POSIX locking failed). Use only one rename.sh per directory; corruption risk if two writers." >&2
+            elif db_init_create_checked_paths_schema_via_local_tmp; then
+                :
             else
                 echo "ERROR: could not create or open SQLite cache: $DB_FILE" >&2
                 echo "If you see \"database is locked\", close other rename.sh (or sqlite3) using this file, then retry." >&2
@@ -1300,9 +1343,7 @@ db_init() {
                 echo "  rm -f -- \"${DB_FILE}-wal\" \"${DB_FILE}-shm\" \"${DB_FILE}-journal\"" >&2
                 echo "sqlite3 diagnostic (first lines):" >&2
                 rename_sqlite3_db_run -batch 2>&1 <<'SQL' | head -n 25 >&2 || true
-PRAGMA locking_mode=EXCLUSIVE;
-PRAGMA busy_timeout=25000;
-BEGIN IMMEDIATE;
+PRAGMA busy_timeout=30000;
 CREATE TABLE IF NOT EXISTS checked_paths (
     path TEXT PRIMARY KEY,
     kind TEXT NOT NULL,
@@ -1312,7 +1353,6 @@ CREATE TABLE IF NOT EXISTS checked_paths (
     last_checked TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 CREATE INDEX IF NOT EXISTS idx_checked_paths_kind ON checked_paths(kind);
-COMMIT;
 SQL
                 exit 1
             fi
