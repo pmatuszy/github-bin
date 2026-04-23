@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.04.22 - v. 18.68 - green highlight for main rename and flatten questions; VERBOSE note: vlog() uses CYAN, many legacy lines use plain echo
 # 2026.04.22 - v. 18.67 - transform_basename: replace & with and (M3U key normalize already did; plain renames did not)
 # 2026.04.22 - v. 18.66 - strip .ebooksclub. from names (replace with single dot)
 # 2026.04.22 - v. 18.65 - wrap long DB hash verbose lines: put path on continuation when prefix+path exceeds MAX_LINE_LENGTH
@@ -2312,6 +2313,7 @@ print_skip_path_reason() {
     fi
 }
 
+# Colored [VERBOSE] prefix; many older call sites still use plain "echo '[VERBOSE] ...'" (e.g. wrapped SQLite/checksum lines).
 vlog() {
     (( VERBOSE == 1 )) || return 0
     echo -e "${CYAN}[VERBOSE]${RESET} $*" >&2
@@ -4567,7 +4569,7 @@ auto_yes_current_dir_matches() {
 print_rename_prompt_menu() {
     local kind_label="$1"
     verbose_question_timestamp "Rename this ${kind_label}?"
-    echo "Rename this ${kind_label}?"
+    echo -e "${GREEN}Rename this ${kind_label}?${RESET}"
     echo "  [Y] Yes (default)"
     echo "  [N] No"
     echo "  [M] Rename by editing target filename"
@@ -4633,7 +4635,7 @@ maybe_prompt_flatten_single_child_dir() {
     echo "Contains exactly one subdirectory with files:"
     echo "  $child_dir"
     verbose_question_timestamp "Move child contents one level up and delete this subdirectory?"
-    echo "Move child contents one level up and delete this subdirectory?"
+    echo -e "${GREEN}Move child contents one level up and delete this subdirectory?${RESET}"
     echo "  [Y] Yes — flatten (move child contents up, remove subdirectory; then choose folder name)"
     echo "  [N] No (default) — keep current folder layout"
     echo "  [E] Add flatten exception — skip flatten prompts for this directory in the future"
