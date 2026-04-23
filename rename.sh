@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.04.23 - v. 18.86 - sqlite3 without -uri: probe once, fall back to path open (nolock URI unavailable); warn once
 # 2026.04.23 - v. 18.85 - SQLite checked_paths: full column list in CREATE (signature, hashes); batched ALTER migration before WAL; fix warmup SELECT
 # 2026.04.23 - v. 18.84 - db_init: drop EXCLUSIVE/BEGIN IMMEDIATE (breaks CIFS); optional bootstrap via local TMPDIR + mv; then nolock URI
 # 2026.04.23 - v. 18.83 - --db-maintenance implies maintenance-only (like --run-db-maintenance): skip db_init; exit 0 if cache DB missing
@@ -241,6 +242,10 @@ LEGACY_DB_FILE="$START_DIR/rename.sh-optional-db.sqlite3"
 # Set by db_init when host FS returns SQLITE_BUSY unless opened with sqlite3 -uri '...?nolock=1' (unsafe if two writers).
 DB_SQLITE_USE_URI=""
 DB_SQLITE_URI=""
+# Probed on first URI open: some distros ship sqlite3 CLI without -uri (need 3.7.13+ for file:...?nolock=1).
+RENAME_SQLITE3_URI_PROBED=""
+RENAME_SQLITE3_HAS_URI_FLAG=""
+RENAME_SQLITE3_URI_FALLBACK_WARNED=""
 DB_HASHES_ADDED=0
 DB_ROWS_NEW=0
 DB_ROWS_UPDATED=0
@@ -869,10 +874,29 @@ DB_PENDING_SQL_FILE=""
 DB_PENDING_COUNT=0
 DB_FLUSH_EVERY=500
 
+rename_sqlite3_probe_cli_uri_support() {
+    [[ -n "$RENAME_SQLITE3_URI_PROBED" ]] && return 0
+    RENAME_SQLITE3_URI_PROBED=1
+    if sqlite3 -uri ':memory:' 'SELECT 1;' >/dev/null 2>&1; then
+        RENAME_SQLITE3_HAS_URI_FLAG=1
+    else
+        RENAME_SQLITE3_HAS_URI_FLAG=0
+    fi
+}
+
 # Central open path so optional URI+nolock applies to every sqlite3 use of the cache DB.
 rename_sqlite3_db_run() {
     if [[ -n "$DB_SQLITE_USE_URI" ]]; then
-        sqlite3 -uri "$DB_SQLITE_URI" "$@"
+        rename_sqlite3_probe_cli_uri_support
+        if (( RENAME_SQLITE3_HAS_URI_FLAG == 1 )); then
+            sqlite3 -uri "$DB_SQLITE_URI" "$@"
+        else
+            if [[ -z "$RENAME_SQLITE3_URI_FALLBACK_WARNED" ]]; then
+                RENAME_SQLITE3_URI_FALLBACK_WARNED=1
+                echo "WARNING: this sqlite3 has no -uri option (need 3.7.13+ for file:...?nolock=1). Opening the cache by filesystem path instead; on CIFS/SMB you may see \"database is locked\" — install a newer sqlite3 or use a local cache directory." >&2
+            fi
+            sqlite3 "$DB_FILE" "$@"
+        fi
     else
         sqlite3 "$DB_FILE" "$@"
     fi
