@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.04.23 - v. 18.81 - db_init: remove orphan -wal/-shm/empty DB before open; busy_timeout + one retry after clearing lock artifacts (SQLITE_BUSY)
 # 2026.04.23 - v. 18.80 - db_init: call db_migrate_legacy_file correctly; create SQLite schema before optional WAL pragmas (|| true); clearer init failure hint
 # 2026.04.22 - v. 18.79 - preserve leading _ on *_okladka*.jpg cover filenames (media strip + stem normalize)
 # 2026.04.22 - v. 18.78 - checksum group: clearer preview labels and prompt text (hash file vs referenced files; what Yes does)
@@ -329,8 +330,8 @@ Options:
   --force-recheck        Ignore SQLite cache and recheck everything
   --run-db-maintenance   Run DB maintenance and exit (manual invocation; implies --use-db)
   --db-maintenance auto|[full]
-                         auto: lightweight optimize/checkpoint profile
-                         [full]: optimize + analyze + reindex + WAL truncate profile
+                         Profile for --run-db-maintenance only (does not run maintenance by itself)
+                         auto: lightweight optimize/checkpoint; full: optimize + analyze + reindex + WAL truncate
   --colors [yes]|no      Skip the startup colors question
   --mode real|[dry-run]  Skip the startup mode question
   --scope subdirs|[current]
@@ -893,6 +894,38 @@ db_migrate_legacy_file() {
     fi
 }
 
+# Leftover -wal/-shm from a crash or copy, or a 0-byte DB file, often yields SQLITE_BUSY ("database is locked") on first open.
+db_remove_stale_sqlite_lock_artifacts() {
+    [[ -n "$DB_FILE" ]] || return 0
+    if [[ ! -f "$DB_FILE" ]]; then
+        rm -f -- "${DB_FILE}-wal" "${DB_FILE}-shm" "${DB_FILE}-journal" 2>/dev/null || true
+        return 0
+    fi
+    if [[ ! -s "$DB_FILE" ]]; then
+        rm -f -- "$DB_FILE" "${DB_FILE}-wal" "${DB_FILE}-shm" "${DB_FILE}-journal" 2>/dev/null || true
+    fi
+}
+
+db_clear_sqlite_sidecar_files() {
+    [[ -n "$DB_FILE" ]] || return 0
+    rm -f -- "${DB_FILE}-wal" "${DB_FILE}-shm" "${DB_FILE}-journal" 2>/dev/null || true
+}
+
+db_init_create_checked_paths_schema() {
+    sqlite3 "$DB_FILE" >/dev/null 2>&1 <<'SQL'
+PRAGMA busy_timeout=20000;
+CREATE TABLE IF NOT EXISTS checked_paths (
+    path TEXT PRIMARY KEY,
+    kind TEXT NOT NULL,
+    size INTEGER NOT NULL,
+    mtime INTEGER NOT NULL,
+    status TEXT NOT NULL,
+    last_checked TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_checked_paths_kind ON checked_paths(kind);
+SQL
+}
+
 db_run_maintenance() {
     local mode="$1"
 
@@ -1206,9 +1239,19 @@ db_init() {
     db_migrate_legacy_file
     startup_progress "Preparing SQLite cache: $DB_FILE"
     db_require_sqlite
+    db_remove_stale_sqlite_lock_artifacts
     # Create schema first (default journal mode). WAL/synchronous pragmas can fail on some
     # mounts or with stale -wal/-shm; applying them only after open avoids a hard init failure.
-    if ! sqlite3 "$DB_FILE" >/dev/null 2>&1 <<'SQL'
+    if ! db_init_create_checked_paths_schema; then
+        db_clear_sqlite_sidecar_files
+        if ! db_init_create_checked_paths_schema; then
+            echo "ERROR: could not create or open SQLite cache: $DB_FILE" >&2
+            echo "If you see \"database is locked\", close other rename.sh (or sqlite3) using this file, then retry." >&2
+            echo "Check write permissions on the start directory. Stale sidecar files from a crash or copy can also cause locks:" >&2
+            echo "  rm -f -- \"${DB_FILE}-wal\" \"${DB_FILE}-shm\" \"${DB_FILE}-journal\"" >&2
+            echo "sqlite3 diagnostic (first lines):" >&2
+            sqlite3 "$DB_FILE" 2>&1 <<'SQL' | head -n 20 >&2 || true
+PRAGMA busy_timeout=20000;
 CREATE TABLE IF NOT EXISTS checked_paths (
     path TEXT PRIMARY KEY,
     kind TEXT NOT NULL,
@@ -1219,23 +1262,8 @@ CREATE TABLE IF NOT EXISTS checked_paths (
 );
 CREATE INDEX IF NOT EXISTS idx_checked_paths_kind ON checked_paths(kind);
 SQL
-    then
-        echo "ERROR: could not create or open SQLite cache: $DB_FILE" >&2
-        echo "Check write permissions on the start directory. If this DB was copied or interrupted, try removing stale sidecar files:" >&2
-        echo "  rm -f -- \"${DB_FILE}-wal\" \"${DB_FILE}-shm\"" >&2
-        echo "sqlite3 diagnostic (first lines):" >&2
-        sqlite3 "$DB_FILE" 2>&1 <<'SQL' | head -n 15 >&2 || true
-CREATE TABLE IF NOT EXISTS checked_paths (
-    path TEXT PRIMARY KEY,
-    kind TEXT NOT NULL,
-    size INTEGER NOT NULL,
-    mtime INTEGER NOT NULL,
-    status TEXT NOT NULL,
-    last_checked TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-);
-CREATE INDEX IF NOT EXISTS idx_checked_paths_kind ON checked_paths(kind);
-SQL
-        exit 1
+            exit 1
+        fi
     fi
     sqlite3 "$DB_FILE" >/dev/null 2>&1 <<'SQL' || true
 PRAGMA journal_mode=WAL;
