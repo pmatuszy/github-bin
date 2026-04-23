@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.04.22 - v. 18.67 - transform_basename: replace & with and (M3U key normalize already did; plain renames did not)
 # 2026.04.22 - v. 18.66 - strip .ebooksclub. from names (replace with single dot)
 # 2026.04.22 - v. 18.65 - wrap long DB hash verbose lines: put path on continuation when prefix+path exceeds MAX_LINE_LENGTH
 # 2026.04.22 - v. 18.64 - treat _rename.sh.resume-state.json as internal protected (never prompt rename)
@@ -3247,6 +3248,8 @@ transform_basename() {
     new="${new//\[eksiazki PL\]/}"
     new="${new//_eksiazki PL_/}"
     new="${new//_eksiazki_PL_/}"
+
+    new="${new//&/and}"
 
     if [[ "$new" =~ ^([0-9]{2})([0-9]{2})([0-9]{2})_([0-9]{6})_-_(.+)(\.[^.]+)$ ]]; then
         printf '20%s%s%s_%s_-_%s%s' \
