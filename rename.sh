@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.04.22 - v. 18.74 - fix DB path rewrite after mv: resolve old path via parent+basename; checksum file refs + .md5/.sha512 renames update rows
 # 2026.04.22 - v. 18.73 - do not rename aggregate checksum manifest _sumy_kontrolne.md5 (basename, case-insensitive)
 # 2026.04.22 - v. 18.72 - directories: never stem/ext split (no extensions); normalize full basename like extensionless files
 # 2026.04.22 - v. 18.71 - if last-dot suffix has space or brackets (e.g. Site.PL - rest), normalize whole basename not only stem
@@ -787,6 +788,24 @@ db_abs_path() {
     fi
 }
 
+# After mv, the old path no longer exists; realpath -e fails. Reconstruct from parent (still on disk) + basename.
+db_abs_path_if_deleted() {
+    local p="$1" dir base parent_abs
+    if [[ -e "$p" || -h "$p" ]]; then
+        db_abs_path "$p" 2>/dev/null
+        return $?
+    fi
+    dir="$(dirname -- "$p")"
+    base="$(basename -- "$p")"
+    parent_abs="$(db_abs_path "$dir" 2>/dev/null || true)"
+    [[ -n "$parent_abs" ]] || return 1
+    if [[ "$parent_abs" == "/" ]]; then
+        printf '/%s\n' "$base"
+    else
+        printf '%s/%s\n' "$parent_abs" "$base"
+    fi
+}
+
 db_get_size_mtime() {
     stat -Lc '%s|%Y' -- "$1"
 }
@@ -1551,7 +1570,7 @@ db_rewrite_subtree() {
     (( USE_DB == 1 )) || return 0
     [[ -e "$new_path" ]] || return 0
 
-    old_abs="$(db_abs_path "$old_path" 2>/dev/null || true)"
+    old_abs="$(db_abs_path_if_deleted "$old_path" 2>/dev/null || true)"
     new_abs="$(db_abs_path "$new_path" 2>/dev/null || true)"
     [[ -n "$old_abs" && -n "$new_abs" ]] || return 0
 
@@ -1618,7 +1637,7 @@ db_rewrite_single_path() {
 
     (( USE_DB == 1 )) || return 0
 
-    old_abs="$(db_abs_path "$old_path" 2>/dev/null || true)"
+    old_abs="$(db_abs_path_if_deleted "$old_path" 2>/dev/null || true)"
     new_abs="$(db_abs_path "$new_path" 2>/dev/null || true)"
     [[ -n "$old_abs" && -n "$new_abs" ]] || return 0
 
@@ -5503,6 +5522,8 @@ for f in "${ordered_paths[@]}"; do
                 mv -i -- "${refs[$i]}" "${new_refs[$i]}"
                 if [[ "$ref_was_dir" == "yes" ]]; then
                     db_rewrite_subtree "${refs[$i]}" "${new_refs[$i]}"
+                else
+                    db_rewrite_single_path "${refs[$i]}" "${new_refs[$i]}"
                 fi
                 register_current_file_rename "${refs[$i]}" "${new_refs[$i]}"
                 ((++files_affected))
@@ -5546,6 +5567,7 @@ for f in "${ordered_paths[@]}"; do
         if [[ "$new_sum" != "$sum_file" ]]; then
             print_checksum_file_rename_verbose "$sum_file" "$new_sum"
             mv -i -- "$sum_file" "$new_sum"
+            db_rewrite_single_path "$sum_file" "$new_sum"
             mark_current_sum_renamed
             ((++files_affected))
             record_rename "$sum_file" "$new_sum"
