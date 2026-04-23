@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.04.22 - v. 18.70 - strip Audiobook PL markers case-insensitively ([AudioBook PL], _AudioBook_PL, etc.; GNU sed I)
 # 2026.04.22 - v. 18.69 - drop duplicate verbose_question_timestamp before prompts that echo the same line; green checksum-group question
 # 2026.04.22 - v. 18.68 - green highlight for main rename and flatten questions; VERBOSE note: vlog() uses CYAN, many legacy lines use plain echo
 # 2026.04.22 - v. 18.67 - transform_basename: replace & with and (M3U key normalize already did; plain renames did not)
@@ -3242,11 +3243,11 @@ transform_basename() {
         new="${new//.WnA./.}"
     done
     new="${new//_M_and_T_Books/}"
-    new="${new//_Audiobook_PL/}"
-    new="${new//\[Audiobook_PL\]/}"
-    new="${new//\[Audiobook PL\]/}"
-    new="${new//_audiobook_pl/}"
-    new="${new//audiobook pl/}"
+    # [AudioBook PL], [Audiobook_PL], _AudioBook_PL, trailing "audiobook pl", any case (GNU sed).
+    new=$(printf '%s' "$new" | sed -E \
+        -e 's/\[audiobook[[:space:]_]+pl\]//gI' \
+        -e 's/_audiobook_pl//gI' \
+        -e 's/audiobook[[:space:]]+pl//gI')
     new="${new//\[eksiążki PL\]/}"
     new="${new//\[eksiazki PL\]/}"
     new="${new//_eksiazki PL_/}"
