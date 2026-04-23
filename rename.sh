@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.04.22 - v. 18.79 - preserve leading _ on *_okladka*.jpg cover filenames (media strip + stem normalize)
 # 2026.04.22 - v. 18.78 - checksum group: clearer preview labels and prompt text (hash file vs referenced files; what Yes does)
 # 2026.04.22 - v. 18.77 - protect .md5/.sha512 whose basename starts with _ or __ from checksum-file rename (keep leading underscores)
 # 2026.04.22 - v. 18.76 - rename menu [L]: session auto-yes when suggestion only lowercases a mixed-case 3-letter alphabetic extension
@@ -2599,6 +2600,16 @@ is_m3u_file() {
     [[ "$lower" == *.m3u ]]
 }
 
+# Leading underscore is intentional on cover scans (okładka); pattern is case-insensitive on basename.
+# Matches okladka and okladna spellings in the stem.
+is_okladka_cover_keep_leading_underscore() {
+    local bn lower
+    bn="$1"
+    [[ "$bn" != */* ]] || bn="$(basename -- "$bn")"
+    lower="${bn,,}"
+    [[ "$lower" == _*okladka*jpg || "$lower" == _*okladna*jpg ]]
+}
+
 # Internet shortcut: basename contains "torrent" and ends in .url (any case).
 is_torrent_url_file() {
     local p="$1"
@@ -3221,8 +3232,28 @@ choose_r_grave_mapping_for_file() {
 }
 
 # Spaces/brackets/punct → underscores for final basename (used on stem or whole name).
+# Optional second arg preserve-leading-underscore: skip stripping leading underscores (see okladka cover rule).
 _normalize_basename_separators() {
-    printf '%s' "$1" | sed -E '
+    local input="$1"
+    local preserve="${2-}"
+    if [[ "$preserve" == preserve-leading-underscore ]]; then
+        printf '%s' "$input" | sed -E '
+            s/[[:space:]]+/_/g;
+            s/,+/_/g;
+            s/;+/_/g;
+            s/:+/_/g;
+            s/\(+/_/g;
+            s/\)+/_/g;
+            s/\[+/_/g;
+            s/\]+/_/g;
+            s/\{+/_/g;
+            s/\}+/_/g;
+            s/"|'\''/_/g;
+            s/_+/_/g;
+            s/_+$//;
+        '
+    else
+        printf '%s' "$input" | sed -E '
             s/[[:space:]]+/_/g;
             s/,+/_/g;
             s/;+/_/g;
@@ -3238,6 +3269,7 @@ _normalize_basename_separators() {
             s/^_+//;
             s/_+$//;
         '
+    fi
 }
 
 transform_basename() {
@@ -3443,10 +3475,18 @@ transform_basename() {
         ext_body="${new##*.}"
         # Suffix with spaces/brackets is not a real extension (site.PL - subtitle, tags); normalize whole basename.
         if [[ "$ext_body" == *[[:space:]]* || "$ext_body" == *'['* || "$ext_body" == *']'* ]]; then
-            printf '%s' "$(_normalize_basename_separators "$new")"
+            if is_okladka_cover_keep_leading_underscore "$new"; then
+                printf '%s' "$(_normalize_basename_separators "$new" preserve-leading-underscore)"
+            else
+                printf '%s' "$(_normalize_basename_separators "$new")"
+            fi
         else
             ext=".$ext_body"
-            stem="$(_normalize_basename_separators "$stem")"
+            if is_okladka_cover_keep_leading_underscore "${stem}${ext}"; then
+                stem="$(_normalize_basename_separators "$stem" preserve-leading-underscore)"
+            else
+                stem="$(_normalize_basename_separators "$stem")"
+            fi
             printf '%s%s' "$stem" "$ext"
         fi
     else
@@ -3482,7 +3522,7 @@ transform_name() {
         base="$(sanitize_basename_control_chars "$base")"
     fi
 
-    if is_media_file "$base"; then
+    if is_media_file "$base" && ! is_okladka_cover_keep_leading_underscore "$base"; then
         while [[ "$base" == _* ]]; do
             base="${base#_}"
         done
@@ -3562,9 +3602,11 @@ transform_name() {
     fi
 
     if is_media_file "$newbase"; then
-        while [[ "$newbase" == _* ]]; do
-            newbase="${newbase#_}"
-        done
+        if ! is_okladka_cover_keep_leading_underscore "$newbase"; then
+            while [[ "$newbase" == _* ]]; do
+                newbase="${newbase#_}"
+            done
+        fi
         if [[ "$newbase" =~ ^([0-9])\.(mp3|aac|m4a|flac|ogg|oga|opus|wav|wma|alac|aiff|ape|mka|mp2|mp1|ac3|mp4|m4v|mov|mkv|webm|avi)$ ]]; then
             newbase="0${BASH_REMATCH[1]}.${BASH_REMATCH[2]}"
         fi
