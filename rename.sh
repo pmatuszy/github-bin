@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.04.23 - v. 18.88 - underscore-leading .par2: allow renames but preserve leading _ in normalize (was: skip rename entirely)
 # 2026.04.23 - v. 18.87 - wrap sqlite3 -uri fallback WARNING to respect MAX_LINE_LENGTH (two lines when needed)
 # 2026.04.23 - v. 18.86 - sqlite3 without -uri: probe once, fall back to path open (nolock URI unavailable); warn once
 # 2026.04.23 - v. 18.85 - SQLite checked_paths: full column list in CREATE (signature, hashes); batched ALTER migration before WAL; fix warmup SELECT
@@ -2828,6 +2829,15 @@ is_okladka_cover_keep_leading_underscore() {
     [[ "$lower" == _*okladka*jpg || "$lower" == _*okladna*jpg ]]
 }
 
+# PAR2 repair sets often use a leading underscore on the volume/slice basename; normalize the rest but keep leading _.
+is_par2_keep_leading_underscore() {
+    local bn lower
+    bn="$1"
+    [[ "$bn" != */* ]] || bn="$(basename -- "$bn")"
+    lower="${bn,,}"
+    [[ "$bn" == _* && "$lower" == *.par2 ]]
+}
+
 # Internet shortcut: basename contains "torrent" and ends in .url (any case).
 is_torrent_url_file() {
     local p="$1"
@@ -2858,14 +2868,6 @@ rename_suggested_only_lowercase_three_letter_ext() {
     [[ "$stem" == "${nb%.*}" ]] || return 1
     [[ "$ne" == "${oe,,}" ]] || return 1
     return 0
-}
-
-is_protected_par2_name() {
-    local p="$1"
-    local base lower
-    base="$(basename -- "$p")"
-    lower="${base,,}"
-    [[ "$base" == _* && "$lower" == *.par2 ]]
 }
 
 path_to_exclude_entry() {
@@ -3450,7 +3452,7 @@ choose_r_grave_mapping_for_file() {
 }
 
 # Spaces/brackets/punct → underscores for final basename (used on stem or whole name).
-# Optional second arg preserve-leading-underscore: skip stripping leading underscores (see okladka cover rule).
+# Optional second arg preserve-leading-underscore: skip stripping leading underscores (okladka cover + underscore-leading .par2).
 _normalize_basename_separators() {
     local input="$1"
     local preserve="${2-}"
@@ -3693,14 +3695,14 @@ transform_basename() {
         ext_body="${new##*.}"
         # Suffix with spaces/brackets is not a real extension (site.PL - subtitle, tags); normalize whole basename.
         if [[ "$ext_body" == *[[:space:]]* || "$ext_body" == *'['* || "$ext_body" == *']'* ]]; then
-            if is_okladka_cover_keep_leading_underscore "$new"; then
+            if is_okladka_cover_keep_leading_underscore "$new" || is_par2_keep_leading_underscore "$new"; then
                 printf '%s' "$(_normalize_basename_separators "$new" preserve-leading-underscore)"
             else
                 printf '%s' "$(_normalize_basename_separators "$new")"
             fi
         else
             ext=".$ext_body"
-            if is_okladka_cover_keep_leading_underscore "${stem}${ext}"; then
+            if is_okladka_cover_keep_leading_underscore "${stem}${ext}" || is_par2_keep_leading_underscore "${stem}${ext}"; then
                 stem="$(_normalize_basename_separators "$stem" preserve-leading-underscore)"
             else
                 stem="$(_normalize_basename_separators "$stem")"
@@ -5985,14 +5987,6 @@ for f in "${ordered_paths[@]}"; do
         new="$precomputed_new"
     else
         new="$(transform_name "$f")"
-    fi
-
-    if is_protected_par2_name "$f"; then
-        vlog "Protected .par2 basename starts with underscore, no rename needed for '$f'"
-        db_backfill_missing_hashes_for_existing_file "$f"
-        ((++files_skipped))
-        db_mark_checked "$f" "plain" "checked"
-        continue
     fi
 
     if [[ "$f" == "$new" ]]; then
