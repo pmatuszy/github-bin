@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.04.23 - v. 18.82 - SQLite on broken FS: BEGIN IMMEDIATE schema + optional file URI ?nolock=1 for all DB access (CIFS/NFS SQLITE_BUSY)
 # 2026.04.23 - v. 18.81 - db_init: remove orphan -wal/-shm/empty DB before open; busy_timeout + one retry after clearing lock artifacts (SQLITE_BUSY)
 # 2026.04.23 - v. 18.80 - db_init: call db_migrate_legacy_file correctly; create SQLite schema before optional WAL pragmas (|| true); clearer init failure hint
 # 2026.04.22 - v. 18.79 - preserve leading _ on *_okladka*.jpg cover filenames (media strip + stem normalize)
@@ -234,6 +235,9 @@ FORCE_RECHECK=0
 FAST_DB=0
 DB_FILE="$START_DIR/_rename.sh-optional-db.sqlite3"
 LEGACY_DB_FILE="$START_DIR/rename.sh-optional-db.sqlite3"
+# Set by db_init when host FS returns SQLITE_BUSY unless opened with sqlite3 -uri '...?nolock=1' (unsafe if two writers).
+DB_SQLITE_USE_URI=""
+DB_SQLITE_URI=""
 DB_HASHES_ADDED=0
 DB_ROWS_NEW=0
 DB_ROWS_UPDATED=0
@@ -861,6 +865,15 @@ DB_PENDING_SQL_FILE=""
 DB_PENDING_COUNT=0
 DB_FLUSH_EVERY=500
 
+# Central open path so optional URI+nolock applies to every sqlite3 use of the cache DB.
+rename_sqlite3_db_run() {
+    if [[ -n "$DB_SQLITE_USE_URI" ]]; then
+        sqlite3 -uri "$DB_SQLITE_URI" "$@"
+    else
+        sqlite3 "$DB_FILE" "$@"
+    fi
+}
+
 db_flush_pending() {
     (( USE_DB == 1 )) || return 0
     [[ -n "$DB_PENDING_SQL_FILE" && -s "$DB_PENDING_SQL_FILE" ]] || return 0
@@ -868,7 +881,7 @@ db_flush_pending() {
         printf 'BEGIN IMMEDIATE;\n'
         cat -- "$DB_PENDING_SQL_FILE"
         printf 'COMMIT;\n'
-    } | sqlite3 "$DB_FILE" >/dev/null 2>&1 || true
+    } | rename_sqlite3_db_run >/dev/null 2>&1 || true
     : > "$DB_PENDING_SQL_FILE"
     DB_PENDING_COUNT=0
 }
@@ -911,9 +924,19 @@ db_clear_sqlite_sidecar_files() {
     rm -f -- "${DB_FILE}-wal" "${DB_FILE}-shm" "${DB_FILE}-journal" 2>/dev/null || true
 }
 
-db_init_create_checked_paths_schema() {
-    sqlite3 "$DB_FILE" >/dev/null 2>&1 <<'SQL'
-PRAGMA busy_timeout=20000;
+db_sqlite_file_uri_nolock() {
+    command -v python3 >/dev/null 2>&1 || return 1
+    python3 -c 'import pathlib, urllib.parse, sys
+p = pathlib.Path(sys.argv[1]).expanduser().resolve()
+print("file:" + urllib.parse.quote(str(p), safe="/:") + "?nolock=1")
+' "$DB_FILE"
+}
+
+db_init_create_checked_paths_schema_core() {
+    rename_sqlite3_db_run -batch >/dev/null 2>&1 <<'SQL'
+PRAGMA locking_mode=EXCLUSIVE;
+PRAGMA busy_timeout=25000;
+BEGIN IMMEDIATE;
 CREATE TABLE IF NOT EXISTS checked_paths (
     path TEXT PRIMARY KEY,
     kind TEXT NOT NULL,
@@ -923,7 +946,27 @@ CREATE TABLE IF NOT EXISTS checked_paths (
     last_checked TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 CREATE INDEX IF NOT EXISTS idx_checked_paths_kind ON checked_paths(kind);
+COMMIT;
 SQL
+}
+
+db_init_create_checked_paths_schema_nolock() {
+    local uri
+    uri="$(db_sqlite_file_uri_nolock)" || return 1
+    DB_SQLITE_USE_URI=1
+    DB_SQLITE_URI="$uri"
+    if db_init_create_checked_paths_schema_core; then
+        return 0
+    fi
+    DB_SQLITE_USE_URI=""
+    DB_SQLITE_URI=""
+    return 1
+}
+
+db_init_create_checked_paths_schema() {
+    DB_SQLITE_USE_URI=""
+    DB_SQLITE_URI=""
+    db_init_create_checked_paths_schema_core
 }
 
 db_run_maintenance() {
@@ -944,7 +987,7 @@ db_run_maintenance() {
         startup_progress "SQLite maintenance: running AUTO profile..."
         (( VERBOSE == 1 )) && echo "[VERBOSE] SQLite maintenance command: PRAGMA optimize;" >&2
         (( VERBOSE == 1 )) && echo "[VERBOSE] SQLite maintenance command: PRAGMA wal_checkpoint(PASSIVE);" >&2
-        sqlite3 "$DB_FILE" >/dev/null 2>&1 <<'SQL'
+        rename_sqlite3_db_run >/dev/null 2>&1 <<'SQL'
 PRAGMA optimize;
 PRAGMA wal_checkpoint(PASSIVE);
 SQL
@@ -958,7 +1001,7 @@ SQL
     (( VERBOSE == 1 )) && echo "[VERBOSE] SQLite maintenance command: ANALYZE;" >&2
     (( VERBOSE == 1 )) && echo "[VERBOSE] SQLite maintenance command: REINDEX checked_paths;" >&2
     (( VERBOSE == 1 )) && echo "[VERBOSE] SQLite maintenance command: PRAGMA wal_checkpoint(TRUNCATE);" >&2
-    sqlite3 "$DB_FILE" >/dev/null 2>&1 <<'SQL'
+    rename_sqlite3_db_run >/dev/null 2>&1 <<'SQL'
 PRAGMA optimize;
 ANALYZE;
 REINDEX checked_paths;
@@ -993,7 +1036,7 @@ db_prune_missing_paths() {
     DB_MAINT_ROWS_REMOVED=0
 
     startup_progress "SQLite maintenance: checking DB paths against filesystem..."
-    total_db_rows="$(sqlite3 "$DB_FILE" 'SELECT COUNT(*) FROM checked_paths;' 2>/dev/null || echo 0)"
+    total_db_rows="$(rename_sqlite3_db_run 'SELECT COUNT(*) FROM checked_paths;' 2>/dev/null || echo 0)"
     [[ "$total_db_rows" =~ ^[0-9]+$ ]] || total_db_rows=0
 
     if (( total_db_rows > 0 )); then
@@ -1030,7 +1073,7 @@ db_prune_missing_paths() {
             startup_progress "SQLite maintenance: crosscheck progress ($DB_MAINT_ROWS_CHECKED checked, $DB_MAINT_ROWS_MISSING missing)..."
             next_progress_count=$((next_progress_count + 500))
         fi
-    done < <(sqlite3 "$DB_FILE" 'SELECT path FROM checked_paths;')
+    done < <(rename_sqlite3_db_run 'SELECT path FROM checked_paths;')
 
     if (( DB_MAINT_ROWS_MISSING > 0 )); then
         (( VERBOSE == 1 )) && echo "[VERBOSE] SQLite maintenance command: delete rows for missing filesystem paths" >&2
@@ -1050,7 +1093,7 @@ db_prune_missing_paths() {
                     printf "DELETE FROM checked_paths WHERE path='%s';\n" "$escaped_path"
                 done
                 printf 'COMMIT;\n'
-            } | sqlite3 "$DB_FILE" >/dev/null 2>&1
+            } | rename_sqlite3_db_run >/dev/null 2>&1
 
             delete_processed=$end_idx
             delete_progress_pct=$(( delete_processed * 100 / delete_total ))
@@ -1135,7 +1178,7 @@ db_maintenance_backfill_missing_hashes() {
     candidate_query="SELECT path, COALESCE(file_md5,''), COALESCE(file_sha512,'') FROM checked_paths WHERE ${candidate_where};"
 
     startup_progress "SQLite maintenance: backfilling missing md5/sha512 for existing file rows..."
-    total_candidates="$(sqlite3 "$DB_FILE" "SELECT COUNT(*) FROM checked_paths WHERE ${candidate_where};" 2>/dev/null || echo 0)"
+    total_candidates="$(rename_sqlite3_db_run "SELECT COUNT(*) FROM checked_paths WHERE ${candidate_where};" 2>/dev/null || echo 0)"
     [[ "$total_candidates" =~ ^[0-9]+$ ]] || total_candidates=0
 
     if (( total_candidates > 0 )); then
@@ -1213,7 +1256,7 @@ db_maintenance_backfill_missing_hashes() {
                 db_flush_pending
             fi
         fi
-    done < <(sqlite3 -separator '|' "$DB_FILE" "$candidate_query")
+    done < <(rename_sqlite3_db_run -separator '|' "$candidate_query")
 
     startup_progress "SQLite maintenance: hash backfill finished (scanned: $DB_MAINT_HASH_ROWS_SCANNED, updated: $DB_MAINT_HASH_ROWS_UPDATED, md5 filled: $DB_MAINT_HASH_MD5_FILLED, sha512 filled: $DB_MAINT_HASH_SHA512_FILLED)"
 }
@@ -1244,14 +1287,20 @@ db_init() {
     # mounts or with stale -wal/-shm; applying them only after open avoids a hard init failure.
     if ! db_init_create_checked_paths_schema; then
         db_clear_sqlite_sidecar_files
+        db_remove_stale_sqlite_lock_artifacts
         if ! db_init_create_checked_paths_schema; then
-            echo "ERROR: could not create or open SQLite cache: $DB_FILE" >&2
-            echo "If you see \"database is locked\", close other rename.sh (or sqlite3) using this file, then retry." >&2
-            echo "Check write permissions on the start directory. Stale sidecar files from a crash or copy can also cause locks:" >&2
-            echo "  rm -f -- \"${DB_FILE}-wal\" \"${DB_FILE}-shm\" \"${DB_FILE}-journal\"" >&2
-            echo "sqlite3 diagnostic (first lines):" >&2
-            sqlite3 "$DB_FILE" 2>&1 <<'SQL' | head -n 20 >&2 || true
-PRAGMA busy_timeout=20000;
+            if db_init_create_checked_paths_schema_nolock; then
+                (( VERBOSE == 1 )) && echo "[VERBOSE] SQLite cache opened with ?nolock=1 (host FS POSIX locking failed). Use only one rename.sh per directory; corruption risk if two writers." >&2
+            else
+                echo "ERROR: could not create or open SQLite cache: $DB_FILE" >&2
+                echo "If you see \"database is locked\", close other rename.sh (or sqlite3) using this file, then retry." >&2
+                echo "Check write permissions on the start directory. Stale sidecar files from a crash or copy can also cause locks:" >&2
+                echo "  rm -f -- \"${DB_FILE}-wal\" \"${DB_FILE}-shm\" \"${DB_FILE}-journal\"" >&2
+                echo "sqlite3 diagnostic (first lines):" >&2
+                rename_sqlite3_db_run -batch 2>&1 <<'SQL' | head -n 25 >&2 || true
+PRAGMA locking_mode=EXCLUSIVE;
+PRAGMA busy_timeout=25000;
+BEGIN IMMEDIATE;
 CREATE TABLE IF NOT EXISTS checked_paths (
     path TEXT PRIMARY KEY,
     kind TEXT NOT NULL,
@@ -1261,33 +1310,35 @@ CREATE TABLE IF NOT EXISTS checked_paths (
     last_checked TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 CREATE INDEX IF NOT EXISTS idx_checked_paths_kind ON checked_paths(kind);
+COMMIT;
 SQL
-            exit 1
+                exit 1
+            fi
         fi
     fi
-    sqlite3 "$DB_FILE" >/dev/null 2>&1 <<'SQL' || true
+    rename_sqlite3_db_run >/dev/null 2>&1 <<'SQL' || true
 PRAGMA journal_mode=WAL;
 PRAGMA synchronous=NORMAL;
 PRAGMA temp_store=MEMORY;
 PRAGMA cache_size=-20000;
 SQL
-    sqlite3 "$DB_FILE" 'ALTER TABLE checked_paths ADD COLUMN signature TEXT;' >/dev/null 2>&1 || true
-    sqlite3 "$DB_FILE" 'ALTER TABLE checked_paths ADD COLUMN file_hash_kind TEXT;' >/dev/null 2>&1 || true
-    sqlite3 "$DB_FILE" 'ALTER TABLE checked_paths ADD COLUMN file_hash TEXT;' >/dev/null 2>&1 || true
-    sqlite3 "$DB_FILE" 'ALTER TABLE checked_paths ADD COLUMN file_md5 TEXT;' >/dev/null 2>&1 || true
-    sqlite3 "$DB_FILE" 'ALTER TABLE checked_paths ADD COLUMN file_sha512 TEXT;' >/dev/null 2>&1 || true
-    sqlite3 "$DB_FILE" 'CREATE INDEX IF NOT EXISTS idx_checked_paths_signature ON checked_paths(signature);' >/dev/null 2>&1 || true
-    sqlite3 "$DB_FILE" 'CREATE INDEX IF NOT EXISTS idx_checked_paths_file_hash ON checked_paths(file_hash_kind, file_hash);' >/dev/null 2>&1 || true
-    sqlite3 "$DB_FILE" 'CREATE INDEX IF NOT EXISTS idx_checked_paths_file_md5 ON checked_paths(file_md5);' >/dev/null 2>&1 || true
-    sqlite3 "$DB_FILE" 'CREATE INDEX IF NOT EXISTS idx_checked_paths_file_sha512 ON checked_paths(file_sha512);' >/dev/null 2>&1 || true
-    sqlite3 "$DB_FILE" "CREATE INDEX IF NOT EXISTS idx_checked_paths_missing_hashes ON checked_paths(path) WHERE COALESCE(file_md5,'')='' OR COALESCE(file_sha512,'');" >/dev/null 2>&1 || true
+    rename_sqlite3_db_run 'ALTER TABLE checked_paths ADD COLUMN signature TEXT;' >/dev/null 2>&1 || true
+    rename_sqlite3_db_run 'ALTER TABLE checked_paths ADD COLUMN file_hash_kind TEXT;' >/dev/null 2>&1 || true
+    rename_sqlite3_db_run 'ALTER TABLE checked_paths ADD COLUMN file_hash TEXT;' >/dev/null 2>&1 || true
+    rename_sqlite3_db_run 'ALTER TABLE checked_paths ADD COLUMN file_md5 TEXT;' >/dev/null 2>&1 || true
+    rename_sqlite3_db_run 'ALTER TABLE checked_paths ADD COLUMN file_sha512 TEXT;' >/dev/null 2>&1 || true
+    rename_sqlite3_db_run 'CREATE INDEX IF NOT EXISTS idx_checked_paths_signature ON checked_paths(signature);' >/dev/null 2>&1 || true
+    rename_sqlite3_db_run 'CREATE INDEX IF NOT EXISTS idx_checked_paths_file_hash ON checked_paths(file_hash_kind, file_hash);' >/dev/null 2>&1 || true
+    rename_sqlite3_db_run 'CREATE INDEX IF NOT EXISTS idx_checked_paths_file_md5 ON checked_paths(file_md5);' >/dev/null 2>&1 || true
+    rename_sqlite3_db_run 'CREATE INDEX IF NOT EXISTS idx_checked_paths_file_sha512 ON checked_paths(file_sha512);' >/dev/null 2>&1 || true
+    rename_sqlite3_db_run "CREATE INDEX IF NOT EXISTS idx_checked_paths_missing_hashes ON checked_paths(path) WHERE COALESCE(file_md5,'')='' OR COALESCE(file_sha512,'');" >/dev/null 2>&1 || true
     DB_PENDING_SQL_FILE="$(mktemp)"
 
     local total_cached_rows=0
     local progress_pct=0
     local next_progress_pct=10
 
-    total_cached_rows="$(sqlite3 "$DB_FILE" 'SELECT COUNT(*) FROM checked_paths;' 2>/dev/null || echo 0)"
+    total_cached_rows="$(rename_sqlite3_db_run 'SELECT COUNT(*) FROM checked_paths;' 2>/dev/null || echo 0)"
     [[ "$total_cached_rows" =~ ^[0-9]+$ ]] || total_cached_rows=0
 
     if (( total_cached_rows > 0 )); then
@@ -1327,7 +1378,7 @@ SQL
         elif (( warmed_rows % 50000 == 0 )); then
             startup_progress "SQLite warmup progress: $warmed_rows rows loaded..."
         fi
-    done < <(sqlite3 -separator '|' "$DB_FILE" 'SELECT path, size, mtime, COALESCE(status, ""), COALESCE(signature, ""), COALESCE(file_md5, ""), COALESCE(file_sha512, ""), COALESCE(file_hash_kind, ""), COALESCE(file_hash, "") FROM checked_paths;')
+    done < <(rename_sqlite3_db_run -separator '|' 'SELECT path, size, mtime, COALESCE(status, ""), COALESCE(signature, ""), COALESCE(file_md5, ""), COALESCE(file_sha512, ""), COALESCE(file_hash_kind, ""), COALESCE(file_hash, "") FROM checked_paths;')
 
     if (( total_cached_rows > 0 )); then
         startup_progress "SQLite cache warmup done: 100% ($warmed_rows / $total_cached_rows rows loaded)"
@@ -1480,7 +1531,7 @@ db_find_path_by_file_hash_in_subtree() {
         *) return 1 ;;
     esac
 
-    row_path="$(sqlite3 -separator $'\t' "$DB_FILE" "$query" 2>/dev/null | head -n 1)"
+    row_path="$(rename_sqlite3_db_run -separator $'\t' "$query" 2>/dev/null | head -n 1)"
     if [[ -n "$row_path" ]]; then
         if [[ -e "$row_path" ]]; then
             ((++DB_HASH_LOOKUP_HITS))
