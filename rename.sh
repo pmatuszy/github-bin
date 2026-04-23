@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.04.22 - v. 18.77 - protect .md5/.sha512 whose basename starts with _ or __ from checksum-file rename (keep leading underscores)
 # 2026.04.22 - v. 18.76 - rename menu [L]: session auto-yes when suggestion only lowercases a mixed-case 3-letter alphabetic extension
 # 2026.04.22 - v. 18.75 - rename menu [T]: delete *torrent*.URL shortcuts; allow no-op renames to menu for those; DB row delete on remove
 # 2026.04.22 - v. 18.74 - fix DB path rewrite after mv: resolve old path via parent+basename; checksum file refs + .md5/.sha512 renames update rows
@@ -2127,7 +2128,7 @@ print_checksum_file_rename_verbose() {
 print_protected_checksum_verbose() {
     (( VERBOSE == 1 )) || return 0
     local sum_file="$1"
-    local line1="Protected checksum name starts with double underscores"
+    local line1="Protected checksum name starts with leading underscore(s)"
     local line2="          keeping checksum filename unchanged: '${sum_file}'"
 
     if (( ${#line1} + 11 <= MAX_LINE_LENGTH )) && (( ${#line2} <= MAX_LINE_LENGTH )); then
@@ -2571,12 +2572,11 @@ is_checksum_file() {
 
 is_protected_checksum_name() {
     local p="$1"
-    local base lower
+    local base
     base="$(basename -- "$p")"
-    lower="${base,,}"
     is_checksum_file "$p" || return 1
-    [[ "$base" == __* ]] && return 0
-    [[ "$lower" == '_sumy_kontrolne.md5' ]] && return 0
+    # Leading underscore(s) are often intentional; do not offer to strip them via transform_name.
+    [[ "$base" == _* ]] && return 0
     return 1
 }
 
@@ -3463,6 +3463,19 @@ transform_name() {
     base="$(basename -- "$f")"
     audio_ext_re='(mp3|aac|m4a|flac|ogg|oga|opus|wav|wma|alac|aiff|ape|mka|mp2|mp1|ac3)'
     common_media_ext_re='(mp3|aac|m4a|flac|ogg|oga|opus|wav|wma|alac|aiff|ape|mka|mp2|mp1|ac3|mp4|m4v|mov|mkv|webm|avi)'
+
+    if [[ -f "$f" ]] && is_protected_checksum_name "$f"; then
+        if [[ "$dir" == "." ]]; then
+            if [[ "$f" == ./* ]]; then
+                printf './%s' "$base"
+            else
+                printf '%s' "$base"
+            fi
+        else
+            printf '%s/%s' "$dir" "$base"
+        fi
+        return 0
+    fi
 
     if path_has_control_chars "$base"; then
         base="$(sanitize_basename_control_chars "$base")"
