@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.04.22 - v. 18.66 - strip .ebooksclub. from names (replace with single dot)
 # 2026.04.22 - v. 18.65 - wrap long DB hash verbose lines: put path on continuation when prefix+path exceeds MAX_LINE_LENGTH
 # 2026.04.22 - v. 18.64 - treat _rename.sh.resume-state.json as internal protected (never prompt rename)
 # 2026.04.22 - v. 18.63 - flatten prompt: explain y/N/e/q; skip flatten when sole subdir is VIDEO_TS (DVD layout)
@@ -3232,6 +3233,7 @@ transform_basename() {
     new="${new//eBook.PL/}"
     new="${new//_www.osiolek.com/}"
     new="${new//www.osiolek.com/}"
+    new="${new//.ebooksclub./.}"
     while [[ "$new" == *".WnA."* ]]; do
         new="${new//.WnA./.}"
     done
