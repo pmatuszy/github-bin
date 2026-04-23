@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.04.23 - v. 18.89 - same-inode source/target: no rename prompt (case-insensitive FS); extension-only lowercasing for any ext (.MP4); [L] menu widened
 # 2026.04.23 - v. 18.88 - underscore-leading .par2: allow renames but preserve leading _ in normalize (was: skip rename entirely)
 # 2026.04.23 - v. 18.87 - wrap sqlite3 -uri fallback WARNING to respect MAX_LINE_LENGTH (two lines when needed)
 # 2026.04.23 - v. 18.86 - sqlite3 without -uri: probe once, fall back to path open (nolock URI unavailable); warn once
@@ -2848,10 +2849,18 @@ is_torrent_url_file() {
     [[ "$lower" == *torrent*.url ]]
 }
 
-# True when old/new differ only by lowercasing a 3-letter alphabetic extension (same dirname and basename stem).
-rename_suggested_only_lowercase_three_letter_ext() {
+paths_refer_to_same_file() {
+    local a="$1" b="$2" ida idb
+    [[ -e "$a" && -e "$b" ]] || return 1
+    ida="$(stat -c '%d:%i' -- "$a" 2>/dev/null)" || return 1
+    idb="$(stat -c '%d:%i' -- "$b" 2>/dev/null)" || return 1
+    [[ -n "$ida" && "$ida" == "$idb" ]]
+}
+
+# Same directory and basename stem; suggested path lowercases only the extension (any length, e.g. .MP4 -> .mp4, .JPEG -> .jpeg).
+rename_suggested_only_extension_case_change() {
     local old_path="$1" new_path="$2"
-    local dir_old dir_new ob nb stem oe ne
+    local dir_old dir_new ob nb stem_old stem_new oe ne
 
     [[ -f "$old_path" ]] || return 1
     dir_old="$(dirname -- "$old_path")"
@@ -2860,13 +2869,14 @@ rename_suggested_only_lowercase_three_letter_ext() {
     ob="$(basename -- "$old_path")"
     nb="$(basename -- "$new_path")"
     [[ "$ob" == *.* && "$nb" == *.* ]] || return 1
-    stem="${ob%.*}"
+    stem_old="${ob%.*}"
+    stem_new="${nb%.*}"
+    [[ "$stem_old" == "$stem_new" ]] || return 1
     oe="${ob##*.}"
     ne="${nb##*.}"
-    [[ "${#oe}" -eq 3 && "$oe" =~ ^[[:alpha:]]{3}$ ]] || return 1
-    [[ "$oe" != "${oe,,}" ]] || return 1
-    [[ "$stem" == "${nb%.*}" ]] || return 1
+    [[ -n "$oe" && -n "$ne" ]] || return 1
     [[ "$ne" == "${oe,,}" ]] || return 1
+    [[ "$oe" != "${oe,,}" ]] || return 1
     return 0
 }
 
@@ -4337,6 +4347,14 @@ perform_plain_entry_rename() {
     local new="$2"
     local old_companion_dir="" new_companion_dir="" old_companion_name="" new_companion_name=""
 
+    if paths_refer_to_same_file "$old" "$new"; then
+        vlog "Skipping rename: source and target are the same file (same device:inode): '$old' | '$new'"
+        db_backfill_missing_hashes_for_existing_file "$old"
+        ((++files_skipped))
+        db_mark_checked "$old" "plain" "checked"
+        return 0
+    fi
+
     if [[ -e "$new" ]]; then
         handle_existing_target_collision "$old" "$new"
         collision_decision_rc=$?
@@ -4681,7 +4699,7 @@ files_skipped=0
 stopped_by_user=no
 rename_all=no
 AUTO_RENAME_DIR=""
-AUTO_LOWERCASE_3_EXT_SESSION=no
+AUTO_LOWERCASE_3_EXT_SESSION=no # [L] session: any extension case-only lowercasing (name kept for compatibility)
 
 declare -a renamed_list=()
 declare -A recorded
@@ -4934,8 +4952,8 @@ print_rename_prompt_menu() {
     echo "  [M] Rename by editing target filename"
     echo "  [A] All remaining"
     echo "  [D] Yes for this directory"
-    if [[ -n "$path" && -n "$suggested_new" ]] && rename_suggested_only_lowercase_three_letter_ext "$path" "$suggested_new"; then
-        echo "  [L] Yes, and auto-approve all such 3-letter extension lowercases for this run (no further prompts)"
+    if [[ -n "$path" && -n "$suggested_new" ]] && rename_suggested_only_extension_case_change "$path" "$suggested_new"; then
+        echo "  [L] Yes, and auto-approve all extension case-only lowercasing for this run (no further prompts)"
         choice_hint+=/l
     fi
     if [[ -n "$path" ]] && is_torrent_url_file "$path"; then
@@ -5989,6 +6007,14 @@ for f in "${ordered_paths[@]}"; do
         new="$(transform_name "$f")"
     fi
 
+    if [[ "$f" != "$new" ]] && paths_refer_to_same_file "$f" "$new"; then
+        vlog "Suggested target is the same inode as source (case-insensitive path spellings): '$f' | '$new' — no rename."
+        db_backfill_missing_hashes_for_existing_file "$f"
+        ((++files_skipped))
+        db_mark_checked "$f" "plain" "checked"
+        continue
+    fi
+
     if [[ "$f" == "$new" ]]; then
         if ! is_torrent_url_file "$f"; then
             vlog "No rename needed for '$f'"
@@ -6036,8 +6062,8 @@ for f in "${ordered_paths[@]}"; do
         continue
     fi
 
-    if [[ "$AUTO_LOWERCASE_3_EXT_SESSION" == "yes" ]] && [[ "$f" != "$new" ]] && rename_suggested_only_lowercase_three_letter_ext "$f" "$new"; then
-        print_rename_action_verbose "$f" "$new" "auto lowercase 3-letter ext (session)"
+    if [[ "$AUTO_LOWERCASE_3_EXT_SESSION" == "yes" ]] && [[ "$f" != "$new" ]] && rename_suggested_only_extension_case_change "$f" "$new"; then
+        print_rename_action_verbose "$f" "$new" "auto extension case-only lowercase (session)"
         perform_plain_entry_rename "$f" "$new" || break
         continue
     fi
@@ -6131,13 +6157,13 @@ for f in "${ordered_paths[@]}"; do
             processed["$f"]=1
             ;;
         l|L)
-            if ! rename_suggested_only_lowercase_three_letter_ext "$f" "$new"; then
-                echo -e "${YELLOW}[L] applies only when the suggestion only lowercases a mixed-case 3-letter alphabetic extension.${RESET}"
+            if ! rename_suggested_only_extension_case_change "$f" "$new"; then
+                echo -e "${YELLOW}[L] applies only when the suggestion only lowercases the file extension (same stem).${RESET}"
                 ((++files_skipped))
             else
                 AUTO_LOWERCASE_3_EXT_SESSION=yes
-                vlog "Session auto-yes enabled for 3-letter extension lowercasing-only renames"
-                print_rename_action_verbose "$f" "$new" "lowercase 3-letter ext + session auto"
+                vlog "Session auto-yes enabled for extension case-only lowercasing renames"
+                print_rename_action_verbose "$f" "$new" "extension case lowercase + session auto"
                 perform_plain_entry_rename "$f" "$new" || break
             fi
             ;;
