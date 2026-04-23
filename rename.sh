@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.04.23 - v. 18.80 - db_init: call db_migrate_legacy_file correctly; create SQLite schema before optional WAL pragmas (|| true); clearer init failure hint
 # 2026.04.22 - v. 18.79 - preserve leading _ on *_okladka*.jpg cover filenames (media strip + stem normalize)
 # 2026.04.22 - v. 18.78 - checksum group: clearer preview labels and prompt text (hash file vs referenced files; what Yes does)
 # 2026.04.22 - v. 18.77 - protect .md5/.sha512 whose basename starts with _ or __ from checksum-file rename (keep leading underscores)
@@ -1201,15 +1202,13 @@ db_init() {
     local warmed_rows=0
     local md5_hash sha512_hash file_hash_kind file_hash
 
-    db_migrate_legacy_file()
     (( USE_DB == 1 )) || return 0
+    db_migrate_legacy_file
     startup_progress "Preparing SQLite cache: $DB_FILE"
     db_require_sqlite
-    sqlite3 "$DB_FILE" >/dev/null 2>&1 <<'SQL'
-PRAGMA journal_mode=WAL;
-PRAGMA synchronous=NORMAL;
-PRAGMA temp_store=MEMORY;
-PRAGMA cache_size=-20000;
+    # Create schema first (default journal mode). WAL/synchronous pragmas can fail on some
+    # mounts or with stale -wal/-shm; applying them only after open avoids a hard init failure.
+    if ! sqlite3 "$DB_FILE" >/dev/null 2>&1 <<'SQL'
 CREATE TABLE IF NOT EXISTS checked_paths (
     path TEXT PRIMARY KEY,
     kind TEXT NOT NULL,
@@ -1219,6 +1218,30 @@ CREATE TABLE IF NOT EXISTS checked_paths (
     last_checked TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 CREATE INDEX IF NOT EXISTS idx_checked_paths_kind ON checked_paths(kind);
+SQL
+    then
+        echo "ERROR: could not create or open SQLite cache: $DB_FILE" >&2
+        echo "Check write permissions on the start directory. If this DB was copied or interrupted, try removing stale sidecar files:" >&2
+        echo "  rm -f -- \"${DB_FILE}-wal\" \"${DB_FILE}-shm\"" >&2
+        echo "sqlite3 diagnostic (first lines):" >&2
+        sqlite3 "$DB_FILE" 2>&1 <<'SQL' | head -n 15 >&2 || true
+CREATE TABLE IF NOT EXISTS checked_paths (
+    path TEXT PRIMARY KEY,
+    kind TEXT NOT NULL,
+    size INTEGER NOT NULL,
+    mtime INTEGER NOT NULL,
+    status TEXT NOT NULL,
+    last_checked TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_checked_paths_kind ON checked_paths(kind);
+SQL
+        exit 1
+    fi
+    sqlite3 "$DB_FILE" >/dev/null 2>&1 <<'SQL' || true
+PRAGMA journal_mode=WAL;
+PRAGMA synchronous=NORMAL;
+PRAGMA temp_store=MEMORY;
+PRAGMA cache_size=-20000;
 SQL
     sqlite3 "$DB_FILE" 'ALTER TABLE checked_paths ADD COLUMN signature TEXT;' >/dev/null 2>&1 || true
     sqlite3 "$DB_FILE" 'ALTER TABLE checked_paths ADD COLUMN file_hash_kind TEXT;' >/dev/null 2>&1 || true
