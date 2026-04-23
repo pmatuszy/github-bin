@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.04.22 - v. 18.72 - directories: never stem/ext split (no extensions); normalize full basename like extensionless files
 # 2026.04.22 - v. 18.71 - if last-dot suffix has space or brackets (e.g. Site.PL - rest), normalize whole basename not only stem
 # 2026.04.22 - v. 18.70 - strip Audiobook PL markers case-insensitively ([AudioBook PL], _AudioBook_PL, etc.; GNU sed I)
 # 2026.04.22 - v. 18.69 - drop duplicate verbose_question_timestamp before prompts that echo the same line; green checksum-group question
@@ -3356,11 +3357,14 @@ transform_basename() {
         s/\.$//;
     ')
 
-    if [[ "$new" == *.* ]]; then
+    # Directories do not use file extensions; dots in the name are part of the title (e.g. Foo.PL - bar).
+    if [[ -n "$original_path" && -d "$original_path" ]]; then
+        printf '%s' "$(_normalize_basename_separators "$new")"
+    elif [[ "$new" == *.* ]]; then
         local stem ext ext_body
         stem="${new%.*}"
         ext_body="${new##*.}"
-        # Last dot is often a site suffix (…Afganistanu.PL - subtitle), not a real extension.
+        # Suffix with spaces/brackets is not a real extension (site.PL - subtitle, tags); normalize whole basename.
         if [[ "$ext_body" == *[[:space:]]* || "$ext_body" == *'['* || "$ext_body" == *']'* ]]; then
             printf '%s' "$(_normalize_basename_separators "$new")"
         else
