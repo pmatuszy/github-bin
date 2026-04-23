@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.04.22 - v. 18.69 - drop duplicate verbose_question_timestamp before prompts that echo the same line; green checksum-group question
 # 2026.04.22 - v. 18.68 - green highlight for main rename and flatten questions; VERBOSE note: vlog() uses CYAN, many legacy lines use plain echo
 # 2026.04.22 - v. 18.67 - transform_basename: replace & with and (M3U key normalize already did; plain renames did not)
 # 2026.04.22 - v. 18.66 - strip .ebooksclub. from names (replace with single dot)
@@ -4568,7 +4569,6 @@ auto_yes_current_dir_matches() {
 
 print_rename_prompt_menu() {
     local kind_label="$1"
-    verbose_question_timestamp "Rename this ${kind_label}?"
     echo -e "${GREEN}Rename this ${kind_label}?${RESET}"
     echo "  [Y] Yes (default)"
     echo "  [N] No"
@@ -4634,7 +4634,6 @@ maybe_prompt_flatten_single_child_dir() {
     echo -e "${CYAN}FLATTEN CANDIDATE:${RESET} $parent_dir"
     echo "Contains exactly one subdirectory with files:"
     echo "  $child_dir"
-    verbose_question_timestamp "Move child contents one level up and delete this subdirectory?"
     echo -e "${GREEN}Move child contents one level up and delete this subdirectory?${RESET}"
     echo "  [Y] Yes — flatten (move child contents up, remove subdirectory; then choose folder name)"
     echo "  [N] No (default) — keep current folder layout"
@@ -4798,8 +4797,7 @@ choose_custom_rename_target() {
     suggested_base="$(basename -- "$suggested_path")"
 
     echo >&2
-    verbose_question_timestamp "Rename by editing target filename"
-    echo "Rename by editing target filename (basename only):" >&2
+    echo -e "${GREEN}Rename by editing target filename (basename only):${RESET}" >&2
     echo "  Use arrows/Home/End for cursor movement and editing." >&2
     echo "  Current suggestion: $suggested_base" >&2
     echo -n "New basename: " >&2
@@ -4829,8 +4827,7 @@ choose_custom_rename_target() {
 print_checksum_prompt_menu() {
     local label_lower="$1"
     local hash_file="$2"
-    verbose_question_timestamp "Rename this ${label_lower} group?"
-    echo "Rename this ${label_lower} group?"
+    echo -e "${GREEN}Rename this ${label_lower} group?${RESET}"
     echo "  hash file: $hash_file"
     echo "  [Y] Yes (default)"
     echo "  [N] No"
