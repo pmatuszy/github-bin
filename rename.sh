@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.04.23 - v. 18.90 - normalize YYYY-MM-DD_at_HH.MM.SS[_tail].ext -> YYYYMMDD_HHMMSS[_tail].ext
 # 2026.04.23 - v. 18.89 - same-inode source/target: no rename prompt (case-insensitive FS); extension-only lowercasing for any ext (.MP4); [L] menu widened
 # 2026.04.23 - v. 18.88 - underscore-leading .par2: allow renames but preserve leading _ in normalize (was: skip rename entirely)
 # 2026.04.23 - v. 18.87 - wrap sqlite3 -uri fallback WARNING to respect MAX_LINE_LENGTH (two lines when needed)
@@ -3819,6 +3820,16 @@ transform_name() {
             fi
         elif [[ "$newbase" =~ ^([0-9]{4})-([0-9]{2})-([0-9]{2})_([0-9]{2})-([0-9]{2})-([0-9]{2})(\.${audio_ext_re})$ ]]; then
             newbase="${BASH_REMATCH[1]}${BASH_REMATCH[2]}${BASH_REMATCH[3]}_${BASH_REMATCH[4]}${BASH_REMATCH[5]}${BASH_REMATCH[6]}${BASH_REMATCH[7]}"
+        elif [[ "$newbase" =~ ^([0-9]{4})-([0-9]{2})-([0-9]{2})_at_([0-9]{1,2})\.([0-9]{1,2})\.([0-9]{1,2})(_[^.]+)?(\..+)$ ]]; then
+            # e.g. 2019-12-21_at_17.57.33_3.jpg -> 20191221_175733_3.jpg
+            y="${BASH_REMATCH[1]}"
+            mo="${BASH_REMATCH[2]}"
+            d="${BASH_REMATCH[3]}"
+            hh="$(printf '%02d' "$((10#${BASH_REMATCH[4]}))")"
+            mm="$(printf '%02d' "$((10#${BASH_REMATCH[5]}))")"
+            ss="$(printf '%02d' "$((10#${BASH_REMATCH[6]}))")"
+            tail_bit="${BASH_REMATCH[7]-}"
+            newbase="${y}${mo}${d}_${hh}${mm}${ss}${tail_bit}${BASH_REMATCH[8]}"
         elif [[ "$newbase" =~ ^([0-9]{8})-([0-9]{6})_(.+)(\.${common_media_ext_re})$ ]]; then
             media_suffix="${BASH_REMATCH[3]}"
             media_suffix=$(printf '%s' "$media_suffix" | tr '[:upper:]' '[:lower:]')
