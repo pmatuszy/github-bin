@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.04.23 - v. 18.83 - --db-maintenance implies maintenance-only (like --run-db-maintenance): skip db_init; exit 0 if cache DB missing
 # 2026.04.23 - v. 18.82 - SQLite on broken FS: BEGIN IMMEDIATE schema + optional file URI ?nolock=1 for all DB access (CIFS/NFS SQLITE_BUSY)
 # 2026.04.23 - v. 18.81 - db_init: remove orphan -wal/-shm/empty DB before open; busy_timeout + one retry after clearing lock artifacts (SQLITE_BUSY)
 # 2026.04.23 - v. 18.80 - db_init: call db_migrate_legacy_file correctly; create SQLite schema before optional WAL pragmas (|| true); clearer init failure hint
@@ -332,9 +333,9 @@ Options:
   --use-db               Use SQLite cache in the start directory (_rename.sh-optional-db.sqlite3)
   --fast                 With --use-db, trust cached paths without checking current size/mtime
   --force-recheck        Ignore SQLite cache and recheck everything
-  --run-db-maintenance   Run DB maintenance and exit (manual invocation; implies --use-db)
+  --run-db-maintenance   Run DB maintenance and exit (implies --use-db; uses --db-maintenance profile or default full)
   --db-maintenance auto|[full]
-                         Profile for --run-db-maintenance only (does not run maintenance by itself)
+                         Run that maintenance profile and exit (implies --use-db; same exit path as --run-db-maintenance)
                          auto: lightweight optimize/checkpoint; full: optimize + analyze + reindex + WAL truncate
   --colors [yes]|no      Skip the startup colors question
   --mode real|[dry-run]  Skip the startup mode question
@@ -350,7 +351,8 @@ Options:
 Example:
   rename.sh -v --use-db --colors yes --mode real --scope subdirs
   rename.sh -v --use-db --fast --colors yes --mode real --scope subdirs
-  rename.sh --run-db-maintenance --db-maintenance full
+  rename.sh --use-db --db-maintenance full
+  rename.sh --run-db-maintenance --db-maintenance auto
   rename.sh --resume-state ask --use-db --mode real --scope subdirs
 EOF
 }
@@ -1894,6 +1896,8 @@ while (( $# > 0 )); do
                 auto|full) CLI_DB_MAINTENANCE="$2" ;;
                 *) echo "Invalid value for --db-maintenance: $2 (use auto or full)" >&2; usage >&2; exit 1 ;;
             esac
+            USE_DB=1
+            RUN_DB_MAINTENANCE=1
             shift 2
             ;;
         --colors)
@@ -2004,8 +2008,8 @@ if (( USE_DB == 1 )); then
         echo "SQLite cache mode override: force recheck enabled"
     fi
     case "$CLI_DB_MAINTENANCE" in
-        auto) echo "SQLite maintenance profile: AUTO (optimize/checkpoint) [manual with --run-db-maintenance]" ;;
-        full) echo "SQLite maintenance profile: FULL (optimize + analyze + reindex + WAL truncate) [manual with --run-db-maintenance]" ;;
+        auto) echo "SQLite maintenance profile: AUTO (optimize/checkpoint) [only shown during interactive runs; maintenance via --db-maintenance or --run-db-maintenance]" ;;
+        full) echo "SQLite maintenance profile: FULL (optimize + analyze + reindex + WAL truncate) [only shown during interactive runs; maintenance via --db-maintenance or --run-db-maintenance]" ;;
     esac
 fi
 
@@ -2077,8 +2081,8 @@ print_verbose_options_box() {
             db_mode="${db_mode}; force recheck active"
         fi
         case "$CLI_DB_MAINTENANCE" in
-            auto) db_maintenance_text="auto - lightweight optimize/checkpoint profile for --run-db-maintenance" ;;
-            full) db_maintenance_text="full - optimize + analyze + reindex + WAL truncate profile for --run-db-maintenance" ;;
+            auto) db_maintenance_text="auto - lightweight optimize/checkpoint profile (--db-maintenance / --run-db-maintenance)" ;;
+            full) db_maintenance_text="full - optimize + analyze + reindex + WAL truncate profile (--db-maintenance / --run-db-maintenance)" ;;
             *)    db_maintenance_text="$CLI_DB_MAINTENANCE" ;;
         esac
     else
