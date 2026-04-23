@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.04.22 - v. 18.75 - rename menu [T]: delete *torrent*.URL shortcuts; allow no-op renames to menu for those; DB row delete on remove
 # 2026.04.22 - v. 18.74 - fix DB path rewrite after mv: resolve old path via parent+basename; checksum file refs + .md5/.sha512 renames update rows
 # 2026.04.22 - v. 18.73 - do not rename aggregate checksum manifest _sumy_kontrolne.md5 (basename, case-insensitive)
 # 2026.04.22 - v. 18.72 - directories: never stem/ext split (no extensions); normalize full basename like extensionless files
@@ -803,6 +804,25 @@ db_abs_path_if_deleted() {
         printf '/%s\n' "$base"
     else
         printf '%s/%s\n' "$parent_abs" "$base"
+    fi
+}
+
+db_delete_cached_row_for_path() {
+    local path="$1"
+    local abs
+    (( USE_DB == 1 )) || return 0
+    [[ -e "$path" ]] || return 0
+    abs="$(db_abs_path "$path" 2>/dev/null || true)"
+    [[ -n "$abs" ]] || return 0
+    printf "DELETE FROM checked_paths WHERE path='%s';\n" "$(sql_escape "$abs")" >> "$DB_PENDING_SQL_FILE"
+    unset 'DB_CACHE_META[$abs]'
+    unset 'DB_CACHE_STATUS[$abs]'
+    unset 'DB_CACHE_HASH_MD5[$abs]'
+    unset 'DB_CACHE_HASH_SHA512[$abs]'
+    unset 'DB_CACHE_ROW_EXISTS[$abs]'
+    (( ++DB_PENDING_COUNT ))
+    if (( DB_PENDING_COUNT >= DB_FLUSH_EVERY )); then
+        db_flush_pending
     fi
 }
 
@@ -2575,6 +2595,16 @@ is_m3u_file() {
     local p="$1"
     local lower="${p,,}"
     [[ "$lower" == *.m3u ]]
+}
+
+# Internet shortcut: basename contains "torrent" and ends in .url (any case).
+is_torrent_url_file() {
+    local p="$1"
+    local bn lower
+    [[ -f "$p" ]] || return 1
+    bn="$(basename -- "$p")"
+    lower="${bn,,}"
+    [[ "$lower" == *torrent*.url ]]
 }
 
 is_protected_par2_name() {
@@ -4594,16 +4624,23 @@ auto_yes_current_dir_matches() {
 
 print_rename_prompt_menu() {
     local kind_label="$1"
+    local path="${2-}"
+    local choice_hint="Choice [Y/n/m/a/d/E/x/q]: "
+
     echo -e "${GREEN}Rename this ${kind_label}?${RESET}"
     echo "  [Y] Yes (default)"
     echo "  [N] No"
     echo "  [M] Rename by editing target filename"
     echo "  [A] All remaining"
     echo "  [D] Yes for this directory"
+    if [[ -n "$path" ]] && is_torrent_url_file "$path"; then
+        echo "  [T] Delete this torrent .URL shortcut"
+        choice_hint="Choice [Y/n/m/a/d/t/E/x/q]: "
+    fi
     echo "  [E] Add exception (skip this path and its subtree by filter match)"
     echo "  [X] Exact exception (do not rename only this exact path; still check subtree)"
     echo "  [Q] Quit"
-    echo -n "Choice [Y/n/m/a/d/E/x/q]: "
+    echo -n "$choice_hint"
 }
 
 maybe_prompt_flatten_single_child_dir() {
@@ -5645,24 +5682,39 @@ for f in "${ordered_paths[@]}"; do
         continue
     fi
 
-    [[ "$f" == "$new" ]] && {
-        vlog "No rename needed for '$f'"
-        db_backfill_missing_hashes_for_existing_file "$f"
-        ((++files_skipped))
-        db_mark_checked "$f" "plain" "checked"
-        continue
-    }
+    if [[ "$f" == "$new" ]]; then
+        if ! is_torrent_url_file "$f"; then
+            vlog "No rename needed for '$f'"
+            db_backfill_missing_hashes_for_existing_file "$f"
+            ((++files_skipped))
+            db_mark_checked "$f" "plain" "checked"
+            continue
+        fi
+        vlog "No rename transform for torrent .URL '$f' (prompt offers delete [T])"
+    fi
 
     if [[ "$rename_all" == "yes" ]]; then
-        print_rename_action_verbose "$f" "$new" "rename_all"
-        perform_plain_entry_rename "$f" "$new" || break
-        continue
+        if [[ "$f" != "$new" ]]; then
+            print_rename_action_verbose "$f" "$new" "rename_all"
+            perform_plain_entry_rename "$f" "$new" || break
+        elif ! is_torrent_url_file "$f"; then
+            ((++files_skipped))
+        fi
+        if [[ "$f" != "$new" ]] || ! is_torrent_url_file "$f"; then
+            continue
+        fi
     fi
 
     if auto_yes_current_dir_matches "$f"; then
-        print_rename_action_verbose "$f" "$new" "per-directory auto-yes"
-        perform_plain_entry_rename "$f" "$new" || break
-        continue
+        if [[ "$f" != "$new" ]]; then
+            print_rename_action_verbose "$f" "$new" "per-directory auto-yes"
+            perform_plain_entry_rename "$f" "$new" || break
+        elif ! is_torrent_url_file "$f"; then
+            ((++files_skipped))
+        fi
+        if [[ "$f" != "$new" ]] || ! is_torrent_url_file "$f"; then
+            continue
+        fi
     fi
 
     if exception_exists_for_path "$f"; then
@@ -5677,10 +5729,15 @@ for f in "${ordered_paths[@]}"; do
         continue
     fi
 
+    torrent_url_noop=
+    if is_torrent_url_file "$f" && [[ "$f" == "$new" ]]; then
+        torrent_url_noop=1
+    fi
+
     echo
     echo -e "${RED}OLD:${RESET} $f"
     echo -e "${GREEN}NEW:${RESET} $new"
-    print_rename_prompt_menu "entry"
+    print_rename_prompt_menu "entry" "$f"
     flush_stdin
     read_single_key input "$PROMPT_WAIT_SECONDS"
     echo
@@ -5727,19 +5784,47 @@ for f in "${ordered_paths[@]}"; do
             if [[ "$confirm" =~ [Yy] ]]; then
                 rename_all=yes
                 vlog "rename_all enabled by user"
-                perform_plain_entry_rename "$f" "$new" || break
+                if [[ -z "$torrent_url_noop" ]]; then
+                    perform_plain_entry_rename "$f" "$new" || break
+                fi
             else
                 ((++files_skipped))
             fi
             ;;
         d|D)
-            AUTO_RENAME_DIR="$(dirname -- "$f")"
-            vlog "Per-directory auto-yes enabled for '$AUTO_RENAME_DIR'"
-            perform_plain_entry_rename "$f" "$new" || break
+            if [[ -n "$torrent_url_noop" ]]; then
+                AUTO_RENAME_DIR="$(dirname -- "$f")"
+                vlog "Per-directory auto-yes enabled for '$AUTO_RENAME_DIR' (no rename for identical torrent .URL)"
+                ((++files_skipped))
+            else
+                AUTO_RENAME_DIR="$(dirname -- "$f")"
+                vlog "Per-directory auto-yes enabled for '$AUTO_RENAME_DIR'"
+                perform_plain_entry_rename "$f" "$new" || break
+            fi
+            ;;
+        t|T)
+            if ! is_torrent_url_file "$f"; then
+                echo -e "${YELLOW}[T] applies only to torrent *.URL shortcuts.${RESET}"
+                ((++files_skipped))
+            elif [[ "$mode" == "dry-run" ]]; then
+                echo -e "${CYAN}[DRY-RUN] Would delete torrent .URL:${RESET} $f"
+                ((++files_affected))
+            else
+                db_delete_cached_row_for_path "$f"
+                rm -f -- "$f"
+                echo -e "${GREEN}Deleted torrent .URL:${RESET} $f"
+                ((++files_affected))
+            fi
+            processed["$f"]=1
             ;;
         *)
-            print_rename_action_verbose "$f" "$new"
-            perform_plain_entry_rename "$f" "$new" || break
+            if [[ -n "$torrent_url_noop" ]]; then
+                echo -e "${YELLOW}No rename to apply for this torrent .URL; use [T] to delete it or [N] to skip.${RESET}"
+                ((++files_skipped))
+            else
+                print_rename_action_verbose "$f" "$new"
+                perform_plain_entry_rename "$f" "$new" || break
+            fi
             ;;
     esac
 done
