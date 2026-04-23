@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.04.23 - v. 18.94 - Recording*.m4a: prepend YYYYMMDD_HHMMSS_-_ from oldest of birth/mtime (match case-insensitive)
 # 2026.04.23 - v. 18.93 - Audiobook PL strip: _audiobook_pl only when not followed by letters (avoid _AudioBook_Player -> Smartayer)
 # 2026.04.23 - v. 18.92 - reload _exclude-rename.sh.txt from disk before/after appending exceptions so external edits apply immediately
 # 2026.04.23 - v. 18.91 - exclude file: FILE=basename (or FILE=glob) skips renames for that filename in any directory; prompt [F]
@@ -3828,6 +3829,12 @@ transform_name() {
         if [[ "$newbase" =~ ^video.*\.mp4$ ]] && [[ ! "$newbase" =~ ^[0-9]{8}_[0-9]{6}_video.*\.mp4$ ]]; then
             ts="$(get_file_oldest_timestamp_yyyymmdd_hhmmss "$f")"
             newbase="${ts}_${newbase}"
+        fi
+
+        # Recording*.m4a (any case): YYYYMMDD_HHMMSS_-_Recording...m4a using oldest birth vs mtime (same helper as images).
+        if [[ "${newbase,,}" == recording*.m4a ]] && [[ ! "${newbase,,}" =~ ^[0-9]{8}_[0-9]{6}_-_recording.*\.m4a$ ]]; then
+            ts="$(get_file_oldest_timestamp_yyyymmdd_hhmmss "$f")"
+            newbase="${ts}_-_${newbase}"
         fi
 
         if [[ "$newbase" =~ ^IMG_([0-9]{8})_([0-9]{6})(\..+)$ ]]; then
