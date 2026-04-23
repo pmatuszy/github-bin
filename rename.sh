@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.04.22 - v. 18.71 - if last-dot suffix has space or brackets (e.g. Site.PL - rest), normalize whole basename not only stem
 # 2026.04.22 - v. 18.70 - strip Audiobook PL markers case-insensitively ([AudioBook PL], _AudioBook_PL, etc.; GNU sed I)
 # 2026.04.22 - v. 18.69 - drop duplicate verbose_question_timestamp before prompts that echo the same line; green checksum-group question
 # 2026.04.22 - v. 18.68 - green highlight for main rename and flatten questions; VERBOSE note: vlog() uses CYAN, many legacy lines use plain echo
@@ -3141,6 +3142,26 @@ choose_r_grave_mapping_for_file() {
     esac
 }
 
+# Spaces/brackets/punct → underscores for final basename (used on stem or whole name).
+_normalize_basename_separators() {
+    printf '%s' "$1" | sed -E '
+            s/[[:space:]]+/_/g;
+            s/,+/_/g;
+            s/;+/_/g;
+            s/:+/_/g;
+            s/\(+/_/g;
+            s/\)+/_/g;
+            s/\[+/_/g;
+            s/\]+/_/g;
+            s/\{+/_/g;
+            s/\}+/_/g;
+            s/"|'\''/_/g;
+            s/_+/_/g;
+            s/^_+//;
+            s/_+$//;
+        '
+}
+
 transform_basename() {
     local new="$1"
     local original_path="${2-}"
@@ -3336,43 +3357,19 @@ transform_basename() {
     ')
 
     if [[ "$new" == *.* ]]; then
-        local stem ext
+        local stem ext ext_body
         stem="${new%.*}"
-        ext=".${new##*.}"
-        stem=$(printf '%s' "$stem" | sed -E '
-            s/[[:space:]]+/_/g;
-            s/,+/_/g;
-            s/;+/_/g;
-            s/:+/_/g;
-            s/\(+/_/g;
-            s/\)+/_/g;
-            s/\[+/_/g;
-            s/\]+/_/g;
-            s/\{+/_/g;
-            s/\}+/_/g;
-            s/"|'\''/_/g;
-            s/_+/_/g;
-            s/^_+//;
-            s/_+$//;
-        ')
-        printf '%s%s' "$stem" "$ext"
+        ext_body="${new##*.}"
+        # Last dot is often a site suffix (…Afganistanu.PL - subtitle), not a real extension.
+        if [[ "$ext_body" == *[[:space:]]* || "$ext_body" == *'['* || "$ext_body" == *']'* ]]; then
+            printf '%s' "$(_normalize_basename_separators "$new")"
+        else
+            ext=".$ext_body"
+            stem="$(_normalize_basename_separators "$stem")"
+            printf '%s%s' "$stem" "$ext"
+        fi
     else
-        printf '%s' "$(printf '%s' "$new" | sed -E '
-            s/[[:space:]]+/_/g;
-            s/,+/_/g;
-            s/;+/_/g;
-            s/:+/_/g;
-            s/\(+/_/g;
-            s/\)+/_/g;
-            s/\[+/_/g;
-            s/\]+/_/g;
-            s/\{+/_/g;
-            s/\}+/_/g;
-            s/"|'\''/_/g;
-            s/_+/_/g;
-            s/^_+//;
-            s/_+$//;
-        ')"
+        printf '%s' "$(_normalize_basename_separators "$new")"
     fi
 }
 
