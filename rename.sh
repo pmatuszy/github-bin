@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.04.23 - v. 18.95 - strip _eBook-PL fragment from basenames (alongside _eBook.PL / eBook.PL)
 # 2026.04.23 - v. 18.94 - Recording*.m4a: prepend YYYYMMDD_HHMMSS_-_ from oldest of birth/mtime (match case-insensitive)
 # 2026.04.23 - v. 18.93 - Audiobook PL strip: _audiobook_pl only when not followed by letters (avoid _AudioBook_Player -> Smartayer)
 # 2026.04.23 - v. 18.92 - reload _exclude-rename.sh.txt from disk before/after appending exceptions so external edits apply immediately
@@ -3643,6 +3644,7 @@ transform_basename() {
     new="${new//._osloskop.net/}"
     new="${new//_eBook.PL/}"
     new="${new//eBook.PL/}"
+    new=$(printf '%s' "$new" | sed -E 's/_ebook-pl//gI')
     new="${new//_www.osiolek.com/}"
     new="${new//www.osiolek.com/}"
     new="${new//.ebooksclub./.}"
