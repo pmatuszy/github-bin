@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.04.27 - v. 18.99 - show/reuse HTML companion-dir recovery plan and update URL-encoded HTML refs
 # 2026.04.27 - v. 18.98 - HTML companion dirs: recover when normalized companion exists; ignore empty target dir collisions
 # 2026.04.27 - v. 18.97 - do not rename underscore-leading .par2 files, including checksum-group references
 # 2026.04.24 - v. 18.96 - auto-reload _exclude-rename.sh.txt when it changes on disk during long runs; flatten honors new filters
@@ -3326,6 +3327,64 @@ find_html_companion_dir() {
     return 1
 }
 
+HTML_COMPANION_OLD_DIR=""
+HTML_COMPANION_NEW_DIR=""
+HTML_COMPANION_OLD_NAME=""
+HTML_COMPANION_NEW_NAME=""
+HTML_COMPANION_REFERENCE_UPDATE_ONLY=no
+
+plan_html_companion_for_rename() {
+    local old="$1"
+    local new="$2"
+    local old_html_stem="" companion_suffix="" candidate_companion_dir=""
+
+    HTML_COMPANION_OLD_DIR=""
+    HTML_COMPANION_NEW_DIR=""
+    HTML_COMPANION_OLD_NAME=""
+    HTML_COMPANION_NEW_NAME=""
+    HTML_COMPANION_REFERENCE_UPDATE_ONLY=no
+
+    is_html_file "$old" || return 0
+
+    HTML_COMPANION_OLD_DIR="$(find_html_companion_dir "$old" || true)"
+    if [[ -z "$HTML_COMPANION_OLD_DIR" ]]; then
+        for companion_suffix in "_files" "_pliki"; do
+            candidate_companion_dir="$(html_companion_dir_path_with_suffix "$new" "$companion_suffix")"
+            if [[ -d "$candidate_companion_dir" ]]; then
+                HTML_COMPANION_OLD_NAME="$(basename -- "$(html_companion_dir_path_with_suffix "$old" "$companion_suffix")")"
+                HTML_COMPANION_NEW_DIR="$candidate_companion_dir"
+                HTML_COMPANION_NEW_NAME="$(basename -- "$HTML_COMPANION_NEW_DIR")"
+                HTML_COMPANION_REFERENCE_UPDATE_ONLY=yes
+                vlog "HTML companion already exists at normalized target; will update references only: '$HTML_COMPANION_NEW_DIR'"
+                break
+            fi
+        done
+    else
+        HTML_COMPANION_OLD_NAME="$(basename -- "$HTML_COMPANION_OLD_DIR")"
+        old_html_stem="$(basename -- "${old%.*}")"
+        companion_suffix="${HTML_COMPANION_OLD_NAME#${old_html_stem}}"
+        HTML_COMPANION_NEW_DIR="$(html_companion_dir_path_with_suffix "$new" "$companion_suffix")"
+        HTML_COMPANION_NEW_NAME="$(basename -- "$HTML_COMPANION_NEW_DIR")"
+    fi
+}
+
+print_html_companion_plan_for_prompt() {
+    local old="$1"
+    local new="$2"
+
+    plan_html_companion_for_rename "$old" "$new"
+
+    if [[ -n "$HTML_COMPANION_OLD_DIR" && "$HTML_COMPANION_OLD_DIR" != "$HTML_COMPANION_NEW_DIR" ]]; then
+        echo -e "${CYAN}HTML companion:${RESET} will rename directory and update references inside the HTML file."
+        echo -e "  ${RED}OLD DIR:${RESET} $HTML_COMPANION_OLD_DIR"
+        echo -e "  ${GREEN}NEW DIR:${RESET} $HTML_COMPANION_NEW_DIR"
+    elif [[ "$HTML_COMPANION_REFERENCE_UPDATE_ONLY" == "yes" ]]; then
+        echo -e "${CYAN}HTML companion:${RESET} already exists with the new name; references inside the HTML file will be updated."
+        echo -e "  ${RED}OLD REF:${RESET} $HTML_COMPANION_OLD_NAME"
+        echo -e "  ${GREEN}NEW REF:${RESET} $HTML_COMPANION_NEW_NAME"
+    fi
+}
+
 directory_is_empty() {
     local dir="$1"
     [[ -d "$dir" ]] || return 1
@@ -3336,14 +3395,44 @@ update_html_companion_reference() {
     local html_file="$1"
     local old_dir_name="$2"
     local new_dir_name="$3"
-    local old_re new_re
 
     [[ -f "$html_file" ]] || return 0
-    old_re="$(sed_escape_regex "$old_dir_name")"
-    new_re="$(sed_escape_repl "$new_dir_name")"
 
     vlog "Updating HTML companion directory reference in '$html_file': '$old_dir_name' -> '$new_dir_name'"
-    preserve_timestamps_inplace "$html_file"         sed -i -E "s|${old_re}|${new_re}|g" -- "$html_file"
+    preserve_timestamps_inplace "$html_file" \
+        python3 - "$html_file" "$old_dir_name" "$new_dir_name" <<'PY'
+import sys
+from pathlib import Path
+from urllib.parse import quote
+
+path = Path(sys.argv[1])
+old = sys.argv[2]
+new = sys.argv[3]
+
+data = path.read_bytes()
+replacements = []
+
+for encoding in ("utf-8", "cp1250", "iso-8859-2"):
+    try:
+        replacements.append((old.encode(encoding), new.encode(encoding)))
+    except UnicodeEncodeError:
+        pass
+
+for safe in ("", "/"):
+    old_q = quote(old, safe=safe)
+    new_q = quote(new, safe=safe)
+    replacements.append((old_q.encode("ascii"), new_q.encode("ascii")))
+    replacements.append((old_q.lower().encode("ascii"), new_q.encode("ascii")))
+
+seen = set()
+for old_bytes, new_bytes in replacements:
+    if not old_bytes or old_bytes in seen:
+        continue
+    seen.add(old_bytes)
+    data = data.replace(old_bytes, new_bytes)
+
+path.write_bytes(data)
+PY
 }
 
 update_checksum_hash_for_ref() {
@@ -4459,7 +4548,6 @@ perform_plain_entry_rename() {
     local new="$2"
     local old_companion_dir="" new_companion_dir="" old_companion_name="" new_companion_name=""
     local html_reference_update_only=no
-    local old_html_stem="" companion_suffix="" candidate_companion_dir=""
 
     if paths_refer_to_same_file "$old" "$new"; then
         vlog "Skipping rename: source and target are the same file (same device:inode): '$old' | '$new'"
@@ -4488,25 +4576,12 @@ perform_plain_entry_rename() {
     fi
 
     if is_html_file "$old"; then
-        old_companion_dir="$(find_html_companion_dir "$old" || true)"
-        if [[ -z "$old_companion_dir" ]]; then
-            for companion_suffix in "_files" "_pliki"; do
-                candidate_companion_dir="$(html_companion_dir_path_with_suffix "$new" "$companion_suffix")"
-                if [[ -d "$candidate_companion_dir" ]]; then
-                    old_companion_name="$(basename -- "$(html_companion_dir_path_with_suffix "$old" "$companion_suffix")")"
-                    new_companion_dir="$candidate_companion_dir"
-                    new_companion_name="$(basename -- "$new_companion_dir")"
-                    html_reference_update_only=yes
-                    vlog "HTML companion already exists at normalized target; will update references only: '$new_companion_dir'"
-                    break
-                fi
-            done
-        else
-            old_companion_name="$(basename -- "$old_companion_dir")"
-            old_html_stem="$(basename -- "${old%.*}")"
-            companion_suffix="${old_companion_name#${old_html_stem}}"
-            new_companion_dir="$(html_companion_dir_path_with_suffix "$new" "$companion_suffix")"
-        fi
+        plan_html_companion_for_rename "$old" "$new"
+        old_companion_dir="$HTML_COMPANION_OLD_DIR"
+        new_companion_dir="$HTML_COMPANION_NEW_DIR"
+        old_companion_name="$HTML_COMPANION_OLD_NAME"
+        new_companion_name="$HTML_COMPANION_NEW_NAME"
+        html_reference_update_only="$HTML_COMPANION_REFERENCE_UPDATE_ONLY"
 
         if [[ -n "$old_companion_dir" && "$old_companion_dir" != "$new_companion_dir" && -e "$new_companion_dir" ]]; then
             if directory_is_empty "$new_companion_dir"; then
@@ -6229,6 +6304,9 @@ for f in "${ordered_paths[@]}"; do
     echo
     echo -e "${RED}OLD:${RESET} $f"
     echo -e "${GREEN}NEW:${RESET} $new"
+    if [[ "$f" != "$new" ]] && is_html_file "$f"; then
+        print_html_companion_plan_for_prompt "$f" "$new"
+    fi
     print_rename_prompt_menu "entry" "$f" "$new"
     flush_stdin
     read_single_key input "$PROMPT_WAIT_SECONDS"
