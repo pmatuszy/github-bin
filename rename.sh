@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# 2026.04.27 - v. 18.97 - do not rename underscore-leading .par2 files, including checksum-group references
+# 2026.04.24 - v. 18.96 - auto-reload _exclude-rename.sh.txt when it changes on disk during long runs; flatten honors new filters
 # 2026.04.23 - v. 18.95 - strip _eBook-PL fragment from basenames (alongside _eBook.PL / eBook.PL)
 # 2026.04.23 - v. 18.94 - Recording*.m4a: prepend YYYYMMDD_HHMMSS_-_ from oldest of birth/mtime (match case-insensitive)
 # 2026.04.23 - v. 18.93 - Audiobook PL strip: _audiobook_pl only when not followed by letters (avoid _AudioBook_Player -> Smartayer)
@@ -315,6 +317,7 @@ declare -a CURRENT_OP_FILE_OLDS=()
 declare -a CURRENT_OP_FILE_NEWS=()
 
 declare -a EXCLUDE_FILTERS=()
+EXCLUDE_FILTERS_SIGNATURE=""
 
 on_err() {
     local exit_code="$1"
@@ -595,11 +598,22 @@ normalize_exclude_filters_file_if_needed() {
     fi
 }
 
+exclude_filters_file_signature() {
+    if [[ -f "$EXCLUDE_FILTERS_FILE" ]]; then
+        stat -c '%Y:%s' -- "$EXCLUDE_FILTERS_FILE" 2>/dev/null || printf 'unreadable'
+    else
+        printf 'missing'
+    fi
+}
+
 load_exclude_filters() {
     local line
     EXCLUDE_FILTERS=()
 
-    [[ -f "$EXCLUDE_FILTERS_FILE" ]] || return 0
+    if [[ ! -f "$EXCLUDE_FILTERS_FILE" ]]; then
+        EXCLUDE_FILTERS_SIGNATURE="$(exclude_filters_file_signature)"
+        return 0
+    fi
 
     normalize_exclude_filters_file_if_needed
 
@@ -609,6 +623,16 @@ load_exclude_filters() {
         [[ "$line" =~ ^# ]] && continue
         EXCLUDE_FILTERS+=( "$line" )
     done < "$EXCLUDE_FILTERS_FILE"
+    EXCLUDE_FILTERS_SIGNATURE="$(exclude_filters_file_signature)"
+}
+
+reload_exclude_filters_if_changed() {
+    local current_signature
+    current_signature="$(exclude_filters_file_signature)"
+    if [[ "$current_signature" != "$EXCLUDE_FILTERS_SIGNATURE" ]]; then
+        load_exclude_filters
+        (( VERBOSE == 1 )) && echo "[VERBOSE] Exclude filters reloaded from disk: ${#EXCLUDE_FILTERS[@]} active line(s)" >&2
+    fi
 }
 
 is_excluded_by_filter_file() {
@@ -618,6 +642,7 @@ is_excluded_by_filter_file() {
     local exact_target
     local fn_pat
 
+    reload_exclude_filters_if_changed
     base="$(basename -- "$p")"
 
     for filter in "${EXCLUDE_FILTERS[@]}"; do
@@ -687,6 +712,7 @@ flatten_exception_exists_for_path() {
     local entry=""
     local existing
 
+    reload_exclude_filters_if_changed
     entry="$(flatten_exception_entry_for_path "$path")"
     [[ -n "$entry" ]] || return 1
 
@@ -703,6 +729,7 @@ exception_exists_for_path() {
     local fn_entry=""
     local existing
 
+    reload_exclude_filters_if_changed
     entry="$(path_to_exclude_entry "$path")"
     exact_entry="$(exact_exception_entry_for_path "$path")"
     fn_entry=""
@@ -2877,8 +2904,8 @@ is_okladka_cover_keep_leading_underscore() {
     [[ "$lower" == _*okladka*jpg || "$lower" == _*okladna*jpg ]]
 }
 
-# PAR2 repair sets often use a leading underscore on the volume/slice basename; normalize the rest but keep leading _.
-is_par2_keep_leading_underscore() {
+# PAR2 repair sets often use a leading underscore on the volume/slice basename; keep those names untouched.
+is_protected_par2_name() {
     local bn lower
     bn="$1"
     [[ "$bn" != */* ]] || bn="$(basename -- "$bn")"
@@ -3509,7 +3536,7 @@ choose_r_grave_mapping_for_file() {
 }
 
 # Spaces/brackets/punct → underscores for final basename (used on stem or whole name).
-# Optional second arg preserve-leading-underscore: skip stripping leading underscores (okladka cover + underscore-leading .par2).
+# Optional second arg preserve-leading-underscore: skip stripping leading underscores (okladka cover).
 _normalize_basename_separators() {
     local input="$1"
     local preserve="${2-}"
@@ -3754,14 +3781,14 @@ transform_basename() {
         ext_body="${new##*.}"
         # Suffix with spaces/brackets is not a real extension (site.PL - subtitle, tags); normalize whole basename.
         if [[ "$ext_body" == *[[:space:]]* || "$ext_body" == *'['* || "$ext_body" == *']'* ]]; then
-            if is_okladka_cover_keep_leading_underscore "$new" || is_par2_keep_leading_underscore "$new"; then
+            if is_okladka_cover_keep_leading_underscore "$new"; then
                 printf '%s' "$(_normalize_basename_separators "$new" preserve-leading-underscore)"
             else
                 printf '%s' "$(_normalize_basename_separators "$new")"
             fi
         else
             ext=".$ext_body"
-            if is_okladka_cover_keep_leading_underscore "${stem}${ext}" || is_par2_keep_leading_underscore "${stem}${ext}"; then
+            if is_okladka_cover_keep_leading_underscore "${stem}${ext}"; then
                 stem="$(_normalize_basename_separators "$stem" preserve-leading-underscore)"
             else
                 stem="$(_normalize_basename_separators "$stem")"
@@ -3783,6 +3810,19 @@ transform_name() {
     base="$(basename -- "$f")"
     audio_ext_re='(mp3|aac|m4a|flac|ogg|oga|opus|wav|wma|alac|aiff|ape|mka|mp2|mp1|ac3)'
     common_media_ext_re='(mp3|aac|m4a|flac|ogg|oga|opus|wav|wma|alac|aiff|ape|mka|mp2|mp1|ac3|mp4|m4v|mov|mkv|webm|avi)'
+
+    if [[ -f "$f" ]] && is_protected_par2_name "$f"; then
+        if [[ "$dir" == "." ]]; then
+            if [[ "$f" == ./* ]]; then
+                printf './%s' "$base"
+            else
+                printf '%s' "$base"
+            fi
+        else
+            printf '%s/%s' "$dir" "$base"
+        fi
+        return 0
+    fi
 
     if [[ -f "$f" ]] && is_protected_checksum_name "$f"; then
         if [[ "$dir" == "." ]]; then
