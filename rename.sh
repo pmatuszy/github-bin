@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.04.27 - v. 18.98 - HTML companion dirs: recover when normalized companion exists; ignore empty target dir collisions
 # 2026.04.27 - v. 18.97 - do not rename underscore-leading .par2 files, including checksum-group references
 # 2026.04.24 - v. 18.96 - auto-reload _exclude-rename.sh.txt when it changes on disk during long runs; flatten honors new filters
 # 2026.04.23 - v. 18.95 - strip _eBook-PL fragment from basenames (alongside _eBook.PL / eBook.PL)
@@ -3325,6 +3326,12 @@ find_html_companion_dir() {
     return 1
 }
 
+directory_is_empty() {
+    local dir="$1"
+    [[ -d "$dir" ]] || return 1
+    ! find "$dir" -mindepth 1 -print -quit 2>/dev/null | grep -q .
+}
+
 update_html_companion_reference() {
     local html_file="$1"
     local old_dir_name="$2"
@@ -4451,6 +4458,8 @@ perform_plain_entry_rename() {
     local old="$1"
     local new="$2"
     local old_companion_dir="" new_companion_dir="" old_companion_name="" new_companion_name=""
+    local html_reference_update_only=no
+    local old_html_stem="" companion_suffix="" candidate_companion_dir=""
 
     if paths_refer_to_same_file "$old" "$new"; then
         vlog "Skipping rename: source and target are the same file (same device:inode): '$old' | '$new'"
@@ -4481,7 +4490,17 @@ perform_plain_entry_rename() {
     if is_html_file "$old"; then
         old_companion_dir="$(find_html_companion_dir "$old" || true)"
         if [[ -z "$old_companion_dir" ]]; then
-            new_companion_dir=""
+            for companion_suffix in "_files" "_pliki"; do
+                candidate_companion_dir="$(html_companion_dir_path_with_suffix "$new" "$companion_suffix")"
+                if [[ -d "$candidate_companion_dir" ]]; then
+                    old_companion_name="$(basename -- "$(html_companion_dir_path_with_suffix "$old" "$companion_suffix")")"
+                    new_companion_dir="$candidate_companion_dir"
+                    new_companion_name="$(basename -- "$new_companion_dir")"
+                    html_reference_update_only=yes
+                    vlog "HTML companion already exists at normalized target; will update references only: '$new_companion_dir'"
+                    break
+                fi
+            done
         else
             old_companion_name="$(basename -- "$old_companion_dir")"
             old_html_stem="$(basename -- "${old%.*}")"
@@ -4490,10 +4509,15 @@ perform_plain_entry_rename() {
         fi
 
         if [[ -n "$old_companion_dir" && "$old_companion_dir" != "$new_companion_dir" && -e "$new_companion_dir" ]]; then
-            echo -e "${YELLOW}SKIP:${RESET} Target companion directory already exists: $new_companion_dir"
-            vlog "Collision detected for companion directory '$old_companion_dir' -> '$new_companion_dir'"
-            ((++files_skipped))
-            return 0
+            if directory_is_empty "$new_companion_dir"; then
+                vlog "Removing empty target companion directory before pair rename: '$new_companion_dir'"
+                rmdir -- "$new_companion_dir"
+            else
+                echo -e "${YELLOW}SKIP:${RESET} Target companion directory already exists: $new_companion_dir"
+                vlog "Collision detected for companion directory '$old_companion_dir' -> '$new_companion_dir'"
+                ((++files_skipped))
+                return 0
+            fi
         fi
     fi
 
@@ -4501,6 +4525,8 @@ perform_plain_entry_rename() {
         echo -e "${CYAN}[DRY-RUN] Would rename:${RESET} $old ${ARROW} $new"
         if [[ -n "$old_companion_dir" && "$old_companion_dir" != "$new_companion_dir" ]]; then
             echo -e "${CYAN}[DRY-RUN] Would rename companion directory:${RESET} $old_companion_dir ${ARROW} $new_companion_dir"
+            echo -e "${CYAN}[DRY-RUN] Would update HTML reference inside:${RESET} $new"
+        elif [[ "$html_reference_update_only" == "yes" ]]; then
             echo -e "${CYAN}[DRY-RUN] Would update HTML reference inside:${RESET} $new"
         fi
         ((++files_affected))
@@ -4547,6 +4573,13 @@ perform_plain_entry_rename() {
             ((++files_skipped))
             return 0
         fi
+    fi
+
+    if [[ "$html_reference_update_only" == "yes" ]]; then
+        update_html_companion_reference "$new" "$old_companion_name" "$new_companion_name"
+        echo -e "${CYAN}HTML PAIR UPDATED:${RESET} companion reference inside HTML file was updated from '$old_companion_name' to '$new_companion_name'."
+        db_mark_checked "$new_companion_dir" "html_companion" "checked"
+        processed["$new_companion_dir"]=1
     fi
 
     return 0
