@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.04.28 - v. 19.06 - add [U] session auto-approve for extension-case-only renames on media + Microsoft Office files
 # 2026.04.28 - v. 19.05 - normalize YYYYMMDD_at_HH.MM.SS (and HH-MM-SS) into YYYYMMDD_HHMMSS
 # 2026.04.28 - v. 19.04 - date-time media normalization also accepts underscore time separators (HH_MM_SS)
 # 2026.04.28 - v. 19.03 - when deleting thumbs.db, remove/update local checksum refs that point to it
@@ -2896,6 +2897,18 @@ is_media_file() {
     [[ "$lower" == *.mp3 || "$lower" == *.flac || "$lower" == *.wav || "$lower" == *.m4a || "$lower" == *.aac || "$lower" == *.ogg || "$lower" == *.wma || "$lower" == *.mp4 || "$lower" == *.mkv || "$lower" == *.avi || "$lower" == *.mov || "$lower" == *.wmv || "$lower" == *.mpeg || "$lower" == *.mpg || "$lower" == *.m4v || "$lower" == *.webm || "$lower" == *.ts ]]
 }
 
+is_ms_office_file() {
+    local p="$1"
+    local lower="${p,,}"
+    [[ "$lower" == *.doc || "$lower" == *.docx || "$lower" == *.docm || "$lower" == *.dot || "$lower" == *.dotx || "$lower" == *.dotm || "$lower" == *.xls || "$lower" == *.xlsx || "$lower" == *.xlsm || "$lower" == *.xlt || "$lower" == *.xltx || "$lower" == *.xltm || "$lower" == *.xlam || "$lower" == *.ppt || "$lower" == *.pptx || "$lower" == *.pptm || "$lower" == *.pot || "$lower" == *.potx || "$lower" == *.potm || "$lower" == *.pps || "$lower" == *.ppsx || "$lower" == *.ppsm || "$lower" == *.sldx || "$lower" == *.sldm ]]
+}
+
+eligible_for_media_office_extension_case_auto() {
+    local p="$1"
+    [[ -f "$p" ]] || return 1
+    is_media_file "$p" || is_ms_office_file "$p"
+}
+
 is_m3u_file() {
     local p="$1"
     local lower="${p,,}"
@@ -5018,6 +5031,7 @@ stopped_by_user=no
 rename_all=no
 AUTO_RENAME_DIR=""
 AUTO_LOWERCASE_3_EXT_SESSION=no # [L] session: any extension case-only lowercasing (name kept for compatibility)
+AUTO_LOWERCASE_MEDIA_OFFICE_EXT_SESSION=no # [U] session: only media + MS Office extension case-only lowercasing
 
 declare -a renamed_list=()
 declare -A recorded
@@ -5273,6 +5287,10 @@ print_rename_prompt_menu() {
     if [[ -n "$path" && -n "$suggested_new" ]] && rename_suggested_only_extension_case_change "$path" "$suggested_new"; then
         echo "  [L] Yes, and auto-approve all extension case-only lowercasing for this run (no further prompts)"
         choice_hint+=/l
+        if eligible_for_media_office_extension_case_auto "$path"; then
+            echo "  [U] Yes, and auto-approve extension case-only lowercasing only for media + Microsoft Office files"
+            choice_hint+=/u
+        fi
     fi
     if [[ -n "$path" ]] && is_torrent_url_file "$path"; then
         echo "  [T] Delete this torrent .URL shortcut"
@@ -6408,6 +6426,11 @@ for f in "${ordered_paths[@]}"; do
         perform_plain_entry_rename "$f" "$new" || break
         continue
     fi
+    if [[ "$AUTO_LOWERCASE_MEDIA_OFFICE_EXT_SESSION" == "yes" ]] && [[ "$f" != "$new" ]] && rename_suggested_only_extension_case_change "$f" "$new" && eligible_for_media_office_extension_case_auto "$f"; then
+        print_rename_action_verbose "$f" "$new" "auto extension case-only lowercase (media+office session)"
+        perform_plain_entry_rename "$f" "$new" || break
+        continue
+    fi
 
     torrent_url_noop=
     thumbs_db_noop=
@@ -6543,6 +6566,20 @@ for f in "${ordered_paths[@]}"; do
                 AUTO_LOWERCASE_3_EXT_SESSION=yes
                 vlog "Session auto-yes enabled for extension case-only lowercasing renames"
                 print_rename_action_verbose "$f" "$new" "extension case lowercase + session auto"
+                perform_plain_entry_rename "$f" "$new" || break
+            fi
+            ;;
+        u|U)
+            if ! rename_suggested_only_extension_case_change "$f" "$new"; then
+                echo -e "${YELLOW}[U] applies only when the suggestion only lowercases the file extension (same stem).${RESET}"
+                ((++files_skipped))
+            elif ! eligible_for_media_office_extension_case_auto "$f"; then
+                echo -e "${YELLOW}[U] applies only to media and Microsoft Office files.${RESET}"
+                ((++files_skipped))
+            else
+                AUTO_LOWERCASE_MEDIA_OFFICE_EXT_SESSION=yes
+                vlog "Session auto-yes enabled for extension case-only lowercasing on media + Microsoft Office files"
+                print_rename_action_verbose "$f" "$new" "extension case lowercase + media/office session auto"
                 perform_plain_entry_rename "$f" "$new" || break
             fi
             ;;
