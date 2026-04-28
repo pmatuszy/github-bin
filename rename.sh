@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.04.28 - v. 19.08 - offer to remove missing thumbs.db references from checksum files
 # 2026.04.28 - v. 19.07 - normalize fully hyphenated YYYY-MM-DD-HH-MM-SS media timestamps with title tails
 # 2026.04.28 - v. 19.06 - add [U] session auto-approve for extension-case-only renames on media + Microsoft Office files
 # 2026.04.28 - v. 19.05 - normalize YYYYMMDD_at_HH.MM.SS (and HH-MM-SS) into YYYYMMDD_HHMMSS
@@ -2945,13 +2946,18 @@ is_torrent_url_file() {
     [[ "$lower" == *torrent*.url ]]
 }
 
-is_thumbs_db_file() {
+path_basename_is_thumbs_db() {
     local p="$1"
     local bn lower
-    [[ -f "$p" ]] || return 1
     bn="$(basename -- "$p")"
     lower="${bn,,}"
     [[ "$lower" == "thumbs.db" ]]
+}
+
+is_thumbs_db_file() {
+    local p="$1"
+    [[ -f "$p" ]] || return 1
+    path_basename_is_thumbs_db "$p"
 }
 
 paths_refer_to_same_file() {
@@ -5993,12 +5999,101 @@ for f in "${ordered_paths[@]}"; do
 
         missing=no
         declare -a missing_refs=()
-        for ref in "${refs[@]}"; do
+        declare -a missing_thumb_refs=()
+        declare -a missing_thumb_raw_refs=()
+        declare -a missing_thumb_indexes=()
+        thumbs_db_refs_removed=no
+        for i in "${!refs[@]}"; do
+            ref="${refs[$i]}"
             if [[ ! -e "$ref" ]]; then
                 missing=yes
                 missing_refs+=( "$ref" )
+                if path_basename_is_thumbs_db "$ref"; then
+                    missing_thumb_refs+=( "$ref" )
+                    missing_thumb_raw_refs+=( "${refs_raw[$i]}" )
+                    missing_thumb_indexes+=( "$i" )
+                fi
             fi
         done
+
+        if (( ${#missing_thumb_refs[@]} > 0 )); then
+            echo
+            echo -e "${CYAN}${label} THUMBS.DB MISSING:${RESET} '$sum_file' contains reference(s) to missing thumbs.db file(s)."
+            echo -e "${CYAN}Hash file:${RESET} $sum_file"
+            for i in "${!missing_thumb_refs[@]}"; do
+                echo -e "  ${YELLOW}MISSING THUMBS.DB:${RESET} ${missing_thumb_refs[$i]}"
+                echo -e "  ${YELLOW}HASH REF:${RESET}          ${missing_thumb_raw_refs[$i]}"
+            done
+
+            if [[ "$mode" == "dry-run" ]]; then
+                echo -e "${CYAN}[DRY-RUN] Would offer to remove the missing thumbs.db reference(s) from this ${label,,} file.${RESET}"
+            else
+                verbose_question_timestamp "Remove missing thumbs.db reference(s) from this hash file?"
+                echo -e "${GREEN}Remove missing thumbs.db reference(s) from this hash file?${RESET}"
+                echo "  [Y] Yes - remove only the thumbs.db line(s) shown above"
+                echo "  [N] No - keep the hash file unchanged (default)"
+                echo "  [Q] Quit"
+                echo -n "Choice [y/N/q]: "
+                flush_stdin
+                read_single_key input "$PROMPT_WAIT_SECONDS"
+                echo
+
+                case "$input" in
+                    q|Q)
+                        stopped_by_user=yes
+                        break
+                        ;;
+                    y|Y)
+                        ensure_checksum_file_unix_format "$sum_file"
+                        for i in "${!missing_thumb_raw_refs[@]}"; do
+                            print_checksum_update_verbose "$sum_file" "${missing_thumb_raw_refs[$i]}" "<removed: missing thumbs.db>"
+                            remove_checksum_ref_entry "$sum_file" "${missing_thumb_raw_refs[$i]}"
+                            echo -e "${GREEN}${label} REF REMOVED:${RESET} ${missing_thumb_raw_refs[$i]}"
+                        done
+                        thumbs_db_refs_removed=yes
+                        ((++files_affected))
+
+                        unset removed_missing_thumb_indexes
+                        declare -A removed_missing_thumb_indexes=()
+                        for i in "${missing_thumb_indexes[@]}"; do
+                            removed_missing_thumb_indexes["$i"]=1
+                        done
+
+                        declare -a kept_refs_raw=()
+                        declare -a kept_refs=()
+                        declare -a kept_expected_hashes=()
+                        for i in "${!refs[@]}"; do
+                            [[ -n "${removed_missing_thumb_indexes[$i]+x}" ]] && continue
+                            kept_refs_raw+=( "${refs_raw[$i]}" )
+                            kept_refs+=( "${refs[$i]}" )
+                            kept_expected_hashes+=( "${expected_hashes[$i]}" )
+                        done
+                        refs_raw=( "${kept_refs_raw[@]}" )
+                        refs=( "${kept_refs[@]}" )
+                        expected_hashes=( "${kept_expected_hashes[@]}" )
+
+                        missing=no
+                        missing_refs=()
+                        for ref in "${refs[@]}"; do
+                            if [[ ! -e "$ref" ]]; then
+                                missing=yes
+                                missing_refs+=( "$ref" )
+                            fi
+                        done
+                        ;;
+                    *)
+                        vlog "User kept missing thumbs.db reference(s) in '$sum_file'"
+                        ;;
+                esac
+            fi
+        fi
+
+        if [[ "$thumbs_db_refs_removed" == "yes" ]] && (( ${#refs[@]} == 0 )); then
+            echo -e "${CYAN}${label} CLEANUP:${RESET} '$sum_file' has no remaining referenced files after thumbs.db cleanup."
+            db_mark_checked "$sum_file" "checksum_group" "checked"
+            processed["$sum_file"]=1
+            continue
+        fi
 
         if [[ "$missing" == "yes" ]]; then
             echo
