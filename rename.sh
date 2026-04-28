@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.04.28 - v. 19.05 - normalize YYYYMMDD_at_HH.MM.SS (and HH-MM-SS) into YYYYMMDD_HHMMSS
 # 2026.04.28 - v. 19.04 - date-time media normalization also accepts underscore time separators (HH_MM_SS)
 # 2026.04.28 - v. 19.03 - when deleting thumbs.db, remove/update local checksum refs that point to it
 # 2026.04.28 - v. 19.02 - offer [K] delete for thumbs.db (case-insensitive), including no-op rename cases
@@ -4050,6 +4051,15 @@ transform_name() {
             ss="$(printf '%02d' "$((10#${BASH_REMATCH[6]}))")"
             tail_bit="${BASH_REMATCH[7]-}"
             newbase="${y}${mo}${d}_${hh}${mm}${ss}${tail_bit}${BASH_REMATCH[8]}"
+        elif [[ "$newbase" =~ ^([0-9]{8})_at_([0-9]{1,2})[.-]([0-9]{1,2})[.-]([0-9]{1,2})(_[^.]+)?(\..+)$ ]]; then
+            # e.g. 20180527_at_19.31.29.jpg -> 20180527_193129.jpg
+            # and  20180527_at_19-31-29.jpg -> 20180527_193129.jpg
+            ymd="${BASH_REMATCH[1]}"
+            hh="$(printf '%02d' "$((10#${BASH_REMATCH[2]}))")"
+            mm="$(printf '%02d' "$((10#${BASH_REMATCH[3]}))")"
+            ss="$(printf '%02d' "$((10#${BASH_REMATCH[4]}))")"
+            tail_bit="${BASH_REMATCH[5]-}"
+            newbase="${ymd}_${hh}${mm}${ss}${tail_bit}${BASH_REMATCH[6]}"
         elif [[ "$newbase" =~ ^([0-9]{8})-([0-9]{6})_(.+)(\.${common_media_ext_re})$ ]]; then
             media_suffix="${BASH_REMATCH[3]}"
             media_suffix=$(printf '%s' "$media_suffix" | tr '[:upper:]' '[:lower:]')
