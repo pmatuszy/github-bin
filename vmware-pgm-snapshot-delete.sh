@@ -132,16 +132,28 @@ _add_unique_vmx_line() {
 _pgm_parse_snapshots_from_list_out() {
   local list_out="$1"
   local -n _snaps_ref="$2"
-  local line saw_zero=0
+  local line saw_zero=0 saw_total=0 expected_count=-1
 
   _snaps_ref=()
   while IFS= read -r line || [[ -n "$line" ]]; do
     line="${line%$'\r'}"
     [[ -z "${line//[[:space:]]/}" ]] && continue
     if [[ "${line}" =~ [Tt]otal[[:space:]]+snapshots: ]]; then
+      saw_total=1
+      if [[ "${line}" =~ [Tt]otal[[:space:]]+snapshots:[[:space:]]*([0-9]+) ]]; then
+        expected_count="${BASH_REMATCH[1]}"
+      fi
       if [[ "${line}" =~ [Tt]otal[[:space:]]+snapshots:[[:space:]]*0[[:space:]]*$ ]]; then
         saw_zero=1
       fi
+      continue
+    fi
+    # vmrun may print warnings before "Total snapshots:" (e.g. AppLoader/libaio).
+    # Only collect names after the total line when it is present.
+    if ((saw_total == 0)); then
+      continue
+    fi
+    if ((expected_count >= 0 && ${#_snaps_ref[@]} >= expected_count)); then
       continue
     fi
     _snaps_ref+=("$line")
