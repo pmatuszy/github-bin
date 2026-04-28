@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# 2026.04.28 - v. 19.01 - normalize YYYY-MM-DD[ _]HH[-.]MM[-.]SS[_tail|-tail].media (incl. mp4) after cleanup pass
+# 2026.04.28 - v. 19.00 - normalize YYYY-MM-DD[ _]HH-MM-SS[_tail|-tail].media (incl. mp4) after cleanup pass
 # 2026.04.27 - v. 18.99 - show/reuse HTML companion-dir recovery plan and update URL-encoded HTML refs
 # 2026.04.27 - v. 18.98 - HTML companion dirs: recover when normalized companion exists; ignore empty target dir collisions
 # 2026.04.27 - v. 18.97 - do not rename underscore-leading .par2 files, including checksum-group references
@@ -3957,6 +3959,21 @@ transform_name() {
                     break
                 fi
             done
+        fi
+
+        # Normalize date-time media names even when they originally had a space
+        # between date and time (or leading spaces before the date), e.g.
+        # " 2018-02-28 22-20-15-491.mp4" or "2018-02-28_22.20.15.mp4"
+        # -> "20180228_222015-491.mp4" / "20180228_222015.mp4".
+        if [[ "$newbase" =~ ^[[:space:]]*([0-9]{4})-([0-9]{2})-([0-9]{2})[[:space:]_]([0-9]{2})[-.]([0-9]{2})[-.]([0-9]{2})([-_][^.]+)?(\.${common_media_ext_re})$ ]]; then
+            y="${BASH_REMATCH[1]}"
+            mo="${BASH_REMATCH[2]}"
+            d="${BASH_REMATCH[3]}"
+            hh="${BASH_REMATCH[4]}"
+            mm="${BASH_REMATCH[5]}"
+            ss="${BASH_REMATCH[6]}"
+            tail_bit="${BASH_REMATCH[7]-}"
+            newbase="${y}${mo}${d}_${hh}${mm}${ss}${tail_bit}${BASH_REMATCH[8]}"
         fi
 
         if [[ "$newbase" =~ ^image.*\.jpg$ ]] && [[ ! "$newbase" =~ ^[0-9]{8}_[0-9]{6}_image.*\.jpg$ ]]; then
