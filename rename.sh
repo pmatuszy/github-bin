@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# 2026.04.28 - v. 19.04 - date-time media normalization also accepts underscore time separators (HH_MM_SS)
+# 2026.04.28 - v. 19.03 - when deleting thumbs.db, remove/update local checksum refs that point to it
+# 2026.04.28 - v. 19.02 - offer [K] delete for thumbs.db (case-insensitive), including no-op rename cases
 # 2026.04.28 - v. 19.01 - normalize YYYY-MM-DD[ _]HH[-.]MM[-.]SS[_tail|-tail].media (incl. mp4) after cleanup pass
 # 2026.04.28 - v. 19.00 - normalize YYYY-MM-DD[ _]HH-MM-SS[_tail|-tail].media (incl. mp4) after cleanup pass
 # 2026.04.27 - v. 18.99 - show/reuse HTML companion-dir recovery plan and update URL-encoded HTML refs
@@ -2927,6 +2930,15 @@ is_torrent_url_file() {
     [[ "$lower" == *torrent*.url ]]
 }
 
+is_thumbs_db_file() {
+    local p="$1"
+    local bn lower
+    [[ -f "$p" ]] || return 1
+    bn="$(basename -- "$p")"
+    lower="${bn,,}"
+    [[ "$lower" == "thumbs.db" ]]
+}
+
 paths_refer_to_same_file() {
     local a="$1" b="$2" ida idb
     [[ -e "$a" && -e "$b" ]] || return 1
@@ -3963,9 +3975,10 @@ transform_name() {
 
         # Normalize date-time media names even when they originally had a space
         # between date and time (or leading spaces before the date), e.g.
-        # " 2018-02-28 22-20-15-491.mp4" or "2018-02-28_22.20.15.mp4"
+        # " 2018-02-28 22-20-15-491.mp4", "2018-02-28_22.20.15.mp4",
+        # or "2025-07-23__09_07_46-Finished_signing.jpg"
         # -> "20180228_222015-491.mp4" / "20180228_222015.mp4".
-        if [[ "$newbase" =~ ^[[:space:]]*([0-9]{4})-([0-9]{2})-([0-9]{2})[[:space:]_]([0-9]{2})[-.]([0-9]{2})[-.]([0-9]{2})([-_][^.]+)?(\.${common_media_ext_re})$ ]]; then
+        if [[ "$newbase" =~ ^[[:space:]]*([0-9]{4})-([0-9]{2})-([0-9]{2})[[:space:]_]+([0-9]{2})[-._]([0-9]{2})[-._]([0-9]{2})([-_][^.]+)?(\.${common_media_ext_re})$ ]]; then
             y="${BASH_REMATCH[1]}"
             mo="${BASH_REMATCH[2]}"
             d="${BASH_REMATCH[3]}"
@@ -4453,6 +4466,71 @@ update_checksum_content_refs() {
             -e "s|([[:space:]]\*?)${old_re1}\$|\1${new_re1}|g" \
             -e "s|([[:space:]]\*?)${old_re2}\$|\1${new_re2}|g" \
             -- "$sum_file"
+}
+
+remove_checksum_ref_entry() {
+    local sum_file="$1"
+    local target_ref="$2"
+
+    preserve_timestamps_inplace "$sum_file" \
+        python3 - "$sum_file" "$target_ref" <<'PY'
+import re
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+target = sys.argv[2]
+changed = False
+
+lines = path.read_text(encoding="utf-8", errors="surrogateescape").splitlines(True)
+out = []
+for line in lines:
+    m = re.match(r'^([0-9A-Fa-f]+)(\s+)(\*?)(.*?)(\r?\n?)$', line)
+    if m and m.group(4) == target:
+        changed = True
+        continue
+    out.append(line)
+
+if changed:
+    path.write_text(''.join(out), encoding="utf-8", errors="surrogateescape")
+PY
+}
+
+update_local_checksums_after_deleted_file() {
+    local deleted_file="$1"
+    local sum_file hash ref resolved old_ref_for_write
+    local -a verify_files=()
+    local -A seen_verify=()
+    local changed_any=no
+
+    collect_local_checksum_ref_summaries "$deleted_file" "file"
+    (( ${#PLAIN_REF_SUM_FILES[@]} > 0 )) || return 0
+
+    for sum_file in "${PLAIN_REF_SUM_FILES[@]}"; do
+        [[ -f "$sum_file" ]] || continue
+        while IFS=$'\t' read -r hash ref; do
+            [[ -n "$ref" ]] || continue
+            resolved="$(resolve_checksum_ref_path "$sum_file" "$ref")"
+            [[ "$resolved" == "$deleted_file" ]] || continue
+            old_ref_for_write="$(format_ref_for_checksum_file "$sum_file" "$ref" "$resolved")"
+            print_checksum_update_verbose "$sum_file" "$old_ref_for_write" "<removed: deleted target>"
+            remove_checksum_ref_entry "$sum_file" "$old_ref_for_write"
+            changed_any=yes
+            if [[ -z "${seen_verify[$sum_file]+x}" ]]; then
+                seen_verify["$sum_file"]=1
+                verify_files+=( "$sum_file" )
+            fi
+        done < <(extract_checksum_entries "$sum_file")
+    done
+
+    [[ "$changed_any" == "yes" ]] || return 0
+
+    for sum_file in "${verify_files[@]}"; do
+        if ! checksum_check "$sum_file"; then
+            echo -e "${YELLOW}CHECKSUM WARNING:${RESET} After removing deleted-file references, checksum file check failed: $sum_file"
+            echo -e "${YELLOW}NOTE:${RESET} failure may come from other missing/changed files already listed there."
+        fi
+    done
 }
 
 declare -a LOCAL_UPDATE_SUM_FILES=()
@@ -5189,6 +5267,10 @@ print_rename_prompt_menu() {
     if [[ -n "$path" ]] && is_torrent_url_file "$path"; then
         echo "  [T] Delete this torrent .URL shortcut"
         choice_hint+=/t
+    fi
+    if [[ -n "$path" ]] && is_thumbs_db_file "$path"; then
+        echo "  [K] Delete this thumbs.db file"
+        choice_hint+=/k
     fi
     if [[ -n "$path" && -f "$path" ]]; then
         echo "  [F] Filename-only exception (skip this basename in every directory)"
@@ -6259,24 +6341,28 @@ for f in "${ordered_paths[@]}"; do
     fi
 
     if [[ "$f" == "$new" ]]; then
-        if ! is_torrent_url_file "$f"; then
+        if ! is_torrent_url_file "$f" && ! is_thumbs_db_file "$f"; then
             vlog "No rename needed for '$f'"
             db_backfill_missing_hashes_for_existing_file "$f"
             ((++files_skipped))
             db_mark_checked "$f" "plain" "checked"
             continue
         fi
-        vlog "No rename transform for torrent .URL '$f' (prompt offers delete [T])"
+        if is_torrent_url_file "$f"; then
+            vlog "No rename transform for torrent .URL '$f' (prompt offers delete [T])"
+        elif is_thumbs_db_file "$f"; then
+            vlog "No rename transform for thumbs.db '$f' (prompt offers delete [K])"
+        fi
     fi
 
     if [[ "$rename_all" == "yes" ]]; then
         if [[ "$f" != "$new" ]]; then
             print_rename_action_verbose "$f" "$new" "rename_all"
             perform_plain_entry_rename "$f" "$new" || break
-        elif ! is_torrent_url_file "$f"; then
+        elif ! is_torrent_url_file "$f" && ! is_thumbs_db_file "$f"; then
             ((++files_skipped))
         fi
-        if [[ "$f" != "$new" ]] || ! is_torrent_url_file "$f"; then
+        if [[ "$f" != "$new" ]] || ( ! is_torrent_url_file "$f" && ! is_thumbs_db_file "$f" ); then
             continue
         fi
     fi
@@ -6285,10 +6371,10 @@ for f in "${ordered_paths[@]}"; do
         if [[ "$f" != "$new" ]]; then
             print_rename_action_verbose "$f" "$new" "per-directory auto-yes"
             perform_plain_entry_rename "$f" "$new" || break
-        elif ! is_torrent_url_file "$f"; then
+        elif ! is_torrent_url_file "$f" && ! is_thumbs_db_file "$f"; then
             ((++files_skipped))
         fi
-        if [[ "$f" != "$new" ]] || ! is_torrent_url_file "$f"; then
+        if [[ "$f" != "$new" ]] || ( ! is_torrent_url_file "$f" && ! is_thumbs_db_file "$f" ); then
             continue
         fi
     fi
@@ -6314,8 +6400,12 @@ for f in "${ordered_paths[@]}"; do
     fi
 
     torrent_url_noop=
+    thumbs_db_noop=
     if is_torrent_url_file "$f" && [[ "$f" == "$new" ]]; then
         torrent_url_noop=1
+    fi
+    if is_thumbs_db_file "$f" && [[ "$f" == "$new" ]]; then
+        thumbs_db_noop=1
     fi
 
     echo
@@ -6379,7 +6469,7 @@ for f in "${ordered_paths[@]}"; do
             if [[ "$confirm" =~ [Yy] ]]; then
                 rename_all=yes
                 vlog "rename_all enabled by user"
-                if [[ -z "$torrent_url_noop" ]]; then
+                if [[ -z "$torrent_url_noop" && -z "$thumbs_db_noop" ]]; then
                     perform_plain_entry_rename "$f" "$new" || break
                 fi
             else
@@ -6387,9 +6477,9 @@ for f in "${ordered_paths[@]}"; do
             fi
             ;;
         d|D)
-            if [[ -n "$torrent_url_noop" ]]; then
+            if [[ -n "$torrent_url_noop" || -n "$thumbs_db_noop" ]]; then
                 AUTO_RENAME_DIR="$(dirname -- "$f")"
-                vlog "Per-directory auto-yes enabled for '$AUTO_RENAME_DIR' (no rename for identical torrent .URL)"
+                vlog "Per-directory auto-yes enabled for '$AUTO_RENAME_DIR' (no rename for identical special file)"
                 ((++files_skipped))
             else
                 AUTO_RENAME_DIR="$(dirname -- "$f")"
@@ -6412,6 +6502,29 @@ for f in "${ordered_paths[@]}"; do
             fi
             processed["$f"]=1
             ;;
+        k|K)
+            if ! is_thumbs_db_file "$f"; then
+                echo -e "${YELLOW}[K] applies only to thumbs.db files.${RESET}"
+                ((++files_skipped))
+            elif [[ "$mode" == "dry-run" ]]; then
+                collect_local_checksum_ref_summaries "$f" "file"
+                echo -e "${CYAN}[DRY-RUN] Would delete thumbs.db:${RESET} $f"
+                if (( ${#PLAIN_REF_SUM_FILES[@]} > 0 )); then
+                    echo -e "${CYAN}[DRY-RUN] Would update checksum file(s) for removed thumbs.db reference:${RESET}"
+                    for sum_file in "${PLAIN_REF_SUM_FILES[@]}"; do
+                        echo "  $sum_file"
+                    done
+                fi
+                ((++files_affected))
+            else
+                update_local_checksums_after_deleted_file "$f"
+                db_delete_cached_row_for_path "$f"
+                rm -f -- "$f"
+                echo -e "${GREEN}Deleted thumbs.db:${RESET} $f"
+                ((++files_affected))
+            fi
+            processed["$f"]=1
+            ;;
         l|L)
             if ! rename_suggested_only_extension_case_change "$f" "$new"; then
                 echo -e "${YELLOW}[L] applies only when the suggestion only lowercases the file extension (same stem).${RESET}"
@@ -6426,6 +6539,9 @@ for f in "${ordered_paths[@]}"; do
         *)
             if [[ -n "$torrent_url_noop" ]]; then
                 echo -e "${YELLOW}No rename to apply for this torrent .URL; use [T] to delete it or [N] to skip.${RESET}"
+                ((++files_skipped))
+            elif [[ -n "$thumbs_db_noop" ]]; then
+                echo -e "${YELLOW}No rename to apply for this thumbs.db; use [K] to delete it or [N] to skip.${RESET}"
                 ((++files_skipped))
             else
                 print_rename_action_verbose "$f" "$new"
