@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.04.28 - v. 19.07 - normalize fully hyphenated YYYY-MM-DD-HH-MM-SS media timestamps with title tails
 # 2026.04.28 - v. 19.06 - add [U] session auto-approve for extension-case-only renames on media + Microsoft Office files
 # 2026.04.28 - v. 19.05 - normalize YYYYMMDD_at_HH.MM.SS (and HH-MM-SS) into YYYYMMDD_HHMMSS
 # 2026.04.28 - v. 19.04 - date-time media normalization also accepts underscore time separators (HH_MM_SS)
@@ -3990,9 +3991,10 @@ transform_name() {
         # Normalize date-time media names even when they originally had a space
         # between date and time (or leading spaces before the date), e.g.
         # " 2018-02-28 22-20-15-491.mp4", "2018-02-28_22.20.15.mp4",
+        # "2020-04-24-14-40-29_o_prof._Miernowskim.jpg",
         # or "2025-07-23__09_07_46-Finished_signing.jpg"
         # -> "20180228_222015-491.mp4" / "20180228_222015.mp4".
-        if [[ "$newbase" =~ ^[[:space:]]*([0-9]{4})-([0-9]{2})-([0-9]{2})[[:space:]_]+([0-9]{2})[-._]([0-9]{2})[-._]([0-9]{2})([-_][^.]+)?(\.${common_media_ext_re})$ ]]; then
+        if [[ "$newbase" =~ ^[[:space:]]*([0-9]{4})-([0-9]{2})-([0-9]{2})[[:space:]_-]+([0-9]{2})[-._]([0-9]{2})[-._]([0-9]{2})([-_].+)?(\.${common_media_ext_re})$ ]]; then
             y="${BASH_REMATCH[1]}"
             mo="${BASH_REMATCH[2]}"
             d="${BASH_REMATCH[3]}"
