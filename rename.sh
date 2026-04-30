@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.04.30 - v. 19.12 - restore errexit after set +e captures (transform_name leaked set -e; ERR on checksum return 1)
 # 2026.04.30 - v. 19.11 - YYYYMMDD HH-MM-SS[_tail].media -> YYYYMMDD_HH-MM-SS[_tail].media (space/tab before time)
 # 2026.04.30 - v. 19.10 - set -e: mapping quit/manual return 0 from choose_*; capture $(transform_basename/name) with set +e
 # 2026.04.30 - v. 19.09 - special-char mapping prompts: [o]ther replacement, [q]uit, [m]anual basename edit
@@ -2020,10 +2021,16 @@ checksum_file_has_renamable_refs() {
     while IFS=$'\t' read -r ref_hash ref_raw; do
         [[ -n "$ref_raw" ]] || continue
         resolved_ref="$(resolve_checksum_ref_path "$sum_file" "$ref_raw")"
+        local _cffr_save_e=0
+        [[ $- == *e* ]] && _cffr_save_e=1
         set +e
         transformed_ref="$(transform_name "$resolved_ref")"
         tnr_rc=$?
-        set -e
+        if ((_cffr_save_e)); then
+            set -e
+        else
+            set +e
+        fi
         if (( tnr_rc == 2 )); then
             return 2
         fi
@@ -4129,10 +4136,16 @@ transform_name() {
         done
     fi
 
+    local _tn_save_e=0
+    [[ $- == *e* ]] && _tn_save_e=1
     set +e
     newbase="$(transform_basename "$base" "$f")"
     tb_rc=$?
-    set -e
+    if ((_tn_save_e)); then
+        set -e
+    else
+        set +e
+    fi
     if (( tb_rc == 2 )); then
         return 2
     fi
@@ -6062,19 +6075,31 @@ for f in "${ordered_paths[@]}"; do
     fi
 
     if db_has_valid_entry "$f" && ! path_has_control_chars "$f"; then
+        _rename_cap_save_e=0
+        [[ $- == *e* ]] && _rename_cap_save_e=1
         set +e
         precomputed_new="$(transform_name "$f")"
         tnf_rc=$?
-        set -e
+        if ((_rename_cap_save_e)); then
+            set -e
+        else
+            set +e
+        fi
         if (( tnf_rc == 2 )); then
             break
         fi
         crr=1
         if [[ -f "$f" ]] && is_checksum_file "$f"; then
+            _rename_cap_save_e=0
+            [[ $- == *e* ]] && _rename_cap_save_e=1
             set +e
             checksum_file_has_renamable_refs "$f"
             crr=$?
-            set -e
+            if ((_rename_cap_save_e)); then
+                set -e
+            else
+                set +e
+            fi
             if (( crr == 2 )); then
                 break
             fi
@@ -6287,20 +6312,32 @@ for f in "${ordered_paths[@]}"; do
             continue
         fi
 
+        _rename_cap_save_e=0
+        [[ $- == *e* ]] && _rename_cap_save_e=1
         set +e
         new_sum="$(transform_name "$sum_file")"
         tns_rc=$?
-        set -e
+        if ((_rename_cap_save_e)); then
+            set -e
+        else
+            set +e
+        fi
         if (( tns_rc == 2 )); then
             break
         fi
         declare -a new_refs=()
         refs_need_rename=no
         for ref in "${refs[@]}"; do
+            _rename_cap_save_e=0
+            [[ $- == *e* ]] && _rename_cap_save_e=1
             set +e
             new_ref="$(transform_name "$ref")"
             tnr_rc=$?
-            set -e
+            if ((_rename_cap_save_e)); then
+                set -e
+            else
+                set +e
+            fi
             if (( tnr_rc == 2 )); then
                 break 2
             fi
@@ -6626,10 +6663,16 @@ for f in "${ordered_paths[@]}"; do
         if [[ -n "$precomputed_new" ]]; then
             new="$precomputed_new"
         else
+            _rename_cap_save_e=0
+            [[ $- == *e* ]] && _rename_cap_save_e=1
             set +e
             new="$(transform_name "$f")"
             tnf_rc=$?
-            set -e
+            if ((_rename_cap_save_e)); then
+                set -e
+            else
+                set +e
+            fi
             if (( tnf_rc == 2 )); then
                 break
             fi
@@ -6651,10 +6694,16 @@ for f in "${ordered_paths[@]}"; do
     if [[ -n "$precomputed_new" ]]; then
         new="$precomputed_new"
     else
+        _rename_cap_save_e=0
+        [[ $- == *e* ]] && _rename_cap_save_e=1
         set +e
         new="$(transform_name "$f")"
         tnf_rc=$?
-        set -e
+        if ((_rename_cap_save_e)); then
+            set -e
+        else
+            set +e
+        fi
         if (( tnf_rc == 2 )); then
             break
         fi
