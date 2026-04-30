@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.04.30 - v. 19.11 - YYYYMMDD HH-MM-SS[_tail].media -> YYYYMMDD_HH-MM-SS[_tail].media (space/tab before time)
 # 2026.04.30 - v. 19.10 - set -e: mapping quit/manual return 0 from choose_*; capture $(transform_basename/name) with set +e
 # 2026.04.30 - v. 19.09 - special-char mapping prompts: [o]ther replacement, [q]uit, [m]anual basename edit
 # 2026.04.28 - v. 19.08 - offer to remove missing thumbs.db references from checksum files
@@ -4148,6 +4149,12 @@ transform_name() {
                     break
                 fi
             done
+        fi
+
+        # YYYYMMDD + whitespace + HH-MM-SS[_tail].media -> YYYYMMDD_HH-MM-SS[_tail].media
+        # (e.g. 20190202 14-28-08_0001.jpg; not covered by YYYY-MM-DD... rules above.)
+        if [[ "$newbase" =~ ^([0-9]{8})[[:space:]]+([0-9]{2})-([0-9]{2})-([0-9]{2})(_[^.]*)?(\.${common_media_ext_re})$ ]]; then
+            newbase="${BASH_REMATCH[1]}_${BASH_REMATCH[2]}-${BASH_REMATCH[3]}-${BASH_REMATCH[4]}${BASH_REMATCH[5]-}${BASH_REMATCH[6]}"
         fi
 
         # Normalize date-time media names even when they originally had a space
