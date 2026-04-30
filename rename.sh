@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.04.30 - v. 19.09 - special-char mapping prompts: [o]ther replacement, [q]uit, [m]anual basename edit
 # 2026.04.28 - v. 19.08 - offer to remove missing thumbs.db references from checksum files
 # 2026.04.28 - v. 19.07 - normalize fully hyphenated YYYY-MM-DD-HH-MM-SS media timestamps with title tails
 # 2026.04.28 - v. 19.06 - add [U] session auto-approve for extension-case-only renames on media + Microsoft Office files
@@ -2018,6 +2019,9 @@ checksum_file_has_renamable_refs() {
         [[ -n "$ref_raw" ]] || continue
         resolved_ref="$(resolve_checksum_ref_path "$sum_file" "$ref_raw")"
         transformed_ref="$(transform_name "$resolved_ref")"
+        if (( $? == 2 )); then
+            return 2
+        fi
         if [[ "$resolved_ref" != "$transformed_ref" ]]; then
             return 0
         fi
@@ -3585,85 +3589,209 @@ stop_on_checksum_failure() {
 choose_r_acute_mapping_for_file() {
     local path="$1"
     local answer=""
-    echo >&2
-    echo "Filename contains ŕ:" >&2
-    echo "  $path" >&2
-    verbose_question_timestamp "Choose mapping for ŕ in this file:"
-    echo "Choose mapping for ŕ in this file:" >&2
-    echo "  [1] c (default)" >&2
-    echo "  [2] s" >&2
-    echo "  [3] c and space" >&2
-    echo "  [4] s and space" >&2
-    echo -n "Choice [1/2/3/4]: " >&2
-    flush_stdin
-    read_single_key answer "$PROMPT_WAIT_SECONDS"
-    echo >&2
-    case "$answer" in
-        2) printf '%s' "s" ;;
-        3) printf '%s' "c " ;;
-        4) printf '%s' "s " ;;
-        *) printf '%s' "c" ;;
-    esac
+    local repl=""
+    local manual_name=""
+
+    while true; do
+        echo >&2
+        echo "Filename contains ŕ:" >&2
+        echo "  $path" >&2
+        verbose_question_timestamp "Choose mapping for ŕ in this file:"
+        echo "Choose mapping for ŕ in this file:" >&2
+        echo "  [1] c (default)" >&2
+        echo "  [2] s" >&2
+        echo "  [3] c and space" >&2
+        echo "  [4] s and space" >&2
+        echo "  [o] Other (type replacement, Enter)" >&2
+        echo "  [q] Quit" >&2
+        echo "  [m] Manually edit basename" >&2
+        echo -n "Choice [1/2/3/4/o/q/m]: " >&2
+        flush_stdin
+        read_single_key answer "$PROMPT_WAIT_SECONDS"
+        echo >&2
+        case "$answer" in
+            2) printf '%s' "s"; return 0 ;;
+            3) printf '%s' "c "; return 0 ;;
+            4) printf '%s' "s "; return 0 ;;
+            o|O)
+                echo -n "Replacement for ŕ: " >&2
+                read_line_editable repl "$PROMPT_WAIT_SECONDS" ""
+                echo >&2
+                [[ -n "$repl" ]] || continue
+                printf '%s' "$repl"
+                return 0
+                ;;
+            q|Q)
+                stopped_by_user=yes
+                return 2
+                ;;
+            m|M)
+                echo "New basename (filename only, including extension; empty = back to menu):" >&2
+                read_line_editable manual_name "$PROMPT_WAIT_SECONDS" "$(basename -- "$path")"
+                echo >&2
+                if [[ -n "$manual_name" ]]; then
+                    MANUAL_BASENAME_OVERRIDE="$manual_name"
+                    return 3
+                fi
+                continue
+                ;;
+            1|'') printf '%s' "c"; return 0 ;;
+            *) printf '%s' "c"; return 0 ;;
+        esac
+    done
 }
 
 choose_registered_mapping_for_file() {
     local path="$1"
     local answer=""
-    echo >&2
-    echo "Filename contains ®:" >&2
-    echo "  $path" >&2
-    verbose_question_timestamp "Choose mapping for ® in this file:"
-    echo "Choose mapping for ® in this file:" >&2
-    echo "  [1] z (default)" >&2
-    echo "  [2] l" >&2
-    echo -n "Choice [1/2]: " >&2
-    flush_stdin
-    read_single_key answer "$PROMPT_WAIT_SECONDS"
-    echo >&2
-    case "$answer" in
-        2) printf '%s' "l" ;;
-        *) printf '%s' "z" ;;
-    esac
+    local repl=""
+    local manual_name=""
+
+    while true; do
+        echo >&2
+        echo "Filename contains ®:" >&2
+        echo "  $path" >&2
+        verbose_question_timestamp "Choose mapping for ® in this file:"
+        echo "Choose mapping for ® in this file:" >&2
+        echo "  [1] z (default)" >&2
+        echo "  [2] l" >&2
+        echo "  [o] Other (type replacement, Enter)" >&2
+        echo "  [q] Quit" >&2
+        echo "  [m] Manually edit basename" >&2
+        echo -n "Choice [1/2/o/q/m]: " >&2
+        flush_stdin
+        read_single_key answer "$PROMPT_WAIT_SECONDS"
+        echo >&2
+        case "$answer" in
+            2) printf '%s' "l"; return 0 ;;
+            o|O)
+                echo -n "Replacement for ®: " >&2
+                read_line_editable repl "$PROMPT_WAIT_SECONDS" ""
+                echo >&2
+                [[ -n "$repl" ]] || continue
+                printf '%s' "$repl"
+                return 0
+                ;;
+            q|Q)
+                stopped_by_user=yes
+                return 2
+                ;;
+            m|M)
+                echo "New basename (filename only, including extension; empty = back to menu):" >&2
+                read_line_editable manual_name "$PROMPT_WAIT_SECONDS" "$(basename -- "$path")"
+                echo >&2
+                if [[ -n "$manual_name" ]]; then
+                    MANUAL_BASENAME_OVERRIDE="$manual_name"
+                    return 3
+                fi
+                continue
+                ;;
+            1|'') printf '%s' "z"; return 0 ;;
+            *) printf '%s' "z"; return 0 ;;
+        esac
+    done
 }
 
 choose_at_sign_mapping_for_file() {
     local path="$1"
     local answer=""
-    echo >&2
-    echo "Filename contains @ (media file):" >&2
-    echo "  $path" >&2
-    verbose_question_timestamp "Choose mapping for @ in this file:"
-    echo "Choose mapping for @ in this file:" >&2
-    echo "  [1] a (default)" >&2
-    echo "  [2] e" >&2
-    echo -n "Choice [1/2]: " >&2
-    flush_stdin
-    read_single_key answer "$PROMPT_WAIT_SECONDS"
-    echo >&2
-    case "$answer" in
-        2) printf '%s' "e" ;;
-        *) printf '%s' "a" ;;
-    esac
+    local repl=""
+    local manual_name=""
+
+    while true; do
+        echo >&2
+        echo "Filename contains @ (media file):" >&2
+        echo "  $path" >&2
+        verbose_question_timestamp "Choose mapping for @ in this file:"
+        echo "Choose mapping for @ in this file:" >&2
+        echo "  [1] a (default)" >&2
+        echo "  [2] e" >&2
+        echo "  [o] Other (type replacement, Enter)" >&2
+        echo "  [q] Quit" >&2
+        echo "  [m] Manually edit basename" >&2
+        echo -n "Choice [1/2/o/q/m]: " >&2
+        flush_stdin
+        read_single_key answer "$PROMPT_WAIT_SECONDS"
+        echo >&2
+        case "$answer" in
+            2) printf '%s' "e"; return 0 ;;
+            o|O)
+                echo -n "Replacement for @: " >&2
+                read_line_editable repl "$PROMPT_WAIT_SECONDS" ""
+                echo >&2
+                [[ -n "$repl" ]] || continue
+                printf '%s' "$repl"
+                return 0
+                ;;
+            q|Q)
+                stopped_by_user=yes
+                return 2
+                ;;
+            m|M)
+                echo "New basename (filename only, including extension; empty = back to menu):" >&2
+                read_line_editable manual_name "$PROMPT_WAIT_SECONDS" "$(basename -- "$path")"
+                echo >&2
+                if [[ -n "$manual_name" ]]; then
+                    MANUAL_BASENAME_OVERRIDE="$manual_name"
+                    return 3
+                fi
+                continue
+                ;;
+            1|'') printf '%s' "a"; return 0 ;;
+            *) printf '%s' "a"; return 0 ;;
+        esac
+    done
 }
 
 choose_r_grave_mapping_for_file() {
     local path="$1"
     local answer=""
-    echo >&2
-    echo "Filename contains Ŕ:" >&2
-    echo "  $path" >&2
-    verbose_question_timestamp "Choose mapping for Ŕ in this file:"
-    echo "Choose mapping for Ŕ in this file:" >&2
-    echo "  [1] c (default)" >&2
-    echo "  [2] s" >&2
-    echo -n "Choice [1/2]: " >&2
-    flush_stdin
-    read_single_key answer "$PROMPT_WAIT_SECONDS"
-    echo >&2
-    case "$answer" in
-        2) printf '%s' "s" ;;
-        *) printf '%s' "c" ;;
-    esac
+    local repl=""
+    local manual_name=""
+
+    while true; do
+        echo >&2
+        echo "Filename contains Ŕ:" >&2
+        echo "  $path" >&2
+        verbose_question_timestamp "Choose mapping for Ŕ in this file:"
+        echo "Choose mapping for Ŕ in this file:" >&2
+        echo "  [1] c (default)" >&2
+        echo "  [2] s" >&2
+        echo "  [o] Other (type replacement, Enter)" >&2
+        echo "  [q] Quit" >&2
+        echo "  [m] Manually edit basename" >&2
+        echo -n "Choice [1/2/o/q/m]: " >&2
+        flush_stdin
+        read_single_key answer "$PROMPT_WAIT_SECONDS"
+        echo >&2
+        case "$answer" in
+            2) printf '%s' "s"; return 0 ;;
+            o|O)
+                echo -n "Replacement for Ŕ: " >&2
+                read_line_editable repl "$PROMPT_WAIT_SECONDS" ""
+                echo >&2
+                [[ -n "$repl" ]] || continue
+                printf '%s' "$repl"
+                return 0
+                ;;
+            q|Q)
+                stopped_by_user=yes
+                return 2
+                ;;
+            m|M)
+                echo "New basename (filename only, including extension; empty = back to menu):" >&2
+                read_line_editable manual_name "$PROMPT_WAIT_SECONDS" "$(basename -- "$path")"
+                echo >&2
+                if [[ -n "$manual_name" ]]; then
+                    MANUAL_BASENAME_OVERRIDE="$manual_name"
+                    return 3
+                fi
+                continue
+                ;;
+            1|'') printf '%s' "c"; return 0 ;;
+            *) printf '%s' "c"; return 0 ;;
+        esac
+    done
 }
 
 # Spaces/brackets/punct → underscores for final basename (used on stem or whole name).
@@ -3711,26 +3839,56 @@ transform_basename() {
     local new="$1"
     local original_path="${2-}"
     local local_r_acute local_registered local_at_sign local_r_grave
+    local map_rc
 
-    local_r_acute="${MAP_R_ACUTE:-c}"
-    local_registered="${MAP_REGISTERED:-z}"
-    local_at_sign="${MAP_AT_SIGN:-a}"
-    local_r_grave="${MAP_R_GRAVE:-c}"
-
-    if [[ -n "$original_path" && "$new" == *"ŕ"* ]]; then
-        local_r_acute="$(choose_r_acute_mapping_for_file "$original_path")"
-    fi
-    if [[ -n "$original_path" && "$new" == *"®"* ]]; then
-        local_registered="$(choose_registered_mapping_for_file "$original_path")"
-    fi
-    if [[ -n "$original_path" && "$new" == *"Ŕ"* ]]; then
-        local_r_grave="$(choose_r_grave_mapping_for_file "$original_path")"
-    fi
-    if [[ -n "$original_path" && "$new" == *"@"* ]]; then
-        if is_media_file "$original_path"; then
-            local_at_sign="$(choose_at_sign_mapping_for_file "$original_path")"
+    while true; do
+        if [[ -n "${MANUAL_BASENAME_OVERRIDE-}" ]]; then
+            new="$MANUAL_BASENAME_OVERRIDE"
+            unset MANUAL_BASENAME_OVERRIDE
         fi
-    fi
+
+        local_r_acute="${MAP_R_ACUTE:-c}"
+        local_registered="${MAP_REGISTERED:-z}"
+        local_at_sign="${MAP_AT_SIGN:-a}"
+        local_r_grave="${MAP_R_GRAVE:-c}"
+
+        if [[ -n "$original_path" && "$new" == *"ŕ"* ]]; then
+            local_r_acute="$(choose_r_acute_mapping_for_file "$original_path")"
+            map_rc=$?
+            case "$map_rc" in
+                2) return 2 ;;
+                3) continue ;;
+            esac
+        fi
+        if [[ -n "$original_path" && "$new" == *"®"* ]]; then
+            local_registered="$(choose_registered_mapping_for_file "$original_path")"
+            map_rc=$?
+            case "$map_rc" in
+                2) return 2 ;;
+                3) continue ;;
+            esac
+        fi
+        if [[ -n "$original_path" && "$new" == *"Ŕ"* ]]; then
+            local_r_grave="$(choose_r_grave_mapping_for_file "$original_path")"
+            map_rc=$?
+            case "$map_rc" in
+                2) return 2 ;;
+                3) continue ;;
+            esac
+        fi
+        if [[ -n "$original_path" && "$new" == *"@"* ]]; then
+            if is_media_file "$original_path"; then
+                local_at_sign="$(choose_at_sign_mapping_for_file "$original_path")"
+                map_rc=$?
+                case "$map_rc" in
+                    2) return 2 ;;
+                    3) continue ;;
+                esac
+            fi
+        fi
+
+        break
+    done
 
     while [[ "$new" == '!'* ]]; do
         new="${new#!}"
@@ -3979,6 +4137,9 @@ transform_name() {
     fi
 
     newbase="$(transform_basename "$base" "$f")"
+    if (( $? == 2 )); then
+        return 2
+    fi
 
     if [[ -e "$f" ]]; then
         if [[ ! -d "$f" ]]; then
@@ -5900,9 +6061,21 @@ for f in "${ordered_paths[@]}"; do
 
     if db_has_valid_entry "$f" && ! path_has_control_chars "$f"; then
         precomputed_new="$(transform_name "$f")"
+        tnf_rc=$?
+        if (( tnf_rc == 2 )); then
+            break
+        fi
+        crr=1
+        if [[ -f "$f" ]] && is_checksum_file "$f"; then
+            checksum_file_has_renamable_refs "$f"
+            crr=$?
+            if (( crr == 2 )); then
+                break
+            fi
+        fi
         if [[ "$f" != "$precomputed_new" ]]; then
             vlog "DB cache hit for '$f' but rename is still needed; processing entry."
-        elif [[ -f "$f" ]] && is_checksum_file "$f" && checksum_file_has_renamable_refs "$f"; then
+        elif (( crr == 0 )); then
             vlog "DB cache hit for '$f' but referenced checksum entries still need rename; processing checksum file."
         else
         db_backfill_missing_hashes_for_existing_file "$f"
@@ -6109,10 +6282,16 @@ for f in "${ordered_paths[@]}"; do
         fi
 
         new_sum="$(transform_name "$sum_file")"
+        if (( $? == 2 )); then
+            break
+        fi
         declare -a new_refs=()
         refs_need_rename=no
         for ref in "${refs[@]}"; do
             new_ref="$(transform_name "$ref")"
+            if (( $? == 2 )); then
+                break 2
+            fi
             new_refs+=( "$new_ref" )
             [[ "$new_ref" != "$ref" ]] && refs_need_rename=yes
         done
@@ -6436,6 +6615,9 @@ for f in "${ordered_paths[@]}"; do
             new="$precomputed_new"
         else
             new="$(transform_name "$f")"
+            if (( $? == 2 )); then
+                break
+            fi
             precomputed_new="$new"
         fi
         if [[ "$f" != "$new" && ( -e "$base.sha512" || -e "$base.md5" ) ]]; then
@@ -6455,6 +6637,9 @@ for f in "${ordered_paths[@]}"; do
         new="$precomputed_new"
     else
         new="$(transform_name "$f")"
+        if (( $? == 2 )); then
+            break
+        fi
     fi
 
     if [[ "$f" != "$new" ]] && paths_refer_to_same_file "$f" "$new"; then
