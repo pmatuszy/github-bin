@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.04.30 - v. 19.10 - set -e: mapping quit/manual return 0 from choose_*; capture $(transform_basename/name) with set +e
 # 2026.04.30 - v. 19.09 - special-char mapping prompts: [o]ther replacement, [q]uit, [m]anual basename edit
 # 2026.04.28 - v. 19.08 - offer to remove missing thumbs.db references from checksum files
 # 2026.04.28 - v. 19.07 - normalize fully hyphenated YYYY-MM-DD-HH-MM-SS media timestamps with title tails
@@ -2018,8 +2019,11 @@ checksum_file_has_renamable_refs() {
     while IFS=$'\t' read -r ref_hash ref_raw; do
         [[ -n "$ref_raw" ]] || continue
         resolved_ref="$(resolve_checksum_ref_path "$sum_file" "$ref_raw")"
+        set +e
         transformed_ref="$(transform_name "$resolved_ref")"
-        if (( $? == 2 )); then
+        tnr_rc=$?
+        set -e
+        if (( tnr_rc == 2 )); then
             return 2
         fi
         if [[ "$resolved_ref" != "$transformed_ref" ]]; then
@@ -3623,7 +3627,7 @@ choose_r_acute_mapping_for_file() {
                 ;;
             q|Q)
                 stopped_by_user=yes
-                return 2
+                return 0
                 ;;
             m|M)
                 echo "New basename (filename only, including extension; empty = back to menu):" >&2
@@ -3631,7 +3635,7 @@ choose_r_acute_mapping_for_file() {
                 echo >&2
                 if [[ -n "$manual_name" ]]; then
                     MANUAL_BASENAME_OVERRIDE="$manual_name"
-                    return 3
+                    return 0
                 fi
                 continue
                 ;;
@@ -3674,7 +3678,7 @@ choose_registered_mapping_for_file() {
                 ;;
             q|Q)
                 stopped_by_user=yes
-                return 2
+                return 0
                 ;;
             m|M)
                 echo "New basename (filename only, including extension; empty = back to menu):" >&2
@@ -3682,7 +3686,7 @@ choose_registered_mapping_for_file() {
                 echo >&2
                 if [[ -n "$manual_name" ]]; then
                     MANUAL_BASENAME_OVERRIDE="$manual_name"
-                    return 3
+                    return 0
                 fi
                 continue
                 ;;
@@ -3725,7 +3729,7 @@ choose_at_sign_mapping_for_file() {
                 ;;
             q|Q)
                 stopped_by_user=yes
-                return 2
+                return 0
                 ;;
             m|M)
                 echo "New basename (filename only, including extension; empty = back to menu):" >&2
@@ -3733,7 +3737,7 @@ choose_at_sign_mapping_for_file() {
                 echo >&2
                 if [[ -n "$manual_name" ]]; then
                     MANUAL_BASENAME_OVERRIDE="$manual_name"
-                    return 3
+                    return 0
                 fi
                 continue
                 ;;
@@ -3776,7 +3780,7 @@ choose_r_grave_mapping_for_file() {
                 ;;
             q|Q)
                 stopped_by_user=yes
-                return 2
+                return 0
                 ;;
             m|M)
                 echo "New basename (filename only, including extension; empty = back to menu):" >&2
@@ -3784,7 +3788,7 @@ choose_r_grave_mapping_for_file() {
                 echo >&2
                 if [[ -n "$manual_name" ]]; then
                     MANUAL_BASENAME_OVERRIDE="$manual_name"
-                    return 3
+                    return 0
                 fi
                 continue
                 ;;
@@ -3839,7 +3843,6 @@ transform_basename() {
     local new="$1"
     local original_path="${2-}"
     local local_r_acute local_registered local_at_sign local_r_grave
-    local map_rc
 
     while true; do
         if [[ -n "${MANUAL_BASENAME_OVERRIDE-}" ]]; then
@@ -3852,38 +3855,27 @@ transform_basename() {
         local_at_sign="${MAP_AT_SIGN:-a}"
         local_r_grave="${MAP_R_GRAVE:-c}"
 
+        # choose_* must return 0 from $(...) paths: set -e treats non-zero as fatal before map_rc=$? runs.
         if [[ -n "$original_path" && "$new" == *"ŕ"* ]]; then
             local_r_acute="$(choose_r_acute_mapping_for_file "$original_path")"
-            map_rc=$?
-            case "$map_rc" in
-                2) return 2 ;;
-                3) continue ;;
-            esac
+            [[ "$stopped_by_user" != yes ]] || return 2
+            [[ -z "${MANUAL_BASENAME_OVERRIDE-}" ]] || continue
         fi
         if [[ -n "$original_path" && "$new" == *"®"* ]]; then
             local_registered="$(choose_registered_mapping_for_file "$original_path")"
-            map_rc=$?
-            case "$map_rc" in
-                2) return 2 ;;
-                3) continue ;;
-            esac
+            [[ "$stopped_by_user" != yes ]] || return 2
+            [[ -z "${MANUAL_BASENAME_OVERRIDE-}" ]] || continue
         fi
         if [[ -n "$original_path" && "$new" == *"Ŕ"* ]]; then
             local_r_grave="$(choose_r_grave_mapping_for_file "$original_path")"
-            map_rc=$?
-            case "$map_rc" in
-                2) return 2 ;;
-                3) continue ;;
-            esac
+            [[ "$stopped_by_user" != yes ]] || return 2
+            [[ -z "${MANUAL_BASENAME_OVERRIDE-}" ]] || continue
         fi
         if [[ -n "$original_path" && "$new" == *"@"* ]]; then
             if is_media_file "$original_path"; then
                 local_at_sign="$(choose_at_sign_mapping_for_file "$original_path")"
-                map_rc=$?
-                case "$map_rc" in
-                    2) return 2 ;;
-                    3) continue ;;
-                esac
+                [[ "$stopped_by_user" != yes ]] || return 2
+                [[ -z "${MANUAL_BASENAME_OVERRIDE-}" ]] || continue
             fi
         fi
 
@@ -4136,8 +4128,11 @@ transform_name() {
         done
     fi
 
+    set +e
     newbase="$(transform_basename "$base" "$f")"
-    if (( $? == 2 )); then
+    tb_rc=$?
+    set -e
+    if (( tb_rc == 2 )); then
         return 2
     fi
 
@@ -6060,15 +6055,19 @@ for f in "${ordered_paths[@]}"; do
     fi
 
     if db_has_valid_entry "$f" && ! path_has_control_chars "$f"; then
+        set +e
         precomputed_new="$(transform_name "$f")"
         tnf_rc=$?
+        set -e
         if (( tnf_rc == 2 )); then
             break
         fi
         crr=1
         if [[ -f "$f" ]] && is_checksum_file "$f"; then
+            set +e
             checksum_file_has_renamable_refs "$f"
             crr=$?
+            set -e
             if (( crr == 2 )); then
                 break
             fi
@@ -6281,15 +6280,21 @@ for f in "${ordered_paths[@]}"; do
             continue
         fi
 
+        set +e
         new_sum="$(transform_name "$sum_file")"
-        if (( $? == 2 )); then
+        tns_rc=$?
+        set -e
+        if (( tns_rc == 2 )); then
             break
         fi
         declare -a new_refs=()
         refs_need_rename=no
         for ref in "${refs[@]}"; do
+            set +e
             new_ref="$(transform_name "$ref")"
-            if (( $? == 2 )); then
+            tnr_rc=$?
+            set -e
+            if (( tnr_rc == 2 )); then
                 break 2
             fi
             new_refs+=( "$new_ref" )
@@ -6614,8 +6619,11 @@ for f in "${ordered_paths[@]}"; do
         if [[ -n "$precomputed_new" ]]; then
             new="$precomputed_new"
         else
+            set +e
             new="$(transform_name "$f")"
-            if (( $? == 2 )); then
+            tnf_rc=$?
+            set -e
+            if (( tnf_rc == 2 )); then
                 break
             fi
             precomputed_new="$new"
@@ -6636,8 +6644,11 @@ for f in "${ordered_paths[@]}"; do
     if [[ -n "$precomputed_new" ]]; then
         new="$precomputed_new"
     else
+        set +e
         new="$(transform_name "$f")"
-        if (( $? == 2 )); then
+        tnf_rc=$?
+        set -e
+        if (( tnf_rc == 2 )); then
             break
         fi
     fi
