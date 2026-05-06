@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# 2026.05.06 - v. 19.24 - checksum mismatch: quitting [Q] shows user-stop message (not "SHA512 incorrect"); finish_current_operation on checksum exits
+# 2026.05.06 - v. 19.23 - checksum mismatch: show list-file times, stored hash, on-disk file times+hash before recovery [U]/[Q]
 # 2026.05.06 - v. 19.22 - more MAX_LINE_LENGTH wrapping: checksum preview/recovery/thumbs/dry-run, collision details, exceptions via emit_wrap_exclude, summary rename list, torrent/thumbs paths, print_checksum_* helpers
 # 2026.05.06 - v. 19.21 - central WRAP_MSG_INDENT + emit_wrap_* helpers; wrap long user-facing echo lines to MAX_LINE_LENGTH
 # 2026.05.06 - v. 19.20 - wrap long checksum-group progress / FAIL / VERIFIED / OK lines to MAX_LINE_LENGTH
@@ -3745,6 +3747,60 @@ confirm_large_hash_check() {
     esac
 }
 
+# Before [U]/[Q]: list file metadata, hash stored in the list for this ref, and on-disk file metadata + current hash.
+print_checksum_mismatch_decision_context() {
+    local sum_file="$1"
+    local ref_in_file="$2"
+    local path_on_disk="$3"
+    local label="$4"
+    local kind target_norm target_re matched_line stored_hash disk_hash
+
+    kind="$(checksum_kind "$sum_file")" || kind="?"
+    target_norm="$(strip_leading_dot_slash "$ref_in_file")"
+    target_re="$(sed_escape_regex "$target_norm")"
+    matched_line="$(
+        sed -E 's/\r$//' -- "$sum_file" 2>/dev/null | grep -E "^[0-9a-fA-F]+[[:space:]]+\*?${target_re}$" | tail -n 1 || true
+    )"
+    if [[ -n "$matched_line" ]]; then
+        stored_hash="$(printf '%s' "$matched_line" | awk '{print tolower($1)}')"
+    else
+        stored_hash=""
+    fi
+
+    echo
+    echo -e "${CYAN}${label} mismatch — details for your decision:${RESET}"
+    emit_wrap_labeled_stdout "  Checksum list file: " "  ${CYAN}Checksum list file:${RESET} " "$sum_file"
+    if [[ -f "$sum_file" ]]; then
+        echo "    size:       $(format_bytes_human "$(get_file_size_bytes "$sum_file")")"
+        echo "    created:    $(format_epoch_human "$(get_file_birth_epoch "$sum_file")")"
+        echo "    modified:   $(format_epoch_human "$(get_file_mtime_epoch "$sum_file")")"
+    else
+        echo "    (not readable as a regular file here — cannot show size/times)"
+    fi
+    if [[ -n "$stored_hash" ]]; then
+        emit_wrap_labeled_stdout "    Stored ${kind} in list for this reference: " "    ${CYAN}Stored ${kind} in list for this reference:${RESET} " "$stored_hash"
+    else
+        echo "    (No matching checksum line found for this reference in the list.)"
+    fi
+
+    echo
+    emit_wrap_labeled_stdout "  File on disk: " "  ${CYAN}File on disk:${RESET} " "$path_on_disk"
+    if [[ -f "$path_on_disk" ]]; then
+        echo "    size:       $(format_bytes_human "$(get_file_size_bytes "$path_on_disk")")"
+        echo "    created:    $(format_epoch_human "$(get_file_birth_epoch "$path_on_disk")")"
+        echo "    modified:   $(format_epoch_human "$(get_file_mtime_epoch "$path_on_disk")")"
+        disk_hash="$(checksum_of_file "$kind" "$path_on_disk" || true)"
+        if [[ -n "$disk_hash" ]]; then
+            emit_wrap_labeled_stdout "    Current ${kind} of file: " "    ${CYAN}Current ${kind} of file:${RESET} " "$disk_hash"
+        else
+            echo "    (Could not compute ${kind} for this path.)"
+        fi
+    else
+        echo "    (not a regular file — cannot show size/times or compute ${kind})"
+    fi
+    echo
+}
+
 suggest_checksum_mismatch_recovery() {
     local sum_file="$1"
     local ref_in_file="$2"
@@ -3757,6 +3813,8 @@ suggest_checksum_mismatch_recovery() {
     tool="$(checksum_cmd "$sum_file")"
     qdir="$(printf '%q' "$sum_dir")"
     qref="$(printf '%q' "$ref_in_file")"
+
+    print_checksum_mismatch_decision_context "$sum_file" "$ref_in_file" "$path_on_disk" "$label"
 
     echo
     echo -e "${CYAN}${label} recovery hint (${phase}):${RESET}"
@@ -3821,8 +3879,27 @@ stop_on_checksum_failure() {
     local label
     label="$(checksum_label "$sum_file")"
 
+    finish_current_operation
     emit_wrap_labeled_stdout "${label} ERROR: ${label} verification ${phase} failed for " "${RED}${label} ERROR:${RESET} ${label} verification ${phase} failed for " "'${sum_file}'."
     emit_wrap_labeled_stdout "STOPPING: " "${RED}STOPPING:${RESET} " "Script execution aborted because ${label} is incorrect."
+    exit 1
+}
+
+# User chose [Q] (or left the mismatch menu without fixing): not the same as "hash algorithm / file is wrong".
+stop_on_checksum_user_quit_after_mismatch() {
+    local sum_file="$1"
+    local phase="$2"
+    local label
+    label="$(checksum_label "$sum_file")"
+
+    stopped_by_user=yes
+    finish_current_operation
+    echo
+    emit_wrap_labeled_stdout "STOPPING: " "${YELLOW}STOPPING:${RESET} " "You quit from the ${label} mismatch prompt (${phase}). Exiting without using [U] to refresh the stored hash from the file on disk."
+    emit_wrap_labeled_stdout "Note: " "${CYAN}Note:${RESET} " "This is not the same as '${label} being incorrect' — you chose not to apply [U] or fix the issue now."
+    emit_wrap_labeled_stdout "Hash list: " "${CYAN}Hash list:${RESET} " "$sum_file"
+    SCRIPT_FINISH_TIME="$(date '+%Y-%m-%d %H:%M:%S')"
+    print_summary
     exit 1
 }
 
@@ -6759,7 +6836,7 @@ for f in "${ordered_paths[@]}"; do
                 if prompt_refresh_checksum_hash_after_mismatch "$sum_file" "${refs_raw[$i]}" "${refs[$i]}" "before rename"; then
                     continue
                 fi
-                stop_on_checksum_failure "$sum_file" "before rename"
+                stop_on_checksum_user_quit_after_mismatch "$sum_file" "before rename"
             done
             print_checksum_verified_refs_line "$label" before "$sum_file"
         fi
@@ -6909,7 +6986,7 @@ for f in "${ordered_paths[@]}"; do
                 if prompt_refresh_checksum_hash_after_mismatch "$final_sum" "$new_ref_for_verify" "${new_refs[$i]}" "after rename"; then
                     continue
                 fi
-                stop_on_checksum_failure "$final_sum" "after rename"
+                stop_on_checksum_user_quit_after_mismatch "$final_sum" "after rename"
             done
             print_checksum_verified_refs_line "$label" after "$final_sum"
             print_checksum_group_ok_line "$label" "$final_sum"
