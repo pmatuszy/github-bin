@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# 2026.05.06 - v. 19.22 - more MAX_LINE_LENGTH wrapping: checksum preview/recovery/thumbs/dry-run, collision details, exceptions via emit_wrap_exclude, summary rename list, torrent/thumbs paths, print_checksum_* helpers
+# 2026.05.06 - v. 19.21 - central WRAP_MSG_INDENT + emit_wrap_* helpers; wrap long user-facing echo lines to MAX_LINE_LENGTH
+# 2026.05.06 - v. 19.20 - wrap long checksum-group progress / FAIL / VERIFIED / OK lines to MAX_LINE_LENGTH
 # 2026.05.06 - v. 19.19 - checksum verify loop: capture exit code with || vrc=$? so set -e does not abort before handling mismatch
 # 2026.05.06 - v. 19.18 - wrap long same-inode (case-only) verbose line to MAX_LINE_LENGTH
 # 2026.05.06 - v. 19.17 - checksum verify fail: recovery hint + optional [U] refresh hash from disk (before/after rename)
@@ -265,6 +268,65 @@
 SCRIPT_VERSION="$(LC_ALL=C grep -m1 '^# [0-9]' "$0" | sed -E 's/^# ([0-9]{4}\.[0-9]{2}\.[0-9]{2} - v\. [0-9]+\.[0-9]+) - .*/\1/')"
 LARGE_HASHFILE_LINE_THRESHOLD=20
 MAX_LINE_LENGTH=200
+# Continuation indent for user-visible lines longer than MAX_LINE_LENGTH (checksum/HTML style).
+WRAP_MSG_INDENT="          "
+
+# plain_prefix + body == full visible line (no ANSI). fd 1=stdout, 2=stderr.
+emit_wrap_labeled_line() {
+    local fd="$1"
+    local plain_prefix="$2"
+    local ansi_label="$3"
+    local body="$4"
+    local plain="${plain_prefix}${body}"
+    if (( ${#plain} <= MAX_LINE_LENGTH )); then
+        printf '%b%s\n' "$ansi_label" "$body" >&"$fd"
+    else
+        printf '%b\n' "$ansi_label" >&"$fd"
+        printf '%s%s\n' "$WRAP_MSG_INDENT" "$body" >&"$fd"
+    fi
+}
+
+emit_wrap_labeled_stdout() { emit_wrap_labeled_line 1 "$@"; }
+emit_wrap_labeled_stderr() { emit_wrap_labeled_line 2 "$@"; }
+
+# "TAG: entry -> exclude file" with colored arrow when it fits on one line.
+emit_wrap_exclude_append_message() {
+    local use_cyan_for_tag="$1"
+    local tag="$2"
+    local entry="$3"
+    local plain="${tag}: ${entry} -> ${EXCLUDE_FILTERS_FILE}"
+    if (( ${#plain} <= MAX_LINE_LENGTH )); then
+        if [[ "$use_cyan_for_tag" == 1 ]]; then
+            printf '%b %s %b %s\n' "${CYAN}${tag}:${RESET}" "$entry" "${CYAN}->${RESET}" "$EXCLUDE_FILTERS_FILE"
+        else
+            printf '%b %s %b %s\n' "${YELLOW}${tag}:${RESET}" "$entry" "${CYAN}->${RESET}" "$EXCLUDE_FILTERS_FILE"
+        fi
+    else
+        if [[ "$use_cyan_for_tag" == 1 ]]; then
+            printf '%b %s\n' "${CYAN}${tag}:${RESET}" "$entry"
+        else
+            printf '%b %s\n' "${YELLOW}${tag}:${RESET}" "$entry"
+        fi
+        printf '%s%b %s\n' "$WRAP_MSG_INDENT" "${CYAN}->${RESET}" "$EXCLUDE_FILTERS_FILE"
+    fi
+}
+
+# Long OLD path ARROW NEW path (ARROW is set later at startup; expanded at call time).
+emit_wrap_old_arrow_new_stdout() {
+    local plain_pfx="$1"
+    local ansi_pfx="$2"
+    local old_p="$3"
+    local new_p="$4"
+    local sep=" ${ARROW} "
+    local plain="${plain_pfx}${old_p}${sep}${new_p}"
+    if (( ${#plain} <= MAX_LINE_LENGTH )); then
+        printf '%b%s%s%s\n' "$ansi_pfx" "$old_p" "$sep" "$new_p"
+    else
+        printf '%b\n' "$ansi_pfx"
+        printf '%s%s%s%s\n' "$WRAP_MSG_INDENT" "$old_p" "$sep" "$new_p"
+    fi
+}
+
 START_DIR="$(pwd -P)"
 EXCLUDE_FILTERS_FILE="$START_DIR/_exclude-rename.sh.txt"
 USE_DB=0
@@ -787,9 +849,9 @@ append_path_to_exclude_filters_file() {
     if (( found == 0 )); then
         printf '%s
 ' "$entry" >> "$EXCLUDE_FILTERS_FILE"
-        echo -e "${CYAN}EXCEPTION ADDED:${RESET} $entry ${CYAN}->${RESET} $EXCLUDE_FILTERS_FILE"
+        emit_wrap_exclude_append_message 1 "EXCEPTION ADDED" "$entry"
     else
-        echo -e "${YELLOW}EXCEPTION EXISTS:${RESET} $entry ${CYAN}->${RESET} $EXCLUDE_FILTERS_FILE"
+        emit_wrap_exclude_append_message 0 "EXCEPTION EXISTS" "$entry"
     fi
 
     load_exclude_filters
@@ -814,9 +876,9 @@ append_exact_path_to_exclude_filters_file() {
     if (( found == 0 )); then
         printf '%s
 ' "$entry" >> "$EXCLUDE_FILTERS_FILE"
-        echo -e "${CYAN}EXACT EXCEPTION ADDED:${RESET} $entry ${CYAN}->${RESET} $EXCLUDE_FILTERS_FILE"
+        emit_wrap_exclude_append_message 1 "EXACT EXCEPTION ADDED" "$entry"
     else
-        echo -e "${YELLOW}EXACT EXCEPTION EXISTS:${RESET} $entry ${CYAN}->${RESET} $EXCLUDE_FILTERS_FILE"
+        emit_wrap_exclude_append_message 0 "EXACT EXCEPTION EXISTS" "$entry"
     fi
 
     load_exclude_filters
@@ -830,7 +892,7 @@ append_filename_only_exception_to_exclude_filters_file() {
         if [[ -e "$EXCLUDE_FILTERS_FILE" ]]; then
             load_exclude_filters
         fi
-        echo -e "${YELLOW}SKIP:${RESET} Filename-only exceptions apply to regular files only." >&2
+        emit_wrap_labeled_stderr "SKIP: " "${YELLOW}SKIP:${RESET} " "Filename-only exceptions apply to regular files only."
         return 1
     }
 
@@ -847,9 +909,9 @@ append_filename_only_exception_to_exclude_filters_file() {
     if (( found == 0 )); then
         printf '%s
 ' "$entry" >> "$EXCLUDE_FILTERS_FILE"
-        echo -e "${CYAN}FILENAME-ONLY EXCEPTION ADDED:${RESET} $entry ${CYAN}->${RESET} $EXCLUDE_FILTERS_FILE"
+        emit_wrap_exclude_append_message 1 "FILENAME-ONLY EXCEPTION ADDED" "$entry"
     else
-        echo -e "${YELLOW}FILENAME-ONLY EXCEPTION EXISTS:${RESET} $entry ${CYAN}->${RESET} $EXCLUDE_FILTERS_FILE"
+        emit_wrap_exclude_append_message 0 "FILENAME-ONLY EXCEPTION EXISTS" "$entry"
     fi
 
     load_exclude_filters
@@ -874,9 +936,9 @@ append_flatten_exception_to_exclude_filters_file() {
     if (( found == 0 )); then
         printf '%s
 ' "$entry" >> "$EXCLUDE_FILTERS_FILE"
-        echo -e "${CYAN}FLATTEN EXCEPTION ADDED:${RESET} $entry ${CYAN}->${RESET} $EXCLUDE_FILTERS_FILE"
+        emit_wrap_exclude_append_message 1 "FLATTEN EXCEPTION ADDED" "$entry"
     else
-        echo -e "${YELLOW}FLATTEN EXCEPTION EXISTS:${RESET} $entry ${CYAN}->${RESET} $EXCLUDE_FILTERS_FILE"
+        emit_wrap_exclude_append_message 0 "FLATTEN EXCEPTION EXISTS" "$entry"
     fi
 
     load_exclude_filters
@@ -2415,9 +2477,78 @@ print_same_inode_no_rename_verbose() {
         echo -e "${CYAN}[VERBOSE]${RESET} Suggested target is the same inode as source (case-insensitive path spellings): '${src}' | '${dst}' — no rename." >&2
     else
         echo -e "${CYAN}[VERBOSE]${RESET} Suggested target is the same inode as source (case-insensitive path spellings) — no rename." >&2
-        echo "          source: '${src}'" >&2
-        echo "          target: '${dst}'" >&2
+        echo "${WRAP_MSG_INDENT}source: '${src}'" >&2
+        echo "${WRAP_MSG_INDENT}target: '${dst}'" >&2
     fi
+}
+
+# Long checksum-file paths: split to two lines when plain length exceeds MAX_LINE_LENGTH (stdout, not stderr).
+print_checksum_verify_progress_line() {
+    local label="$1"
+    local when="$2"
+    local path="$3"
+    local intro_plain
+
+    if [[ "$when" == before ]]; then
+        intro_plain="${label} check (before rename) in progress for changed reference(s)..."
+    else
+        intro_plain="${label} check (after rename) in progress for changed reference(s)..."
+    fi
+    emit_wrap_labeled_stdout "${intro_plain} " "${CYAN}${intro_plain}${RESET} " "$path"
+}
+
+print_checksum_verified_refs_line() {
+    local label="$1"
+    local when="$2"
+    local path="$3"
+
+    if [[ "$when" == before ]]; then
+        emit_wrap_labeled_stdout "${label} VERIFIED (before rename): changed reference(s) in " "${CYAN}${label} VERIFIED (before rename):${RESET} changed reference(s) in " "$path"
+    else
+        emit_wrap_labeled_stdout "${label} VERIFIED (after rename): changed reference(s) in " "${CYAN}${label} VERIFIED (after rename):${RESET} changed reference(s) in " "$path"
+    fi
+}
+
+print_checksum_fail_no_matching_line() {
+    local label="$1"
+    local ref_raw="$2"
+    local sum_file="$3"
+    local tail="(won't rename pair)"
+
+    emit_wrap_labeled_stdout "${label} FAIL: no checksum line matches reference '${ref_raw}' " "${YELLOW}${label} FAIL:${RESET} no checksum line matches reference '${ref_raw}' " "in '${sum_file}' ${tail}"
+}
+
+print_checksum_fail_mismatch_line() {
+    local label="$1"
+    local ref_raw="$2"
+    local sum_file="$3"
+    local tail="(won't rename pair)"
+
+    emit_wrap_labeled_stdout "${label} FAIL: checksum mismatch for reference '${ref_raw}' " "${YELLOW}${label} FAIL:${RESET} checksum mismatch for reference '${ref_raw}' " "in '${sum_file}' ${tail}"
+}
+
+print_checksum_fail_after_no_line() {
+    local label="$1"
+    local new_ref="$2"
+    local final_sum="$3"
+
+    emit_wrap_labeled_stdout "${label} FAIL (after rename): no line for '${new_ref}' " "${YELLOW}${label} FAIL (after rename):${RESET} no line for '${new_ref}' " "in '${final_sum}'."
+}
+
+print_checksum_fail_after_validate_line() {
+    local label="$1"
+    local new_ref="$2"
+    local final_sum="$3"
+
+    emit_wrap_labeled_stdout "${label} FAIL (after rename): reference '${new_ref}' " "${YELLOW}${label} FAIL (after rename):${RESET} reference '${new_ref}' " "in '${final_sum}' does not validate."
+}
+
+print_checksum_group_ok_line() {
+    local label="$1"
+    local final_sum="$2"
+    local llower="${label,,}"
+
+    emit_wrap_labeled_stdout "${label} OK: changed reference(s) were updated inside " "${GREEN}${label} OK:${RESET} changed reference(s) were updated inside " "'${final_sum}' and ${llower} checksum(s) are correct."
 }
 
 print_checksum_update_verbose() {
@@ -2681,7 +2812,7 @@ print_control_char_warning() {
     local path="$1"
     local shown
     shown="$(format_path_for_log "$path")"
-    echo -e "${YELLOW}WARNING:${RESET} path contains control character(s): '$shown'"
+    emit_wrap_labeled_stdout "WARNING: path contains control character(s): '" "${YELLOW}WARNING:${RESET} path contains control character(s): '" "${shown}'"
 }
 
 print_skip_path_reason() {
@@ -2700,14 +2831,21 @@ print_skip_path_reason() {
         echo -e "${YELLOW}SKIP:${RESET} '$shown' $reason"
     else
         echo -e "${YELLOW}SKIP:${RESET} '$shown'"
-        echo "      $reason"
+        echo "${WRAP_MSG_INDENT}$reason"
     fi
 }
 
 # Colored [VERBOSE] prefix; many older call sites still use plain "echo '[VERBOSE] ...'" (e.g. wrapped SQLite/checksum lines).
 vlog() {
     (( VERBOSE == 1 )) || return 0
-    echo -e "${CYAN}[VERBOSE]${RESET} $*" >&2
+    local msg="$*"
+    local plain="[VERBOSE] ${msg}"
+    if (( ${#plain} <= MAX_LINE_LENGTH )); then
+        echo -e "${CYAN}[VERBOSE]${RESET} ${msg}" >&2
+    else
+        echo -e "${CYAN}[VERBOSE]${RESET}" >&2
+        printf '%s%s\n' "$WRAP_MSG_INDENT" "$msg" >&2
+    fi
 }
 
 print_progress_box() {
@@ -2746,22 +2884,21 @@ rollback_current_operation() {
     (( CURRENT_OP_ACTIVE == 1 )) || return 0
 
     echo
-    echo -e "${YELLOW}INTERRUPT:${RESET} Ctrl-C received. Reverting current ${CURRENT_OP_LABEL,,} operation..."
+    emit_wrap_labeled_stdout "INTERRUPT: Ctrl-C received. Reverting current " "${YELLOW}INTERRUPT:${RESET} Ctrl-C received. Reverting current " "${CURRENT_OP_LABEL,,} operation..."
 
     if [[ -n "$CURRENT_OP_CONTENT_FILE" && -n "$CURRENT_OP_CONTENT_BACKUP" && -e "$CURRENT_OP_CONTENT_BACKUP" ]]; then
         if [[ -e "$CURRENT_OP_CONTENT_FILE" ]]; then
             cp -p -- "$CURRENT_OP_CONTENT_BACKUP" "$CURRENT_OP_CONTENT_FILE"
-            echo -e "${CYAN}ROLLBACK:${RESET} restored content of: $CURRENT_OP_CONTENT_FILE"
+            emit_wrap_labeled_stdout "ROLLBACK: restored content of: " "${CYAN}ROLLBACK:${RESET} restored content of: " "$CURRENT_OP_CONTENT_FILE"
         elif [[ "$CURRENT_OP_SUM_RENAMED" -eq 1 && -e "$CURRENT_OP_SUM_NEW" ]]; then
             cp -p -- "$CURRENT_OP_CONTENT_BACKUP" "$CURRENT_OP_SUM_NEW"
-            echo -e "${CYAN}ROLLBACK:${RESET} restored content of: $CURRENT_OP_SUM_NEW"
+            emit_wrap_labeled_stdout "ROLLBACK: restored content of: " "${CYAN}ROLLBACK:${RESET} restored content of: " "$CURRENT_OP_SUM_NEW"
         fi
     fi
 
     if [[ "$CURRENT_OP_SUM_RENAMED" -eq 1 && -e "$CURRENT_OP_SUM_NEW" ]]; then
         mv -f -- "$CURRENT_OP_SUM_NEW" "$CURRENT_OP_SUM_OLD"
-        echo -e "${CYAN}ROLLBACK:${RESET} ${CURRENT_OP_LABEL} file renamed back:"
-        echo "  $CURRENT_OP_SUM_NEW -> $CURRENT_OP_SUM_OLD"
+        emit_wrap_labeled_stdout "ROLLBACK: ${CURRENT_OP_LABEL} file renamed back: " "${CYAN}ROLLBACK:${RESET} ${CURRENT_OP_LABEL} file renamed back: " "${CURRENT_OP_SUM_NEW} -> ${CURRENT_OP_SUM_OLD}"
     fi
 
     for (( idx=${#CURRENT_OP_FILE_OLDS[@]}-1; idx>=0; idx-- )); do
@@ -2769,8 +2906,7 @@ rollback_current_operation() {
         new="${CURRENT_OP_FILE_NEWS[$idx]}"
         if [[ -e "$new" ]]; then
             mv -f -- "$new" "$old"
-            echo -e "${CYAN}ROLLBACK:${RESET} referenced file renamed back:"
-            echo "  $new -> $old"
+            emit_wrap_labeled_stdout "ROLLBACK: referenced file renamed back: " "${CYAN}ROLLBACK:${RESET} referenced file renamed back: " "${new} -> ${old}"
         fi
     done
 
@@ -3133,7 +3269,7 @@ PY
     fi
     if [[ $rc -eq 0 ]]; then
         mv -- "$tmp" "$m3u_file"
-        echo -e "${CYAN}M3U UPDATED:${RESET} $m3u_file"
+        emit_wrap_labeled_stdout "M3U UPDATED: " "${CYAN}M3U UPDATED:${RESET} " "$m3u_file"
     else
         rm -f -- "$tmp"
     fi
@@ -3330,7 +3466,7 @@ check_m3u_targets() {
 ' "OLD: $display_entry"
                     printf '%s
 ' "NEW: $replacement"
-                    echo -e "${CYAN}M3U UPDATED:${RESET} $m3u_file"
+                    emit_wrap_labeled_stdout "M3U UPDATED: " "${CYAN}M3U UPDATED:${RESET} " "$m3u_file"
                 elif [[ $rc -eq 3 ]]; then
                     print_m3u_no_update_needed "$m3u_file"
                 else
@@ -3448,13 +3584,13 @@ print_html_companion_plan_for_prompt() {
     plan_html_companion_for_rename "$old" "$new"
 
     if [[ -n "$HTML_COMPANION_OLD_DIR" && "$HTML_COMPANION_OLD_DIR" != "$HTML_COMPANION_NEW_DIR" ]]; then
-        echo -e "${CYAN}HTML companion:${RESET} will rename directory and update references inside the HTML file."
-        echo -e "  ${RED}OLD DIR:${RESET} $HTML_COMPANION_OLD_DIR"
-        echo -e "  ${GREEN}NEW DIR:${RESET} $HTML_COMPANION_NEW_DIR"
+        emit_wrap_labeled_stdout "HTML companion: " "${CYAN}HTML companion:${RESET} " "will rename directory and update references inside the HTML file."
+        emit_wrap_labeled_stdout "  OLD DIR: " "  ${RED}OLD DIR:${RESET} " "$HTML_COMPANION_OLD_DIR"
+        emit_wrap_labeled_stdout "  NEW DIR: " "  ${GREEN}NEW DIR:${RESET} " "$HTML_COMPANION_NEW_DIR"
     elif [[ "$HTML_COMPANION_REFERENCE_UPDATE_ONLY" == "yes" ]]; then
-        echo -e "${CYAN}HTML companion:${RESET} already exists with the new name; references inside the HTML file will be updated."
-        echo -e "  ${RED}OLD REF:${RESET} $HTML_COMPANION_OLD_NAME"
-        echo -e "  ${GREEN}NEW REF:${RESET} $HTML_COMPANION_NEW_NAME"
+        emit_wrap_labeled_stdout "HTML companion: " "${CYAN}HTML companion:${RESET} " "already exists with the new name; references inside the HTML file will be updated."
+        emit_wrap_labeled_stdout "  OLD REF: " "  ${RED}OLD REF:${RESET} " "$HTML_COMPANION_OLD_NAME"
+        emit_wrap_labeled_stdout "  NEW REF: " "  ${GREEN}NEW REF:${RESET} " "$HTML_COMPANION_NEW_NAME"
     fi
 }
 
@@ -3587,7 +3723,7 @@ confirm_large_hash_check() {
     fi
 
     echo
-    echo -e "${YELLOW}${label} NOTICE:${RESET} '$sum_file' contains $line_count checksum line(s)."
+    emit_wrap_labeled_stdout "${label} NOTICE: " "${YELLOW}${label} NOTICE:${RESET} " "'${sum_file}' contains ${line_count} checksum line(s)."
     echo "Checking it may take a long time."
     echo -n "Check this file and continue? [Y/n/q]: "
 
@@ -3630,9 +3766,9 @@ suggest_checksum_mismatch_recovery() {
     if [[ -f "$path_on_disk" ]]; then
         echo "  To fix manually, re-hash from the checksum file's directory and replace that line:"
         echo "      ( cd $qdir && $tool -- $qref )"
-        echo "  The path column in the list must stay exactly: $ref_in_file"
+        emit_wrap_labeled_stdout "  The path column in the list must stay exactly: " "  The path column in the list must stay exactly: " "$ref_in_file"
     else
-        echo -e "  ${YELLOW}There is no regular file to hash at:${RESET} $path_on_disk"
+        emit_wrap_labeled_stdout "  There is no regular file to hash at: " "  ${YELLOW}There is no regular file to hash at:${RESET} " "$path_on_disk"
     fi
     echo
 }
@@ -3649,8 +3785,8 @@ prompt_refresh_checksum_hash_after_mismatch() {
     suggest_checksum_mismatch_recovery "$sum_file" "$ref_in_file" "$path_on_disk" "$label" "$phase"
 
     while true; do
-        echo -e "  ${GREEN}[U]${RESET} Update stored ${label,,} hash from the file on disk, then re-verify"
-        echo -e "  ${GREEN}[Q]${RESET} Quit (abort script)"
+        emit_wrap_labeled_stdout "  [U] " "  ${GREEN}[U]${RESET} " "Update stored ${label,,} hash from the file on disk, then re-verify"
+        emit_wrap_labeled_stdout "  [Q] " "  ${GREEN}[Q]${RESET} " "Quit (abort script)"
         echo -n "Choice [U/q]: "
         flush_stdin
         read_single_key answer "$PROMPT_WAIT_SECONDS"
@@ -3658,16 +3794,16 @@ prompt_refresh_checksum_hash_after_mismatch() {
         case "$answer" in
             u|U)
                 if [[ ! -f "$path_on_disk" ]]; then
-                    echo -e "${YELLOW}${label}:${RESET} Cannot update - not a regular file: $path_on_disk"
+                    emit_wrap_labeled_stdout "${label}: Cannot update - not a regular file: " "${YELLOW}${label}:${RESET} Cannot update - not a regular file: " "$path_on_disk"
                     continue
                 fi
-                echo -e "${CYAN}${label} FIX:${RESET} Patching '$sum_file' (ref '$ref_in_file') from file '$path_on_disk'..."
+                emit_wrap_labeled_stdout "${label} FIX: Patching " "${CYAN}${label} FIX:${RESET} Patching " "'${sum_file}' (ref '${ref_in_file}') from file '${path_on_disk}'..."
                 update_checksum_hash_for_ref "$sum_file" "$ref_in_file" "$path_on_disk"
                 if verify_single_checksum_target "$sum_file" "$ref_in_file"; then
-                    echo -e "${GREEN}${label} OK:${RESET} Stored hash now matches the file; continuing."
+                    emit_wrap_labeled_stdout "${label} OK: " "${GREEN}${label} OK:${RESET} " "Stored hash now matches the file; continuing."
                     return 0
                 fi
-                echo -e "${YELLOW}${label} WARN:${RESET} Still fails after patch (duplicate conflicting lines in the list, or I/O issue). Try editing the checksum file by hand."
+                emit_wrap_labeled_stdout "${label} WARN: " "${YELLOW}${label} WARN:${RESET} " "Still fails after patch (duplicate conflicting lines in the list, or I/O issue). Try editing the checksum file by hand."
                 ;;
             q|Q|'')
                 return 1
@@ -3685,8 +3821,8 @@ stop_on_checksum_failure() {
     local label
     label="$(checksum_label "$sum_file")"
 
-    echo -e "${RED}${label} ERROR:${RESET} ${label} verification ${phase} failed for '$sum_file'."
-    echo -e "${RED}STOPPING:${RESET} Script execution aborted because ${label} is incorrect."
+    emit_wrap_labeled_stdout "${label} ERROR: ${label} verification ${phase} failed for " "${RED}${label} ERROR:${RESET} ${label} verification ${phase} failed for " "'${sum_file}'."
+    emit_wrap_labeled_stdout "STOPPING: " "${RED}STOPPING:${RESET} " "Script execution aborted because ${label} is incorrect."
     exit 1
 }
 
@@ -4427,11 +4563,11 @@ ensure_checksum_file_unix_format() {
 
     if checksum_file_has_crlf "$sum_file"; then
         if [[ "$mode" == "dry-run" ]]; then
-            echo -e "${CYAN}[DRY-RUN] Would convert ${label} file from CRLF to LF:${RESET} $sum_file"
+            emit_wrap_labeled_stdout "[DRY-RUN] Would convert ${label} file from CRLF to LF: " "${CYAN}[DRY-RUN] Would convert ${label} file from CRLF to LF:${RESET} " "$sum_file"
         else
-            echo -e "${CYAN}${label} NORMALIZE:${RESET} converting CRLF to LF: $sum_file"
+            emit_wrap_labeled_stdout "${label} NORMALIZE: converting CRLF to LF: " "${CYAN}${label} NORMALIZE:${RESET} converting CRLF to LF: " "$sum_file"
             normalize_checksum_file "$sum_file"
-            echo -e "${CYAN}${label} NORMALIZE DONE:${RESET} converted from Windows format to Unix format: $sum_file"
+            emit_wrap_labeled_stdout "${label} NORMALIZE DONE: converted from Windows format to Unix format: " "${CYAN}${label} NORMALIZE DONE:${RESET} converted from Windows format to Unix format: " "$sum_file"
         fi
     fi
 }
@@ -4609,8 +4745,8 @@ handle_existing_target_collision() {
     COLLISION_RENAMED_TARGET=""
 
     if [[ "$mode" == "dry-run" ]]; then
-        echo -e "${YELLOW}COLLISION:${RESET} Target file already exists."
-        echo -e "${CYAN}[DRY-RUN] Would compare MD5, size, and timestamps of source/destination and ask what to do:${RESET} $old ${ARROW} $new"
+        emit_wrap_labeled_stdout "COLLISION: " "${YELLOW}COLLISION:${RESET} " "Target file already exists."
+        emit_wrap_old_arrow_new_stdout "[DRY-RUN] Would compare MD5, size, and timestamps of source/destination and ask what to do: " "${CYAN}[DRY-RUN] Would compare MD5, size, and timestamps of source/destination and ask what to do:${RESET} " "$old" "$new"
         return 1
     fi
 
@@ -4618,13 +4754,13 @@ handle_existing_target_collision() {
     collision_decision_rc=$?
 
     if [[ $collision_decision_rc -eq 0 ]]; then
-        echo -e "${CYAN}OVERWRITE:${RESET} removing destination and continuing rename: $new"
+        emit_wrap_labeled_stdout "OVERWRITE: removing destination and continuing rename: " "${CYAN}OVERWRITE:${RESET} removing destination and continuing rename: " "$new"
         rm -f -- "$new"
         return 0
     elif [[ $collision_decision_rc -eq 2 ]]; then
         return 2
     elif [[ $collision_decision_rc -eq 3 ]]; then
-        echo -e "${CYAN}RENAME WITH _OTHER:${RESET} source will be renamed to: $COLLISION_OTHER_PATH"
+        emit_wrap_labeled_stdout "RENAME WITH _OTHER: source will be renamed to: " "${CYAN}RENAME WITH _OTHER:${RESET} source will be renamed to: " "$COLLISION_OTHER_PATH"
         COLLISION_RENAMED_TARGET="$COLLISION_OTHER_PATH"
         return 3
     else
@@ -4652,17 +4788,17 @@ can_overwrite_collision_with_identical_md5() {
     new_mtime="$(get_file_mtime_epoch "$new")"
 
     echo
-    echo -e "${YELLOW}COLLISION:${RESET} target file already exists."
-    echo -e "  ${RED}SOURCE:${RESET}      $old"
-    echo -e "    size:       $(format_bytes_human "$old_size")"
-    echo -e "    created:    $(format_epoch_human "$old_btime")"
-    echo -e "    modified:   $(format_epoch_human "$old_mtime")"
-    echo -e "    md5:        $old_md5"
-    echo -e "  ${GREEN}DESTINATION:${RESET} $new"
-    echo -e "    size:       $(format_bytes_human "$new_size")"
-    echo -e "    created:    $(format_epoch_human "$new_btime")"
-    echo -e "    modified:   $(format_epoch_human "$new_mtime")"
-    echo -e "    md5:        $new_md5"
+    emit_wrap_labeled_stdout "COLLISION: " "${YELLOW}COLLISION:${RESET} " "target file already exists."
+    emit_wrap_labeled_stdout "  SOURCE:      " "  ${RED}SOURCE:${RESET}      " "$old"
+    emit_wrap_labeled_stdout "    size:       " "    size:       " "$(format_bytes_human "$old_size")"
+    emit_wrap_labeled_stdout "    created:    " "    created:    " "$(format_epoch_human "$old_btime")"
+    emit_wrap_labeled_stdout "    modified:   " "    modified:   " "$(format_epoch_human "$old_mtime")"
+    emit_wrap_labeled_stdout "    md5:        " "    md5:        " "$old_md5"
+    emit_wrap_labeled_stdout "  DESTINATION: " "  ${GREEN}DESTINATION:${RESET} " "$new"
+    emit_wrap_labeled_stdout "    size:       " "    size:       " "$(format_bytes_human "$new_size")"
+    emit_wrap_labeled_stdout "    created:    " "    created:    " "$(format_epoch_human "$new_btime")"
+    emit_wrap_labeled_stdout "    modified:   " "    modified:   " "$(format_epoch_human "$new_mtime")"
+    emit_wrap_labeled_stdout "    md5:        " "    md5:        " "$new_md5"
 
     if [[ "$old_md5" == "$new_md5" ]]; then
         echo "Files are identical."
@@ -4832,8 +4968,8 @@ update_local_checksums_after_deleted_file() {
 
     for sum_file in "${verify_files[@]}"; do
         if ! checksum_check "$sum_file"; then
-            echo -e "${YELLOW}CHECKSUM WARNING:${RESET} After removing deleted-file references, checksum file check failed: $sum_file"
-            echo -e "${YELLOW}NOTE:${RESET} failure may come from other missing/changed files already listed there."
+            emit_wrap_labeled_stdout "CHECKSUM WARNING: After removing deleted-file references, checksum file check failed: " "${YELLOW}CHECKSUM WARNING:${RESET} After removing deleted-file references, checksum file check failed: " "$sum_file"
+            emit_wrap_labeled_stdout "NOTE: " "${YELLOW}NOTE:${RESET} " "failure may come from other missing/changed files already listed there."
         fi
     done
 }
@@ -4968,7 +5104,7 @@ perform_plain_entry_rename() {
         elif [[ $collision_decision_rc -eq 3 ]]; then
             new="$COLLISION_RENAMED_TARGET"
         else
-            echo -e "${YELLOW}SKIP:${RESET} Target file already exists."
+            emit_wrap_labeled_stdout "SKIP: " "${YELLOW}SKIP:${RESET} " "Target file already exists."
             vlog "Collision detected for plain rename '$old' -> '$new'"
             ((++files_skipped))
             return 0
@@ -4988,7 +5124,7 @@ perform_plain_entry_rename() {
                 vlog "Removing empty target companion directory before pair rename: '$new_companion_dir'"
                 rmdir -- "$new_companion_dir"
             else
-                echo -e "${YELLOW}SKIP:${RESET} Target companion directory already exists: $new_companion_dir"
+                emit_wrap_labeled_stdout "SKIP: Target companion directory already exists: " "${YELLOW}SKIP:${RESET} Target companion directory already exists: " "$new_companion_dir"
                 vlog "Collision detected for companion directory '$old_companion_dir' -> '$new_companion_dir'"
                 ((++files_skipped))
                 return 0
@@ -4997,12 +5133,12 @@ perform_plain_entry_rename() {
     fi
 
     if [[ "$mode" == "dry-run" ]]; then
-        echo -e "${CYAN}[DRY-RUN] Would rename:${RESET} $old ${ARROW} $new"
+        emit_wrap_old_arrow_new_stdout "[DRY-RUN] Would rename: " "${CYAN}[DRY-RUN] Would rename:${RESET} " "$old" "$new"
         if [[ -n "$old_companion_dir" && "$old_companion_dir" != "$new_companion_dir" ]]; then
-            echo -e "${CYAN}[DRY-RUN] Would rename companion directory:${RESET} $old_companion_dir ${ARROW} $new_companion_dir"
-            echo -e "${CYAN}[DRY-RUN] Would update HTML reference inside:${RESET} $new"
+            emit_wrap_old_arrow_new_stdout "[DRY-RUN] Would rename companion directory: " "${CYAN}[DRY-RUN] Would rename companion directory:${RESET} " "$old_companion_dir" "$new_companion_dir"
+            emit_wrap_labeled_stdout "[DRY-RUN] Would update HTML reference inside: " "${CYAN}[DRY-RUN] Would update HTML reference inside:${RESET} " "$new"
         elif [[ "$html_reference_update_only" == "yes" ]]; then
-            echo -e "${CYAN}[DRY-RUN] Would update HTML reference inside:${RESET} $new"
+            emit_wrap_labeled_stdout "[DRY-RUN] Would update HTML reference inside: " "${CYAN}[DRY-RUN] Would update HTML reference inside:${RESET} " "$new"
         fi
         ((++files_affected))
         record_rename "$old" "$new"
@@ -5027,11 +5163,11 @@ perform_plain_entry_rename() {
     vlog "DB row ${DB_MARK_CHECKED_RESULT:-updated} after rename: '$new' (plain/checked)"
 
     if [[ -n "$old_companion_dir" && "$old_companion_dir" != "$new_companion_dir" ]]; then
-        echo -e "${CYAN}HTML PAIR RENAME:${RESET} HTML file and companion directory are being updated together."
-        echo -e "  ${RED}OLD HTML:${RESET} $old"
-        echo -e "  ${GREEN}NEW HTML:${RESET} $new"
-        echo -e "  ${RED}OLD DIR:${RESET}  $old_companion_dir"
-        echo -e "  ${GREEN}NEW DIR:${RESET}  $new_companion_dir"
+        emit_wrap_labeled_stdout "HTML PAIR RENAME: " "${CYAN}HTML PAIR RENAME:${RESET} " "HTML file and companion directory are being updated together."
+        emit_wrap_labeled_stdout "  OLD HTML: " "  ${RED}OLD HTML:${RESET} " "$old"
+        emit_wrap_labeled_stdout "  NEW HTML: " "  ${GREEN}NEW HTML:${RESET} " "$new"
+        emit_wrap_labeled_stdout "  OLD DIR:  " "  ${RED}OLD DIR:${RESET}  " "$old_companion_dir"
+        emit_wrap_labeled_stdout "  NEW DIR:  " "  ${GREEN}NEW DIR:${RESET}  " "$new_companion_dir"
         if mv -i -- "$old_companion_dir" "$new_companion_dir"; then
             ((++files_affected))
             record_rename "$old_companion_dir" "$new_companion_dir"
@@ -5039,7 +5175,7 @@ perform_plain_entry_rename() {
             old_companion_name="$(basename -- "$old_companion_dir")"
             new_companion_name="$(basename -- "$new_companion_dir")"
             update_html_companion_reference "$new" "$old_companion_name" "$new_companion_name"
-            echo -e "${CYAN}HTML PAIR UPDATED:${RESET} companion reference inside HTML file was updated from '$old_companion_name' to '$new_companion_name'."
+            emit_wrap_labeled_stdout "HTML PAIR UPDATED: companion reference inside HTML file was updated from " "${CYAN}HTML PAIR UPDATED:${RESET} companion reference inside HTML file was updated from " "'${old_companion_name}' to '${new_companion_name}'."
             db_mark_checked "$new_companion_dir" "html_companion" "checked"
             processed["$old_companion_dir"]=1
             processed["$new_companion_dir"]=1
@@ -5052,7 +5188,7 @@ perform_plain_entry_rename() {
 
     if [[ "$html_reference_update_only" == "yes" ]]; then
         update_html_companion_reference "$new" "$old_companion_name" "$new_companion_name"
-        echo -e "${CYAN}HTML PAIR UPDATED:${RESET} companion reference inside HTML file was updated from '$old_companion_name' to '$new_companion_name'."
+        emit_wrap_labeled_stdout "HTML PAIR UPDATED: companion reference inside HTML file was updated from " "${CYAN}HTML PAIR UPDATED:${RESET} companion reference inside HTML file was updated from " "'${old_companion_name}' to '${new_companion_name}'."
         db_mark_checked "$new_companion_dir" "html_companion" "checked"
         processed["$new_companion_dir"]=1
     fi
@@ -5131,7 +5267,7 @@ print_grouped_checksum_missing_warning() {
 
     [[ "$found_group" == "yes" ]] || return 0
 
-    echo -e "${YELLOW}CHECKSUM GROUP WARNING:${RESET} '$sum_file' contains grouped ORG/OUTPUT/EXCLUDE-style references."
+    emit_wrap_labeled_stdout "CHECKSUM GROUP WARNING: " "${YELLOW}CHECKSUM GROUP WARNING:${RESET} " "'${sum_file}' contains grouped ORG/OUTPUT/EXCLUDE-style references."
 
     local family present_variants expected_variants expected_variant
     for family in "${!family_variants[@]}"; do
@@ -5140,7 +5276,7 @@ print_grouped_checksum_missing_warning() {
 
         for expected_variant in $expected_variants; do
             [[ "$present_variants" == *"${expected_variant} "* ]] && continue
-            echo -e "  ${YELLOW}Missing reference in group:${RESET} ${family}_${expected_variant}.*"
+            emit_wrap_labeled_stdout "  Missing reference in group: " "  ${YELLOW}Missing reference in group:${RESET} " "${family}_${expected_variant}.*"
         done
     done
 }
@@ -5275,7 +5411,7 @@ handle_lnk_file() {
     local answer=""
 
     echo
-    echo -e "${YELLOW}LNK FILE:${RESET} $f"
+    emit_wrap_labeled_stdout "LNK FILE: " "${YELLOW}LNK FILE:${RESET} " "$f"
     verbose_question_timestamp "Remove this .lnk file? [y/N/q]:"
     echo -n "Remove this .lnk file? [y/N/q]: "
 
@@ -5290,9 +5426,9 @@ handle_lnk_file() {
             ;;
         y|Y)
             if [[ "$mode" == "dry-run" ]]; then
-                echo -e "${CYAN}[DRY-RUN] Would remove:${RESET} $f"
+                emit_wrap_labeled_stdout "[DRY-RUN] Would remove: " "${CYAN}[DRY-RUN] Would remove:${RESET} " "$f"
             else
-                echo -e "${CYAN}REMOVE:${RESET} $f"
+                emit_wrap_labeled_stdout "REMOVE: " "${CYAN}REMOVE:${RESET} " "$f"
                 rm -f -- "$f"
             fi
             ((++files_affected))
@@ -5643,7 +5779,7 @@ maybe_prompt_flatten_single_child_dir() {
     fi
 
     echo
-    echo -e "${CYAN}FLATTEN CANDIDATE:${RESET} $parent_dir"
+    emit_wrap_labeled_stdout "FLATTEN CANDIDATE: " "${CYAN}FLATTEN CANDIDATE:${RESET} " "$parent_dir"
     echo "Contains exactly one subdirectory with files:"
     echo "  $child_dir"
     echo -e "${GREEN}Move child contents one level up and delete this subdirectory?${RESET}"
@@ -5694,7 +5830,7 @@ maybe_prompt_flatten_single_child_dir() {
                 edited_base="$parent_base"
             fi
             if [[ "$edited_base" == *"/"* || "$edited_base" == "." || "$edited_base" == ".." ]]; then
-                echo -e "${YELLOW}SKIP FLATTEN:${RESET} Invalid basename: '$edited_base'"
+                emit_wrap_labeled_stdout "SKIP FLATTEN: Invalid basename: " "${YELLOW}SKIP FLATTEN:${RESET} Invalid basename: " "'${edited_base}'"
                 ((++files_skipped))
                 return 0
             fi
@@ -5727,14 +5863,14 @@ maybe_prompt_flatten_single_child_dir() {
             [[ -e "$item" ]] || continue
             item_base="$(basename -- "$item")"
             if [[ -e "$parent_dir/$item_base" ]]; then
-                echo -e "${YELLOW}SKIP FLATTEN:${RESET} Target already exists: $parent_dir/$item_base"
+                emit_wrap_labeled_stdout "SKIP FLATTEN: Target already exists: " "${YELLOW}SKIP FLATTEN:${RESET} Target already exists: " "$parent_dir/$item_base"
                 ((++files_skipped))
                 return 0
             fi
         done
 
         if [[ "$mode" == "dry-run" ]]; then
-            echo -e "${CYAN}[DRY-RUN] Would flatten:${RESET} $child_dir ${ARROW} $parent_dir"
+            emit_wrap_old_arrow_new_stdout "[DRY-RUN] Would flatten: " "${CYAN}[DRY-RUN] Would flatten:${RESET} " "$child_dir" "$parent_dir"
             ((++files_affected))
             record_rename "$child_dir" "$parent_dir"
             return 0
@@ -5753,7 +5889,7 @@ maybe_prompt_flatten_single_child_dir() {
             db_mark_checked "$parent_dir" "plain" "checked"
             vlog "Flattened '$child_dir' into '$parent_dir' (kept parent name)"
         else
-            echo -e "${YELLOW}SKIP FLATTEN:${RESET} Could not remove directory (not empty?): $child_dir"
+            emit_wrap_labeled_stdout "SKIP FLATTEN: Could not remove directory (not empty?): " "${YELLOW}SKIP FLATTEN:${RESET} Could not remove directory (not empty?): " "$child_dir"
             ((++files_skipped))
             return 0
         fi
@@ -5762,13 +5898,13 @@ maybe_prompt_flatten_single_child_dir() {
     fi
 
     if [[ -e "$target_dir" ]]; then
-        echo -e "${YELLOW}SKIP FLATTEN:${RESET} Target directory already exists: $target_dir"
+        emit_wrap_labeled_stdout "SKIP FLATTEN: Target directory already exists: " "${YELLOW}SKIP FLATTEN:${RESET} Target directory already exists: " "$target_dir"
         ((++files_skipped))
         return 0
     fi
 
     if [[ "$mode" == "dry-run" ]]; then
-        echo -e "${CYAN}[DRY-RUN] Would flatten by promoting child directory:${RESET} $child_dir ${ARROW} $target_dir"
+        emit_wrap_old_arrow_new_stdout "[DRY-RUN] Would flatten by promoting child directory: " "${CYAN}[DRY-RUN] Would flatten by promoting child directory:${RESET} " "$child_dir" "$target_dir"
         ((++files_affected))
         record_rename "$child_dir" "$target_dir"
         return 0
@@ -5786,14 +5922,14 @@ maybe_prompt_flatten_single_child_dir() {
             vlog "Flattened '$parent_dir' by keeping basename '$target_base' -> '$target_dir'"
         else
             if mv -i -- "$target_dir" "$child_dir"; then
-                echo -e "${YELLOW}SKIP FLATTEN:${RESET} Could not remove parent directory after promote, reverted move: $parent_dir"
+                emit_wrap_labeled_stdout "SKIP FLATTEN: Could not remove parent directory after promote, reverted move: " "${YELLOW}SKIP FLATTEN:${RESET} Could not remove parent directory after promote, reverted move: " "$parent_dir"
             else
-                echo -e "${YELLOW}SKIP FLATTEN:${RESET} Could not remove parent directory and failed to rollback move. Current location: $target_dir"
+                emit_wrap_labeled_stdout "SKIP FLATTEN: Could not remove parent directory and failed to rollback move. Current location: " "${YELLOW}SKIP FLATTEN:${RESET} Could not remove parent directory and failed to rollback move. Current location: " "$target_dir"
             fi
             ((++files_skipped))
         fi
     else
-        echo -e "${YELLOW}SKIP FLATTEN:${RESET} Could not promote '$child_dir' to '$target_dir'"
+        emit_wrap_labeled_stdout "SKIP FLATTEN: Could not promote " "${YELLOW}SKIP FLATTEN:${RESET} Could not promote " "'${child_dir}' to '${target_dir}'"
         ((++files_skipped))
     fi
 
@@ -5825,7 +5961,7 @@ choose_custom_rename_target() {
         return 1
     fi
     if [[ "$edited_base" == "." || "$edited_base" == ".." ]]; then
-        echo -e "${YELLOW}SKIP:${RESET} Invalid edited basename: '$edited_base'"
+        emit_wrap_labeled_stdout "SKIP: " "${YELLOW}SKIP:${RESET} " "Invalid edited basename: '$edited_base'"
         return 1
     fi
 
@@ -5842,7 +5978,7 @@ print_checksum_prompt_menu() {
     local label_upper="${label_lower^^}"
 
     echo -e "${GREEN}Apply this entire ${label_upper} checksum group?${RESET}"
-    echo "  ${label_upper} file (contains hashes and paths): $hash_file"
+    emit_wrap_labeled_stdout "  ${label_upper} file (contains hashes and paths): " "  ${label_upper} file (contains hashes and paths): " "$hash_file"
     echo "  One confirmation does everything together:"
     echo "    • Rename each referenced file where OLD referenced file → NEW referenced file was shown above"
     echo "    • Rename this ${label_upper} file only if OLD ${label_upper} → NEW ${label_upper} was shown above"
@@ -5893,25 +6029,25 @@ print_checksum_group_preview() {
     local i shown=0
 
     echo
-    echo -e "${CYAN}Checksum group preview (${label}):${RESET} the hash file lists paths to these files on disk."
-    echo -e "${CYAN}If this hash file would be renamed, it appears as OLD/NEW ${label}; otherwise only referenced files are shown.${RESET}"
+    emit_wrap_labeled_stdout "Checksum group preview (${label}): " "${CYAN}Checksum group preview (${label}):${RESET} " "the hash file lists paths to these files on disk."
+    emit_wrap_labeled_stdout "If this hash file would be renamed, it appears as OLD/NEW ${label}; " "${CYAN}If this hash file would be renamed, it appears as OLD/NEW ${label};${RESET} " "otherwise only referenced files are shown."
     echo
 
     if [[ "$sum_old" != "$sum_new" ]]; then
-        echo -e "${RED}OLD ${label} (hash file on disk):${RESET} $sum_old"
-        echo -e "${GREEN}NEW ${label} (hash file on disk):${RESET} $sum_new"
+        emit_wrap_labeled_stdout "OLD ${label} (hash file on disk): " "${RED}OLD ${label} (hash file on disk):${RESET} " "$sum_old"
+        emit_wrap_labeled_stdout "NEW ${label} (hash file on disk): " "${GREEN}NEW ${label} (hash file on disk):${RESET} " "$sum_new"
         shown=1
     fi
 
     for i in "${!_refs[@]}"; do
         [[ "${_new_refs[$i]}" != "${_refs[$i]}" ]] || continue
-        echo -e "${RED}OLD referenced file:${RESET} ${_refs[$i]}"
-        echo -e "${GREEN}NEW referenced file:${RESET} ${_new_refs[$i]}"
+        emit_wrap_labeled_stdout "OLD referenced file: " "${RED}OLD referenced file:${RESET} " "${_refs[$i]}"
+        emit_wrap_labeled_stdout "NEW referenced file: " "${GREEN}NEW referenced file:${RESET} " "${_new_refs[$i]}"
         shown=1
     done
 
     if (( shown == 0 )); then
-        echo -e "${CYAN}NO VISIBLE RENAME CHANGES:${RESET} checksum content update only for $sum_old"
+        emit_wrap_labeled_stdout "NO VISIBLE RENAME CHANGES: checksum content update only for " "${CYAN}NO VISIBLE RENAME CHANGES:${RESET} checksum content update only for " "$sum_old"
     fi
 }
 
@@ -5929,14 +6065,22 @@ print_summary() {
         if (( total_renamed > 100 )); then
             start_idx=$(( total_renamed - 100 ))
         fi
+        local _rsep=" ${ARROW} "
+        local _rplain
         for (( idx=start_idx; idx<total_renamed; idx++ )); do
             r="${renamed_list[$idx]}"
             old=${r%%|*}
             new=${r#*|}
-            printf "  %s %b%s%b %s\n" \
-                "$old" \
-                "$RED" "$ARROW" "$RESET" \
-                "$new"
+            _rplain="  ${old}${_rsep}${new}"
+            if (( ${#_rplain} <= MAX_LINE_LENGTH )); then
+                printf "  %s %b%s%b %s\n" \
+                    "$old" \
+                    "$RED" "$ARROW" "$RESET" \
+                    "$new"
+            else
+                printf "  %s\n" "$old"
+                printf "%s%b%s%b %s\n" "$WRAP_MSG_INDENT" "$RED" "$ARROW" "$RESET" "$new"
+            fi
         done
         echo
     fi
@@ -6211,7 +6355,7 @@ for f in "${ordered_paths[@]}"; do
         if path_has_control_chars "$f"; then
             print_control_char_warning "$f"
         fi
-        echo -e "${CYAN}DB SKIP:${RESET} '$(format_path_for_log "$f")'"
+        emit_wrap_labeled_stdout "DB SKIP: " "${CYAN}DB SKIP:${RESET} " "'$(format_path_for_log "$f")'"
         ((++files_skipped))
         processed["$f"]=1
         continue
@@ -6271,7 +6415,7 @@ for f in "${ordered_paths[@]}"; do
                 checksum_content_modified=yes
                 print_recovery_success_verbose "$ref" "$found_ref" "$replacement_ref"
                 print_recovery_final_status_verbose "$ref" "success"
-                echo -e "${CYAN}${label} RECOVERY CANDIDATE VERIFIED:${RESET} '$found_ref' matches the stored ${label,,}."
+                emit_wrap_labeled_stdout "${label} RECOVERY CANDIDATE VERIFIED: " "${CYAN}${label} RECOVERY CANDIDATE VERIFIED:${RESET} " "'$found_ref' matches the stored ${label,,}."
             else
                 vlog "Recovery failed for '$ref'"
                 print_recovery_final_status_verbose "$ref" "failed"
@@ -6280,11 +6424,11 @@ for f in "${ordered_paths[@]}"; do
 
         if (( ${#recovered_old_refs[@]} > 0 )); then
             echo
-            echo -e "${CYAN}${label} RECOVERY:${RESET} '$sum_file' references missing file(s), but replacement file(s) were found."
+            emit_wrap_labeled_stdout "${label} RECOVERY: " "${CYAN}${label} RECOVERY:${RESET} " "'$sum_file' references missing file(s), but replacement file(s) were found."
             for i in "${!recovered_old_refs[@]}"; do
-                echo -e "  ${RED}OLD REF:${RESET} ${recovered_old_refs[$i]}"
-                echo -e "  ${GREEN}FOUND:${RESET}   ${recovered_new_real_refs[$i]}"
-                echo -e "  ${GREEN}WRITE:${RESET}   ${recovered_new_written_refs[$i]}"
+                emit_wrap_labeled_stdout "  OLD REF: " "  ${RED}OLD REF:${RESET} " "${recovered_old_refs[$i]}"
+                emit_wrap_labeled_stdout "  FOUND: " "  ${GREEN}FOUND:${RESET}   " "${recovered_new_real_refs[$i]}"
+                emit_wrap_labeled_stdout "  WRITE: " "  ${GREEN}WRITE:${RESET}   " "${recovered_new_written_refs[$i]}"
             done
 
             if [[ "$mode" == "real" ]]; then
@@ -6292,10 +6436,16 @@ for f in "${ordered_paths[@]}"; do
                 for i in "${!recovered_old_refs[@]}"; do
                     update_checksum_content_refs "$sum_file" "${recovered_old_refs[$i]}" "${recovered_new_written_refs[$i]}"
                 done
-                echo -e "${CYAN}${label} RECOVERY UPDATED:${RESET} '$sum_file' was updated to point to the found file(s)."
-                echo -e "${CYAN}${label} RECOVERY NOTE:${RESET} full ${label,,} file verification will follow in normal processing."
+                emit_wrap_labeled_stdout "${label} RECOVERY UPDATED: " "${CYAN}${label} RECOVERY UPDATED:${RESET} " "'$sum_file' was updated to point to the found file(s)."
+                emit_wrap_labeled_stdout "${label} RECOVERY NOTE: " "${CYAN}${label} RECOVERY NOTE:${RESET} " "full ${label,,} file verification will follow in normal processing."
             else
-                echo -e "${CYAN}[DRY-RUN] Would update ${label,,} content to use the found file(s) above.${RESET}"
+                _dry_rec="[DRY-RUN] Would update ${label,,} content to use the found file(s) above."
+                if (( ${#_dry_rec} <= MAX_LINE_LENGTH )); then
+                    echo -e "${CYAN}${_dry_rec}${RESET}"
+                else
+                    echo -e "${CYAN}[DRY-RUN] Would update ${label,,} content to use the ${RESET}"
+                    echo -e "${WRAP_MSG_INDENT}${CYAN}found file(s) above.${RESET}"
+                fi
             fi
         fi
 
@@ -6320,15 +6470,21 @@ for f in "${ordered_paths[@]}"; do
 
         if (( ${#missing_thumb_refs[@]} > 0 )); then
             echo
-            echo -e "${CYAN}${label} THUMBS.DB MISSING:${RESET} '$sum_file' contains reference(s) to missing thumbs.db file(s)."
-            echo -e "${CYAN}Hash file:${RESET} $sum_file"
+            emit_wrap_labeled_stdout "${label} THUMBS.DB MISSING: " "${CYAN}${label} THUMBS.DB MISSING:${RESET} " "'$sum_file' contains reference(s) to missing thumbs.db file(s)."
+            emit_wrap_labeled_stdout "Hash file: " "${CYAN}Hash file:${RESET} " "$sum_file"
             for i in "${!missing_thumb_refs[@]}"; do
-                echo -e "  ${YELLOW}MISSING THUMBS.DB:${RESET} ${missing_thumb_refs[$i]}"
-                echo -e "  ${YELLOW}HASH REF:${RESET}          ${missing_thumb_raw_refs[$i]}"
+                emit_wrap_labeled_stdout "  MISSING THUMBS.DB: " "  ${YELLOW}MISSING THUMBS.DB:${RESET} " "${missing_thumb_refs[$i]}"
+                emit_wrap_labeled_stdout "  HASH REF: " "  ${YELLOW}HASH REF:${RESET}          " "${missing_thumb_raw_refs[$i]}"
             done
 
             if [[ "$mode" == "dry-run" ]]; then
-                echo -e "${CYAN}[DRY-RUN] Would offer to remove the missing thumbs.db reference(s) from this ${label,,} file.${RESET}"
+                _dry_th="[DRY-RUN] Would offer to remove the missing thumbs.db reference(s) from this ${label,,} file."
+                if (( ${#_dry_th} <= MAX_LINE_LENGTH )); then
+                    echo -e "${CYAN}${_dry_th}${RESET}"
+                else
+                    echo -e "${CYAN}[DRY-RUN] Would offer to remove the missing thumbs.db reference(s) from this ${RESET}"
+                    echo -e "${WRAP_MSG_INDENT}${CYAN}${label,,} file.${RESET}"
+                fi
             else
                 verbose_question_timestamp "Remove missing thumbs.db reference(s) from this hash file?"
                 echo -e "${GREEN}Remove missing thumbs.db reference(s) from this hash file?${RESET}"
@@ -6350,7 +6506,7 @@ for f in "${ordered_paths[@]}"; do
                         for i in "${!missing_thumb_raw_refs[@]}"; do
                             print_checksum_update_verbose "$sum_file" "${missing_thumb_raw_refs[$i]}" "<removed: missing thumbs.db>"
                             remove_checksum_ref_entry "$sum_file" "${missing_thumb_raw_refs[$i]}"
-                            echo -e "${GREEN}${label} REF REMOVED:${RESET} ${missing_thumb_raw_refs[$i]}"
+                            emit_wrap_labeled_stdout "${label} REF REMOVED: " "${GREEN}${label} REF REMOVED:${RESET} " "${missing_thumb_raw_refs[$i]}"
                         done
                         thumbs_db_refs_removed=yes
                         ((++files_affected))
@@ -6391,7 +6547,7 @@ for f in "${ordered_paths[@]}"; do
         fi
 
         if [[ "$thumbs_db_refs_removed" == "yes" ]] && (( ${#refs[@]} == 0 )); then
-            echo -e "${CYAN}${label} CLEANUP:${RESET} '$sum_file' has no remaining referenced files after thumbs.db cleanup."
+            emit_wrap_labeled_stdout "${label} CLEANUP: " "${CYAN}${label} CLEANUP:${RESET} " "'$sum_file' has no remaining referenced files after thumbs.db cleanup."
             db_mark_checked "$sum_file" "checksum_group" "checked"
             processed["$sum_file"]=1
             continue
@@ -6399,9 +6555,9 @@ for f in "${ordered_paths[@]}"; do
 
         if [[ "$missing" == "yes" ]]; then
             echo
-            echo -e "${YELLOW}${label} SKIP:${RESET} '$sum_file' still references missing file(s)."
+            emit_wrap_labeled_stdout "${label} SKIP: " "${YELLOW}${label} SKIP:${RESET} " "'$sum_file' still references missing file(s)."
             for ref in "${missing_refs[@]}"; do
-                echo -e "  ${YELLOW}MISSING:${RESET} $ref"
+                emit_wrap_labeled_stdout "  MISSING: " "  ${YELLOW}MISSING:${RESET} " "$ref"
             done
             print_grouped_checksum_missing_warning "$sum_file" "${refs[@]}"
             db_mark_checked "$sum_file" "checksum_group" "missing_refs"
@@ -6470,13 +6626,13 @@ for f in "${ordered_paths[@]}"; do
 
         if [[ "$mode" == "dry-run" ]]; then
             if [[ "$checksum_content_modified" == "yes" ]]; then
-                echo -e "${CYAN}[DRY-RUN] Would check ${label} because checksum content would be modified:${RESET} $sum_file"
+                emit_wrap_labeled_stdout "[DRY-RUN] Would check ${label} because checksum content would be modified: " "${CYAN}[DRY-RUN] Would check ${label} because checksum content would be modified:${RESET} " "$sum_file"
             else
-                echo -e "${CYAN}[DRY-RUN] Would check ${label} because rename is needed:${RESET} $sum_file"
+                emit_wrap_labeled_stdout "[DRY-RUN] Would check ${label} because rename is needed: " "${CYAN}[DRY-RUN] Would check ${label} because rename is needed:${RESET} " "$sum_file"
             fi
             print_checksum_group_preview "$label" "$sum_file" "$new_sum" refs new_refs
-            echo -e "${CYAN}[DRY-RUN] Would update ${label,,} content references inside:${RESET} $sum_file"
-            echo -e "${CYAN}[DRY-RUN] Would check changed ${label} reference(s) after rename:${RESET} $new_sum"
+            emit_wrap_labeled_stdout "[DRY-RUN] Would update ${label,,} content references inside: " "${CYAN}[DRY-RUN] Would update ${label,,} content references inside:${RESET} " "$sum_file"
+            emit_wrap_labeled_stdout "[DRY-RUN] Would check changed ${label} reference(s) after rename: " "${CYAN}[DRY-RUN] Would check changed ${label} reference(s) after rename:${RESET} " "$new_sum"
             echo "----------------------------------------"
 
             ((++files_affected))
@@ -6496,7 +6652,7 @@ for f in "${ordered_paths[@]}"; do
             if [[ $rc -eq 2 ]]; then
                 break
             fi
-            echo -e "${YELLOW}SKIP:${RESET} User chose not to check large ${label,,} file '$sum_file'."
+            emit_wrap_labeled_stdout "SKIP: User chose not to check large ${label,,} file " "${YELLOW}SKIP:${RESET} User chose not to check large ${label,,} file " "'$sum_file'."
             ((++files_skipped))
             processed["$sum_file"]=1
             for ref in "${refs[@]}"; do processed["$ref"]=1; done
@@ -6586,7 +6742,7 @@ for f in "${ordered_paths[@]}"; do
         done
 
         if (( changed_count > 0 )); then
-            echo -e "${CYAN}${label} check (before rename) in progress for changed reference(s)...${RESET} $sum_file"
+            print_checksum_verify_progress_line "$label" before "$sum_file"
             for i in "${!refs[@]}"; do
                 [[ "${new_refs[$i]}" != "${refs[$i]}" ]] || continue
                 vrc=0
@@ -6595,17 +6751,17 @@ for f in "${ordered_paths[@]}"; do
                     continue
                 fi
                 if (( vrc == 2 )); then
-                    echo -e "${YELLOW}${label} FAIL:${RESET} no checksum line matches reference '${refs_raw[$i]}' in '$sum_file' (won't rename pair)"
+                    print_checksum_fail_no_matching_line "$label" "${refs_raw[$i]}" "$sum_file"
                     echo "  Check that the path column in the list matches this reference exactly (including spaces and any * prefix)."
                     stop_on_checksum_failure "$sum_file" "before rename"
                 fi
-                echo -e "${YELLOW}${label} FAIL:${RESET} checksum mismatch for reference '${refs_raw[$i]}' in '$sum_file' (won't rename pair)"
+                print_checksum_fail_mismatch_line "$label" "${refs_raw[$i]}" "$sum_file"
                 if prompt_refresh_checksum_hash_after_mismatch "$sum_file" "${refs_raw[$i]}" "${refs[$i]}" "before rename"; then
                     continue
                 fi
                 stop_on_checksum_failure "$sum_file" "before rename"
             done
-            echo -e "${CYAN}${label} VERIFIED (before rename):${RESET} changed reference(s) in $sum_file"
+            print_checksum_verified_refs_line "$label" before "$sum_file"
         fi
 
         declare -a html_companion_old_dirs=()
@@ -6662,7 +6818,7 @@ for f in "${ordered_paths[@]}"; do
         done
 
         if [[ "$collision" == "yes" ]]; then
-            echo -e "${YELLOW}SKIP:${RESET} Target file already exists."
+            emit_wrap_labeled_stdout "SKIP: " "${YELLOW}SKIP:${RESET} " "Target file already exists."
             vlog "Collision detected in checksum group '$sum_file'"
             finish_current_operation
             ((++files_skipped))
@@ -6687,11 +6843,11 @@ for f in "${ordered_paths[@]}"; do
                 record_rename "${refs[$i]}" "${new_refs[$i]}"
 
                 if [[ "${html_companion_apply[$i]}" == "yes" ]]; then
-                    echo -e "${CYAN}HTML PAIR RENAME:${RESET} HTML file and companion directory are being updated together."
-                    echo -e "  ${RED}OLD HTML:${RESET} ${refs[$i]}"
-                    echo -e "  ${GREEN}NEW HTML:${RESET} ${new_refs[$i]}"
-                    echo -e "  ${RED}OLD DIR:${RESET}  ${html_companion_old_dirs[$i]}"
-                    echo -e "  ${GREEN}NEW DIR:${RESET}  ${html_companion_new_dirs[$i]}"
+                    emit_wrap_labeled_stdout "HTML PAIR RENAME: " "${CYAN}HTML PAIR RENAME:${RESET} " "HTML file and companion directory are being updated together."
+                    emit_wrap_labeled_stdout "  OLD HTML: " "  ${RED}OLD HTML:${RESET} " "${refs[$i]}"
+                    emit_wrap_labeled_stdout "  NEW HTML: " "  ${GREEN}NEW HTML:${RESET} " "${new_refs[$i]}"
+                    emit_wrap_labeled_stdout "  OLD DIR: " "  ${RED}OLD DIR:${RESET}  " "${html_companion_old_dirs[$i]}"
+                    emit_wrap_labeled_stdout "  NEW DIR: " "  ${GREEN}NEW DIR:${RESET}  " "${html_companion_new_dirs[$i]}"
                     print_rename_action_verbose "${html_companion_old_dirs[$i]}" "${html_companion_new_dirs[$i]}" "html companion rename"
                     mv -i -- "${html_companion_old_dirs[$i]}" "${html_companion_new_dirs[$i]}"
                     db_rewrite_subtree "${html_companion_old_dirs[$i]}" "${html_companion_new_dirs[$i]}"
@@ -6700,7 +6856,7 @@ for f in "${ordered_paths[@]}"; do
                     ((++files_affected))
                     record_rename "${html_companion_old_dirs[$i]}" "${html_companion_new_dirs[$i]}"
                     update_html_companion_reference "${new_refs[$i]}" "${html_companion_old_names[$i]}" "${html_companion_new_names[$i]}"
-                    echo -e "${CYAN}HTML PAIR UPDATED:${RESET} companion reference inside HTML file was updated from '${html_companion_old_names[$i]}' to '${html_companion_new_names[$i]}'."
+                    emit_wrap_labeled_stdout "HTML PAIR UPDATED: companion reference inside HTML file was updated from " "${CYAN}HTML PAIR UPDATED:${RESET} companion reference inside HTML file was updated from " "'${html_companion_old_names[$i]}' to '${html_companion_new_names[$i]}'."
                     html_hash_needs_refresh[$i]="yes"
                 fi
             else
@@ -6734,7 +6890,7 @@ for f in "${ordered_paths[@]}"; do
         fi
 
         if (( changed_count > 0 )); then
-            echo -e "${CYAN}${label} check (after rename) in progress for changed reference(s)...${RESET} $final_sum"
+            print_checksum_verify_progress_line "$label" after "$final_sum"
             for i in "${!refs[@]}"; do
                 [[ "${new_refs[$i]}" != "${refs[$i]}" ]] || continue
                 new_ref_for_verify="$(format_ref_for_checksum_file "$final_sum" "${refs_raw[$i]}" "${new_refs[$i]}")"
@@ -6744,19 +6900,19 @@ for f in "${ordered_paths[@]}"; do
                     continue
                 fi
                 if (( vrc == 2 )); then
-                    echo -e "${YELLOW}${label} FAIL (after rename):${RESET} no line for '$new_ref_for_verify' in '$final_sum'."
-                    echo -e "${YELLOW}NOTE:${RESET} Files were renamed; checksum file may be inconsistent."
+                    print_checksum_fail_after_no_line "$label" "$new_ref_for_verify" "$final_sum"
+                    emit_wrap_labeled_stdout "NOTE: " "${YELLOW}NOTE:${RESET} " "Files were renamed; checksum file may be inconsistent."
                     stop_on_checksum_failure "$final_sum" "after rename"
                 fi
-                echo -e "${YELLOW}${label} FAIL (after rename):${RESET} reference '$new_ref_for_verify' in '$final_sum' does not validate."
-                echo -e "${YELLOW}NOTE:${RESET} Files were renamed, but checksum verification after update failed."
+                print_checksum_fail_after_validate_line "$label" "$new_ref_for_verify" "$final_sum"
+                emit_wrap_labeled_stdout "NOTE: " "${YELLOW}NOTE:${RESET} " "Files were renamed, but checksum verification after update failed."
                 if prompt_refresh_checksum_hash_after_mismatch "$final_sum" "$new_ref_for_verify" "${new_refs[$i]}" "after rename"; then
                     continue
                 fi
                 stop_on_checksum_failure "$final_sum" "after rename"
             done
-            echo -e "${CYAN}${label} VERIFIED (after rename):${RESET} changed reference(s) in $final_sum"
-            echo -e "${GREEN}${label} OK:${RESET} changed reference(s) were updated inside '$final_sum' and ${label,,} checksum(s) are correct."
+            print_checksum_verified_refs_line "$label" after "$final_sum"
+            print_checksum_group_ok_line "$label" "$final_sum"
         fi
 
         finish_current_operation
@@ -6878,11 +7034,11 @@ for f in "${ordered_paths[@]}"; do
 
     if exception_exists_for_path "$f"; then
         if grep -Fxq -- "$(exact_exception_entry_for_path "$f")" "$EXCLUDE_FILTERS_FILE" 2>/dev/null; then
-            echo -e "${YELLOW}EXACT EXCEPTION EXISTS:${RESET} $(exact_exception_entry_for_path "$f") -> $EXCLUDE_FILTERS_FILE"
+            emit_wrap_exclude_append_message 0 "EXACT EXCEPTION EXISTS" "$(exact_exception_entry_for_path "$f")"
         elif [[ -f "$f" ]] && grep -Fxq -- "$(filename_only_exception_entry_for_path "$f")" "$EXCLUDE_FILTERS_FILE" 2>/dev/null; then
-            echo -e "${YELLOW}FILENAME-ONLY EXCEPTION EXISTS:${RESET} $(filename_only_exception_entry_for_path "$f") -> $EXCLUDE_FILTERS_FILE"
+            emit_wrap_exclude_append_message 0 "FILENAME-ONLY EXCEPTION EXISTS" "$(filename_only_exception_entry_for_path "$f")"
         else
-            echo -e "${YELLOW}EXCEPTION EXISTS:${RESET} $(path_to_exclude_entry "$f") -> $EXCLUDE_FILTERS_FILE"
+            emit_wrap_exclude_append_message 0 "EXCEPTION EXISTS" "$(path_to_exclude_entry "$f")"
         fi
         ((++files_skipped))
         processed["$f"]=1
@@ -6911,8 +7067,8 @@ for f in "${ordered_paths[@]}"; do
     fi
 
     echo
-    echo -e "${RED}OLD:${RESET} $f"
-    echo -e "${GREEN}NEW:${RESET} $new"
+    emit_wrap_labeled_stdout "OLD: " "${RED}OLD:${RESET} " "$f"
+    emit_wrap_labeled_stdout "NEW: " "${GREEN}NEW:${RESET} " "$new"
     if [[ "$f" != "$new" ]] && is_html_file "$f"; then
         print_html_companion_plan_for_prompt "$f" "$new"
     fi
@@ -6994,12 +7150,12 @@ for f in "${ordered_paths[@]}"; do
                 echo -e "${YELLOW}[T] applies only to torrent *.URL shortcuts.${RESET}"
                 ((++files_skipped))
             elif [[ "$mode" == "dry-run" ]]; then
-                echo -e "${CYAN}[DRY-RUN] Would delete torrent .URL:${RESET} $f"
+                emit_wrap_labeled_stdout "[DRY-RUN] Would delete torrent .URL: " "${CYAN}[DRY-RUN] Would delete torrent .URL:${RESET} " "$f"
                 ((++files_affected))
             else
                 db_delete_cached_row_for_path "$f"
                 rm -f -- "$f"
-                echo -e "${GREEN}Deleted torrent .URL:${RESET} $f"
+                emit_wrap_labeled_stdout "Deleted torrent .URL: " "${GREEN}Deleted torrent .URL:${RESET} " "$f"
                 ((++files_affected))
             fi
             processed["$f"]=1
@@ -7010,11 +7166,11 @@ for f in "${ordered_paths[@]}"; do
                 ((++files_skipped))
             elif [[ "$mode" == "dry-run" ]]; then
                 collect_local_checksum_ref_summaries "$f" "file"
-                echo -e "${CYAN}[DRY-RUN] Would delete thumbs.db:${RESET} $f"
+                emit_wrap_labeled_stdout "[DRY-RUN] Would delete thumbs.db: " "${CYAN}[DRY-RUN] Would delete thumbs.db:${RESET} " "$f"
                 if (( ${#PLAIN_REF_SUM_FILES[@]} > 0 )); then
                     echo -e "${CYAN}[DRY-RUN] Would update checksum file(s) for removed thumbs.db reference:${RESET}"
                     for sum_file in "${PLAIN_REF_SUM_FILES[@]}"; do
-                        echo "  $sum_file"
+                        emit_wrap_labeled_stdout "    " "    " "$sum_file"
                     done
                 fi
                 ((++files_affected))
@@ -7022,7 +7178,7 @@ for f in "${ordered_paths[@]}"; do
                 update_local_checksums_after_deleted_file "$f"
                 db_delete_cached_row_for_path "$f"
                 rm -f -- "$f"
-                echo -e "${GREEN}Deleted thumbs.db:${RESET} $f"
+                emit_wrap_labeled_stdout "Deleted thumbs.db: " "${GREEN}Deleted thumbs.db:${RESET} " "$f"
                 ((++files_affected))
             fi
             processed["$f"]=1
@@ -7054,10 +7210,22 @@ for f in "${ordered_paths[@]}"; do
             ;;
         *)
             if [[ -n "$torrent_url_noop" ]]; then
-                echo -e "${YELLOW}No rename to apply for this torrent .URL; use [T] to delete it or [N] to skip.${RESET}"
+                _noop_t="No rename to apply for this torrent .URL; use [T] to delete it or [N] to skip."
+                if (( ${#_noop_t} <= MAX_LINE_LENGTH )); then
+                    echo -e "${YELLOW}${_noop_t}${RESET}"
+                else
+                    echo -e "${YELLOW}No rename to apply for this torrent .URL;${RESET}"
+                    echo -e "${WRAP_MSG_INDENT}${YELLOW}use [T] to delete it or [N] to skip.${RESET}"
+                fi
                 ((++files_skipped))
             elif [[ -n "$thumbs_db_noop" ]]; then
-                echo -e "${YELLOW}No rename to apply for this thumbs.db; use [K] to delete it or [N] to skip.${RESET}"
+                _noop_k="No rename to apply for this thumbs.db; use [K] to delete it or [N] to skip."
+                if (( ${#_noop_k} <= MAX_LINE_LENGTH )); then
+                    echo -e "${YELLOW}${_noop_k}${RESET}"
+                else
+                    echo -e "${YELLOW}No rename to apply for this thumbs.db;${RESET}"
+                    echo -e "${WRAP_MSG_INDENT}${YELLOW}use [K] to delete it or [N] to skip.${RESET}"
+                fi
                 ((++files_skipped))
             else
                 print_rename_action_verbose "$f" "$new"
