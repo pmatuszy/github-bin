@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.05.06 - v. 19.42 - CRITICAL case-only: stage copy in local TMPDIR then cp→share (no hardlink/rm on ci-CIFS — deletes file)
 # 2026.05.06 - v. 19.41 - case-only: if uniq and new are same inode (ci-CIFS), rm uniq not cp; restore path uses same guard
 # 2026.05.06 - v. 19.40 - case-only final hop: mv uniq→new, else cp -p+cmp+rm uniq (CIFS mv-to-case-variant fails); cmp fallback to diff -q
 # 2026.05.06 - v. 19.39 - CRITICAL case-only: hardlink (or cp+cmp) then rm old then mv uniq→new — never os.replace-only on CIFS (data loss risk)
@@ -3263,19 +3264,6 @@ is_case_only_rename_pair() {
     return 0
 }
 
-# Unique intermediate basename in the same directory (case-only safe rename).
-make_case_rename_staging_path() {
-    local target="$1" dir i=0 p
-    dir="$(dirname -- "$target")"
-    [[ -w "$dir" ]] || return 1
-    while (( i < 500 )); do
-        p="$dir/.___ABC_case_uniq_$$_${RANDOM}_${i}.tmp"
-        [[ ! -e "$p" ]] && { printf '%s\n' "$p"; return 0; }
-        ((++i))
-    done
-    return 1
-}
-
 case_only_files_match() {
     local a="$1" b="$2"
     if command -v cmp >/dev/null 2>&1; then
@@ -3285,97 +3273,44 @@ case_only_files_match() {
     diff -q "$a" "$b" >/dev/null 2>&1
 }
 
-# Case-insensitive CIFS may expose two paths for one inode; cp refuses "same file".
-case_only_uniq_and_dest_same_inode_cleanup() {
-    local uniq="$1" dest="$2"
-    [[ -e "$uniq" && -e "$dest" ]] || return 1
-    paths_refer_to_same_file "$uniq" "$dest" || return 1
-    rm -f -- "$uniq"
-    [[ -f "$dest" ]] || return 1
-    return 0
-}
-
-# Put payload back under dest (.DNG) after a failed final hop; avoid cp when uniq and dest are already one inode.
-case_only_restore_uniq_to() {
-    local uniq="$1" dest="$2"
-    [[ -f "$uniq" ]] || return 1
-    if [[ -e "$dest" ]] && paths_refer_to_same_file "$uniq" "$dest"; then
-        rm -f -- "$uniq"
-        [[ -f "$dest" ]] && return 0
-        return 1
-    fi
-    if mv -- "$uniq" "$dest" 2>/dev/null && [[ -f "$dest" ]]; then
-        return 0
-    fi
-    [[ -f "$uniq" ]] || return 1
-    if [[ -e "$dest" ]] && paths_refer_to_same_file "$uniq" "$dest"; then
-        rm -f -- "$uniq"
-        [[ -f "$dest" ]] && return 0
-        return 1
-    fi
-    cp -p -- "$uniq" "$dest" || return 1
-    if ! case_only_files_match "$uniq" "$dest"; then
-        rm -f -- "$dest"
-        return 1
-    fi
-    rm -f -- "$uniq"
-    [[ -f "$dest" ]] || return 1
-    return 0
-}
-
-# After unlinking the old basename, move uniq to final name; CIFS often rejects mv for case-only so fall back to cp + verify.
-case_only_mv_uniq_to_new() {
-    local uniq="$1" new="$2"
-    if mv -- "$uniq" "$new" 2>/dev/null && [[ -f "$new" ]]; then
-        return 0
-    fi
-    [[ -f "$uniq" ]] || return 1
-    if case_only_uniq_and_dest_same_inode_cleanup "$uniq" "$new"; then
-        return 0
-    fi
-    cp -p -- "$uniq" "$new" || return 1
-    if ! case_only_files_match "$uniq" "$new"; then
-        rm -f -- "$new"
-        return 1
-    fi
-    rm -f -- "$uniq"
-    [[ -f "$new" ]] || return 1
-    return 0
-}
-
-# Case-only renames: never rely on rename(old→tmp→new) alone on CIFS/SMB (can drop links). Prefer hardlink + unlink old name + mv to final; else cp+cmp.
+# Case-only on CIFS/SMB: never hardlink+rm in the share directory (case-insensitive servers can drop all names).
+# Copy to local TMPDIR (different device/inode), verify, rm share file, cp onto share, verify, rm staging.
 case_only_rename_safe() {
-    local old="$1" new="$2" uniq
+    local old="$1" new="$2"
+    local tbase staging
     [[ -f "$old" ]] || return 1
-    uniq="$(make_case_rename_staging_path "$new")" || return 1
+    tbase="${TMPDIR:-/tmp}"
+    [[ -d "$tbase" && -w "$tbase" ]] || return 1
+    staging="$(mktemp "$tbase/rename.sh.case-only.XXXXXX")" || return 1
 
-    if ln -- "$old" "$uniq" 2>/dev/null; then
-        rm -f -- "$old" || { rm -f -- "$uniq"; return 1; }
-        if case_only_mv_uniq_to_new "$uniq" "$new"; then
-            return 0
-        fi
-        if case_only_restore_uniq_to "$uniq" "$old"; then
-            return 1
-        fi
-        echo "rename.sh: CASE-ONLY RENAME FAILED after hardlink; data should still exist at: $uniq" >&2
-        echo "rename.sh: Try: mv -- \"$uniq\" \"$old\"" >&2
+    if ! cp -p -- "$old" "$staging"; then
+        rm -f -- "$staging"
+        return 1
+    fi
+    if ! case_only_files_match "$old" "$staging"; then
+        rm -f -- "$staging"
+        return 1
+    fi
+    if ! rm -f -- "$old"; then
+        rm -f -- "$staging"
         return 1
     fi
 
-    cp -p -- "$old" "$uniq" || { rm -f -- "$uniq"; return 1; }
-    if ! case_only_files_match "$old" "$uniq"; then
-        rm -f -- "$uniq"
-        return 1
-    fi
-    rm -f -- "$old" || { rm -f -- "$uniq"; return 1; }
-    if case_only_mv_uniq_to_new "$uniq" "$new"; then
+    if cp -p -- "$staging" "$new" && case_only_files_match "$staging" "$new"; then
+        rm -f -- "$staging"
+        [[ -f "$new" ]] || return 1
         return 0
     fi
-    if case_only_restore_uniq_to "$uniq" "$old"; then
+
+    rm -f -- "$new"
+    if cp -p -- "$staging" "$old" && case_only_files_match "$staging" "$old"; then
+        rm -f -- "$staging"
+        [[ -f "$old" ]] || return 1
         return 1
     fi
-    echo "rename.sh: CASE-ONLY RENAME FAILED after copy; data should still exist at: $uniq" >&2
-    echo "rename.sh: Try: mv -- \"$uniq\" \"$old\"" >&2
+
+    echo "rename.sh: CASE-ONLY RENAME FAILED; bytes should still exist at: $staging" >&2
+    echo "rename.sh: Try: cp -p -- \"$staging\" \"$old\"   # or your intended path" >&2
     return 1
 }
 
