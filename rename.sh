@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.05.06 - v. 19.33 - case-only intermediate B always in same directory as file (no TMPDIR/parent staging)
 # 2026.05.06 - v. 19.32 - case-only: always via intermediate B only (mv A→B→A'; Python matches); remove MoveFileEx / Python-before-mv
 # 2026.05.06 - v. 19.31 - case-only: always stage via TMPDIR first (not only MSYS); try Python MoveFileExW when WINDIR (before bash mv)
 # 2026.05.06 - v. 19.30 - case-only rename: python3 two-step os.replace via TMPDIR when bash mv still fails (MSYS)
@@ -3254,39 +3255,16 @@ is_case_only_rename_pair() {
     return 0
 }
 
-# Pick intermediate path B for case-only two-step renames: mv old→B then mv B→new (never direct old→new).
-# Prefer process TMP so B rarely shares a tree prefix with the target (MSYS mv "same file" on case-insensitive NTFS).
+# Intermediate B for case-only two-step renames: same directory as old/new only (mv A→B→A').
 make_case_rename_staging_path() {
-    local target="$1" dir parent i=0 p tbase
+    local target="$1" dir i=0 p
     dir="$(dirname -- "$target")"
-    parent="$(dirname -- "$dir")"
-    if [[ "${parent%/}" == "${dir%/}" ]]; then
-        parent="${dir}/.."
-    fi
-    tbase="${TMPDIR:-/tmp}"
-    if [[ -d "$tbase" && -w "$tbase" ]]; then
-        p="$(mktemp "$tbase/rename.sh.case-ren.XXXXXX")" || p=""
-        [[ -n "$p" ]] && { printf '%s\n' "$p"; return 0; }
-    fi
-    if [[ -w "$parent" ]]; then
-        i=0
-        while (( i < 500 )); do
-            p="$parent/.___case_ren_$$_${RANDOM}_${i}.tmp"
-            [[ ! -e "$p" ]] && { printf '%s\n' "$p"; return 0; }
-            ((++i))
-        done
-    fi
-    i=0
+    [[ -w "$dir" ]] || return 1
     while (( i < 500 )); do
         p="$dir/.___case_ren_$$_${RANDOM}_${i}.tmp"
         [[ ! -e "$p" ]] && { printf '%s\n' "$p"; return 0; }
         ((++i))
     done
-    if [[ -d "$tbase" && -w "$tbase" ]]; then
-        p="$(mktemp "$tbase/rename.sh.case-ren.XXXXXX")" || return 1
-        printf '%s\n' "$p"
-        return 0
-    fi
     return 1
 }
 
@@ -3300,9 +3278,9 @@ import os, sys, tempfile
 old, new = sys.argv[1], sys.argv[2]
 old = os.path.abspath(old)
 new = os.path.abspath(new)
+same_dir = os.path.dirname(new)
 
-tmpdir = os.environ.get("TMPDIR") or tempfile.gettempdir()
-fd, intermediate = tempfile.mkstemp(dir=tmpdir, prefix="rename.sh.case-py.")
+fd, intermediate = tempfile.mkstemp(dir=same_dir, prefix=".___case_ren_py_", suffix=".tmp")
 os.close(fd)
 try:
     os.unlink(intermediate)
