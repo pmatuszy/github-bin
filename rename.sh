@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.05.06 - v. 19.30 - case-only rename: python3 two-step os.replace via TMPDIR when bash mv still fails (MSYS)
 # 2026.05.06 - v. 19.29 - case-only mv on MSYS/Cygwin: stage via TMPDIR mktemp first (parent-dir staging still hit NTFS same-file mv bug)
 # 2026.05.06 - v. 19.28 - case-only mv: stage temp one directory above target dir (MSYS/NTFS second mv "same file"); fallback TMPDIR mktemp
 # 2026.05.06 - v. 19.27 - rename prompt [S]: auto-yes only for similar names in current dir (same extension; leading _ if anchor had it)
@@ -3296,15 +3297,46 @@ make_case_rename_staging_path() {
     return 1
 }
 
+mv_case_only_rename_via_python3() {
+    local old="$1" new="$2"
+    command -v python3 >/dev/null 2>&1 || return 1
+    python3 - "$old" "$new" <<'PY'
+import os, sys, tempfile
+
+old, new = sys.argv[1], sys.argv[2]
+tmpdir = os.environ.get("TMPDIR") or tempfile.gettempdir()
+fd, tmp = tempfile.mkstemp(dir=tmpdir, prefix="rename.sh.case-py.")
+os.close(fd)
+try:
+    os.unlink(tmp)
+except OSError:
+    pass
+try:
+    os.replace(old, tmp)
+except OSError:
+    sys.exit(1)
+try:
+    os.replace(tmp, new)
+except OSError:
+    try:
+        os.replace(tmp, old)
+    except OSError:
+        pass
+    sys.exit(1)
+PY
+}
+
 mv_with_case_only_filesystem_workaround() {
     local old="$1" new="$2" tmp
     if is_case_only_rename_pair "$old" "$new"; then
         tmp="$(make_case_rename_staging_path "$new")" || return 1
-        mv -i -- "$old" "$tmp" || return 1
-        if ! mv -i -- "$tmp" "$new"; then
+        if mv -i -- "$old" "$tmp"; then
+            if mv -i -- "$tmp" "$new"; then
+                return 0
+            fi
             mv -f -- "$tmp" "$old" 2>/dev/null || true
-            return 1
         fi
+        mv_case_only_rename_via_python3 "$old" "$new" || return 1
         return 0
     fi
     mv -i -- "$old" "$new" || return 1
@@ -3316,11 +3348,13 @@ mv_with_case_only_filesystem_workaround_force() {
     local old="$1" new="$2" tmp
     if is_case_only_rename_pair "$old" "$new"; then
         tmp="$(make_case_rename_staging_path "$new")" || return 1
-        mv -f -- "$old" "$tmp" || return 1
-        if ! mv -f -- "$tmp" "$new"; then
+        if mv -f -- "$old" "$tmp"; then
+            if mv -f -- "$tmp" "$new"; then
+                return 0
+            fi
             mv -f -- "$tmp" "$old" 2>/dev/null || true
-            return 1
         fi
+        mv_case_only_rename_via_python3 "$old" "$new" || return 1
         return 0
     fi
     mv -f -- "$old" "$new" || return 1
