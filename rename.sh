@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.05.06 - v. 19.37 - case-only Python: POSIX os.replace only (no cmd.exe); for Linux including CIFS/SMB mounts
 # 2026.05.06 - v. 19.36 - case-only Python: final hop via cmd.exe ren on Win/MSYS/Cygwin + verify target exists (fix orphan .___case_ren_py_*.tmp)
 # 2026.05.06 - v. 19.35 - case-only same-dir: three hops old→B₁→B₂→final (bash mv + Python); avoids MSYS mistaking B₁ and final for same file
 # 2026.05.06 - v. 19.34 - case-only: try Python two-hop first when python3 exists (MSYS mv second hop falsely reports same file on NTFS)
@@ -3281,12 +3282,12 @@ case_rename_pick_two_distinct_intermediates() {
     return 1
 }
 
-# Same-dir: os.replace(old→B₁→B₂); final hop uses cmd.exe ren on Windows-like hosts (os.replace→new can leave orphan .___case_ren_py_*.tmp).
+# Same-dir three-hop: POSIX os.replace only (Linux/CIFS/SMB friendly; no Windows-only commands).
 mv_case_only_rename_via_python3() {
     local old="$1" new="$2"
     command -v python3 >/dev/null 2>&1 || return 1
     python3 - "$old" "$new" <<'PY'
-import os, sys, tempfile, subprocess
+import os, sys, tempfile
 
 old, new = sys.argv[1], sys.argv[2]
 old = os.path.abspath(old)
@@ -3303,34 +3304,6 @@ def alloc_tmp():
     except OSError:
         pass
     return p
-
-
-def win_like():
-    pl = sys.platform
-    return pl == "win32" or pl.startswith("msys") or pl == "cygwin"
-
-
-def cmdexe():
-    w = os.environ.get("WINDIR")
-    if w:
-        p = os.path.join(w, "System32", "cmd.exe")
-        if os.path.isfile(p):
-            return p
-    return "cmd.exe"
-
-
-def ren_to_final(cur_base: str, dst_base: str) -> bool:
-    try:
-        subprocess.run(
-            [cmdexe(), "/d", "/c", "ren", cur_base, dst_base],
-            cwd=same_dir,
-            check=True,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
-        return True
-    except (OSError, subprocess.CalledProcessError):
-        return False
 
 
 b1 = alloc_tmp()
@@ -3354,26 +3327,16 @@ except OSError:
     except OSError:
         pass
     sys.exit(1)
-
-if win_like():
-    if not ren_to_final(os.path.basename(b2), want_base):
-        try:
-            os.replace(b2, old)
-        except OSError:
-            pass
-        sys.exit(1)
-else:
+try:
+    os.replace(b2, new)
+except OSError:
     try:
-        os.replace(b2, new)
+        os.replace(b2, old)
     except OSError:
-        try:
-            os.replace(b2, old)
-        except OSError:
-            pass
-        sys.exit(1)
+        pass
+    sys.exit(1)
 
 final_path = os.path.join(same_dir, want_base)
-
 if not os.path.isfile(final_path):
     sys.exit(1)
 PY
