@@ -3286,6 +3286,7 @@ case_only_rename_safe() {
     [[ -f "$old" ]] || return 1
     b="$(case_only_random_intermediate_same_dir "$new")" || return 1
     mv -- "$old" "$b" || return 1
+    sleep 1
     if mv -- "$b" "$new"; then
         [[ -f "$new" ]] || return 1
         return 0
