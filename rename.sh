@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.05.06 - v. 19.41 - case-only: if uniq and new are same inode (ci-CIFS), rm uniq not cp; restore path uses same guard
 # 2026.05.06 - v. 19.40 - case-only final hop: mv uniq→new, else cp -p+cmp+rm uniq (CIFS mv-to-case-variant fails); cmp fallback to diff -q
 # 2026.05.06 - v. 19.39 - CRITICAL case-only: hardlink (or cp+cmp) then rm old then mv uniq→new — never os.replace-only on CIFS (data loss risk)
 # 2026.05.06 - v. 19.38 - case-only: exactly two hops mv old→.___ABC_case_uniq_*→new (bash + Python os.replace); drop three-hop
@@ -3284,6 +3285,44 @@ case_only_files_match() {
     diff -q "$a" "$b" >/dev/null 2>&1
 }
 
+# Case-insensitive CIFS may expose two paths for one inode; cp refuses "same file".
+case_only_uniq_and_dest_same_inode_cleanup() {
+    local uniq="$1" dest="$2"
+    [[ -e "$uniq" && -e "$dest" ]] || return 1
+    paths_refer_to_same_file "$uniq" "$dest" || return 1
+    rm -f -- "$uniq"
+    [[ -f "$dest" ]] || return 1
+    return 0
+}
+
+# Put payload back under dest (.DNG) after a failed final hop; avoid cp when uniq and dest are already one inode.
+case_only_restore_uniq_to() {
+    local uniq="$1" dest="$2"
+    [[ -f "$uniq" ]] || return 1
+    if [[ -e "$dest" ]] && paths_refer_to_same_file "$uniq" "$dest"; then
+        rm -f -- "$uniq"
+        [[ -f "$dest" ]] && return 0
+        return 1
+    fi
+    if mv -- "$uniq" "$dest" 2>/dev/null && [[ -f "$dest" ]]; then
+        return 0
+    fi
+    [[ -f "$uniq" ]] || return 1
+    if [[ -e "$dest" ]] && paths_refer_to_same_file "$uniq" "$dest"; then
+        rm -f -- "$uniq"
+        [[ -f "$dest" ]] && return 0
+        return 1
+    fi
+    cp -p -- "$uniq" "$dest" || return 1
+    if ! case_only_files_match "$uniq" "$dest"; then
+        rm -f -- "$dest"
+        return 1
+    fi
+    rm -f -- "$uniq"
+    [[ -f "$dest" ]] || return 1
+    return 0
+}
+
 # After unlinking the old basename, move uniq to final name; CIFS often rejects mv for case-only so fall back to cp + verify.
 case_only_mv_uniq_to_new() {
     local uniq="$1" new="$2"
@@ -3291,6 +3330,9 @@ case_only_mv_uniq_to_new() {
         return 0
     fi
     [[ -f "$uniq" ]] || return 1
+    if case_only_uniq_and_dest_same_inode_cleanup "$uniq" "$new"; then
+        return 0
+    fi
     cp -p -- "$uniq" "$new" || return 1
     if ! case_only_files_match "$uniq" "$new"; then
         rm -f -- "$new"
@@ -3312,8 +3354,7 @@ case_only_rename_safe() {
         if case_only_mv_uniq_to_new "$uniq" "$new"; then
             return 0
         fi
-        if mv -- "$uniq" "$old" 2>/dev/null || { [[ -f "$uniq" ]] && cp -p -- "$uniq" "$old" && case_only_files_match "$uniq" "$old" && rm -f -- "$uniq"; }; then
-            [[ -f "$old" ]] || return 1
+        if case_only_restore_uniq_to "$uniq" "$old"; then
             return 1
         fi
         echo "rename.sh: CASE-ONLY RENAME FAILED after hardlink; data should still exist at: $uniq" >&2
@@ -3330,8 +3371,7 @@ case_only_rename_safe() {
     if case_only_mv_uniq_to_new "$uniq" "$new"; then
         return 0
     fi
-    if mv -- "$uniq" "$old" 2>/dev/null || { [[ -f "$uniq" ]] && cp -p -- "$uniq" "$old" && case_only_files_match "$uniq" "$old" && rm -f -- "$uniq"; }; then
-        [[ -f "$old" ]] || return 1
+    if case_only_restore_uniq_to "$uniq" "$old"; then
         return 1
     fi
     echo "rename.sh: CASE-ONLY RENAME FAILED after copy; data should still exist at: $uniq" >&2
