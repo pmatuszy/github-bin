@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.05.06 - v. 19.39 - CRITICAL case-only: hardlink (or cp+cmp) then rm old then mv uniq→new — never os.replace-only on CIFS (data loss risk)
 # 2026.05.06 - v. 19.38 - case-only: exactly two hops mv old→.___ABC_case_uniq_*→new (bash + Python os.replace); drop three-hop
 # 2026.05.06 - v. 19.37 - case-only Python: POSIX os.replace only (no cmd.exe); for Linux including CIFS/SMB mounts
 # 2026.05.06 - v. 19.36 - case-only Python: final hop via cmd.exe ren on Win/MSYS/Cygwin + verify target exists (fix orphan .___case_ren_py_*.tmp)
@@ -3260,7 +3261,7 @@ is_case_only_rename_pair() {
     return 0
 }
 
-# One guaranteed-unique intermediate in the same directory: mv OLD → this → NEW (case-only renames).
+# Unique intermediate basename in the same directory (case-only safe rename).
 make_case_rename_staging_path() {
     local target="$1" dir i=0 p
     dir="$(dirname -- "$target")"
@@ -3273,63 +3274,48 @@ make_case_rename_staging_path() {
     return 1
 }
 
-# Same-dir two-hop: POSIX os.replace(old→uniq→new), Linux/CIFS/SMB.
-mv_case_only_rename_via_python3() {
-    local old="$1" new="$2"
-    command -v python3 >/dev/null 2>&1 || return 1
-    python3 - "$old" "$new" <<'PY'
-import os, sys, tempfile
+# Case-only renames: never rely on rename(old→tmp→new) alone on CIFS/SMB (can drop links). Prefer hardlink + unlink old name + mv to final; else cp+cmp.
+case_only_rename_safe() {
+    local old="$1" new="$2" uniq
+    [[ -f "$old" ]] || return 1
+    uniq="$(make_case_rename_staging_path "$new")" || return 1
 
-old, new = sys.argv[1], sys.argv[2]
-old = os.path.abspath(old)
-new = os.path.abspath(new)
-same_dir = os.path.dirname(new)
-want_base = os.path.basename(new)
+    if ln -- "$old" "$uniq" 2>/dev/null; then
+        rm -f -- "$old" || { rm -f -- "$uniq"; return 1; }
+        if mv -- "$uniq" "$new"; then
+            [[ -f "$new" ]] || return 1
+            return 0
+        fi
+        if mv -- "$uniq" "$old"; then
+            return 1
+        fi
+        echo "rename.sh: CASE-ONLY RENAME FAILED after hardlink; data should still exist at: $uniq" >&2
+        echo "rename.sh: Try: mv -- \"$uniq\" \"$old\"" >&2
+        return 1
+    fi
 
-fd, uniq = tempfile.mkstemp(dir=same_dir, prefix=".___ABC_case_uniq_py_", suffix=".tmp")
-os.close(fd)
-try:
-    os.unlink(uniq)
-except OSError:
-    pass
-
-try:
-    os.replace(old, uniq)
-except OSError:
-    sys.exit(1)
-try:
-    os.replace(uniq, new)
-except OSError:
-    try:
-        os.replace(uniq, old)
-    except OSError:
-        pass
-    sys.exit(1)
-
-final_path = os.path.join(same_dir, want_base)
-if not os.path.isfile(final_path):
-    sys.exit(1)
-PY
+    cp -p -- "$old" "$uniq" || { rm -f -- "$uniq"; return 1; }
+    if ! cmp -s -- "$old" "$uniq"; then
+        rm -f -- "$uniq"
+        return 1
+    fi
+    rm -f -- "$old" || { rm -f -- "$uniq"; return 1; }
+    if mv -- "$uniq" "$new"; then
+        [[ -f "$new" ]] || return 1
+        return 0
+    fi
+    if mv -- "$uniq" "$old"; then
+        return 1
+    fi
+    echo "rename.sh: CASE-ONLY RENAME FAILED after copy; data should still exist at: $uniq" >&2
+    echo "rename.sh: Try: mv -- \"$uniq\" \"$old\"" >&2
+    return 1
 }
 
 mv_with_case_only_filesystem_workaround() {
-    local old="$1" new="$2" uniq
+    local old="$1" new="$2"
     if is_case_only_rename_pair "$old" "$new"; then
-        if command -v python3 >/dev/null 2>&1; then
-            if mv_case_only_rename_via_python3 "$old" "$new"; then
-                [[ -f "$new" ]] || return 1
-                return 0
-            fi
-        fi
-        uniq="$(make_case_rename_staging_path "$new")" || return 1
-        if mv -i -- "$old" "$uniq"; then
-            if mv -i -- "$uniq" "$new"; then
-                [[ -f "$new" ]] || return 1
-                return 0
-            fi
-            mv -f -- "$uniq" "$old" 2>/dev/null || true
-        fi
-        mv_case_only_rename_via_python3 "$old" "$new" || return 1
+        case_only_rename_safe "$old" "$new" || return 1
         [[ -f "$new" ]] || return 1
         return 0
     fi
@@ -3337,25 +3323,11 @@ mv_with_case_only_filesystem_workaround() {
     return 0
 }
 
-# Same two-hop logic without -i (rollback / error paths).
+# Same case-only logic without -i on the non-case-only mv branch only.
 mv_with_case_only_filesystem_workaround_force() {
-    local old="$1" new="$2" uniq
+    local old="$1" new="$2"
     if is_case_only_rename_pair "$old" "$new"; then
-        if command -v python3 >/dev/null 2>&1; then
-            if mv_case_only_rename_via_python3 "$old" "$new"; then
-                [[ -f "$new" ]] || return 1
-                return 0
-            fi
-        fi
-        uniq="$(make_case_rename_staging_path "$new")" || return 1
-        if mv -f -- "$old" "$uniq"; then
-            if mv -f -- "$uniq" "$new"; then
-                [[ -f "$new" ]] || return 1
-                return 0
-            fi
-            mv -f -- "$uniq" "$old" 2>/dev/null || true
-        fi
-        mv_case_only_rename_via_python3 "$old" "$new" || return 1
+        case_only_rename_safe "$old" "$new" || return 1
         [[ -f "$new" ]] || return 1
         return 0
     fi
