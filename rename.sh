@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# 2026.05.06 - v. 19.27 - rename prompt [S]: auto-yes only for similar names in current dir (same extension; leading _ if anchor had it)
+# 2026.05.06 - v. 19.26 - per-directory [D] auto-yes: print each rename in non-verbose; case-only renames use two-step mv for case-insensitive FS
+# 2026.05.06 - v. 19.25 - plain renames: .nef + matching .xmp in same directory are one pair (single prompt, both renamed)
 # 2026.05.06 - v. 19.24 - checksum mismatch: quitting [Q] shows user-stop message (not "SHA512 incorrect"); finish_current_operation on checksum exits
 # 2026.05.06 - v. 19.23 - checksum mismatch: show list-file times, stored hash, on-disk file times+hash before recovery [U]/[Q]
 # 2026.05.06 - v. 19.22 - more MAX_LINE_LENGTH wrapping: checksum preview/recovery/thumbs/dry-run, collision details, exceptions via emit_wrap_exclude, summary rename list, torrent/thumbs paths, print_checksum_* helpers
@@ -3069,6 +3072,94 @@ is_html_file() {
     [[ "$lower" == *.htm || "$lower" == *.html ]]
 }
 
+# Same-directory stem.nef <-> stem.xmp (Lightroom / Nikon sidecar). Used for paired plain renames.
+nef_xmp_resolve_xmp_buddy() {
+    local dir="$1" stem="$2"
+    local p
+    for p in "$dir/${stem}.xmp" "$dir/${stem}.XMP"; do
+        [[ -f "$p" ]] || continue
+        printf '%s\n' "$p"
+        return 0
+    done
+    shopt -s nullglob
+    local arr=( "$dir/${stem}".[xX][mM][pP] )
+    shopt -u nullglob
+    ((${#arr[@]} > 0)) || return 1
+    printf '%s\n' "${arr[0]}"
+    return 0
+}
+
+nef_xmp_resolve_nef_buddy() {
+    local dir="$1" stem="$2"
+    local p
+    for p in "$dir/${stem}.nef" "$dir/${stem}.NEF"; do
+        [[ -f "$p" ]] || continue
+        printf '%s\n' "$p"
+        return 0
+    done
+    shopt -s nullglob
+    local arr=( "$dir/${stem}".[nN][eE][fF] )
+    shopt -u nullglob
+    ((${#arr[@]} > 0)) || return 1
+    printf '%s\n' "${arr[0]}"
+    return 0
+}
+
+# Prints sibling path if f is .nef or .xmp and the other exists.
+nef_xmp_pair_other_path() {
+    local f="$1" dir base stem ext
+    [[ -f "$f" ]] || return 1
+    dir="$(dirname -- "$f")"
+    base="$(basename -- "$f")"
+    [[ "$base" == *.* ]] || return 1
+    ext="${base##*.}"
+    stem="${base%.*}"
+    case "${ext,,}" in
+        nef) nef_xmp_resolve_xmp_buddy "$dir" "$stem" ;;
+        xmp) nef_xmp_resolve_nef_buddy "$dir" "$stem" ;;
+        *) return 1 ;;
+    esac
+}
+
+nef_xmp_pairing_allowed() {
+    local a="$1" b="$2"
+    ! exception_exists_for_path "$a" && ! exception_exists_for_path "$b"
+}
+
+# Visit .nef first: defer .xmp until the .nef entry is processed.
+nef_xmp_should_defer_sidecar() {
+    local f="$1" other="$2"
+    [[ "${f,,}" == *.xmp ]] && [[ "${other,,}" == *.nef ]] || return 1
+    nef_xmp_pairing_allowed "$f" "$other"
+}
+
+nef_xmp_should_attach_buddy() {
+    local f="$1" other="$2"
+    [[ "${f,,}" == *.nef ]] && [[ "${other,,}" == *.xmp ]] || return 1
+    nef_xmp_pairing_allowed "$f" "$other"
+}
+
+perform_nef_xmp_pair_plain_renames() {
+    local primary_old="$1" primary_new="$2" buddy_old="$3" buddy_new="$4"
+    perform_plain_entry_rename "$primary_old" "$primary_new" || return 1
+    perform_plain_entry_rename "$buddy_old" "$buddy_new" || return 1
+    processed["$buddy_old"]=1
+    return 0
+}
+
+# Main loop: uses f, new, nef_xmp_buddy, nef_xmp_new
+perform_plain_or_nef_xmp_pair() {
+    local reason="$1"
+    if [[ -n "$nef_xmp_buddy" ]]; then
+        print_rename_action_verbose "$f" "$new" "${reason} (NEF+XMP pair)"
+        print_rename_action_verbose "$nef_xmp_buddy" "$nef_xmp_new" "${reason} (NEF+XMP pair)"
+        perform_nef_xmp_pair_plain_renames "$f" "$new" "$nef_xmp_buddy" "$nef_xmp_new"
+    else
+        print_rename_action_verbose "$f" "$new" "$reason"
+        perform_plain_entry_rename "$f" "$new"
+    fi
+}
+
 is_media_file() {
     local p="$1"
     local lower="${p,,}"
@@ -3142,6 +3233,87 @@ paths_refer_to_same_file() {
     ida="$(stat -c '%d:%i' -- "$a" 2>/dev/null)" || return 1
     idb="$(stat -c '%d:%i' -- "$b" 2>/dev/null)" || return 1
     [[ -n "$ida" && "$ida" == "$idb" ]]
+}
+
+# Same parent directory; basenames differ only by letter case (abc.JPG vs abc.jpg). On case-insensitive FS a single mv may fail or match the same inode.
+is_case_only_rename_pair() {
+    local old="$1" new="$2" d_o d_n b_o b_n
+    [[ -e "$old" ]] || return 1
+    d_o="$(dirname -- "$old")"
+    d_n="$(dirname -- "$new")"
+    b_o="$(basename -- "$old")"
+    b_n="$(basename -- "$new")"
+    [[ "${d_o%/}" == "${d_n%/}" ]] || return 1
+    [[ "$b_o" != "$b_n" ]] || return 1
+    [[ "${b_o,,}" == "${b_n,,}" ]] || return 1
+    return 0
+}
+
+make_case_rename_staging_path() {
+    local dir="$1" i=0 p
+    while (( i < 500 )); do
+        p="$dir/.___case_ren_$$_${RANDOM}_${i}.tmp"
+        [[ ! -e "$p" ]] && { printf '%s\n' "$p"; return 0; }
+        ((++i))
+    done
+    return 1
+}
+
+mv_with_case_only_filesystem_workaround() {
+    local old="$1" new="$2" tmp
+    if is_case_only_rename_pair "$old" "$new"; then
+        tmp="$(make_case_rename_staging_path "$(dirname -- "$new")")" || return 1
+        mv -i -- "$old" "$tmp" || return 1
+        if ! mv -i -- "$tmp" "$new"; then
+            mv -f -- "$tmp" "$old" 2>/dev/null || true
+            return 1
+        fi
+        return 0
+    fi
+    mv -i -- "$old" "$new" || return 1
+    return 0
+}
+
+# Same two-step logic without -i (rollback / error paths).
+mv_with_case_only_filesystem_workaround_force() {
+    local old="$1" new="$2" tmp
+    if is_case_only_rename_pair "$old" "$new"; then
+        tmp="$(make_case_rename_staging_path "$(dirname -- "$new")")" || return 1
+        mv -f -- "$old" "$tmp" || return 1
+        if ! mv -f -- "$tmp" "$new"; then
+            mv -f -- "$tmp" "$old" 2>/dev/null || true
+            return 1
+        fi
+        return 0
+    fi
+    mv -f -- "$old" "$new" || return 1
+    return 0
+}
+
+# After [D] per-directory auto-yes or [S] similar-name auto-yes: show renames even when VERBOSE=0 (dirname match or same pwd -P).
+plain_rename_emit_auto_dir_notice_if_active() {
+    local old="$1" new="$2"
+    local d_old want_emit=no
+    d_old="$(dirname -- "$old")"
+    if [[ -n "$AUTO_RENAME_DIR" ]]; then
+        local d_auto="$AUTO_RENAME_DIR"
+        if [[ "$d_old" == "$d_auto" ]]; then
+            want_emit=yes
+        else
+            local r_old r_auto
+            r_old="$(cd -- "$d_old" 2>/dev/null && pwd -P)" || r_old="$d_old"
+            r_auto="$(cd -- "$d_auto" 2>/dev/null && pwd -P)" || r_auto="$AUTO_RENAME_DIR"
+            [[ "$r_old" == "$r_auto" ]] && want_emit=yes
+        fi
+    fi
+    if [[ "$want_emit" == no && -n "$AUTO_RENAME_SIMILAR_DIR" ]]; then
+        if similar_rename_dir_matches_scope "$d_old" "$AUTO_RENAME_SIMILAR_DIR" \
+            && similar_rename_entry_matches_anchor_pattern "$old"; then
+            want_emit=yes
+        fi
+    fi
+    [[ "$want_emit" == yes ]] || return 0
+    emit_wrap_old_arrow_new_stdout "Renamed: " "${GREEN}Renamed:${RESET} " "$old" "$new"
 }
 
 # Same directory and basename stem; suggested path lowercases only the extension (any length, e.g. .MP4 -> .mp4, .JPEG -> .jpeg).
@@ -5163,28 +5335,36 @@ perform_plain_entry_rename() {
     local html_reference_update_only=no
 
     if paths_refer_to_same_file "$old" "$new"; then
-        vlog "Skipping rename: source and target are the same file (same device:inode): '$old' | '$new'"
-        db_backfill_missing_hashes_for_existing_file "$old"
-        ((++files_skipped))
-        db_mark_checked "$old" "plain" "checked"
-        return 0
+        if is_case_only_rename_pair "$old" "$new"; then
+            :
+        else
+            vlog "Skipping rename: source and target are the same file (same device:inode): '$old' | '$new'"
+            db_backfill_missing_hashes_for_existing_file "$old"
+            ((++files_skipped))
+            db_mark_checked "$old" "plain" "checked"
+            return 0
+        fi
     fi
 
     if [[ -e "$new" ]]; then
-        handle_existing_target_collision "$old" "$new"
-        collision_decision_rc=$?
-
-        if [[ $collision_decision_rc -eq 0 ]]; then
+        if is_case_only_rename_pair "$old" "$new" && paths_refer_to_same_file "$old" "$new"; then
             :
-        elif [[ $collision_decision_rc -eq 2 ]]; then
-            return 1
-        elif [[ $collision_decision_rc -eq 3 ]]; then
-            new="$COLLISION_RENAMED_TARGET"
         else
-            emit_wrap_labeled_stdout "SKIP: " "${YELLOW}SKIP:${RESET} " "Target file already exists."
-            vlog "Collision detected for plain rename '$old' -> '$new'"
-            ((++files_skipped))
-            return 0
+            handle_existing_target_collision "$old" "$new"
+            collision_decision_rc=$?
+
+            if [[ $collision_decision_rc -eq 0 ]]; then
+                :
+            elif [[ $collision_decision_rc -eq 2 ]]; then
+                return 1
+            elif [[ $collision_decision_rc -eq 3 ]]; then
+                new="$COLLISION_RENAMED_TARGET"
+            else
+                emit_wrap_labeled_stdout "SKIP: " "${YELLOW}SKIP:${RESET} " "Target file already exists."
+                vlog "Collision detected for plain rename '$old' -> '$new'"
+                ((++files_skipped))
+                return 0
+            fi
         fi
     fi
 
@@ -5228,7 +5408,7 @@ perform_plain_entry_rename() {
     old_was_dir=no
     [[ -d "$old" ]] && old_was_dir=yes
 
-    mv -i -- "$old" "$new"
+    mv_with_case_only_filesystem_workaround "$old" "$new" || return 1
     ((++files_affected))
     record_rename "$old" "$new"
     if [[ "$old_was_dir" == "yes" ]]; then
@@ -5238,6 +5418,7 @@ perform_plain_entry_rename() {
     fi
     db_mark_checked "$new" "plain" "checked"
     vlog "DB row ${DB_MARK_CHECKED_RESULT:-updated} after rename: '$new' (plain/checked)"
+    plain_rename_emit_auto_dir_notice_if_active "$old" "$new"
 
     if [[ -n "$old_companion_dir" && "$old_companion_dir" != "$new_companion_dir" ]]; then
         emit_wrap_labeled_stdout "HTML PAIR RENAME: " "${CYAN}HTML PAIR RENAME:${RESET} " "HTML file and companion directory are being updated together."
@@ -5245,7 +5426,7 @@ perform_plain_entry_rename() {
         emit_wrap_labeled_stdout "  NEW HTML: " "  ${GREEN}NEW HTML:${RESET} " "$new"
         emit_wrap_labeled_stdout "  OLD DIR:  " "  ${RED}OLD DIR:${RESET}  " "$old_companion_dir"
         emit_wrap_labeled_stdout "  NEW DIR:  " "  ${GREEN}NEW DIR:${RESET}  " "$new_companion_dir"
-        if mv -i -- "$old_companion_dir" "$new_companion_dir"; then
+        if mv_with_case_only_filesystem_workaround "$old_companion_dir" "$new_companion_dir"; then
             ((++files_affected))
             record_rename "$old_companion_dir" "$new_companion_dir"
             db_rewrite_subtree "$old_companion_dir" "$new_companion_dir"
@@ -5256,8 +5437,9 @@ perform_plain_entry_rename() {
             db_mark_checked "$new_companion_dir" "html_companion" "checked"
             processed["$old_companion_dir"]=1
             processed["$new_companion_dir"]=1
+            plain_rename_emit_auto_dir_notice_if_active "$old_companion_dir" "$new_companion_dir"
         else
-            mv -f -- "$new" "$old"
+            mv_with_case_only_filesystem_workaround_force "$new" "$old" || true
             ((++files_skipped))
             return 0
         fi
@@ -5525,6 +5707,9 @@ files_skipped=0
 stopped_by_user=no
 rename_all=no
 AUTO_RENAME_DIR=""
+AUTO_RENAME_SIMILAR_DIR=""
+AUTO_RENAME_SIMILAR_EXT=""
+AUTO_RENAME_SIMILAR_NEED_USCORE=no
 AUTO_LOWERCASE_3_EXT_SESSION=no # [L] session: any extension case-only lowercasing (name kept for compatibility)
 AUTO_LOWERCASE_MEDIA_OFFICE_EXT_SESSION=no # [U] session: only media + MS Office extension case-only lowercasing
 
@@ -5767,6 +5952,48 @@ auto_yes_current_dir_matches() {
     [[ -n "$AUTO_RENAME_DIR" && "$path_dir" == "$AUTO_RENAME_DIR" ]]
 }
 
+similar_rename_dir_matches_scope() {
+    local dir_path="$1" scope="$2"
+    [[ -n "$scope" ]] || return 1
+    [[ "$dir_path" == "$scope" ]] && return 0
+    local p s
+    p="$(cd -- "$dir_path" 2>/dev/null && pwd -P)" || p="$dir_path"
+    s="$(cd -- "$scope" 2>/dev/null && pwd -P)" || s="$scope"
+    [[ "$p" == "$s" ]]
+}
+
+similar_rename_entry_matches_anchor_pattern() {
+    local path="$1" bn ext
+    [[ -n "$AUTO_RENAME_SIMILAR_DIR" ]] || return 1
+    similar_rename_dir_matches_scope "$(dirname -- "$path")" "$AUTO_RENAME_SIMILAR_DIR" || return 1
+    bn="$(basename -- "$path")"
+    ext="${bn##*.}"
+    [[ "${ext,,}" == "${AUTO_RENAME_SIMILAR_EXT,,}" ]] || return 1
+    if [[ "$AUTO_RENAME_SIMILAR_NEED_USCORE" == yes ]]; then
+        [[ "$bn" == _* ]] || return 1
+    fi
+    return 0
+}
+
+similar_rename_set_anchor_from_prompt_path() {
+    local path="$1" bn ext
+    bn="$(basename -- "$path")"
+    ext="${bn##*.}"
+    AUTO_RENAME_SIMILAR_DIR="$(dirname -- "$path")"
+    AUTO_RENAME_SIMILAR_EXT="${ext,,}"
+    if [[ "$bn" == _* ]]; then
+        AUTO_RENAME_SIMILAR_NEED_USCORE=yes
+    else
+        AUTO_RENAME_SIMILAR_NEED_USCORE=no
+    fi
+}
+
+similar_rename_clear() {
+    AUTO_RENAME_SIMILAR_DIR=""
+    AUTO_RENAME_SIMILAR_EXT=""
+    AUTO_RENAME_SIMILAR_NEED_USCORE=no
+}
+
 print_rename_prompt_menu() {
     local kind_label="$1"
     local path="${2-}"
@@ -5779,6 +6006,10 @@ print_rename_prompt_menu() {
     echo "  [M] Rename by editing target filename"
     echo "  [A] All remaining"
     echo "  [D] Yes for this directory"
+    if [[ -n "$path" && -f "$path" ]]; then
+        echo "  [S] Yes for similar names in this directory (same extension; leading _ only if this filename starts with _)"
+        choice_hint+=/s
+    fi
     if [[ -n "$path" && -n "$suggested_new" ]] && rename_suggested_only_extension_case_change "$path" "$suggested_new"; then
         echo "  [L] Yes, and auto-approve all extension case-only lowercasing for this run (no further prompts)"
         choice_hint+=/l
@@ -6355,6 +6586,7 @@ maybe_resume_from_checkpoint
 main_index=0
 for f in "${ordered_paths[@]}"; do
     precomputed_new=""
+    nef_xmp_buddy=""
     ((++main_index))
     if (( VERBOSE == 1 && main_index % VERBOSE_MAIN_EVERY == 0 )); then
         print_progress_box "$main_index / ${#ordered_paths[@]}" "$f"
@@ -6849,7 +7081,13 @@ for f in "${ordered_paths[@]}"; do
         declare -a html_hash_needs_refresh=()
 
         collision=no
-        [[ "$new_sum" != "$sum_file" && -e "$new_sum" ]] && collision=yes
+        if [[ "$new_sum" != "$sum_file" && -e "$new_sum" ]]; then
+            if is_case_only_rename_pair "$sum_file" "$new_sum" && paths_refer_to_same_file "$sum_file" "$new_sum"; then
+                :
+            else
+                collision=yes
+            fi
+        fi
 
         for i in "${!refs[@]}"; do
             html_companion_old_dirs+=( "" )
@@ -6860,7 +7098,13 @@ for f in "${ordered_paths[@]}"; do
             html_hash_needs_refresh+=( "no" )
 
             [[ "${new_refs[$i]}" != "${refs[$i]}" ]] || continue
-            [[ -e "${new_refs[$i]}" ]] && collision=yes
+            if [[ -e "${new_refs[$i]}" ]]; then
+                if is_case_only_rename_pair "${refs[$i]}" "${new_refs[$i]}" && paths_refer_to_same_file "${refs[$i]}" "${new_refs[$i]}"; then
+                    :
+                else
+                    collision=yes
+                fi
+            fi
 
             if is_html_file "${refs[$i]}"; then
                 old_companion_dir="$(find_html_companion_dir "${refs[$i]}" || true)"
@@ -6883,7 +7127,13 @@ for f in "${ordered_paths[@]}"; do
                     done
 
                     if [[ "$companion_conflict" == "no" ]]; then
-                        [[ -e "$new_companion_dir" ]] && collision=yes
+                        if [[ -e "$new_companion_dir" ]]; then
+                            if is_case_only_rename_pair "$old_companion_dir" "$new_companion_dir" && paths_refer_to_same_file "$old_companion_dir" "$new_companion_dir"; then
+                                :
+                            else
+                                collision=yes
+                            fi
+                        fi
                         html_companion_old_dirs[$i]="$old_companion_dir"
                         html_companion_new_dirs[$i]="$new_companion_dir"
                         html_companion_old_names[$i]="$(basename -- "$old_companion_dir")"
@@ -6909,7 +7159,7 @@ for f in "${ordered_paths[@]}"; do
                 ref_was_dir=no
                 [[ -d "${refs[$i]}" ]] && ref_was_dir=yes
                 print_rename_action_verbose "${refs[$i]}" "${new_refs[$i]}" "checksum group rename"
-                mv -i -- "${refs[$i]}" "${new_refs[$i]}"
+                mv_with_case_only_filesystem_workaround "${refs[$i]}" "${new_refs[$i]}"
                 if [[ "$ref_was_dir" == "yes" ]]; then
                     db_rewrite_subtree "${refs[$i]}" "${new_refs[$i]}"
                 else
@@ -6926,7 +7176,7 @@ for f in "${ordered_paths[@]}"; do
                     emit_wrap_labeled_stdout "  OLD DIR: " "  ${RED}OLD DIR:${RESET}  " "${html_companion_old_dirs[$i]}"
                     emit_wrap_labeled_stdout "  NEW DIR: " "  ${GREEN}NEW DIR:${RESET}  " "${html_companion_new_dirs[$i]}"
                     print_rename_action_verbose "${html_companion_old_dirs[$i]}" "${html_companion_new_dirs[$i]}" "html companion rename"
-                    mv -i -- "${html_companion_old_dirs[$i]}" "${html_companion_new_dirs[$i]}"
+                    mv_with_case_only_filesystem_workaround "${html_companion_old_dirs[$i]}" "${html_companion_new_dirs[$i]}"
                     db_rewrite_subtree "${html_companion_old_dirs[$i]}" "${html_companion_new_dirs[$i]}"
                     db_mark_renamed_path_checked "${html_companion_new_dirs[$i]}" "plain"
                     register_current_file_rename "${html_companion_old_dirs[$i]}" "${html_companion_new_dirs[$i]}"
@@ -6956,7 +7206,7 @@ for f in "${ordered_paths[@]}"; do
         final_sum="$sum_file"
         if [[ "$new_sum" != "$sum_file" ]]; then
             print_checksum_file_rename_verbose "$sum_file" "$new_sum"
-            mv -i -- "$sum_file" "$new_sum"
+            mv_with_case_only_filesystem_workaround "$sum_file" "$new_sum"
             db_rewrite_single_path "$sum_file" "$new_sum"
             mark_current_sum_renamed
             ((++files_affected))
@@ -7011,6 +7261,27 @@ for f in "${ordered_paths[@]}"; do
         continue
     fi
 
+    if is_internal_protected_path "$f"; then
+        vlog "Protected internal file, no rename needed for '$f'"
+        db_backfill_missing_hashes_for_existing_file "$f"
+        ((++files_skipped))
+        db_mark_checked "$f" "plain" "checked"
+        continue
+    fi
+
+    if [[ -f "$f" ]]; then
+        _nx_other=""
+        if _nx_other="$(nef_xmp_pair_other_path "$f")"; then
+            if nef_xmp_should_defer_sidecar "$f" "$_nx_other"; then
+                vlog "Deferring XMP sidecar '$f' until NEF+XMP pair with '$_nx_other'"
+                continue
+            fi
+            if nef_xmp_should_attach_buddy "$f" "$_nx_other"; then
+                nef_xmp_buddy="$_nx_other"
+            fi
+        fi
+    fi
+
     if [[ -f "$f" ]]; then
         base="${f%.*}"
         if [[ -n "$precomputed_new" ]]; then
@@ -7036,14 +7307,6 @@ for f in "${ordered_paths[@]}"; do
         fi
     fi
 
-    if is_internal_protected_path "$f"; then
-        vlog "Protected internal file, no rename needed for '$f'"
-        db_backfill_missing_hashes_for_existing_file "$f"
-        ((++files_skipped))
-        db_mark_checked "$f" "plain" "checked"
-        continue
-    fi
-
     if [[ -n "$precomputed_new" ]]; then
         new="$precomputed_new"
     else
@@ -7062,49 +7325,152 @@ for f in "${ordered_paths[@]}"; do
         fi
     fi
 
-    if [[ "$f" != "$new" ]] && paths_refer_to_same_file "$f" "$new"; then
-        print_same_inode_no_rename_verbose "$f" "$new"
-        db_backfill_missing_hashes_for_existing_file "$f"
-        ((++files_skipped))
-        db_mark_checked "$f" "plain" "checked"
-        continue
+    nef_xmp_new=""
+    if [[ -n "$nef_xmp_buddy" ]]; then
+        _rename_cap_save_e=0
+        [[ $- == *e* ]] && _rename_cap_save_e=1
+        set +e
+        nef_xmp_new="$(transform_name "$nef_xmp_buddy")"
+        tnb=$?
+        if ((_rename_cap_save_e)); then
+            set -e
+        else
+            set +e
+        fi
+        if (( tnb == 2 )); then
+            break
+        fi
     fi
 
-    if [[ "$f" == "$new" ]]; then
-        if ! is_torrent_url_file "$f" && ! is_thumbs_db_file "$f"; then
-            vlog "No rename needed for '$f'"
+    if [[ -z "$nef_xmp_buddy" ]]; then
+        if [[ "$f" != "$new" ]] && paths_refer_to_same_file "$f" "$new"; then
+            if ! is_case_only_rename_pair "$f" "$new"; then
+                print_same_inode_no_rename_verbose "$f" "$new"
+                db_backfill_missing_hashes_for_existing_file "$f"
+                ((++files_skipped))
+                db_mark_checked "$f" "plain" "checked"
+                continue
+            fi
+        fi
+
+        if [[ "$f" == "$new" ]]; then
+            if ! is_torrent_url_file "$f" && ! is_thumbs_db_file "$f"; then
+                vlog "No rename needed for '$f'"
+                db_backfill_missing_hashes_for_existing_file "$f"
+                ((++files_skipped))
+                db_mark_checked "$f" "plain" "checked"
+                continue
+            fi
+            if is_torrent_url_file "$f"; then
+                vlog "No rename transform for torrent .URL '$f' (prompt offers delete [T])"
+            elif is_thumbs_db_file "$f"; then
+                vlog "No rename transform for thumbs.db '$f' (prompt offers delete [K])"
+            fi
+        fi
+    else
+        nx_pri_si=no
+        nx_bud_si=no
+        if [[ "$f" != "$new" ]] && paths_refer_to_same_file "$f" "$new"; then
+            if ! is_case_only_rename_pair "$f" "$new"; then
+                print_same_inode_no_rename_verbose "$f" "$new"
+                nx_pri_si=yes
+            fi
+        fi
+        if [[ "$nef_xmp_buddy" != "$nef_xmp_new" ]] && paths_refer_to_same_file "$nef_xmp_buddy" "$nef_xmp_new"; then
+            if ! is_case_only_rename_pair "$nef_xmp_buddy" "$nef_xmp_new"; then
+                print_same_inode_no_rename_verbose "$nef_xmp_buddy" "$nef_xmp_new"
+                nx_bud_si=yes
+            fi
+        fi
+        if [[ "$nx_pri_si" == yes && "$nx_bud_si" == yes ]]; then
             db_backfill_missing_hashes_for_existing_file "$f"
-            ((++files_skipped))
+            db_backfill_missing_hashes_for_existing_file "$nef_xmp_buddy"
+            ((files_skipped+=2))
             db_mark_checked "$f" "plain" "checked"
+            db_mark_checked "$nef_xmp_buddy" "plain" "checked"
+            processed["$nef_xmp_buddy"]=1
             continue
         fi
-        if is_torrent_url_file "$f"; then
-            vlog "No rename transform for torrent .URL '$f' (prompt offers delete [T])"
-        elif is_thumbs_db_file "$f"; then
-            vlog "No rename transform for thumbs.db '$f' (prompt offers delete [K])"
+        if [[ "$f" == "$new" && "$nef_xmp_buddy" == "$nef_xmp_new" ]] && ! is_torrent_url_file "$f" && ! is_thumbs_db_file "$f"; then
+            vlog "No rename needed for NEF+XMP pair '$f' + '$nef_xmp_buddy'"
+            db_backfill_missing_hashes_for_existing_file "$f"
+            db_backfill_missing_hashes_for_existing_file "$nef_xmp_buddy"
+            ((files_skipped+=2))
+            db_mark_checked "$f" "plain" "checked"
+            db_mark_checked "$nef_xmp_buddy" "plain" "checked"
+            processed["$nef_xmp_buddy"]=1
+            continue
+        fi
+        if [[ "$f" == "$new" ]]; then
+            if is_torrent_url_file "$f"; then
+                vlog "No rename transform for torrent .URL '$f' (prompt offers delete [T])"
+            elif is_thumbs_db_file "$f"; then
+                vlog "No rename transform for thumbs.db '$f' (prompt offers delete [K])"
+            fi
         fi
     fi
 
     if [[ "$rename_all" == "yes" ]]; then
-        if [[ "$f" != "$new" ]]; then
-            print_rename_action_verbose "$f" "$new" "rename_all"
-            perform_plain_entry_rename "$f" "$new" || break
+        rename_all_do_work=no
+        [[ "$f" != "$new" ]] && rename_all_do_work=yes
+        [[ -n "$nef_xmp_buddy" && "$nef_xmp_buddy" != "$nef_xmp_new" ]] && rename_all_do_work=yes
+        if [[ "$rename_all_do_work" == yes ]]; then
+            perform_plain_or_nef_xmp_pair "rename_all" || break
+        elif [[ -n "$nef_xmp_buddy" ]] && ! is_torrent_url_file "$f" && ! is_thumbs_db_file "$f"; then
+            db_backfill_missing_hashes_for_existing_file "$f"
+            db_backfill_missing_hashes_for_existing_file "$nef_xmp_buddy"
+            ((files_skipped+=2))
+            db_mark_checked "$f" "plain" "checked"
+            db_mark_checked "$nef_xmp_buddy" "plain" "checked"
+            processed["$nef_xmp_buddy"]=1
         elif ! is_torrent_url_file "$f" && ! is_thumbs_db_file "$f"; then
             ((++files_skipped))
         fi
-        if [[ "$f" != "$new" ]] || ( ! is_torrent_url_file "$f" && ! is_thumbs_db_file "$f" ); then
+        if [[ "$f" != "$new" ]] || [[ -n "$nef_xmp_buddy" && "$nef_xmp_buddy" != "$nef_xmp_new" ]] || ( ! is_torrent_url_file "$f" && ! is_thumbs_db_file "$f" ); then
             continue
         fi
     fi
 
     if auto_yes_current_dir_matches "$f"; then
-        if [[ "$f" != "$new" ]]; then
-            print_rename_action_verbose "$f" "$new" "per-directory auto-yes"
-            perform_plain_entry_rename "$f" "$new" || break
+        auto_yes_do_work=no
+        [[ "$f" != "$new" ]] && auto_yes_do_work=yes
+        [[ -n "$nef_xmp_buddy" && "$nef_xmp_buddy" != "$nef_xmp_new" ]] && auto_yes_do_work=yes
+        if [[ "$auto_yes_do_work" == yes ]]; then
+            perform_plain_or_nef_xmp_pair "per-directory auto-yes" || break
+        elif [[ -n "$nef_xmp_buddy" ]] && ! is_torrent_url_file "$f" && ! is_thumbs_db_file "$f"; then
+            db_backfill_missing_hashes_for_existing_file "$f"
+            db_backfill_missing_hashes_for_existing_file "$nef_xmp_buddy"
+            ((files_skipped+=2))
+            db_mark_checked "$f" "plain" "checked"
+            db_mark_checked "$nef_xmp_buddy" "plain" "checked"
+            processed["$nef_xmp_buddy"]=1
         elif ! is_torrent_url_file "$f" && ! is_thumbs_db_file "$f"; then
             ((++files_skipped))
         fi
-        if [[ "$f" != "$new" ]] || ( ! is_torrent_url_file "$f" && ! is_thumbs_db_file "$f" ); then
+        if [[ "$f" != "$new" ]] || [[ -n "$nef_xmp_buddy" && "$nef_xmp_buddy" != "$nef_xmp_new" ]] || ( ! is_torrent_url_file "$f" && ! is_thumbs_db_file "$f" ); then
+            continue
+        fi
+    fi
+
+    if [[ -n "$AUTO_RENAME_SIMILAR_DIR" ]] && [[ -f "$f" ]] \
+        && similar_rename_dir_matches_scope "$(dirname -- "$f")" "$AUTO_RENAME_SIMILAR_DIR" \
+        && similar_rename_entry_matches_anchor_pattern "$f"; then
+        auto_sim_do_work=no
+        [[ "$f" != "$new" ]] && auto_sim_do_work=yes
+        [[ -n "$nef_xmp_buddy" && "$nef_xmp_buddy" != "$nef_xmp_new" ]] && auto_sim_do_work=yes
+        if [[ "$auto_sim_do_work" == yes ]]; then
+            perform_plain_or_nef_xmp_pair "per-directory similar-name auto-yes" || break
+        elif [[ -n "$nef_xmp_buddy" ]] && ! is_torrent_url_file "$f" && ! is_thumbs_db_file "$f"; then
+            db_backfill_missing_hashes_for_existing_file "$f"
+            db_backfill_missing_hashes_for_existing_file "$nef_xmp_buddy"
+            ((files_skipped+=2))
+            db_mark_checked "$f" "plain" "checked"
+            db_mark_checked "$nef_xmp_buddy" "plain" "checked"
+            processed["$nef_xmp_buddy"]=1
+        elif ! is_torrent_url_file "$f" && ! is_thumbs_db_file "$f"; then
+            ((++files_skipped))
+        fi
+        if [[ "$f" != "$new" ]] || [[ -n "$nef_xmp_buddy" && "$nef_xmp_buddy" != "$nef_xmp_new" ]] || ( ! is_torrent_url_file "$f" && ! is_thumbs_db_file "$f" ); then
             continue
         fi
     fi
@@ -7124,13 +7490,11 @@ for f in "${ordered_paths[@]}"; do
     fi
 
     if [[ "$AUTO_LOWERCASE_3_EXT_SESSION" == "yes" ]] && [[ "$f" != "$new" ]] && rename_suggested_only_extension_case_change "$f" "$new"; then
-        print_rename_action_verbose "$f" "$new" "auto extension case-only lowercase (session)"
-        perform_plain_entry_rename "$f" "$new" || break
+        perform_plain_or_nef_xmp_pair "auto extension case-only lowercase (session)" || break
         continue
     fi
     if [[ "$AUTO_LOWERCASE_MEDIA_OFFICE_EXT_SESSION" == "yes" ]] && [[ "$f" != "$new" ]] && rename_suggested_only_extension_case_change "$f" "$new" && eligible_for_media_office_extension_case_auto "$f"; then
-        print_rename_action_verbose "$f" "$new" "auto extension case-only lowercase (media+office session)"
-        perform_plain_entry_rename "$f" "$new" || break
+        perform_plain_or_nef_xmp_pair "auto extension case-only lowercase (media+office session)" || break
         continue
     fi
 
@@ -7144,8 +7508,15 @@ for f in "${ordered_paths[@]}"; do
     fi
 
     echo
+    if [[ -n "$nef_xmp_buddy" ]]; then
+        echo -e "${CYAN}NEF+XMP pair (same stem; both renamed together):${RESET}"
+    fi
     emit_wrap_labeled_stdout "OLD: " "${RED}OLD:${RESET} " "$f"
     emit_wrap_labeled_stdout "NEW: " "${GREEN}NEW:${RESET} " "$new"
+    if [[ -n "$nef_xmp_buddy" ]]; then
+        emit_wrap_labeled_stdout "OLD (sidecar): " "${RED}OLD (sidecar):${RESET} " "$nef_xmp_buddy"
+        emit_wrap_labeled_stdout "NEW (sidecar): " "${GREEN}NEW (sidecar):${RESET} " "$nef_xmp_new"
+    fi
     if [[ "$f" != "$new" ]] && is_html_file "$f"; then
         print_html_companion_plan_for_prompt "$f" "$new"
     fi
@@ -7160,7 +7531,12 @@ for f in "${ordered_paths[@]}"; do
             break
             ;;
         n|N)
-            ((++files_skipped))
+            if [[ -n "$nef_xmp_buddy" ]]; then
+                ((files_skipped+=2))
+                processed["$nef_xmp_buddy"]=1
+            else
+                ((++files_skipped))
+            fi
             ;;
         m|M)
             custom_new="$(choose_custom_rename_target "$f" "$new" || true)"
@@ -7170,8 +7546,16 @@ for f in "${ordered_paths[@]}"; do
                 vlog "Edited rename target matches current name, skipping '$f'"
                 ((++files_skipped))
             else
-                print_rename_action_verbose "$f" "$custom_new" "manual edit"
-                perform_plain_entry_rename "$f" "$custom_new" || break
+                if [[ -n "$nef_xmp_buddy" ]]; then
+                    print_rename_action_verbose "$f" "$custom_new" "manual edit (NEF+XMP pair)"
+                    print_rename_action_verbose "$nef_xmp_buddy" "$nef_xmp_new" "manual edit (NEF+XMP pair; sidecar keeps script suggestion)"
+                    perform_plain_entry_rename "$f" "$custom_new" || break
+                    perform_plain_entry_rename "$nef_xmp_buddy" "$nef_xmp_new" || break
+                    processed["$nef_xmp_buddy"]=1
+                else
+                    print_rename_action_verbose "$f" "$custom_new" "manual edit"
+                    perform_plain_entry_rename "$f" "$custom_new" || break
+                fi
             fi
             ;;
         f|F)
@@ -7203,15 +7587,23 @@ for f in "${ordered_paths[@]}"; do
 
             if [[ "$confirm" =~ [Yy] ]]; then
                 rename_all=yes
+                similar_rename_clear
+                AUTO_RENAME_DIR=""
                 vlog "rename_all enabled by user"
                 if [[ -z "$torrent_url_noop" && -z "$thumbs_db_noop" ]]; then
-                    perform_plain_entry_rename "$f" "$new" || break
+                    perform_plain_or_nef_xmp_pair "rename_all" || break
                 fi
             else
-                ((++files_skipped))
+                if [[ -n "$nef_xmp_buddy" ]]; then
+                    ((files_skipped+=2))
+                    processed["$nef_xmp_buddy"]=1
+                else
+                    ((++files_skipped))
+                fi
             fi
             ;;
         d|D)
+            similar_rename_clear
             if [[ -n "$torrent_url_noop" || -n "$thumbs_db_noop" ]]; then
                 AUTO_RENAME_DIR="$(dirname -- "$f")"
                 vlog "Per-directory auto-yes enabled for '$AUTO_RENAME_DIR' (no rename for identical special file)"
@@ -7219,7 +7611,27 @@ for f in "${ordered_paths[@]}"; do
             else
                 AUTO_RENAME_DIR="$(dirname -- "$f")"
                 vlog "Per-directory auto-yes enabled for '$AUTO_RENAME_DIR'"
-                perform_plain_entry_rename "$f" "$new" || break
+                perform_plain_or_nef_xmp_pair "per-directory auto-yes (prompt)" || break
+            fi
+            ;;
+        s|S)
+            if [[ ! -f "$f" ]]; then
+                echo -e "${YELLOW}[S] applies only to regular files.${RESET}"
+                if [[ -n "$nef_xmp_buddy" ]]; then
+                    ((files_skipped+=2))
+                    processed["$nef_xmp_buddy"]=1
+                else
+                    ((++files_skipped))
+                fi
+            else
+                AUTO_RENAME_DIR=""
+                similar_rename_set_anchor_from_prompt_path "$f"
+                vlog "Per-directory similar-name auto-yes: directory '$AUTO_RENAME_SIMILAR_DIR', extension '.${AUTO_RENAME_SIMILAR_EXT}', require leading underscore: ${AUTO_RENAME_SIMILAR_NEED_USCORE}"
+                if [[ -n "$torrent_url_noop" || -n "$thumbs_db_noop" ]]; then
+                    ((++files_skipped))
+                else
+                    perform_plain_or_nef_xmp_pair "per-directory similar-name auto-yes (prompt)" || break
+                fi
             fi
             ;;
         t|T)
@@ -7267,8 +7679,7 @@ for f in "${ordered_paths[@]}"; do
             else
                 AUTO_LOWERCASE_3_EXT_SESSION=yes
                 vlog "Session auto-yes enabled for extension case-only lowercasing renames"
-                print_rename_action_verbose "$f" "$new" "extension case lowercase + session auto"
-                perform_plain_entry_rename "$f" "$new" || break
+                perform_plain_or_nef_xmp_pair "extension case lowercase + session auto" || break
             fi
             ;;
         u|U)
@@ -7281,8 +7692,7 @@ for f in "${ordered_paths[@]}"; do
             else
                 AUTO_LOWERCASE_MEDIA_OFFICE_EXT_SESSION=yes
                 vlog "Session auto-yes enabled for extension case-only lowercasing on media + Microsoft Office files"
-                print_rename_action_verbose "$f" "$new" "extension case lowercase + media/office session auto"
-                perform_plain_entry_rename "$f" "$new" || break
+                perform_plain_or_nef_xmp_pair "extension case lowercase + media/office session auto" || break
             fi
             ;;
         *)
@@ -7305,8 +7715,7 @@ for f in "${ordered_paths[@]}"; do
                 fi
                 ((++files_skipped))
             else
-                print_rename_action_verbose "$f" "$new"
-                perform_plain_entry_rename "$f" "$new" || break
+                perform_plain_or_nef_xmp_pair "interactive default" || break
             fi
             ;;
     esac
