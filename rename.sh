@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.05.06 - v. 19.43 - case-only: mv A→random B→C only (same dir); drop TMPDIR copy pipeline
 # 2026.05.06 - v. 19.42 - CRITICAL case-only: stage copy in local TMPDIR then cp→share (no hardlink/rm on ci-CIFS — deletes file)
 # 2026.05.06 - v. 19.41 - case-only: if uniq and new are same inode (ci-CIFS), rm uniq not cp; restore path uses same guard
 # 2026.05.06 - v. 19.40 - case-only final hop: mv uniq→new, else cp -p+cmp+rm uniq (CIFS mv-to-case-variant fails); cmp fallback to diff -q
@@ -3264,53 +3265,30 @@ is_case_only_rename_pair() {
     return 0
 }
 
-case_only_files_match() {
-    local a="$1" b="$2"
-    if command -v cmp >/dev/null 2>&1; then
-        cmp -s -- "$a" "$b"
-        return
-    fi
-    diff -q "$a" "$b" >/dev/null 2>&1
+# Random unused path in the same directory as the target (for case-only two-step mv).
+case_only_random_intermediate() {
+    local target="$1" dir i=0 p
+    dir="$(dirname -- "$target")"
+    [[ -w "$dir" ]] || return 1
+    while (( i < 500 )); do
+        p="$dir/.___case_ren_$$_${RANDOM}_${i}.tmp"
+        [[ ! -e "$p" ]] && { printf '%s\n' "$p"; return 0; }
+        ((++i))
+    done
+    return 1
 }
 
-# Case-only on CIFS/SMB: never hardlink+rm in the share directory (case-insensitive servers can drop all names).
-# Copy to local TMPDIR (different device/inode), verify, rm share file, cp onto share, verify, rm staging.
+# Case-only: mv A→B→C with B a random name (same directory as A/C).
 case_only_rename_safe() {
-    local old="$1" new="$2"
-    local tbase staging
+    local old="$1" new="$2" b
     [[ -f "$old" ]] || return 1
-    tbase="${TMPDIR:-/tmp}"
-    [[ -d "$tbase" && -w "$tbase" ]] || return 1
-    staging="$(mktemp "$tbase/rename.sh.case-only.XXXXXX")" || return 1
-
-    if ! cp -p -- "$old" "$staging"; then
-        rm -f -- "$staging"
-        return 1
-    fi
-    if ! case_only_files_match "$old" "$staging"; then
-        rm -f -- "$staging"
-        return 1
-    fi
-    if ! rm -f -- "$old"; then
-        rm -f -- "$staging"
-        return 1
-    fi
-
-    if cp -p -- "$staging" "$new" && case_only_files_match "$staging" "$new"; then
-        rm -f -- "$staging"
+    b="$(case_only_random_intermediate "$new")" || return 1
+    mv -- "$old" "$b" || return 1
+    if mv -- "$b" "$new"; then
         [[ -f "$new" ]] || return 1
         return 0
     fi
-
-    rm -f -- "$new"
-    if cp -p -- "$staging" "$old" && case_only_files_match "$staging" "$old"; then
-        rm -f -- "$staging"
-        [[ -f "$old" ]] || return 1
-        return 1
-    fi
-
-    echo "rename.sh: CASE-ONLY RENAME FAILED; bytes should still exist at: $staging" >&2
-    echo "rename.sh: Try: cp -p -- \"$staging\" \"$old\"   # or your intended path" >&2
+    mv -- "$b" "$old" || return 1
     return 1
 }
 
