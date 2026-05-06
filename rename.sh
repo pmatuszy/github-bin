@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.04.30 - v. 19.13 - Sprache_/Voice_ YYMMDD_HHMMSS.ext (no tail segment) -> YYYYMMDD_HHMMSS-sprache/voice.ext
 # 2026.04.30 - v. 19.12 - restore errexit after set +e captures (transform_name leaked set -e; ERR on checksum return 1)
 # 2026.04.30 - v. 19.11 - YYYYMMDD HH-MM-SS[_tail].media -> YYYYMMDD_HH-MM-SS[_tail].media (space/tab before time)
 # 2026.04.30 - v. 19.10 - set -e: mapping quit/manual return 0 from choose_*; capture $(transform_basename/name) with set +e
@@ -4223,18 +4224,19 @@ transform_name() {
             else
                 newbase="${BASH_REMATCH[1]}_${BASH_REMATCH[2]}-screen_recording${BASH_REMATCH[4]}"
             fi
-        elif [[ "$newbase" =~ ^(Sprache|Voice)_([0-9]{6})_([0-9]{6})_(.+)(\..+)$ ]]; then
+        # Sprache_/Voice_ + YYMMDD + HHMMSS + optional _tail + ext (tail was required before v. 19.13).
+        elif [[ "$newbase" =~ ^(Sprache|Voice)_([0-9]{6})_([0-9]{6})(_(.+))?(\..+)$ ]]; then
             media_kind="${BASH_REMATCH[1]}"
             media_date="20${BASH_REMATCH[2]}"
             media_time="${BASH_REMATCH[3]}"
-            media_suffix="${BASH_REMATCH[4]}"
+            media_suffix="${BASH_REMATCH[5]-}"
             media_kind=$(printf '%s' "$media_kind" | tr '[:upper:]' '[:lower:]')
             media_suffix=$(printf '%s' "$media_suffix" | tr '[:upper:]' '[:lower:]')
             media_suffix=$(printf '%s' "$media_suffix" | sed -E 's/[^[:alnum:]]+/-/g; s/^-+//; s/-+$//; s/-+/-/g')
             if [[ -n "$media_suffix" ]]; then
-                newbase="${media_date}_${media_time}-${media_kind}-${media_suffix}${BASH_REMATCH[5]}"
+                newbase="${media_date}_${media_time}-${media_kind}-${media_suffix}${BASH_REMATCH[6]}"
             else
-                newbase="${media_date}_${media_time}-${media_kind}${BASH_REMATCH[5]}"
+                newbase="${media_date}_${media_time}-${media_kind}${BASH_REMATCH[6]}"
             fi
         elif [[ "$newbase" =~ ^([0-9]{4})-([0-9]{2})-([0-9]{2})_([0-9]{2})-([0-9]{2})-([0-9]{2})(\.${audio_ext_re})$ ]]; then
             newbase="${BASH_REMATCH[1]}${BASH_REMATCH[2]}${BASH_REMATCH[3]}_${BASH_REMATCH[4]}${BASH_REMATCH[5]}${BASH_REMATCH[6]}${BASH_REMATCH[7]}"
