@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.05.06 - v. 19.28 - case-only mv: stage temp one directory above target dir (MSYS/NTFS second mv "same file"); fallback TMPDIR mktemp
 # 2026.05.06 - v. 19.27 - rename prompt [S]: auto-yes only for similar names in current dir (same extension; leading _ if anchor had it)
 # 2026.05.06 - v. 19.26 - per-directory [D] auto-yes: print each rename in non-verbose; case-only renames use two-step mv for case-insensitive FS
 # 2026.05.06 - v. 19.25 - plain renames: .nef + matching .xmp in same directory are one pair (single prompt, both renamed)
@@ -3250,19 +3251,41 @@ is_case_only_rename_pair() {
 }
 
 make_case_rename_staging_path() {
-    local dir="$1" i=0 p
+    local target="$1" dir parent i=0 p tbase
+    dir="$(dirname -- "$target")"
+    parent="$(dirname -- "$dir")"
+    # dirname/. == dirname when target dir is "." or filesystem root; use dir/.. so staging is never in the same directory as the final basename.
+    if [[ "${parent%/}" == "${dir%/}" ]]; then
+        parent="${dir}/.."
+    fi
+    # Same-directory staging breaks the second mv on MSYS + case-insensitive NTFS ("X and Y are the same file").
+    if [[ -w "$parent" ]]; then
+        i=0
+        while (( i < 500 )); do
+            p="$parent/.___case_ren_$$_${RANDOM}_${i}.tmp"
+            [[ ! -e "$p" ]] && { printf '%s\n' "$p"; return 0; }
+            ((++i))
+        done
+    fi
+    i=0
     while (( i < 500 )); do
         p="$dir/.___case_ren_$$_${RANDOM}_${i}.tmp"
         [[ ! -e "$p" ]] && { printf '%s\n' "$p"; return 0; }
         ((++i))
     done
+    tbase="${TMPDIR:-/tmp}"
+    if [[ -d "$tbase" && -w "$tbase" ]]; then
+        p="$(mktemp "$tbase/rename.sh.case-ren.XXXXXX")" || return 1
+        printf '%s\n' "$p"
+        return 0
+    fi
     return 1
 }
 
 mv_with_case_only_filesystem_workaround() {
     local old="$1" new="$2" tmp
     if is_case_only_rename_pair "$old" "$new"; then
-        tmp="$(make_case_rename_staging_path "$(dirname -- "$new")")" || return 1
+        tmp="$(make_case_rename_staging_path "$new")" || return 1
         mv -i -- "$old" "$tmp" || return 1
         if ! mv -i -- "$tmp" "$new"; then
             mv -f -- "$tmp" "$old" 2>/dev/null || true
@@ -3278,7 +3301,7 @@ mv_with_case_only_filesystem_workaround() {
 mv_with_case_only_filesystem_workaround_force() {
     local old="$1" new="$2" tmp
     if is_case_only_rename_pair "$old" "$new"; then
-        tmp="$(make_case_rename_staging_path "$(dirname -- "$new")")" || return 1
+        tmp="$(make_case_rename_staging_path "$new")" || return 1
         mv -f -- "$old" "$tmp" || return 1
         if ! mv -f -- "$tmp" "$new"; then
             mv -f -- "$tmp" "$old" 2>/dev/null || true
