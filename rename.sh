@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.05.06 - v. 19.45 - case-only: mv A→B→C with B in same directory as A/C only (no /tmp or TMPDIR)
 # 2026.05.06 - v. 19.44 - case-only: mv only — A→B under TMPDIR then B→C (same-dir B breaks ci-CIFS “same file”)
 # 2026.05.06 - v. 19.43 - case-only: mv A→random B→C only (same dir); drop TMPDIR copy pipeline
 # 2026.05.06 - v. 19.42 - CRITICAL case-only: stage copy in local TMPDIR then cp→share (no hardlink/rm on ci-CIFS — deletes file)
@@ -3266,23 +3267,24 @@ is_case_only_rename_pair() {
     return 0
 }
 
-# Random unused path under TMPDIR (mv A→B→C with only mv; same-folder B hits “same file” on case-insensitive CIFS).
-case_only_random_mv_staging_path() {
-    local i=0 p tbase="${TMPDIR:-/tmp}"
-    [[ -d "$tbase" && -w "$tbase" ]] || return 1
+# Random unused path in the same directory as old/new (case-only: mv A→B→C, all in that dir).
+case_only_random_intermediate_same_dir() {
+    local target="$1" dir i=0 p
+    dir="$(dirname -- "$target")"
+    [[ -w "$dir" ]] || return 1
     while (( i < 500 )); do
-        p="$tbase/.___case_ren_$$_${RANDOM}_${i}.tmp"
+        p="$dir/.___case_ren_$$_${RANDOM}_${i}.tmp"
         [[ ! -e "$p" ]] && { printf '%s\n' "$p"; return 0; }
         ((++i))
     done
     return 1
 }
 
-# Case-only: mv A→B→C — B must live outside the share (TMPDIR), still only mv(1).
+# Case-only: mv A→B→C — B is random name beside A/C (same directory only).
 case_only_rename_safe() {
     local old="$1" new="$2" b
     [[ -f "$old" ]] || return 1
-    b="$(case_only_random_mv_staging_path)" || return 1
+    b="$(case_only_random_intermediate_same_dir "$new")" || return 1
     mv -- "$old" "$b" || return 1
     if mv -- "$b" "$new"; then
         [[ -f "$new" ]] || return 1
