@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.05.06 - v. 19.17 - checksum verify fail: recovery hint + optional [U] refresh hash from disk (before/after rename)
 # 2026.05.06 - v. 19.16 - treat Photoshop native formats (.psd .psb .psdt) as media (is_media_file + common_media_ext_re)
 # 2026.05.06 - v. 19.15 - YYYY-MM-DD + space/tab/underscore + HH-MM-SS + tail -> YYYYMMDD_HHMMSS early; transform_name tail allows space before title
 # 2026.05.06 - v. 19.14 - treat .nef and .xmp as media (is_media_file + common_media_ext_re timestamp rules)
@@ -3591,6 +3592,76 @@ confirm_large_hash_check() {
     esac
 }
 
+suggest_checksum_mismatch_recovery() {
+    local sum_file="$1"
+    local ref_in_file="$2"
+    local path_on_disk="$3"
+    local label="$4"
+    local phase="$5"
+    local sum_dir tool qdir qref
+
+    sum_dir="$(dirname -- "$sum_file")"
+    tool="$(checksum_cmd "$sum_file")"
+    qdir="$(printf '%q' "$sum_dir")"
+    qref="$(printf '%q' "$ref_in_file")"
+
+    echo
+    echo -e "${CYAN}${label} recovery hint (${phase}):${RESET}"
+    echo "  The hash stored in the checksum file does not match the bytes on disk for this path."
+    echo "  That usually means the file was edited, re-encoded, or replaced after the list was created,"
+    echo "  or the checksum line is wrong (copy/paste, duplicate lines with different hashes)."
+    if [[ -f "$path_on_disk" ]]; then
+        echo "  To fix manually, re-hash from the checksum file's directory and replace that line:"
+        echo "      ( cd $qdir && $tool -- $qref )"
+        echo "  The path column in the list must stay exactly: $ref_in_file"
+    else
+        echo -e "  ${YELLOW}There is no regular file to hash at:${RESET} $path_on_disk"
+    fi
+    echo
+}
+
+# Return 0 if hash was updated and re-verification succeeded; 1 to abort (caller should exit).
+prompt_refresh_checksum_hash_after_mismatch() {
+    local sum_file="$1"
+    local ref_in_file="$2"
+    local path_on_disk="$3"
+    local phase="$4"
+    local label answer
+
+    label="$(checksum_label "$sum_file")"
+    suggest_checksum_mismatch_recovery "$sum_file" "$ref_in_file" "$path_on_disk" "$label" "$phase"
+
+    while true; do
+        echo -e "  ${GREEN}[U]${RESET} Update stored ${label,,} hash from the file on disk, then re-verify"
+        echo -e "  ${GREEN}[Q]${RESET} Quit (abort script)"
+        echo -n "Choice [U/q]: "
+        flush_stdin
+        read_single_key answer "$PROMPT_WAIT_SECONDS"
+        echo
+        case "$answer" in
+            u|U)
+                if [[ ! -f "$path_on_disk" ]]; then
+                    echo -e "${YELLOW}${label}:${RESET} Cannot update - not a regular file: $path_on_disk"
+                    continue
+                fi
+                echo -e "${CYAN}${label} FIX:${RESET} Patching '$sum_file' (ref '$ref_in_file') from file '$path_on_disk'..."
+                update_checksum_hash_for_ref "$sum_file" "$ref_in_file" "$path_on_disk"
+                if verify_single_checksum_target "$sum_file" "$ref_in_file"; then
+                    echo -e "${GREEN}${label} OK:${RESET} Stored hash now matches the file; continuing."
+                    return 0
+                fi
+                echo -e "${YELLOW}${label} WARN:${RESET} Still fails after patch (duplicate conflicting lines in the list, or I/O issue). Try editing the checksum file by hand."
+                ;;
+            q|Q|'')
+                return 1
+                ;;
+            *)
+                return 1
+                ;;
+        esac
+    done
+}
+
 stop_on_checksum_failure() {
     local sum_file="$1"
     local phase="$2"
@@ -4407,7 +4478,9 @@ verify_single_checksum_target() {
         sed -E 's/\r$//' -- "$sum_file" | grep -E "^[0-9a-fA-F]+[[:space:]]+\*?${target_re}$" | tail -n 1 || true
     )"
 
-    [[ -n "$matched_line" ]] || return 1
+    if [[ -z "$matched_line" ]]; then
+        return 2
+    fi
 
     (
         cd "$sum_dir"
@@ -4415,7 +4488,8 @@ verify_single_checksum_target() {
             sha512) printf '%s\n' "$matched_line" | sha512sum -c --quiet --status ;;
             md5)    printf '%s\n' "$matched_line" | md5sum    -c --quiet --status ;;
         esac
-    )
+    ) || return 1
+    return 0
 }
 
 checksum_of_file() {
@@ -6498,10 +6572,21 @@ for f in "${ordered_paths[@]}"; do
             echo -e "${CYAN}${label} check (before rename) in progress for changed reference(s)...${RESET} $sum_file"
             for i in "${!refs[@]}"; do
                 [[ "${new_refs[$i]}" != "${refs[$i]}" ]] || continue
-                if ! verify_single_checksum_target "$sum_file" "${refs_raw[$i]}"; then
-                    echo -e "${YELLOW}${label} FAIL:${RESET} checksum mismatch for reference '${refs_raw[$i]}' in '$sum_file' (won't rename pair)"
+                verify_single_checksum_target "$sum_file" "${refs_raw[$i]}"
+                vrc=$?
+                if (( vrc == 0 )); then
+                    continue
+                fi
+                if (( vrc == 2 )); then
+                    echo -e "${YELLOW}${label} FAIL:${RESET} no checksum line matches reference '${refs_raw[$i]}' in '$sum_file' (won't rename pair)"
+                    echo "  Check that the path column in the list matches this reference exactly (including spaces and any * prefix)."
                     stop_on_checksum_failure "$sum_file" "before rename"
                 fi
+                echo -e "${YELLOW}${label} FAIL:${RESET} checksum mismatch for reference '${refs_raw[$i]}' in '$sum_file' (won't rename pair)"
+                if prompt_refresh_checksum_hash_after_mismatch "$sum_file" "${refs_raw[$i]}" "${refs[$i]}" "before rename"; then
+                    continue
+                fi
+                stop_on_checksum_failure "$sum_file" "before rename"
             done
             echo -e "${CYAN}${label} VERIFIED (before rename):${RESET} changed reference(s) in $sum_file"
         fi
@@ -6636,11 +6721,22 @@ for f in "${ordered_paths[@]}"; do
             for i in "${!refs[@]}"; do
                 [[ "${new_refs[$i]}" != "${refs[$i]}" ]] || continue
                 new_ref_for_verify="$(format_ref_for_checksum_file "$final_sum" "${refs_raw[$i]}" "${new_refs[$i]}")"
-                if ! verify_single_checksum_target "$final_sum" "$new_ref_for_verify"; then
-                    echo -e "${YELLOW}${label} FAIL (after rename):${RESET} reference '$new_ref_for_verify' in '$final_sum' does not validate."
-                    echo -e "${YELLOW}NOTE:${RESET} Files were renamed, but checksum verification after update failed."
+                verify_single_checksum_target "$final_sum" "$new_ref_for_verify"
+                vrc=$?
+                if (( vrc == 0 )); then
+                    continue
+                fi
+                if (( vrc == 2 )); then
+                    echo -e "${YELLOW}${label} FAIL (after rename):${RESET} no line for '$new_ref_for_verify' in '$final_sum'."
+                    echo -e "${YELLOW}NOTE:${RESET} Files were renamed; checksum file may be inconsistent."
                     stop_on_checksum_failure "$final_sum" "after rename"
                 fi
+                echo -e "${YELLOW}${label} FAIL (after rename):${RESET} reference '$new_ref_for_verify' in '$final_sum' does not validate."
+                echo -e "${YELLOW}NOTE:${RESET} Files were renamed, but checksum verification after update failed."
+                if prompt_refresh_checksum_hash_after_mismatch "$final_sum" "$new_ref_for_verify" "${new_refs[$i]}" "after rename"; then
+                    continue
+                fi
+                stop_on_checksum_failure "$final_sum" "after rename"
             done
             echo -e "${CYAN}${label} VERIFIED (after rename):${RESET} changed reference(s) in $final_sum"
             echo -e "${GREEN}${label} OK:${RESET} changed reference(s) were updated inside '$final_sum' and ${label,,} checksum(s) are correct."
