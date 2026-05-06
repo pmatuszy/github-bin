@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.05.06 - v. 19.19 - checksum verify loop: capture exit code with || vrc=$? so set -e does not abort before handling mismatch
 # 2026.05.06 - v. 19.18 - wrap long same-inode (case-only) verbose line to MAX_LINE_LENGTH
 # 2026.05.06 - v. 19.17 - checksum verify fail: recovery hint + optional [U] refresh hash from disk (before/after rename)
 # 2026.05.06 - v. 19.16 - treat Photoshop native formats (.psd .psb .psdt) as media (is_media_file + common_media_ext_re)
@@ -6588,8 +6589,8 @@ for f in "${ordered_paths[@]}"; do
             echo -e "${CYAN}${label} check (before rename) in progress for changed reference(s)...${RESET} $sum_file"
             for i in "${!refs[@]}"; do
                 [[ "${new_refs[$i]}" != "${refs[$i]}" ]] || continue
-                verify_single_checksum_target "$sum_file" "${refs_raw[$i]}"
-                vrc=$?
+                vrc=0
+                verify_single_checksum_target "$sum_file" "${refs_raw[$i]}" || vrc=$?
                 if (( vrc == 0 )); then
                     continue
                 fi
@@ -6737,8 +6738,8 @@ for f in "${ordered_paths[@]}"; do
             for i in "${!refs[@]}"; do
                 [[ "${new_refs[$i]}" != "${refs[$i]}" ]] || continue
                 new_ref_for_verify="$(format_ref_for_checksum_file "$final_sum" "${refs_raw[$i]}" "${new_refs[$i]}")"
-                verify_single_checksum_target "$final_sum" "$new_ref_for_verify"
-                vrc=$?
+                vrc=0
+                verify_single_checksum_target "$final_sum" "$new_ref_for_verify" || vrc=$?
                 if (( vrc == 0 )); then
                     continue
                 fi
