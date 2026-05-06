@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.05.06 - v. 19.38 - case-only: exactly two hops mv old→.___ABC_case_uniq_*→new (bash + Python os.replace); drop three-hop
 # 2026.05.06 - v. 19.37 - case-only Python: POSIX os.replace only (no cmd.exe); for Linux including CIFS/SMB mounts
 # 2026.05.06 - v. 19.36 - case-only Python: final hop via cmd.exe ren on Win/MSYS/Cygwin + verify target exists (fix orphan .___case_ren_py_*.tmp)
 # 2026.05.06 - v. 19.35 - case-only same-dir: three hops old→B₁→B₂→final (bash mv + Python); avoids MSYS mistaking B₁ and final for same file
@@ -3259,30 +3260,20 @@ is_case_only_rename_pair() {
     return 0
 }
 
-# Intermediate names for case-only renames: same directory only; allocate distinct B₁≠B₂ for three-hop mv.
+# One guaranteed-unique intermediate in the same directory: mv OLD → this → NEW (case-only renames).
 make_case_rename_staging_path() {
     local target="$1" dir i=0 p
     dir="$(dirname -- "$target")"
     [[ -w "$dir" ]] || return 1
     while (( i < 500 )); do
-        p="$dir/.___case_ren_$$_${RANDOM}_${i}.tmp"
+        p="$dir/.___ABC_case_uniq_$$_${RANDOM}_${i}.tmp"
         [[ ! -e "$p" ]] && { printf '%s\n' "$p"; return 0; }
         ((++i))
     done
     return 1
 }
 
-case_rename_pick_two_distinct_intermediates() {
-    local target="$1" b1 b2 n=0
-    b1="$(make_case_rename_staging_path "$target")" || return 1
-    while (( n++ < 100 )); do
-        b2="$(make_case_rename_staging_path "$target")" || return 1
-        [[ "$b1" != "$b2" ]] && { printf '%s\n%s\n' "$b1" "$b2"; return 0; }
-    done
-    return 1
-}
-
-# Same-dir three-hop: POSIX os.replace only (Linux/CIFS/SMB friendly; no Windows-only commands).
+# Same-dir two-hop: POSIX os.replace(old→uniq→new), Linux/CIFS/SMB.
 mv_case_only_rename_via_python3() {
     local old="$1" new="$2"
     command -v python3 >/dev/null 2>&1 || return 1
@@ -3295,43 +3286,22 @@ new = os.path.abspath(new)
 same_dir = os.path.dirname(new)
 want_base = os.path.basename(new)
 
-
-def alloc_tmp():
-    fd, p = tempfile.mkstemp(dir=same_dir, prefix=".___case_ren_py_", suffix=".tmp")
-    os.close(fd)
-    try:
-        os.unlink(p)
-    except OSError:
-        pass
-    return p
-
-
-b1 = alloc_tmp()
-b2 = alloc_tmp()
-n = 0
-while b1 == b2 and n < 100:
-    b2 = alloc_tmp()
-    n += 1
-if b1 == b2:
-    sys.exit(1)
+fd, uniq = tempfile.mkstemp(dir=same_dir, prefix=".___ABC_case_uniq_py_", suffix=".tmp")
+os.close(fd)
+try:
+    os.unlink(uniq)
+except OSError:
+    pass
 
 try:
-    os.replace(old, b1)
+    os.replace(old, uniq)
 except OSError:
     sys.exit(1)
 try:
-    os.replace(b1, b2)
+    os.replace(uniq, new)
 except OSError:
     try:
-        os.replace(b1, old)
-    except OSError:
-        pass
-    sys.exit(1)
-try:
-    os.replace(b2, new)
-except OSError:
-    try:
-        os.replace(b2, old)
+        os.replace(uniq, old)
     except OSError:
         pass
     sys.exit(1)
@@ -3343,7 +3313,7 @@ PY
 }
 
 mv_with_case_only_filesystem_workaround() {
-    local old="$1" new="$2" b1 b2 line
+    local old="$1" new="$2" uniq
     if is_case_only_rename_pair "$old" "$new"; then
         if command -v python3 >/dev/null 2>&1; then
             if mv_case_only_rename_via_python3 "$old" "$new"; then
@@ -3351,20 +3321,13 @@ mv_with_case_only_filesystem_workaround() {
                 return 0
             fi
         fi
-        mapfile -t line < <(case_rename_pick_two_distinct_intermediates "$new") || return 1
-        [[ ${#line[@]} -eq 2 ]] || return 1
-        b1="${line[0]}"
-        b2="${line[1]}"
-        if mv -i -- "$old" "$b1"; then
-            if mv -i -- "$b1" "$b2"; then
-                if mv -i -- "$b2" "$new"; then
-                    [[ -f "$new" ]] || return 1
-                    return 0
-                fi
-                mv -f -- "$b2" "$old" 2>/dev/null || true
-            else
-                mv -f -- "$b1" "$old" 2>/dev/null || true
+        uniq="$(make_case_rename_staging_path "$new")" || return 1
+        if mv -i -- "$old" "$uniq"; then
+            if mv -i -- "$uniq" "$new"; then
+                [[ -f "$new" ]] || return 1
+                return 0
             fi
+            mv -f -- "$uniq" "$old" 2>/dev/null || true
         fi
         mv_case_only_rename_via_python3 "$old" "$new" || return 1
         [[ -f "$new" ]] || return 1
@@ -3374,9 +3337,9 @@ mv_with_case_only_filesystem_workaround() {
     return 0
 }
 
-# Same three-hop logic without -i (rollback / error paths).
+# Same two-hop logic without -i (rollback / error paths).
 mv_with_case_only_filesystem_workaround_force() {
-    local old="$1" new="$2" b1 b2 line
+    local old="$1" new="$2" uniq
     if is_case_only_rename_pair "$old" "$new"; then
         if command -v python3 >/dev/null 2>&1; then
             if mv_case_only_rename_via_python3 "$old" "$new"; then
@@ -3384,20 +3347,13 @@ mv_with_case_only_filesystem_workaround_force() {
                 return 0
             fi
         fi
-        mapfile -t line < <(case_rename_pick_two_distinct_intermediates "$new") || return 1
-        [[ ${#line[@]} -eq 2 ]] || return 1
-        b1="${line[0]}"
-        b2="${line[1]}"
-        if mv -f -- "$old" "$b1"; then
-            if mv -f -- "$b1" "$b2"; then
-                if mv -f -- "$b2" "$new"; then
-                    [[ -f "$new" ]] || return 1
-                    return 0
-                fi
-                mv -f -- "$b2" "$old" 2>/dev/null || true
-            else
-                mv -f -- "$b1" "$old" 2>/dev/null || true
+        uniq="$(make_case_rename_staging_path "$new")" || return 1
+        if mv -f -- "$old" "$uniq"; then
+            if mv -f -- "$uniq" "$new"; then
+                [[ -f "$new" ]] || return 1
+                return 0
             fi
+            mv -f -- "$uniq" "$old" 2>/dev/null || true
         fi
         mv_case_only_rename_via_python3 "$old" "$new" || return 1
         [[ -f "$new" ]] || return 1
