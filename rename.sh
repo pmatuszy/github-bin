@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.05.06 - v. 19.34 - case-only: try Python two-hop first when python3 exists (MSYS mv second hop falsely reports same file on NTFS)
 # 2026.05.06 - v. 19.33 - case-only intermediate B always in same directory as file (no TMPDIR/parent staging)
 # 2026.05.06 - v. 19.32 - case-only: always via intermediate B only (mv A→B→A'; Python matches); remove MoveFileEx / Python-before-mv
 # 2026.05.06 - v. 19.31 - case-only: always stage via TMPDIR first (not only MSYS); try Python MoveFileExW when WINDIR (before bash mv)
@@ -3268,7 +3269,7 @@ make_case_rename_staging_path() {
     return 1
 }
 
-# Case-only renames always use two mv steps: A_before_rename → intermediate (B) → A_after_rename (never a direct mv old→new).
+# Same-dir two-hop via os.replace (MSYS/GNU mv often fails the tmp→final hop with "same file" on case-insensitive NTFS).
 mv_case_only_rename_via_python3() {
     local old="$1" new="$2"
     command -v python3 >/dev/null 2>&1 || return 1
@@ -3302,6 +3303,12 @@ PY
 mv_with_case_only_filesystem_workaround() {
     local old="$1" new="$2" intermediate
     if is_case_only_rename_pair "$old" "$new"; then
+        # Prefer Python first: bash mv second step lies about "same file" for same-directory case-only renames on Git Bash + NTFS.
+        if command -v python3 >/dev/null 2>&1; then
+            if mv_case_only_rename_via_python3 "$old" "$new"; then
+                return 0
+            fi
+        fi
         intermediate="$(make_case_rename_staging_path "$new")" || return 1
         if mv -i -- "$old" "$intermediate"; then
             if mv -i -- "$intermediate" "$new"; then
@@ -3320,6 +3327,11 @@ mv_with_case_only_filesystem_workaround() {
 mv_with_case_only_filesystem_workaround_force() {
     local old="$1" new="$2" intermediate
     if is_case_only_rename_pair "$old" "$new"; then
+        if command -v python3 >/dev/null 2>&1; then
+            if mv_case_only_rename_via_python3 "$old" "$new"; then
+                return 0
+            fi
+        fi
         intermediate="$(make_case_rename_staging_path "$new")" || return 1
         if mv -f -- "$old" "$intermediate"; then
             if mv -f -- "$intermediate" "$new"; then
