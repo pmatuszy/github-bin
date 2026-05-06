@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.05.06 - v. 19.35 - case-only same-dir: three hops old→B₁→B₂→final (bash mv + Python); avoids MSYS mistaking B₁ and final for same file
 # 2026.05.06 - v. 19.34 - case-only: try Python two-hop first when python3 exists (MSYS mv second hop falsely reports same file on NTFS)
 # 2026.05.06 - v. 19.33 - case-only intermediate B always in same directory as file (no TMPDIR/parent staging)
 # 2026.05.06 - v. 19.32 - case-only: always via intermediate B only (mv A→B→A'; Python matches); remove MoveFileEx / Python-before-mv
@@ -3256,7 +3257,7 @@ is_case_only_rename_pair() {
     return 0
 }
 
-# Intermediate B for case-only two-step renames: same directory as old/new only (mv A→B→A').
+# Intermediate names for case-only renames: same directory only; allocate distinct B₁≠B₂ for three-hop mv.
 make_case_rename_staging_path() {
     local target="$1" dir i=0 p
     dir="$(dirname -- "$target")"
@@ -3269,7 +3270,17 @@ make_case_rename_staging_path() {
     return 1
 }
 
-# Same-dir two-hop via os.replace (MSYS/GNU mv often fails the tmp→final hop with "same file" on case-insensitive NTFS).
+case_rename_pick_two_distinct_intermediates() {
+    local target="$1" b1 b2 n=0
+    b1="$(make_case_rename_staging_path "$target")" || return 1
+    while (( n++ < 100 )); do
+        b2="$(make_case_rename_staging_path "$target")" || return 1
+        [[ "$b1" != "$b2" ]] && { printf '%s\n%s\n' "$b1" "$b2"; return 0; }
+    done
+    return 1
+}
+
+# Same-dir three-hop: os.replace(old→B₁→B₂→new); MSYS/GNU mv step tmp→final can falsely report "same file" on case-insensitive NTFS.
 mv_case_only_rename_via_python3() {
     local old="$1" new="$2"
     command -v python3 >/dev/null 2>&1 || return 1
@@ -3281,19 +3292,43 @@ old = os.path.abspath(old)
 new = os.path.abspath(new)
 same_dir = os.path.dirname(new)
 
-fd, intermediate = tempfile.mkstemp(dir=same_dir, prefix=".___case_ren_py_", suffix=".tmp")
-os.close(fd)
+
+def alloc_tmp():
+    fd, p = tempfile.mkstemp(dir=same_dir, prefix=".___case_ren_py_", suffix=".tmp")
+    os.close(fd)
+    try:
+        os.unlink(p)
+    except OSError:
+        pass
+    return p
+
+
+b1 = alloc_tmp()
+b2 = alloc_tmp()
+n = 0
+while b1 == b2 and n < 100:
+    b2 = alloc_tmp()
+    n += 1
+if b1 == b2:
+    sys.exit(1)
+
 try:
-    os.unlink(intermediate)
+    os.replace(old, b1)
 except OSError:
-    pass
+    sys.exit(1)
 try:
-    os.replace(old, intermediate)
-    os.replace(intermediate, new)
+    os.replace(b1, b2)
 except OSError:
     try:
-        if os.path.lexists(intermediate):
-            os.replace(intermediate, old)
+        os.replace(b1, old)
+    except OSError:
+        pass
+    sys.exit(1)
+try:
+    os.replace(b2, new)
+except OSError:
+    try:
+        os.replace(b2, old)
     except OSError:
         pass
     sys.exit(1)
@@ -3301,20 +3336,26 @@ PY
 }
 
 mv_with_case_only_filesystem_workaround() {
-    local old="$1" new="$2" intermediate
+    local old="$1" new="$2" b1 b2 line
     if is_case_only_rename_pair "$old" "$new"; then
-        # Prefer Python first: bash mv second step lies about "same file" for same-directory case-only renames on Git Bash + NTFS.
         if command -v python3 >/dev/null 2>&1; then
             if mv_case_only_rename_via_python3 "$old" "$new"; then
                 return 0
             fi
         fi
-        intermediate="$(make_case_rename_staging_path "$new")" || return 1
-        if mv -i -- "$old" "$intermediate"; then
-            if mv -i -- "$intermediate" "$new"; then
-                return 0
+        mapfile -t line < <(case_rename_pick_two_distinct_intermediates "$new") || return 1
+        [[ ${#line[@]} -eq 2 ]] || return 1
+        b1="${line[0]}"
+        b2="${line[1]}"
+        if mv -i -- "$old" "$b1"; then
+            if mv -i -- "$b1" "$b2"; then
+                if mv -i -- "$b2" "$new"; then
+                    return 0
+                fi
+                mv -f -- "$b2" "$old" 2>/dev/null || true
+            else
+                mv -f -- "$b1" "$old" 2>/dev/null || true
             fi
-            mv -f -- "$intermediate" "$old" 2>/dev/null || true
         fi
         mv_case_only_rename_via_python3 "$old" "$new" || return 1
         return 0
@@ -3323,21 +3364,28 @@ mv_with_case_only_filesystem_workaround() {
     return 0
 }
 
-# Same two-step logic without -i (rollback / error paths).
+# Same three-hop logic without -i (rollback / error paths).
 mv_with_case_only_filesystem_workaround_force() {
-    local old="$1" new="$2" intermediate
+    local old="$1" new="$2" b1 b2 line
     if is_case_only_rename_pair "$old" "$new"; then
         if command -v python3 >/dev/null 2>&1; then
             if mv_case_only_rename_via_python3 "$old" "$new"; then
                 return 0
             fi
         fi
-        intermediate="$(make_case_rename_staging_path "$new")" || return 1
-        if mv -f -- "$old" "$intermediate"; then
-            if mv -f -- "$intermediate" "$new"; then
-                return 0
+        mapfile -t line < <(case_rename_pick_two_distinct_intermediates "$new") || return 1
+        [[ ${#line[@]} -eq 2 ]] || return 1
+        b1="${line[0]}"
+        b2="${line[1]}"
+        if mv -f -- "$old" "$b1"; then
+            if mv -f -- "$b1" "$b2"; then
+                if mv -f -- "$b2" "$new"; then
+                    return 0
+                fi
+                mv -f -- "$b2" "$old" 2>/dev/null || true
+            else
+                mv -f -- "$b1" "$old" 2>/dev/null || true
             fi
-            mv -f -- "$intermediate" "$old" 2>/dev/null || true
         fi
         mv_case_only_rename_via_python3 "$old" "$new" || return 1
         return 0
