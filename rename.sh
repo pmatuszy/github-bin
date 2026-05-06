@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.05.06 - v. 19.15 - YYYY-MM-DD + space/tab/underscore + HH-MM-SS + tail -> YYYYMMDD_HHMMSS early; transform_name tail allows space before title
 # 2026.05.06 - v. 19.14 - treat .nef and .xmp as media (is_media_file + common_media_ext_re timestamp rules)
 # 2026.04.30 - v. 19.13 - Sprache_/Voice_ YYMMDD_HHMMSS.ext (no tail segment) -> YYYYMMDD_HHMMSS-sprache/voice.ext
 # 2026.04.30 - v. 19.12 - restore errexit after set +e captures (transform_name leaked set -e; ERR on checksum return 1)
@@ -3992,7 +3993,8 @@ transform_basename() {
         return
     fi
 
-    if [[ "$new" =~ ^([0-9]{4})-([0-9]{2})-([0-9]{2})_([0-9]{2})-([0-9]{2})-([0-9]{2})(.+)(\.[^.]+)$ ]]; then
+    # Underscore or whitespace between date and time (e.g. camera exports "2010-02-20 14-28-18  title.NEF").
+    if [[ "$new" =~ ^([0-9]{4})-([0-9]{2})-([0-9]{2})[[:space:]_]+([0-9]{2})-([0-9]{2})-([0-9]{2})(.+)(\.[^.]+)$ ]]; then
         printf '%s%s%s_%s%s%s%s%s' \
             "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}" "${BASH_REMATCH[3]}" \
             "${BASH_REMATCH[4]}" "${BASH_REMATCH[5]}" "${BASH_REMATCH[6]}" \
@@ -4178,7 +4180,8 @@ transform_name() {
         # "2020-04-24-14-40-29_o_prof._Miernowskim.jpg",
         # or "2025-07-23__09_07_46-Finished_signing.jpg"
         # -> "20180228_222015-491.mp4" / "20180228_222015.mp4".
-        if [[ "$newbase" =~ ^[[:space:]]*([0-9]{4})-([0-9]{2})-([0-9]{2})[[:space:]_-]+([0-9]{2})[-._]([0-9]{2})[-._]([0-9]{2})([-_].+)?(\.${common_media_ext_re})$ ]]; then
+        # Title tail may start with space (before stem separator normalize) or _/- .
+        if [[ "$newbase" =~ ^[[:space:]]*([0-9]{4})-([0-9]{2})-([0-9]{2})[[:space:]_-]+([0-9]{2})[-._]([0-9]{2})[-._]([0-9]{2})([[:space:]_-].*)?(\.${common_media_ext_re})$ ]]; then
             y="${BASH_REMATCH[1]}"
             mo="${BASH_REMATCH[2]}"
             d="${BASH_REMATCH[3]}"
