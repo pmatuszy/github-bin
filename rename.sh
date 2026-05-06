@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.05.06 - v. 19.32 - case-only: always via intermediate B only (mv A→B→A'; Python matches); remove MoveFileEx / Python-before-mv
 # 2026.05.06 - v. 19.31 - case-only: always stage via TMPDIR first (not only MSYS); try Python MoveFileExW when WINDIR (before bash mv)
 # 2026.05.06 - v. 19.30 - case-only rename: python3 two-step os.replace via TMPDIR when bash mv still fails (MSYS)
 # 2026.05.06 - v. 19.29 - case-only mv on MSYS/Cygwin: stage via TMPDIR mktemp first (parent-dir staging still hit NTFS same-file mv bug)
@@ -3253,7 +3254,8 @@ is_case_only_rename_pair() {
     return 0
 }
 
-# Prefer process TMP for staging so the temp path never shares a tree prefix with the target (MSYS mv "same file" on case-insensitive NTFS).
+# Pick intermediate path B for case-only two-step renames: mv old→B then mv B→new (never direct old→new).
+# Prefer process TMP so B rarely shares a tree prefix with the target (MSYS mv "same file" on case-insensitive NTFS).
 make_case_rename_staging_path() {
     local target="$1" dir parent i=0 p tbase
     dir="$(dirname -- "$target")"
@@ -3288,68 +3290,46 @@ make_case_rename_staging_path() {
     return 1
 }
 
+# Case-only renames always use two mv steps: A_before_rename → intermediate (B) → A_after_rename (never a direct mv old→new).
 mv_case_only_rename_via_python3() {
     local old="$1" new="$2"
     command -v python3 >/dev/null 2>&1 || return 1
     python3 - "$old" "$new" <<'PY'
-import os, sys, tempfile, ctypes
-from ctypes import wintypes
+import os, sys, tempfile
 
 old, new = sys.argv[1], sys.argv[2]
 old = os.path.abspath(old)
 new = os.path.abspath(new)
 
-
-def try_win32_movefileex() -> bool:
-    if sys.platform != "win32" and not sys.platform.startswith("msys") and sys.platform != "cygwin":
-        return False
-    k32 = ctypes.WinDLL("kernel32", use_last_error=True)
-    MoveFileExW = k32.MoveFileExW
-    MoveFileExW.argtypes = [wintypes.LPCWSTR, wintypes.LPCWSTR, wintypes.DWORD]
-    MoveFileExW.restype = wintypes.BOOL
-    MOVEFILE_REPLACE_EXISTING = 0x1
-    if MoveFileExW(old, new, 0):
-        return True
-    if MoveFileExW(old, new, MOVEFILE_REPLACE_EXISTING):
-        return True
-    return False
-
-
-def two_step_replace() -> None:
-    tmpdir = os.environ.get("TMPDIR") or tempfile.gettempdir()
-    fd, tmp = tempfile.mkstemp(dir=tmpdir, prefix="rename.sh.case-py.")
-    os.close(fd)
+tmpdir = os.environ.get("TMPDIR") or tempfile.gettempdir()
+fd, intermediate = tempfile.mkstemp(dir=tmpdir, prefix="rename.sh.case-py.")
+os.close(fd)
+try:
+    os.unlink(intermediate)
+except OSError:
+    pass
+try:
+    os.replace(old, intermediate)
+    os.replace(intermediate, new)
+except OSError:
     try:
-        os.unlink(tmp)
+        if os.path.lexists(intermediate):
+            os.replace(intermediate, old)
     except OSError:
         pass
-    os.replace(old, tmp)
-    os.replace(tmp, new)
-
-
-if try_win32_movefileex():
-    sys.exit(0)
-try:
-    two_step_replace()
-except OSError:
     sys.exit(1)
 PY
 }
 
 mv_with_case_only_filesystem_workaround() {
-    local old="$1" new="$2" tmp
+    local old="$1" new="$2" intermediate
     if is_case_only_rename_pair "$old" "$new"; then
-        if [[ -n "${WINDIR:-}" ]] && command -v python3 >/dev/null 2>&1; then
-            if mv_case_only_rename_via_python3 "$old" "$new"; then
+        intermediate="$(make_case_rename_staging_path "$new")" || return 1
+        if mv -i -- "$old" "$intermediate"; then
+            if mv -i -- "$intermediate" "$new"; then
                 return 0
             fi
-        fi
-        tmp="$(make_case_rename_staging_path "$new")" || return 1
-        if mv -i -- "$old" "$tmp"; then
-            if mv -i -- "$tmp" "$new"; then
-                return 0
-            fi
-            mv -f -- "$tmp" "$old" 2>/dev/null || true
+            mv -f -- "$intermediate" "$old" 2>/dev/null || true
         fi
         mv_case_only_rename_via_python3 "$old" "$new" || return 1
         return 0
@@ -3360,19 +3340,14 @@ mv_with_case_only_filesystem_workaround() {
 
 # Same two-step logic without -i (rollback / error paths).
 mv_with_case_only_filesystem_workaround_force() {
-    local old="$1" new="$2" tmp
+    local old="$1" new="$2" intermediate
     if is_case_only_rename_pair "$old" "$new"; then
-        if [[ -n "${WINDIR:-}" ]] && command -v python3 >/dev/null 2>&1; then
-            if mv_case_only_rename_via_python3 "$old" "$new"; then
+        intermediate="$(make_case_rename_staging_path "$new")" || return 1
+        if mv -f -- "$old" "$intermediate"; then
+            if mv -f -- "$intermediate" "$new"; then
                 return 0
             fi
-        fi
-        tmp="$(make_case_rename_staging_path "$new")" || return 1
-        if mv -f -- "$old" "$tmp"; then
-            if mv -f -- "$tmp" "$new"; then
-                return 0
-            fi
-            mv -f -- "$tmp" "$old" 2>/dev/null || true
+            mv -f -- "$intermediate" "$old" 2>/dev/null || true
         fi
         mv_case_only_rename_via_python3 "$old" "$new" || return 1
         return 0
