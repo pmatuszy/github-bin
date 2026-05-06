@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.05.06 - v. 19.40 - case-only final hop: mv uniq→new, else cp -p+cmp+rm uniq (CIFS mv-to-case-variant fails); cmp fallback to diff -q
 # 2026.05.06 - v. 19.39 - CRITICAL case-only: hardlink (or cp+cmp) then rm old then mv uniq→new — never os.replace-only on CIFS (data loss risk)
 # 2026.05.06 - v. 19.38 - case-only: exactly two hops mv old→.___ABC_case_uniq_*→new (bash + Python os.replace); drop three-hop
 # 2026.05.06 - v. 19.37 - case-only Python: POSIX os.replace only (no cmd.exe); for Linux including CIFS/SMB mounts
@@ -3274,6 +3275,32 @@ make_case_rename_staging_path() {
     return 1
 }
 
+case_only_files_match() {
+    local a="$1" b="$2"
+    if command -v cmp >/dev/null 2>&1; then
+        cmp -s -- "$a" "$b"
+        return
+    fi
+    diff -q "$a" "$b" >/dev/null 2>&1
+}
+
+# After unlinking the old basename, move uniq to final name; CIFS often rejects mv for case-only so fall back to cp + verify.
+case_only_mv_uniq_to_new() {
+    local uniq="$1" new="$2"
+    if mv -- "$uniq" "$new" 2>/dev/null && [[ -f "$new" ]]; then
+        return 0
+    fi
+    [[ -f "$uniq" ]] || return 1
+    cp -p -- "$uniq" "$new" || return 1
+    if ! case_only_files_match "$uniq" "$new"; then
+        rm -f -- "$new"
+        return 1
+    fi
+    rm -f -- "$uniq"
+    [[ -f "$new" ]] || return 1
+    return 0
+}
+
 # Case-only renames: never rely on rename(old→tmp→new) alone on CIFS/SMB (can drop links). Prefer hardlink + unlink old name + mv to final; else cp+cmp.
 case_only_rename_safe() {
     local old="$1" new="$2" uniq
@@ -3282,11 +3309,11 @@ case_only_rename_safe() {
 
     if ln -- "$old" "$uniq" 2>/dev/null; then
         rm -f -- "$old" || { rm -f -- "$uniq"; return 1; }
-        if mv -- "$uniq" "$new"; then
-            [[ -f "$new" ]] || return 1
+        if case_only_mv_uniq_to_new "$uniq" "$new"; then
             return 0
         fi
-        if mv -- "$uniq" "$old"; then
+        if mv -- "$uniq" "$old" 2>/dev/null || { [[ -f "$uniq" ]] && cp -p -- "$uniq" "$old" && case_only_files_match "$uniq" "$old" && rm -f -- "$uniq"; }; then
+            [[ -f "$old" ]] || return 1
             return 1
         fi
         echo "rename.sh: CASE-ONLY RENAME FAILED after hardlink; data should still exist at: $uniq" >&2
@@ -3295,16 +3322,16 @@ case_only_rename_safe() {
     fi
 
     cp -p -- "$old" "$uniq" || { rm -f -- "$uniq"; return 1; }
-    if ! cmp -s -- "$old" "$uniq"; then
+    if ! case_only_files_match "$old" "$uniq"; then
         rm -f -- "$uniq"
         return 1
     fi
     rm -f -- "$old" || { rm -f -- "$uniq"; return 1; }
-    if mv -- "$uniq" "$new"; then
-        [[ -f "$new" ]] || return 1
+    if case_only_mv_uniq_to_new "$uniq" "$new"; then
         return 0
     fi
-    if mv -- "$uniq" "$old"; then
+    if mv -- "$uniq" "$old" 2>/dev/null || { [[ -f "$uniq" ]] && cp -p -- "$uniq" "$old" && case_only_files_match "$uniq" "$old" && rm -f -- "$uniq"; }; then
+        [[ -f "$old" ]] || return 1
         return 1
     fi
     echo "rename.sh: CASE-ONLY RENAME FAILED after copy; data should still exist at: $uniq" >&2
