@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.05.06 - v. 19.29 - case-only mv on MSYS/Cygwin: stage via TMPDIR mktemp first (parent-dir staging still hit NTFS same-file mv bug)
 # 2026.05.06 - v. 19.28 - case-only mv: stage temp one directory above target dir (MSYS/NTFS second mv "same file"); fallback TMPDIR mktemp
 # 2026.05.06 - v. 19.27 - rename prompt [S]: auto-yes only for similar names in current dir (same extension; leading _ if anchor had it)
 # 2026.05.06 - v. 19.26 - per-directory [D] auto-yes: print each rename in non-verbose; case-only renames use two-step mv for case-insensitive FS
@@ -3250,6 +3251,15 @@ is_case_only_rename_pair() {
     return 0
 }
 
+# Git Bash / MSYS mv can still report tmp and dest as the same file when the temp sits under a common ancestor of the target (case-insensitive NTFS).
+case_rename_staging_use_tmpdir_first() {
+    case "${OSTYPE:-}" in
+        msys* | cygwin*) return 0 ;;
+    esac
+    [[ -n "${MSYSTEM:-}" ]] && return 0
+    return 1
+}
+
 make_case_rename_staging_path() {
     local target="$1" dir parent i=0 p tbase
     dir="$(dirname -- "$target")"
@@ -3257,6 +3267,11 @@ make_case_rename_staging_path() {
     # dirname/. == dirname when target dir is "." or filesystem root; use dir/.. so staging is never in the same directory as the final basename.
     if [[ "${parent%/}" == "${dir%/}" ]]; then
         parent="${dir}/.."
+    fi
+    tbase="${TMPDIR:-/tmp}"
+    if case_rename_staging_use_tmpdir_first && [[ -d "$tbase" && -w "$tbase" ]]; then
+        p="$(mktemp "$tbase/rename.sh.case-ren.XXXXXX")" || p=""
+        [[ -n "$p" ]] && { printf '%s\n' "$p"; return 0; }
     fi
     # Same-directory staging breaks the second mv on MSYS + case-insensitive NTFS ("X and Y are the same file").
     if [[ -w "$parent" ]]; then
@@ -3273,7 +3288,6 @@ make_case_rename_staging_path() {
         [[ ! -e "$p" ]] && { printf '%s\n' "$p"; return 0; }
         ((++i))
     done
-    tbase="${TMPDIR:-/tmp}"
     if [[ -d "$tbase" && -w "$tbase" ]]; then
         p="$(mktemp "$tbase/rename.sh.case-ren.XXXXXX")" || return 1
         printf '%s\n' "$p"
