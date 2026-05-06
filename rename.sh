@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.05.06 - v. 19.18 - wrap long same-inode (case-only) verbose line to MAX_LINE_LENGTH
 # 2026.05.06 - v. 19.17 - checksum verify fail: recovery hint + optional [U] refresh hash from disk (before/after rename)
 # 2026.05.06 - v. 19.16 - treat Photoshop native formats (.psd .psb .psdt) as media (is_media_file + common_media_ext_re)
 # 2026.05.06 - v. 19.15 - YYYY-MM-DD + space/tab/underscore + HH-MM-SS + tail -> YYYYMMDD_HHMMSS early; transform_name tail allows space before title
@@ -2400,6 +2401,21 @@ print_resolved_ref_verbose() {
     else
         echo "[VERBOSE] Resolved ref '${ref}'" >&2
         echo "          -> '${resolved}'" >&2
+    fi
+}
+
+print_same_inode_no_rename_verbose() {
+    (( VERBOSE == 1 )) || return 0
+    local src="$1"
+    local dst="$2"
+    local plain="[VERBOSE] Suggested target is the same inode as source (case-insensitive path spellings): '${src}' | '${dst}' — no rename."
+
+    if (( ${#plain} <= MAX_LINE_LENGTH )); then
+        echo -e "${CYAN}[VERBOSE]${RESET} Suggested target is the same inode as source (case-insensitive path spellings): '${src}' | '${dst}' — no rename." >&2
+    else
+        echo -e "${CYAN}[VERBOSE]${RESET} Suggested target is the same inode as source (case-insensitive path spellings) — no rename." >&2
+        echo "          source: '${src}'" >&2
+        echo "          target: '${dst}'" >&2
     fi
 }
 
@@ -6813,7 +6829,7 @@ for f in "${ordered_paths[@]}"; do
     fi
 
     if [[ "$f" != "$new" ]] && paths_refer_to_same_file "$f" "$new"; then
-        vlog "Suggested target is the same inode as source (case-insensitive path spellings): '$f' | '$new' — no rename."
+        print_same_inode_no_rename_verbose "$f" "$new"
         db_backfill_missing_hashes_for_existing_file "$f"
         ((++files_skipped))
         db_mark_checked "$f" "plain" "checked"
