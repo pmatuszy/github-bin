@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.05.06 - v. 19.60 - NEF+XMP: sync crs/RawFileName in sidecar to renamed NEF basename (preserve XMP mtime); always verify/prompt-fix mismatches (dry-run notes only)
 # 2026.05.06 - v. 19.59 - verbose: one line for Samba/exfat case-only skip + “no rename” (main loop + checksum no-action); defer checksum ref/sum drop vlogs when group has no action
 # 2026.05.06 - v. 19.58 - --version: same boxed banner as -h (adds DB + exclude lines); print_startup_banner optional detail mode
 # 2026.05.06 - v. 19.57 - transform_name: Sprache_/Voice_ rule — always lowercase sprache label; tail case preserved (Voice unchanged)
@@ -3212,8 +3213,173 @@ perform_nef_xmp_pair_plain_renames() {
     local primary_old="$1" primary_new="$2" buddy_old="$3" buddy_new="$4"
     perform_plain_entry_rename "$primary_old" "$primary_new" || return 1
     perform_plain_entry_rename "$buddy_old" "$buddy_new" || return 1
+    if nef_xmp_pair_set_final_paths_from_primary_and_buddy_new "$primary_new" "$buddy_new"; then
+        nef_xmp_sync_sidecar_raw_file_name_to_nef "$NEF_XMP_FINAL_NEF" "$NEF_XMP_FINAL_XMP" || true
+        nef_xmp_verify_sidecar_raw_file_name_interactive "$NEF_XMP_FINAL_NEF" "$NEF_XMP_FINAL_XMP" || return $?
+    fi
     processed["$buddy_old"]=1
     return 0
+}
+
+# Sets NEF_XMP_FINAL_NEF / NEF_XMP_FINAL_XMP from post-rename paths (primary may be .nef or .xmp).
+nef_xmp_pair_set_final_paths_from_primary_and_buddy_new() {
+    local p_new="$1" b_new="$2"
+    NEF_XMP_FINAL_NEF=""
+    NEF_XMP_FINAL_XMP=""
+    if [[ "${p_new,,}" == *.nef ]]; then
+        NEF_XMP_FINAL_NEF="$p_new"
+        NEF_XMP_FINAL_XMP="$b_new"
+        return 0
+    fi
+    if [[ "${p_new,,}" == *.xmp ]]; then
+        NEF_XMP_FINAL_XMP="$p_new"
+        NEF_XMP_FINAL_NEF="$b_new"
+        return 0
+    fi
+    return 1
+}
+
+nef_xmp_extract_raw_file_name_value() {
+    local xmp="$1"
+    [[ -f "$xmp" ]] || return 1
+    python3 - "$xmp" <<'PY'
+import re
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+data = path.read_bytes()
+patterns = (
+    rb'\bcrs:RawFileName\s*=\s*"([^"]*)"',
+    rb'\bRawFileName\s*=\s*"([^"]*)"',
+    rb"\bcrs:RawFileName\s*=\s*'([^']*)'",
+    rb"\bRawFileName\s*=\s*'([^']*)'",
+)
+for pat in patterns:
+    m = re.search(pat, data, flags=re.I)
+    if m:
+        print(m.group(1).decode("utf-8", errors="surrogateescape"), end="")
+        raise SystemExit(0)
+print("", end="")
+raise SystemExit(0)
+PY
+}
+
+# Rewrite crs:/bare RawFileName= attribute value; restores mtime/access from before write (like HTML companion edits).
+nef_xmp_replace_raw_file_name_preserving_times() {
+    local xmp="$1" new_bn="$2"
+    local ref st=0
+    [[ -f "$xmp" ]] || return 1
+    ref="$(mktemp)"
+    touch -r "$xmp" "$ref"
+    python3 - "$xmp" "$new_bn" <<'PY' || st=$?
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+new_bn = sys.argv[2].encode("utf-8", errors="surrogateescape")
+data = path.read_bytes()
+patterns = (
+    rb'(\bcrs:RawFileName\s*=\s*")([^"]*)(")',
+    rb'(\bRawFileName\s*=\s*")([^"]*)(")',
+    rb"(\bcrs:RawFileName\s*=\s*')([^']*)(')",
+    rb"(\bRawFileName\s*=\s*')([^']*)(')",
+)
+for pat in patterns:
+    m = re.search(pat, data, flags=re.I)
+    if m:
+        data = data[: m.start(2)] + new_bn + data[m.end(2) :]
+        path.write_bytes(data)
+        raise SystemExit(0)
+raise SystemExit(2)
+PY
+    touch -r "$ref" "$xmp"
+    rm -f "$ref"
+    return "$st"
+}
+
+# After a real rename, force sidecar metadata to match the NEF basename (no prompt).
+nef_xmp_sync_sidecar_raw_file_name_to_nef() {
+    local nef_path="$1" xmp_path="$2"
+    local want cur
+    [[ -f "$nef_path" && -f "$xmp_path" ]] || return 0
+    [[ "${xmp_path,,}" == *.xmp ]] || return 0
+    want="$(basename -- "$nef_path")"
+    cur="$(nef_xmp_extract_raw_file_name_value "$xmp_path")"
+    [[ "${cur,,}" == "${want,,}" ]] && return 0
+    if [[ "$mode" == "dry-run" ]]; then
+        vlog "[DRY-RUN] Would set XMP RawFileName in '$xmp_path' to '${want}' (currently '${cur:-empty}')"
+        return 0
+    fi
+    vlog "Updating XMP RawFileName in '$xmp_path' to '${want}' (was '${cur:-empty}')"
+    if ! nef_xmp_replace_raw_file_name_preserving_times "$xmp_path" "$want"; then
+        emit_wrap_labeled_stdout "NOTE: " "${YELLOW}NOTE:${RESET} " "Could not find crs:RawFileName / RawFileName= attribute to rewrite in '$xmp_path' (sidecar may need manual Lightroom/metadata edit)."
+    fi
+}
+
+# Compare XMP RawFileName to paired NEF; prompt to fix stale/wrong values (dry-run: message only).
+nef_xmp_verify_sidecar_raw_file_name_interactive() {
+    local nef_path="$1" xmp_path="$2"
+    local want cur dir ans stem_same resolved proposed
+
+    [[ -f "$nef_path" && -f "$xmp_path" ]] || return 0
+    [[ "${xmp_path,,}" == *.xmp ]] || return 0
+    [[ "${nef_path,,}" == *.nef ]] || return 0
+
+    want="$(basename -- "$nef_path")"
+    cur="$(nef_xmp_extract_raw_file_name_value "$xmp_path")"
+
+    if [[ "${cur,,}" == "${want,,}" ]]; then
+        return 0
+    fi
+
+    dir="$(dirname -- "$xmp_path")"
+    if [[ -n "$cur" && -f "$dir/$cur" ]] && paths_refer_to_same_file "$dir/$cur" "$nef_path"; then
+        return 0
+    fi
+
+    stem_same=""
+    resolved=""
+    if resolved="$(nef_xmp_resolve_nef_buddy "$dir" "$(basename -- "${xmp_path%.*}")")"; then
+        stem_same="$(basename -- "$resolved")"
+    fi
+    proposed="$want"
+
+    if [[ "$mode" == "dry-run" ]]; then
+        emit_wrap_labeled_stdout "NOTE: " "${YELLOW}NOTE:${RESET} " "XMP RawFileName '${cur:-<missing>}' vs paired NEF basename '${want}' in '$xmp_path' (dry-run; no prompt)."
+        return 0
+    fi
+
+    echo
+    echo "XMP sidecar metadata check: '$xmp_path'"
+    echo "  Paired NEF: '$nef_path' (expected basename: '$want')"
+    echo "  RawFileName in XMP: '${cur:-<missing or empty>}'"
+    [[ -n "$stem_same" ]] && echo "  Same-stem .nef in directory: '$stem_same'"
+    verbose_question_timestamp "Update RawFileName in this XMP to '${proposed}'? [y/N/q]:"
+    echo -n "Update RawFileName in this XMP to '${proposed}'? [y/N/q]: "
+    flush_stdin
+    read_single_key ans "$PROMPT_WAIT_SECONDS"
+    echo
+    case "$ans" in
+        q|Q)
+            stopped_by_user=yes
+            return 2
+            ;;
+    esac
+    if [[ "$ans" =~ [Yy] ]]; then
+        if nef_xmp_replace_raw_file_name_preserving_times "$xmp_path" "$proposed"; then
+            emit_wrap_labeled_stdout "OK: " "${GREEN}OK:${RESET} " "Updated RawFileName in '$xmp_path' to '${proposed}'."
+        else
+            emit_wrap_labeled_stdout "SKIP: " "${YELLOW}SKIP:${RESET} " "No RawFileName= attribute found to rewrite in '$xmp_path'."
+        fi
+    fi
+    return 0
+}
+
+nef_xmp_pair_run_sidecar_metadata_checks() {
+    [[ -n "$nef_xmp_buddy" ]] || return 0
+    nef_xmp_pair_set_final_paths_from_primary_and_buddy_new "$1" "$2" || return 0
+    nef_xmp_verify_sidecar_raw_file_name_interactive "$NEF_XMP_FINAL_NEF" "$NEF_XMP_FINAL_XMP" || return $?
 }
 
 # Main loop: uses f, new, nef_xmp_buddy, nef_xmp_new
@@ -3222,7 +3388,7 @@ perform_plain_or_nef_xmp_pair() {
     if [[ -n "$nef_xmp_buddy" ]]; then
         print_rename_action_verbose "$f" "$new" "${reason} (NEF+XMP pair)"
         print_rename_action_verbose "$nef_xmp_buddy" "$nef_xmp_new" "${reason} (NEF+XMP pair)"
-        perform_nef_xmp_pair_plain_renames "$f" "$new" "$nef_xmp_buddy" "$nef_xmp_new"
+        perform_nef_xmp_pair_plain_renames "$f" "$new" "$nef_xmp_buddy" "$nef_xmp_new" || return $?
     else
         print_rename_action_verbose "$f" "$new" "$reason"
         perform_plain_entry_rename "$f" "$new"
@@ -7612,6 +7778,7 @@ for f in "${ordered_paths[@]}"; do
             fi
         fi
         if [[ "$nx_pri_si" == yes && "$nx_bud_si" == yes ]]; then
+            nef_xmp_pair_run_sidecar_metadata_checks "$new" "$nef_xmp_new" || break
             db_backfill_missing_hashes_for_existing_file "$f"
             db_backfill_missing_hashes_for_existing_file "$nef_xmp_buddy"
             ((files_skipped+=2))
@@ -7626,6 +7793,7 @@ for f in "${ordered_paths[@]}"; do
             else
                 vlog "No rename needed for NEF+XMP pair '$f' + '$nef_xmp_buddy'"
             fi
+            nef_xmp_pair_run_sidecar_metadata_checks "$new" "$nef_xmp_new" || break
             db_backfill_missing_hashes_for_existing_file "$f"
             db_backfill_missing_hashes_for_existing_file "$nef_xmp_buddy"
             ((files_skipped+=2))
@@ -7650,6 +7818,7 @@ for f in "${ordered_paths[@]}"; do
         if [[ "$rename_all_do_work" == yes ]]; then
             perform_plain_or_nef_xmp_pair "rename_all" || break
         elif [[ -n "$nef_xmp_buddy" ]] && ! is_torrent_url_file "$f" && ! is_thumbs_db_file "$f"; then
+            nef_xmp_pair_run_sidecar_metadata_checks "$new" "$nef_xmp_new" || break
             db_backfill_missing_hashes_for_existing_file "$f"
             db_backfill_missing_hashes_for_existing_file "$nef_xmp_buddy"
             ((files_skipped+=2))
@@ -7671,6 +7840,7 @@ for f in "${ordered_paths[@]}"; do
         if [[ "$auto_yes_do_work" == yes ]]; then
             perform_plain_or_nef_xmp_pair "per-directory auto-yes" || break
         elif [[ -n "$nef_xmp_buddy" ]] && ! is_torrent_url_file "$f" && ! is_thumbs_db_file "$f"; then
+            nef_xmp_pair_run_sidecar_metadata_checks "$new" "$nef_xmp_new" || break
             db_backfill_missing_hashes_for_existing_file "$f"
             db_backfill_missing_hashes_for_existing_file "$nef_xmp_buddy"
             ((files_skipped+=2))
@@ -7694,6 +7864,7 @@ for f in "${ordered_paths[@]}"; do
         if [[ "$auto_sim_do_work" == yes ]]; then
             perform_plain_or_nef_xmp_pair "per-directory similar-name auto-yes" || break
         elif [[ -n "$nef_xmp_buddy" ]] && ! is_torrent_url_file "$f" && ! is_thumbs_db_file "$f"; then
+            nef_xmp_pair_run_sidecar_metadata_checks "$new" "$nef_xmp_new" || break
             db_backfill_missing_hashes_for_existing_file "$f"
             db_backfill_missing_hashes_for_existing_file "$nef_xmp_buddy"
             ((files_skipped+=2))
@@ -7786,6 +7957,10 @@ for f in "${ordered_paths[@]}"; do
                     print_rename_action_verbose "$nef_xmp_buddy" "$nef_xmp_new" "manual edit (NEF+XMP pair; sidecar keeps script suggestion)"
                     perform_plain_entry_rename "$f" "$custom_new" || break
                     perform_plain_entry_rename "$nef_xmp_buddy" "$nef_xmp_new" || break
+                    if nef_xmp_pair_set_final_paths_from_primary_and_buddy_new "$custom_new" "$nef_xmp_new"; then
+                        nef_xmp_sync_sidecar_raw_file_name_to_nef "$NEF_XMP_FINAL_NEF" "$NEF_XMP_FINAL_XMP" || true
+                        nef_xmp_verify_sidecar_raw_file_name_interactive "$NEF_XMP_FINAL_NEF" "$NEF_XMP_FINAL_XMP" || break
+                    fi
                     processed["$nef_xmp_buddy"]=1
                 else
                     print_rename_action_verbose "$f" "$custom_new" "manual edit"
