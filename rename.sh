@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.05.06 - v. 19.68 - NEF+XMP RawFileName prompt: multi-line Keys menu (readability)
 # 2026.05.06 - v. 19.67 - NEF+XMP RawFileName prompt: default yes ([Y/n/d/q]; Enter accepts)
 # 2026.05.06 - v. 19.66 - NEF+XMP RawFileName: bold/colored verification line outside box; [d]irectory batch auto-apply (no further prompts in that dir)
 # 2026.05.06 - v. 19.65 - NEF+XMP filesystem box: fold long lines (no filename truncation via %.*s)
@@ -3603,7 +3604,11 @@ nef_xmp_verify_sidecar_raw_file_name_interactive() {
         echo "  Could not locate RawFileName element or attribute to rewrite (parsed inner value: '${cur:-empty}')."
     fi
     echo
-    echo "  Keys: [Y]/Enter yes (this file only, default)  [d] yes + auto for every RawFileName fix in this directory  [n] no  [q] quit run"
+    echo "  Keys:"
+    echo "    [Y] Yes / Enter - this file only (default)"
+    echo "    [d] Yes + auto for every RawFileName fix in this directory"
+    echo "    [n] No"
+    echo "    [q] Quit run"
     verbose_question_timestamp "Apply this RawFileName change in the XMP? [Y/n/d/q]:"
     echo -n "Apply this RawFileName change in the XMP? [Y/n/d/q]: "
     flush_stdin
