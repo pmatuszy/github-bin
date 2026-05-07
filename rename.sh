@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.05.07 - v. 19.79 - non-verbose progress (dots + M/S/H): write to /dev/tty when available (stdout is often block-buffered when not a TTY)
 # 2026.05.07 - v. 19.78 - fix nonverbose_progress_stdout_line_char: use "verbose -> skip" (was inverted; dots and M/S/H never printed)
 # 2026.05.07 - v. 19.77 - non-verbose checksum ref verify: M/S/H letters (same line wrap as dots) instead of silent checks
 # 2026.05.07 - v. 19.76 - current-scope discovery Python: restore import sys (stdin/stdout/stderr)
@@ -434,7 +435,7 @@ shopt -s nullglob
 
 VERBOSE=0
 VERBOSE_MAIN_EVERY=200
-# Non-verbose: one '.' per main-loop examined file (stdout); checksum per-ref verify prints M/S/H (see nonverbose_checksum_ref_verify_progress_letter); same column counter wraps at MAX_LINE_LENGTH; close line before prompts.
+# Non-verbose: '.' per main-loop entry and M/S/H per checksum ref verify; written to /dev/tty when writable so output is visible even if stdout is block-buffered (e.g. piped). Same column counter wraps at MAX_LINE_LENGTH; end line before prompts/other stdout.
 NONVERBOSE_PROGRESS_DOT_LINE_OPEN=no
 NONVERBOSE_PROGRESS_DOT_COL_COUNT=0
 # After auto-dir “Renamed:” (stdout), the next iteration’s lone progress dot looked odd; skip that one dot (see nonverbose_main_loop_progress_dot).
@@ -599,15 +600,32 @@ flush_stdin() {
     done
 }
 
-# One non-verbose stdout progress character (dot or checksum letter); wraps like dots (MAX_LINE_LENGTH).
+# Non-verbose progress stream: prefer controlling TTY so dots/M-S-H show immediately (stdout may be fully buffered when not a TTY).
+nonverbose_progress_tty_put() {
+    if [[ -w /dev/tty ]] 2>/dev/null; then
+        printf '%s' "$1" >/dev/tty
+    else
+        printf '%s' "$1"
+    fi
+}
+
+nonverbose_progress_tty_nl() {
+    if [[ -w /dev/tty ]] 2>/dev/null; then
+        printf '\n' >/dev/tty
+    else
+        printf '\n'
+    fi
+}
+
+# One non-verbose progress character (dot or checksum letter); wraps like dots (MAX_LINE_LENGTH).
 nonverbose_progress_stdout_line_char() {
     local ch="$1"
     (( VERBOSE == 1 )) && return 0
     if [[ "$NONVERBOSE_PROGRESS_DOT_LINE_OPEN" == yes ]] && (( NONVERBOSE_PROGRESS_DOT_COL_COUNT >= MAX_LINE_LENGTH )); then
-        printf '\n'
+        nonverbose_progress_tty_nl
         NONVERBOSE_PROGRESS_DOT_COL_COUNT=0
     fi
-    printf '%s' "$ch"
+    nonverbose_progress_tty_put "$ch"
     NONVERBOSE_PROGRESS_DOT_LINE_OPEN=yes
     ((++NONVERBOSE_PROGRESS_DOT_COL_COUNT))
 }
@@ -636,7 +654,7 @@ nonverbose_checksum_ref_verify_progress_letter() {
 
 nonverbose_progress_dot_endline_if_needed() {
     [[ "$NONVERBOSE_PROGRESS_DOT_LINE_OPEN" == yes ]] || return 0
-    printf '\n'
+    nonverbose_progress_tty_nl
     NONVERBOSE_PROGRESS_DOT_LINE_OPEN=no
     NONVERBOSE_PROGRESS_DOT_COL_COUNT=0
 }
