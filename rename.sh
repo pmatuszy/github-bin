@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.05.07 - v. 19.51 - checksum_file_has_renamable_refs: avoid ERR/set -e on final return 1 (RETURN trap + no inner errexit toggle)
 # 2026.05.07 - v. 19.50 - if SQLite cache file exists in start dir and --use-db omitted, prompt to enable it (default Y)
 # 2026.05.07 - v. 19.49 - if findmnt is missing, print one-time install hint (util-linux) for mount-type detection
 # 2026.05.07 - v. 19.48 - case-only skip: also FUSE SMB (GVFS fuse.gvfsd-fuse, smb path/SOURCE; fuse.rclone smb hints)
@@ -2146,6 +2147,10 @@ db_mark_renamed_path_checked() {
 checksum_file_has_renamable_refs() {
     local sum_file="$1"
     local ref_hash ref_raw resolved_ref transformed_ref
+    local _cffr_restore_e=0
+    [[ $- == *e* ]] && _cffr_restore_e=1
+    set +e
+    trap 'if ((_cffr_restore_e)); then set -e; else set +e; fi; trap - RETURN' RETURN
 
     [[ -f "$sum_file" ]] || return 1
     is_checksum_file "$sum_file" || return 1
@@ -2153,16 +2158,8 @@ checksum_file_has_renamable_refs() {
     while IFS=$'\t' read -r ref_hash ref_raw; do
         [[ -n "$ref_raw" ]] || continue
         resolved_ref="$(resolve_checksum_ref_path "$sum_file" "$ref_raw")"
-        local _cffr_save_e=0
-        [[ $- == *e* ]] && _cffr_save_e=1
-        set +e
         transformed_ref="$(transform_name "$resolved_ref")"
         tnr_rc=$?
-        if ((_cffr_save_e)); then
-            set -e
-        else
-            set +e
-        fi
         if (( tnr_rc == 2 )); then
             return 2
         fi
@@ -6813,14 +6810,14 @@ for f in "${ordered_paths[@]}"; do
         elif (( crr == 0 )); then
             vlog "DB cache hit for '$f' but referenced checksum entries still need rename; processing checksum file."
         else
-        db_backfill_missing_hashes_for_existing_file "$f"
-        if path_has_control_chars "$f"; then
-            print_control_char_warning "$f"
-        fi
-        emit_wrap_labeled_stdout "DB SKIP: " "${CYAN}DB SKIP:${RESET} " "'$(format_path_for_log "$f")'"
-        ((++files_skipped))
-        processed["$f"]=1
-        continue
+            db_backfill_missing_hashes_for_existing_file "$f"
+            if path_has_control_chars "$f"; then
+                print_control_char_warning "$f"
+            fi
+            emit_wrap_labeled_stdout "DB SKIP: " "${CYAN}DB SKIP:${RESET} " "'$(format_path_for_log "$f")'"
+            ((++files_skipped))
+            processed["$f"]=1
+            continue
         fi
     fi
 
