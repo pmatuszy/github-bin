@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.05.07 - v. 19.82 - non-verbose M/S/H: print one letter per 10 checksum progress events (resolve + verify + whole-file check share one counter)
 # 2026.05.07 - v. 19.81 - non-verbose: one M/S/H per checksum list line when resolving refs (replaces verbose-only "Resolved ref" lines for that phase)
 # 2026.05.07 - v. 19.80 - M/S/H: verify every checksum list ref (before/after rename + no-rename-needed real runs); whole-file checksum_check emits one letter; no-op groups skip dry-run verify
 # 2026.05.07 - v. 19.79 - non-verbose progress (dots + M/S/H): write to /dev/tty when available (stdout is often block-buffered when not a TTY)
@@ -437,9 +438,10 @@ shopt -s nullglob
 
 VERBOSE=0
 VERBOSE_MAIN_EVERY=200
-# Non-verbose: '.' per main-loop entry and M/S/H per checksum ref verify; written to /dev/tty when writable so output is visible even if stdout is block-buffered (e.g. piped). Same column counter wraps at MAX_LINE_LENGTH; end line before prompts/other stdout.
+# Non-verbose: '.' per main-loop entry; M/S/H once per 10 checksum progress events (resolve, per-ref verify, whole-file check). Written to /dev/tty when writable so output is visible even if stdout is block-buffered (e.g. piped). Same column counter wraps at MAX_LINE_LENGTH; end line before prompts/other stdout.
 NONVERBOSE_PROGRESS_DOT_LINE_OPEN=no
 NONVERBOSE_PROGRESS_DOT_COL_COUNT=0
+NONVERBOSE_CHECKSUM_LETTER_EVENT_N=0
 # After auto-dir “Renamed:” (stdout), the next iteration’s lone progress dot looked odd; skip that one dot (see nonverbose_main_loop_progress_dot).
 NONVERBOSE_SKIP_NEXT_MAIN_LOOP_DOT=no
 CLI_COLORS=""
@@ -642,10 +644,13 @@ nonverbose_main_loop_progress_dot() {
 }
 
 # M = MD5 list, S = SHA512 list, H = anything else (unknown extension / future kinds).
+# Counts every logical "checksum file progress" event; prints a letter only on every 10th (10, 20, …).
 nonverbose_checksum_ref_verify_progress_letter() {
     local kind="${1-}"
     local letter
     (( VERBOSE == 1 )) && return 0
+    ((++NONVERBOSE_CHECKSUM_LETTER_EVENT_N))
+    (( NONVERBOSE_CHECKSUM_LETTER_EVENT_N % 10 == 0 )) || return 0
     case "$kind" in
         md5) letter=M ;;
         sha512) letter=S ;;
