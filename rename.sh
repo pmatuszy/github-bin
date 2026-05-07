@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.05.06 - v. 19.67 - NEF+XMP RawFileName prompt: default yes ([Y/n/d/q]; Enter accepts)
 # 2026.05.06 - v. 19.66 - NEF+XMP RawFileName: bold/colored verification line outside box; [d]irectory batch auto-apply (no further prompts in that dir)
 # 2026.05.06 - v. 19.65 - NEF+XMP filesystem box: fold long lines (no filename truncation via %.*s)
 # 2026.05.06 - v. 19.64 - vlog: fold long messages (was one huge continuation line after [VERBOSE])
@@ -3602,9 +3603,9 @@ nef_xmp_verify_sidecar_raw_file_name_interactive() {
         echo "  Could not locate RawFileName element or attribute to rewrite (parsed inner value: '${cur:-empty}')."
     fi
     echo
-    echo "  Keys: [y] yes (this file only)  [d] yes + auto for every RawFileName fix in this directory  [n]/Enter skip  [q] quit run"
-    verbose_question_timestamp "Apply this RawFileName change in the XMP? [y/N/d/q]:"
-    echo -n "Apply this RawFileName change in the XMP? [y/N/d/q]: "
+    echo "  Keys: [Y]/Enter yes (this file only, default)  [d] yes + auto for every RawFileName fix in this directory  [n] no  [q] quit run"
+    verbose_question_timestamp "Apply this RawFileName change in the XMP? [Y/n/d/q]:"
+    echo -n "Apply this RawFileName change in the XMP? [Y/n/d/q]: "
     flush_stdin
     read_single_key ans "$PROMPT_WAIT_SECONDS"
     echo
@@ -3623,15 +3624,18 @@ nef_xmp_verify_sidecar_raw_file_name_interactive() {
             fi
             return 0
             ;;
+        n|N)
+            return 0
+            ;;
+        *)
+            if nef_xmp_replace_raw_file_name_preserving_times "$xmp_path" "$proposed"; then
+                emit_wrap_labeled_stdout "OK: " "${GREEN}OK:${RESET} " "Updated RawFileName in '$xmp_path' (same encoding as matched fragment)."
+            else
+                emit_wrap_labeled_stdout "SKIP: " "${YELLOW}SKIP:${RESET} " "No editable RawFileName element or attribute found in '$xmp_path'."
+            fi
+            return 0
+            ;;
     esac
-    if [[ "$ans" =~ [Yy] ]]; then
-        if nef_xmp_replace_raw_file_name_preserving_times "$xmp_path" "$proposed"; then
-            emit_wrap_labeled_stdout "OK: " "${GREEN}OK:${RESET} " "Updated RawFileName in '$xmp_path' (same encoding as matched fragment)."
-        else
-            emit_wrap_labeled_stdout "SKIP: " "${YELLOW}SKIP:${RESET} " "No editable RawFileName element or attribute found in '$xmp_path'."
-        fi
-    fi
-    return 0
 }
 
 nef_xmp_pair_run_sidecar_metadata_checks() {
