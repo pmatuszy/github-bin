@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.05.07 - v. 19.77 - non-verbose checksum ref verify: M/S/H letters (same line wrap as dots) instead of silent checks
 # 2026.05.07 - v. 19.76 - current-scope discovery Python: restore import sys (stdin/stdout/stderr)
 # 2026.05.07 - v. 19.75 - current-directory scope: fast find→sort→shell path (no 64 MB read loop); clearer startup message (no full-tree wording)
 # 2026.05.07 - v. 19.74 - NEF+XMP sidecar help text: flush-left lines ≤ MAX_LINE_LENGTH, breaks at sentence ends
@@ -432,7 +433,7 @@ shopt -s nullglob
 
 VERBOSE=0
 VERBOSE_MAIN_EVERY=200
-# Non-verbose: one '.' per main-loop examined file (stdout); close line before any other stdout output.
+# Non-verbose: one '.' per main-loop examined file (stdout); checksum per-ref verify prints M/S/H (see nonverbose_checksum_ref_verify_progress_letter); same column counter wraps at MAX_LINE_LENGTH; close line before prompts.
 NONVERBOSE_PROGRESS_DOT_LINE_OPEN=no
 NONVERBOSE_PROGRESS_DOT_COL_COUNT=0
 # After auto-dir “Renamed:” (stdout), the next iteration’s lone progress dot looked odd; skip that one dot (see nonverbose_main_loop_progress_dot).
@@ -597,19 +598,39 @@ flush_stdin() {
     done
 }
 
+# One non-verbose stdout progress character (dot or checksum letter); wraps like dots (MAX_LINE_LENGTH).
+nonverbose_progress_stdout_line_char() {
+    local ch="$1"
+    (( VERBOSE == 1 )) || return 0
+    if [[ "$NONVERBOSE_PROGRESS_DOT_LINE_OPEN" == yes ]] && (( NONVERBOSE_PROGRESS_DOT_COL_COUNT >= MAX_LINE_LENGTH )); then
+        printf '\n'
+        NONVERBOSE_PROGRESS_DOT_COL_COUNT=0
+    fi
+    printf '%s' "$ch"
+    NONVERBOSE_PROGRESS_DOT_LINE_OPEN=yes
+    ((++NONVERBOSE_PROGRESS_DOT_COL_COUNT))
+}
+
 nonverbose_main_loop_progress_dot() {
     (( VERBOSE == 1 )) && return 0
     if [[ "$NONVERBOSE_SKIP_NEXT_MAIN_LOOP_DOT" == yes ]]; then
         NONVERBOSE_SKIP_NEXT_MAIN_LOOP_DOT=no
         return 0
     fi
-    if [[ "$NONVERBOSE_PROGRESS_DOT_LINE_OPEN" == yes ]] && (( NONVERBOSE_PROGRESS_DOT_COL_COUNT >= MAX_LINE_LENGTH )); then
-        printf '\n'
-        NONVERBOSE_PROGRESS_DOT_COL_COUNT=0
-    fi
-    printf '.'
-    NONVERBOSE_PROGRESS_DOT_LINE_OPEN=yes
-    ((++NONVERBOSE_PROGRESS_DOT_COL_COUNT))
+    nonverbose_progress_stdout_line_char '.'
+}
+
+# M = MD5 list, S = SHA512 list, H = anything else (unknown extension / future kinds).
+nonverbose_checksum_ref_verify_progress_letter() {
+    local kind="${1-}"
+    local letter
+    (( VERBOSE == 1 )) && return 0
+    case "$kind" in
+        md5) letter=M ;;
+        sha512) letter=S ;;
+        *) letter=H ;;
+    esac
+    nonverbose_progress_stdout_line_char "$letter"
 }
 
 nonverbose_progress_dot_endline_if_needed() {
@@ -5604,7 +5625,8 @@ verify_single_checksum_target() {
     local target_ref="$2"
     local kind sum_dir sum_base target_norm target_re matched_line
 
-    kind="$(checksum_kind "$sum_file")"
+    kind="$(checksum_kind "$sum_file")" || kind=""
+    nonverbose_checksum_ref_verify_progress_letter "$kind"
     sum_dir="$(dirname -- "$sum_file")"
     sum_base="$(basename -- "$sum_file")"
     target_norm="$(strip_leading_dot_slash "$target_ref")"
