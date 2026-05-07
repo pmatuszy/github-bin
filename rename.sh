@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.05.07 - v. 19.94 - SQLite cache present prompt: [Q] Quit (same pattern as resume / DB hash prompts)
 # 2026.05.07 - v. 19.93 - NEF+XMP: if XMP has no RawFileName markup, skip RawFileName prompts/notes (do not suggest adding it)
 # 2026.05.07 - v. 19.92 - NEF+XMP RawFileName prompts: clarify metadata-only patch inside .xmp (not renaming paths); note recovery XMP may omit crs:RawFileName
 # 2026.05.07 - v. 19.91 - transform_basename: same date-first rule for VID-YYYYMMDD-* as IMG- (gallery/WhatsApp)
@@ -550,7 +551,7 @@ Usage: rename.sh [-v|--verbose] [--use-db] [--fast] [--force-recheck] [--run-db-
 Options:
   -v, --verbose          Show extra diagnostic output
   --version              Print version banner (paths + settings) and this usage/help, then exit
-  --use-db               Use SQLite cache in the start directory (_rename.sh-optional-db.sqlite3). If that file or the legacy rename.sh-optional-db.sqlite3 already exists and you omit --use-db, you are prompted whether to use it (default: yes).
+  --use-db               Use SQLite cache in the start directory (_rename.sh-optional-db.sqlite3). If that file or the legacy rename.sh-optional-db.sqlite3 already exists and you omit --use-db, you are prompted whether to use it (default: yes; [q] quits).
   --fast                 With --use-db, trust cached paths without checking current size/mtime
   --force-recheck        Ignore SQLite cache and recheck everything
   --run-db-maintenance   Run DB maintenance and exit (implies --use-db; uses --db-maintenance profile or default full)
@@ -907,11 +908,16 @@ prompt_use_existing_sqlite_cache_if_present() {
     echo "Use this SQLite cache for this run (same as --use-db)?"
     echo "  [Y] Yes — enable SQLite cache (default)"
     echo "  [N] No — run without the cache"
-    echo -n "Choice [Y/n]: "
+    echo "  [Q] Quit"
+    echo -n "Choice [Y/n/q]: "
     flush_stdin
     read_single_key answer "$PROMPT_WAIT_SECONDS"
     echo
 
+    if [[ "$answer" =~ [Qq] ]]; then
+        echo "Quitting."
+        exit 0
+    fi
     if [[ "$answer" =~ [Nn] ]]; then
         startup_progress "SQLite cache file present but not used for this run (user chose no)."
         return 0
