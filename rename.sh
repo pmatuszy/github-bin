@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.05.06 - v. 19.58 - --version: same boxed banner as -h (adds DB + exclude lines); print_startup_banner optional detail mode
 # 2026.05.06 - v. 19.57 - transform_name: Sprache_/Voice_ rule — always lowercase sprache label; tail case preserved (Voice unchanged)
 # 2026.05.06 - v. 19.56 - transform_name: Sprache/Voice/Screen_Recording/YYYYMMDD-HHMMSS_slug media tails — preserve letter case (only slug non-alnum to hyphens)
 # 2026.05.06 - v. 19.55 - transform_basename: date ranges YYYY.MM.DD-YYYY.MM.DD and YYYY.MM.DD-YYYY.MM-DD → YYYYMMDD-YYYYMMDD_tail (before single dotted-date rule)
@@ -467,7 +468,7 @@ Usage: rename.sh [-v|--verbose] [--use-db] [--fast] [--force-recheck] [--run-db-
 
 Options:
   -v, --verbose          Show extra diagnostic output
-  --version              Print version plus this usage/help and exit
+  --version              Print version banner (paths + settings) and this usage/help, then exit
   --use-db               Use SQLite cache in the start directory (_rename.sh-optional-db.sqlite3). If that file or the legacy rename.sh-optional-db.sqlite3 already exists and you omit --use-db, you are prompted whether to use it (default: yes).
   --fast                 With --use-db, trust cached paths without checking current size/mtime
   --force-recheck        Ignore SQLite cache and recheck everything
@@ -508,12 +509,15 @@ print_prompt_wait_description() {
 }
 
 print_startup_banner() {
+    local detail="${1-}"
     local width=60
     local line1="rename.sh"
     local line2="safe media + checksum rename helper"
     local line3="Version     : $SCRIPT_VERSION"
     local line4="Start dir   : $START_DIR"
-    local line5="Prompt wait : $(print_prompt_wait_description)"
+    local line5="DB file     : $DB_FILE"
+    local line6="Exclude file: $EXCLUDE_FILTERS_FILE"
+    local line7="Prompt wait : $(print_prompt_wait_description)"
     local charmap
 
     charmap="$(locale charmap 2>/dev/null || printf 'unknown')"
@@ -533,8 +537,14 @@ print_startup_banner() {
 ' $((width - 2)) $((width - 2)) "$line3"
     printf '│ %-*.*s │
 ' $((width - 2)) $((width - 2)) "$line4"
-    printf '│ %-*.*s │
+    if [[ "$detail" == version ]]; then
+        printf '│ %-*.*s │
 ' $((width - 2)) $((width - 2)) "$line5"
+        printf '│ %-*.*s │
+' $((width - 2)) $((width - 2)) "$line6"
+    fi
+    printf '│ %-*.*s │
+' $((width - 2)) $((width - 2)) "$line7"
     printf '└%*s┘
 ' "$width" '' | tr ' ' '─'
 }
@@ -2209,11 +2219,7 @@ while (( $# > 0 )); do
     #endregion
     case "$1" in
         --version)
-            echo "rename.sh"
-            echo "version: $SCRIPT_VERSION"
-            echo "db file (if used): $DB_FILE"
-            echo "exclude file: $EXCLUDE_FILTERS_FILE"
-            echo "prompt wait: $(print_prompt_wait_description)"
+            print_startup_banner version
             echo
             usage
             exit 0
