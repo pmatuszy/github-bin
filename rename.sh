@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.05.06 - v. 19.69 - non-verbose main loop: print '.' per examined file; end dot line before other stdout or prompts
 # 2026.05.06 - v. 19.68 - NEF+XMP RawFileName prompt: multi-line Keys menu (readability)
 # 2026.05.06 - v. 19.67 - NEF+XMP RawFileName prompt: default yes ([Y/n/d/q]; Enter accepts)
 # 2026.05.06 - v. 19.66 - NEF+XMP RawFileName: bold/colored verification line outside box; [d]irectory batch auto-apply (no further prompts in that dir)
@@ -328,6 +329,9 @@ emit_wrap_labeled_line() {
     local ansi_label="$3"
     local body="$4"
     local plain="${plain_prefix}${body}"
+    if (( fd == 1 )); then
+        nonverbose_progress_dot_endline_if_needed
+    fi
     if (( ${#plain} <= MAX_LINE_LENGTH )); then
         printf '%b%s\n' "$ansi_label" "$body" >&"$fd"
     else
@@ -341,6 +345,7 @@ emit_wrap_labeled_stderr() { emit_wrap_labeled_line 2 "$@"; }
 
 # "TAG: entry -> exclude file" with colored arrow when it fits on one line.
 emit_wrap_exclude_append_message() {
+    nonverbose_progress_dot_endline_if_needed
     local use_cyan_for_tag="$1"
     local tag="$2"
     local entry="$3"
@@ -363,6 +368,7 @@ emit_wrap_exclude_append_message() {
 
 # Long OLD path ARROW NEW path (ARROW is set later at startup; expanded at call time).
 emit_wrap_old_arrow_new_stdout() {
+    nonverbose_progress_dot_endline_if_needed
     local plain_pfx="$1"
     local ansi_pfx="$2"
     local old_p="$3"
@@ -419,6 +425,8 @@ shopt -s nullglob
 
 VERBOSE=0
 VERBOSE_MAIN_EVERY=200
+# Non-verbose: one '.' per main-loop examined file (stdout); close line before any other stdout output.
+NONVERBOSE_PROGRESS_DOT_LINE_OPEN=no
 CLI_COLORS=""
 CLI_MODE=""
 CLI_SCOPE=""
@@ -579,7 +587,20 @@ flush_stdin() {
     done
 }
 
+nonverbose_main_loop_progress_dot() {
+    (( VERBOSE == 1 )) && return 0
+    printf '.'
+    NONVERBOSE_PROGRESS_DOT_LINE_OPEN=yes
+}
+
+nonverbose_progress_dot_endline_if_needed() {
+    [[ "$NONVERBOSE_PROGRESS_DOT_LINE_OPEN" == yes ]] || return 0
+    printf '\n'
+    NONVERBOSE_PROGRESS_DOT_LINE_OPEN=no
+}
+
 read_single_key() {
+    nonverbose_progress_dot_endline_if_needed
     local __var_name="$1"
     local __timeout="$2"
     local __char=""
@@ -597,6 +618,7 @@ read_single_key() {
 }
 
 read_line_editable() {
+    nonverbose_progress_dot_endline_if_needed
     local __var_name="$1"
     local __timeout="$2"
     local __initial="${3-}"
@@ -611,11 +633,14 @@ read_line_editable() {
 }
 
 verbose_question_timestamp() {
-    (( VERBOSE == 1 )) || return 0
     local question="$1"
     local ts
     ts="$(date '+%Y-%m-%d %H:%M:%S')"
-    echo "[VERBOSE] [${ts}] ${question}" >&2
+    if (( VERBOSE == 1 )); then
+        echo "[VERBOSE] [${ts}] ${question}" >&2
+    else
+        nonverbose_progress_dot_endline_if_needed
+    fi
 }
 
 verbose_status_timestamp() {
@@ -3412,6 +3437,7 @@ nef_xmp_sync_sidecar_raw_file_name_to_nef() {
 
 # Plain-text lines only (no ANSI). Long lines are folded with fold -s — nothing is truncated mid-path.
 nef_xmp_emit_text_box() {
+    nonverbose_progress_dot_endline_if_needed
     local title="$1"
     shift
     local -a in_lines=( "$@" )
@@ -6606,6 +6632,7 @@ similar_rename_clear() {
 }
 
 print_rename_prompt_menu() {
+    nonverbose_progress_dot_endline_if_needed
     local kind_label="$1"
     local path="${2-}"
     local suggested_new="${3-}"
@@ -6893,6 +6920,7 @@ choose_custom_rename_target() {
 }
 
 print_checksum_prompt_menu() {
+    nonverbose_progress_dot_endline_if_needed
     local label_lower="$1"
     local hash_file="$2"
     local label_upper="${label_lower^^}"
@@ -6936,6 +6964,7 @@ print_rename_action_verbose() {
 }
 
 print_checksum_group_preview() {
+    nonverbose_progress_dot_endline_if_needed
     local label="$1"
     local sum_old="$2"
     local sum_new="$3"
@@ -6977,6 +7006,7 @@ print_summary() {
     SUMMARY_PRINTED=1
     SCRIPT_FINISH_TIME="${SCRIPT_FINISH_TIME:-$(date '+%Y-%m-%d %H:%M:%S')}"
 
+    nonverbose_progress_dot_endline_if_needed
     echo
     if (( files_affected > 0 )); then
         echo "Affected entries (last 100):"
@@ -7037,6 +7067,7 @@ on_interrupt() {
     stopped_by_user=yes
     SCRIPT_FINISH_TIME="$(date '+%Y-%m-%d %H:%M:%S')"
     save_resume_checkpoint
+    nonverbose_progress_dot_endline_if_needed
     echo
     echo "Interrupted by user (Ctrl-C)."
     echo "Checkpoint saved: $RESUME_STATE_FILE"
@@ -7208,6 +7239,7 @@ for f in "${ordered_paths[@]}"; do
 
     [[ -n "${processed[$f]+x}" ]] && continue
     ((++files_examined))
+    nonverbose_main_loop_progress_dot
 
     if is_excluded_by_filter_file "$f"; then
         print_skip_path_reason "$f" "was ignored because part of its path matches a filter from $EXCLUDE_FILTERS_FILE."
