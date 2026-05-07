@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.05.07 - v. 19.70 - non-verbose progress dots: newline every MAX_LINE_LENGTH dots so one line never exceeds that width
 # 2026.05.06 - v. 19.69 - non-verbose main loop: print '.' per examined file; end dot line before other stdout or prompts
 # 2026.05.06 - v. 19.68 - NEF+XMP RawFileName prompt: multi-line Keys menu (readability)
 # 2026.05.06 - v. 19.67 - NEF+XMP RawFileName prompt: default yes ([Y/n/d/q]; Enter accepts)
@@ -427,6 +428,7 @@ VERBOSE=0
 VERBOSE_MAIN_EVERY=200
 # Non-verbose: one '.' per main-loop examined file (stdout); close line before any other stdout output.
 NONVERBOSE_PROGRESS_DOT_LINE_OPEN=no
+NONVERBOSE_PROGRESS_DOT_COL_COUNT=0
 CLI_COLORS=""
 CLI_MODE=""
 CLI_SCOPE=""
@@ -589,14 +591,20 @@ flush_stdin() {
 
 nonverbose_main_loop_progress_dot() {
     (( VERBOSE == 1 )) && return 0
+    if [[ "$NONVERBOSE_PROGRESS_DOT_LINE_OPEN" == yes ]] && (( NONVERBOSE_PROGRESS_DOT_COL_COUNT >= MAX_LINE_LENGTH )); then
+        printf '\n'
+        NONVERBOSE_PROGRESS_DOT_COL_COUNT=0
+    fi
     printf '.'
     NONVERBOSE_PROGRESS_DOT_LINE_OPEN=yes
+    ((++NONVERBOSE_PROGRESS_DOT_COL_COUNT))
 }
 
 nonverbose_progress_dot_endline_if_needed() {
     [[ "$NONVERBOSE_PROGRESS_DOT_LINE_OPEN" == yes ]] || return 0
     printf '\n'
     NONVERBOSE_PROGRESS_DOT_LINE_OPEN=no
+    NONVERBOSE_PROGRESS_DOT_COL_COUNT=0
 }
 
 read_single_key() {
