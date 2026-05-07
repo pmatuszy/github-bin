@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.05.07 - v. 19.86 - NONVERBOSE_CHECKSUM_LETTER_CYCLE_EVENTS default 100 (was 50)
 # 2026.05.07 - v. 19.85 - non-verbose checksum: S/M/H every stride * NONVERBOSE_CHECKSUM_LETTER_CYCLE_EVENTS (default 50, was 10); ramp maps across cycle-1 steps
 # 2026.05.07 - v. 19.84 - non-verbose checksum ramp: backspace+overwrite in one cell until S/M/H; then advance column (fixes appended ramp strings on TTY)
 # 2026.05.07 - v. 19.83 - non-verbose checksum ramp: ASCII step every N events (NONVERBOSE_CHECKSUM_EVENT_STRIDE_N), S/M/H every N*10; large hash lists prompt [y/N/q] default N (LARGE_HASHFILE_LINE_PROMPT_THRESHOLD)
@@ -449,7 +450,7 @@ NONVERBOSE_CHECKSUM_LETTER_EVENT_N=0
 # Ramp advances every this many checksum events; kind letter (S/M/H) every (stride * NONVERBOSE_CHECKSUM_LETTER_CYCLE_EVENTS) events. STRIDE must be >= 1.
 NONVERBOSE_CHECKSUM_EVENT_STRIDE_N=1
 # One S/M/H commit every (stride * this many) checksum events (ramp redraws for the other cycle-1 stride-aligned events). Must be >= 2.
-NONVERBOSE_CHECKSUM_LETTER_CYCLE_EVENTS=50
+NONVERBOSE_CHECKSUM_LETTER_CYCLE_EVENTS=100
 # ASCII ramp (cycle-1 redraws between letters; positions map across this string). Edit to taste.
 NONVERBOSE_CHECKSUM_RAMP_CHARS='.,`^":;|!~-_=+*/\<>()[]{}#%&@?'
 # When yes, the next ramp update backspaces once before drawing (in-place on /dev/tty).
@@ -706,8 +707,8 @@ nonverbose_checksum_ref_verify_progress_letter() {
     (( VERBOSE == 1 )) && return 0
     stride=${NONVERBOSE_CHECKSUM_EVENT_STRIDE_N:-1}
     (( stride < 1 )) && stride=1
-    cycle=${NONVERBOSE_CHECKSUM_LETTER_CYCLE_EVENTS:-50}
-    [[ "$cycle" =~ ^[0-9]+$ ]] || cycle=50
+    cycle=${NONVERBOSE_CHECKSUM_LETTER_CYCLE_EVENTS:-100}
+    [[ "$cycle" =~ ^[0-9]+$ ]] || cycle=100
     (( cycle < 2 )) && cycle=2
     ((++NONVERBOSE_CHECKSUM_LETTER_EVENT_N))
     e=$NONVERBOSE_CHECKSUM_LETTER_EVENT_N
