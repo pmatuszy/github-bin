@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.05.06 - v. 19.62 - NEF+XMP RawFileName prompt: verify proposed basename exists beside sidecar (inode match), ls/stat + ad-hoc md5 (no DB write), summary line old→new
 # 2026.05.06 - v. 19.61 - NEF+XMP: RawFileName as element (<crs:RawFileName>...</crs:RawFileName>) or attribute; show current vs proposed fragment before confirm prompt
 # 2026.05.06 - v. 19.60 - NEF+XMP: sync crs/RawFileName in sidecar to renamed NEF basename (preserve XMP mtime); always verify/prompt-fix mismatches (dry-run notes only)
 # 2026.05.06 - v. 19.59 - verbose: one line for Samba/exfat case-only skip + “no rename” (main loop + checksum no-action); defer checksum ref/sum drop vlogs when group has no action
@@ -3392,6 +3393,57 @@ nef_xmp_sync_sidecar_raw_file_name_to_nef() {
     fi
 }
 
+# Show that proposed RawFileName basename exists as the paired NEF (ls/stat/md5); does not use rename.sh DB hash helpers.
+nef_xmp_print_proposed_raw_file_proof() {
+    local xmp_path="$1" nef_path="$2" proposed_bn="$3"
+    local dir join ls_line md5_disp sz mt at
+
+    dir="$(dirname -- "$xmp_path")"
+    join="$dir/$proposed_bn"
+
+    echo "--- Raw file that metadata should name (filesystem check) ---"
+    echo "  Suggested RawFileName basename: '$proposed_bn'"
+    echo "  Path if resolved next to sidecar: '$join'"
+    echo "  Paired NEF path (script pairing): '$nef_path'"
+
+    if [[ ! -f "$nef_path" ]]; then
+        echo -e "  ${YELLOW}WARNING:${RESET} paired NEF is not a regular file — cannot verify disk contents."
+        return 1
+    fi
+
+    if [[ -f "$join" ]] && paths_refer_to_same_file "$join" "$nef_path"; then
+        echo -e "  ${GREEN}OK:${RESET} '$join' exists and is the same file as the paired NEF (same inode/device)."
+    elif [[ -f "$join" ]]; then
+        echo -e "  ${YELLOW}WARNING:${RESET} '$join' exists but is not the same inode as paired NEF '$nef_path'."
+    else
+        echo -e "  ${YELLOW}NOTE:${RESET} '$join' not found as that exact spelling; paired NEF may use a different path/case — using paired path for listing/hash below."
+    fi
+
+    ls_line="$(ls -l -- "$nef_path" 2>/dev/null || true)"
+    if [[ -n "$ls_line" ]]; then
+        echo "  ls -l: $ls_line"
+    fi
+
+    sz="$(stat -c %s -- "$nef_path" 2>/dev/null || printf '%s' '?')"
+    mt="$(stat -c '%y' -- "$nef_path" 2>/dev/null || printf '%s' '?')"
+    at="$(stat -c '%x' -- "$nef_path" 2>/dev/null || printf '%s' '?')"
+    echo "  size_bytes: $sz | mtime: $mt | atime: $at"
+
+    md5_disp=""
+    if command -v md5sum >/dev/null 2>&1; then
+        md5_disp="$(md5sum -- "$nef_path" 2>/dev/null | awk '{print tolower($1)}')"
+    elif command -v md5 >/dev/null 2>&1; then
+        md5_disp="$(md5 -q -- "$nef_path" 2>/dev/null | tr '[:upper:]' '[:lower:]')"
+    fi
+    if [[ -n "$md5_disp" ]]; then
+        echo "  md5 (one-off for this prompt; not written to rename.sh DB): $md5_disp"
+    else
+        echo "  md5: (install md5sum or md5 to show)"
+    fi
+    echo
+    return 0
+}
+
 # Compare XMP RawFileName to paired NEF; prompt to fix stale/wrong values (dry-run: message only).
 nef_xmp_verify_sidecar_raw_file_name_interactive() {
     local nef_path="$1" xmp_path="$2"
@@ -3421,18 +3473,21 @@ nef_xmp_verify_sidecar_raw_file_name_interactive() {
     proposed="$want"
 
     if [[ "$mode" == "dry-run" ]]; then
-        emit_wrap_labeled_stdout "NOTE: " "${YELLOW}NOTE:${RESET} " "XMP RawFileName vs paired NEF basename '${want}' in '$xmp_path' (dry-run). Preview:"
+        emit_wrap_labeled_stdout "NOTE: " "${YELLOW}NOTE:${RESET} " "Suggest updating XMP RawFileName from '${cur:-<empty>}' to '${want}' (paired NEF basename). Dry-run preview:"
+        nef_xmp_print_proposed_raw_file_proof "$xmp_path" "$nef_path" "$want"
         if ! nef_xmp_print_raw_file_name_preview "$xmp_path" "$want"; then
-            emit_wrap_labeled_stdout "NOTE: " "${YELLOW}NOTE:${RESET} " "Could not build preview (parsed inner value: '${cur:-empty}')."
+            emit_wrap_labeled_stdout "NOTE: " "${YELLOW}NOTE:${RESET} " "Could not build XML fragment preview (parsed inner value: '${cur:-empty}')."
         fi
         return 0
     fi
 
     echo
     echo "XMP sidecar metadata check: '$xmp_path'"
-    echo "  Paired NEF: '$nef_path' (expected basename: '$want')"
+    echo "  Proposed update: RawFileName value '${cur:-<empty>}' -> '${proposed}' (must match paired NEF on disk)."
+    echo "  Paired NEF: '$nef_path'"
     [[ -n "$stem_same" ]] && echo "  Same-stem .nef in directory: '$stem_same'"
     echo
+    nef_xmp_print_proposed_raw_file_proof "$xmp_path" "$nef_path" "$proposed"
     if ! nef_xmp_print_raw_file_name_preview "$xmp_path" "$proposed"; then
         echo "  Could not locate RawFileName element or attribute to rewrite (parsed inner value: '${cur:-empty}')."
     fi
