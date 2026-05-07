@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.05.07 - v. 19.83 - non-verbose checksum ramp: ASCII step every N events (NONVERBOSE_CHECKSUM_EVENT_STRIDE_N), S/M/H every N*10; large hash lists prompt [y/N/q] default N (LARGE_HASHFILE_LINE_PROMPT_THRESHOLD)
 # 2026.05.07 - v. 19.82 - non-verbose M/S/H: print one letter per 10 checksum progress events (resolve + verify + whole-file check share one counter)
 # 2026.05.07 - v. 19.81 - non-verbose: one M/S/H per checksum list line when resolving refs (replaces verbose-only "Resolved ref" lines for that phase)
 # 2026.05.07 - v. 19.80 - M/S/H: verify every checksum list ref (before/after rename + no-rename-needed real runs); whole-file checksum_check emits one letter; no-op groups skip dry-run verify
@@ -326,7 +327,8 @@
 # 2026.03.27 - v. 1.2 - added many changes about media files
 # 2026.04.15 - v. 17.3 - escape control characters in logged paths and warn explicitly about filenames containing them
 SCRIPT_VERSION="$(LC_ALL=C grep -m1 '^# [0-9]' "$0" | sed -E 's/^# ([0-9]{4}\.[0-9]{2}\.[0-9]{2} - v\. [0-9]+\.[0-9]+) - .*/\1/')"
-LARGE_HASHFILE_LINE_THRESHOLD=20
+# If a checksum list has more than this many lines, ask before checking it; default answer is No ([y/N/q]).
+LARGE_HASHFILE_LINE_PROMPT_THRESHOLD=20
 MAX_LINE_LENGTH=200
 # Long vlog() bodies fold to at most this many columns (excluding WRAP_MSG_INDENT), so paths don’t appear as one endless line.
 VERBOSE_LOG_BODY_WRAP_WIDTH=96
@@ -438,10 +440,14 @@ shopt -s nullglob
 
 VERBOSE=0
 VERBOSE_MAIN_EVERY=200
-# Non-verbose: '.' per main-loop entry; M/S/H once per 10 checksum progress events (resolve, per-ref verify, whole-file check). Written to /dev/tty when writable so output is visible even if stdout is block-buffered (e.g. piped). Same column counter wraps at MAX_LINE_LENGTH; end line before prompts/other stdout.
+# Non-verbose: '.' per main-loop entry; checksum progress uses NONVERBOSE_CHECKSUM_EVENT_STRIDE_N (ramp char every N events, S/M/H every N*10; same counter for resolve, per-ref verify, whole-file check). Written to /dev/tty when writable so output is visible even if stdout is block-buffered (e.g. piped). Same column counter wraps at MAX_LINE_LENGTH; end line before prompts/other stdout.
 NONVERBOSE_PROGRESS_DOT_LINE_OPEN=no
 NONVERBOSE_PROGRESS_DOT_COL_COUNT=0
 NONVERBOSE_CHECKSUM_LETTER_EVENT_N=0
+# Ramp advances every this many checksum events; kind letter (S/M/H) every (stride * 10) events. Must be >= 1.
+NONVERBOSE_CHECKSUM_EVENT_STRIDE_N=1
+# ASCII ramp (9 steps between letters; positions map across this string). Edit to taste.
+NONVERBOSE_CHECKSUM_RAMP_CHARS='.,`^":;|!~-_=+*/\<>()[]{}#%&@?'
 # After auto-dir “Renamed:” (stdout), the next iteration’s lone progress dot looked odd; skip that one dot (see nonverbose_main_loop_progress_dot).
 NONVERBOSE_SKIP_NEXT_MAIN_LOOP_DOT=no
 CLI_COLORS=""
@@ -644,20 +650,42 @@ nonverbose_main_loop_progress_dot() {
 }
 
 # M = MD5 list, S = SHA512 list, H = anything else (unknown extension / future kinds).
-# Counts every logical "checksum file progress" event; prints a letter only on every 10th (10, 20, …).
+# Every checksum progress event increments a counter. Every NONVERBOSE_CHECKSUM_EVENT_STRIDE_N events,
+# print the next ramp character from NONVERBOSE_CHECKSUM_RAMP_CHARS (9 ramp steps per cycle); every
+# (stride * 10) events print S/M/H for the current kind.
 nonverbose_checksum_ref_verify_progress_letter() {
     local kind="${1-}"
-    local letter
+    local letter stride block e slot idx ramp_str len
     (( VERBOSE == 1 )) && return 0
+    stride=${NONVERBOSE_CHECKSUM_EVENT_STRIDE_N:-1}
+    (( stride < 1 )) && stride=1
     ((++NONVERBOSE_CHECKSUM_LETTER_EVENT_N))
-    (( NONVERBOSE_CHECKSUM_LETTER_EVENT_N % 10 == 0 )) || return 0
-    case "$kind" in
-        md5) letter=M ;;
-        sha512) letter=S ;;
-        *) letter=H ;;
-    esac
+    e=$NONVERBOSE_CHECKSUM_LETTER_EVENT_N
+    block=$(( stride * 10 ))
+    if (( e % block == 0 )); then
+        case "$kind" in
+            md5) letter=M ;;
+            sha512) letter=S ;;
+            *) letter=H ;;
+        esac
+        nonverbose_progress_stdout_line_char "$letter"
+        return 0
+    fi
+    (( e % stride == 0 )) || return 0
+    slot=$(( e / stride % 10 ))
+    (( slot == 0 )) && return 0
+    ramp_str="${NONVERBOSE_CHECKSUM_RAMP_CHARS-}"
+    [[ -n "$ramp_str" ]] || ramp_str='?'
+    len=${#ramp_str}
+    if (( len <= 1 )); then
+        letter=${ramp_str:0:1}
+    else
+        idx=$(( (slot - 1) * (len - 1) / 8 ))
+        letter=${ramp_str:idx:1}
+    fi
     nonverbose_progress_stdout_line_char "$letter"
 }
+
 
 nonverbose_progress_dot_endline_if_needed() {
     [[ "$NONVERBOSE_PROGRESS_DOT_LINE_OPEN" == yes ]] || return 0
@@ -4651,29 +4679,29 @@ confirm_large_hash_check() {
     local line_count="$3"
     local answer=""
 
-    if (( line_count <= LARGE_HASHFILE_LINE_THRESHOLD )); then
+    if (( line_count <= LARGE_HASHFILE_LINE_PROMPT_THRESHOLD )); then
         return 0
     fi
 
     echo
     emit_wrap_labeled_stdout "${label} NOTICE: " "${YELLOW}${label} NOTICE:${RESET} " "'${sum_file}' contains ${line_count} checksum line(s)."
     echo "Checking it may take a long time."
-    echo -n "Check this file and continue? [Y/n/q]: "
+    echo -n "Check this file and continue? [y/N/q]: "
 
     flush_stdin
     read -t 300 -n 1 answer || true
     echo
 
     case "$answer" in
+        y|Y)
+            return 0
+            ;;
         q|Q)
             stopped_by_user=yes
             return 2
             ;;
-        n|N)
-            return 1
-            ;;
         *)
-            return 0
+            return 1
             ;;
     esac
 }
