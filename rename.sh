@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.05.07 - v. 19.52 - checksum_file_has_renamable_refs: suppress ERR trap for intentional return 1/2 (set -E + errtrace fires on function return)
 # 2026.05.07 - v. 19.51 - checksum_file_has_renamable_refs: avoid ERR/set -e on final return 1 (RETURN trap + no inner errexit toggle)
 # 2026.05.07 - v. 19.50 - if SQLite cache file exists in start dir and --use-db omitted, prompt to enable it (default Y)
 # 2026.05.07 - v. 19.49 - if findmnt is missing, print one-time install hint (util-linux) for mount-type detection
@@ -2147,10 +2148,12 @@ db_mark_renamed_path_checked() {
 checksum_file_has_renamable_refs() {
     local sum_file="$1"
     local ref_hash ref_raw resolved_ref transformed_ref
-    local _cffr_restore_e=0
-    [[ $- == *e* ]] && _cffr_restore_e=1
+    local _cffr_saved_err_trap
+    # With set -E, ERR trap inherits into functions and can run on `return 1` even when errexit is off.
+    _cffr_saved_err_trap="$(trap -p ERR || true)"
+    trap - ERR
+    trap 'eval "$_cffr_saved_err_trap"; trap - RETURN' RETURN
     set +e
-    trap 'if ((_cffr_restore_e)); then set -e; else set +e; fi; trap - RETURN' RETURN
 
     [[ -f "$sum_file" ]] || return 1
     is_checksum_file "$sum_file" || return 1
