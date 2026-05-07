@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.05.07 - v. 19.85 - non-verbose checksum: S/M/H every stride * NONVERBOSE_CHECKSUM_LETTER_CYCLE_EVENTS (default 50, was 10); ramp maps across cycle-1 steps
 # 2026.05.07 - v. 19.84 - non-verbose checksum ramp: backspace+overwrite in one cell until S/M/H; then advance column (fixes appended ramp strings on TTY)
 # 2026.05.07 - v. 19.83 - non-verbose checksum ramp: ASCII step every N events (NONVERBOSE_CHECKSUM_EVENT_STRIDE_N), S/M/H every N*10; large hash lists prompt [y/N/q] default N (LARGE_HASHFILE_LINE_PROMPT_THRESHOLD)
 # 2026.05.07 - v. 19.82 - non-verbose M/S/H: print one letter per 10 checksum progress events (resolve + verify + whole-file check share one counter)
@@ -445,9 +446,11 @@ VERBOSE_MAIN_EVERY=200
 NONVERBOSE_PROGRESS_DOT_LINE_OPEN=no
 NONVERBOSE_PROGRESS_DOT_COL_COUNT=0
 NONVERBOSE_CHECKSUM_LETTER_EVENT_N=0
-# Ramp advances every this many checksum events; kind letter (S/M/H) every (stride * 10) events. Must be >= 1.
+# Ramp advances every this many checksum events; kind letter (S/M/H) every (stride * NONVERBOSE_CHECKSUM_LETTER_CYCLE_EVENTS) events. STRIDE must be >= 1.
 NONVERBOSE_CHECKSUM_EVENT_STRIDE_N=1
-# ASCII ramp (9 steps between letters; positions map across this string). Edit to taste.
+# One S/M/H commit every (stride * this many) checksum events (ramp redraws for the other cycle-1 stride-aligned events). Must be >= 2.
+NONVERBOSE_CHECKSUM_LETTER_CYCLE_EVENTS=50
+# ASCII ramp (cycle-1 redraws between letters; positions map across this string). Edit to taste.
 NONVERBOSE_CHECKSUM_RAMP_CHARS='.,`^":;|!~-_=+*/\<>()[]{}#%&@?'
 # When yes, the next ramp update backspaces once before drawing (in-place on /dev/tty).
 NONVERBOSE_CHECKSUM_RAMP_CELL_ACTIVE=no
@@ -696,16 +699,19 @@ nonverbose_checksum_commit_kind_letter() {
 
 # M = MD5 list, S = SHA512 list, H = anything else (unknown extension / future kinds).
 # Every checksum progress event increments a counter. Every NONVERBOSE_CHECKSUM_EVENT_STRIDE_N events,
-# redraw the ramp in the same TTY cell (backspace + char); every (stride * 10) events commit S/M/H and advance the column.
+# redraw the ramp in the same TTY cell (backspace + char); every (stride * NONVERBOSE_CHECKSUM_LETTER_CYCLE_EVENTS) events commit S/M/H and advance the column.
 nonverbose_checksum_ref_verify_progress_letter() {
     local kind="${1-}"
-    local letter stride block e slot idx ramp_str len
+    local letter stride block e slot idx ramp_str len cycle denom
     (( VERBOSE == 1 )) && return 0
     stride=${NONVERBOSE_CHECKSUM_EVENT_STRIDE_N:-1}
     (( stride < 1 )) && stride=1
+    cycle=${NONVERBOSE_CHECKSUM_LETTER_CYCLE_EVENTS:-50}
+    [[ "$cycle" =~ ^[0-9]+$ ]] || cycle=50
+    (( cycle < 2 )) && cycle=2
     ((++NONVERBOSE_CHECKSUM_LETTER_EVENT_N))
     e=$NONVERBOSE_CHECKSUM_LETTER_EVENT_N
-    block=$(( stride * 10 ))
+    block=$(( stride * cycle ))
     if (( e % block == 0 )); then
         case "$kind" in
             md5) letter=M ;;
@@ -716,7 +722,7 @@ nonverbose_checksum_ref_verify_progress_letter() {
         return 0
     fi
     (( e % stride == 0 )) || return 0
-    slot=$(( e / stride % 10 ))
+    slot=$(( e / stride % cycle ))
     (( slot == 0 )) && return 0
     ramp_str="${NONVERBOSE_CHECKSUM_RAMP_CHARS-}"
     [[ -n "$ramp_str" ]] || ramp_str='?'
@@ -724,7 +730,9 @@ nonverbose_checksum_ref_verify_progress_letter() {
     if (( len <= 1 )); then
         letter=${ramp_str:0:1}
     else
-        idx=$(( (slot - 1) * (len - 1) / 8 ))
+        denom=$(( cycle - 2 ))
+        (( denom < 1 )) && denom=1
+        idx=$(( (slot - 1) * (len - 1) / denom ))
         letter=${ramp_str:idx:1}
     fi
     nonverbose_checksum_ramp_cell_put "$letter"
