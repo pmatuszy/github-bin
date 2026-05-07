@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.05.07 - v. 19.53 - DB-cache checksum probe: save/restore ERR trap at caller (RETURN trap restored ERR before return 1 unwound under set -E)
 # 2026.05.07 - v. 19.52 - checksum_file_has_renamable_refs: suppress ERR trap for intentional return 1/2 (set -E + errtrace fires on function return)
 # 2026.05.07 - v. 19.51 - checksum_file_has_renamable_refs: avoid ERR/set -e on final return 1 (RETURN trap + no inner errexit toggle)
 # 2026.05.07 - v. 19.50 - if SQLite cache file exists in start dir and --use-db omitted, prompt to enable it (default Y)
@@ -2148,11 +2149,8 @@ db_mark_renamed_path_checked() {
 checksum_file_has_renamable_refs() {
     local sum_file="$1"
     local ref_hash ref_raw resolved_ref transformed_ref
-    local _cffr_saved_err_trap
-    # With set -E, ERR trap inherits into functions and can run on `return 1` even when errexit is off.
-    _cffr_saved_err_trap="$(trap -p ERR || true)"
-    trap - ERR
-    trap 'eval "$_cffr_saved_err_trap"; trap - RETURN' RETURN
+    # Caller disables ERR trap around this call: with set -E, Bash may invoke ERR on `return 1`
+    # ("no renamable refs") even though that status is normal.
     set +e
 
     [[ -f "$sum_file" ]] || return 1
@@ -6797,8 +6795,11 @@ for f in "${ordered_paths[@]}"; do
             _rename_cap_save_e=0
             [[ $- == *e* ]] && _rename_cap_save_e=1
             set +e
+            _db_cache_checksum_err_trap="$(trap -p ERR || true)"
+            trap - ERR
             checksum_file_has_renamable_refs "$f"
             crr=$?
+            eval "${_db_cache_checksum_err_trap:-}"
             if ((_rename_cap_save_e)); then
                 set -e
             else
