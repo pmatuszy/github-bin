@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.05.06 - v. 19.66 - NEF+XMP RawFileName: bold/colored verification line outside box; [d]irectory batch auto-apply (no further prompts in that dir)
 # 2026.05.06 - v. 19.65 - NEF+XMP filesystem box: fold long lines (no filename truncation via %.*s)
 # 2026.05.06 - v. 19.64 - vlog: fold long messages (was one huge continuation line after [VERBOSE])
 # 2026.05.06 - v. 19.63 - NEF+XMP filesystem proof: Unicode box around paired NEF details (dynamic width ≤128 cols, long lines truncated)
@@ -2421,12 +2422,14 @@ if [[ "$use_colors" == "yes" ]]; then
     GREEN='\e[32m'
     CYAN='\e[36m'
     YELLOW='\e[33m'
+    BOLD='\e[1m'
     RESET='\e[0m'
 else
     RED=''
     GREEN=''
     CYAN=''
     YELLOW=''
+    BOLD=''
     RESET=''
 fi
 
@@ -3444,10 +3447,35 @@ nef_xmp_emit_text_box() {
     echo
 }
 
+# Canonical realpath of the directory containing the sidecar (for per-directory RawFileName batch mode).
+nef_xmp_canonical_dir_for_pair() {
+    local d p="${1:-}"
+    [[ -n "$p" ]] || return 1
+    d="$(dirname -- "$p")"
+    ( cd "$d" && pwd -P ) 2>/dev/null || printf '%s\n' "$d"
+}
+
+# Stand-alone verification line so OK/WARN/NOTE is easy to spot (not buried in the Unicode box).
+nef_xmp_print_verification_banner() {
+    local kind="$1" msg="$2"
+    if [[ "$use_colors" == "yes" ]]; then
+        case "$kind" in
+            ok)   echo -e "${GREEN}${BOLD}${msg}${RESET}" ;;
+            warn) echo -e "${YELLOW}${BOLD}${msg}${RESET}" ;;
+            note) echo -e "${YELLOW}${msg}${RESET}" ;;
+            err)  echo -e "${RED}${BOLD}${msg}${RESET}" ;;
+            *)    printf '%s\n' "$msg" ;;
+        esac
+    else
+        printf '%s\n' "$msg"
+    fi
+    echo
+}
+
 # Show that proposed RawFileName basename exists as the paired NEF (ls/stat/md5); does not use rename.sh DB hash helpers.
 nef_xmp_print_proposed_raw_file_proof() {
     local xmp_path="$1" nef_path="$2" proposed_bn="$3"
-    local dir join ls_line md5_disp sz mt at verify_line
+    local dir join ls_line md5_disp sz mt at verify_line verify_kind
 
     dir="$(dirname -- "$xmp_path")"
     join="$dir/$proposed_bn"
@@ -3458,15 +3486,19 @@ nef_xmp_print_proposed_raw_file_proof() {
             "Path beside sidecar would be: '${join}'" \
             "Paired NEF path: '${nef_path}'" \
             "ERROR: paired path is not a regular file — cannot verify."
+        nef_xmp_print_verification_banner err "Verification: ERROR — paired NEF is missing or not a regular file."
         return 1
     fi
 
     if [[ -f "$join" ]] && paths_refer_to_same_file "$join" "$nef_path"; then
         verify_line="Verification: OK — sidecar-dir join matches paired NEF (same inode)."
+        verify_kind=ok
     elif [[ -f "$join" ]]; then
         verify_line="Verification: WARNING — '${join}' exists but differs from paired NEF inode."
+        verify_kind=warn
     else
         verify_line="Verification: NOTE — join path missing (case/spelling?); listing paired NEF below."
+        verify_kind=note
     fi
 
     ls_line="$(ls -l -- "$nef_path" 2>/dev/null || true)"
@@ -3487,12 +3519,13 @@ nef_xmp_print_proposed_raw_file_proof() {
         "Suggested RawFileName basename: '${proposed_bn}'" \
         "Path beside sidecar: '${join}'" \
         "Paired NEF path: '${nef_path}'" \
-        "$verify_line" \
         "ls -l: ${ls_line}" \
         "Size (bytes): ${sz}" \
         "Mtime: ${mt}" \
         "Atime: ${at}" \
         "MD5 (one-off, not DB): ${md5_disp:-install md5sum or md5 to show}"
+
+    nef_xmp_print_verification_banner "$verify_kind" "$verify_line"
 
     return 0
 }
@@ -3500,7 +3533,7 @@ nef_xmp_print_proposed_raw_file_proof() {
 # Compare XMP RawFileName to paired NEF; prompt to fix stale/wrong values (dry-run: message only).
 nef_xmp_verify_sidecar_raw_file_name_interactive() {
     local nef_path="$1" xmp_path="$2"
-    local want cur dir ans stem_same resolved proposed
+    local want cur dir ans stem_same resolved proposed xdir
 
     [[ -f "$nef_path" && -f "$xmp_path" ]] || return 0
     [[ "${xmp_path,,}" == *.xmp ]] || return 0
@@ -3525,11 +3558,35 @@ nef_xmp_verify_sidecar_raw_file_name_interactive() {
     fi
     proposed="$want"
 
+    xdir="$(nef_xmp_canonical_dir_for_pair "$xmp_path")"
+
     if [[ "$mode" == "dry-run" ]]; then
         emit_wrap_labeled_stdout "NOTE: " "${YELLOW}NOTE:${RESET} " "Suggest updating XMP RawFileName from '${cur:-<empty>}' to '${want}' (paired NEF basename). Dry-run preview:"
         nef_xmp_print_proposed_raw_file_proof "$xmp_path" "$nef_path" "$want"
         if ! nef_xmp_print_raw_file_name_preview "$xmp_path" "$want"; then
             emit_wrap_labeled_stdout "NOTE: " "${YELLOW}NOTE:${RESET} " "Could not build XML fragment preview (parsed inner value: '${cur:-empty}')."
+        fi
+        return 0
+    fi
+
+    # Same canonical directory as a prior [d] choice: apply RawFileName fix without prompting.
+    if [[ -n "$NEF_XMP_RAWFIX_AUTO_DIR" && -n "$xdir" && "$xdir" == "$NEF_XMP_RAWFIX_AUTO_DIR" ]]; then
+        echo
+        echo "XMP sidecar metadata check (auto, directory batch): '$xmp_path'"
+        echo "  Applying update: RawFileName '${cur:-<empty>}' -> '${proposed}' (paired NEF basename)."
+        echo "  Paired NEF: '$nef_path'"
+        [[ -n "$stem_same" ]] && echo "  Same-stem .nef in directory: '$stem_same'"
+        echo
+        nef_xmp_print_proposed_raw_file_proof "$xmp_path" "$nef_path" "$proposed"
+        if ! nef_xmp_print_raw_file_name_preview "$xmp_path" "$proposed"; then
+            echo "  Could not locate RawFileName element or attribute to rewrite (parsed inner value: '${cur:-empty}')."
+        fi
+        echo
+        if nef_xmp_replace_raw_file_name_preserving_times "$xmp_path" "$proposed"; then
+            emit_wrap_labeled_stdout "OK: " "${GREEN}OK:${RESET} " "Updated RawFileName in '$xmp_path' (directory batch mode, dir '${NEF_XMP_RAWFIX_AUTO_DIR}')."
+            vlog "RawFileName auto-updated (directory batch): '$xmp_path'"
+        else
+            emit_wrap_labeled_stdout "SKIP: " "${YELLOW}SKIP:${RESET} " "No editable RawFileName element or attribute found in '$xmp_path'."
         fi
         return 0
     fi
@@ -3545,8 +3602,9 @@ nef_xmp_verify_sidecar_raw_file_name_interactive() {
         echo "  Could not locate RawFileName element or attribute to rewrite (parsed inner value: '${cur:-empty}')."
     fi
     echo
-    verbose_question_timestamp "Apply this RawFileName change in the XMP? [y/N/q]:"
-    echo -n "Apply this RawFileName change in the XMP? [y/N/q]: "
+    echo "  Keys: [y] yes (this file only)  [d] yes + auto for every RawFileName fix in this directory  [n]/Enter skip  [q] quit run"
+    verbose_question_timestamp "Apply this RawFileName change in the XMP? [y/N/d/q]:"
+    echo -n "Apply this RawFileName change in the XMP? [y/N/d/q]: "
     flush_stdin
     read_single_key ans "$PROMPT_WAIT_SECONDS"
     echo
@@ -3554,6 +3612,16 @@ nef_xmp_verify_sidecar_raw_file_name_interactive() {
         q|Q)
             stopped_by_user=yes
             return 2
+            ;;
+        d|D)
+            NEF_XMP_RAWFIX_AUTO_DIR="$xdir"
+            if nef_xmp_replace_raw_file_name_preserving_times "$xmp_path" "$proposed"; then
+                emit_wrap_labeled_stdout "OK: " "${GREEN}OK:${RESET} " "Updated RawFileName in '$xmp_path'; further mismatches in '${NEF_XMP_RAWFIX_AUTO_DIR}' auto-apply."
+                vlog "RawFileName directory batch mode set to '${NEF_XMP_RAWFIX_AUTO_DIR}'; applied '$xmp_path'"
+            else
+                emit_wrap_labeled_stdout "SKIP: " "${YELLOW}SKIP:${RESET} " "No editable RawFileName element or attribute found in '$xmp_path'."
+            fi
+            return 0
             ;;
     esac
     if [[ "$ans" =~ [Yy] ]]; then
@@ -6242,6 +6310,8 @@ AUTO_RENAME_DIR=""
 AUTO_RENAME_SIMILAR_DIR=""
 AUTO_RENAME_SIMILAR_EXT=""
 AUTO_RENAME_SIMILAR_NEED_USCORE=no
+# When set to realpath of a directory: RawFileName mismatch prompts auto-apply without asking for every paired XMP in that dir.
+NEF_XMP_RAWFIX_AUTO_DIR=""
 AUTO_LOWERCASE_3_EXT_SESSION=no # [L] session: any extension case-only lowercasing (name kept for compatibility)
 AUTO_LOWERCASE_MEDIA_OFFICE_EXT_SESSION=no # [U] session: only media + MS Office extension case-only lowercasing
 
