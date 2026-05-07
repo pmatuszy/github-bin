@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.05.07 - v. 19.47 - skip case-only renames (full basename incl. ext) on exfat and CIFS/Samba mounts (no prompt / no mv)
 # 2026.05.07 - v. 19.46 - transform_basename: YYYY.MM.DD-tail.ext -> YYYYMMDD_tail.ext (dotted date prefix)
 # 2026.05.06 - v. 19.45 - case-only: mv A→B→C with B in same directory as A/C only (no /tmp or TMPDIR)
 # 2026.05.06 - v. 19.44 - case-only: mv only — A→B under TMPDIR then B→C (same-dir B breaks ci-CIFS “same file”)
@@ -3268,6 +3269,27 @@ is_case_only_rename_pair() {
     return 0
 }
 
+# exfat and SMB/CIFS backends are usually case-insensitive or awkward for case-only renames.
+path_filesystem_skip_case_only_rename() {
+    local path="$1" fs
+    [[ -e "$path" ]] || return 1
+    command -v findmnt >/dev/null 2>&1 || return 1
+    fs="$(findmnt -n -o FSTYPE --target "$path" 2>/dev/null)" || return 1
+    fs="${fs,,}"
+    case "$fs" in
+        exfat|cifs|smb3|smbfs) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+should_skip_case_only_rename_on_fs() {
+    local old="$1" new="$2"
+    [[ "$old" != "$new" ]] || return 1
+    is_case_only_rename_pair "$old" "$new" || return 1
+    path_filesystem_skip_case_only_rename "$old" || return 1
+    return 0
+}
+
 # Random unused path in the same directory as old/new (case-only: mv A→B→C, all in that dir).
 case_only_random_intermediate_same_dir() {
     local target="$1" dir i=0 p
@@ -5385,6 +5407,14 @@ perform_plain_entry_rename() {
         fi
     fi
 
+    if should_skip_case_only_rename_on_fs "$old" "$new"; then
+        vlog "Skipping case-only rename on exfat/CIFS/Samba (no mv): '$old'"
+        db_backfill_missing_hashes_for_existing_file "$old"
+        ((++files_skipped))
+        db_mark_checked "$old" "plain" "checked"
+        return 0
+    fi
+
     if [[ -e "$new" ]]; then
         if is_case_only_rename_pair "$old" "$new" && paths_refer_to_same_file "$old" "$new"; then
             :
@@ -5465,7 +5495,12 @@ perform_plain_entry_rename() {
         emit_wrap_labeled_stdout "  NEW HTML: " "  ${GREEN}NEW HTML:${RESET} " "$new"
         emit_wrap_labeled_stdout "  OLD DIR:  " "  ${RED}OLD DIR:${RESET}  " "$old_companion_dir"
         emit_wrap_labeled_stdout "  NEW DIR:  " "  ${GREEN}NEW DIR:${RESET}  " "$new_companion_dir"
-        if mv_with_case_only_filesystem_workaround "$old_companion_dir" "$new_companion_dir"; then
+        if should_skip_case_only_rename_on_fs "$old_companion_dir" "$new_companion_dir"; then
+            vlog "Skipping case-only HTML companion directory rename on exfat/CIFS/Samba: '$old_companion_dir'"
+            ((++files_skipped))
+            db_mark_checked "$old_companion_dir" "html_companion" "checked"
+            processed["$old_companion_dir"]=1
+        elif mv_with_case_only_filesystem_workaround "$old_companion_dir" "$new_companion_dir"; then
             ((++files_affected))
             record_rename "$old_companion_dir" "$new_companion_dir"
             db_rewrite_subtree "$old_companion_dir" "$new_companion_dir"
@@ -6049,7 +6084,8 @@ print_rename_prompt_menu() {
         echo "  [S] Yes for similar names in this directory (same extension; leading _ only if this filename starts with _)"
         choice_hint+=/s
     fi
-    if [[ -n "$path" && -n "$suggested_new" ]] && rename_suggested_only_extension_case_change "$path" "$suggested_new"; then
+    if [[ -n "$path" && -n "$suggested_new" ]] && rename_suggested_only_extension_case_change "$path" "$suggested_new" \
+        && ! path_filesystem_skip_case_only_rename "$path"; then
         echo "  [L] Yes, and auto-approve all extension case-only lowercasing for this run (no further prompts)"
         choice_hint+=/l
         if eligible_for_media_office_extension_case_auto "$path"; then
@@ -6928,7 +6964,6 @@ for f in "${ordered_paths[@]}"; do
             break
         fi
         declare -a new_refs=()
-        refs_need_rename=no
         for ref in "${refs[@]}"; do
             _rename_cap_save_e=0
             [[ $- == *e* ]] && _rename_cap_save_e=1
@@ -6944,13 +6979,27 @@ for f in "${ordered_paths[@]}"; do
                 break 2
             fi
             new_refs+=( "$new_ref" )
-            [[ "$new_ref" != "$ref" ]] && refs_need_rename=yes
+        done
+
+        for i in "${!new_refs[@]}"; do
+            if [[ "${new_refs[$i]}" != "${refs[$i]}" ]] && should_skip_case_only_rename_on_fs "${refs[$i]}" "${new_refs[$i]}"; then
+                vlog "Dropping case-only ref rename on exfat/CIFS/Samba (checksum group): '${refs[$i]}'"
+                new_refs[$i]="${refs[$i]}"
+            fi
+        done
+
+        refs_need_rename=no
+        for i in "${!new_refs[@]}"; do
+            [[ "${new_refs[$i]}" != "${refs[$i]}" ]] && refs_need_rename=yes
         done
 
         sum_file_needs_rename=no
         if [[ "$new_sum" != "$sum_file" ]]; then
             if is_protected_checksum_name "$sum_file"; then
                 print_protected_checksum_verbose "$sum_file"
+                new_sum="$sum_file"
+            elif should_skip_case_only_rename_on_fs "$sum_file" "$new_sum"; then
+                vlog "Dropping case-only checksum file rename on exfat/CIFS/Samba: '$sum_file'"
                 new_sum="$sum_file"
             else
                 sum_file_needs_rename=yes
@@ -7215,15 +7264,21 @@ for f in "${ordered_paths[@]}"; do
                     emit_wrap_labeled_stdout "  OLD DIR: " "  ${RED}OLD DIR:${RESET}  " "${html_companion_old_dirs[$i]}"
                     emit_wrap_labeled_stdout "  NEW DIR: " "  ${GREEN}NEW DIR:${RESET}  " "${html_companion_new_dirs[$i]}"
                     print_rename_action_verbose "${html_companion_old_dirs[$i]}" "${html_companion_new_dirs[$i]}" "html companion rename"
-                    mv_with_case_only_filesystem_workaround "${html_companion_old_dirs[$i]}" "${html_companion_new_dirs[$i]}"
-                    db_rewrite_subtree "${html_companion_old_dirs[$i]}" "${html_companion_new_dirs[$i]}"
-                    db_mark_renamed_path_checked "${html_companion_new_dirs[$i]}" "plain"
-                    register_current_file_rename "${html_companion_old_dirs[$i]}" "${html_companion_new_dirs[$i]}"
-                    ((++files_affected))
-                    record_rename "${html_companion_old_dirs[$i]}" "${html_companion_new_dirs[$i]}"
-                    update_html_companion_reference "${new_refs[$i]}" "${html_companion_old_names[$i]}" "${html_companion_new_names[$i]}"
-                    emit_wrap_labeled_stdout "HTML PAIR UPDATED: companion reference inside HTML file was updated from " "${CYAN}HTML PAIR UPDATED:${RESET} companion reference inside HTML file was updated from " "'${html_companion_old_names[$i]}' to '${html_companion_new_names[$i]}'."
-                    html_hash_needs_refresh[$i]="yes"
+                    if should_skip_case_only_rename_on_fs "${html_companion_old_dirs[$i]}" "${html_companion_new_dirs[$i]}"; then
+                        vlog "Skipping case-only HTML companion directory rename on exfat/CIFS/Samba (checksum group): '${html_companion_old_dirs[$i]}'"
+                        ((++files_skipped))
+                        db_mark_checked "${html_companion_old_dirs[$i]}" "html_companion" "checked"
+                    else
+                        mv_with_case_only_filesystem_workaround "${html_companion_old_dirs[$i]}" "${html_companion_new_dirs[$i]}"
+                        db_rewrite_subtree "${html_companion_old_dirs[$i]}" "${html_companion_new_dirs[$i]}"
+                        db_mark_renamed_path_checked "${html_companion_new_dirs[$i]}" "plain"
+                        register_current_file_rename "${html_companion_old_dirs[$i]}" "${html_companion_new_dirs[$i]}"
+                        ((++files_affected))
+                        record_rename "${html_companion_old_dirs[$i]}" "${html_companion_new_dirs[$i]}"
+                        update_html_companion_reference "${new_refs[$i]}" "${html_companion_old_names[$i]}" "${html_companion_new_names[$i]}"
+                        emit_wrap_labeled_stdout "HTML PAIR UPDATED: companion reference inside HTML file was updated from " "${CYAN}HTML PAIR UPDATED:${RESET} companion reference inside HTML file was updated from " "'${html_companion_old_names[$i]}' to '${html_companion_new_names[$i]}'."
+                        html_hash_needs_refresh[$i]="yes"
+                    fi
                 fi
             else
                 ((++files_skipped))
@@ -7381,6 +7436,17 @@ for f in "${ordered_paths[@]}"; do
         fi
     fi
 
+    if [[ "$f" != "$new" ]] && should_skip_case_only_rename_on_fs "$f" "$new"; then
+        vlog "Dropping case-only rename suggestion on exfat/CIFS/Samba: '$f'"
+        new="$f"
+        precomputed_new="$f"
+    fi
+    if [[ -n "$nef_xmp_buddy" ]] && [[ "$nef_xmp_buddy" != "$nef_xmp_new" ]] \
+        && should_skip_case_only_rename_on_fs "$nef_xmp_buddy" "$nef_xmp_new"; then
+        vlog "Dropping case-only sidecar rename suggestion on exfat/CIFS/Samba: '$nef_xmp_buddy'"
+        nef_xmp_new="$nef_xmp_buddy"
+    fi
+
     if [[ -z "$nef_xmp_buddy" ]]; then
         if [[ "$f" != "$new" ]] && paths_refer_to_same_file "$f" "$new"; then
             if ! is_case_only_rename_pair "$f" "$new"; then
@@ -7528,11 +7594,13 @@ for f in "${ordered_paths[@]}"; do
         continue
     fi
 
-    if [[ "$AUTO_LOWERCASE_3_EXT_SESSION" == "yes" ]] && [[ "$f" != "$new" ]] && rename_suggested_only_extension_case_change "$f" "$new"; then
+    if [[ "$AUTO_LOWERCASE_3_EXT_SESSION" == "yes" ]] && [[ "$f" != "$new" ]] && rename_suggested_only_extension_case_change "$f" "$new" \
+        && ! path_filesystem_skip_case_only_rename "$f"; then
         perform_plain_or_nef_xmp_pair "auto extension case-only lowercase (session)" || break
         continue
     fi
-    if [[ "$AUTO_LOWERCASE_MEDIA_OFFICE_EXT_SESSION" == "yes" ]] && [[ "$f" != "$new" ]] && rename_suggested_only_extension_case_change "$f" "$new" && eligible_for_media_office_extension_case_auto "$f"; then
+    if [[ "$AUTO_LOWERCASE_MEDIA_OFFICE_EXT_SESSION" == "yes" ]] && [[ "$f" != "$new" ]] && rename_suggested_only_extension_case_change "$f" "$new" \
+        && eligible_for_media_office_extension_case_auto "$f" && ! path_filesystem_skip_case_only_rename "$f"; then
         perform_plain_or_nef_xmp_pair "auto extension case-only lowercase (media+office session)" || break
         continue
     fi
