@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.05.07 - v. 19.50 - if SQLite cache file exists in start dir and --use-db omitted, prompt to enable it (default Y)
 # 2026.05.07 - v. 19.49 - if findmnt is missing, print one-time install hint (util-linux) for mount-type detection
 # 2026.05.07 - v. 19.48 - case-only skip: also FUSE SMB (GVFS fuse.gvfsd-fuse, smb path/SOURCE; fuse.rclone smb hints)
 # 2026.05.07 - v. 19.47 - skip case-only renames (full basename incl. ext) on exfat and CIFS/Samba mounts (no prompt / no mv)
@@ -460,7 +461,7 @@ Usage: rename.sh [-v|--verbose] [--use-db] [--fast] [--force-recheck] [--run-db-
 Options:
   -v, --verbose          Show extra diagnostic output
   --version              Print version plus this usage/help and exit
-  --use-db               Use SQLite cache in the start directory (_rename.sh-optional-db.sqlite3)
+  --use-db               Use SQLite cache in the start directory (_rename.sh-optional-db.sqlite3). If that file or the legacy rename.sh-optional-db.sqlite3 already exists and you omit --use-db, you are prompted whether to use it (default: yes).
   --fast                 With --use-db, trust cached paths without checking current size/mtime
   --force-recheck        Ignore SQLite cache and recheck everything
   --run-db-maintenance   Run DB maintenance and exit (implies --use-db; uses --db-maintenance profile or default full)
@@ -650,6 +651,41 @@ prompt_resume_choice_early() {
     else
         EARLY_RESUME_DECISION="resume"
     fi
+}
+
+prompt_use_existing_sqlite_cache_if_present() {
+    local answer="" shown_db=""
+
+    (( USE_DB == 0 )) || return 0
+    (( RUN_DB_MAINTENANCE == 0 )) || return 0
+    [[ -f "$DB_FILE" || -f "$LEGACY_DB_FILE" ]] || return 0
+
+    if [[ -f "$DB_FILE" ]]; then
+        shown_db="$DB_FILE"
+    else
+        shown_db="$LEGACY_DB_FILE (legacy filename; will migrate to _rename.sh-optional-db.sqlite3 when enabled)"
+    fi
+
+    echo
+    echo "SQLite cache file found in the start directory:"
+    echo "  $shown_db"
+    verbose_question_timestamp "Use this SQLite cache for this run (same as --use-db)?"
+    echo "Use this SQLite cache for this run (same as --use-db)?"
+    echo "  [Y] Yes — enable SQLite cache (default)"
+    echo "  [N] No — run without the cache"
+    echo -n "Choice [Y/n]: "
+    flush_stdin
+    read_single_key answer "$PROMPT_WAIT_SECONDS"
+    echo
+
+    if [[ "$answer" =~ [Nn] ]]; then
+        startup_progress "SQLite cache file present but not used for this run (user chose no)."
+        return 0
+    fi
+
+    USE_DB=1
+    startup_progress "SQLite cache enabled: existing DB in start directory (user chose yes / default)."
+    return 0
 }
 
 preserve_timestamps_inplace() {
@@ -2267,6 +2303,8 @@ while (( $# > 0 )); do
 done
 
 print_startup_banner
+
+prompt_use_existing_sqlite_cache_if_present
 
 if (( RUN_DB_MAINTENANCE == 0 )); then
     prompt_resume_choice_early
