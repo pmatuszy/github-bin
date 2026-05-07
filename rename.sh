@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# 2026.05.07 - v. 19.88 - NEF+XMP rename prompt: pad OLD/NEW/(sidecar) labels to same width so paths align
+# 2026.05.07 - v. 19.87 - transform_basename: YYYY-MM-DD + HH-MM-SS camera rule now runs _normalize_basename_separators (spaces→_, collapse) on full result; early return had skipped that pass
 # 2026.05.07 - v. 19.86 - NONVERBOSE_CHECKSUM_LETTER_CYCLE_EVENTS default 100 (was 50)
 # 2026.05.07 - v. 19.85 - non-verbose checksum: S/M/H every stride * NONVERBOSE_CHECKSUM_LETTER_CYCLE_EVENTS (default 50, was 10); ramp maps across cycle-1 steps
 # 2026.05.07 - v. 19.84 - non-verbose checksum ramp: backspace+overwrite in one cell until S/M/H; then advance column (fixes appended ramp strings on TTY)
@@ -337,6 +339,8 @@ MAX_LINE_LENGTH=200
 VERBOSE_LOG_BODY_WRAP_WIDTH=96
 # NEF+XMP paired-file box: soft-wrap content to this width (fold -s); full paths span multiple rows instead of truncating.
 NEF_XMP_BOX_WRAP_WIDTH=108
+# Plain-text width of "OLD:" / "NEW:" / "OLD (sidecar):" labels in NEF+XMP pair prompts so paths start in the same column.
+NEF_XMP_PAIR_LABEL_WIDTH=15
 # Continuation indent for user-visible lines longer than MAX_LINE_LENGTH (checksum/HTML style).
 WRAP_MSG_INDENT="          "
 
@@ -360,6 +364,22 @@ emit_wrap_labeled_line() {
 
 emit_wrap_labeled_stdout() { emit_wrap_labeled_line 1 "$@"; }
 emit_wrap_labeled_stderr() { emit_wrap_labeled_line 2 "$@"; }
+
+# NEF+XMP interactive rename: pad label to NEF_XMP_PAIR_LABEL_WIDTH so OLD/NEW/sidecar paths align vertically.
+emit_wrap_nef_xmp_pair_label_stdout() {
+    local plain_tag="$1"
+    local color_name="$2"
+    local body="$3"
+    local padded plain_pref ansi_pref
+    printf -v padded '%-*s' "$NEF_XMP_PAIR_LABEL_WIDTH" "$plain_tag"
+    plain_pref="$padded"
+    case "$color_name" in
+        red)   ansi_pref="${RED}${padded}${RESET}" ;;
+        green) ansi_pref="${GREEN}${padded}${RESET}" ;;
+        *)     ansi_pref="$padded" ;;
+    esac
+    emit_wrap_labeled_stdout "$plain_pref" "$ansi_pref" "$body"
+}
 
 # "TAG: entry -> exclude file" with colored arrow when it fits on one line.
 emit_wrap_exclude_append_message() {
@@ -5336,12 +5356,15 @@ transform_basename() {
     fi
 
     # Underscore or whitespace between date and time (e.g. camera exports "2010-02-20 14-28-18  title.NEF").
+    # Early return must still pass through _normalize_basename_separators (otherwise title tail spaces are left as-is).
     if [[ "$new" =~ ^([0-9]{4})-([0-9]{2})-([0-9]{2})[[:space:]_]+([0-9]{2})-([0-9]{2})-([0-9]{2})(.+)(\.[^.]+)$ ]]; then
-        printf '%s%s%s_%s%s%s%s%s' \
+        local _cam_date_time_out
+        _cam_date_time_out="$(printf '%s%s%s_%s%s%s%s%s' \
             "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}" "${BASH_REMATCH[3]}" \
             "${BASH_REMATCH[4]}" "${BASH_REMATCH[5]}" "${BASH_REMATCH[6]}" \
             "${BASH_REMATCH[7]}" \
-            "${BASH_REMATCH[8]}"
+            "${BASH_REMATCH[8]}")"
+        printf '%s' "$(_normalize_basename_separators "$_cam_date_time_out")"
         return
     fi
 
@@ -8459,11 +8482,11 @@ for f in "${ordered_paths[@]}"; do
     if [[ -n "$nef_xmp_buddy" ]]; then
         echo -e "${CYAN}NEF+XMP pair (same stem; both renamed together):${RESET}"
     fi
-    emit_wrap_labeled_stdout "OLD: " "${RED}OLD:${RESET} " "$f"
-    emit_wrap_labeled_stdout "NEW: " "${GREEN}NEW:${RESET} " "$new"
+    emit_wrap_nef_xmp_pair_label_stdout "OLD: " red "$f"
+    emit_wrap_nef_xmp_pair_label_stdout "NEW: " green "$new"
     if [[ -n "$nef_xmp_buddy" ]]; then
-        emit_wrap_labeled_stdout "OLD (sidecar): " "${RED}OLD (sidecar):${RESET} " "$nef_xmp_buddy"
-        emit_wrap_labeled_stdout "NEW (sidecar): " "${GREEN}NEW (sidecar):${RESET} " "$nef_xmp_new"
+        emit_wrap_nef_xmp_pair_label_stdout "OLD (sidecar): " red "$nef_xmp_buddy"
+        emit_wrap_nef_xmp_pair_label_stdout "NEW (sidecar): " green "$nef_xmp_new"
         echo
         echo -e "${CYAN}Sidecar XMP metadata (after you confirm):${RESET}"
         if [[ "$mode" == "dry-run" ]]; then
