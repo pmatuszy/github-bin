@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.05.06 - v. 19.61 - NEF+XMP: RawFileName as element (<crs:RawFileName>...</crs:RawFileName>) or attribute; show current vs proposed fragment before confirm prompt
 # 2026.05.06 - v. 19.60 - NEF+XMP: sync crs/RawFileName in sidecar to renamed NEF basename (preserve XMP mtime); always verify/prompt-fix mismatches (dry-run notes only)
 # 2026.05.06 - v. 19.59 - verbose: one line for Samba/exfat case-only skip + “no rename” (main loop + checksum no-action); defer checksum ref/sum drop vlogs when group has no action
 # 2026.05.06 - v. 19.58 - --version: same boxed banner as -h (adds DB + exclude lines); print_startup_banner optional detail mode
@@ -3239,63 +3240,137 @@ nef_xmp_pair_set_final_paths_from_primary_and_buddy_new() {
     return 1
 }
 
-nef_xmp_extract_raw_file_name_value() {
-    local xmp="$1"
-    [[ -f "$xmp" ]] || return 1
-    python3 - "$xmp" <<'PY'
+# Python helper: op = extract | replace | preview (preview prints current fragment vs proposed; extract prints inner value only).
+nef_xmp_raw_file_name_tool() {
+    local op="$1" xmp="$2"
+    local extra="${3-}"
+    python3 - "$xmp" "$op" "$extra" <<'PY'
 import re
 import sys
 from pathlib import Path
 
 path = Path(sys.argv[1])
+op = sys.argv[2]
+extra = sys.argv[3] if len(sys.argv) > 3 else ""
+
 data = path.read_bytes()
-patterns = (
-    rb'\bcrs:RawFileName\s*=\s*"([^"]*)"',
-    rb'\bRawFileName\s*=\s*"([^"]*)"',
-    rb"\bcrs:RawFileName\s*=\s*'([^']*)'",
-    rb"\bRawFileName\s*=\s*'([^']*)'",
+
+# Element form first (e.g. <crs:RawFileName>...</crs:RawFileName>), then attribute form.
+ELEM_PATTERNS = (
+    (
+        rb"(<crs:RawFileName(?:\s[^>]*)?>)([^<]*)(</crs:RawFileName\s*>)",
+        "elem_crs",
+    ),
+    (
+        rb"(<RawFileName(?:\s[^>]*)?>)([^<]*)(</RawFileName\s*>)",
+        "elem_plain",
+    ),
 )
-for pat in patterns:
-    m = re.search(pat, data, flags=re.I)
-    if m:
-        print(m.group(1).decode("utf-8", errors="surrogateescape"), end="")
+
+ATTR_PATTERNS = (
+    (rb'(\bcrs:RawFileName\s*=\s*")([^"]*)(")', "attr_dq_crs"),
+    (rb'(\bRawFileName\s*=\s*")([^"]*)(")', "attr_dq_plain"),
+    (rb"(\bcrs:RawFileName\s*=\s*')([^']*)(')", "attr_sq_crs"),
+    (rb"(\bRawFileName\s*=\s*')([^']*)(')", "attr_sq_plain"),
+)
+
+
+def find_elem(data: bytes):
+    for pat, kind in ELEM_PATTERNS:
+        m = re.search(pat, data, flags=re.I)
+        if m:
+            return ("elem", kind, m)
+    return None
+
+
+def find_attr(data: bytes):
+    for pat, kind in ATTR_PATTERNS:
+        m = re.search(pat, data, flags=re.I)
+        if m:
+            return ("attr", kind, m)
+    return None
+
+
+def find_any(data: bytes):
+    hit = find_elem(data)
+    if hit:
+        return hit
+    hit = find_attr(data)
+    if hit:
+        return hit
+    return None
+
+
+def inner_value(hit):
+    typ, _kind, m = hit
+    return m.group(2).decode("utf-8", errors="surrogateescape")
+
+
+def replace_inner(data: bytes, new_bn: bytes, hit):
+    typ, _kind, m = hit
+    return data[: m.start(2)] + new_bn + data[m.end(2) :]
+
+
+if op == "extract":
+    hit = find_any(data)
+    if not hit:
+        print("", end="")
         raise SystemExit(0)
-print("", end="")
-raise SystemExit(0)
+    print(inner_value(hit), end="")
+    raise SystemExit(0)
+
+if op == "replace":
+    new_bn = extra.encode("utf-8", errors="surrogateescape")
+    hit = find_any(data)
+    if not hit:
+        raise SystemExit(2)
+    data = replace_inner(data, new_bn, hit)
+    path.write_bytes(data)
+    raise SystemExit(0)
+
+if op == "preview":
+    new_bn = extra.encode("utf-8", errors="surrogateescape")
+    hit = find_any(data)
+    if not hit:
+        raise SystemExit(2)
+    typ, kind, m = hit
+    cur_frag = m.group(0).decode("utf-8", errors="replace")
+    new_frag = (m.group(1) + new_bn + m.group(3)).decode("utf-8", errors="replace")
+    print("Format: %s / %s" % (typ, kind))
+    print("--- Current RawFileName fragment in XMP ---")
+    print(cur_frag)
+    print("--- Would become ---")
+    print(new_frag)
+    raise SystemExit(0)
+
+raise SystemExit(3)
 PY
 }
 
-# Rewrite crs:/bare RawFileName= attribute value; restores mtime/access from before write (like HTML companion edits).
+nef_xmp_extract_raw_file_name_value() {
+    local xmp="$1"
+    [[ -f "$xmp" ]] || return 1
+    nef_xmp_raw_file_name_tool extract "$xmp" ""
+}
+
+# Rewrite RawFileName (element text or attribute value); restores mtime/access from before write.
 nef_xmp_replace_raw_file_name_preserving_times() {
     local xmp="$1" new_bn="$2"
     local ref st=0
     [[ -f "$xmp" ]] || return 1
     ref="$(mktemp)"
     touch -r "$xmp" "$ref"
-    python3 - "$xmp" "$new_bn" <<'PY' || st=$?
-import sys
-from pathlib import Path
-
-path = Path(sys.argv[1])
-new_bn = sys.argv[2].encode("utf-8", errors="surrogateescape")
-data = path.read_bytes()
-patterns = (
-    rb'(\bcrs:RawFileName\s*=\s*")([^"]*)(")',
-    rb'(\bRawFileName\s*=\s*")([^"]*)(")',
-    rb"(\bcrs:RawFileName\s*=\s*')([^']*)(')",
-    rb"(\bRawFileName\s*=\s*')([^']*)(')",
-)
-for pat in patterns:
-    m = re.search(pat, data, flags=re.I)
-    if m:
-        data = data[: m.start(2)] + new_bn + data[m.end(2) :]
-        path.write_bytes(data)
-        raise SystemExit(0)
-raise SystemExit(2)
-PY
+    nef_xmp_raw_file_name_tool replace "$xmp" "$new_bn" || st=$?
     touch -r "$ref" "$xmp"
     rm -f "$ref"
     return "$st"
+}
+
+nef_xmp_print_raw_file_name_preview() {
+    local xmp="$1" proposed_bn="$2"
+    [[ -f "$xmp" ]] || return 1
+    nef_xmp_raw_file_name_tool preview "$xmp" "$proposed_bn" || return 1
+    return 0
 }
 
 # After a real rename, force sidecar metadata to match the NEF basename (no prompt).
@@ -3313,7 +3388,7 @@ nef_xmp_sync_sidecar_raw_file_name_to_nef() {
     fi
     vlog "Updating XMP RawFileName in '$xmp_path' to '${want}' (was '${cur:-empty}')"
     if ! nef_xmp_replace_raw_file_name_preserving_times "$xmp_path" "$want"; then
-        emit_wrap_labeled_stdout "NOTE: " "${YELLOW}NOTE:${RESET} " "Could not find crs:RawFileName / RawFileName= attribute to rewrite in '$xmp_path' (sidecar may need manual Lightroom/metadata edit)."
+        emit_wrap_labeled_stdout "NOTE: " "${YELLOW}NOTE:${RESET} " "Could not find editable crs:RawFileName (element or attribute) / RawFileName in '$xmp_path' (sidecar may need manual Lightroom/metadata edit)."
     fi
 }
 
@@ -3346,17 +3421,24 @@ nef_xmp_verify_sidecar_raw_file_name_interactive() {
     proposed="$want"
 
     if [[ "$mode" == "dry-run" ]]; then
-        emit_wrap_labeled_stdout "NOTE: " "${YELLOW}NOTE:${RESET} " "XMP RawFileName '${cur:-<missing>}' vs paired NEF basename '${want}' in '$xmp_path' (dry-run; no prompt)."
+        emit_wrap_labeled_stdout "NOTE: " "${YELLOW}NOTE:${RESET} " "XMP RawFileName vs paired NEF basename '${want}' in '$xmp_path' (dry-run). Preview:"
+        if ! nef_xmp_print_raw_file_name_preview "$xmp_path" "$want"; then
+            emit_wrap_labeled_stdout "NOTE: " "${YELLOW}NOTE:${RESET} " "Could not build preview (parsed inner value: '${cur:-empty}')."
+        fi
         return 0
     fi
 
     echo
     echo "XMP sidecar metadata check: '$xmp_path'"
     echo "  Paired NEF: '$nef_path' (expected basename: '$want')"
-    echo "  RawFileName in XMP: '${cur:-<missing or empty>}'"
     [[ -n "$stem_same" ]] && echo "  Same-stem .nef in directory: '$stem_same'"
-    verbose_question_timestamp "Update RawFileName in this XMP to '${proposed}'? [y/N/q]:"
-    echo -n "Update RawFileName in this XMP to '${proposed}'? [y/N/q]: "
+    echo
+    if ! nef_xmp_print_raw_file_name_preview "$xmp_path" "$proposed"; then
+        echo "  Could not locate RawFileName element or attribute to rewrite (parsed inner value: '${cur:-empty}')."
+    fi
+    echo
+    verbose_question_timestamp "Apply this RawFileName change in the XMP? [y/N/q]:"
+    echo -n "Apply this RawFileName change in the XMP? [y/N/q]: "
     flush_stdin
     read_single_key ans "$PROMPT_WAIT_SECONDS"
     echo
@@ -3368,9 +3450,9 @@ nef_xmp_verify_sidecar_raw_file_name_interactive() {
     esac
     if [[ "$ans" =~ [Yy] ]]; then
         if nef_xmp_replace_raw_file_name_preserving_times "$xmp_path" "$proposed"; then
-            emit_wrap_labeled_stdout "OK: " "${GREEN}OK:${RESET} " "Updated RawFileName in '$xmp_path' to '${proposed}'."
+            emit_wrap_labeled_stdout "OK: " "${GREEN}OK:${RESET} " "Updated RawFileName in '$xmp_path' (same encoding as matched fragment)."
         else
-            emit_wrap_labeled_stdout "SKIP: " "${YELLOW}SKIP:${RESET} " "No RawFileName= attribute found to rewrite in '$xmp_path'."
+            emit_wrap_labeled_stdout "SKIP: " "${YELLOW}SKIP:${RESET} " "No editable RawFileName element or attribute found in '$xmp_path'."
         fi
     fi
     return 0
