@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.05.07 - v. 19.75 - current-directory scope: fast find→sort→shell path (no 64 MB read loop); clearer startup message (no full-tree wording)
 # 2026.05.07 - v. 19.74 - NEF+XMP sidecar help text: flush-left lines ≤ MAX_LINE_LENGTH, breaks at sentence ends
 # 2026.05.07 - v. 19.73 - NEF+XMP interactive prompt: explain sidecar RawFileName update after rename (comfort text)
 # 2026.05.07 - v. 19.72 - non-verbose: skip one main-loop progress dot after auto-dir “Renamed:” line (avoids lone “.” between consecutive renames)
@@ -2515,7 +2516,7 @@ print_verbose_options_box() {
     if [[ "$process_scope" == "subdirs" ]]; then
         scope_text="subdirs - process the current directory and all subdirectories"
     else
-        scope_text="current - process only the current directory"
+        scope_text="current - immediate children only (find -maxdepth 1; does not descend into subfolders)"
     fi
 
     if (( PROMPT_WAIT_SECONDS == 0 )); then
@@ -7189,76 +7190,48 @@ on_interrupt() {
 
 trap on_interrupt INT
 
-startup_progress "Discovering and sorting entries for selected scope (this can take time on large trees)..."
+if [[ "$process_scope" == "current" ]]; then
+    startup_progress "Listing immediate children of the current directory (find -maxdepth 1; no recursion into subfolders)..."
+else
+    startup_progress "Discovering and sorting entries under this tree (can take time on very large directories)..."
+fi
 if [[ "$process_scope" == "current" ]]; then
     mapfile -d '' -t ordered_paths < <(
         find . -mindepth 1 -maxdepth 1 -depth -print0 |
-        python3 -c '
-import sys
+        VERBOSE="${VERBOSE:-0}" python3 -c "$(cat <<'PY'
+import os
 from datetime import datetime
-import time
-verbose = (len(sys.argv) > 1 and sys.argv[1] == "1")
-buf = bytearray()
-progress_every = 64 * 1024 * 1024
-next_progress = progress_every
-start = time.monotonic()
-while True:
-    chunk = sys.stdin.buffer.read(1024 * 1024)
-    if not chunk:
-        break
-    buf.extend(chunk)
-    if verbose and len(buf) >= next_progress:
-        ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        mb = len(buf) / (1024.0 * 1024.0)
-        elapsed = time.monotonic() - start
-        sys.stderr.write(f"[STARTUP {ts}] Discovery buffered: {mb:.1f} MB in {elapsed:.1f}s...\n")
-        sys.stderr.flush()
-        while len(buf) >= next_progress:
-            next_progress += progress_every
-items = [x for x in bytes(buf).split(b"\0") if x]
-if verbose:
+
+buf = sys.stdin.buffer.read()
+items = [x for x in buf.split(b"\0") if x]
+verbose = os.environ.get("VERBOSE", "0") == "1"
+if verbose and items:
     ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    mb = len(buf) / (1024.0 * 1024.0)
-    elapsed = time.monotonic() - start
-    sys.stderr.write(f"[STARTUP {ts}] Discovery done: {len(items)} entries buffered ({mb:.1f} MB) in {elapsed:.1f}s. Starting sort...\n")
+    sys.stderr.write(
+        "[STARTUP %s] Sorting %d immediate-child paths (current-directory scope)...\n" % (ts, len(items))
+    )
     sys.stderr.flush()
+
+
 def depth(p: bytes) -> int:
-    s = p.decode("utf-8", "surrogateescape")
-    return s.count("/")
+    return p.count(47)
+
+
 def is_checksum(p: bytes) -> int:
     s = p.decode("utf-8", "surrogateescape")
     return 0 if (s.endswith(".sha512") or s.endswith(".md5")) else 1
-sort_start = time.monotonic()
+
+
 items.sort(key=lambda p: (-depth(p), is_checksum(p), p))
-if verbose:
+
+if verbose and items:
     ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    sort_elapsed = time.monotonic() - sort_start
-    total_elapsed = time.monotonic() - start
-    sys.stderr.write(f"[STARTUP {ts}] Sorting done in {sort_elapsed:.1f}s (total startup discovery/sort: {total_elapsed:.1f}s). Starting transfer to shell...\n")
+    sys.stderr.write("[STARTUP %s] Wrote sorted path list to shell.\n" % ts)
     sys.stderr.flush()
-total_items = len(items)
-chunk_items = 50000
-report_every = 200000
-next_report = report_every
-written = 0
-for i in range(0, total_items, chunk_items):
-    chunk_items_list = items[i:i + chunk_items]
-    if not chunk_items_list:
-        continue
-    sys.stdout.buffer.write(b"\0".join(chunk_items_list) + b"\0")
-    written += len(chunk_items_list)
-    if verbose:
-        while written >= next_report:
-            ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            pct = (written * 100.0 / total_items) if total_items else 100.0
-            sys.stderr.write(f"[STARTUP {ts}] Transfer progress: {written}/{total_items} entries ({pct:.1f}%)...\n")
-            sys.stderr.flush()
-            next_report += report_every
-if verbose:
-    ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    sys.stderr.write(f"[STARTUP {ts}] Transfer to shell complete: {written}/{total_items} entries.\n")
-    sys.stderr.flush()
-' "$VERBOSE"
+
+sys.stdout.buffer.write(b"\0".join(items) + (b"\0" if items else b""))
+PY
+)"
     )
 else
     mapfile -d '' -t ordered_paths < <(
