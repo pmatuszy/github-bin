@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# 2026.05.07 - v. 19.73 - NEF+XMP interactive prompt: explain sidecar RawFileName update after rename (comfort text)
+# 2026.05.07 - v. 19.72 - non-verbose: skip one main-loop progress dot after auto-dir “Renamed:” line (avoids lone “.” between consecutive renames)
+# 2026.05.07 - v. 19.71 - NEF+XMP “no rename needed” vlog: header + each path on own lines; slash-aware wrap (not fold -s on whole line)
 # 2026.05.07 - v. 19.70 - non-verbose progress dots: newline every MAX_LINE_LENGTH dots so one line never exceeds that width
 # 2026.05.06 - v. 19.69 - non-verbose main loop: print '.' per examined file; end dot line before other stdout or prompts
 # 2026.05.06 - v. 19.68 - NEF+XMP RawFileName prompt: multi-line Keys menu (readability)
@@ -429,6 +432,8 @@ VERBOSE_MAIN_EVERY=200
 # Non-verbose: one '.' per main-loop examined file (stdout); close line before any other stdout output.
 NONVERBOSE_PROGRESS_DOT_LINE_OPEN=no
 NONVERBOSE_PROGRESS_DOT_COL_COUNT=0
+# After auto-dir “Renamed:” (stdout), the next iteration’s lone progress dot looked odd; skip that one dot (see nonverbose_main_loop_progress_dot).
+NONVERBOSE_SKIP_NEXT_MAIN_LOOP_DOT=no
 CLI_COLORS=""
 CLI_MODE=""
 CLI_SCOPE=""
@@ -591,6 +596,10 @@ flush_stdin() {
 
 nonverbose_main_loop_progress_dot() {
     (( VERBOSE == 1 )) && return 0
+    if [[ "$NONVERBOSE_SKIP_NEXT_MAIN_LOOP_DOT" == yes ]]; then
+        NONVERBOSE_SKIP_NEXT_MAIN_LOOP_DOT=no
+        return 0
+    fi
     if [[ "$NONVERBOSE_PROGRESS_DOT_LINE_OPEN" == yes ]] && (( NONVERBOSE_PROGRESS_DOT_COL_COUNT >= MAX_LINE_LENGTH )); then
         printf '\n'
         NONVERBOSE_PROGRESS_DOT_COL_COUNT=0
@@ -2975,6 +2984,98 @@ vlog() {
     printf '%s\n' "$msg" | fold -s -w "$wrap_w" | sed "s/^/${WRAP_MSG_INDENT}/" >&2
 }
 
+# stderr; indent + single-quoted path. Wraps at '/' when possible so spaces inside a directory name stay on one line;
+# if a segment between slashes is wider than the line budget, falls back to fold -s for that segment only.
+verbose_emit_single_quoted_path_fold_slash() {
+    local max_line="$1"
+    local indent="$2"
+    local path="$3"
+    local shown full
+    shown="$(format_path_for_log "$path")"
+    full="'${shown}'"
+    if (( ${#indent} + ${#full} <= max_line )); then
+        printf '%s%s\n' "$indent" "$full" >&2
+        return 0
+    fi
+
+    local remaining="$shown"
+    local first_phys=1
+    while [[ -n "$remaining" ]]; do
+        local prefix avail chunk head folded
+
+        if (( first_phys )); then
+            prefix="${indent}'"
+            first_phys=0
+        else
+            prefix="$indent"
+        fi
+
+        if (( ${#prefix} + ${#remaining} + 1 <= max_line )); then
+            printf "%s%s'\n" "$prefix" "$remaining" >&2
+            return 0
+        fi
+
+        avail=$(( max_line - ${#prefix} ))
+        (( avail < 1 )) && avail=1
+
+        if (( ${#remaining} <= avail )); then
+            printf "%s%s'\n" "$prefix" "$remaining" >&2
+            return 0
+        fi
+
+        head="${remaining:0:avail}"
+        if [[ "$head" == */* ]]; then
+            chunk="${head%/*}/"
+        else
+            folded="$(printf '%s\n' "$remaining" | fold -s -w "$avail" | head -n1)"
+            chunk="${folded//$'\n'/}"
+            if [[ -z "$chunk" ]]; then
+                chunk="${remaining:0:avail}"
+            fi
+        fi
+        if [[ -z "$chunk" ]]; then
+            chunk="${remaining:0:avail}"
+        fi
+
+        printf '%s%s\n' "$prefix" "$chunk" >&2
+        remaining="${remaining:${#chunk}}"
+    done
+}
+
+# Long paths were one vlog() body → fold -s broke inside directory names (spaces). When the combined
+# line is too long, print the pair header, each path (slash-aware wrap), then an optional trailing note.
+vlog_nef_xmp_pair_no_rename_needed() {
+    (( VERBOSE == 1 )) || return 0
+    local note="${1-}"
+    local p1="$2"
+    local p2="$3"
+    local s1 s2 comb plain hdr
+
+    s1="$(format_path_for_log "$p1")"
+    s2="$(format_path_for_log "$p2")"
+    comb="No rename needed for NEF+XMP pair '${s1}' + '${s2}'${note}"
+    plain="[VERBOSE] ${comb}"
+
+    if (( ${#plain} <= MAX_LINE_LENGTH )); then
+        echo -e "${CYAN}[VERBOSE]${RESET} ${comb}" >&2
+        return 0
+    fi
+
+    hdr="No rename needed for NEF+XMP pair"
+    plain="[VERBOSE] ${hdr}"
+    if (( ${#plain} <= MAX_LINE_LENGTH )); then
+        echo -e "${CYAN}[VERBOSE]${RESET} ${hdr}" >&2
+    else
+        echo -e "${CYAN}[VERBOSE]${RESET}" >&2
+        printf '%s%s\n' "$WRAP_MSG_INDENT" "$hdr" >&2
+    fi
+    verbose_emit_single_quoted_path_fold_slash "$MAX_LINE_LENGTH" "$WRAP_MSG_INDENT" "$p1"
+    verbose_emit_single_quoted_path_fold_slash "$MAX_LINE_LENGTH" "${WRAP_MSG_INDENT}+ " "$p2"
+    if [[ -n "$note" ]]; then
+        printf '%s%s\n' "$WRAP_MSG_INDENT" "${note# }" >&2
+    fi
+}
+
 print_progress_box() {
     local progress="$1"
     local current="$2"
@@ -3920,6 +4021,8 @@ plain_rename_emit_auto_dir_notice_if_active() {
     fi
     [[ "$want_emit" == yes ]] || return 0
     emit_wrap_old_arrow_new_stdout "Renamed: " "${GREEN}Renamed:${RESET} " "$old" "$new"
+    # Next main-loop iteration would print a lone “.” on its own line after this “Renamed:” line; skip that dot once.
+    NONVERBOSE_SKIP_NEXT_MAIN_LOOP_DOT=yes
 }
 
 # Same directory and basename stem; suggested path lowercases only the extension (any length, e.g. .MP4 -> .mp4, .JPEG -> .jpeg).
@@ -8098,9 +8201,9 @@ for f in "${ordered_paths[@]}"; do
         fi
         if [[ "$f" == "$new" && "$nef_xmp_buddy" == "$nef_xmp_new" ]] && ! is_torrent_url_file "$f" && ! is_thumbs_db_file "$f"; then
             if [[ "$verbose_fs_skip_plain" == yes || "$verbose_fs_skip_sidecar" == yes ]]; then
-                vlog "No rename needed for NEF+XMP pair '$f' + '$nef_xmp_buddy' (no case-only rename on exfat/CIFS/Samba)"
+                vlog_nef_xmp_pair_no_rename_needed " (no case-only rename on exfat/CIFS/Samba)" "$f" "$nef_xmp_buddy"
             else
-                vlog "No rename needed for NEF+XMP pair '$f' + '$nef_xmp_buddy'"
+                vlog_nef_xmp_pair_no_rename_needed "" "$f" "$nef_xmp_buddy"
             fi
             nef_xmp_pair_run_sidecar_metadata_checks "$new" "$nef_xmp_new" || break
             db_backfill_missing_hashes_for_existing_file "$f"
@@ -8231,6 +8334,14 @@ for f in "${ordered_paths[@]}"; do
     if [[ -n "$nef_xmp_buddy" ]]; then
         emit_wrap_labeled_stdout "OLD (sidecar): " "${RED}OLD (sidecar):${RESET} " "$nef_xmp_buddy"
         emit_wrap_labeled_stdout "NEW (sidecar): " "${GREEN}NEW (sidecar):${RESET} " "$nef_xmp_new"
+        echo
+        echo -e "${CYAN}Sidecar XMP metadata (after you confirm):${RESET}"
+        if [[ "$mode" == "dry-run" ]]; then
+            emit_wrap_labeled_stdout "      " "" "[Dry-run] A Yes-style answer only simulates the two renames. The script would then set XMP RawFileName (Lightroom Camera Raw crs:RawFileName or RawFileName) to the new NEF basename when that field exists, and would only describe any remaining mismatch—no files are modified in dry-run."
+        else
+            emit_wrap_labeled_stdout "      " "" "After a Yes-style answer: both paths are renamed on disk, then the script updates the sidecar’s RawFileName (Lightroom crs:RawFileName or RawFileName) so it matches the new NEF basename when that metadata is present (the XMP’s own timestamps are preserved when written)."
+            emit_wrap_labeled_stdout "      " "" "A short follow-up prompt appears only if something still disagrees with the renamed NEF or the field cannot be edited automatically."
+        fi
     fi
     if [[ "$f" != "$new" ]] && is_html_file "$f"; then
         print_html_companion_plan_for_prompt "$f" "$new"
