@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.05.07 - v. 19.80 - M/S/H: verify every checksum list ref (before/after rename + no-rename-needed real runs); whole-file checksum_check emits one letter; no-op groups skip dry-run verify
 # 2026.05.07 - v. 19.79 - non-verbose progress (dots + M/S/H): write to /dev/tty when available (stdout is often block-buffered when not a TTY)
 # 2026.05.07 - v. 19.78 - fix nonverbose_progress_stdout_line_char: use "verbose -> skip" (was inverted; dots and M/S/H never printed)
 # 2026.05.07 - v. 19.77 - non-verbose checksum ref verify: M/S/H letters (same line wrap as dots) instead of silent checks
@@ -2664,9 +2665,9 @@ print_checksum_verify_progress_line() {
     local intro_plain
 
     if [[ "$when" == before ]]; then
-        intro_plain="${label} check (before rename) in progress for changed reference(s)..."
+        intro_plain="${label} check (before rename) in progress for reference(s)..."
     else
-        intro_plain="${label} check (after rename) in progress for changed reference(s)..."
+        intro_plain="${label} check (after rename) in progress for reference(s)..."
     fi
     emit_wrap_labeled_stdout "${intro_plain} " "${CYAN}${intro_plain}${RESET} " "$path"
 }
@@ -2677,9 +2678,9 @@ print_checksum_verified_refs_line() {
     local path="$3"
 
     if [[ "$when" == before ]]; then
-        emit_wrap_labeled_stdout "${label} VERIFIED (before rename): changed reference(s) in " "${CYAN}${label} VERIFIED (before rename):${RESET} changed reference(s) in " "$path"
+        emit_wrap_labeled_stdout "${label} VERIFIED (before rename): reference(s) in " "${CYAN}${label} VERIFIED (before rename):${RESET} reference(s) in " "$path"
     else
-        emit_wrap_labeled_stdout "${label} VERIFIED (after rename): changed reference(s) in " "${CYAN}${label} VERIFIED (after rename):${RESET} changed reference(s) in " "$path"
+        emit_wrap_labeled_stdout "${label} VERIFIED (after rename): reference(s) in " "${CYAN}${label} VERIFIED (after rename):${RESET} reference(s) in " "$path"
     fi
 }
 
@@ -5611,6 +5612,7 @@ checksum_check() {
     local sum_file="$1"
     local kind sum_dir sum_base
     kind="$(checksum_kind "$sum_file")"
+    nonverbose_checksum_ref_verify_progress_letter "$kind"
     sum_dir="$(dirname -- "$sum_file")"
     sum_base="$(basename -- "$sum_file")"
 
@@ -7721,6 +7723,34 @@ for f in "${ordered_paths[@]}"; do
                 checksum_no_action_fs_note=yes
             fi
             print_checksum_no_action_verbose "$sum_file" "$checksum_no_action_fs_note"
+            if [[ "$mode" == "real" ]] && (( ${#refs[@]} > 0 )); then
+                local_line_count="$(count_checksum_entries "$sum_file")"
+                if confirm_large_hash_check "$sum_file" "$label" "$local_line_count"; then
+                    ensure_checksum_file_unix_format "$sum_file"
+                    for i in "${!refs[@]}"; do
+                        vrc=0
+                        verify_single_checksum_target "$sum_file" "${refs_raw[$i]}" || vrc=$?
+                        if (( vrc == 0 )); then
+                            continue
+                        fi
+                        if (( vrc == 2 )); then
+                            print_checksum_fail_no_matching_line "$label" "${refs_raw[$i]}" "$sum_file"
+                            echo "  Check that the path column in the list matches this reference exactly (including spaces and any * prefix)."
+                            stop_on_checksum_failure "$sum_file" "checksum list check"
+                        fi
+                        print_checksum_fail_mismatch_line "$label" "${refs_raw[$i]}" "$sum_file"
+                        if prompt_refresh_checksum_hash_after_mismatch "$sum_file" "${refs_raw[$i]}" "${refs[$i]}" "checksum list check"; then
+                            continue
+                        fi
+                        stop_on_checksum_user_quit_after_mismatch "$sum_file" "checksum list check"
+                    done
+                else
+                    rc=$?
+                    if [[ $rc -eq 2 ]]; then
+                        break
+                    fi
+                fi
+            fi
             ((++files_skipped))
             db_mark_checked "$sum_file" "checksum_group" "checked"
             db_mark_many_checked "checksum_ref" "checked" "${refs[@]}"
@@ -7744,7 +7774,7 @@ for f in "${ordered_paths[@]}"; do
             fi
             print_checksum_group_preview "$label" "$sum_file" "$new_sum" refs new_refs
             emit_wrap_labeled_stdout "[DRY-RUN] Would update ${label,,} content references inside: " "${CYAN}[DRY-RUN] Would update ${label,,} content references inside:${RESET} " "$sum_file"
-            emit_wrap_labeled_stdout "[DRY-RUN] Would check changed ${label} reference(s) after rename: " "${CYAN}[DRY-RUN] Would check changed ${label} reference(s) after rename:${RESET} " "$new_sum"
+            emit_wrap_labeled_stdout "[DRY-RUN] Would check ${label} reference(s) after rename: " "${CYAN}[DRY-RUN] Would check ${label} reference(s) after rename:${RESET} " "$new_sum"
             echo "----------------------------------------"
 
             ((++files_affected))
@@ -7848,15 +7878,9 @@ for f in "${ordered_paths[@]}"; do
 
         begin_current_operation "$label" "$sum_file" "$new_sum"
 
-        changed_count=0
-        for i in "${!refs[@]}"; do
-            [[ "${new_refs[$i]}" != "${refs[$i]}" ]] && ((++changed_count))
-        done
-
-        if (( changed_count > 0 )); then
+        if (( ${#refs[@]} > 0 )); then
             print_checksum_verify_progress_line "$label" before "$sum_file"
             for i in "${!refs[@]}"; do
-                [[ "${new_refs[$i]}" != "${refs[$i]}" ]] || continue
                 vrc=0
                 verify_single_checksum_target "$sum_file" "${refs_raw[$i]}" || vrc=$?
                 if (( vrc == 0 )); then
@@ -8025,10 +8049,9 @@ for f in "${ordered_paths[@]}"; do
             ((++files_skipped))
         fi
 
-        if (( changed_count > 0 )); then
+        if (( ${#refs[@]} > 0 )); then
             print_checksum_verify_progress_line "$label" after "$final_sum"
             for i in "${!refs[@]}"; do
-                [[ "${new_refs[$i]}" != "${refs[$i]}" ]] || continue
                 new_ref_for_verify="$(format_ref_for_checksum_file "$final_sum" "${refs_raw[$i]}" "${new_refs[$i]}")"
                 vrc=0
                 verify_single_checksum_target "$final_sum" "$new_ref_for_verify" || vrc=$?
