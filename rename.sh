@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.05.07 - v. 19.92 - NEF+XMP RawFileName prompts: clarify metadata-only patch inside .xmp (not renaming paths); note recovery XMP may omit crs:RawFileName
 # 2026.05.07 - v. 19.91 - transform_basename: same date-first rule for VID-YYYYMMDD-* as IMG- (gallery/WhatsApp)
 # 2026.05.07 - v. 19.90 - transform_basename: trailing YYYY-MM-DD-HH-MM-SS → YYYYMMDD_HHMMSS_ prefix; IMG-YYYYMMDD-* (e.g. WhatsApp) → YYYYMMDD_IMG-* at start + normalize
 # 2026.05.07 - v. 19.89 - NEF+XMP prompt: narrow OLD/NEW padding when no sidecar; transform_basename: ...-YYYY-MM-DD-HH-MM-SS.ext → ..._YYYYMMDD_HHMMSS.ext + normalize
@@ -3869,42 +3870,45 @@ nef_xmp_verify_sidecar_raw_file_name_interactive() {
     if [[ -n "$NEF_XMP_RAWFIX_AUTO_DIR" && -n "$xdir" && "$xdir" == "$NEF_XMP_RAWFIX_AUTO_DIR" ]]; then
         echo
         echo "XMP sidecar metadata check (auto, directory batch): '$xmp_path'"
+        echo "  This step only edits RawFileName *inside* the .xmp (Lightroom crs:RawFileName / RawFileName). It does not rename the .xmp or .nef paths on disk."
         echo "  Applying update: RawFileName '${cur:-<empty>}' -> '${proposed}' (paired NEF basename)."
         echo "  Paired NEF: '$nef_path'"
         [[ -n "$stem_same" ]] && echo "  Same-stem .nef in directory: '$stem_same'"
         echo
         nef_xmp_print_proposed_raw_file_proof "$xmp_path" "$nef_path" "$proposed"
         if ! nef_xmp_print_raw_file_name_preview "$xmp_path" "$proposed"; then
-            echo "  Could not locate RawFileName element or attribute to rewrite (parsed inner value: '${cur:-empty}')."
+            echo "  Could not locate RawFileName element or attribute to rewrite (parsed inner value: '${cur:-empty}'). Nothing to patch inside this .xmp unless you add crs:RawFileName / RawFileName (e.g. re-save from Lightroom)."
         fi
         echo
         if nef_xmp_replace_raw_file_name_preserving_times "$xmp_path" "$proposed"; then
             emit_wrap_labeled_stdout "OK: " "${GREEN}OK:${RESET} " "Updated RawFileName in '$xmp_path' (directory batch mode, dir '${NEF_XMP_RAWFIX_AUTO_DIR}')."
             vlog "RawFileName auto-updated (directory batch): '$xmp_path'"
         else
-            emit_wrap_labeled_stdout "SKIP: " "${YELLOW}SKIP:${RESET} " "No editable RawFileName element or attribute found in '$xmp_path'."
+            emit_wrap_labeled_stdout "SKIP: " "${YELLOW}SKIP:${RESET} " "No editable RawFileName element or attribute found in '$xmp_path' (recovery/minimal XMP often has no crs:RawFileName / RawFileName to patch)."
         fi
         return 0
     fi
 
     echo
     echo "XMP sidecar metadata check: '$xmp_path'"
-    echo "  Proposed update: RawFileName value '${cur:-<empty>}' -> '${proposed}' (must match paired NEF on disk)."
+    echo "  What this does: write the RawFileName string *inside* this .xmp (crs:RawFileName or RawFileName) so it matches the paired .nef basename."
+    echo "  It does not rename the .xmp or .nef files on disk — only the XML field. Recovery/minimal sidecars often omit that field."
+    echo "  Proposed RawFileName value inside the XMP: '${cur:-<empty>}' -> '${proposed}' (should match paired NEF basename)."
     echo "  Paired NEF: '$nef_path'"
     [[ -n "$stem_same" ]] && echo "  Same-stem .nef in directory: '$stem_same'"
     echo
     nef_xmp_print_proposed_raw_file_proof "$xmp_path" "$nef_path" "$proposed"
     if ! nef_xmp_print_raw_file_name_preview "$xmp_path" "$proposed"; then
-        echo "  Could not locate RawFileName element or attribute to rewrite (parsed inner value: '${cur:-empty}')."
+        echo "  Could not locate RawFileName element or attribute to rewrite (parsed inner value: '${cur:-empty}'). Nothing to patch inside this .xmp unless you add crs:RawFileName / RawFileName (e.g. re-save from Lightroom)."
     fi
     echo
     echo "  Keys:"
-    echo "    [Y] Yes / Enter - this file only (default)"
-    echo "    [d] Yes + auto for every RawFileName fix in this directory"
+    echo "    [Y] Yes / Enter - patch this .xmp only (default)"
+    echo "    [d] Yes + auto-patch every RawFileName fix in this directory"
     echo "    [n] No"
     echo "    [q] Quit run"
-    verbose_question_timestamp "Apply this RawFileName change in the XMP? [Y/n/d/q]:"
-    echo -n "Apply this RawFileName change in the XMP? [Y/n/d/q]: "
+    verbose_question_timestamp "Write RawFileName into this .xmp on disk? (metadata only) [Y/n/d/q]:"
+    echo -n "Write RawFileName into this .xmp on disk? (metadata only) [Y/n/d/q]: "
     flush_stdin
     read_single_key ans "$PROMPT_WAIT_SECONDS"
     echo
@@ -3919,7 +3923,7 @@ nef_xmp_verify_sidecar_raw_file_name_interactive() {
                 emit_wrap_labeled_stdout "OK: " "${GREEN}OK:${RESET} " "Updated RawFileName in '$xmp_path'; further mismatches in '${NEF_XMP_RAWFIX_AUTO_DIR}' auto-apply."
                 vlog "RawFileName directory batch mode set to '${NEF_XMP_RAWFIX_AUTO_DIR}'; applied '$xmp_path'"
             else
-                emit_wrap_labeled_stdout "SKIP: " "${YELLOW}SKIP:${RESET} " "No editable RawFileName element or attribute found in '$xmp_path'."
+                emit_wrap_labeled_stdout "SKIP: " "${YELLOW}SKIP:${RESET} " "No editable RawFileName element or attribute found in '$xmp_path' (recovery/minimal XMP often has no crs:RawFileName / RawFileName to patch)."
             fi
             return 0
             ;;
@@ -3930,7 +3934,7 @@ nef_xmp_verify_sidecar_raw_file_name_interactive() {
             if nef_xmp_replace_raw_file_name_preserving_times "$xmp_path" "$proposed"; then
                 emit_wrap_labeled_stdout "OK: " "${GREEN}OK:${RESET} " "Updated RawFileName in '$xmp_path' (same encoding as matched fragment)."
             else
-                emit_wrap_labeled_stdout "SKIP: " "${YELLOW}SKIP:${RESET} " "No editable RawFileName element or attribute found in '$xmp_path'."
+                emit_wrap_labeled_stdout "SKIP: " "${YELLOW}SKIP:${RESET} " "No editable RawFileName element or attribute found in '$xmp_path' (recovery/minimal XMP often has no crs:RawFileName / RawFileName to patch)."
             fi
             return 0
             ;;
