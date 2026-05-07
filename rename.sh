@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.05.06 - v. 19.59 - verbose: one line for Samba/exfat case-only skip + “no rename” (main loop + checksum no-action); defer checksum ref/sum drop vlogs when group has no action
 # 2026.05.06 - v. 19.58 - --version: same boxed banner as -h (adds DB + exclude lines); print_startup_banner optional detail mode
 # 2026.05.06 - v. 19.57 - transform_name: Sprache_/Voice_ rule — always lowercase sprache label; tail case preserved (Voice unchanged)
 # 2026.05.06 - v. 19.56 - transform_name: Sprache/Voice/Screen_Recording/YYYYMMDD-HHMMSS_slug media tails — preserve letter case (only slug non-alnum to hyphens)
@@ -2692,15 +2693,15 @@ print_protected_checksum_verbose() {
 print_checksum_no_action_verbose() {
     (( VERBOSE == 1 )) || return 0
     local sum_file="$1"
-    local line1="All referenced files exist and no rename/update is needed"
-    local line2="          for '${sum_file}' - skipping without checksum verification"
-
-    if (( ${#line1} + 11 <= MAX_LINE_LENGTH )) && (( ${#line2} <= MAX_LINE_LENGTH )); then
-        echo "[VERBOSE] ${line1}" >&2
-        echo "${line2}" >&2
+    local fs_skipped="${2-no}"
+    local msg="All referenced files exist and no rename/update is needed for '${sum_file}' - skipping without checksum verification"
+    [[ "$fs_skipped" == yes ]] && msg+=" (no case-only rename on exfat/CIFS/Samba where applicable)"
+    local plain="[VERBOSE] ${msg}"
+    if (( ${#plain} <= MAX_LINE_LENGTH )); then
+        echo -e "${CYAN}[VERBOSE]${RESET} ${msg}" >&2
     else
-        echo "[VERBOSE] ${line1}" >&2
-        echo "${line2}" >&2
+        echo -e "${CYAN}[VERBOSE]${RESET}" >&2
+        printf '%s%s\n' "$WRAP_MSG_INDENT" "$msg" >&2
     fi
 }
 
@@ -6763,6 +6764,8 @@ main_index=0
 for f in "${ordered_paths[@]}"; do
     precomputed_new=""
     nef_xmp_buddy=""
+    verbose_fs_skip_plain=no
+    verbose_fs_skip_sidecar=no
     ((++main_index))
     if (( VERBOSE == 1 && main_index % VERBOSE_MAIN_EVERY == 0 )); then
         print_progress_box "$main_index / ${#ordered_paths[@]}" "$f"
@@ -7085,9 +7088,10 @@ for f in "${ordered_paths[@]}"; do
             new_refs+=( "$new_ref" )
         done
 
+        declare -a checksum_fs_dropped_refs=()
         for i in "${!new_refs[@]}"; do
             if [[ "${new_refs[$i]}" != "${refs[$i]}" ]] && should_skip_case_only_rename_on_fs "${refs[$i]}" "${new_refs[$i]}"; then
-                vlog "Dropping case-only ref rename on exfat/CIFS/Samba (checksum group): '${refs[$i]}'"
+                checksum_fs_dropped_refs+=( "${refs[$i]}" )
                 new_refs[$i]="${refs[$i]}"
             fi
         done
@@ -7098,12 +7102,13 @@ for f in "${ordered_paths[@]}"; do
         done
 
         sum_file_needs_rename=no
+        checksum_fs_sum_skipped=no
         if [[ "$new_sum" != "$sum_file" ]]; then
             if is_protected_checksum_name "$sum_file"; then
                 print_protected_checksum_verbose "$sum_file"
                 new_sum="$sum_file"
             elif should_skip_case_only_rename_on_fs "$sum_file" "$new_sum"; then
-                vlog "Dropping case-only checksum file rename on exfat/CIFS/Samba: '$sum_file'"
+                checksum_fs_sum_skipped=yes
                 new_sum="$sum_file"
             else
                 sum_file_needs_rename=yes
@@ -7116,13 +7121,24 @@ for f in "${ordered_paths[@]}"; do
         [[ "$checksum_content_modified" == "yes" ]] && action_needed=yes
 
         if [[ "$action_needed" == "no" ]]; then
-            print_checksum_no_action_verbose "$sum_file"
+            checksum_no_action_fs_note=no
+            if (( ${#checksum_fs_dropped_refs[@]} > 0 )) || [[ "$checksum_fs_sum_skipped" == yes ]]; then
+                checksum_no_action_fs_note=yes
+            fi
+            print_checksum_no_action_verbose "$sum_file" "$checksum_no_action_fs_note"
             ((++files_skipped))
             db_mark_checked "$sum_file" "checksum_group" "checked"
             db_mark_many_checked "checksum_ref" "checked" "${refs[@]}"
             processed["$sum_file"]=1
             for ref in "${refs[@]}"; do processed["$ref"]=1; done
             continue
+        fi
+
+        for _cfs_ref in "${checksum_fs_dropped_refs[@]}"; do
+            vlog "Dropping case-only ref rename on exfat/CIFS/Samba (checksum group): '$_cfs_ref'"
+        done
+        if [[ "$checksum_fs_sum_skipped" == yes ]]; then
+            vlog "Dropping case-only checksum file rename on exfat/CIFS/Samba: '$sum_file'"
         fi
 
         if [[ "$mode" == "dry-run" ]]; then
@@ -7541,13 +7557,13 @@ for f in "${ordered_paths[@]}"; do
     fi
 
     if [[ "$f" != "$new" ]] && should_skip_case_only_rename_on_fs "$f" "$new"; then
-        vlog "Dropping case-only rename suggestion on exfat/CIFS/Samba: '$f'"
+        verbose_fs_skip_plain=yes
         new="$f"
         precomputed_new="$f"
     fi
     if [[ -n "$nef_xmp_buddy" ]] && [[ "$nef_xmp_buddy" != "$nef_xmp_new" ]] \
         && should_skip_case_only_rename_on_fs "$nef_xmp_buddy" "$nef_xmp_new"; then
-        vlog "Dropping case-only sidecar rename suggestion on exfat/CIFS/Samba: '$nef_xmp_buddy'"
+        verbose_fs_skip_sidecar=yes
         nef_xmp_new="$nef_xmp_buddy"
     fi
 
@@ -7564,7 +7580,11 @@ for f in "${ordered_paths[@]}"; do
 
         if [[ "$f" == "$new" ]]; then
             if ! is_torrent_url_file "$f" && ! is_thumbs_db_file "$f"; then
-                vlog "No rename needed for '$f'"
+                if [[ "$verbose_fs_skip_plain" == yes ]]; then
+                    vlog "No rename needed for '$f' (no case-only rename on exfat/CIFS/Samba)"
+                else
+                    vlog "No rename needed for '$f'"
+                fi
                 db_backfill_missing_hashes_for_existing_file "$f"
                 ((++files_skipped))
                 db_mark_checked "$f" "plain" "checked"
@@ -7601,7 +7621,11 @@ for f in "${ordered_paths[@]}"; do
             continue
         fi
         if [[ "$f" == "$new" && "$nef_xmp_buddy" == "$nef_xmp_new" ]] && ! is_torrent_url_file "$f" && ! is_thumbs_db_file "$f"; then
-            vlog "No rename needed for NEF+XMP pair '$f' + '$nef_xmp_buddy'"
+            if [[ "$verbose_fs_skip_plain" == yes || "$verbose_fs_skip_sidecar" == yes ]]; then
+                vlog "No rename needed for NEF+XMP pair '$f' + '$nef_xmp_buddy' (no case-only rename on exfat/CIFS/Samba)"
+            else
+                vlog "No rename needed for NEF+XMP pair '$f' + '$nef_xmp_buddy'"
+            fi
             db_backfill_missing_hashes_for_existing_file "$f"
             db_backfill_missing_hashes_for_existing_file "$nef_xmp_buddy"
             ((files_skipped+=2))
