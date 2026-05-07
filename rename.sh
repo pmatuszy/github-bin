@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.05.06 - v. 19.64 - vlog: fold long messages (was one huge continuation line after [VERBOSE])
 # 2026.05.06 - v. 19.63 - NEF+XMP filesystem proof: Unicode box around paired NEF details (dynamic width ≤128 cols, long lines truncated)
 # 2026.05.06 - v. 19.62 - NEF+XMP RawFileName prompt: verify proposed basename exists beside sidecar (inode match), ls/stat + ad-hoc md5 (no DB write), summary line old→new
 # 2026.05.06 - v. 19.61 - NEF+XMP: RawFileName as element (<crs:RawFileName>...</crs:RawFileName>) or attribute; show current vs proposed fragment before confirm prompt
@@ -309,6 +310,8 @@
 SCRIPT_VERSION="$(LC_ALL=C grep -m1 '^# [0-9]' "$0" | sed -E 's/^# ([0-9]{4}\.[0-9]{2}\.[0-9]{2} - v\. [0-9]+\.[0-9]+) - .*/\1/')"
 LARGE_HASHFILE_LINE_THRESHOLD=20
 MAX_LINE_LENGTH=200
+# Long vlog() bodies fold to at most this many columns (excluding WRAP_MSG_INDENT), so paths don’t appear as one endless line.
+VERBOSE_LOG_BODY_WRAP_WIDTH=96
 # Continuation indent for user-visible lines longer than MAX_LINE_LENGTH (checksum/HTML style).
 WRAP_MSG_INDENT="          "
 
@@ -2918,12 +2921,17 @@ vlog() {
     (( VERBOSE == 1 )) || return 0
     local msg="$*"
     local plain="[VERBOSE] ${msg}"
+    local wrap_w=$(( MAX_LINE_LENGTH - ${#WRAP_MSG_INDENT} ))
+    (( wrap_w > VERBOSE_LOG_BODY_WRAP_WIDTH )) && wrap_w=$VERBOSE_LOG_BODY_WRAP_WIDTH
+    (( wrap_w < 48 )) && wrap_w=48
+
     if (( ${#plain} <= MAX_LINE_LENGTH )); then
         echo -e "${CYAN}[VERBOSE]${RESET} ${msg}" >&2
-    else
-        echo -e "${CYAN}[VERBOSE]${RESET}" >&2
-        printf '%s%s\n' "$WRAP_MSG_INDENT" "$msg" >&2
+        return 0
     fi
+
+    echo -e "${CYAN}[VERBOSE]${RESET}" >&2
+    printf '%s\n' "$msg" | fold -s -w "$wrap_w" | sed "s/^/${WRAP_MSG_INDENT}/" >&2
 }
 
 print_progress_box() {
