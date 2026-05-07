@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.05.06 - v. 19.63 - NEF+XMP filesystem proof: Unicode box around paired NEF details (dynamic width ≤128 cols, long lines truncated)
 # 2026.05.06 - v. 19.62 - NEF+XMP RawFileName prompt: verify proposed basename exists beside sidecar (inode match), ls/stat + ad-hoc md5 (no DB write), summary line old→new
 # 2026.05.06 - v. 19.61 - NEF+XMP: RawFileName as element (<crs:RawFileName>...</crs:RawFileName>) or attribute; show current vs proposed fragment before confirm prompt
 # 2026.05.06 - v. 19.60 - NEF+XMP: sync crs/RawFileName in sidecar to renamed NEF basename (preserve XMP mtime); always verify/prompt-fix mismatches (dry-run notes only)
@@ -3393,41 +3394,66 @@ nef_xmp_sync_sidecar_raw_file_name_to_nef() {
     fi
 }
 
+# Plain-text lines only (no ANSI); inner width clamped for readability on narrow terminals.
+nef_xmp_emit_text_box() {
+    local title="$1"
+    shift
+    local -a lines=( "$@" )
+    local inner line len max_len="${#title}"
+
+    for line in "${lines[@]}"; do
+        len="${#line}"
+        (( len > max_len )) && max_len=$len
+    done
+    (( max_len < 52 )) && max_len=52
+    (( max_len > 128 )) && max_len=128
+
+    printf '┌%*s┐
+' "$((max_len + 2))" '' | tr ' ' '─'
+    printf '│ %-*.*s │
+' "$max_len" "$max_len" "$title"
+    printf '├%*s┤
+' "$((max_len + 2))" '' | tr ' ' '─'
+    for line in "${lines[@]}"; do
+        printf '│ %-*.*s │
+' "$max_len" "$max_len" "$line"
+    done
+    printf '└%*s┘
+' "$((max_len + 2))" '' | tr ' ' '─'
+    echo
+}
+
 # Show that proposed RawFileName basename exists as the paired NEF (ls/stat/md5); does not use rename.sh DB hash helpers.
 nef_xmp_print_proposed_raw_file_proof() {
     local xmp_path="$1" nef_path="$2" proposed_bn="$3"
-    local dir join ls_line md5_disp sz mt at
+    local dir join ls_line md5_disp sz mt at verify_line
 
     dir="$(dirname -- "$xmp_path")"
     join="$dir/$proposed_bn"
 
-    echo "--- Raw file that metadata should name (filesystem check) ---"
-    echo "  Suggested RawFileName basename: '$proposed_bn'"
-    echo "  Path if resolved next to sidecar: '$join'"
-    echo "  Paired NEF path (script pairing): '$nef_path'"
-
     if [[ ! -f "$nef_path" ]]; then
-        echo -e "  ${YELLOW}WARNING:${RESET} paired NEF is not a regular file — cannot verify disk contents."
+        nef_xmp_emit_text_box "Paired NEF (filesystem)" \
+            "Suggested RawFileName basename: '${proposed_bn}'" \
+            "Path beside sidecar would be: '${join}'" \
+            "Paired NEF path: '${nef_path}'" \
+            "ERROR: paired path is not a regular file — cannot verify."
         return 1
     fi
 
     if [[ -f "$join" ]] && paths_refer_to_same_file "$join" "$nef_path"; then
-        echo -e "  ${GREEN}OK:${RESET} '$join' exists and is the same file as the paired NEF (same inode/device)."
+        verify_line="Verification: OK — sidecar-dir join matches paired NEF (same inode)."
     elif [[ -f "$join" ]]; then
-        echo -e "  ${YELLOW}WARNING:${RESET} '$join' exists but is not the same inode as paired NEF '$nef_path'."
+        verify_line="Verification: WARNING — '${join}' exists but differs from paired NEF inode."
     else
-        echo -e "  ${YELLOW}NOTE:${RESET} '$join' not found as that exact spelling; paired NEF may use a different path/case — using paired path for listing/hash below."
+        verify_line="Verification: NOTE — join path missing (case/spelling?); listing paired NEF below."
     fi
 
     ls_line="$(ls -l -- "$nef_path" 2>/dev/null || true)"
-    if [[ -n "$ls_line" ]]; then
-        echo "  ls -l: $ls_line"
-    fi
+    [[ -z "$ls_line" ]] && ls_line="(ls -l unavailable)"
 
     sz="$(stat -c %s -- "$nef_path" 2>/dev/null || printf '%s' '?')"
     mt="$(stat -c '%y' -- "$nef_path" 2>/dev/null || printf '%s' '?')"
     at="$(stat -c '%x' -- "$nef_path" 2>/dev/null || printf '%s' '?')"
-    echo "  size_bytes: $sz | mtime: $mt | atime: $at"
 
     md5_disp=""
     if command -v md5sum >/dev/null 2>&1; then
@@ -3435,12 +3461,18 @@ nef_xmp_print_proposed_raw_file_proof() {
     elif command -v md5 >/dev/null 2>&1; then
         md5_disp="$(md5 -q -- "$nef_path" 2>/dev/null | tr '[:upper:]' '[:lower:]')"
     fi
-    if [[ -n "$md5_disp" ]]; then
-        echo "  md5 (one-off for this prompt; not written to rename.sh DB): $md5_disp"
-    else
-        echo "  md5: (install md5sum or md5 to show)"
-    fi
-    echo
+
+    nef_xmp_emit_text_box "Paired NEF (filesystem)" \
+        "Suggested RawFileName basename: '${proposed_bn}'" \
+        "Path beside sidecar: '${join}'" \
+        "Paired NEF path: '${nef_path}'" \
+        "$verify_line" \
+        "ls -l: ${ls_line}" \
+        "Size (bytes): ${sz}" \
+        "Mtime: ${mt}" \
+        "Atime: ${at}" \
+        "MD5 (one-off, not DB): ${md5_disp:-install md5sum or md5 to show}"
+
     return 0
 }
 
