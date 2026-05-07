@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.05.07 - v. 19.49 - if findmnt is missing, print one-time install hint (util-linux) for mount-type detection
 # 2026.05.07 - v. 19.48 - case-only skip: also FUSE SMB (GVFS fuse.gvfsd-fuse, smb path/SOURCE; fuse.rclone smb hints)
 # 2026.05.07 - v. 19.47 - skip case-only renames (full basename incl. ext) on exfat and CIFS/Samba mounts (no prompt / no mv)
 # 2026.05.07 - v. 19.46 - transform_basename: YYYY.MM.DD-tail.ext -> YYYYMMDD_tail.ext (dotted date prefix)
@@ -3270,12 +3271,23 @@ is_case_only_rename_pair() {
     return 0
 }
 
+# One-time notice when util-linux findmnt is absent (case-only skip relies on it).
+warn_findmnt_missing_once() {
+    [[ -n "${FINDMNT_MISSING_WARNED-}" ]] && return 0
+    FINDMNT_MISSING_WARNED=1
+    echo -e "${YELLOW}rename.sh:${RESET} ${CYAN}findmnt${RESET} was not found. Install ${CYAN}util-linux${RESET} so exfat/CIFS/SMB/GVFS mounts are detected and case-only renames are skipped safely." >&2
+    echo "  Debian/Ubuntu: sudo apt install util-linux    Fedora/RHEL: sudo dnf install util-linux    Alpine: apk add util-linux" >&2
+}
+
 # exfat and SMB/CIFS backends are usually case-insensitive or awkward for case-only renames.
 # Also treat GNOME/KDE GVFS SMB (fuse.gvfsd-fuse) and rclone FUSE mounts that expose smb:// / UNC paths.
 path_filesystem_skip_case_only_rename() {
     local path="$1" fs src opts lsrc lopts rp
     [[ -e "$path" ]] || return 1
-    command -v findmnt >/dev/null 2>&1 || return 1
+    if ! command -v findmnt >/dev/null 2>&1; then
+        warn_findmnt_missing_once
+        return 1
+    fi
     fs="$(findmnt -n -o FSTYPE --target "$path" 2>/dev/null)" || return 1
     fs="${fs,,}"
 
