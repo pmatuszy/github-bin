@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# 2026.05.07 - v. 19.91 - transform_basename: same date-first rule for VID-YYYYMMDD-* as IMG- (gallery/WhatsApp)
+# 2026.05.07 - v. 19.90 - transform_basename: trailing YYYY-MM-DD-HH-MM-SS → YYYYMMDD_HHMMSS_ prefix; IMG-YYYYMMDD-* (e.g. WhatsApp) → YYYYMMDD_IMG-* at start + normalize
+# 2026.05.07 - v. 19.89 - NEF+XMP prompt: narrow OLD/NEW padding when no sidecar; transform_basename: ...-YYYY-MM-DD-HH-MM-SS.ext → ..._YYYYMMDD_HHMMSS.ext + normalize
 # 2026.05.07 - v. 19.88 - NEF+XMP rename prompt: pad OLD/NEW/(sidecar) labels to same width so paths align
 # 2026.05.07 - v. 19.87 - transform_basename: YYYY-MM-DD + HH-MM-SS camera rule now runs _normalize_basename_separators (spaces→_, collapse) on full result; early return had skipped that pass
 # 2026.05.07 - v. 19.86 - NONVERBOSE_CHECKSUM_LETTER_CYCLE_EVENTS default 100 (was 50)
@@ -339,8 +342,10 @@ MAX_LINE_LENGTH=200
 VERBOSE_LOG_BODY_WRAP_WIDTH=96
 # NEF+XMP paired-file box: soft-wrap content to this width (fold -s); full paths span multiple rows instead of truncating.
 NEF_XMP_BOX_WRAP_WIDTH=108
-# Plain-text width of "OLD:" / "NEW:" / "OLD (sidecar):" labels in NEF+XMP pair prompts so paths start in the same column.
+# Plain-text width of "OLD (sidecar):" / "NEW (sidecar):" in NEF+XMP pair prompts (wider "OLD:" / "NEW:" use this when a sidecar exists).
 NEF_XMP_PAIR_LABEL_WIDTH=15
+# When there is no XMP sidecar, only "OLD:" / "NEW:" are shown — use this width so paths are not over-indented.
+NEF_XMP_PAIR_LABEL_WIDTH_NO_SIDECAR=5
 # Continuation indent for user-visible lines longer than MAX_LINE_LENGTH (checksum/HTML style).
 WRAP_MSG_INDENT="          "
 
@@ -365,13 +370,15 @@ emit_wrap_labeled_line() {
 emit_wrap_labeled_stdout() { emit_wrap_labeled_line 1 "$@"; }
 emit_wrap_labeled_stderr() { emit_wrap_labeled_line 2 "$@"; }
 
-# NEF+XMP interactive rename: pad label to NEF_XMP_PAIR_LABEL_WIDTH so OLD/NEW/sidecar paths align vertically.
+# NEF+XMP interactive rename: pad label to width (arg 4, default NEF_XMP_PAIR_LABEL_WIDTH) so OLD/NEW/sidecar paths align when sidecars exist.
 emit_wrap_nef_xmp_pair_label_stdout() {
     local plain_tag="$1"
     local color_name="$2"
     local body="$3"
+    local width="${4-}"
     local padded plain_pref ansi_pref
-    printf -v padded '%-*s' "$NEF_XMP_PAIR_LABEL_WIDTH" "$plain_tag"
+    [[ -z "$width" ]] && width=$NEF_XMP_PAIR_LABEL_WIDTH
+    printf -v padded '%-*s' "$width" "$plain_tag"
     plain_pref="$padded"
     case "$color_name" in
         red)   ansi_pref="${RED}${padded}${RESET}" ;;
@@ -5368,6 +5375,30 @@ transform_basename() {
         return
     fi
 
+    # WhatsApp / gallery-style "IMG-YYYYMMDD-rest.ext" or "VID-YYYYMMDD-rest.ext" → "YYYYMMDD_IMG-rest.ext" / "YYYYMMDD_VID-rest.ext" (then normalize).
+    if [[ "$new" =~ ^([Ii][Mm][Gg]|[Vv][Ii][Dd])-([0-9]{8})-(.+)(\.[^.]+)$ ]]; then
+        local _img_vid_date_out
+        _img_vid_date_out="$(printf '%s_%s-%s%s' \
+            "${BASH_REMATCH[2]}" \
+            "${BASH_REMATCH[1]}" \
+            "${BASH_REMATCH[3]}" \
+            "${BASH_REMATCH[4]}")"
+        printf '%s' "$(_normalize_basename_separators "$_img_vid_date_out")"
+        return
+    fi
+
+    # Trailing "-YYYY-MM-DD-HH-MM-SS.ext" (export/screenshot style) → "YYYYMMDD_HHMMSS_title.ext" (timestamp first; then normalize).
+    if [[ "$new" =~ ^(.+)-([0-9]{4})-([0-9]{2})-([0-9]{2})-([0-9]{2})-([0-9]{2})-([0-9]{2})(\.[^.]+)$ ]]; then
+        local _tail_hy_dt_out
+        _tail_hy_dt_out="$(printf '%s%s%s_%s%s%s_%s%s' \
+            "${BASH_REMATCH[2]}" "${BASH_REMATCH[3]}" "${BASH_REMATCH[4]}" \
+            "${BASH_REMATCH[5]}" "${BASH_REMATCH[6]}" "${BASH_REMATCH[7]}" \
+            "${BASH_REMATCH[1]}" \
+            "${BASH_REMATCH[8]}")"
+        printf '%s' "$(_normalize_basename_separators "$_tail_hy_dt_out")"
+        return
+    fi
+
     if [[ "$new" =~ ^([0-9]{8})-([0-9]{6})_-_(.+)(\.[^.]+)$ ]]; then
         printf '%s_%s_-_%s%s' \
             "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}" \
@@ -8482,11 +8513,13 @@ for f in "${ordered_paths[@]}"; do
     if [[ -n "$nef_xmp_buddy" ]]; then
         echo -e "${CYAN}NEF+XMP pair (same stem; both renamed together):${RESET}"
     fi
-    emit_wrap_nef_xmp_pair_label_stdout "OLD: " red "$f"
-    emit_wrap_nef_xmp_pair_label_stdout "NEW: " green "$new"
+    _nxmp_pw=$NEF_XMP_PAIR_LABEL_WIDTH_NO_SIDECAR
+    [[ -n "$nef_xmp_buddy" ]] && _nxmp_pw=$NEF_XMP_PAIR_LABEL_WIDTH
+    emit_wrap_nef_xmp_pair_label_stdout "OLD: " red "$f" "$_nxmp_pw"
+    emit_wrap_nef_xmp_pair_label_stdout "NEW: " green "$new" "$_nxmp_pw"
     if [[ -n "$nef_xmp_buddy" ]]; then
-        emit_wrap_nef_xmp_pair_label_stdout "OLD (sidecar): " red "$nef_xmp_buddy"
-        emit_wrap_nef_xmp_pair_label_stdout "NEW (sidecar): " green "$nef_xmp_new"
+        emit_wrap_nef_xmp_pair_label_stdout "OLD (sidecar): " red "$nef_xmp_buddy" "$NEF_XMP_PAIR_LABEL_WIDTH"
+        emit_wrap_nef_xmp_pair_label_stdout "NEW (sidecar): " green "$nef_xmp_new" "$NEF_XMP_PAIR_LABEL_WIDTH"
         echo
         echo -e "${CYAN}Sidecar XMP metadata (after you confirm):${RESET}"
         if [[ "$mode" == "dry-run" ]]; then
