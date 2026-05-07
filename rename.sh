@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.05.07 - v. 19.78 - fix nonverbose_progress_stdout_line_char: use "verbose -> skip" (was inverted; dots and M/S/H never printed)
 # 2026.05.07 - v. 19.77 - non-verbose checksum ref verify: M/S/H letters (same line wrap as dots) instead of silent checks
 # 2026.05.07 - v. 19.76 - current-scope discovery Python: restore import sys (stdin/stdout/stderr)
 # 2026.05.07 - v. 19.75 - current-directory scope: fast find→sort→shell path (no 64 MB read loop); clearer startup message (no full-tree wording)
@@ -601,7 +602,7 @@ flush_stdin() {
 # One non-verbose stdout progress character (dot or checksum letter); wraps like dots (MAX_LINE_LENGTH).
 nonverbose_progress_stdout_line_char() {
     local ch="$1"
-    (( VERBOSE == 1 )) || return 0
+    (( VERBOSE == 1 )) && return 0
     if [[ "$NONVERBOSE_PROGRESS_DOT_LINE_OPEN" == yes ]] && (( NONVERBOSE_PROGRESS_DOT_COL_COUNT >= MAX_LINE_LENGTH )); then
         printf '\n'
         NONVERBOSE_PROGRESS_DOT_COL_COUNT=0
