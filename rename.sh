@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.05.06 - v. 19.57 - transform_name: Sprache_/Voice_ rule — always lowercase sprache label; tail case preserved (Voice unchanged)
 # 2026.05.06 - v. 19.56 - transform_name: Sprache/Voice/Screen_Recording/YYYYMMDD-HHMMSS_slug media tails — preserve letter case (only slug non-alnum to hyphens)
 # 2026.05.06 - v. 19.55 - transform_basename: date ranges YYYY.MM.DD-YYYY.MM.DD and YYYY.MM.DD-YYYY.MM-DD → YYYYMMDD-YYYYMMDD_tail (before single dotted-date rule)
 # 2026.05.07 - v. 19.54 - transform_basename: YYYY.MM.DD-YYYY.MM.DD range → YYYYMMDD_YYYYMMDD_tail (dirs + files; before single dotted-date rule)
@@ -4862,6 +4863,7 @@ transform_name() {
         # Sprache_/Voice_ + YYMMDD + HHMMSS + optional _tail + ext (tail was required before v. 19.13).
         elif [[ "$newbase" =~ ^(Sprache|Voice)_([0-9]{6})_([0-9]{6})(_(.+))?(\..+)$ ]]; then
             media_kind="${BASH_REMATCH[1]}"
+            [[ "${media_kind,,}" == sprache ]] && media_kind=sprache
             media_date="20${BASH_REMATCH[2]}"
             media_time="${BASH_REMATCH[3]}"
             media_suffix="${BASH_REMATCH[5]-}"
