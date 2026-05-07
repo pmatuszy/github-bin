@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.05.07 - v. 19.93 - NEF+XMP: if XMP has no RawFileName markup, skip RawFileName prompts/notes (do not suggest adding it)
 # 2026.05.07 - v. 19.92 - NEF+XMP RawFileName prompts: clarify metadata-only patch inside .xmp (not renaming paths); note recovery XMP may omit crs:RawFileName
 # 2026.05.07 - v. 19.91 - transform_basename: same date-first rule for VID-YYYYMMDD-* as IMG- (gallery/WhatsApp)
 # 2026.05.07 - v. 19.90 - transform_basename: trailing YYYY-MM-DD-HH-MM-SS → YYYYMMDD_HHMMSS_ prefix; IMG-YYYYMMDD-* (e.g. WhatsApp) → YYYYMMDD_IMG-* at start + normalize
@@ -3685,6 +3686,13 @@ nef_xmp_print_raw_file_name_preview() {
     return 0
 }
 
+# Returns 0 if crs:RawFileName / RawFileName element or attribute exists (tool can preview/replace).
+nef_xmp_sidecar_has_raw_file_name_markup() {
+    local xmp="$1"
+    [[ -f "$xmp" ]] || return 1
+    nef_xmp_raw_file_name_tool preview "$xmp" "__probe__" >/dev/null 2>&1
+}
+
 # After a real rename, force sidecar metadata to match the NEF basename (no prompt).
 nef_xmp_sync_sidecar_raw_file_name_to_nef() {
     local nef_path="$1" xmp_path="$2"
@@ -3694,13 +3702,16 @@ nef_xmp_sync_sidecar_raw_file_name_to_nef() {
     want="$(basename -- "$nef_path")"
     cur="$(nef_xmp_extract_raw_file_name_value "$xmp_path")"
     [[ "${cur,,}" == "${want,,}" ]] && return 0
+    if ! nef_xmp_sidecar_has_raw_file_name_markup "$xmp_path"; then
+        return 0
+    fi
     if [[ "$mode" == "dry-run" ]]; then
         vlog "[DRY-RUN] Would set XMP RawFileName in '$xmp_path' to '${want}' (currently '${cur:-empty}')"
         return 0
     fi
     vlog "Updating XMP RawFileName in '$xmp_path' to '${want}' (was '${cur:-empty}')"
     if ! nef_xmp_replace_raw_file_name_preserving_times "$xmp_path" "$want"; then
-        emit_wrap_labeled_stdout "NOTE: " "${YELLOW}NOTE:${RESET} " "Could not find editable crs:RawFileName (element or attribute) / RawFileName in '$xmp_path' (sidecar may need manual Lightroom/metadata edit)."
+        vlog "XMP RawFileName: no editable crs:RawFileName / RawFileName markup in '$xmp_path' — skipped sync after rename."
     fi
 }
 
@@ -3857,12 +3868,15 @@ nef_xmp_verify_sidecar_raw_file_name_interactive() {
 
     xdir="$(nef_xmp_canonical_dir_for_pair "$xmp_path")"
 
+    if ! nef_xmp_sidecar_has_raw_file_name_markup "$xmp_path"; then
+        vlog "XMP RawFileName: no crs:RawFileName / RawFileName markup in '$xmp_path' — skip (paired NEF basename is '${want}')."
+        return 0
+    fi
+
     if [[ "$mode" == "dry-run" ]]; then
-        emit_wrap_labeled_stdout "NOTE: " "${YELLOW}NOTE:${RESET} " "Suggest updating XMP RawFileName from '${cur:-<empty>}' to '${want}' (paired NEF basename). Dry-run preview:"
+        emit_wrap_labeled_stdout "NOTE: " "${YELLOW}NOTE:${RESET} " "Would update XMP RawFileName from '${cur:-<empty>}' to '${want}' (paired NEF basename). Dry-run preview:"
         nef_xmp_print_proposed_raw_file_proof "$xmp_path" "$nef_path" "$want"
-        if ! nef_xmp_print_raw_file_name_preview "$xmp_path" "$want"; then
-            emit_wrap_labeled_stdout "NOTE: " "${YELLOW}NOTE:${RESET} " "Could not build XML fragment preview (parsed inner value: '${cur:-empty}')."
-        fi
+        nef_xmp_print_raw_file_name_preview "$xmp_path" "$want" || true
         return 0
     fi
 
@@ -3876,15 +3890,13 @@ nef_xmp_verify_sidecar_raw_file_name_interactive() {
         [[ -n "$stem_same" ]] && echo "  Same-stem .nef in directory: '$stem_same'"
         echo
         nef_xmp_print_proposed_raw_file_proof "$xmp_path" "$nef_path" "$proposed"
-        if ! nef_xmp_print_raw_file_name_preview "$xmp_path" "$proposed"; then
-            echo "  Could not locate RawFileName element or attribute to rewrite (parsed inner value: '${cur:-empty}'). Nothing to patch inside this .xmp unless you add crs:RawFileName / RawFileName (e.g. re-save from Lightroom)."
-        fi
+        nef_xmp_print_raw_file_name_preview "$xmp_path" "$proposed" || true
         echo
         if nef_xmp_replace_raw_file_name_preserving_times "$xmp_path" "$proposed"; then
             emit_wrap_labeled_stdout "OK: " "${GREEN}OK:${RESET} " "Updated RawFileName in '$xmp_path' (directory batch mode, dir '${NEF_XMP_RAWFIX_AUTO_DIR}')."
             vlog "RawFileName auto-updated (directory batch): '$xmp_path'"
         else
-            emit_wrap_labeled_stdout "SKIP: " "${YELLOW}SKIP:${RESET} " "No editable RawFileName element or attribute found in '$xmp_path' (recovery/minimal XMP often has no crs:RawFileName / RawFileName to patch)."
+            emit_wrap_labeled_stdout "SKIP: " "${YELLOW}SKIP:${RESET} " "RawFileName patch failed in '$xmp_path' (directory batch)."
         fi
         return 0
     fi
@@ -3892,14 +3904,15 @@ nef_xmp_verify_sidecar_raw_file_name_interactive() {
     echo
     echo "XMP sidecar metadata check: '$xmp_path'"
     echo "  What this does: write the RawFileName string *inside* this .xmp (crs:RawFileName or RawFileName) so it matches the paired .nef basename."
-    echo "  It does not rename the .xmp or .nef files on disk — only the XML field. Recovery/minimal sidecars often omit that field."
+    echo "  It does not rename the .xmp or .nef files on disk — only the XML field."
     echo "  Proposed RawFileName value inside the XMP: '${cur:-<empty>}' -> '${proposed}' (should match paired NEF basename)."
     echo "  Paired NEF: '$nef_path'"
     [[ -n "$stem_same" ]] && echo "  Same-stem .nef in directory: '$stem_same'"
     echo
     nef_xmp_print_proposed_raw_file_proof "$xmp_path" "$nef_path" "$proposed"
     if ! nef_xmp_print_raw_file_name_preview "$xmp_path" "$proposed"; then
-        echo "  Could not locate RawFileName element or attribute to rewrite (parsed inner value: '${cur:-empty}'). Nothing to patch inside this .xmp unless you add crs:RawFileName / RawFileName (e.g. re-save from Lightroom)."
+        vlog "XMP RawFileName: preview failed for '$xmp_path' — skip interactive prompt."
+        return 0
     fi
     echo
     echo "  Keys:"
@@ -3923,7 +3936,7 @@ nef_xmp_verify_sidecar_raw_file_name_interactive() {
                 emit_wrap_labeled_stdout "OK: " "${GREEN}OK:${RESET} " "Updated RawFileName in '$xmp_path'; further mismatches in '${NEF_XMP_RAWFIX_AUTO_DIR}' auto-apply."
                 vlog "RawFileName directory batch mode set to '${NEF_XMP_RAWFIX_AUTO_DIR}'; applied '$xmp_path'"
             else
-                emit_wrap_labeled_stdout "SKIP: " "${YELLOW}SKIP:${RESET} " "No editable RawFileName element or attribute found in '$xmp_path' (recovery/minimal XMP often has no crs:RawFileName / RawFileName to patch)."
+                emit_wrap_labeled_stdout "SKIP: " "${YELLOW}SKIP:${RESET} " "RawFileName patch failed in '$xmp_path'."
             fi
             return 0
             ;;
@@ -3934,7 +3947,7 @@ nef_xmp_verify_sidecar_raw_file_name_interactive() {
             if nef_xmp_replace_raw_file_name_preserving_times "$xmp_path" "$proposed"; then
                 emit_wrap_labeled_stdout "OK: " "${GREEN}OK:${RESET} " "Updated RawFileName in '$xmp_path' (same encoding as matched fragment)."
             else
-                emit_wrap_labeled_stdout "SKIP: " "${YELLOW}SKIP:${RESET} " "No editable RawFileName element or attribute found in '$xmp_path' (recovery/minimal XMP often has no crs:RawFileName / RawFileName to patch)."
+                emit_wrap_labeled_stdout "SKIP: " "${YELLOW}SKIP:${RESET} " "RawFileName patch failed in '$xmp_path'."
             fi
             return 0
             ;;
