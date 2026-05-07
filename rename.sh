@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.05.07 - v. 19.46 - transform_basename: YYYY.MM.DD-tail.ext -> YYYYMMDD_tail.ext (dotted date prefix)
 # 2026.05.06 - v. 19.45 - case-only: mv A→B→C with B in same directory as A/C only (no /tmp or TMPDIR)
 # 2026.05.06 - v. 19.44 - case-only: mv only — A→B under TMPDIR then B→C (same-dir B breaks ci-CIFS “same file”)
 # 2026.05.06 - v. 19.43 - case-only: mv A→random B→C only (same dir); drop TMPDIR copy pipeline
@@ -4493,6 +4494,15 @@ transform_basename() {
             "${BASH_REMATCH[4]}" \
             "${BASH_REMATCH[5]}" \
             "${BASH_REMATCH[6]}"
+        return
+    fi
+
+    # YYYY.MM.DD-tail.ext -> YYYYMMDD_tail.ext (dotted calendar date before hyphen + title; any extension).
+    if [[ "$new" =~ ^([0-9]{4})\.([0-9]{2})\.([0-9]{2})-(.+)(\.[^.]+)$ ]]; then
+        printf '%s%s%s_%s%s' \
+            "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}" "${BASH_REMATCH[3]}" \
+            "${BASH_REMATCH[4]}" \
+            "${BASH_REMATCH[5]}"
         return
     fi
 
