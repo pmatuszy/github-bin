@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.05.06 - v. 19.65 - NEF+XMP filesystem box: fold long lines (no filename truncation via %.*s)
 # 2026.05.06 - v. 19.64 - vlog: fold long messages (was one huge continuation line after [VERBOSE])
 # 2026.05.06 - v. 19.63 - NEF+XMP filesystem proof: Unicode box around paired NEF details (dynamic width ≤128 cols, long lines truncated)
 # 2026.05.06 - v. 19.62 - NEF+XMP RawFileName prompt: verify proposed basename exists beside sidecar (inode match), ls/stat + ad-hoc md5 (no DB write), summary line old→new
@@ -312,6 +313,8 @@ LARGE_HASHFILE_LINE_THRESHOLD=20
 MAX_LINE_LENGTH=200
 # Long vlog() bodies fold to at most this many columns (excluding WRAP_MSG_INDENT), so paths don’t appear as one endless line.
 VERBOSE_LOG_BODY_WRAP_WIDTH=96
+# NEF+XMP paired-file box: soft-wrap content to this width (fold -s); full paths span multiple rows instead of truncating.
+NEF_XMP_BOX_WRAP_WIDTH=108
 # Continuation indent for user-visible lines longer than MAX_LINE_LENGTH (checksum/HTML style).
 WRAP_MSG_INDENT="          "
 
@@ -3402,32 +3405,42 @@ nef_xmp_sync_sidecar_raw_file_name_to_nef() {
     fi
 }
 
-# Plain-text lines only (no ANSI); inner width clamped for readability on narrow terminals.
+# Plain-text lines only (no ANSI). Long lines are folded with fold -s — nothing is truncated mid-path.
 nef_xmp_emit_text_box() {
     local title="$1"
     shift
-    local -a lines=( "$@" )
-    local inner line len max_len="${#title}"
+    local -a in_lines=( "$@" )
+    local wrap_w="${NEF_XMP_BOX_WRAP_WIDTH:-108}"
+    (( wrap_w < 52 )) && wrap_w=52
 
-    for line in "${lines[@]}"; do
-        len="${#line}"
-        (( len > max_len )) && max_len=$len
+    local -a title_rows=()
+    local -a rows=()
+    mapfile -t title_rows < <(printf '%s\n' "$title" | fold -s -w "$wrap_w")
+
+    local line
+    for line in "${in_lines[@]}"; do
+        mapfile -t -O "${#rows[@]}" rows < <(printf '%s\n' "$line" | fold -s -w "$wrap_w")
+    done
+
+    local max_len=0
+    local r
+    for r in "${title_rows[@]}"; do
+        (( ${#r} > max_len )) && max_len=${#r}
+    done
+    for r in "${rows[@]}"; do
+        (( ${#r} > max_len )) && max_len=${#r}
     done
     (( max_len < 52 )) && max_len=52
-    (( max_len > 128 )) && max_len=128
 
-    printf '┌%*s┐
-' "$((max_len + 2))" '' | tr ' ' '─'
-    printf '│ %-*.*s │
-' "$max_len" "$max_len" "$title"
-    printf '├%*s┤
-' "$((max_len + 2))" '' | tr ' ' '─'
-    for line in "${lines[@]}"; do
-        printf '│ %-*.*s │
-' "$max_len" "$max_len" "$line"
+    printf '┌%*s┐\n' "$((max_len + 2))" '' | tr ' ' '─'
+    for r in "${title_rows[@]}"; do
+        printf '│ %-*s │\n' "$max_len" "$r"
     done
-    printf '└%*s┘
-' "$((max_len + 2))" '' | tr ' ' '─'
+    printf '├%*s┤\n' "$((max_len + 2))" '' | tr ' ' '─'
+    for r in "${rows[@]}"; do
+        printf '│ %-*s │\n' "$max_len" "$r"
+    done
+    printf '└%*s┘\n' "$((max_len + 2))" '' | tr ' ' '─'
     echo
 }
 
