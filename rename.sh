@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.05.07 - v. 19.48 - case-only skip: also FUSE SMB (GVFS fuse.gvfsd-fuse, smb path/SOURCE; fuse.rclone smb hints)
 # 2026.05.07 - v. 19.47 - skip case-only renames (full basename incl. ext) on exfat and CIFS/Samba mounts (no prompt / no mv)
 # 2026.05.07 - v. 19.46 - transform_basename: YYYY.MM.DD-tail.ext -> YYYYMMDD_tail.ext (dotted date prefix)
 # 2026.05.06 - v. 19.45 - case-only: mv A→B→C with B in same directory as A/C only (no /tmp or TMPDIR)
@@ -3270,16 +3271,43 @@ is_case_only_rename_pair() {
 }
 
 # exfat and SMB/CIFS backends are usually case-insensitive or awkward for case-only renames.
+# Also treat GNOME/KDE GVFS SMB (fuse.gvfsd-fuse) and rclone FUSE mounts that expose smb:// / UNC paths.
 path_filesystem_skip_case_only_rename() {
-    local path="$1" fs
+    local path="$1" fs src opts lsrc lopts rp
     [[ -e "$path" ]] || return 1
     command -v findmnt >/dev/null 2>&1 || return 1
     fs="$(findmnt -n -o FSTYPE --target "$path" 2>/dev/null)" || return 1
     fs="${fs,,}"
+
     case "$fs" in
         exfat|cifs|smb3|smbfs) return 0 ;;
-        *) return 1 ;;
     esac
+
+    src="$(findmnt -n -o SOURCE --target "$path" 2>/dev/null)" || src=""
+    opts="$(findmnt -n -o OPTIONS --target "$path" 2>/dev/null)" || opts=""
+    lsrc="${src,,}"
+    lopts="${opts,,}"
+
+    rp="$(realpath -- "$path" 2>/dev/null || readlink -f -- "$path" 2>/dev/null || printf '%s' "$path")"
+    rp="${rp,,}"
+
+    case "$fs" in
+        fuse.gvfsd-fuse)
+            if [[ "$rp" == */gvfs/smb-share* ]]; then
+                return 0
+            fi
+            if [[ "$lsrc" == *smb-share* || "$lsrc" == smb:* || "$lsrc" == //* ]]; then
+                return 0
+            fi
+            ;;
+        fuse.rclone)
+            if [[ "$lsrc" == smb:* || "$lsrc" == *':smb'* || "$lsrc" == //* || "$lopts" == *type=smb* || "$lopts" == *fstype=smb* ]]; then
+                return 0
+            fi
+            ;;
+    esac
+
+    return 1
 }
 
 should_skip_case_only_rename_on_fs() {
