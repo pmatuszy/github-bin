@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.05.07 - v. 19.74 - NEF+XMP sidecar help text: flush-left lines ≤ MAX_LINE_LENGTH, breaks at sentence ends
 # 2026.05.07 - v. 19.73 - NEF+XMP interactive prompt: explain sidecar RawFileName update after rename (comfort text)
 # 2026.05.07 - v. 19.72 - non-verbose: skip one main-loop progress dot after auto-dir “Renamed:” line (avoids lone “.” between consecutive renames)
 # 2026.05.07 - v. 19.71 - NEF+XMP “no rename needed” vlog: header + each path on own lines; slash-aware wrap (not fold -s on whole line)
@@ -8337,10 +8338,16 @@ for f in "${ordered_paths[@]}"; do
         echo
         echo -e "${CYAN}Sidecar XMP metadata (after you confirm):${RESET}"
         if [[ "$mode" == "dry-run" ]]; then
-            emit_wrap_labeled_stdout "      " "" "[Dry-run] A Yes-style answer only simulates the two renames. The script would then set XMP RawFileName (Lightroom Camera Raw crs:RawFileName or RawFileName) to the new NEF basename when that field exists, and would only describe any remaining mismatch—no files are modified in dry-run."
+            printf '%s\n' \
+                '[Dry-run] A Yes-style answer only simulates the two renames on disk.' \
+                'The script would then set XMP RawFileName (Lightroom crs:RawFileName or RawFileName) to the new NEF basename when that field exists.' \
+                'It would only describe mismatches. No files are modified in dry-run.'
         else
-            emit_wrap_labeled_stdout "      " "" "After a Yes-style answer: both paths are renamed on disk, then the script updates the sidecar’s RawFileName (Lightroom crs:RawFileName or RawFileName) so it matches the new NEF basename when that metadata is present (the XMP’s own timestamps are preserved when written)."
-            emit_wrap_labeled_stdout "      " "" "A short follow-up prompt appears only if something still disagrees with the renamed NEF or the field cannot be edited automatically."
+            printf '%s\n' \
+                'After a Yes-style answer, both paths are renamed on disk.' \
+                'The script then updates the sidecar XMP so RawFileName (Lightroom crs:RawFileName or RawFileName) matches the new NEF basename when that metadata is present.' \
+                "The XMP file's timestamps are preserved when that metadata is written." \
+                'A short follow-up prompt appears only if something still disagrees with the renamed NEF or if the field cannot be edited automatically.'
         fi
     fi
     if [[ "$f" != "$new" ]] && is_html_file "$f"; then
