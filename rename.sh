@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.05.07 - v. 19.84 - non-verbose checksum ramp: backspace+overwrite in one cell until S/M/H; then advance column (fixes appended ramp strings on TTY)
 # 2026.05.07 - v. 19.83 - non-verbose checksum ramp: ASCII step every N events (NONVERBOSE_CHECKSUM_EVENT_STRIDE_N), S/M/H every N*10; large hash lists prompt [y/N/q] default N (LARGE_HASHFILE_LINE_PROMPT_THRESHOLD)
 # 2026.05.07 - v. 19.82 - non-verbose M/S/H: print one letter per 10 checksum progress events (resolve + verify + whole-file check share one counter)
 # 2026.05.07 - v. 19.81 - non-verbose: one M/S/H per checksum list line when resolving refs (replaces verbose-only "Resolved ref" lines for that phase)
@@ -440,7 +441,7 @@ shopt -s nullglob
 
 VERBOSE=0
 VERBOSE_MAIN_EVERY=200
-# Non-verbose: '.' per main-loop entry; checksum progress uses NONVERBOSE_CHECKSUM_EVENT_STRIDE_N (ramp char every N events, S/M/H every N*10; same counter for resolve, per-ref verify, whole-file check). Written to /dev/tty when writable so output is visible even if stdout is block-buffered (e.g. piped). Same column counter wraps at MAX_LINE_LENGTH; end line before prompts/other stdout.
+# Non-verbose: '.' per main-loop entry; checksum ramp redraws in one terminal cell (backspace+char) until S/M/H commits and advances the column counter. Uses /dev/tty when writable. Same wrap at MAX_LINE_LENGTH; end line before prompts/other stdout.
 NONVERBOSE_PROGRESS_DOT_LINE_OPEN=no
 NONVERBOSE_PROGRESS_DOT_COL_COUNT=0
 NONVERBOSE_CHECKSUM_LETTER_EVENT_N=0
@@ -448,6 +449,8 @@ NONVERBOSE_CHECKSUM_LETTER_EVENT_N=0
 NONVERBOSE_CHECKSUM_EVENT_STRIDE_N=1
 # ASCII ramp (9 steps between letters; positions map across this string). Edit to taste.
 NONVERBOSE_CHECKSUM_RAMP_CHARS='.,`^":;|!~-_=+*/\<>()[]{}#%&@?'
+# When yes, the next ramp update backspaces once before drawing (in-place on /dev/tty).
+NONVERBOSE_CHECKSUM_RAMP_CELL_ACTIVE=no
 # After auto-dir “Renamed:” (stdout), the next iteration’s lone progress dot looked odd; skip that one dot (see nonverbose_main_loop_progress_dot).
 NONVERBOSE_SKIP_NEXT_MAIN_LOOP_DOT=no
 CLI_COLORS=""
@@ -646,13 +649,54 @@ nonverbose_main_loop_progress_dot() {
         NONVERBOSE_SKIP_NEXT_MAIN_LOOP_DOT=no
         return 0
     fi
+    NONVERBOSE_CHECKSUM_RAMP_CELL_ACTIVE=no
     nonverbose_progress_stdout_line_char '.'
+}
+
+# In-place ramp glyph on the controlling TTY (one display column; column counter unchanged).
+nonverbose_checksum_ramp_cell_put() {
+    local ch="$1"
+    (( VERBOSE == 1 )) && return 0
+    [[ -w /dev/tty ]] 2>/dev/null || return 0
+    if [[ "$NONVERBOSE_CHECKSUM_RAMP_CELL_ACTIVE" != yes ]]; then
+        if [[ "$NONVERBOSE_PROGRESS_DOT_LINE_OPEN" == yes ]] && (( NONVERBOSE_PROGRESS_DOT_COL_COUNT >= MAX_LINE_LENGTH )); then
+            nonverbose_progress_tty_nl
+            NONVERBOSE_PROGRESS_DOT_COL_COUNT=0
+        fi
+    fi
+    if [[ "$NONVERBOSE_CHECKSUM_RAMP_CELL_ACTIVE" == yes ]]; then
+        printf '\b' >/dev/tty
+    fi
+    printf '%s' "$ch" >/dev/tty
+    NONVERBOSE_CHECKSUM_RAMP_CELL_ACTIVE=yes
+    NONVERBOSE_PROGRESS_DOT_LINE_OPEN=yes
+}
+
+# Final S/M/H for this ramp cell: optional backspace over last ramp char, then letter; then advance column counter (with wrap).
+nonverbose_checksum_commit_kind_letter() {
+    local letter="$1"
+    (( VERBOSE == 1 )) && return 0
+    if [[ -w /dev/tty ]] 2>/dev/null; then
+        if [[ "$NONVERBOSE_CHECKSUM_RAMP_CELL_ACTIVE" == yes ]]; then
+            printf '\b' >/dev/tty
+        fi
+        if [[ "$NONVERBOSE_PROGRESS_DOT_LINE_OPEN" == yes ]] && (( NONVERBOSE_PROGRESS_DOT_COL_COUNT >= MAX_LINE_LENGTH )); then
+            nonverbose_progress_tty_nl
+            NONVERBOSE_PROGRESS_DOT_COL_COUNT=0
+        fi
+        printf '%s' "$letter" >/dev/tty
+        NONVERBOSE_CHECKSUM_RAMP_CELL_ACTIVE=no
+        NONVERBOSE_PROGRESS_DOT_LINE_OPEN=yes
+        ((++NONVERBOSE_PROGRESS_DOT_COL_COUNT))
+        return 0
+    fi
+    NONVERBOSE_CHECKSUM_RAMP_CELL_ACTIVE=no
+    nonverbose_progress_stdout_line_char "$letter"
 }
 
 # M = MD5 list, S = SHA512 list, H = anything else (unknown extension / future kinds).
 # Every checksum progress event increments a counter. Every NONVERBOSE_CHECKSUM_EVENT_STRIDE_N events,
-# print the next ramp character from NONVERBOSE_CHECKSUM_RAMP_CHARS (9 ramp steps per cycle); every
-# (stride * 10) events print S/M/H for the current kind.
+# redraw the ramp in the same TTY cell (backspace + char); every (stride * 10) events commit S/M/H and advance the column.
 nonverbose_checksum_ref_verify_progress_letter() {
     local kind="${1-}"
     local letter stride block e slot idx ramp_str len
@@ -668,7 +712,7 @@ nonverbose_checksum_ref_verify_progress_letter() {
             sha512) letter=S ;;
             *) letter=H ;;
         esac
-        nonverbose_progress_stdout_line_char "$letter"
+        nonverbose_checksum_commit_kind_letter "$letter"
         return 0
     fi
     (( e % stride == 0 )) || return 0
@@ -683,7 +727,7 @@ nonverbose_checksum_ref_verify_progress_letter() {
         idx=$(( (slot - 1) * (len - 1) / 8 ))
         letter=${ramp_str:idx:1}
     fi
-    nonverbose_progress_stdout_line_char "$letter"
+    nonverbose_checksum_ramp_cell_put "$letter"
 }
 
 
@@ -692,6 +736,7 @@ nonverbose_progress_dot_endline_if_needed() {
     nonverbose_progress_tty_nl
     NONVERBOSE_PROGRESS_DOT_LINE_OPEN=no
     NONVERBOSE_PROGRESS_DOT_COL_COUNT=0
+    NONVERBOSE_CHECKSUM_RAMP_CELL_ACTIVE=no
 }
 
 read_single_key() {
