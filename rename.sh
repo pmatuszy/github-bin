@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.05.06 - v. 19.56 - transform_name: Sprache/Voice/Screen_Recording/YYYYMMDD-HHMMSS_slug media tails — preserve letter case (only slug non-alnum to hyphens)
 # 2026.05.06 - v. 19.55 - transform_basename: date ranges YYYY.MM.DD-YYYY.MM.DD and YYYY.MM.DD-YYYY.MM-DD → YYYYMMDD-YYYYMMDD_tail (before single dotted-date rule)
 # 2026.05.07 - v. 19.54 - transform_basename: YYYY.MM.DD-YYYY.MM.DD range → YYYYMMDD_YYYYMMDD_tail (dirs + files; before single dotted-date rule)
 # 2026.05.07 - v. 19.53 - DB-cache checksum probe: save/restore ERR trap at caller (RETURN trap restored ERR before return 1 unwound under set -E)
@@ -4852,7 +4853,6 @@ transform_name() {
         elif [[ "$newbase" =~ ^Screen_Recording_([0-9]{8})_([0-9]{6})_(.+)(\..+)$ ]]; then
             local screen_suffix
             screen_suffix="${BASH_REMATCH[3]}"
-            screen_suffix=$(printf '%s' "$screen_suffix" | tr '[:upper:]' '[:lower:]')
             screen_suffix=$(printf '%s' "$screen_suffix" | sed -E 's/[^[:alnum:]]+/-/g; s/^-+//; s/-+$//; s/-+/-/g')
             if [[ -n "$screen_suffix" ]]; then
                 newbase="${BASH_REMATCH[1]}_${BASH_REMATCH[2]}-screen_recording-${screen_suffix}${BASH_REMATCH[4]}"
@@ -4865,8 +4865,6 @@ transform_name() {
             media_date="20${BASH_REMATCH[2]}"
             media_time="${BASH_REMATCH[3]}"
             media_suffix="${BASH_REMATCH[5]-}"
-            media_kind=$(printf '%s' "$media_kind" | tr '[:upper:]' '[:lower:]')
-            media_suffix=$(printf '%s' "$media_suffix" | tr '[:upper:]' '[:lower:]')
             media_suffix=$(printf '%s' "$media_suffix" | sed -E 's/[^[:alnum:]]+/-/g; s/^-+//; s/-+$//; s/-+/-/g')
             if [[ -n "$media_suffix" ]]; then
                 newbase="${media_date}_${media_time}-${media_kind}-${media_suffix}${BASH_REMATCH[6]}"
@@ -4896,7 +4894,6 @@ transform_name() {
             newbase="${ymd}_${hh}${mm}${ss}${tail_bit}${BASH_REMATCH[6]}"
         elif [[ "$newbase" =~ ^([0-9]{8})-([0-9]{6})_(.+)(\.${common_media_ext_re})$ ]]; then
             media_suffix="${BASH_REMATCH[3]}"
-            media_suffix=$(printf '%s' "$media_suffix" | tr '[:upper:]' '[:lower:]')
             media_suffix=$(printf '%s' "$media_suffix" | sed -E 's/[^[:alnum:]]+/-/g; s/^-+//; s/-+$//; s/-+/-/g')
             if [[ -n "$media_suffix" ]]; then
                 newbase="${BASH_REMATCH[1]}_${BASH_REMATCH[2]}-${media_suffix}${BASH_REMATCH[4]}"
