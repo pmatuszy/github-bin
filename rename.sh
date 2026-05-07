@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.05.07 - v. 19.76 - current-scope discovery Python: restore import sys (stdin/stdout/stderr)
 # 2026.05.07 - v. 19.75 - current-directory scope: fast find→sort→shell path (no 64 MB read loop); clearer startup message (no full-tree wording)
 # 2026.05.07 - v. 19.74 - NEF+XMP sidecar help text: flush-left lines ≤ MAX_LINE_LENGTH, breaks at sentence ends
 # 2026.05.07 - v. 19.73 - NEF+XMP interactive prompt: explain sidecar RawFileName update after rename (comfort text)
@@ -7200,6 +7201,7 @@ if [[ "$process_scope" == "current" ]]; then
         find . -mindepth 1 -maxdepth 1 -depth -print0 |
         VERBOSE="${VERBOSE:-0}" python3 -c "$(cat <<'PY'
 import os
+import sys
 from datetime import datetime
 
 buf = sys.stdin.buffer.read()
