@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.05.07 - v. 19.81 - non-verbose: one M/S/H per checksum list line when resolving refs (replaces verbose-only "Resolved ref" lines for that phase)
 # 2026.05.07 - v. 19.80 - M/S/H: verify every checksum list ref (before/after rename + no-rename-needed real runs); whole-file checksum_check emits one letter; no-op groups skip dry-run verify
 # 2026.05.07 - v. 19.79 - non-verbose progress (dots + M/S/H): write to /dev/tty when available (stdout is often block-buffered when not a TTY)
 # 2026.05.07 - v. 19.78 - fix nonverbose_progress_stdout_line_char: use "verbose -> skip" (was inverted; dots and M/S/H never printed)
@@ -7453,6 +7454,7 @@ for f in "${ordered_paths[@]}"; do
     if [[ -f "$f" ]] && is_checksum_file "$f"; then
         sum_file="$f"
         label="$(checksum_label "$sum_file")"
+        sum_file_check_kind="$(checksum_kind "$sum_file")" || sum_file_check_kind=""
 
         vlog "Processing checksum file '$sum_file'"
 
@@ -7469,6 +7471,7 @@ for f in "${ordered_paths[@]}"; do
             expected_hashes+=( "$hash" )
             refs_raw+=( "$ref" )
             refs+=( "$(resolve_checksum_ref_path "$sum_file" "$ref")" )
+            nonverbose_checksum_ref_verify_progress_letter "$sum_file_check_kind"
             print_resolved_ref_verbose "$ref" "${refs[-1]}"
         done < <(extract_checksum_entries "$sum_file")
 
