@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.05.07 - v. 19.54 - transform_basename: YYYY.MM.DD-YYYY.MM.DD range → YYYYMMDD_YYYYMMDD_tail (dirs + files; before single dotted-date rule)
 # 2026.05.07 - v. 19.53 - DB-cache checksum probe: save/restore ERR trap at caller (RETURN trap restored ERR before return 1 unwound under set -E)
 # 2026.05.07 - v. 19.52 - checksum_file_has_renamable_refs: suppress ERR trap for intentional return 1/2 (set -E + errtrace fires on function return)
 # 2026.05.07 - v. 19.51 - checksum_file_has_renamable_refs: avoid ERR/set -e on final return 1 (RETURN trap + no inner errexit toggle)
@@ -4592,6 +4593,15 @@ transform_basename() {
             "${BASH_REMATCH[4]}" \
             "${BASH_REMATCH[5]}" \
             "${BASH_REMATCH[6]}"
+        return
+    fi
+
+    # YYYY.MM.DD-YYYY.MM.DD[_tail] — date range → YYYYMMDD_YYYYMMDD_tail (trip folders etc.; must run before single YYYY.MM.DD- rule).
+    if [[ "$new" =~ ^([0-9]{4})\.([0-9]{2})\.([0-9]{2})-([0-9]{4})\.([0-9]{2})\.([0-9]{2})(.*)$ ]]; then
+        printf '%s%s%s_%s%s%s%s' \
+            "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}" "${BASH_REMATCH[3]}" \
+            "${BASH_REMATCH[4]}" "${BASH_REMATCH[5]}" "${BASH_REMATCH[6]}" \
+            "${BASH_REMATCH[7]}"
         return
     fi
 
