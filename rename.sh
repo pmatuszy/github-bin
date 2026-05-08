@@ -1,4 +1,8 @@
 #!/usr/bin/env bash
+# 2026.05.08 - v. 19.108 - Large checksum prompt: skip [y/N/q] when line count is high but sum of on-disk target file sizes is below LARGE_HASHFILE_PROMPT_MIN_TOTAL_BYTES (default 30 GiB)
+# 2026.05.08 - v. 19.107 - Collision _OTHER: single _OTHER + numeric disambiguation (_OTHER_2, …); collapse stacked *_OTHER_OTHER* in transform targets; strip trailing _OTHER before allocating
+# 2026.05.08 - v. 19.106 - User prompts: prefix question lines and choice/readline prompts with (YYYY.MM.DD HH:MM:SS) local time; verbose_question_timestamp can log to stderr for mapping helpers
+# 2026.05.08 - v. 19.105 - Large checksum-list prompt: show last successful full-verify time (absolute + relative); state under RENAME_CHECKSUM_VERIFY_STATE_DIR; record after all refs pass
 # 2026.05.07 - v. 19.104 - NONVERBOSE_CHECKSUM_RAMP_CHARS: optional export/prefix override (default unchanged); -h lists it with a safe quoted example
 # 2026.05.07 - v. 19.103 - -h/--help: alphabetized tunable env vars with examples; tunables honor prefix assignment or export at startup
 # 2026.05.07 - v. 19.102 - Non-verbose checksum list progress: per-letter below NONVERBOSE_CHECKSUM_LIST_PER_LETTER_THRESHOLD (default 3000); batched min(n/10, max char cap) at/above; caps are script/env vars
@@ -350,6 +354,10 @@
 SCRIPT_VERSION="$(LC_ALL=C grep -m1 '^# [0-9]' "$0" | sed -E 's/^# ([0-9]{4}\.[0-9]{2}\.[0-9]{2} - v\. [0-9]+\.[0-9]+) - .*/\1/')"
 # If a checksum list has more than this many lines, ask before checking it; default answer is No ([y/N/q]).
 LARGE_HASHFILE_LINE_PROMPT_THRESHOLD="${LARGE_HASHFILE_LINE_PROMPT_THRESHOLD:-20}"
+# With a “large” line count, still skip that prompt when the sum of sizes of existing regular-file targets is below this many bytes (default 30 GiB). Set to 0 to always prompt when over the line threshold.
+LARGE_HASHFILE_PROMPT_MIN_TOTAL_BYTES="${LARGE_HASHFILE_PROMPT_MIN_TOTAL_BYTES:-32212254720}"
+# Per-path state files for last successful full checksum-list verification (epoch + content digest). Default: ~/.local/state/rename.sh/checksum-verify/
+RENAME_CHECKSUM_VERIFY_STATE_DIR="${RENAME_CHECKSUM_VERIFY_STATE_DIR:-}"
 MAX_LINE_LENGTH="${MAX_LINE_LENGTH:-200}"
 # Long vlog() bodies fold to at most this many columns (excluding WRAP_MSG_INDENT), so paths don’t appear as one endless line.
 VERBOSE_LOG_BODY_WRAP_WIDTH="${VERBOSE_LOG_BODY_WRAP_WIDTH:-96}"
@@ -613,6 +621,8 @@ Environment / tunables (read at startup; use export or prefix on the same line a
       DEBUG_RUN_ID=batch1 rename.sh -v --use-db
   LARGE_HASHFILE_LINE_PROMPT_THRESHOLD  Checksum lists with more lines than this prompt before full check ([y/N/q]); default 20.
       LARGE_HASHFILE_LINE_PROMPT_THRESHOLD=50 rename.sh --use-db
+  LARGE_HASHFILE_PROMPT_MIN_TOTAL_BYTES  With a large line count, skip the prompt if the sum of on-disk regular-file target sizes is below this many bytes (default 32212254720 ≈ 30 GiB). Use 0 to always prompt.
+      LARGE_HASHFILE_PROMPT_MIN_TOTAL_BYTES=0 rename.sh --use-db
   MAP_AT_SIGN                         Replacement for @ in basename mapping prompts (default a).
       MAP_AT_SIGN=x rename.sh
   MAP_R_ACUTE                         Replacement for acute accent (default c).
@@ -641,6 +651,8 @@ Environment / tunables (read at startup; use export or prefix on the same line a
       export NONVERBOSE_CHECKSUM_RAMP_CHARS='.:-=+*'
   NONVERBOSE_MAIN_LOOP_PROGRESS_EVERY_N  Non-verbose: print "k of total" every this many main-loop slots (default 1000).
       NONVERBOSE_MAIN_LOOP_PROGRESS_EVERY_N=500 rename.sh --use-db
+  RENAME_CHECKSUM_VERIFY_STATE_DIR      Directory for last-successful full-verify timestamps for checksum lists (large-list prompt). Default: $HOME/.local/state/rename.sh/checksum-verify
+      RENAME_CHECKSUM_VERIFY_STATE_DIR=/var/tmp/rename-checksum-state rename.sh --use-db
   START_DIR                           Working tree root (default current directory). Use an absolute path.
       START_DIR=/data/photos rename.sh --use-db --scope subdirs
   TMPDIR                              Temp directory for SQLite bootstrap mktemp etc. (POSIX; default often /tmp).
@@ -997,15 +1009,30 @@ read_line_editable() {
     printf -v "$__var_name" '%s' "$__line"
 }
 
+# Local-time prefix for interactive prompts, e.g. "(2026.05.08 14:30:00) " — trailing space included.
+user_prompt_ts_prefix() {
+    printf '(%s) ' "$(date '+%Y.%m.%d %H:%M:%S')"
+}
+
+# Print one user-visible question line with (YYYY.MM.DD HH:MM:SS). Optional second arg "2" / "stderr" for helpers that must not write to stdout.
 verbose_question_timestamp() {
     local question="$1"
+    local dest="${2-}"
     local ts
-    ts="$(date '+%Y-%m-%d %H:%M:%S')"
+    ts="$(date '+%Y.%m.%d %H:%M:%S')"
     if (( VERBOSE == 1 )); then
         echo "[VERBOSE] [${ts}] ${question}" >&2
     else
         nonverbose_progress_dot_endline_if_needed
     fi
+    case "$dest" in
+        2|stderr|err)
+            echo "(${ts}) ${question}" >&2
+            ;;
+        *)
+            echo "(${ts}) ${question}"
+            ;;
+    esac
 }
 
 verbose_status_timestamp() {
@@ -1030,11 +1057,11 @@ confirm_db_hash_update_for_existing_entry() {
     echo "  kind:     $hash_kind"
     echo "  stored:   $old_hash"
     echo "  computed: $new_hash"
-    echo "Replace stored hash with computed value?"
+    echo "$(user_prompt_ts_prefix)Replace stored hash with computed value?"
     echo "  [Y] Yes (default)"
     echo "  [N] No (keep existing DB hash)"
     echo "  [Q] Quit"
-    echo -n "Choice [Y/n/q]: "
+    echo -n "$(user_prompt_ts_prefix)Choice [Y/n/q]: "
     flush_stdin
     read_single_key answer "$PROMPT_WAIT_SECONDS"
     echo
@@ -1055,11 +1082,10 @@ prompt_resume_choice_early() {
     echo
     echo "Checkpoint found from an interrupted run: $RESUME_STATE_FILE"
     verbose_question_timestamp "Resume from checkpoint?"
-    echo "Resume from checkpoint?"
     echo "  [Y] Resume (default)"
     echo "  [N] Start from the beginning"
     echo "  [Q] Quit"
-    echo -n "Choice [Y/n/q]: "
+    echo -n "$(user_prompt_ts_prefix)Choice [Y/n/q]: "
     flush_stdin
     read_single_key answer "$PROMPT_WAIT_SECONDS"
     echo
@@ -1091,11 +1117,10 @@ prompt_use_existing_sqlite_cache_if_present() {
     echo "SQLite cache file found in the start directory:"
     echo "  $shown_db"
     verbose_question_timestamp "Use this SQLite cache for this run (same as --use-db)?"
-    echo "Use this SQLite cache for this run (same as --use-db)?"
     echo "  [Y] Yes — enable SQLite cache (default)"
     echo "  [N] No — run without the cache"
     echo "  [Q] Quit"
-    echo -n "Choice [Y/n/q]: "
+    echo -n "$(user_prompt_ts_prefix)Choice [Y/n/q]: "
     flush_stdin
     read_single_key answer "$PROMPT_WAIT_SECONDS"
     echo
@@ -2584,6 +2609,7 @@ checksum_file_has_renamable_refs() {
         resolved_ref="$(resolve_checksum_ref_path "$sum_file" "$ref_raw")"
         transformed_ref="$(transform_name "$resolved_ref")"
         tnr_rc=$?
+        transformed_ref="$(collapse_stacked_other_suffix_in_path "$transformed_ref")"
         if (( tnr_rc == 2 )); then
             return 2
         fi
@@ -2798,11 +2824,10 @@ if [[ -n "$CLI_COLORS" ]]; then
 else
     echo
     verbose_question_timestamp "Use colors?"
-    echo "Use colors?"
     echo "  [Y] Yes (default)"
     echo "  [N] No"
     echo "  [Q] Quit"
-    echo -n "Choice [Y/n/q]: "
+    echo -n "$(user_prompt_ts_prefix)Choice [Y/n/q]: "
 
     flush_stdin
     read_single_key input "$PROMPT_WAIT_SECONDS"
@@ -3565,11 +3590,10 @@ if [[ -n "$CLI_MODE" ]]; then
 else
     echo
     verbose_question_timestamp "Select mode:"
-    echo "Select mode:"
     echo "  [D] Dry-run (default)"
     echo "  [R] Real rename (interactive)"
     echo "  [Q] Quit"
-    echo -n "Choice [D/r/q]: "
+    echo -n "$(user_prompt_ts_prefix)Choice [D/r/q]: "
 
     flush_stdin
     read_single_key input "$PROMPT_WAIT_SECONDS"
@@ -3593,11 +3617,10 @@ if [[ -n "$CLI_SCOPE" ]]; then
 else
     echo
     verbose_question_timestamp "What should be processed?"
-    echo "What should be processed?"
     echo "  [C] Current directory only (default)"
     echo "  [S] Also subdirectories"
     echo "  [Q] Quit"
-    echo -n "Choice [C/s/q]: "
+    echo -n "$(user_prompt_ts_prefix)Choice [C/s/q]: "
 
     flush_stdin
     read_single_key input "$PROMPT_WAIT_SECONDS"
@@ -4110,7 +4133,6 @@ nef_xmp_verify_sidecar_raw_file_name_interactive() {
     echo "    [n] No"
     echo "    [q] Quit run"
     verbose_question_timestamp "Write RawFileName into this .xmp on disk? (metadata only) [Y/n/d/q]:"
-    echo -n "Write RawFileName into this .xmp on disk? (metadata only) [Y/n/d/q]: "
     flush_stdin
     read_single_key ans "$PROMPT_WAIT_SECONDS"
     echo
@@ -4960,20 +4982,147 @@ count_checksum_entries() {
     awk 'NF > 0 {count++} END {print count+0}' < <(extract_checksum_entries "$sum_file")
 }
 
+checksum_list_verify_state_abspath() {
+    db_abs_path "$1" 2>/dev/null || printf '%s' "$1"
+}
+
+checksum_list_verify_state_filepath() {
+    local sum_file="$1" abs key dir state_root
+    state_root="${RENAME_CHECKSUM_VERIFY_STATE_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/rename.sh/checksum-verify}"
+    abs="$(checksum_list_verify_state_abspath "$sum_file")"
+    if command -v md5sum >/dev/null 2>&1; then
+        key="$(printf '%s' "$abs" | md5sum | awk '{print $1}')"
+    else
+        key="$(printf '%s' "$abs" | cksum | awk '{print $1}')"
+    fi
+    [[ -n "$key" ]] || return 1
+    printf '%s/%s' "$state_root" "$key"
+}
+
+# Print human-readable age like "2 days, 4h, 45 mins ago" (local wall clock).
+format_epoch_relative_to_now() {
+    local epoch="$1" now delta rem days hours mins
+    now="$(date +%s)"
+    delta=$((now - epoch))
+    if (( delta < 0 )); then
+        printf '%s' "in the future (clock skew?)"
+        return 0
+    fi
+    if (( delta < 60 )); then
+        printf '%s' "just now"
+        return 0
+    fi
+    days=$((delta / 86400))
+    rem=$((delta % 86400))
+    hours=$((rem / 3600))
+    rem=$((rem % 3600))
+    mins=$((rem / 60))
+
+    local out="" sep=""
+    if (( days > 0 )); then
+        if (( days == 1 )); then
+            out+="${sep}1 day"
+        else
+            out+="${sep}${days} days"
+        fi
+        sep=", "
+    fi
+    if (( hours > 0 )); then
+        out+="${sep}${hours}h"
+        sep=", "
+    fi
+    if (( mins > 0 )); then
+        if (( mins == 1 )); then
+            out+="${sep}1 min"
+        else
+            out+="${sep}${mins} mins"
+        fi
+        sep=", "
+    fi
+    if [[ -z "$out" ]]; then
+        out="${delta}s"
+    fi
+    printf '%s ago' "$out"
+}
+
+print_checksum_list_last_verify_for_prompt() {
+    local sum_file="$1" state_path epoch stored_sig cur_sig rel
+
+    state_path="$(checksum_list_verify_state_filepath "$sum_file" 2>/dev/null || true)"
+    if [[ -z "$state_path" || ! -f "$state_path" ]]; then
+        echo "Last time this list was fully verified (all entries passed): no saved record."
+        return 0
+    fi
+    IFS=$'\t' read -r epoch stored_sig < "$state_path" || true
+    if ! [[ "$epoch" =~ ^[0-9]+$ ]]; then
+        echo "Last time this list was fully verified (all entries passed): no readable saved record."
+        return 0
+    fi
+    rel="$(format_epoch_relative_to_now "$epoch")"
+    echo "Last time this list was fully verified (all entries passed): $(format_epoch_human "$epoch") local time ($rel)."
+    cur_sig="$(db_compute_signature "$sum_file" 2>/dev/null || true)"
+    if [[ -n "$stored_sig" && -n "$cur_sig" && "$stored_sig" != "$cur_sig" ]]; then
+        echo "Note: the checksum list file has changed since that verification — the time above may be stale."
+    fi
+}
+
+record_checksum_list_full_verify_success() {
+    local sum_file="$1" state_path dir sig epoch tmp
+
+    [[ -f "$sum_file" ]] || return 0
+    sig="$(db_compute_signature "$sum_file" 2>/dev/null)" || return 0
+    [[ -n "$sig" ]] || return 0
+    state_path="$(checksum_list_verify_state_filepath "$sum_file")" || return 0
+    dir="$(dirname -- "$state_path")"
+    mkdir -p -- "$dir" 2>/dev/null || return 0
+    epoch="$(date +%s)"
+    tmp="${state_path}.tmp.$$"
+    printf '%s\t%s\n' "$epoch" "$sig" > "$tmp" 2>/dev/null || return 0
+    mv -f -- "$tmp" "$state_path" 2>/dev/null || { rm -f -- "$tmp" 2>/dev/null || true; return 0; }
+}
+
+# Sum byte sizes of paths in a bash array (name ref) that exist as regular files (checksum targets).
+sum_bytes_of_existing_regular_files_checksum_refs() {
+    local -n _paths="$1"
+    local p total=0 sz
+    for p in "${_paths[@]}"; do
+        [[ -f "$p" ]] || continue
+        sz="$(get_file_size_bytes "$p")"
+        if [[ "$sz" =~ ^[0-9]+$ ]]; then
+            ((total += sz))
+        fi
+    done
+    printf '%d' "$total"
+}
+
 confirm_large_hash_check() {
     local sum_file="$1"
     local label="$2"
     local line_count="$3"
+    local ref_array_name="${4-}"
     local answer=""
+    local total_bytes=0
 
     if (( line_count <= LARGE_HASHFILE_LINE_PROMPT_THRESHOLD )); then
+        return 0
+    fi
+
+    if [[ -n "$ref_array_name" ]]; then
+        total_bytes="$(sum_bytes_of_existing_regular_files_checksum_refs "$ref_array_name")"
+    else
+        total_bytes="$LARGE_HASHFILE_PROMPT_MIN_TOTAL_BYTES"
+    fi
+
+    if (( LARGE_HASHFILE_PROMPT_MIN_TOTAL_BYTES > 0 && total_bytes < LARGE_HASHFILE_PROMPT_MIN_TOTAL_BYTES )); then
+        vlog "Large ${label,,} list (${line_count} lines) but total size of on-disk targets ($(format_bytes_human "$total_bytes")) is below LARGE_HASHFILE_PROMPT_MIN_TOTAL_BYTES ($(format_bytes_human "$LARGE_HASHFILE_PROMPT_MIN_TOTAL_BYTES")); verifying without prompt."
         return 0
     fi
 
     echo
     emit_wrap_labeled_stdout "${label} NOTICE: " "${YELLOW}${label} NOTICE:${RESET} " "'${sum_file}' contains ${line_count} checksum line(s)."
     echo "Checking it may take a long time."
-    echo -n "Check this file and continue? [y/N/q]: "
+    print_checksum_list_last_verify_for_prompt "$sum_file"
+    echo -n "$(user_prompt_ts_prefix)Check this file and continue? [y/N/q]: "
 
     flush_stdin
     read -t 300 -n 1 answer || true
@@ -5091,7 +5240,7 @@ prompt_refresh_checksum_hash_after_mismatch() {
     while true; do
         emit_wrap_labeled_stdout "  [U] " "  ${GREEN}[U]${RESET} " "Update stored ${label,,} hash from the file on disk, then re-verify"
         emit_wrap_labeled_stdout "  [Q] " "  ${GREEN}[Q]${RESET} " "Quit (abort script)"
-        echo -n "Choice [U/q]: "
+        echo -n "$(user_prompt_ts_prefix)Choice [U/q]: "
         flush_stdin
         read_single_key answer "$PROMPT_WAIT_SECONDS"
         echo
@@ -5159,8 +5308,7 @@ choose_r_acute_mapping_for_file() {
         echo >&2
         echo "Filename contains ŕ:" >&2
         echo "  $path" >&2
-        verbose_question_timestamp "Choose mapping for ŕ in this file:"
-        echo "Choose mapping for ŕ in this file:" >&2
+        verbose_question_timestamp "Choose mapping for ŕ in this file:" 2
         echo "  [1] c (default)" >&2
         echo "  [2] s" >&2
         echo "  [3] c and space" >&2
@@ -5168,7 +5316,7 @@ choose_r_acute_mapping_for_file() {
         echo "  [o] Other (type replacement, Enter)" >&2
         echo "  [q] Quit" >&2
         echo "  [m] Manually edit basename" >&2
-        echo -n "Choice [1/2/3/4/o/q/m]: " >&2
+        echo -n "$(user_prompt_ts_prefix)Choice [1/2/3/4/o/q/m]: " >&2
         flush_stdin
         read_single_key answer "$PROMPT_WAIT_SECONDS"
         echo >&2
@@ -5177,7 +5325,7 @@ choose_r_acute_mapping_for_file() {
             3) printf '%s' "c "; return 0 ;;
             4) printf '%s' "s "; return 0 ;;
             o|O)
-                echo -n "Replacement for ŕ: " >&2
+                echo -n "$(user_prompt_ts_prefix)Replacement for ŕ: " >&2
                 read_line_editable repl "$PROMPT_WAIT_SECONDS" ""
                 echo >&2
                 [[ -n "$repl" ]] || continue
@@ -5189,7 +5337,7 @@ choose_r_acute_mapping_for_file() {
                 return 0
                 ;;
             m|M)
-                echo "New basename (filename only, including extension; empty = back to menu):" >&2
+                echo "$(user_prompt_ts_prefix)New basename (filename only, including extension; empty = back to menu):" >&2
                 read_line_editable manual_name "$PROMPT_WAIT_SECONDS" "$(basename -- "$path")"
                 echo >&2
                 if [[ -n "$manual_name" ]]; then
@@ -5214,21 +5362,20 @@ choose_registered_mapping_for_file() {
         echo >&2
         echo "Filename contains ®:" >&2
         echo "  $path" >&2
-        verbose_question_timestamp "Choose mapping for ® in this file:"
-        echo "Choose mapping for ® in this file:" >&2
+        verbose_question_timestamp "Choose mapping for ® in this file:" 2
         echo "  [1] z (default)" >&2
         echo "  [2] l" >&2
         echo "  [o] Other (type replacement, Enter)" >&2
         echo "  [q] Quit" >&2
         echo "  [m] Manually edit basename" >&2
-        echo -n "Choice [1/2/o/q/m]: " >&2
+        echo -n "$(user_prompt_ts_prefix)Choice [1/2/o/q/m]: " >&2
         flush_stdin
         read_single_key answer "$PROMPT_WAIT_SECONDS"
         echo >&2
         case "$answer" in
             2) printf '%s' "l"; return 0 ;;
             o|O)
-                echo -n "Replacement for ®: " >&2
+                echo -n "$(user_prompt_ts_prefix)Replacement for ®: " >&2
                 read_line_editable repl "$PROMPT_WAIT_SECONDS" ""
                 echo >&2
                 [[ -n "$repl" ]] || continue
@@ -5240,7 +5387,7 @@ choose_registered_mapping_for_file() {
                 return 0
                 ;;
             m|M)
-                echo "New basename (filename only, including extension; empty = back to menu):" >&2
+                echo "$(user_prompt_ts_prefix)New basename (filename only, including extension; empty = back to menu):" >&2
                 read_line_editable manual_name "$PROMPT_WAIT_SECONDS" "$(basename -- "$path")"
                 echo >&2
                 if [[ -n "$manual_name" ]]; then
@@ -5265,21 +5412,20 @@ choose_at_sign_mapping_for_file() {
         echo >&2
         echo "Filename contains @ (media file):" >&2
         echo "  $path" >&2
-        verbose_question_timestamp "Choose mapping for @ in this file:"
-        echo "Choose mapping for @ in this file:" >&2
+        verbose_question_timestamp "Choose mapping for @ in this file:" 2
         echo "  [1] a (default)" >&2
         echo "  [2] e" >&2
         echo "  [o] Other (type replacement, Enter)" >&2
         echo "  [q] Quit" >&2
         echo "  [m] Manually edit basename" >&2
-        echo -n "Choice [1/2/o/q/m]: " >&2
+        echo -n "$(user_prompt_ts_prefix)Choice [1/2/o/q/m]: " >&2
         flush_stdin
         read_single_key answer "$PROMPT_WAIT_SECONDS"
         echo >&2
         case "$answer" in
             2) printf '%s' "e"; return 0 ;;
             o|O)
-                echo -n "Replacement for @: " >&2
+                echo -n "$(user_prompt_ts_prefix)Replacement for @: " >&2
                 read_line_editable repl "$PROMPT_WAIT_SECONDS" ""
                 echo >&2
                 [[ -n "$repl" ]] || continue
@@ -5291,7 +5437,7 @@ choose_at_sign_mapping_for_file() {
                 return 0
                 ;;
             m|M)
-                echo "New basename (filename only, including extension; empty = back to menu):" >&2
+                echo "$(user_prompt_ts_prefix)New basename (filename only, including extension; empty = back to menu):" >&2
                 read_line_editable manual_name "$PROMPT_WAIT_SECONDS" "$(basename -- "$path")"
                 echo >&2
                 if [[ -n "$manual_name" ]]; then
@@ -5316,21 +5462,20 @@ choose_r_grave_mapping_for_file() {
         echo >&2
         echo "Filename contains Ŕ:" >&2
         echo "  $path" >&2
-        verbose_question_timestamp "Choose mapping for Ŕ in this file:"
-        echo "Choose mapping for Ŕ in this file:" >&2
+        verbose_question_timestamp "Choose mapping for Ŕ in this file:" 2
         echo "  [1] c (default)" >&2
         echo "  [2] s" >&2
         echo "  [o] Other (type replacement, Enter)" >&2
         echo "  [q] Quit" >&2
         echo "  [m] Manually edit basename" >&2
-        echo -n "Choice [1/2/o/q/m]: " >&2
+        echo -n "$(user_prompt_ts_prefix)Choice [1/2/o/q/m]: " >&2
         flush_stdin
         read_single_key answer "$PROMPT_WAIT_SECONDS"
         echo >&2
         case "$answer" in
             2) printf '%s' "s"; return 0 ;;
             o|O)
-                echo -n "Replacement for Ŕ: " >&2
+                echo -n "$(user_prompt_ts_prefix)Replacement for Ŕ: " >&2
                 read_line_editable repl "$PROMPT_WAIT_SECONDS" ""
                 echo >&2
                 [[ -n "$repl" ]] || continue
@@ -5342,7 +5487,7 @@ choose_r_grave_mapping_for_file() {
                 return 0
                 ;;
             m|M)
-                echo "New basename (filename only, including extension; empty = back to menu):" >&2
+                echo "$(user_prompt_ts_prefix)New basename (filename only, including extension; empty = back to menu):" >&2
                 read_line_editable manual_name "$PROMPT_WAIT_SECONDS" "$(basename -- "$path")"
                 echo >&2
                 if [[ -n "$manual_name" ]]; then
@@ -6092,9 +6237,35 @@ format_epoch_human() {
     fi
 }
 
+# If basename stem ends with repeated _OTHER segments (e.g. foo_OTHER_OTHER), collapse to a single trailing _OTHER so the name is offered for rename cleanup.
+collapse_stacked_other_suffix_in_path() {
+    local path="$1"
+    local dir base stem ext
+    [[ -n "$path" ]] || { printf '%s' "$path"; return; }
+    dir="$(dirname -- "$path")"
+    base="$(basename -- "$path")"
+    if [[ "$base" == *.* ]]; then
+        stem="${base%.*}"
+        ext=".${base##*.}"
+    else
+        stem="$base"
+        ext=""
+    fi
+    [[ "$stem" == *_OTHER_OTHER* ]] || { printf '%s' "$path"; return; }
+    while [[ "$stem" == *_OTHER_OTHER ]]; do
+        stem="${stem%_OTHER}"
+    done
+    if [[ "$dir" == "." ]]; then
+        printf './%s%s' "$stem" "$ext"
+    else
+        printf '%s/%s%s' "$dir" "$stem" "$ext"
+    fi
+}
+
+# Pick a non-existing path: one _OTHER before the extension; if taken, use _OTHER_2, _OTHER_3, … (never stack multiple _OTHER tokens).
 make_other_suffix_path() {
     local path="$1"
-    local dir base stem ext candidate
+    local dir base stem ext candidate n
     dir="$(dirname -- "$path")"
     base="$(basename -- "$path")"
 
@@ -6106,10 +6277,15 @@ make_other_suffix_path() {
         ext=""
     fi
 
+    while [[ "$stem" == *_OTHER ]]; do
+        stem="${stem%_OTHER}"
+    done
+
     candidate="${dir}/${stem}_OTHER${ext}"
+    n=2
     while [[ -e "$candidate" ]]; do
-        candidate="${dir}/${stem}_OTHER${ext}"
-        stem="${stem}_OTHER"
+        candidate="${dir}/${stem}_OTHER_${n}${ext}"
+        ((++n))
     done
     printf '%s' "$candidate"
 }
@@ -6184,12 +6360,11 @@ can_overwrite_collision_with_identical_md5() {
 
     old_other_path="$(make_other_suffix_path "$new")"
     verbose_question_timestamp "What should be done?"
-    echo "What should be done?"
     echo "  [O] Overwrite destination and continue rename"
-    echo "  [R] Rename source with suffix _OTHER -> $(basename -- "$old_other_path")"
+    echo "  [R] Rename source to alternate name (one _OTHER, or _OTHER_2, … if needed) -> $(basename -- "$old_other_path")"
     echo "  [S] Skip (default)"
     echo "  [Q] Quit"
-    echo -n "Choice [o/r/S/q]: "
+    echo -n "$(user_prompt_ts_prefix)Choice [o/r/S/q]: "
 
     flush_stdin
     read_single_key answer "$PROMPT_WAIT_SECONDS"
@@ -6812,8 +6987,6 @@ handle_lnk_file() {
     echo
     emit_wrap_labeled_stdout "LNK FILE: " "${YELLOW}LNK FILE:${RESET} " "$f"
     verbose_question_timestamp "Remove this .lnk file? [y/N/q]:"
-    echo -n "Remove this .lnk file? [y/N/q]: "
-
     flush_stdin
     read_single_key answer "$PROMPT_WAIT_SECONDS"
     echo
@@ -7060,11 +7233,10 @@ maybe_resume_from_checkpoint() {
                 echo
                 echo "Checkpoint found from an interrupted run: $RESUME_STATE_FILE"
                 verbose_question_timestamp "Resume from checkpoint?"
-                echo "Resume from checkpoint?"
                 echo "  [Y] Resume (default)"
                 echo "  [N] Start from the beginning"
                 echo "  [Q] Quit"
-                echo -n "Choice [Y/n/q]: "
+                echo -n "$(user_prompt_ts_prefix)Choice [Y/n/q]: "
                 flush_stdin
                 read_single_key answer "$PROMPT_WAIT_SECONDS"
                 echo
@@ -7146,14 +7318,14 @@ print_rename_prompt_menu() {
     local entry_kind="$kind_label"
 
     if [[ "$menu_variant" == thumbs-noop ]]; then
-        echo -e "${GREEN}This thumbs.db does not need a rename (suggested path matches the current path).${RESET}"
+        echo -e "$(user_prompt_ts_prefix)${GREEN}This thumbs.db does not need a rename (suggested path matches the current path).${RESET}"
         echo -e "${CYAN}  OLD and NEW below are the same on purpose — use [K] to delete this Windows thumbnail cache file, or skip.${RESET}"
     elif [[ "$menu_variant" == torrent-noop ]]; then
-        echo -e "${GREEN}This torrent .URL shortcut does not need a rename (suggested path matches the current path).${RESET}"
+        echo -e "$(user_prompt_ts_prefix)${GREEN}This torrent .URL shortcut does not need a rename (suggested path matches the current path).${RESET}"
         echo -e "${CYAN}  OLD and NEW below are the same on purpose — use [T] to delete the shortcut, or skip.${RESET}"
     else
         [[ -n "$path" && -d "$path" ]] && entry_kind="directory"
-        echo -e "${GREEN}Rename this ${entry_kind}?${RESET}"
+        echo -e "$(user_prompt_ts_prefix)${GREEN}Rename this ${entry_kind}?${RESET}"
     fi
 
     if [[ "$menu_variant" == thumbs-noop || "$menu_variant" == torrent-noop ]]; then
@@ -7195,7 +7367,7 @@ print_rename_prompt_menu() {
     echo "  [X] Exact exception (do not rename only this exact path; still check subtree)"
     echo "  [Q] Quit"
     choice_hint+="/E/x/q]: "
-    echo -n "$choice_hint"
+    echo -n "$(user_prompt_ts_prefix)$choice_hint"
 }
 
 maybe_prompt_flatten_single_child_dir() {
@@ -7251,12 +7423,12 @@ maybe_prompt_flatten_single_child_dir() {
     emit_wrap_labeled_stdout "FLATTEN CANDIDATE: " "${CYAN}FLATTEN CANDIDATE:${RESET} " "$parent_dir"
     echo "Contains exactly one subdirectory with files:"
     echo "  $child_dir"
-    echo -e "${GREEN}Move child contents one level up and delete this subdirectory?${RESET}"
+    echo -e "$(user_prompt_ts_prefix)${GREEN}Move child contents one level up and delete this subdirectory?${RESET}"
     echo "  [Y] Yes — flatten (move child contents up, remove subdirectory; then choose folder name)"
     echo "  [N] No (default) — keep current folder layout"
     echo "  [E] Add flatten exception — skip flatten prompts for this directory in the future"
     echo "  [Q] Quit — stop the script"
-    echo -n "Choice [y/N/e/q]: "
+    echo -n "$(user_prompt_ts_prefix)Choice [y/N/e/q]: "
     flush_stdin
     read_single_key answer "$PROMPT_WAIT_SECONDS"
     echo
@@ -7271,12 +7443,12 @@ maybe_prompt_flatten_single_child_dir() {
     fi
     [[ "$answer" =~ [Yy] ]] || return 0
 
-    echo "Which directory name should remain after flatten?"
+    echo "$(user_prompt_ts_prefix)Which directory name should remain after flatten?"
     echo "  [P] Keep parent name: $parent_base (default)"
     echo "  [C] Keep child name:  $child_base"
     echo "  [M] Manually edit resulting basename"
     echo "  [Q] Quit"
-    echo -n "Choice [P/c/m/q]: "
+    echo -n "$(user_prompt_ts_prefix)Choice [P/c/m/q]: "
     flush_stdin
     read_single_key name_choice "$PROMPT_WAIT_SECONDS"
     echo
@@ -7290,9 +7462,9 @@ maybe_prompt_flatten_single_child_dir() {
             target_base="$child_base"
             ;;
         m|M)
-            echo "Manual basename edit (readline enabled):"
+            echo "$(user_prompt_ts_prefix)Manual basename edit (readline enabled):"
             echo "  Use arrows/Home/End for cursor movement and editing."
-            echo -n "New basename: "
+            echo -n "$(user_prompt_ts_prefix)New basename: "
             read_line_editable edited_base "$PROMPT_WAIT_SECONDS" "$parent_base"
             echo
             if [[ -z "$edited_base" ]]; then
@@ -7414,10 +7586,10 @@ choose_custom_rename_target() {
     suggested_base="$(basename -- "$suggested_path")"
 
     echo >&2
-    echo -e "${GREEN}Rename by editing target filename (basename only):${RESET}" >&2
+    echo -e "$(user_prompt_ts_prefix)${GREEN}Rename by editing target filename (basename only):${RESET}" >&2
     echo "  Use arrows/Home/End for cursor movement and editing." >&2
     echo "  Current suggestion: $suggested_base" >&2
-    echo -n "New basename: " >&2
+    echo -n "$(user_prompt_ts_prefix)New basename: " >&2
     read_line_editable edited_base "$PROMPT_WAIT_SECONDS" "$suggested_base"
     echo >&2
 
@@ -7447,7 +7619,7 @@ print_checksum_prompt_menu() {
     local hash_file="$2"
     local label_upper="${label_lower^^}"
 
-    echo -e "${GREEN}Apply this entire ${label_upper} checksum group?${RESET}"
+    echo -e "$(user_prompt_ts_prefix)${GREEN}Apply this entire ${label_upper} checksum group?${RESET}"
     emit_wrap_labeled_stdout "  ${label_upper} file (contains hashes and paths): " "  ${label_upper} file (contains hashes and paths): " "$hash_file"
     echo "  One confirmation does everything together:"
     echo "    • Rename each referenced file where OLD referenced file → NEW referenced file was shown above"
@@ -7461,7 +7633,7 @@ print_checksum_prompt_menu() {
     echo "  [X] Exact exception (skip only this hash file path; still check other paths)"
     echo "  [F] Filename-only exception (skip this hash file basename in every directory)"
     echo "  [Q] Quit"
-    echo -n "Choice [Y/n/a/d/E/x/f/q]: "
+    echo -n "$(user_prompt_ts_prefix)Choice [Y/n/a/d/E/x/f/q]: "
 }
 
 print_rename_action_verbose() {
@@ -7779,6 +7951,7 @@ for f in "${ordered_paths[@]}"; do
         set +e
         precomputed_new="$(transform_name "$f")"
         tnf_rc=$?
+        precomputed_new="$(collapse_stacked_other_suffix_in_path "$precomputed_new")"
         if ((_rename_cap_save_e)); then
             set -e
         else
@@ -7949,11 +8122,10 @@ for f in "${ordered_paths[@]}"; do
                 fi
             else
                 verbose_question_timestamp "Remove missing thumbs.db reference(s) from this hash file?"
-                echo -e "${GREEN}Remove missing thumbs.db reference(s) from this hash file?${RESET}"
                 echo "  [Y] Yes - remove only the thumbs.db line(s) shown above"
                 echo "  [N] No - keep the hash file unchanged (default)"
                 echo "  [Q] Quit"
-                echo -n "Choice [y/N/q]: "
+                echo -n "$(user_prompt_ts_prefix)Choice [y/N/q]: "
                 flush_stdin
                 read_single_key input "$PROMPT_WAIT_SECONDS"
                 echo
@@ -8033,6 +8205,7 @@ for f in "${ordered_paths[@]}"; do
         set +e
         new_sum="$(transform_name "$sum_file")"
         tns_rc=$?
+        new_sum="$(collapse_stacked_other_suffix_in_path "$new_sum")"
         if ((_rename_cap_save_e)); then
             set -e
         else
@@ -8048,6 +8221,7 @@ for f in "${ordered_paths[@]}"; do
             set +e
             new_ref="$(transform_name "$ref")"
             tnr_rc=$?
+            new_ref="$(collapse_stacked_other_suffix_in_path "$new_ref")"
             if ((_rename_cap_save_e)); then
                 set -e
             else
@@ -8099,7 +8273,7 @@ for f in "${ordered_paths[@]}"; do
             print_checksum_no_action_verbose "$sum_file" "$checksum_no_action_fs_note"
             if [[ "$mode" == "real" ]] && (( ${#refs[@]} > 0 )); then
                 local_line_count="$(count_checksum_entries "$sum_file")"
-                if confirm_large_hash_check "$sum_file" "$label" "$local_line_count"; then
+                if confirm_large_hash_check "$sum_file" "$label" "$local_line_count" refs; then
                     ensure_checksum_file_unix_format "$sum_file"
                     for i in "${!refs[@]}"; do
                         vrc=0
@@ -8118,6 +8292,7 @@ for f in "${ordered_paths[@]}"; do
                         fi
                         stop_on_checksum_user_quit_after_mismatch "$sum_file" "checksum list check"
                     done
+                    record_checksum_list_full_verify_success "$sum_file"
                 else
                     rc=$?
                     if [[ $rc -eq 2 ]]; then
@@ -8163,7 +8338,7 @@ for f in "${ordered_paths[@]}"; do
         fi
 
         local_line_count="$(count_checksum_entries "$sum_file")"
-        if ! confirm_large_hash_check "$sum_file" "$label" "$local_line_count"; then
+        if ! confirm_large_hash_check "$sum_file" "$label" "$local_line_count" refs; then
             rc=$?
             if [[ $rc -eq 2 ]]; then
                 break
@@ -8201,9 +8376,13 @@ for f in "${ordered_paths[@]}"; do
                     ;;
                 a|A)
                     echo
-                    verbose_question_timestamp "Are you sure? [y/N]:"
-                    echo "⚠️  This will rename ALL remaining files/directories."
-                    echo -n "Are you sure? [y/N]: "
+                    echo "$(user_prompt_ts_prefix)⚠️  This will rename ALL remaining files/directories."
+                    if (( VERBOSE == 1 )); then
+                        echo "[VERBOSE] [$(date '+%Y.%m.%d %H:%M:%S')] Are you sure? [y/N]:" >&2
+                    else
+                        nonverbose_progress_dot_endline_if_needed
+                    fi
+                    echo -n "$(user_prompt_ts_prefix)Are you sure? [y/N]: "
                     flush_stdin
                     read_single_key confirm "$PROMPT_WAIT_SECONDS"
                     echo
@@ -8446,6 +8625,7 @@ for f in "${ordered_paths[@]}"; do
             done
             print_checksum_verified_refs_line "$label" after "$final_sum"
             print_checksum_group_ok_line "$label" "$final_sum"
+            record_checksum_list_full_verify_success "$final_sum"
         fi
 
         finish_current_operation
@@ -8498,6 +8678,7 @@ for f in "${ordered_paths[@]}"; do
             set +e
             new="$(transform_name "$f")"
             tnf_rc=$?
+            new="$(collapse_stacked_other_suffix_in_path "$new")"
             if ((_rename_cap_save_e)); then
                 set -e
             else
@@ -8521,6 +8702,7 @@ for f in "${ordered_paths[@]}"; do
         set +e
         new="$(transform_name "$f")"
         tnf_rc=$?
+        new="$(collapse_stacked_other_suffix_in_path "$new")"
         if ((_rename_cap_save_e)); then
             set -e
         else
@@ -8538,6 +8720,7 @@ for f in "${ordered_paths[@]}"; do
         set +e
         nef_xmp_new="$(transform_name "$nef_xmp_buddy")"
         tnb=$?
+        nef_xmp_new="$(collapse_stacked_other_suffix_in_path "$nef_xmp_new")"
         if ((_rename_cap_save_e)); then
             set -e
         else
@@ -8841,9 +9024,13 @@ for f in "${ordered_paths[@]}"; do
             ;;
         a|A)
             echo
-            verbose_question_timestamp "Are you sure? [y/N]:"
-            echo "⚠️  This will rename ALL remaining files/directories."
-            echo -n "Are you sure? [y/N]: "
+            echo "$(user_prompt_ts_prefix)⚠️  This will rename ALL remaining files/directories."
+            if (( VERBOSE == 1 )); then
+                echo "[VERBOSE] [$(date '+%Y.%m.%d %H:%M:%S')] Are you sure? [y/N]:" >&2
+            else
+                nonverbose_progress_dot_endline_if_needed
+            fi
+            echo -n "$(user_prompt_ts_prefix)Are you sure? [y/N]: "
             flush_stdin
             read_single_key confirm "$PROMPT_WAIT_SECONDS"
             echo
