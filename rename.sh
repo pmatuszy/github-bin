@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.05.07 - v. 19.101 - Window title uses resolved script path; non-verbose main loop: every NONVERBOSE_MAIN_LOOP_PROGRESS_EVERY_N slots print "k out of total" line (ends dot row first)
 # 2026.05.07 - v. 19.100 - SSH/terminal window title: set to script basename + all argv after parse; restore via CSI 23t on EXIT
 # 2026.05.07 - v. 19.99 - Ctrl-C: one INT handler (rollback + checkpoint + summary); remove duplicate early on_interrupt; set -e-safe || true so summary always runs
 # 2026.05.07 - v. 19.98 - Non-verbose checksum list progress: <500 entries → one S/M/H per line/ref; ≥500 → one letter per min(50,max(1,n/10)) entries (ramp between)
@@ -483,6 +484,8 @@ RENAME_SH_WINDOW_TITLE_PUSHED=0
 
 VERBOSE=0
 VERBOSE_MAIN_EVERY=200
+# Non-verbose main loop: after this many ordered_paths slots (main_index), print a separate "k out of total" line (default 1000).
+NONVERBOSE_MAIN_LOOP_PROGRESS_EVERY_N=1000
 # Non-verbose: '.' per main-loop entry; checksum ramp redraws in one terminal cell (backspace+char) until S/M/H commits and advances the column counter. Uses /dev/tty when writable. Same wrap at MAX_LINE_LENGTH; end line before prompts/other stdout.
 NONVERBOSE_PROGRESS_DOT_LINE_OPEN=no
 NONVERBOSE_PROGRESS_DOT_COL_COUNT=0
@@ -689,10 +692,18 @@ rename_sh_window_title_restore() {
 }
 
 rename_sh_window_title_apply_from_saved_argv() {
-    local title="" a i bn max_len=240
+    local title="" a i script0 max_len=400
     (( ${#RENAME_SH_ORIGINAL_ARGV[@]} > 0 )) || return 0
-    bn="$(basename -- "${RENAME_SH_ORIGINAL_ARGV[0]}")"
-    title="$bn"
+    script0="${RENAME_SH_ORIGINAL_ARGV[0]}"
+    if [[ -e "$script0" ]]; then
+        if command -v realpath >/dev/null 2>&1; then
+            title="$(realpath "$script0" 2>/dev/null)" || title="$script0"
+        else
+            title="$(cd "$(dirname -- "$script0")" 2>/dev/null && pwd -P)/$(basename -- "$script0")" 2>/dev/null || title="$script0"
+        fi
+    else
+        title="$script0"
+    fi
     for (( i = 1; i < ${#RENAME_SH_ORIGINAL_ARGV[@]}; i++ )); do
         a="${RENAME_SH_ORIGINAL_ARGV[$i]}"
         a="${a//$'\r'/}"
@@ -731,6 +742,24 @@ nonverbose_main_loop_progress_dot() {
     fi
     NONVERBOSE_CHECKSUM_RAMP_CELL_ACTIVE=no
     nonverbose_progress_stdout_line_char '.'
+}
+
+# End the current dot row, then print "n out of total" (non-verbose only). n = main_index in ordered_paths loop.
+nonverbose_main_loop_progress_milestone() {
+    local n="${1-0}"
+    local total="${2-0}"
+    local every="${NONVERBOSE_MAIN_LOOP_PROGRESS_EVERY_N:-1000}"
+    (( VERBOSE == 1 )) && return 0
+    (( every < 1 )) && every=1000
+    (( total < 1 )) && return 0
+    (( n < every )) && return 0
+    (( n % every != 0 )) && return 0
+    nonverbose_progress_dot_endline_if_needed
+    if [[ -w /dev/tty ]] 2>/dev/null; then
+        printf '%d out of %d\n' "$n" "$total" >/dev/tty
+    else
+        printf '%d out of %d\n' "$n" "$total"
+    fi
 }
 
 # In-place ramp glyph on the controlling TTY (one display column; column counter unchanged).
@@ -7648,6 +7677,7 @@ for f in "${ordered_paths[@]}"; do
     if (( VERBOSE == 1 && main_index % VERBOSE_MAIN_EVERY == 0 )); then
         print_progress_box "$main_index / ${#ordered_paths[@]}" "$f"
     fi
+    nonverbose_main_loop_progress_milestone "$main_index" "${#ordered_paths[@]}"
 
     [[ -n "${processed[$f]+x}" ]] && continue
     ((++files_examined))
