@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# 2026.05.07 - v. 19.104 - NONVERBOSE_CHECKSUM_RAMP_CHARS: optional export/prefix override (default unchanged); -h lists it with a safe quoted example
+# 2026.05.07 - v. 19.103 - -h/--help: alphabetized tunable env vars with examples; tunables honor prefix assignment or export at startup
+# 2026.05.07 - v. 19.102 - Non-verbose checksum list progress: per-letter below NONVERBOSE_CHECKSUM_LIST_PER_LETTER_THRESHOLD (default 3000); batched min(n/10, max char cap) at/above; caps are script/env vars
 # 2026.05.07 - v. 19.101 - Window title uses resolved script path; non-verbose main loop: every NONVERBOSE_MAIN_LOOP_PROGRESS_EVERY_N slots print "k out of total" line (ends dot row first)
 # 2026.05.07 - v. 19.100 - SSH/terminal window title: set to script basename + all argv after parse; restore via CSI 23t on EXIT
 # 2026.05.07 - v. 19.99 - Ctrl-C: one INT handler (rollback + checkpoint + summary); remove duplicate early on_interrupt; set -e-safe || true so summary always runs
@@ -346,18 +349,18 @@
 # 2026.04.15 - v. 17.3 - escape control characters in logged paths and warn explicitly about filenames containing them
 SCRIPT_VERSION="$(LC_ALL=C grep -m1 '^# [0-9]' "$0" | sed -E 's/^# ([0-9]{4}\.[0-9]{2}\.[0-9]{2} - v\. [0-9]+\.[0-9]+) - .*/\1/')"
 # If a checksum list has more than this many lines, ask before checking it; default answer is No ([y/N/q]).
-LARGE_HASHFILE_LINE_PROMPT_THRESHOLD=20
-MAX_LINE_LENGTH=200
+LARGE_HASHFILE_LINE_PROMPT_THRESHOLD="${LARGE_HASHFILE_LINE_PROMPT_THRESHOLD:-20}"
+MAX_LINE_LENGTH="${MAX_LINE_LENGTH:-200}"
 # Long vlog() bodies fold to at most this many columns (excluding WRAP_MSG_INDENT), so paths don’t appear as one endless line.
-VERBOSE_LOG_BODY_WRAP_WIDTH=96
+VERBOSE_LOG_BODY_WRAP_WIDTH="${VERBOSE_LOG_BODY_WRAP_WIDTH:-96}"
 # NEF+XMP paired-file box: soft-wrap content to this width (fold -s); full paths span multiple rows instead of truncating.
-NEF_XMP_BOX_WRAP_WIDTH=108
+NEF_XMP_BOX_WRAP_WIDTH="${NEF_XMP_BOX_WRAP_WIDTH:-108}"
 # Plain-text width of "OLD (sidecar):" / "NEW (sidecar):" in NEF+XMP pair prompts (wider "OLD:" / "NEW:" use this when a sidecar exists).
-NEF_XMP_PAIR_LABEL_WIDTH=15
+NEF_XMP_PAIR_LABEL_WIDTH="${NEF_XMP_PAIR_LABEL_WIDTH:-15}"
 # When there is no XMP sidecar, only "OLD:" / "NEW:" are shown — use this width so paths are not over-indented.
-NEF_XMP_PAIR_LABEL_WIDTH_NO_SIDECAR=5
+NEF_XMP_PAIR_LABEL_WIDTH_NO_SIDECAR="${NEF_XMP_PAIR_LABEL_WIDTH_NO_SIDECAR:-5}"
 # Continuation indent for user-visible lines longer than MAX_LINE_LENGTH (checksum/HTML style).
-WRAP_MSG_INDENT="          "
+WRAP_MSG_INDENT="${WRAP_MSG_INDENT:-          }"
 
 # plain_prefix + body == full visible line (no ANSI). fd 1=stdout, 2=stderr.
 emit_wrap_labeled_line() {
@@ -438,7 +441,7 @@ emit_wrap_old_arrow_new_stdout() {
     fi
 }
 
-START_DIR="$(pwd -P)"
+START_DIR="${START_DIR:-$(pwd -P)}"
 EXCLUDE_FILTERS_FILE="$START_DIR/_exclude-rename.sh.txt"
 USE_DB=0
 FORCE_RECHECK=0
@@ -483,25 +486,30 @@ RENAME_SH_ORIGINAL_ARGV=( "$0" "$@" )
 RENAME_SH_WINDOW_TITLE_PUSHED=0
 
 VERBOSE=0
-VERBOSE_MAIN_EVERY=200
+VERBOSE_MAIN_EVERY="${VERBOSE_MAIN_EVERY:-200}"
 # Non-verbose main loop: after this many ordered_paths slots (main_index), print a separate "k out of total" line (default 1000).
-NONVERBOSE_MAIN_LOOP_PROGRESS_EVERY_N=1000
+NONVERBOSE_MAIN_LOOP_PROGRESS_EVERY_N="${NONVERBOSE_MAIN_LOOP_PROGRESS_EVERY_N:-1000}"
 # Non-verbose: '.' per main-loop entry; checksum ramp redraws in one terminal cell (backspace+char) until S/M/H commits and advances the column counter. Uses /dev/tty when writable. Same wrap at MAX_LINE_LENGTH; end line before prompts/other stdout.
 NONVERBOSE_PROGRESS_DOT_LINE_OPEN=no
 NONVERBOSE_PROGRESS_DOT_COL_COUNT=0
 NONVERBOSE_CHECKSUM_LETTER_EVENT_N=0
 # Ramp advances every this many checksum events; kind letter (S/M/H) every (stride * NONVERBOSE_CHECKSUM_LETTER_CYCLE_EVENTS) events. STRIDE must be >= 1.
-NONVERBOSE_CHECKSUM_EVENT_STRIDE_N=1
+NONVERBOSE_CHECKSUM_EVENT_STRIDE_N="${NONVERBOSE_CHECKSUM_EVENT_STRIDE_N:-1}"
 # One S/M/H commit every (stride * this many) checksum events (ramp redraws for the other cycle-1 stride-aligned events). Must be >= 2.
-NONVERBOSE_CHECKSUM_LETTER_CYCLE_EVENTS=100
-# ASCII ramp (cycle-1 redraws between letters; positions map across this string). Edit to taste.
-NONVERBOSE_CHECKSUM_RAMP_CHARS='.,`^":;|!~-_=+*/\<>()[]{}#%&@?'
+NONVERBOSE_CHECKSUM_LETTER_CYCLE_EVENTS="${NONVERBOSE_CHECKSUM_LETTER_CYCLE_EVENTS:-100}"
+# ASCII ramp (cycle-1 redraws between letters; positions map across this string). Default when unset; override with export or prefix assignment (quote metacharacters).
+if [[ -z "${NONVERBOSE_CHECKSUM_RAMP_CHARS+x}" ]]; then
+    NONVERBOSE_CHECKSUM_RAMP_CHARS='.,`^":;|!~-_=+*/\<>()[]{}#%&@?'
+fi
 # When yes, the next ramp update backspaces once before drawing (in-place on /dev/tty).
 NONVERBOSE_CHECKSUM_RAMP_CELL_ACTIVE=no
 # List-aware scaling for nonverbose_checksum_ref_verify_progress_letter (second arg = checksum file path).
 NONVERBOSE_CHECKSUM_PROGRESS_SOURCE=""
 NONVERBOSE_CHECKSUM_PROGRESS_NREFS=0
 NONVERBOSE_CHECKSUM_PROGRESS_FPL=0
+# Non-verbose checksum list (second arg to progress letter): below threshold → one S/M/H per line/ref; at or above → one letter every min(MAX_PER_CHAR, max(1,n/10)) events. Override: export VAR=value before running.
+NONVERBOSE_CHECKSUM_LIST_PER_LETTER_THRESHOLD="${NONVERBOSE_CHECKSUM_LIST_PER_LETTER_THRESHOLD:-3000}"
+NONVERBOSE_CHECKSUM_LIST_MAX_ENTRIES_PER_PROGRESS_CHAR="${NONVERBOSE_CHECKSUM_LIST_MAX_ENTRIES_PER_PROGRESS_CHAR:-50}"
 # After auto-dir “Renamed:” (stdout), the next iteration’s lone progress dot looked odd; skip that one dot (see nonverbose_main_loop_progress_dot).
 NONVERBOSE_SKIP_NEXT_MAIN_LOOP_DOT=no
 CLI_COLORS=""
@@ -511,10 +519,10 @@ CLI_RESUME_STATE="resume"
 CLI_DB_MAINTENANCE="full"
 RUN_DB_MAINTENANCE=0
 PROMPT_WAIT_SECONDS=0
-MAP_R_ACUTE="c"
-MAP_REGISTERED="z"
-MAP_AT_SIGN="a"
-MAP_R_GRAVE="c"
+MAP_R_ACUTE="${MAP_R_ACUTE:-c}"
+MAP_REGISTERED="${MAP_REGISTERED:-z}"
+MAP_AT_SIGN="${MAP_AT_SIGN:-a}"
+MAP_R_GRAVE="${MAP_R_GRAVE:-c}"
 
 CURRENT_OP_ACTIVE=0
 CURRENT_OP_LABEL=""
@@ -597,6 +605,52 @@ Example:
   rename.sh --use-db --db-maintenance full
   rename.sh --run-db-maintenance --db-maintenance auto
   rename.sh --resume-state ask --use-db --mode real --scope subdirs
+
+Environment / tunables (read at startup; use export or prefix on the same line as rename.sh):
+  DEBUG_LOG_PATH                      JSON debug log file (default under workspace root).
+      export DEBUG_LOG_PATH=/tmp/rename-debug.log
+  DEBUG_RUN_ID                        runId string inside each JSON log line.
+      DEBUG_RUN_ID=batch1 rename.sh -v --use-db
+  LARGE_HASHFILE_LINE_PROMPT_THRESHOLD  Checksum lists with more lines than this prompt before full check ([y/N/q]); default 20.
+      LARGE_HASHFILE_LINE_PROMPT_THRESHOLD=50 rename.sh --use-db
+  MAP_AT_SIGN                         Replacement for @ in basename mapping prompts (default a).
+      MAP_AT_SIGN=x rename.sh
+  MAP_R_ACUTE                         Replacement for acute accent (default c).
+      MAP_R_ACUTE=x rename.sh
+  MAP_R_GRAVE                         Replacement for grave accent (default c).
+      MAP_R_GRAVE=h rename.sh
+  MAP_REGISTERED                      Replacement for ® (default z).
+      MAP_REGISTERED=r rename.sh
+  MAX_LINE_LENGTH                     Wrap width for many user-visible lines and non-verbose dot rows (default 200).
+      MAX_LINE_LENGTH=120 rename.sh -v
+  NEF_XMP_BOX_WRAP_WIDTH              fold -s width for NEF+XMP text box (default 108).
+      NEF_XMP_BOX_WRAP_WIDTH=96 rename.sh
+  NEF_XMP_PAIR_LABEL_WIDTH            Plain width for OLD/NEW (sidecar) labels when sidecar exists (default 15).
+      NEF_XMP_PAIR_LABEL_WIDTH=12 rename.sh
+  NEF_XMP_PAIR_LABEL_WIDTH_NO_SIDECAR  Label width when there is no sidecar (default 5).
+      NEF_XMP_PAIR_LABEL_WIDTH_NO_SIDECAR=8 rename.sh
+  NONVERBOSE_CHECKSUM_EVENT_STRIDE_N  Non-verbose checksum ramp: events per ramp step (default 1).
+      NONVERBOSE_CHECKSUM_EVENT_STRIDE_N=2 rename.sh --use-db
+  NONVERBOSE_CHECKSUM_LETTER_CYCLE_EVENTS  Events between S/M/H commits is stride × this (default 100; min 2 enforced in logic).
+      NONVERBOSE_CHECKSUM_LETTER_CYCLE_EVENTS=50 rename.sh --use-db
+  NONVERBOSE_CHECKSUM_LIST_MAX_ENTRIES_PER_PROGRESS_CHAR  Large checksum lists: max entries represented by one progress letter (default 50).
+      NONVERBOSE_CHECKSUM_LIST_MAX_ENTRIES_PER_PROGRESS_CHAR=40 rename.sh --use-db
+  NONVERBOSE_CHECKSUM_LIST_PER_LETTER_THRESHOLD  Below this many list lines, one S/M/H per ref; at or above, batched letters (default 3000).
+      NONVERBOSE_CHECKSUM_LIST_PER_LETTER_THRESHOLD=5000 rename.sh --use-db
+  NONVERBOSE_CHECKSUM_RAMP_CHARS        Non-verbose checksum ramp glyphs between S/M/H (maps to in-cell redraw order). Default is a long punctuation set; use single quotes when exporting.
+      export NONVERBOSE_CHECKSUM_RAMP_CHARS='.:-=+*'
+  NONVERBOSE_MAIN_LOOP_PROGRESS_EVERY_N  Non-verbose: print "k of total" every this many main-loop slots (default 1000).
+      NONVERBOSE_MAIN_LOOP_PROGRESS_EVERY_N=500 rename.sh --use-db
+  START_DIR                           Working tree root (default current directory). Use an absolute path.
+      START_DIR=/data/photos rename.sh --use-db --scope subdirs
+  TMPDIR                              Temp directory for SQLite bootstrap mktemp etc. (POSIX; default often /tmp).
+      TMPDIR=/var/tmp rename.sh --use-db
+  VERBOSE_LOG_BODY_WRAP_WIDTH         Max fold width for long [VERBOSE] bodies (default 96).
+      VERBOSE_LOG_BODY_WRAP_WIDTH=80 rename.sh -v
+  VERBOSE_MAIN_EVERY                  Verbose progress box cadence in main loop (default 200).
+      VERBOSE_MAIN_EVERY=100 rename.sh -v --use-db
+  WRAP_MSG_INDENT                     Spaces prefixing wrapped continuation lines (default 10 spaces).
+      WRAP_MSG_INDENT='    ' rename.sh -v
 EOF
 }
 
@@ -804,12 +858,12 @@ nonverbose_checksum_commit_kind_letter() {
 }
 
 # M = MD5 list, S = SHA512 list, H = anything else (unknown extension / future kinds).
-# With optional second arg (checksum file path): scale by line count — <500 lines → one S/M/H per event;
-# ≥500 lines → one letter every min(50, max(1, n/10)) events (ramp glyphs between letters). Without second arg, uses stride*cycle legacy behavior.
+# With optional second arg (checksum file path): scale by line count — below NONVERBOSE_CHECKSUM_LIST_PER_LETTER_THRESHOLD → one S/M/H per event;
+# at or above → one letter every min(NONVERBOSE_CHECKSUM_LIST_MAX_ENTRIES_PER_PROGRESS_CHAR, max(1, n/10)) events (ramp between). Without second arg, uses stride*cycle legacy behavior.
 nonverbose_checksum_ref_verify_progress_letter() {
     local kind="${1-}"
     local sum_path="${2-}"
-    local letter stride block e slot idx ramp_str len cycle denom fpl pos nline
+    local letter stride block e slot idx ramp_str len cycle denom fpl pos nline thr maxc
     (( VERBOSE == 1 )) && return 0
 
     if [[ -n "$sum_path" ]]; then
@@ -819,12 +873,18 @@ nonverbose_checksum_ref_verify_progress_letter() {
             nline="$(extract_checksum_entries "$sum_path" | wc -l | tr -d ' \t')"
             [[ "$nline" =~ ^[0-9]+$ ]] || nline=0
             NONVERBOSE_CHECKSUM_PROGRESS_NREFS=$nline
-            if (( nline > 0 && nline < 500 )); then
+            thr="${NONVERBOSE_CHECKSUM_LIST_PER_LETTER_THRESHOLD:-3000}"
+            maxc="${NONVERBOSE_CHECKSUM_LIST_MAX_ENTRIES_PER_PROGRESS_CHAR:-50}"
+            [[ "$thr" =~ ^[0-9]+$ ]] || thr=3000
+            [[ "$maxc" =~ ^[0-9]+$ ]] || maxc=50
+            (( thr < 1 )) && thr=1
+            (( maxc < 1 )) && maxc=1
+            if (( nline > 0 && nline < thr )); then
                 NONVERBOSE_CHECKSUM_PROGRESS_FPL=1
-            elif (( nline >= 500 )); then
+            elif (( nline >= thr )); then
                 fpl=$(( nline / 10 ))
                 (( fpl < 1 )) && fpl=1
-                (( fpl > 50 )) && fpl=50
+                (( fpl > maxc )) && fpl=$maxc
                 NONVERBOSE_CHECKSUM_PROGRESS_FPL=$fpl
             else
                 NONVERBOSE_CHECKSUM_PROGRESS_FPL=0
