@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.05.07 - v. 19.96 - FILE= basename exceptions: apply to files and directories; [F] at rename prompt for dirs too (skip basename everywhere)
 # 2026.05.07 - v. 19.95 - Directory renames: prompt says directory; SQLite subtree rewrite updates all checked_paths under prefix (not only warmed cache keys)
 # 2026.05.07 - v. 19.94 - SQLite cache present prompt: [Q] Quit (same pattern as resume / DB hash prompts)
 # 2026.05.07 - v. 19.93 - NEF+XMP: if XMP has no RawFileName markup, skip RawFileName prompts/notes (do not suggest adding it)
@@ -571,8 +572,8 @@ Options:
   -h, --help             Show this help
 
 Optional exclude file in the start directory: _exclude-rename.sh.txt
-  FILE=basename or FILE=wildcard — skip renaming that filename in every subdirectory (not path-specific).
-  [F] at the rename or checksum-group prompt appends FILE=<that file's basename>. See also =full/path, /basename/, globs.
+  FILE=basename or FILE=wildcard — skip renaming that filename in every subdirectory (files and directories; not path-specific).
+  [F] at the rename prompt appends FILE=<basename> for the current path (file or directory). At the checksum-group prompt, [F] uses the list file's basename. See also =full/path, /basename/, globs.
 
 Example:
   rename.sh -v --use-db --colors yes --mode real --scope subdirs
@@ -1036,7 +1037,6 @@ is_excluded_by_filter_file() {
     for filter in "${EXCLUDE_FILTERS[@]}"; do
         if [[ "$filter" == FILE=* ]]; then
             fn_pat="${filter#FILE=}"
-            [[ -f "$p" ]] || continue
             if [[ "$fn_pat" == *'*'* || "$fn_pat" == *'?'* || "$fn_pat" == *'['* ]]; then
                 [[ "$base" == $fn_pat ]] && return 0
             else
@@ -1083,10 +1083,10 @@ exact_exception_entry_for_path() {
     printf '=%s' "$p"
 }
 
-# Regular files only: exclude line FILE=basename matches basename in any directory (optional glob after FILE=).
+# Basename-only: exclude line FILE=basename matches basename in any directory (file or directory; optional glob after FILE=).
 filename_only_exception_entry_for_path() {
     local p="$1"
-    [[ -f "$p" ]] || return 1
+    [[ -f "$p" || -d "$p" ]] || return 1
     printf 'FILE=%s' "$(basename -- "$p")"
 }
 
@@ -1121,7 +1121,7 @@ exception_exists_for_path() {
     entry="$(path_to_exclude_entry "$path")"
     exact_entry="$(exact_exception_entry_for_path "$path")"
     fn_entry=""
-    if [[ -f "$path" ]]; then
+    if [[ -f "$path" || -d "$path" ]]; then
         fn_entry="$(filename_only_exception_entry_for_path "$path")"
     fi
     [[ -n "$entry" || -n "$exact_entry" || -n "$fn_entry" ]] || return 1
@@ -1196,7 +1196,7 @@ append_filename_only_exception_to_exclude_filters_file() {
         if [[ -e "$EXCLUDE_FILTERS_FILE" ]]; then
             load_exclude_filters
         fi
-        emit_wrap_labeled_stderr "SKIP: " "${YELLOW}SKIP:${RESET} " "Filename-only exceptions apply to regular files only."
+        emit_wrap_labeled_stderr "SKIP: " "${YELLOW}SKIP:${RESET} " "Filename-only exceptions need an existing file or directory path."
         return 1
     }
 
@@ -6991,8 +6991,8 @@ print_rename_prompt_menu() {
         echo "  [K] Delete this thumbs.db file"
         choice_hint+=/k
     fi
-    if [[ -n "$path" && -f "$path" ]]; then
-        echo "  [F] Filename-only exception (skip this basename in every directory)"
+    if [[ -n "$path" && ( -f "$path" || -d "$path" ) ]]; then
+        echo "  [F] Filename-only exception — skip this basename everywhere (any file or directory with this name)"
         choice_hint+=/f
     fi
     echo "  [E] Add exception (skip this path and its subtree by filter match)"
@@ -8508,7 +8508,7 @@ for f in "${ordered_paths[@]}"; do
     if exception_exists_for_path "$f"; then
         if grep -Fxq -- "$(exact_exception_entry_for_path "$f")" "$EXCLUDE_FILTERS_FILE" 2>/dev/null; then
             emit_wrap_exclude_append_message 0 "EXACT EXCEPTION EXISTS" "$(exact_exception_entry_for_path "$f")"
-        elif [[ -f "$f" ]] && grep -Fxq -- "$(filename_only_exception_entry_for_path "$f")" "$EXCLUDE_FILTERS_FILE" 2>/dev/null; then
+        elif [[ ( -f "$f" || -d "$f" ) ]] && grep -Fxq -- "$(filename_only_exception_entry_for_path "$f")" "$EXCLUDE_FILTERS_FILE" 2>/dev/null; then
             emit_wrap_exclude_append_message 0 "FILENAME-ONLY EXCEPTION EXISTS" "$(filename_only_exception_entry_for_path "$f")"
         else
             emit_wrap_exclude_append_message 0 "EXCEPTION EXISTS" "$(path_to_exclude_entry "$f")"
