@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.05.07 - v. 19.100 - SSH/terminal window title: set to script basename + all argv after parse; restore via CSI 23t on EXIT
 # 2026.05.07 - v. 19.99 - Ctrl-C: one INT handler (rollback + checkpoint + summary); remove duplicate early on_interrupt; set -e-safe || true so summary always runs
 # 2026.05.07 - v. 19.98 - Non-verbose checksum list progress: <500 entries → one S/M/H per line/ref; ≥500 → one letter per min(50,max(1,n/10)) entries (ramp between)
 # 2026.05.07 - v. 19.97 - thumbs.db / torrent .URL no-op prompts: explain identical OLD/NEW; clearer menu; default skip without yellow wall + db_mark_checked
@@ -476,6 +477,10 @@ DEBUG_RUN_ID="${DEBUG_RUN_ID:-pre-fix}"
 set -Eeuo pipefail
 shopt -s nullglob
 
+# Snapshot argv for terminal title (CLI loop below shifts through flags).
+RENAME_SH_ORIGINAL_ARGV=( "$0" "$@" )
+RENAME_SH_WINDOW_TITLE_PUSHED=0
+
 VERBOSE=0
 VERBOSE_MAIN_EVERY=200
 # Non-verbose: '.' per main-loop entry; checksum ramp redraws in one terminal cell (backspace+char) until S/M/H commits and advances the column counter. Uses /dev/tty when writable. Same wrap at MAX_LINE_LENGTH; end line before prompts/other stdout.
@@ -672,6 +677,37 @@ nonverbose_progress_tty_nl() {
     else
         printf '\n'
     fi
+}
+
+# xterm-style title stack: CSI 22 t push, CSI 23 t pop (OSC 0/2 set icon/window title). No-op if no TTY.
+rename_sh_window_title_restore() {
+    (( RENAME_SH_WINDOW_TITLE_PUSHED == 1 )) || return 0
+    if [[ -w /dev/tty ]] 2>/dev/null; then
+        printf '\033[23t' >/dev/tty 2>/dev/null || true
+    fi
+    RENAME_SH_WINDOW_TITLE_PUSHED=0
+}
+
+rename_sh_window_title_apply_from_saved_argv() {
+    local title="" a i bn max_len=240
+    (( ${#RENAME_SH_ORIGINAL_ARGV[@]} > 0 )) || return 0
+    bn="$(basename -- "${RENAME_SH_ORIGINAL_ARGV[0]}")"
+    title="$bn"
+    for (( i = 1; i < ${#RENAME_SH_ORIGINAL_ARGV[@]}; i++ )); do
+        a="${RENAME_SH_ORIGINAL_ARGV[$i]}"
+        a="${a//$'\r'/}"
+        a="${a//$'\n'/ }"
+        a="${a//$'\t'/ }"
+        title+=" $a"
+    done
+    if (( ${#title} > max_len )); then
+        title="${title:0:$(( max_len - 3 ))}..."
+    fi
+    [[ -w /dev/tty ]] 2>/dev/null || return 0
+    printf '\033[22t' >/dev/tty 2>/dev/null || true
+    printf '\033]0;%s\033\\' "$title" >/dev/tty 2>/dev/null || printf '\033]0;%s\a' "$title" >/dev/tty 2>/dev/null || true
+    printf '\033]2;%s\033\\' "$title" >/dev/tty 2>/dev/null || printf '\033]2;%s\a' "$title" >/dev/tty 2>/dev/null || true
+    RENAME_SH_WINDOW_TITLE_PUSHED=1
 }
 
 # One non-verbose progress character (dot or checksum letter); wraps like dots (MAX_LINE_LENGTH).
@@ -1447,6 +1483,7 @@ db_flush_pending() {
 
 cleanup_on_exit() {
     local rc=$?
+    rename_sh_window_title_restore || true
     if (( USE_DB == 1 )); then
         db_flush_pending || true
         if [[ -n "$DB_PENDING_SQL_FILE" && -e "$DB_PENDING_SQL_FILE" ]]; then
@@ -2592,6 +2629,8 @@ while (( $# > 0 )); do
             ;;
     esac
 done
+
+rename_sh_window_title_apply_from_saved_argv
 
 print_startup_banner
 
