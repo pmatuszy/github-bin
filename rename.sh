@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# 2026.05.08 - v. 19.120.124242 - SCRIPT_VERSION taken from this line: v. aa.bbb.HHMMSS — aa = month counter (19 now, bump to 20 next month); bbb = commit counter this month; HHMMSS when you edit; not computed at runtime
+# 2026.05.08 - v. 19.121.125710 - SCRIPT_VERSION taken from this line: v. aa.bbb.HHMMSS — aa = month counter (19 now, bump to 20 next month); bbb = commit counter this month; HHMMSS when you edit; not computed at runtime
+# 2026.05.08 - v. 19.121 - Resume: non-verbose main-loop milestone uses files_examined (not slot index); checkpoint paths register ./ and no-./ keys for processed lookup
 # 2026.05.08 - v. 19.120 - Plain rename prompt: when path is a directory and --use-db, ask about updating DB entries for that subtree
 # 2026.05.08 - v. 19.119 - Checksum mismatch: [I] ignore ref and continue; no full-verify state if any [I]; before/after rename show NOTE instead of VERIFIED/OK when [I] used
 # 2026.05.08 - v. 19.118 - emit_wrap_old_arrow_new_stdout: when one line does not fit, print prefix+old+arrow on line 1 and indented new on line 2 (avoids lone “Renamed:” plus a wrapped old→new)
@@ -515,7 +516,7 @@ RENAME_SH_WINDOW_TITLE_PUSHED=0
 
 VERBOSE=0
 VERBOSE_MAIN_EVERY="${VERBOSE_MAIN_EVERY:-200}"
-# Non-verbose main loop: after this many ordered_paths slots (main_index), print a separate "k out of total" line (default 1000).
+# Non-verbose main loop: after this many examined paths (files_examined), print a separate "k out of total" line (default 1000). Resume restores files_examined so progress continues from the checkpoint.
 NONVERBOSE_MAIN_LOOP_PROGRESS_EVERY_N="${NONVERBOSE_MAIN_LOOP_PROGRESS_EVERY_N:-1000}"
 # Non-verbose: '.' per main-loop entry; checksum ramp redraws in one terminal cell (backspace+char) until S/M/H commits and advances the column counter. Uses /dev/tty when writable. Same wrap at MAX_LINE_LENGTH; end line before prompts/other stdout.
 NONVERBOSE_PROGRESS_DOT_LINE_OPEN=no
@@ -669,7 +670,7 @@ Environment / tunables (read at startup; use export or prefix on the same line a
       NONVERBOSE_CHECKSUM_LIST_PER_LETTER_THRESHOLD=5000 rename.sh --use-db
   NONVERBOSE_CHECKSUM_RAMP_CHARS        Non-verbose checksum ramp glyphs between S/M/H (maps to in-cell redraw order). Default is a long punctuation set; use single quotes when exporting.
       export NONVERBOSE_CHECKSUM_RAMP_CHARS='.:-=+*'
-  NONVERBOSE_MAIN_LOOP_PROGRESS_EVERY_N  Non-verbose: print "k of total" every this many main-loop slots (default 1000).
+  NONVERBOSE_MAIN_LOOP_PROGRESS_EVERY_N  Non-verbose: print "k of total" every this many examined paths (files_examined; resume restores the counter; default 1000).
       NONVERBOSE_MAIN_LOOP_PROGRESS_EVERY_N=500 rename.sh --use-db
   RENAME_CHECKSUM_VERIFY_STATE_DIR      Directory for last-successful full-verify timestamps for checksum lists (large-list prompt). Default: $HOME/.local/state/rename.sh/checksum-verify
       RENAME_CHECKSUM_VERIFY_STATE_DIR=/var/tmp/rename-checksum-state rename.sh --use-db
@@ -832,7 +833,7 @@ nonverbose_main_loop_progress_dot() {
     nonverbose_progress_stdout_line_char '.'
 }
 
-# End the current dot row, then print "n out of total" (non-verbose only). n = main_index in ordered_paths loop.
+# End the current dot row, then print "n out of total" (non-verbose only). n = files_examined (paths actually taken past the resume skip), restored when resuming.
 nonverbose_main_loop_progress_milestone() {
     local n="${1-0}"
     local total="${2-0}"
@@ -7157,6 +7158,18 @@ PY
     rm -f -- "$tmp_processed" "$tmp_renamed"
 }
 
+# Register a path from resume JSON under the same key forms the main loop uses (find emits ./foo; older checkpoints may store foo).
+resume_checkpoint_register_processed_path() {
+    local p="$1"
+    [[ -z "$p" ]] && return 0
+    processed["$p"]=1
+    if [[ "$p" == ./* ]]; then
+        processed["${p#./}"]=1
+    elif [[ "$p" != /* ]]; then
+        processed["./$p"]=1
+    fi
+}
+
 load_resume_checkpoint() {
     local tmp_processed tmp_renamed meta
     local prev_processed_count=0
@@ -7238,7 +7251,7 @@ PY
     declare -gA processed=()
     verbose_status_timestamp "Restoring processed-entry state from checkpoint..."
     while IFS= read -r -d '' path; do
-        processed["$path"]=1
+        resume_checkpoint_register_processed_path "$path"
         ((++prev_processed_count))
         if (( VERBOSE == 1 && prev_processed_count % 100000 == 0 )); then
             verbose_status_timestamp "Resume restore progress: ${prev_processed_count} processed entries loaded..."
@@ -7262,6 +7275,7 @@ PY
     RESUME_STATE_WAS_LOADED=1
     verbose_status_timestamp "Resume checkpoint restore complete: processed=${prev_processed_count}, renamed=${prev_renamed_count}"
     echo "Resume checkpoint loaded: $prev_processed_count entries marked as already processed."
+    echo "Note: Non-verbose 'n out of total' is the examined-path count (restored from the checkpoint); skipping resume entries does not advance it."
     return 0
 }
 
@@ -7964,7 +7978,7 @@ startup_progress "Entry discovery and sort complete: ${#ordered_paths[@]} entrie
 startup_progress "Entering main processing loop..."
 
 vlog "Discovered entries to process: ${#ordered_paths[@]}"
-vlog "Progress box updates every ${VERBOSE_MAIN_EVERY} iterations; already-processed entries may be skipped quickly."
+vlog "Progress box updates every ${VERBOSE_MAIN_EVERY} slot index; non-verbose 'k out of total' uses files_examined (resume restores it)."
 maybe_resume_from_checkpoint
 
 main_index=0
@@ -7977,10 +7991,10 @@ for f in "${ordered_paths[@]}"; do
     if (( VERBOSE == 1 && main_index % VERBOSE_MAIN_EVERY == 0 )); then
         print_progress_box "$main_index / ${#ordered_paths[@]}" "$f"
     fi
-    nonverbose_main_loop_progress_milestone "$main_index" "${#ordered_paths[@]}"
 
     [[ -n "${processed[$f]+x}" ]] && continue
     ((++files_examined))
+    nonverbose_main_loop_progress_milestone "$files_examined" "${#ordered_paths[@]}"
     nonverbose_main_loop_progress_dot
 
     if is_excluded_by_filter_file "$f"; then
