@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.05.07 - v. 19.99 - Ctrl-C: one INT handler (rollback + checkpoint + summary); remove duplicate early on_interrupt; set -e-safe || true so summary always runs
 # 2026.05.07 - v. 19.98 - Non-verbose checksum list progress: <500 entries → one S/M/H per line/ref; ≥500 → one letter per min(50,max(1,n/10)) entries (ramp between)
 # 2026.05.07 - v. 19.97 - thumbs.db / torrent .URL no-op prompts: explain identical OLD/NEW; clearer menu; default skip without yellow wall + db_mark_checked
 # 2026.05.07 - v. 19.96 - FILE= basename exceptions: apply to files and directories; [F] at rename prompt for dirs too (skip basename everywhere)
@@ -3382,13 +3383,6 @@ rollback_current_operation() {
 
     echo -e "${GREEN}ROLLBACK DONE.${RESET}"
 }
-
-on_interrupt() {
-    trap - INT
-    rollback_current_operation
-    exit 130
-}
-trap 'on_interrupt' INT
 
 begin_current_operation() {
     local label="$1"
@@ -7466,15 +7460,18 @@ print_summary() {
     echo "==========================="
 }
 
+# Single INT handler: rollback in-flight checksum op (if any), save resume state, then summary (set -e-safe).
 on_interrupt() {
+    trap - INT
+    rollback_current_operation || true
     stopped_by_user=yes
     SCRIPT_FINISH_TIME="$(date '+%Y-%m-%d %H:%M:%S')"
-    save_resume_checkpoint
-    nonverbose_progress_dot_endline_if_needed
+    save_resume_checkpoint || true
+    nonverbose_progress_dot_endline_if_needed || true
     echo
     echo "Interrupted by user (Ctrl-C)."
     echo "Checkpoint saved: $RESUME_STATE_FILE"
-    print_summary
+    print_summary || true
     exit 130
 }
 
