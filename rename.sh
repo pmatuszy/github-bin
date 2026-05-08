@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
-# 2026.05.08 - v. 19.115.110507 - SCRIPT_VERSION taken from this line (v. MAJOR.MINOR.HHMMSS); set HHMMSS when you edit the script — not computed at runtime
-# 2026.05.08 - v. 19.115 - transform_name: plain PXL_<digits>.ext (no embedded YYYYMMDD_HHMMSS) → YYYYMMDD_HHMMSS-<stem>.ext via oldest birth/mtime, like IMG_<digits>
+# 2026.05.08 - v. 19.120.124242 - SCRIPT_VERSION taken from this line: v. aa.bbb.HHMMSS — aa = month counter (19 now, bump to 20 next month); bbb = commit counter this month; HHMMSS when you edit; not computed at runtime
+# 2026.05.08 - v. 19.120 - Plain rename prompt: when path is a directory and --use-db, ask about updating DB entries for that subtree
+# 2026.05.08 - v. 19.119 - Checksum mismatch: [I] ignore ref and continue; no full-verify state if any [I]; before/after rename show NOTE instead of VERIFIED/OK when [I] used
+# 2026.05.08 - v. 19.118 - emit_wrap_old_arrow_new_stdout: when one line does not fit, print prefix+old+arrow on line 1 and indented new on line 2 (avoids lone “Renamed:” plus a wrapped old→new)
+# 2026.05.08 - v. 19.116 - Checksum group preview: pad OLD/NEW labels to one width so hash-file and referenced paths start in the same column
+# 2026.05.08 - v. 19.115 - transform_name: plain PXL_<digits>.ext via file birth/mtime; IMG/PXL stem-preserving rules
 # 2026.05.08 - v. 19.114 - transform_name: IMG_* / PXL_* (embedded YYYYMMDD_HHMMSS) → YYYYMMDD_HHMMSS-<original stem>.ext; plain IMG_<digits> uses file birth/mtime for prefix
 # 2026.05.08 - v. 19.113 - Collision prompt: [D] session — auto _OTHER (like [R]) for all further collisions whose source file is in the same directory
 # 2026.05.08 - v. 19.110 - Window title: [invocation cwd] before resolved script path + argv
@@ -357,7 +361,7 @@
 # 2026.03.27 - v. 1.3 - fixed top-level path handling: keep ./ prefix in transform_name()
 # 2026.03.27 - v. 1.2 - added many changes about media files
 # 2026.04.15 - v. 17.3 - escape control characters in logged paths and warn explicitly about filenames containing them
-# SCRIPT_VERSION: first # YYYY.MM.DD line must use v. MAJOR.MINOR.HHMMSS (six digits); set the time when you change the script.
+# SCRIPT_VERSION: first # YYYY.MM.DD line must use v. aa.bbb.HHMMSS (aa = month counter; bbb = commits this month; HHMMSS = edit time).
 SCRIPT_VERSION="$(LC_ALL=C grep -m1 '^# [0-9]' "$0" | sed -E -n 's/^# [0-9]{4}\.[0-9]{2}\.[0-9]{2} - v\. ([0-9]+\.[0-9]+\.[0-9]{6}) - .*/\1/p')"
 [[ "$SCRIPT_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]{6}$ ]] || SCRIPT_VERSION="0.0.000000"
 # If a checksum list has more than this many lines, ask before checking it; default answer is No ([y/N/q]).
@@ -399,22 +403,29 @@ emit_wrap_labeled_line() {
 emit_wrap_labeled_stdout() { emit_wrap_labeled_line 1 "$@"; }
 emit_wrap_labeled_stderr() { emit_wrap_labeled_line 2 "$@"; }
 
-# NEF+XMP interactive rename: pad label to width (arg 4, default NEF_XMP_PAIR_LABEL_WIDTH) so OLD/NEW/sidecar paths align when sidecars exist.
-emit_wrap_nef_xmp_pair_label_stdout() {
+# Pad plain_tag to width (spaces after text), color the padded tag; then same wrapping as emit_wrap_labeled_stdout.
+emit_wrap_padded_label_stdout() {
     local plain_tag="$1"
     local color_name="$2"
     local body="$3"
-    local width="${4-}"
-    local padded plain_pref ansi_pref
-    [[ -z "$width" ]] && width=$NEF_XMP_PAIR_LABEL_WIDTH
+    local width="$4"
+    local padded ansi_pref
     printf -v padded '%-*s' "$width" "$plain_tag"
-    plain_pref="$padded"
     case "$color_name" in
-        red)   ansi_pref="${RED}${padded}${RESET}" ;;
-        green) ansi_pref="${GREEN}${padded}${RESET}" ;;
-        *)     ansi_pref="$padded" ;;
+        red)    ansi_pref="${RED}${padded}${RESET}" ;;
+        green)  ansi_pref="${GREEN}${padded}${RESET}" ;;
+        cyan)   ansi_pref="${CYAN}${padded}${RESET}" ;;
+        yellow) ansi_pref="${YELLOW}${padded}${RESET}" ;;
+        *)      ansi_pref="$padded" ;;
     esac
-    emit_wrap_labeled_stdout "$plain_pref" "$ansi_pref" "$body"
+    emit_wrap_labeled_stdout "$padded" "$ansi_pref" "$body"
+}
+
+# NEF+XMP interactive rename: pad label to width (arg 4, default NEF_XMP_PAIR_LABEL_WIDTH) so OLD/NEW/sidecar paths align when sidecars exist.
+emit_wrap_nef_xmp_pair_label_stdout() {
+    local width="${4-}"
+    [[ -z "$width" ]] && width=$NEF_XMP_PAIR_LABEL_WIDTH
+    emit_wrap_padded_label_stdout "$1" "$2" "$3" "$width"
 }
 
 # "TAG: entry -> exclude file" with colored arrow when it fits on one line.
@@ -452,8 +463,8 @@ emit_wrap_old_arrow_new_stdout() {
     if (( ${#plain} <= MAX_LINE_LENGTH )); then
         printf '%b%s%s%s\n' "$ansi_pfx" "$old_p" "$sep" "$new_p"
     else
-        printf '%b\n' "$ansi_pfx"
-        printf '%s%s%s%s\n' "$WRAP_MSG_INDENT" "$old_p" "$sep" "$new_p"
+        printf '%b%s%s\n' "$ansi_pfx" "$old_p" "$sep"
+        printf '%s%s\n' "$WRAP_MSG_INDENT" "$new_p"
     fi
 }
 
@@ -5237,7 +5248,7 @@ suggest_checksum_mismatch_recovery() {
     echo
 }
 
-# Return 0 if hash was updated and re-verification succeeded; 1 to abort (caller should exit).
+# Return 0 if hash was updated and re-verification succeeded; 2 if user chose [I] (ignore, caller continues); 1 if user quit [Q] or invalid (caller exits).
 prompt_refresh_checksum_hash_after_mismatch() {
     local sum_file="$1"
     local ref_in_file="$2"
@@ -5250,8 +5261,9 @@ prompt_refresh_checksum_hash_after_mismatch() {
 
     while true; do
         emit_wrap_labeled_stdout "  [U] " "  ${GREEN}[U]${RESET} " "Update stored ${label,,} hash from the file on disk, then re-verify"
+        emit_wrap_labeled_stdout "  [I] " "  ${GREEN}[I]${RESET} " "Ignore this mismatch and continue (checksum list unchanged; you fix it later)"
         emit_wrap_labeled_stdout "  [Q] " "  ${GREEN}[Q]${RESET} " "Quit (abort script)"
-        echo -n "$(user_prompt_ts_prefix)Choice [U/q]: "
+        echo -n "$(user_prompt_ts_prefix)Choice [U/i/Q]: "
         flush_stdin
         read_single_key answer "$PROMPT_WAIT_SECONDS"
         echo
@@ -5268,6 +5280,11 @@ prompt_refresh_checksum_hash_after_mismatch() {
                     return 0
                 fi
                 emit_wrap_labeled_stdout "${label} WARN: " "${YELLOW}${label} WARN:${RESET} " "Still fails after patch (duplicate conflicting lines in the list, or I/O issue). Try editing the checksum file by hand."
+                ;;
+            i|I)
+                emit_wrap_labeled_stdout "${label} IGNORE: " "${YELLOW}${label} IGNORE:${RESET} " "Continuing with stored hash for '${ref_in_file}' unchanged (${phase})."
+                vlog "${label} mismatch ignored by user for ref '${ref_in_file}' (${phase})"
+                return 2
                 ;;
             q|Q|'')
                 return 1
@@ -5301,8 +5318,8 @@ stop_on_checksum_user_quit_after_mismatch() {
     stopped_by_user=yes
     finish_current_operation
     echo
-    emit_wrap_labeled_stdout "STOPPING: " "${YELLOW}STOPPING:${RESET} " "You quit from the ${label} mismatch prompt (${phase}). Exiting without using [U] to refresh the stored hash from the file on disk."
-    emit_wrap_labeled_stdout "Note: " "${CYAN}Note:${RESET} " "This is not the same as '${label} being incorrect' — you chose not to apply [U] or fix the issue now."
+    emit_wrap_labeled_stdout "STOPPING: " "${YELLOW}STOPPING:${RESET} " "You quit ([Q]) from the ${label} mismatch prompt (${phase}). Exiting without [U] (refresh hash) or [I] (ignore)."
+    emit_wrap_labeled_stdout "Note: " "${CYAN}Note:${RESET} " "This is not the same as '${label} being incorrect' — you pressed [Q] instead of [U] or [I]."
     emit_wrap_labeled_stdout "Hash list: " "${CYAN}Hash list:${RESET} " "$sum_file"
     SCRIPT_FINISH_TIME="$(date '+%Y-%m-%d %H:%M:%S')"
     print_summary
@@ -7363,7 +7380,11 @@ print_rename_prompt_menu() {
         echo -e "${CYAN}  OLD and NEW below are the same on purpose — use [T] to delete the shortcut, or skip.${RESET}"
     else
         [[ -n "$path" && -d "$path" ]] && entry_kind="directory"
-        echo -e "$(user_prompt_ts_prefix)${GREEN}Rename this ${entry_kind}?${RESET}"
+        if [[ "$entry_kind" == "directory" ]] && (( USE_DB == 1 )); then
+            echo -e "$(user_prompt_ts_prefix)${GREEN}Rename this directory and update all entries in the database for that subtree?${RESET}"
+        else
+            echo -e "$(user_prompt_ts_prefix)${GREEN}Rename this ${entry_kind}?${RESET}"
+        fi
     fi
 
     if [[ "$menu_variant" == thumbs-noop || "$menu_variant" == torrent-noop ]]; then
@@ -7711,6 +7732,15 @@ print_checksum_group_preview() {
     local -n _refs="$refs_name"
     local -n _new_refs="$new_refs_name"
     local i shown=0
+    local label_colw l_hash l_ref
+
+    l_hash="OLD ${label} (hash file on disk): "
+    l_ref="OLD referenced file: "
+    if (( ${#l_hash} >= ${#l_ref} )); then
+        label_colw=${#l_hash}
+    else
+        label_colw=${#l_ref}
+    fi
 
     echo
     emit_wrap_labeled_stdout "Checksum group preview (${label}): " "${CYAN}Checksum group preview (${label}):${RESET} " "the hash file lists paths to these files on disk."
@@ -7718,15 +7748,15 @@ print_checksum_group_preview() {
     echo
 
     if [[ "$sum_old" != "$sum_new" ]]; then
-        emit_wrap_labeled_stdout "OLD ${label} (hash file on disk): " "${RED}OLD ${label} (hash file on disk):${RESET} " "$sum_old"
-        emit_wrap_labeled_stdout "NEW ${label} (hash file on disk): " "${GREEN}NEW ${label} (hash file on disk):${RESET} " "$sum_new"
+        emit_wrap_padded_label_stdout "OLD ${label} (hash file on disk): " red "$sum_old" "$label_colw"
+        emit_wrap_padded_label_stdout "NEW ${label} (hash file on disk): " green "$sum_new" "$label_colw"
         shown=1
     fi
 
     for i in "${!_refs[@]}"; do
         [[ "${_new_refs[$i]}" != "${_refs[$i]}" ]] || continue
-        emit_wrap_labeled_stdout "OLD referenced file: " "${RED}OLD referenced file:${RESET} " "${_refs[$i]}"
-        emit_wrap_labeled_stdout "NEW referenced file: " "${GREEN}NEW referenced file:${RESET} " "${_new_refs[$i]}"
+        emit_wrap_padded_label_stdout "OLD referenced file: " red "${_refs[$i]}" "$label_colw"
+        emit_wrap_padded_label_stdout "NEW referenced file: " green "${_new_refs[$i]}" "$label_colw"
         shown=1
     done
 
@@ -8313,6 +8343,7 @@ for f in "${ordered_paths[@]}"; do
                 local_line_count="$(count_checksum_entries "$sum_file")"
                 if confirm_large_hash_check "$sum_file" "$label" "$local_line_count" refs; then
                     ensure_checksum_file_unix_format "$sum_file"
+                    checksum_list_verify_ignored=no
                     for i in "${!refs[@]}"; do
                         vrc=0
                         verify_single_checksum_target "$sum_file" "${refs_raw[$i]}" || vrc=$?
@@ -8325,12 +8356,17 @@ for f in "${ordered_paths[@]}"; do
                             stop_on_checksum_failure "$sum_file" "checksum list check"
                         fi
                         print_checksum_fail_mismatch_line "$label" "${refs_raw[$i]}" "$sum_file"
-                        if prompt_refresh_checksum_hash_after_mismatch "$sum_file" "${refs_raw[$i]}" "${refs[$i]}" "checksum list check"; then
+                        mismatch_menu_rc=0
+                        prompt_refresh_checksum_hash_after_mismatch "$sum_file" "${refs_raw[$i]}" "${refs[$i]}" "checksum list check" || mismatch_menu_rc=$?
+                        if (( mismatch_menu_rc == 0 || mismatch_menu_rc == 2 )); then
+                            (( mismatch_menu_rc == 2 )) && checksum_list_verify_ignored=yes
                             continue
                         fi
                         stop_on_checksum_user_quit_after_mismatch "$sum_file" "checksum list check"
                     done
-                    record_checksum_list_full_verify_success "$sum_file"
+                    if [[ "$checksum_list_verify_ignored" != yes ]]; then
+                        record_checksum_list_full_verify_success "$sum_file"
+                    fi
                 else
                     rc=$?
                     if [[ $rc -eq 2 ]]; then
@@ -8471,6 +8507,7 @@ for f in "${ordered_paths[@]}"; do
 
         if (( ${#refs[@]} > 0 )); then
             print_checksum_verify_progress_line "$label" before "$sum_file"
+            checksum_before_rename_ignored=no
             for i in "${!refs[@]}"; do
                 vrc=0
                 verify_single_checksum_target "$sum_file" "${refs_raw[$i]}" || vrc=$?
@@ -8483,12 +8520,19 @@ for f in "${ordered_paths[@]}"; do
                     stop_on_checksum_failure "$sum_file" "before rename"
                 fi
                 print_checksum_fail_mismatch_line "$label" "${refs_raw[$i]}" "$sum_file"
-                if prompt_refresh_checksum_hash_after_mismatch "$sum_file" "${refs_raw[$i]}" "${refs[$i]}" "before rename"; then
+                mismatch_menu_rc=0
+                prompt_refresh_checksum_hash_after_mismatch "$sum_file" "${refs_raw[$i]}" "${refs[$i]}" "before rename" || mismatch_menu_rc=$?
+                if (( mismatch_menu_rc == 0 || mismatch_menu_rc == 2 )); then
+                    (( mismatch_menu_rc == 2 )) && checksum_before_rename_ignored=yes
                     continue
                 fi
                 stop_on_checksum_user_quit_after_mismatch "$sum_file" "before rename"
             done
-            print_checksum_verified_refs_line "$label" before "$sum_file"
+            if [[ "$checksum_before_rename_ignored" == yes ]]; then
+                emit_wrap_labeled_stdout "${label} NOTE: " "${YELLOW}${label} NOTE:${RESET} " "At least one reference had a checksum mismatch you chose [I] to ignore; not all references were verified before rename."
+            else
+                print_checksum_verified_refs_line "$label" before "$sum_file"
+            fi
         fi
 
         declare -a html_companion_old_dirs=()
@@ -8642,6 +8686,7 @@ for f in "${ordered_paths[@]}"; do
 
         if (( ${#refs[@]} > 0 )); then
             print_checksum_verify_progress_line "$label" after "$final_sum"
+            checksum_after_rename_ignored=no
             for i in "${!refs[@]}"; do
                 new_ref_for_verify="$(format_ref_for_checksum_file "$final_sum" "${refs_raw[$i]}" "${new_refs[$i]}")"
                 vrc=0
@@ -8656,14 +8701,21 @@ for f in "${ordered_paths[@]}"; do
                 fi
                 print_checksum_fail_after_validate_line "$label" "$new_ref_for_verify" "$final_sum"
                 emit_wrap_labeled_stdout "NOTE: " "${YELLOW}NOTE:${RESET} " "Files were renamed, but checksum verification after update failed."
-                if prompt_refresh_checksum_hash_after_mismatch "$final_sum" "$new_ref_for_verify" "${new_refs[$i]}" "after rename"; then
+                mismatch_menu_rc=0
+                prompt_refresh_checksum_hash_after_mismatch "$final_sum" "$new_ref_for_verify" "${new_refs[$i]}" "after rename" || mismatch_menu_rc=$?
+                if (( mismatch_menu_rc == 0 || mismatch_menu_rc == 2 )); then
+                    (( mismatch_menu_rc == 2 )) && checksum_after_rename_ignored=yes
                     continue
                 fi
                 stop_on_checksum_user_quit_after_mismatch "$final_sum" "after rename"
             done
-            print_checksum_verified_refs_line "$label" after "$final_sum"
-            print_checksum_group_ok_line "$label" "$final_sum"
-            record_checksum_list_full_verify_success "$final_sum"
+            if [[ "$checksum_after_rename_ignored" == yes ]]; then
+                emit_wrap_labeled_stdout "${label} NOTE: " "${YELLOW}${label} NOTE:${RESET} " "At least one reference still does not match the list after rename ([I] ignore); checksum file may be wrong until you fix or [U]pdate."
+            else
+                print_checksum_verified_refs_line "$label" after "$final_sum"
+                print_checksum_group_ok_line "$label" "$final_sum"
+                record_checksum_list_full_verify_success "$final_sum"
+            fi
         fi
 
         finish_current_operation
