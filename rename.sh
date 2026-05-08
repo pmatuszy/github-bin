@@ -1,5 +1,8 @@
 #!/usr/bin/env bash
-# 2026.05.08 - v. 19.121.125710 - SCRIPT_VERSION taken from this line: v. aa.bbb.HHMMSS — aa = month counter (19 now, bump to 20 next month); bbb = commit counter this month; HHMMSS when you edit; not computed at runtime
+# 2026.05.08 - v. 19.124.140854 - SCRIPT_VERSION taken from this line: v. aa.bbb.HHMMSS — aa = month counter (19 now, bump to 20 next month); bbb = commit counter this month; HHMMSS when you edit; not computed at runtime
+# 2026.05.08 - v. 19.124 - NEF+XMP RawFileName prompt: print question with printf so read_single_key answers on the same line; less blank spacing before keys
+# 2026.05.08 - v. 19.123 - transform_basename: YYYY Mon DD HH-MM-SS.ext (English month abbr, spaces) → YYYY_Mon_DD_HH-MM-SS.ext
+# 2026.05.08 - v. 19.122 - path_basename_is_thumbs_db: treat backslashes like slashes (Windows paths in checksum lists) so missing Thumbs.db refs get the remove-from-hash prompt
 # 2026.05.08 - v. 19.121 - Resume: non-verbose main-loop milestone uses files_examined (not slot index); checkpoint paths register ./ and no-./ keys for processed lookup
 # 2026.05.08 - v. 19.120 - Plain rename prompt: when path is a directory and --use-db, ask about updating DB entries for that subtree
 # 2026.05.08 - v. 19.119 - Checksum mismatch: [I] ignore ref and continue; no full-verify state if any [I]; before/after rename show NOTE instead of VERIFIED/OK when [I] used
@@ -4012,7 +4015,6 @@ nef_xmp_print_verification_banner() {
     else
         printf '%s\n' "$msg"
     fi
-    echo
 }
 
 # Show that proposed RawFileName basename exists as the paired NEF (ls/stat/md5); does not use rename.sh DB hash helpers.
@@ -4149,13 +4151,17 @@ nef_xmp_verify_sidecar_raw_file_name_interactive() {
         vlog "XMP RawFileName: preview failed for '$xmp_path' — skip interactive prompt."
         return 0
     fi
-    echo
     echo "  Keys:"
     echo "    [Y] Yes / Enter - patch this .xmp only (default)"
     echo "    [d] Yes + auto-patch every RawFileName fix in this directory"
     echo "    [n] No"
     echo "    [q] Quit run"
-    verbose_question_timestamp "Write RawFileName into this .xmp on disk? (metadata only) [Y/n/d/q]:"
+    if (( VERBOSE == 1 )); then
+        echo "[VERBOSE] [$(date '+%Y.%m.%d %H:%M:%S')] Write RawFileName into this .xmp on disk? (metadata only) [Y/n/d/q]:" >&2
+    else
+        nonverbose_progress_dot_endline_if_needed
+    fi
+    printf '%s' "$(user_prompt_ts_prefix)Write RawFileName into this .xmp on disk? (metadata only) [Y/n/d/q]: "
     flush_stdin
     read_single_key ans "$PROMPT_WAIT_SECONDS"
     echo
@@ -4263,6 +4269,8 @@ is_torrent_url_file() {
 path_basename_is_thumbs_db() {
     local p="$1"
     local bn lower
+    # Windows-style paths inside checksum lines use '\' ; basename(1) only splits on '/' so normalize first.
+    p="${p//\\//}"
     bn="$(basename -- "$p")"
     lower="${bn,,}"
     [[ "$lower" == "thumbs.db" ]]
@@ -5705,6 +5713,29 @@ transform_basename() {
     new="${new//_eksiazki_PL_/}"
 
     new="${new//&/and}"
+
+    # YYYY Mon DD HH-MM-SS.ext — English 3-letter month + spaces (common exports) → YYYY_Mon_DD_HH-MM-SS.ext
+    local _ymd_y _ymd_mon _ymd_d _ymd_hh _ymd_mm _ymd_ss _ymd_ext _ymd_mlc _ymd_mout
+    if [[ "$new" =~ ^([0-9]{4})[[:space:]]+([A-Za-z]{3})[[:space:]]+([0-9]{1,2})[[:space:]]+([0-9]{2})-([0-9]{2})-([0-9]{2})(\.[^.]+)$ ]]; then
+        _ymd_y="${BASH_REMATCH[1]}"
+        _ymd_mon="${BASH_REMATCH[2]}"
+        _ymd_d="${BASH_REMATCH[3]}"
+        _ymd_hh="${BASH_REMATCH[4]}"
+        _ymd_mm="${BASH_REMATCH[5]}"
+        _ymd_ss="${BASH_REMATCH[6]}"
+        _ymd_ext="${BASH_REMATCH[7]}"
+        _ymd_mlc="${_ymd_mon,,}"
+        case "$_ymd_mlc" in
+            jan) _ymd_mout="Jan" ;; feb) _ymd_mout="Feb" ;; mar) _ymd_mout="Mar" ;; apr) _ymd_mout="Apr" ;;
+            may) _ymd_mout="May" ;; jun) _ymd_mout="Jun" ;; jul) _ymd_mout="Jul" ;; aug) _ymd_mout="Aug" ;;
+            sep) _ymd_mout="Sep" ;; oct) _ymd_mout="Oct" ;; nov) _ymd_mout="Nov" ;; dec) _ymd_mout="Dec" ;;
+            *) _ymd_mout="" ;;
+        esac
+        if [[ -n "$_ymd_mout" ]]; then
+            printf '%s_%s_%02d_%s-%s-%s%s' "$_ymd_y" "$_ymd_mout" "$((10#${_ymd_d}))" "$_ymd_hh" "$_ymd_mm" "$_ymd_ss" "$_ymd_ext"
+            return
+        fi
+    fi
 
     if [[ "$new" =~ ^([0-9]{2})([0-9]{2})([0-9]{2})_([0-9]{6})_-_(.+)(\.[^.]+)$ ]]; then
         printf '20%s%s%s_%s_-_%s%s' \
