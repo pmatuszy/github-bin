@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.05.07 - v. 19.98 - Non-verbose checksum list progress: <500 entries → one S/M/H per line/ref; ≥500 → one letter per min(50,max(1,n/10)) entries (ramp between)
 # 2026.05.07 - v. 19.97 - thumbs.db / torrent .URL no-op prompts: explain identical OLD/NEW; clearer menu; default skip without yellow wall + db_mark_checked
 # 2026.05.07 - v. 19.96 - FILE= basename exceptions: apply to files and directories; [F] at rename prompt for dirs too (skip basename everywhere)
 # 2026.05.07 - v. 19.95 - Directory renames: prompt says directory; SQLite subtree rewrite updates all checked_paths under prefix (not only warmed cache keys)
@@ -488,6 +489,10 @@ NONVERBOSE_CHECKSUM_LETTER_CYCLE_EVENTS=100
 NONVERBOSE_CHECKSUM_RAMP_CHARS='.,`^":;|!~-_=+*/\<>()[]{}#%&@?'
 # When yes, the next ramp update backspaces once before drawing (in-place on /dev/tty).
 NONVERBOSE_CHECKSUM_RAMP_CELL_ACTIVE=no
+# List-aware scaling for nonverbose_checksum_ref_verify_progress_letter (second arg = checksum file path).
+NONVERBOSE_CHECKSUM_PROGRESS_SOURCE=""
+NONVERBOSE_CHECKSUM_PROGRESS_NREFS=0
+NONVERBOSE_CHECKSUM_PROGRESS_FPL=0
 # After auto-dir “Renamed:” (stdout), the next iteration’s lone progress dot looked odd; skip that one dot (see nonverbose_main_loop_progress_dot).
 NONVERBOSE_SKIP_NEXT_MAIN_LOOP_DOT=no
 CLI_COLORS=""
@@ -733,12 +738,63 @@ nonverbose_checksum_commit_kind_letter() {
 }
 
 # M = MD5 list, S = SHA512 list, H = anything else (unknown extension / future kinds).
-# Every checksum progress event increments a counter. Every NONVERBOSE_CHECKSUM_EVENT_STRIDE_N events,
-# redraw the ramp in the same TTY cell (backspace + char); every (stride * NONVERBOSE_CHECKSUM_LETTER_CYCLE_EVENTS) events commit S/M/H and advance the column.
+# With optional second arg (checksum file path): scale by line count — <500 lines → one S/M/H per event;
+# ≥500 lines → one letter every min(50, max(1, n/10)) events (ramp glyphs between letters). Without second arg, uses stride*cycle legacy behavior.
 nonverbose_checksum_ref_verify_progress_letter() {
     local kind="${1-}"
-    local letter stride block e slot idx ramp_str len cycle denom
+    local sum_path="${2-}"
+    local letter stride block e slot idx ramp_str len cycle denom fpl pos nline
     (( VERBOSE == 1 )) && return 0
+
+    if [[ -n "$sum_path" ]]; then
+        if [[ "$sum_path" != "${NONVERBOSE_CHECKSUM_PROGRESS_SOURCE-}" ]]; then
+            NONVERBOSE_CHECKSUM_PROGRESS_SOURCE="$sum_path"
+            NONVERBOSE_CHECKSUM_LETTER_EVENT_N=0
+            nline="$(extract_checksum_entries "$sum_path" | wc -l | tr -d ' \t')"
+            [[ "$nline" =~ ^[0-9]+$ ]] || nline=0
+            NONVERBOSE_CHECKSUM_PROGRESS_NREFS=$nline
+            if (( nline > 0 && nline < 500 )); then
+                NONVERBOSE_CHECKSUM_PROGRESS_FPL=1
+            elif (( nline >= 500 )); then
+                fpl=$(( nline / 10 ))
+                (( fpl < 1 )) && fpl=1
+                (( fpl > 50 )) && fpl=50
+                NONVERBOSE_CHECKSUM_PROGRESS_FPL=$fpl
+            else
+                NONVERBOSE_CHECKSUM_PROGRESS_FPL=0
+            fi
+        fi
+        fpl=${NONVERBOSE_CHECKSUM_PROGRESS_FPL:-0}
+        if (( fpl > 0 )); then
+            ((++NONVERBOSE_CHECKSUM_LETTER_EVENT_N))
+            e=$NONVERBOSE_CHECKSUM_LETTER_EVENT_N
+            pos=$(( (e - 1) % fpl + 1 ))
+            if (( pos == fpl )); then
+                case "$kind" in
+                    md5) letter=M ;;
+                    sha512) letter=S ;;
+                    *) letter=H ;;
+                esac
+                nonverbose_checksum_commit_kind_letter "$letter"
+                return 0
+            fi
+            (( fpl <= 2 )) && return 0
+            ramp_str="${NONVERBOSE_CHECKSUM_RAMP_CHARS-}"
+            [[ -n "$ramp_str" ]] || ramp_str='?'
+            len=${#ramp_str}
+            denom=$(( fpl - 2 ))
+            (( denom < 1 )) && denom=1
+            if (( len <= 1 )); then
+                letter=${ramp_str:0:1}
+            else
+                idx=$(( (pos - 1) * (len - 1) / denom ))
+                letter=${ramp_str:idx:1}
+            fi
+            nonverbose_checksum_ramp_cell_put "$letter"
+            return 0
+        fi
+    fi
+
     stride=${NONVERBOSE_CHECKSUM_EVENT_STRIDE_N:-1}
     (( stride < 1 )) && stride=1
     cycle=${NONVERBOSE_CHECKSUM_LETTER_CYCLE_EVENTS:-100}
@@ -2796,6 +2852,8 @@ print_checksum_verify_progress_line() {
         intro_plain="${label} check (after rename) in progress for reference(s)..."
     fi
     emit_wrap_labeled_stdout "${intro_plain} " "${CYAN}${intro_plain}${RESET} " "$path"
+    NONVERBOSE_CHECKSUM_LETTER_EVENT_N=0
+    NONVERBOSE_CHECKSUM_PROGRESS_SOURCE=""
 }
 
 print_checksum_verified_refs_line() {
@@ -5815,7 +5873,7 @@ verify_single_checksum_target() {
     local kind sum_dir sum_base target_norm target_re matched_line
 
     kind="$(checksum_kind "$sum_file")" || kind=""
-    nonverbose_checksum_ref_verify_progress_letter "$kind"
+    nonverbose_checksum_ref_verify_progress_letter "$kind" "$sum_file"
     sum_dir="$(dirname -- "$sum_file")"
     sum_base="$(basename -- "$sum_file")"
     target_norm="$(strip_leading_dot_slash "$target_ref")"
@@ -7658,7 +7716,7 @@ for f in "${ordered_paths[@]}"; do
             expected_hashes+=( "$hash" )
             refs_raw+=( "$ref" )
             refs+=( "$(resolve_checksum_ref_path "$sum_file" "$ref")" )
-            nonverbose_checksum_ref_verify_progress_letter "$sum_file_check_kind"
+            nonverbose_checksum_ref_verify_progress_letter "$sum_file_check_kind" "$sum_file"
             print_resolved_ref_verbose "$ref" "${refs[-1]}"
         done < <(extract_checksum_entries "$sum_file")
 
