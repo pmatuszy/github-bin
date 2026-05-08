@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.05.07 - v. 19.97 - thumbs.db / torrent .URL no-op prompts: explain identical OLD/NEW; clearer menu; default skip without yellow wall + db_mark_checked
 # 2026.05.07 - v. 19.96 - FILE= basename exceptions: apply to files and directories; [F] at rename prompt for dirs too (skip basename everywhere)
 # 2026.05.07 - v. 19.95 - Directory renames: prompt says directory; SQLite subtree rewrite updates all checked_paths under prefix (not only warmed cache keys)
 # 2026.05.07 - v. 19.94 - SQLite cache present prompt: [Q] Quit (same pattern as resume / DB hash prompts)
@@ -574,6 +575,7 @@ Options:
 Optional exclude file in the start directory: _exclude-rename.sh.txt
   FILE=basename or FILE=wildcard — skip renaming that filename in every subdirectory (files and directories; not path-specific).
   [F] at the rename prompt appends FILE=<basename> for the current path (file or directory). At the checksum-group prompt, [F] uses the list file's basename. See also =full/path, /basename/, globs.
+  thumbs.db / torrent .URL: if the suggested path equals the current path, you still get a prompt so you can delete the file ([K] / [T]); there is no rename to apply.
 
 Example:
   rename.sh -v --use-db --colors yes --mode real --scope subdirs
@@ -6959,14 +6961,28 @@ print_rename_prompt_menu() {
     local kind_label="$1"
     local path="${2-}"
     local suggested_new="${3-}"
+    local menu_variant="${4-}"
     local choice_hint="Choice [Y/n/m/a/d"
     local entry_kind="$kind_label"
 
-    [[ -n "$path" && -d "$path" ]] && entry_kind="directory"
+    if [[ "$menu_variant" == thumbs-noop ]]; then
+        echo -e "${GREEN}This thumbs.db does not need a rename (suggested path matches the current path).${RESET}"
+        echo -e "${CYAN}  OLD and NEW below are the same on purpose — use [K] to delete this Windows thumbnail cache file, or skip.${RESET}"
+    elif [[ "$menu_variant" == torrent-noop ]]; then
+        echo -e "${GREEN}This torrent .URL shortcut does not need a rename (suggested path matches the current path).${RESET}"
+        echo -e "${CYAN}  OLD and NEW below are the same on purpose — use [T] to delete the shortcut, or skip.${RESET}"
+    else
+        [[ -n "$path" && -d "$path" ]] && entry_kind="directory"
+        echo -e "${GREEN}Rename this ${entry_kind}?${RESET}"
+    fi
 
-    echo -e "${GREEN}Rename this ${entry_kind}?${RESET}"
-    echo "  [Y] Yes (default)"
-    echo "  [N] No"
+    if [[ "$menu_variant" == thumbs-noop || "$menu_variant" == torrent-noop ]]; then
+        echo "  [Y] or Enter — Skip (default; no rename to apply)"
+        echo "  [N] Skip"
+    else
+        echo "  [Y] Yes (default)"
+        echo "  [N] No"
+    fi
     echo "  [M] Rename by editing target filename"
     echo "  [A] All remaining"
     echo "  [D] Yes for this directory"
@@ -8571,7 +8587,10 @@ for f in "${ordered_paths[@]}"; do
     if [[ "$f" != "$new" ]] && is_html_file "$f"; then
         print_html_companion_plan_for_prompt "$f" "$new"
     fi
-    print_rename_prompt_menu "entry" "$f" "$new"
+    _rename_menu_variant=""
+    [[ -n "$thumbs_db_noop" ]] && _rename_menu_variant=thumbs-noop
+    [[ -n "$torrent_url_noop" ]] && _rename_menu_variant=torrent-noop
+    print_rename_prompt_menu "entry" "$f" "$new" "$_rename_menu_variant"
     flush_stdin
     read_single_key input "$PROMPT_WAIT_SECONDS"
     echo
@@ -8587,6 +8606,11 @@ for f in "${ordered_paths[@]}"; do
                 processed["$nef_xmp_buddy"]=1
             else
                 ((++files_skipped))
+                if [[ -n "$thumbs_db_noop" || -n "$torrent_url_noop" ]]; then
+                    db_backfill_missing_hashes_for_existing_file "$f" || true
+                    db_mark_checked "$f" "plain" "checked"
+                    processed["$f"]=1
+                fi
             fi
             ;;
         m|M)
@@ -8752,23 +8776,17 @@ for f in "${ordered_paths[@]}"; do
             ;;
         *)
             if [[ -n "$torrent_url_noop" ]]; then
-                _noop_t="No rename to apply for this torrent .URL; use [T] to delete it or [N] to skip."
-                if (( ${#_noop_t} <= MAX_LINE_LENGTH )); then
-                    echo -e "${YELLOW}${_noop_t}${RESET}"
-                else
-                    echo -e "${YELLOW}No rename to apply for this torrent .URL;${RESET}"
-                    echo -e "${WRAP_MSG_INDENT}${YELLOW}use [T] to delete it or [N] to skip.${RESET}"
-                fi
+                vlog "Skipped torrent .URL (no rename suggested; default or skip): '$f'"
+                db_backfill_missing_hashes_for_existing_file "$f" || true
+                db_mark_checked "$f" "plain" "checked"
                 ((++files_skipped))
+                processed["$f"]=1
             elif [[ -n "$thumbs_db_noop" ]]; then
-                _noop_k="No rename to apply for this thumbs.db; use [K] to delete it or [N] to skip."
-                if (( ${#_noop_k} <= MAX_LINE_LENGTH )); then
-                    echo -e "${YELLOW}${_noop_k}${RESET}"
-                else
-                    echo -e "${YELLOW}No rename to apply for this thumbs.db;${RESET}"
-                    echo -e "${WRAP_MSG_INDENT}${YELLOW}use [K] to delete it or [N] to skip.${RESET}"
-                fi
+                vlog "Skipped thumbs.db (no rename suggested; default or skip): '$f'"
+                db_backfill_missing_hashes_for_existing_file "$f" || true
+                db_mark_checked "$f" "plain" "checked"
                 ((++files_skipped))
+                processed["$f"]=1
             else
                 perform_plain_or_nef_xmp_pair "interactive default" || break
             fi
