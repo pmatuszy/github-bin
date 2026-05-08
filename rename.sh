@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.05.07 - v. 19.95 - Directory renames: prompt says directory; SQLite subtree rewrite updates all checked_paths under prefix (not only warmed cache keys)
 # 2026.05.07 - v. 19.94 - SQLite cache present prompt: [Q] Quit (same pattern as resume / DB hash prompts)
 # 2026.05.07 - v. 19.93 - NEF+XMP: if XMP has no RawFileName markup, skip RawFileName prompts/notes (do not suggest adding it)
 # 2026.05.07 - v. 19.92 - NEF+XMP RawFileName prompts: clarify metadata-only patch inside .xmp (not renaming paths); note recovery XMP may omit crs:RawFileName
@@ -2267,6 +2268,7 @@ db_rewrite_subtree() {
     local old_path="$1"
     local new_path="$2"
     local old_abs new_abs old_prefix new_prefix old_db_path new_db_path suffix sql
+    local old_esc new_esc
     local rewritten_count=0
     local -a matched_paths=()
 
@@ -2280,16 +2282,21 @@ db_rewrite_subtree() {
     old_prefix="${old_abs%/}/"
     new_prefix="${new_abs%/}/"
 
+    old_esc="$(sql_escape "$old_abs")"
+    new_esc="$(sql_escape "$new_abs")"
+    # Rewrite every cached row under this directory prefix in SQLite (warm cache may omit most paths).
+    sql="UPDATE checked_paths SET path = CASE WHEN path='${old_esc}' THEN '${new_esc}' ELSE '${new_esc}' || SUBSTR(path, LENGTH('${old_esc}') + 1) END WHERE path='${old_esc}' OR SUBSTR(path, 1, LENGTH('${old_esc}') + 1) = '${old_esc}' || '/';"
+    printf '%s\n' "$sql" >> "$DB_PENDING_SQL_FILE"
+    (( ++DB_PENDING_COUNT ))
+    if (( DB_PENDING_COUNT >= DB_FLUSH_EVERY )); then
+        db_flush_pending
+    fi
+
     for old_db_path in "${!DB_CACHE_META[@]}"; do
         if [[ "$old_db_path" == "$old_abs" || "$old_db_path" == "$old_prefix"* ]]; then
             matched_paths+=( "$old_db_path" )
         fi
     done
-
-    if (( ${#matched_paths[@]} == 0 )); then
-        vlog "DB subtree rewrite summary: 0 cached path(s) matched for '$old_abs' -> '$new_abs'"
-        return 0
-    fi
 
     for old_db_path in "${matched_paths[@]}"; do
         if [[ "$old_db_path" == "$old_abs" ]]; then
@@ -2317,20 +2324,14 @@ db_rewrite_subtree() {
             DB_CACHE_ROW_EXISTS["$new_db_path"]=1
             unset 'DB_CACHE_ROW_EXISTS[$old_db_path]'
         fi
-
-        ((++DB_ROWS_NEW))
-        ((++DB_ROWS_REMOVED))
-
-        sql="INSERT INTO checked_paths(path, kind, size, mtime, status, last_checked, signature, file_hash_kind, file_hash, file_md5, file_sha512) SELECT '$(sql_escape "$new_db_path")', kind, size, mtime, status, last_checked, signature, file_hash_kind, file_hash, file_md5, file_sha512 FROM checked_paths WHERE path='$(sql_escape "$old_db_path")' ON CONFLICT(path) DO UPDATE SET kind=excluded.kind, size=excluded.size, mtime=excluded.mtime, status=excluded.status, signature=excluded.signature, last_checked=excluded.last_checked, file_hash_kind=COALESCE(excluded.file_hash_kind, checked_paths.file_hash_kind), file_hash=COALESCE(excluded.file_hash, checked_paths.file_hash), file_md5=COALESCE(excluded.file_md5, checked_paths.file_md5), file_sha512=COALESCE(excluded.file_sha512, checked_paths.file_sha512); DELETE FROM checked_paths WHERE path='$(sql_escape "$old_db_path")';"
-        printf '%s\n' "$sql" >> "$DB_PENDING_SQL_FILE"
-        (( ++DB_PENDING_COUNT ))
-        if (( DB_PENDING_COUNT >= DB_FLUSH_EVERY )); then
-            db_flush_pending
-        fi
         (( ++rewritten_count ))
     done
 
-    vlog "DB subtree rewrite summary: ${rewritten_count} cached path(s) updated for '$old_abs' -> '$new_abs'"
+    if (( rewritten_count == 0 )); then
+        vlog "DB subtree rewrite: SQLite prefix '${old_abs}' -> '${new_abs}' (no in-memory cache keys to relabel)"
+    else
+        vlog "DB subtree rewrite: SQLite prefix '${old_abs}' -> '${new_abs}' (${rewritten_count} in-memory cache key(s) relabeled)"
+    fi
 }
 
 db_rewrite_single_path() {
@@ -6959,8 +6960,11 @@ print_rename_prompt_menu() {
     local path="${2-}"
     local suggested_new="${3-}"
     local choice_hint="Choice [Y/n/m/a/d"
+    local entry_kind="$kind_label"
 
-    echo -e "${GREEN}Rename this ${kind_label}?${RESET}"
+    [[ -n "$path" && -d "$path" ]] && entry_kind="directory"
+
+    echo -e "${GREEN}Rename this ${entry_kind}?${RESET}"
     echo "  [Y] Yes (default)"
     echo "  [N] No"
     echo "  [M] Rename by editing target filename"
@@ -7275,6 +7279,9 @@ print_rename_action_verbose() {
     if [[ -n "$reason" ]]; then
         second="due to ${reason}"
         line="${line} ${second}"
+    fi
+    if [[ -d "$old_path" ]]; then
+        line+=" [directory]"
     fi
 
     if (( ${#line} <= MAX_LINE_LENGTH )); then
@@ -8540,6 +8547,9 @@ for f in "${ordered_paths[@]}"; do
     [[ -n "$nef_xmp_buddy" ]] && _nxmp_pw=$NEF_XMP_PAIR_LABEL_WIDTH
     emit_wrap_nef_xmp_pair_label_stdout "OLD: " red "$f" "$_nxmp_pw"
     emit_wrap_nef_xmp_pair_label_stdout "NEW: " green "$new" "$_nxmp_pw"
+    if [[ -d "$f" ]]; then
+        echo -e "${CYAN}  (This path is a directory, not a regular file.)${RESET}"
+    fi
     if [[ -n "$nef_xmp_buddy" ]]; then
         emit_wrap_nef_xmp_pair_label_stdout "OLD (sidecar): " red "$nef_xmp_buddy" "$NEF_XMP_PAIR_LABEL_WIDTH"
         emit_wrap_nef_xmp_pair_label_stdout "NEW (sidecar): " green "$nef_xmp_new" "$NEF_XMP_PAIR_LABEL_WIDTH"
