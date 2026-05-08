@@ -1,4 +1,10 @@
 #!/usr/bin/env bash
+# 2026.05.08 - v. 19.115.110507 - SCRIPT_VERSION taken from this line (v. MAJOR.MINOR.HHMMSS); set HHMMSS when you edit the script — not computed at runtime
+# 2026.05.08 - v. 19.115 - transform_name: plain PXL_<digits>.ext (no embedded YYYYMMDD_HHMMSS) → YYYYMMDD_HHMMSS-<stem>.ext via oldest birth/mtime, like IMG_<digits>
+# 2026.05.08 - v. 19.114 - transform_name: IMG_* / PXL_* (embedded YYYYMMDD_HHMMSS) → YYYYMMDD_HHMMSS-<original stem>.ext; plain IMG_<digits> uses file birth/mtime for prefix
+# 2026.05.08 - v. 19.113 - Collision prompt: [D] session — auto _OTHER (like [R]) for all further collisions whose source file is in the same directory
+# 2026.05.08 - v. 19.110 - Window title: [invocation cwd] before resolved script path + argv
+# 2026.05.08 - v. 19.109 - Version banner: semantic v from first line + local HHMMSS (e.g. 19.109.101646)
 # 2026.05.08 - v. 19.108 - Large checksum prompt: skip [y/N/q] when line count is high but sum of on-disk target file sizes is below LARGE_HASHFILE_PROMPT_MIN_TOTAL_BYTES (default 30 GiB)
 # 2026.05.08 - v. 19.107 - Collision _OTHER: single _OTHER + numeric disambiguation (_OTHER_2, …); collapse stacked *_OTHER_OTHER* in transform targets; strip trailing _OTHER before allocating
 # 2026.05.08 - v. 19.106 - User prompts: prefix question lines and choice/readline prompts with (YYYY.MM.DD HH:MM:SS) local time; verbose_question_timestamp can log to stderr for mapping helpers
@@ -351,7 +357,9 @@
 # 2026.03.27 - v. 1.3 - fixed top-level path handling: keep ./ prefix in transform_name()
 # 2026.03.27 - v. 1.2 - added many changes about media files
 # 2026.04.15 - v. 17.3 - escape control characters in logged paths and warn explicitly about filenames containing them
-SCRIPT_VERSION="$(LC_ALL=C grep -m1 '^# [0-9]' "$0" | sed -E 's/^# ([0-9]{4}\.[0-9]{2}\.[0-9]{2} - v\. [0-9]+\.[0-9]+) - .*/\1/')"
+# SCRIPT_VERSION: first # YYYY.MM.DD line must use v. MAJOR.MINOR.HHMMSS (six digits); set the time when you change the script.
+SCRIPT_VERSION="$(LC_ALL=C grep -m1 '^# [0-9]' "$0" | sed -E -n 's/^# [0-9]{4}\.[0-9]{2}\.[0-9]{2} - v\. ([0-9]+\.[0-9]+\.[0-9]{6}) - .*/\1/p')"
+[[ "$SCRIPT_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]{6}$ ]] || SCRIPT_VERSION="0.0.000000"
 # If a checksum list has more than this many lines, ask before checking it; default answer is No ([y/N/q]).
 LARGE_HASHFILE_LINE_PROMPT_THRESHOLD="${LARGE_HASHFILE_LINE_PROMPT_THRESHOLD:-20}"
 # With a “large” line count, still skip that prompt when the sum of sizes of existing regular-file targets is below this many bytes (default 30 GiB). Set to 0 to always prompt when over the line threshold.
@@ -449,7 +457,8 @@ emit_wrap_old_arrow_new_stdout() {
     fi
 }
 
-START_DIR="${START_DIR:-$(pwd -P)}"
+RENAME_SH_INVOCATION_CWD="$(pwd -P)"
+START_DIR="${START_DIR:-$RENAME_SH_INVOCATION_CWD}"
 EXCLUDE_FILTERS_FILE="$START_DIR/_exclude-rename.sh.txt"
 USE_DB=0
 FORCE_RECHECK=0
@@ -758,7 +767,7 @@ rename_sh_window_title_restore() {
 }
 
 rename_sh_window_title_apply_from_saved_argv() {
-    local title="" a i script0 max_len=400
+    local title="" a i script0 max_len=400 cwd_bracket=""
     (( ${#RENAME_SH_ORIGINAL_ARGV[@]} > 0 )) || return 0
     script0="${RENAME_SH_ORIGINAL_ARGV[0]}"
     if [[ -e "$script0" ]]; then
@@ -777,6 +786,8 @@ rename_sh_window_title_apply_from_saved_argv() {
         a="${a//$'\t'/ }"
         title+=" $a"
     done
+    cwd_bracket="[${RENAME_SH_INVOCATION_CWD}] "
+    title="${cwd_bracket}${title}"
     if (( ${#title} > max_len )); then
         title="${title:0:$(( max_len - 3 ))}..."
     fi
@@ -5956,15 +5967,18 @@ transform_name() {
         fi
 
         if [[ "$newbase" =~ ^IMG_([0-9]{8})_([0-9]{6})(\..+)$ ]]; then
-            newbase="${BASH_REMATCH[1]}_${BASH_REMATCH[2]}-img${BASH_REMATCH[3]}"
-        elif [[ "$newbase" =~ ^PXL_([0-9]{8})_([0-9]{6})[0-9]*(\..+)$ ]]; then
-            newbase="${BASH_REMATCH[1]}_${BASH_REMATCH[2]}-pxl${BASH_REMATCH[3]}"
+            newbase="${BASH_REMATCH[1]}_${BASH_REMATCH[2]}-IMG_${BASH_REMATCH[1]}_${BASH_REMATCH[2]}${BASH_REMATCH[3]}"
+        elif [[ "$newbase" =~ ^PXL_([0-9]{8})_([0-9]{6})([0-9]*)(\..+)$ ]]; then
+            newbase="${BASH_REMATCH[1]}_${BASH_REMATCH[2]}-PXL_${BASH_REMATCH[1]}_${BASH_REMATCH[2]}${BASH_REMATCH[3]}${BASH_REMATCH[4]}"
         elif [[ "$newbase" =~ ^received_[0-9]+(\..+)$ ]]; then
             ts="$(get_file_oldest_timestamp_compact "$f")"
             newbase="${ts}-received${BASH_REMATCH[1]}"
-        elif [[ "$newbase" =~ ^IMG_[0-9]+(\..+)$ ]]; then
+        elif [[ "$newbase" =~ ^(IMG_[0-9]+)(\..+)$ ]]; then
             ts="$(get_file_oldest_timestamp_compact "$f")"
-            newbase="${ts}-img${BASH_REMATCH[1]}"
+            newbase="${ts}-${BASH_REMATCH[1]}${BASH_REMATCH[2]}"
+        elif [[ "$newbase" =~ ^(PXL_[0-9]+)(\..+)$ ]]; then
+            ts="$(get_file_oldest_timestamp_compact "$f")"
+            newbase="${ts}-${BASH_REMATCH[1]}${BASH_REMATCH[2]}"
         elif [[ "$newbase" =~ ^Screen_Recording_([0-9]{8})_([0-9]{6})_(.+)(\..+)$ ]]; then
             local screen_suffix
             screen_suffix="${BASH_REMATCH[3]}"
@@ -6290,6 +6304,13 @@ make_other_suffix_path() {
     printf '%s' "$candidate"
 }
 
+# When set: collision prompts skip [o/r/S/q] and apply _OTHER (like [R]) if the source file's directory matches this path (see similar_rename_dir_matches_scope).
+collision_auto_other_dir_matches_source() {
+    local old="$1"
+    [[ -n "$AUTO_COLLISION_OTHER_DIR" ]] || return 1
+    similar_rename_dir_matches_scope "$(dirname -- "$old")" "$AUTO_COLLISION_OTHER_DIR"
+}
+
 handle_existing_target_collision() {
     local old="$1"
     local new="$2"
@@ -6359,12 +6380,21 @@ can_overwrite_collision_with_identical_md5() {
     fi
 
     old_other_path="$(make_other_suffix_path "$new")"
+
+    if collision_auto_other_dir_matches_source "$old"; then
+        COLLISION_OTHER_PATH="$old_other_path"
+        emit_wrap_labeled_stdout "AUTO _OTHER (this directory): " "${CYAN}AUTO _OTHER (this directory):${RESET} " "session active — source -> '$(basename -- "$old_other_path")'"
+        vlog "Collision _OTHER auto (directory session): '$old' -> '$old_other_path'"
+        return 3
+    fi
+
     verbose_question_timestamp "What should be done?"
     echo "  [O] Overwrite destination and continue rename"
     echo "  [R] Rename source to alternate name (one _OTHER, or _OTHER_2, … if needed) -> $(basename -- "$old_other_path")"
+    echo "  [D] For this source directory only: use _OTHER for all further collisions (like [R])"
     echo "  [S] Skip (default)"
     echo "  [Q] Quit"
-    echo -n "$(user_prompt_ts_prefix)Choice [o/r/S/q]: "
+    echo -n "$(user_prompt_ts_prefix)Choice [o/r/d/S/q]: "
 
     flush_stdin
     read_single_key answer "$PROMPT_WAIT_SECONDS"
@@ -6380,6 +6410,12 @@ can_overwrite_collision_with_identical_md5() {
             ;;
         r|R)
             COLLISION_OTHER_PATH="$old_other_path"
+            return 3
+            ;;
+        d|D)
+            AUTO_COLLISION_OTHER_DIR="$(cd -- "$(dirname -- "$old")" 2>/dev/null && pwd -P)" || AUTO_COLLISION_OTHER_DIR="$(dirname -- "$old")"
+            COLLISION_OTHER_PATH="$old_other_path"
+            vlog "Collision _OTHER per-directory session enabled for '$AUTO_COLLISION_OTHER_DIR'"
             return 3
             ;;
         *)
@@ -7023,6 +7059,8 @@ AUTO_RENAME_DIR=""
 AUTO_RENAME_SIMILAR_DIR=""
 AUTO_RENAME_SIMILAR_EXT=""
 AUTO_RENAME_SIMILAR_NEED_USCORE=no
+# When set to realpath of a directory: collision prompts auto-apply _OTHER (like [R]) for every source file in that directory until cleared.
+AUTO_COLLISION_OTHER_DIR=""
 # When set to realpath of a directory: RawFileName mismatch prompts auto-apply without asking for every paired XMP in that dir.
 NEF_XMP_RAWFIX_AUTO_DIR=""
 AUTO_LOWERCASE_3_EXT_SESSION=no # [L] session: any extension case-only lowercasing (name kept for compatibility)
@@ -9039,6 +9077,7 @@ for f in "${ordered_paths[@]}"; do
                 rename_all=yes
                 similar_rename_clear
                 AUTO_RENAME_DIR=""
+                AUTO_COLLISION_OTHER_DIR=""
                 vlog "rename_all enabled by user"
                 if [[ -z "$torrent_url_noop" && -z "$thumbs_db_noop" ]]; then
                     perform_plain_or_nef_xmp_pair "rename_all" || break
@@ -9075,6 +9114,7 @@ for f in "${ordered_paths[@]}"; do
                 fi
             else
                 AUTO_RENAME_DIR=""
+                AUTO_COLLISION_OTHER_DIR=""
                 similar_rename_set_anchor_from_prompt_path "$f"
                 vlog "Per-directory similar-name auto-yes: directory '$AUTO_RENAME_SIMILAR_DIR', extension '.${AUTO_RENAME_SIMILAR_EXT}', require leading underscore: ${AUTO_RENAME_SIMILAR_NEED_USCORE}"
                 if [[ -n "$torrent_url_noop" || -n "$thumbs_db_noop" ]]; then
