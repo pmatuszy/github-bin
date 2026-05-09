@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
-# 2026.05.09 - v. 19.127.104821 - SCRIPT_VERSION taken from this line: v. aa.bbb.HHMMSS — aa = month counter (19 now; bump aa next month); bbb = edit counter this month, add 1 on every edit (…125, 126, 127…); HHMMSS = local 24h wall-clock time when you save that version (not computed at runtime). Workflow: replace this line with the next bbb and a new HHMMSS; move the old text to a new row below as "# date - v. bbb - topic" without HHMMSS.
-# 2026.05.09 - v. 19.127 - SCRIPT_VERSION history line documents bbb +1 per edit and HHMMSS = time of that edit on line 1 only
-# 2026.05.08 - v. 19.126 - Checksum missing-ref recovery: try path rebuilt by transform_basename on each relative segment (parent dirs renamed); SKIP output shows that path when still missing
-# 2026.05.08 - v. 19.125 - Non-verbose main-loop "n out of total": numerator is paths examined this session (files_examined minus checkpoint baseline), not cumulative across prior interrupted runs
+# 2026.05.09 - v. 19.129.105425 - SCRIPT_VERSION taken from this line: v. aa.bbb.HHMMSS — aa = month counter (19 now; bump aa next month); bbb = edit counter this month, add 1 on every edit (…125, 126, 127…); HHMMSS = local 24h wall-clock time for that edit (not computed at runtime). Every history row keeps the full triplet (aa.bbb.HHMMSS), not only this line. Workflow: insert a new top row with the next bbb and a new HHMMSS; push the prior first row down unchanged (it already carries its timestamp).
+# 2026.05.09 - v. 19.128.105224 - Resume checkpoint note about non-verbose progress wraps to MAX_LINE_LENGTH (continuation uses WRAP_MSG_INDENT)
+# 2026.05.09 - v. 19.127.104821 - SCRIPT_VERSION history line documents bbb +1 per edit; HHMMSS documents time of that edit
+# 2026.05.08 - v. 19.126.104609 - Checksum missing-ref recovery: try path rebuilt by transform_basename on each relative segment (parent dirs renamed); SKIP output shows that path when still missing
+# 2026.05.08 - v. 19.125.172551 - Non-verbose main-loop "n out of total": numerator is paths examined this session (files_examined minus checkpoint baseline), not cumulative across prior interrupted runs
 # 2026.05.08 - v. 19.124 - NEF+XMP RawFileName prompt: print question with printf so read_single_key answers on the same line; less blank spacing before keys
 # 2026.05.08 - v. 19.123 - transform_basename: YYYY Mon DD HH-MM-SS.ext (English month abbr, spaces) → YYYY_Mon_DD_HH-MM-SS.ext
 # 2026.05.08 - v. 19.122 - path_basename_is_thumbs_db: treat backslashes like slashes (Windows paths in checksum lists) so missing Thumbs.db refs get the remove-from-hash prompt
@@ -368,7 +369,7 @@
 # 2026.03.27 - v. 1.3 - fixed top-level path handling: keep ./ prefix in transform_name()
 # 2026.03.27 - v. 1.2 - added many changes about media files
 # 2026.04.15 - v. 17.3 - escape control characters in logged paths and warn explicitly about filenames containing them
-# SCRIPT_VERSION: first # YYYY.MM.DD line must use v. aa.bbb.HHMMSS (aa = month counter; bbb +1 each edit this month; HHMMSS = six-digit local time of that same edit).
+# SCRIPT_VERSION: first # YYYY.MM.DD line; use v. aa.bbb.HHMMSS there and on each history row (aa = month counter; bbb +1 per edit; HHMMSS = six-digit local time of that edit).
 SCRIPT_VERSION="$(LC_ALL=C grep -m1 '^# [0-9]' "$0" | sed -E -n 's/^# [0-9]{4}\.[0-9]{2}\.[0-9]{2} - v\. ([0-9]+\.[0-9]+\.[0-9]{6}) - .*/\1/p')"
 [[ "$SCRIPT_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]{6}$ ]] || SCRIPT_VERSION="0.0.000000"
 # If a checksum list has more than this many lines, ask before checking it; default answer is No ([y/N/q]).
@@ -7401,7 +7402,8 @@ PY
     RESUME_STATE_WAS_LOADED=1
     verbose_status_timestamp "Resume checkpoint restore complete: processed=${prev_processed_count}, renamed=${prev_renamed_count}"
     echo "Resume checkpoint loaded: $prev_processed_count entries marked as already processed."
-    echo "Note: Non-verbose 'n out of total' counts paths examined this session (numerator resets from the checkpoint baseline); denominator is the current sorted list; skipping resume entries does not advance the numerator."
+    echo "Note: Non-verbose 'n out of total' counts paths examined this session (numerator resets from the checkpoint baseline);"
+    echo "${WRAP_MSG_INDENT}denominator is the current sorted list; skipping resume entries does not advance the numerator."
     return 0
 }
 
