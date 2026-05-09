@@ -1,5 +1,8 @@
 #!/usr/bin/env bash
-# 2026.05.09 - v. 19.130.110644 - SCRIPT_VERSION taken from this line: v. aa.bbb.HHMMSS — aa = month counter (19 now; bump aa next month); bbb = edit counter this month, add 1 on every edit (…125, 126, 127…); HHMMSS = local 24h wall-clock time for that edit (not computed at runtime). Every history row keeps the full triplet (aa.bbb.HHMMSS), not only this line. Workflow: insert a new top row with the next bbb and a new HHMMSS; push the prior first row down unchanged (it already carries its timestamp).
+# 2026.05.09 - v. 19.133.154136 - SCRIPT_VERSION taken from this line: v. aa.bbb.HHMMSS — aa = month counter (19 now; bump aa next month); bbb = edit counter this month, add 1 on every edit (…125, 126, 127…); HHMMSS = local 24h wall-clock time for that edit (not computed at runtime). Every history row keeps the full triplet (aa.bbb.HHMMSS), not only this line. Workflow: insert a new top row with the next bbb and a new HHMMSS; push the prior first row down unchanged (it already carries its timestamp).
+# 2026.05.09 - v. 19.132.112134 - Checksum recovery: capture find_best_path_for_missing_ref exit with set -e (return 1 is normal failure; command substitution must not abort the script)
+# 2026.05.09 - v. 19.131.111354 - Ctrl-C cleanup: ignore nested SIGINT until summary; first-line feedback + faster checkpoint save (Python dedupe+JSON from streamed keys)
+# 2026.05.09 - v. 19.130.110644 - Ctrl-C during interrupt cleanup: ignore nested SIGINT until summary (was trap - INT then second ^C killed shell before print_summary during slow checkpoint save)
 # 2026.05.09 - v. 19.129.105425 - Resume: explain discovery vs checkpoint overlap; dedupe saved paths; mark built-in excluded paths processed; warn on low key match rate
 # 2026.05.09 - v. 19.128.105224 - Resume checkpoint note about non-verbose progress wraps to MAX_LINE_LENGTH (continuation uses WRAP_MSG_INDENT)
 # 2026.05.09 - v. 19.127.104821 - SCRIPT_VERSION history line documents bbb +1 per edit; HHMMSS documents time of that edit
@@ -7241,28 +7244,26 @@ resume_path_canonical_for_storage() {
 }
 
 save_resume_checkpoint() {
-    local tmp_processed tmp_renamed
+    local tmp_renamed
     local p r
 
     if ! command -v python3 >/dev/null 2>&1; then
         return 0
     fi
 
-    tmp_processed="$(mktemp)"
     tmp_renamed="$(mktemp)"
 
-    declare -A seen_canon=()
-    for p in "${!processed[@]}"; do
-        c="$(resume_path_canonical_for_storage "$p" 2>/dev/null)" || continue
-        [[ -n "${seen_canon[$c]+x}" ]] && continue
-        seen_canon["$c"]=1
-        printf '%s\0' "$c" >> "$tmp_processed"
-    done
     for r in "${renamed_list[@]}"; do
         printf '%s\0' "$r" >> "$tmp_renamed"
     done
 
-    if ! python3 - "$RESUME_STATE_FILE" "$tmp_processed" "$tmp_renamed" \
+    # Stream all processed map keys to Python (bash printf only); Python dedupes with same rules as
+    # resume_path_canonical_for_storage and writes JSON in one pass — much faster than per-key bash work.
+    if ! {
+        for p in "${!processed[@]}"; do
+            printf '%s\0' "$p"
+        done
+    } | python3 - "$RESUME_STATE_FILE" "$tmp_renamed" \
         "$SCRIPT_VERSION" "$START_DIR" "$mode" "$process_scope" \
         "$USE_DB" "$FAST_DB" "$FORCE_RECHECK" "$PROMPT_WAIT_SECONDS" \
         "$files_examined" "$files_affected" "$files_skipped" "$FILES_HASHED" \
@@ -7271,42 +7272,68 @@ import json
 import pathlib
 import sys
 
-state_path = pathlib.Path(sys.argv[1])
-processed_path = pathlib.Path(sys.argv[2])
-renamed_path = pathlib.Path(sys.argv[3])
+# Mirrors resume_path_canonical_for_storage() in bash.
+def canon(s):
+    if not s:
+        return None
+    p = s
+    while p.endswith("/"):
+        p = p[:-1]
+    if not p:
+        return None
+    if p.startswith("/"):
+        return p
+    if p.startswith("./"):
+        return p
+    return "./" + p
 
-def read_null_file(path: pathlib.Path):
-    data = path.read_bytes()
-    if not data:
-        return []
-    return [x.decode("utf-8", "surrogateescape") for x in data.split(b"\0") if x]
+state_path = pathlib.Path(sys.argv[1])
+renamed_path = pathlib.Path(sys.argv[2])
+
+raw_parts = sys.stdin.buffer.read().split(b"\0")
+seen = {}
+for raw in raw_parts:
+    if not raw:
+        continue
+    s = raw.decode("utf-8", "surrogateescape")
+    c = canon(s)
+    if c is None:
+        continue
+    seen.setdefault(c, None)
+processed_list = list(seen.keys())
+
+rdata = renamed_path.read_bytes()
+if rdata:
+    renamed_list = [x.decode("utf-8", "surrogateescape") for x in rdata.split(b"\0") if x]
+else:
+    renamed_list = []
 
 payload = {
-    "scriptVersion": sys.argv[4],
-    "startDir": sys.argv[5],
-    "mode": sys.argv[6],
-    "scope": sys.argv[7],
-    "useDb": int(sys.argv[8]),
-    "fastDb": int(sys.argv[9]),
-    "forceRecheck": int(sys.argv[10]),
-    "promptWaitSeconds": int(sys.argv[11]),
-    "filesExamined": int(sys.argv[12]),
-    "filesAffected": int(sys.argv[13]),
-    "filesSkipped": int(sys.argv[14]),
-    "filesHashed": int(sys.argv[15]),
-    "scriptStartTime": sys.argv[16],
-    "processed": read_null_file(processed_path),
-    "renamedList": read_null_file(renamed_path),
+    "scriptVersion": sys.argv[3],
+    "startDir": sys.argv[4],
+    "mode": sys.argv[5],
+    "scope": sys.argv[6],
+    "useDb": int(sys.argv[7]),
+    "fastDb": int(sys.argv[8]),
+    "forceRecheck": int(sys.argv[9]),
+    "promptWaitSeconds": int(sys.argv[10]),
+    "filesExamined": int(sys.argv[11]),
+    "filesAffected": int(sys.argv[12]),
+    "filesSkipped": int(sys.argv[13]),
+    "filesHashed": int(sys.argv[14]),
+    "scriptStartTime": sys.argv[15],
+    "processed": processed_list,
+    "renamedList": renamed_list,
 }
 
-state_path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+state_path.write_text(json.dumps(payload, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
 PY
     then
-        rm -f -- "$tmp_processed" "$tmp_renamed"
+        rm -f -- "$tmp_renamed"
         return 0
     fi
 
-    rm -f -- "$tmp_processed" "$tmp_renamed"
+    rm -f -- "$tmp_renamed"
 }
 
 # Register a path from resume JSON under the same key forms the main loop uses (find emits ./foo; older checkpoints may store foo).
@@ -7999,9 +8026,11 @@ print_summary() {
     echo "==========================="
 }
 
-# Single INT handler: rollback in-flight checksum op (if any), save resume state, then summary (set -e-safe).
+# Single INT handler: rollback, save resume state, then summary. Ignore further SIGINT during cleanup so a second Ctrl-C cannot exit before print_summary.
 on_interrupt() {
-    trap - INT
+    trap '' INT
+    nonverbose_progress_dot_endline_if_needed || true
+    printf '\n%s\n' "Interrupt received — rolling back in-flight work if needed, then saving checkpoint (large trees: writing JSON can still take several seconds)..." >&2
     rollback_current_operation || true
     stopped_by_user=yes
     SCRIPT_FINISH_TIME="$(date '+%Y-%m-%d %H:%M:%S')"
@@ -8296,8 +8325,8 @@ for f in "${ordered_paths[@]}"; do
             fi
 
             vlog "Ref missing, trying recovery: '$ref'"
-            found_ref="$(find_best_path_for_missing_ref "$ref" "${expected_hashes[$i]}" "$sum_file")"
-            _fbr_rc=$?
+            _fbr_rc=0
+            found_ref="$(find_best_path_for_missing_ref "$ref" "${expected_hashes[$i]}" "$sum_file")" || _fbr_rc=$?
             if ((_fbr_rc == 2)); then
                 stopped_by_user=yes
                 break
