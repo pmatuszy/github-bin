@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# 2026.05.09 - v. 19.129.105425 - SCRIPT_VERSION taken from this line: v. aa.bbb.HHMMSS — aa = month counter (19 now; bump aa next month); bbb = edit counter this month, add 1 on every edit (…125, 126, 127…); HHMMSS = local 24h wall-clock time for that edit (not computed at runtime). Every history row keeps the full triplet (aa.bbb.HHMMSS), not only this line. Workflow: insert a new top row with the next bbb and a new HHMMSS; push the prior first row down unchanged (it already carries its timestamp).
+# 2026.05.09 - v. 19.130.110644 - SCRIPT_VERSION taken from this line: v. aa.bbb.HHMMSS — aa = month counter (19 now; bump aa next month); bbb = edit counter this month, add 1 on every edit (…125, 126, 127…); HHMMSS = local 24h wall-clock time for that edit (not computed at runtime). Every history row keeps the full triplet (aa.bbb.HHMMSS), not only this line. Workflow: insert a new top row with the next bbb and a new HHMMSS; push the prior first row down unchanged (it already carries its timestamp).
+# 2026.05.09 - v. 19.129.105425 - Resume: explain discovery vs checkpoint overlap; dedupe saved paths; mark built-in excluded paths processed; warn on low key match rate
 # 2026.05.09 - v. 19.128.105224 - Resume checkpoint note about non-verbose progress wraps to MAX_LINE_LENGTH (continuation uses WRAP_MSG_INDENT)
 # 2026.05.09 - v. 19.127.104821 - SCRIPT_VERSION history line documents bbb +1 per edit; HHMMSS documents time of that edit
 # 2026.05.08 - v. 19.126.104609 - Checksum missing-ref recovery: try path rebuilt by transform_basename on each relative segment (parent dirs renamed); SKIP output shows that path when still missing
@@ -575,6 +576,7 @@ SUMMARY_PRINTED=0
 FILES_HASHED=0
 RESUME_STATE_FILE="$START_DIR/_rename.sh.resume-state.json"
 RESUME_STATE_WAS_LOADED=0
+RESUME_CHECKPOINT_PROCESSED_LINES_LOADED=0
 EARLY_RESUME_DECISION=""
 declare -a CURRENT_OP_FILE_OLDS=()
 declare -a CURRENT_OP_FILE_NEWS=()
@@ -7219,6 +7221,25 @@ clear_resume_state_file() {
     rm -f -- "$RESUME_STATE_FILE"
 }
 
+# Single relative form for resume JSON (./foo vs foo); absolute paths unchanged. Used to dedupe processed keys on save.
+resume_path_canonical_for_storage() {
+    local p="$1"
+    [[ -n "$p" ]] || return 1
+    while [[ "$p" == */ ]]; do
+        p="${p%/}"
+    done
+    [[ -n "$p" ]] || return 1
+    if [[ "$p" == /* ]]; then
+        printf '%s' "$p"
+        return 0
+    fi
+    if [[ "$p" == ./* ]]; then
+        printf '%s' "$p"
+        return 0
+    fi
+    printf './%s' "$p"
+}
+
 save_resume_checkpoint() {
     local tmp_processed tmp_renamed
     local p r
@@ -7230,8 +7251,12 @@ save_resume_checkpoint() {
     tmp_processed="$(mktemp)"
     tmp_renamed="$(mktemp)"
 
+    declare -A seen_canon=()
     for p in "${!processed[@]}"; do
-        printf '%s\0' "$p" >> "$tmp_processed"
+        c="$(resume_path_canonical_for_storage "$p" 2>/dev/null)" || continue
+        [[ -n "${seen_canon[$c]+x}" ]] && continue
+        seen_canon["$c"]=1
+        printf '%s\0' "$c" >> "$tmp_processed"
     done
     for r in "${renamed_list[@]}"; do
         printf '%s\0' "$r" >> "$tmp_renamed"
@@ -7379,6 +7404,9 @@ PY
     verbose_status_timestamp "Restoring processed-entry state from checkpoint..."
     while IFS= read -r -d '' path; do
         resume_checkpoint_register_processed_path "$path"
+        if c="$(resume_path_canonical_for_storage "$path" 2>/dev/null)"; then
+            [[ "$c" != "$path" ]] && resume_checkpoint_register_processed_path "$c"
+        fi
         ((++prev_processed_count))
         if (( VERBOSE == 1 && prev_processed_count % 100000 == 0 )); then
             verbose_status_timestamp "Resume restore progress: ${prev_processed_count} processed entries loaded..."
@@ -7400,6 +7428,7 @@ PY
 
     rm -f -- "$tmp_processed" "$tmp_renamed"
     RESUME_STATE_WAS_LOADED=1
+    RESUME_CHECKPOINT_PROCESSED_LINES_LOADED=$prev_processed_count
     verbose_status_timestamp "Resume checkpoint restore complete: processed=${prev_processed_count}, renamed=${prev_renamed_count}"
     echo "Resume checkpoint loaded: $prev_processed_count entries marked as already processed."
     echo "Note: Non-verbose 'n out of total' counts paths examined this session (numerator resets from the checkpoint baseline);"
@@ -8109,6 +8138,21 @@ vlog "Discovered entries to process: ${#ordered_paths[@]}"
 vlog "Progress box updates every ${VERBOSE_MAIN_EVERY} slot index; non-verbose 'k out of total' uses files_examined minus checkpoint baseline (this session only)."
 maybe_resume_from_checkpoint
 
+if (( RESUME_STATE_WAS_LOADED == 1 )); then
+    resume_ordered_hits=0
+    for _rp in "${ordered_paths[@]}"; do
+        [[ -n "${processed[$_rp]+x}" ]] && ((++resume_ordered_hits))
+    done
+    _resume_tot=${#ordered_paths[@]}
+    _resume_rem=$((_resume_tot - resume_ordered_hits))
+    echo "Resume: ${resume_ordered_hits} of ${_resume_tot} discovered paths match the checkpoint and will be skipped when reached (about ${_resume_rem} paths are not in the checkpoint yet)."
+    echo "${WRAP_MSG_INDENT}Traversal is depth/checksum sorted, not \"where you left off\" in walk order — early non-verbose dots are paths that still need handling, not a failed resume."
+    vlog "Resume: ${resume_ordered_hits}/${_resume_tot} ordered_paths keys match processed checkpoint map"
+    if (( RESUME_CHECKPOINT_PROCESSED_LINES_LOADED > 200 )) && (( resume_ordered_hits * 10 < RESUME_CHECKPOINT_PROCESSED_LINES_LOADED * 3 )); then
+        echo "Warning: Checkpoint lists ${RESUME_CHECKPOINT_PROCESSED_LINES_LOADED} paths but only ${resume_ordered_hits} match this run's discovery (different cwd/START_DIR, tree changed, or path spelling)."
+    fi
+fi
+
 main_index=0
 for f in "${ordered_paths[@]}"; do
     precomputed_new=""
@@ -8138,6 +8182,7 @@ for f in "${ordered_paths[@]}"; do
     if is_excluded_path "$f"; then
         vlog "Skipping excluded path '$f'"
         ((++files_skipped))
+        processed["$f"]=1
         continue
     fi
 
