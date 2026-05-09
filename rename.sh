@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
-# 2026.05.08 - v. 19.125.172551 - SCRIPT_VERSION taken from this line: v. aa.bbb.HHMMSS — aa = month counter (19 now, bump to 20 next month); bbb = commit counter this month; HHMMSS when you edit; not computed at runtime
+# 2026.05.09 - v. 19.127.104821 - SCRIPT_VERSION taken from this line: v. aa.bbb.HHMMSS — aa = month counter (19 now; bump aa next month); bbb = edit counter this month, add 1 on every edit (…125, 126, 127…); HHMMSS = local 24h wall-clock time when you save that version (not computed at runtime). Workflow: replace this line with the next bbb and a new HHMMSS; move the old text to a new row below as "# date - v. bbb - topic" without HHMMSS.
+# 2026.05.09 - v. 19.127 - SCRIPT_VERSION history line documents bbb +1 per edit and HHMMSS = time of that edit on line 1 only
+# 2026.05.08 - v. 19.126 - Checksum missing-ref recovery: try path rebuilt by transform_basename on each relative segment (parent dirs renamed); SKIP output shows that path when still missing
 # 2026.05.08 - v. 19.125 - Non-verbose main-loop "n out of total": numerator is paths examined this session (files_examined minus checkpoint baseline), not cumulative across prior interrupted runs
 # 2026.05.08 - v. 19.124 - NEF+XMP RawFileName prompt: print question with printf so read_single_key answers on the same line; less blank spacing before keys
 # 2026.05.08 - v. 19.123 - transform_basename: YYYY Mon DD HH-MM-SS.ext (English month abbr, spaces) → YYYY_Mon_DD_HH-MM-SS.ext
@@ -366,7 +368,7 @@
 # 2026.03.27 - v. 1.3 - fixed top-level path handling: keep ./ prefix in transform_name()
 # 2026.03.27 - v. 1.2 - added many changes about media files
 # 2026.04.15 - v. 17.3 - escape control characters in logged paths and warn explicitly about filenames containing them
-# SCRIPT_VERSION: first # YYYY.MM.DD line must use v. aa.bbb.HHMMSS (aa = month counter; bbb = commits this month; HHMMSS = edit time).
+# SCRIPT_VERSION: first # YYYY.MM.DD line must use v. aa.bbb.HHMMSS (aa = month counter; bbb +1 each edit this month; HHMMSS = six-digit local time of that same edit).
 SCRIPT_VERSION="$(LC_ALL=C grep -m1 '^# [0-9]' "$0" | sed -E -n 's/^# [0-9]{4}\.[0-9]{2}\.[0-9]{2} - v\. ([0-9]+\.[0-9]+\.[0-9]{6}) - .*/\1/p')"
 [[ "$SCRIPT_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]{6}$ ]] || SCRIPT_VERSION="0.0.000000"
 # If a checksum list has more than this many lines, ask before checking it; default answer is No ([y/N/q]).
@@ -6969,6 +6971,59 @@ build_recovery_file_index() {
     RECOVERY_INDEX_READY["$search_root"]=1
 }
 
+# Strip leading ./ then compare: print path of fullpath relative to root (no leading slash). Exit 1 if fullpath is not under root.
+relative_path_under_dir_for_recovery() {
+    local root="$1" fullpath="$2"
+    fullpath="${fullpath#./}"
+    root="${root#./}"
+    root="${root%/}"
+    if [[ "$root" == "." || -z "$root" ]]; then
+        printf '%s' "$fullpath"
+        return 0
+    fi
+    local pref="${root}/"
+    if [[ "$fullpath" == "$pref"* ]]; then
+        printf '%s' "${fullpath#"$pref"}"
+        return 0
+    fi
+    if [[ "$fullpath" == "$root" ]]; then
+        printf ''
+        return 0
+    fi
+    return 1
+}
+
+# Apply transform_basename to each relative path segment (same rules as directory/file renames). Prints path starting at search_root. Exit 2 if transform_basename aborts (user); exit 1 if not under root or empty rel.
+checksum_rebuilt_ref_path_by_segments() {
+    local search_root="$1"
+    local missing_ref="$2"
+    local rel OIFS parts p t out tb_rc _cr_save_e=0
+
+    rel="$(relative_path_under_dir_for_recovery "$search_root" "$missing_ref")" || return 1
+    [[ -n "$rel" ]] || return 1
+
+    out="$search_root"
+    [[ $- == *e* ]] && _cr_save_e=1
+    set +e
+    OIFS="$IFS"
+    IFS='/'
+    read -ra parts <<< "$rel"
+    IFS="$OIFS"
+    for p in "${parts[@]}"; do
+        [[ -n "$p" ]] || continue
+        t="$(transform_basename "$p")"
+        tb_rc=$?
+        if (( tb_rc == 2 )); then
+            ((_cr_save_e)) && set -e || set +e
+            return 2
+        fi
+        out="${out%/}/$t"
+    done
+    ((_cr_save_e)) && set -e || set +e
+    printf '%s' "$out"
+    return 0
+}
+
 find_best_path_for_missing_ref() {
     local missing_ref="$1"
     local expected_hash="$2"
@@ -6978,10 +7033,19 @@ find_best_path_for_missing_ref() {
     local fast_base fast_path fast_hash
     local candidate candidate_hash candidate_name indexed_candidates index_key all_candidates
     local -a candidate_names=()
+    local rebuilt rebuilt_hash _wn_save_e _wn_rc _seg_save_e _seg_rc
 
     kind="$(checksum_kind "$sum_file")"
     wanted_base="$(basename -- "$missing_ref")"
-    wanted_norm="$(transform_basename "$wanted_base")"
+    _wn_save_e=0
+    [[ $- == *e* ]] && _wn_save_e=1
+    set +e
+    wanted_norm="$(transform_basename "$wanted_base" "$missing_ref")"
+    _wn_rc=$?
+    ((_wn_save_e)) && set -e || set +e
+    if ((_wn_rc == 2)); then
+        return 2
+    fi
     missing_dir="$(dirname -- "$missing_ref")"
     search_root="$(dirname -- "$sum_file")"
 
@@ -7039,6 +7103,33 @@ find_best_path_for_missing_ref() {
             fi
         done <<< "$indexed_candidates"
     done
+
+    _seg_save_e=0
+    [[ $- == *e* ]] && _seg_save_e=1
+    set +e
+    rebuilt="$(checksum_rebuilt_ref_path_by_segments "$search_root" "$missing_ref")"
+    _seg_rc=$?
+    ((_seg_save_e)) && set -e || set +e
+    if ((_seg_rc == 2)); then
+        return 2
+    fi
+    if ((_seg_rc == 0)) && [[ -n "$rebuilt" ]] && [[ -f "$rebuilt" ]]; then
+        vlog "Per-segment basename-transform recovery candidate: '$rebuilt'"
+        if [[ -n "$expected_hash" ]]; then
+            rebuilt_hash="$(checksum_of_file "$kind" "$rebuilt")"
+            vlog "Per-segment candidate has $kind=$rebuilt_hash"
+            if [[ "${rebuilt_hash,,}" == "${expected_hash,,}" ]]; then
+                vlog "Per-segment basename-transform recovery checksum matches"
+                printf '%s' "$rebuilt"
+                return 0
+            fi
+            vlog "Per-segment basename-transform recovery checksum does not match"
+        else
+            vlog "Per-segment basename-transform recovery accepted (no expected hash available)"
+            printf '%s' "$rebuilt"
+            return 0
+        fi
+    fi
 
     if [[ -n "$expected_hash" ]]; then
         candidate="$(db_find_path_by_file_hash_in_subtree "$search_root" "$kind" "$expected_hash" || true)"
@@ -8158,7 +8249,12 @@ for f in "${ordered_paths[@]}"; do
             fi
 
             vlog "Ref missing, trying recovery: '$ref'"
-            found_ref="$(find_best_path_for_missing_ref "$ref" "${expected_hashes[$i]}" "$sum_file" || true)"
+            found_ref="$(find_best_path_for_missing_ref "$ref" "${expected_hashes[$i]}" "$sum_file")"
+            _fbr_rc=$?
+            if ((_fbr_rc == 2)); then
+                stopped_by_user=yes
+                break
+            fi
             if [[ -n "$found_ref" ]]; then
                 replacement_ref="$(format_ref_for_checksum_file "$sum_file" "${refs_raw[$i]}" "$found_ref")"
                 recovered_old_refs+=( "${refs_raw[$i]}" )
@@ -8175,6 +8271,10 @@ for f in "${ordered_paths[@]}"; do
                 print_recovery_final_status_verbose "$ref" "failed"
             fi
         done
+
+        if [[ "$stopped_by_user" == yes ]]; then
+            break
+        fi
 
         if (( ${#recovered_old_refs[@]} > 0 )); then
             echo
@@ -8309,8 +8409,27 @@ for f in "${ordered_paths[@]}"; do
         if [[ "$missing" == "yes" ]]; then
             echo
             emit_wrap_labeled_stdout "${label} SKIP: " "${YELLOW}${label} SKIP:${RESET} " "'$sum_file' still references missing file(s)."
-            for ref in "${missing_refs[@]}"; do
+            for i in "${!refs[@]}"; do
+                ref="${refs[$i]}"
+                [[ -e "$ref" ]] && continue
                 emit_wrap_labeled_stdout "  MISSING: " "  ${YELLOW}MISSING:${RESET} " "$ref"
+                _rh_save_e=0
+                [[ $- == *e* ]] && _rh_save_e=1
+                set +e
+                _rebuilt_hint="$(checksum_rebuilt_ref_path_by_segments "$(dirname -- "$sum_file")" "$ref")"
+                _rh_rc=$?
+                ((_rh_save_e)) && set -e || set +e
+                if ((_rh_rc == 2)); then
+                    stopped_by_user=yes
+                    break 2
+                fi
+                if ((_rh_rc == 0)) && [[ -n "$_rebuilt_hint" ]]; then
+                    if [[ -f "$_rebuilt_hint" ]]; then
+                        emit_wrap_labeled_stdout "  SAME RULES → ON DISK: " "  ${CYAN}SAME RULES → ON DISK:${RESET} " "$_rebuilt_hint"
+                    else
+                        emit_wrap_labeled_stdout "  SAME RULES → EXPECTED: " "  ${CYAN}SAME RULES → EXPECTED:${RESET} " "$_rebuilt_hint"
+                    fi
+                fi
             done
             print_grouped_checksum_missing_warning "$sum_file" "${refs[@]}"
             db_mark_checked "$sum_file" "checksum_group" "missing_refs"
