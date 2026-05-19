@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.05.19 - v. 19.134.114531 - Collision prompt: [P] delete source (keep destination; skip rename); [V] delete destination then rename (same as [O])
 # 2026.05.09 - v. 19.133.154136 - SCRIPT_VERSION taken from this line: v. aa.bbb.HHMMSS — aa = month counter (19 now; bump aa next month); bbb = edit counter this month, add 1 on every edit (…125, 126, 127…); HHMMSS = local 24h wall-clock time for that edit (not computed at runtime). Every history row keeps the full triplet (aa.bbb.HHMMSS), not only this line. Workflow: insert a new top row with the next bbb and a new HHMMSS; push the prior first row down unchanged (it already carries its timestamp).
 # 2026.05.09 - v. 19.132.112134 - Checksum recovery: capture find_best_path_for_missing_ref exit with set -e (return 1 is normal failure; command substitution must not abort the script)
 # 2026.05.09 - v. 19.131.111354 - Ctrl-C cleanup: ignore nested SIGINT until summary; first-line feedback + faster checkpoint save (Python dedupe+JSON from streamed keys)
@@ -6362,7 +6363,7 @@ make_other_suffix_path() {
     printf '%s' "$candidate"
 }
 
-# When set: collision prompts skip [o/r/S/q] and apply _OTHER (like [R]) if the source file's directory matches this path (see similar_rename_dir_matches_scope).
+# When set: collision prompts skip [o/r/d/p/v/S/q] and apply _OTHER (like [R]) if the source file's directory matches this path (see similar_rename_dir_matches_scope).
 collision_auto_other_dir_matches_source() {
     local old="$1"
     [[ -n "$AUTO_COLLISION_OTHER_DIR" ]] || return 1
@@ -6378,6 +6379,7 @@ handle_existing_target_collision() {
     if [[ "$mode" == "dry-run" ]]; then
         emit_wrap_labeled_stdout "COLLISION: " "${YELLOW}COLLISION:${RESET} " "Target file already exists."
         emit_wrap_old_arrow_new_stdout "[DRY-RUN] Would compare MD5, size, and timestamps of source/destination and ask what to do: " "${CYAN}[DRY-RUN] Would compare MD5, size, and timestamps of source/destination and ask what to do:${RESET} " "$old" "$new"
+        emit_wrap_labeled_stdout "[DRY-RUN] Choices would include: " "${CYAN}[DRY-RUN] Choices would include:${RESET} " "[O]/[V] remove destination then rename; [R]/[D] _OTHER; [P] remove source only (keep destination); [S] skip; [Q] quit."
         return 1
     fi
 
@@ -6394,6 +6396,11 @@ handle_existing_target_collision() {
         emit_wrap_labeled_stdout "RENAME WITH _OTHER: source will be renamed to: " "${CYAN}RENAME WITH _OTHER:${RESET} source will be renamed to: " "$COLLISION_OTHER_PATH"
         COLLISION_RENAMED_TARGET="$COLLISION_OTHER_PATH"
         return 3
+    elif [[ $collision_decision_rc -eq 4 ]]; then
+        emit_wrap_labeled_stdout "DELETE SOURCE: removed duplicate source; destination unchanged: " "${CYAN}DELETE SOURCE:${RESET} removed duplicate source; destination unchanged: " "$old"
+        db_delete_cached_row_for_path "$old"
+        rm -f -- "$old" || return 1
+        return 4
     else
         return 1
     fi
@@ -6447,12 +6454,14 @@ can_overwrite_collision_with_identical_md5() {
     fi
 
     verbose_question_timestamp "What should be done?"
-    echo "  [O] Overwrite destination and continue rename"
+    echo "  [O] Overwrite destination (delete destination file), then continue rename"
+    echo "  [V] Same as [O] — delete destination file only, then rename"
     echo "  [R] Rename source to alternate name (one _OTHER, or _OTHER_2, … if needed) -> $(basename -- "$old_other_path")"
     echo "  [D] For this source directory only: use _OTHER for all further collisions (like [R])"
+    echo "  [P] Delete source file only (keep destination; skip this rename)"
     echo "  [S] Skip (default)"
     echo "  [Q] Quit"
-    echo -n "$(user_prompt_ts_prefix)Choice [o/r/d/S/q]: "
+    echo -n "$(user_prompt_ts_prefix)Choice [o/v/r/d/p/S/q]: "
 
     flush_stdin
     read_single_key answer "$PROMPT_WAIT_SECONDS"
@@ -6463,7 +6472,7 @@ can_overwrite_collision_with_identical_md5() {
             stopped_by_user=yes
             return 2
             ;;
-        o|O)
+        o|O|v|V)
             return 0
             ;;
         r|R)
@@ -6475,6 +6484,9 @@ can_overwrite_collision_with_identical_md5() {
             COLLISION_OTHER_PATH="$old_other_path"
             vlog "Collision _OTHER per-directory session enabled for '$AUTO_COLLISION_OTHER_DIR'"
             return 3
+            ;;
+        p|P)
+            return 4
             ;;
         *)
             return 1
@@ -6763,6 +6775,13 @@ perform_plain_entry_rename() {
                 return 1
             elif [[ $collision_decision_rc -eq 3 ]]; then
                 new="$COLLISION_RENAMED_TARGET"
+            elif [[ $collision_decision_rc -eq 4 ]]; then
+                db_backfill_missing_hashes_for_existing_file "$new"
+                db_mark_checked "$new" "plain" "checked"
+                resume_checkpoint_register_processed_path "$old"
+                vlog "Collision resolved by deleting source duplicate '$old'; kept destination '$new'"
+                ((++files_affected))
+                return 0
             else
                 emit_wrap_labeled_stdout "SKIP: " "${YELLOW}SKIP:${RESET} " "Target file already exists."
                 vlog "Collision detected for plain rename '$old' -> '$new'"
