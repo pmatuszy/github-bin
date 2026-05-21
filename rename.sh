@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.05.21 - v. 19.136.121500 - copy-series pad: include already-renamed siblings (Nasza_bomba_11.mp3) when computing max N so late files still get 04 not 4
 # 2026.05.21 - v. 19.135.120000 - transform_basename: zero-pad media copy-series (N) before separator normalize; width from max N in same directory (2 digits for 10–99, 3 for 100+)
 # 2026.05.19 - v. 19.134.114531 - Collision prompt: [P] delete source (keep destination; skip rename); [V] delete destination then rename (same as [O])
 # 2026.05.09 - v. 19.133.154136 - SCRIPT_VERSION taken from this line: v. aa.bbb.HHMMSS — aa = month counter (19 now; bump aa next month); bbb = edit counter this month, add 1 on every edit (…125, 126, 127…); HHMMSS = local 24h wall-clock time for that edit (not computed at runtime). Every history row keeps the full triplet (aa.bbb.HHMMSS), not only this line. Workflow: insert a new top row with the next bbb and a new HHMMSS; push the prior first row down unchanged (it already carries its timestamp).
@@ -5591,14 +5592,14 @@ _normalize_basename_separators() {
     fi
 }
 
-# "Title (N).ext" copy series: pad N to ${#max_n} digits using the largest N among same-directory
-# siblings with the same title prefix and extension (e.g. 36 files → 01…36; 150 files → 001…150).
+# "Title (N).ext" copy series: pad N using the largest index among same-directory siblings
+# (still "Title (N).ext" or already "Title_N.ext" after an earlier rename in this run).
 # Runs before _normalize_basename_separators (spaces/brackets → underscores).
 _pad_copy_series_parenthetical_basename() {
     local new="$1"
     local original_path="$2"
     local dir stem ext_body ext_dot prefix num max_n width padded n f b
-    local prefix_re
+    local prefix_re title_part norm_prefix norm_prefix_re
 
     [[ "$new" == *.* ]] || { printf '%s' "$new"; return 0; }
     [[ -n "$original_path" && -f "$original_path" ]] || { printf '%s' "$new"; return 0; }
@@ -5615,6 +5616,9 @@ _pad_copy_series_parenthetical_basename() {
     dir="$(dirname -- "$original_path")"
     max_n=$((10#$num))
     prefix_re="$(sed_escape_regex "$prefix")"
+    title_part="${prefix%"${prefix##*[![:space:]]}"}"
+    norm_prefix="$(_normalize_basename_separators "$title_part")"
+    norm_prefix_re="$(sed_escape_regex "$norm_prefix")"
 
     for f in "$dir"/*; do
         [[ -e "$f" && -f "$f" ]] || continue
@@ -5623,10 +5627,17 @@ _pad_copy_series_parenthetical_basename() {
             [[ "${BASH_REMATCH[2],,}" == "${ext_dot,,}" ]] || continue
             n=$((10#${BASH_REMATCH[1]}))
             (( n > max_n )) && max_n=$n
+        elif [[ "$b" =~ ^${norm_prefix_re}_([0-9]+)(\.[^.]+)$ ]]; then
+            [[ "${BASH_REMATCH[2],,}" == "${ext_dot,,}" ]] || continue
+            n=$((10#${BASH_REMATCH[1]}))
+            (( n > max_n )) && max_n=$n
         fi
     done
 
-    width=${#max_n}
+    width=1
+    if (( max_n >= 10 )); then
+        width=${#max_n}
+    fi
     padded="$(printf "%0${width}d" "$((10#$num))")"
     if [[ "$num" == "$padded" ]]; then
         printf '%s' "$new"
