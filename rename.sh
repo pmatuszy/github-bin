@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.05.21 - v. 19.135.120000 - transform_basename: zero-pad media copy-series (N) before separator normalize; width from max N in same directory (2 digits for 10–99, 3 for 100+)
 # 2026.05.19 - v. 19.134.114531 - Collision prompt: [P] delete source (keep destination; skip rename); [V] delete destination then rename (same as [O])
 # 2026.05.09 - v. 19.133.154136 - SCRIPT_VERSION taken from this line: v. aa.bbb.HHMMSS — aa = month counter (19 now; bump aa next month); bbb = edit counter this month, add 1 on every edit (…125, 126, 127…); HHMMSS = local 24h wall-clock time for that edit (not computed at runtime). Every history row keeps the full triplet (aa.bbb.HHMMSS), not only this line. Workflow: insert a new top row with the next bbb and a new HHMMSS; push the prior first row down unchanged (it already carries its timestamp).
 # 2026.05.09 - v. 19.132.112134 - Checksum recovery: capture find_best_path_for_missing_ref exit with set -e (return 1 is normal failure; command substitution must not abort the script)
@@ -5590,6 +5591,50 @@ _normalize_basename_separators() {
     fi
 }
 
+# "Title (N).ext" copy series: pad N to ${#max_n} digits using the largest N among same-directory
+# siblings with the same title prefix and extension (e.g. 36 files → 01…36; 150 files → 001…150).
+# Runs before _normalize_basename_separators (spaces/brackets → underscores).
+_pad_copy_series_parenthetical_basename() {
+    local new="$1"
+    local original_path="$2"
+    local dir stem ext_body ext_dot prefix num max_n width padded n f b
+    local prefix_re
+
+    [[ "$new" == *.* ]] || { printf '%s' "$new"; return 0; }
+    [[ -n "$original_path" && -f "$original_path" ]] || { printf '%s' "$new"; return 0; }
+    is_media_file "$original_path" || { printf '%s' "$new"; return 0; }
+
+    stem="${new%.*}"
+    ext_body="${new##*.}"
+    ext_dot=".$ext_body"
+
+    [[ "$stem" =~ ^(.+[[:space:]]+)\(([0-9]+)\)$ ]] || { printf '%s' "$new"; return 0; }
+    prefix="${BASH_REMATCH[1]}"
+    num="${BASH_REMATCH[2]}"
+
+    dir="$(dirname -- "$original_path")"
+    max_n=$((10#$num))
+    prefix_re="$(sed_escape_regex "$prefix")"
+
+    for f in "$dir"/*; do
+        [[ -e "$f" && -f "$f" ]] || continue
+        b="$(basename -- "$f")"
+        if [[ "$b" =~ ^${prefix_re}\(([0-9]+)\)(\.[^.]+)$ ]]; then
+            [[ "${BASH_REMATCH[2],,}" == "${ext_dot,,}" ]] || continue
+            n=$((10#${BASH_REMATCH[1]}))
+            (( n > max_n )) && max_n=$n
+        fi
+    done
+
+    width=${#max_n}
+    padded="$(printf "%0${width}d" "$((10#$num))")"
+    if [[ "$num" == "$padded" ]]; then
+        printf '%s' "$new"
+    else
+        printf '%s(%s)%s' "$prefix" "$padded" "$ext_dot"
+    fi
+}
+
 transform_basename() {
     local new="$1"
     local original_path="${2-}"
@@ -5881,6 +5926,10 @@ transform_basename() {
         s/_$//;
         s/\.$//;
     ')
+
+    if [[ -n "$original_path" && -f "$original_path" ]] && is_media_file "$original_path"; then
+        new="$(_pad_copy_series_parenthetical_basename "$new" "$original_path")"
+    fi
 
     # Directories do not use file extensions; dots in the name are part of the title (e.g. Foo.PL - bar).
     if [[ -n "$original_path" && -d "$original_path" ]]; then
