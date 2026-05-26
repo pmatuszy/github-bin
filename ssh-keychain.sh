@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.05.26 - user-facing messages translated from Polish to English
 # 2023.09.01 - v. 1.2 - added id_ed25519_nucvm_adminkey 
 # 2023.08.21 - v. 1.1 - added feature batchmode (parameter: batch)
 # 2023.05.20 - v. 1.0 - added feature that more than 3 keys can be loaded (ile_kluczy_powinno_byc_zaladowanych)
@@ -61,7 +62,7 @@ HC_message=$(
   warnings_and_errors=0
 
   cat  $0|grep -e '# *20[123][0-9]'|head -n 1 | awk '{print "script version: " $5 " (dated "$2")"}'
-  echo "aktualna data: `date '+%Y.%m.%d %H:%M'`" ; echo ;
+  echo "current date: `date '+%Y.%m.%d %H:%M'`" ; echo ;
   keychain  --nocolor ${klucze} 2>&1 | egrep -iq "warning|error"
   
   if (( $? == 0 )); then               # exit status = 0 oznacza, ze linie ZNALEZIONO, wiec jest blad

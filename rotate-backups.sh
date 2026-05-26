@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.05.26 - user-facing messages translated from Polish to English
 # 2023.05.26 - v. 0.2 - sending statuses to healthcheck servers before executing exit
 # 2023.03.12 - v. 0.1 - initial release
 
@@ -44,7 +45,7 @@ fi
 
 TEMP_MESSAGE=$(
    cat  $0|grep -e '# *20[123][0-9]'|head -n 1 | awk '{print "script version: " $5 " (dated "$2")"}'
-   echo ; echo "aktualna data: `date '+%Y.%m.%d %H:%M'`" ; echo ;
+   echo ; echo "current date: `date '+%Y.%m.%d %H:%M'`" ; echo ;
 
    echo "Numbers of files to be preserved : PRESERVED_PLACEMARK"
    echo "Numbers of files to be deleted   : DELETED_PLACEMARK"

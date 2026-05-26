@@ -17,10 +17,10 @@ echo superintel
 echo 
 echo 
 
-read -p "Wpisz haslo: " -s PASSWD
+read -p "Enter password: " -s PASSWD
 echo 
 
-umount /mnt/superintel/Dysk?  2>/dev/null  # just in case sa zamontowane, by nie dostawac komunikatu "mount error(16): Device or resource busy"
+umount /mnt/superintel/Dysk?  2>/dev/null  # unmount first if already mounted, to avoid "mount error(16): Device or resource busy"
 sleep 1
 
 mount.cifs -o user=administrator,password=$PASSWD //superintel.eth.b.matuszyk.com/DyskC /mnt/superintel/DyskC ; df -hP /mnt/superintel/DyskC

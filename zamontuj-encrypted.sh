@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.05.26 - user-facing messages translated from Polish to English
 # 2023.02.28 - v. 0.5 - curl with kod_powrotu
 # 2022.07.01 - v. 0.4 - dodalem wywolanie /root/bin/sprawdz-czy-encrypted-jest-zamontowany.sh na koncu
 # 2022.06.21 - v. 0.3 - dodalem obsluge healthcheckow
@@ -13,7 +14,7 @@ if [ -f "$HEALTHCHECKS_FILE" ];then
 fi
 
 echo
-read -r -p "Wpisz haslo: " -s PASSWD
+read -r -p "Enter password: " -s PASSWD
 echo
 
 ################################################################################
@@ -23,7 +24,7 @@ zrob_fsck() {
 echo "################################################################################"
 
 echo
-echo czas na fsck $1 ...
+echo running fsck on $1 ...
 echo
 echo "################################################################################"
 

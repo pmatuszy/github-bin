@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.05.26 - user-facing messages translated from Polish to English
 # 2021.09.19 - v. 0.6 - dodalem wypisywanie kropek, by ladniej wygladalo
 # 2021.06.17 - v. 0.5 - najpierw jest przeliczana md5 suma pliku plik_template
 # 2021.02.02 - v. 0.4 - added call for script header and footer
@@ -21,11 +22,11 @@ co_ile_wypisac_date=200
 tresc_maila="plik ${plik} zostal zmodyfikowany, ale przywrocilem domyslna konfiguracje, hehe"
 
 if [ ! -f ${plik} ]; then
-  echo "plik $plik nie istnieje - wychodze...."
+  echo "file $plik does not exist - exiting...."
   exit 1
 fi
 if [ ! -f ${plik_template} ]; then
-  echo "plik $plik_template nie istnieje - wychodze...."
+  echo "file $plik_template does not exist - exiting...."
   exit 2
 fi
 
@@ -36,8 +37,8 @@ echo -n "`date '+%Y.%m.%d %H:%M:%S'` "
 while : ; do
     #inotifywait -q -e modify -e delete -e close_write -e moved_to -e moved_from -e move -e create -e delete_self -e attrib ${plik}
     if [[ $(md5sum "$plik"|awk '{print $1}') != ${md5_template} ]]; then 
-      echo   #  piszemy pusta linie, bo zwykle ostatnia linia byla bez znaku konca linii
-      echo `date '+%Y.%m.%d %H:%M:%S'`" - wykrylem zmiany w pliku - wysylam maila"
+      echo   # blank line: previous output often had no trailing newline
+      echo `date '+%Y.%m.%d %H:%M:%S'`" - detected file change - sending mail"
       sleep $opoznienie
       cp ${plik_template} ${plik}
       systemctl restart lighttpd 

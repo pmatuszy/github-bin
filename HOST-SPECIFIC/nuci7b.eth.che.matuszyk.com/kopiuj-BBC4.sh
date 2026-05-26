@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.05.26 - user-facing messages translated from Polish to English
 # 2023.08.10 - v. 0.7 - bugfix: checking if ${DOKAD} exists and if not exiting
 # 2023.05.22 - v. 0.6 - std_options are different for interactive and non-interactive session
 # 2023.05.20 - v. 0.5 - allow script to use keychain
@@ -23,7 +24,7 @@ export SKAD_DIR="/worek-samba/nagrania/BBC4"
 export DOKAD="/mnt/luks-raid1-A/video-1dyne-kopie/BBC4-ARCHIWUM"
 
 cat  $0|grep -e '# *20[123][0-9]'|head -n 1 | awk '{print "script version: " $5 " (dated "$2")"}' ; echo
-echo " "; echo "aktualna data: `date '+%Y.%m.%d %H:%M:%S'`" ; echo ;
+echo " "; echo "current date: `date '+%Y.%m.%d %H:%M:%S'`" ; echo ;
 
 echo ; echo "SKAD  = $SKAD_HOST:$SKAD_DIR" ; echo "DOKAD = $DOKAD" ; echo ; echo
 
@@ -43,14 +44,14 @@ ssh "${SKAD_HOST}" "cd ${SKAD_DIR} 2>/dev/null || exit 1; /bin/ls -1tr"
 kod_powrotu=$?
 
 if (( $kod_powrotu != 0 ));then
-  echo ; echo "Nie moge zmienic katalogu na $DOKAD na serwerze $SKAD_HOST ...";echo
+  echo ; echo "Cannot change directory to $DOKAD on server $SKAD_HOST ...";echo
   exit 2
 fi
 
 ile_plikow=$(ssh "${SKAD_HOST}" "cd ${SKAD_DIR} ; /bin/ls -1tr" | wc -l)
 
 if (( $ile_plikow == 1 )) ; then
-  echo ; echo "nie ma plikow do skopiowania, wychodze...";echo
+  echo ; echo "no files to copy, exiting...";echo
   exit 0
 fi
 

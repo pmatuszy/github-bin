@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.05.26 - user-facing messages translated from Polish to English
 # 2025.11.13 - v. 0.6 - added while loop (with little help of ChatGPT)
 # 2023.10.14 - v. 0.5 - increased sleep delay from 100 to 600s
 # 2023.01.03 - v. 0.4 - dodano random delay jesli skrypt jest wywolywany nieinteraktywnie
@@ -40,7 +41,7 @@ done
 
 # If still failing → exit 2 and notify healthchecks
 if (( blad != 0 )); then
-    m="echo "${SCRIPT_VERSION}";echo ; apt update jest uruchomione na innym terminalu i nie moge dostac locka wiec wychodze"
+    m="echo "${SCRIPT_VERSION}";echo ; apt update is running on another terminal and lock cannot be acquired, exiting"
     /usr/bin/curl -fsS -m 100 --retry 10 --retry-delay 10 --data-raw "${m}" \
         -o /dev/null "$HEALTHCHECK_URL"/fail 2>/dev/null
     exit 2

@@ -16,22 +16,22 @@ echo
 
 mkdir -p /mnt/pgm-che/DyskC /mnt/pgm-che/DyskD /mnt/pgm-che/DyskE /mnt/pgm-che/DyskF
 
-read -p "Wpisz haslo: " -s PASSWD ; echo
+read -p "Enter password: " -s PASSWD ; echo
 
 
 loc_dir_name="/mnt/pgm-che/DyskC"
 rem_dir_name="//pgm-che.eth.che.matuszyk.com/DyskC"
-umount "${loc_dir_name}" 2>/dev/null  # just in case sa zamontowane, by nie dostawac komunikatu "mount error(16): Device or resource busy"
+umount "${loc_dir_name}" 2>/dev/null  # unmount first if already mounted, to avoid "mount error(16): Device or resource busy"
 mount.cifs -o user=p,password=$PASSWD "${rem_dir_name}" "${loc_dir_name}"
 
 loc_dir_name="/mnt/pgm-che/DyskD"
 rem_dir_name="//pgm-che.eth.che.matuszyk.com/DyskD"
-umount "${loc_dir_name}" 2>/dev/null  # just in case sa zamontowane, by nie dostawac komunikatu "mount error(16): Device or resource busy"
+umount "${loc_dir_name}" 2>/dev/null  # unmount first if already mounted, to avoid "mount error(16): Device or resource busy"
 mount.cifs -o user=p,password=$PASSWD "${rem_dir_name}" "${loc_dir_name}"
 
 loc_dir_name="/mnt/pgm-che/DyskE"
 rem_dir_name="//pgm-che.eth.che.matuszyk.com/DyskE"
-umount "${loc_dir_name}" 2>/dev/null  # just in case sa zamontowane, by nie dostawac komunikatu "mount error(16): Device or resource busy"
+umount "${loc_dir_name}" 2>/dev/null  # unmount first if already mounted, to avoid "mount error(16): Device or resource busy"
 mount.cifs -o user=p,password=$PASSWD "${rem_dir_name}" "${loc_dir_name}"
 
 df -hP |egrep 'Filesystem|pgm-che.eth.che.matuszyk.com'

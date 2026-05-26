@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.05.26 - v. 0.2 - English messages
 # 2026.05.26 - v. 0.1 - initial release: Linux VeraCrypt dismount by mount point
 
 . /root/bin/_script_header.sh

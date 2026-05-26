@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.05.26 - user-facing messages translated from Polish to English
 # 2026.04.21 - v. 1.2 - clarify bare-metal check: virt-what empty on host, nonempty when virtualized (no wc -l)
 # 2026.04.21 - v. 1.1 - fix vmrun list boxed output; fix VMware Tools retry/success logic; grep -F for exclude paths; local VM path in helpers; comment crontab example block
 # 2025.11.03 - v. 1.0 - added optional exluded vms that the status won't be checked (/root/bin/vmware-exclude-from-checks.txt)
@@ -129,7 +130,7 @@ export DISPLAY=
 m=$(
   export cos_nie_tak=0
   cat  $0|grep -e '# *20[123][0-9]'|head -n 1 | awk '{print "script version: " $5 " (dated "$2")"}' ; echo
-  echo " "; echo "aktualna data: `date '+%Y.%m.%d %H:%M'`" ; echo ;
+  echo " "; echo "current date: `date '+%Y.%m.%d %H:%M'`" ; echo ;
   vmrun list 2>/dev/null | boxes -s 40x5 -a c
   echo;
   vmrun list 2> /dev/null | grep Total 

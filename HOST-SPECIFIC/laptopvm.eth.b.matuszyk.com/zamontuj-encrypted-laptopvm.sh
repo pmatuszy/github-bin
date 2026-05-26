@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.05.26 - user-facing messages translated from Polish to English
 # 2021.09.19 - v. 0.5 - zmiana w fsck, dodana funkcja zrob_fsck
 # 2021.08.29 - v. 0.4 - exportfs po zamontowaniu obu duzych volumentow, dodano montowanie dla minidlna i restart tego serwisu
 # 2021.04.09 - v. 0.3 - bug fix: nie montowane byly backup2 i replication2 w jailu...
@@ -7,7 +8,7 @@
 # 2020.0x.xx - v. 0.1 - initial release (date unknown)
 
 echo
-read -r -p "Wpisz haslo: " -s PASSWD
+read -r -p "Enter password: " -s PASSWD
 echo
 
 ################################################################################
@@ -16,7 +17,7 @@ zrob_fsck() {
 
 echo "################################################################################"
 echo
-echo czas na fsck $1 ...
+echo running fsck on $1 ...
 echo
 echo "################################################################################"
 

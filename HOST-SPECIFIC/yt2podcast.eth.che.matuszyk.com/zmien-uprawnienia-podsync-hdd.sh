@@ -1,12 +1,13 @@
 #!/bin/bash
 
+# 2026.05.26 - user-facing messages translated from Polish to English
 # 2023.04.06 - v. 0.3 - excluding temp dir /podsync-hdd/_temp/
 # 2021.02.07 - v. 0.2 - spr. czy nie ma wiecej dzialajacych instancji skryptu....
 # 2020.xx.xx - v. 0.1 - initial release
 
-# w dniu 21.01.2021 dodalem 2>/dev/null na koncu kazdego find'a by nie dostawac co jakis czas maili, ze plik nie istnieje z crontaba
+# 2021-01-21: 2>/dev/null on each find to avoid cron mails about missing files
 
-# spr. ile jest dzialajacych instancji - jesli wiecej niz jedna to my wychodzimy
+# if more than one instance is running, exit
 if [[ `ps -e|grep $0` -gt 1 ]]; then
   exit 2
 fi

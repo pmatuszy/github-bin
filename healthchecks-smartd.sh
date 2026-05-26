@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.05.26 - user-facing messages translated from Polish to English
 # 2023.01.16 - v. 0.3 - better service restart failure detection, redirection of 2> on 1>
 # 2023.01.03 - v. 0.2 - dodano random delay jesli skrypt jest wywolywany nieinteraktywnie
 # 2022.05.18 - v. 0.1 - initial release
@@ -14,7 +15,7 @@ m=$( echo "${SCRIPT_VERSION}";echo ;
      cat  $0|grep -e '# *20[123][0-9]'|head -n 1 | awk '{print "script version: " $5 " (dated "$2")"}' ; echo ; echo
      systemctl restart smartd --no-pager 2>&1
      kod_powrotu=$?
-     sleep 5 ; echo ; echo "STATUS PO RESTARCIE SERWISU: " ; echo
+     sleep 5 ; echo ; echo "STATUS AFTER SERVICE RESTART: " ; echo
      systemctl status smartd --no-pager ; echo ; exit $kod_powrotu )
 wynik_po_restarcie=$?
 

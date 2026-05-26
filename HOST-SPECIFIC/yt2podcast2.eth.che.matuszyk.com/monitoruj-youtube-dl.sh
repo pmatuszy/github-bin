@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.05.26 - user-facing messages translated from Polish to English
 # (C) Paul G. Matuszyk 2020.04.20
 # first production version
 # 2026.03.24 - v. 1.8 - if log files don't exist, we pause for a couple of seconds
@@ -36,12 +37,12 @@ tcScrTitleEnd="\e\134"
 echo -ne "$tcScrTitleStart $0 $tcScrTitleEnd"
 
 pierwszy_raz=1
-echo "[`date '+%Y.%m.%d %H:%M:%S'`] zaczynamy dzialac, opoznienie=$opoznienie , max_liczba_linii=$max_liczba_linii"
+echo "[`date '+%Y.%m.%d %H:%M:%S'`] starting (delay=$opoznienie, max_lines=$max_liczba_linii)"
 pop=`( du -ks /podsync-hdd |awk '{print $1}' ) 2>/dev/null`
 echo "[`date '+%Y.%m.%d %H:%M:%S'`] wchodzimy w petle nieskonczona"
 
 if [ $czy_wysylac_maile -ne 0 ] ; then  
-  echo Manualnie startuje feedy podsynca | mutt -s "[ `hostname` ] reczny restart podsynca (`date '+%Y.%m.%d %H:%M:%S'`)" `hostname`@matuszyk.com
+  echo Manually restarting podsync feeds | mutt -s "[ `hostname` ] manual podsync restart (`date '+%Y.%m.%d %H:%M:%S'`)" `hostname`@matuszyk.com
 fi
 
 while : ; do
@@ -73,7 +74,7 @@ while : ; do
 
 
      if (( `pgrep -fc ${ffmpeg_path}` >  0 )) ; then
-        echo "w tle sa ffmpeg szt. `pgrep -fc ${ffmpeg_path}` ==> czekamy, az zakoncza dzialalnosc..."
+        echo "background ffmpeg count: `pgrep -fc ${ffmpeg_path}` ==> waiting for them to finish..."
      fi
 
      licznik=1
@@ -91,16 +92,16 @@ while : ; do
      done
      echo
      su podsync -c "/home/podsync/bin/feeds-restart.sh" 
-     echo -n "czekamy 20s po restarcie "
+     echo -n "waiting 20s after restart "
      for p in {1..20};do 
        echo -n .
        sleep 1
      done
      echo
      if [ `egrep "server responded with a 'Too Many Requests' error|Sign in to confirm you.*re not a bot" ${maska_logow}|wc -l` -gt $max_liczba_linii ] ; then
-        echo "po restarcie dalej sa problemy z podlaczeniem ==> inicjuje nowy restart"
-        echo "po restarcie dalej sa problemy z podlaczeniem ==> inicjuje nowy restart"
-        echo "po restarcie dalej sa problemy z podlaczeniem ==> inicjuje nowy restart"
+        echo "still connection problems after restart ==> initiating new restart"
+        echo "still connection problems after restart ==> initiating new restart"
+        echo "still connection problems after restart ==> initiating new restart"
         continue
      fi
   else
@@ -112,7 +113,7 @@ while : ; do
            sleep $sleep_1dyncze_opoznienie
            echo -en "\r[`date '+%Y.%m.%d %H:%M:%S'`] (liczba bledow w logach: `egrep "server responded with a 'Too Many Requests' error|Sign in to confirm you.*re not a bot" ${maska_logow}|wc -l`)"
            if [ `egrep "server responded with a 'Too Many Requests' error|Sign in to confirm you.*re not a bot" ${maska_logow}|wc -l` -gt $max_liczba_linii ] ; then
-             echo " (troche za duzo bo max., ktory dopuszczam to $max_liczba_linii) ==> inicjuje nowy restart"
+             echo " (too many lines; max allowed is $max_liczba_linii) ==> initiating new restart"
              break
            fi
          fi
@@ -148,7 +149,7 @@ while : ; do
        for (( c=0; c<$liczba_iteracji; c++ )); do
          echo -en "\r[`date '+%Y.%m.%d %H:%M:%S'`] (liczba bledow w logach: `egrep "server responded with a 'Too Many Requests' error|Sign in to confirm you.*re not a bot" ${maska_logow}|wc -l`)"
          if [ `egrep "server responded with a 'Too Many Requests' error|Sign in to confirm you.*re not a bot" ${maska_logow}|wc -l` -gt $max_liczba_linii ] ; then
-           echo " (troche za duzo bo max., ktory dopuszczam to $max_liczba_linii) ==> inicjuje nowy restart"
+           echo " (too many lines; max allowed is $max_liczba_linii) ==> initiating new restart"
            break
          fi
          sleep $sleep_1dyncze_opoznienie

@@ -9,34 +9,34 @@ destination_praca="/mnt/superintel/DyskS/____z_DyskU/_backupy-1dyne_kopie/praca/
 echo ; echo
 co=$source_dropbox
 if [ ! -d "$co" ] ; then
-   echo ; echo "$co nie istnieje" ; echo "WYCHODZE ..."; echo
+   echo ; echo "$co does not exist" ; echo "EXITING ..."; echo
    exit 1
 else
-   echo "`date '+%Y.%m.%d %H:%M:%S'` - katalog $co istnieje - OK"
+   echo "`date '+%Y.%m.%d %H:%M:%S'` - directory $co exists - OK"
 fi
 
 co=$destination_dropbox
 if [ ! -d "$co" ] ; then
-   echo ; echo "$co nie istnieje" ; echo "WYCHODZE ..."; echo
+   echo ; echo "$co does not exist" ; echo "EXITING ..."; echo
    exit 1
 else
-   echo "`date '+%Y.%m.%d %H:%M:%S'` - katalog $co istnieje - OK"
+   echo "`date '+%Y.%m.%d %H:%M:%S'` - directory $co exists - OK"
 fi
 
 co=$source_praca
 if [ ! -d "$co" ] ; then
-   echo ; echo "$co nie istnieje" ; echo "WYCHODZE ..."; echo
+   echo ; echo "$co does not exist" ; echo "EXITING ..."; echo
    exit 1
 else
-   echo "`date '+%Y.%m.%d %H:%M:%S'` - katalog $co istnieje - OK"
+   echo "`date '+%Y.%m.%d %H:%M:%S'` - directory $co exists - OK"
 fi
 
 co=$destination_praca
 if [ ! -d "$co" ] ; then
-   echo ; echo "$co nie istnieje" ; echo "WYCHODZE ..."; echo
+   echo ; echo "$co does not exist" ; echo "EXITING ..."; echo
    exit 1
 else
-   echo "`date '+%Y.%m.%d %H:%M:%S'` - katalog $co istnieje - OK"
+   echo "`date '+%Y.%m.%d %H:%M:%S'` - directory $co exists - OK"
 fi
 echo
 
@@ -80,12 +80,12 @@ echo
 
 sha512sum "${plik}" > "${plik}.sha512"
 
-echo "`date '+%Y.%m.%d %H:%M:%S'` - zrobione, teraz robie sprawdzenie"
+echo "`date '+%Y.%m.%d %H:%M:%S'` - done, now running verification"
 echo
 echo -n "                      "
 sha512sum --check "${plik}.sha512"
 kod_powrotu=$?
-echo "`date '+%Y.%m.%d %H:%M:%S'` - kod powrotu = $kod_powrotu"
+echo "`date '+%Y.%m.%d %H:%M:%S'` - exit code = $kod_powrotu"
 echo
 
 echo "`date '+%Y.%m.%d %H:%M:%S'` - zaczynam mv na zdalny serwer"
@@ -95,15 +95,15 @@ echo "*************************************"
 rsync -ah --progress ${plik} ${plik}.sha512 ${destination}
 echo "*************************************"
 kod_powrotu=$?
-echo "`date '+%Y.%m.%d %H:%M:%S'` - kod powrotu = $kod_powrotu"
+echo "`date '+%Y.%m.%d %H:%M:%S'` - exit code = $kod_powrotu"
 
-echo "`date '+%Y.%m.%d %H:%M:%S'` - zrobione, teraz robie sprawdzenie plikow na zdalnym serwerze"
+echo "`date '+%Y.%m.%d %H:%M:%S'` - done, now verifying files on remote server"
 echo "                      sha512sum --check ${destination}/${plik}.sha512"
 echo
 echo -n "                      "
 sha512sum --check "${destination}/${plik}.sha512"
 kod_powrotu=$?
-echo "`date '+%Y.%m.%d %H:%M:%S'` - kod powrotu = $kod_powrotu"
+echo "`date '+%Y.%m.%d %H:%M:%S'` - exit code = $kod_powrotu"
 echo
 
 if (( $kod_powrotu != 0 )); then

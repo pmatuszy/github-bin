@@ -1,11 +1,12 @@
 #!/bin/bash
 
+# 2026.05.26 - user-facing messages translated from Polish to English
 # 2023.03.27 - v. 0.1 - initial release
 
 . /root/bin/_script_header.sh
 
 echo
-read -r -p "Wpisz haslo: " -s PASSWD
+read -r -p "Enter password: " -s PASSWD
 echo
 
 ################################################################################
@@ -13,7 +14,7 @@ zrob_fsck() {
 ################################################################################
 echo ; echo "==> ########## zrob_fsck($1)"
 
-echo czas na fsck $1 ...
+echo running fsck on $1 ...
 
 if [ $(lsblk -no FSTYPE $1) == 'ext4' ];then
   fsck.ext4 -f -p $1
@@ -22,7 +23,7 @@ else
 fi
 
 kod_powrotu=$?
-echo "kod powrotu z fsck to $kod_powrotu (przebieg 1-szy)"
+echo "fsck exit code: $kod_powrotu (pass 1)"
 
 if (( $kod_powrotu != 0 ));then
   echo
@@ -34,9 +35,9 @@ if (( $kod_powrotu != 0 ));then
   else
     fsck      -C -M -R -T $1
   fi
-  echo "kod powrotu z fsck to $? (przebieg 2-gi)"
+  echo "fsck exit code: $? (pass 2)"
 else
-  echo "fsck zrobiony"
+  echo "fsck completed"
 fi
 echo "<== ########## zrob_fsck($1)"
 }
@@ -45,7 +46,7 @@ zamontuj_fs_MASTER() {
 echo ; echo "==> ########## zamontuj_fs_MASTER($1, $2, $3)"
 
 if [ $(mountpoint -q $2 ; echo $?) -eq 0 ] ; then
-   echo $1 jest juz zamontowany ... wychodze
+   echo $1 is already mounted ... exiting
    echo "<== ########## zamontuj_fs_MASTER($1, $2, $3)"
    return
 fi
@@ -53,7 +54,7 @@ fi
 echo -n "$PASSWD" | cryptsetup luksOpen "${1}" encrypted_luks_device_"$(basename ${1})" -d -
 
 if (( $? != 0 ));then
-  echo  ; echo "NIE MOGE ZAMONTOWAC $1 pod $2 !!!!!!!"; echo "wychodze ..."
+  echo  ; echo "CANNOT MOUNT $1 at $2 !!!!!!!"; echo "exiting ..."
   echo "<== ########## zamontuj_fs_MASTER($1, $2, $3)"
   return
 fi
@@ -89,8 +90,8 @@ echo
 df -h /encrypted /mnt/luks-buffalo2 /mnt/luks-raidsonic
 
 echo ; echo
-echo "restart nfs servera, bo zwykle jest problem polegajacy na tym, ze service nie startuje od razu, bo nie sa zamontowane exportowane fs'y"
-echo "wiec teraz po ich zamontowaniu, restartujemy serwis..."
+echo "restarting NFS server (service often fails at boot because exported filesystems are not mounted yet)"
+echo "now that they are mounted, restarting the service..."
 echo ; echo
 systemctl restart nfs-kernel-server
 

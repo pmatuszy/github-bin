@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.05.26 - user-facing messages translated from Polish to English
 # 2023.12.18 - v. 0.7 - bugfix: check if restic is installed
 # 2023.03.26 - v. 0.6 - added ile_prob i odstepy_miedzy_probami_sek
 # 2023.02.28 - v. 0.5 - curl with kod_powrotu
@@ -39,7 +40,7 @@ if pgrep -f "${RESTIC_BIN}" > /dev/null ; then
     echo '#####################################################'
     echo '#####################################################'
     echo
-    echo "${RESTIC_BIN} dziala, wiec nie startuje nowej instancji a po prostu koncze dzialanie skryptu"
+    echo "${RESTIC_BIN} is already running, not starting a new instance; exiting script"
     echo
     echo '#####################################################'
     echo '#####################################################' 
@@ -49,7 +50,7 @@ if pgrep -f "${RESTIC_BIN}" > /dev/null ; then
 fi
 
 wersja_przed=$(echo " " ; echo " " ; echo "wersja przed: " ; ${RESTIC_BIN} version 2>&1; echo " ")
-m=$( echo " "; echo "aktualna data: `date '+%Y.%m.%d %H:%M'`" ; echo ; 
+m=$( echo " "; echo "current date: `date '+%Y.%m.%d %H:%M'`" ; echo ; 
      for (( p=1 ; p<=$ile_prob;p++)) ;do
        "${RESTIC_BIN}" self-update 2>&1 
        if (( $? == 0 )); then

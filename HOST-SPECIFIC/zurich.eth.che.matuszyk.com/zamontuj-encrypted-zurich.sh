@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.05.26 - user-facing messages translated from Polish to English
 # 2023.03.27 - v. 0.6 - bugfix with fsck (instead of hardcoded /dev/mapper/encrypted_luks_device_encrypted.luks2 will use $1)
 # 2023.03.21 - v. 0.5 - small cosmetic changes, like adding _script_footer.sh execution
 # 2023.01.26 - v. 0.5 - added script version print
@@ -17,7 +18,7 @@ if [ -f "$HEALTHCHECKS_FILE" ];then
 fi
 
 echo
-read -r -p "Wpisz haslo: " -s PASSWD
+read -r -p "Enter password: " -s PASSWD
 echo
 
 ################################################################################
@@ -25,7 +26,7 @@ zrob_fsck() {
 ################################################################################
 echo ; echo "==> ########## zrob_fsck($1)"
 
-echo czas na fsck $1 ...
+echo running fsck on $1 ...
 
 if [ $(lsblk -no FSTYPE $1) == 'ext4' ];then
   fsck.ext4 -f $1
@@ -34,7 +35,7 @@ else
 fi
 
 kod_powrotu=$?
-echo "kod powrotu z fsck to $kod_powrotu (przebieg 1-szy)"
+echo "fsck exit code: $kod_powrotu (pass 1)"
 
 if (( $kod_powrotu != 0 ));then
   echo
@@ -46,9 +47,9 @@ if (( $kod_powrotu != 0 ));then
   else
     fsck      -C -M -R -T $1
   fi
-  echo "kod powrotu z fsck to $? (przebieg 2-gi)"
+  echo "fsck exit code: $? (pass 2)"
 else
-  echo "fsck zrobiony"
+  echo "fsck completed"
 fi
 echo "<== ########## zrob_fsck($1)"
 }
@@ -57,7 +58,7 @@ zamontuj_fs_MASTER() {
 echo ; echo "==> ########## zamontuj_fs_MASTER($1, $2, $3)"
 
 if [ $(mountpoint -q $2 ; echo $?) -eq 0 ] ; then
-   echo $1 jest juz zamontowany ... wychodze
+   echo $1 is already mounted ... exiting
    echo "<== ########## zamontuj_fs_MASTER($1, $2, $3)"
    return
 fi
@@ -65,7 +66,7 @@ fi
 echo -n "$PASSWD" | cryptsetup luksOpen "${1}" encrypted_luks_device_"$(basename ${1})" -d -
 
 if (( $? != 0 ));then
-  echo  ; echo "NIE MOGE ZAMONTOWAC $1 pod $2 !!!!!!!"; echo "wychodze ..."
+  echo  ; echo "CANNOT MOUNT $1 at $2 !!!!!!!"; echo "exiting ..."
   echo "<== ########## zamontuj_fs_MASTER($1, $2, $3)"
   return
 fi
@@ -96,20 +97,20 @@ echo ; echo
 
 exit
 
-########## wychodze, bo to co ponizej to jest dla dyskow zewnetrznych a te przepialem do nuci7b w dniu 27.03.2023
-########## wychodze, bo to co ponizej to jest dla dyskow zewnetrznych a te przepialem do nuci7b w dniu 27.03.2023
-########## wychodze, bo to co ponizej to jest dla dyskow zewnetrznych a te przepialem do nuci7b w dniu 27.03.2023
-########## wychodze, bo to co ponizej to jest dla dyskow zewnetrznych a te przepialem do nuci7b w dniu 27.03.2023
-########## wychodze, bo to co ponizej to jest dla dyskow zewnetrznych a te przepialem do nuci7b w dniu 27.03.2023
-########## wychodze, bo to co ponizej to jest dla dyskow zewnetrznych a te przepialem do nuci7b w dniu 27.03.2023
-########## wychodze, bo to co ponizej to jest dla dyskow zewnetrznych a te przepialem do nuci7b w dniu 27.03.2023
-########## wychodze, bo to co ponizej to jest dla dyskow zewnetrznych a te przepialem do nuci7b w dniu 27.03.2023
-########## wychodze, bo to co ponizej to jest dla dyskow zewnetrznych a te przepialem do nuci7b w dniu 27.03.2023
-########## wychodze, bo to co ponizej to jest dla dyskow zewnetrznych a te przepialem do nuci7b w dniu 27.03.2023
-########## wychodze, bo to co ponizej to jest dla dyskow zewnetrznych a te przepialem do nuci7b w dniu 27.03.2023
-########## wychodze, bo to co ponizej to jest dla dyskow zewnetrznych a te przepialem do nuci7b w dniu 27.03.2023
-########## wychodze, bo to co ponizej to jest dla dyskow zewnetrznych a te przepialem do nuci7b w dniu 27.03.2023
-########## wychodze, bo to co ponizej to jest dla dyskow zewnetrznych a te przepialem do nuci7b w dniu 27.03.2023
+########## exiting: below was for external disks, moved to nuci7b on 2023-03-27
+########## exiting: below was for external disks, moved to nuci7b on 2023-03-27
+########## exiting: below was for external disks, moved to nuci7b on 2023-03-27
+########## exiting: below was for external disks, moved to nuci7b on 2023-03-27
+########## exiting: below was for external disks, moved to nuci7b on 2023-03-27
+########## exiting: below was for external disks, moved to nuci7b on 2023-03-27
+########## exiting: below was for external disks, moved to nuci7b on 2023-03-27
+########## exiting: below was for external disks, moved to nuci7b on 2023-03-27
+########## exiting: below was for external disks, moved to nuci7b on 2023-03-27
+########## exiting: below was for external disks, moved to nuci7b on 2023-03-27
+########## exiting: below was for external disks, moved to nuci7b on 2023-03-27
+########## exiting: below was for external disks, moved to nuci7b on 2023-03-27
+########## exiting: below was for external disks, moved to nuci7b on 2023-03-27
+########## exiting: below was for external disks, moved to nuci7b on 2023-03-27
 
 
 /root/bin/smr-disks-timeout.sh
@@ -118,7 +119,7 @@ input_from_user=""
 read -t 300 -n 1 -p "Do you want to mount main encrypted volumes? [Y/n/q]: " input_from_user
 echo
 if [ "${input_from_user}" == 'q' -o  $"{input_from_user}" == 'Q' -o "${input_from_user}" == 'n' -o  $"{input_from_user}" == 'N' ]; then
-  echo  ; echo "nie to nie.... wychodze" ; echo 
+  echo  ; echo "no, exiting" ; echo 
   . /root/bin/_script_footer.sh
   exit 1
 fi

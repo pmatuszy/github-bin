@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.05.26 - user-facing messages translated from Polish to English
 # 2022.12.31 - v. 0.3 - dodalem funkcje zamontuj_via_nfs
 # 2022.09.11 - v. 0.2 - zmiany kosmetyczne o KeePassie
 # 2022.07.30 - v. 0.1 - initial release
@@ -16,12 +17,12 @@ echo ; cat  $0|grep -e '# *20[123][0-9]'|head -n 1 | awk '{print "script version
 
 echo ; echo "w KeePassie:" ; echo  "Samba (p @ lublin.eth.r.matuszyk.com)"
 
-read -p "Wpisz haslo: " -s PASSWD ; echo
+read -p "Enter password: " -s PASSWD ; echo
 
 ###############################################################################################################
 ###############################################################################################################
 zamontuj_via_nfs() {
-umount "${2}" 2>/dev/null  # just in case sa zamontowane, by nie dostawac komunikatu "mount error(16): Device or resource busy"
+umount "${2}" 2>/dev/null  # unmount first if already mounted, to avoid "mount error(16): Device or resource busy"
 mount.cifs -o user=p,password=$PASSWD "${1}" "${2}"
 
 if (( $? == 0 ));then

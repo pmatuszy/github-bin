@@ -14,9 +14,9 @@ echo
 
 #set -x
 
-read -p "Wpisz haslo: " -s PASSWD
+read -p "Enter password: " -s PASSWD
 
-umount /mnt/server/Dysk?  2>/dev/null  # just in case sa zamontowane, by nie dostawac komunikatu "mount error(16): Device or resource busy"
+umount /mnt/server/Dysk?  2>/dev/null  # unmount first if already mounted, to avoid "mount error(16): Device or resource busy"
 
 mount.cifs -o user=administrator,password=$PASSWD //server.int.matuszyk.com/DyskC /mnt/server/DyskC ; df -hP /mnt/server/DyskC
 mount.cifs -o user=administrator,password=$PASSWD  //server.int.matuszyk.com/DyskD /mnt/server/DyskD ; df -hP /mnt/server/DyskD

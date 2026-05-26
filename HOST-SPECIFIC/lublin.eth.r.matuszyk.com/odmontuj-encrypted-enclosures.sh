@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.05.26 - user-facing messages translated from Polish to English
 # 2023.01.26 - v. 0.2 - added script version print
 # 2022.11.21 - v. 0.1 - initial release
 
@@ -12,7 +13,7 @@ odmontuj_fs_MASTER() {
 echo ; echo "==> ########## odmontuj_fs_MASTER($1)"
 
 if [ $(mountpoint -q $1 ; echo $?) -ne 0 ] ; then
-   echo $1 NIE jest juz zamontowany ... wychodze
+   echo $1 NIE is already mounted ... exiting
    echo "<== ########## odmontuj_fs_MASTER($1)"
    return 
 fi
@@ -22,7 +23,7 @@ luks_device="$(df -h $1 | grep $1  | awk '{print $1}')"
 umount $1 
 
 if (( $? != 0 ));then
-  echo  ; echo "NIE MOGE ODZAMONTOWAC $1  !!!!!!!"; echo "wychodze ..."
+  echo  ; echo "CANNOT UNMOUNT $1 !!!!!!!"; echo "exiting ..."
   echo "<== ########## odmontuj_fs_MASTER($1)"
   umount -l $1
   sleep 5
@@ -36,7 +37,7 @@ echo cryptsetup luksClose ${luks_device}
 cryptsetup luksClose ${luks_device}
 
 if (( $? != 0 ));then
-  echo  ; echo "NIE MOGE ZAMKNAC LUKS DEVICEa $1 !!!!!!!"; echo "wychodze ..."
+  echo  ; echo "CANNOT CLOSE LUKS DEVICE $1 !!!!!!!"; echo "exiting ..."
   echo "<== ########## odmontuj_fs_MASTER($1)"
   return
 else

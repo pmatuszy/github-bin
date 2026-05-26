@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.05.26 - user-facing messages translated from Polish to English
 # 2023.02.08 - v. 0.1 - initial release
 
 . /root/bin/_script_header.sh
@@ -40,7 +41,7 @@ export key2_status="PROBLEM"
 export HC_MESSAGE=""
 HC_MESSAGE=$(
 cat  $0|grep -e '# *20[123][0-9]'|head -n 1 | awk '{print "script version: " $5 " (dated "$2")"}'
-echo "aktualna data: `date '+%Y.%m.%d %H:%M'`"
+echo "current date: `date '+%Y.%m.%d %H:%M'`"
 
 spr_czy_agent_is_running
 if spr_zaladowanie_klucze id_ed25519 ; then

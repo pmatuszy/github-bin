@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.05.26 - user-facing messages translated from Polish to English
 # 2023.03.12 - v. 0.2 - added chmod command to limit backup visibility
 # 2022.12.20 - v. 0.1 - initial release
 
@@ -14,7 +15,7 @@ export MAX_RANDOM_DELAY_IN_SEC=${MAX_RANDOM_DELAY_IN_SEC:-50}
 export LIMIT_NUMBER_OF_LAST_BACKUPS_TO_LIST=100
 
 SCRIPT_VERSION=$(echo ; cat $0|grep -e '# *20[123][0-9]'|head -n 1 | awk '{print "script version: " $5 " (dated "$2")"}' ; 
-                 echo " "; echo "aktualna data: `date '+%Y.%m.%d %H:%M'`" ; echo ;
+                 echo " "; echo "current date: `date '+%Y.%m.%d %H:%M'`" ; echo ;
                  echo "script is run on `hostname`" ; echo
                  )
 

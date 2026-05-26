@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.05.26 - user-facing messages translated from Polish to English
 # 2024.12.16 - v. 2.8 - bugfix: pgrep changed from pgrep -x to pgrep -xf
 # 2023.02.18 - v. 2.7 - fix a bug in curl "/usr/bin/curl: Argument list too long" by echoing HC_message in pipe to curl
 # 2023.02.02 - v. 2.6 - added support for /root/SECRET subdirectory
@@ -51,7 +52,7 @@ else
     echo '#####################################################'
     echo '#####################################################'
     echo
-    echo "\$REPO_PASS_INFO nie moze byc znaleziony. Wychodze"
+    echo "\$REPO_PASS_INFO cannot be found. Exiting"
     echo
     echo '#####################################################'
     echo '#####################################################' )
@@ -75,7 +76,7 @@ if [ ! -f "$RESTIC_BIN" ]; then
     echo '#####################################################'
     echo '#####################################################'
     echo
-    echo "restic binary defined as ${RESTIC_BIN} nie moze byc znaleziony. Wychodze"
+    echo "restic binary defined as ${RESTIC_BIN} cannot be found. Exiting"
     echo
     echo '#####################################################'
     echo '#####################################################' )
@@ -93,8 +94,8 @@ fi
 
 if [ ! -d "$XDG_CACHE_HOME" ] ; then
    m=$( echo "${SCRIPT_VERSION}";echo ;
-   echo "XDG_CACHE_HOME ($XDG_CACHE_HOME)  nie istnieje"
-   echo "WYCHODZE ..." )
+   echo "XDG_CACHE_HOME ($XDG_CACHE_HOME)  does not exist"
+   echo "EXITING ..." )
    /usr/bin/curl -fsS -m 100 --retry 10 --retry-delay 10 --data-raw "$m" -o /dev/null "$HEALTHCHECK_URL"/fail 2>/dev/null
    exit 4
 fi
@@ -104,7 +105,7 @@ if pgrep -fx "${RESTIC_BIN}" > /dev/null ; then
     echo '#####################################################'
     echo '#####################################################'
     echo
-    echo "${RESTIC_BIN} dziala, wiec nie startuje nowej instancji a po prostu koncze dzialanie skryptu"
+    echo "${RESTIC_BIN} is already running, not starting a new instance; exiting script"
     echo ; ps -ef|grep "${RESTIC_BIN}" ; echo
     echo
     echo '#####################################################'
@@ -115,8 +116,8 @@ fi
 
 if [ ! -d "$XDG_CACHE_HOME" ] ; then
   m=$( echo "${SCRIPT_VERSION}";echo ;
-    echo "$XDG_CACHE_HOME nie istnieje"
-    echo "WYCHODZE ..." )
+    echo "$XDG_CACHE_HOME does not exist"
+    echo "EXITING ..." )
   /usr/bin/curl -fsS -m 100 --retry 10 --retry-delay 10 --data-raw "$m" -o /dev/null "$HEALTHCHECK_URL"/fail 2>/dev/null
   exit 1
 fi
@@ -130,7 +131,7 @@ if (( $script_is_run_interactively == 1 )); then
   ( echo "${SCRIPT_VERSION}" ; echo ; echo "RESTIC_REPOSITORY = $RESTIC_REPOSITORY" ; echo ;
     kod_powrotu=999
     for (( p=1 ; p<=$MAX_LICZBA_PONOWIEN_BACKUPOW ; p++ )); do
-    if (( $p > 1 )) ; then echo ; echo "aktualna data: `date '+%Y.%m.%d %H:%M'`" ; echo ; fi
+    if (( $p > 1 )) ; then echo ; echo "current date: `date '+%Y.%m.%d %H:%M'`" ; echo ; fi
       eval ${RESTIC_BIN} --cleanup-cache --iexclude=${MY_EXCLUDES} --iexclude-file=${MY_EXCLUDE_FILE} backup / $WHAT_TO_BACKUP_ON_TOP_OF_ROOT 2>&1
       kod_powrotu=$?
       if (( $kod_powrotu != 0 )); then
@@ -148,7 +149,7 @@ else
                 echo "RESTIC_REPOSITORY = $RESTIC_REPOSITORY" ; echo 
                 kod_powrotu=999
                 for (( p=1 ; p<=$MAX_LICZBA_PONOWIEN_BACKUPOW ; p++ )); do 
-                if (( $p > 1 )) ; then echo ; echo "aktualna data: `date '+%Y.%m.%d %H:%M'`" ; echo ; fi
+                if (( $p > 1 )) ; then echo ; echo "current date: `date '+%Y.%m.%d %H:%M'`" ; echo ; fi
                   eval ${RESTIC_BIN} --cleanup-cache --iexclude=${MY_EXCLUDES} --iexclude-file=${MY_EXCLUDE_FILE} backup / $WHAT_TO_BACKUP_ON_TOP_OF_ROOT 2>&1
                   kod_powrotu=$?
                   if (( $kod_powrotu != 0 )); then
@@ -169,11 +170,11 @@ export run_after_backup_log=$( eval $RUN_AFTER_BACKUP 2>&1 )
 if (( $script_is_run_interactively == 1 )); then
   m="echo "${SCRIPT_VERSION}";echo ; PGM: emtpy as run interactively"
   echo ; echo "~~~~~~~~~~~~~~~~~~~~~~~~~"
-  echo kod powrotu z backupu: $kod_powrotu ; echo "~~~~~~~~~~~~~~~~~~~~~~~~~" ; echo ;
+  echo backup exit code: $kod_powrotu ; echo "~~~~~~~~~~~~~~~~~~~~~~~~~" ; echo ;
   ${RESTIC_BIN} --cleanup-cache                          snapshots 2>&1 
 else
   m=$( echo "${SCRIPT_VERSION}";echo ; echo ; echo "~~~~~~~~~~~~~~~~~~~~~~~~~"
-       echo kod powrotu z backupu: $kod_powrotu ; echo "~~~~~~~~~~~~~~~~~~~~~~~~~" ; echo ;
+       echo backup exit code: $kod_powrotu ; echo "~~~~~~~~~~~~~~~~~~~~~~~~~" ; echo ;
        ${RESTIC_BIN} --cleanup-cache                          snapshots 2>&1 )
 fi
 

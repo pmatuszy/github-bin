@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.05.26 - v. 0.3 - English password prompt and messages
 # 2026.05.26 - v. 0.2 - interactive password; fixed --pim=0 --keyfiles= --protect-hidden=no
 # 2026.05.26 - v. 0.1 - initial release: Linux VeraCrypt mount via CLI (volume + mount point)
 
@@ -72,7 +73,7 @@ if mountpoint -q "${VC_MOUNT}"; then
 fi
 
 echo
-read -r -p "Wpisz haslo: " -s PASSWD
+read -r -p "Enter password: " -s PASSWD
 echo
 echo
 echo "(PGM) Mounting ${VC_VOLUME} -> ${VC_MOUNT} ..."

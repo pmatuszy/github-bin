@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.05.26 - user-facing messages translated from Polish to English
 # 2023.07.17 - v. 0.7 - rsync error stream redirecion to stdout
 # 2023.07.06 - v. 0.3 - added --no-motd
 # 2023.06.25 - v. 0.2 - added optional parameter $3 e.g. --remove-source-files which will be passed to rsync as a parameter
@@ -55,7 +56,7 @@ export rsync_options="--no-motd -a -v --stats --bwlimit=990000 --no-compress --p
 
 HC_MESSAGE=$(
    cat  $0|grep -e '# *20[123][0-9]'|head -n 1 | awk '{print "script version: " $5 " (dated "$2")"}'
-   echo ; echo "aktualna data: `date '+%Y.%m.%d %H:%M'`" ; echo ;
+   echo ; echo "current date: `date '+%Y.%m.%d %H:%M'`" ; echo ;
    
    echo ; echo  ; echo "SKAD  = $SKAD" ; echo "DOKAD = $DOKAD" ; echo 
    echo ; echo "command to be run:"
@@ -67,7 +68,7 @@ kod_powrotu=$?
 
 if (( $script_is_run_interactively == 1 )); then
   echo "$HC_MESSAGE"
-  echo "kod_powrotu = $kod_powrotu"
+  echo "exit code = $kod_powrotu"
 fi
 
 echo "$HC_MESSAGE" | egrep -q "^Number of files: 0$"

@@ -14,9 +14,9 @@ echo "dokad : $loc_dir_name"
 echo
 echo
 
-read -p "Wpisz haslo: " -s PASSWD
+read -p "Enter password: " -s PASSWD
 
-umount "${loc_dir_name}" 2>/dev/null  # just in case sa zamontowane, by nie dostawac komunikatu "mount error(16): Device or resource busy"
+umount "${loc_dir_name}" 2>/dev/null  # unmount first if already mounted, to avoid "mount error(16): Device or resource busy"
 
 mount.cifs -o user=p,password=$PASSWD "${rem_dir_name}" "${loc_dir_name}" 
 df -hP "${loc_dir_name}"

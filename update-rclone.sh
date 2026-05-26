@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.05.26 - user-facing messages translated from Polish to English
 # 2026.04.21 - v. 0.6 - after failed selfupdate retries, exit with last rclone rc (not sleep's 0); comment crontab example; tighten up-to-date grep
 # 2023.12.18 - v. 0.5 - bugfix: check if rclone is installed
 # 2023.03.26 - v. 0.4 - added ile_prob i odstepy_miedzy_probami_sek
@@ -41,7 +42,7 @@ fi
 #   echo '#####################################################'
 #   echo '#####################################################'
 #   echo
-#   echo "${RCLONE_BIN} dziala, wiec nie startuje nowej instancji a po prostu koncze dzialanie skryptu"
+#   echo "${RCLONE_BIN} is already running, not starting a new instance; exiting script"
 #   echo
 #   echo '#####################################################'
 #   echo '#####################################################' )
@@ -51,7 +52,7 @@ fi
 
 wersja_przed=$(echo " " ; echo " " ; echo "wersja przed: " ; "${RCLONE_BIN}" version 2>&1; echo " " )
 wersja_przed_short=$(echo " " ; echo " " ; echo "wersja: " ; "${RCLONE_BIN}" version|head -n 1 2>&1; echo " " )
-m=$( echo " "; echo "aktualna data: `date '+%Y.%m.%d %H:%M'`" ; echo ;
+m=$( echo " "; echo "current date: `date '+%Y.%m.%d %H:%M'`" ; echo ;
      last_rc=1
      for (( p=1 ; p<=$ile_prob;p++)) ;do
        "${RCLONE_BIN}" selfupdate 2>&1

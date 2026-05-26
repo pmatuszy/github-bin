@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.05.26 - user-facing messages translated from Polish to English
 # 2023.10.05 - v. 1.1 - added vgchange with 1s delay
 # 2023.03.27 - v. 1.0 - bugfix with fsck (instead of hardcoded /dev/mapper/encrypted_luks_device_encrypted.luks2 will use $1)
 # 2023.03.20 - v. 0.9 - bugfix with kod_powrotu
@@ -24,7 +25,7 @@
 echo ; cat  $0|grep -e '# *20[123][0-9]'|head -n 1 | awk '{print "script version: " $5 " (dated "$2")"}' ; echo
 
 echo
-read -r -p "Wpisz haslo: " -s PASSWD
+read -r -p "Enter password: " -s PASSWD
 echo
 
 ################################################################################
@@ -32,7 +33,7 @@ zrob_fsck() {
 ################################################################################
 echo ; echo "==> ###### zrob_fsck($1)"
 
-echo czas na fsck $1 ...
+echo running fsck on $1 ...
 
 if [ $(lsblk -no FSTYPE $1) == 'ext4' ];then
   fsck.ext4 -f -p $1
@@ -41,7 +42,7 @@ else
 fi
 
 kod_powrotu=$?
-echo "kod powrotu z fsck to $kod_powrotu"
+echo "fsck exit code: $kod_powrotu"
 
 if (( $kod_powrotu != 0 ));then
   echo ; echo "... and once again fsck " ; echo
@@ -51,9 +52,9 @@ if (( $kod_powrotu != 0 ));then
   else
     fsck      -C -M -R -T $1
   fi
-  echo "kod powrotu z fsck to $?"
+  echo "fsck exit code: $?"
 else
-  echo "fsck zrobiony"
+  echo "fsck completed"
 fi
 echo "<== ###### zrob_fsck($1)"
 }
@@ -65,7 +66,7 @@ echo ; echo "==> ########## zamontuj_fs_MASTER($1, $2, $3)"
        echo "==> ########## zamontuj_fs_MASTER($1, $2, $3)"
 
 if [ $(mountpoint -q $2 ; echo $?) -eq 0 ] ; then
-   echo $1 jest juz zamontowany ... wychodze
+   echo $1 is already mounted ... exiting
    echo "<== ########## zamontuj_fs_MASTER($1, $2, $3)"
    return
 fi
@@ -73,7 +74,7 @@ fi
 echo -n "$PASSWD" | cryptsetup luksOpen "${1}" encrypted_luks_device_"$(basename ${1})" -d -
 
 if (( $? != 0 ));then
-  echo  ; echo "NIE MOGE ZAMONTOWAC $1 pod $2 !!!!!!!"; echo "wychodze ..."
+  echo  ; echo "CANNOT MOUNT $1 at $2 !!!!!!!"; echo "exiting ..."
   echo "<== ########## zamontuj_fs_MASTER($1, $2, $3)"
   return
 fi
@@ -129,8 +130,8 @@ sleep 3
 nohup rclone --config /root/rclone.conf mount --daemon --allow-other --read-only local-crypt-local-replication2-rclone:/server/DivX /mnt/minidlna/DivX &
 sleep 3
 
-# odczekamy dodatkowe 15s bo rclone mount troche trwa
-echo ; echo ; echo "odczekamy dodatkowe 15s bo rclone mount troche trwa" ; echo
+# waiting an extra 15s for rclone mount to finish
+echo ; echo ; echo "waiting an extra 15s for rclone mount to finish" ; echo
 sleep 15
 
 service minidlna restart

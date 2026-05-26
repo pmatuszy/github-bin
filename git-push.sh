@@ -71,7 +71,7 @@ if [ "${p}" == 'y' -o  "${p}" == 'y' ]; then
   echo git push | boxes -s 40x3 -a c
   git push 
   if (( $? != 0 )); then
-    echo ; echo '(PGM) nie moge zrobic pusha - wychodze' ; echo
+    echo ; echo '(PGM) cannot push - exiting' ; echo
     exit 2
   fi
 else

@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.05.26 - user-facing messages translated from Polish to English
 # 2023.05.22 - v. 1.2 - added NO_STARTUP_DELAY parameters to /root/bin/_script_header.sh
 # 2023.05.16 - v. 1.1 - bugfix: functional change of the script
 # 2023.05.15 - v. 1.0 - bugfix: functional change of the script
@@ -47,12 +48,12 @@ while (( $secs_to_midnight > $ile_sek_przed_polnoca_nie_nagrywamy_juz )) && (( $
 
   let secs_nagrywania=secs_to_midnight+ile_wiecej_sek_nagrywac
   DOKAD="${DOKAD_PREFIX}-`date '+%Y.%m.%d__%H%M%S'`.mp3"
-  echo "linia komend ffmpeg -hide_banner -loglevel quiet -t "${secs_nagrywania}" -i \"$SKAD\" \"$DOKAD\"" | tee -a $log_file
+  echo "ffmpeg command line -hide_banner -loglevel quiet -t "${secs_nagrywania}" -i \"$SKAD\" \"$DOKAD\"" | tee -a $log_file
   ffmpeg -hide_banner -loglevel quiet -t "${secs_nagrywania}" -i "$SKAD" "$DOKAD" 2>&1
 
   kod_powrotu=$?
   chown "${wlasciciel_pliku}" "${DOKAD}" 2>/dev/null
-  echo "`date '+%Y.%m.%d__%H:%M:%S'` kod powrotu to $kod_powrotu" | tee -a $log_file
+  echo "`date '+%Y.%m.%d__%H:%M:%S'` exit code is $kod_powrotu" | tee -a $log_file
   secs_to_midnight=$((($(date -d "tomorrow 00:00" +%s)-$(date +%s))))
   echo "3. `date '+%Y.%m.%d__%H:%M:%S'` (na koncu petli) secs_to_midnight = $secs_to_midnight" | tee -a $log_file
   sleep ${opoznienie_miedzy_wywolaniami} # opozniamy bo jak sa problemy z siecia, to by nie startowac od razu z nastepna proba...

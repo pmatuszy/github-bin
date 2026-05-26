@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.05.26 - user-facing messages translated from Polish to English
 # 2023.09.06 - v. 0.6 - mount cdrom in r/o mode
 # 2023.07.03 - v. 0.5 - force installation of tools from vmware...
 # 2023.05.09 - v. 0.4 - added checking if the script is run on the virtual machine
@@ -21,7 +22,7 @@ if [ ! -f  /mnt/tmp/vmware-tools-upgrader-64 ];then
 fi
 
 if [ ! $(dpkg -s open-vm-tools >/dev/null 2>&1 ) ];then    # openvm tools are NOT installed
-  echo "usuwam open-vm-tools, bo nie chce uzywac tego pakietu" | boxes -s 50x3 -a c -d ada-box
+  echo "removing open-vm-tools (prefer VMware tools package)" | boxes -s 50x3 -a c -d ada-box
   echo apt remove -y open-vm-tools | boxes -s 50x3 -a c -d ada-box
   apt remove -y --purge open-vm-tools >/dev/null 2>&1
 fi

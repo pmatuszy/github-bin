@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.05.26 - user-facing messages translated from Polish to English
 # 2023.10.18 - v. 0.4 - added possibility to pause checking until a specific date
 # 2023.07.27 - v. 0.3 - bugfix: added ssh 2>/dev/null redirection in case the script is not able to connect
 # 2023.07.05 - v. 0.2 - added printing of the public IP address if there is a problem
@@ -29,7 +30,7 @@ check_if_installed scp openssh-client
 HC_MESSAGE=$(
    echo dddd ${ROUTER_IP}
    cat  $0|grep -e '# *20[123][0-9]'|head -n 1 | awk '{print "script version: " $5 " (dated "$2")"}'
-   echo ; echo "aktualna data: `date '+%Y.%m.%d %H:%M'`" ; echo ;
+   echo ; echo "current date: `date '+%Y.%m.%d %H:%M'`" ; echo ;
 
    echo ; echo -n "checking if ppp interface is up..."
    echo ssh  admin@${ROUTER_IP} "ifconfig -a" 2>/dev/null | sed -n '/^ppp[0-9]/,/^$/p'
@@ -67,7 +68,7 @@ kod_powrotu=$?
 
 if (( $script_is_run_interactively == 1 )); then
   echo "$HC_MESSAGE"
-  echo "kod_powrotu = $kod_powrotu"
+  echo "exit code = $kod_powrotu"
 fi
 
 # if rsync exit code is 23 and no files are transferred / created  we treat it as successful run

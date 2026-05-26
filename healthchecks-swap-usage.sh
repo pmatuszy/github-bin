@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.05.26 - user-facing messages translated from Polish to English
 # 2025.10.27 - v. 0.71- zmiana limitu MAX_DOPUSZCZALNA_ZAJETOSC_SWAP 950 ==> 1500
 # 2025.10.22 - v. 0.7 - zmiana limitu MAX_DOPUSZCZALNA_ZAJETOSC_SWAP 600 ==> 950
 # 2023.02.28 - v. 0.6 - curl with kod_powrotu
@@ -26,10 +27,10 @@ m=$( echo "${SCRIPT_VERSION}";echo ;
      ile_zajetego_SWAP=$(free -m|grep '^Swap:'|awk '{print $3}');
      let czy_jest_wolny_ram=$ile_wolnego_RAM-$ile_zajetego_SWAP;
      if (( $czy_jest_wolny_ram >= $MIN_RAM_FREE && $ile_zajetego_SWAP > ${MAX_DOPUSZCZALNA_ZAJETOSC_SWAP} ));then
-       echo "wymuszam zmniejszenie zajetosci SWAPa,"
-       echo "bo MAX_DOPUSZCZALNA_ZAJETOSC_SWAP ($MAX_DOPUSZCZALNA_ZAJETOSC_SWAP) < ile_zajetego_SWAP ($ile_zajetego_SWAP)"
-       echo "RAM tez jest wolny ile_wolnego_RAM ($ile_wolnego_RAM) > MIN_RAM_FREE ($MIN_RAM_FREE)"
-       echo "~~~~~~~~ PRZED ~~~~~~~~"
+       echo "forcing SWAP usage reduction,"
+       echo "because MAX_DOPUSZCZALNA_ZAJETOSC_SWAP ($MAX_DOPUSZCZALNA_ZAJETOSC_SWAP) < ile_zajetego_SWAP ($ile_zajetego_SWAP)"
+       echo "RAM is also free: ile_wolnego_RAM ($ile_wolnego_RAM) > MIN_RAM_FREE ($MIN_RAM_FREE)"
+       echo "~~~~~~~~ BEFORE ~~~~~~~~"
        printf "ile_wolnego_RAM    = %5d [MiB]\n" $ile_wolnego_RAM
        printf "ile_zajetego_SWAP  = %5d [MiB]\n" $ile_zajetego_SWAP
        printf "czy_jest_wolny_ram = %5d [MiB]\n" $czy_jest_wolny_ram
@@ -41,18 +42,18 @@ m=$( echo "${SCRIPT_VERSION}";echo ;
        ile_zajetego_SWAP=$(free -m|grep '^Swap:'|awk '{print $3}');
        let czy_jest_wolny_ram=$ile_wolnego_RAM-$ile_zajetego_SWAP;
 
-       echo "~~~~~~~~ PO    ~~~~~~~~"
+       echo "~~~~~~~~ AFTER ~~~~~~~~"
        printf "ile_wolnego_RAM    = %5d [MiB]\n" $ile_wolnego_RAM
        printf "ile_zajetego_SWAP  = %5d [MiB]\n" $ile_zajetego_SWAP
        printf "czy_jest_wolny_ram = %5d [MiB]\n" $czy_jest_wolny_ram
        echo
 
        exit 1
-     else  # nie ma krytycznej sytuacji, sprawdzamy wiec inne kryteria
+     else  # no critical condition; check other criteria
        if (( $czy_jest_wolny_ram >= $MIN_RAM_FREE && $ile_zajetego_SWAP > $MAX_USED_SWAP_TO_TRIM_ANYWAY )); then
-         echo "trimujemy SWAPa bo troche jest zajetego, ale nie przekracza MAX_DOPUSZCZALNA_ZAJETOSC_SWAP ($MAX_DOPUSZCZALNA_ZAJETOSC_SWAP)"
-         echo "RAM tez jest wolny ile_wolnego_RAM ($ile_wolnego_RAM) > MIN_RAM_FREE ($MIN_RAM_FREE)"
-         echo "~~~~~~~~ PRZED ~~~~~~~~"
+         echo "trimming swap (some usage, below MAX_DOPUSZCZALNA_ZAJETOSC_SWAP ($MAX_DOPUSZCZALNA_ZAJETOSC_SWAP))"
+         echo "RAM is also free: ile_wolnego_RAM ($ile_wolnego_RAM) > MIN_RAM_FREE ($MIN_RAM_FREE)"
+         echo "~~~~~~~~ BEFORE ~~~~~~~~"
          printf "ile_wolnego_RAM    = %5d [MiB]\n" $ile_wolnego_RAM
          printf "ile_zajetego_SWAP  = %5d [MiB]\n" $ile_zajetego_SWAP
          printf "czy_jest_wolny_ram = %5d [MiB]\n" $czy_jest_wolny_ram
@@ -64,7 +65,7 @@ m=$( echo "${SCRIPT_VERSION}";echo ;
          ile_zajetego_SWAP=$(free -m|grep '^Swap:'|awk '{print $3}');
          let czy_jest_wolny_ram=$ile_wolnego_RAM-$ile_zajetego_SWAP;
 
-         echo "~~~~~~~~ PO    ~~~~~~~~"
+         echo "~~~~~~~~ AFTER ~~~~~~~~"
          printf "ile_wolnego_RAM    = %5d [MiB]\n" $ile_wolnego_RAM
          printf "ile_zajetego_SWAP  = %5d [MiB]\n" $ile_zajetego_SWAP
          printf "czy_jest_wolny_ram = %5d [MiB]\n" $czy_jest_wolny_ram
@@ -72,7 +73,7 @@ m=$( echo "${SCRIPT_VERSION}";echo ;
          exit 0
 
        fi
-       echo "MAX_DOPUSZCZALNA_ZAJETOSC_SWAP ($MAX_DOPUSZCZALNA_ZAJETOSC_SWAP) > ile_zajetego_SWAP ($ile_zajetego_SWAP) wiec nie trzeba nic robic ..."
+       echo "MAX_DOPUSZCZALNA_ZAJETOSC_SWAP ($MAX_DOPUSZCZALNA_ZAJETOSC_SWAP) > ile_zajetego_SWAP ($ile_zajetego_SWAP) nothing to do ..."
        printf "ile_wolnego_RAM    = %5d [MiB]\n" $ile_wolnego_RAM
        printf "ile_zajetego_SWAP  = %5d [MiB]\n" $ile_zajetego_SWAP
        printf "czy_jest_wolny_ram = %5d [MiB]\n" $czy_jest_wolny_ram

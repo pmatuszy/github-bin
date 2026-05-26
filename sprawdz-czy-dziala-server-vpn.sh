@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.05.26 - user-facing messages translated from Polish to English
 # 2023.01.03 - v. 0.2 - dodano random delay jesli skrypt jest wywolywany nieinteraktywnie
 # 20xx.xx.xx - v. 0.1 - initial release (date unknown)
 
@@ -10,7 +11,7 @@ fi
 
 # spr. czy dziala vpn
 if [ `ps -ef|grep vpnserver | awk '{print $8}'|grep -v grep|uniq|wc -l` -eq 0 ];then 
-#  (echo "vpn na `hostname` NIE dziala" | mailx -r root@`hostname` -a 'Content-Type: text/html' -s "(`/bin/hostname`-`date '+\%Y.\%m.\%d \%H:\%M:\%S'`) vpn nie dziala" matuszyk+`/bin/hostname`@matuszyk.com)
+#  (echo "vpn on `hostname` is DOWN" | mailx -r root@`hostname` -a 'Content-Type: text/html' -s "(`/bin/hostname`-`date '+\%Y.\%m.\%d \%H:\%M:\%S'`) vpn is down" matuszyk+`/bin/hostname`@matuszyk.com)
   /usr/bin/curl -fsS -m 100 --retry 10 --retry-delay 10 -o /dev/null "$HEALTHCHECK_URL"/fail 2>/dev/null
 else
   /usr/bin/curl -fsS -m 100 --retry 10 --retry-delay 10 -o /dev/null "$HEALTHCHECK_URL" 2>/dev/null
@@ -25,7 +26,7 @@ exit $?
 
 # old crontab entry
 # spr. czy dziala vpn
-#5 */6 * * * if [ `ps -ef|grep vpnserver | awk '{print $8}'|grep -v grep|uniq|wc -l` -eq 0 ];then (echo "vpn na `hostname` NIE dziala" | mailx -r root@`hostname` -a 'Content-Type: text/html' -s "(`/bin/hostname`-`date '+\%Y.\%m.\%d \%H:\%M:\%S'`) vpn nie dziala" matuszyk+`/bin/hostname`@matuszyk.com) ; fi
+#5 */6 * * * if [ `ps -ef|grep vpnserver | awk '{print $8}'|grep -v grep|uniq|wc -l` -eq 0 ];then (echo "vpn on `hostname` is DOWN" | mailx -r root@`hostname` -a 'Content-Type: text/html' -s "(`/bin/hostname`-`date '+\%Y.\%m.\%d \%H:\%M:\%S'`) vpn is down" matuszyk+`/bin/hostname`@matuszyk.com) ; fi
 
 ~
 

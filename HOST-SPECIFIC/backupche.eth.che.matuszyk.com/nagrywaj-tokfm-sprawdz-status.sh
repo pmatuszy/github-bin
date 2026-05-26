@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.05.26 - user-facing messages translated from Polish to English
 # 2023.07.31 - v. 0.3 - bugfix: better error handling (cd command, find command)
 # 2023.04.11 - v. 0.2 - added printing script name
 # 2023.02.14 - v. 0.1 - initial release
@@ -18,13 +19,13 @@ ile_plikow=$(find "${DIR}" -type f -name "${maska_plikow}" -mmin -${jak_nowe_pli
 
 HC_message=$(
    echo "script name: $0"
-   echo "aktualna data: `date '+%Y.%m.%d %H:%M'`" ;
+   echo "current date: `date '+%Y.%m.%d %H:%M'`" ;
    cat  $0|grep -e '# *20[123][0-9]'|head -n 1 | awk '{print "script version: " $5 " (dated "$2")"}'
    echo "katalog: $DIR" ;echo 
    cd "${DIR}" 2>/dev/null
 
    if (( $? != 0 ));then
-     echo "(PGM) Nie moge zmienic katalogu na ${DIR}  - moze nie jest zamontowany fs?. PRZERYWAM DZIALANIE"
+     echo "(PGM) Cannot change directory to ${DIR} - filesystem may not be mounted? ABORTING"
      exit 1
    fi
    

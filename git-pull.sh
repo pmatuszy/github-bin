@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.05.26 - user-facing messages translated from Polish to English
 # 2023.02.18 - v. 1.0 - some minor changes like printing script version in non-interactive mode
 # 2023.02.11 - v. 1.0 - added GIT_SSH_COMMAND
 # 2023.02.07 - v. 0.9 - added batch mode
@@ -58,7 +59,7 @@ if [ "${p}" == 'y' -o  "${p}" == 'y' ]; then
   echo git ls-remote git+ssh://git@github.com/pmatuszy/"${github_project_name}".git | boxes -s 70x3 -a c
   git ls-remote git+ssh://git@github.com/pmatuszy/"${github_project_name}".git 2>&1 >/dev/null
   if (( $? != 0 )); then
-    echo  ; echo ; echo "Nie mam dostepu do zdalnego repozytorium.... WYCHODZE" ; echo ; echo
+    echo  ; echo ; echo "No access to remote repository.... EXITING" ; echo ; echo
     exit 2
   fi
 
@@ -68,7 +69,7 @@ if [ "${p}" == 'y' -o  "${p}" == 'y' ]; then
 
   git pull git+ssh://git@github.com/pmatuszy/"${github_project_name}".git
   if (( $? != 0 )); then
-    echo  ; echo ; echo "Pull was not successful... WYCHODZE" ; echo ; echo
+    echo  ; echo ; echo "Pull was not successful... EXITING" ; echo ; echo
     exit 3
   fi
 
