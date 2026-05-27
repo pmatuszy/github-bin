@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.05.27 - v. 0.9.0 - print start/finish, processing time, and other/wait time at end
 # 2026.05.27 - v. 0.8.9 - already-merged menu: [d] delete input chapters (non-default)
 # 2026.05.27 - v. 0.8.8 - output stem timestamp from first chapter file (not last)
 # 2026.05.27 - v. 0.8.7 - output name: …_parts_01-04_concat.mp4 from chapter range
@@ -125,10 +126,13 @@ detect_mp4_merge_asset() {
 fetch_latest_release_tag() {
   local api_url="https://api.github.com/repos/${MP4_MERGE_REPO}/releases/latest"
   local json tag
+  pgm_processing_begin
   if ! json=$(/usr/bin/curl -fsSL --max-time 120 "${api_url}" 2>/dev/null); then
+    pgm_processing_end
     echo "(PGM) Failed to fetch release metadata from ${api_url}" >&2
     return 1
   fi
+  pgm_processing_end
   tag=$(printf '%s\n' "$json" | grep -m1 '"tag_name"' | sed 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/')
   if [[ -z "$tag" ]]; then
     echo "(PGM) Could not parse latest release tag from GitHub API." >&2
@@ -158,11 +162,14 @@ update_mp4_merge() {
   echo "(PGM) To:   ${dest}"
   echo
 
+  pgm_processing_begin
   if ! /usr/bin/curl -fsSL --max-time 600 -o "${tmp}" "${url}"; then
+    pgm_processing_end
     rm -f "${tmp}"
     echo "(PGM) Download failed." >&2
     return 1
   fi
+  pgm_processing_end
   chmod 755 "${tmp}"
   mv -f "${tmp}" "${dest}"
 
@@ -199,6 +206,66 @@ find_merger() {
 # Set by do_merge; used by trap on Ctrl-C to drop a partial output file.
 VIDEO_MERGE_OUT_FILE=""
 PGM_READ_TIMEOUT=300
+PGM_SCRIPT_START_NS=""
+PGM_PROCESSING_SEC=0
+PGM_PROCESSING_SLICE_START=""
+
+pgm_time_now_ns() {
+  date +%s.%N 2>/dev/null || date +%s
+}
+
+pgm_record_script_start() {
+  PGM_SCRIPT_START_NS=$(pgm_time_now_ns)
+  PGM_PROCESSING_SEC=0
+}
+
+pgm_processing_begin() {
+  PGM_PROCESSING_SLICE_START=$(pgm_time_now_ns)
+}
+
+pgm_processing_end() {
+  local t_end
+  t_end=$(pgm_time_now_ns)
+  PGM_PROCESSING_SEC=$(awk -v acc="${PGM_PROCESSING_SEC:-0}" -v t0="${PGM_PROCESSING_SLICE_START}" -v t1="${t_end}" \
+    'BEGIN { printf "%.6f", acc + (t1 - t0) }')
+}
+
+pgm_format_wall_clock() {
+  local ns="$1"
+  date -d "@${ns%.*}" '+%Y.%m.%d %H:%M:%S' 2>/dev/null \
+    || date -r "${ns%.*}" '+%Y.%m.%d %H:%M:%S' 2>/dev/null \
+    || printf '%s\n' "${ns%.*}"
+}
+
+format_duration_sec() {
+  local sec="$1"
+  awk -v s="${sec}" 'BEGIN {
+    if (s < 0) s = 0
+    h = int(s / 3600)
+    m = int((s - h * 3600) / 60)
+    x = s - h * 3600 - m * 60
+    if (h > 0) printf "%dh %02dm %05.2fs", h, m, x
+    else if (m > 0) printf "%dm %05.2fs", m, x
+    else printf "%.2f s", s
+  }'
+}
+
+print_pgm_timing_summary() {
+  local end_ns total_sec wait_sec
+  [[ -n "${PGM_SCRIPT_START_NS}" ]] || return 0
+  end_ns=$(pgm_time_now_ns)
+  total_sec=$(awk -v s0="${PGM_SCRIPT_START_NS}" -v s1="${end_ns}" 'BEGIN { printf "%.6f", s1 - s0 }')
+  wait_sec=$(awk -v t="${total_sec}" -v p="${PGM_PROCESSING_SEC:-0}" \
+    'BEGIN { w = t - p; if (w < 0) w = 0; printf "%.6f", w }')
+  echo
+  echo "(PGM) --- Timing ---"
+  printf '(PGM) Started:           %s\n' "$(pgm_format_wall_clock "${PGM_SCRIPT_START_NS}")"
+  printf '(PGM) Finished:          %s\n' "$(date '+%Y.%m.%d %H:%M:%S')"
+  printf '(PGM) Total wall time:   %s\n' "$(format_duration_sec "${total_sec}")"
+  printf '(PGM) Processing time:   %s  (merges, downloads)\n' "$(format_duration_sec "${PGM_PROCESSING_SEC:-0}")"
+  printf '(PGM) Other/wait time:   %s  (prompts, startup delay, overhead)\n' "$(format_duration_sec "${wait_sec}")"
+  echo
+}
 
 flush_stdin() {
   local discard drained=0 max_drain=256
@@ -529,8 +596,10 @@ run_merge_group() {
   VIDEO_MERGE_OUT_FILE="${output_file}"
   echo "(PGM) Merging ${#files[@]} chapter(s) → ${output_file}"
   trap video_merge_ctrl_c INT
+  pgm_processing_begin
   "${merger}" "${files[@]}" --out "${output_file}"
   rc=$?
+  pgm_processing_end
   trap ctrl_c INT
   VIDEO_MERGE_OUT_FILE=""
   if (( rc == 0 )); then
@@ -733,9 +802,6 @@ do_merge() {
     echo
   done
 
-  if (( rc == 0 )); then
-    echo "(PGM) Finished."
-  fi
   return "${rc}"
 }
 
@@ -786,15 +852,20 @@ if [[ -f "${BASH_SOURCE[0]}" ]]; then
   chmod 700 "${BASH_SOURCE[0]}" 2>/dev/null || true
 fi
 
+pgm_record_script_start
+
 if (( DO_UPDATE )); then
   update_mp4_merge
   kod_powrotu=$?
+  print_pgm_timing_summary
   . /root/bin/_script_footer.sh
   exit "${kod_powrotu}"
 fi
 
 do_merge
 kod_powrotu=$?
+
+print_pgm_timing_summary
 
 . /root/bin/_script_footer.sh
 
