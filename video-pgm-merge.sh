@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.05.27 - v. 0.9.1 - log prefix: YYYY.MM.DD HH:MM:SS instead of (PGM)
 # 2026.05.27 - v. 0.9.0 - print start/finish, processing time, and other/wait time at end
 # 2026.05.27 - v. 0.8.9 - already-merged menu: [d] delete input chapters (non-default)
 # 2026.05.27 - v. 0.8.8 - output stem timestamp from first chapter file (not last)
@@ -129,13 +130,13 @@ fetch_latest_release_tag() {
   pgm_processing_begin
   if ! json=$(/usr/bin/curl -fsSL --max-time 120 "${api_url}" 2>/dev/null); then
     pgm_processing_end
-    echo "(PGM) Failed to fetch release metadata from ${api_url}" >&2
+    echo "$(pgm_ts) Failed to fetch release metadata from ${api_url}" >&2
     return 1
   fi
   pgm_processing_end
   tag=$(printf '%s\n' "$json" | grep -m1 '"tag_name"' | sed 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/')
   if [[ -z "$tag" ]]; then
-    echo "(PGM) Could not parse latest release tag from GitHub API." >&2
+    echo "$(pgm_ts) Could not parse latest release tag from GitHub API." >&2
     return 1
   fi
   printf '%s\n' "$tag"
@@ -146,7 +147,7 @@ update_mp4_merge() {
   check_if_installed curl
 
   if ! asset=$(detect_mp4_merge_asset); then
-    echo "(PGM) Unsupported OS/arch for mp4_merge: $(uname -s) $(uname -m)" >&2
+    echo "$(pgm_ts) Unsupported OS/arch for mp4_merge: $(uname -s) $(uname -m)" >&2
     return 1
   fi
   if ! tag=$(fetch_latest_release_tag); then
@@ -157,16 +158,16 @@ update_mp4_merge() {
   tmp="${dest}.tmp.$$"
   url="https://github.com/${MP4_MERGE_REPO}/releases/download/${tag}/${asset}"
 
-  echo "(PGM) Installing ${asset} (${tag}) ..."
-  echo "(PGM) From: ${url}"
-  echo "(PGM) To:   ${dest}"
+  echo "$(pgm_ts) Installing ${asset} (${tag}) ..."
+  echo "$(pgm_ts) From: ${url}"
+  echo "$(pgm_ts) To:   ${dest}"
   echo
 
   pgm_processing_begin
   if ! /usr/bin/curl -fsSL --max-time 600 -o "${tmp}" "${url}"; then
     pgm_processing_end
     rm -f "${tmp}"
-    echo "(PGM) Download failed." >&2
+    echo "$(pgm_ts) Download failed." >&2
     return 1
   fi
   pgm_processing_end
@@ -177,9 +178,9 @@ update_mp4_merge() {
     ln -sf "${asset}" "${MP4_MERGE_INSTALL_DIR}/mp4_merge"
   fi
 
-  echo "(PGM) Installed: ${dest}"
+  echo "$(pgm_ts) Installed: ${dest}"
   if [[ -x "${dest}" ]]; then
-    echo "(PGM) $(file -b "${dest}" 2>/dev/null || echo 'binary ready')"
+    echo "$(pgm_ts) $(file -b "${dest}" 2>/dev/null || echo 'binary ready')"
   fi
   return 0
 }
@@ -209,6 +210,10 @@ PGM_READ_TIMEOUT=300
 PGM_SCRIPT_START_NS=""
 PGM_PROCESSING_SEC=0
 PGM_PROCESSING_SLICE_START=""
+
+pgm_ts() {
+  date '+%Y.%m.%d %H:%M:%S'
+}
 
 pgm_time_now_ns() {
   date +%s.%N 2>/dev/null || date +%s
@@ -258,12 +263,12 @@ print_pgm_timing_summary() {
   wait_sec=$(awk -v t="${total_sec}" -v p="${PGM_PROCESSING_SEC:-0}" \
     'BEGIN { w = t - p; if (w < 0) w = 0; printf "%.6f", w }')
   echo
-  echo "(PGM) --- Timing ---"
-  printf '(PGM) Started:           %s\n' "$(pgm_format_wall_clock "${PGM_SCRIPT_START_NS}")"
-  printf '(PGM) Finished:          %s\n' "$(date '+%Y.%m.%d %H:%M:%S')"
-  printf '(PGM) Total wall time:   %s\n' "$(format_duration_sec "${total_sec}")"
-  printf '(PGM) Processing time:   %s  (merges, downloads)\n' "$(format_duration_sec "${PGM_PROCESSING_SEC:-0}")"
-  printf '(PGM) Other/wait time:   %s  (prompts, startup delay, overhead)\n' "$(format_duration_sec "${wait_sec}")"
+  echo "$(pgm_ts) --- Timing ---"
+  printf '%s Started:           %s\n' "$(pgm_ts)" "$(pgm_format_wall_clock "${PGM_SCRIPT_START_NS}")"
+  printf '%s Finished:          %s\n' "$(pgm_ts)" "$(date '+%Y.%m.%d %H:%M:%S')"
+  printf '%s Total wall time:   %s\n' "$(pgm_ts)" "$(format_duration_sec "${total_sec}")"
+  printf '%s Processing time:   %s  (merges, downloads)\n' "$(pgm_ts)" "$(format_duration_sec "${PGM_PROCESSING_SEC:-0}")"
+  printf '%s Other/wait time:   %s  (prompts, startup delay, overhead)\n' "$(pgm_ts)" "$(format_duration_sec "${wait_sec}")"
   echo
 }
 
@@ -349,7 +354,7 @@ format_size_comparison_line() {
 video_merge_ctrl_c() {
   if [[ -n "${VIDEO_MERGE_OUT_FILE}" && -e "${VIDEO_MERGE_OUT_FILE}" ]]; then
     rm -f "${VIDEO_MERGE_OUT_FILE}"
-    echo "(PGM) Removed incomplete output: ${VIDEO_MERGE_OUT_FILE}"
+    echo "$(pgm_ts) Removed incomplete output: ${VIDEO_MERGE_OUT_FILE}"
   fi
   ctrl_c
 }
@@ -436,7 +441,7 @@ print_group_plan() {
   local gidx=0 mergeable=0 standalone=0
   local -a files=()
   local f base part cam blob
-  echo "(PGM) Chapter plan in $(pwd):"
+  echo "$(pgm_ts) Chapter plan in $(pwd):"
   echo
   for blob in "${GROUP_BLOBS[@]}"; do
     group_files_to_array "$blob" files
@@ -486,7 +491,7 @@ print_group_plan() {
     done
     echo
   fi
-  echo "(PGM) Summary: ${mergeable} merge group(s), ${standalone} standalone file(s)."
+  echo "$(pgm_ts) Summary: ${mergeable} merge group(s), ${standalone} standalone file(s)."
   echo
 }
 
@@ -564,14 +569,14 @@ prompt_delete_merged_inputs() {
     y)
       for f in "${files[@]}"; do
         if rm -f -- "$f"; then
-          echo "(PGM) Deleted: ${f##*/}"
+          echo "$(pgm_ts) Deleted: ${f##*/}"
         else
-          echo "(PGM) Could not delete: $f" >&2
+          echo "$(pgm_ts) Could not delete: $f" >&2
         fi
       done
       ;;
     *)
-      echo "(PGM) Input files kept."
+      echo "$(pgm_ts) Input files kept."
       ;;
   esac
   echo
@@ -588,13 +593,13 @@ run_merge_group() {
       return 0
     fi
     if ! rm -f -- "$output_file"; then
-      echo "(PGM) Could not remove existing output: ${output_file}" >&2
+      echo "$(pgm_ts) Could not remove existing output: ${output_file}" >&2
       return 1
     fi
-    echo "(PGM) Removed existing output for redo merge."
+    echo "$(pgm_ts) Removed existing output for redo merge."
   fi
   VIDEO_MERGE_OUT_FILE="${output_file}"
-  echo "(PGM) Merging ${#files[@]} chapter(s) → ${output_file}"
+  echo "$(pgm_ts) Merging ${#files[@]} chapter(s) → ${output_file}"
   trap video_merge_ctrl_c INT
   pgm_processing_begin
   "${merger}" "${files[@]}" --out "${output_file}"
@@ -603,12 +608,12 @@ run_merge_group() {
   trap ctrl_c INT
   VIDEO_MERGE_OUT_FILE=""
   if (( rc == 0 )); then
-    echo "(PGM) Done: ${output_file}"
+    echo "$(pgm_ts) Done: ${output_file}"
     echo
     print_merge_size_summary "$output_file" "${files[@]}"
     prompt_delete_merged_inputs after_merge "${files[@]}"
   else
-    echo "(PGM) Merge failed (exit ${rc})." >&2
+    echo "$(pgm_ts) Merge failed (exit ${rc})." >&2
   fi
   return "${rc}"
 }
@@ -624,7 +629,7 @@ prompt_merge_group_action() {
   fi
   if (( DO_YES )); then
     if (( already_merged )); then
-      echo "(PGM) Output already exists, skipping: ${output_file}"
+      echo "$(pgm_ts) Output already exists, skipping: ${output_file}"
       REPLY=skip
     else
       REPLY=merge
@@ -645,9 +650,9 @@ prompt_merge_group_action() {
   fi
   if (( ! script_is_run_interactively )); then
     if (( already_merged )); then
-      echo "(PGM) Output already exists, skipping: ${output_file}"
+      echo "$(pgm_ts) Output already exists, skipping: ${output_file}"
     else
-      echo "(PGM) Non-interactive: skipping group ${group_num} (use -y to merge all)."
+      echo "$(pgm_ts) Non-interactive: skipping group ${group_num} (use -y to merge all)."
     fi
     REPLY=skip
     return 0
@@ -662,12 +667,12 @@ prompt_merge_group_action() {
       pgm_read_key "Already merged — group ${group_num}/${group_total} [N/r/d/a/q]: " n
       choice="${REPLY,,}"
       case "$choice" in
-        ''|n)  REPLY=skip; echo "(PGM) Keeping existing output and inputs."; return 0 ;;
+        ''|n)  REPLY=skip; echo "$(pgm_ts) Keeping existing output and inputs."; return 0 ;;
         r)     REPLY=redo; return 0 ;;
         d)     REPLY=delete_inputs; return 0 ;;
         a)     REPLY=skip_all; return 0 ;;
         q)     REPLY=quit; return 0 ;;
-        *)     echo "(PGM) Unknown choice: ${REPLY}" ;;
+        *)     echo "$(pgm_ts) Unknown choice: ${REPLY}" ;;
       esac
     else
       echo "  [Y] Merge this group (default)"
@@ -683,7 +688,7 @@ prompt_merge_group_action() {
         a)     REPLY=skip_all; return 0 ;;
         m)     REPLY=merge_all; return 0 ;;
         q)     REPLY=quit; return 0 ;;
-        *)     echo "(PGM) Unknown choice: ${REPLY}" ;;
+        *)     echo "$(pgm_ts) Unknown choice: ${REPLY}" ;;
       esac
     fi
   done
@@ -705,7 +710,7 @@ show_merge_group_detail() {
   echo "  → ${output_file}"
   if [[ -e "$output_file" ]]; then
     sz=$(file_size_bytes "$output_file")
-    echo "(PGM) Already merged — output: $(format_bytes_human "$sz")"
+    echo "$(pgm_ts) Already merged — output: $(format_bytes_human "$sz")"
   fi
   echo
 }
@@ -714,9 +719,9 @@ do_merge() {
   local merger rc=0 group_num=0 mergeable_total=0
   local blob action -a files=() mergeable_blobs=()
   merger=$(find_merger) || {
-    echo "(PGM) mp4_merge not found in . or ${SCRIPT_DIR}/" >&2
-    echo "(PGM) Run: $(basename "$0") -u" >&2
-    echo "(PGM) Or set MP4_MERGE_BIN=/path/to/mp4_merge" >&2
+    echo "$(pgm_ts) mp4_merge not found in . or ${SCRIPT_DIR}/" >&2
+    echo "$(pgm_ts) Run: $(basename "$0") -u" >&2
+    echo "$(pgm_ts) Or set MP4_MERGE_BIN=/path/to/mp4_merge" >&2
     return 1
   }
 
@@ -725,7 +730,7 @@ do_merge() {
   shopt -u nocaseglob
 
   if (( ${#mp4_files[@]} == 0 )); then
-    echo "(PGM) No *.mp4 files in $(pwd)" >&2
+    echo "$(pgm_ts) No *.mp4 files in $(pwd)" >&2
     return 1
   fi
 
@@ -734,7 +739,7 @@ do_merge() {
 
   build_chapter_groups "${sorted_mp4[@]}"
   if (( ${#GROUP_BLOBS[@]} == 0 )); then
-    echo "(PGM) No chapter MP4s to process in $(pwd)" >&2
+    echo "$(pgm_ts) No chapter MP4s to process in $(pwd)" >&2
     return 1
   fi
 
@@ -752,7 +757,7 @@ do_merge() {
   mergeable_total=${#mergeable_blobs[@]}
 
   if (( mergeable_total == 0 )); then
-    echo "(PGM) No multi-part chapter groups to merge."
+    echo "$(pgm_ts) No multi-part chapter groups to merge."
     return 0
   fi
 
@@ -774,28 +779,28 @@ do_merge() {
         if [[ -e "$output_file" ]]; then
           prompt_delete_merged_inputs already_merged "${files[@]}"
         else
-          echo "(PGM) No merged output for group ${group_num}; cannot delete inputs here." >&2
+          echo "$(pgm_ts) No merged output for group ${group_num}; cannot delete inputs here." >&2
         fi
         ;;
       skip)
         if [[ ! -e "$output_file" ]]; then
-          echo "(PGM) Skipped group ${group_num}."
+          echo "$(pgm_ts) Skipped group ${group_num}."
         fi
         ;;
       skip_all)
         SKIP_ALL_REMAINING=1
-        echo "(PGM) Skipping remaining groups."
+        echo "$(pgm_ts) Skipping remaining groups."
         ;;
       merge_all)
         MERGE_ALL_REMAINING=1
         if [[ -e "$output_file" ]]; then
-          echo "(PGM) Keeping existing output for group ${group_num}."
+          echo "$(pgm_ts) Keeping existing output for group ${group_num}."
         else
           run_merge_group "$merger" 0 "${files[@]}" || rc=$?
         fi
         ;;
       quit)
-        echo "(PGM) Quit at group ${group_num}."
+        echo "$(pgm_ts) Quit at group ${group_num}."
         return "${rc}"
         ;;
     esac
@@ -835,7 +840,7 @@ while [[ $# -gt 0 ]]; do
       shift
       ;;
     *)
-      echo "(PGM) Unknown argument: $1" >&2
+      echo "$(pgm_ts) Unknown argument: $1" >&2
       echo "Try: $(basename "$0") --help" >&2
       exit 1
       ;;
