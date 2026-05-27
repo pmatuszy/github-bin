@@ -1,28 +1,27 @@
 #!/bin/bash
 
+# 2026.05.26 - v. 0.5 - source _script_header.sh / _script_footer.sh like other bin scripts
+# 2026.05.26 - v. 0.4 - enforce owner-only mode 700 on this script when run on Linux
 # 2026.05.26 - v. 0.3 - add -h/--help and -u/--update (install mp4_merge from gyroflow/mp4-merge)
 # 2026.05.26 - v. 0.2 - renamed from gopro-mp4-merge.sh
 # 2026.05.26 - v. 0.1 - merge GoPro chapter MP4s (Windows merge-gopro batch port)
 
-set -o nounset
-set -o pipefail
-
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 MP4_MERGE_REPO="${MP4_MERGE_REPO:-gyroflow/mp4-merge}"
-MP4_MERGE_INSTALL_DIR="${MP4_MERGE_INSTALL_DIR:-${SCRIPT_DIR}}"
 
 show_help() {
   cat <<EOF
-Usage: $(basename "$0") [-h|--help] [-u|--update] [-v|--version]
+Usage: $(basename "$0") [-h|--help] [-u|--update] [-v|--version] [NO_STARTUP_DELAY]
 
 Merge chapter MP4 files in the current directory (e.g. GoPro splits) into one
 file using mp4_merge from https://github.com/gyroflow/mp4-merge
 
 Options:
-  -h, --help      Show this help and exit.
-  -u, --update    Download or update mp4_merge for this OS/CPU into the install
-                  directory (default: directory containing this script).
-  -v, --version   Print script version and exit.
+  -h, --help           Show this help and exit.
+  -u, --update         Download or update mp4_merge for this OS/CPU into the install
+                       directory (default: directory containing this script).
+  -v, --version        Print script version and exit.
+  NO_STARTUP_DELAY     Skip random startup delay when run non-interactively (see
+                       _script_header.sh).
 
 Merge behaviour (no options):
   - Collects *.mp4 in the current working directory (case-insensitive).
@@ -48,8 +47,8 @@ Examples:
   cd /path/to/chapters && $(basename "$0")
       Merge all chapter MP4s in that folder.
 
-  MP4_MERGE_BIN=/opt/bin/mp4_merge-linux64 $(basename "$0")
-      Use a specific binary.
+  $(basename "$0") NO_STARTUP_DELAY
+      Merge without random delay (cron).
 
 Upstream: https://github.com/gyroflow/mp4-merge
 EOF
@@ -101,7 +100,7 @@ detect_mp4_merge_asset() {
 fetch_latest_release_tag() {
   local api_url="https://api.github.com/repos/${MP4_MERGE_REPO}/releases/latest"
   local json tag
-  if ! json=$(curl -fsSL --max-time 120 "${api_url}" 2>/dev/null); then
+  if ! json=$(/usr/bin/curl -fsSL --max-time 120 "${api_url}" 2>/dev/null); then
     echo "(PGM) Failed to fetch release metadata from ${api_url}" >&2
     return 1
   fi
@@ -114,11 +113,9 @@ fetch_latest_release_tag() {
 }
 
 update_mp4_merge() {
-  local asset tag dest tmp url curl_bin
-  if ! curl_bin=$(type -fP curl 2>/dev/null); then
-    echo "(PGM) curl is required for --update (install curl or set PATH)." >&2
-    return 1
-  fi
+  local asset tag dest tmp url
+  check_if_installed curl
+
   if ! asset=$(detect_mp4_merge_asset); then
     echo "(PGM) Unsupported OS/arch for mp4_merge: $(uname -s) $(uname -m)" >&2
     return 1
@@ -136,7 +133,7 @@ update_mp4_merge() {
   echo "(PGM) To:   ${dest}"
   echo
 
-  if ! "${curl_bin}" -fsSL --max-time 600 -o "${tmp}" "${url}"; then
+  if ! /usr/bin/curl -fsSL --max-time 600 -o "${tmp}" "${url}"; then
     rm -f "${tmp}"
     echo "(PGM) Download failed." >&2
     return 1
@@ -144,7 +141,6 @@ update_mp4_merge() {
   chmod 755 "${tmp}"
   mv -f "${tmp}" "${dest}"
 
-  # Generic symlink for find_merger fallback
   if [[ "${asset}" != mp4_merge ]]; then
     ln -sf "${asset}" "${MP4_MERGE_INSTALL_DIR}/mp4_merge"
   fi
@@ -176,7 +172,7 @@ find_merger() {
 }
 
 do_merge() {
-  local merger kod_powrotu top_file file_base
+  local merger top_file file_base
   merger=$(find_merger) || {
     echo "(PGM) mp4_merge not found in . or ${SCRIPT_DIR}/" >&2
     echo "(PGM) Run: $(basename "$0") -u" >&2
@@ -199,29 +195,26 @@ do_merge() {
   local merge_files=()
   mapfile -t merge_files < <(printf '%s\n' "${mp4_files[@]}" | LC_ALL=C sort)
 
-  clear 2>/dev/null || true
   echo "Merging video chapters:"
   printf ' %q' "${merge_files[@]}"
   echo
   echo
 
   "${merger}" "${merge_files[@]}" --out "${file_base}_concat.mp4"
-  kod_powrotu=$?
+  local rc=$?
 
   echo
-  if (( kod_powrotu == 0 )); then
+  if (( rc == 0 )); then
     echo "Done!"
   else
-    echo "Merge failed (exit ${kod_powrotu})."
+    echo "(PGM) Merge failed (exit ${rc})."
   fi
-
-  if tty -s </dev/tty 2>/dev/null; then
-    read -r -p "Press Enter to continue..."
-  fi
-  return "${kod_powrotu}"
+  return "${rc}"
 }
 
-# --- argument parsing (before merge) ---
+# --- parse options before _script_header (avoids figlet/delay on --help) ---
+DO_UPDATE=0
+HEADER_EXTRA_ARGS=()
 while [[ $# -gt 0 ]]; do
   case $1 in
     -h|--help)
@@ -233,8 +226,12 @@ while [[ $# -gt 0 ]]; do
       exit 0
       ;;
     -u|--update)
-      update_mp4_merge
-      exit $?
+      DO_UPDATE=1
+      shift
+      ;;
+    NO_STARTUP_DELAY)
+      HEADER_EXTRA_ARGS+=(NO_STARTUP_DELAY)
+      shift
       ;;
     *)
       echo "(PGM) Unknown argument: $1" >&2
@@ -244,5 +241,26 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+# shellcheck disable=SC1091
+. /root/bin/_script_header.sh "${HEADER_EXTRA_ARGS[@]}"
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+MP4_MERGE_INSTALL_DIR="${MP4_MERGE_INSTALL_DIR:-${SCRIPT_DIR}}"
+
+if [[ -f "${BASH_SOURCE[0]}" ]]; then
+  chmod 700 "${BASH_SOURCE[0]}" 2>/dev/null || true
+fi
+
+if (( DO_UPDATE )); then
+  update_mp4_merge
+  kod_powrotu=$?
+  . /root/bin/_script_footer.sh
+  exit "${kod_powrotu}"
+fi
+
 do_merge
-exit $?
+kod_powrotu=$?
+
+. /root/bin/_script_footer.sh
+
+exit "${kod_powrotu}"
