@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.05.27 - v. 0.11.3 - size-split: flexible GoPro names (_-_ labels, GOPRO7 suffix)
 # 2026.05.27 - v. 0.11.2 - GoPro7 size-split: ~4GB and/or ~6:49 (409s) chapter duration
 # 2026.05.27 - v. 0.11.1 - size-split: trust ~4GB size; ffprobe only rejects clearly short clips
 # 2026.05.27 - v. 0.11.0 - detect size-split GoPro clips (~4GB, ~8:30-9:00) without _part_XX names
@@ -58,8 +59,8 @@ Merge behaviour (no options):
   - Detects GoPro-style chapter sequences (_part_01, _part_02, … with the same
     camera token, e.g. GOPRO7_BLACK). A new recording starts when part resets to 01.
   - Also groups clips without _part_XX names when they look like fixed-size splits:
-    same camera (…_-__-_GOPRO7_BLACK.MP4), ~4 GB per segment; GoPro7 chapters are often
-    ~6:49 (409 s) each — duration or size can qualify, optional smaller tail segment.
+    GoPro timestamp + GOPRO7_BLACK (or …_-__-_CAMERA) suffix, same session label in the
+    name (~4 GB / ~6:49 per chapter for GoPro7), optional smaller tail segment.
   - Shows each multi-part group (with file sizes) and asks whether to merge
     (single-key Y/N/A/M/Q, no Enter — like rename.sh).
   - After a successful merge: size summary (inputs, output, difference) and optional
@@ -1051,25 +1052,56 @@ chapter_camera_from_basename() {
   return 1
 }
 
-# GoPro timestamp name without _part_XX: 20210321_142541_-__-_GOPRO7_BLACK.MP4
-gopro_timestamp_cam_from_basename() {
+# GoPro clip without _part_XX: YYYYMMDD_HHMMSS_…_GOPRO7_BLACK.MP4 (middle tags optional).
+gopro_camera_suffix_from_basename() {
   local base="$1"
-  GOPRO_TS_DATE=""
-  GOPRO_TS_TIME=""
-  GOPRO_TS_CAM=""
-  if [[ "$base" =~ ^([0-9]{8})_([0-9]{6})_-__-_([^./]+)\.[mM][pP]4$ ]]; then
-    GOPRO_TS_DATE="${BASH_REMATCH[1]}"
-    GOPRO_TS_TIME="${BASH_REMATCH[2]}"
-    GOPRO_TS_CAM="${BASH_REMATCH[3]}"
+  if [[ "$base" =~ (GOPRO[0-9]+_[A-Z0-9]+)\.[mM][pP]4$ ]]; then
+    printf '%s\n' "${BASH_REMATCH[1]}"
     return 0
   fi
   return 1
 }
 
+gopro_timestamp_cam_from_basename() {
+  local base="$1" cam
+  GOPRO_TS_DATE=""
+  GOPRO_TS_TIME=""
+  GOPRO_TS_CAM=""
+  if [[ "$base" =~ ^([0-9]{8})_([0-9]{6})_ ]]; then
+    GOPRO_TS_DATE="${BASH_REMATCH[1]}"
+    GOPRO_TS_TIME="${BASH_REMATCH[2]}"
+  else
+    return 1
+  fi
+  cam=$(gopro_camera_suffix_from_basename "$base") || return 1
+  GOPRO_TS_CAM="$cam"
+  return 0
+}
+
+# Session key from middle of basename (dermatolog+s29 vs farma+s29, order-independent).
+gopro_session_key_from_basename() {
+  local base="$1" mid cam
+  local -a tokens=()
+  gopro_timestamp_cam_from_basename "$base" || return 1
+  cam="$GOPRO_TS_CAM"
+  if [[ "$base" =~ ^[0-9]{8}_[0-9]{6}_(.+)\.[mM][pP]4$ ]]; then
+    mid="${BASH_REMATCH[1]}"
+  else
+    return 1
+  fi
+  mid="${mid%_"${cam}"}"
+  mapfile -t tokens < <(
+    printf '%s\n' "$mid" | tr '_-( )' '\n' | tr '[:upper:]' '[:lower:]' |
+      grep -E '^[a-z0-9]{2,}$' | grep -Ev '^(niecaly|film|proxy|black|gopro)$' | LC_ALL=C sort -u
+  )
+  ((${#tokens[@]} > 0)) || return 1
+  local IFS='-'
+  printf '%s\n' "${tokens[*]}"
+}
+
 gopro_camera_from_basename() {
   local base="$1"
-  if gopro_timestamp_cam_from_basename "$base"; then
-    printf '%s\n' "$GOPRO_TS_CAM"
+  if gopro_camera_suffix_from_basename "$base"; then
     return 0
   fi
   chapter_camera_from_basename "$base"
@@ -1184,7 +1216,7 @@ size_split_run_valid() {
 
 size_split_group_output_file() {
   local -a files=("$@")
-  local fb lb date1 t1 cam1 t2 cam2
+  local fb lb date1 t1 cam1 t2 cam2 session=""
   fb="${files[0]##*/}"
   lb="${files[-1]##*/}"
   gopro_timestamp_cam_from_basename "$fb" || return 1
@@ -1192,7 +1224,12 @@ size_split_group_output_file() {
   gopro_timestamp_cam_from_basename "$lb" || return 1
   t2="$GOPRO_TS_TIME" cam2="$GOPRO_TS_CAM"
   [[ "$cam1" == "$cam2" ]] || return 1
-  printf '%s_%s-%s_-__-_%s_concat.mp4\n' "$date1" "$t1" "$t2" "$cam1"
+  session=$(gopro_session_key_from_basename "$fb" 2>/dev/null) || session=""
+  if [[ -n "$session" ]]; then
+    printf '%s_%s-%s_-__-_%s_%s_concat.mp4\n' "$date1" "$t1" "$t2" "$session" "$cam1"
+  else
+    printf '%s_%s-%s_-__-_%s_concat.mp4\n' "$date1" "$t1" "$t2" "$cam1"
+  fi
 }
 
 group_is_size_split() {
@@ -1255,14 +1292,18 @@ build_size_split_groups() {
       (( i++ )) || true
       continue
     fi
-    local run_cam
+    local run_cam run_session
     run_cam=$(gopro_camera_from_basename "${singles[i]##*/}")
+    run_session=$(gopro_session_key_from_basename "${singles[i]##*/}" 2>/dev/null) || run_session=""
     (( i++ )) || true
     while (( i < n )); do
       f="${singles[i]}"
       base="${f##*/}"
       if [[ "$(gopro_camera_from_basename "$base")" != "$run_cam" ]]; then
         break
+      fi
+      if [[ -n "$run_session" ]]; then
+        [[ "$(gopro_session_key_from_basename "$base" 2>/dev/null)" == "$run_session" ]] || break
       fi
       if is_full_size_split_segment "$f"; then
         run+=("$f")
@@ -1764,7 +1805,7 @@ do_merge() {
 
   if (( mergeable_total == 0 )); then
     echo "$(pgm_ts) No multi-part chapter groups to merge."
-    echo "$(pgm_ts) Tip: sequential ~4 GB clips with the same camera (…_-__-_GOPRO…MP4) may be size-split recordings."
+    echo "$(pgm_ts) Tip: sequential GoPro clips (YYYYMMDD_HHMMSS_…_GOPRO7_BLACK.MP4, ~4 GB) may be size-split recordings."
     return 0
   fi
 
