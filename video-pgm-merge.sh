@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.05.27 - v. 0.11.7 - size-split groups: next chapter time ≈ prev time + prev duration
 # 2026.05.27 - v. 0.11.6 - size-split output: copy middle label verbatim from first input name
 # 2026.05.27 - v. 0.11.5 - robust S29_-_dermatolog slug in size-split output filenames
 # 2026.05.27 - v. 0.11.4 - size-split output: session label (dermatolog) in name + MP4 metadata
@@ -62,8 +63,8 @@ Merge behaviour (no options):
   - Detects GoPro-style chapter sequences (_part_01, _part_02, … with the same
     camera token, e.g. GOPRO7_BLACK). A new recording starts when part resets to 01.
   - Also groups clips without _part_XX names when they look like fixed-size splits:
-    GoPro timestamp + GOPRO7_BLACK suffix, same session label in the name (~4 GB / ~6:49
-    for GoPro7). Output name: DATE_T1-T2 + middle from inputs + CAMERA_concat.mp4.
+    same session label, ~4 GB / ~6:49 chapters, and filename times that chain (next clip
+    time ≈ previous time + previous duration). Output: DATE_T1-T2 + middle + CAMERA_concat.
   - Shows each multi-part group (with file sizes) and asks whether to merge
     (single-key Y/N/A/M/Q, no Enter — like rename.sh).
   - After a successful merge: size summary (inputs, output, difference) and optional
@@ -1095,6 +1096,74 @@ gopro_middle_from_basename() {
   printf '%s\n' "$mid"
 }
 
+# Seconds since midnight from HHMMSS (for same-day checks without date(1)).
+gopro_hhmmss_to_seconds() {
+  local t="$1"
+  awk -v t="$t" 'BEGIN {
+    h=int(substr(t,1,2)); m=int(substr(t,3,2)); s=int(substr(t,5,2));
+    printf "%d\n", h*3600+m*60+s
+  }'
+}
+
+# Epoch seconds for YYYYMMDD + HHMMSS (uses date(1) when available).
+gopro_datetime_to_epoch() {
+  local d="$1" t="$2" iso
+  iso="${d:0:4}-${d:4:2}-${d:6:2} ${t:0:2}:${t:2:2}:${t:4:2}"
+  if date -d "$iso" +%s 2>/dev/null; then
+    return 0
+  fi
+  return 1
+}
+
+# 0 = next file's basename time matches previous file end time (± tolerance).
+size_split_chapter_timestamps_follow() {
+  local prev_f="$1" next_f="$2"
+  local pb nb prev_date prev_time next_date next_time
+  local prev_epoch next_epoch dur expected delta tol min_gap max_gap
+  pb="${prev_f##*/}"
+  nb="${next_f##*/}"
+  gopro_timestamp_cam_from_basename "$pb" || return 1
+  prev_date="$GOPRO_TS_DATE" prev_time="$GOPRO_TS_TIME"
+  gopro_timestamp_cam_from_basename "$nb" || return 1
+  next_date="$GOPRO_TS_DATE" next_time="$GOPRO_TS_TIME"
+
+  tol="${PGM_SIZE_SPLIT_TIME_TOLERANCE_SEC:-180}"
+  min_gap="${PGM_SIZE_SPLIT_TIME_MIN_GAP_SEC:-300}"
+  max_gap="${PGM_SIZE_SPLIT_TIME_MAX_GAP_SEC:-720}"
+
+  dur=$(ffprobe_duration_seconds "$prev_f" 2>/dev/null) || dur=""
+
+  if prev_epoch=$(gopro_datetime_to_epoch "$prev_date" "$prev_time" 2>/dev/null) \
+    && next_epoch=$(gopro_datetime_to_epoch "$next_date" "$next_time" 2>/dev/null); then
+    if [[ -n "$dur" ]]; then
+      expected=$(awk -v p="$prev_epoch" -v d="$dur" 'BEGIN{printf "%d", p+d+0.5}')
+      delta=$(( next_epoch - expected ))
+      (( delta >= -tol && delta <= tol ))
+      return $?
+    fi
+    delta=$(( next_epoch - prev_epoch ))
+    (( delta >= min_gap && delta <= max_gap ))
+    return $?
+  fi
+
+  # Same calendar day only (filename times).
+  [[ "$prev_date" == "$next_date" ]] || return 1
+  prev_epoch=$(gopro_hhmmss_to_seconds "$prev_time")
+  next_epoch=$(gopro_hhmmss_to_seconds "$next_time")
+  if [[ -n "$dur" ]]; then
+    expected=$(awk -v p="$prev_epoch" -v d="$dur" 'BEGIN{printf "%d", p+d+0.5}')
+    delta=$(( next_epoch - expected ))
+    # Midnight wrap: next chapter on same day usually does not roll past 24h.
+    if (( next_epoch < prev_epoch )); then
+      return 1
+    fi
+    (( delta >= -tol && delta <= tol ))
+    return $?
+  fi
+  gap=$(( next_epoch - prev_epoch ))
+  (( next_epoch >= prev_epoch && gap >= min_gap && gap <= max_gap ))
+}
+
 gopro_token_is_noise() {
   local t="${1,,}"
   [[ "$t" =~ ^s[0-9]+$ ]] && return 0
@@ -1373,7 +1442,7 @@ build_size_split_groups() {
   }
 
   if ! command -v ffprobe >/dev/null 2>&1; then
-    echo "$(pgm_ts) ffprobe not found — size-split detection uses file size only (~4 GB)." >&2
+    echo "$(pgm_ts) ffprobe not found — size-split uses file size; timestamp chain uses ~5–12 min gaps between names." >&2
     warned_ffprobe=1
   fi
 
@@ -1400,6 +1469,9 @@ build_size_split_groups() {
       fi
       if [[ -n "$run_session" ]]; then
         [[ "$(gopro_session_key_from_basename "$base" 2>/dev/null)" == "$run_session" ]] || break
+      fi
+      if ! size_split_chapter_timestamps_follow "${run[-1]}" "$f"; then
+        break
       fi
       if is_full_size_split_segment "$f"; then
         run+=("$f")
