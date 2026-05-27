@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.05.27 - v. 0.11.2 - GoPro7 size-split: ~4GB and/or ~6:49 (409s) chapter duration
 # 2026.05.27 - v. 0.11.1 - size-split: trust ~4GB size; ffprobe only rejects clearly short clips
 # 2026.05.27 - v. 0.11.0 - detect size-split GoPro clips (~4GB, ~8:30-9:00) without _part_XX names
 # 2026.05.27 - v. 0.10.9 - install mp4_merge to /usr/local/bin; remove PATH/cwd/script copies
@@ -57,8 +58,8 @@ Merge behaviour (no options):
   - Detects GoPro-style chapter sequences (_part_01, _part_02, … with the same
     camera token, e.g. GOPRO7_BLACK). A new recording starts when part resets to 01.
   - Also groups clips without _part_XX names when they look like fixed-size splits:
-    same camera (…_-__-_GOPRO7_BLACK.MP4), ~4 GB per segment (ffprobe may reject only if
-    duration is clearly too short for a full chapter), optional smaller tail segment.
+    same camera (…_-__-_GOPRO7_BLACK.MP4), ~4 GB per segment; GoPro7 chapters are often
+    ~6:49 (409 s) each — duration or size can qualify, optional smaller tail segment.
   - Shows each multi-part group (with file sizes) and asks whether to merge
     (single-key Y/N/A/M/Q, no Enter — like rename.sh).
   - After a successful merge: size summary (inputs, output, difference) and optional
@@ -1079,6 +1080,26 @@ PGM_SIZE_SPLIT_MIN_BYTES=$(( 3700 * 1024 * 1024 ))
 PGM_SIZE_SPLIT_MAX_BYTES=$(( 4200 * 1024 * 1024 ))
 # With ffprobe: reject a ~4 GB file only if duration is clearly too short to be a full chapter.
 PGM_SIZE_SPLIT_DURATION_REJECT_BELOW_SEC="${PGM_SIZE_SPLIT_DURATION_REJECT_BELOW_SEC:-420}"
+# GoPro7 (camera name contains GOPRO7): chapters often ~6:49 and ~4 GB.
+PGM_GOPRO7_SIZE_MIN_BYTES=$(( 3500 * 1024 * 1024 ))
+PGM_GOPRO7_SIZE_MAX_BYTES=$(( 4500 * 1024 * 1024 ))
+PGM_GOPRO7_DURATION_MIN_SEC="${PGM_GOPRO7_DURATION_MIN_SEC:-380}"
+PGM_GOPRO7_DURATION_MAX_SEC="${PGM_GOPRO7_DURATION_MAX_SEC:-450}"
+
+gopro_camera_is_gopro7() {
+  [[ "$1" == *GOPRO7* ]]
+}
+
+gopro7_size_in_chapter_range() {
+  local sz="$1"
+  (( sz >= PGM_GOPRO7_SIZE_MIN_BYTES && sz <= PGM_GOPRO7_SIZE_MAX_BYTES ))
+}
+
+duration_in_gopro7_chapter_range() {
+  local dur="$1"
+  awk -v d="$dur" -v lo="$PGM_GOPRO7_DURATION_MIN_SEC" -v hi="$PGM_GOPRO7_DURATION_MAX_SEC" \
+    'BEGIN { exit !(d+0 >= lo && d+0 <= hi) }'
+}
 
 ffprobe_duration_seconds() {
   local f="$1" d
@@ -1095,22 +1116,55 @@ duration_too_short_for_full_size_split() {
     'BEGIN { exit !(d+0 > 0 && d+0 < rej) }'
 }
 
-# Full segment: ~4 GB; ffprobe must not show a clearly too-short duration.
+# Full segment: ~4 GB and/or (GoPro7) ~6:49 duration; reject only clearly invalid durations.
 is_full_size_split_segment() {
-  local f="$1" sz dur
+  local f="$1" sz dur base cam="" gp7=0
+  base="${f##*/}"
   sz=$(file_size_bytes "$f")
+  cam=$(gopro_camera_from_basename "$base" 2>/dev/null) || cam=
+  gopro_camera_is_gopro7 "$cam" && gp7=1
+  dur=$(ffprobe_duration_seconds "$f" 2>/dev/null) || dur=
+
+  if (( gp7 )); then
+    if gopro7_size_in_chapter_range "$sz"; then
+      if [[ -n "$dur" ]]; then
+        duration_in_gopro7_chapter_range "$dur" && return 0
+        duration_too_short_for_full_size_split "$dur" && return 1
+      fi
+      return 0
+    fi
+    if [[ -n "$dur" ]] && duration_in_gopro7_chapter_range "$dur" \
+      && (( sz >= PGM_GOPRO7_SIZE_MIN_BYTES )); then
+      return 0
+    fi
+  fi
+
   (( sz >= PGM_SIZE_SPLIT_MIN_BYTES && sz <= PGM_SIZE_SPLIT_MAX_BYTES )) || return 1
-  if dur=$(ffprobe_duration_seconds "$f" 2>/dev/null) && [[ -n "$dur" ]]; then
+  if [[ -n "$dur" ]]; then
     duration_too_short_for_full_size_split "$dur" && return 1
   fi
   return 0
 }
 
 is_partial_size_split_segment() {
-  local f="$1" sz dur
+  local f="$1" sz dur base cam="" gp7=0
+  base="${f##*/}"
   sz=$(file_size_bytes "$f")
+  cam=$(gopro_camera_from_basename "$base" 2>/dev/null) || cam=
+  gopro_camera_is_gopro7 "$cam" && gp7=1
+  dur=$(ffprobe_duration_seconds "$f" 2>/dev/null) || dur=
+
+  if (( gp7 )); then
+    (( sz < PGM_GOPRO7_SIZE_MIN_BYTES )) && return 0
+    if [[ -n "$dur" ]] && ! duration_in_gopro7_chapter_range "$dur" \
+      && duration_too_short_for_full_size_split "$dur"; then
+      return 0
+    fi
+    return 1
+  fi
+
   (( sz < PGM_SIZE_SPLIT_MIN_BYTES )) && return 0
-  if dur=$(ffprobe_duration_seconds "$f" 2>/dev/null) && [[ -n "$dur" ]]; then
+  if [[ -n "$dur" ]]; then
     duration_too_short_for_full_size_split "$dur" && return 0
   fi
   return 1
@@ -1268,7 +1322,11 @@ print_size_split_near_miss_hint() {
   done
   echo "$(pgm_ts) Note: ${#cand[@]} same-camera clips look like size-splits but were not grouped."
   if [[ -n "$first_fail" ]]; then
-    echo "$(pgm_ts)       Example: ${first_fail} duration ${first_dur}s (full segment needs ~4 GB and duration not below ${PGM_SIZE_SPLIT_DURATION_REJECT_BELOW_SEC}s)."
+    if [[ "$first_cam" == *GOPRO7* ]]; then
+      echo "$(pgm_ts)       Example: ${first_fail} duration ${first_dur}s (GoPro7: ~4 GB or ~6:49, ${PGM_GOPRO7_DURATION_MIN_SEC}-${PGM_GOPRO7_DURATION_MAX_SEC}s)."
+    else
+      echo "$(pgm_ts)       Example: ${first_fail} duration ${first_dur}s (full segment needs ~4 GB and duration not below ${PGM_SIZE_SPLIT_DURATION_REJECT_BELOW_SEC}s)."
+    fi
   fi
 }
 
@@ -1327,7 +1385,12 @@ group_files_to_array() {
 }
 
 print_size_split_group_hint() {
-  echo "Probable size-split recordings (no _part_XX; sequential ~4 GB chapters, same camera):"
+  local cam_sample="$1"
+  if [[ "$cam_sample" == *GOPRO7* ]]; then
+    echo "Probable size-split recordings (no _part_XX; GoPro7 ~4 GB / ~6:49 per chapter, same camera):"
+  else
+    echo "Probable size-split recordings (no _part_XX; sequential ~4 GB chapters, same camera):"
+  fi
 }
 
 print_group_plan() {
@@ -1375,7 +1438,15 @@ print_group_plan() {
     done
   fi
   if (( size_split_groups > 0 )); then
-    print_size_split_group_hint
+    cam=""
+    for blob in "${GROUP_BLOBS[@]}"; do
+      group_files_to_array "$blob" files
+      (( ${#files[@]} < 2 )) && continue
+      group_is_size_split "${files[@]}" || continue
+      cam=$(gopro_camera_from_basename "${files[0]##*/}" 2>/dev/null) || cam=
+      break
+    done
+    print_size_split_group_hint "$cam"
     gidx=0
     for blob in "${GROUP_BLOBS[@]}"; do
       group_files_to_array "$blob" files
