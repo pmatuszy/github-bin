@@ -1,5 +1,7 @@
 #!/bin/bash
 
+# 2026.05.27 - v. 0.8.3 - prompt skip (default) or redo when _concat output already exists
+# 2026.05.27 - v. 0.8.2 - one line per input file (name + size together)
 # 2026.05.27 - v. 0.8.1 - size difference: positive value + which side is larger (input vs output)
 # 2026.05.27 - v. 0.8 - single-key prompts, per-file sizes, post-merge summary, optional delete inputs
 # 2026.05.27 - v. 0.7 - interactive GoPro chapter groups (part_01→02→…); -y merges all without prompts
@@ -37,6 +39,7 @@ Merge behaviour (no options):
     (single-key Y/N/A/M/Q, no Enter — like rename.sh).
   - After a successful merge: size summary (inputs, output, difference) and optional
     deletion of the source chapter files (single-key Y/N).
+  - If the expected _concat output already exists: skip (default) or redo merge (R).
   - Output file per group: <last_chapter_basename>_concat.mp4
   - Single-part files are listed but not merged unless you group them manually.
 
@@ -232,6 +235,18 @@ format_bytes_human() {
   }'
 }
 
+# One line: part label (if any), basename, size.
+print_chapter_file_line() {
+  local indent="$1" f="$2"
+  local base="${f##*/}" part sz
+  sz=$(file_size_bytes "$f")
+  if part=$(chapter_part_from_basename "$base" 2>/dev/null); then
+    printf '%spart %02d  %s  %s\n' "$indent" "$part" "$base" "$(format_bytes_human "$sz")"
+  else
+    printf '%s%s  %s\n' "$indent" "$base" "$(format_bytes_human "$sz")"
+  fi
+}
+
 # Absolute size difference (always non-negative).
 format_bytes_abs_human() {
   local bytes="$1"
@@ -358,22 +373,19 @@ print_group_plan() {
       group_files_to_array "$blob" files
       (( ${#files[@]} < 2 )) && continue
       (( gidx++ )) || true
-      printf '  [group %d/%d] %d parts → %s_concat.mp4\n' \
-        "$gidx" "$mergeable" "${#files[@]}" "${files[-1]%.*}"
+      local out_name="${files[-1]%.*}_concat.mp4"
+      if [[ -e "$out_name" ]]; then
+        printf '  [group %d/%d] %d parts → %s  (already merged)\n' \
+          "$gidx" "$mergeable" "${#files[@]}" "$out_name"
+      else
+        printf '  [group %d/%d] %d parts → %s\n' \
+          "$gidx" "$mergeable" "${#files[@]}" "$out_name"
+      fi
       local group_bytes=0 sz
       for f in "${files[@]}"; do
+        print_chapter_file_line '      ' "$f"
         sz=$(file_size_bytes "$f")
         (( group_bytes += sz ))
-      done
-      for f in "${files[@]}"; do
-        base="${f##*/}"
-        sz=$(file_size_bytes "$f")
-        if part=$(chapter_part_from_basename "$base" 2>/dev/null); then
-          printf '      part %02d  %s\n' "$part" "$base"
-        else
-          printf '              %s\n' "$base"
-        fi
-        printf '              %s\n' "$(format_bytes_human "$sz")"
       done
       printf '      input total (%d files): %s\n' "${#files[@]}" "$(format_bytes_human "$group_bytes")"
       echo
@@ -411,19 +423,13 @@ print_merge_size_summary() {
   local output_file="$1"
   shift
   local -a files=("$@")
-  local f base part sz input_total=0 out_sz=0
+  local f sz input_total=0 out_sz=0
   echo "=== Size summary ==="
   printf '  Input parts (%d files):\n' "${#files[@]}"
   for f in "${files[@]}"; do
-    base="${f##*/}"
+    print_chapter_file_line '    ' "$f"
     sz=$(file_size_bytes "$f")
     (( input_total += sz ))
-    if part=$(chapter_part_from_basename "$base" 2>/dev/null); then
-      printf '    part %02d  %s\n' "$part" "$base"
-    else
-      printf '            %s\n' "$base"
-    fi
-    printf '            %s\n' "$(format_bytes_human "$sz")"
   done
   printf '  Input total:  %s\n' "$(format_bytes_human "$input_total")"
   if [[ -f "$output_file" ]]; then
@@ -435,6 +441,30 @@ print_merge_size_summary() {
     echo "  Output:       (file missing — merge may have failed)"
   fi
   echo
+}
+
+# Sets REPLY to skip or redo when expected output already exists.
+prompt_existing_output_action() {
+  local output_file="$1"
+  local sz
+  REPLY=skip
+  if (( DO_YES )) || (( ! script_is_run_interactively )); then
+    echo "(PGM) Output already exists, skipping: ${output_file}"
+    return 0
+  fi
+  sz=$(file_size_bytes "$output_file")
+  echo "(PGM) Already merged — output exists:"
+  printf '         %s  %s\n' "$output_file" "$(format_bytes_human "$sz")"
+  echo "  [N] Skip (keep existing)   [R] Redo merge (replace output)"
+  pgm_read_key "Already merged — [N/r]: " n
+  case "${REPLY,,}" in
+    r) REPLY=redo; return 0 ;;
+    *)
+      REPLY=skip
+      echo "(PGM) Keeping existing output."
+      return 0
+      ;;
+  esac
 }
 
 prompt_delete_merged_inputs() {
@@ -473,8 +503,15 @@ run_merge_group() {
   local output_file rc
   output_file=$(group_output_file "${files[@]}")
   if [[ -e "$output_file" ]]; then
-    echo "(PGM) Output already exists, skipping: ${output_file}"
-    return 0
+    prompt_existing_output_action "$output_file"
+    if [[ "$REPLY" == skip ]]; then
+      return 0
+    fi
+    if ! rm -f -- "$output_file"; then
+      echo "(PGM) Could not remove existing output: ${output_file}" >&2
+      return 1
+    fi
+    echo "(PGM) Removed existing output for redo merge."
   fi
   VIDEO_MERGE_OUT_FILE="${output_file}"
   echo "(PGM) Merging ${#files[@]} chapter(s) → ${output_file}"
@@ -535,26 +572,19 @@ show_merge_group_detail() {
   local group_num="$1" group_total="$2"
   shift 2
   local -a files=("$@")
-  local f base part output_file sz input_total=0
+  local f output_file sz input_total=0
   output_file=$(group_output_file "${files[@]}")
   echo "=== Merge group ${group_num} of ${group_total} (${#files[@]} parts) ==="
   for f in "${files[@]}"; do
-    base="${f##*/}"
+    print_chapter_file_line '  ' "$f"
     sz=$(file_size_bytes "$f")
     (( input_total += sz ))
-    part=$(chapter_part_from_basename "$base" 2>/dev/null) || part=
-    if [[ -n "$part" ]]; then
-      printf '  part %02d  %s\n' "$part" "$base"
-    else
-      printf '         %s\n' "$base"
-    fi
-    printf '         %s\n' "$(format_bytes_human "$sz")"
   done
   printf '  input total: %s\n' "$(format_bytes_human "$input_total")"
   echo "  → ${output_file}"
   if [[ -e "$output_file" ]]; then
     sz=$(file_size_bytes "$output_file")
-    echo "(PGM) Note: output file already exists ($(format_bytes_human "$sz"))."
+    echo "(PGM) Already merged: $(format_bytes_human "$sz") — skip [N] or redo [R] if you choose merge"
   fi
   echo
 }
