@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.05.27 - v. 0.11.1 - size-split: trust ~4GB size; ffprobe only rejects clearly short clips
 # 2026.05.27 - v. 0.11.0 - detect size-split GoPro clips (~4GB, ~8:30-9:00) without _part_XX names
 # 2026.05.27 - v. 0.10.9 - install mp4_merge to /usr/local/bin; remove PATH/cwd/script copies
 # 2026.05.27 - v. 0.10.8 - default mp4_merge install /usr/local/bin; prompt to move from cwd
@@ -56,8 +57,8 @@ Merge behaviour (no options):
   - Detects GoPro-style chapter sequences (_part_01, _part_02, … with the same
     camera token, e.g. GOPRO7_BLACK). A new recording starts when part resets to 01.
   - Also groups clips without _part_XX names when they look like fixed-size splits:
-    same camera (…_-__-_GOPRO7_BLACK.MP4), ~4 GB each, ~8:30–9:00 duration (ffprobe),
-    optional shorter tail segment.
+    same camera (…_-__-_GOPRO7_BLACK.MP4), ~4 GB per segment (ffprobe may reject only if
+    duration is clearly too short for a full chapter), optional smaller tail segment.
   - Shows each multi-part group (with file sizes) and asks whether to merge
     (single-key Y/N/A/M/Q, no Enter — like rename.sh).
   - After a successful merge: size summary (inputs, output, difference) and optional
@@ -1073,11 +1074,11 @@ gopro_camera_from_basename() {
   chapter_camera_from_basename "$base"
 }
 
-# ~4 GB GoPro chapter splits (bytes); duration checked separately via ffprobe.
+# ~4 GB GoPro chapter splits (bytes). Chapters are size-capped, so duration often exceeds 9:00.
 PGM_SIZE_SPLIT_MIN_BYTES=$(( 3700 * 1024 * 1024 ))
 PGM_SIZE_SPLIT_MAX_BYTES=$(( 4200 * 1024 * 1024 ))
-PGM_SIZE_SPLIT_DURATION_MIN_SEC=510
-PGM_SIZE_SPLIT_DURATION_MAX_SEC=540
+# With ffprobe: reject a ~4 GB file only if duration is clearly too short to be a full chapter.
+PGM_SIZE_SPLIT_DURATION_REJECT_BELOW_SEC="${PGM_SIZE_SPLIT_DURATION_REJECT_BELOW_SEC:-420}"
 
 ffprobe_duration_seconds() {
   local f="$1" d
@@ -1088,26 +1089,19 @@ ffprobe_duration_seconds() {
   awk -v d="$d" 'BEGIN { if (d+0 >= 0) printf "%.3f\n", d+0; else exit 1 }'
 }
 
-duration_in_size_split_full_range() {
+duration_too_short_for_full_size_split() {
   local dur="$1"
-  awk -v d="$dur" -v lo="$PGM_SIZE_SPLIT_DURATION_MIN_SEC" -v hi="$PGM_SIZE_SPLIT_DURATION_MAX_SEC" \
-    'BEGIN { exit !(d+0 >= lo && d+0 <= hi) }'
+  awk -v d="$dur" -v rej="$PGM_SIZE_SPLIT_DURATION_REJECT_BELOW_SEC" \
+    'BEGIN { exit !(d+0 > 0 && d+0 < rej) }'
 }
 
-duration_is_size_split_partial() {
-  local dur="$1"
-  awk -v d="$dur" -v lo="$PGM_SIZE_SPLIT_DURATION_MIN_SEC" \
-    'BEGIN { exit !(d+0 > 0 && d+0 < lo) }'
-}
-
-# Full segment: ~4 GB and (if ffprobe works) 8:30–9:00; else size only.
+# Full segment: ~4 GB; ffprobe must not show a clearly too-short duration.
 is_full_size_split_segment() {
   local f="$1" sz dur
   sz=$(file_size_bytes "$f")
   (( sz >= PGM_SIZE_SPLIT_MIN_BYTES && sz <= PGM_SIZE_SPLIT_MAX_BYTES )) || return 1
   if dur=$(ffprobe_duration_seconds "$f" 2>/dev/null) && [[ -n "$dur" ]]; then
-    duration_in_size_split_full_range "$dur"
-    return $?
+    duration_too_short_for_full_size_split "$dur" && return 1
   fi
   return 0
 }
@@ -1117,8 +1111,7 @@ is_partial_size_split_segment() {
   sz=$(file_size_bytes "$f")
   (( sz < PGM_SIZE_SPLIT_MIN_BYTES )) && return 0
   if dur=$(ffprobe_duration_seconds "$f" 2>/dev/null) && [[ -n "$dur" ]]; then
-    duration_is_size_split_partial "$dur"
-    return $?
+    duration_too_short_for_full_size_split "$dur" && return 0
   fi
   return 1
 }
@@ -1201,7 +1194,13 @@ build_size_split_groups() {
   n=${#singles[@]}
   i=0
   while (( i < n )); do
-    run=("${singles[i]}")
+    if is_full_size_split_segment "${singles[i]}"; then
+      run=("${singles[i]}")
+    else
+      kept+=("${singles[i]}")
+      (( i++ )) || true
+      continue
+    fi
     local run_cam
     run_cam=$(gopro_camera_from_basename "${singles[i]##*/}")
     (( i++ )) || true
@@ -1234,6 +1233,43 @@ build_size_split_groups() {
 
   GROUP_BLOBS=( "${kept[@]}" "${new_groups[@]}" )
   (( warned_ffprobe )) || true
+  print_size_split_near_miss_hint
+}
+
+# Explain when same-camera ~4GB singles were not grouped (after a failed strict check).
+print_size_split_near_miss_hint() {
+  local -a cand=() files=()
+  local blob f base cam sz dur n_full=0
+  local first_cam="" first_fail="" first_dur=""
+  for blob in "${GROUP_BLOBS[@]}"; do
+    group_files_to_array "$blob" files
+    (( ${#files[@]} == 1 )) || continue
+    f="${files[0]}"
+    base="${f##*/}"
+    gopro_timestamp_cam_from_basename "$base" || continue
+    sz=$(file_size_bytes "$f")
+    if [[ -z "$first_cam" ]]; then
+      first_cam="$GOPRO_TS_CAM"
+    fi
+    [[ "$GOPRO_TS_CAM" == "$first_cam" ]] || continue
+    cand+=("$f")
+    if (( sz >= PGM_SIZE_SPLIT_MIN_BYTES && sz <= PGM_SIZE_SPLIT_MAX_BYTES )); then
+      (( n_full++ )) || true
+      if [[ -z "$first_fail" ]] && ! is_full_size_split_segment "$f"; then
+        first_fail="${base}"
+        first_dur=$(ffprobe_duration_seconds "$f" 2>/dev/null) || first_dur="?"
+      fi
+    fi
+  done
+  (( ${#cand[@]} >= 2 && n_full >= 2 )) || return 0
+  for blob in "${GROUP_BLOBS[@]}"; do
+    group_files_to_array "$blob" files
+    (( ${#files[@]} >= 2 )) && group_is_size_split "${files[@]}" && return 0
+  done
+  echo "$(pgm_ts) Note: ${#cand[@]} same-camera clips look like size-splits but were not grouped."
+  if [[ -n "$first_fail" ]]; then
+    echo "$(pgm_ts)       Example: ${first_fail} duration ${first_dur}s (full segment needs ~4 GB and duration not below ${PGM_SIZE_SPLIT_DURATION_REJECT_BELOW_SEC}s)."
+  fi
 }
 
 # 0 = next file continues the same multi-part recording.
@@ -1291,11 +1327,7 @@ group_files_to_array() {
 }
 
 print_size_split_group_hint() {
-  if command -v ffprobe >/dev/null 2>&1; then
-    echo "Probable size-split recordings (no _part_XX; ~4 GB and ~8:30–9:00 each, ffprobe):"
-  else
-    echo "Probable size-split recordings (no _part_XX; ~4 GB each; install ffprobe for duration check):"
-  fi
+  echo "Probable size-split recordings (no _part_XX; sequential ~4 GB chapters, same camera):"
 }
 
 print_group_plan() {
@@ -1661,7 +1693,7 @@ do_merge() {
 
   if (( mergeable_total == 0 )); then
     echo "$(pgm_ts) No multi-part chapter groups to merge."
-    echo "$(pgm_ts) Tip: sequential ~4 GB clips with the same camera (…_-__-_GOPRO…MP4) may be size-split recordings — need ffprobe and matching durations (~8:30–9:00)."
+    echo "$(pgm_ts) Tip: sequential ~4 GB clips with the same camera (…_-__-_GOPRO…MP4) may be size-split recordings."
     return 0
   fi
 
