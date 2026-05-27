@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.05.27 - v. 0.12.0 - group same-timestamp GoPro clips (_GOPRO*_GX chapter suffix, ~4GB)
 # 2026.05.27 - v. 0.11.10 - [q] on delete-inputs prompt quits script (no next merge group)
 # 2026.05.27 - v. 0.11.9 - size-split output name: timestamp from first file only (not last)
 # 2026.05.27 - v. 0.11.8 - show ffprobe duration per input file in merge group display
@@ -66,8 +67,8 @@ Merge behaviour (no options):
   - Detects GoPro-style chapter sequences (_part_01, _part_02, … with the same
     camera token, e.g. GOPRO7_BLACK). A new recording starts when part resets to 01.
   - Also groups clips without _part_XX names when they look like fixed-size splits:
-    same session label, ~4 GB / ~6:49 chapters, and filename times that chain (next clip
-    time ≈ previous time + previous duration). Output: first file DATE_TIME + middle + CAMERA_concat.
+    same session label, ~4 GB / ~6:49 chapters; filename times that chain, or the same
+    YYYYMMDD_HHMMSS with GX chapter suffixes (e.g. …_GOPRO10_BLACK_GX013496.MP4).
   - Shows each multi-part group (with file sizes) and asks whether to merge
     (single-key Y/N/A/M/Q, no Enter — like rename.sh).
   - After a successful merge: size summary (inputs, output, difference) and optional
@@ -1092,10 +1093,24 @@ chapter_camera_from_basename() {
   return 1
 }
 
-# GoPro clip without _part_XX: YYYYMMDD_HHMMSS_…_GOPRO7_BLACK.MP4 (middle tags optional).
+# GoPro clip without _part_XX: YYYYMMDD_HHMMSS_…_GOPRO7_BLACK.MP4 or …_GOPRO10_BLACK_GX013496.MP4
 gopro_camera_suffix_from_basename() {
   local base="$1"
+  if [[ "$base" =~ _((GOPRO[0-9]+_[A-Z0-9]+))_([A-Z]{2}[0-9]{4,6})\.[mM][pP]4$ ]]; then
+    printf '%s\n' "${BASH_REMATCH[1]}"
+    return 0
+  fi
   if [[ "$base" =~ (GOPRO[0-9]+_[A-Z0-9]+)\.[mM][pP]4$ ]]; then
+    printf '%s\n' "${BASH_REMATCH[1]}"
+    return 0
+  fi
+  return 1
+}
+
+# Optional GX-style chapter token (GX013496) before .MP4.
+gopro_chapter_suffix_from_basename() {
+  local base="$1"
+  if [[ "$base" =~ _([A-Z]{2}[0-9]{4,6})\.[mM][pP]4$ ]]; then
     printf '%s\n' "${BASH_REMATCH[1]}"
     return 0
   fi
@@ -1107,6 +1122,14 @@ gopro_timestamp_cam_from_basename() {
   GOPRO_TS_DATE=""
   GOPRO_TS_TIME=""
   GOPRO_TS_CAM=""
+  GOPRO_TS_CHAPTER=""
+  if [[ "$base" =~ ^([0-9]{8})_([0-9]{6})_(.*)_((GOPRO[0-9]+_[A-Z0-9]+))_([A-Z]{2}[0-9]{4,6})\.[mM][pP]4$ ]]; then
+    GOPRO_TS_DATE="${BASH_REMATCH[1]}"
+    GOPRO_TS_TIME="${BASH_REMATCH[2]}"
+    GOPRO_TS_CAM="${BASH_REMATCH[4]}"
+    GOPRO_TS_CHAPTER="${BASH_REMATCH[5]}"
+    return 0
+  fi
   if [[ "$base" =~ ^([0-9]{8})_([0-9]{6})_ ]]; then
     GOPRO_TS_DATE="${BASH_REMATCH[1]}"
     GOPRO_TS_TIME="${BASH_REMATCH[2]}"
@@ -1115,21 +1138,43 @@ gopro_timestamp_cam_from_basename() {
   fi
   cam=$(gopro_camera_suffix_from_basename "$base") || return 1
   GOPRO_TS_CAM="$cam"
+  GOPRO_TS_CHAPTER=""
   return 0
 }
 
 # Middle part of GoPro basename (between timestamp and camera suffix).
 gopro_middle_from_basename() {
-  local base="$1" mid cam
+  local base="$1" mid
   gopro_timestamp_cam_from_basename "$base" || return 1
-  cam="$GOPRO_TS_CAM"
-  if [[ "$base" =~ ^[0-9]{8}_[0-9]{6}_(.+)\.[mM][pP]4$ ]]; then
+  if [[ "$base" =~ ^[0-9]{8}_[0-9]{6}_(.*)_((GOPRO[0-9]+_[A-Z0-9]+))_([A-Z]{2}[0-9]{4,6})\.[mM][pP]4$ ]]; then
     mid="${BASH_REMATCH[1]}"
+  elif [[ "$base" =~ ^[0-9]{8}_[0-9]{6}_(.+)\.[mM][pP]4$ ]]; then
+    mid="${BASH_REMATCH[1]}"
+    mid="${mid%_"${GOPRO_TS_CAM}"}"
   else
     return 1
   fi
-  mid="${mid%_"${cam}"}"
   printf '%s\n' "$mid"
+}
+
+# Grouping key: same date, time, camera, and middle (ignores per-file GX chapter suffix).
+gopro_recording_group_key_from_basename() {
+  local base="$1" mid
+  gopro_timestamp_cam_from_basename "$base" || return 1
+  mid=$(gopro_middle_from_basename "$base" 2>/dev/null) || mid=""
+  printf '%s_%s|%s|%s\n' "$GOPRO_TS_DATE" "$GOPRO_TS_TIME" "$GOPRO_TS_CAM" "$mid"
+}
+
+# Sort key for size-split singles (time order, then GX chapter number).
+gopro_size_split_sort_key() {
+  local f="$1" base ch sort_num
+  base="${f##*/}"
+  gopro_timestamp_cam_from_basename "$base" || { printf '%s\n' "$base"; return 0; }
+  sort_num=0
+  if [[ -n "${GOPRO_TS_CHAPTER:-}" && "$GOPRO_TS_CHAPTER" =~ ^[A-Z]{2}([0-9]+)$ ]]; then
+    sort_num=$((10#${BASH_REMATCH[1]}))
+  fi
+  printf '%s_%s_%06d_%s\n' "$GOPRO_TS_DATE" "$GOPRO_TS_TIME" "$sort_num" "$base"
 }
 
 # Seconds since midnight from HHMMSS (for same-day checks without date(1)).
@@ -1162,6 +1207,11 @@ size_split_chapter_timestamps_follow() {
   prev_date="$GOPRO_TS_DATE" prev_time="$GOPRO_TS_TIME"
   gopro_timestamp_cam_from_basename "$nb" || return 1
   next_date="$GOPRO_TS_DATE" next_time="$GOPRO_TS_TIME"
+
+  # Same start time in filename (GX013496, GX023496, … on one recording).
+  if [[ "$prev_date" == "$next_date" && "$prev_time" == "$next_time" ]]; then
+    return 0
+  fi
 
   tol="${PGM_SIZE_SPLIT_TIME_TOLERANCE_SEC:-180}"
   min_gap="${PGM_SIZE_SPLIT_TIME_MIN_GAP_SEC:-300}"
@@ -1478,7 +1528,11 @@ build_size_split_groups() {
     warned_ffprobe=1
   fi
 
-  mapfile -t singles < <(printf '%s\n' "${singles[@]}" | LC_ALL=C sort)
+  mapfile -t singles < <(
+    for f in "${singles[@]}"; do
+      printf '%s\t%s\n' "$(gopro_size_split_sort_key "$f")" "$f"
+    done | LC_ALL=C sort -t $'\t' -k1,1 | cut -f2-
+  )
   n=${#singles[@]}
   i=0
   while (( i < n )); do
@@ -1489,9 +1543,9 @@ build_size_split_groups() {
       (( i++ )) || true
       continue
     fi
-    local run_cam run_session
+    local run_cam run_group_key
     run_cam=$(gopro_camera_from_basename "${singles[i]##*/}")
-    run_session=$(gopro_session_key_from_basename "${singles[i]##*/}" 2>/dev/null) || run_session=""
+    run_group_key=$(gopro_recording_group_key_from_basename "${singles[i]##*/}" 2>/dev/null) || run_group_key=""
     (( i++ )) || true
     while (( i < n )); do
       f="${singles[i]}"
@@ -1499,8 +1553,8 @@ build_size_split_groups() {
       if [[ "$(gopro_camera_from_basename "$base")" != "$run_cam" ]]; then
         break
       fi
-      if [[ -n "$run_session" ]]; then
-        [[ "$(gopro_session_key_from_basename "$base" 2>/dev/null)" == "$run_session" ]] || break
+      if [[ -n "$run_group_key" ]]; then
+        [[ "$(gopro_recording_group_key_from_basename "$base" 2>/dev/null)" == "$run_group_key" ]] || break
       fi
       if ! size_split_chapter_timestamps_follow "${run[-1]}" "$f"; then
         break
