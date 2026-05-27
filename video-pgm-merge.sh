@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.05.27 - v. 0.10.7 - list *_concat outputs with no (or incomplete) input chapters in folder
 # 2026.05.27 - v. 0.10.6.1 - fix invalid "local blob action -a" in do_merge (bash nounset)
 # 2026.05.27 - v. 0.10.6 - INPUT block then OUTPUT block (stacked, not side by side)
 # 2026.05.27 - v. 0.10.5 - one line per chapter; align size columns at '|' (fixed-width bytes/kB/MB)
@@ -60,6 +61,7 @@ Merge behaviour (no options):
   - Output file per group: <first_chapter_stem>_parts_<first>-<last>_concat.mp4
     (timestamp from the first part, e.g. …154511_…_parts_01-04_concat.mp4)
   - Single-part files are listed but not merged unless you group them manually.
+  - Lists merged *_concat files when matching input chapters are not in the folder.
 
 mp4_merge lookup (merge mode):
   1. MP4_MERGE_BIN if set and executable
@@ -669,6 +671,110 @@ is_concat_output_basename() {
   [[ "${base}" == *_concat ]]
 }
 
+# Set by concat_parse_cam_part_range: camera token and part range from output name.
+CONCAT_PARSE_CAM=""
+CONCAT_PARSE_FIRST=0
+CONCAT_PARSE_LAST=0
+PGM_ORPHAN_CONCAT_COUNT=0
+
+# Parse *_parts_01-04_concat or legacy *_part_04_concat basename.
+concat_parse_cam_part_range() {
+  local base="$1"
+  CONCAT_PARSE_CAM=""
+  CONCAT_PARSE_FIRST=0
+  CONCAT_PARSE_LAST=0
+  if [[ "$base" =~ _-__-_([^/]+)_parts_([0-9]{2})-([0-9]{2})(_Proxy)?_concat\.[mM][pP]4$ ]]; then
+    CONCAT_PARSE_CAM="${BASH_REMATCH[1]}"
+    CONCAT_PARSE_FIRST=$((10#${BASH_REMATCH[2]}))
+    CONCAT_PARSE_LAST=$((10#${BASH_REMATCH[3]}))
+    return 0
+  fi
+  if [[ "$base" =~ _-__-_([^/]+)_part_([0-9]{2})_concat\.[mM][pP]4$ ]]; then
+    CONCAT_PARSE_CAM="${BASH_REMATCH[1]}"
+    CONCAT_PARSE_FIRST=$((10#${BASH_REMATCH[2]}))
+    CONCAT_PARSE_LAST=$CONCAT_PARSE_FIRST
+    return 0
+  fi
+  return 1
+}
+
+chapter_input_matches_cam_part() {
+  local base="$1" cam="$2" part="$3"
+  local pp
+  pp=$(printf '%02d' "$part")
+  [[ "$base" =~ _-__-_${cam}_part_${pp}(_Proxy)?\.[mM][pP]4$ ]]
+}
+
+# How many distinct parts for cam exist as chapter inputs in the file list.
+count_chapter_inputs_cam_part_range() {
+  local cam="$1" first="$2" last="$3"
+  shift 3
+  local -a all_mp4=("$@")
+  local f base p found=0
+  for (( p = first; p <= last; p++ )); do
+    for f in "${all_mp4[@]}"; do
+      base="${f##*/}"
+      is_concat_output_basename "$base" && continue
+      if chapter_input_matches_cam_part "$base" "$cam" "$p"; then
+        (( found++ ))
+        break
+      fi
+    done
+  done
+  printf '%d\n' "$found"
+}
+
+print_orphan_concat_section() {
+  local -a all_mp4=("$@")
+  local f base cam first last expected found note sep sz
+  local -a orphans=()
+  PGM_ORPHAN_CONCAT_COUNT=0
+
+  for f in "${all_mp4[@]}"; do
+    base="${f##*/}"
+    is_concat_output_basename "$base" || continue
+    if ! concat_parse_cam_part_range "$base"; then
+      orphans+=("${f}|unrecognized name|?|0|0|0|0")
+      continue
+    fi
+    cam="$CONCAT_PARSE_CAM"
+    first="$CONCAT_PARSE_FIRST"
+    last="$CONCAT_PARSE_LAST"
+    expected=$(( last - first + 1 ))
+    found=$(count_chapter_inputs_cam_part_range "$cam" "$first" "$last" "${all_mp4[@]}")
+    if (( found >= expected )); then
+      continue
+    fi
+    if (( found == 0 )); then
+      note="no input chapters in this folder"
+    else
+      note="only ${found} of ${expected} input chapter(s) present"
+    fi
+    orphans+=("${f}|${note}|${cam}|${first}|${last}|${expected}|${found}")
+  done
+
+  PGM_ORPHAN_CONCAT_COUNT=${#orphans[@]}
+  (( PGM_ORPHAN_CONCAT_COUNT > 0 )) || return 0
+
+  sep=$(printf '%*s' 72 '' | tr ' ' '-')
+  echo "Merged outputs without input chapters in this folder:"
+  printf '  %s\n' "$sep"
+  for entry in "${orphans[@]}"; do
+    IFS='|' read -r f note cam first last expected found <<< "$entry"
+    base="${f##*/}"
+    sz=$(file_size_bytes "$f")
+    printf '  %s\n' "$base"
+    printf '  %s\n' "$(format_bytes_human_aligned "$sz")"
+    if [[ "$cam" == '?' ]]; then
+      printf '  %s\n' "$note"
+    else
+      printf '  Camera: %s  parts %02d-%02d\n' "$cam" "$first" "$last"
+      printf '  Status: %s\n' "$note"
+    fi
+    echo
+  done
+}
+
 # Print decimal part number to stdout, or return 1 if not a _part_XX chapter name.
 chapter_part_from_basename() {
   local base="$1"
@@ -742,6 +848,7 @@ group_files_to_array() {
 }
 
 print_group_plan() {
+  local -a all_mp4=("$@")
   local gidx=0 mergeable=0 standalone=0
   local -a files=()
   local f base part cam blob
@@ -795,7 +902,8 @@ print_group_plan() {
     done
     echo
   fi
-  echo "$(pgm_ts) Summary: ${mergeable} merge group(s), ${standalone} standalone file(s)."
+  print_orphan_concat_section "${all_mp4[@]}"
+  echo "$(pgm_ts) Summary: ${mergeable} merge group(s), ${standalone} standalone file(s), ${PGM_ORPHAN_CONCAT_COUNT} merged output(s) without input chapters."
   echo
 }
 
@@ -1030,15 +1138,16 @@ do_merge() {
   mapfile -t sorted_mp4 < <(printf '%s\n' "${mp4_files[@]}" | LC_ALL=C sort)
 
   build_chapter_groups "${sorted_mp4[@]}"
-  if (( ${#GROUP_BLOBS[@]} == 0 )); then
-    echo "$(pgm_ts) No chapter MP4s to process in $(pwd)" >&2
-    return 1
-  fi
 
   MERGE_ALL_REMAINING=0
   SKIP_ALL_REMAINING=0
 
-  print_group_plan
+  print_group_plan "${sorted_mp4[@]}"
+
+  if (( ${#GROUP_BLOBS[@]} == 0 )); then
+    echo "$(pgm_ts) No chapter input MP4s in $(pwd)."
+    return 0
+  fi
 
   for blob in "${GROUP_BLOBS[@]}"; do
     group_files_to_array "$blob" files
