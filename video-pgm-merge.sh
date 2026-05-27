@@ -696,7 +696,6 @@ find_merger() {
 
 # Set by do_merge; used by trap on Ctrl-C to drop a partial output file.
 VIDEO_MERGE_OUT_FILE=""
-PGM_READ_TIMEOUT=-1
 PGM_READ_TIMEOUT_CLI=0
 PGM_SCRIPT_START_NS=""
 PGM_PROCESSING_SEC=0
@@ -777,16 +776,12 @@ flush_stdin() {
   done
 }
 
-# Apply PGM_READ_TIMEOUT from env (unless --read-timeout set); -1 or 0 = wait forever.
+# Apply PGM_READ_TIMEOUT from env (unless --read-timeout set); 0 or unset = wait forever.
 pgm_init_read_timeout() {
   if (( PGM_READ_TIMEOUT_CLI )); then
     return 0
   fi
-  if [[ -n "${PGM_READ_TIMEOUT+set}" ]]; then
-    PGM_READ_TIMEOUT="${PGM_READ_TIMEOUT}"
-  else
-    PGM_READ_TIMEOUT=-1
-  fi
+  PGM_READ_TIMEOUT="${PGM_READ_TIMEOUT:--1}"
 }
 
 pgm_read_timeout_is_limited() {
