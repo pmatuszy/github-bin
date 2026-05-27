@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.05.27 - v. 0.11.6 - size-split output: copy middle label verbatim from first input name
 # 2026.05.27 - v. 0.11.5 - robust S29_-_dermatolog slug in size-split output filenames
 # 2026.05.27 - v. 0.11.4 - size-split output: session label (dermatolog) in name + MP4 metadata
 # 2026.05.27 - v. 0.11.3 - size-split: flexible GoPro names (_-_ labels, GOPRO7 suffix)
@@ -61,9 +62,8 @@ Merge behaviour (no options):
   - Detects GoPro-style chapter sequences (_part_01, _part_02, … with the same
     camera token, e.g. GOPRO7_BLACK). A new recording starts when part resets to 01.
   - Also groups clips without _part_XX names when they look like fixed-size splits:
-    GoPro timestamp + GOPRO7_BLACK (or …_-__-_CAMERA) suffix, same session label in the
-    name (~4 GB / ~6:49 per chapter for GoPro7). Output name keeps labels (e.g. dermatolog)
-    and writes title/description into the merged MP4 when ffmpeg is available.
+    GoPro timestamp + GOPRO7_BLACK suffix, same session label in the name (~4 GB / ~6:49
+    for GoPro7). Output name: DATE_T1-T2 + middle from inputs + CAMERA_concat.mp4.
   - Shows each multi-part group (with file sizes) and asks whether to merge
     (single-key Y/N/A/M/Q, no Enter — like rename.sh).
   - After a successful merge: size summary (inputs, output, difference) and optional
@@ -1280,7 +1280,7 @@ size_split_run_valid() {
 
 size_split_group_output_file() {
   local -a files=("$@")
-  local fb lb date1 t1 cam1 t2 cam2 desc="" s_tag=""
+  local fb lb date1 t1 t2 cam1 cam2 middle=""
   fb="${files[0]##*/}"
   lb="${files[-1]##*/}"
   gopro_timestamp_cam_from_basename "$fb" || return 1
@@ -1288,43 +1288,22 @@ size_split_group_output_file() {
   gopro_timestamp_cam_from_basename "$lb" || return 1
   t2="$GOPRO_TS_TIME" cam2="$GOPRO_TS_CAM"
   [[ "$cam1" == "$cam2" ]] || return 1
-  s_tag=$(gopro_s_tag_from_basename "$fb" 2>/dev/null) || s_tag=""
-  desc=$(gopro_description_from_basename "$fb" 2>/dev/null) || desc=""
-  if [[ -z "$s_tag" || -z "$desc" ]]; then
-    local slug part
-    slug=$(gopro_session_label_slug_from_basename "$fb" 2>/dev/null) || slug=""
-    if [[ "$slug" == *'_-__-_'* ]]; then
-      s_tag="${slug%%_-__-_*}"
-      desc="${slug#*_-__-_}"
-    elif [[ -n "$slug" ]]; then
-      desc="$slug"
-    fi
-  fi
-  if [[ -n "$s_tag" && -n "$desc" ]]; then
-    printf '%s_%s-%s_-_-%s_-_-%s_-_-%s_concat.mp4\n' \
-      "$date1" "$t1" "$t2" "$s_tag" "$desc" "$cam1"
-  elif [[ -n "$desc" ]]; then
-    printf '%s_%s-%s_-_-%s_-_-%s_concat.mp4\n' \
-      "$date1" "$t1" "$t2" "$desc" "$cam1"
-  else
-    printf '%s_%s-%s_-__-_%s_concat.mp4\n' "$date1" "$t1" "$t2" "$cam1"
-  fi
+  middle=$(gopro_middle_from_basename "$fb") || return 1
+  # e.g. 20210416_101802-102453_-_S29_-_dermatolog_-_GOPRO7_BLACK_concat.mp4
+  printf '%s_%s-%s_%s%s_concat.mp4\n' "$date1" "$t1" "$t2" "$middle" "$cam1"
 }
 
 # Label for merged output metadata (title/description).
 group_merge_description_label() {
   local -a files=("$@")
-  local fb s_tag desc
+  local fb middle
   fb="${files[0]##*/}"
-  s_tag=$(gopro_s_tag_from_basename "$fb" 2>/dev/null) || s_tag=""
-  desc=$(gopro_description_from_basename "$fb" 2>/dev/null) || desc=""
-  if [[ -n "$s_tag" && -n "$desc" ]]; then
-    printf '%s / %s\n' "$s_tag" "$desc"
-  elif [[ -n "$desc" ]]; then
-    printf '%s\n' "$desc"
-  else
-    return 1
-  fi
+  middle=$(gopro_middle_from_basename "$fb") || return 1
+  middle="${middle#_}"
+  middle="${middle%_}"
+  middle="${middle//_-/ }"
+  middle="${middle//_/ }"
+  printf '%s\n' "$middle"
 }
 
 apply_merge_output_metadata() {
@@ -1613,7 +1592,11 @@ print_group_plan() {
       (( gidx++ )) || true
       out_name=$(group_output_file "${files[@]}")
       local grp_desc
-      grp_desc=$(gopro_description_from_basename "${files[0]##*/}" 2>/dev/null) || grp_desc=
+      grp_desc=$(gopro_middle_from_basename "${files[0]##*/}" 2>/dev/null) || grp_desc=
+      grp_desc="${grp_desc//_-/ }"
+      grp_desc="${grp_desc//_/ }"
+      grp_desc="${grp_desc# }"
+      grp_desc="${grp_desc% }"
       if [[ -e "$out_name" ]]; then
         if [[ -n "$grp_desc" ]]; then
           printf '  [group %d/%d] %d clips (%s) → %s  (already merged)\n' \
