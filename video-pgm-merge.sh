@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.05.27 - v. 0.11.0 - detect size-split GoPro clips (~4GB, ~8:30-9:00) without _part_XX names
 # 2026.05.27 - v. 0.10.9 - install mp4_merge to /usr/local/bin; remove PATH/cwd/script copies
 # 2026.05.27 - v. 0.10.8 - default mp4_merge install /usr/local/bin; prompt to move from cwd
 # 2026.05.27 - v. 0.10.7 - list *_concat outputs with no (or incomplete) input chapters in folder
@@ -54,6 +55,9 @@ Merge behaviour (no options):
     existing *_concat.mp4 outputs.
   - Detects GoPro-style chapter sequences (_part_01, _part_02, … with the same
     camera token, e.g. GOPRO7_BLACK). A new recording starts when part resets to 01.
+  - Also groups clips without _part_XX names when they look like fixed-size splits:
+    same camera (…_-__-_GOPRO7_BLACK.MP4), ~4 GB each, ~8:30–9:00 duration (ffprobe),
+    optional shorter tail segment.
   - Shows each multi-part group (with file sizes) and asks whether to merge
     (single-key Y/N/A/M/Q, no Enter — like rename.sh).
   - After a successful merge: size summary (inputs, output, difference) and optional
@@ -62,7 +66,7 @@ Merge behaviour (no options):
     or delete input chapters [d] (keeps merged output).
   - Output file per group: <first_chapter_stem>_parts_<first>-<last>_concat.mp4
     (timestamp from the first part, e.g. …154511_…_parts_01-04_concat.mp4)
-  - Single-part files are listed but not merged unless you group them manually.
+  - Other single files are listed as standalone; probable size-split sets are merge candidates.
   - Lists merged *_concat files when matching input chapters are not in the folder.
 
 mp4_merge lookup (merge mode):
@@ -1045,6 +1049,193 @@ chapter_camera_from_basename() {
   return 1
 }
 
+# GoPro timestamp name without _part_XX: 20210321_142541_-__-_GOPRO7_BLACK.MP4
+gopro_timestamp_cam_from_basename() {
+  local base="$1"
+  GOPRO_TS_DATE=""
+  GOPRO_TS_TIME=""
+  GOPRO_TS_CAM=""
+  if [[ "$base" =~ ^([0-9]{8})_([0-9]{6})_-__-_([^./]+)\.[mM][pP]4$ ]]; then
+    GOPRO_TS_DATE="${BASH_REMATCH[1]}"
+    GOPRO_TS_TIME="${BASH_REMATCH[2]}"
+    GOPRO_TS_CAM="${BASH_REMATCH[3]}"
+    return 0
+  fi
+  return 1
+}
+
+gopro_camera_from_basename() {
+  local base="$1"
+  if gopro_timestamp_cam_from_basename "$base"; then
+    printf '%s\n' "$GOPRO_TS_CAM"
+    return 0
+  fi
+  chapter_camera_from_basename "$base"
+}
+
+# ~4 GB GoPro chapter splits (bytes); duration checked separately via ffprobe.
+PGM_SIZE_SPLIT_MIN_BYTES=$(( 3700 * 1024 * 1024 ))
+PGM_SIZE_SPLIT_MAX_BYTES=$(( 4200 * 1024 * 1024 ))
+PGM_SIZE_SPLIT_DURATION_MIN_SEC=510
+PGM_SIZE_SPLIT_DURATION_MAX_SEC=540
+
+ffprobe_duration_seconds() {
+  local f="$1" d
+  command -v ffprobe >/dev/null 2>&1 || return 1
+  d=$(ffprobe -v error -show_entries format=duration \
+    -of default=noprint_wrappers=1:nokey=1 -- "$f" 2>/dev/null) || return 1
+  [[ -n "$d" ]] || return 1
+  awk -v d="$d" 'BEGIN { if (d+0 >= 0) printf "%.3f\n", d+0; else exit 1 }'
+}
+
+duration_in_size_split_full_range() {
+  local dur="$1"
+  awk -v d="$dur" -v lo="$PGM_SIZE_SPLIT_DURATION_MIN_SEC" -v hi="$PGM_SIZE_SPLIT_DURATION_MAX_SEC" \
+    'BEGIN { exit !(d+0 >= lo && d+0 <= hi) }'
+}
+
+duration_is_size_split_partial() {
+  local dur="$1"
+  awk -v d="$dur" -v lo="$PGM_SIZE_SPLIT_DURATION_MIN_SEC" \
+    'BEGIN { exit !(d+0 > 0 && d+0 < lo) }'
+}
+
+# Full segment: ~4 GB and (if ffprobe works) 8:30–9:00; else size only.
+is_full_size_split_segment() {
+  local f="$1" sz dur
+  sz=$(file_size_bytes "$f")
+  (( sz >= PGM_SIZE_SPLIT_MIN_BYTES && sz <= PGM_SIZE_SPLIT_MAX_BYTES )) || return 1
+  if dur=$(ffprobe_duration_seconds "$f" 2>/dev/null) && [[ -n "$dur" ]]; then
+    duration_in_size_split_full_range "$dur"
+    return $?
+  fi
+  return 0
+}
+
+is_partial_size_split_segment() {
+  local f="$1" sz dur
+  sz=$(file_size_bytes "$f")
+  (( sz < PGM_SIZE_SPLIT_MIN_BYTES )) && return 0
+  if dur=$(ffprobe_duration_seconds "$f" 2>/dev/null) && [[ -n "$dur" ]]; then
+    duration_is_size_split_partial "$dur"
+    return $?
+  fi
+  return 1
+}
+
+size_split_run_valid() {
+  local -a run=("$@")
+  local i n=${#run[@]} f
+  (( n >= 2 )) || return 1
+  for (( i = 0; i < n - 1; i++ )); do
+    is_full_size_split_segment "${run[i]}" || return 1
+  done
+  f="${run[n - 1]}"
+  is_full_size_split_segment "$f" && return 0
+  is_partial_size_split_segment "$f"
+}
+
+size_split_group_output_file() {
+  local -a files=("$@")
+  local fb lb date1 t1 cam1 t2 cam2
+  fb="${files[0]##*/}"
+  lb="${files[-1]##*/}"
+  gopro_timestamp_cam_from_basename "$fb" || return 1
+  date1="$GOPRO_TS_DATE" t1="$GOPRO_TS_TIME" cam1="$GOPRO_TS_CAM"
+  gopro_timestamp_cam_from_basename "$lb" || return 1
+  t2="$GOPRO_TS_TIME" cam2="$GOPRO_TS_CAM"
+  [[ "$cam1" == "$cam2" ]] || return 1
+  printf '%s_%s-%s_-__-_%s_concat.mp4\n' "$date1" "$t1" "$t2" "$cam1"
+}
+
+group_is_size_split() {
+  local -a files=("$@")
+  local f base
+  (( ${#files[@]} >= 2 )) || return 1
+  for f in "${files[@]}"; do
+    base="${f##*/}"
+    if chapter_part_from_basename "$base" >/dev/null 2>&1; then
+      return 1
+    fi
+    gopro_timestamp_cam_from_basename "$base" || return 1
+  done
+  size_split_run_valid "${files[@]}"
+}
+
+# Combine single-file blobs that look like sequential ~4 GB splits (no _part_XX).
+build_size_split_groups() {
+  local -a kept=() singles=() run=()
+  local blob files f base i n run_len
+  local -a new_groups=()
+  local warned_ffprobe=0
+
+  for blob in "${GROUP_BLOBS[@]}"; do
+    group_files_to_array "$blob" files
+    if (( ${#files[@]} >= 2 )); then
+      kept+=("$blob")
+      continue
+    fi
+    base="${files[0]##*/}"
+    if chapter_part_from_basename "$base" >/dev/null 2>&1; then
+      kept+=("$blob")
+      continue
+    fi
+    gopro_timestamp_cam_from_basename "$base" || {
+      kept+=("$blob")
+      continue
+    }
+    singles+=("${files[0]}")
+  done
+
+  (( ${#singles[@]} >= 2 )) || {
+    GROUP_BLOBS=( "${kept[@]}" )
+    return 0
+  }
+
+  if ! command -v ffprobe >/dev/null 2>&1; then
+    echo "$(pgm_ts) ffprobe not found — size-split detection uses file size only (~4 GB)." >&2
+    warned_ffprobe=1
+  fi
+
+  mapfile -t singles < <(printf '%s\n' "${singles[@]}" | LC_ALL=C sort)
+  n=${#singles[@]}
+  i=0
+  while (( i < n )); do
+    run=("${singles[i]}")
+    local run_cam
+    run_cam=$(gopro_camera_from_basename "${singles[i]##*/}")
+    (( i++ )) || true
+    while (( i < n )); do
+      f="${singles[i]}"
+      base="${f##*/}"
+      if [[ "$(gopro_camera_from_basename "$base")" != "$run_cam" ]]; then
+        break
+      fi
+      if is_full_size_split_segment "$f"; then
+        run+=("$f")
+        (( i++ )) || true
+        continue
+      fi
+      if is_partial_size_split_segment "$f"; then
+        run+=("$f")
+        (( i++ )) || true
+      fi
+      break
+    done
+    if size_split_run_valid "${run[@]}"; then
+      new_groups+=("$(printf '%s\n' "${run[@]}")")
+    else
+      local part_path
+      for part_path in "${run[@]}"; do
+        kept+=("$part_path")
+      done
+    fi
+  done
+
+  GROUP_BLOBS=( "${kept[@]}" "${new_groups[@]}" )
+  (( warned_ffprobe )) || true
+}
+
 # 0 = next file continues the same multi-part recording.
 chapter_continues_sequence() {
   local last_base="$1" new_base="$2"
@@ -1087,6 +1278,7 @@ build_chapter_groups() {
   if [[ -n "$current_blob" ]]; then
     GROUP_BLOBS+=("$current_blob")
   fi
+  build_size_split_groups
 }
 
 group_files_to_array() {
@@ -1098,37 +1290,84 @@ group_files_to_array() {
   fi
 }
 
+print_size_split_group_hint() {
+  if command -v ffprobe >/dev/null 2>&1; then
+    echo "Probable size-split recordings (no _part_XX; ~4 GB and ~8:30–9:00 each, ffprobe):"
+  else
+    echo "Probable size-split recordings (no _part_XX; ~4 GB each; install ffprobe for duration check):"
+  fi
+}
+
 print_group_plan() {
   local -a all_mp4=("$@")
-  local gidx=0 mergeable=0 standalone=0
+  local gidx=0 mergeable=0 size_split_groups=0 part_groups=0 standalone=0
   local -a files=()
-  local f base part cam blob
+  local f base part cam blob out_name is_ss
+  local group_bytes=0 sz
   echo "$(pgm_ts) Chapter plan in $(pwd):"
   echo
   for blob in "${GROUP_BLOBS[@]}"; do
     group_files_to_array "$blob" files
-    (( ${#files[@]} >= 2 )) && (( mergeable++ )) || true
+    (( ${#files[@]} >= 2 )) || continue
+    (( mergeable++ )) || true
+    if group_is_size_split "${files[@]}"; then
+      (( size_split_groups++ )) || true
+    else
+      (( part_groups++ )) || true
+    fi
   done
-  if (( mergeable > 0 )); then
-    echo "Merge candidates:"
+  if (( part_groups > 0 )); then
+    echo "Merge candidates (_part_XX chapters):"
+    gidx=0
     for blob in "${GROUP_BLOBS[@]}"; do
       group_files_to_array "$blob" files
       (( ${#files[@]} < 2 )) && continue
+      group_is_size_split "${files[@]}" && continue
       (( gidx++ )) || true
-      local out_name
       out_name=$(group_output_file "${files[@]}")
       if [[ -e "$out_name" ]]; then
         printf '  [group %d/%d] %d parts → %s  (already merged)\n' \
-          "$gidx" "$mergeable" "${#files[@]}" "$out_name"
+          "$gidx" "$part_groups" "${#files[@]}" "$out_name"
       else
         printf '  [group %d/%d] %d parts → %s\n' \
-          "$gidx" "$mergeable" "${#files[@]}" "$out_name"
+          "$gidx" "$part_groups" "${#files[@]}" "$out_name"
       fi
-      local group_bytes=0 sz
+      group_bytes=0
       for f in "${files[@]}"; do
         print_chapter_file_line '      ' "$f"
         sz=$(file_size_bytes "$f")
         (( group_bytes += sz ))
+      done
+      printf '      input total (%d files): %s\n' "${#files[@]}" "$(format_bytes_human "$group_bytes")"
+      echo
+    done
+  fi
+  if (( size_split_groups > 0 )); then
+    print_size_split_group_hint
+    gidx=0
+    for blob in "${GROUP_BLOBS[@]}"; do
+      group_files_to_array "$blob" files
+      (( ${#files[@]} < 2 )) && continue
+      group_is_size_split "${files[@]}" || continue
+      (( gidx++ )) || true
+      out_name=$(group_output_file "${files[@]}")
+      if [[ -e "$out_name" ]]; then
+        printf '  [group %d/%d] %d clips → %s  (already merged)\n' \
+          "$gidx" "$size_split_groups" "${#files[@]}" "$out_name"
+      else
+        printf '  [group %d/%d] %d clips → %s\n' \
+          "$gidx" "$size_split_groups" "${#files[@]}" "$out_name"
+      fi
+      group_bytes=0
+      for f in "${files[@]}"; do
+        print_chapter_file_line '      ' "$f"
+        sz=$(file_size_bytes "$f")
+        (( group_bytes += sz ))
+        if dur=$(ffprobe_duration_seconds "$f" 2>/dev/null) && [[ -n "$dur" ]]; then
+          printf '             duration: %s s (~%d:%02d)\n' "$dur" \
+            "$(awk -v d="$dur" 'BEGIN{printf "%d", int(d/60)}')" \
+            "$(awk -v d="$dur" 'BEGIN{printf "%d", int(d)%60}')"
+        fi
       done
       printf '      input total (%d files): %s\n' "${#files[@]}" "$(format_bytes_human "$group_bytes")"
       echo
@@ -1154,13 +1393,20 @@ print_group_plan() {
     echo
   fi
   print_orphan_concat_section "${all_mp4[@]}"
-  echo "$(pgm_ts) Summary: ${mergeable} merge group(s), ${standalone} standalone file(s), ${PGM_ORPHAN_CONCAT_COUNT} merged output(s) without input chapters."
+  if (( size_split_groups > 0 )); then
+    echo "$(pgm_ts) Summary: ${mergeable} merge group(s) (${size_split_groups} size-split), ${standalone} standalone file(s), ${PGM_ORPHAN_CONCAT_COUNT} merged output(s) without input chapters."
+  else
+    echo "$(pgm_ts) Summary: ${mergeable} merge group(s), ${standalone} standalone file(s), ${PGM_ORPHAN_CONCAT_COUNT} merged output(s) without input chapters."
+  fi
   echo
 }
 
 group_output_file() {
   local -a files=("$@")
   local f base stem part min_part= max_part= got_part=0 suffix_proxy=
+  if (( ${#files[@]} >= 2 )) && group_is_size_split "${files[@]}"; then
+    size_split_group_output_file "${files[@]}" && return 0
+  fi
   for f in "${files[@]}"; do
     base="${f##*/}"
     if part=$(chapter_part_from_basename "$base" 2>/dev/null); then
@@ -1415,6 +1661,7 @@ do_merge() {
 
   if (( mergeable_total == 0 )); then
     echo "$(pgm_ts) No multi-part chapter groups to merge."
+    echo "$(pgm_ts) Tip: sequential ~4 GB clips with the same camera (…_-__-_GOPRO…MP4) may be size-split recordings — need ffprobe and matching durations (~8:30–9:00)."
     return 0
   fi
 
