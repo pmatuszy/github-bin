@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.05.27 - v. 0.10.2 - fix json_tmp unbound on RETURN trap under set -o nounset
 # 2026.05.27 - v. 0.10.1 - align labelled status lines after timestamp (pgm_log_kv)
 # 2026.05.27 - v. 0.10.0 - -u: show installed hash/version, compare GitHub SHA-256, prompt install/replace
 # 2026.05.27 - v. 0.9.1 - log prefix: YYYY.MM.DD HH:MM:SS instead of (PGM)
@@ -293,7 +294,7 @@ prompt_mp4_merge_update_action() {
     case "$state:$choice" in
       missing:''|missing:y) REPLY=install; return 0 ;;
       missing:n)           REPLY=keep; echo "$(pgm_ts) Install cancelled."; return 0 ;;
-      latest:''|latest:n)  REPLY=keep; echo "$(pgm_ts) Keeping current install."; return 0 ;;
+      latest:''|latest:n)  REPLY=keep; return 0 ;;
       latest:y)            REPLY=install; return 0 ;;
       outdated:''|outdated:y) REPLY=install; return 0 ;;
       outdated:n)          REPLY=keep; echo "$(pgm_ts) Keeping current install."; return 0 ;;
@@ -326,7 +327,8 @@ update_mp4_merge() {
 
   json_tmp=$(mktemp)
   releases_tmp=$(mktemp)
-  trap 'rm -f "${json_tmp}" "${releases_tmp}"' RETURN
+  # Embed paths when trap is set: on RETURN, locals are gone under nounset.
+  trap "rm -f -- $(printf '%q' "$json_tmp") $(printf '%q' "$releases_tmp")" RETURN
 
   latest_json=$(fetch_mp4_merge_latest_release_json) || {
     echo "$(pgm_ts) Failed to fetch latest release from GitHub." >&2
@@ -384,6 +386,7 @@ update_mp4_merge() {
       return $?
       ;;
     keep)
+      pgm_log_kv "Action" "Keeping current install."
       return 0
       ;;
     quit)
@@ -882,7 +885,7 @@ prompt_merge_group_action() {
       pgm_read_key "Already merged — group ${group_num}/${group_total} [N/r/d/a/q]: " n
       choice="${REPLY,,}"
       case "$choice" in
-        ''|n)  REPLY=skip; echo "$(pgm_ts) Keeping existing output and inputs."; return 0 ;;
+        ''|n)  REPLY=skip; pgm_log_kv "Action" "Keeping existing output and inputs."; return 0 ;;
         r)     REPLY=redo; return 0 ;;
         d)     REPLY=delete_inputs; return 0 ;;
         a)     REPLY=skip_all; return 0 ;;
