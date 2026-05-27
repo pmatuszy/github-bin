@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.05.27 - v. 0.10.9 - install mp4_merge to /usr/local/bin; remove PATH/cwd/script copies
 # 2026.05.27 - v. 0.10.8 - default mp4_merge install /usr/local/bin; prompt to move from cwd
 # 2026.05.27 - v. 0.10.7 - list *_concat outputs with no (or incomplete) input chapters in folder
 # 2026.05.27 - v. 0.10.6.1 - fix invalid "local blob action -a" in do_merge (bash nounset)
@@ -67,7 +68,8 @@ Merge behaviour (no options):
 mp4_merge lookup (merge mode):
   1. MP4_MERGE_BIN if set and executable
   2. /usr/local/bin (or MP4_MERGE_INSTALL_DIR): mp4_merge-linux64, …, mp4_merge
-  3. ./mp4_merge-linux64, … in the current directory (interactive: offer to move to /usr/local/bin)
+  3. ./mp4_merge-linux64, … in the current directory (interactive: install to /usr/local/bin,
+     remove other copies on PATH and in the script directory)
   4. Same names in the script directory
 
 Environment:
@@ -246,6 +248,8 @@ install_mp4_merge_asset() {
   if [[ -x "${dest}" ]]; then
     echo "$(pgm_ts) $(file -b "${dest}" 2>/dev/null || echo 'binary ready')"
   fi
+  mp4_merge_collect_extras "$(mp4_merge_abs_path "$dest" 2>/dev/null || printf '%s' "$dest")"
+  mp4_merge_remove_extras "$(mp4_merge_abs_path "$dest" 2>/dev/null || printf '%s' "$dest")"
   return 0
 }
 
@@ -256,6 +260,127 @@ MP4_MERGE_ASSET_NAMES=(
   mp4_merge-linux
   mp4_merge
 )
+MP4_MERGE_EXTRA_PATHS=()
+
+mp4_merge_abs_path() {
+  local p="$1"
+  [[ -e "$p" || -L "$p" ]] || return 1
+  if readlink -f -- "$p" &>/dev/null; then
+    readlink -f -- "$p"
+    return 0
+  fi
+  if command -v realpath >/dev/null 2>&1 && realpath -- "$p" &>/dev/null; then
+    realpath -- "$p"
+    return 0
+  fi
+  local dir base
+  base=$(basename -- "$p")
+  dir=$(cd "$(dirname -- "$p")" 2>/dev/null && pwd -P) || return 1
+  printf '%s/%s\n' "$dir" "$base"
+}
+
+mp4_merge_dir_is_system_install() {
+  local dir="$1" abs
+  [[ -n "$dir" ]] || return 1
+  if abs=$(mp4_merge_abs_path "${dir%/}/." 2>/dev/null); then
+    dir="$abs"
+  else
+    dir="${dir%/}"
+  fi
+  [[ "$dir" == "${MP4_MERGE_INSTALL_DIR}" || "$dir" == "${MP4_MERGE_SYSTEM_DIR}" ]]
+}
+
+mp4_merge_path_in_system_dir() {
+  local path="$1" dir abs
+  abs=$(mp4_merge_abs_path "$path") || return 1
+  dir=$(dirname -- "$abs")
+  mp4_merge_dir_is_system_install "$dir"
+}
+
+mp4_merge_extra_already_listed() {
+  local candidate="$1" existing
+  for existing in "${MP4_MERGE_EXTRA_PATHS[@]}"; do
+    [[ "$existing" == "$candidate" ]] && return 0
+  done
+  return 1
+}
+
+mp4_merge_extra_add() {
+  local f="$1" skip_abs="${2:-}"
+  local abs
+  [[ -e "$f" || -L "$f" ]] || return 0
+  abs=$(mp4_merge_abs_path "$f") || return 0
+  mp4_merge_path_in_system_dir "$abs" && return 0
+  [[ -n "$skip_abs" && "$abs" == "$skip_abs" ]] && return 0
+  mp4_merge_extra_already_listed "$abs" && return 0
+  MP4_MERGE_EXTRA_PATHS+=("$abs")
+}
+
+# Collect mp4_merge binaries outside MP4_MERGE_INSTALL_DIR (PATH, cwd, script dir).
+mp4_merge_collect_extras() {
+  local skip_abs="${1:-}"
+  local dir name p path_dirs
+  MP4_MERGE_EXTRA_PATHS=()
+  if [[ -n "${PATH:-}" ]]; then
+    IFS=':' read -r -a path_dirs <<< "$PATH"
+    for dir in "${path_dirs[@]}"; do
+      [[ -n "$dir" ]] || continue
+      [[ -d "$dir" ]] || continue
+      mp4_merge_dir_is_system_install "$dir" && continue
+      for name in "${MP4_MERGE_ASSET_NAMES[@]}"; do
+        mp4_merge_extra_add "${dir}/${name}" "$skip_abs"
+      done
+    done
+  fi
+  if [[ -n "${SCRIPT_DIR:-}" ]] && ! mp4_merge_dir_is_system_install "${SCRIPT_DIR}"; then
+    for name in "${MP4_MERGE_ASSET_NAMES[@]}"; do
+      mp4_merge_extra_add "${SCRIPT_DIR}/${name}" "$skip_abs"
+    done
+  fi
+  for name in "${MP4_MERGE_ASSET_NAMES[@]}"; do
+    mp4_merge_extra_add "./${name}" "$skip_abs"
+  done
+}
+
+mp4_merge_print_extra_locations() {
+  local p
+  (( ${#MP4_MERGE_EXTRA_PATHS[@]} > 0 )) || return 0
+  echo "  Other copies (will be removed when installed to ${MP4_MERGE_INSTALL_DIR}):"
+  for p in "${MP4_MERGE_EXTRA_PATHS[@]}"; do
+    printf '    %s\n' "$p"
+  done
+}
+
+mp4_merge_remove_extras() {
+  local keep_abs="${1:-}"
+  local p dir d removed=0
+  local -a rm_dirs=()
+  for p in "${MP4_MERGE_EXTRA_PATHS[@]}"; do
+    [[ -n "$keep_abs" && "$p" == "$keep_abs" ]] && continue
+    [[ -e "$p" || -L "$p" ]] || continue
+    dir=$(dirname -- "$p")
+    if rm -f -- "$p"; then
+      pgm_log_kv "Removed" "$p"
+      (( removed++ )) || true
+      rm_dirs+=("$dir")
+    else
+      echo "$(pgm_ts) Could not remove: ${p}" >&2
+    fi
+  done
+  for dir in "${rm_dirs[@]}"; do
+    mp4_merge_dir_is_system_install "$dir" && continue
+    for name in "${MP4_MERGE_ASSET_NAMES[@]}"; do
+      [[ -e "${dir}/${name}" || -L "${dir}/${name}" ]] && continue 2
+    done
+    if [[ -e "${dir}/mp4_merge" || -L "${dir}/mp4_merge" ]]; then
+      if rm -f -- "${dir}/mp4_merge"; then
+        pgm_log_kv "Removed" "${dir}/mp4_merge"
+        (( removed++ )) || true
+      fi
+    fi
+  done
+  (( removed > 0 )) || true
+}
 
 mp4_merge_install_dir_writable() {
   local dir="${1:-${MP4_MERGE_INSTALL_DIR}}"
@@ -303,11 +428,11 @@ mp4_merge_print_not_found_help() {
   echo "$(pgm_ts) Or set MP4_MERGE_BIN=/path/to/mp4_merge" >&2
 }
 
-# If merger is ./mp4_merge* in cwd, offer to move it to MP4_MERGE_INSTALL_DIR.
+# If merger is outside /usr/local/bin, offer install there and remove PATH/script/cwd copies.
 resolve_merger_path_for_merge() {
   local merger="$1"
-  local base choice dest
-  if [[ "$merger" != ./* ]]; then
+  local base choice dest dest_abs
+  if mp4_merge_path_in_system_dir "$merger"; then
     printf '%s\n' "$merger"
     return 0
   fi
@@ -315,21 +440,30 @@ resolve_merger_path_for_merge() {
     printf '%s\n' "$merger"
     return 0
   fi
-  base="${merger#./}"
-  pgm_log_kv "mp4_merge in current directory" "$(pwd)/${base}"
+  if [[ "$merger" == ./* ]]; then
+    base="${merger#./}"
+    pgm_log_kv "mp4_merge in current directory" "$(pwd)/${base}"
+  else
+    pgm_log_kv "mp4_merge found outside" "${MP4_MERGE_INSTALL_DIR}" "$merger"
+  fi
   echo "  Recommended location: ${MP4_MERGE_INSTALL_DIR}/"
+  mp4_merge_collect_extras ""
+  mp4_merge_print_extra_locations
   if ! mp4_merge_install_dir_writable "${MP4_MERGE_INSTALL_DIR}"; then
     echo "  (${MP4_MERGE_INSTALL_DIR} is not writable — use sudo $(basename "$0") -u)"
   fi
   while true; do
-    echo "  [Y] Move to ${MP4_MERGE_INSTALL_DIR} (default)"
-    echo "  [n] Keep using file in this directory"
+    echo "  [Y] Install to ${MP4_MERGE_INSTALL_DIR} and remove other copies (default)"
+    echo "  [n] Keep using: ${merger}"
     echo "  [q] Quit"
-    pgm_read_key "Move mp4_merge to ${MP4_MERGE_INSTALL_DIR}? [Y/n/q]: " y
+    pgm_read_key "Install mp4_merge to ${MP4_MERGE_INSTALL_DIR}? [Y/n/q]: " y
     choice="${REPLY,,}"
     case "$choice" in
       ''|y)
         dest=$(mp4_merge_install_local_binary "$merger") || return 1
+        dest_abs=$(mp4_merge_abs_path "$dest" 2>/dev/null || printf '%s' "$dest")
+        mp4_merge_collect_extras "$dest_abs"
+        mp4_merge_remove_extras "$dest_abs"
         echo "$(pgm_ts) mp4_merge is now at ${dest}"
         printf '%s\n' "$dest"
         return 0
