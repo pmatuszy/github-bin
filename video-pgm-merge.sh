@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.05.27 - v. 0.8.7 - output name: …_parts_01-04_concat.mp4 from chapter range
 # 2026.05.27 - v. 0.8.6 - menu keys: default uppercase, other options lowercase in brackets
 # 2026.05.27 - v. 0.8.5 - menu options one per line; default key uppercase in prompt (rename.sh style)
 # 2026.05.27 - v. 0.8.4 - already-merged groups: only skip/redo prompt (not Y-merge then N/r)
@@ -43,7 +44,7 @@ Merge behaviour (no options):
   - After a successful merge: size summary (inputs, output, difference) and optional
     deletion of the source chapter files (single-key Y/N).
   - If the expected _concat output already exists: skip (default) or redo merge (R).
-  - Output file per group: <last_chapter_basename>_concat.mp4
+  - Output file per group: <stem>_parts_<first>-<last>_concat.mp4 (e.g. …_parts_01-04_concat.mp4)
   - Single-part files are listed but not merged unless you group them manually.
 
 mp4_merge lookup (merge mode):
@@ -376,7 +377,8 @@ print_group_plan() {
       group_files_to_array "$blob" files
       (( ${#files[@]} < 2 )) && continue
       (( gidx++ )) || true
-      local out_name="${files[-1]%.*}_concat.mp4"
+      local out_name
+      out_name=$(group_output_file "${files[@]}")
       if [[ -e "$out_name" ]]; then
         printf '  [group %d/%d] %d parts → %s  (already merged)\n' \
           "$gidx" "$mergeable" "${#files[@]}" "$out_name"
@@ -419,7 +421,28 @@ print_group_plan() {
 
 group_output_file() {
   local -a files=("$@")
-  printf '%s_concat.mp4\n' "${files[-1]%.*}"
+  local f base stem part min_part= max_part= got_part=0 suffix_proxy=
+  for f in "${files[@]}"; do
+    base="${f##*/}"
+    if part=$(chapter_part_from_basename "$base" 2>/dev/null); then
+      got_part=1
+      if [[ -z "$min_part" ]] || (( part < min_part )); then
+        min_part=$part
+      fi
+      if [[ -z "$max_part" ]] || (( part > max_part )); then
+        max_part=$part
+      fi
+    fi
+  done
+  base="${files[-1]##*/}"
+  stem="${base%.*}"
+  if (( got_part )) && [[ "$stem" =~ ^(.*)_part_[0-9]{2}(_Proxy)?$ ]]; then
+    suffix_proxy="${BASH_REMATCH[2]}"
+    printf '%s_parts_%02d-%02d%s_concat.mp4\n' \
+      "${BASH_REMATCH[1]}" "$min_part" "$max_part" "$suffix_proxy"
+    return 0
+  fi
+  printf '%s_concat.mp4\n' "$stem"
 }
 
 print_merge_size_summary() {
