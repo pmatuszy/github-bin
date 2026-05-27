@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.05.27 - v. 0.10.6.1 - fix invalid "local blob action -a" in do_merge (bash nounset)
 # 2026.05.27 - v. 0.10.6 - INPUT block then OUTPUT block (stacked, not side by side)
 # 2026.05.27 - v. 0.10.5 - one line per chapter; align size columns at '|' (fixed-width bytes/kB/MB)
 # 2026.05.27 - v. 0.10.4 - fixed INPUT/OUTPUT columns: basename and size on separate lines
@@ -1007,7 +1008,8 @@ show_merge_group_detail() {
 
 do_merge() {
   local merger rc=0 group_num=0 mergeable_total=0
-  local blob action -a files=() mergeable_blobs=()
+  local blob action
+  local -a files=() mergeable_blobs=()
   merger=$(find_merger) || {
     echo "$(pgm_ts) mp4_merge not found in . or ${SCRIPT_DIR}/" >&2
     echo "$(pgm_ts) Run: $(basename "$0") -u" >&2
