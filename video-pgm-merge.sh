@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.05.27 - v. 0.10.8 - default mp4_merge install /usr/local/bin; prompt to move from cwd
 # 2026.05.27 - v. 0.10.7 - list *_concat outputs with no (or incomplete) input chapters in folder
 # 2026.05.27 - v. 0.10.6.1 - fix invalid "local blob action -a" in do_merge (bash nounset)
 # 2026.05.27 - v. 0.10.6 - INPUT block then OUTPUT block (stacked, not side by side)
@@ -65,18 +66,18 @@ Merge behaviour (no options):
 
 mp4_merge lookup (merge mode):
   1. MP4_MERGE_BIN if set and executable
-  2. ./mp4_merge-linux64, ./mp4_merge-linux-arm64, ./mp4_merge-linux32,
-     ./mp4_merge-linux, ./mp4_merge
-  3. Same names in the script directory
+  2. /usr/local/bin (or MP4_MERGE_INSTALL_DIR): mp4_merge-linux64, …, mp4_merge
+  3. ./mp4_merge-linux64, … in the current directory (interactive: offer to move to /usr/local/bin)
+  4. Same names in the script directory
 
 Environment:
   MP4_MERGE_BIN           Path to mp4_merge binary (overrides search paths).
-  MP4_MERGE_INSTALL_DIR   Target directory for -u/--update (default: script dir).
+  MP4_MERGE_INSTALL_DIR   Target directory for -u/--update (default: /usr/local/bin).
   MP4_MERGE_REPO          GitHub repo for releases (default: gyroflow/mp4-merge).
 
 Examples:
   $(basename "$0") -u
-      Install or refresh mp4_merge for this machine.
+      Download mp4_merge into /usr/local/bin (recommended system location).
 
   cd /path/to/chapters && $(basename "$0")
       Merge all chapter MP4s in that folder.
@@ -248,6 +249,106 @@ install_mp4_merge_asset() {
   return 0
 }
 
+MP4_MERGE_ASSET_NAMES=(
+  mp4_merge-linux64
+  mp4_merge-linux-arm64
+  mp4_merge-linux32
+  mp4_merge-linux
+  mp4_merge
+)
+
+mp4_merge_install_dir_writable() {
+  local dir="${1:-${MP4_MERGE_INSTALL_DIR}}"
+  [[ -n "$dir" ]] || return 1
+  if [[ ! -d "$dir" ]]; then
+    mkdir -p "$dir" 2>/dev/null || return 1
+  fi
+  [[ -w "$dir" ]]
+}
+
+# Move or copy a local mp4_merge binary into MP4_MERGE_INSTALL_DIR (and symlink mp4_merge).
+mp4_merge_install_local_binary() {
+  local src="$1"
+  local base dest dir
+  base=$(basename "$src")
+  dest="${MP4_MERGE_INSTALL_DIR}/${base}"
+  dir="${MP4_MERGE_INSTALL_DIR}"
+  if ! mp4_merge_install_dir_writable "$dir"; then
+    echo "$(pgm_ts) Cannot write to ${dir} (try: sudo $(basename "$0") -u)." >&2
+    return 1
+  fi
+  if ! mv -f -- "$src" "$dest" 2>/dev/null; then
+    if ! cp -f -- "$src" "$dest"; then
+      echo "$(pgm_ts) Failed to install ${base} into ${dir}." >&2
+      return 1
+    fi
+    rm -f -- "$src"
+  fi
+  chmod 755 "$dest"
+  if [[ "$base" != mp4_merge ]]; then
+    ln -sf "$base" "${dir}/mp4_merge"
+  fi
+  pgm_log_kv "Installed path" "${dest}"
+  printf '%s\n' "$dest"
+  return 0
+}
+
+mp4_merge_print_not_found_help() {
+  echo "$(pgm_ts) mp4_merge not found." >&2
+  echo "$(pgm_ts) Install to ${MP4_MERGE_INSTALL_DIR} (recommended):" >&2
+  echo "$(pgm_ts)   $(basename "$0") -u" >&2
+  if ! mp4_merge_install_dir_writable "${MP4_MERGE_INSTALL_DIR}" 2>/dev/null; then
+    echo "$(pgm_ts)   (directory not writable — use sudo for -u)" >&2
+  fi
+  echo "$(pgm_ts) Or set MP4_MERGE_BIN=/path/to/mp4_merge" >&2
+}
+
+# If merger is ./mp4_merge* in cwd, offer to move it to MP4_MERGE_INSTALL_DIR.
+resolve_merger_path_for_merge() {
+  local merger="$1"
+  local base choice dest
+  if [[ "$merger" != ./* ]]; then
+    printf '%s\n' "$merger"
+    return 0
+  fi
+  if (( DO_YES )) || (( ! script_is_run_interactively )); then
+    printf '%s\n' "$merger"
+    return 0
+  fi
+  base="${merger#./}"
+  pgm_log_kv "mp4_merge in current directory" "$(pwd)/${base}"
+  echo "  Recommended location: ${MP4_MERGE_INSTALL_DIR}/"
+  if ! mp4_merge_install_dir_writable "${MP4_MERGE_INSTALL_DIR}"; then
+    echo "  (${MP4_MERGE_INSTALL_DIR} is not writable — use sudo $(basename "$0") -u)"
+  fi
+  while true; do
+    echo "  [Y] Move to ${MP4_MERGE_INSTALL_DIR} (default)"
+    echo "  [n] Keep using file in this directory"
+    echo "  [q] Quit"
+    pgm_read_key "Move mp4_merge to ${MP4_MERGE_INSTALL_DIR}? [Y/n/q]: " y
+    choice="${REPLY,,}"
+    case "$choice" in
+      ''|y)
+        dest=$(mp4_merge_install_local_binary "$merger") || return 1
+        echo "$(pgm_ts) mp4_merge is now at ${dest}"
+        printf '%s\n' "$dest"
+        return 0
+        ;;
+      n)
+        printf '%s\n' "$merger"
+        return 0
+        ;;
+      q)
+        echo "$(pgm_ts) Quit."
+        return 2
+        ;;
+      *)
+        echo "$(pgm_ts) Unknown choice: ${REPLY}"
+        ;;
+    esac
+  done
+}
+
 # Sets REPLY to: install | keep | quit
 prompt_mp4_merge_update_action() {
   local state="$1"
@@ -273,7 +374,7 @@ prompt_mp4_merge_update_action() {
   while true; do
     case "$state" in
       missing)
-        echo "  [Y] Download and install (default)"
+        echo "  [Y] Download and install to ${MP4_MERGE_INSTALL_DIR} (default)"
         echo "  [n] Cancel"
         echo "  [q] Quit"
         pgm_read_key "mp4_merge not installed — [Y/n/q]: " y
@@ -356,7 +457,10 @@ update_mp4_merge() {
   printf '%s' "$releases_json" >"${releases_tmp}"
 
   pgm_log_kv "Machine asset" "${asset}"
-  pgm_log_kv "Install directory" "${MP4_MERGE_INSTALL_DIR}"
+  pgm_log_kv "Install directory" "${MP4_MERGE_INSTALL_DIR}  (recommended: ${MP4_MERGE_SYSTEM_DIR})"
+  if ! mp4_merge_install_dir_writable "${MP4_MERGE_INSTALL_DIR}"; then
+    echo "$(pgm_ts) Install directory is not writable — run with sudo or set MP4_MERGE_INSTALL_DIR." >&2
+  fi
   pgm_log_kv "Latest on GitHub" "${latest_tag}"
   pgm_log_kv "Latest SHA-256" "${latest_digest}"
   echo
@@ -403,22 +507,35 @@ update_mp4_merge() {
   esac
 }
 
+find_merger_in_dir() {
+  local dir="$1" name
+  [[ -n "$dir" ]] || return 1
+  for name in "${MP4_MERGE_ASSET_NAMES[@]}"; do
+    if [[ -x "${dir}/${name}" ]]; then
+      printf '%s\n' "${dir}/${name}"
+      return 0
+    fi
+  done
+  return 1
+}
+
 find_merger() {
+  local name
   if [[ -n "${MP4_MERGE_BIN:-}" && -x "${MP4_MERGE_BIN}" ]]; then
     printf '%s\n' "${MP4_MERGE_BIN}"
     return 0
   fi
-  local name
-  for name in mp4_merge-linux64 mp4_merge-linux-arm64 mp4_merge-linux32 mp4_merge-linux mp4_merge; do
+  find_merger_in_dir "${MP4_MERGE_INSTALL_DIR}" && return 0
+  if [[ "${MP4_MERGE_SYSTEM_DIR}" != "${MP4_MERGE_INSTALL_DIR}" ]]; then
+    find_merger_in_dir "${MP4_MERGE_SYSTEM_DIR}" && return 0
+  fi
+  for name in "${MP4_MERGE_ASSET_NAMES[@]}"; do
     if [[ -x "./${name}" ]]; then
       printf '%s\n' "./${name}"
       return 0
     fi
-    if [[ -x "${SCRIPT_DIR}/${name}" ]]; then
-      printf '%s\n' "${SCRIPT_DIR}/${name}"
-      return 0
-    fi
   done
+  find_merger_in_dir "${SCRIPT_DIR}" && return 0
   return 1
 }
 
@@ -1119,9 +1236,14 @@ do_merge() {
   local blob action
   local -a files=() mergeable_blobs=()
   merger=$(find_merger) || {
-    echo "$(pgm_ts) mp4_merge not found in . or ${SCRIPT_DIR}/" >&2
-    echo "$(pgm_ts) Run: $(basename "$0") -u" >&2
-    echo "$(pgm_ts) Or set MP4_MERGE_BIN=/path/to/mp4_merge" >&2
+    mp4_merge_print_not_found_help
+    return 1
+  }
+  merger=$(resolve_merger_path_for_merge "$merger") || {
+    local resolve_rc=$?
+    if (( resolve_rc == 2 )); then
+      return 0
+    fi
     return 1
   }
 
@@ -1252,7 +1374,8 @@ done
 . /root/bin/_script_header.sh "${HEADER_EXTRA_ARGS[@]}"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-MP4_MERGE_INSTALL_DIR="${MP4_MERGE_INSTALL_DIR:-${SCRIPT_DIR}}"
+MP4_MERGE_SYSTEM_DIR="${MP4_MERGE_SYSTEM_DIR:-/usr/local/bin}"
+MP4_MERGE_INSTALL_DIR="${MP4_MERGE_INSTALL_DIR:-${MP4_MERGE_SYSTEM_DIR}}"
 
 if [[ -f "${BASH_SOURCE[0]}" ]]; then
   chmod 700 "${BASH_SOURCE[0]}" 2>/dev/null || true
