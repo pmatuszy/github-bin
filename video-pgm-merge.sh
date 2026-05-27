@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.05.27 - v. 0.8.4 - already-merged groups: only skip/redo prompt (not Y-merge then N/r)
 # 2026.05.27 - v. 0.8.3 - prompt skip (default) or redo when _concat output already exists
 # 2026.05.27 - v. 0.8.2 - one line per input file (name + size together)
 # 2026.05.27 - v. 0.8.1 - size difference: positive value + which side is larger (input vs output)
@@ -443,30 +444,6 @@ print_merge_size_summary() {
   echo
 }
 
-# Sets REPLY to skip or redo when expected output already exists.
-prompt_existing_output_action() {
-  local output_file="$1"
-  local sz
-  REPLY=skip
-  if (( DO_YES )) || (( ! script_is_run_interactively )); then
-    echo "(PGM) Output already exists, skipping: ${output_file}"
-    return 0
-  fi
-  sz=$(file_size_bytes "$output_file")
-  echo "(PGM) Already merged — output exists:"
-  printf '         %s  %s\n' "$output_file" "$(format_bytes_human "$sz")"
-  echo "  [N] Skip (keep existing)   [R] Redo merge (replace output)"
-  pgm_read_key "Already merged — [N/r]: " n
-  case "${REPLY,,}" in
-    r) REPLY=redo; return 0 ;;
-    *)
-      REPLY=skip
-      echo "(PGM) Keeping existing output."
-      return 0
-      ;;
-  esac
-}
-
 prompt_delete_merged_inputs() {
   local -a files=("$@")
   local f choice
@@ -497,14 +474,13 @@ prompt_delete_merged_inputs() {
 }
 
 run_merge_group() {
-  local merger="$1"
-  shift
+  local merger="$1" redo="${2:-0}"
+  shift 2
   local -a files=("$@")
   local output_file rc
   output_file=$(group_output_file "${files[@]}")
   if [[ -e "$output_file" ]]; then
-    prompt_existing_output_action "$output_file"
-    if [[ "$REPLY" == skip ]]; then
+    if (( ! redo )); then
       return 0
     fi
     if ! rm -f -- "$output_file"; then
@@ -531,16 +507,30 @@ run_merge_group() {
   return "${rc}"
 }
 
-# Sets REPLY to: merge | skip | skip_all | merge_all | quit
+# Sets REPLY to: merge | redo | skip | skip_all | merge_all | quit
+# $3 = expected output file (may already exist).
 prompt_merge_group_action() {
-  local group_num="$1" group_total="$2"
+  local group_num="$1" group_total="$2" output_file="${3:-}"
+  local already_merged=0 choice
   REPLY=skip
+  if [[ -n "$output_file" && -e "$output_file" ]]; then
+    already_merged=1
+  fi
   if (( DO_YES )); then
-    REPLY=merge
+    if (( already_merged )); then
+      echo "(PGM) Output already exists, skipping: ${output_file}"
+      REPLY=skip
+    else
+      REPLY=merge
+    fi
     return 0
   fi
   if (( MERGE_ALL_REMAINING )); then
-    REPLY=merge
+    if (( already_merged )); then
+      REPLY=skip
+    else
+      REPLY=merge
+    fi
     return 0
   fi
   if (( SKIP_ALL_REMAINING )); then
@@ -548,23 +538,39 @@ prompt_merge_group_action() {
     return 0
   fi
   if (( ! script_is_run_interactively )); then
-    echo "(PGM) Non-interactive: skipping group ${group_num} (use -y to merge all)."
+    if (( already_merged )); then
+      echo "(PGM) Output already exists, skipping: ${output_file}"
+    else
+      echo "(PGM) Non-interactive: skipping group ${group_num} (use -y to merge all)."
+    fi
     REPLY=skip
     return 0
   fi
-  local choice
   while true; do
-    echo "  [Y] Merge   [N] Skip   [A] Skip all remaining   [M] Merge all remaining   [Q] Quit"
-    pgm_read_key "Choice for group ${group_num}/${group_total} [Y/n/a/m/q]: " y
-    choice="${REPLY,,}"
-    case "$choice" in
-      ''|y)  REPLY=merge; return 0 ;;
-      n)     REPLY=skip; return 0 ;;
-      a)     REPLY=skip_all; return 0 ;;
-      m)     REPLY=merge_all; return 0 ;;
-      q)     REPLY=quit; return 0 ;;
-      *)     echo "(PGM) Unknown choice: ${REPLY}" ;;
-    esac
+    if (( already_merged )); then
+      echo "  [N] Skip (keep existing)   [R] Redo merge   [A] Skip all remaining   [Q] Quit"
+      pgm_read_key "Already merged — group ${group_num}/${group_total} [N/r/a/q]: " n
+      choice="${REPLY,,}"
+      case "$choice" in
+        ''|n)  REPLY=skip; echo "(PGM) Keeping existing output."; return 0 ;;
+        r)     REPLY=redo; return 0 ;;
+        a)     REPLY=skip_all; return 0 ;;
+        q)     REPLY=quit; return 0 ;;
+        *)     echo "(PGM) Unknown choice: ${REPLY}" ;;
+      esac
+    else
+      echo "  [Y] Merge   [N] Skip   [A] Skip all remaining   [M] Merge all remaining   [Q] Quit"
+      pgm_read_key "Choice for group ${group_num}/${group_total} [Y/n/a/m/q]: " y
+      choice="${REPLY,,}"
+      case "$choice" in
+        ''|y)  REPLY=merge; return 0 ;;
+        n)     REPLY=skip; return 0 ;;
+        a)     REPLY=skip_all; return 0 ;;
+        m)     REPLY=merge_all; return 0 ;;
+        q)     REPLY=quit; return 0 ;;
+        *)     echo "(PGM) Unknown choice: ${REPLY}" ;;
+      esac
+    fi
   done
 }
 
@@ -584,7 +590,7 @@ show_merge_group_detail() {
   echo "  → ${output_file}"
   if [[ -e "$output_file" ]]; then
     sz=$(file_size_bytes "$output_file")
-    echo "(PGM) Already merged: $(format_bytes_human "$sz") — skip [N] or redo [R] if you choose merge"
+    echo "(PGM) Already merged — output: $(format_bytes_human "$sz")"
   fi
   echo
 }
@@ -638,23 +644,33 @@ do_merge() {
   for blob in "${mergeable_blobs[@]}"; do
     group_files_to_array "$blob" files
     (( group_num++ )) || true
+    output_file=$(group_output_file "${files[@]}")
     show_merge_group_detail "$group_num" "$mergeable_total" "${files[@]}"
-    prompt_merge_group_action "$group_num" "$mergeable_total"
+    prompt_merge_group_action "$group_num" "$mergeable_total" "$output_file"
     action=$REPLY
     case "$action" in
       merge)
-        run_merge_group "$merger" "${files[@]}" || rc=$?
+        run_merge_group "$merger" 0 "${files[@]}" || rc=$?
+        ;;
+      redo)
+        run_merge_group "$merger" 1 "${files[@]}" || rc=$?
         ;;
       skip)
-        echo "(PGM) Skipped group ${group_num}."
+        if [[ ! -e "$output_file" ]]; then
+          echo "(PGM) Skipped group ${group_num}."
+        fi
         ;;
       skip_all)
         SKIP_ALL_REMAINING=1
-        echo "(PGM) Skipped group ${group_num}; skipping remaining groups."
+        echo "(PGM) Skipping remaining groups."
         ;;
       merge_all)
         MERGE_ALL_REMAINING=1
-        run_merge_group "$merger" "${files[@]}" || rc=$?
+        if [[ -e "$output_file" ]]; then
+          echo "(PGM) Keeping existing output for group ${group_num}."
+        else
+          run_merge_group "$merger" 0 "${files[@]}" || rc=$?
+        fi
         ;;
       quit)
         echo "(PGM) Quit at group ${group_num}."
