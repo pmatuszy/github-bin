@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.05.27 - v. 0.8.9 - already-merged menu: [d] delete input chapters (non-default)
 # 2026.05.27 - v. 0.8.8 - output stem timestamp from first chapter file (not last)
 # 2026.05.27 - v. 0.8.7 - output name: …_parts_01-04_concat.mp4 from chapter range
 # 2026.05.27 - v. 0.8.6 - menu keys: default uppercase, other options lowercase in brackets
@@ -44,7 +45,8 @@ Merge behaviour (no options):
     (single-key Y/N/A/M/Q, no Enter — like rename.sh).
   - After a successful merge: size summary (inputs, output, difference) and optional
     deletion of the source chapter files (single-key Y/N).
-  - If the expected _concat output already exists: skip (default) or redo merge (R).
+  - If the expected _concat output already exists: skip (default), redo merge [r],
+    or delete input chapters [d] (keeps merged output).
   - Output file per group: <first_chapter_stem>_parts_<first>-<last>_concat.mp4
     (timestamp from the first part, e.g. …154511_…_parts_01-04_concat.mp4)
   - Single-part files are listed but not merged unless you group them manually.
@@ -472,12 +474,18 @@ print_merge_size_summary() {
 }
 
 prompt_delete_merged_inputs() {
+  local context="${1:-after_merge}"
+  shift
   local -a files=("$@")
   local f choice
   if (( DO_YES )) || (( ! script_is_run_interactively )); then
     return 0
   fi
-  echo "Delete the ${#files[@]} merged input chapter file(s)?"
+  if [[ "$context" == already_merged ]]; then
+    echo "Delete ${#files[@]} input chapter file(s)? (merged output will be kept)"
+  else
+    echo "Delete the ${#files[@]} merged input chapter file(s)?"
+  fi
   for f in "${files[@]}"; do
     printf '    %s\n' "${f##*/}"
   done
@@ -529,14 +537,14 @@ run_merge_group() {
     echo "(PGM) Done: ${output_file}"
     echo
     print_merge_size_summary "$output_file" "${files[@]}"
-    prompt_delete_merged_inputs "${files[@]}"
+    prompt_delete_merged_inputs after_merge "${files[@]}"
   else
     echo "(PGM) Merge failed (exit ${rc})." >&2
   fi
   return "${rc}"
 }
 
-# Sets REPLY to: merge | redo | skip | skip_all | merge_all | quit
+# Sets REPLY to: merge | redo | skip | skip_all | merge_all | delete_inputs | quit
 # $3 = expected output file (may already exist).
 prompt_merge_group_action() {
   local group_num="$1" group_total="$2" output_file="${3:-}"
@@ -577,15 +585,17 @@ prompt_merge_group_action() {
   fi
   while true; do
     if (( already_merged )); then
-      echo "  [N] Skip — keep existing output (default)"
+      echo "  [N] Skip — keep output and input files (default)"
       echo "  [r] Redo merge — replace output file"
+      echo "  [d] Delete input chapter files — keep merged output"
       echo "  [a] Skip all remaining groups"
       echo "  [q] Quit"
-      pgm_read_key "Already merged — group ${group_num}/${group_total} [N/r/a/q]: " n
+      pgm_read_key "Already merged — group ${group_num}/${group_total} [N/r/d/a/q]: " n
       choice="${REPLY,,}"
       case "$choice" in
-        ''|n)  REPLY=skip; echo "(PGM) Keeping existing output."; return 0 ;;
+        ''|n)  REPLY=skip; echo "(PGM) Keeping existing output and inputs."; return 0 ;;
         r)     REPLY=redo; return 0 ;;
+        d)     REPLY=delete_inputs; return 0 ;;
         a)     REPLY=skip_all; return 0 ;;
         q)     REPLY=quit; return 0 ;;
         *)     echo "(PGM) Unknown choice: ${REPLY}" ;;
@@ -690,6 +700,13 @@ do_merge() {
         ;;
       redo)
         run_merge_group "$merger" 1 "${files[@]}" || rc=$?
+        ;;
+      delete_inputs)
+        if [[ -e "$output_file" ]]; then
+          prompt_delete_merged_inputs already_merged "${files[@]}"
+        else
+          echo "(PGM) No merged output for group ${group_num}; cannot delete inputs here." >&2
+        fi
         ;;
       skip)
         if [[ ! -e "$output_file" ]]; then
