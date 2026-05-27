@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.05.27 - v. 0.10.0 - -u: show installed hash/version, compare GitHub SHA-256, prompt install/replace
 # 2026.05.27 - v. 0.9.1 - log prefix: YYYY.MM.DD HH:MM:SS instead of (PGM)
 # 2026.05.27 - v. 0.9.0 - print start/finish, processing time, and other/wait time at end
 # 2026.05.27 - v. 0.8.9 - already-merged menu: [d] delete input chapters (non-default)
@@ -31,8 +32,8 @@ file using mp4_merge from https://github.com/gyroflow/mp4-merge
 
 Options:
   -h, --help           Show this help and exit.
-  -u, --update         Download or update mp4_merge for this OS/CPU into the install
-                       directory (default: directory containing this script).
+  -u, --update         Check installed mp4_merge (SHA-256 vs GitHub releases), show
+                       version if known, then prompt to install or replace (or use -y).
   -v, --version        Print script version and exit.
   -y, --yes            Merge every detected multi-part group without prompts (for cron).
   NO_STARTUP_DELAY     Skip random startup delay when run non-interactively (see
@@ -124,35 +125,85 @@ detect_mp4_merge_asset() {
   esac
 }
 
-fetch_latest_release_tag() {
-  local api_url="https://api.github.com/repos/${MP4_MERGE_REPO}/releases/latest"
-  local json tag
+mp4_merge_github_curl() {
+  local url="$1"
   pgm_processing_begin
-  if ! json=$(/usr/bin/curl -fsSL --max-time 120 "${api_url}" 2>/dev/null); then
-    pgm_processing_end
-    echo "$(pgm_ts) Failed to fetch release metadata from ${api_url}" >&2
-    return 1
-  fi
+  /usr/bin/curl -fsSL --max-time 120 "${url}" 2>/dev/null
   pgm_processing_end
-  tag=$(printf '%s\n' "$json" | grep -m1 '"tag_name"' | sed 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/')
-  if [[ -z "$tag" ]]; then
-    echo "$(pgm_ts) Could not parse latest release tag from GitHub API." >&2
-    return 1
-  fi
-  printf '%s\n' "$tag"
 }
 
-update_mp4_merge() {
-  local asset tag dest tmp url
-  check_if_installed curl
+fetch_mp4_merge_latest_release_json() {
+  mp4_merge_github_curl "https://api.github.com/repos/${MP4_MERGE_REPO}/releases/latest"
+}
 
-  if ! asset=$(detect_mp4_merge_asset); then
-    echo "$(pgm_ts) Unsupported OS/arch for mp4_merge: $(uname -s) $(uname -m)" >&2
-    return 1
+fetch_mp4_merge_all_releases_json() {
+  mp4_merge_github_curl "https://api.github.com/repos/${MP4_MERGE_REPO}/releases?per_page=100"
+}
+
+release_tag_from_json() {
+  printf '%s\n' "$1" | grep -m1 '"tag_name"' | sed 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/'
+}
+
+# Requires python3. Args: releases_json_file asset_name -> stdout digest hex (no sha256: prefix).
+release_asset_digest_from_json() {
+  local json_file="$1" asset="$2"
+  python3 - "$asset" "$json_file" <<'PY'
+import json, sys
+asset, path = sys.argv[1], sys.argv[2]
+with open(path, encoding="utf-8") as f:
+    data = json.load(f)
+for a in data.get("assets") or []:
+    if a.get("name") == asset:
+        d = (a.get("digest") or "").strip()
+        if d.startswith("sha256:"):
+            d = d[7:]
+        print(d.lower())
+        break
+PY
+}
+
+# Requires python3. Args: releases_json_file asset_name sha256_hex -> stdout tag_name or nothing.
+find_release_tag_for_asset_digest() {
+  local json_file="$1" asset="$2" digest="$3"
+  python3 - "$asset" "$digest" "$json_file" <<'PY'
+import json, sys
+asset, want, path = sys.argv[1], sys.argv[2].lower(), sys.argv[3]
+with open(path, encoding="utf-8") as f:
+    releases = json.load(f)
+if isinstance(releases, dict):
+    releases = [releases]
+for rel in releases:
+    tag = rel.get("tag_name") or ""
+    for a in rel.get("assets") or []:
+        if a.get("name") != asset:
+            continue
+        d = (a.get("digest") or "").strip().lower()
+        if d.startswith("sha256:"):
+            d = d[7:]
+        if d == want:
+            print(tag)
+            raise SystemExit(0)
+PY
+}
+
+file_sha256_hex() {
+  local f="$1"
+  sha256sum -- "$f" 2>/dev/null | awk '{print tolower($1)}'
+}
+
+resolve_mp4_merge_install_path() {
+  local asset="$1"
+  local dest="${MP4_MERGE_INSTALL_DIR}/${asset}"
+  if [[ -f "$dest" ]]; then
+    printf '%s\n' "$dest"
+    return 0
   fi
-  if ! tag=$(fetch_latest_release_tag); then
-    return 1
-  fi
+  return 1
+}
+
+install_mp4_merge_asset() {
+  local asset="$1" tag="$2"
+  local dest tmp url
   mkdir -p "${MP4_MERGE_INSTALL_DIR}"
   dest="${MP4_MERGE_INSTALL_DIR}/${asset}"
   tmp="${dest}.tmp.$$"
@@ -178,11 +229,167 @@ update_mp4_merge() {
     ln -sf "${asset}" "${MP4_MERGE_INSTALL_DIR}/mp4_merge"
   fi
 
+  local new_hash
+  new_hash=$(file_sha256_hex "$dest")
   echo "$(pgm_ts) Installed: ${dest}"
+  echo "$(pgm_ts) SHA-256: ${new_hash}  (${tag})"
   if [[ -x "${dest}" ]]; then
     echo "$(pgm_ts) $(file -b "${dest}" 2>/dev/null || echo 'binary ready')"
   fi
   return 0
+}
+
+# Sets REPLY to: install | keep | quit
+prompt_mp4_merge_update_action() {
+  local state="$1"
+  REPLY=keep
+  if (( DO_YES )); then
+    case "$state" in
+      missing|outdated|unknown) REPLY=install ;;
+      latest) REPLY=keep ;;
+    esac
+    return 0
+  fi
+  if (( ! script_is_run_interactively )); then
+    case "$state" in
+      missing|outdated|unknown) REPLY=install ;;
+      latest)
+        echo "$(pgm_ts) Already on latest release; skipping download (use -y only for merge mode)."
+        REPLY=keep
+        ;;
+    esac
+    return 0
+  fi
+  local choice
+  while true; do
+    case "$state" in
+      missing)
+        echo "  [Y] Download and install (default)"
+        echo "  [n] Cancel"
+        echo "  [q] Quit"
+        pgm_read_key "mp4_merge not installed — [Y/n/q]: " y
+        ;;
+      latest)
+        echo "  [N] Keep current install (default)"
+        echo "  [y] Re-download and replace anyway"
+        echo "  [q] Quit"
+        pgm_read_key "Already on latest release — [N/y/q]: " n
+        ;;
+      outdated)
+        echo "  [Y] Replace with latest release (default)"
+        echo "  [n] Keep current install"
+        echo "  [q] Quit"
+        pgm_read_key "Update available — [Y/n/q]: " y
+        ;;
+      unknown)
+        echo "  [Y] Replace with latest release from GitHub (default)"
+        echo "  [n] Keep current file"
+        echo "  [q] Quit"
+        pgm_read_key "Installed hash unknown on GitHub — [Y/n/q]: " y
+        ;;
+    esac
+    choice="${REPLY,,}"
+    case "$state:$choice" in
+      missing:''|missing:y) REPLY=install; return 0 ;;
+      missing:n)           REPLY=keep; echo "$(pgm_ts) Install cancelled."; return 0 ;;
+      latest:''|latest:n)  REPLY=keep; echo "$(pgm_ts) Keeping current install."; return 0 ;;
+      latest:y)            REPLY=install; return 0 ;;
+      outdated:''|outdated:y) REPLY=install; return 0 ;;
+      outdated:n)          REPLY=keep; echo "$(pgm_ts) Keeping current install."; return 0 ;;
+      unknown:''|unknown:y) REPLY=install; return 0 ;;
+      unknown:n)           REPLY=keep; echo "$(pgm_ts) Keeping current file."; return 0 ;;
+      *:q)                 REPLY=quit; return 0 ;;
+      *)                   echo "$(pgm_ts) Unknown choice: ${REPLY}" ;;
+    esac
+  done
+}
+
+update_mp4_merge() {
+  local asset tag dest install_path local_hash local_tag latest_json releases_json
+  local latest_tag latest_digest json_tmp releases_tmp state
+
+  check_if_installed curl
+  if ! command -v python3 >/dev/null 2>&1; then
+    echo "$(pgm_ts) python3 is required for release hash lookup (install python3)." >&2
+    return 1
+  fi
+  if ! command -v sha256sum >/dev/null 2>&1; then
+    echo "$(pgm_ts) sha256sum is required to verify mp4_merge binaries." >&2
+    return 1
+  fi
+
+  if ! asset=$(detect_mp4_merge_asset); then
+    echo "$(pgm_ts) Unsupported OS/arch for mp4_merge: $(uname -s) $(uname -m)" >&2
+    return 1
+  fi
+
+  json_tmp=$(mktemp)
+  releases_tmp=$(mktemp)
+  trap 'rm -f "${json_tmp}" "${releases_tmp}"' RETURN
+
+  latest_json=$(fetch_mp4_merge_latest_release_json) || {
+    echo "$(pgm_ts) Failed to fetch latest release from GitHub." >&2
+    return 1
+  }
+  printf '%s' "$latest_json" >"${json_tmp}"
+  latest_tag=$(release_tag_from_json "$latest_json")
+  latest_digest=$(release_asset_digest_from_json "${json_tmp}" "${asset}")
+  if [[ -z "$latest_tag" || -z "$latest_digest" ]]; then
+    echo "$(pgm_ts) Could not read latest release metadata for ${asset}." >&2
+    return 1
+  fi
+
+  releases_json=$(fetch_mp4_merge_all_releases_json) || {
+    echo "$(pgm_ts) Failed to fetch release list from GitHub." >&2
+    return 1
+  }
+  printf '%s' "$releases_json" >"${releases_tmp}"
+
+  echo "$(pgm_ts) mp4_merge for this machine: ${asset}"
+  echo "$(pgm_ts) Install directory: ${MP4_MERGE_INSTALL_DIR}"
+  echo "$(pgm_ts) Latest on GitHub:  ${latest_tag}"
+  echo "$(pgm_ts) Latest SHA-256:    ${latest_digest}"
+  echo
+
+  if install_path=$(resolve_mp4_merge_install_path "$asset"); then
+    local_hash=$(file_sha256_hex "$install_path")
+    local_tag=$(find_release_tag_for_asset_digest "${releases_tmp}" "${asset}" "${local_hash}" 2>/dev/null || true)
+    echo "$(pgm_ts) Installed file:    ${install_path}"
+    echo "$(pgm_ts) Installed SHA-256:  ${local_hash}"
+    if [[ -n "$local_tag" ]]; then
+      echo "$(pgm_ts) Installed version: ${local_tag}  (matched GitHub release by hash)"
+    else
+      echo "$(pgm_ts) Installed version: unknown  (hash not found in GitHub releases)"
+    fi
+    echo "$(pgm_ts) Installed size:    $(format_bytes_human "$(file_size_bytes "$install_path")")"
+    echo
+    if [[ "$local_hash" == "$latest_digest" ]]; then
+      state=latest
+    elif [[ -n "$local_tag" ]]; then
+      state=outdated
+    else
+      state=unknown
+    fi
+  else
+    echo "$(pgm_ts) Installed file:    not found"
+    echo
+    state=missing
+  fi
+
+  prompt_mp4_merge_update_action "$state"
+  case "$REPLY" in
+    install)
+      install_mp4_merge_asset "$asset" "$latest_tag"
+      return $?
+      ;;
+    keep)
+      return 0
+      ;;
+    quit)
+      echo "$(pgm_ts) Quit."
+      return 0
+      ;;
+  esac
 }
 
 find_merger() {
