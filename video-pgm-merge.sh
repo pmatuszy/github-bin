@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.05.27 - v. 0.8.5 - menu options one per line; default key uppercase in prompt (rename.sh style)
 # 2026.05.27 - v. 0.8.4 - already-merged groups: only skip/redo prompt (not Y-merge then N/r)
 # 2026.05.27 - v. 0.8.3 - prompt skip (default) or redo when _concat output already exists
 # 2026.05.27 - v. 0.8.2 - one line per input file (name + size together)
@@ -454,6 +455,8 @@ prompt_delete_merged_inputs() {
   for f in "${files[@]}"; do
     printf '    %s\n' "${f##*/}"
   done
+  echo "  [Y] Yes — delete merged input chapter files"
+  echo "  [N] No — keep input files (default)"
   pgm_read_key "Delete inputs? [y/N]: " n
   choice="${REPLY,,}"
   case "$choice" in
@@ -548,7 +551,10 @@ prompt_merge_group_action() {
   fi
   while true; do
     if (( already_merged )); then
-      echo "  [N] Skip (keep existing)   [R] Redo merge   [A] Skip all remaining   [Q] Quit"
+      echo "  [N] Skip — keep existing output (default)"
+      echo "  [R] Redo merge — replace output file"
+      echo "  [A] Skip all remaining groups"
+      echo "  [Q] Quit"
       pgm_read_key "Already merged — group ${group_num}/${group_total} [N/r/a/q]: " n
       choice="${REPLY,,}"
       case "$choice" in
@@ -559,7 +565,11 @@ prompt_merge_group_action() {
         *)     echo "(PGM) Unknown choice: ${REPLY}" ;;
       esac
     else
-      echo "  [Y] Merge   [N] Skip   [A] Skip all remaining   [M] Merge all remaining   [Q] Quit"
+      echo "  [Y] Merge this group (default)"
+      echo "  [N] Skip this group"
+      echo "  [A] Skip all remaining groups"
+      echo "  [M] Merge all remaining groups"
+      echo "  [Q] Quit"
       pgm_read_key "Choice for group ${group_num}/${group_total} [Y/n/a/m/q]: " y
       choice="${REPLY,,}"
       case "$choice" in
