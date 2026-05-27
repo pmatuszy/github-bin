@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.05.27 - v. 0.10.4 - fixed INPUT/OUTPUT columns: basename and size on separate lines
 # 2026.05.27 - v. 0.10.3 - merge group detail: INPUT/OUTPUT columns, totals side by side
 # 2026.05.27 - v. 0.10.2 - fix json_tmp unbound on RETURN trap under set -o nounset
 # 2026.05.27 - v. 0.10.1 - align labelled status lines after timestamp (pgm_log_kv)
@@ -552,29 +553,33 @@ print_chapter_file_line() {
   printf '%s%s\n' "$indent" "$(chapter_file_summary_line "$f")"
 }
 
-# INPUT / OUTPUT two-column block for one merge group.
+# Truncate for fixed-width columns (ellipsis if needed).
+pgm_truncate_str() {
+  local s="$1" max="$2"
+  if ((${#s} <= max)); then
+    printf '%s' "$s"
+  else
+    printf '%s...' "${s:0:$(( max - 3 ))}"
+  fi
+}
+
+# Fixed layout: part + basename (line 1), size indented (line 2); OUTPUT at PGM_IO_OUT_COL.
+PGM_IO_PART_W=8
+PGM_IO_NAME_W=58
+PGM_IO_OUT_COL=72
+
 print_merge_group_io_block() {
   local output_file="$1"
   shift
   local -a files=("$@")
-  local f i col=76 len=0 input_total=0 out_sz=0
-  local -a in_lines=()
-  local input_total_s output_total_s output_note sep_in sep_out
+  local f i input_total=0 out_sz=0
+  local base part_lbl name_disp size_s
+  local input_total_s output_total_s output_note sep_in sep_out out_disp
 
   for f in "${files[@]}"; do
-    in_lines+=("$(chapter_file_summary_line "$f")")
     sz=$(file_size_bytes "$f")
     (( input_total += sz ))
-    if ((${#in_lines[-1]} > len)); then
-      len=${#in_lines[-1]}
-    fi
   done
-  if (( len + 2 > col )); then
-    col=$(( len + 2 ))
-  fi
-  if (( col > 100 )); then
-    col=100
-  fi
 
   if [[ -e "$output_file" ]]; then
     out_sz=$(file_size_bytes "$output_file")
@@ -585,21 +590,35 @@ print_merge_group_io_block() {
     output_note="(not created yet)"
   fi
   input_total_s="$(format_bytes_human "$input_total")"
+  out_disp=$(pgm_truncate_str "${output_file##*/}" 48)
 
-  sep_in=$(printf '%*s' 60 '' | tr ' ' '-')
+  sep_in=$(printf '%*s' $(( PGM_IO_PART_W + PGM_IO_NAME_W )) '' | tr ' ' '-')
   sep_out=$(printf '%*s' 44 '' | tr ' ' '-')
 
-  printf '  %-*s  %s\n' "$col" "INPUT (${#files[@]} parts)" "OUTPUT"
-  printf '  %-*s  %s\n' "$col" "$sep_in" "$sep_out"
-  for i in "${!in_lines[@]}"; do
-    if (( i == 0 )); then
-      printf '  %-*s  %s\n' "$col" "${in_lines[$i]}" "${output_file}"
+  printf '  %-*s  %s\n' "$PGM_IO_OUT_COL" "INPUT (${#files[@]} parts)" "OUTPUT"
+  printf '  %s  %s\n' "$sep_in" "$sep_out"
+
+  for i in "${!files[@]}"; do
+    f="${files[$i]}"
+    base="${f##*/}"
+    size_s="$(format_bytes_human "$(file_size_bytes "$f")")"
+    if part_lbl=$(chapter_part_from_basename "$base" 2>/dev/null); then
+      part_lbl=$(printf 'part %02d' "$part_lbl")
     else
-      printf '  %-*s\n' "$col" "${in_lines[$i]}"
+      part_lbl=""
     fi
+    name_disp=$(pgm_truncate_str "$base" "$PGM_IO_NAME_W")
+    if (( i == 0 )); then
+      printf '  %-*s %-*s  %s\n' "$PGM_IO_PART_W" "$part_lbl" "$PGM_IO_NAME_W" "$name_disp" "$out_disp"
+    else
+      printf '  %-*s %-*s\n' "$PGM_IO_PART_W" "$part_lbl" "$PGM_IO_NAME_W" "$name_disp"
+    fi
+    printf '  %*s%s\n' "$PGM_IO_PART_W" '' "$size_s"
   done
-  printf '  %-*s  %s\n' "$col" "$sep_in" "$sep_out"
-  printf '  %-*s  Total: %s  %s\n' "$col" "Total: ${input_total_s}" "${output_total_s}  ${output_note}"
+
+  printf '  %s  %s\n' "$sep_in" "$sep_out"
+  printf '  %-*s %-*s  Total: %s  %s\n' \
+    "$PGM_IO_PART_W" "Total:" "$PGM_IO_NAME_W" "$input_total_s" "${output_total_s}  ${output_note}"
 }
 
 # Absolute size difference (always non-negative).
