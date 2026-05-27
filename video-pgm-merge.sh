@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.05.27 - v. 0.10.3 - merge group detail: INPUT/OUTPUT columns, totals side by side
 # 2026.05.27 - v. 0.10.2 - fix json_tmp unbound on RETURN trap under set -o nounset
 # 2026.05.27 - v. 0.10.1 - align labelled status lines after timestamp (pgm_log_kv)
 # 2026.05.27 - v. 0.10.0 - -u: show installed hash/version, compare GitHub SHA-256, prompt install/replace
@@ -533,16 +534,72 @@ format_bytes_human() {
   }'
 }
 
-# One line: part label (if any), basename, size.
-print_chapter_file_line() {
-  local indent="$1" f="$2"
+# One line: part label (if any), basename, size (no trailing newline).
+chapter_file_summary_line() {
+  local f="$1"
   local base="${f##*/}" part sz
   sz=$(file_size_bytes "$f")
   if part=$(chapter_part_from_basename "$base" 2>/dev/null); then
-    printf '%spart %02d  %s  %s\n' "$indent" "$part" "$base" "$(format_bytes_human "$sz")"
+    printf 'part %02d  %s  %s' "$part" "$base" "$(format_bytes_human "$sz")"
   else
-    printf '%s%s  %s\n' "$indent" "$base" "$(format_bytes_human "$sz")"
+    printf '%s  %s' "$base" "$(format_bytes_human "$sz")"
   fi
+}
+
+# One line: part label (if any), basename, size.
+print_chapter_file_line() {
+  local indent="$1" f="$2"
+  printf '%s%s\n' "$indent" "$(chapter_file_summary_line "$f")"
+}
+
+# INPUT / OUTPUT two-column block for one merge group.
+print_merge_group_io_block() {
+  local output_file="$1"
+  shift
+  local -a files=("$@")
+  local f i col=76 len=0 input_total=0 out_sz=0
+  local -a in_lines=()
+  local input_total_s output_total_s output_note sep_in sep_out
+
+  for f in "${files[@]}"; do
+    in_lines+=("$(chapter_file_summary_line "$f")")
+    sz=$(file_size_bytes "$f")
+    (( input_total += sz ))
+    if ((${#in_lines[-1]} > len)); then
+      len=${#in_lines[-1]}
+    fi
+  done
+  if (( len + 2 > col )); then
+    col=$(( len + 2 ))
+  fi
+  if (( col > 100 )); then
+    col=100
+  fi
+
+  if [[ -e "$output_file" ]]; then
+    out_sz=$(file_size_bytes "$output_file")
+    output_total_s="$(format_bytes_human "$out_sz")"
+    output_note="(on disk)"
+  else
+    output_total_s="—"
+    output_note="(not created yet)"
+  fi
+  input_total_s="$(format_bytes_human "$input_total")"
+
+  sep_in=$(printf '%*s' 60 '' | tr ' ' '-')
+  sep_out=$(printf '%*s' 44 '' | tr ' ' '-')
+
+  printf '  %-*s  %s\n' "$col" "INPUT (${#files[@]} parts)" "OUTPUT"
+  printf '  %-*s  %s\n' "$col" "$sep_in" "$sep_out"
+  for i in "${!in_lines[@]}"; do
+    if (( i == 0 )); then
+      printf '  %-*s  %s\n' "$col" "${in_lines[$i]}" "${output_file}"
+    else
+      printf '  %-*s\n' "$col" "${in_lines[$i]}"
+    fi
+  done
+  printf '  %-*s  %s\n' "$col" "$sep_in" "$sep_out"
+  printf '  %-*s  Total: %s  %s\n' "$col" "Total: ${input_total_s}" "${output_total_s}  ${output_note}"
 }
 
 # Absolute size difference (always non-negative).
@@ -743,22 +800,18 @@ print_merge_size_summary() {
   local output_file="$1"
   shift
   local -a files=("$@")
-  local f sz input_total=0 out_sz=0
-  echo "=== Size summary ==="
-  printf '  Input parts (%d files):\n' "${#files[@]}"
+  local f input_total=0 out_sz=0
   for f in "${files[@]}"; do
-    print_chapter_file_line '    ' "$f"
     sz=$(file_size_bytes "$f")
     (( input_total += sz ))
   done
-  printf '  Input total:  %s\n' "$(format_bytes_human "$input_total")"
+  echo "=== Size summary ==="
+  print_merge_group_io_block "$output_file" "${files[@]}"
   if [[ -f "$output_file" ]]; then
     out_sz=$(file_size_bytes "$output_file")
-    printf '  Output:       %s\n' "$(format_bytes_human "$out_sz")"
-    printf '                %s\n' "$output_file"
     format_size_comparison_line "$input_total" "$out_sz"
   else
-    echo "  Output:       (file missing — merge may have failed)"
+    echo "  $(pgm_ts) Output file missing — merge may have failed."
   fi
   echo
 }
@@ -916,20 +969,11 @@ show_merge_group_detail() {
   local group_num="$1" group_total="$2"
   shift 2
   local -a files=("$@")
-  local f output_file sz input_total=0
+  local output_file
   output_file=$(group_output_file "${files[@]}")
+  echo
   echo "=== Merge group ${group_num} of ${group_total} (${#files[@]} parts) ==="
-  for f in "${files[@]}"; do
-    print_chapter_file_line '  ' "$f"
-    sz=$(file_size_bytes "$f")
-    (( input_total += sz ))
-  done
-  printf '  input total: %s\n' "$(format_bytes_human "$input_total")"
-  echo "  → ${output_file}"
-  if [[ -e "$output_file" ]]; then
-    sz=$(file_size_bytes "$output_file")
-    echo "$(pgm_ts) Already merged — output: $(format_bytes_human "$sz")"
-  fi
+  print_merge_group_io_block "$output_file" "${files[@]}"
   echo
 }
 
