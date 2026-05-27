@@ -1,5 +1,7 @@
 #!/bin/bash
 
+# 2026.05.27 - v. 0.8.1 - size difference: positive value + which side is larger (input vs output)
+# 2026.05.27 - v. 0.8 - single-key prompts, per-file sizes, post-merge summary, optional delete inputs
 # 2026.05.27 - v. 0.7 - interactive GoPro chapter groups (part_01→02→…); -y merges all without prompts
 # 2026.05.26 - v. 0.6 - on Ctrl-C remove incomplete _concat.mp4 output during merge
 # 2026.05.26 - v. 0.5 - source _script_header.sh / _script_footer.sh like other bin scripts
@@ -31,7 +33,10 @@ Merge behaviour (no options):
     existing *_concat.mp4 outputs.
   - Detects GoPro-style chapter sequences (_part_01, _part_02, … with the same
     camera token, e.g. GOPRO7_BLACK). A new recording starts when part resets to 01.
-  - Shows each multi-part group and asks whether to merge (interactive session).
+  - Shows each multi-part group (with file sizes) and asks whether to merge
+    (single-key Y/N/A/M/Q, no Enter — like rename.sh).
+  - After a successful merge: size summary (inputs, output, difference) and optional
+    deletion of the source chapter files (single-key Y/N).
   - Output file per group: <last_chapter_basename>_concat.mp4
   - Single-part files are listed but not merged unless you group them manually.
 
@@ -182,6 +187,74 @@ find_merger() {
 
 # Set by do_merge; used by trap on Ctrl-C to drop a partial output file.
 VIDEO_MERGE_OUT_FILE=""
+PGM_READ_TIMEOUT=300
+
+flush_stdin() {
+  local discard drained=0 max_drain=256
+  while (( drained < max_drain )) && IFS= read -r -t 0.02 -n 1 discard; do
+    ((++drained))
+  done
+}
+
+# Read one key (no Enter). Sets REPLY; uses default when empty and default is set.
+pgm_read_key() {
+  local prompt="$1" default="${2:-}" timeout="${3:-$PGM_READ_TIMEOUT}"
+  local answer=
+  if (( ! script_is_run_interactively )); then
+    REPLY="$default"
+    return 0
+  fi
+  printf '%s' "$prompt"
+  flush_stdin
+  read -t "$timeout" -n 1 answer || answer=
+  echo
+  if [[ -z "$answer" ]]; then
+    REPLY="$default"
+  else
+    REPLY="$answer"
+  fi
+}
+
+file_size_bytes() {
+  local f="$1"
+  if [[ ! -f "$f" ]]; then
+    printf '0\n'
+    return 0
+  fi
+  stat -c %s -- "$f" 2>/dev/null || stat -f %z -- "$f" 2>/dev/null || printf '0\n'
+}
+
+# bytes | kB | MB on one line (kB/MB = 1024-based).
+format_bytes_human() {
+  local bytes="$1"
+  awk -v b="$bytes" 'BEGIN {
+    printf "%d bytes | %.2f kB | %.2f MB", b, b/1024.0, b/1048576.0
+  }'
+}
+
+# Absolute size difference (always non-negative).
+format_bytes_abs_human() {
+  local bytes="$1"
+  if (( bytes < 0 )); then
+    bytes=$(( -bytes ))
+  fi
+  format_bytes_human "$bytes"
+}
+
+# Describe which side is larger: input parts vs merged output (positive difference only).
+format_size_comparison_line() {
+  local input_total="$1" output_bytes="$2"
+  local diff=0
+  if (( input_total > output_bytes )); then
+    diff=$(( input_total - output_bytes ))
+    printf '  Difference: %s — input files are larger than output\n' "$(format_bytes_abs_human "$diff")"
+  elif (( output_bytes > input_total )); then
+    diff=$(( output_bytes - input_total ))
+    printf '  Difference: %s — output is larger than input files\n' "$(format_bytes_abs_human "$diff")"
+  else
+    printf '  Difference: 0 bytes | 0.00 kB | 0.00 MB — input total and output are the same size\n'
+  fi
+}
 
 video_merge_ctrl_c() {
   if [[ -n "${VIDEO_MERGE_OUT_FILE}" && -e "${VIDEO_MERGE_OUT_FILE}" ]]; then
@@ -287,14 +360,22 @@ print_group_plan() {
       (( gidx++ )) || true
       printf '  [group %d/%d] %d parts → %s_concat.mp4\n' \
         "$gidx" "$mergeable" "${#files[@]}" "${files[-1]%.*}"
+      local group_bytes=0 sz
+      for f in "${files[@]}"; do
+        sz=$(file_size_bytes "$f")
+        (( group_bytes += sz ))
+      done
       for f in "${files[@]}"; do
         base="${f##*/}"
+        sz=$(file_size_bytes "$f")
         if part=$(chapter_part_from_basename "$base" 2>/dev/null); then
           printf '      part %02d  %s\n' "$part" "$base"
         else
           printf '              %s\n' "$base"
         fi
+        printf '              %s\n' "$(format_bytes_human "$sz")"
       done
+      printf '      input total (%d files): %s\n' "${#files[@]}" "$(format_bytes_human "$group_bytes")"
       echo
     done
   fi
@@ -326,6 +407,65 @@ group_output_file() {
   printf '%s_concat.mp4\n' "${files[-1]%.*}"
 }
 
+print_merge_size_summary() {
+  local output_file="$1"
+  shift
+  local -a files=("$@")
+  local f base part sz input_total=0 out_sz=0
+  echo "=== Size summary ==="
+  printf '  Input parts (%d files):\n' "${#files[@]}"
+  for f in "${files[@]}"; do
+    base="${f##*/}"
+    sz=$(file_size_bytes "$f")
+    (( input_total += sz ))
+    if part=$(chapter_part_from_basename "$base" 2>/dev/null); then
+      printf '    part %02d  %s\n' "$part" "$base"
+    else
+      printf '            %s\n' "$base"
+    fi
+    printf '            %s\n' "$(format_bytes_human "$sz")"
+  done
+  printf '  Input total:  %s\n' "$(format_bytes_human "$input_total")"
+  if [[ -f "$output_file" ]]; then
+    out_sz=$(file_size_bytes "$output_file")
+    printf '  Output:       %s\n' "$(format_bytes_human "$out_sz")"
+    printf '                %s\n' "$output_file"
+    format_size_comparison_line "$input_total" "$out_sz"
+  else
+    echo "  Output:       (file missing — merge may have failed)"
+  fi
+  echo
+}
+
+prompt_delete_merged_inputs() {
+  local -a files=("$@")
+  local f choice
+  if (( DO_YES )) || (( ! script_is_run_interactively )); then
+    return 0
+  fi
+  echo "Delete the ${#files[@]} merged input chapter file(s)?"
+  for f in "${files[@]}"; do
+    printf '    %s\n' "${f##*/}"
+  done
+  pgm_read_key "Delete inputs? [y/N]: " n
+  choice="${REPLY,,}"
+  case "$choice" in
+    y)
+      for f in "${files[@]}"; do
+        if rm -f -- "$f"; then
+          echo "(PGM) Deleted: ${f##*/}"
+        else
+          echo "(PGM) Could not delete: $f" >&2
+        fi
+      done
+      ;;
+    *)
+      echo "(PGM) Input files kept."
+      ;;
+  esac
+  echo
+}
+
 run_merge_group() {
   local merger="$1"
   shift
@@ -345,6 +485,9 @@ run_merge_group() {
   VIDEO_MERGE_OUT_FILE=""
   if (( rc == 0 )); then
     echo "(PGM) Done: ${output_file}"
+    echo
+    print_merge_size_summary "$output_file" "${files[@]}"
+    prompt_delete_merged_inputs "${files[@]}"
   else
     echo "(PGM) Merge failed (exit ${rc})." >&2
   fi
@@ -375,15 +518,15 @@ prompt_merge_group_action() {
   local choice
   while true; do
     echo "  [Y] Merge   [N] Skip   [A] Skip all remaining   [M] Merge all remaining   [Q] Quit"
-    printf 'Choice for group %d/%d [Y/n/a/m/q]: ' "$group_num" "$group_total"
-    IFS= read -r choice || choice=q
-    case "${choice,,}" in
-      ''|y|yes)  REPLY=merge; return 0 ;;
-      n|no)      REPLY=skip; return 0 ;;
-      a|all)     REPLY=skip_all; return 0 ;;
-      m|merge)   REPLY=merge_all; return 0 ;;
-      q|quit)    REPLY=quit; return 0 ;;
-      *)         echo "(PGM) Unknown choice: ${choice}" ;;
+    pgm_read_key "Choice for group ${group_num}/${group_total} [Y/n/a/m/q]: " y
+    choice="${REPLY,,}"
+    case "$choice" in
+      ''|y)  REPLY=merge; return 0 ;;
+      n)     REPLY=skip; return 0 ;;
+      a)     REPLY=skip_all; return 0 ;;
+      m)     REPLY=merge_all; return 0 ;;
+      q)     REPLY=quit; return 0 ;;
+      *)     echo "(PGM) Unknown choice: ${REPLY}" ;;
     esac
   done
 }
@@ -392,21 +535,26 @@ show_merge_group_detail() {
   local group_num="$1" group_total="$2"
   shift 2
   local -a files=("$@")
-  local f base part output_file
+  local f base part output_file sz input_total=0
   output_file=$(group_output_file "${files[@]}")
   echo "=== Merge group ${group_num} of ${group_total} (${#files[@]} parts) ==="
   for f in "${files[@]}"; do
     base="${f##*/}"
+    sz=$(file_size_bytes "$f")
+    (( input_total += sz ))
     part=$(chapter_part_from_basename "$base" 2>/dev/null) || part=
     if [[ -n "$part" ]]; then
       printf '  part %02d  %s\n' "$part" "$base"
     else
       printf '         %s\n' "$base"
     fi
+    printf '         %s\n' "$(format_bytes_human "$sz")"
   done
+  printf '  input total: %s\n' "$(format_bytes_human "$input_total")"
   echo "  → ${output_file}"
   if [[ -e "$output_file" ]]; then
-    echo "(PGM) Note: output file already exists."
+    sz=$(file_size_bytes "$output_file")
+    echo "(PGM) Note: output file already exists ($(format_bytes_human "$sz"))."
   fi
   echo
 }
