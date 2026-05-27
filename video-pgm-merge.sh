@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.05.27 - v. 0.11.10 - [q] on delete-inputs prompt quits script (no next merge group)
 # 2026.05.27 - v. 0.11.9 - size-split output name: timestamp from first file only (not last)
 # 2026.05.27 - v. 0.11.8 - show ffprobe duration per input file in merge group display
 # 2026.05.27 - v. 0.11.7 - size-split groups: next chapter time ≈ prev time + prev duration
@@ -1822,7 +1823,8 @@ prompt_delete_merged_inputs() {
   done
   echo "  [y] Yes — delete merged input chapter files"
   echo "  [N] No — keep input files (default)"
-  pgm_read_key "Delete inputs? [y/N]: " n
+  echo "  [q] Quit"
+  pgm_read_key "Delete inputs? [y/N/q]: " n
   choice="${REPLY,,}"
   case "$choice" in
     y)
@@ -1833,12 +1835,17 @@ prompt_delete_merged_inputs() {
           echo "$(pgm_ts) Could not delete: $f" >&2
         fi
       done
+      return 0
+      ;;
+    q)
+      echo "$(pgm_ts) Quit."
+      return 2
       ;;
     *)
       echo "$(pgm_ts) Input files kept."
+      return 0
       ;;
   esac
-  echo
 }
 
 run_merge_group() {
@@ -1875,6 +1882,11 @@ run_merge_group() {
     echo
     print_merge_size_summary "$output_file" "${files[@]}"
     prompt_delete_merged_inputs after_merge "${files[@]}"
+    rc=$?
+    if (( rc == 2 )); then
+      return 2
+    fi
+    rc=0
   else
     echo "$(pgm_ts) Merge failed (exit ${rc})." >&2
   fi
@@ -2033,13 +2045,25 @@ do_merge() {
     case "$action" in
       merge)
         run_merge_group "$merger" 0 "${files[@]}" || rc=$?
+        if (( rc == 2 )); then
+          echo "$(pgm_ts) Quit at group ${group_num}."
+          return "${rc}"
+        fi
         ;;
       redo)
         run_merge_group "$merger" 1 "${files[@]}" || rc=$?
+        if (( rc == 2 )); then
+          echo "$(pgm_ts) Quit at group ${group_num}."
+          return "${rc}"
+        fi
         ;;
       delete_inputs)
         if [[ -e "$output_file" ]]; then
-          prompt_delete_merged_inputs already_merged "${files[@]}"
+          prompt_delete_merged_inputs already_merged "${files[@]}" || rc=$?
+          if (( rc == 2 )); then
+            echo "$(pgm_ts) Quit at group ${group_num}."
+            return "${rc}"
+          fi
         else
           echo "$(pgm_ts) No merged output for group ${group_num}; cannot delete inputs here." >&2
         fi
@@ -2059,6 +2083,10 @@ do_merge() {
           echo "$(pgm_ts) Keeping existing output for group ${group_num}."
         else
           run_merge_group "$merger" 0 "${files[@]}" || rc=$?
+          if (( rc == 2 )); then
+            echo "$(pgm_ts) Quit at group ${group_num}."
+            return "${rc}"
+          fi
         fi
         ;;
       quit)
