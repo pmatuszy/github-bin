@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.05.27 - v. 0.8.8 - output stem timestamp from first chapter file (not last)
 # 2026.05.27 - v. 0.8.7 - output name: …_parts_01-04_concat.mp4 from chapter range
 # 2026.05.27 - v. 0.8.6 - menu keys: default uppercase, other options lowercase in brackets
 # 2026.05.27 - v. 0.8.5 - menu options one per line; default key uppercase in prompt (rename.sh style)
@@ -44,7 +45,8 @@ Merge behaviour (no options):
   - After a successful merge: size summary (inputs, output, difference) and optional
     deletion of the source chapter files (single-key Y/N).
   - If the expected _concat output already exists: skip (default) or redo merge (R).
-  - Output file per group: <stem>_parts_<first>-<last>_concat.mp4 (e.g. …_parts_01-04_concat.mp4)
+  - Output file per group: <first_chapter_stem>_parts_<first>-<last>_concat.mp4
+    (timestamp from the first part, e.g. …154511_…_parts_01-04_concat.mp4)
   - Single-part files are listed but not merged unless you group them manually.
 
 mp4_merge lookup (merge mode):
@@ -434,7 +436,7 @@ group_output_file() {
       fi
     fi
   done
-  base="${files[-1]##*/}"
+  base="${files[0]##*/}"
   stem="${base%.*}"
   if (( got_part )) && [[ "$stem" =~ ^(.*)_part_[0-9]{2}(_Proxy)?$ ]]; then
     suffix_proxy="${BASH_REMATCH[2]}"
