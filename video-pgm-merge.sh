@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.05.27 - v. 0.12.1 - prompt timeout: wait forever by default; --read-timeout or PGM_READ_TIMEOUT
 # 2026.05.27 - v. 0.12.0 - group same-timestamp GoPro clips (_GOPRO*_GX chapter suffix, ~4GB)
 # 2026.05.27 - v. 0.11.10 - [q] on delete-inputs prompt quits script (no next merge group)
 # 2026.05.27 - v. 0.11.9 - size-split output name: timestamp from first file only (not last)
@@ -47,7 +48,8 @@ MP4_MERGE_REPO="${MP4_MERGE_REPO:-gyroflow/mp4-merge}"
 
 show_help() {
   cat <<EOF
-Usage: $(basename "$0") [-h|--help] [-u|--update] [-v|--version] [-y|--yes] [NO_STARTUP_DELAY]
+Usage: $(basename "$0") [-h|--help] [-u|--update] [-v|--version] [-y|--yes]
+       [--read-timeout SEC] [NO_STARTUP_DELAY]
 
 Merge chapter MP4 files in the current directory (e.g. GoPro splits) into one
 file using mp4_merge from https://github.com/gyroflow/mp4-merge
@@ -58,6 +60,8 @@ Options:
                        version if known, then prompt to install or replace (or use -y).
   -v, --version        Print script version and exit.
   -y, --yes            Merge every detected multi-part group without prompts (for cron).
+  --read-timeout SEC   Single-key prompt timeout in seconds (0 = wait forever).
+                       Default: wait forever. Env: PGM_READ_TIMEOUT (e.g. 300).
   NO_STARTUP_DELAY     Skip random startup delay when run non-interactively (see
                        _script_header.sh).
 
@@ -91,6 +95,8 @@ Environment:
   MP4_MERGE_BIN           Path to mp4_merge binary (overrides search paths).
   MP4_MERGE_INSTALL_DIR   Target directory for -u/--update (default: /usr/local/bin).
   MP4_MERGE_REPO          GitHub repo for releases (default: gyroflow/mp4-merge).
+  PGM_READ_TIMEOUT        Seconds per single-key prompt; unset or 0 = wait forever.
+                          Overridden by --read-timeout.
 
 Examples:
   $(basename "$0") -u
@@ -690,7 +696,8 @@ find_merger() {
 
 # Set by do_merge; used by trap on Ctrl-C to drop a partial output file.
 VIDEO_MERGE_OUT_FILE=""
-PGM_READ_TIMEOUT=300
+PGM_READ_TIMEOUT=-1
+PGM_READ_TIMEOUT_CLI=0
 PGM_SCRIPT_START_NS=""
 PGM_PROCESSING_SEC=0
 PGM_PROCESSING_SLICE_START=""
@@ -770,6 +777,22 @@ flush_stdin() {
   done
 }
 
+# Apply PGM_READ_TIMEOUT from env (unless --read-timeout set); -1 or 0 = wait forever.
+pgm_init_read_timeout() {
+  if (( PGM_READ_TIMEOUT_CLI )); then
+    return 0
+  fi
+  if [[ -n "${PGM_READ_TIMEOUT+set}" ]]; then
+    PGM_READ_TIMEOUT="${PGM_READ_TIMEOUT}"
+  else
+    PGM_READ_TIMEOUT=-1
+  fi
+}
+
+pgm_read_timeout_is_limited() {
+  [[ "$PGM_READ_TIMEOUT" =~ ^[0-9]+$ ]] && (( PGM_READ_TIMEOUT > 0 ))
+}
+
 # Read one key (no Enter). Sets REPLY; uses default when empty and default is set.
 pgm_read_key() {
   local prompt="$1" default="${2:-}" timeout="${3:-$PGM_READ_TIMEOUT}"
@@ -780,7 +803,11 @@ pgm_read_key() {
   fi
   printf '%s' "$prompt"
   flush_stdin
-  read -t "$timeout" -n 1 answer || answer=
+  if pgm_read_timeout_is_limited && [[ "$timeout" =~ ^[0-9]+$ ]] && (( timeout > 0 )); then
+    read -t "$timeout" -n 1 answer || answer=
+  else
+    read -n 1 answer || answer=
+  fi
   echo
   if [[ -z "$answer" ]]; then
     REPLY="$default"
@@ -2179,6 +2206,24 @@ while [[ $# -gt 0 ]]; do
       DO_YES=1
       shift
       ;;
+    --read-timeout)
+      if [[ -z "${2:-}" || ! "$2" =~ ^[0-9]+$ ]]; then
+        echo "$(pgm_ts) --read-timeout requires a non-negative integer (seconds)." >&2
+        exit 1
+      fi
+      PGM_READ_TIMEOUT="$2"
+      PGM_READ_TIMEOUT_CLI=1
+      shift 2
+      ;;
+    --read-timeout=*)
+      PGM_READ_TIMEOUT="${1#*=}"
+      if [[ ! "$PGM_READ_TIMEOUT" =~ ^[0-9]+$ ]]; then
+        echo "$(pgm_ts) --read-timeout requires a non-negative integer (seconds)." >&2
+        exit 1
+      fi
+      PGM_READ_TIMEOUT_CLI=1
+      shift
+      ;;
     NO_STARTUP_DELAY)
       HEADER_EXTRA_ARGS+=(NO_STARTUP_DELAY)
       shift
@@ -2190,6 +2235,8 @@ while [[ $# -gt 0 ]]; do
       ;;
   esac
 done
+
+pgm_init_read_timeout
 
 # shellcheck disable=SC1091
 . /root/bin/_script_header.sh "${HEADER_EXTRA_ARGS[@]}"
@@ -2203,6 +2250,14 @@ if [[ -f "${BASH_SOURCE[0]}" ]]; then
 fi
 
 pgm_record_script_start
+
+if (( script_is_run_interactively )) && ! (( DO_YES )); then
+  if pgm_read_timeout_is_limited; then
+    pgm_log_kv "Prompt timeout" "${PGM_READ_TIMEOUT} s per key (then default choice)"
+  else
+    pgm_log_kv "Prompt timeout" "none (wait for keypress)"
+  fi
+fi
 
 if (( DO_UPDATE )); then
   update_mp4_merge
