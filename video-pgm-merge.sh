@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.05.27 - v. 0.11.9 - size-split output name: timestamp from first file only (not last)
 # 2026.05.27 - v. 0.11.8 - show ffprobe duration per input file in merge group display
 # 2026.05.27 - v. 0.11.7 - size-split groups: next chapter time ≈ prev time + prev duration
 # 2026.05.27 - v. 0.11.6 - size-split output: copy middle label verbatim from first input name
@@ -65,7 +66,7 @@ Merge behaviour (no options):
     camera token, e.g. GOPRO7_BLACK). A new recording starts when part resets to 01.
   - Also groups clips without _part_XX names when they look like fixed-size splits:
     same session label, ~4 GB / ~6:49 chapters, and filename times that chain (next clip
-    time ≈ previous time + previous duration). Output: DATE_T1-T2 + middle + CAMERA_concat.
+    time ≈ previous time + previous duration). Output: first file DATE_TIME + middle + CAMERA_concat.
   - Shows each multi-part group (with file sizes) and asks whether to merge
     (single-key Y/N/A/M/Q, no Enter — like rename.sh).
   - After a successful merge: size summary (inputs, output, difference) and optional
@@ -1383,17 +1384,13 @@ size_split_run_valid() {
 
 size_split_group_output_file() {
   local -a files=("$@")
-  local fb lb date1 t1 t2 cam1 cam2 middle=""
+  local fb date1 t1 cam1 middle=""
   fb="${files[0]##*/}"
-  lb="${files[-1]##*/}"
   gopro_timestamp_cam_from_basename "$fb" || return 1
   date1="$GOPRO_TS_DATE" t1="$GOPRO_TS_TIME" cam1="$GOPRO_TS_CAM"
-  gopro_timestamp_cam_from_basename "$lb" || return 1
-  t2="$GOPRO_TS_TIME" cam2="$GOPRO_TS_CAM"
-  [[ "$cam1" == "$cam2" ]] || return 1
   middle=$(gopro_middle_from_basename "$fb") || return 1
-  # e.g. 20210416_101802-102453_-_S29_-_dermatolog_-_GOPRO7_BLACK_concat.mp4
-  printf '%s_%s-%s_%s%s_concat.mp4\n' "$date1" "$t1" "$t2" "$middle" "$cam1"
+  # e.g. 20210416_101802_-_S29_-_dermatolog_-_GOPRO7_BLACK_concat.mp4
+  printf '%s_%s_%s%s_concat.mp4\n' "$date1" "$t1" "$middle" "$cam1"
 }
 
 # Label for merged output metadata (title/description).
