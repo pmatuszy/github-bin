@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.05.27 - v. 0.11.4 - size-split output: session label (dermatolog) in name + MP4 metadata
 # 2026.05.27 - v. 0.11.3 - size-split: flexible GoPro names (_-_ labels, GOPRO7 suffix)
 # 2026.05.27 - v. 0.11.2 - GoPro7 size-split: ~4GB and/or ~6:49 (409s) chapter duration
 # 2026.05.27 - v. 0.11.1 - size-split: trust ~4GB size; ffprobe only rejects clearly short clips
@@ -60,7 +61,8 @@ Merge behaviour (no options):
     camera token, e.g. GOPRO7_BLACK). A new recording starts when part resets to 01.
   - Also groups clips without _part_XX names when they look like fixed-size splits:
     GoPro timestamp + GOPRO7_BLACK (or …_-__-_CAMERA) suffix, same session label in the
-    name (~4 GB / ~6:49 per chapter for GoPro7), optional smaller tail segment.
+    name (~4 GB / ~6:49 per chapter for GoPro7). Output name keeps labels (e.g. dermatolog)
+    and writes title/description into the merged MP4 when ffmpeg is available.
   - Shows each multi-part group (with file sizes) and asks whether to merge
     (single-key Y/N/A/M/Q, no Enter — like rename.sh).
   - After a successful merge: size summary (inputs, output, difference) and optional
@@ -1078,10 +1080,9 @@ gopro_timestamp_cam_from_basename() {
   return 0
 }
 
-# Session key from middle of basename (dermatolog+s29 vs farma+s29, order-independent).
-gopro_session_key_from_basename() {
+# Middle part of GoPro basename (between timestamp and camera suffix).
+gopro_middle_from_basename() {
   local base="$1" mid cam
-  local -a tokens=()
   gopro_timestamp_cam_from_basename "$base" || return 1
   cam="$GOPRO_TS_CAM"
   if [[ "$base" =~ ^[0-9]{8}_[0-9]{6}_(.+)\.[mM][pP]4$ ]]; then
@@ -1090,6 +1091,23 @@ gopro_session_key_from_basename() {
     return 1
   fi
   mid="${mid%_"${cam}"}"
+  printf '%s\n' "$mid"
+}
+
+gopro_token_is_noise() {
+  local t="${1,,}"
+  [[ "$t" =~ ^s[0-9]+$ ]] && return 0
+  case "$t" in
+    niecaly|film|proxy|black|gopro|niecalyfilm) return 0 ;;
+  esac
+  return 1
+}
+
+# Human session label for grouping (dermatolog-s29 vs farma-s29, order-independent).
+gopro_session_key_from_basename() {
+  local base="$1" mid
+  local -a tokens=()
+  mid=$(gopro_middle_from_basename "$base") || return 1
   mapfile -t tokens < <(
     printf '%s\n' "$mid" | tr '_-( )' '\n' | tr '[:upper:]' '[:lower:]' |
       grep -E '^[a-z0-9]{2,}$' | grep -Ev '^(niecaly|film|proxy|black|gopro)$' | LC_ALL=C sort -u
@@ -1097,6 +1115,32 @@ gopro_session_key_from_basename() {
   ((${#tokens[@]} > 0)) || return 1
   local IFS='-'
   printf '%s\n' "${tokens[*]}"
+}
+
+# Primary description token (dermatolog, farma) in original name order.
+gopro_description_from_basename() {
+  local base="$1" mid t t_lower
+  mid=$(gopro_middle_from_basename "$base") || return 1
+  while IFS= read -r t; do
+    [[ -n "$t" ]] || continue
+    t_lower="${t,,}"
+    gopro_token_is_noise "$t_lower" && continue
+    [[ "$t_lower" =~ ^[a-z]{4,}$ ]] || continue
+    printf '%s\n' "$t_lower"
+    return 0
+  done < <(printf '%s' "$mid" | tr '_-( )' '\n')
+  return 1
+}
+
+# S29-style tag from basename, if present.
+gopro_s_tag_from_basename() {
+  local base="$1" mid
+  mid=$(gopro_middle_from_basename "$base") || return 1
+  if [[ "$mid" =~ (^|[^a-zA-Z])([Ss][0-9]{1,3})([^a-zA-Z0-9]|$) ]]; then
+    printf 'S%s\n' "$(echo "${BASH_REMATCH[2]}" | tr '[:lower:]' '[:upper:]' | sed 's/^S//')"
+    return 0
+  fi
+  return 1
 }
 
 gopro_camera_from_basename() {
@@ -1216,7 +1260,7 @@ size_split_run_valid() {
 
 size_split_group_output_file() {
   local -a files=("$@")
-  local fb lb date1 t1 cam1 t2 cam2 session=""
+  local fb lb date1 t1 cam1 t2 cam2 desc="" s_tag=""
   fb="${files[0]##*/}"
   lb="${files[-1]##*/}"
   gopro_timestamp_cam_from_basename "$fb" || return 1
@@ -1224,12 +1268,55 @@ size_split_group_output_file() {
   gopro_timestamp_cam_from_basename "$lb" || return 1
   t2="$GOPRO_TS_TIME" cam2="$GOPRO_TS_CAM"
   [[ "$cam1" == "$cam2" ]] || return 1
-  session=$(gopro_session_key_from_basename "$fb" 2>/dev/null) || session=""
-  if [[ -n "$session" ]]; then
-    printf '%s_%s-%s_-__-_%s_%s_concat.mp4\n' "$date1" "$t1" "$t2" "$session" "$cam1"
+  desc=$(gopro_description_from_basename "$fb" 2>/dev/null) || desc=""
+  s_tag=$(gopro_s_tag_from_basename "$fb" 2>/dev/null) || s_tag=""
+  if [[ -n "$desc" && -n "$s_tag" ]]; then
+    printf '%s_%s-%s_-_-%s_-_-%s_-_-%s_concat.mp4\n' \
+      "$date1" "$t1" "$t2" "$s_tag" "$desc" "$cam1"
+  elif [[ -n "$desc" ]]; then
+    printf '%s_%s-%s_-_-%s_-_-%s_concat.mp4\n' \
+      "$date1" "$t1" "$t2" "$desc" "$cam1"
   else
     printf '%s_%s-%s_-__-_%s_concat.mp4\n' "$date1" "$t1" "$t2" "$cam1"
   fi
+}
+
+# Label for merged output metadata (title/description).
+group_merge_description_label() {
+  local -a files=("$@")
+  local fb desc s_tag
+  fb="${files[0]##*/}"
+  desc=$(gopro_description_from_basename "$fb" 2>/dev/null) || desc=""
+  s_tag=$(gopro_s_tag_from_basename "$fb" 2>/dev/null) || s_tag=""
+  if [[ -n "$desc" && -n "$s_tag" ]]; then
+    printf '%s / %s\n' "$s_tag" "$desc"
+  elif [[ -n "$desc" ]]; then
+    printf '%s\n' "$desc"
+  else
+    return 1
+  fi
+}
+
+apply_merge_output_metadata() {
+  local output_file="$1" label="$2"
+  local tmp rc
+  [[ -n "$label" && -f "$output_file" ]] || return 0
+  if ! command -v ffmpeg >/dev/null 2>&1; then
+    pgm_log_kv "Metadata" "skipped (ffmpeg not installed)"
+    return 0
+  fi
+  tmp="${output_file}.meta.tmp.$$"
+  if ffmpeg -y -v error -i "$output_file" -codec copy \
+    -metadata "title=${label}" -metadata "description=${label}" \
+    -metadata "comment=${label}" "$tmp" 2>/dev/null; then
+    if mv -f -- "$tmp" "$output_file"; then
+      pgm_log_kv "Metadata title" "$label"
+      return 0
+    fi
+  fi
+  rm -f -- "$tmp"
+  pgm_log_kv "Metadata" "could not write (ffmpeg copy failed)"
+  return 1
 }
 
 group_is_size_split() {
@@ -1495,12 +1582,24 @@ print_group_plan() {
       group_is_size_split "${files[@]}" || continue
       (( gidx++ )) || true
       out_name=$(group_output_file "${files[@]}")
+      local grp_desc
+      grp_desc=$(gopro_description_from_basename "${files[0]##*/}" 2>/dev/null) || grp_desc=
       if [[ -e "$out_name" ]]; then
-        printf '  [group %d/%d] %d clips → %s  (already merged)\n' \
-          "$gidx" "$size_split_groups" "${#files[@]}" "$out_name"
+        if [[ -n "$grp_desc" ]]; then
+          printf '  [group %d/%d] %d clips (%s) → %s  (already merged)\n' \
+            "$gidx" "$size_split_groups" "${#files[@]}" "$grp_desc" "$out_name"
+        else
+          printf '  [group %d/%d] %d clips → %s  (already merged)\n' \
+            "$gidx" "$size_split_groups" "${#files[@]}" "$out_name"
+        fi
       else
-        printf '  [group %d/%d] %d clips → %s\n' \
-          "$gidx" "$size_split_groups" "${#files[@]}" "$out_name"
+        if [[ -n "$grp_desc" ]]; then
+          printf '  [group %d/%d] %d clips (%s) → %s\n' \
+            "$gidx" "$size_split_groups" "${#files[@]}" "$grp_desc" "$out_name"
+        else
+          printf '  [group %d/%d] %d clips → %s\n' \
+            "$gidx" "$size_split_groups" "${#files[@]}" "$out_name"
+        fi
       fi
       group_bytes=0
       for f in "${files[@]}"; do
@@ -1658,6 +1757,10 @@ run_merge_group() {
   VIDEO_MERGE_OUT_FILE=""
   if (( rc == 0 )); then
     echo "$(pgm_ts) Done: ${output_file}"
+    local meta_label
+    if meta_label=$(group_merge_description_label "${files[@]}" 2>/dev/null); then
+      apply_merge_output_metadata "$output_file" "$meta_label"
+    fi
     echo
     print_merge_size_summary "$output_file" "${files[@]}"
     prompt_delete_merged_inputs after_merge "${files[@]}"
