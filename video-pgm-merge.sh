@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.05.27 - v. 0.11.5 - robust S29_-_dermatolog slug in size-split output filenames
 # 2026.05.27 - v. 0.11.4 - size-split output: session label (dermatolog) in name + MP4 metadata
 # 2026.05.27 - v. 0.11.3 - size-split: flexible GoPro names (_-_ labels, GOPRO7 suffix)
 # 2026.05.27 - v. 0.11.2 - GoPro7 size-split: ~4GB and/or ~6:49 (409s) chapter duration
@@ -1117,29 +1118,48 @@ gopro_session_key_from_basename() {
   printf '%s\n' "${tokens[*]}"
 }
 
-# Primary description token (dermatolog, farma) in original name order.
+# Primary description token (dermatolog, farma).
 gopro_description_from_basename() {
-  local base="$1" mid t t_lower
+  local base="$1" mid
   mid=$(gopro_middle_from_basename "$base") || return 1
-  while IFS= read -r t; do
-    [[ -n "$t" ]] || continue
-    t_lower="${t,,}"
-    gopro_token_is_noise "$t_lower" && continue
-    [[ "$t_lower" =~ ^[a-z]{4,}$ ]] || continue
-    printf '%s\n' "$t_lower"
-    return 0
-  done < <(printf '%s' "$mid" | tr '_-( )' '\n')
-  return 1
+  printf '%s\n' "$mid" | tr '_-( )' '\n' | tr '[:upper:]' '[:lower:]' |
+    grep -E '^[a-z]{4,}$' | grep -Ev '^(s[0-9]+|niecaly|film|proxy|black|gopro)$' | head -1
 }
 
 # S29-style tag from basename, if present.
 gopro_s_tag_from_basename() {
-  local base="$1" mid
+  local base="$1" mid raw
   mid=$(gopro_middle_from_basename "$base") || return 1
-  if [[ "$mid" =~ (^|[^a-zA-Z])([Ss][0-9]{1,3})([^a-zA-Z0-9]|$) ]]; then
-    printf 'S%s\n' "$(echo "${BASH_REMATCH[2]}" | tr '[:lower:]' '[:upper:]' | sed 's/^S//')"
+  raw=$(printf '%s\n' "$mid" | grep -oiE 's[0-9]{1,3}' | head -1) || return 1
+  raw="${raw,,}"
+  printf 'S%s\n' "${raw#s}"
+}
+
+# Session label for output names: S29_-_dermatolog
+gopro_session_label_slug_from_basename() {
+  local base="$1" s_tag="" desc="" key part
+  s_tag=$(gopro_s_tag_from_basename "$base" 2>/dev/null) || s_tag=""
+  desc=$(gopro_description_from_basename "$base" 2>/dev/null) || desc=""
+  if [[ -z "$s_tag" || -z "$desc" ]]; then
+    key=$(gopro_session_key_from_basename "$base" 2>/dev/null) || key=""
+    if [[ -n "$key" ]]; then
+      IFS='-' read -r -a parts <<< "$key"
+      for part in "${parts[@]}"; do
+        [[ -z "$part" ]] && continue
+        if [[ "$part" =~ ^s[0-9]+$ ]]; then
+          s_tag="S${part#s}"
+        elif [[ -z "$desc" ]]; then
+          desc="$part"
+        fi
+      done
+    fi
+  fi
+  if [[ -n "$s_tag" && -n "$desc" ]]; then
+    printf '%s_-_-%s' "$s_tag" "$desc"
     return 0
   fi
+  [[ -n "$desc" ]] && printf '%s\n' "$desc" && return 0
+  [[ -n "$s_tag" ]] && printf '%s\n' "$s_tag" && return 0
   return 1
 }
 
@@ -1268,9 +1288,19 @@ size_split_group_output_file() {
   gopro_timestamp_cam_from_basename "$lb" || return 1
   t2="$GOPRO_TS_TIME" cam2="$GOPRO_TS_CAM"
   [[ "$cam1" == "$cam2" ]] || return 1
-  desc=$(gopro_description_from_basename "$fb" 2>/dev/null) || desc=""
   s_tag=$(gopro_s_tag_from_basename "$fb" 2>/dev/null) || s_tag=""
-  if [[ -n "$desc" && -n "$s_tag" ]]; then
+  desc=$(gopro_description_from_basename "$fb" 2>/dev/null) || desc=""
+  if [[ -z "$s_tag" || -z "$desc" ]]; then
+    local slug part
+    slug=$(gopro_session_label_slug_from_basename "$fb" 2>/dev/null) || slug=""
+    if [[ "$slug" == *'_-__-_'* ]]; then
+      s_tag="${slug%%_-__-_*}"
+      desc="${slug#*_-__-_}"
+    elif [[ -n "$slug" ]]; then
+      desc="$slug"
+    fi
+  fi
+  if [[ -n "$s_tag" && -n "$desc" ]]; then
     printf '%s_%s-%s_-_-%s_-_-%s_-_-%s_concat.mp4\n' \
       "$date1" "$t1" "$t2" "$s_tag" "$desc" "$cam1"
   elif [[ -n "$desc" ]]; then
@@ -1284,11 +1314,11 @@ size_split_group_output_file() {
 # Label for merged output metadata (title/description).
 group_merge_description_label() {
   local -a files=("$@")
-  local fb desc s_tag
+  local fb s_tag desc
   fb="${files[0]##*/}"
-  desc=$(gopro_description_from_basename "$fb" 2>/dev/null) || desc=""
   s_tag=$(gopro_s_tag_from_basename "$fb" 2>/dev/null) || s_tag=""
-  if [[ -n "$desc" && -n "$s_tag" ]]; then
+  desc=$(gopro_description_from_basename "$fb" 2>/dev/null) || desc=""
+  if [[ -n "$s_tag" && -n "$desc" ]]; then
     printf '%s / %s\n' "$s_tag" "$desc"
   elif [[ -n "$desc" ]]; then
     printf '%s\n' "$desc"
