@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.05.27 - v. 0.10.1 - align labelled status lines after timestamp (pgm_log_kv)
 # 2026.05.27 - v. 0.10.0 - -u: show installed hash/version, compare GitHub SHA-256, prompt install/replace
 # 2026.05.27 - v. 0.9.1 - log prefix: YYYY.MM.DD HH:MM:SS instead of (PGM)
 # 2026.05.27 - v. 0.9.0 - print start/finish, processing time, and other/wait time at end
@@ -209,9 +210,9 @@ install_mp4_merge_asset() {
   tmp="${dest}.tmp.$$"
   url="https://github.com/${MP4_MERGE_REPO}/releases/download/${tag}/${asset}"
 
-  echo "$(pgm_ts) Installing ${asset} (${tag}) ..."
-  echo "$(pgm_ts) From: ${url}"
-  echo "$(pgm_ts) To:   ${dest}"
+  pgm_log_kv "Installing" "${asset} (${tag}) ..."
+  pgm_log_kv "From" "${url}"
+  pgm_log_kv "To" "${dest}"
   echo
 
   pgm_processing_begin
@@ -231,8 +232,8 @@ install_mp4_merge_asset() {
 
   local new_hash
   new_hash=$(file_sha256_hex "$dest")
-  echo "$(pgm_ts) Installed: ${dest}"
-  echo "$(pgm_ts) SHA-256: ${new_hash}  (${tag})"
+  pgm_log_kv "Installed path" "${dest}"
+  pgm_log_kv "SHA-256" "${new_hash}  (${tag})"
   if [[ -x "${dest}" ]]; then
     echo "$(pgm_ts) $(file -b "${dest}" 2>/dev/null || echo 'binary ready')"
   fi
@@ -345,23 +346,23 @@ update_mp4_merge() {
   }
   printf '%s' "$releases_json" >"${releases_tmp}"
 
-  echo "$(pgm_ts) mp4_merge for this machine: ${asset}"
-  echo "$(pgm_ts) Install directory: ${MP4_MERGE_INSTALL_DIR}"
-  echo "$(pgm_ts) Latest on GitHub:  ${latest_tag}"
-  echo "$(pgm_ts) Latest SHA-256:    ${latest_digest}"
+  pgm_log_kv "Machine asset" "${asset}"
+  pgm_log_kv "Install directory" "${MP4_MERGE_INSTALL_DIR}"
+  pgm_log_kv "Latest on GitHub" "${latest_tag}"
+  pgm_log_kv "Latest SHA-256" "${latest_digest}"
   echo
 
   if install_path=$(resolve_mp4_merge_install_path "$asset"); then
     local_hash=$(file_sha256_hex "$install_path")
     local_tag=$(find_release_tag_for_asset_digest "${releases_tmp}" "${asset}" "${local_hash}" 2>/dev/null || true)
-    echo "$(pgm_ts) Installed file:    ${install_path}"
-    echo "$(pgm_ts) Installed SHA-256:  ${local_hash}"
+    pgm_log_kv "Installed file" "${install_path}"
+    pgm_log_kv "Installed SHA-256" "${local_hash}"
     if [[ -n "$local_tag" ]]; then
-      echo "$(pgm_ts) Installed version: ${local_tag}  (matched GitHub release by hash)"
+      pgm_log_kv "Installed version" "${local_tag}  (matched GitHub release by hash)"
     else
-      echo "$(pgm_ts) Installed version: unknown  (hash not found in GitHub releases)"
+      pgm_log_kv "Installed version" "unknown  (hash not found in GitHub releases)"
     fi
-    echo "$(pgm_ts) Installed size:    $(format_bytes_human "$(file_size_bytes "$install_path")")"
+    pgm_log_kv "Installed size" "$(format_bytes_human "$(file_size_bytes "$install_path")")"
     echo
     if [[ "$local_hash" == "$latest_digest" ]]; then
       state=latest
@@ -371,7 +372,7 @@ update_mp4_merge() {
       state=unknown
     fi
   else
-    echo "$(pgm_ts) Installed file:    not found"
+    pgm_log_kv "Installed file" "not found"
     echo
     state=missing
   fi
@@ -420,6 +421,13 @@ PGM_PROCESSING_SLICE_START=""
 
 pgm_ts() {
   date '+%Y.%m.%d %H:%M:%S'
+}
+
+# Timestamp + fixed-width label + value (labels align in status blocks).
+pgm_log_kv() {
+  local label="$1"
+  shift
+  printf '%s %-*s  %s\n' "$(pgm_ts)" 26 "${label}:" "$*"
 }
 
 pgm_time_now_ns() {
@@ -471,11 +479,11 @@ print_pgm_timing_summary() {
     'BEGIN { w = t - p; if (w < 0) w = 0; printf "%.6f", w }')
   echo
   echo "$(pgm_ts) --- Timing ---"
-  printf '%s Started:           %s\n' "$(pgm_ts)" "$(pgm_format_wall_clock "${PGM_SCRIPT_START_NS}")"
-  printf '%s Finished:          %s\n' "$(pgm_ts)" "$(date '+%Y.%m.%d %H:%M:%S')"
-  printf '%s Total wall time:   %s\n' "$(pgm_ts)" "$(format_duration_sec "${total_sec}")"
-  printf '%s Processing time:   %s  (merges, downloads)\n' "$(pgm_ts)" "$(format_duration_sec "${PGM_PROCESSING_SEC:-0}")"
-  printf '%s Other/wait time:   %s  (prompts, startup delay, overhead)\n' "$(pgm_ts)" "$(format_duration_sec "${wait_sec}")"
+  pgm_log_kv "Started" "$(pgm_format_wall_clock "${PGM_SCRIPT_START_NS}")"
+  pgm_log_kv "Finished" "$(date '+%Y.%m.%d %H:%M:%S')"
+  pgm_log_kv "Total wall time" "$(format_duration_sec "${total_sec}")"
+  pgm_log_kv "Processing time" "$(format_duration_sec "${PGM_PROCESSING_SEC:-0}")  (merges, downloads)"
+  pgm_log_kv "Other/wait time" "$(format_duration_sec "${wait_sec}")  (prompts, startup delay, overhead)"
   echo
 }
 
