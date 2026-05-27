@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.05.27 - v. 0.11.8 - show ffprobe duration per input file in merge group display
 # 2026.05.27 - v. 0.11.7 - size-split groups: next chapter time ≈ prev time + prev duration
 # 2026.05.27 - v. 0.11.6 - size-split output: copy middle label verbatim from first input name
 # 2026.05.27 - v. 0.11.5 - robust S29_-_dermatolog slug in size-split output filenames
@@ -810,19 +811,34 @@ format_bytes_human_aligned() {
   }'
 }
 
+# Seconds from ffprobe as "409.3 s (6:49)" for display.
+format_duration_display() {
+  local dur="$1"
+  [[ -n "$dur" ]] || return 1
+  awk -v d="$dur" 'BEGIN {
+    m=int(d/60); s=int(d+0.5)%60;
+    if (s >= 60) { s -= 60; m += 1 }
+    printf "%.1f s (%d:%02d)", d+0, m, s
+  }'
+}
+
 # One line: part label (if any), basename, size (no trailing newline).
 chapter_file_summary_line() {
   local f="$1"
-  local base="${f##*/}" part sz
+  local base="${f##*/}" part sz dur dur_s
   sz=$(file_size_bytes "$f")
   if part=$(chapter_part_from_basename "$base" 2>/dev/null); then
     printf 'part %02d  %s  %s' "$part" "$base" "$(format_bytes_human "$sz")"
   else
     printf '%s  %s' "$base" "$(format_bytes_human "$sz")"
   fi
+  if dur=$(ffprobe_duration_seconds "$f" 2>/dev/null) && [[ -n "$dur" ]]; then
+    dur_s=$(format_duration_display "$dur")
+    printf '  %s' "$dur_s"
+  fi
 }
 
-# One line: part label (if any), basename, size.
+# One line: part label (if any), basename, size, duration.
 print_chapter_file_line() {
   local indent="$1" f="$2"
   printf '%s%s\n' "$indent" "$(chapter_file_summary_line "$f")"
@@ -843,11 +859,17 @@ PGM_IO_PART_W=8
 PGM_IO_NAME_W=52
 
 pgm_io_input_line() {
-  local part_lbl="$1" base="$2" sz="$3"
-  local name_disp
+  local part_lbl="$1" f="$2"
+  local base="${f##*/}" sz dur dur_disp name_disp
   name_disp=$(pgm_truncate_str "$base" "$PGM_IO_NAME_W")
-  printf '  %-*s %-*s %s\n' "$PGM_IO_PART_W" "$part_lbl" "$PGM_IO_NAME_W" "$name_disp" \
-    "$(format_bytes_human_aligned "$sz")"
+  sz=$(file_size_bytes "$f")
+  if dur=$(ffprobe_duration_seconds "$f" 2>/dev/null) && [[ -n "$dur" ]]; then
+    dur_disp=$(format_duration_display "$dur")
+  else
+    dur_disp="—"
+  fi
+  printf '  %-*s %-*s %s  %s\n' "$PGM_IO_PART_W" "$part_lbl" "$PGM_IO_NAME_W" "$name_disp" \
+    "$(format_bytes_human_aligned "$sz")" "$dur_disp"
 }
 
 # INPUT section, then OUTPUT section (narrower than side-by-side layout).
@@ -855,19 +877,25 @@ print_merge_group_io_block() {
   local output_file="$1"
   shift
   local -a files=("$@")
-  local f input_total=0 out_sz=0
-  local base part_lbl
-  local input_total_s output_total_s output_note sep
+  local f input_total=0 out_sz=0 input_dur_total=0
+  local base part_lbl dur
+  local input_total_s output_total_s output_note input_dur_s sep
 
   for f in "${files[@]}"; do
     sz=$(file_size_bytes "$f")
     (( input_total += sz ))
+    if dur=$(ffprobe_duration_seconds "$f" 2>/dev/null) && [[ -n "$dur" ]]; then
+      input_dur_total=$(awk -v a="$input_dur_total" -v b="$dur" 'BEGIN{printf "%.3f", a+b}')
+    fi
   done
 
   if [[ -e "$output_file" ]]; then
     out_sz=$(file_size_bytes "$output_file")
     output_total_s="$(format_bytes_human_aligned "$out_sz")"
     output_note="(on disk)"
+    if dur=$(ffprobe_duration_seconds "$output_file" 2>/dev/null) && [[ -n "$dur" ]]; then
+      output_note+="  $(format_duration_display "$dur")"
+    fi
   else
     output_total_s="—"
     output_note="(not created yet)"
@@ -884,9 +912,15 @@ print_merge_group_io_block() {
     else
       part_lbl=""
     fi
-    pgm_io_input_line "$part_lbl" "$base" "$(file_size_bytes "$f")"
+    pgm_io_input_line "$part_lbl" "$f"
   done
-  printf '  %-*s %-*s %s\n' "$PGM_IO_PART_W" "Total:" "$PGM_IO_NAME_W" "" "$input_total_s"
+  if [[ -n "$input_dur_total" ]] && awk -v d="$input_dur_total" 'BEGIN{exit !(d>0)}'; then
+    input_dur_s=$(format_duration_display "$input_dur_total")
+  else
+    input_dur_s="—"
+  fi
+  printf '  %-*s %-*s %s  %s\n' "$PGM_IO_PART_W" "Total:" "$PGM_IO_NAME_W" "" \
+    "$input_total_s" "$input_dur_s"
   echo
   echo "  OUTPUT"
   printf '  %s\n' "$sep"
@@ -1691,11 +1725,6 @@ print_group_plan() {
         print_chapter_file_line '      ' "$f"
         sz=$(file_size_bytes "$f")
         (( group_bytes += sz ))
-        if dur=$(ffprobe_duration_seconds "$f" 2>/dev/null) && [[ -n "$dur" ]]; then
-          printf '             duration: %s s (~%d:%02d)\n' "$dur" \
-            "$(awk -v d="$dur" 'BEGIN{printf "%d", int(d/60)}')" \
-            "$(awk -v d="$dur" 'BEGIN{printf "%d", int(d)%60}')"
-        fi
       done
       printf '      input total (%d files): %s\n' "${#files[@]}" "$(format_bytes_human "$group_bytes")"
       echo
