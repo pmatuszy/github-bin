@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.05.27 - v. 3.12.3 - green suggestions/questions, red deletion prompts in ffmpeg-voice
 # 2026.05.27 - v. 3.12.2 - fix transcript re-do filename column when label fills width (no extra space)
 # 2026.05.27 - v. 3.12.1 - align transcript re-do detail lines (ORG/OUTPUT/SHA512 + legacy/loop)
 # 2026.05.27 - v. 3.12 - batch transcript re-do prompts with F/G (not one Y/N/Q per pair inline)
@@ -175,14 +176,22 @@ fi
 
 ARROW="→"
 
+print_suggestion() {
+    echo -e "${GREEN}$*${RESET}"
+}
+
+print_deletion() {
+    echo -e "${RED}$*${RESET}"
+}
+
 # ============================================================
 # MODE SELECTION
 # ============================================================
 echo
-echo "Select mode:"
-echo "  [D] Dry-run (default)"
-echo "  [R] Real processing (interactive)"
-echo "  [Q] Quit"
+print_suggestion "Select mode:"
+print_suggestion "  [D] Dry-run (default)"
+print_suggestion "  [R] Real processing (interactive)"
+print_suggestion "  [Q] Quit"
 echo -n "Choice [D/r/q]: "
 
 mode="dry-run"
@@ -210,16 +219,16 @@ fi
 # ============================================================
 echo
 if [[ "$mode" == "real" ]]; then
-    echo "Enable transcription (ORG/OUTPUT x VAD/noVAD whisper servers)?"
-    echo "  [Y] Yes (default)"
-    echo "  [N] No"
-    echo "  [Q] Quit"
+    print_suggestion "Enable transcription (ORG/OUTPUT x VAD/noVAD whisper servers)?"
+    print_suggestion "  [Y] Yes (default)"
+    print_suggestion "  [N] No"
+    print_suggestion "  [Q] Quit"
     echo -n "Choice [Y/n/q]: "
 else
-    echo "Include transcription step in dry-run (ORG/OUTPUT x VAD/noVAD)?"
-    echo "  [Y] Yes (default)"
-    echo "  [N] No"
-    echo "  [Q] Quit"
+    print_suggestion "Include transcription step in dry-run (ORG/OUTPUT x VAD/noVAD)?"
+    print_suggestion "  [Y] Yes (default)"
+    print_suggestion "  [N] No"
+    print_suggestion "  [Q] Quit"
     echo -n "Choice [Y/n/q]: "
 fi
 
@@ -241,9 +250,9 @@ echo -e "Transcription enabled: ${CYAN}$DO_TRANSCRIPTION${RESET}"
 # ============================================================
 if [[ "$mode" == "real" ]]; then
     echo
-    echo "Batch size for asking before processing?"
-    echo "  Default: 50"
-    echo "  Enter a positive number, or press Enter for default."
+    print_suggestion "Batch size for asking before processing?"
+    print_suggestion "  Default: 50"
+    print_suggestion "  Enter a positive number, or press Enter for default."
     echo -n "Batch size [50]: "
 
     input=""
@@ -433,13 +442,13 @@ read_batch_choice() {
     BATCH_CHOICE_DECISION=""
     BATCH_CHOICE_ACTION=""
 
-    echo "$prompt_line"
-    echo "  [Y] Yes (default)"
-    echo "  [N] No"
-    echo "  [A] Yes for all remaining in this batch"
-    echo "  [F] Finish batch now (process selected only; stop asking for rest of batch)"
-    echo "  [G] Process selected; skip all further prompts this run"
-    echo "  [Q] Quit"
+    print_suggestion "$prompt_line"
+    print_suggestion "  [Y] Yes (default)"
+    print_suggestion "  [N] No"
+    print_suggestion "  [A] Yes for all remaining in this batch"
+    print_suggestion "  [F] Finish batch now (process selected only; stop asking for rest of batch)"
+    print_suggestion "  [G] Process selected; skip all further prompts this run"
+    print_suggestion "  [Q] Quit"
     echo -n "Choice [Y/n/a/f/g/q]: "
 
     read -t 300 -n 1 input || true
@@ -503,9 +512,9 @@ print_restore_block() {
         } | boxes -d stone
     else
         echo -e "${YELLOW}INTERRUPTED:${RESET} restoring current file state..."
-        [[ -n "$removed_msg" ]] && echo -e "${YELLOW}${removed_msg}${RESET}"
+        [[ -n "$removed_msg" ]] && print_deletion "$removed_msg"
         [[ -n "$restored_msg" ]] && echo -e "${YELLOW}${restored_msg}${RESET}"
-        [[ -n "$txt_removed_msg" ]] && echo -e "${YELLOW}${txt_removed_msg}${RESET}"
+        [[ -n "$txt_removed_msg" ]] && print_deletion "$txt_removed_msg"
     fi
 }
 
@@ -680,8 +689,8 @@ ensure_transcribe_endpoint_ready() {
         echo
         echo -e "${YELLOW}TRANSCRIPTION SERVER DOWN:${RESET} ${host}:${port} (${label})"
         print_transcribe_endpoint_down_reason "$host" "$port"
-        echo "  [W] Wait until the server is back (default)"
-        echo "  [Q] Quit"
+        print_suggestion "  [W] Wait until the server is back (default)"
+        print_suggestion "  [Q] Quit"
         echo -n "Choice [W/q]: "
         read -t 300 -n 1 input || true
         echo
@@ -826,7 +835,7 @@ print_missing_transcript_variants_for_audio() {
     for tag in "${TRANSCRIPT_VARIANT_SUFFIXES[@]}"; do
         if ! transcript_variant_exists_for_audio "$audio_file" "$tag"; then
             variant_txt="$(transcript_variant_path_for_audio "$audio_file" "$tag")"
-            echo -e "${CYAN}TRANSCRIPTION:${RESET} Missing transcript: $variant_txt"
+            print_suggestion "TRANSCRIPTION: Missing transcript: $variant_txt"
         fi
     done
 }
@@ -987,7 +996,7 @@ print_transcript_redo_pair_details() {
     done
     value_col=$(( ${#indent} + label_width + 1 ))
 
-    echo -e "${YELLOW}TRANSCRIPT RE-DO SUGGESTED:${RESET} ORG/OUTPUT pair needs fresh VAD + noVAD transcripts."
+    print_suggestion "TRANSCRIPT RE-DO SUGGESTED: ORG/OUTPUT pair needs fresh VAD + noVAD transcripts."
     print_transcript_redo_detail_line "$indent" "$value_col" "ORG:" "$org_file"
     print_transcript_redo_detail_line "$indent" "$value_col" "OUTPUT:" "$out_file"
     print_transcript_redo_detail_line "$indent" "$value_col" "SHA512:" "$sha_file"
@@ -1043,7 +1052,7 @@ execute_transcript_redo_for_pair() {
     local sha_file="$3"
 
     echo
-    echo -e "${CYAN}TRANSCRIPT RE-DO:${RESET} Removing old transcript files for this pair."
+    print_deletion "TRANSCRIPT RE-DO: Removing old transcript files for this pair."
     remove_all_transcript_files_for_pair "$org_file" "$out_file"
     ensure_pair_sha_file "$org_file" "$out_file" "$sha_file"
     prepare_sha_for_transcript_redo "$sha_file" "$org_file" "$out_file"
@@ -1070,15 +1079,15 @@ process_transcript_redo_queue() {
     if [[ "$mode" == "dry-run" ]]; then
         local i
         echo
-        echo -e "${CYAN}TRANSCRIPT RE-DO QUEUE:${RESET} ${#transcript_redo_orgs[@]} pair(s)"
+        print_suggestion "TRANSCRIPT RE-DO QUEUE: ${#transcript_redo_orgs[@]} pair(s)"
         for i in "${!transcript_redo_orgs[@]}"; do
             echo
             print_transcript_redo_pair_details \
                 "${transcript_redo_orgs[$i]}" \
                 "${transcript_redo_outs[$i]}" \
                 "${transcript_redo_shas[$i]}"
-            echo "Would prompt (with [F]/[G]): redo all four transcripts?"
-            echo "Would remove all transcript .txt files for this pair, then queue transcription."
+            print_suggestion "Would prompt (with [F]/[G]): redo all four transcripts?"
+            print_deletion "Would remove all transcript .txt files for this pair, then queue transcription."
         done
         transcript_redo_orgs=()
         transcript_redo_outs=()
@@ -1093,7 +1102,7 @@ process_transcript_redo_queue() {
     idx=0
 
     echo
-    echo -e "${CYAN}TRANSCRIPT RE-DO BATCH:${RESET} ${total_files} pair(s) need legacy/loop cleanup before re-transcribing."
+    print_suggestion "TRANSCRIPT RE-DO BATCH: ${total_files} pair(s) need legacy/loop cleanup before re-transcribing."
 
     while (( idx < total_files )); do
         [[ "$skip_remaining_redo_prompts" == yes ]] && break
@@ -1292,7 +1301,7 @@ flag_transcript_loop_if_needed() {
     [[ -e "$loop_txt" ]] && return 0
 
     if [[ "$mode" == "dry-run" ]]; then
-        echo -e "${YELLOW}POSSIBLE LOOP:${RESET} would rename: $txt_file $ARROW $loop_txt"
+        print_suggestion "POSSIBLE LOOP: would rename: $txt_file $ARROW $loop_txt"
         return 0
     fi
 
@@ -1547,10 +1556,10 @@ queue_or_print_missing_transcriptions() {
     if [[ "$mode" == "dry-run" ]]; then
         if (( need_org || need_out )); then
             if transcript_any_variant_exists_for_audio "$org_file" && need_out -eq 1; then
-                echo -e "${CYAN}TRANSCRIPTION:${RESET} Partial ORG transcripts; still need OUTPUT variants:"
+                print_suggestion "TRANSCRIPTION: Partial ORG transcripts; still need OUTPUT variants:"
                 print_missing_transcript_variants_for_audio "$out_file"
             elif transcript_any_variant_exists_for_audio "$out_file" && need_org -eq 1; then
-                echo -e "${CYAN}TRANSCRIPTION:${RESET} Partial OUTPUT transcripts; still need ORG variants:"
+                print_suggestion "TRANSCRIPTION: Partial OUTPUT transcripts; still need ORG variants:"
                 print_missing_transcript_variants_for_audio "$org_file"
             else
                 print_missing_transcript_variants_for_audio "$org_file"
@@ -1561,7 +1570,7 @@ queue_or_print_missing_transcriptions() {
             fi
             print_transcription_dry_run_steps "$org_file" "$out_file" "$sha_file"
         else
-            echo -e "${CYAN}TRANSCRIPTION:${RESET} All transcript variants present; sync sha512 if needed"
+            print_suggestion "TRANSCRIPTION: All transcript variants present; sync sha512 if needed"
             if [[ ! -e "$sha_file" ]]; then
                 echo "sha512sum -- \"$org_file\" \"$out_file\" > \"$sha_file\""
             fi
