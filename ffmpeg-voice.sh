@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# 2026.05.27 - v. 3.12.2 - fix transcript re-do filename column when label fills width (no extra space)
+# 2026.05.27 - v. 3.12.1 - align transcript re-do detail lines (ORG/OUTPUT/SHA512 + legacy/loop)
 # 2026.05.27 - v. 3.12 - batch transcript re-do prompts with F/G (not one Y/N/Q per pair inline)
 # 2026.05.27 - v. 3.11 - batch prompts: finish batch now [F] or skip all further prompts [G]
 # 2026.05.27 - v. 3.10 - before each transcription: recheck whisper server; wait or quit if down
@@ -953,30 +955,53 @@ remove_all_transcript_files_for_pair() {
     done
 }
 
+print_transcript_redo_detail_line() {
+    local indent="$1"
+    local value_col="$2"
+    local label="$3"
+    local value="$4"
+    local spaces
+
+    spaces=$(( value_col - ${#indent} - ${#label} ))
+    (( spaces < 0 )) && spaces=0
+    printf "%s%s%*s%s\n" "$indent" "$label" "$spaces" "" "$value"
+}
+
 print_transcript_redo_pair_details() {
     local org_file="$1"
     local out_file="$2"
     local sha_file="$3"
     local -a legacy=() unflagged=()
-    local line
+    local indent="  " label_width value_col i
+    local legacy_label loop_label
 
     mapfile -t legacy < <(pair_list_legacy_transcript_files "$org_file" "$out_file")
     mapfile -t unflagged < <(pair_list_unflagged_loop_transcript_files "$org_file" "$out_file")
 
+    legacy_label="Legacy (no _VAD / _noVAD):"
+    loop_label="Loop (not ${TRANSCRIPT_LOOP_MARKER}):"
+
+    label_width=0
+    for i in "ORG:" "OUTPUT:" "SHA512:" "$legacy_label" "$loop_label"; do
+        (( ${#i} > label_width )) && label_width=${#i}
+    done
+    value_col=$(( ${#indent} + label_width + 1 ))
+
     echo -e "${YELLOW}TRANSCRIPT RE-DO SUGGESTED:${RESET} ORG/OUTPUT pair needs fresh VAD + noVAD transcripts."
-    echo "  ORG: $org_file"
-    echo "  OUTPUT: $out_file"
-    echo "  SHA512: $sha_file"
+    print_transcript_redo_detail_line "$indent" "$value_col" "ORG:" "$org_file"
+    print_transcript_redo_detail_line "$indent" "$value_col" "OUTPUT:" "$out_file"
+    print_transcript_redo_detail_line "$indent" "$value_col" "SHA512:" "$sha_file"
+
     if (( ${#legacy[@]} > 0 )); then
-        echo "  Legacy or non-standard transcript names (no _VAD / _noVAD in filename):"
-        for line in "${legacy[@]}"; do
-            echo "    - $line"
+        print_transcript_redo_detail_line "$indent" "$value_col" "$legacy_label" "${legacy[0]}"
+        for (( i = 1; i < ${#legacy[@]}; i++ )); do
+            printf "%*s%s\n" "$value_col" "" "${legacy[$i]}"
         done
     fi
     if (( ${#unflagged[@]} > 0 )); then
-        echo "  Repetition loop in file(s) not marked ${TRANSCRIPT_LOOP_MARKER}:"
-        for line in "${unflagged[@]}"; do
-            echo "    - $line"
+        print_transcript_redo_detail_line "$indent" "$value_col" "$loop_label" "${unflagged[0]}"
+        for (( i = 1; i < ${#unflagged[@]}; i++ )); do
+            printf "%*s%s\n" "$value_col" "" "${unflagged[$i]}"
         done
     fi
 }
