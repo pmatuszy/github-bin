@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.05.28 - v. 3.28 - sha512sum -c only when hash file lists missing paths; media hash check only without/redo transcripts
 # 2026.05.28 - v. 3.27 - prune missing paths from sha512 (legacy .txt); repair instead of hang/exit; backfill progress
 # 2026.05.28 - v. 3.26 - skip existing-pair prompt when transcripts and sha512 are already complete
 # 2026.05.28 - v. 3.25 - source _script_header.sh / _script_footer.sh; add -v/--version
@@ -1155,11 +1156,6 @@ create_sha512_single_file() {
     sha512sum -- "$file" > "$sha_file"
 }
 
-verify_sha512_file() {
-    local sha_file="$1"
-    sha512sum -c --quiet -- "$sha_file"
-}
-
 sha512_entry_path() {
     local line="$1"
     printf '%s' "${line#*  }"
@@ -1197,6 +1193,22 @@ prune_missing_paths_from_sha512_file() {
     return 0
 }
 
+# Returns 0 when the sha512 file lists at least one path that does not exist on disk.
+sha512_file_has_missing_paths() {
+    local sha_file="$1"
+    local line path
+
+    [[ -e "$sha_file" ]] || return 1
+
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        [[ -z "$line" ]] && continue
+        path="$(sha512_entry_path "$line")"
+        [[ -e "$path" ]] || return 0
+    done < "$sha_file"
+
+    return 1
+}
+
 verify_sha512_file_existing_only() {
     local sha_file="$1"
     local line path tmp
@@ -1221,14 +1233,95 @@ verify_sha512_file_existing_only() {
     return "$ok"
 }
 
-repair_pair_sha512_file() {
+# Media ORG/OUTPUT hash check (sha512sum -c on media lines only) when sha is missing or transcripts need work.
+pair_needs_media_hash_check() {
     local org_file="$1"
     local out_file="$2"
     local sha_file="$3"
 
+    [[ -e "$org_file" && -e "$out_file" ]] || return 1
+
+    if [[ ! -e "$sha_file" ]]; then
+        return 0
+    fi
+
+    [[ "$DO_TRANSCRIPTION" != "yes" ]] && return 1
+
+    pair_needs_transcript_redo_offer "$org_file" "$out_file" && return 0
+    transcript_all_variants_exist_for_audio "$org_file" || return 0
+    transcript_all_variants_exist_for_audio "$out_file" || return 0
+
+    return 1
+}
+
+pair_needs_transcript_loop_scan() {
+    local org_file="$1"
+    local out_file="$2"
+
+    [[ "$DO_TRANSCRIPTION" == "yes" ]] || return 1
+    pair_needs_transcript_redo_offer "$org_file" "$out_file" && return 0
+    transcript_all_variants_exist_for_audio "$org_file" || return 0
+    transcript_all_variants_exist_for_audio "$out_file" || return 0
+
+    return 1
+}
+
+ensure_pair_media_sha_file() {
+    local org_file="$1"
+    local out_file="$2"
+    local sha_file="$3"
+
+    [[ -e "$org_file" && -e "$out_file" ]] || return 1
+
+    if [[ ! -e "$sha_file" ]]; then
+        if [[ "$mode" == "dry-run" ]]; then
+            return 0
+        fi
+        create_sha512_pair_file "$sha_file" "$org_file" "$out_file"
+        return 0
+    fi
+
+    if pair_media_hashes_valid_in_sha "$sha_file" "$org_file" "$out_file"; then
+        return 0
+    fi
+
+    echo -e "${YELLOW}SHA512:${RESET} ORG/OUTPUT media hashes missing or invalid — rebuilding."
+    create_sha512_pair_file "$sha_file" "$org_file" "$out_file"
+}
+
+maybe_repair_sha512_if_stale_references() {
+    local org_file="$1"
+    local out_file="$2"
+    local sha_file="$3"
+
+    [[ -e "$sha_file" ]] || return 0
+    sha512_file_has_missing_paths "$sha_file" || return 0
+
+    echo -e "${YELLOW}SHA512:${RESET} $sha_file lists file(s) missing on disk — repairing hash file."
     prune_missing_paths_from_sha512_file "$sha_file"
-    ensure_pair_sha_file "$org_file" "$out_file" "$sha_file"
-    sync_existing_transcript_hashes "$org_file" "$out_file" "$sha_file"
+
+    if pair_needs_media_hash_check "$org_file" "$out_file" "$sha_file"; then
+        ensure_pair_media_sha_file "$org_file" "$out_file" "$sha_file" || return 1
+    elif [[ ! -e "$sha_file" ]]; then
+        create_sha512_pair_file "$sha_file" "$org_file" "$out_file"
+    fi
+
+    append_transcript_variant_hashes_for_audio "$org_file" "$sha_file"
+    append_transcript_variant_hashes_for_audio "$out_file" "$sha_file"
+
+    if pair_needs_transcript_loop_scan "$org_file" "$out_file"; then
+        check_transcript_loops_for_pair "$org_file" "$out_file" "$sha_file"
+        append_transcript_variant_hashes_for_audio "$org_file" "$sha_file"
+        append_transcript_variant_hashes_for_audio "$out_file" "$sha_file"
+    fi
+
+    if verify_sha512_file_existing_only "$sha_file"; then
+        echo -e "${CYAN}SHA512 VERIFIED:${RESET} $sha_file (repaired)"
+        return 0
+    fi
+
+    echo -e "${YELLOW}SHA512 VERIFY FAILED:${RESET} $sha_file"
+    exit 1
 }
 
 # Path transcribe-server writes before rename (…_ORG.txt / …_OUTPUT.txt).
@@ -1540,9 +1633,6 @@ build_voice_transcribe_queue() {
 
         [[ -e "$org_file" && -e "$out_file" ]] || continue
 
-        ensure_pair_sha_file "$org_file" "$out_file" "$sha_file"
-        sync_existing_transcript_hashes "$org_file" "$out_file" "$sha_file"
-
         if transcript_all_variants_exist_for_audio "$org_file"; then
             need_org=0
         else
@@ -1556,9 +1646,16 @@ build_voice_transcribe_queue() {
         fi
 
         if (( need_org || need_out )); then
+            sync_existing_transcript_hashes "$org_file" "$out_file" "$sha_file"
             enqueue_pair_for_transcription "$org_file" "$out_file" "$sha_file"
+        elif pair_needs_media_hash_check "$org_file" "$out_file" "$sha_file" \
+            || pair_needs_transcript_redo_offer "$org_file" "$out_file" \
+            || sha512_file_has_missing_paths "$sha_file"; then
+            sync_existing_transcript_hashes "$org_file" "$out_file" "$sha_file"
         else
-            verify_pair_sha_or_exit "$sha_file" "$org_file" "$out_file"
+            maybe_repair_sha512_if_stale_references "$org_file" "$out_file" "$sha_file"
+            append_transcript_variant_hashes_for_audio "$org_file" "$sha_file"
+            append_transcript_variant_hashes_for_audio "$out_file" "$sha_file"
         fi
     done
 }
@@ -1603,7 +1700,7 @@ execute_transcript_redo_for_pair() {
     print_deletion "TRANSCRIPT RE-DO: Removing old transcript files for this pair."
     voice_processing_begin
     remove_all_transcript_files_for_pair "$org_file" "$out_file"
-    ensure_pair_sha_file "$org_file" "$out_file" "$sha_file"
+    ensure_pair_media_sha_file "$org_file" "$out_file" "$sha_file"
     prepare_sha_for_transcript_redo "$sha_file" "$org_file" "$out_file"
     voice_processing_end
     enqueue_pair_for_transcription "$org_file" "$out_file" "$sha_file"
@@ -1950,6 +2047,11 @@ ensure_pair_sha_file() {
     local out_file="$2"
     local sha_file="$3"
 
+    if pair_needs_media_hash_check "$org_file" "$out_file" "$sha_file"; then
+        ensure_pair_media_sha_file "$org_file" "$out_file" "$sha_file"
+        return $?
+    fi
+
     [[ -e "$org_file" && -e "$out_file" ]] || return 1
 
     if [[ -e "$sha_file" ]]; then
@@ -1982,12 +2084,24 @@ sync_existing_transcript_hashes() {
     local out_file="$2"
     local sha_file="$3"
 
-    ensure_pair_sha_file "$org_file" "$out_file" "$sha_file" || return 1
+    maybe_repair_sha512_if_stale_references "$org_file" "$out_file" "$sha_file"
+
+    if pair_needs_media_hash_check "$org_file" "$out_file" "$sha_file"; then
+        ensure_pair_media_sha_file "$org_file" "$out_file" "$sha_file" || return 1
+    elif [[ ! -e "$sha_file" ]]; then
+        if [[ "$mode" != "dry-run" ]]; then
+            create_sha512_pair_file "$sha_file" "$org_file" "$out_file"
+        fi
+    fi
+
     append_transcript_variant_hashes_for_audio "$org_file" "$sha_file"
     append_transcript_variant_hashes_for_audio "$out_file" "$sha_file"
-    check_transcript_loops_for_pair "$org_file" "$out_file" "$sha_file"
-    append_transcript_variant_hashes_for_audio "$org_file" "$sha_file"
-    append_transcript_variant_hashes_for_audio "$out_file" "$sha_file"
+
+    if pair_needs_transcript_loop_scan "$org_file" "$out_file"; then
+        check_transcript_loops_for_pair "$org_file" "$out_file" "$sha_file"
+        append_transcript_variant_hashes_for_audio "$org_file" "$sha_file"
+        append_transcript_variant_hashes_for_audio "$out_file" "$sha_file"
+    fi
 }
 
 file_size_bytes() {
@@ -2076,31 +2190,6 @@ run_all_transcriptions_for_audio() {
     done
 }
 
-verify_pair_sha_or_exit() {
-    local sha_file="$1"
-    local org_file="${2:-}"
-    local out_file="${3:-}"
-
-    [[ -e "$sha_file" ]] || return 0
-
-    if verify_sha512_file "$sha_file"; then
-        echo -e "${CYAN}SHA512 VERIFIED:${RESET} $sha_file"
-        return 0
-    fi
-
-    if [[ -n "$org_file" && -n "$out_file" ]]; then
-        echo -e "${YELLOW}SHA512:${RESET} $sha_file has stale or missing paths — repairing from files on disk."
-        repair_pair_sha512_file "$org_file" "$out_file" "$sha_file"
-        if verify_sha512_file "$sha_file"; then
-            echo -e "${CYAN}SHA512 VERIFIED:${RESET} $sha_file (repaired)"
-            return 0
-        fi
-    fi
-
-    echo -e "${YELLOW}SHA512 VERIFY FAILED:${RESET} $sha_file"
-    exit 1
-}
-
 queue_or_print_missing_transcriptions() {
     local org_file="$1"
     local out_file="$2"
@@ -2150,13 +2239,7 @@ queue_or_print_missing_transcriptions() {
         return 0
     fi
 
-    prune_missing_paths_from_sha512_file "$sha_file"
-    ensure_pair_sha_file "$org_file" "$out_file" "$sha_file"
     sync_existing_transcript_hashes "$org_file" "$out_file" "$sha_file"
-
-    if (( ! need_org && ! need_out )); then
-        verify_pair_sha_or_exit "$sha_file" "$org_file" "$out_file"
-    fi
 }
 
 run_transcriptions_for_pair() {
@@ -2174,7 +2257,6 @@ run_transcriptions_for_pair() {
 
     check_transcript_loops_for_pair "$org_file" "$out_file" "$sha_file"
     sync_existing_transcript_hashes "$org_file" "$out_file" "$sha_file"
-    verify_pair_sha_or_exit "$sha_file" "$org_file" "$out_file"
     voice_processing_end
     ((++stats_pairs_transcribed))
 }
@@ -2367,13 +2449,6 @@ backfill_existing_pair_sha() {
     print_sha_block "$sha_file" "$org_file" "$out_file"
     voice_processing_begin
     create_sha512_pair_file "$sha_file" "$org_file" "$out_file"
-
-    if verify_sha512_file "$sha_file"; then
-        echo -e "${CYAN}SHA512 VERIFIED:${RESET} $sha_file"
-    else
-        echo -e "${YELLOW}SHA512 VERIFY FAILED:${RESET} $sha_file"
-        exit 1
-    fi
     voice_processing_end
 
     sync_existing_transcript_hashes "$org_file" "$out_file" "$sha_file"
@@ -2474,13 +2549,6 @@ process_one_file() {
     echo
     print_sha_block "$sha_file" "$new_in" "$out"
     create_sha512_pair_file "$sha_file" "$new_in" "$out"
-
-    if verify_sha512_file "$sha_file"; then
-        echo -e "${CYAN}SHA512 VERIFIED:${RESET} $sha_file"
-    else
-        echo -e "${YELLOW}SHA512 VERIFY FAILED:${RESET} $sha_file"
-        exit 1
-    fi
     voice_processing_end
 
     record_change "$original_in" "$new_in" "$out"
@@ -2500,8 +2568,7 @@ existing_pair_is_complete_for_batch() {
     local sha_file="$3"
 
     [[ -e "$org_file" && -e "$out_file" && -e "$sha_file" ]] || return 1
-    pair_media_hashes_valid_in_sha "$sha_file" "$org_file" "$out_file" || return 1
-    verify_sha512_file_existing_only "$sha_file" || return 1
+    sha512_file_has_missing_paths "$sha_file" && return 1
 
     if [[ "$DO_TRANSCRIPTION" == "yes" ]]; then
         pair_needs_transcript_redo_offer "$org_file" "$out_file" && return 1
@@ -2518,7 +2585,9 @@ finalize_complete_existing_pair() {
     local sha_file="$3"
 
     [[ "$mode" == "real" ]] || return 0
-    sync_existing_transcript_hashes "$org_file" "$out_file" "$sha_file"
+    maybe_repair_sha512_if_stale_references "$org_file" "$out_file" "$sha_file"
+    append_transcript_variant_hashes_for_audio "$org_file" "$sha_file"
+    append_transcript_variant_hashes_for_audio "$out_file" "$sha_file"
 }
 
 print_existing_pairs_skip_section() {
@@ -2716,13 +2785,6 @@ process_exclude_sha_only() {
     print_sha_block "$sha_file" "$excluded_file"
     voice_processing_begin
     create_sha512_single_file "$sha_file" "$excluded_file"
-
-    if verify_sha512_file "$sha_file"; then
-        echo -e "${CYAN}SHA512 VERIFIED:${RESET} $sha_file"
-    else
-        echo -e "${YELLOW}SHA512 VERIFY FAILED:${RESET} $sha_file"
-        exit 1
-    fi
     voice_processing_end
 
     ((++files_affected))
