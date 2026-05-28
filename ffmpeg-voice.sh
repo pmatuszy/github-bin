@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.05.27 - v. 3.7 - detect repeated transcript lines; rename to *_ORG/_OUTPUT_POSSIBLE_LOOP.txt
 # 2026.05.27 - v. 3.6 - complete missing transcript when only _ORG or _OUTPUT .txt exists; sync sha512
 # 2026.05.27 - v. 3.5 - optional command-line file: process only that file, not whole directory
 # 2026.05.27 - v. 3.4 - transcribe _ORG then _OUTPUT audio; transcripts as *_ORG.txt and *_OUTPUT.txt
@@ -94,6 +95,7 @@ TRANSCRIBE_CMD="${TRANSCRIBE_CMD:-}"
 TRANSCRIBE_HOST="192.168.200.134"
 TRANSCRIBE_PORT="${TRANSCRIBE_PORT:-8080}"
 PARTIAL_TXT_DELETE_MAX_BYTES=127
+TRANSCRIPT_LOOP_MARKER="_POSSIBLE_LOOP"
 
 # ============================================================
 # COLOR SELECTION
@@ -562,9 +564,129 @@ verify_sha512_file() {
     sha512sum -c --quiet -- "$sha_file"
 }
 
+# Path transcribe-server creates (…_ORG.txt / …_OUTPUT.txt).
 txt_file_for_audio() {
     local audio_file="$1"
     printf '%s\n' "${audio_file%.*}.txt"
+}
+
+txt_file_loop_variant() {
+    printf '%s%s.txt\n' "${1%.txt}" "$TRANSCRIPT_LOOP_MARKER"
+}
+
+transcript_exists_for_audio() {
+    local audio_file="$1"
+    local base
+
+    base="$(txt_file_for_audio "$audio_file")"
+    [[ -e "$base" || -e "$(txt_file_loop_variant "$base")" ]]
+}
+
+transcript_path_for_audio() {
+    local audio_file="$1"
+    local base loop
+
+    base="$(txt_file_for_audio "$audio_file")"
+    loop="$(txt_file_loop_variant "$base")"
+    if [[ -e "$loop" ]]; then
+        printf '%s\n' "$loop"
+    elif [[ -e "$base" ]]; then
+        printf '%s\n' "$base"
+    else
+        printf '%s\n' "$base"
+    fi
+}
+
+transcript_has_repetition_loop() {
+    local txt_file="$1"
+
+    [[ -e "$txt_file" ]] || return 1
+
+    awk '
+    /^\[/ {
+        t = $0
+        sub(/^\[[^]]*\][[:space:]]*/, "", t)
+        gsub(/^[[:space:]]+|[[:space:]]+$/, "", t)
+        if (t == "") next
+        if (t == prev) {
+            rep++
+            if (rep >= 2) { found = 1; exit }
+        } else {
+            rep = 1
+        }
+        prev = t
+    }
+    END { exit(found ? 0 : 1 }
+    ' "$txt_file"
+}
+
+remove_sha512_entry() {
+    local sha_file="$1"
+    local target_file="$2"
+    local tmp
+
+    [[ -e "$sha_file" ]] || return 0
+    tmp="$(mktemp)"
+    grep -Fv "  $target_file" "$sha_file" >"$tmp" || true
+    if [[ -s "$tmp" ]]; then
+        mv -f -- "$tmp" "$sha_file"
+    else
+        rm -f -- "$sha_file" "$tmp"
+    fi
+}
+
+replace_sha512_transcript_entry() {
+    local sha_file="$1"
+    local old_path="$2"
+    local new_path="$3"
+
+    [[ -n "$sha_file" && -e "$sha_file" ]] || return 0
+    if sha_file_has_entry "$sha_file" "$old_path"; then
+        remove_sha512_entry "$sha_file" "$old_path"
+    fi
+    append_sha512_for_file_if_missing "$sha_file" "$new_path"
+}
+
+flag_transcript_loop_if_needed() {
+    local txt_file="$1"
+    local sha_file="${2:-}"
+    local loop_txt
+
+    [[ -e "$txt_file" ]] || return 0
+    [[ "$txt_file" == *"${TRANSCRIPT_LOOP_MARKER}.txt" ]] && return 0
+
+    transcript_has_repetition_loop "$txt_file" || return 0
+
+    loop_txt="$(txt_file_loop_variant "$txt_file")"
+    [[ -e "$loop_txt" ]] && return 0
+
+    if [[ "$mode" == "dry-run" ]]; then
+        echo -e "${YELLOW}POSSIBLE LOOP:${RESET} would rename: $txt_file $ARROW $loop_txt"
+        return 0
+    fi
+
+    mv -f -- "$txt_file" "$loop_txt"
+    echo -e "${YELLOW}POSSIBLE LOOP:${RESET} renamed transcript: $loop_txt"
+    replace_sha512_transcript_entry "$sha_file" "$txt_file" "$loop_txt"
+}
+
+check_transcript_loops_for_audio() {
+    local audio_file="$1"
+    local sha_file="$2"
+    local txt_path
+
+    transcript_exists_for_audio "$audio_file" || return 0
+    txt_path="$(transcript_path_for_audio "$audio_file")"
+    flag_transcript_loop_if_needed "$txt_path" "$sha_file"
+}
+
+check_transcript_loops_for_pair() {
+    local org_file="$1"
+    local out_file="$2"
+    local sha_file="$3"
+
+    check_transcript_loops_for_audio "$org_file" "$sha_file"
+    check_transcript_loops_for_audio "$out_file" "$sha_file"
 }
 
 print_transcription_dry_run_steps() {
@@ -573,30 +695,28 @@ print_transcription_dry_run_steps() {
     local sha_file="$3"
     local org_txt out_txt
 
-    org_txt="$(txt_file_for_audio "$org_file")"
-    out_txt="$(txt_file_for_audio "$out_file")"
+    org_txt="$(transcript_path_for_audio "$org_file")"
+    out_txt="$(transcript_path_for_audio "$out_file")"
 
     print_transcribe_connectivity_checks
     if [[ ! -e "$sha_file" ]]; then
         echo "sha512sum -- \"$org_file\" \"$out_file\" > \"$sha_file\""
     fi
-    if [[ ! -e "$org_txt" ]]; then
+    if ! transcript_exists_for_audio "$org_file"; then
         echo "\"$TRANSCRIBE_CMD\" \"$org_file\""
+        echo "sha512sum -- \"$(txt_file_for_audio "$org_file")\" >> \"$sha_file\""
+    else
+        [[ -e "$(txt_file_for_audio "$org_file")" ]] \
+            && flag_transcript_loop_if_needed "$(txt_file_for_audio "$org_file")" "$sha_file"
+        echo "sha512sum -- \"$(transcript_path_for_audio "$org_file")\" >> \"$sha_file\""
     fi
-    if [[ ! -e "$out_txt" ]]; then
+    if ! transcript_exists_for_audio "$out_file"; then
         echo "\"$TRANSCRIBE_CMD\" \"$out_file\""
-    fi
-    if [[ -e "$org_txt" ]]; then
-        echo "sha512sum -- \"$org_txt\" >> \"$sha_file\""
-    fi
-    if [[ -e "$out_txt" ]]; then
-        echo "sha512sum -- \"$out_txt\" >> \"$sha_file\""
-    fi
-    if [[ ! -e "$org_txt" ]]; then
-        echo "sha512sum -- \"$org_txt\" >> \"$sha_file\""
-    fi
-    if [[ ! -e "$out_txt" ]]; then
-        echo "sha512sum -- \"$out_txt\" >> \"$sha_file\""
+        echo "sha512sum -- \"$(txt_file_for_audio "$out_file")\" >> \"$sha_file\""
+    else
+        [[ -e "$(txt_file_for_audio "$out_file")" ]] \
+            && flag_transcript_loop_if_needed "$(txt_file_for_audio "$out_file")" "$sha_file"
+        echo "sha512sum -- \"$(transcript_path_for_audio "$out_file")\" >> \"$sha_file\""
     fi
     echo "sha512sum -c --quiet -- \"$sha_file\""
 }
@@ -646,8 +766,10 @@ sync_existing_transcript_hashes() {
     local sha_file="$3"
     local org_txt out_txt
 
-    org_txt="$(txt_file_for_audio "$org_file")"
-    out_txt="$(txt_file_for_audio "$out_file")"
+    check_transcript_loops_for_pair "$org_file" "$out_file" "$sha_file"
+
+    org_txt="$(transcript_path_for_audio "$org_file")"
+    out_txt="$(transcript_path_for_audio "$out_file")"
 
     ensure_pair_sha_file "$org_file" "$out_file" "$sha_file" || return 1
 
@@ -682,10 +804,18 @@ should_delete_partial_txt_on_interrupt() {
 run_one_transcription() {
     local audio_file="$1"
     local sha_file="$2"
-    local txt_file="$3"
+    local expected_txt="$3"
+    local resolved_txt
 
-    if [[ -e "$txt_file" ]]; then
-        append_sha512_for_file_if_missing "$sha_file" "$txt_file"
+    if transcript_exists_for_audio "$audio_file"; then
+        resolved_txt="$(transcript_path_for_audio "$audio_file")"
+        if [[ -e "$expected_txt" ]]; then
+            flag_transcript_loop_if_needed "$expected_txt" "$sha_file"
+        else
+            flag_transcript_loop_if_needed "$resolved_txt" "$sha_file"
+        fi
+        resolved_txt="$(transcript_path_for_audio "$audio_file")"
+        append_sha512_for_file_if_missing "$sha_file" "$resolved_txt"
         return 0
     fi
 
@@ -697,16 +827,18 @@ run_one_transcription() {
     check_transcribe_host_or_exit
     check_free_space_or_exit "."
 
-    current_txt_file="$txt_file"
+    current_txt_file="$expected_txt"
 
     "$TRANSCRIBE_CMD" "$audio_file"
 
-    if [[ ! -e "$txt_file" ]]; then
-        echo -e "${YELLOW}TRANSCRIPTION FAILED:${RESET} expected transcript not found: $txt_file"
+    if [[ ! -e "$expected_txt" ]]; then
+        echo -e "${YELLOW}TRANSCRIPTION FAILED:${RESET} expected transcript not found: $expected_txt"
         exit 1
     fi
 
-    append_sha512_for_file_if_missing "$sha_file" "$txt_file"
+    flag_transcript_loop_if_needed "$expected_txt" "$sha_file"
+    resolved_txt="$(transcript_path_for_audio "$audio_file")"
+    append_sha512_for_file_if_missing "$sha_file" "$resolved_txt"
     current_txt_file=""
 }
 
@@ -736,13 +868,13 @@ queue_or_print_missing_transcriptions() {
     org_txt="$(txt_file_for_audio "$org_file")"
     out_txt="$(txt_file_for_audio "$out_file")"
 
-    if [[ -e "$org_txt" ]]; then
+    if transcript_exists_for_audio "$org_file"; then
         need_org=0
     else
         need_org=1
     fi
 
-    if [[ -e "$out_txt" ]]; then
+    if transcript_exists_for_audio "$out_file"; then
         need_out=0
     else
         need_out=1
@@ -750,9 +882,9 @@ queue_or_print_missing_transcriptions() {
 
     if [[ "$mode" == "dry-run" ]]; then
         if (( need_org || need_out )); then
-            if [[ -e "$org_txt" && need_out -eq 1 ]]; then
+            if transcript_exists_for_audio "$org_file" && need_out -eq 1; then
                 echo -e "${CYAN}TRANSCRIPTION:${RESET} Have ORG transcript; still need OUTPUT: $out_txt"
-            elif [[ -e "$out_txt" && need_org -eq 1 ]]; then
+            elif transcript_exists_for_audio "$out_file" && need_org -eq 1; then
                 echo -e "${CYAN}TRANSCRIPTION:${RESET} Have OUTPUT transcript; still need ORG: $org_txt"
             else
                 (( need_org )) && echo -e "${CYAN}TRANSCRIPTION:${RESET} Missing transcript: $org_txt"
@@ -767,9 +899,7 @@ queue_or_print_missing_transcriptions() {
             if [[ ! -e "$sha_file" ]]; then
                 echo "sha512sum -- \"$org_file\" \"$out_file\" > \"$sha_file\""
             fi
-            [[ -e "$org_txt" ]] && echo "sha512sum -- \"$org_txt\" >> \"$sha_file\""
-            [[ -e "$out_txt" ]] && echo "sha512sum -- \"$out_txt\" >> \"$sha_file\""
-            echo "sha512sum -c --quiet -- \"$sha_file\""
+            print_transcription_dry_run_steps "$org_file" "$out_file" "$sha_file"
         fi
         echo "----------------------------------------"
         return 0
@@ -783,10 +913,10 @@ queue_or_print_missing_transcriptions() {
         return 0
     fi
 
-    if [[ -e "$org_txt" && need_out -eq 1 ]]; then
-        echo -e "${CYAN}TRANSCRIPTION:${RESET} Have ORG transcript; still need OUTPUT: $out_txt"
-    elif [[ -e "$out_txt" && need_org -eq 1 ]]; then
-        echo -e "${CYAN}TRANSCRIPTION:${RESET} Have OUTPUT transcript; still need ORG: $org_txt"
+    if transcript_exists_for_audio "$org_file" && need_out -eq 1; then
+        echo -e "${CYAN}TRANSCRIPTION:${RESET} Have ORG transcript ($(transcript_path_for_audio "$org_file")); still need OUTPUT: $out_txt"
+    elif transcript_exists_for_audio "$out_file" && need_org -eq 1; then
+        echo -e "${CYAN}TRANSCRIPTION:${RESET} Have OUTPUT transcript ($(transcript_path_for_audio "$out_file")); still need ORG: $org_txt"
     else
         (( need_org )) && echo -e "${CYAN}TRANSCRIPTION:${RESET} Missing transcript: $org_txt"
         (( need_out )) && echo -e "${CYAN}TRANSCRIPTION:${RESET} Missing transcript: $out_txt"
@@ -812,6 +942,7 @@ run_transcriptions_for_pair() {
     run_one_transcription "$org_file" "$sha_file" "$org_txt"
     run_one_transcription "$out_file" "$sha_file" "$out_txt"
 
+    check_transcript_loops_for_pair "$org_file" "$out_file" "$sha_file"
     sync_existing_transcript_hashes "$org_file" "$out_file" "$sha_file"
     verify_pair_sha_or_exit "$sha_file"
 }
@@ -846,8 +977,8 @@ process_transcription_queue() {
             org_file="${transcribe_queue_orgs[$idx]}"
             out_file="${transcribe_queue_outs[$idx]}"
             sha_file="${transcribe_queue_shas[$idx]}"
-            org_txt="$(txt_file_for_audio "$org_file")"
-            out_txt="$(txt_file_for_audio "$out_file")"
+            org_txt="$(transcript_path_for_audio "$org_file")"
+            out_txt="$(transcript_path_for_audio "$out_file")"
 
             overall_pos=$(( idx + 1 ))
             batch_pos=$(( batch_count + 1 ))
@@ -926,8 +1057,8 @@ process_transcription_queue() {
                     echo
                     print_processing_progress "$selected_pos" "$selected_total" "$selected_left_after" "$total_files"
                     print_transcription_pair_block \
-                        "${batch_orgs[$i]}" "$(txt_file_for_audio "${batch_orgs[$i]}")" \
-                        "${batch_outs[$i]}" "$(txt_file_for_audio "${batch_outs[$i]}")" \
+                        "${batch_orgs[$i]}" "$(transcript_path_for_audio "${batch_orgs[$i]}")" \
+                        "${batch_outs[$i]}" "$(transcript_path_for_audio "${batch_outs[$i]}")" \
                         "${batch_shas[$i]}"
                     run_transcriptions_for_pair "${batch_orgs[$i]}" "${batch_outs[$i]}" "${batch_shas[$i]}"
                 fi
