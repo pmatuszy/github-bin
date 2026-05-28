@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.05.28 - v. 3.32 - pair block shows (missing); skip existing batch if transcription off; show why not skipped
 # 2026.05.28 - v. 3.31 - auto-skip existing pairs when ORG/OUTPUT/transcripts on disk (ignore stale .sha512 lines)
 # 2026.05.28 - v. 3.30 - no sha/transcript checks at startup; prepare existing pairs only when selected in batch
 # 2026.05.28 - v. 3.29 - skip startup backfill for complete existing pairs; media hash not on redo-offer alone
@@ -963,6 +964,17 @@ print_transcription_pair_line() {
     fi
 }
 
+pair_block_path_status() {
+    local path="$1"
+
+    if [[ -e "$path" ]]; then
+        printf '%s' "$path"
+        return 0
+    fi
+
+    printf '%s (missing)' "$path"
+}
+
 print_transcription_pair_block() {
     local org_file="$1"
     local out_file="$2"
@@ -973,17 +985,28 @@ print_transcription_pair_block() {
     [[ "$have_boxes" != "yes" ]] && color_mode=yes
 
     print_transcription_pair_lines() {
-        print_transcription_pair_line "$value_col" "ORG AUDIO:" "$org_file" "$color_mode"
+        print_transcription_pair_line "$value_col" "ORG AUDIO:" \
+            "$(pair_block_path_status "$org_file")" "$color_mode"
         for tag in "${TRANSCRIPT_VARIANT_SUFFIXES[@]}"; do
             variant_path="$(transcript_variant_path_for_audio "$org_file" "$tag")"
-            print_transcription_pair_line "$value_col" "ORG TRANSCRIPT (${tag}):" "$variant_path" "$color_mode"
+            if transcript_variant_exists_for_audio "$org_file" "$tag"; then
+                variant_path="$(transcript_variant_resolved_path "$variant_path")"
+            fi
+            print_transcription_pair_line "$value_col" "ORG TRANSCRIPT (${tag}):" \
+                "$(pair_block_path_status "$variant_path")" "$color_mode"
         done
-        print_transcription_pair_line "$value_col" "OUTPUT AUDIO:" "$out_file" "$color_mode"
+        print_transcription_pair_line "$value_col" "OUTPUT AUDIO:" \
+            "$(pair_block_path_status "$out_file")" "$color_mode"
         for tag in "${TRANSCRIPT_VARIANT_SUFFIXES[@]}"; do
             variant_path="$(transcript_variant_path_for_audio "$out_file" "$tag")"
-            print_transcription_pair_line "$value_col" "OUTPUT TRANSCRIPT (${tag}):" "$variant_path" "$color_mode"
+            if transcript_variant_exists_for_audio "$out_file" "$tag"; then
+                variant_path="$(transcript_variant_resolved_path "$variant_path")"
+            fi
+            print_transcription_pair_line "$value_col" "OUTPUT TRANSCRIPT (${tag}):" \
+                "$(pair_block_path_status "$variant_path")" "$color_mode"
         done
-        print_transcription_pair_line "$value_col" "SHA512 FILE:" "$sha_file" "$color_mode"
+        print_transcription_pair_line "$value_col" "SHA512 FILE:" \
+            "$(pair_block_path_status "$sha_file")" "$color_mode"
     }
 
     if [[ "$have_boxes" == "yes" ]]; then
@@ -2555,7 +2578,7 @@ process_one_file() {
     current_txt_file=""
 }
 
-# Skip prompts when media + transcripts are on disk. Stale .sha512 lines are repaired only if you include the pair.
+# Skip prompts when there is nothing this run would do for the pair.
 existing_pair_is_complete_for_batch() {
     local org_file="$1"
     local out_file="$2"
@@ -2563,14 +2586,41 @@ existing_pair_is_complete_for_batch() {
 
     [[ -e "$org_file" && -e "$out_file" ]] || return 1
 
+    # Transcription/re-do disabled: ORG+OUTPUT on disk is enough (no batch prompts).
+    [[ "$DO_TRANSCRIPTION" != "yes" ]] && return 0
+
+    transcript_all_variants_exist_for_audio "$org_file" || return 1
+    transcript_all_variants_exist_for_audio "$out_file" || return 1
+    return 0
+}
+
+existing_pair_incomplete_summary() {
+    local org_file="$1"
+    local out_file="$2"
+    local sha_file="$3"
+    local tag variant_txt parts=()
+
+    [[ -e "$org_file" ]] || parts+=("ORG audio missing")
+    [[ -e "$out_file" ]] || parts+=("OUTPUT audio missing")
+
     if [[ "$DO_TRANSCRIPTION" == "yes" ]]; then
-        transcript_all_variants_exist_for_audio "$org_file" || return 1
-        transcript_all_variants_exist_for_audio "$out_file" || return 1
-        return 0
+        for tag in "${TRANSCRIPT_VARIANT_SUFFIXES[@]}"; do
+            if ! transcript_variant_exists_for_audio "$org_file" "$tag"; then
+                variant_txt="$(transcript_variant_path_for_audio "$org_file" "$tag")"
+                parts+=("missing $(basename "$variant_txt")")
+            fi
+            if ! transcript_variant_exists_for_audio "$out_file" "$tag"; then
+                variant_txt="$(transcript_variant_path_for_audio "$out_file" "$tag")"
+                parts+=("missing $(basename "$variant_txt")")
+            fi
+        done
+    elif [[ ! -e "$sha_file" ]]; then
+        parts+=("missing $(basename "$sha_file")")
     fi
 
-    [[ -e "$sha_file" ]] || return 1
-    return 0
+    ((${#parts[@]} == 0)) && return 0
+    local IFS='; '
+    echo "${parts[*]}"
 }
 
 print_existing_pairs_skip_section() {
@@ -2599,11 +2649,18 @@ process_existing_pairs_batch() {
     local total_files idx remaining_total batch_size_now batch_count batch_yes batch_no
     local accept_all_remaining finish_batch_now overall_pos batch_pos still_after_this
     local org_file out_file sha_file i selected_total selected_pos selected_left_after
+    local incomplete_summary
     local -a prompt_orgs=() prompt_outs=() prompt_shas=()
     local -a skip_orgs=() skip_outs=() skip_shas=()
     local skip_count=0
 
     (( ${#existing_pair_orgs[@]} == 0 )) && return 0
+
+    if [[ "$DO_TRANSCRIPTION" != "yes" ]]; then
+        echo
+        print_suggestion "EXISTING PAIRS: transcription is disabled — ${#existing_pair_orgs[@]} ORG/OUTPUT pair(s) left as-is (no batch prompts)."
+        return 0
+    fi
 
     for i in "${!existing_pair_orgs[@]}"; do
         org_file="${existing_pair_orgs[$i]}"
@@ -2684,6 +2741,10 @@ process_existing_pairs_batch() {
                 "$batch_pos" "$batch_size_now" "$overall_pos" "$total_files" "$still_after_this" \
                 "$batch_yes" "$batch_no"
             print_transcription_pair_block "$org_file" "$out_file" "$sha_file"
+            incomplete_summary="$(existing_pair_incomplete_summary "$org_file" "$out_file" "$sha_file")"
+            if [[ -n "$incomplete_summary" ]]; then
+                print_suggestion "Why this pair is not auto-skipped: ${incomplete_summary}"
+            fi
             read_batch_choice "Include this existing ORG/OUTPUT pair in this run (re-do and/or transcription prompts later)?"
 
             case "$BATCH_CHOICE_ACTION" in
