@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# 2026.05.28 - v. 3.21 - show (OK / NOT OK) next to Whisper VAD and noVAD endpoints at startup
+# 2026.05.28 - v. 3.20 - log when a transcript variant is skipped (already on disk); echo env for transcribe call
 # 2026.05.28 - v. 3.19 - always prompt per pair before transcription (include/re-do only marks active scope)
 # 2026.05.28 - v. 3.18 - timestamp (YYYY.MM.DD HH:MM:SS) before each interactive question
 # 2026.05.28 - v. 3.17 - existing-pair Yes runs transcription/re-do without a second prompt batch
@@ -426,12 +428,57 @@ init_transcribe_cmd() {
     TRANSCRIBE_CMD="${mount_point}/${TRANSCRIBE_SCRIPT_REL}"
 }
 
+transcribe_host_port_open() {
+    local host="$1" port="$2"
+
+    if command -v nc >/dev/null 2>&1; then
+        nc -z -w 2 "$host" "$port" >/dev/null 2>&1
+        return $?
+    fi
+    if command -v timeout >/dev/null 2>&1; then
+        timeout 2 bash -c "exec 3<>/dev/tcp/${host}/${port}" >/dev/null 2>&1
+        return $?
+    fi
+    bash -c "exec 3<>/dev/tcp/${host}/${port}" >/dev/null 2>&1
+}
+
+transcribe_endpoint_is_up() {
+    local host="$1"
+    local port="$2"
+
+    ping -c 1 -W 1 "$host" >/dev/null 2>&1 && transcribe_host_port_open "$host" "$port"
+}
+
+whisper_endpoint_status_label() {
+    local host="$1"
+    local port="$2"
+
+    if transcribe_endpoint_is_up "$host" "$port"; then
+        echo -e "${GREEN}OK${RESET}"
+    else
+        echo -e "${RED}NOT OK${RESET}"
+    fi
+}
+
+print_transcribe_whisper_servers_info() {
+    local cmd_status
+
+    echo
+    if [[ -n "$TRANSCRIBE_CMD" && -x "$TRANSCRIBE_CMD" ]]; then
+        cmd_status="${GREEN}OK${RESET}"
+    elif [[ -n "$TRANSCRIBE_CMD" ]]; then
+        cmd_status="${RED}NOT OK${RESET}"
+    else
+        cmd_status="${RED}NOT OK${RESET}"
+    fi
+    echo -e "Transcribe command:  ${CYAN}${TRANSCRIBE_CMD:-<not resolved>}${RESET} (${cmd_status})"
+    echo -e "Whisper VAD:         ${CYAN}${WHISPER_VAD_HOST}:${WHISPER_VAD_PORT}${RESET} ($(whisper_endpoint_status_label "$WHISPER_VAD_HOST" "$WHISPER_VAD_PORT"))"
+    echo -e "Whisper noVAD:       ${CYAN}${WHISPER_NOVAD_HOST}:${WHISPER_NOVAD_PORT}${RESET} ($(whisper_endpoint_status_label "$WHISPER_NOVAD_HOST" "$WHISPER_NOVAD_PORT"))"
+}
+
 if [[ "$DO_TRANSCRIPTION" == "yes" ]]; then
     if init_transcribe_cmd "."; then
-        echo
-        echo -e "Transcribe command:  ${CYAN}$TRANSCRIBE_CMD${RESET}"
-        echo -e "Whisper VAD:         ${CYAN}${WHISPER_VAD_HOST}:${WHISPER_VAD_PORT}${RESET}"
-        echo -e "Whisper noVAD:       ${CYAN}${WHISPER_NOVAD_HOST}:${WHISPER_NOVAD_PORT}${RESET}"
+        print_transcribe_whisper_servers_info
     else
         echo
         echo -e "${YELLOW}Warning:${RESET} could not resolve mount point for transcribe-server.sh (cwd: $PWD)"
@@ -710,20 +757,6 @@ check_free_space_or_exit() {
     fi
 }
 
-transcribe_host_port_open() {
-    local host="$1" port="$2"
-
-    if command -v nc >/dev/null 2>&1; then
-        nc -z -w 2 "$host" "$port" >/dev/null 2>&1
-        return $?
-    fi
-    if command -v timeout >/dev/null 2>&1; then
-        timeout 2 bash -c "exec 3<>/dev/tcp/${host}/${port}" >/dev/null 2>&1
-        return $?
-    fi
-    bash -c "exec 3<>/dev/tcp/${host}/${port}" >/dev/null 2>&1
-}
-
 whisper_host_for_suffix() {
     case "$1" in
         "$TRANSCRIPT_VAD_SUFFIX") printf '%s' "$WHISPER_VAD_HOST" ;;
@@ -757,13 +790,6 @@ print_transcribe_connectivity_checks() {
             echo "timeout 2 bash -c 'exec 3<>/dev/tcp/${host}/${port}'  # ${tag}"
         fi
     done
-}
-
-transcribe_endpoint_is_up() {
-    local host="$1"
-    local port="$2"
-
-    ping -c 1 -W 1 "$host" >/dev/null 2>&1 && transcribe_host_port_open "$host" "$port"
 }
 
 print_transcribe_endpoint_down_reason() {
@@ -1677,6 +1703,7 @@ run_one_transcription_variant() {
 
     if transcript_variant_exists_for_audio "$audio_file" "$variant_suffix"; then
         variant_txt="$(transcript_variant_path_for_audio "$audio_file" "$variant_suffix")"
+        echo -e "${YELLOW}TRANSCRIPTION SKIP (${variant_suffix}):${RESET} already present — ${variant_txt}"
         [[ -e "$variant_txt" ]] && flag_transcript_loop_if_needed "$variant_txt" "$sha_file"
         resolved_txt="$(transcript_variant_resolved_path "$variant_txt")"
         append_sha512_for_file_if_missing "$sha_file" "$resolved_txt"
@@ -1696,6 +1723,7 @@ run_one_transcription_variant() {
     current_txt_file="$variant_txt"
 
     echo -e "${CYAN}TRANSCRIBE (${variant_suffix}):${RESET} ${whisper_host}:${whisper_port} $ARROW $variant_txt"
+    echo -e "${CYAN}TRANSCRIBE ENV:${RESET} TRANSCRIBE_HOST=${whisper_host} TRANSCRIBE_PORT=${whisper_port}"
 
     TRANSCRIBE_HOST="$whisper_host" TRANSCRIBE_PORT="$whisper_port" \
         "$TRANSCRIBE_CMD" "$audio_file"
@@ -2675,8 +2703,16 @@ print_voice_statistics_summary() {
         voice_log_kv "Transcribe command" "$TRANSCRIBE_CMD"
     fi
     if [[ "$DO_TRANSCRIPTION" == "yes" ]]; then
-        voice_log_kv "Whisper VAD" "${WHISPER_VAD_HOST}:${WHISPER_VAD_PORT}"
-        voice_log_kv "Whisper noVAD" "${WHISPER_NOVAD_HOST}:${WHISPER_NOVAD_PORT}"
+        if transcribe_endpoint_is_up "$WHISPER_VAD_HOST" "$WHISPER_VAD_PORT"; then
+            voice_log_kv "Whisper VAD" "${WHISPER_VAD_HOST}:${WHISPER_VAD_PORT} (OK)"
+        else
+            voice_log_kv "Whisper VAD" "${WHISPER_VAD_HOST}:${WHISPER_VAD_PORT} (NOT OK)"
+        fi
+        if transcribe_endpoint_is_up "$WHISPER_NOVAD_HOST" "$WHISPER_NOVAD_PORT"; then
+            voice_log_kv "Whisper noVAD" "${WHISPER_NOVAD_HOST}:${WHISPER_NOVAD_PORT} (OK)"
+        else
+            voice_log_kv "Whisper noVAD" "${WHISPER_NOVAD_HOST}:${WHISPER_NOVAD_PORT} (NOT OK)"
+        fi
     fi
     voice_log_kv "Files examined" "$files_examined"
     voice_log_kv "Active pairs (this run)" "${#voice_active_orgs[@]}"
