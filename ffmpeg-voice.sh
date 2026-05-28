@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.05.27 - v. 3.2 - transcribe-server.sh path from cwd filesystem mount (not hardcoded /mnt/temp)
 # 2026.03.30 - v. 3.1 - default batch size changed to 50
 # 2026.03.30 - v. 3.0 - add [a] accept-all-remaining-in-batch to main file-processing prompts too
 # 2026.03.30 - v. 2.9 - add [a] answer for transcription batch prompts to accept all remaining in current batch
@@ -19,7 +20,8 @@ shopt -s nullglob nocaseglob
 BATCH_SIZE=50
 MIN_FREE_KB=1048576   # 1 GiB
 DO_TRANSCRIPTION=yes
-TRANSCRIBE_CMD="/mnt/temp/whisper.cpp/transcribe-server.sh"
+TRANSCRIBE_SCRIPT_REL="${TRANSCRIBE_SCRIPT_REL:-whisper.cpp/transcribe-server.sh}"
+TRANSCRIBE_CMD="${TRANSCRIBE_CMD:-}"
 TRANSCRIBE_HOST="192.168.200.134"
 PARTIAL_TXT_DELETE_MAX_BYTES=127
 
@@ -143,8 +145,6 @@ if [[ "$mode" == "real" ]]; then
     echo -e "Batch size selected: ${CYAN}$BATCH_SIZE${RESET}"
 fi
 
-sleep 1
-
 # ============================================================
 # HELPERS
 # ============================================================
@@ -152,6 +152,55 @@ have_boxes=no
 if command -v boxes >/dev/null 2>&1; then
     have_boxes=yes
 fi
+
+# Mount point for path (findmnt, else df — same idea as check_free_space_or_exit).
+filesystem_mount_for_path() {
+    local target_path="$1"
+    local mount_point=""
+
+    if command -v findmnt >/dev/null 2>&1; then
+        mount_point="$(findmnt -n -o TARGET --target "$target_path" 2>/dev/null)" || mount_point=""
+        if [[ -n "$mount_point" ]]; then
+            printf '%s' "${mount_point%/}"
+            return 0
+        fi
+    fi
+
+    mount_point="$(
+        LC_ALL=C /bin/df -Pk -- "$target_path" 2>/dev/null \
+        | awk 'NR==2 {print $6}'
+    )"
+    if [[ -n "$mount_point" ]]; then
+        printf '%s' "${mount_point%/}"
+        return 0
+    fi
+    return 1
+}
+
+# <mount>/whisper.cpp/transcribe-server.sh on the filesystem holding cwd (or TRANSCRIBE_CMD if preset).
+init_transcribe_cmd() {
+    local base_path="${1:-.}"
+    local mount_point=""
+
+    if [[ -n "$TRANSCRIBE_CMD" ]]; then
+        return 0
+    fi
+
+    mount_point="$(filesystem_mount_for_path "$base_path")" || return 1
+    TRANSCRIBE_CMD="${mount_point}/${TRANSCRIBE_SCRIPT_REL}"
+}
+
+if [[ "$DO_TRANSCRIPTION" == "yes" ]]; then
+    if init_transcribe_cmd "."; then
+        echo
+        echo -e "Transcribe command:  ${CYAN}$TRANSCRIBE_CMD${RESET}"
+    else
+        echo
+        echo -e "${YELLOW}Warning:${RESET} could not resolve mount point for transcribe-server.sh (cwd: $PWD)"
+    fi
+fi
+
+sleep 1
 
 print_file_block() {
     local original_in="$1"
@@ -1088,6 +1137,9 @@ fi
 echo "Boxes available:       $have_boxes"
 echo "Colors enabled:        $use_colors"
 echo "Transcription enabled: $DO_TRANSCRIPTION"
+if [[ "$DO_TRANSCRIPTION" == "yes" && -n "$TRANSCRIBE_CMD" ]]; then
+    echo "Transcribe command:    $TRANSCRIBE_CMD"
+fi
 echo "Transcription host:    $TRANSCRIBE_HOST"
 echo "Files examined:        $files_examined"
 echo "Files affected:        $files_affected"
