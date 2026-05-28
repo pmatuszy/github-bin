@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.05.28 - v. 3.16 - batch prompts for existing ORG/OUTPUT pairs when nothing left to convert
 # 2026.05.27 - v. 3.15 - transcription/re-do prompts only for pairs selected in this run (not whole directory)
 # 2026.05.27 - v. 3.14 - [F] finish-batch skips unasked slots; re-do [F] then transcription prompts; re-do/transcribe after file loop
 # 2026.05.27 - v. 3.13 - end-of-run timing and statistics summary (like video-pgm-merge.sh)
@@ -2034,6 +2035,7 @@ declare -a voice_active_outs=()
 declare -a voice_active_shas=()
 declare -A voice_active_stem_seen=()
 skip_remaining_redo_prompts=no
+skip_remaining_existing_pair_prompts=no
 
 current_original_in=""
 current_new_in=""
@@ -2151,6 +2153,123 @@ process_one_file() {
     current_out=""
     current_renamed=no
     current_txt_file=""
+}
+
+process_existing_pairs_batch() {
+    local total_files idx remaining_total batch_size_now batch_count batch_yes batch_no
+    local accept_all_remaining finish_batch_now overall_pos batch_pos still_after_this
+    local org_file out_file sha_file i selected_total selected_pos selected_left_after
+
+    (( ${#existing_pair_orgs[@]} == 0 )) && return 0
+
+    total_files=${#existing_pair_orgs[@]}
+    idx=0
+
+    echo
+    print_suggestion "EXISTING PAIRS BATCH: ${total_files} ORG/OUTPUT pair(s) — choose which to include for transcription/re-do."
+
+    while (( idx < total_files )); do
+        [[ "$skip_remaining_existing_pair_prompts" == yes ]] && break
+
+        declare -a batch_orgs=()
+        declare -a batch_outs=()
+        declare -a batch_shas=()
+        declare -a batch_selected=()
+
+        remaining_total=$(( total_files - idx ))
+        batch_size_now=$BATCH_SIZE
+        (( remaining_total < batch_size_now )) && batch_size_now=$remaining_total
+
+        batch_count=0
+        batch_yes=0
+        batch_no=0
+        accept_all_remaining=no
+        finish_batch_now=no
+
+        while (( idx < total_files && batch_count < batch_size_now )); do
+            org_file="${existing_pair_orgs[$idx]}"
+            out_file="${existing_pair_outs[$idx]}"
+            sha_file="${existing_pair_shas[$idx]}"
+
+            if [[ "$accept_all_remaining" == "yes" ]]; then
+                batch_selected+=("yes")
+                ((++batch_yes))
+                voice_mark_pair_active "$org_file" "$out_file" "$sha_file"
+                batch_orgs+=("$org_file")
+                batch_outs+=("$out_file")
+                batch_shas+=("$sha_file")
+                ((idx+=1))
+                ((batch_count+=1))
+                continue
+            fi
+
+            overall_pos=$(( idx + 1 ))
+            batch_pos=$(( batch_count + 1 ))
+            still_after_this=$(( total_files - overall_pos ))
+
+            echo
+            print_prompt_and_decision_summary \
+                "$batch_pos" "$batch_size_now" "$overall_pos" "$total_files" "$still_after_this" \
+                "$batch_yes" "$batch_no"
+            print_transcription_pair_block "$org_file" "$out_file" "$sha_file"
+            read_batch_choice "Include this existing ORG/OUTPUT pair for transcription/re-do in this run?"
+
+            case "$BATCH_CHOICE_ACTION" in
+                quit)
+                    stopped_by_user=yes
+                    echo "Quitting."
+                    exit 0
+                    ;;
+                finish_batch)
+                    finish_batch_now=yes
+                    echo "Finishing existing-pairs batch — ${batch_yes} pair(s) selected for this run."
+                    break
+                    ;;
+                skip_all)
+                    skip_remaining_existing_pair_prompts=yes
+                    finish_batch_now=yes
+                    echo "Skipping further existing-pair prompts — ${batch_yes} pair(s) selected for this run."
+                    break
+                    ;;
+                accept_all)
+                    batch_selected+=("yes")
+                    ((++batch_yes))
+                    accept_all_remaining=yes
+                    voice_mark_pair_active "$org_file" "$out_file" "$sha_file"
+                    batch_orgs+=("$org_file")
+                    batch_outs+=("$out_file")
+                    batch_shas+=("$sha_file")
+                    ((idx+=1))
+                    ((batch_count+=1))
+                    continue
+                    ;;
+                decided)
+                    if [[ "$BATCH_CHOICE_DECISION" == yes ]]; then
+                        batch_selected+=("yes")
+                        ((++batch_yes))
+                        voice_mark_pair_active "$org_file" "$out_file" "$sha_file"
+                    else
+                        batch_selected+=("no")
+                        ((++batch_no))
+                    fi
+                    ;;
+            esac
+
+            batch_orgs+=("$org_file")
+            batch_outs+=("$out_file")
+            batch_shas+=("$sha_file")
+
+            ((idx+=1))
+            ((batch_count+=1))
+        done
+
+        if [[ "$finish_batch_now" == yes ]]; then
+            idx=$(batch_prompt_finish_skip_idx "$idx" "$batch_size_now" "$batch_count")
+        fi
+
+        [[ "$skip_remaining_existing_pair_prompts" == yes ]] && break
+        [[ "$finish_batch_now" == yes ]] && break
+    done
 }
 
 process_exclude_sha_only() {
@@ -2454,10 +2573,16 @@ else
         fi
         [[ "$finish_batch_now" == yes ]] && break
     done
+
+    if [[ "$mode" == "real" ]] && (( ${#existing_pair_orgs[@]} > 0 && ${#all_files[@]} == 0 )); then
+        process_existing_pairs_batch
+    fi
 fi
 
 if [[ "$mode" == "real" && "$DO_TRANSCRIPTION" == "yes" ]]; then
     process_transcription_queue
+elif [[ "$mode" == "real" ]] && (( ${#voice_active_orgs[@]} > 0 )); then
+    print_suggestion "Pairs were selected but transcription is disabled — no transcription/re-do prompts."
 fi
 
 print_voice_size_summary() {
@@ -2558,6 +2683,7 @@ print_voice_statistics_summary() {
         voice_log_kv "Skipped file prompts" "$skip_remaining_file_prompts"
         voice_log_kv "Skipped transcribe prompts" "$skip_remaining_transcription_prompts"
         voice_log_kv "Skipped re-do prompts" "$skip_remaining_redo_prompts"
+        voice_log_kv "Skipped existing-pair prompts" "$skip_remaining_existing_pair_prompts"
     fi
 
     summary_line="${files_examined} examined"
