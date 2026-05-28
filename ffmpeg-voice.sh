@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.05.27 - v. 3.3 - transcription host check: ping and TCP port (default 8080) open
 # 2026.05.27 - v. 3.2 - transcribe-server.sh path from cwd filesystem mount (not hardcoded /mnt/temp)
 # 2026.03.30 - v. 3.1 - default batch size changed to 50
 # 2026.03.30 - v. 3.0 - add [a] accept-all-remaining-in-batch to main file-processing prompts too
@@ -23,6 +24,7 @@ DO_TRANSCRIPTION=yes
 TRANSCRIBE_SCRIPT_REL="${TRANSCRIBE_SCRIPT_REL:-whisper.cpp/transcribe-server.sh}"
 TRANSCRIBE_CMD="${TRANSCRIBE_CMD:-}"
 TRANSCRIBE_HOST="192.168.200.134"
+TRANSCRIBE_PORT="${TRANSCRIBE_PORT:-8080}"
 PARTIAL_TXT_DELETE_MAX_BYTES=127
 
 # ============================================================
@@ -407,17 +409,45 @@ check_free_space_or_exit() {
     fi
 }
 
+transcribe_host_port_open() {
+    local host="$1" port="$2"
+
+    if command -v nc >/dev/null 2>&1; then
+        nc -z -w 2 "$host" "$port" >/dev/null 2>&1
+        return $?
+    fi
+    if command -v timeout >/dev/null 2>&1; then
+        timeout 2 bash -c "exec 3<>/dev/tcp/${host}/${port}" >/dev/null 2>&1
+        return $?
+    fi
+    bash -c "exec 3<>/dev/tcp/${host}/${port}" >/dev/null 2>&1
+}
+
+print_transcribe_connectivity_checks() {
+    echo "ping -c 1 -W 1 \"$TRANSCRIBE_HOST\""
+    if command -v nc >/dev/null 2>&1; then
+        echo "nc -z -w 2 \"$TRANSCRIBE_HOST\" \"$TRANSCRIBE_PORT\""
+    else
+        echo "timeout 2 bash -c 'exec 3<>/dev/tcp/${TRANSCRIBE_HOST}/${TRANSCRIBE_PORT}'"
+    fi
+}
+
 check_transcribe_host_or_exit() {
     [[ "$DO_TRANSCRIPTION" == "yes" ]] || return 0
 
-    if ping -c 1 -W 1 "$TRANSCRIBE_HOST" >/dev/null 2>&1; then
-        return 0
+    if ! ping -c 1 -W 1 "$TRANSCRIBE_HOST" >/dev/null 2>&1; then
+        echo
+        echo -e "${YELLOW}TRANSCRIPTION UNAVAILABLE:${RESET} host not reachable (ping): $TRANSCRIBE_HOST"
+        echo "Cannot continue because transcription cannot be done."
+        exit 1
     fi
 
-    echo
-    echo -e "${YELLOW}TRANSCRIPTION UNAVAILABLE:${RESET} host not reachable: $TRANSCRIBE_HOST"
-    echo "Cannot continue because transcription cannot be done."
-    exit 1
+    if ! transcribe_host_port_open "$TRANSCRIBE_HOST" "$TRANSCRIBE_PORT"; then
+        echo
+        echo -e "${YELLOW}TRANSCRIPTION UNAVAILABLE:${RESET} port ${TRANSCRIBE_PORT} not open on $TRANSCRIBE_HOST"
+        echo "Cannot continue because transcription cannot be done."
+        exit 1
+    fi
 }
 
 sha_file_from_pair() {
@@ -559,7 +589,7 @@ queue_or_print_missing_transcription() {
     echo -e "${CYAN}TRANSCRIPTION:${RESET} Missing transcript: $txt_file"
 
     if [[ "$mode" == "dry-run" ]]; then
-        echo "ping -c 1 -W 1 \"$TRANSCRIBE_HOST\""
+        print_transcribe_connectivity_checks
         echo "\"$TRANSCRIBE_CMD\" \"$out_file\""
         echo "sha512sum -- \"$txt_file\" >> \"$sha_file\""
         echo "sha512sum -c --quiet -- \"$sha_file\""
@@ -1002,7 +1032,7 @@ if [[ "$mode" == "dry-run" ]]; then
         echo "sha512sum -- \"$new_in\" \"$out\" > \"$sha_file\""
         echo "sha512sum -c --quiet -- \"$sha_file\""
         if [[ "$DO_TRANSCRIPTION" == "yes" ]]; then
-            echo "ping -c 1 -W 1 \"$TRANSCRIBE_HOST\""
+            print_transcribe_connectivity_checks
             echo "\"$TRANSCRIBE_CMD\" \"$out\""
             echo "sha512sum -- \"$txt_file\" >> \"$sha_file\""
             echo "sha512sum -c --quiet -- \"$sha_file\""
@@ -1140,7 +1170,7 @@ echo "Transcription enabled: $DO_TRANSCRIPTION"
 if [[ "$DO_TRANSCRIPTION" == "yes" && -n "$TRANSCRIBE_CMD" ]]; then
     echo "Transcribe command:    $TRANSCRIBE_CMD"
 fi
-echo "Transcription host:    $TRANSCRIBE_HOST"
+echo "Transcription host:    $TRANSCRIBE_HOST:$TRANSCRIBE_PORT"
 echo "Files examined:        $files_examined"
 echo "Files affected:        $files_affected"
 echo "Files skipped:         $files_skipped"
