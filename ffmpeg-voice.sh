@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.05.27 - v. 3.8 - four transcripts per pair (ORG/OUTPUT x VAD/noVAD); dual whisper host/port config
 # 2026.05.27 - v. 3.7 - detect repeated transcript lines; rename to *_ORG/_OUTPUT_POSSIBLE_LOOP.txt
 # 2026.05.27 - v. 3.6 - complete missing transcript when only _ORG or _OUTPUT .txt exists; sync sha512
 # 2026.05.27 - v. 3.5 - optional command-line file: process only that file, not whole directory
@@ -37,6 +38,21 @@ Without FILE, all matching audio files in the current directory are candidates
 Options:
   -h, --help    Show this help and exit.
   -- FILE       Explicit file operand (use when the name starts with -).
+
+Transcription (when enabled):
+  Each *_ORG.* and *_OUTPUT.flac gets two transcripts: *_VAD.txt (whisper with VAD)
+  and *_noVAD.txt (whisper without VAD), e.g. stem_ORG_VAD.txt and stem_OUTPUT_noVAD.txt.
+  Loop detection may rename to *_POSSIBLE_LOOP.txt.
+
+Whisper servers (defaults below; override with environment variables):
+  WHISPER_VAD_HOST / WHISPER_VAD_PORT       Server with VAD (default port 8080).
+  WHISPER_NOVAD_HOST / WHISPER_NOVAD_PORT   Server without VAD (default port 8081).
+
+Other environment variables:
+  TRANSCRIBE_CMD          Full path to transcribe-server.sh (skips mount lookup).
+  TRANSCRIBE_SCRIPT_REL   Relative path under mount (default: whisper.cpp/transcribe-server.sh).
+  Legacy: TRANSCRIBE_HOST and TRANSCRIBE_PORT apply to the VAD server only if
+          WHISPER_VAD_HOST / WHISPER_VAD_PORT are unset.
 EOF
 }
 
@@ -92,8 +108,14 @@ MIN_FREE_KB=1048576   # 1 GiB
 DO_TRANSCRIPTION=yes
 TRANSCRIBE_SCRIPT_REL="${TRANSCRIBE_SCRIPT_REL:-whisper.cpp/transcribe-server.sh}"
 TRANSCRIBE_CMD="${TRANSCRIBE_CMD:-}"
-TRANSCRIBE_HOST="192.168.200.134"
-TRANSCRIBE_PORT="${TRANSCRIBE_PORT:-8080}"
+# Whisper servers — edit here or set WHISPER_VAD_* / WHISPER_NOVAD_* in the environment.
+WHISPER_VAD_HOST="${WHISPER_VAD_HOST:-${TRANSCRIBE_HOST:-192.168.200.134}}"
+WHISPER_VAD_PORT="${WHISPER_VAD_PORT:-${TRANSCRIBE_PORT:-8080}}"
+WHISPER_NOVAD_HOST="${WHISPER_NOVAD_HOST:-192.168.200.134}"
+WHISPER_NOVAD_PORT="${WHISPER_NOVAD_PORT:-8081}"
+TRANSCRIPT_VAD_SUFFIX="VAD"
+TRANSCRIPT_NOVAD_SUFFIX="noVAD"
+declare -a TRANSCRIPT_VARIANT_SUFFIXES=("$TRANSCRIPT_VAD_SUFFIX" "$TRANSCRIPT_NOVAD_SUFFIX")
 PARTIAL_TXT_DELETE_MAX_BYTES=127
 TRANSCRIPT_LOOP_MARKER="_POSSIBLE_LOOP"
 
@@ -171,13 +193,13 @@ fi
 # ============================================================
 echo
 if [[ "$mode" == "real" ]]; then
-    echo "Enable transcription flow for missing *_ORG.txt and *_OUTPUT.txt files?"
+    echo "Enable transcription (ORG/OUTPUT x VAD/noVAD whisper servers)?"
     echo "  [Y] Yes (default)"
     echo "  [N] No"
     echo "  [Q] Quit"
     echo -n "Choice [Y/n/q]: "
 else
-    echo "Include transcription step in dry-run for missing *_ORG.txt and *_OUTPUT.txt files?"
+    echo "Include transcription step in dry-run (ORG/OUTPUT x VAD/noVAD)?"
     echo "  [Y] Yes (default)"
     echo "  [N] No"
     echo "  [Q] Quit"
@@ -271,6 +293,8 @@ if [[ "$DO_TRANSCRIPTION" == "yes" ]]; then
     if init_transcribe_cmd "."; then
         echo
         echo -e "Transcribe command:  ${CYAN}$TRANSCRIBE_CMD${RESET}"
+        echo -e "Whisper VAD:         ${CYAN}${WHISPER_VAD_HOST}:${WHISPER_VAD_PORT}${RESET}"
+        echo -e "Whisper noVAD:       ${CYAN}${WHISPER_NOVAD_HOST}:${WHISPER_NOVAD_PORT}${RESET}"
     else
         echo
         echo -e "${YELLOW}Warning:${RESET} could not resolve mount point for transcribe-server.sh (cwd: $PWD)"
@@ -446,24 +470,35 @@ print_low_space_block() {
 
 print_transcription_pair_block() {
     local org_file="$1"
-    local org_txt="$2"
-    local out_file="$3"
-    local out_txt="$4"
-    local sha_file="$5"
+    local out_file="$2"
+    local sha_file="$3"
+    local tag variant_path
 
     if [[ "$have_boxes" == "yes" ]]; then
         {
             printf "ORG AUDIO:    %s\n" "$org_file"
-            printf "ORG TRANSCRIPT: %s\n" "$org_txt"
+            for tag in "${TRANSCRIPT_VARIANT_SUFFIXES[@]}"; do
+                variant_path="$(transcript_variant_path_for_audio "$org_file" "$tag")"
+                printf "ORG TRANSCRIPT (%s): %s\n" "$tag" "$variant_path"
+            done
             printf "OUTPUT AUDIO: %s\n" "$out_file"
-            printf "OUTPUT TRANSCRIPT: %s\n" "$out_txt"
+            for tag in "${TRANSCRIPT_VARIANT_SUFFIXES[@]}"; do
+                variant_path="$(transcript_variant_path_for_audio "$out_file" "$tag")"
+                printf "OUTPUT TRANSCRIPT (%s): %s\n" "$tag" "$variant_path"
+            done
             printf "SHA512 FILE:  %s\n" "$sha_file"
         } | boxes -d stone
     else
         echo -e "${CYAN}ORG AUDIO:${RESET}     $org_file"
-        echo -e "${CYAN}ORG TRANSCRIPT:${RESET} $org_txt"
+        for tag in "${TRANSCRIPT_VARIANT_SUFFIXES[@]}"; do
+            variant_path="$(transcript_variant_path_for_audio "$org_file" "$tag")"
+            echo -e "${CYAN}ORG TRANSCRIPT (${tag}):${RESET} $variant_path"
+        done
         echo -e "${CYAN}OUTPUT AUDIO:${RESET}  $out_file"
-        echo -e "${CYAN}OUTPUT TRANSCRIPT:${RESET} $out_txt"
+        for tag in "${TRANSCRIPT_VARIANT_SUFFIXES[@]}"; do
+            variant_path="$(transcript_variant_path_for_audio "$out_file" "$tag")"
+            echo -e "${CYAN}OUTPUT TRANSCRIPT (${tag}):${RESET} $variant_path"
+        done
         echo -e "${CYAN}SHA512 FILE:${RESET}   $sha_file"
     fi
 }
@@ -504,31 +539,78 @@ transcribe_host_port_open() {
     bash -c "exec 3<>/dev/tcp/${host}/${port}" >/dev/null 2>&1
 }
 
+whisper_host_for_suffix() {
+    case "$1" in
+        "$TRANSCRIPT_VAD_SUFFIX") printf '%s' "$WHISPER_VAD_HOST" ;;
+        "$TRANSCRIPT_NOVAD_SUFFIX") printf '%s' "$WHISPER_NOVAD_HOST" ;;
+        *) return 1 ;;
+    esac
+}
+
+whisper_port_for_suffix() {
+    case "$1" in
+        "$TRANSCRIPT_VAD_SUFFIX") printf '%s' "$WHISPER_VAD_PORT" ;;
+        "$TRANSCRIPT_NOVAD_SUFFIX") printf '%s' "$WHISPER_NOVAD_PORT" ;;
+        *) return 1 ;;
+    esac
+}
+
 print_transcribe_connectivity_checks() {
-    echo "ping -c 1 -W 1 \"$TRANSCRIBE_HOST\""
-    if command -v nc >/dev/null 2>&1; then
-        echo "nc -z -w 2 \"$TRANSCRIBE_HOST\" \"$TRANSCRIBE_PORT\""
-    else
-        echo "timeout 2 bash -c 'exec 3<>/dev/tcp/${TRANSCRIBE_HOST}/${TRANSCRIBE_PORT}'"
+    local tag host port
+    local -A seen_hosts=()
+
+    for tag in "${TRANSCRIPT_VARIANT_SUFFIXES[@]}"; do
+        host="$(whisper_host_for_suffix "$tag")"
+        port="$(whisper_port_for_suffix "$tag")"
+        if [[ -z "${seen_hosts[$host]+x}" ]]; then
+            echo "ping -c 1 -W 1 \"$host\""
+            seen_hosts["$host"]=1
+        fi
+        if command -v nc >/dev/null 2>&1; then
+            echo "nc -z -w 2 \"$host\" \"$port\"  # ${tag}"
+        else
+            echo "timeout 2 bash -c 'exec 3<>/dev/tcp/${host}/${port}'  # ${tag}"
+        fi
+    done
+}
+
+check_transcribe_endpoint_or_exit() {
+    local host="$1"
+    local port="$2"
+    local label="${3:-whisper}"
+
+    if ! ping -c 1 -W 1 "$host" >/dev/null 2>&1; then
+        echo
+        echo -e "${YELLOW}TRANSCRIPTION UNAVAILABLE:${RESET} host not reachable (ping): $host (${label})"
+        echo "Cannot continue because transcription cannot be done."
+        exit 1
+    fi
+
+    if ! transcribe_host_port_open "$host" "$port"; then
+        echo
+        echo -e "${YELLOW}TRANSCRIPTION UNAVAILABLE:${RESET} port ${port} not open on ${host} (${label})"
+        echo "Cannot continue because transcription cannot be done."
+        exit 1
     fi
 }
 
-check_transcribe_host_or_exit() {
+check_transcribe_hosts_or_exit() {
+    local tag host port
+    local -A checked_endpoints=()
+    local endpoint_key
+
     [[ "$DO_TRANSCRIPTION" == "yes" ]] || return 0
 
-    if ! ping -c 1 -W 1 "$TRANSCRIBE_HOST" >/dev/null 2>&1; then
-        echo
-        echo -e "${YELLOW}TRANSCRIPTION UNAVAILABLE:${RESET} host not reachable (ping): $TRANSCRIBE_HOST"
-        echo "Cannot continue because transcription cannot be done."
-        exit 1
-    fi
-
-    if ! transcribe_host_port_open "$TRANSCRIBE_HOST" "$TRANSCRIBE_PORT"; then
-        echo
-        echo -e "${YELLOW}TRANSCRIPTION UNAVAILABLE:${RESET} port ${TRANSCRIBE_PORT} not open on $TRANSCRIBE_HOST"
-        echo "Cannot continue because transcription cannot be done."
-        exit 1
-    fi
+    for tag in "${TRANSCRIPT_VARIANT_SUFFIXES[@]}"; do
+        host="$(whisper_host_for_suffix "$tag")"
+        port="$(whisper_port_for_suffix "$tag")"
+        endpoint_key="${host}:${port}"
+        if [[ -n "${checked_endpoints[$endpoint_key]+x}" ]]; then
+            continue
+        fi
+        checked_endpoints["$endpoint_key"]=1
+        check_transcribe_endpoint_or_exit "$host" "$port" "${tag} @ ${endpoint_key}"
+    done
 }
 
 sha_file_from_pair() {
@@ -564,37 +646,87 @@ verify_sha512_file() {
     sha512sum -c --quiet -- "$sha_file"
 }
 
-# Path transcribe-server creates (…_ORG.txt / …_OUTPUT.txt).
+# Path transcribe-server writes before rename (…_ORG.txt / …_OUTPUT.txt).
 txt_file_for_audio() {
     local audio_file="$1"
     printf '%s\n' "${audio_file%.*}.txt"
+}
+
+transcript_variant_path_for_audio() {
+    local audio_file="$1"
+    local variant_suffix="$2"
+    printf '%s_%s.txt\n' "${audio_file%.*}" "$variant_suffix"
 }
 
 txt_file_loop_variant() {
     printf '%s%s.txt\n' "${1%.txt}" "$TRANSCRIPT_LOOP_MARKER"
 }
 
-transcript_exists_for_audio() {
-    local audio_file="$1"
-    local base
+transcript_variant_resolved_path() {
+    local variant_txt="$1"
+    local loop_txt
 
-    base="$(txt_file_for_audio "$audio_file")"
-    [[ -e "$base" || -e "$(txt_file_loop_variant "$base")" ]]
+    loop_txt="$(txt_file_loop_variant "$variant_txt")"
+    if [[ -e "$loop_txt" ]]; then
+        printf '%s\n' "$loop_txt"
+    elif [[ -e "$variant_txt" ]]; then
+        printf '%s\n' "$variant_txt"
+    else
+        printf '%s\n' "$variant_txt"
+    fi
 }
 
-transcript_path_for_audio() {
+transcript_variant_exists_for_audio() {
     local audio_file="$1"
-    local base loop
+    local variant_suffix="$2"
+    local variant_txt loop_txt
+
+    variant_txt="$(transcript_variant_path_for_audio "$audio_file" "$variant_suffix")"
+    loop_txt="$(txt_file_loop_variant "$variant_txt")"
+    [[ -e "$variant_txt" || -e "$loop_txt" ]]
+}
+
+transcript_all_variants_exist_for_audio() {
+    local audio_file="$1"
+    local tag
+
+    for tag in "${TRANSCRIPT_VARIANT_SUFFIXES[@]}"; do
+        transcript_variant_exists_for_audio "$audio_file" "$tag" || return 1
+    done
+}
+
+transcript_any_variant_exists_for_audio() {
+    local audio_file="$1"
+    local tag
+
+    for tag in "${TRANSCRIPT_VARIANT_SUFFIXES[@]}"; do
+        transcript_variant_exists_for_audio "$audio_file" "$tag" && return 0
+    done
+    return 1
+}
+
+print_missing_transcript_variants_for_audio() {
+    local audio_file="$1"
+    local tag variant_txt
+
+    for tag in "${TRANSCRIPT_VARIANT_SUFFIXES[@]}"; do
+        if ! transcript_variant_exists_for_audio "$audio_file" "$tag"; then
+            variant_txt="$(transcript_variant_path_for_audio "$audio_file" "$tag")"
+            echo -e "${CYAN}TRANSCRIPTION:${RESET} Missing transcript: $variant_txt"
+        fi
+    done
+}
+
+migrate_legacy_transcript_to_vad_variant() {
+    local audio_file="$1"
+    local base vad_txt
 
     base="$(txt_file_for_audio "$audio_file")"
-    loop="$(txt_file_loop_variant "$base")"
-    if [[ -e "$loop" ]]; then
-        printf '%s\n' "$loop"
-    elif [[ -e "$base" ]]; then
-        printf '%s\n' "$base"
-    else
-        printf '%s\n' "$base"
-    fi
+    vad_txt="$(transcript_variant_path_for_audio "$audio_file" "$TRANSCRIPT_VAD_SUFFIX")"
+    [[ -e "$base" && ! -e "$vad_txt" ]] || return 0
+    [[ "$mode" == "dry-run" ]] && return 0
+    mv -f -- "$base" "$vad_txt"
+    echo -e "${CYAN}TRANSCRIPTION:${RESET} Migrated legacy transcript $base $ARROW $vad_txt"
 }
 
 transcript_has_repetition_loop() {
@@ -673,11 +805,18 @@ flag_transcript_loop_if_needed() {
 check_transcript_loops_for_audio() {
     local audio_file="$1"
     local sha_file="$2"
-    local txt_path
+    local tag variant_txt txt_path
 
-    transcript_exists_for_audio "$audio_file" || return 0
-    txt_path="$(transcript_path_for_audio "$audio_file")"
-    flag_transcript_loop_if_needed "$txt_path" "$sha_file"
+    for tag in "${TRANSCRIPT_VARIANT_SUFFIXES[@]}"; do
+        variant_txt="$(transcript_variant_path_for_audio "$audio_file" "$tag")"
+        if [[ -e "$variant_txt" ]]; then
+            flag_transcript_loop_if_needed "$variant_txt" "$sha_file"
+        fi
+        txt_path="$(transcript_variant_resolved_path "$variant_txt")"
+        if [[ -e "$txt_path" && "$txt_path" != "$variant_txt" ]]; then
+            flag_transcript_loop_if_needed "$txt_path" "$sha_file"
+        fi
+    done
 }
 
 check_transcript_loops_for_pair() {
@@ -693,31 +832,31 @@ print_transcription_dry_run_steps() {
     local org_file="$1"
     local out_file="$2"
     local sha_file="$3"
-    local org_txt out_txt
-
-    org_txt="$(transcript_path_for_audio "$org_file")"
-    out_txt="$(transcript_path_for_audio "$out_file")"
+    local audio_file tag host port variant_txt
 
     print_transcribe_connectivity_checks
     if [[ ! -e "$sha_file" ]]; then
         echo "sha512sum -- \"$org_file\" \"$out_file\" > \"$sha_file\""
     fi
-    if ! transcript_exists_for_audio "$org_file"; then
-        echo "\"$TRANSCRIBE_CMD\" \"$org_file\""
-        echo "sha512sum -- \"$(txt_file_for_audio "$org_file")\" >> \"$sha_file\""
-    else
-        [[ -e "$(txt_file_for_audio "$org_file")" ]] \
-            && flag_transcript_loop_if_needed "$(txt_file_for_audio "$org_file")" "$sha_file"
-        echo "sha512sum -- \"$(transcript_path_for_audio "$org_file")\" >> \"$sha_file\""
-    fi
-    if ! transcript_exists_for_audio "$out_file"; then
-        echo "\"$TRANSCRIBE_CMD\" \"$out_file\""
-        echo "sha512sum -- \"$(txt_file_for_audio "$out_file")\" >> \"$sha_file\""
-    else
-        [[ -e "$(txt_file_for_audio "$out_file")" ]] \
-            && flag_transcript_loop_if_needed "$(txt_file_for_audio "$out_file")" "$sha_file"
-        echo "sha512sum -- \"$(transcript_path_for_audio "$out_file")\" >> \"$sha_file\""
-    fi
+
+    for audio_file in "$org_file" "$out_file"; do
+        migrate_legacy_transcript_to_vad_variant "$audio_file"
+        for tag in "${TRANSCRIPT_VARIANT_SUFFIXES[@]}"; do
+            variant_txt="$(transcript_variant_path_for_audio "$audio_file" "$tag")"
+            if transcript_variant_exists_for_audio "$audio_file" "$tag"; then
+                [[ -e "$variant_txt" ]] \
+                    && flag_transcript_loop_if_needed "$variant_txt" "$sha_file"
+                echo "sha512sum -- \"$(transcript_variant_resolved_path "$variant_txt")\" >> \"$sha_file\""
+                continue
+            fi
+            host="$(whisper_host_for_suffix "$tag")"
+            port="$(whisper_port_for_suffix "$tag")"
+            echo "# ${tag} @ ${host}:${port}"
+            echo "TRANSCRIBE_HOST=$host TRANSCRIBE_PORT=$port \"$TRANSCRIBE_CMD\" \"$audio_file\""
+            echo "# rename $(txt_file_for_audio "$audio_file") -> $variant_txt"
+            echo "sha512sum -- \"$variant_txt\" >> \"$sha_file\""
+        done
+    done
     echo "sha512sum -c --quiet -- \"$sha_file\""
 }
 
@@ -760,21 +899,32 @@ ensure_pair_sha_file() {
     create_sha512_pair_file "$sha_file" "$org_file" "$out_file"
 }
 
+append_transcript_variant_hashes_for_audio() {
+    local audio_file="$1"
+    local sha_file="$2"
+    local tag variant_txt resolved_txt
+
+    migrate_legacy_transcript_to_vad_variant "$audio_file"
+    for tag in "${TRANSCRIPT_VARIANT_SUFFIXES[@]}"; do
+        if transcript_variant_exists_for_audio "$audio_file" "$tag"; then
+            variant_txt="$(transcript_variant_path_for_audio "$audio_file" "$tag")"
+            resolved_txt="$(transcript_variant_resolved_path "$variant_txt")"
+            append_sha512_for_file_if_missing "$sha_file" "$resolved_txt"
+        fi
+    done
+}
+
 sync_existing_transcript_hashes() {
     local org_file="$1"
     local out_file="$2"
     local sha_file="$3"
-    local org_txt out_txt
-
-    check_transcript_loops_for_pair "$org_file" "$out_file" "$sha_file"
-
-    org_txt="$(transcript_path_for_audio "$org_file")"
-    out_txt="$(transcript_path_for_audio "$out_file")"
 
     ensure_pair_sha_file "$org_file" "$out_file" "$sha_file" || return 1
-
-    [[ -e "$org_txt" ]] && append_sha512_for_file_if_missing "$sha_file" "$org_txt"
-    [[ -e "$out_txt" ]] && append_sha512_for_file_if_missing "$sha_file" "$out_txt"
+    append_transcript_variant_hashes_for_audio "$org_file" "$sha_file"
+    append_transcript_variant_hashes_for_audio "$out_file" "$sha_file"
+    check_transcript_loops_for_pair "$org_file" "$out_file" "$sha_file"
+    append_transcript_variant_hashes_for_audio "$org_file" "$sha_file"
+    append_transcript_variant_hashes_for_audio "$out_file" "$sha_file"
 }
 
 file_size_bytes() {
@@ -801,20 +951,20 @@ should_delete_partial_txt_on_interrupt() {
     (( size_bytes <= PARTIAL_TXT_DELETE_MAX_BYTES ))
 }
 
-run_one_transcription() {
+run_one_transcription_variant() {
     local audio_file="$1"
     local sha_file="$2"
-    local expected_txt="$3"
-    local resolved_txt
+    local variant_suffix="$3"
+    local whisper_host="$4"
+    local whisper_port="$5"
+    local server_base variant_txt resolved_txt
 
-    if transcript_exists_for_audio "$audio_file"; then
-        resolved_txt="$(transcript_path_for_audio "$audio_file")"
-        if [[ -e "$expected_txt" ]]; then
-            flag_transcript_loop_if_needed "$expected_txt" "$sha_file"
-        else
-            flag_transcript_loop_if_needed "$resolved_txt" "$sha_file"
-        fi
-        resolved_txt="$(transcript_path_for_audio "$audio_file")"
+    migrate_legacy_transcript_to_vad_variant "$audio_file"
+
+    if transcript_variant_exists_for_audio "$audio_file" "$variant_suffix"; then
+        variant_txt="$(transcript_variant_path_for_audio "$audio_file" "$variant_suffix")"
+        [[ -e "$variant_txt" ]] && flag_transcript_loop_if_needed "$variant_txt" "$sha_file"
+        resolved_txt="$(transcript_variant_resolved_path "$variant_txt")"
         append_sha512_for_file_if_missing "$sha_file" "$resolved_txt"
         return 0
     fi
@@ -824,22 +974,43 @@ run_one_transcription() {
         return 0
     fi
 
-    check_transcribe_host_or_exit
+    check_transcribe_endpoint_or_exit "$whisper_host" "$whisper_port" "${variant_suffix}"
     check_free_space_or_exit "."
 
-    current_txt_file="$expected_txt"
+    server_base="$(txt_file_for_audio "$audio_file")"
+    variant_txt="$(transcript_variant_path_for_audio "$audio_file" "$variant_suffix")"
+    current_txt_file="$variant_txt"
 
-    "$TRANSCRIBE_CMD" "$audio_file"
+    echo -e "${CYAN}TRANSCRIBE (${variant_suffix}):${RESET} ${whisper_host}:${whisper_port} $ARROW $variant_txt"
 
-    if [[ ! -e "$expected_txt" ]]; then
-        echo -e "${YELLOW}TRANSCRIPTION FAILED:${RESET} expected transcript not found: $expected_txt"
+    TRANSCRIBE_HOST="$whisper_host" TRANSCRIBE_PORT="$whisper_port" \
+        "$TRANSCRIBE_CMD" "$audio_file"
+
+    if [[ ! -e "$server_base" ]]; then
+        echo -e "${YELLOW}TRANSCRIPTION FAILED:${RESET} expected transcript not found: $server_base"
         exit 1
     fi
 
-    flag_transcript_loop_if_needed "$expected_txt" "$sha_file"
-    resolved_txt="$(transcript_path_for_audio "$audio_file")"
+    if [[ "$server_base" != "$variant_txt" ]]; then
+        mv -f -- "$server_base" "$variant_txt"
+    fi
+
+    flag_transcript_loop_if_needed "$variant_txt" "$sha_file"
+    resolved_txt="$(transcript_variant_resolved_path "$variant_txt")"
     append_sha512_for_file_if_missing "$sha_file" "$resolved_txt"
     current_txt_file=""
+}
+
+run_all_transcriptions_for_audio() {
+    local audio_file="$1"
+    local sha_file="$2"
+    local tag host port
+
+    for tag in "${TRANSCRIPT_VARIANT_SUFFIXES[@]}"; do
+        host="$(whisper_host_for_suffix "$tag")"
+        port="$(whisper_port_for_suffix "$tag")"
+        run_one_transcription_variant "$audio_file" "$sha_file" "$tag" "$host" "$port"
+    done
 }
 
 verify_pair_sha_or_exit() {
@@ -859,22 +1030,18 @@ queue_or_print_missing_transcriptions() {
     local org_file="$1"
     local out_file="$2"
     local sha_file="$3"
-    local org_txt out_txt
     local need_org=0 need_out=0
 
     [[ "$DO_TRANSCRIPTION" == "yes" ]] || return 0
     [[ -e "$org_file" && -e "$out_file" ]] || return 0
 
-    org_txt="$(txt_file_for_audio "$org_file")"
-    out_txt="$(txt_file_for_audio "$out_file")"
-
-    if transcript_exists_for_audio "$org_file"; then
+    if transcript_all_variants_exist_for_audio "$org_file"; then
         need_org=0
     else
         need_org=1
     fi
 
-    if transcript_exists_for_audio "$out_file"; then
+    if transcript_all_variants_exist_for_audio "$out_file"; then
         need_out=0
     else
         need_out=1
@@ -882,20 +1049,22 @@ queue_or_print_missing_transcriptions() {
 
     if [[ "$mode" == "dry-run" ]]; then
         if (( need_org || need_out )); then
-            if transcript_exists_for_audio "$org_file" && need_out -eq 1; then
-                echo -e "${CYAN}TRANSCRIPTION:${RESET} Have ORG transcript; still need OUTPUT: $out_txt"
-            elif transcript_exists_for_audio "$out_file" && need_org -eq 1; then
-                echo -e "${CYAN}TRANSCRIPTION:${RESET} Have OUTPUT transcript; still need ORG: $org_txt"
+            if transcript_any_variant_exists_for_audio "$org_file" && need_out -eq 1; then
+                echo -e "${CYAN}TRANSCRIPTION:${RESET} Partial ORG transcripts; still need OUTPUT variants:"
+                print_missing_transcript_variants_for_audio "$out_file"
+            elif transcript_any_variant_exists_for_audio "$out_file" && need_org -eq 1; then
+                echo -e "${CYAN}TRANSCRIPTION:${RESET} Partial OUTPUT transcripts; still need ORG variants:"
+                print_missing_transcript_variants_for_audio "$org_file"
             else
-                (( need_org )) && echo -e "${CYAN}TRANSCRIPTION:${RESET} Missing transcript: $org_txt"
-                (( need_out )) && echo -e "${CYAN}TRANSCRIPTION:${RESET} Missing transcript: $out_txt"
+                print_missing_transcript_variants_for_audio "$org_file"
+                print_missing_transcript_variants_for_audio "$out_file"
             fi
             if [[ ! -e "$sha_file" ]]; then
                 echo "sha512sum -- \"$org_file\" \"$out_file\" > \"$sha_file\""
             fi
             print_transcription_dry_run_steps "$org_file" "$out_file" "$sha_file"
         else
-            echo -e "${CYAN}TRANSCRIPTION:${RESET} Both transcripts present; sync sha512 if needed"
+            echo -e "${CYAN}TRANSCRIPTION:${RESET} All transcript variants present; sync sha512 if needed"
             if [[ ! -e "$sha_file" ]]; then
                 echo "sha512sum -- \"$org_file\" \"$out_file\" > \"$sha_file\""
             fi
@@ -913,13 +1082,15 @@ queue_or_print_missing_transcriptions() {
         return 0
     fi
 
-    if transcript_exists_for_audio "$org_file" && need_out -eq 1; then
-        echo -e "${CYAN}TRANSCRIPTION:${RESET} Have ORG transcript ($(transcript_path_for_audio "$org_file")); still need OUTPUT: $out_txt"
-    elif transcript_exists_for_audio "$out_file" && need_org -eq 1; then
-        echo -e "${CYAN}TRANSCRIPTION:${RESET} Have OUTPUT transcript ($(transcript_path_for_audio "$out_file")); still need ORG: $org_txt"
+    if transcript_any_variant_exists_for_audio "$org_file" && need_out -eq 1; then
+        echo -e "${CYAN}TRANSCRIPTION:${RESET} Partial ORG transcripts; still need OUTPUT variants:"
+        print_missing_transcript_variants_for_audio "$out_file"
+    elif transcript_any_variant_exists_for_audio "$out_file" && need_org -eq 1; then
+        echo -e "${CYAN}TRANSCRIPTION:${RESET} Partial OUTPUT transcripts; still need ORG variants:"
+        print_missing_transcript_variants_for_audio "$org_file"
     else
-        (( need_org )) && echo -e "${CYAN}TRANSCRIPTION:${RESET} Missing transcript: $org_txt"
-        (( need_out )) && echo -e "${CYAN}TRANSCRIPTION:${RESET} Missing transcript: $out_txt"
+        print_missing_transcript_variants_for_audio "$org_file"
+        print_missing_transcript_variants_for_audio "$out_file"
     fi
 
     transcribe_queue_orgs+=("$org_file")
@@ -931,16 +1102,13 @@ run_transcriptions_for_pair() {
     local org_file="$1"
     local out_file="$2"
     local sha_file="$3"
-    local org_txt out_txt
-
-    org_txt="$(txt_file_for_audio "$org_file")"
-    out_txt="$(txt_file_for_audio "$out_file")"
 
     ensure_pair_sha_file "$org_file" "$out_file" "$sha_file"
+    check_transcribe_hosts_or_exit
     sync_existing_transcript_hashes "$org_file" "$out_file" "$sha_file"
 
-    run_one_transcription "$org_file" "$sha_file" "$org_txt"
-    run_one_transcription "$out_file" "$sha_file" "$out_txt"
+    run_all_transcriptions_for_audio "$org_file" "$sha_file"
+    run_all_transcriptions_for_audio "$out_file" "$sha_file"
 
     check_transcript_loops_for_pair "$org_file" "$out_file" "$sha_file"
     sync_existing_transcript_hashes "$org_file" "$out_file" "$sha_file"
@@ -972,13 +1140,11 @@ process_transcription_queue() {
         accept_all_remaining=no
 
         while (( idx < total_files && batch_count < batch_size_now )); do
-            local org_file out_file sha_file org_txt out_txt overall_pos batch_pos still_after_this
+            local org_file out_file sha_file overall_pos batch_pos still_after_this
 
             org_file="${transcribe_queue_orgs[$idx]}"
             out_file="${transcribe_queue_outs[$idx]}"
             sha_file="${transcribe_queue_shas[$idx]}"
-            org_txt="$(transcript_path_for_audio "$org_file")"
-            out_txt="$(transcript_path_for_audio "$out_file")"
 
             overall_pos=$(( idx + 1 ))
             batch_pos=$(( batch_count + 1 ))
@@ -999,7 +1165,7 @@ process_transcription_queue() {
             print_prompt_and_decision_summary \
                 "$batch_pos" "$batch_size_now" "$overall_pos" "$total_files" "$still_after_this" \
                 "$batch_yes" "$batch_no"
-            print_transcription_pair_block "$org_file" "$org_txt" "$out_file" "$out_txt" "$sha_file"
+            print_transcription_pair_block "$org_file" "$out_file" "$sha_file"
             echo "Do transcription later in this batch?"
             echo "  [Y] Yes (default)"
             echo "  [N] No"
@@ -1057,9 +1223,7 @@ process_transcription_queue() {
                     echo
                     print_processing_progress "$selected_pos" "$selected_total" "$selected_left_after" "$total_files"
                     print_transcription_pair_block \
-                        "${batch_orgs[$i]}" "$(transcript_path_for_audio "${batch_orgs[$i]}")" \
-                        "${batch_outs[$i]}" "$(transcript_path_for_audio "${batch_outs[$i]}")" \
-                        "${batch_shas[$i]}"
+                        "${batch_orgs[$i]}" "${batch_outs[$i]}" "${batch_shas[$i]}"
                     run_transcriptions_for_pair "${batch_orgs[$i]}" "${batch_outs[$i]}" "${batch_shas[$i]}"
                 fi
             done
@@ -1540,7 +1704,8 @@ echo "Transcription enabled: $DO_TRANSCRIPTION"
 if [[ "$DO_TRANSCRIPTION" == "yes" && -n "$TRANSCRIBE_CMD" ]]; then
     echo "Transcribe command:    $TRANSCRIBE_CMD"
 fi
-echo "Transcription host:    $TRANSCRIBE_HOST:$TRANSCRIBE_PORT"
+echo "Whisper VAD:           ${WHISPER_VAD_HOST}:${WHISPER_VAD_PORT}"
+echo "Whisper noVAD:         ${WHISPER_NOVAD_HOST}:${WHISPER_NOVAD_PORT}"
 echo "Files examined:        $files_examined"
 echo "Files affected:        $files_affected"
 echo "Files skipped:         $files_skipped"
