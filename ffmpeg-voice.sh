@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# 2026.05.28 - v. 3.19 - always prompt per pair before transcription (include/re-do only marks active scope)
+# 2026.05.28 - v. 3.18 - timestamp (YYYY.MM.DD HH:MM:SS) before each interactive question
 # 2026.05.28 - v. 3.17 - existing-pair Yes runs transcription/re-do without a second prompt batch
 # 2026.05.28 - v. 3.16 - batch prompts for existing ORG/OUTPUT pairs when nothing left to convert
 # 2026.05.27 - v. 3.15 - transcription/re-do prompts only for pairs selected in this run (not whole directory)
@@ -142,15 +144,19 @@ declare -a TRANSCRIPT_VARIANT_SUFFIXES=("$TRANSCRIPT_VAD_SUFFIX" "$TRANSCRIPT_NO
 PARTIAL_TXT_DELETE_MAX_BYTES=127
 TRANSCRIPT_LOOP_MARKER="_POSSIBLE_LOOP"
 
+voice_ts() {
+    date '+%Y.%m.%d %H:%M:%S'
+}
+
 # ============================================================
 # COLOR SELECTION
 # ============================================================
 echo
-echo "Use colors?"
+echo "$(voice_ts) Use colors?"
 echo "  [Y] Yes (default)"
 echo "  [N] No"
 echo "  [Q] Quit"
-echo -n "Choice [Y/n/q]: "
+echo -n "$(voice_ts) Choice [Y/n/q]: "
 
 use_colors=yes
 input=""
@@ -185,6 +191,18 @@ print_suggestion() {
     echo -e "${GREEN}$*${RESET}"
 }
 
+print_question() {
+    print_suggestion "$(voice_ts) $*"
+}
+
+print_choice_prompt() {
+    echo -n "${GREEN}$(voice_ts) Choice ${1}${RESET}"
+}
+
+print_input_prompt() {
+    echo -n "${GREEN}$(voice_ts) ${1}${RESET}"
+}
+
 print_deletion() {
     echo -e "${RED}$*${RESET}"
 }
@@ -198,10 +216,6 @@ batch_prompt_finish_skip_idx() {
 VOICE_SCRIPT_START_NS=""
 VOICE_PROCESSING_SEC=0
 VOICE_PROCESSING_SLICE_START=""
-
-voice_ts() {
-    date '+%Y.%m.%d %H:%M:%S'
-}
 
 voice_log_kv() {
     local label="$1"
@@ -285,11 +299,11 @@ format_voice_size_comparison_line() {
 # MODE SELECTION
 # ============================================================
 echo
-print_suggestion "Select mode:"
+print_question "Select mode:"
 print_suggestion "  [D] Dry-run (default)"
 print_suggestion "  [R] Real processing (interactive)"
 print_suggestion "  [Q] Quit"
-echo -n "Choice [D/r/q]: "
+print_choice_prompt "[D/r/q]: "
 
 mode="dry-run"
 input=""
@@ -316,17 +330,17 @@ fi
 # ============================================================
 echo
 if [[ "$mode" == "real" ]]; then
-    print_suggestion "Enable transcription (ORG/OUTPUT x VAD/noVAD whisper servers)?"
+    print_question "Enable transcription (ORG/OUTPUT x VAD/noVAD whisper servers)?"
     print_suggestion "  [Y] Yes (default)"
     print_suggestion "  [N] No"
     print_suggestion "  [Q] Quit"
-    echo -n "Choice [Y/n/q]: "
+    print_choice_prompt "[Y/n/q]: "
 else
-    print_suggestion "Include transcription step in dry-run (ORG/OUTPUT x VAD/noVAD)?"
+    print_question "Include transcription step in dry-run (ORG/OUTPUT x VAD/noVAD)?"
     print_suggestion "  [Y] Yes (default)"
     print_suggestion "  [N] No"
     print_suggestion "  [Q] Quit"
-    echo -n "Choice [Y/n/q]: "
+    print_choice_prompt "[Y/n/q]: "
 fi
 
 input=""
@@ -347,10 +361,10 @@ echo -e "Transcription enabled: ${CYAN}$DO_TRANSCRIPTION${RESET}"
 # ============================================================
 if [[ "$mode" == "real" ]]; then
     echo
-    print_suggestion "Batch size for asking before processing?"
+    print_question "Batch size for asking before processing?"
     print_suggestion "  Default: 50"
     print_suggestion "  Enter a positive number, or press Enter for default."
-    echo -n "Batch size [50]: "
+    print_input_prompt "Batch size [50]: "
 
     input=""
     IFS= read -r -t 60 input || true
@@ -541,14 +555,14 @@ read_batch_choice() {
     BATCH_CHOICE_DECISION=""
     BATCH_CHOICE_ACTION=""
 
-    print_suggestion "$prompt_line"
+    print_question "$prompt_line"
     print_suggestion "  [Y] Yes (default)"
     print_suggestion "  [N] No"
     print_suggestion "  [A] Yes for all remaining in this batch"
     print_suggestion "  [F] Finish batch now (process selected only; stop asking for rest of batch)"
     print_suggestion "  [G] Process selected; skip all further prompts this run"
     print_suggestion "  [Q] Quit"
-    echo -n "Choice [Y/n/a/f/g/q]: "
+    print_choice_prompt "[Y/n/a/f/g/q]: "
 
     read -t 300 -n 1 input || true
     echo
@@ -790,7 +804,7 @@ ensure_transcribe_endpoint_ready() {
         print_transcribe_endpoint_down_reason "$host" "$port"
         print_suggestion "  [W] Wait until the server is back (default)"
         print_suggestion "  [Q] Quit"
-        echo -n "Choice [W/q]: "
+        print_choice_prompt "[W/q]: "
         read -t 300 -n 1 input || true
         echo
 
@@ -1141,83 +1155,6 @@ voice_mark_pair_active() {
     voice_active_shas+=("$sha_file")
 }
 
-voice_confirm_transcription_for_pair() {
-    local org_file="$1"
-    local out_file="$2"
-    local sha_file="${3:-}"
-    local stem
-
-    voice_mark_pair_active "$org_file" "$out_file" "$sha_file"
-    [[ -e "$org_file" && -e "$out_file" ]] || return 0
-    stem=$(voice_pair_stem_from_org "$org_file")
-    voice_transcribe_confirmed["$stem"]=1
-}
-
-voice_any_transcription_confirmed() {
-    (( ${#voice_transcribe_confirmed[@]} > 0 ))
-}
-
-voice_mark_or_confirm_transcription_for_run() {
-    local org_file="$1"
-    local out_file="$2"
-    local sha_file="${3:-}"
-
-    if [[ "$DO_TRANSCRIPTION" == "yes" ]]; then
-        voice_confirm_transcription_for_pair "$org_file" "$out_file" "$sha_file"
-    else
-        voice_mark_pair_active "$org_file" "$out_file" "$sha_file"
-    fi
-}
-
-run_transcription_for_confirmed_active_pairs() {
-    local i org_file out_file sha_file stem need_org=0 need_out=0
-    local total confirmed_pos=0
-
-    total=${#voice_active_orgs[@]}
-    (( total == 0 )) && return 0
-
-    echo
-    print_suggestion "Running transcription/re-do for ${#voice_transcribe_confirmed[@]} pair(s) you already included in this run."
-
-    for i in "${!voice_active_orgs[@]}"; do
-        org_file="${voice_active_orgs[$i]}"
-        out_file="${voice_active_outs[$i]}"
-        sha_file="${voice_active_shas[$i]}"
-        stem=$(voice_pair_stem_from_org "$org_file")
-
-        [[ -n "${voice_transcribe_confirmed[$stem]+x}" ]] || continue
-
-        ((++confirmed_pos))
-        echo
-        print_processing_progress "$confirmed_pos" "${#voice_transcribe_confirmed[@]}" \
-            "$(( ${#voice_transcribe_confirmed[@]} - confirmed_pos ))" "$total"
-        print_transcription_pair_block "$org_file" "$out_file" "$sha_file"
-
-        ensure_pair_sha_file "$org_file" "$out_file" "$sha_file"
-        sync_existing_transcript_hashes "$org_file" "$out_file" "$sha_file"
-        check_transcript_loops_for_pair "$org_file" "$out_file" "$sha_file"
-
-        if transcript_all_variants_exist_for_audio "$org_file"; then
-            need_org=0
-        else
-            need_org=1
-        fi
-
-        if transcript_all_variants_exist_for_audio "$out_file"; then
-            need_out=0
-        else
-            need_out=1
-        fi
-
-        if (( need_org || need_out )); then
-            run_transcriptions_for_pair "$org_file" "$out_file" "$sha_file"
-        else
-            print_suggestion "All transcript variants already present — syncing sha512 only."
-            verify_pair_sha_or_exit "$sha_file"
-        fi
-    done
-}
-
 populate_active_transcript_redo_queue() {
     local i org_file out_file sha_file
 
@@ -1313,8 +1250,6 @@ execute_transcript_redo_for_pair() {
     local out_file="$2"
     local sha_file="$3"
 
-    voice_confirm_transcription_for_pair "$org_file" "$out_file" "$sha_file"
-
     echo
     print_deletion "TRANSCRIPT RE-DO: Removing old transcript files for this pair."
     voice_processing_begin
@@ -1404,7 +1339,6 @@ process_transcript_redo_queue() {
             if [[ "$accept_all_remaining" == "yes" ]]; then
                 batch_selected+=("yes")
                 ((++batch_yes))
-                voice_confirm_transcription_for_pair "$org_file" "$out_file" "$sha_file"
                 batch_orgs+=("$org_file")
                 batch_outs+=("$out_file")
                 batch_shas+=("$sha_file")
@@ -1441,7 +1375,6 @@ process_transcript_redo_queue() {
                     batch_selected+=("yes")
                     ((++batch_yes))
                     accept_all_remaining=yes
-                    voice_confirm_transcription_for_pair "$org_file" "$out_file" "$sha_file"
                     batch_orgs+=("$org_file")
                     batch_outs+=("$out_file")
                     batch_shas+=("$sha_file")
@@ -1453,7 +1386,6 @@ process_transcript_redo_queue() {
                     if [[ "$BATCH_CHOICE_DECISION" == yes ]]; then
                         batch_selected+=("yes")
                         ((++batch_yes))
-                        voice_confirm_transcription_for_pair "$org_file" "$out_file" "$sha_file"
                     else
                         batch_selected+=("no")
                         ((++batch_no))
@@ -1899,14 +1831,6 @@ process_transcription_queue() {
 
     build_voice_transcribe_queue
 
-    if voice_any_transcription_confirmed; then
-        run_transcription_for_confirmed_active_pairs
-        transcribe_queue_orgs=()
-        transcribe_queue_outs=()
-        transcribe_queue_shas=()
-        return 0
-    fi
-
     local total_files idx
     total_files=${#transcribe_queue_outs[@]}
     idx=0
@@ -1962,7 +1886,7 @@ process_transcription_queue() {
                 "$batch_pos" "$batch_size_now" "$overall_pos" "$total_files" "$still_after_this" \
                 "$batch_yes" "$batch_no"
             print_transcription_pair_block "$org_file" "$out_file" "$sha_file"
-            read_batch_choice "Do transcription later in this batch?"
+            read_batch_choice "Run transcription for this pair now?"
 
             case "$BATCH_CHOICE_ACTION" in
                 quit)
@@ -2123,7 +2047,6 @@ declare -a voice_active_orgs=()
 declare -a voice_active_outs=()
 declare -a voice_active_shas=()
 declare -A voice_active_stem_seen=()
-declare -A voice_transcribe_confirmed=()
 skip_remaining_redo_prompts=no
 skip_remaining_existing_pair_prompts=no
 
@@ -2183,7 +2106,7 @@ process_one_file() {
     check_free_space_or_exit "."
 
     sha_file="$(sha_file_from_pair "$new_in")"
-    voice_mark_or_confirm_transcription_for_run "$new_in" "$out" "$sha_file"
+    voice_mark_pair_active "$new_in" "$out" "$sha_file"
 
     if [[ -e "$out" ]]; then
         echo
@@ -2284,7 +2207,7 @@ process_existing_pairs_batch() {
             if [[ "$accept_all_remaining" == "yes" ]]; then
                 batch_selected+=("yes")
                 ((++batch_yes))
-                voice_confirm_transcription_for_pair "$org_file" "$out_file" "$sha_file"
+                voice_mark_pair_active "$org_file" "$out_file" "$sha_file"
                 batch_orgs+=("$org_file")
                 batch_outs+=("$out_file")
                 batch_shas+=("$sha_file")
@@ -2302,7 +2225,7 @@ process_existing_pairs_batch() {
                 "$batch_pos" "$batch_size_now" "$overall_pos" "$total_files" "$still_after_this" \
                 "$batch_yes" "$batch_no"
             print_transcription_pair_block "$org_file" "$out_file" "$sha_file"
-            read_batch_choice "Include this existing ORG/OUTPUT pair for transcription/re-do in this run?"
+            read_batch_choice "Include this existing ORG/OUTPUT pair in this run (re-do and/or transcription prompts later)?"
 
             case "$BATCH_CHOICE_ACTION" in
                 quit)
@@ -2325,7 +2248,7 @@ process_existing_pairs_batch() {
                     batch_selected+=("yes")
                     ((++batch_yes))
                     accept_all_remaining=yes
-                    voice_confirm_transcription_for_pair "$org_file" "$out_file" "$sha_file"
+                    voice_mark_pair_active "$org_file" "$out_file" "$sha_file"
                     batch_orgs+=("$org_file")
                     batch_outs+=("$out_file")
                     batch_shas+=("$sha_file")
@@ -2337,7 +2260,7 @@ process_existing_pairs_batch() {
                     if [[ "$BATCH_CHOICE_DECISION" == yes ]]; then
                         batch_selected+=("yes")
                         ((++batch_yes))
-                        voice_confirm_transcription_for_pair "$org_file" "$out_file" "$sha_file"
+                        voice_mark_pair_active "$org_file" "$out_file" "$sha_file"
                     else
                         batch_selected+=("no")
                         ((++batch_no))
@@ -2602,7 +2525,7 @@ else
                     batch_selected+=("yes")
                     ((++batch_yes))
                     accept_all_remaining=yes
-                    voice_mark_or_confirm_transcription_for_run "$new_in" "$out" "$(sha_file_from_pair "$new_in")"
+                    voice_mark_pair_active "$new_in" "$out" "$(sha_file_from_pair "$new_in")"
                     batch_originals+=("$original_in")
                     batch_newins+=("$new_in")
                     batch_outputs+=("$out")
@@ -2614,7 +2537,7 @@ else
                     if [[ "$BATCH_CHOICE_DECISION" == yes ]]; then
                         batch_selected+=("yes")
                         ((++batch_yes))
-                        voice_mark_or_confirm_transcription_for_run "$new_in" "$out" "$(sha_file_from_pair "$new_in")"
+                        voice_mark_pair_active "$new_in" "$out" "$(sha_file_from_pair "$new_in")"
                     else
                         batch_selected+=("no")
                         ((++files_skipped))
