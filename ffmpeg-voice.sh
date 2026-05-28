@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.05.27 - v. 3.5 - optional command-line file: process only that file, not whole directory
 # 2026.05.27 - v. 3.4 - transcribe _ORG then _OUTPUT audio; transcripts as *_ORG.txt and *_OUTPUT.txt
 # 2026.05.27 - v. 3.3 - transcription host check: ping and TCP port (default 8080) open
 # 2026.05.27 - v. 3.2 - transcribe-server.sh path from cwd filesystem mount (not hardcoded /mnt/temp)
@@ -15,6 +16,71 @@
 
 set -euo pipefail
 shopt -s nullglob nocaseglob
+
+TARGET_FILE=""
+
+show_help() {
+    cat <<EOF
+Usage: $(basename "$0") [-h|--help] [FILE]
+
+Process voice/audio files in the current directory: rename to *_ORG.*,
+create *_OUTPUT.flac, sha512 sidecars, and optional transcription.
+
+With FILE, only that file is processed (no directory scan). FILE must exist
+and be a supported audio type (.wav .mp3 .m4a .flac .ogg .opus .aac .mp4).
+
+Without FILE, all matching audio files in the current directory are candidates
+(excluding existing *_ORG.*, *_OUTPUT.flac, and *_EXCLUDE.* handling as usual).
+
+Options:
+  -h, --help    Show this help and exit.
+  -- FILE       Explicit file operand (use when the name starts with -).
+EOF
+}
+
+is_supported_audio() {
+    local path="$1"
+    local ext="${path##*.}"
+    ext="${ext,,}"
+    case "$ext" in
+        wav|mp3|m4a|flac|ogg|opus|aac|mp4) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+parse_cli_args() {
+    while [[ $# -gt 0 ]]; do
+        case $1 in
+            -h|--help)
+                show_help
+                exit 0
+                ;;
+            --)
+                shift
+                if [[ $# -ne 1 ]]; then
+                    echo "Expected exactly one file after --." >&2
+                    exit 1
+                fi
+                TARGET_FILE=$1
+                return 0
+                ;;
+            -*)
+                echo "Unknown option: $1 (try --help)" >&2
+                exit 1
+                ;;
+            *)
+                if [[ -n "$TARGET_FILE" ]]; then
+                    echo "Only one file may be specified (try --help)." >&2
+                    exit 1
+                fi
+                TARGET_FILE=$1
+                shift
+                ;;
+        esac
+    done
+}
+
+parse_cli_args "$@"
 
 # ============================================================
 # DEFAULT SETTINGS
@@ -91,6 +157,11 @@ elif [[ "$input" =~ [Rr] ]]; then
 fi
 
 echo -e "Mode selected: ${CYAN}$mode${RESET}"
+if [[ -n "$TARGET_FILE" ]]; then
+    echo -e "Scope: ${CYAN}single file${RESET} — $TARGET_FILE"
+else
+    echo -e "Scope: ${CYAN}current directory${RESET}"
+fi
 
 # ============================================================
 # TRANSCRIPTION SELECTION
@@ -988,10 +1059,27 @@ declare -a existing_pair_orgs=()
 declare -a existing_pair_outs=()
 declare -a existing_pair_shas=()
 
-for f in *.wav *.mp3 *.m4a *.flac *.ogg *.opus *.aac *.mp4; do
-    [[ -e "$f" ]] || continue
-    discovered_files+=("$f")
-done
+if [[ -n "$TARGET_FILE" ]]; then
+    if [[ ! -e "$TARGET_FILE" ]]; then
+        echo "File not found: $TARGET_FILE" >&2
+        exit 1
+    fi
+    if [[ ! -f "$TARGET_FILE" ]]; then
+        echo "Not a regular file: $TARGET_FILE" >&2
+        exit 1
+    fi
+    if ! is_supported_audio "$TARGET_FILE"; then
+        echo "Unsupported audio type: $TARGET_FILE" >&2
+        echo "Supported: .wav .mp3 .m4a .flac .ogg .opus .aac .mp4" >&2
+        exit 1
+    fi
+    discovered_files+=("$TARGET_FILE")
+else
+    for f in *.wav *.mp3 *.m4a *.flac *.ogg *.opus *.aac *.mp4; do
+        [[ -e "$f" ]] || continue
+        discovered_files+=("$f")
+    done
+fi
 
 if (( ${#discovered_files[@]} > 0 )); then
     mapfile -t all_files < <(printf '%s\n' "${discovered_files[@]}" | LC_ALL=C sort)
@@ -1212,6 +1300,11 @@ fi
 
 echo "========= SUMMARY ========="
 echo "Mode:                  $mode"
+if [[ -n "$TARGET_FILE" ]]; then
+    echo "Scope:                 single file ($TARGET_FILE)"
+else
+    echo "Scope:                 current directory"
+fi
 if [[ "$mode" == "real" ]]; then
     echo "Batch size:            $BATCH_SIZE"
 fi
