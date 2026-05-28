@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.05.28 - v. 3.35 - do not exit on sha512 repair fail; run transcription after existing-pair Yes
 # 2026.05.28 - v. 3.34 - inline whisper HTTP transcription; VAD/noVAD host:port (no hardcoded transcribe-server.sh curl)
 # 2026.05.28 - v. 3.33 - pair block: ***MISSING*** on absent paths; list legacy *_ORG.txt / *_OUTPUT.txt as no longer needed
 # 2026.05.28 - v. 3.32 - pair block shows (missing); skip existing batch if transcription off; show why not skipped
@@ -1442,8 +1443,18 @@ maybe_repair_sha512_if_stale_references() {
         return 0
     fi
 
-    echo -e "${YELLOW}SHA512 VERIFY FAILED:${RESET} $sha_file"
-    exit 1
+    echo -e "${YELLOW}SHA512 VERIFY FAILED:${RESET} $sha_file (continuing)"
+    return 1
+}
+
+pair_needs_transcription_work() {
+    local org_file="$1"
+    local out_file="$2"
+
+    [[ "$DO_TRANSCRIPTION" == "yes" ]] || return 1
+    transcript_all_variants_exist_for_audio "$org_file" || return 0
+    transcript_all_variants_exist_for_audio "$out_file" || return 0
+    return 1
 }
 
 # Path whisper inference writes before rename (…_ORG.txt / …_OUTPUT.txt).
@@ -2537,7 +2548,16 @@ prepare_selected_existing_pair() {
 
     if [[ -e "$sha_file" ]]; then
         echo "$(voice_ts) Preparing selected pair: $(basename "$org_file")"
-        queue_or_print_missing_transcriptions "$org_file" "$out_file" "$sha_file"
+        maybe_repair_sha512_if_stale_references "$org_file" "$out_file" "$sha_file" || true
+        enqueue_transcript_redo_if_needed "$org_file" "$out_file" "$sha_file"
+        if pair_on_transcript_redo_queue "$org_file"; then
+            return 0
+        fi
+        if pair_needs_transcription_work "$org_file" "$out_file"; then
+            run_transcriptions_for_pair "$org_file" "$out_file" "$sha_file"
+        else
+            sync_existing_transcript_hashes "$org_file" "$out_file" "$sha_file"
+        fi
         return 0
     fi
 
@@ -2845,7 +2865,7 @@ process_existing_pairs_batch() {
             if [[ -n "$incomplete_summary" ]]; then
                 print_suggestion "Why this pair is not auto-skipped: ${incomplete_summary}"
             fi
-            read_batch_choice "Include this existing ORG/OUTPUT pair in this run (re-do and/or transcription prompts later)?"
+            read_batch_choice "Include this existing ORG/OUTPUT pair (transcribe missing variants / re-do if needed)?"
 
             case "$BATCH_CHOICE_ACTION" in
                 quit)
