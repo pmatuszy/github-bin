@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.05.28 - v. 3.30 - no sha/transcript checks at startup; prepare existing pairs only when selected in batch
 # 2026.05.28 - v. 3.29 - skip startup backfill for complete existing pairs; media hash not on redo-offer alone
 # 2026.05.28 - v. 3.28 - sha512sum -c only when hash file lists missing paths; media hash check only without/redo transcripts
 # 2026.05.28 - v. 3.27 - prune missing paths from sha512 (legacy .txt); repair instead of hang/exit; backfill progress
@@ -1646,16 +1647,7 @@ build_voice_transcribe_queue() {
         fi
 
         if (( need_org || need_out )); then
-            sync_existing_transcript_hashes "$org_file" "$out_file" "$sha_file"
             enqueue_pair_for_transcription "$org_file" "$out_file" "$sha_file"
-        elif pair_needs_media_hash_check "$org_file" "$out_file" "$sha_file" \
-            || pair_needs_transcript_redo_offer "$org_file" "$out_file" \
-            || sha512_file_has_missing_paths "$sha_file"; then
-            sync_existing_transcript_hashes "$org_file" "$out_file" "$sha_file"
-        else
-            maybe_repair_sha512_if_stale_references "$org_file" "$out_file" "$sha_file"
-            append_transcript_variant_hashes_for_audio "$org_file" "$sha_file"
-            append_transcript_variant_hashes_for_audio "$out_file" "$sha_file"
         fi
     done
 }
@@ -2421,14 +2413,13 @@ process_transcription_queue() {
     transcribe_queue_shas=()
 }
 
-backfill_existing_pair_sha() {
+prepare_selected_existing_pair() {
     local org_file="$1"
     local out_file="$2"
     local sha_file="$3"
 
     if [[ -e "$sha_file" ]]; then
-        existing_pair_needs_startup_backfill "$org_file" "$out_file" "$sha_file" || return 0
-        echo "$(voice_ts) Checking existing pair: $(basename "$org_file")"
+        echo "$(voice_ts) Preparing selected pair: $(basename "$org_file")"
         queue_or_print_missing_transcriptions "$org_file" "$out_file" "$sha_file"
         return 0
     fi
@@ -2572,46 +2563,11 @@ existing_pair_is_complete_for_batch() {
     sha512_file_has_missing_paths "$sha_file" && return 1
 
     if [[ "$DO_TRANSCRIPTION" == "yes" ]]; then
-        pair_needs_transcript_redo_offer "$org_file" "$out_file" && return 1
         transcript_all_variants_exist_for_audio "$org_file" || return 1
         transcript_all_variants_exist_for_audio "$out_file" || return 1
     fi
 
     return 0
-}
-
-# Startup backfill: only when .sha512 is missing, stale, or pair still needs transcript/sha work.
-existing_pair_needs_startup_backfill() {
-    local org_file="$1"
-    local out_file="$2"
-    local sha_file="$3"
-
-    [[ -e "$org_file" && -e "$out_file" ]] || return 1
-
-    if [[ ! -e "$sha_file" ]]; then
-        return 0
-    fi
-
-    sha512_file_has_missing_paths "$sha_file" && return 0
-
-    if [[ "$DO_TRANSCRIPTION" != "yes" ]]; then
-        return 1
-    fi
-
-    existing_pair_is_complete_for_batch "$org_file" "$out_file" "$sha_file" && return 1
-
-    return 0
-}
-
-finalize_complete_existing_pair() {
-    local org_file="$1"
-    local out_file="$2"
-    local sha_file="$3"
-
-    [[ "$mode" == "real" ]] || return 0
-    maybe_repair_sha512_if_stale_references "$org_file" "$out_file" "$sha_file"
-    append_transcript_variant_hashes_for_audio "$org_file" "$sha_file"
-    append_transcript_variant_hashes_for_audio "$out_file" "$sha_file"
 }
 
 print_existing_pairs_skip_section() {
@@ -2655,7 +2611,6 @@ process_existing_pairs_batch() {
             skip_orgs+=("$org_file")
             skip_outs+=("$out_file")
             skip_shas+=("$sha_file")
-            finalize_complete_existing_pair "$org_file" "$out_file" "$sha_file"
             ((++skip_count))
         else
             prompt_orgs+=("$org_file")
@@ -2708,6 +2663,7 @@ process_existing_pairs_batch() {
                 batch_selected+=("yes")
                 ((++batch_yes))
                 voice_mark_pair_active "$org_file" "$out_file" "$sha_file"
+                prepare_selected_existing_pair "$org_file" "$out_file" "$sha_file"
                 batch_orgs+=("$org_file")
                 batch_outs+=("$out_file")
                 batch_shas+=("$sha_file")
@@ -2747,6 +2703,7 @@ process_existing_pairs_batch() {
                     ((++batch_yes))
                     accept_all_remaining=yes
                     voice_mark_pair_active "$org_file" "$out_file" "$sha_file"
+                    prepare_selected_existing_pair "$org_file" "$out_file" "$sha_file"
                     batch_orgs+=("$org_file")
                     batch_outs+=("$out_file")
                     batch_shas+=("$sha_file")
@@ -2759,6 +2716,7 @@ process_existing_pairs_batch() {
                         batch_selected+=("yes")
                         ((++batch_yes))
                         voice_mark_pair_active "$org_file" "$out_file" "$sha_file"
+                        prepare_selected_existing_pair "$org_file" "$out_file" "$sha_file"
                     else
                         batch_selected+=("no")
                         ((++batch_no))
@@ -2884,18 +2842,6 @@ for f in "${all_files[@]}"; do
 done
 
 all_files=("${filtered_files[@]}")
-
-# ============================================================
-# BACKFILL SHA512 FOR EXISTING _ORG + _OUTPUT PAIRS
-# ============================================================
-if (( ${#existing_pair_orgs[@]} > 0 )); then
-    for i in "${!existing_pair_orgs[@]}"; do
-        backfill_existing_pair_sha \
-            "${existing_pair_orgs[$i]}" \
-            "${existing_pair_outs[$i]}" \
-            "${existing_pair_shas[$i]}"
-    done
-fi
 
 # ============================================================
 # HANDLE *_EXCLUDE.* SHA512 FILES
@@ -3070,7 +3016,7 @@ else
         [[ "$finish_batch_now" == yes ]] && break
     done
 
-    if [[ "$mode" == "real" ]] && (( ${#existing_pair_orgs[@]} > 0 && ${#all_files[@]} == 0 )); then
+    if (( ${#existing_pair_orgs[@]} > 0 && ${#all_files[@]} == 0 )); then
         process_existing_pairs_batch
     fi
 fi
