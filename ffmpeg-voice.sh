@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.05.27 - v. 3.11 - batch prompts: finish batch now [F] or skip all further prompts [G]
 # 2026.05.27 - v. 3.10 - before each transcription: recheck whisper server; wait or quit if down
 # 2026.05.27 - v. 3.9.1 - fix loop-detection awk for mawk/busybox (no ternary in exit)
 # 2026.05.27 - v. 3.9 - prompt redo when legacy/unflagged-loop transcripts; keep valid ORG/OUTPUT sha hashes
@@ -414,6 +415,52 @@ print_prompt_and_decision_summary() {
         echo -e "${YELLOW}WILL BE SKIPPED IN THIS BATCH:${RESET}   $no_count"
         echo -e "${CYAN}ANSWERS STILL MISSING:${RESET}           $undecided"
     fi
+}
+
+# Sets BATCH_CHOICE_DECISION (yes|no) and BATCH_CHOICE_ACTION:
+#   decided | accept_all | finish_batch | skip_all | quit
+read_batch_choice() {
+    local prompt_line="$1"
+    local input=""
+
+    BATCH_CHOICE_DECISION=""
+    BATCH_CHOICE_ACTION=""
+
+    echo "$prompt_line"
+    echo "  [Y] Yes (default)"
+    echo "  [N] No"
+    echo "  [A] Yes for all remaining in this batch"
+    echo "  [F] Finish batch now (process selected only; stop asking for rest of batch)"
+    echo "  [G] Process selected; skip all further prompts this run"
+    echo "  [Q] Quit"
+    echo -n "Choice [Y/n/a/f/g/q]: "
+
+    read -t 300 -n 1 input || true
+    echo
+
+    case "$input" in
+        q|Q)
+            BATCH_CHOICE_ACTION=quit
+            ;;
+        n|N)
+            BATCH_CHOICE_DECISION=no
+            BATCH_CHOICE_ACTION=decided
+            ;;
+        a|A)
+            BATCH_CHOICE_DECISION=yes
+            BATCH_CHOICE_ACTION=accept_all
+            ;;
+        f|F)
+            BATCH_CHOICE_ACTION=finish_batch
+            ;;
+        g|G)
+            BATCH_CHOICE_ACTION=skip_all
+            ;;
+        *)
+            BATCH_CHOICE_DECISION=yes
+            BATCH_CHOICE_ACTION=decided
+            ;;
+    esac
 }
 
 print_processing_progress() {
@@ -1387,12 +1434,15 @@ process_transcription_queue() {
     idx=0
 
     while (( idx < total_files )); do
+        [[ "$skip_remaining_prompts" == yes ]] && break
+
         declare -a batch_orgs=()
         declare -a batch_outs=()
         declare -a batch_shas=()
         declare -a batch_selected=()
 
-        local remaining_total batch_size_now batch_count batch_yes batch_no accept_all_remaining
+        local remaining_total batch_size_now batch_count batch_yes batch_no accept_all_remaining finish_batch_now
+        finish_batch_now=no
         remaining_total=$(( total_files - idx ))
         batch_size_now=$BATCH_SIZE
         (( remaining_total < batch_size_now )) && batch_size_now=$remaining_total
@@ -1429,35 +1479,46 @@ process_transcription_queue() {
                 "$batch_pos" "$batch_size_now" "$overall_pos" "$total_files" "$still_after_this" \
                 "$batch_yes" "$batch_no"
             print_transcription_pair_block "$org_file" "$out_file" "$sha_file"
-            echo "Do transcription later in this batch?"
-            echo "  [Y] Yes (default)"
-            echo "  [N] No"
-            echo "  [A] Yes for all remaining in this batch"
-            echo "  [Q] Quit"
-            echo -n "Choice [Y/n/a/q]: "
-            read -t 300 -n 1 input || true
-            echo
+            read_batch_choice "Do transcription later in this batch?"
 
-            case "$input" in
-                q|Q)
+            case "$BATCH_CHOICE_ACTION" in
+                quit)
                     stopped_by_user=yes
                     echo
                     echo "Quitting."
                     exit 0
                     ;;
-                n|N)
-                    batch_selected+=("no")
-                    ((++files_skipped))
-                    ((++batch_no))
+                finish_batch)
+                    finish_batch_now=yes
+                    echo "Finishing this batch — processing ${batch_yes} selected transcription(s) only."
+                    break
                     ;;
-                a|A)
+                skip_all)
+                    skip_remaining_prompts=yes
+                    finish_batch_now=yes
+                    echo "Skipping all further prompts — processing ${batch_yes} selected transcription(s) from this batch."
+                    break
+                    ;;
+                accept_all)
                     batch_selected+=("yes")
                     ((++batch_yes))
                     accept_all_remaining=yes
+                    batch_orgs+=("$org_file")
+                    batch_outs+=("$out_file")
+                    batch_shas+=("$sha_file")
+                    ((idx+=1))
+                    ((batch_count+=1))
+                    continue
                     ;;
-                *)
-                    batch_selected+=("yes")
-                    ((++batch_yes))
+                decided)
+                    if [[ "$BATCH_CHOICE_DECISION" == yes ]]; then
+                        batch_selected+=("yes")
+                        ((++batch_yes))
+                    else
+                        batch_selected+=("no")
+                        ((++files_skipped))
+                        ((++batch_no))
+                    fi
                     ;;
             esac
 
@@ -1476,20 +1537,29 @@ process_transcription_queue() {
                 [[ "$decision" == "yes" ]] && ((selected_total+=1))
             done
 
-            selected_pos=0
-            for i in "${!batch_outs[@]}"; do
-                if [[ "${batch_selected[$i]}" == "yes" ]]; then
-                    local selected_left_after
-                    ((selected_pos+=1))
-                    selected_left_after=$(( selected_total - selected_pos ))
+            if (( selected_total > 0 )); then
+                selected_pos=0
+                for i in "${!batch_outs[@]}"; do
+                    if [[ "${batch_selected[$i]}" == "yes" ]]; then
+                        local selected_left_after
+                        ((selected_pos+=1))
+                        selected_left_after=$(( selected_total - selected_pos ))
 
-                    echo
-                    print_processing_progress "$selected_pos" "$selected_total" "$selected_left_after" "$total_files"
-                    print_transcription_pair_block \
-                        "${batch_orgs[$i]}" "${batch_outs[$i]}" "${batch_shas[$i]}"
-                    run_transcriptions_for_pair "${batch_orgs[$i]}" "${batch_outs[$i]}" "${batch_shas[$i]}"
-                fi
-            done
+                        echo
+                        print_processing_progress "$selected_pos" "$selected_total" "$selected_left_after" "$total_files"
+                        print_transcription_pair_block \
+                            "${batch_orgs[$i]}" "${batch_outs[$i]}" "${batch_shas[$i]}"
+                        run_transcriptions_for_pair "${batch_orgs[$i]}" "${batch_outs[$i]}" "${batch_shas[$i]}"
+                    fi
+                done
+            elif (( finish_batch_now )); then
+                echo "No transcriptions selected in this batch."
+            fi
+        fi
+
+        if [[ "$skip_remaining_prompts" == yes ]]; then
+            (( files_skipped += total_files - idx ))
+            break
         fi
     done
 
@@ -1544,6 +1614,7 @@ files_examined=0
 files_affected=0
 files_skipped=0
 stopped_by_user=no
+skip_remaining_prompts=no
 
 declare -a affected_list=()
 declare -a transcribe_queue_orgs=()
@@ -1839,6 +1910,8 @@ else
     idx=0
 
     while (( idx < total_files )); do
+        [[ "$skip_remaining_prompts" == yes ]] && break
+
         declare -a batch_originals=()
         declare -a batch_newins=()
         declare -a batch_outputs=()
@@ -1852,6 +1925,7 @@ else
         batch_yes=0
         batch_no=0
         accept_all_remaining=no
+        finish_batch_now=no
 
         while (( idx < total_files && batch_count < batch_size_now )); do
             original_in="${all_files[$idx]}"
@@ -1880,35 +1954,46 @@ else
                 "$batch_pos" "$batch_size_now" "$overall_pos" "$total_files" "$still_after_this" \
                 "$batch_yes" "$batch_no"
             print_file_block "$original_in" "$new_in" "$out"
-            echo "Process this file later in this batch?"
-            echo "  [Y] Yes (default)"
-            echo "  [N] No"
-            echo "  [A] Yes for all remaining in this batch"
-            echo "  [Q] Quit"
-            echo -n "Choice [Y/n/a/q]: "
-            read -t 300 -n 1 input || true
-            echo
+            read_batch_choice "Process this file later in this batch?"
 
-            case "$input" in
-                q|Q)
+            case "$BATCH_CHOICE_ACTION" in
+                quit)
                     stopped_by_user=yes
                     echo
                     echo "Quitting."
                     exit 0
                     ;;
-                n|N)
-                    batch_selected+=("no")
-                    ((++files_skipped))
-                    ((++batch_no))
+                finish_batch)
+                    finish_batch_now=yes
+                    echo "Finishing this batch — processing ${batch_yes} selected file(s) only."
+                    break
                     ;;
-                a|A)
+                skip_all)
+                    skip_remaining_prompts=yes
+                    finish_batch_now=yes
+                    echo "Skipping all further prompts — processing ${batch_yes} selected file(s) from this batch."
+                    break
+                    ;;
+                accept_all)
                     batch_selected+=("yes")
                     ((++batch_yes))
                     accept_all_remaining=yes
+                    batch_originals+=("$original_in")
+                    batch_newins+=("$new_in")
+                    batch_outputs+=("$out")
+                    ((idx+=1))
+                    ((batch_count+=1))
+                    continue
                     ;;
-                *)
-                    batch_selected+=("yes")
-                    ((++batch_yes))
+                decided)
+                    if [[ "$BATCH_CHOICE_DECISION" == yes ]]; then
+                        batch_selected+=("yes")
+                        ((++batch_yes))
+                    else
+                        batch_selected+=("no")
+                        ((++files_skipped))
+                        ((++batch_no))
+                    fi
                     ;;
             esac
 
@@ -1926,19 +2011,28 @@ else
                 [[ "$decision" == "yes" ]] && ((selected_total+=1))
             done
 
-            selected_pos=0
-            for i in "${!batch_originals[@]}"; do
-                if [[ "${batch_selected[$i]}" == "yes" ]]; then
-                    ((selected_pos+=1))
-                    selected_left_after=$(( selected_total - selected_pos ))
-                    echo
-                    print_processing_progress "$selected_pos" "$selected_total" "$selected_left_after" "$total_files"
-                    process_one_file "${batch_originals[$i]}" "${batch_newins[$i]}" "${batch_outputs[$i]}"
-                fi
-            done
+            if (( selected_total > 0 )); then
+                selected_pos=0
+                for i in "${!batch_originals[@]}"; do
+                    if [[ "${batch_selected[$i]}" == "yes" ]]; then
+                        ((selected_pos+=1))
+                        selected_left_after=$(( selected_total - selected_pos ))
+                        echo
+                        print_processing_progress "$selected_pos" "$selected_total" "$selected_left_after" "$total_files"
+                        process_one_file "${batch_originals[$i]}" "${batch_newins[$i]}" "${batch_outputs[$i]}"
+                    fi
+                done
+            elif (( finish_batch_now )); then
+                echo "No files selected in this batch."
+            fi
         fi
 
         process_transcription_queue
+
+        if [[ "$skip_remaining_prompts" == yes ]]; then
+            (( files_skipped += total_files - idx ))
+            break
+        fi
     done
 fi
 
@@ -1973,6 +2067,7 @@ echo "Files examined:        $files_examined"
 echo "Files affected:        $files_affected"
 echo "Files skipped:         $files_skipped"
 echo "Stopped by user:       $stopped_by_user"
+echo "Skipped more prompts:  $skip_remaining_prompts"
 
 if (( ${#affected_list[@]} > 0 )); then
     echo
