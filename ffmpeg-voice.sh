@@ -43,6 +43,10 @@ Options:
   -h, --help    Show this help and exit.
   -- FILE       Explicit file operand (use when the name starts with -).
 
+Interactive batch prompts (real mode):
+  [F] Finish batch now — process only items you already answered in this batch.
+  [G] Process selected; skip all further prompts of that kind (files vs transcription).
+
 Transcription (when enabled):
   Each *_ORG.* and *_OUTPUT.flac gets two transcripts: *_VAD.txt (whisper with VAD)
   and *_noVAD.txt (whisper without VAD), e.g. stem_ORG_VAD.txt and stem_OUTPUT_noVAD.txt.
@@ -1911,7 +1915,7 @@ else
     idx=0
 
     while (( idx < total_files )); do
-        [[ "$skip_remaining_prompts" == yes ]] && break
+        [[ "$skip_remaining_file_prompts" == yes ]] && break
 
         declare -a batch_originals=()
         declare -a batch_newins=()
@@ -1970,9 +1974,9 @@ else
                     break
                     ;;
                 skip_all)
-                    skip_remaining_prompts=yes
+                    skip_remaining_file_prompts=yes
                     finish_batch_now=yes
-                    echo "Skipping all further prompts — processing ${batch_yes} selected file(s) from this batch."
+                    echo "Skipping all further file prompts — processing ${batch_yes} selected file(s) from this batch."
                     break
                     ;;
                 accept_all)
@@ -2030,7 +2034,7 @@ else
 
         process_transcription_queue
 
-        if [[ "$skip_remaining_prompts" == yes ]]; then
+        if [[ "$skip_remaining_file_prompts" == yes ]]; then
             (( files_skipped += total_files - idx ))
             break
         fi
@@ -2068,7 +2072,8 @@ echo "Files examined:        $files_examined"
 echo "Files affected:        $files_affected"
 echo "Files skipped:         $files_skipped"
 echo "Stopped by user:       $stopped_by_user"
-echo "Skipped more prompts:  $skip_remaining_prompts"
+echo "Skipped file prompts:  $skip_remaining_file_prompts"
+echo "Skipped transcribe prompts: $skip_remaining_transcription_prompts"
 
 if (( ${#affected_list[@]} > 0 )); then
     echo
