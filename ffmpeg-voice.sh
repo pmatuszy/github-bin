@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.05.27 - v. 3.9 - prompt redo when legacy/unflagged-loop transcripts; keep valid ORG/OUTPUT sha hashes
 # 2026.05.27 - v. 3.8 - four transcripts per pair (ORG/OUTPUT x VAD/noVAD); dual whisper host/port config
 # 2026.05.27 - v. 3.7 - detect repeated transcript lines; rename to *_ORG/_OUTPUT_POSSIBLE_LOOP.txt
 # 2026.05.27 - v. 3.6 - complete missing transcript when only _ORG or _OUTPUT .txt exists; sync sha512
@@ -43,6 +44,10 @@ Transcription (when enabled):
   Each *_ORG.* and *_OUTPUT.flac gets two transcripts: *_VAD.txt (whisper with VAD)
   and *_noVAD.txt (whisper without VAD), e.g. stem_ORG_VAD.txt and stem_OUTPUT_noVAD.txt.
   Loop detection may rename to *_POSSIBLE_LOOP.txt.
+
+  If old transcripts (no _VAD/_noVAD) or an unflagged loop are found, the script asks
+  whether to redo all four transcripts. When the sha512 file already matches ORG and
+  OUTPUT media, only transcript lines are replaced; otherwise the hash file is rebuilt.
 
 Whisper servers (defaults below; override with environment variables):
   WHISPER_VAD_HOST / WHISPER_VAD_PORT       Server with VAD (default port 8080).
@@ -717,16 +722,204 @@ print_missing_transcript_variants_for_audio() {
     done
 }
 
-migrate_legacy_transcript_to_vad_variant() {
-    local audio_file="$1"
-    local base vad_txt
+is_expected_transcript_path() {
+    local txt_path="$1"
+    local audio_file="$2"
+    local tag variant_txt loop_txt
 
-    base="$(txt_file_for_audio "$audio_file")"
-    vad_txt="$(transcript_variant_path_for_audio "$audio_file" "$TRANSCRIPT_VAD_SUFFIX")"
-    [[ -e "$base" && ! -e "$vad_txt" ]] || return 0
-    [[ "$mode" == "dry-run" ]] && return 0
-    mv -f -- "$base" "$vad_txt"
-    echo -e "${CYAN}TRANSCRIPTION:${RESET} Migrated legacy transcript $base $ARROW $vad_txt"
+    for tag in "${TRANSCRIPT_VARIANT_SUFFIXES[@]}"; do
+        variant_txt="$(transcript_variant_path_for_audio "$audio_file" "$tag")"
+        if [[ "$txt_path" == "$variant_txt" ]]; then
+            return 0
+        fi
+        loop_txt="$(txt_file_loop_variant "$variant_txt")"
+        if [[ "$txt_path" == "$loop_txt" ]]; then
+            return 0
+        fi
+    done
+    return 1
+}
+
+collect_transcript_txt_files_for_audio() {
+    local audio_file="$1"
+    local -n _paths_ref="$2"
+    local f prefix
+
+    _paths_ref=()
+    prefix="${audio_file%.*}"
+    for f in "${prefix}"*.txt; do
+        [[ -e "$f" ]] || continue
+        _paths_ref+=("$f")
+    done
+}
+
+pair_list_legacy_transcript_files() {
+    local org_file="$1"
+    local out_file="$2"
+    local audio_file txt_path
+
+    for audio_file in "$org_file" "$out_file"; do
+        collect_transcript_txt_files_for_audio "$audio_file" _pair_txt_paths
+        for txt_path in "${_pair_txt_paths[@]}"; do
+            if ! is_expected_transcript_path "$txt_path" "$audio_file"; then
+                printf '%s\n' "$txt_path"
+            fi
+        done
+    done
+}
+
+pair_list_unflagged_loop_transcript_files() {
+    local org_file="$1"
+    local out_file="$2"
+    local audio_file txt_path
+
+    for audio_file in "$org_file" "$out_file"; do
+        collect_transcript_txt_files_for_audio "$audio_file" _pair_txt_paths
+        for txt_path in "${_pair_txt_paths[@]}"; do
+            [[ "$txt_path" == *"${TRANSCRIPT_LOOP_MARKER}.txt" ]] && continue
+            if transcript_has_repetition_loop "$txt_path"; then
+                printf '%s\n' "$txt_path"
+            fi
+        done
+    done
+}
+
+pair_needs_transcript_redo_offer() {
+    local org_file="$1"
+    local out_file="$2"
+    local legacy unflagged
+
+    mapfile -t legacy < <(pair_list_legacy_transcript_files "$org_file" "$out_file")
+    mapfile -t unflagged < <(pair_list_unflagged_loop_transcript_files "$org_file" "$out_file")
+
+    (( ${#legacy[@]} > 0 || ${#unflagged[@]} > 0 ))
+}
+
+pair_media_hashes_valid_in_sha() {
+    local sha_file="$1"
+    local org_file="$2"
+    local out_file="$3"
+    local tmp
+
+    [[ -e "$sha_file" && -e "$org_file" && -e "$out_file" ]] || return 1
+    grep -Fq "  $org_file" "$sha_file" || return 1
+    grep -Fq "  $out_file" "$sha_file" || return 1
+
+    tmp="$(mktemp)"
+    grep -F "  $org_file" "$sha_file" >"$tmp"
+    grep -F "  $out_file" "$sha_file" >>"$tmp"
+    sha512sum -c --quiet -- "$tmp"
+    local ok=$?
+    rm -f -- "$tmp"
+    return "$ok"
+}
+
+prepare_sha_for_transcript_redo() {
+    local sha_file="$1"
+    local org_file="$2"
+    local out_file="$3"
+    local tmp
+
+    if pair_media_hashes_valid_in_sha "$sha_file" "$org_file" "$out_file"; then
+        echo -e "${CYAN}SHA512:${RESET} ORG and OUTPUT media hashes OK — keeping them, replacing transcript entries only."
+        tmp="$(mktemp)"
+        grep -F "  $org_file" "$sha_file" >"$tmp"
+        grep -F "  $out_file" "$sha_file" >>"$tmp"
+        mv -f -- "$tmp" "$sha_file"
+        return 0
+    fi
+
+    echo -e "${YELLOW}SHA512:${RESET} ORG/OUTPUT missing or invalid — rebuilding hash file for media files."
+    create_sha512_pair_file "$sha_file" "$org_file" "$out_file"
+}
+
+remove_all_transcript_files_for_pair() {
+    local org_file="$1"
+    local out_file="$2"
+    local audio_file txt_path
+
+    for audio_file in "$org_file" "$out_file"; do
+        collect_transcript_txt_files_for_audio "$audio_file" _pair_txt_paths
+        for txt_path in "${_pair_txt_paths[@]}"; do
+            rm -f -- "$txt_path"
+        done
+    done
+}
+
+# Returns 1 if user chose redo (transcripts removed, sha prepared); 0 otherwise.
+maybe_offer_transcript_redo_for_pair() {
+    local org_file="$1"
+    local out_file="$2"
+    local sha_file="$3"
+    local -a legacy=() unflagged=()
+    local line input
+
+    pair_needs_transcript_redo_offer "$org_file" "$out_file" || return 0
+
+    mapfile -t legacy < <(pair_list_legacy_transcript_files "$org_file" "$out_file")
+    mapfile -t unflagged < <(pair_list_unflagged_loop_transcript_files "$org_file" "$out_file")
+
+    echo
+    echo -e "${YELLOW}TRANSCRIPT RE-DO SUGGESTED:${RESET} ORG/OUTPUT pair needs fresh VAD + noVAD transcripts."
+    if (( ${#legacy[@]} > 0 )); then
+        echo "  Legacy or non-standard transcript names (no _VAD / _noVAD in filename):"
+        for line in "${legacy[@]}"; do
+            echo "    - $line"
+        done
+    fi
+    if (( ${#unflagged[@]} > 0 )); then
+        echo "  Repetition loop in file(s) not marked ${TRANSCRIPT_LOOP_MARKER}:"
+        for line in "${unflagged[@]}"; do
+            echo "    - $line"
+        done
+    fi
+
+    if [[ "$mode" == "dry-run" ]]; then
+        echo "Would prompt: redo all four transcripts (ORG/OUTPUT x VAD/noVAD)?"
+        echo "Would remove all transcript files for this pair:"
+        for audio_file in "$org_file" "$out_file"; do
+            collect_transcript_txt_files_for_audio "$audio_file" _pair_txt_paths
+            for line in "${_pair_txt_paths[@]}"; do
+                echo "    rm -f -- $line"
+            done
+        done
+        if pair_media_hashes_valid_in_sha "$sha_file" "$org_file" "$out_file"; then
+            echo "Would keep ORG/OUTPUT entries in $sha_file and drop transcript lines."
+        else
+            echo "Would rebuild $sha_file from ORG and OUTPUT media only."
+        fi
+        echo "Would re-run four transcriptions and append new transcript hashes."
+        return 0
+    fi
+
+    echo "Redo all four transcripts and update $sha_file?"
+    echo "  [Y] Yes (default)"
+    echo "  [N] No — keep existing transcript files"
+    echo "  [Q] Quit"
+    echo -n "Choice [Y/n/q]: "
+    read -t 300 -n 1 input || true
+    echo
+
+    case "$input" in
+        q|Q)
+            stopped_by_user=yes
+            echo "Quitting."
+            exit 0
+            ;;
+        n|N)
+            echo "Keeping existing transcripts."
+            return 0
+            ;;
+        *)
+            ;;
+    esac
+
+    echo
+    echo -e "${CYAN}TRANSCRIPT RE-DO:${RESET} Removing old transcript files for this pair."
+    remove_all_transcript_files_for_pair "$org_file" "$out_file"
+    ensure_pair_sha_file "$org_file" "$out_file" "$sha_file"
+    prepare_sha_for_transcript_redo "$sha_file" "$org_file" "$out_file"
+    return 1
 }
 
 transcript_has_repetition_loop() {
@@ -840,7 +1033,6 @@ print_transcription_dry_run_steps() {
     fi
 
     for audio_file in "$org_file" "$out_file"; do
-        migrate_legacy_transcript_to_vad_variant "$audio_file"
         for tag in "${TRANSCRIPT_VARIANT_SUFFIXES[@]}"; do
             variant_txt="$(transcript_variant_path_for_audio "$audio_file" "$tag")"
             if transcript_variant_exists_for_audio "$audio_file" "$tag"; then
@@ -904,7 +1096,6 @@ append_transcript_variant_hashes_for_audio() {
     local sha_file="$2"
     local tag variant_txt resolved_txt
 
-    migrate_legacy_transcript_to_vad_variant "$audio_file"
     for tag in "${TRANSCRIPT_VARIANT_SUFFIXES[@]}"; do
         if transcript_variant_exists_for_audio "$audio_file" "$tag"; then
             variant_txt="$(transcript_variant_path_for_audio "$audio_file" "$tag")"
@@ -958,8 +1149,6 @@ run_one_transcription_variant() {
     local whisper_host="$4"
     local whisper_port="$5"
     local server_base variant_txt resolved_txt
-
-    migrate_legacy_transcript_to_vad_variant "$audio_file"
 
     if transcript_variant_exists_for_audio "$audio_file" "$variant_suffix"; then
         variant_txt="$(transcript_variant_path_for_audio "$audio_file" "$variant_suffix")"
@@ -1031,9 +1220,14 @@ queue_or_print_missing_transcriptions() {
     local out_file="$2"
     local sha_file="$3"
     local need_org=0 need_out=0
+    local redo_all=0
 
     [[ "$DO_TRANSCRIPTION" == "yes" ]] || return 0
     [[ -e "$org_file" && -e "$out_file" ]] || return 0
+
+    if maybe_offer_transcript_redo_for_pair "$org_file" "$out_file" "$sha_file"; then
+        redo_all=1
+    fi
 
     if transcript_all_variants_exist_for_audio "$org_file"; then
         need_org=0
@@ -1044,6 +1238,11 @@ queue_or_print_missing_transcriptions() {
     if transcript_all_variants_exist_for_audio "$out_file"; then
         need_out=0
     else
+        need_out=1
+    fi
+
+    if (( redo_all )); then
+        need_org=1
         need_out=1
     fi
 
