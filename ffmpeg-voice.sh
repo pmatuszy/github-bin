@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.05.28 - v. 3.25 - source _script_header.sh / _script_footer.sh; add -v/--version
 # 2026.05.28 - v. 3.24 - align filenames in transcription pair block (ORG/OUTPUT/transcripts/sha512)
 # 2026.05.28 - v. 3.23 - print run summary when user quits with [Q] (EXIT trap)
 # 2026.05.28 - v. 3.22 - fix literal ANSI escapes in choice prompts (printf %b, not echo -n)
@@ -56,8 +57,10 @@ Without FILE, all matching audio files in the current directory are candidates
 (excluding existing *_ORG.*, *_OUTPUT.flac, and *_EXCLUDE.* handling as usual).
 
 Options:
-  -h, --help    Show this help and exit.
-  -- FILE       Explicit file operand (use when the name starts with -).
+  -h, --help           Show this help and exit.
+  -v, --version        Print script version and exit.
+  NO_STARTUP_DELAY     Skip _script_header.sh random startup delay (non-tty runs).
+  -- FILE              Explicit file operand (use when the name starts with -).
 
 Interactive batch prompts (real mode; file processing, transcript re-do, transcription):
   [F] Finish batch now — process only items you already answered in this batch.
@@ -85,6 +88,23 @@ Other environment variables:
 EOF
 }
 
+script_version() {
+    local ver=unknown date=
+
+    while IFS= read -r line; do
+        if [[ "$line" =~ ^#\ ([0-9]{4}\.[0-9]{2}\.[0-9]{2})\ -\ v\.\ ([0-9]+(\.[0-9]+)*) ]]; then
+            date="${BASH_REMATCH[1]}"
+            ver="${BASH_REMATCH[2]}"
+            break
+        fi
+    done < "$0"
+    if [[ -n "$date" ]]; then
+        printf '%s version %s (%s)\n' "$(basename "$0")" "$ver" "$date"
+    else
+        printf '%s version %s\n' "$(basename "$0")" "$ver"
+    fi
+}
+
 is_supported_audio() {
     local path="$1"
     local ext="${path##*.}"
@@ -101,6 +121,14 @@ parse_cli_args() {
             -h|--help)
                 show_help
                 exit 0
+                ;;
+            -v|--version)
+                script_version
+                exit 0
+                ;;
+            NO_STARTUP_DELAY)
+                HEADER_EXTRA_ARGS+=(NO_STARTUP_DELAY)
+                shift
                 ;;
             --)
                 shift
@@ -127,7 +155,11 @@ parse_cli_args() {
     done
 }
 
+HEADER_EXTRA_ARGS=()
 parse_cli_args "$@"
+
+# shellcheck disable=SC1091
+. /root/bin/_script_header.sh "${HEADER_EXTRA_ARGS[@]}"
 
 # ============================================================
 # DEFAULT SETTINGS
@@ -479,6 +511,8 @@ voice_finish_run() {
     VOICE_SUMMARY_DONE=yes
     print_voice_statistics_summary
     print_voice_timing_summary
+    # shellcheck disable=SC1091
+    . /root/bin/_script_footer.sh
 }
 
 voice_quit() {
@@ -680,8 +714,6 @@ if [[ "$DO_TRANSCRIPTION" == "yes" ]]; then
 fi
 
 voice_record_script_start
-
-sleep 1
 
 print_file_block() {
     local original_in="$1"
