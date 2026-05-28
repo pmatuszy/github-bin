@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.05.27 - v. 3.6 - complete missing transcript when only _ORG or _OUTPUT .txt exists; sync sha512
 # 2026.05.27 - v. 3.5 - optional command-line file: process only that file, not whole directory
 # 2026.05.27 - v. 3.4 - transcribe _ORG then _OUTPUT audio; transcripts as *_ORG.txt and *_OUTPUT.txt
 # 2026.05.27 - v. 3.3 - transcription host check: ping and TCP port (default 8080) open
@@ -576,12 +577,25 @@ print_transcription_dry_run_steps() {
     out_txt="$(txt_file_for_audio "$out_file")"
 
     print_transcribe_connectivity_checks
+    if [[ ! -e "$sha_file" ]]; then
+        echo "sha512sum -- \"$org_file\" \"$out_file\" > \"$sha_file\""
+    fi
     if [[ ! -e "$org_txt" ]]; then
         echo "\"$TRANSCRIBE_CMD\" \"$org_file\""
-        echo "sha512sum -- \"$org_txt\" >> \"$sha_file\""
     fi
     if [[ ! -e "$out_txt" ]]; then
         echo "\"$TRANSCRIBE_CMD\" \"$out_file\""
+    fi
+    if [[ -e "$org_txt" ]]; then
+        echo "sha512sum -- \"$org_txt\" >> \"$sha_file\""
+    fi
+    if [[ -e "$out_txt" ]]; then
+        echo "sha512sum -- \"$out_txt\" >> \"$sha_file\""
+    fi
+    if [[ ! -e "$org_txt" ]]; then
+        echo "sha512sum -- \"$org_txt\" >> \"$sha_file\""
+    fi
+    if [[ ! -e "$out_txt" ]]; then
         echo "sha512sum -- \"$out_txt\" >> \"$sha_file\""
     fi
     echo "sha512sum -c --quiet -- \"$sha_file\""
@@ -601,11 +615,44 @@ append_sha512_for_file_if_missing() {
 
     [[ -e "$target_file" ]] || return 1
 
-    if sha_file_has_entry "$sha_file" "$target_file"; then
+    if [[ -e "$sha_file" ]] && sha_file_has_entry "$sha_file" "$target_file"; then
         return 0
     fi
 
     sha512sum -- "$target_file" >> "$sha_file"
+}
+
+ensure_pair_sha_file() {
+    local org_file="$1"
+    local out_file="$2"
+    local sha_file="$3"
+
+    [[ -e "$org_file" && -e "$out_file" ]] || return 1
+
+    if [[ -e "$sha_file" ]]; then
+        return 0
+    fi
+
+    if [[ "$mode" == "dry-run" ]]; then
+        return 0
+    fi
+
+    create_sha512_pair_file "$sha_file" "$org_file" "$out_file"
+}
+
+sync_existing_transcript_hashes() {
+    local org_file="$1"
+    local out_file="$2"
+    local sha_file="$3"
+    local org_txt out_txt
+
+    org_txt="$(txt_file_for_audio "$org_file")"
+    out_txt="$(txt_file_for_audio "$out_file")"
+
+    ensure_pair_sha_file "$org_file" "$out_file" "$sha_file" || return 1
+
+    [[ -e "$org_txt" ]] && append_sha512_for_file_if_missing "$sha_file" "$org_txt"
+    [[ -e "$out_txt" ]] && append_sha512_for_file_if_missing "$sha_file" "$out_txt"
 }
 
 file_size_bytes() {
@@ -633,7 +680,7 @@ should_delete_partial_txt_on_interrupt() {
 }
 
 run_one_transcription() {
-    local out_file="$1"
+    local audio_file="$1"
     local sha_file="$2"
     local txt_file="$3"
 
@@ -652,7 +699,7 @@ run_one_transcription() {
 
     current_txt_file="$txt_file"
 
-    "$TRANSCRIBE_CMD" "$out_file"
+    "$TRANSCRIBE_CMD" "$audio_file"
 
     if [[ ! -e "$txt_file" ]]; then
         echo -e "${YELLOW}TRANSCRIPTION FAILED:${RESET} expected transcript not found: $txt_file"
@@ -660,6 +707,13 @@ run_one_transcription() {
     fi
 
     append_sha512_for_file_if_missing "$sha_file" "$txt_file"
+    current_txt_file=""
+}
+
+verify_pair_sha_or_exit() {
+    local sha_file="$1"
+
+    [[ -e "$sha_file" ]] || return 0
 
     if verify_sha512_file "$sha_file"; then
         echo -e "${CYAN}SHA512 VERIFIED:${RESET} $sha_file"
@@ -667,8 +721,6 @@ run_one_transcription() {
         echo -e "${YELLOW}SHA512 VERIFY FAILED:${RESET} $sha_file"
         exit 1
     fi
-
-    current_txt_file=""
 }
 
 queue_or_print_missing_transcriptions() {
@@ -679,31 +731,65 @@ queue_or_print_missing_transcriptions() {
     local need_org=0 need_out=0
 
     [[ "$DO_TRANSCRIPTION" == "yes" ]] || return 0
+    [[ -e "$org_file" && -e "$out_file" ]] || return 0
 
     org_txt="$(txt_file_for_audio "$org_file")"
     out_txt="$(txt_file_for_audio "$out_file")"
 
     if [[ -e "$org_txt" ]]; then
-        append_sha512_for_file_if_missing "$sha_file" "$org_txt"
+        need_org=0
     else
         need_org=1
     fi
 
     if [[ -e "$out_txt" ]]; then
-        append_sha512_for_file_if_missing "$sha_file" "$out_txt"
+        need_out=0
     else
         need_out=1
     fi
 
-    (( need_org || need_out )) || return 0
-
-    (( need_org )) && echo -e "${CYAN}TRANSCRIPTION:${RESET} Missing transcript: $org_txt"
-    (( need_out )) && echo -e "${CYAN}TRANSCRIPTION:${RESET} Missing transcript: $out_txt"
-
     if [[ "$mode" == "dry-run" ]]; then
-        print_transcription_dry_run_steps "$org_file" "$out_file" "$sha_file"
+        if (( need_org || need_out )); then
+            if [[ -e "$org_txt" && need_out -eq 1 ]]; then
+                echo -e "${CYAN}TRANSCRIPTION:${RESET} Have ORG transcript; still need OUTPUT: $out_txt"
+            elif [[ -e "$out_txt" && need_org -eq 1 ]]; then
+                echo -e "${CYAN}TRANSCRIPTION:${RESET} Have OUTPUT transcript; still need ORG: $org_txt"
+            else
+                (( need_org )) && echo -e "${CYAN}TRANSCRIPTION:${RESET} Missing transcript: $org_txt"
+                (( need_out )) && echo -e "${CYAN}TRANSCRIPTION:${RESET} Missing transcript: $out_txt"
+            fi
+            if [[ ! -e "$sha_file" ]]; then
+                echo "sha512sum -- \"$org_file\" \"$out_file\" > \"$sha_file\""
+            fi
+            print_transcription_dry_run_steps "$org_file" "$out_file" "$sha_file"
+        else
+            echo -e "${CYAN}TRANSCRIPTION:${RESET} Both transcripts present; sync sha512 if needed"
+            if [[ ! -e "$sha_file" ]]; then
+                echo "sha512sum -- \"$org_file\" \"$out_file\" > \"$sha_file\""
+            fi
+            [[ -e "$org_txt" ]] && echo "sha512sum -- \"$org_txt\" >> \"$sha_file\""
+            [[ -e "$out_txt" ]] && echo "sha512sum -- \"$out_txt\" >> \"$sha_file\""
+            echo "sha512sum -c --quiet -- \"$sha_file\""
+        fi
         echo "----------------------------------------"
         return 0
+    fi
+
+    ensure_pair_sha_file "$org_file" "$out_file" "$sha_file"
+    sync_existing_transcript_hashes "$org_file" "$out_file" "$sha_file"
+
+    if (( ! need_org && ! need_out )); then
+        verify_pair_sha_or_exit "$sha_file"
+        return 0
+    fi
+
+    if [[ -e "$org_txt" && need_out -eq 1 ]]; then
+        echo -e "${CYAN}TRANSCRIPTION:${RESET} Have ORG transcript; still need OUTPUT: $out_txt"
+    elif [[ -e "$out_txt" && need_org -eq 1 ]]; then
+        echo -e "${CYAN}TRANSCRIPTION:${RESET} Have OUTPUT transcript; still need ORG: $org_txt"
+    else
+        (( need_org )) && echo -e "${CYAN}TRANSCRIPTION:${RESET} Missing transcript: $org_txt"
+        (( need_out )) && echo -e "${CYAN}TRANSCRIPTION:${RESET} Missing transcript: $out_txt"
     fi
 
     transcribe_queue_orgs+=("$org_file")
@@ -720,8 +806,14 @@ run_transcriptions_for_pair() {
     org_txt="$(txt_file_for_audio "$org_file")"
     out_txt="$(txt_file_for_audio "$out_file")"
 
+    ensure_pair_sha_file "$org_file" "$out_file" "$sha_file"
+    sync_existing_transcript_hashes "$org_file" "$out_file" "$sha_file"
+
     run_one_transcription "$org_file" "$sha_file" "$org_txt"
     run_one_transcription "$out_file" "$sha_file" "$out_txt"
+
+    sync_existing_transcript_hashes "$org_file" "$out_file" "$sha_file"
+    verify_pair_sha_or_exit "$sha_file"
 }
 
 process_transcription_queue() {
@@ -960,6 +1052,9 @@ process_one_file() {
     if [[ -e "$out" ]]; then
         echo
         echo -e "${YELLOW}SKIP:${RESET} Output already exists: $out"
+        if [[ -e "$new_in" ]]; then
+            queue_or_print_missing_transcriptions "$new_in" "$out" "$sha_file"
+        fi
         ((++files_skipped))
         return 0
     fi
