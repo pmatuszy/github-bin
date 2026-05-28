@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.05.27 - v. 3.4 - transcribe _ORG then _OUTPUT audio; transcripts as *_ORG.txt and *_OUTPUT.txt
 # 2026.05.27 - v. 3.3 - transcription host check: ping and TCP port (default 8080) open
 # 2026.05.27 - v. 3.2 - transcribe-server.sh path from cwd filesystem mount (not hardcoded /mnt/temp)
 # 2026.03.30 - v. 3.1 - default batch size changed to 50
@@ -96,13 +97,13 @@ echo -e "Mode selected: ${CYAN}$mode${RESET}"
 # ============================================================
 echo
 if [[ "$mode" == "real" ]]; then
-    echo "Enable transcription flow for missing *_OUTPUT.txt files?"
+    echo "Enable transcription flow for missing *_ORG.txt and *_OUTPUT.txt files?"
     echo "  [Y] Yes (default)"
     echo "  [N] No"
     echo "  [Q] Quit"
     echo -n "Choice [Y/n/q]: "
 else
-    echo "Include transcription step in dry-run for missing *_OUTPUT.txt files?"
+    echo "Include transcription step in dry-run for missing *_ORG.txt and *_OUTPUT.txt files?"
     echo "  [Y] Yes (default)"
     echo "  [N] No"
     echo "  [Q] Quit"
@@ -369,21 +370,27 @@ print_low_space_block() {
     fi
 }
 
-print_transcription_file_block() {
-    local out_file="$1"
-    local txt_file="$2"
-    local sha_file="$3"
+print_transcription_pair_block() {
+    local org_file="$1"
+    local org_txt="$2"
+    local out_file="$3"
+    local out_txt="$4"
+    local sha_file="$5"
 
     if [[ "$have_boxes" == "yes" ]]; then
         {
-            printf "SOURCE AUDIO: %s\n" "$out_file"
-            printf "TRANSCRIPT:   %s\n" "$txt_file"
+            printf "ORG AUDIO:    %s\n" "$org_file"
+            printf "ORG TRANSCRIPT: %s\n" "$org_txt"
+            printf "OUTPUT AUDIO: %s\n" "$out_file"
+            printf "OUTPUT TRANSCRIPT: %s\n" "$out_txt"
             printf "SHA512 FILE:  %s\n" "$sha_file"
         } | boxes -d stone
     else
-        echo -e "${CYAN}SOURCE AUDIO:${RESET} $out_file"
-        echo -e "${CYAN}TRANSCRIPT:${RESET}   $txt_file"
-        echo -e "${CYAN}SHA512 FILE:${RESET}  $sha_file"
+        echo -e "${CYAN}ORG AUDIO:${RESET}     $org_file"
+        echo -e "${CYAN}ORG TRANSCRIPT:${RESET} $org_txt"
+        echo -e "${CYAN}OUTPUT AUDIO:${RESET}  $out_file"
+        echo -e "${CYAN}OUTPUT TRANSCRIPT:${RESET} $out_txt"
+        echo -e "${CYAN}SHA512 FILE:${RESET}   $sha_file"
     fi
 }
 
@@ -483,9 +490,30 @@ verify_sha512_file() {
     sha512sum -c --quiet -- "$sha_file"
 }
 
-txt_file_from_output() {
-    local out_file="$1"
-    printf '%s\n' "${out_file%.*}.txt"
+txt_file_for_audio() {
+    local audio_file="$1"
+    printf '%s\n' "${audio_file%.*}.txt"
+}
+
+print_transcription_dry_run_steps() {
+    local org_file="$1"
+    local out_file="$2"
+    local sha_file="$3"
+    local org_txt out_txt
+
+    org_txt="$(txt_file_for_audio "$org_file")"
+    out_txt="$(txt_file_for_audio "$out_file")"
+
+    print_transcribe_connectivity_checks
+    if [[ ! -e "$org_txt" ]]; then
+        echo "\"$TRANSCRIBE_CMD\" \"$org_file\""
+        echo "sha512sum -- \"$org_txt\" >> \"$sha_file\""
+    fi
+    if [[ ! -e "$out_txt" ]]; then
+        echo "\"$TRANSCRIBE_CMD\" \"$out_file\""
+        echo "sha512sum -- \"$out_txt\" >> \"$sha_file\""
+    fi
+    echo "sha512sum -c --quiet -- \"$sha_file\""
 }
 
 sha_file_has_entry() {
@@ -572,34 +600,57 @@ run_one_transcription() {
     current_txt_file=""
 }
 
-queue_or_print_missing_transcription() {
-    local out_file="$1"
-    local sha_file="$2"
-    local txt_file
+queue_or_print_missing_transcriptions() {
+    local org_file="$1"
+    local out_file="$2"
+    local sha_file="$3"
+    local org_txt out_txt
+    local need_org=0 need_out=0
 
     [[ "$DO_TRANSCRIPTION" == "yes" ]] || return 0
 
-    txt_file="$(txt_file_from_output "$out_file")"
+    org_txt="$(txt_file_for_audio "$org_file")"
+    out_txt="$(txt_file_for_audio "$out_file")"
 
-    if [[ -e "$txt_file" ]]; then
-        append_sha512_for_file_if_missing "$sha_file" "$txt_file"
-        return 0
+    if [[ -e "$org_txt" ]]; then
+        append_sha512_for_file_if_missing "$sha_file" "$org_txt"
+    else
+        need_org=1
     fi
 
-    echo -e "${CYAN}TRANSCRIPTION:${RESET} Missing transcript: $txt_file"
+    if [[ -e "$out_txt" ]]; then
+        append_sha512_for_file_if_missing "$sha_file" "$out_txt"
+    else
+        need_out=1
+    fi
+
+    (( need_org || need_out )) || return 0
+
+    (( need_org )) && echo -e "${CYAN}TRANSCRIPTION:${RESET} Missing transcript: $org_txt"
+    (( need_out )) && echo -e "${CYAN}TRANSCRIPTION:${RESET} Missing transcript: $out_txt"
 
     if [[ "$mode" == "dry-run" ]]; then
-        print_transcribe_connectivity_checks
-        echo "\"$TRANSCRIBE_CMD\" \"$out_file\""
-        echo "sha512sum -- \"$txt_file\" >> \"$sha_file\""
-        echo "sha512sum -c --quiet -- \"$sha_file\""
+        print_transcription_dry_run_steps "$org_file" "$out_file" "$sha_file"
         echo "----------------------------------------"
         return 0
     fi
 
+    transcribe_queue_orgs+=("$org_file")
     transcribe_queue_outs+=("$out_file")
     transcribe_queue_shas+=("$sha_file")
-    transcribe_queue_txts+=("$txt_file")
+}
+
+run_transcriptions_for_pair() {
+    local org_file="$1"
+    local out_file="$2"
+    local sha_file="$3"
+    local org_txt out_txt
+
+    org_txt="$(txt_file_for_audio "$org_file")"
+    out_txt="$(txt_file_for_audio "$out_file")"
+
+    run_one_transcription "$org_file" "$sha_file" "$org_txt"
+    run_one_transcription "$out_file" "$sha_file" "$out_txt"
 }
 
 process_transcription_queue() {
@@ -611,9 +662,9 @@ process_transcription_queue() {
     idx=0
 
     while (( idx < total_files )); do
+        declare -a batch_orgs=()
         declare -a batch_outs=()
         declare -a batch_shas=()
-        declare -a batch_txts=()
         declare -a batch_selected=()
 
         local remaining_total batch_size_now batch_count batch_yes batch_no accept_all_remaining
@@ -627,11 +678,13 @@ process_transcription_queue() {
         accept_all_remaining=no
 
         while (( idx < total_files && batch_count < batch_size_now )); do
-            local out_file sha_file txt_file overall_pos batch_pos still_after_this
+            local org_file out_file sha_file org_txt out_txt overall_pos batch_pos still_after_this
 
+            org_file="${transcribe_queue_orgs[$idx]}"
             out_file="${transcribe_queue_outs[$idx]}"
             sha_file="${transcribe_queue_shas[$idx]}"
-            txt_file="${transcribe_queue_txts[$idx]}"
+            org_txt="$(txt_file_for_audio "$org_file")"
+            out_txt="$(txt_file_for_audio "$out_file")"
 
             overall_pos=$(( idx + 1 ))
             batch_pos=$(( batch_count + 1 ))
@@ -640,9 +693,9 @@ process_transcription_queue() {
             if [[ "$accept_all_remaining" == "yes" ]]; then
                 batch_selected+=("yes")
                 ((++batch_yes))
+                batch_orgs+=("$org_file")
                 batch_outs+=("$out_file")
                 batch_shas+=("$sha_file")
-                batch_txts+=("$txt_file")
                 ((idx+=1))
                 ((batch_count+=1))
                 continue
@@ -652,7 +705,7 @@ process_transcription_queue() {
             print_prompt_and_decision_summary \
                 "$batch_pos" "$batch_size_now" "$overall_pos" "$total_files" "$still_after_this" \
                 "$batch_yes" "$batch_no"
-            print_transcription_file_block "$out_file" "$txt_file" "$sha_file"
+            print_transcription_pair_block "$org_file" "$org_txt" "$out_file" "$out_txt" "$sha_file"
             echo "Do transcription later in this batch?"
             echo "  [Y] Yes (default)"
             echo "  [N] No"
@@ -685,9 +738,9 @@ process_transcription_queue() {
                     ;;
             esac
 
+            batch_orgs+=("$org_file")
             batch_outs+=("$out_file")
             batch_shas+=("$sha_file")
-            batch_txts+=("$txt_file")
 
             ((idx+=1))
             ((batch_count+=1))
@@ -709,16 +762,19 @@ process_transcription_queue() {
 
                     echo
                     print_processing_progress "$selected_pos" "$selected_total" "$selected_left_after" "$total_files"
-                    print_transcription_file_block "${batch_outs[$i]}" "${batch_txts[$i]}" "${batch_shas[$i]}"
-                    run_one_transcription "${batch_outs[$i]}" "${batch_shas[$i]}" "${batch_txts[$i]}"
+                    print_transcription_pair_block \
+                        "${batch_orgs[$i]}" "$(txt_file_for_audio "${batch_orgs[$i]}")" \
+                        "${batch_outs[$i]}" "$(txt_file_for_audio "${batch_outs[$i]}")" \
+                        "${batch_shas[$i]}"
+                    run_transcriptions_for_pair "${batch_orgs[$i]}" "${batch_outs[$i]}" "${batch_shas[$i]}"
                 fi
             done
         fi
     done
 
+    transcribe_queue_orgs=()
     transcribe_queue_outs=()
     transcribe_queue_shas=()
-    transcribe_queue_txts=()
 }
 
 backfill_existing_pair_sha() {
@@ -727,7 +783,7 @@ backfill_existing_pair_sha() {
     local sha_file="$3"
 
     if [[ -e "$sha_file" ]]; then
-        queue_or_print_missing_transcription "$out_file" "$sha_file"
+        queue_or_print_missing_transcriptions "$org_file" "$out_file" "$sha_file"
         return 0
     fi
 
@@ -736,7 +792,7 @@ backfill_existing_pair_sha() {
         print_sha_block "$sha_file" "$org_file" "$out_file"
         echo "sha512sum -- \"$org_file\" \"$out_file\" > \"$sha_file\""
         echo "sha512sum -c --quiet -- \"$sha_file\""
-        queue_or_print_missing_transcription "$out_file" "$sha_file"
+        queue_or_print_missing_transcriptions "$org_file" "$out_file" "$sha_file"
         echo "----------------------------------------"
         ((++files_affected))
         return 0
@@ -755,7 +811,7 @@ backfill_existing_pair_sha() {
         exit 1
     fi
 
-    queue_or_print_missing_transcription "$out_file" "$sha_file"
+    queue_or_print_missing_transcriptions "$org_file" "$out_file" "$sha_file"
 
     ((++files_affected))
 }
@@ -769,9 +825,9 @@ files_skipped=0
 stopped_by_user=no
 
 declare -a affected_list=()
+declare -a transcribe_queue_orgs=()
 declare -a transcribe_queue_outs=()
 declare -a transcribe_queue_shas=()
-declare -a transcribe_queue_txts=()
 
 current_original_in=""
 current_new_in=""
@@ -874,7 +930,7 @@ process_one_file() {
         exit 1
     fi
 
-    queue_or_print_missing_transcription "$out" "$sha_file"
+    queue_or_print_missing_transcriptions "$new_in" "$out" "$sha_file"
 
     record_change "$original_in" "$new_in" "$out"
     ((++files_affected))
@@ -1015,8 +1071,6 @@ if [[ "$mode" == "dry-run" ]]; then
         base="${base%_ORG}"
         out="${base}_OUTPUT.flac"
         sha_file="$(sha_file_from_pair "$new_in")"
-        txt_file="$(txt_file_from_output "$out")"
-
         if [[ -e "$out" ]]; then
             echo
             echo -e "${YELLOW}SKIP:${RESET} Output already exists: $out"
@@ -1032,10 +1086,7 @@ if [[ "$mode" == "dry-run" ]]; then
         echo "sha512sum -- \"$new_in\" \"$out\" > \"$sha_file\""
         echo "sha512sum -c --quiet -- \"$sha_file\""
         if [[ "$DO_TRANSCRIPTION" == "yes" ]]; then
-            print_transcribe_connectivity_checks
-            echo "\"$TRANSCRIBE_CMD\" \"$out\""
-            echo "sha512sum -- \"$txt_file\" >> \"$sha_file\""
-            echo "sha512sum -c --quiet -- \"$sha_file\""
+            print_transcription_dry_run_steps "$new_in" "$out" "$sha_file"
         fi
         echo "----------------------------------------"
 
