@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.05.28 - v. 3.26 - skip existing-pair prompt when transcripts and sha512 are already complete
 # 2026.05.28 - v. 3.25 - source _script_header.sh / _script_footer.sh; add -v/--version
 # 2026.05.28 - v. 3.24 - align filenames in transcription pair block (ORG/OUTPUT/transcripts/sha512)
 # 2026.05.28 - v. 3.23 - print run summary when user quits with [Q] (EXIT trap)
@@ -2407,18 +2408,98 @@ process_one_file() {
     current_txt_file=""
 }
 
+existing_pair_is_complete_for_batch() {
+    local org_file="$1"
+    local out_file="$2"
+    local sha_file="$3"
+
+    [[ -e "$org_file" && -e "$out_file" && -e "$sha_file" ]] || return 1
+    verify_sha512_file "$sha_file" || return 1
+
+    if [[ "$DO_TRANSCRIPTION" == "yes" ]]; then
+        pair_needs_transcript_redo_offer "$org_file" "$out_file" && return 1
+        transcript_all_variants_exist_for_audio "$org_file" || return 1
+        transcript_all_variants_exist_for_audio "$out_file" || return 1
+    fi
+
+    return 0
+}
+
+finalize_complete_existing_pair() {
+    local org_file="$1"
+    local out_file="$2"
+    local sha_file="$3"
+
+    [[ "$mode" == "real" ]] || return 0
+    sync_existing_transcript_hashes "$org_file" "$out_file" "$sha_file"
+}
+
+print_existing_pairs_skip_section() {
+    local -n _skip_orgs=$1
+    local -n _skip_outs=$2
+    local -n _skip_shas=$3
+    local i
+
+    (( ${#_skip_orgs[@]} == 0 )) && return 0
+
+    echo
+    print_suggestion "EXISTING PAIRS — complete (transcripts and sha512 OK); skipped without prompt:"
+    for i in "${!_skip_orgs[@]}"; do
+        echo
+        if [[ "$have_boxes" == "yes" ]]; then
+            print_transcription_pair_block \
+                "${_skip_orgs[$i]}" "${_skip_outs[$i]}" "${_skip_shas[$i]}" | boxes -d stone
+        else
+            print_transcription_pair_block \
+                "${_skip_orgs[$i]}" "${_skip_outs[$i]}" "${_skip_shas[$i]}"
+        fi
+    done
+}
+
 process_existing_pairs_batch() {
     local total_files idx remaining_total batch_size_now batch_count batch_yes batch_no
     local accept_all_remaining finish_batch_now overall_pos batch_pos still_after_this
     local org_file out_file sha_file i selected_total selected_pos selected_left_after
+    local -a prompt_orgs=() prompt_outs=() prompt_shas=()
+    local -a skip_orgs=() skip_outs=() skip_shas=()
+    local skip_count=0
 
     (( ${#existing_pair_orgs[@]} == 0 )) && return 0
 
-    total_files=${#existing_pair_orgs[@]}
+    for i in "${!existing_pair_orgs[@]}"; do
+        org_file="${existing_pair_orgs[$i]}"
+        out_file="${existing_pair_outs[$i]}"
+        sha_file="${existing_pair_shas[$i]}"
+
+        if existing_pair_is_complete_for_batch "$org_file" "$out_file" "$sha_file"; then
+            skip_orgs+=("$org_file")
+            skip_outs+=("$out_file")
+            skip_shas+=("$sha_file")
+            finalize_complete_existing_pair "$org_file" "$out_file" "$sha_file"
+            ((++skip_count))
+        else
+            prompt_orgs+=("$org_file")
+            prompt_outs+=("$out_file")
+            prompt_shas+=("$sha_file")
+        fi
+    done
+
+    if (( skip_count > 0 )); then
+        (( files_skipped += skip_count ))
+        print_existing_pairs_skip_section skip_orgs skip_outs skip_shas
+    fi
+
+    total_files=${#prompt_orgs[@]}
+    (( total_files == 0 )) && return 0
+
     idx=0
 
     echo
-    print_suggestion "EXISTING PAIRS BATCH: ${total_files} ORG/OUTPUT pair(s) — choose which to include for transcription/re-do."
+    if (( skip_count > 0 )); then
+        print_suggestion "EXISTING PAIRS BATCH: ${total_files} pair(s) need your choice (${skip_count} complete pair(s) skipped above)."
+    else
+        print_suggestion "EXISTING PAIRS BATCH: ${total_files} ORG/OUTPUT pair(s) — choose which to include for transcription/re-do."
+    fi
 
     while (( idx < total_files )); do
         [[ "$skip_remaining_existing_pair_prompts" == yes ]] && break
@@ -2439,9 +2520,9 @@ process_existing_pairs_batch() {
         finish_batch_now=no
 
         while (( idx < total_files && batch_count < batch_size_now )); do
-            org_file="${existing_pair_orgs[$idx]}"
-            out_file="${existing_pair_outs[$idx]}"
-            sha_file="${existing_pair_shas[$idx]}"
+            org_file="${prompt_orgs[$idx]}"
+            out_file="${prompt_outs[$idx]}"
+            sha_file="${prompt_shas[$idx]}"
 
             if [[ "$accept_all_remaining" == "yes" ]]; then
                 batch_selected+=("yes")
