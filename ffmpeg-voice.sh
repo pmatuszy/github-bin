@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.05.27 - v. 3.12 - batch transcript re-do prompts with F/G (not one Y/N/Q per pair inline)
 # 2026.05.27 - v. 3.11 - batch prompts: finish batch now [F] or skip all further prompts [G]
 # 2026.05.27 - v. 3.10 - before each transcription: recheck whisper server; wait or quit if down
 # 2026.05.27 - v. 3.9.1 - fix loop-detection awk for mawk/busybox (no ternary in exit)
@@ -43,9 +44,9 @@ Options:
   -h, --help    Show this help and exit.
   -- FILE       Explicit file operand (use when the name starts with -).
 
-Interactive batch prompts (real mode):
+Interactive batch prompts (real mode; file processing, transcript re-do, transcription):
   [F] Finish batch now — process only items you already answered in this batch.
-  [G] Process selected; skip all further prompts of that kind (files vs transcription).
+  [G] Process selected; skip all further prompts of that kind (files / re-do / transcription).
 
 Transcription (when enabled):
   Each *_ORG.* and *_OUTPUT.flac gets two transcripts: *_VAD.txt (whisper with VAD)
@@ -952,21 +953,20 @@ remove_all_transcript_files_for_pair() {
     done
 }
 
-# Returns 1 if user chose redo (transcripts removed, sha prepared); 0 otherwise.
-maybe_offer_transcript_redo_for_pair() {
+print_transcript_redo_pair_details() {
     local org_file="$1"
     local out_file="$2"
     local sha_file="$3"
     local -a legacy=() unflagged=()
-    local line input
-
-    pair_needs_transcript_redo_offer "$org_file" "$out_file" || return 0
+    local line
 
     mapfile -t legacy < <(pair_list_legacy_transcript_files "$org_file" "$out_file")
     mapfile -t unflagged < <(pair_list_unflagged_loop_transcript_files "$org_file" "$out_file")
 
-    echo
     echo -e "${YELLOW}TRANSCRIPT RE-DO SUGGESTED:${RESET} ORG/OUTPUT pair needs fresh VAD + noVAD transcripts."
+    echo "  ORG: $org_file"
+    echo "  OUTPUT: $out_file"
+    echo "  SHA512: $sha_file"
     if (( ${#legacy[@]} > 0 )); then
         echo "  Legacy or non-standard transcript names (no _VAD / _noVAD in filename):"
         for line in "${legacy[@]}"; do
@@ -979,53 +979,219 @@ maybe_offer_transcript_redo_for_pair() {
             echo "    - $line"
         done
     fi
+}
 
-    if [[ "$mode" == "dry-run" ]]; then
-        echo "Would prompt: redo all four transcripts (ORG/OUTPUT x VAD/noVAD)?"
-        echo "Would remove all transcript files for this pair:"
-        for audio_file in "$org_file" "$out_file"; do
-            collect_transcript_txt_files_for_audio "$audio_file" _pair_txt_paths
-            for line in "${_pair_txt_paths[@]}"; do
-                echo "    rm -f -- $line"
-            done
-        done
-        if pair_media_hashes_valid_in_sha "$sha_file" "$org_file" "$out_file"; then
-            echo "Would keep ORG/OUTPUT entries in $sha_file and drop transcript lines."
-        else
-            echo "Would rebuild $sha_file from ORG and OUTPUT media only."
-        fi
-        echo "Would re-run four transcriptions and append new transcript hashes."
-        return 0
-    fi
+pair_on_transcribe_queue() {
+    local org_file="$1"
+    local i
 
-    echo "Redo all four transcripts and update $sha_file?"
-    echo "  [Y] Yes (default)"
-    echo "  [N] No — keep existing transcript files"
-    echo "  [Q] Quit"
-    echo -n "Choice [Y/n/q]: "
-    read -t 300 -n 1 input || true
-    echo
+    for i in "${!transcribe_queue_orgs[@]}"; do
+        [[ "${transcribe_queue_orgs[$i]}" == "$org_file" ]] && return 0
+    done
+    return 1
+}
 
-    case "$input" in
-        q|Q)
-            stopped_by_user=yes
-            echo "Quitting."
-            exit 0
-            ;;
-        n|N)
-            echo "Keeping existing transcripts."
-            return 0
-            ;;
-        *)
-            ;;
-    esac
+enqueue_pair_for_transcription() {
+    local org_file="$1"
+    local out_file="$2"
+    local sha_file="$3"
+
+    pair_on_transcribe_queue "$org_file" && return 0
+    transcribe_queue_orgs+=("$org_file")
+    transcribe_queue_outs+=("$out_file")
+    transcribe_queue_shas+=("$sha_file")
+}
+
+pair_on_transcript_redo_queue() {
+    local org_file="$1"
+    local i
+
+    for i in "${!transcript_redo_orgs[@]}"; do
+        [[ "${transcript_redo_orgs[$i]}" == "$org_file" ]] && return 0
+    done
+    return 1
+}
+
+execute_transcript_redo_for_pair() {
+    local org_file="$1"
+    local out_file="$2"
+    local sha_file="$3"
 
     echo
     echo -e "${CYAN}TRANSCRIPT RE-DO:${RESET} Removing old transcript files for this pair."
     remove_all_transcript_files_for_pair "$org_file" "$out_file"
     ensure_pair_sha_file "$org_file" "$out_file" "$sha_file"
     prepare_sha_for_transcript_redo "$sha_file" "$org_file" "$out_file"
-    return 1
+    enqueue_pair_for_transcription "$org_file" "$out_file" "$sha_file"
+}
+
+enqueue_transcript_redo_if_needed() {
+    local org_file="$1"
+    local out_file="$2"
+    local sha_file="$3"
+
+    pair_needs_transcript_redo_offer "$org_file" "$out_file" || return 0
+    pair_on_transcript_redo_queue "$org_file" && return 0
+
+    transcript_redo_orgs+=("$org_file")
+    transcript_redo_outs+=("$out_file")
+    transcript_redo_shas+=("$sha_file")
+}
+
+process_transcript_redo_queue() {
+    [[ "$DO_TRANSCRIPTION" == "yes" ]] || return 0
+    (( ${#transcript_redo_orgs[@]} == 0 )) && return 0
+
+    if [[ "$mode" == "dry-run" ]]; then
+        local i
+        echo
+        echo -e "${CYAN}TRANSCRIPT RE-DO QUEUE:${RESET} ${#transcript_redo_orgs[@]} pair(s)"
+        for i in "${!transcript_redo_orgs[@]}"; do
+            echo
+            print_transcript_redo_pair_details \
+                "${transcript_redo_orgs[$i]}" \
+                "${transcript_redo_outs[$i]}" \
+                "${transcript_redo_shas[$i]}"
+            echo "Would prompt (with [F]/[G]): redo all four transcripts?"
+            echo "Would remove all transcript .txt files for this pair, then queue transcription."
+        done
+        transcript_redo_orgs=()
+        transcript_redo_outs=()
+        transcript_redo_shas=()
+        return 0
+    fi
+
+    [[ "$mode" == "real" ]] || return 0
+
+    local total_files idx
+    total_files=${#transcript_redo_orgs[@]}
+    idx=0
+
+    echo
+    echo -e "${CYAN}TRANSCRIPT RE-DO BATCH:${RESET} ${total_files} pair(s) need legacy/loop cleanup before re-transcribing."
+
+    while (( idx < total_files )); do
+        [[ "$skip_remaining_redo_prompts" == yes ]] && break
+
+        declare -a batch_orgs=()
+        declare -a batch_outs=()
+        declare -a batch_shas=()
+        declare -a batch_selected=()
+
+        local remaining_total batch_size_now batch_count batch_yes batch_no accept_all_remaining finish_batch_now
+        finish_batch_now=no
+        remaining_total=$(( total_files - idx ))
+        batch_size_now=$BATCH_SIZE
+        (( remaining_total < batch_size_now )) && batch_size_now=$remaining_total
+
+        batch_count=0
+        batch_yes=0
+        batch_no=0
+        accept_all_remaining=no
+
+        while (( idx < total_files && batch_count < batch_size_now )); do
+            local org_file out_file sha_file overall_pos batch_pos still_after_this
+
+            org_file="${transcript_redo_orgs[$idx]}"
+            out_file="${transcript_redo_outs[$idx]}"
+            sha_file="${transcript_redo_shas[$idx]}"
+
+            overall_pos=$(( idx + 1 ))
+            batch_pos=$(( batch_count + 1 ))
+            still_after_this=$(( total_files - overall_pos ))
+
+            if [[ "$accept_all_remaining" == "yes" ]]; then
+                batch_selected+=("yes")
+                ((++batch_yes))
+                batch_orgs+=("$org_file")
+                batch_outs+=("$out_file")
+                batch_shas+=("$sha_file")
+                ((idx+=1))
+                ((batch_count+=1))
+                continue
+            fi
+
+            echo
+            print_prompt_and_decision_summary \
+                "$batch_pos" "$batch_size_now" "$overall_pos" "$total_files" "$still_after_this" \
+                "$batch_yes" "$batch_no"
+            print_transcript_redo_pair_details "$org_file" "$out_file" "$sha_file"
+            read_batch_choice "Redo all four transcripts for this pair?"
+
+            case "$BATCH_CHOICE_ACTION" in
+                quit)
+                    stopped_by_user=yes
+                    echo "Quitting."
+                    exit 0
+                    ;;
+                finish_batch)
+                    finish_batch_now=yes
+                    echo "Finishing re-do batch — processing ${batch_yes} selected pair(s) only."
+                    break
+                    ;;
+                skip_all)
+                    skip_remaining_redo_prompts=yes
+                    finish_batch_now=yes
+                    echo "Skipping all further re-do prompts — processing ${batch_yes} selected pair(s) from this batch."
+                    break
+                    ;;
+                accept_all)
+                    batch_selected+=("yes")
+                    ((++batch_yes))
+                    accept_all_remaining=yes
+                    batch_orgs+=("$org_file")
+                    batch_outs+=("$out_file")
+                    batch_shas+=("$sha_file")
+                    ((idx+=1))
+                    ((batch_count+=1))
+                    continue
+                    ;;
+                decided)
+                    if [[ "$BATCH_CHOICE_DECISION" == yes ]]; then
+                        batch_selected+=("yes")
+                        ((++batch_yes))
+                    else
+                        batch_selected+=("no")
+                        ((++batch_no))
+                    fi
+                    ;;
+            esac
+
+            batch_orgs+=("$org_file")
+            batch_outs+=("$out_file")
+            batch_shas+=("$sha_file")
+
+            ((idx+=1))
+            ((batch_count+=1))
+        done
+
+        if (( ${#batch_orgs[@]} > 0 )); then
+            local selected_total selected_pos i
+            selected_total=0
+            for decision in "${batch_selected[@]}"; do
+                [[ "$decision" == "yes" ]] && ((selected_total+=1))
+            done
+
+            if (( selected_total > 0 )); then
+                selected_pos=0
+                for i in "${!batch_orgs[@]}"; do
+                    if [[ "${batch_selected[$i]}" == "yes" ]]; then
+                        ((selected_pos+=1))
+                        execute_transcript_redo_for_pair \
+                            "${batch_orgs[$i]}" "${batch_outs[$i]}" "${batch_shas[$i]}"
+                    fi
+                done
+            elif (( finish_batch_now )); then
+                echo "No pairs selected for re-do in this batch."
+            fi
+        fi
+
+        [[ "$skip_remaining_redo_prompts" == yes ]] && break
+    done
+
+    transcript_redo_orgs=()
+    transcript_redo_outs=()
+    transcript_redo_shas=()
 }
 
 transcript_has_repetition_loop() {
@@ -1335,14 +1501,11 @@ queue_or_print_missing_transcriptions() {
     local out_file="$2"
     local sha_file="$3"
     local need_org=0 need_out=0
-    local redo_all=0
 
     [[ "$DO_TRANSCRIPTION" == "yes" ]] || return 0
     [[ -e "$org_file" && -e "$out_file" ]] || return 0
 
-    if maybe_offer_transcript_redo_for_pair "$org_file" "$out_file" "$sha_file"; then
-        redo_all=1
-    fi
+    enqueue_transcript_redo_if_needed "$org_file" "$out_file" "$sha_file"
 
     if transcript_all_variants_exist_for_audio "$org_file"; then
         need_org=0
@@ -1353,11 +1516,6 @@ queue_or_print_missing_transcriptions() {
     if transcript_all_variants_exist_for_audio "$out_file"; then
         need_out=0
     else
-        need_out=1
-    fi
-
-    if (( redo_all )); then
-        need_org=1
         need_out=1
     fi
 
@@ -1396,20 +1554,7 @@ queue_or_print_missing_transcriptions() {
         return 0
     fi
 
-    if transcript_any_variant_exists_for_audio "$org_file" && need_out -eq 1; then
-        echo -e "${CYAN}TRANSCRIPTION:${RESET} Partial ORG transcripts; still need OUTPUT variants:"
-        print_missing_transcript_variants_for_audio "$out_file"
-    elif transcript_any_variant_exists_for_audio "$out_file" && need_org -eq 1; then
-        echo -e "${CYAN}TRANSCRIPTION:${RESET} Partial OUTPUT transcripts; still need ORG variants:"
-        print_missing_transcript_variants_for_audio "$org_file"
-    else
-        print_missing_transcript_variants_for_audio "$org_file"
-        print_missing_transcript_variants_for_audio "$out_file"
-    fi
-
-    transcribe_queue_orgs+=("$org_file")
-    transcribe_queue_outs+=("$out_file")
-    transcribe_queue_shas+=("$sha_file")
+    enqueue_pair_for_transcription "$org_file" "$out_file" "$sha_file"
 }
 
 run_transcriptions_for_pair() {
@@ -1431,6 +1576,9 @@ run_transcriptions_for_pair() {
 
 process_transcription_queue() {
     [[ "$DO_TRANSCRIPTION" == "yes" ]] || return 0
+
+    process_transcript_redo_queue
+
     [[ "$mode" == "real" ]] || return 0
 
     local total_files idx
@@ -1625,6 +1773,10 @@ declare -a affected_list=()
 declare -a transcribe_queue_orgs=()
 declare -a transcribe_queue_outs=()
 declare -a transcribe_queue_shas=()
+declare -a transcript_redo_orgs=()
+declare -a transcript_redo_outs=()
+declare -a transcript_redo_shas=()
+skip_remaining_redo_prompts=no
 
 current_original_in=""
 current_new_in=""
@@ -2074,6 +2226,7 @@ echo "Files skipped:         $files_skipped"
 echo "Stopped by user:       $stopped_by_user"
 echo "Skipped file prompts:  $skip_remaining_file_prompts"
 echo "Skipped transcribe prompts: $skip_remaining_transcription_prompts"
+echo "Skipped re-do prompts:    $skip_remaining_redo_prompts"
 
 if (( ${#affected_list[@]} > 0 )); then
     echo
