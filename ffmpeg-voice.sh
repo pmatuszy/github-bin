@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.05.28 - v. 3.29 - skip startup backfill for complete existing pairs; media hash not on redo-offer alone
 # 2026.05.28 - v. 3.28 - sha512sum -c only when hash file lists missing paths; media hash check only without/redo transcripts
 # 2026.05.28 - v. 3.27 - prune missing paths from sha512 (legacy .txt); repair instead of hang/exit; backfill progress
 # 2026.05.28 - v. 3.26 - skip existing-pair prompt when transcripts and sha512 are already complete
@@ -1247,7 +1248,6 @@ pair_needs_media_hash_check() {
 
     [[ "$DO_TRANSCRIPTION" != "yes" ]] && return 1
 
-    pair_needs_transcript_redo_offer "$org_file" "$out_file" && return 0
     transcript_all_variants_exist_for_audio "$org_file" || return 0
     transcript_all_variants_exist_for_audio "$out_file" || return 0
 
@@ -2427,6 +2427,7 @@ backfill_existing_pair_sha() {
     local sha_file="$3"
 
     if [[ -e "$sha_file" ]]; then
+        existing_pair_needs_startup_backfill "$org_file" "$out_file" "$sha_file" || return 0
         echo "$(voice_ts) Checking existing pair: $(basename "$org_file")"
         queue_or_print_missing_transcriptions "$org_file" "$out_file" "$sha_file"
         return 0
@@ -2575,6 +2576,29 @@ existing_pair_is_complete_for_batch() {
         transcript_all_variants_exist_for_audio "$org_file" || return 1
         transcript_all_variants_exist_for_audio "$out_file" || return 1
     fi
+
+    return 0
+}
+
+# Startup backfill: only when .sha512 is missing, stale, or pair still needs transcript/sha work.
+existing_pair_needs_startup_backfill() {
+    local org_file="$1"
+    local out_file="$2"
+    local sha_file="$3"
+
+    [[ -e "$org_file" && -e "$out_file" ]] || return 1
+
+    if [[ ! -e "$sha_file" ]]; then
+        return 0
+    fi
+
+    sha512_file_has_missing_paths "$sha_file" && return 0
+
+    if [[ "$DO_TRANSCRIPTION" != "yes" ]]; then
+        return 1
+    fi
+
+    existing_pair_is_complete_for_batch "$org_file" "$out_file" "$sha_file" && return 1
 
     return 0
 }
