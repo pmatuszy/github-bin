@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.05.27 - v. 3.10 - before each transcription: recheck whisper server; wait or quit if down
 # 2026.05.27 - v. 3.9.1 - fix loop-detection awk for mawk/busybox (no ternary in exit)
 # 2026.05.27 - v. 3.9 - prompt redo when legacy/unflagged-loop transcripts; keep valid ORG/OUTPUT sha hashes
 # 2026.05.27 - v. 3.8 - four transcripts per pair (ORG/OUTPUT x VAD/noVAD); dual whisper host/port config
@@ -53,6 +54,7 @@ Transcription (when enabled):
 Whisper servers (defaults below; override with environment variables):
   WHISPER_VAD_HOST / WHISPER_VAD_PORT       Server with VAD (default port 8080).
   WHISPER_NOVAD_HOST / WHISPER_NOVAD_PORT   Server without VAD (default port 8081).
+  WHISPER_WAIT_POLL_SEC                     Seconds between retries when waiting for a down server (default: 10).
 
 Other environment variables:
   TRANSCRIBE_CMD          Full path to transcribe-server.sh (skips mount lookup).
@@ -119,6 +121,7 @@ WHISPER_VAD_HOST="${WHISPER_VAD_HOST:-${TRANSCRIBE_HOST:-192.168.200.134}}"
 WHISPER_VAD_PORT="${WHISPER_VAD_PORT:-${TRANSCRIBE_PORT:-8080}}"
 WHISPER_NOVAD_HOST="${WHISPER_NOVAD_HOST:-192.168.200.134}"
 WHISPER_NOVAD_PORT="${WHISPER_NOVAD_PORT:-8081}"
+WHISPER_WAIT_POLL_SEC="${WHISPER_WAIT_POLL_SEC:-10}"
 TRANSCRIPT_VAD_SUFFIX="VAD"
 TRANSCRIPT_NOVAD_SUFFIX="noVAD"
 declare -a TRANSCRIPT_VARIANT_SUFFIXES=("$TRANSCRIPT_VAD_SUFFIX" "$TRANSCRIPT_NOVAD_SUFFIX")
@@ -580,24 +583,75 @@ print_transcribe_connectivity_checks() {
     done
 }
 
-check_transcribe_endpoint_or_exit() {
+transcribe_endpoint_is_up() {
+    local host="$1"
+    local port="$2"
+
+    ping -c 1 -W 1 "$host" >/dev/null 2>&1 && transcribe_host_port_open "$host" "$port"
+}
+
+print_transcribe_endpoint_down_reason() {
+    local host="$1"
+    local port="$2"
+
+    if ! ping -c 1 -W 1 "$host" >/dev/null 2>&1; then
+        echo "  Host not reachable (ping)."
+    elif ! transcribe_host_port_open "$host" "$port"; then
+        echo "  TCP port ${port} is not open."
+    fi
+}
+
+# Called before every transcription run (server may stop between runs).
+ensure_transcribe_endpoint_ready() {
     local host="$1"
     local port="$2"
     local label="${3:-whisper}"
+    local input poll_sec
 
-    if ! ping -c 1 -W 1 "$host" >/dev/null 2>&1; then
+    poll_sec="${WHISPER_WAIT_POLL_SEC:-10}"
+
+    if transcribe_endpoint_is_up "$host" "$port"; then
+        return 0
+    fi
+
+    if [[ "$mode" == "dry-run" ]]; then
         echo
-        echo -e "${YELLOW}TRANSCRIPTION UNAVAILABLE:${RESET} host not reachable (ping): $host (${label})"
+        echo -e "${YELLOW}TRANSCRIPTION UNAVAILABLE:${RESET} ${host}:${port} (${label})"
+        print_transcribe_endpoint_down_reason "$host" "$port"
         echo "Cannot continue because transcription cannot be done."
         exit 1
     fi
 
-    if ! transcribe_host_port_open "$host" "$port"; then
+    while true; do
         echo
-        echo -e "${YELLOW}TRANSCRIPTION UNAVAILABLE:${RESET} port ${port} not open on ${host} (${label})"
-        echo "Cannot continue because transcription cannot be done."
-        exit 1
-    fi
+        echo -e "${YELLOW}TRANSCRIPTION SERVER DOWN:${RESET} ${host}:${port} (${label})"
+        print_transcribe_endpoint_down_reason "$host" "$port"
+        echo "  [W] Wait until the server is back (default)"
+        echo "  [Q] Quit"
+        echo -n "Choice [W/q]: "
+        read -t 300 -n 1 input || true
+        echo
+
+        case "$input" in
+            q|Q)
+                stopped_by_user=yes
+                echo "Quitting."
+                exit 0
+                ;;
+        esac
+
+        echo "Waiting for ${host}:${port} (every ${poll_sec}s)..."
+        while ! transcribe_endpoint_is_up "$host" "$port"; do
+            sleep "$poll_sec"
+            echo "  Still waiting for ${host}:${port} (${label})..."
+        done
+        echo -e "${GREEN}TRANSCRIPTION SERVER UP:${RESET} ${host}:${port} (${label})"
+        return 0
+    done
+}
+
+check_transcribe_endpoint_or_exit() {
+    ensure_transcribe_endpoint_ready "$@"
 }
 
 check_transcribe_hosts_or_exit() {
@@ -929,6 +983,7 @@ transcript_has_repetition_loop() {
     [[ -e "$txt_file" ]] || return 1
 
     awk '
+    BEGIN { found = 0; rep = 0 }
     /^\[/ {
         t = $0
         sub(/^\[[^]]*\][[:space:]]*/, "", t)
@@ -936,13 +991,21 @@ transcript_has_repetition_loop() {
         if (t == "") next
         if (t == prev) {
             rep++
-            if (rep >= 2) { found = 1; exit }
+            if (rep >= 2) {
+                found = 1
+                exit 0
+            }
         } else {
             rep = 1
         }
         prev = t
     }
-    END { exit(found ? 0 : 1 }
+    END {
+        if (found) {
+            exit 0
+        }
+        exit 1
+    }
     ' "$txt_file"
 }
 
@@ -1164,7 +1227,7 @@ run_one_transcription_variant() {
         return 0
     fi
 
-    check_transcribe_endpoint_or_exit "$whisper_host" "$whisper_port" "${variant_suffix}"
+    ensure_transcribe_endpoint_ready "$whisper_host" "$whisper_port" "${variant_suffix}"
     check_free_space_or_exit "."
 
     server_base="$(txt_file_for_audio "$audio_file")"
