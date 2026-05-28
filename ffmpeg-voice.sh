@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.05.27 - v. 3.14 - [F] finish-batch skips unasked slots; re-do [F] then transcription prompts; re-do/transcribe after file loop
 # 2026.05.27 - v. 3.13 - end-of-run timing and statistics summary (like video-pgm-merge.sh)
 # 2026.05.27 - v. 3.12.3 - green suggestions/questions, red deletion prompts in ffmpeg-voice
 # 2026.05.27 - v. 3.12.2 - fix transcript re-do filename column when label fills width (no extra space)
@@ -183,6 +184,12 @@ print_suggestion() {
 
 print_deletion() {
     echo -e "${RED}$*${RESET}"
+}
+
+# After [F] finish-batch: skip unasked slots in the current prompt window.
+batch_prompt_finish_skip_idx() {
+    local idx="$1" batch_size_now="$2" batch_count="$3"
+    echo $(( idx + batch_size_now - batch_count ))
 }
 
 VOICE_SCRIPT_START_NS=""
@@ -1312,7 +1319,15 @@ process_transcript_redo_queue() {
             fi
         fi
 
+        if [[ "$finish_batch_now" == yes ]]; then
+            idx=$(batch_prompt_finish_skip_idx "$idx" "$batch_size_now" "$batch_count")
+            if [[ "$skip_remaining_redo_prompts" != yes ]]; then
+                print_suggestion "Proceeding to transcription prompts; remaining re-do pairs deferred to a later run."
+            fi
+        fi
+
         [[ "$skip_remaining_redo_prompts" == yes ]] && break
+        [[ "$finish_batch_now" == yes ]] && break
     done
 
     transcript_redo_orgs=()
@@ -1714,6 +1729,11 @@ process_transcription_queue() {
     total_files=${#transcribe_queue_outs[@]}
     idx=0
 
+    (( total_files == 0 )) && return 0
+
+    echo
+    print_suggestion "TRANSCRIPTION BATCH: ${total_files} pair(s) queued for transcription."
+
     while (( idx < total_files )); do
         [[ "$skip_remaining_transcription_prompts" == yes ]] && break
 
@@ -1838,10 +1858,15 @@ process_transcription_queue() {
             fi
         fi
 
+        if [[ "$finish_batch_now" == yes ]]; then
+            idx=$(batch_prompt_finish_skip_idx "$idx" "$batch_size_now" "$batch_count")
+        fi
+
         if [[ "$skip_remaining_transcription_prompts" == yes ]]; then
             (( files_skipped += total_files - idx ))
             break
         fi
+        [[ "$finish_batch_now" == yes ]] && break
     done
 
     transcribe_queue_orgs=()
@@ -2159,10 +2184,6 @@ if (( ${#existing_pair_orgs[@]} > 0 )); then
     done
 fi
 
-if [[ "$mode" == "real" ]]; then
-    process_transcription_queue
-fi
-
 # ============================================================
 # HANDLE *_EXCLUDE.* SHA512 FILES
 # ============================================================
@@ -2326,13 +2347,20 @@ else
             fi
         fi
 
-        process_transcription_queue
+        if [[ "$finish_batch_now" == yes ]]; then
+            idx=$(batch_prompt_finish_skip_idx "$idx" "$batch_size_now" "$batch_count")
+        fi
 
         if [[ "$skip_remaining_file_prompts" == yes ]]; then
             (( files_skipped += total_files - idx ))
             break
         fi
+        [[ "$finish_batch_now" == yes ]] && break
     done
+fi
+
+if [[ "$mode" == "real" && "$DO_TRANSCRIPTION" == "yes" ]]; then
+    process_transcription_queue
 fi
 
 print_voice_size_summary() {
