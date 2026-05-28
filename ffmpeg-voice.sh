@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.05.28 - v. 3.31 - auto-skip existing pairs when ORG/OUTPUT/transcripts on disk (ignore stale .sha512 lines)
 # 2026.05.28 - v. 3.30 - no sha/transcript checks at startup; prepare existing pairs only when selected in batch
 # 2026.05.28 - v. 3.29 - skip startup backfill for complete existing pairs; media hash not on redo-offer alone
 # 2026.05.28 - v. 3.28 - sha512sum -c only when hash file lists missing paths; media hash check only without/redo transcripts
@@ -2554,19 +2555,21 @@ process_one_file() {
     current_txt_file=""
 }
 
+# Skip prompts when media + transcripts are on disk. Stale .sha512 lines are repaired only if you include the pair.
 existing_pair_is_complete_for_batch() {
     local org_file="$1"
     local out_file="$2"
     local sha_file="$3"
 
-    [[ -e "$org_file" && -e "$out_file" && -e "$sha_file" ]] || return 1
-    sha512_file_has_missing_paths "$sha_file" && return 1
+    [[ -e "$org_file" && -e "$out_file" ]] || return 1
 
     if [[ "$DO_TRANSCRIPTION" == "yes" ]]; then
         transcript_all_variants_exist_for_audio "$org_file" || return 1
         transcript_all_variants_exist_for_audio "$out_file" || return 1
+        return 0
     fi
 
+    [[ -e "$sha_file" ]] || return 1
     return 0
 }
 
@@ -2579,7 +2582,7 @@ print_existing_pairs_skip_section() {
     (( ${#_skip_orgs[@]} == 0 )) && return 0
 
     echo
-    print_suggestion "EXISTING PAIRS — complete (transcripts and sha512 OK); skipped without prompt:"
+    print_suggestion "EXISTING PAIRS — ORG, OUTPUT, and all transcripts on disk; skipped without prompt:"
     for i in "${!_skip_orgs[@]}"; do
         echo
         if [[ "$have_boxes" == "yes" ]]; then
@@ -2631,7 +2634,7 @@ process_existing_pairs_batch() {
 
     echo
     if (( skip_count > 0 )); then
-        print_suggestion "EXISTING PAIRS BATCH: ${total_files} pair(s) need your choice (${skip_count} complete pair(s) skipped above)."
+        print_suggestion "EXISTING PAIRS BATCH: ${total_files} pair(s) still need work or your choice (${skip_count} already complete on disk, skipped above)."
     else
         print_suggestion "EXISTING PAIRS BATCH: ${total_files} ORG/OUTPUT pair(s) — choose which to include for transcription/re-do."
     fi
