@@ -1434,7 +1434,7 @@ process_transcription_queue() {
     idx=0
 
     while (( idx < total_files )); do
-        [[ "$skip_remaining_prompts" == yes ]] && break
+        [[ "$skip_remaining_transcription_prompts" == yes ]] && break
 
         declare -a batch_orgs=()
         declare -a batch_outs=()
@@ -1494,9 +1494,9 @@ process_transcription_queue() {
                     break
                     ;;
                 skip_all)
-                    skip_remaining_prompts=yes
+                    skip_remaining_transcription_prompts=yes
                     finish_batch_now=yes
-                    echo "Skipping all further prompts — processing ${batch_yes} selected transcription(s) from this batch."
+                    echo "Skipping all further transcription prompts — processing ${batch_yes} selected from this batch."
                     break
                     ;;
                 accept_all)
@@ -1557,7 +1557,7 @@ process_transcription_queue() {
             fi
         fi
 
-        if [[ "$skip_remaining_prompts" == yes ]]; then
+        if [[ "$skip_remaining_transcription_prompts" == yes ]]; then
             (( files_skipped += total_files - idx ))
             break
         fi
@@ -1614,7 +1614,8 @@ files_examined=0
 files_affected=0
 files_skipped=0
 stopped_by_user=no
-skip_remaining_prompts=no
+skip_remaining_file_prompts=no
+skip_remaining_transcription_prompts=no
 
 declare -a affected_list=()
 declare -a transcribe_queue_orgs=()
