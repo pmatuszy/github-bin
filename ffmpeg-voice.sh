@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.05.28 - v. 3.24 - align filenames in transcription pair block (ORG/OUTPUT/transcripts/sha512)
 # 2026.05.28 - v. 3.23 - print run summary when user quits with [Q] (EXIT trap)
 # 2026.05.28 - v. 3.22 - fix literal ANSI escapes in choice prompts (printf %b, not echo -n)
 # 2026.05.28 - v. 3.21 - show (OK / NOT OK) next to Whisper VAD and noVAD endpoints at startup
@@ -893,38 +894,64 @@ print_low_space_block() {
     fi
 }
 
+transcription_pair_block_value_col() {
+    local label_width=0 tag t
+
+    for t in "ORG AUDIO:" "OUTPUT AUDIO:" "SHA512 FILE:"; do
+        (( ${#t} > label_width )) && label_width=${#t}
+    done
+    for tag in "${TRANSCRIPT_VARIANT_SUFFIXES[@]}"; do
+        t="ORG TRANSCRIPT (${tag}):"
+        (( ${#t} > label_width )) && label_width=${#t}
+        t="OUTPUT TRANSCRIPT (${tag}):"
+        (( ${#t} > label_width )) && label_width=${#t}
+    done
+    echo $(( label_width + 1 ))
+}
+
+print_transcription_pair_line() {
+    local value_col="$1"
+    local label="$2"
+    local value="$3"
+    local use_color="${4:-no}"
+    local spaces=$(( value_col - ${#label} ))
+
+    (( spaces < 0 )) && spaces=0
+
+    if [[ "$use_color" == yes ]]; then
+        printf '%b%s%*s%b %s\n' "$CYAN" "$label" "$spaces" "" "$RESET" "$value"
+    else
+        print_transcript_redo_detail_line "" "$value_col" "$label" "$value"
+    fi
+}
+
 print_transcription_pair_block() {
     local org_file="$1"
     local out_file="$2"
     local sha_file="$3"
-    local tag variant_path
+    local tag variant_path value_col color_mode=no
 
-    if [[ "$have_boxes" == "yes" ]]; then
-        {
-            printf "ORG AUDIO:    %s\n" "$org_file"
-            for tag in "${TRANSCRIPT_VARIANT_SUFFIXES[@]}"; do
-                variant_path="$(transcript_variant_path_for_audio "$org_file" "$tag")"
-                printf "ORG TRANSCRIPT (%s): %s\n" "$tag" "$variant_path"
-            done
-            printf "OUTPUT AUDIO: %s\n" "$out_file"
-            for tag in "${TRANSCRIPT_VARIANT_SUFFIXES[@]}"; do
-                variant_path="$(transcript_variant_path_for_audio "$out_file" "$tag")"
-                printf "OUTPUT TRANSCRIPT (%s): %s\n" "$tag" "$variant_path"
-            done
-            printf "SHA512 FILE:  %s\n" "$sha_file"
-        } | boxes -d stone
-    else
-        echo -e "${CYAN}ORG AUDIO:${RESET}     $org_file"
+    value_col="$(transcription_pair_block_value_col)"
+    [[ "$have_boxes" != "yes" ]] && color_mode=yes
+
+    print_transcription_pair_lines() {
+        print_transcription_pair_line "$value_col" "ORG AUDIO:" "$org_file" "$color_mode"
         for tag in "${TRANSCRIPT_VARIANT_SUFFIXES[@]}"; do
             variant_path="$(transcript_variant_path_for_audio "$org_file" "$tag")"
-            echo -e "${CYAN}ORG TRANSCRIPT (${tag}):${RESET} $variant_path"
+            print_transcription_pair_line "$value_col" "ORG TRANSCRIPT (${tag}):" "$variant_path" "$color_mode"
         done
-        echo -e "${CYAN}OUTPUT AUDIO:${RESET}  $out_file"
+        print_transcription_pair_line "$value_col" "OUTPUT AUDIO:" "$out_file" "$color_mode"
         for tag in "${TRANSCRIPT_VARIANT_SUFFIXES[@]}"; do
             variant_path="$(transcript_variant_path_for_audio "$out_file" "$tag")"
-            echo -e "${CYAN}OUTPUT TRANSCRIPT (${tag}):${RESET} $variant_path"
+            print_transcription_pair_line "$value_col" "OUTPUT TRANSCRIPT (${tag}):" "$variant_path" "$color_mode"
         done
-        echo -e "${CYAN}SHA512 FILE:${RESET}   $sha_file"
+        print_transcription_pair_line "$value_col" "SHA512 FILE:" "$sha_file" "$color_mode"
+    }
+
+    if [[ "$have_boxes" == "yes" ]]; then
+        print_transcription_pair_lines | boxes -d stone
+    else
+        print_transcription_pair_lines
     fi
 }
 
