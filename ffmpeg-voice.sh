@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# 2026.05.28 - v. 3.23 - print run summary when user quits with [Q] (EXIT trap)
+# 2026.05.28 - v. 3.22 - fix literal ANSI escapes in choice prompts (printf %b, not echo -n)
 # 2026.05.28 - v. 3.21 - show (OK / NOT OK) next to Whisper VAD and noVAD endpoints at startup
 # 2026.05.28 - v. 3.20 - log when a transcript variant is skipped (already on disk); echo env for transcribe call
 # 2026.05.28 - v. 3.19 - always prompt per pair before transcription (include/re-do only marks active scope)
@@ -150,47 +152,10 @@ voice_ts() {
     date '+%Y.%m.%d %H:%M:%S'
 }
 
-# ============================================================
-# COLOR SELECTION
-# ============================================================
-echo
-echo "$(voice_ts) Use colors?"
-echo "  [Y] Yes (default)"
-echo "  [N] No"
-echo "  [Q] Quit"
-echo -n "$(voice_ts) Choice [Y/n/q]: "
-
-use_colors=yes
-input=""
-
-read -t 60 -n 1 input || true
-echo
-
-if [[ "$input" =~ [Qq] ]]; then
-    echo "Quitting."
-    exit 0
-elif [[ "$input" =~ [Nn] ]]; then
-    use_colors=no
-fi
-
-if [[ "$use_colors" == "yes" ]]; then
-    RED='\e[31m'
-    GREEN='\e[32m'
-    CYAN='\e[36m'
-    YELLOW='\e[33m'
-    RESET='\e[0m'
-else
-    RED=''
-    GREEN=''
-    CYAN=''
-    YELLOW=''
-    RESET=''
-fi
-
 ARROW="→"
 
 print_suggestion() {
-    echo -e "${GREEN}$*${RESET}"
+    printf '%b%s%b\n' "$GREEN" "$*" "$RESET"
 }
 
 print_question() {
@@ -198,15 +163,15 @@ print_question() {
 }
 
 print_choice_prompt() {
-    echo -n "${GREEN}$(voice_ts) Choice ${1}${RESET}"
+    printf '%b%s Choice %s%b' "$GREEN" "$(voice_ts)" "$1" "$RESET"
 }
 
 print_input_prompt() {
-    echo -n "${GREEN}$(voice_ts) ${1}${RESET}"
+    printf '%b%s%s%b' "$GREEN" "$(voice_ts)" "$1" "$RESET"
 }
 
 print_deletion() {
-    echo -e "${RED}$*${RESET}"
+    printf '%b%s%b\n' "$RED" "$*" "$RESET"
 }
 
 # After [F] finish-batch: skip unasked slots in the current prompt window.
@@ -297,6 +262,268 @@ format_voice_size_comparison_line() {
     printf '  Difference: %s (%s)\n' "$(format_bytes_human "$diff")" "$note"
 }
 
+transcribe_host_port_open() {
+    local host="$1" port="$2"
+
+    if command -v nc >/dev/null 2>&1; then
+        nc -z -w 2 "$host" "$port" >/dev/null 2>&1
+        return $?
+    fi
+    if command -v timeout >/dev/null 2>&1; then
+        timeout 2 bash -c "exec 3<>/dev/tcp/${host}/${port}" >/dev/null 2>&1
+        return $?
+    fi
+    bash -c "exec 3<>/dev/tcp/${host}/${port}" >/dev/null 2>&1
+}
+
+transcribe_endpoint_is_up() {
+    local host="$1"
+    local port="$2"
+
+    ping -c 1 -W 1 "$host" >/dev/null 2>&1 && transcribe_host_port_open "$host" "$port"
+}
+
+whisper_endpoint_status_label() {
+    local host="$1"
+    local port="$2"
+
+    if transcribe_endpoint_is_up "$host" "$port"; then
+        printf '%bOK%b' "$GREEN" "$RESET"
+    else
+        printf '%bNOT OK%b' "$RED" "$RESET"
+    fi
+}
+
+# ============================================================
+# STATE (early — summary on [Q] quit must see these)
+# ============================================================
+files_examined=0
+files_affected=0
+files_skipped=0
+stats_new_files_processed=0
+stats_sha_backfilled=0
+stats_pairs_transcribed=0
+stats_transcript_redos=0
+stopped_by_user=no
+skip_remaining_file_prompts=no
+skip_remaining_transcription_prompts=no
+skip_remaining_redo_prompts=no
+skip_remaining_existing_pair_prompts=no
+VOICE_SUMMARY_DONE=no
+
+declare -a affected_list=()
+declare -a all_files=()
+declare -a exclude_files=()
+declare -a existing_pair_orgs=()
+declare -a existing_pair_outs=()
+declare -a existing_pair_shas=()
+declare -a transcribe_queue_orgs=()
+declare -a transcribe_queue_outs=()
+declare -a transcribe_queue_shas=()
+declare -a transcript_redo_orgs=()
+declare -a transcript_redo_outs=()
+declare -a transcript_redo_shas=()
+declare -a voice_active_orgs=()
+declare -a voice_active_outs=()
+declare -a voice_active_shas=()
+declare -A voice_active_stem_seen=()
+
+current_original_in=""
+current_new_in=""
+current_out=""
+current_renamed=no
+current_txt_file=""
+
+print_voice_size_summary() {
+    local r old rest mid new org_total=0 out_total=0 sz
+
+    for r in "${affected_list[@]}"; do
+        old=${r%%|*}
+        rest=${r#*|}
+        mid=${rest%%|*}
+        new=${rest#*|}
+        if [[ -f "$mid" ]]; then
+            sz=$(file_size_bytes "$mid")
+            (( org_total += sz ))
+        fi
+        if [[ -f "$new" ]]; then
+            sz=$(file_size_bytes "$new")
+            (( out_total += sz ))
+        fi
+    done
+
+    (( org_total == 0 && out_total == 0 )) && return 0
+
+    echo "=== Size summary (new conversions) ==="
+    voice_log_kv "ORG audio total" "$(format_bytes_human "$org_total")"
+    voice_log_kv "OUTPUT FLAC total" "$(format_bytes_human "$out_total")"
+    format_voice_size_comparison_line "$org_total" "$out_total"
+    echo
+}
+
+print_voice_timing_summary() {
+    local end_ns total_sec wait_sec
+
+    [[ -n "${VOICE_SCRIPT_START_NS}" ]] || return 0
+    end_ns=$(voice_time_now_ns)
+    total_sec=$(awk -v s0="${VOICE_SCRIPT_START_NS}" -v s1="${end_ns}" 'BEGIN { printf "%.6f", s1 - s0 }')
+    wait_sec=$(awk -v t="${total_sec}" -v p="${VOICE_PROCESSING_SEC:-0}" \
+        'BEGIN { w = t - p; if (w < 0) w = 0; printf "%.6f", w }')
+
+    echo
+    echo "$(voice_ts) --- Timing ---"
+    voice_log_kv "Started" "$(voice_format_wall_clock "${VOICE_SCRIPT_START_NS}")"
+    voice_log_kv "Finished" "$(date '+%Y.%m.%d %H:%M:%S')"
+    voice_log_kv "Total wall time" "$(format_duration_sec "${total_sec}")"
+    voice_log_kv "Processing time" "$(format_duration_sec "${VOICE_PROCESSING_SEC:-0}")  (ffmpeg, sha512, transcription, re-do)"
+    voice_log_kv "Other/wait time" "$(format_duration_sec "${wait_sec}")  (prompts, startup delay, overhead)"
+    echo
+}
+
+print_voice_statistics_summary() {
+    local scope_line summary_line
+    local existing_pairs=${#existing_pair_orgs[@]}
+    local exclude_count=${#exclude_files[@]}
+    local candidates=${#all_files[@]}
+
+    echo
+    if (( files_examined == 0 )); then
+        echo "$(voice_ts) No matching input files found."
+        echo
+    fi
+
+    if [[ -n "$TARGET_FILE" ]]; then
+        scope_line="single file ($TARGET_FILE)"
+    else
+        scope_line="current directory"
+    fi
+
+    echo "$(voice_ts) --- Run summary ---"
+    voice_log_kv "Mode" "${mode:-not selected}"
+    voice_log_kv "Scope" "$scope_line"
+    if [[ "${mode:-}" == "real" ]]; then
+        voice_log_kv "Batch size" "${BATCH_SIZE:-}"
+    fi
+    voice_log_kv "Boxes available" "${have_boxes:-no}"
+    voice_log_kv "Colors enabled" "${use_colors:-yes}"
+    voice_log_kv "Transcription enabled" "${DO_TRANSCRIPTION:-}"
+    if [[ "${DO_TRANSCRIPTION:-}" == "yes" && -n "${TRANSCRIBE_CMD:-}" ]]; then
+        voice_log_kv "Transcribe command" "$TRANSCRIBE_CMD"
+    fi
+    if [[ "${DO_TRANSCRIPTION:-}" == "yes" ]]; then
+        if transcribe_endpoint_is_up "$WHISPER_VAD_HOST" "$WHISPER_VAD_PORT"; then
+            voice_log_kv "Whisper VAD" "${WHISPER_VAD_HOST}:${WHISPER_VAD_PORT} (OK)"
+        else
+            voice_log_kv "Whisper VAD" "${WHISPER_VAD_HOST}:${WHISPER_VAD_PORT} (NOT OK)"
+        fi
+        if transcribe_endpoint_is_up "$WHISPER_NOVAD_HOST" "$WHISPER_NOVAD_PORT"; then
+            voice_log_kv "Whisper noVAD" "${WHISPER_NOVAD_HOST}:${WHISPER_NOVAD_PORT} (OK)"
+        else
+            voice_log_kv "Whisper noVAD" "${WHISPER_NOVAD_HOST}:${WHISPER_NOVAD_PORT} (NOT OK)"
+        fi
+    fi
+    voice_log_kv "Files examined" "$files_examined"
+    voice_log_kv "Active pairs (this run)" "${#voice_active_orgs[@]}"
+    voice_log_kv "Candidates to convert" "$candidates"
+    voice_log_kv "Existing ORG/OUTPUT pairs" "$existing_pairs"
+    voice_log_kv "EXCLUDE files" "$exclude_count"
+    voice_log_kv "Files affected" "$files_affected"
+    voice_log_kv "New conversions" "$stats_new_files_processed"
+    voice_log_kv "SHA512 backfilled" "$stats_sha_backfilled"
+    voice_log_kv "Files skipped" "$files_skipped"
+    if [[ "${DO_TRANSCRIPTION:-}" == "yes" ]]; then
+        voice_log_kv "Transcription pairs run" "$stats_pairs_transcribed"
+        voice_log_kv "Transcript re-dos" "$stats_transcript_redos"
+    fi
+    voice_log_kv "Stopped by user" "$stopped_by_user"
+    if [[ "${mode:-}" == "real" ]]; then
+        voice_log_kv "Skipped file prompts" "$skip_remaining_file_prompts"
+        voice_log_kv "Skipped transcribe prompts" "$skip_remaining_transcription_prompts"
+        voice_log_kv "Skipped re-do prompts" "$skip_remaining_redo_prompts"
+        voice_log_kv "Skipped existing-pair prompts" "$skip_remaining_existing_pair_prompts"
+    fi
+
+    summary_line="${files_examined} examined"
+    summary_line+=", ${stats_new_files_processed} new conversion(s)"
+    summary_line+=", ${existing_pairs} existing pair(s)"
+    if [[ "${DO_TRANSCRIPTION:-}" == "yes" ]]; then
+        summary_line+=", ${stats_pairs_transcribed} transcribed pair(s)"
+        summary_line+=", ${stats_transcript_redos} transcript re-do(s)"
+    fi
+    summary_line+=", ${files_skipped} skipped"
+    echo "$(voice_ts) Summary: ${summary_line}."
+
+    if (( ${#affected_list[@]} > 0 )); then
+        echo
+        echo "Planned/performed changes:"
+        for r in "${affected_list[@]}"; do
+            old=${r%%|*}
+            rest=${r#*|}
+            mid=${rest%%|*}
+            new=${rest#*|}
+            printf "  %s %b%s%b %s %b%s%b %s\n" \
+                "$old" \
+                "$RED" "$ARROW" "$RESET" \
+                "$mid" \
+                "$RED" "$ARROW" "$RESET" \
+                "$new"
+        done
+        echo
+        print_voice_size_summary
+    fi
+}
+
+voice_finish_run() {
+    [[ "$VOICE_SUMMARY_DONE" == yes ]] && return 0
+    VOICE_SUMMARY_DONE=yes
+    print_voice_statistics_summary
+    print_voice_timing_summary
+}
+
+voice_quit() {
+    stopped_by_user=yes
+    echo "Quitting."
+    exit 0
+}
+
+trap voice_finish_run EXIT
+
+# ============================================================
+# COLOR SELECTION
+# ============================================================
+echo
+echo "$(voice_ts) Use colors?"
+echo "  [Y] Yes (default)"
+echo "  [N] No"
+echo "  [Q] Quit"
+echo -n "$(voice_ts) Choice [Y/n/q]: "
+
+use_colors=yes
+input=""
+
+read -r -t 60 -n 1 input || true
+printf '\n'
+
+if [[ "$input" =~ [Qq] ]]; then
+    voice_quit
+elif [[ "$input" =~ [Nn] ]]; then
+    use_colors=no
+fi
+
+if [[ "$use_colors" == "yes" ]]; then
+    RED=$'\033[31m'
+    GREEN=$'\033[32m'
+    CYAN=$'\033[36m'
+    YELLOW=$'\033[33m'
+    RESET=$'\033[0m'
+else
+    RED=''
+    GREEN=''
+    CYAN=''
+    YELLOW=''
+    RESET=''
+fi
+
 # ============================================================
 # MODE SELECTION
 # ============================================================
@@ -310,12 +537,11 @@ print_choice_prompt "[D/r/q]: "
 mode="dry-run"
 input=""
 
-read -t 60 -n 1 input || true
-echo
+read -r -t 60 -n 1 input || true
+printf '\n'
 
 if [[ "$input" =~ [Qq] ]]; then
-    echo "Quitting."
-    exit 0
+    voice_quit
 elif [[ "$input" =~ [Rr] ]]; then
     mode="real"
 fi
@@ -346,12 +572,11 @@ else
 fi
 
 input=""
-read -t 60 -n 1 input || true
-echo
+read -r -t 60 -n 1 input || true
+printf '\n'
 
 if [[ "$input" =~ [Qq] ]]; then
-    echo "Quitting."
-    exit 0
+    voice_quit
 elif [[ "$input" =~ [Nn] ]]; then
     DO_TRANSCRIPTION=no
 fi
@@ -426,38 +651,6 @@ init_transcribe_cmd() {
 
     mount_point="$(filesystem_mount_for_path "$base_path")" || return 1
     TRANSCRIBE_CMD="${mount_point}/${TRANSCRIBE_SCRIPT_REL}"
-}
-
-transcribe_host_port_open() {
-    local host="$1" port="$2"
-
-    if command -v nc >/dev/null 2>&1; then
-        nc -z -w 2 "$host" "$port" >/dev/null 2>&1
-        return $?
-    fi
-    if command -v timeout >/dev/null 2>&1; then
-        timeout 2 bash -c "exec 3<>/dev/tcp/${host}/${port}" >/dev/null 2>&1
-        return $?
-    fi
-    bash -c "exec 3<>/dev/tcp/${host}/${port}" >/dev/null 2>&1
-}
-
-transcribe_endpoint_is_up() {
-    local host="$1"
-    local port="$2"
-
-    ping -c 1 -W 1 "$host" >/dev/null 2>&1 && transcribe_host_port_open "$host" "$port"
-}
-
-whisper_endpoint_status_label() {
-    local host="$1"
-    local port="$2"
-
-    if transcribe_endpoint_is_up "$host" "$port"; then
-        echo -e "${GREEN}OK${RESET}"
-    else
-        echo -e "${RED}NOT OK${RESET}"
-    fi
 }
 
 print_transcribe_whisper_servers_info() {
@@ -611,8 +804,8 @@ read_batch_choice() {
     print_suggestion "  [Q] Quit"
     print_choice_prompt "[Y/n/a/f/g/q]: "
 
-    read -t 300 -n 1 input || true
-    echo
+    read -r -t 300 -n 1 input || true
+    printf '\n'
 
     case "$input" in
         q|Q)
@@ -831,14 +1024,12 @@ ensure_transcribe_endpoint_ready() {
         print_suggestion "  [W] Wait until the server is back (default)"
         print_suggestion "  [Q] Quit"
         print_choice_prompt "[W/q]: "
-        read -t 300 -n 1 input || true
-        echo
+        read -r -t 300 -n 1 input || true
+        printf '\n'
 
         case "$input" in
             q|Q)
-                stopped_by_user=yes
-                echo "Quitting."
-                exit 0
+                voice_quit
                 ;;
         esac
 
@@ -1382,9 +1573,7 @@ process_transcript_redo_queue() {
 
             case "$BATCH_CHOICE_ACTION" in
                 quit)
-                    stopped_by_user=yes
-                    echo "Quitting."
-                    exit 0
+                    voice_quit
                     ;;
                 finish_batch)
                     finish_batch_now=yes
@@ -1918,10 +2107,7 @@ process_transcription_queue() {
 
             case "$BATCH_CHOICE_ACTION" in
                 quit)
-                    stopped_by_user=yes
-                    echo
-                    echo "Quitting."
-                    exit 0
+                    voice_quit
                     ;;
                 finish_batch)
                     finish_batch_now=yes
@@ -2049,40 +2235,6 @@ backfill_existing_pair_sha() {
     ((++files_affected))
     ((++stats_sha_backfilled))
 }
-
-# ============================================================
-# STATE
-# ============================================================
-files_examined=0
-files_affected=0
-files_skipped=0
-stats_new_files_processed=0
-stats_sha_backfilled=0
-stats_pairs_transcribed=0
-stats_transcript_redos=0
-stopped_by_user=no
-skip_remaining_file_prompts=no
-skip_remaining_transcription_prompts=no
-
-declare -a affected_list=()
-declare -a transcribe_queue_orgs=()
-declare -a transcribe_queue_outs=()
-declare -a transcribe_queue_shas=()
-declare -a transcript_redo_orgs=()
-declare -a transcript_redo_outs=()
-declare -a transcript_redo_shas=()
-declare -a voice_active_orgs=()
-declare -a voice_active_outs=()
-declare -a voice_active_shas=()
-declare -A voice_active_stem_seen=()
-skip_remaining_redo_prompts=no
-skip_remaining_existing_pair_prompts=no
-
-current_original_in=""
-current_new_in=""
-current_out=""
-current_renamed=no
-current_txt_file=""
 
 record_change() {
     local old="$1"
@@ -2257,9 +2409,7 @@ process_existing_pairs_batch() {
 
             case "$BATCH_CHOICE_ACTION" in
                 quit)
-                    stopped_by_user=yes
-                    echo "Quitting."
-                    exit 0
+                    voice_quit
                     ;;
                 finish_batch)
                     finish_batch_now=yes
@@ -2356,11 +2506,6 @@ process_exclude_sha_only() {
 # BUILD FILE LIST + DETECT EXISTING PAIRS / EXCLUDES
 # ============================================================
 declare -a discovered_files=()
-declare -a all_files=()
-declare -a exclude_files=()
-declare -a existing_pair_orgs=()
-declare -a existing_pair_outs=()
-declare -a existing_pair_shas=()
 
 if [[ -n "$TARGET_FILE" ]]; then
     if [[ ! -e "$TARGET_FILE" ]]; then
@@ -2533,10 +2678,7 @@ else
 
             case "$BATCH_CHOICE_ACTION" in
                 quit)
-                    stopped_by_user=yes
-                    echo
-                    echo "Quitting."
-                    exit 0
+                    voice_quit
                     ;;
                 finish_batch)
                     finish_batch_now=yes
@@ -2625,148 +2767,3 @@ if [[ "$mode" == "real" && "$DO_TRANSCRIPTION" == "yes" ]]; then
 elif [[ "$mode" == "real" ]] && (( ${#voice_active_orgs[@]} > 0 )); then
     print_suggestion "Pairs were selected but transcription is disabled — no transcription/re-do prompts."
 fi
-
-print_voice_size_summary() {
-    local r old rest mid new org_total=0 out_total=0 sz
-
-    for r in "${affected_list[@]}"; do
-        old=${r%%|*}
-        rest=${r#*|}
-        mid=${rest%%|*}
-        new=${rest#*|}
-        if [[ -f "$mid" ]]; then
-            sz=$(file_size_bytes "$mid")
-            (( org_total += sz ))
-        fi
-        if [[ -f "$new" ]]; then
-            sz=$(file_size_bytes "$new")
-            (( out_total += sz ))
-        fi
-    done
-
-    (( org_total == 0 && out_total == 0 )) && return 0
-
-    echo "=== Size summary (new conversions) ==="
-    voice_log_kv "ORG audio total" "$(format_bytes_human "$org_total")"
-    voice_log_kv "OUTPUT FLAC total" "$(format_bytes_human "$out_total")"
-    format_voice_size_comparison_line "$org_total" "$out_total"
-    echo
-}
-
-print_voice_timing_summary() {
-    local end_ns total_sec wait_sec
-
-    [[ -n "${VOICE_SCRIPT_START_NS}" ]] || return 0
-    end_ns=$(voice_time_now_ns)
-    total_sec=$(awk -v s0="${VOICE_SCRIPT_START_NS}" -v s1="${end_ns}" 'BEGIN { printf "%.6f", s1 - s0 }')
-    wait_sec=$(awk -v t="${total_sec}" -v p="${VOICE_PROCESSING_SEC:-0}" \
-        'BEGIN { w = t - p; if (w < 0) w = 0; printf "%.6f", w }')
-
-    echo
-    echo "$(voice_ts) --- Timing ---"
-    voice_log_kv "Started" "$(voice_format_wall_clock "${VOICE_SCRIPT_START_NS}")"
-    voice_log_kv "Finished" "$(date '+%Y.%m.%d %H:%M:%S')"
-    voice_log_kv "Total wall time" "$(format_duration_sec "${total_sec}")"
-    voice_log_kv "Processing time" "$(format_duration_sec "${VOICE_PROCESSING_SEC:-0}")  (ffmpeg, sha512, transcription, re-do)"
-    voice_log_kv "Other/wait time" "$(format_duration_sec "${wait_sec}")  (prompts, startup delay, overhead)"
-    echo
-}
-
-print_voice_statistics_summary() {
-    local scope_line summary_line
-    local existing_pairs=${#existing_pair_orgs[@]}
-    local exclude_count=${#exclude_files[@]}
-    local candidates=${#all_files[@]}
-
-    echo
-    if (( files_examined == 0 )); then
-        echo "$(voice_ts) No matching input files found."
-        echo
-    fi
-
-    if [[ -n "$TARGET_FILE" ]]; then
-        scope_line="single file ($TARGET_FILE)"
-    else
-        scope_line="current directory"
-    fi
-
-    echo "$(voice_ts) --- Run summary ---"
-    voice_log_kv "Mode" "$mode"
-    voice_log_kv "Scope" "$scope_line"
-    if [[ "$mode" == "real" ]]; then
-        voice_log_kv "Batch size" "$BATCH_SIZE"
-    fi
-    voice_log_kv "Boxes available" "$have_boxes"
-    voice_log_kv "Colors enabled" "$use_colors"
-    voice_log_kv "Transcription enabled" "$DO_TRANSCRIPTION"
-    if [[ "$DO_TRANSCRIPTION" == "yes" && -n "$TRANSCRIBE_CMD" ]]; then
-        voice_log_kv "Transcribe command" "$TRANSCRIBE_CMD"
-    fi
-    if [[ "$DO_TRANSCRIPTION" == "yes" ]]; then
-        if transcribe_endpoint_is_up "$WHISPER_VAD_HOST" "$WHISPER_VAD_PORT"; then
-            voice_log_kv "Whisper VAD" "${WHISPER_VAD_HOST}:${WHISPER_VAD_PORT} (OK)"
-        else
-            voice_log_kv "Whisper VAD" "${WHISPER_VAD_HOST}:${WHISPER_VAD_PORT} (NOT OK)"
-        fi
-        if transcribe_endpoint_is_up "$WHISPER_NOVAD_HOST" "$WHISPER_NOVAD_PORT"; then
-            voice_log_kv "Whisper noVAD" "${WHISPER_NOVAD_HOST}:${WHISPER_NOVAD_PORT} (OK)"
-        else
-            voice_log_kv "Whisper noVAD" "${WHISPER_NOVAD_HOST}:${WHISPER_NOVAD_PORT} (NOT OK)"
-        fi
-    fi
-    voice_log_kv "Files examined" "$files_examined"
-    voice_log_kv "Active pairs (this run)" "${#voice_active_orgs[@]}"
-    voice_log_kv "Candidates to convert" "$candidates"
-    voice_log_kv "Existing ORG/OUTPUT pairs" "$existing_pairs"
-    voice_log_kv "EXCLUDE files" "$exclude_count"
-    voice_log_kv "Files affected" "$files_affected"
-    voice_log_kv "New conversions" "$stats_new_files_processed"
-    voice_log_kv "SHA512 backfilled" "$stats_sha_backfilled"
-    voice_log_kv "Files skipped" "$files_skipped"
-    if [[ "$DO_TRANSCRIPTION" == "yes" ]]; then
-        voice_log_kv "Transcription pairs run" "$stats_pairs_transcribed"
-        voice_log_kv "Transcript re-dos" "$stats_transcript_redos"
-    fi
-    voice_log_kv "Stopped by user" "$stopped_by_user"
-    if [[ "$mode" == "real" ]]; then
-        voice_log_kv "Skipped file prompts" "$skip_remaining_file_prompts"
-        voice_log_kv "Skipped transcribe prompts" "$skip_remaining_transcription_prompts"
-        voice_log_kv "Skipped re-do prompts" "$skip_remaining_redo_prompts"
-        voice_log_kv "Skipped existing-pair prompts" "$skip_remaining_existing_pair_prompts"
-    fi
-
-    summary_line="${files_examined} examined"
-    summary_line+=", ${stats_new_files_processed} new conversion(s)"
-    summary_line+=", ${existing_pairs} existing pair(s)"
-    if [[ "$DO_TRANSCRIPTION" == "yes" ]]; then
-        summary_line+=", ${stats_pairs_transcribed} transcribed pair(s)"
-        summary_line+=", ${stats_transcript_redos} transcript re-do(s)"
-    fi
-    summary_line+=", ${files_skipped} skipped"
-    echo "$(voice_ts) Summary: ${summary_line}."
-
-    if (( ${#affected_list[@]} > 0 )); then
-        echo
-        echo "Planned/performed changes:"
-        for r in "${affected_list[@]}"; do
-            old=${r%%|*}
-            rest=${r#*|}
-            mid=${rest%%|*}
-            new=${rest#*|}
-            printf "  %s %b%s%b %s %b%s%b %s\n" \
-                "$old" \
-                "$RED" "$ARROW" "$RESET" \
-                "$mid" \
-                "$RED" "$ARROW" "$RESET" \
-                "$new"
-        done
-        echo
-        print_voice_size_summary
-    fi
-}
-
-# ============================================================
-# SUMMARY
-# ============================================================
-print_voice_statistics_summary
-print_voice_timing_summary
