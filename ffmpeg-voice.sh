@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.05.28 - v. 3.34 - inline whisper HTTP transcription; VAD/noVAD host:port (no hardcoded transcribe-server.sh curl)
 # 2026.05.28 - v. 3.33 - pair block: ***MISSING*** on absent paths; list legacy *_ORG.txt / *_OUTPUT.txt as no longer needed
 # 2026.05.28 - v. 3.32 - pair block shows (missing); skip existing batch if transcription off; show why not skipped
 # 2026.05.28 - v. 3.31 - auto-skip existing pairs when ORG/OUTPUT/transcripts on disk (ignore stale .sha512 lines)
@@ -88,9 +89,11 @@ Whisper servers (defaults below; override with environment variables):
   WHISPER_NOVAD_HOST / WHISPER_NOVAD_PORT   Server without VAD (default port 8081).
   WHISPER_WAIT_POLL_SEC                     Seconds between retries when waiting for a down server (default: 10).
 
-Other environment variables:
-  TRANSCRIBE_CMD          Full path to transcribe-server.sh (skips mount lookup).
-  TRANSCRIBE_SCRIPT_REL   Relative path under mount (default: whisper.cpp/transcribe-server.sh).
+Transcription HTTP (built into this script; requires curl and python3):
+  TRANSCRIBE_MAX_CHARS                      Max characters per transcript line (default: 100).
+  TRANSCRIBE_LANGUAGE                       Whisper language (default: pl).
+  TRANSCRIBE_TRANSLATE                      Whisper translate flag (default: false).
+
   Legacy: TRANSCRIBE_HOST and TRANSCRIBE_PORT apply to the VAD server only if
           WHISPER_VAD_HOST / WHISPER_VAD_PORT are unset.
 EOF
@@ -175,14 +178,15 @@ parse_cli_args "$@"
 BATCH_SIZE=50
 MIN_FREE_KB=1048576   # 1 GiB
 DO_TRANSCRIPTION=yes
-TRANSCRIBE_SCRIPT_REL="${TRANSCRIBE_SCRIPT_REL:-whisper.cpp/transcribe-server.sh}"
-TRANSCRIBE_CMD="${TRANSCRIBE_CMD:-}"
 # Whisper servers — edit here or set WHISPER_VAD_* / WHISPER_NOVAD_* in the environment.
 WHISPER_VAD_HOST="${WHISPER_VAD_HOST:-${TRANSCRIBE_HOST:-192.168.200.134}}"
 WHISPER_VAD_PORT="${WHISPER_VAD_PORT:-${TRANSCRIBE_PORT:-8080}}"
 WHISPER_NOVAD_HOST="${WHISPER_NOVAD_HOST:-192.168.200.134}"
 WHISPER_NOVAD_PORT="${WHISPER_NOVAD_PORT:-8081}"
 WHISPER_WAIT_POLL_SEC="${WHISPER_WAIT_POLL_SEC:-10}"
+TRANSCRIBE_MAX_CHARS="${TRANSCRIBE_MAX_CHARS:-100}"
+TRANSCRIBE_LANGUAGE="${TRANSCRIBE_LANGUAGE:-pl}"
+TRANSCRIBE_TRANSLATE="${TRANSCRIBE_TRANSLATE:-false}"
 TRANSCRIPT_VAD_SUFFIX="VAD"
 TRANSCRIPT_NOVAD_SUFFIX="noVAD"
 declare -a TRANSCRIPT_VARIANT_SUFFIXES=("$TRANSCRIPT_VAD_SUFFIX" "$TRANSCRIPT_NOVAD_SUFFIX")
@@ -335,6 +339,92 @@ whisper_endpoint_status_label() {
     fi
 }
 
+transcription_dependencies_ok() {
+    command -v curl >/dev/null 2>&1 && command -v python3 >/dev/null 2>&1
+}
+
+whisper_inference_url() {
+    local host="$1"
+    local port="$2"
+    printf 'http://%s:%s/inference' "$host" "$port"
+}
+
+# Python segment merge (same logic as whisper.cpp/transcribe-server.sh).
+run_whisper_transcription_to_file() {
+    local host="$1"
+    local port="$2"
+    local input_audio="$3"
+    local output_txt="$4"
+    local max_chars="${5:-$TRANSCRIBE_MAX_CHARS}"
+    local url
+
+    if [[ ! -f "$input_audio" ]]; then
+        echo -e "${YELLOW}TRANSCRIPTION FAILED:${RESET} file not found: $input_audio" >&2
+        return 1
+    fi
+
+    url="$(whisper_inference_url "$host" "$port")"
+
+    curl -s "$url" \
+        -F "file=@${input_audio}" \
+        -F "language=${TRANSCRIBE_LANGUAGE}" \
+        -F "translate=${TRANSCRIBE_TRANSLATE}" \
+        -F "response_format=verbose_json" \
+        | python3 -c '
+import sys, json
+
+MAX_CHARS = int(sys.argv[1])
+d = json.load(sys.stdin)
+
+def fmt(x):
+    h = int(x // 3600)
+    m = int((x % 3600) // 60)
+    sec = int(x % 60)
+    ms = int(round((x - int(x)) * 1000))
+    return f"{h:02d}:{m:02d}:{sec:02d}.{ms:03d}"
+
+segments = d["segments"]
+merged = []
+
+cur_start = None
+cur_end = None
+cur_text = ""
+
+for s in segments:
+    text = " ".join(s["text"].split()).strip()
+    if not text:
+        continue
+
+    if cur_text == "":
+        cur_start = s["start"]
+        cur_end = s["end"]
+        cur_text = text
+    elif len(cur_text) + 1 + len(text) <= MAX_CHARS:
+        cur_text += " " + text
+        cur_end = s["end"]
+    else:
+        merged.append((cur_start, cur_end, cur_text))
+        cur_start = s["start"]
+        cur_end = s["end"]
+        cur_text = text
+
+if cur_text:
+    merged.append((cur_start, cur_end, cur_text))
+
+for start, end, text in merged:
+    print(f"[{fmt(start)} --> {fmt(end)}]   {text}")
+' "$max_chars" >"$output_txt"
+
+    if [[ ! -s "$output_txt" ]]; then
+        echo -e "${YELLOW}TRANSCRIPTION FAILED:${RESET} empty transcript from ${host}:${port}" >&2
+        rm -f -- "$output_txt"
+        return 1
+    fi
+
+    echo -e "${CYAN}Saved:${RESET} $output_txt"
+    return 0
+}
+
 # ============================================================
 # STATE (early — summary on [Q] quit must see these)
 # ============================================================
@@ -448,8 +538,9 @@ print_voice_statistics_summary() {
     voice_log_kv "Boxes available" "${have_boxes:-no}"
     voice_log_kv "Colors enabled" "${use_colors:-yes}"
     voice_log_kv "Transcription enabled" "${DO_TRANSCRIPTION:-}"
-    if [[ "${DO_TRANSCRIPTION:-}" == "yes" && -n "${TRANSCRIBE_CMD:-}" ]]; then
-        voice_log_kv "Transcribe command" "$TRANSCRIBE_CMD"
+    if [[ "${DO_TRANSCRIPTION:-}" == "yes" ]]; then
+        voice_log_kv "Transcription" "HTTP inference (curl + python3)"
+        voice_log_kv "Transcribe max chars" "$TRANSCRIBE_MAX_CHARS"
     fi
     if [[ "${DO_TRANSCRIPTION:-}" == "yes" ]]; then
         if transcribe_endpoint_is_up "$WHISPER_VAD_HOST" "$WHISPER_VAD_PORT"; then
@@ -683,42 +774,22 @@ filesystem_mount_for_path() {
     return 1
 }
 
-# <mount>/whisper.cpp/transcribe-server.sh on the filesystem holding cwd (or TRANSCRIBE_CMD if preset).
-init_transcribe_cmd() {
-    local base_path="${1:-.}"
-    local mount_point=""
-
-    if [[ -n "$TRANSCRIBE_CMD" ]]; then
-        return 0
-    fi
-
-    mount_point="$(filesystem_mount_for_path "$base_path")" || return 1
-    TRANSCRIBE_CMD="${mount_point}/${TRANSCRIBE_SCRIPT_REL}"
-}
-
 print_transcribe_whisper_servers_info() {
-    local cmd_status
+    local deps_status
 
     echo
-    if [[ -n "$TRANSCRIBE_CMD" && -x "$TRANSCRIBE_CMD" ]]; then
-        cmd_status="${GREEN}OK${RESET}"
-    elif [[ -n "$TRANSCRIBE_CMD" ]]; then
-        cmd_status="${RED}NOT OK${RESET}"
+    if transcription_dependencies_ok; then
+        deps_status="${GREEN}OK${RESET}"
     else
-        cmd_status="${RED}NOT OK${RESET}"
+        deps_status="${RED}NOT OK (need curl and python3)${RESET}"
     fi
-    echo -e "Transcribe command:  ${CYAN}${TRANSCRIBE_CMD:-<not resolved>}${RESET} (${cmd_status})"
+    echo -e "Transcription:       ${CYAN}HTTP inference (curl + python3)${RESET} (${deps_status})"
     echo -e "Whisper VAD:         ${CYAN}${WHISPER_VAD_HOST}:${WHISPER_VAD_PORT}${RESET} ($(whisper_endpoint_status_label "$WHISPER_VAD_HOST" "$WHISPER_VAD_PORT"))"
     echo -e "Whisper noVAD:       ${CYAN}${WHISPER_NOVAD_HOST}:${WHISPER_NOVAD_PORT}${RESET} ($(whisper_endpoint_status_label "$WHISPER_NOVAD_HOST" "$WHISPER_NOVAD_PORT"))"
 }
 
 if [[ "$DO_TRANSCRIPTION" == "yes" ]]; then
-    if init_transcribe_cmd "."; then
-        print_transcribe_whisper_servers_info
-    else
-        echo
-        echo -e "${YELLOW}Warning:${RESET} could not resolve mount point for transcribe-server.sh (cwd: $PWD)"
-    fi
+    print_transcribe_whisper_servers_info
 fi
 
 voice_record_script_start
@@ -1375,7 +1446,7 @@ maybe_repair_sha512_if_stale_references() {
     exit 1
 }
 
-# Path transcribe-server writes before rename (…_ORG.txt / …_OUTPUT.txt).
+# Path whisper inference writes before rename (…_ORG.txt / …_OUTPUT.txt).
 txt_file_for_audio() {
     local audio_file="$1"
     printf '%s\n' "${audio_file%.*}.txt"
@@ -2055,7 +2126,7 @@ print_transcription_dry_run_steps() {
             host="$(whisper_host_for_suffix "$tag")"
             port="$(whisper_port_for_suffix "$tag")"
             echo "# ${tag} @ ${host}:${port}"
-            echo "TRANSCRIBE_HOST=$host TRANSCRIBE_PORT=$port \"$TRANSCRIBE_CMD\" \"$audio_file\""
+            echo "curl -s $(whisper_inference_url "$host" "$port") -F file=@\"$audio_file\" -F language=${TRANSCRIBE_LANGUAGE} -F translate=${TRANSCRIBE_TRANSLATE} -F response_format=verbose_json | python3 ... > $(txt_file_for_audio "$audio_file")"
             echo "# rename $(txt_file_for_audio "$audio_file") -> $variant_txt"
             echo "sha512sum -- \"$variant_txt\" >> \"$sha_file\""
         done
@@ -2187,8 +2258,8 @@ run_one_transcription_variant() {
         return 0
     fi
 
-    if [[ ! -x "$TRANSCRIBE_CMD" ]]; then
-        echo -e "${YELLOW}TRANSCRIPTION SKIPPED:${RESET} command not found or not executable: $TRANSCRIBE_CMD"
+    if ! transcription_dependencies_ok; then
+        echo -e "${YELLOW}TRANSCRIPTION SKIPPED:${RESET} curl and python3 are required"
         return 0
     fi
 
@@ -2200,13 +2271,9 @@ run_one_transcription_variant() {
     current_txt_file="$variant_txt"
 
     echo -e "${CYAN}TRANSCRIBE (${variant_suffix}):${RESET} ${whisper_host}:${whisper_port} $ARROW $variant_txt"
-    echo -e "${CYAN}TRANSCRIBE ENV:${RESET} TRANSCRIBE_HOST=${whisper_host} TRANSCRIBE_PORT=${whisper_port}"
+    echo -e "${CYAN}TRANSCRIBE URL:${RESET} $(whisper_inference_url "$whisper_host" "$whisper_port")"
 
-    TRANSCRIBE_HOST="$whisper_host" TRANSCRIBE_PORT="$whisper_port" \
-        "$TRANSCRIBE_CMD" "$audio_file"
-
-    if [[ ! -e "$server_base" ]]; then
-        echo -e "${YELLOW}TRANSCRIPTION FAILED:${RESET} expected transcript not found: $server_base"
+    if ! run_whisper_transcription_to_file "$whisper_host" "$whisper_port" "$audio_file" "$server_base"; then
         exit 1
     fi
 
