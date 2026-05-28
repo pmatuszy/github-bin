@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.05.27 - v. 3.15 - transcription/re-do prompts only for pairs selected in this run (not whole directory)
 # 2026.05.27 - v. 3.14 - [F] finish-batch skips unasked slots; re-do [F] then transcription prompts; re-do/transcribe after file loop
 # 2026.05.27 - v. 3.13 - end-of-run timing and statistics summary (like video-pgm-merge.sh)
 # 2026.05.27 - v. 3.12.3 - green suggestions/questions, red deletion prompts in ffmpeg-voice
@@ -1111,6 +1112,90 @@ print_transcript_redo_pair_details() {
     fi
 }
 
+voice_pair_stem_from_org() {
+    local org_file="$1"
+    local stem="${org_file%.*}"
+    stem="${stem%_ORG}"
+    printf '%s' "$stem"
+}
+
+voice_mark_pair_active() {
+    local org_file="$1"
+    local out_file="$2"
+    local sha_file="${3:-}"
+    local stem
+
+    [[ -e "$org_file" && -e "$out_file" ]] || return 0
+    stem=$(voice_pair_stem_from_org "$org_file")
+    [[ -n "${voice_active_stem_seen[$stem]+x}" ]] && return 0
+    if [[ -z "$sha_file" ]]; then
+        sha_file="$(sha_file_from_pair "$org_file")"
+    fi
+    voice_active_stem_seen["$stem"]=1
+    voice_active_orgs+=("$org_file")
+    voice_active_outs+=("$out_file")
+    voice_active_shas+=("$sha_file")
+}
+
+populate_active_transcript_redo_queue() {
+    local i org_file out_file sha_file
+
+    [[ "$DO_TRANSCRIPTION" == "yes" ]] || return 0
+    (( ${#voice_active_orgs[@]} == 0 )) && return 0
+
+    transcript_redo_orgs=()
+    transcript_redo_outs=()
+    transcript_redo_shas=()
+
+    for i in "${!voice_active_orgs[@]}"; do
+        org_file="${voice_active_orgs[$i]}"
+        out_file="${voice_active_outs[$i]}"
+        sha_file="${voice_active_shas[$i]}"
+        enqueue_transcript_redo_if_needed "$org_file" "$out_file" "$sha_file"
+    done
+}
+
+build_voice_transcribe_queue() {
+    local i org_file out_file sha_file need_org=0 need_out=0
+
+    [[ "$DO_TRANSCRIPTION" == "yes" ]] || return 0
+    [[ "$mode" == "real" ]] || return 0
+    (( ${#voice_active_orgs[@]} == 0 )) && return 0
+
+    transcribe_queue_orgs=()
+    transcribe_queue_outs=()
+    transcribe_queue_shas=()
+
+    for i in "${!voice_active_orgs[@]}"; do
+        org_file="${voice_active_orgs[$i]}"
+        out_file="${voice_active_outs[$i]}"
+        sha_file="${voice_active_shas[$i]}"
+
+        [[ -e "$org_file" && -e "$out_file" ]] || continue
+
+        ensure_pair_sha_file "$org_file" "$out_file" "$sha_file"
+        sync_existing_transcript_hashes "$org_file" "$out_file" "$sha_file"
+
+        if transcript_all_variants_exist_for_audio "$org_file"; then
+            need_org=0
+        else
+            need_org=1
+        fi
+
+        if transcript_all_variants_exist_for_audio "$out_file"; then
+            need_out=0
+        else
+            need_out=1
+        fi
+
+        if (( need_org || need_out )); then
+            enqueue_pair_for_transcription "$org_file" "$out_file" "$sha_file"
+        else
+            verify_pair_sha_or_exit "$sha_file"
+        fi
+    done
+}
+
 pair_on_transcribe_queue() {
     local org_file="$1"
     local i
@@ -1146,6 +1231,8 @@ execute_transcript_redo_for_pair() {
     local org_file="$1"
     local out_file="$2"
     local sha_file="$3"
+
+    voice_mark_pair_active "$org_file" "$out_file" "$sha_file"
 
     echo
     print_deletion "TRANSCRIPT RE-DO: Removing old transcript files for this pair."
@@ -1236,6 +1323,7 @@ process_transcript_redo_queue() {
             if [[ "$accept_all_remaining" == "yes" ]]; then
                 batch_selected+=("yes")
                 ((++batch_yes))
+                voice_mark_pair_active "$org_file" "$out_file" "$sha_file"
                 batch_orgs+=("$org_file")
                 batch_outs+=("$out_file")
                 batch_shas+=("$sha_file")
@@ -1283,6 +1371,7 @@ process_transcript_redo_queue() {
                     if [[ "$BATCH_CHOICE_DECISION" == yes ]]; then
                         batch_selected+=("yes")
                         ((++batch_yes))
+                        voice_mark_pair_active "$org_file" "$out_file" "$sha_file"
                     else
                         batch_selected+=("no")
                         ((++batch_no))
@@ -1646,8 +1735,6 @@ queue_or_print_missing_transcriptions() {
     [[ "$DO_TRANSCRIPTION" == "yes" ]] || return 0
     [[ -e "$org_file" && -e "$out_file" ]] || return 0
 
-    enqueue_transcript_redo_if_needed "$org_file" "$out_file" "$sha_file"
-
     if transcript_all_variants_exist_for_audio "$org_file"; then
         need_org=0
     else
@@ -1661,6 +1748,7 @@ queue_or_print_missing_transcriptions() {
     fi
 
     if [[ "$mode" == "dry-run" ]]; then
+        enqueue_transcript_redo_if_needed "$org_file" "$out_file" "$sha_file"
         if (( need_org || need_out )); then
             if transcript_any_variant_exists_for_audio "$org_file" && need_out -eq 1; then
                 print_suggestion "TRANSCRIPTION: Partial ORG transcripts; still need OUTPUT variants:"
@@ -1692,10 +1780,7 @@ queue_or_print_missing_transcriptions() {
 
     if (( ! need_org && ! need_out )); then
         verify_pair_sha_or_exit "$sha_file"
-        return 0
     fi
-
-    enqueue_pair_for_transcription "$org_file" "$out_file" "$sha_file"
 }
 
 run_transcriptions_for_pair() {
@@ -1721,9 +1806,16 @@ run_transcriptions_for_pair() {
 process_transcription_queue() {
     [[ "$DO_TRANSCRIPTION" == "yes" ]] || return 0
 
+    if [[ "$mode" == "real" ]] && (( ${#voice_active_orgs[@]} == 0 )); then
+        return 0
+    fi
+
+    populate_active_transcript_redo_queue
     process_transcript_redo_queue
 
     [[ "$mode" == "real" ]] || return 0
+
+    build_voice_transcribe_queue
 
     local total_files idx
     total_files=${#transcribe_queue_outs[@]}
@@ -1910,7 +2002,7 @@ backfill_existing_pair_sha() {
     fi
     voice_processing_end
 
-    queue_or_print_missing_transcriptions "$org_file" "$out_file" "$sha_file"
+    sync_existing_transcript_hashes "$org_file" "$out_file" "$sha_file"
 
     ((++files_affected))
     ((++stats_sha_backfilled))
@@ -1937,6 +2029,10 @@ declare -a transcribe_queue_shas=()
 declare -a transcript_redo_orgs=()
 declare -a transcript_redo_outs=()
 declare -a transcript_redo_shas=()
+declare -a voice_active_orgs=()
+declare -a voice_active_outs=()
+declare -a voice_active_shas=()
+declare -A voice_active_stem_seen=()
 skip_remaining_redo_prompts=no
 
 current_original_in=""
@@ -1995,6 +2091,7 @@ process_one_file() {
     check_free_space_or_exit "."
 
     sha_file="$(sha_file_from_pair "$new_in")"
+    voice_mark_pair_active "$new_in" "$out" "$sha_file"
 
     if [[ -e "$out" ]]; then
         echo
@@ -2044,8 +2141,6 @@ process_one_file() {
         exit 1
     fi
     voice_processing_end
-
-    queue_or_print_missing_transcriptions "$new_in" "$out" "$sha_file"
 
     record_change "$original_in" "$new_in" "$out"
     ((++files_affected))
@@ -2298,6 +2393,7 @@ else
                     batch_selected+=("yes")
                     ((++batch_yes))
                     accept_all_remaining=yes
+                    voice_mark_pair_active "$new_in" "$out" "$(sha_file_from_pair "$new_in")"
                     batch_originals+=("$original_in")
                     batch_newins+=("$new_in")
                     batch_outputs+=("$out")
@@ -2309,6 +2405,7 @@ else
                     if [[ "$BATCH_CHOICE_DECISION" == yes ]]; then
                         batch_selected+=("yes")
                         ((++batch_yes))
+                        voice_mark_pair_active "$new_in" "$out" "$(sha_file_from_pair "$new_in")"
                     else
                         batch_selected+=("no")
                         ((++files_skipped))
@@ -2444,6 +2541,7 @@ print_voice_statistics_summary() {
         voice_log_kv "Whisper noVAD" "${WHISPER_NOVAD_HOST}:${WHISPER_NOVAD_PORT}"
     fi
     voice_log_kv "Files examined" "$files_examined"
+    voice_log_kv "Active pairs (this run)" "${#voice_active_orgs[@]}"
     voice_log_kv "Candidates to convert" "$candidates"
     voice_log_kv "Existing ORG/OUTPUT pairs" "$existing_pairs"
     voice_log_kv "EXCLUDE files" "$exclude_count"
