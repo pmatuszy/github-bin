@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.05.28 - v. 3.33 - pair block: ***MISSING*** on absent paths; list legacy *_ORG.txt / *_OUTPUT.txt as no longer needed
 # 2026.05.28 - v. 3.32 - pair block shows (missing); skip existing batch if transcription off; show why not skipped
 # 2026.05.28 - v. 3.31 - auto-skip existing pairs when ORG/OUTPUT/transcripts on disk (ignore stale .sha512 lines)
 # 2026.05.28 - v. 3.30 - no sha/transcript checks at startup; prepare existing pairs only when selected in batch
@@ -945,6 +946,8 @@ transcription_pair_block_value_col() {
         t="OUTPUT TRANSCRIPT (${tag}):"
         (( ${#t} > label_width )) && label_width=${#t}
     done
+    t="LEGACY (no longer needed):"
+    (( ${#t} > label_width )) && label_width=${#t}
     echo $(( label_width + 1 ))
 }
 
@@ -972,7 +975,29 @@ pair_block_path_status() {
         return 0
     fi
 
-    printf '%s (missing)' "$path"
+    printf '%s ***MISSING***' "$path"
+}
+
+print_transcription_pair_legacy_lines() {
+    local org_file="$1"
+    local out_file="$2"
+    local value_col="$3"
+    local color_mode="$4"
+    local -a legacy=()
+    local legacy_path label_printed=no
+
+    mapfile -t legacy < <(pair_list_legacy_transcript_files "$org_file" "$out_file")
+    (( ${#legacy[@]} == 0 )) && return 0
+
+    for legacy_path in "${legacy[@]}"; do
+        if [[ "$label_printed" == no ]]; then
+            print_transcription_pair_line "$value_col" "LEGACY (no longer needed):" \
+                "$legacy_path" "$color_mode"
+            label_printed=yes
+        else
+            print_transcript_redo_detail_line "" "$value_col" "" "$legacy_path"
+        fi
+    done
 }
 
 print_transcription_pair_block() {
@@ -1005,6 +1030,7 @@ print_transcription_pair_block() {
             print_transcription_pair_line "$value_col" "OUTPUT TRANSCRIPT (${tag}):" \
                 "$(pair_block_path_status "$variant_path")" "$color_mode"
         done
+        print_transcription_pair_legacy_lines "$org_file" "$out_file" "$value_col" "$color_mode"
         print_transcription_pair_line "$value_col" "SHA512 FILE:" \
             "$(pair_block_path_status "$sha_file")" "$color_mode"
     }
@@ -2607,16 +2633,23 @@ existing_pair_incomplete_summary() {
         for tag in "${TRANSCRIPT_VARIANT_SUFFIXES[@]}"; do
             if ! transcript_variant_exists_for_audio "$org_file" "$tag"; then
                 variant_txt="$(transcript_variant_path_for_audio "$org_file" "$tag")"
-                parts+=("missing $(basename "$variant_txt")")
+                parts+=("$(basename "$variant_txt") ***MISSING***")
             fi
             if ! transcript_variant_exists_for_audio "$out_file" "$tag"; then
                 variant_txt="$(transcript_variant_path_for_audio "$out_file" "$tag")"
-                parts+=("missing $(basename "$variant_txt")")
+                parts+=("$(basename "$variant_txt") ***MISSING***")
             fi
         done
     elif [[ ! -e "$sha_file" ]]; then
-        parts+=("missing $(basename "$sha_file")")
+        parts+=("$(basename "$sha_file") ***MISSING***")
     fi
+
+    local -a legacy=()
+    local legacy_path
+    mapfile -t legacy < <(pair_list_legacy_transcript_files "$org_file" "$out_file")
+    for legacy_path in "${legacy[@]}"; do
+        parts+=("$(basename "$legacy_path") is legacy (no longer needed — use _VAD/_noVAD)")
+    done
 
     ((${#parts[@]} == 0)) && return 0
     local IFS='; '
