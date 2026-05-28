@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.05.28 - v. 3.27 - prune missing paths from sha512 (legacy .txt); repair instead of hang/exit; backfill progress
 # 2026.05.28 - v. 3.26 - skip existing-pair prompt when transcripts and sha512 are already complete
 # 2026.05.28 - v. 3.25 - source _script_header.sh / _script_footer.sh; add -v/--version
 # 2026.05.28 - v. 3.24 - align filenames in transcription pair block (ORG/OUTPUT/transcripts/sha512)
@@ -1159,6 +1160,77 @@ verify_sha512_file() {
     sha512sum -c --quiet -- "$sha_file"
 }
 
+sha512_entry_path() {
+    local line="$1"
+    printf '%s' "${line#*  }"
+}
+
+# Drop sha512 lines whose file no longer exists (e.g. old *_OUTPUT.txt without _VAD/_noVAD).
+prune_missing_paths_from_sha512_file() {
+    local sha_file="$1"
+    local dropped_path line path pruned=0 tmp
+
+    [[ -e "$sha_file" ]] || return 0
+
+    tmp="$(mktemp)"
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        [[ -z "$line" ]] && continue
+        path="$(sha512_entry_path "$line")"
+        if [[ -e "$path" ]]; then
+            printf '%s\n' "$line" >>"$tmp"
+        else
+            echo -e "${YELLOW}SHA512:${RESET} dropping missing entry: $path"
+            ((++pruned))
+        fi
+    done < "$sha_file"
+
+    if (( pruned > 0 )); then
+        if [[ -s "$tmp" ]]; then
+            mv -f -- "$tmp" "$sha_file"
+        else
+            rm -f -- "$tmp" "$sha_file"
+        fi
+    else
+        rm -f -- "$tmp"
+    fi
+
+    return 0
+}
+
+verify_sha512_file_existing_only() {
+    local sha_file="$1"
+    local line path tmp
+
+    [[ -e "$sha_file" ]] || return 1
+
+    tmp="$(mktemp)"
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        [[ -z "$line" ]] && continue
+        path="$(sha512_entry_path "$line")"
+        [[ -e "$path" ]] && printf '%s\n' "$line" >>"$tmp"
+    done < "$sha_file"
+
+    if [[ ! -s "$tmp" ]]; then
+        rm -f -- "$tmp"
+        return 1
+    fi
+
+    sha512sum -c --quiet -- "$tmp" 2>/dev/null
+    local ok=$?
+    rm -f -- "$tmp"
+    return "$ok"
+}
+
+repair_pair_sha512_file() {
+    local org_file="$1"
+    local out_file="$2"
+    local sha_file="$3"
+
+    prune_missing_paths_from_sha512_file "$sha_file"
+    ensure_pair_sha_file "$org_file" "$out_file" "$sha_file"
+    sync_existing_transcript_hashes "$org_file" "$out_file" "$sha_file"
+}
+
 # Path transcribe-server writes before rename (…_ORG.txt / …_OUTPUT.txt).
 txt_file_for_audio() {
     local audio_file="$1"
@@ -1486,7 +1558,7 @@ build_voice_transcribe_queue() {
         if (( need_org || need_out )); then
             enqueue_pair_for_transcription "$org_file" "$out_file" "$sha_file"
         else
-            verify_pair_sha_or_exit "$sha_file"
+            verify_pair_sha_or_exit "$sha_file" "$org_file" "$out_file"
         fi
     done
 }
@@ -2006,15 +2078,27 @@ run_all_transcriptions_for_audio() {
 
 verify_pair_sha_or_exit() {
     local sha_file="$1"
+    local org_file="${2:-}"
+    local out_file="${3:-}"
 
     [[ -e "$sha_file" ]] || return 0
 
     if verify_sha512_file "$sha_file"; then
         echo -e "${CYAN}SHA512 VERIFIED:${RESET} $sha_file"
-    else
-        echo -e "${YELLOW}SHA512 VERIFY FAILED:${RESET} $sha_file"
-        exit 1
+        return 0
     fi
+
+    if [[ -n "$org_file" && -n "$out_file" ]]; then
+        echo -e "${YELLOW}SHA512:${RESET} $sha_file has stale or missing paths — repairing from files on disk."
+        repair_pair_sha512_file "$org_file" "$out_file" "$sha_file"
+        if verify_sha512_file "$sha_file"; then
+            echo -e "${CYAN}SHA512 VERIFIED:${RESET} $sha_file (repaired)"
+            return 0
+        fi
+    fi
+
+    echo -e "${YELLOW}SHA512 VERIFY FAILED:${RESET} $sha_file"
+    exit 1
 }
 
 queue_or_print_missing_transcriptions() {
@@ -2066,11 +2150,12 @@ queue_or_print_missing_transcriptions() {
         return 0
     fi
 
+    prune_missing_paths_from_sha512_file "$sha_file"
     ensure_pair_sha_file "$org_file" "$out_file" "$sha_file"
     sync_existing_transcript_hashes "$org_file" "$out_file" "$sha_file"
 
     if (( ! need_org && ! need_out )); then
-        verify_pair_sha_or_exit "$sha_file"
+        verify_pair_sha_or_exit "$sha_file" "$org_file" "$out_file"
     fi
 }
 
@@ -2089,7 +2174,7 @@ run_transcriptions_for_pair() {
 
     check_transcript_loops_for_pair "$org_file" "$out_file" "$sha_file"
     sync_existing_transcript_hashes "$org_file" "$out_file" "$sha_file"
-    verify_pair_sha_or_exit "$sha_file"
+    verify_pair_sha_or_exit "$sha_file" "$org_file" "$out_file"
     voice_processing_end
     ((++stats_pairs_transcribed))
 }
@@ -2260,6 +2345,7 @@ backfill_existing_pair_sha() {
     local sha_file="$3"
 
     if [[ -e "$sha_file" ]]; then
+        echo "$(voice_ts) Checking existing pair: $(basename "$org_file")"
         queue_or_print_missing_transcriptions "$org_file" "$out_file" "$sha_file"
         return 0
     fi
@@ -2414,7 +2500,8 @@ existing_pair_is_complete_for_batch() {
     local sha_file="$3"
 
     [[ -e "$org_file" && -e "$out_file" && -e "$sha_file" ]] || return 1
-    verify_sha512_file "$sha_file" || return 1
+    pair_media_hashes_valid_in_sha "$sha_file" "$org_file" "$out_file" || return 1
+    verify_sha512_file_existing_only "$sha_file" || return 1
 
     if [[ "$DO_TRANSCRIPTION" == "yes" ]]; then
         pair_needs_transcript_redo_offer "$org_file" "$out_file" && return 1
