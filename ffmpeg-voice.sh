@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.05.27 - v. 3.9.1 - fix loop-detection awk for mawk/busybox (no ternary in exit)
 # 2026.05.27 - v. 3.9 - prompt redo when legacy/unflagged-loop transcripts; keep valid ORG/OUTPUT sha hashes
 # 2026.05.27 - v. 3.8 - four transcripts per pair (ORG/OUTPUT x VAD/noVAD); dual whisper host/port config
 # 2026.05.27 - v. 3.7 - detect repeated transcript lines; rename to *_ORG/_OUTPUT_POSSIBLE_LOOP.txt
