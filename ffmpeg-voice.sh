@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.05.30 - v. 3.41 - Ctrl-C: remove in-flight transcript (server .txt path); quiet python on interrupt
 # 2026.05.30 - v. 3.40 - print Whisper endpoint OK (ping + TCP) before each transcribe when already up
 # 2026.05.30 - v. 3.39 - compact one-line OK for complete existing pairs (no huge pair block / double boxes)
 # 2026.05.30 - v. 3.38 - drop redundant "not auto-skipped" line; short hint when legacy .txt will be removed
@@ -386,9 +387,6 @@ run_whisper_transcription_to_file() {
         | python3 -c '
 import sys, json
 
-MAX_CHARS = int(sys.argv[1])
-d = json.load(sys.stdin)
-
 def fmt(x):
     h = int(x // 3600)
     m = int((x % 3600) // 60)
@@ -396,36 +394,41 @@ def fmt(x):
     ms = int(round((x - int(x)) * 1000))
     return f"{h:02d}:{m:02d}:{sec:02d}.{ms:03d}"
 
-segments = d["segments"]
-merged = []
+try:
+    MAX_CHARS = int(sys.argv[1])
+    d = json.load(sys.stdin)
+    segments = d["segments"]
+    merged = []
 
-cur_start = None
-cur_end = None
-cur_text = ""
+    cur_start = None
+    cur_end = None
+    cur_text = ""
 
-for s in segments:
-    text = " ".join(s["text"].split()).strip()
-    if not text:
-        continue
+    for s in segments:
+        text = " ".join(s["text"].split()).strip()
+        if not text:
+            continue
 
-    if cur_text == "":
-        cur_start = s["start"]
-        cur_end = s["end"]
-        cur_text = text
-    elif len(cur_text) + 1 + len(text) <= MAX_CHARS:
-        cur_text += " " + text
-        cur_end = s["end"]
-    else:
+        if cur_text == "":
+            cur_start = s["start"]
+            cur_end = s["end"]
+            cur_text = text
+        elif len(cur_text) + 1 + len(text) <= MAX_CHARS:
+            cur_text += " " + text
+            cur_end = s["end"]
+        else:
+            merged.append((cur_start, cur_end, cur_text))
+            cur_start = s["start"]
+            cur_end = s["end"]
+            cur_text = text
+
+    if cur_text:
         merged.append((cur_start, cur_end, cur_text))
-        cur_start = s["start"]
-        cur_end = s["end"]
-        cur_text = text
 
-if cur_text:
-    merged.append((cur_start, cur_end, cur_text))
-
-for start, end, text in merged:
-    print(f"[{fmt(start)} --> {fmt(end)}]   {text}")
+    for start, end, text in merged:
+        print(f"[{fmt(start)} --> {fmt(end)}]   {text}")
+except KeyboardInterrupt:
+    sys.exit(130)
 ' "$max_chars" >"$output_txt"
 
     if [[ ! -s "$output_txt" ]]; then
@@ -478,6 +481,9 @@ current_new_in=""
 current_out=""
 current_renamed=no
 current_txt_file=""
+transcription_in_flight=no
+current_transcription_write_path=""
+current_transcription_target_path=""
 
 print_voice_size_summary() {
     local r old rest mid new org_total=0 out_total=0 sz
@@ -2285,6 +2291,29 @@ should_delete_partial_txt_on_interrupt() {
     (( size_bytes <= PARTIAL_TXT_DELETE_MAX_BYTES ))
 }
 
+# Remove the file whisper writes before rename (…_ORG.txt / …_OUTPUT.txt) when Ctrl-C mid-request.
+remove_inflight_transcription_outputs() {
+    local msg=""
+    local size_bytes
+
+    [[ "$transcription_in_flight" == yes ]] || return 0
+
+    if [[ -n "$current_transcription_write_path" && -e "$current_transcription_write_path" ]]; then
+        size_bytes="$(file_size_bytes "$current_transcription_write_path")"
+        rm -f -- "$current_transcription_write_path"
+        msg="REMOVED INCOMPLETE TRANSCRIPT (interrupted): $current_transcription_write_path (${size_bytes} bytes)"
+    fi
+
+    transcription_in_flight=no
+    current_transcription_write_path=""
+    current_transcription_target_path=""
+    current_txt_file=""
+
+    if [[ -n "$msg" ]]; then
+        printf '%s\n' "$msg"
+    fi
+}
+
 run_one_transcription_variant() {
     local audio_file="$1"
     local sha_file="$2"
@@ -2313,6 +2342,9 @@ run_one_transcription_variant() {
     server_base="$(txt_file_for_audio "$audio_file")"
     variant_txt="$(transcript_variant_path_for_audio "$audio_file" "$variant_suffix")"
     current_txt_file="$variant_txt"
+    current_transcription_write_path="$server_base"
+    current_transcription_target_path="$variant_txt"
+    transcription_in_flight=yes
 
     echo -e "${CYAN}TRANSCRIBE (${variant_suffix}):${RESET} ${whisper_host}:${whisper_port} $ARROW $variant_txt"
     if [[ "$whisper_endpoint_announced_key" != "${whisper_host}:${whisper_port}" ]]; then
@@ -2321,16 +2353,23 @@ run_one_transcription_variant() {
     echo -e "${CYAN}TRANSCRIBE URL:${RESET} $(whisper_inference_url "$whisper_host" "$whisper_port")"
 
     if ! run_whisper_transcription_to_file "$whisper_host" "$whisper_port" "$audio_file" "$server_base"; then
+        transcription_in_flight=no
+        current_transcription_write_path=""
+        current_transcription_target_path=""
+        current_txt_file=""
         exit 1
     fi
 
     if [[ "$server_base" != "$variant_txt" ]]; then
         mv -f -- "$server_base" "$variant_txt"
     fi
+    current_transcription_write_path=""
 
     flag_transcript_loop_if_needed "$variant_txt" "$sha_file"
     resolved_txt="$(transcript_variant_resolved_path "$variant_txt")"
     append_sha512_for_file_if_missing "$sha_file" "$resolved_txt"
+    transcription_in_flight=no
+    current_transcription_target_path=""
     current_txt_file=""
 }
 
@@ -2632,11 +2671,18 @@ cleanup_current_file() {
     local restored_msg=""
     local txt_removed_msg=""
 
+    txt_removed_msg="$(remove_inflight_transcription_outputs)"
+
     if [[ -n "$current_txt_file" ]] && should_delete_partial_txt_on_interrupt "$current_txt_file"; then
         local txt_size
         txt_size="$(file_size_bytes "$current_txt_file")"
         rm -f -- "$current_txt_file"
-        txt_removed_msg="REMOVED PARTIAL TRANSCRIPT: $current_txt_file (${txt_size} bytes)"
+        if [[ -n "$txt_removed_msg" ]]; then
+            txt_removed_msg+=$'\n'"REMOVED PARTIAL TRANSCRIPT: $current_txt_file (${txt_size} bytes)"
+        else
+            txt_removed_msg="REMOVED PARTIAL TRANSCRIPT: $current_txt_file (${txt_size} bytes)"
+        fi
+        current_txt_file=""
     fi
 
     if [[ "$current_renamed" == "yes" ]]; then
@@ -2723,6 +2769,9 @@ process_one_file() {
     current_out=""
     current_renamed=no
     current_txt_file=""
+    transcription_in_flight=no
+    current_transcription_write_path=""
+    current_transcription_target_path=""
 }
 
 # Skip prompts when there is nothing this run would do for the pair.
