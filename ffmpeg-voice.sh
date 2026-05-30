@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.05.30 - v. 3.40 - print Whisper endpoint OK (ping + TCP) before each transcribe when already up
 # 2026.05.30 - v. 3.39 - compact one-line OK for complete existing pairs (no huge pair block / double boxes)
 # 2026.05.30 - v. 3.38 - drop redundant "not auto-skipped" line; short hint when legacy .txt will be removed
 # 2026.05.30 - v. 3.37 - process selected existing pairs after each prompt batch (not only at the end)
@@ -344,6 +345,13 @@ whisper_endpoint_status_label() {
     fi
 }
 
+print_whisper_endpoint_ok() {
+    local host="$1"
+    local port="$2"
+
+    echo -e "Whisper endpoint: ${CYAN}${host}:${port}${RESET} — ${GREEN}OK${RESET} (ping + TCP)"
+}
+
 transcription_dependencies_ok() {
     command -v curl >/dev/null 2>&1 && command -v python3 >/dev/null 2>&1
 }
@@ -446,6 +454,7 @@ skip_remaining_transcription_prompts=no
 skip_remaining_redo_prompts=no
 skip_remaining_existing_pair_prompts=no
 VOICE_SUMMARY_DONE=no
+whisper_endpoint_announced_key=""
 
 declare -a affected_list=()
 declare -a all_files=()
@@ -1229,6 +1238,7 @@ ensure_transcribe_endpoint_ready() {
             echo "  Still waiting for ${host}:${port} (${label})..."
         done
         echo -e "${GREEN}TRANSCRIPTION SERVER UP:${RESET} ${host}:${port} (${label})"
+        whisper_endpoint_announced_key="${host}:${port}"
         return 0
     done
 }
@@ -2305,6 +2315,9 @@ run_one_transcription_variant() {
     current_txt_file="$variant_txt"
 
     echo -e "${CYAN}TRANSCRIBE (${variant_suffix}):${RESET} ${whisper_host}:${whisper_port} $ARROW $variant_txt"
+    if [[ "$whisper_endpoint_announced_key" != "${whisper_host}:${whisper_port}" ]]; then
+        print_whisper_endpoint_ok "$whisper_host" "$whisper_port"
+    fi
     echo -e "${CYAN}TRANSCRIBE URL:${RESET} $(whisper_inference_url "$whisper_host" "$whisper_port")"
 
     if ! run_whisper_transcription_to_file "$whisper_host" "$whisper_port" "$audio_file" "$server_base"; then
