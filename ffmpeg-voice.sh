@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.05.30 - v. 3.37 - process selected existing pairs after each prompt batch (not only at the end)
 # 2026.05.30 - v. 3.36 - defer existing-pair work until after prompts; legacy .txt does not block transcription
 # 2026.05.28 - v. 3.35 - do not exit on sha512 repair fail; run transcription after existing-pair Yes
 # 2026.05.28 - v. 3.34 - inline whisper HTTP transcription; VAD/noVAD host:port (no hardcoded transcribe-server.sh curl)
@@ -2761,20 +2762,31 @@ existing_pair_incomplete_summary() {
     echo "${parts[*]}"
 }
 
-process_selected_existing_pairs_work() {
-    local i total
+process_existing_pairs_batch_selections() {
+    local -n _orgs=$1
+    local -n _outs=$2
+    local -n _shas=$3
+    local -n _selected=$4
+    local i selected_total=0 selected_pos=0 selected_left_after=0
 
-    (( ${#voice_active_orgs[@]} == 0 )) && return 0
+    (( ${#_orgs[@]} == 0 )) && return 0
 
-    total=${#voice_active_orgs[@]}
+    for decision in "${_selected[@]}"; do
+        [[ "$decision" == "yes" ]] && ((selected_total+=1))
+    done
+    (( selected_total == 0 )) && return 0
+
     echo
-    print_suggestion "SELECTED EXISTING PAIRS: processing ${total} pair(s) (transcription / sha512) — this may take a long time."
+    print_suggestion "EXISTING PAIRS BATCH: processing ${selected_total} selected pair(s) from this batch (transcription / sha512)..."
 
-    for i in "${!voice_active_orgs[@]}"; do
-        prepare_selected_existing_pair \
-            "${voice_active_orgs[$i]}" \
-            "${voice_active_outs[$i]}" \
-            "${voice_active_shas[$i]}"
+    for i in "${!_orgs[@]}"; do
+        [[ "${_selected[$i]:-}" == "yes" ]] || continue
+        ((selected_pos+=1))
+        selected_left_after=$(( selected_total - selected_pos ))
+        voice_mark_pair_active "${_orgs[$i]}" "${_outs[$i]}" "${_shas[$i]}"
+        echo
+        print_processing_progress "$selected_pos" "$selected_total" "$selected_left_after" "${#_orgs[@]}"
+        prepare_selected_existing_pair "${_orgs[$i]}" "${_outs[$i]}" "${_shas[$i]}"
     done
 }
 
@@ -2877,7 +2889,6 @@ process_existing_pairs_batch() {
             if [[ "$accept_all_remaining" == "yes" ]]; then
                 batch_selected+=("yes")
                 ((++batch_yes))
-                voice_mark_pair_active "$org_file" "$out_file" "$sha_file"
                 batch_orgs+=("$org_file")
                 batch_outs+=("$out_file")
                 batch_shas+=("$sha_file")
@@ -2920,7 +2931,6 @@ process_existing_pairs_batch() {
                     batch_selected+=("yes")
                     ((++batch_yes))
                     accept_all_remaining=yes
-                    voice_mark_pair_active "$org_file" "$out_file" "$sha_file"
                     batch_orgs+=("$org_file")
                     batch_outs+=("$out_file")
                     batch_shas+=("$sha_file")
