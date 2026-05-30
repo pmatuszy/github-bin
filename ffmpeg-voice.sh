@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.05.30 - v. 3.36 - defer existing-pair work until after prompts; legacy .txt does not block transcription
 # 2026.05.28 - v. 3.35 - do not exit on sha512 repair fail; run transcription after existing-pair Yes
 # 2026.05.28 - v. 3.34 - inline whisper HTTP transcription; VAD/noVAD host:port (no hardcoded transcribe-server.sh curl)
 # 2026.05.28 - v. 3.33 - pair block: ***MISSING*** on absent paths; list legacy *_ORG.txt / *_OUTPUT.txt as no longer needed
@@ -1595,10 +1596,29 @@ pair_needs_transcript_redo_offer() {
     local out_file="$2"
     local legacy unflagged
 
-    mapfile -t legacy < <(pair_list_legacy_transcript_files "$org_file" "$out_file")
     mapfile -t unflagged < <(pair_list_unflagged_loop_transcript_files "$org_file" "$out_file")
+    (( ${#unflagged[@]} > 0 )) && return 0
 
-    (( ${#legacy[@]} > 0 || ${#unflagged[@]} > 0 ))
+    mapfile -t legacy < <(pair_list_legacy_transcript_files "$org_file" "$out_file")
+    (( ${#legacy[@]} == 0 )) && return 1
+
+    # Legacy-only cleanup redo when new-format variants already exist.
+    transcript_all_variants_exist_for_audio "$org_file" \
+        && transcript_all_variants_exist_for_audio "$out_file"
+}
+
+remove_legacy_transcript_files_for_pair() {
+    local org_file="$1"
+    local out_file="$2"
+    local -a legacy=()
+    local txt_path
+
+    mapfile -t legacy < <(pair_list_legacy_transcript_files "$org_file" "$out_file")
+    for txt_path in "${legacy[@]}"; do
+        [[ -e "$txt_path" ]] || continue
+        rm -f -- "$txt_path"
+        echo -e "${YELLOW}LEGACY REMOVED:${RESET} $txt_path"
+    done
 }
 
 pair_media_hashes_valid_in_sha() {
@@ -2547,16 +2567,14 @@ prepare_selected_existing_pair() {
     local sha_file="$3"
 
     if [[ -e "$sha_file" ]]; then
-        echo "$(voice_ts) Preparing selected pair: $(basename "$org_file")"
+        echo "$(voice_ts) Processing selected pair: $(basename "$org_file")"
         maybe_repair_sha512_if_stale_references "$org_file" "$out_file" "$sha_file" || true
-        enqueue_transcript_redo_if_needed "$org_file" "$out_file" "$sha_file"
-        if pair_on_transcript_redo_queue "$org_file"; then
-            return 0
-        fi
+        remove_legacy_transcript_files_for_pair "$org_file" "$out_file"
         if pair_needs_transcription_work "$org_file" "$out_file"; then
             run_transcriptions_for_pair "$org_file" "$out_file" "$sha_file"
         else
             sync_existing_transcript_hashes "$org_file" "$out_file" "$sha_file"
+            enqueue_transcript_redo_if_needed "$org_file" "$out_file" "$sha_file"
         fi
         return 0
     fi
@@ -2743,6 +2761,23 @@ existing_pair_incomplete_summary() {
     echo "${parts[*]}"
 }
 
+process_selected_existing_pairs_work() {
+    local i total
+
+    (( ${#voice_active_orgs[@]} == 0 )) && return 0
+
+    total=${#voice_active_orgs[@]}
+    echo
+    print_suggestion "SELECTED EXISTING PAIRS: processing ${total} pair(s) (transcription / sha512) — this may take a long time."
+
+    for i in "${!voice_active_orgs[@]}"; do
+        prepare_selected_existing_pair \
+            "${voice_active_orgs[$i]}" \
+            "${voice_active_outs[$i]}" \
+            "${voice_active_shas[$i]}"
+    done
+}
+
 print_existing_pairs_skip_section() {
     local -n _skip_orgs=$1
     local -n _skip_outs=$2
@@ -2843,7 +2878,6 @@ process_existing_pairs_batch() {
                 batch_selected+=("yes")
                 ((++batch_yes))
                 voice_mark_pair_active "$org_file" "$out_file" "$sha_file"
-                prepare_selected_existing_pair "$org_file" "$out_file" "$sha_file"
                 batch_orgs+=("$org_file")
                 batch_outs+=("$out_file")
                 batch_shas+=("$sha_file")
@@ -2887,7 +2921,6 @@ process_existing_pairs_batch() {
                     ((++batch_yes))
                     accept_all_remaining=yes
                     voice_mark_pair_active "$org_file" "$out_file" "$sha_file"
-                    prepare_selected_existing_pair "$org_file" "$out_file" "$sha_file"
                     batch_orgs+=("$org_file")
                     batch_outs+=("$out_file")
                     batch_shas+=("$sha_file")
@@ -2900,7 +2933,6 @@ process_existing_pairs_batch() {
                         batch_selected+=("yes")
                         ((++batch_yes))
                         voice_mark_pair_active "$org_file" "$out_file" "$sha_file"
-                        prepare_selected_existing_pair "$org_file" "$out_file" "$sha_file"
                     else
                         batch_selected+=("no")
                         ((++batch_no))
@@ -2923,6 +2955,8 @@ process_existing_pairs_batch() {
         [[ "$skip_remaining_existing_pair_prompts" == yes ]] && break
         [[ "$finish_batch_now" == yes ]] && break
     done
+
+    process_selected_existing_pairs_work
 }
 
 process_exclude_sha_only() {
