@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.05.30 - v. 3.45 - Saved: print final variant transcript path (not intermediate *_ORG.txt)
 # 2026.05.30 - v. 3.44 - terminal title: [cwd] full script path; restore on exit
 # 2026.05.30 - v. 3.43 - selected existing pair Yes: redo all four transcripts (not skip present variants)
 # 2026.05.30 - v. 3.42 - drop redundant TRANSCRIBE URL line (endpoint OK + host:port already shown)
@@ -483,7 +484,6 @@ except KeyboardInterrupt:
         return 1
     fi
 
-    echo -e "${CYAN}Saved:${RESET} $output_txt"
     return 0
 }
 
@@ -2439,6 +2439,7 @@ run_one_transcription_variant() {
 
     flag_transcript_loop_if_needed "$variant_txt" "$sha_file"
     resolved_txt="$(transcript_variant_resolved_path "$variant_txt")"
+    echo -e "${CYAN}Saved:${RESET} $resolved_txt"
     append_sha512_for_file_if_missing "$sha_file" "$resolved_txt"
     transcription_in_flight=no
     current_transcription_target_path=""
