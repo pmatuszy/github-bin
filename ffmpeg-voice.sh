@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.05.30 - v. 3.44 - terminal title: [cwd] full script path; restore on exit
 # 2026.05.30 - v. 3.43 - selected existing pair Yes: redo all four transcripts (not skip present variants)
 # 2026.05.30 - v. 3.42 - drop redundant TRANSCRIBE URL line (endpoint OK + host:port already shown)
 # 2026.05.30 - v. 3.41 - Ctrl-C: remove in-flight transcript (server .txt path); quiet python on interrupt
@@ -180,6 +181,49 @@ parse_cli_args "$@"
 
 # shellcheck disable=SC1091
 . /root/bin/_script_header.sh "${HEADER_EXTRA_ARGS[@]}"
+
+VOICE_WINDOW_TITLE_PUSHED=0
+
+# xterm-style title: [cwd] /full/path/to/script.sh (see rename.sh); no-op without a tty.
+voice_window_title_restore() {
+    (( VOICE_WINDOW_TITLE_PUSHED == 1 )) || return 0
+    if [[ -w /dev/tty ]] 2>/dev/null; then
+        printf '\033[23t' >/dev/tty 2>/dev/null || true
+    fi
+    VOICE_WINDOW_TITLE_PUSHED=0
+}
+
+voice_window_title_apply() {
+    local title="" script_path="$0" cwd max_len=400
+
+    cwd="$(pwd -P 2>/dev/null || pwd)"
+    if [[ -e "$script_path" ]]; then
+        if command -v realpath >/dev/null 2>&1; then
+            script_path="$(realpath "$script_path" 2>/dev/null)" || script_path="$0"
+        else
+            script_path="$(cd "$(dirname -- "$script_path")" 2>/dev/null && pwd -P)/$(basename -- "$script_path")" \
+                2>/dev/null || script_path="$0"
+        fi
+    fi
+    title="[${cwd}] ${script_path}"
+    if (( ${#title} > max_len )); then
+        title="${title:0:$(( max_len - 3 ))}..."
+    fi
+
+    if [[ -n "${STY:-}" ]]; then
+        echo -ne "${tcScrTitleStart}${title}${tcScrTitleEnd}"
+    fi
+
+    [[ -w /dev/tty ]] 2>/dev/null || return 0
+    printf '\033[22t' >/dev/tty 2>/dev/null || true
+    printf '\033]0;%s\033\\' "$title" >/dev/tty 2>/dev/null \
+        || printf '\033]0;%s\a' "$title" >/dev/tty 2>/dev/null || true
+    printf '\033]2;%s\033\\' "$title" >/dev/tty 2>/dev/null \
+        || printf '\033]2;%s\a' "$title" >/dev/tty 2>/dev/null || true
+    VOICE_WINDOW_TITLE_PUSHED=1
+}
+
+voice_window_title_apply
 
 # ============================================================
 # DEFAULT SETTINGS
@@ -631,6 +675,7 @@ print_voice_statistics_summary() {
 voice_finish_run() {
     [[ "$VOICE_SUMMARY_DONE" == yes ]] && return 0
     VOICE_SUMMARY_DONE=yes
+    voice_window_title_restore
     print_voice_statistics_summary
     print_voice_timing_summary
     # shellcheck disable=SC1091
