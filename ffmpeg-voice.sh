@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.05.30 - v. 3.38 - drop redundant "not auto-skipped" line; short hint when legacy .txt will be removed
 # 2026.05.30 - v. 3.37 - process selected existing pairs after each prompt batch (not only at the end)
 # 2026.05.30 - v. 3.36 - defer existing-pair work until after prompts; legacy .txt does not block transcription
 # 2026.05.28 - v. 3.35 - do not exit on sha512 repair fail; run transcription after existing-pair Yes
@@ -1065,7 +1066,7 @@ print_transcription_pair_legacy_lines() {
 
     for legacy_path in "${legacy[@]}"; do
         if [[ "$label_printed" == no ]]; then
-            print_transcription_pair_line "$value_col" "LEGACY (no longer needed):" \
+            print_transcription_pair_line "$value_col" "LEGACY (removed if you include pair):" \
                 "$legacy_path" "$color_mode"
             label_printed=yes
         else
