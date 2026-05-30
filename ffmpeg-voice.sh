@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.05.30 - v. 3.42 - drop redundant TRANSCRIBE URL line (endpoint OK + host:port already shown)
 # 2026.05.30 - v. 3.41 - Ctrl-C: remove in-flight transcript (server .txt path); quiet python on interrupt
 # 2026.05.30 - v. 3.40 - print Whisper endpoint OK (ping + TCP) before each transcribe when already up
 # 2026.05.30 - v. 3.39 - compact one-line OK for complete existing pairs (no huge pair block / double boxes)
@@ -2350,7 +2351,6 @@ run_one_transcription_variant() {
     if [[ "$whisper_endpoint_announced_key" != "${whisper_host}:${whisper_port}" ]]; then
         print_whisper_endpoint_ok "$whisper_host" "$whisper_port"
     fi
-    echo -e "${CYAN}TRANSCRIBE URL:${RESET} $(whisper_inference_url "$whisper_host" "$whisper_port")"
 
     if ! run_whisper_transcription_to_file "$whisper_host" "$whisper_port" "$audio_file" "$server_base"; then
         transcription_in_flight=no
