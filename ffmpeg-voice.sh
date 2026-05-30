@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.05.30 - v. 3.43 - selected existing pair Yes: redo all four transcripts (not skip present variants)
 # 2026.05.30 - v. 3.42 - drop redundant TRANSCRIBE URL line (endpoint OK + host:port already shown)
 # 2026.05.30 - v. 3.41 - Ctrl-C: remove in-flight transcript (server .txt path); quiet python on interrupt
 # 2026.05.30 - v. 3.40 - print Whisper endpoint OK (ping + TCP) before each transcribe when already up
@@ -485,6 +486,7 @@ current_txt_file=""
 transcription_in_flight=no
 current_transcription_write_path=""
 current_transcription_target_path=""
+transcription_force_redo=no
 
 print_voice_size_summary() {
     local r old rest mid new org_total=0 out_total=0 sz
@@ -1518,6 +1520,26 @@ transcript_variant_exists_for_audio() {
     [[ -e "$variant_txt" || -e "$loop_txt" ]]
 }
 
+# Remove one variant (and loop rename) before re-transcribing; optional sha512 line cleanup.
+remove_transcript_variant_files_for_audio() {
+    local audio_file="$1"
+    local variant_suffix="$2"
+    local sha_file="${3:-}"
+    local variant_txt loop_txt base_txt path
+
+    variant_txt="$(transcript_variant_path_for_audio "$audio_file" "$variant_suffix")"
+    loop_txt="$(txt_file_loop_variant "$variant_txt")"
+    base_txt="$(txt_file_for_audio "$audio_file")"
+
+    for path in "$variant_txt" "$loop_txt" "$base_txt"; do
+        [[ -e "$path" ]] || continue
+        if [[ -n "$sha_file" ]] && sha_file_has_entry "$sha_file" "$path"; then
+            remove_sha512_entry "$sha_file" "$path"
+        fi
+        rm -f -- "$path"
+    done
+}
+
 transcript_all_variants_exist_for_audio() {
     local audio_file="$1"
     local tag
@@ -2323,13 +2345,19 @@ run_one_transcription_variant() {
     local whisper_port="$5"
     local server_base variant_txt resolved_txt
 
+    variant_txt="$(transcript_variant_path_for_audio "$audio_file" "$variant_suffix")"
+
     if transcript_variant_exists_for_audio "$audio_file" "$variant_suffix"; then
-        variant_txt="$(transcript_variant_path_for_audio "$audio_file" "$variant_suffix")"
-        echo -e "${YELLOW}TRANSCRIPTION SKIP (${variant_suffix}):${RESET} already present — ${variant_txt}"
-        [[ -e "$variant_txt" ]] && flag_transcript_loop_if_needed "$variant_txt" "$sha_file"
-        resolved_txt="$(transcript_variant_resolved_path "$variant_txt")"
-        append_sha512_for_file_if_missing "$sha_file" "$resolved_txt"
-        return 0
+        if [[ "$transcription_force_redo" == yes ]]; then
+            echo -e "${YELLOW}TRANSCRIPTION REDO (${variant_suffix}):${RESET} already present — ${variant_txt} — redoing"
+            remove_transcript_variant_files_for_audio "$audio_file" "$variant_suffix" "$sha_file"
+        else
+            echo -e "${YELLOW}TRANSCRIPTION SKIP (${variant_suffix}):${RESET} already present — ${variant_txt}"
+            [[ -e "$variant_txt" ]] && flag_transcript_loop_if_needed "$variant_txt" "$sha_file"
+            resolved_txt="$(transcript_variant_resolved_path "$variant_txt")"
+            append_sha512_for_file_if_missing "$sha_file" "$resolved_txt"
+            return 0
+        fi
     fi
 
     if ! transcription_dependencies_ok; then
@@ -2341,7 +2369,6 @@ run_one_transcription_variant() {
     check_free_space_or_exit "."
 
     server_base="$(txt_file_for_audio "$audio_file")"
-    variant_txt="$(transcript_variant_path_for_audio "$audio_file" "$variant_suffix")"
     current_txt_file="$variant_txt"
     current_transcription_write_path="$server_base"
     current_transcription_target_path="$variant_txt"
@@ -2625,11 +2652,14 @@ prepare_selected_existing_pair() {
         echo "$(voice_ts) Processing selected pair: $(basename "$org_file")"
         maybe_repair_sha512_if_stale_references "$org_file" "$out_file" "$sha_file" || true
         remove_legacy_transcript_files_for_pair "$org_file" "$out_file"
-        if pair_needs_transcription_work "$org_file" "$out_file"; then
+        if [[ "$DO_TRANSCRIPTION" == "yes" ]]; then
+            print_suggestion "Re-transcribing all variants (ORG/OUTPUT × VAD/noVAD) for this selected pair."
+            prepare_sha_for_transcript_redo "$sha_file" "$org_file" "$out_file"
+            transcription_force_redo=yes
             run_transcriptions_for_pair "$org_file" "$out_file" "$sha_file"
+            transcription_force_redo=no
         else
             sync_existing_transcript_hashes "$org_file" "$out_file" "$sha_file"
-            enqueue_transcript_redo_if_needed "$org_file" "$out_file" "$sha_file"
         fi
         return 0
     fi
