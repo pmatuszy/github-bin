@@ -2942,7 +2942,6 @@ process_existing_pairs_batch() {
                     if [[ "$BATCH_CHOICE_DECISION" == yes ]]; then
                         batch_selected+=("yes")
                         ((++batch_yes))
-                        voice_mark_pair_active "$org_file" "$out_file" "$sha_file"
                     else
                         batch_selected+=("no")
                         ((++batch_no))
@@ -2958,6 +2957,8 @@ process_existing_pairs_batch() {
             ((batch_count+=1))
         done
 
+        process_existing_pairs_batch_selections batch_orgs batch_outs batch_shas batch_selected
+
         if [[ "$finish_batch_now" == yes ]]; then
             idx=$(batch_prompt_finish_skip_idx "$idx" "$batch_size_now" "$batch_count")
         fi
@@ -2965,8 +2966,6 @@ process_existing_pairs_batch() {
         [[ "$skip_remaining_existing_pair_prompts" == yes ]] && break
         [[ "$finish_batch_now" == yes ]] && break
     done
-
-    process_selected_existing_pairs_work
 }
 
 process_exclude_sha_only() {
