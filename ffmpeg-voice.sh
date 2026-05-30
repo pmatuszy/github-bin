@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.05.30 - v. 3.39 - compact one-line OK for complete existing pairs (no huge pair block / double boxes)
 # 2026.05.30 - v. 3.38 - drop redundant "not auto-skipped" line; short hint when legacy .txt will be removed
 # 2026.05.30 - v. 3.37 - process selected existing pairs after each prompt batch (not only at the end)
 # 2026.05.30 - v. 3.36 - defer existing-pair work until after prompts; legacy .txt does not block transcription
@@ -1021,7 +1022,7 @@ transcription_pair_block_value_col() {
         t="OUTPUT TRANSCRIPT (${tag}):"
         (( ${#t} > label_width )) && label_width=${#t}
     done
-    t="LEGACY (no longer needed):"
+    t="LEGACY (removed if you include pair):"
     (( ${#t} > label_width )) && label_width=${#t}
     echo $(( label_width + 1 ))
 }
@@ -2727,40 +2728,19 @@ existing_pair_is_complete_for_batch() {
     return 0
 }
 
-existing_pair_incomplete_summary() {
+print_existing_pair_legacy_hint() {
     local org_file="$1"
     local out_file="$2"
-    local sha_file="$3"
-    local tag variant_txt parts=()
-
-    [[ -e "$org_file" ]] || parts+=("ORG audio missing")
-    [[ -e "$out_file" ]] || parts+=("OUTPUT audio missing")
-
-    if [[ "$DO_TRANSCRIPTION" == "yes" ]]; then
-        for tag in "${TRANSCRIPT_VARIANT_SUFFIXES[@]}"; do
-            if ! transcript_variant_exists_for_audio "$org_file" "$tag"; then
-                variant_txt="$(transcript_variant_path_for_audio "$org_file" "$tag")"
-                parts+=("$(basename "$variant_txt") ***MISSING***")
-            fi
-            if ! transcript_variant_exists_for_audio "$out_file" "$tag"; then
-                variant_txt="$(transcript_variant_path_for_audio "$out_file" "$tag")"
-                parts+=("$(basename "$variant_txt") ***MISSING***")
-            fi
-        done
-    elif [[ ! -e "$sha_file" ]]; then
-        parts+=("$(basename "$sha_file") ***MISSING***")
-    fi
-
     local -a legacy=()
-    local legacy_path
-    mapfile -t legacy < <(pair_list_legacy_transcript_files "$org_file" "$out_file")
-    for legacy_path in "${legacy[@]}"; do
-        parts+=("$(basename "$legacy_path") is legacy (no longer needed — use _VAD/_noVAD)")
-    done
 
-    ((${#parts[@]} == 0)) && return 0
-    local IFS='; '
-    echo "${parts[*]}"
+    mapfile -t legacy < <(pair_list_legacy_transcript_files "$org_file" "$out_file")
+    (( ${#legacy[@]} == 0 )) && return 0
+
+    if (( ${#legacy[@]} == 1 )); then
+        print_suggestion "The legacy transcript file above will be deleted if you include this pair."
+    else
+        print_suggestion "The ${#legacy[@]} legacy transcript files above will be deleted if you include this pair."
+    fi
 }
 
 process_existing_pairs_batch_selections() {
@@ -2791,6 +2771,13 @@ process_existing_pairs_batch_selections() {
     done
 }
 
+print_existing_pair_ok_line() {
+    local org_file="$1"
+    local out_file="$2"
+
+    echo -e "  ${GREEN}OK:${RESET} $(basename "$org_file") + $(basename "$out_file") — media and all transcript variants on disk"
+}
+
 print_existing_pairs_skip_section() {
     local -n _skip_orgs=$1
     local -n _skip_outs=$2
@@ -2800,16 +2787,9 @@ print_existing_pairs_skip_section() {
     (( ${#_skip_orgs[@]} == 0 )) && return 0
 
     echo
-    print_suggestion "EXISTING PAIRS — ORG, OUTPUT, and all transcripts on disk; skipped without prompt:"
+    print_suggestion "EXISTING PAIRS — complete on disk; skipped without prompt (${#_skip_orgs[@]}):"
     for i in "${!_skip_orgs[@]}"; do
-        echo
-        if [[ "$have_boxes" == "yes" ]]; then
-            print_transcription_pair_block \
-                "${_skip_orgs[$i]}" "${_skip_outs[$i]}" "${_skip_shas[$i]}" | boxes -d stone
-        else
-            print_transcription_pair_block \
-                "${_skip_orgs[$i]}" "${_skip_outs[$i]}" "${_skip_shas[$i]}"
-        fi
+        print_existing_pair_ok_line "${_skip_orgs[$i]}" "${_skip_outs[$i]}"
     done
 }
 
@@ -2907,10 +2887,7 @@ process_existing_pairs_batch() {
                 "$batch_pos" "$batch_size_now" "$overall_pos" "$total_files" "$still_after_this" \
                 "$batch_yes" "$batch_no"
             print_transcription_pair_block "$org_file" "$out_file" "$sha_file"
-            incomplete_summary="$(existing_pair_incomplete_summary "$org_file" "$out_file" "$sha_file")"
-            if [[ -n "$incomplete_summary" ]]; then
-                print_suggestion "Why this pair is not auto-skipped: ${incomplete_summary}"
-            fi
+            print_existing_pair_legacy_hint "$org_file" "$out_file"
             read_batch_choice "Include this existing ORG/OUTPUT pair (transcribe missing variants / re-do if needed)?"
 
             case "$BATCH_CHOICE_ACTION" in
