@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.05.31 - v. 19.142.231100 - GoPro/camera raw: guard transform_gopro_camera_basename under set -e/ERR trap (no-metadata return 1 no longer prints "ERROR: command failed at line ..."); fall back to normal rename quietly
 # 2026.05.31 - v. 19.141.183500 - GoPro/camera raw + exiftool missing: stop polluting suggested NEW name (stderr not stdout); one-time prompt suggests video-pgm-install-exiftool.sh and offers [S]kip-this-run / [Q]uit
 # 2026.05.31 - v. 19.140.183200 - --version: print a short version banner (name + version) and exit; no paths/usage
 # 2026.05.26 - v. 19.139.151200 - GoPro exiftool: RENAME_EXIFTOOL defaults to bundled luks-buffalo2 path when unset (EXIFLOC still overrides)
@@ -6231,7 +6232,7 @@ transform_name() {
         done
     fi
 
-    local _gopro_applied=0 _gopro_try=""
+    local _gopro_applied=0 _gopro_try="" _gopro_rc=0
     if [[ -f "$f" ]] && gopro_camera_raw_basename_matches "$base"; then
         if ! resolve_rename_exiftool >/dev/null; then
             prompt_gopro_exiftool_missing_action "$f"
@@ -6239,11 +6240,23 @@ transform_name() {
             _transform_name_return_unchanged "$f"
             return 0
         fi
+        # transform_gopro_camera_basename returns non-zero when no usable camera
+        # metadata is found (e.g. empty/dummy file or unrecognized device); guard
+        # it so set -e / the ERR trap don't treat that as a fatal error.
+        local _tn_save_e_gp=0
+        [[ $- == *e* ]] && _tn_save_e_gp=1
+        set +e
         _gopro_try="$(transform_gopro_camera_basename "$f" "$base")"
-        if [[ -n "$_gopro_try" ]]; then
+        _gopro_rc=$?
+        if ((_tn_save_e_gp)); then
+            set -e
+        fi
+        if (( _gopro_rc == 0 )) && [[ -n "$_gopro_try" ]]; then
             newbase="$_gopro_try"
             _gopro_applied=1
             vlog "GoPro/camera exiftool rename: $base -> $_gopro_try"
+        else
+            vlog "GoPro/camera exiftool rename: no usable metadata for $base (rc=$_gopro_rc); falling back to normal rename"
         fi
     fi
 
