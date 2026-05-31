@@ -1,0 +1,171 @@
+#!/usr/bin/env bash
+#
+# video-pgm-install-exiftool.sh
+#
+# Installs the latest ExifTool under:
+#   /usr/local/Image-ExifTool-<version>
+#
+# Creates/updates symlinks:
+#   /usr/local/exiftool      -> /usr/local/Image-ExifTool-<version>
+#   /usr/local/bin/exiftool  -> /usr/local/exiftool/exiftool
+#
+# Official latest version:
+#   https://exiftool.org/ver.txt
+#
+
+set -euo pipefail
+
+BASE_URL="https://exiftool.org"
+VERSION_URL="${BASE_URL}/ver.txt"
+INSTALL_BASE="/usr/local"
+BIN_DIR="/usr/local/bin"
+
+need_cmd() {
+    if ! command -v "$1" >/dev/null 2>&1; then
+        echo "ERROR: Required command not found: $1" >&2
+        exit 1
+    fi
+}
+
+as_root_check() {
+    if [[ "${EUID}" -ne 0 ]]; then
+        echo "ERROR: Please run as root, for example:" >&2
+        echo "  sudo bash $0" >&2
+        exit 1
+    fi
+}
+
+detect_platform() {
+    local os arch
+
+    os="$(uname -s)"
+    arch="$(uname -m)"
+
+    if [[ "${os}" != "Linux" ]]; then
+        echo "ERROR: This installer is for Linux only. Detected OS: ${os}" >&2
+        exit 1
+    fi
+
+    case "${arch}" in
+        x86_64|amd64)
+            PLATFORM="linux-x86_64"
+            ;;
+        i386|i686)
+            PLATFORM="linux-x86"
+            ;;
+        aarch64|arm64)
+            PLATFORM="linux-arm64"
+            ;;
+        armv7l|armv6l|arm)
+            PLATFORM="linux-arm"
+            ;;
+        *)
+            echo "ERROR: Unsupported Linux architecture: ${arch}" >&2
+            exit 1
+            ;;
+    esac
+
+    echo "Detected platform: ${PLATFORM}"
+    echo "Note: ExifTool official Linux/Unix package is Perl-based and not CPU-specific."
+}
+
+download_file() {
+    local url="$1"
+    local output="$2"
+
+    if command -v curl >/dev/null 2>&1; then
+        curl -fsSL "$url" -o "$output"
+    elif command -v wget >/dev/null 2>&1; then
+        wget -q "$url" -O "$output"
+    else
+        echo "ERROR: Need curl or wget." >&2
+        exit 1
+    fi
+}
+
+get_latest_version() {
+    local version
+
+    version="$(download_file "${VERSION_URL}" - | tr -d '[:space:]')"
+
+    if [[ ! "${version}" =~ ^[0-9]+(\.[0-9]+)+$ ]]; then
+        echo "ERROR: Invalid ExifTool version received: '${version}'" >&2
+        exit 1
+    fi
+
+    echo "${version}"
+}
+
+main() {
+    as_root_check
+    detect_platform
+
+    need_cmd perl
+    need_cmd tar
+    need_cmd gzip
+    need_cmd ln
+    need_cmd mkdir
+    need_cmd rm
+
+    local version archive url tmpdir extracted_dir target_dir current_link bin_link
+
+    version="$(get_latest_version)"
+    archive="Image-ExifTool-${version}.tar.gz"
+    url="${BASE_URL}/${archive}"
+
+    extracted_dir="Image-ExifTool-${version}"
+    target_dir="${INSTALL_BASE}/${extracted_dir}"
+    current_link="${INSTALL_BASE}/exiftool"
+    bin_link="${BIN_DIR}/exiftool"
+
+    echo "Latest ExifTool version: ${version}"
+    echo "Download URL: ${url}"
+    echo "Install target: ${target_dir}"
+
+    tmpdir="$(mktemp -d)"
+    trap 'rm -rf "$tmpdir"' EXIT
+
+    cd "$tmpdir"
+
+    echo "Downloading ${archive}..."
+    download_file "$url" "$archive"
+
+    echo "Extracting..."
+    tar -xzf "$archive"
+
+    if [[ ! -x "${extracted_dir}/exiftool" ]]; then
+        echo "ERROR: Extracted exiftool executable not found." >&2
+        exit 1
+    fi
+
+    echo "Testing downloaded ExifTool..."
+    perl "${extracted_dir}/exiftool" -ver >/dev/null
+
+    if [[ -d "${target_dir}" ]]; then
+        echo "Target already exists: ${target_dir}"
+        echo "Leaving existing directory in place."
+    else
+        echo "Installing to ${target_dir}..."
+        mv "${extracted_dir}" "${target_dir}"
+    fi
+
+    echo "Creating symlink: ${current_link} -> ${target_dir}"
+    ln -sfn "${target_dir}" "${current_link}"
+
+    mkdir -p "${BIN_DIR}"
+
+    echo "Creating symlink: ${bin_link} -> ${current_link}/exiftool"
+    ln -sfn "${current_link}/exiftool" "${bin_link}"
+
+    echo "Verifying installation..."
+    "${bin_link}" -ver
+
+    echo
+    echo "ExifTool installed successfully."
+    echo "Version: $("${bin_link}" -ver)"
+    echo "Directory: ${target_dir}"
+    echo "Current symlink: ${current_link}"
+    echo "Command: ${bin_link}"
+}
+
+main "$@"
