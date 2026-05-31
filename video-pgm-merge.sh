@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.05.31 - v. 0.12.3 - -v/--version print a short version banner; also show the banner at startup
 # 2026.05.31 - v. 0.12.2 - merge mode: when mp4_merge is missing, show install info then offer to install it (Y/n/q)
 # 2026.05.27 - v. 0.12.1 - prompt timeout: wait forever by default; --read-timeout or PGM_READ_TIMEOUT
 # 2026.05.27 - v. 0.12.0 - group same-timestamp GoPro clips (_GOPRO*_GX chapter suffix, ~4GB)
@@ -130,6 +131,27 @@ script_version() {
   else
     printf '%s version %s\n' "$(basename "$0")" "$ver"
   fi
+}
+
+print_version_banner() {
+  local ver=unknown date= line title verline width=60
+  while IFS= read -r line; do
+    if [[ "$line" =~ ^#\ ([0-9]{4}\.[0-9]{2}\.[0-9]{2})\ -\ v\.\ ([0-9]+(\.[0-9]+)*) ]]; then
+      date="${BASH_REMATCH[1]}"
+      ver="${BASH_REMATCH[2]}"
+      break
+    fi
+  done < "$0"
+  title="$(basename "$0")"
+  if [[ -n "$date" ]]; then
+    verline="Version: ${ver} (${date})"
+  else
+    verline="Version: ${ver}"
+  fi
+  printf '┌%*s┐\n' "$width" '' | tr ' ' '─'
+  printf '│ %-*.*s │\n' $((width - 2)) $((width - 2)) "$title"
+  printf '│ %-*.*s │\n' $((width - 2)) $((width - 2)) "$verline"
+  printf '└%*s┘\n' "$width" '' | tr ' ' '─'
 }
 
 # Print gyroflow/mp4-merge asset basename for this host (stdout) or return 1.
@@ -2225,7 +2247,7 @@ while [[ $# -gt 0 ]]; do
       exit 0
       ;;
     -v|--version)
-      script_version
+      print_version_banner
       exit 0
       ;;
     -u|--update)
@@ -2280,6 +2302,8 @@ if [[ -f "${BASH_SOURCE[0]}" ]]; then
 fi
 
 pgm_record_script_start
+
+print_version_banner
 
 if (( script_is_run_interactively )) && ! (( DO_YES )); then
   if pgm_read_timeout_is_limited; then
