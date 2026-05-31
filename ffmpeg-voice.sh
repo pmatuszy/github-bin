@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.05.31 - v. 3.46 - server down: prompt [W]ait / [C]ontinue without transcription / [Q]uit
 # 2026.05.30 - v. 3.45 - Saved: print final variant transcript path (not intermediate *_ORG.txt)
 # 2026.05.30 - v. 3.44 - terminal title: [cwd] full script path; restore on exit
 # 2026.05.30 - v. 3.43 - selected existing pair Yes: redo all four transcripts (not skip present variants)
@@ -1275,14 +1276,19 @@ ensure_transcribe_endpoint_ready() {
         echo -e "${YELLOW}TRANSCRIPTION SERVER DOWN:${RESET} ${host}:${port} (${label})"
         print_transcribe_endpoint_down_reason "$host" "$port"
         print_suggestion "  [W] Wait until the server is back (default)"
+        print_suggestion "  [C] Continue without transcription (skip)"
         print_suggestion "  [Q] Quit"
-        print_choice_prompt "[W/q]: "
+        print_choice_prompt "[W/c/q]: "
         read -r -t 300 -n 1 input || true
         printf '\n'
 
         case "$input" in
             q|Q)
                 voice_quit
+                ;;
+            c|C)
+                echo -e "${YELLOW}TRANSCRIPTION SKIPPED:${RESET} ${host}:${port} is down — continuing without transcription."
+                return 1
                 ;;
         esac
 
@@ -1316,7 +1322,9 @@ check_transcribe_hosts_or_exit() {
             continue
         fi
         checked_endpoints["$endpoint_key"]=1
-        check_transcribe_endpoint_or_exit "$host" "$port" "${tag} @ ${endpoint_key}"
+        if ! check_transcribe_endpoint_or_exit "$host" "$port" "${tag} @ ${endpoint_key}"; then
+            return 1
+        fi
     done
 }
 
@@ -2410,7 +2418,10 @@ run_one_transcription_variant() {
         return 0
     fi
 
-    ensure_transcribe_endpoint_ready "$whisper_host" "$whisper_port" "${variant_suffix}"
+    if ! ensure_transcribe_endpoint_ready "$whisper_host" "$whisper_port" "${variant_suffix}"; then
+        echo -e "${YELLOW}TRANSCRIPTION SKIP (${variant_suffix}):${RESET} server down — ${variant_txt} not created"
+        return 0
+    fi
     check_free_space_or_exit "."
 
     server_base="$(txt_file_for_audio "$audio_file")"
@@ -2517,7 +2528,11 @@ run_transcriptions_for_pair() {
 
     voice_processing_begin
     ensure_pair_sha_file "$org_file" "$out_file" "$sha_file"
-    check_transcribe_hosts_or_exit
+    if ! check_transcribe_hosts_or_exit; then
+        sync_existing_transcript_hashes "$org_file" "$out_file" "$sha_file"
+        voice_processing_end
+        return 0
+    fi
     sync_existing_transcript_hashes "$org_file" "$out_file" "$sha_file"
 
     run_all_transcriptions_for_audio "$org_file" "$sha_file"
