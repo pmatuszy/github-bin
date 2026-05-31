@@ -96,6 +96,64 @@ get_latest_version() {
     echo "${version}"
 }
 
+# Print the currently installed exiftool version (empty if none/unreadable).
+get_installed_version() {
+    local exe="$1"
+    local v=""
+
+    [[ -n "${exe}" ]] || return 0
+    if [[ -x "${exe}" ]] || command -v "${exe}" >/dev/null 2>&1; then
+        v="$("${exe}" -ver 2>/dev/null | tr -d '[:space:]')" || v=""
+    fi
+    echo "${v}"
+}
+
+# If exiftool is already installed, show its version and ask: update/install or quit.
+prompt_if_already_installed() {
+    local latest="$1"
+    local bin_link="$2"
+    local found_exe="" installed=""
+    local reply=""
+
+    if command -v exiftool >/dev/null 2>&1; then
+        found_exe="$(command -v exiftool)"
+    elif [[ -x "${bin_link}" ]]; then
+        found_exe="${bin_link}"
+    fi
+
+    if [[ -z "${found_exe}" ]]; then
+        echo "No existing ExifTool found — proceeding with a fresh install."
+        return 0
+    fi
+
+    installed="$(get_installed_version "${found_exe}")"
+    echo "ExifTool is already installed:"
+    echo "  Command: ${found_exe}"
+    echo "  Installed version: ${installed:-unknown}"
+    echo "  Latest version:    ${latest}"
+
+    if [[ -n "${installed}" && "${installed}" == "${latest}" ]]; then
+        echo "You already have the latest version."
+        echo -n "Reinstall it anyway? [y/N] "
+    else
+        echo -n "Update/install version ${latest} now? [Y/n] "
+    fi
+
+    read -r reply || reply=""
+
+    if [[ -n "${installed}" && "${installed}" == "${latest}" ]]; then
+        case "${reply}" in
+            y|Y|yes|YES) echo "Reinstalling..." ;;
+            *) echo "Quitting — no changes made."; exit 0 ;;
+        esac
+    else
+        case "${reply}" in
+            n|N|no|NO) echo "Quitting — no changes made."; exit 0 ;;
+            *) echo "Proceeding with update/install..." ;;
+        esac
+    fi
+}
+
 main() {
     as_root_check
     detect_platform
@@ -119,6 +177,9 @@ main() {
     bin_link="${BIN_DIR}/exiftool"
 
     echo "Latest ExifTool version: ${version}"
+
+    prompt_if_already_installed "${version}" "${bin_link}"
+
     echo "Download URL: ${url}"
     echo "Install target: ${target_dir}"
 
