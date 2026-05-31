@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.05.31 - v. 1.3 - update/reinstall prompt reads a single key (no Enter required)
 # 2026.05.31 - v. 1.2 - fix "tmpdir: unbound variable" in EXIT trap (global TMP_WORK_DIR + guarded cleanup)
 # 2026.05.31 - v. 1.1 - if exiftool already installed: print version and ask to update/reinstall or quit
 # 2026.05.31 - v. 1.0 - initial release: install latest ExifTool under /usr/local and create symlinks
@@ -150,7 +151,8 @@ prompt_if_already_installed() {
         echo -n "Update/install version ${latest} now? [Y/n] "
     fi
 
-    read -r reply || reply=""
+    read -r -n 1 reply || reply=""
+    echo
 
     if [[ -n "${installed}" && "${installed}" == "${latest}" ]]; then
         case "${reply}" in
