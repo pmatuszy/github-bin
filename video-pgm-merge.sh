@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.05.31 - v. 0.13.0 - detect/group raw GoPro chapter files (GXccnnnn[_Proxy].MP4); merge originals & proxies separately
 # 2026.05.31 - v. 0.12.3 - -v/--version print a short version banner; also show the banner at startup
 # 2026.05.31 - v. 0.12.2 - merge mode: when mp4_merge is missing, show install info then offer to install it (Y/n/q)
 # 2026.05.27 - v. 0.12.1 - prompt timeout: wait forever by default; --read-timeout or PGM_READ_TIMEOUT
@@ -1712,12 +1713,109 @@ chapter_continues_sequence() {
   (( new_part == last_part + 1 ))
 }
 
+# Raw GoPro camera chapter name (HERO6+ / MAX): G[HX] + 2-digit chapter + 4-digit
+# recording number, optional _Proxy. Sets RAW_GP_PREFIX / RAW_GP_CHAPTER /
+# RAW_GP_NUMBER / RAW_GP_PROXY. e.g. GX010393.MP4 -> GX 01 0393 ; GX020393_Proxy.MP4.
+gopro_raw_chapter_parse() {
+  local base="$1"
+  RAW_GP_PREFIX="" RAW_GP_CHAPTER="" RAW_GP_NUMBER="" RAW_GP_PROXY=""
+  if [[ "$base" =~ ^(G[HX])([0-9]{2})([0-9]{4})(_Proxy)?\.[mM][pP]4$ ]]; then
+    RAW_GP_PREFIX="${BASH_REMATCH[1]}"
+    RAW_GP_CHAPTER="${BASH_REMATCH[2]}"
+    RAW_GP_NUMBER="${BASH_REMATCH[3]}"
+    RAW_GP_PROXY="${BASH_REMATCH[4]}"
+    return 0
+  fi
+  return 1
+}
+
+# Group key for a raw GoPro chapter file: prefix + recording number + variant (orig vs proxy).
+# Chapters of one recording share this key; originals and proxies get different keys.
+gopro_raw_group_key() {
+  gopro_raw_chapter_parse "$1" || return 1
+  printf '%s_%s%s\n' "$RAW_GP_PREFIX" "$RAW_GP_NUMBER" "$RAW_GP_PROXY"
+}
+
+# True if every file is a raw GoPro chapter sharing the same group key.
+group_is_raw_gopro() {
+  local -a files=("$@")
+  local f base key first_key=
+  (( ${#files[@]} >= 1 )) || return 1
+  for f in "${files[@]}"; do
+    base="${f##*/}"
+    key=$(gopro_raw_group_key "$base") || return 1
+    if [[ -z "$first_key" ]]; then
+      first_key="$key"
+    elif [[ "$key" != "$first_key" ]]; then
+      return 1
+    fi
+  done
+  return 0
+}
+
+# Output name for a raw GoPro chapter group: e.g. GX0393_parts_01-04_concat.mp4
+# (proxies: GX0393_Proxy_parts_01-04_concat.mp4).
+raw_gopro_group_output_file() {
+  local -a files=("$@")
+  local f base prefix="" num="" proxy="" min="" max="" ch
+  for f in "${files[@]}"; do
+    base="${f##*/}"
+    gopro_raw_chapter_parse "$base" || return 1
+    prefix="$RAW_GP_PREFIX"
+    num="$RAW_GP_NUMBER"
+    proxy="$RAW_GP_PROXY"
+    ch=$((10#$RAW_GP_CHAPTER))
+    if [[ -z "$min" ]] || (( ch < min )); then min=$ch; fi
+    if [[ -z "$max" ]] || (( ch > max )); then max=$ch; fi
+  done
+  printf '%s%s%s_parts_%02d-%02d_concat.mp4\n' "$prefix" "$num" "$proxy" "$min" "$max"
+}
+
+# Pull raw GoPro chapter files (GXccnnnn[_Proxy].MP4) out of the sorted list into
+# key-based groups (one per recording+variant, ordered by chapter). Remaining files
+# are returned via the nameref _rest for the legacy sequential/size-split logic.
+build_raw_gopro_groups() {
+  local -n _rest=$1
+  shift
+  local -a sorted=("$@")
+  local f base key
+  local -a keys_seen=()
+  local -A group_map=()
+  _rest=()
+  for f in "${sorted[@]}"; do
+    base="${f##*/}"
+    if is_concat_output_basename "$base"; then
+      _rest+=("$f")
+      continue
+    fi
+    if gopro_raw_chapter_parse "$base"; then
+      key="${RAW_GP_PREFIX}_${RAW_GP_NUMBER}${RAW_GP_PROXY}"
+      if [[ -z "${group_map[$key]+x}" ]]; then
+        group_map["$key"]="$f"
+        keys_seen+=("$key")
+      else
+        group_map["$key"]+=$'\n'"$f"
+      fi
+    else
+      _rest+=("$f")
+    fi
+  done
+  # Input was LC_ALL=C sorted; within one key only the 2 chapter digits vary, so
+  # the entries are already in ascending chapter order.
+  local k
+  for k in "${keys_seen[@]}"; do
+    GROUP_BLOBS+=("${group_map[$k]}")
+  done
+}
+
 # Build merge groups: each element of GROUP_BLOBS is a newline-separated file list (sorted).
 build_chapter_groups() {
   local -a sorted=("$@")
   GROUP_BLOBS=()
   local current_blob="" f base last_base last_file
-  for f in "${sorted[@]}"; do
+  local -a rest=()
+  build_raw_gopro_groups rest "${sorted[@]}"
+  for f in "${rest[@]}"; do
     base="${f##*/}"
     if is_concat_output_basename "$base"; then
       continue
@@ -1763,7 +1861,7 @@ print_size_split_group_hint() {
 
 print_group_plan() {
   local -a all_mp4=("$@")
-  local gidx=0 mergeable=0 size_split_groups=0 part_groups=0 standalone=0
+  local gidx=0 mergeable=0 size_split_groups=0 part_groups=0 raw_gopro_groups=0 standalone=0
   local -a files=()
   local f base part cam blob out_name is_ss
   local group_bytes=0 sz
@@ -1773,7 +1871,9 @@ print_group_plan() {
     group_files_to_array "$blob" files
     (( ${#files[@]} >= 2 )) || continue
     (( mergeable++ )) || true
-    if group_is_size_split "${files[@]}"; then
+    if group_is_raw_gopro "${files[@]}"; then
+      (( raw_gopro_groups++ )) || true
+    elif group_is_size_split "${files[@]}"; then
       (( size_split_groups++ )) || true
     else
       (( part_groups++ )) || true
@@ -1785,6 +1885,7 @@ print_group_plan() {
     for blob in "${GROUP_BLOBS[@]}"; do
       group_files_to_array "$blob" files
       (( ${#files[@]} < 2 )) && continue
+      group_is_raw_gopro "${files[@]}" && continue
       group_is_size_split "${files[@]}" && continue
       (( gidx++ )) || true
       out_name=$(group_output_file "${files[@]}")
@@ -1855,6 +1956,32 @@ print_group_plan() {
       echo
     done
   fi
+  if (( raw_gopro_groups > 0 )); then
+    echo "Merge candidates (GoPro chapter files GXccnnnn — originals and proxies separately):"
+    gidx=0
+    for blob in "${GROUP_BLOBS[@]}"; do
+      group_files_to_array "$blob" files
+      (( ${#files[@]} < 2 )) && continue
+      group_is_raw_gopro "${files[@]}" || continue
+      (( gidx++ )) || true
+      out_name=$(group_output_file "${files[@]}")
+      if [[ -e "$out_name" ]]; then
+        printf '  [group %d/%d] %d chapters → %s  (already merged)\n' \
+          "$gidx" "$raw_gopro_groups" "${#files[@]}" "$out_name"
+      else
+        printf '  [group %d/%d] %d chapters → %s\n' \
+          "$gidx" "$raw_gopro_groups" "${#files[@]}" "$out_name"
+      fi
+      group_bytes=0
+      for f in "${files[@]}"; do
+        printf '      %s\n' "${f##*/}"
+        sz=$(file_size_bytes "$f")
+        (( group_bytes += sz ))
+      done
+      printf '      input total (%d files): %s\n' "${#files[@]}" "$(format_bytes_human "$group_bytes")"
+      echo
+    done
+  fi
   for blob in "${GROUP_BLOBS[@]}"; do
     group_files_to_array "$blob" files
     (( ${#files[@]} < 2 )) && (( standalone++ )) || true
@@ -1875,8 +2002,12 @@ print_group_plan() {
     echo
   fi
   print_orphan_concat_section "${all_mp4[@]}"
-  if (( size_split_groups > 0 )); then
-    echo "$(pgm_ts) Summary: ${mergeable} merge group(s) (${size_split_groups} size-split), ${standalone} standalone file(s), ${PGM_ORPHAN_CONCAT_COUNT} merged output(s) without input chapters."
+  local breakdown=""
+  (( part_groups > 0 )) && breakdown+="${breakdown:+, }${part_groups} _part_XX"
+  (( raw_gopro_groups > 0 )) && breakdown+="${breakdown:+, }${raw_gopro_groups} GoPro chapter"
+  (( size_split_groups > 0 )) && breakdown+="${breakdown:+, }${size_split_groups} size-split"
+  if [[ -n "$breakdown" ]]; then
+    echo "$(pgm_ts) Summary: ${mergeable} merge group(s) (${breakdown}), ${standalone} standalone file(s), ${PGM_ORPHAN_CONCAT_COUNT} merged output(s) without input chapters."
   else
     echo "$(pgm_ts) Summary: ${mergeable} merge group(s), ${standalone} standalone file(s), ${PGM_ORPHAN_CONCAT_COUNT} merged output(s) without input chapters."
   fi
@@ -1888,6 +2019,9 @@ group_output_file() {
   local f base stem part min_part= max_part= got_part=0 suffix_proxy=
   if (( ${#files[@]} >= 2 )) && group_is_size_split "${files[@]}"; then
     size_split_group_output_file "${files[@]}" && return 0
+  fi
+  if group_is_raw_gopro "${files[@]}"; then
+    raw_gopro_group_output_file "${files[@]}" && return 0
   fi
   for f in "${files[@]}"; do
     base="${f##*/}"
