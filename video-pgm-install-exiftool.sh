@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.05.31 - v. 1.2 - fix "tmpdir: unbound variable" in EXIT trap (global TMP_WORK_DIR + guarded cleanup)
 # 2026.05.31 - v. 1.1 - if exiftool already installed: print version and ask to update/reinstall or quit
 # 2026.05.31 - v. 1.0 - initial release: install latest ExifTool under /usr/local and create symlinks
 #
@@ -21,6 +22,14 @@ BASE_URL="https://exiftool.org"
 VERSION_URL="${BASE_URL}/ver.txt"
 INSTALL_BASE="/usr/local"
 BIN_DIR="/usr/local/bin"
+
+TMP_WORK_DIR=""
+cleanup_tmp_work_dir() {
+    if [[ -n "${TMP_WORK_DIR:-}" && -d "${TMP_WORK_DIR}" ]]; then
+        rm -rf "${TMP_WORK_DIR}"
+    fi
+}
+trap cleanup_tmp_work_dir EXIT
 
 need_cmd() {
     if ! command -v "$1" >/dev/null 2>&1; then
@@ -167,7 +176,7 @@ main() {
     need_cmd mkdir
     need_cmd rm
 
-    local version archive url tmpdir extracted_dir target_dir current_link bin_link
+    local version archive url extracted_dir target_dir current_link bin_link
 
     version="$(get_latest_version)"
     archive="Image-ExifTool-${version}.tar.gz"
@@ -185,10 +194,9 @@ main() {
     echo "Download URL: ${url}"
     echo "Install target: ${target_dir}"
 
-    tmpdir="$(mktemp -d)"
-    trap 'rm -rf "$tmpdir"' EXIT
+    TMP_WORK_DIR="$(mktemp -d)"
 
-    cd "$tmpdir"
+    cd "$TMP_WORK_DIR"
 
     echo "Downloading ${archive}..."
     download_file "$url" "$archive"
