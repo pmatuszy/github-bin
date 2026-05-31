@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.05.31 - v. 19.140.183200 - --version: print a short version banner (name + version) and exit; no paths/usage
 # 2026.05.26 - v. 19.139.151200 - GoPro exiftool: RENAME_EXIFTOOL defaults to bundled luks-buffalo2 path when unset (EXIFLOC still overrides)
 # 2026.05.26 - v. 19.138.150500 - GoPro rename: default exiftool at luks-buffalo2 Image-ExifTool path; EXIFLOC/RENAME_EXIFTOOL override; skip camera raw files with hint if missing
 # 2026.05.26 - v. 19.137.143000 - GoPro camera files (GH/GX/ch/gx MP4, GOPR JPG): exiftool metadata rename to YYYYMMDD_HHMMSS_-__-_MODEL (from zmien-nazwe-CURRENT_DIRECTORY.sh)
@@ -626,7 +627,7 @@ Usage: rename.sh [-v|--verbose] [--use-db] [--fast] [--force-recheck] [--run-db-
 
 Options:
   -v, --verbose          Show extra diagnostic output
-  --version              Print version banner (paths + settings) and this usage/help, then exit
+  --version              Print a short version banner and exit
   --use-db               Use SQLite cache in the start directory (_rename.sh-optional-db.sqlite3). If that file or the legacy rename.sh-optional-db.sqlite3 already exists and you omit --use-db, you are prompted whether to use it (default: yes; [q] quits).
   --fast                 With --use-db, trust cached paths without checking current size/mtime
   --force-recheck        Ignore SQLite cache and recheck everything
@@ -760,6 +761,17 @@ print_startup_banner() {
 ' $((width - 2)) $((width - 2)) "$line7"
     printf '└%*s┘
 ' "$width" '' | tr ' ' '─'
+}
+
+print_version_banner() {
+    local width=60
+    local line1="rename.sh"
+    local line2="Version: $SCRIPT_VERSION"
+
+    printf '┌%*s┐\n' "$width" '' | tr ' ' '─'
+    printf '│ %-*.*s │\n' $((width - 2)) $((width - 2)) "$line1"
+    printf '│ %-*.*s │\n' $((width - 2)) $((width - 2)) "$line2"
+    printf '└%*s┘\n' "$width" '' | tr ' ' '─'
 }
 
 startup_progress() {
@@ -2703,9 +2715,7 @@ while (( $# > 0 )); do
     #endregion
     case "$1" in
         --version)
-            print_startup_banner version
-            echo
-            usage
+            print_version_banner
             exit 0
             ;;
         -v|--verbose)
