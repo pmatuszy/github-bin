@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.05.31 - v. 19.141.183500 - GoPro/camera raw + exiftool missing: stop polluting suggested NEW name (stderr not stdout); one-time prompt suggests video-pgm-install-exiftool.sh and offers [S]kip-this-run / [Q]uit
 # 2026.05.31 - v. 19.140.183200 - --version: print a short version banner (name + version) and exit; no paths/usage
 # 2026.05.26 - v. 19.139.151200 - GoPro exiftool: RENAME_EXIFTOOL defaults to bundled luks-buffalo2 path when unset (EXIFLOC still overrides)
 # 2026.05.26 - v. 19.138.150500 - GoPro rename: default exiftool at luks-buffalo2 Image-ExifTool path; EXIFLOC/RENAME_EXIFTOOL override; skip camera raw files with hint if missing
@@ -5669,6 +5670,8 @@ _pad_copy_series_parenthetical_basename() {
 
 RENAME_EXIFTOOL_RESOLVED=""
 RENAME_EXIFTOOL_MISSING_WARNED=""
+# Per-run decision when exiftool is missing for GoPro/camera raw files: "" (ask) or "skip".
+GOPRO_EXIFTOOL_MISSING_ACTION=""
 
 # Resolve exiftool once: RENAME_EXIFTOOL (includes script default), then PATH. Prints path; exit 1 if unavailable.
 resolve_rename_exiftool() {
@@ -5696,9 +5699,48 @@ warn_gopro_exiftool_missing_once() {
     RENAME_EXIFTOOL_MISSING_WARNED=1
     emit_wrap_labeled_stderr "GOPRO/CAMERA: " "${YELLOW}GOPRO/CAMERA:${RESET} " "Would rename GoPro/camera raw files (GH/GX/GOPR…) using exiftool metadata, but exiftool was not found — those files are left unchanged."
     emit_wrap_labeled_stderr "GOPRO/CAMERA: " "${YELLOW}GOPRO/CAMERA:${RESET} " "Tried, in order: ${RENAME_EXIFTOOL}, exiftool on PATH."
+    emit_wrap_labeled_stderr "GOPRO/CAMERA: " "${YELLOW}GOPRO/CAMERA:${RESET} " "Install exiftool first, e.g. run as root: sudo bash video-pgm-install-exiftool.sh"
     emit_wrap_labeled_stderr "GOPRO/CAMERA: " "${YELLOW}GOPRO/CAMERA:${RESET} " "Override with RENAME_EXIFTOOL or EXIFLOC, e.g.: export RENAME_EXIFTOOL='/path/to/exiftool'"
     emit_wrap_labeled_stderr "GOPRO/CAMERA: " "${YELLOW}GOPRO/CAMERA:${RESET} " "Or run: EXIFLOC=/path/to/exiftool rename.sh --scope current"
-    vlog "GoPro/camera rename skipped: exiftool not found (set RENAME_EXIFTOOL or EXIFLOC, or install exiftool on PATH)"
+    vlog "GoPro/camera rename skipped: exiftool not found (install via video-pgm-install-exiftool.sh, or set RENAME_EXIFTOOL/EXIFLOC, or install exiftool on PATH)"
+}
+
+# Ask once (per run) what to do for GoPro/camera raw files when exiftool is missing:
+# install hint + [S] skip these files for the rest of this run (default) / [Q] quit.
+# Writes only to stderr/tty so it never pollutes a $(transform_name ...) capture.
+prompt_gopro_exiftool_missing_action() {
+    local f="$1"
+    local answer=""
+
+    if [[ "$GOPRO_EXIFTOOL_MISSING_ACTION" == "skip" ]]; then
+        emit_wrap_labeled_stderr "SKIP: " "${YELLOW}SKIP:${RESET} " "GoPro/camera raw file (exiftool not found): $(format_path_for_log "$f")"
+        return 0
+    fi
+
+    warn_gopro_exiftool_missing_once
+
+    while true; do
+        echo >&2
+        echo -e "$(user_prompt_ts_prefix)${GREEN}exiftool is required to rename this GoPro/camera raw file:${RESET}" >&2
+        echo "  $(format_path_for_log "$f")" >&2
+        echo "  [S] Skip GoPro/camera raw files for the rest of this run (default)" >&2
+        echo "  [Q] Quit" >&2
+        echo -n "$(user_prompt_ts_prefix)Choice [S/q]: " >&2
+        flush_stdin
+        read_single_key answer "$PROMPT_WAIT_SECONDS"
+        echo >&2
+        case "$answer" in
+            q|Q)
+                stopped_by_user=yes
+                return 0
+                ;;
+            *)
+                GOPRO_EXIFTOOL_MISSING_ACTION="skip"
+                emit_wrap_labeled_stderr "SKIP: " "${YELLOW}SKIP:${RESET} " "GoPro/camera raw file (exiftool not found): $(format_path_for_log "$f")"
+                return 0
+                ;;
+        esac
+    done
 }
 
 # Print unchanged path for f (same shape as transform_name return values).
@@ -6192,8 +6234,8 @@ transform_name() {
     local _gopro_applied=0 _gopro_try=""
     if [[ -f "$f" ]] && gopro_camera_raw_basename_matches "$base"; then
         if ! resolve_rename_exiftool >/dev/null; then
-            warn_gopro_exiftool_missing_once
-            emit_wrap_labeled_stdout "SKIP: " "${YELLOW}SKIP:${RESET} " "GoPro/camera raw file (exiftool not found): $(format_path_for_log "$f")"
+            prompt_gopro_exiftool_missing_action "$f"
+            [[ "$stopped_by_user" != yes ]] || return 2
             _transform_name_return_unchanged "$f"
             return 0
         fi
