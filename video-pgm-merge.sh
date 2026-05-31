@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.05.31 - v. 0.12.2 - merge mode: when mp4_merge is missing, show install info then offer to install it (Y/n/q)
 # 2026.05.27 - v. 0.12.1 - prompt timeout: wait forever by default; --read-timeout or PGM_READ_TIMEOUT
 # 2026.05.27 - v. 0.12.0 - group same-timestamp GoPro clips (_GOPRO*_GX chapter suffix, ~4GB)
 # 2026.05.27 - v. 0.11.10 - [q] on delete-inputs prompt quits script (no next merge group)
@@ -447,6 +448,34 @@ mp4_merge_print_not_found_help() {
     echo "$(pgm_ts)   (directory not writable — use sudo for -u)" >&2
   fi
   echo "$(pgm_ts) Or set MP4_MERGE_BIN=/path/to/mp4_merge" >&2
+}
+
+# When mp4_merge is missing, ask whether to download/install it now (reuses update_mp4_merge).
+# Returns 0 if the user agreed and the install ran, 1 if declined / quit.
+prompt_install_mp4_merge_now() {
+  local rc prev_yes
+
+  if (( ! DO_YES )) && (( script_is_run_interactively )); then
+    echo
+    echo "  [Y] Yes — download and install mp4_merge to ${MP4_MERGE_INSTALL_DIR} (default)"
+    echo "  [n] No — do not install"
+    echo "  [q] Quit"
+    pgm_read_key "Install mp4_merge now? [Y/n/q]: " y
+    case "${REPLY,,}" in
+      ''|y) ;;
+      n) echo "$(pgm_ts) Not installing mp4_merge."; return 1 ;;
+      q) echo "$(pgm_ts) Quit."; return 1 ;;
+      *) echo "$(pgm_ts) Not installing mp4_merge."; return 1 ;;
+    esac
+  fi
+
+  # Auto-confirm the update prompt for the missing case (we already asked above).
+  prev_yes=$DO_YES
+  DO_YES=1
+  update_mp4_merge
+  rc=$?
+  DO_YES=$prev_yes
+  return $rc
 }
 
 # If merger is outside /usr/local/bin, offer install there and remove PATH/script/cwd copies.
@@ -2063,7 +2092,13 @@ do_merge() {
   local -a files=() mergeable_blobs=()
   merger=$(find_merger) || {
     mp4_merge_print_not_found_help
-    return 1
+    if ! prompt_install_mp4_merge_now; then
+      return 1
+    fi
+    merger=$(find_merger) || {
+      echo "$(pgm_ts) mp4_merge is still not available after the install attempt — cannot merge." >&2
+      return 1
+    }
   }
   merger=$(resolve_merger_path_for_merge "$merger") || {
     local resolve_rc=$?
