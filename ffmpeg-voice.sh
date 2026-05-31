@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.05.31 - v. 3.47 - startup: if any whisper ip not pingable / port closed, prompt W/C/Q before processing
 # 2026.05.31 - v. 3.46 - server down: prompt [W]ait / [C]ontinue without transcription / [Q]uit
 # 2026.05.30 - v. 3.45 - Saved: print final variant transcript path (not intermediate *_ORG.txt)
 # 2026.05.30 - v. 3.44 - terminal title: [cwd] full script path; restore on exit
@@ -1326,6 +1327,23 @@ check_transcribe_hosts_or_exit() {
             return 1
         fi
     done
+}
+
+# Startup gate: prompt once if any whisper endpoint (ip not pingable / port closed) is down.
+prompt_whisper_endpoints_or_disable() {
+    [[ "$DO_TRANSCRIPTION" == "yes" ]] || return 0
+    [[ "$mode" == "real" ]] || return 0
+
+    if transcribe_endpoint_is_up "$WHISPER_VAD_HOST" "$WHISPER_VAD_PORT" \
+        && transcribe_endpoint_is_up "$WHISPER_NOVAD_HOST" "$WHISPER_NOVAD_PORT"; then
+        return 0
+    fi
+
+    if ! check_transcribe_hosts_or_exit; then
+        DO_TRANSCRIPTION=no
+        echo
+        print_suggestion "TRANSCRIPTION DISABLED for this run — continuing without transcription."
+    fi
 }
 
 sha_file_from_pair() {
@@ -3209,6 +3227,8 @@ if (( ${#exclude_files[@]} > 0 )); then
         process_exclude_sha_only "$excluded_file"
     done
 fi
+
+prompt_whisper_endpoints_or_disable
 
 # ============================================================
 # DRY-RUN
