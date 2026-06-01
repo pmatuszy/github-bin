@@ -1,5 +1,8 @@
 #!/bin/bash
 
+# 2026.06.01 - v. 0.8 - rewritten to use ssh + scp only (no rsync): ping remote first,
+#                       then per-file download, sha512 (or md5) verify, and delete the
+#                       remote file (move) ONLY after it is correctly downloaded & verified
 # 2026.05.26 - user-facing messages translated from Polish to English
 # 2023.07.17 - v. 0.7 - rsync error stream redirecion to stdout
 # 2023.07.06 - v. 0.3 - added --no-motd
@@ -8,84 +11,217 @@
 
 . /root/bin/_script_header.sh
 
-if [ -f "$HEALTHCHECKS_FILE" ];then
-  HEALTHCHECK_URL=$(cat "$HEALTHCHECKS_FILE" |grep "^`basename $0`"|awk '{print $2}')
+if [ -f "$HEALTHCHECKS_FILE" ]; then
+  HEALTHCHECK_URL=$(cat "$HEALTHCHECKS_FILE" | grep "^$(basename "$0")" | awk '{print $2}')
 fi
 
 if [ ! -z "${HEALTHCHECKS_FORCE_ID:-}" ]; then
-  HEALTHCHECK_URL=$(cat "$HEALTHCHECKS_FILE" |grep "^$HEALTHCHECKS_FORCE_ID"|awk '{print $2}')
+  HEALTHCHECK_URL=$(cat "$HEALTHCHECKS_FILE" | grep "^$HEALTHCHECKS_FORCE_ID" | awk '{print $2}')
 fi
 
-if [ -f $HOME/.keychain/$HOSTNAME-sh ];then
-  . $HOME/.keychain/$HOSTNAME-sh
+if [ -f "$HOME/.keychain/$HOSTNAME-sh" ]; then
+  . "$HOME/.keychain/$HOSTNAME-sh"
 fi
+
+# Integrity hash command (whole-file checksum compared on both ends).
+# Override with BACKUP_HASH_CMD=md5sum (or sha256sum) if you prefer a faster/other hash.
+HASH_CMD="${BACKUP_HASH_CMD:-sha512sum}"
 
 check_if_installed curl
-check_if_installed rsync
+check_if_installed ssh openssh-client
 check_if_installed scp openssh-client
+check_if_installed ping iputils-ping
+check_if_installed "$HASH_CMD" coreutils
 
-RSYNC_BIN="$(type -Pf rsync)"
+print_usage() {
+  echo
+  echo "Usage: $(basename "$0") <[user@]host:/remote/path> <local_dest_dir> [--remove-source-files|--move]"
+  echo
+  echo "  Pings the remote host first; if it does not respond, nothing is copied."
+  echo "  Downloads each remote file via scp, verifies it with ${HASH_CMD}, and (only with"
+  echo "  --remove-source-files/--move) deletes each remote file AFTER it has been correctly"
+  echo "  downloaded and verified."
+  echo
+  echo "  A trailing slash on the remote path copies its CONTENTS (rsync-style)."
+  echo "  Env: SCP_LIMIT_KBIT=<n>      limit scp bandwidth (kbit/s); default unlimited."
+  echo "       BACKUP_HASH_CMD=<cmd>   integrity hash command (default sha512sum)."
+  echo
+}
 
-if (( $# != 2 ))  && (( $# != 3 )) ; then
-  echo ; echo "(PGM) wrong # of command line arguments... (must be 2 or 3)" ; echo 
+if (( $# != 2 )) && (( $# != 3 )); then
+  echo; echo "(PGM) wrong # of command line arguments... (must be 2 or 3)"; echo
+  print_usage
   exit 1
 fi
 
-if [ ! -d "${2}" ];then
-  echo ; echo "(PGM) Directory ${2} doesn't exist..." ; echo
+export SKAD="$1"
+export DOKAD="$2"
+
+MOVE_MODE=0
+if (( $# == 3 )); then
+  case "$3" in
+    --remove-source-files|--move)
+      MOVE_MODE=1 ;;
+    *)
+      echo; echo "(PGM) Unknown 3rd parameter ($3) - only --remove-source-files/--move is supported..."; echo
+      echo "(PGM) Unknown 3rd parameter ($3) ..." | /usr/bin/curl -fsS -m 100 --retry 10 --retry-delay 10 --data-binary @- -o /dev/null "$HEALTHCHECK_URL"/4 2>/dev/null
+      exit 4 ;;
+  esac
+fi
+
+if [ ! -d "$DOKAD" ]; then
+  echo; echo "(PGM) Directory $DOKAD doesn't exist..."; echo
   exit 2
 fi
 
-export rsync_extra_option=""
-if (( $# == 3 )) ; then
-  "${RSYNC_BIN}" --help | grep -- "$3" >/dev/null 2>&1
-  if (( $? != 0 ));then
-    echo ; echo "(PGM) Unknown rsync parameter passed as 3rd parameter of the script ($3) ..." ; echo
-    echo "(PGM) Unknown rsync parameter passed as 3rd parameter of the script ($3) ..." | /usr/bin/curl -fsS -m 100 --retry 10 --retry-delay 10 --data-binary @- -o /dev/null "$HEALTHCHECK_URL"/$kod_powrotu 2>/dev/null
-    exit 4
-  fi
-  export rsync_extra_option="${3}"
+case "$SKAD" in
+  *:*) ssh_target="${SKAD%%:*}"; remote_path="${SKAD#*:}" ;;
+  *)   echo; echo "(PGM) SKAD must be [user@]host:/remote/path ..."; echo; exit 3 ;;
+esac
+if [ -z "$ssh_target" ] || [ -z "$remote_path" ]; then
+  echo; echo "(PGM) Could not parse remote spec ($SKAD) ..."; echo
+  exit 3
 fi
 
-export SKAD=$1
-export DOKAD="$2"
+# bare hostname/IP for the reachability ping (strip optional user@)
+remote_host="${ssh_target##*@}"
 
-#### export rsync_option="-a -v --stats --bwlimit=990000 --no-compress --progress --info=progress1 --partial  --inplace --remove-source-files"
+SSH_OPTS=(-T -o Compression=no -o LogLevel=error -o BatchMode=yes)
+SCP_OPTS=(-p -o Compression=no -o LogLevel=error -o BatchMode=yes)
+if [ -n "${SCP_LIMIT_KBIT:-}" ]; then
+  SCP_OPTS+=(-l "$SCP_LIMIT_KBIT")
+fi
 
-export rsync_options="--no-motd -a -v --stats --bwlimit=990000 --no-compress --partial  --inplace  -e 'ssh -T -o Compression=no -x -o LogLevel=error ' ${rsync_extra_option}"
+# single-quote a string for safe use inside a remote shell command
+rq() {
+  local s=${1//\'/\'\\\'\'}
+  printf "'%s'" "$s"
+}
+
+# base dir used to compute each file's path relative to the destination (rsync-style)
+if [[ "$remote_path" == */ ]]; then
+  base="${remote_path%/}"
+else
+  base="$(dirname -- "$remote_path")"
+fi
 
 HC_MESSAGE=$(
-   cat  $0|grep -e '# *20[123][0-9]'|head -n 1 | awk '{print "script version: " $5 " (dated "$2")"}'
-   echo ; echo "current date: `date '+%Y.%m.%d %H:%M'`" ; echo ;
-   
-   echo ; echo  ; echo "SKAD  = $SKAD" ; echo "DOKAD = $DOKAD" ; echo 
-   echo ; echo "command to be run:"
-   echo rsync $rsync_options ${SKAD} "${DOKAD}"
-   eval "${RSYNC_BIN}" $rsync_options ${SKAD} "${DOKAD}" 2>&1
-   exit $?
-   )
+  grep -E -m1 '^# *20[123][0-9]' "$0" | awk '{print "script version: " $5 " (dated "$2")"}'
+  echo
+  echo "current date: $(date '+%Y.%m.%d %H:%M')"
+  echo
+  echo "SKAD  = $SKAD"
+  echo "DOKAD = $DOKAD"
+  echo "hash  = $HASH_CMD"
+  if (( MOVE_MODE == 1 )); then
+    echo "mode  = MOVE (delete remote file after verified download)"
+  else
+    echo "mode  = COPY (remote files are kept)"
+  fi
+  echo
+
+  found=0; transferred=0; deleted=0; failed=0
+
+  # 4) Reachability check: if the remote host does not answer, do not try to copy.
+  if ! ping -c 2 -W 5 "$remote_host" >/dev/null 2>&1; then
+    echo "ERROR: remote host '$remote_host' is not responding to ping - aborting (nothing copied)"
+    echo
+    echo "SUMMARY: found=0 transferred=0 deleted=0 failed=1"
+    exit 1
+  fi
+  echo "Remote host '$remote_host' is reachable (ping OK)."
+  echo
+
+  tmp_list="$(mktemp)"
+  trap 'rm -f -- "$tmp_list"' EXIT
+
+  if ! ssh "${SSH_OPTS[@]}" "$ssh_target" "find $(rq "$remote_path") -type f -print0" > "$tmp_list" 2>/dev/null; then
+    echo "ERROR: remote enumeration failed (ssh/find on $ssh_target:$remote_path)"
+    echo
+    echo "SUMMARY: found=0 transferred=0 deleted=0 failed=1"
+    exit 1
+  fi
+
+  mapfile -d '' -t remote_files < "$tmp_list"
+
+  if (( ${#remote_files[@]} == 0 )); then
+    echo "Nothing to do: no files found at $ssh_target:$remote_path"
+    echo
+    echo "SUMMARY: found=0 transferred=0 deleted=0 failed=0"
+    exit 0
+  fi
+
+  for file in "${remote_files[@]}"; do
+    [ -n "$file" ] || continue
+    found=$((found + 1))
+
+    relpath="${file#"$base"/}"
+    if [ "$relpath" = "$file" ]; then
+      relpath="$(basename -- "$file")"
+    fi
+    local_target="$DOKAD/$relpath"
+
+    echo ">> $relpath"
+
+    remote_sum="$(ssh "${SSH_OPTS[@]}" "$ssh_target" "$HASH_CMD -- $(rq "$file")" 2>/dev/null | awk '{print $1}')"
+    if [ -z "$remote_sum" ]; then
+      echo "   ERROR: cannot read remote checksum - skipping (remote kept)"
+      failed=$((failed + 1))
+      continue
+    fi
+
+    if ! mkdir -p -- "$(dirname -- "$local_target")"; then
+      echo "   ERROR: cannot create local directory - skipping (remote kept)"
+      failed=$((failed + 1))
+      continue
+    fi
+
+    if ! scp "${SCP_OPTS[@]}" "$ssh_target:$file" "$local_target" >/dev/null 2>&1; then
+      echo "   ERROR: scp download failed - skipping (remote kept)"
+      rm -f -- "$local_target"
+      failed=$((failed + 1))
+      continue
+    fi
+
+    local_sum="$("$HASH_CMD" -- "$local_target" 2>/dev/null | awk '{print $1}')"
+    if [ "$remote_sum" != "$local_sum" ]; then
+      echo "   ERROR: checksum mismatch (remote=$remote_sum local=$local_sum) - removing bad copy, remote kept"
+      rm -f -- "$local_target"
+      failed=$((failed + 1))
+      continue
+    fi
+
+    transferred=$((transferred + 1))
+
+    if (( MOVE_MODE == 1 )); then
+      if ssh "${SSH_OPTS[@]}" "$ssh_target" "rm -f -- $(rq "$file")" 2>/dev/null; then
+        echo "   OK: verified + removed remote"
+        deleted=$((deleted + 1))
+      else
+        echo "   OK: verified, but FAILED to remove remote (kept)"
+        failed=$((failed + 1))
+      fi
+    else
+      echo "   OK: verified (copy mode, remote kept)"
+    fi
+  done
+
+  echo
+  echo "SUMMARY: found=$found transferred=$transferred deleted=$deleted failed=$failed"
+  exit "$failed"
+)
 kod_powrotu=$?
 
-if (( $script_is_run_interactively == 1 )); then
+if (( script_is_run_interactively == 1 )); then
   echo "$HC_MESSAGE"
   echo "exit code = $kod_powrotu"
 fi
 
-echo "$HC_MESSAGE" | egrep -q "^Number of files: 0$"
-kod_1=$?
-
-echo "$HC_MESSAGE" | egrep -q "^Number of created files: 0$"
-kod_2=$?
-
-echo "$HC_MESSAGE" | egrep -q "^Number of regular files transferred: 0$"
-kod_3=$?
-
-# if rsync exit code is 23 and no files are transferred / created  we treat it as successful run
-if (( $kod_powrotu == 23 )) && (( $kod_1 == 0 )) &&  (( $kod_2 == 0 )) && (( $kod_3 == 0 )) ;then
-  # we do nothing here - we don't even run curl - if nothing was fetched we do not provide status (neither ok nor error)
+# nothing found and nothing failed -> silent (no healthcheck ping), like the old rsync-23 no-op
+if echo "$HC_MESSAGE" | grep -Eq "^SUMMARY: found=0 transferred=0 deleted=0 failed=0$"; then
   echo > /dev/null
 else
   echo "$HC_MESSAGE" | /usr/bin/curl -fsS -m 100 --retry 10 --retry-delay 10 --data-binary @- -o /dev/null "$HEALTHCHECK_URL"/$kod_powrotu 2>/dev/null
 fi
 
-exit $?
+exit "$kod_powrotu"
