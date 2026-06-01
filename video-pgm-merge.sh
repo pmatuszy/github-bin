@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.06.01 - v. 0.13.1 - fix: _part_NN chapter grouping mixed proxy with normal parts; group by stem+variant (key-based) so originals and proxies never merge together
 # 2026.05.31 - v. 0.13.0 - detect/group raw GoPro chapter files (GXccnnnn[_Proxy].MP4); merge originals & proxies separately
 # 2026.05.31 - v. 0.12.3 - -v/--version print a short version banner; also show the banner at startup
 # 2026.05.31 - v. 0.12.2 - merge mode: when mp4_merge is missing, show install info then offer to install it (Y/n/q)
@@ -1699,20 +1700,6 @@ print_size_split_near_miss_hint() {
   fi
 }
 
-# 0 = next file continues the same multi-part recording.
-chapter_continues_sequence() {
-  local last_base="$1" new_base="$2"
-  local last_part new_part last_cam new_cam
-  last_part=$(chapter_part_from_basename "$last_base") || return 1
-  new_part=$(chapter_part_from_basename "$new_base") || return 1
-  last_cam=$(chapter_camera_from_basename "$last_base" 2>/dev/null) || last_cam=
-  new_cam=$(chapter_camera_from_basename "$new_base" 2>/dev/null) || new_cam=
-  if [[ -n "$last_cam" && -n "$new_cam" && "$last_cam" != "$new_cam" ]]; then
-    return 1
-  fi
-  (( new_part == last_part + 1 ))
-}
-
 # Raw GoPro camera chapter name (HERO6+ / MAX): G[HX] + 2-digit chapter + 4-digit
 # recording number, optional _Proxy. Sets RAW_GP_PREFIX / RAW_GP_CHAPTER /
 # RAW_GP_NUMBER / RAW_GP_PROXY. e.g. GX010393.MP4 -> GX 01 0393 ; GX020393_Proxy.MP4.
@@ -1808,36 +1795,76 @@ build_raw_gopro_groups() {
   done
 }
 
+# Parse an already-renamed chapter name: <stem>_part_NN[_Proxy].<ext>.
+# Sets PART_STEM / PART_NUM / PART_PROXY / PART_EXT. Returns 0 on match.
+part_chapter_parse() {
+  local base="$1"
+  PART_STEM="" PART_NUM="" PART_PROXY="" PART_EXT=""
+  if [[ "$base" =~ ^(.*)_part_([0-9]{2})(_Proxy)?\.([mM][pP]4)$ ]]; then
+    PART_STEM="${BASH_REMATCH[1]}"
+    PART_NUM="${BASH_REMATCH[2]}"
+    PART_PROXY="${BASH_REMATCH[3]}"
+    PART_EXT="${BASH_REMATCH[4]}"
+    return 0
+  fi
+  return 1
+}
+
+# Pull _part_NN chapter files out of the list into key-based groups. The key is the
+# stem plus the proxy variant, so originals (_part_NN) and proxies (_part_NN_Proxy)
+# go into separate groups and are NEVER mixed. Remaining files come back via _rest.
+build_part_chapter_groups() {
+  local -n _rest=$1
+  shift
+  local -a sorted=("$@")
+  local f base key
+  local -a keys_seen=()
+  local -A group_map=()
+  _rest=()
+  for f in "${sorted[@]}"; do
+    base="${f##*/}"
+    if is_concat_output_basename "$base"; then
+      _rest+=("$f")
+      continue
+    fi
+    if part_chapter_parse "$base"; then
+      key="${PART_STEM}${PART_PROXY}"
+      if [[ -z "${group_map[$key]+x}" ]]; then
+        group_map["$key"]="$f"
+        keys_seen+=("$key")
+      else
+        group_map["$key"]+=$'\n'"$f"
+      fi
+    else
+      _rest+=("$f")
+    fi
+  done
+  # Input was LC_ALL=C sorted; within one key only the 2 part digits vary, so the
+  # entries are already in ascending part order.
+  local k
+  for k in "${keys_seen[@]}"; do
+    GROUP_BLOBS+=("${group_map[$k]}")
+  done
+}
+
 # Build merge groups: each element of GROUP_BLOBS is a newline-separated file list (sorted).
 build_chapter_groups() {
   local -a sorted=("$@")
   GROUP_BLOBS=()
-  local current_blob="" f base last_base last_file
-  local -a rest=()
-  build_raw_gopro_groups rest "${sorted[@]}"
-  for f in "${rest[@]}"; do
+  local f base
+  local -a rest1=() rest2=()
+  # 1) raw GoPro chapter files (GXccnnnn[_Proxy].MP4) -> key-based groups
+  build_raw_gopro_groups rest1 "${sorted[@]}"
+  # 2) already-renamed _part_NN chapters -> key-based groups (originals vs proxies kept apart)
+  build_part_chapter_groups rest2 "${rest1[@]}"
+  # 3) everything else becomes a single-file blob (size-split detection runs next)
+  for f in "${rest2[@]}"; do
     base="${f##*/}"
     if is_concat_output_basename "$base"; then
       continue
     fi
-    if [[ -z "$current_blob" ]]; then
-      current_blob="$f"
-      last_base="$base"
-      continue
-    fi
-    last_file="${current_blob##*$'\n'}"
-    last_base="${last_file##*/}"
-    if chapter_continues_sequence "$last_base" "$base"; then
-      current_blob+=$'\n'"$f"
-    else
-      GROUP_BLOBS+=("$current_blob")
-      current_blob="$f"
-    fi
-    last_base="$base"
+    GROUP_BLOBS+=("$f")
   done
-  if [[ -n "$current_blob" ]]; then
-    GROUP_BLOBS+=("$current_blob")
-  fi
   build_size_split_groups
 }
 
