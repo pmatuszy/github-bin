@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.06.01 - v. 19.144.154000 - window title: "[ cwd ] full_script_path options" (spaces inside brackets); also set GNU screen / tmux window name (ESC k) so it shows inside screen/tmux, not only xterm/VTE
 # 2026.06.01 - v. 19.143.150000 - transform_basename: dotted date + separated time (YYYY.MM.DD <sep> HH<sep>MM<sep>SS[_tail]) → YYYYMMDD_HHMMSS[_tail] for any extension (e.g. checksum .sha512/.md5 sidecars)
 # 2026.05.31 - v. 19.142.231100 - GoPro/camera raw: guard transform_gopro_camera_basename under set -e/ERR trap (no-metadata return 1 no longer prints "ERROR: command failed at line ..."); fall back to normal rename quietly
 # 2026.05.31 - v. 19.141.183500 - GoPro/camera raw + exiftool missing: stop polluting suggested NEW name (stderr not stdout); one-time prompt suggests video-pgm-install-exiftool.sh and offers [S]kip-this-run / [Q]uit
@@ -839,12 +840,17 @@ rename_sh_window_title_apply_from_saved_argv() {
         a="${a//$'\t'/ }"
         title+=" $a"
     done
-    cwd_bracket="[${RENAME_SH_INVOCATION_CWD}] "
+    cwd_bracket="[ ${RENAME_SH_INVOCATION_CWD} ] "
     title="${cwd_bracket}${title}"
     if (( ${#title} > max_len )); then
         title="${title:0:$(( max_len - 3 ))}..."
     fi
     [[ -w /dev/tty ]] 2>/dev/null || return 0
+    # GNU screen / tmux set the window name with ESC k <name> ESC backslash.
+    if [[ -n "${STY:-}" || -n "${TMUX:-}" ]]; then
+        printf '\033k%s\033\\' "$title" >/dev/tty 2>/dev/null || true
+    fi
+    # xterm/VTE: push current title (CSI 22 t), then set icon (OSC 0) and window (OSC 2) title.
     printf '\033[22t' >/dev/tty 2>/dev/null || true
     printf '\033]0;%s\033\\' "$title" >/dev/tty 2>/dev/null || printf '\033]0;%s\a' "$title" >/dev/tty 2>/dev/null || true
     printf '\033]2;%s\033\\' "$title" >/dev/tty 2>/dev/null || printf '\033]2;%s\a' "$title" >/dev/tty 2>/dev/null || true
