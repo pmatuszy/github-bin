@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.06.01 - v. 19.143.150000 - transform_basename: dotted date + separated time (YYYY.MM.DD <sep> HH<sep>MM<sep>SS[_tail]) → YYYYMMDD_HHMMSS[_tail] for any extension (e.g. checksum .sha512/.md5 sidecars)
 # 2026.05.31 - v. 19.142.231100 - GoPro/camera raw: guard transform_gopro_camera_basename under set -e/ERR trap (no-metadata return 1 no longer prints "ERROR: command failed at line ..."); fall back to normal rename quietly
 # 2026.05.31 - v. 19.141.183500 - GoPro/camera raw + exiftool missing: stop polluting suggested NEW name (stderr not stdout); one-time prompt suggests video-pgm-install-exiftool.sh and offers [S]kip-this-run / [Q]uit
 # 2026.05.31 - v. 19.140.183200 - --version: print a short version banner (name + version) and exit; no paths/usage
@@ -6042,6 +6043,21 @@ transform_basename() {
             "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}" "${BASH_REMATCH[3]}" \
             "${BASH_REMATCH[4]}" "${BASH_REMATCH[5]}" "${BASH_REMATCH[6]}" \
             "${BASH_REMATCH[7]}"
+        return
+    fi
+
+    # YYYY.MM.DD <sep> HH<sep>MM<sep>SS [<sep> tail].ext -> YYYYMMDD_HHMMSS[_tail].ext
+    # Dotted calendar date + separated clock time (dots/underscores/hyphens/spaces between the
+    # date and time and between H/M/S), any extension. Covers checksum sidecars and exports like
+    # 2018.05.02__21_02_56__EdgeNY_etc_root.sha512 -> 20180502_210256_EdgeNY_etc_root.sha512.
+    if [[ "$new" =~ ^([0-9]{4})\.([0-9]{2})\.([0-9]{2})[[:space:]_.-]+([0-9]{2})[._-]([0-9]{2})[._-]([0-9]{2})(.*)(\.[^.]+)$ ]]; then
+        local _dotdate_time_out
+        _dotdate_time_out="$(printf '%s%s%s_%s%s%s%s%s' \
+            "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}" "${BASH_REMATCH[3]}" \
+            "${BASH_REMATCH[4]}" "${BASH_REMATCH[5]}" "${BASH_REMATCH[6]}" \
+            "${BASH_REMATCH[7]}" \
+            "${BASH_REMATCH[8]}")"
+        printf '%s' "$(_normalize_basename_separators "$_dotdate_time_out")"
         return
     fi
 
