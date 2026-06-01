@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.06.01 - v. 0.9 - support glob source paths (e.g. host:/root/config/*): expand on the remote shell so wildcards work like rsync; rename SKAD/DOKAD vars to SOURCE/DEST
 # 2026.06.01 - v. 0.8 - rewritten to use ssh + scp only (no rsync): ping remote first,
 #                       then per-file download, sha512 (or md5) verify, and delete the
 #                       remote file (move) ONLY after it is correctly downloaded & verified
@@ -54,8 +55,8 @@ if (( $# != 2 )) && (( $# != 3 )); then
   exit 1
 fi
 
-export SKAD="$1"
-export DOKAD="$2"
+export SOURCE="$1"
+export DEST="$2"
 
 MOVE_MODE=0
 if (( $# == 3 )); then
@@ -69,17 +70,17 @@ if (( $# == 3 )); then
   esac
 fi
 
-if [ ! -d "$DOKAD" ]; then
-  echo; echo "(PGM) Directory $DOKAD doesn't exist..."; echo
+if [ ! -d "$DEST" ]; then
+  echo; echo "(PGM) Directory $DEST doesn't exist..."; echo
   exit 2
 fi
 
-case "$SKAD" in
-  *:*) ssh_target="${SKAD%%:*}"; remote_path="${SKAD#*:}" ;;
-  *)   echo; echo "(PGM) SKAD must be [user@]host:/remote/path ..."; echo; exit 3 ;;
+case "$SOURCE" in
+  *:*) ssh_target="${SOURCE%%:*}"; remote_path="${SOURCE#*:}" ;;
+  *)   echo; echo "(PGM) SOURCE must be [user@]host:/remote/path ..."; echo; exit 3 ;;
 esac
 if [ -z "$ssh_target" ] || [ -z "$remote_path" ]; then
-  echo; echo "(PGM) Could not parse remote spec ($SKAD) ..."; echo
+  echo; echo "(PGM) Could not parse remote spec ($SOURCE) ..."; echo
   exit 3
 fi
 
@@ -110,8 +111,8 @@ HC_MESSAGE=$(
   echo
   echo "current date: $(date '+%Y.%m.%d %H:%M')"
   echo
-  echo "SKAD  = $SKAD"
-  echo "DOKAD = $DOKAD"
+  echo "SOURCE = $SOURCE"
+  echo "DEST   = $DEST"
   echo "hash  = $HASH_CMD"
   if (( MOVE_MODE == 1 )); then
     echo "mode  = MOVE (delete remote file after verified download)"
@@ -135,7 +136,17 @@ HC_MESSAGE=$(
   tmp_list="$(mktemp)"
   trap 'rm -f -- "$tmp_list"' EXIT
 
-  if ! ssh "${SSH_OPTS[@]}" "$ssh_target" "find $(rq "$remote_path") -type f -print0" > "$tmp_list" 2>/dev/null; then
+  # Build the remote listing command. If the remote path contains glob
+  # metacharacters (* ? [), let the REMOTE shell expand it (rsync-style
+  # "/path/*" sources) - "; true" keeps a no-match expansion from looking
+  # like a failure. Otherwise quote the path literally so spaces are safe.
+  if [[ "$remote_path" == *[*?[]* ]]; then
+    remote_list_cmd="for p in ${remote_path}; do [ -e \"\$p\" ] && find \"\$p\" -type f -print0; done; true"
+  else
+    remote_list_cmd="find $(rq "$remote_path") -type f -print0"
+  fi
+
+  if ! ssh "${SSH_OPTS[@]}" "$ssh_target" "$remote_list_cmd" > "$tmp_list" 2>/dev/null; then
     echo "ERROR: remote enumeration failed (ssh/find on $ssh_target:$remote_path)"
     echo
     echo "SUMMARY: found=0 transferred=0 deleted=0 failed=1"
@@ -159,7 +170,7 @@ HC_MESSAGE=$(
     if [ "$relpath" = "$file" ]; then
       relpath="$(basename -- "$file")"
     fi
-    local_target="$DOKAD/$relpath"
+    local_target="$DEST/$relpath"
 
     echo ">> $relpath"
 
