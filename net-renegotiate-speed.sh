@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.06.02 - v. 0.4 - fix --run argv order (ifaces before options); exclude wifi; verify screen session after start
 # 2026.06.02 - v. 0.3 - resolve GNU screen binary when screen is a shell function (type -P, /usr/bin/screen, /bin/screen)
 # 2026.06.02 - v. 0.2 - screen: -c /dev/null so user .screenrc is not loaded
 # 2026.06.02 - v. 0.1 - try 1 Gbit/s renegotiation on physical ethernet NICs: list candidates, ask user, run test in screen (ping + revert after timeout on failure)
@@ -165,11 +166,12 @@ trap net_reneg_cleanup EXIT
 
 kod_powrotu=0
 
-# Physical ethernet = sysfs device present and type 1 (ARPHRD_ETHER), not loopback.
+# Wired ethernet only: sysfs device, ARPHRD_ETHER (1), not loopback/wifi/virtual.
 iface_is_physical_ethernet() {
   local iface="$1" t
   [[ "$iface" != lo ]] || return 1
   [[ -e "/sys/class/net/${iface}/device" ]] || return 1
+  [[ ! -d "/sys/class/net/${iface}/wireless" ]] || return 1
   [[ -r "/sys/class/net/${iface}/type" ]] || return 1
   t="$(<"/sys/class/net/${iface}/type")"
   [[ "$t" == 1 ]]
@@ -384,7 +386,7 @@ run_worker() {
   local iface fail=0
 
   if (( ${#WORKER_IFACES[@]} == 0 )); then
-    echo "No interfaces specified for --run."
+    echo "No interfaces specified for --run (put interface name(s) immediately after --run)." >&2
     return 1
   fi
 
@@ -428,11 +430,12 @@ launch_screen_worker() {
   if command -v readlink >/dev/null 2>&1; then
     script_path="$(readlink -f "$0" 2>/dev/null)" || script_path="$0"
   fi
-  cmd=( bash "$script_path" --run --no_startup_delay -t "$PING_TIMEOUT_SEC" -p "$PING_TARGET" -s "$TARGET_MBPS" )
-
+  # Interface names must follow --run immediately (parser stops at first -option).
+  cmd=( bash "$script_path" --run )
   for iface in "${WORKER_IFACES[@]}"; do
     cmd+=( "$iface" )
   done
+  cmd+=( --no_startup_delay -t "$PING_TIMEOUT_SEC" -p "$PING_TARGET" -s "$TARGET_MBPS" )
 
   if ! ensure_screen_bin; then
     echo "ERROR: GNU screen is required but no screen binary was found." >&2
@@ -450,7 +453,17 @@ launch_screen_worker() {
   fi
 
   echo "Starting screen session '${SCREEN_SESSION_NAME}'..."
-  "$SCREEN_BIN" -c "$SCREEN_NO_RC" -dmS "$SCREEN_SESSION_NAME" "${cmd[@]}"
+  if ! "$SCREEN_BIN" -c "$SCREEN_NO_RC" -dmS "$SCREEN_SESSION_NAME" "${cmd[@]}"; then
+    echo "ERROR: failed to start screen session." >&2
+    return 1
+  fi
+  sleep 0.3
+  if ! "$SCREEN_BIN" -list 2>/dev/null | grep -qE "[[:space:]]+[0-9]+\\.${SCREEN_SESSION_NAME}([[:space:]]|$)"; then
+    echo "ERROR: screen session '${SCREEN_SESSION_NAME}' exited immediately." >&2
+    echo "Worker command: ${cmd[*]}" >&2
+    echo "Run manually to see errors: ${cmd[*]}" >&2
+    return 1
+  fi
   echo
   echo "Worker started. Attach to watch progress:"
   echo "  ${SCREEN_BIN} -c ${SCREEN_NO_RC} -r ${SCREEN_SESSION_NAME}"
