@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.06.02 - v. 19.152.160000 - fix colored "Renamed:" line: printf used %s for RESET so literal \e[0m appeared at end of line (now %b%s%b for green new path + reset)
 # 2026.06.02 - v. 19.151.143000 - transform_basename: compact validated embedded dotted dates YYYY.M(M).D(D) anywhere in the stem (not only leading) → YYYYMMDD; year>=1980, real month/day; e.g. config_EdgeCHE_as_of_2021.11.01_040001.cfg.bz2.ssl → ..._20211101_040001...
 # 2026.06.02 - v. 19.150.124500 - non-verbose checksum progress letters: small/single-reference lists (< NONVERBOSE_CHECKSUM_LIST_PER_LETTER_THRESHOLD) print NO S/M/H letters (a lone "S" between status lines was just noise); the ramp is kept only for very large lists (>= threshold)
 # 2026.06.02 - v. 19.149.104500 - when colors enabled, entire NEW suggested-name lines (label + path) print in green (checksum preview, OLD/NEW prompts, arrow renames); OLD padded lines whole-line red
@@ -525,7 +526,7 @@ emit_wrap_old_arrow_new_stdout() {
     local plain="${plain_pfx}${old_p}${sep}${new_p}"
     if (( ${#plain} <= MAX_LINE_LENGTH )); then
         if [[ "$use_colors" == yes ]]; then
-            printf '%b%s%s%b%b%s%b\n' "$ansi_pfx" "$old_p" "$sep" "${GREEN}" "$new_p" "${RESET}"
+            printf '%b%s%s%b%s%b\n' "$ansi_pfx" "$old_p" "$sep" "${GREEN}" "$new_p" "${RESET}"
         else
             printf '%b%s%s%s\n' "$ansi_pfx" "$old_p" "$sep" "$new_p"
         fi
