@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.06.02 - v. 19.147.101500 - summary: "Affected entries (last 100)" lists only renames from THE CURRENT run (resume no longer shows stale entries from previous runs); header becomes "Affected entries this run (last 100):" on a resumed run, and prints "No entries affected this run" when a resumed run changed nothing
 # 2026.06.02 - v. 19.146.095900 - resume: non-verbose "N out of total" continues from the checkpoint position (offset = discovered paths already matched/skipped this run + this-session examined, capped at total) so a resumed run is visibly counting from ~position, not from 1
 # 2026.06.02 - v. 19.145.095000 - transform_basename: validated leading dotted date YYYY.M(M).D(D) + any non-digit separator → YYYYMMDD + rest (year>=1980, real month/day incl. leap years), then normalize; e.g. "2018.03.16 - LG ....sha512" → "20180316_-_LG_....sha512"
 # 2026.06.01 - v. 19.144.154000 - window title: "[ cwd ] full_script_path options" (spaces inside brackets); also set GNU screen / tmux window name (ESC k) so it shows inside screen/tmux, not only xterm/VTE
@@ -7608,6 +7609,10 @@ AUTO_LOWERCASE_MEDIA_OFFICE_EXT_SESSION=no # [U] session: only media + MS Office
 declare -a renamed_list=()
 declare -A recorded
 declare -A processed
+# Index into renamed_list where THIS run's renames begin. On resume it is set to the
+# number of entries restored from the checkpoint, so the summary can list only the
+# entries affected during the current run (0 for fresh runs).
+RENAMED_LIST_SESSION_BASE=0
 
 clear_resume_state_file() {
     [[ -f "$RESUME_STATE_FILE" ]] || return 0
@@ -7842,6 +7847,10 @@ PY
             verbose_status_timestamp "Resume restore progress: ${prev_renamed_count} renamed entries loaded..."
         fi
     done < "$tmp_renamed"
+
+    # Everything restored above belongs to previous runs; the summary's "affected entries"
+    # list should start counting from here so it only shows what THIS run renamed.
+    RENAMED_LIST_SESSION_BASE=${#renamed_list[@]}
 
     rm -f -- "$tmp_processed" "$tmp_renamed"
     RESUME_STATE_WAS_LOADED=1
@@ -8361,11 +8370,21 @@ print_summary() {
 
     nonverbose_progress_dot_endline_if_needed
     echo
-    if (( files_affected > 0 )); then
-        echo "Affected entries (last 100):"
-        start_idx=0
-        total_renamed=${#renamed_list[@]}
-        if (( total_renamed > 100 )); then
+    # Only list entries renamed during THIS run. On a resumed run, renamed_list also holds
+    # entries from previous runs (restored from the checkpoint); skip those so we don't show
+    # stale renames when the current run changed nothing.
+    local _session_base=${RENAMED_LIST_SESSION_BASE:-0}
+    total_renamed=${#renamed_list[@]}
+    (( _session_base > total_renamed )) && _session_base=$total_renamed
+    local _session_renamed=$(( total_renamed - _session_base ))
+    if (( _session_renamed > 0 )); then
+        if (( RESUME_STATE_WAS_LOADED == 1 )); then
+            echo "Affected entries this run (last 100):"
+        else
+            echo "Affected entries (last 100):"
+        fi
+        start_idx=$_session_base
+        if (( _session_renamed > 100 )); then
             start_idx=$(( total_renamed - 100 ))
         fi
         local _rsep=" ${ARROW} "
@@ -8385,6 +8404,9 @@ print_summary() {
                 printf "%s%b%s%b %s\n" "$WRAP_MSG_INDENT" "$RED" "$ARROW" "$RESET" "$new"
             fi
         done
+        echo
+    elif (( RESUME_STATE_WAS_LOADED == 1 )); then
+        echo "No entries affected this run (resumed run; ${_session_base} rename(s) from earlier runs are recorded in the checkpoint)."
         echo
     fi
 
