@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.06.02 - v. 0.7 - refresh template MD5 when template mtime changes; check cp/systemctl; quoted paths; EXIT trap for footer
 # 2026.05.26 - user-facing messages translated from Polish to English
 # 2021.09.19 - v. 0.6 - dodalem wypisywanie kropek, by ladniej wygladalo
 # 2021.06.17 - v. 0.5 - najpierw jest przeliczana md5 suma pliku plik_template
@@ -12,47 +13,71 @@
 
 plik=/etc/lighttpd/lighttpd.conf
 plik_template=/etc/lighttpd/lighttpd.conf.dobry-dziala
-md5_template=`md5sum /etc/lighttpd/lighttpd.conf.dobry-dziala|awk '{print $1}'`
 
 opoznienie=300    # opoznienie w sekundach po ktorych dopiero odwracamy zmiane pliku (by np. update skonczyl sie)
                   # bylo 120s ale chyba to za malo bo 2x skrypt wyslal maila w dniu 20.01.2021
 co_ile_spr=30
 co_ile_wypisac_date=200
 
-tresc_maila="plik ${plik} zostal zmodyfikowany, ale przywrocilem domyslna konfiguracje, hehe"
+tresc_maila="File ${plik} was modified; the default configuration was restored."
 
-if [ ! -f ${plik} ]; then
+lighttpd_template_md5() {
+  md5sum "$plik_template" | awk '{print $1}'
+}
+
+lighttpd_refresh_template_md5_if_needed() {
+  local mtime
+  mtime=$(stat -c %Y "$plik_template" 2>/dev/null) || return 1
+  if [[ "$mtime" != "${template_mtime_last:-}" ]]; then
+    template_mtime_last=$mtime
+    md5_template=$(lighttpd_template_md5) || return 1
+  fi
+  return 0
+}
+
+lighttpd_watch_cleanup() {
+  . /root/bin/_script_footer.sh
+}
+trap lighttpd_watch_cleanup EXIT
+
+if [[ ! -f "$plik" ]]; then
   echo "file $plik does not exist - exiting...."
   exit 1
 fi
-if [ ! -f ${plik_template} ]; then
+if [[ ! -f "$plik_template" ]]; then
   echo "file $plik_template does not exist - exiting...."
   exit 2
 fi
 
+template_mtime_last=
+md5_template=$(lighttpd_template_md5) || exit 3
+
 shopt -s nocasematch
 
 licznik=0
-echo -n "`date '+%Y.%m.%d %H:%M:%S'` "
+echo -n "$(date '+%Y.%m.%d %H:%M:%S') "
 while : ; do
-    #inotifywait -q -e modify -e delete -e close_write -e moved_to -e moved_from -e move -e create -e delete_self -e attrib ${plik}
-    if [[ $(md5sum "$plik"|awk '{print $1}') != ${md5_template} ]]; then 
+    lighttpd_refresh_template_md5_if_needed || echo "WARNING: could not refresh template MD5 for $plik_template" >&2
+    if [[ $(md5sum "$plik" | awk '{print $1}') != "${md5_template}" ]]; then
       echo   # blank line: previous output often had no trailing newline
-      echo `date '+%Y.%m.%d %H:%M:%S'`" - detected file change - sending mail"
-      sleep $opoznienie
-      cp ${plik_template} ${plik}
-      systemctl restart lighttpd 
-      echo "$tresc_maila" | strings | /usr/bin/mailx -s "(`hostname`-`date '+%Y.%m.%d %H:%M:%S'`) modifykacja pliku ${plik} zostala odwrocona" matuszyk+`hostname`@matuszyk.com
-      let licznik=0
+      echo "$(date '+%Y.%m.%d %H:%M:%S') - detected file change - sending mail"
+      sleep "$opoznienie"
+      if ! cp "$plik_template" "$plik"; then
+        echo "ERROR: failed to restore $plik from $plik_template" >&2
+      elif ! systemctl restart lighttpd; then
+        echo "ERROR: systemctl restart lighttpd failed after restoring $plik" >&2
+      else
+        echo "$tresc_maila" | strings | /usr/bin/mailx -s "($(hostname)-$(date '+%Y.%m.%d %H:%M:%S')) ${plik} modification reverted" "matuszyk+$(hostname)@matuszyk.com"
+      fi
+      licznik=0
     else
-       sleep $co_ile_spr
+       sleep "$co_ile_spr"
        echo -n "."
-       let licznik=licznik+1
-       if (( $licznik == $co_ile_wypisac_date )) ; then
-         echo ; echo -n "`date '+%Y.%m.%d %H:%M:%S'` "
+       ((licznik++))
+       if (( licznik == co_ile_wypisac_date )); then
+         echo
+         echo -n "$(date '+%Y.%m.%d %H:%M:%S') "
          licznik=0
        fi
     fi
 done
-
-. /root/bin/_script_footer.sh
