@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.06.02 - v. 19.148.103000 - non-verbose: a run of "DB SKIP" cache hits no longer alternates "DB SKIP" / "." — suppress the lone progress dot after a DB SKIP line (mirrors auto-dir "Renamed:"), so consecutive cache hits read as clean "DB SKIP" lines
 # 2026.06.02 - v. 19.147.101500 - summary: "Affected entries (last 100)" lists only renames from THE CURRENT run (resume no longer shows stale entries from previous runs); header becomes "Affected entries this run (last 100):" on a resumed run, and prints "No entries affected this run" when a resumed run changed nothing
 # 2026.06.02 - v. 19.146.095900 - resume: non-verbose "N out of total" continues from the checkpoint position (offset = discovered paths already matched/skipped this run + this-session examined, capped at total) so a resumed run is visibly counting from ~position, not from 1
 # 2026.06.02 - v. 19.145.095000 - transform_basename: validated leading dotted date YYYY.M(M).D(D) + any non-digit separator → YYYYMMDD + rest (year>=1980, real month/day incl. leap years), then normalize; e.g. "2018.03.16 - LG ....sha512" → "20180316_-_LG_....sha512"
@@ -8697,6 +8698,10 @@ for f in "${ordered_paths[@]}"; do
                 print_control_char_warning "$f"
             fi
             emit_wrap_labeled_stdout "DB SKIP: " "${CYAN}DB SKIP:${RESET} " "'$(format_path_for_log "$f")'"
+            # DB SKIP already printed an explicit per-path line; suppress the next iteration's
+            # lone progress dot so a run of cache hits reads as clean "DB SKIP" lines instead of
+            # alternating "DB SKIP" / "." (mirrors the auto-dir "Renamed:" behavior).
+            NONVERBOSE_SKIP_NEXT_MAIN_LOOP_DOT=yes
             ((++files_skipped))
             processed["$f"]=1
             continue
