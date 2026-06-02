@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.06.02 - v. 0.3 - resolve GNU screen binary when screen is a shell function (type -P, /usr/bin/screen, /bin/screen)
 # 2026.06.02 - v. 0.2 - screen: -c /dev/null so user .screenrc is not loaded
 # 2026.06.02 - v. 0.1 - try 1 Gbit/s renegotiation on physical ethernet NICs: list candidates, ask user, run test in screen (ping + revert after timeout on failure)
 
@@ -63,6 +64,39 @@ EOF
 
 SCREEN_SESSION_NAME="${NET_RENEG_SCREEN_NAME:-net-renegotiate}"
 SCREEN_NO_RC=/dev/null
+SCREEN_BIN=""
+
+# Real GNU screen executable (not a shell function/alias named screen).
+resolve_screen_bin() {
+  local p=""
+  if declare -F screen >/dev/null 2>&1; then
+    p="$(type -P screen 2>/dev/null || true)"
+  else
+    p="$(command -v screen 2>/dev/null || true)"
+    if [[ -n "$p" && ! -x "$p" ]]; then
+      p="$(type -P screen 2>/dev/null || true)"
+    fi
+  fi
+  if [[ -n "$p" && -x "$p" ]]; then
+    printf '%s' "$p"
+    return 0
+  fi
+  for p in /usr/bin/screen /bin/screen; do
+    if [[ -x "$p" ]]; then
+      printf '%s' "$p"
+      return 0
+    fi
+  done
+  return 1
+}
+
+ensure_screen_bin() {
+  if [[ -n "$SCREEN_BIN" && -x "$SCREEN_BIN" ]]; then
+    return 0
+  fi
+  SCREEN_BIN="$(resolve_screen_bin)" || return 1
+  return 0
+}
 TARGET_MBPS="${NET_RENEG_TARGET_MBPS:-1000}"
 PING_TARGET="${NET_RENEG_PING_TARGET:-www.google.com}"
 PING_TIMEOUT_SEC="${NET_RENEG_TIMEOUT_SEC:-20}"
@@ -356,6 +390,7 @@ run_worker() {
 
   check_if_installed ethtool
   check_if_installed ping iputils-ping
+  ensure_screen_bin 2>/dev/null || true
 
   echo "Renegotiation worker in screen session '${SCREEN_SESSION_NAME}'"
   echo "Host: $(hostname 2>/dev/null || echo '?')  Target: ${TARGET_MBPS} Mb/s  Ping: ${PING_TARGET}"
@@ -379,7 +414,7 @@ run_worker() {
   fi
 
   echo
-  echo "Detach from screen: Ctrl-A then D   |   Reattach: screen -c ${SCREEN_NO_RC} -r ${SCREEN_SESSION_NAME}"
+  echo "Detach from screen: Ctrl-A then D   |   Reattach: ${SCREEN_BIN:-screen} -c ${SCREEN_NO_RC} -r ${SCREEN_SESSION_NAME}"
   if [[ -t 0 ]]; then
     read -r -n 1 -s -p "Press any key to close this screen window... " _
     echo
@@ -399,23 +434,26 @@ launch_screen_worker() {
     cmd+=( "$iface" )
   done
 
-  if ! command -v screen >/dev/null 2>&1; then
-    echo "ERROR: GNU screen is required but not found in PATH." >&2
+  if ! ensure_screen_bin; then
+    echo "ERROR: GNU screen is required but no screen binary was found." >&2
     return 1
   fi
+  if declare -F screen >/dev/null 2>&1; then
+    echo "Note: shell function 'screen' is defined; using binary: ${SCREEN_BIN}"
+  fi
 
-  if screen -list 2>/dev/null | grep -q "[[:space:]]*[0-9]*\.${SCREEN_SESSION_NAME}[[:space:]]"; then
+  if "$SCREEN_BIN" -list 2>/dev/null | grep -q "[[:space:]]*[0-9]*\.${SCREEN_SESSION_NAME}[[:space:]]"; then
     echo "Screen session '${SCREEN_SESSION_NAME}' already exists."
-    echo "Attach: screen -c ${SCREEN_NO_RC} -r ${SCREEN_SESSION_NAME}"
-    echo "Or remove it first: screen -c ${SCREEN_NO_RC} -S ${SCREEN_SESSION_NAME} -X quit"
+    echo "Attach: ${SCREEN_BIN} -c ${SCREEN_NO_RC} -r ${SCREEN_SESSION_NAME}"
+    echo "Or remove it first: ${SCREEN_BIN} -c ${SCREEN_NO_RC} -S ${SCREEN_SESSION_NAME} -X quit"
     return 1
   fi
 
   echo "Starting screen session '${SCREEN_SESSION_NAME}'..."
-  screen -c "$SCREEN_NO_RC" -dmS "$SCREEN_SESSION_NAME" "${cmd[@]}"
+  "$SCREEN_BIN" -c "$SCREEN_NO_RC" -dmS "$SCREEN_SESSION_NAME" "${cmd[@]}"
   echo
   echo "Worker started. Attach to watch progress:"
-  echo "  screen -c ${SCREEN_NO_RC} -r ${SCREEN_SESSION_NAME}"
+  echo "  ${SCREEN_BIN} -c ${SCREEN_NO_RC} -r ${SCREEN_SESSION_NAME}"
   echo
   return 0
 }
@@ -425,7 +463,7 @@ interactive_main() {
 
   check_if_installed ethtool
   check_if_installed ping iputils-ping
-  command -v screen >/dev/null 2>&1 || check_if_installed screen
+  ensure_screen_bin || check_if_installed screen
 
   if ! print_physical_nic_table; then
     kod_powrotu=1
