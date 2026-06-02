@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.06.02 - v. 19.145.095000 - transform_basename: validated leading dotted date YYYY.M(M).D(D) + any non-digit separator → YYYYMMDD + rest (year>=1980, real month/day incl. leap years), then normalize; e.g. "2018.03.16 - LG ....sha512" → "20180316_-_LG_....sha512"
 # 2026.06.01 - v. 19.144.154000 - window title: "[ cwd ] full_script_path options" (spaces inside brackets); also set GNU screen / tmux window name (ESC k) so it shows inside screen/tmux, not only xterm/VTE
 # 2026.06.01 - v. 19.143.150000 - transform_basename: dotted date + separated time (YYYY.MM.DD <sep> HH<sep>MM<sep>SS[_tail]) → YYYYMMDD_HHMMSS[_tail] for any extension (e.g. checksum .sha512/.md5 sidecars)
 # 2026.05.31 - v. 19.142.231100 - GoPro/camera raw: guard transform_gopro_camera_basename under set -e/ERR trap (no-metadata return 1 no longer prints "ERROR: command failed at line ..."); fall back to normal rename quietly
@@ -5583,6 +5584,22 @@ choose_r_grave_mapping_for_file() {
 
 # Spaces/brackets/punct → underscores for final basename (used on stem or whole name).
 # Optional second arg preserve-leading-underscore: skip stripping leading underscores (okladka cover).
+# 0 = (year >= 1980) AND (month 1-12) AND (day valid for that month, leap years honored).
+# Args: YYYY MM DD (each may carry a leading zero; forced to base-10 to avoid octal parsing).
+_rename_is_valid_ymd() {
+    local y=$((10#$1)) m=$((10#$2)) d=$((10#$3)) dim
+    (( y >= 1980 )) || return 1
+    (( m >= 1 && m <= 12 )) || return 1
+    case "$m" in
+        1|3|5|7|8|10|12) dim=31 ;;
+        4|6|9|11)        dim=30 ;;
+        2) if (( (y % 4 == 0 && y % 100 != 0) || y % 400 == 0 )); then dim=29; else dim=28; fi ;;
+        *) return 1 ;;
+    esac
+    (( d >= 1 && d <= dim )) || return 1
+    return 0
+}
+
 _normalize_basename_separators() {
     local input="$1"
     local preserve="${2-}"
@@ -6073,6 +6090,22 @@ transform_basename() {
             "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}" "${BASH_REMATCH[3]}" \
             "${BASH_REMATCH[4]}" \
             "${BASH_REMATCH[5]}"
+        return
+    fi
+
+    # Leading dotted calendar date YYYY.M(M).D(D) followed by ANY non-digit separator (space, _, -, .)
+    # or end of name. Month/day may be 1 or 2 digits; the date is validated (year >= 1980, month 1-12,
+    # day valid for that month incl. leap years) so non-dates like 1.2.3 or 2018.13.40 are left alone.
+    # -> YYYYMMDD + rest, then normalize (spaces/brackets -> underscores, collapse).
+    # e.g. "2018.03.16 - LGUS996238c749 - offline backup LG Pawla.sha512"
+    #   -> "20180316_-_LGUS996238c749_-_offline_backup_LG_Pawla.sha512"
+    if [[ "$new" =~ ^([0-9]{4})\.([0-9]{1,2})\.([0-9]{1,2})([^0-9].*)?$ ]] \
+        && _rename_is_valid_ymd "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}" "${BASH_REMATCH[3]}"; then
+        local _lead_date_out
+        _lead_date_out="$(printf '%04d%02d%02d%s' \
+            "$((10#${BASH_REMATCH[1]}))" "$((10#${BASH_REMATCH[2]}))" "$((10#${BASH_REMATCH[3]}))" \
+            "${BASH_REMATCH[4]}")"
+        printf '%s' "$(_normalize_basename_separators "$_lead_date_out")"
         return
     fi
 
