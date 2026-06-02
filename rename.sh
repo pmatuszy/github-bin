@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.06.02 - v. 19.151.143000 - transform_basename: compact validated embedded dotted dates YYYY.M(M).D(D) anywhere in the stem (not only leading) → YYYYMMDD; year>=1980, real month/day; e.g. config_EdgeCHE_as_of_2021.11.01_040001.cfg.bz2.ssl → ..._20211101_040001...
 # 2026.06.02 - v. 19.150.124500 - non-verbose checksum progress letters: small/single-reference lists (< NONVERBOSE_CHECKSUM_LIST_PER_LETTER_THRESHOLD) print NO S/M/H letters (a lone "S" between status lines was just noise); the ramp is kept only for very large lists (>= threshold)
 # 2026.06.02 - v. 19.149.104500 - when colors enabled, entire NEW suggested-name lines (label + path) print in green (checksum preview, OLD/NEW prompts, arrow renames); OLD padded lines whole-line red
 # 2026.06.02 - v. 19.148.103000 - non-verbose: a run of "DB SKIP" cache hits no longer alternates "DB SKIP" / "." — suppress the lone progress dot after a DB SKIP line (mirrors auto-dir "Renamed:"), so consecutive cache hits read as clean "DB SKIP" lines
@@ -5647,6 +5648,43 @@ _rename_is_valid_ymd() {
     return 0
 }
 
+# Replace every validated YYYY.M(M).D(D) substring in NAME (anywhere, not only at the start).
+# Boundaries: the character before and after the match must not be a digit (or start/end of string).
+# Invalid calendar values (year < 1980, month/day out of range) are left unchanged.
+_rename_compact_embedded_dotted_dates() {
+    local s="$1"
+    local -i i=0 len=${#s}
+    local y m d match_len j compact
+
+    while (( i < len )); do
+        if [[ ${s:i} =~ ^([0-9]{4})\.([0-9]{1,2})\.([0-9]{1,2}) ]]; then
+            y="${BASH_REMATCH[1]}"
+            m="${BASH_REMATCH[2]}"
+            d="${BASH_REMATCH[3]}"
+            match_len=${#BASH_REMATCH[0]}
+            if (( i > 0 )) && [[ ${s:i-1:1} =~ [0-9] ]]; then
+                (( ++i ))
+                continue
+            fi
+            j=$(( i + match_len ))
+            if (( j < len )) && [[ ${s:j:1} =~ [0-9] ]]; then
+                (( ++i ))
+                continue
+            fi
+            if _rename_is_valid_ymd "$y" "$m" "$d"; then
+                compact="$(printf '%04d%02d%02d' \
+                    "$((10#${y}))" "$((10#${m}))" "$((10#${d}))")"
+                s="${s:0:i}${compact}${s:j}"
+                len=${#s}
+                i=$(( i + 8 ))
+                continue
+            fi
+        fi
+        (( ++i ))
+    done
+    printf '%s' "$s"
+}
+
 _normalize_basename_separators() {
     local input="$1"
     local preserve="${2-}"
@@ -6155,6 +6193,10 @@ transform_basename() {
         printf '%s' "$(_normalize_basename_separators "$_lead_date_out")"
         return
     fi
+
+    # Embedded dotted calendar date anywhere in the stem (e.g. as_of_2021.11.01_040001 in a config backup name).
+    # Runs after start-anchored dotted rules so YYYY.MM.DD + time at the beginning is still handled above.
+    new="$(_rename_compact_embedded_dotted_dates "$new")"
 
     # Underscore or whitespace between date and time (e.g. camera exports "2010-02-20 14-28-18  title.NEF").
     # Early return must still pass through _normalize_basename_separators (otherwise title tail spaces are left as-is).
