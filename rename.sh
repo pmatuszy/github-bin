@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# 2026.06.02 - v. 19.150.124500 - non-verbose checksum progress letters: small/single-reference lists (< NONVERBOSE_CHECKSUM_LIST_PER_LETTER_THRESHOLD) print NO S/M/H letters (a lone "S" between status lines was just noise); the ramp is kept only for very large lists (>= threshold)
+# 2026.06.02 - v. 19.149.104500 - when colors enabled, entire NEW suggested-name lines (label + path) print in green (checksum preview, OLD/NEW prompts, arrow renames); OLD padded lines whole-line red
 # 2026.06.02 - v. 19.148.103000 - non-verbose: a run of "DB SKIP" cache hits no longer alternates "DB SKIP" / "." — suppress the lone progress dot after a DB SKIP line (mirrors auto-dir "Renamed:"), so consecutive cache hits read as clean "DB SKIP" lines
 # 2026.06.02 - v. 19.147.101500 - summary: "Affected entries (last 100)" lists only renames from THE CURRENT run (resume no longer shows stale entries from previous runs); header becomes "Affected entries this run (last 100):" on a resumed run, and prints "No entries affected this run" when a resumed run changed nothing
 # 2026.06.02 - v. 19.146.095900 - resume: non-verbose "N out of total" continues from the checkpoint position (offset = discovered paths already matched/skipped this run + this-session examined, capped at total) so a resumed run is visibly counting from ~position, not from 1
@@ -414,14 +416,35 @@ NEF_XMP_PAIR_LABEL_WIDTH_NO_SIDECAR="${NEF_XMP_PAIR_LABEL_WIDTH_NO_SIDECAR:-5}"
 WRAP_MSG_INDENT="${WRAP_MSG_INDENT:-          }"
 
 # plain_prefix + body == full visible line (no ANSI). fd 1=stdout, 2=stderr.
+# Optional 5th arg full_line_color (green|red|cyan|yellow): when use_colors=yes, the entire
+# visible line (prefix + body) uses that color — used for OLD/NEW suggested path lines.
 emit_wrap_labeled_line() {
     local fd="$1"
     local plain_prefix="$2"
     local ansi_label="$3"
     local body="$4"
+    local full_line_color="${5-}"
     local plain="${plain_prefix}${body}"
+    local line_color=""
     if (( fd == 1 )); then
         nonverbose_progress_dot_endline_if_needed
+    fi
+    if [[ "$use_colors" == yes && -n "$full_line_color" ]]; then
+        case "$full_line_color" in
+            green)  line_color=$GREEN ;;
+            red)    line_color=$RED ;;
+            cyan)   line_color=$CYAN ;;
+            yellow) line_color=$YELLOW ;;
+        esac
+    fi
+    if [[ -n "$line_color" ]]; then
+        if (( ${#plain} <= MAX_LINE_LENGTH )); then
+            printf '%b%s%b\n' "$line_color" "$plain" "$RESET" >&"$fd"
+        else
+            printf '%b%s%b\n' "$line_color" "$plain_prefix" "$RESET" >&"$fd"
+            printf '%b%s%s%b\n' "$line_color" "$WRAP_MSG_INDENT" "$body" "$RESET" >&"$fd"
+        fi
+        return 0
     fi
     if (( ${#plain} <= MAX_LINE_LENGTH )); then
         printf '%b%s\n' "$ansi_label" "$body" >&"$fd"
@@ -431,10 +454,13 @@ emit_wrap_labeled_line() {
     fi
 }
 
-emit_wrap_labeled_stdout() { emit_wrap_labeled_line 1 "$@"; }
+# Optional 4th arg: full_line_color (see emit_wrap_labeled_line).
+emit_wrap_labeled_stdout() {
+    emit_wrap_labeled_line 1 "$@"
+}
 emit_wrap_labeled_stderr() { emit_wrap_labeled_line 2 "$@"; }
 
-# Pad plain_tag to width (spaces after text), color the padded tag; then same wrapping as emit_wrap_labeled_stdout.
+# Pad plain_tag to width; when colors are on, color the whole line (tag + path) per color_name.
 emit_wrap_padded_label_stdout() {
     local plain_tag="$1"
     local color_name="$2"
@@ -449,7 +475,11 @@ emit_wrap_padded_label_stdout() {
         yellow) ansi_pref="${YELLOW}${padded}${RESET}" ;;
         *)      ansi_pref="$padded" ;;
     esac
-    emit_wrap_labeled_stdout "$padded" "$ansi_pref" "$body"
+    if [[ "$use_colors" == yes && "$color_name" =~ ^(green|red|cyan|yellow)$ ]]; then
+        emit_wrap_labeled_line 1 "$padded" "" "$body" "$color_name"
+    else
+        emit_wrap_labeled_stdout "$padded" "$ansi_pref" "$body"
+    fi
 }
 
 # NEF+XMP interactive rename: pad label to width (arg 4, default NEF_XMP_PAIR_LABEL_WIDTH) so OLD/NEW/sidecar paths align when sidecars exist.
@@ -483,6 +513,7 @@ emit_wrap_exclude_append_message() {
 }
 
 # Long OLD path ARROW NEW path (ARROW is set later at startup; expanded at call time).
+# When colors are on, the suggested new path is printed in green.
 emit_wrap_old_arrow_new_stdout() {
     nonverbose_progress_dot_endline_if_needed
     local plain_pfx="$1"
@@ -492,10 +523,19 @@ emit_wrap_old_arrow_new_stdout() {
     local sep=" ${ARROW} "
     local plain="${plain_pfx}${old_p}${sep}${new_p}"
     if (( ${#plain} <= MAX_LINE_LENGTH )); then
-        printf '%b%s%s%s\n' "$ansi_pfx" "$old_p" "$sep" "$new_p"
+        if [[ "$use_colors" == yes ]]; then
+            printf '%b%s%s%b%b%s%b\n' "$ansi_pfx" "$old_p" "$sep" "${GREEN}" "$new_p" "${RESET}"
+        else
+            printf '%b%s%s%s\n' "$ansi_pfx" "$old_p" "$sep" "$new_p"
+        fi
     else
-        printf '%b%s%s\n' "$ansi_pfx" "$old_p" "$sep"
-        printf '%s%s\n' "$WRAP_MSG_INDENT" "$new_p"
+        if [[ "$use_colors" == yes ]]; then
+            printf '%b%s%s\n' "$ansi_pfx" "$old_p" "$sep"
+            printf '%b%s%s%b\n' "${GREEN}" "$WRAP_MSG_INDENT" "$new_p" "${RESET}"
+        else
+            printf '%b%s%s\n' "$ansi_pfx" "$old_p" "$sep"
+            printf '%s%s\n' "$WRAP_MSG_INDENT" "$new_p"
+        fi
     fi
 }
 
@@ -566,7 +606,7 @@ NONVERBOSE_CHECKSUM_RAMP_CELL_ACTIVE=no
 NONVERBOSE_CHECKSUM_PROGRESS_SOURCE=""
 NONVERBOSE_CHECKSUM_PROGRESS_NREFS=0
 NONVERBOSE_CHECKSUM_PROGRESS_FPL=0
-# Non-verbose checksum list (second arg to progress letter): below threshold → one S/M/H per line/ref; at or above → one letter every min(MAX_PER_CHAR, max(1,n/10)) events. Override: export VAR=value before running.
+# Non-verbose checksum list (second arg to progress letter): below threshold → NO progress letters (a lone S/M/H is just noise for small/single-reference files); at or above → one letter every min(MAX_PER_CHAR, max(1,n/10)) events. Override: export VAR=value before running.
 NONVERBOSE_CHECKSUM_LIST_PER_LETTER_THRESHOLD="${NONVERBOSE_CHECKSUM_LIST_PER_LETTER_THRESHOLD:-3000}"
 NONVERBOSE_CHECKSUM_LIST_MAX_ENTRIES_PER_PROGRESS_CHAR="${NONVERBOSE_CHECKSUM_LIST_MAX_ENTRIES_PER_PROGRESS_CHAR:-50}"
 # After auto-dir “Renamed:” (stdout), the next iteration’s lone progress dot looked odd; skip that one dot (see nonverbose_main_loop_progress_dot).
@@ -699,7 +739,7 @@ Environment / tunables (read at startup; use export or prefix on the same line a
       NONVERBOSE_CHECKSUM_LETTER_CYCLE_EVENTS=50 rename.sh --use-db
   NONVERBOSE_CHECKSUM_LIST_MAX_ENTRIES_PER_PROGRESS_CHAR  Large checksum lists: max entries represented by one progress letter (default 50).
       NONVERBOSE_CHECKSUM_LIST_MAX_ENTRIES_PER_PROGRESS_CHAR=40 rename.sh --use-db
-  NONVERBOSE_CHECKSUM_LIST_PER_LETTER_THRESHOLD  Below this many list lines, one S/M/H per ref; at or above, batched letters (default 3000).
+  NONVERBOSE_CHECKSUM_LIST_PER_LETTER_THRESHOLD  Below this many list lines, NO progress letters (small/single-reference lists stay quiet); at or above, batched S/M/H letters (default 3000).
       NONVERBOSE_CHECKSUM_LIST_PER_LETTER_THRESHOLD=5000 rename.sh --use-db
   NONVERBOSE_CHECKSUM_RAMP_CHARS        Non-verbose checksum ramp glyphs between S/M/H (maps to in-cell redraw order). Default is a long punctuation set; use single quotes when exporting.
       export NONVERBOSE_CHECKSUM_RAMP_CHARS='.:-=+*'
@@ -944,7 +984,7 @@ nonverbose_checksum_commit_kind_letter() {
 }
 
 # M = MD5 list, S = SHA512 list, H = anything else (unknown extension / future kinds).
-# With optional second arg (checksum file path): scale by line count — below NONVERBOSE_CHECKSUM_LIST_PER_LETTER_THRESHOLD → one S/M/H per event;
+# With optional second arg (checksum file path): scale by line count — below NONVERBOSE_CHECKSUM_LIST_PER_LETTER_THRESHOLD → NO letters at all (small/single-reference lists stay quiet);
 # at or above → one letter every min(NONVERBOSE_CHECKSUM_LIST_MAX_ENTRIES_PER_PROGRESS_CHAR, max(1, n/10)) events (ramp between). Without second arg, uses stride*cycle legacy behavior.
 nonverbose_checksum_ref_verify_progress_letter() {
     local kind="${1-}"
@@ -965,14 +1005,15 @@ nonverbose_checksum_ref_verify_progress_letter() {
             [[ "$maxc" =~ ^[0-9]+$ ]] || maxc=50
             (( thr < 1 )) && thr=1
             (( maxc < 1 )) && maxc=1
-            if (( nline > 0 && nline < thr )); then
-                NONVERBOSE_CHECKSUM_PROGRESS_FPL=1
-            elif (( nline >= thr )); then
+            if (( nline >= thr )); then
                 fpl=$(( nline / 10 ))
                 (( fpl < 1 )) && fpl=1
                 (( fpl > maxc )) && fpl=$maxc
                 NONVERBOSE_CHECKSUM_PROGRESS_FPL=$fpl
             else
+                # Small lists (incl. single-reference .sha512/.md5 files): no progress
+                # letters at all — a lone "S"/"M"/"H" between status lines is just noise.
+                # Letters/ramp are only useful for very large lists (>= threshold).
                 NONVERBOSE_CHECKSUM_PROGRESS_FPL=0
             fi
         fi
@@ -1005,6 +1046,9 @@ nonverbose_checksum_ref_verify_progress_letter() {
             nonverbose_checksum_ramp_cell_put "$letter"
             return 0
         fi
+        # Size is known (sum_path was given): never fall through to the legacy stride/cycle
+        # path below, which would print a glyph even for a small/single-reference list.
+        return 0
     fi
 
     stride=${NONVERBOSE_CHECKSUM_EVENT_STRIDE_N:-1}
@@ -4933,11 +4977,11 @@ print_html_companion_plan_for_prompt() {
     if [[ -n "$HTML_COMPANION_OLD_DIR" && "$HTML_COMPANION_OLD_DIR" != "$HTML_COMPANION_NEW_DIR" ]]; then
         emit_wrap_labeled_stdout "HTML companion: " "${CYAN}HTML companion:${RESET} " "will rename directory and update references inside the HTML file."
         emit_wrap_labeled_stdout "  OLD DIR: " "  ${RED}OLD DIR:${RESET} " "$HTML_COMPANION_OLD_DIR"
-        emit_wrap_labeled_stdout "  NEW DIR: " "  ${GREEN}NEW DIR:${RESET} " "$HTML_COMPANION_NEW_DIR"
+        emit_wrap_labeled_stdout "  NEW DIR: " "  ${GREEN}NEW DIR:${RESET} " "$HTML_COMPANION_NEW_DIR" green
     elif [[ "$HTML_COMPANION_REFERENCE_UPDATE_ONLY" == "yes" ]]; then
         emit_wrap_labeled_stdout "HTML companion: " "${CYAN}HTML companion:${RESET} " "already exists with the new name; references inside the HTML file will be updated."
         emit_wrap_labeled_stdout "  OLD REF: " "  ${RED}OLD REF:${RESET} " "$HTML_COMPANION_OLD_NAME"
-        emit_wrap_labeled_stdout "  NEW REF: " "  ${GREEN}NEW REF:${RESET} " "$HTML_COMPANION_NEW_NAME"
+        emit_wrap_labeled_stdout "  NEW REF: " "  ${GREEN}NEW REF:${RESET} " "$HTML_COMPANION_NEW_NAME" green
     fi
 }
 
@@ -6799,7 +6843,7 @@ can_overwrite_collision_with_identical_md5() {
     emit_wrap_labeled_stdout "    created:    " "    created:    " "$(format_epoch_human "$old_btime")"
     emit_wrap_labeled_stdout "    modified:   " "    modified:   " "$(format_epoch_human "$old_mtime")"
     emit_wrap_labeled_stdout "    md5:        " "    md5:        " "$old_md5"
-    emit_wrap_labeled_stdout "  DESTINATION: " "  ${GREEN}DESTINATION:${RESET} " "$new"
+    emit_wrap_labeled_stdout "  DESTINATION: " "  ${GREEN}DESTINATION:${RESET} " "$new" green
     emit_wrap_labeled_stdout "    size:       " "    size:       " "$(format_bytes_human "$new_size")"
     emit_wrap_labeled_stdout "    created:    " "    created:    " "$(format_epoch_human "$new_btime")"
     emit_wrap_labeled_stdout "    modified:   " "    modified:   " "$(format_epoch_human "$new_mtime")"
@@ -7213,9 +7257,9 @@ perform_plain_entry_rename() {
     if [[ -n "$old_companion_dir" && "$old_companion_dir" != "$new_companion_dir" ]]; then
         emit_wrap_labeled_stdout "HTML PAIR RENAME: " "${CYAN}HTML PAIR RENAME:${RESET} " "HTML file and companion directory are being updated together."
         emit_wrap_labeled_stdout "  OLD HTML: " "  ${RED}OLD HTML:${RESET} " "$old"
-        emit_wrap_labeled_stdout "  NEW HTML: " "  ${GREEN}NEW HTML:${RESET} " "$new"
+        emit_wrap_labeled_stdout "  NEW HTML: " "  ${GREEN}NEW HTML:${RESET} " "$new" green
         emit_wrap_labeled_stdout "  OLD DIR:  " "  ${RED}OLD DIR:${RESET}  " "$old_companion_dir"
-        emit_wrap_labeled_stdout "  NEW DIR:  " "  ${GREEN}NEW DIR:${RESET}  " "$new_companion_dir"
+        emit_wrap_labeled_stdout "  NEW DIR:  " "  ${GREEN}NEW DIR:${RESET}  " "$new_companion_dir" green
         if should_skip_case_only_rename_on_fs "$old_companion_dir" "$new_companion_dir"; then
             vlog "Skipping case-only HTML companion directory rename on exfat/CIFS/Samba: '$old_companion_dir'"
             ((++files_skipped))
@@ -8396,13 +8440,21 @@ print_summary() {
             new=${r#*|}
             _rplain="  ${old}${_rsep}${new}"
             if (( ${#_rplain} <= MAX_LINE_LENGTH )); then
-                printf "  %s %b%s%b %s\n" \
-                    "$old" \
-                    "$RED" "$ARROW" "$RESET" \
-                    "$new"
+                if [[ "$use_colors" == yes ]]; then
+                    printf "  %s %b%s%b %b%s%b\n" \
+                        "$old" \
+                        "$RED" "$ARROW" "$RESET" \
+                        "${GREEN}" "$new" "${RESET}"
+                else
+                    printf "  %s %s %s\n" "$old" "$ARROW" "$new"
+                fi
             else
                 printf "  %s\n" "$old"
-                printf "%s%b%s%b %s\n" "$WRAP_MSG_INDENT" "$RED" "$ARROW" "$RESET" "$new"
+                if [[ "$use_colors" == yes ]]; then
+                    printf "%s%b%s%b %b%s%b\n" "$WRAP_MSG_INDENT" "$RED" "$ARROW" "$RESET" "${GREEN}" "$new" "${RESET}"
+                else
+                    printf "%s%s %s\n" "$WRAP_MSG_INDENT" "$ARROW" "$new"
+                fi
             fi
         done
         echo
@@ -9307,9 +9359,9 @@ for f in "${ordered_paths[@]}"; do
                 if [[ "${html_companion_apply[$i]}" == "yes" ]]; then
                     emit_wrap_labeled_stdout "HTML PAIR RENAME: " "${CYAN}HTML PAIR RENAME:${RESET} " "HTML file and companion directory are being updated together."
                     emit_wrap_labeled_stdout "  OLD HTML: " "  ${RED}OLD HTML:${RESET} " "${refs[$i]}"
-                    emit_wrap_labeled_stdout "  NEW HTML: " "  ${GREEN}NEW HTML:${RESET} " "${new_refs[$i]}"
+                    emit_wrap_labeled_stdout "  NEW HTML: " "  ${GREEN}NEW HTML:${RESET} " "${new_refs[$i]}" green
                     emit_wrap_labeled_stdout "  OLD DIR: " "  ${RED}OLD DIR:${RESET}  " "${html_companion_old_dirs[$i]}"
-                    emit_wrap_labeled_stdout "  NEW DIR: " "  ${GREEN}NEW DIR:${RESET}  " "${html_companion_new_dirs[$i]}"
+                    emit_wrap_labeled_stdout "  NEW DIR: " "  ${GREEN}NEW DIR:${RESET}  " "${html_companion_new_dirs[$i]}" green
                     print_rename_action_verbose "${html_companion_old_dirs[$i]}" "${html_companion_new_dirs[$i]}" "html companion rename"
                     if should_skip_case_only_rename_on_fs "${html_companion_old_dirs[$i]}" "${html_companion_new_dirs[$i]}"; then
                         vlog "Skipping case-only HTML companion directory rename on exfat/CIFS/Samba (checksum group): '${html_companion_old_dirs[$i]}'"
