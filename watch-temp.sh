@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.06.02 - v. 0.6 - print a "(press Ctrl-C to exit)" hint at the bottom of the live view (Pi loop + both `watch sensors` paths)
 # 2026.06.02 - v. 0.5 - Pi view: annotate the healthy throttle line ("OK (0x0)  <- no under-voltage / no throttling, now or since boot") so the bitmask is self-explanatory
 # 2026.06.02 - v. 0.4 - Pi view: no temp file and no exported function — render in-process via a shell function in a clear+sleep loop (ANSI home/clear gives the same non-scrolling refresh as watch); x86 still uses `watch sensors`
 # 2026.06.02 - v. 0.3 - fix: run the Pi view via a temp render script executed by watch (the exported-function approach failed because watch's `sh -c` dropped the BASH_FUNC_* env entry -> "render_pi_status: command not found")
@@ -107,6 +108,8 @@ watch_render_loop() {
   while : ; do
     printf '\033[H\033[2J'
     render_pi_status
+    echo
+    echo "(press Ctrl-C to exit)"
     sleep "$WATCH_INTERVAL"
   done
 }
@@ -119,7 +122,7 @@ if is_raspberry_pi; then
     echo "      Falling back to 'sensors'."
     echo
     check_if_installed sensors
-    watch -n "$WATCH_INTERVAL" sensors
+    watch -n "$WATCH_INTERVAL" 'sensors; echo; echo "(press Ctrl-C to exit)"'
   fi
 else
   # x86 / other hardware: lm-sensors shows per-core coretemp, NVMe, etc.
@@ -128,5 +131,5 @@ else
     echo ; echo "(PGM) I can't find sensors utility... exiting ..." ; echo
     exit 1
   fi
-  watch -n "$WATCH_INTERVAL" sensors
+  watch -n "$WATCH_INTERVAL" 'sensors; echo; echo "(press Ctrl-C to exit)"'
 fi
