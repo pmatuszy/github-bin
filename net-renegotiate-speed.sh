@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.06.02 - v. 0.2 - screen: -c /dev/null so user .screenrc is not loaded
 # 2026.06.02 - v. 0.1 - try 1 Gbit/s renegotiation on physical ethernet NICs: list candidates, ask user, run test in screen (ping + revert after timeout on failure)
 
 print_version_banner() {
@@ -35,8 +36,9 @@ test fails within the timeout.
 Interactive flow (default):
   1. Lists physical ethernet interfaces (skips loopback and virtual/docker bridges).
   2. Asks whether to proceed.
-  3. Starts a detached GNU screen session named "${SCREEN_SESSION_NAME}" that runs
-     the renegotiation test (attach: screen -r ${SCREEN_SESSION_NAME}).
+  3. Starts a detached GNU screen session named "${SCREEN_SESSION_NAME}" (no .screenrc;
+     uses -c /dev/null) that runs the renegotiation test
+     (attach: screen -c /dev/null -r ${SCREEN_SESSION_NAME}).
 
 Inside the screen session, for each selected interface:
   - Saves current ethtool settings
@@ -60,6 +62,7 @@ EOF
 }
 
 SCREEN_SESSION_NAME="${NET_RENEG_SCREEN_NAME:-net-renegotiate}"
+SCREEN_NO_RC=/dev/null
 TARGET_MBPS="${NET_RENEG_TARGET_MBPS:-1000}"
 PING_TARGET="${NET_RENEG_PING_TARGET:-www.google.com}"
 PING_TIMEOUT_SEC="${NET_RENEG_TIMEOUT_SEC:-20}"
@@ -376,7 +379,7 @@ run_worker() {
   fi
 
   echo
-  echo "Detach from screen: Ctrl-A then D   |   Reattach: screen -r ${SCREEN_SESSION_NAME}"
+  echo "Detach from screen: Ctrl-A then D   |   Reattach: screen -c ${SCREEN_NO_RC} -r ${SCREEN_SESSION_NAME}"
   if [[ -t 0 ]]; then
     read -r -n 1 -s -p "Press any key to close this screen window... " _
     echo
@@ -403,16 +406,16 @@ launch_screen_worker() {
 
   if screen -list 2>/dev/null | grep -q "[[:space:]]*[0-9]*\.${SCREEN_SESSION_NAME}[[:space:]]"; then
     echo "Screen session '${SCREEN_SESSION_NAME}' already exists."
-    echo "Attach: screen -r ${SCREEN_SESSION_NAME}"
-    echo "Or remove it first: screen -S ${SCREEN_SESSION_NAME} -X quit"
+    echo "Attach: screen -c ${SCREEN_NO_RC} -r ${SCREEN_SESSION_NAME}"
+    echo "Or remove it first: screen -c ${SCREEN_NO_RC} -S ${SCREEN_SESSION_NAME} -X quit"
     return 1
   fi
 
   echo "Starting screen session '${SCREEN_SESSION_NAME}'..."
-  screen -dmS "$SCREEN_SESSION_NAME" "${cmd[@]}"
+  screen -c "$SCREEN_NO_RC" -dmS "$SCREEN_SESSION_NAME" "${cmd[@]}"
   echo
   echo "Worker started. Attach to watch progress:"
-  echo "  screen -r ${SCREEN_SESSION_NAME}"
+  echo "  screen -c ${SCREEN_NO_RC} -r ${SCREEN_SESSION_NAME}"
   echo
   return 0
 }
