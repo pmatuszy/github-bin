@@ -1,10 +1,76 @@
 #!/bin/bash
 
+# 2026.06.02 - v. 0.4 - add -h/--help and -v/--version options (parsed before the header so they skip the figlet banner / startup delay)
 # 2026.06.02 - v. 0.3 - auto-detect the real CPU sensor (x86_pkg_temp/coretemp on Intel, cpu-thermal on Raspberry Pi) instead of hard-coding thermal_zone0 (which is ambient acpitz on x86); print the chosen sensor
 # 2026.06.02 - v. 0.2 - require readable thermal_zone0; EXIT trap runs footer; modern $(date) / quoted paths
 # 2020.0x.xx - v. 0.1 - initial release (date unknown)
 
-. /root/bin/_script_header.sh
+print_version_banner() {
+  local ver=unknown date= line title verline width=60
+  while IFS= read -r line; do
+    if [[ "$line" =~ ^#\ ([0-9]{4}\.[0-9]{2}\.[0-9]{2})\ -\ v\.\ ([0-9]+(\.[0-9]+)*) ]]; then
+      date="${BASH_REMATCH[1]}"
+      ver="${BASH_REMATCH[2]}"
+      break
+    fi
+  done < "$0"
+  title="$(basename "$0")"
+  if [[ -n "$date" ]]; then
+    verline="Version: ${ver} (${date})"
+  else
+    verline="Version: ${ver}"
+  fi
+  printf '┌%*s┐\n' "$width" '' | tr ' ' '─'
+  printf '│ %-*.*s │\n' $((width - 2)) $((width - 2)) "$title"
+  printf '│ %-*.*s │\n' $((width - 2)) $((width - 2)) "$verline"
+  printf '└%*s┘\n' "$width" '' | tr ' ' '─'
+}
+
+show_help() {
+  cat <<EOF
+Usage: $(basename "$0") [-h|--help] [-v|--version] [NO_STARTUP_DELAY]
+
+Continuously print the CPU temperature (every 3 seconds) until Ctrl-C.
+
+The CPU sensor is auto-detected so the same script is correct on different hardware:
+  - Intel/x86: the coretemp package sensor (x86_pkg_temp thermal zone or
+    coretemp hwmon "Package id 0") rather than the ambient acpitz zone.
+  - Raspberry Pi: the cpu-thermal zone (thermal_zone0).
+  - Fallback: thermal_zone0 if nothing more specific is found.
+
+Options:
+  -h, --help        Show this help and exit.
+  -v, --version     Print script version and exit.
+  NO_STARTUP_DELAY  Skip the random startup delay when run non-interactively
+                    (see _script_header.sh).
+EOF
+}
+
+# --- parse options before sourcing the header (avoids figlet/delay on --help/--version) ---
+HEADER_EXTRA_ARGS=()
+while [[ $# -gt 0 ]]; do
+  case $1 in
+    -h|--help)
+      show_help
+      exit 0
+      ;;
+    -v|--version)
+      print_version_banner
+      exit 0
+      ;;
+    NO_STARTUP_DELAY)
+      HEADER_EXTRA_ARGS+=(NO_STARTUP_DELAY)
+      shift
+      ;;
+    *)
+      echo "Unknown argument: $1" >&2
+      echo "Try: $(basename "$0") --help" >&2
+      exit 1
+      ;;
+  esac
+done
+
+. /root/bin/_script_header.sh "${HEADER_EXTRA_ARGS[@]}"
 
 # Auto-detect the best CPU temperature source for this machine.
 # On Raspberry Pi, thermal_zone0 is the CPU (cpu-thermal). On x86, thermal_zone0 is usually

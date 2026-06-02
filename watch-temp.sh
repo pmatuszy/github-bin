@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.06.02 - v. 0.7 - add -h/--help and -v/--version options (parsed before the header so they skip the figlet banner / startup delay)
 # 2026.06.02 - v. 0.6 - print a "(press Ctrl-C to exit)" hint at the bottom of the live view (Pi loop + both `watch sensors` paths)
 # 2026.06.02 - v. 0.5 - Pi view: annotate the healthy throttle line ("OK (0x0)  <- no under-voltage / no throttling, now or since boot") so the bitmask is self-explanatory
 # 2026.06.02 - v. 0.4 - Pi view: no temp file and no exported function — render in-process via a shell function in a clear+sleep loop (ANSI home/clear gives the same non-scrolling refresh as watch); x86 still uses `watch sensors`
@@ -7,7 +8,76 @@
 # 2026.06.02 - v. 0.2 - Raspberry Pi: rich vcgencmd live view (SoC temp + ARM clock + core voltage + decoded throttle/under-voltage status) instead of the bare one-line `sensors`; auto-detect Pi vs x86 (x86 keeps `sensors`); fall back to sensors if vcgencmd is missing; remove stray debug echo; guard virt-what when absent
 # 2025.11.04 - v. 0.1 - initial release
 
-. /root/bin/_script_header.sh
+print_version_banner() {
+  local ver=unknown date= line title verline width=60
+  while IFS= read -r line; do
+    if [[ "$line" =~ ^#\ ([0-9]{4}\.[0-9]{2}\.[0-9]{2})\ -\ v\.\ ([0-9]+(\.[0-9]+)*) ]]; then
+      date="${BASH_REMATCH[1]}"
+      ver="${BASH_REMATCH[2]}"
+      break
+    fi
+  done < "$0"
+  title="$(basename "$0")"
+  if [[ -n "$date" ]]; then
+    verline="Version: ${ver} (${date})"
+  else
+    verline="Version: ${ver}"
+  fi
+  printf '┌%*s┐\n' "$width" '' | tr ' ' '─'
+  printf '│ %-*.*s │\n' $((width - 2)) $((width - 2)) "$title"
+  printf '│ %-*.*s │\n' $((width - 2)) $((width - 2)) "$verline"
+  printf '└%*s┘\n' "$width" '' | tr ' ' '─'
+}
+
+show_help() {
+  cat <<EOF
+Usage: $(basename "$0") [-h|--help] [-v|--version] [NO_STARTUP_DELAY]
+
+Live temperature/status view, refreshed every WATCH_TEMP_INTERVAL seconds
+(default 1). Press Ctrl-C to exit. Refuses to run inside a VM.
+
+Hardware-aware display:
+  - Raspberry Pi: rich vcgencmd view (SoC temp, ARM clock, core voltage and a
+    decoded throttling/under-voltage status). Falls back to 'sensors' if
+    vcgencmd is missing.
+  - x86 / other: 'watch sensors' (per-core coretemp, NVMe, etc.).
+
+Options:
+  -h, --help        Show this help and exit.
+  -v, --version     Print script version and exit.
+  NO_STARTUP_DELAY  Skip the random startup delay when run non-interactively
+                    (see _script_header.sh).
+
+Environment:
+  WATCH_TEMP_INTERVAL   Refresh interval in seconds (default: 1).
+EOF
+}
+
+# --- parse options before sourcing the header (avoids figlet/delay on --help/--version) ---
+HEADER_EXTRA_ARGS=()
+while [[ $# -gt 0 ]]; do
+  case $1 in
+    -h|--help)
+      show_help
+      exit 0
+      ;;
+    -v|--version)
+      print_version_banner
+      exit 0
+      ;;
+    NO_STARTUP_DELAY)
+      HEADER_EXTRA_ARGS+=(NO_STARTUP_DELAY)
+      shift
+      ;;
+    *)
+      echo "Unknown argument: $1" >&2
+      echo "Try: $(basename "$0") --help" >&2
+      exit 1
+      ;;
+  esac
+done
+
+. /root/bin/_script_header.sh "${HEADER_EXTRA_ARGS[@]}"
 
 export DISPLAY=
 WATCH_INTERVAL="${WATCH_TEMP_INTERVAL:-1}"
