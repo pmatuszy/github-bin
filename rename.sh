@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.06.02 - v. 19.146.095900 - resume: non-verbose "N out of total" continues from the checkpoint position (offset = discovered paths already matched/skipped this run + this-session examined, capped at total) so a resumed run is visibly counting from ~position, not from 1
 # 2026.06.02 - v. 19.145.095000 - transform_basename: validated leading dotted date YYYY.M(M).D(D) + any non-digit separator → YYYYMMDD + rest (year>=1980, real month/day incl. leap years), then normalize; e.g. "2018.03.16 - LG ....sha512" → "20180316_-_LG_....sha512"
 # 2026.06.01 - v. 19.144.154000 - window title: "[ cwd ] full_script_path options" (spaces inside brackets); also set GNU screen / tmux window name (ESC k) so it shows inside screen/tmux, not only xterm/VTE
 # 2026.06.01 - v. 19.143.150000 - transform_basename: dotted date + separated time (YYYY.MM.DD <sep> HH<sep>MM<sep>SS[_tail]) → YYYYMMDD_HHMMSS[_tail] for any extension (e.g. checksum .sha512/.md5 sidecars)
@@ -7583,6 +7584,12 @@ handle_lnk_file() {
 files_examined=0
 # When resuming, load_resume_checkpoint sets this to the restored files_examined so milestone "n out of total" counts only this session.
 MAIN_LOOP_FILES_EXAMINED_MILESTONE_BASE=0
+# Added to the non-verbose "N out of total" numerator so a resumed run counts from the
+# checkpoint position (= number of discovered paths already matched/skipped this run),
+# not from 1. Stays 0 for fresh runs. Bounded: offset + remaining == total.
+MAIN_LOOP_RESUME_PROGRESS_OFFSET=0
+# Last milestone numerator actually shown, so a clamped value is never printed twice.
+MAIN_LOOP_LAST_MILESTONE_VALUE=-1
 files_affected=0
 files_skipped=0
 stopped_by_user=no
@@ -8547,7 +8554,7 @@ startup_progress "Entry discovery and sort complete: ${#ordered_paths[@]} entrie
 startup_progress "Entering main processing loop..."
 
 vlog "Discovered entries to process: ${#ordered_paths[@]}"
-vlog "Progress box updates every ${VERBOSE_MAIN_EVERY} slot index; non-verbose 'k out of total' uses files_examined minus checkpoint baseline (this session only)."
+vlog "Progress box updates every ${VERBOSE_MAIN_EVERY} slot index; non-verbose 'k out of total' = this-session examined + resume offset (continues from the checkpoint position, capped at total)."
 maybe_resume_from_checkpoint
 
 if (( RESUME_STATE_WAS_LOADED == 1 )); then
@@ -8557,7 +8564,11 @@ if (( RESUME_STATE_WAS_LOADED == 1 )); then
     done
     _resume_tot=${#ordered_paths[@]}
     _resume_rem=$((_resume_tot - resume_ordered_hits))
+    # Make the live "N out of total" counter continue from the resumed position instead of
+    # restarting at 1: offset = paths already matched/skipped this run (bounded by total).
+    MAIN_LOOP_RESUME_PROGRESS_OFFSET=$resume_ordered_hits
     echo "Resume: ${resume_ordered_hits} of ${_resume_tot} discovered paths match the checkpoint and will be skipped when reached (about ${_resume_rem} paths are not in the checkpoint yet)."
+    echo "${WRAP_MSG_INDENT}Progress counter continues from ~${resume_ordered_hits}/${_resume_tot} so you can tell this is a resumed run."
     echo "${WRAP_MSG_INDENT}Traversal is depth/checksum sorted, not \"where you left off\" in walk order — early non-verbose dots are paths that still need handling, not a failed resume."
     vlog "Resume: ${resume_ordered_hits}/${_resume_tot} ordered_paths keys match processed checkpoint map"
     if (( RESUME_CHECKPOINT_PROCESSED_LINES_LOADED > 200 )) && (( resume_ordered_hits * 10 < RESUME_CHECKPOINT_PROCESSED_LINES_LOADED * 3 )); then
@@ -8580,7 +8591,13 @@ for f in "${ordered_paths[@]}"; do
     ((++files_examined))
     _fe_mile=$((files_examined - MAIN_LOOP_FILES_EXAMINED_MILESTONE_BASE))
     (( _fe_mile < 0 )) && _fe_mile=0
-    nonverbose_main_loop_progress_milestone "$_fe_mile" "${#ordered_paths[@]}"
+    # Resume: count from the checkpoint position (offset + this-session examined), bounded by total.
+    _fe_mile_display=$((_fe_mile + MAIN_LOOP_RESUME_PROGRESS_OFFSET))
+    (( _fe_mile_display > ${#ordered_paths[@]} )) && _fe_mile_display=${#ordered_paths[@]}
+    if (( _fe_mile_display != MAIN_LOOP_LAST_MILESTONE_VALUE )); then
+        nonverbose_main_loop_progress_milestone "$_fe_mile_display" "${#ordered_paths[@]}"
+        MAIN_LOOP_LAST_MILESTONE_VALUE=$_fe_mile_display
+    fi
     nonverbose_main_loop_progress_dot
 
     if is_excluded_by_filter_file "$f"; then
