@@ -1,11 +1,13 @@
 #!/bin/bash
 
+# 2026.06.02 - v. 0.2 - add --no_startup_delay option (parsed before header)
 # 2026.04.22 - v. 0.1 - curl timeouts, IPv4/IPv6, fallbacks, --raw (no header), PGM output otherwise
 
 _show_help=0
 _show_ver=0
 _ip_curl_family=(-4)
 _raw=0
+HEADER_EXTRA_ARGS=()
 
 while [[ $# -gt 0 ]]; do
   case $1 in
@@ -15,6 +17,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     -v|--version)
       _show_ver=1
+      shift
+      ;;
+    --no_startup_delay)
+      HEADER_EXTRA_ARGS+=(NO_STARTUP_DELAY)
       shift
       ;;
     -4)
@@ -39,13 +45,15 @@ done
 
 if ((_show_help)); then
   cat <<'EOF'
-Usage: public-ip-address.sh [-h|--help] [-v|--version] [-4|-6] [--raw]
+Usage: public-ip-address.sh [-h|--help] [-v|--version] [--no_startup_delay] [-4|-6] [--raw]
 
 Print this host's public IP using HTTPS endpoints (tries several if one fails).
 
 Options:
   -h, --help     Show this help and exit.
   -v, --version  Print script version and exit.
+  --no_startup_delay
+                 Skip random startup delay when run non-interactively.
   -4             Use IPv4 only (default).
   -6             Use IPv6 only.
   --raw          Print only the address to stdout (no header/footer); for scripts.
@@ -104,7 +112,7 @@ if ((_raw)); then
   exit 0
 fi
 
-. /root/bin/_script_header.sh
+. /root/bin/_script_header.sh "${HEADER_EXTRA_ARGS[@]}"
 
 kod_powrotu=1
 

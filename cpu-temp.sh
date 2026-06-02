@@ -1,5 +1,7 @@
 #!/bin/bash
 
+# 2026.06.02 - v. 0.6 - drop _script_cli.sh; inline print_version_banner in this script
+# 2026.06.02 - v. 0.5 - rename NO_STARTUP_DELAY to --no_startup_delay
 # 2026.06.02 - v. 0.4 - add -h/--help and -v/--version options (parsed before the header so they skip the figlet banner / startup delay)
 # 2026.06.02 - v. 0.3 - auto-detect the real CPU sensor (x86_pkg_temp/coretemp on Intel, cpu-thermal on Raspberry Pi) instead of hard-coding thermal_zone0 (which is ambient acpitz on x86); print the chosen sensor
 # 2026.06.02 - v. 0.2 - require readable thermal_zone0; EXIT trap runs footer; modern $(date) / quoted paths
@@ -28,7 +30,7 @@ print_version_banner() {
 
 show_help() {
   cat <<EOF
-Usage: $(basename "$0") [-h|--help] [-v|--version] [NO_STARTUP_DELAY]
+Usage: $(basename "$0") [-h|--help] [-v|--version] [--no_startup_delay]
 
 Continuously print the CPU temperature (every 3 seconds) until Ctrl-C.
 
@@ -41,7 +43,8 @@ The CPU sensor is auto-detected so the same script is correct on different hardw
 Options:
   -h, --help        Show this help and exit.
   -v, --version     Print script version and exit.
-  NO_STARTUP_DELAY  Skip the random startup delay when run non-interactively
+  --no_startup_delay
+                    Skip the random startup delay when run non-interactively
                     (see _script_header.sh).
 EOF
 }
@@ -58,7 +61,7 @@ while [[ $# -gt 0 ]]; do
       print_version_banner
       exit 0
       ;;
-    NO_STARTUP_DELAY)
+    --no_startup_delay)
       HEADER_EXTRA_ARGS+=(NO_STARTUP_DELAY)
       shift
       ;;

@@ -15,7 +15,7 @@
 # 2022.01.26 - v. 0.2 - jak ffmpeg sie skonczy wczesniej to restartujemy nagrywanie do polnocy + 1 minuta
 # 2022.01.13 - v. 0.1 - initial release (date unknown)
 
-. /root/bin/_script_header.sh NO_STARTUP_DELAY
+. /root/bin/_script_header.sh --no_startup_delay
 
 # SKAD="http://gdansk1-1.radio.pionier.net.pl:8000/pl/tuba10-1.mp3"
 SKAD="http://poznan5-4.radio.pionier.net.pl:8000/tuba10-1.mp3"

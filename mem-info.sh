@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.06.02 - v. 0.28 - add --no_startup_delay option (parsed before header)
 # 2026.04.22 - v. 0.27 - free -m: boxed title only; table plain (expand + compact, no boxes)
 # 2026.04.22 - v. 0.26 - free -m: no boxes (revert v0.25); expand + compact only
 # 2026.04.22 - v. 0.25 - free -m: expand + compact aligned table, then pipe to boxes
@@ -33,6 +34,7 @@ _mi_full_meminfo=0
 _show_help=0
 _show_ver=0
 _mi_page_cli=''
+HEADER_EXTRA_ARGS=()
 
 while [[ $# -gt 0 ]]; do
   case $1 in
@@ -42,6 +44,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     -v|--version)
       _show_ver=1
+      shift
+      ;;
+    --no_startup_delay)
+      HEADER_EXTRA_ARGS+=(NO_STARTUP_DELAY)
       shift
       ;;
     -p|--page)
@@ -96,7 +102,7 @@ esac
 
 if ((_show_help)); then
   cat <<'EOF'
-Usage: mem-info.sh [-h|--help] [-v|--version] [-p|--page] [-n|--no-page] [-f|--full] [-c N|--chunk N]
+Usage: mem-info.sh [-h|--help] [-v|--version] [--no_startup_delay] [-p|--page] [-n|--no-page] [-f|--full] [-c N|--chunk N]
 
 Print a readable RAM report for the local Linux system: summary (with the
 kernel's MemAvailable estimate, rough "used" vs page cache),
@@ -117,6 +123,8 @@ Paging:
 Options:
   -h, --help      Show this help and exit.
   -v, --version   Print script version and exit.
+  --no_startup_delay
+                  Skip random startup delay when run non-interactively.
   -p, --page      Force Enter paging on (even if MEM_INFO_PAGE=0).
   -n, --no-page   Force paging off (full output at once).
   -f, --full      Print every line from /proc/meminfo (long). Default is a
@@ -167,7 +175,7 @@ if ((_show_ver)); then
   exit 0
 fi
 
-. /root/bin/_script_header.sh
+. /root/bin/_script_header.sh "${HEADER_EXTRA_ARGS[@]}"
 
 kod_powrotu=0
 

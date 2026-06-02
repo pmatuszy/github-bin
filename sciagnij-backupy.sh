@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.06.02 - v. 0.10 - add -h/--help, -v/--version, --no_startup_delay (parsed before header)
 # 2026.06.01 - v. 0.9 - support glob source paths (e.g. host:/root/config/*): expand on the remote shell so wildcards work like rsync; rename SKAD/DOKAD vars to SOURCE/DEST
 # 2026.06.01 - v. 0.8 - rewritten to use ssh + scp only (no rsync): ping remote first,
 #                       then per-file download, sha512 (or md5) verify, and delete the
@@ -10,7 +11,63 @@
 # 2023.06.25 - v. 0.2 - added optional parameter $3 e.g. --remove-source-files which will be passed to rsync as a parameter
 # 2023.03.13 - v. 0.1 - initial release
 
-. /root/bin/_script_header.sh
+print_version_banner() {
+  local ver=unknown date= line title verline width=60
+  while IFS= read -r line; do
+    if [[ "$line" =~ ^#\ ([0-9]{4}\.[0-9]{2}\.[0-9]{2})\ -\ v\.\ ([0-9]+(\.[0-9]+)*) ]]; then
+      date="${BASH_REMATCH[1]}"
+      ver="${BASH_REMATCH[2]}"
+      break
+    fi
+  done < "$0"
+  title="$(basename "$0")"
+  if [[ -n "$date" ]]; then
+    verline="Version: ${ver} (${date})"
+  else
+    verline="Version: ${ver}"
+  fi
+  printf '┌%*s┐\n' "$width" '' | tr ' ' '─'
+  printf '│ %-*.*s │\n' $((width - 2)) $((width - 2)) "$title"
+  printf '│ %-*.*s │\n' $((width - 2)) $((width - 2)) "$verline"
+  printf '└%*s┘\n' "$width" '' | tr ' ' '─'
+}
+
+print_usage() {
+  echo
+  echo "Usage: $(basename "$0") [-h|--help] [-v|--version] [--no_startup_delay] <[user@]host:/remote/path> <local_dest_dir> [--remove-source-files|--move]"
+  echo
+  echo "  Pings the remote host first; if it does not respond, nothing is copied."
+  echo "  Downloads each remote file via scp, verifies it with ${HASH_CMD:-sha512sum}, and (only with"
+  echo "  --remove-source-files/--move) deletes each remote file AFTER it has been correctly"
+  echo "  downloaded and verified."
+  echo
+  echo "  A trailing slash on the remote path copies its CONTENTS (rsync-style)."
+  echo "  Env: SCP_LIMIT_KBIT=<n>      limit scp bandwidth (kbit/s); default unlimited."
+  echo "       BACKUP_HASH_CMD=<cmd>   integrity hash command (default sha512sum)."
+  echo
+  echo "Options:"
+  echo "  -h, --help           Show this help and exit."
+  echo "  -v, --version        Print script version and exit."
+  echo "  --no_startup_delay   Skip random startup delay when run non-interactively."
+  echo
+}
+
+show_help() {
+  print_usage
+}
+
+HEADER_EXTRA_ARGS=()
+while [[ $# -gt 0 ]]; do
+  case $1 in
+    -h|--help) show_help; exit 0 ;;
+    -v|--version) print_version_banner; exit 0 ;;
+    --no_startup_delay) HEADER_EXTRA_ARGS+=(NO_STARTUP_DELAY); shift ;;
+    -*) echo "Unknown option: $1" >&2; echo "Try: $(basename "$0") --help" >&2; exit 1 ;;
+    *) break ;;
+  esac
+done
+
+. /root/bin/_script_header.sh "${HEADER_EXTRA_ARGS[@]}"
 
 if [ -f "$HEALTHCHECKS_FILE" ]; then
   HEALTHCHECK_URL=$(cat "$HEALTHCHECKS_FILE" | grep "^$(basename "$0")" | awk '{print $2}')
@@ -33,21 +90,6 @@ check_if_installed ssh openssh-client
 check_if_installed scp openssh-client
 check_if_installed ping iputils-ping
 check_if_installed "$HASH_CMD" coreutils
-
-print_usage() {
-  echo
-  echo "Usage: $(basename "$0") <[user@]host:/remote/path> <local_dest_dir> [--remove-source-files|--move]"
-  echo
-  echo "  Pings the remote host first; if it does not respond, nothing is copied."
-  echo "  Downloads each remote file via scp, verifies it with ${HASH_CMD}, and (only with"
-  echo "  --remove-source-files/--move) deletes each remote file AFTER it has been correctly"
-  echo "  downloaded and verified."
-  echo
-  echo "  A trailing slash on the remote path copies its CONTENTS (rsync-style)."
-  echo "  Env: SCP_LIMIT_KBIT=<n>      limit scp bandwidth (kbit/s); default unlimited."
-  echo "       BACKUP_HASH_CMD=<cmd>   integrity hash command (default sha512sum)."
-  echo
-}
 
 if (( $# != 2 )) && (( $# != 3 )); then
   echo; echo "(PGM) wrong # of command line arguments... (must be 2 or 3)"; echo

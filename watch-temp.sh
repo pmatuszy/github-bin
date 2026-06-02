@@ -1,5 +1,7 @@
 #!/bin/bash
 
+# 2026.06.02 - v. 0.9 - drop _script_cli.sh; inline print_version_banner in this script
+# 2026.06.02 - v. 0.8 - rename NO_STARTUP_DELAY to --no_startup_delay
 # 2026.06.02 - v. 0.7 - add -h/--help and -v/--version options (parsed before the header so they skip the figlet banner / startup delay)
 # 2026.06.02 - v. 0.6 - print a "(press Ctrl-C to exit)" hint at the bottom of the live view (Pi loop + both `watch sensors` paths)
 # 2026.06.02 - v. 0.5 - Pi view: annotate the healthy throttle line ("OK (0x0)  <- no under-voltage / no throttling, now or since boot") so the bitmask is self-explanatory
@@ -31,7 +33,7 @@ print_version_banner() {
 
 show_help() {
   cat <<EOF
-Usage: $(basename "$0") [-h|--help] [-v|--version] [NO_STARTUP_DELAY]
+Usage: $(basename "$0") [-h|--help] [-v|--version] [--no_startup_delay]
 
 Live temperature/status view, refreshed every WATCH_TEMP_INTERVAL seconds
 (default 1). Press Ctrl-C to exit. Refuses to run inside a VM.
@@ -45,7 +47,8 @@ Hardware-aware display:
 Options:
   -h, --help        Show this help and exit.
   -v, --version     Print script version and exit.
-  NO_STARTUP_DELAY  Skip the random startup delay when run non-interactively
+  --no_startup_delay
+                    Skip the random startup delay when run non-interactively
                     (see _script_header.sh).
 
 Environment:
@@ -65,7 +68,7 @@ while [[ $# -gt 0 ]]; do
       print_version_banner
       exit 0
       ;;
-    NO_STARTUP_DELAY)
+    --no_startup_delay)
       HEADER_EXTRA_ARGS+=(NO_STARTUP_DELAY)
       shift
       ;;

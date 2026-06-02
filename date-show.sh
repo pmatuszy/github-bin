@@ -1,15 +1,17 @@
 #!/bin/bash
 
+# 2026.06.02 - v. 0.4 - add --no_startup_delay option (parsed before header)
 # 2026.04.21 - v. 0.3 - help text includes usage examples
 # 2026.04.21 - v. 0.2 - figlet width from COLUMNS; DATE_SHOW_INTERVAL; -u UTC; -h/-v; tput clear; drop redundant figlet check
 # 2025.07.30 - v. 0.1 - initial release
 
 utc=0
+HEADER_EXTRA_ARGS=()
 while [[ $# -gt 0 ]]; do
   case $1 in
     -h|--help)
       cat <<'EOF'
-Usage: date-show.sh [-h|--help] [-v|--version] [-u]
+Usage: date-show.sh [-h|--help] [-v|--version] [--no_startup_delay] [-u]
 
 Full-screen loop: clear the terminal and show the current time as large banner
 text (figlet). Stop with Ctrl+C.
@@ -17,6 +19,8 @@ text (figlet). Stop with Ctrl+C.
 Options:
   -h, --help     Show this help and exit.
   -v, --version  Print script version and exit.
+  --no_startup_delay
+                 Skip random startup delay when run non-interactively.
   -u             Use UTC (same as date -u). Otherwise use local time; set TZ
                  to choose another zone (e.g. TZ=Europe/Warsaw date-show.sh).
 
@@ -64,6 +68,10 @@ EOF
       fi
       exit 0
       ;;
+    --no_startup_delay)
+      HEADER_EXTRA_ARGS+=(NO_STARTUP_DELAY)
+      shift
+      ;;
     -u)
       utc=1
       shift
@@ -76,7 +84,7 @@ EOF
   esac
 done
 
-. /root/bin/_script_header.sh
+. /root/bin/_script_header.sh "${HEADER_EXTRA_ARGS[@]}"
 
 interval="${DATE_SHOW_INTERVAL:-1}"
 if ! [[ "$interval" =~ ^[0-9]+([.][0-9]+)?$ ]]; then

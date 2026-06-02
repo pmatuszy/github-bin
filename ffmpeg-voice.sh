@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.06.02 - v. 3.48 - rename NO_STARTUP_DELAY CLI flag to --no_startup_delay
 # 2026.05.31 - v. 3.47 - startup: if any whisper ip not pingable / port closed, prompt W/C/Q before processing
 # 2026.05.31 - v. 3.46 - server down: prompt [W]ait / [C]ontinue without transcription / [Q]uit
 # 2026.05.30 - v. 3.45 - Saved: print final variant transcript path (not intermediate *_ORG.txt)
@@ -81,7 +82,7 @@ Without FILE, all matching audio files in the current directory are candidates
 Options:
   -h, --help           Show this help and exit.
   -v, --version        Print script version and exit.
-  NO_STARTUP_DELAY     Skip _script_header.sh random startup delay (non-tty runs).
+  --no_startup_delay   Skip _script_header.sh random startup delay (non-tty runs).
   -- FILE              Explicit file operand (use when the name starts with -).
 
 Interactive batch prompts (real mode; file processing, transcript re-do, transcription):
@@ -150,7 +151,7 @@ parse_cli_args() {
                 script_version
                 exit 0
                 ;;
-            NO_STARTUP_DELAY)
+            --no_startup_delay)
                 HEADER_EXTRA_ARGS+=(NO_STARTUP_DELAY)
                 shift
                 ;;
@@ -1265,11 +1266,11 @@ ensure_transcribe_endpoint_ready() {
     fi
 
     if [[ "$mode" == "dry-run" ]]; then
-        echo
+    echo
         echo -e "${YELLOW}TRANSCRIPTION UNAVAILABLE:${RESET} ${host}:${port} (${label})"
         print_transcribe_endpoint_down_reason "$host" "$port"
-        echo "Cannot continue because transcription cannot be done."
-        exit 1
+    echo "Cannot continue because transcription cannot be done."
+    exit 1
     fi
 
     while true; do
@@ -2427,7 +2428,7 @@ run_one_transcription_variant() {
             [[ -e "$variant_txt" ]] && flag_transcript_loop_if_needed "$variant_txt" "$sha_file"
             resolved_txt="$(transcript_variant_resolved_path "$variant_txt")"
             append_sha512_for_file_if_missing "$sha_file" "$resolved_txt"
-            return 0
+        return 0
         fi
     fi
 
@@ -2661,8 +2662,8 @@ process_transcription_queue() {
                     ;;
                 decided)
                     if [[ "$BATCH_CHOICE_DECISION" == yes ]]; then
-                        batch_selected+=("yes")
-                        ((++batch_yes))
+                    batch_selected+=("yes")
+                    ((++batch_yes))
                     else
                         batch_selected+=("no")
                         ((++files_skipped))
@@ -2687,20 +2688,20 @@ process_transcription_queue() {
             done
 
             if (( selected_total > 0 )); then
-                selected_pos=0
-                for i in "${!batch_outs[@]}"; do
-                    if [[ "${batch_selected[$i]}" == "yes" ]]; then
-                        local selected_left_after
-                        ((selected_pos+=1))
-                        selected_left_after=$(( selected_total - selected_pos ))
+            selected_pos=0
+            for i in "${!batch_outs[@]}"; do
+                if [[ "${batch_selected[$i]}" == "yes" ]]; then
+                    local selected_left_after
+                    ((selected_pos+=1))
+                    selected_left_after=$(( selected_total - selected_pos ))
 
-                        echo
-                        print_processing_progress "$selected_pos" "$selected_total" "$selected_left_after" "$total_files"
+                    echo
+                    print_processing_progress "$selected_pos" "$selected_total" "$selected_left_after" "$total_files"
                         print_transcription_pair_block \
                             "${batch_orgs[$i]}" "${batch_outs[$i]}" "${batch_shas[$i]}"
                         run_transcriptions_for_pair "${batch_orgs[$i]}" "${batch_outs[$i]}" "${batch_shas[$i]}"
-                    fi
-                done
+                fi
+            done
             elif (( finish_batch_now )); then
                 echo "No transcriptions selected in this batch."
             fi
@@ -2789,7 +2790,7 @@ cleanup_current_file() {
         if [[ -n "$txt_removed_msg" ]]; then
             txt_removed_msg+=$'\n'"REMOVED PARTIAL TRANSCRIPT: $current_txt_file (${txt_size} bytes)"
         else
-            txt_removed_msg="REMOVED PARTIAL TRANSCRIPT: $current_txt_file (${txt_size} bytes)"
+        txt_removed_msg="REMOVED PARTIAL TRANSCRIPT: $current_txt_file (${txt_size} bytes)"
         fi
         current_txt_file=""
     fi
@@ -3170,10 +3171,10 @@ if [[ -n "$TARGET_FILE" ]]; then
     fi
     discovered_files+=("$TARGET_FILE")
 else
-    for f in *.wav *.mp3 *.m4a *.flac *.ogg *.opus *.aac *.mp4; do
-        [[ -e "$f" ]] || continue
-        discovered_files+=("$f")
-    done
+for f in *.wav *.mp3 *.m4a *.flac *.ogg *.opus *.aac *.mp4; do
+    [[ -e "$f" ]] || continue
+    discovered_files+=("$f")
+done
 fi
 
 if (( ${#discovered_files[@]} > 0 )); then
@@ -3342,8 +3343,8 @@ else
                     ;;
                 decided)
                     if [[ "$BATCH_CHOICE_DECISION" == yes ]]; then
-                        batch_selected+=("yes")
-                        ((++batch_yes))
+                    batch_selected+=("yes")
+                    ((++batch_yes))
                         voice_mark_pair_active "$new_in" "$out" "$(sha_file_from_pair "$new_in")"
                     else
                         batch_selected+=("no")
@@ -3368,16 +3369,16 @@ else
             done
 
             if (( selected_total > 0 )); then
-                selected_pos=0
-                for i in "${!batch_originals[@]}"; do
-                    if [[ "${batch_selected[$i]}" == "yes" ]]; then
-                        ((selected_pos+=1))
-                        selected_left_after=$(( selected_total - selected_pos ))
-                        echo
-                        print_processing_progress "$selected_pos" "$selected_total" "$selected_left_after" "$total_files"
-                        process_one_file "${batch_originals[$i]}" "${batch_newins[$i]}" "${batch_outputs[$i]}"
-                    fi
-                done
+            selected_pos=0
+            for i in "${!batch_originals[@]}"; do
+                if [[ "${batch_selected[$i]}" == "yes" ]]; then
+                    ((selected_pos+=1))
+                    selected_left_after=$(( selected_total - selected_pos ))
+                    echo
+                    print_processing_progress "$selected_pos" "$selected_total" "$selected_left_after" "$total_files"
+                    process_one_file "${batch_originals[$i]}" "${batch_newins[$i]}" "${batch_outputs[$i]}"
+                fi
+            done
             elif (( finish_batch_now )); then
                 echo "No files selected in this batch."
             fi

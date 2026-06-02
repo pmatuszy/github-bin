@@ -20,7 +20,7 @@
 # SKAD="http://open.live.bbc.co.uk/mediaselector/5/select/version/2.0/mediaset/http-icy-mp3-a/vpid/bbc_radio_fourfm/format/pls.pls"
 # SKAD="http://stream.live.vc.bbcmedia.co.uk/bbc_radio_fourfm?s=1642067029&e=1642081429&h=b27ba5e1db5ba2f56beacf6d37b8abea"
 
-. /root/bin/_script_header.sh NO_STARTUP_DELAY
+. /root/bin/_script_header.sh --no_startup_delay
 
 SKAD="http://stream.live.vc.bbcmedia.co.uk/bbc_radio_fourfm"
 DOKAD_PREFIX="/worek-samba/nagrania/BBC4/BBC4"

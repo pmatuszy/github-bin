@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.06.02 - v. 1.53 - accept --no_startup_delay as alias for NO_STARTUP_DELAY (skip random delay when sourced with that flag)
 # 2026.04.21 - v. 1.52 - ctrl_c STY guard; quote $0 in version/tty; year-agnostic changelog grep; -n STY; indent; contract blurb
 # 2025.10.28 - v. 1.51- now we set LC_ALL for scripts to have proper separators in numbers (like ,.)
 # 2023.10.10 - v. 1.5 - bugfix: removed hardcoded HEALTHCHECKS_FILE
@@ -115,7 +116,7 @@ FORCE_NO_STARTUP_DELAY_var=0
 
 if [ $# -ne 0 ];then      # if there is an argument supplied we gonna check what is that
   case $1 in
-    NO_STARTUP_DELAY)
+    NO_STARTUP_DELAY|--no_startup_delay)
          FORCE_NO_STARTUP_DELAY_var=1
        ;;
     *)

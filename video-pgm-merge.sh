@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.06.02 - v. 0.13.2 - rename NO_STARTUP_DELAY to --no_startup_delay
 # 2026.06.01 - v. 0.13.1 - fix: _part_NN chapter grouping mixed proxy with normal parts; group by stem+variant (key-based) so originals and proxies never merge together
 # 2026.05.31 - v. 0.13.0 - detect/group raw GoPro chapter files (GXccnnnn[_Proxy].MP4); merge originals & proxies separately
 # 2026.05.31 - v. 0.12.3 - -v/--version print a short version banner; also show the banner at startup
@@ -53,7 +54,7 @@ MP4_MERGE_REPO="${MP4_MERGE_REPO:-gyroflow/mp4-merge}"
 show_help() {
   cat <<EOF
 Usage: $(basename "$0") [-h|--help] [-u|--update] [-v|--version] [-y|--yes]
-       [--read-timeout SEC] [NO_STARTUP_DELAY]
+       [--read-timeout SEC] [--no_startup_delay]
 
 Merge chapter MP4 files in the current directory (e.g. GoPro splits) into one
 file using mp4_merge from https://github.com/gyroflow/mp4-merge
@@ -66,7 +67,7 @@ Options:
   -y, --yes            Merge every detected multi-part group without prompts (for cron).
   --read-timeout SEC   Single-key prompt timeout in seconds (0 = wait forever).
                        Default: wait forever. Env: PGM_READ_TIMEOUT (e.g. 300).
-  NO_STARTUP_DELAY     Skip random startup delay when run non-interactively (see
+  --no_startup_delay   Skip random startup delay when run non-interactively (see
                        _script_header.sh).
 
 Merge behaviour (no options):
@@ -109,10 +110,10 @@ Examples:
   cd /path/to/chapters && $(basename "$0")
       Merge all chapter MP4s in that folder.
 
-  $(basename "$0") -y NO_STARTUP_DELAY
+  $(basename "$0") -y --no_startup_delay
       Merge all chapter groups without prompts (cron).
 
-  $(basename "$0") NO_STARTUP_DELAY
+  $(basename "$0") --no_startup_delay
       Interactive merge plan with per-group prompts.
 
 Upstream: https://github.com/gyroflow/mp4-merge
@@ -256,7 +257,7 @@ resolve_mp4_merge_install_path() {
     printf '%s\n' "$dest"
     return 0
   fi
-  return 1
+    return 1
 }
 
 install_mp4_merge_asset() {
@@ -1069,8 +1070,8 @@ concat_parse_cam_part_range() {
     CONCAT_PARSE_LAST=$CONCAT_PARSE_FIRST
     return 0
   fi
-  return 1
-}
+    return 1
+  }
 
 chapter_input_matches_cam_part() {
   local base="$1" cam="$2" part="$3"
@@ -1156,7 +1157,7 @@ chapter_part_from_basename() {
     printf '%d\n' "$((10#${BASH_REMATCH[1]}))"
     return 0
   fi
-  return 1
+    return 1
 }
 
 chapter_camera_from_basename() {
@@ -2437,7 +2438,7 @@ while [[ $# -gt 0 ]]; do
       PGM_READ_TIMEOUT_CLI=1
       shift
       ;;
-    NO_STARTUP_DELAY)
+    --no_startup_delay)
       HEADER_EXTRA_ARGS+=(NO_STARTUP_DELAY)
       shift
       ;;

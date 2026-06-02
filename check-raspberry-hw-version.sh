@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.06.02 - v. 0.32 - add -h/--help, -v/--version, --no_startup_delay (parsed before header)
 # 2025.10.27 - v. 0.31- bugfix: check if it is run on raspberry pi hardware - ChatGPT helped on that one
 # 2025.10.27 - v. 0.3 - bugfix: if mem < 1GB it was not properly formatted and displayed 0 GB - ChatGPT helped on that one
 # 2020.12.08 - v. 0.2 - adding info about total RAM
@@ -7,7 +8,52 @@
 
 # tr -d '\0'` below is to get rid of the message "warning: command substitution: ignored null byte in input"
 
-. /root/bin/_script_header.sh
+print_version_banner() {
+  local ver=unknown date= line title verline width=60
+  while IFS= read -r line; do
+    if [[ "$line" =~ ^#\ ([0-9]{4}\.[0-9]{2}\.[0-9]{2})\ -\ v\.\ ([0-9]+(\.[0-9]+)*) ]]; then
+      date="${BASH_REMATCH[1]}"
+      ver="${BASH_REMATCH[2]}"
+      break
+    fi
+  done < "$0"
+  title="$(basename "$0")"
+  if [[ -n "$date" ]]; then
+    verline="Version: ${ver} (${date})"
+  else
+    verline="Version: ${ver}"
+  fi
+  printf '┌%*s┐\n' "$width" '' | tr ' ' '─'
+  printf '│ %-*.*s │\n' $((width - 2)) $((width - 2)) "$title"
+  printf '│ %-*.*s │\n' $((width - 2)) $((width - 2)) "$verline"
+  printf '└%*s┘\n' "$width" '' | tr ' ' '─'
+}
+
+show_help() {
+  cat <<EOF
+Usage: $(basename "$0") [-h|--help] [-v|--version] [--no_startup_delay]
+
+Print Raspberry Pi model (from device-tree) and total RAM. Exits with an error if
+the machine is not a Raspberry Pi.
+
+Options:
+  -h, --help           Show this help and exit.
+  -v, --version        Print script version and exit.
+  --no_startup_delay   Skip random startup delay when run non-interactively.
+EOF
+}
+
+HEADER_EXTRA_ARGS=()
+while [[ $# -gt 0 ]]; do
+  case $1 in
+    -h|--help) show_help; exit 0 ;;
+    -v|--version) print_version_banner; exit 0 ;;
+    --no_startup_delay) HEADER_EXTRA_ARGS+=(NO_STARTUP_DELAY); shift ;;
+    *) echo "Unknown argument: $1" >&2; echo "Try: $(basename "$0") --help" >&2; exit 1 ;;
+  esac
+done
+
+. /root/bin/_script_header.sh "${HEADER_EXTRA_ARGS[@]}"
 
 if (( ! script_is_run_interactively ));then    # jesli nie interaktywnie, to chcemy wyswietlic info, by poszlo do logow
   echo "${SCRIPT_VERSION}";echo

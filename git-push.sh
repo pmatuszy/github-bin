@@ -1,5 +1,6 @@
 #!/bin/bash
  
+# 2026.06.02 - v. 1.3 - add -h/--help, -v/--version, --no_startup_delay (parsed before header)
 # 2023.02.11 - v. 1.2 - added GIT_SSH_COMMAND
 # 2023.02.07 - v. 1.1 - added batch mode, added GIT_REPO_DIRECTORY variable
 # 2023.01.26 - v. 1.0 - fixed script version print
@@ -17,7 +18,56 @@
 # 2020.11.26 - v. 0.2 - added second section with 'git pull'
 # 2020.10.20 - v. 0.1 - initial release
 
-. /root/bin/_script_header.sh
+print_version_banner() {
+  local ver=unknown date= line title verline width=60
+  while IFS= read -r line; do
+    if [[ "$line" =~ ^#\ ([0-9]{4}\.[0-9]{2}\.[0-9]{2})\ -\ v\.\ ([0-9]+(\.[0-9]+)*) ]]; then
+      date="${BASH_REMATCH[1]}"
+      ver="${BASH_REMATCH[2]}"
+      break
+    fi
+  done < "$0"
+  title="$(basename "$0")"
+  if [[ -n "$date" ]]; then
+    verline="Version: ${ver} (${date})"
+  else
+    verline="Version: ${ver}"
+  fi
+  printf '┌%*s┐\n' "$width" '' | tr ' ' '─'
+  printf '│ %-*.*s │\n' $((width - 2)) $((width - 2)) "$title"
+  printf '│ %-*.*s │\n' $((width - 2)) $((width - 2)) "$verline"
+  printf '└%*s┘\n' "$width" '' | tr ' ' '─'
+}
+
+show_help() {
+  cat <<EOF
+Usage: $(basename "$0") [-h|--help] [-v|--version] [--no_startup_delay] [batch]
+
+Push local changes in github-bin to the remote repository.
+
+Options:
+  -h, --help           Show this help and exit.
+  -v, --version        Print script version and exit.
+  --no_startup_delay   Skip random startup delay when run non-interactively.
+
+Arguments:
+  batch                Non-interactive mode: auto-answer yes to prompts (for cron).
+EOF
+}
+
+HEADER_EXTRA_ARGS=()
+batch_mode=0
+while [[ $# -gt 0 ]]; do
+  case $1 in
+    -h|--help) show_help; exit 0 ;;
+    -v|--version) print_version_banner; exit 0 ;;
+    --no_startup_delay) HEADER_EXTRA_ARGS+=(NO_STARTUP_DELAY); shift ;;
+    batch) batch_mode=1; shift ;;
+    *) echo "Unknown argument: $1" >&2; echo "Try: $(basename "$0") --help" >&2; exit 1 ;;
+  esac
+done
+
+. /root/bin/_script_header.sh "${HEADER_EXTRA_ARGS[@]}"
 
 if (( ! script_is_run_interactively ));then    # jesli nie interaktywnie, to chcemy wyswietlic info, by poszlo do logow
   echo "${SCRIPT_VERSION}";echo
@@ -42,11 +92,8 @@ fi
 
 keychain --nogui --nocolor id_rsa id_ed25519 id_SSH_ed25519_20230207_OpenSSH
 
-batch_mode=0
-
-if (( $# != 0 )) && [ "${1-nonbatch}" == "batch" ]; then
+if (( batch_mode == 1 )); then
   echo ; echo "(PGM) enabling batch mode (no questions asked)"
-  batch_mode=1
 fi
 
 cd "${GIT_REPO_DIRECTORY}" || exit 2
