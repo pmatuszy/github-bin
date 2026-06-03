@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 2026.06.02 - v. 3.48 - rename NO_STARTUP_DELAY CLI flag to --no_startup_delay
+# 2026.06.03 - v. 3.49 - skip media with no audio; check ffmpeg exit code; register pairs for transcription before OUTPUT exists
 # 2026.06.02 - v. 3.48 - process *_ORG.* without *_OUTPUT.flac (create OUTPUT only); always run existing-pair batch when pairs exist
 # 2026.05.31 - v. 3.47 - startup: if any whisper ip not pingable / port closed, prompt W/C/Q before processing
 # 2026.05.31 - v. 3.46 - server down: prompt [W]ait / [C]ontinue without transcription / [Q]uit
@@ -80,6 +80,7 @@ and be a supported audio type (.wav .mp3 .m4a .flac .ogg .opus .aac .mp4).
 Without FILE, all matching audio files in the current directory are candidates.
 Already-renamed *_ORG.* without *_OUTPUT.flac are queued to create OUTPUT only.
 Full *_ORG + *_OUTPUT pairs use the existing-pair path; *_EXCLUDE.* as usual.
+Video-only files (no audio stream) are skipped with a clear message.
 
 Options:
   -h, --help           Show this help and exit.
@@ -1390,6 +1391,36 @@ voice_set_paths_from_candidate() {
     fi
 }
 
+# True when the file has at least one audio stream (ffprobe preferred).
+media_has_audio_stream() {
+    local file="$1"
+    local n
+
+    [[ -f "$file" ]] || return 1
+
+    if command -v ffprobe >/dev/null 2>&1; then
+        n="$(ffprobe -v error -select_streams a -show_entries stream=index -of csv=p=0 "$file" 2>/dev/null | wc -l)"
+        (( n > 0 )) && return 0
+        return 1
+    fi
+
+    ffmpeg -hide_banner -i "$file" -f null - 2>&1 | grep -qE '(Stream #0:[0-9]+.*Audio:|Audio: )'
+}
+
+voice_ffmpeg_filter_chain='silenceremove=start_periods=1:start_silence=0.9:start_threshold=-50dB:stop_periods=-1:stop_silence=0.8:stop_threshold=-45dB,highpass=f=80,acompressor=threshold=-18dB:ratio=3:attack=20:release=250:makeup=4,dynaudnorm=f=150:g=11'
+
+# Create *_OUTPUT.flac from ORG media; return 0 on success.
+voice_create_output_flac_from_org() {
+    local org_in="$1"
+    local out="$2"
+
+    ffmpeg -hide_banner -y -i "$org_in" \
+        -map 0:a:0 -vn \
+        -af "$voice_ffmpeg_filter_chain" \
+        -c:a flac -compression_level 12 \
+        "$out"
+}
+
 sha_file_from_single() {
     local file="$1"
     local stem
@@ -1885,7 +1916,6 @@ voice_mark_pair_active() {
     local sha_file="${3:-}"
     local stem
 
-    [[ -e "$org_file" && -e "$out_file" ]] || return 0
     stem=$(voice_pair_stem_from_org "$org_file")
     if [[ -z "$sha_file" ]]; then
         sha_file="$(sha_file_from_pair "$org_file")"
@@ -2858,6 +2888,7 @@ process_one_file() {
     local out="$3"
     local sha_file
     local already_org=no
+    local ffmpeg_rc=0
 
     [[ "$original_in" == "$new_in" ]] && already_org=yes
 
@@ -2897,6 +2928,17 @@ process_one_file() {
         print_file_block "$original_in" "$new_in" "$out"
     fi
 
+    local audio_probe="$new_in"
+    [[ -e "$audio_probe" ]] || audio_probe="$original_in"
+
+    if ! media_has_audio_stream "$audio_probe"; then
+        echo
+        echo -e "${YELLOW}SKIP:${RESET} No audio stream in '$(basename "$audio_probe")' (video-only or empty) — cannot create OUTPUT or transcripts." >&2
+        echo "Rename to *_EXCLUDE.* if you want to ignore this file in future runs." >&2
+        ((++files_skipped))
+        return 1
+    fi
+
     current_original_in="$original_in"
     current_new_in="$new_in"
     current_out="$out"
@@ -2908,11 +2950,22 @@ process_one_file() {
     fi
 
     voice_processing_begin
-    ffmpeg -hide_banner -y -i "$new_in" \
-        -map 0:a:0 -vn \
-        -af "silenceremove=start_periods=1:start_silence=0.9:start_threshold=-50dB:stop_periods=-1:stop_silence=0.8:stop_threshold=-45dB,highpass=f=80,acompressor=threshold=-18dB:ratio=3:attack=20:release=250:makeup=4,dynaudnorm=f=150:g=11" \
-        -c:a flac -compression_level 12 \
-        "$out"
+    if ! voice_create_output_flac_from_org "$new_in" "$out"; then
+        ffmpeg_rc=$?
+        voice_processing_end
+        rm -f -- "$out"
+        echo
+        echo -e "${YELLOW}FAIL:${RESET} ffmpeg could not create '$out' (exit ${ffmpeg_rc})." >&2
+        if [[ "$current_renamed" == yes ]]; then
+            mv -i -- "$new_in" "$original_in"
+            current_renamed=no
+        fi
+        current_original_in=""
+        current_new_in=""
+        current_out=""
+        ((++files_skipped))
+        return 1
+    fi
 
     touch -r "$new_in" "$out"
 
@@ -2933,6 +2986,7 @@ process_one_file() {
     transcription_in_flight=no
     current_transcription_write_path=""
     current_transcription_target_path=""
+    return 0
 }
 
 # Skip prompts when there is nothing this run would do for the pair.
@@ -3306,7 +3360,13 @@ if [[ "$mode" == "dry-run" ]]; then
         else
             print_file_block "$original_in" "$new_in" "$out"
         fi
-        echo "ffmpeg -hide_banner -y -i \"$new_in\" -map 0:a:0 -vn -af \"silenceremove=start_periods=1:start_silence=0.9:start_threshold=-50dB:stop_periods=-1:stop_silence=0.8:stop_threshold=-45dB,highpass=f=80,acompressor=threshold=-18dB:ratio=3:attack=20:release=250:makeup=4,dynaudnorm=f=150:g=11\" -c:a flac -compression_level 12 \"$out\""
+        local dry_audio_probe="$new_in"
+        [[ -e "$dry_audio_probe" ]] || dry_audio_probe="$original_in"
+        if ! media_has_audio_stream "$dry_audio_probe"; then
+            echo -e "${YELLOW}SKIP:${RESET} No audio stream — would not run ffmpeg."
+        else
+            echo "ffmpeg -hide_banner -y -i \"$new_in\" -map 0:a:0 -vn -af \"${voice_ffmpeg_filter_chain}\" -c:a flac -compression_level 12 \"$out\""
+        fi
         echo "touch -r \"$new_in\" \"$out\""
         print_sha_block "$sha_file" "$new_in" "$out"
         echo "sha512sum -- \"$new_in\" \"$out\" > \"$sha_file\""
