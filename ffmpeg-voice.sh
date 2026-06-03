@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # 2026.06.02 - v. 3.48 - rename NO_STARTUP_DELAY CLI flag to --no_startup_delay
+# 2026.06.02 - v. 3.48 - process *_ORG.* without *_OUTPUT.flac (create OUTPUT only); always run existing-pair batch when pairs exist
 # 2026.05.31 - v. 3.47 - startup: if any whisper ip not pingable / port closed, prompt W/C/Q before processing
 # 2026.05.31 - v. 3.46 - server down: prompt [W]ait / [C]ontinue without transcription / [Q]uit
 # 2026.05.30 - v. 3.45 - Saved: print final variant transcript path (not intermediate *_ORG.txt)
@@ -76,8 +77,9 @@ create *_OUTPUT.flac, sha512 sidecars, and optional transcription.
 With FILE, only that file is processed (no directory scan). FILE must exist
 and be a supported audio type (.wav .mp3 .m4a .flac .ogg .opus .aac .mp4).
 
-Without FILE, all matching audio files in the current directory are candidates
-(excluding existing *_ORG.*, *_OUTPUT.flac, and *_EXCLUDE.* handling as usual).
+Without FILE, all matching audio files in the current directory are candidates.
+Already-renamed *_ORG.* without *_OUTPUT.flac are queued to create OUTPUT only.
+Full *_ORG + *_OUTPUT pairs use the existing-pair path; *_EXCLUDE.* as usual.
 
 Options:
   -h, --help           Show this help and exit.
@@ -883,6 +885,21 @@ print_file_block() {
     fi
 }
 
+print_org_only_block() {
+    local org_in="$1"
+    local out="$2"
+
+    if [[ "$have_boxes" == "yes" ]]; then
+        {
+            printf "ORG (already named): %s\n" "$org_in"
+            printf "OUTPUT:  %s\n" "$out"
+        } | boxes -d stone
+    else
+        echo -e "${RED}ORG (already named):${RESET} $org_in"
+        echo -e "${GREEN}OUTPUT:${RESET}  $out"
+    fi
+}
+
 print_sha_block() {
     local sha_file="$1"
     local entry1="$2"
@@ -1353,6 +1370,24 @@ sha_file_from_pair() {
     base_no_ext="${new_in%.*}"
     stem="${base_no_ext%_ORG}"
     printf '%s.sha512' "$stem"
+}
+
+# Given a scan candidate (raw audio or already *_ORG.*), set voice_path_* globals.
+voice_set_paths_from_candidate() {
+    local f="$1"
+    local stem
+    voice_path_original="$f"
+    if [[ "$f" == *_ORG.* ]]; then
+        stem="${f%.*}"
+        stem="${stem%_ORG}"
+        voice_path_org="$f"
+        voice_path_out="${stem}_OUTPUT.flac"
+    else
+        voice_path_org="${f%.*}_ORG.${f##*.}"
+        stem="${voice_path_org%.*}"
+        stem="${stem%_ORG}"
+        voice_path_out="${stem}_OUTPUT.flac"
+    fi
 }
 
 sha_file_from_single() {
@@ -2822,6 +2857,9 @@ process_one_file() {
     local new_in="$2"
     local out="$3"
     local sha_file
+    local already_org=no
+
+    [[ "$original_in" == "$new_in" ]] && already_org=yes
 
     check_free_space_or_exit "."
 
@@ -2838,23 +2876,36 @@ process_one_file() {
         return 0
     fi
 
-    if [[ -e "$new_in" || -e "$out" || -e "$sha_file" ]]; then
+    if [[ "$already_org" == yes ]]; then
+        if [[ ! -e "$new_in" ]]; then
+            echo
+            echo -e "${YELLOW}SKIP:${RESET} ORG file missing: '$new_in'" >&2
+            ((++files_skipped))
+            return 0
+        fi
+    elif [[ -e "$new_in" || -e "$sha_file" ]]; then
         echo
-        echo -e "${YELLOW}SKIP:${RESET} Target exists: '$new_in' or '$out' or '$sha_file'"
+        echo -e "${YELLOW}SKIP:${RESET} Target exists: '$new_in' or '$sha_file'"
         ((++files_skipped))
         return 0
     fi
 
     echo
-    print_file_block "$original_in" "$new_in" "$out"
+    if [[ "$already_org" == yes ]]; then
+        print_org_only_block "$new_in" "$out"
+    else
+        print_file_block "$original_in" "$new_in" "$out"
+    fi
 
     current_original_in="$original_in"
     current_new_in="$new_in"
     current_out="$out"
     current_renamed=no
 
-    mv -i -- "$original_in" "$new_in"
-    current_renamed=yes
+    if [[ "$already_org" != yes ]]; then
+        mv -i -- "$original_in" "$new_in"
+        current_renamed=yes
+    fi
 
     voice_processing_begin
     ffmpeg -hide_banner -y -i "$new_in" \
@@ -3194,9 +3245,10 @@ for f in "${all_files[@]}"; do
     fi
 
     if [[ "$f" == *_ORG.* ]]; then
-        stem="${f%.*}"
+        voice_set_paths_from_candidate "$f"
+        stem="${voice_path_org%.*}"
         stem="${stem%_ORG}"
-        out="${stem}_OUTPUT.flac"
+        out="$voice_path_out"
         sha="${stem}.sha512"
 
         if [[ -e "$out" && -z "${seen_pair_stems[$stem]+x}" ]]; then
@@ -3204,9 +3256,10 @@ for f in "${all_files[@]}"; do
             existing_pair_outs+=("$out")
             existing_pair_shas+=("$sha")
             seen_pair_stems["$stem"]=1
+            ((++files_skipped))
+        else
+            filtered_files+=("$f")
         fi
-
-        ((++files_skipped))
         continue
     fi
 
@@ -3236,10 +3289,9 @@ prompt_whisper_endpoints_or_disable
 # ============================================================
 if [[ "$mode" == "dry-run" ]]; then
     for original_in in "${all_files[@]}"; do
-        new_in="${original_in%.*}_ORG.${original_in##*.}"
-        base="${new_in%.*}"
-        base="${base%_ORG}"
-        out="${base}_OUTPUT.flac"
+        voice_set_paths_from_candidate "$original_in"
+        new_in="$voice_path_org"
+        out="$voice_path_out"
         sha_file="$(sha_file_from_pair "$new_in")"
         if [[ -e "$out" ]]; then
             echo
@@ -3249,7 +3301,11 @@ if [[ "$mode" == "dry-run" ]]; then
         fi
 
         echo
-        print_file_block "$original_in" "$new_in" "$out"
+        if [[ "$original_in" == "$new_in" ]]; then
+            print_org_only_block "$new_in" "$out"
+        else
+            print_file_block "$original_in" "$new_in" "$out"
+        fi
         echo "ffmpeg -hide_banner -y -i \"$new_in\" -map 0:a:0 -vn -af \"silenceremove=start_periods=1:start_silence=0.9:start_threshold=-50dB:stop_periods=-1:stop_silence=0.8:stop_threshold=-45dB,highpass=f=80,acompressor=threshold=-18dB:ratio=3:attack=20:release=250:makeup=4,dynaudnorm=f=150:g=11\" -c:a flac -compression_level 12 \"$out\""
         echo "touch -r \"$new_in\" \"$out\""
         print_sha_block "$sha_file" "$new_in" "$out"
@@ -3287,10 +3343,9 @@ else
 
         while (( idx < total_files && batch_count < batch_size_now )); do
             original_in="${all_files[$idx]}"
-            new_in="${original_in%.*}_ORG.${original_in##*.}"
-            base="${new_in%.*}"
-            base="${base%_ORG}"
-            out="${base}_OUTPUT.flac"
+            voice_set_paths_from_candidate "$original_in"
+            new_in="$voice_path_org"
+            out="$voice_path_out"
 
             if [[ "$accept_all_remaining" == "yes" ]]; then
                 batch_selected+=("yes")
@@ -3311,7 +3366,11 @@ else
             print_prompt_and_decision_summary \
                 "$batch_pos" "$batch_size_now" "$overall_pos" "$total_files" "$still_after_this" \
                 "$batch_yes" "$batch_no"
-            print_file_block "$original_in" "$new_in" "$out"
+            if [[ "$original_in" == "$new_in" ]]; then
+                print_org_only_block "$new_in" "$out"
+            else
+                print_file_block "$original_in" "$new_in" "$out"
+            fi
             read_batch_choice "Process this file later in this batch?"
 
             case "$BATCH_CHOICE_ACTION" in
@@ -3395,7 +3454,7 @@ else
         [[ "$finish_batch_now" == yes ]] && break
     done
 
-    if (( ${#existing_pair_orgs[@]} > 0 && ${#all_files[@]} == 0 )); then
+    if (( ${#existing_pair_orgs[@]} > 0 )); then
         process_existing_pairs_batch
     fi
 fi
