@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.06.03 - v. 3.50 - process_one_file skip/fail return 0 (set -e must not abort whole run)
 # 2026.06.03 - v. 3.49 - skip media with no audio; check ffmpeg exit code; register pairs for transcription before OUTPUT exists
 # 2026.06.02 - v. 3.48 - process *_ORG.* without *_OUTPUT.flac (create OUTPUT only); always run existing-pair batch when pairs exist
 # 2026.05.31 - v. 3.47 - startup: if any whisper ip not pingable / port closed, prompt W/C/Q before processing
@@ -1399,12 +1400,18 @@ media_has_audio_stream() {
     [[ -f "$file" ]] || return 1
 
     if command -v ffprobe >/dev/null 2>&1; then
-        n="$(ffprobe -v error -select_streams a -show_entries stream=index -of csv=p=0 "$file" 2>/dev/null | wc -l)"
-        (( n > 0 )) && return 0
+        n="$(ffprobe -v error -select_streams a -show_entries stream=index -of csv=p=0 "$file" 2>/dev/null | wc -l | tr -d '[:space:]')"
+        n="${n:-0}"
+        if (( n > 0 )); then
+            return 0
+        fi
         return 1
     fi
 
-    ffmpeg -hide_banner -i "$file" -f null - 2>&1 | grep -qE '(Stream #0:[0-9]+.*Audio:|Audio: )'
+    if ffmpeg -hide_banner -i "$file" -f null - 2>&1 | grep -qE '(Stream #0:[0-9]+.*Audio:|Audio: )'; then
+        return 0
+    fi
+    return 1
 }
 
 voice_ffmpeg_filter_chain='silenceremove=start_periods=1:start_silence=0.9:start_threshold=-50dB:stop_periods=-1:stop_silence=0.8:stop_threshold=-45dB,highpass=f=80,acompressor=threshold=-18dB:ratio=3:attack=20:release=250:makeup=4,dynaudnorm=f=150:g=11'
@@ -2643,7 +2650,7 @@ process_transcription_queue() {
     build_voice_transcribe_queue
 
     local total_files idx
-    total_files=${#transcribe_queue_outs[@]}
+    total_files=${#transcribe_queue_orgs[@]}
     idx=0
 
     (( total_files == 0 )) && return 0
@@ -2936,7 +2943,7 @@ process_one_file() {
         echo -e "${YELLOW}SKIP:${RESET} No audio stream in '$(basename "$audio_probe")' (video-only or empty) — cannot create OUTPUT or transcripts." >&2
         echo "Rename to *_EXCLUDE.* if you want to ignore this file in future runs." >&2
         ((++files_skipped))
-        return 1
+        return 0
     fi
 
     current_original_in="$original_in"
@@ -2964,7 +2971,7 @@ process_one_file() {
         current_new_in=""
         current_out=""
         ((++files_skipped))
-        return 1
+        return 0
     fi
 
     touch -r "$new_in" "$out"
@@ -3495,7 +3502,7 @@ else
                     selected_left_after=$(( selected_total - selected_pos ))
                     echo
                     print_processing_progress "$selected_pos" "$selected_total" "$selected_left_after" "$total_files"
-                    process_one_file "${batch_originals[$i]}" "${batch_newins[$i]}" "${batch_outputs[$i]}"
+                    process_one_file "${batch_originals[$i]}" "${batch_newins[$i]}" "${batch_outputs[$i]}" || true
                 fi
             done
             elif (( finish_batch_now )); then
