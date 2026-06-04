@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.06.03 - v. 19.153.120000 - non-verbose: no main-loop progress dot on checksum files; skip dot after checksum-group OK (no lone "." between groups)
 # 2026.06.02 - v. 19.152.160000 - fix colored "Renamed:" line: printf used %s for RESET so literal \e[0m appeared at end of line (now %b%s%b for green new path + reset)
 # 2026.06.02 - v. 19.151.143000 - transform_basename: compact validated embedded dotted dates YYYY.M(M).D(D) anywhere in the stem (not only leading) → YYYYMMDD; year>=1980, real month/day; e.g. config_EdgeCHE_as_of_2021.11.01_040001.cfg.bz2.ssl → ..._20211101_040001...
 # 2026.06.02 - v. 19.150.124500 - non-verbose checksum progress letters: small/single-reference lists (< NONVERBOSE_CHECKSUM_LIST_PER_LETTER_THRESHOLD) print NO S/M/H letters (a lone "S" between status lines was just noise); the ramp is kept only for very large lists (>= threshold)
@@ -612,6 +613,7 @@ NONVERBOSE_CHECKSUM_PROGRESS_FPL=0
 NONVERBOSE_CHECKSUM_LIST_PER_LETTER_THRESHOLD="${NONVERBOSE_CHECKSUM_LIST_PER_LETTER_THRESHOLD:-3000}"
 NONVERBOSE_CHECKSUM_LIST_MAX_ENTRIES_PER_PROGRESS_CHAR="${NONVERBOSE_CHECKSUM_LIST_MAX_ENTRIES_PER_PROGRESS_CHAR:-50}"
 # After auto-dir “Renamed:” (stdout), the next iteration’s lone progress dot looked odd; skip that one dot (see nonverbose_main_loop_progress_dot).
+# Checksum files and checksum-group OK lines get the same treatment (status lines replace dots).
 NONVERBOSE_SKIP_NEXT_MAIN_LOOP_DOT=no
 CLI_COLORS=""
 CLI_MODE=""
@@ -3180,6 +3182,8 @@ print_checksum_group_ok_line() {
     local llower="${label,,}"
 
     emit_wrap_labeled_stdout "${label} OK: changed reference(s) were updated inside " "${GREEN}${label} OK:${RESET} changed reference(s) were updated inside " "'${final_sum}' and ${llower} checksum(s) are correct."
+    # Next main-loop dot (often the following .sha512) would flush as a lone "." before the next group preview.
+    NONVERBOSE_SKIP_NEXT_MAIN_LOOP_DOT=yes
 }
 
 print_checksum_update_verbose() {
@@ -8716,7 +8720,11 @@ for f in "${ordered_paths[@]}"; do
         nonverbose_main_loop_progress_milestone "$_fe_mile_display" "${#ordered_paths[@]}"
         MAIN_LOOP_LAST_MILESTONE_VALUE=$_fe_mile_display
     fi
-    nonverbose_main_loop_progress_dot
+    if [[ -f "$f" ]] && is_checksum_file "$f"; then
+        : # checksum groups print full status lines; a progress dot becomes a lone "." on the next emit_wrap line
+    else
+        nonverbose_main_loop_progress_dot
+    fi
 
     if is_excluded_by_filter_file "$f"; then
         print_skip_path_reason "$f" "was ignored because part of its path matches a filter from $EXCLUDE_FILTERS_FILE."
