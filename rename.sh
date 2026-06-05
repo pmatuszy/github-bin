@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.06.05 - v. 19.155.231500 - GoPro: omit _part_XX when only one chapter in dir; prompt to strip lone _part_XX from already-renamed files
 # 2026.06.05 - v. 19.154.230000 - rename prompt [B]: skip directory where this file lives and entire subtree (SUBTREE= in exclude file)
 # 2026.06.03 - v. 19.153.120000 - non-verbose: no main-loop progress dot on checksum files; skip dot after checksum-group OK (no lone "." between groups)
 # 2026.06.02 - v. 19.152.160000 - fix colored "Renamed:" line: printf used %s for RESET so literal \e[0m appeared at end of line (now %b%s%b for green new path + reset)
@@ -5983,6 +5984,166 @@ gopro_camera_raw_basename_matches() {
     return 1
 }
 
+gopro_raw_stem_core_from_basename() {
+    local bn="$1"
+    local stem="${bn%.*}"
+
+    stem="${stem%_Proxy}"
+    stem="${stem%_proxy}"
+    stem="${stem%_PROXY}"
+    printf '%s' "$stem"
+}
+
+# GH010001.MP4 + GH020001.MP4 share GH0001 (camera prefix + segment id).
+gopro_raw_basename_session_key() {
+    local bn="$1"
+    local stem
+
+    stem="$(gopro_raw_stem_core_from_basename "$bn")"
+    [[ "$stem" =~ ^[cCgG][hHxX][0-9]{6}$ ]] || return 1
+    printf '%s%s' "${stem:0:2}" "${stem:4:4}"
+}
+
+gopro_raw_basename_chapter_id() {
+    local bn="$1"
+    local stem
+
+    stem="$(gopro_raw_stem_core_from_basename "$bn")"
+    [[ "$stem" =~ ^[cCgG][hHxX][0-9]{6}$ ]] || return 1
+    printf '%s' "${stem:2:2}"
+}
+
+gopro_raw_session_chapter_count_in_dir() {
+    local dir="$1"
+    local session_key="$2"
+    local -A chapters=()
+    local f bn key ch
+    local saved_nullglob
+
+    [[ -n "$dir" && -n "$session_key" ]] || { printf '0'; return 0; }
+
+    saved_nullglob="$(shopt -p nullglob || true)"
+    shopt -s nullglob
+    for f in "$dir"/*; do
+        [[ -f "$f" ]] || continue
+        bn="$(basename -- "$f")"
+        gopro_camera_raw_basename_matches "$bn" || continue
+        key="$(gopro_raw_basename_session_key "$bn")" || continue
+        [[ "$key" == "$session_key" ]] || continue
+        ch="$(gopro_raw_basename_chapter_id "$bn")"
+        [[ -n "$ch" ]] || continue
+        chapters["$ch"]=1
+    done
+    eval "$saved_nullglob"
+
+    printf '%s' "${#chapters[@]}"
+}
+
+gopro_renamed_basename_has_part_segment() {
+    [[ "$1" =~ ^[0-9]{8}_[0-9]{6}_-__-_[^_]+_[^_]+_part_[0-9]{2}(_Proxy)?\.[mM][pP]4$ ]]
+}
+
+gopro_renamed_session_prefix_from_basename() {
+    [[ "$1" =~ ^(.+)_part_[0-9]{2}(_Proxy)?\.[mM][pP]4$ ]] || return 1
+    printf '%s' "${BASH_REMATCH[1]}"
+}
+
+gopro_renamed_basename_without_part_segment() {
+    [[ "$1" =~ ^(.+)_part_[0-9]{2}(_Proxy)?(\.[mM][pP]4)$ ]] || return 1
+    printf '%s%s%s' "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}" "${BASH_REMATCH[3]}"
+}
+
+gopro_renamed_unique_part_count_in_dir() {
+    local dir="$1"
+    local prefix="$2"
+    local -A part_nums=()
+    local f bn p part
+    local saved_nullglob
+
+    [[ -n "$dir" && -n "$prefix" ]] || { printf '0'; return 0; }
+
+    saved_nullglob="$(shopt -p nullglob || true)"
+    shopt -s nullglob
+    for f in "$dir"/*; do
+        [[ -f "$f" ]] || continue
+        bn="$(basename -- "$f")"
+        gopro_renamed_basename_has_part_segment "$bn" || continue
+        p="$(gopro_renamed_session_prefix_from_basename "$bn")" || continue
+        [[ "$p" == "$prefix" ]] || continue
+        [[ "$bn" =~ _part_([0-9]{2}) ]] || continue
+        part_nums["${BASH_REMATCH[1]}"]=1
+    done
+    eval "$saved_nullglob"
+
+    printf '%s' "${#part_nums[@]}"
+}
+
+gopro_format_camera_basename_output() {
+    local ts="$1"
+    local manuf="$2"
+    local model="$3"
+    local suffix="$4"
+    local ext="$5"
+
+    if [[ -n "$suffix" ]]; then
+        printf '%s_-__-_%s_%s_%s.%s' "$ts" "$manuf" "$model" "$suffix" "$ext"
+    else
+        printf '%s_-__-_%s_%s.%s' "$ts" "$manuf" "$model" "$ext"
+    fi
+}
+
+# Already-renamed GoPro-style name with lone _part_XX in this directory → ask to drop the part segment.
+maybe_prompt_gopro_remove_lone_part_basename() {
+    local f="$1"
+    local base="$2"
+    local dir prefix part_count stripped answer
+
+    [[ -f "$f" ]] || return 1
+    gopro_renamed_basename_has_part_segment "$base" || return 1
+    dir="$(dirname -- "$f")"
+    prefix="$(gopro_renamed_session_prefix_from_basename "$base")" || return 1
+    part_count="$(gopro_renamed_unique_part_count_in_dir "$dir" "$prefix")"
+    [[ "$part_count" =~ ^[0-9]+$ ]] || return 1
+    (( part_count > 1 )) && return 1
+
+    stripped="$(gopro_renamed_basename_without_part_segment "$base")" || return 1
+    [[ "$stripped" != "$base" ]] || return 1
+
+    if [[ "$mode" == "dry-run" ]]; then
+        emit_wrap_labeled_stderr "GOPRO: " "${CYAN}GOPRO:${RESET} " "Single chapter in directory — would prompt to remove _part_XX from '$(basename -- "$base")' → '$(basename -- "$stripped")'."
+        printf '%s' "$stripped"
+        return 0
+    fi
+
+    while true; do
+        echo >&2
+        echo -e "$(user_prompt_ts_prefix)${GREEN}This GoPro file is the only chapter here but its name still has _part_XX:${RESET}" >&2
+        echo "  OLD: $(format_path_for_log "$f")" >&2
+        echo "  NEW: $(format_path_for_log "$(dirname -- "$f")/$stripped")" >&2
+        echo "  [Y] Remove _part_XX from the filename (default)" >&2
+        echo "  [N] Keep the current name" >&2
+        echo "  [Q] Quit" >&2
+        echo -n "$(user_prompt_ts_prefix)Choice [Y/n/q]: " >&2
+        flush_stdin
+        read_single_key answer "$PROMPT_WAIT_SECONDS"
+        echo >&2
+        case "$answer" in
+            q|Q)
+                stopped_by_user=yes
+                return 1
+                ;;
+            n|N)
+                return 1
+                ;;
+            *)
+                vlog "GoPro lone _part_XX removal accepted: $base -> $stripped"
+                printf '%s' "$stripped"
+                return 0
+                ;;
+        esac
+    done
+}
+
 # Build YYYYMMDD_HHMMSS_-__-_MANUFACTURER_MODEL[_part_XX][_Proxy].ext from camera metadata (GoPro 4–12, Sony, Contour, LG v20).
 transform_gopro_camera_basename() {
     local file="$1"
@@ -6059,15 +6220,27 @@ transform_gopro_camera_basename() {
     fi
 
     if [[ "$czy_gopro" == 1 && "$gopro4" == 0 && "$base" =~ ^[cCgG][hHxX][0-9][0-9][0-9][0-9][0-9][0-9] ]]; then
-        suffix_pliku="part_${base:2:2}"
+        local session_key chapter_count chapter_id
+        session_key="$(gopro_raw_basename_session_key "$base")" || session_key=""
+        if [[ -n "$session_key" ]]; then
+            chapter_count="$(gopro_raw_session_chapter_count_in_dir "$(dirname -- "$file")" "$session_key")"
+            if [[ "$chapter_count" =~ ^[0-9]+$ ]] && (( chapter_count > 1 )); then
+                chapter_id="$(gopro_raw_basename_chapter_id "$base")"
+                [[ -n "$chapter_id" ]] && suffix_pliku="part_${chapter_id}"
+            fi
+        fi
     fi
     if [[ "$base" == *"_Proxy"* ]]; then
-        suffix_pliku="${suffix_pliku}_Proxy"
+        if [[ -n "$suffix_pliku" ]]; then
+            suffix_pliku="${suffix_pliku}_Proxy"
+        else
+            suffix_pliku="_Proxy"
+        fi
     fi
 
     [[ -n "$data_stworzenia_pliku_w_czasie_lokalnym" ]] || return 1
 
-    printf '%s_-__-_%s_%s_%s.%s' \
+    gopro_format_camera_basename_output \
         "$data_stworzenia_pliku_w_czasie_lokalnym" \
         "$DeviceManufacturer" \
         "$DeviceModelName" \
@@ -6481,7 +6654,7 @@ transform_name() {
         done
     fi
 
-    local _gopro_applied=0 _gopro_try="" _gopro_rc=0
+    local _gopro_applied=0 _gopro_try="" _gopro_rc=0 _gopro_part_strip=""
     if [[ -f "$f" ]] && gopro_camera_raw_basename_matches "$base"; then
         if ! resolve_rename_exiftool >/dev/null; then
             prompt_gopro_exiftool_missing_action "$f"
@@ -6506,6 +6679,26 @@ transform_name() {
             vlog "GoPro/camera exiftool rename: $base -> $_gopro_try"
         else
             vlog "GoPro/camera exiftool rename: no usable metadata for $base (rc=$_gopro_rc); falling back to normal rename"
+        fi
+    fi
+
+    if [[ -f "$f" ]] && (( _gopro_applied == 0 )) && [[ "$stopped_by_user" != yes ]]; then
+        local _gopro_part_rc=0
+        local _tn_save_e_part=0
+        [[ $- == *e* ]] && _tn_save_e_part=1
+        set +e
+        _gopro_part_strip="$(maybe_prompt_gopro_remove_lone_part_basename "$f" "$base")"
+        _gopro_part_rc=$?
+        if ((_tn_save_e_part)); then
+            set -e
+        else
+            set +e
+        fi
+        if [[ "$stopped_by_user" == yes ]]; then
+            return 2
+        fi
+        if (( _gopro_part_rc == 0 )) && [[ -n "$_gopro_part_strip" ]]; then
+            MANUAL_BASENAME_OVERRIDE="$_gopro_part_strip"
         fi
     fi
 
