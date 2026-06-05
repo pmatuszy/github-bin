@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.06.05 - v. 19.154.230000 - rename prompt [B]: skip directory where this file lives and entire subtree (SUBTREE= in exclude file)
 # 2026.06.03 - v. 19.153.120000 - non-verbose: no main-loop progress dot on checksum files; skip dot after checksum-group OK (no lone "." between groups)
 # 2026.06.02 - v. 19.152.160000 - fix colored "Renamed:" line: printf used %s for RESET so literal \e[0m appeared at end of line (now %b%s%b for green new path + reset)
 # 2026.06.02 - v. 19.151.143000 - transform_basename: compact validated embedded dotted dates YYYY.M(M).D(D) anywhere in the stem (not only leading) → YYYYMMDD; year>=1980, real month/day; e.g. config_EdgeCHE_as_of_2021.11.01_040001.cfg.bz2.ssl → ..._20211101_040001...
@@ -700,6 +701,7 @@ Options:
 
 Optional exclude file in the start directory: _exclude-rename.sh.txt
   FILE=basename or FILE=wildcard — skip renaming that filename in every subdirectory (files and directories; not path-specific).
+  SUBTREE=dir — skip that directory and every path under it (prompt [B] on a file uses the directory where that file lives).
   [F] at the rename prompt appends FILE=<basename> for the current path (file or directory). At the checksum-group prompt, [F] uses the list file's basename. See also =full/path, /basename/, globs.
   thumbs.db / torrent .URL: if the suggested path equals the current path, you still get a prompt so you can delete the file ([K] / [T]); there is no rename to apply.
 
@@ -1376,6 +1378,13 @@ is_excluded_by_filter_file() {
             continue
         fi
 
+        if [[ "$filter" == SUBTREE=* ]]; then
+            if path_is_under_subtree_root "$p" "${filter#SUBTREE=}"; then
+                return 0
+            fi
+            continue
+        fi
+
         if [[ "$filter" == =* ]]; then
             exact_target="${filter#=}" 
             if [[ "$p" == "$exact_target" ]]; then
@@ -1424,6 +1433,97 @@ filename_only_exception_entry_for_path() {
 flatten_exception_entry_for_path() {
     local p="$1"
     printf 'FLATTEN_EXACT=%s' "$p"
+}
+
+# Directory containing a file (or the directory itself) for SUBTREE= exceptions.
+containing_directory_for_subtree_exception() {
+    local p="$1"
+    if [[ -d "$p" ]]; then
+        printf '%s' "$p"
+    else
+        dirname -- "$p"
+    fi
+}
+
+subtree_exception_entry_for_directory() {
+    local d="$1"
+    local abs
+
+    [[ -n "$d" ]] || return 1
+    abs="$(db_abs_path "$d" 2>/dev/null || true)"
+    [[ -n "$abs" ]] && d="$abs"
+    printf 'SUBTREE=%s' "$d"
+}
+
+# True when p is exactly root or a path under root/ (after db_abs_path when possible).
+path_is_under_subtree_root() {
+    local p="$1"
+    local root="$2"
+    local abs_p abs_root
+
+    [[ -n "$p" && -n "$root" ]] || return 1
+    abs_p="$(db_abs_path "$p" 2>/dev/null || true)"
+    abs_root="$(db_abs_path "$root" 2>/dev/null || true)"
+    [[ -n "$abs_p" ]] || abs_p="$p"
+    [[ -n "$abs_root" ]] || abs_root="$root"
+    abs_p="${abs_p%/}"
+    abs_root="${abs_root%/}"
+    [[ "$abs_p" == "$abs_root" || "$abs_p" == "$abs_root"/* ]]
+}
+
+subtree_exception_exists_for_directory() {
+    local dir="$1"
+    local entry existing
+
+    reload_exclude_filters_if_changed
+    entry="$(subtree_exception_entry_for_directory "$dir")" || return 1
+    [[ -n "$entry" ]] || return 1
+
+    for existing in "${EXCLUDE_FILTERS[@]}"; do
+        [[ "$existing" == "$entry" ]] && return 0
+    done
+    return 1
+}
+
+append_subtree_directory_to_exclude_filters_file() {
+    local dir="$1"
+    local entry existing found=0
+
+    [[ -n "$dir" ]] || return 1
+    [[ -e "$dir" ]] || {
+        emit_wrap_labeled_stderr "SKIP: " "${YELLOW}SKIP:${RESET} " "Subtree exceptions need an existing directory: '$dir'"
+        return 1
+    }
+
+    entry="$(subtree_exception_entry_for_directory "$dir")" || return 1
+
+    if [[ ! -e "$EXCLUDE_FILTERS_FILE" ]]; then
+        : > "$EXCLUDE_FILTERS_FILE"
+    fi
+
+    load_exclude_filters
+
+    for existing in "${EXCLUDE_FILTERS[@]}"; do
+        [[ "$existing" == "$entry" ]] && { found=1; break; }
+    done
+
+    if (( found == 0 )); then
+        printf '%s
+' "$entry" >> "$EXCLUDE_FILTERS_FILE"
+        emit_wrap_exclude_append_message 1 "SUBTREE EXCEPTION ADDED" "$entry"
+    else
+        emit_wrap_exclude_append_message 0 "SUBTREE EXCEPTION EXISTS" "$entry"
+    fi
+
+    load_exclude_filters
+}
+
+apply_containing_directory_subtree_exception() {
+    local p="$1"
+    local dir
+
+    dir="$(containing_directory_for_subtree_exception "$p")"
+    append_subtree_directory_to_exclude_filters_file "$dir"
 }
 
 flatten_exception_exists_for_path() {
@@ -8111,6 +8211,13 @@ print_rename_prompt_menu() {
         echo "  [F] Filename-only exception — skip this basename everywhere (any file or directory with this name)"
         choice_hint+=/f
     fi
+    if [[ -n "$path" && -f "$path" ]]; then
+        echo "  [B] Skip the directory where this file lives and everything under it (subtree exception)"
+        choice_hint+=/b
+    elif [[ -n "$path" && -d "$path" ]]; then
+        echo "  [B] Skip this directory and everything under it (subtree exception)"
+        choice_hint+=/b
+    fi
     echo "  [E] Add exception (skip this path and its subtree by filter match)"
     echo "  [X] Exact exception (do not rename only this exact path; still check subtree)"
     echo "  [Q] Quit"
@@ -9876,6 +9983,24 @@ for f in "${ordered_paths[@]}"; do
                 processed["$f"]=1
             else
                 ((++files_skipped))
+            fi
+            ;;
+        b|B)
+            if apply_containing_directory_subtree_exception "$f"; then
+                ((++files_skipped))
+                processed["$f"]=1
+                if [[ -n "$nef_xmp_buddy" ]]; then
+                    ((++files_skipped))
+                    processed["$nef_xmp_buddy"]=1
+                fi
+            else
+                if [[ -n "$nef_xmp_buddy" ]]; then
+                    ((files_skipped+=2))
+                    processed["$nef_xmp_buddy"]=1
+                else
+                    ((++files_skipped))
+                fi
+                processed["$f"]=1
             fi
             ;;
         e|E)
