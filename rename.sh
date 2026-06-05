@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.06.02 - v. 19.156.120000 - Plain rename: update local .sha512/.md5 refs immediately; GoPro lone _part_XX prompt [D] directory / [A] whole run
 # 2026.06.05 - v. 19.155.231500 - GoPro: omit _part_XX when only one chapter in dir; prompt to strip lone _part_XX from already-renamed files
 # 2026.06.05 - v. 19.154.230000 - rename prompt [B]: skip directory where this file lives and entire subtree (SUBTREE= in exclude file)
 # 2026.06.03 - v. 19.153.120000 - non-verbose: no main-loop progress dot on checksum files; skip dot after checksum-group OK (no lone "." between groups)
@@ -2867,7 +2868,7 @@ print_checksum_sibling_notice_verbose() {
         has_any=1
     fi
     if (( has_any == 1 )); then
-        echo "          checksum references will be updated when checksum file is processed." >&2
+        echo "          local checksum references will be updated during this rename." >&2
     fi
 }
 
@@ -6092,11 +6093,19 @@ gopro_format_camera_basename_output() {
     fi
 }
 
+gopro_auto_strip_lone_part_matches() {
+    local f="$1"
+
+    [[ "$AUTO_GOPRO_STRIP_PART_SESSION" == yes ]] && return 0
+    [[ -n "$AUTO_GOPRO_STRIP_PART_DIR" ]] || return 1
+    similar_rename_dir_matches_scope "$(dirname -- "$f")" "$AUTO_GOPRO_STRIP_PART_DIR"
+}
+
 # Already-renamed GoPro-style name with lone _part_XX in this directory → ask to drop the part segment.
 maybe_prompt_gopro_remove_lone_part_basename() {
     local f="$1"
     local base="$2"
-    local dir prefix part_count stripped answer
+    local dir prefix part_count stripped answer confirm
 
     [[ -f "$f" ]] || return 1
     gopro_renamed_basename_has_part_segment "$base" || return 1
@@ -6109,6 +6118,16 @@ maybe_prompt_gopro_remove_lone_part_basename() {
     stripped="$(gopro_renamed_basename_without_part_segment "$base")" || return 1
     [[ "$stripped" != "$base" ]] || return 1
 
+    if gopro_auto_strip_lone_part_matches "$f"; then
+        if [[ "$mode" == "dry-run" ]]; then
+            emit_wrap_labeled_stderr "GOPRO: " "${CYAN}GOPRO:${RESET} " "Auto-remove lone _part_XX: '$(basename -- "$base")' → '$(basename -- "$stripped")'."
+        else
+            vlog "GoPro lone _part_XX removal auto-yes: $base -> $stripped"
+        fi
+        printf '%s' "$stripped"
+        return 0
+    fi
+
     if [[ "$mode" == "dry-run" ]]; then
         emit_wrap_labeled_stderr "GOPRO: " "${CYAN}GOPRO:${RESET} " "Single chapter in directory — would prompt to remove _part_XX from '$(basename -- "$base")' → '$(basename -- "$stripped")'."
         printf '%s' "$stripped"
@@ -6120,10 +6139,12 @@ maybe_prompt_gopro_remove_lone_part_basename() {
         echo -e "$(user_prompt_ts_prefix)${GREEN}This GoPro file is the only chapter here but its name still has _part_XX:${RESET}" >&2
         echo "  OLD: $(format_path_for_log "$f")" >&2
         echo "  NEW: $(format_path_for_log "$(dirname -- "$f")/$stripped")" >&2
-        echo "  [Y] Remove _part_XX from the filename (default)" >&2
+        echo "  [Y] Remove _part_XX from this filename (default)" >&2
+        echo "  [D] Remove _part_XX for all lone-chapter files in this directory (rest of run)" >&2
+        echo "  [A] Remove _part_XX for all lone-chapter files in this run" >&2
         echo "  [N] Keep the current name" >&2
         echo "  [Q] Quit" >&2
-        echo -n "$(user_prompt_ts_prefix)Choice [Y/n/q]: " >&2
+        echo -n "$(user_prompt_ts_prefix)Choice [Y/n/d/a/q]: " >&2
         flush_stdin
         read_single_key answer "$PROMPT_WAIT_SECONDS"
         echo >&2
@@ -6134,6 +6155,31 @@ maybe_prompt_gopro_remove_lone_part_basename() {
                 ;;
             n|N)
                 return 1
+                ;;
+            d|D)
+                AUTO_GOPRO_STRIP_PART_DIR="$(cd -- "$dir" 2>/dev/null && pwd -P)" || AUTO_GOPRO_STRIP_PART_DIR="$dir"
+                vlog "Per-directory GoPro lone _part_XX strip enabled for '$AUTO_GOPRO_STRIP_PART_DIR'"
+                printf '%s' "$stripped"
+                return 0
+                ;;
+            a|A)
+                echo
+                echo "$(user_prompt_ts_prefix)⚠️  This will remove lone _part_XX from all qualifying GoPro files for the rest of this run."
+                if (( VERBOSE == 1 )); then
+                    echo "[VERBOSE] [$(date '+%Y.%m.%d %H:%M:%S')] Are you sure? [y/N]:" >&2
+                else
+                    nonverbose_progress_dot_endline_if_needed
+                fi
+                echo -n "$(user_prompt_ts_prefix)Are you sure? [y/N]: "
+                flush_stdin
+                read_single_key confirm "$PROMPT_WAIT_SECONDS"
+                echo
+                if [[ "$confirm" =~ [Yy] ]]; then
+                    AUTO_GOPRO_STRIP_PART_SESSION=yes
+                    vlog "Session-wide GoPro lone _part_XX strip enabled"
+                    printf '%s' "$stripped"
+                    return 0
+                fi
                 ;;
             *)
                 vlog "GoPro lone _part_XX removal accepted: $base -> $stripped"
@@ -7487,11 +7533,51 @@ collect_local_checksum_ref_summaries() {
     done
 }
 
+apply_local_checksum_ref_updates_after_rename() {
+    local target_old="$1"
+    local target_new="$2"
+    local target_kind="$3"
+    local sum_file i changed_any=no
+
+    collect_local_checksum_ref_updates "$target_old" "$target_new" "$target_kind"
+    (( ${#LOCAL_UPDATE_SUM_FILES[@]} > 0 )) || return 0
+
+    if [[ "$mode" == "dry-run" ]]; then
+        emit_wrap_labeled_stdout "[DRY-RUN] Would update checksum reference(s) in local hash file(s) for rename: " "${CYAN}[DRY-RUN] Would update checksum reference(s) in local hash file(s) for rename:${RESET} " "$target_old"
+        for sum_file in "${LOCAL_UPDATE_VERIFY_FILES[@]}"; do
+            emit_wrap_labeled_stdout "    " "    " "$sum_file"
+        done
+        if (( VERBOSE == 1 )); then
+            for i in "${!LOCAL_UPDATE_SUM_FILES[@]}"; do
+                print_checksum_update_verbose "${LOCAL_UPDATE_SUM_FILES[$i]}" "${LOCAL_UPDATE_OLD_REFS[$i]}" "${LOCAL_UPDATE_NEW_REFS[$i]}"
+            done
+        fi
+        return 0
+    fi
+
+    for i in "${!LOCAL_UPDATE_SUM_FILES[@]}"; do
+        ensure_checksum_file_unix_format "${LOCAL_UPDATE_SUM_FILES[$i]}"
+        update_checksum_content_refs "${LOCAL_UPDATE_SUM_FILES[$i]}" "${LOCAL_UPDATE_OLD_REFS[$i]}" "${LOCAL_UPDATE_NEW_REFS[$i]}"
+        changed_any=yes
+    done
+
+    [[ "$changed_any" == "yes" ]] || return 0
+
+    for sum_file in "${LOCAL_UPDATE_VERIFY_FILES[@]}"; do
+        if ! checksum_check "$sum_file"; then
+            emit_wrap_labeled_stdout "CHECKSUM WARNING: After plain rename, checksum file check failed: " "${YELLOW}CHECKSUM WARNING:${RESET} After plain rename, checksum file check failed: " "$sum_file"
+            emit_wrap_labeled_stdout "NOTE: " "${YELLOW}NOTE:${RESET} " "failure may come from other missing/changed files already listed there."
+        fi
+        db_mark_checked "$sum_file" "checksum_group" "checked"
+    done
+}
+
 perform_plain_entry_rename() {
     local old="$1"
     local new="$2"
     local old_companion_dir="" new_companion_dir="" old_companion_name="" new_companion_name=""
     local html_reference_update_only=no
+    local target_kind=file
 
     if paths_refer_to_same_file "$old" "$new"; then
         if is_case_only_rename_pair "$old" "$new"; then
@@ -7563,6 +7649,8 @@ perform_plain_entry_rename() {
         fi
     fi
 
+    [[ -d "$old" ]] && target_kind=directory
+
     if [[ "$mode" == "dry-run" ]]; then
         emit_wrap_old_arrow_new_stdout "[DRY-RUN] Would rename: " "${CYAN}[DRY-RUN] Would rename:${RESET} " "$old" "$new"
         if [[ -n "$old_companion_dir" && "$old_companion_dir" != "$new_companion_dir" ]]; then
@@ -7571,6 +7659,7 @@ perform_plain_entry_rename() {
         elif [[ "$html_reference_update_only" == "yes" ]]; then
             emit_wrap_labeled_stdout "[DRY-RUN] Would update HTML reference inside: " "${CYAN}[DRY-RUN] Would update HTML reference inside:${RESET} " "$new"
         fi
+        apply_local_checksum_ref_updates_after_rename "$old" "$new" "$target_kind"
         ((++files_affected))
         record_rename "$old" "$new"
         if [[ -n "$old_companion_dir" && "$old_companion_dir" != "$new_companion_dir" ]]; then
@@ -7630,6 +7719,8 @@ perform_plain_entry_rename() {
         db_mark_checked "$new_companion_dir" "html_companion" "checked"
         processed["$new_companion_dir"]=1
     fi
+
+    apply_local_checksum_ref_updates_after_rename "$old" "$new" "$target_kind"
 
     return 0
 }
@@ -7990,6 +8081,8 @@ AUTO_COLLISION_OTHER_DIR=""
 NEF_XMP_RAWFIX_AUTO_DIR=""
 AUTO_LOWERCASE_3_EXT_SESSION=no # [L] session: any extension case-only lowercasing (name kept for compatibility)
 AUTO_LOWERCASE_MEDIA_OFFICE_EXT_SESSION=no # [U] session: only media + MS Office extension case-only lowercasing
+AUTO_GOPRO_STRIP_PART_DIR="" # GoPro lone _part_XX prompt [D]: auto-strip for rest of run in this directory
+AUTO_GOPRO_STRIP_PART_SESSION=no # GoPro lone _part_XX prompt [A]: auto-strip for all qualifying files this run
 
 declare -a renamed_list=()
 declare -A recorded
