@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.06.06 - v. 19.157.002100 - GoPro lone _part_XX: return 0 when not applicable (fix set -E ERR trap abort in transform_name)
 # 2026.06.02 - v. 19.156.120000 - Plain rename: update local .sha512/.md5 refs immediately; GoPro lone _part_XX prompt [D] directory / [A] whole run
 # 2026.06.05 - v. 19.155.231500 - GoPro: omit _part_XX when only one chapter in dir; prompt to strip lone _part_XX from already-renamed files
 # 2026.06.05 - v. 19.154.230000 - rename prompt [B]: skip directory where this file lives and entire subtree (SUBTREE= in exclude file)
@@ -6107,16 +6108,17 @@ maybe_prompt_gopro_remove_lone_part_basename() {
     local base="$2"
     local dir prefix part_count stripped answer confirm
 
-    [[ -f "$f" ]] || return 1
-    gopro_renamed_basename_has_part_segment "$base" || return 1
+    # Not applicable is success (return 0, no output) — return 1 aborts transform_name under set -E + ERR trap in $(...).
+    [[ -f "$f" ]] || return 0
+    gopro_renamed_basename_has_part_segment "$base" || return 0
     dir="$(dirname -- "$f")"
-    prefix="$(gopro_renamed_session_prefix_from_basename "$base")" || return 1
+    prefix="$(gopro_renamed_session_prefix_from_basename "$base")" || return 0
     part_count="$(gopro_renamed_unique_part_count_in_dir "$dir" "$prefix")"
-    [[ "$part_count" =~ ^[0-9]+$ ]] || return 1
-    (( part_count > 1 )) && return 1
+    [[ "$part_count" =~ ^[0-9]+$ ]] || return 0
+    (( part_count > 1 )) && return 0
 
-    stripped="$(gopro_renamed_basename_without_part_segment "$base")" || return 1
-    [[ "$stripped" != "$base" ]] || return 1
+    stripped="$(gopro_renamed_basename_without_part_segment "$base")" || return 0
+    [[ "$stripped" != "$base" ]] || return 0
 
     if gopro_auto_strip_lone_part_matches "$f"; then
         if [[ "$mode" == "dry-run" ]]; then
@@ -6151,10 +6153,10 @@ maybe_prompt_gopro_remove_lone_part_basename() {
         case "$answer" in
             q|Q)
                 stopped_by_user=yes
-                return 1
+                return 2
                 ;;
             n|N)
-                return 1
+                return 0
                 ;;
             d|D)
                 AUTO_GOPRO_STRIP_PART_DIR="$(cd -- "$dir" 2>/dev/null && pwd -P)" || AUTO_GOPRO_STRIP_PART_DIR="$dir"
@@ -6729,18 +6731,21 @@ transform_name() {
     fi
 
     if [[ -f "$f" ]] && (( _gopro_applied == 0 )) && [[ "$stopped_by_user" != yes ]]; then
-        local _gopro_part_rc=0
+        local _gopro_part_rc=0 _gopro_part_err_trap=""
         local _tn_save_e_part=0
         [[ $- == *e* ]] && _tn_save_e_part=1
         set +e
+        _gopro_part_err_trap="$(trap -p ERR || true)"
+        trap - ERR
         _gopro_part_strip="$(maybe_prompt_gopro_remove_lone_part_basename "$f" "$base")"
         _gopro_part_rc=$?
+        eval "${_gopro_part_err_trap:-}"
         if ((_tn_save_e_part)); then
             set -e
         else
             set +e
         fi
-        if [[ "$stopped_by_user" == yes ]]; then
+        if (( _gopro_part_rc == 2 )) || [[ "$stopped_by_user" == yes ]]; then
             return 2
         fi
         if (( _gopro_part_rc == 0 )) && [[ -n "$_gopro_part_strip" ]]; then
