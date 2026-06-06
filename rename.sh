@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.06.06 - v. 19.161.171300 - non-verbose: retract/skip lone progress dot around main rename OLD/NEW prompts
 # 2026.06.06 - v. 19.160.131500 - GoPro exiftool date: take first Create Date line before tr -d newline (fixes doubled YYYYMMDD_HHMMSS in GOPR JPG names)
 # 2026.06.06 - v. 19.159.125100 - GoPro [D]/[A]: persist strip flags across transform_name subshell; auto-rename without main prompt
 # 2026.06.06 - v. 19.158.002500 - GoPro prompts: choice on same line as read_single_key; retract lone non-verbose progress dot before prompts
@@ -8544,7 +8545,7 @@ similar_rename_clear() {
 }
 
 print_rename_prompt_menu() {
-    nonverbose_progress_dot_endline_if_needed
+    nonverbose_progress_dot_prepare_for_prompt
     local kind_label="$1"
     local path="${2-}"
     local suggested_new="${3-}"
@@ -8860,7 +8861,7 @@ choose_custom_rename_target() {
 }
 
 print_checksum_prompt_menu() {
-    nonverbose_progress_dot_endline_if_needed
+    nonverbose_progress_dot_prepare_for_prompt
     local label_lower="$1"
     local hash_file="$2"
     local label_upper="${label_lower^^}"
@@ -9712,6 +9713,7 @@ for f in "${ordered_paths[@]}"; do
             flush_stdin
             read_single_key input "$PROMPT_WAIT_SECONDS"
             echo
+            NONVERBOSE_SKIP_NEXT_MAIN_LOOP_DOT=yes
 
             case "$input" in
                 q|Q)
@@ -9723,12 +9725,9 @@ for f in "${ordered_paths[@]}"; do
                     do_rename=no
                     ;;
                 a|A)
-                    echo
                     echo "$(user_prompt_ts_prefix)⚠️  This will rename ALL remaining files/directories."
                     if (( VERBOSE == 1 )); then
                         echo "[VERBOSE] [$(date '+%Y.%m.%d %H:%M:%S')] Are you sure? [y/N]:" >&2
-                    else
-                        nonverbose_progress_dot_endline_if_needed
                     fi
                     echo -n "$(user_prompt_ts_prefix)Are you sure? [y/N]: "
                     flush_stdin
@@ -10291,6 +10290,7 @@ for f in "${ordered_paths[@]}"; do
         thumbs_db_noop=1
     fi
 
+    nonverbose_progress_dot_prepare_for_prompt
     echo
     if [[ -n "$nef_xmp_buddy" ]]; then
         echo -e "${CYAN}NEF+XMP pair (same stem; both renamed together):${RESET}"
@@ -10330,6 +10330,8 @@ for f in "${ordered_paths[@]}"; do
     flush_stdin
     read_single_key input "$PROMPT_WAIT_SECONDS"
     echo
+    # User just answered an interactive prompt; next main-loop iteration must not print a lone "." on stdout/tty.
+    NONVERBOSE_SKIP_NEXT_MAIN_LOOP_DOT=yes
 
     case "$input" in
         q|Q)
