@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# 2026.06.06 - v. 19.159.125100 - GoPro [D]/[A]: persist strip flags across transform_name subshell; auto-rename without main prompt
+# 2026.06.06 - v. 19.158.002500 - GoPro prompts: choice on same line as read_single_key; retract lone non-verbose progress dot before prompts
 # 2026.06.06 - v. 19.157.002100 - GoPro lone _part_XX: return 0 when not applicable (fix set -E ERR trap abort in transform_name)
 # 2026.06.02 - v. 19.156.120000 - Plain rename: update local .sha512/.md5 refs immediately; GoPro lone _part_XX prompt [D] directory / [A] whole run
 # 2026.06.05 - v. 19.155.231500 - GoPro: omit _part_XX when only one chapter in dir; prompt to strip lone _part_XX from already-renamed files
@@ -1103,8 +1105,32 @@ nonverbose_progress_dot_endline_if_needed() {
     NONVERBOSE_CHECKSUM_RAMP_CELL_ACTIVE=no
 }
 
+# Erase a single lone '.' on the progress TTY row instead of leaving "." on its own line before a prompt.
+nonverbose_progress_dot_retract_lone_if_needed() {
+    (( VERBOSE == 1 )) && return 0
+    [[ "$NONVERBOSE_PROGRESS_DOT_LINE_OPEN" == yes ]] || return 0
+    (( NONVERBOSE_PROGRESS_DOT_COL_COUNT == 1 )) || return 0
+    if [[ -w /dev/tty ]] 2>/dev/null; then
+        printf '\b \b' >/dev/tty
+    else
+        printf '\b \b'
+    fi
+    NONVERBOSE_PROGRESS_DOT_LINE_OPEN=no
+    NONVERBOSE_PROGRESS_DOT_COL_COUNT=0
+    NONVERBOSE_CHECKSUM_RAMP_CELL_ACTIVE=no
+}
+
+nonverbose_progress_dot_prepare_for_prompt() {
+    (( VERBOSE == 1 )) && return 0
+    if [[ "$NONVERBOSE_PROGRESS_DOT_LINE_OPEN" == yes ]] && (( NONVERBOSE_PROGRESS_DOT_COL_COUNT == 1 )); then
+        nonverbose_progress_dot_retract_lone_if_needed
+    else
+        nonverbose_progress_dot_endline_if_needed
+    fi
+}
+
 read_single_key() {
-    nonverbose_progress_dot_endline_if_needed
+    nonverbose_progress_dot_prepare_for_prompt
     local __var_name="$1"
     local __timeout="$2"
     local __char=""
@@ -1829,6 +1855,7 @@ cleanup_on_exit() {
             rm -f -- "$DB_PENDING_SQL_FILE"
         fi
     fi
+    [[ -n "${RENAME_SH_GOPRO_STATE_FILE:-}" && -f "$RENAME_SH_GOPRO_STATE_FILE" ]] && rm -f -- "$RENAME_SH_GOPRO_STATE_FILE"
     exit $rc
 }
 trap cleanup_on_exit EXIT
@@ -5938,15 +5965,19 @@ prompt_gopro_exiftool_missing_action() {
     warn_gopro_exiftool_missing_once
 
     while true; do
+        nonverbose_progress_dot_prepare_for_prompt
         echo >&2
         echo -e "$(user_prompt_ts_prefix)${GREEN}exiftool is required to rename this GoPro/camera raw file:${RESET}" >&2
         echo "  $(format_path_for_log "$f")" >&2
         echo "  [S] Skip GoPro/camera raw files for the rest of this run (default)" >&2
         echo "  [Q] Quit" >&2
-        echo -n "$(user_prompt_ts_prefix)Choice [S/q]: " >&2
+        if (( VERBOSE == 1 )); then
+            echo "[VERBOSE] [$(date '+%Y.%m.%d %H:%M:%S')] Choice [S/q]:" >&2
+        fi
+        printf '%s' "$(user_prompt_ts_prefix)Choice [S/q]: " >&2
         flush_stdin
         read_single_key answer "$PROMPT_WAIT_SECONDS"
-        echo >&2
+        printf '\n' >&2
         case "$answer" in
             q|Q)
                 stopped_by_user=yes
@@ -6094,9 +6125,72 @@ gopro_format_camera_basename_output() {
     fi
 }
 
+gopro_strip_part_state_save() {
+    local state_dir
+    [[ -n "${RENAME_SH_GOPRO_STATE_FILE:-}" ]] || return 0
+    state_dir="$(dirname -- "$RENAME_SH_GOPRO_STATE_FILE")"
+    [[ -n "$state_dir" && "$state_dir" != "." ]] && mkdir -p -- "$state_dir" 2>/dev/null || true
+    printf 'AUTO_GOPRO_STRIP_PART_DIR=%s\nAUTO_GOPRO_STRIP_PART_SESSION=%s\n' \
+        "$AUTO_GOPRO_STRIP_PART_DIR" "$AUTO_GOPRO_STRIP_PART_SESSION" > "$RENAME_SH_GOPRO_STATE_FILE"
+}
+
+gopro_strip_part_state_load() {
+    local line key val
+    [[ -n "${RENAME_SH_GOPRO_STATE_FILE:-}" && -f "$RENAME_SH_GOPRO_STATE_FILE" ]] || return 0
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        [[ "$line" == *=* ]] || continue
+        key="${line%%=*}"
+        val="${line#*=}"
+        case "$key" in
+            AUTO_GOPRO_STRIP_PART_DIR) AUTO_GOPRO_STRIP_PART_DIR="$val" ;;
+            AUTO_GOPRO_STRIP_PART_SESSION) AUTO_GOPRO_STRIP_PART_SESSION="$val" ;;
+        esac
+    done < "$RENAME_SH_GOPRO_STATE_FILE"
+}
+
 gopro_auto_strip_lone_part_matches() {
     local f="$1"
 
+    gopro_strip_part_state_load
+    [[ "$AUTO_GOPRO_STRIP_PART_SESSION" == yes ]] && return 0
+    [[ -n "$AUTO_GOPRO_STRIP_PART_DIR" ]] || return 1
+    similar_rename_dir_matches_scope "$(dirname -- "$f")" "$AUTO_GOPRO_STRIP_PART_DIR"
+}
+
+gopro_lone_part_strip_rename_candidate() {
+    local f="$1"
+    local new="$2"
+    local old_base new_base dir prefix part_count ts_prefix
+
+    [[ -f "$f" ]] || return 1
+    [[ "$f" != "$new" ]] || return 1
+
+    old_base="$(basename -- "$f")"
+    new_base="$(basename -- "$new")"
+    gopro_renamed_basename_has_part_segment "$old_base" || return 1
+    [[ "$new_base" == *"_part_"* ]] && return 1
+
+    dir="$(dirname -- "$f")"
+    [[ "$dir" == "$(dirname -- "$new")" ]] || return 1
+
+    prefix="$(gopro_renamed_session_prefix_from_basename "$old_base")" || return 1
+    part_count="$(gopro_renamed_unique_part_count_in_dir "$dir" "$prefix")"
+    [[ "$part_count" =~ ^[0-9]+$ ]] || return 1
+    (( part_count == 1 )) || return 1
+
+    # Allow further basename normalization (_-__-_ → _-_ etc.); same capture timestamp is enough.
+    [[ "$old_base" =~ ^([0-9]{8}_[0-9]{6})_ ]] || return 1
+    ts_prefix="${BASH_REMATCH[1]}"
+    [[ "$new_base" == "${ts_prefix}"_* ]] || return 1
+    return 0
+}
+
+gopro_auto_rename_lone_part_strip_matches() {
+    local f="$1"
+    local new="$2"
+
+    gopro_strip_part_state_load
+    gopro_lone_part_strip_rename_candidate "$f" "$new" || return 1
     [[ "$AUTO_GOPRO_STRIP_PART_SESSION" == yes ]] && return 0
     [[ -n "$AUTO_GOPRO_STRIP_PART_DIR" ]] || return 1
     similar_rename_dir_matches_scope "$(dirname -- "$f")" "$AUTO_GOPRO_STRIP_PART_DIR"
@@ -6137,6 +6231,7 @@ maybe_prompt_gopro_remove_lone_part_basename() {
     fi
 
     while true; do
+        nonverbose_progress_dot_prepare_for_prompt
         echo >&2
         echo -e "$(user_prompt_ts_prefix)${GREEN}This GoPro file is the only chapter here but its name still has _part_XX:${RESET}" >&2
         echo "  OLD: $(format_path_for_log "$f")" >&2
@@ -6146,10 +6241,13 @@ maybe_prompt_gopro_remove_lone_part_basename() {
         echo "  [A] Remove _part_XX for all lone-chapter files in this run" >&2
         echo "  [N] Keep the current name" >&2
         echo "  [Q] Quit" >&2
-        echo -n "$(user_prompt_ts_prefix)Choice [Y/n/d/a/q]: " >&2
+        if (( VERBOSE == 1 )); then
+            echo "[VERBOSE] [$(date '+%Y.%m.%d %H:%M:%S')] Choice [Y/n/d/a/q]:" >&2
+        fi
+        printf '%s' "$(user_prompt_ts_prefix)Choice [Y/n/d/a/q]: " >&2
         flush_stdin
         read_single_key answer "$PROMPT_WAIT_SECONDS"
-        echo >&2
+        printf '\n' >&2
         case "$answer" in
             q|Q)
                 stopped_by_user=yes
@@ -6160,25 +6258,24 @@ maybe_prompt_gopro_remove_lone_part_basename() {
                 ;;
             d|D)
                 AUTO_GOPRO_STRIP_PART_DIR="$(cd -- "$dir" 2>/dev/null && pwd -P)" || AUTO_GOPRO_STRIP_PART_DIR="$dir"
-                vlog "Per-directory GoPro lone _part_XX strip enabled for '$AUTO_GOPRO_STRIP_PART_DIR'"
+                gopro_strip_part_state_save
+                vlog "Per-directory GoPro lone _part_XX strip + auto-rename enabled for '$AUTO_GOPRO_STRIP_PART_DIR'"
                 printf '%s' "$stripped"
                 return 0
                 ;;
             a|A)
-                echo
-                echo "$(user_prompt_ts_prefix)⚠️  This will remove lone _part_XX from all qualifying GoPro files for the rest of this run."
+                echo "$(user_prompt_ts_prefix)⚠️  This will remove lone _part_XX from all qualifying GoPro files for the rest of this run." >&2
                 if (( VERBOSE == 1 )); then
                     echo "[VERBOSE] [$(date '+%Y.%m.%d %H:%M:%S')] Are you sure? [y/N]:" >&2
-                else
-                    nonverbose_progress_dot_endline_if_needed
                 fi
-                echo -n "$(user_prompt_ts_prefix)Are you sure? [y/N]: "
+                printf '%s' "$(user_prompt_ts_prefix)Are you sure? [y/N]: " >&2
                 flush_stdin
                 read_single_key confirm "$PROMPT_WAIT_SECONDS"
-                echo
+                printf '\n' >&2
                 if [[ "$confirm" =~ [Yy] ]]; then
                     AUTO_GOPRO_STRIP_PART_SESSION=yes
-                    vlog "Session-wide GoPro lone _part_XX strip enabled"
+                    gopro_strip_part_state_save
+                    vlog "Session-wide GoPro lone _part_XX strip + auto-rename enabled"
                     printf '%s' "$stripped"
                     return 0
                 fi
@@ -8088,6 +8185,7 @@ AUTO_LOWERCASE_3_EXT_SESSION=no # [L] session: any extension case-only lowercasi
 AUTO_LOWERCASE_MEDIA_OFFICE_EXT_SESSION=no # [U] session: only media + MS Office extension case-only lowercasing
 AUTO_GOPRO_STRIP_PART_DIR="" # GoPro lone _part_XX prompt [D]: auto-strip for rest of run in this directory
 AUTO_GOPRO_STRIP_PART_SESSION=no # GoPro lone _part_XX prompt [A]: auto-strip for all qualifying files this run
+RENAME_SH_GOPRO_STATE_FILE="${RENAME_SH_GOPRO_STATE_FILE:-${XDG_STATE_HOME:-$HOME/.local/state}/rename.sh/gopro-strip.$$}"
 
 declare -a renamed_list=()
 declare -A recorded
@@ -10126,6 +10224,11 @@ for f in "${ordered_paths[@]}"; do
         if [[ "$f" != "$new" ]] || [[ -n "$nef_xmp_buddy" && "$nef_xmp_buddy" != "$nef_xmp_new" ]] || ( ! is_torrent_url_file "$f" && ! is_thumbs_db_file "$f" ); then
             continue
         fi
+    fi
+
+    if [[ -z "$nef_xmp_buddy" ]] && gopro_auto_rename_lone_part_strip_matches "$f" "$new"; then
+        perform_plain_or_nef_xmp_pair "GoPro lone _part_XX auto-yes" || break
+        continue
     fi
 
     if [[ -n "$AUTO_RENAME_SIMILAR_DIR" ]] && [[ -f "$f" ]] \
