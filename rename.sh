@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.06.06 - v. 19.160.131500 - GoPro exiftool date: take first Create Date line before tr -d newline (fixes doubled YYYYMMDD_HHMMSS in GOPR JPG names)
 # 2026.06.06 - v. 19.159.125100 - GoPro [D]/[A]: persist strip flags across transform_name subshell; auto-rename without main prompt
 # 2026.06.06 - v. 19.158.002500 - GoPro prompts: choice on same line as read_single_key; retract lone non-verbose progress dot before prompts
 # 2026.06.06 - v. 19.157.002100 - GoPro lone _part_XX: return 0 when not applicable (fix set -E ERR trap abort in transform_name)
@@ -6332,9 +6333,10 @@ transform_gopro_camera_basename() {
             H23) DeviceManufacturer=GOPRO12; DeviceModelName=BLACK ;;
         esac
         if [[ "$base" =~ ^[gG][oO][pP][rR][0-9][0-9][0-9][0-9]\.[jJ][pP][gG]$ ]]; then
-            TrackCreateDate="$("$exifloc" -api largefilesupport=1 -d '%Y%m%d_%H%M%S' "$file" | egrep '^Create Date *:' | egrep -v '\.' | tr 'a-z' 'A-Z' | sed 's/^CREATE DATE *: //' | tr -d ':' | tr ' ' '_' | tr -d $'\r\n' | sort -u | head -n 1)"
+            # GOPR JPG often has several Create Date tags; head -n 1 must run before tr -d newline or two timestamps glue together.
+            TrackCreateDate="$("$exifloc" -api largefilesupport=1 -d '%Y%m%d_%H%M%S' "$file" | egrep '^Create Date *:' | egrep -v '\.' | head -n 1 | tr 'a-z' 'A-Z' | sed 's/^CREATE DATE *: //' | tr -d ':' | tr ' ' '_' | tr -d $'\r')"
         else
-            TrackCreateDate="$("$exifloc" -api largefilesupport=1 -d '%Y%m%d_%H%M%S' "$file" | grep '^Create Date' | tr 'a-z' 'A-Z' | sed 's/^CREATE DATE *: //' | tr -d ':' | tr ' ' '_' | tr -d $'\r\n' | head -n 1)"
+            TrackCreateDate="$("$exifloc" -api largefilesupport=1 -d '%Y%m%d_%H%M%S' "$file" | grep '^Create Date' | head -n 1 | tr 'a-z' 'A-Z' | sed 's/^CREATE DATE *: //' | tr -d ':' | tr ' ' '_' | tr -d $'\r')"
         fi
         data_stworzenia_pliku_w_czasie_lokalnym="$TrackCreateDate"
     fi
@@ -6343,7 +6345,7 @@ transform_gopro_camera_basename() {
         czy_contour=1
         DeviceManufacturer=Contour
         DeviceModelName=2
-        TrackCreateDate="$("$exifloc" -api largefilesupport=1 -d '%Y%m%d_%H%M%S' "$file" | grep 'Track Create Date' | tr 'a-z' 'A-Z' | sed 's/TRACK CREATE DATE               : //' | tr -d ':' | tr ' ' '_' | tr -d $'\r\n' | head -n 1)"
+        TrackCreateDate="$("$exifloc" -api largefilesupport=1 -d '%Y%m%d_%H%M%S' "$file" | grep 'Track Create Date' | head -n 1 | tr 'a-z' 'A-Z' | sed 's/TRACK CREATE DATE               : //' | tr -d ':' | tr ' ' '_' | tr -d $'\r')"
         data_stworzenia_pliku_w_czasie_lokalnym="$TrackCreateDate"
     fi
 
@@ -6351,7 +6353,7 @@ transform_gopro_camera_basename() {
         czy_LGv20=1
         DeviceManufacturer=LG
         DeviceModelName=v20
-        TrackCreateDate="$("$exifloc" -api largefilesupport=1 -d '%Y%m%d_%H%M%S' "$file" | grep 'Track Create Date' | tr 'a-z' 'A-Z' | sed 's/TRACK CREATE DATE               : //' | tr -d ':' | tr ' ' '_' | tr -d $'\r\n' | head -n 1)"
+        TrackCreateDate="$("$exifloc" -api largefilesupport=1 -d '%Y%m%d_%H%M%S' "$file" | grep 'Track Create Date' | head -n 1 | tr 'a-z' 'A-Z' | sed 's/TRACK CREATE DATE               : //' | tr -d ':' | tr ' ' '_' | tr -d $'\r')"
         Duration="$(printf '%s\n' "$exif" | grep 'Duration                        : ' | sed 's/Duration                        : //' | tr -d $'\r\n' | sed 's/ s$//g')"
         data="$TrackCreateDate"
         if [[ "$Duration" =~ ":" ]]; then
