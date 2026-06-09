@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.06.09 - v. 19.162.150000 - OLD prompt/preview lines yellow instead of red (readability); GoPro metadata rename separator _-_-_ instead of _-__-_ (legacy _-__-_ still recognized for _part_XX helpers)
 # 2026.06.06 - v. 19.161.171300 - non-verbose: retract/skip lone progress dot around main rename OLD/NEW prompts
 # 2026.06.06 - v. 19.160.131500 - GoPro exiftool date: take first Create Date line before tr -d newline (fixes doubled YYYYMMDD_HHMMSS in GOPR JPG names)
 # 2026.06.06 - v. 19.159.125100 - GoPro [D]/[A]: persist strip flags across transform_name subshell; auto-rename without main prompt
@@ -5114,11 +5115,11 @@ print_html_companion_plan_for_prompt() {
 
     if [[ -n "$HTML_COMPANION_OLD_DIR" && "$HTML_COMPANION_OLD_DIR" != "$HTML_COMPANION_NEW_DIR" ]]; then
         emit_wrap_labeled_stdout "HTML companion: " "${CYAN}HTML companion:${RESET} " "will rename directory and update references inside the HTML file."
-        emit_wrap_labeled_stdout "  OLD DIR: " "  ${RED}OLD DIR:${RESET} " "$HTML_COMPANION_OLD_DIR"
+        emit_wrap_labeled_stdout "  OLD DIR: " "  ${YELLOW}OLD DIR:${RESET} " "$HTML_COMPANION_OLD_DIR" yellow
         emit_wrap_labeled_stdout "  NEW DIR: " "  ${GREEN}NEW DIR:${RESET} " "$HTML_COMPANION_NEW_DIR" green
     elif [[ "$HTML_COMPANION_REFERENCE_UPDATE_ONLY" == "yes" ]]; then
         emit_wrap_labeled_stdout "HTML companion: " "${CYAN}HTML companion:${RESET} " "already exists with the new name; references inside the HTML file will be updated."
-        emit_wrap_labeled_stdout "  OLD REF: " "  ${RED}OLD REF:${RESET} " "$HTML_COMPANION_OLD_NAME"
+        emit_wrap_labeled_stdout "  OLD REF: " "  ${YELLOW}OLD REF:${RESET} " "$HTML_COMPANION_OLD_NAME" yellow
         emit_wrap_labeled_stdout "  NEW REF: " "  ${GREEN}NEW REF:${RESET} " "$HTML_COMPANION_NEW_NAME" green
     fi
 }
@@ -6075,7 +6076,7 @@ gopro_raw_session_chapter_count_in_dir() {
 }
 
 gopro_renamed_basename_has_part_segment() {
-    [[ "$1" =~ ^[0-9]{8}_[0-9]{6}_-__-_[^_]+_[^_]+_part_[0-9]{2}(_Proxy)?\.[mM][pP]4$ ]]
+    [[ "$1" =~ ^[0-9]{8}_[0-9]{6}_(-__-_|-_-_)[^_]+_[^_]+_part_[0-9]{2}(_Proxy)?\.[mM][pP]4$ ]]
 }
 
 gopro_renamed_session_prefix_from_basename() {
@@ -6121,9 +6122,9 @@ gopro_format_camera_basename_output() {
     local ext="$5"
 
     if [[ -n "$suffix" ]]; then
-        printf '%s_-__-_%s_%s_%s.%s' "$ts" "$manuf" "$model" "$suffix" "$ext"
+        printf '%s_-_-_%s_%s_%s.%s' "$ts" "$manuf" "$model" "$suffix" "$ext"
     else
-        printf '%s_-__-_%s_%s.%s' "$ts" "$manuf" "$model" "$ext"
+        printf '%s_-_-_%s_%s.%s' "$ts" "$manuf" "$model" "$ext"
     fi
 }
 
@@ -6180,7 +6181,7 @@ gopro_lone_part_strip_rename_candidate() {
     [[ "$part_count" =~ ^[0-9]+$ ]] || return 1
     (( part_count == 1 )) || return 1
 
-    # Allow further basename normalization (_-__-_ → _-_ etc.); same capture timestamp is enough.
+    # Allow further basename normalization on the model segment; same capture timestamp is enough.
     [[ "$old_base" =~ ^([0-9]{8}_[0-9]{6})_ ]] || return 1
     ts_prefix="${BASH_REMATCH[1]}"
     [[ "$new_base" == "${ts_prefix}"_* ]] || return 1
@@ -6291,7 +6292,7 @@ maybe_prompt_gopro_remove_lone_part_basename() {
     done
 }
 
-# Build YYYYMMDD_HHMMSS_-__-_MANUFACTURER_MODEL[_part_XX][_Proxy].ext from camera metadata (GoPro 4–12, Sony, Contour, LG v20).
+# Build YYYYMMDD_HHMMSS_-_-_MANUFACTURER_MODEL[_part_XX][_Proxy].ext from camera metadata (GoPro 4–12, Sony, Contour, LG v20).
 transform_gopro_camera_basename() {
     local file="$1"
     local base="$2"
@@ -7790,9 +7791,9 @@ perform_plain_entry_rename() {
 
     if [[ -n "$old_companion_dir" && "$old_companion_dir" != "$new_companion_dir" ]]; then
         emit_wrap_labeled_stdout "HTML PAIR RENAME: " "${CYAN}HTML PAIR RENAME:${RESET} " "HTML file and companion directory are being updated together."
-        emit_wrap_labeled_stdout "  OLD HTML: " "  ${RED}OLD HTML:${RESET} " "$old"
+        emit_wrap_labeled_stdout "  OLD HTML: " "  ${YELLOW}OLD HTML:${RESET} " "$old" yellow
         emit_wrap_labeled_stdout "  NEW HTML: " "  ${GREEN}NEW HTML:${RESET} " "$new" green
-        emit_wrap_labeled_stdout "  OLD DIR:  " "  ${RED}OLD DIR:${RESET}  " "$old_companion_dir"
+        emit_wrap_labeled_stdout "  OLD DIR:  " "  ${YELLOW}OLD DIR:${RESET}  " "$old_companion_dir" yellow
         emit_wrap_labeled_stdout "  NEW DIR:  " "  ${GREEN}NEW DIR:${RESET}  " "$new_companion_dir" green
         if should_skip_case_only_rename_on_fs "$old_companion_dir" "$new_companion_dir"; then
             vlog "Skipping case-only HTML companion directory rename on exfat/CIFS/Samba: '$old_companion_dir'"
@@ -8936,14 +8937,14 @@ print_checksum_group_preview() {
     echo
 
     if [[ "$sum_old" != "$sum_new" ]]; then
-        emit_wrap_padded_label_stdout "OLD ${label} (hash file on disk): " red "$sum_old" "$label_colw"
+        emit_wrap_padded_label_stdout "OLD ${label} (hash file on disk): " yellow "$sum_old" "$label_colw"
         emit_wrap_padded_label_stdout "NEW ${label} (hash file on disk): " green "$sum_new" "$label_colw"
         shown=1
     fi
 
     for i in "${!_refs[@]}"; do
         [[ "${_new_refs[$i]}" != "${_refs[$i]}" ]] || continue
-        emit_wrap_padded_label_stdout "OLD referenced file: " red "${_refs[$i]}" "$label_colw"
+        emit_wrap_padded_label_stdout "OLD referenced file: " yellow "${_refs[$i]}" "$label_colw"
         emit_wrap_padded_label_stdout "NEW referenced file: " green "${_new_refs[$i]}" "$label_colw"
         shown=1
     done
@@ -9385,7 +9386,7 @@ for f in "${ordered_paths[@]}"; do
             echo
             emit_wrap_labeled_stdout "${label} RECOVERY: " "${CYAN}${label} RECOVERY:${RESET} " "'$sum_file' references missing file(s), but replacement file(s) were found."
             for i in "${!recovered_old_refs[@]}"; do
-                emit_wrap_labeled_stdout "  OLD REF: " "  ${RED}OLD REF:${RESET} " "${recovered_old_refs[$i]}"
+                emit_wrap_labeled_stdout "  OLD REF: " "  ${YELLOW}OLD REF:${RESET} " "${recovered_old_refs[$i]}" yellow
                 emit_wrap_labeled_stdout "  FOUND: " "  ${GREEN}FOUND:${RESET}   " "${recovered_new_real_refs[$i]}"
                 emit_wrap_labeled_stdout "  WRITE: " "  ${GREEN}WRITE:${RESET}   " "${recovered_new_written_refs[$i]}"
             done
@@ -9906,9 +9907,9 @@ for f in "${ordered_paths[@]}"; do
 
                 if [[ "${html_companion_apply[$i]}" == "yes" ]]; then
                     emit_wrap_labeled_stdout "HTML PAIR RENAME: " "${CYAN}HTML PAIR RENAME:${RESET} " "HTML file and companion directory are being updated together."
-                    emit_wrap_labeled_stdout "  OLD HTML: " "  ${RED}OLD HTML:${RESET} " "${refs[$i]}"
+                    emit_wrap_labeled_stdout "  OLD HTML: " "  ${YELLOW}OLD HTML:${RESET} " "${refs[$i]}" yellow
                     emit_wrap_labeled_stdout "  NEW HTML: " "  ${GREEN}NEW HTML:${RESET} " "${new_refs[$i]}" green
-                    emit_wrap_labeled_stdout "  OLD DIR: " "  ${RED}OLD DIR:${RESET}  " "${html_companion_old_dirs[$i]}"
+                    emit_wrap_labeled_stdout "  OLD DIR: " "  ${YELLOW}OLD DIR:${RESET}  " "${html_companion_old_dirs[$i]}" yellow
                     emit_wrap_labeled_stdout "  NEW DIR: " "  ${GREEN}NEW DIR:${RESET}  " "${html_companion_new_dirs[$i]}" green
                     print_rename_action_verbose "${html_companion_old_dirs[$i]}" "${html_companion_new_dirs[$i]}" "html companion rename"
                     if should_skip_case_only_rename_on_fs "${html_companion_old_dirs[$i]}" "${html_companion_new_dirs[$i]}"; then
@@ -10297,13 +10298,13 @@ for f in "${ordered_paths[@]}"; do
     fi
     _nxmp_pw=$NEF_XMP_PAIR_LABEL_WIDTH_NO_SIDECAR
     [[ -n "$nef_xmp_buddy" ]] && _nxmp_pw=$NEF_XMP_PAIR_LABEL_WIDTH
-    emit_wrap_nef_xmp_pair_label_stdout "OLD: " red "$f" "$_nxmp_pw"
+    emit_wrap_nef_xmp_pair_label_stdout "OLD: " yellow "$f" "$_nxmp_pw"
     emit_wrap_nef_xmp_pair_label_stdout "NEW: " green "$new" "$_nxmp_pw"
     if [[ -d "$f" ]]; then
         echo -e "${CYAN}  (This path is a directory, not a regular file.)${RESET}"
     fi
     if [[ -n "$nef_xmp_buddy" ]]; then
-        emit_wrap_nef_xmp_pair_label_stdout "OLD (sidecar): " red "$nef_xmp_buddy" "$NEF_XMP_PAIR_LABEL_WIDTH"
+        emit_wrap_nef_xmp_pair_label_stdout "OLD (sidecar): " yellow "$nef_xmp_buddy" "$NEF_XMP_PAIR_LABEL_WIDTH"
         emit_wrap_nef_xmp_pair_label_stdout "NEW (sidecar): " green "$nef_xmp_new" "$NEF_XMP_PAIR_LABEL_WIDTH"
         echo
         echo -e "${CYAN}Sidecar XMP metadata (after you confirm):${RESET}"
