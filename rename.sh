@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.06.09 - v. 19.165.232500 - rename prompt [V]: list parent directory (and inside OLD when it is a directory); re-prompt after listing
 # 2026.06.09 - v. 19.164.180000 - startup defaults: colors yes, mode real, scope subdirs (Enter accepts on each prompt)
 # 2026.06.09 - v. 19.163.172500 - rename prompt [S]: auto-yes for rest of directory across all extensions (not only anchor ext; fixes re-prompt when jpg/mp4 interleave)
 # 2026.06.09 - v. 19.162.150000 - OLD prompt/preview lines yellow instead of red (readability); GoPro metadata rename separator _-_-_ instead of _-__-_ (legacy _-__-_ still recognized for _part_XX helpers)
@@ -8541,6 +8542,80 @@ similar_rename_clear() {
     AUTO_RENAME_SIMILAR_NEED_USCORE=no
 }
 
+# One directory level for rename prompt [V]: mark OLD/NEW basenames when they appear as siblings.
+print_rename_one_level_dir_listing() {
+    local dir="$1"
+    local mark_old="${2-}"
+    local mark_new="${3-}"
+    local -a entries=()
+    local entry bn line suffix
+
+    mapfile -t entries < <(find "$dir" -mindepth 1 -maxdepth 1 2>/dev/null | LC_ALL=C sort)
+
+    if (( ${#entries[@]} == 0 )); then
+        echo "  (empty)"
+        return 0
+    fi
+
+    for entry in "${entries[@]}"; do
+        [[ -n "$entry" ]] || continue
+        bn="$(basename -- "$entry")"
+        suffix=""
+        if [[ -n "$mark_old" && "$bn" == "$mark_old" ]]; then
+            suffix="  ← OLD"
+            line="  $bn$suffix"
+            if [[ "$use_colors" == yes ]]; then
+                printf '%b%s%b%s\n' "$YELLOW" "  $bn" "$RESET" "$suffix"
+            else
+                printf '%s\n' "$line"
+            fi
+            continue
+        fi
+        if [[ -n "$mark_new" && "$bn" == "$mark_new" ]]; then
+            suffix="  ← NEW (on disk)"
+            if [[ "$use_colors" == yes ]]; then
+                printf '%b%s%b%s\n' "$GREEN" "  $bn" "$RESET" "$suffix"
+            else
+                printf '  %s%s\n' "$bn" "$suffix"
+            fi
+            continue
+        fi
+        if [[ -d "$entry" ]]; then
+            printf '  %s/\n' "$bn"
+        else
+            printf '  %s\n' "$bn"
+        fi
+    done
+}
+
+# Parent of OLD path; when OLD is a directory, also list its immediate children.
+print_rename_parent_directory_listing() {
+    local path="$1"
+    local suggested_new="${2-}"
+    local parent old_base new_base
+
+    [[ -n "$path" ]] || return 0
+    parent="$(dirname -- "$path")"
+    [[ -n "$parent" ]] || parent="."
+    old_base="$(basename -- "$path")"
+    new_base=""
+    [[ -n "$suggested_new" ]] && new_base="$(basename -- "$suggested_new")"
+
+    echo
+    emit_wrap_labeled_stdout "LISTING: " "${CYAN}LISTING:${RESET} " "Directory containing this path: $(format_path_for_log "$parent")"
+    if [[ ! -d "$parent" ]]; then
+        echo "  (not found or not a directory)"
+        return 0
+    fi
+    print_rename_one_level_dir_listing "$parent" "$old_base" "$new_base"
+
+    if [[ -d "$path" ]]; then
+        echo
+        emit_wrap_labeled_stdout "LISTING: " "${CYAN}LISTING:${RESET} " "Inside OLD directory: $(format_path_for_log "$path")"
+        print_rename_one_level_dir_listing "$path" "" ""
+    fi
+}
+
 print_rename_prompt_menu() {
     nonverbose_progress_dot_prepare_for_prompt
     local kind_label="$1"
@@ -8606,6 +8681,10 @@ print_rename_prompt_menu() {
     elif [[ -n "$path" && -d "$path" ]]; then
         echo "  [B] Skip this directory and everything under it (subtree exception)"
         choice_hint+=/b
+    fi
+    if [[ -n "$path" ]]; then
+        echo "  [V] List directory where this path exists (parent; plus inside when OLD is a directory)"
+        choice_hint+=/v
     fi
     echo "  [E] Add exception (skip this path and its subtree by filter match)"
     echo "  [X] Exact exception (do not rename only this exact path; still check subtree)"
@@ -10323,10 +10402,17 @@ for f in "${ordered_paths[@]}"; do
     _rename_menu_variant=""
     [[ -n "$thumbs_db_noop" ]] && _rename_menu_variant=thumbs-noop
     [[ -n "$torrent_url_noop" ]] && _rename_menu_variant=torrent-noop
-    print_rename_prompt_menu "entry" "$f" "$new" "$_rename_menu_variant"
-    flush_stdin
-    read_single_key input "$PROMPT_WAIT_SECONDS"
-    echo
+    while true; do
+        print_rename_prompt_menu "entry" "$f" "$new" "$_rename_menu_variant"
+        flush_stdin
+        read_single_key input "$PROMPT_WAIT_SECONDS"
+        echo
+        if [[ "$input" =~ [Vv] ]]; then
+            print_rename_parent_directory_listing "$f" "$new"
+            continue
+        fi
+        break
+    done
     # User just answered an interactive prompt; next main-loop iteration must not print a lone "." on stdout/tty.
     NONVERBOSE_SKIP_NEXT_MAIN_LOOP_DOT=yes
 
