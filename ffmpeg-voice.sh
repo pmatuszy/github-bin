@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.06.09 - v. 3.52 - startup defaults: colors yes, mode real, scope subdirs (Enter accepts on each prompt)
 # 2026.06.09 - v. 3.51 - startup scope prompt like rename.sh: current directory only vs subdirectories; --scope current|subdirs
 # 2026.06.03 - v. 3.50 - process_one_file skip/fail return 0 (set -e must not abort whole run)
 # 2026.06.03 - v. 3.49 - skip media with no audio; check ffmpeg exit code; register pairs for transcription before OUTPUT exists
@@ -69,7 +70,7 @@ shopt -s nullglob nocaseglob
 
 TARGET_FILE=""
 CLI_SCOPE=""
-process_scope="current"
+process_scope="subdirs"
 
 show_help() {
     cat <<EOF
@@ -82,7 +83,7 @@ With FILE, only that file is processed (no directory scan). FILE must exist
 and be a supported audio type (.wav .mp3 .m4a .flac .ogg .opus .aac .mp4).
 
 Without FILE, matching audio files are candidates. Scope is asked at startup
-unless --scope is given: current directory only (default) or also subdirectories.
+unless --scope is given: subdirectories (default) or current directory only.
 Already-renamed *_ORG.* without *_OUTPUT.flac are queued to create OUTPUT only.
 Full *_ORG + *_OUTPUT pairs use the existing-pair path; *_EXCLUDE.* as usual.
 Video-only files (no audio stream) are skipped with a clear message.
@@ -90,8 +91,8 @@ Video-only files (no audio stream) are skipped with a clear message.
 Options:
   -h, --help           Show this help and exit.
   -v, --version        Print script version and exit.
-  --scope current|subdirs
-                       Skip the startup scope question (current = immediate children only).
+  --scope subdirs|current
+                       Skip the startup scope question (subdirs = default; current = immediate children only).
   --no_startup_delay   Skip _script_header.sh random startup delay (non-tty runs).
   -- FILE              Explicit file operand (use when the name starts with -).
 
@@ -754,12 +755,12 @@ fi
 # ============================================================
 echo
 print_question "Select mode:"
-print_suggestion "  [D] Dry-run (default)"
-print_suggestion "  [R] Real processing (interactive)"
+print_suggestion "  [R] Real processing (default)"
+print_suggestion "  [D] Dry-run"
 print_suggestion "  [Q] Quit"
-print_choice_prompt "[D/r/q]: "
+print_choice_prompt "[R/d/q]: "
 
-mode="dry-run"
+mode="real"
 input=""
 
 read -r -t 60 -n 1 input || true
@@ -767,8 +768,8 @@ printf '\n'
 
 if [[ "$input" =~ [Qq] ]]; then
     voice_quit
-elif [[ "$input" =~ [Rr] ]]; then
-    mode="real"
+elif [[ "$input" =~ [Dd] ]]; then
+    mode="dry-run"
 fi
 
 echo -e "Mode selected: ${CYAN}$mode${RESET}"
@@ -781,10 +782,10 @@ elif [[ -n "$CLI_SCOPE" ]]; then
 else
     echo
     print_question "What should be processed?"
-    print_suggestion "  [C] Current directory only (default)"
-    print_suggestion "  [S] Also subdirectories"
+    print_suggestion "  [S] Also subdirectories (default)"
+    print_suggestion "  [C] Current directory only"
     print_suggestion "  [Q] Quit"
-    print_choice_prompt "[C/s/q]: "
+    print_choice_prompt "[S/c/q]: "
 
     input=""
     read -r -t 60 -n 1 input || true
@@ -792,10 +793,10 @@ else
 
     if [[ "$input" =~ [Qq] ]]; then
         voice_quit
-    elif [[ "$input" =~ [Ss] ]]; then
-        process_scope="subdirs"
-    else
+    elif [[ "$input" =~ [Cc] ]]; then
         process_scope="current"
+    else
+        process_scope="subdirs"
     fi
     echo -e "Scope selected: ${CYAN}$process_scope${RESET}"
 fi

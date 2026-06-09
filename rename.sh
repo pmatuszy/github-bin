@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.06.09 - v. 19.164.180000 - startup defaults: colors yes, mode real, scope subdirs (Enter accepts on each prompt)
 # 2026.06.09 - v. 19.163.172500 - rename prompt [S]: auto-yes for rest of directory across all extensions (not only anchor ext; fixes re-prompt when jpg/mp4 interleave)
 # 2026.06.09 - v. 19.162.150000 - OLD prompt/preview lines yellow instead of red (readability); GoPro metadata rename separator _-_-_ instead of _-__-_ (legacy _-__-_ still recognized for _part_XX helpers)
 # 2026.06.06 - v. 19.161.171300 - non-verbose: retract/skip lone progress dot around main rename OLD/NEW prompts
@@ -3838,7 +3839,7 @@ finish_current_operation() {
     CURRENT_OP_FILE_NEWS=()
 }
 
-mode="dry-run"
+mode="real"
 input=""
 
 if [[ -n "$CLI_MODE" ]]; then
@@ -3846,10 +3847,10 @@ if [[ -n "$CLI_MODE" ]]; then
 else
     echo
     verbose_question_timestamp "Select mode:"
-    echo "  [D] Dry-run (default)"
-    echo "  [R] Real rename (interactive)"
+    echo "  [R] Real rename (default)"
+    echo "  [D] Dry-run"
     echo "  [Q] Quit"
-    echo -n "$(user_prompt_ts_prefix)Choice [D/r/q]: "
+    echo -n "$(user_prompt_ts_prefix)Choice [R/d/q]: "
 
     flush_stdin
     read_single_key input "$PROMPT_WAIT_SECONDS"
@@ -3858,14 +3859,14 @@ else
     if [[ "$input" =~ [Qq] ]]; then
         echo "Quitting."
         exit 0
-    elif [[ "$input" =~ [Rr] ]]; then
-        mode="real"
+    elif [[ "$input" =~ [Dd] ]]; then
+        mode="dry-run"
     fi
 fi
 
 echo -e "Mode selected: ${CYAN}$mode${RESET}"
 
-process_scope="current"
+process_scope="subdirs"
 input=""
 
 if [[ -n "$CLI_SCOPE" ]]; then
@@ -3873,10 +3874,10 @@ if [[ -n "$CLI_SCOPE" ]]; then
 else
     echo
     verbose_question_timestamp "What should be processed?"
-    echo "  [C] Current directory only (default)"
-    echo "  [S] Also subdirectories"
+    echo "  [S] Also subdirectories (default)"
+    echo "  [C] Current directory only"
     echo "  [Q] Quit"
-    echo -n "$(user_prompt_ts_prefix)Choice [C/s/q]: "
+    echo -n "$(user_prompt_ts_prefix)Choice [S/c/q]: "
 
     flush_stdin
     read_single_key input "$PROMPT_WAIT_SECONDS"
@@ -3885,8 +3886,8 @@ else
     if [[ "$input" =~ [Qq] ]]; then
         echo "Quitting."
         exit 0
-    elif [[ "$input" =~ [Ss] ]]; then
-        process_scope="subdirs"
+    elif [[ "$input" =~ [Cc] ]]; then
+        process_scope="current"
     fi
 fi
 
