@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.06.09 - v. 19.163.172500 - rename prompt [S]: auto-yes for rest of directory across all extensions (not only anchor ext; fixes re-prompt when jpg/mp4 interleave)
 # 2026.06.09 - v. 19.162.150000 - OLD prompt/preview lines yellow instead of red (readability); GoPro metadata rename separator _-_-_ instead of _-__-_ (legacy _-__-_ still recognized for _part_XX helpers)
 # 2026.06.06 - v. 19.161.171300 - non-verbose: retract/skip lone progress dot around main rename OLD/NEW prompts
 # 2026.06.06 - v. 19.160.131500 - GoPro exiftool date: take first Create Date line before tr -d newline (fixes doubled YYYYMMDD_HHMMSS in GOPR JPG names)
@@ -8179,7 +8180,6 @@ stopped_by_user=no
 rename_all=no
 AUTO_RENAME_DIR=""
 AUTO_RENAME_SIMILAR_DIR=""
-AUTO_RENAME_SIMILAR_EXT=""
 AUTO_RENAME_SIMILAR_NEED_USCORE=no
 # When set to realpath of a directory: collision prompts auto-apply _OTHER (like [R]) for every source file in that directory until cleared.
 AUTO_COLLISION_OTHER_DIR=""
@@ -8514,12 +8514,10 @@ similar_rename_dir_matches_scope() {
 }
 
 similar_rename_entry_matches_anchor_pattern() {
-    local path="$1" bn ext
+    local path="$1" bn
     [[ -n "$AUTO_RENAME_SIMILAR_DIR" ]] || return 1
     similar_rename_dir_matches_scope "$(dirname -- "$path")" "$AUTO_RENAME_SIMILAR_DIR" || return 1
     bn="$(basename -- "$path")"
-    ext="${bn##*.}"
-    [[ "${ext,,}" == "${AUTO_RENAME_SIMILAR_EXT,,}" ]] || return 1
     if [[ "$AUTO_RENAME_SIMILAR_NEED_USCORE" == yes ]]; then
         [[ "$bn" == _* ]] || return 1
     fi
@@ -8527,11 +8525,9 @@ similar_rename_entry_matches_anchor_pattern() {
 }
 
 similar_rename_set_anchor_from_prompt_path() {
-    local path="$1" bn ext
+    local path="$1" bn
     bn="$(basename -- "$path")"
-    ext="${bn##*.}"
-    AUTO_RENAME_SIMILAR_DIR="$(dirname -- "$path")"
-    AUTO_RENAME_SIMILAR_EXT="${ext,,}"
+    AUTO_RENAME_SIMILAR_DIR="$(cd -- "$(dirname -- "$path")" 2>/dev/null && pwd -P)" || AUTO_RENAME_SIMILAR_DIR="$(dirname -- "$path")"
     if [[ "$bn" == _* ]]; then
         AUTO_RENAME_SIMILAR_NEED_USCORE=yes
     else
@@ -8541,7 +8537,6 @@ similar_rename_set_anchor_from_prompt_path() {
 
 similar_rename_clear() {
     AUTO_RENAME_SIMILAR_DIR=""
-    AUTO_RENAME_SIMILAR_EXT=""
     AUTO_RENAME_SIMILAR_NEED_USCORE=no
 }
 
@@ -8580,7 +8575,7 @@ print_rename_prompt_menu() {
     echo "  [A] All remaining"
     echo "  [D] Yes for this directory"
     if [[ -n "$path" && -f "$path" ]]; then
-        echo "  [S] Yes for similar names in this directory (same extension; leading _ only if this filename starts with _)"
+        echo "  [S] Yes for similar names in this directory (all extensions here; leading _ only if this filename starts with _)"
         choice_hint+=/s
     fi
     if [[ -n "$path" && -n "$suggested_new" ]] && rename_suggested_only_extension_case_change "$path" "$suggested_new" \
@@ -10468,7 +10463,7 @@ for f in "${ordered_paths[@]}"; do
                 AUTO_RENAME_DIR=""
                 AUTO_COLLISION_OTHER_DIR=""
                 similar_rename_set_anchor_from_prompt_path "$f"
-                vlog "Per-directory similar-name auto-yes: directory '$AUTO_RENAME_SIMILAR_DIR', extension '.${AUTO_RENAME_SIMILAR_EXT}', require leading underscore: ${AUTO_RENAME_SIMILAR_NEED_USCORE}"
+                vlog "Per-directory similar-name auto-yes: directory '$AUTO_RENAME_SIMILAR_DIR', all extensions, require leading underscore: ${AUTO_RENAME_SIMILAR_NEED_USCORE}"
                 if [[ -n "$torrent_url_noop" || -n "$thumbs_db_noop" ]]; then
                     ((++files_skipped))
                 else

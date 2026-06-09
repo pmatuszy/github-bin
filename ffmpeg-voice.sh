@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.06.09 - v. 3.51 - startup scope prompt like rename.sh: current directory only vs subdirectories; --scope current|subdirs
 # 2026.06.03 - v. 3.50 - process_one_file skip/fail return 0 (set -e must not abort whole run)
 # 2026.06.03 - v. 3.49 - skip media with no audio; check ffmpeg exit code; register pairs for transcription before OUTPUT exists
 # 2026.06.02 - v. 3.48 - process *_ORG.* without *_OUTPUT.flac (create OUTPUT only); always run existing-pair batch when pairs exist
@@ -67,18 +68,21 @@ set -euo pipefail
 shopt -s nullglob nocaseglob
 
 TARGET_FILE=""
+CLI_SCOPE=""
+process_scope="current"
 
 show_help() {
     cat <<EOF
-Usage: $(basename "$0") [-h|--help] [FILE]
+Usage: $(basename "$0") [-h|--help] [--scope current|subdirs] [FILE]
 
-Process voice/audio files in the current directory: rename to *_ORG.*,
-create *_OUTPUT.flac, sha512 sidecars, and optional transcription.
+Process voice/audio files: rename to *_ORG.*, create *_OUTPUT.flac, sha512
+sidecars, and optional transcription.
 
 With FILE, only that file is processed (no directory scan). FILE must exist
 and be a supported audio type (.wav .mp3 .m4a .flac .ogg .opus .aac .mp4).
 
-Without FILE, all matching audio files in the current directory are candidates.
+Without FILE, matching audio files are candidates. Scope is asked at startup
+unless --scope is given: current directory only (default) or also subdirectories.
 Already-renamed *_ORG.* without *_OUTPUT.flac are queued to create OUTPUT only.
 Full *_ORG + *_OUTPUT pairs use the existing-pair path; *_EXCLUDE.* as usual.
 Video-only files (no audio stream) are skipped with a clear message.
@@ -86,6 +90,8 @@ Video-only files (no audio stream) are skipped with a clear message.
 Options:
   -h, --help           Show this help and exit.
   -v, --version        Print script version and exit.
+  --scope current|subdirs
+                       Skip the startup scope question (current = immediate children only).
   --no_startup_delay   Skip _script_header.sh random startup delay (non-tty runs).
   -- FILE              Explicit file operand (use when the name starts with -).
 
@@ -158,6 +164,14 @@ parse_cli_args() {
             --no_startup_delay)
                 HEADER_EXTRA_ARGS+=(NO_STARTUP_DELAY)
                 shift
+                ;;
+            --scope)
+                [[ $# -ge 2 ]] || { echo "Missing value for --scope (use current or subdirs)." >&2; exit 1; }
+                case "$2" in
+                    current|subdirs) CLI_SCOPE="$2" ;;
+                    *) echo "Invalid value for --scope: $2 (use current or subdirs)." >&2; exit 1 ;;
+                esac
+                shift 2
                 ;;
             --)
                 shift
@@ -599,8 +613,10 @@ print_voice_statistics_summary() {
 
     if [[ -n "$TARGET_FILE" ]]; then
         scope_line="single file ($TARGET_FILE)"
+    elif [[ "$process_scope" == "subdirs" ]]; then
+        scope_line="current directory and subdirectories"
     else
-        scope_line="current directory"
+        scope_line="current directory only"
     fi
 
     echo "$(voice_ts) --- Run summary ---"
@@ -756,10 +772,32 @@ elif [[ "$input" =~ [Rr] ]]; then
 fi
 
 echo -e "Mode selected: ${CYAN}$mode${RESET}"
+
 if [[ -n "$TARGET_FILE" ]]; then
     echo -e "Scope: ${CYAN}single file${RESET} — $TARGET_FILE"
+elif [[ -n "$CLI_SCOPE" ]]; then
+    process_scope="$CLI_SCOPE"
+    echo -e "Scope selected: ${CYAN}$process_scope${RESET}"
 else
-    echo -e "Scope: ${CYAN}current directory${RESET}"
+    echo
+    print_question "What should be processed?"
+    print_suggestion "  [C] Current directory only (default)"
+    print_suggestion "  [S] Also subdirectories"
+    print_suggestion "  [Q] Quit"
+    print_choice_prompt "[C/s/q]: "
+
+    input=""
+    read -r -t 60 -n 1 input || true
+    printf '\n'
+
+    if [[ "$input" =~ [Qq] ]]; then
+        voice_quit
+    elif [[ "$input" =~ [Ss] ]]; then
+        process_scope="subdirs"
+    else
+        process_scope="current"
+    fi
+    echo -e "Scope selected: ${CYAN}$process_scope${RESET}"
 fi
 
 # ============================================================
@@ -3283,10 +3321,24 @@ if [[ -n "$TARGET_FILE" ]]; then
     fi
     discovered_files+=("$TARGET_FILE")
 else
-for f in *.wav *.mp3 *.m4a *.flac *.ogg *.opus *.aac *.mp4; do
-    [[ -e "$f" ]] || continue
-    discovered_files+=("$f")
-done
+    if [[ "$process_scope" == "subdirs" ]]; then
+        echo "$(voice_ts) Discovering audio files in current directory and subdirectories..."
+        while IFS= read -r -d '' f; do
+            discovered_files+=("$f")
+        done < <(
+            find . -type f \( \
+                -iname '*.wav' -o -iname '*.mp3' -o -iname '*.m4a' -o \
+                -iname '*.flac' -o -iname '*.ogg' -o -iname '*.opus' -o \
+                -iname '*.aac' -o -iname '*.mp4' \
+            \) -print0 2>/dev/null
+        )
+    else
+        echo "$(voice_ts) Discovering audio files in current directory only..."
+        for f in *.wav *.mp3 *.m4a *.flac *.ogg *.opus *.aac *.mp4; do
+            [[ -e "$f" ]] || continue
+            discovered_files+=("$f")
+        done
+    fi
 fi
 
 if (( ${#discovered_files[@]} > 0 )); then
