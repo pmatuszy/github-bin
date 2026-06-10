@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.06.10 - v. 19.170.133500 - checksum .sha512/.md5: preserve leading _ / __ on hash filenames through transform_basename; block rename only for _sumy_kontrolne.md5 manifest
 # 2026.06.10 - v. 19.169.131000 - interactive prompts: [V] view parent directory on path-related menus (checksum, collision [W], mapping, NEF+XMP, flatten, lnk, DB hash, etc.)
 # 2026.06.10 - v. 19.168.124500 - GoPro lone _part_XX prompt: [V] list parent directory (same listing as main rename prompt); re-prompt after listing
 # 2026.06.10 - v. 19.167.121000 - transform_basename: Windows Screenshot YYYY-MM-DD HHMMSS in one pass (spaces + validated date + time); embedded YYYY-MM-DD hyphen compaction; finish pass after separator normalize
@@ -3384,8 +3385,8 @@ print_checksum_file_rename_verbose() {
 print_protected_checksum_verbose() {
     (( VERBOSE == 1 )) || return 0
     local sum_file="$1"
-    local line1="Protected checksum name starts with leading underscore(s)"
-    local line2="          keeping checksum filename unchanged: '${sum_file}'"
+    local line1="Protected checksum manifest (_sumy_kontrolne.md5) — keeping filename unchanged:"
+    local line2="          '${sum_file}'"
 
     if (( ${#line1} + 11 <= MAX_LINE_LENGTH )) && (( ${#line2} <= MAX_LINE_LENGTH )); then
         echo "[VERBOSE] ${line1}" >&2
@@ -3919,14 +3920,47 @@ is_checksum_file() {
     [[ "$p" == *.sha512 || "$p" == *.md5 ]]
 }
 
+# Leading underscore run on checksum stem (_ or __ etc.) — preserved through transform_basename.
+checksum_file_leading_underscore_prefix() {
+    local base="$1"
+    local stem
+    base="$(basename -- "$base")"
+    stem="${base%.*}"
+    [[ "$stem" =~ ^(_+) ]] || return 1
+    printf '%s' "${BASH_REMATCH[1]}"
+}
+
+_transform_basename_restore_checksum_prefix() {
+    local out="$1"
+    local pfx="$2"
+    local stem ext_body
+
+    [[ -n "$pfx" ]] || { printf '%s' "$out"; return 0; }
+    if [[ "$out" != *.* ]]; then
+        while [[ "$out" == _* ]]; do
+            out="${out#_}"
+        done
+        printf '%s%s' "$pfx" "$out"
+        return 0
+    fi
+    stem="${out%.*}"
+    ext_body="${out##*.}"
+    while [[ "$stem" == _* ]]; do
+        stem="${stem#_}"
+    done
+    printf '%s.%s' "${pfx}${stem}" "$ext_body"
+}
+
+is_checksum_manifest_never_rename() {
+    local base
+    base="$(basename -- "$1")"
+    [[ "${base,,}" == "_sumy_kontrolne.md5" ]]
+}
+
 is_protected_checksum_name() {
     local p="$1"
-    local base
-    base="$(basename -- "$p")"
     is_checksum_file "$p" || return 1
-    # Leading underscore(s) are often intentional; do not offer to strip them via transform_name.
-    [[ "$base" == _* ]] && return 0
-    return 1
+    is_checksum_manifest_never_rename "$p"
 }
 
 is_html_file() {
@@ -6528,6 +6562,11 @@ transform_basename() {
     local new="$1"
     local original_path="${2-}"
     local local_r_acute local_registered local_at_sign local_r_grave
+    local _checksum_us_prefix=""
+
+    _tb_emit() {
+        _transform_basename_restore_checksum_prefix "$1" "$_checksum_us_prefix"
+    }
 
     while true; do
         if [[ -n "${MANUAL_BASENAME_OVERRIDE-}" ]]; then
@@ -6658,6 +6697,13 @@ transform_basename() {
 
     new="${new//&/and}"
 
+    if [[ -n "$original_path" ]] && is_checksum_file "$original_path"; then
+        _checksum_us_prefix="$(checksum_file_leading_underscore_prefix "$original_path" || true)"
+        if [[ -n "$_checksum_us_prefix" ]]; then
+            new="${new#$_checksum_us_prefix}"
+        fi
+    fi
+
     # YYYY Mon DD HH-MM-SS.ext — English 3-letter month + spaces (common exports) → YYYY_Mon_DD_HH-MM-SS.ext
     local _ymd_y _ymd_mon _ymd_d _ymd_hh _ymd_mm _ymd_ss _ymd_ext _ymd_mlc _ymd_mout
     if [[ "$new" =~ ^([0-9]{4})[[:space:]]+([A-Za-z]{3})[[:space:]]+([0-9]{1,2})[[:space:]]+([0-9]{2})-([0-9]{2})-([0-9]{2})(\.[^.]+)$ ]]; then
@@ -6676,35 +6722,35 @@ transform_basename() {
             *) _ymd_mout="" ;;
         esac
         if [[ -n "$_ymd_mout" ]]; then
-            printf '%s_%s_%02d_%s-%s-%s%s' "$_ymd_y" "$_ymd_mout" "$((10#${_ymd_d}))" "$_ymd_hh" "$_ymd_mm" "$_ymd_ss" "$_ymd_ext"
+            _tb_emit "$(printf '%s_%s_%02d_%s-%s-%s%s' "$_ymd_y" "$_ymd_mout" "$((10#${_ymd_d}))" "$_ymd_hh" "$_ymd_mm" "$_ymd_ss" "$_ymd_ext")"
             return
         fi
     fi
 
     if [[ "$new" =~ ^([0-9]{2})([0-9]{2})([0-9]{2})_([0-9]{6})_-_(.+)(\.[^.]+)$ ]]; then
-        printf '20%s%s%s_%s_-_%s%s' \
+        _tb_emit "$(printf '20%s%s%s_%s_-_%s%s' \
             "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}" "${BASH_REMATCH[3]}" \
             "${BASH_REMATCH[4]}" \
             "${BASH_REMATCH[5]}" \
-            "${BASH_REMATCH[6]}"
+            "${BASH_REMATCH[6]}")"
         return
     fi
 
     # YYYY.MM.DD-YYYY.MM.DD[_tail] — date range → YYYYMMDD-YYYYMMDD_tail (trip folders etc.; must run before single YYYY.MM.DD- rule).
     if [[ "$new" =~ ^([0-9]{4})\.([0-9]{2})\.([0-9]{2})-([0-9]{4})\.([0-9]{2})\.([0-9]{2})(.*)$ ]]; then
-        printf '%s%s%s-%s%s%s%s' \
+        _tb_emit "$(printf '%s%s%s-%s%s%s%s' \
             "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}" "${BASH_REMATCH[3]}" \
             "${BASH_REMATCH[4]}" "${BASH_REMATCH[5]}" "${BASH_REMATCH[6]}" \
-            "${BASH_REMATCH[7]}"
+            "${BASH_REMATCH[7]}")"
         return
     fi
 
     # YYYY.MM.DD-YYYY.MM-DD[_tail] — mixed dotted/hyphen end date (e.g. ...13-...03-17-ZRH) → YYYYMMDD-YYYYMMDD_tail.
     if [[ "$new" =~ ^([0-9]{4})\.([0-9]{2})\.([0-9]{2})-([0-9]{4})\.([0-9]{2})-([0-9]{2})(.*)$ ]]; then
-        printf '%s%s%s-%s%s%s%s' \
+        _tb_emit "$(printf '%s%s%s-%s%s%s%s' \
             "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}" "${BASH_REMATCH[3]}" \
             "${BASH_REMATCH[4]}" "${BASH_REMATCH[5]}" "${BASH_REMATCH[6]}" \
-            "${BASH_REMATCH[7]}"
+            "${BASH_REMATCH[7]}")"
         return
     fi
 
@@ -6719,16 +6765,16 @@ transform_basename() {
             "${BASH_REMATCH[4]}" "${BASH_REMATCH[5]}" "${BASH_REMATCH[6]}" \
             "${BASH_REMATCH[7]}" \
             "${BASH_REMATCH[8]}")"
-        printf '%s' "$(_normalize_basename_separators "$_dotdate_time_out")"
+        _tb_emit "$(_normalize_basename_separators "$_dotdate_time_out")"
         return
     fi
 
     # YYYY.MM.DD-tail.ext -> YYYYMMDD_tail.ext (dotted calendar date before hyphen + title; any extension).
     if [[ "$new" =~ ^([0-9]{4})\.([0-9]{2})\.([0-9]{2})-(.+)(\.[^.]+)$ ]]; then
-        printf '%s%s%s_%s%s' \
+        _tb_emit "$(printf '%s%s%s_%s%s' \
             "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}" "${BASH_REMATCH[3]}" \
             "${BASH_REMATCH[4]}" \
-            "${BASH_REMATCH[5]}"
+            "${BASH_REMATCH[5]}")"
         return
     fi
 
@@ -6744,7 +6790,7 @@ transform_basename() {
         _lead_date_out="$(printf '%04d%02d%02d%s' \
             "$((10#${BASH_REMATCH[1]}))" "$((10#${BASH_REMATCH[2]}))" "$((10#${BASH_REMATCH[3]}))" \
             "${BASH_REMATCH[4]}")"
-        printf '%s' "$(_normalize_basename_separators "$_lead_date_out")"
+        _tb_emit "$(_normalize_basename_separators "$_lead_date_out")"
         return
     fi
 
@@ -6752,9 +6798,9 @@ transform_basename() {
     # Underscore separators between title, date, and 6-digit time in one pass (no rename-then-rerun).
     if [[ "$new" =~ ^([Ss]creenshot)[[:space:]]+([0-9]{4})-([0-9]{1,2})-([0-9]{1,2})[[:space:]]+([0-9]{6})(\.[^.]+)$ ]]; then
         if _rename_is_valid_ymd "${BASH_REMATCH[2]}" "${BASH_REMATCH[3]}" "${BASH_REMATCH[4]}"; then
-            printf 'Screenshot_%04d-%02d-%02d_%s%s' \
+            _tb_emit "$(printf 'Screenshot_%04d-%02d-%02d_%s%s' \
                 "$((10#${BASH_REMATCH[2]}))" "$((10#${BASH_REMATCH[3]}))" "$((10#${BASH_REMATCH[4]}))" \
-                "${BASH_REMATCH[5]}" "${BASH_REMATCH[6]}"
+                "${BASH_REMATCH[5]}" "${BASH_REMATCH[6]}")"
             return
         fi
     fi
@@ -6773,7 +6819,7 @@ transform_basename() {
             "${BASH_REMATCH[4]}" "${BASH_REMATCH[5]}" "${BASH_REMATCH[6]}" \
             "${BASH_REMATCH[7]}" \
             "${BASH_REMATCH[8]}")"
-        printf '%s' "$(_normalize_basename_separators "$_cam_date_time_out")"
+        _tb_emit "$(_normalize_basename_separators "$_cam_date_time_out")"
         return
     fi
 
@@ -6785,7 +6831,7 @@ transform_basename() {
             "${BASH_REMATCH[1]}" \
             "${BASH_REMATCH[3]}" \
             "${BASH_REMATCH[4]}")"
-        printf '%s' "$(_normalize_basename_separators "$_img_vid_date_out")"
+        _tb_emit "$(_normalize_basename_separators "$_img_vid_date_out")"
         return
     fi
 
@@ -6797,57 +6843,57 @@ transform_basename() {
             "${BASH_REMATCH[5]}" "${BASH_REMATCH[6]}" "${BASH_REMATCH[7]}" \
             "${BASH_REMATCH[1]}" \
             "${BASH_REMATCH[8]}")"
-        printf '%s' "$(_normalize_basename_separators "$_tail_hy_dt_out")"
+        _tb_emit "$(_normalize_basename_separators "$_tail_hy_dt_out")"
         return
     fi
 
     if [[ "$new" =~ ^([0-9]{8})-([0-9]{6})_-_(.+)(\.[^.]+)$ ]]; then
-        printf '%s_%s_-_%s%s' \
+        _tb_emit "$(printf '%s_%s_-_%s%s' \
             "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}" \
             "${BASH_REMATCH[3]}" \
-            "${BASH_REMATCH[4]}"
+            "${BASH_REMATCH[4]}")"
         return
     fi
 
     if [[ "$new" =~ ^([0-9]{4})-([0-9]{2})-([0-9]{2})-([0-9]{2})-([0-9]{2})-([0-9]{2})-(.+)(\.[^.]+)$ ]]; then
-        printf '%s%s%s_%s%s%s-%s%s' \
+        _tb_emit "$(printf '%s%s%s_%s%s%s-%s%s' \
             "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}" "${BASH_REMATCH[3]}" \
             "${BASH_REMATCH[4]}" "${BASH_REMATCH[5]}" "${BASH_REMATCH[6]}" \
             "${BASH_REMATCH[7]}" \
-            "${BASH_REMATCH[8]}"
+            "${BASH_REMATCH[8]}")"
         return
     fi
 
     if [[ "$new" =~ ^signal-([0-9]{4})-([0-9]{2})-([0-9]{2})-([0-9]{6})(\.[^.]+)$ ]]; then
-        printf '%s%s%s_%s-signal%s' \
+        _tb_emit "$(printf '%s%s%s_%s-signal%s' \
             "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}" "${BASH_REMATCH[3]}" \
             "${BASH_REMATCH[4]}" \
-            "${BASH_REMATCH[5]}"
+            "${BASH_REMATCH[5]}")"
         return
     fi
 
     if [[ "$new" =~ ^signal-([0-9]{4})-([0-9]{2})-([0-9]{2})-([0-9]{6})_(.+)(\.[^.]+)$ ]]; then
-        printf '%s%s%s_%s-signal-%s%s' \
+        _tb_emit "$(printf '%s%s%s_%s-signal-%s%s' \
             "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}" "${BASH_REMATCH[3]}" \
             "${BASH_REMATCH[4]}" \
             "${BASH_REMATCH[5]}" \
-            "${BASH_REMATCH[6]}"
+            "${BASH_REMATCH[6]}")"
         return
     fi
 
     if [[ "$new" =~ ^signal-([0-9]{4})-([0-9]{2})-([0-9]{2})-([0-9]{2})-([0-9]{2})-([0-9]{2})-(.+)(\.[^.]+)$ ]]; then
-        printf '%s%s%s_%s%s%s-signal-%s%s' \
+        _tb_emit "$(printf '%s%s%s_%s%s%s-signal-%s%s' \
             "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}" "${BASH_REMATCH[3]}" \
             "${BASH_REMATCH[4]}" "${BASH_REMATCH[5]}" "${BASH_REMATCH[6]}" \
             "${BASH_REMATCH[7]}" \
-            "${BASH_REMATCH[8]}"
+            "${BASH_REMATCH[8]}")"
         return
     fi
 
     if [[ "$new" =~ ^Screenshot_([0-9]{8}_[0-9]{6}_.+)(\.[^.]+)$ ]]; then
-        printf '%s-screenshot%s' \
+        _tb_emit "$(printf '%s-screenshot%s' \
             "${BASH_REMATCH[1]}" \
-            "${BASH_REMATCH[2]}"
+            "${BASH_REMATCH[2]}")"
         return
     fi
 
@@ -6869,7 +6915,7 @@ transform_basename() {
 
     # Directories do not use file extensions; dots in the name are part of the title (e.g. Foo.PL - bar).
     if [[ -n "$original_path" && -d "$original_path" ]]; then
-        printf '%s' "$(_rename_finish_basename_stem "$new")"
+        _tb_emit "$(_rename_finish_basename_stem "$new")"
     elif [[ "$new" == *.* ]]; then
         local stem ext ext_body
         stem="${new%.*}"
@@ -6877,9 +6923,9 @@ transform_basename() {
         # Suffix with spaces/brackets is not a real extension (site.PL - subtitle, tags); normalize whole basename.
         if [[ "$ext_body" == *[[:space:]]* || "$ext_body" == *'['* || "$ext_body" == *']'* ]]; then
             if is_okladka_cover_keep_leading_underscore "$new"; then
-                printf '%s' "$(_rename_finish_basename_stem "$new" preserve-leading-underscore)"
+                _tb_emit "$(_rename_finish_basename_stem "$new" preserve-leading-underscore)"
             else
-                printf '%s' "$(_rename_finish_basename_stem "$new")"
+                _tb_emit "$(_rename_finish_basename_stem "$new")"
             fi
         else
             ext=".$ext_body"
@@ -6888,10 +6934,10 @@ transform_basename() {
             else
                 stem="$(_rename_finish_basename_stem "$stem")"
             fi
-            printf '%s%s' "$stem" "$ext"
+            _tb_emit "${stem}${ext}"
         fi
     else
-        printf '%s' "$(_rename_finish_basename_stem "$new")"
+        _tb_emit "$(_rename_finish_basename_stem "$new")"
     fi
 }
 
