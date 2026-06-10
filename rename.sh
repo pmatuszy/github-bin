@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.06.10 - v. 19.176.163000 - Sony XAVC clip pairs C####.MP4 + C####M01.XML: CreationDate local wall-clock → YYYYMMDD_HHMMSS_-_-_MANUFACTURER_MODEL_C####[M01].ext; defer XML until MP4
 # 2026.06.10 - v. 19.175.160000 - Screenshot_YYYY-MM-DD-HH-MM-SS + title tail (e.g. ...29 o prof. Miernowskim.jpg) → YYYYMMDD_HHMMSS_title-screenshot.ext
 # 2026.06.10 - v. 19.174.154400 - fix Screenshot timestamp-first doubled basename (if-test leaked printf stdout); prefer Screenshot_YYYYMMDD-HH-MM-SS over ambiguous YYYY-MM-DD split
 # 2026.06.10 - v. 19.173.150500 - Screenshot_* date+time (incl. Huawei Screenshot_YYYY-MM-DD-HH-MM-SS) → YYYYMMDD_HHMMSS-screenshot.ext; skip partial hyphen date compaction on Screenshot_ stems
@@ -4507,14 +4508,19 @@ nef_xmp_verify_sidecar_raw_file_name_interactive() {
 
 nef_xmp_pair_run_sidecar_metadata_checks() {
     [[ -n "$nef_xmp_buddy" ]] || return 0
+    [[ "$RENAME_SIDECAR_KIND" == sony_clip ]] && return 0
     nef_xmp_pair_set_final_paths_from_primary_and_buddy_new "$1" "$2" || return 0
     nef_xmp_verify_sidecar_raw_file_name_interactive "$NEF_XMP_FINAL_NEF" "$NEF_XMP_FINAL_XMP" || return $?
 }
 
-# Main loop: uses f, new, nef_xmp_buddy, nef_xmp_new
+# Main loop: uses f, new, nef_xmp_buddy, nef_xmp_new, RENAME_SIDECAR_KIND
 perform_plain_or_nef_xmp_pair() {
     local reason="$1"
-    if [[ -n "$nef_xmp_buddy" ]]; then
+    if [[ "$RENAME_SIDECAR_KIND" == sony_clip && -n "$nef_xmp_buddy" ]]; then
+        print_rename_action_verbose "$f" "$new" "${reason} (Sony clip pair)"
+        print_rename_action_verbose "$nef_xmp_buddy" "$nef_xmp_new" "${reason} (Sony clip pair)"
+        perform_sony_clip_pair_plain_renames "$f" "$new" "$nef_xmp_buddy" "$nef_xmp_new" || return $?
+    elif [[ -n "$nef_xmp_buddy" ]]; then
         print_rename_action_verbose "$f" "$new" "${reason} (NEF+XMP pair)"
         print_rename_action_verbose "$nef_xmp_buddy" "$nef_xmp_new" "${reason} (NEF+XMP pair)"
         perform_nef_xmp_pair_plain_renames "$f" "$new" "$nef_xmp_buddy" "$nef_xmp_new" || return $?
@@ -6435,6 +6441,215 @@ gopro_format_camera_basename_output() {
     fi
 }
 
+# Sony XAVC-S / professionalDisc: C0101.MP4 + C0101M01.XML (NonRealTimeMeta sidecar).
+RENAME_SIDECAR_KIND=""
+
+sony_clip_mp4_basename_matches() {
+    local bn="$1"
+    [[ "$bn" =~ ^[Cc][0-9]{4}\.[mM][pP]4$ ]]
+}
+
+sony_clip_xml_basename_matches() {
+    local bn="$1"
+    [[ "$bn" =~ ^[Cc][0-9]{4}[Mm]01\.[xX][mM][lL]$ ]]
+}
+
+sony_clip_media_basename_matches() {
+    local bn="$1"
+    sony_clip_mp4_basename_matches "$bn" || sony_clip_xml_basename_matches "$bn"
+}
+
+sony_clip_already_renamed_basename_matches() {
+    local bn="$1"
+    [[ "$bn" =~ ^[0-9]{8}_[0-9]{6}_(-__-_|-_-_)[A-Za-z0-9_]+_C[0-9]{4}(M01)?\.[mM][pP]4$ ]] && return 0
+    [[ "$bn" =~ ^[0-9]{8}_[0-9]{6}_(-__-_|-_-_)[A-Za-z0-9_]+_C[0-9]{4}M01\.[xX][mM][lL]$ ]]
+}
+
+sony_clip_clip_stem_from_basename() {
+    local bn="$1"
+    local stem="${bn%.*}"
+    if [[ "$stem" =~ ^([Cc][0-9]{4})[Mm]01$ ]]; then
+        printf '%s' "${BASH_REMATCH[1]}"
+        return 0
+    fi
+    if [[ "$stem" =~ ^([Cc][0-9]{4})$ ]]; then
+        printf '%s' "${BASH_REMATCH[1]}"
+        return 0
+    fi
+    return 1
+}
+
+sony_clip_resolve_xml_buddy() {
+    local dir="$1" clip_stem="$2"
+    local p
+    for p in \
+        "$dir/${clip_stem}M01.XML" "$dir/${clip_stem}M01.xml" \
+        "$dir/${clip_stem}m01.XML" "$dir/${clip_stem}m01.xml"; do
+        [[ -f "$p" ]] || continue
+        printf '%s\n' "$p"
+        return 0
+    done
+    return 1
+}
+
+sony_clip_resolve_mp4_buddy() {
+    local dir="$1" clip_stem="$2"
+    local p
+    for p in \
+        "$dir/${clip_stem}.MP4" "$dir/${clip_stem}.mp4" \
+        "$dir/${clip_stem}.Mp4"; do
+        [[ -f "$p" ]] || continue
+        printf '%s\n' "$p"
+        return 0
+    done
+    return 1
+}
+
+sony_clip_pair_other_path() {
+    local f="$1" dir base clip_stem other
+    [[ -f "$f" ]] || return 1
+    dir="$(dirname -- "$f")"
+    base="$(basename -- "$f")"
+    clip_stem="$(sony_clip_clip_stem_from_basename "$base")" || return 1
+    if sony_clip_mp4_basename_matches "$base"; then
+        sony_clip_resolve_xml_buddy "$dir" "$clip_stem"
+        return $?
+    fi
+    if sony_clip_xml_basename_matches "$base"; then
+        sony_clip_resolve_mp4_buddy "$dir" "$clip_stem"
+        return $?
+    fi
+    return 1
+}
+
+sony_clip_pairing_allowed() {
+    local a="$1" b="$2"
+    ! exception_exists_for_path "$a" && ! exception_exists_for_path "$b"
+}
+
+sony_clip_should_defer_xml() {
+    local f="$1" other="$2"
+    sony_clip_xml_basename_matches "$(basename -- "$f")" || return 1
+    sony_clip_mp4_basename_matches "$(basename -- "$other")" || return 1
+    sony_clip_pairing_allowed "$f" "$other"
+}
+
+sony_clip_should_attach_buddy() {
+    local f="$1" other="$2"
+    sony_clip_mp4_basename_matches "$(basename -- "$f")" || return 1
+    sony_clip_xml_basename_matches "$(basename -- "$other")" || return 1
+    sony_clip_pairing_allowed "$f" "$other"
+}
+
+# CreationDate value="YYYY-MM-DDTHH:MM:SS±HH:MM" → local wall-clock YYYYMMDD_HHMMSS (offset kept in XML only).
+sony_clip_parse_creation_date_local_ts() {
+    local iso="$1"
+    if [[ "$iso" =~ ^([0-9]{4})-([0-9]{2})-([0-9]{2})[Tt]([0-9]{2}):([0-9]{2}):([0-9]{2}) ]]; then
+        printf '%s%s%s_%s%s%s' \
+            "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}" "${BASH_REMATCH[3]}" \
+            "${BASH_REMATCH[4]}" "${BASH_REMATCH[5]}" "${BASH_REMATCH[6]}"
+        return 0
+    fi
+    return 1
+}
+
+sony_clip_normalize_device_token() {
+    local t="$1"
+    t="${t^^}"
+    t="${t// /_}"
+    t="${t//-/_}"
+    t="${t//./_}"
+    printf '%s' "$t"
+}
+
+# Read manufacturer, model, CreationDate from NonRealTimeMeta XML. Prints: MANUF<TAB>MODEL<TAB>TS
+sony_clip_read_xml_metadata() {
+    local xml="$1"
+    local manuf="" model="" iso="" ts=""
+    [[ -f "$xml" && -r "$xml" ]] || return 1
+    iso="$(grep -E 'CreationDate[[:space:]]+value=' -- "$xml" 2>/dev/null | head -n 1 \
+        | sed -E 's/.*value="([^"]+)".*/\1/')"
+    [[ -n "$iso" ]] || return 1
+    ts="$(sony_clip_parse_creation_date_local_ts "$iso")" || return 1
+    manuf="$(grep -E '<Device[[:space:]]' -- "$xml" 2>/dev/null | head -n 1 \
+        | sed -E 's/.*manufacturer="([^"]+)".*/\1/')"
+    model="$(grep -E '<Device[[:space:]]' -- "$xml" 2>/dev/null | head -n 1 \
+        | sed -E 's/.*modelName="([^"]+)".*/\1/')"
+    manuf="$(sony_clip_normalize_device_token "${manuf:-SONY}")"
+    model="$(sony_clip_normalize_device_token "${model:-UNKNOWN}")"
+    printf '%s\t%s\t%s' "$manuf" "$model" "$ts"
+}
+
+sony_clip_metadata_from_mp4_exiftool() {
+    local mp4="$1"
+    local exifloc exif manuf="" model="" ts=""
+    exifloc="$(resolve_rename_exiftool)" || return 1
+    exif="$("$exifloc" -api largefilesupport=1 "$mp4" 2>/dev/null)" || return 1
+    [[ -n "$exif" ]] || return 1
+    if printf '%s\n' "$exif" | grep -q 'Device Manufacturer'; then
+        manuf="$(printf '%s\n' "$exif" | grep 'Device Manufacturer' | head -n 1 \
+            | sed 's/Device Manufacturer[[:space:]]*: //' | tr -d $'\r\n')"
+        model="$(printf '%s\n' "$exif" | grep 'Device Model Name' | head -n 1 \
+            | sed 's/Device Model Name[[:space:]]*: //' | tr -d $'\r\n')"
+        ts="$("$exifloc" -api largefilesupport=1 -d '%Y%m%d_%H%M%S' "$mp4" 2>/dev/null \
+            | grep -E '^Create Date' | head -n 1 | sed 's/^Create Date[[:space:]]*: //' | tr -d $'\r\n')"
+    fi
+    [[ -n "$ts" ]] || return 1
+    manuf="$(sony_clip_normalize_device_token "${manuf:-SONY}")"
+    model="$(sony_clip_normalize_device_token "${model:-UNKNOWN}")"
+    printf '%s\t%s\t%s' "$manuf" "$model" "$ts"
+}
+
+# suffix_stem: C0101 or C0101M01; ext without dot.
+transform_sony_clip_basename() {
+    local file="$1"
+    local base="$2"
+    local dir clip_stem suffix_stem ext meta manuf model ts xml_path mp4_path
+    local _sc_line _sc_manuf _sc_model _sc_ts
+
+    sony_clip_media_basename_matches "$base" || return 1
+    sony_clip_already_renamed_basename_matches "$base" && return 1
+
+    dir="$(dirname -- "$file")"
+    ext="${base##*.}"
+    clip_stem="$(sony_clip_clip_stem_from_basename "$base")" || return 1
+    if sony_clip_xml_basename_matches "$base"; then
+        suffix_stem="${clip_stem}M01"
+        xml_path="$file"
+        mp4_path="$(sony_clip_resolve_mp4_buddy "$dir" "$clip_stem" || true)"
+    else
+        suffix_stem="$clip_stem"
+        mp4_path="$file"
+        xml_path="$(sony_clip_resolve_xml_buddy "$dir" "$clip_stem" || true)"
+    fi
+
+    meta=""
+    if [[ -n "$xml_path" && -f "$xml_path" ]]; then
+        meta="$(sony_clip_read_xml_metadata "$xml_path" || true)"
+    fi
+    if [[ -z "$meta" && -n "$mp4_path" && -f "$mp4_path" ]]; then
+        meta="$(sony_clip_metadata_from_mp4_exiftool "$mp4_path" || true)"
+    fi
+    if [[ -z "$meta" && -n "$mp4_path" && -f "$mp4_path" ]]; then
+        ts="$(get_file_oldest_timestamp_yyyymmdd_hhmmss "$mp4_path")"
+        [[ -n "$ts" ]] || return 1
+        meta="$(printf 'SONY\tUNKNOWN\t%s' "$ts")"
+        vlog "Sony clip: no XML/exiftool metadata for '$(basename -- "$base")'; using oldest file timestamp"
+    fi
+    [[ -n "$meta" ]] || return 1
+
+    IFS=$'\t' read -r _sc_manuf _sc_model _sc_ts <<< "$meta"
+    gopro_format_camera_basename_output "$_sc_ts" "$_sc_manuf" "$_sc_model" "$suffix_stem" "$ext"
+}
+
+perform_sony_clip_pair_plain_renames() {
+    local primary_old="$1" primary_new="$2" buddy_old="$3" buddy_new="$4"
+    perform_plain_entry_rename "$primary_old" "$primary_new" || return 1
+    perform_plain_entry_rename "$buddy_old" "$buddy_new" || return 1
+    processed["$buddy_old"]=1
+    return 0
+}
+
 gopro_strip_part_state_save() {
     local state_dir
     [[ -n "${RENAME_SH_GOPRO_STATE_FILE:-}" ]] || return 0
@@ -7151,7 +7366,28 @@ transform_name() {
     fi
 
     local _gopro_applied=0 _gopro_try="" _gopro_rc=0 _gopro_part_strip=""
-    if [[ -f "$f" ]] && gopro_camera_raw_basename_matches "$base"; then
+    local _sony_applied=0 _sony_try="" _sony_rc=0
+    if [[ -f "$f" ]] && sony_clip_media_basename_matches "$base"; then
+        local _tn_save_e_sc=0
+        [[ $- == *e* ]] && _tn_save_e_sc=1
+        set +e
+        _sony_try="$(transform_sony_clip_basename "$f" "$base")"
+        _sony_rc=$?
+        if ((_tn_save_e_sc)); then
+            set -e
+        else
+            set +e
+        fi
+        if (( _sony_rc == 0 )) && [[ -n "$_sony_try" ]]; then
+            newbase="$_sony_try"
+            _sony_applied=1
+            vlog "Sony clip rename: $base -> $_sony_try"
+        else
+            vlog "Sony clip rename: no usable metadata for $base (rc=$_sony_rc); falling back to normal rename"
+        fi
+    fi
+
+    if [[ -f "$f" ]] && (( _sony_applied == 0 )) && gopro_camera_raw_basename_matches "$base"; then
         if ! resolve_rename_exiftool >/dev/null; then
             prompt_gopro_exiftool_missing_action "$f"
             [[ "$stopped_by_user" != yes ]] || return 2
@@ -7178,7 +7414,7 @@ transform_name() {
         fi
     fi
 
-    if [[ -f "$f" ]] && (( _gopro_applied == 0 )) && [[ "$stopped_by_user" != yes ]]; then
+    if [[ -f "$f" ]] && (( _gopro_applied == 0 && _sony_applied == 0 )) && [[ "$stopped_by_user" != yes ]]; then
         local _gopro_part_rc=0 _gopro_part_err_trap=""
         local _tn_save_e_part=0
         [[ $- == *e* ]] && _tn_save_e_part=1
@@ -7204,7 +7440,7 @@ transform_name() {
     local _tn_save_e=0
     [[ $- == *e* ]] && _tn_save_e=1
     set +e
-    if ((_gopro_applied == 0)); then
+    if (( _gopro_applied == 0 && _sony_applied == 0 )); then
         newbase="$(transform_basename "$base" "$f")"
         tb_rc=$?
     else
@@ -7233,7 +7469,7 @@ transform_name() {
             done
         fi
 
-        if ((_gopro_applied == 0)); then
+        if (( _gopro_applied == 0 && _sony_applied == 0 )); then
         # YYYYMMDD + whitespace + HH-MM-SS[_tail].media -> YYYYMMDD_HH-MM-SS[_tail].media
         # (e.g. 20190202 14-28-08_0001.jpg; not covered by YYYY-MM-DD... rules above.)
         if [[ "$newbase" =~ ^([0-9]{8})[[:space:]]+([0-9]{2})-([0-9]{2})-([0-9]{2})(_[^.]*)?(\.${common_media_ext_re})$ ]]; then
@@ -9672,6 +9908,7 @@ main_index=0
 for f in "${ordered_paths[@]}"; do
     precomputed_new=""
     nef_xmp_buddy=""
+    RENAME_SIDECAR_KIND=""
     verbose_fs_skip_plain=no
     verbose_fs_skip_sidecar=no
     ((++main_index))
@@ -10512,6 +10749,20 @@ for f in "${ordered_paths[@]}"; do
             fi
             if nef_xmp_should_attach_buddy "$f" "$_nx_other"; then
                 nef_xmp_buddy="$_nx_other"
+                RENAME_SIDECAR_KIND=nef_xmp
+            fi
+        fi
+        if [[ -z "$nef_xmp_buddy" ]]; then
+            _sc_other=""
+            if _sc_other="$(sony_clip_pair_other_path "$f")"; then
+                if sony_clip_should_defer_xml "$f" "$_sc_other"; then
+                    vlog "Deferring Sony XML sidecar '$f' until clip pair with '$_sc_other'"
+                    continue
+                fi
+                if sony_clip_should_attach_buddy "$f" "$_sc_other"; then
+                    nef_xmp_buddy="$_sc_other"
+                    RENAME_SIDECAR_KIND=sony_clip
+                fi
             fi
         fi
     fi
@@ -10777,7 +11028,9 @@ for f in "${ordered_paths[@]}"; do
 
     nonverbose_progress_dot_prepare_for_prompt
     echo
-    if [[ -n "$nef_xmp_buddy" ]]; then
+    if [[ "$RENAME_SIDECAR_KIND" == sony_clip && -n "$nef_xmp_buddy" ]]; then
+        echo -e "${CYAN}Sony clip pair (C####.MP4 + C####M01.XML; both renamed together):${RESET}"
+    elif [[ -n "$nef_xmp_buddy" ]]; then
         echo -e "${CYAN}NEF+XMP pair (same stem; both renamed together):${RESET}"
     fi
     _nxmp_pw=$NEF_XMP_PAIR_LABEL_WIDTH_NO_SIDECAR
@@ -10788,21 +11041,28 @@ for f in "${ordered_paths[@]}"; do
         echo -e "${CYAN}  (This path is a directory, not a regular file.)${RESET}"
     fi
     if [[ -n "$nef_xmp_buddy" ]]; then
-        emit_wrap_nef_xmp_pair_label_stdout "OLD (sidecar): " yellow "$nef_xmp_buddy" "$NEF_XMP_PAIR_LABEL_WIDTH"
-        emit_wrap_nef_xmp_pair_label_stdout "NEW (sidecar): " green "$nef_xmp_new" "$NEF_XMP_PAIR_LABEL_WIDTH"
-        echo
-        echo -e "${CYAN}Sidecar XMP metadata (after you confirm):${RESET}"
-        if [[ "$mode" == "dry-run" ]]; then
-            printf '%s\n' \
-                '[Dry-run] A Yes-style answer only simulates the two renames on disk.' \
-                'The script would then set XMP RawFileName (Lightroom crs:RawFileName or RawFileName) to the new NEF basename when that field exists.' \
-                'It would only describe mismatches. No files are modified in dry-run.'
+        if [[ "$RENAME_SIDECAR_KIND" == sony_clip ]]; then
+            emit_wrap_nef_xmp_pair_label_stdout "OLD (XML): " yellow "$nef_xmp_buddy" "$NEF_XMP_PAIR_LABEL_WIDTH"
+            emit_wrap_nef_xmp_pair_label_stdout "NEW (XML): " green "$nef_xmp_new" "$NEF_XMP_PAIR_LABEL_WIDTH"
+            echo
+            echo -e "${CYAN}Sony NonRealTimeMeta XML is renamed with the clip; CreationDate local wall-clock is used for both names.${RESET}"
         else
-            printf '%s\n' \
-                'After a Yes-style answer, both paths are renamed on disk.' \
-                'The script then updates the sidecar XMP so RawFileName (Lightroom crs:RawFileName or RawFileName) matches the new NEF basename when that metadata is present.' \
-                "The XMP file's timestamps are preserved when that metadata is written." \
-                'A short follow-up prompt appears only if something still disagrees with the renamed NEF or if the field cannot be edited automatically.'
+            emit_wrap_nef_xmp_pair_label_stdout "OLD (sidecar): " yellow "$nef_xmp_buddy" "$NEF_XMP_PAIR_LABEL_WIDTH"
+            emit_wrap_nef_xmp_pair_label_stdout "NEW (sidecar): " green "$nef_xmp_new" "$NEF_XMP_PAIR_LABEL_WIDTH"
+            echo
+            echo -e "${CYAN}Sidecar XMP metadata (after you confirm):${RESET}"
+            if [[ "$mode" == "dry-run" ]]; then
+                printf '%s\n' \
+                    '[Dry-run] A Yes-style answer only simulates the two renames on disk.' \
+                    'The script would then set XMP RawFileName (Lightroom crs:RawFileName or RawFileName) to the new NEF basename when that field exists.' \
+                    'It would only describe mismatches. No files are modified in dry-run.'
+            else
+                printf '%s\n' \
+                    'After a Yes-style answer, both paths are renamed on disk.' \
+                    'The script then updates the sidecar XMP so RawFileName (Lightroom crs:RawFileName or RawFileName) matches the new NEF basename when that metadata is present.' \
+                    "The XMP file's timestamps are preserved when that metadata is written." \
+                    'A short follow-up prompt appears only if something still disagrees with the renamed NEF or if the field cannot be edited automatically.'
+            fi
         fi
     fi
     if [[ "$f" != "$new" ]] && is_html_file "$f"; then
