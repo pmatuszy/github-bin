@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.06.10 - v. 19.167.121000 - transform_basename: Windows Screenshot YYYY-MM-DD HHMMSS in one pass (spaces + validated date + time); embedded YYYY-MM-DD hyphen compaction; finish pass after separator normalize
 # 2026.06.09 - v. 19.166.233500 - GoPro _Proxy suffix: use Proxy not _Proxy in suffix segment (format already adds underscore; fixes __Proxy)
 # 2026.06.09 - v. 19.165.232500 - rename prompt [V]: list parent directory (and inside OLD when it is a directory); re-prompt after listing
 # 2026.06.09 - v. 19.164.180000 - startup defaults: colors yes, mode real, scope subdirs (Enter accepts on each prompt)
@@ -5827,6 +5828,80 @@ _rename_compact_embedded_dotted_dates() {
     printf '%s' "$s"
 }
 
+# Replace every validated YYYY-M(M)-D(D) substring in NAME (anywhere, not only at the start).
+_rename_compact_embedded_hyphen_dates() {
+    local s="$1"
+    local -i i=0 len=${#s}
+    local y m d match_len j compact
+
+    while (( i < len )); do
+        if [[ ${s:i} =~ ^([0-9]{4})-([0-9]{1,2})-([0-9]{1,2}) ]]; then
+            y="${BASH_REMATCH[1]}"
+            m="${BASH_REMATCH[2]}"
+            d="${BASH_REMATCH[3]}"
+            match_len=${#BASH_REMATCH[0]}
+            if (( i > 0 )) && [[ ${s:i-1:1} =~ [0-9] ]]; then
+                (( ++i ))
+                continue
+            fi
+            j=$(( i + match_len ))
+            if (( j < len )) && [[ ${s:j:1} =~ [0-9] ]]; then
+                (( ++i ))
+                continue
+            fi
+            if _rename_is_valid_ymd "$y" "$m" "$d"; then
+                compact="$(printf '%04d%02d%02d' \
+                    "$((10#${y}))" "$((10#${m}))" "$((10#${d}))")"
+                s="${s:0:i}${compact}${s:j}"
+                len=${#s}
+                i=$(( i + 8 ))
+                continue
+            fi
+        fi
+        (( ++i ))
+    done
+    printf '%s' "$s"
+}
+
+# Screenshot_YYYY-MM-DD_HHMMSS -> Screenshot_YYYYMMDD_HHMMSS when date validates.
+_rename_apply_screenshot_hyphen_date_compact() {
+    local stem="$1"
+    local y m d time
+
+    if [[ "$stem" =~ ^([Ss]creenshot)_([0-9]{4})-([0-9]{1,2})-([0-9]{1,2})_([0-9]{6})$ ]]; then
+        y="${BASH_REMATCH[2]}"
+        m="${BASH_REMATCH[3]}"
+        d="${BASH_REMATCH[4]}"
+        time="${BASH_REMATCH[5]}"
+        if _rename_is_valid_ymd "$y" "$m" "$d"; then
+            printf 'Screenshot_%04d%02d%02d_%s' \
+                "$((10#${y}))" "$((10#${m}))" "$((10#${d}))" \
+                "$time"
+            return 0
+        fi
+    fi
+    return 1
+}
+
+# After spaces/brackets -> underscores, optionally compact embedded hyphen dates (not Screenshot_* stems).
+_rename_finish_basename_stem() {
+    local stem="$1"
+    local preserve="${2-}"
+    local finished
+
+    if [[ "$preserve" == preserve-leading-underscore ]]; then
+        finished="$(_normalize_basename_separators "$stem" preserve-leading-underscore)"
+    else
+        finished="$(_normalize_basename_separators "$stem")"
+    fi
+    if [[ ! "$finished" =~ ^[Ss]creenshot_ ]]; then
+        finished="$(_rename_compact_embedded_hyphen_dates "$finished")"
+    elif _rename_apply_screenshot_hyphen_date_compact "$finished"; then
+        finished="$( _rename_apply_screenshot_hyphen_date_compact "$finished" )"
+    fi
+    printf '%s' "$finished"
+}
+
 _normalize_basename_separators() {
     local input="$1"
     local preserve="${2-}"
@@ -6626,9 +6701,21 @@ transform_basename() {
         return
     fi
 
+    # Windows Screenshot / Snip & Sketch: "Screenshot YYYY-MM-DD HHMMSS.ext" (spaces still present).
+    # Underscore separators between title, date, and 6-digit time in one pass (no rename-then-rerun).
+    if [[ "$new" =~ ^([Ss]creenshot)[[:space:]]+([0-9]{4})-([0-9]{1,2})-([0-9]{1,2})[[:space:]]+([0-9]{6})(\.[^.]+)$ ]]; then
+        if _rename_is_valid_ymd "${BASH_REMATCH[2]}" "${BASH_REMATCH[3]}" "${BASH_REMATCH[4]}"; then
+            printf 'Screenshot_%04d-%02d-%02d_%s%s' \
+                "$((10#${BASH_REMATCH[2]}))" "$((10#${BASH_REMATCH[3]}))" "$((10#${BASH_REMATCH[4]}))" \
+                "${BASH_REMATCH[5]}" "${BASH_REMATCH[6]}"
+            return
+        fi
+    fi
+
     # Embedded dotted calendar date anywhere in the stem (e.g. as_of_2021.11.01_040001 in a config backup name).
     # Runs after start-anchored dotted rules so YYYY.MM.DD + time at the beginning is still handled above.
     new="$(_rename_compact_embedded_dotted_dates "$new")"
+    new="$(_rename_compact_embedded_hyphen_dates "$new")"
 
     # Underscore or whitespace between date and time (e.g. camera exports "2010-02-20 14-28-18  title.NEF").
     # Early return must still pass through _normalize_basename_separators (otherwise title tail spaces are left as-is).
@@ -6735,7 +6822,7 @@ transform_basename() {
 
     # Directories do not use file extensions; dots in the name are part of the title (e.g. Foo.PL - bar).
     if [[ -n "$original_path" && -d "$original_path" ]]; then
-        printf '%s' "$(_normalize_basename_separators "$new")"
+        printf '%s' "$(_rename_finish_basename_stem "$new")"
     elif [[ "$new" == *.* ]]; then
         local stem ext ext_body
         stem="${new%.*}"
@@ -6743,21 +6830,21 @@ transform_basename() {
         # Suffix with spaces/brackets is not a real extension (site.PL - subtitle, tags); normalize whole basename.
         if [[ "$ext_body" == *[[:space:]]* || "$ext_body" == *'['* || "$ext_body" == *']'* ]]; then
             if is_okladka_cover_keep_leading_underscore "$new"; then
-                printf '%s' "$(_normalize_basename_separators "$new" preserve-leading-underscore)"
+                printf '%s' "$(_rename_finish_basename_stem "$new" preserve-leading-underscore)"
             else
-                printf '%s' "$(_normalize_basename_separators "$new")"
+                printf '%s' "$(_rename_finish_basename_stem "$new")"
             fi
         else
             ext=".$ext_body"
             if is_okladka_cover_keep_leading_underscore "${stem}${ext}"; then
-                stem="$(_normalize_basename_separators "$stem" preserve-leading-underscore)"
+                stem="$(_rename_finish_basename_stem "$stem" preserve-leading-underscore)"
             else
-                stem="$(_normalize_basename_separators "$stem")"
+                stem="$(_rename_finish_basename_stem "$stem")"
             fi
             printf '%s%s' "$stem" "$ext"
         fi
     else
-        printf '%s' "$(_normalize_basename_separators "$new")"
+        printf '%s' "$(_rename_finish_basename_stem "$new")"
     fi
 }
 
