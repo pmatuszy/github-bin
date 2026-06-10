@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.06.10 - v. 19.175.160000 - Screenshot_YYYY-MM-DD-HH-MM-SS + title tail (e.g. ...29 o prof. Miernowskim.jpg) → YYYYMMDD_HHMMSS_title-screenshot.ext
 # 2026.06.10 - v. 19.174.154400 - fix Screenshot timestamp-first doubled basename (if-test leaked printf stdout); prefer Screenshot_YYYYMMDD-HH-MM-SS over ambiguous YYYY-MM-DD split
 # 2026.06.10 - v. 19.173.150500 - Screenshot_* date+time (incl. Huawei Screenshot_YYYY-MM-DD-HH-MM-SS) → YYYYMMDD_HHMMSS-screenshot.ext; skip partial hyphen date compaction on Screenshot_ stems
 # 2026.06.10 - v. 19.172.144800 - prompt [V]/[W] directory listing: print to stderr (visible when prompt runs inside $(...) e.g. GoPro lone _part_XX)
@@ -5965,13 +5966,71 @@ _rename_compact_embedded_hyphen_dates() {
     printf '%s' "$s"
 }
 
-# Screenshot_* with calendar date + clock time → YYYYMMDD_HHMMSS-screenshot.ext (timestamp first).
+# Title tail after Screenshot date/time (spaces → underscores; drop leading separators).
+_rename_screenshot_normalize_title_tail() {
+    local tail="$1"
+    tail="$(_normalize_basename_separators "$tail")"
+    while [[ "$tail" == _* ]]; do
+        tail="${tail#_}"
+    done
+    printf '%s' "$tail"
+}
+
+# Screenshot_* with calendar date + clock time → YYYYMMDD_HHMMSS[-title]-screenshot.ext (timestamp first).
 # Prints the new basename on stdout when matched; callers must capture once (never use as bare if-test).
 _rename_screenshot_timestamp_first() {
     local new="$1"
-    local y m d hh mm ss ext ymd
+    local y m d hh mm ss ext ymd tail_norm
 
     [[ "$new" =~ -[Ss]creenshot\.[^.]+$ ]] && return 1
+
+    # Screenshot_YYYY-MM-DD-HH-MM-SS + title tail (e.g. ...-29 o prof. Miernowskim.jpg).
+    if [[ "$new" =~ ^[Ss]creenshot_([0-9]{4})-([0-9]{1,2})-([0-9]{1,2})-([0-9]{2})-([0-9]{2})-([0-9]{2})([[:space:]_-].+)(\.[^.]+)$ ]]; then
+        y="${BASH_REMATCH[1]}"
+        m="${BASH_REMATCH[2]}"
+        d="${BASH_REMATCH[3]}"
+        hh="${BASH_REMATCH[4]}"
+        mm="${BASH_REMATCH[5]}"
+        ss="${BASH_REMATCH[6]}"
+        ext="${BASH_REMATCH[8]}"
+        _rename_is_valid_ymd "$y" "$m" "$d" || return 1
+        tail_norm="$(_rename_screenshot_normalize_title_tail "${BASH_REMATCH[7]}")"
+        printf '%04d%02d%02d_%02d%02d%02d_%s-screenshot%s' \
+            "$((10#${y}))" "$((10#${m}))" "$((10#${d}))" \
+            "$((10#${hh}))" "$((10#${mm}))" "$((10#${ss}))" \
+            "$tail_norm" \
+            "$ext"
+        return 0
+    fi
+
+    # Screenshot_YYYYMMDD-HH-MM-SS + title tail.
+    if [[ "$new" =~ ^[Ss]creenshot_([0-9]{8})-([0-9]{2})-([0-9]{2})-([0-9]{2})([[:space:]_-].+)(\.[^.]+)$ ]]; then
+        ymd="${BASH_REMATCH[1]}"
+        hh="${BASH_REMATCH[2]}"
+        mm="${BASH_REMATCH[3]}"
+        ss="${BASH_REMATCH[4]}"
+        ext="${BASH_REMATCH[6]}"
+        _rename_is_valid_ymd "${ymd:0:4}" "${ymd:4:2}" "${ymd:6:2}" || return 1
+        tail_norm="$(_rename_screenshot_normalize_title_tail "${BASH_REMATCH[5]}")"
+        printf '%s_%02d%02d%02d_%s-screenshot%s' \
+            "$ymd" \
+            "$((10#${hh}))" "$((10#${mm}))" "$((10#${ss}))" \
+            "$tail_norm" \
+            "$ext"
+        return 0
+    fi
+
+    # Screenshot_YYYYMMDD_HHMMSS + title tail (underscore or space before title).
+    if [[ "$new" =~ ^[Ss]creenshot_([0-9]{8})_([0-9]{6})[._[:space:]]+(.+)(\.[^.]+)$ ]]; then
+        ymd="${BASH_REMATCH[1]}"
+        _rename_is_valid_ymd "${ymd:0:4}" "${ymd:4:2}" "${ymd:6:2}" || return 1
+        tail_norm="$(_rename_screenshot_normalize_title_tail "${BASH_REMATCH[3]}")"
+        printf '%s_%s_%s-screenshot%s' \
+            "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}" \
+            "$tail_norm" \
+            "${BASH_REMATCH[4]}"
+        return 0
+    fi
 
     # Screenshot_YYYYMMDD-HH-MM-SS.ext (Galaxy etc.; 8-digit date before hyphenated time).
     if [[ "$new" =~ ^[Ss]creenshot_([0-9]{8})-([0-9]{2})-([0-9]{2})-([0-9]{2})(\.[^.]+)$ ]]; then
@@ -6993,13 +7052,6 @@ transform_basename() {
             "${BASH_REMATCH[4]}" "${BASH_REMATCH[5]}" "${BASH_REMATCH[6]}" \
             "${BASH_REMATCH[7]}" \
             "${BASH_REMATCH[8]}")"
-        return
-    fi
-
-    if [[ "$new" =~ ^Screenshot_([0-9]{8}_[0-9]{6}_.+)(\.[^.]+)$ ]]; then
-        _tb_emit "$(printf '%s-screenshot%s' \
-            "${BASH_REMATCH[1]}" \
-            "${BASH_REMATCH[2]}")"
         return
     fi
 
