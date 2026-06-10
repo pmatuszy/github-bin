@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.06.10 - v. 19.171.140000 - archive/compressed (.zip .rar .tar .7z .gz etc.): preserve leading _ / __ through transform_basename (do not strip)
 # 2026.06.10 - v. 19.170.133500 - checksum .sha512/.md5: preserve leading _ / __ on hash filenames through transform_basename; block rename only for _sumy_kontrolne.md5 manifest
 # 2026.06.10 - v. 19.169.131000 - interactive prompts: [V] view parent directory on path-related menus (checksum, collision [W], mapping, NEF+XMP, flatten, lnk, DB hash, etc.)
 # 2026.06.10 - v. 19.168.124500 - GoPro lone _part_XX prompt: [V] list parent directory (same listing as main rename prompt); re-prompt after listing
@@ -3920,7 +3921,32 @@ is_checksum_file() {
     [[ "$p" == *.sha512 || "$p" == *.md5 ]]
 }
 
-# Leading underscore run on checksum stem (_ or __ etc.) — preserved through transform_basename.
+# Archive / compression containers and common split-volume suffixes (.r00, .001, …).
+is_archive_compressed_file() {
+    local bn lower
+    bn="$1"
+    [[ "$bn" != */* ]] || bn="$(basename -- "$bn")"
+    lower="${bn,,}"
+    case "$lower" in
+        *.7z|*.ace|*.alz|*.apk|*.apm|*.ar|*.arc|*.arj|*.b1|*.bh|*.bz2|*.cab|*.cpio|*.deb|*.dmg|*.ear|*.egg|*.gz|*.iso|*.jar|*.lha|*.lrz|*.lz|*.lz4|*.lzh|*.lzma|*.lzo|*.pak|*.pea|*.pet|*.rar|*.rpm|*.sit|*.sfx|*.swm|*.tar|*.tbz|*.tbz2|*.tgz|*.txz|*.war|*.wim|*.xpi|*.xz|*.zip|*.zipx|*.z|*.zoo|*.zst)
+            return 0
+            ;;
+        *.tar.*|*.cpio.*)
+            return 0
+            ;;
+        *.r[0-9][0-9]|*.s[0-9][0-9][0-9]|*.[0-9][0-9][0-9])
+            return 0
+            ;;
+    esac
+    return 1
+}
+
+basename_preserve_leading_underscore_file() {
+    local p="$1"
+    is_checksum_file "$p" || is_archive_compressed_file "$p"
+}
+
+# Leading underscore run on stem (_ or __ etc.) — preserved through transform_basename.
 checksum_file_leading_underscore_prefix() {
     local base="$1"
     local stem
@@ -6697,8 +6723,13 @@ transform_basename() {
 
     new="${new//&/and}"
 
-    if [[ -n "$original_path" ]] && is_checksum_file "$original_path"; then
+    if [[ -n "$original_path" ]] && basename_preserve_leading_underscore_file "$original_path"; then
         _checksum_us_prefix="$(checksum_file_leading_underscore_prefix "$original_path" || true)"
+        if [[ -n "$_checksum_us_prefix" ]]; then
+            new="${new#$_checksum_us_prefix}"
+        fi
+    elif basename_preserve_leading_underscore_file "$new"; then
+        _checksum_us_prefix="$(checksum_file_leading_underscore_prefix "$new" || true)"
         if [[ -n "$_checksum_us_prefix" ]]; then
             new="${new#$_checksum_us_prefix}"
         fi
@@ -6922,14 +6953,18 @@ transform_basename() {
         ext_body="${new##*.}"
         # Suffix with spaces/brackets is not a real extension (site.PL - subtitle, tags); normalize whole basename.
         if [[ "$ext_body" == *[[:space:]]* || "$ext_body" == *'['* || "$ext_body" == *']'* ]]; then
-            if is_okladka_cover_keep_leading_underscore "$new"; then
+            if is_okladka_cover_keep_leading_underscore "$new" \
+                || { [[ -n "$original_path" ]] && basename_preserve_leading_underscore_file "$original_path"; } \
+                || basename_preserve_leading_underscore_file "$new"; then
                 _tb_emit "$(_rename_finish_basename_stem "$new" preserve-leading-underscore)"
             else
                 _tb_emit "$(_rename_finish_basename_stem "$new")"
             fi
         else
             ext=".$ext_body"
-            if is_okladka_cover_keep_leading_underscore "${stem}${ext}"; then
+            if is_okladka_cover_keep_leading_underscore "${stem}${ext}" \
+                || { [[ -n "$original_path" ]] && basename_preserve_leading_underscore_file "$original_path"; } \
+                || basename_preserve_leading_underscore_file "${stem}${ext}"; then
                 stem="$(_rename_finish_basename_stem "$stem" preserve-leading-underscore)"
             else
                 stem="$(_rename_finish_basename_stem "$stem")"
