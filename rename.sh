@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.06.10 - v. 19.168.124500 - GoPro lone _part_XX prompt: [V] list parent directory (same listing as main rename prompt); re-prompt after listing
 # 2026.06.10 - v. 19.167.121000 - transform_basename: Windows Screenshot YYYY-MM-DD HHMMSS in one pass (spaces + validated date + time); embedded YYYY-MM-DD hyphen compaction; finish pass after separator normalize
 # 2026.06.09 - v. 19.166.233500 - GoPro _Proxy suffix: use Proxy not _Proxy in suffix segment (format already adds underscore; fixes __Proxy)
 # 2026.06.09 - v. 19.165.232500 - rename prompt [V]: list parent directory (and inside OLD when it is a directory); re-prompt after listing
@@ -6322,15 +6323,20 @@ maybe_prompt_gopro_remove_lone_part_basename() {
         echo "  [D] Remove _part_XX for all lone-chapter files in this directory (rest of run)" >&2
         echo "  [A] Remove _part_XX for all lone-chapter files in this run" >&2
         echo "  [N] Keep the current name" >&2
+        echo "  [V] List directory where this file exists (parent; mark OLD/NEW basenames)" >&2
         echo "  [Q] Quit" >&2
         if (( VERBOSE == 1 )); then
-            echo "[VERBOSE] [$(date '+%Y.%m.%d %H:%M:%S')] Choice [Y/n/d/a/q]:" >&2
+            echo "[VERBOSE] [$(date '+%Y.%m.%d %H:%M:%S')] Choice [Y/n/d/a/v/q]:" >&2
         fi
-        printf '%s' "$(user_prompt_ts_prefix)Choice [Y/n/d/a/q]: " >&2
+        printf '%s' "$(user_prompt_ts_prefix)Choice [Y/n/d/a/v/q]: " >&2
         flush_stdin
         read_single_key answer "$PROMPT_WAIT_SECONDS"
         printf '\n' >&2
         case "$answer" in
+            v|V)
+                print_rename_parent_directory_listing "$f" "$(dirname -- "$f")/$stripped"
+                continue
+                ;;
             q|Q)
                 stopped_by_user=yes
                 return 2
