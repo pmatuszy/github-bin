@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.06.09 - v. 19.166.233500 - GoPro _Proxy suffix: use Proxy not _Proxy in suffix segment (format already adds underscore; fixes __Proxy)
 # 2026.06.09 - v. 19.165.232500 - rename prompt [V]: list parent directory (and inside OLD when it is a directory); re-prompt after listing
 # 2026.06.09 - v. 19.164.180000 - startup defaults: colors yes, mode real, scope subdirs (Enter accepts on each prompt)
 # 2026.06.09 - v. 19.163.172500 - rename prompt [S]: auto-yes for rest of directory across all extensions (not only anchor ext; fixes re-prompt when jpg/mp4 interleave)
@@ -6386,7 +6387,8 @@ transform_gopro_camera_basename() {
         if [[ -n "$suffix_pliku" ]]; then
             suffix_pliku="${suffix_pliku}_Proxy"
         else
-            suffix_pliku="_Proxy"
+            # gopro_format_camera_basename_output joins model + suffix with a single '_'
+            suffix_pliku="Proxy"
         fi
     fi
 
