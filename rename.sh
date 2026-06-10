@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.06.10 - v. 19.172.144800 - prompt [V]/[W] directory listing: print to stderr (visible when prompt runs inside $(...) e.g. GoPro lone _part_XX)
 # 2026.06.10 - v. 19.171.140000 - archive/compressed (.zip .rar .tar .7z .gz etc.): preserve leading _ / __ through transform_basename (do not strip)
 # 2026.06.10 - v. 19.170.133500 - checksum .sha512/.md5: preserve leading _ / __ on hash filenames through transform_basename; block rename only for _sumy_kontrolne.md5 manifest
 # 2026.06.10 - v. 19.169.131000 - interactive prompts: [V] view parent directory on path-related menus (checksum, collision [W], mapping, NEF+XMP, flatten, lnk, DB hash, etc.)
@@ -8774,6 +8775,7 @@ similar_rename_clear() {
 }
 
 # One directory level for rename prompt [V]: mark OLD/NEW basenames when they appear as siblings.
+# Always stderr: callers often run inside $(...) (e.g. GoPro _part_XX, transform_basename mapping) where stdout is captured.
 print_rename_one_level_dir_listing() {
     local dir="$1"
     local mark_old="${2-}"
@@ -8784,7 +8786,7 @@ print_rename_one_level_dir_listing() {
     mapfile -t entries < <(find "$dir" -mindepth 1 -maxdepth 1 2>/dev/null | LC_ALL=C sort)
 
     if (( ${#entries[@]} == 0 )); then
-        echo "  (empty)"
+        echo "  (empty)" >&2
         return 0
     fi
 
@@ -8796,25 +8798,25 @@ print_rename_one_level_dir_listing() {
             suffix="  ← OLD"
             line="  $bn$suffix"
             if [[ "$use_colors" == yes ]]; then
-                printf '%b%s%b%s\n' "$YELLOW" "  $bn" "$RESET" "$suffix"
+                printf '%b%s%b%s\n' "$YELLOW" "  $bn" "$RESET" "$suffix" >&2
             else
-                printf '%s\n' "$line"
+                printf '%s\n' "$line" >&2
             fi
             continue
         fi
         if [[ -n "$mark_new" && "$bn" == "$mark_new" ]]; then
             suffix="  ← NEW (on disk)"
             if [[ "$use_colors" == yes ]]; then
-                printf '%b%s%b%s\n' "$GREEN" "  $bn" "$RESET" "$suffix"
+                printf '%b%s%b%s\n' "$GREEN" "  $bn" "$RESET" "$suffix" >&2
             else
-                printf '  %s%s\n' "$bn" "$suffix"
+                printf '  %s%s\n' "$bn" "$suffix" >&2
             fi
             continue
         fi
         if [[ -d "$entry" ]]; then
-            printf '  %s/\n' "$bn"
+            printf '  %s/\n' "$bn" >&2
         else
-            printf '  %s\n' "$bn"
+            printf '  %s\n' "$bn" >&2
         fi
     done
 }
@@ -8832,17 +8834,17 @@ print_rename_parent_directory_listing() {
     new_base=""
     [[ -n "$suggested_new" ]] && new_base="$(basename -- "$suggested_new")"
 
-    echo
-    emit_wrap_labeled_stdout "LISTING: " "${CYAN}LISTING:${RESET} " "Directory containing this path: $(format_path_for_log "$parent")"
+    echo >&2
+    emit_wrap_labeled_stderr "LISTING: " "${CYAN}LISTING:${RESET} " "Directory containing this path: $(format_path_for_log "$parent")"
     if [[ ! -d "$parent" ]]; then
-        echo "  (not found or not a directory)"
+        echo "  (not found or not a directory)" >&2
         return 0
     fi
     print_rename_one_level_dir_listing "$parent" "$old_base" "$new_base"
 
     if [[ -d "$path" ]]; then
-        echo
-        emit_wrap_labeled_stdout "LISTING: " "${CYAN}LISTING:${RESET} " "Inside OLD directory: $(format_path_for_log "$path")"
+        echo >&2
+        emit_wrap_labeled_stderr "LISTING: " "${CYAN}LISTING:${RESET} " "Inside OLD directory: $(format_path_for_log "$path")"
         print_rename_one_level_dir_listing "$path" "" ""
     fi
 }
