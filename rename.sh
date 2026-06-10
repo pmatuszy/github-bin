@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.06.10 - v. 19.169.131000 - interactive prompts: [V] view parent directory on path-related menus (checksum, collision [W], mapping, NEF+XMP, flatten, lnk, DB hash, etc.)
 # 2026.06.10 - v. 19.168.124500 - GoPro lone _part_XX prompt: [V] list parent directory (same listing as main rename prompt); re-prompt after listing
 # 2026.06.10 - v. 19.167.121000 - transform_basename: Windows Screenshot YYYY-MM-DD HHMMSS in one pass (spaces + validated date + time); embedded YYYY-MM-DD hyphen compaction; finish pass after separator normalize
 # 2026.06.09 - v. 19.166.233500 - GoPro _Proxy suffix: use Proxy not _Proxy in suffix segment (format already adds underscore; fixes __Proxy)
@@ -1219,20 +1220,25 @@ confirm_db_hash_update_for_existing_entry() {
     echo "  kind:     $hash_kind"
     echo "  stored:   $old_hash"
     echo "  computed: $new_hash"
-    echo "$(user_prompt_ts_prefix)Replace stored hash with computed value?"
-    echo "  [Y] Yes (default)"
-    echo "  [N] No (keep existing DB hash)"
-    echo "  [Q] Quit"
-    echo -n "$(user_prompt_ts_prefix)Choice [Y/n/q]: "
-    flush_stdin
-    read_single_key answer "$PROMPT_WAIT_SECONDS"
-    echo
-
-    case "$answer" in
-        q|Q) return 2 ;;
-        n|N) return 1 ;;
-        *) return 0 ;;
-    esac
+    while true; do
+        echo "$(user_prompt_ts_prefix)Replace stored hash with computed value?"
+        echo "  [Y] Yes (default)"
+        echo "  [N] No (keep existing DB hash)"
+        print_prompt_view_directory_menu_line
+        echo "  [Q] Quit"
+        echo -n "$(user_prompt_ts_prefix)Choice [Y/n/v/q]: "
+        flush_stdin
+        read_single_key answer "$PROMPT_WAIT_SECONDS"
+        echo
+        if handle_prompt_directory_listing_choice "$answer" "$path"; then
+            continue
+        fi
+        case "$answer" in
+            q|Q) return 2 ;;
+            n|N) return 1 ;;
+            *) return 0 ;;
+        esac
+    done
 }
 
 prompt_resume_choice_early() {
@@ -4386,47 +4392,53 @@ nef_xmp_verify_sidecar_raw_file_name_interactive() {
         vlog "XMP RawFileName: preview failed for '$xmp_path' — skip interactive prompt."
         return 0
     fi
-    echo "  Keys:"
-    echo "    [Y] Yes / Enter - patch this .xmp only (default)"
-    echo "    [d] Yes + auto-patch every RawFileName fix in this directory"
-    echo "    [n] No"
-    echo "    [q] Quit run"
-    if (( VERBOSE == 1 )); then
-        echo "[VERBOSE] [$(date '+%Y.%m.%d %H:%M:%S')] Write RawFileName into this .xmp on disk? (metadata only) [Y/n/d/q]:" >&2
-    else
-        nonverbose_progress_dot_endline_if_needed
-    fi
-    printf '%s' "$(user_prompt_ts_prefix)Write RawFileName into this .xmp on disk? (metadata only) [Y/n/d/q]: "
-    flush_stdin
-    read_single_key ans "$PROMPT_WAIT_SECONDS"
-    echo
-    case "$ans" in
-        q|Q)
-            stopped_by_user=yes
-            return 2
-            ;;
-        d|D)
-            NEF_XMP_RAWFIX_AUTO_DIR="$xdir"
-            if nef_xmp_replace_raw_file_name_preserving_times "$xmp_path" "$proposed"; then
-                emit_wrap_labeled_stdout "OK: " "${GREEN}OK:${RESET} " "Updated RawFileName in '$xmp_path'; further mismatches in '${NEF_XMP_RAWFIX_AUTO_DIR}' auto-apply."
-                vlog "RawFileName directory batch mode set to '${NEF_XMP_RAWFIX_AUTO_DIR}'; applied '$xmp_path'"
-            else
-                emit_wrap_labeled_stdout "SKIP: " "${YELLOW}SKIP:${RESET} " "RawFileName patch failed in '$xmp_path'."
-            fi
-            return 0
-            ;;
-        n|N)
-            return 0
-            ;;
-        *)
-            if nef_xmp_replace_raw_file_name_preserving_times "$xmp_path" "$proposed"; then
-                emit_wrap_labeled_stdout "OK: " "${GREEN}OK:${RESET} " "Updated RawFileName in '$xmp_path' (same encoding as matched fragment)."
-            else
-                emit_wrap_labeled_stdout "SKIP: " "${YELLOW}SKIP:${RESET} " "RawFileName patch failed in '$xmp_path'."
-            fi
-            return 0
-            ;;
-    esac
+    while true; do
+        echo "  Keys:"
+        echo "    [Y] Yes / Enter - patch this .xmp only (default)"
+        echo "    [d] Yes + auto-patch every RawFileName fix in this directory"
+        echo "    [n] No"
+        print_prompt_view_directory_menu_line
+        echo "    [q] Quit run"
+        if (( VERBOSE == 1 )); then
+            echo "[VERBOSE] [$(date '+%Y.%m.%d %H:%M:%S')] Write RawFileName into this .xmp on disk? (metadata only) [Y/n/d/v/q]:" >&2
+        else
+            nonverbose_progress_dot_endline_if_needed
+        fi
+        printf '%s' "$(user_prompt_ts_prefix)Write RawFileName into this .xmp on disk? (metadata only) [Y/n/d/v/q]: "
+        flush_stdin
+        read_single_key ans "$PROMPT_WAIT_SECONDS"
+        echo
+        if handle_prompt_directory_listing_choice "$ans" "$xmp_path" "$nef_path"; then
+            continue
+        fi
+        case "$ans" in
+            q|Q)
+                stopped_by_user=yes
+                return 2
+                ;;
+            d|D)
+                NEF_XMP_RAWFIX_AUTO_DIR="$xdir"
+                if nef_xmp_replace_raw_file_name_preserving_times "$xmp_path" "$proposed"; then
+                    emit_wrap_labeled_stdout "OK: " "${GREEN}OK:${RESET} " "Updated RawFileName in '$xmp_path'; further mismatches in '${NEF_XMP_RAWFIX_AUTO_DIR}' auto-apply."
+                    vlog "RawFileName directory batch mode set to '${NEF_XMP_RAWFIX_AUTO_DIR}'; applied '$xmp_path'"
+                else
+                    emit_wrap_labeled_stdout "SKIP: " "${YELLOW}SKIP:${RESET} " "RawFileName patch failed in '$xmp_path'."
+                fi
+                return 0
+                ;;
+            n|N)
+                return 0
+                ;;
+            *)
+                if nef_xmp_replace_raw_file_name_preserving_times "$xmp_path" "$proposed"; then
+                    emit_wrap_labeled_stdout "OK: " "${GREEN}OK:${RESET} " "Updated RawFileName in '$xmp_path' (same encoding as matched fragment)."
+                else
+                    emit_wrap_labeled_stdout "SKIP: " "${YELLOW}SKIP:${RESET} " "RawFileName patch failed in '$xmp_path'."
+                fi
+                return 0
+                ;;
+        esac
+    done
 }
 
 nef_xmp_pair_run_sidecar_metadata_checks() {
@@ -5384,28 +5396,34 @@ confirm_large_hash_check() {
         return 0
     fi
 
-    echo
-    emit_wrap_labeled_stdout "${label} NOTICE: " "${YELLOW}${label} NOTICE:${RESET} " "'${sum_file}' contains ${line_count} checksum line(s)."
-    echo "Checking it may take a long time."
-    print_checksum_list_last_verify_for_prompt "$sum_file"
-    echo -n "$(user_prompt_ts_prefix)Check this file and continue? [y/N/q]: "
+    while true; do
+        echo
+        emit_wrap_labeled_stdout "${label} NOTICE: " "${YELLOW}${label} NOTICE:${RESET} " "'${sum_file}' contains ${line_count} checksum line(s)."
+        echo "Checking it may take a long time."
+        print_checksum_list_last_verify_for_prompt "$sum_file"
+        print_prompt_view_directory_menu_line
+        echo -n "$(user_prompt_ts_prefix)Check this file and continue? [y/N/v/q]: "
 
-    flush_stdin
-    read -t 300 -n 1 answer || true
-    echo
+        flush_stdin
+        read_single_key answer "$PROMPT_WAIT_SECONDS"
+        echo
 
-    case "$answer" in
-        y|Y)
-            return 0
-            ;;
-        q|Q)
-            stopped_by_user=yes
-            return 2
-            ;;
-        *)
-            return 1
-            ;;
-    esac
+        if handle_prompt_directory_listing_choice "$answer" "$sum_file"; then
+            continue
+        fi
+        case "$answer" in
+            y|Y)
+                return 0
+                ;;
+            q|Q)
+                stopped_by_user=yes
+                return 2
+                ;;
+            *)
+                return 1
+                ;;
+        esac
+    done
 }
 
 # Before [U]/[Q]: list file metadata, hash stored in the list for this ref, and on-disk file metadata + current hash.
@@ -5506,11 +5524,15 @@ prompt_refresh_checksum_hash_after_mismatch() {
     while true; do
         emit_wrap_labeled_stdout "  [U] " "  ${GREEN}[U]${RESET} " "Update stored ${label,,} hash from the file on disk, then re-verify"
         emit_wrap_labeled_stdout "  [I] " "  ${GREEN}[I]${RESET} " "Ignore this mismatch and continue (checksum list unchanged; you fix it later)"
+        print_prompt_view_directory_menu_line
         emit_wrap_labeled_stdout "  [Q] " "  ${GREEN}[Q]${RESET} " "Quit (abort script)"
-        echo -n "$(user_prompt_ts_prefix)Choice [U/i/Q]: "
+        echo -n "$(user_prompt_ts_prefix)Choice [U/i/v/Q]: "
         flush_stdin
         read_single_key answer "$PROMPT_WAIT_SECONDS"
         echo
+        if handle_prompt_directory_listing_choice "$answer" "$path_on_disk"; then
+            continue
+        fi
         case "$answer" in
             u|U)
                 if [[ ! -f "$path_on_disk" ]]; then
@@ -5588,10 +5610,14 @@ choose_r_acute_mapping_for_file() {
         echo "  [o] Other (type replacement, Enter)" >&2
         echo "  [q] Quit" >&2
         echo "  [m] Manually edit basename" >&2
-        echo -n "$(user_prompt_ts_prefix)Choice [1/2/3/4/o/q/m]: " >&2
+        print_prompt_view_directory_menu_line_stderr
+        echo -n "$(user_prompt_ts_prefix)Choice [1/2/3/4/o/q/m/v]: " >&2
         flush_stdin
         read_single_key answer "$PROMPT_WAIT_SECONDS"
         echo >&2
+        if handle_prompt_directory_listing_choice "$answer" "$path"; then
+            continue
+        fi
         case "$answer" in
             2) printf '%s' "s"; return 0 ;;
             3) printf '%s' "c "; return 0 ;;
@@ -5640,10 +5666,14 @@ choose_registered_mapping_for_file() {
         echo "  [o] Other (type replacement, Enter)" >&2
         echo "  [q] Quit" >&2
         echo "  [m] Manually edit basename" >&2
-        echo -n "$(user_prompt_ts_prefix)Choice [1/2/o/q/m]: " >&2
+        print_prompt_view_directory_menu_line_stderr
+        echo -n "$(user_prompt_ts_prefix)Choice [1/2/o/q/m/v]: " >&2
         flush_stdin
         read_single_key answer "$PROMPT_WAIT_SECONDS"
         echo >&2
+        if handle_prompt_directory_listing_choice "$answer" "$path"; then
+            continue
+        fi
         case "$answer" in
             2) printf '%s' "l"; return 0 ;;
             o|O)
@@ -5690,10 +5720,14 @@ choose_at_sign_mapping_for_file() {
         echo "  [o] Other (type replacement, Enter)" >&2
         echo "  [q] Quit" >&2
         echo "  [m] Manually edit basename" >&2
-        echo -n "$(user_prompt_ts_prefix)Choice [1/2/o/q/m]: " >&2
+        print_prompt_view_directory_menu_line_stderr
+        echo -n "$(user_prompt_ts_prefix)Choice [1/2/o/q/m/v]: " >&2
         flush_stdin
         read_single_key answer "$PROMPT_WAIT_SECONDS"
         echo >&2
+        if handle_prompt_directory_listing_choice "$answer" "$path"; then
+            continue
+        fi
         case "$answer" in
             2) printf '%s' "e"; return 0 ;;
             o|O)
@@ -5740,10 +5774,14 @@ choose_r_grave_mapping_for_file() {
         echo "  [o] Other (type replacement, Enter)" >&2
         echo "  [q] Quit" >&2
         echo "  [m] Manually edit basename" >&2
-        echo -n "$(user_prompt_ts_prefix)Choice [1/2/o/q/m]: " >&2
+        print_prompt_view_directory_menu_line_stderr
+        echo -n "$(user_prompt_ts_prefix)Choice [1/2/o/q/m/v]: " >&2
         flush_stdin
         read_single_key answer "$PROMPT_WAIT_SECONDS"
         echo >&2
+        if handle_prompt_directory_listing_choice "$answer" "$path"; then
+            continue
+        fi
         case "$answer" in
             2) printf '%s' "s"; return 0 ;;
             o|O)
@@ -6053,14 +6091,18 @@ prompt_gopro_exiftool_missing_action() {
         echo -e "$(user_prompt_ts_prefix)${GREEN}exiftool is required to rename this GoPro/camera raw file:${RESET}" >&2
         echo "  $(format_path_for_log "$f")" >&2
         echo "  [S] Skip GoPro/camera raw files for the rest of this run (default)" >&2
+        print_prompt_view_directory_menu_line_stderr
         echo "  [Q] Quit" >&2
         if (( VERBOSE == 1 )); then
-            echo "[VERBOSE] [$(date '+%Y.%m.%d %H:%M:%S')] Choice [S/q]:" >&2
+            echo "[VERBOSE] [$(date '+%Y.%m.%d %H:%M:%S')] Choice [S/v/q]:" >&2
         fi
-        printf '%s' "$(user_prompt_ts_prefix)Choice [S/q]: " >&2
+        printf '%s' "$(user_prompt_ts_prefix)Choice [S/v/q]: " >&2
         flush_stdin
         read_single_key answer "$PROMPT_WAIT_SECONDS"
         printf '\n' >&2
+        if handle_prompt_directory_listing_choice "$answer" "$f"; then
+            continue
+        fi
         case "$answer" in
             q|Q)
                 stopped_by_user=yes
@@ -6323,7 +6365,7 @@ maybe_prompt_gopro_remove_lone_part_basename() {
         echo "  [D] Remove _part_XX for all lone-chapter files in this directory (rest of run)" >&2
         echo "  [A] Remove _part_XX for all lone-chapter files in this run" >&2
         echo "  [N] Keep the current name" >&2
-        echo "  [V] List directory where this file exists (parent; mark OLD/NEW basenames)" >&2
+        print_prompt_view_directory_menu_line_stderr
         echo "  [Q] Quit" >&2
         if (( VERBOSE == 1 )); then
             echo "[VERBOSE] [$(date '+%Y.%m.%d %H:%M:%S')] Choice [Y/n/d/a/v/q]:" >&2
@@ -6332,11 +6374,10 @@ maybe_prompt_gopro_remove_lone_part_basename() {
         flush_stdin
         read_single_key answer "$PROMPT_WAIT_SECONDS"
         printf '\n' >&2
+        if handle_prompt_directory_listing_choice "$answer" "$f" "$(dirname -- "$f")/$stripped"; then
+            continue
+        fi
         case "$answer" in
-            v|V)
-                print_rename_parent_directory_listing "$f" "$(dirname -- "$f")/$stripped"
-                continue
-                ;;
             q|Q)
                 stopped_by_user=yes
                 return 2
@@ -7454,45 +7495,52 @@ can_overwrite_collision_with_identical_md5() {
         return 3
     fi
 
-    verbose_question_timestamp "What should be done?"
-    echo "  [O] Overwrite destination (delete destination file), then continue rename"
-    echo "  [V] Same as [O] — delete destination file only, then rename"
-    echo "  [R] Rename source to alternate name (one _OTHER, or _OTHER_2, … if needed) -> $(basename -- "$old_other_path")"
-    echo "  [D] For this source directory only: use _OTHER for all further collisions (like [R])"
-    echo "  [P] Delete source file only (keep destination; skip this rename)"
-    echo "  [S] Skip (default)"
-    echo "  [Q] Quit"
-    echo -n "$(user_prompt_ts_prefix)Choice [o/v/r/d/p/S/q]: "
+    while true; do
+        verbose_question_timestamp "What should be done?"
+        echo "  [O] Overwrite destination (delete destination file), then continue rename"
+        echo "  [V] Same as [O] — delete destination file only, then rename"
+        echo "  [R] Rename source to alternate name (one _OTHER, or _OTHER_2, … if needed) -> $(basename -- "$old_other_path")"
+        echo "  [D] For this source directory only: use _OTHER for all further collisions (like [R])"
+        echo "  [P] Delete source file only (keep destination; skip this rename)"
+        echo "  [S] Skip (default)"
+        echo "  [W] List directory (parent; mark SOURCE/DESTINATION basenames)"
+        echo "  [Q] Quit"
+        echo -n "$(user_prompt_ts_prefix)Choice [o/v/r/d/p/S/w/q]: "
 
-    flush_stdin
-    read_single_key answer "$PROMPT_WAIT_SECONDS"
-    echo
+        flush_stdin
+        read_single_key answer "$PROMPT_WAIT_SECONDS"
+        echo
 
-    case "$answer" in
-        q|Q)
-            stopped_by_user=yes
-            return 2
-            ;;
-        o|O|v|V)
-            return 0
-            ;;
-        r|R)
-            COLLISION_OTHER_PATH="$old_other_path"
-            return 3
-            ;;
-        d|D)
-            AUTO_COLLISION_OTHER_DIR="$(cd -- "$(dirname -- "$old")" 2>/dev/null && pwd -P)" || AUTO_COLLISION_OTHER_DIR="$(dirname -- "$old")"
-            COLLISION_OTHER_PATH="$old_other_path"
-            vlog "Collision _OTHER per-directory session enabled for '$AUTO_COLLISION_OTHER_DIR'"
-            return 3
-            ;;
-        p|P)
-            return 4
-            ;;
-        *)
-            return 1
-            ;;
-    esac
+        if [[ "$answer" =~ [Ww] ]]; then
+            print_rename_parent_directory_listing "$old" "$new"
+            continue
+        fi
+        case "$answer" in
+            q|Q)
+                stopped_by_user=yes
+                return 2
+                ;;
+            o|O|v|V)
+                return 0
+                ;;
+            r|R)
+                COLLISION_OTHER_PATH="$old_other_path"
+                return 3
+                ;;
+            d|D)
+                AUTO_COLLISION_OTHER_DIR="$(cd -- "$(dirname -- "$old")" 2>/dev/null && pwd -P)" || AUTO_COLLISION_OTHER_DIR="$(dirname -- "$old")"
+                COLLISION_OTHER_PATH="$old_other_path"
+                vlog "Collision _OTHER per-directory session enabled for '$AUTO_COLLISION_OTHER_DIR'"
+                return 3
+                ;;
+            p|P)
+                return 4
+                ;;
+            *)
+                return 1
+                ;;
+        esac
+    done
 }
 
 sed_escape_regex() {
@@ -8232,34 +8280,41 @@ handle_lnk_file() {
     local f="$1"
     local answer=""
 
-    echo
-    emit_wrap_labeled_stdout "LNK FILE: " "${YELLOW}LNK FILE:${RESET} " "$f"
-    verbose_question_timestamp "Remove this .lnk file? [y/N/q]:"
-    flush_stdin
-    read_single_key answer "$PROMPT_WAIT_SECONDS"
-    echo
+    while true; do
+        echo
+        emit_wrap_labeled_stdout "LNK FILE: " "${YELLOW}LNK FILE:${RESET} " "$f"
+        verbose_question_timestamp "Remove this .lnk file?"
+        print_prompt_view_directory_menu_line
+        echo -n "$(user_prompt_ts_prefix)Remove this .lnk file? [y/N/v/q]: "
+        flush_stdin
+        read_single_key answer "$PROMPT_WAIT_SECONDS"
+        echo
 
-    case "$answer" in
-        q|Q)
-            stopped_by_user=yes
-            return 1
-            ;;
-        y|Y)
-            if [[ "$mode" == "dry-run" ]]; then
-                emit_wrap_labeled_stdout "[DRY-RUN] Would remove: " "${CYAN}[DRY-RUN] Would remove:${RESET} " "$f"
-            else
-                emit_wrap_labeled_stdout "REMOVE: " "${CYAN}REMOVE:${RESET} " "$f"
-                rm -f -- "$f"
-            fi
-            ((++files_affected))
-            return 0
-            ;;
-        *)
-            ((++files_skipped))
-            db_mark_checked "$f" "lnk" "kept"
-            return 0
-            ;;
-    esac
+        if handle_prompt_directory_listing_choice "$answer" "$f"; then
+            continue
+        fi
+        case "$answer" in
+            q|Q)
+                stopped_by_user=yes
+                return 1
+                ;;
+            y|Y)
+                if [[ "$mode" == "dry-run" ]]; then
+                    emit_wrap_labeled_stdout "[DRY-RUN] Would remove: " "${CYAN}[DRY-RUN] Would remove:${RESET} " "$f"
+                else
+                    emit_wrap_labeled_stdout "REMOVE: " "${CYAN}REMOVE:${RESET} " "$f"
+                    rm -f -- "$f"
+                fi
+                ((++files_affected))
+                return 0
+                ;;
+            *)
+                ((++files_skipped))
+                db_mark_checked "$f" "lnk" "kept"
+                return 0
+                ;;
+        esac
+    done
 }
 
 files_examined=0
@@ -8711,6 +8766,27 @@ print_rename_parent_directory_listing() {
     fi
 }
 
+# Shared [V] directory listing for interactive prompts (stdout menu line).
+print_prompt_view_directory_menu_line() {
+    echo "  [V] List directory where this path exists (parent; mark OLD/NEW basenames when given)"
+}
+
+# Shared [V] directory listing for stderr prompts (mapping helpers, GoPro, exiftool).
+print_prompt_view_directory_menu_line_stderr() {
+    echo "  [V] List directory where this path exists (parent; mark OLD/NEW basenames when given)" >&2
+}
+
+# Returns 0 when answer is [V] and a listing was printed (caller should re-prompt).
+handle_prompt_directory_listing_choice() {
+    local answer="$1"
+    local path="$2"
+    local suggested_new="${3-}"
+
+    [[ "$answer" =~ [Vv] && -n "$path" ]] || return 1
+    print_rename_parent_directory_listing "$path" "$suggested_new"
+    return 0
+}
+
 print_rename_prompt_menu() {
     nonverbose_progress_dot_prepare_for_prompt
     local kind_label="$1"
@@ -8778,7 +8854,7 @@ print_rename_prompt_menu() {
         choice_hint+=/b
     fi
     if [[ -n "$path" ]]; then
-        echo "  [V] List directory where this path exists (parent; plus inside when OLD is a directory)"
+        print_prompt_view_directory_menu_line
         choice_hint+=/v
     fi
     echo "  [E] Add exception (skip this path and its subtree by filter match)"
@@ -8837,41 +8913,53 @@ maybe_prompt_flatten_single_child_dir() {
         return 0
     fi
 
-    echo
-    emit_wrap_labeled_stdout "FLATTEN CANDIDATE: " "${CYAN}FLATTEN CANDIDATE:${RESET} " "$parent_dir"
-    echo "Contains exactly one subdirectory with files:"
-    echo "  $child_dir"
-    echo -e "$(user_prompt_ts_prefix)${GREEN}Move child contents one level up and delete this subdirectory?${RESET}"
-    echo "  [Y] Yes — flatten (move child contents up, remove subdirectory; then choose folder name)"
-    echo "  [N] No (default) — keep current folder layout"
-    echo "  [E] Add flatten exception — skip flatten prompts for this directory in the future"
-    echo "  [Q] Quit — stop the script"
-    echo -n "$(user_prompt_ts_prefix)Choice [y/N/e/q]: "
-    flush_stdin
-    read_single_key answer "$PROMPT_WAIT_SECONDS"
-    echo
+    while true; do
+        echo
+        emit_wrap_labeled_stdout "FLATTEN CANDIDATE: " "${CYAN}FLATTEN CANDIDATE:${RESET} " "$parent_dir"
+        echo "Contains exactly one subdirectory with files:"
+        echo "  $child_dir"
+        echo -e "$(user_prompt_ts_prefix)${GREEN}Move child contents one level up and delete this subdirectory?${RESET}"
+        echo "  [Y] Yes — flatten (move child contents up, remove subdirectory; then choose folder name)"
+        echo "  [N] No (default) — keep current folder layout"
+        echo "  [E] Add flatten exception — skip flatten prompts for this directory in the future"
+        print_prompt_view_directory_menu_line
+        echo "  [Q] Quit — stop the script"
+        echo -n "$(user_prompt_ts_prefix)Choice [y/N/e/v/q]: "
+        flush_stdin
+        read_single_key answer "$PROMPT_WAIT_SECONDS"
+        echo
 
-    if [[ "$answer" =~ [Qq] ]]; then
-        stopped_by_user=yes
-        return 2
-    fi
-    if [[ "$answer" =~ [Ee] ]]; then
-        append_flatten_exception_to_exclude_filters_file "$parent_dir"
-        return 0
-    fi
-    [[ "$answer" =~ [Yy] ]] || return 0
+        if handle_prompt_directory_listing_choice "$answer" "$parent_dir"; then
+            continue
+        fi
+        if [[ "$answer" =~ [Qq] ]]; then
+            stopped_by_user=yes
+            return 2
+        fi
+        if [[ "$answer" =~ [Ee] ]]; then
+            append_flatten_exception_to_exclude_filters_file "$parent_dir"
+            return 0
+        fi
+        [[ "$answer" =~ [Yy] ]] || return 0
+        break
+    done
 
-    echo "$(user_prompt_ts_prefix)Which directory name should remain after flatten?"
-    echo "  [P] Keep parent name: $parent_base (default)"
-    echo "  [C] Keep child name:  $child_base"
-    echo "  [M] Manually edit resulting basename"
-    echo "  [Q] Quit"
-    echo -n "$(user_prompt_ts_prefix)Choice [P/c/m/q]: "
-    flush_stdin
-    read_single_key name_choice "$PROMPT_WAIT_SECONDS"
-    echo
+    while true; do
+        echo "$(user_prompt_ts_prefix)Which directory name should remain after flatten?"
+        echo "  [P] Keep parent name: $parent_base (default)"
+        echo "  [C] Keep child name:  $child_base"
+        echo "  [M] Manually edit resulting basename"
+        print_prompt_view_directory_menu_line
+        echo "  [Q] Quit"
+        echo -n "$(user_prompt_ts_prefix)Choice [P/c/m/v/q]: "
+        flush_stdin
+        read_single_key name_choice "$PROMPT_WAIT_SECONDS"
+        echo
 
-    case "$name_choice" in
+        if handle_prompt_directory_listing_choice "$name_choice" "$parent_dir"; then
+            continue
+        fi
+        case "$name_choice" in
         q|Q)
             stopped_by_user=yes
             return 2
@@ -8898,7 +8986,9 @@ maybe_prompt_flatten_single_child_dir() {
         *)
             target_base="$parent_base"
             ;;
-    esac
+        esac
+        break
+    done
 
     if [[ "$parent_parent_dir" == "." ]]; then
         target_dir="./$target_base"
@@ -9050,8 +9140,9 @@ print_checksum_prompt_menu() {
     echo "  [E] Add exception (skip paths matching this hash file basename via exclude filter)"
     echo "  [X] Exact exception (skip only this hash file path; still check other paths)"
     echo "  [F] Filename-only exception (skip this hash file basename in every directory)"
+    print_prompt_view_directory_menu_line
     echo "  [Q] Quit"
-    echo -n "$(user_prompt_ts_prefix)Choice [Y/n/a/d/E/x/f/q]: "
+    echo -n "$(user_prompt_ts_prefix)Choice [Y/n/a/d/E/x/f/v/q]: "
 }
 
 print_rename_action_verbose() {
@@ -9616,14 +9707,22 @@ for f in "${ordered_paths[@]}"; do
                     echo -e "${WRAP_MSG_INDENT}${CYAN}${label,,} file.${RESET}"
                 fi
             else
-                verbose_question_timestamp "Remove missing thumbs.db reference(s) from this hash file?"
-                echo "  [Y] Yes - remove only the thumbs.db line(s) shown above"
-                echo "  [N] No - keep the hash file unchanged (default)"
-                echo "  [Q] Quit"
-                echo -n "$(user_prompt_ts_prefix)Choice [y/N/q]: "
-                flush_stdin
-                read_single_key input "$PROMPT_WAIT_SECONDS"
-                echo
+                while true; do
+                    verbose_question_timestamp "Remove missing thumbs.db reference(s) from this hash file?"
+                    echo "  [Y] Yes - remove only the thumbs.db line(s) shown above"
+                    echo "  [N] No - keep the hash file unchanged (default)"
+                    print_prompt_view_directory_menu_line
+                    echo "  [Q] Quit"
+                    echo -n "$(user_prompt_ts_prefix)Choice [y/N/v/q]: "
+                    flush_stdin
+                    read_single_key input "$PROMPT_WAIT_SECONDS"
+                    echo
+
+                    if handle_prompt_directory_listing_choice "$input" "$sum_file"; then
+                        continue
+                    fi
+                    break
+                done
 
                 case "$input" in
                     q|Q)
@@ -9880,10 +9979,16 @@ for f in "${ordered_paths[@]}"; do
         elif auto_yes_current_dir_matches "$sum_file"; then
             do_rename=yes
         else
-            print_checksum_prompt_menu "${label,,}" "$sum_file"
-            flush_stdin
-            read_single_key input "$PROMPT_WAIT_SECONDS"
-            echo
+            while true; do
+                print_checksum_prompt_menu "${label,,}" "$sum_file"
+                flush_stdin
+                read_single_key input "$PROMPT_WAIT_SECONDS"
+                echo
+                if handle_prompt_directory_listing_choice "$input" "$sum_file"; then
+                    continue
+                fi
+                break
+            done
             NONVERBOSE_SKIP_NEXT_MAIN_LOOP_DOT=yes
 
             case "$input" in
@@ -10502,8 +10607,7 @@ for f in "${ordered_paths[@]}"; do
         flush_stdin
         read_single_key input "$PROMPT_WAIT_SECONDS"
         echo
-        if [[ "$input" =~ [Vv] ]]; then
-            print_rename_parent_directory_listing "$f" "$new"
+        if handle_prompt_directory_listing_choice "$input" "$f" "$new"; then
             continue
         fi
         break
