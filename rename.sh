@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.06.10 - v. 19.173.150500 - Screenshot_* date+time (incl. Huawei Screenshot_YYYY-MM-DD-HH-MM-SS) → YYYYMMDD_HHMMSS-screenshot.ext; skip partial hyphen date compaction on Screenshot_ stems
 # 2026.06.10 - v. 19.172.144800 - prompt [V]/[W] directory listing: print to stderr (visible when prompt runs inside $(...) e.g. GoPro lone _part_XX)
 # 2026.06.10 - v. 19.171.140000 - archive/compressed (.zip .rar .tar .7z .gz etc.): preserve leading _ / __ through transform_basename (do not strip)
 # 2026.06.10 - v. 19.170.133500 - checksum .sha512/.md5: preserve leading _ / __ on hash filenames through transform_basename; block rename only for _sumy_kontrolne.md5 manifest
@@ -5963,23 +5964,84 @@ _rename_compact_embedded_hyphen_dates() {
     printf '%s' "$s"
 }
 
-# Screenshot_YYYY-MM-DD_HHMMSS -> Screenshot_YYYYMMDD_HHMMSS when date validates.
-_rename_apply_screenshot_hyphen_date_compact() {
-    local stem="$1"
-    local y m d time
+# Screenshot_* with calendar date + clock time → YYYYMMDD_HHMMSS-screenshot.ext (timestamp first).
+_rename_screenshot_timestamp_first() {
+    local new="$1"
+    local y m d hh mm ss ext ymd
 
-    if [[ "$stem" =~ ^([Ss]creenshot)_([0-9]{4})-([0-9]{1,2})-([0-9]{1,2})_([0-9]{6})$ ]]; then
-        y="${BASH_REMATCH[2]}"
-        m="${BASH_REMATCH[3]}"
-        d="${BASH_REMATCH[4]}"
-        time="${BASH_REMATCH[5]}"
-        if _rename_is_valid_ymd "$y" "$m" "$d"; then
-            printf 'Screenshot_%04d%02d%02d_%s' \
-                "$((10#${y}))" "$((10#${m}))" "$((10#${d}))" \
-                "$time"
-            return 0
-        fi
+    # Screenshot_YYYY-MM-DD-HH-MM-SS.ext (e.g. Huawei Honor export).
+    if [[ "$new" =~ ^[Ss]creenshot_([0-9]{4})-([0-9]{1,2})-([0-9]{1,2})-([0-9]{2})-([0-9]{2})-([0-9]{2})(\.[^.]+)$ ]]; then
+        y="${BASH_REMATCH[1]}"
+        m="${BASH_REMATCH[2]}"
+        d="${BASH_REMATCH[3]}"
+        hh="${BASH_REMATCH[4]}"
+        mm="${BASH_REMATCH[5]}"
+        ss="${BASH_REMATCH[6]}"
+        ext="${BASH_REMATCH[7]}"
+        _rename_is_valid_ymd "$y" "$m" "$d" || return 1
+        printf '%04d%02d%02d_%02d%02d%02d-screenshot%s' \
+            "$((10#${y}))" "$((10#${m}))" "$((10#${d}))" \
+            "$((10#${hh}))" "$((10#${mm}))" "$((10#${ss}))" \
+            "$ext"
+        return 0
     fi
+
+    # Screenshot_YYYY-MM-DD + sep + HH-MM-SS.ext or Screenshot_YYYY-MM-DD_HHMMSS.ext
+    if [[ "$new" =~ ^[Ss]creenshot_([0-9]{4})-([0-9]{1,2})-([0-9]{1,2})[._-]+([0-9]{2})[._-]?([0-9]{2})[._-]?([0-9]{2})(\.[^.]+)$ ]]; then
+        y="${BASH_REMATCH[1]}"
+        m="${BASH_REMATCH[2]}"
+        d="${BASH_REMATCH[3]}"
+        hh="${BASH_REMATCH[4]}"
+        mm="${BASH_REMATCH[5]}"
+        ss="${BASH_REMATCH[6]}"
+        ext="${BASH_REMATCH[7]}"
+        _rename_is_valid_ymd "$y" "$m" "$d" || return 1
+        printf '%04d%02d%02d_%02d%02d%02d-screenshot%s' \
+            "$((10#${y}))" "$((10#${m}))" "$((10#${d}))" \
+            "$((10#${hh}))" "$((10#${mm}))" "$((10#${ss}))" \
+            "$ext"
+        return 0
+    fi
+    if [[ "$new" =~ ^[Ss]creenshot_([0-9]{4})-([0-9]{1,2})-([0-9]{1,2})[._-]+([0-9]{6})(\.[^.]+)$ ]]; then
+        y="${BASH_REMATCH[1]}"
+        m="${BASH_REMATCH[2]}"
+        d="${BASH_REMATCH[3]}"
+        hh="${BASH_REMATCH[4]:0:2}"
+        mm="${BASH_REMATCH[4]:2:2}"
+        ss="${BASH_REMATCH[4]:4:2}"
+        ext="${BASH_REMATCH[5]}"
+        _rename_is_valid_ymd "$y" "$m" "$d" || return 1
+        printf '%04d%02d%02d_%s-screenshot%s' \
+            "$((10#${y}))" "$((10#${m}))" "$((10#${d}))" \
+            "${BASH_REMATCH[4]}" \
+            "$ext"
+        return 0
+    fi
+
+    # Screenshot_YYYYMMDD-HH-MM-SS.ext (date already compacted; time still hyphenated).
+    if [[ "$new" =~ ^[Ss]creenshot_([0-9]{8})-([0-9]{2})-([0-9]{2})-([0-9]{2})(\.[^.]+)$ ]]; then
+        ymd="${BASH_REMATCH[1]}"
+        hh="${BASH_REMATCH[2]}"
+        mm="${BASH_REMATCH[3]}"
+        ss="${BASH_REMATCH[4]}"
+        ext="${BASH_REMATCH[5]}"
+        _rename_is_valid_ymd "${ymd:0:4}" "${ymd:4:2}" "${ymd:6:2}" || return 1
+        printf '%s_%02d%02d%02d-screenshot%s' \
+            "$ymd" \
+            "$((10#${hh}))" "$((10#${mm}))" "$((10#${ss}))" \
+            "$ext"
+        return 0
+    fi
+
+    # Screenshot_YYYYMMDD_HHMMSS.ext (no extra title tail).
+    if [[ "$new" =~ ^[Ss]creenshot_([0-9]{8})_([0-9]{6})(\.[^.]+)$ ]]; then
+        ymd="${BASH_REMATCH[1]}"
+        _rename_is_valid_ymd "${ymd:0:4}" "${ymd:4:2}" "${ymd:6:2}" || return 1
+        printf '%s_%s-screenshot%s' \
+            "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}" "${BASH_REMATCH[3]}"
+        return 0
+    fi
+
     return 1
 }
 
@@ -5994,10 +6056,12 @@ _rename_finish_basename_stem() {
     else
         finished="$(_normalize_basename_separators "$stem")"
     fi
-    if [[ ! "$finished" =~ ^[Ss]creenshot_ ]]; then
+    if [[ "$finished" =~ ^[Ss]creenshot_ ]]; then
+        if _rename_screenshot_timestamp_first "$finished"; then
+            finished="$(_rename_screenshot_timestamp_first "$finished")"
+        fi
+    else
         finished="$(_rename_compact_embedded_hyphen_dates "$finished")"
-    elif _rename_apply_screenshot_hyphen_date_compact "$finished"; then
-        finished="$( _rename_apply_screenshot_hyphen_date_compact "$finished" )"
     fi
     printf '%s' "$finished"
 }
@@ -6827,20 +6891,27 @@ transform_basename() {
     fi
 
     # Windows Screenshot / Snip & Sketch: "Screenshot YYYY-MM-DD HHMMSS.ext" (spaces still present).
-    # Underscore separators between title, date, and 6-digit time in one pass (no rename-then-rerun).
     if [[ "$new" =~ ^([Ss]creenshot)[[:space:]]+([0-9]{4})-([0-9]{1,2})-([0-9]{1,2})[[:space:]]+([0-9]{6})(\.[^.]+)$ ]]; then
         if _rename_is_valid_ymd "${BASH_REMATCH[2]}" "${BASH_REMATCH[3]}" "${BASH_REMATCH[4]}"; then
-            _tb_emit "$(printf 'Screenshot_%04d-%02d-%02d_%s%s' \
+            _tb_emit "$(printf '%04d%02d%02d_%s-screenshot%s' \
                 "$((10#${BASH_REMATCH[2]}))" "$((10#${BASH_REMATCH[3]}))" "$((10#${BASH_REMATCH[4]}))" \
                 "${BASH_REMATCH[5]}" "${BASH_REMATCH[6]}")"
             return
         fi
     fi
 
+    # Screenshot_* with embedded date+time → YYYYMMDD_HHMMSS-screenshot.ext (before hyphen date compaction).
+    if _rename_screenshot_timestamp_first "$new"; then
+        _tb_emit "$(_rename_screenshot_timestamp_first "$new")"
+        return
+    fi
+
     # Embedded dotted calendar date anywhere in the stem (e.g. as_of_2021.11.01_040001 in a config backup name).
     # Runs after start-anchored dotted rules so YYYY.MM.DD + time at the beginning is still handled above.
     new="$(_rename_compact_embedded_dotted_dates "$new")"
-    new="$(_rename_compact_embedded_hyphen_dates "$new")"
+    if [[ ! "$new" =~ ^[Ss]creenshot_ ]]; then
+        new="$(_rename_compact_embedded_hyphen_dates "$new")"
+    fi
 
     # Underscore or whitespace between date and time (e.g. camera exports "2010-02-20 14-28-18  title.NEF").
     # Early return must still pass through _normalize_basename_separators (otherwise title tail spaces are left as-is).
