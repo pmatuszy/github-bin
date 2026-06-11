@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.06.11 - v. 3.54 - sha512 entries: relative paths without ./ prefix (rename.sh compatible)
 # 2026.06.11 - v. 3.53 - existing pairs: require sha512 on disk; auto-backfill when only hashes missing
 # 2026.06.09 - v. 3.52 - startup defaults: colors yes, mode real, scope subdirs (Enter accepts on each prompt)
 # 2026.06.09 - v. 3.51 - startup scope prompt like rename.sh: current directory only vs subdirectories; --scope current|subdirs
@@ -1475,22 +1476,170 @@ sha_file_from_single() {
     printf '%s.sha512' "$stem"
 }
 
+sha512_strip_leading_dot_slash() {
+    local p="$1"
+    printf '%s' "${p#./}"
+}
+
+# Resolve a path column from a .sha512 file to a path usable for -e / sha512sum (rename.sh rules).
+sha512_resolve_entry_path() {
+    local sha_file="$1"
+    local ref="$2"
+    local sum_dir
+
+    sum_dir="$(dirname -- "$sha_file")"
+
+    if [[ "$ref" == /* ]]; then
+        printf '%s' "$ref"
+        return 0
+    fi
+
+    if [[ "$ref" == ./* ]]; then
+        if [[ "$sum_dir" == "." ]]; then
+            printf '%s' "$ref"
+        else
+            printf '%s/%s' "$sum_dir" "${ref#./}"
+        fi
+        return 0
+    fi
+
+    if [[ "$sum_dir" == "." ]]; then
+        if [[ -e "./$ref" ]]; then
+            printf './%s' "$ref"
+        else
+            printf '%s' "$ref"
+        fi
+    else
+        printf '%s/%s' "$sum_dir" "$ref"
+    fi
+}
+
+# Path to store in a .sha512 file: relative to the sidecar directory, no ./ prefix.
+sha512_ref_path_for_entry() {
+    local sha_file="$1"
+    local target_file="$2"
+    local sum_dir resolved sum_abs file_abs ref
+
+    sum_dir="$(dirname -- "$sha_file")"
+    resolved="$(sha512_resolve_entry_path "$sha_file" "$target_file")"
+
+    if [[ "$sum_dir" == "." ]]; then
+        printf '%s' "$(basename -- "$resolved")"
+        return 0
+    fi
+
+    if command -v realpath >/dev/null 2>&1; then
+        sum_abs="$(realpath -e "$sum_dir" 2>/dev/null || realpath "$sum_dir")"
+        file_abs="$(realpath -e "$resolved" 2>/dev/null || realpath "$resolved")"
+        ref="$(realpath --relative-to="$sum_abs" "$file_abs" 2>/dev/null)" || ref="$(basename -- "$resolved")"
+    else
+        ref="${resolved#"$sum_dir"/}"
+        ref="${ref#/}"
+    fi
+    sha512_strip_leading_dot_slash "$ref"
+}
+
+write_sha512_entry() {
+    local sha_file="$1"
+    local target_file="$2"
+    local hash ref
+
+    [[ -e "$target_file" ]] || return 1
+    hash="$(sha512sum -- "$target_file" | awk '{print $1}')"
+    ref="$(sha512_ref_path_for_entry "$sha_file" "$target_file")"
+    printf '%s  %s\n' "$hash" "$ref" >>"$sha_file"
+}
+
+# Rewrite legacy ./path columns to rename.sh-style bare relative paths.
+normalize_sha512_file_refs() {
+    local sha_file="$1"
+    local tmp line hash path ref changed=0
+
+    [[ -e "$sha_file" ]] || return 0
+
+    tmp="$(mktemp)"
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        [[ -z "$line" ]] && continue
+        hash="${line%%  *}"
+        path="$(sha512_entry_path "$line")"
+        ref="$(sha512_ref_path_for_entry "$sha_file" "$(sha512_resolve_entry_path "$sha_file" "$path")")"
+        if [[ "$path" != "$ref" ]]; then
+            changed=1
+        fi
+        printf '%s  %s\n' "$hash" "$ref" >>"$tmp"
+    done < "$sha_file"
+
+    if (( changed == 1 )); then
+        mv -f -- "$tmp" "$sha_file"
+    else
+        rm -f -- "$tmp"
+    fi
+}
+
 create_sha512_pair_file() {
     local sha_file="$1"
     local org_file="$2"
     local out_file="$3"
-    sha512sum -- "$org_file" "$out_file" > "$sha_file"
+
+    : >"$sha_file"
+    write_sha512_entry "$sha_file" "$org_file"
+    write_sha512_entry "$sha_file" "$out_file"
+    normalize_sha512_file_refs "$sha_file"
 }
 
 create_sha512_single_file() {
     local sha_file="$1"
     local file="$2"
-    sha512sum -- "$file" > "$sha_file"
+
+    : >"$sha_file"
+    write_sha512_entry "$sha_file" "$file"
+    normalize_sha512_file_refs "$sha_file"
 }
 
 sha512_entry_path() {
     local line="$1"
     printf '%s' "${line#*  }"
+}
+
+sha512_entry_paths_match_target() {
+    local sha_file="$1"
+    local path_in_file="$2"
+    local target_file="$3"
+    local want ref
+
+    want="$(sha512_ref_path_for_entry "$sha_file" "$target_file")"
+    ref="$(sha512_strip_leading_dot_slash "$path_in_file")"
+    [[ "$ref" == "$want" || "$path_in_file" == "$target_file" ]]
+}
+
+sha512_collect_lines_for_target() {
+    local sha_file="$1"
+    local target_file="$2"
+    local line path hash ref
+
+    [[ -e "$sha_file" ]] || return 0
+
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        [[ -z "$line" ]] && continue
+        path="$(sha512_entry_path "$line")"
+        sha512_entry_paths_match_target "$sha_file" "$path" "$target_file" || continue
+        hash="${line%%  *}"
+        ref="$(sha512_ref_path_for_entry "$sha_file" "$target_file")"
+        printf '%s  %s\n' "$hash" "$ref"
+    done < "$sha_file"
+}
+
+sha512_verify_lines_in_sum_dir() {
+    local sha_file="$1"
+    local lines_file="$2"
+    local sum_dir
+
+    sum_dir="$(dirname -- "$sha_file")"
+    if [[ "$sum_dir" == "." ]]; then
+        sha512sum -c --quiet -- "$lines_file" 2>/dev/null
+    else
+        ( cd "$sum_dir" && sha512sum -c --quiet -- "$lines_file" ) 2>/dev/null
+    fi
 }
 
 # Drop sha512 lines whose file no longer exists (e.g. old *_OUTPUT.txt without _VAD/_noVAD).
@@ -1504,6 +1653,7 @@ prune_missing_paths_from_sha512_file() {
     while IFS= read -r line || [[ -n "$line" ]]; do
         [[ -z "$line" ]] && continue
         path="$(sha512_entry_path "$line")"
+        path="$(sha512_resolve_entry_path "$sha_file" "$path")"
         if [[ -e "$path" ]]; then
             printf '%s\n' "$line" >>"$tmp"
         else
@@ -1535,6 +1685,7 @@ sha512_file_has_missing_paths() {
     while IFS= read -r line || [[ -n "$line" ]]; do
         [[ -z "$line" ]] && continue
         path="$(sha512_entry_path "$line")"
+        path="$(sha512_resolve_entry_path "$sha_file" "$path")"
         [[ -e "$path" ]] || return 0
     done < "$sha_file"
 
@@ -1551,7 +1702,11 @@ verify_sha512_file_existing_only() {
     while IFS= read -r line || [[ -n "$line" ]]; do
         [[ -z "$line" ]] && continue
         path="$(sha512_entry_path "$line")"
-        [[ -e "$path" ]] && printf '%s\n' "$line" >>"$tmp"
+        path="$(sha512_resolve_entry_path "$sha_file" "$path")"
+        [[ -e "$path" ]] || continue
+        hash="${line%%  *}"
+        ref="$(sha512_ref_path_for_entry "$sha_file" "$path")"
+        printf '%s  %s\n' "$hash" "$ref" >>"$tmp"
     done < "$sha_file"
 
     if [[ ! -s "$tmp" ]]; then
@@ -1559,7 +1714,7 @@ verify_sha512_file_existing_only() {
         return 1
     fi
 
-    sha512sum -c --quiet -- "$tmp" 2>/dev/null
+    sha512_verify_lines_in_sum_dir "$sha_file" "$tmp"
     local ok=$?
     rm -f -- "$tmp"
     return "$ok"
@@ -1752,6 +1907,8 @@ maybe_repair_sha512_if_stale_references() {
         append_transcript_variant_hashes_for_audio "$org_file" "$sha_file"
         append_transcript_variant_hashes_for_audio "$out_file" "$sha_file"
     fi
+
+    normalize_sha512_file_refs "$sha_file"
 
     if verify_sha512_file_existing_only "$sha_file"; then
         echo -e "${CYAN}SHA512 VERIFIED:${RESET} $sha_file (repaired)"
@@ -1962,13 +2119,15 @@ pair_media_hashes_valid_in_sha() {
     local tmp
 
     [[ -e "$sha_file" && -e "$org_file" && -e "$out_file" ]] || return 1
-    grep -Fq "  $org_file" "$sha_file" || return 1
-    grep -Fq "  $out_file" "$sha_file" || return 1
 
     tmp="$(mktemp)"
-    grep -F "  $org_file" "$sha_file" >"$tmp"
-    grep -F "  $out_file" "$sha_file" >>"$tmp"
-    sha512sum -c --quiet -- "$tmp"
+    sha512_collect_lines_for_target "$sha_file" "$org_file" >"$tmp"
+    sha512_collect_lines_for_target "$sha_file" "$out_file" >>"$tmp"
+    if [[ ! -s "$tmp" ]]; then
+        rm -f -- "$tmp"
+        return 1
+    fi
+    sha512_verify_lines_in_sum_dir "$sha_file" "$tmp"
     local ok=$?
     rm -f -- "$tmp"
     return "$ok"
@@ -1983,9 +2142,10 @@ prepare_sha_for_transcript_redo() {
     if pair_media_hashes_valid_in_sha "$sha_file" "$org_file" "$out_file"; then
         echo -e "${CYAN}SHA512:${RESET} ORG and OUTPUT media hashes OK — keeping them, replacing transcript entries only."
         tmp="$(mktemp)"
-        grep -F "  $org_file" "$sha_file" >"$tmp"
-        grep -F "  $out_file" "$sha_file" >>"$tmp"
+        sha512_collect_lines_for_target "$sha_file" "$org_file" >"$tmp"
+        sha512_collect_lines_for_target "$sha_file" "$out_file" >>"$tmp"
         mv -f -- "$tmp" "$sha_file"
+        normalize_sha512_file_refs "$sha_file"
         return 0
     fi
 
@@ -2394,11 +2554,18 @@ transcript_has_repetition_loop() {
 remove_sha512_entry() {
     local sha_file="$1"
     local target_file="$2"
-    local tmp
+    local tmp line path
 
     [[ -e "$sha_file" ]] || return 0
     tmp="$(mktemp)"
-    grep -Fv "  $target_file" "$sha_file" >"$tmp" || true
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        [[ -z "$line" ]] && continue
+        path="$(sha512_entry_path "$line")"
+        if sha512_entry_paths_match_target "$sha_file" "$path" "$target_file"; then
+            continue
+        fi
+        printf '%s\n' "$line" >>"$tmp"
+    done < "$sha_file"
     if [[ -s "$tmp" ]]; then
         mv -f -- "$tmp" "$sha_file"
     else
@@ -2501,9 +2668,15 @@ print_transcription_dry_run_steps() {
 sha_file_has_entry() {
     local sha_file="$1"
     local target_file="$2"
+    local line path
 
     [[ -e "$sha_file" ]] || return 1
-    grep -Fq "  $target_file" "$sha_file"
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        [[ -z "$line" ]] && continue
+        path="$(sha512_entry_path "$line")"
+        sha512_entry_paths_match_target "$sha_file" "$path" "$target_file" && return 0
+    done < "$sha_file"
+    return 1
 }
 
 append_sha512_for_file_if_missing() {
@@ -2516,7 +2689,8 @@ append_sha512_for_file_if_missing() {
         return 0
     fi
 
-    sha512sum -- "$target_file" >> "$sha_file"
+    write_sha512_entry "$sha_file" "$target_file"
+    normalize_sha512_file_refs "$sha_file"
 }
 
 ensure_pair_sha_file() {
@@ -2579,6 +2753,8 @@ sync_existing_transcript_hashes() {
         append_transcript_variant_hashes_for_audio "$org_file" "$sha_file"
         append_transcript_variant_hashes_for_audio "$out_file" "$sha_file"
     fi
+
+    [[ -e "$sha_file" ]] && normalize_sha512_file_refs "$sha_file"
 }
 
 file_size_bytes() {
