@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.06.11 - v. 1.4 - third option: build static from ffmpeg.org official release source
 # 2026.06.11 - v. 1.3 - install prompts default [y/N]; fix installed-metadata subshell; ffmpeg.org HTML parse
 # 2026.06.11 - v. 1.2 - ffmpeg.org latest; static first then apt dynamic; move old installs aside
 # 2026.06.11 - v. 1.1 - detect legacy /usr/local/bin/ffmpeg-VERSION-arch-static and release semver (e.g. 7.0.2)
@@ -10,6 +11,7 @@
 # Static builds:     https://johnvansickle.com/ffmpeg/
 # Git (master) static builds are recommended for bug fixes; release static builds also exist.
 # Dynamic fallback: distro ffmpeg package via apt when static is unavailable.
+# Source fallback: compile official ffmpeg.org release tarball (--enable-static).
 #
 
 set -euo pipefail
@@ -24,6 +26,7 @@ FFMPEG_BUILD_KIND="${FFMPEG_BUILD_KIND:-git}"
 INSTALL_PLAN=""
 DYNAMIC_ONLY=0
 STATIC_ONLY=0
+SOURCE_ONLY=0
 ASSUME_YES=0
 VERBOSE=1
 NETWORK_TIMEOUT_SEC="${NETWORK_TIMEOUT_SEC:-120}"
@@ -75,13 +78,17 @@ print_version_banner() {
 show_help() {
     cat <<EOF
 Usage: $(basename "$0") [-h|--help] [-v|--version] [-y|--yes] [-q|--quiet] [--release]
-       [--dynamic-only] [--static-only] [--no_startup_delay]
+       [--dynamic-only] [--static-only] [--source-only] [--no_startup_delay]
 
-Check installed ffmpeg against ffmpeg.org, then install a static build
-(johnvansickle.com) or dynamic build (apt). Older installs are moved aside.
+Check installed ffmpeg against ffmpeg.org, then optionally install:
+  1) prebuilt static (johnvansickle.com)
+  2) dynamic package (apt)
+  3) static build compiled from the official ffmpeg.org release source
+Older installs are moved aside, not deleted.
 
 Install layout:
-  /opt/ffmpeg-VERSION/      versioned static or apt-tracked install
+  /opt/ffmpeg-VERSION/      prebuilt static or apt-tracked install
+  /opt/ffmpeg-VERSION-src/  official-release source static build
   /opt/ffmpeg               symlink to active install
   /usr/local/bin/ffmpeg     symlink into active install
   /opt/ffmpeg-*-backup-*    previous installs preserved automatically
@@ -89,11 +96,13 @@ Install layout:
 Options:
   -h, --help           Show this help and exit.
   -v, --version        Print script version and exit.
-  -y, --yes            Install without prompting: static if available, else apt.
+  -y, --yes            Install without prompting: static if available, else apt
+                       (does not auto-build from source; that is slow).
   -q, --quiet          Less progress output (errors still shown).
   --release            Use release static builds instead of git (master) builds.
   --dynamic-only       Install distro ffmpeg via apt only.
-  --static-only        Do not fall back to apt when static is unavailable.
+  --static-only        Do not fall back to apt or source build.
+  --source-only        Skip prebuilt static/apt; offer official source build only.
   --no_startup_delay   Skip random startup delay when run non-interactively.
 
 Environment:
@@ -252,6 +261,10 @@ format_installed_build_label() {
         echo "apt ${INSTALLED_FFMPEG_SEMVER:-${build_id}} (${APT_FFMPEG_CANDIDATE:-dynamic})"
         return 0
     fi
+    if [[ "${INSTALLED_BUILD_SOURCE}" == "src" ]]; then
+        echo "official source static ${INSTALLED_FFMPEG_SEMVER:-${build_id}}"
+        return 0
+    fi
     if [[ "${INSTALLED_BUILD_KIND}" == "semver" ]]; then
         local label
         label="$(format_build_with_date "${INSTALLED_FFMPEG_SEMVER:-${build_id}}" "" semver)"
@@ -292,6 +305,27 @@ ffmpeg_tarball_url() {
     else
         echo "${base}/builds/$(ffmpeg_tarball_basename)"
     fi
+}
+
+ffmpeg_org_release_tarball_name() {
+    local version="${1:-${FFMPEG_ORG_VERSION}}"
+    echo "ffmpeg-${version}.tar.xz"
+}
+
+ffmpeg_org_release_tarball_url() {
+    echo "https://ffmpeg.org/releases/$(ffmpeg_org_release_tarball_name "$1")"
+}
+
+official_source_build_is_available() {
+    [[ -n "${FFMPEG_ORG_VERSION}" ]]
+}
+
+ensure_ffmpeg_org_release_version() {
+    if official_source_build_is_available; then
+        return 0
+    fi
+    fetch_ffmpeg_org_latest_release || true
+    official_source_build_is_available
 }
 
 fetch_ffmpeg_org_latest_release() {
@@ -438,6 +472,12 @@ version_from_install_path() {
         INSTALLED_BUILD_KIND="date"
         INSTALLED_BUILD_SOURCE="opt"
         set_installed_build_id "${BASH_REMATCH[1]}"
+        return 0
+    fi
+    if [[ "${path}" =~ /ffmpeg-([0-9]+(\.[0-9]+)+)-src(/|$) ]]; then
+        INSTALLED_BUILD_KIND="semver"
+        INSTALLED_BUILD_SOURCE="src"
+        set_installed_build_id "${BASH_REMATCH[1]}-src"
         return 0
     fi
     if [[ "${path}" =~ /ffmpeg-([0-9]+(\.[0-9]+)+)-apt(/|$) ]]; then
@@ -780,16 +820,39 @@ apt_dynamic_is_available() {
     [[ -n "${APT_FFMPEG_CANDIDATE}" && "${APT_FFMPEG_CANDIDATE}" != "(none)" ]]
 }
 
+prompt_build_from_source_fallback() {
+    local reply=""
+
+    if (( STATIC_ONLY == 1 )); then
+        echo "Quitting — no changes made."
+        quit_prompt_with_optional_old_cleanup
+    fi
+    if ! ensure_ffmpeg_org_release_version; then
+        echo "ERROR: Could not determine an official ffmpeg.org release version to build." >&2
+        quit_prompt_with_optional_old_cleanup
+    fi
+    echo "  (slow — compiles the ffmpeg.org release tarball; not nightly/git.)"
+    echo
+    echo ">>> Waiting for your answer:"
+    echo -n "Build static ffmpeg ${FFMPEG_ORG_VERSION} from official release source? [y/N] "
+    read -r -n 1 reply || reply=""
+    echo
+    case "${reply}" in
+        y|Y|yes|YES) INSTALL_PLAN="source"; echo "Proceeding with official source build..." ;;
+        *) echo "Quitting — no changes made."; quit_prompt_with_optional_old_cleanup ;;
+    esac
+}
+
 prompt_install_dynamic_fallback() {
     local reply=""
 
-    if ! apt_dynamic_is_available; then
-        echo "ERROR: Static install unavailable and no apt ffmpeg package candidate found." >&2
-        exit 1
-    fi
     if (( STATIC_ONLY == 1 )); then
-        echo "ERROR: Static install unavailable and --static-only was given." >&2
-        exit 1
+        prompt_build_from_source_fallback
+        return 0
+    fi
+    if ! apt_dynamic_is_available; then
+        prompt_build_from_source_fallback
+        return 0
     fi
     if (( ASSUME_YES == 1 )); then
         INSTALL_PLAN="dynamic"
@@ -803,7 +866,7 @@ prompt_install_dynamic_fallback() {
     echo
     case "${reply}" in
         y|Y|yes|YES) INSTALL_PLAN="dynamic"; echo "Proceeding with apt install..." ;;
-        *) echo "Quitting — no changes made."; quit_prompt_with_optional_old_cleanup ;;
+        *) prompt_build_from_source_fallback ;;
     esac
 }
 
@@ -833,7 +896,17 @@ prompt_install_plan() {
     else
         echo "  Apt dynamic:       not available"
     fi
+    if official_source_build_is_available; then
+        echo "  Source build:      ffmpeg.org release ${FFMPEG_ORG_VERSION} (official tarball, static compile)"
+    else
+        echo "  Source build:      ffmpeg.org release version unknown"
+    fi
     echo
+
+    if (( SOURCE_ONLY == 1 )); then
+        prompt_build_from_source_fallback
+        return 0
+    fi
 
     if (( DYNAMIC_ONLY == 1 )); then
         prompt_install_dynamic_fallback
@@ -924,23 +997,133 @@ migrate_active_install_aside() {
     move_path_aside "${active}"
 }
 
+resolve_ffmpeg_bins_in_install_dir() {
+    local versioned="$1"
+    local ffmpeg_bin="" ffprobe_bin=""
+
+    if [[ -x "${versioned}/bin/ffmpeg" ]]; then
+        ffmpeg_bin="${versioned}/bin/ffmpeg"
+        ffprobe_bin="${versioned}/bin/ffprobe"
+    elif [[ -x "${versioned}/ffmpeg" ]]; then
+        ffmpeg_bin="${versioned}/ffmpeg"
+        ffprobe_bin="${versioned}/ffprobe"
+    else
+        return 1
+    fi
+    printf '%s\n%s\n' "${ffmpeg_bin}" "${ffprobe_bin}"
+}
+
 link_ffmpeg_active_version() {
     local build_id="$1"
-    local versioned=""
+    local versioned="" bins="" ffmpeg_bin="" ffprobe_bin=""
 
     versioned="$(ffmpeg_versioned_path "${build_id}")"
-    if [[ ! -x "${versioned}/ffmpeg" ]]; then
-        echo "ERROR: ffmpeg binary not found: ${versioned}/ffmpeg" >&2
+    bins="$(resolve_ffmpeg_bins_in_install_dir "${versioned}" || true)"
+    ffmpeg_bin="$(printf '%s\n' "${bins}" | sed -n '1p')"
+    ffprobe_bin="$(printf '%s\n' "${bins}" | sed -n '2p')"
+    if [[ -z "${ffmpeg_bin}" || ! -x "${ffmpeg_bin}" ]]; then
+        echo "ERROR: ffmpeg binary not found under ${versioned}" >&2
         exit 1
     fi
 
     log_step "Pointing active symlinks to ${versioned}"
     ln -sfn "${versioned}" "${CURRENT_LINK}"
-    ln -sfn "${versioned}/ffmpeg" "${BIN_FFMPEG}"
-    if [[ -x "${versioned}/ffprobe" ]]; then
-        ln -sfn "${versioned}/ffprobe" "${BIN_FFPROBE}"
+    ln -sfn "${ffmpeg_bin}" "${BIN_FFMPEG}"
+    if [[ -n "${ffprobe_bin}" && -x "${ffprobe_bin}" ]]; then
+        ln -sfn "${ffprobe_bin}" "${BIN_FFPROBE}"
     fi
     ls -l "${BIN_FFMPEG}" "${BIN_FFPROBE}" "${CURRENT_LINK}" 2>/dev/null || ls -l "${BIN_FFMPEG}" "${CURRENT_LINK}"
+}
+
+install_source_build_dependencies() {
+    echo
+    echo "part 1 — build dependencies for official source compile"
+    echo
+    need_cmd apt-get
+    log_step "Running apt-get update..."
+    apt-get update
+    log_step "Installing compiler and common codec development libraries..."
+    apt-get install -y \
+        build-essential pkg-config yasm nasm \
+        libunistring-dev zlib1g-dev \
+        libx264-dev libx265-dev libvpx-dev \
+        libmp3lame-dev libopus-dev libvorbis-dev \
+        libtheora-dev libass-dev libdav1d-dev
+    log_note "Build dependencies installed."
+}
+
+perform_install_build_from_source() {
+    local version="${FFMPEG_ORG_VERSION}"
+    local tarball url src_dir build_id="" versioned="" jobs="" rc=0
+
+    if ! ensure_ffmpeg_org_release_version; then
+        echo "ERROR: ffmpeg.org release version is unknown." >&2
+        return 1
+    fi
+
+    echo
+    echo "part 1 — official ffmpeg.org release source (${version})"
+    echo
+
+    need_cmd make
+    need_cmd gcc
+    preserve_legacy_local_bin_install
+    migrate_active_install_aside
+    install_source_build_dependencies
+
+    tarball="$(ffmpeg_org_release_tarball_name "${version}")"
+    url="$(ffmpeg_org_release_tarball_url "${version}")"
+    build_id="${version}-src"
+
+    mkdir -p "${TEMP_CATALOG}"
+    TMP_WORK_DIR="$(mktemp -d "${TEMP_CATALOG}/ffmpeg-source-build.XXXXXX")"
+
+    echo
+    echo "part 2 — download and extract official release tarball"
+    echo
+    download_file "${url}" "${TMP_WORK_DIR}/${tarball}"
+    tar -xJf "${TMP_WORK_DIR}/${tarball}" -C "${TMP_WORK_DIR}"
+    src_dir="${TMP_WORK_DIR}/ffmpeg-${version}"
+    if [[ ! -d "${src_dir}" ]]; then
+        echo "ERROR: source directory not found: ${src_dir}" >&2
+        return 1
+    fi
+
+    versioned="$(ffmpeg_versioned_path "${build_id}")"
+    if [[ -e "${versioned}" ]]; then
+        move_path_aside "${versioned}"
+    fi
+
+    echo
+    echo "part 3 — configure and compile static build (this can take a long time)"
+    echo
+
+    cd "${src_dir}"
+    log_step "Running ffmpeg configure (static, official release ${version})..."
+    ./configure \
+        --prefix="${versioned}" \
+        --enable-static \
+        --disable-shared \
+        --disable-debug \
+        --enable-gpl \
+        --enable-version3 \
+        --pkg-config-flags="--static" \
+        --extra-libs="-lpthread -lm"
+
+    jobs="$(nproc 2>/dev/null || echo 2)"
+    log_step "Building with make -j${jobs}..."
+    make -j"${jobs}"
+    log_step "Installing into ${versioned}..."
+    make install
+
+    printf 'official ffmpeg.org release %s (static source build)\n' "${version}" > "${versioned}/.install-source"
+    chmod 755 -R "${versioned}"
+    chown root:root -R "${versioned}"
+
+    link_ffmpeg_active_version "${build_id}"
+    verify_active_ffmpeg
+    print_install_success_summary "${build_id}" "official source static ${version}"
+    return 0
 }
 
 verify_active_ffmpeg() {
@@ -1117,10 +1300,31 @@ run_install_plan() {
             fi
             INSTALL_PLAN=""
             prompt_install_dynamic_fallback
-            perform_install_dynamic
+            case "${INSTALL_PLAN}" in
+                dynamic)
+                    if perform_install_dynamic; then
+                        return 0
+                    fi
+                    echo "Dynamic apt install failed."
+                    INSTALL_PLAN=""
+                    prompt_build_from_source_fallback
+                    perform_install_build_from_source
+                    ;;
+                source) perform_install_build_from_source ;;
+                *) quit_prompt_with_optional_old_cleanup ;;
+            esac
             ;;
         dynamic)
-            perform_install_dynamic
+            if perform_install_dynamic; then
+                return 0
+            fi
+            echo "Dynamic apt install failed."
+            INSTALL_PLAN=""
+            prompt_build_from_source_fallback
+            perform_install_build_from_source
+            ;;
+        source)
+            perform_install_build_from_source
             ;;
         *)
             echo "Quitting — no install method selected."
@@ -1167,6 +1371,9 @@ main() {
         echo "  url:     $(ffmpeg_tarball_url)"
     elif [[ "${INSTALL_PLAN}" == "dynamic" ]]; then
         echo "  package: ffmpeg (${APT_FFMPEG_CANDIDATE})"
+    elif [[ "${INSTALL_PLAN}" == "source" ]]; then
+        echo "  package: $(ffmpeg_org_release_tarball_name)"
+        echo "  url:     $(ffmpeg_org_release_tarball_url)"
     fi
     echo "  temp:    ${TEMP_CATALOG}"
     echo
@@ -1186,6 +1393,7 @@ while [[ $# -gt 0 ]]; do
         --release) FFMPEG_BUILD_KIND="release"; shift ;;
         --dynamic-only) DYNAMIC_ONLY=1; shift ;;
         --static-only) STATIC_ONLY=1; shift ;;
+        --source-only) SOURCE_ONLY=1; shift ;;
         --no_startup_delay) HEADER_EXTRA_ARGS+=(NO_STARTUP_DELAY); shift ;;
         *) echo "Unknown argument: $1" >&2; echo "Try: $(basename "$0") --help" >&2; exit 1 ;;
     esac
