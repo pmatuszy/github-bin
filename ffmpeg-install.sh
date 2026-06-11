@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.06.11 - v. 1.9 - running ffmpeg: offer graceful/force kill or skip with version summary; fix pgrep false positives
 # 2026.06.09 - v. 1.8 - after successful install: ffmpeg -version and script version banner
 # 2026.06.09 - v. 1.7 - check for running ffmpeg/ffprobe before script and before install
 # 2026.06.09 - v. 1.6 - prompts accept q to quit; show [y/N/q]
@@ -35,6 +36,8 @@ ASSUME_YES=0
 VERBOSE=1
 NETWORK_TIMEOUT_SEC="${NETWORK_TIMEOUT_SEC:-120}"
 FFMPEG_PROBE_TIMEOUT_SEC="${FFMPEG_PROBE_TIMEOUT_SEC:-15}"
+FFMPEG_KILL_GRACE_WAIT_SEC="${FFMPEG_KILL_GRACE_WAIT_SEC:-30}"
+FFMPEG_KILL_FORCE_WAIT_SEC="${FFMPEG_KILL_FORCE_WAIT_SEC:-10}"
 FFMPEG_ORG_VERSION=""
 FFMPEG_ORG_RELEASE_DATE=""
 REMOTE_BUILD_DATE=""
@@ -47,6 +50,7 @@ INSTALLED_BUILD_ID=""
 INSTALLED_BUILD_KIND=""
 INSTALLED_BUILD_SOURCE=""
 FFMPEG_RUNNING_ACK=0
+FFMPEG_VERSION_SUMMARY_SHOWN=0
 
 MACHINE_HW=""
 FFMPEG_ARCH=""
@@ -85,8 +89,9 @@ show_help() {
 Usage: $(basename "$0") [-h|--help] [-v|--version] [-y|--yes] [-q|--quiet] [--release]
        [--dynamic-only] [--static-only] [--source-only] [--no_startup_delay]
 
-Refuses to proceed while ffmpeg/ffprobe is running unless you confirm [y/N/q]
-(or use --yes). Checks again immediately before any install step.
+When ffmpeg/ffprobe is running, offers graceful kill (SIGTERM), then force kill
+(SIGKILL) if needed, or [S]kip to compare running vs installable versions.
+Re-checks before any install step. With --yes, tries graceful then force kill.
 
 Check installed ffmpeg against ffmpeg.org, then optionally install:
   1) prebuilt static (johnvansickle.com)
@@ -120,6 +125,8 @@ Environment:
   FFMPEG_BUILD_KIND         git (default) or release — same as --release.
   NETWORK_TIMEOUT_SEC       curl/wget timeout in seconds (default: 120).
   FFMPEG_PROBE_TIMEOUT_SEC  timeout for probing installed ffmpeg (default: 15).
+  FFMPEG_KILL_GRACE_WAIT_SEC  seconds to wait after SIGTERM (default: 30).
+  FFMPEG_KILL_FORCE_WAIT_SEC  seconds to wait after SIGKILL (default: 10).
 EOF
 }
 
@@ -816,12 +823,47 @@ prompt_reply_is_quit() {
     esac
 }
 
+ffmpeg_cmdline_is_ffmpeg_or_ffprobe() {
+    local cmd="$1"
+    [[ "$cmd" =~ ^ffmpeg([[:space:]]|$) || "$cmd" =~ ^ffprobe([[:space:]]|$) ]]
+}
+
 ffmpeg_running_procs() {
+    local line="" pid="" cmd=""
+
     if command -v pgrep >/dev/null 2>&1; then
-        pgrep -af '[f]fmpeg|[f]fprobe' 2>/dev/null || true
+        while IFS= read -r line; do
+            [[ -n "${line}" ]] || continue
+            [[ "$line" == *ffmpeg-install.sh* ]] && continue
+            pid="${line%% *}"
+            cmd="${line#"${pid}" }"
+            cmd="${cmd# }"
+            ffmpeg_cmdline_is_ffmpeg_or_ffprobe "${cmd}" || continue
+            printf '%s\n' "${line}"
+        done < <(
+            pgrep -af ffmpeg 2>/dev/null || true
+            pgrep -af ffprobe 2>/dev/null || true
+        )
     else
-        ps -eo pid=,args= 2>/dev/null | grep -E '[f]fmpeg|[f]fprobe' || true
+        while IFS= read -r line; do
+            [[ -n "${line}" ]] || continue
+            [[ "$line" == *ffmpeg-install.sh* ]] && continue
+            pid="${line%% *}"
+            cmd="${line#"${pid}" }"
+            cmd="${cmd# }"
+            ffmpeg_cmdline_is_ffmpeg_or_ffprobe "${cmd}" || continue
+            printf '%s\n' "${line}"
+        done < <(ps -eo pid=,args= 2>/dev/null || true)
     fi
+}
+
+ffmpeg_running_pids() {
+    local line="" pid=""
+    while IFS= read -r line; do
+        [[ -n "${line}" ]] || continue
+        pid="${line%% *}"
+        [[ "${pid}" =~ ^[0-9]+$ ]] && printf '%s\n' "${pid}"
+    done < <(ffmpeg_running_procs)
 }
 
 ffmpeg_is_running() {
@@ -830,52 +872,239 @@ ffmpeg_is_running() {
     [[ -n "${procs}" ]]
 }
 
-prompt_continue_while_ffmpeg_running() {
-    local procs="" reply="" count=0 line=""
-
-    procs="$(ffmpeg_running_procs)"
-    [[ -n "${procs}" ]] || return 0
-
+ffmpeg_running_proc_count() {
+    local count=0 line=""
     while IFS= read -r line; do
         [[ -n "${line}" ]] && (( count++ )) || true
-    done <<< "${procs}"
+    done < <(ffmpeg_running_procs)
+    echo "${count}"
+}
 
+print_ffmpeg_running_process_list() {
+    local count=0 line=""
+
+    count="$(ffmpeg_running_proc_count)"
     echo
     echo "ffmpeg/ffprobe is currently running (${count} process(es)):"
     while IFS= read -r line; do
         [[ -n "${line}" ]] && echo "  ${line}"
-    done <<< "${procs}"
+    done < <(ffmpeg_running_procs)
     echo
     echo "Installing while ffmpeg is running can fail (binary in use) or leave jobs on old binaries."
-    echo "Stop active jobs first, then run this script again."
+}
+
+signal_running_ffmpeg_procs() {
+    local sig="$1" pid=""
+    while IFS= read -r pid; do
+        [[ -n "${pid}" ]] || continue
+        kill "-${sig}" "${pid}" 2>/dev/null || true
+    done < <(ffmpeg_running_pids)
+}
+
+wait_for_ffmpeg_not_running() {
+    local max_wait="${1:-${FFMPEG_KILL_GRACE_WAIT_SEC}}" i=0
+    while (( i < max_wait )); do
+        ffmpeg_is_running || return 0
+        sleep 1
+        ((++i))
+    done
+    return 1
+}
+
+kill_running_ffmpeg_gracefully() {
+    local count=0
+
+    ffmpeg_is_running || return 0
+    count="$(ffmpeg_running_proc_count)"
+    log_step "Sending SIGTERM to ${count} ffmpeg/ffprobe process(es)..."
+    signal_running_ffmpeg_procs TERM
+    if wait_for_ffmpeg_not_running "${FFMPEG_KILL_GRACE_WAIT_SEC}"; then
+        log_note "All ffmpeg/ffprobe processes stopped."
+        FFMPEG_RUNNING_ACK=0
+        return 0
+    fi
+    return 1
+}
+
+kill_running_ffmpeg_forcefully() {
+    local count=0
+
+    ffmpeg_is_running || return 0
+    count="$(ffmpeg_running_proc_count)"
+    log_step "Sending SIGKILL to ${count} ffmpeg/ffprobe process(es)..."
+    signal_running_ffmpeg_procs KILL
+    if wait_for_ffmpeg_not_running "${FFMPEG_KILL_FORCE_WAIT_SEC}"; then
+        log_note "All ffmpeg/ffprobe processes stopped."
+        FFMPEG_RUNNING_ACK=0
+        return 0
+    fi
+    return 1
+}
+
+print_running_ffmpeg_version_summary() {
+    local pid="" exe="" ver=""
+    declare -A seen_exes=()
+
+    echo "  Running process binaries:"
+    if ! ffmpeg_is_running; then
+        echo "    (none)"
+        return 0
+    fi
+
+    while IFS= read -r pid; do
+        [[ -n "${pid}" ]] || continue
+        exe="$(readlink -f "/proc/${pid}/exe" 2>/dev/null || true)"
+        [[ -n "${exe}" ]] || continue
+        [[ -n "${seen_exes[$exe]+x}" ]] && continue
+        seen_exes[$exe]=1
+        ver="$(probe_ffmpeg_semver "${exe}" || true)"
+        if [[ -n "${ver}" ]]; then
+            echo "    pid ${pid}: ${exe} — ffmpeg ${ver}"
+        else
+            echo "    pid ${pid}: ${exe} — version unknown"
+        fi
+    done < <(ffmpeg_running_pids)
+}
+
+print_ffmpeg_version_check_block() {
+    local installed="$1" installed_date="$2"
+
     echo
+    echo "ffmpeg version check (${FFMPEG_ARCH}):"
+    print_running_ffmpeg_version_summary
+    echo "  Active install:    $(format_installed_build_label "${installed}" "${installed_date}")"
+    if [[ -n "${FFMPEG_ORG_VERSION}" ]]; then
+        echo "  ffmpeg.org latest: ${FFMPEG_ORG_VERSION} (released ${FFMPEG_ORG_RELEASE_DATE:-unknown})"
+    else
+        echo "  ffmpeg.org latest: unknown"
+    fi
+    if (( STATIC_TARBALL_AVAILABLE == 1 )); then
+        echo "  Static (${FFMPEG_BUILD_KIND}): available — $(ffmpeg_tarball_basename)"
+        if build_id_is_date "${REMOTE_BUILD_LABEL}"; then
+            echo "                     tarball dated ${REMOTE_BUILD_DATE}"
+        elif [[ -n "${REMOTE_BUILD_LABEL}" && "${REMOTE_BUILD_LABEL}" != "latest" ]]; then
+            echo "                     build label ${REMOTE_BUILD_LABEL}"
+        fi
+    else
+        echo "  Static (${FFMPEG_BUILD_KIND}): not available for ${FFMPEG_ARCH}"
+    fi
+    if apt_dynamic_is_available; then
+        echo "  Apt dynamic:       ${APT_FFMPEG_CANDIDATE} (upstream ${APT_FFMPEG_VERSION:-?})"
+    else
+        echo "  Apt dynamic:       not available"
+    fi
+    if official_source_build_is_available; then
+        echo "  Source build:      ffmpeg.org release ${FFMPEG_ORG_VERSION} (official tarball, static compile)"
+    else
+        echo "  Source build:      ffmpeg.org release version unknown"
+    fi
+    echo
+}
+
+skip_running_ffmpeg_with_version_summary() {
+    local installed="$1" installed_date="$2"
+
+    FFMPEG_RUNNING_ACK=1
+    FFMPEG_VERSION_SUMMARY_SHOWN=1
+    log_note "Continuing without stopping running ffmpeg/ffprobe (at your risk)."
+    print_ffmpeg_version_check_block "${installed}" "${installed_date}"
+}
+
+prompt_force_kill_or_skip_running_ffmpeg() {
+    local installed="$1" installed_date="$2" reply=""
+
+    while ffmpeg_is_running; do
+        echo
+        echo "Some ffmpeg/ffprobe process(es) are still running after SIGTERM."
+        print_ffmpeg_running_process_list
+        echo "  [F] Force kill (SIGKILL) and wait"
+        echo "  [S] Skip — show versions, continue without stopping jobs"
+        echo "  [Q] Quit"
+        echo ">>> Waiting for your answer:"
+        echo -n "Choice [F/s/q]: "
+        read -r -n 1 reply || reply=""
+        echo
+        case "${reply}" in
+            f|F)
+                if kill_running_ffmpeg_forcefully; then
+                    return 0
+                fi
+                echo "WARNING: Some ffmpeg/ffprobe processes could not be stopped." >&2
+                ;;
+            s|S)
+                skip_running_ffmpeg_with_version_summary "${installed}" "${installed_date}"
+                return 0
+                ;;
+            q|Q)
+                echo "Quitting — stop ffmpeg and run this script again."
+                exit 0
+                ;;
+            *)
+                echo "Please choose F, s, or q."
+                ;;
+        esac
+    done
+    return 0
+}
+
+handle_running_ffmpeg_interactive() {
+    local installed="$1" installed_date="$2" reply=""
+
+    ffmpeg_is_running || return 0
 
     if (( ASSUME_YES == 1 )); then
-        FFMPEG_RUNNING_ACK=1
-        log_note "Continuing anyway because --yes was given."
+        print_ffmpeg_running_process_list
+        if kill_running_ffmpeg_gracefully; then
+            return 0
+        fi
+        if kill_running_ffmpeg_forcefully; then
+            return 0
+        fi
+        skip_running_ffmpeg_with_version_summary "${installed}" "${installed_date}"
         return 0
     fi
 
-    echo ">>> Waiting for your answer:"
-    echo -n "Continue while ffmpeg is running? [y/N/q] "
-    read -r -n 1 reply || reply=""
-    echo
-    if prompt_reply_is_yes "${reply}"; then
-        FFMPEG_RUNNING_ACK=1
-        log_note "Continuing while ffmpeg is running (at your risk)."
-        return 0
-    fi
-    echo "Quitting — stop ffmpeg and run this script again."
-    exit 0
+    while ffmpeg_is_running; do
+        print_ffmpeg_running_process_list
+        echo "  [K] Kill gracefully (SIGTERM) and wait for processes to exit"
+        echo "  [S] Skip — show running vs installable versions, continue without stopping jobs"
+        echo "  [Q] Quit"
+        echo ">>> Waiting for your answer:"
+        echo -n "Choice [K/s/q] (Enter=kill gracefully): "
+        read -r -n 1 reply || reply=""
+        echo
+        case "${reply}" in
+            s|S|n|N)
+                skip_running_ffmpeg_with_version_summary "${installed}" "${installed_date}"
+                return 0
+                ;;
+            k|K|y|Y|"")
+                if kill_running_ffmpeg_gracefully; then
+                    return 0
+                fi
+                prompt_force_kill_or_skip_running_ffmpeg "${installed}" "${installed_date}"
+                return 0
+                ;;
+            q|Q)
+                echo "Quitting — stop ffmpeg and run this script again."
+                exit 0
+                ;;
+            *)
+                echo "Unknown choice; try again."
+                ;;
+        esac
+    done
+    FFMPEG_RUNNING_ACK=0
+    return 0
 }
 
 check_ffmpeg_running_before_install() {
     ffmpeg_is_running || return 0
     if (( FFMPEG_RUNNING_ACK == 1 )); then
-        log_note "ffmpeg/ffprobe still running (continuing at your risk)."
+        log_note "ffmpeg/ffprobe still running (you chose to skip stopping them)."
         return 0
     fi
-    prompt_continue_while_ffmpeg_running
+    handle_running_ffmpeg_interactive "${INSTALLED_BUILD_ID}" ""
 }
 
 prompt_remove_old_ffmpeg_installs() {
@@ -995,33 +1224,9 @@ prompt_install_plan() {
 
     INSTALL_PLAN=""
 
-    echo
-    echo "ffmpeg version check (${FFMPEG_ARCH}):"
-    if [[ -n "${FFMPEG_ORG_VERSION}" ]]; then
-        echo "  ffmpeg.org latest: ${FFMPEG_ORG_VERSION} (released ${FFMPEG_ORG_RELEASE_DATE:-unknown})"
-    else
-        echo "  ffmpeg.org latest: unknown"
+    if (( FFMPEG_VERSION_SUMMARY_SHOWN == 0 )); then
+        print_ffmpeg_version_check_block "${installed}" "${installed_date}"
     fi
-    echo "  Installed:         $(format_installed_build_label "${installed}" "${installed_date}")"
-    if (( STATIC_TARBALL_AVAILABLE == 1 )); then
-        echo "  Static (${FFMPEG_BUILD_KIND}): available — $(ffmpeg_tarball_basename)"
-        if build_id_is_date "${REMOTE_BUILD_LABEL}"; then
-            echo "                     tarball dated ${REMOTE_BUILD_DATE}"
-        fi
-    else
-        echo "  Static (${FFMPEG_BUILD_KIND}): not available for ${FFMPEG_ARCH}"
-    fi
-    if apt_dynamic_is_available; then
-        echo "  Apt dynamic:       ${APT_FFMPEG_CANDIDATE} (upstream ${APT_FFMPEG_VERSION:-?})"
-    else
-        echo "  Apt dynamic:       not available"
-    fi
-    if official_source_build_is_available; then
-        echo "  Source build:      ffmpeg.org release ${FFMPEG_ORG_VERSION} (official tarball, static compile)"
-    else
-        echo "  Source build:      ffmpeg.org release version unknown"
-    fi
-    echo
 
     if (( SOURCE_ONLY == 1 )); then
         prompt_build_from_source_fallback
@@ -1468,8 +1673,6 @@ main() {
 
     log_step "Starting ffmpeg install/update check..."
     as_root_check
-    log_step "Checking for running ffmpeg/ffprobe..."
-    prompt_continue_while_ffmpeg_running
     detect_machine "$(uname -m)"
 
     log_step "Step 1/4 — ffmpeg.org latest release"
@@ -1493,6 +1696,10 @@ main() {
     fi
 
     log_step "Version check complete."
+    if ffmpeg_is_running; then
+        log_step "Running ffmpeg/ffprobe detected — stop or skip before install prompts..."
+        handle_running_ffmpeg_interactive "${installed}" "${installed_date}"
+    fi
     prompt_install_plan "${installed}" "${installed_date}"
 
     echo
