@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.06.11 - v. 2.1.2 - max profile: --enable-chromaprint (not --enable-libchromaprint) for ffmpeg 8.x
 # 2026.06.11 - v. 2.1.1 - fix nounset tarball URL, apt local -a syntax, duplicate profile/fdk prompts
 # 2026.06.11 - v. 2.1 - source build profiles: min/common/max/gpu/nvidia; --source-profile; interactive menu
 # 2026.06.11 - v. 2.0 - source build: enable common external encoders (libmp3lame, x264, openssl, aom, …)
@@ -1750,7 +1751,7 @@ ffmpeg_source_configure_args() {
     if [[ "${SOURCE_PROFILE}" == max || "${SOURCE_PROFILE}" == gpu || "${SOURCE_PROFILE}" == nvidia ]]; then
         pkg-config --exists libopenjp2 2>/dev/null && args+=( --enable-libopenjpeg )
         pkg-config --exists libbluray 2>/dev/null && args+=( --enable-libbluray )
-        pkg-config --exists libchromaprint 2>/dev/null && args+=( --enable-libchromaprint )
+        pkg-config --exists libchromaprint 2>/dev/null && args+=( --enable-chromaprint )
         pkg-config --exists libgme 2>/dev/null && args+=( --enable-libgme )
         pkg-config --exists libopenmpt 2>/dev/null && args+=( --enable-libopenmpt )
         pkg-config --exists vidstab 2>/dev/null && args+=( --enable-libvidstab )
