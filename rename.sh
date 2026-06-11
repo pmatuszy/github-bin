@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.06.09 - v. 19.180.120000 - rename/checksum prompts [C]: type custom exclude pattern, append to exclude file immediately
 # 2026.06.10 - v. 19.179.174500 - embedded -date_YYYY-MM-DD_HH_MM_SS[_tail] (BBC/Our World exports) → YYYYMMDD_HHMMSS_title[_tail]; before and after hyphen compaction
 # 2026.06.10 - v. 19.178.172000 - Signal timestamp-first: run before and after hyphen date compaction (idempotent; catches partial compact / reorder-safe)
 # 2026.06.10 - v. 19.177.170000 - Signal signal-YYYY-MM-DD-HH-MM-SS[-tail]: timestamp first before hyphen date compaction (fixes signal-20260606-12-00-47-325 stuck after partial compact)
@@ -727,7 +728,7 @@ Options:
 Optional exclude file in the start directory: _exclude-rename.sh.txt
   FILE=basename or FILE=wildcard — skip renaming that filename in every subdirectory (files and directories; not path-specific).
   SUBTREE=dir — skip that directory and every path under it (prompt [B] on a file uses the directory where that file lives).
-  [F] at the rename prompt appends FILE=<basename> for the current path (file or directory). At the checksum-group prompt, [F] uses the list file's basename. See also =full/path, /basename/, globs.
+  [F] at the rename prompt appends FILE=<basename> for the current path (file or directory). At the checksum-group prompt, [F] uses the list file's basename. [C] lets you type any custom filter line (FILE=, SUBTREE=, =path, globs). See also /basename/.
   thumbs.db / torrent .URL: if the suggested path equals the current path, you still get a prompt so you can delete the file ([K] / [T]); there is no rename to apply.
 
 Example:
@@ -1617,6 +1618,55 @@ exception_exists_for_path() {
         [[ -n "$fn_entry" && "$existing" == "$fn_entry" ]] && return 0
     done
     return 1
+}
+
+append_custom_exclude_pattern_to_exclude_filters_file() {
+    local pattern="$1"
+    local existing found=0
+
+    [[ -n "$pattern" ]] || return 1
+    [[ "$pattern" != \#* ]] || return 1
+
+    if [[ ! -e "$EXCLUDE_FILTERS_FILE" ]]; then
+        : > "$EXCLUDE_FILTERS_FILE"
+    fi
+
+    load_exclude_filters
+
+    for existing in "${EXCLUDE_FILTERS[@]}"; do
+        [[ "$existing" == "$pattern" ]] && { found=1; break; }
+    done
+
+    if (( found == 0 )); then
+        printf '%s
+' "$pattern" >> "$EXCLUDE_FILTERS_FILE"
+        emit_wrap_exclude_append_message 1 "EXCEPTION ADDED" "$pattern"
+    else
+        emit_wrap_exclude_append_message 0 "EXCEPTION EXISTS" "$pattern"
+    fi
+
+    load_exclude_filters
+}
+
+prompt_custom_exclude_pattern_from_user() {
+    local pattern=""
+
+    echo
+    echo "$(user_prompt_ts_prefix)Custom exclude pattern (written to exclude file; active immediately):"
+    echo "  Same syntax as _exclude-rename.sh.txt — FILE=name, SUBTREE=dir, =/exact/path, globs, /fragment/"
+    echo "  Leave empty and press Enter to cancel."
+    echo -n "$(user_prompt_ts_prefix)Pattern: "
+    read_line_editable pattern "$PROMPT_WAIT_SECONDS" ""
+    echo
+    pattern="${pattern%$'\r'}"
+    pattern="${pattern#"${pattern%%[![:space:]]*}"}"
+    pattern="${pattern%"${pattern##*[![:space:]]}"}"
+    [[ -n "$pattern" ]] || return 1
+    if [[ "$pattern" == \#* ]]; then
+        emit_wrap_labeled_stdout "SKIP: " "${YELLOW}SKIP:${RESET} " "Pattern must not start with # (comments are ignored when loading)."
+        return 1
+    fi
+    append_custom_exclude_pattern_to_exclude_filters_file "$pattern"
 }
 
 append_path_to_exclude_filters_file() {
@@ -9496,6 +9546,8 @@ print_rename_prompt_menu() {
     fi
     echo "  [E] Add exception (skip this path and its subtree by filter match)"
     echo "  [X] Exact exception (do not rename only this exact path; still check subtree)"
+    echo "  [C] Custom exclude pattern — type any filter line (FILE=, SUBTREE=, glob, etc.)"
+    choice_hint+=/c
     echo "  [Q] Quit"
     choice_hint+="/E/x/q]: "
     echo -n "$(user_prompt_ts_prefix)$choice_hint"
@@ -9777,9 +9829,10 @@ print_checksum_prompt_menu() {
     echo "  [E] Add exception (skip paths matching this hash file basename via exclude filter)"
     echo "  [X] Exact exception (skip only this hash file path; still check other paths)"
     echo "  [F] Filename-only exception (skip this hash file basename in every directory)"
+    echo "  [C] Custom exclude pattern — type any filter line (FILE=, SUBTREE=, glob, etc.)"
     print_prompt_view_directory_menu_line
     echo "  [Q] Quit"
-    echo -n "$(user_prompt_ts_prefix)Choice [Y/n/a/d/E/x/f/v/q]: "
+    echo -n "$(user_prompt_ts_prefix)Choice [Y/n/a/d/E/x/f/c/v/q]: "
 }
 
 print_rename_action_verbose() {
@@ -10625,6 +10678,13 @@ for f in "${ordered_paths[@]}"; do
                 if handle_prompt_directory_listing_choice "$input" "$sum_file"; then
                     continue
                 fi
+                if [[ "$input" =~ [Cc] ]]; then
+                    if prompt_custom_exclude_pattern_from_user; then
+                        input='C'
+                    else
+                        continue
+                    fi
+                fi
                 break
             done
             NONVERBOSE_SKIP_NEXT_MAIN_LOOP_DOT=yes
@@ -10675,6 +10735,10 @@ for f in "${ordered_paths[@]}"; do
                     else
                         ((++files_skipped))
                     fi
+                    do_rename=no
+                    ;;
+                c|C)
+                    ((++files_skipped))
                     do_rename=no
                     ;;
                 *)
@@ -11271,6 +11335,13 @@ for f in "${ordered_paths[@]}"; do
         if handle_prompt_directory_listing_choice "$input" "$f" "$new"; then
             continue
         fi
+        if [[ "$input" =~ [Cc] ]]; then
+            if prompt_custom_exclude_pattern_from_user; then
+                input='C'
+            else
+                continue
+            fi
+        fi
         break
     done
     # User just answered an interactive prompt; next main-loop iteration must not print a lone "." on stdout/tty.
@@ -11351,6 +11422,10 @@ for f in "${ordered_paths[@]}"; do
             ;;
         x|X)
             append_exact_path_to_exclude_filters_file "$f"
+            ((++files_skipped))
+            processed["$f"]=1
+            ;;
+        c|C)
             ((++files_skipped))
             processed["$f"]=1
             ;;

@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# 2026.06.09 - v. 1.7 - check for running ffmpeg/ffprobe before script and before install
+# 2026.06.09 - v. 1.6 - prompts accept q to quit; show [y/N/q]
 # 2026.06.11 - v. 1.5 - install to /usr/local/bin/ffmpeg-VERSION; ffmpeg/ffprobe -> versioned names
 # 2026.06.11 - v. 1.4 - third option: build static from ffmpeg.org official release source
 # 2026.06.11 - v. 1.3 - install prompts default [y/N]; fix installed-metadata subshell; ffmpeg.org HTML parse
@@ -43,6 +45,7 @@ INSTALLED_FFMPEG_SEMVER=""
 INSTALLED_BUILD_ID=""
 INSTALLED_BUILD_KIND=""
 INSTALLED_BUILD_SOURCE=""
+FFMPEG_RUNNING_ACK=0
 
 MACHINE_HW=""
 FFMPEG_ARCH=""
@@ -81,6 +84,9 @@ show_help() {
 Usage: $(basename "$0") [-h|--help] [-v|--version] [-y|--yes] [-q|--quiet] [--release]
        [--dynamic-only] [--static-only] [--source-only] [--no_startup_delay]
 
+Refuses to proceed while ffmpeg/ffprobe is running unless you confirm [y/N/q]
+(or use --yes). Checks again immediately before any install step.
+
 Check installed ffmpeg against ffmpeg.org, then optionally install:
   1) prebuilt static (johnvansickle.com)
   2) dynamic package (apt)
@@ -100,6 +106,8 @@ Options:
   -y, --yes            Install without prompting: static if available, else apt
                        (does not auto-build from source; that is slow).
   -q, --quiet          Less progress output (errors still shown).
+
+Interactive prompts use [y/N/q]: y = yes, Enter/N = no (default), q = quit.
   --release            Use release static builds instead of git (master) builds.
   --dynamic-only       Install distro ffmpeg via apt only.
   --static-only        Do not fall back to apt or source build.
@@ -793,6 +801,82 @@ list_preserved_ffmpeg_versions() {
     done
 }
 
+prompt_reply_is_yes() {
+    case "${1}" in
+        y|Y|yes|YES) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+prompt_reply_is_quit() {
+    case "${1}" in
+        q|Q|quit|QUIT) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+ffmpeg_running_procs() {
+    if command -v pgrep >/dev/null 2>&1; then
+        pgrep -af '[f]fmpeg|[f]fprobe' 2>/dev/null || true
+    else
+        ps -eo pid=,args= 2>/dev/null | grep -E '[f]fmpeg|[f]fprobe' || true
+    fi
+}
+
+ffmpeg_is_running() {
+    local procs=""
+    procs="$(ffmpeg_running_procs)"
+    [[ -n "${procs}" ]]
+}
+
+prompt_continue_while_ffmpeg_running() {
+    local procs="" reply="" count=0 line=""
+
+    procs="$(ffmpeg_running_procs)"
+    [[ -n "${procs}" ]] || return 0
+
+    while IFS= read -r line; do
+        [[ -n "${line}" ]] && (( count++ )) || true
+    done <<< "${procs}"
+
+    echo
+    echo "ffmpeg/ffprobe is currently running (${count} process(es)):"
+    while IFS= read -r line; do
+        [[ -n "${line}" ]] && echo "  ${line}"
+    done <<< "${procs}"
+    echo
+    echo "Installing while ffmpeg is running can fail (binary in use) or leave jobs on old binaries."
+    echo "Stop active jobs first, then run this script again."
+    echo
+
+    if (( ASSUME_YES == 1 )); then
+        FFMPEG_RUNNING_ACK=1
+        log_note "Continuing anyway because --yes was given."
+        return 0
+    fi
+
+    echo ">>> Waiting for your answer:"
+    echo -n "Continue while ffmpeg is running? [y/N/q] "
+    read -r -n 1 reply || reply=""
+    echo
+    if prompt_reply_is_yes "${reply}"; then
+        FFMPEG_RUNNING_ACK=1
+        log_note "Continuing while ffmpeg is running (at your risk)."
+        return 0
+    fi
+    echo "Quitting — stop ffmpeg and run this script again."
+    exit 0
+}
+
+check_ffmpeg_running_before_install() {
+    ffmpeg_is_running || return 0
+    if (( FFMPEG_RUNNING_ACK == 1 )); then
+        log_note "ffmpeg/ffprobe still running (continuing at your risk)."
+        return 0
+    fi
+    prompt_continue_while_ffmpeg_running
+}
+
 prompt_remove_old_ffmpeg_installs() {
     local old_labels=() label="" reply="" vffmpeg="" vffprobe=""
 
@@ -819,16 +903,18 @@ prompt_remove_old_ffmpeg_installs() {
         vffprobe="${BIN_DIR}/ffprobe-${label}"
 
         echo ">>> Waiting for your answer:"
-        echo -n "Remove ffmpeg-${label} and ffprobe-${label}? [y/N] "
+        echo -n "Remove ffmpeg-${label} and ffprobe-${label}? [y/N/q] "
         read -r -n 1 reply || reply=""
         echo
-        case "${reply}" in
-            y|Y|yes|YES)
-                log_step "Removing ffmpeg-${label} and ffprobe-${label}"
-                rm -f "${vffmpeg}" "${vffprobe}"
-                ;;
-            *) log_note "Keeping ffmpeg-${label}." ;;
-        esac
+        if prompt_reply_is_yes "${reply}"; then
+            log_step "Removing ffmpeg-${label} and ffprobe-${label}"
+            rm -f "${vffmpeg}" "${vffprobe}"
+        elif prompt_reply_is_quit "${reply}"; then
+            log_note "Quitting — keeping remaining old versions."
+            return 0
+        else
+            log_note "Keeping ffmpeg-${label}."
+        fi
     done
 }
 
@@ -859,13 +945,16 @@ prompt_build_from_source_fallback() {
     echo "  (slow — compiles the ffmpeg.org release tarball; not nightly/git.)"
     echo
     echo ">>> Waiting for your answer:"
-    echo -n "Build static ffmpeg ${FFMPEG_ORG_VERSION} from official release source? [y/N] "
+    echo -n "Build static ffmpeg ${FFMPEG_ORG_VERSION} from official release source? [y/N/q] "
     read -r -n 1 reply || reply=""
     echo
-    case "${reply}" in
-        y|Y|yes|YES) INSTALL_PLAN="source"; echo "Proceeding with official source build..." ;;
-        *) echo "Quitting — no changes made."; quit_prompt_with_optional_old_cleanup ;;
-    esac
+    if prompt_reply_is_yes "${reply}"; then
+        INSTALL_PLAN="source"
+        echo "Proceeding with official source build..."
+    else
+        echo "Quitting — no changes made."
+        quit_prompt_with_optional_old_cleanup
+    fi
 }
 
 prompt_install_dynamic_fallback() {
@@ -886,13 +975,18 @@ prompt_install_dynamic_fallback() {
     fi
     echo
     echo ">>> Waiting for your answer:"
-    echo -n "Install dynamic ffmpeg via apt (${APT_FFMPEG_CANDIDATE})? [y/N] "
+    echo -n "Install dynamic ffmpeg via apt (${APT_FFMPEG_CANDIDATE})? [y/N/q] "
     read -r -n 1 reply || reply=""
     echo
-    case "${reply}" in
-        y|Y|yes|YES) INSTALL_PLAN="dynamic"; echo "Proceeding with apt install..." ;;
-        *) prompt_build_from_source_fallback ;;
-    esac
+    if prompt_reply_is_yes "${reply}"; then
+        INSTALL_PLAN="dynamic"
+        echo "Proceeding with apt install..."
+    elif prompt_reply_is_quit "${reply}"; then
+        echo "Quitting — no changes made."
+        quit_prompt_with_optional_old_cleanup
+    else
+        prompt_build_from_source_fallback
+    fi
 }
 
 prompt_install_plan() {
@@ -945,13 +1039,17 @@ prompt_install_plan() {
             return 0
         fi
         echo ">>> Waiting for your answer:"
-        echo -n "Install static ffmpeg build? [y/N] "
+        echo -n "Install static ffmpeg build? [y/N/q] "
         read -r -n 1 reply || reply=""
         echo
-        case "${reply}" in
-            y|Y|yes|YES) INSTALL_PLAN="static"; echo "Proceeding with static install..."; return 0 ;;
-            *) ;;
-        esac
+        if prompt_reply_is_yes "${reply}"; then
+            INSTALL_PLAN="static"
+            echo "Proceeding with static install..."
+            return 0
+        elif prompt_reply_is_quit "${reply}"; then
+            echo "Quitting — no changes made."
+            quit_prompt_with_optional_old_cleanup
+        fi
     else
         echo "Static build is not available for this architecture."
     fi
@@ -1307,6 +1405,8 @@ perform_install_dynamic() {
 }
 
 run_install_plan() {
+    check_ffmpeg_running_before_install
+
     case "${INSTALL_PLAN}" in
         static)
             if perform_install_static; then
@@ -1356,6 +1456,8 @@ main() {
 
     log_step "Starting ffmpeg install/update check..."
     as_root_check
+    log_step "Checking for running ffmpeg/ffprobe..."
+    prompt_continue_while_ffmpeg_running
     detect_machine "$(uname -m)"
 
     log_step "Step 1/4 — ffmpeg.org latest release"
