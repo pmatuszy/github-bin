@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# 2026.06.11 - v. 2.1.12 - installed path listing: symlink target and resolved real file for each tool
+# 2026.06.11 - v. 2.1.11 - version check prompt: show full paths to installed ffmpeg/ffprobe/ffplay binaries
 # 2026.06.11 - v. 2.1.10 - versioned filenames use release semver (8.1.1); git static falls back to ffmpeg.org version
 # 2026.06.11 - v. 2.1.9 - versioned bin names use semver or N-REV (not YYYYMMDD); migrate date-named bins
 # 2026.06.11 - v. 2.1.8 - ffplay versioned layout; plain ff* -> versioned file + symlink; /bin/env; end summary
@@ -352,7 +354,11 @@ format_installed_build_label() {
         return 0
     fi
     if [[ -n "${INSTALLED_FFMPEG_SEMVER}" ]]; then
-        echo "ffmpeg ${INSTALLED_FFMPEG_SEMVER} (${build_id})"
+        if [[ "${INSTALLED_FFMPEG_SEMVER}" == "${build_id}" ]]; then
+            echo "ffmpeg ${build_id}"
+        else
+            echo "ffmpeg ${INSTALLED_FFMPEG_SEMVER} (${build_id})"
+        fi
         return 0
     fi
     if build_id_is_date "${build_id}"; then
@@ -863,6 +869,95 @@ resolve_active_ffprobe_exe() {
     return 1
 }
 
+resolve_active_ffplay_exe() {
+    local target=""
+
+    for target in "${BIN_FFPLAY}"; do
+        if [[ -L "${target}" || -e "${target}" ]]; then
+            target="$(readlink -f "${target}" 2>/dev/null || true)"
+            if [[ -n "${target}" && -x "${target}" && ! -d "${target}" ]]; then
+                echo "${target}"
+                return 0
+            fi
+        fi
+    done
+
+    if command -v ffplay >/dev/null 2>&1; then
+        command -v ffplay
+        return 0
+    fi
+
+    return 1
+}
+
+resolve_active_tool_exe() {
+    case "${1}" in
+        ffmpeg) resolve_active_ffmpeg_exe ;;
+        ffprobe) resolve_active_ffprobe_exe ;;
+        ffplay) resolve_active_ffplay_exe ;;
+        *) return 1 ;;
+    esac
+}
+
+print_tool_install_path_detail() {
+    local tool="$1"
+    local path="${BIN_DIR}/${tool}"
+    local target="" hop="" resolved=""
+
+    if [[ -L "${path}" ]]; then
+        target="$(readlink "${path}" 2>/dev/null || true)"
+        echo "    ${tool} symlink: ${path} -> ${target:-?}"
+        if [[ -n "${target}" ]]; then
+            if [[ "${target}" == /* ]]; then
+                hop="${target}"
+            else
+                hop="${BIN_DIR}/${target}"
+            fi
+            if [[ -L "${hop}" ]]; then
+                echo "    ${tool} points to: ${hop} -> $(readlink "${hop}" 2>/dev/null || echo '?')"
+            elif [[ -f "${hop}" ]]; then
+                echo "    ${tool} points to: ${hop}"
+            fi
+        fi
+    elif [[ -f "${path}" ]]; then
+        echo "    ${tool} file: ${path} (plain binary, not a symlink)"
+    else
+        return 1
+    fi
+
+    resolved="$(readlink -f "${path}" 2>/dev/null || true)"
+    if [[ -n "${resolved}" && -x "${resolved}" && ! -d "${resolved}" ]]; then
+        echo "    ${tool} real file: ${resolved}"
+    fi
+    return 0
+}
+
+tool_is_installed_under_bin_dir() {
+    local tool="$1"
+    local path="${BIN_DIR}/${tool}"
+    [[ -e "${path}" || -L "${path}" ]]
+}
+
+print_installed_tool_binary_paths() {
+    local tool="" -a installed_tools=()
+
+    for tool in "${FFMPEG_ACTIVE_TOOLS[@]}"; do
+        if tool_is_installed_under_bin_dir "${tool}"; then
+            installed_tools+=( "${tool}" )
+        fi
+    done
+
+    if ((${#installed_tools[@]} == 0)); then
+        echo "  Installed binaries: (none under ${BIN_DIR})"
+        return 0
+    fi
+
+    echo "  Installed binaries:"
+    for tool in "${installed_tools[@]}"; do
+        print_tool_install_path_detail "${tool}" || true
+    done
+}
+
 parse_build_id_from_ffmpeg_version() {
     local text="$1"
     if [[ "${text}" =~ ffmpeg-git-([0-9]{8}) ]]; then
@@ -1217,6 +1312,7 @@ print_ffmpeg_version_check_block() {
     echo "ffmpeg version check (${FFMPEG_ARCH}):"
     print_running_ffmpeg_version_summary
     echo "  Active install:    $(format_installed_build_label "${installed}" "${installed_date}")"
+    print_installed_tool_binary_paths
     if [[ -n "${FFMPEG_ORG_VERSION}" ]]; then
         echo "  ffmpeg.org latest: ${FFMPEG_ORG_VERSION} (released ${FFMPEG_ORG_RELEASE_DATE:-unknown})"
     else
@@ -2302,22 +2398,18 @@ perform_install_build_from_source() {
 print_local_bin_tool_row() {
     local tool="$1"
     local path="${BIN_DIR}/${tool}"
-    local target="" resolved="" ver_line=""
+    local resolved="" ver_line=""
 
     echo "  ${tool}:"
-    if [[ -L "${path}" ]]; then
-        target="$(readlink "${path}" 2>/dev/null || true)"
-        resolved="$(readlink -f "${path}" 2>/dev/null || true)"
-        echo "    symlink: ${path} -> ${target}"
-        [[ -n "${resolved}" && "${resolved}" != "${path}" ]] && echo "    resolves: ${resolved}"
-    elif [[ -f "${path}" ]]; then
-        echo "    WARNING: ${path} is a plain file (expected symlink -> ${tool}-VERSION)"
-        resolved="${path}"
-    else
+    if ! print_tool_install_path_detail "${tool}"; then
         echo "    (not installed)"
         return 0
     fi
+    if [[ -f "${path}" && ! -L "${path}" ]]; then
+        echo "    WARNING: expected symlink -> ${tool}-VERSION"
+    fi
 
+    resolved="$(readlink -f "${path}" 2>/dev/null || true)"
     if [[ -n "${resolved}" && -x "${resolved}" ]]; then
         ver_line="$(probe_tool_version_output "${resolved}" 2>/dev/null | head -n1 || true)"
         if [[ -n "${ver_line}" ]]; then
