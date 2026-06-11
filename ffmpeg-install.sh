@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.06.11 - v. 2.1.6 - source install: absolute staging prefix, unset DESTDIR, recover ffmpeg from build tree
 # 2026.06.11 - v. 2.1.5 - probe pkg-config (incl. static) before each --enable-lib*; fixes x265 etc. on jammy
 # 2026.06.11 - v. 2.1.4 - skip libsvtav1 when SvtAv1Enc >= 0.9.0 not satisfied by pkg-config (e.g. jammy arm64)
 # 2026.06.11 - v. 2.1.3 - skip libdav1d when distro dav1d < 1.0.0 (e.g. Ubuntu 22.04); libaom still used
@@ -1901,6 +1902,69 @@ print_source_build_encoder_check() {
     fi
 }
 
+ffmpeg_source_resolve_staging_dir() {
+    local work_dir="$1"
+    local staging="${work_dir}/staging"
+
+    mkdir -p "${staging}/bin"
+    if command -v realpath >/dev/null 2>&1; then
+        realpath "${staging}"
+        return 0
+    fi
+    printf '%s/staging' "$(cd "${work_dir}" && pwd)"
+}
+
+# make install may only ship libraries when DESTDIR is set in the environment; copy from build tree if needed.
+ffmpeg_source_ensure_staged_bins() {
+    local staging="$1"
+    local src_dir="$2"
+    local destdir_path=""
+
+    if [[ -x "${staging}/bin/ffmpeg" ]]; then
+        return 0
+    fi
+
+    if [[ -n "${DESTDIR:-}" ]]; then
+        destdir_path="${DESTDIR%/}${staging}/bin/ffmpeg"
+        if [[ -x "${destdir_path}" ]]; then
+            log_note "Found ffmpeg under DESTDIR (${destdir_path}); copying into staging prefix."
+            install -m 755 "${destdir_path}" "${staging}/bin/ffmpeg"
+            destdir_path="${DESTDIR%/}${staging}/bin/ffprobe"
+            [[ -x "${destdir_path}" ]] && install -m 755 "${destdir_path}" "${staging}/bin/ffprobe"
+            return 0
+        fi
+        log_note "DESTDIR=${DESTDIR} is set; make install may have skipped ${staging}/bin."
+    fi
+
+    if [[ -x "${src_dir}/ffmpeg" ]]; then
+        log_note "Installing ffmpeg/ffprobe from build tree into ${staging}/bin (make install left prefix/bin empty)."
+        install -m 755 "${src_dir}/ffmpeg" "${staging}/bin/ffmpeg"
+        [[ -x "${src_dir}/ffprobe" ]] && install -m 755 "${src_dir}/ffprobe" "${staging}/bin/ffprobe"
+        return 0
+    fi
+
+    return 1
+}
+
+ffmpeg_source_report_staging_failure() {
+    local staging="$1"
+    local src_dir="$2"
+
+    echo "ERROR: staged ffmpeg binary not found: ${staging}/bin/ffmpeg" >&2
+    if [[ -d "${staging}/bin" ]]; then
+        echo "  Contents of ${staging}/bin:" >&2
+        ls -la "${staging}/bin" 2>/dev/null >&2 || true
+    else
+        echo "  Directory missing: ${staging}/bin" >&2
+    fi
+    if [[ -e "${src_dir}/ffmpeg" ]]; then
+        echo "  Build tree has: ${src_dir}/ffmpeg (not executable?)" >&2
+        ls -la "${src_dir}/ffmpeg" 2>/dev/null >&2 || true
+    else
+        echo "  Build tree binary missing: ${src_dir}/ffmpeg (link step may have failed — see ffbuild/config.log)." >&2
+    fi
+}
+
 perform_install_build_from_source() {
     local version="${FFMPEG_ORG_VERSION}"
     local tarball url src_dir build_id="" staging="" jobs=""
@@ -1929,7 +1993,7 @@ perform_install_build_from_source() {
 
     mkdir -p "${TEMP_CATALOG}" "${BIN_DIR}"
     TMP_WORK_DIR="$(mktemp -d "${TEMP_CATALOG}/ffmpeg-source-build.XXXXXX")"
-    staging="${TMP_WORK_DIR}/staging"
+    staging="$(ffmpeg_source_resolve_staging_dir "${TMP_WORK_DIR}")"
 
     echo
     echo "part 2 — download and extract official release tarball"
@@ -1957,12 +2021,22 @@ perform_install_build_from_source() {
 
     jobs="$(nproc 2>/dev/null || echo 2)"
     log_step "Building with make -j${jobs}..."
+    make -j"${jobs}" ffmpeg ffprobe
     make -j"${jobs}"
-    log_step "Staging install before copying to ${BIN_DIR}..."
-    make install
 
-    if [[ ! -x "${staging}/bin/ffmpeg" ]]; then
-        echo "ERROR: staged ffmpeg binary not found: ${staging}/bin/ffmpeg" >&2
+    if [[ ! -x "${src_dir}/ffmpeg" ]]; then
+        echo "ERROR: ffmpeg was not built in ${src_dir} (check ffbuild/config.log)." >&2
+        return 1
+    fi
+
+    log_step "Staging install into prefix ${staging} before copying to ${BIN_DIR}..."
+    if [[ -n "${DESTDIR:-}" ]]; then
+        log_note "Unsetting DESTDIR for make install (was: ${DESTDIR})."
+    fi
+    env -u DESTDIR make install
+
+    if ! ffmpeg_source_ensure_staged_bins "${staging}" "${src_dir}"; then
+        ffmpeg_source_report_staging_failure "${staging}" "${src_dir}"
         return 1
     fi
 
