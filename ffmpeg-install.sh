@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# 2026.06.11 - v. 2.1 - source build profiles: min/common/max/gpu/nvidia; --source-profile; interactive menu
+# 2026.06.11 - v. 2.0 - source build: enable common external encoders (libmp3lame, x264, openssl, aom, …)
 # 2026.06.11 - v. 1.9 - running ffmpeg: offer graceful/force kill or skip with version summary; fix pgrep false positives
 # 2026.06.09 - v. 1.8 - after successful install: ffmpeg -version and script version banner
 # 2026.06.09 - v. 1.7 - check for running ffmpeg/ffprobe before script and before install
@@ -16,7 +18,7 @@
 # Static builds:     https://johnvansickle.com/ffmpeg/
 # Git (master) static builds are recommended for bug fixes; release static builds also exist.
 # Dynamic fallback: distro ffmpeg package via apt when static is unavailable.
-# Source fallback: compile official ffmpeg.org release tarball (--enable-static).
+# Source fallback: compile official ffmpeg.org release tarball (static, common lib* encoders).
 #
 
 set -euo pipefail
@@ -38,6 +40,15 @@ NETWORK_TIMEOUT_SEC="${NETWORK_TIMEOUT_SEC:-120}"
 FFMPEG_PROBE_TIMEOUT_SEC="${FFMPEG_PROBE_TIMEOUT_SEC:-15}"
 FFMPEG_KILL_GRACE_WAIT_SEC="${FFMPEG_KILL_GRACE_WAIT_SEC:-30}"
 FFMPEG_KILL_FORCE_WAIT_SEC="${FFMPEG_KILL_FORCE_WAIT_SEC:-10}"
+FFMPEG_CONFIGURE_EXTRA="${FFMPEG_CONFIGURE_EXTRA:-}"
+FFMPEG_SOURCE_PROFILE="${FFMPEG_SOURCE_PROFILE:-}"
+CLI_SOURCE_PROFILE=""
+CLI_SOURCE_WITH_FDK=0
+SOURCE_PROFILE=""
+FFMPEG_SOURCE_WITH_FDK_AAC=0
+FFMPEG_SOURCE_HAS_SVTAV1=0
+FFMPEG_SOURCE_HAS_FDK_AAC=0
+FFMPEG_SOURCE_PROFILE_READY=0
 FFMPEG_ORG_VERSION=""
 FFMPEG_ORG_RELEASE_DATE=""
 REMOTE_BUILD_DATE=""
@@ -87,7 +98,9 @@ print_version_banner() {
 show_help() {
     cat <<EOF
 Usage: $(basename "$0") [-h|--help] [-v|--version] [-y|--yes] [-q|--quiet] [--release]
-       [--dynamic-only] [--static-only] [--source-only] [--no_startup_delay]
+       [--dynamic-only] [--static-only] [--source-only]
+       [--source-profile min|common|max|gpu|nvidia] [--source-with-fdk-aac]
+       [--no_startup_delay]
 
 When ffmpeg/ffprobe is running, offers graceful kill (SIGTERM), then force kill
 (SIGKILL) if needed, or [S]kip to compare running vs installable versions.
@@ -96,7 +109,8 @@ Re-checks before any install step. With --yes, tries graceful then force kill.
 Check installed ffmpeg against ffmpeg.org, then optionally install:
   1) prebuilt static (johnvansickle.com)
   2) dynamic package (apt)
-  3) static build compiled from the official ffmpeg.org release source
+  3) static/shared build compiled from the official ffmpeg.org release source
+     Profiles: min, common (default), max, gpu (VAAPI), nvidia (NVENC/CUDA)
 Older installs are moved aside, not deleted.
 
 Install layout (/usr/local/bin):
@@ -118,6 +132,10 @@ Interactive prompts use [y/N/q]: y = yes, Enter/N = no (default), q = quit.
   --dynamic-only       Install distro ffmpeg via apt only.
   --static-only        Do not fall back to apt or source build.
   --source-only        Skip prebuilt static/apt; offer official source build only.
+  --source-profile P   Source build profile: min, common, max, gpu, or nvidia
+                       (skips profile menu). Default when omitted: common.
+  --source-with-fdk-aac
+                       With max profile: enable libfdk-aac (non-free, best AAC).
   --no_startup_delay   Skip random startup delay when run non-interactively.
 
 Environment:
@@ -127,6 +145,8 @@ Environment:
   FFMPEG_PROBE_TIMEOUT_SEC  timeout for probing installed ffmpeg (default: 15).
   FFMPEG_KILL_GRACE_WAIT_SEC  seconds to wait after SIGTERM (default: 30).
   FFMPEG_KILL_FORCE_WAIT_SEC  seconds to wait after SIGKILL (default: 10).
+  FFMPEG_CONFIGURE_EXTRA      Extra ./configure flags for source builds (space-separated).
+  FFMPEG_SOURCE_PROFILE       Same as --source-profile (min|common|max|gpu|nvidia).
 EOF
 }
 
@@ -994,7 +1014,7 @@ print_ffmpeg_version_check_block() {
         echo "  Apt dynamic:       not available"
     fi
     if official_source_build_is_available; then
-        echo "  Source build:      ffmpeg.org release ${FFMPEG_ORG_VERSION} (official tarball, static compile)"
+        echo "  Source build:      ffmpeg.org ${FFMPEG_ORG_VERSION} (profiles: min/common/max/gpu/nvidia)"
     else
         echo "  Source build:      ffmpeg.org release version unknown"
     fi
@@ -1180,7 +1200,8 @@ prompt_build_from_source_fallback() {
     echo
     if prompt_reply_is_yes "${reply}"; then
         INSTALL_PLAN="source"
-        echo "Proceeding with official source build..."
+        ensure_source_build_profile_selected
+        echo "Proceeding with official source build (profile: ${SOURCE_PROFILE})..."
     else
         echo "Quitting — no changes made."
         quit_prompt_with_optional_old_cleanup
@@ -1383,21 +1404,423 @@ install_versioned_symlinks_to_local() {
     link_active_ffmpeg_version "${label}"
 }
 
-install_source_build_dependencies() {
+source_profile_is_valid() {
+    case "${1}" in
+        min|common|max|gpu|nvidia) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+source_profile_label() {
+    case "${SOURCE_PROFILE}" in
+        min) echo "minimal static (openssl, libmp3lame, x264, opus)" ;;
+        common) echo "common static (recommended codec set)" ;;
+        max) echo "max static (common + extra codecs)" ;;
+        gpu) echo "GPU/VAAPI (shared libs, Intel/AMD)" ;;
+        nvidia) echo "NVIDIA NVENC/CUDA (shared libs, non-free)" ;;
+        *) echo "${SOURCE_PROFILE}" ;;
+    esac
+}
+
+ffmpeg_source_build_id() {
+    local version="$1"
+    printf '%s-src-%s' "${version}" "${SOURCE_PROFILE}"
+}
+
+apt_cache_has_package() {
+    apt-cache show "$1" >/dev/null 2>&1
+}
+
+apt_install_packages() {
+    local pkg="" -a packages=()
+    for pkg in "$@"; do
+        [[ -n "${pkg}" ]] && packages+=( "${pkg}" )
+    done
+    ((${#packages[@]} > 0)) || return 0
+    apt-get install -y "${packages[@]}"
+}
+
+apt_install_optional_packages() {
+    local pkg="" -a present=()
+    for pkg in "$@"; do
+        if apt_cache_has_package "${pkg}"; then
+            present+=( "${pkg}" )
+        else
+            log_note "Optional package not in apt, skipping: ${pkg}"
+        fi
+    done
+    ((${#present[@]} > 0)) || return 0
+    apt-get install -y "${present[@]}"
+}
+
+gpu_vaapi_runtime_looks_available() {
+    [[ -e /dev/dri/card0 || -e /dev/dri/renderD128 ]] && return 0
+    if command -v vainfo >/dev/null 2>&1; then
+        vainfo >/dev/null 2>&1 && return 0
+    fi
+    return 1
+}
+
+nvidia_runtime_looks_available() {
+    command -v nvidia-smi >/dev/null 2>&1 || return 1
+    nvidia-smi >/dev/null 2>&1
+}
+
+prompt_source_fdk_aac_if_max() {
+    local reply=""
+
+    [[ "${SOURCE_PROFILE}" == max ]] || return 0
+    if (( CLI_SOURCE_WITH_FDK == 1 )); then
+        FFMPEG_SOURCE_WITH_FDK_AAC=1
+        return 0
+    fi
+    if (( ASSUME_YES == 1 )); then
+        return 0
+    fi
     echo
-    echo "part 1 — build dependencies for official source compile"
+    echo "max profile: optional libfdk-aac (non-free license, best AAC quality)."
+    echo ">>> Waiting for your answer:"
+    echo -n "Include libfdk-aac in this build? [y/N/q] "
+    read -r -n 1 reply || reply=""
+    echo
+    if prompt_reply_is_quit "${reply}"; then
+        echo "Quitting — no changes made."
+        quit_prompt_with_optional_old_cleanup
+    fi
+    if prompt_reply_is_yes "${reply}"; then
+        FFMPEG_SOURCE_WITH_FDK_AAC=1
+    fi
+}
+
+prompt_confirm_gpu_or_nvidia_profile() {
+    local reply="" hw=""
+
+    case "${SOURCE_PROFILE}" in
+        gpu)
+            if ! gpu_vaapi_runtime_looks_available; then
+                echo "WARNING: no VAAPI device detected (/dev/dri or vainfo failed)." >&2
+            fi
+            echo
+            echo "gpu profile builds a shared ffmpeg with VAAPI (needs GPU drivers at runtime)."
+            echo "Not suitable for fully static/offline binaries."
+            ;;
+        nvidia)
+            hw="$(uname -m)"
+            if [[ "${hw}" == aarch64 ]] && ! nvidia_runtime_looks_available; then
+                echo "ERROR: nvidia profile is not available on this host (aarch64, no working nvidia-smi)." >&2
+                return 1
+            fi
+            if ! nvidia_runtime_looks_available; then
+                echo "WARNING: nvidia-smi not working; NVENC build may fail or be unusable." >&2
+            fi
+            echo
+            echo "nvidia profile builds a shared ffmpeg with NVENC/CUDA (non-free, needs NVIDIA driver)."
+            ;;
+        *) return 0 ;;
+    esac
+    if (( ASSUME_YES == 1 )); then
+        log_note "Continuing with ${SOURCE_PROFILE} profile (--yes)."
+        return 0
+    fi
+    echo ">>> Waiting for your answer:"
+    echo -n "Continue with ${SOURCE_PROFILE} profile? [y/N/q] "
+    read -r -n 1 reply || reply=""
+    echo
+    if prompt_reply_is_quit "${reply}"; then
+        echo "Quitting — no changes made."
+        quit_prompt_with_optional_old_cleanup
+    fi
+    prompt_reply_is_yes "${reply}"
+}
+
+prompt_source_build_profile_menu() {
+    local reply=""
+
+    while true; do
+        echo
+        echo "Source build profile:"
+        echo "  [1] common — libmp3lame, x264, openssl, aom, … (default)"
+        echo "  [2] min    — smaller/faster static build"
+        echo "  [3] max    — common + extra codecs (optional libfdk-aac)"
+        echo "  [4] gpu    — common + VAAPI (Intel/AMD; shared libs)"
+        echo "  [5] nvidia — common + NVENC/CUDA (NVIDIA; shared libs)"
+        echo "  [Q] Quit"
+        echo ">>> Waiting for your answer:"
+        echo -n "Choice [1/2/3/4/5/q] (Enter=common): "
+        read -r -n 1 reply || reply=""
+        echo
+        case "${reply}" in
+            q|Q)
+                echo "Quitting — no changes made."
+                quit_prompt_with_optional_old_cleanup
+                ;;
+            2|m|M) SOURCE_PROFILE=min; break ;;
+            3|x|X) SOURCE_PROFILE=max; break ;;
+            4|g|G) SOURCE_PROFILE=gpu; break ;;
+            5|n|N) SOURCE_PROFILE=nvidia; break ;;
+            1|c|C|y|Y|"") SOURCE_PROFILE=common; break ;;
+            *)
+                echo "Unknown choice; try again."
+                ;;
+        esac
+    done
+    prompt_source_fdk_aac_if_max
+    if ! prompt_confirm_gpu_or_nvidia_profile; then
+        echo "Pick another profile:"
+        SOURCE_PROFILE=""
+        prompt_source_build_profile_menu
+    fi
+}
+
+ensure_source_build_profile_selected() {
+    (( FFMPEG_SOURCE_PROFILE_READY == 1 )) && return 0
+
+    if [[ -n "${SOURCE_PROFILE}" ]] && source_profile_is_valid "${SOURCE_PROFILE}"; then
+        :
+    elif [[ -n "${CLI_SOURCE_PROFILE}" ]]; then
+        SOURCE_PROFILE="${CLI_SOURCE_PROFILE}"
+    elif [[ -n "${FFMPEG_SOURCE_PROFILE}" ]]; then
+        SOURCE_PROFILE="${FFMPEG_SOURCE_PROFILE}"
+    else
+        prompt_source_build_profile_menu
+        return 0
+    fi
+    if ! source_profile_is_valid "${SOURCE_PROFILE}"; then
+        echo "ERROR: invalid source profile: ${SOURCE_PROFILE}" >&2
+        exit 1
+    fi
+    if (( CLI_SOURCE_WITH_FDK == 1 )); then
+        FFMPEG_SOURCE_WITH_FDK_AAC=1
+    fi
+    if [[ "${SOURCE_PROFILE}" == max ]]; then
+        prompt_source_fdk_aac_if_max
+    fi
+    if [[ "${SOURCE_PROFILE}" == gpu || "${SOURCE_PROFILE}" == nvidia ]]; then
+        if ! prompt_confirm_gpu_or_nvidia_profile; then
+            prompt_source_build_profile_menu
+        fi
+    fi
+    log_note "Source build profile: ${SOURCE_PROFILE} ($(source_profile_label))"
+    FFMPEG_SOURCE_PROFILE_READY=1
+}
+
+install_source_build_dependencies() {
+    local -a pkgs=()
+
+    echo
+    echo "part 1 — build dependencies for official source compile (profile: ${SOURCE_PROFILE})"
     echo
     need_cmd apt-get
     log_step "Running apt-get update..."
     apt-get update
-    log_step "Installing compiler and common codec development libraries..."
-    apt-get install -y \
-        build-essential pkg-config yasm nasm \
-        libunistring-dev zlib1g-dev \
-        libx264-dev libx265-dev libvpx-dev \
-        libmp3lame-dev libopus-dev libvorbis-dev \
-        libtheora-dev libass-dev libdav1d-dev
+
+    pkgs=(
+        build-essential pkg-config yasm nasm
+        libunistring-dev zlib1g-dev
+    )
+
+    case "${SOURCE_PROFILE}" in
+        min)
+            pkgs+=(
+                libssl-dev libmp3lame-dev libx264-dev libopus-dev
+            )
+            ;;
+        common|max|gpu|nvidia)
+            pkgs+=(
+                libssl-dev
+                libmp3lame-dev libx264-dev libx265-dev libvpx-dev
+                libopus-dev libvorbis-dev libtheora-dev libass-dev libdav1d-dev
+                libaom-dev libwebp-dev
+                libfreetype-dev libfontconfig-dev libharfbuzz-dev
+                libsoxr-dev libsnappy-dev libzimg-dev
+                libspeex-dev libtwolame-dev
+            )
+            ;;
+    esac
+
+    case "${SOURCE_PROFILE}" in
+        max|gpu|nvidia)
+            apt_install_optional_packages \
+                libopenjpeg-dev libbluray-dev libchromaprint-dev \
+                libgme-dev libopenmpt-dev libvidstab-dev libxml2-dev libshine-dev
+            ;;
+    esac
+
+    case "${SOURCE_PROFILE}" in
+        max|common|gpu|nvidia)
+            FFMPEG_SOURCE_HAS_SVTAV1=0
+            if apt_cache_has_package libsvtav1-dev; then
+                pkgs+=( libsvtav1-dev )
+                FFMPEG_SOURCE_HAS_SVTAV1=1
+            else
+                log_note "libsvtav1-dev not in apt; SVT-AV1 encoder will be skipped."
+            fi
+            ;;
+        *)
+            FFMPEG_SOURCE_HAS_SVTAV1=0
+            ;;
+    esac
+
+    if [[ "${SOURCE_PROFILE}" == max ]] && (( FFMPEG_SOURCE_WITH_FDK_AAC == 1 )); then
+        FFMPEG_SOURCE_HAS_FDK_AAC=0
+        if apt_cache_has_package libfdk-aac-dev; then
+            pkgs+=( libfdk-aac-dev )
+            FFMPEG_SOURCE_HAS_FDK_AAC=1
+        else
+            echo "ERROR: libfdk-aac-dev not available in apt; disable --source-with-fdk-aac or pick another profile." >&2
+            return 1
+        fi
+    else
+        FFMPEG_SOURCE_HAS_FDK_AAC=0
+    fi
+
+    if [[ "${SOURCE_PROFILE}" == gpu ]]; then
+        apt_install_optional_packages libva-dev libvdpau-dev libdrm-dev libvulkan-dev
+    fi
+
+    if [[ "${SOURCE_PROFILE}" == nvidia ]]; then
+        apt_install_optional_packages nvidia-cuda-toolkit libnpp-dev
+    fi
+
+    log_step "Installing compiler and profile packages..."
+    apt_install_packages "${pkgs[@]}"
     log_note "Build dependencies installed."
+}
+
+ffmpeg_source_configure_args() {
+    local staging="$1"
+    local -a args=()
+    local pkg_config_flags="--static"
+    local extra_libs="-lpthread -lm"
+
+    args=(
+        --prefix="${staging}"
+        --disable-debug
+        --enable-gpl
+        --enable-version3
+    )
+
+    if [[ "${SOURCE_PROFILE}" == gpu || "${SOURCE_PROFILE}" == nvidia ]]; then
+        args+=( --enable-shared --disable-static )
+        pkg_config_flags=""
+        extra_libs="-lpthread -lm -ldl"
+    else
+        args+=( --enable-static --disable-shared )
+    fi
+
+    args+=(
+        --pkg-config-flags="${pkg_config_flags}"
+        "--extra-libs=${extra_libs}"
+        --enable-openssl
+    )
+
+    case "${SOURCE_PROFILE}" in
+        min)
+            args+=(
+                --enable-libmp3lame
+                --enable-libx264
+                --enable-libopus
+            )
+            ;;
+        common|max|gpu|nvidia)
+            args+=(
+                --enable-libmp3lame
+                --enable-libx264
+                --enable-libx265
+                --enable-libvpx
+                --enable-libopus
+                --enable-libvorbis
+                --enable-libtheora
+                --enable-libass
+                --enable-libdav1d
+                --enable-libaom
+                --enable-libwebp
+                --enable-libfreetype
+                --enable-libfontconfig
+                --enable-libsoxr
+                --enable-libsnappy
+                --enable-libzimg
+                --enable-libspeex
+                --enable-libtwolame
+            )
+            ;;
+    esac
+
+    if (( FFMPEG_SOURCE_HAS_SVTAV1 == 1 )); then
+        args+=( --enable-libsvtav1 )
+    fi
+
+    if [[ "${SOURCE_PROFILE}" == max || "${SOURCE_PROFILE}" == gpu || "${SOURCE_PROFILE}" == nvidia ]]; then
+        pkg-config --exists libopenjp2 2>/dev/null && args+=( --enable-libopenjpeg )
+        pkg-config --exists libbluray 2>/dev/null && args+=( --enable-libbluray )
+        pkg-config --exists libchromaprint 2>/dev/null && args+=( --enable-libchromaprint )
+        pkg-config --exists libgme 2>/dev/null && args+=( --enable-libgme )
+        pkg-config --exists libopenmpt 2>/dev/null && args+=( --enable-libopenmpt )
+        pkg-config --exists vidstab 2>/dev/null && args+=( --enable-libvidstab )
+        pkg-config --exists libxml-2.0 2>/dev/null && args+=( --enable-libxml2 )
+        pkg-config --exists shine 2>/dev/null && args+=( --enable-libshine )
+    fi
+
+    if [[ "${SOURCE_PROFILE}" == max ]] && (( FFMPEG_SOURCE_HAS_FDK_AAC == 1 )); then
+        args+=( --enable-nonfree --enable-libfdk-aac )
+    fi
+
+    if [[ "${SOURCE_PROFILE}" == gpu ]]; then
+        pkg-config --exists libva 2>/dev/null && args+=( --enable-vaapi )
+        pkg-config --exists libdrm 2>/dev/null && args+=( --enable-libdrm )
+        pkg-config --exists vulkan 2>/dev/null && args+=( --enable-vulkan )
+    fi
+
+    if [[ "${SOURCE_PROFILE}" == nvidia ]]; then
+        args+=(
+            --enable-nonfree
+            --enable-nvenc
+            --enable-cuvid
+        )
+        if command -v nvcc >/dev/null 2>&1; then
+            args+=( --enable-cuda-nvcc --enable-libnpp )
+        else
+            log_note "nvcc not found; building NVENC without CUDA/NPP compile support."
+        fi
+    fi
+
+    if [[ -n "${FFMPEG_CONFIGURE_EXTRA}" ]]; then
+        read -r -a configure_extra <<< "${FFMPEG_CONFIGURE_EXTRA}"
+        args+=( "${configure_extra[@]}" )
+    fi
+    printf '%s\n' "${args[@]}"
+}
+
+print_source_build_encoder_check() {
+    local ffmpeg_exe="$1"
+    local line="" found=0 pattern=""
+
+    [[ -n "${ffmpeg_exe}" && -x "${ffmpeg_exe}" ]] || return 0
+
+    case "${SOURCE_PROFILE}" in
+        min) pattern='libmp3lame|libx264|libopus' ;;
+        max)
+            if (( FFMPEG_SOURCE_HAS_FDK_AAC == 1 )); then
+                pattern='libmp3lame|libx264|libfdk_aac|libaom|libsvtav1'
+            else
+                pattern='libmp3lame|libx264|libopus|libaom|libsvtav1|libtwolame'
+            fi
+            ;;
+        gpu) pattern='libmp3lame|libx264|h264_vaapi|hevc_vaapi' ;;
+        nvidia) pattern='libmp3lame|libx264|h264_nvenc|hevc_nvenc' ;;
+        *) pattern='libmp3lame|libx264|libopus|libaom|libsvtav1|libtwolame' ;;
+    esac
+
+    echo
+    echo "Sample encoders in built ffmpeg (profile: ${SOURCE_PROFILE}):"
+    while IFS= read -r line; do
+        [[ -n "${line}" ]] || continue
+        echo "  ${line}"
+        found=1
+    done < <("${ffmpeg_exe}" -hide_banner -encoders 2>/dev/null | grep -E "${pattern}" || true)
+    if (( found == 0 )); then
+        echo "  WARNING: expected encoders not found (check configure log)." >&2
+    fi
 }
 
 perform_install_build_from_source() {
@@ -1409,19 +1832,22 @@ perform_install_build_from_source() {
         return 1
     fi
 
+    ensure_source_build_profile_selected
+
     echo
-    echo "part 1 — official ffmpeg.org release source (${version})"
+    echo "part 1 — official ffmpeg.org release source (${version}, profile: ${SOURCE_PROFILE})"
     echo
 
     need_cmd make
     need_cmd gcc
     need_cmd install
+    need_cmd pkg-config
     normalize_legacy_versioned_bins
     install_source_build_dependencies
 
     tarball="$(ffmpeg_org_release_tarball_name "${version}")"
     url="$(ffmpeg_org_release_tarball_url "${version}")"
-    build_id="${version}-src"
+    build_id="$(ffmpeg_source_build_id "${version}")"
 
     mkdir -p "${TEMP_CATALOG}" "${BIN_DIR}"
     TMP_WORK_DIR="$(mktemp -d "${TEMP_CATALOG}/ffmpeg-source-build.XXXXXX")"
@@ -1443,16 +1869,13 @@ perform_install_build_from_source() {
     echo
 
     cd "${src_dir}"
-    log_step "Running ffmpeg configure (static, official release ${version})..."
-    ./configure \
-        --prefix="${staging}" \
-        --enable-static \
-        --disable-shared \
-        --disable-debug \
-        --enable-gpl \
-        --enable-version3 \
-        --pkg-config-flags="--static" \
-        --extra-libs="-lpthread -lm"
+    log_step "Running ffmpeg configure (profile ${SOURCE_PROFILE}, release ${version})..."
+    configure_args=()
+    while IFS= read -r flag; do
+        [[ -n "${flag}" ]] && configure_args+=( "${flag}" )
+    done < <(ffmpeg_source_configure_args "${staging}")
+    log_note "Configure flags: ${configure_args[*]}"
+    ./configure "${configure_args[@]}"
 
     jobs="$(nproc 2>/dev/null || echo 2)"
     log_step "Building with make -j${jobs}..."
@@ -1465,8 +1888,10 @@ perform_install_build_from_source() {
         return 1
     fi
 
+    print_source_build_encoder_check "${staging}/bin/ffmpeg"
+
     install_versioned_bins_to_local "${build_id}" "${staging}/bin/ffmpeg" "${staging}/bin/ffprobe"
-    print_install_success_summary "${build_id}" "official source static ${version}"
+    print_install_success_summary "${build_id}" "official source ${SOURCE_PROFILE} ${version}"
     return 0
 }
 
@@ -1713,6 +2138,8 @@ main() {
     elif [[ "${INSTALL_PLAN}" == "source" ]]; then
         echo "  package: $(ffmpeg_org_release_tarball_name)"
         echo "  url:     $(ffmpeg_org_release_tarball_url)"
+        echo "  profile: ${SOURCE_PROFILE:-common}"
+        (( FFMPEG_SOURCE_WITH_FDK_AAC == 1 )) && echo "  extras:  libfdk-aac (non-free)"
     fi
     echo "  temp:    ${TEMP_CATALOG}"
     echo
@@ -1731,6 +2158,16 @@ while [[ $# -gt 0 ]]; do
         --dynamic-only) DYNAMIC_ONLY=1; shift ;;
         --static-only) STATIC_ONLY=1; shift ;;
         --source-only) SOURCE_ONLY=1; shift ;;
+        --source-profile)
+            [[ $# -ge 2 ]] || { echo "Missing value for --source-profile" >&2; usage >&2; exit 1; }
+            if ! source_profile_is_valid "${2}"; then
+                echo "Invalid --source-profile: ${2} (use min, common, max, gpu, or nvidia)" >&2
+                exit 1
+            fi
+            CLI_SOURCE_PROFILE="${2}"
+            shift 2
+            ;;
+        --source-with-fdk-aac) CLI_SOURCE_WITH_FDK=1; shift ;;
         --no_startup_delay) HEADER_EXTRA_ARGS+=(NO_STARTUP_DELAY); shift ;;
         *) echo "Unknown argument: $1" >&2; echo "Try: $(basename "$0") --help" >&2; exit 1 ;;
     esac
