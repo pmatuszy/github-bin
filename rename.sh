@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.06.10 - v. 19.178.172000 - Signal timestamp-first: run before and after hyphen date compaction (idempotent; catches partial compact / reorder-safe)
 # 2026.06.10 - v. 19.177.170000 - Signal signal-YYYY-MM-DD-HH-MM-SS[-tail]: timestamp first before hyphen date compaction (fixes signal-20260606-12-00-47-325 stuck after partial compact)
 # 2026.06.10 - v. 19.176.163000 - Sony XAVC clip pairs C####.MP4 + C####M01.XML: CreationDate local wall-clock → YYYYMMDD_HHMMSS_-_-_MANUFACTURER_MODEL_C####[M01].ext; defer XML until MP4
 # 2026.06.10 - v. 19.175.160000 - Screenshot_YYYY-MM-DD-HH-MM-SS + title tail (e.g. ...29 o prof. Miernowskim.jpg) → YYYYMMDD_HHMMSS_title-screenshot.ext
@@ -6218,6 +6219,11 @@ _rename_finish_basename_stem() {
         local _sig_fin=""
         _sig_fin="$(_rename_signal_timestamp_first "$finished" || true)"
         [[ -n "$_sig_fin" ]] && finished="$_sig_fin"
+        if [[ "$finished" =~ ^[Ss]ignal- ]]; then
+            finished="$(_rename_compact_embedded_hyphen_dates "$finished")"
+            _sig_fin="$(_rename_signal_timestamp_first "$finished" || true)"
+            [[ -n "$_sig_fin" ]] && finished="$_sig_fin"
+        fi
     else
         finished="$(_rename_compact_embedded_hyphen_dates "$finished")"
     fi
@@ -7286,8 +7292,15 @@ transform_basename() {
     # Embedded dotted calendar date anywhere in the stem (e.g. as_of_2021.11.01_040001 in a config backup name).
     # Runs after start-anchored dotted rules so YYYY.MM.DD + time at the beginning is still handled above.
     new="$(_rename_compact_embedded_dotted_dates "$new")"
-    if [[ ! "$new" =~ ^[Ss]creenshot_ && ! "$new" =~ ^[Ss]ignal- ]]; then
+    if [[ ! "$new" =~ ^[Ss]creenshot_ ]]; then
         new="$(_rename_compact_embedded_hyphen_dates "$new")"
+    fi
+
+    # Signal (again): catch signal-YYYYMMDD-HH-MM-SS-tail after hyphen date compaction, or names compaction ran on anyway.
+    _sig_ts_out="$(_rename_signal_timestamp_first "$new" || true)"
+    if [[ -n "$_sig_ts_out" ]]; then
+        _tb_emit "$_sig_ts_out"
+        return
     fi
 
     # Underscore or whitespace between date and time (e.g. camera exports "2010-02-20 14-28-18  title.NEF").
