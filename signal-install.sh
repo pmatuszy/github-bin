@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.06.11 - v. 1.11 - Pi/JVM: require Java 25 (openjdk-25 or Temurin); fix JNI jar patch with zip -j
 # 2026.06.11 - v. 1.10 - old installs: list versions, prompt to remove each one [y/N] separately
 # 2026.06.11 - v. 1.9 - fix latest release date (subshell); prompt to remove old /opt/signal-cli-VERSION installs
 # 2026.06.11 - v. 1.8 - installed version: probe active /opt/signal-cli (exec), not old /opt/signal-cli-* dirs; fix 0.11.5.1 parsing
@@ -34,6 +35,8 @@ ASSUME_YES=0
 VERBOSE=1
 NETWORK_TIMEOUT_SEC="${NETWORK_TIMEOUT_SEC:-60}"
 SIGNAL_CLI_PROBE_TIMEOUT_SEC="${SIGNAL_CLI_PROBE_TIMEOUT_SEC:-20}"
+SIGNAL_CLI_MIN_JAVA_MAJOR=25
+SIGNAL_CLI_JAVA_HOME=""
 RELEASE_PUBLISHED_DATE=""
 GITHUB_FETCHED_RELEASE_VERSION=""
 
@@ -752,6 +755,111 @@ ensure_download_tools() {
     apt-get install -y curl
 }
 
+java_major_version() {
+    local major=""
+    if ! command -v java >/dev/null 2>&1; then
+        return 1
+    fi
+    major="$(java -version 2>&1 | sed -E -n 's/.*version "([0-9]+)(\.[^"]*)?".*/\1/p' | head -n1)"
+    [[ -n "${major}" ]] || return 1
+    echo "${major}"
+}
+
+java_meets_signal_cli_requirement() {
+    local major=""
+    major="$(java_major_version || true)"
+    [[ -n "${major}" ]] && (( major >= SIGNAL_CLI_MIN_JAVA_MAJOR ))
+}
+
+configure_signal_cli_java_home() {
+    local cand="" major=""
+
+    for cand in \
+        /usr/lib/jvm/java-25-openjdk-* \
+        /usr/lib/jvm/temurin-25-jdk-* \
+        /usr/lib/jvm/*-25-*; do
+        if [[ -x "${cand}/bin/java" ]]; then
+            major="$("${cand}/bin/java" -version 2>&1 | sed -E -n 's/.*version "([0-9]+).*/\1/p' | head -n1)"
+            if [[ -n "${major}" ]] && (( major >= SIGNAL_CLI_MIN_JAVA_MAJOR )); then
+                SIGNAL_CLI_JAVA_HOME="${cand}"
+                export JAVA_HOME="${SIGNAL_CLI_JAVA_HOME}"
+                export PATH="${JAVA_HOME}/bin:${PATH}"
+                log_note "JAVA_HOME=${JAVA_HOME}"
+                log_note "Java: $("${JAVA_HOME}/bin/java" -version 2>&1 | head -n1)"
+                return 0
+            fi
+        fi
+    done
+    return 1
+}
+
+install_temurin_25_jdk() {
+    local codename arch keyring=/usr/share/keyrings/adoptium.gpg gpg_tmp=""
+
+    log_step "openjdk-25-jdk not in apt — installing Eclipse Temurin 25..."
+    apt-get install -y wget gnupg ca-certificates apt-transport-https
+
+    install -d -m 0755 /usr/share/keyrings
+    gpg_tmp="$(mktemp)"
+    download_file "https://packages.adoptium.net/artifactory/api/gpg/key/public" "${gpg_tmp}"
+    gpg --dearmor -o "${keyring}" < "${gpg_tmp}"
+    rm -f "${gpg_tmp}"
+
+    codename="$(. /etc/os-release && echo "${VERSION_CODENAME}")"
+    arch="$(dpkg --print-architecture)"
+    cat > /etc/apt/sources.list.d/adoptium.list <<EOF
+deb [signed-by=${keyring} arch=${arch}] https://packages.adoptium.net/artifactory/deb ${codename} main
+EOF
+
+    apt-get update
+    apt-get install -y temurin-25-jdk
+}
+
+ensure_java_for_signal_cli() {
+  if java_meets_signal_cli_requirement && configure_signal_cli_java_home; then
+    return 0
+  fi
+
+  log_step "Installing Java ${SIGNAL_CLI_MIN_JAVA_MAJOR}+ (signal-cli 0.14+ requires it)..."
+
+  if apt-cache show openjdk-25-jdk &>/dev/null; then
+    apt-get install -y openjdk-25-jdk
+  else
+    install_temurin_25_jdk
+  fi
+
+  if ! java_meets_signal_cli_requirement; then
+    echo "ERROR: Java ${SIGNAL_CLI_MIN_JAVA_MAJOR}+ is required but not available after install." >&2
+    echo "  $(java -version 2>&1 | head -n1 || echo 'java not found')" >&2
+    exit 1
+  fi
+
+  configure_signal_cli_java_home || {
+    echo "ERROR: Could not locate Java ${SIGNAL_CLI_MIN_JAVA_MAJOR} installation under /usr/lib/jvm." >&2
+    exit 1
+  }
+
+  if command -v update-alternatives >/dev/null 2>&1 && [[ -n "${SIGNAL_CLI_JAVA_HOME}" ]]; then
+    update-alternatives --install /usr/bin/java java "${SIGNAL_CLI_JAVA_HOME}/bin/java" 2500 2>/dev/null || true
+    update-alternatives --set java "${SIGNAL_CLI_JAVA_HOME}/bin/java" 2>/dev/null || true
+  fi
+}
+
+patch_libsignal_jni_into_jar() {
+    local jar_path="$1"
+    local jni_so="$2"
+    local jni_work=""
+
+    jni_work="$(mktemp -d)"
+    cp -f "${jni_so}" "${jni_work}/libsignal_jni.so"
+    cp -f "${jni_so}" "${jni_work}/libsignal_jni_aarch64.so"
+
+    log_step "Patching jar with native libsignal_jni.so..."
+    zip -d "${jar_path}" libsignal_jni.so libsignal_jni_aarch64.so 2>/dev/null || true
+    zip -j "${jar_path}" "${jni_work}/libsignal_jni.so" "${jni_work}/libsignal_jni_aarch64.so"
+    rm -rf "${jni_work}"
+}
+
 install_apt_dependencies() {
     echo
     echo "part 1 — apt dependencies"
@@ -760,8 +868,7 @@ install_apt_dependencies() {
     apt-get update
     log_step "Installing build/runtime packages..."
     apt-get install -y curl zip protobuf-compiler clang libclang-dev cmake make unzip wget
-    log_step "Installing OpenJDK 21..."
-    apt-get install -y openjdk-21-jdk
+    ensure_java_for_signal_cli
     log_note "apt dependencies done."
 }
 
@@ -918,9 +1025,7 @@ build_and_install_libsignal_jni() {
         exit 1
     fi
 
-    log_step "Patching jar with native libsignal_jni.so..."
-    zip -d "${jar_path}" libsignal_jni.so 2>/dev/null || true
-    zip "${jar_path}" "${jni_so}"
+    patch_libsignal_jni_into_jar "${jar_path}" "${jni_so}"
 
     mkdir -p "${JAVA_JNI_DIR}"
     log_step "Installing JNI library to ${JAVA_JNI_DIR}..."
@@ -946,6 +1051,9 @@ verify_installation() {
     echo
     echo "part 7 — verify"
     echo
+    if is_pi_jni_install_method; then
+        configure_signal_cli_java_home || ensure_java_for_signal_cli
+    fi
     cd /
     signal-cli version
 }
