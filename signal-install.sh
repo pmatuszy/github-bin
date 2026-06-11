@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.06.11 - v. 1.10 - old installs: list versions, prompt to remove each one [y/N] separately
 # 2026.06.11 - v. 1.9 - fix latest release date (subshell); prompt to remove old /opt/signal-cli-VERSION installs
 # 2026.06.11 - v. 1.8 - installed version: probe active /opt/signal-cli (exec), not old /opt/signal-cli-* dirs; fix 0.11.5.1 parsing
 # 2026.06.11 - v. 1.7 - keep old installs as /opt/signal-cli-VERSION; /opt/signal-cli symlink → latest
@@ -423,18 +424,23 @@ collect_old_signal_cli_install_paths() {
 }
 
 prompt_remove_old_signal_cli_installs() {
-    local old_paths=() path="" reply="" name=""
+    local old_paths=() path="" reply="" name="" vers=""
 
     while IFS= read -r path; do
         [[ -n "${path}" ]] && old_paths+=("${path}")
-    done < <(collect_old_signal_cli_install_paths)
+    done < <(collect_old_signal_cli_install_paths | sort -V)
 
     ((${#old_paths[@]} > 0)) || return 0
 
     echo
     echo "Older signal-cli install(s) found (not active):"
     for path in "${old_paths[@]}"; do
-        echo "  ${path}"
+        vers="$(version_from_install_path "${path}" || true)"
+        if [[ -n "${vers}" ]]; then
+            echo "  signal-cli-${vers}"
+        else
+            echo "  $(basename "${path}")"
+        fi
     done
     echo
 
@@ -443,20 +449,23 @@ prompt_remove_old_signal_cli_installs() {
         return 0
     fi
 
-    echo ">>> Waiting for your answer:"
-    echo -n "Remove these old install(s)? [y/N] "
-    read -r -n 1 reply || reply=""
-    echo
-    case "${reply}" in
-        y|Y|yes|YES)
-            for path in "${old_paths[@]}"; do
+    for path in "${old_paths[@]}"; do
+        name="$(basename "${path}")"
+        vers="$(version_from_install_path "${path}" || true)"
+        [[ -n "${vers}" ]] && name="signal-cli-${vers}"
+
+        echo ">>> Waiting for your answer:"
+        echo -n "Remove ${name}? [y/N] "
+        read -r -n 1 reply || reply=""
+        echo
+        case "${reply}" in
+            y|Y|yes|YES)
                 log_step "Removing old install: ${path}"
                 rm -rf "${path}"
-            done
-            echo "Old install(s) removed."
-            ;;
-        *) log_note "Keeping old install(s)." ;;
-    esac
+                ;;
+            *) log_note "Keeping ${name}." ;;
+        esac
+    done
 }
 
 quit_prompt_with_optional_old_cleanup() {
