@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.06.11 - v. 19.182.120000 - Anruf aufnehmen <phone>_YYMMDD_HHMMSS → YYYYMMDD_HHMMSS_<phone>_Anruf_aufnehmen
 # 2026.06.11 - v. 19.181.120000 - checksum verify: match sha512 lines with or without ./ prefix (ffmpeg-voice / sha512sum cwd style)
 # 2026.06.09 - v. 19.180.120000 - rename/checksum prompts [C]: type custom exclude pattern, append to exclude file immediately
 # 2026.06.10 - v. 19.179.174500 - embedded -date_YYYY-MM-DD_HH_MM_SS[_tail] (BBC/Our World exports) → YYYYMMDD_HHMMSS_title[_tail]; before and after hyphen compaction
@@ -5950,6 +5951,30 @@ _rename_is_valid_ymd() {
     return 0
 }
 
+# Anruf-aufnehmen phone recordings: YYMMDD in filename → YYYYMMDD (Sprache/Voice style); DDMMYY fallback if invalid.
+_rename_anruf_aufnehmen_yyyymmdd_from_date6() {
+    local date6="$1"
+    local yy mm dd yyyy
+
+    yy="${date6:0:2}"
+    mm="${date6:2:2}"
+    dd="${date6:4:2}"
+    yyyy="20${yy}"
+    if _rename_is_valid_ymd "$yyyy" "$mm" "$dd"; then
+        printf '%s%s%s' "$yyyy" "$mm" "$dd"
+        return 0
+    fi
+    dd="${date6:0:2}"
+    mm="${date6:2:2}"
+    yy="${date6:4:2}"
+    yyyy="20${yy}"
+    if _rename_is_valid_ymd "$yyyy" "$mm" "$dd"; then
+        printf '%s%s%s' "$yyyy" "$mm" "$dd"
+        return 0
+    fi
+    return 1
+}
+
 # Replace every validated YYYY.M(M).D(D) substring in NAME (anywhere, not only at the start).
 # Boundaries: the character before and after the match must not be a digit (or start/end of string).
 # Invalid calendar values (year < 1980, month/day out of range) are left unchanged.
@@ -7770,6 +7795,18 @@ transform_name() {
                 newbase="${BASH_REMATCH[1]}_${BASH_REMATCH[2]}-screen_recording-${screen_suffix}${BASH_REMATCH[4]}"
             else
                 newbase="${BASH_REMATCH[1]}_${BASH_REMATCH[2]}-screen_recording${BASH_REMATCH[4]}"
+            fi
+        # Anruf aufnehmen <phone>_YYMMDD_HHMMSS.ext → YYYYMMDD_HHMMSS_<phone>_Anruf_aufnehmen.ext
+        elif [[ ! "$newbase" =~ ^[0-9]{8}_[0-9]{6}_[0-9]+_Anruf_aufnehmen(\.${audio_ext_re})$ ]] \
+            && [[ "${newbase,,}" =~ ^anruf[ _]+aufnehmen[ _]+([0-9]{8,15})_([0-9]{6})_([0-9]{6})(\.${audio_ext_re})$ ]]; then
+            local anruf_phone anruf_date6 anruf_time6 anruf_ext anruf_ymd
+            anruf_phone="${BASH_REMATCH[1]}"
+            anruf_date6="${BASH_REMATCH[2]}"
+            anruf_time6="${BASH_REMATCH[3]}"
+            anruf_ext="${BASH_REMATCH[4]}"
+            anruf_ymd="$(_rename_anruf_aufnehmen_yyyymmdd_from_date6 "$anruf_date6" || true)"
+            if [[ -n "$anruf_ymd" ]]; then
+                newbase="${anruf_ymd}_${anruf_time6}_${anruf_phone}_Anruf_aufnehmen${anruf_ext}"
             fi
         # Sprache_/Voice_ + YYMMDD + HHMMSS + optional _tail + ext (tail was required before v. 19.13).
         elif [[ "$newbase" =~ ^(Sprache|Voice)_([0-9]{6})_([0-9]{6})(_(.+))?(\..+)$ ]]; then
