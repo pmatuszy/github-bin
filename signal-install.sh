@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.06.11 - v. 1.14 - Pi/JVM: repair prompt only when needed; default [y/N]
 # 2026.06.11 - v. 1.13 - Pi/JVM: quieter JNI jar patch; skip cp when JNI already in place
 # 2026.06.11 - v. 1.12 - Pi/JVM: --repair + prompt to fix Java 25 and re-patch JNI jar (no rebuild)
 # 2026.06.11 - v. 1.11 - Pi/JVM: require Java 25 (openjdk-25 or Temurin); fix JNI jar patch with zip -j
@@ -699,33 +700,25 @@ prompt_install_or_update() {
 
     if [[ "${installed}" == "${latest}" ]]; then
         if is_pi_jni_install_method; then
-            if pi_install_needs_repair "${installed}"; then
-                echo "Repair may be needed: Java ${SIGNAL_CLI_MIN_JAVA_MAJOR}+ and/or JNI entries inside the libsignal jar."
-            fi
             if (( ASSUME_YES == 1 )); then
                 echo "Reinstalling latest version (--yes, full rebuild)."
                 return 0
             fi
             echo "You already have the latest version."
-            echo
-            echo ">>> Waiting for your answer:"
-            echo -n "Repair Java + JNI jar only (no rebuild)? [Y/n] "
-            read -r -n 1 reply || reply=""
-            echo
-            case "${reply}" in
-                n|N|no|NO)
-                    echo
-                    echo ">>> Waiting for your answer:"
-                    echo -n "Full reinstall / rebuild JNI anyway? [y/N] "
-                    read -r -n 1 reply || reply=""
-                    echo
-                    case "${reply}" in
-                        y|Y|yes|YES) echo "Proceeding with full reinstall..." ;;
-                        *) echo "Quitting — no changes made."; quit_prompt_with_optional_old_cleanup ;;
-                    esac
-                    ;;
-                *) echo "Proceeding with repair (Java + JNI jar)..."; INSTALL_ACTION=repair ;;
-            esac
+            if pi_install_needs_repair "${installed}"; then
+                echo "Repair is recommended: Java ${SIGNAL_CLI_MIN_JAVA_MAJOR}+ and/or JNI setup inside the libsignal jar."
+                echo
+                echo ">>> Waiting for your answer:"
+                echo -n "Repair Java + JNI jar only (no rebuild)? [y/N] "
+                read -r -n 1 reply || reply=""
+                echo
+                case "${reply}" in
+                    y|Y|yes|YES) echo "Proceeding with repair (Java + JNI jar)..."; INSTALL_ACTION=repair ;;
+                    *) prompt_pi_reinstall_or_quit ;;
+                esac
+            else
+                prompt_pi_reinstall_or_quit
+            fi
             return 0
         fi
         if (( ASSUME_YES == 1 )); then
@@ -907,12 +900,21 @@ find_existing_libsignal_jni_so() {
 
 libsignal_jar_needs_jni_repair() {
     local jar_path="$1"
+    local entries=""
 
     need_cmd unzip
-    if ! unzip -l "${jar_path}" 2>/dev/null | grep -qE '[[:space:]]libsignal_jni\.so$'; then
+    entries="$(unzip -Z1 "${jar_path}" 2>/dev/null || true)"
+
+    if grep 'libsignal_jni' <<< "${entries}" | grep -qE 'mnt/|signal-temp/|signal-cli-install/'; then
         return 0
     fi
-    if unzip -l "${jar_path}" 2>/dev/null | grep 'libsignal_jni' | grep -qE 'mnt/|signal-temp/|signal-cli-install/'; then
+    if ! grep -Fxq 'libsignal_jni.so' <<< "${entries}"; then
+        return 0
+    fi
+    if ! grep -Fxq 'libsignal_jni_aarch64.so' <<< "${entries}"; then
+        return 0
+    fi
+    if grep -qE '^libsignal_jni_(amd64|x86_64)\.so$' <<< "${entries}"; then
         return 0
     fi
     return 1
@@ -925,9 +927,26 @@ pi_install_needs_repair() {
     if ! java_meets_signal_cli_requirement; then
         return 0
     fi
+    if [[ ! -f "${JAVA_JNI_DIR}/libsignal_jni.so" ]]; then
+        return 0
+    fi
     jar_path="$(find_libsignal_client_jar "${version}" || true)"
     [[ -n "${jar_path}" ]] || return 1
     libsignal_jar_needs_jni_repair "${jar_path}"
+}
+
+prompt_pi_reinstall_or_quit() {
+    local reply=""
+
+    echo
+    echo ">>> Waiting for your answer:"
+    echo -n "Full reinstall / rebuild JNI anyway? [y/N] "
+    read -r -n 1 reply || reply=""
+    echo
+    case "${reply}" in
+        y|Y|yes|YES) echo "Proceeding with full reinstall..." ;;
+        *) echo "Quitting — no changes made."; quit_prompt_with_optional_old_cleanup ;;
+    esac
 }
 
 jar_delete_entry_if_present() {
