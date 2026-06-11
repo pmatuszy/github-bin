@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.06.11 - v. 2.1.7 - detect johnvansickle git ffmpeg (N-*-g*-YYYYMMDD) and localbin date builds
 # 2026.06.11 - v. 2.1.6 - source install: absolute staging prefix, unset DESTDIR, recover ffmpeg from build tree
 # 2026.06.11 - v. 2.1.5 - probe pkg-config (incl. static) before each --enable-lib*; fixes x265 etc. on jammy
 # 2026.06.11 - v. 2.1.4 - skip libsvtav1 when SvtAv1Enc >= 0.9.0 not satisfied by pkg-config (e.g. jammy arm64)
@@ -298,6 +299,10 @@ format_build_with_date() {
 format_installed_build_label() {
     local build_id="$1" date_label="$2"
     if [[ -z "${build_id}" && -z "${INSTALLED_FFMPEG_SEMVER}" ]]; then
+        if [[ -n "${INSTALLED_BUILD_KIND}" ]]; then
+            echo "installed (${BIN_FFMPEG}, build id unknown)"
+            return 0
+        fi
         echo "not installed"
         return 0
     fi
@@ -679,11 +684,20 @@ parse_build_id_from_ffmpeg_version() {
     local text="$1"
     if [[ "${text}" =~ ffmpeg-git-([0-9]{8}) ]]; then
         INSTALLED_BUILD_KIND="date"
+        INSTALLED_BUILD_SOURCE="${INSTALLED_BUILD_SOURCE:-localbin}"
         echo "${BASH_REMATCH[1]}"
         return 0
     fi
     if [[ "${text}" =~ ffmpeg-release-([0-9]{8}) ]]; then
         INSTALLED_BUILD_KIND="date"
+        INSTALLED_BUILD_SOURCE="${INSTALLED_BUILD_SOURCE:-localbin}"
+        echo "${BASH_REMATCH[1]}"
+        return 0
+    fi
+    # johnvansickle git static: ffmpeg version N-123196-gba38fa206e-20260306
+    if [[ "${text}" =~ ffmpeg[[:space:]]+version[[:space:]]+N-[0-9]+-g[0-9a-fA-F]+-([0-9]{8}) ]]; then
+        INSTALLED_BUILD_KIND="date"
+        INSTALLED_BUILD_SOURCE="${INSTALLED_BUILD_SOURCE:-localbin}"
         echo "${BASH_REMATCH[1]}"
         return 0
     fi
@@ -766,9 +780,15 @@ get_installed_build_id() {
             if [[ "${out}" =~ ffmpeg[[:space:]]+version[[:space:]]+([0-9]+(\.[0-9]+)+)-static ]]; then
                 INSTALLED_BUILD_KIND="semver"
                 INSTALLED_BUILD_SOURCE="opt"
+            elif [[ "${out}" =~ ffmpeg[[:space:]]+version[[:space:]]+N-[0-9]+-g[0-9a-fA-F]+-[0-9]{8} ]]; then
+                INSTALLED_BUILD_KIND="date"
+                INSTALLED_BUILD_SOURCE="localbin"
             fi
             if [[ "${exe}" =~ ^/usr/local/bin/ffmpeg-.+-static$ ]]; then
                 INSTALLED_BUILD_SOURCE="localbin"
+            fi
+            if [[ "${exe}" == "${BIN_FFMPEG}" || "${exe}" == /usr/local/bin/ffmpeg ]]; then
+                [[ "${INSTALLED_BUILD_KIND}" == date && -z "${INSTALLED_BUILD_SOURCE}" ]] && INSTALLED_BUILD_SOURCE="localbin"
             fi
             log_note "Active ffmpeg reported: $(printf '%s' "${out}" | head -n1 | tr '\n' ' ')"
             set_installed_build_id "${build_id}"
