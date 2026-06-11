@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.06.11 - v. 2.1.1 - fix nounset tarball URL, apt local -a syntax, duplicate profile/fdk prompts
 # 2026.06.11 - v. 2.1 - source build profiles: min/common/max/gpu/nvidia; --source-profile; interactive menu
 # 2026.06.11 - v. 2.0 - source build: enable common external encoders (libmp3lame, x264, openssl, aom, …)
 # 2026.06.11 - v. 1.9 - running ffmpeg: offer graceful/force kill or skip with version summary; fix pgrep false positives
@@ -350,7 +351,8 @@ ffmpeg_org_release_tarball_name() {
 }
 
 ffmpeg_org_release_tarball_url() {
-    echo "https://ffmpeg.org/releases/$(ffmpeg_org_release_tarball_name "$1")"
+    local version="${1:-${FFMPEG_ORG_VERSION}}"
+    echo "https://ffmpeg.org/releases/$(ffmpeg_org_release_tarball_name "${version}")"
 }
 
 official_source_build_is_available() {
@@ -1432,7 +1434,8 @@ apt_cache_has_package() {
 }
 
 apt_install_packages() {
-    local pkg="" -a packages=()
+    local pkg=""
+    local -a packages=()
     for pkg in "$@"; do
         [[ -n "${pkg}" ]] && packages+=( "${pkg}" )
     done
@@ -1441,7 +1444,8 @@ apt_install_packages() {
 }
 
 apt_install_optional_packages() {
-    local pkg="" -a present=()
+    local pkg=""
+    local -a present=()
     for pkg in "$@"; do
         if apt_cache_has_package "${pkg}"; then
             present+=( "${pkg}" )
@@ -1564,12 +1568,6 @@ prompt_source_build_profile_menu() {
                 ;;
         esac
     done
-    prompt_source_fdk_aac_if_max
-    if ! prompt_confirm_gpu_or_nvidia_profile; then
-        echo "Pick another profile:"
-        SOURCE_PROFILE=""
-        prompt_source_build_profile_menu
-    fi
 }
 
 ensure_source_build_profile_selected() {
@@ -1583,7 +1581,6 @@ ensure_source_build_profile_selected() {
         SOURCE_PROFILE="${FFMPEG_SOURCE_PROFILE}"
     else
         prompt_source_build_profile_menu
-        return 0
     fi
     if ! source_profile_is_valid "${SOURCE_PROFILE}"; then
         echo "ERROR: invalid source profile: ${SOURCE_PROFILE}" >&2
@@ -2136,8 +2133,8 @@ main() {
     elif [[ "${INSTALL_PLAN}" == "dynamic" ]]; then
         echo "  package: ffmpeg (${APT_FFMPEG_CANDIDATE})"
     elif [[ "${INSTALL_PLAN}" == "source" ]]; then
-        echo "  package: $(ffmpeg_org_release_tarball_name)"
-        echo "  url:     $(ffmpeg_org_release_tarball_url)"
+        echo "  package: $(ffmpeg_org_release_tarball_name "${FFMPEG_ORG_VERSION}")"
+        echo "  url:     $(ffmpeg_org_release_tarball_url "${FFMPEG_ORG_VERSION}")"
         echo "  profile: ${SOURCE_PROFILE:-common}"
         (( FFMPEG_SOURCE_WITH_FDK_AAC == 1 )) && echo "  extras:  libfdk-aac (non-free)"
     fi
