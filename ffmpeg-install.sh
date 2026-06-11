@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.06.09 - v. 1.8 - after successful install: ffmpeg -version and script version banner
 # 2026.06.09 - v. 1.7 - check for running ffmpeg/ffprobe before script and before install
 # 2026.06.09 - v. 1.6 - prompts accept q to quit; show [y/N/q]
 # 2026.06.11 - v. 1.5 - install to /usr/local/bin/ffmpeg-VERSION; ffmpeg/ffprobe -> versioned names
@@ -1260,22 +1261,34 @@ perform_install_build_from_source() {
     fi
 
     install_versioned_bins_to_local "${build_id}" "${staging}/bin/ffmpeg" "${staging}/bin/ffprobe"
-    verify_active_ffmpeg
     print_install_success_summary "${build_id}" "official source static ${version}"
     return 0
 }
 
-verify_active_ffmpeg() {
+print_run_finish_versions() {
+    local ffmpeg_exe=""
+
     echo
-    echo "part — verify"
+    echo "part — installed ffmpeg version"
     echo
-    if command -v timeout >/dev/null 2>&1; then
-        timeout "${FFMPEG_PROBE_TIMEOUT_SEC}" ffmpeg -version | head -n3
-        timeout "${FFMPEG_PROBE_TIMEOUT_SEC}" ffprobe -version | head -n1
+    ffmpeg_exe="$(resolve_active_ffmpeg_exe || true)"
+    if [[ -n "${ffmpeg_exe}" && -x "${ffmpeg_exe}" ]]; then
+        if command -v timeout >/dev/null 2>&1; then
+            timeout "${FFMPEG_PROBE_TIMEOUT_SEC}" "${ffmpeg_exe}" -version
+        else
+            "${ffmpeg_exe}" -version
+        fi
+    elif command -v ffmpeg >/dev/null 2>&1; then
+        if command -v timeout >/dev/null 2>&1; then
+            timeout "${FFMPEG_PROBE_TIMEOUT_SEC}" ffmpeg -version
+        else
+            ffmpeg -version
+        fi
     else
-        ffmpeg -version | head -n3
-        ffprobe -version | head -n1
+        echo "WARNING: could not run ffmpeg -version (binary not found)." >&2
     fi
+    echo
+    print_version_banner
 }
 
 print_install_success_summary() {
@@ -1291,6 +1304,7 @@ print_install_success_summary() {
     echo "           ${BIN_FFPROBE} -> $(readlink "${BIN_FFPROBE}" 2>/dev/null || echo '?')"
     list_preserved_ffmpeg_versions
     prompt_remove_old_ffmpeg_installs
+    print_run_finish_versions
 }
 
 perform_install_static() {
@@ -1361,7 +1375,6 @@ perform_install_static() {
     fi
 
     install_versioned_bins_to_local "${build_id}" "${extracted_dir}/ffmpeg" "${extracted_dir}/ffprobe"
-    verify_active_ffmpeg
     print_install_success_summary "${build_id}" "static ${FFMPEG_BUILD_KIND}"
     return 0
 }
@@ -1399,7 +1412,6 @@ perform_install_dynamic() {
     build_id="${ver}-apt"
 
     install_versioned_symlinks_to_local "${build_id}" "${apt_ffmpeg}" "${apt_ffprobe}"
-    verify_active_ffmpeg
     print_install_success_summary "${build_id}" "dynamic apt"
     return 0
 }
