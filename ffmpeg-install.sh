@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# 2026.06.11 - v. 2.1.10 - versioned filenames use release semver (8.1.1); git static falls back to ffmpeg.org version
+# 2026.06.11 - v. 2.1.9 - versioned bin names use semver or N-REV (not YYYYMMDD); migrate date-named bins
+# 2026.06.11 - v. 2.1.8 - ffplay versioned layout; plain ff* -> versioned file + symlink; /bin/env; end summary
 # 2026.06.11 - v. 2.1.7 - detect johnvansickle git ffmpeg (N-*-g*-YYYYMMDD) and localbin date builds
 # 2026.06.11 - v. 2.1.6 - source install: absolute staging prefix, unset DESTDIR, recover ffmpeg from build tree
 # 2026.06.11 - v. 2.1.5 - probe pkg-config (incl. static) before each --enable-lib*; fixes x265 etc. on jammy
@@ -34,6 +37,8 @@ FFMPEG_BASE_URL="https://johnvansickle.com/ffmpeg"
 BIN_DIR="/usr/local/bin"
 BIN_FFMPEG="${BIN_DIR}/ffmpeg"
 BIN_FFPROBE="${BIN_DIR}/ffprobe"
+BIN_FFPLAY="${BIN_DIR}/ffplay"
+FFMPEG_ACTIVE_TOOLS=( ffmpeg ffprobe ffplay )
 INSTALL_OPT="/opt"
 TEMP_CATALOG="${TEMP_CATALOG:-/mnt/ffmpeg-temp}"
 FFMPEG_BUILD_KIND="${FFMPEG_BUILD_KIND:-git}"
@@ -68,6 +73,8 @@ INSTALLED_FFMPEG_SEMVER=""
 INSTALLED_BUILD_ID=""
 INSTALLED_BUILD_KIND=""
 INSTALLED_BUILD_SOURCE=""
+INSTALLED_BUILD_SNAPSHOT_DATE=""
+INSTALLED_GIT_REVISION=""
 FFMPEG_RUNNING_ACK=0
 FFMPEG_VERSION_SUMMARY_SHOWN=0
 
@@ -122,11 +129,14 @@ Check installed ffmpeg against ffmpeg.org, then optionally install:
 Older installs are moved aside, not deleted.
 
 Install layout (/usr/local/bin):
-  ffmpeg-VERSION            versioned binary (or symlink for apt)
+  ffmpeg-VERSION            versioned binary (release semver e.g. 8.1.1; apt uses 6.1.1-apt internally)
   ffprobe-VERSION           matching ffprobe
+  ffplay-VERSION            matching ffplay (when present in static/source build)
   ffmpeg                    symlink -> ffmpeg-VERSION (active)
   ffprobe                   symlink -> ffprobe-VERSION (active)
+  ffplay                    symlink -> ffplay-VERSION (active, when installed)
   ffmpeg-VERSION-backup-*   same-name binary moved aside before replace
+  Plain ffmpeg/ffprobe/ffplay files are migrated to versioned names on startup.
 
 Options:
   -h, --help           Show this help and exit.
@@ -272,10 +282,19 @@ build_id_is_semver() {
     [[ "${1}" =~ ^[0-9]+(\.[0-9]+)+$ ]]
 }
 
+build_id_is_git_revision() {
+    [[ "${1}" =~ ^N-[0-9]+$ ]]
+}
+
+version_label_is_date_only() {
+    [[ "${1}" =~ ^[0-9]{8}$ ]]
+}
+
 build_ids_comparable() {
     local a="$1" b="$2"
     build_id_is_date "${a}" && build_id_is_date "${b}" && return 0
     build_id_is_semver "${a}" && build_id_is_semver "${b}" && return 0
+    build_id_is_git_revision "${a}" && build_id_is_git_revision "${b}" && return 0
     return 1
 }
 
@@ -324,11 +343,23 @@ format_installed_build_label() {
         fi
         return 0
     fi
-    if [[ -n "${INSTALLED_FFMPEG_SEMVER}" ]]; then
-        echo "build ${build_id} (ffmpeg ${INSTALLED_FFMPEG_SEMVER})"
+    if [[ -n "${INSTALLED_GIT_REVISION}" ]]; then
+        if [[ -n "${date_label}" && "${date_label}" != "unknown" ]]; then
+            echo "ffmpeg ${build_id} (git ${INSTALLED_GIT_REVISION}, snapshot ${date_label})"
+        else
+            echo "ffmpeg ${build_id} (git ${INSTALLED_GIT_REVISION})"
+        fi
         return 0
     fi
-    format_build_with_date "${build_id}" "${date_label}" date
+    if [[ -n "${INSTALLED_FFMPEG_SEMVER}" ]]; then
+        echo "ffmpeg ${INSTALLED_FFMPEG_SEMVER} (${build_id})"
+        return 0
+    fi
+    if build_id_is_date "${build_id}"; then
+        format_build_with_date "${build_id}" "${date_label}" date
+        return 0
+    fi
+    echo "build ${build_id}"
 }
 
 build_id_from_http_date() {
@@ -509,6 +540,14 @@ detect_machine() {
 
 version_label_from_build_id() {
     local id="$1"
+    if [[ "${id}" =~ ^([0-9]+(\.[0-9]+)+)-src(-[a-z]+)?$ ]]; then
+        echo "${BASH_REMATCH[1]}"
+        return 0
+    fi
+    if [[ "${id}" =~ ^([0-9]+(\.[0-9]+)+)-apt$ ]]; then
+        echo "${BASH_REMATCH[1]}"
+        return 0
+    fi
     id="${id%-src}"
     id="${id%-apt}"
     echo "${id}"
@@ -520,6 +559,150 @@ versioned_ffmpeg_bin() {
 
 versioned_ffprobe_bin() {
     echo "${BIN_DIR}/ffprobe-$(version_label_from_build_id "$1")"
+}
+
+versioned_ffplay_bin() {
+    echo "${BIN_DIR}/ffplay-$(version_label_from_build_id "$1")"
+}
+
+versioned_tool_bin() {
+    local tool="$1" build_id="$2"
+    echo "${BIN_DIR}/${tool}-$(version_label_from_build_id "${build_id}")"
+}
+
+run_env() {
+    /bin/env "$@"
+}
+
+probe_tool_version_output() {
+    local exe="$1"
+    local out="" rc=0
+
+    [[ -n "${exe}" && -x "${exe}" ]] || return 1
+    if command -v timeout >/dev/null 2>&1; then
+        out="$(timeout "${FFMPEG_PROBE_TIMEOUT_SEC}" "${exe}" -version 2>&1)" || rc=$?
+    else
+        out="$("${exe}" -version 2>&1)" || rc=$?
+    fi
+    (( rc == 0 )) || return 1
+    printf '%s' "${out}"
+}
+
+# Filename label: release semver (8.1.1) — not calendar dates or git N-REV tokens.
+resolve_version_label_from_version_output() {
+    local text="$1"
+    local fallback="${2:-}"
+    local semver=""
+
+    if semver="$(parse_ffmpeg_semver_from_version_output "${text}")"; then
+        echo "${semver}"
+        return 0
+    fi
+    if [[ "${text}" =~ ffmpeg[[:space:]]+version[[:space:]]+([0-9]+(\.[0-9]+)+)-static ]]; then
+        echo "${BASH_REMATCH[1]}"
+        return 0
+    fi
+    if [[ "${text}" =~ ffmpeg[[:space:]]+version[[:space:]]+N-[0-9]+-g[0-9a-fA-F]+-[0-9]{8} ]]; then
+        if [[ -n "${fallback}" ]]; then
+            echo "${fallback}"
+            return 0
+        fi
+    fi
+    return 1
+}
+
+resolve_version_label_from_executable() {
+    local exe="$1"
+    local fallback="${2:-}"
+    local out=""
+
+    out="$(probe_tool_version_output "${exe}" || true)"
+    [[ -n "${out}" ]] || return 1
+    resolve_version_label_from_version_output "${out}" "${fallback}"
+}
+
+label_from_executable() {
+    resolve_version_label_from_executable "$1" "${FFMPEG_ORG_VERSION:-}"
+}
+
+version_label_needs_semver_migration() {
+    local label="$1"
+    version_label_is_date_only "${label}" || build_id_is_git_revision "${label}"
+}
+
+rename_versioned_tool_set_if_needed() {
+    local old_label="$1" new_label="$2"
+    local tool="" old_path="" new_path="" active_label=""
+
+    [[ -n "${old_label}" && -n "${new_label}" && "${old_label}" != "${new_label}" ]] || return 0
+    version_label_needs_semver_migration "${old_label}" || return 0
+
+    active_label="$(get_active_version_label 2>/dev/null || true)"
+
+    for tool in "${FFMPEG_ACTIVE_TOOLS[@]}"; do
+        old_path="${BIN_DIR}/${tool}-${old_label}"
+        new_path="${BIN_DIR}/${tool}-${new_label}"
+        [[ -e "${old_path}" ]] || continue
+        if [[ -e "${new_path}" && ! "${old_path}" -ef "${new_path}" ]]; then
+            move_path_aside "${new_path}"
+        fi
+        if [[ ! -e "${new_path}" ]]; then
+            log_step "Renaming ${tool}-${old_label} -> ${tool}-${new_label}"
+            mv -v "${old_path}" "${new_path}"
+        fi
+        if [[ "${active_label}" == "${old_label}" && ( -L "${BIN_DIR}/${tool}" || ! -e "${BIN_DIR}/${tool}" ) ]]; then
+            ln -sfn "${tool}-${new_label}" "${BIN_DIR}/${tool}"
+        fi
+    done
+}
+
+normalize_mislabeled_versioned_bins() {
+    local path="" name="" old_label="" version_label=""
+
+    for path in "${BIN_DIR}"/ffmpeg-*; do
+        [[ -e "${path}" ]] || continue
+        [[ -f "${path}" || -L "${path}" ]] || continue
+        name="$(basename -- "${path}")"
+        [[ "${name}" =~ ^ffmpeg-(.+)$ ]] || continue
+        old_label="${BASH_REMATCH[1]}"
+        [[ "${old_label}" == *-backup-* ]] && continue
+        version_label_needs_semver_migration "${old_label}" || continue
+        version_label="$(resolve_version_label_from_executable "${path}" "${FFMPEG_ORG_VERSION:-}" || true)"
+        [[ -n "${version_label}" ]] || continue
+        rename_versioned_tool_set_if_needed "${old_label}" "${version_label}"
+    done
+}
+
+normalize_local_bin_active_tool() {
+    local tool="$1"
+    local path="${BIN_DIR}/${tool}"
+    local label="" versioned=""
+
+    [[ -e "${path}" ]] || return 0
+    [[ -L "${path}" ]] && return 0
+    [[ -f "${path}" ]] || return 0
+
+    label="$(label_from_executable "${path}" || true)"
+    [[ -n "${label}" ]] || label="unknown"
+
+    versioned="${BIN_DIR}/${tool}-${label}"
+    if [[ ! -e "${versioned}" ]]; then
+        log_step "Migrating plain ${tool} -> ${tool}-${label}"
+        mv -v "${path}" "${versioned}"
+    else
+        log_step "Plain ${tool} duplicates ${tool}-${label}; moving plain file aside"
+        move_path_aside "${path}"
+    fi
+    ln -sfn "${tool}-${label}" "${path}"
+}
+
+normalize_local_bin_active_tools() {
+    local tool=""
+
+    normalize_mislabeled_versioned_bins
+    for tool in "${FFMPEG_ACTIVE_TOOLS[@]}"; do
+        normalize_local_bin_active_tool "${tool}"
+    done
 }
 
 get_active_version_label() {
@@ -695,9 +878,16 @@ parse_build_id_from_ffmpeg_version() {
         return 0
     fi
     # johnvansickle git static: ffmpeg version N-123196-gba38fa206e-20260306
-    if [[ "${text}" =~ ffmpeg[[:space:]]+version[[:space:]]+N-[0-9]+-g[0-9a-fA-F]+-([0-9]{8}) ]]; then
-        INSTALLED_BUILD_KIND="date"
+    if [[ "${text}" =~ ffmpeg[[:space:]]+version[[:space:]]+(N-[0-9]+)-g[0-9a-fA-F]+-([0-9]{8}) ]]; then
+        INSTALLED_GIT_REVISION="${BASH_REMATCH[1]}"
+        INSTALLED_BUILD_SNAPSHOT_DATE="${BASH_REMATCH[2]}"
         INSTALLED_BUILD_SOURCE="${INSTALLED_BUILD_SOURCE:-localbin}"
+        if semver="$(resolve_version_label_from_version_output "${text}" "${FFMPEG_ORG_VERSION:-}")"; then
+            INSTALLED_BUILD_KIND="semver"
+            echo "${semver}"
+            return 0
+        fi
+        INSTALLED_BUILD_KIND="git"
         echo "${BASH_REMATCH[1]}"
         return 0
     fi
@@ -758,6 +948,8 @@ get_installed_build_id() {
     INSTALLED_BUILD_ID=""
     INSTALLED_BUILD_KIND=""
     INSTALLED_BUILD_SOURCE=""
+    INSTALLED_BUILD_SNAPSHOT_DATE=""
+    INSTALLED_GIT_REVISION=""
     INSTALLED_FFMPEG_SEMVER=""
 
     exe="$(resolve_active_ffmpeg_exe || true)"
@@ -780,9 +972,13 @@ get_installed_build_id() {
             if [[ "${out}" =~ ffmpeg[[:space:]]+version[[:space:]]+([0-9]+(\.[0-9]+)+)-static ]]; then
                 INSTALLED_BUILD_KIND="semver"
                 INSTALLED_BUILD_SOURCE="opt"
-            elif [[ "${out}" =~ ffmpeg[[:space:]]+version[[:space:]]+N-[0-9]+-g[0-9a-fA-F]+-[0-9]{8} ]]; then
-                INSTALLED_BUILD_KIND="date"
+            elif [[ "${out}" =~ ffmpeg[[:space:]]+version[[:space:]]+(N-[0-9]+)-g[0-9a-fA-F]+-([0-9]{8}) ]]; then
+                INSTALLED_GIT_REVISION="${BASH_REMATCH[1]}"
+                INSTALLED_BUILD_SNAPSHOT_DATE="${BASH_REMATCH[2]}"
                 INSTALLED_BUILD_SOURCE="localbin"
+                if [[ "${INSTALLED_BUILD_KIND}" != semver ]]; then
+                    INSTALLED_BUILD_KIND="git"
+                fi
             fi
             if [[ "${exe}" =~ ^/usr/local/bin/ffmpeg-.+-static$ ]]; then
                 INSTALLED_BUILD_SOURCE="localbin"
@@ -850,9 +1046,9 @@ list_preserved_ffmpeg_versions() {
     echo "  Versioned binaries in ${BIN_DIR}/:"
     for label in "${labels[@]}"; do
         if [[ -n "${active}" && "${label}" == "${active}" ]]; then
-            echo "    ffmpeg-${label}  ffprobe-${label}  (active)"
+            echo "    ffmpeg-${label}  ffprobe-${label}  ffplay-${label}  (active)"
         else
-            echo "    ffmpeg-${label}  ffprobe-${label}"
+            echo "    ffmpeg-${label}  ffprobe-${label}  ffplay-${label}"
         fi
     done
 }
@@ -1167,7 +1363,7 @@ prompt_remove_old_ffmpeg_installs() {
     echo
     echo "Older ffmpeg version(s) in ${BIN_DIR} (not active):"
     for label in "${old_labels[@]}"; do
-        echo "  ffmpeg-${label}  ffprobe-${label}"
+        echo "  ffmpeg-${label}  ffprobe-${label}  ffplay-${label}"
     done
     echo
 
@@ -1179,14 +1375,15 @@ prompt_remove_old_ffmpeg_installs() {
     for label in "${old_labels[@]}"; do
         vffmpeg="${BIN_DIR}/ffmpeg-${label}"
         vffprobe="${BIN_DIR}/ffprobe-${label}"
+        vffplay="${BIN_DIR}/ffplay-${label}"
 
         echo ">>> Waiting for your answer:"
-        echo -n "Remove ffmpeg-${label} and ffprobe-${label}? [y/N/q] "
+        echo -n "Remove ffmpeg-${label}, ffprobe-${label}, ffplay-${label}? [y/N/q] "
         read -r -n 1 reply || reply=""
         echo
         if prompt_reply_is_yes "${reply}"; then
-            log_step "Removing ffmpeg-${label} and ffprobe-${label}"
-            rm -f "${vffmpeg}" "${vffprobe}"
+            log_step "Removing ffmpeg-${label}, ffprobe-${label}, ffplay-${label}"
+            rm -f "${vffmpeg}" "${vffprobe}" "${vffplay}"
         elif prompt_reply_is_quit "${reply}"; then
             log_note "Quitting — keeping remaining old versions."
             return 0
@@ -1198,11 +1395,12 @@ prompt_remove_old_ffmpeg_installs() {
 
 quit_prompt_with_optional_old_cleanup() {
     prompt_remove_old_ffmpeg_installs
+    print_local_bin_ffmpeg_summary
     exit 0
 }
 
 build_id_is_known() {
-    build_id_is_date "${1}" || build_id_is_semver "${1}"
+    build_id_is_date "${1}" || build_id_is_semver "${1}" || build_id_is_git_revision "${1}"
 }
 
 apt_dynamic_is_available() {
@@ -1366,27 +1564,43 @@ normalize_legacy_versioned_bins() {
     done
 }
 
-link_active_ffmpeg_version() {
-    local label="$1"
+ensure_active_tool_symlink() {
+    local tool="$1" label="$2"
+    local path="${BIN_DIR}/${tool}" versioned="${BIN_DIR}/${tool}-${label}"
 
-    log_step "Pointing active symlinks to ffmpeg-${label} and ffprobe-${label}"
-    ln -sfn "ffmpeg-${label}" "${BIN_FFMPEG}"
-    if [[ -e "${BIN_DIR}/ffprobe-${label}" ]]; then
-        ln -sfn "ffprobe-${label}" "${BIN_FFPROBE}"
+    [[ -e "${versioned}" ]] || return 1
+    if [[ -e "${path}" && ! -L "${path}" ]]; then
+        move_path_aside "${path}"
     fi
-    ls -l "${BIN_FFMPEG}" "${BIN_FFPROBE}" 2>/dev/null || ls -l "${BIN_FFMPEG}"
+    ln -sfn "${tool}-${label}" "${path}"
+    return 0
+}
+
+link_active_ffmpeg_tools() {
+    local label="$1"
+    local tool="" linked=()
+
+    log_step "Pointing active symlinks to *-${label} (ffmpeg, ffprobe, ffplay)"
+    for tool in "${FFMPEG_ACTIVE_TOOLS[@]}"; do
+        if ensure_active_tool_symlink "${tool}" "${label}"; then
+            linked+=( "${BIN_DIR}/${tool}" )
+        fi
+    done
+    ((${#linked[@]} > 0)) && ls -l "${linked[@]}"
 }
 
 install_versioned_bins_to_local() {
     local build_id="$1"
     local ffmpeg_src="$2"
     local ffprobe_src="${3:-}"
-    local label="" vffmpeg="" vffprobe=""
+    local ffplay_src="${4:-}"
+    local label="" vffmpeg="" vffprobe="" vffplay=""
 
     need_cmd install
     label="$(version_label_from_build_id "${build_id}")"
     vffmpeg="$(versioned_ffmpeg_bin "${build_id}")"
     vffprobe="$(versioned_ffprobe_bin "${build_id}")"
+    vffplay="$(versioned_ffplay_bin "${build_id}")"
 
     if [[ -e "${vffmpeg}" ]]; then
         move_path_aside "${vffmpeg}"
@@ -1394,33 +1608,45 @@ install_versioned_bins_to_local() {
     if [[ -n "${ffprobe_src}" && -e "${vffprobe}" ]]; then
         move_path_aside "${vffprobe}"
     fi
+    if [[ -n "${ffplay_src}" && -e "${vffplay}" ]]; then
+        move_path_aside "${vffplay}"
+    fi
 
-    log_step "Installing into ${BIN_DIR}: ffmpeg-${label}, ffprobe-${label}"
+    log_step "Installing into ${BIN_DIR}: ffmpeg-${label}, ffprobe-${label}${ffplay_src:+, ffplay-${label}}"
     install -m 755 "${ffmpeg_src}" "${vffmpeg}"
     if [[ -n "${ffprobe_src}" && -e "${ffprobe_src}" ]]; then
         install -m 755 "${ffprobe_src}" "${vffprobe}"
     fi
+    if [[ -n "${ffplay_src}" && -e "${ffplay_src}" ]]; then
+        install -m 755 "${ffplay_src}" "${vffplay}"
+    fi
     chown root:root "${vffmpeg}"
     [[ -e "${vffprobe}" ]] && chown root:root "${vffprobe}"
+    [[ -e "${vffplay}" ]] && chown root:root "${vffplay}"
 
-    link_active_ffmpeg_version "${label}"
+    link_active_ffmpeg_tools "${label}"
 }
 
 install_versioned_symlinks_to_local() {
     local build_id="$1"
     local ffmpeg_src="$2"
     local ffprobe_src="${3:-}"
-    local label="" vffmpeg="" vffprobe=""
+    local ffplay_src="${4:-}"
+    local label="" vffmpeg="" vffprobe="" vffplay=""
 
     label="$(version_label_from_build_id "${build_id}")"
     vffmpeg="$(versioned_ffmpeg_bin "${build_id}")"
     vffprobe="$(versioned_ffprobe_bin "${build_id}")"
+    vffplay="$(versioned_ffplay_bin "${build_id}")"
 
     if [[ -e "${vffmpeg}" ]]; then
         move_path_aside "${vffmpeg}"
     fi
     if [[ -n "${ffprobe_src}" && -e "${vffprobe}" ]]; then
         move_path_aside "${vffprobe}"
+    fi
+    if [[ -n "${ffplay_src}" && -e "${vffplay}" ]]; then
+        move_path_aside "${vffplay}"
     fi
 
     log_step "Installing into ${BIN_DIR}: ffmpeg-${label} -> ${ffmpeg_src}"
@@ -1428,8 +1654,11 @@ install_versioned_symlinks_to_local() {
     if [[ -n "${ffprobe_src}" && -e "${ffprobe_src}" ]]; then
         ln -sfn "${ffprobe_src}" "${vffprobe}"
     fi
+    if [[ -n "${ffplay_src}" && -e "${ffplay_src}" ]]; then
+        ln -sfn "${ffplay_src}" "${vffplay}"
+    fi
 
-    link_active_ffmpeg_version "${label}"
+    link_active_ffmpeg_tools "${label}"
 }
 
 source_profile_is_valid() {
@@ -1951,15 +2180,18 @@ ffmpeg_source_ensure_staged_bins() {
             install -m 755 "${destdir_path}" "${staging}/bin/ffmpeg"
             destdir_path="${DESTDIR%/}${staging}/bin/ffprobe"
             [[ -x "${destdir_path}" ]] && install -m 755 "${destdir_path}" "${staging}/bin/ffprobe"
+            destdir_path="${DESTDIR%/}${staging}/bin/ffplay"
+            [[ -x "${destdir_path}" ]] && install -m 755 "${destdir_path}" "${staging}/bin/ffplay"
             return 0
         fi
         log_note "DESTDIR=${DESTDIR} is set; make install may have skipped ${staging}/bin."
     fi
 
     if [[ -x "${src_dir}/ffmpeg" ]]; then
-        log_note "Installing ffmpeg/ffprobe from build tree into ${staging}/bin (make install left prefix/bin empty)."
+        log_note "Installing ffmpeg/ffprobe/ffplay from build tree into ${staging}/bin (make install left prefix/bin empty)."
         install -m 755 "${src_dir}/ffmpeg" "${staging}/bin/ffmpeg"
         [[ -x "${src_dir}/ffprobe" ]] && install -m 755 "${src_dir}/ffprobe" "${staging}/bin/ffprobe"
+        [[ -x "${src_dir}/ffplay" ]] && install -m 755 "${src_dir}/ffplay" "${staging}/bin/ffplay"
         return 0
     fi
 
@@ -2053,7 +2285,7 @@ perform_install_build_from_source() {
     if [[ -n "${DESTDIR:-}" ]]; then
         log_note "Unsetting DESTDIR for make install (was: ${DESTDIR})."
     fi
-    env -u DESTDIR make install
+    run_env -u DESTDIR make install
 
     if ! ffmpeg_source_ensure_staged_bins "${staging}" "${src_dir}"; then
         ffmpeg_source_report_staging_failure "${staging}" "${src_dir}"
@@ -2062,33 +2294,59 @@ perform_install_build_from_source() {
 
     print_source_build_encoder_check "${staging}/bin/ffmpeg"
 
-    install_versioned_bins_to_local "${build_id}" "${staging}/bin/ffmpeg" "${staging}/bin/ffprobe"
+    install_versioned_bins_to_local "${build_id}" "${staging}/bin/ffmpeg" "${staging}/bin/ffprobe" "${staging}/bin/ffplay"
     print_install_success_summary "${build_id}" "official source ${SOURCE_PROFILE} ${version}"
     return 0
 }
 
-print_run_finish_versions() {
-    local ffmpeg_exe=""
+print_local_bin_tool_row() {
+    local tool="$1"
+    local path="${BIN_DIR}/${tool}"
+    local target="" resolved="" ver_line=""
+
+    echo "  ${tool}:"
+    if [[ -L "${path}" ]]; then
+        target="$(readlink "${path}" 2>/dev/null || true)"
+        resolved="$(readlink -f "${path}" 2>/dev/null || true)"
+        echo "    symlink: ${path} -> ${target}"
+        [[ -n "${resolved}" && "${resolved}" != "${path}" ]] && echo "    resolves: ${resolved}"
+    elif [[ -f "${path}" ]]; then
+        echo "    WARNING: ${path} is a plain file (expected symlink -> ${tool}-VERSION)"
+        resolved="${path}"
+    else
+        echo "    (not installed)"
+        return 0
+    fi
+
+    if [[ -n "${resolved}" && -x "${resolved}" ]]; then
+        ver_line="$(probe_tool_version_output "${resolved}" 2>/dev/null | head -n1 || true)"
+        if [[ -n "${ver_line}" ]]; then
+            echo "    version: ${ver_line}"
+        else
+            echo "    version: (probe failed)"
+        fi
+    fi
+}
+
+print_local_bin_ffmpeg_summary() {
+    local path=""
 
     echo
-    echo "part — installed ffmpeg version"
+    echo "part — ${BIN_DIR} ffmpeg toolchain"
     echo
-    ffmpeg_exe="$(resolve_active_ffmpeg_exe || true)"
-    if [[ -n "${ffmpeg_exe}" && -x "${ffmpeg_exe}" ]]; then
-        if command -v timeout >/dev/null 2>&1; then
-            timeout "${FFMPEG_PROBE_TIMEOUT_SEC}" "${ffmpeg_exe}" -version
-        else
-            "${ffmpeg_exe}" -version
-        fi
-    elif command -v ffmpeg >/dev/null 2>&1; then
-        if command -v timeout >/dev/null 2>&1; then
-            timeout "${FFMPEG_PROBE_TIMEOUT_SEC}" ffmpeg -version
-        else
-            ffmpeg -version
-        fi
+    echo "Files matching ${BIN_DIR}/ff*:"
+    if compgen -G "${BIN_DIR}/ff*" >/dev/null 2>&1; then
+        ls -l "${BIN_DIR}"/ff* 2>/dev/null || true
     else
-        echo "WARNING: could not run ffmpeg -version (binary not found)." >&2
+        echo "  (none)"
     fi
+    echo
+    echo "Active tools:"
+    for path in "${FFMPEG_ACTIVE_TOOLS[@]}"; do
+        print_local_bin_tool_row "${path}"
+    done
+    echo
+    list_preserved_ffmpeg_versions
     echo
     print_version_banner
 }
@@ -2104,9 +2362,9 @@ print_install_success_summary() {
     fi
     echo "  Active:  ${BIN_FFMPEG} -> $(readlink "${BIN_FFMPEG}" 2>/dev/null || echo '?')"
     echo "           ${BIN_FFPROBE} -> $(readlink "${BIN_FFPROBE}" 2>/dev/null || echo '?')"
+    echo "           ${BIN_FFPLAY} -> $(readlink "${BIN_FFPLAY}" 2>/dev/null || echo '?')"
     list_preserved_ffmpeg_versions
     prompt_remove_old_ffmpeg_installs
-    print_run_finish_versions
 }
 
 perform_install_static() {
@@ -2150,17 +2408,24 @@ perform_install_static() {
     fi
 
     static_semver="$(probe_ffmpeg_semver "${extracted_dir}/ffmpeg" || true)"
-    build_id="$(build_id_from_extracted_dir "${extracted_dir}" || true)"
+    build_id="$(resolve_version_label_from_executable "${extracted_dir}/ffmpeg" "${FFMPEG_ORG_VERSION:-}" || true)"
     if [[ -z "${build_id}" ]]; then
-        if [[ -n "${static_semver}" ]]; then
-            build_id="${static_semver}"
-        else
-            build_id="$(date +%Y%m%d)"
-            log_note "Could not parse build id from directory name; using ${build_id}."
+        build_id="${static_semver}"
+    fi
+    if [[ -z "${build_id}" ]]; then
+        build_id="unknown"
+        log_note "Could not determine version label from static binary; using ${build_id}."
+    elif [[ -n "${FFMPEG_ORG_VERSION}" && "${build_id}" == "${FFMPEG_ORG_VERSION}" ]]; then
+        static_out="$(probe_tool_version_output "${extracted_dir}/ffmpeg" || true)"
+        if [[ "${static_out}" =~ ffmpeg[[:space:]]+version[[:space:]]+N-[0-9]+-g ]]; then
+            log_note "Static git snapshot binary; versioned filenames use ffmpeg.org release ${build_id}."
         fi
     fi
     log_note "Extracted: $(basename "${extracted_dir}")"
-    log_note "Build id: ${build_id}"
+    log_note "Install version label: ${build_id}"
+    if dir_date="$(build_id_from_extracted_dir "${extracted_dir}" || true)"; then
+        log_note "Tarball directory build date: ${dir_date}"
+    fi
     if [[ -n "${static_semver}" ]]; then
         log_note "Static binary reports ffmpeg ${static_semver}"
         if [[ -n "${FFMPEG_ORG_VERSION}" ]] && version_is_newer_than "${FFMPEG_ORG_VERSION}" "${static_semver}"; then
@@ -2176,7 +2441,7 @@ perform_install_static() {
         return 1
     fi
 
-    install_versioned_bins_to_local "${build_id}" "${extracted_dir}/ffmpeg" "${extracted_dir}/ffprobe"
+    install_versioned_bins_to_local "${build_id}" "${extracted_dir}/ffmpeg" "${extracted_dir}/ffprobe" "${extracted_dir}/ffplay"
     print_install_success_summary "${build_id}" "static ${FFMPEG_BUILD_KIND}"
     return 0
 }
@@ -2204,6 +2469,7 @@ perform_install_dynamic() {
 
     apt_ffmpeg="$(command -v ffmpeg || true)"
     apt_ffprobe="$(command -v ffprobe || true)"
+    apt_ffplay="$(command -v ffplay || true)"
     if [[ -z "${apt_ffmpeg}" || ! -x "${apt_ffmpeg}" ]]; then
         echo "ERROR: ffmpeg not found after apt install." >&2
         return 1
@@ -2213,7 +2479,7 @@ perform_install_dynamic() {
     [[ -n "${ver}" ]] || ver="${APT_FFMPEG_VERSION:-unknown}"
     build_id="${ver}-apt"
 
-    install_versioned_symlinks_to_local "${build_id}" "${apt_ffmpeg}" "${apt_ffprobe}"
+    install_versioned_symlinks_to_local "${build_id}" "${apt_ffmpeg}" "${apt_ffprobe}" "${apt_ffplay}"
     print_install_success_summary "${build_id}" "dynamic apt"
     return 0
 }
@@ -2270,7 +2536,11 @@ main() {
 
     log_step "Starting ffmpeg install/update check..."
     as_root_check
+    mkdir -p "${BIN_DIR}"
     detect_machine "$(uname -m)"
+    fetch_ffmpeg_org_latest_release || true
+    normalize_legacy_versioned_bins
+    normalize_local_bin_active_tools
 
     log_step "Step 1/4 — ffmpeg.org latest release"
     fetch_ffmpeg_org_latest_release || true
@@ -2288,7 +2558,9 @@ main() {
     log_step "Step 4/4 — detect installed ffmpeg"
     get_installed_build_id
     installed="${INSTALLED_BUILD_ID}"
-    if build_id_is_date "${installed}"; then
+    if [[ -n "${INSTALLED_BUILD_SNAPSHOT_DATE}" ]]; then
+        installed_date="$(format_build_date_display "${INSTALLED_BUILD_SNAPSHOT_DATE}")"
+    elif build_id_is_date "${installed}"; then
         installed_date="$(format_build_date_display "${installed}")"
     fi
 
@@ -2317,6 +2589,7 @@ main() {
     echo
 
     run_install_plan
+    print_local_bin_ffmpeg_summary
 }
 
 HEADER_EXTRA_ARGS=()
