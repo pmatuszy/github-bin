@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.06.11 - v. 1.6 - version check: GitHub release dates; update prompt default [y/N]
 # 2026.06.11 - v. 1.5 - x86_64: prebuilt signal-cli-VERSION-Linux-native.tar.gz (no Java/Rust/JNI); Pi/arm keeps JNI path
 # 2026.06.11 - v. 1.4 - prompts: drop "(single key, Enter not required)" hint line
 # 2026.06.11 - v. 1.3 - step 1: detect running signal-cli silently (no process list); still warn before install
@@ -29,6 +30,7 @@ ASSUME_YES=0
 VERBOSE=1
 NETWORK_TIMEOUT_SEC="${NETWORK_TIMEOUT_SEC:-60}"
 SIGNAL_CLI_PROBE_TIMEOUT_SEC="${SIGNAL_CLI_PROBE_TIMEOUT_SEC:-20}"
+RELEASE_PUBLISHED_DATE=""
 
 TMP_WORK_DIR=""
 cleanup_tmp_work_dir() {
@@ -145,6 +147,58 @@ fetch_url() {
     fi
 }
 
+format_github_release_date() {
+    local iso="$1"
+    if [[ -z "${iso}" ]]; then
+        echo "unknown"
+        return 0
+    fi
+    if [[ "${iso}" =~ ^([0-9]{4})-([0-9]{2})-([0-9]{2}) ]]; then
+        echo "${BASH_REMATCH[1]}.${BASH_REMATCH[2]}.${BASH_REMATCH[3]}"
+        return 0
+    fi
+    echo "${iso}"
+}
+
+# Fetch signal-cli release metadata from GitHub. Empty version = latest.
+# Sets RELEASE_PUBLISHED_DATE; prints version on stdout.
+github_fetch_signal_cli_release() {
+    local version="${1:-}"
+    local json tag api_url published
+
+    RELEASE_PUBLISHED_DATE=""
+
+    if [[ -z "${version}" ]]; then
+        api_url="https://api.github.com/repos/${SIGNAL_CLI_REPO}/releases/latest"
+        log_step "Querying GitHub for latest ${SIGNAL_CLI_REPO} release..."
+    else
+        api_url="https://api.github.com/repos/${SIGNAL_CLI_REPO}/releases/tags/v${version}"
+        log_note "Querying GitHub for ${SIGNAL_CLI_REPO} release v${version}..."
+    fi
+    log_note "${api_url}"
+
+    if ! json="$(fetch_url "${api_url}" 2>/dev/null)"; then
+        RELEASE_PUBLISHED_DATE="unknown"
+        return 1
+    fi
+
+    tag="$(printf '%s\n' "$json" | grep -m1 '"tag_name"' | sed -E 's/.*"tag_name"[[:space:]]*:[[:space:]]*"v?([^"]+)".*/\1/')"
+    published="$(printf '%s\n' "$json" | grep -m1 '"published_at"' | sed -E 's/.*"published_at"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/')"
+    RELEASE_PUBLISHED_DATE="$(format_github_release_date "${published}")"
+
+    if [[ ! "$tag" =~ ^[0-9]+(\.[0-9]+)+$ ]]; then
+        RELEASE_PUBLISHED_DATE="unknown"
+        if [[ -n "${version}" ]]; then
+            return 1
+        fi
+        echo "ERROR: Could not parse latest release version for ${SIGNAL_CLI_REPO} (got '${tag}')." >&2
+        exit 1
+    fi
+
+    log_note "Release ${tag} published: ${RELEASE_PUBLISHED_DATE}"
+    echo "${tag}"
+}
+
 github_latest_release_version() {
     local repo="$1"
     local json tag api_url
@@ -160,7 +214,22 @@ github_latest_release_version() {
         exit 1
     fi
     log_note "Latest ${repo} release: ${tag}"
-    echo "$tag"
+    echo "${tag}"
+}
+
+format_version_with_release_date() {
+    local ver="$1" date="$2"
+
+    if [[ -z "${ver}" ]]; then
+        echo "not installed"
+        return 0
+    fi
+
+    if [[ -n "${date}" && "${date}" != "unknown" ]]; then
+        echo "${ver} (released ${date})"
+    else
+        echo "${ver}"
+    fi
 }
 
 parse_signal_cli_version_output() {
@@ -394,12 +463,12 @@ check_platform_for_install_method() {
 }
 
 prompt_install_or_update() {
-    local latest="$1" installed="$2" reply=""
+    local latest="$1" installed="$2" latest_date="$3" installed_date="$4" reply=""
 
     echo
     echo "signal-cli version check:"
-    echo "  Installed: ${installed:-not installed}"
-    echo "  Latest:    ${latest}"
+    echo "  Installed: $(format_version_with_release_date "${installed}" "${installed_date}")"
+    echo "  Latest:    $(format_version_with_release_date "${latest}" "${latest_date}")"
     echo
 
     if [[ -z "${installed}" ]]; then
@@ -448,12 +517,12 @@ prompt_install_or_update() {
         fi
         echo
         echo ">>> Waiting for your answer:"
-        echo -n "Update signal-cli ${installed} -> ${latest} now? [Y/n] "
+        echo -n "Update signal-cli ${installed} -> ${latest} now? [y/N] "
         read -r -n 1 reply || reply=""
         echo
         case "${reply}" in
-            n|N|no|NO) echo "Quitting — no changes made."; exit 0 ;;
-            *) echo "Proceeding with update..." ;;
+            y|Y|yes|YES) echo "Proceeding with update..." ;;
+            *) echo "Quitting — no changes made."; exit 0 ;;
         esac
         return 0
     fi
@@ -711,7 +780,7 @@ perform_install_pi() {
 }
 
 main() {
-    local installed="" latest="" protoc_latest=""
+    local installed="" latest="" protoc_latest="" latest_date="" installed_date=""
 
     log_step "Starting signal-cli install/update check..."
     as_root_check
@@ -747,7 +816,16 @@ main() {
     else
         log_step "Step 2/2 — fetch latest signal-cli release from GitHub"
     fi
-    latest="$(github_latest_release_version "${SIGNAL_CLI_REPO}")"
+    latest="$(github_fetch_signal_cli_release)"
+    latest_date="${RELEASE_PUBLISHED_DATE}"
+
+    if [[ -n "${installed}" ]]; then
+        if github_fetch_signal_cli_release "${installed}" >/dev/null; then
+            installed_date="${RELEASE_PUBLISHED_DATE}"
+        else
+            installed_date="unknown"
+        fi
+    fi
 
     if is_pi_jni_install_method; then
         log_step "Step 3/3 — fetch latest protoc release from GitHub"
@@ -755,7 +833,7 @@ main() {
     fi
 
     log_step "Version check complete."
-    prompt_install_or_update "${latest}" "${installed}"
+    prompt_install_or_update "${latest}" "${installed}" "${latest_date}" "${installed_date}"
     prompt_stop_signal_cli_before_install
 
     echo
