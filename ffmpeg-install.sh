@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.06.11 - v. 2.1.13 - fix local -a syntax in print_installed_tool_binary_paths (bash on backupche)
 # 2026.06.11 - v. 2.1.12 - installed path listing: symlink target and resolved real file for each tool
 # 2026.06.11 - v. 2.1.11 - version check prompt: show full paths to installed ffmpeg/ffprobe/ffplay binaries
 # 2026.06.11 - v. 2.1.10 - versioned filenames use release semver (8.1.1); git static falls back to ffmpeg.org version
@@ -939,7 +940,8 @@ tool_is_installed_under_bin_dir() {
 }
 
 print_installed_tool_binary_paths() {
-    local tool="" -a installed_tools=()
+    local tool=""
+    local -a installed_tools=()
 
     for tool in "${FFMPEG_ACTIVE_TOOLS[@]}"; do
         if tool_is_installed_under_bin_dir "${tool}"; then
