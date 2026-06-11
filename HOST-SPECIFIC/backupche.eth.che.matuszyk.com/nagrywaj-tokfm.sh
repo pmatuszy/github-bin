@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.06.11 - v. 1.5 - bugfix: FFMPEG_BIN lost when print_ffmpeg_in_use was piped to tee (subshell + nounset)
 # 2026.06.11 - v. 1.4 - print ffmpeg path/version at start; FFMPEG_BIN; mkdir output dir; -nostdin; quote vars
 # 2026.05.26 - user-facing messages translated from Polish to English
 # 2023.07.08 - v. 1.3 - bugfix: forced aktualny dzien to be a number in 10 base
@@ -29,6 +30,7 @@ ile_wiecej_sek_nagrywac=120
 ile_sek_przed_polnoca_nie_nagrywamy_juz=10
 
 log_file="/tmp/$(basename "$0")_$(date '+%Y.%m.%d__%H%M%S').log"
+FFMPEG_BIN="${FFMPEG_BIN:-}"
 
 resolve_ffmpeg_bin() {
     local candidate=""
@@ -67,7 +69,9 @@ mkdir -p "${DOKAD_DIR}" || {
     exit 1
 }
 
-print_ffmpeg_in_use | tee -a "${log_file}"
+# Do not pipe this function: a pipeline runs in a subshell, so FFMPEG_BIN would not
+# reach the main script (_script_header.sh enables nounset).
+print_ffmpeg_in_use
 
 dzien_wywolania=$(date '+%d')
 aktualny_dzien=${dzien_wywolania}
