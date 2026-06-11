@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.06.11 - v. 2.1.15 - ffprobe/ffplay version labels match ffmpeg; fix *-unknown; parse ffprobe/ffplay -version
 # 2026.06.11 - v. 2.1.14 - column-align installed binary path lines (tool / kind / path)
 # 2026.06.11 - v. 2.1.13 - fix local -a syntax in print_installed_tool_binary_paths (bash on backupche)
 # 2026.06.11 - v. 2.1.12 - installed path listing: symlink target and resolved real file for each tool
@@ -608,11 +609,11 @@ resolve_version_label_from_version_output() {
         echo "${semver}"
         return 0
     fi
-    if [[ "${text}" =~ ffmpeg[[:space:]]+version[[:space:]]+([0-9]+(\.[0-9]+)+)-static ]]; then
-        echo "${BASH_REMATCH[1]}"
+    if [[ "${text}" =~ ff(mpeg|probe|play)[[:space:]]+version[[:space:]]+([0-9]+(\.[0-9]+)+)-static ]]; then
+        echo "${BASH_REMATCH[2]}"
         return 0
     fi
-    if [[ "${text}" =~ ffmpeg[[:space:]]+version[[:space:]]+N-[0-9]+-g[0-9a-fA-F]+-[0-9]{8} ]]; then
+    if [[ "${text}" =~ ff(mpeg|probe|play)[[:space:]]+version[[:space:]]+N-[0-9]+-g[0-9a-fA-F]+-[0-9]{8} ]]; then
         if [[ -n "${fallback}" ]]; then
             echo "${fallback}"
             return 0
@@ -632,12 +633,25 @@ resolve_version_label_from_executable() {
 }
 
 label_from_executable() {
-    resolve_version_label_from_executable "$1" "${FFMPEG_ORG_VERSION:-}"
+    local exe="$1"
+    local label="" ffmpeg_label=""
+
+    label="$(resolve_version_label_from_executable "${exe}" "${FFMPEG_ORG_VERSION:-}" || true)"
+    if [[ -n "${label}" ]]; then
+        echo "${label}"
+        return 0
+    fi
+    ffmpeg_label="$(active_ffmpeg_version_label 2>/dev/null || true)"
+    [[ -n "${ffmpeg_label}" ]] && echo "${ffmpeg_label}"
+}
+
+version_label_is_unknown() {
+    [[ "${1:-}" == unknown ]]
 }
 
 version_label_needs_semver_migration() {
     local label="$1"
-    version_label_is_date_only "${label}" || build_id_is_git_revision "${label}"
+    version_label_is_date_only "${label}" || build_id_is_git_revision "${label}" || version_label_is_unknown "${label}"
 }
 
 rename_versioned_tool_set_if_needed() {
@@ -660,8 +674,14 @@ rename_versioned_tool_set_if_needed() {
             log_step "Renaming ${tool}-${old_label} -> ${tool}-${new_label}"
             mv -v "${old_path}" "${new_path}"
         fi
-        if [[ "${active_label}" == "${old_label}" && ( -L "${BIN_DIR}/${tool}" || ! -e "${BIN_DIR}/${tool}" ) ]]; then
-            ln -sfn "${tool}-${new_label}" "${BIN_DIR}/${tool}"
+        link="${BIN_DIR}/${tool}"
+        if [[ -L "${link}" ]]; then
+            current="$(readlink "${link}" 2>/dev/null || true)"
+            if [[ "${current}" == "${tool}-${old_label}" ]]; then
+                ln -sfn "${tool}-${new_label}" "${link}"
+            fi
+        elif [[ "${active_label}" == "${old_label}" && ! -e "${link}" ]]; then
+            ln -sfn "${tool}-${new_label}" "${link}"
         fi
     done
 }
@@ -693,6 +713,9 @@ normalize_local_bin_active_tool() {
     [[ -f "${path}" ]] || return 0
 
     label="$(label_from_executable "${path}" || true)"
+    if [[ -z "${label}" ]]; then
+        label="$(active_ffmpeg_version_label 2>/dev/null || true)"
+    fi
     [[ -n "${label}" ]] || label="unknown"
 
     versioned="${BIN_DIR}/${tool}-${label}"
@@ -706,6 +729,14 @@ normalize_local_bin_active_tool() {
     ln -sfn "${tool}-${label}" "${path}"
 }
 
+normalize_unknown_labeled_versioned_bins() {
+    local correct_label=""
+
+    correct_label="$(active_ffmpeg_version_label 2>/dev/null || true)"
+    [[ -n "${correct_label}" && "${correct_label}" != unknown ]] || return 0
+    rename_versioned_tool_set_if_needed "unknown" "${correct_label}"
+}
+
 normalize_local_bin_active_tools() {
     local tool=""
 
@@ -713,6 +744,7 @@ normalize_local_bin_active_tools() {
     for tool in "${FFMPEG_ACTIVE_TOOLS[@]}"; do
         normalize_local_bin_active_tool "${tool}"
     done
+    normalize_unknown_labeled_versioned_bins
 }
 
 get_active_version_label() {
@@ -720,6 +752,32 @@ get_active_version_label() {
     link="$(readlink "${BIN_FFMPEG}" 2>/dev/null || true)"
     [[ "${link}" =~ ^ffmpeg-(.+)$ ]] || return 1
     echo "${BASH_REMATCH[1]}"
+}
+
+active_ffmpeg_version_label() {
+    local label="" exe=""
+
+    if label="$(get_active_version_label 2>/dev/null)"; then
+        echo "${label}"
+        return 0
+    fi
+
+    exe="$(readlink -f "${BIN_FFMPEG}" 2>/dev/null || true)"
+    if [[ -n "${exe}" && -x "${exe}" && ! -d "${exe}" ]]; then
+        if label="$(resolve_version_label_from_executable "${exe}" "${FFMPEG_ORG_VERSION:-}" || true)"; then
+            [[ -n "${label}" ]] && echo "${label}" && return 0
+        fi
+    fi
+
+    for exe in "${BIN_DIR}"/ffmpeg-*; do
+        [[ -f "${exe}" && ! -L "${exe}" ]] || continue
+        [[ "${exe}" == *-backup-* ]] && continue
+        if label="$(resolve_version_label_from_executable "${exe}" "${FFMPEG_ORG_VERSION:-}" || true)"; then
+            [[ -n "${label}" && "${label}" != unknown ]] && echo "${label}" && return 0
+        fi
+    done
+
+    [[ -n "${FFMPEG_ORG_VERSION}" ]] && echo "${FFMPEG_ORG_VERSION}"
 }
 
 set_installed_build_id() {
@@ -776,8 +834,8 @@ move_path_aside() {
 
 parse_ffmpeg_semver_from_version_output() {
     local text="$1"
-    if [[ "${text}" =~ ffmpeg[[:space:]]+version[[:space:]]+([0-9]+(\.[0-9]+)+) ]]; then
-        echo "${BASH_REMATCH[1]}"
+    if [[ "${text}" =~ ff(mpeg|probe|play)[[:space:]]+version[[:space:]]+([0-9]+(\.[0-9]+)+) ]]; then
+        echo "${BASH_REMATCH[2]}"
         return 0
     fi
     return 1
@@ -985,10 +1043,10 @@ parse_build_id_from_ffmpeg_version() {
         echo "${BASH_REMATCH[1]}"
         return 0
     fi
-    # johnvansickle git static: ffmpeg version N-123196-gba38fa206e-20260306
-    if [[ "${text}" =~ ffmpeg[[:space:]]+version[[:space:]]+(N-[0-9]+)-g[0-9a-fA-F]+-([0-9]{8}) ]]; then
-        INSTALLED_GIT_REVISION="${BASH_REMATCH[1]}"
-        INSTALLED_BUILD_SNAPSHOT_DATE="${BASH_REMATCH[2]}"
+    # johnvansickle git static: ffmpeg/ffprobe/ffplay version N-123196-gba38fa206e-20260306
+    if [[ "${text}" =~ ff(mpeg|probe|play)[[:space:]]+version[[:space:]]+(N-[0-9]+)-g[0-9a-fA-F]+-([0-9]{8}) ]]; then
+        INSTALLED_GIT_REVISION="${BASH_REMATCH[2]}"
+        INSTALLED_BUILD_SNAPSHOT_DATE="${BASH_REMATCH[3]}"
         INSTALLED_BUILD_SOURCE="${INSTALLED_BUILD_SOURCE:-localbin}"
         if semver="$(resolve_version_label_from_version_output "${text}" "${FFMPEG_ORG_VERSION:-}")"; then
             INSTALLED_BUILD_KIND="semver"
@@ -996,7 +1054,7 @@ parse_build_id_from_ffmpeg_version() {
             return 0
         fi
         INSTALLED_BUILD_KIND="git"
-        echo "${BASH_REMATCH[1]}"
+        echo "${BASH_REMATCH[2]}"
         return 0
     fi
     if [[ "${text}" =~ ffmpeg[[:space:]]+version[[:space:]]+([0-9]+(\.[0-9]+)+)-static ]]; then
