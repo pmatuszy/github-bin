@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.06.11 - v. 1.6 - -c copy: official static ffmpeg 8.x has no mp3 encoder (stream is already mp3)
 # 2026.06.11 - v. 1.5 - bugfix: FFMPEG_BIN lost when print_ffmpeg_in_use was piped to tee (subshell + nounset)
 # 2026.06.11 - v. 1.4 - print ffmpeg path/version at start; FFMPEG_BIN; mkdir output dir; -nostdin; quote vars
 # 2026.05.26 - user-facing messages translated from Polish to English
@@ -88,8 +89,8 @@ while (( secs_to_midnight > ile_sek_przed_polnoca_nie_nagrywamy_juz )) && (( 10#
 
     secs_nagrywania=$(( secs_to_midnight + ile_wiecej_sek_nagrywac ))
     DOKAD="${DOKAD_PREFIX}-$(date '+%Y.%m.%d__%H%M%S').mp3"
-    echo "${FFMPEG_BIN} -hide_banner -loglevel quiet -nostdin -t ${secs_nagrywania} -i \"${SKAD}\" \"${DOKAD}\"" | tee -a "${log_file}"
-    "${FFMPEG_BIN}" -hide_banner -loglevel quiet -nostdin -t "${secs_nagrywania}" -i "${SKAD}" "${DOKAD}" 2>>"${log_file}"
+    echo "${FFMPEG_BIN} -hide_banner -loglevel error -nostdin -c copy -t ${secs_nagrywania} -i \"${SKAD}\" \"${DOKAD}\"" | tee -a "${log_file}"
+    "${FFMPEG_BIN}" -hide_banner -loglevel error -nostdin -c copy -t "${secs_nagrywania}" -i "${SKAD}" "${DOKAD}" 2>>"${log_file}"
 
     kod_powrotu=$?
     chown "${wlasciciel_pliku}" "${DOKAD}" 2>/dev/null
