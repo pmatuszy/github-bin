@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.06.11 - v. 19.185.120000 - flatten prompt [C]: custom exclude pattern (incl. FLATTEN_EXACT=); match globs/fragments
 # 2026.06.11 - v. 19.184.120000 - Anruf_aufnehmen: callee id may be phone digits or text (parse YYMMDD_HHMMSS from right)
 # 2026.06.11 - v. 19.183.120000 - fix Anruf_aufnehmen =~ syntax (drop negated match; match normalized stem)
 # 2026.06.11 - v. 19.182.120000 - Anruf aufnehmen <phone>_YYMMDD_HHMMSS → YYYYMMDD_HHMMSS_<phone>_Anruf_aufnehmen
@@ -732,6 +733,7 @@ Options:
 Optional exclude file in the start directory: _exclude-rename.sh.txt
   FILE=basename or FILE=wildcard — skip renaming that filename in every subdirectory (files and directories; not path-specific).
   SUBTREE=dir — skip that directory and every path under it (prompt [B] on a file uses the directory where that file lives).
+  FLATTEN_EXACT=dir — skip flatten prompts for matching directories (prompt [E] uses exact path; [C] may use globs or /fragment/).
   [F] at the rename prompt appends FILE=<basename> for the current path (file or directory). At the checksum-group prompt, [F] uses the list file's basename. [C] lets you type any custom filter line (FILE=, SUBTREE=, =path, globs). See also /basename/.
   thumbs.db / torrent .URL: if the suggested path equals the current path, you still get a prompt so you can delete the file ([K] / [T]); there is no rename to apply.
 
@@ -1585,6 +1587,29 @@ apply_containing_directory_subtree_exception() {
     append_subtree_directory_to_exclude_filters_file "$dir"
 }
 
+path_matches_flatten_exclude_filter() {
+    local p="$1"
+    local filter="" target="" base=""
+
+    [[ -n "$p" ]] || return 1
+    base="$(basename -- "$p")"
+
+    for filter in "${EXCLUDE_FILTERS[@]}"; do
+        [[ "$filter" == FLATTEN_EXACT=* ]] || continue
+        target="${filter#FLATTEN_EXACT=}"
+        [[ -n "$target" ]] || continue
+        if [[ "$p" == "$target" ]]; then
+            return 0
+        fi
+        if [[ "$target" == *'*'* || "$target" == *'?'* || "$target" == *'['* ]]; then
+            [[ "$p" == $target || "$base" == $target ]] && return 0
+        elif [[ "$p" == *"$target"* ]]; then
+            return 0
+        fi
+    done
+    return 1
+}
+
 flatten_exception_exists_for_path() {
     local path="$1"
     local entry=""
@@ -1597,7 +1622,7 @@ flatten_exception_exists_for_path() {
     for existing in "${EXCLUDE_FILTERS[@]}"; do
         [[ "$existing" == "$entry" ]] && return 0
     done
-    return 1
+    path_matches_flatten_exclude_filter "$path"
 }
 
 exception_exists_for_path() {
@@ -1653,11 +1678,15 @@ append_custom_exclude_pattern_to_exclude_filters_file() {
 }
 
 prompt_custom_exclude_pattern_from_user() {
+    local context="${1:-}"
     local pattern=""
 
     echo
     echo "$(user_prompt_ts_prefix)Custom exclude pattern (written to exclude file; active immediately):"
     echo "  Same syntax as _exclude-rename.sh.txt — FILE=name, SUBTREE=dir, =/exact/path, globs, /fragment/"
+    if [[ "$context" == flatten ]]; then
+        echo "  FLATTEN_EXACT=dir — skip flatten prompts (exact path, glob, or path fragment)"
+    fi
     echo "  Leave empty and press Enter to cancel."
     echo -n "$(user_prompt_ts_prefix)Pattern: "
     read_line_editable pattern "$PROMPT_WAIT_SECONDS" ""
@@ -9659,9 +9688,10 @@ maybe_prompt_flatten_single_child_dir() {
         echo "  [Y] Yes — flatten (move child contents up, remove subdirectory; then choose folder name)"
         echo "  [N] No (default) — keep current folder layout"
         echo "  [E] Add flatten exception — skip flatten prompts for this directory in the future"
+        echo "  [C] Custom exclude pattern — type any filter line (FLATTEN_EXACT=, SUBTREE=, glob, etc.)"
         print_prompt_view_directory_menu_line
         echo "  [Q] Quit — stop the script"
-        echo -n "$(user_prompt_ts_prefix)Choice [y/N/e/v/q]: "
+        echo -n "$(user_prompt_ts_prefix)Choice [y/N/e/c/v/q]: "
         flush_stdin
         read_single_key answer "$PROMPT_WAIT_SECONDS"
         echo
@@ -9676,6 +9706,12 @@ maybe_prompt_flatten_single_child_dir() {
         if [[ "$answer" =~ [Ee] ]]; then
             append_flatten_exception_to_exclude_filters_file "$parent_dir"
             return 0
+        fi
+        if [[ "$answer" =~ [Cc] ]]; then
+            if prompt_custom_exclude_pattern_from_user flatten; then
+                return 0
+            fi
+            continue
         fi
         [[ "$answer" =~ [Yy] ]] || return 0
         break
