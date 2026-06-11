@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.06.11 - v. 2.1.16 - quit exits immediately (no old-version removal prompt); skip backup-* in old-version list
 # 2026.06.11 - v. 2.1.15 - ffprobe/ffplay version labels match ffmpeg; fix *-unknown; parse ffprobe/ffplay -version
 # 2026.06.11 - v. 2.1.14 - column-align installed binary path lines (tool / kind / path)
 # 2026.06.11 - v. 2.1.13 - fix local -a syntax in print_installed_tool_binary_paths (bash on backupche)
@@ -649,6 +650,10 @@ version_label_is_unknown() {
     [[ "${1:-}" == unknown ]]
 }
 
+version_label_is_backup_aside() {
+    [[ "${1:-}" == backup-* || "${1:-}" == *-backup-* ]]
+}
+
 version_label_needs_semver_migration() {
     local label="$1"
     version_label_is_date_only "${label}" || build_id_is_git_revision "${label}" || version_label_is_unknown "${label}"
@@ -695,7 +700,7 @@ normalize_mislabeled_versioned_bins() {
         name="$(basename -- "${path}")"
         [[ "${name}" =~ ^ffmpeg-(.+)$ ]] || continue
         old_label="${BASH_REMATCH[1]}"
-        [[ "${old_label}" == *-backup-* ]] && continue
+        version_label_is_backup_aside "${old_label}" && continue
         version_label_needs_semver_migration "${old_label}" || continue
         version_label="$(resolve_version_label_from_executable "${path}" "${FFMPEG_ORG_VERSION:-}" || true)"
         [[ -n "${version_label}" ]] || continue
@@ -1185,7 +1190,7 @@ collect_old_version_labels() {
         name="$(basename "${path}")"
         [[ "${name}" =~ ^ffmpeg-(.+)$ ]] || continue
         label="${BASH_REMATCH[1]}"
-        [[ "${label}" == *-backup-* ]] && continue
+        version_label_is_backup_aside "${label}" && continue
         [[ -n "${active}" && "${label}" == "${active}" ]] && continue
         printf '%s\n' "${label}"
     done | sort -V -u
@@ -1200,7 +1205,7 @@ list_preserved_ffmpeg_versions() {
         name="$(basename "${path}")"
         [[ "${name}" =~ ^ffmpeg-(.+)$ ]] || continue
         label="${BASH_REMATCH[1]}"
-        [[ "${label}" == *-backup-* ]] && continue
+        version_label_is_backup_aside "${label}" && continue
         raw_labels+=("${label}")
     done
     ((${#raw_labels[@]} > 0)) || return 0
@@ -1560,10 +1565,13 @@ prompt_remove_old_ffmpeg_installs() {
     done
 }
 
-quit_prompt_with_optional_old_cleanup() {
-    prompt_remove_old_ffmpeg_installs
+quit_script() {
     print_local_bin_ffmpeg_summary
     exit 0
+}
+
+quit_prompt_with_optional_old_cleanup() {
+    quit_script
 }
 
 build_id_is_known() {
