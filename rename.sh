@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.06.10 - v. 19.179.174500 - embedded -date_YYYY-MM-DD_HH_MM_SS[_tail] (BBC/Our World exports) → YYYYMMDD_HHMMSS_title[_tail]; before and after hyphen compaction
 # 2026.06.10 - v. 19.178.172000 - Signal timestamp-first: run before and after hyphen date compaction (idempotent; catches partial compact / reorder-safe)
 # 2026.06.10 - v. 19.177.170000 - Signal signal-YYYY-MM-DD-HH-MM-SS[-tail]: timestamp first before hyphen date compaction (fixes signal-20260606-12-00-47-325 stuck after partial compact)
 # 2026.06.10 - v. 19.176.163000 - Sony XAVC clip pairs C####.MP4 + C####M01.XML: CreationDate local wall-clock → YYYYMMDD_HHMMSS_-_-_MANUFACTURER_MODEL_C####[M01].ext; defer XML until MP4
@@ -6061,6 +6062,86 @@ _rename_signal_timestamp_first() {
     return 1
 }
 
+# BBC / iPlayer style: ...-date_YYYY-MM-DD_HH_MM_SS[_id].ext → YYYYMMDD_HHMMSS_... (before/after hyphen date compaction).
+_rename_date_tag_timestamp_first() {
+    local new="$1"
+    local prefix y m d hh mm ss tail ext ymd
+
+    [[ "$new" =~ ^[0-9]{8}_[0-9]{6}_ ]] && [[ "$new" != *-[Dd][Aa][Tt][Ee]_* ]] && return 1
+
+    # ...-date_YYYY-MM-DD_HH_MM_SS_tail.ext
+    if [[ "$new" =~ ^(.+)-[Dd][Aa][Tt][Ee]_([0-9]{4})-([0-9]{1,2})-([0-9]{1,2})_([0-9]{2})_([0-9]{2})_([0-9]{2})_(.+)(\.[^.]+)$ ]]; then
+        prefix="${BASH_REMATCH[1]}"
+        y="${BASH_REMATCH[2]}"
+        m="${BASH_REMATCH[3]}"
+        d="${BASH_REMATCH[4]}"
+        hh="${BASH_REMATCH[5]}"
+        mm="${BASH_REMATCH[6]}"
+        ss="${BASH_REMATCH[7]}"
+        tail="${BASH_REMATCH[8]}"
+        ext="${BASH_REMATCH[9]}"
+        _rename_is_valid_ymd "$y" "$m" "$d" || return 1
+        printf '%04d%02d%02d_%02d%02d%02d_%s%s' \
+            "$((10#${y}))" "$((10#${m}))" "$((10#${d}))" \
+            "$((10#${hh}))" "$((10#${mm}))" "$((10#${ss}))" \
+            "${prefix}${tail}" "$ext"
+        return 0
+    fi
+
+    # ...-date_YYYY-MM-DD_HH_MM_SS.ext (no tail after time)
+    if [[ "$new" =~ ^(.+)-[Dd][Aa][Tt][Ee]_([0-9]{4})-([0-9]{1,2})-([0-9]{1,2})_([0-9]{2})_([0-9]{2})_([0-9]{2})(\.[^.]+)$ ]]; then
+        prefix="${BASH_REMATCH[1]}"
+        y="${BASH_REMATCH[2]}"
+        m="${BASH_REMATCH[3]}"
+        d="${BASH_REMATCH[4]}"
+        hh="${BASH_REMATCH[5]}"
+        mm="${BASH_REMATCH[6]}"
+        ss="${BASH_REMATCH[7]}"
+        ext="${BASH_REMATCH[8]}"
+        _rename_is_valid_ymd "$y" "$m" "$d" || return 1
+        printf '%04d%02d%02d_%02d%02d%02d_%s%s' \
+            "$((10#${y}))" "$((10#${m}))" "$((10#${d}))" \
+            "$((10#${hh}))" "$((10#${mm}))" "$((10#${ss}))" \
+            "$prefix" "$ext"
+        return 0
+    fi
+
+    # ...-date_YYYYMMDD_HH_MM_SS_tail.ext (date part already compacted)
+    if [[ "$new" =~ ^(.+)-[Dd][Aa][Tt][Ee]_([0-9]{8})_([0-9]{2})_([0-9]{2})_([0-9]{2})_(.+)(\.[^.]+)$ ]]; then
+        prefix="${BASH_REMATCH[1]}"
+        ymd="${BASH_REMATCH[2]}"
+        hh="${BASH_REMATCH[3]}"
+        mm="${BASH_REMATCH[4]}"
+        ss="${BASH_REMATCH[5]}"
+        tail="${BASH_REMATCH[6]}"
+        ext="${BASH_REMATCH[7]}"
+        _rename_is_valid_ymd "${ymd:0:4}" "${ymd:4:2}" "${ymd:6:2}" || return 1
+        printf '%s_%02d%02d%02d_%s%s' \
+            "$ymd" \
+            "$((10#${hh}))" "$((10#${mm}))" "$((10#${ss}))" \
+            "${prefix}${tail}" "$ext"
+        return 0
+    fi
+
+    # ...-date_YYYYMMDD_HH_MM_SS.ext
+    if [[ "$new" =~ ^(.+)-[Dd][Aa][Tt][Ee]_([0-9]{8})_([0-9]{2})_([0-9]{2})_([0-9]{2})(\.[^.]+)$ ]]; then
+        prefix="${BASH_REMATCH[1]}"
+        ymd="${BASH_REMATCH[2]}"
+        hh="${BASH_REMATCH[3]}"
+        mm="${BASH_REMATCH[4]}"
+        ss="${BASH_REMATCH[5]}"
+        ext="${BASH_REMATCH[6]}"
+        _rename_is_valid_ymd "${ymd:0:4}" "${ymd:4:2}" "${ymd:6:2}" || return 1
+        printf '%s_%02d%02d%02d_%s%s' \
+            "$ymd" \
+            "$((10#${hh}))" "$((10#${mm}))" "$((10#${ss}))" \
+            "$prefix" "$ext"
+        return 0
+    fi
+
+    return 1
+}
+
 # Title tail after Screenshot date/time (spaces → underscores; drop leading separators).
 _rename_screenshot_normalize_title_tail() {
     local tail="$1"
@@ -6223,6 +6304,15 @@ _rename_finish_basename_stem() {
             finished="$(_rename_compact_embedded_hyphen_dates "$finished")"
             _sig_fin="$(_rename_signal_timestamp_first "$finished" || true)"
             [[ -n "$_sig_fin" ]] && finished="$_sig_fin"
+        fi
+    elif [[ "$finished" == *-[Dd][Aa][Tt][Ee]_* ]]; then
+        local _dt_fin=""
+        _dt_fin="$(_rename_date_tag_timestamp_first "$finished" || true)"
+        [[ -n "$_dt_fin" ]] && finished="$_dt_fin"
+        if [[ "$finished" == *-[Dd][Aa][Tt][Ee]_* ]]; then
+            finished="$(_rename_compact_embedded_hyphen_dates "$finished")"
+            _dt_fin="$(_rename_date_tag_timestamp_first "$finished" || true)"
+            [[ -n "$_dt_fin" ]] && finished="$_dt_fin"
         fi
     else
         finished="$(_rename_compact_embedded_hyphen_dates "$finished")"
@@ -7273,6 +7363,14 @@ transform_basename() {
         fi
     fi
 
+    # ...-date_YYYY-MM-DD_HH_MM_SS[_tail].ext → YYYYMMDD_HHMMSS_... (before hyphen date compaction).
+    local _date_tag_out=""
+    _date_tag_out="$(_rename_date_tag_timestamp_first "$new" || true)"
+    if [[ -n "$_date_tag_out" ]]; then
+        _tb_emit "$(_normalize_basename_separators "$_date_tag_out")"
+        return
+    fi
+
     # Signal signal-YYYY-MM-DD-HH-MM-SS[-tail] → YYYYMMDD_HHMMSS-signal[-tail].ext (before hyphen date compaction).
     local _sig_ts_out=""
     _sig_ts_out="$(_rename_signal_timestamp_first "$new" || true)"
@@ -7300,6 +7398,13 @@ transform_basename() {
     _sig_ts_out="$(_rename_signal_timestamp_first "$new" || true)"
     if [[ -n "$_sig_ts_out" ]]; then
         _tb_emit "$_sig_ts_out"
+        return
+    fi
+
+    # ...-date_YYYYMMDD_HH_MM_SS (again, after hyphen date compaction).
+    _date_tag_out="$(_rename_date_tag_timestamp_first "$new" || true)"
+    if [[ -n "$_date_tag_out" ]]; then
+        _tb_emit "$(_normalize_basename_separators "$_date_tag_out")"
         return
     fi
 
