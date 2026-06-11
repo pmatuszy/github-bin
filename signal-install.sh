@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.06.11 - v. 1.15 - Pi/JVM: hint --repair when automatic repair check passes
 # 2026.06.11 - v. 1.14 - Pi/JVM: repair prompt only when needed; default [y/N]
 # 2026.06.11 - v. 1.13 - Pi/JVM: quieter JNI jar patch; skip cp when JNI already in place
 # 2026.06.11 - v. 1.12 - Pi/JVM: --repair + prompt to fix Java 25 and re-patch JNI jar (no rebuild)
@@ -717,6 +718,7 @@ prompt_install_or_update() {
                     *) prompt_pi_reinstall_or_quit ;;
                 esac
             else
+                print_pi_force_repair_hint
                 prompt_pi_reinstall_or_quit
             fi
             return 0
@@ -933,6 +935,12 @@ pi_install_needs_repair() {
     jar_path="$(find_libsignal_client_jar "${version}" || true)"
     [[ -n "${jar_path}" ]] || return 1
     libsignal_jar_needs_jni_repair "${jar_path}"
+}
+
+print_pi_force_repair_hint() {
+    echo "Java and JNI setup look OK (no repair needed)."
+    echo "To force repair anyway (Java + re-patch JNI jar, no rebuild):"
+    echo "  sudo $(basename "$0") --repair"
 }
 
 prompt_pi_reinstall_or_quit() {
