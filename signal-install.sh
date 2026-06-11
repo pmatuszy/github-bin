@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.06.11 - v. 1.3 - step 1: detect running signal-cli silently (no process list); still warn before install
 # 2026.06.11 - v. 1.2 - if signal-cli daemon is running: skip version exec (hangs); read version from /opt symlinks; prompt before install
 # 2026.06.11 - v. 1.1 - verbose progress: log each step; timeout on signal-cli version probe; visible GitHub/download status
 # 2026.06.11 - v. 1.0 - initial release: check installed/latest signal-cli; prompt install/update on Raspberry Pi (libsignal JNI build)
@@ -220,18 +221,6 @@ signal_cli_is_running() {
     [[ -n "${pids}" ]]
 }
 
-warn_if_signal_cli_running() {
-    local pids reply=""
-
-    pids="$(signal_cli_running_pids)"
-    [[ -n "${pids}" ]] || return 0
-
-    log_note "WARNING: signal-cli process(es) already running:"
-    printf '%s\n' "${pids}" | sed 's/^/    /' >&2
-    log_note "A running daemon can make 'signal-cli version' hang; using install-path detection instead."
-    return 0
-}
-
 prompt_stop_signal_cli_before_install() {
     local pids="" reply=""
 
@@ -270,12 +259,10 @@ get_installed_signal_cli_version() {
     local exe="" out="" rc=0 vers=""
 
     if signal_cli_is_running; then
-        warn_if_signal_cli_running
         if vers="$(get_installed_signal_cli_version_from_filesystem)"; then
             echo "${vers}"
             return 0
         fi
-        log_note "signal-cli is running and install path version is unknown."
         return 0
     fi
 
