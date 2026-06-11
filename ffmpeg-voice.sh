@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.06.11 - v. 3.53 - existing pairs: require sha512 on disk; auto-backfill when only hashes missing
 # 2026.06.09 - v. 3.52 - startup defaults: colors yes, mode real, scope subdirs (Enter accepts on each prompt)
 # 2026.06.09 - v. 3.51 - startup scope prompt like rename.sh: current directory only vs subdirectories; --scope current|subdirs
 # 2026.06.03 - v. 3.50 - process_one_file skip/fail return 0 (set -e must not abort whole run)
@@ -1564,6 +1565,113 @@ verify_sha512_file_existing_only() {
     return "$ok"
 }
 
+# True when sha512 sidecar exists, media lines verify, and transcript lines match on-disk variants.
+pair_sha512_is_complete() {
+    local org_file="$1"
+    local out_file="$2"
+    local sha_file="$3"
+    local audio_file tag variant_txt resolved_txt
+
+    [[ -e "$org_file" && -e "$out_file" && -e "$sha_file" ]] || return 1
+    sha512_file_has_missing_paths "$sha_file" && return 1
+    pair_media_hashes_valid_in_sha "$sha_file" "$org_file" "$out_file" || return 1
+
+    if [[ "$DO_TRANSCRIPTION" == "yes" ]]; then
+        for audio_file in "$org_file" "$out_file"; do
+            for tag in "${TRANSCRIPT_VARIANT_SUFFIXES[@]}"; do
+                if transcript_variant_exists_for_audio "$audio_file" "$tag"; then
+                    variant_txt="$(transcript_variant_path_for_audio "$audio_file" "$tag")"
+                    resolved_txt="$(transcript_variant_resolved_path "$variant_txt")"
+                    [[ -e "$resolved_txt" ]] || continue
+                    sha_file_has_entry "$sha_file" "$resolved_txt" || return 1
+                fi
+            done
+        done
+    fi
+
+    verify_sha512_file_existing_only "$sha_file"
+}
+
+# Media+transcripts are done; only sha512 create/sync remains (no transcription re-do).
+pair_needs_sha512_backfill_only() {
+    local org_file="$1"
+    local out_file="$2"
+    local sha_file="$3"
+
+    pair_sha512_is_complete "$org_file" "$out_file" "$sha_file" && return 1
+    [[ -e "$org_file" && -e "$out_file" ]] || return 1
+
+    if [[ "$DO_TRANSCRIPTION" == "yes" ]]; then
+        transcript_all_variants_exist_for_audio "$org_file" || return 1
+        transcript_all_variants_exist_for_audio "$out_file" || return 1
+        pair_needs_transcript_redo_offer "$org_file" "$out_file" && return 1
+    fi
+
+    return 0
+}
+
+backfill_existing_pair_sha512() {
+    local org_file="$1"
+    local out_file="$2"
+    local sha_file="$3"
+
+    [[ -e "$org_file" && -e "$out_file" ]] || return 1
+    pair_sha512_is_complete "$org_file" "$out_file" "$sha_file" && return 0
+
+    if [[ "$mode" == "dry-run" ]]; then
+        echo
+        print_sha_block "$sha_file" "$org_file" "$out_file"
+        if [[ ! -e "$sha_file" ]] || ! pair_media_hashes_valid_in_sha "$sha_file" "$org_file" "$out_file"; then
+            echo "sha512sum -- \"$org_file\" \"$out_file\" > \"$sha_file\""
+        fi
+        queue_or_print_missing_transcriptions "$org_file" "$out_file" "$sha_file"
+        echo "----------------------------------------"
+        ((++files_affected))
+        return 0
+    fi
+
+    check_free_space_or_exit "."
+
+    echo
+    echo "$(voice_ts) Backfilling SHA512: $(basename "$org_file")"
+    print_sha_block "$sha_file" "$org_file" "$out_file"
+    voice_processing_begin
+    sync_existing_transcript_hashes "$org_file" "$out_file" "$sha_file"
+    voice_processing_end
+
+    if pair_sha512_is_complete "$org_file" "$out_file" "$sha_file"; then
+        echo -e "${CYAN}SHA512 VERIFIED:${RESET} $sha_file"
+    else
+        echo -e "${YELLOW}SHA512 VERIFY FAILED:${RESET} $sha_file (continuing)"
+    fi
+
+    ((++files_affected))
+    ((++stats_sha_backfilled))
+}
+
+backfill_existing_pairs_sha512_when_transcription_off() {
+    local i org_file out_file sha_file backfilled=0
+
+    (( ${#existing_pair_orgs[@]} == 0 )) && return 0
+
+    for i in "${!existing_pair_orgs[@]}"; do
+        org_file="${existing_pair_orgs[$i]}"
+        out_file="${existing_pair_outs[$i]}"
+        sha_file="${existing_pair_shas[$i]}"
+        pair_sha512_is_complete "$org_file" "$out_file" "$sha_file" && continue
+        backfill_existing_pair_sha512 "$org_file" "$out_file" "$sha_file"
+        ((++backfilled))
+    done
+
+    if (( backfilled > 0 )); then
+        echo
+        print_suggestion "EXISTING PAIRS: SHA512 backfilled for ${backfilled} ORG/OUTPUT pair(s) (transcription disabled)."
+    else
+        echo
+        print_suggestion "EXISTING PAIRS: transcription is disabled — ${#existing_pair_orgs[@]} ORG/OUTPUT pair(s) already have SHA512 (no batch prompts)."
+    fi
+}
+
 # Media ORG/OUTPUT hash check (sha512sum -c on media lines only) when sha is missing or transcripts need work.
 pair_needs_media_hash_check() {
     local org_file="$1"
@@ -2839,6 +2947,11 @@ prepare_selected_existing_pair() {
     local out_file="$2"
     local sha_file="$3"
 
+    if pair_needs_sha512_backfill_only "$org_file" "$out_file" "$sha_file"; then
+        backfill_existing_pair_sha512 "$org_file" "$out_file" "$sha_file"
+        return 0
+    fi
+
     if [[ -e "$sha_file" ]]; then
         echo "$(voice_ts) Processing selected pair: $(basename "$org_file")"
         maybe_repair_sha512_if_stale_references "$org_file" "$out_file" "$sha_file" || true
@@ -2855,29 +2968,7 @@ prepare_selected_existing_pair() {
         return 0
     fi
 
-    if [[ "$mode" == "dry-run" ]]; then
-        echo
-        print_sha_block "$sha_file" "$org_file" "$out_file"
-        echo "sha512sum -- \"$org_file\" \"$out_file\" > \"$sha_file\""
-        echo "sha512sum -c --quiet -- \"$sha_file\""
-        queue_or_print_missing_transcriptions "$org_file" "$out_file" "$sha_file"
-        echo "----------------------------------------"
-        ((++files_affected))
-        return 0
-    fi
-
-    check_free_space_or_exit "."
-
-    echo
-    print_sha_block "$sha_file" "$org_file" "$out_file"
-    voice_processing_begin
-    create_sha512_pair_file "$sha_file" "$org_file" "$out_file"
-    voice_processing_end
-
-    sync_existing_transcript_hashes "$org_file" "$out_file" "$sha_file"
-
-    ((++files_affected))
-    ((++stats_sha_backfilled))
+    backfill_existing_pair_sha512 "$org_file" "$out_file" "$sha_file"
 }
 
 record_change() {
@@ -3043,11 +3134,13 @@ existing_pair_is_complete_for_batch() {
 
     [[ -e "$org_file" && -e "$out_file" ]] || return 1
 
-    # Transcription/re-do disabled: ORG+OUTPUT on disk is enough (no batch prompts).
-    [[ "$DO_TRANSCRIPTION" != "yes" ]] && return 0
+    if [[ "$DO_TRANSCRIPTION" == "yes" ]]; then
+        transcript_all_variants_exist_for_audio "$org_file" || return 1
+        transcript_all_variants_exist_for_audio "$out_file" || return 1
+        pair_needs_transcript_redo_offer "$org_file" "$out_file" && return 1
+    fi
 
-    transcript_all_variants_exist_for_audio "$org_file" || return 1
-    transcript_all_variants_exist_for_audio "$out_file" || return 1
+    pair_sha512_is_complete "$org_file" "$out_file" "$sha_file" || return 1
     return 0
 }
 
@@ -3098,7 +3191,7 @@ print_existing_pair_ok_line() {
     local org_file="$1"
     local out_file="$2"
 
-    echo -e "  ${GREEN}OK:${RESET} $(basename "$org_file") + $(basename "$out_file") — media and all transcript variants on disk"
+    echo -e "  ${GREEN}OK:${RESET} $(basename "$org_file") + $(basename "$out_file") — media, transcripts, and SHA512 on disk"
 }
 
 print_existing_pairs_skip_section() {
@@ -3128,8 +3221,7 @@ process_existing_pairs_batch() {
     (( ${#existing_pair_orgs[@]} == 0 )) && return 0
 
     if [[ "$DO_TRANSCRIPTION" != "yes" ]]; then
-        echo
-        print_suggestion "EXISTING PAIRS: transcription is disabled — ${#existing_pair_orgs[@]} ORG/OUTPUT pair(s) left as-is (no batch prompts)."
+        backfill_existing_pairs_sha512_when_transcription_off
         return 0
     fi
 
@@ -3137,6 +3229,11 @@ process_existing_pairs_batch() {
         org_file="${existing_pair_orgs[$i]}"
         out_file="${existing_pair_outs[$i]}"
         sha_file="${existing_pair_shas[$i]}"
+
+        if pair_needs_sha512_backfill_only "$org_file" "$out_file" "$sha_file"; then
+            backfill_existing_pair_sha512 "$org_file" "$out_file" "$sha_file"
+            continue
+        fi
 
         if existing_pair_is_complete_for_batch "$org_file" "$out_file" "$sha_file"; then
             skip_orgs+=("$org_file")
