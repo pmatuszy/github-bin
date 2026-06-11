@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.06.11 - v. 1.8 - installed version: probe active /opt/signal-cli (exec), not old /opt/signal-cli-* dirs; fix 0.11.5.1 parsing
 # 2026.06.11 - v. 1.7 - keep old installs as /opt/signal-cli-VERSION; /opt/signal-cli symlink → latest
 # 2026.06.11 - v. 1.6 - version check: GitHub release dates; update prompt default [y/N]
 # 2026.06.11 - v. 1.5 - x86_64: prebuilt signal-cli-VERSION-Linux-native.tar.gz (no Java/Rust/JNI); Pi/arm keeps JNI path
@@ -235,16 +236,86 @@ format_version_with_release_date() {
 
 parse_signal_cli_version_output() {
     local text="$1"
-    printf '%s\n' "$text" | grep -oE '[0-9]+\.[0-9]+(\.[0-9]+)?' | head -n1
+    # e.g. "signal-cli 0.14.5" or "signal-cli version: 0.11.5.1"
+    if [[ "${text}" =~ signal-cli[^0-9]*([0-9]+(\.[0-9]+)+) ]]; then
+        echo "${BASH_REMATCH[1]}"
+        return 0
+    fi
+    printf '%s\n' "${text}" | grep -oE '[0-9]+(\.[0-9]+)+' | head -n1
 }
 
 version_from_install_path() {
     local path="$1"
     [[ -n "${path}" ]] || return 1
-    if [[ "${path}" =~ signal-cli-([0-9]+\.[0-9]+(\.[0-9]+)?) ]]; then
+    if [[ "${path}" =~ signal-cli-([0-9]+(\.[0-9]+)+) ]]; then
         echo "${BASH_REMATCH[1]}"
         return 0
     fi
+    return 1
+}
+
+# Path to the active signal-cli binary (follows /opt/signal-cli and /usr/local/bin/signal-cli).
+resolve_active_signal_cli_exe() {
+    local target="" tree=""
+
+    if [[ -L "${BIN_LINK}" || -e "${BIN_LINK}" ]]; then
+        target="$(readlink -f "${BIN_LINK}" 2>/dev/null || true)"
+        if [[ -n "${target}" && -x "${target}" && ! -d "${target}" ]]; then
+            echo "${target}"
+            return 0
+        fi
+    fi
+
+    if [[ -L "${CURRENT_LINK}" ]]; then
+        target="$(readlink -f "${CURRENT_LINK}" 2>/dev/null || true)"
+        if [[ -n "${target}" && -x "${target}" && ! -d "${target}" ]]; then
+            echo "${target}"
+            return 0
+        fi
+        if [[ -n "${target}" && -d "${target}" && -x "${target}/bin/signal-cli" ]]; then
+            echo "${target}/bin/signal-cli"
+            return 0
+        fi
+    fi
+
+    if [[ -f "${CURRENT_LINK}" && -x "${CURRENT_LINK}" ]]; then
+        echo "${CURRENT_LINK}"
+        return 0
+    fi
+
+    if [[ -d "${CURRENT_LINK}" && -x "${CURRENT_LINK}/bin/signal-cli" ]]; then
+        echo "${CURRENT_LINK}/bin/signal-cli"
+        return 0
+    fi
+
+    if command -v signal-cli >/dev/null 2>&1; then
+        command -v signal-cli
+        return 0
+    fi
+
+    return 1
+}
+
+version_from_active_install_path() {
+    local path="$1" tree="" vers=""
+
+    [[ -n "${path}" ]] || return 1
+
+    vers="$(version_from_install_path "${path}" || true)"
+    if [[ -n "${vers}" ]]; then
+        echo "${vers}"
+        return 0
+    fi
+
+    if [[ "${path}" == */bin/signal-cli ]]; then
+        tree="$(dirname "$(dirname "${path}")")"
+        vers="$(version_from_install_path "${tree}" || true)"
+        if [[ -n "${vers}" ]]; then
+            echo "${vers}"
+            return 0
+        fi
+    fi
+
     return 1
 }
 
@@ -309,21 +380,36 @@ link_signal_cli_active_version() {
 }
 
 list_preserved_signal_cli_versions() {
-    local entry="" vers="" found=0
+    local entry="" name="" active_target="" found=0
+    active_target="$(readlink -f "${CURRENT_LINK}" 2>/dev/null || true)"
+
     for entry in "${INSTALL_OPT}"/signal-cli-[0-9]*; do
         [[ -e "${entry}" ]] || continue
-        vers="$(version_from_install_path "${entry}" || true)"
-        [[ -n "${vers}" ]] || continue
+        name="$(basename "${entry}")"
         if (( found == 0 )); then
-            echo "  Preserved under ${INSTALL_OPT}/:"
+            echo "  Installs under ${INSTALL_OPT}/:"
             found=1
         fi
-        echo "    signal-cli-${vers}"
+        if [[ -n "${active_target}" && "${entry}" == "${active_target}" ]]; then
+            echo "    ${name}  (active)"
+        else
+            echo "    ${name}"
+        fi
     done
 }
 
 get_installed_signal_cli_version_from_filesystem() {
-    local target="" vers="" candidate
+    local exe="" vers="" target=""
+
+    exe="$(resolve_active_signal_cli_exe || true)"
+    [[ -n "${exe}" ]] || return 1
+
+    vers="$(version_from_active_install_path "${exe}" || true)"
+    if [[ -n "${vers}" ]]; then
+        log_note "Installed version from active install ${exe}: ${vers}"
+        echo "${vers}"
+        return 0
+    fi
 
     if [[ -L "${CURRENT_LINK}" ]]; then
         target="$(readlink -f "${CURRENT_LINK}" 2>/dev/null || true)"
@@ -334,26 +420,6 @@ get_installed_signal_cli_version_from_filesystem() {
             return 0
         fi
     fi
-
-    if [[ -L "${BIN_LINK}" ]]; then
-        target="$(readlink -f "${BIN_LINK}" 2>/dev/null || true)"
-        vers="$(version_from_install_path "${target}" || true)"
-        if [[ -n "${vers}" ]]; then
-            log_note "Installed version from ${BIN_LINK} -> ${target}: ${vers}"
-            echo "${vers}"
-            return 0
-        fi
-    fi
-
-    for candidate in "${INSTALL_OPT}"/signal-cli-[0-9]*; do
-        [[ -d "${candidate}" ]] || continue
-        vers="$(version_from_install_path "${candidate}" || true)"
-        if [[ -n "${vers}" ]]; then
-            log_note "Installed version inferred from directory ${candidate}: ${vers}"
-            echo "${vers}"
-            return 0
-        fi
-    done
 
     return 1
 }
@@ -405,61 +471,45 @@ prompt_stop_signal_cli_before_install() {
 get_installed_signal_cli_version() {
     local exe="" out="" rc=0 vers=""
 
-    if signal_cli_is_running; then
-        if vers="$(get_installed_signal_cli_version_from_filesystem)"; then
-            echo "${vers}"
-            return 0
-        fi
+    exe="$(resolve_active_signal_cli_exe || true)"
+
+    if [[ -z "${exe}" ]]; then
+        log_note "No active signal-cli binary found (${BIN_LINK}, ${CURRENT_LINK})"
         return 0
     fi
 
+    if ! signal_cli_is_running; then
+        log_step "Probing active signal-cli (timeout ${SIGNAL_CLI_PROBE_TIMEOUT_SEC}s): ${exe}"
+        if command -v timeout >/dev/null 2>&1; then
+            out="$(timeout "${SIGNAL_CLI_PROBE_TIMEOUT_SEC}" "${exe}" version 2>&1)" || rc=$?
+        else
+            out="$("${exe}" version 2>&1)" || rc=$?
+        fi
+
+        if (( rc == 0 )); then
+            vers="$(parse_signal_cli_version_output "${out}")"
+            if [[ -n "${vers}" ]]; then
+                log_note "Active signal-cli reported: $(printf '%s' "${out}" | tr '\n' ' ')"
+                echo "${vers}"
+                return 0
+            fi
+        elif (( rc != 124 )); then
+            log_note "WARNING: signal-cli version probe failed (exit ${rc})"
+        fi
+    fi
+
     if vers="$(get_installed_signal_cli_version_from_filesystem)"; then
-        log_note "Using install-path version (no need to exec signal-cli): ${vers}"
+        log_note "Using active install path version: ${vers}"
         echo "${vers}"
         return 0
     fi
 
-    if command -v signal-cli >/dev/null 2>&1; then
-        exe="$(command -v signal-cli)"
-    elif [[ -x "${BIN_LINK}" ]]; then
-        exe="${BIN_LINK}"
-    fi
-
-    if [[ -z "${exe}" ]]; then
-        log_note "No signal-cli binary found on PATH or at ${BIN_LINK}"
-        return 0
-    fi
-
-    log_step "Probing installed signal-cli (timeout ${SIGNAL_CLI_PROBE_TIMEOUT_SEC}s): ${exe}"
-    if command -v timeout >/dev/null 2>&1; then
-        out="$(timeout "${SIGNAL_CLI_PROBE_TIMEOUT_SEC}" "${exe}" version 2>&1)" || rc=$?
+    if signal_cli_is_running; then
+        log_note "signal-cli is running and active version could not be determined."
     else
-        out="$("${exe}" version 2>&1)" || rc=$?
+        log_note "Active signal-cli version could not be determined."
     fi
-
-    if (( rc == 124 )); then
-        log_note "WARNING: signal-cli version probe timed out after ${SIGNAL_CLI_PROBE_TIMEOUT_SEC}s."
-        if vers="$(get_installed_signal_cli_version_from_filesystem)"; then
-            log_note "Falling back to install-path version: ${vers}"
-            echo "${vers}"
-            return 0
-        fi
-        log_note "Install-path version also unknown."
-        return 0
-    fi
-    if (( rc != 0 )); then
-        log_note "WARNING: signal-cli version probe failed (exit ${rc}); output:"
-        printf '%s\n' "$out" | sed 's/^/    /' >&2
-        if vers="$(get_installed_signal_cli_version_from_filesystem)"; then
-            log_note "Falling back to install-path version: ${vers}"
-            echo "${vers}"
-            return 0
-        fi
-        return 0
-    fi
-
-    log_note "signal-cli reported: $(printf '%s' "$out" | tr '\n' ' ')"
-    parse_signal_cli_version_output "$out"
+    return 0
 }
 
 version_is_newer_than() {
