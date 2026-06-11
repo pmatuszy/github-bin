@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.06.11 - v. 1.1 - detect legacy /usr/local/bin/ffmpeg-VERSION-arch-static and release semver (e.g. 7.0.2)
 # 2026.06.11 - v. 1.0 - install/update static FFmpeg (John Van Sickle builds) under /opt/ffmpeg-YYYYMMDD
 #
 # ffmpeg-install.sh
@@ -22,6 +23,8 @@ NETWORK_TIMEOUT_SEC="${NETWORK_TIMEOUT_SEC:-120}"
 FFMPEG_PROBE_TIMEOUT_SEC="${FFMPEG_PROBE_TIMEOUT_SEC:-15}"
 REMOTE_BUILD_DATE=""
 REMOTE_BUILD_LABEL=""
+INSTALLED_BUILD_KIND=""
+INSTALLED_BUILD_SOURCE=""
 
 MACHINE_HW=""
 FFMPEG_ARCH=""
@@ -163,17 +166,55 @@ format_build_date_display() {
     [[ -n "${id}" ]] && echo "${id}" || echo "unknown"
 }
 
+build_id_is_date() {
+    [[ "${1}" =~ ^[0-9]{8}$ ]]
+}
+
+build_id_is_semver() {
+    [[ "${1}" =~ ^[0-9]+(\.[0-9]+)+$ ]]
+}
+
+build_ids_comparable() {
+    local a="$1" b="$2"
+    build_id_is_date "${a}" && build_id_is_date "${b}" && return 0
+    build_id_is_semver "${a}" && build_id_is_semver "${b}" && return 0
+    return 1
+}
+
 format_build_with_date() {
-    local build_id="$1" date_label="$2"
-    if [[ -n "${build_id}" ]]; then
-        if [[ -n "${date_label}" && "${date_label}" != "unknown" ]]; then
-            echo "build ${build_id} (dated ${date_label})"
-        else
-            echo "build ${build_id}"
-        fi
-    else
+    local build_id="$1" date_label="$2" kind="${3:-date}"
+    if [[ -z "${build_id}" ]]; then
         echo "not installed"
+        return 0
     fi
+    if [[ "${kind}" == "semver" ]]; then
+        echo "release ${build_id} (${FFMPEG_ARCH} static)"
+        return 0
+    fi
+    if [[ -n "${date_label}" && "${date_label}" != "unknown" ]]; then
+        echo "build ${build_id} (dated ${date_label})"
+    else
+        echo "build ${build_id}"
+    fi
+}
+
+format_installed_build_label() {
+    local build_id="$1" date_label="$2"
+    if [[ -z "${build_id}" ]]; then
+        echo "not installed"
+        return 0
+    fi
+    if [[ "${INSTALLED_BUILD_KIND}" == "semver" ]]; then
+        local label
+        label="$(format_build_with_date "${build_id}" "" semver)"
+        if [[ "${INSTALLED_BUILD_SOURCE}" == "localbin" ]]; then
+            echo "${label}, ${BIN_FFMPEG}"
+        else
+            echo "${label}"
+        fi
+        return 0
+    fi
+    format_build_with_date "${build_id}" "${date_label}" date
 }
 
 build_id_from_http_date() {
@@ -251,6 +292,42 @@ version_from_install_path() {
     local path="$1"
     [[ -n "${path}" ]] || return 1
     if [[ "${path}" =~ /ffmpeg-([0-9]{8})(/|$) ]]; then
+        INSTALLED_BUILD_KIND="date"
+        INSTALLED_BUILD_SOURCE="opt"
+        echo "${BASH_REMATCH[1]}"
+        return 0
+    fi
+    if [[ "${path}" =~ /ffmpeg-([0-9]+(\.[0-9]+)+)(/|$) ]]; then
+        INSTALLED_BUILD_KIND="semver"
+        INSTALLED_BUILD_SOURCE="opt"
+        echo "${BASH_REMATCH[1]}"
+        return 0
+    fi
+    return 1
+}
+
+parse_build_id_from_binary_name() {
+    local path="$1"
+    local name=""
+
+    [[ -n "${path}" ]] || return 1
+    name="$(basename "${path}")"
+
+    if [[ "${name}" =~ ^ffmpeg-git-([0-9]{8})- ]]; then
+        INSTALLED_BUILD_KIND="date"
+        INSTALLED_BUILD_SOURCE="opt"
+        echo "${BASH_REMATCH[1]}"
+        return 0
+    fi
+    if [[ "${name}" =~ ^ffmpeg-release-([0-9]{8})- ]]; then
+        INSTALLED_BUILD_KIND="date"
+        INSTALLED_BUILD_SOURCE="opt"
+        echo "${BASH_REMATCH[1]}"
+        return 0
+    fi
+    if [[ "${name}" =~ ^ffmpeg-([0-9]+(\.[0-9]+)+)- ]]; then
+        INSTALLED_BUILD_KIND="semver"
+        INSTALLED_BUILD_SOURCE="localbin"
         echo "${BASH_REMATCH[1]}"
         return 0
     fi
@@ -302,10 +379,17 @@ resolve_active_ffprobe_exe() {
 parse_build_id_from_ffmpeg_version() {
     local text="$1"
     if [[ "${text}" =~ ffmpeg-git-([0-9]{8}) ]]; then
+        INSTALLED_BUILD_KIND="date"
         echo "${BASH_REMATCH[1]}"
         return 0
     fi
     if [[ "${text}" =~ ffmpeg-release-([0-9]{8}) ]]; then
+        INSTALLED_BUILD_KIND="date"
+        echo "${BASH_REMATCH[1]}"
+        return 0
+    fi
+    if [[ "${text}" =~ ffmpeg[[:space:]]+version[[:space:]]+([0-9]+(\.[0-9]+)+)-static ]]; then
+        INSTALLED_BUILD_KIND="semver"
         echo "${BASH_REMATCH[1]}"
         return 0
     fi
@@ -313,13 +397,27 @@ parse_build_id_from_ffmpeg_version() {
 }
 
 get_installed_build_id_from_filesystem() {
-    local exe="" tree="" build_id="" target=""
+    local exe="" build_id="" target="" link_name="" link_dir=""
 
     exe="$(resolve_active_ffmpeg_exe || true)"
     if [[ -n "${exe}" ]]; then
         build_id="$(version_from_install_path "${exe}" || true)"
+        if [[ -z "${build_id}" ]]; then
+            build_id="$(parse_build_id_from_binary_name "${exe}" || true)"
+        fi
         if [[ -n "${build_id}" ]]; then
-            log_note "Installed build from active path ${exe}: ${build_id}"
+            log_note "Installed build from active path ${exe}: ${build_id} (${INSTALLED_BUILD_KIND})"
+            echo "${build_id}"
+            return 0
+        fi
+    fi
+
+    if [[ -L "${BIN_FFMPEG}" ]]; then
+        link_name="$(readlink "${BIN_FFMPEG}" 2>/dev/null || true)"
+        build_id="$(parse_build_id_from_binary_name "${link_name}" || true)"
+        if [[ -n "${build_id}" ]]; then
+            link_dir="$(dirname "${BIN_FFMPEG}")"
+            log_note "Installed build from ${BIN_FFMPEG} -> ${link_dir}/${link_name}: ${build_id} (${INSTALLED_BUILD_KIND})"
             echo "${build_id}"
             return 0
         fi
@@ -329,7 +427,7 @@ get_installed_build_id_from_filesystem() {
         target="$(readlink -f "${CURRENT_LINK}" 2>/dev/null || true)"
         build_id="$(version_from_install_path "${target}" || true)"
         if [[ -n "${build_id}" ]]; then
-            log_note "Installed build from ${CURRENT_LINK} -> ${target}: ${build_id}"
+            log_note "Installed build from ${CURRENT_LINK} -> ${target}: ${build_id} (${INSTALLED_BUILD_KIND})"
             echo "${build_id}"
             return 0
         fi
@@ -340,6 +438,9 @@ get_installed_build_id_from_filesystem() {
 
 get_installed_build_id() {
     local exe="" out="" rc=0 build_id=""
+
+    INSTALLED_BUILD_KIND=""
+    INSTALLED_BUILD_SOURCE=""
 
     exe="$(resolve_active_ffmpeg_exe || true)"
     if [[ -z "${exe}" ]]; then
@@ -466,22 +567,29 @@ quit_prompt_with_optional_old_cleanup() {
 }
 
 build_id_is_known() {
-    [[ "${1}" =~ ^[0-9]{8}$ ]]
+    build_id_is_date "${1}" || build_id_is_semver "${1}"
 }
 
 prompt_install_or_update() {
     local latest="$1" installed="$2" latest_date="$3" installed_date="$4" reply=""
-    local latest_known=0
+    local latest_known=0 comparable=0
 
-    build_id_is_known "${latest}" && latest_known=1
+    build_id_is_date "${latest}" && latest_known=1
+    if [[ -n "${installed}" && -n "${latest}" ]]; then
+        build_ids_comparable "${installed}" "${latest}" && comparable=1
+    fi
 
     echo
     echo "ffmpeg static build check (${FFMPEG_BUILD_KIND}, ${FFMPEG_ARCH}):"
-    echo "  Installed: $(format_build_with_date "${installed}" "${installed_date}")"
+    echo "  Installed: $(format_installed_build_label "${installed}" "${installed_date}")"
     if (( latest_known == 1 )); then
-        echo "  Latest:    $(format_build_with_date "${latest}" "${latest_date}")"
+        echo "  Latest:    $(format_build_with_date "${latest}" "${latest_date}" date)"
     else
         echo "  Latest:    remote build date unknown (will verify after download)"
+    fi
+    if [[ -n "${installed}" && "${INSTALLED_BUILD_KIND}" == "semver" && "${FFMPEG_BUILD_KIND}" == "git" ]]; then
+        echo "  Note:      installed release uses semver; remote check is latest git snapshot (dated build id)."
+        echo "             Use --release to install/compare release builds instead."
     fi
     echo
 
@@ -514,6 +622,23 @@ prompt_install_or_update() {
         echo
         case "${reply}" in
             y|Y|yes|YES) echo "Proceeding with download..." ;;
+            *) echo "Quitting — no changes made."; quit_prompt_with_optional_old_cleanup ;;
+        esac
+        return 0
+    fi
+
+    if (( comparable == 0 )); then
+        if (( ASSUME_YES == 1 )); then
+            echo "Installing ${FFMPEG_BUILD_KIND} build (--yes)."
+            return 0
+        fi
+        echo
+        echo ">>> Waiting for your answer:"
+        echo -n "Install ${FFMPEG_BUILD_KIND} static build (replacing current ffmpeg)? [y/N] "
+        read -r -n 1 reply || reply=""
+        echo
+        case "${reply}" in
+            y|Y|yes|YES) echo "Proceeding with install..." ;;
             *) echo "Quitting — no changes made."; quit_prompt_with_optional_old_cleanup ;;
         esac
         return 0
@@ -596,7 +721,27 @@ build_id_from_extracted_dir() {
         echo "${BASH_REMATCH[2]}"
         return 0
     fi
+    if [[ "${name}" =~ ffmpeg-([0-9]+(\.[0-9]+)+)- ]]; then
+        echo "${BASH_REMATCH[1]}"
+        return 0
+    fi
     return 1
+}
+
+cleanup_legacy_local_bin_static_files() {
+    local bin_dir path active_ffmpeg active_ffprobe
+
+    bin_dir="$(dirname "${BIN_FFMPEG}")"
+    active_ffmpeg="$(readlink -f "${BIN_FFMPEG}" 2>/dev/null || true)"
+    active_ffprobe="$(readlink -f "${BIN_FFPROBE}" 2>/dev/null || true)"
+
+    for path in "${bin_dir}"/ffmpeg-*-static "${bin_dir}"/ffprobe-*-static; do
+        [[ -e "${path}" ]] || continue
+        [[ -L "${path}" ]] && continue
+        [[ "${path}" == "${active_ffmpeg}" || "${path}" == "${active_ffprobe}" ]] && continue
+        log_step "Removing legacy static binary: ${path}"
+        rm -f "${path}"
+    done
 }
 
 link_ffmpeg_active_version() {
@@ -620,6 +765,7 @@ link_ffmpeg_active_version() {
 
 perform_install() {
     local installed_build_id="${1:-}"
+    local had_legacy_localbin="${2:-0}"
     local tarball url extracted_dir build_id="" versioned="" installed_versioned=""
 
     echo
@@ -671,6 +817,9 @@ perform_install() {
     chown root:root -R "${versioned}"
 
     link_ffmpeg_active_version "${build_id}"
+    if (( had_legacy_localbin == 1 )); then
+        cleanup_legacy_local_bin_static_files
+    fi
 
     echo
     echo "part 3 — verify"
@@ -730,7 +879,9 @@ main() {
     echo "  temp:    ${TEMP_CATALOG}"
     echo
 
-    perform_install "${installed}"
+    local had_legacy_localbin=0
+    [[ "${INSTALLED_BUILD_SOURCE}" == "localbin" ]] && had_legacy_localbin=1
+    perform_install "${installed}" "${had_legacy_localbin}"
 }
 
 HEADER_EXTRA_ARGS=()
