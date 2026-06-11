@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.06.11 - v. 1.7 - keep old installs as /opt/signal-cli-VERSION; /opt/signal-cli symlink → latest
 # 2026.06.11 - v. 1.6 - version check: GitHub release dates; update prompt default [y/N]
 # 2026.06.11 - v. 1.5 - x86_64: prebuilt signal-cli-VERSION-Linux-native.tar.gz (no Java/Rust/JNI); Pi/arm keeps JNI path
 # 2026.06.11 - v. 1.4 - prompts: drop "(single key, Enter not required)" hint line
@@ -245,6 +246,80 @@ version_from_install_path() {
         return 0
     fi
     return 1
+}
+
+signal_cli_versioned_path() {
+    echo "${INSTALL_OPT}/signal-cli-${1}"
+}
+
+# Legacy installs used a flat /opt/signal-cli file — rename before upgrading.
+migrate_legacy_flat_native_binary() {
+    local installed_version="$1"
+    local versioned="" probed="" out=""
+
+    if [[ ! -f "${CURRENT_LINK}" || -L "${CURRENT_LINK}" ]]; then
+        return 0
+    fi
+
+    if [[ -z "${installed_version}" ]]; then
+        if command -v timeout >/dev/null 2>&1; then
+            out="$(timeout 5 "${CURRENT_LINK}" version 2>/dev/null || true)"
+        else
+            out="$("${CURRENT_LINK}" version 2>/dev/null || true)"
+        fi
+        installed_version="$(parse_signal_cli_version_output "${out}")"
+        [[ -n "${installed_version}" ]] || installed_version="legacy"
+    fi
+
+    versioned="$(signal_cli_versioned_path "${installed_version}")"
+    if [[ -e "${versioned}" ]]; then
+        versioned="$(signal_cli_versioned_path "${installed_version}-backup-$(date +%Y%m%d%H%M%S)")"
+    fi
+
+    log_step "Preserving previous install as ${versioned}"
+    mv -v "${CURRENT_LINK}" "${versioned}"
+}
+
+link_signal_cli_active_version() {
+    local version="$1"
+    local kind="$2"
+    local versioned=""
+
+    versioned="$(signal_cli_versioned_path "${version}")"
+
+    if [[ "${kind}" == "jvm" ]]; then
+        if [[ ! -x "${versioned}/bin/signal-cli" ]]; then
+            echo "ERROR: JVM install not found: ${versioned}/bin/signal-cli" >&2
+            exit 1
+        fi
+        log_step "Pointing active symlinks to ${versioned}"
+        ln -sfn "${versioned}" "${CURRENT_LINK}"
+        ln -sfn "${versioned}/bin/signal-cli" "${BIN_LINK}"
+    else
+        if [[ ! -f "${versioned}" ]]; then
+            echo "ERROR: Native binary not found: ${versioned}" >&2
+            exit 1
+        fi
+        log_step "Pointing active symlinks to ${versioned}"
+        ln -sfn "${versioned}" "${CURRENT_LINK}"
+        ln -sfn "${CURRENT_LINK}" "${BIN_LINK}"
+    fi
+
+    ls -l "${BIN_LINK}" "${CURRENT_LINK}"
+}
+
+list_preserved_signal_cli_versions() {
+    local entry="" vers="" found=0
+    for entry in "${INSTALL_OPT}"/signal-cli-[0-9]*; do
+        [[ -e "${entry}" ]] || continue
+        vers="$(version_from_install_path "${entry}" || true)"
+        [[ -n "${vers}" ]] || continue
+        if (( found == 0 )); then
+            echo "  Preserved under ${INSTALL_OPT}/:"
+            found=1
+        fi
+        echo "    signal-cli-${vers}"
+    done
 }
 
 get_installed_signal_cli_version_from_filesystem() {
@@ -587,63 +662,72 @@ install_protoc() {
 
 prepare_opt_and_download_signal_cli() {
     local version="$1"
-    local archive url
+    local installed_version="${2:-}"
+    local archive url versioned
 
     echo
     echo "part 3 — signal-cli ${version} into ${INSTALL_OPT}"
     echo
 
+    versioned="$(signal_cli_versioned_path "${version}")"
+    migrate_legacy_flat_native_binary "${installed_version}"
+
     cd "${INSTALL_OPT}"
-    log_step "Cleaning old signal-cli download artifacts in ${INSTALL_OPT}..."
-    rm -fv "signal-cli-${version}-Linux-native.tar.gz"* "${CURRENT_LINK}" 2>/dev/null || true
+    log_step "Cleaning leftover download artifacts in ${INSTALL_OPT}..."
+    rm -fv "signal-cli-${version}-Linux-native.tar.gz"* 2>/dev/null || true
 
     archive="signal-cli-${version}.tar.gz"
     url="https://github.com/AsamK/signal-cli/releases/download/v${version}/${archive}"
+
+    if [[ -d "${versioned}" ]]; then
+        log_note "Existing ${versioned} will be updated in place (older versions are kept)."
+    fi
 
     download_file "${url}" "${archive}"
     log_step "Extracting ${archive} into ${INSTALL_OPT}..."
     tar xf "${archive}" -C "${INSTALL_OPT}"
     rm -fv "${archive}"
 
-    log_step "Creating symlinks..."
-    ln -sfn "${INSTALL_OPT}/signal-cli-${version}" "${CURRENT_LINK}"
-    ln -sfn "${INSTALL_OPT}/signal-cli-${version}/bin/signal-cli" "${BIN_LINK}"
-
-    ls -l "${BIN_LINK}" "${CURRENT_LINK}"
+    link_signal_cli_active_version "${version}" jvm
 }
 
 prepare_opt_and_download_signal_cli_native() {
     local version="$1"
-    local archive url
+    local installed_version="${2:-}"
+    local archive url versioned extracted_bin tmp_archive
 
     echo
     echo "part 1 — signal-cli ${version} Linux-native into ${INSTALL_OPT}"
     echo
 
-    cd "${INSTALL_OPT}"
-    log_step "Removing previous native binary/symlink (if any)..."
-    rm -fv "${CURRENT_LINK}" 2>/dev/null || true
-    [[ -d "${CURRENT_LINK}" ]] && rm -rf "${CURRENT_LINK}"
+    versioned="$(signal_cli_versioned_path "${version}")"
+    migrate_legacy_flat_native_binary "${installed_version}"
 
     archive="signal-cli-${version}-Linux-native.tar.gz"
     url="https://github.com/AsamK/signal-cli/releases/download/v${version}/${archive}"
 
-    download_file "${url}" "${archive}"
-    log_step "Extracting ${archive} into ${INSTALL_OPT}..."
-    tar xf "${archive}" -C "${INSTALL_OPT}"
-    rm -fv "${archive}"
+    TMP_WORK_DIR="$(mktemp -d)"
+    tmp_archive="${TMP_WORK_DIR}/${archive}"
 
-    if [[ ! -e "${CURRENT_LINK}" ]]; then
-        echo "ERROR: Expected ${CURRENT_LINK} after extracting ${archive}." >&2
+    download_file "${url}" "${tmp_archive}"
+    log_step "Extracting ${archive}..."
+    tar xf "${tmp_archive}" -C "${TMP_WORK_DIR}"
+    rm -fv "${tmp_archive}"
+
+    extracted_bin="${TMP_WORK_DIR}/signal-cli"
+    if [[ ! -f "${extracted_bin}" ]]; then
+        extracted_bin="$(find "${TMP_WORK_DIR}" -type f -name signal-cli 2>/dev/null | head -n1)"
+    fi
+    if [[ -z "${extracted_bin}" || ! -f "${extracted_bin}" ]]; then
+        echo "ERROR: signal-cli binary not found inside ${archive}." >&2
         exit 1
     fi
 
-    log_step "Creating symlink ${BIN_LINK} -> ${CURRENT_LINK}"
-    ln -sfn "${CURRENT_LINK}" "${BIN_LINK}"
-    chmod 755 "${CURRENT_LINK}"
-    chown root:root "${CURRENT_LINK}"
+    log_step "Installing native binary to ${versioned}"
+    install -m 755 "${extracted_bin}" "${versioned}"
+    chown root:root "${versioned}"
 
-    ls -l "${BIN_LINK}" "${CURRENT_LINK}"
+    link_signal_cli_active_version "${version}" native
 }
 
 install_rust_toolchain() {
@@ -743,30 +827,35 @@ verify_installation() {
 
 perform_install_native() {
     local signal_version="$1"
+    local installed_version="${2:-}"
 
     ensure_download_tools
     need_cmd tar
+    need_cmd find
+    need_cmd install
     need_cmd ln
     need_cmd chmod
     need_cmd chown
 
-    prepare_opt_and_download_signal_cli_native "${signal_version}"
+    prepare_opt_and_download_signal_cli_native "${signal_version}" "${installed_version}"
     verify_installation
 
     echo
     echo "signal-cli installed/updated successfully (Linux-native)."
     echo "  Version: $(get_installed_signal_cli_version)"
+    echo "  Active:  ${CURRENT_LINK} -> $(readlink -f "${CURRENT_LINK}" 2>/dev/null || echo '?')"
     echo "  Binary:  ${BIN_LINK}"
-    echo "  Native:  ${CURRENT_LINK}"
+    list_preserved_signal_cli_versions
 }
 
 perform_install_pi() {
     local signal_version="$1"
     local protoc_version="$2"
+    local installed_version="${3:-}"
 
     install_apt_dependencies
     install_protoc "${protoc_version}"
-    prepare_opt_and_download_signal_cli "${signal_version}"
+    prepare_opt_and_download_signal_cli "${signal_version}" "${installed_version}"
     install_rust_toolchain
     build_and_install_libsignal_jni "${signal_version}"
     finalize_permissions_pi "${signal_version}"
@@ -775,8 +864,9 @@ perform_install_pi() {
     echo
     echo "signal-cli installed/updated successfully."
     echo "  Version: $(get_installed_signal_cli_version)"
+    echo "  Active:  ${CURRENT_LINK} -> $(readlink -f "${CURRENT_LINK}" 2>/dev/null || echo '?')"
     echo "  Binary:  ${BIN_LINK}"
-    echo "  Tree:    ${INSTALL_OPT}/signal-cli-${signal_version}"
+    list_preserved_signal_cli_versions
 }
 
 main() {
@@ -849,9 +939,9 @@ main() {
     echo
 
     if [[ "${INSTALL_METHOD}" == "native_x86_64" ]]; then
-        perform_install_native "${latest}"
+        perform_install_native "${latest}" "${installed}"
     else
-        perform_install_pi "${latest}" "${protoc_latest}"
+        perform_install_pi "${latest}" "${protoc_latest}" "${installed}"
     fi
 }
 
