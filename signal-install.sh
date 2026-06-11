@@ -1,0 +1,483 @@
+#!/usr/bin/env bash
+# 2026.06.11 - v. 1.0 - initial release: check installed/latest signal-cli; prompt install/update on Raspberry Pi (libsignal JNI build)
+#
+# signal-install.sh
+#
+# Installs or updates signal-cli on Raspberry Pi (aarch64) using the procedure from:
+#   https://github.com/pmatuszy/signal-cli-on-Raspberry-PI---WORKS-
+#
+# Releases: https://github.com/AsamK/signal-cli/releases
+# protoc:   https://github.com/protocolbuffers/protobuf/releases
+#
+
+set -euo pipefail
+
+SIGNAL_CLI_REPO="AsamK/signal-cli"
+PROTOBUF_REPO="protocolbuffers/protobuf"
+INSTALL_OPT="/opt"
+BIN_LINK="/usr/local/bin/signal-cli"
+CURRENT_LINK="${INSTALL_OPT}/signal-cli"
+JAVA_JNI_DIR="/usr/java/packages/lib"
+TEMP_CATALOG="${TEMP_CATALOG:-/mnt/signal-temp}"
+ASSUME_YES=0
+
+TMP_WORK_DIR=""
+cleanup_tmp_work_dir() {
+    if [[ -n "${TMP_WORK_DIR:-}" && -d "${TMP_WORK_DIR}" ]]; then
+        rm -rf "${TMP_WORK_DIR}"
+    fi
+}
+trap cleanup_tmp_work_dir EXIT
+
+print_version_banner() {
+    local ver=unknown date= line title verline width=60
+    while IFS= read -r line; do
+        if [[ "$line" =~ ^#\ ([0-9]{4}\.[0-9]{2}\.[0-9]{2})\ -\ v\.\ ([0-9]+(\.[0-9]+)*) ]]; then
+            date="${BASH_REMATCH[1]}"
+            ver="${BASH_REMATCH[2]}"
+            break
+        fi
+    done < "$0"
+    title="$(basename "$0")"
+    if [[ -n "$date" ]]; then
+        verline="Version: ${ver} (${date})"
+    else
+        verline="Version: ${ver}"
+    fi
+    printf '┌%*s┐\n' "$width" '' | tr ' ' '─'
+    printf '│ %-*.*s │\n' $((width - 2)) $((width - 2)) "$title"
+    printf '│ %-*.*s │\n' $((width - 2)) $((width - 2)) "$verline"
+    printf '└%*s┘\n' "$width" '' | tr ' ' '─'
+}
+
+show_help() {
+    cat <<EOF
+Usage: $(basename "$0") [-h|--help] [-v|--version] [-y|--yes] [--no_startup_delay]
+
+Check the installed signal-cli version (if any), compare with the latest GitHub
+release, and optionally install or update on Raspberry Pi (aarch64) including
+the libsignal JNI build step.
+
+Options:
+  -h, --help           Show this help and exit.
+  -v, --version        Print script version and exit.
+  -y, --yes            Install/update without prompting (non-interactive OK).
+  --no_startup_delay   Skip random startup delay when run non-interactively.
+
+Environment:
+  TEMP_CATALOG         Build workspace (default: /mnt/signal-temp).
+EOF
+}
+
+need_cmd() {
+    if ! command -v "$1" >/dev/null 2>&1; then
+        echo "ERROR: Required command not found: $1" >&2
+        exit 1
+    fi
+}
+
+as_root_check() {
+    if [[ "${EUID}" -ne 0 ]]; then
+        echo "ERROR: Please run as root, for example:" >&2
+        echo "  sudo bash $0" >&2
+        exit 1
+    fi
+}
+
+download_file() {
+    local url="$1"
+    local output="$2"
+
+    if command -v curl >/dev/null 2>&1; then
+        curl -fsSL "$url" -o "$output"
+    elif command -v wget >/dev/null 2>&1; then
+        wget -q "$url" -O "$output"
+    else
+        echo "ERROR: Need curl or wget." >&2
+        exit 1
+    fi
+}
+
+fetch_url() {
+    local url="$1"
+    if command -v curl >/dev/null 2>&1; then
+        curl -fsSL "$url"
+    elif command -v wget >/dev/null 2>&1; then
+        wget -qO- "$url"
+    else
+        echo "ERROR: Need curl or wget." >&2
+        exit 1
+    fi
+}
+
+github_latest_release_version() {
+    local repo="$1"
+    local json tag
+
+    json="$(fetch_url "https://api.github.com/repos/${repo}/releases/latest")"
+    tag="$(printf '%s\n' "$json" | grep -m1 '"tag_name"' | sed -E 's/.*"tag_name"[[:space:]]*:[[:space:]]*"v?([^"]+)".*/\1/')"
+    if [[ ! "$tag" =~ ^[0-9]+(\.[0-9]+)+$ ]]; then
+        echo "ERROR: Could not parse latest release version for ${repo} (got '${tag}')." >&2
+        exit 1
+    fi
+    echo "$tag"
+}
+
+parse_signal_cli_version_output() {
+    local text="$1"
+    printf '%s\n' "$text" | grep -oE '[0-9]+\.[0-9]+(\.[0-9]+)?' | head -n1
+}
+
+get_installed_signal_cli_version() {
+    local exe="" out=""
+
+    if command -v signal-cli >/dev/null 2>&1; then
+        exe="$(command -v signal-cli)"
+    elif [[ -x "${BIN_LINK}" ]]; then
+        exe="${BIN_LINK}"
+    fi
+
+    [[ -n "${exe}" ]] || return 0
+
+    out="$("${exe}" version 2>/dev/null || true)"
+    parse_signal_cli_version_output "$out"
+}
+
+version_is_newer_than() {
+    local a="$1" b="$2"
+    [[ "$(printf '%s\n%s\n' "$b" "$a" | sort -V | tail -n1)" == "$a" && "$a" != "$b" ]]
+}
+
+detect_machine() {
+    local hw arch rust_target protoc_arch
+
+    hw="$(uname -m)"
+    arch="$(uname --hardware-platform 2>/dev/null || uname -m)"
+
+    case "${hw}" in
+        aarch64|arm64)
+            rust_target="nightly-aarch64-unknown-linux-gnu"
+            ;;
+        armv7l|armv6l)
+            rust_target="nightly-armv7-unknown-linux-gnueabihf"
+            ;;
+        *)
+            rust_target=""
+            ;;
+    esac
+
+    protoc_arch="${arch}"
+    protoc_arch="${protoc_arch/aarch64/aarch_64}"
+
+    MACHINE_HW="${hw}"
+    PROTOC_ARCHITECTURE="${protoc_arch}"
+    RUST_TARGET="${rust_target}"
+}
+
+check_raspberry_pi() {
+    if grep -q "Raspberry Pi" /proc/device-tree/model 2>/dev/null; then
+        echo "Running on Raspberry Pi hardware."
+        return 0
+    fi
+    echo "WARNING: This does not look like Raspberry Pi hardware."
+    echo "The libsignal JNI build procedure was written for Raspberry Pi aarch64."
+    if (( ASSUME_YES == 0 )) && tty >/dev/null 2>&1; then
+        echo -n "Continue anyway? [y/N] "
+        local reply=""
+        read -r -n 1 reply || reply=""
+        echo
+        case "${reply}" in
+            y|Y) ;;
+            *) echo "Quitting."; exit 0 ;;
+        esac
+    elif (( ASSUME_YES == 0 )); then
+        echo "ERROR: Not a Raspberry Pi and --yes was not given." >&2
+        exit 1
+    fi
+}
+
+prompt_install_or_update() {
+    local latest="$1" installed="$2" reply=""
+
+    echo
+    echo "signal-cli version check:"
+    echo "  Installed: ${installed:-not installed}"
+    echo "  Latest:    ${latest}"
+    echo
+
+    if [[ -z "${installed}" ]]; then
+        if (( ASSUME_YES == 1 )); then
+            echo "Proceeding with fresh install (--yes)."
+            return 0
+        fi
+        echo -n "Install signal-cli ${latest} now? [Y/n] "
+        read -r -n 1 reply || reply=""
+        echo
+        case "${reply}" in
+            n|N|no|NO) echo "Quitting — no changes made."; exit 0 ;;
+            *) echo "Proceeding with install..." ;;
+        esac
+        return 0
+    fi
+
+    if [[ "${installed}" == "${latest}" ]]; then
+        if (( ASSUME_YES == 1 )); then
+            echo "Reinstalling latest version (--yes)."
+            return 0
+        fi
+        echo "You already have the latest version."
+        echo -n "Reinstall / rebuild JNI anyway? [y/N] "
+        read -r -n 1 reply || reply=""
+        echo
+        case "${reply}" in
+            y|Y|yes|YES) echo "Proceeding with reinstall..." ;;
+            *) echo "Quitting — no changes made."; exit 0 ;;
+        esac
+        return 0
+    fi
+
+    if version_is_newer_than "${latest}" "${installed}"; then
+        if (( ASSUME_YES == 1 )); then
+            echo "Updating ${installed} -> ${latest} (--yes)."
+            return 0
+        fi
+        echo -n "Update signal-cli ${installed} -> ${latest} now? [Y/n] "
+        read -r -n 1 reply || reply=""
+        echo
+        case "${reply}" in
+            n|N|no|NO) echo "Quitting — no changes made."; exit 0 ;;
+            *) echo "Proceeding with update..." ;;
+        esac
+        return 0
+    fi
+
+    echo "Installed version (${installed}) is newer than the published latest (${latest})."
+    if (( ASSUME_YES == 1 )); then
+        echo "Proceeding with reinstall of ${latest} (--yes)."
+        return 0
+    fi
+    echo -n "Reinstall published version ${latest} anyway? [y/N] "
+    read -r -n 1 reply || reply=""
+    echo
+    case "${reply}" in
+        y|Y|yes|YES) echo "Proceeding..." ;;
+        *) echo "Quitting — no changes made."; exit 0 ;;
+    esac
+}
+
+install_apt_dependencies() {
+    echo
+    echo "part 1 — apt dependencies"
+    echo
+    apt-get update -qq
+    apt-get install -y curl zip protobuf-compiler clang libclang-dev cmake make unzip wget
+    apt-get install -y openjdk-21-jdk
+}
+
+install_protoc() {
+    local protoc_version="$1"
+    local protoc_zip url
+
+    echo
+    echo "part 2 — protoc ${protoc_version}"
+    echo
+
+    protoc_zip="protoc-${protoc_version}-linux-${PROTOC_ARCHITECTURE}.zip"
+    url="https://github.com/protocolbuffers/protobuf/releases/download/v${protoc_version}/${protoc_zip}"
+
+    cd /tmp
+    download_file "${url}" "${protoc_zip}"
+    unzip -o "${protoc_zip}" -d /usr/local bin/protoc
+    unzip -o "${protoc_zip}" -d /usr/local 'include/*'
+    rm -f "${protoc_zip}"
+    protoc --version
+}
+
+prepare_opt_and_download_signal_cli() {
+    local version="$1"
+    local archive url
+
+    echo
+    echo "part 3 — signal-cli ${version} into ${INSTALL_OPT}"
+    echo
+
+    cd "${INSTALL_OPT}"
+    rm -fv "signal-cli-${version}-Linux-native.tar.gz"* "${CURRENT_LINK}" 2>/dev/null || true
+
+    archive="signal-cli-${version}.tar.gz"
+    url="https://github.com/AsamK/signal-cli/releases/download/v${version}/${archive}"
+
+    download_file "${url}" "${archive}"
+    tar xf "${archive}" -C "${INSTALL_OPT}"
+    rm -fv "${archive}"
+
+    ln -sfn "${INSTALL_OPT}/signal-cli-${version}" "${CURRENT_LINK}"
+    ln -sfn "${INSTALL_OPT}/signal-cli-${version}/bin/signal-cli" "${BIN_LINK}"
+
+    ls -l "${BIN_LINK}" "${CURRENT_LINK}"
+}
+
+install_rust_toolchain() {
+    echo
+    echo "part 4 — rust toolchain (${RUST_TARGET})"
+    echo
+
+    if [[ -z "${RUST_TARGET}" ]]; then
+        echo "ERROR: Unsupported CPU for rust JNI build: ${MACHINE_HW}" >&2
+        exit 1
+    fi
+
+    if [[ -x "${HOME}/.cargo/bin/rustc" ]]; then
+        echo "rustup already present: $("${HOME}/.cargo/bin/rustc" --version 2>/dev/null || true)"
+    else
+        curl https://sh.rustup.rs -sSf | sh -s -- --default-toolchain "${RUST_TARGET}" -y
+    fi
+
+    # shellcheck disable=SC1091
+    source "${HOME}/.cargo/env" 2>/dev/null || export PATH="${PATH}:${HOME}/.cargo/bin"
+    rustup default "${RUST_TARGET}" 2>/dev/null || true
+    rustc --version
+}
+
+build_and_install_libsignal_jni() {
+    local version="$1"
+    local libversion jar_path jni_so build_root
+
+    echo
+    echo "part 5 — libsignal JNI for signal-cli ${version}"
+    echo
+
+    jar_path="$(find "${INSTALL_OPT}/signal-cli-${version}/lib/" -maxdepth 1 -mindepth 1 -name 'libsignal-client-*.jar' | head -n1)"
+    if [[ -z "${jar_path}" ]]; then
+        echo "ERROR: libsignal-client jar not found under ${INSTALL_OPT}/signal-cli-${version}/lib/" >&2
+        exit 1
+    fi
+
+    libversion="$(basename "${jar_path}" | sed -E 's/^libsignal-client-//; s/\.jar$//')"
+    echo "LIBVERSION = ${libversion}"
+
+    mkdir -p "${TEMP_CATALOG}/signal-cli-install"
+    build_root="${TEMP_CATALOG}/signal-cli-install"
+    cd "${build_root}"
+
+    download_file "https://github.com/signalapp/libsignal/archive/refs/tags/v${libversion}.tar.gz" "v${libversion}.tar.gz"
+    tar xzf "v${libversion}.tar.gz"
+    rm -fv "v${libversion}.tar.gz"
+    mv -v "libsignal-${libversion}" libsignal
+
+    sed -i "s/include ':android'//" "${build_root}/libsignal/java/settings.gradle"
+    "${build_root}/libsignal/java/build_jni.sh" desktop
+
+    jni_so="$(find "${build_root}/libsignal/target" -path '*/release/libsignal_jni.so' 2>/dev/null | head -n1)"
+    if [[ -z "${jni_so}" || ! -f "${jni_so}" ]]; then
+        echo "ERROR: libsignal_jni.so not found after build." >&2
+        exit 1
+    fi
+
+    zip -d "${jar_path}" libsignal_jni.so 2>/dev/null || true
+    zip "${jar_path}" "${jni_so}"
+
+    mkdir -p "${JAVA_JNI_DIR}"
+    cp -v "${jni_so}" "${JAVA_JNI_DIR}/"
+}
+
+finalize_permissions() {
+    local version="$1"
+
+    echo
+    echo "part 6 — permissions and cleanup"
+    echo
+
+    chown root:root "${JAVA_JNI_DIR}/libsignal_jni.so"
+    chmod 755 "${JAVA_JNI_DIR}/libsignal_jni.so"
+    chmod 755 -R "${INSTALL_OPT}/signal-cli-${version}"
+    chown root:root -R "${INSTALL_OPT}/signal-cli-${version}"
+
+    rm -rf "${TEMP_CATALOG}/signal-cli-install"
+}
+
+verify_installation() {
+    echo
+    echo "part 7 — verify"
+    echo
+    cd /
+    signal-cli version
+}
+
+perform_install() {
+    local signal_version="$1"
+    local protoc_version="$2"
+
+    install_apt_dependencies
+    install_protoc "${protoc_version}"
+    prepare_opt_and_download_signal_cli "${signal_version}"
+    install_rust_toolchain
+    build_and_install_libsignal_jni "${signal_version}"
+    finalize_permissions "${signal_version}"
+    verify_installation
+
+    echo
+    echo "signal-cli installed/updated successfully."
+    echo "  Version: $(get_installed_signal_cli_version)"
+    echo "  Binary:  ${BIN_LINK}"
+    echo "  Tree:    ${INSTALL_OPT}/signal-cli-${signal_version}"
+}
+
+main() {
+    local installed="" latest="" protoc_latest=""
+
+    as_root_check
+    detect_machine
+    check_raspberry_pi
+
+    need_cmd grep
+    need_cmd sed
+    need_cmd sort
+    need_cmd tar
+    need_cmd zip
+    need_cmd find
+    need_cmd ln
+    need_cmd mkdir
+    need_cmd chown
+    need_cmd chmod
+
+    echo "Machine: ${MACHINE_HW} (protoc arch label: ${PROTOC_ARCHITECTURE})"
+
+    installed="$(get_installed_signal_cli_version)"
+    latest="$(github_latest_release_version "${SIGNAL_CLI_REPO}")"
+    protoc_latest="$(github_latest_release_version "${PROTOBUF_REPO}")"
+
+    prompt_install_or_update "${latest}" "${installed}"
+
+    echo
+    echo "Will install:"
+    echo "  signal-cli: ${latest}"
+    echo "  protoc:     ${protoc_latest}"
+    echo "  temp dir:   ${TEMP_CATALOG}/signal-cli-install"
+    echo
+
+    perform_install "${latest}" "${protoc_latest}"
+}
+
+HEADER_EXTRA_ARGS=()
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        -h|--help) show_help; exit 0 ;;
+        -v|--version) print_version_banner; exit 0 ;;
+        -y|--yes) ASSUME_YES=1; shift ;;
+        --no_startup_delay) HEADER_EXTRA_ARGS+=(NO_STARTUP_DELAY); shift ;;
+        *) echo "Unknown argument: $1" >&2; echo "Try: $(basename "$0") --help" >&2; exit 1 ;;
+    esac
+done
+
+if [[ -f /root/bin/_script_header.sh ]]; then
+    # shellcheck disable=SC1091
+    . /root/bin/_script_header.sh "${HEADER_EXTRA_ARGS[@]}"
+fi
+
+main "$@"
+
+if [[ -f /root/bin/_script_footer.sh ]]; then
+    # shellcheck disable=SC1091
+    . /root/bin/_script_footer.sh
+fi
