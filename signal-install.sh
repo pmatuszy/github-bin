@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.06.11 - v. 1.9 - fix latest release date (subshell); prompt to remove old /opt/signal-cli-VERSION installs
 # 2026.06.11 - v. 1.8 - installed version: probe active /opt/signal-cli (exec), not old /opt/signal-cli-* dirs; fix 0.11.5.1 parsing
 # 2026.06.11 - v. 1.7 - keep old installs as /opt/signal-cli-VERSION; /opt/signal-cli symlink → latest
 # 2026.06.11 - v. 1.6 - version check: GitHub release dates; update prompt default [y/N]
@@ -33,6 +34,7 @@ VERBOSE=1
 NETWORK_TIMEOUT_SEC="${NETWORK_TIMEOUT_SEC:-60}"
 SIGNAL_CLI_PROBE_TIMEOUT_SEC="${SIGNAL_CLI_PROBE_TIMEOUT_SEC:-20}"
 RELEASE_PUBLISHED_DATE=""
+GITHUB_FETCHED_RELEASE_VERSION=""
 
 TMP_WORK_DIR=""
 cleanup_tmp_work_dir() {
@@ -163,11 +165,12 @@ format_github_release_date() {
 }
 
 # Fetch signal-cli release metadata from GitHub. Empty version = latest.
-# Sets RELEASE_PUBLISHED_DATE; prints version on stdout.
+# Sets GITHUB_FETCHED_RELEASE_VERSION and RELEASE_PUBLISHED_DATE (do not call inside $()).
 github_fetch_signal_cli_release() {
     local version="${1:-}"
     local json tag api_url published
 
+    GITHUB_FETCHED_RELEASE_VERSION=""
     RELEASE_PUBLISHED_DATE=""
 
     if [[ -z "${version}" ]]; then
@@ -197,8 +200,9 @@ github_fetch_signal_cli_release() {
         exit 1
     fi
 
+    GITHUB_FETCHED_RELEASE_VERSION="${tag}"
     log_note "Release ${tag} published: ${RELEASE_PUBLISHED_DATE}"
-    echo "${tag}"
+    return 0
 }
 
 github_latest_release_version() {
@@ -379,9 +383,19 @@ link_signal_cli_active_version() {
     ls -l "${BIN_LINK}" "${CURRENT_LINK}"
 }
 
+get_active_signal_cli_install_target() {
+    readlink -f "${CURRENT_LINK}" 2>/dev/null || true
+}
+
+is_active_signal_cli_install() {
+    local entry="$1" active_target=""
+
+    active_target="$(get_active_signal_cli_install_target)"
+    [[ -n "${active_target}" && "${entry}" == "${active_target}" ]]
+}
+
 list_preserved_signal_cli_versions() {
-    local entry="" name="" active_target="" found=0
-    active_target="$(readlink -f "${CURRENT_LINK}" 2>/dev/null || true)"
+    local entry="" name="" found=0
 
     for entry in "${INSTALL_OPT}"/signal-cli-[0-9]*; do
         [[ -e "${entry}" ]] || continue
@@ -390,12 +404,64 @@ list_preserved_signal_cli_versions() {
             echo "  Installs under ${INSTALL_OPT}/:"
             found=1
         fi
-        if [[ -n "${active_target}" && "${entry}" == "${active_target}" ]]; then
+        if is_active_signal_cli_install "${entry}"; then
             echo "    ${name}  (active)"
         else
             echo "    ${name}"
         fi
     done
+}
+
+# Print paths of versioned installs that are not the active /opt/signal-cli target.
+collect_old_signal_cli_install_paths() {
+    local entry=""
+    for entry in "${INSTALL_OPT}"/signal-cli-[0-9]*; do
+        [[ -e "${entry}" ]] || continue
+        is_active_signal_cli_install "${entry}" && continue
+        printf '%s\n' "${entry}"
+    done
+}
+
+prompt_remove_old_signal_cli_installs() {
+    local old_paths=() path="" reply="" name=""
+
+    while IFS= read -r path; do
+        [[ -n "${path}" ]] && old_paths+=("${path}")
+    done < <(collect_old_signal_cli_install_paths)
+
+    ((${#old_paths[@]} > 0)) || return 0
+
+    echo
+    echo "Older signal-cli install(s) found (not active):"
+    for path in "${old_paths[@]}"; do
+        echo "  ${path}"
+    done
+    echo
+
+    if (( ASSUME_YES == 1 )); then
+        log_note "Keeping old installs (--yes, no removal prompt)."
+        return 0
+    fi
+
+    echo ">>> Waiting for your answer:"
+    echo -n "Remove these old install(s)? [y/N] "
+    read -r -n 1 reply || reply=""
+    echo
+    case "${reply}" in
+        y|Y|yes|YES)
+            for path in "${old_paths[@]}"; do
+                log_step "Removing old install: ${path}"
+                rm -rf "${path}"
+            done
+            echo "Old install(s) removed."
+            ;;
+        *) log_note "Keeping old install(s)." ;;
+    esac
+}
+
+quit_prompt_with_optional_old_cleanup() {
+    prompt_remove_old_signal_cli_installs
+    exit 0
 }
 
 get_installed_signal_cli_version_from_filesystem() {
@@ -607,7 +673,7 @@ prompt_install_or_update() {
         read -r -n 1 reply || reply=""
         echo
         case "${reply}" in
-            n|N|no|NO) echo "Quitting — no changes made."; exit 0 ;;
+            n|N|no|NO) echo "Quitting — no changes made."; quit_prompt_with_optional_old_cleanup ;;
             *) echo "Proceeding with install..." ;;
         esac
         return 0
@@ -630,7 +696,7 @@ prompt_install_or_update() {
         echo
         case "${reply}" in
             y|Y|yes|YES) echo "Proceeding with reinstall..." ;;
-            *) echo "Quitting — no changes made."; exit 0 ;;
+            *) echo "Quitting — no changes made."; quit_prompt_with_optional_old_cleanup ;;
         esac
         return 0
     fi
@@ -647,7 +713,7 @@ prompt_install_or_update() {
         echo
         case "${reply}" in
             y|Y|yes|YES) echo "Proceeding with update..." ;;
-            *) echo "Quitting — no changes made."; exit 0 ;;
+            *) echo "Quitting — no changes made."; quit_prompt_with_optional_old_cleanup ;;
         esac
         return 0
     fi
@@ -664,7 +730,7 @@ prompt_install_or_update() {
     echo
     case "${reply}" in
         y|Y|yes|YES) echo "Proceeding..." ;;
-        *) echo "Quitting — no changes made."; exit 0 ;;
+        *) echo "Quitting — no changes made."; quit_prompt_with_optional_old_cleanup ;;
     esac
 }
 
@@ -896,6 +962,7 @@ perform_install_native() {
     echo "  Active:  ${CURRENT_LINK} -> $(readlink -f "${CURRENT_LINK}" 2>/dev/null || echo '?')"
     echo "  Binary:  ${BIN_LINK}"
     list_preserved_signal_cli_versions
+    prompt_remove_old_signal_cli_installs
 }
 
 perform_install_pi() {
@@ -917,6 +984,7 @@ perform_install_pi() {
     echo "  Active:  ${CURRENT_LINK} -> $(readlink -f "${CURRENT_LINK}" 2>/dev/null || echo '?')"
     echo "  Binary:  ${BIN_LINK}"
     list_preserved_signal_cli_versions
+    prompt_remove_old_signal_cli_installs
 }
 
 main() {
@@ -956,11 +1024,15 @@ main() {
     else
         log_step "Step 2/2 — fetch latest signal-cli release from GitHub"
     fi
-    latest="$(github_fetch_signal_cli_release)"
+    if ! github_fetch_signal_cli_release; then
+        echo "ERROR: Could not fetch latest ${SIGNAL_CLI_REPO} release." >&2
+        exit 1
+    fi
+    latest="${GITHUB_FETCHED_RELEASE_VERSION}"
     latest_date="${RELEASE_PUBLISHED_DATE}"
 
     if [[ -n "${installed}" ]]; then
-        if github_fetch_signal_cli_release "${installed}" >/dev/null; then
+        if github_fetch_signal_cli_release "${installed}"; then
             installed_date="${RELEASE_PUBLISHED_DATE}"
         else
             installed_date="unknown"
