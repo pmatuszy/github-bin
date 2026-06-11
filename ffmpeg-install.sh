@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.06.11 - v. 1.3 - install prompts default [y/N]; fix installed-metadata subshell; ffmpeg.org HTML parse
 # 2026.06.11 - v. 1.2 - ffmpeg.org latest; static first then apt dynamic; move old installs aside
 # 2026.06.11 - v. 1.1 - detect legacy /usr/local/bin/ffmpeg-VERSION-arch-static and release semver (e.g. 7.0.2)
 # 2026.06.11 - v. 1.0 - install/update static FFmpeg (John Van Sickle builds) under /opt/ffmpeg-YYYYMMDD
@@ -35,6 +36,7 @@ STATIC_TARBALL_AVAILABLE=0
 APT_FFMPEG_CANDIDATE=""
 APT_FFMPEG_VERSION=""
 INSTALLED_FFMPEG_SEMVER=""
+INSTALLED_BUILD_ID=""
 INSTALLED_BUILD_KIND=""
 INSTALLED_BUILD_SOURCE=""
 
@@ -308,8 +310,15 @@ fetch_ffmpeg_org_latest_release() {
     if [[ "${heading}" =~ ^###[[:space:]]FFmpeg[[:space:]]+([0-9]+(\.[0-9]+)+) ]]; then
         FFMPEG_ORG_VERSION="${BASH_REMATCH[1]}"
     fi
+    if [[ -z "${FFMPEG_ORG_VERSION}" ]]; then
+        FFMPEG_ORG_VERSION="$(printf '%s\n' "${html}" | grep -m1 -oiE 'ffmpeg-[0-9]+\.[0-9]+\.[0-9]+\.tar' \
+            | sed -E 's/.*ffmpeg-([0-9]+\.[0-9]+\.[0-9]+)\.tar.*/\1/I')"
+    fi
+    if [[ -z "${FFMPEG_ORG_VERSION}" ]]; then
+        FFMPEG_ORG_VERSION="$(printf '%s\n' "${html}" | grep -m1 -oE 'FFmpeg [0-9]+\.[0-9]+\.[0-9]+' | awk '{print $2}')"
+    fi
 
-    date_line="$(printf '%s\n' "${html}" | grep -m1 "^${FFMPEG_ORG_VERSION} was released on" || true)"
+    date_line="$(printf '%s\n' "${html}" | grep -m1 "${FFMPEG_ORG_VERSION} was released on" || true)"
     if [[ "${date_line}" =~ was[[:space:]]+released[[:space:]]+on[[:space:]]+([0-9]{4}-[0-9]{2}-[0-9]{2}) ]]; then
         FFMPEG_ORG_RELEASE_DATE="${BASH_REMATCH[1]//-/.}"
     fi
@@ -418,25 +427,29 @@ ffmpeg_versioned_path() {
     echo "${INSTALL_OPT}/ffmpeg-${1}"
 }
 
+set_installed_build_id() {
+    INSTALLED_BUILD_ID="${1:-}"
+}
+
 version_from_install_path() {
     local path="$1"
     [[ -n "${path}" ]] || return 1
     if [[ "${path}" =~ /ffmpeg-([0-9]{8})(/|$) ]]; then
         INSTALLED_BUILD_KIND="date"
         INSTALLED_BUILD_SOURCE="opt"
-        echo "${BASH_REMATCH[1]}"
+        set_installed_build_id "${BASH_REMATCH[1]}"
         return 0
     fi
     if [[ "${path}" =~ /ffmpeg-([0-9]+(\.[0-9]+)+)-apt(/|$) ]]; then
         INSTALLED_BUILD_KIND="semver"
         INSTALLED_BUILD_SOURCE="apt"
-        echo "${BASH_REMATCH[1]}-apt"
+        set_installed_build_id "${BASH_REMATCH[1]}-apt"
         return 0
     fi
     if [[ "${path}" =~ /ffmpeg-([0-9]+(\.[0-9]+)+)(/|$) ]]; then
         INSTALLED_BUILD_KIND="semver"
         INSTALLED_BUILD_SOURCE="opt"
-        echo "${BASH_REMATCH[1]}"
+        set_installed_build_id "${BASH_REMATCH[1]}"
         return 0
     fi
     if [[ "${path}" =~ /ffmpeg-legacy- ]]; then
@@ -493,19 +506,19 @@ parse_build_id_from_binary_name() {
     if [[ "${name}" =~ ^ffmpeg-git-([0-9]{8})- ]]; then
         INSTALLED_BUILD_KIND="date"
         INSTALLED_BUILD_SOURCE="opt"
-        echo "${BASH_REMATCH[1]}"
+        set_installed_build_id "${BASH_REMATCH[1]}"
         return 0
     fi
     if [[ "${name}" =~ ^ffmpeg-release-([0-9]{8})- ]]; then
         INSTALLED_BUILD_KIND="date"
         INSTALLED_BUILD_SOURCE="opt"
-        echo "${BASH_REMATCH[1]}"
+        set_installed_build_id "${BASH_REMATCH[1]}"
         return 0
     fi
     if [[ "${name}" =~ ^ffmpeg-([0-9]+(\.[0-9]+)+)- ]]; then
         INSTALLED_BUILD_KIND="semver"
         INSTALLED_BUILD_SOURCE="localbin"
-        echo "${BASH_REMATCH[1]}"
+        set_installed_build_id "${BASH_REMATCH[1]}"
         return 0
     fi
     return 1
@@ -585,34 +598,25 @@ get_installed_build_id_from_filesystem() {
 
     exe="$(resolve_active_ffmpeg_exe || true)"
     if [[ -n "${exe}" ]]; then
-        build_id="$(version_from_install_path "${exe}" || true)"
-        if [[ -z "${build_id}" ]]; then
-            build_id="$(parse_build_id_from_binary_name "${exe}" || true)"
-        fi
-        if [[ -n "${build_id}" ]]; then
-            log_note "Installed build from active path ${exe}: ${build_id} (${INSTALLED_BUILD_KIND})"
-            echo "${build_id}"
+        if version_from_install_path "${exe}" || parse_build_id_from_binary_name "${exe}"; then
+            log_note "Installed build from active path ${exe}: ${INSTALLED_BUILD_ID} (${INSTALLED_BUILD_KIND})"
             return 0
         fi
     fi
 
     if [[ -L "${BIN_FFMPEG}" ]]; then
         link_name="$(readlink "${BIN_FFMPEG}" 2>/dev/null || true)"
-        build_id="$(parse_build_id_from_binary_name "${link_name}" || true)"
-        if [[ -n "${build_id}" ]]; then
+        if parse_build_id_from_binary_name "${link_name}"; then
             link_dir="$(dirname "${BIN_FFMPEG}")"
-            log_note "Installed build from ${BIN_FFMPEG} -> ${link_dir}/${link_name}: ${build_id} (${INSTALLED_BUILD_KIND})"
-            echo "${build_id}"
+            log_note "Installed build from ${BIN_FFMPEG} -> ${link_dir}/${link_name}: ${INSTALLED_BUILD_ID} (${INSTALLED_BUILD_KIND})"
             return 0
         fi
     fi
 
     if [[ -L "${CURRENT_LINK}" ]]; then
         target="$(readlink -f "${CURRENT_LINK}" 2>/dev/null || true)"
-        build_id="$(version_from_install_path "${target}" || true)"
-        if [[ -n "${build_id}" ]]; then
-            log_note "Installed build from ${CURRENT_LINK} -> ${target}: ${build_id} (${INSTALLED_BUILD_KIND})"
-            echo "${build_id}"
+        if version_from_install_path "${target}"; then
+            log_note "Installed build from ${CURRENT_LINK} -> ${target}: ${INSTALLED_BUILD_ID} (${INSTALLED_BUILD_KIND})"
             return 0
         fi
     fi
@@ -623,6 +627,7 @@ get_installed_build_id_from_filesystem() {
 get_installed_build_id() {
     local exe="" out="" rc=0 build_id=""
 
+    INSTALLED_BUILD_ID=""
     INSTALLED_BUILD_KIND=""
     INSTALLED_BUILD_SOURCE=""
     INSTALLED_FFMPEG_SEMVER=""
@@ -644,8 +649,15 @@ get_installed_build_id() {
         INSTALLED_FFMPEG_SEMVER="$(parse_ffmpeg_semver_from_version_output "${out}" || true)"
         build_id="$(parse_build_id_from_ffmpeg_version "${out}" || true)"
         if [[ -n "${build_id}" ]]; then
+            if [[ "${out}" =~ ffmpeg[[:space:]]+version[[:space:]]+([0-9]+(\.[0-9]+)+)-static ]]; then
+                INSTALLED_BUILD_KIND="semver"
+                INSTALLED_BUILD_SOURCE="opt"
+            fi
+            if [[ "${exe}" =~ ^/usr/local/bin/ffmpeg-.+-static$ ]]; then
+                INSTALLED_BUILD_SOURCE="localbin"
+            fi
             log_note "Active ffmpeg reported: $(printf '%s' "${out}" | head -n1 | tr '\n' ' ')"
-            echo "${build_id}"
+            set_installed_build_id "${build_id}"
             return 0
         fi
         log_note "Active ffmpeg: $(printf '%s' "${out}" | head -n1 | tr '\n' ' ')"
@@ -653,9 +665,8 @@ get_installed_build_id() {
         log_note "WARNING: ffmpeg version probe failed (exit ${rc})"
     fi
 
-    if build_id="$(get_installed_build_id_from_filesystem)"; then
-        log_note "Using active install path build id: ${build_id}"
-        echo "${build_id}"
+    if get_installed_build_id_from_filesystem; then
+        log_note "Using active install path build id: ${INSTALLED_BUILD_ID}"
         return 0
     fi
 
@@ -787,12 +798,12 @@ prompt_install_dynamic_fallback() {
     fi
     echo
     echo ">>> Waiting for your answer:"
-    echo -n "Install dynamic ffmpeg via apt (${APT_FFMPEG_CANDIDATE})? [Y/n] "
+    echo -n "Install dynamic ffmpeg via apt (${APT_FFMPEG_CANDIDATE})? [y/N] "
     read -r -n 1 reply || reply=""
     echo
     case "${reply}" in
-        n|N|no|NO) echo "Quitting — no changes made."; quit_prompt_with_optional_old_cleanup ;;
-        *) INSTALL_PLAN="dynamic"; echo "Proceeding with apt install..." ;;
+        y|Y|yes|YES) INSTALL_PLAN="dynamic"; echo "Proceeding with apt install..." ;;
+        *) echo "Quitting — no changes made."; quit_prompt_with_optional_old_cleanup ;;
     esac
 }
 
@@ -836,12 +847,12 @@ prompt_install_plan() {
             return 0
         fi
         echo ">>> Waiting for your answer:"
-        echo -n "Install static ffmpeg build? [Y/n] "
+        echo -n "Install static ffmpeg build? [y/N] "
         read -r -n 1 reply || reply=""
         echo
         case "${reply}" in
-            n|N|no|NO) ;;
-            *) INSTALL_PLAN="static"; echo "Proceeding with static install..."; return 0 ;;
+            y|Y|yes|YES) INSTALL_PLAN="static"; echo "Proceeding with static install..."; return 0 ;;
+            *) ;;
         esac
     else
         echo "Static build is not available for this architecture."
@@ -1139,7 +1150,8 @@ main() {
     echo
 
     log_step "Step 4/4 — detect installed ffmpeg"
-    installed="$(get_installed_build_id)"
+    get_installed_build_id
+    installed="${INSTALLED_BUILD_ID}"
     if build_id_is_date "${installed}"; then
         installed_date="$(format_build_date_display "${installed}")"
     fi
