@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.06.10 - v. 19.177.170000 - Signal signal-YYYY-MM-DD-HH-MM-SS[-tail]: timestamp first before hyphen date compaction (fixes signal-20260606-12-00-47-325 stuck after partial compact)
 # 2026.06.10 - v. 19.176.163000 - Sony XAVC clip pairs C####.MP4 + C####M01.XML: CreationDate local wall-clock → YYYYMMDD_HHMMSS_-_-_MANUFACTURER_MODEL_C####[M01].ext; defer XML until MP4
 # 2026.06.10 - v. 19.175.160000 - Screenshot_YYYY-MM-DD-HH-MM-SS + title tail (e.g. ...29 o prof. Miernowskim.jpg) → YYYYMMDD_HHMMSS_title-screenshot.ext
 # 2026.06.10 - v. 19.174.154400 - fix Screenshot timestamp-first doubled basename (if-test leaked printf stdout); prefer Screenshot_YYYYMMDD-HH-MM-SS over ambiguous YYYY-MM-DD split
@@ -5972,6 +5973,93 @@ _rename_compact_embedded_hyphen_dates() {
     printf '%s' "$s"
 }
 
+# Signal messenger exports: signal-YYYY-MM-DD-HH-MM-SS[-tail] → YYYYMMDD_HHMMSS-signal[-tail].ext
+_rename_signal_timestamp_first() {
+    local new="$1"
+    local y m d hh mm ss ext tail ymd
+
+    [[ "$new" =~ ^[0-9]{8}_[0-9]{6}-[Ss]ignal ]] && return 1
+
+    # signal-YYYY-MM-DD-HH-MM-SS-tail.ext (e.g. signal-2026-06-06-12-00-47-325.jpg).
+    if [[ "$new" =~ ^[Ss]ignal-([0-9]{4})-([0-9]{1,2})-([0-9]{1,2})-([0-9]{2})-([0-9]{2})-([0-9]{2})-(.+)(\.[^.]+)$ ]]; then
+        y="${BASH_REMATCH[1]}"
+        m="${BASH_REMATCH[2]}"
+        d="${BASH_REMATCH[3]}"
+        hh="${BASH_REMATCH[4]}"
+        mm="${BASH_REMATCH[5]}"
+        ss="${BASH_REMATCH[6]}"
+        tail="${BASH_REMATCH[7]}"
+        ext="${BASH_REMATCH[8]}"
+        _rename_is_valid_ymd "$y" "$m" "$d" || return 1
+        printf '%04d%02d%02d_%02d%02d%02d-signal-%s%s' \
+            "$((10#${y}))" "$((10#${m}))" "$((10#${d}))" \
+            "$((10#${hh}))" "$((10#${mm}))" "$((10#${ss}))" \
+            "$tail" "$ext"
+        return 0
+    fi
+
+    # signal-YYYY-MM-DD-HH-MM-SS.ext (no tail).
+    if [[ "$new" =~ ^[Ss]ignal-([0-9]{4})-([0-9]{1,2})-([0-9]{1,2})-([0-9]{2})-([0-9]{2})-([0-9]{2})(\.[^.]+)$ ]]; then
+        y="${BASH_REMATCH[1]}"
+        m="${BASH_REMATCH[2]}"
+        d="${BASH_REMATCH[3]}"
+        hh="${BASH_REMATCH[4]}"
+        mm="${BASH_REMATCH[5]}"
+        ss="${BASH_REMATCH[6]}"
+        ext="${BASH_REMATCH[7]}"
+        _rename_is_valid_ymd "$y" "$m" "$d" || return 1
+        printf '%04d%02d%02d_%02d%02d%02d-signal%s' \
+            "$((10#${y}))" "$((10#${m}))" "$((10#${d}))" \
+            "$((10#${hh}))" "$((10#${mm}))" "$((10#${ss}))" \
+            "$ext"
+        return 0
+    fi
+
+    # signal-YYYYMMDD-HH-MM-SS-tail.ext (date already compacted; time still hyphenated).
+    if [[ "$new" =~ ^[Ss]ignal-([0-9]{8})-([0-9]{2})-([0-9]{2})-([0-9]{2})-(.+)(\.[^.]+)$ ]]; then
+        ymd="${BASH_REMATCH[1]}"
+        hh="${BASH_REMATCH[2]}"
+        mm="${BASH_REMATCH[3]}"
+        ss="${BASH_REMATCH[4]}"
+        tail="${BASH_REMATCH[5]}"
+        ext="${BASH_REMATCH[6]}"
+        _rename_is_valid_ymd "${ymd:0:4}" "${ymd:4:2}" "${ymd:6:2}" || return 1
+        printf '%s_%02d%02d%02d-signal-%s%s' \
+            "$ymd" \
+            "$((10#${hh}))" "$((10#${mm}))" "$((10#${ss}))" \
+            "$tail" "$ext"
+        return 0
+    fi
+
+    # signal-YYYY-MM-DD-HHMMSS.ext
+    if [[ "$new" =~ ^[Ss]ignal-([0-9]{4})-([0-9]{1,2})-([0-9]{1,2})-([0-9]{6})(\.[^.]+)$ ]]; then
+        y="${BASH_REMATCH[1]}"
+        m="${BASH_REMATCH[2]}"
+        d="${BASH_REMATCH[3]}"
+        ext="${BASH_REMATCH[5]}"
+        _rename_is_valid_ymd "$y" "$m" "$d" || return 1
+        printf '%04d%02d%02d_%s-signal%s' \
+            "$((10#${y}))" "$((10#${m}))" "$((10#${d}))" \
+            "${BASH_REMATCH[4]}" "$ext"
+        return 0
+    fi
+
+    # signal-YYYY-MM-DD-HHMMSS_tail.ext
+    if [[ "$new" =~ ^[Ss]ignal-([0-9]{4})-([0-9]{1,2})-([0-9]{1,2})-([0-9]{6})_(.+)(\.[^.]+)$ ]]; then
+        y="${BASH_REMATCH[1]}"
+        m="${BASH_REMATCH[2]}"
+        d="${BASH_REMATCH[3]}"
+        ext="${BASH_REMATCH[6]}"
+        _rename_is_valid_ymd "$y" "$m" "$d" || return 1
+        printf '%04d%02d%02d_%s-signal-%s%s' \
+            "$((10#${y}))" "$((10#${m}))" "$((10#${d}))" \
+            "${BASH_REMATCH[4]}" "${BASH_REMATCH[5]}" "$ext"
+        return 0
+    fi
+
+    return 1
+}
+
 # Title tail after Screenshot date/time (spaces → underscores; drop leading separators).
 _rename_screenshot_normalize_title_tail() {
     local tail="$1"
@@ -6126,6 +6214,10 @@ _rename_finish_basename_stem() {
         local _ss_fin=""
         _ss_fin="$(_rename_screenshot_timestamp_first "$finished" || true)"
         [[ -n "$_ss_fin" ]] && finished="$_ss_fin"
+    elif [[ "$finished" =~ ^[Ss]ignal- ]]; then
+        local _sig_fin=""
+        _sig_fin="$(_rename_signal_timestamp_first "$finished" || true)"
+        [[ -n "$_sig_fin" ]] && finished="$_sig_fin"
     else
         finished="$(_rename_compact_embedded_hyphen_dates "$finished")"
     fi
@@ -7175,6 +7267,14 @@ transform_basename() {
         fi
     fi
 
+    # Signal signal-YYYY-MM-DD-HH-MM-SS[-tail] → YYYYMMDD_HHMMSS-signal[-tail].ext (before hyphen date compaction).
+    local _sig_ts_out=""
+    _sig_ts_out="$(_rename_signal_timestamp_first "$new" || true)"
+    if [[ -n "$_sig_ts_out" ]]; then
+        _tb_emit "$_sig_ts_out"
+        return
+    fi
+
     # Screenshot_* with embedded date+time → YYYYMMDD_HHMMSS-screenshot.ext (before hyphen date compaction).
     local _ss_ts_out=""
     _ss_ts_out="$(_rename_screenshot_timestamp_first "$new" || true)"
@@ -7186,7 +7286,7 @@ transform_basename() {
     # Embedded dotted calendar date anywhere in the stem (e.g. as_of_2021.11.01_040001 in a config backup name).
     # Runs after start-anchored dotted rules so YYYY.MM.DD + time at the beginning is still handled above.
     new="$(_rename_compact_embedded_dotted_dates "$new")"
-    if [[ ! "$new" =~ ^[Ss]creenshot_ ]]; then
+    if [[ ! "$new" =~ ^[Ss]creenshot_ && ! "$new" =~ ^[Ss]ignal- ]]; then
         new="$(_rename_compact_embedded_hyphen_dates "$new")"
     fi
 
@@ -7237,32 +7337,6 @@ transform_basename() {
 
     if [[ "$new" =~ ^([0-9]{4})-([0-9]{2})-([0-9]{2})-([0-9]{2})-([0-9]{2})-([0-9]{2})-(.+)(\.[^.]+)$ ]]; then
         _tb_emit "$(printf '%s%s%s_%s%s%s-%s%s' \
-            "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}" "${BASH_REMATCH[3]}" \
-            "${BASH_REMATCH[4]}" "${BASH_REMATCH[5]}" "${BASH_REMATCH[6]}" \
-            "${BASH_REMATCH[7]}" \
-            "${BASH_REMATCH[8]}")"
-        return
-    fi
-
-    if [[ "$new" =~ ^signal-([0-9]{4})-([0-9]{2})-([0-9]{2})-([0-9]{6})(\.[^.]+)$ ]]; then
-        _tb_emit "$(printf '%s%s%s_%s-signal%s' \
-            "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}" "${BASH_REMATCH[3]}" \
-            "${BASH_REMATCH[4]}" \
-            "${BASH_REMATCH[5]}")"
-        return
-    fi
-
-    if [[ "$new" =~ ^signal-([0-9]{4})-([0-9]{2})-([0-9]{2})-([0-9]{6})_(.+)(\.[^.]+)$ ]]; then
-        _tb_emit "$(printf '%s%s%s_%s-signal-%s%s' \
-            "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}" "${BASH_REMATCH[3]}" \
-            "${BASH_REMATCH[4]}" \
-            "${BASH_REMATCH[5]}" \
-            "${BASH_REMATCH[6]}")"
-        return
-    fi
-
-    if [[ "$new" =~ ^signal-([0-9]{4})-([0-9]{2})-([0-9]{2})-([0-9]{2})-([0-9]{2})-([0-9]{2})-(.+)(\.[^.]+)$ ]]; then
-        _tb_emit "$(printf '%s%s%s_%s%s%s-signal-%s%s' \
             "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}" "${BASH_REMATCH[3]}" \
             "${BASH_REMATCH[4]}" "${BASH_REMATCH[5]}" "${BASH_REMATCH[6]}" \
             "${BASH_REMATCH[7]}" \
