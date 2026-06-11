@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.06.11 - v. 19.181.120000 - checksum verify: match sha512 lines with or without ./ prefix (ffmpeg-voice / sha512sum cwd style)
 # 2026.06.09 - v. 19.180.120000 - rename/checksum prompts [C]: type custom exclude pattern, append to exclude file immediately
 # 2026.06.10 - v. 19.179.174500 - embedded -date_YYYY-MM-DD_HH_MM_SS[_tail] (BBC/Our World exports) → YYYYMMDD_HHMMSS_title[_tail]; before and after hyphen compaction
 # 2026.06.10 - v. 19.178.172000 - Signal timestamp-first: run before and after hyphen date compaction (idempotent; catches partial compact / reorder-safe)
@@ -5558,11 +5559,7 @@ print_checksum_mismatch_decision_context() {
     local kind target_norm target_re matched_line stored_hash disk_hash
 
     kind="$(checksum_kind "$sum_file")" || kind="?"
-    target_norm="$(strip_leading_dot_slash "$ref_in_file")"
-    target_re="$(sed_escape_regex "$target_norm")"
-    matched_line="$(
-        sed -E 's/\r$//' -- "$sum_file" 2>/dev/null | grep -E "^[0-9a-fA-F]+[[:space:]]+\*?${target_re}$" | tail -n 1 || true
-    )"
+    matched_line="$(find_checksum_line_for_ref "$sum_file" "$ref_in_file")"
     if [[ -n "$matched_line" ]]; then
         stored_hash="$(printf '%s' "$matched_line" | awk '{print tolower($1)}')"
     else
@@ -7944,14 +7941,10 @@ verify_single_checksum_target() {
     nonverbose_checksum_ref_verify_progress_letter "$kind" "$sum_file"
     sum_dir="$(dirname -- "$sum_file")"
     sum_base="$(basename -- "$sum_file")"
-    target_norm="$(strip_leading_dot_slash "$target_ref")"
-    target_re="$(sed_escape_regex "$target_norm")"
 
     print_single_target_check_verbose "$(checksum_cmd "$sum_file")" "$sum_dir" "$target_ref" "$sum_base"
 
-    matched_line="$(
-        sed -E 's/\r$//' -- "$sum_file" | grep -E "^[0-9a-fA-F]+[[:space:]]+\*?${target_re}$" | tail -n 1 || true
-    )"
+    matched_line="$(find_checksum_line_for_ref "$sum_file" "$target_ref")"
 
     if [[ -z "$matched_line" ]]; then
         return 2
@@ -8240,6 +8233,22 @@ sed_escape_repl() {
 strip_leading_dot_slash() {
     local p="$1"
     printf '%s' "${p#./}"
+}
+
+# sha512sum in cwd often writes "./file"; callers may pass ref with or without ./ — match either.
+find_checksum_line_for_ref() {
+    local sum_file="$1"
+    local target_ref="$2"
+    local target_norm target_re
+
+    [[ -f "$sum_file" && -n "$target_ref" ]] || return 0
+
+    target_norm="$(strip_leading_dot_slash "$target_ref")"
+    target_re="$(sed_escape_regex "$target_norm")"
+
+    sed -E 's/\r$//' -- "$sum_file" 2>/dev/null \
+        | grep -E "^[0-9a-fA-F]+[[:space:]]+\*?(\./)?${target_re}$" \
+        | tail -n 1 || true
 }
 
 relative_path() {
