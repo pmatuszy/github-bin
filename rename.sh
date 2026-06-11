@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.06.11 - v. 19.186.120000 - Call recording <callee>_YYMMDD_HHMMSS → YYYYMMDD_HHMMSS_<callee>_Call_recording
 # 2026.06.11 - v. 19.185.120000 - flatten prompt [C]: custom exclude pattern (incl. FLATTEN_EXACT=); match globs/fragments
 # 2026.06.11 - v. 19.184.120000 - Anruf_aufnehmen: callee id may be phone digits or text (parse YYMMDD_HHMMSS from right)
 # 2026.06.11 - v. 19.183.120000 - fix Anruf_aufnehmen =~ syntax (drop negated match; match normalized stem)
@@ -7838,6 +7839,18 @@ transform_name() {
             anruf_ymd="$(_rename_anruf_aufnehmen_yyyymmdd_from_date6 "$anruf_date6" || true)"
             if [[ -n "$anruf_ymd" ]]; then
                 newbase="${anruf_ymd}_${anruf_time6}_${anruf_id}_Anruf_aufnehmen${anruf_ext}"
+            fi
+        # Call recording <callee>_YYMMDD_HHMMSS.ext → YYYYMMDD_HHMMSS_<callee>_Call_recording.ext
+        # after transform_basename: Call_recording_<callee>_YYMMDD_HHMMSS.ext
+        elif [[ "${newbase,,}" =~ ^call_recording_(.+)_([0-9]{6})_([0-9]{6})(\.${audio_ext_re})$ ]]; then
+            local call_rec_id call_rec_date6 call_rec_time6 call_rec_ext call_rec_ymd
+            call_rec_id="${BASH_REMATCH[1]}"
+            call_rec_date6="${BASH_REMATCH[2]}"
+            call_rec_time6="${BASH_REMATCH[3]}"
+            call_rec_ext="${BASH_REMATCH[4]}"
+            call_rec_ymd="$(_rename_anruf_aufnehmen_yyyymmdd_from_date6 "$call_rec_date6" || true)"
+            if [[ -n "$call_rec_ymd" ]]; then
+                newbase="${call_rec_ymd}_${call_rec_time6}_${call_rec_id}_Call_recording${call_rec_ext}"
             fi
         # Sprache_/Voice_ + YYMMDD + HHMMSS + optional _tail + ext (tail was required before v. 19.13).
         elif [[ "$newbase" =~ ^(Sprache|Voice)_([0-9]{6})_([0-9]{6})(_(.+))?(\..+)$ ]]; then
