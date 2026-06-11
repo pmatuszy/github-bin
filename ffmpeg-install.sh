@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.06.11 - v. 2.1.4 - skip libsvtav1 when SvtAv1Enc >= 0.9.0 not satisfied by pkg-config (e.g. jammy arm64)
 # 2026.06.11 - v. 2.1.3 - skip libdav1d when distro dav1d < 1.0.0 (e.g. Ubuntu 22.04); libaom still used
 # 2026.06.11 - v. 2.1.2 - max profile: --enable-chromaprint (not --enable-libchromaprint) for ffmpeg 8.x
 # 2026.06.11 - v. 2.1.1 - fix nounset tarball URL, apt local -a syntax, duplicate profile/fdk prompts
@@ -1622,15 +1623,30 @@ probe_source_optional_codecs() {
     FFMPEG_SOURCE_HAS_DAV1D=0
     if ffmpeg_pkg_config_satisfied 'dav1d >= 1.0.0'; then
         FFMPEG_SOURCE_HAS_DAV1D=1
-        return 0
-    fi
-    if pkg-config --exists dav1d 2>/dev/null; then
+    elif pkg-config --exists dav1d 2>/dev/null; then
         log_note "dav1d $(pkg-config --modversion dav1d 2>/dev/null) is below 1.0.0 (FFmpeg 8.x needs dav1d >= 1.0.0); libdav1d disabled — libaom still provides AV1."
     elif apt_cache_has_package libdav1d-dev; then
         log_note "libdav1d-dev is installed but dav1d >= 1.0.0 is not visible to pkg-config; libdav1d disabled — libaom still provides AV1."
     else
         log_note "dav1d not available; libdav1d disabled — libaom still provides AV1."
     fi
+
+    FFMPEG_SOURCE_HAS_SVTAV1=0
+    case "${SOURCE_PROFILE}" in
+        max|common|gpu|nvidia)
+            if ffmpeg_pkg_config_satisfied 'SvtAv1Enc >= 0.9.0'; then
+                FFMPEG_SOURCE_HAS_SVTAV1=1
+            elif pkg-config --exists 'SvtAv1Enc >= 0.9.0' 2>/dev/null; then
+                log_note "SvtAv1Enc >= 0.9.0 is installed but not available for static linking; libsvtav1 disabled."
+            elif pkg-config --exists SvtAv1Enc 2>/dev/null; then
+                log_note "SvtAv1Enc $(pkg-config --modversion SvtAv1Enc 2>/dev/null) is below 0.9.0 (FFmpeg 8.x needs SvtAv1Enc >= 0.9.0); libsvtav1 disabled."
+            elif apt_cache_has_package libsvtav1-dev; then
+                log_note "libsvtav1-dev is installed but SvtAv1Enc >= 0.9.0 is not visible to pkg-config; libsvtav1 disabled."
+            else
+                log_note "SvtAv1Enc not available; libsvtav1 disabled."
+            fi
+            ;;
+    esac
 }
 
 install_source_build_dependencies() {
@@ -1677,16 +1693,11 @@ install_source_build_dependencies() {
 
     case "${SOURCE_PROFILE}" in
         max|common|gpu|nvidia)
-            FFMPEG_SOURCE_HAS_SVTAV1=0
             if apt_cache_has_package libsvtav1-dev; then
                 pkgs+=( libsvtav1-dev )
-                FFMPEG_SOURCE_HAS_SVTAV1=1
             else
                 log_note "libsvtav1-dev not in apt; SVT-AV1 encoder will be skipped."
             fi
-            ;;
-        *)
-            FFMPEG_SOURCE_HAS_SVTAV1=0
             ;;
     esac
 
