@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# 2026.06.11 - v. 1.5 - x86_64: prebuilt signal-cli-VERSION-Linux-native.tar.gz (no Java/Rust/JNI); Pi/arm keeps JNI path
+# 2026.06.11 - v. 1.4 - prompts: drop "(single key, Enter not required)" hint line
 # 2026.06.11 - v. 1.3 - step 1: detect running signal-cli silently (no process list); still warn before install
 # 2026.06.11 - v. 1.2 - if signal-cli daemon is running: skip version exec (hangs); read version from /opt symlinks; prompt before install
 # 2026.06.11 - v. 1.1 - verbose progress: log each step; timeout on signal-cli version probe; visible GitHub/download status
@@ -6,11 +8,12 @@
 #
 # signal-install.sh
 #
-# Installs or updates signal-cli on Raspberry Pi (aarch64) using the procedure from:
+# x86_64 Linux: official GraalVM native build (signal-cli-VERSION-Linux-native.tar.gz)
+# Pi / arm: JVM tarball + libsignal JNI build — procedure from:
 #   https://github.com/pmatuszy/signal-cli-on-Raspberry-PI---WORKS-
 #
 # Releases: https://github.com/AsamK/signal-cli/releases
-# protoc:   https://github.com/protocolbuffers/protobuf/releases
+# protoc:   https://github.com/protocolbuffers/protobuf/releases (Pi/arm path only)
 #
 
 set -euo pipefail
@@ -61,8 +64,8 @@ show_help() {
 Usage: $(basename "$0") [-h|--help] [-v|--version] [-y|--yes] [-q|--quiet] [--no_startup_delay]
 
 Check the installed signal-cli version (if any), compare with the latest GitHub
-release, and optionally install or update on Raspberry Pi (aarch64) including
-the libsignal JNI build step.
+release, and optionally install or update. On x86_64 Linux uses the prebuilt
+Linux-native tarball; on Raspberry Pi / arm builds libsignal JNI from source.
 
 Options:
   -h, --help           Show this help and exit.
@@ -242,7 +245,7 @@ prompt_stop_signal_cli_before_install() {
         return 0
     fi
 
-    echo ">>> Waiting for your answer (single key, Enter not required):"
+    echo ">>> Waiting for your answer:"
     echo -n "Continue install/update without stopping signal-cli? [y/N] "
     read -r -n 1 reply || reply=""
     echo
@@ -327,14 +330,25 @@ detect_machine() {
     arch="$(uname --hardware-platform 2>/dev/null || uname -m)"
 
     case "${hw}" in
+        x86_64|amd64)
+            INSTALL_METHOD="native_x86_64"
+            INSTALL_METHOD_LABEL="prebuilt Linux-native binary (x86_64)"
+            rust_target=""
+            ;;
         aarch64|arm64)
+            INSTALL_METHOD="pi_jni"
+            INSTALL_METHOD_LABEL="JVM tarball + libsignal JNI build (arm64)"
             rust_target="nightly-aarch64-unknown-linux-gnu"
             ;;
         armv7l|armv6l)
+            INSTALL_METHOD="pi_jni"
+            INSTALL_METHOD_LABEL="JVM tarball + libsignal JNI build (arm)"
             rust_target="nightly-armv7-unknown-linux-gnueabihf"
             ;;
         *)
-            rust_target=""
+            echo "ERROR: Unsupported CPU architecture: ${hw}" >&2
+            echo "Supported: x86_64 (native), aarch64/arm (JNI build)." >&2
+            exit 1
             ;;
     esac
 
@@ -346,15 +360,26 @@ detect_machine() {
     RUST_TARGET="${rust_target}"
 }
 
-check_raspberry_pi() {
-    if grep -q "Raspberry Pi" /proc/device-tree/model 2>/dev/null; then
-        echo "Running on Raspberry Pi hardware."
+is_pi_jni_install_method() {
+    [[ "${INSTALL_METHOD}" == "pi_jni" ]]
+}
+
+check_platform_for_install_method() {
+    if [[ "${INSTALL_METHOD}" == "native_x86_64" ]]; then
+        echo "Install method: ${INSTALL_METHOD_LABEL}"
         return 0
     fi
+
+    if grep -q "Raspberry Pi" /proc/device-tree/model 2>/dev/null; then
+        echo "Running on Raspberry Pi hardware."
+        echo "Install method: ${INSTALL_METHOD_LABEL}"
+        return 0
+    fi
+
     echo "WARNING: This does not look like Raspberry Pi hardware."
     echo "The libsignal JNI build procedure was written for Raspberry Pi aarch64."
     if (( ASSUME_YES == 0 )) && tty >/dev/null 2>&1; then
-        echo -n "Continue anyway? [y/N] "
+        echo -n "Continue with JNI build anyway? [y/N] "
         local reply=""
         read -r -n 1 reply || reply=""
         echo
@@ -383,7 +408,7 @@ prompt_install_or_update() {
             return 0
         fi
         echo
-        echo ">>> Waiting for your answer (single key, Enter not required):"
+        echo ">>> Waiting for your answer:"
         echo -n "Install signal-cli ${latest} now? [Y/n] "
         read -r -n 1 reply || reply=""
         echo
@@ -401,8 +426,12 @@ prompt_install_or_update() {
         fi
         echo "You already have the latest version."
         echo
-        echo ">>> Waiting for your answer (single key, Enter not required):"
-        echo -n "Reinstall / rebuild JNI anyway? [y/N] "
+        echo ">>> Waiting for your answer:"
+        if is_pi_jni_install_method; then
+            echo -n "Reinstall / rebuild JNI anyway? [y/N] "
+        else
+            echo -n "Reinstall anyway? [y/N] "
+        fi
         read -r -n 1 reply || reply=""
         echo
         case "${reply}" in
@@ -418,7 +447,7 @@ prompt_install_or_update() {
             return 0
         fi
         echo
-        echo ">>> Waiting for your answer (single key, Enter not required):"
+        echo ">>> Waiting for your answer:"
         echo -n "Update signal-cli ${installed} -> ${latest} now? [Y/n] "
         read -r -n 1 reply || reply=""
         echo
@@ -435,7 +464,7 @@ prompt_install_or_update() {
         return 0
     fi
     echo
-    echo ">>> Waiting for your answer (single key, Enter not required):"
+    echo ">>> Waiting for your answer:"
     echo -n "Reinstall published version ${latest} anyway? [y/N] "
     read -r -n 1 reply || reply=""
     echo
@@ -443,6 +472,15 @@ prompt_install_or_update() {
         y|Y|yes|YES) echo "Proceeding..." ;;
         *) echo "Quitting — no changes made."; exit 0 ;;
     esac
+}
+
+ensure_download_tools() {
+    if command -v curl >/dev/null 2>&1 || command -v wget >/dev/null 2>&1; then
+        return 0
+    fi
+    log_step "Installing curl (needed for downloads)..."
+    apt-get update
+    apt-get install -y curl
 }
 
 install_apt_dependencies() {
@@ -501,6 +539,40 @@ prepare_opt_and_download_signal_cli() {
     log_step "Creating symlinks..."
     ln -sfn "${INSTALL_OPT}/signal-cli-${version}" "${CURRENT_LINK}"
     ln -sfn "${INSTALL_OPT}/signal-cli-${version}/bin/signal-cli" "${BIN_LINK}"
+
+    ls -l "${BIN_LINK}" "${CURRENT_LINK}"
+}
+
+prepare_opt_and_download_signal_cli_native() {
+    local version="$1"
+    local archive url
+
+    echo
+    echo "part 1 — signal-cli ${version} Linux-native into ${INSTALL_OPT}"
+    echo
+
+    cd "${INSTALL_OPT}"
+    log_step "Removing previous native binary/symlink (if any)..."
+    rm -fv "${CURRENT_LINK}" 2>/dev/null || true
+    [[ -d "${CURRENT_LINK}" ]] && rm -rf "${CURRENT_LINK}"
+
+    archive="signal-cli-${version}-Linux-native.tar.gz"
+    url="https://github.com/AsamK/signal-cli/releases/download/v${version}/${archive}"
+
+    download_file "${url}" "${archive}"
+    log_step "Extracting ${archive} into ${INSTALL_OPT}..."
+    tar xf "${archive}" -C "${INSTALL_OPT}"
+    rm -fv "${archive}"
+
+    if [[ ! -e "${CURRENT_LINK}" ]]; then
+        echo "ERROR: Expected ${CURRENT_LINK} after extracting ${archive}." >&2
+        exit 1
+    fi
+
+    log_step "Creating symlink ${BIN_LINK} -> ${CURRENT_LINK}"
+    ln -sfn "${CURRENT_LINK}" "${BIN_LINK}"
+    chmod 755 "${CURRENT_LINK}"
+    chown root:root "${CURRENT_LINK}"
 
     ls -l "${BIN_LINK}" "${CURRENT_LINK}"
 }
@@ -577,7 +649,7 @@ build_and_install_libsignal_jni() {
     cp -v "${jni_so}" "${JAVA_JNI_DIR}/"
 }
 
-finalize_permissions() {
+finalize_permissions_pi() {
     local version="$1"
 
     echo
@@ -600,7 +672,26 @@ verify_installation() {
     signal-cli version
 }
 
-perform_install() {
+perform_install_native() {
+    local signal_version="$1"
+
+    ensure_download_tools
+    need_cmd tar
+    need_cmd ln
+    need_cmd chmod
+    need_cmd chown
+
+    prepare_opt_and_download_signal_cli_native "${signal_version}"
+    verify_installation
+
+    echo
+    echo "signal-cli installed/updated successfully (Linux-native)."
+    echo "  Version: $(get_installed_signal_cli_version)"
+    echo "  Binary:  ${BIN_LINK}"
+    echo "  Native:  ${CURRENT_LINK}"
+}
+
+perform_install_pi() {
     local signal_version="$1"
     local protoc_version="$2"
 
@@ -609,7 +700,7 @@ perform_install() {
     prepare_opt_and_download_signal_cli "${signal_version}"
     install_rust_toolchain
     build_and_install_libsignal_jni "${signal_version}"
-    finalize_permissions "${signal_version}"
+    finalize_permissions_pi "${signal_version}"
     verify_installation
 
     echo
@@ -625,31 +716,43 @@ main() {
     log_step "Starting signal-cli install/update check..."
     as_root_check
     detect_machine
-    check_raspberry_pi
+    check_platform_for_install_method
 
     log_step "Checking required local commands..."
     need_cmd grep
     need_cmd sed
     need_cmd sort
-    need_cmd tar
-    need_cmd zip
-    need_cmd find
-    need_cmd ln
-    need_cmd mkdir
-    need_cmd chown
-    need_cmd chmod
+    if is_pi_jni_install_method; then
+        need_cmd tar
+        need_cmd zip
+        need_cmd find
+        need_cmd ln
+        need_cmd mkdir
+        need_cmd chown
+        need_cmd chmod
+    fi
 
     echo "Machine: ${MACHINE_HW} (protoc arch label: ${PROTOC_ARCHITECTURE})"
     echo
 
-    log_step "Step 1/3 — detect installed signal-cli version"
+    if is_pi_jni_install_method; then
+        log_step "Step 1/3 — detect installed signal-cli version"
+    else
+        log_step "Step 1/2 — detect installed signal-cli version"
+    fi
     installed="$(get_installed_signal_cli_version)"
 
-    log_step "Step 2/3 — fetch latest signal-cli release from GitHub"
+    if is_pi_jni_install_method; then
+        log_step "Step 2/3 — fetch latest signal-cli release from GitHub"
+    else
+        log_step "Step 2/2 — fetch latest signal-cli release from GitHub"
+    fi
     latest="$(github_latest_release_version "${SIGNAL_CLI_REPO}")"
 
-    log_step "Step 3/3 — fetch latest protoc release from GitHub"
-    protoc_latest="$(github_latest_release_version "${PROTOBUF_REPO}")"
+    if is_pi_jni_install_method; then
+        log_step "Step 3/3 — fetch latest protoc release from GitHub"
+        protoc_latest="$(github_latest_release_version "${PROTOBUF_REPO}")"
+    fi
 
     log_step "Version check complete."
     prompt_install_or_update "${latest}" "${installed}"
@@ -658,11 +761,20 @@ main() {
     echo
     echo "Will install:"
     echo "  signal-cli: ${latest}"
-    echo "  protoc:     ${protoc_latest}"
-    echo "  temp dir:   ${TEMP_CATALOG}/signal-cli-install"
+    echo "  method:     ${INSTALL_METHOD_LABEL}"
+    if is_pi_jni_install_method; then
+        echo "  protoc:     ${protoc_latest}"
+        echo "  temp dir:   ${TEMP_CATALOG}/signal-cli-install"
+    else
+        echo "  package:    signal-cli-${latest}-Linux-native.tar.gz"
+    fi
     echo
 
-    perform_install "${latest}" "${protoc_latest}"
+    if [[ "${INSTALL_METHOD}" == "native_x86_64" ]]; then
+        perform_install_native "${latest}"
+    else
+        perform_install_pi "${latest}" "${protoc_latest}"
+    fi
 }
 
 HEADER_EXTRA_ARGS=()
