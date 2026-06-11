@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.06.11 - v. 19.183.120000 - fix Anruf_aufnehmen =~ syntax (drop negated match; match normalized stem)
 # 2026.06.11 - v. 19.182.120000 - Anruf aufnehmen <phone>_YYMMDD_HHMMSS → YYYYMMDD_HHMMSS_<phone>_Anruf_aufnehmen
 # 2026.06.11 - v. 19.181.120000 - checksum verify: match sha512 lines with or without ./ prefix (ffmpeg-voice / sha512sum cwd style)
 # 2026.06.09 - v. 19.180.120000 - rename/checksum prompts [C]: type custom exclude pattern, append to exclude file immediately
@@ -7797,8 +7798,8 @@ transform_name() {
                 newbase="${BASH_REMATCH[1]}_${BASH_REMATCH[2]}-screen_recording${BASH_REMATCH[4]}"
             fi
         # Anruf aufnehmen <phone>_YYMMDD_HHMMSS.ext → YYYYMMDD_HHMMSS_<phone>_Anruf_aufnehmen.ext
-        elif [[ ! "$newbase" =~ ^[0-9]{8}_[0-9]{6}_[0-9]+_Anruf_aufnehmen(\.${audio_ext_re})$ ]] \
-            && [[ "${newbase,,}" =~ ^anruf[ _]+aufnehmen[ _]+([0-9]{8,15})_([0-9]{6})_([0-9]{6})(\.${audio_ext_re})$ ]]; then
+        # (after transform_basename: Anruf_aufnehmen_<phone>_YYMMDD_HHMMSS.ext; already-renamed names do not match)
+        elif [[ "${newbase,,}" =~ ^anruf_aufnehmen_([0-9]{8,15})_([0-9]{6})_([0-9]{6})(\.${audio_ext_re})$ ]]; then
             local anruf_phone anruf_date6 anruf_time6 anruf_ext anruf_ymd
             anruf_phone="${BASH_REMATCH[1]}"
             anruf_date6="${BASH_REMATCH[2]}"
