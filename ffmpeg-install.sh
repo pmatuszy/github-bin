@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.06.11 - v. 2.1.3 - skip libdav1d when distro dav1d < 1.0.0 (e.g. Ubuntu 22.04); libaom still used
 # 2026.06.11 - v. 2.1.2 - max profile: --enable-chromaprint (not --enable-libchromaprint) for ffmpeg 8.x
 # 2026.06.11 - v. 2.1.1 - fix nounset tarball URL, apt local -a syntax, duplicate profile/fdk prompts
 # 2026.06.11 - v. 2.1 - source build profiles: min/common/max/gpu/nvidia; --source-profile; interactive menu
@@ -49,6 +50,7 @@ CLI_SOURCE_WITH_FDK=0
 SOURCE_PROFILE=""
 FFMPEG_SOURCE_WITH_FDK_AAC=0
 FFMPEG_SOURCE_HAS_SVTAV1=0
+FFMPEG_SOURCE_HAS_DAV1D=0
 FFMPEG_SOURCE_HAS_FDK_AAC=0
 FFMPEG_SOURCE_PROFILE_READY=0
 FFMPEG_ORG_VERSION=""
@@ -1602,6 +1604,35 @@ ensure_source_build_profile_selected() {
     FFMPEG_SOURCE_PROFILE_READY=1
 }
 
+ffmpeg_source_static_build() {
+    [[ "${SOURCE_PROFILE}" != gpu && "${SOURCE_PROFILE}" != nvidia ]]
+}
+
+ffmpeg_pkg_config_satisfied() {
+    local spec="$1"
+
+    if ffmpeg_source_static_build; then
+        pkg-config --static --exists "${spec}" 2>/dev/null
+    else
+        pkg-config --exists "${spec}" 2>/dev/null
+    fi
+}
+
+probe_source_optional_codecs() {
+    FFMPEG_SOURCE_HAS_DAV1D=0
+    if ffmpeg_pkg_config_satisfied 'dav1d >= 1.0.0'; then
+        FFMPEG_SOURCE_HAS_DAV1D=1
+        return 0
+    fi
+    if pkg-config --exists dav1d 2>/dev/null; then
+        log_note "dav1d $(pkg-config --modversion dav1d 2>/dev/null) is below 1.0.0 (FFmpeg 8.x needs dav1d >= 1.0.0); libdav1d disabled — libaom still provides AV1."
+    elif apt_cache_has_package libdav1d-dev; then
+        log_note "libdav1d-dev is installed but dav1d >= 1.0.0 is not visible to pkg-config; libdav1d disabled — libaom still provides AV1."
+    else
+        log_note "dav1d not available; libdav1d disabled — libaom still provides AV1."
+    fi
+}
+
 install_source_build_dependencies() {
     local -a pkgs=()
 
@@ -1682,6 +1713,7 @@ install_source_build_dependencies() {
 
     log_step "Installing compiler and profile packages..."
     apt_install_packages "${pkgs[@]}"
+    probe_source_optional_codecs
     log_note "Build dependencies installed."
 }
 
@@ -1730,7 +1762,6 @@ ffmpeg_source_configure_args() {
                 --enable-libvorbis
                 --enable-libtheora
                 --enable-libass
-                --enable-libdav1d
                 --enable-libaom
                 --enable-libwebp
                 --enable-libfreetype
@@ -1746,6 +1777,9 @@ ffmpeg_source_configure_args() {
 
     if (( FFMPEG_SOURCE_HAS_SVTAV1 == 1 )); then
         args+=( --enable-libsvtav1 )
+    fi
+    if (( FFMPEG_SOURCE_HAS_DAV1D == 1 )); then
+        args+=( --enable-libdav1d )
     fi
 
     if [[ "${SOURCE_PROFILE}" == max || "${SOURCE_PROFILE}" == gpu || "${SOURCE_PROFILE}" == nvidia ]]; then
