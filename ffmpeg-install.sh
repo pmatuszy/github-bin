@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.06.11 - v. 2.1.5 - probe pkg-config (incl. static) before each --enable-lib*; fixes x265 etc. on jammy
 # 2026.06.11 - v. 2.1.4 - skip libsvtav1 when SvtAv1Enc >= 0.9.0 not satisfied by pkg-config (e.g. jammy arm64)
 # 2026.06.11 - v. 2.1.3 - skip libdav1d when distro dav1d < 1.0.0 (e.g. Ubuntu 22.04); libaom still used
 # 2026.06.11 - v. 2.1.2 - max profile: --enable-chromaprint (not --enable-libchromaprint) for ffmpeg 8.x
@@ -1619,6 +1620,38 @@ ffmpeg_pkg_config_satisfied() {
     fi
 }
 
+ffmpeg_source_try_enable_pkg() {
+    local args_var="$1"
+    local pkg_spec="$2"
+    local flag="$3"
+    local label="${4:-${flag#--enable-}}"
+    local -n _args="$args_var"
+
+    if ffmpeg_pkg_config_satisfied "${pkg_spec}"; then
+        _args+=( "${flag}" )
+        return 0
+    fi
+    if pkg-config --exists "${pkg_spec}" 2>/dev/null; then
+        log_note "${label} disabled — installed but not available to pkg-config for this build (${pkg_spec})."
+    else
+        log_note "${label} disabled — ${pkg_spec} not found via pkg-config."
+    fi
+    return 1
+}
+
+ffmpeg_source_try_enable_openssl() {
+    local args_var="$1"
+    local -n _args="$args_var"
+
+    if ffmpeg_pkg_config_satisfied 'openssl >= 3.0.0'; then
+        _args+=( --enable-openssl )
+    elif ffmpeg_pkg_config_satisfied openssl; then
+        _args+=( --enable-openssl )
+    else
+        log_note "openssl disabled — not found via pkg-config."
+    fi
+}
+
 probe_source_optional_codecs() {
     FFMPEG_SOURCE_HAS_DAV1D=0
     if ffmpeg_pkg_config_satisfied 'dav1d >= 1.0.0'; then
@@ -1752,39 +1785,39 @@ ffmpeg_source_configure_args() {
     args+=(
         --pkg-config-flags="${pkg_config_flags}"
         "--extra-libs=${extra_libs}"
-        --enable-openssl
     )
 
     case "${SOURCE_PROFILE}" in
         min)
-            args+=(
-                --enable-libmp3lame
-                --enable-libx264
-                --enable-libopus
-            )
+            args+=( --enable-libmp3lame )
+            ffmpeg_source_try_enable_pkg args x264 --enable-libx264 libx264
+            ffmpeg_source_try_enable_pkg args opus --enable-libopus opus
             ;;
         common|max|gpu|nvidia)
+            # lame/theora/twolame/soxr/snappy: ffmpeg configure uses header/link checks, not pkg-config
             args+=(
                 --enable-libmp3lame
-                --enable-libx264
-                --enable-libx265
-                --enable-libvpx
-                --enable-libopus
-                --enable-libvorbis
                 --enable-libtheora
-                --enable-libass
-                --enable-libaom
-                --enable-libwebp
-                --enable-libfreetype
-                --enable-libfontconfig
                 --enable-libsoxr
                 --enable-libsnappy
-                --enable-libzimg
-                --enable-libspeex
                 --enable-libtwolame
             )
+            ffmpeg_source_try_enable_pkg args x264 --enable-libx264 libx264
+            ffmpeg_source_try_enable_pkg args x265 --enable-libx265 x265
+            ffmpeg_source_try_enable_pkg args vpx --enable-libvpx vpx
+            ffmpeg_source_try_enable_pkg args opus --enable-libopus opus
+            ffmpeg_source_try_enable_pkg args vorbis --enable-libvorbis vorbis
+            ffmpeg_source_try_enable_pkg args "libass >= 0.11.0" --enable-libass libass
+            ffmpeg_source_try_enable_pkg args "aom >= 2.0.0" --enable-libaom libaom
+            ffmpeg_source_try_enable_pkg args "libwebp >= 0.2.0" --enable-libwebp libwebp
+            ffmpeg_source_try_enable_pkg args freetype2 --enable-libfreetype libfreetype
+            ffmpeg_source_try_enable_pkg args fontconfig --enable-libfontconfig libfontconfig
+            ffmpeg_source_try_enable_pkg args "zimg >= 2.7.0" --enable-libzimg libzimg
+            ffmpeg_source_try_enable_pkg args speex --enable-libspeex libspeex
             ;;
     esac
+
+    ffmpeg_source_try_enable_openssl args
 
     if (( FFMPEG_SOURCE_HAS_SVTAV1 == 1 )); then
         args+=( --enable-libsvtav1 )
@@ -1794,24 +1827,26 @@ ffmpeg_source_configure_args() {
     fi
 
     if [[ "${SOURCE_PROFILE}" == max || "${SOURCE_PROFILE}" == gpu || "${SOURCE_PROFILE}" == nvidia ]]; then
-        pkg-config --exists libopenjp2 2>/dev/null && args+=( --enable-libopenjpeg )
-        pkg-config --exists libbluray 2>/dev/null && args+=( --enable-libbluray )
-        pkg-config --exists libchromaprint 2>/dev/null && args+=( --enable-chromaprint )
-        pkg-config --exists libgme 2>/dev/null && args+=( --enable-libgme )
-        pkg-config --exists libopenmpt 2>/dev/null && args+=( --enable-libopenmpt )
-        pkg-config --exists vidstab 2>/dev/null && args+=( --enable-libvidstab )
-        pkg-config --exists libxml-2.0 2>/dev/null && args+=( --enable-libxml2 )
-        pkg-config --exists shine 2>/dev/null && args+=( --enable-libshine )
+        ffmpeg_source_try_enable_pkg args "libopenjp2 >= 2.1.0" --enable-libopenjpeg libopenjpeg
+        ffmpeg_source_try_enable_pkg args libbluray --enable-libbluray libbluray
+        ffmpeg_source_try_enable_pkg args libchromaprint --enable-chromaprint chromaprint
+        ffmpeg_source_try_enable_pkg args libgme --enable-libgme libgme
+        ffmpeg_source_try_enable_pkg args "libopenmpt >= 0.2.6557" --enable-libopenmpt libopenmpt
+        ffmpeg_source_try_enable_pkg args "vidstab >= 0.98" --enable-libvidstab libvidstab
+        ffmpeg_source_try_enable_pkg args libxml-2.0 --enable-libxml2 libxml2
+        ffmpeg_source_try_enable_pkg args shine --enable-libshine libshine
     fi
 
     if [[ "${SOURCE_PROFILE}" == max ]] && (( FFMPEG_SOURCE_HAS_FDK_AAC == 1 )); then
-        args+=( --enable-nonfree --enable-libfdk-aac )
+        if ffmpeg_source_try_enable_pkg args fdk-aac --enable-libfdk-aac libfdk-aac; then
+            args+=( --enable-nonfree )
+        fi
     fi
 
     if [[ "${SOURCE_PROFILE}" == gpu ]]; then
-        pkg-config --exists libva 2>/dev/null && args+=( --enable-vaapi )
-        pkg-config --exists libdrm 2>/dev/null && args+=( --enable-libdrm )
-        pkg-config --exists vulkan 2>/dev/null && args+=( --enable-vulkan )
+        ffmpeg_source_try_enable_pkg args libva --enable-vaapi vaapi
+        ffmpeg_source_try_enable_pkg args libdrm --enable-libdrm libdrm
+        ffmpeg_source_try_enable_pkg args vulkan --enable-vulkan vulkan
     fi
 
     if [[ "${SOURCE_PROFILE}" == nvidia ]]; then
