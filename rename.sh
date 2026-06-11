@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.06.11 - v. 19.184.120000 - Anruf_aufnehmen: callee id may be phone digits or text (parse YYMMDD_HHMMSS from right)
 # 2026.06.11 - v. 19.183.120000 - fix Anruf_aufnehmen =~ syntax (drop negated match; match normalized stem)
 # 2026.06.11 - v. 19.182.120000 - Anruf aufnehmen <phone>_YYMMDD_HHMMSS → YYYYMMDD_HHMMSS_<phone>_Anruf_aufnehmen
 # 2026.06.11 - v. 19.181.120000 - checksum verify: match sha512 lines with or without ./ prefix (ffmpeg-voice / sha512sum cwd style)
@@ -5952,7 +5953,7 @@ _rename_is_valid_ymd() {
     return 0
 }
 
-# Anruf-aufnehmen phone recordings: YYMMDD in filename → YYYYMMDD (Sprache/Voice style); DDMMYY fallback if invalid.
+# Anruf-aufnehmen recordings: YYMMDD in filename → YYYYMMDD (Sprache/Voice style); DDMMYY fallback if invalid.
 _rename_anruf_aufnehmen_yyyymmdd_from_date6() {
     local date6="$1"
     local yy mm dd yyyy
@@ -7797,17 +7798,17 @@ transform_name() {
             else
                 newbase="${BASH_REMATCH[1]}_${BASH_REMATCH[2]}-screen_recording${BASH_REMATCH[4]}"
             fi
-        # Anruf aufnehmen <phone>_YYMMDD_HHMMSS.ext → YYYYMMDD_HHMMSS_<phone>_Anruf_aufnehmen.ext
-        # (after transform_basename: Anruf_aufnehmen_<phone>_YYMMDD_HHMMSS.ext; already-renamed names do not match)
-        elif [[ "${newbase,,}" =~ ^anruf_aufnehmen_([0-9]{8,15})_([0-9]{6})_([0-9]{6})(\.${audio_ext_re})$ ]]; then
-            local anruf_phone anruf_date6 anruf_time6 anruf_ext anruf_ymd
-            anruf_phone="${BASH_REMATCH[1]}"
+        # Anruf aufnehmen <callee>_YYMMDD_HHMMSS.ext → YYYYMMDD_HHMMSS_<callee>_Anruf_aufnehmen.ext
+        # callee = phone digits or text; after transform_basename: Anruf_aufnehmen_<callee>_YYMMDD_HHMMSS.ext
+        elif [[ "${newbase,,}" =~ ^anruf_aufnehmen_(.+)_([0-9]{6})_([0-9]{6})(\.${audio_ext_re})$ ]]; then
+            local anruf_id anruf_date6 anruf_time6 anruf_ext anruf_ymd
+            anruf_id="${BASH_REMATCH[1]}"
             anruf_date6="${BASH_REMATCH[2]}"
             anruf_time6="${BASH_REMATCH[3]}"
             anruf_ext="${BASH_REMATCH[4]}"
             anruf_ymd="$(_rename_anruf_aufnehmen_yyyymmdd_from_date6 "$anruf_date6" || true)"
             if [[ -n "$anruf_ymd" ]]; then
-                newbase="${anruf_ymd}_${anruf_time6}_${anruf_phone}_Anruf_aufnehmen${anruf_ext}"
+                newbase="${anruf_ymd}_${anruf_time6}_${anruf_id}_Anruf_aufnehmen${anruf_ext}"
             fi
         # Sprache_/Voice_ + YYMMDD + HHMMSS + optional _tail + ext (tail was required before v. 19.13).
         elif [[ "$newbase" =~ ^(Sprache|Voice)_([0-9]{6})_([0-9]{6})(_(.+))?(\..+)$ ]]; then
