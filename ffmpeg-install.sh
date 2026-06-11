@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.06.11 - v. 2.1.14 - column-align installed binary path lines (tool / kind / path)
 # 2026.06.11 - v. 2.1.13 - fix local -a syntax in print_installed_tool_binary_paths (bash on backupche)
 # 2026.06.11 - v. 2.1.12 - installed path listing: symlink target and resolved real file for each tool
 # 2026.06.11 - v. 2.1.11 - version check prompt: show full paths to installed ffmpeg/ffprobe/ffplay binaries
@@ -42,6 +43,8 @@ BIN_FFMPEG="${BIN_DIR}/ffmpeg"
 BIN_FFPROBE="${BIN_DIR}/ffprobe"
 BIN_FFPLAY="${BIN_DIR}/ffplay"
 FFMPEG_ACTIVE_TOOLS=( ffmpeg ffprobe ffplay )
+FFMPEG_TOOL_LABEL_WIDTH=7
+FFMPEG_TOOL_KIND_WIDTH=11
 INSTALL_OPT="/opt"
 TEMP_CATALOG="${TEMP_CATALOG:-/mnt/ffmpeg-temp}"
 FFMPEG_BUILD_KIND="${FFMPEG_BUILD_KIND:-git}"
@@ -900,6 +903,14 @@ resolve_active_tool_exe() {
     esac
 }
 
+print_tool_install_kind_line() {
+    local tool="$1" kind="$2" detail="$3"
+    printf '    %-*s %-*s %s\n' \
+        "${FFMPEG_TOOL_LABEL_WIDTH}" "${tool}" \
+        "${FFMPEG_TOOL_KIND_WIDTH}" "${kind}" \
+        "${detail}"
+}
+
 print_tool_install_path_detail() {
     local tool="$1"
     local path="${BIN_DIR}/${tool}"
@@ -907,7 +918,7 @@ print_tool_install_path_detail() {
 
     if [[ -L "${path}" ]]; then
         target="$(readlink "${path}" 2>/dev/null || true)"
-        echo "    ${tool} symlink: ${path} -> ${target:-?}"
+        print_tool_install_kind_line "${tool}" "symlink:" "${path} -> ${target:-?}"
         if [[ -n "${target}" ]]; then
             if [[ "${target}" == /* ]]; then
                 hop="${target}"
@@ -915,20 +926,20 @@ print_tool_install_path_detail() {
                 hop="${BIN_DIR}/${target}"
             fi
             if [[ -L "${hop}" ]]; then
-                echo "    ${tool} points to: ${hop} -> $(readlink "${hop}" 2>/dev/null || echo '?')"
+                print_tool_install_kind_line "${tool}" "points to:" "${hop} -> $(readlink "${hop}" 2>/dev/null || echo '?')"
             elif [[ -f "${hop}" ]]; then
-                echo "    ${tool} points to: ${hop}"
+                print_tool_install_kind_line "${tool}" "points to:" "${hop}"
             fi
         fi
     elif [[ -f "${path}" ]]; then
-        echo "    ${tool} file: ${path} (plain binary, not a symlink)"
+        print_tool_install_kind_line "${tool}" "file:" "${path} (plain binary, not a symlink)"
     else
         return 1
     fi
 
     resolved="$(readlink -f "${path}" 2>/dev/null || true)"
     if [[ -n "${resolved}" && -x "${resolved}" && ! -d "${resolved}" ]]; then
-        echo "    ${tool} real file: ${resolved}"
+        print_tool_install_kind_line "${tool}" "real file:" "${resolved}"
     fi
     return 0
 }
