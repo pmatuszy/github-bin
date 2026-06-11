@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.06.11 - v. 1.5 - install to /usr/local/bin/ffmpeg-VERSION; ffmpeg/ffprobe -> versioned names
 # 2026.06.11 - v. 1.4 - third option: build static from ffmpeg.org official release source
 # 2026.06.11 - v. 1.3 - install prompts default [y/N]; fix installed-metadata subshell; ffmpeg.org HTML parse
 # 2026.06.11 - v. 1.2 - ffmpeg.org latest; static first then apt dynamic; move old installs aside
@@ -17,10 +18,10 @@
 set -euo pipefail
 
 FFMPEG_BASE_URL="https://johnvansickle.com/ffmpeg"
+BIN_DIR="/usr/local/bin"
+BIN_FFMPEG="${BIN_DIR}/ffmpeg"
+BIN_FFPROBE="${BIN_DIR}/ffprobe"
 INSTALL_OPT="/opt"
-BIN_FFMPEG="/usr/local/bin/ffmpeg"
-BIN_FFPROBE="/usr/local/bin/ffprobe"
-CURRENT_LINK="${INSTALL_OPT}/ffmpeg"
 TEMP_CATALOG="${TEMP_CATALOG:-/mnt/ffmpeg-temp}"
 FFMPEG_BUILD_KIND="${FFMPEG_BUILD_KIND:-git}"
 INSTALL_PLAN=""
@@ -86,12 +87,12 @@ Check installed ffmpeg against ffmpeg.org, then optionally install:
   3) static build compiled from the official ffmpeg.org release source
 Older installs are moved aside, not deleted.
 
-Install layout:
-  /opt/ffmpeg-VERSION/      prebuilt static or apt-tracked install
-  /opt/ffmpeg-VERSION-src/  official-release source static build
-  /opt/ffmpeg               symlink to active install
-  /usr/local/bin/ffmpeg     symlink into active install
-  /opt/ffmpeg-*-backup-*    previous installs preserved automatically
+Install layout (/usr/local/bin):
+  ffmpeg-VERSION            versioned binary (or symlink for apt)
+  ffprobe-VERSION           matching ffprobe
+  ffmpeg                    symlink -> ffmpeg-VERSION (active)
+  ffprobe                   symlink -> ffprobe-VERSION (active)
+  ffmpeg-VERSION-backup-*   same-name binary moved aside before replace
 
 Options:
   -h, --help           Show this help and exit.
@@ -457,8 +458,26 @@ detect_machine() {
     esac
 }
 
-ffmpeg_versioned_path() {
-    echo "${INSTALL_OPT}/ffmpeg-${1}"
+version_label_from_build_id() {
+    local id="$1"
+    id="${id%-src}"
+    id="${id%-apt}"
+    echo "${id}"
+}
+
+versioned_ffmpeg_bin() {
+    echo "${BIN_DIR}/ffmpeg-$(version_label_from_build_id "$1")"
+}
+
+versioned_ffprobe_bin() {
+    echo "${BIN_DIR}/ffprobe-$(version_label_from_build_id "$1")"
+}
+
+get_active_version_label() {
+    local link=""
+    link="$(readlink "${BIN_FFMPEG}" 2>/dev/null || true)"
+    [[ "${link}" =~ ^ffmpeg-(.+)$ ]] || return 1
+    echo "${BASH_REMATCH[1]}"
 }
 
 set_installed_build_id() {
@@ -555,8 +574,14 @@ parse_build_id_from_binary_name() {
         set_installed_build_id "${BASH_REMATCH[1]}"
         return 0
     fi
-    if [[ "${name}" =~ ^ffmpeg-([0-9]+(\.[0-9]+)+)- ]]; then
+    if [[ "${name}" =~ ^ffmpeg-([0-9]+(\.[0-9]+)+)(-[^/]+)?$ ]]; then
         INSTALLED_BUILD_KIND="semver"
+        INSTALLED_BUILD_SOURCE="localbin"
+        set_installed_build_id "${BASH_REMATCH[1]}"
+        return 0
+    fi
+    if [[ "${name}" =~ ^ffmpeg-([0-9]{8})$ ]]; then
+        INSTALLED_BUILD_KIND="date"
         INSTALLED_BUILD_SOURCE="localbin"
         set_installed_build_id "${BASH_REMATCH[1]}"
         return 0
@@ -567,7 +592,7 @@ parse_build_id_from_binary_name() {
 resolve_active_ffmpeg_exe() {
     local target=""
 
-    for target in "${BIN_FFMPEG}" "${CURRENT_LINK}/ffmpeg"; do
+    for target in "${BIN_FFMPEG}"; do
         if [[ -L "${target}" || -e "${target}" ]]; then
             target="$(readlink -f "${target}" 2>/dev/null || true)"
             if [[ -n "${target}" && -x "${target}" && ! -d "${target}" ]]; then
@@ -588,7 +613,7 @@ resolve_active_ffmpeg_exe() {
 resolve_active_ffprobe_exe() {
     local target=""
 
-    for target in "${BIN_FFPROBE}" "${CURRENT_LINK}/ffprobe"; do
+    for target in "${BIN_FFPROBE}"; do
         if [[ -L "${target}" || -e "${target}" ]]; then
             target="$(readlink -f "${target}" 2>/dev/null || true)"
             if [[ -n "${target}" && -x "${target}" && ! -d "${target}" ]]; then
@@ -634,7 +659,14 @@ parse_build_id_from_ffmpeg_version() {
 }
 
 get_installed_build_id_from_filesystem() {
-    local exe="" build_id="" target="" link_name="" link_dir=""
+    local exe="" build_id="" target="" link_name="" label=""
+
+    if label="$(get_active_version_label 2>/dev/null)"; then
+        INSTALLED_BUILD_KIND="semver"
+        INSTALLED_BUILD_SOURCE="localbin"
+        set_installed_build_id "${label}"
+        return 0
+    fi
 
     exe="$(resolve_active_ffmpeg_exe || true)"
     if [[ -n "${exe}" ]]; then
@@ -647,16 +679,14 @@ get_installed_build_id_from_filesystem() {
     if [[ -L "${BIN_FFMPEG}" ]]; then
         link_name="$(readlink "${BIN_FFMPEG}" 2>/dev/null || true)"
         if parse_build_id_from_binary_name "${link_name}"; then
-            link_dir="$(dirname "${BIN_FFMPEG}")"
-            log_note "Installed build from ${BIN_FFMPEG} -> ${link_dir}/${link_name}: ${INSTALLED_BUILD_ID} (${INSTALLED_BUILD_KIND})"
+            log_note "Installed build from ${BIN_FFMPEG} -> ${link_name}: ${INSTALLED_BUILD_ID} (${INSTALLED_BUILD_KIND})"
             return 0
         fi
     fi
 
-    if [[ -L "${CURRENT_LINK}" ]]; then
-        target="$(readlink -f "${CURRENT_LINK}" 2>/dev/null || true)"
-        if version_from_install_path "${target}"; then
-            log_note "Installed build from ${CURRENT_LINK} -> ${target}: ${INSTALLED_BUILD_ID} (${INSTALLED_BUILD_KIND})"
+    if [[ -e "${BIN_FFMPEG}" && ! -L "${BIN_FFMPEG}" ]]; then
+        if parse_build_id_from_binary_name "${BIN_FFMPEG}"; then
+            log_note "Installed build from ${BIN_FFMPEG}: ${INSTALLED_BUILD_ID}"
             return 0
         fi
     fi
@@ -674,7 +704,7 @@ get_installed_build_id() {
 
     exe="$(resolve_active_ffmpeg_exe || true)"
     if [[ -z "${exe}" ]]; then
-        log_note "No active ffmpeg binary found (${BIN_FFMPEG}, ${CURRENT_LINK})"
+        log_note "No active ffmpeg binary found (${BIN_FFMPEG})"
         return 0
     fi
 
@@ -719,90 +749,85 @@ version_is_newer_than() {
     [[ "$(printf '%s\n%s\n' "$b" "$a" | sort -V | tail -n1)" == "$a" && "$a" != "$b" ]]
 }
 
-get_active_ffmpeg_install_target() {
-    readlink -f "${CURRENT_LINK}" 2>/dev/null || true
-}
+collect_old_version_labels() {
+    local path="" name="" label="" active=""
 
-is_active_ffmpeg_install() {
-    local entry="$1" active_target=""
-    active_target="$(get_active_ffmpeg_install_target)"
-    [[ -n "${active_target}" && "${entry}" == "${active_target}" ]]
-}
-
-iter_preserved_ffmpeg_install_paths() {
-    local entry=""
-    for entry in \
-        "${INSTALL_OPT}"/ffmpeg-[0-9]* \
-        "${INSTALL_OPT}"/ffmpeg-legacy-* \
-        "${INSTALL_OPT}"/ffmpeg-*-backup-*; do
-        [[ -e "${entry}" ]] || continue
-        printf '%s\n' "${entry}"
-    done
+    active="$(get_active_version_label || true)"
+    for path in "${BIN_DIR}"/ffmpeg-*; do
+        [[ -e "${path}" ]] || continue
+        [[ "${path}" == "${BIN_FFMPEG}" ]] && continue
+        name="$(basename "${path}")"
+        [[ "${name}" =~ ^ffmpeg-(.+)$ ]] || continue
+        label="${BASH_REMATCH[1]}"
+        [[ "${label}" == *-backup-* ]] && continue
+        [[ -n "${active}" && "${label}" == "${active}" ]] && continue
+        printf '%s\n' "${label}"
+    done | sort -V -u
 }
 
 list_preserved_ffmpeg_versions() {
-    local entry="" found=0
-    while IFS= read -r entry; do
-        if (( found == 0 )); then
-            echo "  Installs under ${INSTALL_OPT}/:"
-            found=1
-        fi
-        if is_active_ffmpeg_install "${entry}"; then
-            echo "    $(basename "${entry}")  (active)"
-        else
-            echo "    $(basename "${entry}")"
-        fi
-    done < <(iter_preserved_ffmpeg_install_paths | sort -V | awk '!seen[$0]++')
-}
+    local label="" active="" path="" name="" raw_labels=() labels=()
 
-collect_old_ffmpeg_install_paths() {
-    local entry=""
-    while IFS= read -r entry; do
-        is_active_ffmpeg_install "${entry}" && continue
-        printf '%s\n' "${entry}"
-    done < <(iter_preserved_ffmpeg_install_paths | sort -V | awk '!seen[$0]++')
+    active="$(get_active_version_label || true)"
+    for path in "${BIN_DIR}"/ffmpeg-*; do
+        [[ -e "${path}" ]] || continue
+        name="$(basename "${path}")"
+        [[ "${name}" =~ ^ffmpeg-(.+)$ ]] || continue
+        label="${BASH_REMATCH[1]}"
+        [[ "${label}" == *-backup-* ]] && continue
+        raw_labels+=("${label}")
+    done
+    ((${#raw_labels[@]} > 0)) || return 0
+
+    while IFS= read -r label; do
+        [[ -n "${label}" ]] && labels+=("${label}")
+    done < <(printf '%s\n' "${raw_labels[@]}" | sort -V -u)
+
+    echo "  Versioned binaries in ${BIN_DIR}/:"
+    for label in "${labels[@]}"; do
+        if [[ -n "${active}" && "${label}" == "${active}" ]]; then
+            echo "    ffmpeg-${label}  ffprobe-${label}  (active)"
+        else
+            echo "    ffmpeg-${label}  ffprobe-${label}"
+        fi
+    done
 }
 
 prompt_remove_old_ffmpeg_installs() {
-    local old_paths=() path="" reply="" name="" build_id=""
+    local old_labels=() label="" reply="" vffmpeg="" vffprobe=""
 
-    while IFS= read -r path; do
-        [[ -n "${path}" ]] && old_paths+=("${path}")
-    done < <(collect_old_ffmpeg_install_paths | sort -V)
+    while IFS= read -r label; do
+        [[ -n "${label}" ]] && old_labels+=("${label}")
+    done < <(collect_old_version_labels)
 
-    ((${#old_paths[@]} > 0)) || return 0
+    ((${#old_labels[@]} > 0)) || return 0
 
     echo
-    echo "Older ffmpeg install(s) found (not active):"
-    for path in "${old_paths[@]}"; do
-        build_id="$(version_from_install_path "${path}" || true)"
-        if [[ -n "${build_id}" ]]; then
-            echo "  ffmpeg-${build_id}"
-        else
-            echo "  $(basename "${path}")"
-        fi
+    echo "Older ffmpeg version(s) in ${BIN_DIR} (not active):"
+    for label in "${old_labels[@]}"; do
+        echo "  ffmpeg-${label}  ffprobe-${label}"
     done
     echo
 
     if (( ASSUME_YES == 1 )); then
-        log_note "Keeping old installs (--yes, no removal prompt)."
+        log_note "Keeping old versioned binaries (--yes, no removal prompt)."
         return 0
     fi
 
-    for path in "${old_paths[@]}"; do
-        build_id="$(version_from_install_path "${path}" || true)"
-        name="ffmpeg-${build_id:-$(basename "${path}")}"
+    for label in "${old_labels[@]}"; do
+        vffmpeg="${BIN_DIR}/ffmpeg-${label}"
+        vffprobe="${BIN_DIR}/ffprobe-${label}"
 
         echo ">>> Waiting for your answer:"
-        echo -n "Remove ${name}? [y/N] "
+        echo -n "Remove ffmpeg-${label} and ffprobe-${label}? [y/N] "
         read -r -n 1 reply || reply=""
         echo
         case "${reply}" in
             y|Y|yes|YES)
-                log_step "Removing old install: ${path}"
-                rm -rf "${path}"
+                log_step "Removing ffmpeg-${label} and ffprobe-${label}"
+                rm -f "${vffmpeg}" "${vffprobe}"
                 ;;
-            *) log_note "Keeping ${name}." ;;
+            *) log_note "Keeping ffmpeg-${label}." ;;
         esac
     done
 }
@@ -967,72 +992,91 @@ build_id_from_extracted_dir() {
     return 1
 }
 
-preserve_legacy_local_bin_install() {
-    local bin_dir path legacy_dir base ffprobe_path
+normalize_legacy_versioned_bins() {
+    local path="" label="" target="" ffprobe_path=""
 
-    bin_dir="$(dirname "${BIN_FFMPEG}")"
-    for path in "${bin_dir}"/ffmpeg-*-static; do
+    for path in "${BIN_DIR}"/ffmpeg-*-static; do
         [[ -f "${path}" ]] || continue
         [[ -L "${path}" ]] && continue
-        base="$(basename "${path}")"
-        legacy_dir="${INSTALL_OPT}/ffmpeg-legacy-${base#ffmpeg-}"
-        if [[ -e "${legacy_dir}" ]]; then
-            move_path_aside "${legacy_dir}"
-        fi
-        mkdir -p "${legacy_dir}"
-        log_step "Preserving legacy static install: ${path} -> ${legacy_dir}/"
-        mv -v "${path}" "${legacy_dir}/ffmpeg"
-        ffprobe_path="${path/ffmpeg-/ffprobe-}"
-        if [[ -f "${ffprobe_path}" && ! -L "${ffprobe_path}" ]]; then
-            mv -v "${ffprobe_path}" "${legacy_dir}/ffprobe"
+        if [[ "${path}" =~ ffmpeg-([0-9]+(\.[0-9]+)+)- ]]; then
+            label="${BASH_REMATCH[1]}"
+            target="${BIN_DIR}/ffmpeg-${label}"
+            if [[ ! -e "${target}" ]]; then
+                log_step "Renaming legacy $(basename "${path}") -> ffmpeg-${label}"
+                mv -v "${path}" "${target}"
+                ffprobe_path="${path/ffmpeg-/ffprobe-}"
+                if [[ -f "${ffprobe_path}" && ! -L "${ffprobe_path}" && ! -e "${BIN_DIR}/ffprobe-${label}" ]]; then
+                    mv -v "${ffprobe_path}" "${BIN_DIR}/ffprobe-${label}"
+                fi
+            fi
         fi
     done
 }
 
-migrate_active_install_aside() {
-    local active=""
+link_active_ffmpeg_version() {
+    local label="$1"
 
-    active="$(get_active_ffmpeg_install_target)"
-    [[ -n "${active}" && -d "${active}" ]] || return 0
-    move_path_aside "${active}"
-}
-
-resolve_ffmpeg_bins_in_install_dir() {
-    local versioned="$1"
-    local ffmpeg_bin="" ffprobe_bin=""
-
-    if [[ -x "${versioned}/bin/ffmpeg" ]]; then
-        ffmpeg_bin="${versioned}/bin/ffmpeg"
-        ffprobe_bin="${versioned}/bin/ffprobe"
-    elif [[ -x "${versioned}/ffmpeg" ]]; then
-        ffmpeg_bin="${versioned}/ffmpeg"
-        ffprobe_bin="${versioned}/ffprobe"
-    else
-        return 1
+    log_step "Pointing active symlinks to ffmpeg-${label} and ffprobe-${label}"
+    ln -sfn "ffmpeg-${label}" "${BIN_FFMPEG}"
+    if [[ -e "${BIN_DIR}/ffprobe-${label}" ]]; then
+        ln -sfn "ffprobe-${label}" "${BIN_FFPROBE}"
     fi
-    printf '%s\n%s\n' "${ffmpeg_bin}" "${ffprobe_bin}"
+    ls -l "${BIN_FFMPEG}" "${BIN_FFPROBE}" 2>/dev/null || ls -l "${BIN_FFMPEG}"
 }
 
-link_ffmpeg_active_version() {
+install_versioned_bins_to_local() {
     local build_id="$1"
-    local versioned="" bins="" ffmpeg_bin="" ffprobe_bin=""
+    local ffmpeg_src="$2"
+    local ffprobe_src="${3:-}"
+    local label="" vffmpeg="" vffprobe=""
 
-    versioned="$(ffmpeg_versioned_path "${build_id}")"
-    bins="$(resolve_ffmpeg_bins_in_install_dir "${versioned}" || true)"
-    ffmpeg_bin="$(printf '%s\n' "${bins}" | sed -n '1p')"
-    ffprobe_bin="$(printf '%s\n' "${bins}" | sed -n '2p')"
-    if [[ -z "${ffmpeg_bin}" || ! -x "${ffmpeg_bin}" ]]; then
-        echo "ERROR: ffmpeg binary not found under ${versioned}" >&2
-        exit 1
+    need_cmd install
+    label="$(version_label_from_build_id "${build_id}")"
+    vffmpeg="$(versioned_ffmpeg_bin "${build_id}")"
+    vffprobe="$(versioned_ffprobe_bin "${build_id}")"
+
+    if [[ -e "${vffmpeg}" ]]; then
+        move_path_aside "${vffmpeg}"
+    fi
+    if [[ -n "${ffprobe_src}" && -e "${vffprobe}" ]]; then
+        move_path_aside "${vffprobe}"
     fi
 
-    log_step "Pointing active symlinks to ${versioned}"
-    ln -sfn "${versioned}" "${CURRENT_LINK}"
-    ln -sfn "${ffmpeg_bin}" "${BIN_FFMPEG}"
-    if [[ -n "${ffprobe_bin}" && -x "${ffprobe_bin}" ]]; then
-        ln -sfn "${ffprobe_bin}" "${BIN_FFPROBE}"
+    log_step "Installing into ${BIN_DIR}: ffmpeg-${label}, ffprobe-${label}"
+    install -m 755 "${ffmpeg_src}" "${vffmpeg}"
+    if [[ -n "${ffprobe_src}" && -e "${ffprobe_src}" ]]; then
+        install -m 755 "${ffprobe_src}" "${vffprobe}"
     fi
-    ls -l "${BIN_FFMPEG}" "${BIN_FFPROBE}" "${CURRENT_LINK}" 2>/dev/null || ls -l "${BIN_FFMPEG}" "${CURRENT_LINK}"
+    chown root:root "${vffmpeg}"
+    [[ -e "${vffprobe}" ]] && chown root:root "${vffprobe}"
+
+    link_active_ffmpeg_version "${label}"
+}
+
+install_versioned_symlinks_to_local() {
+    local build_id="$1"
+    local ffmpeg_src="$2"
+    local ffprobe_src="${3:-}"
+    local label="" vffmpeg="" vffprobe=""
+
+    label="$(version_label_from_build_id "${build_id}")"
+    vffmpeg="$(versioned_ffmpeg_bin "${build_id}")"
+    vffprobe="$(versioned_ffprobe_bin "${build_id}")"
+
+    if [[ -e "${vffmpeg}" ]]; then
+        move_path_aside "${vffmpeg}"
+    fi
+    if [[ -n "${ffprobe_src}" && -e "${vffprobe}" ]]; then
+        move_path_aside "${vffprobe}"
+    fi
+
+    log_step "Installing into ${BIN_DIR}: ffmpeg-${label} -> ${ffmpeg_src}"
+    ln -sfn "${ffmpeg_src}" "${vffmpeg}"
+    if [[ -n "${ffprobe_src}" && -e "${ffprobe_src}" ]]; then
+        ln -sfn "${ffprobe_src}" "${vffprobe}"
+    fi
+
+    link_active_ffmpeg_version "${label}"
 }
 
 install_source_build_dependencies() {
@@ -1054,7 +1098,7 @@ install_source_build_dependencies() {
 
 perform_install_build_from_source() {
     local version="${FFMPEG_ORG_VERSION}"
-    local tarball url src_dir build_id="" versioned="" jobs="" rc=0
+    local tarball url src_dir build_id="" staging="" jobs=""
 
     if ! ensure_ffmpeg_org_release_version; then
         echo "ERROR: ffmpeg.org release version is unknown." >&2
@@ -1067,16 +1111,17 @@ perform_install_build_from_source() {
 
     need_cmd make
     need_cmd gcc
-    preserve_legacy_local_bin_install
-    migrate_active_install_aside
+    need_cmd install
+    normalize_legacy_versioned_bins
     install_source_build_dependencies
 
     tarball="$(ffmpeg_org_release_tarball_name "${version}")"
     url="$(ffmpeg_org_release_tarball_url "${version}")"
     build_id="${version}-src"
 
-    mkdir -p "${TEMP_CATALOG}"
+    mkdir -p "${TEMP_CATALOG}" "${BIN_DIR}"
     TMP_WORK_DIR="$(mktemp -d "${TEMP_CATALOG}/ffmpeg-source-build.XXXXXX")"
+    staging="${TMP_WORK_DIR}/staging"
 
     echo
     echo "part 2 — download and extract official release tarball"
@@ -1089,11 +1134,6 @@ perform_install_build_from_source() {
         return 1
     fi
 
-    versioned="$(ffmpeg_versioned_path "${build_id}")"
-    if [[ -e "${versioned}" ]]; then
-        move_path_aside "${versioned}"
-    fi
-
     echo
     echo "part 3 — configure and compile static build (this can take a long time)"
     echo
@@ -1101,7 +1141,7 @@ perform_install_build_from_source() {
     cd "${src_dir}"
     log_step "Running ffmpeg configure (static, official release ${version})..."
     ./configure \
-        --prefix="${versioned}" \
+        --prefix="${staging}" \
         --enable-static \
         --disable-shared \
         --disable-debug \
@@ -1113,14 +1153,15 @@ perform_install_build_from_source() {
     jobs="$(nproc 2>/dev/null || echo 2)"
     log_step "Building with make -j${jobs}..."
     make -j"${jobs}"
-    log_step "Installing into ${versioned}..."
+    log_step "Staging install before copying to ${BIN_DIR}..."
     make install
 
-    printf 'official ffmpeg.org release %s (static source build)\n' "${version}" > "${versioned}/.install-source"
-    chmod 755 -R "${versioned}"
-    chown root:root -R "${versioned}"
+    if [[ ! -x "${staging}/bin/ffmpeg" ]]; then
+        echo "ERROR: staged ffmpeg binary not found: ${staging}/bin/ffmpeg" >&2
+        return 1
+    fi
 
-    link_ffmpeg_active_version "${build_id}"
+    install_versioned_bins_to_local "${build_id}" "${staging}/bin/ffmpeg" "${staging}/bin/ffprobe"
     verify_active_ffmpeg
     print_install_success_summary "${build_id}" "official source static ${version}"
     return 0
@@ -1148,15 +1189,14 @@ print_install_success_summary() {
     if [[ -n "${FFMPEG_ORG_VERSION}" ]]; then
         echo "  ffmpeg.org latest: ${FFMPEG_ORG_VERSION}"
     fi
-    echo "  Active:  ${CURRENT_LINK} -> $(readlink -f "${CURRENT_LINK}" 2>/dev/null || echo '?')"
-    echo "  Binary:  ${BIN_FFMPEG}"
+    echo "  Active:  ${BIN_FFMPEG} -> $(readlink "${BIN_FFMPEG}" 2>/dev/null || echo '?')"
+    echo "           ${BIN_FFPROBE} -> $(readlink "${BIN_FFPROBE}" 2>/dev/null || echo '?')"
     list_preserved_ffmpeg_versions
     prompt_remove_old_ffmpeg_installs
 }
 
 perform_install_static() {
-    local had_legacy_localbin="${1:-0}"
-    local tarball url extracted_dir build_id="" versioned="" static_semver=""
+    local tarball url extracted_dir build_id="" static_semver=""
 
     echo
     echo "part 1 — download static ffmpeg (${FFMPEG_BUILD_KIND}, ${FFMPEG_ARCH})"
@@ -1166,18 +1206,15 @@ perform_install_static() {
     need_cmd find
     need_cmd ln
     need_cmd mkdir
-    need_cmd chmod
-    need_cmd chown
+    need_cmd install
 
     if (( STATIC_TARBALL_AVAILABLE == 0 )); then
         echo "ERROR: Static tarball is not available." >&2
         return 1
     fi
 
-    preserve_legacy_local_bin_install
-    migrate_active_install_aside
-
-    mkdir -p "${TEMP_CATALOG}"
+    normalize_legacy_versioned_bins
+    mkdir -p "${TEMP_CATALOG}" "${BIN_DIR}"
     TMP_WORK_DIR="$(mktemp -d "${TEMP_CATALOG}/ffmpeg-install.XXXXXX")"
     tarball="${TMP_WORK_DIR}/$(ffmpeg_tarball_basename)"
     url="$(ffmpeg_tarball_url)"
@@ -1188,7 +1225,7 @@ perform_install_static() {
     verify_tarball_md5 "${tarball}"
 
     echo
-    echo "part 2 — extract and install under ${INSTALL_OPT}"
+    echo "part 2 — extract and install into ${BIN_DIR}"
     echo
 
     tar -xJf "${tarball}" -C "${TMP_WORK_DIR}"
@@ -1220,16 +1257,12 @@ perform_install_static() {
         fi
     fi
 
-    versioned="$(ffmpeg_versioned_path "${build_id}")"
-    if [[ -e "${versioned}" ]]; then
-        move_path_aside "${versioned}"
+    if [[ ! -x "${extracted_dir}/ffmpeg" ]]; then
+        echo "ERROR: ffmpeg binary not found in extracted static build." >&2
+        return 1
     fi
 
-    mv -v "${extracted_dir}" "${versioned}"
-    chmod 755 -R "${versioned}"
-    chown root:root -R "${versioned}"
-
-    link_ffmpeg_active_version "${build_id}"
+    install_versioned_bins_to_local "${build_id}" "${extracted_dir}/ffmpeg" "${extracted_dir}/ffprobe"
     verify_active_ffmpeg
     print_install_success_summary "${build_id}" "static ${FFMPEG_BUILD_KIND}"
     return 0
@@ -1248,8 +1281,8 @@ perform_install_dynamic() {
     fi
 
     need_cmd apt-get
-    preserve_legacy_local_bin_install
-    migrate_active_install_aside
+    normalize_legacy_versioned_bins
+    mkdir -p "${BIN_DIR}"
 
     log_step "Running apt-get update..."
     apt-get update
@@ -1266,32 +1299,17 @@ perform_install_dynamic() {
     ver="$(probe_ffmpeg_semver "${apt_ffmpeg}" || true)"
     [[ -n "${ver}" ]] || ver="${APT_FFMPEG_VERSION:-unknown}"
     build_id="${ver}-apt"
-    versioned="$(ffmpeg_versioned_path "${build_id}")"
-    if [[ -e "${versioned}" ]]; then
-        move_path_aside "${versioned}"
-    fi
 
-    mkdir -p "${versioned}"
-    ln -sfn "${apt_ffmpeg}" "${versioned}/ffmpeg"
-    if [[ -n "${apt_ffprobe}" && -x "${apt_ffprobe}" ]]; then
-        ln -sfn "${apt_ffprobe}" "${versioned}/ffprobe"
-    fi
-    printf '%s\n' "apt ${APT_FFMPEG_CANDIDATE}" > "${versioned}/.install-source"
-    chmod 755 "${versioned}"
-    chown root:root -R "${versioned}"
-
-    link_ffmpeg_active_version "${build_id}"
+    install_versioned_symlinks_to_local "${build_id}" "${apt_ffmpeg}" "${apt_ffprobe}"
     verify_active_ffmpeg
     print_install_success_summary "${build_id}" "dynamic apt"
     return 0
 }
 
 run_install_plan() {
-    local had_legacy_localbin="${1:-0}"
-
     case "${INSTALL_PLAN}" in
         static)
-            if perform_install_static "${had_legacy_localbin}"; then
+            if perform_install_static; then
                 return 0
             fi
             echo "Static install failed."
@@ -1378,9 +1396,7 @@ main() {
     echo "  temp:    ${TEMP_CATALOG}"
     echo
 
-    local had_legacy_localbin=0
-    [[ "${INSTALLED_BUILD_SOURCE}" == "localbin" ]] && had_legacy_localbin=1
-    run_install_plan "${had_legacy_localbin}"
+    run_install_plan
 }
 
 HEADER_EXTRA_ARGS=()
