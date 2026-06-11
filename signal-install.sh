@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.06.11 - v. 1.12 - Pi/JVM: --repair + prompt to fix Java 25 and re-patch JNI jar (no rebuild)
 # 2026.06.11 - v. 1.11 - Pi/JVM: require Java 25 (openjdk-25 or Temurin); fix JNI jar patch with zip -j
 # 2026.06.11 - v. 1.10 - old installs: list versions, prompt to remove each one [y/N] separately
 # 2026.06.11 - v. 1.9 - fix latest release date (subshell); prompt to remove old /opt/signal-cli-VERSION installs
@@ -32,6 +33,8 @@ CURRENT_LINK="${INSTALL_OPT}/signal-cli"
 JAVA_JNI_DIR="/usr/java/packages/lib"
 TEMP_CATALOG="${TEMP_CATALOG:-/mnt/signal-temp}"
 ASSUME_YES=0
+REPAIR_PI_ONLY=0
+INSTALL_ACTION=full
 VERBOSE=1
 NETWORK_TIMEOUT_SEC="${NETWORK_TIMEOUT_SEC:-60}"
 SIGNAL_CLI_PROBE_TIMEOUT_SEC="${SIGNAL_CLI_PROBE_TIMEOUT_SEC:-20}"
@@ -82,6 +85,8 @@ Options:
   -v, --version        Print script version and exit.
   -y, --yes            Install/update without prompting (non-interactive OK).
   -q, --quiet          Less progress output (errors still shown).
+  --repair             Pi/JVM only: install Java 25+ and re-patch JNI jar from an
+                       existing libsignal_jni.so (no protoc/rust/JNI rebuild).
   --no_startup_delay   Skip random startup delay when run non-interactively.
 
 Environment:
@@ -692,6 +697,36 @@ prompt_install_or_update() {
     fi
 
     if [[ "${installed}" == "${latest}" ]]; then
+        if is_pi_jni_install_method; then
+            if pi_install_needs_repair "${installed}"; then
+                echo "Repair may be needed: Java ${SIGNAL_CLI_MIN_JAVA_MAJOR}+ and/or JNI entries inside the libsignal jar."
+            fi
+            if (( ASSUME_YES == 1 )); then
+                echo "Reinstalling latest version (--yes, full rebuild)."
+                return 0
+            fi
+            echo "You already have the latest version."
+            echo
+            echo ">>> Waiting for your answer:"
+            echo -n "Repair Java + JNI jar only (no rebuild)? [Y/n] "
+            read -r -n 1 reply || reply=""
+            echo
+            case "${reply}" in
+                n|N|no|NO)
+                    echo
+                    echo ">>> Waiting for your answer:"
+                    echo -n "Full reinstall / rebuild JNI anyway? [y/N] "
+                    read -r -n 1 reply || reply=""
+                    echo
+                    case "${reply}" in
+                        y|Y|yes|YES) echo "Proceeding with full reinstall..." ;;
+                        *) echo "Quitting — no changes made."; quit_prompt_with_optional_old_cleanup ;;
+                    esac
+                    ;;
+                *) echo "Proceeding with repair (Java + JNI jar)..."; INSTALL_ACTION=repair ;;
+            esac
+            return 0
+        fi
         if (( ASSUME_YES == 1 )); then
             echo "Reinstalling latest version (--yes)."
             return 0
@@ -699,11 +734,7 @@ prompt_install_or_update() {
         echo "You already have the latest version."
         echo
         echo ">>> Waiting for your answer:"
-        if is_pi_jni_install_method; then
-            echo -n "Reinstall / rebuild JNI anyway? [y/N] "
-        else
-            echo -n "Reinstall anyway? [y/N] "
-        fi
+        echo -n "Reinstall anyway? [y/N] "
         read -r -n 1 reply || reply=""
         echo
         case "${reply}" in
@@ -845,6 +876,59 @@ ensure_java_for_signal_cli() {
   fi
 }
 
+find_libsignal_client_jar() {
+    local version="$1"
+    local jar_path=""
+
+    jar_path="$(find "${INSTALL_OPT}/signal-cli-${version}/lib/" -maxdepth 1 -mindepth 1 -name 'libsignal-client-*.jar' 2>/dev/null | head -n1)"
+    if [[ -z "${jar_path}" || ! -f "${jar_path}" ]]; then
+        return 1
+    fi
+    echo "${jar_path}"
+}
+
+find_existing_libsignal_jni_so() {
+    local jni_so=""
+
+    if [[ -f "${JAVA_JNI_DIR}/libsignal_jni.so" ]]; then
+        echo "${JAVA_JNI_DIR}/libsignal_jni.so"
+        return 0
+    fi
+
+    jni_so="$(find "${TEMP_CATALOG}/signal-cli-install/libsignal/target" -path '*/release/libsignal_jni.so' 2>/dev/null | head -n1)"
+    if [[ -n "${jni_so}" && -f "${jni_so}" ]]; then
+        echo "${jni_so}"
+        return 0
+    fi
+
+    return 1
+}
+
+libsignal_jar_needs_jni_repair() {
+    local jar_path="$1"
+
+    need_cmd unzip
+    if ! unzip -l "${jar_path}" 2>/dev/null | grep -qE '[[:space:]]libsignal_jni\.so$'; then
+        return 0
+    fi
+    if unzip -l "${jar_path}" 2>/dev/null | grep 'libsignal_jni' | grep -qE 'mnt/|signal-temp/|signal-cli-install/'; then
+        return 0
+    fi
+    return 1
+}
+
+pi_install_needs_repair() {
+    local version="$1"
+    local jar_path=""
+
+    if ! java_meets_signal_cli_requirement; then
+        return 0
+    fi
+    jar_path="$(find_libsignal_client_jar "${version}" || true)"
+    [[ -n "${jar_path}" ]] || return 1
+    libsignal_jar_needs_jni_repair "${jar_path}"
+}
+
 patch_libsignal_jni_into_jar() {
     local jar_path="$1"
     local jni_so="$2"
@@ -856,8 +940,35 @@ patch_libsignal_jni_into_jar() {
 
     log_step "Patching jar with native libsignal_jni.so..."
     zip -d "${jar_path}" libsignal_jni.so libsignal_jni_aarch64.so 2>/dev/null || true
+    # Remove mistaken full-path entries from older script versions.
+    unzip -Z1 "${jar_path}" 2>/dev/null | grep -E 'libsignal_jni.*\.so$' | while IFS= read -r entry; do
+        [[ "${entry}" == libsignal_jni.so || "${entry}" == libsignal_jni_aarch64.so ]] && continue
+        zip -d "${jar_path}" "${entry}" 2>/dev/null || true
+    done
     zip -j "${jar_path}" "${jni_work}/libsignal_jni.so" "${jni_work}/libsignal_jni_aarch64.so"
     rm -rf "${jni_work}"
+}
+
+install_libsignal_jni_to_system() {
+    local jni_so="$1"
+
+    mkdir -p "${JAVA_JNI_DIR}"
+    log_step "Installing JNI library to ${JAVA_JNI_DIR}..."
+    cp -v "${jni_so}" "${JAVA_JNI_DIR}/libsignal_jni.so"
+    chown root:root "${JAVA_JNI_DIR}/libsignal_jni.so"
+    chmod 755 "${JAVA_JNI_DIR}/libsignal_jni.so"
+}
+
+install_repair_apt_dependencies() {
+    echo
+    echo "part 1 — repair dependencies (Java + zip)"
+    echo
+    log_step "Running apt-get update..."
+    apt-get update
+    log_step "Installing zip/unzip (needed to patch jar)..."
+    apt-get install -y zip unzip
+    ensure_java_for_signal_cli
+    log_note "repair dependencies done."
 }
 
 install_apt_dependencies() {
@@ -994,7 +1105,7 @@ build_and_install_libsignal_jni() {
     echo "part 5 — libsignal JNI for signal-cli ${version}"
     echo
 
-    jar_path="$(find "${INSTALL_OPT}/signal-cli-${version}/lib/" -maxdepth 1 -mindepth 1 -name 'libsignal-client-*.jar' | head -n1)"
+    jar_path="$(find_libsignal_client_jar "${version}" || true)"
     if [[ -z "${jar_path}" ]]; then
         echo "ERROR: libsignal-client jar not found under ${INSTALL_OPT}/signal-cli-${version}/lib/" >&2
         exit 1
@@ -1026,10 +1137,61 @@ build_and_install_libsignal_jni() {
     fi
 
     patch_libsignal_jni_into_jar "${jar_path}" "${jni_so}"
+    install_libsignal_jni_to_system "${jni_so}"
+}
 
-    mkdir -p "${JAVA_JNI_DIR}"
-    log_step "Installing JNI library to ${JAVA_JNI_DIR}..."
-    cp -v "${jni_so}" "${JAVA_JNI_DIR}/"
+perform_repair_pi() {
+    local version="$1"
+    local jar_path="" jni_so=""
+
+    echo
+    echo "repair — Java ${SIGNAL_CLI_MIN_JAVA_MAJOR}+ and JNI jar for signal-cli ${version} (no rebuild)"
+    echo
+
+    need_cmd zip
+    need_cmd unzip
+    need_cmd cp
+    need_cmd chown
+    need_cmd chmod
+
+    install_repair_apt_dependencies
+
+    jar_path="$(find_libsignal_client_jar "${version}" || true)"
+    if [[ -z "${jar_path}" ]]; then
+        echo "ERROR: libsignal-client jar not found under ${INSTALL_OPT}/signal-cli-${version}/lib/" >&2
+        exit 1
+    fi
+    log_note "libsignal-client jar: ${jar_path}"
+
+    jni_so="$(find_existing_libsignal_jni_so || true)"
+    if [[ -z "${jni_so}" ]]; then
+        echo "ERROR: libsignal_jni.so not found." >&2
+        echo "  Checked: ${JAVA_JNI_DIR}/libsignal_jni.so" >&2
+        echo "           ${TEMP_CATALOG}/signal-cli-install/libsignal/target/.../libsignal_jni.so" >&2
+        echo "Run a full install/rebuild, or copy libsignal_jni.so to ${JAVA_JNI_DIR}/ first." >&2
+        exit 1
+    fi
+    log_note "Using JNI library: ${jni_so}"
+
+    patch_libsignal_jni_into_jar "${jar_path}" "${jni_so}"
+    install_libsignal_jni_to_system "${jni_so}"
+
+    echo
+    echo "part 2 — permissions"
+    echo
+    chmod 755 -R "${INSTALL_OPT}/signal-cli-${version}"
+    chown root:root -R "${INSTALL_OPT}/signal-cli-${version}"
+
+    verify_installation
+
+    echo
+    echo "signal-cli repaired successfully (Java + JNI jar)."
+    echo "  Version: $(get_installed_signal_cli_version)"
+    echo "  Active:  ${CURRENT_LINK} -> $(readlink -f "${CURRENT_LINK}" 2>/dev/null || echo '?')"
+    echo "  Binary:  ${BIN_LINK}"
+    echo "  JAVA_HOME: ${SIGNAL_CLI_JAVA_HOME:-?}"
+    list_preserved_signal_cli_versions
+    prompt_remove_old_signal_cli_installs
 }
 
 finalize_permissions_pi() {
@@ -1039,8 +1201,6 @@ finalize_permissions_pi() {
     echo "part 6 — permissions and cleanup"
     echo
 
-    chown root:root "${JAVA_JNI_DIR}/libsignal_jni.so"
-    chmod 755 "${JAVA_JNI_DIR}/libsignal_jni.so"
     chmod 755 -R "${INSTALL_OPT}/signal-cli-${version}"
     chown root:root -R "${INSTALL_OPT}/signal-cli-${version}"
 
@@ -1162,7 +1322,43 @@ main() {
     fi
 
     log_step "Version check complete."
+
+    if (( REPAIR_PI_ONLY == 1 )); then
+        if ! is_pi_jni_install_method; then
+            echo "ERROR: --repair is only supported on Pi / arm (JVM + JNI install path)." >&2
+            exit 1
+        fi
+        if [[ -z "${installed}" ]]; then
+            echo "ERROR: --repair requires an existing signal-cli install." >&2
+            exit 1
+        fi
+        echo
+        echo "Will repair:"
+        echo "  signal-cli: ${installed}"
+        echo "  actions:    Java ${SIGNAL_CLI_MIN_JAVA_MAJOR}+, re-patch JNI jar (no rebuild)"
+        echo
+        prompt_stop_signal_cli_before_install
+        perform_repair_pi "${installed}"
+        return 0
+    fi
+
     prompt_install_or_update "${latest}" "${installed}" "${latest_date}" "${installed_date}"
+
+    if [[ "${INSTALL_ACTION}" == "repair" ]]; then
+        if [[ -z "${installed}" ]]; then
+            echo "ERROR: repair requested but no installed signal-cli version detected." >&2
+            exit 1
+        fi
+        echo
+        echo "Will repair:"
+        echo "  signal-cli: ${installed}"
+        echo "  actions:    Java ${SIGNAL_CLI_MIN_JAVA_MAJOR}+, re-patch JNI jar (no rebuild)"
+        echo
+        prompt_stop_signal_cli_before_install
+        perform_repair_pi "${installed}"
+        return 0
+    fi
+
     prompt_stop_signal_cli_before_install
 
     echo
@@ -1191,6 +1387,7 @@ while [[ $# -gt 0 ]]; do
         -v|--version) print_version_banner; exit 0 ;;
         -y|--yes) ASSUME_YES=1; shift ;;
         -q|--quiet) VERBOSE=0; shift ;;
+        --repair) REPAIR_PI_ONLY=1; shift ;;
         --no_startup_delay) HEADER_EXTRA_ARGS+=(NO_STARTUP_DELAY); shift ;;
         *) echo "Unknown argument: $1" >&2; echo "Try: $(basename "$0") --help" >&2; exit 1 ;;
     esac
