@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.06.11 - v. 19.187.120000 - always skip _rename.sh.resume-state.json (any directory); check early in main loop
 # 2026.06.11 - v. 19.186.120000 - Call recording <callee>_YYMMDD_HHMMSS → YYYYMMDD_HHMMSS_<callee>_Call_recording
 # 2026.06.11 - v. 19.185.120000 - flatten prompt [C]: custom exclude pattern (incl. FLATTEN_EXACT=); match globs/fragments
 # 2026.06.11 - v. 19.184.120000 - Anruf_aufnehmen: callee id may be phone digits or text (parse YYMMDD_HHMMSS from right)
@@ -4876,12 +4877,27 @@ path_to_exclude_entry() {
 
 is_internal_protected_path() {
     local p="$1"
-    local abs start_abs
+    local abs start_abs resume_abs base
 
     [[ -n "$p" ]] || return 1
+    base="$(basename -- "$p")"
+
+    case "$base" in
+        _rename.sh.resume-state.json|rename.sh.resume-state.json)
+            return 0
+            ;;
+    esac
 
     abs="$(db_abs_path "$p" 2>/dev/null || true)"
     start_abs="$(db_abs_path "$START_DIR" 2>/dev/null || true)"
+
+    if [[ -n "${RESUME_STATE_FILE:-}" ]]; then
+        resume_abs="$(db_abs_path "$RESUME_STATE_FILE" 2>/dev/null || true)"
+        [[ -n "$resume_abs" ]] || resume_abs="$RESUME_STATE_FILE"
+        if [[ -n "$abs" && "$abs" == "$resume_abs" ]]; then
+            return 0
+        fi
+    fi
 
     [[ -n "$abs" && -n "$start_abs" ]] || return 1
 
@@ -10290,6 +10306,15 @@ for f in "${ordered_paths[@]}"; do
         continue
     fi
 
+    if is_internal_protected_path "$f"; then
+        vlog "Protected internal file, no rename needed for '$f'"
+        db_backfill_missing_hashes_for_existing_file "$f"
+        ((++files_skipped))
+        db_mark_checked "$f" "plain" "checked"
+        processed["$f"]=1
+        continue
+    fi
+
     if [[ -f "$f" && "$f" == *.lnk ]]; then
         if ! handle_lnk_file "$f"; then
             break
@@ -11082,14 +11107,6 @@ for f in "${ordered_paths[@]}"; do
         for ref in "${refs[@]}"; do processed["$ref"]=1; done
         for ref in "${new_refs[@]}"; do processed["$ref"]=1; done
 
-        continue
-    fi
-
-    if is_internal_protected_path "$f"; then
-        vlog "Protected internal file, no rename needed for '$f'"
-        db_backfill_missing_hashes_for_existing_file "$f"
-        ((++files_skipped))
-        db_mark_checked "$f" "plain" "checked"
         continue
     fi
 
