@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.06.11 - v. 1.13 - Pi/JVM: quieter JNI jar patch; skip cp when JNI already in place
 # 2026.06.11 - v. 1.12 - Pi/JVM: --repair + prompt to fix Java 25 and re-patch JNI jar (no rebuild)
 # 2026.06.11 - v. 1.11 - Pi/JVM: require Java 25 (openjdk-25 or Temurin); fix JNI jar patch with zip -j
 # 2026.06.11 - v. 1.10 - old installs: list versions, prompt to remove each one [y/N] separately
@@ -929,34 +930,55 @@ pi_install_needs_repair() {
     libsignal_jar_needs_jni_repair "${jar_path}"
 }
 
+jar_delete_entry_if_present() {
+    local jar_path="$1"
+    local entry="$2"
+
+    unzip -Z1 "${jar_path}" 2>/dev/null | grep -Fxq "${entry}" || return 0
+    zip -q -d "${jar_path}" "${entry}" 2>/dev/null || true
+}
+
 patch_libsignal_jni_into_jar() {
     local jar_path="$1"
     local jni_so="$2"
-    local jni_work=""
+    local jni_work="" entry="" removed=0
 
     jni_work="$(mktemp -d)"
     cp -f "${jni_so}" "${jni_work}/libsignal_jni.so"
     cp -f "${jni_so}" "${jni_work}/libsignal_jni_aarch64.so"
 
     log_step "Patching jar with native libsignal_jni.so..."
-    zip -d "${jar_path}" libsignal_jni.so libsignal_jni_aarch64.so 2>/dev/null || true
-    # Remove mistaken full-path entries from older script versions.
-    unzip -Z1 "${jar_path}" 2>/dev/null | grep -E 'libsignal_jni.*\.so$' | while IFS= read -r entry; do
-        [[ "${entry}" == libsignal_jni.so || "${entry}" == libsignal_jni_aarch64.so ]] && continue
-        zip -d "${jar_path}" "${entry}" 2>/dev/null || true
-    done
-    zip -j "${jar_path}" "${jni_work}/libsignal_jni.so" "${jni_work}/libsignal_jni_aarch64.so"
+    while IFS= read -r entry; do
+        [[ -n "${entry}" ]] || continue
+        jar_delete_entry_if_present "${jar_path}" "${entry}"
+        removed=1
+    done < <(unzip -Z1 "${jar_path}" 2>/dev/null | grep -E 'libsignal_jni.*\.so$' || true)
+    if (( removed == 1 )); then
+        log_note "Removed old JNI entries from jar."
+    fi
+
+    zip -jq "${jar_path}" "${jni_work}/libsignal_jni.so" "${jni_work}/libsignal_jni_aarch64.so"
+    log_note "Added libsignal_jni.so and libsignal_jni_aarch64.so to jar root."
     rm -rf "${jni_work}"
 }
 
 install_libsignal_jni_to_system() {
     local jni_so="$1"
+    local dest="${JAVA_JNI_DIR}/libsignal_jni.so"
+    local jni_real="" dest_real=""
 
     mkdir -p "${JAVA_JNI_DIR}"
-    log_step "Installing JNI library to ${JAVA_JNI_DIR}..."
-    cp -v "${jni_so}" "${JAVA_JNI_DIR}/libsignal_jni.so"
-    chown root:root "${JAVA_JNI_DIR}/libsignal_jni.so"
-    chmod 755 "${JAVA_JNI_DIR}/libsignal_jni.so"
+    jni_real="$(readlink -f "${jni_so}")"
+    dest_real="$(readlink -f "${dest}" 2>/dev/null || true)"
+
+    if [[ -n "${dest_real}" && "${jni_real}" == "${dest_real}" ]]; then
+        log_note "JNI library already in place: ${dest}"
+    else
+        log_step "Installing JNI library to ${JAVA_JNI_DIR}..."
+        cp -v "${jni_so}" "${dest}"
+    fi
+    chown root:root "${dest}"
+    chmod 755 "${dest}"
 }
 
 install_repair_apt_dependencies() {
