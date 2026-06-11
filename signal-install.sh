@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# 2026.06.11 - v. 1.2 - if signal-cli daemon is running: skip version exec (hangs); read version from /opt symlinks; prompt before install
+# 2026.06.11 - v. 1.1 - verbose progress: log each step; timeout on signal-cli version probe; visible GitHub/download status
 # 2026.06.11 - v. 1.0 - initial release: check installed/latest signal-cli; prompt install/update on Raspberry Pi (libsignal JNI build)
 #
 # signal-install.sh
@@ -20,6 +22,9 @@ CURRENT_LINK="${INSTALL_OPT}/signal-cli"
 JAVA_JNI_DIR="/usr/java/packages/lib"
 TEMP_CATALOG="${TEMP_CATALOG:-/mnt/signal-temp}"
 ASSUME_YES=0
+VERBOSE=1
+NETWORK_TIMEOUT_SEC="${NETWORK_TIMEOUT_SEC:-60}"
+SIGNAL_CLI_PROBE_TIMEOUT_SEC="${SIGNAL_CLI_PROBE_TIMEOUT_SEC:-20}"
 
 TMP_WORK_DIR=""
 cleanup_tmp_work_dir() {
@@ -52,7 +57,7 @@ print_version_banner() {
 
 show_help() {
     cat <<EOF
-Usage: $(basename "$0") [-h|--help] [-v|--version] [-y|--yes] [--no_startup_delay]
+Usage: $(basename "$0") [-h|--help] [-v|--version] [-y|--yes] [-q|--quiet] [--no_startup_delay]
 
 Check the installed signal-cli version (if any), compare with the latest GitHub
 release, and optionally install or update on Raspberry Pi (aarch64) including
@@ -62,11 +67,24 @@ Options:
   -h, --help           Show this help and exit.
   -v, --version        Print script version and exit.
   -y, --yes            Install/update without prompting (non-interactive OK).
+  -q, --quiet          Less progress output (errors still shown).
   --no_startup_delay   Skip random startup delay when run non-interactively.
 
 Environment:
-  TEMP_CATALOG         Build workspace (default: /mnt/signal-temp).
+  TEMP_CATALOG                  Build workspace (default: /mnt/signal-temp).
+  NETWORK_TIMEOUT_SEC           curl/wget timeout for GitHub queries (default: 60).
+  SIGNAL_CLI_PROBE_TIMEOUT_SEC  timeout for probing installed signal-cli (default: 20).
 EOF
+}
+
+log_step() {
+    (( VERBOSE == 1 )) || return 0
+    printf '>>> %s\n' "$*" >&2
+}
+
+log_note() {
+    (( VERBOSE == 1 )) || return 0
+    printf '    %s\n' "$*" >&2
 }
 
 need_cmd() {
@@ -88,22 +106,35 @@ download_file() {
     local url="$1"
     local output="$2"
 
+    log_step "Downloading: ${url}"
+    log_note "Saving to: ${output}"
+
     if command -v curl >/dev/null 2>&1; then
-        curl -fsSL "$url" -o "$output"
+        if (( VERBOSE == 1 )) && tty >/dev/null 2>&1; then
+            curl -fL --connect-timeout "${NETWORK_TIMEOUT_SEC}" --max-time "${NETWORK_TIMEOUT_SEC}" \
+                --progress-bar "$url" -o "$output"
+            echo >&2
+        else
+            curl -fsSL --connect-timeout "${NETWORK_TIMEOUT_SEC}" --max-time "${NETWORK_TIMEOUT_SEC}" \
+                "$url" -o "$output"
+        fi
     elif command -v wget >/dev/null 2>&1; then
-        wget -q "$url" -O "$output"
+        wget --timeout="${NETWORK_TIMEOUT_SEC}" "$url" -O "$output"
     else
         echo "ERROR: Need curl or wget." >&2
         exit 1
     fi
+
+    log_note "Download finished ($(du -h "$output" 2>/dev/null | awk '{print $1}' || echo '?'))"
 }
 
 fetch_url() {
     local url="$1"
+    log_step "Fetching URL (timeout ${NETWORK_TIMEOUT_SEC}s): ${url}"
     if command -v curl >/dev/null 2>&1; then
-        curl -fsSL "$url"
+        curl -fsSL --connect-timeout "${NETWORK_TIMEOUT_SEC}" --max-time "${NETWORK_TIMEOUT_SEC}" "$url"
     elif command -v wget >/dev/null 2>&1; then
-        wget -qO- "$url"
+        wget -qO- --timeout="${NETWORK_TIMEOUT_SEC}" "$url"
     else
         echo "ERROR: Need curl or wget." >&2
         exit 1
@@ -112,14 +143,19 @@ fetch_url() {
 
 github_latest_release_version() {
     local repo="$1"
-    local json tag
+    local json tag api_url
 
-    json="$(fetch_url "https://api.github.com/repos/${repo}/releases/latest")"
+    api_url="https://api.github.com/repos/${repo}/releases/latest"
+    log_step "Querying GitHub for latest ${repo} release..."
+    log_note "${api_url}"
+
+    json="$(fetch_url "${api_url}")"
     tag="$(printf '%s\n' "$json" | grep -m1 '"tag_name"' | sed -E 's/.*"tag_name"[[:space:]]*:[[:space:]]*"v?([^"]+)".*/\1/')"
     if [[ ! "$tag" =~ ^[0-9]+(\.[0-9]+)+$ ]]; then
         echo "ERROR: Could not parse latest release version for ${repo} (got '${tag}')." >&2
         exit 1
     fi
+    log_note "Latest ${repo} release: ${tag}"
     echo "$tag"
 }
 
@@ -128,8 +164,126 @@ parse_signal_cli_version_output() {
     printf '%s\n' "$text" | grep -oE '[0-9]+\.[0-9]+(\.[0-9]+)?' | head -n1
 }
 
+version_from_install_path() {
+    local path="$1"
+    [[ -n "${path}" ]] || return 1
+    if [[ "${path}" =~ signal-cli-([0-9]+\.[0-9]+(\.[0-9]+)?) ]]; then
+        echo "${BASH_REMATCH[1]}"
+        return 0
+    fi
+    return 1
+}
+
+get_installed_signal_cli_version_from_filesystem() {
+    local target="" vers="" candidate
+
+    if [[ -L "${CURRENT_LINK}" ]]; then
+        target="$(readlink -f "${CURRENT_LINK}" 2>/dev/null || true)"
+        vers="$(version_from_install_path "${target}" || true)"
+        if [[ -n "${vers}" ]]; then
+            log_note "Installed version from ${CURRENT_LINK} -> ${target}: ${vers}"
+            echo "${vers}"
+            return 0
+        fi
+    fi
+
+    if [[ -L "${BIN_LINK}" ]]; then
+        target="$(readlink -f "${BIN_LINK}" 2>/dev/null || true)"
+        vers="$(version_from_install_path "${target}" || true)"
+        if [[ -n "${vers}" ]]; then
+            log_note "Installed version from ${BIN_LINK} -> ${target}: ${vers}"
+            echo "${vers}"
+            return 0
+        fi
+    fi
+
+    for candidate in "${INSTALL_OPT}"/signal-cli-[0-9]*; do
+        [[ -d "${candidate}" ]] || continue
+        vers="$(version_from_install_path "${candidate}" || true)"
+        if [[ -n "${vers}" ]]; then
+            log_note "Installed version inferred from directory ${candidate}: ${vers}"
+            echo "${vers}"
+            return 0
+        fi
+    done
+
+    return 1
+}
+
+signal_cli_running_pids() {
+  pgrep -af '[s]ignal-cli' 2>/dev/null || true
+}
+
+signal_cli_is_running() {
+    local pids
+    pids="$(signal_cli_running_pids)"
+    [[ -n "${pids}" ]]
+}
+
+warn_if_signal_cli_running() {
+    local pids reply=""
+
+    pids="$(signal_cli_running_pids)"
+    [[ -n "${pids}" ]] || return 0
+
+    log_note "WARNING: signal-cli process(es) already running:"
+    printf '%s\n' "${pids}" | sed 's/^/    /' >&2
+    log_note "A running daemon can make 'signal-cli version' hang; using install-path detection instead."
+    return 0
+}
+
+prompt_stop_signal_cli_before_install() {
+    local pids="" reply=""
+
+    pids="$(signal_cli_running_pids)"
+    [[ -n "${pids}" ]] || return 0
+
+    echo
+    echo "signal-cli is still running:"
+    printf '%s\n' "${pids}" | sed 's/^/  /'
+    echo
+    echo "Updating while the daemon runs can fail or leave a stale process using old files."
+    echo "Stop it first (examples):"
+    echo "  systemctl stop signal-cli"
+    echo "  pkill -f 'signal-cli.*daemon'"
+    echo
+
+    if (( ASSUME_YES == 1 )); then
+        log_note "Continuing anyway because --yes was given."
+        return 0
+    fi
+
+    echo ">>> Waiting for your answer (single key, Enter not required):"
+    echo -n "Continue install/update without stopping signal-cli? [y/N] "
+    read -r -n 1 reply || reply=""
+    echo
+    case "${reply}" in
+        y|Y|yes|YES) log_note "Continuing while signal-cli is running (at your risk)." ;;
+        *)
+            echo "Quitting — stop signal-cli and run this script again."
+            exit 0
+            ;;
+    esac
+}
+
 get_installed_signal_cli_version() {
-    local exe="" out=""
+    local exe="" out="" rc=0 vers=""
+
+    if signal_cli_is_running; then
+        warn_if_signal_cli_running
+        if vers="$(get_installed_signal_cli_version_from_filesystem)"; then
+            echo "${vers}"
+            return 0
+        fi
+        log_note "signal-cli is running and install path version is unknown."
+        return 0
+    fi
+
+    if vers="$(get_installed_signal_cli_version_from_filesystem)"; then
+        log_note "Using install-path version (no need to exec signal-cli): ${vers}"
+        echo "${vers}"
+        return 0
+    fi
 
     if command -v signal-cli >/dev/null 2>&1; then
         exe="$(command -v signal-cli)"
@@ -137,9 +291,40 @@ get_installed_signal_cli_version() {
         exe="${BIN_LINK}"
     fi
 
-    [[ -n "${exe}" ]] || return 0
+    if [[ -z "${exe}" ]]; then
+        log_note "No signal-cli binary found on PATH or at ${BIN_LINK}"
+        return 0
+    fi
 
-    out="$("${exe}" version 2>/dev/null || true)"
+    log_step "Probing installed signal-cli (timeout ${SIGNAL_CLI_PROBE_TIMEOUT_SEC}s): ${exe}"
+    if command -v timeout >/dev/null 2>&1; then
+        out="$(timeout "${SIGNAL_CLI_PROBE_TIMEOUT_SEC}" "${exe}" version 2>&1)" || rc=$?
+    else
+        out="$("${exe}" version 2>&1)" || rc=$?
+    fi
+
+    if (( rc == 124 )); then
+        log_note "WARNING: signal-cli version probe timed out after ${SIGNAL_CLI_PROBE_TIMEOUT_SEC}s."
+        if vers="$(get_installed_signal_cli_version_from_filesystem)"; then
+            log_note "Falling back to install-path version: ${vers}"
+            echo "${vers}"
+            return 0
+        fi
+        log_note "Install-path version also unknown."
+        return 0
+    fi
+    if (( rc != 0 )); then
+        log_note "WARNING: signal-cli version probe failed (exit ${rc}); output:"
+        printf '%s\n' "$out" | sed 's/^/    /' >&2
+        if vers="$(get_installed_signal_cli_version_from_filesystem)"; then
+            log_note "Falling back to install-path version: ${vers}"
+            echo "${vers}"
+            return 0
+        fi
+        return 0
+    fi
+
+    log_note "signal-cli reported: $(printf '%s' "$out" | tr '\n' ' ')"
     parse_signal_cli_version_output "$out"
 }
 
@@ -210,6 +395,8 @@ prompt_install_or_update() {
             echo "Proceeding with fresh install (--yes)."
             return 0
         fi
+        echo
+        echo ">>> Waiting for your answer (single key, Enter not required):"
         echo -n "Install signal-cli ${latest} now? [Y/n] "
         read -r -n 1 reply || reply=""
         echo
@@ -226,6 +413,8 @@ prompt_install_or_update() {
             return 0
         fi
         echo "You already have the latest version."
+        echo
+        echo ">>> Waiting for your answer (single key, Enter not required):"
         echo -n "Reinstall / rebuild JNI anyway? [y/N] "
         read -r -n 1 reply || reply=""
         echo
@@ -241,6 +430,8 @@ prompt_install_or_update() {
             echo "Updating ${installed} -> ${latest} (--yes)."
             return 0
         fi
+        echo
+        echo ">>> Waiting for your answer (single key, Enter not required):"
         echo -n "Update signal-cli ${installed} -> ${latest} now? [Y/n] "
         read -r -n 1 reply || reply=""
         echo
@@ -256,6 +447,8 @@ prompt_install_or_update() {
         echo "Proceeding with reinstall of ${latest} (--yes)."
         return 0
     fi
+    echo
+    echo ">>> Waiting for your answer (single key, Enter not required):"
     echo -n "Reinstall published version ${latest} anyway? [y/N] "
     read -r -n 1 reply || reply=""
     echo
@@ -269,9 +462,13 @@ install_apt_dependencies() {
     echo
     echo "part 1 — apt dependencies"
     echo
-    apt-get update -qq
+    log_step "Running apt-get update..."
+    apt-get update
+    log_step "Installing build/runtime packages..."
     apt-get install -y curl zip protobuf-compiler clang libclang-dev cmake make unzip wget
+    log_step "Installing OpenJDK 21..."
     apt-get install -y openjdk-21-jdk
+    log_note "apt dependencies done."
 }
 
 install_protoc() {
@@ -287,10 +484,11 @@ install_protoc() {
 
     cd /tmp
     download_file "${url}" "${protoc_zip}"
+    log_step "Installing protoc into /usr/local..."
     unzip -o "${protoc_zip}" -d /usr/local bin/protoc
     unzip -o "${protoc_zip}" -d /usr/local 'include/*'
     rm -f "${protoc_zip}"
-    protoc --version
+    log_note "Installed: $(protoc --version 2>&1)"
 }
 
 prepare_opt_and_download_signal_cli() {
@@ -302,15 +500,18 @@ prepare_opt_and_download_signal_cli() {
     echo
 
     cd "${INSTALL_OPT}"
+    log_step "Cleaning old signal-cli download artifacts in ${INSTALL_OPT}..."
     rm -fv "signal-cli-${version}-Linux-native.tar.gz"* "${CURRENT_LINK}" 2>/dev/null || true
 
     archive="signal-cli-${version}.tar.gz"
     url="https://github.com/AsamK/signal-cli/releases/download/v${version}/${archive}"
 
     download_file "${url}" "${archive}"
+    log_step "Extracting ${archive} into ${INSTALL_OPT}..."
     tar xf "${archive}" -C "${INSTALL_OPT}"
     rm -fv "${archive}"
 
+    log_step "Creating symlinks..."
     ln -sfn "${INSTALL_OPT}/signal-cli-${version}" "${CURRENT_LINK}"
     ln -sfn "${INSTALL_OPT}/signal-cli-${version}/bin/signal-cli" "${BIN_LINK}"
 
@@ -328,15 +529,17 @@ install_rust_toolchain() {
     fi
 
     if [[ -x "${HOME}/.cargo/bin/rustc" ]]; then
-        echo "rustup already present: $("${HOME}/.cargo/bin/rustc" --version 2>/dev/null || true)"
+        log_note "rustup already present: $("${HOME}/.cargo/bin/rustc" --version 2>/dev/null || true)"
     else
+        log_step "Installing rustup (this can take several minutes)..."
         curl https://sh.rustup.rs -sSf | sh -s -- --default-toolchain "${RUST_TARGET}" -y
     fi
 
     # shellcheck disable=SC1091
     source "${HOME}/.cargo/env" 2>/dev/null || export PATH="${PATH}:${HOME}/.cargo/bin"
+    log_step "Selecting rust toolchain ${RUST_TARGET}..."
     rustup default "${RUST_TARGET}" 2>/dev/null || true
-    rustc --version
+    log_note "Active rustc: $(rustc --version 2>&1)"
 }
 
 build_and_install_libsignal_jni() {
@@ -354,18 +557,22 @@ build_and_install_libsignal_jni() {
     fi
 
     libversion="$(basename "${jar_path}" | sed -E 's/^libsignal-client-//; s/\.jar$//')"
-    echo "LIBVERSION = ${libversion}"
+    log_note "libsignal-client jar: ${jar_path}"
+    log_note "LIBVERSION = ${libversion}"
 
     mkdir -p "${TEMP_CATALOG}/signal-cli-install"
     build_root="${TEMP_CATALOG}/signal-cli-install"
     cd "${build_root}"
 
     download_file "https://github.com/signalapp/libsignal/archive/refs/tags/v${libversion}.tar.gz" "v${libversion}.tar.gz"
+    log_step "Extracting libsignal sources..."
     tar xzf "v${libversion}.tar.gz"
     rm -fv "v${libversion}.tar.gz"
     mv -v "libsignal-${libversion}" libsignal
 
+    log_step "Patching libsignal settings.gradle (remove android module)..."
     sed -i "s/include ':android'//" "${build_root}/libsignal/java/settings.gradle"
+    log_step "Building libsignal JNI (this is the slow step — often 10–30+ minutes on a Pi)..."
     "${build_root}/libsignal/java/build_jni.sh" desktop
 
     jni_so="$(find "${build_root}/libsignal/target" -path '*/release/libsignal_jni.so' 2>/dev/null | head -n1)"
@@ -374,10 +581,12 @@ build_and_install_libsignal_jni() {
         exit 1
     fi
 
+    log_step "Patching jar with native libsignal_jni.so..."
     zip -d "${jar_path}" libsignal_jni.so 2>/dev/null || true
     zip "${jar_path}" "${jni_so}"
 
     mkdir -p "${JAVA_JNI_DIR}"
+    log_step "Installing JNI library to ${JAVA_JNI_DIR}..."
     cp -v "${jni_so}" "${JAVA_JNI_DIR}/"
 }
 
@@ -426,10 +635,12 @@ perform_install() {
 main() {
     local installed="" latest="" protoc_latest=""
 
+    log_step "Starting signal-cli install/update check..."
     as_root_check
     detect_machine
     check_raspberry_pi
 
+    log_step "Checking required local commands..."
     need_cmd grep
     need_cmd sed
     need_cmd sort
@@ -442,12 +653,20 @@ main() {
     need_cmd chmod
 
     echo "Machine: ${MACHINE_HW} (protoc arch label: ${PROTOC_ARCHITECTURE})"
+    echo
 
+    log_step "Step 1/3 — detect installed signal-cli version"
     installed="$(get_installed_signal_cli_version)"
+
+    log_step "Step 2/3 — fetch latest signal-cli release from GitHub"
     latest="$(github_latest_release_version "${SIGNAL_CLI_REPO}")"
+
+    log_step "Step 3/3 — fetch latest protoc release from GitHub"
     protoc_latest="$(github_latest_release_version "${PROTOBUF_REPO}")"
 
+    log_step "Version check complete."
     prompt_install_or_update "${latest}" "${installed}"
+    prompt_stop_signal_cli_before_install
 
     echo
     echo "Will install:"
@@ -465,6 +684,7 @@ while [[ $# -gt 0 ]]; do
         -h|--help) show_help; exit 0 ;;
         -v|--version) print_version_banner; exit 0 ;;
         -y|--yes) ASSUME_YES=1; shift ;;
+        -q|--quiet) VERBOSE=0; shift ;;
         --no_startup_delay) HEADER_EXTRA_ARGS+=(NO_STARTUP_DELAY); shift ;;
         *) echo "Unknown argument: $1" >&2; echo "Try: $(basename "$0") --help" >&2; exit 1 ;;
     esac
