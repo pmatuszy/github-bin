@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.06.11 - v. 1.12 - disk check uses /bin/df when df is a shell function
 # 2026.06.11 - v. 1.11 - remove kod_powrotu; use exit_code only
 # 2026.06.11 - v. 1.10 - translate remaining Polish changelog comments; drop legacy SKAD/DOKAD env names
 # 2026.06.11 - v. 1.9 - rename Polish config/internal variables to English names
@@ -56,6 +57,7 @@ exit_code=0
 CURRENT_PART=""
 ACTIVE_STREAM_URL=""
 LOCK_FD=9
+DF_FUNCTION_NOTE_LOGGED=0
 
 log_line() {
     echo "$1" | tee -a "${LOG_FILE}"
@@ -121,11 +123,36 @@ print_ffmpeg_in_use() {
     log_line "  ${version_line}"
 }
 
+resolve_df_bin() {
+    if [[ "$(type -t df 2>/dev/null)" == "function" ]]; then
+        if [[ -x /bin/df ]]; then
+            echo "/bin/df"
+            return 0
+        fi
+        return 1
+    fi
+    if [[ -x /bin/df ]]; then
+        echo "/bin/df"
+        return 0
+    fi
+    command -v df 2>/dev/null || return 1
+}
+
 check_disk_space() {
     local target_dir="$1"
     local avail_kb=""
+    local df_bin=""
 
-    avail_kb="$(df -Pk "${target_dir}" 2>/dev/null | awk 'NR==2 {print $4}')"
+    df_bin="$(resolve_df_bin)" || {
+        log_line "ERROR: cannot find df binary (df is a shell function and /bin/df is missing)"
+        return 1
+    }
+    if [[ "$(type -t df 2>/dev/null)" == "function" && DF_FUNCTION_NOTE_LOGGED -eq 0 ]]; then
+        log_line "df is a shell function; using ${df_bin} for disk space check"
+        DF_FUNCTION_NOTE_LOGGED=1
+    fi
+
+    avail_kb="$("${df_bin}" -Pk -- "${target_dir}" 2>/dev/null | awk 'NR==2 {print $4}')"
     if [[ -z "${avail_kb}" || ! "${avail_kb}" =~ ^[0-9]+$ ]]; then
         log_line "ERROR: cannot determine free disk space for ${target_dir}"
         return 1
