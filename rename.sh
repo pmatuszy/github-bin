@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.06.12 - v. 19.190.163000 - thumbs.db prompt [O]: delete this file and auto-delete all other thumbs.db for the rest of the run
 # 2026.06.12 - v. 19.189.120000 - wrapped old→new: old and new paths start in the same column (line 2 indent = prefix width)
 # 2026.06.12 - v. 19.188.120000 - wrapped Renamed/old→new: arrow + new path on line 2, column-aligned under prefix
 # 2026.06.11 - v. 19.187.120000 - always skip _rename.sh.resume-state.json (any directory); check early in main loop
@@ -742,7 +743,7 @@ Optional exclude file in the start directory: _exclude-rename.sh.txt
   SUBTREE=dir — skip that directory and every path under it (prompt [B] on a file uses the directory where that file lives).
   FLATTEN_EXACT=dir — skip flatten prompts for matching directories (prompt [E] uses exact path; [C] may use globs or /fragment/).
   [F] at the rename prompt appends FILE=<basename> for the current path (file or directory). At the checksum-group prompt, [F] uses the list file's basename. [C] lets you type any custom filter line (FILE=, SUBTREE=, =path, globs). See also /basename/.
-  thumbs.db / torrent .URL: if the suggested path equals the current path, you still get a prompt so you can delete the file ([K] / [T]); there is no rename to apply.
+  thumbs.db / torrent .URL: if the suggested path equals the current path, you still get a prompt so you can delete the file ([K] / [O] all thumbs.db this run / [T]); there is no rename to apply.
 
 Example:
   rename.sh -v --use-db --colors yes --mode real --scope subdirs
@@ -4690,6 +4691,30 @@ is_thumbs_db_file() {
     local p="$1"
     [[ -f "$p" ]] || return 1
     path_basename_is_thumbs_db "$p"
+}
+
+perform_thumbs_db_delete() {
+    local path="$1"
+    if ! is_thumbs_db_file "$path"; then
+        return 1
+    fi
+    if [[ "$mode" == "dry-run" ]]; then
+        collect_local_checksum_ref_summaries "$path" "file"
+        emit_wrap_labeled_stdout "[DRY-RUN] Would delete thumbs.db: " "${CYAN}[DRY-RUN] Would delete thumbs.db:${RESET} " "$path"
+        if (( ${#PLAIN_REF_SUM_FILES[@]} > 0 )); then
+            echo -e "${CYAN}[DRY-RUN] Would update checksum file(s) for removed thumbs.db reference:${RESET}"
+            for sum_file in "${PLAIN_REF_SUM_FILES[@]}"; do
+                emit_wrap_labeled_stdout "    " "    " "$sum_file"
+            done
+        fi
+    else
+        update_local_checksums_after_deleted_file "$path"
+        db_delete_cached_row_for_path "$path"
+        rm -f -- "$path"
+        emit_wrap_labeled_stdout "Deleted thumbs.db: " "${GREEN}Deleted thumbs.db:${RESET} " "$path"
+    fi
+    ((++files_affected))
+    return 0
 }
 
 paths_refer_to_same_file() {
@@ -9138,6 +9163,7 @@ AUTO_LOWERCASE_3_EXT_SESSION=no # [L] session: any extension case-only lowercasi
 AUTO_LOWERCASE_MEDIA_OFFICE_EXT_SESSION=no # [U] session: only media + MS Office extension case-only lowercasing
 AUTO_GOPRO_STRIP_PART_DIR="" # GoPro lone _part_XX prompt [D]: auto-strip for rest of run in this directory
 AUTO_GOPRO_STRIP_PART_SESSION=no # GoPro lone _part_XX prompt [A]: auto-strip for all qualifying files this run
+AUTO_DELETE_THUMBS_DB_SESSION=no # thumbs.db prompt [O]: delete all thumbs.db for the rest of this run
 RENAME_SH_GOPRO_STATE_FILE="${RENAME_SH_GOPRO_STATE_FILE:-${XDG_STATE_HOME:-$HOME/.local/state}/rename.sh/gopro-strip.$$}"
 
 declare -a renamed_list=()
@@ -9596,7 +9622,7 @@ print_rename_prompt_menu() {
 
     if [[ "$menu_variant" == thumbs-noop ]]; then
         echo -e "$(user_prompt_ts_prefix)${GREEN}This thumbs.db does not need a rename (suggested path matches the current path).${RESET}"
-        echo -e "${CYAN}  OLD and NEW below are the same on purpose — use [K] to delete this Windows thumbnail cache file, or skip.${RESET}"
+        echo -e "${CYAN}  OLD and NEW below are the same on purpose — use [K] to delete this thumbs.db, [O] to delete all thumbs.db this run, or skip.${RESET}"
     elif [[ "$menu_variant" == torrent-noop ]]; then
         echo -e "$(user_prompt_ts_prefix)${GREEN}This torrent .URL shortcut does not need a rename (suggested path matches the current path).${RESET}"
         echo -e "${CYAN}  OLD and NEW below are the same on purpose — use [T] to delete the shortcut, or skip.${RESET}"
@@ -9638,7 +9664,8 @@ print_rename_prompt_menu() {
     fi
     if [[ -n "$path" ]] && is_thumbs_db_file "$path"; then
         echo "  [K] Delete this thumbs.db file"
-        choice_hint+=/k
+        echo "  [O] Delete this thumbs.db and all other thumbs.db files for the rest of this run"
+        choice_hint+=/ko
     fi
     if [[ -n "$path" && ( -f "$path" || -d "$path" ) ]]; then
         echo "  [F] Filename-only exception — skip this basename everywhere (any file or directory with this name)"
@@ -11392,6 +11419,15 @@ for f in "${ordered_paths[@]}"; do
         continue
     fi
 
+    if [[ "$AUTO_DELETE_THUMBS_DB_SESSION" == "yes" ]] && is_thumbs_db_file "$f"; then
+        if perform_thumbs_db_delete "$f"; then
+            processed["$f"]=1
+        else
+            ((++files_skipped))
+        fi
+        continue
+    fi
+
     torrent_url_noop=
     thumbs_db_noop=
     if is_torrent_url_file "$f" && [[ "$f" == "$new" ]]; then
@@ -11628,27 +11664,24 @@ for f in "${ordered_paths[@]}"; do
             processed["$f"]=1
             ;;
         k|K)
-            if ! is_thumbs_db_file "$f"; then
+            if perform_thumbs_db_delete "$f"; then
+                processed["$f"]=1
+            else
                 echo -e "${YELLOW}[K] applies only to thumbs.db files.${RESET}"
                 ((++files_skipped))
-            elif [[ "$mode" == "dry-run" ]]; then
-                collect_local_checksum_ref_summaries "$f" "file"
-                emit_wrap_labeled_stdout "[DRY-RUN] Would delete thumbs.db: " "${CYAN}[DRY-RUN] Would delete thumbs.db:${RESET} " "$f"
-                if (( ${#PLAIN_REF_SUM_FILES[@]} > 0 )); then
-                    echo -e "${CYAN}[DRY-RUN] Would update checksum file(s) for removed thumbs.db reference:${RESET}"
-                    for sum_file in "${PLAIN_REF_SUM_FILES[@]}"; do
-                        emit_wrap_labeled_stdout "    " "    " "$sum_file"
-                    done
-                fi
-                ((++files_affected))
-            else
-                update_local_checksums_after_deleted_file "$f"
-                db_delete_cached_row_for_path "$f"
-                rm -f -- "$f"
-                emit_wrap_labeled_stdout "Deleted thumbs.db: " "${GREEN}Deleted thumbs.db:${RESET} " "$f"
-                ((++files_affected))
             fi
-            processed["$f"]=1
+            ;;
+        o|O)
+            if ! is_thumbs_db_file "$f"; then
+                echo -e "${YELLOW}[O] applies only to thumbs.db files.${RESET}"
+                ((++files_skipped))
+            else
+                AUTO_DELETE_THUMBS_DB_SESSION=yes
+                vlog "Session auto-delete enabled for all thumbs.db files this run"
+                if perform_thumbs_db_delete "$f"; then
+                    processed["$f"]=1
+                fi
+            fi
             ;;
         l|L)
             if ! rename_suggested_only_extension_case_change "$f" "$new"; then
