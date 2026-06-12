@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# 2026.06.12 - v. 19.189.120000 - wrapped old→new: old and new paths start in the same column (line 2 indent = prefix width)
+# 2026.06.12 - v. 19.188.120000 - wrapped Renamed/old→new: arrow + new path on line 2, column-aligned under prefix
 # 2026.06.11 - v. 19.187.120000 - always skip _rename.sh.resume-state.json (any directory); check early in main loop
 # 2026.06.11 - v. 19.186.120000 - Call recording <callee>_YYMMDD_HHMMSS → YYYYMMDD_HHMMSS_<callee>_Call_recording
 # 2026.06.11 - v. 19.185.120000 - flatten prompt [C]: custom exclude pattern (incl. FLATTEN_EXACT=); match globs/fragments
@@ -551,6 +553,7 @@ emit_wrap_exclude_append_message() {
 
 # Long OLD path ARROW NEW path (ARROW is set later at startup; expanded at call time).
 # When colors are on, the suggested new path is printed in green.
+# Wrapped layout: line 1 = prefix+old+arrow; line 2 = spaces (prefix width) + new so old/new paths share the same column.
 emit_wrap_old_arrow_new_stdout() {
     nonverbose_progress_dot_endline_if_needed
     local plain_pfx="$1"
@@ -559,6 +562,8 @@ emit_wrap_old_arrow_new_stdout() {
     local new_p="$4"
     local sep=" ${ARROW} "
     local plain="${plain_pfx}${old_p}${sep}${new_p}"
+    local path_col_indent=""
+    printf -v path_col_indent '%*s' "${#plain_pfx}" ''
     if (( ${#plain} <= MAX_LINE_LENGTH )); then
         if [[ "$use_colors" == yes ]]; then
             printf '%b%s%s%b%s%b\n' "$ansi_pfx" "$old_p" "$sep" "${GREEN}" "$new_p" "${RESET}"
@@ -568,10 +573,10 @@ emit_wrap_old_arrow_new_stdout() {
     else
         if [[ "$use_colors" == yes ]]; then
             printf '%b%s%s\n' "$ansi_pfx" "$old_p" "$sep"
-            printf '%b%s%s%b\n' "${GREEN}" "$WRAP_MSG_INDENT" "$new_p" "${RESET}"
+            printf '%s%b%s%b\n' "$path_col_indent" "${GREEN}" "$new_p" "${RESET}"
         else
             printf '%b%s%s\n' "$ansi_pfx" "$old_p" "$sep"
-            printf '%s%s\n' "$WRAP_MSG_INDENT" "$new_p"
+            printf '%s%s\n' "$path_col_indent" "$new_p"
         fi
     fi
 }
