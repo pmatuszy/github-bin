@@ -1,38 +1,40 @@
 #!/bin/bash
 
+# 2026.06.11 - v. 1.10 - translate remaining Polish changelog comments; drop legacy SKAD/DOKAD env names
+# 2026.06.11 - v. 1.9 - rename Polish config/internal variables to English names
 # 2026.06.11 - v. 1.8 - flock, partial files, disk check, stream failover/probe, traps, summary
 # 2026.06.11 - v. 1.7 - -c copy / -t after -i (input -c treats copy as decoder); reconnect for live HTTP
 # 2026.06.11 - v. 1.6 - -c copy: official static ffmpeg 8.x has no mp3 encoder (stream is already mp3)
 # 2026.06.11 - v. 1.5 - bugfix: FFMPEG_BIN lost when print_ffmpeg_in_use was piped to tee (subshell + nounset)
 # 2026.06.11 - v. 1.4 - print ffmpeg path/version at start; FFMPEG_BIN; mkdir output dir; -nostdin; quote vars
 # 2026.05.26 - user-facing messages translated from Polish to English
-# 2023.07.08 - v. 1.3 - bugfix: forced aktualny dzien to be a number in 10 base
+# 2023.07.08 - v. 1.3 - bugfix: force day-of-month as base-10 in arithmetic (08 is invalid octal)
 # 2023.05.22 - v. 1.2 - added NO_STARTUP_DELAY parameters to /root/bin/_script_header.sh
 # 2023.05.16 - v. 1.1 - bugfix: functional change of the script
 # 2023.05.15 - v. 1.0 - bugfix: functional change of the script
 # 2023.04.11 - v. 0.9 - bugfix: removed second invocation of /root/bin/_script_header.sh
 # 2023.02.14 - v. 0.8 - removed sending of healthchecks status
-# 2022.05.23 - v. 0.7 - dodane 2>/dev/null po wywolaniu curl by nie dostawac maili z crona o timeoucie
-# 2022.05.16 - v. 0.6 - eliminacja curla by nie startowac "$url/start" 2x, poprawne badanie kodu powrotu ffmpeg przez dodanie exit $?
-# 2022.05.10 - v. 0.5 - dodalem obsluge healthchecks
-# 2022.02.04 - v. 0.4 - jak ffmpeg skonczy sie przedwczesnie to wprowadzilem opoznienie 60s, by nie podejmowac proby od razu po niepowodzeniu
-# 2022.01.30 - v. 0.3 - zmiana sprawdzania czy dzialamy interaktywnie
-# 2022.01.26 - v. 0.2 - jak ffmpeg sie skonczy wczesniej to restartujemy nagrywanie do polnocy + 1 minuta
+# 2022.05.23 - v. 0.7 - append 2>/dev/null to curl so cron does not email on timeout
+# 2022.05.16 - v. 0.6 - remove curl to avoid starting "$url/start" twice; check ffmpeg exit code via exit $?
+# 2022.05.10 - v. 0.5 - add healthchecks support
+# 2022.02.04 - v. 0.4 - on premature ffmpeg exit, wait 60s before retrying
+# 2022.01.30 - v. 0.3 - change interactive-session detection
+# 2022.01.26 - v. 0.2 - on early ffmpeg exit, restart recording until midnight + 1 minute
 # 2022.01.13 - v. 0.1 - initial release (date unknown)
 
 . /root/bin/_script_header.sh --no_startup_delay
 
-SKAD="${SKAD:-http://poznan5-4.radio.pionier.net.pl:8000/tuba10-1.mp3}"
-SKAD_FALLBACK="${SKAD_FALLBACK:-http://gdansk1-1.radio.pionier.net.pl:8000/pl/tuba10-1.mp3}"
-export DOKAD_PREFIX="${DOKAD_PREFIX:-/worek-samba/nagrania/TokFM-nagrania/tokFM}"
-DOKAD_DIR="$(dirname -- "${DOKAD_PREFIX}")"
+STREAM_URL="${STREAM_URL:-http://poznan5-4.radio.pionier.net.pl:8000/tuba10-1.mp3}"
+STREAM_URL_FALLBACK="${STREAM_URL_FALLBACK:-http://gdansk1-1.radio.pionier.net.pl:8000/pl/tuba10-1.mp3}"
+export OUTPUT_PREFIX="${OUTPUT_PREFIX:-/worek-samba/nagrania/TokFM-nagrania/tokFM}"
+OUTPUT_DIR="$(dirname -- "${OUTPUT_PREFIX}")"
 RECORD_TMP_DIR="${RECORD_TMP_DIR:-/tmp}"
 LOCK_FILE="${LOCK_FILE:-/tmp/nagrywaj-tokfm.lock}"
 
-wlasciciel_pliku="${FILE_OWNER:-che:che}"
-opoznienie_miedzy_wywolaniami="${RETRY_DELAY:-60s}"
-ile_wiecej_sek_nagrywac="${EXTRA_SECONDS_AFTER_MIDNIGHT:-120}"
-ile_sek_przed_polnoca_nie_nagrywamy_juz="${SECONDS_BEFORE_MIDNIGHT_STOP:-10}"
+FILE_OWNER="${FILE_OWNER:-che:che}"
+RETRY_DELAY="${RETRY_DELAY:-60s}"
+EXTRA_SECONDS_AFTER_MIDNIGHT="${EXTRA_SECONDS_AFTER_MIDNIGHT:-120}"
+SECONDS_BEFORE_MIDNIGHT_STOP="${SECONDS_BEFORE_MIDNIGHT_STOP:-10}"
 
 MIN_FREE_KB="${MIN_FREE_KB:-1048576}"
 MIN_SUCCESS_BYTES="${MIN_SUCCESS_BYTES:-65536}"
@@ -41,7 +43,7 @@ LOG_RETENTION_DAYS="${LOG_RETENTION_DAYS:-14}"
 STREAM_PROBE_TIMEOUT="${STREAM_PROBE_TIMEOUT:-15}"
 HTTP_TIMEOUT_US="${HTTP_TIMEOUT_US:-15000000}"
 
-log_file="/tmp/$(basename "$0")_$(date '+%Y.%m.%d__%H%M%S').log"
+LOG_FILE="/tmp/$(basename "$0")_$(date '+%Y.%m.%d__%H%M%S').log"
 FFMPEG_BIN="${FFMPEG_BIN:-}"
 SCRIPT_START_TIME="$(date '+%Y-%m-%d %H:%M:%S')"
 
@@ -49,17 +51,13 @@ segments_ok=0
 segments_failed=0
 consecutive_failures=0
 bytes_recorded_total=0
-kod_powrotu=0
+exit_code=0
 CURRENT_PART=""
 ACTIVE_STREAM_URL=""
 LOCK_FD=9
 
 log_line() {
-    echo "$1" | tee -a "${log_file}"
-}
-
-log_line_only() {
-    echo "$1" >> "${log_file}"
+    echo "$1" | tee -a "${LOG_FILE}"
 }
 
 cleanup_partial_recording() {
@@ -73,9 +71,9 @@ cleanup_partial_recording() {
 cleanup_on_signal() {
     log_line "$(date '+%Y.%m.%d__%H:%M:%S') received signal, stopping (partial recording discarded)"
     cleanup_partial_recording
-    kod_powrotu=130
+    exit_code=130
     print_summary
-    exit "${kod_powrotu}"
+    exit "${exit_code}"
 }
 
 trap cleanup_on_signal INT TERM
@@ -112,7 +110,7 @@ print_ffmpeg_in_use() {
     local ffmpeg_bin="" resolved="" version_line=""
 
     ffmpeg_bin="$(resolve_ffmpeg_bin)" || {
-        echo "ERROR: ffmpeg not found (set FFMPEG_BIN or install ffmpeg)." | tee -a "${log_file}" >&2
+        echo "ERROR: ffmpeg not found (set FFMPEG_BIN or install ffmpeg)." | tee -a "${LOG_FILE}" >&2
         exit 1
     }
     FFMPEG_BIN="${ffmpeg_bin}"
@@ -156,7 +154,7 @@ probe_stream_url() {
 resolve_stream_url() {
     local url=""
 
-    for url in "${SKAD}" "${SKAD_FALLBACK}"; do
+    for url in "${STREAM_URL}" "${STREAM_URL_FALLBACK}"; do
         [[ -z "${url}" ]] && continue
         if probe_stream_url "${url}"; then
             echo "${url}"
@@ -189,7 +187,7 @@ finalize_recording() {
     fi
 
     mv -f "${part_path}" "${final_path}"
-    chown "${wlasciciel_pliku}" "${final_path}" 2>/dev/null || true
+    chown "${FILE_OWNER}" "${final_path}" 2>/dev/null || true
     log_line "$(date '+%Y.%m.%d__%H:%M:%S') saved ${final_path} (${part_size} bytes)"
     bytes_recorded_total=$(( bytes_recorded_total + part_size ))
     return 0
@@ -216,7 +214,7 @@ run_ffmpeg_recording() {
     printf -v ffmpeg_cmd_line '%q ' "${ffmpeg_cmd[@]}"
     log_line "${ffmpeg_cmd_line}"
 
-    "${ffmpeg_cmd[@]}" 2>>"${log_file}"
+    "${ffmpeg_cmd[@]}" 2>>"${LOG_FILE}"
     return $?
 }
 
@@ -228,18 +226,18 @@ print_summary() {
     log_line "========= SUMMARY ========="
     log_line "Script start time:     ${SCRIPT_START_TIME}"
     log_line "Script finish time:    ${script_end_time}"
-    log_line "Stream primary:        ${SKAD}"
-    log_line "Stream fallback:       ${SKAD_FALLBACK:-<none>}"
+    log_line "Stream primary:        ${STREAM_URL}"
+    log_line "Stream fallback:       ${STREAM_URL_FALLBACK:-<none>}"
     log_line "Stream used last:      ${ACTIVE_STREAM_URL:-<none>}"
-    log_line "Output prefix:         ${DOKAD_PREFIX}"
+    log_line "Output prefix:         ${OUTPUT_PREFIX}"
     log_line "Temp record dir:       ${RECORD_TMP_DIR}"
     log_line "Segments saved:        ${segments_ok}"
     log_line "Segments failed:       ${segments_failed}"
     log_line "Bytes recorded:        ${bytes_recorded_total}"
     log_line "Consecutive failures:  ${consecutive_failures}"
-    log_line "Exit code:             ${kod_powrotu}"
-    log_line "Log file:              ${log_file}"
-    log_line "Day boundary note:     loop stops when day-of-month changes; last segment may run ${ile_wiecej_sek_nagrywac}s past midnight"
+    log_line "Exit code:             ${exit_code}"
+    log_line "Log file:              ${LOG_FILE}"
+    log_line "Day boundary note:     loop stops when day-of-month changes; last segment may run ${EXTRA_SECONDS_AFTER_MIDNIGHT}s past midnight"
     log_line "==========================="
 }
 
@@ -257,17 +255,17 @@ maybe_ping_healthcheck() {
         echo "segments saved: ${segments_ok}"
         echo "segments failed: ${segments_failed}"
         echo "bytes recorded: ${bytes_recorded_total}"
-        echo "exit code: ${kod_powrotu}"
+        echo "exit code: ${exit_code}"
     )
     echo "${hc_message}" | /usr/bin/curl -fsS -m 100 --retry 3 --retry-delay 5 \
-        --data-binary @- -o /dev/null "${hc_url}/${kod_powrotu}" 2>/dev/null || true
+        --data-binary @- -o /dev/null "${hc_url}/${exit_code}" 2>/dev/null || true
 }
 
 prune_old_logs
 acquire_lock
 
-mkdir -p "${DOKAD_DIR}" "${RECORD_TMP_DIR}" || {
-    echo "ERROR: cannot create output/temp directories" | tee -a "${log_file}" >&2
+mkdir -p "${OUTPUT_DIR}" "${RECORD_TMP_DIR}" || {
+    echo "ERROR: cannot create output/temp directories" | tee -a "${LOG_FILE}" >&2
     exit 1
 }
 
@@ -275,65 +273,65 @@ mkdir -p "${DOKAD_DIR}" "${RECORD_TMP_DIR}" || {
 # reach the main script (_script_header.sh enables nounset).
 print_ffmpeg_in_use
 
-dzien_wywolania=$(date '+%d')
-aktualny_dzien=${dzien_wywolania}
+invocation_day=$(date '+%d')
+current_day=${invocation_day}
 
-log_line "0. $(date '+%Y.%m.%d__%H:%M:%S') dzien_wywolania = ${dzien_wywolania} , aktualny_dzien = ${aktualny_dzien}"
+log_line "0. $(date '+%Y.%m.%d__%H:%M:%S') invocation_day = ${invocation_day} , current_day = ${current_day}"
 
 secs_to_midnight=$(( $(date -d "tomorrow 00:00" +%s) - $(date +%s) ))
 log_line "1. $(date '+%Y.%m.%d__%H:%M:%S') secs_to_midnight = ${secs_to_midnight}"
 
-while (( secs_to_midnight > ile_sek_przed_polnoca_nie_nagrywamy_juz )) && (( 10#${dzien_wywolania} == 10#${aktualny_dzien} )); do
+while (( secs_to_midnight > SECONDS_BEFORE_MIDNIGHT_STOP )) && (( 10#${invocation_day} == 10#${current_day} )); do
     # 10# forces day-of-month as decimal (08 would otherwise be invalid octal in arithmetic)
     log_line "2. $(date '+%Y.%m.%d__%H:%M:%S') (loop start) secs_to_midnight = ${secs_to_midnight}"
-    log_line "2. $(date '+%Y.%m.%d__%H:%M:%S') dzien_wywolania = ${dzien_wywolania} , aktualny_dzien = ${aktualny_dzien}"
+    log_line "2. $(date '+%Y.%m.%d__%H:%M:%S') invocation_day = ${invocation_day} , current_day = ${current_day}"
 
-    if ! check_disk_space "${DOKAD_DIR}"; then
-        kod_powrotu=1
+    if ! check_disk_space "${OUTPUT_DIR}"; then
+        exit_code=1
         ((++segments_failed))
         ((++consecutive_failures))
         if (( consecutive_failures >= MAX_CONSECUTIVE_FAILURES )); then
             log_line "ERROR: reached ${MAX_CONSECUTIVE_FAILURES} consecutive failures, stopping"
             break
         fi
-        sleep "${opoznienie_miedzy_wywolaniami}"
-        aktualny_dzien=$(date '+%d')
+        sleep "${RETRY_DELAY}"
+        current_day=$(date '+%d')
         continue
     fi
 
     ACTIVE_STREAM_URL="$(resolve_stream_url)" || {
         log_line "$(date '+%Y.%m.%d__%H:%M:%S') ERROR: no stream URL reachable (primary and fallback failed)"
-        kod_powrotu=1
+        exit_code=1
         ((++segments_failed))
         ((++consecutive_failures))
         if (( consecutive_failures >= MAX_CONSECUTIVE_FAILURES )); then
             log_line "ERROR: reached ${MAX_CONSECUTIVE_FAILURES} consecutive failures, stopping"
             break
         fi
-        sleep "${opoznienie_miedzy_wywolaniami}"
-        aktualny_dzien=$(date '+%d')
+        sleep "${RETRY_DELAY}"
+        current_day=$(date '+%d')
         continue
     }
     log_line "$(date '+%Y.%m.%d__%H:%M:%S') using stream ${ACTIVE_STREAM_URL}"
 
-    secs_nagrywania=$(( secs_to_midnight + ile_wiecej_sek_nagrywac ))
-    DOKAD="${DOKAD_PREFIX}-$(date '+%Y.%m.%d__%H%M%S').mp3"
-    CURRENT_PART="${RECORD_TMP_DIR}/$(basename "${DOKAD}").part"
+    record_duration_sec=$(( secs_to_midnight + EXTRA_SECONDS_AFTER_MIDNIGHT ))
+    output_path="${OUTPUT_PREFIX}-$(date '+%Y.%m.%d__%H%M%S').mp3"
+    CURRENT_PART="${RECORD_TMP_DIR}/$(basename "${output_path}").part"
     rm -f "${CURRENT_PART}"
 
-    if run_ffmpeg_recording "${ACTIVE_STREAM_URL}" "${secs_nagrywania}" "${CURRENT_PART}"; then
-        if finalize_recording "${CURRENT_PART}" "${DOKAD}"; then
+    if run_ffmpeg_recording "${ACTIVE_STREAM_URL}" "${record_duration_sec}" "${CURRENT_PART}"; then
+        if finalize_recording "${CURRENT_PART}" "${output_path}"; then
             ((++segments_ok))
             consecutive_failures=0
         else
-            kod_powrotu=1
+            exit_code=1
             ((++segments_failed))
             ((++consecutive_failures))
         fi
     else
-        kod_powrotu=1
+        exit_code=1
         cleanup_partial_recording
-        log_line "$(date '+%Y.%m.%d__%H:%M:%S') WARNING: ffmpeg exited non-zero; retrying after ${opoznienie_miedzy_wywolaniami}"
+        log_line "$(date '+%Y.%m.%d__%H:%M:%S') WARNING: ffmpeg exited non-zero; retrying after ${RETRY_DELAY}"
         ((++segments_failed))
         ((++consecutive_failures))
     fi
@@ -346,19 +344,21 @@ while (( secs_to_midnight > ile_sek_przed_polnoca_nie_nagrywamy_juz )) && (( 10#
 
     secs_to_midnight=$(( $(date -d "tomorrow 00:00" +%s) - $(date +%s) ))
     log_line "3. $(date '+%Y.%m.%d__%H:%M:%S') (loop end) secs_to_midnight = ${secs_to_midnight}"
-    sleep "${opoznienie_miedzy_wywolaniami}"
-    aktualny_dzien=$(date '+%d')
-    log_line "4. $(date '+%Y.%m.%d__%H:%M:%S') dzien_wywolania = ${dzien_wywolania} , aktualny_dzien = ${aktualny_dzien}"
+    sleep "${RETRY_DELAY}"
+    current_day=$(date '+%d')
+    log_line "4. $(date '+%Y.%m.%d__%H:%M:%S') invocation_day = ${invocation_day} , current_day = ${current_day}"
 done
 
 if (( segments_ok > 0 )); then
-    kod_powrotu=0
+    exit_code=0
 elif (( segments_failed > 0 )); then
-    kod_powrotu=1
+    exit_code=1
 fi
 
 log_line "$(date '+%Y.%m.%d__%H:%M:%S') finished running $0"
 print_summary
 maybe_ping_healthcheck
+# kod_powrotu is the legacy exit-code variable from _script_header.sh
+kod_powrotu="${exit_code}"
 . /root/bin/_script_footer.sh
-exit "${kod_powrotu}"
+exit "${exit_code}"
