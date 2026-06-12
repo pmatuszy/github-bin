@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.06.12 - v. 0.9 - discover disks via fdisk (_smart_disk_discovery.sh); no disks message
 # 2026.04.21 - v. 0.8 - no "Press ENTER" after the last disk (still between disks when interactive)
 # 2026.04.21 - v. 0.7 - fix quit test typo (f"); redirect >/dev/null 2>&1; quote devices; grep -F for nvme; pass all CLI disks via "$@"
 # 2023.07.03 - v. 0.6 - bugfix: last_short_offline_test, last_extended_offline_test, last_conveyance_offline_test calculation
@@ -19,6 +20,7 @@
 # 2022.10.11 - v. 0.1 - initial release
 
 . /root/bin/_script_header.sh
+. /root/bin/_smart_disk_discovery.sh
 
 check_if_installed smartctl smartmontools
 
@@ -27,8 +29,15 @@ declare -a disk_array
 if [ $# -eq 0 ]; then
     echo ; echo ; echo "No arguments supplied, I will run the script against ALL disks found on this systems..."
     echo "searching for disks..."
-    mapfile -t disk_array < <(jd.sh 2>/dev/null | grep Disk | sed 's|:.*||g' | sed 's|Disk ||g' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
-    sleep 3
+    mapfile -t disk_array < <(discover_whole_disk_devices)
+    if ((${#disk_array[@]} == 0)); then
+        echo
+        echo "No whole-disk block devices found (same discovery as jd.sh: fdisk -l)."
+        echo "Try: smart-selftest-results.sh /dev/sda   or run jd.sh to list devices."
+        echo
+        . /root/bin/_script_footer.sh
+        exit 1
+    fi
 else
     disk_array=("$@")
 fi

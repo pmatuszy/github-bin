@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.06.12 - v. 2.1.19 - libfdk-aac prompt defaults to yes [Y/n/q]
 # 2026.06.12 - v. 2.1.18 - remove old version dirs (legacy ffmpeg-* directories); encoder probe fallback
 # 2026.06.12 - v. 2.1.17 - static install prompt shows planned version (e.g. 8.1.1)
 # 2026.06.11 - v. 2.1.16 - quit exits immediately (no old-version removal prompt); skip backup-* in old-version list
@@ -1278,6 +1279,13 @@ prompt_reply_is_quit() {
     esac
 }
 
+prompt_reply_is_no() {
+    case "${1}" in
+        n|N|no|NO) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
 ffmpeg_cmdline_is_ffmpeg_or_ffprobe() {
     local cmd="$1"
     [[ "$cmd" =~ ^ffmpeg([[:space:]]|$) || "$cmd" =~ ^ffprobe([[:space:]]|$) ]]
@@ -1954,19 +1962,22 @@ prompt_source_fdk_aac_if_max() {
         return 0
     fi
     if (( ASSUME_YES == 1 )); then
+        FFMPEG_SOURCE_WITH_FDK_AAC=1
         return 0
     fi
     echo
     echo "max profile: optional libfdk-aac (non-free license, best AAC quality)."
     echo ">>> Waiting for your answer:"
-    echo -n "Include libfdk-aac in this build? [y/N/q] "
+    echo -n "Include libfdk-aac in this build? [Y/n/q] "
     read -r -n 1 reply || reply=""
     echo
     if prompt_reply_is_quit "${reply}"; then
         echo "Quitting — no changes made."
         quit_prompt_with_optional_old_cleanup
     fi
-    if prompt_reply_is_yes "${reply}"; then
+    if prompt_reply_is_no "${reply}"; then
+        FFMPEG_SOURCE_WITH_FDK_AAC=0
+    else
         FFMPEG_SOURCE_WITH_FDK_AAC=1
     fi
 }
