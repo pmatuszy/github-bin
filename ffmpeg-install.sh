@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.06.12 - v. 2.1.17 - static install prompt shows planned version (e.g. 8.1.1)
 # 2026.06.11 - v. 2.1.16 - quit exits immediately (no old-version removal prompt); skip backup-* in old-version list
 # 2026.06.11 - v. 2.1.15 - ffprobe/ffplay version labels match ffmpeg; fix *-unknown; parse ffprobe/ffplay -version
 # 2026.06.11 - v. 2.1.14 - column-align installed binary path lines (tool / kind / path)
@@ -631,6 +632,22 @@ resolve_version_label_from_executable() {
     out="$(probe_tool_version_output "${exe}" || true)"
     [[ -n "${out}" ]] || return 1
     resolve_version_label_from_version_output "${out}" "${fallback}"
+}
+
+planned_static_install_version() {
+    if [[ -n "${FFMPEG_ORG_VERSION}" ]]; then
+        echo "${FFMPEG_ORG_VERSION}"
+        return 0
+    fi
+    if [[ -n "${REMOTE_BUILD_LABEL}" && "${REMOTE_BUILD_LABEL}" != "latest" ]]; then
+        echo "${REMOTE_BUILD_LABEL}"
+        return 0
+    fi
+    if [[ -n "${REMOTE_BUILD_DATE}" && "${REMOTE_BUILD_DATE}" != "unknown" ]]; then
+        echo "${REMOTE_BUILD_DATE}"
+        return 0
+    fi
+    return 1
 }
 
 label_from_executable() {
@@ -1642,7 +1659,7 @@ prompt_install_dynamic_fallback() {
 }
 
 prompt_install_plan() {
-    local installed="$1" installed_date="$2" reply=""
+    local installed="$1" installed_date="$2" reply="" static_version=""
 
     INSTALL_PLAN=""
 
@@ -1666,8 +1683,13 @@ prompt_install_plan() {
             echo "Proceeding with static install (--yes)."
             return 0
         fi
+        static_version="$(planned_static_install_version || true)"
         echo ">>> Waiting for your answer:"
-        echo -n "Install static ffmpeg build? [y/N/q] "
+        if [[ -n "${static_version}" ]]; then
+            echo -n "Install static ffmpeg build ${static_version}? [y/N/q] "
+        else
+            echo -n "Install static ffmpeg build? [y/N/q] "
+        fi
         read -r -n 1 reply || reply=""
         echo
         if prompt_reply_is_yes "${reply}"; then
