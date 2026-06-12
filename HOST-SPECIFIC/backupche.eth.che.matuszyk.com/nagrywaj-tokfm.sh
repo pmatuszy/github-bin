@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.06.11 - v. 1.13 - write .part files in output directory, not /tmp
 # 2026.06.11 - v. 1.12 - disk check uses /bin/df when df is a shell function
 # 2026.06.11 - v. 1.11 - remove kod_powrotu; use exit_code only
 # 2026.06.11 - v. 1.10 - translate remaining Polish changelog comments; drop legacy SKAD/DOKAD env names
@@ -30,7 +31,6 @@ STREAM_URL="${STREAM_URL:-http://poznan5-4.radio.pionier.net.pl:8000/tuba10-1.mp
 STREAM_URL_FALLBACK="${STREAM_URL_FALLBACK:-http://gdansk1-1.radio.pionier.net.pl:8000/pl/tuba10-1.mp3}"
 export OUTPUT_PREFIX="${OUTPUT_PREFIX:-/worek-samba/nagrania/TokFM-nagrania/tokFM}"
 OUTPUT_DIR="$(dirname -- "${OUTPUT_PREFIX}")"
-RECORD_TMP_DIR="${RECORD_TMP_DIR:-/tmp}"
 LOCK_FILE="${LOCK_FILE:-/tmp/nagrywaj-tokfm.lock}"
 
 FILE_OWNER="${FILE_OWNER:-che:che}"
@@ -258,7 +258,7 @@ print_summary() {
     log_line "Stream fallback:       ${STREAM_URL_FALLBACK:-<none>}"
     log_line "Stream used last:      ${ACTIVE_STREAM_URL:-<none>}"
     log_line "Output prefix:         ${OUTPUT_PREFIX}"
-    log_line "Temp record dir:       ${RECORD_TMP_DIR}"
+    log_line "Output directory:      ${OUTPUT_DIR}"
     log_line "Segments saved:        ${segments_ok}"
     log_line "Segments failed:       ${segments_failed}"
     log_line "Bytes recorded:        ${bytes_recorded_total}"
@@ -292,8 +292,8 @@ maybe_ping_healthcheck() {
 prune_old_logs
 acquire_lock
 
-mkdir -p "${OUTPUT_DIR}" "${RECORD_TMP_DIR}" || {
-    echo "ERROR: cannot create output/temp directories" | tee -a "${LOG_FILE}" >&2
+mkdir -p "${OUTPUT_DIR}" || {
+    echo "ERROR: cannot create output directory" | tee -a "${LOG_FILE}" >&2
     exit 1
 }
 
@@ -344,7 +344,7 @@ while (( secs_to_midnight > SECONDS_BEFORE_MIDNIGHT_STOP )) && (( 10#${invocatio
 
     record_duration_sec=$(( secs_to_midnight + EXTRA_SECONDS_AFTER_MIDNIGHT ))
     output_path="${OUTPUT_PREFIX}-$(date '+%Y.%m.%d__%H%M%S').mp3"
-    CURRENT_PART="${RECORD_TMP_DIR}/$(basename "${output_path}").part"
+    CURRENT_PART="${output_path}.part"
     rm -f "${CURRENT_PART}"
 
     if run_ffmpeg_recording "${ACTIVE_STREAM_URL}" "${record_duration_sec}" "${CURRENT_PART}"; then
