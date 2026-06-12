@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.06.11 - v. 1.11 - remove kod_powrotu; use exit_code only
 # 2026.06.11 - v. 1.10 - translate remaining Polish changelog comments; drop legacy SKAD/DOKAD env names
 # 2026.06.11 - v. 1.9 - rename Polish config/internal variables to English names
 # 2026.06.11 - v. 1.8 - flock, partial files, disk check, stream failover/probe, traps, summary
@@ -358,7 +359,5 @@ fi
 log_line "$(date '+%Y.%m.%d__%H:%M:%S') finished running $0"
 print_summary
 maybe_ping_healthcheck
-# kod_powrotu is the legacy exit-code variable from _script_header.sh
-kod_powrotu="${exit_code}"
 . /root/bin/_script_footer.sh
 exit "${exit_code}"
