@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.06.12 - v. 1.14 - partial files use .partial.mp3 (ffmpeg needs .mp3 extension); log ffmpeg stderr on failure
 # 2026.06.11 - v. 1.13 - write .part files in output directory, not /tmp
 # 2026.06.11 - v. 1.12 - disk check uses /bin/df when df is a shell function
 # 2026.06.11 - v. 1.11 - remove kod_powrotu; use exit_code only
@@ -202,6 +203,10 @@ file_size_bytes() {
     echo "${size}"
 }
 
+partial_output_path() {
+    printf '%s.partial.mp3' "${1%.mp3}"
+}
+
 finalize_recording() {
     local part_path="$1"
     local final_path="$2"
@@ -225,6 +230,7 @@ run_ffmpeg_recording() {
     local stream_url="$1"
     local duration_sec="$2"
     local part_path="$3"
+    local ffmpeg_stderr="" ffmpeg_rc=0
 
     local -a ffmpeg_cmd=(
         "${FFMPEG_BIN}"
@@ -236,14 +242,28 @@ run_ffmpeg_recording() {
         -map 0:a:0
         -c copy
         -fflags +genpts
+        -f mp3
         "${part_path}"
     )
 
     printf -v ffmpeg_cmd_line '%q ' "${ffmpeg_cmd[@]}"
     log_line "${ffmpeg_cmd_line}"
 
-    "${ffmpeg_cmd[@]}" 2>>"${LOG_FILE}"
-    return $?
+    ffmpeg_stderr="$(mktemp)"
+    "${ffmpeg_cmd[@]}" 2>"${ffmpeg_stderr}"
+    ffmpeg_rc=$?
+    if [[ -s "${ffmpeg_stderr}" ]]; then
+        cat "${ffmpeg_stderr}" >>"${LOG_FILE}"
+        if (( ffmpeg_rc != 0 )); then
+            log_line "ffmpeg stderr:"
+            while IFS= read -r line || [[ -n "${line}" ]]; do
+                [[ -z "${line}" ]] && continue
+                log_line "  ${line}"
+            done <"${ffmpeg_stderr}"
+        fi
+    fi
+    rm -f "${ffmpeg_stderr}"
+    return "${ffmpeg_rc}"
 }
 
 print_summary() {
@@ -344,7 +364,7 @@ while (( secs_to_midnight > SECONDS_BEFORE_MIDNIGHT_STOP )) && (( 10#${invocatio
 
     record_duration_sec=$(( secs_to_midnight + EXTRA_SECONDS_AFTER_MIDNIGHT ))
     output_path="${OUTPUT_PREFIX}-$(date '+%Y.%m.%d__%H%M%S').mp3"
-    CURRENT_PART="${output_path}.part"
+    CURRENT_PART="$(partial_output_path "${output_path}")"
     rm -f "${CURRENT_PART}"
 
     if run_ffmpeg_recording "${ACTIVE_STREAM_URL}" "${record_duration_sec}" "${CURRENT_PART}"; then
