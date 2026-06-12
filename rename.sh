@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.06.12 - v. 19.191.171500 - --date-placement front|original for BBC/iPlayer -date_ names (original: compact YYYYMMDD_HHMMSS in title, not at start)
 # 2026.06.12 - v. 19.190.163000 - thumbs.db prompt [O]: delete this file and auto-delete all other thumbs.db for the rest of the run
 # 2026.06.12 - v. 19.189.120000 - wrapped old→new: old and new paths start in the same column (line 2 indent = prefix width)
 # 2026.06.12 - v. 19.188.120000 - wrapped Renamed/old→new: arrow + new path on line 2, column-aligned under prefix
@@ -659,7 +660,9 @@ CLI_COLORS=""
 CLI_MODE=""
 CLI_SCOPE=""
 CLI_RESUME_STATE="resume"
+CLI_DATE_PLACEMENT=""
 CLI_DB_MAINTENANCE="full"
+DATE_PLACEMENT="${DATE_PLACEMENT:-front}"
 RUN_DB_MAINTENANCE=0
 PROMPT_WAIT_SECONDS=0
 MAP_R_ACUTE="${MAP_R_ACUTE:-c}"
@@ -715,7 +718,7 @@ debug_log() {
 
 usage() {
     cat <<'EOF'
-Usage: rename.sh [-v|--verbose] [--use-db] [--fast] [--force-recheck] [--run-db-maintenance] [--db-maintenance auto|[full]] [--colors [yes]|no] [--mode real|[dry-run]] [--scope subdirs|[current]] [--resume-state [resume]|ask|fresh] [--wait-seconds [0]|N] [--version] [-h|--help]
+Usage: rename.sh [-v|--verbose] [--use-db] [--fast] [--force-recheck] [--run-db-maintenance] [--db-maintenance auto|[full]] [--colors [yes]|no] [--mode real|[dry-run]] [--scope subdirs|[current]] [--date-placement front|[original]] [--resume-state [resume]|ask|fresh] [--wait-seconds [0]|N] [--version] [-h|--help]
 
 Options:
   -v, --verbose          Show extra diagnostic output
@@ -731,6 +734,10 @@ Options:
   --mode real|[dry-run]  Skip the startup mode question
   --scope subdirs|[current]
                          Skip the startup scope question
+  --date-placement front|[original]
+                         BBC/iPlayer-style names with -date_YYYY-MM-DD_HH_MM_SS:
+                         front = YYYYMMDD_HHMMSS_ at the start (default);
+                         original = compact YYYYMMDD_HHMMSS stays in the title (not moved to the front)
   --resume-state [resume]|ask|fresh
                          [resume]: automatically resume from checkpoint if it exists (default)
                          ask: if checkpoint exists, ask to resume or restart
@@ -757,6 +764,8 @@ Environment / tunables (read at startup; use export or prefix on the same line a
       export DEBUG_LOG_PATH=/tmp/rename-debug.log
   DEBUG_RUN_ID                        runId string inside each JSON log line.
       DEBUG_RUN_ID=batch1 rename.sh -v --use-db
+  DATE_PLACEMENT                      BBC/iPlayer -date_ handling: front (default) or original (same as --date-placement).
+      DATE_PLACEMENT=original rename.sh --use-db --scope subdirs ./_ogladam
   EXIFLOC                             Override exiftool path (same as RENAME_EXIFTOOL; zmien-nazwe script name)
       EXIFLOC=/opt/exiftool/exiftool rename.sh --scope current
   LARGE_HASHFILE_LINE_PROMPT_THRESHOLD  Checksum lists with more lines than this prompt before full check ([y/N/q]); default 20.
@@ -797,6 +806,7 @@ Environment / tunables (read at startup; use export or prefix on the same line a
       RENAME_EXIFTOOL=/opt/exiftool/exiftool rename.sh --scope current
   START_DIR                           Working tree root (default current directory). Use an absolute path.
       START_DIR=/data/photos rename.sh --use-db --scope subdirs
+  rename.sh --date-placement original --use-db --mode real --scope subdirs ./_ogladam
   TMPDIR                              Temp directory for SQLite bootstrap mktemp etc. (POSIX; default often /tmp).
       TMPDIR=/var/tmp rename.sh --use-db
   VERBOSE_LOG_BODY_WRAP_WIDTH         Max fold width for long [VERBOSE] bodies (default 96).
@@ -3088,6 +3098,14 @@ while (( $# > 0 )); do
             esac
             shift 2
             ;;
+        --date-placement)
+            [[ $# -ge 2 ]] || { echo "Missing value for --date-placement" >&2; usage >&2; exit 1; }
+            case "$2" in
+                front|original) CLI_DATE_PLACEMENT="$2" ;;
+                *) echo "Invalid value for --date-placement: $2 (use front or original)" >&2; usage >&2; exit 1 ;;
+            esac
+            shift 2
+            ;;
         --wait-seconds)
             [[ $# -ge 2 ]] || { echo "Missing value for --wait-seconds" >&2; usage >&2; exit 1; }
             [[ "$2" =~ ^[0-9]+$ ]] || { echo "Invalid value for --wait-seconds: $2 (use 0 or a positive integer)" >&2; usage >&2; exit 1; }
@@ -3112,6 +3130,17 @@ while (( $# > 0 )); do
 done
 
 rename_sh_window_title_apply_from_saved_argv
+
+if [[ -n "$CLI_DATE_PLACEMENT" ]]; then
+    DATE_PLACEMENT="$CLI_DATE_PLACEMENT"
+fi
+case "$DATE_PLACEMENT" in
+    front|original) ;;
+    *)
+        echo "Invalid DATE_PLACEMENT: $DATE_PLACEMENT (use front or original)" >&2
+        exit 1
+        ;;
+esac
 
 print_startup_banner
 
@@ -3273,6 +3302,7 @@ print_verbose_options_box() {
     lines+=("Colors         : ${color_text}")
     lines+=("Mode           : ${mode} - $( [[ "$mode" == "real" ]] && printf '%s' 'perform interactive real renames' || printf '%s' 'show planned changes only' )")
     lines+=("Scope          : ${scope_text}")
+    lines+=("Date placement : ${DATE_PLACEMENT} - $( [[ "$DATE_PLACEMENT" == original ]] && printf '%s' 'BBC/iPlayer -date_ compact stamp stays in title' || printf '%s' 'BBC/iPlayer -date_ stamp moved to front' )")
     lines+=("SQLite cache   : ${db_mode}")
     lines+=("DB maintenance : ${db_maintenance_text}")
     lines+=("Resume state   : ${CLI_RESUME_STATE} - checkpoint behavior after Ctrl-C")
@@ -6212,10 +6242,34 @@ _rename_signal_timestamp_first() {
     return 1
 }
 
-# BBC / iPlayer style: ...-date_YYYY-MM-DD_HH_MM_SS[_id].ext → YYYYMMDD_HHMMSS_... (before/after hyphen date compaction).
+# BBC / iPlayer style: ...-date_YYYY-MM-DD_HH_MM_SS[_id].ext
+# DATE_PLACEMENT=front (default) → YYYYMMDD_HHMMSS_title; original → title_YYYYMMDD_HHMMSS[_tail] (before/after hyphen date compaction).
+_rename_date_tag_place_output() {
+    local prefix="$1"
+    local tail="$2"
+    local ext="$3"
+    local ymd="$4"
+    local hhmmss="$5"
+
+    if [[ "$DATE_PLACEMENT" == original ]]; then
+        if [[ -n "$tail" ]]; then
+            printf '%s_%s_%s_%s%s' "$prefix" "$ymd" "$hhmmss" "$tail" "$ext"
+        else
+            printf '%s_%s_%s%s' "$prefix" "$ymd" "$hhmmss" "$ext"
+        fi
+        return 0
+    fi
+
+    if [[ -n "$tail" ]]; then
+        printf '%s_%s_%s%s' "$ymd" "$hhmmss" "${prefix}${tail}" "$ext"
+    else
+        printf '%s_%s_%s%s' "$ymd" "$hhmmss" "$prefix" "$ext"
+    fi
+}
+
 _rename_date_tag_timestamp_first() {
     local new="$1"
-    local prefix y m d hh mm ss tail ext ymd
+    local prefix y m d hh mm ss tail ext ymd ymd_out hhmmss_out
 
     [[ "$new" =~ ^[0-9]{8}_[0-9]{6}_ ]] && [[ "$new" != *-[Dd][Aa][Tt][Ee]_* ]] && return 1
 
@@ -6231,10 +6285,9 @@ _rename_date_tag_timestamp_first() {
         tail="${BASH_REMATCH[8]}"
         ext="${BASH_REMATCH[9]}"
         _rename_is_valid_ymd "$y" "$m" "$d" || return 1
-        printf '%04d%02d%02d_%02d%02d%02d_%s%s' \
-            "$((10#${y}))" "$((10#${m}))" "$((10#${d}))" \
-            "$((10#${hh}))" "$((10#${mm}))" "$((10#${ss}))" \
-            "${prefix}${tail}" "$ext"
+        ymd_out="$(printf '%04d%02d%02d' "$((10#${y}))" "$((10#${m}))" "$((10#${d}))")"
+        hhmmss_out="$(printf '%02d%02d%02d' "$((10#${hh}))" "$((10#${mm}))" "$((10#${ss}))")"
+        _rename_date_tag_place_output "$prefix" "$tail" "$ext" "$ymd_out" "$hhmmss_out"
         return 0
     fi
 
@@ -6249,10 +6302,9 @@ _rename_date_tag_timestamp_first() {
         ss="${BASH_REMATCH[7]}"
         ext="${BASH_REMATCH[8]}"
         _rename_is_valid_ymd "$y" "$m" "$d" || return 1
-        printf '%04d%02d%02d_%02d%02d%02d_%s%s' \
-            "$((10#${y}))" "$((10#${m}))" "$((10#${d}))" \
-            "$((10#${hh}))" "$((10#${mm}))" "$((10#${ss}))" \
-            "$prefix" "$ext"
+        ymd_out="$(printf '%04d%02d%02d' "$((10#${y}))" "$((10#${m}))" "$((10#${d}))")"
+        hhmmss_out="$(printf '%02d%02d%02d' "$((10#${hh}))" "$((10#${mm}))" "$((10#${ss}))")"
+        _rename_date_tag_place_output "$prefix" "" "$ext" "$ymd_out" "$hhmmss_out"
         return 0
     fi
 
@@ -6266,10 +6318,8 @@ _rename_date_tag_timestamp_first() {
         tail="${BASH_REMATCH[6]}"
         ext="${BASH_REMATCH[7]}"
         _rename_is_valid_ymd "${ymd:0:4}" "${ymd:4:2}" "${ymd:6:2}" || return 1
-        printf '%s_%02d%02d%02d_%s%s' \
-            "$ymd" \
-            "$((10#${hh}))" "$((10#${mm}))" "$((10#${ss}))" \
-            "${prefix}${tail}" "$ext"
+        hhmmss_out="$(printf '%02d%02d%02d' "$((10#${hh}))" "$((10#${mm}))" "$((10#${ss}))")"
+        _rename_date_tag_place_output "$prefix" "$tail" "$ext" "$ymd" "$hhmmss_out"
         return 0
     fi
 
@@ -6282,10 +6332,8 @@ _rename_date_tag_timestamp_first() {
         ss="${BASH_REMATCH[5]}"
         ext="${BASH_REMATCH[6]}"
         _rename_is_valid_ymd "${ymd:0:4}" "${ymd:4:2}" "${ymd:6:2}" || return 1
-        printf '%s_%02d%02d%02d_%s%s' \
-            "$ymd" \
-            "$((10#${hh}))" "$((10#${mm}))" "$((10#${ss}))" \
-            "$prefix" "$ext"
+        hhmmss_out="$(printf '%02d%02d%02d' "$((10#${hh}))" "$((10#${mm}))" "$((10#${ss}))")"
+        _rename_date_tag_place_output "$prefix" "" "$ext" "$ymd" "$hhmmss_out"
         return 0
     fi
 
@@ -9220,7 +9268,7 @@ save_resume_checkpoint() {
         done
     } | python3 - "$RESUME_STATE_FILE" "$tmp_renamed" \
         "$SCRIPT_VERSION" "$START_DIR" "$mode" "$process_scope" \
-        "$USE_DB" "$FAST_DB" "$FORCE_RECHECK" "$PROMPT_WAIT_SECONDS" \
+        "$USE_DB" "$FAST_DB" "$FORCE_RECHECK" "$PROMPT_WAIT_SECONDS" "$DATE_PLACEMENT" \
         "$files_examined" "$files_affected" "$files_skipped" "$FILES_HASHED" \
         "$SCRIPT_START_TIME" <<'PY'
 import json
@@ -9272,11 +9320,12 @@ payload = {
     "fastDb": int(sys.argv[8]),
     "forceRecheck": int(sys.argv[9]),
     "promptWaitSeconds": int(sys.argv[10]),
-    "filesExamined": int(sys.argv[11]),
-    "filesAffected": int(sys.argv[12]),
-    "filesSkipped": int(sys.argv[13]),
-    "filesHashed": int(sys.argv[14]),
-    "scriptStartTime": sys.argv[15],
+    "datePlacement": sys.argv[11],
+    "filesExamined": int(sys.argv[12]),
+    "filesAffected": int(sys.argv[13]),
+    "filesSkipped": int(sys.argv[14]),
+    "filesHashed": int(sys.argv[15]),
+    "scriptStartTime": sys.argv[16],
     "processed": processed_list,
     "renamedList": renamed_list,
 }
@@ -9318,7 +9367,7 @@ load_resume_checkpoint() {
     tmp_processed="$(mktemp)"
     tmp_renamed="$(mktemp)"
     verbose_status_timestamp "Loading resume checkpoint metadata from: $RESUME_STATE_FILE"
-    if ! meta="$(python3 - "$RESUME_STATE_FILE" "$tmp_processed" "$tmp_renamed" "$START_DIR" "$mode" "$process_scope" "$USE_DB" "$FAST_DB" "$FORCE_RECHECK" "$PROMPT_WAIT_SECONDS" <<'PY'
+    if ! meta="$(python3 - "$RESUME_STATE_FILE" "$tmp_processed" "$tmp_renamed" "$START_DIR" "$mode" "$process_scope" "$USE_DB" "$FAST_DB" "$FORCE_RECHECK" "$PROMPT_WAIT_SECONDS" "$DATE_PLACEMENT" <<'PY'
 import json
 import pathlib
 import sys
@@ -9349,6 +9398,10 @@ for key, expected in numeric_checks:
     if int(data.get(key, -1)) != expected:
         print(f"mismatch:{key}")
         sys.exit(2)
+
+if str(data.get("datePlacement", "front")) != sys.argv[11]:
+    print("mismatch:datePlacement")
+    sys.exit(2)
 
 processed = data.get("processed", [])
 renamed = data.get("renamedList", [])
@@ -10113,6 +10166,7 @@ print_summary() {
     echo "Colors enabled:        $use_colors"
     echo "Verbose:               $VERBOSE"
     echo "Scope:                 $process_scope"
+    echo "Date placement:        $DATE_PLACEMENT"
     echo "Entries examined:      $files_examined"
     echo "Files processed:       $files_examined"
     echo "Files hashed:          $FILES_HASHED"
