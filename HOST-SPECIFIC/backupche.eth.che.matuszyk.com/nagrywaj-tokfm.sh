@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.06.11 - v. 1.8 - flock, partial files, disk check, stream failover/probe, traps, summary
 # 2026.06.11 - v. 1.7 - -c copy / -t after -i (input -c treats copy as decoder); reconnect for live HTTP
 # 2026.06.11 - v. 1.6 - -c copy: official static ffmpeg 8.x has no mp3 encoder (stream is already mp3)
 # 2026.06.11 - v. 1.5 - bugfix: FFMPEG_BIN lost when print_ffmpeg_in_use was piped to tee (subshell + nounset)
@@ -21,18 +22,75 @@
 
 . /root/bin/_script_header.sh --no_startup_delay
 
-# SKAD="http://gdansk1-1.radio.pionier.net.pl:8000/pl/tuba10-1.mp3"
-SKAD="http://poznan5-4.radio.pionier.net.pl:8000/tuba10-1.mp3"
-export DOKAD_PREFIX="/worek-samba/nagrania/TokFM-nagrania/tokFM"
+SKAD="${SKAD:-http://poznan5-4.radio.pionier.net.pl:8000/tuba10-1.mp3}"
+SKAD_FALLBACK="${SKAD_FALLBACK:-http://gdansk1-1.radio.pionier.net.pl:8000/pl/tuba10-1.mp3}"
+export DOKAD_PREFIX="${DOKAD_PREFIX:-/worek-samba/nagrania/TokFM-nagrania/tokFM}"
 DOKAD_DIR="$(dirname -- "${DOKAD_PREFIX}")"
+RECORD_TMP_DIR="${RECORD_TMP_DIR:-/tmp}"
+LOCK_FILE="${LOCK_FILE:-/tmp/nagrywaj-tokfm.lock}"
 
-wlasciciel_pliku="che:che"
-opoznienie_miedzy_wywolaniami=60s
-ile_wiecej_sek_nagrywac=120
-ile_sek_przed_polnoca_nie_nagrywamy_juz=10
+wlasciciel_pliku="${FILE_OWNER:-che:che}"
+opoznienie_miedzy_wywolaniami="${RETRY_DELAY:-60s}"
+ile_wiecej_sek_nagrywac="${EXTRA_SECONDS_AFTER_MIDNIGHT:-120}"
+ile_sek_przed_polnoca_nie_nagrywamy_juz="${SECONDS_BEFORE_MIDNIGHT_STOP:-10}"
+
+MIN_FREE_KB="${MIN_FREE_KB:-1048576}"
+MIN_SUCCESS_BYTES="${MIN_SUCCESS_BYTES:-65536}"
+MAX_CONSECUTIVE_FAILURES="${MAX_CONSECUTIVE_FAILURES:-10}"
+LOG_RETENTION_DAYS="${LOG_RETENTION_DAYS:-14}"
+STREAM_PROBE_TIMEOUT="${STREAM_PROBE_TIMEOUT:-15}"
+HTTP_TIMEOUT_US="${HTTP_TIMEOUT_US:-15000000}"
 
 log_file="/tmp/$(basename "$0")_$(date '+%Y.%m.%d__%H%M%S').log"
 FFMPEG_BIN="${FFMPEG_BIN:-}"
+SCRIPT_START_TIME="$(date '+%Y-%m-%d %H:%M:%S')"
+
+segments_ok=0
+segments_failed=0
+consecutive_failures=0
+bytes_recorded_total=0
+kod_powrotu=0
+CURRENT_PART=""
+ACTIVE_STREAM_URL=""
+LOCK_FD=9
+
+log_line() {
+    echo "$1" | tee -a "${log_file}"
+}
+
+log_line_only() {
+    echo "$1" >> "${log_file}"
+}
+
+cleanup_partial_recording() {
+    if [[ -n "${CURRENT_PART:-}" && -f "${CURRENT_PART}" ]]; then
+        log_line "$(date '+%Y.%m.%d__%H:%M:%S') removing incomplete partial file ${CURRENT_PART}"
+        rm -f "${CURRENT_PART}"
+    fi
+    CURRENT_PART=""
+}
+
+cleanup_on_signal() {
+    log_line "$(date '+%Y.%m.%d__%H:%M:%S') received signal, stopping (partial recording discarded)"
+    cleanup_partial_recording
+    kod_powrotu=130
+    print_summary
+    exit "${kod_powrotu}"
+}
+
+trap cleanup_on_signal INT TERM
+
+prune_old_logs() {
+    find /tmp -maxdepth 1 -name "$(basename "$0")_*.log" -mtime +"${LOG_RETENTION_DAYS}" -delete 2>/dev/null || true
+}
+
+acquire_lock() {
+    exec {LOCK_FD}>"${LOCK_FILE}"
+    if ! flock -n "${LOCK_FD}"; then
+        echo "Another instance is already running (lock: ${LOCK_FILE}). Exiting."
+        exit 0
+    fi
+}
 
 resolve_ffmpeg_bin() {
     local candidate=""
@@ -60,14 +118,156 @@ print_ffmpeg_in_use() {
     FFMPEG_BIN="${ffmpeg_bin}"
     resolved="$(readlink -f "${ffmpeg_bin}" 2>/dev/null || echo "${ffmpeg_bin}")"
     version_line="$("${ffmpeg_bin}" -hide_banner -version 2>/dev/null | head -n1)"
-    echo "ffmpeg in use: ${resolved}"
-    echo "  ${version_line}"
-    echo "ffmpeg in use: ${resolved}" >> "${log_file}"
-    echo "  ${version_line}" >> "${log_file}"
+    log_line "ffmpeg in use: ${resolved}"
+    log_line "  ${version_line}"
 }
 
-mkdir -p "${DOKAD_DIR}" || {
-    echo "ERROR: cannot create output directory ${DOKAD_DIR}" | tee -a "${log_file}" >&2
+check_disk_space() {
+    local target_dir="$1"
+    local avail_kb=""
+
+    avail_kb="$(df -Pk "${target_dir}" 2>/dev/null | awk 'NR==2 {print $4}')"
+    if [[ -z "${avail_kb}" || ! "${avail_kb}" =~ ^[0-9]+$ ]]; then
+        log_line "ERROR: cannot determine free disk space for ${target_dir}"
+        return 1
+    fi
+    if (( avail_kb < MIN_FREE_KB )); then
+        log_line "ERROR: low disk space on ${target_dir}: ${avail_kb} KiB free, need at least ${MIN_FREE_KB} KiB"
+        return 1
+    fi
+    log_line "disk space OK on ${target_dir}: ${avail_kb} KiB free (minimum ${MIN_FREE_KB} KiB)"
+    return 0
+}
+
+probe_stream_url() {
+    local url="$1"
+
+    if command -v curl >/dev/null 2>&1; then
+        curl -fsS --max-time "${STREAM_PROBE_TIMEOUT}" -I "${url}" >/dev/null 2>&1 && return 0
+    fi
+    if [[ -n "${FFMPEG_BIN:-}" && -x "${FFMPEG_BIN}" ]]; then
+        "${FFMPEG_BIN}" -hide_banner -loglevel error -nostdin \
+            -timeout "${HTTP_TIMEOUT_US}" -rw_timeout "${HTTP_TIMEOUT_US}" \
+            -i "${url}" -t 1 -f null - >/dev/null 2>&1 && return 0
+    fi
+    return 1
+}
+
+resolve_stream_url() {
+    local url=""
+
+    for url in "${SKAD}" "${SKAD_FALLBACK}"; do
+        [[ -z "${url}" ]] && continue
+        if probe_stream_url "${url}"; then
+            echo "${url}"
+            return 0
+        fi
+        log_line "$(date '+%Y.%m.%d__%H:%M:%S') stream probe failed: ${url}"
+    done
+    return 1
+}
+
+file_size_bytes() {
+    local path="$1"
+    local size=""
+
+    size="$(stat -c '%s' "${path}" 2>/dev/null || echo 0)"
+    [[ "${size}" =~ ^[0-9]+$ ]] || size=0
+    echo "${size}"
+}
+
+finalize_recording() {
+    local part_path="$1"
+    local final_path="$2"
+    local part_size=0
+
+    part_size="$(file_size_bytes "${part_path}")"
+    if (( part_size < MIN_SUCCESS_BYTES )); then
+        log_line "$(date '+%Y.%m.%d__%H:%M:%S') recording too small (${part_size} bytes < ${MIN_SUCCESS_BYTES}), discarding ${part_path}"
+        rm -f "${part_path}"
+        return 1
+    fi
+
+    mv -f "${part_path}" "${final_path}"
+    chown "${wlasciciel_pliku}" "${final_path}" 2>/dev/null || true
+    log_line "$(date '+%Y.%m.%d__%H:%M:%S') saved ${final_path} (${part_size} bytes)"
+    bytes_recorded_total=$(( bytes_recorded_total + part_size ))
+    return 0
+}
+
+run_ffmpeg_recording() {
+    local stream_url="$1"
+    local duration_sec="$2"
+    local part_path="$3"
+
+    local -a ffmpeg_cmd=(
+        "${FFMPEG_BIN}"
+        -hide_banner -loglevel error -nostdin -y
+        -reconnect 1 -reconnect_streamed 1 -reconnect_at_eof 1 -reconnect_delay_max 5
+        -timeout "${HTTP_TIMEOUT_US}" -rw_timeout "${HTTP_TIMEOUT_US}"
+        -i "${stream_url}"
+        -t "${duration_sec}"
+        -map 0:a:0
+        -c copy
+        -fflags +genpts
+        "${part_path}"
+    )
+
+    printf -v ffmpeg_cmd_line '%q ' "${ffmpeg_cmd[@]}"
+    log_line "${ffmpeg_cmd_line}"
+
+    "${ffmpeg_cmd[@]}" 2>>"${log_file}"
+    return $?
+}
+
+print_summary() {
+    local script_end_time=""
+
+    script_end_time="$(date '+%Y-%m-%d %H:%M:%S')"
+    log_line ""
+    log_line "========= SUMMARY ========="
+    log_line "Script start time:     ${SCRIPT_START_TIME}"
+    log_line "Script finish time:    ${script_end_time}"
+    log_line "Stream primary:        ${SKAD}"
+    log_line "Stream fallback:       ${SKAD_FALLBACK:-<none>}"
+    log_line "Stream used last:      ${ACTIVE_STREAM_URL:-<none>}"
+    log_line "Output prefix:         ${DOKAD_PREFIX}"
+    log_line "Temp record dir:       ${RECORD_TMP_DIR}"
+    log_line "Segments saved:        ${segments_ok}"
+    log_line "Segments failed:       ${segments_failed}"
+    log_line "Bytes recorded:        ${bytes_recorded_total}"
+    log_line "Consecutive failures:  ${consecutive_failures}"
+    log_line "Exit code:             ${kod_powrotu}"
+    log_line "Log file:              ${log_file}"
+    log_line "Day boundary note:     loop stops when day-of-month changes; last segment may run ${ile_wiecej_sek_nagrywac}s past midnight"
+    log_line "==========================="
+}
+
+maybe_ping_healthcheck() {
+    local hc_url="" hc_message=""
+
+    [[ -f "${HEALTHCHECKS_FILE:-}" ]] || return 0
+    hc_url="$(grep -m1 "^$(basename "$0")" "${HEALTHCHECKS_FILE}" | awk '{print $2}')"
+    [[ -n "${hc_url}" ]] || return 0
+
+    hc_message=$(
+        echo "script name: $0"
+        echo "current date: $(date '+%Y.%m.%d %H:%M')"
+        grep -E -m1 '^# *[0-9]{4}\.[0-9]{2}\.[0-9]{2}' "$0" | awk '{print "script version: " $5 " (dated "$2")"}'
+        echo "segments saved: ${segments_ok}"
+        echo "segments failed: ${segments_failed}"
+        echo "bytes recorded: ${bytes_recorded_total}"
+        echo "exit code: ${kod_powrotu}"
+    )
+    echo "${hc_message}" | /usr/bin/curl -fsS -m 100 --retry 3 --retry-delay 5 \
+        --data-binary @- -o /dev/null "${hc_url}/${kod_powrotu}" 2>/dev/null || true
+}
+
+prune_old_logs
+acquire_lock
+
+mkdir -p "${DOKAD_DIR}" "${RECORD_TMP_DIR}" || {
+    echo "ERROR: cannot create output/temp directories" | tee -a "${log_file}" >&2
     exit 1
 }
 
@@ -78,36 +278,87 @@ print_ffmpeg_in_use
 dzien_wywolania=$(date '+%d')
 aktualny_dzien=${dzien_wywolania}
 
-echo "0. $(date '+%Y.%m.%d__%H:%M:%S') dzien_wywolania = ${dzien_wywolania} , aktualny_dzien = ${aktualny_dzien}" | tee -a "${log_file}"
+log_line "0. $(date '+%Y.%m.%d__%H:%M:%S') dzien_wywolania = ${dzien_wywolania} , aktualny_dzien = ${aktualny_dzien}"
 
 secs_to_midnight=$(( $(date -d "tomorrow 00:00" +%s) - $(date +%s) ))
-echo "1. $(date '+%Y.%m.%d__%H:%M:%S') secs_to_midnight = ${secs_to_midnight}" | tee -a "${log_file}"
+log_line "1. $(date '+%Y.%m.%d__%H:%M:%S') secs_to_midnight = ${secs_to_midnight}"
 
 while (( secs_to_midnight > ile_sek_przed_polnoca_nie_nagrywamy_juz )) && (( 10#${dzien_wywolania} == 10#${aktualny_dzien} )); do
     # 10# forces day-of-month as decimal (08 would otherwise be invalid octal in arithmetic)
-    echo "2. $(date '+%Y.%m.%d__%H:%M:%S') (loop start) secs_to_midnight = ${secs_to_midnight}" | tee -a "${log_file}"
-    echo "2. $(date '+%Y.%m.%d__%H:%M:%S') dzien_wywolania = ${dzien_wywolania} , aktualny_dzien = ${aktualny_dzien}" | tee -a "${log_file}"
+    log_line "2. $(date '+%Y.%m.%d__%H:%M:%S') (loop start) secs_to_midnight = ${secs_to_midnight}"
+    log_line "2. $(date '+%Y.%m.%d__%H:%M:%S') dzien_wywolania = ${dzien_wywolania} , aktualny_dzien = ${aktualny_dzien}"
+
+    if ! check_disk_space "${DOKAD_DIR}"; then
+        kod_powrotu=1
+        ((++segments_failed))
+        ((++consecutive_failures))
+        if (( consecutive_failures >= MAX_CONSECUTIVE_FAILURES )); then
+            log_line "ERROR: reached ${MAX_CONSECUTIVE_FAILURES} consecutive failures, stopping"
+            break
+        fi
+        sleep "${opoznienie_miedzy_wywolaniami}"
+        aktualny_dzien=$(date '+%d')
+        continue
+    fi
+
+    ACTIVE_STREAM_URL="$(resolve_stream_url)" || {
+        log_line "$(date '+%Y.%m.%d__%H:%M:%S') ERROR: no stream URL reachable (primary and fallback failed)"
+        kod_powrotu=1
+        ((++segments_failed))
+        ((++consecutive_failures))
+        if (( consecutive_failures >= MAX_CONSECUTIVE_FAILURES )); then
+            log_line "ERROR: reached ${MAX_CONSECUTIVE_FAILURES} consecutive failures, stopping"
+            break
+        fi
+        sleep "${opoznienie_miedzy_wywolaniami}"
+        aktualny_dzien=$(date '+%d')
+        continue
+    }
+    log_line "$(date '+%Y.%m.%d__%H:%M:%S') using stream ${ACTIVE_STREAM_URL}"
 
     secs_nagrywania=$(( secs_to_midnight + ile_wiecej_sek_nagrywac ))
     DOKAD="${DOKAD_PREFIX}-$(date '+%Y.%m.%d__%H%M%S').mp3"
-    echo "${FFMPEG_BIN} -hide_banner -loglevel error -nostdin -reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5 -i \"${SKAD}\" -t ${secs_nagrywania} -c copy \"${DOKAD}\"" | tee -a "${log_file}"
-    "${FFMPEG_BIN}" -hide_banner -loglevel error -nostdin \
-        -reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5 \
-        -i "${SKAD}" -t "${secs_nagrywania}" -c copy "${DOKAD}" 2>>"${log_file}"
+    CURRENT_PART="${RECORD_TMP_DIR}/$(basename "${DOKAD}").part"
+    rm -f "${CURRENT_PART}"
 
-    kod_powrotu=$?
-    chown "${wlasciciel_pliku}" "${DOKAD}" 2>/dev/null
-    echo "$(date '+%Y.%m.%d__%H:%M:%S') exit code is ${kod_powrotu}" | tee -a "${log_file}"
-    if (( kod_powrotu != 0 )); then
-        echo "$(date '+%Y.%m.%d__%H:%M:%S') WARNING: ffmpeg exited non-zero; retrying after ${opoznienie_miedzy_wywolaniami}" | tee -a "${log_file}" >&2
+    if run_ffmpeg_recording "${ACTIVE_STREAM_URL}" "${secs_nagrywania}" "${CURRENT_PART}"; then
+        if finalize_recording "${CURRENT_PART}" "${DOKAD}"; then
+            ((++segments_ok))
+            consecutive_failures=0
+        else
+            kod_powrotu=1
+            ((++segments_failed))
+            ((++consecutive_failures))
+        fi
+    else
+        kod_powrotu=1
+        cleanup_partial_recording
+        log_line "$(date '+%Y.%m.%d__%H:%M:%S') WARNING: ffmpeg exited non-zero; retrying after ${opoznienie_miedzy_wywolaniami}"
+        ((++segments_failed))
+        ((++consecutive_failures))
+    fi
+    CURRENT_PART=""
+
+    if (( consecutive_failures >= MAX_CONSECUTIVE_FAILURES )); then
+        log_line "ERROR: reached ${MAX_CONSECUTIVE_FAILURES} consecutive failures, stopping"
+        break
     fi
 
     secs_to_midnight=$(( $(date -d "tomorrow 00:00" +%s) - $(date +%s) ))
-    echo "3. $(date '+%Y.%m.%d__%H:%M:%S') (loop end) secs_to_midnight = ${secs_to_midnight}" | tee -a "${log_file}"
+    log_line "3. $(date '+%Y.%m.%d__%H:%M:%S') (loop end) secs_to_midnight = ${secs_to_midnight}"
     sleep "${opoznienie_miedzy_wywolaniami}"
     aktualny_dzien=$(date '+%d')
-    echo "4. $(date '+%Y.%m.%d__%H:%M:%S') dzien_wywolania = ${dzien_wywolania} , aktualny_dzien = ${aktualny_dzien}" | tee -a "${log_file}"
+    log_line "4. $(date '+%Y.%m.%d__%H:%M:%S') dzien_wywolania = ${dzien_wywolania} , aktualny_dzien = ${aktualny_dzien}"
 done
 
-echo "$(date '+%Y.%m.%d__%H:%M:%S') finished running $0" | tee -a "${log_file}"
+if (( segments_ok > 0 )); then
+    kod_powrotu=0
+elif (( segments_failed > 0 )); then
+    kod_powrotu=1
+fi
+
+log_line "$(date '+%Y.%m.%d__%H:%M:%S') finished running $0"
+print_summary
+maybe_ping_healthcheck
 . /root/bin/_script_footer.sh
+exit "${kod_powrotu}"
