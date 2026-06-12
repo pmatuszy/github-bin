@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.06.12 - v. 2.1.18 - remove old version dirs (legacy ffmpeg-* directories); encoder probe fallback
 # 2026.06.12 - v. 2.1.17 - static install prompt shows planned version (e.g. 8.1.1)
 # 2026.06.11 - v. 2.1.16 - quit exits immediately (no old-version removal prompt); skip backup-* in old-version list
 # 2026.06.11 - v. 2.1.15 - ffprobe/ffplay version labels match ffmpeg; fix *-unknown; parse ffprobe/ffplay -version
@@ -854,6 +855,28 @@ move_path_aside() {
     mv -v "${path}" "${aside}"
 }
 
+remove_versioned_tool_path() {
+    local path="$1"
+
+    [[ -n "${path}" && -e "${path}" ]] || return 0
+    if [[ -d "${path}" && ! -L "${path}" ]]; then
+        log_note "Removing directory ${path}"
+        rm -rf -- "${path}"
+        return 0
+    fi
+    rm -f -- "${path}"
+}
+
+remove_versioned_ffmpeg_set() {
+    local label="$1"
+    local tool="" path=""
+
+    for tool in ffmpeg ffprobe ffplay; do
+        path="${BIN_DIR}/${tool}-${label}"
+        remove_versioned_tool_path "${path}"
+    done
+}
+
 parse_ffmpeg_semver_from_version_output() {
     local text="$1"
     if [[ "${text}" =~ ff(mpeg|probe|play)[[:space:]]+version[[:space:]]+([0-9]+(\.[0-9]+)+) ]]; then
@@ -1572,7 +1595,7 @@ prompt_remove_old_ffmpeg_installs() {
         echo
         if prompt_reply_is_yes "${reply}"; then
             log_step "Removing ffmpeg-${label}, ffprobe-${label}, ffplay-${label}"
-            rm -f "${vffmpeg}" "${vffprobe}" "${vffplay}"
+            remove_versioned_ffmpeg_set "${label}"
         elif prompt_reply_is_quit "${reply}"; then
             log_note "Quitting — keeping remaining old versions."
             return 0
@@ -2316,25 +2339,32 @@ ffmpeg_source_configure_args() {
     printf '%s\n' "${args[@]}"
 }
 
+source_build_encoder_is_available() {
+    local ffmpeg_exe="$1" encoder="$2"
+
+    "${ffmpeg_exe}" -hide_banner -h "encoder=${encoder}" >/dev/null 2>&1
+}
+
 print_source_build_encoder_check() {
     local ffmpeg_exe="$1"
-    local line="" found=0 pattern=""
+    local line="" found=0 pattern="" encoder="" encoders=()
 
     [[ -n "${ffmpeg_exe}" && -x "${ffmpeg_exe}" ]] || return 0
 
     case "${SOURCE_PROFILE}" in
-        min) pattern='libmp3lame|libx264|libopus' ;;
+        min) encoders=( libmp3lame libx264 libopus ) ;;
         max)
             if (( FFMPEG_SOURCE_HAS_FDK_AAC == 1 )); then
-                pattern='libmp3lame|libx264|libfdk_aac|libaom|libsvtav1'
+                encoders=( libmp3lame libx264 libfdk_aac libaom libsvtav1 )
             else
-                pattern='libmp3lame|libx264|libopus|libaom|libsvtav1|libtwolame'
+                encoders=( libmp3lame libx264 libopus libaom libsvtav1 libtwolame )
             fi
             ;;
-        gpu) pattern='libmp3lame|libx264|h264_vaapi|hevc_vaapi' ;;
-        nvidia) pattern='libmp3lame|libx264|h264_nvenc|hevc_nvenc' ;;
-        *) pattern='libmp3lame|libx264|libopus|libaom|libsvtav1|libtwolame' ;;
+        gpu) encoders=( libmp3lame libx264 h264_vaapi hevc_vaapi ) ;;
+        nvidia) encoders=( libmp3lame libx264 h264_nvenc hevc_nvenc ) ;;
+        *) encoders=( libmp3lame libx264 libopus libaom libsvtav1 libtwolame ) ;;
     esac
+    pattern="$(IFS='|'; echo "${encoders[*]}")"
 
     echo
     echo "Sample encoders in built ffmpeg (profile: ${SOURCE_PROFILE}):"
@@ -2342,7 +2372,15 @@ print_source_build_encoder_check() {
         [[ -n "${line}" ]] || continue
         echo "  ${line}"
         found=1
-    done < <("${ffmpeg_exe}" -hide_banner -encoders 2>/dev/null | grep -E "${pattern}" || true)
+    done < <("${ffmpeg_exe}" -hide_banner -encoders 2>&1 | grep -E "${pattern}" || true)
+    if (( found == 0 )); then
+        for encoder in "${encoders[@]}"; do
+            if source_build_encoder_is_available "${ffmpeg_exe}" "${encoder}"; then
+                echo "  ${encoder} (via -h encoder=${encoder})"
+                found=1
+            fi
+        done
+    fi
     if (( found == 0 )); then
         echo "  WARNING: expected encoders not found (check configure log)." >&2
     fi
