@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.06.11 - v. 0.3 - show time only (no date) in figlet display
 # 2026.04.21 - v. 0.2 - require procps-ng GNU watch (-w/--no-wrap; sub-second -n); document intent
 # 2023.01.16 - v. 0.1 - initial release
 
@@ -21,6 +22,6 @@ require_gnu_watch() {
 require_gnu_watch
 
 sleep 2
-watch -w -t -n0.1 "date '+%Y.%m.%d %H:%M:%S' | figlet -w 140 -f big"
+watch -w -t -n0.1 "date '+%H:%M:%S' | figlet -w 140 -f big"
 
 . /root/bin/_script_footer.sh
