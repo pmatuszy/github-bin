@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.06.13 - v. 19.195.231500 - GoPro Mission 1 rename labels: GoPro_Mission1_Pro (not GOPRO_MISSION1PRO)
 # 2026.06.13 - v. 19.194.224800 - GoPro Mission 1: GP######.JPG, firmware H26, Camera Model Name fallback
 # 2026.06.12 - v. 19.193.190000 - after rename, update matching paths in _exclude-rename.sh.txt and print EXCLUDE FILE UPDATED lines
 # 2026.06.12 - v. 19.192.180000 - help (-h): prompt to show environment tunables [y/N] default N, 5s timeout
@@ -6955,7 +6956,13 @@ gopro_camera_raw_jpg_basename_matches() {
     return 1
 }
 
-# When firmware prefix is unknown, use Camera Model Name (e.g. MISSION 1 PRO -> GOPRO / MISSION1PRO).
+# GoPro Mission 1 (and MISSION 1 PRO metadata): readable GoPro_Mission1_Pro segment in output names.
+gopro_set_mission1_pro_labels() {
+    DeviceManufacturer=GoPro
+    DeviceModelName=Mission1_Pro
+}
+
+# When firmware prefix is unknown, use Camera Model Name (e.g. MISSION 1 PRO -> GoPro / Mission1_Pro).
 gopro_apply_camera_model_name_from_exif() {
     local exif="$1"
     local raw norm
@@ -6963,6 +6970,12 @@ gopro_apply_camera_model_name_from_exif() {
     raw="$(printf '%s\n' "$exif" | grep 'Camera Model Name' | head -n 1 | sed 's/Camera Model Name[[:space:]]*: //' | tr -d $'\r\n')"
     [[ -n "$raw" ]] || return 1
     norm="$(printf '%s' "$raw" | tr '[:lower:]' '[:upper:]' | tr -d ' ')"
+    case "$norm" in
+        MISSION1PRO|MISSION1)
+            gopro_set_mission1_pro_labels
+            return 0
+            ;;
+    esac
     [[ -n "$norm" ]] || return 1
     DeviceManufacturer=GOPRO
     DeviceModelName="$norm"
@@ -7502,7 +7515,7 @@ transform_gopro_camera_basename() {
             HD7) DeviceManufacturer=GOPRO7; DeviceModelName=BLACK ;;
             H21) DeviceManufacturer=GOPRO10; DeviceModelName=BLACK ;;
             H23) DeviceManufacturer=GOPRO12; DeviceModelName=BLACK ;;
-            H26) DeviceManufacturer=GOPRO; DeviceModelName=MISSION1PRO ;;
+            H26) gopro_set_mission1_pro_labels ;;
         esac
         if [[ "$DeviceManufacturer" == xxx ]]; then
             gopro_apply_camera_model_name_from_exif "$exif" || true
