@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# 2026.06.12 - v. 19.193.190000 - after rename, update matching paths in _exclude-rename.sh.txt and print EXCLUDE FILE UPDATED lines
+# 2026.06.12 - v. 19.192.180000 - help (-h): prompt to show environment tunables [y/N] default N, 5s timeout
 # 2026.06.12 - v. 19.191.171500 - --date-placement front|original for BBC/iPlayer -date_ names (original: compact YYYYMMDD_HHMMSS in title, not at start)
 # 2026.06.12 - v. 19.190.163000 - thumbs.db prompt [O]: delete this file and auto-delete all other thumbs.db for the rest of the run
 # 2026.06.12 - v. 19.189.120000 - wrapped old→new: old and new paths start in the same column (line 2 indent = prefix width)
@@ -743,13 +745,14 @@ Options:
                          ask: if checkpoint exists, ask to resume or restart
                          fresh: always start from beginning
   --wait-seconds [0]|N   Wait N seconds for each interactive answer; 0 means wait forever
-  -h, --help             Show this help
+  -h, --help             Show this help (offers to list environment tunables)
 
 Optional exclude file in the start directory: _exclude-rename.sh.txt
   FILE=basename or FILE=wildcard — skip renaming that filename in every subdirectory (files and directories; not path-specific).
   SUBTREE=dir — skip that directory and every path under it (prompt [B] on a file uses the directory where that file lives).
   FLATTEN_EXACT=dir — skip flatten prompts for matching directories (prompt [E] uses exact path; [C] may use globs or /fragment/).
   [F] at the rename prompt appends FILE=<basename> for the current path (file or directory). At the checksum-group prompt, [F] uses the list file's basename. [C] lets you type any custom filter line (FILE=, SUBTREE=, =path, globs). See also /basename/.
+  When a renamed path appears in this file (=path, SUBTREE=, FLATTEN_EXACT=, or a bare path line), the entry is rewritten to the new path automatically.
   thumbs.db / torrent .URL: if the suggested path equals the current path, you still get a prompt so you can delete the file ([K] / [O] all thumbs.db this run / [T]); there is no rename to apply.
 
 Example:
@@ -758,6 +761,12 @@ Example:
   rename.sh --use-db --db-maintenance full
   rename.sh --run-db-maintenance --db-maintenance auto
   rename.sh --resume-state ask --use-db --mode real --scope subdirs
+  rename.sh --date-placement original --use-db --mode real --scope subdirs ./_ogladam
+EOF
+}
+
+usage_environment_tunables() {
+    cat <<'EOF'
 
 Environment / tunables (read at startup; use export or prefix on the same line as rename.sh):
   DEBUG_LOG_PATH                      JSON debug log file (default under workspace root).
@@ -806,7 +815,6 @@ Environment / tunables (read at startup; use export or prefix on the same line a
       RENAME_EXIFTOOL=/opt/exiftool/exiftool rename.sh --scope current
   START_DIR                           Working tree root (default current directory). Use an absolute path.
       START_DIR=/data/photos rename.sh --use-db --scope subdirs
-  rename.sh --date-placement original --use-db --mode real --scope subdirs ./_ogladam
   TMPDIR                              Temp directory for SQLite bootstrap mktemp etc. (POSIX; default often /tmp).
       TMPDIR=/var/tmp rename.sh --use-db
   VERBOSE_LOG_BODY_WRAP_WIDTH         Max fold width for long [VERBOSE] bodies (default 96).
@@ -1190,6 +1198,22 @@ read_single_key() {
     # Discard any extra buffered keypresses from the same burst so they do not
     # affect the next prompt or keep the pre-read drain loop busy.
     flush_stdin
+}
+
+# After usage() on -h/--help: optional full environment-variable list (default no; 5 second timeout).
+prompt_show_usage_environment_tunables() {
+    local answer=""
+
+    echo
+    echo -n "$(user_prompt_ts_prefix)Show all environment variables? [y/N]: "
+    flush_stdin
+    read_single_key answer 5
+    echo
+    case "$answer" in
+        y|Y)
+            usage_environment_tunables
+            ;;
+    esac
 }
 
 read_line_editable() {
@@ -1832,6 +1856,216 @@ append_flatten_exception_to_exclude_filters_file() {
     fi
 
     load_exclude_filters
+}
+
+# Canonical relative path for exclude-file rewrites (./foo; absolute unchanged).
+exclude_filter_canonical_path() {
+    local p="$1"
+    while [[ "$p" == */ ]]; do
+        p="${p%/}"
+    done
+    [[ -n "$p" ]] || return 1
+    if [[ "$p" == /* ]]; then
+        printf '%s' "$p"
+        return 0
+    fi
+    if [[ "$p" == ./* ]]; then
+        printf '%s' "$p"
+        return 0
+    fi
+    printf './%s' "$p"
+}
+
+exclude_filter_paths_equivalent() {
+    local a="$1" b="$2"
+    a="$(exclude_filter_canonical_path "$a")"
+    b="$(exclude_filter_canonical_path "$b")"
+    [[ -n "$a" && -n "$b" && "$a" == "$b" ]] && return 0
+    local abs_a abs_b
+    abs_a="$(db_abs_path_if_deleted "$a" 2>/dev/null || db_abs_path "$a" 2>/dev/null || true)"
+    abs_b="$(db_abs_path_if_deleted "$b" 2>/dev/null || db_abs_path "$b" 2>/dev/null || true)"
+    [[ -n "$abs_a" && -n "$abs_b" && "$abs_a" == "$abs_b" ]]
+}
+
+exclude_filter_format_path_like() {
+    local template="$1"
+    local new_path="$2"
+    new_path="$(exclude_filter_canonical_path "$new_path")"
+    if [[ "$template" == ./* ]]; then
+        if [[ "$new_path" == ./* ]]; then
+            printf '%s' "$new_path"
+        else
+            printf './%s' "${new_path#./}"
+        fi
+    elif [[ "$template" == /* ]]; then
+        local abs
+        abs="$(db_abs_path "$new_path" 2>/dev/null || true)"
+        if [[ -n "$abs" ]]; then
+            printf '%s' "$abs"
+        else
+            printf '%s' "$new_path"
+        fi
+    else
+        printf '%s' "${new_path#./}"
+    fi
+}
+
+# Rewrite a path embedded in an exclude line after old -> new (exact or under old when old is a directory).
+exclude_filter_rewrite_embedded_path() {
+    local path_val="$1"
+    local old="$2"
+    local new="$3"
+    local exact_only="${4:-no}"
+    local suffix rel canon_path canon_old canon_new
+
+    if exclude_filter_paths_equivalent "$path_val" "$old"; then
+        exclude_filter_format_path_like "$path_val" "$new"
+        return 0
+    fi
+    [[ "$exact_only" == yes ]] && return 1
+
+    if exclude_filter_path_is_under_dir "$path_val" "$old"; then
+        canon_path="$(exclude_filter_canonical_path "$path_val")"
+        canon_old="$(exclude_filter_canonical_path "$old")"
+        canon_new="$(exclude_filter_canonical_path "$new")"
+        suffix="${canon_path#"${canon_old}/"}"
+        [[ "$suffix" == "$canon_path" ]] && suffix=""
+        if [[ -n "$suffix" ]]; then
+            rel="${canon_new}/${suffix}"
+        else
+            rel="$canon_new"
+        fi
+        exclude_filter_format_path_like "$path_val" "$rel"
+        return 0
+    fi
+    return 1
+}
+
+exclude_filter_path_is_under_dir() {
+    local path_val="$1"
+    local dir="$2"
+    local canon_path canon_dir abs_p abs_d
+
+    path_is_under_subtree_root "$path_val" "$dir" && return 0
+    canon_path="$(exclude_filter_canonical_path "$path_val")"
+    canon_dir="$(exclude_filter_canonical_path "$dir")"
+    [[ -n "$canon_path" && -n "$canon_dir" && "$canon_path" == "$canon_dir"/* ]] && return 0
+    abs_p="$(db_abs_path "$path_val" 2>/dev/null || true)"
+    abs_d="$(db_abs_path_if_deleted "$dir" 2>/dev/null || db_abs_path "$dir" 2>/dev/null || true)"
+    [[ -n "$abs_p" && -n "$abs_d" && ( "$abs_p" == "$abs_d" || "$abs_p" == "$abs_d"/* ) ]]
+}
+
+exclude_filter_line_rewrite_for_rename() {
+    local line="$1"
+    local old="$2"
+    local new="$3"
+    local path_val rewritten prefix
+
+    [[ -n "$line" ]] || return 0
+    [[ "$line" =~ ^# ]] && { printf '%s' "$line"; return 0; }
+
+    if [[ "$line" == FILE=* ]]; then
+        printf '%s' "$line"
+        return 0
+    fi
+
+    if [[ "$line" == SUBTREE=* ]]; then
+        path_val="${line#SUBTREE=}"
+        if rewritten="$(exclude_filter_rewrite_embedded_path "$path_val" "$old" "$new" no)"; then
+            printf 'SUBTREE=%s' "$rewritten"
+        else
+            printf '%s' "$line"
+        fi
+        return 0
+    fi
+
+    if [[ "$line" == FLATTEN_EXACT=* ]]; then
+        path_val="${line#FLATTEN_EXACT=}"
+        if rewritten="$(exclude_filter_rewrite_embedded_path "$path_val" "$old" "$new" no)"; then
+            printf 'FLATTEN_EXACT=%s' "$rewritten"
+        else
+            printf '%s' "$line"
+        fi
+        return 0
+    fi
+
+    if [[ "$line" == =* ]]; then
+        path_val="${line#=}"
+        if rewritten="$(exclude_filter_rewrite_embedded_path "$path_val" "$old" "$new" yes)"; then
+            printf '=%s' "$rewritten"
+        else
+            printf '%s' "$line"
+        fi
+        return 0
+    fi
+
+    if rewritten="$(exclude_filter_rewrite_embedded_path "$line" "$old" "$new" no)"; then
+        printf '%s' "$rewritten"
+        return 0
+    fi
+
+    old="$(exclude_filter_canonical_path "$old")"
+    new="$(exclude_filter_canonical_path "$new")"
+    if [[ -n "$old" && -n "$new" && "$old" != "$new" && "$line" == *"$old"* ]]; then
+        printf '%s' "${line//"$old"/"$new"}"
+        return 0
+    fi
+
+    printf '%s' "$line"
+}
+
+update_exclude_filters_file_after_rename() {
+    local old="$1"
+    local new="$2"
+    local line new_line out_line
+    local -a out_lines=()
+    local changed=0
+    local header_printed=0
+    local tmp
+
+    [[ -f "$EXCLUDE_FILTERS_FILE" ]] || return 0
+    [[ -n "$old" && -n "$new" ]] || return 0
+    exclude_filter_paths_equivalent "$old" "$new" && return 0
+
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        line="${line%$'\r'}"
+        if [[ -n "$line" ]] && [[ ! "$line" =~ ^# ]]; then
+            new_line="$(exclude_filter_line_rewrite_for_rename "$line" "$old" "$new")"
+            if [[ "$new_line" != "$line" ]]; then
+                changed=1
+                if (( header_printed == 0 )); then
+                    if [[ "$mode" == "dry-run" ]]; then
+                        emit_wrap_labeled_stdout "[DRY-RUN] Would update exclude file: " "${CYAN}[DRY-RUN] Would update exclude file:${RESET} " "$EXCLUDE_FILTERS_FILE"
+                    else
+                        emit_wrap_labeled_stdout "EXCLUDE FILE UPDATED: " "${CYAN}EXCLUDE FILE UPDATED:${RESET} " "$EXCLUDE_FILTERS_FILE"
+                    fi
+                    header_printed=1
+                fi
+                emit_wrap_labeled_stdout "  OLD: " "  ${YELLOW}OLD:${RESET} " "$line" yellow
+                emit_wrap_labeled_stdout "  NEW: " "  ${GREEN}NEW:${RESET} " "$new_line" green
+            fi
+            out_lines+=( "$new_line" )
+        else
+            out_lines+=( "$line" )
+        fi
+    done < "$EXCLUDE_FILTERS_FILE"
+
+    (( changed == 1 )) || return 0
+
+    if [[ "$mode" == "dry-run" ]]; then
+        return 0
+    fi
+
+    tmp="$(mktemp)"
+    {
+        local i
+        for i in "${!out_lines[@]}"; do
+            printf '%s\n' "${out_lines[$i]}"
+        done
+    } > "$tmp"
+    mv -f -- "$tmp" "$EXCLUDE_FILTERS_FILE"
+    load_exclude_filters
+    vlog "Exclude filter file updated after rename: '$old' -> '$new'"
 }
 
 sql_escape() {
@@ -3119,6 +3353,7 @@ while (( $# > 0 )); do
             print_startup_banner
             echo
             usage
+            prompt_show_usage_environment_tunables
             exit 0
             ;;
         *)
@@ -8782,10 +9017,12 @@ perform_plain_entry_rename() {
             emit_wrap_labeled_stdout "[DRY-RUN] Would update HTML reference inside: " "${CYAN}[DRY-RUN] Would update HTML reference inside:${RESET} " "$new"
         fi
         apply_local_checksum_ref_updates_after_rename "$old" "$new" "$target_kind"
+        update_exclude_filters_file_after_rename "$old" "$new"
         ((++files_affected))
         record_rename "$old" "$new"
         if [[ -n "$old_companion_dir" && "$old_companion_dir" != "$new_companion_dir" ]]; then
             record_rename "$old_companion_dir" "$new_companion_dir"
+            update_exclude_filters_file_after_rename "$old_companion_dir" "$new_companion_dir"
         fi
         return 0
     fi
@@ -8828,6 +9065,7 @@ perform_plain_entry_rename() {
             processed["$old_companion_dir"]=1
             processed["$new_companion_dir"]=1
             plain_rename_emit_auto_dir_notice_if_active "$old_companion_dir" "$new_companion_dir"
+            update_exclude_filters_file_after_rename "$old_companion_dir" "$new_companion_dir"
         else
             mv_with_case_only_filesystem_workaround_force "$new" "$old" || true
             ((++files_skipped))
@@ -8843,6 +9081,7 @@ perform_plain_entry_rename() {
     fi
 
     apply_local_checksum_ref_updates_after_rename "$old" "$new" "$target_kind"
+    update_exclude_filters_file_after_rename "$old" "$new"
 
     return 0
 }
