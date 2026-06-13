@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.06.13 - v. 19.194.224800 - GoPro Mission 1: GP######.JPG, firmware H26, Camera Model Name fallback
 # 2026.06.12 - v. 19.193.190000 - after rename, update matching paths in _exclude-rename.sh.txt and print EXCLUDE FILE UPDATED lines
 # 2026.06.12 - v. 19.192.180000 - help (-h): prompt to show environment tunables [y/N] default N, 5s timeout
 # 2026.06.12 - v. 19.191.171500 - --date-placement front|original for BBC/iPlayer -date_ names (original: compact YYYYMMDD_HHMMSS in title, not at start)
@@ -442,7 +443,7 @@ LARGE_HASHFILE_LINE_PROMPT_THRESHOLD="${LARGE_HASHFILE_LINE_PROMPT_THRESHOLD:-20
 LARGE_HASHFILE_PROMPT_MIN_TOTAL_BYTES="${LARGE_HASHFILE_PROMPT_MIN_TOTAL_BYTES:-32212254720}"
 # Per-path state files for last successful full checksum-list verification (epoch + content digest). Default: ~/.local/state/rename.sh/checksum-verify/
 RENAME_CHECKSUM_VERIFY_STATE_DIR="${RENAME_CHECKSUM_VERIFY_STATE_DIR:-}"
-# exiftool for GoPro/Sony/Contour/LG camera raw filenames (GH010001.MP4, GOPR0123.JPG).
+# exiftool for GoPro/Sony/Contour/LG camera raw filenames (GH010001.MP4, GOPR0123.JPG, GP010032.JPG).
 # Default when neither RENAME_EXIFTOOL nor EXIFLOC is set: bundled copy on luks-buffalo2; then exiftool on PATH.
 RENAME_EXIFTOOL_DEFAULT='/mnt/luks-buffalo2/worek/_video-JEDYNE_KOPIE/_katalog_roboczy/scripts/Image-ExifTool-12.41/exiftool'
 RENAME_EXIFTOOL="${RENAME_EXIFTOOL:-${EXIFLOC:-$RENAME_EXIFTOOL_DEFAULT}}"
@@ -6875,7 +6876,7 @@ resolve_rename_exiftool() {
 warn_gopro_exiftool_missing_once() {
     [[ -z "$RENAME_EXIFTOOL_MISSING_WARNED" ]] || return 0
     RENAME_EXIFTOOL_MISSING_WARNED=1
-    emit_wrap_labeled_stderr "GOPRO/CAMERA: " "${YELLOW}GOPRO/CAMERA:${RESET} " "Would rename GoPro/camera raw files (GH/GX/GOPR…) using exiftool metadata, but exiftool was not found — those files are left unchanged."
+    emit_wrap_labeled_stderr "GOPRO/CAMERA: " "${YELLOW}GOPRO/CAMERA:${RESET} " "Would rename GoPro/camera raw files (GH/GX/GOPR/GP…) using exiftool metadata, but exiftool was not found — those files are left unchanged."
     emit_wrap_labeled_stderr "GOPRO/CAMERA: " "${YELLOW}GOPRO/CAMERA:${RESET} " "Tried, in order: ${RENAME_EXIFTOOL}, exiftool on PATH."
     emit_wrap_labeled_stderr "GOPRO/CAMERA: " "${YELLOW}GOPRO/CAMERA:${RESET} " "Install exiftool first, e.g. run as root: sudo bash video-pgm-install-exiftool.sh"
     emit_wrap_labeled_stderr "GOPRO/CAMERA: " "${YELLOW}GOPRO/CAMERA:${RESET} " "Override with RENAME_EXIFTOOL or EXIFLOC, e.g.: export RENAME_EXIFTOOL='/path/to/exiftool'"
@@ -6946,12 +6947,33 @@ _transform_name_return_unchanged() {
     fi
 }
 
+# GoPro JPG raw names: legacy GOPR####.JPG and Mission 1 GP######.JPG.
+gopro_camera_raw_jpg_basename_matches() {
+    local base="$1"
+    [[ "$base" =~ ^[gG][oO][pP][rR][0-9][0-9][0-9][0-9]\.[jJ][pP][gG]$ ]] && return 0
+    [[ "$base" =~ ^[gG][pP][0-9][0-9][0-9][0-9][0-9][0-9]\.[jJ][pP][gG]$ ]] && return 0
+    return 1
+}
+
+# When firmware prefix is unknown, use Camera Model Name (e.g. MISSION 1 PRO -> GOPRO / MISSION1PRO).
+gopro_apply_camera_model_name_from_exif() {
+    local exif="$1"
+    local raw norm
+
+    raw="$(printf '%s\n' "$exif" | grep 'Camera Model Name' | head -n 1 | sed 's/Camera Model Name[[:space:]]*: //' | tr -d $'\r\n')"
+    [[ -n "$raw" ]] || return 1
+    norm="$(printf '%s' "$raw" | tr '[:lower:]' '[:upper:]' | tr -d ' ')"
+    [[ -n "$norm" ]] || return 1
+    DeviceManufacturer=GOPRO
+    DeviceModelName="$norm"
+    return 0
+}
+
 # GoPro-style raw names before exiftool rename (zmien-nazwe-CURRENT_DIRECTORY.sh patterns).
 gopro_camera_raw_basename_matches() {
     local base="$1"
     [[ "$base" =~ ^[cCgG][hHxX][0-9][0-9][0-9][0-9][0-9][0-9](_Proxy)?\.[mM][pP]4$ ]] && return 0
-    [[ "$base" =~ ^[gG][oO][pP][rR][0-9][0-9][0-9][0-9]\.[jJ][pP][gG]$ ]] && return 0
-    return 1
+    gopro_camera_raw_jpg_basename_matches "$base"
 }
 
 gopro_raw_stem_core_from_basename() {
@@ -7439,7 +7461,7 @@ maybe_prompt_gopro_remove_lone_part_basename() {
     done
 }
 
-# Build YYYYMMDD_HHMMSS_-_-_MANUFACTURER_MODEL[_part_XX][_Proxy].ext from camera metadata (GoPro 4–12, Sony, Contour, LG v20).
+# Build YYYYMMDD_HHMMSS_-_-_MANUFACTURER_MODEL[_part_XX][_Proxy].ext from camera metadata (GoPro 4–12, Mission 1, Sony, Contour, LG v20).
 transform_gopro_camera_basename() {
     local file="$1"
     local base="$2"
@@ -7480,9 +7502,13 @@ transform_gopro_camera_basename() {
             HD7) DeviceManufacturer=GOPRO7; DeviceModelName=BLACK ;;
             H21) DeviceManufacturer=GOPRO10; DeviceModelName=BLACK ;;
             H23) DeviceManufacturer=GOPRO12; DeviceModelName=BLACK ;;
+            H26) DeviceManufacturer=GOPRO; DeviceModelName=MISSION1PRO ;;
         esac
-        if [[ "$base" =~ ^[gG][oO][pP][rR][0-9][0-9][0-9][0-9]\.[jJ][pP][gG]$ ]]; then
-            # GOPR JPG often has several Create Date tags; head -n 1 must run before tr -d newline or two timestamps glue together.
+        if [[ "$DeviceManufacturer" == xxx ]]; then
+            gopro_apply_camera_model_name_from_exif "$exif" || true
+        fi
+        if gopro_camera_raw_jpg_basename_matches "$base"; then
+            # GOPR/GP JPG often has several Create Date tags; head -n 1 must run before tr -d newline or two timestamps glue together.
             TrackCreateDate="$("$exifloc" -api largefilesupport=1 -d '%Y%m%d_%H%M%S' "$file" | egrep '^Create Date *:' | egrep -v '\.' | head -n 1 | tr 'a-z' 'A-Z' | sed 's/^CREATE DATE *: //' | tr -d ':' | tr ' ' '_' | tr -d $'\r')"
         else
             TrackCreateDate="$("$exifloc" -api largefilesupport=1 -d '%Y%m%d_%H%M%S' "$file" | grep '^Create Date' | head -n 1 | tr 'a-z' 'A-Z' | sed 's/^CREATE DATE *: //' | tr -d ':' | tr ' ' '_' | tr -d $'\r')"
@@ -7536,6 +7562,7 @@ transform_gopro_camera_basename() {
     fi
 
     [[ -n "$data_stworzenia_pliku_w_czasie_lokalnym" ]] || return 1
+    [[ "$DeviceManufacturer" != xxx && "$DeviceModelName" != xxx ]] || return 1
 
     gopro_format_camera_basename_output \
         "$data_stworzenia_pliku_w_czasie_lokalnym" \
