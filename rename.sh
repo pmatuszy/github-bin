@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.06.13 - v. 19.196.233000 - non-verbose: skip lone progress dot after [DRY-RUN] stdout status lines
 # 2026.06.13 - v. 19.195.231500 - GoPro Mission 1 rename labels: GoPro_Mission1_Pro (not GOPRO_MISSION1PRO)
 # 2026.06.13 - v. 19.194.224800 - GoPro Mission 1: GP######.JPG, firmware H26, Camera Model Name fallback
 # 2026.06.12 - v. 19.193.190000 - after rename, update matching paths in _exclude-rename.sh.txt and print EXCLUDE FILE UPDATED lines
@@ -460,6 +461,12 @@ NEF_XMP_PAIR_LABEL_WIDTH_NO_SIDECAR="${NEF_XMP_PAIR_LABEL_WIDTH_NO_SIDECAR:-5}"
 # Continuation indent for user-visible lines longer than MAX_LINE_LENGTH (checksum/HTML style).
 WRAP_MSG_INDENT="${WRAP_MSG_INDENT:-          }"
 
+# After a full stdout status line, skip the next main-loop progress dot (avoids lone "." between lines).
+nonverbose_skip_next_main_loop_dot_after_stdout_status() {
+    (( VERBOSE == 1 )) && return 0
+    NONVERBOSE_SKIP_NEXT_MAIN_LOOP_DOT=yes
+}
+
 # plain_prefix + body == full visible line (no ANSI). fd 1=stdout, 2=stderr.
 # Optional 5th arg full_line_color (green|red|cyan|yellow): when use_colors=yes, the entire
 # visible line (prefix + body) uses that color — used for OLD/NEW suggested path lines.
@@ -489,6 +496,9 @@ emit_wrap_labeled_line() {
             printf '%b%s%b\n' "$line_color" "$plain_prefix" "$RESET" >&"$fd"
             printf '%b%s%s%b\n' "$line_color" "$WRAP_MSG_INDENT" "$body" "$RESET" >&"$fd"
         fi
+        if (( fd == 1 )) && [[ "$plain_prefix" == *"[DRY-RUN]"* ]]; then
+            nonverbose_skip_next_main_loop_dot_after_stdout_status
+        fi
         return 0
     fi
     if (( ${#plain} <= MAX_LINE_LENGTH )); then
@@ -496,6 +506,9 @@ emit_wrap_labeled_line() {
     else
         printf '%b\n' "$ansi_label" >&"$fd"
         printf '%s%s\n' "$WRAP_MSG_INDENT" "$body" >&"$fd"
+    fi
+    if (( fd == 1 )) && [[ "$plain_prefix" == *"[DRY-RUN]"* ]]; then
+        nonverbose_skip_next_main_loop_dot_after_stdout_status
     fi
 }
 
@@ -584,6 +597,9 @@ emit_wrap_old_arrow_new_stdout() {
             printf '%b%s%s\n' "$ansi_pfx" "$old_p" "$sep"
             printf '%s%s\n' "$path_col_indent" "$new_p"
         fi
+    fi
+    if [[ "$plain_pfx" == *"[DRY-RUN]"* ]] || [[ "$plain_pfx" == "Renamed: " ]]; then
+        nonverbose_skip_next_main_loop_dot_after_stdout_status
     fi
 }
 
@@ -3695,8 +3711,7 @@ print_checksum_group_ok_line() {
     local llower="${label,,}"
 
     emit_wrap_labeled_stdout "${label} OK: changed reference(s) were updated inside " "${GREEN}${label} OK:${RESET} changed reference(s) were updated inside " "'${final_sum}' and ${llower} checksum(s) are correct."
-    # Next main-loop dot (often the following .sha512) would flush as a lone "." before the next group preview.
-    NONVERBOSE_SKIP_NEXT_MAIN_LOOP_DOT=yes
+    nonverbose_skip_next_main_loop_dot_after_stdout_status
 }
 
 print_checksum_update_verbose() {
@@ -5141,8 +5156,6 @@ plain_rename_emit_auto_dir_notice_if_active() {
     fi
     [[ "$want_emit" == yes ]] || return 0
     emit_wrap_old_arrow_new_stdout "Renamed: " "${GREEN}Renamed:${RESET} " "$old" "$new"
-    # Next main-loop iteration would print a lone “.” on its own line after this “Renamed:” line; skip that dot once.
-    NONVERBOSE_SKIP_NEXT_MAIN_LOOP_DOT=yes
 }
 
 # Same directory and basename stem; suggested path lowercases only the extension (any length, e.g. .MP4 -> .mp4, .JPEG -> .jpeg).
