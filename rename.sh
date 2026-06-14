@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.06.14 - v. 19.197.130000 - collision: [V] list directory; [C] overwrite all dest in this directory; drop duplicate [W]
 # 2026.06.13 - v. 19.196.233000 - non-verbose: skip lone progress dot after [DRY-RUN] stdout status lines
 # 2026.06.13 - v. 19.195.231500 - GoPro Mission 1 rename labels: GoPro_Mission1_Pro (not GOPRO_MISSION1PRO)
 # 2026.06.13 - v. 19.194.224800 - GoPro Mission 1: GP######.JPG, firmware H26, Camera Model Name fallback
@@ -8547,11 +8548,18 @@ make_other_suffix_path() {
     printf '%s' "$candidate"
 }
 
-# When set: collision prompts skip [o/r/d/p/v/S/q] and apply _OTHER (like [R]) if the source file's directory matches this path (see similar_rename_dir_matches_scope).
+# When set: collision prompts skip [o/r/d/c/p/v/S/q] and apply _OTHER (like [R]) if the source file's directory matches this path (see similar_rename_dir_matches_scope).
 collision_auto_other_dir_matches_source() {
     local old="$1"
     [[ -n "$AUTO_COLLISION_OTHER_DIR" ]] || return 1
     similar_rename_dir_matches_scope "$(dirname -- "$old")" "$AUTO_COLLISION_OTHER_DIR"
+}
+
+# When set: collision prompts skip [o/r/d/c/p/v/S/q] and overwrite destination (like [O]) for sources in this directory.
+collision_auto_overwrite_dir_matches_source() {
+    local old="$1"
+    [[ -n "$AUTO_COLLISION_OVERWRITE_DIR" ]] || return 1
+    similar_rename_dir_matches_scope "$(dirname -- "$old")" "$AUTO_COLLISION_OVERWRITE_DIR"
 }
 
 handle_existing_target_collision() {
@@ -8563,7 +8571,7 @@ handle_existing_target_collision() {
     if [[ "$mode" == "dry-run" ]]; then
         emit_wrap_labeled_stdout "COLLISION: " "${YELLOW}COLLISION:${RESET} " "Target file already exists."
         emit_wrap_old_arrow_new_stdout "[DRY-RUN] Would compare MD5, size, and timestamps of source/destination and ask what to do: " "${CYAN}[DRY-RUN] Would compare MD5, size, and timestamps of source/destination and ask what to do:${RESET} " "$old" "$new"
-        emit_wrap_labeled_stdout "[DRY-RUN] Choices would include: " "${CYAN}[DRY-RUN] Choices would include:${RESET} " "[O]/[V] remove destination then rename; [R]/[D] _OTHER; [P] remove source only (keep destination); [S] skip; [Q] quit."
+        emit_wrap_labeled_stdout "[DRY-RUN] Choices would include: " "${CYAN}[DRY-RUN] Choices would include:${RESET} " "[O] remove destination then rename; [C] overwrite all in this directory; [R]/[D] _OTHER; [P] remove source only; [V] list directory; [S] skip; [Q] quit."
         return 1
     fi
 
@@ -8630,6 +8638,12 @@ can_overwrite_collision_with_identical_md5() {
 
     old_other_path="$(make_other_suffix_path "$new")"
 
+    if collision_auto_overwrite_dir_matches_source "$old"; then
+        emit_wrap_labeled_stdout "AUTO OVERWRITE (this directory): " "${CYAN}AUTO OVERWRITE (this directory):${RESET} " "session active — will delete destination and continue rename"
+        vlog "Collision overwrite auto (directory session): '$old' -> '$new'"
+        return 0
+    fi
+
     if collision_auto_other_dir_matches_source "$old"; then
         COLLISION_OTHER_PATH="$old_other_path"
         emit_wrap_labeled_stdout "AUTO _OTHER (this directory): " "${CYAN}AUTO _OTHER (this directory):${RESET} " "session active — source -> '$(basename -- "$old_other_path")'"
@@ -8640,20 +8654,20 @@ can_overwrite_collision_with_identical_md5() {
     while true; do
         verbose_question_timestamp "What should be done?"
         echo "  [O] Overwrite destination (delete destination file), then continue rename"
-        echo "  [V] Same as [O] — delete destination file only, then rename"
+        echo "  [C] For this source directory only: overwrite destination for all further collisions (like [O])"
         echo "  [R] Rename source to alternate name (one _OTHER, or _OTHER_2, … if needed) -> $(basename -- "$old_other_path")"
         echo "  [D] For this source directory only: use _OTHER for all further collisions (like [R])"
         echo "  [P] Delete source file only (keep destination; skip this rename)"
         echo "  [S] Skip (default)"
-        echo "  [W] List directory (parent; mark SOURCE/DESTINATION basenames)"
+        echo "  [V] List directory (parent; mark SOURCE/DESTINATION basenames)"
         echo "  [Q] Quit"
-        echo -n "$(user_prompt_ts_prefix)Choice [o/v/r/d/p/S/w/q]: "
+        echo -n "$(user_prompt_ts_prefix)Choice [o/c/r/d/p/S/v/q]: "
 
         flush_stdin
         read_single_key answer "$PROMPT_WAIT_SECONDS"
         echo
 
-        if [[ "$answer" =~ [Ww] ]]; then
+        if [[ "$answer" =~ [Vv] ]]; then
             print_rename_parent_directory_listing "$old" "$new"
             continue
         fi
@@ -8662,7 +8676,12 @@ can_overwrite_collision_with_identical_md5() {
                 stopped_by_user=yes
                 return 2
                 ;;
-            o|O|v|V)
+            o|O)
+                return 0
+                ;;
+            c|C)
+                AUTO_COLLISION_OVERWRITE_DIR="$(cd -- "$(dirname -- "$old")" 2>/dev/null && pwd -P)" || AUTO_COLLISION_OVERWRITE_DIR="$(dirname -- "$old")"
+                vlog "Collision overwrite per-directory session enabled for '$AUTO_COLLISION_OVERWRITE_DIR'"
                 return 0
                 ;;
             r|R)
@@ -9497,6 +9516,8 @@ AUTO_RENAME_SIMILAR_DIR=""
 AUTO_RENAME_SIMILAR_NEED_USCORE=no
 # When set to realpath of a directory: collision prompts auto-apply _OTHER (like [R]) for every source file in that directory until cleared.
 AUTO_COLLISION_OTHER_DIR=""
+# When set to realpath of a directory: collision prompts auto-overwrite destination (like [O]) for every source file in that directory until cleared.
+AUTO_COLLISION_OVERWRITE_DIR=""
 # When set to realpath of a directory: RawFileName mismatch prompts auto-apply without asking for every paired XMP in that dir.
 NEF_XMP_RAWFIX_AUTO_DIR=""
 AUTO_LOWERCASE_3_EXT_SESSION=no # [L] session: any extension case-only lowercasing (name kept for compatibility)
@@ -11948,6 +11969,7 @@ for f in "${ordered_paths[@]}"; do
                 similar_rename_clear
                 AUTO_RENAME_DIR=""
                 AUTO_COLLISION_OTHER_DIR=""
+                AUTO_COLLISION_OVERWRITE_DIR=""
                 vlog "rename_all enabled by user"
                 if [[ -z "$torrent_url_noop" && -z "$thumbs_db_noop" ]]; then
                     perform_plain_or_nef_xmp_pair "rename_all" || break
@@ -11985,6 +12007,7 @@ for f in "${ordered_paths[@]}"; do
             else
                 AUTO_RENAME_DIR=""
                 AUTO_COLLISION_OTHER_DIR=""
+                AUTO_COLLISION_OVERWRITE_DIR=""
                 similar_rename_set_anchor_from_prompt_path "$f"
                 vlog "Per-directory similar-name auto-yes: directory '$AUTO_RENAME_SIMILAR_DIR', all extensions, require leading underscore: ${AUTO_RENAME_SIMILAR_NEED_USCORE}"
                 if [[ -n "$torrent_url_noop" || -n "$thumbs_db_noop" ]]; then
