@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.06.14 - v. 19.198.140000 - Olympus voice recorder DM######.MP3 → YYYYMMDD_HHMMSS_-_-_Olympus_voice_recorder-DM….MP3 (oldest exif/stat date)
 # 2026.06.14 - v. 19.197.130000 - collision: [V] list directory; [C] overwrite all dest in this directory; drop duplicate [W]
 # 2026.06.13 - v. 19.196.233000 - non-verbose: skip lone progress dot after [DRY-RUN] stdout status lines
 # 2026.06.13 - v. 19.195.231500 - GoPro Mission 1 rename labels: GoPro_Mission1_Pro (not GOPRO_MISSION1PRO)
@@ -1415,6 +1416,83 @@ get_file_oldest_timestamp_compact() {
     local ts
     ts="$(get_file_oldest_timestamp_yyyymmdd_hhmmss "$file")"
     printf '%s' "${ts:0:8}_${ts:9:6}"
+}
+
+get_file_atime_epoch() {
+    local file="$1"
+    stat -c %X -- "$file" 2>/dev/null || echo 0
+}
+
+get_file_ctime_epoch() {
+    local file="$1"
+    stat -c %Z -- "$file" 2>/dev/null || echo 0
+}
+
+# Olympus digital voice recorder: DM######.MP3 (case-insensitive).
+olympus_voice_recorder_raw_basename_matches() {
+    [[ "$1" =~ ^[Dd][Mm][0-9]{6}\.[mM][pP][3]$ ]]
+}
+
+olympus_voice_recorder_already_renamed_basename_matches() {
+    [[ "$1" =~ ^[0-9]{8}_[0-9]{6}_-_-_Olympus_voice_recorder-[Dd][Mm][0-9]{6}\.[mM][pP][3]$ ]]
+}
+
+# Track minimum positive epoch among filesystem times and exiftool file/media dates.
+olympus_voice_recorder_oldest_epoch_from_file() {
+    local file="$1"
+    local min_epoch=0 cand exifloc tag val
+    local -a exif_tags=(
+        FileModifyDate FileAccessDate FileInodeChangeDate
+        CreateDate MediaCreateDate DateTimeOriginal
+    )
+
+    _olympus_consider_epoch() {
+        cand="$1"
+        [[ "$cand" =~ ^[0-9]+$ ]] || return 0
+        (( cand > 0 )) || return 0
+        if (( min_epoch == 0 || cand < min_epoch )); then
+            min_epoch="$cand"
+        fi
+    }
+
+    _olympus_consider_epoch "$(get_file_birth_epoch "$file")"
+    _olympus_consider_epoch "$(get_file_mtime_epoch "$file")"
+    _olympus_consider_epoch "$(get_file_atime_epoch "$file")"
+    _olympus_consider_epoch "$(get_file_ctime_epoch "$file")"
+
+    if exifloc="$(resolve_rename_exiftool 2>/dev/null)"; then
+        for tag in "${exif_tags[@]}"; do
+            val="$("$exifloc" -api largefilesupport=1 -s3 -d '%s' "-${tag}" "$file" 2>/dev/null)" || val=""
+            val="${val//$'\r'/}"
+            val="${val#"${val%%[![:space:]]*}"}"
+            val="${val%"${val##*[![:space:]]}"}"
+            _olympus_consider_epoch "$val"
+        done
+    fi
+
+    (( min_epoch > 0 )) || return 1
+    printf '%s' "$min_epoch"
+}
+
+olympus_voice_recorder_oldest_timestamp_yyyymmdd_hhmmss() {
+    local file="$1"
+    local epoch
+    epoch="$(olympus_voice_recorder_oldest_epoch_from_file "$file")" || return 1
+    date -d "@$epoch" +%Y%m%d_%H%M%S
+}
+
+# e.g. DM420018.MP3 → 20100311_190904_-_-_Olympus_voice_recorder-DM420018.MP3
+transform_olympus_voice_recorder_basename() {
+    local file="$1"
+    local base="$2"
+    local ts stem ext
+
+    olympus_voice_recorder_raw_basename_matches "$base" || return 1
+    olympus_voice_recorder_already_renamed_basename_matches "$base" && return 1
+    ts="$(olympus_voice_recorder_oldest_timestamp_yyyymmdd_hhmmss "$file")" || return 1
+    stem="${base%.*}"
+    ext="${base##*.}"
+    printf '%s_-_-_Olympus_voice_recorder-%s.%s' "$ts" "$stem" "$ext"
 }
 
 text_file_has_crlf() {
@@ -8093,7 +8171,28 @@ transform_name() {
         fi
     fi
 
-    if [[ -f "$f" ]] && (( _gopro_applied == 0 && _sony_applied == 0 )) && [[ "$stopped_by_user" != yes ]]; then
+    local _olympus_applied=0 _olympus_try="" _olympus_rc=0
+    if [[ -f "$f" ]] && (( _gopro_applied == 0 && _sony_applied == 0 )) && olympus_voice_recorder_raw_basename_matches "$base"; then
+        local _tn_save_e_oly=0
+        [[ $- == *e* ]] && _tn_save_e_oly=1
+        set +e
+        _olympus_try="$(transform_olympus_voice_recorder_basename "$f" "$base")"
+        _olympus_rc=$?
+        if ((_tn_save_e_oly)); then
+            set -e
+        else
+            set +e
+        fi
+        if (( _olympus_rc == 0 )) && [[ -n "$_olympus_try" ]]; then
+            newbase="$_olympus_try"
+            _olympus_applied=1
+            vlog "Olympus voice recorder rename: $base -> $_olympus_try"
+        else
+            vlog "Olympus voice recorder rename: no usable timestamp for $base (rc=$_olympus_rc); falling back to normal rename"
+        fi
+    fi
+
+    if [[ -f "$f" ]] && (( _gopro_applied == 0 && _sony_applied == 0 && _olympus_applied == 0 )) && [[ "$stopped_by_user" != yes ]]; then
         local _gopro_part_rc=0 _gopro_part_err_trap=""
         local _tn_save_e_part=0
         [[ $- == *e* ]] && _tn_save_e_part=1
@@ -8119,7 +8218,7 @@ transform_name() {
     local _tn_save_e=0
     [[ $- == *e* ]] && _tn_save_e=1
     set +e
-    if (( _gopro_applied == 0 && _sony_applied == 0 )); then
+    if (( _gopro_applied == 0 && _sony_applied == 0 && _olympus_applied == 0 )); then
         newbase="$(transform_basename "$base" "$f")"
         tb_rc=$?
     else
@@ -8148,7 +8247,7 @@ transform_name() {
             done
         fi
 
-        if (( _gopro_applied == 0 && _sony_applied == 0 )); then
+        if (( _gopro_applied == 0 && _sony_applied == 0 && _olympus_applied == 0 )); then
         # YYYYMMDD + whitespace + HH-MM-SS[_tail].media -> YYYYMMDD_HH-MM-SS[_tail].media
         # (e.g. 20190202 14-28-08_0001.jpg; not covered by YYYY-MM-DD... rules above.)
         if [[ "$newbase" =~ ^([0-9]{8})[[:space:]]+([0-9]{2})-([0-9]{2})-([0-9]{2})(_[^.]*)?(\.${common_media_ext_re})$ ]]; then
@@ -8295,7 +8394,7 @@ transform_name() {
     if [[ ! -d "$f" && "$newbase" == *.* ]]; then
         stem="${newbase%.*}"
         ext="${newbase##*.}"
-        if [[ "$ext" != "${ext,,}" ]]; then
+        if (( _olympus_applied == 0 )) && [[ "$ext" != "${ext,,}" ]]; then
             newbase="${stem}.${ext,,}"
         fi
     fi
