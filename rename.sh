@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.06.14 - v. 19.199.150000 - checksum group: target exists → same collision menu as plain renames (MD5, times, [O]/[C]/…)
 # 2026.06.14 - v. 19.198.140000 - Olympus voice recorder DM######.MP3 → YYYYMMDD_HHMMSS_-_-_Olympus_voice_recorder-DM….MP3 (oldest exif/stat date)
 # 2026.06.14 - v. 19.197.130000 - collision: [V] list directory; [C] overwrite all dest in this directory; drop duplicate [W]
 # 2026.06.13 - v. 19.196.233000 - non-verbose: skip lone progress dot after [DRY-RUN] stdout status lines
@@ -8661,6 +8662,183 @@ collision_auto_overwrite_dir_matches_source() {
     similar_rename_dir_matches_scope "$(dirname -- "$old")" "$AUTO_COLLISION_OVERWRITE_DIR"
 }
 
+# True when a planned rename would hit an existing path (excluding case-only same inode).
+checksum_rename_pair_has_target_collision() {
+    local old="$1"
+    local new="$2"
+
+    [[ "$old" != "$new" && -e "$new" ]] || return 1
+    if is_case_only_rename_pair "$old" "$new" && paths_refer_to_same_file "$old" "$new"; then
+        return 1
+    fi
+    return 0
+}
+
+# Fill html_companion_* arrays for checksum-group HTML ref renames (no collision handling here).
+build_checksum_group_html_companion_arrays() {
+    local -n _refs="$1"
+    local -n _new_refs="$2"
+    local -n _html_old_dirs="$3"
+    local -n _html_new_dirs="$4"
+    local -n _html_old_names="$5"
+    local -n _html_new_names="$6"
+    local -n _html_apply="$7"
+
+    local i old_companion_dir new_companion_dir old_companion_name old_html_stem companion_suffix companion_conflict j
+
+    _html_old_dirs=()
+    _html_new_dirs=()
+    _html_old_names=()
+    _html_new_names=()
+    _html_apply=()
+
+    for i in "${!_refs[@]}"; do
+        _html_old_dirs+=( "" )
+        _html_new_dirs+=( "" )
+        _html_old_names+=( "" )
+        _html_new_names+=( "" )
+        _html_apply+=( "no" )
+
+        [[ "${_new_refs[$i]}" != "${_refs[$i]}" ]] || continue
+        is_html_file "${_refs[$i]}" || continue
+
+        old_companion_dir="$(find_html_companion_dir "${_refs[$i]}" || true)"
+        if [[ -z "$old_companion_dir" ]]; then
+            continue
+        fi
+
+        old_companion_name="$(basename -- "$old_companion_dir")"
+        old_html_stem="$(basename -- "${_refs[$i]%.*}")"
+        companion_suffix="${old_companion_name#${old_html_stem}}"
+        new_companion_dir="$(html_companion_dir_path_with_suffix "${_new_refs[$i]}" "$companion_suffix")"
+
+        [[ "$old_companion_dir" != "$new_companion_dir" ]] || continue
+
+        companion_conflict=no
+        for j in "${!_refs[@]}"; do
+            if [[ "${_refs[$j]}" == "$old_companion_dir" || "${_refs[$j]}" == "$old_companion_dir/"* ]]; then
+                companion_conflict=yes
+                break
+            fi
+        done
+        [[ "$companion_conflict" == "no" ]] || continue
+
+        _html_old_dirs[$i]="$old_companion_dir"
+        _html_new_dirs[$i]="$new_companion_dir"
+        _html_old_names[$i]="$(basename -- "$old_companion_dir")"
+        _html_new_names[$i]="$(basename -- "$new_companion_dir")"
+        _html_apply[$i]="yes"
+    done
+}
+
+# Resolve checksum-group rename collisions using the same dialog as plain renames.
+# Namerefs: new_sum, refs, new_refs, html_apply, html_old_dirs, html_new_dirs.
+# Return 0 proceed, 1 skip whole group, 2 quit.
+resolve_checksum_group_rename_collisions() {
+    local sum_file="$1"
+    local -n _new_sum="$2"
+    local -n _refs="$3"
+    local -n _new_refs="$4"
+    local -n _html_apply="$5"
+    local -n _html_old_dirs="$6"
+    local -n _html_new_dirs="$7"
+
+    local i dec old new companion_old companion_new resolved_any
+
+    if [[ "$mode" == "dry-run" ]]; then
+        if checksum_rename_pair_has_target_collision "$sum_file" "$_new_sum"; then
+            handle_existing_target_collision "$sum_file" "$_new_sum" || true
+        fi
+        for i in "${!_refs[@]}"; do
+            [[ "${_new_refs[$i]}" != "${_refs[$i]}" ]] || continue
+            if checksum_rename_pair_has_target_collision "${_refs[$i]}" "${_new_refs[$i]}"; then
+                handle_existing_target_collision "${_refs[$i]}" "${_new_refs[$i]}" || true
+            fi
+        done
+        for i in "${!_html_apply[@]}"; do
+            [[ "${_html_apply[$i]}" == "yes" ]] || continue
+            companion_old="${_html_old_dirs[$i]}"
+            companion_new="${_html_new_dirs[$i]}"
+            if checksum_rename_pair_has_target_collision "$companion_old" "$companion_new"; then
+                if [[ -f "$companion_old" && -f "$companion_new" ]]; then
+                    handle_existing_target_collision "$companion_old" "$companion_new" || true
+                else
+                    emit_wrap_labeled_stdout "COLLISION: " "${YELLOW}COLLISION:${RESET} " "HTML companion directory target already exists."
+                    emit_wrap_labeled_stdout "  SOURCE:      " "  ${RED}SOURCE:${RESET}      " "$companion_old"
+                    emit_wrap_labeled_stdout "  DESTINATION: " "  ${GREEN}DESTINATION:${RESET} " "$companion_new" green
+                fi
+            fi
+        done
+        return 0
+    fi
+
+    while true; do
+        resolved_any=no
+
+        if checksum_rename_pair_has_target_collision "$sum_file" "$_new_sum"; then
+            handle_existing_target_collision "$sum_file" "$_new_sum"
+            dec=$?
+            case "$dec" in
+                0) resolved_any=yes ;;
+                2) return 2 ;;
+                3) _new_sum="$COLLISION_RENAMED_TARGET"; resolved_any=yes ;;
+                4)
+                    emit_wrap_labeled_stdout "SKIP: " "${YELLOW}SKIP:${RESET} " "Checksum group: hash file source removed; cannot continue this group."
+                    return 1
+                    ;;
+                *) return 1 ;;
+            esac
+            continue
+        fi
+
+        for i in "${!_refs[@]}"; do
+            [[ "${_new_refs[$i]}" != "${_refs[$i]}" ]] || continue
+            if checksum_rename_pair_has_target_collision "${_refs[$i]}" "${_new_refs[$i]}"; then
+                handle_existing_target_collision "${_refs[$i]}" "${_new_refs[$i]}"
+                dec=$?
+                case "$dec" in
+                    0) resolved_any=yes ;;
+                    2) return 2 ;;
+                    3) _new_refs[$i]="$COLLISION_RENAMED_TARGET"; resolved_any=yes ;;
+                    4) resolved_any=yes ;;
+                    *) return 1 ;;
+                esac
+                break
+            fi
+        done
+        [[ "$resolved_any" == "yes" ]] && continue
+
+        for i in "${!_html_apply[@]}"; do
+            [[ "${_html_apply[$i]}" == "yes" ]] || continue
+            companion_old="${_html_old_dirs[$i]}"
+            companion_new="${_html_new_dirs[$i]}"
+            if ! checksum_rename_pair_has_target_collision "$companion_old" "$companion_new"; then
+                continue
+            fi
+            if [[ -f "$companion_old" && -f "$companion_new" ]]; then
+                handle_existing_target_collision "$companion_old" "$companion_new"
+                dec=$?
+                case "$dec" in
+                    0) resolved_any=yes ;;
+                    2) return 2 ;;
+                    3) _html_new_dirs[$i]="$COLLISION_RENAMED_TARGET"; resolved_any=yes ;;
+                    4) resolved_any=yes ;;
+                    *) return 1 ;;
+                esac
+                break
+            fi
+            emit_wrap_labeled_stdout "SKIP: " "${YELLOW}SKIP:${RESET} " "Checksum group: HTML companion directory target already exists."
+            vlog "Checksum group HTML companion directory collision: '$companion_old' -> '$companion_new'"
+            return 1
+        done
+        [[ "$resolved_any" == "yes" ]] && continue
+
+        break
+    done
+
+    return 0
+}
+
 handle_existing_target_collision() {
     local old="$1"
     local new="$2"
@@ -11252,6 +11430,16 @@ for f in "${ordered_paths[@]}"; do
                 emit_wrap_labeled_stdout "[DRY-RUN] Would check ${label} because rename is needed: " "${CYAN}[DRY-RUN] Would check ${label} because rename is needed:${RESET} " "$sum_file"
             fi
             print_checksum_group_preview "$label" "$sum_file" "$new_sum" refs new_refs
+            declare -a html_companion_old_dirs=()
+            declare -a html_companion_new_dirs=()
+            declare -a html_companion_old_names=()
+            declare -a html_companion_new_names=()
+            declare -a html_companion_apply=()
+            build_checksum_group_html_companion_arrays refs new_refs \
+                html_companion_old_dirs html_companion_new_dirs \
+                html_companion_old_names html_companion_new_names html_companion_apply
+            resolve_checksum_group_rename_collisions "$sum_file" new_sum refs new_refs \
+                html_companion_apply html_companion_old_dirs html_companion_new_dirs || true
             emit_wrap_labeled_stdout "[DRY-RUN] Would update ${label,,} content references inside: " "${CYAN}[DRY-RUN] Would update ${label,,} content references inside:${RESET} " "$sum_file"
             emit_wrap_labeled_stdout "[DRY-RUN] Would check ${label} reference(s) after rename: " "${CYAN}[DRY-RUN] Would check ${label} reference(s) after rename:${RESET} " "$new_sum"
             echo "----------------------------------------"
@@ -11413,73 +11601,23 @@ for f in "${ordered_paths[@]}"; do
         declare -a html_companion_apply=()
         declare -a html_hash_needs_refresh=()
 
-        collision=no
-        if [[ "$new_sum" != "$sum_file" && -e "$new_sum" ]]; then
-            if is_case_only_rename_pair "$sum_file" "$new_sum" && paths_refer_to_same_file "$sum_file" "$new_sum"; then
-                :
-            else
-                collision=yes
-            fi
-        fi
-
+        build_checksum_group_html_companion_arrays refs new_refs \
+            html_companion_old_dirs html_companion_new_dirs \
+            html_companion_old_names html_companion_new_names html_companion_apply
         for i in "${!refs[@]}"; do
-            html_companion_old_dirs+=( "" )
-            html_companion_new_dirs+=( "" )
-            html_companion_old_names+=( "" )
-            html_companion_new_names+=( "" )
-            html_companion_apply+=( "no" )
             html_hash_needs_refresh+=( "no" )
-
-            [[ "${new_refs[$i]}" != "${refs[$i]}" ]] || continue
-            if [[ -e "${new_refs[$i]}" ]]; then
-                if is_case_only_rename_pair "${refs[$i]}" "${new_refs[$i]}" && paths_refer_to_same_file "${refs[$i]}" "${new_refs[$i]}"; then
-                    :
-                else
-                    collision=yes
-                fi
-            fi
-
-            if is_html_file "${refs[$i]}"; then
-                old_companion_dir="$(find_html_companion_dir "${refs[$i]}" || true)"
-                if [[ -n "$old_companion_dir" ]]; then
-                    old_companion_name="$(basename -- "$old_companion_dir")"
-                    old_html_stem="$(basename -- "${refs[$i]%.*}")"
-                    companion_suffix="${old_companion_name#${old_html_stem}}"
-                    new_companion_dir="$(html_companion_dir_path_with_suffix "${new_refs[$i]}" "$companion_suffix")"
-                else
-                    new_companion_dir=""
-                fi
-
-                if [[ -n "$old_companion_dir" && "$old_companion_dir" != "$new_companion_dir" ]]; then
-                    companion_conflict=no
-                    for j in "${!refs[@]}"; do
-                        if [[ "${refs[$j]}" == "$old_companion_dir" || "${refs[$j]}" == "$old_companion_dir/"* ]]; then
-                            companion_conflict=yes
-                            break
-                        fi
-                    done
-
-                    if [[ "$companion_conflict" == "no" ]]; then
-                        if [[ -e "$new_companion_dir" ]]; then
-                            if is_case_only_rename_pair "$old_companion_dir" "$new_companion_dir" && paths_refer_to_same_file "$old_companion_dir" "$new_companion_dir"; then
-                                :
-                            else
-                                collision=yes
-                            fi
-                        fi
-                        html_companion_old_dirs[$i]="$old_companion_dir"
-                        html_companion_new_dirs[$i]="$new_companion_dir"
-                        html_companion_old_names[$i]="$(basename -- "$old_companion_dir")"
-                        html_companion_new_names[$i]="$(basename -- "$new_companion_dir")"
-                        html_companion_apply[$i]="yes"
-                    fi
-                fi
-            fi
         done
 
-        if [[ "$collision" == "yes" ]]; then
+        checksum_group_collision_rc=0
+        resolve_checksum_group_rename_collisions "$sum_file" new_sum refs new_refs \
+            html_companion_apply html_companion_old_dirs html_companion_new_dirs || checksum_group_collision_rc=$?
+        if (( checksum_group_collision_rc == 2 )); then
+            stopped_by_user=yes
+            break
+        fi
+        if (( checksum_group_collision_rc == 1 )); then
             emit_wrap_labeled_stdout "SKIP: " "${YELLOW}SKIP:${RESET} " "Target file already exists."
-            vlog "Collision detected in checksum group '$sum_file'"
+            vlog "Collision detected in checksum group '$sum_file' (user skipped or unresolved)"
             finish_current_operation
             ((++files_skipped))
             processed["$sum_file"]=1
@@ -11489,6 +11627,11 @@ for f in "${ordered_paths[@]}"; do
 
         for i in "${!refs[@]}"; do
             if [[ "${new_refs[$i]}" != "${refs[$i]}" ]]; then
+                if [[ ! -e "${refs[$i]}" ]]; then
+                    vlog "Checksum group ref source already removed (collision delete-source): '${refs[$i]}'"
+                    ((++files_skipped))
+                    continue
+                fi
                 ref_was_dir=no
                 [[ -d "${refs[$i]}" ]] && ref_was_dir=yes
                 print_rename_action_verbose "${refs[$i]}" "${new_refs[$i]}" "checksum group rename"
