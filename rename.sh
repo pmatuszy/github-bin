@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.06.14 - v. 19.200.160000 - Olympus voice recorder: DM######.MP3/.WMA/.WAV (same rename rules as MP3)
 # 2026.06.14 - v. 19.199.150000 - checksum group: target exists → same collision menu as plain renames (MD5, times, [O]/[C]/…)
 # 2026.06.14 - v. 19.198.140000 - Olympus voice recorder DM######.MP3 → YYYYMMDD_HHMMSS_-_-_Olympus_voice_recorder-DM….MP3 (oldest exif/stat date)
 # 2026.06.14 - v. 19.197.130000 - collision: [V] list directory; [C] overwrite all dest in this directory; drop duplicate [W]
@@ -1429,13 +1430,13 @@ get_file_ctime_epoch() {
     stat -c %Z -- "$file" 2>/dev/null || echo 0
 }
 
-# Olympus digital voice recorder: DM######.MP3 (case-insensitive).
+# Olympus digital voice recorder: DM######.MP3 / .WMA / .WAV (case-insensitive).
 olympus_voice_recorder_raw_basename_matches() {
-    [[ "$1" =~ ^[Dd][Mm][0-9]{6}\.[mM][pP][3]$ ]]
+    [[ "$1" =~ ^[Dd][Mm][0-9]{6}\.([mM][pP]3|[wW][mM][aA]|[wW][aA][vV])$ ]]
 }
 
 olympus_voice_recorder_already_renamed_basename_matches() {
-    [[ "$1" =~ ^[0-9]{8}_[0-9]{6}_-_-_Olympus_voice_recorder-[Dd][Mm][0-9]{6}\.[mM][pP][3]$ ]]
+    [[ "$1" =~ ^[0-9]{8}_[0-9]{6}_-_-_Olympus_voice_recorder-[Dd][Mm][0-9]{6}\.([mM][pP]3|[wW][mM][aA]|[wW][aA][vV])$ ]]
 }
 
 # Track minimum positive epoch among filesystem times and exiftool file/media dates.
@@ -1482,7 +1483,7 @@ olympus_voice_recorder_oldest_timestamp_yyyymmdd_hhmmss() {
     date -d "@$epoch" +%Y%m%d_%H%M%S
 }
 
-# e.g. DM420018.MP3 → 20100311_190904_-_-_Olympus_voice_recorder-DM420018.MP3
+# e.g. DM420018.MP3 → 20100311_190904_-_-_Olympus_voice_recorder-DM420018.MP3 (same for .WMA / .WAV)
 transform_olympus_voice_recorder_basename() {
     local file="$1"
     local base="$2"
