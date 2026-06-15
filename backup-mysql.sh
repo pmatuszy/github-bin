@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.06.15 - changed date format
 # 2026.05.26 - user-facing messages translated from Polish to English
 # 2023.03.12 - v. 0.2 - added chmod command to limit backup visibility
 # 2022.12.20 - v. 0.1 - initial release
@@ -9,7 +10,7 @@ if [ -f "$HEALTHCHECKS_FILE" ];then
   HEALTHCHECK_URL=$(cat "$HEALTHCHECKS_FILE" |grep "^`basename $0`"|awk '{print $2}')
 fi
 
-export BACKUP_DESTINATION=${BACKUP_DESTINATION:-"/var/www/$(date '+%Y.%m.%d_%H%M%S')_cron_mysqldump-all-databases.sql.pbz2"}
+export BACKUP_DESTINATION=${BACKUP_DESTINATION:-"/var/www/$(date '+%Y%m%d_%H%M%S')_cron_mysqldump-all-databases.sql.pbz2"}
 export MYSQL_USER=${MYSQL_USER:-root}
 export MAX_RANDOM_DELAY_IN_SEC=${MAX_RANDOM_DELAY_IN_SEC:-50}
 export LIMIT_NUMBER_OF_LAST_BACKUPS_TO_LIST=100
