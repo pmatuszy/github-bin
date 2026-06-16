@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.06.16 - v. 19.208.150000 - DB maintenance hash backfill verbose lines: include date/time stamp
 # 2026.06.16 - v. 19.207.140000 - fix hash backfill set -e abort when jobs-remaining decrements to 0
 # 2026.06.16 - v. 19.206.130000 - DB maintenance hash backfill TTY bar: 80 columns wide (was 20)
 # 2026.06.16 - v. 19.205.120000 - DB maintenance hash backfill (non-verbose): TTY in-place bar + ETA; log file 5% milestones; no dot rows
@@ -2665,12 +2666,15 @@ print_db_maintenance_hash_job_verbose() {
     (( VERBOSE == 1 )) || return 0
     local path="$1"
     local hash_kind="$2"
-    local line="[VERBOSE] SQLite maintenance hash backfill ($hash_kind): '${path}' ($DB_MAINT_HASH_JOBS_REMAINING remaining)"
+    local ts
+    local line
+    ts="$(date '+%Y-%m-%d %H:%M:%S')"
+    line="[VERBOSE ${ts}] SQLite maintenance hash backfill ($hash_kind): '${path}' ($DB_MAINT_HASH_JOBS_REMAINING remaining)"
 
     if (( ${#line} <= MAX_LINE_LENGTH )); then
         echo "$line" >&2
     else
-        echo "[VERBOSE] SQLite maintenance hash backfill ($hash_kind): ($DB_MAINT_HASH_JOBS_REMAINING remaining)" >&2
+        echo "[VERBOSE ${ts}] SQLite maintenance hash backfill ($hash_kind): ($DB_MAINT_HASH_JOBS_REMAINING remaining)" >&2
         echo "          '${path}'" >&2
     fi
 }
