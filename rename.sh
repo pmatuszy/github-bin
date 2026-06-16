@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.06.16 - v. 19.211.150000 - DB maintenance: inline CIFS mount detect (early exit skips late functions); sqlite3 read fallbacks
 # 2026.06.16 - v. 19.210.140000 - DB maintenance on CIFS/NFS: open with ?nolock=1, probe row count, fix silent locked reads
 # 2026.06.16 - v. 19.209.140000 - DB maintenance: open cache schema before FULL/AUTO SQL; do not abort on REINDEX/WAL failure; always reach prune + hash backfill
 # 2026.06.16 - v. 19.208.150000 - DB maintenance hash backfill verbose lines: include date/time stamp
@@ -662,6 +663,7 @@ DB_MAINT_HASH_BACKFILL_LAST_DISPLAY_EPOCH=0
 DB_MAINT_HASH_BACKFILL_NEXT_PCT=5
 DB_MAINT_HASH_BACKFILL_BAR_WIDTH=80
 DB_MAINT_KNOWN_TOTAL_ROWS=0
+DB_MAINT_LAST_SQLITE_ERR=""
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 WORKSPACE_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd -P)"
 DEBUG_LOG_PATH="${DEBUG_LOG_PATH:-$WORKSPACE_ROOT/debug-8439cd.log}"
@@ -2493,8 +2495,9 @@ db_init_create_checked_paths_schema() {
 }
 
 # True when the SQLite cache path is on a mount where POSIX locking is unreliable (CIFS/SMB/NFS/…).
+# Inlined here on purpose: --run-db-maintenance exits before later functions (e.g. path_filesystem_skip_case_only_rename) are defined.
 db_sqlite_prefer_nolock_for_cache_path() {
-    local target="$DB_FILE" fs
+    local target="$DB_FILE" fs src opts lsrc lopts rp
 
     [[ -n "$target" ]] || return 1
     if [[ -f "$target" ]]; then
@@ -2504,24 +2507,49 @@ db_sqlite_prefer_nolock_for_cache_path() {
     fi
     [[ -e "$target" ]] || return 1
 
-    if path_filesystem_skip_case_only_rename "$target"; then
-        return 0
+    if ! command -v findmnt >/dev/null 2>&1; then
+        [[ "$target" == /mnt/* ]] && return 0
+        return 1
     fi
-    if command -v findmnt >/dev/null 2>&1; then
-        fs="$(findmnt -n -o FSTYPE --target "$target" 2>/dev/null)" || return 1
-        fs="${fs,,}"
-        case "$fs" in
-            nfs|nfs4|fuse.sshfs) return 0 ;;
-        esac
+
+    fs="$(findmnt -n -o FSTYPE --target "$target" 2>/dev/null)" || fs=""
+    if [[ -z "$fs" ]]; then
+        [[ "$target" == /mnt/* ]] && return 0
+        return 1
     fi
+    fs="${fs,,}"
+
+    case "$fs" in
+        exfat|cifs|smb3|smbfs|nfs|nfs4|fuse.sshfs) return 0 ;;
+    esac
+
+    src="$(findmnt -n -o SOURCE --target "$target" 2>/dev/null)" || src=""
+    opts="$(findmnt -n -o OPTIONS --target "$target" 2>/dev/null)" || opts=""
+    lsrc="${src,,}"
+    lopts="${opts,,}"
+    rp="$(realpath -- "$target" 2>/dev/null || readlink -f -- "$target" 2>/dev/null || printf '%s' "$target")"
+    rp="${rp,,}"
+
+    case "$fs" in
+        fuse.gvfsd-fuse)
+            [[ "$rp" == */gvfs/smb-share* ]] && return 0
+            [[ "$lsrc" == *smb-share* || "$lsrc" == smb:* || "$lsrc" == //* ]] && return 0
+            ;;
+        fuse.rclone)
+            [[ "$lsrc" == smb:* || "$lsrc" == *':smb'* || "$lsrc" == //* || "$lopts" == *type=smb* || "$lopts" == *fstype=smb* ]] && return 0
+            ;;
+    esac
+
     return 1
 }
 
 # Read checked_paths row count for maintenance; fail (non-zero) on lock/read errors — never silently return 0.
 db_sqlite_maintenance_count_rows() {
-    local count err err_line rc
+    local count err err_line rc uri
 
+    DB_MAINT_LAST_SQLITE_ERR=""
     err="$(mktemp)"
+
     count="$(rename_sqlite3_db_run 'PRAGMA busy_timeout=60000; SELECT COUNT(*) FROM checked_paths;' 2>"$err")"
     rc=$?
     if (( rc == 0 )) && [[ "$count" =~ ^[0-9]+$ ]]; then
@@ -2529,8 +2557,31 @@ db_sqlite_maintenance_count_rows() {
         printf '%s' "$count"
         return 0
     fi
+
+    if command -v sqlite3 >/dev/null 2>&1 && [[ -f "$DB_FILE" ]]; then
+        count="$(sqlite3 -cmd 'PRAGMA busy_timeout=60000' "$DB_FILE" 'SELECT COUNT(*) FROM checked_paths;' 2>"$err")"
+        rc=$?
+        if (( rc == 0 )) && [[ "$count" =~ ^[0-9]+$ ]]; then
+            rm -f -- "$err"
+            printf '%s' "$count"
+            return 0
+        fi
+        if uri="$(db_sqlite_file_uri_nolock 2>/dev/null)"; then
+            count="$(sqlite3 -uri -cmd 'PRAGMA busy_timeout=60000' "$uri" 'SELECT COUNT(*) FROM checked_paths;' 2>"$err")"
+            rc=$?
+            if (( rc == 0 )) && [[ "$count" =~ ^[0-9]+$ ]]; then
+                DB_SQLITE_USE_URI=1
+                DB_SQLITE_URI="$uri"
+                rm -f -- "$err"
+                printf '%s' "$count"
+                return 0
+            fi
+        fi
+    fi
+
     err_line="$(head -n 1 "$err" | tr -d '\r')"
     rm -f -- "$err"
+    DB_MAINT_LAST_SQLITE_ERR="$err_line"
     [[ -n "$err_line" ]] && echo "$err_line" >&2
     return 1
 }
@@ -2592,7 +2643,9 @@ db_open_cache_for_maintenance() {
         fi
         if ! probe_count="$(db_sqlite_maintenance_count_rows 2>/dev/null)"; then
             echo "ERROR: SQLite cache is locked or unreadable: $DB_FILE" >&2
+            [[ -n "${DB_MAINT_LAST_SQLITE_ERR:-}" ]] && echo "SQLite error: $DB_MAINT_LAST_SQLITE_ERR" >&2
             echo "Close any other rename.sh or sqlite3 using this file, then retry." >&2
+            echo "Tip: exit interactive sqlite3 sessions (they keep the DB open) before maintenance." >&2
             return 1
         fi
     fi
