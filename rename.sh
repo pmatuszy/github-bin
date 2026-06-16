@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.06.16 - v. 19.210.140000 - DB maintenance on CIFS/NFS: open with ?nolock=1, probe row count, fix silent locked reads
 # 2026.06.16 - v. 19.209.140000 - DB maintenance: open cache schema before FULL/AUTO SQL; do not abort on REINDEX/WAL failure; always reach prune + hash backfill
 # 2026.06.16 - v. 19.208.150000 - DB maintenance hash backfill verbose lines: include date/time stamp
 # 2026.06.16 - v. 19.207.140000 - fix hash backfill set -e abort when jobs-remaining decrements to 0
@@ -660,6 +661,7 @@ DB_MAINT_HASH_BACKFILL_LAST_DISPLAY_PCT=-1
 DB_MAINT_HASH_BACKFILL_LAST_DISPLAY_EPOCH=0
 DB_MAINT_HASH_BACKFILL_NEXT_PCT=5
 DB_MAINT_HASH_BACKFILL_BAR_WIDTH=80
+DB_MAINT_KNOWN_TOTAL_ROWS=0
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 WORKSPACE_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd -P)"
 DEBUG_LOG_PATH="${DEBUG_LOG_PATH:-$WORKSPACE_ROOT/debug-8439cd.log}"
@@ -2490,23 +2492,120 @@ db_init_create_checked_paths_schema() {
     db_init_create_checked_paths_schema_core
 }
 
+# True when the SQLite cache path is on a mount where POSIX locking is unreliable (CIFS/SMB/NFS/…).
+db_sqlite_prefer_nolock_for_cache_path() {
+    local target="$DB_FILE" fs
+
+    [[ -n "$target" ]] || return 1
+    if [[ -f "$target" ]]; then
+        :
+    else
+        target="$(dirname -- "$target")"
+    fi
+    [[ -e "$target" ]] || return 1
+
+    if path_filesystem_skip_case_only_rename "$target"; then
+        return 0
+    fi
+    if command -v findmnt >/dev/null 2>&1; then
+        fs="$(findmnt -n -o FSTYPE --target "$target" 2>/dev/null)" || return 1
+        fs="${fs,,}"
+        case "$fs" in
+            nfs|nfs4|fuse.sshfs) return 0 ;;
+        esac
+    fi
+    return 1
+}
+
+# Read checked_paths row count for maintenance; fail (non-zero) on lock/read errors — never silently return 0.
+db_sqlite_maintenance_count_rows() {
+    local count err err_line rc
+
+    err="$(mktemp)"
+    count="$(rename_sqlite3_db_run 'PRAGMA busy_timeout=60000; SELECT COUNT(*) FROM checked_paths;' 2>"$err")"
+    rc=$?
+    if (( rc == 0 )) && [[ "$count" =~ ^[0-9]+$ ]]; then
+        rm -f -- "$err"
+        printf '%s' "$count"
+        return 0
+    fi
+    err_line="$(head -n 1 "$err" | tr -d '\r')"
+    rm -f -- "$err"
+    [[ -n "$err_line" ]] && echo "$err_line" >&2
+    return 1
+}
+
+db_sqlite_maintenance_switch_to_nolock() {
+    DB_SQLITE_USE_URI=""
+    DB_SQLITE_URI=""
+    if db_init_create_checked_paths_schema_nolock; then
+        db_upgrade_checked_paths_schema
+        return 0
+    fi
+    return 1
+}
+
 # Maintenance-only: ensure schema/WAL pragmas without loading every row into memory.
 db_open_cache_for_maintenance() {
+    local probe_count="" opened_with_nolock=0 uri=""
+
+    DB_MAINT_KNOWN_TOTAL_ROWS=0
     db_remove_stale_sqlite_lock_artifacts
-    if ! db_init_create_checked_paths_schema; then
-        db_clear_sqlite_sidecar_files
-        db_remove_stale_sqlite_lock_artifacts
+
+    if db_sqlite_prefer_nolock_for_cache_path && uri="$(db_sqlite_file_uri_nolock 2>/dev/null)"; then
+        DB_SQLITE_USE_URI=1
+        DB_SQLITE_URI="$uri"
+        opened_with_nolock=1
+        startup_progress "SQLite maintenance: network/CIFS-style mount detected — opening cache with ?nolock=1"
+        if ! db_init_create_checked_paths_schema_core; then
+            DB_SQLITE_USE_URI=""
+            DB_SQLITE_URI=""
+            opened_with_nolock=0
+        fi
+    fi
+
+    if (( opened_with_nolock == 0 )); then
+        DB_SQLITE_USE_URI=""
+        DB_SQLITE_URI=""
         if ! db_init_create_checked_paths_schema; then
-            if db_init_create_checked_paths_schema_nolock; then
-                (( VERBOSE == 1 )) && echo "[VERBOSE] SQLite maintenance: cache opened with ?nolock=1" >&2
-            elif ! db_init_create_checked_paths_schema_via_local_tmp; then
-                echo "ERROR: could not open SQLite cache for maintenance: $DB_FILE" >&2
-                return 1
+            db_clear_sqlite_sidecar_files
+            db_remove_stale_sqlite_lock_artifacts
+            if ! db_init_create_checked_paths_schema; then
+                if db_init_create_checked_paths_schema_nolock; then
+                    opened_with_nolock=1
+                    (( VERBOSE == 1 )) && echo "[VERBOSE] SQLite maintenance: cache opened with ?nolock=1" >&2
+                elif ! db_init_create_checked_paths_schema_via_local_tmp; then
+                    echo "ERROR: could not open SQLite cache for maintenance: $DB_FILE" >&2
+                    return 1
+                fi
             fi
         fi
     fi
+
     db_upgrade_checked_paths_schema
+
+    if ! probe_count="$(db_sqlite_maintenance_count_rows 2>/dev/null)"; then
+        startup_progress "SQLite maintenance: cache read probe failed (database locked?) — retrying with ?nolock=1..."
+        if (( opened_with_nolock == 0 )) && db_sqlite_maintenance_switch_to_nolock; then
+            opened_with_nolock=1
+            (( VERBOSE == 1 )) && echo "[VERBOSE] SQLite maintenance: switched to ?nolock=1 after read probe failed." >&2
+        fi
+        if ! probe_count="$(db_sqlite_maintenance_count_rows 2>/dev/null)"; then
+            echo "ERROR: SQLite cache is locked or unreadable: $DB_FILE" >&2
+            echo "Close any other rename.sh or sqlite3 using this file, then retry." >&2
+            return 1
+        fi
+    fi
+
+    DB_MAINT_KNOWN_TOTAL_ROWS=$probe_count
+    if (( probe_count == 0 )) && [[ -s "$DB_FILE" ]]; then
+        startup_progress "SQLite maintenance: WARNING — checked_paths has 0 rows but the DB file is non-empty (unexpected; was another writer interrupted?)"
+    else
+        startup_progress "SQLite maintenance: cache ready ($probe_count rows in checked_paths)"
+    fi
+
     rename_sqlite3_db_run >/dev/null 2>&1 <<'SQL' || true
+PRAGMA busy_timeout=60000;
 PRAGMA journal_mode=WAL;
 PRAGMA synchronous=NORMAL;
 PRAGMA temp_store=MEMORY;
@@ -2523,7 +2622,8 @@ db_maintenance_run_sql_step() {
 
     (( VERBOSE == 1 )) && echo "[VERBOSE] SQLite maintenance command: ${label}" >&2
     err="$(mktemp)"
-    if rename_sqlite3_db_run 2>"$err" <<<"$sql"; then
+    if rename_sqlite3_db_run 2>"$err" >/dev/null <<<"PRAGMA busy_timeout=60000;
+${sql}"; then
         rm -f -- "$err"
         return 0
     fi
@@ -2599,15 +2699,19 @@ db_prune_missing_paths() {
     DB_MAINT_ROWS_REMOVED=0
 
     startup_progress "SQLite maintenance: checking DB paths against filesystem..."
-    total_db_rows="$(rename_sqlite3_db_run 'SELECT COUNT(*) FROM checked_paths;' 2>/dev/null || echo 0)"
-    [[ "$total_db_rows" =~ ^[0-9]+$ ]] || total_db_rows=0
+    if ! total_db_rows="$(db_sqlite_maintenance_count_rows 2>/dev/null)"; then
+        startup_progress "SQLite maintenance: ERROR — could not read checked_paths row count (database locked?)"
+        startup_progress "SQLite maintenance: filesystem check skipped"
+        return 0
+    fi
+    DB_MAINT_KNOWN_TOTAL_ROWS=$total_db_rows
 
     if (( total_db_rows > 0 )); then
         startup_progress "SQLite maintenance: crosscheck progress 0% (0 / $total_db_rows checked, 0 missing)..."
     fi
 
     prune_paths_file="$(mktemp)"
-    if ! rename_sqlite3_db_run 'SELECT path FROM checked_paths;' >"$prune_paths_file" 2>/dev/null; then
+    if ! rename_sqlite3_db_run 'PRAGMA busy_timeout=60000; SELECT path FROM checked_paths;' >"$prune_paths_file" 2>/dev/null; then
         startup_progress "SQLite maintenance: WARNING — could not list checked_paths for filesystem crosscheck (skipped)"
         rm -f -- "$prune_paths_file"
         startup_progress "SQLite maintenance: filesystem check finished (checked: 0, missing: 0, removed: 0)"
@@ -2831,6 +2935,7 @@ db_maintenance_backfill_missing_hashes() {
     local candidate_where=""
     local candidate_query=""
     local need_md5=0 need_sha512=0
+    local inv_file="" backfill_file=""
 
     DB_MAINT_HASH_ROWS_SCANNED=0
     DB_MAINT_HASH_ROWS_UPDATED=0
@@ -2874,6 +2979,12 @@ db_maintenance_backfill_missing_hashes() {
     candidate_query="SELECT path, COALESCE(file_md5,''), COALESCE(file_sha512,''), COALESCE(file_hash_kind,''), COALESCE(file_hash,'') FROM checked_paths WHERE ${candidate_where};"
 
     startup_progress "SQLite maintenance: counting missing hash slots on existing files..."
+    inv_file="$(mktemp)"
+    if ! rename_sqlite3_db_run -separator '|' "PRAGMA busy_timeout=60000; ${candidate_query}" >"$inv_file" 2>/dev/null; then
+        startup_progress "SQLite maintenance: ERROR — could not query missing-hash candidates (database locked?)"
+        rm -f -- "$inv_file"
+        return 0
+    fi
     while IFS='|' read -r path md5_hash sha512_hash file_hash_kind file_hash; do
         [[ "$stopped_by_user" == yes ]] && break
         [[ -n "$path" ]] || continue
@@ -2887,7 +2998,8 @@ db_maintenance_backfill_missing_hashes() {
         if ! _db_maintenance_row_has_effective_sha512 "$sha512_hash" "$file_hash_kind" "$file_hash"; then
             (( ++DB_MAINT_HASH_SHA512_JOBS ))
         fi
-    done < <(rename_sqlite3_db_run -separator '|' "$candidate_query")
+    done <"$inv_file"
+    rm -f -- "$inv_file"
 
     DB_MAINT_HASH_JOBS_TOTAL=$(( DB_MAINT_HASH_MD5_JOBS + DB_MAINT_HASH_SHA512_JOBS ))
     DB_MAINT_HASH_JOBS_REMAINING=$DB_MAINT_HASH_JOBS_TOTAL
@@ -2895,7 +3007,11 @@ db_maintenance_backfill_missing_hashes() {
     startup_progress "SQLite maintenance: hash inventory — md5 missing: $DB_MAINT_HASH_MD5_JOBS, sha512 missing: $DB_MAINT_HASH_SHA512_JOBS, total jobs: $DB_MAINT_HASH_JOBS_TOTAL (skipped not on disk: $DB_MAINT_HASH_SKIPPED_NOT_FILE)"
 
     if (( DB_MAINT_HASH_JOBS_TOTAL == 0 )); then
-        startup_progress "SQLite maintenance: hash backfill skipped (no missing hashes on existing files)"
+        if (( DB_MAINT_KNOWN_TOTAL_ROWS > 0 )); then
+            startup_progress "SQLite maintenance: hash backfill skipped (no missing hash slots on rows that exist on disk)"
+        else
+            startup_progress "SQLite maintenance: hash backfill skipped (no missing hashes on existing files)"
+        fi
         return 0
     fi
 
@@ -2906,6 +3022,14 @@ db_maintenance_backfill_missing_hashes() {
             DB_MAINT_HASH_BACKFILL_TTY_BAR=yes
             _db_maintenance_hash_backfill_progress_render 1
         fi
+    fi
+
+    backfill_file="$(mktemp)"
+    if ! rename_sqlite3_db_run -separator '|' "PRAGMA busy_timeout=60000; ${candidate_query}" >"$backfill_file" 2>/dev/null; then
+        startup_progress "SQLite maintenance: ERROR — could not list hash backfill candidates (database locked?)"
+        rm -f -- "$backfill_file"
+        _db_maintenance_hash_backfill_progress_finish
+        return 0
     fi
 
     while IFS='|' read -r path md5_hash sha512_hash file_hash_kind file_hash; do
@@ -2969,7 +3093,8 @@ db_maintenance_backfill_missing_hashes() {
                 db_flush_pending
             fi
         fi
-    done < <(rename_sqlite3_db_run -separator '|' "$candidate_query")
+    done <"$backfill_file"
+    rm -f -- "$backfill_file"
 
     _db_maintenance_hash_backfill_progress_finish
     db_flush_pending
@@ -2989,6 +3114,7 @@ print_db_maintenance_summary() {
     echo "========= SQLITE MAINTENANCE SUMMARY ($status) ========="
     echo "Profile:               $profile"
     echo "DB file:               $DB_FILE"
+    echo "DB rows (checked_paths): $DB_MAINT_KNOWN_TOTAL_ROWS"
     echo "Script start time:     $SCRIPT_START_TIME"
     echo "Script finish time:    ${SCRIPT_FINISH_TIME:-$(date '+%Y-%m-%d %H:%M:%S')}"
     echo "Filesystem crosscheck:"
