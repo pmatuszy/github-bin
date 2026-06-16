@@ -1,5 +1,9 @@
 #!/bin/bash
 
+# 2026.06.16 - v. 0.3.10 - interactive backup prompt defaults to yes
+# 2026.06.16 - v. 0.3.9 - optional backup originals as name.ext_YYYYMMDD_HHMMSS before normalize
+# 2026.06.16 - v. 0.3.8 - normalize all audio tracks; copy video, subtitles, metadata, other streams
+# 2026.06.16 - v. 0.3.7 - fix MP4 normalize: map streams, re-encode audio (aac); show ffmpeg errors
 # 2026.06.16 - v. 0.3.6 - offer normalize for NORMAL and TOO_QUIET; skip only PERFECT
 # 2026.06.16 - v. 0.3.5 - after normalize: print max/mean volume before and after
 # 2026.06.16 - v. 0.3.4 - FILE column capped at 150 chars (shorter when names are shorter)
@@ -64,9 +68,13 @@ Normalization (non-PERFECT files only; PERFECT is never offered):
   standard   ffmpeg loudnorm (default filter parameters)
   youtube    loudnorm=I=-16:TP=-1.0:LRA=11  (YouTube-style targets)
 
-Video files: audio filtered, video stream copied (-c:v copy).
+Video files: loudnorm on every audio track; video, subtitles, chapters, metadata,
+and other non-audio streams are copied. Audio is re-encoded (AAC for MP4/MKV, etc.).
 After a successful in-place replace, the output file gets the original timestamps
 (mtime/atime) back via touch -r.
+
+Optionally save each original file beside the normalized output before processing:
+  <filename.ext>_YYYYMMDD_HHMMSS   (same directory; cp -a preserves metadata)
 
 Options:
   -h, --help           Show this help and exit.
@@ -76,12 +84,15 @@ Options:
                        skip when not interactive unless -n is set).
   -y, --yes            Do not ask per file; normalize every eligible file when
                        -n standard or -n youtube is selected.
+  --save-original      Keep a timestamped copy of each file before normalizing
+                       (skip the interactive backup question).
   --no_startup_delay   Skip random startup delay when run non-interactively
                        (see _script_header.sh).
   -- FILE              Explicit file operands (use when a name starts with -).
 
 Environment:
-  LOUDNESS_NORMALIZE   Same as -n / --normalize (CLI overrides).
+  LOUDNESS_NORMALIZE        Same as -n / --normalize (CLI overrides).
+  LOUDNESS_SAVE_ORIGINAL    1 = save originals aside (same as --save-original).
 
 Exit status:
   0  Scan OK and (if requested) normalization finished without failures.
@@ -98,6 +109,8 @@ NORMALIZE_MODE="${LOUDNESS_NORMALIZE:-}"
 AUTO_YES=0
 CLI_FILES=()
 ANY_CLI_OPTIONS=0
+LOUDNESS_SAVE_ORIGINAL="${LOUDNESS_SAVE_ORIGINAL:-0}"
+LOUDNESS_SAVE_ORIGINAL_CLI=0
 
 # --- parse options before sourcing the header (avoids figlet/delay on --help/--version) ---
 HEADER_EXTRA_ARGS=()
@@ -127,6 +140,12 @@ while [[ $# -gt 0 ]]; do
       AUTO_YES=1
       shift
       ;;
+    --save-original)
+      ANY_CLI_OPTIONS=1
+      LOUDNESS_SAVE_ORIGINAL=1
+      LOUDNESS_SAVE_ORIGINAL_CLI=1
+      shift
+      ;;
     --)
       shift
       CLI_FILES+=( "$@" )
@@ -153,6 +172,11 @@ case "${NORMALIZE_MODE,,}" in
     ;;
 esac
 NORMALIZE_MODE="${NORMALIZE_MODE,,}"
+
+case "${LOUDNESS_SAVE_ORIGINAL,,}" in
+  1|yes|true|y) LOUDNESS_SAVE_ORIGINAL=1 ;;
+  *)          LOUDNESS_SAVE_ORIGINAL=0 ;;
+esac
 
 # No flags at all (FILE operands alone are OK): presume interactive prompts and streaming scan.
 PRESUME_INTERACTIVE=0
@@ -272,11 +296,6 @@ file_has_audio_stream() {
   ffprobe -v error -select_streams a:0 -show_entries stream=index -of csv=p=0 -- "$file" 2>/dev/null | grep -q .
 }
 
-file_has_video_stream() {
-  local file="$1"
-  ffprobe -v error -select_streams v:0 -show_entries stream=index -of csv=p=0 -- "$file" 2>/dev/null | grep -q .
-}
-
 parse_volumedetect_db() {
   local blob="$1" key="$2"
   awk -v key="$key" '
@@ -371,29 +390,83 @@ restore_file_timestamps_from_ref() {
   touch -r "$ref" "$file"
 }
 
+# Audio encoder flags for filtered output (cannot use -c:a copy with loudnorm).
+normalize_audio_encoder_args() {
+  local file="$1" ext="${file##*.}"
+  case "${ext,,}" in
+    mp3)  printf '%s\n' '-c:a' 'libmp3lame' '-q:a' '2' ;;
+    flac) printf '%s\n' '-c:a' 'flac' ;;
+    ogg)  printf '%s\n' '-c:a' 'libvorbis' '-q:a' '5' ;;
+    opus) printf '%s\n' '-c:a' 'libopus' '-b:a' '128k' ;;
+    wav)  printf '%s\n' '-c:a' 'pcm_s16le' ;;
+    wma)  printf '%s\n' '-c:a' 'wmav2' ;;
+    *)    printf '%s\n' '-c:a' 'aac' '-b:a' '192k' ;;
+  esac
+}
+
+print_ffmpeg_error_tail() {
+  local log="$1" n="${2:-15}"
+  [[ -f "$log" && -s "$log" ]] || return 0
+  echo '    ffmpeg error (last lines):'
+  tail -n "$n" "$log" | sed 's/^/      /'
+}
+
+count_file_audio_streams() {
+  local file="$1"
+  ffprobe -v error -select_streams a -show_entries stream=index -of csv=p=0 -- "$file" 2>/dev/null | grep -c .
+}
+
+# Copy original to <path/filename.ext>_YYYYMMDD_HHMMSS in the same directory.
+save_original_aside() {
+  local file="$1" ts dest
+  ts="$(date +%Y%m%d_%H%M%S)"
+  dest="${file}_${ts}"
+  if [[ -e "$dest" ]]; then
+    echo "    Backup already exists: ${dest}" >&2
+    return 1
+  fi
+  if cp -a -- "$file" "$dest"; then
+    echo "    Original saved: ${dest}"
+    return 0
+  fi
+  echo "    Could not save original to: ${dest}" >&2
+  return 1
+}
+
 normalize_file_inplace() {
   local file="$1" filter="$2"
-  local tmp ref ext ffmpeg_rc=0 ts_ref
+  local tmp ref ext ffmpeg_rc=0 ts_ref stderr_log
+  local -a encoder_args=()
 
   ext="${file##*.}"
   tmp="${file}.tmp.${ext}.$$"
   ts_ref="$(mktemp)"
+  stderr_log="$(mktemp)"
   touch -r "$file" "$ts_ref"
   LOUDNESS_TMP_FILE="$tmp"
 
-  if file_has_video_stream "$file"; then
-    ffmpeg -hide_banner -nostats -y -i "$file" -filter:a "$filter" -c:v copy -- "$tmp" \
-      >/dev/null 2>&1 || ffmpeg_rc=$?
-  else
-    ffmpeg -hide_banner -nostats -y -i "$file" -filter:a "$filter" -- "$tmp" \
-      >/dev/null 2>&1 || ffmpeg_rc=$?
-  fi
+  mapfile -t encoder_args < <(normalize_audio_encoder_args "$file")
+
+  # Map all streams; -filter:a applies loudnorm to every audio track; -c copy keeps
+  # video, subtitles, attachments, etc.; -c:a overrides audio to re-encode after filter.
+  ffmpeg -hide_banner -nostats -y -i "$file" \
+    -map 0 \
+    -map_metadata 0 \
+    -map_chapters 0 \
+    -filter:a "$filter" \
+    -c copy \
+    "${encoder_args[@]}" \
+    -max_muxing_queue_size 9999 \
+    -- "$tmp" 2>"$stderr_log" || ffmpeg_rc=$?
 
   if (( ffmpeg_rc != 0 )) || [[ ! -s "$tmp" ]]; then
-    rm -f -- "$tmp" "$ts_ref"
+    print_ffmpeg_error_tail "$stderr_log"
+    rm -f -- "$tmp" "$ts_ref" "$stderr_log"
     LOUDNESS_TMP_FILE=""
     return 1
   fi
+
+  rm -f -- "$stderr_log"
 
   if ! mv -f -- "$tmp" "$file"; then
     rm -f -- "$tmp" "$ts_ref"
@@ -629,8 +702,20 @@ prompt_normalize_mode() {
   esac
 }
 
+prompt_save_original_aside() {
+  echo
+  echo "Backup pattern: <filename.ext>_YYYYMMDD_HHMMSS (same directory as the source file)."
+  loudness_read_key "$(date '+%Y.%m.%d %H:%M:%S') Save originals aside before normalizing? [Y/n/q]: " Y
+  case "${REPLY^^}" in
+    Q) loudness_quit_now ;;
+    N) LOUDNESS_SAVE_ORIGINAL=0 ;;
+    *) LOUDNESS_SAVE_ORIGINAL=1 ;;
+  esac
+  echo
+}
+
 normalize_candidate_files() {
-  local filter file max_db status i norm_ok=0 norm_fail=0 norm_skip=0
+  local filter file max_db status i norm_ok=0 norm_fail=0 norm_skip=0 audio_n
   local before_max before_mean after_max after_mean measure_line measure_rc
 
   filter="$(loudnorm_filter_for_mode "$NORMALIZE_MODE")" || {
@@ -640,7 +725,11 @@ normalize_candidate_files() {
 
   echo
   echo "Normalization mode: ${NORMALIZE_MODE} (${filter})"
-  echo "Only non-PERFECT files are processed; timestamps are preserved."
+  echo "All audio tracks are loudnorm-filtered; video, subtitles, and other streams are copied."
+  if (( LOUDNESS_SAVE_ORIGINAL )); then
+    echo "Originals are copied aside as <name.ext>_YYYYMMDD_HHMMSS before each file is normalized."
+  fi
+  echo "Timestamps on the normalized file are preserved."
   echo
 
   for i in "${!NORMALIZE_FILES[@]}"; do
@@ -663,9 +752,20 @@ normalize_candidate_files() {
       read -r before_max before_mean <<<"$measure_line"
     fi
 
+    audio_n="$(count_file_audio_streams "$file")"
+    if (( LOUDNESS_SAVE_ORIGINAL )); then
+      if ! save_original_aside "$file"; then
+        echo 'Aborting normalize for this file.'
+        (( ++norm_fail ))
+        continue
+      fi
+    fi
     printf 'Normalizing %s ... ' "$file"
     if normalize_file_inplace "$file" "$filter"; then
       echo 'OK'
+      if (( audio_n > 1 )); then
+        echo "    (${audio_n} audio tracks normalized; other streams copied)"
+      fi
       measure_rc=0
       measure_line="$(measure_loudness "$file")" || measure_rc=$?
       if (( measure_rc == 0 )); then
@@ -740,6 +840,10 @@ fi
 if [[ "$NORMALIZE_MODE" == none || -z "$NORMALIZE_MODE" ]]; then
   kod_powrotu=1
   exit 1
+fi
+
+if (( ! LOUDNESS_SAVE_ORIGINAL && ! LOUDNESS_SAVE_ORIGINAL_CLI )) && loudness_is_interactive; then
+  prompt_save_original_aside
 fi
 
 if normalize_candidate_files; then
