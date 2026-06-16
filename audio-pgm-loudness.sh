@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.06.16 - v. 0.4.3 - per-file [D] normalize rest of directory (was [R] rest of batch)
 # 2026.06.16 - v. 0.4.2 - prompt timestamps in square brackets for readability
 # 2026.06.16 - v. 0.4.1 - backup: move original to *.backup.deleteme (not timestamped copy)
 # 2026.06.16 - v. 0.4.0 - YouTube mode: optional include PERFECT; [R] normalize rest in batch
@@ -94,8 +95,8 @@ Options:
   --include-perfect    With -n youtube, normalize PERFECT files too (skip the
                        interactive question).
 
-Per-file normalize prompt (interactive): [y] yes, [N] no, [R] yes for this file
-and all remaining in the batch, [Q] quit.
+Per-file normalize prompt (interactive): [y] yes, [N] no, [D] yes for rest of
+directory, [Q] quit.
   --no_startup_delay   Skip random startup delay when run non-interactively
                        (see _script_header.sh).
   -- FILE              Explicit file operands (use when a name starts with -).
@@ -125,7 +126,7 @@ LOUDNESS_SAVE_ORIGINAL="${LOUDNESS_SAVE_ORIGINAL:-0}"
 LOUDNESS_SAVE_ORIGINAL_CLI=0
 LOUDNESS_INCLUDE_PERFECT="${LOUDNESS_INCLUDE_PERFECT:-0}"
 LOUDNESS_INCLUDE_PERFECT_CLI=0
-NORMALIZE_REST=0
+NORMALIZE_DIR=""
 
 # --- parse options before sourcing the header (avoids figlet/delay on --help/--version) ---
 HEADER_EXTRA_ARGS=()
@@ -856,12 +857,19 @@ prompt_save_original_aside() {
   echo
 }
 
+normalize_skip_file_prompt() {
+  local file="$1"
+  (( AUTO_YES )) && return 0
+  [[ -n "$NORMALIZE_DIR" && "$(dirname -- "$file")" == "$NORMALIZE_DIR" ]] && return 0
+  return 1
+}
+
 normalize_candidate_files() {
   local filter file max_db status i norm_ok=0 norm_fail=0 norm_skip=0 audio_n
   local before_max before_mean after_max after_mean measure_line measure_rc
   local backup src dest
 
-  NORMALIZE_REST=0
+  NORMALIZE_DIR=""
 
   filter="$(loudnorm_filter_for_mode "$NORMALIZE_MODE")" || {
     echo "ERROR: unknown normalize mode: ${NORMALIZE_MODE}" >&2
@@ -875,7 +883,7 @@ normalize_candidate_files() {
     echo "Originals are moved to *.backup.deleteme before each file is normalized."
   fi
   echo "Timestamps on the normalized file are preserved."
-  echo "Per-file prompt: [y] yes, [N] no, [R] yes for rest of batch, [Q] quit."
+  echo "Per-file prompt: [y] yes, [N] no, [D] yes for rest of directory, [Q] quit."
   echo
 
   for i in "${!NORMALIZE_FILES[@]}"; do
@@ -883,11 +891,11 @@ normalize_candidate_files() {
     max_db="${NORMALIZE_MAX[$i]}"
     status="${NORMALIZE_STATUS[$i]}"
 
-    if (( ! AUTO_YES && ! NORMALIZE_REST )); then
-      loudness_read_key "[$(date '+%Y.%m.%d %H:%M:%S')] Normalize ${file} (${status}, ${max_db} dB)? [y/N/r/q]: " N
+    if ! normalize_skip_file_prompt "$file"; then
+      loudness_read_key "[$(date '+%Y.%m.%d %H:%M:%S')] Normalize ${file} (${status}, ${max_db} dB)? [y/N/d/q]: " N
       case "${REPLY^^}" in
         Q) echo "Quit requested." ; return 2 ;;
-        R) NORMALIZE_REST=1 ;;
+        D) NORMALIZE_DIR="$(dirname -- "$file")" ;;
         Y) ;;
         *) (( ++norm_skip )) ; continue ;;
       esac
