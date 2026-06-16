@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.06.14 - v. 1.4 - when ExifTool not found: prompt to install [y/N] default N, 300s timeout
 # 2026.05.31 - v. 1.3 - update/reinstall prompt reads a single key (no Enter required)
 # 2026.05.31 - v. 1.2 - fix "tmpdir: unbound variable" in EXIT trap (global TMP_WORK_DIR + guarded cleanup)
 # 2026.05.31 - v. 1.1 - if exiftool already installed: print version and ask to update/reinstall or quit
@@ -31,6 +32,39 @@ cleanup_tmp_work_dir() {
     fi
 }
 trap cleanup_tmp_work_dir EXIT
+
+INSTALL_EXIFTOOL_READ_TIMEOUT="${INSTALL_EXIFTOOL_READ_TIMEOUT:-300}"
+
+flush_stdin() {
+    while read -r -t 0.001 -n 10000 _garbage 2>/dev/null; do :; done
+}
+
+# Read one key (no Enter). Sets REPLY; empty answer uses default_key.
+exiftool_read_key() {
+    local prompt="$1"
+    local default_key="${2:-}"
+    local timeout="${3:-${INSTALL_EXIFTOOL_READ_TIMEOUT}}"
+    local answer=""
+
+    if [[ ! -t 0 ]]; then
+        REPLY="$default_key"
+        return 0
+    fi
+
+    printf '%s' "$prompt"
+    flush_stdin
+    if [[ "$timeout" =~ ^[0-9]+$ ]] && (( timeout > 0 )); then
+        read -t "$timeout" -n 1 answer || answer=""
+    else
+        read -n 1 answer || answer=""
+    fi
+    echo
+    if [[ -z "$answer" ]]; then
+        REPLY="$default_key"
+    else
+        REPLY="$answer"
+    fi
+}
 
 need_cmd() {
     if ! command -v "$1" >/dev/null 2>&1; then
@@ -120,6 +154,23 @@ get_installed_version() {
     echo "${v}"
 }
 
+# When ExifTool is missing, ask before downloading (default no; 300s timeout).
+prompt_install_if_missing() {
+    local latest="$1"
+
+    echo "No ExifTool found on this system."
+    echo "  Latest available version: ${latest}"
+    if [[ ! -t 0 ]]; then
+        echo "Non-interactive session — not installing (default [N])."
+        exit 0
+    fi
+    exiftool_read_key "Install ExifTool now? [y/N]: " n "${INSTALL_EXIFTOOL_READ_TIMEOUT}"
+    case "${REPLY}" in
+        y|Y) echo "Proceeding with install..." ;;
+        *) echo "Quitting — no changes made."; exit 0 ;;
+    esac
+}
+
 # If exiftool is already installed, show its version and ask: update/install or quit.
 prompt_if_already_installed() {
     local latest="$1"
@@ -134,7 +185,7 @@ prompt_if_already_installed() {
     fi
 
     if [[ -z "${found_exe}" ]]; then
-        echo "No existing ExifTool found — proceeding with a fresh install."
+        prompt_install_if_missing "${latest}"
         return 0
     fi
 
