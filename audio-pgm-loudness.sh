@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.06.16 - v. 0.3.4 - FILE column capped at 150 chars (shorter when names are shorter)
 # 2026.06.16 - v. 0.3.3 - startup “offer normalize after scan?” defaults to yes
 # 2026.06.16 - v. 0.3.2 - scan table: right-align MAX/MEAN dB columns (decimal aligned, not minus)
 # 2026.06.16 - v. 0.3.1 - normalize prompts default N; [Q] quit on normalize-related prompts
@@ -390,6 +391,7 @@ declare -a ROW_FILE=() ROW_MAX=() ROW_MEAN=() ROW_STATUS=()
 declare -a TOO_QUIET_FILES=() TOO_QUIET_MAX=()
 
 REPORT_FILE_W=4
+REPORT_FILE_MAX_W=150
 REPORT_MAX_W=10
 REPORT_MEAN_W=11
 REPORT_STATUS_W=6
@@ -404,10 +406,23 @@ init_report_column_widths() {
   for f in "${MEDIA_FILES[@]}"; do
     REPORT_FILE_W=$(_table_col_width "$REPORT_FILE_W" "$f")
   done
+  if (( REPORT_FILE_W > REPORT_FILE_MAX_W )); then
+    REPORT_FILE_W=$REPORT_FILE_MAX_W
+  fi
   REPORT_MAX_W=$(_table_col_width "$REPORT_MAX_W" 'MAX_VOLUME')
   REPORT_MEAN_W=$(_table_col_width "$REPORT_MEAN_W" 'MEAN_VOLUME')
   REPORT_STATUS_W=$(_table_col_width "$REPORT_STATUS_W" 'TOO_QUIET')
   REPORT_STATUS_W=$(_table_col_width "$REPORT_STATUS_W" 'NO AUDIO')
+}
+
+# Left-align filename within the FILE column (truncate with … if longer than width).
+format_scan_file_cell() {
+  local file="$1" width="$2"
+  if (( ${#file} <= width )); then
+    printf '%-*s' "$width" "$file"
+  else
+    printf '%-*s' "$width" "${file:0:$(( width - 3 ))}..."
+  fi
 }
 
 # Right-align a volumedetect dB value (or em dash) within a fixed column width.
@@ -435,11 +450,12 @@ print_report_table_header() {
 
 print_report_table_row() {
   local file="$1" max_val="$2" mean_val="$3" status="$4"
-  local max_cell mean_cell
+  local file_cell max_cell mean_cell
+  file_cell="$(format_scan_file_cell "$file" "$REPORT_FILE_W")"
   max_cell="$(format_scan_db_cell "$max_val" "$REPORT_MAX_W")"
   mean_cell="$(format_scan_db_cell "$mean_val" "$REPORT_MEAN_W")"
-  printf '%-*s  %s  %s  %-*s\n' \
-    "$REPORT_FILE_W" "$file" \
+  printf '%s  %s  %s  %-*s\n' \
+    "$file_cell" \
     "$max_cell" "$mean_cell" \
     "$REPORT_STATUS_W" "$status"
 }
