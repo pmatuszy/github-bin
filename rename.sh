@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.06.15 - v. 19.202.120000 - DB maintenance hash backfill (non-verbose): milestone line every 1% or every 1000 hashes
 # 2026.06.14 - v. 19.201.170000 - DB maintenance hash backfill: inventory (md5/sha512 slots), countdown in verbose, dots in non-verbose; AUTO+FULL profiles; fill each missing slot independently
 # 2026.06.14 - v. 19.200.160000 - Olympus voice recorder: DM######.MP3/.WMA/.WAV (same rename rules as MP3)
 # 2026.06.14 - v. 19.199.150000 - checksum group: target exists → same collision menu as plain renames (MD5, times, [O]/[C]/…)
@@ -645,6 +646,9 @@ DB_MAINT_HASH_JOBS_REMAINING=0
 DB_MAINT_HASH_MD5_JOBS=0
 DB_MAINT_HASH_SHA512_JOBS=0
 DB_MAINT_HASH_SKIPPED_NOT_FILE=0
+DB_MAINT_HASH_JOBS_DONE=0
+DB_MAINT_HASH_BACKFILL_NEXT_PCT=1
+DB_MAINT_HASH_BACKFILL_NEXT_COUNT=1000
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 WORKSPACE_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd -P)"
 DEBUG_LOG_PATH="${DEBUG_LOG_PATH:-$WORKSPACE_ROOT/debug-8439cd.log}"
@@ -2658,6 +2662,35 @@ print_db_maintenance_hash_job_verbose() {
     fi
 }
 
+_db_maintenance_hash_backfill_milestone_if_needed() {
+    (( VERBOSE == 1 )) && return 0
+    (( DB_MAINT_HASH_JOBS_TOTAL > 0 )) || return 0
+
+    local progress_pct=0
+    local emit=0
+
+    progress_pct=$(( DB_MAINT_HASH_JOBS_DONE * 100 / DB_MAINT_HASH_JOBS_TOTAL ))
+
+    if (( DB_MAINT_HASH_JOBS_DONE >= DB_MAINT_HASH_BACKFILL_NEXT_COUNT )); then
+        emit=1
+        while (( DB_MAINT_HASH_BACKFILL_NEXT_COUNT <= DB_MAINT_HASH_JOBS_DONE )); do
+            DB_MAINT_HASH_BACKFILL_NEXT_COUNT=$(( DB_MAINT_HASH_BACKFILL_NEXT_COUNT + 1000 ))
+        done
+    fi
+
+    if (( progress_pct >= DB_MAINT_HASH_BACKFILL_NEXT_PCT && DB_MAINT_HASH_BACKFILL_NEXT_PCT <= 100 )); then
+        emit=1
+        while (( progress_pct >= DB_MAINT_HASH_BACKFILL_NEXT_PCT && DB_MAINT_HASH_BACKFILL_NEXT_PCT <= 100 )); do
+            DB_MAINT_HASH_BACKFILL_NEXT_PCT=$(( DB_MAINT_HASH_BACKFILL_NEXT_PCT + 1 ))
+        done
+    fi
+
+    if (( emit == 1 )); then
+        nonverbose_progress_dot_endline_if_needed
+        startup_progress "SQLite maintenance: hash backfill progress ${progress_pct}% ($DB_MAINT_HASH_JOBS_DONE / $DB_MAINT_HASH_JOBS_TOTAL hashes, $DB_MAINT_HASH_JOBS_REMAINING remaining)..."
+    fi
+}
+
 _db_maintenance_hash_job_completed() {
     local path="$1"
     local hash_kind="$2"
@@ -2665,7 +2698,9 @@ _db_maintenance_hash_job_completed() {
     if (( VERBOSE == 1 )); then
         print_db_maintenance_hash_job_verbose "$path" "$hash_kind"
     else
+        (( ++DB_MAINT_HASH_JOBS_DONE ))
         nonverbose_progress_stdout_line_char '.'
+        _db_maintenance_hash_backfill_milestone_if_needed
     fi
 }
 
@@ -2688,6 +2723,9 @@ db_maintenance_backfill_missing_hashes() {
     DB_MAINT_HASH_MD5_JOBS=0
     DB_MAINT_HASH_SHA512_JOBS=0
     DB_MAINT_HASH_SKIPPED_NOT_FILE=0
+    DB_MAINT_HASH_JOBS_DONE=0
+    DB_MAINT_HASH_BACKFILL_NEXT_PCT=1
+    DB_MAINT_HASH_BACKFILL_NEXT_COUNT=1000
 
     if command -v md5sum >/dev/null 2>&1; then
         md5_backend="md5sum"
