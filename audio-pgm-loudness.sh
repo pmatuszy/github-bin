@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.06.16 - v. 0.4.2 - prompt timestamps in square brackets for readability
 # 2026.06.16 - v. 0.4.1 - backup: move original to *.backup.deleteme (not timestamped copy)
 # 2026.06.16 - v. 0.4.0 - YouTube mode: optional include PERFECT; [R] normalize rest in batch
 # 2026.06.16 - v. 0.3.12 - fix normalize temp path: name.tmp.PID.ext (ffmpeg muxer detection)
@@ -777,7 +778,7 @@ prompt_startup_interactive() {
 
   echo "Files to scan: ${n}"
   echo
-  loudness_read_key "$(date '+%Y.%m.%d %H:%M:%S') Proceed with loudness scan? [Y/n/q]: " Y
+  loudness_read_key "[$(date '+%Y.%m.%d %H:%M:%S')] Proceed with loudness scan? [Y/n/q]: " Y
   case "${REPLY^^}" in
     Q) loudness_quit_now ;;
     N)
@@ -788,7 +789,7 @@ prompt_startup_interactive() {
   esac
 
   echo
-  loudness_read_key "$(date '+%Y.%m.%d %H:%M:%S') If non-PERFECT files are found, offer normalize after scan? [Y/n/q]: " Y
+  loudness_read_key "[$(date '+%Y.%m.%d %H:%M:%S')] If non-PERFECT files are found, offer normalize after scan? [Y/n/q]: " Y
   case "${REPLY^^}" in
     Q) loudness_quit_now ;;
     N) LOUDNESS_OFFER_NORMALIZE=0 ;;
@@ -813,7 +814,7 @@ prompt_normalize_mode() {
   echo "  [Y] YouTube-style loudnorm (I=-16:TP=-1.0:LRA=11)"
   echo "  [N] Skip normalization (default)"
   echo "  [Q] Quit"
-  loudness_read_key "$(date '+%Y.%m.%d %H:%M:%S') Normalize? [S/y/N/q]: " N
+  loudness_read_key "[$(date '+%Y.%m.%d %H:%M:%S')] Normalize? [S/y/N/q]: " N
   case "${REPLY^^}" in
     Q) loudness_quit_now ;;
     S) NORMALIZE_MODE=standard ;;
@@ -831,7 +832,7 @@ prompt_youtube_include_perfect() {
   echo
   echo "YouTube-style loudnorm targets -16 LUFS. ${n_perfect} file(s) are PERFECT"
   echo "(peak already near maximum; normalization may reduce dynamic range)."
-  loudness_read_key "$(date '+%Y.%m.%d %H:%M:%S') Include PERFECT files in YouTube normalize? [Y/n/q]: " Y
+  loudness_read_key "[$(date '+%Y.%m.%d %H:%M:%S')] Include PERFECT files in YouTube normalize? [Y/n/q]: " Y
   case "${REPLY^^}" in
     Q) loudness_quit_now ;;
     N) LOUDNESS_INCLUDE_PERFECT=0 ;;
@@ -846,7 +847,7 @@ prompt_youtube_include_perfect() {
 prompt_save_original_aside() {
   echo
   echo "Backup pattern: <filename>.backup.deleteme (original is moved, not copied)."
-  loudness_read_key "$(date '+%Y.%m.%d %H:%M:%S') Move originals aside before normalizing? [Y/n/q]: " Y
+  loudness_read_key "[$(date '+%Y.%m.%d %H:%M:%S')] Move originals aside before normalizing? [Y/n/q]: " Y
   case "${REPLY^^}" in
     Q) loudness_quit_now ;;
     N) LOUDNESS_SAVE_ORIGINAL=0 ;;
@@ -883,7 +884,7 @@ normalize_candidate_files() {
     status="${NORMALIZE_STATUS[$i]}"
 
     if (( ! AUTO_YES && ! NORMALIZE_REST )); then
-      loudness_read_key "$(date '+%Y.%m.%d %H:%M:%S') Normalize ${file} (${status}, ${max_db} dB)? [y/N/r/q]: " N
+      loudness_read_key "[$(date '+%Y.%m.%d %H:%M:%S')] Normalize ${file} (${status}, ${max_db} dB)? [y/N/r/q]: " N
       case "${REPLY^^}" in
         Q) echo "Quit requested." ; return 2 ;;
         R) NORMALIZE_REST=1 ;;
