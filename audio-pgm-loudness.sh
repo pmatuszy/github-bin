@@ -1,5 +1,8 @@
 #!/bin/bash
 
+# 2026.06.16 - v. 0.3.0 - no CLI flags: interactive startup; stream scan rows one-by-one (no hang)
+# 2026.06.16 - v. 0.2.2 - legend: indent PERFECT dB range one column (leading minus on other rows)
+# 2026.06.16 - v. 0.2.1 - align classification legend columns (label / dB / description)
 # 2026.06.16 - v. 0.2 - dB cheat-sheet categories; optional loudnorm (standard / youtube-style); preserve mtime
 # 2026.06.16 - v. 0.1 - initial release: scan cwd for audio/video; ffmpeg volumedetect; flag too-silent files
 
@@ -46,6 +49,10 @@ Supported extensions (case-insensitive):
 With FILE operands, only those paths are checked (must exist). Without FILE,
 every supported file in the current working directory is scanned.
 
+When no command-line options are given (only optional FILE operands), the script
+runs in interactive mode: it asks before scanning and prints each result row as
+soon as that file is measured (so a long scan does not look hung).
+
 Normalization (TOO QUIET files only):
   standard   ffmpeg loudnorm (default filter parameters)
   youtube    loudnorm=I=-16:TP=-1.0:LRA=11  (YouTube-style targets)
@@ -59,7 +66,7 @@ Options:
   -v, --version        Print script version and exit.
   -n, --normalize MODE none|standard|youtube
                        Normalize TOO QUIET files (default: ask when interactive,
-                       skip when not on a tty unless -n is set).
+                       skip when not interactive unless -n is set).
   -y, --yes            Do not ask per file; normalize every TOO QUIET file when
                        -n standard or -n youtube is selected.
   --no_startup_delay   Skip random startup delay when run non-interactively
@@ -83,6 +90,7 @@ EOF
 NORMALIZE_MODE="${LOUDNESS_NORMALIZE:-}"
 AUTO_YES=0
 CLI_FILES=()
+ANY_CLI_OPTIONS=0
 
 # --- parse options before sourcing the header (avoids figlet/delay on --help/--version) ---
 HEADER_EXTRA_ARGS=()
@@ -97,15 +105,18 @@ while [[ $# -gt 0 ]]; do
       exit 0
       ;;
     --no_startup_delay)
+      ANY_CLI_OPTIONS=1
       HEADER_EXTRA_ARGS+=(NO_STARTUP_DELAY)
       shift
       ;;
     -n|--normalize)
+      ANY_CLI_OPTIONS=1
       [[ $# -ge 2 ]] || { echo "Missing value for --normalize" >&2; exit 1; }
       NORMALIZE_MODE="$2"
       shift 2
       ;;
     -y|--yes)
+      ANY_CLI_OPTIONS=1
       AUTO_YES=1
       shift
       ;;
@@ -136,7 +147,15 @@ case "${NORMALIZE_MODE,,}" in
 esac
 NORMALIZE_MODE="${NORMALIZE_MODE,,}"
 
+# No flags at all (FILE operands alone are OK): presume interactive prompts and streaming scan.
+PRESUME_INTERACTIVE=0
+(( ! ANY_CLI_OPTIONS )) && PRESUME_INTERACTIVE=1
+
 . /root/bin/_script_header.sh "${HEADER_EXTRA_ARGS[@]}"
+
+if [[ -f "${BASH_SOURCE[0]}" ]]; then
+  chmod 700 "${BASH_SOURCE[0]}" 2>/dev/null || true
+fi
 
 LOUDNESS_READ_TIMEOUT="${LOUDNESS_READ_TIMEOUT:-300}"
 
@@ -163,6 +182,12 @@ MEDIA_EXTENSIONS=(
 
 LOUDNESS_TMP_FILE=""
 
+loudness_is_interactive() {
+  (( PRESUME_INTERACTIVE )) && return 0
+  (( script_is_run_interactively )) && return 0
+  return 1
+}
+
 flush_stdin() {
   local discard drained=0
   while (( drained < 256 )) && IFS= read -r -t 0.02 -n 1 discard; do
@@ -174,7 +199,7 @@ loudness_read_key() {
   local prompt="$1" default="${2:-N}" timeout="${3:-$LOUDNESS_READ_TIMEOUT}"
   local answer=""
 
-  if (( ! script_is_run_interactively )); then
+  if ! loudness_is_interactive; then
     REPLY="$default"
     return 0
   fi
@@ -345,66 +370,70 @@ _table_col_width() {
   (( ${#text} > cur )) && printf '%s' "${#text}" || printf '%s' "$cur"
 }
 
+print_loudness_class_legend() {
+  local label_w=9 range_w=18
+  printf '  %-*s  %-*s  — %s\n' "$label_w" 'PERFECT'   "$range_w" ' 0.0 to -2.0 dB'   'do not normalize'
+  printf '  %-*s  %-*s  — %s\n' "$label_w" 'NORMAL'    "$range_w" '-2.0 to -6.0 dB'   'usually fine'
+  printf '  %-*s  %-*s  — %s\n' "$label_w" 'TOO QUIET' "$range_w" '-6.0 dB or lower' 'loudnorm candidates'
+}
+
 declare -a ROW_FILE=() ROW_MAX=() ROW_MEAN=() ROW_STATUS=()
 declare -a TOO_QUIET_FILES=() TOO_QUIET_MAX=()
 
-scan_media_files() {
-  local file max_db mean_db status measure_rc measure_line
+REPORT_FILE_W=4
+REPORT_MAX_W=10
+REPORT_MEAN_W=11
+REPORT_STATUS_W=6
 
-  ROW_FILE=()
-  ROW_MAX=()
-  ROW_MEAN=()
-  ROW_STATUS=()
-  TOO_QUIET_FILES=()
-  TOO_QUIET_MAX=()
-
-  for file in "${MEDIA_FILES[@]}"; do
-    if ! file_has_audio_stream "$file"; then
-      ROW_FILE+=( "$file" )
-      ROW_MAX+=( '—' )
-      ROW_MEAN+=( '—' )
-      ROW_STATUS+=( 'NO AUDIO' )
-      continue
-    fi
-
-    measure_rc=0
-    measure_line="$(measure_loudness "$file")" || measure_rc=$?
-    if (( measure_rc != 0 )); then
-      ROW_FILE+=( "$file" )
-      ROW_MAX+=( '—' )
-      ROW_MEAN+=( '—' )
-      if (( measure_rc == 2 )); then
-        ROW_STATUS+=( 'NO AUDIO' )
-      else
-        ROW_STATUS+=( 'ERROR' )
-      fi
-      continue
-    fi
-
-    read -r max_db mean_db <<<"$measure_line"
-    status="$(classify_max_volume "$max_db")"
-
-    ROW_FILE+=( "$file" )
-    ROW_MAX+=( "${max_db} dB" )
-    if [[ "$mean_db" == '-' ]]; then
-      ROW_MEAN+=( '—' )
-    else
-      ROW_MEAN+=( "${mean_db} dB" )
-    fi
-    ROW_STATUS+=( "$status" )
-
-    if [[ "$status" == TOO_QUIET ]]; then
-      TOO_QUIET_FILES+=( "$file" )
-      TOO_QUIET_MAX+=( "$max_db" )
-    fi
+init_report_column_widths() {
+  local f
+  REPORT_FILE_W=4
+  REPORT_MAX_W=10
+  REPORT_MEAN_W=11
+  REPORT_STATUS_W=6
+  for f in "${MEDIA_FILES[@]}"; do
+    REPORT_FILE_W=$(_table_col_width "$REPORT_FILE_W" "$f")
   done
+  REPORT_STATUS_W=$(_table_col_width "$REPORT_STATUS_W" 'TOO_QUIET')
+  REPORT_STATUS_W=$(_table_col_width "$REPORT_STATUS_W" 'NO AUDIO')
 }
 
-print_loudness_report() {
-  local file_w max_w mean_w status_w sep i
-  local count_perfect=0 count_normal=0 count_too_quiet=0 count_no_audio=0 count_error=0
+print_report_table_header() {
+  local sep
+  printf '%-*s  %-*s  %-*s  %-*s\n' \
+    "$REPORT_FILE_W" 'FILE' \
+    "$REPORT_MAX_W" 'MAX_VOLUME' \
+    "$REPORT_MEAN_W" 'MEAN_VOLUME' \
+    "$REPORT_STATUS_W" 'STATUS'
+  sep="$(printf '%*s' "$(( REPORT_FILE_W + REPORT_MAX_W + REPORT_MEAN_W + REPORT_STATUS_W + 6 ))" '' | tr ' ' '-')"
+  printf '%s\n' "$sep"
+}
 
-  for i in "${!ROW_FILE[@]}"; do
+print_report_table_row() {
+  local file="$1" max_col="$2" mean_col="$3" status="$4"
+  printf '%-*s  %-*s  %-*s  %-*s\n' \
+    "$REPORT_FILE_W" "$file" \
+    "$REPORT_MAX_W" "$max_col" \
+    "$REPORT_MEAN_W" "$mean_col" \
+    "$REPORT_STATUS_W" "$status"
+}
+
+append_scan_row() {
+  local file="$1" max_col="$2" mean_col="$3" status="$4" max_db="${5:-}"
+  ROW_FILE+=( "$file" )
+  ROW_MAX+=( "$max_col" )
+  ROW_MEAN+=( "$mean_col" )
+  ROW_STATUS+=( "$status" )
+  if [[ "$status" == TOO_QUIET ]]; then
+    TOO_QUIET_FILES+=( "$file" )
+    TOO_QUIET_MAX+=( "$max_db" )
+  fi
+}
+
+print_scan_summary() {
+  local count_perfect=0 count_normal=0 count_too_quiet=0 count_no_audio=0 count_error=0 i
+
+  for i in "${!ROW_STATUS[@]}"; do
     case "${ROW_STATUS[$i]}" in
       PERFECT)    (( ++count_perfect )) ;;
       NORMAL)     (( ++count_normal )) ;;
@@ -412,32 +441,6 @@ print_loudness_report() {
       'NO AUDIO') (( ++count_no_audio )) ;;
       ERROR)      (( ++count_error )) ;;
     esac
-  done
-
-  file_w=$(_table_col_width 4 'FILE')
-  max_w=$(_table_col_width 10 'MAX_VOLUME')
-  mean_w=$(_table_col_width 11 'MEAN_VOLUME')
-  status_w=$(_table_col_width 6 'STATUS')
-
-  for i in "${!ROW_FILE[@]}"; do
-    file_w=$(_table_col_width "$file_w" "${ROW_FILE[$i]}")
-    max_w=$(_table_col_width "$max_w" "${ROW_MAX[$i]}")
-    mean_w=$(_table_col_width "$mean_w" "${ROW_MEAN[$i]}")
-    status_w=$(_table_col_width "$status_w" "${ROW_STATUS[$i]}")
-  done
-
-  printf '%-*s  %-*s  %-*s  %-*s\n' \
-    "$file_w" 'FILE' "$max_w" 'MAX_VOLUME' "$mean_w" 'MEAN_VOLUME' "$status_w" 'STATUS'
-
-  sep="$(printf '%*s' "$(( file_w + max_w + mean_w + status_w + 6 ))" '' | tr ' ' '-')"
-  printf '%s\n' "$sep"
-
-  for i in "${!ROW_FILE[@]}"; do
-    printf '%-*s  %-*s  %-*s  %-*s\n' \
-      "$file_w" "${ROW_FILE[$i]}" \
-      "$max_w" "${ROW_MAX[$i]}" \
-      "$mean_w" "${ROW_MEAN[$i]}" \
-      "$status_w" "${ROW_STATUS[$i]}"
   done
 
   echo
@@ -451,6 +454,87 @@ print_loudness_report() {
     return 2
   fi
   return 0
+}
+
+scan_one_media_file() {
+  local file="$1"
+  local max_db mean_db status measure_rc measure_line
+  local max_col mean_col
+
+  if ! file_has_audio_stream "$file"; then
+    append_scan_row "$file" '—' '—' 'NO AUDIO'
+    print_report_table_row "$file" '—' '—' 'NO AUDIO'
+    return 0
+  fi
+
+  measure_rc=0
+  measure_line="$(measure_loudness "$file")" || measure_rc=$?
+  if (( measure_rc != 0 )); then
+    if (( measure_rc == 2 )); then
+      status='NO AUDIO'
+    else
+      status='ERROR'
+    fi
+    append_scan_row "$file" '—' '—' "$status"
+    print_report_table_row "$file" '—' '—' "$status"
+    return 0
+  fi
+
+  read -r max_db mean_db <<<"$measure_line"
+  status="$(classify_max_volume "$max_db")"
+  max_col="${max_db} dB"
+  if [[ "$mean_db" == '-' ]]; then
+    mean_col='—'
+  else
+    mean_col="${mean_db} dB"
+  fi
+
+  append_scan_row "$file" "$max_col" "$mean_col" "$status" "$max_db"
+  print_report_table_row "$file" "$max_col" "$mean_col" "$status"
+  return 0
+}
+
+scan_media_files_with_report() {
+  local file
+
+  ROW_FILE=()
+  ROW_MAX=()
+  ROW_MEAN=()
+  ROW_STATUS=()
+  TOO_QUIET_FILES=()
+  TOO_QUIET_MAX=()
+
+  init_report_column_widths
+  print_report_table_header
+
+  for file in "${MEDIA_FILES[@]}"; do
+    scan_one_media_file "$file"
+  done
+
+  print_scan_summary
+}
+
+prompt_startup_interactive() {
+  local n="${#MEDIA_FILES[@]}"
+
+  echo "Files to scan: ${n}"
+  echo
+  loudness_read_key "$(date '+%Y.%m.%d %H:%M:%S') Proceed with loudness scan? [Y/n]: " Y
+  case "${REPLY^^}" in
+    N)
+      echo "Scan skipped."
+      kod_powrotu=0
+      exit 0
+      ;;
+  esac
+
+  echo
+  loudness_read_key "$(date '+%Y.%m.%d %H:%M:%S') If too-quiet files are found, offer normalize after scan? [Y/n]: " Y
+  case "${REPLY^^}" in
+    N) LOUDNESS_OFFER_NORMALIZE=0 ;;
+    *) LOUDNESS_OFFER_NORMALIZE=1 ;;
+  esac
+  echo
 }
 
 prompt_normalize_mode() {
@@ -510,6 +594,8 @@ normalize_too_quiet_files() {
   return 0
 }
 
+LOUDNESS_OFFER_NORMALIZE=1
+
 MEDIA_FILES=()
 if ! collect_media_files; then
   kod_powrotu=1
@@ -518,9 +604,7 @@ fi
 
 echo "Audio loudness scan: $(pwd)"
 echo "Classification (max_volume peak):"
-echo "  PERFECT    0.0 to -2.0 dB   — do not normalize"
-echo "  NORMAL     -2.0 to -6.0 dB — usually fine"
-echo "  TOO QUIET  -6.0 dB or lower — loudnorm candidates"
+print_loudness_class_legend
 echo "Tool: ffmpeg volumedetect (-vn for video files)"
 echo
 
@@ -531,12 +615,15 @@ if (( ${#MEDIA_FILES[@]} == 0 )); then
   exit 0
 fi
 
-echo "Files to scan: ${#MEDIA_FILES[@]}"
-echo
+if loudness_is_interactive; then
+  prompt_startup_interactive
+else
+  echo "Files to scan: ${#MEDIA_FILES[@]}"
+  echo
+fi
 
-scan_media_files
 scan_rc=0
-print_loudness_report || scan_rc=$?
+scan_media_files_with_report || scan_rc=$?
 
 if (( scan_rc == 1 )); then
   kod_powrotu=1
@@ -549,7 +636,7 @@ if (( ${#TOO_QUIET_FILES[@]} == 0 )); then
 fi
 
 if [[ -z "$NORMALIZE_MODE" ]]; then
-  if (( script_is_run_interactively )); then
+  if loudness_is_interactive && (( LOUDNESS_OFFER_NORMALIZE )); then
     prompt_normalize_mode
   else
     NORMALIZE_MODE=none
