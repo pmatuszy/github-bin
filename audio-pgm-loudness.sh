@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.06.16 - v. 0.3.12 - fix normalize temp path: name.tmp.PID.ext (ffmpeg muxer detection)
 # 2026.06.16 - v. 0.3.11 - backup originals as name_YYYYMMDD_HHMMSS.ext (not name.ext_timestamp)
 # 2026.06.16 - v. 0.3.10 - interactive backup prompt defaults to yes
 # 2026.06.16 - v. 0.3.9 - optional backup originals as name.ext_YYYYMMDD_HHMMSS before normalize
@@ -450,13 +451,35 @@ save_original_aside() {
   return 1
 }
 
+# Temp output beside source: <name>.tmp.<pid>.<ext> so ffmpeg sees a normal extension.
+normalize_temp_output_path() {
+  local file="$1" pid="$2"
+  local dir base stem ext
+  dir="$(dirname -- "$file")"
+  base="$(basename -- "$file")"
+  ext="${base##*.}"
+  if [[ "$base" == *.* && "$ext" != "$base" ]]; then
+    stem="${base%.*}"
+    if [[ "$dir" == . ]]; then
+      printf '%s' "${stem}.tmp.${pid}.${ext}"
+    else
+      printf '%s' "${dir}/${stem}.tmp.${pid}.${ext}"
+    fi
+  else
+    if [[ "$dir" == . ]]; then
+      printf '%s' "${base}.tmp.${pid}"
+    else
+      printf '%s' "${dir}/${base}.tmp.${pid}"
+    fi
+  fi
+}
+
 normalize_file_inplace() {
   local file="$1" filter="$2"
-  local tmp ref ext ffmpeg_rc=0 ts_ref stderr_log
+  local tmp ref ffmpeg_rc=0 ts_ref stderr_log
   local -a encoder_args=()
 
-  ext="${file##*.}"
-  tmp="${file}.tmp.${ext}.$$"
+  tmp="$(normalize_temp_output_path "$file" "$$")"
   ts_ref="$(mktemp)"
   stderr_log="$(mktemp)"
   touch -r "$file" "$ts_ref"
