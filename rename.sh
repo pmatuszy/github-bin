@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.06.16 - v. 19.207.140000 - fix hash backfill set -e abort when jobs-remaining decrements to 0
 # 2026.06.16 - v. 19.206.130000 - DB maintenance hash backfill TTY bar: 80 columns wide (was 20)
 # 2026.06.16 - v. 19.205.120000 - DB maintenance hash backfill (non-verbose): TTY in-place bar + ETA; log file 5% milestones; no dot rows
 # 2026.06.16 - v. 19.204.070000 - fix DB maintenance Ctrl-C: initialize stopped_by_user before maintenance (set -u)
@@ -2757,7 +2758,9 @@ _db_maintenance_hash_backfill_progress_finish() {
 _db_maintenance_hash_job_completed() {
     local path="$1"
     local hash_kind="$2"
-    (( DB_MAINT_HASH_JOBS_REMAINING > 0 )) && (( --DB_MAINT_HASH_JOBS_REMAINING ))
+    if (( DB_MAINT_HASH_JOBS_REMAINING > 0 )); then
+        DB_MAINT_HASH_JOBS_REMAINING=$(( DB_MAINT_HASH_JOBS_REMAINING - 1 ))
+    fi
     if (( VERBOSE == 1 )); then
         print_db_maintenance_hash_job_verbose "$path" "$hash_kind"
     else
