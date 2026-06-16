@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.06.15 - v. 19.203.140000 - Ctrl-C during DB maintenance: flush pending SQL and print maintenance/backfill summary instead of silent exit
 # 2026.06.15 - v. 19.202.120000 - DB maintenance hash backfill (non-verbose): milestone line every 1% or every 1000 hashes
 # 2026.06.14 - v. 19.201.170000 - DB maintenance hash backfill: inventory (md5/sha512 slots), countdown in verbose, dots in non-verbose; AUTO+FULL profiles; fill each missing slot independently
 # 2026.06.14 - v. 19.200.160000 - Olympus voice recorder: DM######.MP3/.WMA/.WAV (same rename rules as MP3)
@@ -2501,6 +2502,7 @@ PRAGMA optimize;
 PRAGMA wal_checkpoint(PASSIVE);
 SQL
         db_prune_missing_paths
+        [[ "$stopped_by_user" == yes ]] && return 0
         db_maintenance_backfill_missing_hashes
         startup_progress "SQLite maintenance: AUTO profile finished"
         return 0
@@ -2518,6 +2520,7 @@ REINDEX checked_paths;
 PRAGMA wal_checkpoint(TRUNCATE);
 SQL
     db_prune_missing_paths
+    [[ "$stopped_by_user" == yes ]] && return 0
     db_maintenance_backfill_missing_hashes
     startup_progress "SQLite maintenance: FULL profile finished"
 }
@@ -2554,6 +2557,7 @@ db_prune_missing_paths() {
     fi
 
     while IFS= read -r path; do
+        [[ "$stopped_by_user" == yes ]] && break
         [[ -n "$path" ]] || continue
         (( ++DB_MAINT_ROWS_CHECKED ))
         if [[ ! -e "$path" ]]; then
@@ -2754,6 +2758,7 @@ db_maintenance_backfill_missing_hashes() {
 
     startup_progress "SQLite maintenance: counting missing hash slots on existing files..."
     while IFS='|' read -r path md5_hash sha512_hash file_hash_kind file_hash; do
+        [[ "$stopped_by_user" == yes ]] && break
         [[ -n "$path" ]] || continue
         if [[ ! -f "$path" ]]; then
             (( ++DB_MAINT_HASH_SKIPPED_NOT_FILE ))
@@ -2780,6 +2785,7 @@ db_maintenance_backfill_missing_hashes() {
     startup_progress "SQLite maintenance: hash backfill starting ($DB_MAINT_HASH_JOBS_REMAINING jobs remaining)..."
 
     while IFS='|' read -r path md5_hash sha512_hash file_hash_kind file_hash; do
+        [[ "$stopped_by_user" == yes ]] && break
         [[ -n "$path" ]] || continue
         (( ++DB_MAINT_HASH_ROWS_SCANNED ))
 
@@ -2815,6 +2821,7 @@ db_maintenance_backfill_missing_hashes() {
             updated_this_row=1
             _db_maintenance_hash_job_completed "$path" "md5"
         fi
+        [[ "$stopped_by_user" == yes ]] && break
         if (( need_sha512 == 1 )); then
             case "$sha512_backend" in
                 sha512sum) new_sha512="$(sha512sum -- "$path" | awk '{print tolower($1)}')" ;;
@@ -2842,7 +2849,51 @@ db_maintenance_backfill_missing_hashes() {
 
     nonverbose_progress_dot_endline_if_needed
     db_flush_pending
-    startup_progress "SQLite maintenance: hash backfill finished (remaining: $DB_MAINT_HASH_JOBS_REMAINING, md5 filled: $DB_MAINT_HASH_MD5_FILLED, sha512 filled: $DB_MAINT_HASH_SHA512_FILLED, rows updated: $DB_MAINT_HASH_ROWS_UPDATED, skipped not on disk: $DB_MAINT_HASH_SKIPPED_NOT_FILE)"
+    if [[ "$stopped_by_user" == yes ]]; then
+        startup_progress "SQLite maintenance: hash backfill interrupted (remaining: $DB_MAINT_HASH_JOBS_REMAINING, md5 filled: $DB_MAINT_HASH_MD5_FILLED, sha512 filled: $DB_MAINT_HASH_SHA512_FILLED, rows updated: $DB_MAINT_HASH_ROWS_UPDATED, skipped not on disk: $DB_MAINT_HASH_SKIPPED_NOT_FILE)"
+    else
+        startup_progress "SQLite maintenance: hash backfill finished (remaining: $DB_MAINT_HASH_JOBS_REMAINING, md5 filled: $DB_MAINT_HASH_MD5_FILLED, sha512 filled: $DB_MAINT_HASH_SHA512_FILLED, rows updated: $DB_MAINT_HASH_ROWS_UPDATED, skipped not on disk: $DB_MAINT_HASH_SKIPPED_NOT_FILE)"
+    fi
+}
+
+print_db_maintenance_summary() {
+    local profile="${CLI_DB_MAINTENANCE:-full}"
+    local status="finished"
+
+    [[ "$stopped_by_user" == yes ]] && status="interrupted by user (Ctrl-C)"
+
+    echo "========= SQLITE MAINTENANCE SUMMARY ($status) ========="
+    echo "Profile:               $profile"
+    echo "DB file:               $DB_FILE"
+    echo "Script start time:     $SCRIPT_START_TIME"
+    echo "Script finish time:    ${SCRIPT_FINISH_TIME:-$(date '+%Y-%m-%d %H:%M:%S')}"
+    echo "Filesystem crosscheck:"
+    echo "  DB rows checked:     $DB_MAINT_ROWS_CHECKED"
+    echo "  missing on disk:     $DB_MAINT_ROWS_MISSING"
+    echo "  removed from DB:     $DB_MAINT_ROWS_REMOVED"
+    echo "Hash backfill:"
+    echo "  hash jobs planned:   $DB_MAINT_HASH_JOBS_TOTAL"
+    echo "  hash jobs done:      $DB_MAINT_HASH_JOBS_DONE"
+    echo "  hash jobs remaining: $DB_MAINT_HASH_JOBS_REMAINING"
+    echo "  md5 slots filled:    $DB_MAINT_HASH_MD5_FILLED"
+    echo "  sha512 slots filled: $DB_MAINT_HASH_SHA512_FILLED"
+    echo "  rows updated:        $DB_MAINT_HASH_ROWS_UPDATED"
+    echo "  rows scanned:        $DB_MAINT_HASH_ROWS_SCANNED"
+    echo "  skipped not on disk: $DB_MAINT_HASH_SKIPPED_NOT_FILE"
+    echo "DB rows updated (all): $DB_ROWS_UPDATED"
+    echo "======================================================="
+}
+
+on_interrupt_db_maintenance() {
+    trap '' INT
+    nonverbose_progress_dot_endline_if_needed || true
+    stopped_by_user=yes
+    SCRIPT_FINISH_TIME="$(date '+%Y-%m-%d %H:%M:%S')"
+    printf '\n%s\n' "Interrupt received during SQLite maintenance — saving pending DB updates and printing summary..." >&2
+    db_flush_pending || true
+    echo
+    print_db_maintenance_summary
+    exit 130
 }
 
 print_db_maintenance_missing_verbose() {
@@ -3582,21 +3633,11 @@ if (( USE_DB == 1 )); then
             echo "SQLite maintenance skipped: DB file not found: $DB_FILE"
             exit 0
         fi
+        trap on_interrupt_db_maintenance INT
         startup_progress "Running manual SQLite maintenance profile: $CLI_DB_MAINTENANCE"
         db_run_maintenance "$CLI_DB_MAINTENANCE"
-        echo "SQLite maintenance filesystem check:"
-        echo "  DB rows checked: $DB_MAINT_ROWS_CHECKED"
-        echo "  DB rows missing in filesystem: $DB_MAINT_ROWS_MISSING"
-        echo "  DB rows removed from DB: $DB_MAINT_ROWS_REMOVED"
-        echo "SQLite maintenance hash backfill:"
-        echo "  hash jobs (md5 + sha512 slots): $DB_MAINT_HASH_JOBS_TOTAL"
-        echo "  md5 slots filled: $DB_MAINT_HASH_MD5_FILLED"
-        echo "  sha512 slots filled: $DB_MAINT_HASH_SHA512_FILLED"
-        echo "  rows updated: $DB_MAINT_HASH_ROWS_UPDATED"
-        echo "  rows scanned: $DB_MAINT_HASH_ROWS_SCANNED"
-        echo "  skipped (not a regular file on disk): $DB_MAINT_HASH_SKIPPED_NOT_FILE"
-        echo "  jobs remaining: $DB_MAINT_HASH_JOBS_REMAINING"
-        echo "SQLite maintenance finished: $DB_FILE"
+        db_flush_pending || true
+        print_db_maintenance_summary
         exit 0
     fi
 
@@ -10861,6 +10902,14 @@ print_summary() {
         echo "DB stale rows removed: $DB_STALE_ROWS_REMOVED"
         echo "DB hash lookup hits:   $DB_HASH_LOOKUP_HITS"
         echo "DB hash lookup misses: $DB_HASH_LOOKUP_MISSES"
+        if (( DB_MAINT_HASH_JOBS_TOTAL > 0 || DB_MAINT_HASH_JOBS_DONE > 0 )); then
+            echo "DB hash backfill (partial or maintenance):"
+            echo "  hash jobs planned:   $DB_MAINT_HASH_JOBS_TOTAL"
+            echo "  hash jobs done:      $DB_MAINT_HASH_JOBS_DONE"
+            echo "  hash jobs remaining: $DB_MAINT_HASH_JOBS_REMAINING"
+            echo "  md5 slots filled:    $DB_MAINT_HASH_MD5_FILLED"
+            echo "  sha512 slots filled: $DB_MAINT_HASH_SHA512_FILLED"
+        fi
     else
         echo "DB used:               no"
     fi
@@ -10875,6 +10924,9 @@ on_interrupt() {
     rollback_current_operation || true
     stopped_by_user=yes
     SCRIPT_FINISH_TIME="$(date '+%Y-%m-%d %H:%M:%S')"
+    if (( USE_DB == 1 )); then
+        db_flush_pending || true
+    fi
     save_resume_checkpoint || true
     nonverbose_progress_dot_endline_if_needed || true
     echo
