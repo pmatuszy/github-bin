@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.06.16 - v. 0.3.11 - backup originals as name_YYYYMMDD_HHMMSS.ext (not name.ext_timestamp)
 # 2026.06.16 - v. 0.3.10 - interactive backup prompt defaults to yes
 # 2026.06.16 - v. 0.3.9 - optional backup originals as name.ext_YYYYMMDD_HHMMSS before normalize
 # 2026.06.16 - v. 0.3.8 - normalize all audio tracks; copy video, subtitles, metadata, other streams
@@ -74,7 +75,7 @@ After a successful in-place replace, the output file gets the original timestamp
 (mtime/atime) back via touch -r.
 
 Optionally save each original file beside the normalized output before processing:
-  <filename.ext>_YYYYMMDD_HHMMSS   (same directory; cp -a preserves metadata)
+  <name>_YYYYMMDD_HHMMSS.ext   (same directory; cp -a preserves metadata)
 
 Options:
   -h, --help           Show this help and exit.
@@ -416,11 +417,27 @@ count_file_audio_streams() {
   ffprobe -v error -select_streams a -show_entries stream=index -of csv=p=0 -- "$file" 2>/dev/null | grep -c .
 }
 
-# Copy original to <path/filename.ext>_YYYYMMDD_HHMMSS in the same directory.
+# Copy original to <path/name>_YYYYMMDD_HHMMSS.ext in the same directory.
 save_original_aside() {
-  local file="$1" ts dest
+  local file="$1" ts dest dir base stem ext
   ts="$(date +%Y%m%d_%H%M%S)"
-  dest="${file}_${ts}"
+  dir="$(dirname -- "$file")"
+  base="$(basename -- "$file")"
+  ext="${base##*.}"
+  if [[ "$base" == *.* && "$ext" != "$base" ]]; then
+    stem="${base%.*}"
+    if [[ "$dir" == . ]]; then
+      dest="${stem}_${ts}.${ext}"
+    else
+      dest="${dir}/${stem}_${ts}.${ext}"
+    fi
+  else
+    if [[ "$dir" == . ]]; then
+      dest="${base}_${ts}"
+    else
+      dest="${dir}/${base}_${ts}"
+    fi
+  fi
   if [[ -e "$dest" ]]; then
     echo "    Backup already exists: ${dest}" >&2
     return 1
@@ -704,7 +721,7 @@ prompt_normalize_mode() {
 
 prompt_save_original_aside() {
   echo
-  echo "Backup pattern: <filename.ext>_YYYYMMDD_HHMMSS (same directory as the source file)."
+  echo "Backup pattern: <name>_YYYYMMDD_HHMMSS.ext (same directory as the source file)."
   loudness_read_key "$(date '+%Y.%m.%d %H:%M:%S') Save originals aside before normalizing? [Y/n/q]: " Y
   case "${REPLY^^}" in
     Q) loudness_quit_now ;;
@@ -727,7 +744,7 @@ normalize_candidate_files() {
   echo "Normalization mode: ${NORMALIZE_MODE} (${filter})"
   echo "All audio tracks are loudnorm-filtered; video, subtitles, and other streams are copied."
   if (( LOUDNESS_SAVE_ORIGINAL )); then
-    echo "Originals are copied aside as <name.ext>_YYYYMMDD_HHMMSS before each file is normalized."
+    echo "Originals are copied aside as <name>_YYYYMMDD_HHMMSS.ext before each file is normalized."
   fi
   echo "Timestamps on the normalized file are preserved."
   echo
