@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.06.16 - v. 19.205.120000 - DB maintenance hash backfill (non-verbose): TTY in-place bar + ETA; log file 5% milestones; no dot rows
 # 2026.06.16 - v. 19.204.070000 - fix DB maintenance Ctrl-C: initialize stopped_by_user before maintenance (set -u)
 # 2026.06.15 - v. 19.203.140000 - Ctrl-C during DB maintenance: flush pending SQL and print maintenance/backfill summary instead of silent exit
 # 2026.06.15 - v. 19.202.120000 - DB maintenance hash backfill (non-verbose): milestone line every 1% or every 1000 hashes
@@ -649,8 +650,11 @@ DB_MAINT_HASH_MD5_JOBS=0
 DB_MAINT_HASH_SHA512_JOBS=0
 DB_MAINT_HASH_SKIPPED_NOT_FILE=0
 DB_MAINT_HASH_JOBS_DONE=0
-DB_MAINT_HASH_BACKFILL_NEXT_PCT=1
-DB_MAINT_HASH_BACKFILL_NEXT_COUNT=1000
+DB_MAINT_HASH_BACKFILL_TTY_BAR=no
+DB_MAINT_HASH_BACKFILL_START_EPOCH=0
+DB_MAINT_HASH_BACKFILL_LAST_DISPLAY_PCT=-1
+DB_MAINT_HASH_BACKFILL_LAST_DISPLAY_EPOCH=0
+DB_MAINT_HASH_BACKFILL_NEXT_PCT=5
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 WORKSPACE_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd -P)"
 DEBUG_LOG_PATH="${DEBUG_LOG_PATH:-$WORKSPACE_ROOT/debug-8439cd.log}"
@@ -2668,32 +2672,83 @@ print_db_maintenance_hash_job_verbose() {
     fi
 }
 
-_db_maintenance_hash_backfill_milestone_if_needed() {
+_db_maintenance_hash_backfill_format_eta() {
+    local secs="$1"
+
+    (( secs < 0 )) && secs=0
+    if (( secs < 60 )); then
+        printf '~%ds left' "$secs"
+    elif (( secs < 3600 )); then
+        printf '~%dm left' $(( (secs + 59) / 60 ))
+    else
+        printf '~%dh %dm left' $(( secs / 3600 )) $(( (secs % 3600 + 59) / 60 ))
+    fi
+}
+
+_db_maintenance_hash_backfill_progress_render() {
+    local force="${1:-0}"
+    local now progress_pct filled_n empty_n bar elapsed rate eta eta_str rate_str line
+
     (( VERBOSE == 1 )) && return 0
     (( DB_MAINT_HASH_JOBS_TOTAL > 0 )) || return 0
 
-    local progress_pct=0
-    local emit=0
-
     progress_pct=$(( DB_MAINT_HASH_JOBS_DONE * 100 / DB_MAINT_HASH_JOBS_TOTAL ))
+    now="$(date +%s)"
 
-    if (( DB_MAINT_HASH_JOBS_DONE >= DB_MAINT_HASH_BACKFILL_NEXT_COUNT )); then
-        emit=1
-        while (( DB_MAINT_HASH_BACKFILL_NEXT_COUNT <= DB_MAINT_HASH_JOBS_DONE )); do
-            DB_MAINT_HASH_BACKFILL_NEXT_COUNT=$(( DB_MAINT_HASH_BACKFILL_NEXT_COUNT + 1000 ))
-        done
+    if (( force != 1 )); then
+        if [[ "$DB_MAINT_HASH_BACKFILL_TTY_BAR" == yes ]]; then
+            if (( progress_pct < 100 )) && (( progress_pct < DB_MAINT_HASH_BACKFILL_LAST_DISPLAY_PCT + 1 )) && (( now - DB_MAINT_HASH_BACKFILL_LAST_DISPLAY_EPOCH < 1 )); then
+                return 0
+            fi
+        elif (( progress_pct < DB_MAINT_HASH_BACKFILL_NEXT_PCT )) && (( progress_pct < 100 )); then
+            return 0
+        fi
     fi
 
-    if (( progress_pct >= DB_MAINT_HASH_BACKFILL_NEXT_PCT && DB_MAINT_HASH_BACKFILL_NEXT_PCT <= 100 )); then
-        emit=1
-        while (( progress_pct >= DB_MAINT_HASH_BACKFILL_NEXT_PCT && DB_MAINT_HASH_BACKFILL_NEXT_PCT <= 100 )); do
-            DB_MAINT_HASH_BACKFILL_NEXT_PCT=$(( DB_MAINT_HASH_BACKFILL_NEXT_PCT + 1 ))
-        done
+    if [[ "$DB_MAINT_HASH_BACKFILL_TTY_BAR" == yes ]]; then
+        filled_n=$(( progress_pct * 20 / 100 ))
+        empty_n=$(( 20 - filled_n ))
+        bar="$(printf '%*s' "$filled_n" '' | tr ' ' '#')$(printf '%*s' "$empty_n" '' | tr ' ' '-')"
+        elapsed=$(( now - DB_MAINT_HASH_BACKFILL_START_EPOCH ))
+        if (( DB_MAINT_HASH_JOBS_DONE > 0 )) && (( elapsed > 0 )); then
+            rate=$(( DB_MAINT_HASH_JOBS_DONE / elapsed ))
+            eta=$(( (elapsed * (DB_MAINT_HASH_JOBS_TOTAL - DB_MAINT_HASH_JOBS_DONE)) / DB_MAINT_HASH_JOBS_DONE ))
+            eta_str="$(_db_maintenance_hash_backfill_format_eta "$eta")"
+            rate_str="~${rate}/s"
+            line="$(printf 'hash backfill: [%s] %3d%% %d/%d  %s  %s' "$bar" "$progress_pct" "$DB_MAINT_HASH_JOBS_DONE" "$DB_MAINT_HASH_JOBS_TOTAL" "$rate_str" "$eta_str")"
+        else
+            line="$(printf 'hash backfill: [%s] %3d%% %d/%d' "$bar" "$progress_pct" "$DB_MAINT_HASH_JOBS_DONE" "$DB_MAINT_HASH_JOBS_TOTAL")"
+        fi
+        printf '\r%s\033[K' "$line" >/dev/tty 2>/dev/null || true
+        DB_MAINT_HASH_BACKFILL_LAST_DISPLAY_PCT=$progress_pct
+        DB_MAINT_HASH_BACKFILL_LAST_DISPLAY_EPOCH=$now
+        return 0
     fi
 
-    if (( emit == 1 )); then
-        nonverbose_progress_dot_endline_if_needed
-        startup_progress "SQLite maintenance: hash backfill progress ${progress_pct}% ($DB_MAINT_HASH_JOBS_DONE / $DB_MAINT_HASH_JOBS_TOTAL hashes, $DB_MAINT_HASH_JOBS_REMAINING remaining)..."
+    if (( progress_pct >= DB_MAINT_HASH_BACKFILL_NEXT_PCT )) && (( DB_MAINT_HASH_BACKFILL_NEXT_PCT <= 100 )); then
+        echo "hash backfill: ${DB_MAINT_HASH_BACKFILL_NEXT_PCT}% ($DB_MAINT_HASH_JOBS_DONE / $DB_MAINT_HASH_JOBS_TOTAL)"
+        DB_MAINT_HASH_BACKFILL_NEXT_PCT=$(( DB_MAINT_HASH_BACKFILL_NEXT_PCT + 5 ))
+        while (( progress_pct >= DB_MAINT_HASH_BACKFILL_NEXT_PCT )) && (( DB_MAINT_HASH_BACKFILL_NEXT_PCT <= 100 )); do
+            DB_MAINT_HASH_BACKFILL_NEXT_PCT=$(( DB_MAINT_HASH_BACKFILL_NEXT_PCT + 5 ))
+        done
+    fi
+    DB_MAINT_HASH_BACKFILL_LAST_DISPLAY_PCT=$progress_pct
+}
+
+_db_maintenance_hash_backfill_progress_update() {
+    _db_maintenance_hash_backfill_progress_render 0
+}
+
+_db_maintenance_hash_backfill_progress_finish() {
+    (( VERBOSE == 1 )) && return 0
+    if [[ "$DB_MAINT_HASH_BACKFILL_TTY_BAR" == yes ]]; then
+        _db_maintenance_hash_backfill_progress_render 1
+        nonverbose_progress_tty_nl
+        DB_MAINT_HASH_BACKFILL_TTY_BAR=no
+        return 0
+    fi
+    if (( DB_MAINT_HASH_JOBS_TOTAL > 0 )) && (( DB_MAINT_HASH_JOBS_DONE >= DB_MAINT_HASH_JOBS_TOTAL )) && (( DB_MAINT_HASH_BACKFILL_NEXT_PCT <= 100 )); then
+        echo "hash backfill: 100% ($DB_MAINT_HASH_JOBS_DONE / $DB_MAINT_HASH_JOBS_TOTAL)"
     fi
 }
 
@@ -2705,8 +2760,7 @@ _db_maintenance_hash_job_completed() {
         print_db_maintenance_hash_job_verbose "$path" "$hash_kind"
     else
         (( ++DB_MAINT_HASH_JOBS_DONE ))
-        nonverbose_progress_stdout_line_char '.'
-        _db_maintenance_hash_backfill_milestone_if_needed
+        _db_maintenance_hash_backfill_progress_update
     fi
 }
 
@@ -2730,8 +2784,11 @@ db_maintenance_backfill_missing_hashes() {
     DB_MAINT_HASH_SHA512_JOBS=0
     DB_MAINT_HASH_SKIPPED_NOT_FILE=0
     DB_MAINT_HASH_JOBS_DONE=0
-    DB_MAINT_HASH_BACKFILL_NEXT_PCT=1
-    DB_MAINT_HASH_BACKFILL_NEXT_COUNT=1000
+    DB_MAINT_HASH_BACKFILL_TTY_BAR=no
+    DB_MAINT_HASH_BACKFILL_START_EPOCH=0
+    DB_MAINT_HASH_BACKFILL_LAST_DISPLAY_PCT=-1
+    DB_MAINT_HASH_BACKFILL_LAST_DISPLAY_EPOCH=0
+    DB_MAINT_HASH_BACKFILL_NEXT_PCT=5
 
     if command -v md5sum >/dev/null 2>&1; then
         md5_backend="md5sum"
@@ -2785,6 +2842,13 @@ db_maintenance_backfill_missing_hashes() {
     fi
 
     startup_progress "SQLite maintenance: hash backfill starting ($DB_MAINT_HASH_JOBS_REMAINING jobs remaining)..."
+    if (( VERBOSE == 0 )); then
+        DB_MAINT_HASH_BACKFILL_START_EPOCH="$(date +%s)"
+        if [[ -w /dev/tty ]] 2>/dev/null; then
+            DB_MAINT_HASH_BACKFILL_TTY_BAR=yes
+            _db_maintenance_hash_backfill_progress_render 1
+        fi
+    fi
 
     while IFS='|' read -r path md5_hash sha512_hash file_hash_kind file_hash; do
         [[ "$stopped_by_user" == yes ]] && break
@@ -2849,7 +2913,7 @@ db_maintenance_backfill_missing_hashes() {
         fi
     done < <(rename_sqlite3_db_run -separator '|' "$candidate_query")
 
-    nonverbose_progress_dot_endline_if_needed
+    _db_maintenance_hash_backfill_progress_finish
     db_flush_pending
     if [[ "$stopped_by_user" == yes ]]; then
         startup_progress "SQLite maintenance: hash backfill interrupted (remaining: $DB_MAINT_HASH_JOBS_REMAINING, md5 filled: $DB_MAINT_HASH_MD5_FILLED, sha512 filled: $DB_MAINT_HASH_SHA512_FILLED, rows updated: $DB_MAINT_HASH_ROWS_UPDATED, skipped not on disk: $DB_MAINT_HASH_SKIPPED_NOT_FILE)"
@@ -2888,6 +2952,7 @@ print_db_maintenance_summary() {
 
 on_interrupt_db_maintenance() {
     trap '' INT
+    _db_maintenance_hash_backfill_progress_finish || true
     nonverbose_progress_dot_endline_if_needed || true
     stopped_by_user=yes
     SCRIPT_FINISH_TIME="$(date '+%Y-%m-%d %H:%M:%S')"
