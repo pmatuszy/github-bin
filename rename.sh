@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.06.16 - v. 19.204.070000 - fix DB maintenance Ctrl-C: initialize stopped_by_user before maintenance (set -u)
 # 2026.06.15 - v. 19.203.140000 - Ctrl-C during DB maintenance: flush pending SQL and print maintenance/backfill summary instead of silent exit
 # 2026.06.15 - v. 19.202.120000 - DB maintenance hash backfill (non-verbose): milestone line every 1% or every 1000 hashes
 # 2026.06.14 - v. 19.201.170000 - DB maintenance hash backfill: inventory (md5/sha512 slots), countdown in verbose, dots in non-verbose; AUTO+FULL profiles; fill each missing slot independently
@@ -717,6 +718,7 @@ COLLISION_RENAMED_TARGET=""
 SCRIPT_START_TIME="$(date '+%Y-%m-%d %H:%M:%S')"
 SCRIPT_FINISH_TIME=""
 SUMMARY_PRINTED=0
+stopped_by_user=no
 FILES_HASHED=0
 RESUME_STATE_FILE="$START_DIR/_rename.sh.resume-state.json"
 RESUME_STATE_WAS_LOADED=0
@@ -9916,7 +9918,6 @@ MAIN_LOOP_RESUME_PROGRESS_OFFSET=0
 MAIN_LOOP_LAST_MILESTONE_VALUE=-1
 files_affected=0
 files_skipped=0
-stopped_by_user=no
 rename_all=no
 AUTO_RENAME_DIR=""
 AUTO_RENAME_SIMILAR_DIR=""
