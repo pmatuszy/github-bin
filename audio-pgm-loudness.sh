@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.06.16 - v. 0.3.5 - after normalize: print max/mean volume before and after
 # 2026.06.16 - v. 0.3.4 - FILE column capped at 150 chars (shorter when names are shorter)
 # 2026.06.16 - v. 0.3.3 - startup “offer normalize after scan?” defaults to yes
 # 2026.06.16 - v. 0.3.2 - scan table: right-align MAX/MEAN dB columns (decimal aligned, not minus)
@@ -309,6 +310,35 @@ measure_loudness() {
   return 0
 }
 
+format_db_display_value() {
+  local db="$1"
+  if [[ "$db" == '—' || "$db" == '-' || -z "$db" ]]; then
+    printf '%s' '—'
+    return 0
+  fi
+  awk -v v="$db" 'BEGIN { printf "%.1f dB", v + 0 }'
+}
+
+# Loudness from the scan pass (max mean on stdout); else re-measure the file.
+get_scan_loudness_for_file() {
+  local file="$1" i
+  for i in "${!ROW_FILE[@]}"; do
+    if [[ "${ROW_FILE[$i]}" == "$file" ]]; then
+      printf '%s %s\n' "${ROW_MAX[$i]}" "${ROW_MEAN[$i]}"
+      return 0
+    fi
+  done
+  measure_loudness "$file"
+}
+
+print_normalize_before_after() {
+  local before_max="$1" before_mean="$2" after_max="$3" after_mean="$4"
+  printf '    Before: max %10s  mean %10s\n' \
+    "$(format_db_display_value "$before_max")" "$(format_db_display_value "$before_mean")"
+  printf '    After:  max %10s  mean %10s\n' \
+    "$(format_db_display_value "$after_max")" "$(format_db_display_value "$after_mean")"
+}
+
 # PERFECT | NORMAL | TOO_QUIET based on max_volume peak (dB).
 classify_max_volume() {
   local max_db="$1"
@@ -593,7 +623,8 @@ prompt_normalize_mode() {
 }
 
 normalize_too_quiet_files() {
-  local filter file max_db i norm_ok=0 norm_fail=0 norm_skip=0 answer
+  local filter file max_db i norm_ok=0 norm_fail=0 norm_skip=0
+  local before_max before_mean after_max after_mean measure_line measure_rc
 
   filter="$(loudnorm_filter_for_mode "$NORMALIZE_MODE")" || {
     echo "ERROR: unknown normalize mode: ${NORMALIZE_MODE}" >&2
@@ -618,9 +649,24 @@ normalize_too_quiet_files() {
       esac
     fi
 
-    printf 'Normalizing %s (was %s dB peak) ... ' "$file" "$max_db"
+    before_max=""
+    before_mean=""
+    if measure_line="$(get_scan_loudness_for_file "$file")"; then
+      read -r before_max before_mean <<<"$measure_line"
+    fi
+
+    printf 'Normalizing %s ... ' "$file"
     if normalize_file_inplace "$file" "$filter"; then
       echo 'OK'
+      measure_rc=0
+      measure_line="$(measure_loudness "$file")" || measure_rc=$?
+      if (( measure_rc == 0 )); then
+        read -r after_max after_mean <<<"$measure_line"
+        print_normalize_before_after "$before_max" "$before_mean" "$after_max" "$after_mean"
+      else
+        echo '    After: could not measure loudness'
+      fi
+      echo
       (( ++norm_ok ))
     else
       echo 'FAILED'
