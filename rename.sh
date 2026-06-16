@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.06.16 - v. 19.209.140000 - DB maintenance: open cache schema before FULL/AUTO SQL; do not abort on REINDEX/WAL failure; always reach prune + hash backfill
 # 2026.06.16 - v. 19.208.150000 - DB maintenance hash backfill verbose lines: include date/time stamp
 # 2026.06.16 - v. 19.207.140000 - fix hash backfill set -e abort when jobs-remaining decrements to 0
 # 2026.06.16 - v. 19.206.130000 - DB maintenance hash backfill TTY bar: 80 columns wide (was 20)
@@ -2489,14 +2490,61 @@ db_init_create_checked_paths_schema() {
     db_init_create_checked_paths_schema_core
 }
 
+# Maintenance-only: ensure schema/WAL pragmas without loading every row into memory.
+db_open_cache_for_maintenance() {
+    db_remove_stale_sqlite_lock_artifacts
+    if ! db_init_create_checked_paths_schema; then
+        db_clear_sqlite_sidecar_files
+        db_remove_stale_sqlite_lock_artifacts
+        if ! db_init_create_checked_paths_schema; then
+            if db_init_create_checked_paths_schema_nolock; then
+                (( VERBOSE == 1 )) && echo "[VERBOSE] SQLite maintenance: cache opened with ?nolock=1" >&2
+            elif ! db_init_create_checked_paths_schema_via_local_tmp; then
+                echo "ERROR: could not open SQLite cache for maintenance: $DB_FILE" >&2
+                return 1
+            fi
+        fi
+    fi
+    db_upgrade_checked_paths_schema
+    rename_sqlite3_db_run >/dev/null 2>&1 <<'SQL' || true
+PRAGMA journal_mode=WAL;
+PRAGMA synchronous=NORMAL;
+PRAGMA temp_store=MEMORY;
+PRAGMA cache_size=-20000;
+SQL
+    return 0
+}
+
+# Run one maintenance SQL step; warn and continue on failure (REINDEX/WAL often fail on network mounts).
+db_maintenance_run_sql_step() {
+    local label="$1"
+    local sql="$2"
+    local err err_line
+
+    (( VERBOSE == 1 )) && echo "[VERBOSE] SQLite maintenance command: ${label}" >&2
+    err="$(mktemp)"
+    if rename_sqlite3_db_run 2>"$err" <<<"$sql"; then
+        rm -f -- "$err"
+        return 0
+    fi
+    err_line="$(head -n 1 "$err" | tr -d '\r')"
+    rm -f -- "$err"
+    startup_progress "SQLite maintenance: WARNING — ${label} failed (continuing)${err_line:+: ${err_line}}"
+    return 1
+}
+
 db_run_maintenance() {
     local mode="$1"
+    local _dm_save_e=0
 
     (( USE_DB == 1 )) || return 0
     case "$mode" in
         auto|full) ;;
         *) return 0 ;;
     esac
+
+    [[ $- == *e* ]] && _dm_save_e=1
+    set +e
 
     if [[ -z "$DB_PENDING_SQL_FILE" || ! -e "$DB_PENDING_SQL_FILE" ]]; then
         DB_PENDING_SQL_FILE="$(mktemp)"
@@ -2505,34 +2553,25 @@ db_run_maintenance() {
 
     if [[ "$mode" == "auto" ]]; then
         startup_progress "SQLite maintenance: running AUTO profile..."
-        (( VERBOSE == 1 )) && echo "[VERBOSE] SQLite maintenance command: PRAGMA optimize;" >&2
-        (( VERBOSE == 1 )) && echo "[VERBOSE] SQLite maintenance command: PRAGMA wal_checkpoint(PASSIVE);" >&2
-        rename_sqlite3_db_run >/dev/null 2>&1 <<'SQL'
-PRAGMA optimize;
-PRAGMA wal_checkpoint(PASSIVE);
-SQL
+        db_maintenance_run_sql_step "PRAGMA optimize;" "PRAGMA optimize;"
+        db_maintenance_run_sql_step "PRAGMA wal_checkpoint(PASSIVE);" "PRAGMA wal_checkpoint(PASSIVE);"
         db_prune_missing_paths
-        [[ "$stopped_by_user" == yes ]] && return 0
-        db_maintenance_backfill_missing_hashes
+        [[ "$stopped_by_user" == yes ]] || db_maintenance_backfill_missing_hashes
         startup_progress "SQLite maintenance: AUTO profile finished"
+        ((_dm_save_e)) && set -e || set +e
         return 0
     fi
 
     startup_progress "SQLite maintenance: running FULL profile..."
-    (( VERBOSE == 1 )) && echo "[VERBOSE] SQLite maintenance command: PRAGMA optimize;" >&2
-    (( VERBOSE == 1 )) && echo "[VERBOSE] SQLite maintenance command: ANALYZE;" >&2
-    (( VERBOSE == 1 )) && echo "[VERBOSE] SQLite maintenance command: REINDEX checked_paths;" >&2
-    (( VERBOSE == 1 )) && echo "[VERBOSE] SQLite maintenance command: PRAGMA wal_checkpoint(TRUNCATE);" >&2
-    rename_sqlite3_db_run >/dev/null 2>&1 <<'SQL'
-PRAGMA optimize;
-ANALYZE;
-REINDEX checked_paths;
-PRAGMA wal_checkpoint(TRUNCATE);
-SQL
+    db_maintenance_run_sql_step "PRAGMA optimize;" "PRAGMA optimize;"
+    db_maintenance_run_sql_step "ANALYZE;" "ANALYZE;"
+    db_maintenance_run_sql_step "REINDEX checked_paths;" "REINDEX checked_paths;"
+    db_maintenance_run_sql_step "PRAGMA wal_checkpoint(TRUNCATE);" "PRAGMA wal_checkpoint(TRUNCATE);"
     db_prune_missing_paths
-    [[ "$stopped_by_user" == yes ]] && return 0
-    db_maintenance_backfill_missing_hashes
+    [[ "$stopped_by_user" == yes ]] || db_maintenance_backfill_missing_hashes
     startup_progress "SQLite maintenance: FULL profile finished"
+    ((_dm_save_e)) && set -e || set +e
+    return 0
 }
 
 db_prune_missing_paths() {
@@ -2553,6 +2592,7 @@ db_prune_missing_paths() {
     local end_idx=0
     local i=0
     local -a missing_paths=()
+    local prune_paths_file=""
 
     DB_MAINT_ROWS_CHECKED=0
     DB_MAINT_ROWS_MISSING=0
@@ -2564,6 +2604,14 @@ db_prune_missing_paths() {
 
     if (( total_db_rows > 0 )); then
         startup_progress "SQLite maintenance: crosscheck progress 0% (0 / $total_db_rows checked, 0 missing)..."
+    fi
+
+    prune_paths_file="$(mktemp)"
+    if ! rename_sqlite3_db_run 'SELECT path FROM checked_paths;' >"$prune_paths_file" 2>/dev/null; then
+        startup_progress "SQLite maintenance: WARNING — could not list checked_paths for filesystem crosscheck (skipped)"
+        rm -f -- "$prune_paths_file"
+        startup_progress "SQLite maintenance: filesystem check finished (checked: 0, missing: 0, removed: 0)"
+        return 0
     fi
 
     while IFS= read -r path; do
@@ -2597,7 +2645,8 @@ db_prune_missing_paths() {
             startup_progress "SQLite maintenance: crosscheck progress ($DB_MAINT_ROWS_CHECKED checked, $DB_MAINT_ROWS_MISSING missing)..."
             next_progress_count=$((next_progress_count + 500))
         fi
-    done < <(rename_sqlite3_db_run 'SELECT path FROM checked_paths;')
+    done <"$prune_paths_file"
+    rm -f -- "$prune_paths_file"
 
     if (( DB_MAINT_ROWS_MISSING > 0 )); then
         (( VERBOSE == 1 )) && echo "[VERBOSE] SQLite maintenance command: delete rows for missing filesystem paths" >&2
@@ -3709,9 +3758,12 @@ if (( USE_DB == 1 )); then
             echo "SQLite maintenance skipped: DB file not found: $DB_FILE"
             exit 0
         fi
+        if ! db_open_cache_for_maintenance; then
+            exit 1
+        fi
         trap on_interrupt_db_maintenance INT
         startup_progress "Running manual SQLite maintenance profile: $CLI_DB_MAINTENANCE"
-        db_run_maintenance "$CLI_DB_MAINTENANCE"
+        db_run_maintenance "$CLI_DB_MAINTENANCE" || true
         db_flush_pending || true
         print_db_maintenance_summary
         exit 0
