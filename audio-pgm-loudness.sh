@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.06.16 - v. 0.3.6 - offer normalize for NORMAL and TOO_QUIET; skip only PERFECT
 # 2026.06.16 - v. 0.3.5 - after normalize: print max/mean volume before and after
 # 2026.06.16 - v. 0.3.4 - FILE column capped at 150 chars (shorter when names are shorter)
 # 2026.06.16 - v. 0.3.3 - startup “offer normalize after scan?” defaults to yes
@@ -45,7 +46,8 @@ peak level (max_volume):
   NORMAL  (-2.0 to -6.0 dB)    Usually fine; normalize only if you want louder mix.
   TOO QUIET (-6.0 dB or lower) Prime candidates for loudnorm (quiet dialogue).
 
-Optionally normalize TOO QUIET files in place (original modification time kept).
+Optionally normalize non-PERFECT files (NORMAL or TOO QUIET) in place (original
+modification time kept). PERFECT peaks are never normalization candidates.
 
 Supported extensions (case-insensitive):
   Video: .avi .mp4 .mkv .mov .wmv .mpeg .mpg .m4v .webm .ts
@@ -58,7 +60,7 @@ When no command-line options are given (only optional FILE operands), the script
 runs in interactive mode: it asks before scanning and prints each result row as
 soon as that file is measured (so a long scan does not look hung).
 
-Normalization (TOO QUIET files only):
+Normalization (non-PERFECT files only; PERFECT is never offered):
   standard   ffmpeg loudnorm (default filter parameters)
   youtube    loudnorm=I=-16:TP=-1.0:LRA=11  (YouTube-style targets)
 
@@ -70,9 +72,9 @@ Options:
   -h, --help           Show this help and exit.
   -v, --version        Print script version and exit.
   -n, --normalize MODE none|standard|youtube
-                       Normalize TOO QUIET files (default: ask when interactive,
+                       Normalize eligible files (default: ask when interactive,
                        skip when not interactive unless -n is set).
-  -y, --yes            Do not ask per file; normalize every TOO QUIET file when
+  -y, --yes            Do not ask per file; normalize every eligible file when
                        -n standard or -n youtube is selected.
   --no_startup_delay   Skip random startup delay when run non-interactively
                        (see _script_header.sh).
@@ -83,7 +85,7 @@ Environment:
 
 Exit status:
   0  Scan OK and (if requested) normalization finished without failures.
-  1  Errors, or TOO QUIET files remain after a scan-only run.
+  1  Errors, or eligible files remain after a scan-only run (no normalize).
 
 Examples:
   cd /path/to/clips && $(basename "$0")
@@ -418,7 +420,7 @@ print_loudness_class_legend() {
 }
 
 declare -a ROW_FILE=() ROW_MAX=() ROW_MEAN=() ROW_STATUS=()
-declare -a TOO_QUIET_FILES=() TOO_QUIET_MAX=()
+declare -a NORMALIZE_FILES=() NORMALIZE_MAX=() NORMALIZE_STATUS=()
 
 REPORT_FILE_W=4
 REPORT_FILE_MAX_W=150
@@ -496,9 +498,10 @@ append_scan_row() {
   ROW_MAX+=( "$max_val" )
   ROW_MEAN+=( "$mean_val" )
   ROW_STATUS+=( "$status" )
-  if [[ "$status" == TOO_QUIET ]]; then
-    TOO_QUIET_FILES+=( "$file" )
-    TOO_QUIET_MAX+=( "$max_db" )
+  if [[ "$status" == NORMAL || "$status" == TOO_QUIET ]]; then
+    NORMALIZE_FILES+=( "$file" )
+    NORMALIZE_MAX+=( "$max_db" )
+    NORMALIZE_STATUS+=( "$status" )
   fi
 }
 
@@ -524,6 +527,9 @@ print_scan_summary() {
   fi
   if (( count_too_quiet > 0 )); then
     return 2
+  fi
+  if (( count_normal > 0 )); then
+    return 3
   fi
   return 0
 }
@@ -566,8 +572,9 @@ scan_media_files_with_report() {
   ROW_MAX=()
   ROW_MEAN=()
   ROW_STATUS=()
-  TOO_QUIET_FILES=()
-  TOO_QUIET_MAX=()
+  NORMALIZE_FILES=()
+  NORMALIZE_MAX=()
+  NORMALIZE_STATUS=()
 
   init_report_column_widths
   print_report_table_header
@@ -595,7 +602,7 @@ prompt_startup_interactive() {
   esac
 
   echo
-  loudness_read_key "$(date '+%Y.%m.%d %H:%M:%S') If too-quiet files are found, offer normalize after scan? [Y/n/q]: " Y
+  loudness_read_key "$(date '+%Y.%m.%d %H:%M:%S') If non-PERFECT files are found, offer normalize after scan? [Y/n/q]: " Y
   case "${REPLY^^}" in
     Q) loudness_quit_now ;;
     N) LOUDNESS_OFFER_NORMALIZE=0 ;;
@@ -605,10 +612,10 @@ prompt_startup_interactive() {
 }
 
 prompt_normalize_mode() {
-  local n="${#TOO_QUIET_FILES[@]}"
+  local n="${#NORMALIZE_FILES[@]}"
 
   echo
-  echo "${n} file(s) are TOO QUIET (max_volume <= -6.0 dB)."
+  echo "${n} file(s) can be normalized (NORMAL or TOO QUIET; PERFECT skipped)."
   echo "  [S] Standard loudnorm"
   echo "  [Y] YouTube-style loudnorm (I=-16:TP=-1.0:LRA=11)"
   echo "  [N] Skip normalization (default)"
@@ -622,8 +629,8 @@ prompt_normalize_mode() {
   esac
 }
 
-normalize_too_quiet_files() {
-  local filter file max_db i norm_ok=0 norm_fail=0 norm_skip=0
+normalize_candidate_files() {
+  local filter file max_db status i norm_ok=0 norm_fail=0 norm_skip=0
   local before_max before_mean after_max after_mean measure_line measure_rc
 
   filter="$(loudnorm_filter_for_mode "$NORMALIZE_MODE")" || {
@@ -633,15 +640,16 @@ normalize_too_quiet_files() {
 
   echo
   echo "Normalization mode: ${NORMALIZE_MODE} (${filter})"
-  echo "Only TOO QUIET files are processed; timestamps are preserved."
+  echo "Only non-PERFECT files are processed; timestamps are preserved."
   echo
 
-  for i in "${!TOO_QUIET_FILES[@]}"; do
-    file="${TOO_QUIET_FILES[$i]}"
-    max_db="${TOO_QUIET_MAX[$i]}"
+  for i in "${!NORMALIZE_FILES[@]}"; do
+    file="${NORMALIZE_FILES[$i]}"
+    max_db="${NORMALIZE_MAX[$i]}"
+    status="${NORMALIZE_STATUS[$i]}"
 
     if (( ! AUTO_YES )); then
-      loudness_read_key "$(date '+%Y.%m.%d %H:%M:%S') Normalize ${file} (${max_db} dB)? [y/N/q]: " N
+      loudness_read_key "$(date '+%Y.%m.%d %H:%M:%S') Normalize ${file} (${status}, ${max_db} dB)? [y/N/q]: " N
       case "${REPLY^^}" in
         Q) echo "Quit requested." ; return 2 ;;
         Y) ;;
@@ -716,7 +724,7 @@ if (( scan_rc == 1 )); then
   exit 1
 fi
 
-if (( ${#TOO_QUIET_FILES[@]} == 0 )); then
+if (( ${#NORMALIZE_FILES[@]} == 0 )); then
   kod_powrotu=0
   exit 0
 fi
@@ -734,7 +742,7 @@ if [[ "$NORMALIZE_MODE" == none || -z "$NORMALIZE_MODE" ]]; then
   exit 1
 fi
 
-if normalize_too_quiet_files; then
+if normalize_candidate_files; then
   kod_powrotu=0
 else
   norm_rc=$?
