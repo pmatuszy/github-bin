@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.06.16 - v. 19.206.130000 - DB maintenance hash backfill TTY bar: 80 columns wide (was 20)
 # 2026.06.16 - v. 19.205.120000 - DB maintenance hash backfill (non-verbose): TTY in-place bar + ETA; log file 5% milestones; no dot rows
 # 2026.06.16 - v. 19.204.070000 - fix DB maintenance Ctrl-C: initialize stopped_by_user before maintenance (set -u)
 # 2026.06.15 - v. 19.203.140000 - Ctrl-C during DB maintenance: flush pending SQL and print maintenance/backfill summary instead of silent exit
@@ -655,6 +656,7 @@ DB_MAINT_HASH_BACKFILL_START_EPOCH=0
 DB_MAINT_HASH_BACKFILL_LAST_DISPLAY_PCT=-1
 DB_MAINT_HASH_BACKFILL_LAST_DISPLAY_EPOCH=0
 DB_MAINT_HASH_BACKFILL_NEXT_PCT=5
+DB_MAINT_HASH_BACKFILL_BAR_WIDTH=80
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 WORKSPACE_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd -P)"
 DEBUG_LOG_PATH="${DEBUG_LOG_PATH:-$WORKSPACE_ROOT/debug-8439cd.log}"
@@ -2706,8 +2708,8 @@ _db_maintenance_hash_backfill_progress_render() {
     fi
 
     if [[ "$DB_MAINT_HASH_BACKFILL_TTY_BAR" == yes ]]; then
-        filled_n=$(( progress_pct * 20 / 100 ))
-        empty_n=$(( 20 - filled_n ))
+        filled_n=$(( progress_pct * DB_MAINT_HASH_BACKFILL_BAR_WIDTH / 100 ))
+        empty_n=$(( DB_MAINT_HASH_BACKFILL_BAR_WIDTH - filled_n ))
         bar="$(printf '%*s' "$filled_n" '' | tr ' ' '#')$(printf '%*s' "$empty_n" '' | tr ' ' '-')"
         elapsed=$(( now - DB_MAINT_HASH_BACKFILL_START_EPOCH ))
         if (( DB_MAINT_HASH_JOBS_DONE > 0 )) && (( elapsed > 0 )); then
