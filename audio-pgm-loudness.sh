@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.06.17 - v. 0.4.4 - interactive backup conflict: replace, keep, or skip
 # 2026.06.16 - v. 0.4.3 - per-file [D] normalize rest of directory (was [R] rest of batch)
 # 2026.06.16 - v. 0.4.2 - prompt timestamps in square brackets for readability
 # 2026.06.16 - v. 0.4.1 - backup: move original to *.backup.deleteme (not timestamped copy)
@@ -81,6 +82,8 @@ After a successful in-place replace, the output file gets the original timestamp
 
 Optionally move each original aside before normalizing (delete *.backup.deleteme when satisfied):
   e.g. clip.mp4 -> clip.mp4.backup.deleteme   (same directory)
+  If that backup path already exists, interactive mode explains the conflict and
+  offers to replace the old backup, keep it and normalize in place, or skip.
 
 Options:
   -h, --help           Show this help and exit.
@@ -92,20 +95,28 @@ Options:
                        -n standard or -n youtube is selected.
   --save-original      Move each original to *.backup.deleteme before normalizing
                        (skip the interactive backup question).
+  --replace-backup     When *.backup.deleteme already exists, remove it and move
+                       the current file aside (non-interactive; no prompt).
   --include-perfect    With -n youtube, normalize PERFECT files too (skip the
                        interactive question).
-
-Per-file normalize prompt (interactive): [y] yes, [N] no, [D] yes for rest of
-directory, [Q] quit.
   --no_startup_delay   Skip random startup delay when run non-interactively
                        (see _script_header.sh).
   -- FILE              Explicit file operands (use when a name starts with -).
+
+Interactive normalization prompts:
+  Per file: [y] yes, [N] no, [D] rest of directory, [Q] quit.
+  Backup conflict: [Y] replace old backup, [K] keep backup and normalize in
+  place, [S] skip file, [Q] quit.
 
 Environment:
   LOUDNESS_NORMALIZE        Same as -n / --normalize (CLI overrides).
   LOUDNESS_SAVE_ORIGINAL    1 = move originals to *.backup.deleteme (same as --save-original).
   LOUDNESS_INCLUDE_PERFECT  1 = with youtube mode, include PERFECT files (same as
                               --include-perfect).
+  LOUDNESS_REPLACE_BACKUP   1 = remove existing *.backup.deleteme before moving
+                              aside (same as --replace-backup).
+  LOUDNESS_BACKUP_ON_CONFLICT  Non-interactive when backup exists: replace, keep
+                              (normalize in place; default), or skip.
 
 Exit status:
   0  Scan OK and (if requested) normalization finished without failures.
@@ -126,6 +137,9 @@ LOUDNESS_SAVE_ORIGINAL="${LOUDNESS_SAVE_ORIGINAL:-0}"
 LOUDNESS_SAVE_ORIGINAL_CLI=0
 LOUDNESS_INCLUDE_PERFECT="${LOUDNESS_INCLUDE_PERFECT:-0}"
 LOUDNESS_INCLUDE_PERFECT_CLI=0
+LOUDNESS_REPLACE_BACKUP="${LOUDNESS_REPLACE_BACKUP:-0}"
+LOUDNESS_REPLACE_BACKUP_CLI=0
+LOUDNESS_BACKUP_ON_CONFLICT="${LOUDNESS_BACKUP_ON_CONFLICT:-}"
 NORMALIZE_DIR=""
 
 # --- parse options before sourcing the header (avoids figlet/delay on --help/--version) ---
@@ -168,6 +182,12 @@ while [[ $# -gt 0 ]]; do
       LOUDNESS_INCLUDE_PERFECT_CLI=1
       shift
       ;;
+    --replace-backup)
+      ANY_CLI_OPTIONS=1
+      LOUDNESS_REPLACE_BACKUP=1
+      LOUDNESS_REPLACE_BACKUP_CLI=1
+      shift
+      ;;
     --)
       shift
       CLI_FILES+=( "$@" )
@@ -203,6 +223,11 @@ esac
 case "${LOUDNESS_INCLUDE_PERFECT,,}" in
   1|yes|true|y) LOUDNESS_INCLUDE_PERFECT=1 ;;
   *)          LOUDNESS_INCLUDE_PERFECT=0 ;;
+esac
+
+case "${LOUDNESS_REPLACE_BACKUP,,}" in
+  1|yes|true|y) LOUDNESS_REPLACE_BACKUP=1 ;;
+  *)          LOUDNESS_REPLACE_BACKUP=0 ;;
 esac
 
 # No flags at all (FILE operands alone are OK): presume interactive prompts and streaming scan.
@@ -460,15 +485,194 @@ move_original_to_backup() {
   local file="$1" dest
   dest="$(backup_deleteme_path "$file")"
   if [[ -e "$dest" ]]; then
-    echo "    Backup already exists: ${dest}" >&2
-    return 1
+    return 2
   fi
   if mv -- "$file" "$dest"; then
     echo "    Original moved to: ${dest}"
     return 0
   fi
-  echo "    Could not move original to: ${dest}" >&2
+  echo "    ERROR: could not move ${file} to ${dest}" >&2
   return 1
+}
+
+file_stat_brief() {
+  local f="$1" size mtime
+  if [[ ! -e "$f" ]]; then
+    printf 'not found'
+    return 0
+  fi
+  size="$(du -h -- "$f" 2>/dev/null | awk '{print $1}')"
+  mtime="$(date -r "$f" '+%Y-%m-%d %H:%M:%S' 2>/dev/null || true)"
+  if [[ -n "$size" && -n "$mtime" ]]; then
+    printf '%s, modified %s' "$size" "$mtime"
+  elif [[ -n "$size" ]]; then
+    printf '%s' "$size"
+  else
+    printf 'present'
+  fi
+}
+
+print_backup_conflict_details() {
+  local file="$1" backup="$2"
+  echo
+  echo "    ┌─ Backup slot busy ─────────────────────────────────────────"
+  printf '    │  Target backup:  %s\n' "$backup"
+  printf '    │                   (%s)\n' "$(file_stat_brief "$backup")"
+  if [[ -f "$file" ]]; then
+    printf '    │  File to process: %s\n' "$file"
+    printf '    │                   (%s)\n' "$(file_stat_brief "$file")"
+    echo '    │  A previous run likely left the backup; the current file may'
+    echo '    │  already be a normalized copy you are re-processing.'
+  else
+    echo "    │  WARNING: ${file} is missing — only the backup file remains."
+  fi
+  echo '    └────────────────────────────────────────────────────────────'
+  echo
+}
+
+remove_old_backup_and_move_aside() {
+  local file="$1" backup="$2"
+  if ! rm -f -- "$backup"; then
+    echo "    ERROR: could not remove old backup: ${backup}" >&2
+    return 1
+  fi
+  echo "    Removed old backup: ${backup}"
+  if [[ ! -f "$file" ]]; then
+    echo "    ERROR: ${file} is missing; cannot create a new backup." >&2
+    return 1
+  fi
+  move_original_to_backup "$file"
+}
+
+# Sets result to one of: moved | inplace | skip | quit | fail
+resolve_backup_conflict() {
+  local file="$1" backup="$2"
+  local -n _result=$3
+  local policy
+
+  _result=fail
+  print_backup_conflict_details "$file" "$backup"
+
+  if (( LOUDNESS_REPLACE_BACKUP_CLI || LOUDNESS_REPLACE_BACKUP )); then
+    if remove_old_backup_and_move_aside "$file" "$backup"; then
+      _result=moved
+    fi
+    return 0
+  fi
+
+  if ! loudness_is_interactive; then
+    policy="${LOUDNESS_BACKUP_ON_CONFLICT,,}"
+    [[ -z "$policy" ]] && policy=keep
+    case "$policy" in
+      replace|remove|r)
+        if remove_old_backup_and_move_aside "$file" "$backup"; then
+          _result=moved
+        fi
+        ;;
+      keep|k|inplace)
+        echo '    Keeping existing backup; normalizing in place (current file will be overwritten).'
+        _result=inplace
+        ;;
+      skip|s)
+        echo '    Skipped: backup already exists (LOUDNESS_BACKUP_ON_CONFLICT=skip).'
+        _result=skip
+        ;;
+      *)
+        echo "    ERROR: backup exists for ${file}; set LOUDNESS_BACKUP_ON_CONFLICT=replace|keep|skip or use --replace-backup" >&2
+        _result=fail
+        ;;
+    esac
+    return 0
+  fi
+
+  if [[ ! -f "$file" ]]; then
+    echo '    Only the backup remains — cannot normalize without the original file.'
+    loudness_read_key "[$(date '+%Y.%m.%d %H:%M:%S')] Restore backup to original name and skip normalize? [Y/n/q]: " Y
+    case "${REPLY^^}" in
+      Q) _result=quit ; return 0 ;;
+      N)
+        echo '    Skipped.'
+        _result=skip
+        return 0
+        ;;
+      *)
+        if mv -- "$backup" "$file"; then
+          echo "    Restored ${file} from backup (not normalized)."
+          _result=skip
+        else
+          echo "    ERROR: could not restore ${file} from ${backup}" >&2
+          _result=fail
+        fi
+        return 0
+        ;;
+    esac
+  fi
+
+  echo '  [Y] Remove old backup, move current file aside, then normalize'
+  echo '      (the previous original in .backup.deleteme will be deleted)'
+  echo '  [K] Keep old backup; normalize current file in place'
+  echo '      (safe for re-normalizing; backup still holds the first original)'
+  echo '  [S] Skip this file (default)'
+  echo '  [Q] Quit'
+  loudness_read_key "[$(date '+%Y.%m.%d %H:%M:%S')] Backup conflict for ${file}? [y/K/s/q]: " S
+  case "${REPLY^^}" in
+    Q) _result=quit ;;
+    Y)
+      if remove_old_backup_and_move_aside "$file" "$backup"; then
+        _result=moved
+      fi
+      ;;
+    K)
+      echo '    Keeping existing backup; normalizing in place.'
+      _result=inplace
+      ;;
+    *)
+      echo '    Skipped: backup left unchanged.'
+      _result=skip
+      ;;
+  esac
+}
+
+# Sets src/backup; returns 0 ready, 2 skip, 3 quit, 1 error.
+prepare_normalize_with_backup() {
+  local file="$1"
+  local -n _src=$2
+  local -n _backup=$3
+  local conflict_action prep_rc=0
+
+  _backup="$(backup_deleteme_path "$file")"
+  _src="$file"
+
+  prep_rc=0
+  move_original_to_backup "$file" || prep_rc=$?
+  case "$prep_rc" in
+    0)
+      _src="$_backup"
+      return 0
+      ;;
+    2)
+      resolve_backup_conflict "$file" "$_backup" conflict_action
+      case "$conflict_action" in
+        moved)
+          _src="$_backup"
+          return 0
+          ;;
+        inplace)
+          _src="$file"
+          return 0
+          ;;
+        skip) return 2 ;;
+        quit) return 3 ;;
+        *)
+          echo "    ERROR: could not resolve backup conflict for ${file}" >&2
+          return 1
+          ;;
+      esac
+      ;;
+    *)
+      return 1
+      ;;
+  esac
 }
 
 restore_original_from_backup() {
@@ -865,9 +1069,9 @@ normalize_skip_file_prompt() {
 }
 
 normalize_candidate_files() {
-  local filter file max_db status i norm_ok=0 norm_fail=0 norm_skip=0 audio_n
+  local filter file max_db status i norm_ok=0 norm_fail=0 norm_skip=0 norm_backup_skip=0 audio_n
   local before_max before_mean after_max after_mean measure_line measure_rc
-  local backup src dest
+  local backup src dest prep_rc
 
   NORMALIZE_DIR=""
 
@@ -912,13 +1116,18 @@ normalize_candidate_files() {
     src="$file"
     dest="$file"
     if (( LOUDNESS_SAVE_ORIGINAL )); then
-      backup="$(backup_deleteme_path "$file")"
-      if ! move_original_to_backup "$file"; then
-        echo 'Aborting normalize for this file.'
-        (( ++norm_fail ))
-        continue
-      fi
-      src="$backup"
+      prep_rc=0
+      prepare_normalize_with_backup "$file" src backup || prep_rc=$?
+      case "$prep_rc" in
+        0) ;;
+        2) (( ++norm_backup_skip )) ; continue ;;
+        3) echo 'Quit requested.' ; return 2 ;;
+        *)
+          echo "    FAILED: backup step for ${file} (see messages above)."
+          (( ++norm_fail ))
+          continue
+          ;;
+      esac
     fi
     printf 'Normalizing %s ... ' "$file"
     if normalize_file_inplace "$src" "$dest" "$filter"; then
@@ -937,8 +1146,8 @@ normalize_candidate_files() {
       echo
       (( ++norm_ok ))
     else
-      echo 'FAILED'
-      if [[ -n "$backup" ]] && [[ ! -f "$dest" ]]; then
+      echo 'FAILED (ffmpeg — see error lines above)'
+      if [[ -n "$backup" && -f "$backup" && ! -f "$dest" ]]; then
         restore_original_from_backup "$backup" "$dest" || true
       fi
       (( ++norm_fail ))
@@ -946,7 +1155,15 @@ normalize_candidate_files() {
   done
 
   echo
-  printf 'Normalization: %d OK, %d skipped, %d failed\n' "$norm_ok" "$norm_skip" "$norm_fail"
+  if (( norm_backup_skip > 0 )); then
+    printf 'Normalization: %d OK, %d skipped (%d backup conflict), %d failed\n' \
+      "$norm_ok" "$(( norm_skip + norm_backup_skip ))" "$norm_backup_skip" "$norm_fail"
+  else
+    printf 'Normalization: %d OK, %d skipped, %d failed\n' "$norm_ok" "$norm_skip" "$norm_fail"
+  fi
+  if (( norm_fail > 0 )); then
+    echo 'Check FAILED entries above for ffmpeg errors or backup problems.'
+  fi
   (( norm_fail > 0 )) && return 1
   return 0
 }
