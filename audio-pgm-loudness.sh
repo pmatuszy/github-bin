@@ -1,5 +1,7 @@
 #!/bin/bash
 
+# 2026.06.17 - v. 0.5.9 - scan table: Unicode display-width columns (terminal-safe)
+# 2026.06.17 - v. 0.5.8 - scan table: column dash gaps; fixed-width dB alignment
 # 2026.06.17 - v. 0.5.7 - batch normalize prompts (like ffmpeg-voice): ask N, then process
 # 2026.06.17 - v. 0.5.6 - prompt brackets: default letter capital; read timeout 10 min
 # 2026.06.17 - v. 0.5.5 - scan scope: current directory or subdirectories (--scope)
@@ -1257,6 +1259,116 @@ _table_col_width() {
   (( ${#text} > cur )) && printf '%s' "${#text}" || printf '%s' "$cur"
 }
 
+# Terminal display width (Unicode-aware via python3 unicodedata.east_asian_width).
+LOUDNESS_TABLE_HAVE_PYTHON=-1
+
+_loudness_table_have_python() {
+  if (( LOUDNESS_TABLE_HAVE_PYTHON >= 0 )); then
+    return "$LOUDNESS_TABLE_HAVE_PYTHON"
+  fi
+  if command -v python3 >/dev/null 2>&1; then
+    LOUDNESS_TABLE_HAVE_PYTHON=0
+  else
+    LOUDNESS_TABLE_HAVE_PYTHON=1
+  fi
+  return "$LOUDNESS_TABLE_HAVE_PYTHON"
+}
+
+_loudness_table_python() {
+  TABLE_FMT_OP="$1" TABLE_FMT_TEXT="${2-}" TABLE_FMT_WIDTH="${3-0}" python3 <<'PY'
+import os, sys, unicodedata
+
+def disp_width(s):
+    w = 0
+    for ch in s:
+        w += 2 if unicodedata.east_asian_width(ch) in ('F', 'W') else 1
+    return w
+
+def trunc(s, maxw, suffix='…'):
+    if disp_width(s) <= maxw:
+        return s
+    sw = disp_width(suffix)
+    limit = maxw - sw
+    if limit < 1:
+        return suffix if disp_width(suffix) <= maxw else ''
+    out, w = [], 0
+    for ch in s:
+        cw = 2 if unicodedata.east_asian_width(ch) in ('F', 'W') else 1
+        if w + cw > limit:
+            break
+        out.append(ch)
+        w += cw
+    return ''.join(out) + suffix
+
+def pad_left(s, width):
+    s = trunc(s, width) if disp_width(s) > width else s
+    sys.stdout.write(s + (' ' * (width - disp_width(s))))
+
+def pad_right(s, width):
+    s = trunc(s, width) if disp_width(s) > width else s
+    sys.stdout.write((' ' * (width - disp_width(s))) + s)
+
+op = os.environ['TABLE_FMT_OP']
+text = os.environ.get('TABLE_FMT_TEXT', '')
+width = int(os.environ.get('TABLE_FMT_WIDTH', '0'))
+
+if op == 'width':
+    print(disp_width(text))
+elif op == 'pad_left':
+    pad_left(text, width)
+elif op == 'pad_right':
+    pad_right(text, width)
+else:
+    sys.exit(2)
+PY
+}
+
+_table_disp_width() {
+  local w
+  if _loudness_table_have_python; then
+    w="$(_loudness_table_python width "$1")"
+    printf '%s' "$w"
+    return 0
+  fi
+  printf '%s' "${#1}"
+}
+
+_table_disp_col_width() {
+  local cur="$1" text="$2" w
+  w="$(_table_disp_width "$text")"
+  (( w > cur )) && printf '%s' "$w" || printf '%s' "$cur"
+}
+
+_table_pad_left() {
+  local text="$1" width="$2"
+  if _loudness_table_have_python; then
+    _loudness_table_python pad_left "$text" "$width"
+    return 0
+  fi
+  if (( ${#text} <= width )); then
+    printf '%-*s' "$width" "$text"
+  else
+    printf '%-*s' "$width" "${text:0:$(( width - 3 ))}..."
+  fi
+}
+
+_table_pad_right() {
+  local text="$1" width="$2"
+  if _loudness_table_have_python; then
+    _loudness_table_python pad_right "$text" "$width"
+    return 0
+  fi
+  printf '%*s' "$width" "$text"
+}
+
+_table_dash_col() {
+  local w="$1"
+  printf '%*s' "$w" '' | tr ' ' '-'
+}
+
+REPORT_COL_GAP='  '
+REPORT_DB_FMT_W=10
+
 print_loudness_class_legend() {
   local label_w=9 range_w=18
   printf '  %-*s  %-*s  — %s\n' "$label_w" 'PERFECT'   "$range_w" ' 0.0 to -2.0 dB'   'do not normalize'
@@ -1276,53 +1388,63 @@ REPORT_STATUS_W=6
 init_report_column_widths() {
   local f
   REPORT_FILE_W=4
-  # Right-aligned cells: "%8.1f dB" (11 chars) so decimals line up, not the minus sign.
-  REPORT_MAX_W=11
-  REPORT_MEAN_W=11
+  REPORT_MAX_W=$REPORT_DB_FMT_W
+  REPORT_MEAN_W=$REPORT_DB_FMT_W
   REPORT_STATUS_W=6
   for f in "${MEDIA_FILES[@]}"; do
-    REPORT_FILE_W=$(_table_col_width "$REPORT_FILE_W" "$f")
+    REPORT_FILE_W=$(_table_disp_col_width "$REPORT_FILE_W" "$f")
   done
   if (( REPORT_FILE_W > REPORT_FILE_MAX_W )); then
     REPORT_FILE_W=$REPORT_FILE_MAX_W
   fi
-  REPORT_MAX_W=$(_table_col_width "$REPORT_MAX_W" 'MAX_VOLUME')
-  REPORT_MEAN_W=$(_table_col_width "$REPORT_MEAN_W" 'MEAN_VOLUME')
-  REPORT_STATUS_W=$(_table_col_width "$REPORT_STATUS_W" 'TOO_QUIET')
-  REPORT_STATUS_W=$(_table_col_width "$REPORT_STATUS_W" 'NO AUDIO')
+  REPORT_MAX_W=$(_table_disp_col_width "$REPORT_MAX_W" 'MAX_VOLUME')
+  REPORT_MEAN_W=$(_table_disp_col_width "$REPORT_MEAN_W" 'MEAN_VOLUME')
+  REPORT_STATUS_W=$(_table_disp_col_width "$REPORT_STATUS_W" 'TOO_QUIET')
+  REPORT_STATUS_W=$(_table_disp_col_width "$REPORT_STATUS_W" 'NO AUDIO')
 }
 
-# Left-align filename within the FILE column (truncate with … if longer than width).
+# Left-align filename within the FILE column (truncate with … by display width).
 format_scan_file_cell() {
-  local file="$1" width="$2"
-  if (( ${#file} <= width )); then
-    printf '%-*s' "$width" "$file"
-  else
-    printf '%-*s' "$width" "${file:0:$(( width - 3 ))}..."
-  fi
+  _table_pad_left "$1" "$2"
 }
 
 # Right-align a volumedetect dB value (or em dash) within a fixed column width.
+# Uses "%7.1f dB" (always 10 chars) so decimals line up in a column, not the minus sign.
 format_scan_db_cell() {
-  local value="$1" width="$2" num
+  local value="$1" width="$2" num cell
   if [[ "$value" == '—' || "$value" == '-' || -z "$value" ]]; then
     printf '%*s' "$width" '—'
     return 0
   fi
   num="${value%%[[:space:]]dB*}"
   num="${num//[[:space:]]/}"
-  awk -v v="$num" -v w="$width" 'BEGIN { printf "%*s", w, sprintf("%8.1f dB", v + 0) }'
+  cell="$(awk -v v="$num" 'BEGIN { printf "%s", sprintf("%7.1f dB", v + 0) }')"
+  if (( ${#cell} > width )); then
+    cell="$(awk -v v="$num" 'BEGIN { printf "%s", sprintf("%.1f dB", v + 0) }')"
+    if (( ${#cell} > width )); then
+      cell="${cell: -width}"
+    fi
+  fi
+  printf '%*s' "$width" "$cell"
 }
 
 print_report_table_header() {
-  local sep
-  printf '%-*s  %*s  %*s  %-*s\n' \
-    "$REPORT_FILE_W" 'FILE' \
-    "$REPORT_MAX_W" 'MAX_VOLUME' \
-    "$REPORT_MEAN_W" 'MEAN_VOLUME' \
+  local file_h sep_file sep_max sep_mean sep_status
+  file_h="$(format_scan_file_cell 'FILE' "$REPORT_FILE_W")"
+  sep_file="$(_table_dash_col "$REPORT_FILE_W")"
+  sep_max="$(_table_dash_col "$REPORT_MAX_W")"
+  sep_mean="$(_table_dash_col "$REPORT_MEAN_W")"
+  sep_status="$(_table_dash_col "$REPORT_STATUS_W")"
+  printf '%s%s%*s%s%*s%s%-*s\n' \
+    "$file_h" "$REPORT_COL_GAP" \
+    "$REPORT_MAX_W" 'MAX_VOLUME' "$REPORT_COL_GAP" \
+    "$REPORT_MEAN_W" 'MEAN_VOLUME' "$REPORT_COL_GAP" \
     "$REPORT_STATUS_W" 'STATUS'
-  sep="$(printf '%*s' "$(( REPORT_FILE_W + REPORT_MAX_W + REPORT_MEAN_W + REPORT_STATUS_W + 6 ))" '' | tr ' ' '-')"
-  printf '%s\n' "$sep"
+  printf '%s%s%s%s%s%s%s\n' \
+    "$sep_file" "$REPORT_COL_GAP" \
+    "$sep_max" "$REPORT_COL_GAP" \
+    "$sep_mean" "$REPORT_COL_GAP" \
+    "$sep_status"
 }
 
 print_report_table_row() {
@@ -1331,9 +1453,10 @@ print_report_table_row() {
   file_cell="$(format_scan_file_cell "$file" "$REPORT_FILE_W")"
   max_cell="$(format_scan_db_cell "$max_val" "$REPORT_MAX_W")"
   mean_cell="$(format_scan_db_cell "$mean_val" "$REPORT_MEAN_W")"
-  printf '%s  %s  %s  %-*s\n' \
-    "$file_cell" \
-    "$max_cell" "$mean_cell" \
+  printf '%s%s%s%s%s%s%-*s\n' \
+    "$file_cell" "$REPORT_COL_GAP" \
+    "$max_cell" "$REPORT_COL_GAP" \
+    "$mean_cell" "$REPORT_COL_GAP" \
     "$REPORT_STATUS_W" "$status"
 }
 
