@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.06.17 - v. 0.5.7 - batch normalize prompts (like ffmpeg-voice): ask N, then process
 # 2026.06.17 - v. 0.5.6 - prompt brackets: default letter capital; read timeout 10 min
 # 2026.06.17 - v. 0.5.5 - scan scope: current directory or subdirectories (--scope)
 # 2026.06.17 - v. 0.5.4 - interactive normalize prompt defaults to YouTube
@@ -55,8 +56,8 @@ print_version_banner() {
 show_help() {
   cat <<EOF
 Usage: $(basename "$0") [-h|--help] [-v|--version] [--no_startup_delay]
-       [-n standard|youtube|none] [-y] [--scope current|subdirs] [--scan-only]
-       [--print-cli-only] [-- FILE ...]
+       [-n standard|youtube|none] [-y] [--scope current|subdirs] [--batch-size N]
+       [--scan-only] [--print-cli-only] [-- FILE ...]
 
 Scan for audio and video files and measure loudness with ffmpeg volumedetect
 (video is ignored for speed). Each file is classified by peak level (max_volume):
@@ -115,14 +116,20 @@ Options:
   --scope current|subdirs
                        current = files in cwd only; subdirs = cwd and all
                        subfolders (skip the interactive scope question).
+  --batch-size N       Per-file normalize prompts: ask N files at a time before
+                       processing (default 50; skip the interactive batch question).
   --include-perfect    With -n youtube, normalize PERFECT files too (skip the
                        interactive question).
   --no_startup_delay   Skip random startup delay when run non-interactively
                        (see _script_header.sh).
   -- FILE              Explicit file operands (use when a name starts with -).
 
-Interactive normalization prompts:
-  Per file: [y] yes, [N] no, [D] rest of directory, [Q] quit.
+Interactive normalization prompts (per file, in batches like ffmpeg-voice.sh):
+  Ask about up to N files (batch size, default 50), then normalize only the
+  files you selected in that batch before the next batch of prompts.
+  [y] yes, [N] no, [D] rest of directory, [A] yes for all remaining in batch,
+  [F] finish batch (normalize selected; stop asking), [G] normalize selected and
+  skip all further prompts, [Q] quit.
   Backup conflict: [Y] replace old backup, [K] keep backup and normalize in
   place, [S] skip file, [Q] quit.
 
@@ -136,6 +143,8 @@ Environment:
   LOUDNESS_BACKUP_ON_CONFLICT  Non-interactive when backup exists: replace, keep
                               (normalize in place; default), or skip.
   LOUDNESS_SCAN_SCOPE       current or subdirs (same as --scope).
+  LOUDNESS_BATCH_SIZE       Batch size for per-file normalize prompts (same as
+                              --batch-size; default 50).
   LOUDNESS_READ_TIMEOUT     Seconds to wait for a key at interactive prompts
                               (default: 600 = 10 minutes; 0 = wait forever).
 
@@ -166,6 +175,11 @@ PRINT_CLI_ONLY=0
 SCAN_ONLY=0
 LOUDNESS_SCAN_SCOPE="${LOUDNESS_SCAN_SCOPE:-}"
 LOUDNESS_SCAN_SCOPE_CLI=0
+LOUDNESS_BATCH_SIZE="${LOUDNESS_BATCH_SIZE:-}"
+LOUDNESS_BATCH_SIZE_CLI=0
+BATCH_SIZE=50
+LOUDNESS_BATCH_CHOICE_DECISION=""
+LOUDNESS_BATCH_CHOICE_ACTION=""
 LOUDNESS_SAVE_ORIGINAL="${LOUDNESS_SAVE_ORIGINAL:-0}"
 LOUDNESS_SAVE_ORIGINAL_CLI=0
 LOUDNESS_INCLUDE_PERFECT="${LOUDNESS_INCLUDE_PERFECT:-0}"
@@ -246,6 +260,18 @@ while [[ $# -gt 0 ]]; do
           ;;
       esac
       LOUDNESS_SCAN_SCOPE_CLI=1
+      shift 2
+      ;;
+    --batch-size)
+      ANY_CLI_OPTIONS=1
+      [[ $# -ge 2 ]] || { echo "Missing value for --batch-size" >&2; exit 1; }
+      case "$2" in
+        *[!0-9]*|'') echo "Invalid value for --batch-size: $2 (use a positive integer)" >&2; exit 1 ;;
+        0*) echo "Invalid value for --batch-size: $2 (use a positive integer)" >&2; exit 1 ;;
+        *) LOUDNESS_BATCH_SIZE="$2" ;;
+      esac
+      LOUDNESS_BATCH_SIZE_CLI=1
+      BATCH_SIZE="$LOUDNESS_BATCH_SIZE"
       shift 2
       ;;
     --)
@@ -569,6 +595,9 @@ cli_print_built_command() {
   if [[ -n "$LOUDNESS_SCAN_SCOPE" && ${#CLI_FILES[@]} == 0 ]]; then
     parts+=( --scope "$LOUDNESS_SCAN_SCOPE" )
   fi
+  if [[ -n "$LOUDNESS_BATCH_SIZE" && "$LOUDNESS_BATCH_SIZE" != 50 ]]; then
+    parts+=( --batch-size "$LOUDNESS_BATCH_SIZE" )
+  fi
 
   file_count="${#CLI_SELECTED_FILES[@]}"
   if (( file_count > 1 )); then
@@ -625,39 +654,15 @@ cli_print_built_command() {
 }
 
 collect_normalize_choices_cli_only() {
-  local file max_db status i
+  local rc=0
   NORMALIZE_DIR=""
-
   echo
-  echo "Per-file prompt: [y] yes, [N] no, [D] yes for rest of directory, [Q] quit."
-  echo "Levels were not measured — status shows as ? for every file."
+  echo 'Per-file prompts run in batches (like ffmpeg-voice.sh): ask about each file,'
+  echo 'then record selections for the batch before moving on.'
+  echo 'Levels were not measured — status shows as ? for every file.'
   echo
-
-  for i in "${!NORMALIZE_FILES[@]}"; do
-    file="${NORMALIZE_FILES[$i]}"
-    max_db="${NORMALIZE_MAX[$i]}"
-    status="${NORMALIZE_STATUS[$i]}"
-
-    if ! normalize_skip_file_prompt "$file"; then
-      loudness_read_key "Normalize ${file} (${status}, ${max_db} dB)? [y/N/d/q]: " N
-      case "${REPLY^^}" in
-        Q) echo 'Quit requested.' ; return 2 ;;
-        D)
-          NORMALIZE_DIR="$(dirname -- "$file")"
-          CLI_BUILD_NOTES+=( "[D] used in $(dirname -- "$file")/ — no single CLI flag; use -y or list files" )
-          cli_record_selected_file "$file"
-          ;;
-        Y) cli_record_selected_file "$file" ;;
-        *)
-          CLI_BUILD_ALL_YES=0
-          continue
-          ;;
-      esac
-    else
-      cli_record_selected_file "$file"
-    fi
-  done
-  return 0
+  normalize_run_batch_prompt_loop 1 || rc=$?
+  return "$rc"
 }
 
 run_print_cli_only_session() {
@@ -1608,10 +1613,341 @@ normalize_skip_file_prompt() {
   return 1
 }
 
-normalize_candidate_files() {
-  local filter file max_db status i norm_ok=0 norm_fail=0 norm_skip=0 norm_backup_skip=0 audio_n
+batch_prompt_finish_skip_idx() {
+  local idx="$1" batch_size_now="$2" batch_count="$3"
+  echo $(( idx + batch_size_now - batch_count ))
+}
+
+loudness_print_batch_prompt_summary() {
+  local batch_pos="$1" batch_size_now="$2" overall_pos="$3" total_files="$4"
+  local still_after="$5" batch_yes="$6" batch_no="$7"
+  local undecided=$(( batch_size_now - batch_yes - batch_no ))
+
+  echo
+  printf 'PROMPTING: batch file %s/%s (overall %s/%s)\n' \
+    "$batch_pos" "$batch_size_now" "$overall_pos" "$total_files"
+  printf 'LEFT TO ASK AFTER THIS: %s\n' "$still_after"
+  printf 'WILL BE NORMALIZED IN THIS BATCH: %s\n' "$batch_yes"
+  printf 'WILL BE SKIPPED IN THIS BATCH:   %s\n' "$batch_no"
+  printf 'ANSWERS STILL MISSING:           %s\n' "$undecided"
+}
+
+loudness_read_normalize_batch_choice() {
+  local file="$1" status="$2" max_db="$3"
+
+  echo '  [y] Yes normalize'
+  echo '  [N] No (default)'
+  echo "  [D] Yes, and rest of directory ($(dirname -- "$file")/) without further prompts"
+  echo '  [A] Yes for all remaining in this batch'
+  echo '  [F] Finish batch now (normalize selected only; stop asking for rest of batch)'
+  echo '  [G] Normalize selected; skip all further prompts this run'
+  echo '  [Q] Quit'
+  loudness_read_key "Normalize ${file} (${status}, ${max_db} dB)? [y/N/d/a/f/g/q]: " N
+
+  LOUDNESS_BATCH_CHOICE_DECISION=""
+  LOUDNESS_BATCH_CHOICE_ACTION=""
+  case "${REPLY^^}" in
+    Q) LOUDNESS_BATCH_CHOICE_ACTION=quit ;;
+    Y) LOUDNESS_BATCH_CHOICE_DECISION=yes; LOUDNESS_BATCH_CHOICE_ACTION=decided ;;
+    D) LOUDNESS_BATCH_CHOICE_DECISION=yes; LOUDNESS_BATCH_CHOICE_ACTION=decided_dir ;;
+    A) LOUDNESS_BATCH_CHOICE_DECISION=yes; LOUDNESS_BATCH_CHOICE_ACTION=accept_all ;;
+    F) LOUDNESS_BATCH_CHOICE_ACTION=finish_batch ;;
+    G) LOUDNESS_BATCH_CHOICE_ACTION=skip_all ;;
+    N) LOUDNESS_BATCH_CHOICE_DECISION=no; LOUDNESS_BATCH_CHOICE_ACTION=decided ;;
+    *) LOUDNESS_BATCH_CHOICE_DECISION=no; LOUDNESS_BATCH_CHOICE_ACTION=decided ;;
+  esac
+}
+
+prompt_batch_size_interactive() {
+  local input=""
+
+  echo
+  echo 'Batch size for per-file normalize prompts?'
+  echo '  Default: 50 (ask about N files, then normalize selected before next batch)'
+  printf '[%s] Batch size [50]: ' "$(date '+%Y.%m.%d %H:%M:%S')"
+  if IFS= read -r -t "$LOUDNESS_READ_TIMEOUT" input; then
+    :
+  else
+    input=""
+  fi
+  if [[ -z "$input" ]]; then
+    BATCH_SIZE=50
+  elif [[ "$input" =~ ^[1-9][0-9]*$ ]]; then
+    BATCH_SIZE="$input"
+  else
+    echo 'Invalid batch size. Using default: 50'
+    BATCH_SIZE=50
+  fi
+  LOUDNESS_BATCH_SIZE="$BATCH_SIZE"
+  echo "Batch size: ${BATCH_SIZE}"
+  (( PRINT_CLI_ONLY )) && cli_equiv_note "CLI: --batch-size ${BATCH_SIZE}"
+  echo
+}
+
+resolve_batch_size() {
+  if [[ -n "$LOUDNESS_BATCH_SIZE" ]]; then
+    case "$LOUDNESS_BATCH_SIZE" in
+      *[!0-9]*|'')
+        echo "Invalid LOUDNESS_BATCH_SIZE / --batch-size: ${LOUDNESS_BATCH_SIZE}" >&2
+        return 1
+        ;;
+      0*)
+        echo "Invalid LOUDNESS_BATCH_SIZE / --batch-size: ${LOUDNESS_BATCH_SIZE}" >&2
+        return 1
+        ;;
+      *)
+        BATCH_SIZE="$LOUDNESS_BATCH_SIZE"
+        ;;
+    esac
+    return 0
+  fi
+  prompt_batch_size_interactive
+}
+
+normalize_record_cli_batch_selection() {
+  local file="$1" decision="$2"
+
+  [[ "$decision" == yes ]] || return 0
+  cli_record_selected_file "$file"
+}
+
+# Returns 0 OK, 1 FAILED, 2 skipped (backup conflict), 3 quit requested.
+normalize_one_selected_file() {
+  local i="$1" filter="$2"
+  local file="${NORMALIZE_FILES[$i]}"
   local before_max before_mean after_max after_mean measure_line measure_rc
-  local backup src dest prep_rc
+  local backup src dest prep_rc audio_n
+
+  before_max=""
+  before_mean=""
+  if measure_line="$(get_scan_loudness_for_file "$file")"; then
+    read -r before_max before_mean <<<"$measure_line"
+  fi
+
+  audio_n="$(count_file_audio_streams "$file")"
+  backup=""
+  src="$file"
+  dest="$file"
+  if (( LOUDNESS_SAVE_ORIGINAL )); then
+    prep_rc=0
+    prepare_normalize_with_backup "$file" src backup || prep_rc=$?
+    case "$prep_rc" in
+      0) ;;
+      2) return 2 ;;
+      3) return 3 ;;
+      *)
+        echo "    FAILED: backup step for ${file} (see messages above)."
+        return 1
+        ;;
+    esac
+  fi
+  loudness_begin_file_normalize "$dest" "$backup" "$src"
+  printf 'Normalizing %s ... ' "$file"
+  if normalize_file_inplace "$src" "$dest" "$filter"; then
+    loudness_end_file_normalize
+    echo 'OK'
+    if (( audio_n > 1 )); then
+      echo "    (${audio_n} audio tracks normalized; other streams copied)"
+    fi
+    measure_rc=0
+    measure_line="$(measure_loudness "$file")" || measure_rc=$?
+    if (( measure_rc == 0 )); then
+      read -r after_max after_mean <<<"$measure_line"
+      print_normalize_before_after "$before_max" "$before_mean" "$after_max" "$after_mean"
+    else
+      echo '    After: could not measure loudness'
+    fi
+    echo
+    return 0
+  fi
+  echo 'FAILED (ffmpeg — see error lines above)'
+  if [[ -n "$backup" && -f "$backup" && ! -f "$dest" ]]; then
+    restore_original_from_backup "$backup" "$dest" || true
+  fi
+  loudness_end_file_normalize
+  return 1
+}
+
+# cli_only=1: record CLI_SELECTED_FILES only; cli_only=0: normalize after each batch.
+# Returns 0 ok, 2 quit.
+normalize_run_batch_prompt_loop() {
+  local cli_only="${1:-0}"
+  local filter="${2:-}"
+  local -n _norm_ok="${3:-_unused_norm_ok}"
+  local -n _norm_fail="${4:-_unused_norm_fail}"
+  local -n _norm_skip="${5:-_unused_norm_skip}"
+  local -n _norm_backup_skip="${6:-_unused_norm_backup_skip}"
+
+  local total idx remaining_total batch_size_now batch_count batch_yes batch_no
+  local accept_all_remaining finish_batch_now skip_remaining=no
+  local overall_pos batch_pos still_after selected_total selected_pos selected_left
+  local file max_db status i j rc decision
+
+  if ! resolve_batch_size; then
+    return 1
+  fi
+
+  total=${#NORMALIZE_FILES[@]}
+  idx=0
+
+  while (( idx < total )); do
+    [[ "$skip_remaining" == yes ]] && break
+
+    declare -a batch_indices=()
+    declare -a batch_selected=()
+
+    remaining_total=$(( total - idx ))
+    batch_size_now=$BATCH_SIZE
+    (( remaining_total < batch_size_now )) && batch_size_now=$remaining_total
+
+    batch_count=0
+    batch_yes=0
+    batch_no=0
+    accept_all_remaining=no
+    finish_batch_now=no
+
+    while (( idx < total && batch_count < batch_size_now )); do
+      file="${NORMALIZE_FILES[$idx]}"
+      max_db="${NORMALIZE_MAX[$idx]}"
+      status="${NORMALIZE_STATUS[$idx]}"
+
+      if [[ "$accept_all_remaining" == yes ]] || normalize_skip_file_prompt "$file"; then
+        batch_selected+=( yes )
+        (( ++batch_yes ))
+        batch_indices+=( "$idx" )
+        if (( cli_only )); then
+          normalize_record_cli_batch_selection "$file" yes
+        fi
+        (( ++idx ))
+        (( ++batch_count ))
+        continue
+      fi
+
+      overall_pos=$(( idx + 1 ))
+      batch_pos=$(( batch_count + 1 ))
+      still_after=$(( total - overall_pos ))
+
+      loudness_print_batch_prompt_summary \
+        "$batch_pos" "$batch_size_now" "$overall_pos" "$total" "$still_after" \
+        "$batch_yes" "$batch_no"
+      loudness_read_normalize_batch_choice "$file" "$status" "$max_db"
+
+      case "$LOUDNESS_BATCH_CHOICE_ACTION" in
+        quit)
+          echo 'Quit requested.'
+          return 2
+          ;;
+        finish_batch)
+          finish_batch_now=yes
+          echo "Finishing this batch — normalizing ${batch_yes} selected file(s) only."
+          break
+          ;;
+        skip_all)
+          skip_remaining=yes
+          finish_batch_now=yes
+          echo "Skipping all further normalize prompts — normalizing ${batch_yes} selected file(s) from this batch."
+          break
+          ;;
+        accept_all)
+          batch_selected+=( yes )
+          (( ++batch_yes ))
+          accept_all_remaining=yes
+          batch_indices+=( "$idx" )
+          if (( cli_only )); then
+            normalize_record_cli_batch_selection "$file" yes
+          fi
+          (( ++idx ))
+          (( ++batch_count ))
+          continue
+          ;;
+        decided_dir)
+          NORMALIZE_DIR="$(dirname -- "$file")"
+          batch_selected+=( yes )
+          (( ++batch_yes ))
+          if (( cli_only )); then
+            CLI_BUILD_NOTES+=( "[D] used in $(dirname -- "$file")/ — no single CLI flag; use -y or list files" )
+            normalize_record_cli_batch_selection "$file" yes
+          fi
+          ;;
+        decided)
+          if [[ "$LOUDNESS_BATCH_CHOICE_DECISION" == yes ]]; then
+            batch_selected+=( yes )
+            (( ++batch_yes ))
+            if (( cli_only )); then
+              normalize_record_cli_batch_selection "$file" yes
+            fi
+          else
+            batch_selected+=( no )
+            (( ++batch_no ))
+            if (( cli_only )); then
+              CLI_BUILD_ALL_YES=0
+            fi
+          fi
+          ;;
+      esac
+
+      batch_indices+=( "$idx" )
+      (( ++idx ))
+      (( ++batch_count ))
+    done
+
+    if (( ${#batch_indices[@]} > 0 )); then
+      selected_total=0
+      for decision in "${batch_selected[@]}"; do
+        [[ "$decision" == yes ]] && (( ++selected_total ))
+      done
+
+      if (( selected_total > 0 )); then
+        if (( ! cli_only )); then
+          selected_pos=0
+          for j in "${!batch_indices[@]}"; do
+            [[ "${batch_selected[$j]}" == yes ]] || continue
+            (( ++selected_pos ))
+            selected_left=$(( selected_total - selected_pos ))
+            echo
+            printf 'NORMALIZING: selected file %s/%s in current batch (%s left in batch)\n' \
+              "$selected_pos" "$selected_total" "$selected_left"
+            rc=0
+            normalize_one_selected_file "${batch_indices[$j]}" "$filter" || rc=$?
+            case "$rc" in
+              0) (( ++_norm_ok )) ;;
+              1) (( ++_norm_fail )) ;;
+              2) (( ++_norm_backup_skip )) ;;
+              3) echo 'Quit requested.' ; return 2 ;;
+            esac
+          done
+        fi
+      elif (( finish_batch_now )); then
+        echo 'No files selected for normalization in this batch.'
+      fi
+    fi
+
+    if [[ "$finish_batch_now" == yes ]]; then
+      idx=$(batch_prompt_finish_skip_idx "$idx" "$batch_size_now" "$batch_count")
+    fi
+
+    if (( ! cli_only )); then
+      _norm_skip=$(( _norm_skip + batch_no ))
+      if [[ "$finish_batch_now" == yes ]]; then
+        _norm_skip=$(( _norm_skip + batch_size_now - batch_count ))
+      fi
+    elif [[ "$finish_batch_now" == yes || "$skip_remaining" == yes ]]; then
+      CLI_BUILD_ALL_YES=0
+    fi
+
+    if [[ "$skip_remaining" == yes || "$finish_batch_now" == yes ]]; then
+      if (( ! cli_only )); then
+        _norm_skip=$(( _norm_skip + total - idx ))
+      fi
+      break
+    fi
+  done
+
+  return 0
+}
+
+normalize_candidate_files() {
+  local filter norm_ok=0 norm_fail=0 norm_skip=0 norm_backup_skip=0 rc=0
 
   NORMALIZE_DIR=""
 
@@ -1627,79 +1963,36 @@ normalize_candidate_files() {
     echo "Originals are moved to *.backup.deleteme before each file is normalized."
   fi
   echo "Timestamps on the normalized file are preserved."
-  echo "Per-file prompt: [y] yes, [N] no, [D] yes for rest of directory, [Q] quit."
-  echo
 
-  for i in "${!NORMALIZE_FILES[@]}"; do
-    file="${NORMALIZE_FILES[$i]}"
-    max_db="${NORMALIZE_MAX[$i]}"
-    status="${NORMALIZE_STATUS[$i]}"
-
-    if ! normalize_skip_file_prompt "$file"; then
-      if ! loudness_wants_per_file_prompts; then
+  if ! loudness_wants_per_file_prompts; then
+    echo
+    local i file prep_rc
+    for i in "${!NORMALIZE_FILES[@]}"; do
+      file="${NORMALIZE_FILES[$i]}"
+      if ! normalize_skip_file_prompt "$file"; then
         (( ++norm_skip ))
         continue
       fi
-      loudness_read_key "Normalize ${file} (${status}, ${max_db} dB)? [y/N/d/q]: " N
-      case "${REPLY^^}" in
-        Q) echo "Quit requested." ; return 2 ;;
-        D) NORMALIZE_DIR="$(dirname -- "$file")" ;;
-        Y) ;;
-        *) (( ++norm_skip )) ; continue ;;
-      esac
-    fi
-
-    before_max=""
-    before_mean=""
-    if measure_line="$(get_scan_loudness_for_file "$file")"; then
-      read -r before_max before_mean <<<"$measure_line"
-    fi
-
-    audio_n="$(count_file_audio_streams "$file")"
-    backup=""
-    src="$file"
-    dest="$file"
-    if (( LOUDNESS_SAVE_ORIGINAL )); then
-      prep_rc=0
-      prepare_normalize_with_backup "$file" src backup || prep_rc=$?
-      case "$prep_rc" in
-        0) ;;
-        2) (( ++norm_backup_skip )) ; continue ;;
+      rc=0
+      normalize_one_selected_file "$i" "$filter" || rc=$?
+      case "$rc" in
+        0) (( ++norm_ok )) ;;
+        1) (( ++norm_fail )) ;;
+        2) (( ++norm_backup_skip )) ;;
         3) echo 'Quit requested.' ; return 2 ;;
-        *)
-          echo "    FAILED: backup step for ${file} (see messages above)."
-          (( ++norm_fail ))
-          continue
-          ;;
       esac
-    fi
-    loudness_begin_file_normalize "$dest" "$backup" "$src"
-    printf 'Normalizing %s ... ' "$file"
-    if normalize_file_inplace "$src" "$dest" "$filter"; then
-      loudness_end_file_normalize
-      echo 'OK'
-      if (( audio_n > 1 )); then
-        echo "    (${audio_n} audio tracks normalized; other streams copied)"
-      fi
-      measure_rc=0
-      measure_line="$(measure_loudness "$file")" || measure_rc=$?
-      if (( measure_rc == 0 )); then
-        read -r after_max after_mean <<<"$measure_line"
-        print_normalize_before_after "$before_max" "$before_mean" "$after_max" "$after_mean"
-      else
-        echo '    After: could not measure loudness'
-      fi
-      echo
-      (( ++norm_ok ))
-    else
-      echo 'FAILED (ffmpeg — see error lines above)'
-      if [[ -n "$backup" && -f "$backup" && ! -f "$dest" ]]; then
-        restore_original_from_backup "$backup" "$dest" || true
-      fi
-      loudness_end_file_normalize
-      (( ++norm_fail ))
-    fi
-  done
+    done
+  else
+    echo
+    echo 'Per-file prompts run in batches (like ffmpeg-voice.sh): ask about each file,'
+    echo 'then normalize selected files before the next batch.'
+    echo '  [y] yes, [N] no, [D] rest of directory, [A] all remaining in batch,'
+    echo '  [F] finish batch, [G] skip all further prompts, [Q] quit.'
+    echo
+    normalize_run_batch_prompt_loop 0 "$filter" norm_ok norm_fail norm_skip norm_backup_skip || rc=$?
+    (( rc == 2 )) && return 2
+    (( rc != 0 )) && return 1
+  fi
 
   echo
   if (( norm_backup_skip > 0 )); then
