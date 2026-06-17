@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.06.17 - v. 0.5.19 - prompt menus: default option letter uppercase only
 # 2026.06.17 - v. 0.5.18 - terminal colors option (--colors); PERFECT rows green in scan table
 # 2026.06.17 - v. 0.5.17 - dB: print 0.0 not -0.0; classes prompt no timeout; per-file default Y/N by class
 # 2026.06.17 - v. 0.5.16 - print elapsed time after each normalize (ffmpeg)
@@ -148,11 +149,11 @@ Interactive normalization prompts (per file, in batches like ffmpeg-voice.sh):
   Ask about up to N files (batch size, default 50), then normalize only the
   files you selected in that batch before the next batch of prompts.
   Per-file normalize (batch prompts; default Y for NORMAL/TOO QUIET, N for PERFECT):
-  [Y]/[n] yes/no, [D] rest of directory, [A] yes for all remaining in batch,
-  [F] finish batch (normalize selected; stop asking), [G] normalize selected and
-  skip all further prompts, [Q] quit.
-  Backup conflict: [Y] replace old backup, [K] keep backup and normalize in
-  place, [S] skip file, [Q] quit.
+  [Y]/[n] yes/no, [d] rest of directory, [a] all remaining in batch,
+  [f] finish batch (normalize selected; stop asking), [g] normalize selected and
+  skip all further prompts, [q] quit.
+  Backup conflict: [y] replace old backup, [k] keep backup and normalize in
+  place, [s] skip file, [q] quit (default [s]).
 
 Environment:
   LOUDNESS_NORMALIZE        Same as -n / --normalize (CLI overrides).
@@ -477,8 +478,8 @@ prompt_use_colors() {
   (( PRINT_CLI_ONLY )) && loudness_print_cli_only_section 'Terminal colors'
   echo 'Use colors in the terminal?'
   echo '  [Y] Yes (default)'
-  echo '  [N] No'
-  echo '  [Q] Quit'
+  echo '  [n] No'
+  echo '  [q] Quit'
   loudness_read_key 'Use colors? [Y/n/q]: ' Y
   case "${REPLY^^}" in
     Q) loudness_quit_now ;;
@@ -912,8 +913,8 @@ prompt_scan_scope() {
   (( PRINT_CLI_ONLY )) && loudness_print_cli_only_section 'Scan scope'
   echo 'What should be scanned?'
   echo '  [S] Also subdirectories (default)'
-  echo '  [C] Current directory only'
-  echo '  [Q] Quit'
+  echo '  [c] Current directory only'
+  echo '  [q] Quit'
   loudness_read_key 'Scan scope? [S/c/q]: ' S
   case "${REPLY^^}" in
     Q) loudness_quit_now ;;
@@ -1521,12 +1522,12 @@ resolve_backup_conflict() {
     esac
   fi
 
-  echo '  [Y] Remove old backup, move current file aside, then normalize'
+  echo '  [y] Remove old backup, move current file aside, then normalize'
   echo '      (the previous original in .backup.deleteme will be deleted)'
-  echo '  [K] Keep old backup; normalize current file in place'
+  echo '  [k] Keep old backup; normalize current file in place'
   echo '      (safe for re-normalizing; backup still holds the first original)'
   echo '  [S] Skip this file (default)'
-  echo '  [Q] Quit'
+  echo '  [q] Quit'
   loudness_read_key "Backup conflict for ${file}? [y/k/S/q]: " S
   case "${REPLY^^}" in
     Q) _result=quit ;;
@@ -2132,10 +2133,10 @@ prompt_normalize_mode() {
   else
     echo "No files available for normalization with selected classes."
   fi
-  echo "  [S] Standard loudnorm"
+  echo "  [s] Standard loudnorm"
   echo "  [Y] YouTube-style loudnorm (I=-16:TP=-1.0:LRA=11) (default)"
-  echo "  [N] Skip normalization"
-  echo "  [Q] Quit"
+  echo "  [n] Skip normalization"
+  echo "  [q] Quit"
   loudness_read_key 'Normalize? [s/Y/n/q]: ' Y
   case "${REPLY^^}" in
     Q) loudness_quit_now ;;
@@ -2226,21 +2227,21 @@ loudness_read_normalize_batch_choice() {
   if [[ "$default" == 'Y' ]]; then
     echo '  [Y] Yes normalize (default)'
     echo '  [n] No'
-    echo "  [D] Yes, and rest of directory ($(dirname -- "$file")/) without further prompts"
-    echo '  [A] Yes for all remaining in this batch'
-    echo '  [F] Finish batch now (normalize selected only; stop asking for rest of batch)'
-    echo '  [G] Normalize selected; skip all further prompts this run'
-    echo '  [Q] Quit'
+    echo "  [d] Yes, and rest of directory ($(dirname -- "$file")/) without further prompts"
+    echo '  [a] Yes for all remaining in this batch'
+    echo '  [f] Finish batch now (normalize selected only; stop asking for rest of batch)'
+    echo '  [g] Normalize selected; skip all further prompts this run'
+    echo '  [q] Quit'
     prompt="Normalize ${file} (${status}, ${max_disp})? [Y/n/d/a/f/g/q]: "
     loudness_read_key "$prompt" Y
   else
     echo '  [y] Yes normalize'
     echo '  [N] No (default)'
-    echo "  [D] Yes, and rest of directory ($(dirname -- "$file")/) without further prompts"
-    echo '  [A] Yes for all remaining in this batch'
-    echo '  [F] Finish batch now (normalize selected only; stop asking for rest of batch)'
-    echo '  [G] Normalize selected; skip all further prompts this run'
-    echo '  [Q] Quit'
+    echo "  [d] Yes, and rest of directory ($(dirname -- "$file")/) without further prompts"
+    echo '  [a] Yes for all remaining in this batch'
+    echo '  [f] Finish batch now (normalize selected only; stop asking for rest of batch)'
+    echo '  [g] Normalize selected; skip all further prompts this run'
+    echo '  [q] Quit'
     prompt="Normalize ${file} (${status}, ${max_disp})? [y/N/d/a/f/g/q]: "
     loudness_read_key "$prompt" N
   fi
@@ -2602,8 +2603,8 @@ normalize_candidate_files() {
     echo 'Per-file prompts run in batches (like ffmpeg-voice.sh): ask about each file,'
     echo 'then normalize selected files before the next batch.'
     echo '  Default: [Y] for NORMAL/TOO QUIET, [N] for PERFECT.'
-    echo '  [D] rest of directory, [A] all remaining in batch,'
-    echo '  [F] finish batch, [G] skip all further prompts, [Q] quit.'
+    echo '  [d] rest of directory, [a] all remaining in batch,'
+    echo '  [f] finish batch, [g] skip all further prompts, [q] quit.'
     normalize_run_batch_prompt_loop 0 "$filter" norm_ok norm_fail norm_skip norm_backup_skip || rc=$?
     if (( rc == 2 )); then
       return 2
