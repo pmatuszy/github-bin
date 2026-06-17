@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.06.17 - v. 0.5.13 - fix batch-size prompt false failure (exit status 1 when not --print-cli-only)
 # 2026.06.17 - v. 0.5.12 - fix empty normalize queue after sort; guard batch loop on total=0
 # 2026.06.17 - v. 0.5.11 - --classes filter for normalize candidates (n/t/p abbreviations)
 # 2026.06.17 - v. 0.5.10 - trim extra blank lines between interactive prompts and scan table
@@ -818,7 +819,7 @@ prompt_scan_scope() {
     *) LOUDNESS_SCAN_SCOPE=subdirs ;;
   esac
   echo "Scope: $(loudness_scan_scope_label)"
-  (( PRINT_CLI_ONLY )) && cli_equiv_note "CLI: --scope ${LOUDNESS_SCAN_SCOPE}"
+  cli_equiv_note "CLI: --scope ${LOUDNESS_SCAN_SCOPE}"
 }
 
 collect_media_files_current_dir() {
@@ -1194,7 +1195,7 @@ prompt_normalize_classes() {
   LOUDNESS_CLASSES_RESOLVED=1
   LOUDNESS_CLASSES="$(loudness_classes_cli_spec)"
   echo "Selected classes: $(loudness_classes_label)"
-  (( PRINT_CLI_ONLY )) && cli_equiv_note "CLI: --classes ${LOUDNESS_CLASSES}"
+  cli_equiv_note "CLI: --classes ${LOUDNESS_CLASSES}"
 }
 
 loudness_apply_classes_after_scan() {
@@ -1957,7 +1958,7 @@ prompt_startup_interactive() {
     N) LOUDNESS_OFFER_NORMALIZE=0 ;;
     *) LOUDNESS_OFFER_NORMALIZE=1 ;;
   esac
-  (( PRINT_CLI_ONLY )) && cli_equiv_note "Offer normalize after scan: $(( LOUDNESS_OFFER_NORMALIZE ))"
+  cli_equiv_note "Offer normalize after scan: $(( LOUDNESS_OFFER_NORMALIZE ))"
 }
 
 prompt_normalize_mode() {
@@ -2015,7 +2016,9 @@ prompt_youtube_include_perfect() {
       loudness_rebuild_normalize_queue_from_scan
       ;;
   esac
-  (( PRINT_CLI_ONLY )) && (( LOUDNESS_INCLUDE_PERFECT )) && cli_equiv_note 'CLI: --include-perfect'
+  if (( LOUDNESS_INCLUDE_PERFECT )); then
+    cli_equiv_note 'CLI: --include-perfect'
+  fi
 }
 
 prompt_save_original_aside() {
@@ -2026,7 +2029,9 @@ prompt_save_original_aside() {
     N) LOUDNESS_SAVE_ORIGINAL=0 ;;
     *) LOUDNESS_SAVE_ORIGINAL=1 ;;
   esac
-  (( PRINT_CLI_ONLY )) && (( LOUDNESS_SAVE_ORIGINAL )) && cli_equiv_note 'CLI: --save-original'
+  if (( LOUDNESS_SAVE_ORIGINAL )); then
+    cli_equiv_note 'CLI: --save-original'
+  fi
 }
 
 normalize_skip_file_prompt() {
@@ -2101,7 +2106,7 @@ prompt_batch_size_interactive() {
   fi
   LOUDNESS_BATCH_SIZE="$BATCH_SIZE"
   echo "Batch size: ${BATCH_SIZE}"
-  (( PRINT_CLI_ONLY )) && cli_equiv_note "CLI: --batch-size ${BATCH_SIZE}"
+  cli_equiv_note "CLI: --batch-size ${BATCH_SIZE}"
 }
 
 resolve_batch_size() {
@@ -2122,6 +2127,7 @@ resolve_batch_size() {
     return 0
   fi
   prompt_batch_size_interactive
+  return 0
 }
 
 normalize_record_cli_batch_selection() {
@@ -2204,6 +2210,7 @@ normalize_run_batch_prompt_loop() {
   local file max_db status i j rc decision
 
   if ! resolve_batch_size; then
+    echo 'ERROR: Invalid batch size.' >&2
     return 1
   fi
 
