@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.06.17 - v. 0.5.25 - scan table: center column headers (FILE, MAX_VOLUME, …)
 # 2026.06.17 - v. 0.5.24 - Y/n prompts: arrow up=yes, arrow down=no (↑ yes, ↓ no hint)
 # 2026.06.17 - v. 0.5.23 - Files to scan: show count by extension (mp4, avi, ...)
 # 2026.06.17 - v. 0.5.22 - offer-normalize prompt moved to after scan (with summary visible)
@@ -1848,6 +1849,13 @@ def pad_right(s, width):
     s = trunc(s, width) if disp_width(s) > width else s
     sys.stdout.write((' ' * (width - disp_width(s))) + s)
 
+def pad_center(s, width):
+    s = trunc(s, width) if disp_width(s) > width else s
+    tw = disp_width(s)
+    left = (width - tw) // 2
+    right = width - tw - left
+    sys.stdout.write((' ' * left) + s + (' ' * right))
+
 op = os.environ['TABLE_FMT_OP']
 text = os.environ.get('TABLE_FMT_TEXT', '')
 width = int(os.environ.get('TABLE_FMT_WIDTH', '0'))
@@ -1858,6 +1866,8 @@ elif op == 'pad_left':
     pad_left(text, width)
 elif op == 'pad_right':
     pad_right(text, width)
+elif op == 'pad_center':
+    pad_center(text, width)
 else:
     sys.exit(2)
 PY
@@ -1899,6 +1909,23 @@ _table_pad_right() {
     return 0
   fi
   printf '%*s' "$width" "$text"
+}
+
+_table_pad_center() {
+  local text="$1" width="$2" len pad left right
+  if _loudness_table_have_python; then
+    _loudness_table_python pad_center "$text" "$width"
+    return 0
+  fi
+  len=${#text}
+  if (( len > width )); then
+    text="${text:0:$(( width - 3 ))}..."
+    len=${#text}
+  fi
+  pad=$(( width - len ))
+  left=$(( pad / 2 ))
+  right=$(( pad - left ))
+  printf '%*s%s%*s' "$left" '' "$text" "$right" ''
 }
 
 _table_dash_col() {
@@ -1979,17 +2006,20 @@ format_scan_db_cell() {
 }
 
 print_report_table_header() {
-  local file_h sep_file sep_max sep_mean sep_status
-  file_h="$(format_scan_file_cell 'FILE' "$REPORT_FILE_W")"
+  local file_h max_h mean_h status_h sep_file sep_max sep_mean sep_status
+  file_h="$(_table_pad_center 'FILE' "$REPORT_FILE_W")"
+  max_h="$(_table_pad_center 'MAX_VOLUME' "$REPORT_MAX_W")"
+  mean_h="$(_table_pad_center 'MEAN_VOLUME' "$REPORT_MEAN_W")"
+  status_h="$(_table_pad_center 'STATUS' "$REPORT_STATUS_W")"
   sep_file="$(_table_dash_col "$REPORT_FILE_W")"
   sep_max="$(_table_dash_col "$REPORT_MAX_W")"
   sep_mean="$(_table_dash_col "$REPORT_MEAN_W")"
   sep_status="$(_table_dash_col "$REPORT_STATUS_W")"
-  printf '%s%s%*s%s%*s%s%-*s\n' \
+  printf '%s%s%s%s%s%s%s\n' \
     "$file_h" "$REPORT_COL_GAP" \
-    "$REPORT_MAX_W" 'MAX_VOLUME' "$REPORT_COL_GAP" \
-    "$REPORT_MEAN_W" 'MEAN_VOLUME' "$REPORT_COL_GAP" \
-    "$REPORT_STATUS_W" 'STATUS'
+    "$max_h" "$REPORT_COL_GAP" \
+    "$mean_h" "$REPORT_COL_GAP" \
+    "$status_h"
   printf '%s%s%s%s%s%s%s\n' \
     "$sep_file" "$REPORT_COL_GAP" \
     "$sep_max" "$REPORT_COL_GAP" \
