@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.06.17 - v. 0.5.11 - --classes filter for normalize candidates (n/t/p abbreviations)
 # 2026.06.17 - v. 0.5.10 - trim extra blank lines between interactive prompts and scan table
 # 2026.06.17 - v. 0.5.9 - scan table: Unicode display-width columns (terminal-safe)
 # 2026.06.17 - v. 0.5.8 - scan table: column dash gaps; fixed-width dB alignment
@@ -60,7 +61,7 @@ show_help() {
   cat <<EOF
 Usage: $(basename "$0") [-h|--help] [-v|--version] [--no_startup_delay]
        [-n standard|youtube|none] [-y] [--scope current|subdirs] [--batch-size N]
-       [--scan-only] [--print-cli-only] [-- FILE ...]
+       [--classes SPEC] [--scan-only] [--print-cli-only] [-- FILE ...]
 
 Scan for audio and video files and measure loudness with ffmpeg volumedetect
 (video is ignored for speed). Each file is classified by peak level (max_volume):
@@ -69,8 +70,9 @@ Scan for audio and video files and measure loudness with ffmpeg volumedetect
   NORMAL  (-2.0 to -6.0 dB)    Usually fine; normalize only if you want louder mix.
   TOO QUIET (-6.0 dB or lower) Prime candidates for loudnorm (quiet dialogue).
 
-Optionally normalize non-PERFECT files (NORMAL or TOO QUIET) in place (original
-modification time kept). PERFECT peaks are never normalization candidates.
+Optionally normalize selected classification groups in place (original
+modification time kept). By default NORMAL and TOO QUIET are candidates;
+PERFECT is optional (YouTube mode or --classes / --include-perfect).
 
 Supported extensions (case-insensitive):
   Video: .avi .mp4 .mkv .mov .wmv .mpeg .mpg .m4v .webm .ts
@@ -121,8 +123,13 @@ Options:
                        subfolders (skip the interactive scope question).
   --batch-size N       Per-file normalize prompts: ask N files at a time before
                        processing (default 50; skip the interactive batch question).
-  --include-perfect    With -n youtube, normalize PERFECT files too (skip the
-                       interactive question).
+  --classes SPEC       Normalization candidates by class (scan still measures all).
+                       SPEC is comma-separated and/or concatenated letters:
+                       n=normal, t or q=too-quiet, p=perfect, a or all=all three.
+                       Default: n,t (NORMAL + TOO QUIET). Examples: --classes t
+                       --classes n,t,p  LOUDNESS_CLASSES=n,q
+  --include-perfect    Include PERFECT in candidate classes (same as adding p to
+                       --classes; with -n youtube; skipped when -n standard).
   --no_startup_delay   Skip random startup delay when run non-interactively
                        (see _script_header.sh).
   -- FILE              Explicit file operands (use when a name starts with -).
@@ -148,6 +155,8 @@ Environment:
   LOUDNESS_SCAN_SCOPE       current or subdirs (same as --scope).
   LOUDNESS_BATCH_SIZE       Batch size for per-file normalize prompts (same as
                               --batch-size; default 50).
+  LOUDNESS_CLASSES          Candidate classes for normalization (same as --classes).
+                              n/normal, t or q/too-quiet, p/perfect; default n,t.
   LOUDNESS_READ_TIMEOUT     Seconds to wait for a key at interactive prompts
                               (default: 600 = 10 minutes; 0 = wait forever).
 
@@ -181,6 +190,12 @@ LOUDNESS_SCAN_SCOPE_CLI=0
 LOUDNESS_BATCH_SIZE="${LOUDNESS_BATCH_SIZE:-}"
 LOUDNESS_BATCH_SIZE_CLI=0
 BATCH_SIZE=50
+LOUDNESS_CLASSES="${LOUDNESS_CLASSES:-}"
+LOUDNESS_CLASSES_CLI=0
+LOUDNESS_CLASSES_RESOLVED=0
+LOUDNESS_CLASS_NORMAL=0
+LOUDNESS_CLASS_TOO_QUIET=0
+LOUDNESS_CLASS_PERFECT=0
 LOUDNESS_BATCH_CHOICE_DECISION=""
 LOUDNESS_BATCH_CHOICE_ACTION=""
 LOUDNESS_SAVE_ORIGINAL="${LOUDNESS_SAVE_ORIGINAL:-0}"
@@ -275,6 +290,13 @@ while [[ $# -gt 0 ]]; do
       esac
       LOUDNESS_BATCH_SIZE_CLI=1
       BATCH_SIZE="$LOUDNESS_BATCH_SIZE"
+      shift 2
+      ;;
+    --classes)
+      ANY_CLI_OPTIONS=1
+      [[ $# -ge 2 ]] || { echo "Missing value for --classes" >&2; exit 1; }
+      LOUDNESS_CLASSES="$2"
+      LOUDNESS_CLASSES_CLI=1
       shift 2
       ;;
     --)
@@ -592,7 +614,11 @@ cli_print_built_command() {
   if [[ -n "$NORMALIZE_MODE" && "$NORMALIZE_MODE" != none ]]; then
     parts+=( -n "$NORMALIZE_MODE" )
   fi
-  (( LOUDNESS_INCLUDE_PERFECT )) && parts+=( --include-perfect )
+  if ! loudness_classes_is_default; then
+    parts+=( --classes "$(loudness_classes_cli_spec)" )
+  elif (( LOUDNESS_INCLUDE_PERFECT )); then
+    parts+=( --include-perfect )
+  fi
   (( LOUDNESS_SAVE_ORIGINAL )) && parts+=( --save-original )
   (( LOUDNESS_REPLACE_BACKUP )) && parts+=( --replace-backup )
   if [[ -n "$LOUDNESS_SCAN_SCOPE" && ${#CLI_FILES[@]} == 0 ]]; then
@@ -681,6 +707,12 @@ run_print_cli_only_session() {
   loudness_print_cli_only_section 'Startup'
   prompt_startup_interactive
 
+  if (( LOUDNESS_OFFER_NORMALIZE )); then
+    loudness_print_cli_only_section 'Normalization classes'
+    prompt_normalize_classes
+    loudness_rebuild_normalize_queue_from_scan
+  fi
+
   if [[ -z "$NORMALIZE_MODE" ]]; then
     if (( LOUDNESS_OFFER_NORMALIZE )); then
       loudness_print_cli_only_section 'Normalization mode'
@@ -700,12 +732,22 @@ run_print_cli_only_session() {
 
   if [[ "$NORMALIZE_MODE" == youtube ]]; then
     loudness_print_cli_only_section 'YouTube PERFECT files'
-    if (( LOUDNESS_INCLUDE_PERFECT_CLI || LOUDNESS_INCLUDE_PERFECT )); then
+    if (( LOUDNESS_CLASS_PERFECT )); then
       LOUDNESS_INCLUDE_PERFECT=1
+    elif (( LOUDNESS_INCLUDE_PERFECT_CLI || LOUDNESS_INCLUDE_PERFECT )); then
+      LOUDNESS_INCLUDE_PERFECT=1
+      LOUDNESS_CLASS_PERFECT=1
+      loudness_rebuild_normalize_queue_from_scan
     else
       prompt_youtube_include_perfect_print_cli
+      if (( LOUDNESS_INCLUDE_PERFECT )); then
+        LOUDNESS_CLASS_PERFECT=1
+        loudness_rebuild_normalize_queue_from_scan
+      fi
     fi
-    (( LOUDNESS_INCLUDE_PERFECT )) && cli_equiv_note 'CLI: --include-perfect'
+    if (( LOUDNESS_INCLUDE_PERFECT )) && loudness_classes_is_default; then
+      cli_equiv_note 'CLI: --include-perfect'
+    fi
   fi
 
   cli_setup_print_cli_normalize_queue
@@ -922,6 +964,250 @@ classify_max_volume() {
     }
     print "TOO_QUIET"
   }'
+}
+
+# Map one class token to canonical name (normal|too-quiet|perfect); empty = invalid.
+loudness_canonicalize_class_token() {
+  local t="${1,,}"
+  t="${t//[[:space:]]/}"
+  t="${t//_/-}"
+  case "$t" in
+    n|normal|norm) printf 'normal' ;;
+    t|q|too-quiet|tooquiet|quiet) printf 'too-quiet' ;;
+    p|perfect|perf) printf 'perfect' ;;
+    a|all) printf 'all' ;;
+    *) return 1 ;;
+  esac
+}
+
+loudness_enable_class_flag() {
+  case "$1" in
+    normal) LOUDNESS_CLASS_NORMAL=1 ;;
+    too-quiet) LOUDNESS_CLASS_TOO_QUIET=1 ;;
+    perfect) LOUDNESS_CLASS_PERFECT=1 ;;
+  esac
+}
+
+loudness_parse_classes_spec() {
+  local spec="$1" token canon c i
+  local -a tokens=()
+
+  [[ -n "$spec" ]] || return 1
+
+  spec="${spec,,}"
+  spec="${spec//[[:space:]]/}"
+
+  LOUDNESS_CLASS_NORMAL=0
+  LOUDNESS_CLASS_TOO_QUIET=0
+  LOUDNESS_CLASS_PERFECT=0
+
+  if [[ "$spec" == all || "$spec" == a ]]; then
+    LOUDNESS_CLASS_NORMAL=1
+    LOUDNESS_CLASS_TOO_QUIET=1
+    LOUDNESS_CLASS_PERFECT=1
+    return 0
+  fi
+
+  if [[ "$spec" == *","* ]]; then
+    IFS=',' read -ra tokens <<< "$spec"
+    for token in "${tokens[@]}"; do
+      [[ -n "$token" ]] || continue
+      canon="$(loudness_canonicalize_class_token "$token")" || {
+        echo "Invalid class in --classes / LOUDNESS_CLASSES: ${token}" >&2
+        echo "Use: n/normal, t or q/too-quiet, p/perfect, a/all (comma-separated or concatenated)." >&2
+        return 1
+      }
+      if [[ "$canon" == all ]]; then
+        LOUDNESS_CLASS_NORMAL=1
+        LOUDNESS_CLASS_TOO_QUIET=1
+        LOUDNESS_CLASS_PERFECT=1
+        continue
+      fi
+      loudness_enable_class_flag "$canon"
+    done
+  else
+    for (( i = 0; i < ${#spec}; ++i )); do
+      c="${spec:i:1}"
+      [[ "$c" == "," ]] && continue
+      canon="$(loudness_canonicalize_class_token "$c")" || {
+        echo "Invalid class letter in --classes / LOUDNESS_CLASSES: ${c}" >&2
+        echo "Use: n, t or q, p, a (e.g. nt, n,t,p, or normal,too-quiet)." >&2
+        return 1
+      }
+      if [[ "$canon" == all ]]; then
+        LOUDNESS_CLASS_NORMAL=1
+        LOUDNESS_CLASS_TOO_QUIET=1
+        LOUDNESS_CLASS_PERFECT=1
+        continue
+      fi
+      loudness_enable_class_flag "$canon"
+    done
+  fi
+
+  if (( ! LOUDNESS_CLASS_NORMAL && ! LOUDNESS_CLASS_TOO_QUIET && ! LOUDNESS_CLASS_PERFECT )); then
+    echo "ERROR: --classes / LOUDNESS_CLASSES matched no classes: ${spec}" >&2
+    return 1
+  fi
+  return 0
+}
+
+loudness_apply_default_classes() {
+  LOUDNESS_CLASS_NORMAL=1
+  LOUDNESS_CLASS_TOO_QUIET=1
+  LOUDNESS_CLASS_PERFECT=0
+}
+
+loudness_classes_is_default() {
+  (( LOUDNESS_CLASS_NORMAL && LOUDNESS_CLASS_TOO_QUIET && ! LOUDNESS_CLASS_PERFECT ))
+}
+
+loudness_resolve_classes_from_cli_or_env() {
+  if (( LOUDNESS_CLASSES_RESOLVED )); then
+    return 0
+  fi
+  if [[ -n "$LOUDNESS_CLASSES" ]]; then
+    loudness_parse_classes_spec "$LOUDNESS_CLASSES" || return 1
+    LOUDNESS_CLASSES_RESOLVED=1
+    return 0
+  fi
+  return 1
+}
+
+loudness_finalize_classes() {
+  if (( LOUDNESS_CLASSES_RESOLVED )); then
+    :
+  elif [[ -n "$LOUDNESS_CLASSES" ]]; then
+    loudness_parse_classes_spec "$LOUDNESS_CLASSES" || return 1
+    LOUDNESS_CLASSES_RESOLVED=1
+  else
+    loudness_apply_default_classes
+    LOUDNESS_CLASSES_RESOLVED=1
+  fi
+  if (( LOUDNESS_INCLUDE_PERFECT )); then
+    LOUDNESS_CLASS_PERFECT=1
+  fi
+}
+
+loudness_class_status_enabled() {
+  case "$1" in
+    NORMAL) (( LOUDNESS_CLASS_NORMAL )) ;;
+    TOO_QUIET) (( LOUDNESS_CLASS_TOO_QUIET )) ;;
+    PERFECT) (( LOUDNESS_CLASS_PERFECT )) ;;
+    *) return 1 ;;
+  esac
+}
+
+loudness_classes_label() {
+  local -a parts=()
+  (( LOUDNESS_CLASS_NORMAL )) && parts+=( 'NORMAL' )
+  (( LOUDNESS_CLASS_TOO_QUIET )) && parts+=( 'TOO QUIET' )
+  (( LOUDNESS_CLASS_PERFECT )) && parts+=( 'PERFECT' )
+  ((${#parts[@]} == 0)) && { printf 'none'; return; }
+  local IFS=', '
+  printf '%s' "${parts[*]}"
+}
+
+loudness_classes_cli_spec() {
+  local -a parts=()
+  (( LOUDNESS_CLASS_NORMAL )) && parts+=( n )
+  (( LOUDNESS_CLASS_TOO_QUIET )) && parts+=( t )
+  (( LOUDNESS_CLASS_PERFECT )) && parts+=( p )
+  ((${#parts[@]} == 0)) && return 0
+  local IFS=,
+  printf '%s' "${parts[*]}"
+}
+
+count_scan_status() {
+  local want="$1" n=0 i
+  for i in "${!ROW_STATUS[@]}"; do
+    [[ "${ROW_STATUS[$i]}" == "$want" ]] && (( ++n ))
+  done
+  printf '%s' "$n"
+}
+
+loudness_rebuild_normalize_queue_from_scan() {
+  local i file status max_db
+
+  NORMALIZE_FILES=()
+  NORMALIZE_MAX=()
+  NORMALIZE_STATUS=()
+
+  for i in "${!ROW_FILE[@]}"; do
+    status="${ROW_STATUS[$i]}"
+    loudness_class_status_enabled "$status" || continue
+    file="${ROW_FILE[$i]}"
+    max_db="${ROW_MAX[$i]}"
+    NORMALIZE_FILES+=( "$file" )
+    NORMALIZE_MAX+=( "$max_db" )
+    NORMALIZE_STATUS+=( "$status" )
+  done
+}
+
+loudness_filter_queue_for_standard_mode() {
+  local -a keep_files=() keep_max=() keep_status=()
+  local i n_skipped=0
+
+  [[ "$NORMALIZE_MODE" == standard ]] || return 0
+
+  for i in "${!NORMALIZE_FILES[@]}"; do
+    if [[ "${NORMALIZE_STATUS[$i]}" == PERFECT ]]; then
+      (( ++n_skipped ))
+      continue
+    fi
+    keep_files+=( "${NORMALIZE_FILES[$i]}" )
+    keep_max+=( "${NORMALIZE_MAX[$i]}" )
+    keep_status+=( "${NORMALIZE_STATUS[$i]}" )
+  done
+
+  if (( n_skipped > 0 )); then
+    echo "NOTE: -n standard skips PERFECT files (${n_skipped} removed from normalize queue)."
+  fi
+
+  NORMALIZE_FILES=( "${keep_files[@]}" )
+  NORMALIZE_MAX=( "${keep_max[@]}" )
+  NORMALIZE_STATUS=( "${keep_status[@]}" )
+}
+
+prompt_normalize_classes() {
+  local cn ct cp input
+
+  cn="$(count_scan_status NORMAL)"
+  ct="$(count_scan_status TOO_QUIET)"
+  cp="$(count_scan_perfect_files)"
+
+  echo "Normalization candidates by class: NORMAL ${cn}, TOO QUIET ${ct}, PERFECT ${cp}"
+  echo "  Letters: n=normal, t=too quiet, p=perfect (q also means too quiet on CLI)"
+  echo "  Default: nt (NORMAL + TOO QUIET)"
+  printf '[%s] Classes to include [nt]: ' "$(date '+%Y.%m.%d %H:%M:%S')"
+  if IFS= read -r -t "$LOUDNESS_READ_TIMEOUT" input; then
+    :
+  else
+    input=""
+  fi
+  input="${input%$'\r'}"
+  [[ -z "$input" ]] && input=nt
+  if ! loudness_parse_classes_spec "$input"; then
+    echo 'Using default classes: nt (NORMAL + TOO QUIET).'
+    loudness_apply_default_classes
+  fi
+  LOUDNESS_CLASSES_RESOLVED=1
+  LOUDNESS_CLASSES="$(loudness_classes_cli_spec)"
+  echo "Selected classes: $(loudness_classes_label)"
+  (( PRINT_CLI_ONLY )) && cli_equiv_note "CLI: --classes ${LOUDNESS_CLASSES}"
+}
+
+loudness_apply_classes_after_scan() {
+  if (( SCAN_ONLY || ! LOUDNESS_OFFER_NORMALIZE )); then
+    return 0
+  fi
+
+  if loudness_wants_wizard_prompts && (( ! LOUDNESS_CLASSES_CLI )) && (( ! PRINT_CLI_ONLY )); then
+    prompt_normalize_classes
+  else
+    loudness_finalize_classes || exit 1
+  fi
+
+  loudness_rebuild_normalize_queue_from_scan
 }
 
 loudnorm_filter_for_mode() {
@@ -1463,11 +1749,6 @@ append_scan_row() {
   ROW_MAX+=( "$max_val" )
   ROW_MEAN+=( "$mean_val" )
   ROW_STATUS+=( "$status" )
-  if [[ "$status" == NORMAL || "$status" == TOO_QUIET ]]; then
-    NORMALIZE_FILES+=( "$file" )
-    NORMALIZE_MAX+=( "$max_db" )
-    NORMALIZE_STATUS+=( "$status" )
-  fi
 }
 
 count_scan_perfect_files() {
@@ -1526,8 +1807,15 @@ sort_normalize_files_queue() {
 maybe_include_perfect_for_youtube() {
   [[ "$NORMALIZE_MODE" == youtube ]] || return 0
 
+  if (( LOUDNESS_CLASS_PERFECT )); then
+    LOUDNESS_INCLUDE_PERFECT=1
+    return 0
+  fi
+
   if (( LOUDNESS_INCLUDE_PERFECT_CLI || LOUDNESS_INCLUDE_PERFECT )); then
-    add_perfect_files_to_normalize_queue
+    LOUDNESS_CLASS_PERFECT=1
+    LOUDNESS_INCLUDE_PERFECT=1
+    loudness_rebuild_normalize_queue_from_scan
     return 0
   fi
 
@@ -1661,11 +1949,13 @@ prompt_normalize_mode() {
   if (( PRINT_CLI_ONLY )); then
     echo "${n_media} media file(s) in directory (levels not measured in --print-cli-only)."
   elif (( n > 0 )); then
-    echo "${n} file(s) can be normalized (NORMAL or TOO QUIET; PERFECT skipped unless YouTube)."
+    echo "${n} file(s) queued for normalization ($(loudness_classes_label))."
+  elif (( n_perfect > 0 && LOUDNESS_CLASS_PERFECT )); then
+    echo "No files in selected classes; ${n_perfect} PERFECT file(s) match class filter."
   elif (( n_perfect > 0 )); then
-    echo "No NORMAL/TOO QUIET files; ${n_perfect} PERFECT file(s) — YouTube mode can include them."
+    echo "No files in selected classes; ${n_perfect} PERFECT file(s) — add p to classes or use YouTube mode."
   else
-    echo "No files available for normalization."
+    echo "No files available for normalization with selected classes."
   fi
   echo "  [S] Standard loudnorm"
   echo "  [Y] YouTube-style loudnorm (I=-16:TP=-1.0:LRA=11) (default)"
@@ -1690,6 +1980,8 @@ prompt_normalize_mode() {
 prompt_youtube_include_perfect() {
   local n_perfect
 
+  (( LOUDNESS_CLASS_PERFECT )) && return 0
+
   n_perfect="$(count_scan_perfect_files)"
   (( n_perfect == 0 )) && return 0
 
@@ -1701,7 +1993,8 @@ prompt_youtube_include_perfect() {
     N) LOUDNESS_INCLUDE_PERFECT=0 ;;
     *)
       LOUDNESS_INCLUDE_PERFECT=1
-      add_perfect_files_to_normalize_queue
+      LOUDNESS_CLASS_PERFECT=1
+      loudness_rebuild_normalize_queue_from_scan
       ;;
   esac
   (( PRINT_CLI_ONLY )) && (( LOUDNESS_INCLUDE_PERFECT )) && cli_equiv_note 'CLI: --include-perfect'
@@ -2115,6 +2408,18 @@ normalize_candidate_files() {
 
 LOUDNESS_OFFER_NORMALIZE=1
 
+if (( SCAN_ONLY )) && { (( LOUDNESS_CLASSES_CLI )) || [[ -n "$LOUDNESS_CLASSES" ]]; }; then
+  echo 'NOTE: --scan-only ignores --classes / LOUDNESS_CLASSES (full scan table only).' >&2
+fi
+
+if (( LOUDNESS_CLASSES_CLI )) || [[ -n "$LOUDNESS_CLASSES" ]]; then
+  loudness_parse_classes_spec "$LOUDNESS_CLASSES" || exit 1
+  LOUDNESS_CLASSES_RESOLVED=1
+fi
+if (( LOUDNESS_INCLUDE_PERFECT )); then
+  LOUDNESS_CLASS_PERFECT=1
+fi
+
 if (( PRINT_CLI_ONLY )) && ! loudness_is_interactive; then
   echo 'ERROR: --print-cli-only requires an interactive terminal.' >&2
   kod_powrotu=1
@@ -2183,18 +2488,24 @@ if (( SCAN_ONLY )); then
   exit 0
 fi
 
-perfect_scan_count="$(count_scan_perfect_files)"
-if (( ${#NORMALIZE_FILES[@]} == 0 && perfect_scan_count == 0 )); then
+loudness_apply_classes_after_scan
+
+if (( ! LOUDNESS_OFFER_NORMALIZE )); then
+  if (( scan_rc >= 2 )); then
+    kod_powrotu=1
+    exit 1
+  fi
+  kod_powrotu=0
+  exit 0
+fi
+
+if (( ${#NORMALIZE_FILES[@]} == 0 )); then
   kod_powrotu=0
   exit 0
 fi
 
 if [[ -z "$NORMALIZE_MODE" ]]; then
   if loudness_wants_wizard_prompts && (( LOUDNESS_OFFER_NORMALIZE )); then
-    if (( ${#NORMALIZE_FILES[@]} == 0 && perfect_scan_count == 0 )); then
-      kod_powrotu=0
-      exit 0
-    fi
     prompt_normalize_mode
   else
     NORMALIZE_MODE=none
@@ -2206,7 +2517,17 @@ if [[ "$NORMALIZE_MODE" == none || -z "$NORMALIZE_MODE" ]]; then
   exit 1
 fi
 
+loudness_filter_queue_for_standard_mode
+
+if (( ${#NORMALIZE_FILES[@]} == 0 )); then
+  echo 'No files remain in the normalize queue after applying mode and class filters.'
+  kod_powrotu=0
+  exit 0
+fi
+
 maybe_include_perfect_for_youtube
+
+loudness_filter_queue_for_standard_mode
 
 if (( ${#NORMALIZE_FILES[@]} == 0 )); then
   echo "No files queued for normalization."
