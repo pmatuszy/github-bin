@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.06.17 - v. 0.5.15 - fix nounset: quote yes/no in batch_selected array appends
 # 2026.06.17 - v. 0.5.14 - batch prompt summary: align counter columns
 # 2026.06.17 - v. 0.5.13 - fix batch-size prompt false failure (exit status 1 when not --print-cli-only)
 # 2026.06.17 - v. 0.5.12 - fix empty normalize queue after sort; guard batch loop on total=0
@@ -2077,13 +2078,13 @@ loudness_read_normalize_batch_choice() {
   LOUDNESS_BATCH_CHOICE_ACTION=""
   case "${REPLY^^}" in
     Q) LOUDNESS_BATCH_CHOICE_ACTION=quit ;;
-    Y) LOUDNESS_BATCH_CHOICE_DECISION=yes; LOUDNESS_BATCH_CHOICE_ACTION=decided ;;
-    D) LOUDNESS_BATCH_CHOICE_DECISION=yes; LOUDNESS_BATCH_CHOICE_ACTION=decided_dir ;;
-    A) LOUDNESS_BATCH_CHOICE_DECISION=yes; LOUDNESS_BATCH_CHOICE_ACTION=accept_all ;;
+    Y) LOUDNESS_BATCH_CHOICE_DECISION='yes'; LOUDNESS_BATCH_CHOICE_ACTION=decided ;;
+    D) LOUDNESS_BATCH_CHOICE_DECISION='yes'; LOUDNESS_BATCH_CHOICE_ACTION=decided_dir ;;
+    A) LOUDNESS_BATCH_CHOICE_DECISION='yes'; LOUDNESS_BATCH_CHOICE_ACTION=accept_all ;;
     F) LOUDNESS_BATCH_CHOICE_ACTION=finish_batch ;;
     G) LOUDNESS_BATCH_CHOICE_ACTION=skip_all ;;
-    N) LOUDNESS_BATCH_CHOICE_DECISION=no; LOUDNESS_BATCH_CHOICE_ACTION=decided ;;
-    *) LOUDNESS_BATCH_CHOICE_DECISION=no; LOUDNESS_BATCH_CHOICE_ACTION=decided ;;
+    N) LOUDNESS_BATCH_CHOICE_DECISION='no'; LOUDNESS_BATCH_CHOICE_ACTION=decided ;;
+    *) LOUDNESS_BATCH_CHOICE_DECISION='no'; LOUDNESS_BATCH_CHOICE_ACTION=decided ;;
   esac
 }
 
@@ -2207,7 +2208,7 @@ normalize_run_batch_prompt_loop() {
   local -n _norm_backup_skip="${6:-_unused_norm_backup_skip}"
 
   local total idx remaining_total batch_size_now batch_count batch_yes batch_no
-  local accept_all_remaining finish_batch_now skip_remaining=no
+  local accept_all_remaining finish_batch_now skip_remaining='no'
   local overall_pos batch_pos still_after selected_total selected_pos selected_left
   local file max_db status i j rc decision
 
@@ -2239,8 +2240,8 @@ normalize_run_batch_prompt_loop() {
     batch_count=0
     batch_yes=0
     batch_no=0
-    accept_all_remaining=no
-    finish_batch_now=no
+    accept_all_remaining='no'
+    finish_batch_now='no'
 
     while (( idx < total && batch_count < batch_size_now )); do
       file="${NORMALIZE_FILES[$idx]}"
@@ -2248,7 +2249,7 @@ normalize_run_batch_prompt_loop() {
       status="${NORMALIZE_STATUS[$idx]}"
 
       if [[ "$accept_all_remaining" == yes ]] || normalize_skip_file_prompt "$file"; then
-        batch_selected+=( yes )
+        batch_selected+=( 'yes' )
         (( ++batch_yes ))
         batch_indices+=( "$idx" )
         if (( cli_only )); then
@@ -2274,20 +2275,20 @@ normalize_run_batch_prompt_loop() {
           return 2
           ;;
         finish_batch)
-          finish_batch_now=yes
+          finish_batch_now='yes'
           echo "Finishing this batch — normalizing ${batch_yes} selected file(s) only."
           break
           ;;
         skip_all)
-          skip_remaining=yes
-          finish_batch_now=yes
+          skip_remaining='yes'
+          finish_batch_now='yes'
           echo "Skipping all further normalize prompts — normalizing ${batch_yes} selected file(s) from this batch."
           break
           ;;
         accept_all)
-          batch_selected+=( yes )
+          batch_selected+=( 'yes' )
           (( ++batch_yes ))
-          accept_all_remaining=yes
+          accept_all_remaining='yes'
           batch_indices+=( "$idx" )
           if (( cli_only )); then
             normalize_record_cli_batch_selection "$file" yes
@@ -2298,7 +2299,7 @@ normalize_run_batch_prompt_loop() {
           ;;
         decided_dir)
           NORMALIZE_DIR="$(dirname -- "$file")"
-          batch_selected+=( yes )
+          batch_selected+=( 'yes' )
           (( ++batch_yes ))
           if (( cli_only )); then
             CLI_BUILD_NOTES+=( "[D] used in $(dirname -- "$file")/ — no single CLI flag; use -y or list files" )
@@ -2307,13 +2308,13 @@ normalize_run_batch_prompt_loop() {
           ;;
         decided)
           if [[ "$LOUDNESS_BATCH_CHOICE_DECISION" == yes ]]; then
-            batch_selected+=( yes )
+            batch_selected+=( 'yes' )
             (( ++batch_yes ))
             if (( cli_only )); then
               normalize_record_cli_batch_selection "$file" yes
             fi
           else
-            batch_selected+=( no )
+            batch_selected+=( 'no' )
             (( ++batch_no ))
             if (( cli_only )); then
               CLI_BUILD_ALL_YES=0
