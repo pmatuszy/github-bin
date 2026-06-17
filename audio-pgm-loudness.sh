@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.06.17 - v. 0.5.10 - trim extra blank lines between interactive prompts and scan table
 # 2026.06.17 - v. 0.5.9 - scan table: Unicode display-width columns (terminal-safe)
 # 2026.06.17 - v. 0.5.8 - scan table: column dash gaps; fixed-width dB alignment
 # 2026.06.17 - v. 0.5.7 - batch normalize prompts (like ffmpeg-voice): ask N, then process
@@ -658,11 +659,9 @@ cli_print_built_command() {
 collect_normalize_choices_cli_only() {
   local rc=0
   NORMALIZE_DIR=""
-  echo
   echo 'Per-file prompts run in batches (like ffmpeg-voice.sh): ask about each file,'
   echo 'then record selections for the batch before moving on.'
   echo 'Levels were not measured — status shows as ? for every file.'
-  echo
   normalize_run_batch_prompt_loop 1 || rc=$?
   return "$rc"
 }
@@ -765,7 +764,6 @@ loudness_scan_scope_label() {
 
 prompt_scan_scope() {
   (( PRINT_CLI_ONLY )) && loudness_print_cli_only_section 'Scan scope'
-  echo
   echo 'What should be scanned?'
   echo '  [S] Also subdirectories (default)'
   echo '  [C] Current directory only'
@@ -778,7 +776,6 @@ prompt_scan_scope() {
   esac
   echo "Scope: $(loudness_scan_scope_label)"
   (( PRINT_CLI_ONLY )) && cli_equiv_note "CLI: --scope ${LOUDNESS_SCAN_SCOPE}"
-  echo
 }
 
 collect_media_files_current_dir() {
@@ -1626,7 +1623,6 @@ prompt_startup_interactive() {
   local n="${#MEDIA_FILES[@]}"
 
   echo "Files to scan: ${n}"
-  echo
   if (( PRINT_CLI_ONLY )); then
     loudness_read_key 'Include loudness scan in the built command? [Y/n/q]: ' Y
   else
@@ -1645,7 +1641,6 @@ prompt_startup_interactive() {
       ;;
   esac
 
-  echo
   if (( PRINT_CLI_ONLY )); then
     loudness_read_key 'If non-PERFECT files would be found, offer normalize in real run? [Y/n/q]: ' Y
   else
@@ -1657,14 +1652,12 @@ prompt_startup_interactive() {
     *) LOUDNESS_OFFER_NORMALIZE=1 ;;
   esac
   (( PRINT_CLI_ONLY )) && cli_equiv_note "Offer normalize after scan: $(( LOUDNESS_OFFER_NORMALIZE ))"
-  echo
 }
 
 prompt_normalize_mode() {
   local n="${#NORMALIZE_FILES[@]}" n_perfect n_media="${#MEDIA_FILES[@]}"
 
   n_perfect="$(count_scan_perfect_files)"
-  echo
   if (( PRINT_CLI_ONLY )); then
     echo "${n_media} media file(s) in directory (levels not measured in --print-cli-only)."
   elif (( n > 0 )); then
@@ -1700,7 +1693,6 @@ prompt_youtube_include_perfect() {
   n_perfect="$(count_scan_perfect_files)"
   (( n_perfect == 0 )) && return 0
 
-  echo
   echo "YouTube-style loudnorm targets -16 LUFS. ${n_perfect} file(s) are PERFECT"
   echo "(peak already near maximum; normalization may reduce dynamic range)."
   loudness_read_key 'Include PERFECT files in YouTube normalize? [Y/n/q]: ' Y
@@ -1713,11 +1705,9 @@ prompt_youtube_include_perfect() {
       ;;
   esac
   (( PRINT_CLI_ONLY )) && (( LOUDNESS_INCLUDE_PERFECT )) && cli_equiv_note 'CLI: --include-perfect'
-  echo
 }
 
 prompt_save_original_aside() {
-  echo
   echo "Backup pattern: <filename>.backup.deleteme (original is moved, not copied)."
   loudness_read_key 'Move originals aside before normalizing? [Y/n/q]: ' Y
   case "${REPLY^^}" in
@@ -1726,7 +1716,6 @@ prompt_save_original_aside() {
     *) LOUDNESS_SAVE_ORIGINAL=1 ;;
   esac
   (( PRINT_CLI_ONLY )) && (( LOUDNESS_SAVE_ORIGINAL )) && cli_equiv_note 'CLI: --save-original'
-  echo
 }
 
 normalize_skip_file_prompt() {
@@ -1746,7 +1735,6 @@ loudness_print_batch_prompt_summary() {
   local still_after="$5" batch_yes="$6" batch_no="$7"
   local undecided=$(( batch_size_now - batch_yes - batch_no ))
 
-  echo
   printf 'PROMPTING: batch file %s/%s (overall %s/%s)\n' \
     "$batch_pos" "$batch_size_now" "$overall_pos" "$total_files"
   printf 'LEFT TO ASK AFTER THIS: %s\n' "$still_after"
@@ -1784,7 +1772,6 @@ loudness_read_normalize_batch_choice() {
 prompt_batch_size_interactive() {
   local input=""
 
-  echo
   echo 'Batch size for per-file normalize prompts?'
   echo '  Default: 50 (ask about N files, then normalize selected before next batch)'
   printf '[%s] Batch size [50]: ' "$(date '+%Y.%m.%d %H:%M:%S')"
@@ -1804,7 +1791,6 @@ prompt_batch_size_interactive() {
   LOUDNESS_BATCH_SIZE="$BATCH_SIZE"
   echo "Batch size: ${BATCH_SIZE}"
   (( PRINT_CLI_ONLY )) && cli_equiv_note "CLI: --batch-size ${BATCH_SIZE}"
-  echo
 }
 
 resolve_batch_size() {
@@ -2079,7 +2065,6 @@ normalize_candidate_files() {
     return 1
   }
 
-  echo
   echo "Normalization mode: ${NORMALIZE_MODE} (${filter})"
   echo "All audio tracks are loudnorm-filtered; video, subtitles, and other streams are copied."
   if (( LOUDNESS_SAVE_ORIGINAL )); then
@@ -2088,7 +2073,6 @@ normalize_candidate_files() {
   echo "Timestamps on the normalized file are preserved."
 
   if ! loudness_wants_per_file_prompts; then
-    echo
     local i file prep_rc
     for i in "${!NORMALIZE_FILES[@]}"; do
       file="${NORMALIZE_FILES[$i]}"
@@ -2106,12 +2090,10 @@ normalize_candidate_files() {
       esac
     done
   else
-    echo
     echo 'Per-file prompts run in batches (like ffmpeg-voice.sh): ask about each file,'
     echo 'then normalize selected files before the next batch.'
     echo '  [y] yes, [N] no, [D] rest of directory, [A] all remaining in batch,'
     echo '  [F] finish batch, [G] skip all further prompts, [Q] quit.'
-    echo
     normalize_run_batch_prompt_loop 0 "$filter" norm_ok norm_fail norm_skip norm_backup_skip || rc=$?
     (( rc == 2 )) && return 2
     (( rc != 0 )) && return 1
@@ -2160,6 +2142,17 @@ if ! collect_media_files; then
   exit 1
 fi
 
+if (( ${#MEDIA_FILES[@]} == 0 )); then
+  echo "No supported audio/video files found under $(pwd) ($(loudness_scan_scope_label))."
+  echo "Extensions: ${MEDIA_EXTENSIONS[*]}"
+  kod_powrotu=0
+  exit 0
+fi
+
+if loudness_wants_wizard_prompts && (( ! PRINT_CLI_ONLY )); then
+  prompt_startup_interactive
+fi
+
 if (( ${#CLI_FILES[@]} > 0 )); then
   echo "Audio loudness scan: $(pwd) (${#MEDIA_FILES[@]} explicit file(s))"
 else
@@ -2168,24 +2161,13 @@ fi
 echo "Classification (max_volume peak):"
 print_loudness_class_legend
 echo "Tool: ffmpeg volumedetect (-vn for video files)"
-echo
-
-if (( ${#MEDIA_FILES[@]} == 0 )); then
-  echo "No supported audio/video files found under $(pwd) ($(loudness_scan_scope_label))."
-  echo "Extensions: ${MEDIA_EXTENSIONS[*]}"
-  kod_powrotu=0
-  exit 0
-fi
 
 if (( PRINT_CLI_ONLY )); then
   run_print_cli_only_session
 fi
 
-if loudness_wants_wizard_prompts; then
-  prompt_startup_interactive
-else
+if ! loudness_wants_wizard_prompts; then
   echo "Files to scan: ${#MEDIA_FILES[@]}"
-  echo
 fi
 
 scan_rc=0
