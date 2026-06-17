@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.06.17 - v. 0.5.12 - fix empty normalize queue after sort; guard batch loop on total=0
 # 2026.06.17 - v. 0.5.11 - --classes filter for normalize candidates (n/t/p abbreviations)
 # 2026.06.17 - v. 0.5.10 - trim extra blank lines between interactive prompts and scan table
 # 2026.06.17 - v. 0.5.9 - scan table: Unicode display-width columns (terminal-safe)
@@ -1783,21 +1784,38 @@ add_perfect_files_to_normalize_queue() {
 # Keep NORMALIZE_FILES / NORMALIZE_MAX / NORMALIZE_STATUS in LC_ALL=C name order.
 sort_normalize_files_queue() {
   local -a order=() sorted_files=() sorted_max=() sorted_status=()
-  local i idx
+  local n=${#NORMALIZE_FILES[@]} i idx sorted_n=0
 
-  (( ${#NORMALIZE_FILES[@]} < 2 )) && return 0
+  (( n < 2 )) && return 0
 
   mapfile -t order < <(
     for i in "${!NORMALIZE_FILES[@]}"; do
-      printf '%s\t%d\n' "${NORMALIZE_FILES[$i]}" "$i"
-    done | LC_ALL=C sort -t $'\t' -k1,1 | cut -f2
+      # Index is the last field so paths that contain tabs cannot break sorting.
+      printf '%s\t%s\n' "${NORMALIZE_FILES[$i]}" "$i"
+    done | LC_ALL=C sort -t $'\t' -k1,1 | awk -F '\t' 'NF >= 2 { print $NF }'
   )
 
+  if (( ${#order[@]} != n )); then
+    echo "WARNING: Could not sort normalize queue (${#order[@]} indices for ${n} files); keeping scan order." >&2
+    return 0
+  fi
+
   for idx in "${order[@]}"; do
+    idx="${idx//$'\r'/}"
+    if [[ ! "$idx" =~ ^[0-9]+$ ]] || (( idx < 0 || idx >= n )); then
+      echo "WARNING: Invalid normalize queue sort index '${idx}'; keeping scan order." >&2
+      return 0
+    fi
     sorted_files+=( "${NORMALIZE_FILES[$idx]}" )
     sorted_max+=( "${NORMALIZE_MAX[$idx]}" )
     sorted_status+=( "${NORMALIZE_STATUS[$idx]}" )
+    (( ++sorted_n ))
   done
+
+  if (( sorted_n != n )); then
+    echo "WARNING: Normalize queue sort incomplete (${sorted_n}/${n}); keeping scan order." >&2
+    return 0
+  fi
 
   NORMALIZE_FILES=( "${sorted_files[@]}" )
   NORMALIZE_MAX=( "${sorted_max[@]}" )
@@ -2192,6 +2210,13 @@ normalize_run_batch_prompt_loop() {
   total=${#NORMALIZE_FILES[@]}
   idx=0
 
+  if (( total == 0 )); then
+    echo 'ERROR: Normalize queue is empty — nothing to normalize.' >&2
+    return 1
+  fi
+
+  echo "Normalize queue: ${total} file(s)."
+
   while (( idx < total )); do
     [[ "$skip_remaining" == yes ]] && break
 
@@ -2388,8 +2413,12 @@ normalize_candidate_files() {
     echo '  [y] yes, [N] no, [D] rest of directory, [A] all remaining in batch,'
     echo '  [F] finish batch, [G] skip all further prompts, [Q] quit.'
     normalize_run_batch_prompt_loop 0 "$filter" norm_ok norm_fail norm_skip norm_backup_skip || rc=$?
-    (( rc == 2 )) && return 2
-    (( rc != 0 )) && return 1
+    if (( rc == 2 )); then
+      return 2
+    fi
+    if (( rc != 0 )); then
+      return 1
+    fi
   fi
 
   echo
@@ -2536,6 +2565,12 @@ if (( ${#NORMALIZE_FILES[@]} == 0 )); then
 fi
 
 sort_normalize_files_queue
+
+if (( ${#NORMALIZE_FILES[@]} == 0 )); then
+  echo 'ERROR: Normalize queue is empty after sorting — cannot continue.' >&2
+  kod_powrotu=1
+  exit 1
+fi
 
 if (( ! LOUDNESS_SAVE_ORIGINAL && ! LOUDNESS_SAVE_ORIGINAL_CLI )) && loudness_wants_wizard_prompts; then
   prompt_save_original_aside
