@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.06.17 - v. 0.5.22 - offer-normalize prompt moved to after scan (with summary visible)
 # 2026.06.17 - v. 0.5.21 - legend: do not color PERFECT label (scan table rows still green)
 # 2026.06.17 - v. 0.5.20 - fix terminal colors: use ANSI bytes, not \\e in printf %b
 # 2026.06.17 - v. 0.5.19 - prompt menus: default option letter uppercase only
@@ -93,9 +94,10 @@ media files are discovered in the working directory — current folder only by
 default, or the whole tree with --scope subdirs (interactive default: subdirs).
 
 When no command-line options are given (only optional FILE operands), the script
-runs in interactive mode: it asks about terminal colors and scan scope, then
-whether to scan, and prints each result row as soon as that file is measured
-(so a long scan does not look hung). With --colors yes, PERFECT rows are green.
+runs in interactive mode: it asks about terminal colors and scan scope, whether
+to scan, and (after results are shown) whether to offer normalization. Each result
+row is printed as soon as that file is measured. With --colors yes, PERFECT rows
+are green in the scan table.
 
 Normalization (non-PERFECT by default; PERFECT is never offered for standard mode):
   standard   ffmpeg loudnorm (default filter parameters)
@@ -813,6 +815,9 @@ run_print_cli_only_session() {
 
   loudness_print_cli_only_section 'Startup'
   prompt_startup_interactive
+
+  loudness_print_cli_only_section 'Normalize offer'
+  prompt_offer_normalize_after_scan
 
   if (( LOUDNESS_OFFER_NORMALIZE )); then
     loudness_print_cli_only_section 'Normalization classes'
@@ -2102,16 +2107,46 @@ prompt_startup_interactive() {
       exit 0
       ;;
   esac
+}
 
-  if (( PRINT_CLI_ONLY )); then
-    loudness_read_key 'If non-PERFECT files would be found, offer normalize in real run? [Y/n/q]: ' Y
+prompt_offer_normalize_after_scan() {
+  local n_normal n_too_quiet n_perfect
+
+  n_normal="$(count_scan_status NORMAL)"
+  n_too_quiet="$(count_scan_status TOO_QUIET)"
+  n_perfect="$(count_scan_perfect_files)"
+
+  echo
+  if (( n_normal + n_too_quiet > 0 )); then
+    if (( PRINT_CLI_ONLY )); then
+      loudness_read_key 'If non-PERFECT files would be found, offer normalize in real run? [Y/n/q]: ' Y
+    else
+      loudness_read_key 'Non-PERFECT files were found. Offer normalize after scan? [Y/n/q]: ' Y
+    fi
+  elif (( n_perfect > 0 )); then
+    if (( PRINT_CLI_ONLY )); then
+      loudness_read_key 'If only PERFECT files would be found, offer normalize in real run? [y/N/q]: ' N
+    else
+      loudness_read_key 'All scanned files are PERFECT. Offer normalize anyway? [y/N/q]: ' N
+    fi
   else
-    loudness_read_key 'If non-PERFECT files are found, offer normalize after scan? [Y/n/q]: ' Y
+    if (( PRINT_CLI_ONLY )); then
+      loudness_read_key 'If eligible files would be found, offer normalize in real run? [Y/n/q]: ' Y
+    else
+      loudness_read_key 'Offer normalize if eligible files are found? [Y/n/q]: ' Y
+    fi
   fi
   case "${REPLY^^}" in
     Q) loudness_quit_now ;;
     N) LOUDNESS_OFFER_NORMALIZE=0 ;;
-    *) LOUDNESS_OFFER_NORMALIZE=1 ;;
+    Y) LOUDNESS_OFFER_NORMALIZE=1 ;;
+    *)
+      if (( n_normal + n_too_quiet > 0 )); then
+        LOUDNESS_OFFER_NORMALIZE=1
+      else
+        LOUDNESS_OFFER_NORMALIZE=0
+      fi
+      ;;
   esac
   cli_equiv_note "Offer normalize after scan: $(( LOUDNESS_OFFER_NORMALIZE ))"
 }
@@ -2710,7 +2745,9 @@ if (( SCAN_ONLY )); then
   exit 0
 fi
 
-loudness_apply_classes_after_scan
+if loudness_wants_wizard_prompts; then
+  prompt_offer_normalize_after_scan
+fi
 
 if (( ! LOUDNESS_OFFER_NORMALIZE )); then
   if (( scan_rc >= 2 )); then
@@ -2720,6 +2757,8 @@ if (( ! LOUDNESS_OFFER_NORMALIZE )); then
   kod_powrotu=0
   exit 0
 fi
+
+loudness_apply_classes_after_scan
 
 if (( ${#NORMALIZE_FILES[@]} == 0 )); then
   kod_powrotu=0
