@@ -1,5 +1,7 @@
 #!/bin/bash
 
+# 2026.06.17 - v. 0.5.24 - Y/n prompts: arrow up=yes, arrow down=no (↑ yes, ↓ no hint)
+# 2026.06.17 - v. 0.5.23 - Files to scan: show count by extension (mp4, avi, ...)
 # 2026.06.17 - v. 0.5.22 - offer-normalize prompt moved to after scan (with summary visible)
 # 2026.06.17 - v. 0.5.21 - legend: do not color PERFECT label (scan table rows still green)
 # 2026.06.17 - v. 0.5.20 - fix terminal colors: use ANSI bytes, not \\e in printf %b
@@ -158,6 +160,8 @@ Interactive normalization prompts (per file, in batches like ffmpeg-voice.sh):
   skip all further prompts, [q] quit.
   Backup conflict: [y] replace old backup, [k] keep backup and normalize in
   place, [s] skip file, [q] quit (default [s]).
+  Yes/no prompts also accept arrow up (yes) and arrow down (no); Enter uses
+  the default shown in brackets.
 
 Environment:
   LOUDNESS_NORMALIZE        Same as -n / --normalize (CLI overrides).
@@ -484,7 +488,7 @@ prompt_use_colors() {
   echo '  [Y] Yes (default)'
   echo '  [n] No'
   echo '  [q] Quit'
-  loudness_read_key 'Use colors? [Y/n/q]: ' Y
+  loudness_read_yn_key 'Use colors? [Y/n/q]: ' Y
   case "${REPLY^^}" in
     Q) loudness_quit_now ;;
     N) LOUDNESS_USE_COLORS=no ;;
@@ -593,6 +597,69 @@ flush_stdin() {
   done
 }
 
+loudness_read_tty_byte() {
+  local timeout="${1:-}" byte="" use_timeout=0
+
+  if [[ "$timeout" =~ ^[0-9]+$ ]] && (( timeout > 0 )); then
+    use_timeout=1
+  fi
+  if [[ -r /dev/tty ]] 2>/dev/null; then
+    if (( use_timeout )); then
+      IFS= read -r -t "$timeout" -n 1 byte < /dev/tty 2>/dev/null || byte=""
+    else
+      IFS= read -r -n 1 byte < /dev/tty 2>/dev/null || byte=""
+    fi
+  elif (( use_timeout )); then
+    IFS= read -r -t "$timeout" -n 1 byte || byte=""
+  else
+    IFS= read -r -n 1 byte || byte=""
+  fi
+  printf '%s' "$byte"
+}
+
+loudness_prompt_add_yn_arrow_hint() {
+  local prompt="$1"
+
+  [[ "$prompt" == *"(↑ yes, ↓ no)"* ]] && {
+    printf '%s' "$prompt"
+    return 0
+  }
+  if [[ "$prompt" == *': ' ]]; then
+    prompt="${prompt%: }"
+    printf '%s (↑ yes, ↓ no): ' "$prompt"
+  elif [[ "$prompt" == *':' ]]; then
+    prompt="${prompt%:}"
+    printf '%s (↑ yes, ↓ no): ' "$prompt"
+  else
+    printf '%s (↑ yes, ↓ no): ' "$prompt"
+  fi
+}
+
+loudness_read_arrow_yn_byte() {
+  local timeout="${1:-}" answer="" c2 c3
+
+  answer="$(loudness_read_tty_byte "$timeout")"
+  if [[ "$answer" == $'\033' ]]; then
+    c2="$(loudness_read_tty_byte 0.05)"
+    if [[ "$c2" == '[' ]]; then
+      c3="$(loudness_read_tty_byte 0.05)"
+      case "$c3" in
+        A) printf 'Y'; return 0 ;;
+        B) printf 'N'; return 0 ;;
+      esac
+    elif [[ "$c2" == 'O' ]]; then
+      c3="$(loudness_read_tty_byte 0.05)"
+      case "$c3" in
+        A) printf 'Y'; return 0 ;;
+        B) printf 'N'; return 0 ;;
+      esac
+    fi
+    printf ''
+    return 0
+  fi
+  printf '%s' "$answer"
+}
+
 loudness_read_key() {
   local prompt="$1" default="${2:-N}" timeout="${3:-$LOUDNESS_READ_TIMEOUT}"
   local answer=""
@@ -608,11 +675,32 @@ loudness_read_key() {
 
   printf '%s' "$prompt"
   flush_stdin
-  if [[ "$timeout" =~ ^[0-9]+$ ]] && (( timeout > 0 )); then
-    read -t "$timeout" -n 1 answer || answer=""
+  answer="$(loudness_read_tty_byte "$timeout")"
+  echo
+  if [[ -z "$answer" ]]; then
+    REPLY="$default"
   else
-    read -n 1 answer || answer=""
+    REPLY="$answer"
   fi
+}
+
+loudness_read_yn_key() {
+  local prompt="$1" default="${2:-N}" timeout="${3:-$LOUDNESS_READ_TIMEOUT}"
+  local display_prompt answer=""
+
+  if ! loudness_is_interactive; then
+    REPLY="$default"
+    return 0
+  fi
+
+  display_prompt="$(loudness_prompt_add_yn_arrow_hint "$prompt")"
+  if [[ "$prompt" != \[* ]]; then
+    display_prompt="[$(date '+%Y.%m.%d %H:%M:%S')] ${display_prompt}"
+  fi
+
+  printf '%s' "$display_prompt"
+  flush_stdin
+  answer="$(loudness_read_arrow_yn_byte "$timeout")"
   echo
   if [[ -z "$answer" ]]; then
     REPLY="$default"
@@ -887,7 +975,7 @@ prompt_youtube_include_perfect_print_cli() {
   echo
   echo "YouTube-style loudnorm targets -16 LUFS. Loudness was not measured in"
   echo "--print-cli-only; you may include files that would scan as PERFECT."
-  loudness_read_key 'Include PERFECT-level files in YouTube normalize? [Y/n/q]: ' Y
+  loudness_read_yn_key 'Include PERFECT-level files in YouTube normalize? [Y/n/q]: ' Y
   case "${REPLY^^}" in
     Q) loudness_quit_now ;;
     N) LOUDNESS_INCLUDE_PERFECT=0 ;;
@@ -991,6 +1079,36 @@ collect_media_files() {
   fi
 
   mapfile -t MEDIA_FILES < <(printf '%s\n' "${found[@]}" | LC_ALL=C sort -u)
+}
+
+loudness_media_files_scan_summary() {
+  local file ext line count breakdown
+  declare -A ext_count=()
+  local -a parts=()
+
+  for file in "${MEDIA_FILES[@]}"; do
+    ext="${file##*.}"
+    ext="${ext,,}"
+    ext_count["$ext"]=$(( ${ext_count[$ext]:-0} + 1 ))
+  done
+
+  if (( ${#MEDIA_FILES[@]} == 0 )); then
+    echo '0'
+    return
+  fi
+
+  while IFS= read -r line; do
+    count="${line%%$'\t'*}"
+    ext="${line#*$'\t'}"
+    parts+=( "${count} ${ext}" )
+  done < <(
+    for ext in "${!ext_count[@]}"; do
+      printf '%d\t%s\n' "${ext_count[$ext]}" "$ext"
+    done | LC_ALL=C sort -t $'\t' -k1,1nr -k2,2
+  )
+
+  breakdown=$(IFS=', '; echo "${parts[*]}")
+  echo "${#MEDIA_FILES[@]} (${breakdown})"
 }
 
 file_has_audio_stream() {
@@ -1508,7 +1626,7 @@ resolve_backup_conflict() {
 
   if [[ ! -f "$file" ]]; then
     echo '    Only the backup remains — cannot normalize without the original file.'
-    loudness_read_key 'Restore backup to original name and skip normalize? [Y/n/q]: ' Y
+    loudness_read_yn_key 'Restore backup to original name and skip normalize? [Y/n/q]: ' Y
     case "${REPLY^^}" in
       Q) _result=quit ; return 0 ;;
       N)
@@ -2087,13 +2205,11 @@ scan_media_files_with_report() {
 }
 
 prompt_startup_interactive() {
-  local n="${#MEDIA_FILES[@]}"
-
-  echo "Files to scan: ${n}"
+  echo "Files to scan: $(loudness_media_files_scan_summary)"
   if (( PRINT_CLI_ONLY )); then
-    loudness_read_key 'Include loudness scan in the built command? [Y/n/q]: ' Y
+    loudness_read_yn_key 'Include loudness scan in the built command? [Y/n/q]: ' Y
   else
-    loudness_read_key 'Proceed with loudness scan? [Y/n/q]: ' Y
+    loudness_read_yn_key 'Proceed with loudness scan? [Y/n/q]: ' Y
   fi
   case "${REPLY^^}" in
     Q) loudness_quit_now ;;
@@ -2119,21 +2235,21 @@ prompt_offer_normalize_after_scan() {
   echo
   if (( n_normal + n_too_quiet > 0 )); then
     if (( PRINT_CLI_ONLY )); then
-      loudness_read_key 'If non-PERFECT files would be found, offer normalize in real run? [Y/n/q]: ' Y
+      loudness_read_yn_key 'If non-PERFECT files would be found, offer normalize in real run? [Y/n/q]: ' Y
     else
-      loudness_read_key 'Non-PERFECT files were found. Offer normalize after scan? [Y/n/q]: ' Y
+      loudness_read_yn_key 'Non-PERFECT files were found. Offer normalize after scan? [Y/n/q]: ' Y
     fi
   elif (( n_perfect > 0 )); then
     if (( PRINT_CLI_ONLY )); then
-      loudness_read_key 'If only PERFECT files would be found, offer normalize in real run? [y/N/q]: ' N
+      loudness_read_yn_key 'If only PERFECT files would be found, offer normalize in real run? [y/N/q]: ' N
     else
-      loudness_read_key 'All scanned files are PERFECT. Offer normalize anyway? [y/N/q]: ' N
+      loudness_read_yn_key 'All scanned files are PERFECT. Offer normalize anyway? [y/N/q]: ' N
     fi
   else
     if (( PRINT_CLI_ONLY )); then
-      loudness_read_key 'If eligible files would be found, offer normalize in real run? [Y/n/q]: ' Y
+      loudness_read_yn_key 'If eligible files would be found, offer normalize in real run? [Y/n/q]: ' Y
     else
-      loudness_read_key 'Offer normalize if eligible files are found? [Y/n/q]: ' Y
+      loudness_read_yn_key 'Offer normalize if eligible files are found? [Y/n/q]: ' Y
     fi
   fi
   case "${REPLY^^}" in
@@ -2196,7 +2312,7 @@ prompt_youtube_include_perfect() {
 
   echo "YouTube-style loudnorm targets -16 LUFS. ${n_perfect} file(s) are PERFECT"
   echo "(peak already near maximum; normalization may reduce dynamic range)."
-  loudness_read_key 'Include PERFECT files in YouTube normalize? [Y/n/q]: ' Y
+  loudness_read_yn_key 'Include PERFECT files in YouTube normalize? [Y/n/q]: ' Y
   case "${REPLY^^}" in
     Q) loudness_quit_now ;;
     N) LOUDNESS_INCLUDE_PERFECT=0 ;;
@@ -2213,7 +2329,7 @@ prompt_youtube_include_perfect() {
 
 prompt_save_original_aside() {
   echo "Backup pattern: <filename>.backup.deleteme (original is moved, not copied)."
-  loudness_read_key 'Move originals aside before normalizing? [Y/n/q]: ' Y
+  loudness_read_yn_key 'Move originals aside before normalizing? [Y/n/q]: ' Y
   case "${REPLY^^}" in
     Q) loudness_quit_now ;;
     N) LOUDNESS_SAVE_ORIGINAL=0 ;;
@@ -2266,7 +2382,7 @@ loudness_read_normalize_batch_choice() {
     echo '  [g] Normalize selected; skip all further prompts this run'
     echo '  [q] Quit'
     prompt="Normalize ${file} (${status}, ${max_disp})? [Y/n/d/a/f/g/q]: "
-    loudness_read_key "$prompt" Y
+    loudness_read_yn_key "$prompt" Y
   else
     echo '  [y] Yes normalize'
     echo '  [N] No (default)'
@@ -2276,7 +2392,7 @@ loudness_read_normalize_batch_choice() {
     echo '  [g] Normalize selected; skip all further prompts this run'
     echo '  [q] Quit'
     prompt="Normalize ${file} (${status}, ${max_disp})? [y/N/d/a/f/g/q]: "
-    loudness_read_key "$prompt" N
+    loudness_read_yn_key "$prompt" N
   fi
 
   LOUDNESS_BATCH_CHOICE_DECISION=""
@@ -2729,7 +2845,7 @@ if (( PRINT_CLI_ONLY )); then
 fi
 
 if ! loudness_wants_wizard_prompts; then
-  echo "Files to scan: ${#MEDIA_FILES[@]}"
+  echo "Files to scan: $(loudness_media_files_scan_summary)"
 fi
 
 scan_rc=0
