@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.06.17 - v. 1.5 - tarball downloads from SourceForge (exiftool.org tar.gz returns 404)
 # 2026.06.14 - v. 1.4 - when ExifTool not found: prompt to install [y/N] default N, 300s timeout
 # 2026.05.31 - v. 1.3 - update/reinstall prompt reads a single key (no Enter required)
 # 2026.05.31 - v. 1.2 - fix "tmpdir: unbound variable" in EXIT trap (global TMP_WORK_DIR + guarded cleanup)
@@ -17,11 +18,15 @@
 # Official latest version:
 #   https://exiftool.org/ver.txt
 #
+# Full Linux/Unix tarball (since ~2026, not hosted on exiftool.org):
+#   https://downloads.sourceforge.net/project/exiftool/Image-ExifTool-<version>.tar.gz
+#
 
 set -euo pipefail
 
 BASE_URL="https://exiftool.org"
 VERSION_URL="${BASE_URL}/ver.txt"
+DOWNLOAD_BASE="https://downloads.sourceforge.net/project/exiftool"
 INSTALL_BASE="/usr/local"
 BIN_DIR="/usr/local/bin"
 
@@ -142,6 +147,11 @@ get_latest_version() {
     echo "${version}"
 }
 
+exiftool_archive_url() {
+    local version="$1"
+    printf '%s/Image-ExifTool-%s.tar.gz' "${DOWNLOAD_BASE}" "${version}"
+}
+
 # Print the currently installed exiftool version (empty if none/unreadable).
 get_installed_version() {
     local exe="$1"
@@ -233,7 +243,7 @@ main() {
 
     version="$(get_latest_version)"
     archive="Image-ExifTool-${version}.tar.gz"
-    url="${BASE_URL}/${archive}"
+    url="$(exiftool_archive_url "${version}")"
 
     extracted_dir="Image-ExifTool-${version}"
     target_dir="${INSTALL_BASE}/${extracted_dir}"
