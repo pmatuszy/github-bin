@@ -1,5 +1,7 @@
 #!/bin/bash
 
+# 2026.06.17 - v. 0.5.0 - --print-cli-only; window title [cwd] script argv; prompt timestamps
+# 2026.06.17 - v. 0.4.5 - normalize queue processed in alphabetical order
 # 2026.06.17 - v. 0.4.4 - interactive backup conflict: replace, keep, or skip
 # 2026.06.16 - v. 0.4.3 - per-file [D] normalize rest of directory (was [R] rest of batch)
 # 2026.06.16 - v. 0.4.2 - prompt timestamps in square brackets for readability
@@ -47,7 +49,7 @@ print_version_banner() {
 show_help() {
   cat <<EOF
 Usage: $(basename "$0") [-h|--help] [-v|--version] [--no_startup_delay]
-       [-n standard|youtube|none] [-y] [-- FILE ...]
+       [-n standard|youtube|none] [-y] [--print-cli-only] [-- FILE ...]
 
 Scan the current directory for audio and video files and measure loudness with
 ffmpeg volumedetect (video is ignored for speed). Each file is classified by
@@ -97,6 +99,9 @@ Options:
                        (skip the interactive backup question).
   --replace-backup     When *.backup.deleteme already exists, remove it and move
                        the current file aside (non-interactive; no prompt).
+  --print-cli-only     Interactive dry-run: answer the usual prompts but do not
+                       scan, normalize, or modify any file. Prints an equivalent
+                       non-interactive command at the end.
   --include-perfect    With -n youtube, normalize PERFECT files too (skip the
                        interactive question).
   --no_startup_delay   Skip random startup delay when run non-interactively
@@ -124,15 +129,21 @@ Exit status:
 
 Examples:
   cd /path/to/clips && $(basename "$0")
-  $(basename "$0") -n youtube -y
+  $(basename "$0") -n youtube -y --save-original
+  $(basename "$0") --print-cli-only
   $(basename "$0") -n standard -- quiet_interview.mkv
 EOF
 }
+
+LOUDNESS_INVOCATION_CWD="$(pwd -P 2>/dev/null || pwd)"
+LOUDNESS_ORIGINAL_ARGV=( "$0" "$@" )
+LOUDNESS_WINDOW_TITLE_PUSHED=0
 
 NORMALIZE_MODE="${LOUDNESS_NORMALIZE:-}"
 AUTO_YES=0
 CLI_FILES=()
 ANY_CLI_OPTIONS=0
+PRINT_CLI_ONLY=0
 LOUDNESS_SAVE_ORIGINAL="${LOUDNESS_SAVE_ORIGINAL:-0}"
 LOUDNESS_SAVE_ORIGINAL_CLI=0
 LOUDNESS_INCLUDE_PERFECT="${LOUDNESS_INCLUDE_PERFECT:-0}"
@@ -141,6 +152,9 @@ LOUDNESS_REPLACE_BACKUP="${LOUDNESS_REPLACE_BACKUP:-0}"
 LOUDNESS_REPLACE_BACKUP_CLI=0
 LOUDNESS_BACKUP_ON_CONFLICT="${LOUDNESS_BACKUP_ON_CONFLICT:-}"
 NORMALIZE_DIR=""
+declare -a CLI_SELECTED_FILES=()
+CLI_BUILD_ALL_YES=1
+CLI_BUILD_NOTES=()
 
 # --- parse options before sourcing the header (avoids figlet/delay on --help/--version) ---
 HEADER_EXTRA_ARGS=()
@@ -188,6 +202,11 @@ while [[ $# -gt 0 ]]; do
       LOUDNESS_REPLACE_BACKUP_CLI=1
       shift
       ;;
+    --print-cli-only)
+      ANY_CLI_OPTIONS=1
+      PRINT_CLI_ONLY=1
+      shift
+      ;;
     --)
       shift
       CLI_FILES+=( "$@" )
@@ -233,6 +252,7 @@ esac
 # No flags at all (FILE operands alone are OK): presume interactive prompts and streaming scan.
 PRESUME_INTERACTIVE=0
 (( ! ANY_CLI_OPTIONS )) && PRESUME_INTERACTIVE=1
+(( PRINT_CLI_ONLY )) && PRESUME_INTERACTIVE=1
 
 . /root/bin/_script_header.sh "${HEADER_EXTRA_ARGS[@]}"
 
@@ -244,16 +264,21 @@ LOUDNESS_READ_TIMEOUT="${LOUDNESS_READ_TIMEOUT:-300}"
 
 audio_pgm_loudness_cleanup() {
   [[ -n "${LOUDNESS_TMP_FILE:-}" && -f "${LOUDNESS_TMP_FILE}" ]] && rm -f -- "${LOUDNESS_TMP_FILE}"
+  loudness_window_title_restore
   . /root/bin/_script_footer.sh
 }
 trap audio_pgm_loudness_cleanup EXIT
 
 check_if_installed ffmpeg || true
 if ! command -v ffmpeg >/dev/null 2>&1; then
-  echo "ERROR: ffmpeg is required but was not found in PATH." >&2
-  echo "Try: ffmpeg-install.sh   or install the ffmpeg package." >&2
-  kod_powrotu=1
-  exit 1
+  if (( PRINT_CLI_ONLY )); then
+    echo "NOTE: ffmpeg not found — OK for --print-cli-only (no scan/normalize will run)."
+  else
+    echo "ERROR: ffmpeg is required but was not found in PATH." >&2
+    echo "Try: ffmpeg-install.sh   or install the ffmpeg package." >&2
+    kod_powrotu=1
+    exit 1
+  fi
 fi
 
 shopt -s nullglob nocaseglob
@@ -293,6 +318,10 @@ loudness_read_key() {
     return 0
   fi
 
+  if [[ "$prompt" != \[* ]]; then
+    prompt="[$(date '+%Y.%m.%d %H:%M:%S')] ${prompt}"
+  fi
+
   printf '%s' "$prompt"
   flush_stdin
   if [[ "$timeout" =~ ^[0-9]+$ ]] && (( timeout > 0 )); then
@@ -306,6 +335,269 @@ loudness_read_key() {
   else
     REPLY="$answer"
   fi
+}
+
+loudness_window_title_restore() {
+  (( LOUDNESS_WINDOW_TITLE_PUSHED == 1 )) || return 0
+  if [[ -w /dev/tty ]] 2>/dev/null; then
+    printf '\033[23t' >/dev/tty 2>/dev/null || true
+  fi
+  LOUDNESS_WINDOW_TITLE_PUSHED=0
+}
+
+loudness_window_title_apply() {
+  local title="" a i script0 max_len=400 cwd_bracket=""
+  (( ${#LOUDNESS_ORIGINAL_ARGV[@]} > 0 )) || return 0
+  [[ -w /dev/tty ]] 2>/dev/null || return 0
+
+  script0="${LOUDNESS_ORIGINAL_ARGV[0]}"
+  if [[ -e "$script0" ]]; then
+    if command -v realpath >/dev/null 2>&1; then
+      title="$(realpath "$script0" 2>/dev/null)" || title="$script0"
+    else
+      title="$(cd "$(dirname -- "$script0")" 2>/dev/null && pwd -P)/$(basename -- "$script0")" 2>/dev/null || title="$script0"
+    fi
+  else
+    title="$script0"
+  fi
+  for (( i = 1; i < ${#LOUDNESS_ORIGINAL_ARGV[@]}; i++ )); do
+    a="${LOUDNESS_ORIGINAL_ARGV[$i]}"
+    a="${a//$'\r'/}"
+    a="${a//$'\n'/ }"
+    a="${a//$'\t'/ }"
+    title+=" $a"
+  done
+  cwd_bracket="[ ${LOUDNESS_INVOCATION_CWD} ] "
+  title="${cwd_bracket}${title}"
+  if (( ${#title} > max_len )); then
+    title="${title:0:$(( max_len - 3 ))}..."
+  fi
+  if [[ -n "${STY:-}" || -n "${TMUX:-}" ]]; then
+    printf '\033k%s\033\\' "$title" >/dev/tty 2>/dev/null || true
+  fi
+  printf '\033[22t' >/dev/tty 2>/dev/null || true
+  printf '\033]0;%s\033\\' "$title" >/dev/tty 2>/dev/null || printf '\033]0;%s\a' "$title" >/dev/tty 2>/dev/null || true
+  printf '\033]2;%s\033\\' "$title" >/dev/tty 2>/dev/null || printf '\033]2;%s\a' "$title" >/dev/tty 2>/dev/null || true
+  LOUDNESS_WINDOW_TITLE_PUSHED=1
+}
+
+loudness_print_cli_only_banner() {
+  echo
+  echo '════════════════════════════════════════════════════════════════════'
+  echo '  PRINT-CLI-ONLY — no scan, no normalize, no files will be modified'
+  echo '  Answer the prompts; an equivalent command line is built at the end.'
+  echo '════════════════════════════════════════════════════════════════════'
+  echo
+}
+
+loudness_print_cli_only_section() {
+  echo
+  echo "── ${1} (--print-cli-only: recording answers only, no action) ──"
+}
+
+cli_equiv_note() {
+  local note="$1"
+  (( PRINT_CLI_ONLY )) || return 0
+  echo "    → ${note}"
+}
+
+cli_record_selected_file() {
+  local file="$1"
+  CLI_SELECTED_FILES+=( "$file" )
+}
+
+cli_setup_print_cli_normalize_queue() {
+  local f
+  NORMALIZE_FILES=()
+  NORMALIZE_MAX=()
+  NORMALIZE_STATUS=()
+  for f in "${MEDIA_FILES[@]}"; do
+    NORMALIZE_FILES+=( "$f" )
+    NORMALIZE_MAX+=( '—' )
+    NORMALIZE_STATUS+=( '?' )
+  done
+  sort_normalize_files_queue
+}
+
+cli_print_built_command() {
+  local -a parts=() script_path f quoted note
+  local use_y=0 file_count=0
+
+  script_path="${LOUDNESS_ORIGINAL_ARGV[0]}"
+  if [[ -e "$script_path" ]]; then
+    if command -v realpath >/dev/null 2>&1; then
+      script_path="$(realpath "$script_path" 2>/dev/null)" || true
+    fi
+  fi
+  parts+=( "$script_path" )
+
+  if [[ -n "$NORMALIZE_MODE" && "$NORMALIZE_MODE" != none ]]; then
+    parts+=( -n "$NORMALIZE_MODE" )
+  fi
+  (( LOUDNESS_INCLUDE_PERFECT )) && parts+=( --include-perfect )
+  (( LOUDNESS_SAVE_ORIGINAL )) && parts+=( --save-original )
+  (( LOUDNESS_REPLACE_BACKUP )) && parts+=( --replace-backup )
+
+  file_count="${#CLI_SELECTED_FILES[@]}"
+  if (( file_count > 1 )); then
+    mapfile -t CLI_SELECTED_FILES < <(printf '%s\n' "${CLI_SELECTED_FILES[@]}" | LC_ALL=C sort -u)
+    file_count="${#CLI_SELECTED_FILES[@]}"
+  fi
+  if (( file_count == 0 )); then
+    :
+  elif (( CLI_BUILD_ALL_YES && file_count == ${#NORMALIZE_FILES[@]} )); then
+    use_y=1
+    parts+=( -y )
+  else
+    parts+=( -- )
+    for f in "${CLI_SELECTED_FILES[@]}"; do
+      parts+=( "$f" )
+    done
+  fi
+
+  echo
+  echo '════════════════════════════════════════════════════════════════════'
+  echo '  Equivalent command (copy and run without --print-cli-only):'
+  echo
+  printf '  cd %q && \\\n' "$LOUDNESS_INVOCATION_CWD"
+  printf '  '
+  for f in "${parts[@]}"; do
+    printf '%q ' "$f"
+  done
+  echo
+  echo
+  if (( ${#CLI_BUILD_NOTES[@]} > 0 )); then
+    echo '  Notes:'
+    for note in "${CLI_BUILD_NOTES[@]}"; do
+      echo "    - ${note}"
+    done
+    echo
+  fi
+  if (( ! LOUDNESS_OFFER_NORMALIZE )); then
+    echo '  Scan-only intent: run without -n (or with -n none) after measuring;'
+    echo '  this script exits 1 when eligible files remain un-normalized.'
+    echo
+  fi
+  if (( use_y == 0 && file_count > 0 && file_count < ${#NORMALIZE_FILES[@]} )); then
+    echo '  Per-file choices are listed as explicit FILE operands (no -y).'
+    echo '  [D] rest-of-directory has no single flag — use -y or name files.'
+    echo
+  fi
+  echo '  No files were scanned or modified in this --print-cli-only session.'
+  echo '════════════════════════════════════════════════════════════════════'
+  echo
+}
+
+collect_normalize_choices_cli_only() {
+  local file max_db status i
+  NORMALIZE_DIR=""
+
+  echo
+  echo "Per-file prompt: [y] yes, [N] no, [D] yes for rest of directory, [Q] quit."
+  echo "Levels were not measured — status shows as ? for every file."
+  echo
+
+  for i in "${!NORMALIZE_FILES[@]}"; do
+    file="${NORMALIZE_FILES[$i]}"
+    max_db="${NORMALIZE_MAX[$i]}"
+    status="${NORMALIZE_STATUS[$i]}"
+
+    if ! normalize_skip_file_prompt "$file"; then
+      loudness_read_key "Normalize ${file} (${status}, ${max_db} dB)? [y/N/d/q]: " N
+      case "${REPLY^^}" in
+        Q) echo 'Quit requested.' ; return 2 ;;
+        D)
+          NORMALIZE_DIR="$(dirname -- "$file")"
+          CLI_BUILD_NOTES+=( "[D] used in $(dirname -- "$file")/ — no single CLI flag; use -y or list files" )
+          cli_record_selected_file "$file"
+          ;;
+        Y) cli_record_selected_file "$file" ;;
+        *)
+          CLI_BUILD_ALL_YES=0
+          continue
+          ;;
+      esac
+    else
+      cli_record_selected_file "$file"
+    fi
+  done
+  return 0
+}
+
+run_print_cli_only_session() {
+  local rc=0
+
+  loudness_print_cli_only_banner
+
+  if (( ${#MEDIA_FILES[@]} == 0 )); then
+    echo "No supported audio/video files found in $(pwd)."
+    echo "Extensions: ${MEDIA_EXTENSIONS[*]}"
+    kod_powrotu=0
+    exit 0
+  fi
+
+  loudness_print_cli_only_section 'Startup'
+  prompt_startup_interactive
+
+  if [[ -z "$NORMALIZE_MODE" ]]; then
+    if (( LOUDNESS_OFFER_NORMALIZE )); then
+      loudness_print_cli_only_section 'Normalization mode'
+      NORMALIZE_FILES=()
+      prompt_normalize_mode
+    else
+      NORMALIZE_MODE=none
+      CLI_BUILD_NOTES+=( 'Normalize offer declined — built command is scan-only' )
+    fi
+  fi
+
+  if [[ "$NORMALIZE_MODE" == none || -z "$NORMALIZE_MODE" ]]; then
+    cli_print_built_command
+    kod_powrotu=0
+    exit 0
+  fi
+
+  if [[ "$NORMALIZE_MODE" == youtube ]]; then
+    loudness_print_cli_only_section 'YouTube PERFECT files'
+    if (( LOUDNESS_INCLUDE_PERFECT_CLI || LOUDNESS_INCLUDE_PERFECT )); then
+      LOUDNESS_INCLUDE_PERFECT=1
+    else
+      prompt_youtube_include_perfect_print_cli
+    fi
+    (( LOUDNESS_INCLUDE_PERFECT )) && cli_equiv_note 'CLI: --include-perfect'
+  fi
+
+  cli_setup_print_cli_normalize_queue
+
+  if (( ! LOUDNESS_SAVE_ORIGINAL && ! LOUDNESS_SAVE_ORIGINAL_CLI )); then
+    loudness_print_cli_only_section 'Backup originals'
+    prompt_save_original_aside
+  elif (( LOUDNESS_SAVE_ORIGINAL )); then
+    cli_equiv_note 'CLI: --save-original'
+  fi
+
+  loudness_print_cli_only_section 'Per-file normalize'
+  collect_normalize_choices_cli_only || rc=$?
+  if (( rc == 2 )); then
+    kod_powrotu=130
+    exit 130
+  fi
+
+  cli_print_built_command
+  kod_powrotu=0
+  exit 0
+}
+
+prompt_youtube_include_perfect_print_cli() {
+  echo
+  echo "YouTube-style loudnorm targets -16 LUFS. Loudness was not measured in"
+  echo "--print-cli-only; you may include files that would scan as PERFECT."
+  loudness_read_key 'Include PERFECT-level files in YouTube normalize? [Y/n/q]: ' Y
+  case "${REPLY^^}" in
+    Q) loudness_quit_now ;;
+    N) LOUDNESS_INCLUDE_PERFECT=0 ;;
+    *) LOUDNESS_INCLUDE_PERFECT=1 ;;
+  esac
+  echo
 }
 
 # Collect unique paths (sorted) from cwd or CLI operands.
@@ -587,7 +879,7 @@ resolve_backup_conflict() {
 
   if [[ ! -f "$file" ]]; then
     echo '    Only the backup remains — cannot normalize without the original file.'
-    loudness_read_key "[$(date '+%Y.%m.%d %H:%M:%S')] Restore backup to original name and skip normalize? [Y/n/q]: " Y
+    loudness_read_key 'Restore backup to original name and skip normalize? [Y/n/q]: ' Y
     case "${REPLY^^}" in
       Q) _result=quit ; return 0 ;;
       N)
@@ -614,7 +906,7 @@ resolve_backup_conflict() {
   echo '      (safe for re-normalizing; backup still holds the first original)'
   echo '  [S] Skip this file (default)'
   echo '  [Q] Quit'
-  loudness_read_key "[$(date '+%Y.%m.%d %H:%M:%S')] Backup conflict for ${file}? [y/K/s/q]: " S
+  loudness_read_key "Backup conflict for ${file}? [y/K/s/q]: " S
   case "${REPLY^^}" in
     Q) _result=quit ;;
     Y)
@@ -882,6 +1174,30 @@ add_perfect_files_to_normalize_queue() {
   done
 }
 
+# Keep NORMALIZE_FILES / NORMALIZE_MAX / NORMALIZE_STATUS in LC_ALL=C name order.
+sort_normalize_files_queue() {
+  local -a order=() sorted_files=() sorted_max=() sorted_status=()
+  local i idx
+
+  (( ${#NORMALIZE_FILES[@]} < 2 )) && return 0
+
+  mapfile -t order < <(
+    for i in "${!NORMALIZE_FILES[@]}"; do
+      printf '%s\t%d\n' "${NORMALIZE_FILES[$i]}" "$i"
+    done | LC_ALL=C sort -t $'\t' -k1,1 | cut -f2
+  )
+
+  for idx in "${order[@]}"; do
+    sorted_files+=( "${NORMALIZE_FILES[$idx]}" )
+    sorted_max+=( "${NORMALIZE_MAX[$idx]}" )
+    sorted_status+=( "${NORMALIZE_STATUS[$idx]}" )
+  done
+
+  NORMALIZE_FILES=( "${sorted_files[@]}" )
+  NORMALIZE_MAX=( "${sorted_max[@]}" )
+  NORMALIZE_STATUS=( "${sorted_status[@]}" )
+}
+
 maybe_include_perfect_for_youtube() {
   [[ "$NORMALIZE_MODE" == youtube ]] || return 0
 
@@ -983,32 +1299,47 @@ prompt_startup_interactive() {
 
   echo "Files to scan: ${n}"
   echo
-  loudness_read_key "[$(date '+%Y.%m.%d %H:%M:%S')] Proceed with loudness scan? [Y/n/q]: " Y
+  if (( PRINT_CLI_ONLY )); then
+    loudness_read_key 'Include loudness scan in the built command? [Y/n/q]: ' Y
+  else
+    loudness_read_key 'Proceed with loudness scan? [Y/n/q]: ' Y
+  fi
   case "${REPLY^^}" in
     Q) loudness_quit_now ;;
     N)
-      echo "Scan skipped."
+      if (( PRINT_CLI_ONLY )); then
+        echo 'No command built (scan step declined).'
+      else
+        echo 'Scan skipped.'
+      fi
       kod_powrotu=0
       exit 0
       ;;
   esac
 
   echo
-  loudness_read_key "[$(date '+%Y.%m.%d %H:%M:%S')] If non-PERFECT files are found, offer normalize after scan? [Y/n/q]: " Y
+  if (( PRINT_CLI_ONLY )); then
+    loudness_read_key 'If non-PERFECT files would be found, offer normalize in real run? [Y/n/q]: ' Y
+  else
+    loudness_read_key 'If non-PERFECT files are found, offer normalize after scan? [Y/n/q]: ' Y
+  fi
   case "${REPLY^^}" in
     Q) loudness_quit_now ;;
     N) LOUDNESS_OFFER_NORMALIZE=0 ;;
     *) LOUDNESS_OFFER_NORMALIZE=1 ;;
   esac
+  (( PRINT_CLI_ONLY )) && cli_equiv_note "Offer normalize after scan: $(( LOUDNESS_OFFER_NORMALIZE ))"
   echo
 }
 
 prompt_normalize_mode() {
-  local n="${#NORMALIZE_FILES[@]}" n_perfect
+  local n="${#NORMALIZE_FILES[@]}" n_perfect n_media="${#MEDIA_FILES[@]}"
 
   n_perfect="$(count_scan_perfect_files)"
   echo
-  if (( n > 0 )); then
+  if (( PRINT_CLI_ONLY )); then
+    echo "${n_media} media file(s) in directory (levels not measured in --print-cli-only)."
+  elif (( n > 0 )); then
     echo "${n} file(s) can be normalized (NORMAL or TOO QUIET; PERFECT skipped unless YouTube)."
   elif (( n_perfect > 0 )); then
     echo "No NORMAL/TOO QUIET files; ${n_perfect} PERFECT file(s) — YouTube mode can include them."
@@ -1019,13 +1350,20 @@ prompt_normalize_mode() {
   echo "  [Y] YouTube-style loudnorm (I=-16:TP=-1.0:LRA=11)"
   echo "  [N] Skip normalization (default)"
   echo "  [Q] Quit"
-  loudness_read_key "[$(date '+%Y.%m.%d %H:%M:%S')] Normalize? [S/y/N/q]: " N
+  loudness_read_key 'Normalize? [S/y/N/q]: ' N
   case "${REPLY^^}" in
     Q) loudness_quit_now ;;
     S) NORMALIZE_MODE=standard ;;
     Y) NORMALIZE_MODE=youtube ;;
     *) NORMALIZE_MODE=none ;;
   esac
+  if (( PRINT_CLI_ONLY )); then
+    if [[ "$NORMALIZE_MODE" == none ]]; then
+      cli_equiv_note 'CLI: scan only (omit -n or use -n none)'
+    else
+      cli_equiv_note "CLI: -n ${NORMALIZE_MODE}"
+    fi
+  fi
 }
 
 prompt_youtube_include_perfect() {
@@ -1037,7 +1375,7 @@ prompt_youtube_include_perfect() {
   echo
   echo "YouTube-style loudnorm targets -16 LUFS. ${n_perfect} file(s) are PERFECT"
   echo "(peak already near maximum; normalization may reduce dynamic range)."
-  loudness_read_key "[$(date '+%Y.%m.%d %H:%M:%S')] Include PERFECT files in YouTube normalize? [Y/n/q]: " Y
+  loudness_read_key 'Include PERFECT files in YouTube normalize? [Y/n/q]: ' Y
   case "${REPLY^^}" in
     Q) loudness_quit_now ;;
     N) LOUDNESS_INCLUDE_PERFECT=0 ;;
@@ -1046,18 +1384,20 @@ prompt_youtube_include_perfect() {
       add_perfect_files_to_normalize_queue
       ;;
   esac
+  (( PRINT_CLI_ONLY )) && (( LOUDNESS_INCLUDE_PERFECT )) && cli_equiv_note 'CLI: --include-perfect'
   echo
 }
 
 prompt_save_original_aside() {
   echo
   echo "Backup pattern: <filename>.backup.deleteme (original is moved, not copied)."
-  loudness_read_key "[$(date '+%Y.%m.%d %H:%M:%S')] Move originals aside before normalizing? [Y/n/q]: " Y
+  loudness_read_key 'Move originals aside before normalizing? [Y/n/q]: ' Y
   case "${REPLY^^}" in
     Q) loudness_quit_now ;;
     N) LOUDNESS_SAVE_ORIGINAL=0 ;;
     *) LOUDNESS_SAVE_ORIGINAL=1 ;;
   esac
+  (( PRINT_CLI_ONLY )) && (( LOUDNESS_SAVE_ORIGINAL )) && cli_equiv_note 'CLI: --save-original'
   echo
 }
 
@@ -1096,7 +1436,7 @@ normalize_candidate_files() {
     status="${NORMALIZE_STATUS[$i]}"
 
     if ! normalize_skip_file_prompt "$file"; then
-      loudness_read_key "[$(date '+%Y.%m.%d %H:%M:%S')] Normalize ${file} (${status}, ${max_db} dB)? [y/N/d/q]: " N
+      loudness_read_key "Normalize ${file} (${status}, ${max_db} dB)? [y/N/d/q]: " N
       case "${REPLY^^}" in
         Q) echo "Quit requested." ; return 2 ;;
         D) NORMALIZE_DIR="$(dirname -- "$file")" ;;
@@ -1170,6 +1510,14 @@ normalize_candidate_files() {
 
 LOUDNESS_OFFER_NORMALIZE=1
 
+if (( PRINT_CLI_ONLY )) && ! loudness_is_interactive; then
+  echo 'ERROR: --print-cli-only requires an interactive terminal.' >&2
+  kod_powrotu=1
+  exit 1
+fi
+
+loudness_window_title_apply
+
 MEDIA_FILES=()
 if ! collect_media_files; then
   kod_powrotu=1
@@ -1187,6 +1535,10 @@ if (( ${#MEDIA_FILES[@]} == 0 )); then
   echo "Extensions: ${MEDIA_EXTENSIONS[*]}"
   kod_powrotu=0
   exit 0
+fi
+
+if (( PRINT_CLI_ONLY )); then
+  run_print_cli_only_session
 fi
 
 if loudness_is_interactive; then
@@ -1234,6 +1586,8 @@ if (( ${#NORMALIZE_FILES[@]} == 0 )); then
   kod_powrotu=0
   exit 0
 fi
+
+sort_normalize_files_queue
 
 if (( ! LOUDNESS_SAVE_ORIGINAL && ! LOUDNESS_SAVE_ORIGINAL_CLI )) && loudness_is_interactive; then
   prompt_save_original_aside
