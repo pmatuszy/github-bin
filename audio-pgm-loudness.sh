@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.06.17 - v. 0.5.17 - dB: print 0.0 not -0.0; classes prompt no timeout; per-file default Y/N by class
 # 2026.06.17 - v. 0.5.16 - print elapsed time after each normalize (ffmpeg)
 # 2026.06.17 - v. 0.5.15 - fix nounset: quote yes/no in batch_selected array appends
 # 2026.06.17 - v. 0.5.14 - batch prompt summary: align counter columns
@@ -142,7 +143,8 @@ Options:
 Interactive normalization prompts (per file, in batches like ffmpeg-voice.sh):
   Ask about up to N files (batch size, default 50), then normalize only the
   files you selected in that batch before the next batch of prompts.
-  [y] yes, [N] no, [D] rest of directory, [A] yes for all remaining in batch,
+  Per-file normalize (batch prompts; default Y for NORMAL/TOO QUIET, N for PERFECT):
+  [Y]/[n] yes/no, [D] rest of directory, [A] yes for all remaining in batch,
   [F] finish batch (normalize selected; stop asking), [G] normalize selected and
   skip all further prompts, [Q] quit.
   Backup conflict: [Y] replace old backup, [K] keep backup and normalize in
@@ -162,8 +164,9 @@ Environment:
                               --batch-size; default 50).
   LOUDNESS_CLASSES          Candidate classes for normalization (same as --classes).
                               n/normal, t or q/too-quiet, p/perfect; default n,t.
-  LOUDNESS_READ_TIMEOUT     Seconds to wait for a key at interactive prompts
+  LOUDNESS_READ_TIMEOUT     Seconds to wait for a single-key interactive prompt
                               (default: 600 = 10 minutes; 0 = wait forever).
+                              The post-scan classes line prompt waits until Enter.
 
 Exit status:
   0  Scan OK and (if requested) normalization finished without failures.
@@ -932,7 +935,19 @@ format_db_display_value() {
     printf '%s' '—'
     return 0
   fi
-  awk -v v="$db" 'BEGIN { printf "%.1f dB", v + 0 }'
+  db="${db%%[[:space:]]dB*}"
+  db="${db//[[:space:]]/}"
+  printf '%s dB' "$(loudness_format_db_number "$db")"
+}
+
+# One dB value as "0.0" or "-3.2" (no unit). Negative zero → 0.0.
+loudness_format_db_number() {
+  awk -v v="$1" 'BEGIN {
+    v = v + 0
+    s = sprintf("%.1f", v)
+    if (s == "-0.0") s = "0.0"
+    print s
+  }'
 }
 
 # Loudness from the scan pass (max mean on stdout); else re-measure the file.
@@ -1199,7 +1214,7 @@ prompt_normalize_classes() {
   echo "  Letters: n=normal, t=too quiet, p=perfect (q also means too quiet on CLI)"
   echo "  Default: nt (NORMAL + TOO QUIET)"
   printf '[%s] Classes to include [nt]: ' "$(date '+%Y.%m.%d %H:%M:%S')"
-  if IFS= read -r -t "$LOUDNESS_READ_TIMEOUT" input; then
+  if IFS= read -r input; then
     :
   else
     input=""
@@ -1721,9 +1736,19 @@ format_scan_db_cell() {
   fi
   num="${value%%[[:space:]]dB*}"
   num="${num//[[:space:]]/}"
-  cell="$(awk -v v="$num" 'BEGIN { printf "%s", sprintf("%7.1f dB", v + 0) }')"
+  cell="$(awk -v v="$num" 'BEGIN {
+    v = v + 0
+    s = sprintf("%.1f", v)
+    if (s == "-0.0") s = "0.0"
+    printf "%s", sprintf("%7.1f dB", s + 0)
+  }')"
   if (( ${#cell} > width )); then
-    cell="$(awk -v v="$num" 'BEGIN { printf "%s", sprintf("%.1f dB", v + 0) }')"
+    cell="$(awk -v v="$num" 'BEGIN {
+      v = v + 0
+      s = sprintf("%.1f", v)
+      if (s == "-0.0") s = "0.0"
+      printf "%s", sprintf("%.1f dB", s + 0)
+    }')"
     if (( ${#cell} > width )); then
       cell="${cell: -width}"
     fi
@@ -2080,15 +2105,32 @@ loudness_print_batch_prompt_summary() {
 
 loudness_read_normalize_batch_choice() {
   local file="$1" status="$2" max_db="$3"
+  local default='N' max_disp prompt
 
-  echo '  [y] Yes normalize'
-  echo '  [N] No (default)'
-  echo "  [D] Yes, and rest of directory ($(dirname -- "$file")/) without further prompts"
-  echo '  [A] Yes for all remaining in this batch'
-  echo '  [F] Finish batch now (normalize selected only; stop asking for rest of batch)'
-  echo '  [G] Normalize selected; skip all further prompts this run'
-  echo '  [Q] Quit'
-  loudness_read_key "Normalize ${file} (${status}, ${max_db} dB)? [y/N/d/a/f/g/q]: " N
+  [[ "$status" == PERFECT ]] || default='Y'
+  max_disp="$(format_db_display_value "$max_db")"
+
+  if [[ "$default" == 'Y' ]]; then
+    echo '  [Y] Yes normalize (default)'
+    echo '  [n] No'
+    echo "  [D] Yes, and rest of directory ($(dirname -- "$file")/) without further prompts"
+    echo '  [A] Yes for all remaining in this batch'
+    echo '  [F] Finish batch now (normalize selected only; stop asking for rest of batch)'
+    echo '  [G] Normalize selected; skip all further prompts this run'
+    echo '  [Q] Quit'
+    prompt="Normalize ${file} (${status}, ${max_disp})? [Y/n/d/a/f/g/q]: "
+    loudness_read_key "$prompt" Y
+  else
+    echo '  [y] Yes normalize'
+    echo '  [N] No (default)'
+    echo "  [D] Yes, and rest of directory ($(dirname -- "$file")/) without further prompts"
+    echo '  [A] Yes for all remaining in this batch'
+    echo '  [F] Finish batch now (normalize selected only; stop asking for rest of batch)'
+    echo '  [G] Normalize selected; skip all further prompts this run'
+    echo '  [Q] Quit'
+    prompt="Normalize ${file} (${status}, ${max_disp})? [y/N/d/a/f/g/q]: "
+    loudness_read_key "$prompt" N
+  fi
 
   LOUDNESS_BATCH_CHOICE_DECISION=""
   LOUDNESS_BATCH_CHOICE_ACTION=""
@@ -2100,7 +2142,14 @@ loudness_read_normalize_batch_choice() {
     F) LOUDNESS_BATCH_CHOICE_ACTION=finish_batch ;;
     G) LOUDNESS_BATCH_CHOICE_ACTION=skip_all ;;
     N) LOUDNESS_BATCH_CHOICE_DECISION='no'; LOUDNESS_BATCH_CHOICE_ACTION=decided ;;
-    *) LOUDNESS_BATCH_CHOICE_DECISION='no'; LOUDNESS_BATCH_CHOICE_ACTION=decided ;;
+    *)
+      if [[ "$default" == 'Y' ]]; then
+        LOUDNESS_BATCH_CHOICE_DECISION='yes'
+      else
+        LOUDNESS_BATCH_CHOICE_DECISION='no'
+      fi
+      LOUDNESS_BATCH_CHOICE_ACTION=decided
+      ;;
   esac
 }
 
@@ -2439,7 +2488,8 @@ normalize_candidate_files() {
   else
     echo 'Per-file prompts run in batches (like ffmpeg-voice.sh): ask about each file,'
     echo 'then normalize selected files before the next batch.'
-    echo '  [y] yes, [N] no, [D] rest of directory, [A] all remaining in batch,'
+    echo '  Default: [Y] for NORMAL/TOO QUIET, [N] for PERFECT.'
+    echo '  [D] rest of directory, [A] all remaining in batch,'
     echo '  [F] finish batch, [G] skip all further prompts, [Q] quit.'
     normalize_run_batch_prompt_loop 0 "$filter" norm_ok norm_fail norm_skip norm_backup_skip || rc=$?
     if (( rc == 2 )); then
