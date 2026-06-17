@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.06.17 - v. 0.5.16 - print elapsed time after each normalize (ffmpeg)
 # 2026.06.17 - v. 0.5.15 - fix nounset: quote yes/no in batch_selected array appends
 # 2026.06.17 - v. 0.5.14 - batch prompt summary: align counter columns
 # 2026.06.17 - v. 0.5.13 - fix batch-size prompt false failure (exit status 1 when not --print-cli-only)
@@ -952,6 +953,21 @@ print_normalize_before_after() {
     "$(format_db_display_value "$before_max")" "$(format_db_display_value "$before_mean")"
   printf '    After:  max %10s  mean %10s\n' \
     "$(format_db_display_value "$after_max")" "$(format_db_display_value "$after_mean")"
+}
+
+# Wall-clock seconds → "45s", "2m 15s", or "1h 3m 5s".
+loudness_format_elapsed() {
+  local s="${1:-0}" h m
+  (( s < 0 )) && s=0
+  h=$(( s / 3600 )); s=$(( s % 3600 ))
+  m=$(( s / 60 )); s=$(( s % 60 ))
+  if (( h > 0 )); then
+    printf '%dh %dm %ds' "$h" "$m" "$s"
+  elif (( m > 0 )); then
+    printf '%dm %ds' "$m" "$s"
+  else
+    printf '%ds' "$s"
+  fi
 }
 
 # PERFECT | NORMAL | TOO_QUIET based on max_volume peak (dB).
@@ -2145,7 +2161,7 @@ normalize_one_selected_file() {
   local i="$1" filter="$2"
   local file="${NORMALIZE_FILES[$i]}"
   local before_max before_mean after_max after_mean measure_line measure_rc
-  local backup src dest prep_rc audio_n
+  local backup src dest prep_rc audio_n norm_start norm_elapsed
 
   before_max=""
   before_mean=""
@@ -2171,10 +2187,12 @@ normalize_one_selected_file() {
     esac
   fi
   loudness_begin_file_normalize "$dest" "$backup" "$src"
+  norm_start=$SECONDS
   printf 'Normalizing %s ... ' "$file"
   if normalize_file_inplace "$src" "$dest" "$filter"; then
     loudness_end_file_normalize
-    echo 'OK'
+    norm_elapsed=$(( SECONDS - norm_start ))
+    printf 'OK (%s)\n' "$(loudness_format_elapsed "$norm_elapsed")"
     if (( audio_n > 1 )); then
       echo "    (${audio_n} audio tracks normalized; other streams copied)"
     fi
@@ -2189,7 +2207,8 @@ normalize_one_selected_file() {
     echo
     return 0
   fi
-  echo 'FAILED (ffmpeg — see error lines above)'
+  norm_elapsed=$(( SECONDS - norm_start ))
+  echo "FAILED ($(loudness_format_elapsed "$norm_elapsed") — see ffmpeg errors above)"
   if [[ -n "$backup" && -f "$backup" && ! -f "$dest" ]]; then
     restore_original_from_backup "$backup" "$dest" || true
   fi
