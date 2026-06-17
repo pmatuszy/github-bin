@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.06.17 - v. 0.5.21 - legend: do not color PERFECT label (scan table rows still green)
 # 2026.06.17 - v. 0.5.20 - fix terminal colors: use ANSI bytes, not \\e in printf %b
 # 2026.06.17 - v. 0.5.19 - prompt menus: default option letter uppercase only
 # 2026.06.17 - v. 0.5.18 - terminal colors option (--colors); PERFECT rows green in scan table
@@ -1787,11 +1788,7 @@ REPORT_DB_FMT_W=10
 
 print_loudness_class_legend() {
   local label_w=9 range_w=18
-  if loudness_colors_enabled; then
-    printf '  %b%-*s%b  %-*s  — %s\n' "$GREEN" "$label_w" 'PERFECT' "$RESET" "$range_w" ' 0.0 to -2.0 dB' 'do not normalize'
-  else
-    printf '  %-*s  %-*s  — %s\n' "$label_w" 'PERFECT' "$range_w" ' 0.0 to -2.0 dB' 'do not normalize'
-  fi
+  printf '  %-*s  %-*s  — %s\n' "$label_w" 'PERFECT'   "$range_w" ' 0.0 to -2.0 dB'   'do not normalize'
   printf '  %-*s  %-*s  — %s\n' "$label_w" 'NORMAL'    "$range_w" '-2.0 to -6.0 dB'   'usually fine'
   printf '  %-*s  %-*s  — %s\n' "$label_w" 'TOO QUIET' "$range_w" '-6.0 dB or lower' 'loudnorm candidates'
 }
@@ -1888,11 +1885,11 @@ print_report_table_row() {
   if [[ "$status" == PERFECT ]] && loudness_colors_enabled; then
     local status_cell
     status_cell="$(printf '%-*s' "$REPORT_STATUS_W" "$status")"
-    printf '%b%s%b%s%s%s%s%s%s%b%s%b\n' \
-      "${GREEN}" "$file_cell" "${RESET}" "$REPORT_COL_GAP" \
+    printf '%s%s%s%s%s%s%s%s%s%s%s\n' \
+      "$GREEN" "$file_cell" "$RESET" "$REPORT_COL_GAP" \
       "$max_cell" "$REPORT_COL_GAP" \
       "$mean_cell" "$REPORT_COL_GAP" \
-      "${GREEN}" "$status_cell" "${RESET}"
+      "$GREEN" "$status_cell" "$RESET"
     return 0
   fi
 
