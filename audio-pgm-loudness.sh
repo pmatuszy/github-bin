@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.06.17 - v. 0.5.6 - prompt brackets: default letter capital; read timeout 10 min
 # 2026.06.17 - v. 0.5.5 - scan scope: current directory or subdirectories (--scope)
 # 2026.06.17 - v. 0.5.4 - interactive normalize prompt defaults to YouTube
 # 2026.06.17 - v. 0.5.3 - --scan-only: measure cwd non-interactively, no normalize
@@ -135,6 +136,8 @@ Environment:
   LOUDNESS_BACKUP_ON_CONFLICT  Non-interactive when backup exists: replace, keep
                               (normalize in place; default), or skip.
   LOUDNESS_SCAN_SCOPE       current or subdirs (same as --scope).
+  LOUDNESS_READ_TIMEOUT     Seconds to wait for a key at interactive prompts
+                              (default: 600 = 10 minutes; 0 = wait forever).
 
 Exit status:
   0  Scan OK and (if requested) normalization finished without failures.
@@ -314,7 +317,7 @@ if [[ -f "${BASH_SOURCE[0]}" ]]; then
   chmod 700 "${BASH_SOURCE[0]}" 2>/dev/null || true
 fi
 
-LOUDNESS_READ_TIMEOUT="${LOUDNESS_READ_TIMEOUT:-300}"
+LOUDNESS_READ_TIMEOUT="${LOUDNESS_READ_TIMEOUT:-600}"
 
 audio_pgm_loudness_cleanup() {
   loudness_interrupt_restore_in_progress_file
@@ -1103,7 +1106,7 @@ resolve_backup_conflict() {
   echo '      (safe for re-normalizing; backup still holds the first original)'
   echo '  [S] Skip this file (default)'
   echo '  [Q] Quit'
-  loudness_read_key "Backup conflict for ${file}? [y/K/s/q]: " S
+  loudness_read_key "Backup conflict for ${file}? [y/k/S/q]: " S
   case "${REPLY^^}" in
     Q) _result=quit ;;
     Y)
@@ -1547,7 +1550,7 @@ prompt_normalize_mode() {
   echo "  [Y] YouTube-style loudnorm (I=-16:TP=-1.0:LRA=11) (default)"
   echo "  [N] Skip normalization"
   echo "  [Q] Quit"
-  loudness_read_key 'Normalize? [S/Y/n/q]: ' Y
+  loudness_read_key 'Normalize? [s/Y/n/q]: ' Y
   case "${REPLY^^}" in
     Q) loudness_quit_now ;;
     S) NORMALIZE_MODE=standard ;;
