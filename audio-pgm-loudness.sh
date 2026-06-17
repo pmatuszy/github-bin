@@ -1,5 +1,7 @@
 #!/bin/bash
 
+# 2026.06.17 - v. 0.5.3 - --scan-only: measure cwd non-interactively, no normalize
+# 2026.06.17 - v. 0.5.2 - CLI flags skip startup/wizard prompts on a TTY (-y batch)
 # 2026.06.17 - v. 0.5.1 - Ctrl-C: remove temp output, restore *.backup.deleteme if moved aside
 # 2026.06.17 - v. 0.5.0 - --print-cli-only; window title [cwd] script argv; prompt timestamps
 # 2026.06.17 - v. 0.4.5 - normalize queue processed in alphabetical order
@@ -50,7 +52,7 @@ print_version_banner() {
 show_help() {
   cat <<EOF
 Usage: $(basename "$0") [-h|--help] [-v|--version] [--no_startup_delay]
-       [-n standard|youtube|none] [-y] [--print-cli-only] [-- FILE ...]
+       [-n standard|youtube|none] [-y] [--scan-only] [--print-cli-only] [-- FILE ...]
 
 Scan the current directory for audio and video files and measure loudness with
 ffmpeg volumedetect (video is ignored for speed). Each file is classified by
@@ -95,7 +97,8 @@ Options:
                        Normalize eligible files (default: ask when interactive,
                        skip when not interactive unless -n is set).
   -y, --yes            Do not ask per file; normalize every eligible file when
-                       -n standard or -n youtube is selected.
+                       -n standard or -n youtube is selected. With any CLI
+                       option, startup wizard prompts are also skipped.
   --save-original      Move each original to *.backup.deleteme before normalizing
                        (skip the interactive backup question).
   --replace-backup     When *.backup.deleteme already exists, remove it and move
@@ -103,6 +106,8 @@ Options:
   --print-cli-only     Interactive dry-run: answer the usual prompts but do not
                        scan, normalize, or modify any file. Prints an equivalent
                        non-interactive command at the end.
+  --scan-only          Scan media in the current directory only; no prompts and
+                       no normalization (exit 0 when scan completes).
   --include-perfect    With -n youtube, normalize PERFECT files too (skip the
                        interactive question).
   --no_startup_delay   Skip random startup delay when run non-interactively
@@ -126,10 +131,12 @@ Environment:
 
 Exit status:
   0  Scan OK and (if requested) normalization finished without failures.
-  1  Errors, or eligible files remain after a scan-only run (no normalize).
+  1  Errors, or eligible files remain after a scan-only run (no normalize),
+     except with --scan-only (always 0 after a successful scan).
 
 Examples:
   cd /path/to/clips && $(basename "$0")
+  cd /path/to/clips && $(basename "$0") --scan-only
   $(basename "$0") -n youtube -y --save-original
   $(basename "$0") --print-cli-only
   $(basename "$0") -n standard -- quiet_interview.mkv
@@ -145,6 +152,7 @@ AUTO_YES=0
 CLI_FILES=()
 ANY_CLI_OPTIONS=0
 PRINT_CLI_ONLY=0
+SCAN_ONLY=0
 LOUDNESS_SAVE_ORIGINAL="${LOUDNESS_SAVE_ORIGINAL:-0}"
 LOUDNESS_SAVE_ORIGINAL_CLI=0
 LOUDNESS_INCLUDE_PERFECT="${LOUDNESS_INCLUDE_PERFECT:-0}"
@@ -208,6 +216,11 @@ while [[ $# -gt 0 ]]; do
       PRINT_CLI_ONLY=1
       shift
       ;;
+    --scan-only)
+      ANY_CLI_OPTIONS=1
+      SCAN_ONLY=1
+      shift
+      ;;
     --)
       shift
       CLI_FILES+=( "$@" )
@@ -249,6 +262,22 @@ case "${LOUDNESS_REPLACE_BACKUP,,}" in
   1|yes|true|y) LOUDNESS_REPLACE_BACKUP=1 ;;
   *)          LOUDNESS_REPLACE_BACKUP=0 ;;
 esac
+
+if (( SCAN_ONLY && PRINT_CLI_ONLY )); then
+  echo 'ERROR: --scan-only and --print-cli-only cannot be used together.' >&2
+  exit 1
+fi
+
+if (( SCAN_ONLY )); then
+  if [[ -n "$NORMALIZE_MODE" && "$NORMALIZE_MODE" != none ]]; then
+    echo "NOTE: --scan-only ignores -n ${NORMALIZE_MODE} (no normalization)." >&2
+  fi
+  NORMALIZE_MODE=none
+  if (( ${#CLI_FILES[@]} > 0 )); then
+    echo 'NOTE: --scan-only scans the current directory only; ignoring FILE operands.' >&2
+    CLI_FILES=()
+  fi
+fi
 
 # No flags at all (FILE operands alone are OK): presume interactive prompts and streaming scan.
 PRESUME_INTERACTIVE=0
@@ -349,6 +378,21 @@ loudness_on_interrupt() {
 trap loudness_on_interrupt INT
 
 loudness_is_interactive() {
+  (( PRESUME_INTERACTIVE )) && return 0
+  (( script_is_run_interactively )) && return 0
+  return 1
+}
+
+# Startup / mode / backup wizard (no CLI flags, or --print-cli-only).
+loudness_wants_wizard_prompts() {
+  (( PRINT_CLI_ONLY )) && return 0
+  (( ! ANY_CLI_OPTIONS )) && return 0
+  return 1
+}
+
+# Per-file normalize prompts (TTY ok when -n set but -y not set).
+loudness_wants_per_file_prompts() {
+  (( AUTO_YES )) && return 1
   (( PRESUME_INTERACTIVE )) && return 0
   (( script_is_run_interactively )) && return 0
   return 1
@@ -539,6 +583,10 @@ cli_print_built_command() {
   if (( use_y == 0 && file_count > 0 && file_count < ${#NORMALIZE_FILES[@]} )); then
     echo '  Per-file choices are listed as explicit FILE operands (no -y).'
     echo '  [D] rest-of-directory has no single flag — use -y or name files.'
+    echo
+  elif (( use_y )); then
+    echo '  With -n and -y (and other flags shown), the script runs without'
+    echo '  startup or per-file prompts when executed from the cd directory above.'
     echo
   fi
   echo '  No files were scanned or modified in this --print-cli-only session.'
@@ -910,7 +958,7 @@ resolve_backup_conflict() {
     return 0
   fi
 
-  if ! loudness_is_interactive; then
+  if ! loudness_wants_wizard_prompts; then
     policy="${LOUDNESS_BACKUP_ON_CONFLICT,,}"
     [[ -z "$policy" ]] && policy=keep
     case "$policy" in
@@ -1264,7 +1312,7 @@ maybe_include_perfect_for_youtube() {
     return 0
   fi
 
-  if ! loudness_is_interactive; then
+  if ! loudness_wants_wizard_prompts; then
     return 0
   fi
 
@@ -1494,6 +1542,10 @@ normalize_candidate_files() {
     status="${NORMALIZE_STATUS[$i]}"
 
     if ! normalize_skip_file_prompt "$file"; then
+      if ! loudness_wants_per_file_prompts; then
+        (( ++norm_skip ))
+        continue
+      fi
       loudness_read_key "Normalize ${file} (${status}, ${max_db} dB)? [y/N/d/q]: " N
       case "${REPLY^^}" in
         Q) echo "Quit requested." ; return 2 ;;
@@ -1602,7 +1654,7 @@ if (( PRINT_CLI_ONLY )); then
   run_print_cli_only_session
 fi
 
-if loudness_is_interactive; then
+if loudness_wants_wizard_prompts; then
   prompt_startup_interactive
 else
   echo "Files to scan: ${#MEDIA_FILES[@]}"
@@ -1617,6 +1669,11 @@ if (( scan_rc == 1 )); then
   exit 1
 fi
 
+if (( SCAN_ONLY )); then
+  kod_powrotu=0
+  exit 0
+fi
+
 perfect_scan_count="$(count_scan_perfect_files)"
 if (( ${#NORMALIZE_FILES[@]} == 0 && perfect_scan_count == 0 )); then
   kod_powrotu=0
@@ -1624,7 +1681,7 @@ if (( ${#NORMALIZE_FILES[@]} == 0 && perfect_scan_count == 0 )); then
 fi
 
 if [[ -z "$NORMALIZE_MODE" ]]; then
-  if loudness_is_interactive && (( LOUDNESS_OFFER_NORMALIZE )); then
+  if loudness_wants_wizard_prompts && (( LOUDNESS_OFFER_NORMALIZE )); then
     if (( ${#NORMALIZE_FILES[@]} == 0 && perfect_scan_count == 0 )); then
       kod_powrotu=0
       exit 0
@@ -1650,7 +1707,7 @@ fi
 
 sort_normalize_files_queue
 
-if (( ! LOUDNESS_SAVE_ORIGINAL && ! LOUDNESS_SAVE_ORIGINAL_CLI )) && loudness_is_interactive; then
+if (( ! LOUDNESS_SAVE_ORIGINAL && ! LOUDNESS_SAVE_ORIGINAL_CLI )) && loudness_wants_wizard_prompts; then
   prompt_save_original_aside
 fi
 
