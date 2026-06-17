@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.06.17 - v. 0.5.1 - Ctrl-C: remove temp output, restore *.backup.deleteme if moved aside
 # 2026.06.17 - v. 0.5.0 - --print-cli-only; window title [cwd] script argv; prompt timestamps
 # 2026.06.17 - v. 0.4.5 - normalize queue processed in alphabetical order
 # 2026.06.17 - v. 0.4.4 - interactive backup conflict: replace, keep, or skip
@@ -263,6 +264,7 @@ fi
 LOUDNESS_READ_TIMEOUT="${LOUDNESS_READ_TIMEOUT:-300}"
 
 audio_pgm_loudness_cleanup() {
+  loudness_interrupt_restore_in_progress_file
   [[ -n "${LOUDNESS_TMP_FILE:-}" && -f "${LOUDNESS_TMP_FILE}" ]] && rm -f -- "${LOUDNESS_TMP_FILE}"
   loudness_window_title_restore
   . /root/bin/_script_footer.sh
@@ -289,6 +291,62 @@ MEDIA_EXTENSIONS=(
 )
 
 LOUDNESS_TMP_FILE=""
+LOUDNESS_INTERRUPT_RESTORE_DEST=""
+LOUDNESS_INTERRUPT_RESTORE_BACKUP=""
+LOUDNESS_INTERRUPT_CLEANUP_DONE=0
+
+loudness_begin_file_normalize() {
+  local dest="$1" backup="$2" src="$3"
+  LOUDNESS_INTERRUPT_RESTORE_DEST="$dest"
+  if [[ -n "$backup" && "$src" == "$backup" ]]; then
+    LOUDNESS_INTERRUPT_RESTORE_BACKUP="$backup"
+  else
+    LOUDNESS_INTERRUPT_RESTORE_BACKUP=""
+  fi
+}
+
+loudness_end_file_normalize() {
+  LOUDNESS_INTERRUPT_RESTORE_DEST=""
+  LOUDNESS_INTERRUPT_RESTORE_BACKUP=""
+}
+
+loudness_interrupt_restore_in_progress_file() {
+  local dest="$LOUDNESS_INTERRUPT_RESTORE_DEST" backup="$LOUDNESS_INTERRUPT_RESTORE_BACKUP"
+
+  (( LOUDNESS_INTERRUPT_CLEANUP_DONE )) && return 0
+  LOUDNESS_INTERRUPT_CLEANUP_DONE=1
+
+  [[ -n "${LOUDNESS_TMP_FILE:-}" && -f "${LOUDNESS_TMP_FILE}" ]] && rm -f -- "${LOUDNESS_TMP_FILE}"
+  LOUDNESS_TMP_FILE=""
+
+  [[ -n "$dest" && -n "$backup" && -f "$backup" ]] || return 0
+
+  echo "Interrupted during normalize of ${dest}."
+  if [[ -f "$dest" ]]; then
+    echo "Removing partial output: ${dest}"
+    rm -f -- "$dest"
+  fi
+  if [[ ! -e "$dest" ]]; then
+    echo "Restoring original from backup: ${backup}"
+    restore_original_from_backup "$backup" "$dest" || \
+      echo "WARNING: could not restore ${dest} from ${backup}" >&2
+  fi
+  loudness_end_file_normalize
+}
+
+loudness_on_interrupt() {
+  echo
+  echo '** Trapped CTRL-C — cleaning up....'
+  loudness_interrupt_restore_in_progress_file
+  if [[ -n "${STY:-}" ]]; then
+    echo -ne "${tcScrTitleStart}${0}${tcScrTitleEnd}"
+  fi
+  loudness_window_title_restore
+  kod_powrotu=130
+  exit 130
+}
+
+trap loudness_on_interrupt INT
 
 loudness_is_interactive() {
   (( PRESUME_INTERACTIVE )) && return 0
@@ -1469,8 +1527,10 @@ normalize_candidate_files() {
           ;;
       esac
     fi
+    loudness_begin_file_normalize "$dest" "$backup" "$src"
     printf 'Normalizing %s ... ' "$file"
     if normalize_file_inplace "$src" "$dest" "$filter"; then
+      loudness_end_file_normalize
       echo 'OK'
       if (( audio_n > 1 )); then
         echo "    (${audio_n} audio tracks normalized; other streams copied)"
@@ -1490,6 +1550,7 @@ normalize_candidate_files() {
       if [[ -n "$backup" && -f "$backup" && ! -f "$dest" ]]; then
         restore_original_from_backup "$backup" "$dest" || true
       fi
+      loudness_end_file_normalize
       (( ++norm_fail ))
     fi
   done
