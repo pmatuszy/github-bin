@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# 2026.06.17 - v. 19.213.143000 - flatten [A]: FLATTEN_CHILD= sole-subdir name; fix set -e on flatten quit
+# 2026.06.17 - v. 19.212.143000 - flatten prompt [A]: always exclude by basename/glob (*.trickplay, etc.)
 # 2026.06.16 - v. 19.211.150000 - DB maintenance: inline CIFS mount detect (early exit skips late functions); sqlite3 read fallbacks
 # 2026.06.16 - v. 19.210.140000 - DB maintenance on CIFS/NFS: open with ?nolock=1, probe row count, fix silent locked reads
 # 2026.06.16 - v. 19.209.140000 - DB maintenance: open cache schema before FULL/AUTO SQL; do not abort on REINDEX/WAL failure; always reach prune + hash backfill
@@ -798,7 +800,8 @@ Options:
 Optional exclude file in the start directory: _exclude-rename.sh.txt
   FILE=basename or FILE=wildcard — skip renaming that filename in every subdirectory (files and directories; not path-specific).
   SUBTREE=dir — skip that directory and every path under it (prompt [B] on a file uses the directory where that file lives).
-  FLATTEN_EXACT=dir — skip flatten prompts for matching directories (prompt [E] uses exact path; [C] may use globs or /fragment/).
+  FLATTEN_EXACT=dir — skip flatten prompts for this parent directory (prompt [E] exact path; [C] custom).
+  FLATTEN_CHILD=name — skip flatten when the only subdirectory is named name (prompt [A]; globs OK).
   [F] at the rename prompt appends FILE=<basename> for the current path (file or directory). At the checksum-group prompt, [F] uses the list file's basename. [C] lets you type any custom filter line (FILE=, SUBTREE=, =path, globs). See also /basename/.
   When a renamed path appears in this file (=path, SUBTREE=, FLATTEN_EXACT=, or a bare path line), the entry is rewritten to the new path automatically.
   thumbs.db / torrent .URL: if the suggested path equals the current path, you still get a prompt so you can delete the file ([K] / [O] all thumbs.db this run / [T]); there is no rename to apply.
@@ -1663,6 +1666,64 @@ flatten_exception_entry_for_path() {
     printf 'FLATTEN_EXACT=%s' "$p"
 }
 
+flatten_child_exception_entry() {
+    local child_base="$1"
+    printf 'FLATTEN_CHILD=%s' "$child_base"
+}
+
+flatten_child_name_matches_exclude_filter() {
+    local child_base="$1"
+    local filter="" target=""
+
+    [[ -n "$child_base" ]] || return 1
+    reload_exclude_filters_if_changed
+
+    for filter in "${EXCLUDE_FILTERS[@]}"; do
+        [[ "$filter" == FLATTEN_CHILD=* ]] || continue
+        target="${filter#FLATTEN_CHILD=}"
+        [[ -n "$target" ]] || continue
+        if [[ "$target" == *'*'* || "$target" == *'?'* || "$target" == *'['* ]]; then
+            [[ "$child_base" == $target ]] && return 0
+        elif [[ "$child_base" == "$target" ]]; then
+            return 0
+        fi
+    done
+    return 1
+}
+
+append_flatten_child_exception_to_exclude_filters_file() {
+    local child_base="$1"
+    local entry existing found=0
+
+    [[ -n "$child_base" ]] || return 1
+    entry="$(flatten_child_exception_entry "$child_base")"
+
+    if [[ ! -e "$EXCLUDE_FILTERS_FILE" ]]; then
+        : > "$EXCLUDE_FILTERS_FILE"
+    fi
+
+    load_exclude_filters
+
+    for existing in "${EXCLUDE_FILTERS[@]}"; do
+        [[ "$existing" == "$entry" ]] && { found=1; break; }
+    done
+
+    if (( found == 0 )); then
+        printf '%s
+' "$entry" >> "$EXCLUDE_FILTERS_FILE"
+        emit_wrap_exclude_append_message 1 "FLATTEN CHILD EXCEPTION ADDED" "$entry"
+    else
+        emit_wrap_exclude_append_message 0 "FLATTEN CHILD EXCEPTION EXISTS" "$entry"
+    fi
+
+    load_exclude_filters
+}
+
+flatten_child_exception_menu_line() {
+    local child_base="$1"
+    echo "  [A] Always skip flatten when the sole subdirectory is named: ${child_base} (anywhere; saved to exclude file)"
+}
+
 # Directory containing a file (or the directory itself) for SUBTREE= exceptions.
 containing_directory_for_subtree_exception() {
     local p="$1"
@@ -1770,6 +1831,8 @@ path_matches_flatten_exclude_filter() {
         fi
         if [[ "$target" == *'*'* || "$target" == *'?'* || "$target" == *'['* ]]; then
             [[ "$p" == $target || "$base" == $target ]] && return 0
+        elif [[ "$target" != */* ]]; then
+            [[ "$base" == "$target" ]] && return 0
         elif [[ "$p" == *"$target"* ]]; then
             return 0
         fi
@@ -1852,7 +1915,8 @@ prompt_custom_exclude_pattern_from_user() {
     echo "$(user_prompt_ts_prefix)Custom exclude pattern (written to exclude file; active immediately):"
     echo "  Same syntax as _exclude-rename.sh.txt — FILE=name, SUBTREE=dir, =/exact/path, globs, /fragment/"
     if [[ "$context" == flatten ]]; then
-        echo "  FLATTEN_EXACT=dir — skip flatten prompts (exact path, glob, or path fragment)"
+        echo "  FLATTEN_EXACT=dir — skip flatten for this parent directory (exact path or fragment)"
+        echo "  FLATTEN_CHILD=name — skip flatten when the only subdirectory is named name (globs OK)"
     fi
     echo "  Leave empty and press Enter to cancel."
     echo -n "$(user_prompt_ts_prefix)Pattern: "
@@ -10815,6 +10879,11 @@ maybe_prompt_flatten_single_child_dir() {
         return 0
     fi
 
+    if flatten_child_name_matches_exclude_filter "$child_base"; then
+        vlog "Flatten prompt skipped: sole subdirectory matches FLATTEN_CHILD: '$child_base'"
+        return 0
+    fi
+
     if ! find "$child_dir" -type f -print -quit | grep -q .; then
         return 0
     fi
@@ -10827,11 +10896,12 @@ maybe_prompt_flatten_single_child_dir() {
         echo -e "$(user_prompt_ts_prefix)${GREEN}Move child contents one level up and delete this subdirectory?${RESET}"
         echo "  [Y] Yes — flatten (move child contents up, remove subdirectory; then choose folder name)"
         echo "  [N] No (default) — keep current folder layout"
-        echo "  [E] Add flatten exception — skip flatten prompts for this directory in the future"
-        echo "  [C] Custom exclude pattern — type any filter line (FLATTEN_EXACT=, SUBTREE=, glob, etc.)"
+        flatten_child_exception_menu_line "$child_base"
+        echo "  [E] Add flatten exception — skip flatten prompts for this parent directory only"
+        echo "  [C] Custom exclude pattern — type any filter line (FLATTEN_EXACT=, FLATTEN_CHILD=, SUBTREE=, glob, etc.)"
         print_prompt_view_directory_menu_line
         echo "  [Q] Quit — stop the script"
-        echo -n "$(user_prompt_ts_prefix)Choice [y/N/e/c/v/q]: "
+        echo -n "$(user_prompt_ts_prefix)Choice [y/N/a/e/c/v/q]: "
         flush_stdin
         read_single_key answer "$PROMPT_WAIT_SECONDS"
         echo
@@ -10842,6 +10912,10 @@ maybe_prompt_flatten_single_child_dir() {
         if [[ "$answer" =~ [Qq] ]]; then
             stopped_by_user=yes
             return 2
+        fi
+        if [[ "$answer" =~ [Aa] ]]; then
+            append_flatten_child_exception_to_exclude_filters_file "$child_base"
+            return 0
         fi
         if [[ "$answer" =~ [Ee] ]]; then
             append_flatten_exception_to_exclude_filters_file "$parent_dir"
@@ -11447,8 +11521,8 @@ for f in "${ordered_paths[@]}"; do
     fi
 
     if [[ -d "$f" ]]; then
-        maybe_prompt_flatten_single_child_dir "$f"
-        flatten_rc=$?
+        flatten_rc=0
+        maybe_prompt_flatten_single_child_dir "$f" || flatten_rc=$?
         if (( flatten_rc == 2 )); then
             break
         fi
