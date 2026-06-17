@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.06.17 - v. 0.5.14 - batch prompt summary: align counter columns
 # 2026.06.17 - v. 0.5.13 - fix batch-size prompt false failure (exit status 1 when not --print-cli-only)
 # 2026.06.17 - v. 0.5.12 - fix empty normalize queue after sort; guard batch loop on total=0
 # 2026.06.17 - v. 0.5.11 - --classes filter for normalize candidates (n/t/p abbreviations)
@@ -2050,13 +2051,14 @@ loudness_print_batch_prompt_summary() {
   local batch_pos="$1" batch_size_now="$2" overall_pos="$3" total_files="$4"
   local still_after="$5" batch_yes="$6" batch_no="$7"
   local undecided=$(( batch_size_now - batch_yes - batch_no ))
+  local label_w=33 num_w=4
 
   printf 'PROMPTING: batch file %s/%s (overall %s/%s)\n' \
     "$batch_pos" "$batch_size_now" "$overall_pos" "$total_files"
-  printf 'LEFT TO ASK AFTER THIS: %s\n' "$still_after"
-  printf 'WILL BE NORMALIZED IN THIS BATCH: %s\n' "$batch_yes"
-  printf 'WILL BE SKIPPED IN THIS BATCH:   %s\n' "$batch_no"
-  printf 'ANSWERS STILL MISSING:           %s\n' "$undecided"
+  printf '%-*s %*s\n' "$label_w" 'LEFT TO ASK AFTER THIS:' "$num_w" "$still_after"
+  printf '%-*s %*s\n' "$label_w" 'WILL BE NORMALIZED IN THIS BATCH:' "$num_w" "$batch_yes"
+  printf '%-*s %*s\n' "$label_w" 'WILL BE SKIPPED IN THIS BATCH:' "$num_w" "$batch_no"
+  printf '%-*s %*s\n' "$label_w" 'ANSWERS STILL MISSING:' "$num_w" "$undecided"
 }
 
 loudness_read_normalize_batch_choice() {
