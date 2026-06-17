@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.06.17 - v. 0.5.18 - terminal colors option (--colors); PERFECT rows green in scan table
 # 2026.06.17 - v. 0.5.17 - dB: print 0.0 not -0.0; classes prompt no timeout; per-file default Y/N by class
 # 2026.06.17 - v. 0.5.16 - print elapsed time after each normalize (ffmpeg)
 # 2026.06.17 - v. 0.5.15 - fix nounset: quote yes/no in batch_selected array appends
@@ -66,8 +67,8 @@ print_version_banner() {
 show_help() {
   cat <<EOF
 Usage: $(basename "$0") [-h|--help] [-v|--version] [--no_startup_delay]
-       [-n standard|youtube|none] [-y] [--scope current|subdirs] [--batch-size N]
-       [--classes SPEC] [--scan-only] [--print-cli-only] [-- FILE ...]
+       [-n standard|youtube|none] [-y] [--colors yes|no] [--scope current|subdirs]
+       [--batch-size N] [--classes SPEC] [--scan-only] [--print-cli-only] [-- FILE ...]
 
 Scan for audio and video files and measure loudness with ffmpeg volumedetect
 (video is ignored for speed). Each file is classified by peak level (max_volume):
@@ -89,8 +90,9 @@ media files are discovered in the working directory — current folder only by
 default, or the whole tree with --scope subdirs (interactive default: subdirs).
 
 When no command-line options are given (only optional FILE operands), the script
-runs in interactive mode: it asks before scanning and prints each result row as
-soon as that file is measured (so a long scan does not look hung).
+runs in interactive mode: it asks about terminal colors and scan scope, then
+whether to scan, and prints each result row as soon as that file is measured
+(so a long scan does not look hung). With --colors yes, PERFECT rows are green.
 
 Normalization (non-PERFECT by default; PERFECT is never offered for standard mode):
   standard   ffmpeg loudnorm (default filter parameters)
@@ -129,6 +131,8 @@ Options:
                        subfolders (skip the interactive scope question).
   --batch-size N       Per-file normalize prompts: ask N files at a time before
                        processing (default 50; skip the interactive batch question).
+  --colors yes|no      Use terminal colors (skip the interactive colors question).
+                       When enabled, PERFECT rows in the scan table are green.
   --classes SPEC       Normalization candidates by class (scan still measures all).
                        SPEC is comma-separated and/or concatenated letters:
                        n=normal, t or q=too-quiet, p=perfect, a or all=all three.
@@ -167,6 +171,7 @@ Environment:
   LOUDNESS_READ_TIMEOUT     Seconds to wait for a single-key interactive prompt
                               (default: 600 = 10 minutes; 0 = wait forever).
                               The post-scan classes line prompt waits until Enter.
+  LOUDNESS_USE_COLORS       yes or no (same as --colors). Interactive default: yes.
 
 Exit status:
   0  Scan OK and (if requested) normalization finished without failures.
@@ -177,7 +182,7 @@ Examples:
   cd /path/to/clips && $(basename "$0")
   cd /path/to/clips && $(basename "$0") --scan-only
   cd /path/to/tree && $(basename "$0") --scan-only --scope subdirs
-  $(basename "$0") -n youtube -y --save-original
+  $(basename "$0") -n youtube -y --save-original --colors yes
   $(basename "$0") --print-cli-only
   $(basename "$0") -n standard -- quiet_interview.mkv
 EOF
@@ -204,6 +209,8 @@ LOUDNESS_CLASSES_RESOLVED=0
 LOUDNESS_CLASS_NORMAL=0
 LOUDNESS_CLASS_TOO_QUIET=0
 LOUDNESS_CLASS_PERFECT=0
+LOUDNESS_USE_COLORS="${LOUDNESS_USE_COLORS:-}"
+LOUDNESS_COLORS_CLI=0
 LOUDNESS_BATCH_CHOICE_DECISION=""
 LOUDNESS_BATCH_CHOICE_ACTION=""
 LOUDNESS_SAVE_ORIGINAL="${LOUDNESS_SAVE_ORIGINAL:-0}"
@@ -305,6 +312,20 @@ while [[ $# -gt 0 ]]; do
       [[ $# -ge 2 ]] || { echo "Missing value for --classes" >&2; exit 1; }
       LOUDNESS_CLASSES="$2"
       LOUDNESS_CLASSES_CLI=1
+      shift 2
+      ;;
+    --colors)
+      ANY_CLI_OPTIONS=1
+      [[ $# -ge 2 ]] || { echo "Missing value for --colors" >&2; exit 1; }
+      case "${2,,}" in
+        yes|y|1|true) LOUDNESS_USE_COLORS=yes ;;
+        no|n|0|false) LOUDNESS_USE_COLORS=no ;;
+        *)
+          echo "Invalid value for --colors: $2 (use yes or no)" >&2
+          exit 1
+          ;;
+      esac
+      LOUDNESS_COLORS_CLI=1
       shift 2
       ;;
     --)
@@ -409,6 +430,76 @@ LOUDNESS_TMP_FILE=""
 LOUDNESS_INTERRUPT_RESTORE_DEST=""
 LOUDNESS_INTERRUPT_RESTORE_BACKUP=""
 LOUDNESS_INTERRUPT_CLEANUP_DONE=0
+RED=''
+GREEN=''
+CYAN=''
+YELLOW=''
+BOLD=''
+RESET=''
+
+loudness_colors_enabled() {
+  [[ "$LOUDNESS_USE_COLORS" == yes ]]
+}
+
+loudness_init_colors() {
+  if loudness_colors_enabled; then
+    RED='\e[31m'
+    GREEN='\e[32m'
+    CYAN='\e[36m'
+    YELLOW='\e[33m'
+    BOLD='\e[1m'
+    RESET='\e[0m'
+  else
+    RED=''
+    GREEN=''
+    CYAN=''
+    YELLOW=''
+    BOLD=''
+    RESET=''
+  fi
+}
+
+loudness_normalize_use_colors_token() {
+  case "${LOUDNESS_USE_COLORS,,}" in
+    yes|y|1|true) LOUDNESS_USE_COLORS=yes ;;
+    no|n|0|false) LOUDNESS_USE_COLORS=no ;;
+    '')
+      return 1
+      ;;
+    *)
+      echo "Invalid LOUDNESS_USE_COLORS / --colors: ${LOUDNESS_USE_COLORS}" >&2
+      exit 1
+      ;;
+  esac
+}
+
+prompt_use_colors() {
+  (( PRINT_CLI_ONLY )) && loudness_print_cli_only_section 'Terminal colors'
+  echo 'Use colors in the terminal?'
+  echo '  [Y] Yes (default)'
+  echo '  [N] No'
+  echo '  [Q] Quit'
+  loudness_read_key 'Use colors? [Y/n/q]: ' Y
+  case "${REPLY^^}" in
+    Q) loudness_quit_now ;;
+    N) LOUDNESS_USE_COLORS=no ;;
+    *) LOUDNESS_USE_COLORS=yes ;;
+  esac
+  if [[ "$LOUDNESS_USE_COLORS" == no ]]; then
+    cli_equiv_note 'CLI: --colors no'
+  fi
+}
+
+loudness_resolve_use_colors() {
+  if ! loudness_normalize_use_colors_token; then
+    if loudness_wants_wizard_prompts || (( PRINT_CLI_ONLY )); then
+      prompt_use_colors
+    else
+      LOUDNESS_USE_COLORS=no
+    fi
+  fi
+  loudness_init_colors
+}
 
 loudness_begin_file_normalize() {
   local dest="$1" backup="$2" src="$3"
@@ -634,6 +725,11 @@ cli_print_built_command() {
   fi
   if [[ -n "$LOUDNESS_BATCH_SIZE" && "$LOUDNESS_BATCH_SIZE" != 50 ]]; then
     parts+=( --batch-size "$LOUDNESS_BATCH_SIZE" )
+  fi
+  if [[ "$LOUDNESS_USE_COLORS" == no ]]; then
+    parts+=( --colors no )
+  elif (( LOUDNESS_COLORS_CLI )) && [[ "$LOUDNESS_USE_COLORS" == yes ]]; then
+    parts+=( --colors yes )
   fi
 
   file_count="${#CLI_SELECTED_FILES[@]}"
@@ -1689,7 +1785,11 @@ REPORT_DB_FMT_W=10
 
 print_loudness_class_legend() {
   local label_w=9 range_w=18
-  printf '  %-*s  %-*s  — %s\n' "$label_w" 'PERFECT'   "$range_w" ' 0.0 to -2.0 dB'   'do not normalize'
+  if loudness_colors_enabled; then
+    printf '  %b%-*s%b  %-*s  — %s\n' "$GREEN" "$label_w" 'PERFECT' "$RESET" "$range_w" ' 0.0 to -2.0 dB' 'do not normalize'
+  else
+    printf '  %-*s  %-*s  — %s\n' "$label_w" 'PERFECT' "$range_w" ' 0.0 to -2.0 dB' 'do not normalize'
+  fi
   printf '  %-*s  %-*s  — %s\n' "$label_w" 'NORMAL'    "$range_w" '-2.0 to -6.0 dB'   'usually fine'
   printf '  %-*s  %-*s  — %s\n' "$label_w" 'TOO QUIET' "$range_w" '-6.0 dB or lower' 'loudnorm candidates'
 }
@@ -1778,9 +1878,22 @@ print_report_table_header() {
 print_report_table_row() {
   local file="$1" max_val="$2" mean_val="$3" status="$4"
   local file_cell max_cell mean_cell
+
   file_cell="$(format_scan_file_cell "$file" "$REPORT_FILE_W")"
   max_cell="$(format_scan_db_cell "$max_val" "$REPORT_MAX_W")"
   mean_cell="$(format_scan_db_cell "$mean_val" "$REPORT_MEAN_W")"
+
+  if [[ "$status" == PERFECT ]] && loudness_colors_enabled; then
+    local status_cell
+    status_cell="$(printf '%-*s' "$REPORT_STATUS_W" "$status")"
+    printf '%b%s%b%s%s%s%s%s%s%b%s%b\n' \
+      "${GREEN}" "$file_cell" "${RESET}" "$REPORT_COL_GAP" \
+      "$max_cell" "$REPORT_COL_GAP" \
+      "$mean_cell" "$REPORT_COL_GAP" \
+      "${GREEN}" "$status_cell" "${RESET}"
+    return 0
+  fi
+
   printf '%s%s%s%s%s%s%-*s\n' \
     "$file_cell" "$REPORT_COL_GAP" \
     "$max_cell" "$REPORT_COL_GAP" \
@@ -2535,6 +2648,8 @@ if (( PRINT_CLI_ONLY )) && ! loudness_is_interactive; then
 fi
 
 loudness_window_title_apply
+
+loudness_resolve_use_colors
 
 if (( ${#CLI_FILES[@]} == 0 )); then
   if loudness_wants_wizard_prompts && (( ! LOUDNESS_SCAN_SCOPE_CLI )); then
