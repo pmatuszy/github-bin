@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.06.17 - v. 0.5.4 - interactive normalize prompt defaults to YouTube
 # 2026.06.17 - v. 0.5.3 - --scan-only: measure cwd non-interactively, no normalize
 # 2026.06.17 - v. 0.5.2 - CLI flags skip startup/wizard prompts on a TTY (-y batch)
 # 2026.06.17 - v. 0.5.1 - Ctrl-C: remove temp output, restore *.backup.deleteme if moved aside
@@ -1453,15 +1454,15 @@ prompt_normalize_mode() {
     echo "No files available for normalization."
   fi
   echo "  [S] Standard loudnorm"
-  echo "  [Y] YouTube-style loudnorm (I=-16:TP=-1.0:LRA=11)"
-  echo "  [N] Skip normalization (default)"
+  echo "  [Y] YouTube-style loudnorm (I=-16:TP=-1.0:LRA=11) (default)"
+  echo "  [N] Skip normalization"
   echo "  [Q] Quit"
-  loudness_read_key 'Normalize? [S/y/N/q]: ' N
+  loudness_read_key 'Normalize? [S/Y/n/q]: ' Y
   case "${REPLY^^}" in
     Q) loudness_quit_now ;;
     S) NORMALIZE_MODE=standard ;;
-    Y) NORMALIZE_MODE=youtube ;;
-    *) NORMALIZE_MODE=none ;;
+    N) NORMALIZE_MODE=none ;;
+    *) NORMALIZE_MODE=youtube ;;
   esac
   if (( PRINT_CLI_ONLY )); then
     if [[ "$NORMALIZE_MODE" == none ]]; then
