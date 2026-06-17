@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.06.17 - v. 0.5.5 - scan scope: current directory or subdirectories (--scope)
 # 2026.06.17 - v. 0.5.4 - interactive normalize prompt defaults to YouTube
 # 2026.06.17 - v. 0.5.3 - --scan-only: measure cwd non-interactively, no normalize
 # 2026.06.17 - v. 0.5.2 - CLI flags skip startup/wizard prompts on a TTY (-y batch)
@@ -53,11 +54,11 @@ print_version_banner() {
 show_help() {
   cat <<EOF
 Usage: $(basename "$0") [-h|--help] [-v|--version] [--no_startup_delay]
-       [-n standard|youtube|none] [-y] [--scan-only] [--print-cli-only] [-- FILE ...]
+       [-n standard|youtube|none] [-y] [--scope current|subdirs] [--scan-only]
+       [--print-cli-only] [-- FILE ...]
 
-Scan the current directory for audio and video files and measure loudness with
-ffmpeg volumedetect (video is ignored for speed). Each file is classified by
-peak level (max_volume):
+Scan for audio and video files and measure loudness with ffmpeg volumedetect
+(video is ignored for speed). Each file is classified by peak level (max_volume):
 
   PERFECT (0.0 to -2.0 dB)     Already near digital maximum — do not normalize.
   NORMAL  (-2.0 to -6.0 dB)    Usually fine; normalize only if you want louder mix.
@@ -71,7 +72,8 @@ Supported extensions (case-insensitive):
   Audio: .mp3 .flac .wav .m4a .aac .ogg .opus .wma
 
 With FILE operands, only those paths are checked (must exist). Without FILE,
-every supported file in the current working directory is scanned.
+media files are discovered in the working directory — current folder only by
+default, or the whole tree with --scope subdirs (interactive default: subdirs).
 
 When no command-line options are given (only optional FILE operands), the script
 runs in interactive mode: it asks before scanning and prints each result row as
@@ -107,8 +109,11 @@ Options:
   --print-cli-only     Interactive dry-run: answer the usual prompts but do not
                        scan, normalize, or modify any file. Prints an equivalent
                        non-interactive command at the end.
-  --scan-only          Scan media in the current directory only; no prompts and
-                       no normalization (exit 0 when scan completes).
+  --scan-only          Measure loudness only; no prompts and no normalization
+                       (exit 0 when scan completes).
+  --scope current|subdirs
+                       current = files in cwd only; subdirs = cwd and all
+                       subfolders (skip the interactive scope question).
   --include-perfect    With -n youtube, normalize PERFECT files too (skip the
                        interactive question).
   --no_startup_delay   Skip random startup delay when run non-interactively
@@ -129,6 +134,7 @@ Environment:
                               aside (same as --replace-backup).
   LOUDNESS_BACKUP_ON_CONFLICT  Non-interactive when backup exists: replace, keep
                               (normalize in place; default), or skip.
+  LOUDNESS_SCAN_SCOPE       current or subdirs (same as --scope).
 
 Exit status:
   0  Scan OK and (if requested) normalization finished without failures.
@@ -138,6 +144,7 @@ Exit status:
 Examples:
   cd /path/to/clips && $(basename "$0")
   cd /path/to/clips && $(basename "$0") --scan-only
+  cd /path/to/tree && $(basename "$0") --scan-only --scope subdirs
   $(basename "$0") -n youtube -y --save-original
   $(basename "$0") --print-cli-only
   $(basename "$0") -n standard -- quiet_interview.mkv
@@ -154,6 +161,8 @@ CLI_FILES=()
 ANY_CLI_OPTIONS=0
 PRINT_CLI_ONLY=0
 SCAN_ONLY=0
+LOUDNESS_SCAN_SCOPE="${LOUDNESS_SCAN_SCOPE:-}"
+LOUDNESS_SCAN_SCOPE_CLI=0
 LOUDNESS_SAVE_ORIGINAL="${LOUDNESS_SAVE_ORIGINAL:-0}"
 LOUDNESS_SAVE_ORIGINAL_CLI=0
 LOUDNESS_INCLUDE_PERFECT="${LOUDNESS_INCLUDE_PERFECT:-0}"
@@ -222,6 +231,20 @@ while [[ $# -gt 0 ]]; do
       SCAN_ONLY=1
       shift
       ;;
+    --scope)
+      ANY_CLI_OPTIONS=1
+      [[ $# -ge 2 ]] || { echo "Missing value for --scope" >&2; exit 1; }
+      case "${2,,}" in
+        current|c) LOUDNESS_SCAN_SCOPE=current ;;
+        subdirs|s) LOUDNESS_SCAN_SCOPE=subdirs ;;
+        *)
+          echo "Invalid value for --scope: $2 (use current or subdirs)" >&2
+          exit 1
+          ;;
+      esac
+      LOUDNESS_SCAN_SCOPE_CLI=1
+      shift 2
+      ;;
     --)
       shift
       CLI_FILES+=( "$@" )
@@ -275,7 +298,7 @@ if (( SCAN_ONLY )); then
   fi
   NORMALIZE_MODE=none
   if (( ${#CLI_FILES[@]} > 0 )); then
-    echo 'NOTE: --scan-only scans the current directory only; ignoring FILE operands.' >&2
+    echo 'NOTE: --scan-only ignores FILE operands; scanning by scope instead.' >&2
     CLI_FILES=()
   fi
 fi
@@ -540,6 +563,9 @@ cli_print_built_command() {
   (( LOUDNESS_INCLUDE_PERFECT )) && parts+=( --include-perfect )
   (( LOUDNESS_SAVE_ORIGINAL )) && parts+=( --save-original )
   (( LOUDNESS_REPLACE_BACKUP )) && parts+=( --replace-backup )
+  if [[ -n "$LOUDNESS_SCAN_SCOPE" && ${#CLI_FILES[@]} == 0 ]]; then
+    parts+=( --scope "$LOUDNESS_SCAN_SCOPE" )
+  fi
 
   file_count="${#CLI_SELECTED_FILES[@]}"
   if (( file_count > 1 )); then
@@ -637,7 +663,7 @@ run_print_cli_only_session() {
   loudness_print_cli_only_banner
 
   if (( ${#MEDIA_FILES[@]} == 0 )); then
-    echo "No supported audio/video files found in $(pwd)."
+    echo "No supported audio/video files found under $(pwd) ($(loudness_scan_scope_label))."
     echo "Extensions: ${MEDIA_EXTENSIONS[*]}"
     kod_powrotu=0
     exit 0
@@ -708,8 +734,79 @@ prompt_youtube_include_perfect_print_cli() {
 }
 
 # Collect unique paths (sorted) from cwd or CLI operands.
-collect_media_files() {
+normalize_loudness_scan_scope() {
+  case "${LOUDNESS_SCAN_SCOPE,,}" in
+    current|c) LOUDNESS_SCAN_SCOPE=current ;;
+    subdirs|s|recursive|tree) LOUDNESS_SCAN_SCOPE=subdirs ;;
+    *)
+      echo "Invalid LOUDNESS_SCAN_SCOPE / --scope: ${LOUDNESS_SCAN_SCOPE}" >&2
+      echo "Use: current or subdirs" >&2
+      return 1
+      ;;
+  esac
+}
+
+loudness_scan_scope_label() {
+  case "$LOUDNESS_SCAN_SCOPE" in
+    subdirs) printf '%s' 'current directory and subdirectories' ;;
+    *)       printf '%s' 'current directory only' ;;
+  esac
+}
+
+prompt_scan_scope() {
+  (( PRINT_CLI_ONLY )) && loudness_print_cli_only_section 'Scan scope'
+  echo
+  echo 'What should be scanned?'
+  echo '  [S] Also subdirectories (default)'
+  echo '  [C] Current directory only'
+  echo '  [Q] Quit'
+  loudness_read_key 'Scan scope? [S/c/q]: ' S
+  case "${REPLY^^}" in
+    Q) loudness_quit_now ;;
+    C) LOUDNESS_SCAN_SCOPE=current ;;
+    *) LOUDNESS_SCAN_SCOPE=subdirs ;;
+  esac
+  echo "Scope: $(loudness_scan_scope_label)"
+  (( PRINT_CLI_ONLY )) && cli_equiv_note "CLI: --scope ${LOUDNESS_SCAN_SCOPE}"
+  echo
+}
+
+collect_media_files_current_dir() {
   local -a found=() f ext
+  declare -A seen=()
+
+  for ext in "${MEDIA_EXTENSIONS[@]}"; do
+    while IFS= read -r -d '' f; do
+      f="${f#./}"
+      [[ -f "$f" ]] || continue
+      [[ -n "${seen[$f]+x}" ]] && continue
+      seen[$f]=1
+      found+=( "$f" )
+    done < <(find . -maxdepth 1 -type f -iname "*.${ext}" -print0 2>/dev/null)
+  done
+
+  printf '%s\n' "${found[@]}"
+}
+
+collect_media_files_subdirs() {
+  local -a found=() f ext
+  declare -A seen=()
+
+  for ext in "${MEDIA_EXTENSIONS[@]}"; do
+    while IFS= read -r -d '' f; do
+      f="${f#./}"
+      [[ -f "$f" ]] || continue
+      [[ -n "${seen[$f]+x}" ]] && continue
+      seen[$f]=1
+      found+=( "$f" )
+    done < <(find . -type f -iname "*.${ext}" -print0 2>/dev/null)
+  done
+
+  printf '%s\n' "${found[@]}"
+}
+
+collect_media_files() {
+  local -a found=()
   declare -A seen=()
 
   if (( ${#CLI_FILES[@]} > 0 )); then
@@ -722,17 +819,10 @@ collect_media_files() {
       seen[$f]=1
       found+=( "$f" )
     done
+  elif [[ "$LOUDNESS_SCAN_SCOPE" == subdirs ]]; then
+    mapfile -t found < <(collect_media_files_subdirs)
   else
-    for ext in "${MEDIA_EXTENSIONS[@]}"; do
-      for f in *."$ext"; do
-        [[ -f "$f" ]] || continue
-        if [[ -n "${seen[$f]+x}" ]]; then
-          continue
-        fi
-        seen[$f]=1
-        found+=( "$f" )
-      done
-    done
+    mapfile -t found < <(collect_media_files_current_dir)
   fi
 
   if (( ${#found[@]} == 0 )); then
@@ -1632,20 +1722,37 @@ fi
 
 loudness_window_title_apply
 
+if (( ${#CLI_FILES[@]} == 0 )); then
+  if loudness_wants_wizard_prompts && (( ! LOUDNESS_SCAN_SCOPE_CLI )); then
+    prompt_scan_scope
+  fi
+  if [[ -z "$LOUDNESS_SCAN_SCOPE" ]]; then
+    LOUDNESS_SCAN_SCOPE=current
+  fi
+  if ! normalize_loudness_scan_scope; then
+    kod_powrotu=1
+    exit 1
+  fi
+fi
+
 MEDIA_FILES=()
 if ! collect_media_files; then
   kod_powrotu=1
   exit 1
 fi
 
-echo "Audio loudness scan: $(pwd)"
+if (( ${#CLI_FILES[@]} > 0 )); then
+  echo "Audio loudness scan: $(pwd) (${#MEDIA_FILES[@]} explicit file(s))"
+else
+  echo "Audio loudness scan: $(pwd) ($(loudness_scan_scope_label))"
+fi
 echo "Classification (max_volume peak):"
 print_loudness_class_legend
 echo "Tool: ffmpeg volumedetect (-vn for video files)"
 echo
 
 if (( ${#MEDIA_FILES[@]} == 0 )); then
-  echo "No supported audio/video files found in $(pwd)."
+  echo "No supported audio/video files found under $(pwd) ($(loudness_scan_scope_label))."
   echo "Extensions: ${MEDIA_EXTENSIONS[*]}"
   kod_powrotu=0
   exit 0
