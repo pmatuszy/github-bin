@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.06.17 - v. 0.5.20 - fix terminal colors: use ANSI bytes, not \\e in printf %b
 # 2026.06.17 - v. 0.5.19 - prompt menus: default option letter uppercase only
 # 2026.06.17 - v. 0.5.18 - terminal colors option (--colors); PERFECT rows green in scan table
 # 2026.06.17 - v. 0.5.17 - dB: print 0.0 not -0.0; classes prompt no timeout; per-file default Y/N by class
@@ -444,12 +445,12 @@ loudness_colors_enabled() {
 
 loudness_init_colors() {
   if loudness_colors_enabled; then
-    RED='\e[31m'
-    GREEN='\e[32m'
-    CYAN='\e[36m'
-    YELLOW='\e[33m'
-    BOLD='\e[1m'
-    RESET='\e[0m'
+    RED=$'\033[31m'
+    GREEN=$'\033[32m'
+    CYAN=$'\033[36m'
+    YELLOW=$'\033[33m'
+    BOLD=$'\033[1m'
+    RESET=$'\033[0m'
   else
     RED=''
     GREEN=''
