@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.06.18 - v. 19.217.143000 - CIFS DB: python3 sqlite3 ?nolock=1 when CLI lacks -uri; maintenance local staging fallback
 # 2026.06.18 - v. 19.216.143000 - fix sqlite3 -uri probe (file::memory: not :memory:); accurate URI diagnostics
 # 2026.06.18 - v. 19.215.143000 - DB diagnostics: lsof/fuser on cache files; rename.sh PIDs with cwd / cache path
 # 2026.06.18 - v. 19.214.143000 - DB maintenance: auto diagnostics on cache lock; WAL sidecar recovery on CIFS; --db-maint-fix-wal
@@ -639,6 +640,10 @@ RENAME_SQLITE3_URI_PROBED=""
 RENAME_SQLITE3_HAS_URI_FLAG=""
 RENAME_SQLITE3_URI_PROBE_DETAIL=""
 RENAME_SQLITE3_URI_FALLBACK_WARNED=""
+RENAME_SQLITE3_PYTHON_URI_PROBED=""
+RENAME_SQLITE3_PYTHON_URI_OK=0
+DB_MAINT_LOCAL_STAGE_ORIG=""
+DB_MAINT_LOCAL_STAGE_TMP=""
 DB_HASHES_ADDED=0
 DB_ROWS_NEW=0
 DB_ROWS_UPDATED=0
@@ -2421,6 +2426,9 @@ rename_sqlite3_diag_print_cli_info() {
     rename_sqlite3_probe_cli_uri_support
     if (( RENAME_SQLITE3_HAS_URI_FLAG == 1 )); then
         db_sqlite_maintenance_diag_line "  sqlite3 -uri: supported (?nolock=1 usable on CIFS/SMB)"
+    elif rename_sqlite3_probe_python_uri_support && (( RENAME_SQLITE3_PYTHON_URI_OK == 1 )); then
+        db_sqlite_maintenance_diag_line "  sqlite3 -uri: NOT in CLI (${RENAME_SQLITE3_URI_PROBE_DETAIL:-unknown option})"
+        db_sqlite_maintenance_diag_line "  python3 sqlite3 URI: supported (?nolock=1 fallback active)"
     elif rename_sqlite3_version_at_least 3 7 13; then
         db_sqlite_maintenance_diag_line "  sqlite3 -uri: probe FAILED despite sqlite ${ver_num} (CLI may be built without URI filenames)"
         [[ -n "${RENAME_SQLITE3_URI_PROBE_DETAIL:-}" ]] && \
@@ -2432,29 +2440,129 @@ rename_sqlite3_diag_print_cli_info() {
     fi
 }
 
+rename_sqlite3_probe_python_uri_support() {
+    [[ -n "$RENAME_SQLITE3_PYTHON_URI_PROBED" ]] && return 0
+    RENAME_SQLITE3_PYTHON_URI_PROBED=1
+    RENAME_SQLITE3_PYTHON_URI_OK=0
+    command -v python3 >/dev/null 2>&1 || return 0
+    if python3 -c 'import sqlite3; c=sqlite3.connect("file::memory:?cache=shared", uri=True); c.execute("select 1")' >/dev/null 2>&1; then
+        RENAME_SQLITE3_PYTHON_URI_OK=1
+    fi
+}
+
+# Run SQL via python3 sqlite3 when the CLI lacks -uri but ?nolock=1 is required (typical on CIFS/SMB).
+rename_sqlite3_python_db_run() {
+    local batch=0 separator='|' sql="" sql_from_stdin=""
+    local -a sql_parts=()
+
+    while (( $# > 0 )); do
+        case "$1" in
+            -batch) batch=1; shift ;;
+            -separator)
+                [[ $# -ge 2 ]] || return 1
+                separator="$2"
+                shift 2
+                ;;
+            *)
+                sql_parts+=( "$1" )
+                shift
+                ;;
+        esac
+    done
+
+    if (( ${#sql_parts[@]} > 0 )); then
+        sql="${sql_parts[*]}"
+    fi
+    if [[ -z "$sql" ]] && ! [[ -t 0 ]]; then
+        sql_from_stdin="$(cat)"
+        sql="$sql_from_stdin"
+    fi
+    [[ -n "$sql" ]] || return 1
+    [[ -n "$DB_SQLITE_URI" ]] || return 1
+
+    RS_PY_BATCH="$batch" RS_PY_SEP="$separator" RS_PY_SQL="$sql" \
+    DB_SQLITE_URI="$DB_SQLITE_URI" python3 <<'PY'
+import os, sqlite3, sys
+
+uri = os.environ.get("DB_SQLITE_URI", "")
+sql = os.environ.get("RS_PY_SQL", "")
+sep = os.environ.get("RS_PY_SEP", "|")
+batch = os.environ.get("RS_PY_BATCH", "")
+
+if not uri or not sql:
+    sys.exit(1)
+
+def emit_rows(cur):
+    for row in cur:
+        sys.stdout.write(sep.join("" if v is None else str(v) for v in row))
+        sys.stdout.write("\n")
+
+def run_statement(conn, stmt):
+    s = stmt.strip()
+    if not s:
+        return
+    upper = s.lstrip().upper()
+    if upper.startswith("SELECT") or upper.startswith("WITH"):
+        cur = conn.execute(s)
+        emit_rows(cur)
+    elif upper.startswith("PRAGMA"):
+        cur = conn.execute(s)
+        if cur.description:
+            emit_rows(cur)
+    else:
+        conn.execute(s)
+
+conn = sqlite3.connect(uri, uri=True, timeout=60.0)
+try:
+    if batch:
+        conn.executescript(sql)
+    else:
+        for part in sql.split(";"):
+            run_statement(conn, part)
+    conn.commit()
+except sqlite3.Error as e:
+    print(str(e), file=sys.stderr)
+    sys.exit(1)
+finally:
+    conn.close()
+PY
+}
+
+rename_sqlite3_wants_python_uri_backend() {
+    [[ -n "$DB_SQLITE_USE_URI" && -n "$DB_SQLITE_URI" ]] || return 1
+    rename_sqlite3_probe_cli_uri_support
+    (( RENAME_SQLITE3_HAS_URI_FLAG == 1 )) && return 1
+    rename_sqlite3_probe_python_uri_support
+    (( RENAME_SQLITE3_PYTHON_URI_OK == 1 ))
+}
+
 # Central open path so optional URI+nolock applies to every sqlite3 use of the cache DB.
 rename_sqlite3_db_run() {
     if [[ -n "$DB_SQLITE_USE_URI" ]]; then
         rename_sqlite3_probe_cli_uri_support
         if (( RENAME_SQLITE3_HAS_URI_FLAG == 1 )); then
             sqlite3 -uri "$DB_SQLITE_URI" "$@"
-        else
-            if [[ -z "$RENAME_SQLITE3_URI_FALLBACK_WARNED" ]]; then
-                RENAME_SQLITE3_URI_FALLBACK_WARNED=1
-                local sqlite_uri_warn_msg
-                sqlite_uri_warn_msg="WARNING: this sqlite3 has no -uri option (need 3.7.13+ for file:...?nolock=1). Opening the cache by filesystem path instead; on CIFS/SMB you may see \"database is locked\" — install a newer sqlite3 or use a local cache directory."
-                if (( ${#sqlite_uri_warn_msg} <= MAX_LINE_LENGTH )); then
-                    echo "$sqlite_uri_warn_msg" >&2
-                else
-                    echo "WARNING: this sqlite3 has no -uri option (need 3.7.13+ for file:...?nolock=1). Opening the cache by filesystem path instead;" >&2
-                    echo "          On CIFS/SMB you may see \"database is locked\" — install a newer sqlite3 or use a local cache directory." >&2
-                fi
-            fi
-            sqlite3 "$DB_FILE" "$@"
+            return $?
         fi
-    else
+        if rename_sqlite3_wants_python_uri_backend; then
+            rename_sqlite3_python_db_run "$@"
+            return $?
+        fi
+        if [[ -z "$RENAME_SQLITE3_URI_FALLBACK_WARNED" ]]; then
+            RENAME_SQLITE3_URI_FALLBACK_WARNED=1
+            local sqlite_uri_warn_msg
+            sqlite_uri_warn_msg="WARNING: sqlite3 CLI has no -uri option and python3 sqlite3 URI mode is unavailable. Opening the cache by filesystem path instead; on CIFS/SMB you may see \"database is locked\" — install a sqlite3 CLI with -uri or ensure python3 supports sqlite3.connect(..., uri=True)."
+            if (( ${#sqlite_uri_warn_msg} <= MAX_LINE_LENGTH )); then
+                echo "$sqlite_uri_warn_msg" >&2
+            else
+                echo "WARNING: sqlite3 CLI has no -uri option and python3 sqlite3 URI mode is unavailable." >&2
+                echo "          Opening the cache by filesystem path instead; on CIFS/SMB you may see \"database is locked\"." >&2
+            fi
+        fi
         sqlite3 "$DB_FILE" "$@"
+        return $?
     fi
+    sqlite3 "$DB_FILE" "$@"
 }
 
 db_flush_pending() {
@@ -2734,6 +2842,44 @@ db_sqlite_maintenance_switch_to_nolock() {
     return 1
 }
 
+# Copy cache DB to local disk for maintenance when CIFS in-place open fails.
+db_sqlite_maintenance_begin_local_stage() {
+    local tmp=""
+
+    [[ -f "$DB_FILE" ]] || return 1
+    tmp="$(mktemp "${TMPDIR:-/tmp}/rename.sh.maint.XXXXXX")" || return 1
+    rm -f -- "$tmp"
+    tmp="${tmp}.sqlite3"
+    if ! cp -f -- "$DB_FILE" "$tmp" 2>/dev/null; then
+        rm -f -- "$tmp"
+        return 1
+    fi
+    DB_MAINT_LOCAL_STAGE_ORIG="$DB_FILE"
+    DB_MAINT_LOCAL_STAGE_TMP="$tmp"
+    DB_FILE="$tmp"
+    DB_SQLITE_USE_URI=""
+    DB_SQLITE_URI=""
+    startup_progress "SQLite maintenance: using local staging copy (${tmp}) — share cache unreadable in place"
+    return 0
+}
+
+db_sqlite_maintenance_finish_local_stage() {
+    [[ -n "$DB_MAINT_LOCAL_STAGE_ORIG" && -n "$DB_MAINT_LOCAL_STAGE_TMP" ]] || return 0
+    [[ -f "$DB_MAINT_LOCAL_STAGE_TMP" ]] || return 1
+    db_clear_sqlite_sidecar_files
+    if cp -f -- "$DB_MAINT_LOCAL_STAGE_TMP" "$DB_MAINT_LOCAL_STAGE_ORIG"; then
+        startup_progress "SQLite maintenance: copied updated cache back to ${DB_MAINT_LOCAL_STAGE_ORIG}"
+    else
+        echo "ERROR: could not copy maintenance cache back to ${DB_MAINT_LOCAL_STAGE_ORIG}" >&2
+        echo "Updated DB left at: ${DB_MAINT_LOCAL_STAGE_TMP}" >&2
+        return 1
+    fi
+    rm -f -- "$DB_MAINT_LOCAL_STAGE_TMP"
+    DB_MAINT_LOCAL_STAGE_ORIG=""
+    DB_MAINT_LOCAL_STAGE_TMP=""
+    return 0
+}
+
 db_sqlite_maintenance_diag_line() {
     startup_progress "SQLite diagnostics: $*"
 }
@@ -2753,8 +2899,7 @@ db_sqlite_maintenance_try_wal_sidecar_recovery() {
     startup_progress "SQLite maintenance: attempting WAL sidecar recovery (checkpoint TRUNCATE, journal_mode=DELETE, remove -wal/-shm)..."
 
     uri="$(db_sqlite_file_uri_nolock 2>/dev/null)" || uri=""
-    rename_sqlite3_probe_cli_uri_support
-    if [[ -n "$uri" ]] && (( RENAME_SQLITE3_HAS_URI_FLAG == 1 )); then
+    if [[ -n "$uri" ]]; then
         DB_SQLITE_USE_URI=1
         DB_SQLITE_URI="$uri"
         rename_sqlite3_db_run >/dev/null 2>&1 <<'SQL' || true
@@ -2786,14 +2931,21 @@ db_sqlite_maintenance_probe_sqlite_read() {
 
     err="$(mktemp)"
     if (( use_uri == 1 )) && uri="$(db_sqlite_file_uri_nolock 2>/dev/null)"; then
-        rename_sqlite3_probe_cli_uri_support
-        if (( RENAME_SQLITE3_HAS_URI_FLAG == 1 )); then
-            count="$(sqlite3 -uri -cmd 'PRAGMA busy_timeout=5000' "$uri" 'SELECT COUNT(*) FROM checked_paths;' 2>"$err")"
+        if rename_sqlite3_wants_python_uri_backend; then
+            DB_SQLITE_USE_URI=1
+            DB_SQLITE_URI="$uri"
+            count="$(rename_sqlite3_python_db_run 'PRAGMA busy_timeout=60000; SELECT COUNT(*) FROM checked_paths;' 2>"$err")"
             rc=$?
         else
-            count=""
-            rc=1
-            printf '%s\n' "${RENAME_SQLITE3_URI_PROBE_DETAIL:--uri not available (probe failed)}" >"$err"
+            rename_sqlite3_probe_cli_uri_support
+            if (( RENAME_SQLITE3_HAS_URI_FLAG == 1 )); then
+                count="$(sqlite3 -uri -cmd 'PRAGMA busy_timeout=5000' "$uri" 'SELECT COUNT(*) FROM checked_paths;' 2>"$err")"
+                rc=$?
+            else
+                count=""
+                rc=1
+                printf '%s\n' "${RENAME_SQLITE3_URI_PROBE_DETAIL:--uri not available (probe failed)}" >"$err"
+            fi
         fi
     else
         count="$(sqlite3 -cmd 'PRAGMA busy_timeout=5000' "$DB_FILE" 'SELECT COUNT(*) FROM checked_paths;' 2>"$err")"
@@ -2941,10 +3093,14 @@ db_sqlite_maintenance_diagnose_open_failure() {
     fi
 
     rename_sqlite3_probe_cli_uri_support
-    if [[ -n "${DB_SQLITE_USE_URI:-}" ]] && (( RENAME_SQLITE3_HAS_URI_FLAG == 1 )); then
+    if rename_sqlite3_wants_python_uri_backend; then
+        db_sqlite_maintenance_diag_line "open mode: python3 sqlite3 module with ?nolock=1 (CLI lacks -uri)"
+    elif [[ -n "${DB_SQLITE_USE_URI:-}" ]] && (( RENAME_SQLITE3_HAS_URI_FLAG == 1 )); then
         db_sqlite_maintenance_diag_line "open mode: sqlite3 -uri with ?nolock=1"
     elif [[ -n "${DB_SQLITE_USE_URI:-}" ]] && (( RENAME_SQLITE3_HAS_URI_FLAG == 0 )); then
-        db_sqlite_maintenance_diag_line "open mode: ?nolock requested but sqlite3 -uri unavailable — fell back to plain path"
+        db_sqlite_maintenance_diag_line "open mode: ?nolock requested but neither CLI -uri nor python3 URI available — plain path"
+    elif [[ -n "$DB_MAINT_LOCAL_STAGE_TMP" ]]; then
+        db_sqlite_maintenance_diag_line "open mode: local staging copy (${DB_MAINT_LOCAL_STAGE_TMP})"
     else
         db_sqlite_maintenance_diag_line "open mode: plain filesystem path"
     fi
@@ -3005,7 +3161,11 @@ db_open_cache_for_maintenance() {
         DB_SQLITE_USE_URI=1
         DB_SQLITE_URI="$uri"
         opened_with_nolock=1
-        startup_progress "SQLite maintenance: network/CIFS-style mount detected — opening cache with ?nolock=1"
+        if rename_sqlite3_wants_python_uri_backend; then
+            startup_progress "SQLite maintenance: CIFS/SMB mount — using python3 sqlite3 with ?nolock=1 (CLI lacks -uri)"
+        else
+            startup_progress "SQLite maintenance: network/CIFS-style mount detected — opening cache with ?nolock=1"
+        fi
         if ! db_init_create_checked_paths_schema_core; then
             DB_SQLITE_USE_URI=""
             DB_SQLITE_URI=""
@@ -3044,6 +3204,12 @@ db_open_cache_for_maintenance() {
             if db_sqlite_maintenance_should_try_wal_recovery; then
                 db_sqlite_maintenance_try_wal_sidecar_recovery
                 wal_recovery_tried=1
+                probe_count="$(db_sqlite_maintenance_count_rows 2>/dev/null)" || probe_count=""
+            fi
+        fi
+        if [[ -z "$probe_count" ]] || ! [[ "$probe_count" =~ ^[0-9]+$ ]]; then
+            if [[ -z "$DB_MAINT_LOCAL_STAGE_TMP" ]] && db_sqlite_maintenance_begin_local_stage; then
+                db_upgrade_checked_paths_schema
                 probe_count="$(db_sqlite_maintenance_count_rows 2>/dev/null)" || probe_count=""
             fi
         fi
@@ -3607,6 +3773,9 @@ on_interrupt_db_maintenance() {
     SCRIPT_FINISH_TIME="$(date '+%Y-%m-%d %H:%M:%S')"
     printf '\n%s\n' "Interrupt received during SQLite maintenance — saving pending DB updates and printing summary..." >&2
     db_flush_pending || true
+    if [[ -n "$DB_MAINT_LOCAL_STAGE_TMP" && -f "$DB_MAINT_LOCAL_STAGE_TMP" ]]; then
+        echo "Local staging copy not written back (interrupt): ${DB_MAINT_LOCAL_STAGE_TMP}" >&2
+    fi
     echo
     print_db_maintenance_summary
     exit 130
@@ -4360,6 +4529,7 @@ if (( USE_DB == 1 )); then
         startup_progress "Running manual SQLite maintenance profile: $CLI_DB_MAINTENANCE"
         db_run_maintenance "$CLI_DB_MAINTENANCE" || true
         db_flush_pending || true
+        db_sqlite_maintenance_finish_local_stage || true
         print_db_maintenance_summary
         exit 0
     fi
