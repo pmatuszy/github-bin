@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.06.18 - v. 19.214.143000 - DB maintenance: auto diagnostics on cache lock; WAL sidecar recovery on CIFS; --db-maint-fix-wal
 # 2026.06.17 - v. 19.213.143000 - flatten [A]: FLATTEN_CHILD= sole-subdir name; fix set -e on flatten quit
 # 2026.06.17 - v. 19.212.143000 - flatten prompt [A]: always exclude by basename/glob (*.trickplay, etc.)
 # 2026.06.16 - v. 19.211.150000 - DB maintenance: inline CIFS mount detect (early exit skips late functions); sqlite3 read fallbacks
@@ -715,6 +716,7 @@ CLI_DATE_PLACEMENT=""
 CLI_DB_MAINTENANCE="full"
 DATE_PLACEMENT="${DATE_PLACEMENT:-front}"
 RUN_DB_MAINTENANCE=0
+DB_MAINT_FIX_WAL=0
 PROMPT_WAIT_SECONDS=0
 MAP_R_ACUTE="${MAP_R_ACUTE:-c}"
 MAP_REGISTERED="${MAP_REGISTERED:-z}"
@@ -782,6 +784,8 @@ Options:
   --db-maintenance auto|[full]
                          Run that maintenance profile and exit (implies --use-db; same exit path as --run-db-maintenance)
                          auto: lightweight optimize/checkpoint; full: optimize + analyze + reindex + WAL truncate
+  --db-maint-fix-wal     With --run-db-maintenance: if the cache is unreadable, try WAL checkpoint and remove -wal/-shm
+                         before giving up (also attempted automatically on CIFS/SMB when sidecars exist)
   --colors [yes]|no      Skip the startup colors question
   --mode real|[dry-run]  Skip the startup mode question
   --scope subdirs|[current]
@@ -2660,9 +2664,193 @@ db_sqlite_maintenance_switch_to_nolock() {
     return 1
 }
 
+db_sqlite_maintenance_diag_line() {
+    startup_progress "SQLite diagnostics: $*"
+}
+
+# True when -wal / -shm / -journal sidecars exist beside the cache DB.
+db_sqlite_cache_has_wal_sidecars() {
+    [[ -f "${DB_FILE}-wal" || -f "${DB_FILE}-shm" || -f "${DB_FILE}-journal" ]]
+}
+
+# Checkpoint WAL and remove sidecars (helps CIFS/SMB where -wal/-shm break reads).
+db_sqlite_maintenance_try_wal_sidecar_recovery() {
+    local uri=""
+
+    [[ -f "$DB_FILE" ]] || return 1
+    db_sqlite_cache_has_wal_sidecars || return 1
+
+    startup_progress "SQLite maintenance: attempting WAL sidecar recovery (checkpoint TRUNCATE, journal_mode=DELETE, remove -wal/-shm)..."
+
+    uri="$(db_sqlite_file_uri_nolock 2>/dev/null)" || uri=""
+    rename_sqlite3_probe_cli_uri_support
+    if [[ -n "$uri" ]] && (( RENAME_SQLITE3_HAS_URI_FLAG == 1 )); then
+        DB_SQLITE_USE_URI=1
+        DB_SQLITE_URI="$uri"
+        rename_sqlite3_db_run >/dev/null 2>&1 <<'SQL' || true
+PRAGMA busy_timeout=60000;
+PRAGMA wal_checkpoint(TRUNCATE);
+PRAGMA journal_mode=DELETE;
+SQL
+    else
+        sqlite3 -cmd 'PRAGMA busy_timeout=60000' "$DB_FILE" "PRAGMA wal_checkpoint(TRUNCATE); PRAGMA journal_mode=DELETE;" >/dev/null 2>&1 || true
+    fi
+    db_clear_sqlite_sidecar_files
+    if db_sqlite_prefer_nolock_for_cache_path && uri="$(db_sqlite_file_uri_nolock 2>/dev/null)"; then
+        DB_SQLITE_USE_URI=1
+        DB_SQLITE_URI="$uri"
+    fi
+    return 0
+}
+
+db_sqlite_maintenance_should_try_wal_recovery() {
+    (( DB_MAINT_FIX_WAL == 1 )) && return 0
+    db_sqlite_prefer_nolock_for_cache_path && db_sqlite_cache_has_wal_sidecars
+}
+
+db_sqlite_maintenance_probe_sqlite_read() {
+    local label="$1" use_uri="$2" count err err_line uri rc
+
+    command -v sqlite3 >/dev/null 2>&1 || return 1
+    [[ -f "$DB_FILE" ]] || return 1
+
+    err="$(mktemp)"
+    if (( use_uri == 1 )) && uri="$(db_sqlite_file_uri_nolock 2>/dev/null)"; then
+        rename_sqlite3_probe_cli_uri_support
+        if (( RENAME_SQLITE3_HAS_URI_FLAG == 1 )); then
+            count="$(sqlite3 -uri -cmd 'PRAGMA busy_timeout=5000' "$uri" 'SELECT COUNT(*) FROM checked_paths;' 2>"$err")"
+            rc=$?
+        else
+            count=""
+            rc=1
+        fi
+    else
+        count="$(sqlite3 -cmd 'PRAGMA busy_timeout=5000' "$DB_FILE" 'SELECT COUNT(*) FROM checked_paths;' 2>"$err")"
+        rc=$?
+    fi
+    if (( rc == 0 )) && [[ "$count" =~ ^[0-9]+$ ]]; then
+        db_sqlite_maintenance_diag_line "${label}: OK — checked_paths rows=${count}"
+        rm -f -- "$err"
+        return 0
+    fi
+    err_line="$(head -n 1 "$err" | tr -d '\r')"
+    db_sqlite_maintenance_diag_line "${label}: FAILED${err_line:+ — ${err_line}}"
+    rm -f -- "$err"
+    return 1
+}
+
+# Print mount/process/probe hints when maintenance cannot read the cache DB.
+db_sqlite_maintenance_diagnose_open_failure() {
+    local db="$DB_FILE" fs="" src="" opts="" sz="" suffix
+    local tmp="" count="" ic="" line n=0
+
+    echo
+    db_sqlite_maintenance_diag_line "cache open/read failed — collecting troubleshooting details"
+    db_sqlite_maintenance_diag_line "cache path: ${db}"
+
+    if [[ -f "$db" ]]; then
+        sz="$(stat -c '%s bytes' "$db" 2>/dev/null || stat -f '%z bytes' "$db" 2>/dev/null || echo 'unknown size')"
+        db_sqlite_maintenance_diag_line "  main file: present (${sz})"
+    else
+        db_sqlite_maintenance_diag_line "  main file: missing"
+    fi
+
+    for suffix in -wal -shm -journal; do
+        if [[ -f "${db}${suffix}" ]]; then
+            sz="$(stat -c '%s bytes' "${db}${suffix}" 2>/dev/null || stat -f '%z bytes' "${db}${suffix}" 2>/dev/null || echo '?')"
+            db_sqlite_maintenance_diag_line "  sidecar ${suffix}: present (${sz})"
+        fi
+    done
+
+    if command -v findmnt >/dev/null 2>&1 && [[ -e "$db" || -e "$(dirname -- "$db")" ]]; then
+        fs="$(findmnt -n -o FSTYPE --target "$db" 2>/dev/null)" || fs=""
+        src="$(findmnt -n -o SOURCE --target "$db" 2>/dev/null)" || src=""
+        opts="$(findmnt -n -o OPTIONS --target "$db" 2>/dev/null)" || opts=""
+        db_sqlite_maintenance_diag_line "mount: fstype=${fs:-unknown} source=${src:-unknown}"
+        [[ -n "$opts" ]] && db_sqlite_maintenance_diag_line "  options: ${opts}"
+        if db_sqlite_prefer_nolock_for_cache_path; then
+            db_sqlite_maintenance_diag_line "  network/CIFS-style mount: yes (?nolock=1 was used)"
+        else
+            db_sqlite_maintenance_diag_line "  network/CIFS-style mount: no"
+        fi
+    fi
+
+    if [[ -n "${DB_SQLITE_USE_URI:-}" ]]; then
+        db_sqlite_maintenance_diag_line "open mode: sqlite3 -uri with ?nolock=1"
+    else
+        db_sqlite_maintenance_diag_line "open mode: plain filesystem path"
+    fi
+
+    if command -v sqlite3 >/dev/null 2>&1; then
+        rename_sqlite3_probe_cli_uri_support
+        db_sqlite_maintenance_diag_line "sqlite3: $(sqlite3 --version 2>/dev/null | head -n 1)"
+        if (( RENAME_SQLITE3_HAS_URI_FLAG == 1 )); then
+            db_sqlite_maintenance_diag_line "  sqlite3 -uri: supported"
+        else
+            db_sqlite_maintenance_diag_line "  sqlite3 -uri: NOT supported (need 3.7.13+ for ?nolock=1 on network shares)"
+        fi
+    else
+        db_sqlite_maintenance_diag_line "sqlite3: not found in PATH"
+    fi
+
+    [[ -n "${DB_MAINT_LAST_SQLITE_ERR:-}" ]] && \
+        db_sqlite_maintenance_diag_line "last probe error: ${DB_MAINT_LAST_SQLITE_ERR}"
+
+    db_sqlite_maintenance_probe_sqlite_read "read probe (path)" 0 || true
+    db_sqlite_maintenance_probe_sqlite_read "read probe (?nolock URI)" 1 || true
+
+    if command -v lsof >/dev/null 2>&1; then
+        n=0
+        while IFS= read -r line; do
+            [[ -n "$line" ]] || continue
+            if (( n == 0 )); then
+                db_sqlite_maintenance_diag_line "processes holding cache files (lsof):"
+            fi
+            db_sqlite_maintenance_diag_line "  ${line}"
+            (( ++n ))
+            (( n >= 8 )) && break
+        done < <(lsof "$db" "${db}-wal" "${db}-shm" 2>/dev/null | awk 'NR>1 {print}' | head -n 8 || true)
+        (( n == 0 )) && db_sqlite_maintenance_diag_line "processes holding cache files (lsof): none seen"
+    fi
+
+    while IFS= read -r line; do
+        [[ -n "$line" ]] || continue
+        db_sqlite_maintenance_diag_line "  ${line}"
+    done < <(ps ax -o pid=,tty=,args= 2>/dev/null | grep -E '[r]ename\.sh|[s]qlite3.*(_rename\.sh-optional-db|rename\.sh-optional-db)' | head -n 6 || true)
+
+    if [[ -f "$db" ]]; then
+        tmp="$(mktemp "${TMPDIR:-/tmp}/rename.sh.db-diag.XXXXXX")"
+        rm -f -- "$tmp"
+        tmp="${tmp}.sqlite3"
+        if cp -f -- "$db" "$tmp" 2>/dev/null; then
+            count="$(sqlite3 "$tmp" 'SELECT COUNT(*) FROM checked_paths;' 2>/dev/null)" || count=""
+            if [[ "$count" =~ ^[0-9]+$ ]]; then
+                db_sqlite_maintenance_diag_line "local copy test (${tmp}): OK — checked_paths rows=${count}"
+                ic="$(sqlite3 "$tmp" 'PRAGMA integrity_check;' 2>/dev/null | head -n 1)" || ic=""
+                [[ -n "$ic" ]] && db_sqlite_maintenance_diag_line "  integrity_check: ${ic}"
+            else
+                db_sqlite_maintenance_diag_line "local copy test: copy OK but SELECT failed (cache may be corrupt)"
+            fi
+            rm -f -- "$tmp"
+        else
+            db_sqlite_maintenance_diag_line "local copy test: could not copy DB to ${TMPDIR:-/tmp} (permissions?)"
+        fi
+    fi
+
+    db_sqlite_maintenance_diag_line "suggestions:"
+    db_sqlite_maintenance_diag_line "  1) Exit other rename.sh / sqlite3 sessions (other SCREEN/tmux windows too)"
+    if db_sqlite_cache_has_wal_sidecars; then
+        db_sqlite_maintenance_diag_line "  2) WAL sidecars present — retry with: rename.sh --run-db-maintenance --db-maint-fix-wal"
+        db_sqlite_maintenance_diag_line "     (on CIFS/SMB this recovery is tried automatically when sidecars exist)"
+    fi
+    db_sqlite_maintenance_diag_line "  3) If local copy test OK but share probe fails: CIFS/SMB locking — close Windows Explorer on that folder"
+    db_sqlite_maintenance_diag_line "  4) Last resort: mv ${db} ${db}.bak.YYYYMMDD and let rename.sh rebuild the optional cache"
+    echo
+}
+
 # Maintenance-only: ensure schema/WAL pragmas without loading every row into memory.
 db_open_cache_for_maintenance() {
-    local probe_count="" opened_with_nolock=0 uri=""
+    local probe_count="" opened_with_nolock=0 uri="" wal_recovery_tried=0
 
     DB_MAINT_KNOWN_TOTAL_ROWS=0
     db_remove_stale_sqlite_lock_artifacts
@@ -2691,6 +2879,7 @@ db_open_cache_for_maintenance() {
                     (( VERBOSE == 1 )) && echo "[VERBOSE] SQLite maintenance: cache opened with ?nolock=1" >&2
                 elif ! db_init_create_checked_paths_schema_via_local_tmp; then
                     echo "ERROR: could not open SQLite cache for maintenance: $DB_FILE" >&2
+                    db_sqlite_maintenance_diagnose_open_failure
                     return 1
                 fi
             fi
@@ -2706,11 +2895,24 @@ db_open_cache_for_maintenance() {
             (( VERBOSE == 1 )) && echo "[VERBOSE] SQLite maintenance: switched to ?nolock=1 after read probe failed." >&2
         fi
         if ! probe_count="$(db_sqlite_maintenance_count_rows 2>/dev/null)"; then
+            if db_sqlite_maintenance_should_try_wal_recovery; then
+                db_sqlite_maintenance_try_wal_sidecar_recovery
+                wal_recovery_tried=1
+                probe_count="$(db_sqlite_maintenance_count_rows 2>/dev/null)" || probe_count=""
+            fi
+        fi
+        if [[ -z "$probe_count" ]] || ! [[ "$probe_count" =~ ^[0-9]+$ ]]; then
             echo "ERROR: SQLite cache is locked or unreadable: $DB_FILE" >&2
             [[ -n "${DB_MAINT_LAST_SQLITE_ERR:-}" ]] && echo "SQLite error: $DB_MAINT_LAST_SQLITE_ERR" >&2
             echo "Close any other rename.sh or sqlite3 using this file, then retry." >&2
             echo "Tip: exit interactive sqlite3 sessions (they keep the DB open) before maintenance." >&2
+            (( wal_recovery_tried == 0 )) && db_sqlite_cache_has_wal_sidecars && \
+                echo "Tip: retry with --db-maint-fix-wal to attempt WAL sidecar cleanup." >&2
+            db_sqlite_maintenance_diagnose_open_failure
             return 1
+        fi
+        if (( wal_recovery_tried == 1 )); then
+            startup_progress "SQLite maintenance: cache readable after WAL sidecar recovery"
         fi
     fi
 
@@ -3902,6 +4104,10 @@ while (( $# > 0 )); do
             USE_DB=1
             RUN_DB_MAINTENANCE=1
             shift 2
+            ;;
+        --db-maint-fix-wal)
+            DB_MAINT_FIX_WAL=1
+            shift
             ;;
         --colors)
             [[ $# -ge 2 ]] || { echo "Missing value for --colors" >&2; usage >&2; exit 1; }
