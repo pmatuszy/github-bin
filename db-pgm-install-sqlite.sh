@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.06.18 - v. 1.5 - fix URI probe: SQLite 3.53+ has no -uri flag (URI via FILENAME / sqlite3_config)
 # 2026.06.16 - v. 1.4 - prompt before source compile; verify gcc/make/tar prereqs with apt hint
 # 2026.06.16 - v. 1.3 - official prebuilt zip lacks -uri; probe before install, compile autoconf with SQLITE_USE_URI=1
 # 2026.06.16 - v. 1.2 - install binaries directly in /usr/local/bin (no versioned tree)
@@ -65,7 +66,7 @@ Environment:
 After install, ensure /usr/local/bin is before /usr/bin in PATH:
   hash -r
   which sqlite3
-  sqlite3 -help 2>&1 | grep -w uri
+  sqlite3 -batch 'file::memory:' 'SELECT 1;'
 EOF
 }
 
@@ -340,23 +341,44 @@ resolve_download_path() {
     printf '%s/%s' "${SQLITE_BASE_URL}" "${rel}"
 }
 
-sqlite_has_uri_support() {
+sqlite_uri_probe() {
     local exe="$1"
-    local errtmp=""
+    local errtmp="" tmppath="" uri=""
 
     [[ -n "$exe" && -x "$exe" ]] || return 1
 
     errtmp="$(mktemp)"
-    if "${exe}" -uri 'file::memory:' 'SELECT 1;' >/dev/null 2>"${errtmp}"; then
+
+    # SQLite 3.53+ shell: no -uri flag; URI enabled via sqlite3_config at startup.
+    if "${exe}" -batch 'file::memory:' 'SELECT 1;' >/dev/null 2>"${errtmp}"; then
+        rm -f -- "${errtmp}"
+        return 0
+    fi
+
+    # Older builds: explicit -uri flag before the database argument.
+    if "${exe}" -batch -uri 'file::memory:' 'SELECT 1;' >/dev/null 2>"${errtmp}"; then
         rm -f -- "${errtmp}"
         return 0
     fi
     rm -f -- "${errtmp}"
 
-    if "${exe}" -help 2>&1 | grep -qE '(^|[[:space:]])-uri([[:space:]]|$)'; then
-        return 0
-    fi
+    tmppath="$(mktemp)"
+    for uri in "file:${tmppath}?nolock=1" "file://${tmppath}?nolock=1"; do
+        if "${exe}" -batch "${uri}" 'SELECT 1;' >/dev/null 2>/dev/null; then
+            rm -f -- "${tmppath}"
+            return 0
+        fi
+        if "${exe}" -batch -uri "${uri}" 'SELECT 1;' >/dev/null 2>/dev/null; then
+            rm -f -- "${tmppath}"
+            return 0
+        fi
+    done
+    rm -f -- "${tmppath}"
     return 1
+}
+
+sqlite_has_uri_support() {
+    sqlite_uri_probe "$1"
 }
 
 print_sqlite_exe_info() {
@@ -367,9 +389,9 @@ print_sqlite_exe_info() {
     if [[ -n "$exe" && -x "$exe" ]]; then
         echo "    version: $("${exe}" --version 2>/dev/null | head -n 1 || echo unknown)"
         if sqlite_has_uri_support "$exe"; then
-            echo "    -uri:    yes"
+            echo "    URI:     yes (file:...?nolock=1)"
         else
-            echo "    -uri:    no"
+            echo "    URI:     no"
         fi
     fi
 }
@@ -516,8 +538,8 @@ install_from_prebuilt_zip() {
         return 1
     fi
 
-    if ! sqlite_has_uri_support "./sqlite3"; then
-        echo "NOTE: Official prebuilt sqlite3 lacks -uri (SQLITE_USE_URI not enabled in zip build)." >&2
+    if ! sqlite_uri_probe "./sqlite3"; then
+        echo "NOTE: Prebuilt sqlite3 cannot open file: URI databases." >&2
         return 1
     fi
 
@@ -551,9 +573,9 @@ install_from_source() {
         make install
     )
 
-    if ! sqlite_has_uri_support "${staging_prefix}/bin/sqlite3"; then
+    if ! sqlite_uri_probe "${staging_prefix}/bin/sqlite3"; then
         rm -rf "${staging_prefix}"
-        echo "ERROR: Compiled sqlite3 still lacks -uri (check CFLAGS SQLITE_USE_URI=1)." >&2
+        echo "ERROR: Compiled sqlite3 cannot open file: URI databases (?nolock=1)." >&2
         return 1
     fi
 
@@ -564,12 +586,12 @@ install_from_source() {
 
 finalize_install() {
     echo "Verifying installation..."
-    if ! sqlite_has_uri_support "${BIN_LINK}"; then
-        echo "ERROR: Installed sqlite3 still lacks -uri support: ${BIN_LINK}" >&2
+    if ! sqlite_uri_probe "${BIN_LINK}"; then
+        echo "ERROR: Installed sqlite3 cannot open file: URI databases: ${BIN_LINK}" >&2
         exit 1
     fi
     "${BIN_LINK}" --version
-    "${BIN_LINK}" -uri 'file::memory:' 'SELECT 1;'
+    "${BIN_LINK}" -batch 'file::memory:' 'SELECT 1;'
 
     echo
     echo "SQLite installed successfully."
@@ -579,7 +601,7 @@ finalize_install() {
     echo "Ensure /usr/local/bin is before /usr/bin in PATH, then run:"
     echo "  hash -r"
     echo "  which sqlite3"
-    echo "  sqlite3 -help 2>&1 | grep -w uri"
+    echo "  sqlite3 -batch 'file::memory:' 'SELECT 1;'"
 }
 
 parse_args() {

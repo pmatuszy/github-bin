@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.06.18 - v. 19.218.143000 - SQLite 3.53+: URI via FILENAME (no -uri flag); probe + open path updated
 # 2026.06.18 - v. 19.217.143000 - CIFS DB: python3 sqlite3 ?nolock=1 when CLI lacks -uri; maintenance local staging fallback
 # 2026.06.18 - v. 19.216.143000 - fix sqlite3 -uri probe (file::memory: not :memory:); accurate URI diagnostics
 # 2026.06.18 - v. 19.215.143000 - DB diagnostics: lsof/fuser on cache files; rename.sh PIDs with cwd / cache path
@@ -638,6 +639,7 @@ DB_SQLITE_URI=""
 # Probed on first URI open: some distros ship sqlite3 CLI without -uri (need 3.7.13+ for file:...?nolock=1).
 RENAME_SQLITE3_URI_PROBED=""
 RENAME_SQLITE3_HAS_URI_FLAG=""
+RENAME_SQLITE3_URI_ARG_STYLE=""
 RENAME_SQLITE3_URI_PROBE_DETAIL=""
 RENAME_SQLITE3_URI_FALLBACK_WARNED=""
 RENAME_SQLITE3_PYTHON_URI_PROBED=""
@@ -2364,14 +2366,27 @@ rename_sqlite3_probe_cli_uri_support() {
     [[ -n "$RENAME_SQLITE3_URI_PROBED" ]] && return 0
     RENAME_SQLITE3_URI_PROBED=1
     RENAME_SQLITE3_HAS_URI_FLAG=0
+    RENAME_SQLITE3_URI_ARG_STYLE=""
     RENAME_SQLITE3_URI_PROBE_DETAIL=""
 
     local errtmp uri
 
     errtmp="$(mktemp)"
-    # With -uri, SQLite expects a file: URI; bare :memory: fails even on modern sqlite3 builds.
-    if sqlite3 -uri 'file::memory:' 'SELECT 1;' >/dev/null 2>"$errtmp"; then
+
+    # SQLite 3.53+ shell: URI enabled at startup; pass file: URI as FILENAME (no -uri flag).
+    if sqlite3 -batch 'file::memory:' 'SELECT 1;' >/dev/null 2>"$errtmp"; then
         RENAME_SQLITE3_HAS_URI_FLAG=1
+        RENAME_SQLITE3_URI_ARG_STYLE="filename"
+        rm -f -- "$errtmp"
+        return 0
+    fi
+    RENAME_SQLITE3_URI_PROBE_DETAIL="$(head -n 1 "$errtmp" | tr -d '\r')"
+    rm -f -- "$errtmp"
+
+    errtmp="$(mktemp)"
+    if sqlite3 -batch -uri 'file::memory:' 'SELECT 1;' >/dev/null 2>"$errtmp"; then
+        RENAME_SQLITE3_HAS_URI_FLAG=1
+        RENAME_SQLITE3_URI_ARG_STYLE="flag"
         rm -f -- "$errtmp"
         return 0
     fi
@@ -2380,14 +2395,27 @@ rename_sqlite3_probe_cli_uri_support() {
 
     if sqlite3 -help 2>&1 | grep -qE '(^|[[:space:]])-uri([[:space:]]|$)'; then
         RENAME_SQLITE3_HAS_URI_FLAG=1
+        RENAME_SQLITE3_URI_ARG_STYLE="flag"
         RENAME_SQLITE3_URI_PROBE_DETAIL=""
         return 0
     fi
 
     if [[ -f "$DB_FILE" ]] && uri="$(db_sqlite_file_uri_nolock 2>/dev/null)" && [[ -n "$uri" ]]; then
         errtmp="$(mktemp)"
-        if sqlite3 -uri "$uri" 'SELECT 1;' >/dev/null 2>"$errtmp"; then
+        if sqlite3 -batch "$uri" 'SELECT 1;' >/dev/null 2>"$errtmp"; then
             RENAME_SQLITE3_HAS_URI_FLAG=1
+            RENAME_SQLITE3_URI_ARG_STYLE="filename"
+            RENAME_SQLITE3_URI_PROBE_DETAIL=""
+            rm -f -- "$errtmp"
+            return 0
+        fi
+        RENAME_SQLITE3_URI_PROBE_DETAIL="$(head -n 1 "$errtmp" | tr -d '\r')"
+        rm -f -- "$errtmp"
+
+        errtmp="$(mktemp)"
+        if sqlite3 -batch -uri "$uri" 'SELECT 1;' >/dev/null 2>"$errtmp"; then
+            RENAME_SQLITE3_HAS_URI_FLAG=1
+            RENAME_SQLITE3_URI_ARG_STYLE="flag"
             RENAME_SQLITE3_URI_PROBE_DETAIL=""
             rm -f -- "$errtmp"
             return 0
@@ -2396,6 +2424,20 @@ rename_sqlite3_probe_cli_uri_support() {
         rm -f -- "$errtmp"
     fi
     return 0
+}
+
+# Open cache DB using a file: URI (?nolock=1). Style depends on probe (flag vs filename).
+rename_sqlite3_uri_db_run() {
+    local uri="$1"
+    shift
+
+    rename_sqlite3_probe_cli_uri_support
+    (( RENAME_SQLITE3_HAS_URI_FLAG == 1 )) || return 127
+    if [[ "${RENAME_SQLITE3_URI_ARG_STYLE:-}" == flag ]]; then
+        sqlite3 -uri "$uri" "$@"
+    else
+        sqlite3 -batch "$uri" "$@"
+    fi
 }
 
 # True when sqlite3 --version reports at least major.minor.patch.
@@ -2425,7 +2467,7 @@ rename_sqlite3_diag_print_cli_info() {
 
     rename_sqlite3_probe_cli_uri_support
     if (( RENAME_SQLITE3_HAS_URI_FLAG == 1 )); then
-        db_sqlite_maintenance_diag_line "  sqlite3 -uri: supported (?nolock=1 usable on CIFS/SMB)"
+        db_sqlite_maintenance_diag_line "  sqlite3 URI: supported (?nolock=1 usable on CIFS/SMB)"
     elif rename_sqlite3_probe_python_uri_support && (( RENAME_SQLITE3_PYTHON_URI_OK == 1 )); then
         db_sqlite_maintenance_diag_line "  sqlite3 -uri: NOT in CLI (${RENAME_SQLITE3_URI_PROBE_DETAIL:-unknown option})"
         db_sqlite_maintenance_diag_line "  python3 sqlite3 URI: supported (?nolock=1 fallback active)"
@@ -2541,7 +2583,7 @@ rename_sqlite3_db_run() {
     if [[ -n "$DB_SQLITE_USE_URI" ]]; then
         rename_sqlite3_probe_cli_uri_support
         if (( RENAME_SQLITE3_HAS_URI_FLAG == 1 )); then
-            sqlite3 -uri "$DB_SQLITE_URI" "$@"
+            rename_sqlite3_uri_db_run "$DB_SQLITE_URI" "$@"
             return $?
         fi
         if rename_sqlite3_wants_python_uri_backend; then
@@ -2813,7 +2855,7 @@ db_sqlite_maintenance_count_rows() {
             return 0
         fi
         if uri="$(db_sqlite_file_uri_nolock 2>/dev/null)"; then
-            count="$(sqlite3 -uri -cmd 'PRAGMA busy_timeout=60000' "$uri" 'SELECT COUNT(*) FROM checked_paths;' 2>"$err")"
+            count="$(rename_sqlite3_uri_db_run "$uri" -cmd 'PRAGMA busy_timeout=60000' 'SELECT COUNT(*) FROM checked_paths;' 2>"$err")"
             rc=$?
             if (( rc == 0 )) && [[ "$count" =~ ^[0-9]+$ ]]; then
                 DB_SQLITE_USE_URI=1
@@ -2939,7 +2981,7 @@ db_sqlite_maintenance_probe_sqlite_read() {
         else
             rename_sqlite3_probe_cli_uri_support
             if (( RENAME_SQLITE3_HAS_URI_FLAG == 1 )); then
-                count="$(sqlite3 -uri -cmd 'PRAGMA busy_timeout=5000' "$uri" 'SELECT COUNT(*) FROM checked_paths;' 2>"$err")"
+                count="$(rename_sqlite3_uri_db_run "$uri" -cmd 'PRAGMA busy_timeout=5000' 'SELECT COUNT(*) FROM checked_paths;' 2>"$err")"
                 rc=$?
             else
                 count=""
@@ -3096,7 +3138,7 @@ db_sqlite_maintenance_diagnose_open_failure() {
     if rename_sqlite3_wants_python_uri_backend; then
         db_sqlite_maintenance_diag_line "open mode: python3 sqlite3 module with ?nolock=1 (CLI lacks -uri)"
     elif [[ -n "${DB_SQLITE_USE_URI:-}" ]] && (( RENAME_SQLITE3_HAS_URI_FLAG == 1 )); then
-        db_sqlite_maintenance_diag_line "open mode: sqlite3 -uri with ?nolock=1"
+        db_sqlite_maintenance_diag_line "open mode: sqlite3 URI with ?nolock=1 (${RENAME_SQLITE3_URI_ARG_STYLE:-unknown})"
     elif [[ -n "${DB_SQLITE_USE_URI:-}" ]] && (( RENAME_SQLITE3_HAS_URI_FLAG == 0 )); then
         db_sqlite_maintenance_diag_line "open mode: ?nolock requested but neither CLI -uri nor python3 URI available — plain path"
     elif [[ -n "$DB_MAINT_LOCAL_STAGE_TMP" ]]; then
