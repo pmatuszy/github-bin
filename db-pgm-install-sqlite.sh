@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.06.16 - v. 1.1 - fix 404 downloads: parse RELATIVE-URL from sqlite.org CSV (year/artifact paths)
 # 2026.06.16 - v. 1.0 - install SQLite CLI with URI/?nolock=1 (official zip or autoconf build)
 #
 # db-pgm-install-sqlite.sh
@@ -21,6 +22,7 @@
 set -euo pipefail
 
 SQLITE_BASE_URL="https://www.sqlite.org"
+SQLITE_DOWNLOAD_PAGE=""
 INSTALL_BASE="/usr/local"
 BIN_DIR="/usr/local/bin"
 CURRENT_LINK="${INSTALL_BASE}/sqlite"
@@ -198,10 +200,17 @@ sqlite_build_id_to_version() {
     printf '%d.%d.%d' "$major" "$minor" "$patch"
 }
 
+fetch_sqlite_download_page() {
+    if [[ -z "${SQLITE_DOWNLOAD_PAGE}" ]]; then
+        SQLITE_DOWNLOAD_PAGE="$(download_to_stdout "${SQLITE_BASE_URL}/download.html")"
+    fi
+    printf '%s' "${SQLITE_DOWNLOAD_PAGE}"
+}
+
 fetch_latest_build_id() {
     local page="" enc=""
 
-    page="$(download_to_stdout "${SQLITE_BASE_URL}/download.html")"
+    page="$(fetch_sqlite_download_page)"
     enc="$(printf '%s' "$page" | grep -oE 'sqlite-autoconf-[0-9]+\.tar\.gz' | head -n 1 | sed -E 's/^sqlite-autoconf-([0-9]+)\.tar\.gz$/\1/')"
     if [[ -z "$enc" ]]; then
         echo "ERROR: Could not parse latest SQLite version from ${SQLITE_BASE_URL}/download.html" >&2
@@ -210,22 +219,27 @@ fetch_latest_build_id() {
     printf '%s' "$enc"
 }
 
+# sqlite.org serves files as https://www.sqlite.org/YYYY/artifact (CSV RELATIVE-URL in download.html).
 resolve_download_path() {
     local artifact="$1"
     local page="" rel=""
 
-    page="$(download_to_stdout "${SQLITE_BASE_URL}/download.html")"
-    rel="$(printf '%s' "$page" | grep -oE "/[0-9]+/${artifact}" | head -n 1)"
-    if [[ -n "$rel" ]]; then
-        printf '%s%s' "${SQLITE_BASE_URL}" "${rel}"
-        return 0
+    page="$(fetch_sqlite_download_page)"
+
+    rel="$(printf '%s' "$page" | grep -E '^PRODUCT,' | grep -F "${artifact}" | head -n 1 | cut -d, -f3)"
+    if [[ -z "$rel" ]]; then
+        rel="$(printf '%s' "$page" | grep -oE "d391\('[^']+','[^']*/${artifact}'\)" | head -n 1 | sed -E "s/.*'([^']*${artifact})'.*/\1/")"
     fi
-    rel="$(printf '%s' "$page" | grep -oE "/${artifact}" | head -n 1)"
-    if [[ -n "$rel" ]]; then
-        printf '%s%s' "${SQLITE_BASE_URL}" "${rel}"
-        return 0
+    if [[ -z "$rel" ]]; then
+        rel="$(printf '%s' "$page" | grep -oE "[0-9]{4}/${artifact}" | head -n 1)"
     fi
-    printf '%s/%s' "${SQLITE_BASE_URL}" "${artifact}"
+    if [[ -z "$rel" ]]; then
+        echo "ERROR: Could not resolve download path for ${artifact} (see ${SQLITE_BASE_URL}/download.html)." >&2
+        return 1
+    fi
+
+    rel="${rel#/}"
+    printf '%s/%s' "${SQLITE_BASE_URL}" "${rel}"
 }
 
 sqlite_has_uri_support() {
@@ -348,7 +362,7 @@ install_from_prebuilt_zip() {
     local artifact="sqlite-tools-linux-x64-${build_id}.zip"
     local url="" archive=""
 
-    url="$(resolve_download_path "${artifact}")"
+    url="$(resolve_download_path "${artifact}")" || return 1
     archive="${artifact}"
 
     echo "Download URL: ${url}"
@@ -360,7 +374,7 @@ install_from_prebuilt_zip() {
 
     if [[ ! -x sqlite3 ]]; then
         echo "ERROR: sqlite3 binary not found in ${archive}" >&2
-        exit 1
+        return 1
     fi
 
     mkdir -p "${target_dir}/bin"
@@ -374,7 +388,7 @@ install_from_source() {
     local artifact="sqlite-autoconf-${build_id}.tar.gz"
     local url="" src_dir=""
 
-    url="$(resolve_download_path "${artifact}")"
+    url="$(resolve_download_path "${artifact}")" || return 1
 
     echo "Download URL: ${url}"
     echo "Install target: ${target_dir}"
