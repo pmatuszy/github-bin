@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.06.18 - v. 19.215.143000 - DB diagnostics: lsof/fuser on cache files; rename.sh PIDs with cwd / cache path
 # 2026.06.18 - v. 19.214.143000 - DB maintenance: auto diagnostics on cache lock; WAL sidecar recovery on CIFS; --db-maint-fix-wal
 # 2026.06.17 - v. 19.213.143000 - flatten [A]: FLATTEN_CHILD= sole-subdir name; fix set -e on flatten quit
 # 2026.06.17 - v. 19.212.143000 - flatten prompt [A]: always exclude by basename/glob (*.trickplay, etc.)
@@ -2739,10 +2740,102 @@ db_sqlite_maintenance_probe_sqlite_read() {
     return 1
 }
 
+# lsof + fuser on the cache DB and its sidecar files.
+db_sqlite_maintenance_diag_cache_file_holders() {
+    local db="$1"
+    local -a paths=( "$db" )
+    local fuser_out n=0 line
+
+    [[ -n "$db" ]] || return 0
+    [[ -f "${db}-wal" ]] && paths+=( "${db}-wal" )
+    [[ -f "${db}-shm" ]] && paths+=( "${db}-shm" )
+    [[ -f "${db}-journal" ]] && paths+=( "${db}-journal" )
+
+    if command -v lsof >/dev/null 2>&1; then
+        n=0
+        while IFS= read -r line; do
+            [[ -n "$line" ]] || continue
+            if (( n == 0 )); then
+                db_sqlite_maintenance_diag_line "lsof on cache files (${paths[*]}):"
+            fi
+            db_sqlite_maintenance_diag_line "  ${line}"
+            (( ++n ))
+            (( n >= 20 )) && break
+        done < <(lsof "${paths[@]}" 2>/dev/null | head -n 20 || true)
+        (( n == 0 )) && db_sqlite_maintenance_diag_line "lsof on cache files: none (no open handles reported)"
+    else
+        db_sqlite_maintenance_diag_line "lsof: not installed"
+    fi
+
+    if command -v fuser >/dev/null 2>&1; then
+        fuser_out="$(fuser -v "${paths[@]}" 2>&1)" || true
+        if [[ -n "$fuser_out" ]]; then
+            db_sqlite_maintenance_diag_line "fuser on cache files:"
+            while IFS= read -r line; do
+                [[ -n "$line" ]] || continue
+                db_sqlite_maintenance_diag_line "  ${line}"
+            done <<< "$fuser_out"
+        else
+            db_sqlite_maintenance_diag_line "fuser on cache files: none"
+        fi
+    else
+        db_sqlite_maintenance_diag_line "fuser: not installed"
+    fi
+}
+
+# List rename.sh / sqlite3 processes with working directory and expected cache path.
+db_sqlite_maintenance_diag_rename_processes() {
+    local db="$1" pid cwd args tty cache_at_cwd my_pid="" line
+    local -a pids=()
+
+    my_pid="$$"
+    db_sqlite_maintenance_diag_line "this run: pid=${my_pid} start_dir=${START_DIR} cache=${db}"
+
+    while IFS= read -r pid; do
+        [[ "$pid" =~ ^[0-9]+$ ]] || continue
+        pids+=( "$pid" )
+    done < <(ps ax -o pid=,args= 2>/dev/null | grep -E '[r]ename\.sh|[s]qlite3' | awk '
+        /rename\.sh/ { print $1; next }
+        /sqlite3/ && /_rename\.sh-optional-db|rename\.sh-optional-db/ { print $1 }
+    ' | sort -u | head -n 12)
+
+    if (( ${#pids[@]} == 0 )); then
+        db_sqlite_maintenance_diag_line "rename.sh / sqlite3 (cache) processes: none seen"
+        return 0
+    fi
+
+    db_sqlite_maintenance_diag_line "rename.sh / sqlite3 processes (with working directory):"
+
+    for pid in "${pids[@]}"; do
+        cwd=""
+        if [[ -r "/proc/${pid}/cwd" ]]; then
+            cwd="$(readlink -f "/proc/${pid}/cwd" 2>/dev/null || readlink "/proc/${pid}/cwd" 2>/dev/null || true)"
+        elif command -v pwdx >/dev/null 2>&1; then
+            cwd="$(pwdx "$pid" 2>/dev/null | sed 's/^[0-9]*: //')"
+        fi
+        tty="$(ps -p "$pid" -o tty= 2>/dev/null | tr -d ' ')"
+        args="$(ps -p "$pid" -o args= 2>/dev/null | tr -d '\r')"
+        db_sqlite_maintenance_diag_line "  pid=${pid} tty=${tty:-?} cwd=${cwd:-unknown}"
+        [[ -n "$args" ]] && db_sqlite_maintenance_diag_line "    cmd: ${args}"
+        if [[ -n "$cwd" ]]; then
+            cache_at_cwd="${cwd}/_rename.sh-optional-db.sqlite3"
+            if [[ -f "$cache_at_cwd" ]]; then
+                if [[ "$cache_at_cwd" == "$db" ]]; then
+                    db_sqlite_maintenance_diag_line "    cache: ${cache_at_cwd} (same file as this maintenance run)"
+                else
+                    db_sqlite_maintenance_diag_line "    cache: ${cache_at_cwd} (different from this maintenance run)"
+                fi
+            else
+                db_sqlite_maintenance_diag_line "    cache: no _rename.sh-optional-db.sqlite3 in cwd"
+            fi
+        fi
+    done
+}
+
 # Print mount/process/probe hints when maintenance cannot read the cache DB.
 db_sqlite_maintenance_diagnose_open_failure() {
     local db="$DB_FILE" fs="" src="" opts="" sz="" suffix
-    local tmp="" count="" ic="" line n=0
+    local tmp="" count="" ic="" n=0
 
     echo
     db_sqlite_maintenance_diag_line "cache open/read failed — collecting troubleshooting details"
@@ -2799,24 +2892,8 @@ db_sqlite_maintenance_diagnose_open_failure() {
     db_sqlite_maintenance_probe_sqlite_read "read probe (path)" 0 || true
     db_sqlite_maintenance_probe_sqlite_read "read probe (?nolock URI)" 1 || true
 
-    if command -v lsof >/dev/null 2>&1; then
-        n=0
-        while IFS= read -r line; do
-            [[ -n "$line" ]] || continue
-            if (( n == 0 )); then
-                db_sqlite_maintenance_diag_line "processes holding cache files (lsof):"
-            fi
-            db_sqlite_maintenance_diag_line "  ${line}"
-            (( ++n ))
-            (( n >= 8 )) && break
-        done < <(lsof "$db" "${db}-wal" "${db}-shm" 2>/dev/null | awk 'NR>1 {print}' | head -n 8 || true)
-        (( n == 0 )) && db_sqlite_maintenance_diag_line "processes holding cache files (lsof): none seen"
-    fi
-
-    while IFS= read -r line; do
-        [[ -n "$line" ]] || continue
-        db_sqlite_maintenance_diag_line "  ${line}"
-    done < <(ps ax -o pid=,tty=,args= 2>/dev/null | grep -E '[r]ename\.sh|[s]qlite3.*(_rename\.sh-optional-db|rename\.sh-optional-db)' | head -n 6 || true)
+    db_sqlite_maintenance_diag_cache_file_holders "$db"
+    db_sqlite_maintenance_diag_rename_processes "$db"
 
     if [[ -f "$db" ]]; then
         tmp="$(mktemp "${TMPDIR:-/tmp}/rename.sh.db-diag.XXXXXX")"
