@@ -1,5 +1,8 @@
 #!/bin/bash
 
+# 2026.06.18 - v. 0.5.34 - run summary: no [timestamp] prefix on summary lines
+# 2026.06.18 - v. 0.5.33 - end-of-run and Ctrl-C summary (timing, scan/normalize stats)
+# 2026.06.18 - v. 0.5.32 - batch NORMALIZING line: prefix with [YYYY.MM.DD HH:MM:SS]
 # 2026.06.16 - v. 0.5.31 - before normalize: estimate disk need (+15%), show free space, warn if low
 # 2026.06.18 - v. 0.5.30 - after scan: rephrase normalize offer (proceed with loudnorm, not meta “after scan”)
 # 2026.06.18 - v. 0.5.29 - normalize progress: 3-line layout (Normalizing: / path / OK)
@@ -418,6 +421,7 @@ LOUDNESS_READ_TIMEOUT="${LOUDNESS_READ_TIMEOUT:-600}"
 audio_pgm_loudness_cleanup() {
   loudness_interrupt_restore_in_progress_file
   [[ -n "${LOUDNESS_TMP_FILE:-}" && -f "${LOUDNESS_TMP_FILE}" ]] && rm -f -- "${LOUDNESS_TMP_FILE}"
+  loudness_print_run_summary_once
   loudness_window_title_restore
   . /root/bin/_script_footer.sh
 }
@@ -446,6 +450,21 @@ LOUDNESS_TMP_FILE=""
 LOUDNESS_INTERRUPT_RESTORE_DEST=""
 LOUDNESS_INTERRUPT_RESTORE_BACKUP=""
 LOUDNESS_INTERRUPT_CLEANUP_DONE=0
+LOUDNESS_SESSION_START_SEC=""
+LOUDNESS_SESSION_START_EPOCH=""
+LOUDNESS_SCAN_PROC_SEC=0
+LOUDNESS_NORM_PROC_SEC=0
+LOUDNESS_PROMPT_WAIT_SEC=0
+LOUDNESS_PROMPT_WAIT_MARK=0
+LOUDNESS_SCAN_RAN=0
+LOUDNESS_NORMALIZE_RAN=0
+LOUDNESS_STATS_NORM_OK=0
+LOUDNESS_STATS_NORM_SKIP=0
+LOUDNESS_STATS_NORM_FAIL=0
+LOUDNESS_STATS_NORM_BACKUP_SKIP=0
+LOUDNESS_SUMMARY_DONE=no
+LOUDNESS_STOPPED_BY_USER=no
+LOUDNESS_INTERRUPTED=no
 RED=''
 GREEN=''
 CYAN=''
@@ -559,6 +578,7 @@ loudness_interrupt_restore_in_progress_file() {
 loudness_on_interrupt() {
   echo
   echo '** Trapped CTRL-C — cleaning up....'
+  LOUDNESS_INTERRUPTED=yes
   loudness_interrupt_restore_in_progress_file
   if [[ -n "${STY:-}" ]]; then
     echo -ne "${tcScrTitleStart}${0}${tcScrTitleEnd}"
@@ -592,6 +612,7 @@ loudness_wants_per_file_prompts() {
 }
 
 loudness_quit_now() {
+  LOUDNESS_STOPPED_BY_USER=yes
   echo "Quit requested."
   kod_powrotu=0
   exit 0
@@ -605,10 +626,14 @@ flush_stdin() {
 }
 
 loudness_read_tty_byte() {
-  local timeout="${1:-}" byte="" use_timeout=0
+  local timeout="${1:-}" byte="" use_timeout=0 track_wait=0
 
   if [[ "$timeout" =~ ^[0-9]+$ ]] && (( timeout > 0 )); then
     use_timeout=1
+  fi
+  if loudness_is_interactive; then
+    LOUDNESS_PROMPT_WAIT_MARK=$SECONDS
+    track_wait=1
   fi
   if [[ -r /dev/tty ]] 2>/dev/null; then
     if (( use_timeout )); then
@@ -620,6 +645,9 @@ loudness_read_tty_byte() {
     IFS= read -r -t "$timeout" -n 1 byte || byte=""
   else
     IFS= read -r -n 1 byte || byte=""
+  fi
+  if (( track_wait )); then
+    loudness_prompt_wait_end
   fi
   printf '%s' "$byte"
 }
@@ -1214,6 +1242,152 @@ loudness_format_elapsed() {
   fi
 }
 
+loudness_ts() {
+  date '+%Y.%m.%d %H:%M:%S'
+}
+
+loudness_log_kv() {
+  local label="$1"
+  shift
+  printf '[%s] %-*s  %s\n' "$(loudness_ts)" 26 "${label}:" "$*"
+}
+
+loudness_summary_kv() {
+  local label="$1"
+  shift
+  printf '%-*s  %s\n' 26 "${label}:" "$*"
+}
+
+loudness_record_session_start() {
+  [[ -n "$LOUDNESS_SESSION_START_SEC" ]] && return 0
+  LOUDNESS_SESSION_START_SEC=$SECONDS
+  LOUDNESS_SESSION_START_EPOCH="$(loudness_ts)"
+}
+
+loudness_prompt_wait_begin() {
+  LOUDNESS_PROMPT_WAIT_MARK=$SECONDS
+}
+
+loudness_prompt_wait_end() {
+  (( LOUDNESS_PROMPT_WAIT_MARK > 0 )) || return 0
+  LOUDNESS_PROMPT_WAIT_SEC=$(( LOUDNESS_PROMPT_WAIT_SEC + SECONDS - LOUDNESS_PROMPT_WAIT_MARK ))
+  LOUDNESS_PROMPT_WAIT_MARK=0
+}
+
+loudness_stats_record_norm_result() {
+  case "$1" in
+    0) (( ++LOUDNESS_STATS_NORM_OK )) ;;
+    1) (( ++LOUDNESS_STATS_NORM_FAIL )) ;;
+    2) (( ++LOUDNESS_STATS_NORM_BACKUP_SKIP )) ;;
+    skip) (( ++LOUDNESS_STATS_NORM_SKIP )) ;;
+  esac
+}
+
+loudness_add_norm_proc_sec() {
+  local elapsed="$1"
+  (( elapsed > 0 )) || return 0
+  LOUDNESS_NORM_PROC_SEC=$(( LOUDNESS_NORM_PROC_SEC + elapsed ))
+}
+
+loudness_run_exit_label() {
+  if [[ "$LOUDNESS_INTERRUPTED" == yes ]]; then
+    printf '%s' 'interrupted (Ctrl-C)'
+    return 0
+  fi
+  if [[ "$LOUDNESS_STOPPED_BY_USER" == yes ]]; then
+    printf '%s' 'quit ([Q])'
+    return 0
+  fi
+  case "${kod_powrotu:-0}" in
+    0) printf '%s' 'completed' ;;
+    130) printf '%s' 'interrupted' ;;
+    *) printf '%s' "exit code ${kod_powrotu}" ;;
+  esac
+}
+
+loudness_print_run_summary_once() {
+  local total_sec other_sec scan_line norm_line exit_label
+  local count_perfect=0 count_normal=0 count_too_quiet=0 count_no_audio=0 count_error=0 i
+
+  [[ "$LOUDNESS_SUMMARY_DONE" == yes ]] && return 0
+  [[ -n "$LOUDNESS_SESSION_START_SEC" ]] || return 0
+  (( PRINT_CLI_ONLY )) && return 0
+  LOUDNESS_SUMMARY_DONE=yes
+
+  total_sec=$(( SECONDS - LOUDNESS_SESSION_START_SEC ))
+  other_sec=$(( total_sec - LOUDNESS_SCAN_PROC_SEC - LOUDNESS_NORM_PROC_SEC - LOUDNESS_PROMPT_WAIT_SEC ))
+  (( other_sec < 0 )) && other_sec=0
+
+  for i in "${!ROW_STATUS[@]}"; do
+    case "${ROW_STATUS[$i]}" in
+      PERFECT)    (( ++count_perfect )) ;;
+      NORMAL)     (( ++count_normal )) ;;
+      TOO_QUIET)  (( ++count_too_quiet )) ;;
+      'NO AUDIO') (( ++count_no_audio )) ;;
+      ERROR)      (( ++count_error )) ;;
+    esac
+  done
+
+  echo
+  echo '--- Run summary ---'
+  loudness_summary_kv "Working directory" "$(pwd)"
+  if (( ${#CLI_FILES[@]} > 0 )); then
+    loudness_summary_kv "Input" "${#MEDIA_FILES[@]} explicit file(s)"
+  else
+    loudness_summary_kv "Scope" "$(loudness_scan_scope_label)"
+  fi
+
+  if (( LOUDNESS_SCAN_RAN )); then
+    scan_line="${#MEDIA_FILES[@]} file(s) scanned"
+    if (( ${#ROW_STATUS[@]} > 0 )); then
+      scan_line+=", ${count_perfect} perfect, ${count_normal} normal, ${count_too_quiet} too quiet"
+      (( count_no_audio > 0 )) && scan_line+=", ${count_no_audio} no audio"
+      (( count_error > 0 )) && scan_line+=", ${count_error} error(s)"
+    fi
+    loudness_summary_kv "Scan" "$scan_line"
+  fi
+
+  if (( LOUDNESS_NORMALIZE_RAN )); then
+    loudness_summary_kv "Normalize mode" "${NORMALIZE_MODE:-none}"
+    if (( LOUDNESS_SAVE_ORIGINAL )); then
+      loudness_summary_kv "Originals backup" '*.backup.deleteme (moved aside)'
+    fi
+    if (( LOUDNESS_STATS_NORM_BACKUP_SKIP > 0 )); then
+      norm_line="${LOUDNESS_STATS_NORM_OK} OK, $(( LOUDNESS_STATS_NORM_SKIP + LOUDNESS_STATS_NORM_BACKUP_SKIP )) skipped (${LOUDNESS_STATS_NORM_BACKUP_SKIP} backup conflict), ${LOUDNESS_STATS_NORM_FAIL} failed"
+    else
+      norm_line="${LOUDNESS_STATS_NORM_OK} OK, ${LOUDNESS_STATS_NORM_SKIP} skipped, ${LOUDNESS_STATS_NORM_FAIL} failed"
+    fi
+    loudness_summary_kv "Normalization" "$norm_line"
+  elif (( SCAN_ONLY )); then
+    loudness_summary_kv "Normalize" 'scan-only (not run)'
+  elif (( ! LOUDNESS_OFFER_NORMALIZE )); then
+    loudness_summary_kv "Normalize" 'not offered / declined'
+  fi
+
+  if (( AUTO_YES )); then
+    loudness_summary_kv "Batch prompts" 'auto-yes (-y)'
+  elif loudness_wants_per_file_prompts; then
+    loudness_summary_kv "Batch prompts" "interactive (batch size ${LOUDNESS_BATCH_SIZE:-50})"
+  fi
+
+  echo
+  echo '--- Timing ---'
+  loudness_summary_kv "Started" "$LOUDNESS_SESSION_START_EPOCH"
+  loudness_summary_kv "Finished" "$(loudness_ts)"
+  loudness_summary_kv "Total wall time" "$(loudness_format_elapsed "$total_sec")"
+  if (( LOUDNESS_SCAN_RAN )); then
+    loudness_summary_kv "Scan processing" "$(loudness_format_elapsed "$LOUDNESS_SCAN_PROC_SEC")  (ffmpeg volumedetect)"
+  fi
+  if (( LOUDNESS_NORMALIZE_RAN )); then
+    loudness_summary_kv "Normalize processing" "$(loudness_format_elapsed "$LOUDNESS_NORM_PROC_SEC")  (ffmpeg loudnorm + re-measure)"
+  fi
+  loudness_summary_kv "Prompt/wait time" "$(loudness_format_elapsed "$LOUDNESS_PROMPT_WAIT_SEC")  (interactive prompts)"
+  loudness_summary_kv "Other overhead" "$(loudness_format_elapsed "$other_sec")"
+  exit_label="$(loudness_run_exit_label)"
+  loudness_summary_kv "Exit" "$exit_label"
+  echo
+}
+
 # PERFECT | NORMAL | TOO_QUIET based on max_volume peak (dB).
 classify_max_volume() {
   local max_db="$1"
@@ -1443,11 +1617,13 @@ prompt_normalize_classes() {
   echo "  Letters: n=normal, t=too quiet, p=perfect (q also means too quiet on CLI)"
   echo "  Default: nt (NORMAL + TOO QUIET)"
   printf '[%s] Classes to include [nt]: ' "$(date '+%Y.%m.%d %H:%M:%S')"
+  loudness_prompt_wait_begin
   if IFS= read -r input; then
     :
   else
     input=""
   fi
+  loudness_prompt_wait_end
   input="${input%$'\r'}"
   [[ -z "$input" ]] && input=nt
   if ! loudness_parse_classes_spec "$input"; then
@@ -2419,7 +2595,7 @@ scan_one_media_file() {
 }
 
 scan_media_files_with_report() {
-  local file
+  local file scan_start=$SECONDS
 
   ROW_FILE=()
   ROW_MAX=()
@@ -2431,11 +2607,13 @@ scan_media_files_with_report() {
 
   init_report_column_widths
   print_report_table_header
+  LOUDNESS_SCAN_RAN=1
 
   for file in "${MEDIA_FILES[@]}"; do
     scan_one_media_file "$file"
   done
 
+  LOUDNESS_SCAN_PROC_SEC=$(( SECONDS - scan_start ))
   print_scan_summary
 }
 
@@ -2667,11 +2845,13 @@ prompt_batch_size_interactive() {
   echo 'Batch size for per-file normalize prompts?'
   echo '  Default: 50 (ask about N files, then normalize selected before next batch)'
   printf '[%s] Batch size [50]: ' "$(date '+%Y.%m.%d %H:%M:%S')"
+  loudness_prompt_wait_begin
   if IFS= read -r -t "$LOUDNESS_READ_TIMEOUT" input; then
     :
   else
     input=""
   fi
+  loudness_prompt_wait_end
   if [[ -z "$input" ]]; then
     BATCH_SIZE=50
   elif [[ "$input" =~ ^[1-9][0-9]*$ ]]; then
@@ -2745,6 +2925,7 @@ normalize_one_selected_file() {
       3) return 3 ;;
       *)
         echo "    FAILED: backup step for ${file} (see messages above)."
+        loudness_stats_record_norm_result 1
         return 1
         ;;
     esac
@@ -2767,10 +2948,15 @@ normalize_one_selected_file() {
     else
       echo '    After: could not measure loudness'
     fi
+    norm_elapsed=$(( SECONDS - norm_start ))
+    loudness_add_norm_proc_sec "$norm_elapsed"
+    loudness_stats_record_norm_result 0
     echo
     return 0
   fi
   norm_elapsed=$(( SECONDS - norm_start ))
+  loudness_add_norm_proc_sec "$norm_elapsed"
+  loudness_stats_record_norm_result 1
   echo "FAILED ($(loudness_format_elapsed "$norm_elapsed") — see ffmpeg errors above)"
   if [[ -n "$backup" && -f "$backup" && ! -f "$dest" ]]; then
     restore_original_from_backup "$backup" "$dest" || true
@@ -2853,6 +3039,7 @@ normalize_run_batch_prompt_loop() {
 
       case "$LOUDNESS_BATCH_CHOICE_ACTION" in
         quit)
+          LOUDNESS_STOPPED_BY_USER=yes
           echo 'Quit requested.'
           return 2
           ;;
@@ -2924,15 +3111,14 @@ normalize_run_batch_prompt_loop() {
             (( ++selected_pos ))
             selected_left=$(( selected_total - selected_pos ))
             echo
-            printf 'NORMALIZING: selected file %s/%s in current batch (%s left in batch)\n' \
+            printf '[%s] NORMALIZING: selected file %s/%s in current batch (%s left in batch)\n' \
+              "$(date '+%Y.%m.%d %H:%M:%S')" \
               "$selected_pos" "$selected_total" "$selected_left"
             rc=0
             normalize_one_selected_file "${batch_indices[$j]}" "$filter" || rc=$?
             case "$rc" in
-              0) (( ++_norm_ok )) ;;
-              1) (( ++_norm_fail )) ;;
-              2) (( ++_norm_backup_skip )) ;;
-              3) echo 'Quit requested.' ; return 2 ;;
+              2) (( ++_norm_backup_skip )); loudness_stats_record_norm_result 2 ;;
+              3) LOUDNESS_STOPPED_BY_USER=yes; echo 'Quit requested.' ; return 2 ;;
             esac
           done
         fi
@@ -2968,6 +3154,7 @@ normalize_run_batch_prompt_loop() {
 normalize_candidate_files() {
   local filter norm_ok=0 norm_fail=0 norm_skip=0 norm_backup_skip=0 rc=0
 
+  LOUDNESS_NORMALIZE_RAN=1
   NORMALIZE_DIR=""
 
   filter="$(loudnorm_filter_for_mode "$NORMALIZE_MODE")" || {
@@ -2988,17 +3175,17 @@ normalize_candidate_files() {
       file="${NORMALIZE_FILES[$i]}"
       if ! normalize_skip_file_prompt "$file"; then
         (( ++norm_skip ))
+        loudness_stats_record_norm_result skip
         continue
       fi
       rc=0
       normalize_one_selected_file "$i" "$filter" || rc=$?
       case "$rc" in
-        0) (( ++norm_ok )) ;;
-        1) (( ++norm_fail )) ;;
-        2) (( ++norm_backup_skip )) ;;
-        3) echo 'Quit requested.' ; return 2 ;;
+        2) (( ++norm_backup_skip )); loudness_stats_record_norm_result 2 ;;
+        3) LOUDNESS_STOPPED_BY_USER=yes; LOUDNESS_STATS_NORM_SKIP=$norm_skip; echo 'Quit requested.' ; return 2 ;;
       esac
     done
+    LOUDNESS_STATS_NORM_SKIP=$norm_skip
   else
     echo 'Per-file prompts run in batches (like ffmpeg-voice.sh): ask about each file,'
     echo 'then normalize selected files before the next batch.'
@@ -3007,24 +3194,29 @@ normalize_candidate_files() {
     echo '  [f] finish batch, [g] skip all further prompts, [q] quit.'
     normalize_run_batch_prompt_loop 0 "$filter" norm_ok norm_fail norm_skip norm_backup_skip || rc=$?
     if (( rc == 2 )); then
+      LOUDNESS_STOPPED_BY_USER=yes
+      LOUDNESS_STATS_NORM_SKIP=$norm_skip
       return 2
     fi
     if (( rc != 0 )); then
       return 1
     fi
+    LOUDNESS_STATS_NORM_SKIP=$norm_skip
   fi
 
   echo
-  if (( norm_backup_skip > 0 )); then
+  if (( LOUDNESS_STATS_NORM_BACKUP_SKIP > 0 )); then
     printf 'Normalization: %d OK, %d skipped (%d backup conflict), %d failed\n' \
-      "$norm_ok" "$(( norm_skip + norm_backup_skip ))" "$norm_backup_skip" "$norm_fail"
+      "$LOUDNESS_STATS_NORM_OK" "$(( LOUDNESS_STATS_NORM_SKIP + LOUDNESS_STATS_NORM_BACKUP_SKIP ))" \
+      "$LOUDNESS_STATS_NORM_BACKUP_SKIP" "$LOUDNESS_STATS_NORM_FAIL"
   else
-    printf 'Normalization: %d OK, %d skipped, %d failed\n' "$norm_ok" "$norm_skip" "$norm_fail"
+    printf 'Normalization: %d OK, %d skipped, %d failed\n' \
+      "$LOUDNESS_STATS_NORM_OK" "$LOUDNESS_STATS_NORM_SKIP" "$LOUDNESS_STATS_NORM_FAIL"
   fi
-  if (( norm_fail > 0 )); then
+  if (( LOUDNESS_STATS_NORM_FAIL > 0 )); then
     echo 'Check FAILED entries above for ffmpeg errors or backup problems.'
   fi
-  (( norm_fail > 0 )) && return 1
+  (( LOUDNESS_STATS_NORM_FAIL > 0 )) && return 1
   return 0
 }
 
@@ -3083,8 +3275,10 @@ if loudness_wants_wizard_prompts && (( ! PRINT_CLI_ONLY )); then
 fi
 
 if (( ${#CLI_FILES[@]} > 0 )); then
+  loudness_record_session_start
   echo "Audio loudness scan: $(pwd) (${#MEDIA_FILES[@]} explicit file(s))"
 else
+  loudness_record_session_start
   echo "Audio loudness scan: $(pwd) ($(loudness_scan_scope_label))"
 fi
 echo "Classification (max_volume peak):"

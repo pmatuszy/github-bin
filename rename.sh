@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.06.18 - v. 19.222.143000 - OLD/NEW prompt wrap: slash-aware continuation aligned under label (not label-only line + dangling basename)
 # 2026.06.16 - v. 19.221.143000 - trailing -YYYY-MM-DD-HH_MM_SS (Firefox screencapture) → YYYYMMDD_HHMMSS_title
 # 2026.06.16 - v. 19.220.143000 - Bandicam: bandicam_YYYY-MM-DD_HH-MM-SS-ms → YYYYMMDD_HH-MM-SS-ms_bandicam
 # 2026.06.18 - v. 19.219.143000 - prefer /usr/local/bin/sqlite3; fall back to PATH sqlite3 on failure
@@ -495,6 +496,70 @@ nonverbose_skip_next_main_loop_dot_after_stdout_status() {
 # plain_prefix + body == full visible line (no ANSI). fd 1=stdout, 2=stderr.
 # Optional 5th arg full_line_color (green|red|cyan|yellow): when use_colors=yes, the entire
 # visible line (prefix + body) uses that color — used for OLD/NEW suggested path lines.
+# Long paths: break at '/' when possible; continuation lines align under the label column.
+emit_wrap_path_body_slash_aware() {
+    local fd="$1"
+    local plain_prefix="$2"
+    local body="$3"
+    local line_color="$4"
+    local max_line="$MAX_LINE_LENGTH"
+    local prefix_len="${#plain_prefix}"
+    local path_indent="" remaining="$body" first=1
+    local pfx plain avail head chunk
+
+    body="${body//$'\r'/}"
+    body="${body//$'\n'/}"
+    remaining="$body"
+
+    printf -v path_indent '%*s' "$prefix_len" ''
+
+    while [[ -n "$remaining" ]]; do
+        if (( first )); then
+            pfx="$plain_prefix"
+            first=0
+        else
+            pfx="$path_indent"
+        fi
+
+        plain="${pfx}${remaining}"
+        if (( ${#plain} <= max_line )); then
+            if [[ -n "$line_color" ]]; then
+                printf '%b%s%b\n' "$line_color" "$plain" "$RESET" >&"$fd"
+            else
+                printf '%s\n' "$plain" >&"$fd"
+            fi
+            return 0
+        fi
+
+        avail=$(( max_line - ${#pfx} ))
+        (( avail < 1 )) && avail=1
+
+        if (( ${#remaining} <= avail )); then
+            if [[ -n "$line_color" ]]; then
+                printf '%b%s%b\n' "$line_color" "${pfx}${remaining}" "$RESET" >&"$fd"
+            else
+                printf '%s\n' "${pfx}${remaining}" >&"$fd"
+            fi
+            return 0
+        fi
+
+        head="${remaining:0:avail}"
+        if [[ "$head" == */* ]]; then
+            chunk="${head%/*}/"
+        else
+            chunk="$head"
+        fi
+        [[ -z "$chunk" ]] && chunk="${remaining:0:avail}"
+
+        if [[ -n "$line_color" ]]; then
+            printf '%b%s%b\n' "$line_color" "${pfx}${chunk}" "$RESET" >&"$fd"
+        else
+            printf '%s\n' "${pfx}${chunk}" >&"$fd"
+        fi
+        remaining="${remaining:${#chunk}}"
+    done
+}
+
 emit_wrap_labeled_line() {
     local fd="$1"
     local plain_prefix="$2"
@@ -518,8 +583,7 @@ emit_wrap_labeled_line() {
         if (( ${#plain} <= MAX_LINE_LENGTH )); then
             printf '%b%s%b\n' "$line_color" "$plain" "$RESET" >&"$fd"
         else
-            printf '%b%s%b\n' "$line_color" "$plain_prefix" "$RESET" >&"$fd"
-            printf '%b%s%s%b\n' "$line_color" "$WRAP_MSG_INDENT" "$body" "$RESET" >&"$fd"
+            emit_wrap_path_body_slash_aware "$fd" "$plain_prefix" "$body" "$line_color"
         fi
         if (( fd == 1 )) && [[ "$plain_prefix" == *"[DRY-RUN]"* ]]; then
             nonverbose_skip_next_main_loop_dot_after_stdout_status
@@ -529,8 +593,7 @@ emit_wrap_labeled_line() {
     if (( ${#plain} <= MAX_LINE_LENGTH )); then
         printf '%b%s\n' "$ansi_label" "$body" >&"$fd"
     else
-        printf '%b\n' "$ansi_label" >&"$fd"
-        printf '%s%s\n' "$WRAP_MSG_INDENT" "$body" >&"$fd"
+        emit_wrap_path_body_slash_aware "$fd" "$plain_prefix" "$body" ""
     fi
     if (( fd == 1 )) && [[ "$plain_prefix" == *"[DRY-RUN]"* ]]; then
         nonverbose_skip_next_main_loop_dot_after_stdout_status
