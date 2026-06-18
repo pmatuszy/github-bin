@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.06.18 - v. 19.216.143000 - fix sqlite3 -uri probe (file::memory: not :memory:); accurate URI diagnostics
 # 2026.06.18 - v. 19.215.143000 - DB diagnostics: lsof/fuser on cache files; rename.sh PIDs with cwd / cache path
 # 2026.06.18 - v. 19.214.143000 - DB maintenance: auto diagnostics on cache lock; WAL sidecar recovery on CIFS; --db-maint-fix-wal
 # 2026.06.17 - v. 19.213.143000 - flatten [A]: FLATTEN_CHILD= sole-subdir name; fix set -e on flatten quit
@@ -636,6 +637,7 @@ DB_SQLITE_URI=""
 # Probed on first URI open: some distros ship sqlite3 CLI without -uri (need 3.7.13+ for file:...?nolock=1).
 RENAME_SQLITE3_URI_PROBED=""
 RENAME_SQLITE3_HAS_URI_FLAG=""
+RENAME_SQLITE3_URI_PROBE_DETAIL=""
 RENAME_SQLITE3_URI_FALLBACK_WARNED=""
 DB_HASHES_ADDED=0
 DB_ROWS_NEW=0
@@ -2356,10 +2358,77 @@ DB_FLUSH_EVERY=500
 rename_sqlite3_probe_cli_uri_support() {
     [[ -n "$RENAME_SQLITE3_URI_PROBED" ]] && return 0
     RENAME_SQLITE3_URI_PROBED=1
-    if sqlite3 -uri ':memory:' 'SELECT 1;' >/dev/null 2>&1; then
+    RENAME_SQLITE3_HAS_URI_FLAG=0
+    RENAME_SQLITE3_URI_PROBE_DETAIL=""
+
+    local errtmp uri
+
+    errtmp="$(mktemp)"
+    # With -uri, SQLite expects a file: URI; bare :memory: fails even on modern sqlite3 builds.
+    if sqlite3 -uri 'file::memory:' 'SELECT 1;' >/dev/null 2>"$errtmp"; then
         RENAME_SQLITE3_HAS_URI_FLAG=1
+        rm -f -- "$errtmp"
+        return 0
+    fi
+    RENAME_SQLITE3_URI_PROBE_DETAIL="$(head -n 1 "$errtmp" | tr -d '\r')"
+    rm -f -- "$errtmp"
+
+    if sqlite3 -help 2>&1 | grep -qE '(^|[[:space:]])-uri([[:space:]]|$)'; then
+        RENAME_SQLITE3_HAS_URI_FLAG=1
+        RENAME_SQLITE3_URI_PROBE_DETAIL=""
+        return 0
+    fi
+
+    if [[ -f "$DB_FILE" ]] && uri="$(db_sqlite_file_uri_nolock 2>/dev/null)" && [[ -n "$uri" ]]; then
+        errtmp="$(mktemp)"
+        if sqlite3 -uri "$uri" 'SELECT 1;' >/dev/null 2>"$errtmp"; then
+            RENAME_SQLITE3_HAS_URI_FLAG=1
+            RENAME_SQLITE3_URI_PROBE_DETAIL=""
+            rm -f -- "$errtmp"
+            return 0
+        fi
+        RENAME_SQLITE3_URI_PROBE_DETAIL="$(head -n 1 "$errtmp" | tr -d '\r')"
+        rm -f -- "$errtmp"
+    fi
+    return 0
+}
+
+# True when sqlite3 --version reports at least major.minor.patch.
+rename_sqlite3_version_at_least() {
+    local need_m="$1" need_n="$2" need_p="$3" ver_line="" have_m="" have_n="" have_p=""
+
+    ver_line="$(sqlite3 --version 2>/dev/null | head -n 1)" || return 1
+    [[ "$ver_line" =~ ([0-9]+)\.([0-9]+)\.([0-9]+) ]] || return 1
+    have_m="${BASH_REMATCH[1]}"
+    have_n="${BASH_REMATCH[2]}"
+    have_p="${BASH_REMATCH[3]}"
+    if (( have_m > need_m )); then return 0; fi
+    if (( have_m < need_m )); then return 1; fi
+    if (( have_n > need_n )); then return 0; fi
+    if (( have_n < need_n )); then return 1; fi
+    (( have_p >= need_p ))
+}
+
+rename_sqlite3_diag_print_cli_info() {
+    local ver_line="" ver_num=""
+
+    ver_line="$(sqlite3 --version 2>/dev/null | head -n 1)"
+    ver_num="${ver_line%% *}"
+    db_sqlite_maintenance_diag_line "sqlite3 CLI: ${ver_line:-unknown}"
+    [[ "$ver_num" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] && \
+        db_sqlite_maintenance_diag_line "  version: ${ver_num}"
+
+    rename_sqlite3_probe_cli_uri_support
+    if (( RENAME_SQLITE3_HAS_URI_FLAG == 1 )); then
+        db_sqlite_maintenance_diag_line "  sqlite3 -uri: supported (?nolock=1 usable on CIFS/SMB)"
+    elif rename_sqlite3_version_at_least 3 7 13; then
+        db_sqlite_maintenance_diag_line "  sqlite3 -uri: probe FAILED despite sqlite ${ver_num} (CLI may be built without URI filenames)"
+        [[ -n "${RENAME_SQLITE3_URI_PROBE_DETAIL:-}" ]] && \
+            db_sqlite_maintenance_diag_line "  -uri probe: ${RENAME_SQLITE3_URI_PROBE_DETAIL}"
     else
-        RENAME_SQLITE3_HAS_URI_FLAG=0
+        db_sqlite_maintenance_diag_line "  sqlite3 -uri: NOT supported (need sqlite3 3.7.13+ with -uri for ?nolock=1 on network shares)"
+        [[ -n "${RENAME_SQLITE3_URI_PROBE_DETAIL:-}" ]] && \
+            db_sqlite_maintenance_diag_line "  -uri probe: ${RENAME_SQLITE3_URI_PROBE_DETAIL}"
     fi
 }
 
@@ -2724,6 +2793,7 @@ db_sqlite_maintenance_probe_sqlite_read() {
         else
             count=""
             rc=1
+            printf '%s\n' "${RENAME_SQLITE3_URI_PROBE_DETAIL:--uri not available (probe failed)}" >"$err"
         fi
     else
         count="$(sqlite3 -cmd 'PRAGMA busy_timeout=5000' "$DB_FILE" 'SELECT COUNT(*) FROM checked_paths;' 2>"$err")"
@@ -2794,10 +2864,12 @@ db_sqlite_maintenance_diag_rename_processes() {
     while IFS= read -r pid; do
         [[ "$pid" =~ ^[0-9]+$ ]] || continue
         pids+=( "$pid" )
-    done < <(ps ax -o pid=,args= 2>/dev/null | grep -E '[r]ename\.sh|[s]qlite3' | awk '
-        /rename\.sh/ { print $1; next }
-        /sqlite3/ && /_rename\.sh-optional-db|rename\.sh-optional-db/ { print $1 }
-    ' | sort -u | head -n 12)
+    done < <(
+        {
+            pgrep -f 'rename\.sh' 2>/dev/null || true
+            pgrep -f 'sqlite3.*(_rename\.sh-optional-db|rename\.sh-optional-db)' 2>/dev/null || true
+        } | sort -u -n | head -n 12
+    )
 
     if (( ${#pids[@]} == 0 )); then
         db_sqlite_maintenance_diag_line "rename.sh / sqlite3 (cache) processes: none seen"
@@ -2868,20 +2940,17 @@ db_sqlite_maintenance_diagnose_open_failure() {
         fi
     fi
 
-    if [[ -n "${DB_SQLITE_USE_URI:-}" ]]; then
+    rename_sqlite3_probe_cli_uri_support
+    if [[ -n "${DB_SQLITE_USE_URI:-}" ]] && (( RENAME_SQLITE3_HAS_URI_FLAG == 1 )); then
         db_sqlite_maintenance_diag_line "open mode: sqlite3 -uri with ?nolock=1"
+    elif [[ -n "${DB_SQLITE_USE_URI:-}" ]] && (( RENAME_SQLITE3_HAS_URI_FLAG == 0 )); then
+        db_sqlite_maintenance_diag_line "open mode: ?nolock requested but sqlite3 -uri unavailable — fell back to plain path"
     else
         db_sqlite_maintenance_diag_line "open mode: plain filesystem path"
     fi
 
     if command -v sqlite3 >/dev/null 2>&1; then
-        rename_sqlite3_probe_cli_uri_support
-        db_sqlite_maintenance_diag_line "sqlite3: $(sqlite3 --version 2>/dev/null | head -n 1)"
-        if (( RENAME_SQLITE3_HAS_URI_FLAG == 1 )); then
-            db_sqlite_maintenance_diag_line "  sqlite3 -uri: supported"
-        else
-            db_sqlite_maintenance_diag_line "  sqlite3 -uri: NOT supported (need 3.7.13+ for ?nolock=1 on network shares)"
-        fi
+        rename_sqlite3_diag_print_cli_info
     else
         db_sqlite_maintenance_diag_line "sqlite3: not found in PATH"
     fi
