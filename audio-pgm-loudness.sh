@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.06.18 - v. 0.5.27 - Y/n prompt hint: UP/DOWN instead of Unicode arrows
 # 2026.06.18 - v. 0.5.26 - do not abort scan flow for NO AUDIO files (still offer normalize)
 # 2026.06.17 - v. 0.5.25 - scan table: center column headers (FILE, MAX_VOLUME, …)
 # 2026.06.17 - v. 0.5.24 - Y/n prompts: arrow up=yes, arrow down=no (↑ yes, ↓ no hint)
@@ -162,7 +163,7 @@ Interactive normalization prompts (per file, in batches like ffmpeg-voice.sh):
   skip all further prompts, [q] quit.
   Backup conflict: [y] replace old backup, [k] keep backup and normalize in
   place, [s] skip file, [q] quit (default [s]).
-  Yes/no prompts also accept arrow up (yes) and arrow down (no); Enter uses
+  Yes/no prompts also accept UP arrow (yes) and DOWN arrow (no); Enter uses
   the default shown in brackets.
 
 Environment:
