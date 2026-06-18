@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.06.16 - v. 1.2 - install binaries directly in /usr/local/bin (no versioned tree)
 # 2026.06.16 - v. 1.1 - fix 404 downloads: parse RELATIVE-URL from sqlite.org CSV (year/artifact paths)
 # 2026.06.16 - v. 1.0 - install SQLite CLI with URI/?nolock=1 (official zip or autoconf build)
 #
@@ -11,9 +12,9 @@
 # Official downloads: https://www.sqlite.org/download.html
 #
 # Layout:
-#   /usr/local/sqlite-<version>/bin/sqlite3
-#   /usr/local/sqlite              -> /usr/local/sqlite-<version>
-#   /usr/local/bin/sqlite3         -> /usr/local/sqlite/bin/sqlite3
+#   /usr/local/bin/sqlite3
+#   /usr/local/bin/sqldiff            (when shipped in zip)
+#   /usr/local/bin/sqlite3_analyzer   (when shipped in zip)
 #
 # x86_64: official prebuilt sqlite-tools-linux-x64-*.zip when available
 # other:  build from sqlite-autoconf-*.tar.gz with -DSQLITE_USE_URI=1
@@ -23,10 +24,9 @@ set -euo pipefail
 
 SQLITE_BASE_URL="https://www.sqlite.org"
 SQLITE_DOWNLOAD_PAGE=""
-INSTALL_BASE="/usr/local"
 BIN_DIR="/usr/local/bin"
-CURRENT_LINK="${INSTALL_BASE}/sqlite"
 BIN_LINK="${BIN_DIR}/sqlite3"
+LEGACY_CURRENT_LINK="/usr/local/sqlite"
 
 ASSUME_YES=0
 CLI_PIN_VERSION=""
@@ -46,7 +46,7 @@ usage() {
     cat <<'EOF'
 Usage: db-pgm-install-sqlite.sh [options]
 
-Install SQLite CLI with -uri / ?nolock=1 support under /usr/local (root required).
+Install SQLite CLI with -uri / ?nolock=1 support into /usr/local/bin (root required).
 
 Options:
   -y, --yes              Proceed without interactive prompts
@@ -268,15 +268,47 @@ print_sqlite_exe_info() {
 }
 
 find_managed_sqlite() {
-    if [[ -x "${BIN_LINK}" ]]; then
+    if [[ -x "${BIN_LINK}" ]] && sqlite_has_uri_support "${BIN_LINK}"; then
         printf '%s' "${BIN_LINK}"
         return 0
     fi
-    if [[ -L "${CURRENT_LINK}" && -x "${CURRENT_LINK}/bin/sqlite3" ]]; then
-        printf '%s' "${CURRENT_LINK}/bin/sqlite3"
+    if [[ -L "${LEGACY_CURRENT_LINK}" && -x "${LEGACY_CURRENT_LINK}/bin/sqlite3" ]] \
+        && sqlite_has_uri_support "${LEGACY_CURRENT_LINK}/bin/sqlite3"; then
+        printf '%s' "${LEGACY_CURRENT_LINK}/bin/sqlite3"
         return 0
     fi
     return 1
+}
+
+install_tools_to_bin_dir() {
+    local src_dir="${1:-.}"
+
+    mkdir -p "${BIN_DIR}"
+    install -m 755 "${src_dir}/sqlite3" "${BIN_LINK}"
+    if [[ -x "${src_dir}/sqldiff" ]]; then
+        install -m 755 "${src_dir}/sqldiff" "${BIN_DIR}/sqldiff"
+    fi
+    if [[ -x "${src_dir}/sqlite3_analyzer" ]]; then
+        install -m 755 "${src_dir}/sqlite3_analyzer" "${BIN_DIR}/sqlite3_analyzer"
+    fi
+    if [[ -x "${src_dir}/sqlite3_rsync" ]]; then
+        install -m 755 "${src_dir}/sqlite3_rsync" "${BIN_DIR}/sqlite3_rsync"
+    fi
+}
+
+cleanup_legacy_install_layout() {
+    if [[ -L "${BIN_LINK}" ]]; then
+        rm -f "${BIN_LINK}"
+    fi
+    if [[ -L "${BIN_DIR}/sqldiff" ]]; then
+        rm -f "${BIN_DIR}/sqldiff"
+    fi
+    if [[ -L "${BIN_DIR}/sqlite3_analyzer" ]]; then
+        rm -f "${BIN_DIR}/sqlite3_analyzer"
+    fi
+    if [[ -L "${LEGACY_CURRENT_LINK}" ]]; then
+        rm -f "${LEGACY_CURRENT_LINK}"
+    fi
 }
 
 get_installed_version() {
@@ -290,7 +322,7 @@ get_installed_version() {
 prompt_install_if_missing() {
     local latest="$1"
 
-    echo "No /usr/local SQLite install found (with URI support)."
+    echo "No managed SQLite install found in ${BIN_DIR} (with URI support)."
     echo "  Latest upstream version: ${latest}"
     print_sqlite_exe_info "System PATH sqlite3" "$(command -v sqlite3 2>/dev/null || true)"
     if [[ ! -t 0 ]] && ! (( ASSUME_YES )); then
@@ -358,7 +390,7 @@ prompt_if_already_installed() {
 }
 
 install_from_prebuilt_zip() {
-    local version="$1" build_id="$2" target_dir="$3"
+    local build_id="$1"
     local artifact="sqlite-tools-linux-x64-${build_id}.zip"
     local url="" archive=""
 
@@ -366,7 +398,7 @@ install_from_prebuilt_zip() {
     archive="${artifact}"
 
     echo "Download URL: ${url}"
-    echo "Install target: ${target_dir}"
+    echo "Install target: ${BIN_DIR}"
 
     download_file "${url}" "${archive}"
     need_cmd unzip
@@ -377,21 +409,19 @@ install_from_prebuilt_zip() {
         return 1
     fi
 
-    mkdir -p "${target_dir}/bin"
-    install -m 755 sqlite3 "${target_dir}/bin/sqlite3"
-    [[ -x sqldiff ]] && install -m 755 sqldiff "${target_dir}/bin/sqldiff"
-    [[ -x sqlite3_analyzer ]] && install -m 755 sqlite3_analyzer "${target_dir}/bin/sqlite3_analyzer"
+    cleanup_legacy_install_layout
+    install_tools_to_bin_dir "."
 }
 
 install_from_source() {
-    local version="$1" build_id="$2" target_dir="$3"
+    local build_id="$1"
     local artifact="sqlite-autoconf-${build_id}.tar.gz"
-    local url="" src_dir=""
+    local url="" src_dir="" staging_prefix=""
 
     url="$(resolve_download_path "${artifact}")" || return 1
 
     echo "Download URL: ${url}"
-    echo "Install target: ${target_dir}"
+    echo "Install target: ${BIN_DIR}"
 
     need_cmd gcc
     need_cmd make
@@ -402,30 +432,23 @@ install_from_source() {
     src_dir="sqlite-autoconf-${build_id}"
     [[ -d "$src_dir" ]] || { echo "ERROR: extracted source dir missing: ${src_dir}" >&2; exit 1; }
 
+    staging_prefix="$(mktemp -d)"
     (
         cd "$src_dir"
         ./configure \
-            --prefix="${target_dir}" \
+            --prefix="${staging_prefix}" \
             --disable-static \
             CFLAGS="-DSQLITE_USE_URI=1 -DSQLITE_ENABLE_FTS5 -DSQLITE_ENABLE_JSON1 -DSQLITE_ENABLE_RTREE -O2"
         make -j"$(nproc 2>/dev/null || echo 2)"
         make install
     )
+
+    cleanup_legacy_install_layout
+    install_tools_to_bin_dir "${staging_prefix}/bin"
+    rm -rf "${staging_prefix}"
 }
 
 finalize_install() {
-    local version="$1" target_dir="$2"
-
-    ln -sfn "${target_dir}" "${CURRENT_LINK}"
-    mkdir -p "${BIN_DIR}"
-    ln -sfn "${CURRENT_LINK}/bin/sqlite3" "${BIN_LINK}"
-    if [[ -x "${target_dir}/bin/sqldiff" ]]; then
-        ln -sfn "${CURRENT_LINK}/bin/sqldiff" "${BIN_DIR}/sqldiff"
-    fi
-    if [[ -x "${target_dir}/bin/sqlite3_analyzer" ]]; then
-        ln -sfn "${CURRENT_LINK}/bin/sqlite3_analyzer" "${BIN_DIR}/sqlite3_analyzer"
-    fi
-
     echo "Verifying installation..."
     if ! sqlite_has_uri_support "${BIN_LINK}"; then
         echo "ERROR: Installed sqlite3 still lacks -uri support: ${BIN_LINK}" >&2
@@ -437,8 +460,6 @@ finalize_install() {
     echo
     echo "SQLite installed successfully."
     echo "Version: $(get_installed_version "${BIN_LINK}")"
-    echo "Directory: ${target_dir}"
-    echo "Current symlink: ${CURRENT_LINK}"
     echo "Command: ${BIN_LINK}"
     echo
     echo "Ensure /usr/local/bin is before /usr/bin in PATH, then run:"
@@ -473,7 +494,7 @@ parse_args() {
 }
 
 main() {
-    local build_id="" version="" target_dir="" method=""
+    local build_id="" version="" method=""
 
     parse_args "$@"
     as_root_check
@@ -481,7 +502,6 @@ main() {
 
     need_cmd curl
     need_cmd mkdir
-    need_cmd ln
     need_cmd install
     need_cmd rm
 
@@ -500,32 +520,25 @@ main() {
     echo "SQLite release: ${version} (build id ${build_id})"
     prompt_if_already_installed "${version}"
 
-    target_dir="${INSTALL_BASE}/sqlite-${version}"
-    if [[ -d "${target_dir}" ]]; then
-        echo "Target already exists: ${target_dir}"
-        echo "Reusing directory (will overwrite binaries)."
-    fi
-    mkdir -p "${target_dir}/bin"
-
     TMP_WORK_DIR="$(mktemp -d)"
     cd "${TMP_WORK_DIR}"
 
     if (( USE_PREBUILT_TOOLS )); then
         method="prebuilt zip"
         if ! (
-            install_from_prebuilt_zip "${version}" "${build_id}" "${target_dir}"
+            install_from_prebuilt_zip "${build_id}"
         ); then
             echo "WARNING: prebuilt zip failed; falling back to source build." >&2
             method="source (fallback)"
-            install_from_source "${version}" "${build_id}" "${target_dir}"
+            install_from_source "${build_id}"
         fi
     else
         method="source"
-        install_from_source "${version}" "${build_id}" "${target_dir}"
+        install_from_source "${build_id}"
     fi
 
     echo "Install method used: ${method}"
-    finalize_install "${version}" "${target_dir}"
+    finalize_install
 }
 
 main "$@"
