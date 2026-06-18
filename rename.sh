@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.06.18 - v. 19.219.143000 - prefer /usr/local/bin/sqlite3; fall back to PATH sqlite3 on failure
 # 2026.06.18 - v. 19.218.143000 - SQLite 3.53+: URI via FILENAME (no -uri flag); probe + open path updated
 # 2026.06.18 - v. 19.217.143000 - CIFS DB: python3 sqlite3 ?nolock=1 when CLI lacks -uri; maintenance local staging fallback
 # 2026.06.18 - v. 19.216.143000 - fix sqlite3 -uri probe (file::memory: not :memory:); accurate URI diagnostics
@@ -644,6 +645,10 @@ RENAME_SQLITE3_URI_PROBE_DETAIL=""
 RENAME_SQLITE3_URI_FALLBACK_WARNED=""
 RENAME_SQLITE3_PYTHON_URI_PROBED=""
 RENAME_SQLITE3_PYTHON_URI_OK=0
+RENAME_SQLITE3_LOCAL_BIN="/usr/local/bin/sqlite3"
+RENAME_SQLITE3_BIN=""
+RENAME_SQLITE3_BIN_SOURCE=""
+RENAME_SQLITE3_FALLBACK_WARNED=""
 DB_MAINT_LOCAL_STAGE_ORIG=""
 DB_MAINT_LOCAL_STAGE_TMP=""
 DB_HASHES_ADDED=0
@@ -2276,8 +2281,9 @@ sql_escape() {
 }
 
 db_require_sqlite() {
-    if ! command -v sqlite3 >/dev/null 2>&1; then
+    if ! rename_sqlite3_any_available; then
         echo "ERROR: --use-db was requested but sqlite3 is not installed." >&2
+        echo "Install with db-pgm-install-sqlite.sh (/usr/local/bin) or your distro package." >&2
         exit 1
     fi
 }
@@ -2362,19 +2368,94 @@ DB_PENDING_SQL_FILE=""
 DB_PENDING_COUNT=0
 DB_FLUSH_EVERY=500
 
-rename_sqlite3_probe_cli_uri_support() {
-    [[ -n "$RENAME_SQLITE3_URI_PROBED" ]] && return 0
-    RENAME_SQLITE3_URI_PROBED=1
+rename_sqlite3_path_from_path() {
+    command -v sqlite3 2>/dev/null || true
+}
+
+rename_sqlite3_any_available() {
+    [[ -x "$RENAME_SQLITE3_LOCAL_BIN" ]] && return 0
+    [[ -n "$(rename_sqlite3_path_from_path)" ]] && return 0
+    return 1
+}
+
+rename_sqlite3_reset_uri_probe() {
+    RENAME_SQLITE3_URI_PROBED=""
     RENAME_SQLITE3_HAS_URI_FLAG=0
     RENAME_SQLITE3_URI_ARG_STYLE=""
     RENAME_SQLITE3_URI_PROBE_DETAIL=""
+}
 
+rename_sqlite3_set_active_bin() {
+    local new_bin="$1"
+
+    if [[ "${RENAME_SQLITE3_BIN:-}" != "$new_bin" ]]; then
+        RENAME_SQLITE3_BIN="$new_bin"
+        rename_sqlite3_reset_uri_probe
+    fi
+    if [[ "$RENAME_SQLITE3_BIN" == "$RENAME_SQLITE3_LOCAL_BIN" ]]; then
+        RENAME_SQLITE3_BIN_SOURCE="local"
+    else
+        RENAME_SQLITE3_BIN_SOURCE="path"
+    fi
+}
+
+rename_sqlite3_select_bin() {
+    local prefer="${1:-local}"
+
+    if [[ "$prefer" == local && -x "$RENAME_SQLITE3_LOCAL_BIN" ]]; then
+        rename_sqlite3_set_active_bin "$RENAME_SQLITE3_LOCAL_BIN"
+        return 0
+    fi
+    local path_bin=""
+    path_bin="$(rename_sqlite3_path_from_path)"
+    if [[ -n "$path_bin" ]]; then
+        rename_sqlite3_set_active_bin "$path_bin"
+        return 0
+    fi
+    RENAME_SQLITE3_BIN=""
+    RENAME_SQLITE3_BIN_SOURCE=""
+    return 1
+}
+
+rename_sqlite3_resolve_bin() {
+    [[ -n "$RENAME_SQLITE3_BIN" ]] && return 0
+    rename_sqlite3_select_bin local
+}
+
+# Prefer /usr/local/bin/sqlite3; on failure retry with sqlite3 from PATH (if different).
+rename_sqlite3() {
+    local rc=0 path_bin=""
+
+    rename_sqlite3_resolve_bin
+    [[ -n "$RENAME_SQLITE3_BIN" ]] || return 127
+
+    "$RENAME_SQLITE3_BIN" "$@" && return 0
+    rc=$?
+
+    if [[ "${RENAME_SQLITE3_BIN:-}" == "$RENAME_SQLITE3_LOCAL_BIN" ]]; then
+        path_bin="$(rename_sqlite3_path_from_path)"
+        if [[ -n "$path_bin" && "$path_bin" != "$RENAME_SQLITE3_LOCAL_BIN" ]]; then
+            if [[ -z "$RENAME_SQLITE3_FALLBACK_WARNED" ]]; then
+                RENAME_SQLITE3_FALLBACK_WARNED=1
+                echo "WARNING: ${RENAME_SQLITE3_LOCAL_BIN} failed (exit ${rc}); retrying with ${path_bin}." >&2
+            fi
+            rename_sqlite3_set_active_bin "$path_bin"
+            "$RENAME_SQLITE3_BIN" "$@" && return 0
+            return $?
+        fi
+    fi
+    return "$rc"
+}
+
+rename_sqlite3_probe_cli_uri_support_one() {
+    local exe="$1"
     local errtmp uri
+
+    [[ -n "$exe" && -x "$exe" ]] || return 1
 
     errtmp="$(mktemp)"
 
-    # SQLite 3.53+ shell: URI enabled at startup; pass file: URI as FILENAME (no -uri flag).
-    if sqlite3 -batch 'file::memory:' 'SELECT 1;' >/dev/null 2>"$errtmp"; then
+    if "$exe" -batch 'file::memory:' 'SELECT 1;' >/dev/null 2>"$errtmp"; then
         RENAME_SQLITE3_HAS_URI_FLAG=1
         RENAME_SQLITE3_URI_ARG_STYLE="filename"
         rm -f -- "$errtmp"
@@ -2384,7 +2465,7 @@ rename_sqlite3_probe_cli_uri_support() {
     rm -f -- "$errtmp"
 
     errtmp="$(mktemp)"
-    if sqlite3 -batch -uri 'file::memory:' 'SELECT 1;' >/dev/null 2>"$errtmp"; then
+    if "$exe" -batch -uri 'file::memory:' 'SELECT 1;' >/dev/null 2>"$errtmp"; then
         RENAME_SQLITE3_HAS_URI_FLAG=1
         RENAME_SQLITE3_URI_ARG_STYLE="flag"
         rm -f -- "$errtmp"
@@ -2393,7 +2474,7 @@ rename_sqlite3_probe_cli_uri_support() {
     RENAME_SQLITE3_URI_PROBE_DETAIL="$(head -n 1 "$errtmp" | tr -d '\r')"
     rm -f -- "$errtmp"
 
-    if sqlite3 -help 2>&1 | grep -qE '(^|[[:space:]])-uri([[:space:]]|$)'; then
+    if "$exe" -help 2>&1 | grep -qE '(^|[[:space:]])-uri([[:space:]]|$)'; then
         RENAME_SQLITE3_HAS_URI_FLAG=1
         RENAME_SQLITE3_URI_ARG_STYLE="flag"
         RENAME_SQLITE3_URI_PROBE_DETAIL=""
@@ -2402,7 +2483,7 @@ rename_sqlite3_probe_cli_uri_support() {
 
     if [[ -f "$DB_FILE" ]] && uri="$(db_sqlite_file_uri_nolock 2>/dev/null)" && [[ -n "$uri" ]]; then
         errtmp="$(mktemp)"
-        if sqlite3 -batch "$uri" 'SELECT 1;' >/dev/null 2>"$errtmp"; then
+        if "$exe" -batch "$uri" 'SELECT 1;' >/dev/null 2>"$errtmp"; then
             RENAME_SQLITE3_HAS_URI_FLAG=1
             RENAME_SQLITE3_URI_ARG_STYLE="filename"
             RENAME_SQLITE3_URI_PROBE_DETAIL=""
@@ -2413,7 +2494,7 @@ rename_sqlite3_probe_cli_uri_support() {
         rm -f -- "$errtmp"
 
         errtmp="$(mktemp)"
-        if sqlite3 -batch -uri "$uri" 'SELECT 1;' >/dev/null 2>"$errtmp"; then
+        if "$exe" -batch -uri "$uri" 'SELECT 1;' >/dev/null 2>"$errtmp"; then
             RENAME_SQLITE3_HAS_URI_FLAG=1
             RENAME_SQLITE3_URI_ARG_STYLE="flag"
             RENAME_SQLITE3_URI_PROBE_DETAIL=""
@@ -2422,6 +2503,33 @@ rename_sqlite3_probe_cli_uri_support() {
         fi
         RENAME_SQLITE3_URI_PROBE_DETAIL="$(head -n 1 "$errtmp" | tr -d '\r')"
         rm -f -- "$errtmp"
+    fi
+    return 1
+}
+
+rename_sqlite3_probe_cli_uri_support() {
+    local path_bin=""
+
+    [[ -n "$RENAME_SQLITE3_URI_PROBED" ]] && return 0
+    RENAME_SQLITE3_URI_PROBED=1
+    RENAME_SQLITE3_HAS_URI_FLAG=0
+    RENAME_SQLITE3_URI_ARG_STYLE=""
+    RENAME_SQLITE3_URI_PROBE_DETAIL=""
+
+    if [[ -x "$RENAME_SQLITE3_LOCAL_BIN" ]]; then
+        rename_sqlite3_set_active_bin "$RENAME_SQLITE3_LOCAL_BIN"
+        if rename_sqlite3_probe_cli_uri_support_one "$RENAME_SQLITE3_LOCAL_BIN"; then
+            return 0
+        fi
+    fi
+
+    path_bin="$(rename_sqlite3_path_from_path)"
+    if [[ -n "$path_bin" && "$path_bin" != "$RENAME_SQLITE3_LOCAL_BIN" ]]; then
+        rename_sqlite3_set_active_bin "$path_bin"
+        rename_sqlite3_probe_cli_uri_support_one "$path_bin" || true
+    elif [[ -z "$RENAME_SQLITE3_BIN" && -n "$path_bin" ]]; then
+        rename_sqlite3_set_active_bin "$path_bin"
+        rename_sqlite3_probe_cli_uri_support_one "$path_bin" || true
     fi
     return 0
 }
@@ -2434,9 +2542,9 @@ rename_sqlite3_uri_db_run() {
     rename_sqlite3_probe_cli_uri_support
     (( RENAME_SQLITE3_HAS_URI_FLAG == 1 )) || return 127
     if [[ "${RENAME_SQLITE3_URI_ARG_STYLE:-}" == flag ]]; then
-        sqlite3 -uri "$uri" "$@"
+        rename_sqlite3 -uri "$uri" "$@"
     else
-        sqlite3 -batch "$uri" "$@"
+        rename_sqlite3 -batch "$uri" "$@"
     fi
 }
 
@@ -2444,7 +2552,7 @@ rename_sqlite3_uri_db_run() {
 rename_sqlite3_version_at_least() {
     local need_m="$1" need_n="$2" need_p="$3" ver_line="" have_m="" have_n="" have_p=""
 
-    ver_line="$(sqlite3 --version 2>/dev/null | head -n 1)" || return 1
+    ver_line="$(rename_sqlite3 --version 2>/dev/null | head -n 1)" || return 1
     [[ "$ver_line" =~ ([0-9]+)\.([0-9]+)\.([0-9]+) ]] || return 1
     have_m="${BASH_REMATCH[1]}"
     have_n="${BASH_REMATCH[2]}"
@@ -2459,9 +2567,12 @@ rename_sqlite3_version_at_least() {
 rename_sqlite3_diag_print_cli_info() {
     local ver_line="" ver_num=""
 
-    ver_line="$(sqlite3 --version 2>/dev/null | head -n 1)"
+    rename_sqlite3_resolve_bin
+    ver_line="$(rename_sqlite3 --version 2>/dev/null | head -n 1)"
     ver_num="${ver_line%% *}"
     db_sqlite_maintenance_diag_line "sqlite3 CLI: ${ver_line:-unknown}"
+    [[ -n "$RENAME_SQLITE3_BIN" ]] && \
+        db_sqlite_maintenance_diag_line "  command: ${RENAME_SQLITE3_BIN} (${RENAME_SQLITE3_BIN_SOURCE:-unknown})"
     [[ "$ver_num" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] && \
         db_sqlite_maintenance_diag_line "  version: ${ver_num}"
 
@@ -2601,10 +2712,10 @@ rename_sqlite3_db_run() {
                 echo "          Opening the cache by filesystem path instead; on CIFS/SMB you may see \"database is locked\"." >&2
             fi
         fi
-        sqlite3 "$DB_FILE" "$@"
+        rename_sqlite3 "$DB_FILE" "$@"
         return $?
     fi
-    sqlite3 "$DB_FILE" "$@"
+    rename_sqlite3 "$DB_FILE" "$@"
 }
 
 db_flush_pending() {
@@ -2718,7 +2829,7 @@ db_init_create_checked_paths_schema_via_local_tmp() {
     rm -f -- "$tmp"
     tmp="${tmp}.sqlite3"
 
-    if ! sqlite3 -batch "$tmp" >/dev/null 2>&1 <<'SQL'
+    if ! rename_sqlite3 -batch "$tmp" >/dev/null 2>&1 <<'SQL'
 PRAGMA busy_timeout=30000;
 CREATE TABLE IF NOT EXISTS checked_paths (
     path TEXT PRIMARY KEY,
@@ -2846,8 +2957,8 @@ db_sqlite_maintenance_count_rows() {
         return 0
     fi
 
-    if command -v sqlite3 >/dev/null 2>&1 && [[ -f "$DB_FILE" ]]; then
-        count="$(sqlite3 -cmd 'PRAGMA busy_timeout=60000' "$DB_FILE" 'SELECT COUNT(*) FROM checked_paths;' 2>"$err")"
+    if rename_sqlite3_any_available && [[ -f "$DB_FILE" ]]; then
+        count="$(rename_sqlite3 -cmd 'PRAGMA busy_timeout=60000' "$DB_FILE" 'SELECT COUNT(*) FROM checked_paths;' 2>"$err")"
         rc=$?
         if (( rc == 0 )) && [[ "$count" =~ ^[0-9]+$ ]]; then
             rm -f -- "$err"
@@ -2950,7 +3061,7 @@ PRAGMA wal_checkpoint(TRUNCATE);
 PRAGMA journal_mode=DELETE;
 SQL
     else
-        sqlite3 -cmd 'PRAGMA busy_timeout=60000' "$DB_FILE" "PRAGMA wal_checkpoint(TRUNCATE); PRAGMA journal_mode=DELETE;" >/dev/null 2>&1 || true
+        rename_sqlite3 -cmd 'PRAGMA busy_timeout=60000' "$DB_FILE" "PRAGMA wal_checkpoint(TRUNCATE); PRAGMA journal_mode=DELETE;" >/dev/null 2>&1 || true
     fi
     db_clear_sqlite_sidecar_files
     if db_sqlite_prefer_nolock_for_cache_path && uri="$(db_sqlite_file_uri_nolock 2>/dev/null)"; then
@@ -2968,7 +3079,7 @@ db_sqlite_maintenance_should_try_wal_recovery() {
 db_sqlite_maintenance_probe_sqlite_read() {
     local label="$1" use_uri="$2" count err err_line uri rc
 
-    command -v sqlite3 >/dev/null 2>&1 || return 1
+    rename_sqlite3_any_available || return 1
     [[ -f "$DB_FILE" ]] || return 1
 
     err="$(mktemp)"
@@ -2990,7 +3101,7 @@ db_sqlite_maintenance_probe_sqlite_read() {
             fi
         fi
     else
-        count="$(sqlite3 -cmd 'PRAGMA busy_timeout=5000' "$DB_FILE" 'SELECT COUNT(*) FROM checked_paths;' 2>"$err")"
+        count="$(rename_sqlite3 -cmd 'PRAGMA busy_timeout=5000' "$DB_FILE" 'SELECT COUNT(*) FROM checked_paths;' 2>"$err")"
         rc=$?
     fi
     if (( rc == 0 )) && [[ "$count" =~ ^[0-9]+$ ]]; then
@@ -3147,10 +3258,11 @@ db_sqlite_maintenance_diagnose_open_failure() {
         db_sqlite_maintenance_diag_line "open mode: plain filesystem path"
     fi
 
-    if command -v sqlite3 >/dev/null 2>&1; then
+    rename_sqlite3_resolve_bin
+    if [[ -n "$RENAME_SQLITE3_BIN" ]]; then
         rename_sqlite3_diag_print_cli_info
     else
-        db_sqlite_maintenance_diag_line "sqlite3: not found in PATH"
+        db_sqlite_maintenance_diag_line "sqlite3: not found (${RENAME_SQLITE3_LOCAL_BIN} or PATH)"
     fi
 
     [[ -n "${DB_MAINT_LAST_SQLITE_ERR:-}" ]] && \
@@ -3167,10 +3279,10 @@ db_sqlite_maintenance_diagnose_open_failure() {
         rm -f -- "$tmp"
         tmp="${tmp}.sqlite3"
         if cp -f -- "$db" "$tmp" 2>/dev/null; then
-            count="$(sqlite3 "$tmp" 'SELECT COUNT(*) FROM checked_paths;' 2>/dev/null)" || count=""
+            count="$(rename_sqlite3 "$tmp" 'SELECT COUNT(*) FROM checked_paths;' 2>/dev/null)" || count=""
             if [[ "$count" =~ ^[0-9]+$ ]]; then
                 db_sqlite_maintenance_diag_line "local copy test (${tmp}): OK — checked_paths rows=${count}"
-                ic="$(sqlite3 "$tmp" 'PRAGMA integrity_check;' 2>/dev/null | head -n 1)" || ic=""
+                ic="$(rename_sqlite3 "$tmp" 'PRAGMA integrity_check;' 2>/dev/null | head -n 1)" || ic=""
                 [[ -n "$ic" ]] && db_sqlite_maintenance_diag_line "  integrity_check: ${ic}"
             else
                 db_sqlite_maintenance_diag_line "local copy test: copy OK but SELECT failed (cache may be corrupt)"
