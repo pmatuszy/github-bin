@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.06.16 - v. 1.3 - official prebuilt zip lacks -uri; probe before install, compile autoconf with SQLITE_USE_URI=1
 # 2026.06.16 - v. 1.2 - install binaries directly in /usr/local/bin (no versioned tree)
 # 2026.06.16 - v. 1.1 - fix 404 downloads: parse RELATIVE-URL from sqlite.org CSV (year/artifact paths)
 # 2026.06.16 - v. 1.0 - install SQLite CLI with URI/?nolock=1 (official zip or autoconf build)
@@ -16,7 +17,7 @@
 #   /usr/local/bin/sqldiff            (when shipped in zip)
 #   /usr/local/bin/sqlite3_analyzer   (when shipped in zip)
 #
-# x86_64: official prebuilt sqlite-tools-linux-x64-*.zip when available
+# x86_64: try official sqlite-tools zip first; compile autoconf when prebuilt lacks -uri (usual)
 # other:  build from sqlite-autoconf-*.tar.gz with -DSQLITE_USE_URI=1
 #
 
@@ -145,7 +146,7 @@ detect_platform() {
 
     echo "Detected platform: ${PLATFORM}"
     if (( USE_PREBUILT_TOOLS )); then
-        echo "Install method: official sqlite-tools-linux-x64 zip (when available)"
+        echo "Install method: try official zip, else compile autoconf with -DSQLITE_USE_URI=1"
     else
         echo "Install method: compile sqlite-autoconf source with -DSQLITE_USE_URI=1"
     fi
@@ -244,12 +245,21 @@ resolve_download_path() {
 
 sqlite_has_uri_support() {
     local exe="$1"
+    local errtmp=""
 
     [[ -n "$exe" && -x "$exe" ]] || return 1
+
+    errtmp="$(mktemp)"
+    if "${exe}" -uri 'file::memory:' 'SELECT 1;' >/dev/null 2>"${errtmp}"; then
+        rm -f -- "${errtmp}"
+        return 0
+    fi
+    rm -f -- "${errtmp}"
+
     if "${exe}" -help 2>&1 | grep -qE '(^|[[:space:]])-uri([[:space:]]|$)'; then
         return 0
     fi
-    "${exe}" -uri 'file::memory:' 'SELECT 1;' >/dev/null 2>&1
+    return 1
 }
 
 print_sqlite_exe_info() {
@@ -297,7 +307,7 @@ install_tools_to_bin_dir() {
 }
 
 cleanup_legacy_install_layout() {
-    if [[ -L "${BIN_LINK}" ]]; then
+    if [[ -e "${BIN_LINK}" ]]; then
         rm -f "${BIN_LINK}"
     fi
     if [[ -L "${BIN_DIR}/sqldiff" ]]; then
@@ -409,6 +419,11 @@ install_from_prebuilt_zip() {
         return 1
     fi
 
+    if ! sqlite_has_uri_support "./sqlite3"; then
+        echo "NOTE: Official prebuilt sqlite3 lacks -uri (SQLITE_USE_URI not enabled in zip build)." >&2
+        return 1
+    fi
+
     cleanup_legacy_install_layout
     install_tools_to_bin_dir "."
 }
@@ -442,6 +457,12 @@ install_from_source() {
         make -j"$(nproc 2>/dev/null || echo 2)"
         make install
     )
+
+    if ! sqlite_has_uri_support "${staging_prefix}/bin/sqlite3"; then
+        rm -rf "${staging_prefix}"
+        echo "ERROR: Compiled sqlite3 still lacks -uri (check CFLAGS SQLITE_USE_URI=1)." >&2
+        return 1
+    fi
 
     cleanup_legacy_install_layout
     install_tools_to_bin_dir "${staging_prefix}/bin"
@@ -528,8 +549,8 @@ main() {
         if ! (
             install_from_prebuilt_zip "${build_id}"
         ); then
-            echo "WARNING: prebuilt zip failed; falling back to source build." >&2
-            method="source (fallback)"
+            echo "Compiling sqlite-autoconf with -DSQLITE_USE_URI=1..." >&2
+            method="source"
             install_from_source "${build_id}"
         fi
     else
