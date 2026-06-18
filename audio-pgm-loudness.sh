@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.06.18 - v. 0.5.26 - do not abort scan flow for NO AUDIO files (still offer normalize)
 # 2026.06.17 - v. 0.5.25 - scan table: center column headers (FILE, MAX_VOLUME, …)
 # 2026.06.17 - v. 0.5.24 - Y/n prompts: arrow up=yes, arrow down=no (↑ yes, ↓ no hint)
 # 2026.06.17 - v. 0.5.23 - Files to scan: show count by extension (mp4, avi, ...)
@@ -2170,7 +2171,11 @@ print_scan_summary() {
   printf 'Summary: %d perfect, %d normal, %d too quiet, %d no audio, %d error(s)\n' \
     "$count_perfect" "$count_normal" "$count_too_quiet" "$count_no_audio" "$count_error"
 
-  if (( count_error > 0 || count_no_audio > 0 )); then
+  if (( count_no_audio > 0 )); then
+    echo 'NOTE: NO AUDIO files are listed above but are not candidates for normalization.'
+  fi
+
+  if (( count_error > 0 )); then
     return 1
   fi
   if (( count_too_quiet > 0 )); then
@@ -2882,6 +2887,7 @@ scan_rc=0
 scan_media_files_with_report || scan_rc=$?
 
 if (( scan_rc == 1 )); then
+  echo 'Scan reported error(s); normalization skipped.' >&2
   kod_powrotu=1
   exit 1
 fi
