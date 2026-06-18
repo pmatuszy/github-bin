@@ -1,5 +1,9 @@
 #!/bin/bash
 
+# 2026.06.16 - v. 0.5.31 - before normalize: estimate disk need (+15%), show free space, warn if low
+# 2026.06.18 - v. 0.5.30 - after scan: rephrase normalize offer (proceed with loudnorm, not meta “after scan”)
+# 2026.06.18 - v. 0.5.29 - normalize progress: 3-line layout (Normalizing: / path / OK)
+# 2026.06.18 - v. 0.5.28 - normalize OK label green when --colors yes
 # 2026.06.18 - v. 0.5.27 - Y/n prompt hint: UP/DOWN instead of Unicode arrows
 # 2026.06.18 - v. 0.5.26 - do not abort scan flow for NO AUDIO files (still offer normalize)
 # 2026.06.17 - v. 0.5.25 - scan table: center column headers (FILE, MAX_VOLUME, …)
@@ -623,18 +627,18 @@ loudness_read_tty_byte() {
 loudness_prompt_add_yn_arrow_hint() {
   local prompt="$1"
 
-  [[ "$prompt" == *"(↑ yes, ↓ no)"* ]] && {
+  [[ "$prompt" == *"(UP yes, DOWN no)"* ]] && {
     printf '%s' "$prompt"
     return 0
   }
   if [[ "$prompt" == *': ' ]]; then
     prompt="${prompt%: }"
-    printf '%s (↑ yes, ↓ no): ' "$prompt"
+    printf '%s (UP yes, DOWN no): ' "$prompt"
   elif [[ "$prompt" == *':' ]]; then
     prompt="${prompt%:}"
-    printf '%s (↑ yes, ↓ no): ' "$prompt"
+    printf '%s (UP yes, DOWN no): ' "$prompt"
   else
-    printf '%s (↑ yes, ↓ no): ' "$prompt"
+    printf '%s (UP yes, DOWN no): ' "$prompt"
   fi
 }
 
@@ -1510,6 +1514,201 @@ count_file_audio_streams() {
   ffprobe -v error -select_streams a -show_entries stream=index -of csv=p=0 -- "$file" 2>/dev/null | grep -c .
 }
 
+loudness_disk_space_df_bin() {
+  if [[ "$(type -t df 2>/dev/null)" == function && -x /bin/df ]]; then
+    printf '%s\n' /bin/df
+  elif [[ -x /bin/df ]]; then
+    printf '%s\n' /bin/df
+  else
+    command -v df 2>/dev/null || return 1
+  fi
+}
+
+loudness_file_size_bytes() {
+  local f="$1"
+  if [[ ! -f "$f" ]]; then
+    printf '0\n'
+    return 0
+  fi
+  stat -c %s -- "$f" 2>/dev/null || stat -f %z -- "$f" 2>/dev/null || printf '0\n'
+}
+
+loudness_format_bytes_human() {
+  local bytes="$1"
+  awk -v b="$bytes" 'BEGIN {
+    if (b >= 1073741824)
+      printf "%.2f GiB (%.0f bytes)", b/1073741824.0, b
+    else if (b >= 1048576)
+      printf "%.2f MiB (%.0f bytes)", b/1048576.0, b
+    else if (b >= 1024)
+      printf "%.2f KiB (%.0f bytes)", b/1024.0, b
+    else
+      printf "%d bytes", b
+  }'
+}
+
+loudness_apply_disk_margin_15pct() {
+  local bytes="$1"
+  printf '%s\n' $((( bytes * 115 + 99 ) / 100))
+}
+
+loudness_normalize_file_dir() {
+  local file="$1" d
+  d="$(dirname -- "$file")"
+  if [[ "$d" == . ]]; then
+    pwd -P 2>/dev/null || pwd
+  elif [[ -d "$d" ]]; then
+    (cd "$d" && pwd -P) 2>/dev/null || (cd "$d" && pwd)
+  else
+    printf '%s\n' "$d"
+  fi
+}
+
+loudness_disk_avail_bytes() {
+  local target_path="$1"
+  local df_bin avail_kb
+  df_bin="$(loudness_disk_space_df_bin)" || return 1
+  avail_kb="$(
+    LC_ALL=C "$df_bin" -Pk -- "$target_path" 2>/dev/null \
+      | awk 'NR==2 {gsub(/[^0-9]/, "", $4); print $4}'
+  )"
+  [[ -n "$avail_kb" && "$avail_kb" =~ ^[0-9]+$ ]] || return 1
+  printf '%s\n' $(( avail_kb * 1024 ))
+}
+
+# Estimate peak extra bytes for normalize in one directory (sum/max of queued files there).
+loudness_estimate_normalize_dir_bytes() {
+  local save_original="$1" sum="$2" max="$3"
+  if (( save_original )); then
+    printf '%s\n' $(( 2 * sum ))
+  else
+    printf '%s\n' $(( sum + max ))
+  fi
+}
+
+# Print per-directory estimates; prompt when required (+15%) exceeds available. Returns 0 proceed, 1 cancel.
+loudness_confirm_normalize_disk_space() {
+  local -A dir_sum=() dir_max=() dir_count=()
+  local file dir sz sum max base need need_margin avail shortfall
+  local -a dirs=()
+  local n_dirs=0 n_low=0 n_unknown=0 total_sum=0 total_need=0 total_need_margin=0
+  local df_note_printed=0
+
+  for file in "${NORMALIZE_FILES[@]}"; do
+    if [[ ! -f "$file" ]]; then
+      echo "WARNING: missing file (skipped in disk-space estimate): ${file}" >&2
+      continue
+    fi
+    dir="$(loudness_normalize_file_dir "$file")"
+    sz="$(loudness_file_size_bytes "$file")"
+    (( sz >= 0 )) || sz=0
+    dir_sum["$dir"]=$(( ${dir_sum[$dir]:-0} + sz ))
+    dir_count["$dir"]=$(( ${dir_count[$dir]:-0} + 1 ))
+    if (( sz > ${dir_max[$dir]:-0} )); then
+      dir_max["$dir"]=$sz
+    fi
+    total_sum=$(( total_sum + sz ))
+  done
+
+  for dir in "${!dir_sum[@]}"; do
+    dirs+=("$dir")
+  done
+  if (( ${#dirs[@]} == 0 )); then
+    echo 'WARNING: no readable files in normalize queue — skipping disk-space check.' >&2
+    return 0
+  fi
+  IFS=$'\n' dirs=($(printf '%s\n' "${dirs[@]}" | sort))
+  unset IFS
+  n_dirs=${#dirs[@]}
+
+  echo
+  echo 'Disk space check before normalization (includes 15% safety margin):'
+  if (( LOUDNESS_SAVE_ORIGINAL )); then
+    echo '  Estimate: ~2× queued file sizes (original *.backup.deleteme + normalized output).'
+  else
+    echo '  Estimate: queued file sizes + one temp copy of the largest file per directory during ffmpeg.'
+  fi
+
+  for dir in "${dirs[@]}"; do
+    sum="${dir_sum[$dir]}"
+    max="${dir_max[$dir]}"
+    base="$(loudness_estimate_normalize_dir_bytes "$LOUDNESS_SAVE_ORIGINAL" "$sum" "$max")"
+    need_margin="$(loudness_apply_disk_margin_15pct "$base")"
+    total_need=$(( total_need + base ))
+    total_need_margin=$(( total_need_margin + need_margin ))
+
+    printf '  Directory: %s\n' "$dir"
+    printf '    Files queued: %d (%s total)\n' "${dir_count[$dir]}" "$(loudness_format_bytes_human "$sum")"
+    printf '    Estimated need: %s (+15%% margin: %s)\n' \
+      "$(loudness_format_bytes_human "$base")" "$(loudness_format_bytes_human "$need_margin")"
+
+    if ! avail="$(loudness_disk_avail_bytes "$dir")"; then
+      (( ++n_unknown ))
+      echo '    Available:      unknown (could not read free space from df)'
+      echo '    Status:         UNKNOWN'
+      continue
+    fi
+    printf '    Available:      %s\n' "$(loudness_format_bytes_human "$avail")"
+    if (( avail >= need_margin )); then
+      echo '    Status:         OK'
+    else
+      shortfall=$(( need_margin - avail ))
+      (( ++n_low ))
+      printf '    Status:         LOW (short by %s)\n' "$(loudness_format_bytes_human "$shortfall")"
+    fi
+  done
+
+  if (( n_dirs > 1 )); then
+    echo '  Overall queued data:'
+    printf '    %d file(s), %s — estimated need %s (+15%% margin: %s)\n' \
+      "${#NORMALIZE_FILES[@]}" \
+      "$(loudness_format_bytes_human "$total_sum")" \
+      "$(loudness_format_bytes_human "$total_need")" \
+      "$(loudness_format_bytes_human "$total_need_margin")"
+  fi
+
+  if (( n_low == 0 && n_unknown == 0 )); then
+    echo '  All checked directories have enough free space.'
+    return 0
+  fi
+
+  if [[ "$(type -t df 2>/dev/null)" == function && df_note_printed -eq 0 ]]; then
+    echo '  Note: df is a shell function; using /bin/df for free-space checks.'
+    df_note_printed=1
+  fi
+
+  if (( n_low > 0 && n_unknown > 0 )); then
+    echo
+    echo "WARNING: insufficient disk space on ${n_low} director$( (( n_low == 1 )) && printf 'y' || printf 'ies' ); free space unknown for ${n_unknown} director$( (( n_unknown == 1 )) && printf 'y' || printf 'ies' )."
+  elif (( n_low > 0 )); then
+    echo
+    if (( n_low == 1 )); then
+      echo 'WARNING: insufficient disk space on 1 directory.'
+    else
+      echo "WARNING: insufficient disk space on ${n_low} directories."
+    fi
+  else
+    echo
+    if (( n_unknown == 1 )); then
+      echo 'WARNING: could not determine free disk space for 1 directory.'
+    else
+      echo "WARNING: could not determine free disk space for ${n_unknown} directories."
+    fi
+  fi
+
+  if ! loudness_is_interactive; then
+    echo 'Non-interactive mode: normalization cancelled (free space not confirmed).' >&2
+    return 1
+  fi
+
+  loudness_read_yn_key 'Proceed with normalization anyway? [y/N/q]: ' N
+  case "${REPLY^^}" in
+    Y|YES) return 0 ;;
+    Q) loudness_quit_now ;;
+    *) return 1 ;;
+  esac
+}
+
 # Path for original moved aside: <dir>/<basename>.backup.deleteme
 backup_deleteme_path() {
   local file="$1" dir base
@@ -2271,21 +2470,31 @@ prompt_offer_normalize_after_scan() {
   echo
   if (( n_normal + n_too_quiet > 0 )); then
     if (( PRINT_CLI_ONLY )); then
-      loudness_read_yn_key 'If non-PERFECT files would be found, offer normalize in real run? [Y/n/q]: ' Y
+      if (( n_too_quiet > 0 && n_normal > 0 )); then
+        loudness_read_yn_key 'If scan finds NORMAL or TOO QUIET files, include loudnorm in the built command? [Y/n/q]: ' Y
+      elif (( n_too_quiet > 0 )); then
+        loudness_read_yn_key 'If scan finds TOO QUIET files, include loudnorm in the built command? [Y/n/q]: ' Y
+      else
+        loudness_read_yn_key 'If scan finds NORMAL files, include loudnorm in the built command? [Y/n/q]: ' Y
+      fi
+    elif (( n_too_quiet > 0 && n_normal > 0 )); then
+      loudness_read_yn_key "${n_normal} NORMAL and ${n_too_quiet} TOO QUIET file(s) above — proceed with loudnorm? [Y/n/q]: " Y
+    elif (( n_too_quiet > 0 )); then
+      loudness_read_yn_key "${n_too_quiet} TOO QUIET file(s) above — proceed with loudnorm? [Y/n/q]: " Y
     else
-      loudness_read_yn_key 'Non-PERFECT files were found. Offer normalize after scan? [Y/n/q]: ' Y
+      loudness_read_yn_key "${n_normal} NORMAL file(s) above — proceed with loudnorm? [Y/n/q]: " Y
     fi
   elif (( n_perfect > 0 )); then
     if (( PRINT_CLI_ONLY )); then
-      loudness_read_yn_key 'If only PERFECT files would be found, offer normalize in real run? [y/N/q]: ' N
+      loudness_read_yn_key 'If all scanned files are PERFECT, still include loudnorm in the built command? [y/N/q]: ' N
     else
-      loudness_read_yn_key 'All scanned files are PERFECT. Offer normalize anyway? [y/N/q]: ' N
+      loudness_read_yn_key "All ${n_perfect} scanned file(s) are PERFECT — normalize anyway? [y/N/q]: " N
     fi
   else
     if (( PRINT_CLI_ONLY )); then
-      loudness_read_yn_key 'If eligible files would be found, offer normalize in real run? [Y/n/q]: ' Y
+      loudness_read_yn_key 'Include loudnorm in the built command when eligible files are found? [Y/n/q]: ' Y
     else
-      loudness_read_yn_key 'Offer normalize if eligible files are found? [Y/n/q]: ' Y
+      loudness_read_yn_key 'No NORMAL or TOO QUIET files in the scan — open loudnorm wizard anyway? [Y/n/q]: ' Y
     fi
   fi
   case "${REPLY^^}" in
@@ -2504,6 +2713,12 @@ normalize_record_cli_batch_selection() {
   cli_record_selected_file "$file"
 }
 
+print_normalize_file_start() {
+  local file="$1"
+  printf 'Normalizing:\n'
+  printf '%s ...\n' "$file"
+}
+
 # Returns 0 OK, 1 FAILED, 2 skipped (backup conflict), 3 quit requested.
 normalize_one_selected_file() {
   local i="$1" filter="$2"
@@ -2536,11 +2751,11 @@ normalize_one_selected_file() {
   fi
   loudness_begin_file_normalize "$dest" "$backup" "$src"
   norm_start=$SECONDS
-  printf 'Normalizing %s ... ' "$file"
+  print_normalize_file_start "$file"
   if normalize_file_inplace "$src" "$dest" "$filter"; then
     loudness_end_file_normalize
     norm_elapsed=$(( SECONDS - norm_start ))
-    printf 'OK (%s)\n' "$(loudness_format_elapsed "$norm_elapsed")"
+    printf '%bOK%b (%s)\n' "$GREEN" "$RESET" "$(loudness_format_elapsed "$norm_elapsed")"
     if (( audio_n > 1 )); then
       echo "    (${audio_n} audio tracks normalized; other streams copied)"
     fi
@@ -2959,6 +3174,12 @@ fi
 
 if (( ! LOUDNESS_SAVE_ORIGINAL && ! LOUDNESS_SAVE_ORIGINAL_CLI )) && loudness_wants_wizard_prompts; then
   prompt_save_original_aside
+fi
+
+if ! loudness_confirm_normalize_disk_space; then
+  echo 'Normalization cancelled (disk space check).' >&2
+  kod_powrotu=1
+  exit 1
 fi
 
 if normalize_candidate_files; then

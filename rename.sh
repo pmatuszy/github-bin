@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# 2026.06.16 - v. 19.221.143000 - trailing -YYYY-MM-DD-HH_MM_SS (Firefox screencapture) → YYYYMMDD_HHMMSS_title
+# 2026.06.16 - v. 19.220.143000 - Bandicam: bandicam_YYYY-MM-DD_HH-MM-SS-ms → YYYYMMDD_HH-MM-SS-ms_bandicam
 # 2026.06.18 - v. 19.219.143000 - prefer /usr/local/bin/sqlite3; fall back to PATH sqlite3 on failure
 # 2026.06.18 - v. 19.218.143000 - SQLite 3.53+: URI via FILENAME (no -uri flag); probe + open path updated
 # 2026.06.18 - v. 19.217.143000 - CIFS DB: python3 sqlite3 ?nolock=1 when CLI lacks -uri; maintenance local staging fallback
@@ -7749,6 +7751,127 @@ _rename_signal_timestamp_first() {
     return 1
 }
 
+# Bandicam screen recordings: bandicam_YYYY-MM-DD_HH-MM-SS-ms[_tail].ext → YYYYMMDD_HH-MM-SS-ms_bandicam[_tail].ext
+_rename_bandicam_timestamp_first() {
+    local new="$1"
+    local y m d hh mm ss ms tail ext ymd
+
+    [[ "$new" =~ ^[0-9]{8}_[0-9]{2}-[0-9]{2}-[0-9]{2}-[0-9]+_[Bb]andicam ]] && return 1
+
+    # bandicam_YYYY-MM-DD_HH-MM-SS-ms[_tail].ext (e.g. bandicam_2020-04-27_12-32-53-768_-_title.mp4).
+    if [[ "$new" =~ ^[Bb]andicam_([0-9]{4})-([0-9]{1,2})-([0-9]{1,2})_([0-9]{2})-([0-9]{2})-([0-9]{2})-([0-9]+)(.*)(\.[^.]+)$ ]]; then
+        y="${BASH_REMATCH[1]}"
+        m="${BASH_REMATCH[2]}"
+        d="${BASH_REMATCH[3]}"
+        hh="${BASH_REMATCH[4]}"
+        mm="${BASH_REMATCH[5]}"
+        ss="${BASH_REMATCH[6]}"
+        ms="${BASH_REMATCH[7]}"
+        tail="${BASH_REMATCH[8]}"
+        ext="${BASH_REMATCH[9]}"
+        _rename_is_valid_ymd "$y" "$m" "$d" || return 1
+        printf '%04d%02d%02d_%02d-%02d-%02d-%s_bandicam%s%s' \
+            "$((10#${y}))" "$((10#${m}))" "$((10#${d}))" \
+            "$((10#${hh}))" "$((10#${mm}))" "$((10#${ss}))" \
+            "$ms" "$tail" "$ext"
+        return 0
+    fi
+
+    # bandicam_YYYYMMDD_HH-MM-SS-ms[_tail].ext (date already compacted; time still hyphenated).
+    if [[ "$new" =~ ^[Bb]andicam_([0-9]{8})_([0-9]{2})-([0-9]{2})-([0-9]{2})-([0-9]+)(.*)(\.[^.]+)$ ]]; then
+        ymd="${BASH_REMATCH[1]}"
+        hh="${BASH_REMATCH[2]}"
+        mm="${BASH_REMATCH[3]}"
+        ss="${BASH_REMATCH[4]}"
+        ms="${BASH_REMATCH[5]}"
+        tail="${BASH_REMATCH[6]}"
+        ext="${BASH_REMATCH[7]}"
+        _rename_is_valid_ymd "${ymd:0:4}" "${ymd:4:2}" "${ymd:6:2}" || return 1
+        printf '%s_%02d-%02d-%02d-%s_bandicam%s%s' \
+            "$ymd" \
+            "$((10#${hh}))" "$((10#${mm}))" "$((10#${ss}))" \
+            "$ms" "$tail" "$ext"
+        return 0
+    fi
+
+    # bandicam_YYYY-MM-DD_HH-MM-SS[_tail].ext (no milliseconds).
+    if [[ "$new" =~ ^[Bb]andicam_([0-9]{4})-([0-9]{1,2})-([0-9]{1,2})_([0-9]{2})-([0-9]{2})-([0-9]{2})(.*)(\.[^.]+)$ ]]; then
+        y="${BASH_REMATCH[1]}"
+        m="${BASH_REMATCH[2]}"
+        d="${BASH_REMATCH[3]}"
+        hh="${BASH_REMATCH[4]}"
+        mm="${BASH_REMATCH[5]}"
+        ss="${BASH_REMATCH[6]}"
+        tail="${BASH_REMATCH[7]}"
+        ext="${BASH_REMATCH[8]}"
+        _rename_is_valid_ymd "$y" "$m" "$d" || return 1
+        printf '%04d%02d%02d_%02d-%02d-%02d_bandicam%s%s' \
+            "$((10#${y}))" "$((10#${m}))" "$((10#${d}))" \
+            "$((10#${hh}))" "$((10#${mm}))" "$((10#${ss}))" \
+            "$tail" "$ext"
+        return 0
+    fi
+
+    # bandicam_YYYYMMDD_HH-MM-SS[_tail].ext (no milliseconds; date already compacted).
+    if [[ "$new" =~ ^[Bb]andicam_([0-9]{8})_([0-9]{2})-([0-9]{2})-([0-9]{2})(.*)(\.[^.]+)$ ]]; then
+        ymd="${BASH_REMATCH[1]}"
+        hh="${BASH_REMATCH[2]}"
+        mm="${BASH_REMATCH[3]}"
+        ss="${BASH_REMATCH[4]}"
+        tail="${BASH_REMATCH[5]}"
+        ext="${BASH_REMATCH[6]}"
+        _rename_is_valid_ymd "${ymd:0:4}" "${ymd:4:2}" "${ymd:6:2}" || return 1
+        printf '%s_%02d-%02d-%02d_bandicam%s%s' \
+            "$ymd" \
+            "$((10#${hh}))" "$((10#${mm}))" "$((10#${ss}))" \
+            "$tail" "$ext"
+        return 0
+    fi
+
+    return 1
+}
+
+# Trailing -YYYY-MM-DD-HH_MM_SS or -YYYYMMDD-HH_MM_SS (Firefox screencapture, etc.) → YYYYMMDD_HHMMSS_title.ext
+_rename_trailing_date_underscore_time_first() {
+    local new="$1"
+    local prefix y m d hh mm ss ext ymd hhmmss
+
+    [[ "$new" =~ ^[0-9]{8}_[0-9]{6}_ ]] && return 1
+
+    # ...-YYYY-MM-DD-HH_MM_SS.ext (e.g. screencapture-...-2020-04-27-11_50_34.jpg).
+    if [[ "$new" =~ ^(.+)-([0-9]{4})-([0-9]{1,2})-([0-9]{1,2})-([0-9]{2})_([0-9]{2})_([0-9]{2})(\.[^.]+)$ ]]; then
+        prefix="${BASH_REMATCH[1]}"
+        y="${BASH_REMATCH[2]}"
+        m="${BASH_REMATCH[3]}"
+        d="${BASH_REMATCH[4]}"
+        hh="${BASH_REMATCH[5]}"
+        mm="${BASH_REMATCH[6]}"
+        ss="${BASH_REMATCH[7]}"
+        ext="${BASH_REMATCH[8]}"
+        _rename_is_valid_ymd "$y" "$m" "$d" || return 1
+        ymd="$(printf '%04d%02d%02d' "$((10#${y}))" "$((10#${m}))" "$((10#${d}))")"
+        hhmmss="$(printf '%02d%02d%02d' "$((10#${hh}))" "$((10#${mm}))" "$((10#${ss}))")"
+        printf '%s_%s_%s%s' "$ymd" "$hhmmss" "$prefix" "$ext"
+        return 0
+    fi
+
+    # ...-YYYYMMDD-HH_MM_SS.ext (date already compacted).
+    if [[ "$new" =~ ^(.+)-([0-9]{8})-([0-9]{2})_([0-9]{2})_([0-9]{2})(\.[^.]+)$ ]]; then
+        prefix="${BASH_REMATCH[1]}"
+        ymd="${BASH_REMATCH[2]}"
+        hh="${BASH_REMATCH[3]}"
+        mm="${BASH_REMATCH[4]}"
+        ss="${BASH_REMATCH[5]}"
+        ext="${BASH_REMATCH[6]}"
+        _rename_is_valid_ymd "${ymd:0:4}" "${ymd:4:2}" "${ymd:6:2}" || return 1
+        hhmmss="$(printf '%02d%02d%02d' "$((10#${hh}))" "$((10#${mm}))" "$((10#${ss}))")"
+        printf '%s_%s_%s%s' "$ymd" "$hhmmss" "$prefix" "$ext"
+        return 0
+    fi
+
+    return 1
+}
+
 # BBC / iPlayer style: ...-date_YYYY-MM-DD_HH_MM_SS[_id].ext
 # DATE_PLACEMENT=front (default) → YYYYMMDD_HHMMSS_title; original → title_YYYYMMDD_HHMMSS[_tail] (before/after hyphen date compaction).
 _rename_date_tag_place_output() {
@@ -8009,6 +8132,15 @@ _rename_finish_basename_stem() {
             finished="$(_rename_compact_embedded_hyphen_dates "$finished")"
             _sig_fin="$(_rename_signal_timestamp_first "$finished" || true)"
             [[ -n "$_sig_fin" ]] && finished="$_sig_fin"
+        fi
+    elif [[ "$finished" =~ ^[Bb]andicam_ ]]; then
+        local _bc_fin=""
+        _bc_fin="$(_rename_bandicam_timestamp_first "$finished" || true)"
+        [[ -n "$_bc_fin" ]] && finished="$_bc_fin"
+        if [[ "$finished" =~ ^[Bb]andicam_ ]]; then
+            finished="$(_rename_compact_embedded_hyphen_dates "$finished")"
+            _bc_fin="$(_rename_bandicam_timestamp_first "$finished" || true)"
+            [[ -n "$_bc_fin" ]] && finished="$_bc_fin"
         fi
     elif [[ "$finished" == *-[Dd][Aa][Tt][Ee]_* ]]; then
         local _dt_fin=""
@@ -9114,6 +9246,22 @@ transform_basename() {
         return
     fi
 
+    # Bandicam bandicam_YYYY-MM-DD_HH-MM-SS-ms → YYYYMMDD_HH-MM-SS-ms_bandicam (before hyphen date compaction).
+    local _bc_ts_out=""
+    _bc_ts_out="$(_rename_bandicam_timestamp_first "$new" || true)"
+    if [[ -n "$_bc_ts_out" ]]; then
+        _tb_emit "$_bc_ts_out"
+        return
+    fi
+
+    # Trailing -YYYY-MM-DD-HH_MM_SS (Firefox screencapture, etc.) → YYYYMMDD_HHMMSS_title (before hyphen date compaction).
+    local _trail_us_out=""
+    _trail_us_out="$(_rename_trailing_date_underscore_time_first "$new" || true)"
+    if [[ -n "$_trail_us_out" ]]; then
+        _tb_emit "$(_normalize_basename_separators "$_trail_us_out")"
+        return
+    fi
+
     # Signal signal-YYYY-MM-DD-HH-MM-SS[-tail] → YYYYMMDD_HHMMSS-signal[-tail].ext (before hyphen date compaction).
     local _sig_ts_out=""
     _sig_ts_out="$(_rename_signal_timestamp_first "$new" || true)"
@@ -9135,6 +9283,20 @@ transform_basename() {
     new="$(_rename_compact_embedded_dotted_dates "$new")"
     if [[ ! "$new" =~ ^[Ss]creenshot_ ]]; then
         new="$(_rename_compact_embedded_hyphen_dates "$new")"
+    fi
+
+    # Bandicam (again): catch bandicam_YYYYMMDD_HH-MM-SS-ms after hyphen date compaction.
+    _bc_ts_out="$(_rename_bandicam_timestamp_first "$new" || true)"
+    if [[ -n "$_bc_ts_out" ]]; then
+        _tb_emit "$_bc_ts_out"
+        return
+    fi
+
+    # Trailing -YYYYMMDD-HH_MM_SS (again, after hyphen date compaction).
+    _trail_us_out="$(_rename_trailing_date_underscore_time_first "$new" || true)"
+    if [[ -n "$_trail_us_out" ]]; then
+        _tb_emit "$(_normalize_basename_separators "$_trail_us_out")"
+        return
     fi
 
     # Signal (again): catch signal-YYYYMMDD-HH-MM-SS-tail after hyphen date compaction, or names compaction ran on anyway.
