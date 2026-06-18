@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.06.16 - v. 1.4 - prompt before source compile; verify gcc/make/tar prereqs with apt hint
 # 2026.06.16 - v. 1.3 - official prebuilt zip lacks -uri; probe before install, compile autoconf with SQLITE_USE_URI=1
 # 2026.06.16 - v. 1.2 - install binaries directly in /usr/local/bin (no versioned tree)
 # 2026.06.16 - v. 1.1 - fix 404 downloads: parse RELATIVE-URL from sqlite.org CSV (year/artifact paths)
@@ -50,9 +51,12 @@ Usage: db-pgm-install-sqlite.sh [options]
 Install SQLite CLI with -uri / ?nolock=1 support into /usr/local/bin (root required).
 
 Options:
-  -y, --yes              Proceed without interactive prompts
+  -y, --yes              Proceed without interactive prompts (includes compile if needed)
   --version X.Y.Z        Install this release (default: latest from sqlite.org)
   -h, --help             Show this help
+
+Source compile (when official zip lacks -uri) needs: gcc or cc, make, sed, tar, gzip.
+On Debian/Ubuntu: apt-get install -y build-essential
 
 Environment:
   INSTALL_SQLITE_READ_TIMEOUT   Prompt timeout seconds (default: 300)
@@ -100,6 +104,99 @@ need_cmd() {
         echo "ERROR: Required command not found: $1" >&2
         exit 1
     fi
+}
+
+sqlite_c_compiler() {
+    if command -v gcc >/dev/null 2>&1; then
+        printf '%s' gcc
+        return 0
+    fi
+    if command -v cc >/dev/null 2>&1; then
+        printf '%s' cc
+        return 0
+    fi
+    return 1
+}
+
+print_compile_prerequisite_install_hint() {
+    if command -v apt-get >/dev/null 2>&1; then
+        echo "On Debian/Ubuntu, install build tools with:" >&2
+        echo "  apt-get update" >&2
+        echo "  apt-get install -y build-essential" >&2
+    else
+        echo "Install a C compiler (gcc), make, and build-essential-equivalent packages for your distro." >&2
+    fi
+}
+
+# Return 0 when gcc/cc, make, sed, tar, gzip exist and the compiler can link a trivial program.
+check_compile_prerequisites() {
+    local -a missing=()
+    local cc="" tmpsrc="" tmpexe=""
+
+    if ! cc="$(sqlite_c_compiler)"; then
+        missing+=( "gcc or cc (C compiler)" )
+    fi
+    command -v make >/dev/null 2>&1 || missing+=( make )
+    command -v sed >/dev/null 2>&1 || missing+=( sed )
+    command -v tar >/dev/null 2>&1 || missing+=( tar )
+    if ! command -v gzip >/dev/null 2>&1 && ! command -v gunzip >/dev/null 2>&1; then
+        missing+=( gzip )
+    fi
+
+    if (( ${#missing[@]} > 0 )); then
+        echo "ERROR: Missing prerequisites for compiling sqlite3 from source:" >&2
+        printf '  - %s\n' "${missing[@]}" >&2
+        print_compile_prerequisite_install_hint
+        return 1
+    fi
+
+    tmpsrc="$(mktemp --suffix=.c)"
+    tmpexe="$(mktemp)"
+    printf 'int main(void){return 0;}\n' >"${tmpsrc}"
+    if ! "${cc}" "${tmpsrc}" -o "${tmpexe}" 2>/dev/null; then
+        rm -f "${tmpsrc}" "${tmpexe}"
+        echo "ERROR: C compiler found (${cc}) but failed to compile a test program." >&2
+        print_compile_prerequisite_install_hint
+        return 1
+    fi
+    rm -f "${tmpsrc}" "${tmpexe}"
+    return 0
+}
+
+prompt_compile_from_source() {
+    local reason="$1"
+    local default_key="n"
+
+    (( ASSUME_YES )) && default_key="y"
+
+    echo
+    echo "Source compile required: ${reason}"
+    echo "Build uses sqlite-autoconf with -DSQLITE_USE_URI=1 (-uri / ?nolock=1 support)."
+    echo "Downloads source and runs ./configure && make (typically a few minutes)."
+
+    if ! check_compile_prerequisites; then
+        exit 1
+    fi
+    echo "Build prerequisites: OK ($(sqlite_c_compiler), make, tar, sed)."
+
+    if [[ ! -t 0 ]] && ! (( ASSUME_YES )); then
+        echo "Non-interactive session — not compiling (default [N]). Use --yes to compile and install."
+        exit 0
+    fi
+
+    sqlite_read_key "Compile sqlite3 from source now? [y/N]: " "${default_key}" "${INSTALL_SQLITE_READ_TIMEOUT}"
+    case "${REPLY}" in
+        y|Y) echo "Proceeding with source compile..." ;;
+        *) echo "Quitting — no changes made."; exit 0 ;;
+    esac
+}
+
+run_source_compile() {
+    local build_id="$1"
+    local reason="$2"
+
+    prompt_compile_from_source "${reason}"
+    install_from_source "${build_id}"
 }
 
 as_root_check() {
@@ -438,10 +535,6 @@ install_from_source() {
     echo "Download URL: ${url}"
     echo "Install target: ${BIN_DIR}"
 
-    need_cmd gcc
-    need_cmd make
-    need_cmd sed
-
     download_file "${url}" "${artifact}"
     tar xzf "${artifact}"
     src_dir="sqlite-autoconf-${build_id}"
@@ -549,13 +642,12 @@ main() {
         if ! (
             install_from_prebuilt_zip "${build_id}"
         ); then
-            echo "Compiling sqlite-autoconf with -DSQLITE_USE_URI=1..." >&2
+            run_source_compile "${build_id}" "Official zip lacks -uri support."
             method="source"
-            install_from_source "${build_id}"
         fi
     else
+        run_source_compile "${build_id}" "No official Linux prebuilt for ${PLATFORM}."
         method="source"
-        install_from_source "${build_id}"
     fi
 
     echo "Install method used: ${method}"
