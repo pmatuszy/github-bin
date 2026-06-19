@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.06.18 - v. 0.8 - show resolved script version after startup banner (PuTTY / interactive)
 # 2026.06.02 - v. 0.7 - each line: timestamp, [ avg: x.x ], then all core temps (one decimal, space-separated); x86 uses coretemp Core 0..N; single-sensor hosts show avg + one value
 # 2026.06.02 - v. 0.6 - drop _script_cli.sh; inline print_version_banner in this script
 # 2026.06.02 - v. 0.5 - rename NO_STARTUP_DELAY to --no_startup_delay
@@ -79,6 +80,15 @@ while [[ $# -gt 0 ]]; do
 done
 
 . /root/bin/_script_header.sh "${HEADER_EXTRA_ARGS[@]}"
+
+if [[ -n "${SCRIPT_VERSION_NUMBER:-}" && "${SCRIPT_VERSION_NUMBER}" != unknown ]]; then
+  if [[ -n "${SCRIPT_VERSION_DATE:-}" ]]; then
+    echo "Running ${CALLER_SCRIPT_BASENAME} version ${SCRIPT_VERSION_NUMBER} (${SCRIPT_VERSION_DATE})"
+  else
+    echo "Running ${CALLER_SCRIPT_BASENAME} version ${SCRIPT_VERSION_NUMBER}"
+  fi
+  echo
+fi
 
 # Ordered list of sysfs temp paths (millidegrees C). Populated by detect_cpu_core_temp_paths.
 CPU_CORE_TEMP_PATHS=()

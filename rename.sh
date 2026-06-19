@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.06.18 - v. 19.223.143000 - interactive prompts: show script version in PuTTY (timestamp prefix)
 # 2026.06.18 - v. 19.222.143000 - OLD/NEW prompt wrap: slash-aware continuation aligned under label (not label-only line + dangling basename)
 # 2026.06.16 - v. 19.221.143000 - trailing -YYYY-MM-DD-HH_MM_SS (Firefox screencapture) → YYYYMMDD_HHMMSS_title
 # 2026.06.16 - v. 19.220.143000 - Bandicam: bandicam_YYYY-MM-DD_HH-MM-SS-ms → YYYYMMDD_HH-MM-SS-ms_bandicam
@@ -1366,9 +1367,13 @@ read_line_editable() {
     printf -v "$__var_name" '%s' "$__line"
 }
 
-# Local-time prefix for interactive prompts, e.g. "(2026.05.08 14:30:00) " — trailing space included.
+# Local-time prefix for interactive prompts, e.g. "(2026.05.08 14:30:00 v19.223.143000) " — trailing space included.
 user_prompt_ts_prefix() {
-    printf '(%s) ' "$(date '+%Y.%m.%d %H:%M:%S')"
+    local ver=""
+    if [[ -n "$SCRIPT_VERSION" && "$SCRIPT_VERSION" != "0.0.000000" ]]; then
+        ver=" v${SCRIPT_VERSION}"
+    fi
+    printf '(%s%s) ' "$(date '+%Y.%m.%d %H:%M:%S')" "$ver"
 }
 
 # Print one user-visible question line with (YYYY.MM.DD HH:MM:SS). Optional second arg "2" / "stderr" for helpers that must not write to stdout.

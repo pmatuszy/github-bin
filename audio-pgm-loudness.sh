@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.06.18 - v. 0.5.35 - interactive prompts: include script version in timestamp prefix (PuTTY)
 # 2026.06.18 - v. 0.5.34 - run summary: no [timestamp] prefix on summary lines
 # 2026.06.18 - v. 0.5.33 - end-of-run and Ctrl-C summary (timing, scan/normalize stats)
 # 2026.06.18 - v. 0.5.32 - batch NORMALIZING line: prefix with [YYYY.MM.DD HH:MM:SS]
@@ -412,6 +413,16 @@ PRESUME_INTERACTIVE=0
 
 . /root/bin/_script_header.sh "${HEADER_EXTRA_ARGS[@]}"
 
+loudness_prompt_version_suffix() {
+  if [[ -n "${SCRIPT_VERSION_NUMBER:-}" && "${SCRIPT_VERSION_NUMBER}" != unknown ]]; then
+    printf ' v%s' "$SCRIPT_VERSION_NUMBER"
+  fi
+}
+
+loudness_prompt_ts() {
+  printf '[%s%s]' "$(date '+%Y.%m.%d %H:%M:%S')" "$(loudness_prompt_version_suffix)"
+}
+
 if [[ -f "${BASH_SOURCE[0]}" ]]; then
   chmod 700 "${BASH_SOURCE[0]}" 2>/dev/null || true
 fi
@@ -705,7 +716,7 @@ loudness_read_key() {
   fi
 
   if [[ "$prompt" != \[* ]]; then
-    prompt="[$(date '+%Y.%m.%d %H:%M:%S')] ${prompt}"
+    prompt="$(loudness_prompt_ts) ${prompt}"
   fi
 
   printf '%s' "$prompt"
@@ -730,7 +741,7 @@ loudness_read_yn_key() {
 
   display_prompt="$(loudness_prompt_add_yn_arrow_hint "$prompt")"
   if [[ "$prompt" != \[* ]]; then
-    display_prompt="[$(date '+%Y.%m.%d %H:%M:%S')] ${display_prompt}"
+    display_prompt="$(loudness_prompt_ts) ${display_prompt}"
   fi
 
   printf '%s' "$display_prompt"
@@ -1616,7 +1627,7 @@ prompt_normalize_classes() {
   echo "Normalization candidates by class: NORMAL ${cn}, TOO QUIET ${ct}, PERFECT ${cp}"
   echo "  Letters: n=normal, t=too quiet, p=perfect (q also means too quiet on CLI)"
   echo "  Default: nt (NORMAL + TOO QUIET)"
-  printf '[%s] Classes to include [nt]: ' "$(date '+%Y.%m.%d %H:%M:%S')"
+  printf '%s Classes to include [nt]: ' "$(loudness_prompt_ts)"
   loudness_prompt_wait_begin
   if IFS= read -r input; then
     :
@@ -2844,7 +2855,7 @@ prompt_batch_size_interactive() {
 
   echo 'Batch size for per-file normalize prompts?'
   echo '  Default: 50 (ask about N files, then normalize selected before next batch)'
-  printf '[%s] Batch size [50]: ' "$(date '+%Y.%m.%d %H:%M:%S')"
+  printf '%s Batch size [50]: ' "$(loudness_prompt_ts)"
   loudness_prompt_wait_begin
   if IFS= read -r -t "$LOUDNESS_READ_TIMEOUT" input; then
     :
@@ -3111,8 +3122,8 @@ normalize_run_batch_prompt_loop() {
             (( ++selected_pos ))
             selected_left=$(( selected_total - selected_pos ))
             echo
-            printf '[%s] NORMALIZING: selected file %s/%s in current batch (%s left in batch)\n' \
-              "$(date '+%Y.%m.%d %H:%M:%S')" \
+            printf '%s NORMALIZING: selected file %s/%s in current batch (%s left in batch)\n' \
+              "$(loudness_prompt_ts)" \
               "$selected_pos" "$selected_total" "$selected_left"
             rc=0
             normalize_one_selected_file "${batch_indices[$j]}" "$filter" || rc=$?

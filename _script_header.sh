@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.06.18 - v. 1.54 - resolve caller script via BASH_SOURCE; export SCRIPT_VERSION_NUMBER; PuTTY title + prompt helper
 # 2026.06.02 - v. 1.53 - accept --no_startup_delay as alias for NO_STARTUP_DELAY (skip random delay when sourced with that flag)
 # 2026.04.21 - v. 1.52 - ctrl_c STY guard; quote $0 in version/tty; year-agnostic changelog grep; -n STY; indent; contract blurb
 # 2025.10.28 - v. 1.51- now we set LC_ALL for scripts to have proper separators in numbers (like ,.)
@@ -35,6 +36,51 @@ set -o pipefail
 # set this to get proper numbers with separators - especially for smart*sh scripts which do calculations
 export LC_ALL=C
 
+_script_header_resolve_caller_script() {
+  local p="${BASH_SOURCE[1]:-$0}" dir base found
+
+  if [[ "$p" == */* && -r "$p" ]]; then
+    dir="$(cd "$(dirname "$p")" && pwd -P)"
+    base="$(basename "$p")"
+    printf '%s/%s' "$dir" "$base"
+    return 0
+  fi
+  if [[ -r "./$p" ]]; then
+    dir="$(cd "$(dirname "./$p")" && pwd -P)"
+    base="$(basename "$p")"
+    printf '%s/%s' "$dir" "$base"
+    return 0
+  fi
+  found="$(type -P "$p" 2>/dev/null || true)"
+  if [[ -n "$found" && -r "$found" ]]; then
+    printf '%s' "$found"
+    return 0
+  fi
+  printf '%s' "$p"
+}
+
+CALLER_SCRIPT="$(_script_header_resolve_caller_script)"
+export CALLER_SCRIPT
+CALLER_SCRIPT_BASENAME="$(basename "$CALLER_SCRIPT")"
+export CALLER_SCRIPT_BASENAME
+
+SCRIPT_VERSION_NUMBER="$(
+  LC_ALL=C grep -m1 '^# [0-9]' "$CALLER_SCRIPT" 2>/dev/null \
+    | sed -E -n 's/^# [0-9]{4}\.[0-9]{2}\.[0-9]{2} - v\. ([0-9]+(\.[0-9]+)*) - .*/\1/p'
+)"
+SCRIPT_VERSION_DATE="$(
+  LC_ALL=C grep -m1 '^# [0-9]' "$CALLER_SCRIPT" 2>/dev/null \
+    | sed -E -n 's/^# ([0-9]{4}\.[0-9]{2}\.[0-9]{2}) - v\. .*/\1/p'
+)"
+[[ -n "$SCRIPT_VERSION_NUMBER" ]] || SCRIPT_VERSION_NUMBER=unknown
+export SCRIPT_VERSION_NUMBER SCRIPT_VERSION_DATE
+
+script_version_in_prompt() {
+  if [[ -n "${SCRIPT_VERSION_NUMBER:-}" && "${SCRIPT_VERSION_NUMBER}" != unknown ]]; then
+    printf ' v%s' "$SCRIPT_VERSION_NUMBER"
+  fi
+}
+
 #######################################################################################
 function ctrl_c() {
   echo
@@ -42,7 +88,7 @@ function ctrl_c() {
   echo
   if [ -n "${STY:-}" ]; then    # checking if we are running within screen
     # I am setting the screen window title to the script name
-    echo -ne "${tcScrTitleStart}${0}${tcScrTitleEnd}"
+    echo -ne "${tcScrTitleStart}${CALLER_SCRIPT_BASENAME}${tcScrTitleEnd}"
   fi
   exit
 }
@@ -83,13 +129,13 @@ check_if_installed figlet
 
 tty 2>&1 >/dev/null
 if (( $? == 0 )); then
-  echo -ne "\033]0;$(hostname) - ${0}\007";\
-  figlet -w 280 "$(basename "$0")"
+  echo -ne "\033]0;$(hostname) - ${CALLER_SCRIPT_BASENAME}$(script_version_in_prompt)\007"
+  figlet -w 280 "${CALLER_SCRIPT_BASENAME}"
 fi
 
 if [ -n "${STY:-}" ]; then    # checking if we are running within screen
   # I am setting the screen window title to the script name
-  echo -ne "${tcScrTitleStart}${0}${tcScrTitleEnd}"
+  echo -ne "${tcScrTitleStart}${CALLER_SCRIPT_BASENAME}$(script_version_in_prompt)${tcScrTitleEnd}"
 fi
 
 # trap ctrl-c and call ctrl_c()
@@ -103,8 +149,12 @@ export MAX_RANDOM_DELAY_IN_SEC=${MAX_RANDOM_DELAY_IN_SEC:-50}
 export script_is_run_interactively=0
 
 export SCRIPT_VERSION_TMP=$(
-  echo "script name: ${0}" ;
-  grep -E -m1 '^# *[0-9]{4}\.[0-9]{2}\.[0-9]{2}' "$0" | awk '{print "script version: " $5 " (dated "$2")"}' ;
+  echo "script name: ${CALLER_SCRIPT}" ;
+  if [[ "${SCRIPT_VERSION_NUMBER}" != unknown ]]; then
+    echo "script version: ${SCRIPT_VERSION_NUMBER} (dated ${SCRIPT_VERSION_DATE})" ;
+  else
+    echo "script version: unknown" ;
+  fi
   echo "current date : $(date '+%Y.%m.%d %H:%M:%S')"
   echo "script is run on $(hostname)" ; echo ; echo
 )
