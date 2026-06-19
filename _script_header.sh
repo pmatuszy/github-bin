@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.06.18 - v. 1.55 - PuTTY/window title: script version at front of title bar
 # 2026.06.18 - v. 1.54 - resolve caller script via BASH_SOURCE; export SCRIPT_VERSION_NUMBER; PuTTY title + prompt helper
 # 2026.06.02 - v. 1.53 - accept --no_startup_delay as alias for NO_STARTUP_DELAY (skip random delay when sourced with that flag)
 # 2026.04.21 - v. 1.52 - ctrl_c STY guard; quote $0 in version/tty; year-agnostic changelog grep; -n STY; indent; contract blurb
@@ -81,6 +82,12 @@ script_version_in_prompt() {
   fi
 }
 
+script_version_title_prefix() {
+  if [[ -n "${SCRIPT_VERSION_NUMBER:-}" && "${SCRIPT_VERSION_NUMBER}" != unknown ]]; then
+    printf 'v%s ' "$SCRIPT_VERSION_NUMBER"
+  fi
+}
+
 #######################################################################################
 function ctrl_c() {
   echo
@@ -129,13 +136,13 @@ check_if_installed figlet
 
 tty 2>&1 >/dev/null
 if (( $? == 0 )); then
-  echo -ne "\033]0;$(hostname) - ${CALLER_SCRIPT_BASENAME}$(script_version_in_prompt)\007"
+  echo -ne "\033]0;$(script_version_title_prefix)${CALLER_SCRIPT_BASENAME}\007"
   figlet -w 280 "${CALLER_SCRIPT_BASENAME}"
 fi
 
 if [ -n "${STY:-}" ]; then    # checking if we are running within screen
   # I am setting the screen window title to the script name
-  echo -ne "${tcScrTitleStart}${CALLER_SCRIPT_BASENAME}$(script_version_in_prompt)${tcScrTitleEnd}"
+  echo -ne "${tcScrTitleStart}$(script_version_title_prefix)${CALLER_SCRIPT_BASENAME}${tcScrTitleEnd}"
 fi
 
 # trap ctrl-c and call ctrl_c()

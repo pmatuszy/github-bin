@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.06.18 - v. 0.5.36 - PuTTY/window title: script version at front of title bar
 # 2026.06.18 - v. 0.5.35 - interactive prompts: include script version in timestamp prefix (PuTTY)
 # 2026.06.18 - v. 0.5.34 - run summary: no [timestamp] prefix on summary lines
 # 2026.06.18 - v. 0.5.33 - end-of-run and Ctrl-C summary (timing, scan/normalize stats)
@@ -764,10 +765,13 @@ loudness_window_title_restore() {
 }
 
 loudness_window_title_apply() {
-  local title="" a i script0 max_len=400 cwd_bracket=""
+  local title="" a i script0 max_len=400 cwd_bracket="" version_prefix=""
   (( ${#LOUDNESS_ORIGINAL_ARGV[@]} > 0 )) || return 0
   [[ -w /dev/tty ]] 2>/dev/null || return 0
 
+  if [[ -n "${SCRIPT_VERSION_NUMBER:-}" && "${SCRIPT_VERSION_NUMBER}" != unknown ]]; then
+    version_prefix="v${SCRIPT_VERSION_NUMBER} "
+  fi
   script0="${LOUDNESS_ORIGINAL_ARGV[0]}"
   if [[ -e "$script0" ]]; then
     if command -v realpath >/dev/null 2>&1; then
@@ -786,7 +790,7 @@ loudness_window_title_apply() {
     title+=" $a"
   done
   cwd_bracket="[ ${LOUDNESS_INVOCATION_CWD} ] "
-  title="${cwd_bracket}${title}"
+  title="${version_prefix}${cwd_bracket}${title}"
   if (( ${#title} > max_len )); then
     title="${title:0:$(( max_len - 3 ))}..."
   fi

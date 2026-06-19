@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.06.18 - v. 19.225.143000 - PuTTY/window title: script version at front of title bar
 # 2026.06.18 - v. 19.224.143000 - PuTTY/window title: append script version after script path
 # 2026.06.18 - v. 19.223.143000 - interactive prompts: show script version in PuTTY (timestamp prefix)
 # 2026.06.18 - v. 19.222.143000 - OLD/NEW prompt wrap: slash-aware continuation aligned under label (not label-only line + dangling basename)
@@ -1066,8 +1067,11 @@ rename_sh_window_title_restore() {
 }
 
 rename_sh_window_title_apply_from_saved_argv() {
-    local title="" a i script0 max_len=400 cwd_bracket=""
+    local title="" a i script0 max_len=400 cwd_bracket="" version_prefix=""
     (( ${#RENAME_SH_ORIGINAL_ARGV[@]} > 0 )) || return 0
+    if [[ -n "$SCRIPT_VERSION" && "$SCRIPT_VERSION" != "0.0.000000" ]]; then
+        version_prefix="v${SCRIPT_VERSION} "
+    fi
     script0="${RENAME_SH_ORIGINAL_ARGV[0]}"
     if [[ -e "$script0" ]]; then
         if command -v realpath >/dev/null 2>&1; then
@@ -1078,9 +1082,6 @@ rename_sh_window_title_apply_from_saved_argv() {
     else
         title="$script0"
     fi
-    if [[ -n "$SCRIPT_VERSION" && "$SCRIPT_VERSION" != "0.0.000000" ]]; then
-        title+=" v${SCRIPT_VERSION}"
-    fi
     for (( i = 1; i < ${#RENAME_SH_ORIGINAL_ARGV[@]}; i++ )); do
         a="${RENAME_SH_ORIGINAL_ARGV[$i]}"
         a="${a//$'\r'/}"
@@ -1089,7 +1090,7 @@ rename_sh_window_title_apply_from_saved_argv() {
         title+=" $a"
     done
     cwd_bracket="[ ${RENAME_SH_INVOCATION_CWD} ] "
-    title="${cwd_bracket}${title}"
+    title="${version_prefix}${cwd_bracket}${title}"
     if (( ${#title} > max_len )); then
         title="${title:0:$(( max_len - 3 ))}..."
     fi
