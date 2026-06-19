@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.06.19 - v. 19.227.143000 - GoPro exif: missing Firmware Version must not trip ERR/pipefail (grep/sed pipelines)
 # 2026.06.19 - v. 19.226.143000 - OLD/NEW wrap: use PuTTY/terminal width (tput cols), not only MAX_LINE_LENGTH 200
 # 2026.06.18 - v. 19.225.143000 - PuTTY/window title: script version at front of title bar
 # 2026.06.18 - v. 19.224.143000 - PuTTY/window title: append script version after script path
@@ -8467,6 +8468,46 @@ gopro_camera_raw_jpg_basename_matches() {
     return 1
 }
 
+# First matching exif line (grep exit 1 is normal when the tag is absent).
+gopro_exif_first_line() {
+    local exif="$1"
+    local pattern="$2"
+    printf '%s\n' "$exif" | grep -m1 -E "$pattern" 2>/dev/null || true
+}
+
+# Text after the first colon; strip CR/LF.
+gopro_exif_value_after_colon() {
+    local line="${1-}"
+    local val
+
+    [[ -n "$line" ]] || return 0
+    val="${line#*: }"
+    val="${val//$'\r'/}"
+    val="${val//$'\n'/}"
+    printf '%s' "$val"
+}
+
+# Firmware Version or Software prefix before the first dot (HD4, H21, …); empty when absent.
+gopro_firmware_prefix_from_exif() {
+    local exif="$1" line val=""
+
+    line="$(gopro_exif_first_line "$exif" 'Firmware Version')"
+    val="$(gopro_exif_value_after_colon "$line")"
+    if [[ -n "$val" ]]; then
+        val="${val%%.*}"
+        printf '%s' "$val"
+        return 0
+    fi
+    line="$(gopro_exif_first_line "$exif" '^Software[[:space:]]+:')"
+    if [[ -z "$line" ]]; then
+        line="$(gopro_exif_first_line "$exif" 'Software')"
+    fi
+    val="$(gopro_exif_value_after_colon "$line")"
+    [[ -n "$val" ]] || return 0
+    val="${val%%.*}"
+    printf '%s' "$val"
+}
+
 # GoPro Mission 1 (and MISSION 1 PRO metadata): readable GoPro_Mission1_Pro segment in output names.
 gopro_set_mission1_pro_labels() {
     DeviceManufacturer=GoPro
@@ -8476,9 +8517,10 @@ gopro_set_mission1_pro_labels() {
 # When firmware prefix is unknown, use Camera Model Name (e.g. MISSION 1 PRO -> GoPro / Mission1_Pro).
 gopro_apply_camera_model_name_from_exif() {
     local exif="$1"
-    local raw norm
+    local raw norm line
 
-    raw="$(printf '%s\n' "$exif" | grep 'Camera Model Name' | head -n 1 | sed 's/Camera Model Name[[:space:]]*: //' | tr -d $'\r\n')"
+    line="$(gopro_exif_first_line "$exif" 'Camera Model Name')"
+    raw="$(gopro_exif_value_after_colon "$line")"
     [[ -n "$raw" ]] || return 1
     norm="$(printf '%s' "$raw" | tr '[:lower:]' '[:upper:]' | tr -d ' ')"
     case "$norm" in
@@ -8994,6 +9036,23 @@ transform_gopro_camera_basename() {
     local gopro4=0 DeviceManufacturer DeviceModelName
     local data_stworzenia_pliku_w_czasie_lokalnym Duration suffix_pliku ext
     local ktory_gopro TrackCreateDate CreationDateValue data
+    local _tg_err_trap="" _tg_save_e=0
+
+    _transform_gopro_err_trap_restore() {
+        eval "${_tg_err_trap:-}"
+        if ((_tg_save_e)); then
+            set -e
+        else
+            set +e
+        fi
+    }
+
+    _tg_save_e=0
+    [[ $- == *e* ]] && _tg_save_e=1
+    set +e
+    _tg_err_trap="$(trap -p ERR || true)"
+    trap - ERR
+    trap '_transform_gopro_err_trap_restore' RETURN
 
     DeviceManufacturer=xxx
     DeviceModelName=xxx
@@ -9016,10 +9075,7 @@ transform_gopro_camera_basename() {
     if printf '%s\n' "$exif" | egrep 'Compressor Name|Make   ' | grep -q GoPro; then
         czy_gopro=1
         gopro4=0
-        ktory_gopro="$(printf '%s\n' "$exif" | grep 'Firmware Version' | sed 's/Firmware Version                : //' | tr -d $'\r\n' | sed 's/\..*//')"
-        if [[ -z "$ktory_gopro" ]]; then
-            ktory_gopro="$(printf '%s\n' "$exif" | grep 'Software                      ' | sed 's/Software                        : //' | tr -d $'\r\n' | sed 's/\..*//')"
-        fi
+        ktory_gopro="$(gopro_firmware_prefix_from_exif "$exif")"
         case "$ktory_gopro" in
             HD4) gopro4=1; DeviceManufacturer=GOPRO4; DeviceModelName=SILVER ;;
             HD6) DeviceManufacturer=GOPRO6; DeviceModelName=BLACK ;;
