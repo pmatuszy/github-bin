@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.06.19 - v. 19.226.143000 - OLD/NEW wrap: use PuTTY/terminal width (tput cols), not only MAX_LINE_LENGTH 200
 # 2026.06.18 - v. 19.225.143000 - PuTTY/window title: script version at front of title bar
 # 2026.06.18 - v. 19.224.143000 - PuTTY/window title: append script version after script path
 # 2026.06.18 - v. 19.223.143000 - interactive prompts: show script version in PuTTY (timestamp prefix)
@@ -496,6 +497,37 @@ nonverbose_skip_next_main_loop_dot_after_stdout_status() {
     NONVERBOSE_SKIP_NEXT_MAIN_LOOP_DOT=yes
 }
 
+# Interactive PuTTY/SSH: wrap user-visible lines to the real terminal width so the shell does not
+# soft-wrap long OLD/NEW paths at column 0 on the next line (MAX_LINE_LENGTH alone is often 200).
+rename_terminal_column_count() {
+    local cols=""
+
+    if [[ -t 1 ]]; then
+        cols="$(tput cols 2>/dev/null || true)"
+    fi
+    if [[ -w /dev/tty ]] 2>/dev/null && [[ ! "$cols" =~ ^[0-9]+$ ]]; then
+        cols="$(tput cols </dev/tty 2>/dev/null || true)"
+    fi
+    if [[ ! "$cols" =~ ^[0-9]+$ || "$cols" -lt 1 ]]; then
+        cols="${COLUMNS:-}"
+    fi
+    if [[ ! "$cols" =~ ^[0-9]+$ || "$cols" -lt 1 ]]; then
+        cols=80
+    fi
+    printf '%s' "$cols"
+}
+
+rename_effective_wrap_width() {
+    local cols max="${MAX_LINE_LENGTH:-200}"
+
+    cols="$(rename_terminal_column_count)"
+    if (( cols < max )); then
+        printf '%s' "$cols"
+    else
+        printf '%s' "$max"
+    fi
+}
+
 # plain_prefix + body == full visible line (no ANSI). fd 1=stdout, 2=stderr.
 # Optional 5th arg full_line_color (green|red|cyan|yellow): when use_colors=yes, the entire
 # visible line (prefix + body) uses that color — used for OLD/NEW suggested path lines.
@@ -505,10 +537,12 @@ emit_wrap_path_body_slash_aware() {
     local plain_prefix="$2"
     local body="$3"
     local line_color="$4"
-    local max_line="$MAX_LINE_LENGTH"
+    local max_line
     local prefix_len="${#plain_prefix}"
     local path_indent="" remaining="$body" first=1
     local pfx plain avail head chunk
+
+    max_line="$(rename_effective_wrap_width)"
 
     body="${body//$'\r'/}"
     body="${body//$'\n'/}"
@@ -571,6 +605,8 @@ emit_wrap_labeled_line() {
     local full_line_color="${5-}"
     local plain="${plain_prefix}${body}"
     local line_color=""
+    local eff_width
+    eff_width="$(rename_effective_wrap_width)"
     if (( fd == 1 )); then
         nonverbose_progress_dot_endline_if_needed
     fi
@@ -583,7 +619,7 @@ emit_wrap_labeled_line() {
         esac
     fi
     if [[ -n "$line_color" ]]; then
-        if (( ${#plain} <= MAX_LINE_LENGTH )); then
+        if (( ${#plain} <= eff_width )); then
             printf '%b%s%b\n' "$line_color" "$plain" "$RESET" >&"$fd"
         else
             emit_wrap_path_body_slash_aware "$fd" "$plain_prefix" "$body" "$line_color"
@@ -593,7 +629,7 @@ emit_wrap_labeled_line() {
         fi
         return 0
     fi
-    if (( ${#plain} <= MAX_LINE_LENGTH )); then
+    if (( ${#plain} <= eff_width )); then
         printf '%b%s\n' "$ansi_label" "$body" >&"$fd"
     else
         emit_wrap_path_body_slash_aware "$fd" "$plain_prefix" "$body" ""
