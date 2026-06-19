@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.06.18 - v. 19.224.143000 - PuTTY/window title: append script version after script path
 # 2026.06.18 - v. 19.223.143000 - interactive prompts: show script version in PuTTY (timestamp prefix)
 # 2026.06.18 - v. 19.222.143000 - OLD/NEW prompt wrap: slash-aware continuation aligned under label (not label-only line + dangling basename)
 # 2026.06.16 - v. 19.221.143000 - trailing -YYYY-MM-DD-HH_MM_SS (Firefox screencapture) → YYYYMMDD_HHMMSS_title
@@ -1076,6 +1077,9 @@ rename_sh_window_title_apply_from_saved_argv() {
         fi
     else
         title="$script0"
+    fi
+    if [[ -n "$SCRIPT_VERSION" && "$SCRIPT_VERSION" != "0.0.000000" ]]; then
+        title+=" v${SCRIPT_VERSION}"
     fi
     for (( i = 1; i < ${#RENAME_SH_ORIGINAL_ARGV[@]}; i++ )); do
         a="${RENAME_SH_ORIGINAL_ARGV[$i]}"
