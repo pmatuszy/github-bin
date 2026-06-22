@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.06.16 - v. 2.1.20 - default install is official source build (common profile: libmp3lame, x264, …)
 # 2026.06.12 - v. 2.1.19 - libfdk-aac prompt defaults to yes [Y/n/q]
 # 2026.06.12 - v. 2.1.18 - remove old version dirs (legacy ffmpeg-* directories); encoder probe fallback
 # 2026.06.12 - v. 2.1.17 - static install prompt shows planned version (e.g. 8.1.1)
@@ -34,10 +35,11 @@
 # ffmpeg-install.sh
 #
 # Official releases: https://ffmpeg.org/download.html
-# Static builds:     https://johnvansickle.com/ffmpeg/
+# Static builds:     https://johnvansickle.com/ffmpeg/ (minimal codecs — usually no libmp3lame)
 # Git (master) static builds are recommended for bug fixes; release static builds also exist.
-# Dynamic fallback: distro ffmpeg package via apt when static is unavailable.
-# Source fallback: compile official ffmpeg.org release tarball (static, common lib* encoders).
+# Default install:   compile official ffmpeg.org release (common profile: libmp3lame, x264, …).
+# Dynamic fallback:  distro ffmpeg package via apt.
+# Static fallback:     prebuilt johnvansickle tarball when source build is declined or unavailable.
 #
 
 set -euo pipefail
@@ -133,10 +135,10 @@ When ffmpeg/ffprobe is running, offers graceful kill (SIGTERM), then force kill
 Re-checks before any install step. With --yes, tries graceful then force kill.
 
 Check installed ffmpeg against ffmpeg.org, then optionally install:
-  1) prebuilt static (johnvansickle.com)
-  2) dynamic package (apt)
-  3) static/shared build compiled from the official ffmpeg.org release source
+  1) official source build (default) — common profile: libmp3lame, x264, x265, opus, aom, …
      Profiles: min, common (default), max, gpu (VAAPI), nvidia (NVENC/CUDA)
+  2) prebuilt static (johnvansickle.com — minimal codecs, usually no MP3 encode)
+  3) dynamic package (apt)
 Older installs are moved aside, not deleted.
 
 Install layout (/usr/local/bin):
@@ -152,11 +154,12 @@ Install layout (/usr/local/bin):
 Options:
   -h, --help           Show this help and exit.
   -v, --version        Print script version and exit.
-  -y, --yes            Install without prompting: static if available, else apt
-                       (does not auto-build from source; that is slow).
+  -y, --yes            Install without prompting: official source build (common
+                       profile) if ffmpeg.org version is known; else static or apt.
   -q, --quiet          Less progress output (errors still shown).
 
-Interactive prompts use [y/N/q]: y = yes, Enter/N = no (default), q = quit.
+Default install prompt uses [Y/n/q]: Enter/Y = source common, n = other options, q = quit.
+Other prompts use [y/N/q]: y = yes, Enter/N = no, q = quit.
   --release            Use release static builds instead of git (master) builds.
   --dynamic-only       Install distro ffmpeg via apt only.
   --static-only        Do not fall back to apt or source build.
@@ -1657,6 +1660,80 @@ prompt_build_from_source_fallback() {
     fi
 }
 
+prompt_install_source_build_default() {
+    local reply=""
+
+    if (( STATIC_ONLY == 1 || DYNAMIC_ONLY == 1 )); then
+        return 1
+    fi
+    if ! ensure_ffmpeg_org_release_version; then
+        log_note "Official ffmpeg.org release unknown; skipping default source build prompt."
+        return 1
+    fi
+
+    if (( ASSUME_YES == 1 )); then
+        INSTALL_PLAN="source"
+        if [[ -z "${SOURCE_PROFILE}" && -z "${CLI_SOURCE_PROFILE}" && -z "${FFMPEG_SOURCE_PROFILE}" ]]; then
+            SOURCE_PROFILE=common
+        fi
+        ensure_source_build_profile_selected
+        echo "Proceeding with official source build (profile: ${SOURCE_PROFILE}, --yes)."
+        return 0
+    fi
+
+    echo
+    echo "Default: compile ffmpeg ${FFMPEG_ORG_VERSION} from official source (common profile)."
+    echo "  Includes libmp3lame, x264, x265, opus, aom, openssl, and other common codecs."
+    echo "  Prebuilt static builds (johnvansickle.com) usually lack external encoders such as MP3."
+    echo ">>> Waiting for your answer:"
+    echo -n "Build from official source (common profile)? [Y/n/q] "
+    read -r -n 1 reply || reply=""
+    echo
+    if prompt_reply_is_quit "${reply}"; then
+        echo "Quitting — no changes made."
+        quit_prompt_with_optional_old_cleanup
+    fi
+    if prompt_reply_is_no "${reply}"; then
+        return 1
+    fi
+    INSTALL_PLAN="source"
+    if [[ -z "${SOURCE_PROFILE}" && -z "${CLI_SOURCE_PROFILE}" && -z "${FFMPEG_SOURCE_PROFILE}" ]]; then
+        SOURCE_PROFILE=common
+    fi
+    ensure_source_build_profile_selected
+    echo "Proceeding with official source build (profile: ${SOURCE_PROFILE})..."
+    return 0
+}
+
+prompt_install_static_optional() {
+    local reply="" static_version=""
+
+    if (( STATIC_TARBALL_AVAILABLE != 1 )); then
+        echo "Static build is not available for this architecture."
+        return 1
+    fi
+
+    static_version="$(planned_static_install_version || true)"
+    echo ">>> Waiting for your answer:"
+    if [[ -n "${static_version}" ]]; then
+        echo -n "Install prebuilt static ffmpeg ${static_version} instead (fewer codecs)? [y/N/q] "
+    else
+        echo -n "Install prebuilt static ffmpeg instead (fewer codecs)? [y/N/q] "
+    fi
+    read -r -n 1 reply || reply=""
+    echo
+    if prompt_reply_is_yes "${reply}"; then
+        INSTALL_PLAN="static"
+        echo "Proceeding with static install..."
+        return 0
+    fi
+    if prompt_reply_is_quit "${reply}"; then
+        echo "Quitting — no changes made."
+        quit_prompt_with_optional_old_cleanup
+    fi
+    return 1
+}
+
 prompt_install_dynamic_fallback() {
     local reply=""
 
@@ -1690,7 +1767,7 @@ prompt_install_dynamic_fallback() {
 }
 
 prompt_install_plan() {
-    local installed="$1" installed_date="$2" reply="" static_version=""
+    local installed="$1" installed_date="$2" reply=""
 
     INSTALL_PLAN=""
 
@@ -1699,40 +1776,47 @@ prompt_install_plan() {
     fi
 
     if (( SOURCE_ONLY == 1 )); then
+        if (( ASSUME_YES == 1 )); then
+            INSTALL_PLAN="source"
+            ensure_source_build_profile_selected
+            echo "Proceeding with official source build (--yes)."
+            return 0
+        fi
         prompt_build_from_source_fallback
         return 0
     fi
 
     if (( DYNAMIC_ONLY == 1 )); then
+        if (( ASSUME_YES == 1 )); then
+            INSTALL_PLAN="dynamic"
+            echo "Proceeding with dynamic apt install (--yes)."
+            return 0
+        fi
         prompt_install_dynamic_fallback
         return 0
     fi
 
-    if (( STATIC_TARBALL_AVAILABLE == 1 )); then
+    if (( STATIC_ONLY == 1 )); then
         if (( ASSUME_YES == 1 )); then
             INSTALL_PLAN="static"
             echo "Proceeding with static install (--yes)."
             return 0
         fi
-        static_version="$(planned_static_install_version || true)"
-        echo ">>> Waiting for your answer:"
-        if [[ -n "${static_version}" ]]; then
-            echo -n "Install static ffmpeg build ${static_version}? [y/N/q] "
-        else
-            echo -n "Install static ffmpeg build? [y/N/q] "
-        fi
-        read -r -n 1 reply || reply=""
-        echo
-        if prompt_reply_is_yes "${reply}"; then
-            INSTALL_PLAN="static"
-            echo "Proceeding with static install..."
+        prompt_install_static_optional || true
+        if [[ -n "${INSTALL_PLAN}" ]]; then
             return 0
-        elif prompt_reply_is_quit "${reply}"; then
-            echo "Quitting — no changes made."
-            quit_prompt_with_optional_old_cleanup
         fi
-    else
-        echo "Static build is not available for this architecture."
+        echo "Quitting — no changes made."
+        quit_prompt_with_optional_old_cleanup
+    fi
+
+    if prompt_install_source_build_default; then
+        return 0
+    fi
+
+    prompt_install_static_optional || true
+    if [[ -n "${INSTALL_PLAN}" ]]; then
+        return 0
     fi
 
     prompt_install_dynamic_fallback
