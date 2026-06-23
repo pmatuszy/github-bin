@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.06.23 - v. 0.14.2 - seam preview: ask per seam with clearer play message; repeat then next seam
 # 2026.06.23 - v. 0.14.1 - seam preview: pass --start/--length as separate args; fix repeat prompt arithmetic
 # 2026.06.23 - v. 0.14.0 - post-merge: merge boundary times in output; optional terminal seam preview
 # 2026.06.13 - v. 0.13.4 - size-split: recognize ~12 GB chapters (in addition to ~4 GB); same tier per group
@@ -92,8 +93,8 @@ Merge behaviour (no options):
   - Shows each multi-part group (with file sizes) and asks whether to merge
     (single-key Y/N/A/M/Q, no Enter — like rename.sh).
   - After a successful merge: merge-boundary times in the output timeline (where each
-    chapter join occurs), size summary, optional terminal seam preview, and optional
-    deletion of the source chapter files (single-key Y/N).
+    chapter join occurs), size summary, optional per-seam terminal preview (asked one
+    seam at a time), and optional deletion of the source chapter files (single-key Y/N).
   - If the expected _concat output already exists: skip (default), redo merge [r],
     preview merge seams [p], or delete input chapters [d] (keeps merged output).
   - Output file per group: <first_chapter_stem>_parts_<first>-<last>_concat.mp4
@@ -974,6 +975,35 @@ merge_seam_preview_start_length() {
   }'
 }
 
+# Sum of before+after window (e.g. 4 + 5 → 9).
+merge_seam_clip_total_seconds() {
+  local before="$1" after="$2"
+  awk -v b="$before" -v a="$after" 'BEGIN {
+    t = b + a
+    if (t == int(t)) print int(t)
+    else printf "%g", t
+  }'
+}
+
+pgm_ordinal_seam_label() {
+  local n="$1" d u
+  case "$n" in
+    1) printf '1st' ;;
+    2) printf '2nd' ;;
+    3) printf '3rd' ;;
+    *)
+      d=$(( n % 10 ))
+      u=$(( (n / 10) % 10 ))
+      if (( u == 1 )); then printf '%dth' "$n"
+      elif (( d == 1 )); then printf '%dst' "$n"
+      elif (( d == 2 )); then printf '%dnd' "$n"
+      elif (( d == 3 )); then printf '%drd' "$n"
+      else printf '%dth' "$n"
+      fi
+      ;;
+  esac
+}
+
 print_merge_boundaries_report() {
   local output_file="$1"
   shift
@@ -1025,13 +1055,18 @@ find_video_pgm_play_terminal() {
 
 play_merge_seam_preview_once() {
   local player="$1" output_file="$2" boundary="$3" left="$4" right="$5"
-  local start length pos
+  local seam_num="$6" total_seams="$7" ord="$8"
+  local start length pos clip_total
 
   read -r start length < <(merge_seam_preview_start_length "$boundary" \
     "$PGM_SEAM_PREVIEW_BEFORE" "$PGM_SEAM_PREVIEW_AFTER")
   pos="$(format_output_timeline_pos "$boundary")"
+  clip_total="$(merge_seam_clip_total_seconds "$PGM_SEAM_PREVIEW_BEFORE" "$PGM_SEAM_PREVIEW_AFTER")"
+  [[ -n "$ord" ]] || ord="$(pgm_ordinal_seam_label "$seam_num")"
   echo
-  echo "Seam preview: ${left} | ${right}  (merge at ${pos}; playing ${PGM_SEAM_PREVIEW_BEFORE}s before + ${PGM_SEAM_PREVIEW_AFTER}s after)"
+  echo "Playing output file at ${ord} seam (${seam_num} of ${total_seams}): ${output_file##*/}"
+  echo "  Join: ${left} | ${right}  at  ${pos}"
+  echo "  Starts ${PGM_SEAM_PREVIEW_BEFORE}s before the seam; clip length ${clip_total}s (${PGM_SEAM_PREVIEW_BEFORE}s before + ${PGM_SEAM_PREVIEW_AFTER}s after)."
   "${player}" --no_startup_delay --no-countdown --start "$start" --length "$length" "$output_file"
 }
 
@@ -1041,14 +1076,9 @@ prompt_seam_terminal_previews() {
   shift
   local -a files=("$@")
   local -a boundary_times=() boundary_left=() boundary_right=()
-  local player i choice
+  local player i choice seam_num total_seams ord pos clip_total
 
   if (( DO_YES )) || (( ! script_is_run_interactively )); then
-    return 0
-  fi
-  if ! player=$(find_video_pgm_play_terminal); then
-    echo "$(pgm_ts) video-pgm-play-terminal.sh not found — seam preview skipped."
-    echo "$(pgm_ts) Install it to /root/bin or set VIDEO_PGM_PLAY_TERMINAL_BIN."
     return 0
   fi
   if ! merge_compute_boundaries boundary_times boundary_left boundary_right "${files[@]}"; then
@@ -1057,40 +1087,55 @@ prompt_seam_terminal_previews() {
   if [[ ! -f "$output_file" ]]; then
     return 0
   fi
+  if ! player=$(find_video_pgm_play_terminal); then
+    echo "$(pgm_ts) video-pgm-play-terminal.sh not found — seam preview skipped."
+    echo "$(pgm_ts) Install it to /root/bin or set VIDEO_PGM_PLAY_TERMINAL_BIN."
+    return 0
+  fi
 
-  echo "Terminal seam preview uses: ${player}"
-  echo "  Window: ${PGM_SEAM_PREVIEW_BEFORE}s before each join, ${PGM_SEAM_PREVIEW_AFTER}s after."
-  echo "  [y] Yes — preview each merge seam"
-  echo "  [N] No — continue (default)"
-  echo "  [q] Quit"
-  pgm_read_key "Preview merge seams in terminal? [y/N/q]: " n
-  choice="${REPLY,,}"
-  case "$choice" in
-    y)
-      ;;
-    q)
-      return 2
-      ;;
-    *)
-      return 0
-      ;;
-  esac
+  total_seams=${#boundary_times[@]}
+  clip_total="$(merge_seam_clip_total_seconds "$PGM_SEAM_PREVIEW_BEFORE" "$PGM_SEAM_PREVIEW_AFTER")"
+  echo
+  echo "Terminal seam preview: ${player}"
+  echo "Each clip starts ${PGM_SEAM_PREVIEW_BEFORE}s before the join, ${PGM_SEAM_PREVIEW_AFTER}s after (${clip_total}s total)."
+  echo
 
-  for (( i = 0; i < ${#boundary_times[@]}; i++ )); do
-    while true; do
-      play_merge_seam_preview_once "$player" "$output_file" \
-        "${boundary_times[$i]}" "${boundary_left[$i]}" "${boundary_right[$i]}"
-      echo "  [y] Repeat this seam preview"
-      echo "  [N] Continue to next seam (default)"
-      echo "  [q] Quit"
-      pgm_read_key "Repeat seam $(( i + 1 ))/${#boundary_times[@]}? [y/N/q]: " n
-      choice="${REPLY,,}"
-      case "$choice" in
-        y) continue ;;
-        q) return 2 ;;
-        *) break ;;
-      esac
-    done
+  for (( i = 0; i < total_seams; i++ )); do
+    seam_num=$(( i + 1 ))
+    ord="$(pgm_ordinal_seam_label "$seam_num")"
+    pos="$(format_output_timeline_pos "${boundary_times[$i]}")"
+
+    echo "--- ${ord} seam (${seam_num} of ${total_seams}) ---"
+    echo "  ${boundary_left[$i]} | ${boundary_right[$i]}  at  ${pos}"
+    echo "  [y] Play output at this seam (${PGM_SEAM_PREVIEW_BEFORE}s before join, ${clip_total}s clip)"
+    echo "  [N] Skip this seam (default)"
+    echo "  [q] Quit"
+    pgm_read_key "Play ${ord} seam in terminal? [y/N/q]: " n
+    choice="${REPLY,,}"
+    case "$choice" in
+      y)
+        while true; do
+          play_merge_seam_preview_once "$player" "$output_file" \
+            "${boundary_times[$i]}" "${boundary_left[$i]}" "${boundary_right[$i]}" \
+            "$seam_num" "$total_seams" "$ord"
+          echo "  [y] Repeat ${ord} seam preview"
+          echo "  [N] Continue (default)"
+          echo "  [q] Quit"
+          pgm_read_key "Repeat ${ord} seam preview? [y/N/q]: " n
+          choice="${REPLY,,}"
+          case "$choice" in
+            y) continue ;;
+            q) return 2 ;;
+            *) break ;;
+          esac
+        done
+        ;;
+      q)
+        return 2
+        ;;
+      *)
+        ;;
+    esac
   done
   echo
   return 0
