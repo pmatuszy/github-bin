@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.06.23 - v. 0.5.38 - interactive prompts: default no timeout (wait forever); --timeout / LOUDNESS_READ_TIMEOUT
 # 2026.06.23 - v. 0.5.37 - startup: print ffmpeg path and version
 # 2026.06.18 - v. 0.5.36 - PuTTY/window title: script version at front of title bar
 # 2026.06.18 - v. 0.5.35 - interactive prompts: include script version in timestamp prefix (PuTTY)
@@ -87,7 +88,8 @@ show_help() {
   cat <<EOF
 Usage: $(basename "$0") [-h|--help] [-v|--version] [--no_startup_delay]
        [-n standard|youtube|none] [-y] [--colors yes|no] [--scope current|subdirs]
-       [--batch-size N] [--classes SPEC] [--scan-only] [--print-cli-only] [-- FILE ...]
+       [--batch-size N] [--classes SPEC] [--timeout SEC] [--scan-only]
+       [--print-cli-only] [-- FILE ...]
 
 Scan for audio and video files and measure loudness with ffmpeg volumedetect
 (video is ignored for speed). Each file is classified by peak level (max_volume):
@@ -153,6 +155,9 @@ Options:
                        processing (default 50; skip the interactive batch question).
   --colors yes|no      Use terminal colors (skip the interactive colors question).
                        When enabled, PERFECT rows in the scan table are green.
+  --timeout SEC        Seconds to wait for an interactive answer before using the
+                       shown default (0 = wait forever; default 0). Same as
+                       LOUDNESS_READ_TIMEOUT. Alias: --read-timeout.
   --classes SPEC       Normalization candidates by class (scan still measures all).
                        SPEC is comma-separated and/or concatenated letters:
                        n=normal, t or q=too-quiet, p=perfect, a or all=all three.
@@ -190,9 +195,9 @@ Environment:
                               --batch-size; default 50).
   LOUDNESS_CLASSES          Candidate classes for normalization (same as --classes).
                               n/normal, t or q/too-quiet, p/perfect; default n,t.
-  LOUDNESS_READ_TIMEOUT     Seconds to wait for a single-key interactive prompt
-                              (default: 600 = 10 minutes; 0 = wait forever).
-                              The post-scan classes line prompt waits until Enter.
+  LOUDNESS_READ_TIMEOUT     Seconds to wait for an interactive prompt before using
+                              the shown default (same as --timeout; default 0 =
+                              wait forever).
   LOUDNESS_USE_COLORS       yes or no (same as --colors). Interactive default: yes.
 
 Exit status:
@@ -233,6 +238,7 @@ LOUDNESS_CLASS_TOO_QUIET=0
 LOUDNESS_CLASS_PERFECT=0
 LOUDNESS_USE_COLORS="${LOUDNESS_USE_COLORS:-}"
 LOUDNESS_COLORS_CLI=0
+LOUDNESS_READ_TIMEOUT_CLI=0
 LOUDNESS_BATCH_CHOICE_DECISION=""
 LOUDNESS_BATCH_CHOICE_ACTION=""
 LOUDNESS_SAVE_ORIGINAL="${LOUDNESS_SAVE_ORIGINAL:-0}"
@@ -327,6 +333,16 @@ while [[ $# -gt 0 ]]; do
       esac
       LOUDNESS_BATCH_SIZE_CLI=1
       BATCH_SIZE="$LOUDNESS_BATCH_SIZE"
+      shift 2
+      ;;
+    --timeout|--read-timeout)
+      # Passive modifier: do NOT set ANY_CLI_OPTIONS so interactive wizard stays on.
+      [[ $# -ge 2 ]] || { echo "Missing value for --timeout" >&2; exit 1; }
+      case "$2" in
+        ''|*[!0-9]*) echo "Invalid value for --timeout: $2 (use a non-negative integer; 0 = wait forever)" >&2; exit 1 ;;
+      esac
+      LOUDNESS_READ_TIMEOUT="$2"
+      LOUDNESS_READ_TIMEOUT_CLI=1
       shift 2
       ;;
     --classes)
@@ -429,7 +445,8 @@ if [[ -f "${BASH_SOURCE[0]}" ]]; then
   chmod 700 "${BASH_SOURCE[0]}" 2>/dev/null || true
 fi
 
-LOUDNESS_READ_TIMEOUT="${LOUDNESS_READ_TIMEOUT:-600}"
+# Default: 0 = wait forever (no timeout). Override with --timeout SEC or LOUDNESS_READ_TIMEOUT.
+LOUDNESS_READ_TIMEOUT="${LOUDNESS_READ_TIMEOUT:-0}"
 
 audio_pgm_loudness_cleanup() {
   loudness_interrupt_restore_in_progress_file
@@ -755,6 +772,19 @@ loudness_read_yn_key() {
   else
     REPLY="$answer"
   fi
+}
+
+# Read a full line into the named variable, honoring LOUDNESS_READ_TIMEOUT
+# (0 / empty / non-numeric = wait forever). Returns read's exit status.
+loudness_read_line_timed() {
+  local __dest="$1" __input="" __rc=0
+  if [[ "${LOUDNESS_READ_TIMEOUT:-0}" =~ ^[0-9]+$ ]] && (( LOUDNESS_READ_TIMEOUT > 0 )); then
+    IFS= read -r -t "$LOUDNESS_READ_TIMEOUT" __input || __rc=$?
+  else
+    IFS= read -r __input || __rc=$?
+  fi
+  printf -v "$__dest" '%s' "$__input"
+  return "$__rc"
 }
 
 loudness_window_title_restore() {
@@ -1634,7 +1664,7 @@ prompt_normalize_classes() {
   echo "  Default: nt (NORMAL + TOO QUIET)"
   printf '%s Classes to include [nt]: ' "$(loudness_prompt_ts)"
   loudness_prompt_wait_begin
-  if IFS= read -r input; then
+  if loudness_read_line_timed input; then
     :
   else
     input=""
@@ -2872,7 +2902,7 @@ prompt_batch_size_interactive() {
   echo '  Default: 50 (ask about N files, then normalize selected before next batch)'
   printf '%s Batch size [50]: ' "$(loudness_prompt_ts)"
   loudness_prompt_wait_begin
-  if IFS= read -r -t "$LOUDNESS_READ_TIMEOUT" input; then
+  if loudness_read_line_timed input; then
     :
   else
     input=""
