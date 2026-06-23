@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.06.23 - v. 19.228.143000 - prompt menus: default option letter uppercase only (match Choice hints)
 # 2026.06.19 - v. 19.227.143000 - GoPro exif: missing Firmware Version must not trip ERR/pipefail (grep/sed pipelines)
 # 2026.06.19 - v. 19.226.143000 - OLD/NEW wrap: use PuTTY/terminal width (tput cols), not only MAX_LINE_LENGTH 200
 # 2026.06.18 - v. 19.225.143000 - PuTTY/window title: script version at front of title bar
@@ -1463,10 +1464,10 @@ confirm_db_hash_update_for_existing_entry() {
     echo "  computed: $new_hash"
     while true; do
         echo "$(user_prompt_ts_prefix)Replace stored hash with computed value?"
-        echo "  [Y] Yes (default)"
-        echo "  [N] No (keep existing DB hash)"
+        echo "  $(rename_menu_key_bracket Y Y) Yes (default)"
+        echo "  $(rename_menu_key_bracket N Y) No (keep existing DB hash)"
         print_prompt_view_directory_menu_line
-        echo "  [Q] Quit"
+        echo "  $(rename_menu_key_bracket Q Y) Quit"
         echo -n "$(user_prompt_ts_prefix)Choice [Y/n/v/q]: "
         flush_stdin
         read_single_key answer "$PROMPT_WAIT_SECONDS"
@@ -1491,9 +1492,9 @@ prompt_resume_choice_early() {
     echo
     echo "Checkpoint found from an interrupted run: $RESUME_STATE_FILE"
     verbose_question_timestamp "Resume from checkpoint?"
-    echo "  [Y] Resume (default)"
-    echo "  [N] Start from the beginning"
-    echo "  [Q] Quit"
+    echo "  $(rename_menu_key_bracket Y Y) Resume (default)"
+    echo "  $(rename_menu_key_bracket N Y) Start from the beginning"
+    echo "  $(rename_menu_key_bracket Q Y) Quit"
     echo -n "$(user_prompt_ts_prefix)Choice [Y/n/q]: "
     flush_stdin
     read_single_key answer "$PROMPT_WAIT_SECONDS"
@@ -1526,9 +1527,9 @@ prompt_use_existing_sqlite_cache_if_present() {
     echo "SQLite cache file found in the start directory:"
     echo "  $shown_db"
     verbose_question_timestamp "Use this SQLite cache for this run (same as --use-db)?"
-    echo "  [Y] Yes — enable SQLite cache (default)"
-    echo "  [N] No — run without the cache"
-    echo "  [Q] Quit"
+    echo "  $(rename_menu_key_bracket Y Y) Yes — enable SQLite cache (default)"
+    echo "  $(rename_menu_key_bracket N Y) No — run without the cache"
+    echo "  $(rename_menu_key_bracket Q Y) Quit"
     echo -n "$(user_prompt_ts_prefix)Choice [Y/n/q]: "
     flush_stdin
     read_single_key answer "$PROMPT_WAIT_SECONDS"
@@ -1852,7 +1853,7 @@ append_flatten_child_exception_to_exclude_filters_file() {
 
 flatten_child_exception_menu_line() {
     local child_base="$1"
-    echo "  [A] Always skip flatten when the sole subdirectory is named: ${child_base} (anywhere; saved to exclude file)"
+    echo "  $(rename_menu_key_bracket A N) Always skip flatten when the sole subdirectory is named: ${child_base} (anywhere; saved to exclude file)"
 }
 
 # Directory containing a file (or the directory itself) for SUBTREE= exceptions.
@@ -4841,9 +4842,9 @@ if [[ -n "$CLI_COLORS" ]]; then
 else
     echo
     verbose_question_timestamp "Use colors?"
-    echo "  [Y] Yes (default)"
-    echo "  [N] No"
-    echo "  [Q] Quit"
+    echo "  $(rename_menu_key_bracket Y Y) Yes (default)"
+    echo "  $(rename_menu_key_bracket N Y) No"
+    echo "  $(rename_menu_key_bracket Q Y) Quit"
     echo -n "$(user_prompt_ts_prefix)Choice [Y/n/q]: "
 
     flush_stdin
@@ -5609,9 +5610,9 @@ if [[ -n "$CLI_MODE" ]]; then
 else
     echo
     verbose_question_timestamp "Select mode:"
-    echo "  [R] Real rename (default)"
-    echo "  [D] Dry-run"
-    echo "  [Q] Quit"
+    echo "  $(rename_menu_key_bracket R R) Real rename (default)"
+    echo "  $(rename_menu_key_bracket D R) Dry-run"
+    echo "  $(rename_menu_key_bracket Q R) Quit"
     echo -n "$(user_prompt_ts_prefix)Choice [R/d/q]: "
 
     flush_stdin
@@ -5636,9 +5637,9 @@ if [[ -n "$CLI_SCOPE" ]]; then
 else
     echo
     verbose_question_timestamp "What should be processed?"
-    echo "  [S] Also subdirectories (default)"
-    echo "  [C] Current directory only"
-    echo "  [Q] Quit"
+    echo "  $(rename_menu_key_bracket S S) Also subdirectories (default)"
+    echo "  $(rename_menu_key_bracket C S) Current directory only"
+    echo "  $(rename_menu_key_bracket Q S) Quit"
     echo -n "$(user_prompt_ts_prefix)Choice [S/c/q]: "
 
     flush_stdin
@@ -7370,10 +7371,10 @@ prompt_refresh_checksum_hash_after_mismatch() {
     suggest_checksum_mismatch_recovery "$sum_file" "$ref_in_file" "$path_on_disk" "$label" "$phase"
 
     while true; do
-        emit_wrap_labeled_stdout "  [U] " "  ${GREEN}[U]${RESET} " "Update stored ${label,,} hash from the file on disk, then re-verify"
-        emit_wrap_labeled_stdout "  [I] " "  ${GREEN}[I]${RESET} " "Ignore this mismatch and continue (checksum list unchanged; you fix it later)"
+        emit_wrap_labeled_stdout "  $(rename_menu_key_bracket U Q) " "  ${GREEN}$(rename_menu_key_bracket U Q)${RESET} " "Update stored ${label,,} hash from the file on disk, then re-verify"
+        emit_wrap_labeled_stdout "  $(rename_menu_key_bracket I Q) " "  ${GREEN}$(rename_menu_key_bracket I Q)${RESET} " "Ignore this mismatch and continue (checksum list unchanged; you fix it later)"
         print_prompt_view_directory_menu_line
-        emit_wrap_labeled_stdout "  [Q] " "  ${GREEN}[Q]${RESET} " "Quit (abort script)"
+        emit_wrap_labeled_stdout "  $(rename_menu_key_bracket Q Q) " "  ${GREEN}$(rename_menu_key_bracket Q Q)${RESET} " "Quit (abort script)"
         echo -n "$(user_prompt_ts_prefix)Choice [U/i/v/Q]: "
         flush_stdin
         read_single_key answer "$PROMPT_WAIT_SECONDS"
@@ -8416,9 +8417,9 @@ prompt_gopro_exiftool_missing_action() {
         echo >&2
         echo -e "$(user_prompt_ts_prefix)${GREEN}exiftool is required to rename this GoPro/camera raw file:${RESET}" >&2
         echo "  $(format_path_for_log "$f")" >&2
-        echo "  [S] Skip GoPro/camera raw files for the rest of this run (default)" >&2
+        echo "  $(rename_menu_key_bracket S S) Skip GoPro/camera raw files for the rest of this run (default)" >&2
         print_prompt_view_directory_menu_line_stderr
-        echo "  [Q] Quit" >&2
+        echo "  $(rename_menu_key_bracket Q S) Quit" >&2
         if (( VERBOSE == 1 )); then
             echo "[VERBOSE] [$(date '+%Y.%m.%d %H:%M:%S')] Choice [S/v/q]:" >&2
         fi
@@ -8970,12 +8971,12 @@ maybe_prompt_gopro_remove_lone_part_basename() {
         echo -e "$(user_prompt_ts_prefix)${GREEN}This GoPro file is the only chapter here but its name still has _part_XX:${RESET}" >&2
         echo "  OLD: $(format_path_for_log "$f")" >&2
         echo "  NEW: $(format_path_for_log "$(dirname -- "$f")/$stripped")" >&2
-        echo "  [Y] Remove _part_XX from this filename (default)" >&2
-        echo "  [D] Remove _part_XX for all lone-chapter files in this directory (rest of run)" >&2
-        echo "  [A] Remove _part_XX for all lone-chapter files in this run" >&2
-        echo "  [N] Keep the current name" >&2
+        echo "  $(rename_menu_key_bracket Y Y) Remove _part_XX from this filename (default)" >&2
+        echo "  $(rename_menu_key_bracket D Y) Remove _part_XX for all lone-chapter files in this directory (rest of run)" >&2
+        echo "  $(rename_menu_key_bracket A Y) Remove _part_XX for all lone-chapter files in this run" >&2
+        echo "  $(rename_menu_key_bracket N Y) Keep the current name" >&2
         print_prompt_view_directory_menu_line_stderr
-        echo "  [Q] Quit" >&2
+        echo "  $(rename_menu_key_bracket Q Y) Quit" >&2
         if (( VERBOSE == 1 )); then
             echo "[VERBOSE] [$(date '+%Y.%m.%d %H:%M:%S')] Choice [Y/n/d/a/v/q]:" >&2
         fi
@@ -10352,7 +10353,7 @@ handle_existing_target_collision() {
     if [[ "$mode" == "dry-run" ]]; then
         emit_wrap_labeled_stdout "COLLISION: " "${YELLOW}COLLISION:${RESET} " "Target file already exists."
         emit_wrap_old_arrow_new_stdout "[DRY-RUN] Would compare MD5, size, and timestamps of source/destination and ask what to do: " "${CYAN}[DRY-RUN] Would compare MD5, size, and timestamps of source/destination and ask what to do:${RESET} " "$old" "$new"
-        emit_wrap_labeled_stdout "[DRY-RUN] Choices would include: " "${CYAN}[DRY-RUN] Choices would include:${RESET} " "[O] remove destination then rename; [C] overwrite all in this directory; [R]/[D] _OTHER; [P] remove source only; [V] list directory; [S] skip; [Q] quit."
+        emit_wrap_labeled_stdout "[DRY-RUN] Choices would include: " "${CYAN}[DRY-RUN] Choices would include:${RESET} " "[o] remove destination then rename; [c] overwrite all in this directory; [r]/[d] _OTHER; [p] remove source only; [v] list directory; [S] skip; [q] quit."
         return 1
     fi
 
@@ -10434,14 +10435,14 @@ can_overwrite_collision_with_identical_md5() {
 
     while true; do
         verbose_question_timestamp "What should be done?"
-        echo "  [O] Overwrite destination (delete destination file), then continue rename"
-        echo "  [C] For this source directory only: overwrite destination for all further collisions (like [O])"
-        echo "  [R] Rename source to alternate name (one _OTHER, or _OTHER_2, … if needed) -> $(basename -- "$old_other_path")"
-        echo "  [D] For this source directory only: use _OTHER for all further collisions (like [R])"
-        echo "  [P] Delete source file only (keep destination; skip this rename)"
-        echo "  [S] Skip (default)"
-        echo "  [V] List directory (parent; mark SOURCE/DESTINATION basenames)"
-        echo "  [Q] Quit"
+        echo "  $(rename_menu_key_bracket O S) Overwrite destination (delete destination file), then continue rename"
+        echo "  $(rename_menu_key_bracket C S) For this source directory only: overwrite destination for all further collisions (like [O])"
+        echo "  $(rename_menu_key_bracket R S) Rename source to alternate name (one _OTHER, or _OTHER_2, … if needed) -> $(basename -- "$old_other_path")"
+        echo "  $(rename_menu_key_bracket D S) For this source directory only: use _OTHER for all further collisions (like [R])"
+        echo "  $(rename_menu_key_bracket P S) Delete source file only (keep destination; skip this rename)"
+        echo "  $(rename_menu_key_bracket S S) Skip (default)"
+        echo "  $(rename_menu_key_bracket V S) List directory (parent; mark SOURCE/DESTINATION basenames)"
+        echo "  $(rename_menu_key_bracket Q S) Quit"
         echo -n "$(user_prompt_ts_prefix)Choice [o/c/r/d/p/S/v/q]: "
 
         flush_stdin
@@ -11591,9 +11592,9 @@ maybe_resume_from_checkpoint() {
                 echo
                 echo "Checkpoint found from an interrupted run: $RESUME_STATE_FILE"
                 verbose_question_timestamp "Resume from checkpoint?"
-                echo "  [Y] Resume (default)"
-                echo "  [N] Start from the beginning"
-                echo "  [Q] Quit"
+                echo "  $(rename_menu_key_bracket Y Y) Resume (default)"
+                echo "  $(rename_menu_key_bracket N Y) Start from the beginning"
+                echo "  $(rename_menu_key_bracket Q Y) Quit"
                 echo -n "$(user_prompt_ts_prefix)Choice [Y/n/q]: "
                 flush_stdin
                 read_single_key answer "$PROMPT_WAIT_SECONDS"
@@ -11736,14 +11737,25 @@ print_rename_parent_directory_listing() {
     fi
 }
 
-# Shared [V] directory listing for interactive prompts (stdout menu line).
-print_prompt_view_directory_menu_line() {
-    echo "  [V] List directory where this path exists (parent; mark OLD/NEW basenames when given)"
+# Print one menu key: uppercase letter only when it matches default_key.
+rename_menu_key_bracket() {
+    local key="$1" default_key="${2:-}"
+    key="${key:0:1}"
+    if [[ -n "$default_key" && "${key^^}" == "${default_key^^}" ]]; then
+        printf '[%s]' "${key^^}"
+    else
+        printf '[%s]' "${key,,}"
+    fi
 }
 
-# Shared [V] directory listing for stderr prompts (mapping helpers, GoPro, exiftool).
+# Shared [v] directory listing for interactive prompts (stdout menu line).
+print_prompt_view_directory_menu_line() {
+    echo "  $(rename_menu_key_bracket v) List directory where this path exists (parent; mark OLD/NEW basenames when given)"
+}
+
+# Shared [v] directory listing for stderr prompts (mapping helpers, GoPro, exiftool).
 print_prompt_view_directory_menu_line_stderr() {
-    echo "  [V] List directory where this path exists (parent; mark OLD/NEW basenames when given)" >&2
+    echo "  $(rename_menu_key_bracket v) List directory where this path exists (parent; mark OLD/NEW basenames when given)" >&2
 }
 
 # Returns 0 when answer is [V] and a listing was printed (caller should re-prompt).
@@ -11783,56 +11795,56 @@ print_rename_prompt_menu() {
 
     if [[ "$menu_variant" == thumbs-noop || "$menu_variant" == torrent-noop ]]; then
         echo "  [Y] or Enter — Skip (default; no rename to apply)"
-        echo "  [N] Skip"
+        echo "  $(rename_menu_key_bracket N Y) Skip"
     else
-        echo "  [Y] Yes (default)"
-        echo "  [N] No"
+        echo "  $(rename_menu_key_bracket Y Y) Yes (default)"
+        echo "  $(rename_menu_key_bracket N Y) No"
     fi
-    echo "  [M] Rename by editing target filename"
-    echo "  [A] All remaining"
-    echo "  [D] Yes for this directory"
+    echo "  $(rename_menu_key_bracket M Y) Rename by editing target filename"
+    echo "  $(rename_menu_key_bracket A Y) All remaining"
+    echo "  $(rename_menu_key_bracket D Y) Yes for this directory"
     if [[ -n "$path" && -f "$path" ]]; then
-        echo "  [S] Yes for similar names in this directory (all extensions here; leading _ only if this filename starts with _)"
+        echo "  $(rename_menu_key_bracket S Y) Yes for similar names in this directory (all extensions here; leading _ only if this filename starts with _)"
         choice_hint+=/s
     fi
     if [[ -n "$path" && -n "$suggested_new" ]] && rename_suggested_only_extension_case_change "$path" "$suggested_new" \
         && ! path_filesystem_skip_case_only_rename "$path"; then
-        echo "  [L] Yes, and auto-approve all extension case-only lowercasing for this run (no further prompts)"
+        echo "  $(rename_menu_key_bracket L Y) Yes, and auto-approve all extension case-only lowercasing for this run (no further prompts)"
         choice_hint+=/l
         if eligible_for_media_office_extension_case_auto "$path"; then
-            echo "  [U] Yes, and auto-approve extension case-only lowercasing only for media + Microsoft Office files"
+            echo "  $(rename_menu_key_bracket U Y) Yes, and auto-approve extension case-only lowercasing only for media + Microsoft Office files"
             choice_hint+=/u
         fi
     fi
     if [[ -n "$path" ]] && is_torrent_url_file "$path"; then
-        echo "  [T] Delete this torrent .URL shortcut"
+        echo "  $(rename_menu_key_bracket T Y) Delete this torrent .URL shortcut"
         choice_hint+=/t
     fi
     if [[ -n "$path" ]] && is_thumbs_db_file "$path"; then
-        echo "  [K] Delete this thumbs.db file"
-        echo "  [O] Delete this thumbs.db and all other thumbs.db files for the rest of this run"
+        echo "  $(rename_menu_key_bracket K Y) Delete this thumbs.db file"
+        echo "  $(rename_menu_key_bracket O Y) Delete this thumbs.db and all other thumbs.db files for the rest of this run"
         choice_hint+=/ko
     fi
     if [[ -n "$path" && ( -f "$path" || -d "$path" ) ]]; then
-        echo "  [F] Filename-only exception — skip this basename everywhere (any file or directory with this name)"
+        echo "  $(rename_menu_key_bracket F Y) Filename-only exception — skip this basename everywhere (any file or directory with this name)"
         choice_hint+=/f
     fi
     if [[ -n "$path" && -f "$path" ]]; then
-        echo "  [B] Skip the directory where this file lives and everything under it (subtree exception)"
+        echo "  $(rename_menu_key_bracket B Y) Skip the directory where this file lives and everything under it (subtree exception)"
         choice_hint+=/b
     elif [[ -n "$path" && -d "$path" ]]; then
-        echo "  [B] Skip this directory and everything under it (subtree exception)"
+        echo "  $(rename_menu_key_bracket B Y) Skip this directory and everything under it (subtree exception)"
         choice_hint+=/b
     fi
     if [[ -n "$path" ]]; then
         print_prompt_view_directory_menu_line
         choice_hint+=/v
     fi
-    echo "  [E] Add exception (skip this path and its subtree by filter match)"
-    echo "  [X] Exact exception (do not rename only this exact path; still check subtree)"
-    echo "  [C] Custom exclude pattern — type any filter line (FILE=, SUBTREE=, glob, etc.)"
+    echo "  $(rename_menu_key_bracket E Y) Add exception (skip this path and its subtree by filter match)"
+    echo "  $(rename_menu_key_bracket X Y) Exact exception (do not rename only this exact path; still check subtree)"
+    echo "  $(rename_menu_key_bracket C Y) Custom exclude pattern — type any filter line (FILE=, SUBTREE=, glob, etc.)"
     choice_hint+=/c
-    echo "  [Q] Quit"
+    echo "  $(rename_menu_key_bracket Q Y) Quit"
     choice_hint+="/E/x/q]: "
     echo -n "$(user_prompt_ts_prefix)$choice_hint"
 }
@@ -11897,13 +11909,13 @@ maybe_prompt_flatten_single_child_dir() {
         echo "Contains exactly one subdirectory with files:"
         echo "  $child_dir"
         echo -e "$(user_prompt_ts_prefix)${GREEN}Move child contents one level up and delete this subdirectory?${RESET}"
-        echo "  [Y] Yes — flatten (move child contents up, remove subdirectory; then choose folder name)"
-        echo "  [N] No (default) — keep current folder layout"
+        echo "  $(rename_menu_key_bracket Y N) Yes — flatten (move child contents up, remove subdirectory; then choose folder name)"
+        echo "  $(rename_menu_key_bracket N N) No (default) — keep current folder layout"
         flatten_child_exception_menu_line "$child_base"
-        echo "  [E] Add flatten exception — skip flatten prompts for this parent directory only"
-        echo "  [C] Custom exclude pattern — type any filter line (FLATTEN_EXACT=, FLATTEN_CHILD=, SUBTREE=, glob, etc.)"
+        echo "  $(rename_menu_key_bracket E N) Add flatten exception — skip flatten prompts for this parent directory only"
+        echo "  $(rename_menu_key_bracket C N) Custom exclude pattern — type any filter line (FLATTEN_EXACT=, FLATTEN_CHILD=, SUBTREE=, glob, etc.)"
         print_prompt_view_directory_menu_line
-        echo "  [Q] Quit — stop the script"
+        echo "  $(rename_menu_key_bracket Q N) Quit — stop the script"
         echo -n "$(user_prompt_ts_prefix)Choice [y/N/a/e/c/v/q]: "
         flush_stdin
         read_single_key answer "$PROMPT_WAIT_SECONDS"
@@ -11936,11 +11948,11 @@ maybe_prompt_flatten_single_child_dir() {
 
     while true; do
         echo "$(user_prompt_ts_prefix)Which directory name should remain after flatten?"
-        echo "  [P] Keep parent name: $parent_base (default)"
-        echo "  [C] Keep child name:  $child_base"
-        echo "  [M] Manually edit resulting basename"
+        echo "  $(rename_menu_key_bracket P P) Keep parent name: $parent_base (default)"
+        echo "  $(rename_menu_key_bracket C P) Keep child name:  $child_base"
+        echo "  $(rename_menu_key_bracket M P) Manually edit resulting basename"
         print_prompt_view_directory_menu_line
-        echo "  [Q] Quit"
+        echo "  $(rename_menu_key_bracket Q P) Quit"
         echo -n "$(user_prompt_ts_prefix)Choice [P/c/m/v/q]: "
         flush_stdin
         read_single_key name_choice "$PROMPT_WAIT_SECONDS"
@@ -12123,16 +12135,16 @@ print_checksum_prompt_menu() {
     echo "    • Rename each referenced file where OLD referenced file → NEW referenced file was shown above"
     echo "    • Rename this ${label_upper} file only if OLD ${label_upper} → NEW ${label_upper} was shown above"
     echo "    • Rewrite path lines inside the ${label_upper} file, then verify checksums"
-    echo "  [Y] Yes — do all of the above (default)"
-    echo "  [N] No — skip this whole group"
-    echo "  [A] All remaining checksum groups (same full treatment)"
-    echo "  [D] Yes for checksum groups in this directory"
-    echo "  [E] Add exception (skip paths matching this hash file basename via exclude filter)"
-    echo "  [X] Exact exception (skip only this hash file path; still check other paths)"
-    echo "  [F] Filename-only exception (skip this hash file basename in every directory)"
-    echo "  [C] Custom exclude pattern — type any filter line (FILE=, SUBTREE=, glob, etc.)"
+    echo "  $(rename_menu_key_bracket Y Y) Yes — do all of the above (default)"
+    echo "  $(rename_menu_key_bracket N Y) No — skip this whole group"
+    echo "  $(rename_menu_key_bracket A Y) All remaining checksum groups (same full treatment)"
+    echo "  $(rename_menu_key_bracket D Y) Yes for checksum groups in this directory"
+    echo "  $(rename_menu_key_bracket E Y) Add exception (skip paths matching this hash file basename via exclude filter)"
+    echo "  $(rename_menu_key_bracket X Y) Exact exception (skip only this hash file path; still check other paths)"
+    echo "  $(rename_menu_key_bracket F Y) Filename-only exception (skip this hash file basename in every directory)"
+    echo "  $(rename_menu_key_bracket C Y) Custom exclude pattern — type any filter line (FILE=, SUBTREE=, glob, etc.)"
     print_prompt_view_directory_menu_line
-    echo "  [Q] Quit"
+    echo "  $(rename_menu_key_bracket Q Y) Quit"
     echo -n "$(user_prompt_ts_prefix)Choice [Y/n/a/d/E/x/f/c/v/q]: "
 }
 
@@ -12722,10 +12734,10 @@ for f in "${ordered_paths[@]}"; do
             else
                 while true; do
                     verbose_question_timestamp "Remove missing thumbs.db reference(s) from this hash file?"
-                    echo "  [Y] Yes - remove only the thumbs.db line(s) shown above"
-                    echo "  [N] No - keep the hash file unchanged (default)"
+                    echo "  $(rename_menu_key_bracket Y N) Yes - remove only the thumbs.db line(s) shown above"
+                    echo "  $(rename_menu_key_bracket N N) No - keep the hash file unchanged (default)"
                     print_prompt_view_directory_menu_line
-                    echo "  [Q] Quit"
+                    echo "  $(rename_menu_key_bracket Q N) Quit"
                     echo -n "$(user_prompt_ts_prefix)Choice [y/N/v/q]: "
                     flush_stdin
                     read_single_key input "$PROMPT_WAIT_SECONDS"
