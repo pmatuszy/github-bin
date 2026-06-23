@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.06.23 - v. 0.15.2 - parse rename.sh *_parts_NN-NN_concat for orphan listing; clearer orphan output
 # 2026.06.23 - v. 0.15.1 - fix _rest nameref loop; multiline skip message for invalid _part_XX groups
 # 2026.06.23 - v. 0.15.0 - _part_XX groups: consecutive parts only; require ~4 GB / ~12 GB chapters (same as size-split)
 # 2026.06.23 - v. 0.14.2 - seam preview: ask per seam with clearer play message; repeat then next seam
@@ -1289,22 +1290,28 @@ is_concat_output_basename() {
   [[ "${base}" == *_concat ]]
 }
 
-# Set by concat_parse_cam_part_range: camera token and part range from output name.
+# Set by concat_parse_cam_part_range: stem/camera token and part range from output name.
 CONCAT_PARSE_CAM=""
+CONCAT_PARSE_STEM=""
+CONCAT_PARSE_PROXY=""
 CONCAT_PARSE_FIRST=0
 CONCAT_PARSE_LAST=0
 PGM_ORPHAN_CONCAT_COUNT=0
 
-# Parse *_parts_01-04_concat or legacy *_part_04_concat basename.
+# Parse <stem>_parts_01-04[_Proxy]_concat or legacy *_part_04_concat basename.
 concat_parse_cam_part_range() {
   local base="$1"
   CONCAT_PARSE_CAM=""
+  CONCAT_PARSE_STEM=""
+  CONCAT_PARSE_PROXY=""
   CONCAT_PARSE_FIRST=0
   CONCAT_PARSE_LAST=0
-  if [[ "$base" =~ _-__-_([^/]+)_parts_([0-9]{2})-([0-9]{2})(_Proxy)?_concat\.[mM][pP]4$ ]]; then
-    CONCAT_PARSE_CAM="${BASH_REMATCH[1]}"
+  if [[ "$base" =~ ^(.+)_parts_([0-9]{2})-([0-9]{2})(_Proxy)?_concat\.[mM][pP]4$ ]]; then
+    CONCAT_PARSE_STEM="${BASH_REMATCH[1]}"
+    CONCAT_PARSE_PROXY="${BASH_REMATCH[4]}"
     CONCAT_PARSE_FIRST=$((10#${BASH_REMATCH[2]}))
     CONCAT_PARSE_LAST=$((10#${BASH_REMATCH[3]}))
+    CONCAT_PARSE_CAM="$(gopro_camera_suffix_from_basename "$base" 2>/dev/null || true)"
     return 0
   fi
   if [[ "$base" =~ _-__-_([^/]+)_part_([0-9]{2})_concat\.[mM][pP]4$ ]]; then
@@ -1313,8 +1320,17 @@ concat_parse_cam_part_range() {
     CONCAT_PARSE_LAST=$CONCAT_PARSE_FIRST
     return 0
   fi
-    return 1
-  }
+  return 1
+}
+
+chapter_input_matches_stem_part() {
+  local base="$1" stem="$2" part="$3" proxy_suffix="${4:-}"
+  local pp want want_uc
+  pp=$(printf '%02d' "$part")
+  want="${stem}_part_${pp}${proxy_suffix}.mp4"
+  want_uc="${stem}_part_${pp}${proxy_suffix}.MP4"
+  [[ "$base" == "$want" || "$base" == "$want_uc" ]]
+}
 
 chapter_input_matches_cam_part() {
   local base="$1" cam="$2" part="$3"
@@ -1323,20 +1339,25 @@ chapter_input_matches_cam_part() {
   [[ "$base" =~ _-__-_${cam}_part_${pp}(_Proxy)?\.[mM][pP]4$ ]]
 }
 
-# How many distinct parts for cam exist as chapter inputs in the file list.
-count_chapter_inputs_cam_part_range() {
-  local cam="$1" first="$2" last="$3"
-  shift 3
+# How many distinct parts exist as chapter inputs for a concat output's range.
+count_chapter_inputs_for_concat_range() {
+  local first="$1" last="$2" stem="$3" proxy_suffix="${4:-}" cam="${5:-}"
+  shift 5
   local -a all_mp4=("$@")
   local f base p found=0
   for (( p = first; p <= last; p++ )); do
     for f in "${all_mp4[@]}"; do
       base="${f##*/}"
       is_concat_output_basename "$base" && continue
-      if chapter_input_matches_cam_part "$base" "$cam" "$p"; then
-        (( found++ ))
-        break
+      if [[ -n "$stem" ]]; then
+        chapter_input_matches_stem_part "$base" "$stem" "$p" "$proxy_suffix" || continue
+      elif [[ -n "$cam" ]]; then
+        chapter_input_matches_cam_part "$base" "$cam" "$p" || continue
+      else
+        continue
       fi
+      (( found++ ))
+      break
     done
   done
   printf '%d\n' "$found"
@@ -1344,7 +1365,7 @@ count_chapter_inputs_cam_part_range() {
 
 print_orphan_concat_section() {
   local -a all_mp4=("$@")
-  local f base cam first last expected found note sep sz
+  local f base cam stem proxy first last expected found note sep sz
   local -a orphans=()
   PGM_ORPHAN_CONCAT_COUNT=0
 
@@ -1352,14 +1373,16 @@ print_orphan_concat_section() {
     base="${f##*/}"
     is_concat_output_basename "$base" || continue
     if ! concat_parse_cam_part_range "$base"; then
-      orphans+=("${f}|unrecognized name|?|0|0|0|0")
+      orphans+=( "${f}|unparseable concat name|?||0|0|0|0" )
       continue
     fi
     cam="$CONCAT_PARSE_CAM"
+    stem="$CONCAT_PARSE_STEM"
+    proxy="$CONCAT_PARSE_PROXY"
     first="$CONCAT_PARSE_FIRST"
     last="$CONCAT_PARSE_LAST"
     expected=$(( last - first + 1 ))
-    found=$(count_chapter_inputs_cam_part_range "$cam" "$first" "$last" "${all_mp4[@]}")
+    found=$(count_chapter_inputs_for_concat_range "$first" "$last" "$stem" "$proxy" "$cam" "${all_mp4[@]}")
     if (( found >= expected )); then
       continue
     fi
@@ -1368,7 +1391,7 @@ print_orphan_concat_section() {
     else
       note="only ${found} of ${expected} input chapter(s) present"
     fi
-    orphans+=("${f}|${note}|${cam}|${first}|${last}|${expected}|${found}")
+    orphans+=( "${f}|${note}|${stem}|${cam}|${first}|${last}|${expected}|${found}" )
   done
 
   PGM_ORPHAN_CONCAT_COUNT=${#orphans[@]}
@@ -1378,17 +1401,18 @@ print_orphan_concat_section() {
   echo "Merged outputs without input chapters in this folder:"
   printf '  %s\n' "$sep"
   for entry in "${orphans[@]}"; do
-    IFS='|' read -r f note cam first last expected found <<< "$entry"
+    IFS='|' read -r f note stem cam first last expected found <<< "$entry"
     base="${f##*/}"
     sz=$(file_size_bytes "$f")
     printf '  %s\n' "$base"
-    printf '  %s\n' "$(format_bytes_human_aligned "$sz")"
-    if [[ "$cam" == '?' ]]; then
-      printf '  %s\n' "$note"
-    else
-      printf '  Camera: %s  parts %02d-%02d\n' "$cam" "$first" "$last"
-      printf '  Status: %s\n' "$note"
+    printf '    %s\n' "$(format_bytes_human_aligned "$sz")"
+    if [[ -n "$stem" ]]; then
+      printf '    Stem: %s  parts %02d-%02d\n' "$stem" "$first" "$last"
+      [[ -n "$cam" ]] && printf '    Camera: %s\n' "$cam"
+    elif [[ -n "$cam" && "$cam" != '?' ]]; then
+      printf '    Camera: %s  parts %02d-%02d\n' "$cam" "$first" "$last"
     fi
+    printf '    Status: %s\n' "$note"
     echo
   done
 }
@@ -1400,11 +1424,14 @@ chapter_part_from_basename() {
     printf '%d\n' "$((10#${BASH_REMATCH[1]}))"
     return 0
   fi
-    return 1
+  return 1
 }
 
 chapter_camera_from_basename() {
   local base="$1"
+  if gopro_camera_suffix_from_basename "$base"; then
+    return 0
+  fi
   if [[ "$base" =~ _-__-_([^/]+)_part_[0-9]{2} ]]; then
     printf '%s\n' "${BASH_REMATCH[1]}"
     return 0
