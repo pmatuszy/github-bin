@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.06.23 - v. 0.15.1 - fix _rest nameref loop; multiline skip message for invalid _part_XX groups
 # 2026.06.23 - v. 0.15.0 - _part_XX groups: consecutive parts only; require ~4 GB / ~12 GB chapters (same as size-split)
 # 2026.06.23 - v. 0.14.2 - seam preview: ask per seam with clearer play message; repeat then next seam
 # 2026.06.23 - v. 0.14.1 - seam preview: pass --start/--length as separate args; fix repeat prompt arithmetic
@@ -2155,13 +2156,13 @@ part_chapter_sorted_files() {
 }
 
 part_chapter_append_run_to_groups_or_rest() {
-  local -n _rest=$1
+  local -n rest_out=$1
   shift
   local -a run=("$@")
-  local f blob names
+  local f blob
 
   if (( ${#run[@]} < 2 )); then
-    _rest+=( "${run[@]}" )
+    rest_out+=( "${run[@]}" )
     return 0
   fi
   if part_chapter_run_valid "${run[@]}"; then
@@ -2169,16 +2170,16 @@ part_chapter_append_run_to_groups_or_rest() {
     GROUP_BLOBS+=( "$blob" )
     return 0
   fi
-  names=""
+  echo "$(pgm_ts) Skipping _part_XX merge (${#run[@]} consecutive parts):"
+  echo "$(pgm_ts)   Reason: not full ~4 GB / ~12 GB chapters"
   for f in "${run[@]}"; do
-    names+=" ${f##*/}"
+    echo "$(pgm_ts)     ${f##*/}"
   done
-  echo "$(pgm_ts) Skipping _part_XX merge (${#run[@]} consecutive parts): not full ~4 GB / ~12 GB chapters:${names}"
-  _rest+=( "${run[@]}" )
+  rest_out+=( "${run[@]}" )
 }
 
 part_chapter_split_key_into_runs() {
-  local -n _rest=$1
+  local -n rest_out=$1
   shift
   local -a key_files=("$@")
   local -a sorted=() run=()
@@ -2200,31 +2201,31 @@ part_chapter_split_key_into_runs() {
       run+=( "$f" )
       prev_part=$cur_part
     else
-      part_chapter_append_run_to_groups_or_rest _rest "${run[@]}"
+      part_chapter_append_run_to_groups_or_rest rest_out "${run[@]}"
       run=( "$f" )
       prev_part=$cur_part
     fi
   done
-  (( ${#run[@]} > 0 )) && part_chapter_append_run_to_groups_or_rest _rest "${run[@]}"
+  (( ${#run[@]} > 0 )) && part_chapter_append_run_to_groups_or_rest rest_out "${run[@]}"
 }
 
 # Pull _part_NN chapter files out of the list into key-based groups. The key is the
 # stem plus the proxy variant, so originals (_part_NN) and proxies (_part_NN_Proxy)
 # go into separate groups and are NEVER mixed. Within each key, only consecutive part
 # numbers are kept together, and only when sizes match GoPro chapter rules (~4 GB /
-# ~12 GB full segments; last may be shorter). Invalid runs return via _rest.
+# ~12 GB full segments; last may be shorter). Invalid runs return via rest_out.
 build_part_chapter_groups() {
-  local -n _rest=$1
+  local -n rest_out=$1
   shift
   local -a sorted=("$@")
   local f base key
   local -a keys_seen=() key_files=()
   local -A group_map=()
-  _rest=()
+  rest_out=()
   for f in "${sorted[@]}"; do
     base="${f##*/}"
     if is_concat_output_basename "$base"; then
-      _rest+=( "$f" )
+      rest_out+=( "$f" )
       continue
     fi
     if part_chapter_parse "$base"; then
@@ -2236,7 +2237,7 @@ build_part_chapter_groups() {
         group_map["$key"]+=$'\n'"$f"
       fi
     else
-      _rest+=( "$f" )
+      rest_out+=( "$f" )
     fi
   done
   local k
@@ -2246,7 +2247,7 @@ build_part_chapter_groups() {
     if ((${#key_files[@]})) && [[ -z "${key_files[-1]}" ]]; then
       unset 'key_files[-1]'
     fi
-    part_chapter_split_key_into_runs _rest "${key_files[@]}"
+    part_chapter_split_key_into_runs rest_out "${key_files[@]}"
   done
 }
 
