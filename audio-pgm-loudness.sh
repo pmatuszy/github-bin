@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.06.23 - v. 0.5.37 - startup: print ffmpeg path and version
 # 2026.06.18 - v. 0.5.36 - PuTTY/window title: script version at front of title bar
 # 2026.06.18 - v. 0.5.35 - interactive prompts: include script version in timestamp prefix (PuTTY)
 # 2026.06.18 - v. 0.5.34 - run summary: no [timestamp] prefix on summary lines
@@ -1700,6 +1701,16 @@ print_ffmpeg_error_tail() {
   tail -n "$n" "$log" | sed 's/^/      /'
 }
 
+print_ffmpeg_tool_info() {
+  local ffmpeg_bin resolved version_line
+  ffmpeg_bin="$(command -v ffmpeg 2>/dev/null || true)"
+  [[ -n "$ffmpeg_bin" ]] || return 0
+  resolved="$(readlink -f "$ffmpeg_bin" 2>/dev/null || echo "$ffmpeg_bin")"
+  version_line="$(ffmpeg -hide_banner -version 2>/dev/null | head -n1)"
+  echo "ffmpeg: ${resolved}"
+  [[ -n "$version_line" ]] && echo "  ${version_line}"
+}
+
 count_file_audio_streams() {
   local file="$1"
   ffprobe -v error -select_streams a -show_entries stream=index -of csv=p=0 -- "$file" 2>/dev/null | grep -c .
@@ -3299,6 +3310,7 @@ fi
 echo "Classification (max_volume peak):"
 print_loudness_class_legend
 echo "Tool: ffmpeg volumedetect (-vn for video files)"
+print_ffmpeg_tool_info
 
 if (( PRINT_CLI_ONLY )); then
   run_print_cli_only_session
