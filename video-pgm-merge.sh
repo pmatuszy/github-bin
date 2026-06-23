@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.06.23 - v. 0.15.0 - _part_XX groups: consecutive parts only; require ~4 GB / ~12 GB chapters (same as size-split)
 # 2026.06.23 - v. 0.14.2 - seam preview: ask per seam with clearer play message; repeat then next seam
 # 2026.06.23 - v. 0.14.1 - seam preview: pass --start/--length as separate args; fix repeat prompt arithmetic
 # 2026.06.23 - v. 0.14.0 - post-merge: merge boundary times in output; optional terminal seam preview
@@ -84,7 +85,8 @@ Merge behaviour (no options):
   - Collects *.mp4 in the current working directory (case-insensitive), except
     existing *_concat.mp4 outputs.
   - Detects GoPro-style chapter sequences (_part_01, _part_02, … with the same
-    camera token, e.g. GOPRO7_BLACK). A new recording starts when part resets to 01.
+    stem). Consecutive part numbers only; interior chapters must be full ~4 GB or
+    ~12 GB segments (last may be shorter), same rules as size-split recordings.
   - Also groups clips without _part_XX names when they look like fixed-size splits:
     same session label, ~4 GB or ~12 GB chapters (~6:49 or longer per chapter); filename times
     that chain, or the same YYYYMMDD_HHMMSS with GX chapter suffixes
@@ -2127,40 +2129,124 @@ part_chapter_parse() {
   return 1
 }
 
+# True when every file is _part_XX and sizes match a valid GoPro chapter run.
+part_chapter_run_valid() {
+  local -a files=("$@")
+  local f base
+  (( ${#files[@]} >= 2 )) || return 1
+  for f in "${files[@]}"; do
+    part_chapter_parse "${f##*/}" || return 1
+  done
+  size_split_run_valid "${files[@]}"
+}
+
+# Sort _part_XX paths by numeric part (not lexicographic — part_10 before part_09).
+part_chapter_sorted_files() {
+  local -n _out=$1
+  shift
+  local -a files=("$@")
+  local f p
+  mapfile -t _out < <(
+    for f in "${files[@]}"; do
+      p=$(chapter_part_from_basename "${f##*/}") || continue
+      printf '%d\t%s\n' "$p" "$f"
+    done | LC_ALL=C sort -t $'\t' -k1,1n | cut -f2-
+  )
+}
+
+part_chapter_append_run_to_groups_or_rest() {
+  local -n _rest=$1
+  shift
+  local -a run=("$@")
+  local f blob names
+
+  if (( ${#run[@]} < 2 )); then
+    _rest+=( "${run[@]}" )
+    return 0
+  fi
+  if part_chapter_run_valid "${run[@]}"; then
+    blob=$(printf '%s\n' "${run[@]}")
+    GROUP_BLOBS+=( "$blob" )
+    return 0
+  fi
+  names=""
+  for f in "${run[@]}"; do
+    names+=" ${f##*/}"
+  done
+  echo "$(pgm_ts) Skipping _part_XX merge (${#run[@]} consecutive parts): not full ~4 GB / ~12 GB chapters:${names}"
+  _rest+=( "${run[@]}" )
+}
+
+part_chapter_split_key_into_runs() {
+  local -n _rest=$1
+  shift
+  local -a key_files=("$@")
+  local -a sorted=() run=()
+  local f cur_part prev_part
+
+  part_chapter_sorted_files sorted "${key_files[@]}"
+  (( ${#sorted[@]} > 0 )) || return 0
+
+  run=()
+  prev_part=""
+  for f in "${sorted[@]}"; do
+    cur_part=$(chapter_part_from_basename "${f##*/}") || continue
+    if (( ${#run[@]} == 0 )); then
+      run=( "$f" )
+      prev_part=$cur_part
+      continue
+    fi
+    if (( cur_part == prev_part + 1 )); then
+      run+=( "$f" )
+      prev_part=$cur_part
+    else
+      part_chapter_append_run_to_groups_or_rest _rest "${run[@]}"
+      run=( "$f" )
+      prev_part=$cur_part
+    fi
+  done
+  (( ${#run[@]} > 0 )) && part_chapter_append_run_to_groups_or_rest _rest "${run[@]}"
+}
+
 # Pull _part_NN chapter files out of the list into key-based groups. The key is the
 # stem plus the proxy variant, so originals (_part_NN) and proxies (_part_NN_Proxy)
-# go into separate groups and are NEVER mixed. Remaining files come back via _rest.
+# go into separate groups and are NEVER mixed. Within each key, only consecutive part
+# numbers are kept together, and only when sizes match GoPro chapter rules (~4 GB /
+# ~12 GB full segments; last may be shorter). Invalid runs return via _rest.
 build_part_chapter_groups() {
   local -n _rest=$1
   shift
   local -a sorted=("$@")
   local f base key
-  local -a keys_seen=()
+  local -a keys_seen=() key_files=()
   local -A group_map=()
   _rest=()
   for f in "${sorted[@]}"; do
     base="${f##*/}"
     if is_concat_output_basename "$base"; then
-      _rest+=("$f")
+      _rest+=( "$f" )
       continue
     fi
     if part_chapter_parse "$base"; then
       key="${PART_STEM}${PART_PROXY}"
       if [[ -z "${group_map[$key]+x}" ]]; then
         group_map["$key"]="$f"
-        keys_seen+=("$key")
+        keys_seen+=( "$key" )
       else
         group_map["$key"]+=$'\n'"$f"
       fi
     else
-      _rest+=("$f")
+      _rest+=( "$f" )
     fi
   done
-  # Input was LC_ALL=C sorted; within one key only the 2 part digits vary, so the
-  # entries are already in ascending part order.
   local k
   for k in "${keys_seen[@]}"; do
-    GROUP_BLOBS+=("${group_map[$k]}")
+    key_files=()
+    mapfile -t key_files <<< "${group_map[$k]}"
+    if ((${#key_files[@]})) && [[ -z "${key_files[-1]}" ]]; then
+      unset 'key_files[-1]'
+    fi
+    part_chapter_split_key_into_runs _rest "${key_files[@]}"
   done
 }
 
@@ -2224,7 +2310,7 @@ print_group_plan() {
     fi
   done
   if (( part_groups > 0 )); then
-    echo "Merge candidates (_part_XX chapters):"
+    echo "Merge candidates (_part_XX chapters; consecutive parts; ~4 GB / ~12 GB full chapters):"
     gidx=0
     for blob in "${GROUP_BLOBS[@]}"; do
       group_files_to_array "$blob" files
