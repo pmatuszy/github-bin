@@ -1,5 +1,7 @@
 #!/bin/bash
 
+# 2026.06.23 - v. 0.6 - --start and --length for playing a segment (mpv seek + clip length)
+# 2026.06.23 - v. 0.5 - print full mpv command line before countdown / playback
 # 2026.06.23 - v. 0.4 - autodetect terminal size (default); countdown before playback
 # 2026.06.23 - v. 0.3 - --width/-w and --height/-H: tct size; one dimension from video aspect ratio
 # 2026.06.23 - v. 0.2 - --silent: hide mpv status on terminal (mpv --no-terminal); --profile=sw-fast
@@ -30,6 +32,7 @@ show_help() {
   cat <<EOF
 Usage: $(basename "$0") [-h|--help] [-v|--version] [--silent] [--no-silent]
        [--autodetect] [--no-autodetect] [--countdown SEC] [--no-countdown]
+       [--start SEC] [--length SEC]
        [-w|--width COLS] [--height|-H ROWS] [--no_startup_delay] FILE
 
 Play one audio or video file in the terminal using mpv with the True Color
@@ -50,6 +53,9 @@ Options:
   --countdown SEC      Seconds to wait after showing autodetected size (default
                        3). Only with autodetect.
   --no-countdown       Start playback immediately after autodetect info.
+  --start SEC          Start playback at this position in the file (seconds; mpv
+                       --start=). Use with --length for a short clip.
+  --length SEC         Stop after this many seconds of playback (mpv --length=).
   -w, --width COLS     tct output width in terminal character cells (mpv
                        --vo-tct-width). With --height omitted, height is
                        computed from the video aspect ratio.
@@ -77,9 +83,12 @@ Environment:
   VIDEO_PGM_PLAY_COUNTDOWN
                        Countdown seconds before playback with autodetect
                        (default: 3).
+  VIDEO_PGM_PLAY_START   Same as --start (seconds).
+  VIDEO_PGM_PLAY_LENGTH  Same as --length (seconds).
 
 Examples:
   $(basename "$0") clip.mp4
+  $(basename "$0") --start 495 --length 9 clip.mp4
   $(basename "$0") --countdown 5 clip.mp4
   $(basename "$0") -w 80 clip.mp4
   $(basename "$0") --height 24 clip.mp4
@@ -95,6 +104,15 @@ video_pgm_positive_int() {
 
 video_pgm_invalid_dimension() {
   echo "ERROR: invalid $1: ${2:-<empty>} (use a positive integer)" >&2
+  exit 1
+}
+
+video_pgm_valid_seconds() {
+  [[ "${1:-}" =~ ^[0-9]+([.][0-9]+)?$ ]]
+}
+
+video_pgm_invalid_seconds() {
+  echo "ERROR: invalid $1: ${2:-<empty>} (use 0 or a non-negative number)" >&2
   exit 1
 }
 
@@ -183,6 +201,27 @@ video_pgm_playback_countdown() {
   echo
 }
 
+video_pgm_print_command_line() {
+  echo "Playing: $MEDIA_FILE"
+  echo "mpv: ${mpv_resolved}"
+  [[ -n "$mpv_version_line" ]] && echo "  ${mpv_version_line}"
+  if [[ -n "$TCT_WIDTH" || -n "$TCT_HEIGHT" ]]; then
+    echo "tct size: ${TCT_WIDTH:-auto} x ${TCT_HEIGHT:-auto} (terminal cells)"
+  fi
+  if [[ -n "$PLAY_START" ]]; then
+    echo "start:  ${PLAY_START} s"
+  fi
+  if [[ -n "$PLAY_LENGTH" ]]; then
+    echo "length: ${PLAY_LENGTH} s"
+  fi
+  echo -n "Command: $MPV_BIN"
+  for arg in "${MPV_ARGS[@]}"; do
+    printf ' %q' "$arg"
+  done
+  printf ' -- %q\n' "$MEDIA_FILE"
+  echo
+}
+
 # --- parse options before sourcing the header (avoids figlet/delay on --help/--version) ---
 HEADER_EXTRA_ARGS=()
 MEDIA_FILE=""
@@ -191,6 +230,8 @@ TCT_WIDTH="${VIDEO_PGM_PLAY_WIDTH:-}"
 TCT_HEIGHT="${VIDEO_PGM_PLAY_HEIGHT:-}"
 TCT_AUTODETECT="${VIDEO_PGM_PLAY_AUTODETECT:-}"
 PLAY_COUNTDOWN="${VIDEO_PGM_PLAY_COUNTDOWN:-3}"
+PLAY_START="${VIDEO_PGM_PLAY_START:-}"
+PLAY_LENGTH="${VIDEO_PGM_PLAY_LENGTH:-}"
 while [[ $# -gt 0 ]]; do
   case $1 in
     -h|--help)
@@ -218,6 +259,18 @@ while [[ $# -gt 0 ]]; do
     --no-countdown)
       PLAY_COUNTDOWN=0
       shift
+      ;;
+    --start)
+      [[ $# -ge 2 ]] || video_pgm_invalid_seconds "start" ""
+      video_pgm_valid_seconds "$2" || video_pgm_invalid_seconds "start" "$2"
+      PLAY_START="$2"
+      shift 2
+      ;;
+    --length)
+      [[ $# -ge 2 ]] || video_pgm_invalid_seconds "length" ""
+      video_pgm_valid_seconds "$2" || video_pgm_invalid_seconds "length" "$2"
+      PLAY_LENGTH="$2"
+      shift 2
       ;;
     -w|--width)
       [[ $# -ge 2 ]] || video_pgm_invalid_dimension "width" ""
@@ -349,7 +402,6 @@ MEDIA_FILE="$(realpath "$MEDIA_FILE" 2>/dev/null || echo "$MEDIA_FILE")"
 if (( TCT_AUTODETECT )); then
   video_pgm_detect_terminal_dimensions
   video_pgm_print_autodetect_info
-  video_pgm_playback_countdown "$PLAY_COUNTDOWN"
 else
   video_pgm_resolve_tct_dimensions
 fi
@@ -368,20 +420,17 @@ fi
 if [[ -n "$TCT_HEIGHT" ]]; then
   MPV_ARGS+=( --vo-tct-height="$TCT_HEIGHT" )
 fi
+if [[ -n "$PLAY_START" ]]; then
+  MPV_ARGS+=( --start="$PLAY_START" )
+fi
+if [[ -n "$PLAY_LENGTH" ]]; then
+  MPV_ARGS+=( --length="$PLAY_LENGTH" )
+fi
 
-if (( ! PLAY_SILENT )); then
-  echo "Playing: $MEDIA_FILE"
-  echo "mpv: ${mpv_resolved}"
-  [[ -n "$mpv_version_line" ]] && echo "  ${mpv_version_line}"
-  if [[ -n "$TCT_WIDTH" || -n "$TCT_HEIGHT" ]]; then
-    echo "tct size: ${TCT_WIDTH:-auto} x ${TCT_HEIGHT:-auto} (terminal cells)"
-  fi
-  echo -n "Command: $MPV_BIN"
-  for arg in "${MPV_ARGS[@]}"; do
-    printf ' %q' "$arg"
-  done
-  printf ' -- %q\n' "$MEDIA_FILE"
-  echo
+video_pgm_print_command_line
+
+if (( TCT_AUTODETECT )); then
+  video_pgm_playback_countdown "$PLAY_COUNTDOWN"
 fi
 
 "$MPV_BIN" "${MPV_ARGS[@]}" -- "$MEDIA_FILE"

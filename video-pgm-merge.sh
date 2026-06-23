@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.06.23 - v. 0.14.0 - post-merge: merge boundary times in output; optional terminal seam preview
 # 2026.06.13 - v. 0.13.4 - size-split: recognize ~12 GB chapters (in addition to ~4 GB); same tier per group
 # 2026.06.13 - v. 0.13.3 - size-split: group rename.sh-style names (same session label, different per-chapter timestamps)
 # 2026.06.02 - v. 0.13.2 - rename NO_STARTUP_DELAY to --no_startup_delay
@@ -56,7 +57,8 @@ MP4_MERGE_REPO="${MP4_MERGE_REPO:-gyroflow/mp4-merge}"
 show_help() {
   cat <<EOF
 Usage: $(basename "$0") [-h|--help] [-u|--update] [-v|--version] [-y|--yes]
-       [--read-timeout SEC] [--no_startup_delay]
+       [--read-timeout SEC] [--seam-before SEC] [--seam-after SEC]
+       [--no_startup_delay]
 
 Merge chapter MP4 files in the current directory (e.g. GoPro splits) into one
 file using mp4_merge from https://github.com/gyroflow/mp4-merge
@@ -69,6 +71,10 @@ Options:
   -y, --yes            Merge every detected multi-part group without prompts (for cron).
   --read-timeout SEC   Single-key prompt timeout in seconds (0 = wait forever).
                        Default: wait forever. Env: PGM_READ_TIMEOUT (e.g. 300).
+  --seam-before SEC    Terminal seam preview: seconds before each join (default 4).
+                       Env: PGM_SEAM_PREVIEW_BEFORE.
+  --seam-after SEC     Terminal seam preview: seconds after each join (default 5).
+                       Env: PGM_SEAM_PREVIEW_AFTER.
   --no_startup_delay   Skip random startup delay when run non-interactively (see
                        _script_header.sh).
 
@@ -84,10 +90,11 @@ Merge behaviour (no options):
     only in the leading timestamp and share the same middle label.
   - Shows each multi-part group (with file sizes) and asks whether to merge
     (single-key Y/N/A/M/Q, no Enter — like rename.sh).
-  - After a successful merge: size summary (inputs, output, difference) and optional
+  - After a successful merge: merge-boundary times in the output timeline (where each
+    chapter join occurs), size summary, optional terminal seam preview, and optional
     deletion of the source chapter files (single-key Y/N).
   - If the expected _concat output already exists: skip (default), redo merge [r],
-    or delete input chapters [d] (keeps merged output).
+    preview merge seams [p], or delete input chapters [d] (keeps merged output).
   - Output file per group: <first_chapter_stem>_parts_<first>-<last>_concat.mp4
     (timestamp from the first part, e.g. …154511_…_parts_01-04_concat.mp4)
   - Other single files are listed as standalone; probable size-split sets are merge candidates.
@@ -106,6 +113,8 @@ Environment:
   MP4_MERGE_REPO          GitHub repo for releases (default: gyroflow/mp4-merge).
   PGM_READ_TIMEOUT        Seconds per single-key prompt; unset or 0 = wait forever.
                           Overridden by --read-timeout.
+  PGM_SEAM_PREVIEW_BEFORE Seconds before each merge point in terminal preview (default: 4).
+  PGM_SEAM_PREVIEW_AFTER  Seconds after each merge point in terminal preview (default: 5).
 
 Examples:
   $(basename "$0") -u
@@ -903,6 +912,187 @@ format_duration_display() {
     if (s >= 60) { s -= 60; m += 1 }
     printf "%.1f s (%d:%02d)", d+0, m, s
   }'
+}
+
+# Position in merged output as "8min 15s" / "1h 2min 3s".
+format_output_timeline_pos() {
+  local sec="$1"
+  awk -v s="$sec" 'BEGIN {
+    if (s < 0) s = 0
+    h = int(s / 3600)
+    m = int((s - h * 3600) / 60)
+    x = int(s + 0.5) % 60
+    if (h > 0) printf "%dh %dmin %ds", h, m, x
+    else if (m > 0) printf "%dmin %ds", m, x
+    else printf "%ds", int(s+0.5)
+  }'
+}
+
+pgm_valid_seam_seconds() {
+  [[ "${1:-}" =~ ^[0-9]+([.][0-9]+)?$ ]]
+}
+
+pgm_invalid_seam_seconds() {
+  echo "$(pgm_ts) invalid $1: ${2:-<empty>} (use 0 or a non-negative number)" >&2
+  exit 1
+}
+
+# Fill namerefs: boundary_times[], boundary_left[], boundary_right[] (one entry per join).
+merge_compute_boundaries() {
+  local -n _out_times=$1
+  local -n _out_left=$2
+  local -n _out_right=$3
+  shift 3
+  local -a files=("$@")
+  local f dur cumulative=0 i
+
+  _out_times=()
+  _out_left=()
+  _out_right=()
+  (( ${#files[@]} >= 2 )) || return 1
+
+  for (( i = 0; i < ${#files[@]} - 1; i++ )); do
+    dur=$(ffprobe_duration_seconds "${files[$i]}") || return 1
+    cumulative=$(awk -v c="$cumulative" -v d="$dur" 'BEGIN { printf "%.6f", c + d }')
+    _out_times+=( "$cumulative" )
+    _out_left+=( "${files[$i]##*/}" )
+    _out_right+=( "${files[$i + 1]##*/}" )
+  done
+  return 0
+}
+
+# Preview window around boundary T: [max(0,T-before), T+after].
+merge_seam_preview_start_length() {
+  local boundary="$1"
+  local before="$2"
+  local after="$3"
+  awk -v t="$boundary" -v b="$before" -v a="$after" 'BEGIN {
+    s = t - b; if (s < 0) s = 0
+    e = t + a
+    printf "%.3f %.3f\n", s, e - s
+  }'
+}
+
+print_merge_boundaries_report() {
+  local output_file="$1"
+  shift
+  local -a files=("$@")
+  local -a boundary_times=() boundary_left=() boundary_right=()
+  local i boundary pos preview start length preview_from preview_to
+
+  if ! merge_compute_boundaries boundary_times boundary_left boundary_right "${files[@]}"; then
+    echo "=== Merge boundaries ==="
+    echo "  $(pgm_ts) Could not compute boundaries (ffprobe duration missing for one or more inputs)."
+    echo
+    return 1
+  fi
+
+  echo "=== Merge boundaries in output (${output_file##*/}) ==="
+  for (( i = 0; i < ${#boundary_times[@]}; i++ )); do
+    boundary="${boundary_times[$i]}"
+    pos="$(format_output_timeline_pos "$boundary")"
+    read -r start length < <(merge_seam_preview_start_length "$boundary" \
+      "$PGM_SEAM_PREVIEW_BEFORE" "$PGM_SEAM_PREVIEW_AFTER")
+    preview_from="$(format_output_timeline_pos "$start")"
+    preview_to="$(format_output_timeline_pos "$(awk -v s="$start" -v l="$length" 'BEGIN { printf "%.6f", s + l }')")"
+    printf '  %s | %s  at  %s  (preview %s – %s)\n' \
+      "${boundary_left[$i]}" "${boundary_right[$i]}" "$pos" "$preview_from" "$preview_to"
+  done
+  echo
+  return 0
+}
+
+find_video_pgm_play_terminal() {
+  local candidate
+  if [[ -n "${VIDEO_PGM_PLAY_TERMINAL_BIN:-}" && -x "${VIDEO_PGM_PLAY_TERMINAL_BIN}" ]]; then
+    printf '%s\n' "${VIDEO_PGM_PLAY_TERMINAL_BIN}"
+    return 0
+  fi
+  if candidate=$(command -v video-pgm-play-terminal.sh 2>/dev/null); then
+    printf '%s\n' "$candidate"
+    return 0
+  fi
+  for candidate in \
+    "${SCRIPT_DIR:-}/video-pgm-play-terminal.sh" \
+    "/root/bin/video-pgm-play-terminal.sh"; do
+    [[ -n "$candidate" && -x "$candidate" ]] || continue
+    printf '%s\n' "$candidate"
+    return 0
+  done
+  return 1
+}
+
+play_merge_seam_preview_once() {
+  local player="$1" output_file="$2" boundary="$3" left="$4" right="$5"
+  local start length pos
+
+  read -r start length < <(merge_seam_preview_start_length "$boundary" \
+    "$PGM_SEAM_PREVIEW_BEFORE" "$PGM_SEAM_PREVIEW_AFTER")
+  pos="$(format_output_timeline_pos "$boundary")"
+  echo
+  echo "Seam preview: ${left} | ${right}  (merge at ${pos}; playing ${PGM_SEAM_PREVIEW_BEFORE}s before + ${PGM_SEAM_PREVIEW_AFTER}s after)"
+  "${player}" --no_startup_delay --no-countdown --start="$start" --length="$length" "$output_file"
+}
+
+# Return 2 if user quits from a prompt.
+prompt_seam_terminal_previews() {
+  local output_file="$1"
+  shift
+  local -a files=("$@")
+  local -a boundary_times=() boundary_left=() boundary_right=()
+  local player i choice
+
+  if (( DO_YES )) || (( ! script_is_run_interactively )); then
+    return 0
+  fi
+  if ! player=$(find_video_pgm_play_terminal); then
+    echo "$(pgm_ts) video-pgm-play-terminal.sh not found — seam preview skipped."
+    echo "$(pgm_ts) Install it to /root/bin or set VIDEO_PGM_PLAY_TERMINAL_BIN."
+    return 0
+  fi
+  if ! merge_compute_boundaries boundary_times boundary_left boundary_right "${files[@]}"; then
+    return 0
+  fi
+  if [[ ! -f "$output_file" ]]; then
+    return 0
+  fi
+
+  echo "Terminal seam preview uses: ${player}"
+  echo "  Window: ${PGM_SEAM_PREVIEW_BEFORE}s before each join, ${PGM_SEAM_PREVIEW_AFTER}s after."
+  echo "  [y] Yes — preview each merge seam"
+  echo "  [N] No — continue (default)"
+  echo "  [q] Quit"
+  pgm_read_key "Preview merge seams in terminal? [y/N/q]: " n
+  choice="${REPLY,,}"
+  case "$choice" in
+    y)
+      ;;
+    q)
+      return 2
+      ;;
+    *)
+      return 0
+      ;;
+  esac
+
+  for (( i = 0; i < ${#boundary_times[@]}; i++ )); do
+    while true; do
+      play_merge_seam_preview_once "$player" "$output_file" \
+        "${boundary_times[$i]}" "${boundary_left[$i]}" "${boundary_right[$i]}"
+      echo "  [y] Repeat this seam preview"
+      echo "  [N] Continue to next seam (default)"
+      echo "  [q] Quit"
+      pgm_read_key "Repeat seam ${i + 1}/${#boundary_times[@]}? [y/N/q]: " n
+      choice="${REPLY,,}"
+      case "$choice" in
+        y) continue ;;
+        q) return 2 ;;
+        *) break ;;
+      esac
+    done
+  done
+  echo
+  return 0
 }
 
 # One line: part label (if any), basename, size (no trailing newline).
@@ -2250,6 +2440,12 @@ run_merge_group() {
     fi
     echo
     print_merge_size_summary "$output_file" "${files[@]}"
+    print_merge_boundaries_report "$output_file" "${files[@]}"
+    prompt_seam_terminal_previews "$output_file" "${files[@]}"
+    rc=$?
+    if (( rc == 2 )); then
+      return 2
+    fi
     prompt_delete_merged_inputs after_merge "${files[@]}"
     rc=$?
     if (( rc == 2 )); then
@@ -2305,14 +2501,16 @@ prompt_merge_group_action() {
     if (( already_merged )); then
       echo "  [N] Skip — keep output and input files (default)"
       echo "  [r] Redo merge — replace output file"
+      echo "  [p] Preview merge seams in terminal"
       echo "  [d] Delete input chapter files — keep merged output"
       echo "  [a] Skip all remaining groups"
       echo "  [q] Quit"
-      pgm_read_key "Already merged — group ${group_num}/${group_total} [N/r/d/a/q]: " n
+      pgm_read_key "Already merged — group ${group_num}/${group_total} [N/r/p/d/a/q]: " n
       choice="${REPLY,,}"
       case "$choice" in
         ''|n)  REPLY=skip; pgm_log_kv "Action" "Keeping existing output and inputs."; return 0 ;;
         r)     REPLY=redo; return 0 ;;
+        p)     REPLY=preview_seams; return 0 ;;
         d)     REPLY=delete_inputs; return 0 ;;
         a)     REPLY=skip_all; return 0 ;;
         q)     REPLY=quit; return 0 ;;
@@ -2444,8 +2642,22 @@ do_merge() {
         fi
         ;;
       skip)
-        if [[ ! -e "$output_file" ]]; then
+        if [[ -e "$output_file" ]]; then
+          print_merge_boundaries_report "$output_file" "${files[@]}"
+        else
           echo "$(pgm_ts) Skipped group ${group_num}."
+        fi
+        ;;
+      preview_seams)
+        if [[ -e "$output_file" ]]; then
+          print_merge_boundaries_report "$output_file" "${files[@]}"
+          prompt_seam_terminal_previews "$output_file" "${files[@]}" || rc=$?
+          if (( rc == 2 )); then
+            echo "$(pgm_ts) Quit at group ${group_num}."
+            return "${rc}"
+          fi
+        else
+          echo "$(pgm_ts) No merged output for group ${group_num}; cannot preview seams." >&2
         fi
         ;;
       skip_all)
@@ -2482,6 +2694,8 @@ MERGE_ALL_REMAINING=0
 SKIP_ALL_REMAINING=0
 GROUP_BLOBS=()
 HEADER_EXTRA_ARGS=()
+PGM_SEAM_PREVIEW_BEFORE="${PGM_SEAM_PREVIEW_BEFORE:-4}"
+PGM_SEAM_PREVIEW_AFTER="${PGM_SEAM_PREVIEW_AFTER:-5}"
 while [[ $# -gt 0 ]]; do
   case $1 in
     -h|--help)
@@ -2516,6 +2730,30 @@ while [[ $# -gt 0 ]]; do
         exit 1
       fi
       PGM_READ_TIMEOUT_CLI=1
+      shift
+      ;;
+    --seam-before)
+      [[ $# -ge 2 ]] || pgm_invalid_seam_seconds "seam-before" ""
+      pgm_valid_seam_seconds "$2" || pgm_invalid_seam_seconds "seam-before" "$2"
+      PGM_SEAM_PREVIEW_BEFORE="$2"
+      shift 2
+      ;;
+    --seam-before=*)
+      PGM_SEAM_PREVIEW_BEFORE="${1#*=}"
+      pgm_valid_seam_seconds "$PGM_SEAM_PREVIEW_BEFORE" \
+        || pgm_invalid_seam_seconds "seam-before" "$PGM_SEAM_PREVIEW_BEFORE"
+      shift
+      ;;
+    --seam-after)
+      [[ $# -ge 2 ]] || pgm_invalid_seam_seconds "seam-after" ""
+      pgm_valid_seam_seconds "$2" || pgm_invalid_seam_seconds "seam-after" "$2"
+      PGM_SEAM_PREVIEW_AFTER="$2"
+      shift 2
+      ;;
+    --seam-after=*)
+      PGM_SEAM_PREVIEW_AFTER="${1#*=}"
+      pgm_valid_seam_seconds "$PGM_SEAM_PREVIEW_AFTER" \
+        || pgm_invalid_seam_seconds "seam-after" "$PGM_SEAM_PREVIEW_AFTER"
       shift
       ;;
     --no_startup_delay)
