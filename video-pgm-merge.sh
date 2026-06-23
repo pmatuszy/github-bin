@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.06.23 - v. 0.14.1 - seam preview: pass --start/--length as separate args; fix repeat prompt arithmetic
 # 2026.06.23 - v. 0.14.0 - post-merge: merge boundary times in output; optional terminal seam preview
 # 2026.06.13 - v. 0.13.4 - size-split: recognize ~12 GB chapters (in addition to ~4 GB); same tier per group
 # 2026.06.13 - v. 0.13.3 - size-split: group rename.sh-style names (same session label, different per-chapter timestamps)
@@ -1031,7 +1032,7 @@ play_merge_seam_preview_once() {
   pos="$(format_output_timeline_pos "$boundary")"
   echo
   echo "Seam preview: ${left} | ${right}  (merge at ${pos}; playing ${PGM_SEAM_PREVIEW_BEFORE}s before + ${PGM_SEAM_PREVIEW_AFTER}s after)"
-  "${player}" --no_startup_delay --no-countdown --start="$start" --length="$length" "$output_file"
+  "${player}" --no_startup_delay --no-countdown --start "$start" --length "$length" "$output_file"
 }
 
 # Return 2 if user quits from a prompt.
@@ -1082,7 +1083,7 @@ prompt_seam_terminal_previews() {
       echo "  [y] Repeat this seam preview"
       echo "  [N] Continue to next seam (default)"
       echo "  [q] Quit"
-      pgm_read_key "Repeat seam ${i + 1}/${#boundary_times[@]}? [y/N/q]: " n
+      pgm_read_key "Repeat seam $(( i + 1 ))/${#boundary_times[@]}? [y/N/q]: " n
       choice="${REPLY,,}"
       case "$choice" in
         y) continue ;;

@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.06.23 - v. 0.6.1 - accept --start=SEC and --length=SEC (equals form)
 # 2026.06.23 - v. 0.6 - --start and --length for playing a segment (mpv seek + clip length)
 # 2026.06.23 - v. 0.5 - print full mpv command line before countdown / playback
 # 2026.06.23 - v. 0.4 - autodetect terminal size (default); countdown before playback
@@ -266,11 +267,21 @@ while [[ $# -gt 0 ]]; do
       PLAY_START="$2"
       shift 2
       ;;
+    --start=*)
+      PLAY_START="${1#*=}"
+      video_pgm_valid_seconds "$PLAY_START" || video_pgm_invalid_seconds "start" "$PLAY_START"
+      shift
+      ;;
     --length)
       [[ $# -ge 2 ]] || video_pgm_invalid_seconds "length" ""
       video_pgm_valid_seconds "$2" || video_pgm_invalid_seconds "length" "$2"
       PLAY_LENGTH="$2"
       shift 2
+      ;;
+    --length=*)
+      PLAY_LENGTH="${1#*=}"
+      video_pgm_valid_seconds "$PLAY_LENGTH" || video_pgm_invalid_seconds "length" "$PLAY_LENGTH"
+      shift
       ;;
     -w|--width)
       [[ $# -ge 2 ]] || video_pgm_invalid_dimension "width" ""
