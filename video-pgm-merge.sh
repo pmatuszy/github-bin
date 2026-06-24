@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.06.24 - v. 0.15.4 - _part_XX from part_01: merge without ~4 GB check; size rules only for orphan tails (part_02+)
 # 2026.06.23 - v. 0.15.3 - fix rest_out circular nameref: pass caller array name into nested helpers
 # 2026.06.23 - v. 0.15.2 - parse rename.sh *_parts_NN-NN_concat for orphan listing; clearer orphan output
 # 2026.06.23 - v. 0.15.1 - fix _rest nameref loop; multiline skip message for invalid _part_XX groups
@@ -88,8 +89,8 @@ Merge behaviour (no options):
   - Collects *.mp4 in the current working directory (case-insensitive), except
     existing *_concat.mp4 outputs.
   - Detects GoPro-style chapter sequences (_part_01, _part_02, … with the same
-    stem). Consecutive part numbers only; interior chapters must be full ~4 GB or
-    ~12 GB segments (last may be shorter), same rules as size-split recordings.
+    stem). Consecutive part numbers only. Runs starting at part_01 merge as-is;
+    runs starting after part_01 (orphan tails) need full ~4 GB / ~12 GB chapters.
   - Also groups clips without _part_XX names when they look like fixed-size splits:
     same session label, ~4 GB or ~12 GB chapters (~6:49 or longer per chapter); filename times
     that chain, or the same YYYYMMDD_HHMMSS with GX chapter suffixes
@@ -2158,14 +2159,26 @@ part_chapter_parse() {
   return 1
 }
 
-# True when every file is _part_XX and sizes match a valid GoPro chapter run.
+# Lowest _part_XX number in a run (after numeric sort).
+part_chapter_first_part_number() {
+  local -a sorted=()
+  part_chapter_sorted_files sorted "$@"
+  (( ${#sorted[@]} > 0 )) || return 1
+  chapter_part_from_basename "${sorted[0]##*/}"
+}
+
+# True when every file is _part_XX and the run is mergeable.
+# Runs from part_01 are trusted rename.sh chapters (any size). Later orphan tails
+# (e.g. part_04–06 left after parts 01–03 merged) still need size-split rules.
 part_chapter_run_valid() {
   local -a files=("$@")
-  local f base
+  local f first_part
   (( ${#files[@]} >= 2 )) || return 1
   for f in "${files[@]}"; do
     part_chapter_parse "${f##*/}" || return 1
   done
+  first_part=$(part_chapter_first_part_number "${files[@]}") || return 1
+  (( first_part == 1 )) && return 0
   size_split_run_valid "${files[@]}"
 }
 
@@ -2188,7 +2201,7 @@ part_chapter_append_run_to_groups_or_rest() {
   shift
   local -n rest_arr=$_rest_name
   local -a run=("$@")
-  local f blob
+  local f blob first_part skip_reason
 
   if (( ${#run[@]} < 2 )); then
     rest_arr+=( "${run[@]}" )
@@ -2199,8 +2212,14 @@ part_chapter_append_run_to_groups_or_rest() {
     GROUP_BLOBS+=( "$blob" )
     return 0
   fi
+  first_part=$(part_chapter_first_part_number "${run[@]}") || first_part=0
+  if (( first_part > 1 )); then
+    skip_reason="orphan tail from part_$(printf '%02d' "$first_part") and not full ~4 GB / ~12 GB chapters"
+  else
+    skip_reason="not full ~4 GB / ~12 GB chapters"
+  fi
   echo "$(pgm_ts) Skipping _part_XX merge (${#run[@]} consecutive parts):"
-  echo "$(pgm_ts)   Reason: not full ~4 GB / ~12 GB chapters"
+  echo "$(pgm_ts)   Reason: ${skip_reason}"
   for f in "${run[@]}"; do
     echo "$(pgm_ts)     ${f##*/}"
   done
@@ -2241,9 +2260,9 @@ part_chapter_split_key_into_runs() {
 # Pull _part_NN chapter files out of the list into key-based groups. The key is the
 # stem plus the proxy variant, so originals (_part_NN) and proxies (_part_NN_Proxy)
 # go into separate groups and are NEVER mixed. Within each key, only consecutive part
-# numbers are kept together, and only when sizes match GoPro chapter rules (~4 GB /
-# ~12 GB full segments; last may be shorter). Invalid runs return via the array named
-# in $1 (e.g. rest2 from build_chapter_groups).
+# numbers are kept together. Runs from part_01 merge at any size; orphan tails starting
+# after part_01 need ~4 GB / ~12 GB full segments (last may be shorter). Invalid runs
+# return via the array named in $1 (e.g. rest2 from build_chapter_groups).
 build_part_chapter_groups() {
   local _rest_name=$1
   shift
@@ -2342,7 +2361,7 @@ print_group_plan() {
     fi
   done
   if (( part_groups > 0 )); then
-    echo "Merge candidates (_part_XX chapters; consecutive parts; ~4 GB / ~12 GB full chapters):"
+    echo "Merge candidates (_part_XX chapters; consecutive parts from part_01):"
     gidx=0
     for blob in "${GROUP_BLOBS[@]}"; do
       group_files_to_array "$blob" files

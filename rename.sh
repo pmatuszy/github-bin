@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# 2026.06.24 - v. 19.231.143000 - collision skip: print which target file already exists
+# 2026.06.24 - v. 19.230.143000 - GoPro multi-chapter: keep _part_02+ when first chapter already renamed (raw count drops to 1)
 # 2026.06.24 - v. 19.229.143000 - fix rename_menu_key_bracket defined after first use (colors prompt at startup)
 # 2026.06.23 - v. 19.228.143000 - prompt menus: default option letter uppercase only (match Choice hints)
 # 2026.06.19 - v. 19.227.143000 - GoPro exif: missing Firmware Version must not trip ERR/pipefail (grep/sed pipelines)
@@ -8659,6 +8661,27 @@ gopro_renamed_unique_part_count_in_dir() {
     printf '%s' "${#part_nums[@]}"
 }
 
+# Renamed GoPro files with _part_XX in dir (any session prefix). Used when raw siblings were already renamed.
+gopro_renamed_part_segment_count_in_dir() {
+    local dir="$1"
+    local count=0
+    local f bn
+    local saved_nullglob
+
+    [[ -n "$dir" ]] || { printf '0'; return 0; }
+
+    saved_nullglob="$(shopt -p nullglob || true)"
+    shopt -s nullglob
+    for f in "$dir"/*; do
+        [[ -f "$f" ]] || continue
+        bn="$(basename -- "$f")"
+        gopro_renamed_basename_has_part_segment "$bn" && (( count++ )) || true
+    done
+    eval "$saved_nullglob"
+
+    printf '%s' "$count"
+}
+
 gopro_format_camera_basename_output() {
     local ts="$1"
     local manuf="$2"
@@ -9145,13 +9168,16 @@ transform_gopro_camera_basename() {
     fi
 
     if [[ "$czy_gopro" == 1 && "$gopro4" == 0 && "$base" =~ ^[cCgG][hHxX][0-9][0-9][0-9][0-9][0-9][0-9] ]]; then
-        local session_key chapter_count chapter_id
+        local session_key chapter_count chapter_id renamed_part_count
         session_key="$(gopro_raw_basename_session_key "$base")" || session_key=""
-        if [[ -n "$session_key" ]]; then
+        chapter_id="$(gopro_raw_basename_chapter_id "$base")"
+        if [[ -n "$session_key" && -n "$chapter_id" ]]; then
             chapter_count="$(gopro_raw_session_chapter_count_in_dir "$(dirname -- "$file")" "$session_key")"
-            if [[ "$chapter_count" =~ ^[0-9]+$ ]] && (( chapter_count > 1 )); then
-                chapter_id="$(gopro_raw_basename_chapter_id "$base")"
-                [[ -n "$chapter_id" ]] && suffix_pliku="part_${chapter_id}"
+            renamed_part_count="$(gopro_renamed_part_segment_count_in_dir "$(dirname -- "$file")")"
+            if [[ "$chapter_id" != "01" ]] \
+               || { [[ "$chapter_count" =~ ^[0-9]+$ ]] && (( chapter_count > 1 )); } \
+               || { [[ "$renamed_part_count" =~ ^[0-9]+$ ]] && (( renamed_part_count > 0 )); }; then
+                suffix_pliku="part_${chapter_id}"
             fi
         fi
     fi
@@ -10354,7 +10380,7 @@ resolve_checksum_group_rename_collisions() {
                 esac
                 break
             fi
-            emit_wrap_labeled_stdout "SKIP: " "${YELLOW}SKIP:${RESET} " "Checksum group: HTML companion directory target already exists."
+            emit_wrap_labeled_stdout "SKIP: Target companion directory already exists: " "${YELLOW}SKIP:${RESET} Target companion directory already exists: " "$companion_new"
             vlog "Checksum group HTML companion directory collision: '$companion_old' -> '$companion_new'"
             return 1
         done
@@ -10502,6 +10528,8 @@ can_overwrite_collision_with_identical_md5() {
                 return 4
                 ;;
             *)
+                emit_wrap_labeled_stdout "SKIP: Target file already exists: " "${YELLOW}SKIP:${RESET} Target file already exists: " "$new"
+                vlog "Collision skip: keeping destination '$new'; source '$old' unchanged"
                 return 1
                 ;;
         esac
@@ -10853,7 +10881,6 @@ perform_plain_entry_rename() {
                 ((++files_affected))
                 return 0
             else
-                emit_wrap_labeled_stdout "SKIP: " "${YELLOW}SKIP:${RESET} " "Target file already exists."
                 vlog "Collision detected for plain rename '$old' -> '$new'"
                 ((++files_skipped))
                 return 0
@@ -13153,7 +13180,6 @@ for f in "${ordered_paths[@]}"; do
             break
         fi
         if (( checksum_group_collision_rc == 1 )); then
-            emit_wrap_labeled_stdout "SKIP: " "${YELLOW}SKIP:${RESET} " "Target file already exists."
             vlog "Collision detected in checksum group '$sum_file' (user skipped or unresolved)"
             finish_current_operation
             ((++files_skipped))
