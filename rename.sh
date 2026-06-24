@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.06.24 - v. 19.229.143000 - fix rename_menu_key_bracket defined after first use (colors prompt at startup)
 # 2026.06.23 - v. 19.228.143000 - prompt menus: default option letter uppercase only (match Choice hints)
 # 2026.06.19 - v. 19.227.143000 - GoPro exif: missing Firmware Version must not trip ERR/pipefail (grep/sed pipelines)
 # 2026.06.19 - v. 19.226.143000 - OLD/NEW wrap: use PuTTY/terminal width (tput cols), not only MAX_LINE_LENGTH 200
@@ -1417,6 +1418,27 @@ user_prompt_ts_prefix() {
         ver=" v${SCRIPT_VERSION}"
     fi
     printf '(%s%s) ' "$(date '+%Y.%m.%d %H:%M:%S')" "$ver"
+}
+
+# Print one menu key: uppercase letter only when it matches default_key.
+rename_menu_key_bracket() {
+    local key="$1" default_key="${2:-}"
+    key="${key:0:1}"
+    if [[ -n "$default_key" && "${key^^}" == "${default_key^^}" ]]; then
+        printf '[%s]' "${key^^}"
+    else
+        printf '[%s]' "${key,,}"
+    fi
+}
+
+# Shared [v] directory listing for interactive prompts (stdout menu line).
+print_prompt_view_directory_menu_line() {
+    echo "  $(rename_menu_key_bracket v) List directory where this path exists (parent; mark OLD/NEW basenames when given)"
+}
+
+# Shared [v] directory listing for stderr prompts (mapping helpers, GoPro, exiftool).
+print_prompt_view_directory_menu_line_stderr() {
+    echo "  $(rename_menu_key_bracket v) List directory where this path exists (parent; mark OLD/NEW basenames when given)" >&2
 }
 
 # Print one user-visible question line with (YYYY.MM.DD HH:MM:SS). Optional second arg "2" / "stderr" for helpers that must not write to stdout.
@@ -11735,27 +11757,6 @@ print_rename_parent_directory_listing() {
         emit_wrap_labeled_stderr "LISTING: " "${CYAN}LISTING:${RESET} " "Inside OLD directory: $(format_path_for_log "$path")"
         print_rename_one_level_dir_listing "$path" "" ""
     fi
-}
-
-# Print one menu key: uppercase letter only when it matches default_key.
-rename_menu_key_bracket() {
-    local key="$1" default_key="${2:-}"
-    key="${key:0:1}"
-    if [[ -n "$default_key" && "${key^^}" == "${default_key^^}" ]]; then
-        printf '[%s]' "${key^^}"
-    else
-        printf '[%s]' "${key,,}"
-    fi
-}
-
-# Shared [v] directory listing for interactive prompts (stdout menu line).
-print_prompt_view_directory_menu_line() {
-    echo "  $(rename_menu_key_bracket v) List directory where this path exists (parent; mark OLD/NEW basenames when given)"
-}
-
-# Shared [v] directory listing for stderr prompts (mapping helpers, GoPro, exiftool).
-print_prompt_view_directory_menu_line_stderr() {
-    echo "  $(rename_menu_key_bracket v) List directory where this path exists (parent; mark OLD/NEW basenames when given)" >&2
 }
 
 # Returns 0 when answer is [V] and a listing was printed (caller should re-prompt).
