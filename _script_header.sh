@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.06.27 - v. 1.56 - prompts: timestamp only; script version stays in window title (not script_version_in_prompt)
 # 2026.06.18 - v. 1.55 - PuTTY/window title: script version at front of title bar
 # 2026.06.18 - v. 1.54 - resolve caller script via BASH_SOURCE; export SCRIPT_VERSION_NUMBER; PuTTY title + prompt helper
 # 2026.06.02 - v. 1.53 - accept --no_startup_delay as alias for NO_STARTUP_DELAY (skip random delay when sourced with that flag)
@@ -76,10 +77,9 @@ SCRIPT_VERSION_DATE="$(
 [[ -n "$SCRIPT_VERSION_NUMBER" ]] || SCRIPT_VERSION_NUMBER=unknown
 export SCRIPT_VERSION_NUMBER SCRIPT_VERSION_DATE
 
+# Optional suffix for prompt timestamps; version belongs in the window title only.
 script_version_in_prompt() {
-  if [[ -n "${SCRIPT_VERSION_NUMBER:-}" && "${SCRIPT_VERSION_NUMBER}" != unknown ]]; then
-    printf ' v%s' "$SCRIPT_VERSION_NUMBER"
-  fi
+  :
 }
 
 script_version_title_prefix() {

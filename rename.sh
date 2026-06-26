@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.06.27 - v. 19.232.143000 - prompts: timestamp only; script version stays in window title (not in prompt prefix)
 # 2026.06.24 - v. 19.231.143000 - collision skip: print which target file already exists
 # 2026.06.24 - v. 19.230.143000 - GoPro multi-chapter: keep _part_02+ when first chapter already renamed (raw count drops to 1)
 # 2026.06.24 - v. 19.229.143000 - fix rename_menu_key_bracket defined after first use (colors prompt at startup)
@@ -1413,13 +1414,9 @@ read_line_editable() {
     printf -v "$__var_name" '%s' "$__line"
 }
 
-# Local-time prefix for interactive prompts, e.g. "(2026.05.08 14:30:00 v19.223.143000) " — trailing space included.
+# Local-time prefix for interactive prompts, e.g. "(2026.05.08 14:30:00) " — trailing space included.
 user_prompt_ts_prefix() {
-    local ver=""
-    if [[ -n "$SCRIPT_VERSION" && "$SCRIPT_VERSION" != "0.0.000000" ]]; then
-        ver=" v${SCRIPT_VERSION}"
-    fi
-    printf '(%s%s) ' "$(date '+%Y.%m.%d %H:%M:%S')" "$ver"
+    printf '(%s) ' "$(date '+%Y.%m.%d %H:%M:%S')"
 }
 
 # Print one menu key: uppercase letter only when it matches default_key.
