@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.06.26 - v. 0.5.48 - scan-percent prompt: one-line 1–100 help above [q/e]
 # 2026.06.26 - v. 0.5.47 - scan STATUS NO_PROCESS when mean volume below --mean-skip-db (default -60 dB)
 # 2026.06.26 - v. 0.5.46 - skip normalize when mean volume below threshold (default -60 dB); --force overrides
 # 2026.06.26 - v. 0.5.45 - line-input prompts (scan %, batch size): q or e quits
@@ -1452,9 +1453,8 @@ prompt_scan_percent_interactive() {
   local input=""
 
   loudness_print_question 'Percentage of each large file to scan for max/mean volume?'
-  echo '  (1–100; default 100 = full file. Otherwise scans the middle portion:'
-  echo '   e.g. 50% scans from 25% to 75% of duration.)'
   echo "  Applies only to files over ${LOUDNESS_SCAN_PERCENT_MIN_MB} MiB; smaller files are scanned in full."
+  echo '  1–100: percentage of each large file to scan (default 100 = full file; e.g. 50 scans the middle 25%–75%).'
   echo '  [q/e] Quit'
   loudness_printf_prompt '%s Scan percent [100]: ' "$(loudness_prompt_ts)"
   loudness_prompt_wait_begin
