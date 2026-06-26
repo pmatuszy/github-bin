@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.06.26 - v. 0.5.43 - fix nounset crash on colors prompt (string compare, not (( yes/no )))
 # 2026.06.26 - v. 0.5.42 - interactive questions: dark green when --colors yes (prompts and menu headers)
 # 2026.06.26 - v. 0.5.41 - MPEG-TS: no seek/-map on volumedetect; retry simple/full path if ffmpeg crashes
 # 2026.06.26 - v. 0.5.40 - .ts: deeper ffprobe; ffmpeg -map 0:a:0; probe crash → ERROR not NO AUDIO
@@ -614,7 +615,7 @@ prompt_use_colors() {
     N) LOUDNESS_USE_COLORS=no ;;
     *) LOUDNESS_USE_COLORS=yes ;;
   esac
-  if (( colors_uncertain && LOUDNESS_USE_COLORS == no )); then
+  if (( colors_uncertain )) && [[ "$LOUDNESS_USE_COLORS" == no ]]; then
     loudness_init_colors
   fi
   if [[ "$LOUDNESS_USE_COLORS" == no ]]; then
