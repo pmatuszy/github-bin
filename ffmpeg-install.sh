@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.06.26 - v. 2.1.22 - Ubuntu: libopenjp2-7-dev (not libopenjpeg-dev); optional pkg probe must not abort configure
 # 2026.06.26 - v. 2.1.21 - source build: install apt deps before need_cmd pkg-config (was checked too early)
 # 2026.06.16 - v. 2.1.20 - default install is official source build (common profile: libmp3lame, x264, …)
 # 2026.06.12 - v. 2.1.19 - libfdk-aac prompt defaults to yes [Y/n/q]
@@ -2001,6 +2002,28 @@ apt_cache_has_package() {
     apt-cache show "$1" >/dev/null 2>&1
 }
 
+# Ubuntu 24.04+ uses libopenjp2-7-dev; older releases used libopenjpeg-dev.
+apt_resolve_openjpeg_dev_package() {
+    local pkg=""
+    for pkg in libopenjpeg-dev libopenjp2-7-dev; do
+        if apt_cache_has_package "${pkg}"; then
+            printf '%s' "${pkg}"
+            return 0
+        fi
+    done
+    return 1
+}
+
+apt_install_openjpeg_dev_if_available() {
+    local pkg=""
+    if pkg="$(apt_resolve_openjpeg_dev_package)"; then
+        apt_install_packages "${pkg}"
+        return 0
+    fi
+    log_note "OpenJPEG dev not in apt (tried libopenjpeg-dev, libopenjp2-7-dev); libopenjpeg will be skipped."
+    return 0
+}
+
 apt_install_packages() {
     local pkg=""
     local -a packages=()
@@ -2202,7 +2225,7 @@ ffmpeg_source_try_enable_pkg() {
     else
         log_note "${label} disabled — ${pkg_spec} not found via pkg-config."
     fi
-    return 1
+    return 0
 }
 
 ffmpeg_source_try_enable_openssl() {
@@ -2285,8 +2308,9 @@ install_source_build_dependencies() {
     case "${SOURCE_PROFILE}" in
         max|gpu|nvidia)
             apt_install_optional_packages \
-                libopenjpeg-dev libbluray-dev libchromaprint-dev \
+                libbluray-dev libchromaprint-dev \
                 libgme-dev libopenmpt-dev libvidstab-dev libxml2-dev libshine-dev
+            apt_install_openjpeg_dev_if_available
             ;;
     esac
 
@@ -2405,7 +2429,9 @@ ffmpeg_source_configure_args() {
     fi
 
     if [[ "${SOURCE_PROFILE}" == max ]] && (( FFMPEG_SOURCE_HAS_FDK_AAC == 1 )); then
-        if ffmpeg_source_try_enable_pkg args fdk-aac --enable-libfdk-aac libfdk-aac; then
+        local n_args_before=${#args[@]}
+        ffmpeg_source_try_enable_pkg args fdk-aac --enable-libfdk-aac libfdk-aac
+        if (( ${#args[@]} > n_args_before )); then
             args+=( --enable-nonfree )
         fi
     fi

@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.06.26 - v. 1.6 - run exiftool/perl with C.UTF-8 (or C) to avoid locale warnings on minimal systems
 # 2026.06.17 - v. 1.5 - tarball downloads from SourceForge (exiftool.org tar.gz returns 404)
 # 2026.06.14 - v. 1.4 - when ExifTool not found: prompt to install [y/N] default N, 300s timeout
 # 2026.05.31 - v. 1.3 - update/reinstall prompt reads a single key (no Enter required)
@@ -76,6 +77,30 @@ need_cmd() {
         echo "ERROR: Required command not found: $1" >&2
         exit 1
     fi
+}
+
+# Perl warns when LANG/LC_* point at locales not generated on the system (common on minimal VMs).
+exiftool_pick_locale() {
+    local loc
+    while IFS= read -r loc; do
+        [[ -n "$loc" ]] || continue
+        if locale -a 2>/dev/null | LC_ALL=C grep -Fxq "$loc"; then
+            printf '%s' "$loc"
+            return 0
+        fi
+    done <<'EOF'
+C.UTF-8
+C.utf8
+POSIX
+C
+EOF
+    printf '%s' 'C'
+}
+
+run_exiftool() {
+    local lc
+    lc="$(exiftool_pick_locale)"
+    env LC_ALL="$lc" LANG="$lc" LANGUAGE= "$@"
 }
 
 as_root_check() {
@@ -159,7 +184,7 @@ get_installed_version() {
 
     [[ -n "${exe}" ]] || return 0
     if [[ -x "${exe}" ]] || command -v "${exe}" >/dev/null 2>&1; then
-        v="$("${exe}" -ver 2>/dev/null | tr -d '[:space:]')" || v=""
+        v="$(run_exiftool "${exe}" -ver 2>/dev/null | tr -d '[:space:]')" || v=""
     fi
     echo "${v}"
 }
@@ -273,7 +298,7 @@ main() {
     fi
 
     echo "Testing downloaded ExifTool..."
-    perl "${extracted_dir}/exiftool" -ver >/dev/null
+    run_exiftool perl "${extracted_dir}/exiftool" -ver >/dev/null
 
     if [[ -d "${target_dir}" ]]; then
         echo "Target already exists: ${target_dir}"
@@ -292,11 +317,11 @@ main() {
     ln -sfn "${current_link}/exiftool" "${bin_link}"
 
     echo "Verifying installation..."
-    "${bin_link}" -ver
+    run_exiftool "${bin_link}" -ver
 
     echo
     echo "ExifTool installed successfully."
-    echo "Version: $("${bin_link}" -ver)"
+    echo "Version: $(run_exiftool "${bin_link}" -ver)"
     echo "Directory: ${target_dir}"
     echo "Current symlink: ${current_link}"
     echo "Command: ${bin_link}"
