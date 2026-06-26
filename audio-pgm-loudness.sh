@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.06.26 - v. 0.5.42 - interactive questions: dark green when --colors yes (prompts and menu headers)
 # 2026.06.26 - v. 0.5.41 - MPEG-TS: no seek/-map on volumedetect; retry simple/full path if ffmpeg crashes
 # 2026.06.26 - v. 0.5.40 - .ts: deeper ffprobe; ffmpeg -map 0:a:0; probe crash → ERROR not NO AUDIO
 # 2026.06.24 - v. 0.5.39 - scan: optional middle-window sample % for files > 200 MiB (default 100% = full)
@@ -532,6 +533,7 @@ LOUDNESS_STOPPED_BY_USER=no
 LOUDNESS_INTERRUPTED=no
 RED=''
 GREEN=''
+DARK_GREEN=''
 CYAN=''
 YELLOW=''
 BOLD=''
@@ -545,6 +547,7 @@ loudness_init_colors() {
   if loudness_colors_enabled; then
     RED=$'\033[31m'
     GREEN=$'\033[32m'
+    DARK_GREEN=$'\033[32m'
     CYAN=$'\033[36m'
     YELLOW=$'\033[33m'
     BOLD=$'\033[1m'
@@ -552,10 +555,29 @@ loudness_init_colors() {
   else
     RED=''
     GREEN=''
+    DARK_GREEN=''
     CYAN=''
     YELLOW=''
     BOLD=''
     RESET=''
+  fi
+}
+
+loudness_print_question() {
+  if loudness_colors_enabled; then
+    printf '%b%s%b\n' "$DARK_GREEN" "$*" "$RESET"
+  else
+    printf '%s\n' "$*"
+  fi
+}
+
+loudness_printf_prompt() {
+  if loudness_colors_enabled; then
+    printf '%b' "$DARK_GREEN"
+    printf "$@"
+    printf '%b' "$RESET"
+  else
+    printf "$@"
   fi
 }
 
@@ -574,8 +596,15 @@ loudness_normalize_use_colors_token() {
 }
 
 prompt_use_colors() {
+  local colors_uncertain=0
+
   (( PRINT_CLI_ONLY )) && loudness_print_cli_only_section 'Terminal colors'
-  echo 'Use colors in the terminal?'
+  if [[ -z "$LOUDNESS_USE_COLORS" ]]; then
+    colors_uncertain=1
+    LOUDNESS_USE_COLORS=yes
+    loudness_init_colors
+  fi
+  loudness_print_question 'Use colors in the terminal?'
   echo '  [Y] Yes (default)'
   echo '  [n] No'
   echo '  [q] Quit'
@@ -585,6 +614,9 @@ prompt_use_colors() {
     N) LOUDNESS_USE_COLORS=no ;;
     *) LOUDNESS_USE_COLORS=yes ;;
   esac
+  if (( colors_uncertain && LOUDNESS_USE_COLORS == no )); then
+    loudness_init_colors
+  fi
   if [[ "$LOUDNESS_USE_COLORS" == no ]]; then
     cli_equiv_note 'CLI: --colors no'
   fi
@@ -773,7 +805,7 @@ loudness_read_key() {
     prompt="$(loudness_prompt_ts) ${prompt}"
   fi
 
-  printf '%s' "$prompt"
+  loudness_printf_prompt '%s' "$prompt"
   flush_stdin
   answer="$(loudness_read_tty_byte "$timeout")"
   echo
@@ -798,7 +830,7 @@ loudness_read_yn_key() {
     display_prompt="$(loudness_prompt_ts) ${display_prompt}"
   fi
 
-  printf '%s' "$display_prompt"
+  loudness_printf_prompt '%s' "$display_prompt"
   flush_stdin
   answer="$(loudness_read_arrow_yn_byte "$timeout")"
   echo
@@ -1129,7 +1161,7 @@ loudness_scan_scope_label() {
 
 prompt_scan_scope() {
   (( PRINT_CLI_ONLY )) && loudness_print_cli_only_section 'Scan scope'
-  echo 'What should be scanned?'
+  loudness_print_question 'What should be scanned?'
   echo '  [S] Also subdirectories (default)'
   echo '  [c] Current directory only'
   echo '  [q] Quit'
@@ -1362,11 +1394,11 @@ print_loudness_scan_sample_info() {
 prompt_scan_percent_interactive() {
   local input=""
 
-  echo 'Percentage of each large file to scan for max/mean volume?'
+  loudness_print_question 'Percentage of each large file to scan for max/mean volume?'
   echo '  (1–100; default 100 = full file. Otherwise scans the middle portion:'
   echo '   e.g. 50% scans from 25% to 75% of duration.)'
   echo "  Applies only to files over ${LOUDNESS_SCAN_PERCENT_MIN_MB} MiB; smaller files are scanned in full."
-  printf '%s Scan percent [100]: ' "$(loudness_prompt_ts)"
+  loudness_printf_prompt '%s Scan percent [100]: ' "$(loudness_prompt_ts)"
   loudness_prompt_wait_begin
   if loudness_read_line_timed input; then
     :
@@ -1955,7 +1987,7 @@ prompt_normalize_classes() {
   echo "Normalization candidates by class: NORMAL ${cn}, TOO QUIET ${ct}, PERFECT ${cp}"
   echo "  Letters: n=normal, t=too quiet, p=perfect (q also means too quiet on CLI)"
   echo "  Default: nt (NORMAL + TOO QUIET)"
-  printf '%s Classes to include [nt]: ' "$(loudness_prompt_ts)"
+  loudness_printf_prompt '%s Classes to include [nt]: ' "$(loudness_prompt_ts)"
   loudness_prompt_wait_begin
   if loudness_read_line_timed input; then
     :
@@ -3203,9 +3235,9 @@ loudness_read_normalize_batch_choice() {
 prompt_batch_size_interactive() {
   local input=""
 
-  echo 'Batch size for per-file normalize prompts?'
+  loudness_print_question 'Batch size for per-file normalize prompts?'
   echo '  Default: 50 (ask about N files, then normalize selected before next batch)'
-  printf '%s Batch size [50]: ' "$(loudness_prompt_ts)"
+  loudness_printf_prompt '%s Batch size [50]: ' "$(loudness_prompt_ts)"
   loudness_prompt_wait_begin
   if loudness_read_line_timed input; then
     :
