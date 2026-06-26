@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.06.26 - v. 0.5.47 - scan STATUS NO_PROCESS when mean volume below --mean-skip-db (default -60 dB)
 # 2026.06.26 - v. 0.5.46 - skip normalize when mean volume below threshold (default -60 dB); --force overrides
 # 2026.06.26 - v. 0.5.45 - line-input prompts (scan %, batch size): q or e quits
 # 2026.06.26 - v. 0.5.44 - prompts: timestamp only; script version stays in window title (not in prompt prefix)
@@ -106,14 +107,14 @@ Scan for audio and video files and measure loudness with ffmpeg volumedetect
   PERFECT (0.0 to -2.0 dB)     Already near digital maximum — do not normalize.
   NORMAL  (-2.0 to -6.0 dB)    Usually fine; normalize only if you want louder mix.
   TOO QUIET (-6.0 dB or lower) Prime candidates for loudnorm (quiet dialogue).
-
-Files whose mean_volume is below --mean-skip-db (default -60 dB) are not
-normalized unless you answer Yes per file interactively, or pass --force
-(with -y / non-interactive runs they are skipped).
+  NO_PROCESS (mean below --mean-skip-db, default -60 dB)
+                       Very low average level — not normalized unless you
+                       answer Yes per file, or pass --force (with -y on CLI).
 
 Optionally normalize selected classification groups in place (original
 modification time kept). By default NORMAL and TOO QUIET are candidates;
 PERFECT is optional (YouTube mode or --classes / --include-perfect).
+NO_PROCESS files are excluded unless --force is set.
 
 Supported extensions (case-insensitive):
   Video: .avi .mp4 .mkv .mov .wmv .mpeg .mpg .m4v .webm .ts
@@ -201,7 +202,7 @@ Interactive normalization prompts (per file, in batches like ffmpeg-voice.sh):
   Ask about up to N files (batch size, default 50), then normalize only the
   files you selected in that batch before the next batch of prompts.
   Per-file normalize (batch prompts; default Y for NORMAL/TOO QUIET, N for
-  PERFECT or mean below --mean-skip-db):
+  PERFECT or NO_PROCESS):
   [Y]/[n] yes/no, [d] rest of directory, [a] all remaining in batch,
   [f] finish batch (normalize selected; stop asking), [g] normalize selected and
   skip all further prompts, [q] quit.
@@ -1736,7 +1737,7 @@ loudness_run_exit_label() {
 
 loudness_print_run_summary_once() {
   local total_sec other_sec scan_line norm_line exit_label
-  local count_perfect=0 count_normal=0 count_too_quiet=0 count_no_audio=0 count_error=0 i
+  local count_perfect=0 count_normal=0 count_too_quiet=0 count_no_process=0 count_no_audio=0 count_error=0 i
 
   [[ "$LOUDNESS_SUMMARY_DONE" == yes ]] && return 0
   [[ -n "$LOUDNESS_SESSION_START_SEC" ]] || return 0
@@ -1752,6 +1753,7 @@ loudness_print_run_summary_once() {
       PERFECT)    (( ++count_perfect )) ;;
       NORMAL)     (( ++count_normal )) ;;
       TOO_QUIET)  (( ++count_too_quiet )) ;;
+      NO_PROCESS) (( ++count_no_process )) ;;
       'NO AUDIO') (( ++count_no_audio )) ;;
       ERROR)      (( ++count_error )) ;;
     esac
@@ -1770,6 +1772,7 @@ loudness_print_run_summary_once() {
     scan_line="${#MEDIA_FILES[@]} file(s) scanned"
     if (( ${#ROW_STATUS[@]} > 0 )); then
       scan_line+=", ${count_perfect} perfect, ${count_normal} normal, ${count_too_quiet} too quiet"
+      (( count_no_process > 0 )) && scan_line+=", ${count_no_process} no process"
       (( count_no_audio > 0 )) && scan_line+=", ${count_no_audio} no audio"
       (( count_error > 0 )) && scan_line+=", ${count_error} error(s)"
     fi
@@ -1836,6 +1839,17 @@ classify_max_volume() {
   }'
 }
 
+# Peak class from max_volume; NO_PROCESS when mean_volume is below --mean-skip-db.
+classify_loudness_status() {
+  local max_db="$1" mean_db="$2" peak
+  if loudness_mean_volume_below_skip_threshold "$mean_db"; then
+    printf '%s' 'NO_PROCESS'
+    return 0
+  fi
+  peak="$(classify_max_volume "$max_db")"
+  printf '%s' "$peak"
+}
+
 loudness_finalize_mean_skip_db() {
   local v="${LOUDNESS_MEAN_SKIP_DB:-}"
   [[ -n "$v" ]] || return 0
@@ -1859,20 +1873,21 @@ loudness_mean_volume_below_skip_threshold() {
 }
 
 loudness_skip_normalize_for_low_mean() {
+  local status="${1:-}" mean_db="${2:-}"
   (( LOUDNESS_FORCE )) && return 1
-  loudness_mean_volume_below_skip_threshold "$1"
-}
-
-loudness_normalize_prompt_default_no() {
-  local status="$1" mean_db="$2"
-  [[ "$status" == PERFECT ]] && return 0
+  [[ "$status" == NO_PROCESS ]] && return 0
   loudness_mean_volume_below_skip_threshold "$mean_db"
 }
 
-loudness_count_queue_low_mean_files() {
+loudness_normalize_prompt_default_no() {
+  local status="$1"
+  [[ "$status" == PERFECT || "$status" == NO_PROCESS ]]
+}
+
+loudness_count_queue_no_process_files() {
   local i n=0
-  for i in "${!NORMALIZE_MEAN[@]}"; do
-    loudness_mean_volume_below_skip_threshold "${NORMALIZE_MEAN[$i]}" && (( ++n ))
+  for i in "${!NORMALIZE_STATUS[@]}"; do
+    [[ "${NORMALIZE_STATUS[$i]}" == NO_PROCESS ]] && (( ++n ))
   done
   printf '%s' "$n"
 }
@@ -2004,6 +2019,7 @@ loudness_class_status_enabled() {
     NORMAL) (( LOUDNESS_CLASS_NORMAL )) ;;
     TOO_QUIET) (( LOUDNESS_CLASS_TOO_QUIET )) ;;
     PERFECT) (( LOUDNESS_CLASS_PERFECT )) ;;
+    NO_PROCESS) (( LOUDNESS_FORCE )) ;;
     *) return 1 ;;
   esac
 }
@@ -2807,7 +2823,7 @@ print_loudness_class_legend() {
   printf '  %-*s  %-*s  — %s\n' "$label_w" 'NORMAL'    "$range_w" '-2.0 to -6.0 dB'   'usually fine'
   printf '  %-*s  %-*s  — %s\n' "$label_w" 'TOO QUIET' "$range_w" '-6.0 dB or lower' 'loudnorm candidates'
   if [[ -n "$LOUDNESS_MEAN_SKIP_DB" ]]; then
-    printf '  %-*s  %-*s  — %s\n' "$label_w" 'LOW MEAN' "$range_w" "below ${LOUDNESS_MEAN_SKIP_DB} dB" 'skip normalize (default [N]; --force)'
+    printf '  %-*s  %-*s  — %s\n' "$label_w" 'NO_PROCESS' "$range_w" "mean < ${LOUDNESS_MEAN_SKIP_DB} dB" 'do not normalize (--force)'
   fi
 }
 
@@ -2835,6 +2851,7 @@ init_report_column_widths() {
   REPORT_MAX_W=$(_table_disp_col_width "$REPORT_MAX_W" 'MAX_VOLUME')
   REPORT_MEAN_W=$(_table_disp_col_width "$REPORT_MEAN_W" 'MEAN_VOLUME')
   REPORT_STATUS_W=$(_table_disp_col_width "$REPORT_STATUS_W" 'TOO_QUIET')
+  REPORT_STATUS_W=$(_table_disp_col_width "$REPORT_STATUS_W" 'NO_PROCESS')
   REPORT_STATUS_W=$(_table_disp_col_width "$REPORT_STATUS_W" 'NO AUDIO')
 }
 
@@ -3025,21 +3042,26 @@ maybe_include_perfect_for_youtube() {
 }
 
 print_scan_summary() {
-  local count_perfect=0 count_normal=0 count_too_quiet=0 count_no_audio=0 count_error=0 i
+  local count_perfect=0 count_normal=0 count_too_quiet=0 count_no_process=0 count_no_audio=0 count_error=0 i
 
   for i in "${!ROW_STATUS[@]}"; do
     case "${ROW_STATUS[$i]}" in
       PERFECT)    (( ++count_perfect )) ;;
       NORMAL)     (( ++count_normal )) ;;
       TOO_QUIET)  (( ++count_too_quiet )) ;;
+      NO_PROCESS) (( ++count_no_process )) ;;
       'NO AUDIO') (( ++count_no_audio )) ;;
       ERROR)      (( ++count_error )) ;;
     esac
   done
 
   echo
-  printf 'Summary: %d perfect, %d normal, %d too quiet, %d no audio, %d error(s)\n' \
-    "$count_perfect" "$count_normal" "$count_too_quiet" "$count_no_audio" "$count_error"
+  printf 'Summary: %d perfect, %d normal, %d too quiet, %d no process, %d no audio, %d error(s)\n' \
+    "$count_perfect" "$count_normal" "$count_too_quiet" "$count_no_process" "$count_no_audio" "$count_error"
+
+  if (( count_no_process > 0 )); then
+    echo "NOTE: NO_PROCESS files have mean volume below ${LOUDNESS_MEAN_SKIP_DB} dB and are not normalization candidates (use --force to include)."
+  fi
 
   if (( count_no_audio > 0 )); then
     echo 'NOTE: NO AUDIO files are listed above but are not candidates for normalization.'
@@ -3093,7 +3115,7 @@ scan_one_media_file() {
   fi
 
   read -r max_db mean_db <<<"$measure_line"
-  status="$(classify_max_volume "$max_db")"
+  status="$(classify_loudness_status "$max_db" "$mean_db")"
 
   append_scan_row "$file" "$max_db" "$mean_db" "$status" "$max_db"
   print_report_table_row "$file" "$max_db" "$mean_db" "$status"
@@ -3271,8 +3293,8 @@ prompt_save_original_aside() {
 }
 
 normalize_skip_file_prompt() {
-  local file="$1" mean_db="${2:-}"
-  if (( AUTO_YES )) && ! loudness_skip_normalize_for_low_mean "$mean_db"; then
+  local file="$1" status="${2:-}" mean_db="${3:-}"
+  if (( AUTO_YES )) && ! loudness_skip_normalize_for_low_mean "$status" "$mean_db"; then
     return 0
   fi
   [[ -n "$NORMALIZE_DIR" && "$(dirname -- "$file")" == "$NORMALIZE_DIR" ]] && return 0
@@ -3302,14 +3324,14 @@ loudness_read_normalize_batch_choice() {
   local file="$1" status="$2" max_db="$3" mean_db="${4:-}"
   local default='N' max_disp mean_disp prompt
 
-  if ! loudness_normalize_prompt_default_no "$status" "$mean_db"; then
+  if ! loudness_normalize_prompt_default_no "$status"; then
     default='Y'
   fi
   max_disp="$(format_db_display_value "$max_db")"
   mean_disp="$(format_db_display_value "$mean_db")"
 
-  if loudness_mean_volume_below_skip_threshold "$mean_db"; then
-    echo "  Mean ${mean_disp} is below ${LOUDNESS_MEAN_SKIP_DB} dB — default [N] (CLI: --force with -y to include)."
+  if [[ "$status" == NO_PROCESS ]]; then
+    echo "  NO_PROCESS (mean ${mean_disp} below ${LOUDNESS_MEAN_SKIP_DB} dB) — default [N] (CLI: --force with -y to include)."
   fi
 
   if [[ "$default" == 'Y' ]]; then
@@ -3499,7 +3521,7 @@ normalize_run_batch_prompt_loop() {
   local total idx remaining_total batch_size_now batch_count batch_yes batch_no
   local accept_all_remaining finish_batch_now skip_remaining='no'
   local overall_pos batch_pos still_after selected_total selected_pos selected_left
-  local file max_db mean_db status i j rc decision n_low_mean=0
+  local file max_db mean_db status i j rc decision n_no_process=0
 
   if ! resolve_batch_size; then
     echo 'ERROR: Invalid batch size.' >&2
@@ -3515,14 +3537,14 @@ normalize_run_batch_prompt_loop() {
   fi
 
   echo "Normalize queue: ${total} file(s)."
-  n_low_mean="$(loudness_count_queue_low_mean_files)"
-  if (( n_low_mean > 0 )) && [[ -n "$LOUDNESS_MEAN_SKIP_DB" ]]; then
+  n_no_process="$(loudness_count_queue_no_process_files)"
+  if (( n_no_process > 0 )) && [[ -n "$LOUDNESS_MEAN_SKIP_DB" ]]; then
     if (( cli_only )); then
       :
     elif loudness_wants_per_file_prompts; then
-      echo "NOTE: ${n_low_mean} file(s) with mean volume below ${LOUDNESS_MEAN_SKIP_DB} dB — per-file default [N] (use --force with -y to normalize all)."
+      echo "NOTE: ${n_no_process} NO_PROCESS file(s) — per-file default [N] (use --force with -y to normalize all)."
     elif (( ! LOUDNESS_FORCE )); then
-      echo "NOTE: ${n_low_mean} file(s) with mean below ${LOUDNESS_MEAN_SKIP_DB} dB will be skipped (use --force to include)."
+      echo "NOTE: ${n_no_process} NO_PROCESS file(s) will be skipped (use --force to include)."
     fi
   fi
 
@@ -3548,7 +3570,7 @@ normalize_run_batch_prompt_loop() {
       mean_db="${NORMALIZE_MEAN[$idx]}"
       status="${NORMALIZE_STATUS[$idx]}"
 
-      if [[ "$accept_all_remaining" == yes ]] || normalize_skip_file_prompt "$file" "$mean_db"; then
+      if [[ "$accept_all_remaining" == yes ]] || normalize_skip_file_prompt "$file" "$status" "$mean_db"; then
         batch_selected+=( 'yes' )
         (( ++batch_yes ))
         batch_indices+=( "$idx" )
@@ -3702,13 +3724,14 @@ normalize_candidate_files() {
   echo "Timestamps on the normalized file are preserved."
 
   if ! loudness_wants_per_file_prompts; then
-    local i file mean_db prep_rc
+    local i file mean_db status prep_rc
     for i in "${!NORMALIZE_FILES[@]}"; do
       file="${NORMALIZE_FILES[$i]}"
       mean_db="${NORMALIZE_MEAN[$i]}"
-      if ! normalize_skip_file_prompt "$file" "$mean_db"; then
-        if loudness_skip_normalize_for_low_mean "$mean_db"; then
-          echo "    SKIP: mean below ${LOUDNESS_MEAN_SKIP_DB} dB (use --force to normalize): ${file}"
+      status="${NORMALIZE_STATUS[$i]}"
+      if ! normalize_skip_file_prompt "$file" "$status" "$mean_db"; then
+        if [[ "$status" == NO_PROCESS ]]; then
+          echo "    SKIP: NO_PROCESS (mean below ${LOUDNESS_MEAN_SKIP_DB} dB; use --force): ${file}"
         fi
         (( ++norm_skip ))
         loudness_stats_record_norm_result skip
@@ -3725,7 +3748,7 @@ normalize_candidate_files() {
   else
     echo 'Per-file prompts run in batches (like ffmpeg-voice.sh): ask about each file,'
     echo 'then normalize selected files before the next batch.'
-    echo '  Default: [Y] for NORMAL/TOO QUIET, [N] for PERFECT or mean below --mean-skip-db.'
+    echo '  Default: [Y] for NORMAL/TOO QUIET, [N] for PERFECT or NO_PROCESS.'
     echo '  [d] rest of directory, [a] all remaining in batch,'
     echo '  [f] finish batch, [g] skip all further prompts, [q] quit.'
     normalize_run_batch_prompt_loop 0 "$filter" norm_ok norm_fail norm_skip norm_backup_skip || rc=$?
