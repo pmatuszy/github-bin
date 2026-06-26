@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.06.26 - v. 0.5.44 - prompts: timestamp only; script version stays in window title (not in prompt prefix)
 # 2026.06.26 - v. 0.5.43 - fix nounset crash on colors prompt (string compare, not (( yes/no )))
 # 2026.06.26 - v. 0.5.42 - interactive questions: dark green when --colors yes (prompts and menu headers)
 # 2026.06.26 - v. 0.5.41 - MPEG-TS: no seek/-map on volumedetect; retry simple/full path if ffmpeg crashes
@@ -468,14 +469,8 @@ PRESUME_INTERACTIVE=0
 
 . /root/bin/_script_header.sh "${HEADER_EXTRA_ARGS[@]}"
 
-loudness_prompt_version_suffix() {
-  if [[ -n "${SCRIPT_VERSION_NUMBER:-}" && "${SCRIPT_VERSION_NUMBER}" != unknown ]]; then
-    printf ' v%s' "$SCRIPT_VERSION_NUMBER"
-  fi
-}
-
 loudness_prompt_ts() {
-  printf '[%s%s]' "$(date '+%Y.%m.%d %H:%M:%S')" "$(loudness_prompt_version_suffix)"
+  printf '[%s]' "$(date '+%Y.%m.%d %H:%M:%S')"
 }
 
 if [[ -f "${BASH_SOURCE[0]}" ]]; then
@@ -868,9 +863,7 @@ loudness_window_title_apply() {
   (( ${#LOUDNESS_ORIGINAL_ARGV[@]} > 0 )) || return 0
   [[ -w /dev/tty ]] 2>/dev/null || return 0
 
-  if [[ -n "${SCRIPT_VERSION_NUMBER:-}" && "${SCRIPT_VERSION_NUMBER}" != unknown ]]; then
-    version_prefix="v${SCRIPT_VERSION_NUMBER} "
-  fi
+  version_prefix="$(script_version_title_prefix)"
   script0="${LOUDNESS_ORIGINAL_ARGV[0]}"
   if [[ -e "$script0" ]]; then
     if command -v realpath >/dev/null 2>&1; then
