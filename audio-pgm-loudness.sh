@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.06.26 - v. 0.5.45 - line-input prompts (scan %, batch size): q or e quits
 # 2026.06.26 - v. 0.5.44 - prompts: timestamp only; script version stays in window title (not in prompt prefix)
 # 2026.06.26 - v. 0.5.43 - fix nounset crash on colors prompt (string compare, not (( yes/no )))
 # 2026.06.26 - v. 0.5.42 - interactive questions: dark green when --colors yes (prompts and menu headers)
@@ -711,6 +712,17 @@ loudness_quit_now() {
   exit 0
 }
 
+# True when a read-line answer is exactly q/Q/e/E (whitespace trimmed).
+loudness_line_input_is_quit() {
+  local v="${1%$'\r'}"
+  v="${v#"${v%%[![:space:]]*}"}"
+  v="${v%"${v##*[![:space:]]}"}"
+  case "$v" in
+    [QqEe]) return 0 ;;
+  esac
+  return 1
+}
+
 flush_stdin() {
   local discard drained=0
   while (( drained < 256 )) && IFS= read -r -t 0.02 -n 1 discard; do
@@ -1392,6 +1404,7 @@ prompt_scan_percent_interactive() {
   echo '  (1–100; default 100 = full file. Otherwise scans the middle portion:'
   echo '   e.g. 50% scans from 25% to 75% of duration.)'
   echo "  Applies only to files over ${LOUDNESS_SCAN_PERCENT_MIN_MB} MiB; smaller files are scanned in full."
+  echo '  [q/e] Quit'
   loudness_printf_prompt '%s Scan percent [100]: ' "$(loudness_prompt_ts)"
   loudness_prompt_wait_begin
   if loudness_read_line_timed input; then
@@ -1400,6 +1413,10 @@ prompt_scan_percent_interactive() {
     input=""
   fi
   loudness_prompt_wait_end
+  input="${input%$'\r'}"
+  if loudness_line_input_is_quit "$input"; then
+    loudness_quit_now
+  fi
   if [[ -z "$input" ]]; then
     LOUDNESS_SCAN_PERCENT=100
   elif loudness_validate_scan_percent "$input"; then
@@ -3231,6 +3248,7 @@ prompt_batch_size_interactive() {
 
   loudness_print_question 'Batch size for per-file normalize prompts?'
   echo '  Default: 50 (ask about N files, then normalize selected before next batch)'
+  echo '  [q/e] Quit'
   loudness_printf_prompt '%s Batch size [50]: ' "$(loudness_prompt_ts)"
   loudness_prompt_wait_begin
   if loudness_read_line_timed input; then
@@ -3239,6 +3257,10 @@ prompt_batch_size_interactive() {
     input=""
   fi
   loudness_prompt_wait_end
+  input="${input%$'\r'}"
+  if loudness_line_input_is_quit "$input"; then
+    loudness_quit_now
+  fi
   if [[ -z "$input" ]]; then
     BATCH_SIZE=50
   elif [[ "$input" =~ ^[1-9][0-9]*$ ]]; then
