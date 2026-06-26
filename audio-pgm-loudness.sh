@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.06.26 - v. 0.5.41 - MPEG-TS: no seek/-map on volumedetect; retry simple/full path if ffmpeg crashes
 # 2026.06.26 - v. 0.5.40 - .ts: deeper ffprobe; ffmpeg -map 0:a:0; probe crash → ERROR not NO AUDIO
 # 2026.06.24 - v. 0.5.39 - scan: optional middle-window sample % for files > 200 MiB (default 100% = full)
 # 2026.06.23 - v. 0.5.38 - interactive prompts: default no timeout (wait forever); --timeout / LOUDNESS_READ_TIMEOUT
@@ -1234,7 +1235,13 @@ loudness_media_files_scan_summary() {
 }
 
 LOUDNESS_FFPROBE_PROBE_WARNED=0
+LOUDNESS_FFMPEG_MEASURE_FALLBACK_WARNED=0
+LOUDNESS_FFMPEG_CRASH_WARNED=0
 LOUDNESS_LAST_PROBE_RC=0
+LOUDNESS_VD_RC=0
+LOUDNESS_VD_MAX=""
+LOUDNESS_VD_MEAN=""
+LOUDNESS_VD_STDERR=""
 
 loudness_file_is_mpegts() {
   local base="${1##*/}"
@@ -1261,6 +1268,18 @@ loudness_warn_ffprobe_probe_failed_once() {
   if (( rc > 128 )); then
     echo 'WARNING: ffprobe may have crashed (segmentation fault). Consider updating ffmpeg/ffprobe or using distro packages instead of static builds.' >&2
   fi
+}
+
+loudness_warn_ffmpeg_measure_fallback_once() {
+  (( LOUDNESS_FFMPEG_MEASURE_FALLBACK_WARNED )) && return 0
+  LOUDNESS_FFMPEG_MEASURE_FALLBACK_WARNED=1
+  echo 'WARNING: ffmpeg volumedetect needed a simpler fallback for some file(s) (common with MPEG-TS and static ffmpeg builds).' >&2
+}
+
+loudness_warn_ffmpeg_crashed_once() {
+  (( LOUDNESS_FFMPEG_CRASH_WARNED )) && return 0
+  LOUDNESS_FFMPEG_CRASH_WARNED=1
+  echo 'ERROR: ffmpeg crashed measuring some file(s) — file(s) may still have audio; install a newer ffmpeg (e.g. apt or ffmpeg-install.sh source build).' >&2
 }
 
 # Append MPEG-TS probe options to a bash array (nameref).
@@ -1407,6 +1426,7 @@ loudness_scan_window_for_file() {
   local sz dur
 
   (( percent < 100 )) || return 1
+  loudness_file_is_mpegts "$file" && return 1
   sz="$(loudness_file_size_bytes "$file")"
   (( sz > min_bytes )) || return 1
   dur="$(media_duration_seconds "$file")" || return 1
@@ -1437,44 +1457,68 @@ parse_volumedetect_db() {
   ' <<<"$blob"
 }
 
+# Run ffmpeg volumedetect; sets LOUDNESS_VD_RC / LOUDNESS_VD_MAX / LOUDNESS_VD_MEAN. Returns 0 if max_volume parsed.
+loudness_volumedetect_run() {
+  local rc=0
+  LOUDNESS_VD_RC=0
+  LOUDNESS_VD_MAX=""
+  LOUDNESS_VD_MEAN=""
+  LOUDNESS_VD_STDERR=""
+  LOUDNESS_VD_STDERR="$(ffmpeg "$@" 2>&1)" || LOUDNESS_VD_RC=$?
+  LOUDNESS_VD_RC="${LOUDNESS_VD_RC:-0}"
+  LOUDNESS_VD_MAX="$(parse_volumedetect_db "$LOUDNESS_VD_STDERR" max_volume)"
+  LOUDNESS_VD_MEAN="$(parse_volumedetect_db "$LOUDNESS_VD_STDERR" mean_volume)"
+  [[ -n "$LOUDNESS_VD_MAX" ]]
+}
+
+loudness_measure_volumedetect_needs_fallback() {
+  (( LOUDNESS_VD_RC > 128 )) && return 0
+  [[ -z "$LOUDNESS_VD_MAX" && "$LOUDNESS_VD_RC" != 0 ]] && return 0
+  return 1
+}
+
 measure_loudness() {
   local file="$1" mode="${2:-}"
-  local stderr_blob max_db mean_db rc
   local -a ff_args=(-hide_banner -nostats)
-  local window start_sec scan_sec
-
-  loudness_ffprobe_input_opts_for_file "$file" ff_args
+  local window start_sec scan_sec used_fallback=0
 
   if [[ "$mode" != full ]] && window="$(loudness_scan_window_for_file "$file")"; then
     read -r start_sec scan_sec <<<"$window"
     ff_args+=(-ss "$start_sec" -t "$scan_sec")
   fi
 
-  ff_args+=(-i "$file")
-  if loudness_file_is_mpegts "$file"; then
-    ff_args+=(-map 0:a:0?)
-  else
-    ff_args+=(-vn)
+  ff_args+=(-i "$file" -vn -af volumedetect -f null /dev/null)
+  if loudness_volumedetect_run "${ff_args[@]}"; then
+    printf '%s %s\n' "$LOUDNESS_VD_MAX" "${LOUDNESS_VD_MEAN:-—}"
+    return 0
   fi
-  ff_args+=(-af volumedetect -f null /dev/null)
-  stderr_blob="$(ffmpeg "${ff_args[@]}" 2>&1)" || rc=$?
-  rc="${rc:-0}"
 
-  max_db="$(parse_volumedetect_db "$stderr_blob" max_volume)"
-  mean_db="$(parse_volumedetect_db "$stderr_blob" mean_volume)"
+  if loudness_measure_volumedetect_needs_fallback; then
+    if loudness_volumedetect_run -hide_banner -nostats -i "$file" -vn -af volumedetect -f null /dev/null; then
+      used_fallback=1
+    elif loudness_file_is_mpegts "$file" \
+      && loudness_volumedetect_run -hide_banner -nostats -f mpegts -i "$file" -vn -af volumedetect -f null /dev/null; then
+      used_fallback=1
+    fi
+    if (( used_fallback )); then
+      loudness_warn_ffmpeg_measure_fallback_once
+      printf '%s %s\n' "$LOUDNESS_VD_MAX" "${LOUDNESS_VD_MEAN:-—}"
+      return 0
+    fi
+  fi
 
-  if [[ -z "$max_db" ]]; then
-    if grep -qiE 'does not contain any stream|Stream map .* matches no streams|Output file #0 does not contain any stream' <<<"$stderr_blob"; then
+  if [[ -z "$LOUDNESS_VD_MAX" ]]; then
+    if grep -qiE 'does not contain any stream|Stream map .* matches no streams|Output file #0 does not contain any stream' <<<"$LOUDNESS_VD_STDERR"; then
       return 2
     fi
-    if (( rc > 128 )); then
+    if (( LOUDNESS_VD_RC > 128 )); then
       return 5
     fi
-    (( rc != 0 )) && return 3
+    (( LOUDNESS_VD_RC != 0 )) && return 3
     return 4
   fi
 
-  printf '%s %s\n' "$max_db" "${mean_db:--}"
+  printf '%s %s\n' "$LOUDNESS_VD_MAX" "${LOUDNESS_VD_MEAN:-—}"
   return 0
 }
 
@@ -2891,7 +2935,7 @@ scan_one_media_file() {
       status='NO AUDIO'
     elif (( measure_rc == 5 )); then
       status='ERROR'
-      echo "ERROR: ffmpeg crashed measuring $(basename -- "$file") — file may still have audio; try updating ffmpeg/ffprobe." >&2
+      loudness_warn_ffmpeg_crashed_once
     elif [[ "$probe_status" == 2 ]]; then
       status='ERROR'
       echo "ERROR: could not measure $(basename -- "$file") after ffprobe probe failed — try updating ffmpeg/ffprobe." >&2
