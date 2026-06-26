@@ -1,5 +1,7 @@
 #!/bin/bash
 
+# 2026.06.26 - v. 0.5.40 - .ts: deeper ffprobe; ffmpeg -map 0:a:0; probe crash → ERROR not NO AUDIO
+# 2026.06.24 - v. 0.5.39 - scan: optional middle-window sample % for files > 200 MiB (default 100% = full)
 # 2026.06.23 - v. 0.5.38 - interactive prompts: default no timeout (wait forever); --timeout / LOUDNESS_READ_TIMEOUT
 # 2026.06.23 - v. 0.5.37 - startup: print ffmpeg path and version
 # 2026.06.18 - v. 0.5.36 - PuTTY/window title: script version at front of title bar
@@ -89,6 +91,7 @@ show_help() {
 Usage: $(basename "$0") [-h|--help] [-v|--version] [--no_startup_delay]
        [-n standard|youtube|none] [-y] [--colors yes|no] [--scope current|subdirs]
        [--batch-size N] [--classes SPEC] [--timeout SEC] [--scan-only]
+       [--scan-percent N] [--scan-percent-min-mb N]
        [--print-cli-only] [-- FILE ...]
 
 Scan for audio and video files and measure loudness with ffmpeg volumedetect
@@ -111,10 +114,11 @@ media files are discovered in the working directory — current folder only by
 default, or the whole tree with --scope subdirs (interactive default: subdirs).
 
 When no command-line options are given (only optional FILE operands), the script
-runs in interactive mode: it asks about terminal colors and scan scope, whether
-to scan, and (after results are shown) whether to offer normalization. Each result
-row is printed as soon as that file is measured. With --colors yes, PERFECT rows
-are green in the scan table.
+runs in interactive mode: it asks about terminal colors and scan scope, how much
+of each large file to scan (middle window, default 100%), whether to scan, and
+(after results are shown) whether to offer normalization. Each result row is
+printed as soon as that file is measured. With --colors yes, PERFECT rows are
+green in the scan table.
 
 Normalization (non-PERFECT by default; PERFECT is never offered for standard mode):
   standard   ffmpeg loudnorm (default filter parameters)
@@ -148,6 +152,12 @@ Options:
                        non-interactive command at the end.
   --scan-only          Measure loudness only; no prompts and no normalization
                        (exit 0 when scan completes).
+  --scan-percent N     Fraction of each large file to measure (1–100; default 100).
+                       Values below 100 scan the middle portion only (e.g. 50 scans
+                       from 25% to 75% of duration). Applies only to files larger
+                       than --scan-percent-min-mb; smaller files are always full.
+  --scan-percent-min-mb N
+                       Size threshold in MiB for partial scan (default 200).
   --scope current|subdirs
                        current = files in cwd only; subdirs = cwd and all
                        subfolders (skip the interactive scope question).
@@ -198,6 +208,10 @@ Environment:
   LOUDNESS_READ_TIMEOUT     Seconds to wait for an interactive prompt before using
                               the shown default (same as --timeout; default 0 =
                               wait forever).
+  LOUDNESS_SCAN_PERCENT     Scan sample size 1–100 (same as --scan-percent; default 100).
+  LOUDNESS_SCAN_PERCENT_MIN_MB
+                              Partial-scan size threshold in MiB (same as
+                              --scan-percent-min-mb; default 200).
   LOUDNESS_USE_COLORS       yes or no (same as --colors). Interactive default: yes.
 
 Exit status:
@@ -208,7 +222,7 @@ Exit status:
 Examples:
   cd /path/to/clips && $(basename "$0")
   cd /path/to/clips && $(basename "$0") --scan-only
-  cd /path/to/tree && $(basename "$0") --scan-only --scope subdirs
+  cd /path/to/tree && $(basename "$0") --scan-only --scope subdirs --scan-percent 50
   $(basename "$0") -n youtube -y --save-original --colors yes
   $(basename "$0") --print-cli-only
   $(basename "$0") -n standard -- quiet_interview.mkv
@@ -227,6 +241,12 @@ PRINT_CLI_ONLY=0
 SCAN_ONLY=0
 LOUDNESS_SCAN_SCOPE="${LOUDNESS_SCAN_SCOPE:-}"
 LOUDNESS_SCAN_SCOPE_CLI=0
+LOUDNESS_SCAN_PERCENT="${LOUDNESS_SCAN_PERCENT:-100}"
+LOUDNESS_SCAN_PERCENT_CLI=0
+LOUDNESS_SCAN_PERCENT_MIN_MB="${LOUDNESS_SCAN_PERCENT_MIN_MB:-200}"
+LOUDNESS_SCAN_PERCENT_MIN_MB_CLI=0
+LOUDNESS_SCAN_PERCENT_MIN_BYTES=0
+LOUDNESS_SCAN_PARTIAL_MIN_SEC="${LOUDNESS_SCAN_PARTIAL_MIN_SEC:-1}"
 LOUDNESS_BATCH_SIZE="${LOUDNESS_BATCH_SIZE:-}"
 LOUDNESS_BATCH_SIZE_CLI=0
 BATCH_SIZE=50
@@ -308,6 +328,20 @@ while [[ $# -gt 0 ]]; do
       ANY_CLI_OPTIONS=1
       SCAN_ONLY=1
       shift
+      ;;
+    --scan-percent)
+      ANY_CLI_OPTIONS=1
+      [[ $# -ge 2 ]] || { echo "Missing value for --scan-percent" >&2; exit 1; }
+      LOUDNESS_SCAN_PERCENT="$2"
+      LOUDNESS_SCAN_PERCENT_CLI=1
+      shift 2
+      ;;
+    --scan-percent-min-mb)
+      ANY_CLI_OPTIONS=1
+      [[ $# -ge 2 ]] || { echo "Missing value for --scan-percent-min-mb" >&2; exit 1; }
+      LOUDNESS_SCAN_PERCENT_MIN_MB="$2"
+      LOUDNESS_SCAN_PERCENT_MIN_MB_CLI=1
+      shift 2
       ;;
     --scope)
       ANY_CLI_OPTIONS=1
@@ -900,6 +934,12 @@ cli_print_built_command() {
   if [[ -n "$LOUDNESS_BATCH_SIZE" && "$LOUDNESS_BATCH_SIZE" != 50 ]]; then
     parts+=( --batch-size "$LOUDNESS_BATCH_SIZE" )
   fi
+  if [[ -n "$LOUDNESS_SCAN_PERCENT" && "$LOUDNESS_SCAN_PERCENT" != 100 ]]; then
+    parts+=( --scan-percent "$LOUDNESS_SCAN_PERCENT" )
+  fi
+  if [[ -n "$LOUDNESS_SCAN_PERCENT_MIN_MB" && "$LOUDNESS_SCAN_PERCENT_MIN_MB" != 200 ]]; then
+    parts+=( --scan-percent-min-mb "$LOUDNESS_SCAN_PERCENT_MIN_MB" )
+  fi
   if [[ "$LOUDNESS_USE_COLORS" == no ]]; then
     parts+=( --colors no )
   elif (( LOUDNESS_COLORS_CLI )) && [[ "$LOUDNESS_USE_COLORS" == yes ]]; then
@@ -984,6 +1024,7 @@ run_print_cli_only_session() {
 
   loudness_print_cli_only_section 'Startup'
   prompt_startup_interactive
+  resolve_scan_percent_settings || exit 1
 
   loudness_print_cli_only_section 'Normalize offer'
   prompt_offer_normalize_after_scan
@@ -1192,9 +1233,194 @@ loudness_media_files_scan_summary() {
   echo "${#MEDIA_FILES[@]} (${breakdown})"
 }
 
-file_has_audio_stream() {
+LOUDNESS_FFPROBE_PROBE_WARNED=0
+LOUDNESS_LAST_PROBE_RC=0
+
+loudness_file_is_mpegts() {
+  local base="${1##*/}"
+  base="${base,,}"
+  [[ "$base" == *.ts || "$base" == *.mts ]]
+}
+
+loudness_subprocess_exit_label() {
+  local rc="$1"
+  if (( rc > 128 )); then
+    printf 'signal %s' "$(( rc - 128 ))"
+  elif (( rc != 0 )); then
+    printf 'exit %s' "$rc"
+  else
+    printf 'ok'
+  fi
+}
+
+loudness_warn_ffprobe_probe_failed_once() {
+  local file="$1" rc="$2"
+  (( LOUDNESS_FFPROBE_PROBE_WARNED )) && return 0
+  LOUDNESS_FFPROBE_PROBE_WARNED=1
+  echo "WARNING: ffprobe failed on $(basename -- "$file") ($(loudness_subprocess_exit_label "$rc")) — trying ffmpeg volumedetect anyway." >&2
+  if (( rc > 128 )); then
+    echo 'WARNING: ffprobe may have crashed (segmentation fault). Consider updating ffmpeg/ffprobe or using distro packages instead of static builds.' >&2
+  fi
+}
+
+# Append MPEG-TS probe options to a bash array (nameref).
+loudness_ffprobe_input_opts_for_file() {
   local file="$1"
-  ffprobe -v error -select_streams a:0 -show_entries stream=index -of csv=p=0 -- "$file" 2>/dev/null | grep -q .
+  local -n _opts=$2
+  if loudness_file_is_mpegts "$file"; then
+    _opts+=(-analyzeduration 50M -probesize 50M)
+  fi
+}
+
+# stdout: 0 = audio stream found, 1 = no audio, 2 = probe error/crash.
+file_audio_probe_status() {
+  local file="$1"
+  local -a fp_args=(-v error) out=""
+
+  LOUDNESS_LAST_PROBE_RC=0
+  loudness_ffprobe_input_opts_for_file "$file" fp_args
+  fp_args+=(-select_streams a:0 -show_entries stream=index -of csv=p=0 -- "$file")
+
+  out="$(ffprobe "${fp_args[@]}" 2>/dev/null)" || LOUDNESS_LAST_PROBE_RC=$?
+  LOUDNESS_LAST_PROBE_RC="${LOUDNESS_LAST_PROBE_RC:-0}"
+
+  if [[ -n "$out" ]]; then
+    printf '0'
+    return 0
+  fi
+  if (( LOUDNESS_LAST_PROBE_RC == 0 )); then
+    printf '1'
+    return 0
+  fi
+  printf '2'
+  return 0
+}
+
+file_has_audio_stream() {
+  [[ "$(file_audio_probe_status "$1")" == 0 ]]
+}
+
+loudness_validate_scan_percent() {
+  local v="$1"
+  [[ "$v" =~ ^[0-9]+$ ]] || return 1
+  (( v >= 1 && v <= 100 )) || return 1
+  return 0
+}
+
+loudness_validate_scan_percent_min_mb() {
+  [[ "$1" =~ ^[1-9][0-9]*$ ]]
+}
+
+loudness_scan_percent_min_bytes_from_mb() {
+  awk -v mb="$1" 'BEGIN { printf "%.0f", mb * 1048576 }'
+}
+
+loudness_finalize_scan_percent_min_bytes() {
+  if ! loudness_validate_scan_percent_min_mb "$LOUDNESS_SCAN_PERCENT_MIN_MB"; then
+    echo "Invalid LOUDNESS_SCAN_PERCENT_MIN_MB / --scan-percent-min-mb: ${LOUDNESS_SCAN_PERCENT_MIN_MB} (use a positive integer)" >&2
+    return 1
+  fi
+  LOUDNESS_SCAN_PERCENT_MIN_BYTES="$(loudness_scan_percent_min_bytes_from_mb "$LOUDNESS_SCAN_PERCENT_MIN_MB")"
+  return 0
+}
+
+loudness_scan_sample_description() {
+  if (( LOUDNESS_SCAN_PERCENT >= 100 )); then
+    printf '%s' 'full file'
+    return 0
+  fi
+  local lo hi
+  lo=$(( (100 - LOUDNESS_SCAN_PERCENT) / 2 ))
+  hi=$(( lo + LOUDNESS_SCAN_PERCENT ))
+  printf 'middle %d%% of files > %s MiB (from %d%% to %d%% of duration; others: full file)' \
+    "$LOUDNESS_SCAN_PERCENT" "$LOUDNESS_SCAN_PERCENT_MIN_MB" "$lo" "$hi"
+}
+
+print_loudness_scan_sample_info() {
+  echo "Scan sample: $(loudness_scan_sample_description)"
+}
+
+prompt_scan_percent_interactive() {
+  local input=""
+
+  echo 'Percentage of each large file to scan for max/mean volume?'
+  echo '  (1–100; default 100 = full file. Otherwise scans the middle portion:'
+  echo '   e.g. 50% scans from 25% to 75% of duration.)'
+  echo "  Applies only to files over ${LOUDNESS_SCAN_PERCENT_MIN_MB} MiB; smaller files are scanned in full."
+  printf '%s Scan percent [100]: ' "$(loudness_prompt_ts)"
+  loudness_prompt_wait_begin
+  if loudness_read_line_timed input; then
+    :
+  else
+    input=""
+  fi
+  loudness_prompt_wait_end
+  if [[ -z "$input" ]]; then
+    LOUDNESS_SCAN_PERCENT=100
+  elif loudness_validate_scan_percent "$input"; then
+    LOUDNESS_SCAN_PERCENT="$input"
+  else
+    echo 'Invalid scan percent. Using default: 100'
+    LOUDNESS_SCAN_PERCENT=100
+  fi
+  echo "Scan sample: $(loudness_scan_sample_description)"
+  if (( LOUDNESS_SCAN_PERCENT != 100 )); then
+    cli_equiv_note "CLI: --scan-percent ${LOUDNESS_SCAN_PERCENT}"
+  fi
+  if (( LOUDNESS_SCAN_PERCENT_MIN_MB != 200 )); then
+    cli_equiv_note "CLI: --scan-percent-min-mb ${LOUDNESS_SCAN_PERCENT_MIN_MB}"
+  fi
+}
+
+resolve_scan_percent_settings() {
+  loudness_finalize_scan_percent_min_bytes || return 1
+
+  if loudness_wants_wizard_prompts && (( ! LOUDNESS_SCAN_PERCENT_CLI )); then
+    prompt_scan_percent_interactive
+    return 0
+  fi
+
+  if [[ -z "$LOUDNESS_SCAN_PERCENT" ]]; then
+    LOUDNESS_SCAN_PERCENT=100
+  elif ! loudness_validate_scan_percent "$LOUDNESS_SCAN_PERCENT"; then
+    echo "Invalid LOUDNESS_SCAN_PERCENT / --scan-percent: ${LOUDNESS_SCAN_PERCENT} (use 1–100)" >&2
+    return 1
+  fi
+  return 0
+}
+
+media_duration_seconds() {
+  local file="$1" d
+  command -v ffprobe >/dev/null 2>&1 || return 1
+  d="$(ffprobe -v error -show_entries format=duration \
+    -of default=noprint_wrappers=1:nokey=1 -- "$file" 2>/dev/null)" || return 1
+  [[ -n "$d" ]] || return 1
+  awk -v d="$d" 'BEGIN { if (d+0 > 0) printf "%.3f\n", d+0; else exit 1 }'
+}
+
+# stdout: start_sec scan_sec; return 0 partial window, 1 use full file.
+loudness_scan_window_for_file() {
+  local file="$1"
+  local percent="${LOUDNESS_SCAN_PERCENT:-100}"
+  local min_bytes="${LOUDNESS_SCAN_PERCENT_MIN_BYTES:-0}"
+  local min_scan_sec="${LOUDNESS_SCAN_PARTIAL_MIN_SEC:-1}"
+  local sz dur
+
+  (( percent < 100 )) || return 1
+  sz="$(loudness_file_size_bytes "$file")"
+  (( sz > min_bytes )) || return 1
+  dur="$(media_duration_seconds "$file")" || return 1
+  awk -v d="$dur" -v p="$percent" -v min="$min_scan_sec" 'BEGIN {
+    scan = d * p / 100.0
+    start = d * (100 - p) / 200.0
+    if (scan < min) exit 1
+    if (start < 0) start = 0
+    if (start + scan > d + 0.001) scan = d - start
+    if (scan < min) exit 1
+    printf "%.3f %.3f\n", start, scan
+    exit 0
+  }' || return 1
+  return 0
 }
 
 parse_volumedetect_db() {
@@ -1212,9 +1438,26 @@ parse_volumedetect_db() {
 }
 
 measure_loudness() {
-  local file="$1" stderr_blob max_db mean_db rc
+  local file="$1" mode="${2:-}"
+  local stderr_blob max_db mean_db rc
+  local -a ff_args=(-hide_banner -nostats)
+  local window start_sec scan_sec
 
-  stderr_blob="$(ffmpeg -hide_banner -nostats -i "$file" -af volumedetect -vn -f null /dev/null 2>&1)" || rc=$?
+  loudness_ffprobe_input_opts_for_file "$file" ff_args
+
+  if [[ "$mode" != full ]] && window="$(loudness_scan_window_for_file "$file")"; then
+    read -r start_sec scan_sec <<<"$window"
+    ff_args+=(-ss "$start_sec" -t "$scan_sec")
+  fi
+
+  ff_args+=(-i "$file")
+  if loudness_file_is_mpegts "$file"; then
+    ff_args+=(-map 0:a:0?)
+  else
+    ff_args+=(-vn)
+  fi
+  ff_args+=(-af volumedetect -f null /dev/null)
+  stderr_blob="$(ffmpeg "${ff_args[@]}" 2>&1)" || rc=$?
   rc="${rc:-0}"
 
   max_db="$(parse_volumedetect_db "$stderr_blob" max_volume)"
@@ -1223,6 +1466,9 @@ measure_loudness() {
   if [[ -z "$max_db" ]]; then
     if grep -qiE 'does not contain any stream|Stream map .* matches no streams|Output file #0 does not contain any stream' <<<"$stderr_blob"; then
       return 2
+    fi
+    if (( rc > 128 )); then
+      return 5
     fi
     (( rc != 0 )) && return 3
     return 4
@@ -1391,6 +1637,9 @@ loudness_print_run_summary_once() {
       (( count_error > 0 )) && scan_line+=", ${count_error} error(s)"
     fi
     loudness_summary_kv "Scan" "$scan_line"
+    if (( LOUDNESS_SCAN_PERCENT < 100 )); then
+      loudness_summary_kv "Scan sample" "$(loudness_scan_sample_description)"
+    fi
   fi
 
   if (( LOUDNESS_NORMALIZE_RAN )); then
@@ -2621,12 +2870,18 @@ print_scan_summary() {
 
 scan_one_media_file() {
   local file="$1"
-  local max_db mean_db status measure_rc measure_line
+  local max_db mean_db status measure_rc measure_line probe_status
 
-  if ! file_has_audio_stream "$file"; then
+  probe_status="$(file_audio_probe_status "$file")"
+
+  if [[ "$probe_status" == 1 ]]; then
     append_scan_row "$file" '—' '—' 'NO AUDIO'
     print_report_table_row "$file" '—' '—' 'NO AUDIO'
     return 0
+  fi
+
+  if [[ "$probe_status" == 2 ]]; then
+    loudness_warn_ffprobe_probe_failed_once "$file" "$LOUDNESS_LAST_PROBE_RC"
   fi
 
   measure_rc=0
@@ -2634,6 +2889,12 @@ scan_one_media_file() {
   if (( measure_rc != 0 )); then
     if (( measure_rc == 2 )); then
       status='NO AUDIO'
+    elif (( measure_rc == 5 )); then
+      status='ERROR'
+      echo "ERROR: ffmpeg crashed measuring $(basename -- "$file") — file may still have audio; try updating ffmpeg/ffprobe." >&2
+    elif [[ "$probe_status" == 2 ]]; then
+      status='ERROR'
+      echo "ERROR: could not measure $(basename -- "$file") after ffprobe probe failed — try updating ffmpeg/ffprobe." >&2
     else
       status='ERROR'
     fi
@@ -2997,7 +3258,7 @@ normalize_one_selected_file() {
       echo "    (${audio_n} audio tracks normalized; other streams copied)"
     fi
     measure_rc=0
-    measure_line="$(measure_loudness "$file")" || measure_rc=$?
+    measure_line="$(measure_loudness "$file" full)" || measure_rc=$?
     if (( measure_rc == 0 )); then
       read -r after_max after_mean <<<"$measure_line"
       print_normalize_before_after "$before_max" "$before_mean" "$after_max" "$after_mean"
@@ -3330,6 +3591,10 @@ if loudness_wants_wizard_prompts && (( ! PRINT_CLI_ONLY )); then
   prompt_startup_interactive
 fi
 
+if (( ! PRINT_CLI_ONLY )); then
+  resolve_scan_percent_settings || exit 1
+fi
+
 if (( ${#CLI_FILES[@]} > 0 )); then
   loudness_record_session_start
   echo "Audio loudness scan: $(pwd) (${#MEDIA_FILES[@]} explicit file(s))"
@@ -3340,6 +3605,9 @@ fi
 echo "Classification (max_volume peak):"
 print_loudness_class_legend
 echo "Tool: ffmpeg volumedetect (-vn for video files)"
+if (( ! PRINT_CLI_ONLY )); then
+  print_loudness_scan_sample_info
+fi
 print_ffmpeg_tool_info
 
 if (( PRINT_CLI_ONLY )); then

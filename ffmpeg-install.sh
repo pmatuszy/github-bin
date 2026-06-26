@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.06.26 - v. 2.1.21 - source build: install apt deps before need_cmd pkg-config (was checked too early)
 # 2026.06.16 - v. 2.1.20 - default install is official source build (common profile: libmp3lame, x264, …)
 # 2026.06.12 - v. 2.1.19 - libfdk-aac prompt defaults to yes [Y/n/q]
 # 2026.06.12 - v. 2.1.18 - remove old version dirs (legacy ffmpeg-* directories); encoder probe fallback
@@ -2323,6 +2324,7 @@ install_source_build_dependencies() {
     log_step "Installing compiler and profile packages..."
     apt_install_packages "${pkgs[@]}"
     probe_source_optional_codecs
+    need_cmd pkg-config
     log_note "Build dependencies installed."
 }
 
@@ -2562,12 +2564,12 @@ perform_install_build_from_source() {
     echo "part 1 — official ffmpeg.org release source (${version}, profile: ${SOURCE_PROFILE})"
     echo
 
+    normalize_legacy_versioned_bins
+    install_source_build_dependencies || return 1
+
     need_cmd make
     need_cmd gcc
     need_cmd install
-    need_cmd pkg-config
-    normalize_legacy_versioned_bins
-    install_source_build_dependencies
 
     tarball="$(ffmpeg_org_release_tarball_name "${version}")"
     url="$(ffmpeg_org_release_tarball_url "${version}")"
