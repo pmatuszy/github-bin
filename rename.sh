@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.06.27 - v. 19.233.143000 - TVP VOD: drop " Oglądaj na TVP VOD"; pad odc. N / odc._N single digit → 0N
 # 2026.06.27 - v. 19.232.143000 - prompts: timestamp only; script version stays in window title (not in prompt prefix)
 # 2026.06.24 - v. 19.231.143000 - collision skip: print which target file already exists
 # 2026.06.24 - v. 19.230.143000 - GoPro multi-chapter: keep _part_02+ when first chapter already renamed (raw count drops to 1)
@@ -9198,6 +9199,16 @@ transform_gopro_camera_basename() {
         "$ext"
 }
 
+# TVP VOD downloads: remove promo suffix; zero-pad episode digit after odc. / odc._
+_transform_basename_tvp_vod_odc() {
+    local n="$1"
+    n="${n// Oglądaj na TVP VOD/}"
+    n=$(printf '%s' "$n" | sed -E \
+        -e 's/(odc\. )([0-9])([^0-9]|$)/\10\2\3/g' \
+        -e 's/(odc\._)([0-9])([^0-9]|$)/\10\2\3/g')
+    printf '%s' "$n"
+}
+
 transform_basename() {
     local new="$1"
     local original_path="${2-}"
@@ -9303,6 +9314,8 @@ transform_basename() {
     new="${new//Ż/Z}"
 
     new="${new//•/-}"
+
+    new="$(_transform_basename_tvp_vod_odc "$new")"
 
     if [[ "$new" =~ \.jpeg$ ]]; then
         new="${new%.jpeg}.jpg"
