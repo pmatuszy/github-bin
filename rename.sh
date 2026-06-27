@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.06.27 - v. 19.235.143000 - Unicode dashes (en/em/minus etc.) → ASCII hyphen so ls does not show $'\342\200\223'
 # 2026.06.27 - v. 19.234.143000 - TVP VOD promo: also _Ogladaj_na_TVP_VOD (spaces/underscores); strip again after separator normalize
 # 2026.06.27 - v. 19.233.143000 - TVP VOD: drop " Oglądaj na TVP VOD"; pad odc. N / odc._N single digit → 0N
 # 2026.06.27 - v. 19.232.143000 - prompts: timestamp only; script version stays in window title (not in prompt prefix)
@@ -8292,9 +8293,15 @@ _rename_finish_basename_stem() {
     printf '%s' "$finished"
 }
 
+# Unicode dash/minus variants → ASCII hyphen (avoids $'\342\200\223' in ls / bash $'…' quoting).
+_transform_basename_unicode_dashes_to_hyphen() {
+    printf '%s' "$1" | sed $'s/\342\200\220/-/g;s/\342\200\221/-/g;s/\342\200\222/-/g;s/\342\200\223/-/g;s/\342\200\224/-/g;s/\342\200\225/-/g;s/\342\210\222/-/g'
+}
+
 _normalize_basename_separators() {
     local input="$1"
     local preserve="${2-}"
+    input="$(_transform_basename_unicode_dashes_to_hyphen "$input")"
     if [[ "$preserve" == preserve-leading-underscore ]]; then
         printf '%s' "$input" | sed -E '
             s/[[:space:]]+/_/g;
@@ -9325,6 +9332,8 @@ transform_basename() {
     new="${new//Ż/Z}"
 
     new="${new//•/-}"
+
+    new="$(_transform_basename_unicode_dashes_to_hyphen "$new")"
 
     new="$(_transform_basename_tvp_vod_odc "$new")"
 
