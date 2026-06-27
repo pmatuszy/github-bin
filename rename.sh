@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.06.27 - v. 19.234.143000 - TVP VOD promo: also _Ogladaj_na_TVP_VOD (spaces/underscores); strip again after separator normalize
 # 2026.06.27 - v. 19.233.143000 - TVP VOD: drop " Oglądaj na TVP VOD"; pad odc. N / odc._N single digit → 0N
 # 2026.06.27 - v. 19.232.143000 - prompts: timestamp only; script version stays in window title (not in prompt prefix)
 # 2026.06.24 - v. 19.231.143000 - collision skip: print which target file already exists
@@ -8287,6 +8288,7 @@ _rename_finish_basename_stem() {
     else
         finished="$(_rename_compact_embedded_hyphen_dates "$finished")"
     fi
+    finished="$(_transform_basename_strip_tvp_vod_promo "$finished")"
     printf '%s' "$finished"
 }
 
@@ -9200,9 +9202,18 @@ transform_gopro_camera_basename() {
 }
 
 # TVP VOD downloads: remove promo suffix; zero-pad episode digit after odc. / odc._
+_transform_basename_strip_tvp_vod_promo() {
+    local n="$1"
+    # Literal download title (Polish ą); flexible spaces/underscores after normalize.
+    n="${n// Oglądaj na TVP VOD/}"
+    n=$(printf '%s' "$n" | sed -E \
+        's/(^|[ _]+)[Oo]gl[aąAĄ]daj[ _]+na[ _]+TVP[ _]+VOD//gi')
+    printf '%s' "$n"
+}
+
 _transform_basename_tvp_vod_odc() {
     local n="$1"
-    n="${n// Oglądaj na TVP VOD/}"
+    n="$(_transform_basename_strip_tvp_vod_promo "$n")"
     n=$(printf '%s' "$n" | sed -E \
         -e 's/(odc\. )([0-9])([^0-9]|$)/\10\2\3/g' \
         -e 's/(odc\._)([0-9])([^0-9]|$)/\10\2\3/g')
