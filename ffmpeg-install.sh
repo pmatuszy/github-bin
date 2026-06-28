@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.06.23 - v. 2.1.23 - jellyfin profile: Jellyfin-like shared build (VAAPI+NVENC+FDK-AAC); common stays default
 # 2026.06.26 - v. 2.1.22 - Ubuntu: libopenjp2-7-dev (not libopenjpeg-dev); optional pkg probe must not abort configure
 # 2026.06.26 - v. 2.1.21 - source build: install apt deps before need_cmd pkg-config (was checked too early)
 # 2026.06.16 - v. 2.1.20 - default install is official source build (common profile: libmp3lame, x264, …)
@@ -40,6 +41,7 @@
 # Static builds:     https://johnvansickle.com/ffmpeg/ (minimal codecs — usually no libmp3lame)
 # Git (master) static builds are recommended for bug fixes; release static builds also exist.
 # Default install:   compile official ffmpeg.org release (common profile: libmp3lame, x264, …).
+# Jellyfin transcode: --source-profile jellyfin (shared, VAAPI+NVENC+FDK-AAC; long compile).
 # Dynamic fallback:  distro ffmpeg package via apt.
 # Static fallback:     prebuilt johnvansickle tarball when source build is declined or unavailable.
 #
@@ -129,7 +131,7 @@ show_help() {
     cat <<EOF
 Usage: $(basename "$0") [-h|--help] [-v|--version] [-y|--yes] [-q|--quiet] [--release]
        [--dynamic-only] [--static-only] [--source-only]
-       [--source-profile min|common|max|gpu|nvidia] [--source-with-fdk-aac]
+       [--source-profile min|common|max|gpu|nvidia|jellyfin] [--source-with-fdk-aac]
        [--no_startup_delay]
 
 When ffmpeg/ffprobe is running, offers graceful kill (SIGTERM), then force kill
@@ -138,7 +140,7 @@ Re-checks before any install step. With --yes, tries graceful then force kill.
 
 Check installed ffmpeg against ffmpeg.org, then optionally install:
   1) official source build (default) — common profile: libmp3lame, x264, x265, opus, aom, …
-     Profiles: min, common (default), max, gpu (VAAPI), nvidia (NVENC/CUDA)
+     Profiles: min, common (default), max, gpu (VAAPI), nvidia (NVENC/CUDA), jellyfin (Jellyfin-like)
   2) prebuilt static (johnvansickle.com — minimal codecs, usually no MP3 encode)
   3) dynamic package (apt)
 Older installs are moved aside, not deleted.
@@ -166,7 +168,7 @@ Other prompts use [y/N/q]: y = yes, Enter/N = no, q = quit.
   --dynamic-only       Install distro ffmpeg via apt only.
   --static-only        Do not fall back to apt or source build.
   --source-only        Skip prebuilt static/apt; offer official source build only.
-  --source-profile P   Source build profile: min, common, max, gpu, or nvidia
+  --source-profile P   Source build profile: min, common, max, gpu, nvidia, or jellyfin
                        (skips profile menu). Default when omitted: common.
   --source-with-fdk-aac
                        With max profile: enable libfdk-aac (non-free, best AAC).
@@ -180,7 +182,7 @@ Environment:
   FFMPEG_KILL_GRACE_WAIT_SEC  seconds to wait after SIGTERM (default: 30).
   FFMPEG_KILL_FORCE_WAIT_SEC  seconds to wait after SIGKILL (default: 10).
   FFMPEG_CONFIGURE_EXTRA      Extra ./configure flags for source builds (space-separated).
-  FFMPEG_SOURCE_PROFILE       Same as --source-profile (min|common|max|gpu|nvidia).
+  FFMPEG_SOURCE_PROFILE       Same as --source-profile (min|common|max|gpu|nvidia|jellyfin).
 EOF
 }
 
@@ -1463,7 +1465,7 @@ print_ffmpeg_version_check_block() {
         echo "  Apt dynamic:       not available"
     fi
     if official_source_build_is_available; then
-        echo "  Source build:      ffmpeg.org ${FFMPEG_ORG_VERSION} (profiles: min/common/max/gpu/nvidia)"
+        echo "  Source build:      ffmpeg.org ${FFMPEG_ORG_VERSION} (profiles: min/common/max/gpu/nvidia/jellyfin)"
     else
         echo "  Source build:      ffmpeg.org release version unknown"
     fi
@@ -1977,7 +1979,7 @@ install_versioned_symlinks_to_local() {
 
 source_profile_is_valid() {
     case "${1}" in
-        min|common|max|gpu|nvidia) return 0 ;;
+        min|common|max|gpu|nvidia|jellyfin) return 0 ;;
         *) return 1 ;;
     esac
 }
@@ -1989,6 +1991,7 @@ source_profile_label() {
         max) echo "max static (common + extra codecs)" ;;
         gpu) echo "GPU/VAAPI (shared libs, Intel/AMD)" ;;
         nvidia) echo "NVIDIA NVENC/CUDA (shared libs, non-free)" ;;
+        jellyfin) echo "Jellyfin-like shared (VAAPI+NVENC+FDK-AAC, non-free)" ;;
         *) echo "${SOURCE_PROFILE}" ;;
     esac
 }
@@ -2114,6 +2117,15 @@ prompt_confirm_gpu_or_nvidia_profile() {
             echo
             echo "nvidia profile builds a shared ffmpeg with NVENC/CUDA (non-free, needs NVIDIA driver)."
             ;;
+        jellyfin)
+            echo
+            echo "jellyfin profile builds a shared ffmpeg similar to Jellyfin's bundled ffmpeg:"
+            echo "  VAAPI + NVENC + FDK-AAC + many codecs (non-free; long compile)."
+            echo "  Optional GPU libraries are enabled when dev packages are present."
+            if ! gpu_vaapi_runtime_looks_available && ! nvidia_runtime_looks_available; then
+                echo "WARNING: no VAAPI or NVIDIA GPU detected; hardware encode may be unusable." >&2
+            fi
+            ;;
         *) return 0 ;;
     esac
     if (( ASSUME_YES == 1 )); then
@@ -2137,14 +2149,15 @@ prompt_source_build_profile_menu() {
     while true; do
         echo
         echo "Source build profile:"
-        echo "  [1] common — libmp3lame, x264, openssl, aom, … (default)"
-        echo "  [2] min    — smaller/faster static build"
-        echo "  [3] max    — common + extra codecs (optional libfdk-aac)"
-        echo "  [4] gpu    — common + VAAPI (Intel/AMD; shared libs)"
-        echo "  [5] nvidia — common + NVENC/CUDA (NVIDIA; shared libs)"
+        echo "  [1] common   — libmp3lame, x264, openssl, aom, … (default)"
+        echo "  [2] min      — smaller/faster static build"
+        echo "  [3] max      — common + extra codecs (optional libfdk-aac)"
+        echo "  [4] gpu      — common + VAAPI (Intel/AMD; shared libs)"
+        echo "  [5] nvidia   — common + NVENC/CUDA (NVIDIA; shared libs)"
+        echo "  [6] jellyfin — Jellyfin-like shared build (VAAPI+NVENC+FDK-AAC)"
         echo "  [Q] Quit"
         echo ">>> Waiting for your answer:"
-        echo -n "Choice [1/2/3/4/5/q] (Enter=common): "
+        echo -n "Choice [1/2/3/4/5/6/q] (Enter=common): "
         read -r -n 1 reply || reply=""
         echo
         case "${reply}" in
@@ -2156,6 +2169,7 @@ prompt_source_build_profile_menu() {
             3|x|X) SOURCE_PROFILE=max; break ;;
             4|g|G) SOURCE_PROFILE=gpu; break ;;
             5|n|N) SOURCE_PROFILE=nvidia; break ;;
+            6|j|J) SOURCE_PROFILE=jellyfin; break ;;
             1|c|C|y|Y|"") SOURCE_PROFILE=common; break ;;
             *)
                 echo "Unknown choice; try again."
@@ -2186,7 +2200,7 @@ ensure_source_build_profile_selected() {
     if [[ "${SOURCE_PROFILE}" == max ]]; then
         prompt_source_fdk_aac_if_max
     fi
-    if [[ "${SOURCE_PROFILE}" == gpu || "${SOURCE_PROFILE}" == nvidia ]]; then
+    if [[ "${SOURCE_PROFILE}" == gpu || "${SOURCE_PROFILE}" == nvidia || "${SOURCE_PROFILE}" == jellyfin ]]; then
         if ! prompt_confirm_gpu_or_nvidia_profile; then
             prompt_source_build_profile_menu
         fi
@@ -2196,7 +2210,10 @@ ensure_source_build_profile_selected() {
 }
 
 ffmpeg_source_static_build() {
-    [[ "${SOURCE_PROFILE}" != gpu && "${SOURCE_PROFILE}" != nvidia ]]
+    case "${SOURCE_PROFILE}" in
+        gpu|nvidia|jellyfin) return 1 ;;
+        *) return 0 ;;
+    esac
 }
 
 ffmpeg_pkg_config_satisfied() {
@@ -2255,7 +2272,7 @@ probe_source_optional_codecs() {
 
     FFMPEG_SOURCE_HAS_SVTAV1=0
     case "${SOURCE_PROFILE}" in
-        max|common|gpu|nvidia)
+        max|common|gpu|nvidia|jellyfin)
             if ffmpeg_pkg_config_satisfied 'SvtAv1Enc >= 0.9.0'; then
                 FFMPEG_SOURCE_HAS_SVTAV1=1
             elif pkg-config --exists 'SvtAv1Enc >= 0.9.0' 2>/dev/null; then
@@ -2269,6 +2286,31 @@ probe_source_optional_codecs() {
             fi
             ;;
     esac
+}
+
+install_nv_codec_headers_from_git() {
+    local prefix="${1:-/usr/local}"
+
+    if [[ -f "${prefix}/include/ffnvcodec/nvEncodeAPI.h" ]]; then
+        return 0
+    fi
+    need_cmd git
+    need_cmd make
+    local build_dir=""
+    build_dir="$(mktemp -d "${TEMP_CATALOG}/nv-codec-headers.XXXXXX")"
+    log_step "Installing nv-codec-headers from git into ${prefix} (NVENC/NVDEC)..."
+    if ! git clone --depth 1 https://github.com/FFmpeg/nv-codec-headers.git "${build_dir}/nv-codec-headers"; then
+        log_note "nv-codec-headers clone failed; NVENC/NVDEC may be disabled."
+        rm -rf "${build_dir}"
+        return 1
+    fi
+    if ! make -C "${build_dir}/nv-codec-headers" install PREFIX="${prefix}"; then
+        log_note "nv-codec-headers install failed."
+        rm -rf "${build_dir}"
+        return 1
+    fi
+    rm -rf "${build_dir}"
+    log_note "nv-codec-headers installed under ${prefix}."
 }
 
 install_source_build_dependencies() {
@@ -2292,7 +2334,7 @@ install_source_build_dependencies() {
                 libssl-dev libmp3lame-dev libx264-dev libopus-dev
             )
             ;;
-        common|max|gpu|nvidia)
+        common|max|gpu|nvidia|jellyfin)
             pkgs+=(
                 libssl-dev
                 libmp3lame-dev libx264-dev libx265-dev libvpx-dev
@@ -2306,7 +2348,7 @@ install_source_build_dependencies() {
     esac
 
     case "${SOURCE_PROFILE}" in
-        max|gpu|nvidia)
+        max|gpu|nvidia|jellyfin)
             apt_install_optional_packages \
                 libbluray-dev libchromaprint-dev \
                 libgme-dev libopenmpt-dev libvidstab-dev libxml2-dev libshine-dev
@@ -2315,7 +2357,7 @@ install_source_build_dependencies() {
     esac
 
     case "${SOURCE_PROFILE}" in
-        max|common|gpu|nvidia)
+        max|common|gpu|nvidia|jellyfin)
             if apt_cache_has_package libsvtav1-dev; then
                 pkgs+=( libsvtav1-dev )
             else
@@ -2324,7 +2366,20 @@ install_source_build_dependencies() {
             ;;
     esac
 
-    if [[ "${SOURCE_PROFILE}" == max ]] && (( FFMPEG_SOURCE_WITH_FDK_AAC == 1 )); then
+    if [[ "${SOURCE_PROFILE}" == jellyfin ]]; then
+        FFMPEG_SOURCE_HAS_FDK_AAC=0
+        if apt_cache_has_package libfdk-aac-dev; then
+            pkgs+=( libfdk-aac-dev )
+            FFMPEG_SOURCE_HAS_FDK_AAC=1
+        else
+            echo "ERROR: jellyfin profile requires libfdk-aac-dev (non-free)." >&2
+            return 1
+        fi
+        pkgs+=( libfribidi-dev libzvbi-dev libgnutls28-dev libgmp-dev )
+        apt_install_optional_packages \
+            ocl-icd-opencl-dev opencl-headers \
+            libshaderc-dev libplacebo-dev libvpl-dev
+    elif [[ "${SOURCE_PROFILE}" == max ]] && (( FFMPEG_SOURCE_WITH_FDK_AAC == 1 )); then
         FFMPEG_SOURCE_HAS_FDK_AAC=0
         if apt_cache_has_package libfdk-aac-dev; then
             pkgs+=( libfdk-aac-dev )
@@ -2337,12 +2392,13 @@ install_source_build_dependencies() {
         FFMPEG_SOURCE_HAS_FDK_AAC=0
     fi
 
-    if [[ "${SOURCE_PROFILE}" == gpu ]]; then
+    if [[ "${SOURCE_PROFILE}" == gpu || "${SOURCE_PROFILE}" == jellyfin ]]; then
         apt_install_optional_packages libva-dev libvdpau-dev libdrm-dev libvulkan-dev
     fi
 
-    if [[ "${SOURCE_PROFILE}" == nvidia ]]; then
+    if [[ "${SOURCE_PROFILE}" == nvidia || "${SOURCE_PROFILE}" == jellyfin ]]; then
         apt_install_optional_packages nvidia-cuda-toolkit libnpp-dev
+        install_nv_codec_headers_from_git /usr/local || true
     fi
 
     log_step "Installing compiler and profile packages..."
@@ -2365,12 +2421,24 @@ ffmpeg_source_configure_args() {
         --enable-version3
     )
 
-    if [[ "${SOURCE_PROFILE}" == gpu || "${SOURCE_PROFILE}" == nvidia ]]; then
+    if [[ "${SOURCE_PROFILE}" == gpu || "${SOURCE_PROFILE}" == nvidia || "${SOURCE_PROFILE}" == jellyfin ]]; then
         args+=( --enable-shared --disable-static )
         pkg_config_flags=""
         extra_libs="-lpthread -lm -ldl"
     else
         args+=( --enable-static --disable-shared )
+    fi
+
+    if [[ "${SOURCE_PROFILE}" == jellyfin ]]; then
+        args+=(
+            --disable-doc
+            --disable-ffplay
+            --disable-libxcb
+            --disable-sdl2
+            --disable-xlib
+            --enable-lto=auto
+            --extra-version=Jellyfin
+        )
     fi
 
     args+=(
@@ -2384,7 +2452,7 @@ ffmpeg_source_configure_args() {
             ffmpeg_source_try_enable_pkg args x264 --enable-libx264 libx264
             ffmpeg_source_try_enable_pkg args opus --enable-libopus opus
             ;;
-        common|max|gpu|nvidia)
+        common|max|gpu|nvidia|jellyfin)
             # lame/theora/twolame/soxr/snappy: ffmpeg configure uses header/link checks, not pkg-config
             args+=(
                 --enable-libmp3lame
@@ -2408,7 +2476,9 @@ ffmpeg_source_configure_args() {
             ;;
     esac
 
-    ffmpeg_source_try_enable_openssl args
+    if [[ "${SOURCE_PROFILE}" != jellyfin ]]; then
+        ffmpeg_source_try_enable_openssl args
+    fi
 
     if (( FFMPEG_SOURCE_HAS_SVTAV1 == 1 )); then
         args+=( --enable-libsvtav1 )
@@ -2417,7 +2487,7 @@ ffmpeg_source_configure_args() {
         args+=( --enable-libdav1d )
     fi
 
-    if [[ "${SOURCE_PROFILE}" == max || "${SOURCE_PROFILE}" == gpu || "${SOURCE_PROFILE}" == nvidia ]]; then
+    if [[ "${SOURCE_PROFILE}" == max || "${SOURCE_PROFILE}" == gpu || "${SOURCE_PROFILE}" == nvidia || "${SOURCE_PROFILE}" == jellyfin ]]; then
         ffmpeg_source_try_enable_pkg args "libopenjp2 >= 2.1.0" --enable-libopenjpeg libopenjpeg
         ffmpeg_source_try_enable_pkg args libbluray --enable-libbluray libbluray
         ffmpeg_source_try_enable_pkg args libchromaprint --enable-chromaprint chromaprint
@@ -2455,6 +2525,44 @@ ffmpeg_source_configure_args() {
         fi
     fi
 
+    if [[ "${SOURCE_PROFILE}" == jellyfin ]]; then
+        args+=( --enable-nonfree )
+        ffmpeg_source_try_enable_pkg args gnutls --enable-gnutls gnutls
+        ffmpeg_source_try_enable_pkg args gmp --enable-gmp gmp
+        ffmpeg_source_try_enable_pkg args harfbuzz --enable-libharfbuzz harfbuzz
+        ffmpeg_source_try_enable_pkg args fribidi --enable-libfribidi fribidi
+        ffmpeg_source_try_enable_pkg args zvbi --enable-libzvbi zvbi
+        if pkg-config --exists OpenCL 2>/dev/null || [[ -f /usr/include/CL/cl.h ]]; then
+            args+=( --enable-opencl )
+        else
+            log_note "opencl disabled — OpenCL headers not found."
+        fi
+        ffmpeg_source_try_enable_pkg args libva --enable-vaapi vaapi
+        ffmpeg_source_try_enable_pkg args libdrm --enable-libdrm libdrm
+        ffmpeg_source_try_enable_pkg args vulkan --enable-vulkan vulkan
+        ffmpeg_source_try_enable_pkg args shaderc --enable-libshaderc shaderc
+        ffmpeg_source_try_enable_pkg args libplacebo --enable-libplacebo libplacebo
+        ffmpeg_source_try_enable_pkg args amf --enable-amf amf
+        ffmpeg_source_try_enable_pkg args vpl --enable-libvpl vpl
+        if (( FFMPEG_SOURCE_HAS_FDK_AAC == 1 )); then
+            ffmpeg_source_try_enable_pkg args fdk-aac --enable-libfdk-aac libfdk-aac
+        fi
+        args+=(
+            --enable-ffnvcodec
+            --enable-cuvid
+            --enable-nvdec
+            --enable-nvenc
+        )
+        if command -v nvcc >/dev/null 2>&1; then
+            args+=( --enable-cuda --enable-cuda-nvcc )
+            ffmpeg_source_try_enable_pkg args libnpp --enable-libnpp libnpp
+        elif [[ -f /usr/local/include/ffnvcodec/nvEncodeAPI.h ]]; then
+            args+=( --enable-cuda --enable-cuda-llvm )
+        else
+            log_note "cuda disabled — nvcc and ffnvcodec headers not found."
+        fi
+    fi
+
     if [[ -n "${FFMPEG_CONFIGURE_EXTRA}" ]]; then
         read -r -a configure_extra <<< "${FFMPEG_CONFIGURE_EXTRA}"
         args+=( "${configure_extra[@]}" )
@@ -2485,6 +2593,7 @@ print_source_build_encoder_check() {
             ;;
         gpu) encoders=( libmp3lame libx264 h264_vaapi hevc_vaapi ) ;;
         nvidia) encoders=( libmp3lame libx264 h264_nvenc hevc_nvenc ) ;;
+        jellyfin) encoders=( libmp3lame libx264 libfdk_aac h264_vaapi h264_nvenc libsvtav1 ) ;;
         *) encoders=( libmp3lame libx264 libopus libaom libsvtav1 libtwolame ) ;;
     esac
     pattern="$(IFS='|'; echo "${encoders[*]}")"
@@ -2617,7 +2726,11 @@ perform_install_build_from_source() {
     fi
 
     echo
-    echo "part 3 — configure and compile static build (this can take a long time)"
+    if ffmpeg_source_static_build; then
+        echo "part 3 — configure and compile static build (this can take a long time)"
+    else
+        echo "part 3 — configure and compile shared build (this can take a long time)"
+    fi
     echo
 
     cd "${src_dir}"
@@ -2938,6 +3051,7 @@ main() {
         echo "  url:     $(ffmpeg_org_release_tarball_url "${FFMPEG_ORG_VERSION}")"
         echo "  profile: ${SOURCE_PROFILE:-common}"
         (( FFMPEG_SOURCE_WITH_FDK_AAC == 1 )) && echo "  extras:  libfdk-aac (non-free)"
+        [[ "${SOURCE_PROFILE:-}" == jellyfin ]] && echo "  extras:  Jellyfin-like shared build (FDK-AAC, VAAPI, NVENC)"
     fi
     echo "  temp:    ${TEMP_CATALOG}"
     echo
@@ -2960,7 +3074,7 @@ while [[ $# -gt 0 ]]; do
         --source-profile)
             [[ $# -ge 2 ]] || { echo "Missing value for --source-profile" >&2; usage >&2; exit 1; }
             if ! source_profile_is_valid "${2}"; then
-                echo "Invalid --source-profile: ${2} (use min, common, max, gpu, or nvidia)" >&2
+                echo "Invalid --source-profile: ${2} (use min, common, max, gpu, nvidia, or jellyfin)" >&2
                 exit 1
             fi
             CLI_SOURCE_PROFILE="${2}"
