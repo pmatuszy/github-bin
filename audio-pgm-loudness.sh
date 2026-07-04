@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.07.04 - v. 0.5.49 - no media files: do not invent empty path (printf on empty array); exit cleanly
 # 2026.06.26 - v. 0.5.48 - scan-percent prompt: one-line 1–100 help above [q/e]
 # 2026.06.26 - v. 0.5.47 - scan STATUS NO_PROCESS when mean volume below --mean-skip-db (default -60 dB)
 # 2026.06.26 - v. 0.5.46 - skip normalize when mean volume below threshold (default -60 dB); --force overrides
@@ -1247,7 +1248,8 @@ collect_media_files_current_dir() {
     done < <(find . -maxdepth 1 -type f -iname "*.${ext}" -print0 2>/dev/null)
   done
 
-  printf '%s\n' "${found[@]}"
+  # Empty "${found[@]}" still runs printf once → blank line → fake empty path.
+  (( ${#found[@]} > 0 )) && printf '%s\n' "${found[@]}"
 }
 
 collect_media_files_subdirs() {
@@ -1264,7 +1266,7 @@ collect_media_files_subdirs() {
     done < <(find . -type f -iname "*.${ext}" -print0 2>/dev/null)
   done
 
-  printf '%s\n' "${found[@]}"
+  (( ${#found[@]} > 0 )) && printf '%s\n' "${found[@]}"
 }
 
 collect_media_files() {
@@ -1288,10 +1290,16 @@ collect_media_files() {
   fi
 
   if (( ${#found[@]} == 0 )); then
+    MEDIA_FILES=()
     return 0
   fi
 
-  mapfile -t MEDIA_FILES < <(printf '%s\n' "${found[@]}" | LC_ALL=C sort -u)
+  mapfile -t MEDIA_FILES < <(
+    for f in "${found[@]}"; do
+      [[ -n "$f" ]] || continue
+      printf '%s\n' "$f"
+    done | LC_ALL=C sort -u
+  )
 }
 
 loudness_media_files_scan_summary() {
@@ -1300,8 +1308,10 @@ loudness_media_files_scan_summary() {
   local -a parts=()
 
   for file in "${MEDIA_FILES[@]}"; do
+    [[ -n "$file" ]] || continue
     ext="${file##*.}"
     ext="${ext,,}"
+    [[ -n "$ext" ]] || continue
     ext_count["$ext"]=$(( ${ext_count[$ext]:-0} + 1 ))
   done
 
