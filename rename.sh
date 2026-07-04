@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.07.04 - v. 19.236.143000 - Bandicam: bandicam_YYYYMMDD_HH-MM-SS-ms → YYYYMMDD_HH-MM-SS-ms_bandicam (stem or full name)
 # 2026.06.27 - v. 19.235.143000 - Unicode dashes (en/em/minus etc.) → ASCII hyphen so ls does not show $'\342\200\223'
 # 2026.06.27 - v. 19.234.143000 - TVP VOD promo: also _Ogladaj_na_TVP_VOD (spaces/underscores); strip again after separator normalize
 # 2026.06.27 - v. 19.233.143000 - TVP VOD: drop " Oglądaj na TVP VOD"; pad odc. N / odc._N single digit → 0N
@@ -7886,15 +7887,35 @@ _rename_signal_timestamp_first() {
     return 1
 }
 
-# Bandicam screen recordings: bandicam_YYYY-MM-DD_HH-MM-SS-ms[_tail].ext → YYYYMMDD_HH-MM-SS-ms_bandicam[_tail].ext
+# Bandicam captures: bandicam_YYYY-MM-DD_HH-MM-SS-ms or bandicam_YYYYMMDD_HH-MM-SS-ms
+# (e.g. bandicam_20200422_10-06-28-259.jpg) → YYYYMMDD_HH-MM-SS-ms_bandicam.ext
 _rename_bandicam_timestamp_first() {
     local new="$1"
-    local y m d hh mm ss ms tail ext ymd
+    local stem="" ext="" ext_body=""
+    local y m d hh mm ss ms tail ymd
 
-    [[ "$new" =~ ^[0-9]{8}_[0-9]{2}-[0-9]{2}-[0-9]{2}-[0-9]+_[Bb]andicam ]] && return 1
+    # Accept full basename or stem-only (finish pass splits extension off first).
+    if [[ "$new" == *.* ]]; then
+        ext_body="${new##*.}"
+        if [[ "$ext_body" != *[[:space:]]* && "$ext_body" != *'['* && "$ext_body" != *']'* ]]; then
+            stem="${new%.*}"
+            ext=".${ext_body}"
+        else
+            stem="$new"
+        fi
+    else
+        stem="$new"
+    fi
 
-    # bandicam_YYYY-MM-DD_HH-MM-SS-ms[_tail].ext (e.g. bandicam_2020-04-27_12-32-53-768_-_title.mp4).
-    if [[ "$new" =~ ^[Bb]andicam_([0-9]{4})-([0-9]{1,2})-([0-9]{1,2})_([0-9]{2})-([0-9]{2})-([0-9]{2})-([0-9]+)(.*)(\.[^.]+)$ ]]; then
+    if [[ "$stem" =~ ^[Bb]andicam ]]; then
+        stem="$(printf '%s' "$stem" | sed -E \
+            's/^[Bb]andicam[[:space:]]+/bandicam_/; s/[[:space:]]+/_/g')"
+    fi
+
+    [[ "$stem" =~ ^[0-9]{8}_[0-9]{2}-[0-9]{2}-[0-9]{2}-[0-9]+_[Bb]andicam ]] && return 1
+
+    # bandicam_YYYY-MM-DD_HH-MM-SS-ms[_tail] (e.g. bandicam_2020-04-27_12-32-53-768_-_title).
+    if [[ "$stem" =~ ^[Bb]andicam_([0-9]{4})-([0-9]{1,2})-([0-9]{1,2})_([0-9]{2})-([0-9]{2})-([0-9]{2})-([0-9]+)(.*)$ ]]; then
         y="${BASH_REMATCH[1]}"
         m="${BASH_REMATCH[2]}"
         d="${BASH_REMATCH[3]}"
@@ -7903,7 +7924,6 @@ _rename_bandicam_timestamp_first() {
         ss="${BASH_REMATCH[6]}"
         ms="${BASH_REMATCH[7]}"
         tail="${BASH_REMATCH[8]}"
-        ext="${BASH_REMATCH[9]}"
         _rename_is_valid_ymd "$y" "$m" "$d" || return 1
         printf '%04d%02d%02d_%02d-%02d-%02d-%s_bandicam%s%s' \
             "$((10#${y}))" "$((10#${m}))" "$((10#${d}))" \
@@ -7912,15 +7932,14 @@ _rename_bandicam_timestamp_first() {
         return 0
     fi
 
-    # bandicam_YYYYMMDD_HH-MM-SS-ms[_tail].ext (date already compacted; time still hyphenated).
-    if [[ "$new" =~ ^[Bb]andicam_([0-9]{8})_([0-9]{2})-([0-9]{2})-([0-9]{2})-([0-9]+)(.*)(\.[^.]+)$ ]]; then
+    # bandicam_YYYYMMDD_HH-MM-SS-ms[_tail] (e.g. bandicam_20200422_10-06-28-259).
+    if [[ "$stem" =~ ^[Bb]andicam_([0-9]{8})_([0-9]{2})-([0-9]{2})-([0-9]{2})-([0-9]+)(.*)$ ]]; then
         ymd="${BASH_REMATCH[1]}"
         hh="${BASH_REMATCH[2]}"
         mm="${BASH_REMATCH[3]}"
         ss="${BASH_REMATCH[4]}"
         ms="${BASH_REMATCH[5]}"
         tail="${BASH_REMATCH[6]}"
-        ext="${BASH_REMATCH[7]}"
         _rename_is_valid_ymd "${ymd:0:4}" "${ymd:4:2}" "${ymd:6:2}" || return 1
         printf '%s_%02d-%02d-%02d-%s_bandicam%s%s' \
             "$ymd" \
@@ -7929,8 +7948,8 @@ _rename_bandicam_timestamp_first() {
         return 0
     fi
 
-    # bandicam_YYYY-MM-DD_HH-MM-SS[_tail].ext (no milliseconds).
-    if [[ "$new" =~ ^[Bb]andicam_([0-9]{4})-([0-9]{1,2})-([0-9]{1,2})_([0-9]{2})-([0-9]{2})-([0-9]{2})(.*)(\.[^.]+)$ ]]; then
+    # bandicam_YYYY-MM-DD_HH-MM-SS[_tail] (no milliseconds).
+    if [[ "$stem" =~ ^[Bb]andicam_([0-9]{4})-([0-9]{1,2})-([0-9]{1,2})_([0-9]{2})-([0-9]{2})-([0-9]{2})(.*)$ ]]; then
         y="${BASH_REMATCH[1]}"
         m="${BASH_REMATCH[2]}"
         d="${BASH_REMATCH[3]}"
@@ -7938,7 +7957,6 @@ _rename_bandicam_timestamp_first() {
         mm="${BASH_REMATCH[5]}"
         ss="${BASH_REMATCH[6]}"
         tail="${BASH_REMATCH[7]}"
-        ext="${BASH_REMATCH[8]}"
         _rename_is_valid_ymd "$y" "$m" "$d" || return 1
         printf '%04d%02d%02d_%02d-%02d-%02d_bandicam%s%s' \
             "$((10#${y}))" "$((10#${m}))" "$((10#${d}))" \
@@ -7947,14 +7965,13 @@ _rename_bandicam_timestamp_first() {
         return 0
     fi
 
-    # bandicam_YYYYMMDD_HH-MM-SS[_tail].ext (no milliseconds; date already compacted).
-    if [[ "$new" =~ ^[Bb]andicam_([0-9]{8})_([0-9]{2})-([0-9]{2})-([0-9]{2})(.*)(\.[^.]+)$ ]]; then
+    # bandicam_YYYYMMDD_HH-MM-SS[_tail] (no milliseconds; date already compacted).
+    if [[ "$stem" =~ ^[Bb]andicam_([0-9]{8})_([0-9]{2})-([0-9]{2})-([0-9]{2})(.*)$ ]]; then
         ymd="${BASH_REMATCH[1]}"
         hh="${BASH_REMATCH[2]}"
         mm="${BASH_REMATCH[3]}"
         ss="${BASH_REMATCH[4]}"
         tail="${BASH_REMATCH[5]}"
-        ext="${BASH_REMATCH[6]}"
         _rename_is_valid_ymd "${ymd:0:4}" "${ymd:4:2}" "${ymd:6:2}" || return 1
         printf '%s_%02d-%02d-%02d_bandicam%s%s' \
             "$ymd" \
