@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.07.05 - v. 1.57.210400 - fix caller script detection (BASH_SOURCE[1] was _script_header.sh inside function)
 # 2026.06.27 - v. 1.56 - prompts: timestamp only; script version stays in window title (not script_version_in_prompt)
 # 2026.06.18 - v. 1.55 - PuTTY/window title: script version at front of title bar
 # 2026.06.18 - v. 1.54 - resolve caller script via BASH_SOURCE; export SCRIPT_VERSION_NUMBER; PuTTY title + prompt helper
@@ -39,8 +40,33 @@ set -o pipefail
 export LC_ALL=C
 
 _script_header_resolve_caller_script() {
-  local p="${BASH_SOURCE[1]:-$0}" dir base found
+  local p="" dir base found i
 
+  # When this runs inside a function, BASH_SOURCE[1] is _script_header.sh (the call site),
+  # not the script that sourced us — walk the stack and skip header frames.
+  for (( i=1; i < ${#BASH_SOURCE[@]}; i++ )); do
+    p="${BASH_SOURCE[i]}"
+    [[ "$(basename "$p")" == "_script_header.sh" ]] && continue
+    if [[ "$p" == */* && -r "$p" ]]; then
+      dir="$(cd "$(dirname "$p")" && pwd -P)"
+      base="$(basename "$p")"
+      printf '%s/%s' "$dir" "$base"
+      return 0
+    fi
+    if [[ -r "./$p" ]]; then
+      dir="$(cd "$(dirname "./$p")" && pwd -P)"
+      base="$(basename "$p")"
+      printf '%s/%s' "$dir" "$base"
+      return 0
+    fi
+    found="$(type -P "$p" 2>/dev/null || true)"
+    if [[ -n "$found" && -r "$found" ]]; then
+      printf '%s' "$found"
+      return 0
+    fi
+  done
+
+  p="${0:-}"
   if [[ "$p" == */* && -r "$p" ]]; then
     dir="$(cd "$(dirname "$p")" && pwd -P)"
     base="$(basename "$p")"
