@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.07.05 - v. 0.8 - vmrun list only: suppress AppLoader stderr; start keeps stderr (VM password prompt)
 # 2026.07.05 - v. 0.7 - suppress vmrun AppLoader/libaio stderr noise (like vmrun-check-status.sh)
 # 2026.07.05 - v. 0.6 - prompt [a] start all remaining; timestamp prefix on prompts
 # 2023.05.09 - v. 0.5 - added checking if the script is run on the physical machine
@@ -15,13 +16,28 @@ user_prompt_ts_prefix() {
   printf '(%s) ' "$(date '+%Y.%m.%d %H:%M:%S')"
 }
 
-# vmrun prints harmless AppLoader/libaio hints on stderr; same as vmrun-check-status.sh.
-_pgm_vmrun() {
+# vmrun list: harmless AppLoader/libaio on stderr (see vmrun-check-status.sh).
+# vmrun start/suspend: keep stderr — encrypted VMs prompt for password there.
+_pgm_vmrun_list() {
   if [ -n "${TPM_PASS:-}" ]; then
-    vmrun -vp "${TPM_PASS}" "$@" 2>/dev/null
+    vmrun -vp "${TPM_PASS}" list 2>/dev/null
   else
-    vmrun "$@" 2>/dev/null
+    vmrun list 2>/dev/null
   fi
+}
+
+_pgm_vmrun() {
+  local tmp_err rc
+  tmp_err="$(mktemp "${TMPDIR:-/tmp}/vmrun-start-all.err.XXXXXX")"
+  if [ -n "${TPM_PASS:-}" ]; then
+    vmrun -vp "${TPM_PASS}" "$@" 2>"$tmp_err"
+  else
+    vmrun "$@" 2>"$tmp_err"
+  fi
+  rc=$?
+  grep -v -E '^\[AppLoader\]|^An up-to-date "libaio' "$tmp_err" >&2 || true
+  rm -f "$tmp_err"
+  return $rc
 }
 
 check_if_installed virt-what
@@ -45,8 +61,8 @@ if (( $? != 0 )); then
   exit 1
 fi
 
-_pgm_vmrun list | boxes -s 40x5 -a c
-_pgm_vmrun list
+_pgm_vmrun_list | boxes -s 40x5 -a c
+_pgm_vmrun_list
 echo;
 
 echo ; echo "All VMs on that host (running and not running):" ; echo 
@@ -60,7 +76,7 @@ start_all=0
 for p in $VM_LOCATIONS ; do 
   export IFS=$'\n'
   for vm in $(find $p -type f -name "*.vmx" -print 2>/dev/null);do 
-    if (( $(_pgm_vmrun list | grep -v "Total running VMs:" | grep -cF "$vm") != 0 ))  ;then
+    if (( $(_pgm_vmrun_list | grep -v "Total running VMs:" | grep -cF "$vm") != 0 ))  ;then
       echo "(PGM) machine $vm is running so we don't want to start it again...";echo 
       continue
     fi
@@ -112,9 +128,9 @@ done
 
 echo ; 
 
-_pgm_vmrun list | boxes -s 40x5 -a c
+_pgm_vmrun_list | boxes -s 40x5 -a c
 echo 
-_pgm_vmrun list
+_pgm_vmrun_list
 echo 
 
 . /root/bin/_script_footer.sh
