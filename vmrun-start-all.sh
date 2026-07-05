@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.07.05 - v. 0.6 - prompt [a] start all remaining; timestamp prefix on prompts
 # 2023.05.09 - v. 0.5 - added checking if the script is run on the physical machine
 # 2023.02.05 - v. 0.4 - added printing current date and time
 # 2023.02.05 - v. 0.3 - added encrypted vm support
@@ -7,6 +8,11 @@
 # 2023.01.16 - v. 0.1 - initial release
 
 . /root/bin/_script_header.sh
+
+# Local-time prefix for interactive prompts, e.g. "(2026.07.05 17:16:00) "
+user_prompt_ts_prefix() {
+  printf '(%s) ' "$(date '+%Y.%m.%d %H:%M:%S')"
+}
 
 check_if_installed virt-what
 if (( $(virt-what | wc -l) != 0 ));then
@@ -39,6 +45,8 @@ echo ; echo
 
 export OIFS="$IFS"
 
+start_all=0
+
 for p in $VM_LOCATIONS ; do 
   export IFS=$'\n'
   for vm in $(find $p -type f -name "*.vmx" -print 2>/dev/null);do 
@@ -48,14 +56,34 @@ for p in $VM_LOCATIONS ; do
     fi
     echo $vm | boxes -s 40x5 -a c
     ls -ld $vm `dirname $vm`/*lck 2>/dev/null
-    input_from_user=""
-    IFS="$OIFS" read -t 300 -n 1 -p "Do you want to start [y/N/q]: " input_from_user
-    echo
-    if [ "${input_from_user}" == 'q' -o  $"{input_from_user}" == 'Q' ]; then
+
+    do_start=0
+    if (( start_all == 1 )); then
+      do_start=1
+    else
+      input_from_user=""
+      echo -n "$(user_prompt_ts_prefix)Do you want to START $vm [y/N/a/q]: "
+      IFS="$OIFS" read -t 300 -n 1 input_from_user
       echo
-      exit 1
+      case "${input_from_user}" in
+        a|A)
+          start_all=1
+          do_start=1
+          ;;
+        y|Y)
+          do_start=1
+          ;;
+        q|Q)
+          echo
+          exit 1
+          ;;
+        *)
+          do_start=0
+          ;;
+      esac
     fi
-    if [ "${input_from_user}" == 'y' -o  $"{input_from_user}" == 'Y' ]; then
+
+    if (( do_start == 1 )); then
       if [ -d "${vm}.lck" ]; then
         echo "(PGM) removing lck directory as it exists..."
         rm -rfv "${vm}.lck"
@@ -70,7 +98,6 @@ for p in $VM_LOCATIONS ; do
         echo ; echo "(PGM) vmrun finished SUCCESSFULLY"; echo
       else
         echo ; echo "(PGM) vmrun finished with ERRORS !!!!!!"; echo
-
       fi       
     fi
     echo 
