@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.07.05 - v. 0.7 - suppress vmrun AppLoader/libaio stderr noise (like vmrun-check-status.sh)
 # 2026.07.05 - v. 0.6 - prompt [a] start all remaining; timestamp prefix on prompts
 # 2023.05.09 - v. 0.5 - added checking if the script is run on the physical machine
 # 2023.02.05 - v. 0.4 - added printing current date and time
@@ -12,6 +13,15 @@
 # Local-time prefix for interactive prompts, e.g. "(2026.07.05 17:16:00) "
 user_prompt_ts_prefix() {
   printf '(%s) ' "$(date '+%Y.%m.%d %H:%M:%S')"
+}
+
+# vmrun prints harmless AppLoader/libaio hints on stderr; same as vmrun-check-status.sh.
+_pgm_vmrun() {
+  if [ -n "${TPM_PASS:-}" ]; then
+    vmrun -vp "${TPM_PASS}" "$@" 2>/dev/null
+  else
+    vmrun "$@" 2>/dev/null
+  fi
 }
 
 check_if_installed virt-what
@@ -35,8 +45,8 @@ if (( $? != 0 )); then
   exit 1
 fi
 
-echo vmrun list | boxes -s 40x5 -a c
-vmrun list
+_pgm_vmrun list | boxes -s 40x5 -a c
+_pgm_vmrun list
 echo;
 
 echo ; echo "All VMs on that host (running and not running):" ; echo 
@@ -50,7 +60,7 @@ start_all=0
 for p in $VM_LOCATIONS ; do 
   export IFS=$'\n'
   for vm in $(find $p -type f -name "*.vmx" -print 2>/dev/null);do 
-    if (( $(vmrun list |grep -v "Total running VMs:" | grep "$vm"| wc -l) != 0 ))  ;then
+    if (( $(_pgm_vmrun list | grep -v "Total running VMs:" | grep -cF "$vm") != 0 ))  ;then
       echo "(PGM) machine $vm is running so we don't want to start it again...";echo 
       continue
     fi
@@ -89,11 +99,7 @@ for p in $VM_LOCATIONS ; do
         rm -rfv "${vm}.lck"
       fi
       echo "* * * starting $vm (PGM) * * *";echo 
-      if [ ! -z "${TPM_PASS:-}" ];then
-        vmrun -vp "${TPM_PASS}" start $vm nogui
-      else
-        vmrun start $vm nogui
-      fi
+      _pgm_vmrun start "$vm" nogui
       if (( $? == 0 )); then
         echo ; echo "(PGM) vmrun finished SUCCESSFULLY"; echo
       else
@@ -106,9 +112,9 @@ done
 
 echo ; 
 
-echo vmrun list | boxes -s 40x5 -a c
+_pgm_vmrun list | boxes -s 40x5 -a c
 echo 
-vmrun list
+_pgm_vmrun list
 echo 
 
 . /root/bin/_script_footer.sh

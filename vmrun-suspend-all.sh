@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.07.05 - v. 0.8 - suppress vmrun AppLoader/libaio stderr noise (like vmrun-check-status.sh)
 # 2026.07.05 - v. 0.7 - prompt [a] suspend all remaining; timestamp prefix on prompts
 # 2023.05.09 - v. 0.6 - added checking if the script is run on the physical machine
 # 2023.02.05 - v. 0.5 - added printing current date and time
@@ -13,6 +14,15 @@
 # Local-time prefix for interactive prompts, e.g. "(2026.07.05 17:16:00) "
 user_prompt_ts_prefix() {
   printf '(%s) ' "$(date '+%Y.%m.%d %H:%M:%S')"
+}
+
+# vmrun prints harmless AppLoader/libaio hints on stderr; same as vmrun-check-status.sh.
+_pgm_vmrun() {
+  if [ -n "${TPM_PASS:-}" ]; then
+    vmrun -vp "${TPM_PASS}" "$@" 2>/dev/null
+  else
+    vmrun "$@" 2>/dev/null
+  fi
 }
 
 check_if_installed virt-what
@@ -33,16 +43,16 @@ if [ -f /root/SECRET/vmware-pass.sh ];then
   . /root/SECRET/vmware-pass.sh
 fi
 
-echo vmrun list | boxes -s 40x5 -a c
+_pgm_vmrun list | boxes -s 40x5 -a c
 echo;
-vmrun list
+_pgm_vmrun list
 echo
 
 export IFS=$'\n'
 
 suspend_all=0
 
-for p in `vmrun list|grep vmx`;do
+for p in `$(_pgm_vmrun list | grep vmx)`;do
   do_suspend=0
 
   if (( suspend_all == 1 )); then
@@ -73,11 +83,7 @@ for p in `vmrun list|grep vmx`;do
 
   if (( do_suspend == 1 )); then
     echo "* * * suspending $p (PGM) * * *"
-    if [ ! -z "${TPM_PASS:-}" ];then
-      vmrun -vp "${TPM_PASS}" suspend $p nogui
-    else
-      vmrun suspend $p nogui
-    fi
+    _pgm_vmrun suspend "$p" nogui
     if (( $? == 0 )); then
       echo ; echo "(PGM) vmrun finished SUCCESSFULLY"; echo
     else
@@ -89,9 +95,9 @@ done;
 
 echo ;
 
-echo vmrun list | boxes -s 40x5 -a c
+_pgm_vmrun list | boxes -s 40x5 -a c
 echo
-vmrun list
+_pgm_vmrun list
 echo
 
 . /root/bin/_script_footer.sh
