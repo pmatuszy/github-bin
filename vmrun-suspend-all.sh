@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.07.05 - v. 0.7 - prompt [a] suspend all remaining; timestamp prefix on prompts
 # 2023.05.09 - v. 0.6 - added checking if the script is run on the physical machine
 # 2023.02.05 - v. 0.5 - added printing current date and time
 # 2023.02.05 - v. 0.4 - added encrypted vm support
@@ -8,6 +9,11 @@
 # 2023.01.14 - v. 0.1 - initial release
 
 . /root/bin/_script_header.sh
+
+# Local-time prefix for interactive prompts, e.g. "(2026.07.05 17:16:00) "
+user_prompt_ts_prefix() {
+  printf '(%s) ' "$(date '+%Y.%m.%d %H:%M:%S')"
+}
 
 check_if_installed virt-what
 if (( $(virt-what | wc -l) != 0 ));then
@@ -34,16 +40,38 @@ echo
 
 export IFS=$'\n'
 
+suspend_all=0
+
 for p in `vmrun list|grep vmx`;do
-  echo ; echo -n "Do you want to SUSPEND $p [y/N/q]: "
-  input_from_user=""
-  read -t 300 -n 1 input_from_user
-  echo
-  if [ "${input_from_user}" == 'q' -o  $"{input_from_user}" == 'Q' ]; then
+  do_suspend=0
+
+  if (( suspend_all == 1 )); then
+    do_suspend=1
+  else
     echo
-    exit 1
+    echo -n "$(user_prompt_ts_prefix)Do you want to SUSPEND $p [y/N/a/q]: "
+    input_from_user=""
+    read -t 300 -n 1 input_from_user
+    echo
+    case "${input_from_user}" in
+      a|A)
+        suspend_all=1
+        do_suspend=1
+        ;;
+      y|Y)
+        do_suspend=1
+        ;;
+      q|Q)
+        echo
+        exit 1
+        ;;
+      *)
+        do_suspend=0
+        ;;
+    esac
   fi
-  if [ "${input_from_user}" == 'y' -o  $"{input_from_user}" == 'Y' ]; then
+
+  if (( do_suspend == 1 )); then
     echo "* * * suspending $p (PGM) * * *"
     if [ ! -z "${TPM_PASS:-}" ];then
       vmrun -vp "${TPM_PASS}" suspend $p nogui
@@ -59,11 +87,11 @@ for p in `vmrun list|grep vmx`;do
   sleep 0.5 ;
 done;
 
-echo ; 
+echo ;
 
 echo vmrun list | boxes -s 40x5 -a c
-echo 
+echo
 vmrun list
-echo 
+echo
 
 . /root/bin/_script_footer.sh
