@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.07.06 - v. 19.237.143000 - SQLite warmup: COALESCE empty string uses '' not "" (double quotes are column names)
 # 2026.07.04 - v. 19.236.143000 - Bandicam: bandicam_YYYYMMDD_HH-MM-SS-ms → YYYYMMDD_HH-MM-SS-ms_bandicam (stem or full name)
 # 2026.06.27 - v. 19.235.143000 - Unicode dashes (en/em/minus etc.) → ASCII hyphen so ls does not show $'\342\200\223'
 # 2026.06.27 - v. 19.234.143000 - TVP VOD promo: also _Ogladaj_na_TVP_VOD (spaces/underscores); strip again after separator normalize
@@ -4190,7 +4191,7 @@ SQL
         elif (( warmed_rows % 50000 == 0 )); then
             startup_progress "SQLite warmup progress: $warmed_rows rows loaded..."
         fi
-    done < <(rename_sqlite3_db_run -separator '|' 'SELECT path, size, mtime, COALESCE(status, ""), COALESCE(signature, ""), COALESCE(file_md5, ""), COALESCE(file_sha512, ""), COALESCE(file_hash_kind, ""), COALESCE(file_hash, "") FROM checked_paths;')
+    done < <(rename_sqlite3_db_run -separator '|' "SELECT path, size, mtime, COALESCE(status, ''), COALESCE(signature, ''), COALESCE(file_md5, ''), COALESCE(file_sha512, ''), COALESCE(file_hash_kind, ''), COALESCE(file_hash, '') FROM checked_paths;")
 
     if (( total_cached_rows > 0 )); then
         startup_progress "SQLite cache warmup done: 100% ($warmed_rows / $total_cached_rows rows loaded)"
