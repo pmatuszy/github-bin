@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.07.15 - v. 1.7 - run_exiftool: call /bin/env (not bare env — a bash function named env breaks -ver)
 # 2026.06.26 - v. 1.6 - run exiftool/perl with C.UTF-8 (or C) to avoid locale warnings on minimal systems
 # 2026.06.17 - v. 1.5 - tarball downloads from SourceForge (exiftool.org tar.gz returns 404)
 # 2026.06.14 - v. 1.4 - when ExifTool not found: prompt to install [y/N] default N, 300s timeout
@@ -100,7 +101,8 @@ EOF
 run_exiftool() {
     local lc
     lc="$(exiftool_pick_locale)"
-    env LC_ALL="$lc" LANG="$lc" LANGUAGE= "$@"
+    # Absolute path: some interactive shells define a bash function named env.
+    /bin/env LC_ALL="$lc" LANG="$lc" LANGUAGE= "$@"
 }
 
 as_root_check() {
