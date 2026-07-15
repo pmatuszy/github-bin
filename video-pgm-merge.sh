@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.07.15 - v. 0.15.6 - size-split: accept chapter letter on camera token (GOPRO10_BLACKa)
 # 2026.07.15 - v. 0.15.5 - size-split: accept YYYYMMDD_HHMMSSa letter suffixes (rename disambiguation)
 # 2026.06.24 - v. 0.15.4 - _part_XX from part_01: merge without ~4 GB check; size rules only for orphan tails (part_02+)
 # 2026.06.23 - v. 0.15.3 - fix rest_out circular nameref: pass caller array name into nested helpers
@@ -97,7 +98,7 @@ Merge behaviour (no options):
     that chain, or the same YYYYMMDD_HHMMSS with GX chapter suffixes
     (e.g. …_GOPRO10_BLACK_GX013496.MP4). After rename.sh, consecutive chapters may differ
     only in the leading timestamp and share the same middle label, or share one start time with
-    a trailing letter (20220115_200322a / 200322b / …) when the recorder kept the same stamp.
+    a trailing chapter letter on the time (…_200322a_…) or camera token (…_GOPRO10_BLACKa.MP4).
   - Shows each multi-part group (with file sizes) and asks whether to merge
     (single-key Y/N/A/M/Q, no Enter — like rename.sh).
   - After a successful merge: merge-boundary times in the output timeline (where each
@@ -1444,16 +1445,20 @@ chapter_camera_from_basename() {
 }
 
 # GoPro clip without _part_XX: YYYYMMDD_HHMMSS[a]_…_GOPRO7_BLACK.MP4 or …_GOPRO10_BLACK_GX013496.MP4
-# Optional single letter after HHMMSS (a/b/c…) is rename-style collision / chapter disambiguation
-# when several chapters share one start time (e.g. 20220115_200322a_-_-_GOPRO10_BLACK.MP4).
+# Optional single letter after HHMMSS (…_200322a_…) or after the camera token (…_GOPRO10_BLACKa.MP4)
+# is rename-style chapter disambiguation when several chapters share one start time.
+# Sets GOPRO_CAM_LETTER when the letter is on the camera token (empty otherwise).
 gopro_camera_suffix_from_basename() {
   local base="$1"
-  if [[ "$base" =~ _((GOPRO[0-9]+_[A-Z0-9]+))_([A-Z]{2}[0-9]{4,6})\.[mM][pP]4$ ]]; then
+  GOPRO_CAM_LETTER=""
+  if [[ "$base" =~ _(GOPRO[0-9]+_[A-Z0-9]+)_([A-Z]{2}[0-9]{4,6})\.[mM][pP]4$ ]]; then
     printf '%s\n' "${BASH_REMATCH[1]}"
     return 0
   fi
-  if [[ "$base" =~ (GOPRO[0-9]+_[A-Z0-9]+)\.[mM][pP]4$ ]]; then
+  # Trailing lowercase/any letter after UPPERCASE model: GOPRO10_BLACKa.MP4 → cam BLACK, letter a
+  if [[ "$base" =~ (GOPRO[0-9]+_[A-Z0-9]+)([a-zA-Z])?\.[mM][pP]4$ ]]; then
     printf '%s\n' "${BASH_REMATCH[1]}"
+    GOPRO_CAM_LETTER="${BASH_REMATCH[2]}"
     return 0
   fi
   return 1
@@ -1476,6 +1481,7 @@ gopro_timestamp_cam_from_basename() {
   GOPRO_TS_LETTER=""
   GOPRO_TS_CAM=""
   GOPRO_TS_CHAPTER=""
+  GOPRO_CAM_LETTER=""
   # With GX chapter token: date_time[letter]_middle_CAMERA_GXnnnnnn.ext
   if [[ "$base" =~ ^([0-9]{8})_([0-9]{6})([a-zA-Z])?_(.*)_((GOPRO[0-9]+_[A-Z0-9]+))_([A-Z]{2}[0-9]{4,6})\.[mM][pP]4$ ]]; then
     GOPRO_TS_DATE="${BASH_REMATCH[1]}"
@@ -1495,19 +1501,22 @@ gopro_timestamp_cam_from_basename() {
   fi
   cam=$(gopro_camera_suffix_from_basename "$base") || return 1
   GOPRO_TS_CAM="$cam"
+  # Prefer time-letter; else use camera-letter (…_GOPRO10_BLACKa).
+  if [[ -z "${GOPRO_TS_LETTER}" && -n "${GOPRO_CAM_LETTER:-}" ]]; then
+    GOPRO_TS_LETTER="$GOPRO_CAM_LETTER"
+  fi
   GOPRO_TS_CHAPTER=""
   return 0
 }
 
-# Middle part of GoPro basename (between timestamp[+letter] and camera suffix).
+# Middle part of GoPro basename (between timestamp[+letter] and camera suffix[+letter]).
 gopro_middle_from_basename() {
   local base="$1" mid
   gopro_timestamp_cam_from_basename "$base" || return 1
   if [[ "$base" =~ ^[0-9]{8}_[0-9]{6}[a-zA-Z]?_(.*)_((GOPRO[0-9]+_[A-Z0-9]+))_([A-Z]{2}[0-9]{4,6})\.[mM][pP]4$ ]]; then
     mid="${BASH_REMATCH[1]}"
-  elif [[ "$base" =~ ^[0-9]{8}_[0-9]{6}[a-zA-Z]?_(.+)\.[mM][pP]4$ ]]; then
+  elif [[ "$base" =~ ^[0-9]{8}_[0-9]{6}[a-zA-Z]?_(.*)_(GOPRO[0-9]+_[A-Z0-9]+)[a-zA-Z]?\.[mM][pP]4$ ]]; then
     mid="${BASH_REMATCH[1]}"
-    mid="${mid%_"${GOPRO_TS_CAM}"}"
   else
     return 1
   fi
