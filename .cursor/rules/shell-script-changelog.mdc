@@ -1,0 +1,34 @@
+---
+description: Update shell script version history on every script change
+globs: **/*.sh
+alwaysApply: false
+---
+
+# Shell script changelog
+
+When editing any `*.sh` script in this repo, add a new **top** history line immediately after the shebang (newest first).
+
+Format:
+
+```bash
+# YYYY.MM.DD - v. MAJOR.MINOR[.PATCH] - brief what changed
+```
+
+Rules:
+
+- Use today's date (`YYYY.MM.DD`).
+- Bump the version from the current top entry (usually patch: `0.15.11` → `0.15.12`; or minor/major when appropriate).
+- Keep the description to one short line — what changed and why, not a diff dump.
+- Do not edit or reorder older history lines.
+- `print_version_banner` reads the first matching line — the new entry must stay on top.
+
+Example:
+
+```bash
+#!/bin/bash
+
+# 2026.07.15 - v. 1.4 - GIT_REPO_DIRECTORY: ${profile_location_dir}/github/github-bin
+# 2026.07.15 - v. 1.3 - ...
+```
+
+After script changes in this repo: commit and push to `master` unless the user says otherwise.
