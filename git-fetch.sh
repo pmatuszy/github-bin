@@ -10,7 +10,7 @@ set -o nounset
 set -o pipefail
 
 export github_project_name=github-bin
-profile_root="${profile_location_dir:-${HOME:-/root}}"
+profile_root="${profile_location_dir:-$HOME}"
 export GIT_REPO_DIRECTORY="${profile_root}/github/${github_project_name}"
 
 echo
