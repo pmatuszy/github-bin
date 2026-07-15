@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.07.15 - v. 1.57.210402 - profile_location_dir: export only when set; no default to $HOME
 # 2026.07.15 - v. 1.57.210401 - export profile_location_dir (default: $HOME or /root)
 # 2026.07.05 - v. 1.57.210400 - fix caller script detection (BASH_SOURCE[1] was _script_header.sh inside function)
 # 2026.06.27 - v. 1.56 - prompts: timestamp only; script version stays in window title (not script_version_in_prompt)
@@ -175,8 +176,7 @@ fi
 # trap ctrl-c and call ctrl_c()
 trap ctrl_c INT
 
-: "${profile_location_dir:=${HOME:-/root}}"
-export profile_location_dir
+[[ -n "${profile_location_dir:-}" ]] && export profile_location_dir
 
 export HEALTHCHECKS_FILE=/root/bin/healthchecks-ids.txt
 export return_code=123      # default placeholder; scripts set real exit code

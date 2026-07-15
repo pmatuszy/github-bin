@@ -1,5 +1,6 @@
 #!/bin/bash
  
+# 2026.07.15 - v. 0.4 - GIT_REPO_DIRECTORY: ${profile_location_dir:-$HOME}/github/github-bin
 # 2026.07.15 - v. 0.3 - profile_location_dir fallback: ${HOME:-/root}
 # 2026.07.15 - v. 0.2 - run in GIT_REPO_DIRECTORY: ${profile_location_dir}/github/github-bin
 # 2023.01.13 - v. 0.1 - initial release
@@ -9,8 +10,8 @@ set -o nounset
 set -o pipefail
 
 export github_project_name=github-bin
-: "${profile_location_dir:=${HOME:-/root}}"
-export GIT_REPO_DIRECTORY="${profile_location_dir}/github/${github_project_name}"
+profile_root="${profile_location_dir:-${HOME:-/root}}"
+export GIT_REPO_DIRECTORY="${profile_root}/github/${github_project_name}"
 
 echo
 cat  $0|grep -e '# *20[123][0-9]'|head -n 1 | awk '{print "script version: " $5 " (dated "$2")"}' ; echo ; echo

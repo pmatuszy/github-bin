@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.07.15 - v. 1.5 - bin/repo paths: ${profile_location_dir:-$HOME}; profile_location_dir unset → $HOME
 # 2026.07.15 - v. 1.4 - ensure ${profile_location_dir}/github/github-bin exists; cd with error check
 # 2026.07.15 - v. 1.3 - GIT_REPO_DIRECTORY: ${profile_location_dir}/github/github-bin
 # 2026.07.15 - v. 1.2 - GIT_REPO_DIRECTORY: $HOME/github/github-bin (was $HOME/github-bin)
@@ -74,7 +75,8 @@ if (( ! script_is_run_interactively ));then    # jesli nie interaktywnie, to chc
 fi
 
 export github_project_name=github-bin
-export GIT_REPO_DIRECTORY="${profile_location_dir}/github/${github_project_name}"
+profile_root="${profile_location_dir:-$HOME}"
+export GIT_REPO_DIRECTORY="${profile_root}/github/${github_project_name}"
 
 export GIT_SSH_COMMAND='ssh -i $HOME/.ssh/id_SSH_ed25519_20230207_OpenSSH'
 
@@ -102,7 +104,7 @@ fi
 echo
 echo
 if [ "${p}" == 'y' -o  "${p}" == 'y' ]; then
-  mkdir -p "${profile_location_dir}/github" "$HOME/bin"
+  mkdir -p "${profile_root}/github" "${profile_root}/bin"
 
   # sprawdzam, czy mam dostep do zdalnego repo
   echo git ls-remote git+ssh://git@github.com/pmatuszy/"${github_project_name}".git | boxes -s 70x3 -a c
@@ -133,16 +135,16 @@ if [ "${p}" == 'y' -o  "${p}" == 'y' ]; then
     exit 3
   fi
 
-  cp ./* $HOME/bin 2>/dev/null
-  cp ./HOST-SPECIFIC/`hostname`/* $HOME/bin 2>/dev/null
-  cp ./HOST-SPECIFIC/`hostname`.*com/* $HOME/bin 2>/dev/null
+  cp ./* "${profile_root}/bin" 2>/dev/null
+  cp ./HOST-SPECIFIC/`hostname`/* "${profile_root}/bin" 2>/dev/null
+  cp ./HOST-SPECIFIC/`hostname`.*com/* "${profile_root}/bin" 2>/dev/null
 
-  # we copy hidden files to $HOME
-  cp ./HOST-SPECIFIC/`hostname`*/.[a-zA-Z0-9]* $HOME   2>/dev/null
+  # we copy hidden files to profile root ($HOME when profile_location_dir unset)
+  cp ./HOST-SPECIFIC/`hostname`*/.[a-zA-Z0-9]* "${profile_root}"   2>/dev/null
 
   # cleanup
-  rm -v $HOME/bin/git-pull.sh $HOME/bin/git-push.sh $HOME/bin/git-fetch.sh $HOME/bin/vmware-fix.sh $HOME/bin/65535 2>/dev/null
-  rm -v $HOME/bin/*talled*client 2>/dev/null
+  rm -v "${profile_root}/bin/git-pull.sh" "${profile_root}/bin/git-push.sh" "${profile_root}/bin/git-fetch.sh" "${profile_root}/bin/vmware-fix.sh" "${profile_root}/bin/65535" 2>/dev/null
+  rm -v "${profile_root}/bin/"*talled*client 2>/dev/null
   echo 
   echo git status | boxes -s 40x3 -a c
   echo 
