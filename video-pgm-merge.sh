@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.07.15 - v. 0.15.8 - letter chapters (…BLACKa/b/c or …200322a/b): merge without ~4 GB size gate
 # 2026.07.15 - v. 0.15.7 - size-split: ~6:49 (409s) chapter duration for all GOPRO* (not only GOPRO7)
 # 2026.07.15 - v. 0.15.6 - size-split: accept chapter letter on camera token (GOPRO10_BLACKa)
 # 2026.07.15 - v. 0.15.5 - size-split: accept YYYYMMDD_HHMMSSa letter suffixes (rename disambiguation)
@@ -100,6 +101,7 @@ Merge behaviour (no options):
     (e.g. …_GOPRO10_BLACK_GX013496.MP4). After rename.sh, consecutive chapters may differ
     only in the leading timestamp and share the same middle label, or share one start time with
     a trailing chapter letter on the time (…_200322a_…) or camera token (…_GOPRO10_BLACKa.MP4).
+    Letter runs a,b,c… on the same timestamp merge like part_01 chapters (any file size).
   - Shows each multi-part group (with file sizes) and asks whether to merge
     (single-key Y/N/A/M/Q, no Enter — like rename.sh).
   - After a successful merge: merge-boundary times in the output timeline (where each
@@ -1548,6 +1550,44 @@ gopro_size_split_session_key_from_basename() {
   printf '%s|%s\n' "$GOPRO_TS_CAM" "$mid"
 }
 
+# Next lowercase letter after $1 (a→b); empty if not a–y.
+gopro_next_chapter_letter() {
+  local letter="${1,,}" alphabet=abcdefghijklmnopqrstuvwxyz idx
+  [[ "$letter" =~ ^[a-y]$ ]] || { printf ''; return 1; }
+  idx=${alphabet%%"${letter}"*}
+  idx=${#idx}
+  printf '%s\n' "${alphabet:$((idx + 1)):1}"
+}
+
+# True when files share one recording stamp/camera/middle and chapter letters are a,b,c… consecutive.
+# Rename-style disambiguation (…_200322a_… or …_GOPRO10_BLACKa.MP4) — merge at any size, like part_01.
+gopro_letter_chapter_run_ok() {
+  local -a files=("$@")
+  local f base key0="" key letter prev="" expected
+  (( ${#files[@]} >= 2 )) || return 1
+  for f in "${files[@]}"; do
+    base="${f##*/}"
+    if chapter_part_from_basename "$base" >/dev/null 2>&1; then
+      return 1
+    fi
+    gopro_timestamp_cam_from_basename "$base" || return 1
+    letter="${GOPRO_TS_LETTER,,}"
+    [[ "$letter" =~ ^[a-z]$ ]] || return 1
+    key=$(gopro_recording_group_key_from_basename "$base") || return 1
+    if [[ -z "$key0" ]]; then
+      [[ "$letter" == a ]] || return 1
+      key0="$key"
+      prev="$letter"
+      continue
+    fi
+    [[ "$key" == "$key0" ]] || return 1
+    expected=$(gopro_next_chapter_letter "$prev") || return 1
+    [[ "$letter" == "$expected" ]] || return 1
+    prev="$letter"
+  done
+  return 0
+}
+
 # Sort key for size-split singles (time order, then letter a/b/c…, then GX chapter number).
 gopro_size_split_sort_key() {
   local f="$1" base ch sort_num letter_key
@@ -1943,7 +1983,110 @@ group_is_size_split() {
     fi
     gopro_timestamp_cam_from_basename "$base" || return 1
   done
+  # Letter a,b,c… on one start time is enough (any size); else require ~4 GB / ~12 GB chapters.
+  gopro_letter_chapter_run_ok "${files[@]}" && return 0
   size_split_run_valid "${files[@]}"
+}
+
+# Flush a letter-chapter run into dest arrays: multi-file merge blob, else singles back to kept.
+letter_chapter_flush_run() {
+  local -n _kept_ref=$1
+  local -n _new_ref=$2
+  shift 2
+  local -a run=("$@")
+  local rf
+  if (( ${#run[@]} >= 2 )) && gopro_letter_chapter_run_ok "${run[@]}"; then
+    _new_ref+=("$(printf '%s\n' "${run[@]}")")
+  else
+    for rf in "${run[@]}"; do
+      _kept_ref+=("$rf")
+    done
+  fi
+}
+
+# Group rename-style chapter letters (…BLACKa/b/c or …HHMMSSa/b/c) without a ~4 GB size check.
+# Runs before size-split so small lettered chapters still merge.
+build_letter_chapter_groups() {
+  local -a kept=() new_groups=() run=() keys_seen=()
+  local -A by_key=()
+  local blob f base key letter
+  local -a files=() key_files=()
+
+  for blob in "${GROUP_BLOBS[@]}"; do
+    group_files_to_array "$blob" files
+    if (( ${#files[@]} >= 2 )); then
+      kept+=("$blob")
+      continue
+    fi
+    f="${files[0]}"
+    base="${f##*/}"
+    if chapter_part_from_basename "$base" >/dev/null 2>&1 \
+      || ! gopro_timestamp_cam_from_basename "$base"; then
+      kept+=("$f")
+      continue
+    fi
+    letter="${GOPRO_TS_LETTER,,}"
+    if [[ ! "$letter" =~ ^[a-z]$ ]]; then
+      kept+=("$f")
+      continue
+    fi
+    key=$(gopro_recording_group_key_from_basename "$base" 2>/dev/null) || {
+      kept+=("$f")
+      continue
+    }
+    if [[ -z "${by_key[$key]+x}" ]]; then
+      by_key["$key"]="$f"
+      keys_seen+=("$key")
+    else
+      by_key["$key"]+=$'\n'"$f"
+    fi
+  done
+
+  for key in "${keys_seen[@]}"; do
+    key_files=()
+    mapfile -t key_files <<< "${by_key[$key]}"
+    if ((${#key_files[@]})) && [[ -z "${key_files[-1]}" ]]; then
+      unset 'key_files[-1]'
+    fi
+    mapfile -t key_files < <(
+      for f in "${key_files[@]}"; do
+        printf '%s\t%s\n' "$(gopro_size_split_sort_key "$f")" "$f"
+      done | LC_ALL=C sort -t $'\t' -k1,1 | cut -f2-
+    )
+    run=()
+    for f in "${key_files[@]}"; do
+      base="${f##*/}"
+      gopro_timestamp_cam_from_basename "$base" || {
+        letter_chapter_flush_run kept new_groups "${run[@]}"
+        run=()
+        kept+=("$f")
+        continue
+      }
+      letter="${GOPRO_TS_LETTER,,}"
+      if (( ${#run[@]} == 0 )); then
+        if [[ "$letter" == a ]]; then
+          run=( "$f" )
+        else
+          kept+=("$f")
+        fi
+        continue
+      fi
+      if gopro_letter_chapter_run_ok "${run[@]}" "$f"; then
+        run+=( "$f" )
+        continue
+      fi
+      letter_chapter_flush_run kept new_groups "${run[@]}"
+      if [[ "$letter" == a ]]; then
+        run=( "$f" )
+      else
+        run=()
+        kept+=("$f")
+      fi
+    done
+    letter_chapter_flush_run kept new_groups "${run[@]}"
+  done
+
+  GROUP_BLOBS=( "${kept[@]}" "${new_groups[@]}" )
 }
 
 # Combine single-file blobs that look like sequential ~4 GB or ~12 GB splits (no _part_XX).
@@ -2344,7 +2487,7 @@ build_chapter_groups() {
   build_raw_gopro_groups rest1 "${sorted[@]}"
   # 2) already-renamed _part_NN chapters -> key-based groups (originals vs proxies kept apart)
   build_part_chapter_groups rest2 "${rest1[@]}"
-  # 3) everything else becomes a single-file blob (size-split detection runs next)
+  # 3) everything else becomes a single-file blob; letter chapters then size-splits
   for f in "${rest2[@]}"; do
     base="${f##*/}"
     if is_concat_output_basename "$base"; then
@@ -2352,6 +2495,9 @@ build_chapter_groups() {
     fi
     GROUP_BLOBS+=("$f")
   done
+  # 4) rename-style a/b/c chapter letters on the same timestamp (any size)
+  build_letter_chapter_groups
+  # 5) ~4 GB / ~12 GB size-split chapters without letter / _part_XX names
   build_size_split_groups
 }
 
@@ -2367,9 +2513,9 @@ group_files_to_array() {
 print_size_split_group_hint() {
   local cam_sample="$1"
   if [[ "$cam_sample" == *GOPRO* ]]; then
-    echo "Probable size-split recordings (no _part_XX; same camera + session label; ~4 GB / ~6:49 or ~12 GB chapters; leading timestamp may differ per file):"
+    echo "Probable size-split / letter-chapter recordings (no _part_XX; same camera + session label; ~4 GB / ~6:49 or ~12 GB chapters, or a/b/c letters on one start time; leading timestamp may differ per file):"
   else
-    echo "Probable size-split recordings (no _part_XX; same camera + session label; sequential ~4 GB or ~12 GB chapters; leading timestamp may differ per file):"
+    echo "Probable size-split / letter-chapter recordings (no _part_XX; same camera + session label; sequential ~4 GB or ~12 GB chapters, or a/b/c letters on one start time; leading timestamp may differ per file):"
   fi
 }
 
@@ -2820,7 +2966,7 @@ do_merge() {
 
   if (( mergeable_total == 0 )); then
     echo "$(pgm_ts) No multi-part chapter groups to merge."
-    echo "$(pgm_ts) Tip: sequential GoPro clips (YYYYMMDD_HHMMSS_…_GOPRO7_BLACK.MP4, ~4 GB or ~12 GB per chapter) may be size-split recordings."
+    echo "$(pgm_ts) Tip: sequential GoPro clips (YYYYMMDD_HHMMSS_…_GOPRO*_BLACK.MP4, ~4 GB / ~12 GB, or a/b/c letter suffixes on one start time) may be mergeable chapters."
     return 0
   fi
 
