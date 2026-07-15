@@ -1,34 +1,47 @@
 ---
-description: Update shell script version history on every script change
+description: Update both script header sections on every shell script change
 globs: **/*.sh
-alwaysApply: false
+alwaysApply: true
 ---
 
-# Shell script changelog
+# Shell script header (two sections)
 
-When editing any `*.sh` script in this repo, add a new **top** history line immediately after the shebang (newest first).
+When editing any `*.sh` file in this repo, update **both** header sections at the top (newest changelog entry first).
 
-Format:
+## Section 1 — version changelog
+
+Immediately after the shebang, add a new top line:
 
 ```bash
 # YYYY.MM.DD - v. MAJOR.MINOR[.PATCH] - brief what changed
 ```
 
-Rules:
-
 - Use today's date (`YYYY.MM.DD`).
-- Bump the version from the current top entry (usually patch: `0.15.11` → `0.15.12`; or minor/major when appropriate).
-- Keep the description to one short line — what changed and why, not a diff dump.
-- Do not edit or reorder older history lines.
-- `print_version_banner` reads the first matching line — the new entry must stay on top.
+- Bump version from the current top entry.
+- One short line: what changed and why.
+- Do not edit or reorder older changelog lines.
+- `print_version_banner` and `_script_header.sh` read the **first** matching line — keep the new entry on top.
 
-Example:
+## Section 2 — script description block
+
+After the full changelog (oldest entry last), add or update a short description block:
 
 ```bash
-#!/bin/bash
-
-# 2026.07.15 - v. 1.4 - GIT_REPO_DIRECTORY: ${profile_location_dir}/github/github-bin
-# 2026.07.15 - v. 1.3 - ...
+# 2026.07.15 - v. 1.7 - ...
+# 2026.07.15 - v. 1.6 - ...
+# 2020.11.27 - v. 0.1 - initial release
+#
+# git-pull.sh
+#
+# Pull github-bin from GitHub; install scripts to ${profile_location_dir:-$HOME}/bin.
+#
 ```
 
-After script changes in this repo: commit and push to `master` unless the user says otherwise.
+- Description block comes **after all changelog lines**, before the code.
+- Add a description block to new scripts and sourced helpers (`_git-bin-common.sh`, etc.).
+- Sourced helpers need Section 1 changelog too (they have no `print_version_banner`).
+
+## Also update when touched
+
+- `_script_header.sh` / `_script_footer.sh` — own changelog if modified.
+- Commit and push to `master` unless the user says otherwise.

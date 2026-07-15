@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.07.15 - v. 1.7 - script header: changelog block + description block
 # 2026.07.15 - v. 1.6 - resolve repo from script dir; legacy /root/github-bin fallback
 # 2026.07.15 - v. 1.5 - bin/repo paths: ${profile_location_dir:-$HOME}; profile_location_dir unset → $HOME
 # 2026.07.15 - v. 1.4 - ensure ${profile_location_dir}/github/github-bin exists; cd with error check
@@ -19,6 +20,12 @@
 # 2021.05.12 - v. 0.3 - added copying .[a-zA-Z0-9]
 # 2021.04.08 - v. 0.2 - added HOST-SPECIFIC directory copy
 # 2020.11.27 - v. 0.1 - initial release
+#
+# git-pull.sh
+#
+# Pull github-bin from GitHub; install scripts to ${profile_location_dir:-$HOME}/bin.
+# Repo: ${profile_location_dir:-$HOME}/github/github-bin (see _git-bin-common.sh).
+#
 
 print_version_banner() {
   local ver=unknown date= line title verline width=60

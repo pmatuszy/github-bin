@@ -1,10 +1,16 @@
 #!/bin/bash
  
+# 2026.07.15 - v. 0.6 - script header: changelog block + description block
 # 2026.07.15 - v. 0.5 - resolve repo from script dir; legacy path fallback
 # 2026.07.15 - v. 0.4 - GIT_REPO_DIRECTORY: ${profile_location_dir:-$HOME}/github/github-bin
 # 2026.07.15 - v. 0.3 - profile_location_dir fallback: ${HOME:-/root}
 # 2026.07.15 - v. 0.2 - run in GIT_REPO_DIRECTORY: ${profile_location_dir}/github/github-bin
 # 2023.01.13 - v. 0.1 - initial release
+#
+# git-fetch.sh
+#
+# git fetch in ${profile_location_dir:-$HOME}/github/github-bin (see _git-bin-common.sh).
+#
 
 # exit when your script tries to use undeclared variables
 set -o nounset

@@ -1,5 +1,12 @@
 #!/bin/bash
+
+# 2026.07.15 - v. 0.1 - git_bin_resolve_paths: script dir, profile_location_dir:-HOME, legacy github-bin
+#
+# _git-bin-common.sh
+#
 # Shared path helpers for git-pull.sh, git-push.sh, git-fetch.sh (sourced, not executed).
+# Repo: ${profile_location_dir:-$HOME}/github/github-bin (or directory containing the script).
+#
 
 git_bin_resolve_paths() {
   local caller script_dir parent github_project_name="${github_project_name:-github-bin}"

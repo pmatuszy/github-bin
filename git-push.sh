@@ -1,5 +1,6 @@
 #!/bin/bash
  
+# 2026.07.15 - v. 1.9 - script header: changelog block + description block
 # 2026.07.15 - v. 1.8 - resolve repo from script dir; legacy path fallback
 # 2026.07.15 - v. 1.7 - GIT_REPO_DIRECTORY: ${profile_location_dir:-$HOME}/github/github-bin
 # 2026.07.15 - v. 1.6 - profile_location_dir from _script_header.sh
@@ -22,6 +23,12 @@
 # 2020.11.27 - v. 0.3 - changed rm to remove files from the directory not the whole directory
 # 2020.11.26 - v. 0.2 - added second section with 'git pull'
 # 2020.10.20 - v. 0.1 - initial release
+#
+# git-push.sh
+#
+# Push github-bin to GitHub; ends with git-pull.sh to refresh ${profile_location_dir:-$HOME}/bin.
+# Repo: ${profile_location_dir:-$HOME}/github/github-bin (see _git-bin-common.sh).
+#
 
 print_version_banner() {
   local ver=unknown date= line title verline width=60
