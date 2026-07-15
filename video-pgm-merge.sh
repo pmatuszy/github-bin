@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.07.15 - v. 0.15.9 - size-split output: …_parts_01-NN_concat.mp4 (chapter count), fix middle/camera join
 # 2026.07.15 - v. 0.15.8 - letter chapters (…BLACKa/b/c or …200322a/b): merge without ~4 GB size gate
 # 2026.07.15 - v. 0.15.7 - size-split: ~6:49 (409s) chapter duration for all GOPRO* (not only GOPRO7)
 # 2026.07.15 - v. 0.15.6 - size-split: accept chapter letter on camera token (GOPRO10_BLACKa)
@@ -110,7 +111,8 @@ Merge behaviour (no options):
   - If the expected _concat output already exists: skip (default), redo merge [r],
     preview merge seams [p], or delete input chapters [d] (keeps merged output).
   - Output file per group: <first_chapter_stem>_parts_<first>-<last>_concat.mp4
-    (timestamp from the first part, e.g. …154511_…_parts_01-04_concat.mp4)
+    (timestamp from the first part; size-split/letter groups use 01-<N> for chapter count,
+    e.g. …_GOPRO10_BLACK_parts_01-06_concat.mp4)
   - Other single files are listed as standalone; probable size-split sets are merge candidates.
   - Lists merged *_concat files when matching input chapters are not in the folder.
 
@@ -1928,13 +1930,15 @@ size_split_run_valid() {
 
 size_split_group_output_file() {
   local -a files=("$@")
-  local fb date1 t1 cam1 middle=""
+  local fb date1 t1 cam1 middle="" n
   fb="${files[0]##*/}"
   gopro_timestamp_cam_from_basename "$fb" || return 1
   date1="$GOPRO_TS_DATE" t1="$GOPRO_TS_TIME" cam1="$GOPRO_TS_CAM"
   middle=$(gopro_middle_from_basename "$fb") || return 1
-  # e.g. 20210416_101802_-_S29_-_dermatolog_-_GOPRO7_BLACK_concat.mp4
-  printf '%s_%s_%s%s_concat.mp4\n' "$date1" "$t1" "$middle" "$cam1"
+  n=${#files[@]}
+  (( n >= 1 )) || return 1
+  # e.g. 20220115_200322_-__-_GOPRO10_BLACK_parts_01-06_concat.mp4
+  printf '%s_%s_%s_%s_parts_01-%02d_concat.mp4\n' "$date1" "$t1" "$middle" "$cam1" "$n"
 }
 
 # Label for merged output metadata (title/description).
@@ -2589,6 +2593,8 @@ print_group_plan() {
       grp_desc="${grp_desc//_/ }"
       grp_desc="${grp_desc# }"
       grp_desc="${grp_desc% }"
+      # Skip empty separator-only middles (e.g. -__- → "-").
+      [[ "$grp_desc" =~ ^[[:space:]-]*$ ]] && grp_desc=
       if [[ -e "$out_name" ]]; then
         if [[ -n "$grp_desc" ]]; then
           printf '  [group %d/%d] %d clips (%s) → %s  (already merged)\n' \
