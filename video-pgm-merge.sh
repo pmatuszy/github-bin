@@ -1448,17 +1448,22 @@ chapter_camera_from_basename() {
 # Optional single letter after HHMMSS (…_200322a_…) or after the camera token (…_GOPRO10_BLACKa.MP4)
 # is rename-style chapter disambiguation when several chapters share one start time.
 # Sets GOPRO_CAM_LETTER when the letter is on the camera token (empty otherwise).
+# Sets GOPRO_PARSED_CAM and optional GOPRO_CAM_LETTER; also prints camera on stdout
+# (for legacy cam=$(…) callers). Prefer reading GOPRO_PARSED_CAM when letter is needed.
 gopro_camera_suffix_from_basename() {
   local base="$1"
   GOPRO_CAM_LETTER=""
+  GOPRO_PARSED_CAM=""
   if [[ "$base" =~ _(GOPRO[0-9]+_[A-Z0-9]+)_([A-Z]{2}[0-9]{4,6})\.[mM][pP]4$ ]]; then
-    printf '%s\n' "${BASH_REMATCH[1]}"
+    GOPRO_PARSED_CAM="${BASH_REMATCH[1]}"
+    printf '%s\n' "$GOPRO_PARSED_CAM"
     return 0
   fi
-  # Trailing lowercase/any letter after UPPERCASE model: GOPRO10_BLACKa.MP4 → cam BLACK, letter a
+  # Trailing letter after UPPERCASE model: GOPRO10_BLACKa.MP4 → cam BLACK, letter a
   if [[ "$base" =~ (GOPRO[0-9]+_[A-Z0-9]+)([a-zA-Z])?\.[mM][pP]4$ ]]; then
-    printf '%s\n' "${BASH_REMATCH[1]}"
+    GOPRO_PARSED_CAM="${BASH_REMATCH[1]}"
     GOPRO_CAM_LETTER="${BASH_REMATCH[2]}"
+    printf '%s\n' "$GOPRO_PARSED_CAM"
     return 0
   fi
   return 1
@@ -1475,13 +1480,14 @@ gopro_chapter_suffix_from_basename() {
 }
 
 gopro_timestamp_cam_from_basename() {
-  local base="$1" cam
+  local base="$1"
   GOPRO_TS_DATE=""
   GOPRO_TS_TIME=""
   GOPRO_TS_LETTER=""
   GOPRO_TS_CAM=""
   GOPRO_TS_CHAPTER=""
   GOPRO_CAM_LETTER=""
+  GOPRO_PARSED_CAM=""
   # With GX chapter token: date_time[letter]_middle_CAMERA_GXnnnnnn.ext
   if [[ "$base" =~ ^([0-9]{8})_([0-9]{6})([a-zA-Z])?_(.*)_((GOPRO[0-9]+_[A-Z0-9]+))_([A-Z]{2}[0-9]{4,6})\.[mM][pP]4$ ]]; then
     GOPRO_TS_DATE="${BASH_REMATCH[1]}"
@@ -1491,7 +1497,7 @@ gopro_timestamp_cam_from_basename() {
     GOPRO_TS_CHAPTER="${BASH_REMATCH[7]}"
     return 0
   fi
-  # date_time[letter]_…
+  # date_time[letter]_… — call camera parser without $() so GOPRO_CAM_LETTER is not lost in a subshell
   if [[ "$base" =~ ^([0-9]{8})_([0-9]{6})([a-zA-Z])?_ ]]; then
     GOPRO_TS_DATE="${BASH_REMATCH[1]}"
     GOPRO_TS_TIME="${BASH_REMATCH[2]}"
@@ -1499,8 +1505,10 @@ gopro_timestamp_cam_from_basename() {
   else
     return 1
   fi
-  cam=$(gopro_camera_suffix_from_basename "$base") || return 1
-  GOPRO_TS_CAM="$cam"
+  if ! gopro_camera_suffix_from_basename "$base" >/dev/null; then
+    return 1
+  fi
+  GOPRO_TS_CAM="$GOPRO_PARSED_CAM"
   # Prefer time-letter; else use camera-letter (…_GOPRO10_BLACKa).
   if [[ -z "${GOPRO_TS_LETTER}" && -n "${GOPRO_CAM_LETTER:-}" ]]; then
     GOPRO_TS_LETTER="$GOPRO_CAM_LETTER"
