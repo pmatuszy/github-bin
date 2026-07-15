@@ -1,7 +1,7 @@
 
 ## jedna linia: 
 ```
-cd $HOME ; rm -rf $HOME/github-bin; git clone git+ssh://git@github.com/pmatuszy/github-bin.git ; cp -v github-bin/* $HOME/bin ; cd github-bin ; git status 
+mkdir -p ${profile_location_dir}/github ; rm -rf ${profile_location_dir}/github/github-bin; git clone git+ssh://git@github.com/pmatuszy/github-bin.git ${profile_location_dir}/github/github-bin ; cp -v ${profile_location_dir}/github/github-bin/* $HOME/bin ; cd ${profile_location_dir}/github/github-bin ; git status 
 
 '''
 

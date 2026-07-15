@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.07.15 - v. 0.15.11 - seam preview defaults: 2s before join, 2s clip (0s after)
 # 2026.07.15 - v. 0.15.10 - merge outputs: …_concat_parts_01-NN.mp4 (concat before parts)
 # 2026.07.15 - v. 0.15.9 - size-split output: …_parts_01-NN_concat.mp4 (chapter count), fix middle/camera join
 # 2026.07.15 - v. 0.15.8 - letter chapters (…BLACKa/b/c or …200322a/b): merge without ~4 GB size gate
@@ -84,9 +85,9 @@ Options:
   -y, --yes            Merge every detected multi-part group without prompts (for cron).
   --read-timeout SEC   Single-key prompt timeout in seconds (0 = wait forever).
                        Default: wait forever. Env: PGM_READ_TIMEOUT (e.g. 300).
-  --seam-before SEC    Terminal seam preview: seconds before each join (default 4).
+  --seam-before SEC    Terminal seam preview: seconds before each join (default 2).
                        Env: PGM_SEAM_PREVIEW_BEFORE.
-  --seam-after SEC     Terminal seam preview: seconds after each join (default 5).
+  --seam-after SEC     Terminal seam preview: seconds after each join (default 0).
                        Env: PGM_SEAM_PREVIEW_AFTER.
   --no_startup_delay   Skip random startup delay when run non-interactively (see
                        _script_header.sh).
@@ -130,8 +131,8 @@ Environment:
   MP4_MERGE_REPO          GitHub repo for releases (default: gyroflow/mp4-merge).
   PGM_READ_TIMEOUT        Seconds per single-key prompt; unset or 0 = wait forever.
                           Overridden by --read-timeout.
-  PGM_SEAM_PREVIEW_BEFORE Seconds before each merge point in terminal preview (default: 4).
-  PGM_SEAM_PREVIEW_AFTER  Seconds after each merge point in terminal preview (default: 5).
+  PGM_SEAM_PREVIEW_BEFORE Seconds before each merge point in terminal preview (default: 2).
+  PGM_SEAM_PREVIEW_AFTER  Seconds after each merge point in terminal preview (default: 0).
 
 Examples:
   $(basename "$0") -u
@@ -990,7 +991,7 @@ merge_seam_preview_start_length() {
   }'
 }
 
-# Sum of before+after window (e.g. 4 + 5 → 9).
+# Sum of before+after window (e.g. 2 + 0 → 2).
 merge_seam_clip_total_seconds() {
   local before="$1" after="$2"
   awk -v b="$before" -v a="$after" 'BEGIN {
@@ -3075,8 +3076,8 @@ MERGE_ALL_REMAINING=0
 SKIP_ALL_REMAINING=0
 GROUP_BLOBS=()
 HEADER_EXTRA_ARGS=()
-PGM_SEAM_PREVIEW_BEFORE="${PGM_SEAM_PREVIEW_BEFORE:-4}"
-PGM_SEAM_PREVIEW_AFTER="${PGM_SEAM_PREVIEW_AFTER:-5}"
+PGM_SEAM_PREVIEW_BEFORE="${PGM_SEAM_PREVIEW_BEFORE:-2}"
+PGM_SEAM_PREVIEW_AFTER="${PGM_SEAM_PREVIEW_AFTER:-0}"
 while [[ $# -gt 0 ]]; do
   case $1 in
     -h|--help)

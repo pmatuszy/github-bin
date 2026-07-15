@@ -1,5 +1,7 @@
 #!/bin/bash
  
+# 2026.07.15 - v. 1.5 - GIT_REPO_DIRECTORY: ${profile_location_dir}/github/github-bin
+# 2026.07.15 - v. 1.4 - GIT_REPO_DIRECTORY: $HOME/github/github-bin (was $HOME/github-bin)
 # 2026.06.02 - v. 1.3 - add -h/--help, -v/--version, --no_startup_delay (parsed before header)
 # 2023.02.11 - v. 1.2 - added GIT_SSH_COMMAND
 # 2023.02.07 - v. 1.1 - added batch mode, added GIT_REPO_DIRECTORY variable
@@ -74,7 +76,8 @@ if (( ! script_is_run_interactively ));then    # jesli nie interaktywnie, to chc
 fi
 
 export github_project_name=github-bin
-export GIT_REPO_DIRECTORY=/root/"${github_project_name}"
+: "${profile_location_dir:=$HOME}"
+export GIT_REPO_DIRECTORY="${profile_location_dir}/github/${github_project_name}"
 export GIT_SSH_COMMAND='ssh -i $HOME/.ssh/id_SSH_ed25519_20230207_OpenSSH'
 
 if [ ! -d "${GIT_REPO_DIRECTORY}" ];then

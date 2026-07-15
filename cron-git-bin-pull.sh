@@ -1,5 +1,7 @@
 #!/bin/bash
 
+# 2026.07.15 - v. 0.6 - repo path: ${profile_location_dir}/github/github-bin
+# 2026.07.15 - v. 0.5 - repo path: $HOME/github/github-bin (was /root/github-bin)
 # 2026.06.02 - v. 0.4 - add -h/--help, -v/--version, --no_startup_delay (parsed before header)
 # 2026.06.02 - v. 0.3 - ping Healthchecks only when HEALTHCHECK_URL is set (avoid silent curl to empty URL)
 # 2023.02.28 - v. 0.2 - curl with return_code
@@ -30,7 +32,7 @@ show_help() {
   cat <<EOF
 Usage: $(basename "$0") [-h|--help] [-v|--version] [--no_startup_delay]
 
-Cron wrapper: run /root/github-bin/git-pull.sh batch, optionally report exit code
+Cron wrapper: run ${profile_location_dir}/github/github-bin/git-pull.sh batch, optionally report exit code
 to Healthchecks (see healthchecks-ids.txt).
 
 Options:
@@ -56,7 +58,8 @@ if [[ -f "$HEALTHCHECKS_FILE" ]]; then
   HEALTHCHECK_URL=$(grep "^$(basename "$0")" "$HEALTHCHECKS_FILE" | awk '{print $2}')
 fi
 
-HC_message=$(/root/github-bin/git-pull.sh batch 2>&1 ; exit $?)
+: "${profile_location_dir:=$HOME}"
+HC_message=$("${profile_location_dir}/github/github-bin/git-pull.sh" batch 2>&1 ; exit $?)
 return_code=$?
 
 if (( script_is_run_interactively ));then
