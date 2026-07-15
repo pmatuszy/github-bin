@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.07.15 - v. 0.15.10 - merge outputs: …_concat_parts_01-NN.mp4 (concat before parts)
 # 2026.07.15 - v. 0.15.9 - size-split output: …_parts_01-NN_concat.mp4 (chapter count), fix middle/camera join
 # 2026.07.15 - v. 0.15.8 - letter chapters (…BLACKa/b/c or …200322a/b): merge without ~4 GB size gate
 # 2026.07.15 - v. 0.15.7 - size-split: ~6:49 (409s) chapter duration for all GOPRO* (not only GOPRO7)
@@ -110,9 +111,9 @@ Merge behaviour (no options):
     seam at a time), and optional deletion of the source chapter files (single-key Y/N).
   - If the expected _concat output already exists: skip (default), redo merge [r],
     preview merge seams [p], or delete input chapters [d] (keeps merged output).
-  - Output file per group: <first_chapter_stem>_parts_<first>-<last>_concat.mp4
+  - Output file per group: <first_chapter_stem>_concat_parts_<first>-<last>.mp4
     (timestamp from the first part; size-split/letter groups use 01-<N> for chapter count,
-    e.g. …_GOPRO10_BLACK_parts_01-06_concat.mp4)
+    e.g. …_GOPRO10_BLACK_concat_parts_01-06.mp4). Legacy …_parts_*-*_concat.mp4 still recognized.
   - Other single files are listed as standalone; probable size-split sets are merge candidates.
   - Lists merged *_concat files when matching input chapters are not in the folder.
 
@@ -1297,7 +1298,10 @@ video_merge_ctrl_c() {
 # True if basename is an existing merge output (skip as input).
 is_concat_output_basename() {
   local base="${1%.*}"
-  [[ "${base}" == *_concat ]]
+  # …_concat.mp4 (legacy) or …_concat_parts_01-06[_Proxy].mp4
+  [[ "${base}" == *_concat ]] && return 0
+  [[ "${base}" =~ _concat_parts_[0-9]{2}-[0-9]{2}(_Proxy)?$ ]] && return 0
+  return 1
 }
 
 # Set by concat_parse_cam_part_range: stem/camera token and part range from output name.
@@ -1308,7 +1312,8 @@ CONCAT_PARSE_FIRST=0
 CONCAT_PARSE_LAST=0
 PGM_ORPHAN_CONCAT_COUNT=0
 
-# Parse <stem>_parts_01-04[_Proxy]_concat or legacy *_part_04_concat basename.
+# Parse <stem>_concat_parts_01-04[_Proxy], legacy <stem>_parts_01-04[_Proxy]_concat,
+# or legacy *_part_04_concat basename.
 concat_parse_cam_part_range() {
   local base="$1"
   CONCAT_PARSE_CAM=""
@@ -1316,6 +1321,14 @@ concat_parse_cam_part_range() {
   CONCAT_PARSE_PROXY=""
   CONCAT_PARSE_FIRST=0
   CONCAT_PARSE_LAST=0
+  if [[ "$base" =~ ^(.+)_concat_parts_([0-9]{2})-([0-9]{2})(_Proxy)?\.[mM][pP]4$ ]]; then
+    CONCAT_PARSE_STEM="${BASH_REMATCH[1]}"
+    CONCAT_PARSE_PROXY="${BASH_REMATCH[4]}"
+    CONCAT_PARSE_FIRST=$((10#${BASH_REMATCH[2]}))
+    CONCAT_PARSE_LAST=$((10#${BASH_REMATCH[3]}))
+    CONCAT_PARSE_CAM="$(gopro_camera_suffix_from_basename "$base" 2>/dev/null || true)"
+    return 0
+  fi
   if [[ "$base" =~ ^(.+)_parts_([0-9]{2})-([0-9]{2})(_Proxy)?_concat\.[mM][pP]4$ ]]; then
     CONCAT_PARSE_STEM="${BASH_REMATCH[1]}"
     CONCAT_PARSE_PROXY="${BASH_REMATCH[4]}"
@@ -1937,8 +1950,8 @@ size_split_group_output_file() {
   middle=$(gopro_middle_from_basename "$fb") || return 1
   n=${#files[@]}
   (( n >= 1 )) || return 1
-  # e.g. 20220115_200322_-__-_GOPRO10_BLACK_parts_01-06_concat.mp4
-  printf '%s_%s_%s_%s_parts_01-%02d_concat.mp4\n' "$date1" "$t1" "$middle" "$cam1" "$n"
+  # e.g. 20220115_200322_-__-_GOPRO10_BLACK_concat_parts_01-06.mp4
+  printf '%s_%s_%s_%s_concat_parts_01-%02d.mp4\n' "$date1" "$t1" "$middle" "$cam1" "$n"
 }
 
 # Label for merged output metadata (title/description).
@@ -2269,8 +2282,8 @@ group_is_raw_gopro() {
   return 0
 }
 
-# Output name for a raw GoPro chapter group: e.g. GX0393_parts_01-04_concat.mp4
-# (proxies: GX0393_Proxy_parts_01-04_concat.mp4).
+# Output name for a raw GoPro chapter group: e.g. GX0393_concat_parts_01-04.mp4
+# (proxies: GX0393_Proxy_concat_parts_01-04.mp4).
 raw_gopro_group_output_file() {
   local -a files=("$@")
   local f base prefix="" num="" proxy="" min="" max="" ch
@@ -2284,7 +2297,7 @@ raw_gopro_group_output_file() {
     if [[ -z "$min" ]] || (( ch < min )); then min=$ch; fi
     if [[ -z "$max" ]] || (( ch > max )); then max=$ch; fi
   done
-  printf '%s%s%s_parts_%02d-%02d_concat.mp4\n' "$prefix" "$num" "$proxy" "$min" "$max"
+  printf '%s%s%s_concat_parts_%02d-%02d.mp4\n' "$prefix" "$num" "$proxy" "$min" "$max"
 }
 
 # Pull raw GoPro chapter files (GXccnnnn[_Proxy].MP4) out of the sorted list into
@@ -2705,7 +2718,7 @@ group_output_file() {
   stem="${base%.*}"
   if (( got_part )) && [[ "$stem" =~ ^(.*)_part_[0-9]{2}(_Proxy)?$ ]]; then
     suffix_proxy="${BASH_REMATCH[2]}"
-    printf '%s_parts_%02d-%02d%s_concat.mp4\n' \
+    printf '%s_concat_parts_%02d-%02d%s.mp4\n' \
       "${BASH_REMATCH[1]}" "$min_part" "$max_part" "$suffix_proxy"
     return 0
   fi
