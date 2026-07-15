@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.07.15 - v. 0.15.5 - size-split: accept YYYYMMDD_HHMMSSa letter suffixes (rename disambiguation)
 # 2026.06.24 - v. 0.15.4 - _part_XX from part_01: merge without ~4 GB check; size rules only for orphan tails (part_02+)
 # 2026.06.23 - v. 0.15.3 - fix rest_out circular nameref: pass caller array name into nested helpers
 # 2026.06.23 - v. 0.15.2 - parse rename.sh *_parts_NN-NN_concat for orphan listing; clearer orphan output
@@ -95,7 +96,8 @@ Merge behaviour (no options):
     same session label, ~4 GB or ~12 GB chapters (~6:49 or longer per chapter); filename times
     that chain, or the same YYYYMMDD_HHMMSS with GX chapter suffixes
     (e.g. …_GOPRO10_BLACK_GX013496.MP4). After rename.sh, consecutive chapters may differ
-    only in the leading timestamp and share the same middle label.
+    only in the leading timestamp and share the same middle label, or share one start time with
+    a trailing letter (20220115_200322a / 200322b / …) when the recorder kept the same stamp.
   - Shows each multi-part group (with file sizes) and asks whether to merge
     (single-key Y/N/A/M/Q, no Enter — like rename.sh).
   - After a successful merge: merge-boundary times in the output timeline (where each
@@ -1441,7 +1443,9 @@ chapter_camera_from_basename() {
   return 1
 }
 
-# GoPro clip without _part_XX: YYYYMMDD_HHMMSS_…_GOPRO7_BLACK.MP4 or …_GOPRO10_BLACK_GX013496.MP4
+# GoPro clip without _part_XX: YYYYMMDD_HHMMSS[a]_…_GOPRO7_BLACK.MP4 or …_GOPRO10_BLACK_GX013496.MP4
+# Optional single letter after HHMMSS (a/b/c…) is rename-style collision / chapter disambiguation
+# when several chapters share one start time (e.g. 20220115_200322a_-_-_GOPRO10_BLACK.MP4).
 gopro_camera_suffix_from_basename() {
   local base="$1"
   if [[ "$base" =~ _((GOPRO[0-9]+_[A-Z0-9]+))_([A-Z]{2}[0-9]{4,6})\.[mM][pP]4$ ]]; then
@@ -1469,18 +1473,23 @@ gopro_timestamp_cam_from_basename() {
   local base="$1" cam
   GOPRO_TS_DATE=""
   GOPRO_TS_TIME=""
+  GOPRO_TS_LETTER=""
   GOPRO_TS_CAM=""
   GOPRO_TS_CHAPTER=""
-  if [[ "$base" =~ ^([0-9]{8})_([0-9]{6})_(.*)_((GOPRO[0-9]+_[A-Z0-9]+))_([A-Z]{2}[0-9]{4,6})\.[mM][pP]4$ ]]; then
+  # With GX chapter token: date_time[letter]_middle_CAMERA_GXnnnnnn.ext
+  if [[ "$base" =~ ^([0-9]{8})_([0-9]{6})([a-zA-Z])?_(.*)_((GOPRO[0-9]+_[A-Z0-9]+))_([A-Z]{2}[0-9]{4,6})\.[mM][pP]4$ ]]; then
     GOPRO_TS_DATE="${BASH_REMATCH[1]}"
     GOPRO_TS_TIME="${BASH_REMATCH[2]}"
-    GOPRO_TS_CAM="${BASH_REMATCH[4]}"
-    GOPRO_TS_CHAPTER="${BASH_REMATCH[5]}"
+    GOPRO_TS_LETTER="${BASH_REMATCH[3]}"
+    GOPRO_TS_CAM="${BASH_REMATCH[5]}"
+    GOPRO_TS_CHAPTER="${BASH_REMATCH[7]}"
     return 0
   fi
-  if [[ "$base" =~ ^([0-9]{8})_([0-9]{6})_ ]]; then
+  # date_time[letter]_…
+  if [[ "$base" =~ ^([0-9]{8})_([0-9]{6})([a-zA-Z])?_ ]]; then
     GOPRO_TS_DATE="${BASH_REMATCH[1]}"
     GOPRO_TS_TIME="${BASH_REMATCH[2]}"
+    GOPRO_TS_LETTER="${BASH_REMATCH[3]}"
   else
     return 1
   fi
@@ -1490,13 +1499,13 @@ gopro_timestamp_cam_from_basename() {
   return 0
 }
 
-# Middle part of GoPro basename (between timestamp and camera suffix).
+# Middle part of GoPro basename (between timestamp[+letter] and camera suffix).
 gopro_middle_from_basename() {
   local base="$1" mid
   gopro_timestamp_cam_from_basename "$base" || return 1
-  if [[ "$base" =~ ^[0-9]{8}_[0-9]{6}_(.*)_((GOPRO[0-9]+_[A-Z0-9]+))_([A-Z]{2}[0-9]{4,6})\.[mM][pP]4$ ]]; then
+  if [[ "$base" =~ ^[0-9]{8}_[0-9]{6}[a-zA-Z]?_(.*)_((GOPRO[0-9]+_[A-Z0-9]+))_([A-Z]{2}[0-9]{4,6})\.[mM][pP]4$ ]]; then
     mid="${BASH_REMATCH[1]}"
-  elif [[ "$base" =~ ^[0-9]{8}_[0-9]{6}_(.+)\.[mM][pP]4$ ]]; then
+  elif [[ "$base" =~ ^[0-9]{8}_[0-9]{6}[a-zA-Z]?_(.+)\.[mM][pP]4$ ]]; then
     mid="${BASH_REMATCH[1]}"
     mid="${mid%_"${GOPRO_TS_CAM}"}"
   else
@@ -1505,7 +1514,7 @@ gopro_middle_from_basename() {
   printf '%s\n' "$mid"
 }
 
-# Grouping key: same date, time, camera, and middle (ignores per-file GX chapter suffix).
+# Grouping key: same date, time, camera, and middle (ignores per-file GX chapter / letter suffix).
 gopro_recording_group_key_from_basename() {
   local base="$1" mid
   gopro_timestamp_cam_from_basename "$base" || return 1
@@ -1521,16 +1530,18 @@ gopro_size_split_session_key_from_basename() {
   printf '%s|%s\n' "$GOPRO_TS_CAM" "$mid"
 }
 
-# Sort key for size-split singles (time order, then GX chapter number).
+# Sort key for size-split singles (time order, then letter a/b/c…, then GX chapter number).
 gopro_size_split_sort_key() {
-  local f="$1" base ch sort_num
+  local f="$1" base ch sort_num letter_key
   base="${f##*/}"
   gopro_timestamp_cam_from_basename "$base" || { printf '%s\n' "$base"; return 0; }
   sort_num=0
   if [[ -n "${GOPRO_TS_CHAPTER:-}" && "$GOPRO_TS_CHAPTER" =~ ^[A-Z]{2}([0-9]+)$ ]]; then
     sort_num=$((10#${BASH_REMATCH[1]}))
   fi
-  printf '%s_%s_%06d_%s\n' "$GOPRO_TS_DATE" "$GOPRO_TS_TIME" "$sort_num" "$base"
+  # Empty letter sorts before 'a' (use '_' so plain HHMMSS comes first within same second).
+  letter_key="${GOPRO_TS_LETTER:-_}"
+  printf '%s_%s_%s_%06d_%s\n' "$GOPRO_TS_DATE" "$GOPRO_TS_TIME" "$letter_key" "$sort_num" "$base"
 }
 
 # Seconds since midnight from HHMMSS (for same-day checks without date(1)).
