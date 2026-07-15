@@ -129,12 +129,12 @@ export run_before_backup_log=$( eval $RUN_BEFORE_BACKUP 2>&1 )
 if (( $script_is_run_interactively == 1 )); then
   backup_log=""
   ( echo "${SCRIPT_VERSION}" ; echo ; echo "RESTIC_REPOSITORY = $RESTIC_REPOSITORY" ; echo ;
-    kod_powrotu=999
+    return_code=999
     for (( p=1 ; p<=$MAX_LICZBA_PONOWIEN_BACKUPOW ; p++ )); do
     if (( $p > 1 )) ; then echo ; echo "current date: `date '+%Y.%m.%d %H:%M'`" ; echo ; fi
       eval ${RESTIC_BIN} --cleanup-cache --iexclude=${MY_EXCLUDES} --iexclude-file=${MY_EXCLUDE_FILE} backup / $WHAT_TO_BACKUP_ON_TOP_OF_ROOT 2>&1
-      kod_powrotu=$?
-      if (( $kod_powrotu != 0 )); then
+      return_code=$?
+      if (( $return_code != 0 )); then
         echo ; echo "blad backupu - sprobujemy jeszcze raz - czekam 2 sekundy"
         sleep 2
         continue
@@ -142,17 +142,17 @@ if (( $script_is_run_interactively == 1 )); then
         break
       fi
     done
-    exit $kod_powrotu
+    exit $return_code
   )
 else
   backup_log=$( echo "${SCRIPT_VERSION}" ; echo 
                 echo "RESTIC_REPOSITORY = $RESTIC_REPOSITORY" ; echo 
-                kod_powrotu=999
+                return_code=999
                 for (( p=1 ; p<=$MAX_LICZBA_PONOWIEN_BACKUPOW ; p++ )); do 
                 if (( $p > 1 )) ; then echo ; echo "current date: `date '+%Y.%m.%d %H:%M'`" ; echo ; fi
                   eval ${RESTIC_BIN} --cleanup-cache --iexclude=${MY_EXCLUDES} --iexclude-file=${MY_EXCLUDE_FILE} backup / $WHAT_TO_BACKUP_ON_TOP_OF_ROOT 2>&1
-                  kod_powrotu=$?
-                  if (( $kod_powrotu != 0 )); then
+                  return_code=$?
+                  if (( $return_code != 0 )); then
                     echo ; echo "blad backupu - sprobujemy jeszcze raz - czekam ${LICZBA_SEKUND_MIEDZY_PONOWIENIAMI_BACKUPOW}"
                     sleep ${LICZBA_SEKUND_MIEDZY_PONOWIENIAMI_BACKUPOW}
                     continue
@@ -160,27 +160,27 @@ else
 		    break
                   fi
                 done
-                exit $kod_powrotu
+                exit $return_code
               )
 fi
-kod_powrotu=$?
+return_code=$?
 
 export run_after_backup_log=$( eval $RUN_AFTER_BACKUP 2>&1 )
 
 if (( $script_is_run_interactively == 1 )); then
   m="echo "${SCRIPT_VERSION}";echo ; PGM: emtpy as run interactively"
   echo ; echo "~~~~~~~~~~~~~~~~~~~~~~~~~"
-  echo backup exit code: $kod_powrotu ; echo "~~~~~~~~~~~~~~~~~~~~~~~~~" ; echo ;
+  echo backup exit code: $return_code ; echo "~~~~~~~~~~~~~~~~~~~~~~~~~" ; echo ;
   ${RESTIC_BIN} --cleanup-cache                          snapshots 2>&1 
 else
   m=$( echo "${SCRIPT_VERSION}";echo ; echo ; echo "~~~~~~~~~~~~~~~~~~~~~~~~~"
-       echo backup exit code: $kod_powrotu ; echo "~~~~~~~~~~~~~~~~~~~~~~~~~" ; echo ;
+       echo backup exit code: $return_code ; echo "~~~~~~~~~~~~~~~~~~~~~~~~~" ; echo ;
        ${RESTIC_BIN} --cleanup-cache                          snapshots 2>&1 )
 fi
 
 HC_message="$run_before_backup_log $backup_log $m $run_after_backup_log"
 
-if (( $kod_powrotu != 0 )); then
+if (( $return_code != 0 )); then
   echo "$HC_message" | /usr/bin/curl -fsS -m 100 --retry 10 --retry-delay 10 --data-binary @- -o /dev/null "$HEALTHCHECK_URL"/fail 2>/dev/null
 else
   echo "$HC_message" | /usr/bin/curl -fsS -m 100 --retry 10 --retry-delay 10 --data-binary @- -o /dev/null "$HEALTHCHECK_URL" 2>/dev/null

@@ -7,7 +7,7 @@
 # 2026.04.22 - v. 1.7 - serial column width: trim values; max width via value loop (reliable subscripts)
 # 2026.04.22 - v. 1.6 - column widths from longest cell (header + data)
 # 2026.04.22 - v. 1.5 - aligned Device / size / Serial; NVMe SN via nvme id-ctrl
-# 2026.04.22 - v. 1.4 - help/version; root check; grep -E; quoting; disk list for all supported OS; uname -m; kod_powrotu
+# 2026.04.22 - v. 1.4 - help/version; root check; grep -E; quoting; disk list for all supported OS; uname -m; return_code
 # 2023.10.25 - v. 1.3 - added check if hdparm is installed
 # 2023.09.02 - v. 1.2 - bugfix: better OS detection
 # 2023.07.19 - v. 1.1 - bugfix: handling wrong partition table (it was prompted, now it is removed with echo q
@@ -88,24 +88,24 @@ done
 
 . /root/bin/_script_header.sh
 
-kod_powrotu=0
+return_code=0
 
 if [[ "$(id -u)" -ne 0 ]]; then
   echo
   echo "(PGM) Run as root for fdisk/hdparm/nvme listing."
   echo
-  kod_powrotu=1
+  return_code=1
   . /root/bin/_script_footer.sh
-  exit "${kod_powrotu}"
+  exit "${return_code}"
 fi
 
 if [[ ! -f /etc/os-release && ! -f /etc/redhat-release ]]; then
   echo
   echo "(PGM) I don't know what OS is that - I am exiting..."
   echo
-  kod_powrotu=1
+  return_code=1
   . /root/bin/_script_footer.sh
-  exit "${kod_powrotu}"
+  exit "${return_code}"
 fi
 
 check_if_installed nvme nvme-cli
@@ -293,4 +293,4 @@ echo
 
 . /root/bin/_script_footer.sh
 
-exit "${kod_powrotu}"
+exit "${return_code}"

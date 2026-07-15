@@ -177,7 +177,7 @@ fi
 
 . /root/bin/_script_header.sh "${HEADER_EXTRA_ARGS[@]}"
 
-kod_powrotu=0
+return_code=0
 
 _mi_pause_if_needed() {
   if (( _mi_page )) && [[ -t 1 ]] && [[ -r /dev/tty ]]; then
@@ -492,4 +492,4 @@ done
 
 . /root/bin/_script_footer.sh
 
-exit "${kod_powrotu}"
+exit "${return_code}"

@@ -107,15 +107,15 @@ fi
 
 . /root/bin/_script_header.sh "${HEADER_EXTRA_ARGS[@]}"
 
-kod_powrotu=0
+return_code=0
 
 if [ "$(id -u)" -ne 0 ]; then
   echo
   echo "(PGM) This script must run as root (writes /proc/sys/vm/drop_caches)."
   echo
-  kod_powrotu=1
+  return_code=1
   . /root/bin/_script_footer.sh
-  exit "${kod_powrotu}"
+  exit "${return_code}"
 fi
 
 echo
@@ -131,12 +131,12 @@ if (( trace )); then
   set -x
 fi
 echo "$level" > /proc/sys/vm/drop_caches
-kod_powrotu=$?
+return_code=$?
 if (( trace )); then
   set +x
 fi
 
-if (( kod_powrotu != 0 )); then
+if (( return_code != 0 )); then
   echo "(PGM) Write to /proc/sys/vm/drop_caches failed."
 else
   echo "(PGM) drop_caches completed."
@@ -149,4 +149,4 @@ echo
 
 . /root/bin/_script_footer.sh
 
-exit "${kod_powrotu}"
+exit "${return_code}"

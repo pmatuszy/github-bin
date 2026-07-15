@@ -3,7 +3,7 @@
 # 2026.05.26 - user-facing messages translated from Polish to English
 # 2023.12.18 - v. 0.7 - bugfix: check if restic is installed
 # 2023.03.26 - v. 0.6 - added ile_prob i odstepy_miedzy_probami_sek
-# 2023.02.28 - v. 0.5 - curl with kod_powrotu
+# 2023.02.28 - v. 0.5 - curl with return_code
 # 2023.01.03 - v. 0.4 - dodano random delay jesli skrypt jest wywolywany nieinteraktywnie
 # 2022.05.20 - v. 0.3 - dodalem wypisywanie aktualnej daty
 # 2022.05.12 - v. 0.2 - small bux fix (use RESTIC_BIN intsead of /usr/bin/restic)
@@ -63,7 +63,7 @@ m=$( echo " "; echo "current date: `date '+%Y.%m.%d %H:%M'`" ; echo ;
      done
      exit $? 
    )
-kod_powrotu=$?
+return_code=$?
 wersja_po=$(echo " " ; echo "wersja po: "; "${RESTIC_BIN}" version 2>&1; echo " " ; echo " ")
 
 wiadomosc=""
@@ -74,11 +74,11 @@ else
   wiadomosc="$m $wersja_przed $wersja_po"
 fi
 
-/usr/bin/curl -fsS -m 100 --retry 10 --retry-delay 10 --data-raw "$wiadomosc" -o /dev/null "$HEALTHCHECK_URL"/${kod_powrotu} 2>/dev/null
+/usr/bin/curl -fsS -m 100 --retry 10 --retry-delay 10 --data-raw "$wiadomosc" -o /dev/null "$HEALTHCHECK_URL"/${return_code} 2>/dev/null
 
 . /root/bin/_script_footer.sh
 
-exit ${kod_powrotu}
+exit ${return_code}
 #####
 # new crontab entry
 

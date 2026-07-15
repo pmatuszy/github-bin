@@ -27,13 +27,13 @@ ile_max_by_nie_raportowac=45
 blad=1
 how_many_retries=20
 retry_delay=60
-kod_powrotu=999
+return_code=999
 
 while (( blad != 0 && how_many_retries != 0 )); do
     /usr/bin/apt-get update &>/dev/null
-    kod_powrotu=$?
+    return_code=$?
 
-    if (( kod_powrotu == 0 )); then
+    if (( return_code == 0 )); then
         blad=0
         break
     else

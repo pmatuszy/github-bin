@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.07.15 - v. 0.15.7 - size-split: ~6:49 (409s) chapter duration for all GOPRO* (not only GOPRO7)
 # 2026.07.15 - v. 0.15.6 - size-split: accept chapter letter on camera token (GOPRO10_BLACKa)
 # 2026.07.15 - v. 0.15.5 - size-split: accept YYYYMMDD_HHMMSSa letter suffixes (rename disambiguation)
 # 2026.06.24 - v. 0.15.4 - _part_XX from part_01: merge without ~4 GB check; size rules only for orphan tails (part_02+)
@@ -1725,7 +1726,7 @@ PGM_SIZE_SPLIT_MAX_BYTES=$PGM_SIZE_SPLIT_4G_MAX_BYTES
 PGM_SIZE_SPLIT_DURATION_REJECT_BELOW_SEC="${PGM_SIZE_SPLIT_DURATION_REJECT_BELOW_SEC:-420}"
 PGM_SIZE_SPLIT_12G_DURATION_REJECT_BELOW_SEC="${PGM_SIZE_SPLIT_12G_DURATION_REJECT_BELOW_SEC:-1080}"
 PGM_SIZE_SPLIT_12G_TIME_MAX_GAP_SEC="${PGM_SIZE_SPLIT_12G_TIME_MAX_GAP_SEC:-2400}"
-# GoPro7 (camera name contains GOPRO7): ~4 GB chapters often ~6:49.
+# GoPro cameras (7, 10, …): ~4 GB chapters often ~6:49 (409s).
 PGM_GOPRO7_SIZE_MIN_BYTES=$PGM_SIZE_SPLIT_4G_MIN_BYTES
 PGM_GOPRO7_SIZE_MAX_BYTES=$PGM_SIZE_SPLIT_4G_MAX_BYTES
 PGM_GOPRO7_DURATION_MIN_SEC="${PGM_GOPRO7_DURATION_MIN_SEC:-380}"
@@ -1746,6 +1747,10 @@ size_split_tier_for_file() {
 
 gopro_camera_is_gopro7() {
   [[ "$1" == *GOPRO7* ]]
+}
+
+gopro_camera_uses_4gb_chapter_duration() {
+  [[ "$1" == *GOPRO* ]]
 }
 
 gopro7_size_in_chapter_range() {
@@ -1778,7 +1783,7 @@ duration_too_short_for_full_size_split() {
 
 # Full segment at a size tier (4 or 12); reject only clearly invalid durations.
 is_full_size_split_segment_at_tier() {
-  local f="$1" tier="$2" sz dur base cam="" gp7=0
+  local f="$1" tier="$2" sz dur base cam="" gopro_chap=0
   base="${f##*/}"
   sz=$(file_size_bytes "$f")
   dur=$(ffprobe_duration_seconds "$f" 2>/dev/null) || dur=""
@@ -1793,8 +1798,8 @@ is_full_size_split_segment_at_tier() {
       ;;
     4)
       cam=$(gopro_camera_from_basename "$base" 2>/dev/null) || cam=
-      gopro_camera_is_gopro7 "$cam" && gp7=1
-      if (( gp7 )); then
+      gopro_camera_uses_4gb_chapter_duration "$cam" && gopro_chap=1
+      if (( gopro_chap )); then
         if gopro7_size_in_chapter_range "$sz"; then
           if [[ -n "$dur" ]]; then
             duration_in_gopro7_chapter_range "$dur" && return 0
@@ -1825,7 +1830,7 @@ is_full_size_split_segment() {
 }
 
 is_partial_size_split_segment_at_tier() {
-  local f="$1" tier="$2" sz dur base cam="" gp7=0
+  local f="$1" tier="$2" sz dur base cam="" gopro_chap=0
   base="${f##*/}"
   sz=$(file_size_bytes "$f")
   dur=$(ffprobe_duration_seconds "$f" 2>/dev/null) || dur=""
@@ -1837,8 +1842,8 @@ is_partial_size_split_segment_at_tier() {
       ;;
     4)
       cam=$(gopro_camera_from_basename "$base" 2>/dev/null) || cam=
-      gopro_camera_is_gopro7 "$cam" && gp7=1
-      if (( gp7 )); then
+      gopro_camera_uses_4gb_chapter_duration "$cam" && gopro_chap=1
+      if (( gopro_chap )); then
         (( sz < PGM_GOPRO7_SIZE_MIN_BYTES )) && return 0
         if [[ -n "$dur" ]] && ! duration_in_gopro7_chapter_range "$dur" \
           && duration_too_short_for_full_size_split "$dur" 4; then
@@ -2069,8 +2074,8 @@ print_size_split_near_miss_hint() {
   done
   echo "$(pgm_ts) Note: ${#cand[@]} same-camera clips look like size-splits but were not grouped."
   if [[ -n "$first_fail" ]]; then
-    if [[ "$first_cam" == *GOPRO7* ]]; then
-      echo "$(pgm_ts)       Example: ${first_fail} duration ${first_dur}s (GoPro7 ~4 GB: ~6:49, ${PGM_GOPRO7_DURATION_MIN_SEC}-${PGM_GOPRO7_DURATION_MAX_SEC}s)."
+    if [[ "$first_cam" == *GOPRO* ]]; then
+      echo "$(pgm_ts)       Example: ${first_fail} duration ${first_dur}s (GoPro ~4 GB: ~6:49, ${PGM_GOPRO7_DURATION_MIN_SEC}-${PGM_GOPRO7_DURATION_MAX_SEC}s)."
     else
       echo "$(pgm_ts)       Example: ${first_fail} duration ${first_dur}s (full ~4 GB chapter: duration not below ${PGM_SIZE_SPLIT_DURATION_REJECT_BELOW_SEC}s; ~12 GB: not below ${PGM_SIZE_SPLIT_12G_DURATION_REJECT_BELOW_SEC}s)."
     fi
@@ -2361,7 +2366,7 @@ group_files_to_array() {
 
 print_size_split_group_hint() {
   local cam_sample="$1"
-  if [[ "$cam_sample" == *GOPRO7* ]]; then
+  if [[ "$cam_sample" == *GOPRO* ]]; then
     echo "Probable size-split recordings (no _part_XX; same camera + session label; ~4 GB / ~6:49 or ~12 GB chapters; leading timestamp may differ per file):"
   else
     echo "Probable size-split recordings (no _part_XX; same camera + session label; sequential ~4 GB or ~12 GB chapters; leading timestamp may differ per file):"
@@ -3006,17 +3011,17 @@ fi
 
 if (( DO_UPDATE )); then
   update_mp4_merge
-  kod_powrotu=$?
+  return_code=$?
   print_pgm_timing_summary
   . /root/bin/_script_footer.sh
-  exit "${kod_powrotu}"
+  exit "${return_code}"
 fi
 
 do_merge
-kod_powrotu=$?
+return_code=$?
 
 print_pgm_timing_summary
 
 . /root/bin/_script_footer.sh
 
-exit "${kod_powrotu}"
+exit "${return_code}"

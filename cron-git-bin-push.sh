@@ -2,7 +2,7 @@
 
 # 2026.06.02 - v. 0.4 - add -h/--help, -v/--version, --no_startup_delay (parsed before header)
 # 2026.06.02 - v. 0.3 - ping Healthchecks only when HEALTHCHECK_URL is set (avoid silent curl to empty URL)
-# 2023.02.28 - v. 0.2 - curl with kod_powrotu
+# 2023.02.28 - v. 0.2 - curl with return_code
 # 2023.02.17 - v. 0.1 - initial release
 
 print_version_banner() {
@@ -57,17 +57,17 @@ if [[ -f "$HEALTHCHECKS_FILE" ]]; then
 fi
 
 HC_message=$(/root/github-bin/git-push.sh batch 2>&1 ; exit $?)
-kod_powrotu=$?
+return_code=$?
 
 if (( script_is_run_interactively ));then
    echo "${HC_message}"
 fi
 
 if [[ -n "${HEALTHCHECK_URL:-}" ]]; then
-  echo "$HC_message" | /usr/bin/curl -fsS -m 100 --retry 10 --retry-delay 10 --data-binary @- -o /dev/null "${HEALTHCHECK_URL}/${kod_powrotu}" 2>/dev/null
+  echo "$HC_message" | /usr/bin/curl -fsS -m 100 --retry 10 --retry-delay 10 --data-binary @- -o /dev/null "${HEALTHCHECK_URL}/${return_code}" 2>/dev/null
 fi
 
-exit "${kod_powrotu}"
+exit "${return_code}"
 
 #####
 # new crontab entry

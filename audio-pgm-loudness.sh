@@ -542,7 +542,7 @@ if ! command -v ffmpeg >/dev/null 2>&1; then
   else
     echo "ERROR: ffmpeg is required but was not found in PATH." >&2
     echo "Try: ffmpeg-install.sh   or install the ffmpeg package." >&2
-    kod_powrotu=1
+    return_code=1
     exit 1
   fi
 fi
@@ -723,7 +723,7 @@ loudness_on_interrupt() {
     echo -ne "${tcScrTitleStart}${0}${tcScrTitleEnd}"
   fi
   loudness_window_title_restore
-  kod_powrotu=130
+  return_code=130
   exit 130
 }
 
@@ -753,7 +753,7 @@ loudness_wants_per_file_prompts() {
 loudness_quit_now() {
   LOUDNESS_STOPPED_BY_USER=yes
   echo "Quit requested."
-  kod_powrotu=0
+  return_code=0
   exit 0
 }
 
@@ -1110,7 +1110,7 @@ run_print_cli_only_session() {
   if (( ${#MEDIA_FILES[@]} == 0 )); then
     echo "No supported audio/video files found under $(pwd) ($(loudness_scan_scope_label))."
     echo "Extensions: ${MEDIA_EXTENSIONS[*]}"
-    kod_powrotu=0
+    return_code=0
     exit 0
   fi
 
@@ -1140,7 +1140,7 @@ run_print_cli_only_session() {
 
   if [[ "$NORMALIZE_MODE" == none || -z "$NORMALIZE_MODE" ]]; then
     cli_print_built_command
-    kod_powrotu=0
+    return_code=0
     exit 0
   fi
 
@@ -1176,12 +1176,12 @@ run_print_cli_only_session() {
   loudness_print_cli_only_section 'Per-file normalize'
   collect_normalize_choices_cli_only || rc=$?
   if (( rc == 2 )); then
-    kod_powrotu=130
+    return_code=130
     exit 130
   fi
 
   cli_print_built_command
-  kod_powrotu=0
+  return_code=0
   exit 0
 }
 
@@ -1738,10 +1738,10 @@ loudness_run_exit_label() {
     printf '%s' 'quit ([Q])'
     return 0
   fi
-  case "${kod_powrotu:-0}" in
+  case "${return_code:-0}" in
     0) printf '%s' 'completed' ;;
     130) printf '%s' 'interrupted' ;;
-    *) printf '%s' "exit code ${kod_powrotu}" ;;
+    *) printf '%s' "exit code ${return_code}" ;;
   esac
 }
 
@@ -3171,7 +3171,7 @@ prompt_startup_interactive() {
       else
         echo 'Scan skipped.'
       fi
-      kod_powrotu=0
+      return_code=0
       exit 0
       ;;
   esac
@@ -3805,7 +3805,7 @@ fi
 
 if (( PRINT_CLI_ONLY )) && ! loudness_is_interactive; then
   echo 'ERROR: --print-cli-only requires an interactive terminal.' >&2
-  kod_powrotu=1
+  return_code=1
   exit 1
 fi
 
@@ -3823,21 +3823,21 @@ if (( ${#CLI_FILES[@]} == 0 )); then
     LOUDNESS_SCAN_SCOPE=current
   fi
   if ! normalize_loudness_scan_scope; then
-    kod_powrotu=1
+    return_code=1
     exit 1
   fi
 fi
 
 MEDIA_FILES=()
 if ! collect_media_files; then
-  kod_powrotu=1
+  return_code=1
   exit 1
 fi
 
 if (( ${#MEDIA_FILES[@]} == 0 )); then
   echo "No supported audio/video files found under $(pwd) ($(loudness_scan_scope_label))."
   echo "Extensions: ${MEDIA_EXTENSIONS[*]}"
-  kod_powrotu=0
+  return_code=0
   exit 0
 fi
 
@@ -3877,12 +3877,12 @@ scan_media_files_with_report || scan_rc=$?
 
 if (( scan_rc == 1 )); then
   echo 'Scan reported error(s); normalization skipped.' >&2
-  kod_powrotu=1
+  return_code=1
   exit 1
 fi
 
 if (( SCAN_ONLY )); then
-  kod_powrotu=0
+  return_code=0
   exit 0
 fi
 
@@ -3892,17 +3892,17 @@ fi
 
 if (( ! LOUDNESS_OFFER_NORMALIZE )); then
   if (( scan_rc >= 2 )); then
-    kod_powrotu=1
+    return_code=1
     exit 1
   fi
-  kod_powrotu=0
+  return_code=0
   exit 0
 fi
 
 loudness_apply_classes_after_scan
 
 if (( ${#NORMALIZE_FILES[@]} == 0 )); then
-  kod_powrotu=0
+  return_code=0
   exit 0
 fi
 
@@ -3915,7 +3915,7 @@ if [[ -z "$NORMALIZE_MODE" ]]; then
 fi
 
 if [[ "$NORMALIZE_MODE" == none || -z "$NORMALIZE_MODE" ]]; then
-  kod_powrotu=1
+  return_code=1
   exit 1
 fi
 
@@ -3923,7 +3923,7 @@ loudness_filter_queue_for_standard_mode
 
 if (( ${#NORMALIZE_FILES[@]} == 0 )); then
   echo 'No files remain in the normalize queue after applying mode and class filters.'
-  kod_powrotu=0
+  return_code=0
   exit 0
 fi
 
@@ -3933,7 +3933,7 @@ loudness_filter_queue_for_standard_mode
 
 if (( ${#NORMALIZE_FILES[@]} == 0 )); then
   echo "No files queued for normalization."
-  kod_powrotu=0
+  return_code=0
   exit 0
 fi
 
@@ -3941,7 +3941,7 @@ sort_normalize_files_queue
 
 if (( ${#NORMALIZE_FILES[@]} == 0 )); then
   echo 'ERROR: Normalize queue is empty after sorting — cannot continue.' >&2
-  kod_powrotu=1
+  return_code=1
   exit 1
 fi
 
@@ -3951,19 +3951,19 @@ fi
 
 if ! loudness_confirm_normalize_disk_space; then
   echo 'Normalization cancelled (disk space check).' >&2
-  kod_powrotu=1
+  return_code=1
   exit 1
 fi
 
 if normalize_candidate_files; then
-  kod_powrotu=0
+  return_code=0
 else
   norm_rc=$?
   if (( norm_rc == 2 )); then
-    kod_powrotu=130
+    return_code=130
   else
-    kod_powrotu=1
+    return_code=1
   fi
 fi
 
-exit "${kod_powrotu:-0}"
+exit "${return_code:-0}"

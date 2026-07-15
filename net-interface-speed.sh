@@ -263,9 +263,9 @@ echo "Source: /sys/class/net/*/speed (Mb/s); ethtool fallback when needed"
 echo
 
 if ! print_interface_speed_table; then
-  kod_powrotu=1
+  return_code=1
 else
-  kod_powrotu=0
+  return_code=0
 fi
 
-exit "${kod_powrotu:-0}"
+exit "${return_code:-0}"

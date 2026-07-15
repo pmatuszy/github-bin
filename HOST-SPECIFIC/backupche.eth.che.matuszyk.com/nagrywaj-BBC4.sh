@@ -51,9 +51,9 @@ while (( $secs_to_midnight > $ile_sek_przed_polnoca_nie_nagrywamy_juz )) && (( $
   echo "ffmpeg command line -hide_banner -loglevel quiet -t "${secs_nagrywania}" -i \"$SKAD\" \"$DOKAD\"" | tee -a $log_file
   ffmpeg -hide_banner -loglevel quiet -t "${secs_nagrywania}" -i "$SKAD" "$DOKAD" 2>&1
 
-  kod_powrotu=$?
+  return_code=$?
   chown "${wlasciciel_pliku}" "${DOKAD}" 2>/dev/null
-  echo "`date '+%Y.%m.%d__%H:%M:%S'` exit code is $kod_powrotu" | tee -a $log_file
+  echo "`date '+%Y.%m.%d__%H:%M:%S'` exit code is $return_code" | tee -a $log_file
   secs_to_midnight=$((($(date -d "tomorrow 00:00" +%s)-$(date +%s))))
   echo "3. `date '+%Y.%m.%d__%H:%M:%S'` (na koncu petli) secs_to_midnight = $secs_to_midnight" | tee -a $log_file
   sleep ${opoznienie_miedzy_wywolaniami} # opozniamy bo jak sa problemy z siecia, to by nie startowac od razu z nastepna proba...

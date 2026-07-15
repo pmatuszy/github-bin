@@ -114,14 +114,14 @@ fi
 
 . /root/bin/_script_header.sh "${HEADER_EXTRA_ARGS[@]}"
 
-kod_powrotu=1
+return_code=1
 
 if ! type -fP curl &>/dev/null; then
   echo
   echo "(PGM) curl not found; install curl to use this script."
   echo
   . /root/bin/_script_footer.sh
-  exit "${kod_powrotu}"
+  exit "${return_code}"
 fi
 
 if ! _ip_fetch; then
@@ -129,10 +129,10 @@ if ! _ip_fetch; then
   echo "(PGM) Could not get public IP (all endpoints failed or timed out)."
   echo
   . /root/bin/_script_footer.sh
-  exit "${kod_powrotu}"
+  exit "${return_code}"
 fi
 
-kod_powrotu=0
+return_code=0
 
 if [[ "${_ip_curl_family[*]}" == -6 ]]; then
   echo "(PGM) Public IPv6: ${_ip_out}"
@@ -143,4 +143,4 @@ echo
 
 . /root/bin/_script_footer.sh
 
-exit "${kod_powrotu}"
+exit "${return_code}"

@@ -14,9 +14,9 @@ fi
 m=$( echo "${SCRIPT_VERSION}";echo ;
      cat  $0|grep -e '# *20[123][0-9]'|head -n 1 | awk '{print "script version: " $5 " (dated "$2")"}' ; echo ; echo
      systemctl restart smartd --no-pager 2>&1
-     kod_powrotu=$?
+     return_code=$?
      sleep 5 ; echo ; echo "STATUS AFTER SERVICE RESTART: " ; echo
-     systemctl status smartd --no-pager ; echo ; exit $kod_powrotu )
+     systemctl status smartd --no-pager ; echo ; exit $return_code )
 wynik_po_restarcie=$?
 
 wiadomosc=""

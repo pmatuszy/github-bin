@@ -164,7 +164,7 @@ net_reneg_cleanup() {
 }
 trap net_reneg_cleanup EXIT
 
-kod_powrotu=0
+return_code=0
 
 # Wired ethernet only: sysfs device, ARPHRD_ETHER (1), not loopback/wifi/virtual.
 iface_is_physical_ethernet() {
@@ -412,7 +412,7 @@ run_worker() {
     echo "(PGM) All interface test(s) completed successfully."
   else
     echo "(PGM) Finished with ${fail} failure(s) or skip(s)."
-    kod_powrotu=1
+    return_code=1
   fi
 
   echo
@@ -479,7 +479,7 @@ interactive_main() {
   ensure_screen_bin || check_if_installed screen
 
   if ! print_physical_nic_table; then
-    kod_powrotu=1
+    return_code=1
     return 1
   fi
 
@@ -494,7 +494,7 @@ interactive_main() {
     done
     if (( found == 0 )); then
       echo "ERROR: -i ${CLI_IFACE} is not a physical ethernet interface on this host." >&2
-      kod_powrotu=1
+      return_code=1
       return 1
     fi
     WORKER_IFACES=( "$CLI_IFACE" )
@@ -515,13 +515,13 @@ interactive_main() {
     return 0
   fi
 
-  launch_screen_worker || kod_powrotu=1
+  launch_screen_worker || return_code=1
 }
 
 if (( RUN_WORKER == 1 )); then
   run_worker
-  exit "${kod_powrotu}"
+  exit "${return_code}"
 fi
 
 interactive_main
-exit "${kod_powrotu}"
+exit "${return_code}"

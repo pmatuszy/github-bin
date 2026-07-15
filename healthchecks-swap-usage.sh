@@ -3,7 +3,7 @@
 # 2026.05.26 - user-facing messages translated from Polish to English
 # 2025.10.27 - v. 0.71- zmiana limitu MAX_DOPUSZCZALNA_ZAJETOSC_SWAP 950 ==> 1500
 # 2025.10.22 - v. 0.7 - zmiana limitu MAX_DOPUSZCZALNA_ZAJETOSC_SWAP 600 ==> 950
-# 2023.02.28 - v. 0.6 - curl with kod_powrotu
+# 2023.02.28 - v. 0.6 - curl with return_code
 # 2023.01.03 - v. 0.5 - dodano random delay jesli skrypt jest wywolywany nieinteraktywnie
 # 2022.07.01 - v. 0.4 - dodalem trimowanie swapa mimo, ze nie przekracza limitu, ale jest mimo wszystko troche juz jego zaalokowanego
 #                       w ten sposob swap jest zwalniany ale nie jest generowany alert do healthchecka
@@ -81,13 +81,13 @@ m=$( echo "${SCRIPT_VERSION}";echo ;
      fi
     )
 
-kod_powrotu=$?
+return_code=$?
 
-/usr/bin/curl -fsS -m 100 --retry 10 --retry-delay 10 --data-raw "$m" -o /dev/null "$HEALTHCHECK_URL"/${kod_powrotu} 2>/dev/null
+/usr/bin/curl -fsS -m 100 --retry 10 --retry-delay 10 --data-raw "$m" -o /dev/null "$HEALTHCHECK_URL"/${return_code} 2>/dev/null
 
 . /root/bin/_script_footer.sh
 
-exit ${kod_powrotu}
+exit ${return_code}
 
 ######
 # template crontab entry:

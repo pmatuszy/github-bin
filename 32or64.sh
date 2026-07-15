@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # 2026.06.02 - v. 0.4 - add --no_startup_delay option (parsed before header)
-# 2026.04.22 - v. 0.3 - help/version; validate getconf; show uname -m/s; optional dpkg arch; kod_powrotu
+# 2026.04.22 - v. 0.3 - help/version; validate getconf; show uname -m/s; optional dpkg arch; return_code
 # 2023.09.13 - v. 0.2 - added invocation of script_header and script_footer
 # 2022.12.02 - v. 0.1 - inicjalna wersja skryptu
 
@@ -50,15 +50,15 @@ done
 
 . /root/bin/_script_header.sh "${HEADER_EXTRA_ARGS[@]}"
 
-kod_powrotu=0
+return_code=0
 
 if ! type -fP getconf &>/dev/null; then
   echo
   echo "(PGM) getconf not found (install libc-bin or similar)."
   echo
-  kod_powrotu=1
+  return_code=1
   . /root/bin/_script_footer.sh
-  exit "${kod_powrotu}"
+  exit "${return_code}"
 fi
 
 _bits=$(getconf LONG_BIT 2>/dev/null) || _bits=
@@ -66,9 +66,9 @@ if [[ -z "$_bits" ]] || ! [[ "$_bits" =~ ^[0-9]+$ ]]; then
   echo
   echo "(PGM) getconf LONG_BIT failed or returned an unexpected value."
   echo
-  kod_powrotu=1
+  return_code=1
   . /root/bin/_script_footer.sh
-  exit "${kod_powrotu}"
+  exit "${return_code}"
 fi
 
 echo
@@ -82,4 +82,4 @@ echo
 
 . /root/bin/_script_footer.sh
 
-exit "${kod_powrotu}"
+exit "${return_code}"

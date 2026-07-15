@@ -263,18 +263,18 @@ HC_MESSAGE=$(
   echo "SUMMARY: found=$found transferred=$transferred deleted=$deleted failed=$failed"
   exit "$failed"
 )
-kod_powrotu=$?
+return_code=$?
 
 if (( script_is_run_interactively == 1 )); then
   echo "$HC_MESSAGE"
-  echo "exit code = $kod_powrotu"
+  echo "exit code = $return_code"
 fi
 
 # nothing found and nothing failed -> silent (no healthcheck ping), like the old rsync-23 no-op
 if echo "$HC_MESSAGE" | grep -Eq "^SUMMARY: found=0 transferred=0 deleted=0 failed=0$"; then
   echo > /dev/null
 else
-  echo "$HC_MESSAGE" | /usr/bin/curl -fsS -m 100 --retry 10 --retry-delay 10 --data-binary @- -o /dev/null "$HEALTHCHECK_URL"/$kod_powrotu 2>/dev/null
+  echo "$HC_MESSAGE" | /usr/bin/curl -fsS -m 100 --retry 10 --retry-delay 10 --data-binary @- -o /dev/null "$HEALTHCHECK_URL"/$return_code 2>/dev/null
 fi
 
-exit "$kod_powrotu"
+exit "$return_code"

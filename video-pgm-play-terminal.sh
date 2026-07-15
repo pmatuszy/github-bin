@@ -145,14 +145,14 @@ video_pgm_resolve_tct_dimensions() {
   if ! command -v ffprobe >/dev/null 2>&1; then
     echo "ERROR: ffprobe is required to compute the missing tct dimension." >&2
     echo "Install ffmpeg/ffprobe, or pass both --width and --height." >&2
-    kod_powrotu=1
+    return_code=1
     exit 1
   fi
 
   read -r vw vh < <(video_pgm_probe_video_dimensions "$MEDIA_FILE") || {
     echo "ERROR: could not read video dimensions from: $MEDIA_FILE" >&2
     echo "Pass both --width and --height for audio-only files." >&2
-    kod_powrotu=1
+    return_code=1
     exit 1
   }
 
@@ -386,25 +386,25 @@ MPV_BIN="${MPV_BIN:-mpv}"
 if ! command -v "$MPV_BIN" >/dev/null 2>&1; then
   echo "ERROR: mpv is required but was not found (MPV_BIN=${MPV_BIN})." >&2
   echo "Try: apt install mpv   or set MPV_BIN=/path/to/mpv" >&2
-  kod_powrotu=1
+  return_code=1
   exit 1
 fi
 
 if [[ ! -e "$MEDIA_FILE" ]]; then
   echo "ERROR: file not found: $MEDIA_FILE" >&2
-  kod_powrotu=1
+  return_code=1
   exit 1
 fi
 
 if [[ ! -f "$MEDIA_FILE" ]]; then
   echo "ERROR: not a regular file: $MEDIA_FILE" >&2
-  kod_powrotu=1
+  return_code=1
   exit 1
 fi
 
 if [[ ! -r "$MEDIA_FILE" ]]; then
   echo "ERROR: file is not readable: $MEDIA_FILE" >&2
-  kod_powrotu=1
+  return_code=1
   exit 1
 fi
 
@@ -445,7 +445,7 @@ if (( TCT_AUTODETECT )); then
 fi
 
 "$MPV_BIN" "${MPV_ARGS[@]}" -- "$MEDIA_FILE"
-kod_powrotu=$?
+return_code=$?
 
 . /root/bin/_script_footer.sh
-exit "$kod_powrotu"
+exit "$return_code"

@@ -14,7 +14,7 @@
 # 2023.02.10 - v. 1.1 - changed check_if_installed with the option to provide the package name to be installed
 # 2023.02.07 - v. 1.0 - added check_if_installed function and checks for figlet and boxes utils
 # 2023.01.25 - v. 0.9 - added script_is_run_interactively env variable
-# 2023.01.24 - v. 0.8 - added kod_powrotu environment variable
+# 2023.01.24 - v. 0.8 - added return_code environment variable
 # 2023.01.15 - v. 0.7 - change $0 to basename $0 to have a shorter line
 # 2022.10.27 - v. 0.6 - but fix for "tcScrTitleEnd" variable
 # 2022.05.16 - v. 0.5 - small bug fix with STY unbound variable
@@ -175,7 +175,7 @@ fi
 trap ctrl_c INT
 
 export HEALTHCHECKS_FILE=/root/bin/healthchecks-ids.txt
-export kod_powrotu=123      # bezsensowny jakis, ale wazne, by zmienna byla zdefiniowana
+export return_code=123      # default placeholder; scripts set real exit code
 export RANDOM_DELAY=0
 export MAX_RANDOM_DELAY_IN_SEC=${MAX_RANDOM_DELAY_IN_SEC:-50}
 

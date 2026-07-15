@@ -10,18 +10,18 @@ if [[ "$(uname -s)" != Linux ]]; then
   echo
   echo "(PGM) This script supports Linux only (uname -s=$(uname -s))."
   echo
-  kod_powrotu=1
+  return_code=1
   . /root/bin/_script_footer.sh
-  exit "${kod_powrotu}"
+  exit "${return_code}"
 fi
 
 if [ "$(id -u)" -ne 0 ]; then
   echo
   echo "(PGM) VeraCrypt mount requires root."
   echo
-  kod_powrotu=1
+  return_code=1
   . /root/bin/_script_footer.sh
-  exit "${kod_powrotu}"
+  exit "${return_code}"
 fi
 
 check_if_installed veracrypt
@@ -31,9 +31,9 @@ if [ -z "${VERACRYPT_BIN}" ]; then
   echo
   echo "(PGM) I can't find veracrypt utility... exiting ..."
   echo
-  kod_powrotu=1
+  return_code=1
   . /root/bin/_script_footer.sh
-  exit "${kod_powrotu}"
+  exit "${return_code}"
 fi
 
 if (( $# != 2 )); then
@@ -41,9 +41,9 @@ if (( $# != 2 )); then
   echo "(PGM) wrong # of command line arguments... (must be exactly 2)"
   echo "$0 volume_path mount_directory"
   echo
-  kod_powrotu=1
+  return_code=1
   . /root/bin/_script_footer.sh
-  exit "${kod_powrotu}"
+  exit "${return_code}"
 fi
 
 export VC_VOLUME="$1"
@@ -54,9 +54,9 @@ if [[ ! -e "${VC_VOLUME}" ]]; then
   echo "(PGM) volume not found: ${VC_VOLUME}"
   echo "$0 volume_path mount_directory"
   echo
-  kod_powrotu=2
+  return_code=2
   . /root/bin/_script_footer.sh
-  exit "${kod_powrotu}"
+  exit "${return_code}"
 fi
 
 mkdir -p "${VC_MOUNT}"
@@ -67,9 +67,9 @@ if mountpoint -q "${VC_MOUNT}"; then
   echo
   df -hP "${VC_MOUNT}"
   echo
-  kod_powrotu=0
+  return_code=0
   . /root/bin/_script_footer.sh
-  exit "${kod_powrotu}"
+  exit "${return_code}"
 fi
 
 echo
@@ -81,19 +81,19 @@ echo
 
 echo -n "${PASSWD}" | "${VERACRYPT_BIN}" -t --mount "${VC_VOLUME}" "${VC_MOUNT}" \
   --pim=0 --keyfiles= --protect-hidden=no
-kod_powrotu=$?
+return_code=$?
 unset PASSWD
 
-if (( kod_powrotu == 0 )); then
+if (( return_code == 0 )); then
   echo
   df -hP "${VC_MOUNT}"
   echo
 else
   echo
-  echo "(PGM) veracrypt mount failed (exit ${kod_powrotu})."
+  echo "(PGM) veracrypt mount failed (exit ${return_code})."
   echo
 fi
 
 . /root/bin/_script_footer.sh
 
-exit "${kod_powrotu}"
+exit "${return_code}"

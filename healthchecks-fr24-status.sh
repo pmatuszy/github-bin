@@ -42,16 +42,16 @@ m=$( echo "${SCRIPT_VERSION}";echo
   fi
 )
 
-kod_powrotu=$?
+return_code=$?
 
 if [[ -n "${HEALTHCHECK_URL}" ]]; then
   /usr/bin/curl -fsS -m 10 --retry 5 --retry-delay 5 \
-    --data-raw "$m" -o /dev/null "${HEALTHCHECK_URL}/${kod_powrotu}" 2>/dev/null
+    --data-raw "$m" -o /dev/null "${HEALTHCHECK_URL}/${return_code}" 2>/dev/null
 fi
 
 . /root/bin/_script_footer.sh
 
-exit $kod_powrotu
+exit $return_code
 
 #####
 # new crontab entry (example — install with crontab -e, not as shell):

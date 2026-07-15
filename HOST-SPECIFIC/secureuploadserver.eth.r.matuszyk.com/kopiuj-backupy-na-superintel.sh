@@ -84,8 +84,8 @@ echo "`date '+%Y.%m.%d %H:%M:%S'` - done, now running verification"
 echo
 echo -n "                      "
 sha512sum --check "${plik}.sha512"
-kod_powrotu=$?
-echo "`date '+%Y.%m.%d %H:%M:%S'` - exit code = $kod_powrotu"
+return_code=$?
+echo "`date '+%Y.%m.%d %H:%M:%S'` - exit code = $return_code"
 echo
 
 echo "`date '+%Y.%m.%d %H:%M:%S'` - zaczynam mv na zdalny serwer"
@@ -94,19 +94,19 @@ echo "*************************************"
 
 rsync -ah --progress ${plik} ${plik}.sha512 ${destination}
 echo "*************************************"
-kod_powrotu=$?
-echo "`date '+%Y.%m.%d %H:%M:%S'` - exit code = $kod_powrotu"
+return_code=$?
+echo "`date '+%Y.%m.%d %H:%M:%S'` - exit code = $return_code"
 
 echo "`date '+%Y.%m.%d %H:%M:%S'` - done, now verifying files on remote server"
 echo "                      sha512sum --check ${destination}/${plik}.sha512"
 echo
 echo -n "                      "
 sha512sum --check "${destination}/${plik}.sha512"
-kod_powrotu=$?
-echo "`date '+%Y.%m.%d %H:%M:%S'` - exit code = $kod_powrotu"
+return_code=$?
+echo "`date '+%Y.%m.%d %H:%M:%S'` - exit code = $return_code"
 echo
 
-if (( $kod_powrotu != 0 )); then
+if (( $return_code != 0 )); then
   echo ; echo BLAD ; echo
   exit 2
 else

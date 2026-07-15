@@ -17,7 +17,7 @@ check_if_installed boxes
 blad=1
 how_many_retries=10
 retry_delay=15
-kod_powrotu=xxx
+return_code=xxx
 
 while (( $blad != 0 && $how_many_retries != 0 )) ; do
   m=$( echo "${SCRIPT_VERSION}";echo
@@ -34,11 +34,11 @@ while (( $blad != 0 && $how_many_retries != 0 )) ; do
 
     exit $exit_code
     )
-  kod_powrotu=$?
+  return_code=$?
   if [ $script_is_run_interactively == 1 ]; then
     echo "$m"
   fi
-  if (( $kod_powrotu == 0 ));then
+  if (( $return_code == 0 ));then
      blad=0
      break
   else
@@ -46,11 +46,11 @@ while (( $blad != 0 && $how_many_retries != 0 )) ; do
   fi
 done
 
-/usr/bin/curl -fsS -m 100 --retry 10 --retry-delay 10 --data-raw "$m" -o /dev/null "$HEALTHCHECK_URL"/${kod_powrotu} 2>/dev/null
+/usr/bin/curl -fsS -m 100 --retry 10 --retry-delay 10 --data-raw "$m" -o /dev/null "$HEALTHCHECK_URL"/${return_code} 2>/dev/null
 
 . /root/bin/_script_footer.sh
 
-exit ${kod_powrotu}
+exit ${return_code}
 
 ####################
 

@@ -10,7 +10,7 @@
 # 2023.03.13 - v. 0.6 - bugfix for a number of known kesy (!= changed to < )
 # 2023.03.12 - v. 0.5 - added possibility to load more keys (variable klucze)
 # 2023.03.03 - v. 0.4 - added sleep 1 as sometimes checking keychain shows nothing...
-# 2023.02.28 - v. 0.3 - curl with kod_powrotu
+# 2023.02.28 - v. 0.3 - curl with return_code
 # 2023.02.16 - v. 0.2 - major overhaul of the script 
 # 2023.02.08 - v. 0.1 - initial release
 
@@ -98,17 +98,17 @@ HC_message=$(
   echo
   exit $warnings_and_errors
 )
-kod_powrotu=$?
+return_code=$?
 
 if (( script_is_run_interactively )) ;then
   echo "$HC_message"
 fi
 
-echo "$HC_message" | /usr/bin/curl -fsS -m 100 --retry 10 --retry-delay 10 --data-binary @- -o /dev/null "$HEALTHCHECK_URL"/${kod_powrotu} 2>/dev/null
+echo "$HC_message" | /usr/bin/curl -fsS -m 100 --retry 10 --retry-delay 10 --data-binary @- -o /dev/null "$HEALTHCHECK_URL"/${return_code} 2>/dev/null
 
 . /root/bin/_script_footer.sh
 
-exit ${kod_powrotu}
+exit ${return_code}
 
 #####
 # new crontab entry

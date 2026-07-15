@@ -64,19 +64,19 @@ HC_MESSAGE=$(
    let final_exit_code=exit_code_1+exit_code_2+exit_code_3
    exit $final_exit_code
    )
-kod_powrotu=$?
+return_code=$?
 
 if (( $script_is_run_interactively == 1 )); then
   echo "$HC_MESSAGE"
-  echo "exit code = $kod_powrotu"
+  echo "exit code = $return_code"
 fi
 
 # if rsync exit code is 23 and no files are transferred / created  we treat it as successful run
-if (( $kod_powrotu == 23 )) && (( $kod_1 == 0 )) &&  (( $kod_2 == 0 )) && (( $kod_3 == 0 )) ;then
+if (( $return_code == 23 )) && (( $kod_1 == 0 )) &&  (( $kod_2 == 0 )) && (( $kod_3 == 0 )) ;then
   # we do nothing here - we don't even run curl - if nothing was fetched we do not provide status (neither ok nor error)
   echo > /dev/null
 else
-  echo "$HC_MESSAGE" | /usr/bin/curl -fsS -m 100 --retry 10 --retry-delay 10 --data-binary @- -o /dev/null "$HEALTHCHECK_URL"/$kod_powrotu 2>/dev/null
+  echo "$HC_MESSAGE" | /usr/bin/curl -fsS -m 100 --retry 10 --retry-delay 10 --data-binary @- -o /dev/null "$HEALTHCHECK_URL"/$return_code 2>/dev/null
 fi
 
 . /root/bin/_script_footer.sh

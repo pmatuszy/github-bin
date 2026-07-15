@@ -61,7 +61,7 @@ TEMP_MESSAGE=$(
    exit $?
    )
 
-kod_powrotu=$?
+return_code=$?
 export number_of_spared_files=$(echo "$TEMP_MESSAGE" | egrep "^Preserving "| wc -l)
 export number_of_deleted_filed=$(echo "$TEMP_MESSAGE" | egrep "^Deleting "  | wc -l)
 
@@ -71,6 +71,6 @@ if (( $script_is_run_interactively == 1 )); then
   echo "$HC_MESSAGE"
 fi
 
-echo "$HC_MESSAGE" | /usr/bin/curl -fsS -m 100 --retry 10 --retry-delay 10 --data-binary @- -o /dev/null "$HEALTHCHECK_URL"/$kod_powrotu 2>/dev/null
+echo "$HC_MESSAGE" | /usr/bin/curl -fsS -m 100 --retry 10 --retry-delay 10 --data-binary @- -o /dev/null "$HEALTHCHECK_URL"/$return_code 2>/dev/null
 
 exit $?

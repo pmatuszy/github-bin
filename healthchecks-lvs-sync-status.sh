@@ -3,7 +3,7 @@
 # 2025.11.05 - v. 0.6 - added info about pvs, vgs, lvs
 # 2023.11.02 - v. 0.5 - bugfix: if no lvs present no error is returned
 # 2023.07.18 - v. 0.4 - bugfix: redirected 2> to stdout
-# 2023.02.28 - v. 0.3 - curl with kod_powrotu
+# 2023.02.28 - v. 0.3 - curl with return_code
 # 2023.01.03 - v. 0.2 - bug fixed - when no lvs'm the status should be ok
 # 2022.12.29 - v. 0.1 - initial release
 
@@ -48,13 +48,13 @@ m=$( echo "${SCRIPT_VERSION}";echo
        exit 1
      fi
    )
-kod_powrotu=$?
+return_code=$?
 
-/usr/bin/curl -fsS -m 10 --retry 5 --retry-delay 5 --data-raw "$m" -o /dev/null "$HEALTHCHECK_URL"/${kod_powrotu} 2>/dev/null
+/usr/bin/curl -fsS -m 10 --retry 5 --retry-delay 5 --data-raw "$m" -o /dev/null "$HEALTHCHECK_URL"/${return_code} 2>/dev/null
 
 . /root/bin/_script_footer.sh
 
-exit $kod_powrotu
+exit $return_code
 #####
 # new crontab entry
 

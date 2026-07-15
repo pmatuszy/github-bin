@@ -7,21 +7,21 @@
 
 . /root/bin/_script_header.sh
 
-kod_powrotu=1
+return_code=1
 
 if type -fP pm-suspend 2>&1 >/dev/null; then
   pm-suspend
-  kod_powrotu=$?
+  return_code=$?
 elif type -fP systemctl 2>&1 >/dev/null; then
   systemctl suspend
-  kod_powrotu=$?
+  return_code=$?
 else
   echo
   echo "(PGM) I can't find systemctl or pm-suspend utility... exiting ..."
   echo
-  kod_powrotu=1
+  return_code=1
 fi
 
 . /root/bin/_script_footer.sh
 
-exit ${kod_powrotu}
+exit ${return_code}

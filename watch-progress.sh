@@ -96,8 +96,8 @@ for c in "$@"; do _wp_add "$c"; done
 wait_delay="${WATCH_PROGRESS_WAIT_DELAY:-0.5}"
 
 progress --monitor-continuously "${WP_PROGRESS_ARGS[@]}" --wait --wait-delay "$wait_delay"
-kod_powrotu=$?
+return_code=$?
 
 . /root/bin/_script_footer.sh
 
-exit "${kod_powrotu}"
+exit "${return_code}"

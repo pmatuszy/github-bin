@@ -3,7 +3,7 @@
 # 2026.05.26 - user-facing messages translated from Polish to English
 # 2023.10.05 - v. 1.1 - added vgchange with 1s delay
 # 2023.03.27 - v. 1.0 - bugfix with fsck (instead of hardcoded /dev/mapper/encrypted_luks_device_encrypted.luks2 will use $1)
-# 2023.03.20 - v. 0.9 - bugfix with kod_powrotu
+# 2023.03.20 - v. 0.9 - bugfix with return_code
 # 2023.01.26 - v. 0.8 - added script version print
 # 2022.12.01 - v. 0.7 - zmieniona zrob_fsck na nowsza - i wymuszenie fsck -y
 # 2022.05.23 - v. 0.6 - dodane wywolanie healthchecka na koncu
@@ -41,10 +41,10 @@ else
   fsck      -C -M -R -T $1
 fi
 
-kod_powrotu=$?
-echo "fsck exit code: $kod_powrotu"
+return_code=$?
+echo "fsck exit code: $return_code"
 
-if (( $kod_powrotu != 0 ));then
+if (( $return_code != 0 ));then
   echo ; echo "... and once again fsck " ; echo
 
   if [ $(lsblk -no FSTYPE $1) == 'ext4' ];then

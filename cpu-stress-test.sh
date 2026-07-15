@@ -93,7 +93,7 @@ else
   echo "CPU stress on all cores until Ctrl-C (pass duration in seconds as \$1 or set STRESS_SECONDS)..."
   stress-ng "${STRESS_EXTRA[@]}"
 fi
-kod_powrotu=$?
+return_code=$?
 
 . /root/bin/_script_footer.sh
-exit "${kod_powrotu}"
+exit "${return_code}"

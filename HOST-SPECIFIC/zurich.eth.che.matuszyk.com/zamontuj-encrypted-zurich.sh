@@ -34,10 +34,10 @@ else
   fsck      -C -M -R -T $1
 fi
 
-kod_powrotu=$?
-echo "fsck exit code: $kod_powrotu (pass 1)"
+return_code=$?
+echo "fsck exit code: $return_code (pass 1)"
 
-if (( $kod_powrotu != 0 ));then
+if (( $return_code != 0 ));then
   echo
   echo ... and once again fsck
   echo

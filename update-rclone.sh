@@ -67,7 +67,7 @@ m=$( echo " "; echo "current date: `date '+%Y.%m.%d %H:%M'`" ; echo ;
      done
      exit "$last_rc"
    )
-kod_powrotu=$?
+return_code=$?
 
 wiadomosc=""
 if echo "$m" | grep -q "NOTICE: rclone is up to date"; then
@@ -78,12 +78,12 @@ else
 fi
 
 if [[ -n "${HEALTHCHECK_URL:-}" ]]; then
-  /usr/bin/curl -fsS -m 100 --retry 10 --retry-delay 10 --data-raw "$wiadomosc" -o /dev/null "$HEALTHCHECK_URL"/${kod_powrotu} 2>/dev/null
+  /usr/bin/curl -fsS -m 100 --retry 10 --retry-delay 10 --data-raw "$wiadomosc" -o /dev/null "$HEALTHCHECK_URL"/${return_code} 2>/dev/null
 fi
 
 . /root/bin/_script_footer.sh
 
-exit ${kod_powrotu}
+exit ${return_code}
 #####
 # new crontab entry (example — install with crontab -e, not as shell):
 #

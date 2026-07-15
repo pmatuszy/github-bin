@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # 2026.05.26 - user-facing messages translated from Polish to English
-# 2023.02.28 - v. 0.5 - curl with kod_powrotu
+# 2023.02.28 - v. 0.5 - curl with return_code
 # 2022.07.01 - v. 0.4 - dodalem wywolanie /root/bin/sprawdz-czy-encrypted-jest-zamontowany.sh na koncu
 # 2022.06.21 - v. 0.3 - dodalem obsluge healthcheckow
 # 2021.09.19 - v. 0.2 - dodana funkcja fsck, czytanie hasla do zmiennej
@@ -43,9 +43,9 @@ echo -n "$PASSWD" | cryptsetup luksOpen ${nazwa_pliku} encrypted_luks_file_in_ro
 zrob_fsck /dev/mapper/encrypted_luks_file_in_root
 
 mount -o noatime /dev/mapper/encrypted_luks_file_in_root /encrypted
-kod_powrotu=$?
+return_code=$?
 
-/usr/bin/curl -fsS -m 100 --retry 10 --retry-delay 10 -o /dev/null "$HEALTHCHECK_URL"/${kod_powrotu} 2>/dev/null
+/usr/bin/curl -fsS -m 100 --retry 10 --retry-delay 10 -o /dev/null "$HEALTHCHECK_URL"/${return_code} 2>/dev/null
 
 df -h /encrypted
 echo
@@ -53,4 +53,4 @@ echo
 /root/bin/sprawdz-czy-encrypted-jest-zamontowany.sh
 
 . /root/bin/_script_footer.sh
-exit ${kod_powrotu}
+exit ${return_code}

@@ -3,7 +3,7 @@
 # 2026.06.12 - v. 1.14 - partial files use .partial.mp3 (ffmpeg needs .mp3 extension); log ffmpeg stderr on failure
 # 2026.06.11 - v. 1.13 - write .part files in output directory, not /tmp
 # 2026.06.11 - v. 1.12 - disk check uses /bin/df when df is a shell function
-# 2026.06.11 - v. 1.11 - remove kod_powrotu; use exit_code only
+# 2026.06.11 - v. 1.11 - remove return_code; use exit_code only
 # 2026.06.11 - v. 1.10 - translate remaining Polish changelog comments; drop legacy SKAD/DOKAD env names
 # 2026.06.11 - v. 1.9 - rename Polish config/internal variables to English names
 # 2026.06.11 - v. 1.8 - flock, partial files, disk check, stream failover/probe, traps, summary

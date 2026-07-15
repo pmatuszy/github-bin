@@ -41,9 +41,9 @@ fi
 
 echo "Wszystkie pliki:"
 ssh "${SKAD_HOST}" "cd ${SKAD_DIR} 2>/dev/null || exit 1; /bin/ls -1tr"
-kod_powrotu=$?
+return_code=$?
 
-if (( $kod_powrotu != 0 ));then
+if (( $return_code != 0 ));then
   echo ; echo "Cannot change directory to $DOKAD on server $SKAD_HOST ...";echo
   exit 2
 fi

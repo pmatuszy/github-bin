@@ -9,7 +9,7 @@
 # 2023.10.12 - v. 0.8 - output is beautified
 # 2023.05.09 - v. 0.7 - added checking if the script is run on the physical machine
 # 2023.03.15 - v. 0.6 - bugfix: if ip address is 'unknown' then we raise the error
-# 2023.02.28 - v. 0.5 - curl with kod_powrotu
+# 2023.02.28 - v. 0.5 - curl with return_code
 # 2023.02.15 - v. 0.4 - bug fixes for wrong status (was OK instead of PROBLEM)
 # 2023.02.06 - v. 0.3 - small bug fix cos_nie_tak=0 after successful run is set now
 # 2023.02.05 - v. 0.2 - added how_many_retries retry_delay - sometimes retry helps to check statuses
@@ -183,19 +183,19 @@ m=$(
 
   )
 
-kod_powrotu=$?
+return_code=$?
 
 if (( $script_is_run_interactively == 1 )); then
   echo "$m"
 fi
 
 if [[ -n "${HEALTHCHECK_URL}" ]]; then
-  echo "$m" | /usr/bin/curl -fsS -m 100 --retry 10 --retry-delay 10 --data-binary @- -o /dev/null "$HEALTHCHECK_URL"/${kod_powrotu} 2>/dev/null
+  echo "$m" | /usr/bin/curl -fsS -m 100 --retry 10 --retry-delay 10 --data-binary @- -o /dev/null "$HEALTHCHECK_URL"/${return_code} 2>/dev/null
 fi
 
 . /root/bin/_script_footer.sh
 
-exit ${kod_powrotu}
+exit ${return_code}
 
 #####
 # new crontab entry (example — do not run as shell; install with crontab -e):
