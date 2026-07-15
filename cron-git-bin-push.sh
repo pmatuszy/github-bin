@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.07.15 - v. 0.7 - profile_location_dir from _script_header.sh
 # 2026.07.15 - v. 0.6 - repo path: ${profile_location_dir}/github/github-bin
 # 2026.07.15 - v. 0.5 - repo path: $HOME/github/github-bin (was /root/github-bin)
 # 2026.06.02 - v. 0.4 - add -h/--help, -v/--version, --no_startup_delay (parsed before header)
@@ -58,7 +59,6 @@ if [[ -f "$HEALTHCHECKS_FILE" ]]; then
   HEALTHCHECK_URL=$(grep "^$(basename "$0")" "$HEALTHCHECKS_FILE" | awk '{print $2}')
 fi
 
-: "${profile_location_dir:=$HOME}"
 HC_message=$("${profile_location_dir}/github/github-bin/git-push.sh" batch 2>&1 ; exit $?)
 return_code=$?
 

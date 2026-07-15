@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.07.15 - v. 1.4 - ensure ${profile_location_dir}/github/github-bin exists; cd with error check
 # 2026.07.15 - v. 1.3 - GIT_REPO_DIRECTORY: ${profile_location_dir}/github/github-bin
 # 2026.07.15 - v. 1.2 - GIT_REPO_DIRECTORY: $HOME/github/github-bin (was $HOME/github-bin)
 # 2026.06.02 - v. 1.1 - add -h/--help, -v/--version, --no_startup_delay (parsed before header)
@@ -73,7 +74,6 @@ if (( ! script_is_run_interactively ));then    # jesli nie interaktywnie, to chc
 fi
 
 export github_project_name=github-bin
-: "${profile_location_dir:=$HOME}"
 export GIT_REPO_DIRECTORY="${profile_location_dir}/github/${github_project_name}"
 
 export GIT_SSH_COMMAND='ssh -i $HOME/.ssh/id_SSH_ed25519_20230207_OpenSSH'
@@ -102,8 +102,7 @@ fi
 echo
 echo
 if [ "${p}" == 'y' -o  "${p}" == 'y' ]; then
-  cd $HOME
-  mkdir -p $HOME/bin
+  mkdir -p "${profile_location_dir}/github" "$HOME/bin"
 
   # sprawdzam, czy mam dostep do zdalnego repo
   echo git ls-remote git+ssh://git@github.com/pmatuszy/"${github_project_name}".git | boxes -s 70x3 -a c
@@ -113,7 +112,18 @@ if [ "${p}" == 'y' -o  "${p}" == 'y' ]; then
     exit 2
   fi
 
-  cd "${GIT_REPO_DIRECTORY}"
+  if [[ ! -d "${GIT_REPO_DIRECTORY}/.git" ]]; then
+    echo "git clone git+ssh://git@github.com/pmatuszy/${github_project_name}.git ${GIT_REPO_DIRECTORY}" | boxes -s 70x3 -a c
+    git clone git+ssh://git@github.com/pmatuszy/"${github_project_name}".git "${GIT_REPO_DIRECTORY}" || {
+      echo  ; echo ; echo "Clone into ${GIT_REPO_DIRECTORY} was not successful... EXITING" ; echo ; echo
+      exit 3
+    }
+  fi
+
+  cd "${GIT_REPO_DIRECTORY}" || {
+    echo  ; echo ; echo "Cannot cd to ${GIT_REPO_DIRECTORY}... EXITING" ; echo ; echo
+    exit 3
+  }
 
   echo git pull git+ssh://git@github.com/pmatuszy/"${github_project_name}".git | boxes -s 70x3 -a c
 
