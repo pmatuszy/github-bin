@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.07.15 - v. 1.8 - never use flat ${profile_root}/github-bin; self-detect repo from script path
 # 2026.07.15 - v. 1.7 - script header: changelog block + description block
 # 2026.07.15 - v. 1.6 - resolve repo from script dir; legacy /root/github-bin fallback
 # 2026.07.15 - v. 1.5 - bin/repo paths: ${profile_location_dir:-$HOME}; profile_location_dir unset → $HOME
@@ -24,7 +25,7 @@
 # git-pull.sh
 #
 # Pull github-bin from GitHub; install scripts to ${profile_location_dir:-$HOME}/bin.
-# Repo: ${profile_location_dir:-$HOME}/github/github-bin (see _git-bin-common.sh).
+# Repo: ${profile_location_dir:-$HOME}/github/github-bin only (never ${profile_root}/github-bin).
 #
 
 print_version_banner() {
@@ -85,8 +86,23 @@ fi
 export github_project_name=github-bin
 _GIT_BIN_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=_git-bin-common.sh
-. "${_GIT_BIN_DIR}/_git-bin-common.sh"
-git_bin_resolve_paths
+if [[ -f "${_GIT_BIN_DIR}/_git-bin-common.sh" ]]; then
+  . "${_GIT_BIN_DIR}/_git-bin-common.sh"
+  git_bin_resolve_paths
+else
+  # Bootstrap when helper not deployed yet: script inside clone is authoritative.
+  export profile_root="${profile_location_dir:-$HOME}"
+  if [[ -d "${_GIT_BIN_DIR}/.git" ]]; then
+    export GIT_REPO_DIRECTORY="${_GIT_BIN_DIR}"
+    if [[ "$(basename "$(dirname "${_GIT_BIN_DIR}")")" == "github" ]]; then
+      export profile_root="$(cd "${_GIT_BIN_DIR}/../.." && pwd -P)"
+    fi
+  else
+    export GIT_REPO_DIRECTORY="${profile_root}/github/${github_project_name}"
+  fi
+fi
+
+echo "(PGM) GIT_REPO_DIRECTORY=${GIT_REPO_DIRECTORY}"
 
 export GIT_SSH_COMMAND='ssh -i $HOME/.ssh/id_SSH_ed25519_20230207_OpenSSH'
 

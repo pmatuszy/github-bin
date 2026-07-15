@@ -1,5 +1,6 @@
 #!/bin/bash
  
+# 2026.07.15 - v. 0.7 - canonical repo path only; self-detect from script dir
 # 2026.07.15 - v. 0.6 - script header: changelog block + description block
 # 2026.07.15 - v. 0.5 - resolve repo from script dir; legacy path fallback
 # 2026.07.15 - v. 0.4 - GIT_REPO_DIRECTORY: ${profile_location_dir:-$HOME}/github/github-bin
@@ -19,8 +20,20 @@ set -o pipefail
 export github_project_name=github-bin
 _GIT_BIN_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=_git-bin-common.sh
-. "${_GIT_BIN_DIR}/_git-bin-common.sh"
-git_bin_resolve_paths
+if [[ -f "${_GIT_BIN_DIR}/_git-bin-common.sh" ]]; then
+  . "${_GIT_BIN_DIR}/_git-bin-common.sh"
+  git_bin_resolve_paths
+else
+  export profile_root="${profile_location_dir:-${HOME:-/root}}"
+  if [[ -d "${_GIT_BIN_DIR}/.git" ]]; then
+    export GIT_REPO_DIRECTORY="${_GIT_BIN_DIR}"
+    if [[ "$(basename "$(dirname "${_GIT_BIN_DIR}")")" == "github" ]]; then
+      export profile_root="$(cd "${_GIT_BIN_DIR}/../.." && pwd -P)"
+    fi
+  else
+    export GIT_REPO_DIRECTORY="${profile_root}/github/${github_project_name}"
+  fi
+fi
 
 echo
 cat  $0|grep -e '# *20[123][0-9]'|head -n 1 | awk '{print "script version: " $5 " (dated "$2")"}' ; echo ; echo
