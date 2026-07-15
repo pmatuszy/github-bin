@@ -1,5 +1,6 @@
 #!/bin/bash
  
+# 2026.07.15 - v. 1.8 - resolve repo from script dir; legacy path fallback
 # 2026.07.15 - v. 1.7 - GIT_REPO_DIRECTORY: ${profile_location_dir:-$HOME}/github/github-bin
 # 2026.07.15 - v. 1.6 - profile_location_dir from _script_header.sh
 # 2026.07.15 - v. 1.5 - GIT_REPO_DIRECTORY: ${profile_location_dir}/github/github-bin
@@ -78,8 +79,10 @@ if (( ! script_is_run_interactively ));then    # jesli nie interaktywnie, to chc
 fi
 
 export github_project_name=github-bin
-profile_root="${profile_location_dir:-$HOME}"
-export GIT_REPO_DIRECTORY="${profile_root}/github/${github_project_name}"
+_GIT_BIN_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=_git-bin-common.sh
+. "${_GIT_BIN_DIR}/_git-bin-common.sh"
+git_bin_resolve_paths
 export GIT_SSH_COMMAND='ssh -i $HOME/.ssh/id_SSH_ed25519_20230207_OpenSSH'
 
 if [ ! -d "${GIT_REPO_DIRECTORY}" ];then
