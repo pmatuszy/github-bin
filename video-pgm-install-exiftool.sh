@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 2026.07.15 - v. 1.8 - run_exiftool: use env unless it is a bash function (then /bin/env)
 # 2026.07.15 - v. 1.7 - run_exiftool: call /bin/env (not bare env — a bash function named env breaks -ver)
 # 2026.06.26 - v. 1.6 - run exiftool/perl with C.UTF-8 (or C) to avoid locale warnings on minimal systems
 # 2026.06.17 - v. 1.5 - tarball downloads from SourceForge (exiftool.org tar.gz returns 404)
@@ -99,10 +100,13 @@ EOF
 }
 
 run_exiftool() {
-    local lc
+    local lc env_cmd=env
     lc="$(exiftool_pick_locale)"
-    # Absolute path: some interactive shells define a bash function named env.
-    /bin/env LC_ALL="$lc" LANG="$lc" LANGUAGE= "$@"
+    # Some interactive shells define a bash function named env; use /bin/env then.
+    if [[ "$(type -t env 2>/dev/null || true)" == function ]]; then
+        env_cmd=/bin/env
+    fi
+    "$env_cmd" LC_ALL="$lc" LANG="$lc" LANGUAGE= "$@"
 }
 
 as_root_check() {
