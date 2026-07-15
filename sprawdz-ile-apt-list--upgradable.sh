@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.07.15 - v. 0.7 - fix fail-path message quoting; comment crontab examples for bash -n
 # 2026.05.26 - user-facing messages translated from Polish to English
 # 2025.11.13 - v. 0.6 - added while loop (with little help of ChatGPT)
 # 2023.10.14 - v. 0.5 - increased sleep delay from 100 to 600s
@@ -12,6 +13,8 @@
 
 if [ -f "$HEALTHCHECKS_FILE" ]; then
   HEALTHCHECK_URL=$(cat "$HEALTHCHECKS_FILE" | grep "^`basename $0`" | awk '{print $2}')
+else
+  HEALTHCHECK_URL=""
 fi
 
 check_if_installed curl
@@ -41,7 +44,7 @@ done
 
 # If still failing → exit 2 and notify healthchecks
 if (( blad != 0 )); then
-    m="echo "${SCRIPT_VERSION}";echo ; apt update is running on another terminal and lock cannot be acquired, exiting"
+    m=$( echo "${SCRIPT_VERSION}"; echo ; echo "apt update is running on another terminal and lock cannot be acquired, exiting" )
     /usr/bin/curl -fsS -m 100 --retry 10 --retry-delay 10 --data-raw "${m}" \
         -o /dev/null "$HEALTHCHECK_URL"/fail 2>/dev/null
     exit 2
@@ -72,6 +75,6 @@ exit $?
 
 #####
 # new crontab entry
-@reboot ( sleep 60 && /root/bin/sprawdz-ile-apt-list--upgradable.sh ) 2>&1
-2 */6 * * * /root/bin/sprawdz-ile-apt-list--upgradable.sh
+# @reboot ( sleep 60 && /root/bin/sprawdz-ile-apt-list--upgradable.sh ) 2>&1
+# 2 */6 * * * /root/bin/sprawdz-ile-apt-list--upgradable.sh
 

@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.07.15 - v. 0.7 - fix dpkg open-vm-tools check (always emptied by >/dev/null)
 # 2026.05.26 - user-facing messages translated from Polish to English
 # 2023.09.06 - v. 0.6 - mount cdrom in r/o mode
 # 2023.07.03 - v. 0.5 - force installation of tools from vmware...
@@ -21,7 +22,8 @@ if [ ! -f  /mnt/tmp/vmware-tools-upgrader-64 ];then
   mount -o ro /dev/cdrom /mnt/tmp || exit 2
 fi
 
-if [ ! $(dpkg -s open-vm-tools >/dev/null 2>&1 ) ];then    # openvm tools are NOT installed
+# Prefer VMware Tools ISO installer over distro open-vm-tools when the package is present.
+if dpkg -s open-vm-tools >/dev/null 2>&1; then
   echo "removing open-vm-tools (prefer VMware tools package)" | boxes -s 50x3 -a c -d ada-box
   echo apt remove -y open-vm-tools | boxes -s 50x3 -a c -d ada-box
   apt remove -y --purge open-vm-tools >/dev/null 2>&1

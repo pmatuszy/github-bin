@@ -25,4 +25,4 @@ exit ${kod_powrotu}
 #####
 # new crontab entry
 
-5 7 * * * sleep $((RANDOM \% 50)) && /root/bin/healthchecks-geoipupdate.sh
+# 5 7 * * * sleep $((RANDOM \% 50)) && /root/bin/healthchecks-geoipupdate.sh

@@ -30,7 +30,7 @@ echo "$HC_message" | /usr/bin/curl -fsS -m 100 --retry 10 --retry-delay 10 --dat
 exit ${kod_powrotu}
 
 ######
-template crontab entry:
+# template crontab entry:
 
-@reboot        ( sleep 45 && /root/bin/ssd-trim.sh) 2>&1
-0 */4 * * *    /root/bin/ssd-trim.sh
+# @reboot        ( sleep 45 && /root/bin/ssd-trim.sh) 2>&1
+# 0 */4 * * *    /root/bin/ssd-trim.sh

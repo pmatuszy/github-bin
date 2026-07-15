@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.07.15 - v. 0.3 - fix y/Y confirm (was always true); init p for nounset on read timeout
 # 2023.05.09 - v. 0.2 - added checking if the script is run on the physical machine
 # 2023.02.09 - v. 0.1 - initial release
 
@@ -32,9 +33,10 @@ echo ; vmware -v ; echo
 export wersja=$(vmware -v|awk '{print $3}')
 
 echo "Do you want to fix vmware after the kernel update? [y/N]"
-read -t 300 -n 1 p     # read one character (-n) with timeout of 300 seconds
+p=""
+read -t 300 -n 1 p || true     # read one character (-n) with timeout of 300 seconds
 echo
-if [ "${p}" != 'y' -o  "${p}" != 'y' ]; then
+if [[ ! "${p}" =~ ^[yY]$ ]]; then
   echo "no means no - I am exiting..."
   exit 1
 fi

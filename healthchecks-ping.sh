@@ -16,8 +16,8 @@ fi
 exit $?
 
 ######
-template crontab entry:
+# template crontab entry:
 
-@reboot ( sleep 25 && /root/bin/healthchecks-ping.sh ) 2>&1
+# @reboot ( sleep 25 && /root/bin/healthchecks-ping.sh ) 2>&1
 
-*/5 * * * *   /root/bin/healthchecks-ping.sh
+# */5 * * * *   /root/bin/healthchecks-ping.sh

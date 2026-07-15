@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.07.15 - v. 0.9 - do not buffer start stderr (hides encrypted-VM password prompt); list still quiet
 # 2026.07.05 - v. 0.8 - vmrun list only: suppress AppLoader stderr; start keeps stderr (VM password prompt)
 # 2026.07.05 - v. 0.7 - suppress vmrun AppLoader/libaio stderr noise (like vmrun-check-status.sh)
 # 2026.07.05 - v. 0.6 - prompt [a] start all remaining; timestamp prefix on prompts
@@ -16,8 +17,8 @@ user_prompt_ts_prefix() {
   printf '(%s) ' "$(date '+%Y.%m.%d %H:%M:%S')"
 }
 
-# vmrun list: harmless AppLoader/libaio on stderr (see vmrun-check-status.sh).
-# vmrun start/suspend: keep stderr — encrypted VMs prompt for password there.
+# vmrun list: suppress AppLoader/libaio noise on stderr (see vmrun-check-status.sh).
+# vmrun start: keep stderr live — encrypted VMs prompt for password there (do not buffer).
 _pgm_vmrun_list() {
   if [ -n "${TPM_PASS:-}" ]; then
     vmrun -vp "${TPM_PASS}" list 2>/dev/null
@@ -27,17 +28,11 @@ _pgm_vmrun_list() {
 }
 
 _pgm_vmrun() {
-  local tmp_err rc
-  tmp_err="$(mktemp "${TMPDIR:-/tmp}/vmrun-start-all.err.XXXXXX")"
   if [ -n "${TPM_PASS:-}" ]; then
-    vmrun -vp "${TPM_PASS}" "$@" 2>"$tmp_err"
+    vmrun -vp "${TPM_PASS}" "$@"
   else
-    vmrun "$@" 2>"$tmp_err"
+    vmrun "$@"
   fi
-  rc=$?
-  grep -v -E '^\[AppLoader\]|^An up-to-date "libaio' "$tmp_err" >&2 || true
-  rm -f "$tmp_err"
-  return $rc
 }
 
 check_if_installed virt-what

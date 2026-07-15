@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.07.15 - v. 1.3 - clear IP blad on successful retry; init HEALTHCHECK_URL for nounset
 # 2026.05.26 - user-facing messages translated from Polish to English
 # 2026.04.21 - v. 1.2 - clarify bare-metal check: virt-what empty on host, nonempty when virtualized (no wc -l)
 # 2026.04.21 - v. 1.1 - fix vmrun list boxed output; fix VMware Tools retry/success logic; grep -F for exclude paths; local VM path in helpers; comment crontab example block
@@ -41,6 +42,7 @@ if (( $? != 0 )); then
   exit 1
 fi
 
+HEALTHCHECK_URL=""
 if [ -f "$HEALTHCHECKS_FILE" ];then
   HEALTHCHECK_URL=$(cat "$HEALTHCHECKS_FILE" |grep "^`basename $0`"|awk '{print $2}')
 fi
@@ -73,6 +75,7 @@ spr_ip_address() {
       blad=1
     else
       echo "IP Address = $address (PGM)" ; echo
+      blad=0
       break
     fi
     sleep $retry_delay
@@ -186,7 +189,9 @@ if (( $script_is_run_interactively == 1 )); then
   echo "$m"
 fi
 
-echo "$m" | /usr/bin/curl -fsS -m 100 --retry 10 --retry-delay 10 --data-binary @- -o /dev/null "$HEALTHCHECK_URL"/${kod_powrotu} 2>/dev/null
+if [[ -n "${HEALTHCHECK_URL}" ]]; then
+  echo "$m" | /usr/bin/curl -fsS -m 100 --retry 10 --retry-delay 10 --data-binary @- -o /dev/null "$HEALTHCHECK_URL"/${kod_powrotu} 2>/dev/null
+fi
 
 . /root/bin/_script_footer.sh
 

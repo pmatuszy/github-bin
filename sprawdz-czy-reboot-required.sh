@@ -19,7 +19,7 @@ exit $?
 #####
 # new crontab entry
 
-@reboot ( /root/bin/sprawdz-czy-reboot-required.sh ) 2>&1
+# @reboot ( /root/bin/sprawdz-czy-reboot-required.sh ) 2>&1
 
-0 7-22 * * * /root/bin/sprawdz-czy-reboot-required.sh
+# 0 7-22 * * * /root/bin/sprawdz-czy-reboot-required.sh
 

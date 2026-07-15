@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.07.15 - v. 0.18 - listSnapshots parse: skip noise before Total (match delete script)
 # 2026.04.22 - v. 0.17 - encrypted vmrun: DISPLAY default :0 (script clears DISPLAY); no bogus nogui on snapshot/listSnapshots
 # 2026.04.22 - v. 0.16 - vmrun listSnapshots/snapshot: always trailing nogui (encrypted and plain)
 # 2026.04.22 - v. 0.15 - encrypted VM: append nogui to snapshot with -vp (headless / empty DISPLAY; matches start/suspend)
@@ -134,16 +135,28 @@ _add_unique_vmx_line() {
 _pgm_parse_snapshots_from_list_out() {
   local list_out="$1"
   local -n _snaps_ref="$2"
-  local line saw_zero=0
+  local line saw_zero=0 saw_total=0 expected_count=-1
 
   _snaps_ref=()
   while IFS= read -r line || [[ -n "$line" ]]; do
     line="${line%$'\r'}"
     [[ -z "${line//[[:space:]]/}" ]] && continue
     if [[ "${line}" =~ [Tt]otal[[:space:]]+snapshots: ]]; then
+      saw_total=1
+      if [[ "${line}" =~ [Tt]otal[[:space:]]+snapshots:[[:space:]]*([0-9]+) ]]; then
+        expected_count="${BASH_REMATCH[1]}"
+      fi
       if [[ "${line}" =~ [Tt]otal[[:space:]]+snapshots:[[:space:]]*0[[:space:]]*$ ]]; then
         saw_zero=1
       fi
+      continue
+    fi
+    # vmrun may print warnings before "Total snapshots:" (e.g. AppLoader/libaio).
+    # Only collect names after the total line when it is present.
+    if ((saw_total == 0)); then
+      continue
+    fi
+    if ((expected_count >= 0 && ${#_snaps_ref[@]} >= expected_count)); then
       continue
     fi
     _snaps_ref+=("$line")

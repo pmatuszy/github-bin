@@ -31,8 +31,8 @@ fi
 exit $?
 
 ######
-template crontab entry:
+# template crontab entry:
 
-@reboot ( sleep 45 && /root/bin/healthchecks-smartd.sh) 2>&1
+# @reboot ( sleep 45 && /root/bin/healthchecks-smartd.sh) 2>&1
 
-0 18 * * *  sleep $((RANDOM \% 60)) && /root/bin/healthchecks-smartd.sh
+# 0 18 * * *  sleep $((RANDOM \% 60)) && /root/bin/healthchecks-smartd.sh

@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.07.15 - v. 0.2 - fix y/Y confirm (was always true); init p for nounset on read timeout
 # 2025.10.22 - v. 0.1 - initial release
 
 . /root/bin/_script_header.sh
@@ -34,9 +35,10 @@ echo ; vmware -v ; echo
 export wersja=$(vmware -v|awk '{print $3}')
 
 echo "Do you want to reinstall vmware after the kernel update? [y/N]"
-read -t 300 -n 1 p     # read one character (-n) with timeout of 300 seconds
+p=""
+read -t 300 -n 1 p || true     # read one character (-n) with timeout of 300 seconds
 echo
-if [ "${p}" != 'y' -o  "${p}" != 'y' ]; then
+if [[ ! "${p}" =~ ^[yY]$ ]]; then
   echo "no means no - I am exiting..."
   exit 1
 fi

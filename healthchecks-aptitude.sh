@@ -54,5 +54,5 @@ exit ${kod_powrotu}
 
 ####################
 
-@reboot ( sleep 10m && /root/bin/healthchecks-aptitude.sh )
-2 */6 * * *    /root/bin/healthchecks-aptitude.sh
+# @reboot ( sleep 10m && /root/bin/healthchecks-aptitude.sh )
+# 2 */6 * * *    /root/bin/healthchecks-aptitude.sh
