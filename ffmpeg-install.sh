@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# v. 20260716.173000 - jellyfin/gpu: retry configure without vulkan if first attempt fails
+# v. 20260716.173400 - fix set -e aborting before Vulkan configure retry (configure || return 1)
 
 # 2026.06.23 - v. 2.1.23 - jellyfin profile: Jellyfin-like shared build (VAAPI+NVENC+FDK-AAC); common stays default
 # 2026.06.26 - v. 2.1.22 - Ubuntu: libopenjp2-7-dev (not libopenjpeg-dev); optional pkg probe must not abort configure
@@ -2115,12 +2115,22 @@ prompt_confirm_gpu_or_nvidia_profile() {
         return 0
     fi
     echo ">>> Waiting for your answer:"
-    echo -n "Continue with ${SOURCE_PROFILE} profile? [y/N/q] "
+    if [[ "${SOURCE_PROFILE}" == jellyfin ]]; then
+        echo -n "Continue with jellyfin profile? [Y/n/q] "
+    else
+        echo -n "Continue with ${SOURCE_PROFILE} profile? [y/N/q] "
+    fi
     read -r -n 1 reply || reply=""
     echo
     if prompt_reply_is_quit "${reply}"; then
         echo "Quitting — no changes made."
         quit_prompt_with_optional_old_cleanup
+    fi
+    if [[ "${SOURCE_PROFILE}" == jellyfin ]]; then
+        if prompt_reply_is_no "${reply}"; then
+            return 1
+        fi
+        return 0
     fi
     prompt_reply_is_yes "${reply}"
 }
@@ -2776,7 +2786,7 @@ ffmpeg_source_run_configure() {
 
     ffmpeg_source_collect_configure_args "${staging}" args
     log_note "Configure flags: ${args[*]}"
-    ./configure "${args[@]}"
+    ./configure "${args[@]}" || return 1
 }
 
 source_build_encoder_is_available() {
@@ -2951,7 +2961,7 @@ perform_install_build_from_source() {
         local -a first_configure_args=()
         ffmpeg_source_collect_configure_args "${staging}" first_configure_args
         if ffmpeg_source_configure_args_has_vulkan "${first_configure_args[@]}"; then
-            log_step "Configure failed with Vulkan — retrying without vulkan, libshaderc, and libplacebo..."
+            echo ">>> Configure failed with Vulkan — retrying without vulkan, libshaderc, and libplacebo..." >&2
             log_note "Vulkan is optional for transcoding (NVENC, VAAPI, and software paths still work)."
             FFMPEG_SOURCE_SKIP_VULKAN=1
             ffmpeg_source_clean_configure_tree
