@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# v. 20260716.175200 - source build: user help when make fails with too many open files (ulimit)
+# v. 20260716.175400 - source build: cap make -j by RAM; retry/help on make segfault (OOM)
 
 # 2026.06.23 - v. 2.1.23 - jellyfin profile: Jellyfin-like shared build (VAAPI+NVENC+FDK-AAC); common stays default
 # 2026.06.26 - v. 2.1.22 - Ubuntu: libopenjp2-7-dev (not libopenjpeg-dev); optional pkg probe must not abort configure
@@ -2848,14 +2848,21 @@ ffmpeg_source_run_configure() {
     fi
 }
 
+ffmpeg_source_mem_available_mb() {
+    awk '/^MemAvailable:/ { printf "%d", int($2 / 1024); exit }' /proc/meminfo 2>/dev/null
+}
+
 ffmpeg_source_prepare_make_jobs() {
-    local ncpu="" nofile="" hard="" target="" jobs="" max_jobs=""
+    local ncpu="" nofile="" hard="" target="" jobs="" max_jobs="" mem_mb="" ram_jobs="" mb_per_job=2048
 
     ncpu="$(nproc 2>/dev/null || echo 2)"
     nofile="$(ulimit -n 2>/dev/null || echo 1024)"
     hard="$(ulimit -Hn 2>/dev/null || echo "${nofile}")"
 
     target=$(( nofile * 3 ))
+    if (( target > 65536 )); then
+        target=65536
+    fi
     if (( target > hard )); then
         target="${hard}"
     fi
@@ -2863,17 +2870,8 @@ ffmpeg_source_prepare_make_jobs() {
         ulimit -n "${target}" 2>/dev/null || true
         nofile="$(ulimit -n 2>/dev/null || echo "${nofile}")"
     fi
-    if (( nofile < 196608 && hard >= 196608 )); then
-        ulimit -n 196608 2>/dev/null || true
-        nofile="$(ulimit -n 2>/dev/null || echo "${nofile}")"
-    elif (( nofile < 12288 && hard >= 12288 )); then
-        ulimit -n 12288 2>/dev/null || true
-        nofile="$(ulimit -n 2>/dev/null || echo "${nofile}")"
-    fi
     if command -v prlimit >/dev/null 2>&1; then
-        prlimit --nofile="${target}:${hard}" --pid="$$" >/dev/null 2>&1 \
-            || prlimit --nofile=196608:196608 --pid="$$" >/dev/null 2>&1 \
-            || true
+        prlimit --nofile="${target}:${hard}" --pid="$$" >/dev/null 2>&1 || true
         nofile="$(ulimit -n 2>/dev/null || echo "${nofile}")"
     fi
 
@@ -2889,7 +2887,22 @@ ffmpeg_source_prepare_make_jobs() {
     if (( jobs > max_jobs )); then
         echo "    Limiting make -j${ncpu} to -j${max_jobs} (ulimit -n=${nofile}; FFmpeg needs many open files)." >&2
         jobs="${max_jobs}"
-    else
+    fi
+
+    if [[ "${SOURCE_PROFILE}" == jellyfin || "${SOURCE_PROFILE}" == gpu || "${SOURCE_PROFILE}" == nvidia ]]; then
+        mb_per_job=3072
+    fi
+    mem_mb="$(ffmpeg_source_mem_available_mb)"
+    if [[ -n "${mem_mb}" && "${mem_mb}" =~ ^[0-9]+$ ]]; then
+        ram_jobs=$(( mem_mb / mb_per_job ))
+        (( ram_jobs < 1 )) && ram_jobs=1
+        if (( jobs > ram_jobs )); then
+            echo "    Limiting make -j${ncpu} to -j${ram_jobs} (~${mem_mb} MiB MemAvailable; parallel FFmpeg builds are memory-heavy)." >&2
+            jobs="${ram_jobs}"
+        fi
+    fi
+
+    if (( jobs == ncpu )); then
         echo "    make -j${jobs} (ulimit -n=${nofile})." >&2
     fi
     printf '%s\n' "${jobs}"
@@ -2951,6 +2964,71 @@ ffmpeg_source_print_too_many_open_files_help() {
     echo >&2
 }
 
+ffmpeg_source_make_log_indicates_segfault() {
+    local log="$1"
+    [[ -f "${log}" ]] || return 1
+    grep -qiE 'segmentation fault|segfault|signal 11|core dumped|killed' "${log}" 2>/dev/null
+}
+
+ffmpeg_source_make_rc_indicates_segfault() {
+    local rc="$1"
+    local log="$2"
+    if (( rc == 139 || rc == 134 )); then
+        return 0
+    fi
+    ffmpeg_source_make_log_indicates_segfault "${log}"
+}
+
+ffmpeg_source_print_make_failure_help() {
+    local jobs="$1"
+    local src_dir="$2"
+    local log="$3"
+    local rc="$4"
+
+    if ffmpeg_source_make_log_indicates_emfile "${log}"; then
+        ffmpeg_source_print_too_many_open_files_help "${jobs}" "${src_dir}"
+        return 0
+    fi
+    if ffmpeg_source_make_rc_indicates_segfault "${rc}" "${log}"; then
+        ffmpeg_source_print_make_segfault_help "${jobs}" "${src_dir}"
+        return 0
+    fi
+    return 1
+}
+
+ffmpeg_source_print_make_segfault_help() {
+    local jobs="${1:-?}"
+    local src_dir="${2:-.}"
+    local mem_mb=""
+
+    mem_mb="$(ffmpeg_source_mem_available_mb)"
+
+    echo >&2
+    echo "================================================================================" >&2
+    echo "  make crashed (segmentation fault) — often out of memory on VMs" >&2
+    echo "================================================================================" >&2
+    echo >&2
+    echo "  Parallel FFmpeg builds (especially jellyfin + LTO + NVENC) can use several" >&2
+    echo "  GB of RAM per job. make -j${jobs} may have exhausted memory; the kernel or" >&2
+    echo "  compiler then crashes with 'Segmentation fault'." >&2
+    echo >&2
+    if [[ -n "${mem_mb}" ]]; then
+        echo "  MemAvailable now: ~${mem_mb} MiB (script targets ~3 GiB per job for jellyfin)." >&2
+        echo >&2
+    fi
+    echo "  Quick fix — resume with fewer parallel jobs:" >&2
+    echo "    cd ${src_dir}" >&2
+    echo "    make -j1 ffmpeg ffprobe && make -j1" >&2
+    echo "    # or: make -j2 ffmpeg ffprobe && make -j2" >&2
+    echo >&2
+    echo "  If it still crashes:" >&2
+    echo "    - Add swap (e.g. 8G): fallocate -l 8G /swapfile && chmod 600 /swapfile && mkswap /swapfile && swapon /swapfile" >&2
+    echo "    - Give the VM more RAM in VMware settings" >&2
+    echo "    - Reconfigure without LTO: add --disable-lto to configure and rebuild" >&2
+    echo "================================================================================" >&2
+    echo >&2
+}
+
 ffmpeg_source_run_make() {
     local jobs="$1"
     local src_dir="$2"
@@ -2960,9 +3038,7 @@ ffmpeg_source_run_make() {
     make -j"${jobs}" ffmpeg ffprobe 2>&1 | tee "${log}"
     rc=${PIPESTATUS[0]}
     if (( rc != 0 )); then
-        if ffmpeg_source_make_log_indicates_emfile "${log}"; then
-            ffmpeg_source_print_too_many_open_files_help "${jobs}" "${src_dir}"
-        fi
+        ffmpeg_source_print_make_failure_help "${jobs}" "${src_dir}" "${log}" "${rc}" || true
         rm -f "${log}"
         return "${rc}"
     fi
@@ -2970,9 +3046,7 @@ ffmpeg_source_run_make() {
     make -j"${jobs}" 2>&1 | tee -a "${log}"
     rc=${PIPESTATUS[0]}
     if (( rc != 0 )); then
-        if ffmpeg_source_make_log_indicates_emfile "${log}"; then
-            ffmpeg_source_print_too_many_open_files_help "${jobs}" "${src_dir}"
-        fi
+        ffmpeg_source_print_make_failure_help "${jobs}" "${src_dir}" "${log}" "${rc}" || true
         rm -f "${log}"
         return "${rc}"
     fi
@@ -3173,8 +3247,16 @@ perform_install_build_from_source() {
     jobs="$(ffmpeg_source_prepare_make_jobs)"
     log_step "Building with make -j${jobs}..."
     if ! ffmpeg_source_run_make "${jobs}" "${src_dir}"; then
-        echo "ERROR: ffmpeg make failed." >&2
-        return 1
+        if (( jobs > 2 )); then
+            echo ">>> make failed — retrying with make -j2..." >&2
+            if ! ffmpeg_source_run_make 2 "${src_dir}"; then
+                echo "ERROR: ffmpeg make failed (try make -j1 in ${src_dir})." >&2
+                return 1
+            fi
+        else
+            echo "ERROR: ffmpeg make failed (try make -j1 in ${src_dir})." >&2
+            return 1
+        fi
     fi
 
     if [[ ! -x "${src_dir}/ffmpeg" ]]; then
