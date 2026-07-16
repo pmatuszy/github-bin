@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# v. 20260716.221600 - ffplay optional in summaries; fix print_version_banner fallback
+# v. 20260716.223500 - end run summary with start/stop/duration (no script version footer)
 
 # 2026.06.23 - v. 2.1.23 - jellyfin profile: Jellyfin-like shared build (VAAPI+NVENC+FDK-AAC); common stays default
 # 2026.06.26 - v. 2.1.22 - Ubuntu: libopenjp2-7-dev (not libopenjpeg-dev); optional pkg probe must not abort configure
@@ -82,6 +82,10 @@ FFMPEG_SOURCE_MAKE_RETRY_DONE=0
 FFMPEG_SOURCE_MAKE_EMFILE_RETRY_DONE=0
 FFMPEG_SOURCE_LAST_MAKE_RC=0
 FFMPEG_SOURCE_LAST_MAKE_LOG=""
+FFMPEG_SESSION_START_EPOCH=0
+FFMPEG_SESSION_START_ISO=""
+FFMPEG_INSTALL_START_EPOCH=0
+FFMPEG_LAST_INSTALL_KIND=""
 FFMPEG_SOURCE_JELLYFIN_FULL="${FFMPEG_SOURCE_JELLYFIN_FULL:-0}"
 FFMPEG_SOURCE_PROFILE="${FFMPEG_SOURCE_PROFILE:-}"
 CLI_SOURCE_PROFILE=""
@@ -3998,11 +4002,7 @@ print_local_bin_ffmpeg_summary() {
     done
     echo
     list_preserved_ffmpeg_versions
-    if declare -F print_version_banner >/dev/null 2>&1; then
-        print_version_banner
-    elif [[ -n "${SCRIPT_VERSION_NUMBER:-}" && "${SCRIPT_VERSION_NUMBER}" != unknown ]]; then
-        echo "Script version: ${SCRIPT_VERSION_NUMBER} (${SCRIPT_VERSION_DATE:-})"
-    fi
+    print_ffmpeg_session_summary
 }
 
 print_install_success_summary() {
@@ -4011,6 +4011,8 @@ print_install_success_summary() {
     echo "ffmpeg installed/updated successfully."
     echo "  Method:  ${kind}"
     echo "  Build:   ${build_id}"
+    FFMPEG_LAST_INSTALL_KIND="${kind}"
+    INSTALLED_BUILD_ID="${build_id}"
     if [[ -n "${FFMPEG_ORG_VERSION}" ]]; then
         echo "  ffmpeg.org latest: ${FFMPEG_ORG_VERSION}"
     fi
@@ -4019,6 +4021,62 @@ print_install_success_summary() {
     ffmpeg_format_active_tool_line "${BIN_FFPLAY}" "ffplay"
     list_preserved_ffmpeg_versions
     prompt_remove_old_ffmpeg_installs
+}
+
+ffmpeg_format_duration() {
+    local seconds="${1:-0}"
+    local h=0 m=0 s=0
+
+    (( seconds < 0 )) && seconds=0
+    h=$(( seconds / 3600 ))
+    m=$(( (seconds % 3600) / 60 ))
+    s=$(( seconds % 60 ))
+    if (( h > 0 )); then
+        printf '%dh %dm %ds' "${h}" "${m}" "${s}"
+    elif (( m > 0 )); then
+        printf '%dm %ds' "${m}" "${s}"
+    else
+        printf '%ds' "${s}"
+    fi
+}
+
+print_ffmpeg_session_summary() {
+    local end_epoch="" end_iso="" session_secs=0 install_secs=0
+    local host=""
+
+    (( FFMPEG_SESSION_START_EPOCH > 0 )) || return 0
+    end_epoch="$(date +%s)"
+    end_iso="$(date '+%Y.%m.%d %H:%M:%S')"
+    session_secs=$(( end_epoch - FFMPEG_SESSION_START_EPOCH ))
+    host="$(hostname 2>/dev/null || echo unknown)"
+
+    echo
+    echo "part — run summary"
+    echo
+    echo "  Host:      ${host}"
+    echo "  Started:   ${FFMPEG_SESSION_START_ISO}"
+    echo "  Finished:  ${end_iso}"
+    echo "  Duration:  $(ffmpeg_format_duration "${session_secs}") (total script run)"
+    if (( FFMPEG_INSTALL_START_EPOCH > 0 )); then
+        install_secs=$(( end_epoch - FFMPEG_INSTALL_START_EPOCH ))
+        echo "  Install:   $(ffmpeg_format_duration "${install_secs}")"
+    fi
+    if [[ -n "${FFMPEG_LAST_INSTALL_KIND}" ]]; then
+        echo "  Method:    ${FFMPEG_LAST_INSTALL_KIND}"
+    elif [[ -n "${INSTALL_PLAN:-}" ]]; then
+        echo "  Method:    ${INSTALL_PLAN} (not completed)"
+    fi
+    if [[ -n "${SOURCE_PROFILE:-}" && "${INSTALL_PLAN:-}" == source ]]; then
+        echo "  Profile:   ${SOURCE_PROFILE}"
+        (( FFMPEG_SOURCE_WITH_FDK_AAC == 1 )) && echo "  Extras:    libfdk-aac"
+    fi
+    if [[ -n "${INSTALLED_BUILD_ID:-}" ]]; then
+        echo "  Build id:  ${INSTALLED_BUILD_ID}"
+    fi
+    if [[ -n "${TEMP_CATALOG:-}" ]]; then
+        echo "  Temp dir:  ${TEMP_CATALOG}"
+    fi
+    echo
 }
 
 perform_install_static() {
@@ -4142,6 +4200,7 @@ perform_install_dynamic() {
 
 run_install_plan() {
     check_ffmpeg_running_before_install
+    FFMPEG_INSTALL_START_EPOCH=$(date +%s)
 
     case "${INSTALL_PLAN}" in
         static)
@@ -4189,6 +4248,9 @@ run_install_plan() {
 
 main() {
     local installed="" installed_date=""
+
+    FFMPEG_SESSION_START_EPOCH=$(date +%s)
+    FFMPEG_SESSION_START_ISO=$(date '+%Y.%m.%d %H:%M:%S')
 
     log_step "Starting ffmpeg install/update check..."
     as_root_check
