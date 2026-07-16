@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# v. 20260716.190000 - jellyfin core profile (VAAPI+NVENC+FDK); FULL=1 for Vulkan/OpenCL extras
+# v. 20260716.210000 - auto-build static codec deps; apt + source for all profiles
 
 # 2026.06.23 - v. 2.1.23 - jellyfin profile: Jellyfin-like shared build (VAAPI+NVENC+FDK-AAC); common stays default
 # 2026.06.26 - v. 2.1.22 - Ubuntu: libopenjp2-7-dev (not libopenjpeg-dev); optional pkg probe must not abort configure
@@ -93,6 +93,10 @@ FFMPEG_SOURCE_HAS_DAV1D=0
 FFMPEG_SOURCE_HAS_FDK_AAC=0
 FFMPEG_SOURCE_PROFILE_READY=0
 FFMPEG_SOURCE_SKIP_VULKAN=0
+FFMPEG_SOURCE_SKIP_X265="${FFMPEG_SOURCE_SKIP_X265:-0}"
+FFMPEG_SOURCE_SKIP_PKG_LIST="${FFMPEG_SOURCE_SKIP_PKG_LIST:-}"
+FFMPEG_STATIC_DEPS_PREFIX="${FFMPEG_STATIC_DEPS_PREFIX:-/usr/local/ffmpeg-static-deps}"
+FFMPEG_SOURCE_BUILD_STATIC_DEPS="${FFMPEG_SOURCE_BUILD_STATIC_DEPS:-1}"
 FFMPEG_VULKAN_HEADERS_UPGRADE_ATTEMPTED=0
 FFMPEG_ORG_VERSION=""
 FFMPEG_ORG_RELEASE_DATE=""
@@ -181,6 +185,9 @@ Environment:
   FFMPEG_SOURCE_WITH_LTO      Set to 1 to pass --enable-lto=auto (jellyfin; off by default; can crash on some hosts).
   FFMPEG_SOURCE_WITH_CUDA_NVCC  Set to 1 to pass --enable-cuda-nvcc (CUDA filters; off by default).
   FFMPEG_SOURCE_JELLYFIN_FULL    Set to 1 for full jellyfin extras (Vulkan, OpenCL, AMF, VPL); off by default (core transcode build).
+  FFMPEG_SOURCE_SKIP_X265     Set to 1 to omit libx265 (HEVC); static builds skip x265 when no libx265.a in apt.
+  FFMPEG_STATIC_DEPS_PREFIX   Install prefix for static libs built from source (default: /usr/local/ffmpeg-static-deps).
+  FFMPEG_SOURCE_BUILD_STATIC_DEPS  Set to 0 to disable building static libs from source when apt is shared-only.
   FFMPEG_SOURCE_PROFILE       Same as --source-profile (min|common|max|gpu|nvidia|jellyfin).
 EOF
 }
@@ -2231,14 +2238,179 @@ ffmpeg_source_static_build() {
     esac
 }
 
+ffmpeg_source_ensure_pkg_config_path() {
+    local -a paths=()
+    local d seen=""
+
+    for d in /usr/lib/pkgconfig /usr/local/lib/pkgconfig \
+        /usr/lib/x86_64-linux-gnu/pkgconfig /usr/lib/aarch64-linux-gnu/pkgconfig \
+        /usr/lib/arm-linux-gnueabihf/pkgconfig \
+        "${FFMPEG_STATIC_DEPS_PREFIX:-/usr/local/ffmpeg-static-deps}/lib/pkgconfig"; do
+        [[ -d "${d}" ]] || continue
+        case ":${seen}:" in
+            *:"${d}":*) continue ;;
+        esac
+        seen="${seen}:${d}"
+        paths+=( "${d}" )
+    done
+    if ((${#paths[@]} > 0)); then
+        PKG_CONFIG_PATH="$(IFS=:; printf '%s' "${paths[*]}")${PKG_CONFIG_PATH:+:${PKG_CONFIG_PATH}}"
+        export PKG_CONFIG_PATH
+    fi
+}
+
 ffmpeg_pkg_config_satisfied() {
     local spec="$1"
+    local -a flags=()
 
+    ffmpeg_source_ensure_pkg_config_path
     if ffmpeg_source_static_build; then
-        pkg-config --static --exists "${spec}" 2>/dev/null
-    else
-        pkg-config --exists "${spec}" 2>/dev/null
+        flags=(--static)
     fi
+    pkg-config "${flags[@]}" --exists --print-errors "${spec}" >/dev/null 2>&1
+}
+
+ffmpeg_source_x265_static_lib_present() {
+    local libdir=""
+
+    ffmpeg_source_ensure_pkg_config_path
+    libdir="$(pkg-config --variable=libdir x265 2>/dev/null)" || return 1
+    [[ -n "${libdir}" && -f "${libdir}/libx265.a" ]]
+}
+
+ffmpeg_source_x265_ffmpeg_probe_ok() {
+    local -a pcf=()
+    local cflags="" cxx="${CXX:-g++}"
+
+    ffmpeg_source_ensure_pkg_config_path
+    if ffmpeg_source_static_build; then
+        pcf=(--static)
+        ffmpeg_source_x265_static_lib_present || return 1
+    fi
+    pkg-config "${pcf[@]}" --exists --print-errors x265 >/dev/null 2>&1 || return 1
+    cflags="$(pkg-config "${pcf[@]}" --cflags x265 2>/dev/null)" || return 1
+    # shellcheck disable=SC2086
+    printf '%s\n' '#include <x265.h>' 'int main(){ (void)x265_api_get; return 0; }' \
+        | ${cxx} ${cflags} -x c++ -c - -o /dev/null 2>/dev/null
+}
+
+ffmpeg_source_try_enable_x265() {
+    local args_var="$1"
+    local -n _args="$args_var"
+
+    if (( FFMPEG_SOURCE_SKIP_X265 == 1 )) || ffmpeg_source_pkg_is_skipped x265; then
+        return 0
+    fi
+    if ffmpeg_source_x265_ffmpeg_probe_ok; then
+        _args+=( --enable-libx265 )
+        log_note "libx265 enabled ($(pkg-config --modversion x265 2>/dev/null || echo 'x265'))."
+        return 0
+    fi
+    if ffmpeg_source_static_build && pkg-config --exists x265 2>/dev/null \
+        && ! ffmpeg_source_x265_static_lib_present; then
+        log_note "x265 disabled — Ubuntu libx265-dev is shared-only (no libx265.a); static ffmpeg uses x264/aom for video."
+        return 0
+    fi
+    if pkg-config --exists x265 2>/dev/null; then
+        log_note "x265 disabled — x265 not usable for this build (try: apt install libnuma-dev; pkg-config --static --print-errors x265)."
+    else
+        log_note "x265 disabled — x265 not found via pkg-config."
+    fi
+}
+
+ffmpeg_source_skip_pkg() {
+    local pkg="$1"
+
+    [[ -n "${pkg}" ]] || return 0
+    case ":${FFMPEG_SOURCE_SKIP_PKG_LIST}:" in
+        *:"${pkg}":*) return 0 ;;
+    esac
+    FFMPEG_SOURCE_SKIP_PKG_LIST="${FFMPEG_SOURCE_SKIP_PKG_LIST:+$FFMPEG_SOURCE_SKIP_PKG_LIST:}${pkg}"
+    [[ "${pkg}" == x265 ]] && FFMPEG_SOURCE_SKIP_X265=1
+}
+
+ffmpeg_source_pkg_is_skipped() {
+    local spec="$1"
+    local base="${spec%% *}"
+
+    case ":${FFMPEG_SOURCE_SKIP_PKG_LIST}:" in
+        *:"${base}":*) return 0 ;;
+    esac
+    return 1
+}
+
+ffmpeg_source_configure_log_first_pkg_failure() {
+    local pkg=""
+
+    [[ -f ffbuild/config.log ]] || return 1
+    pkg="$(
+        grep -oE 'ERROR: [a-zA-Z0-9._+-]+ not found using pkg-config' ffbuild/config.log 2>/dev/null \
+            | head -1 \
+            | sed -E 's/^ERROR: ([a-zA-Z0-9._+-]+) not found using pkg-config/\1/'
+    )"
+    [[ -n "${pkg}" ]] || return 1
+    printf '%s\n' "${pkg}"
+}
+
+ffmpeg_source_pkg_failure_is_skippable() {
+    local pkg="$1"
+
+    case "${pkg}" in
+        x264|libx264|openssl|libssl)
+            return 1
+            ;;
+        *)
+            return 0
+            ;;
+    esac
+}
+
+ffmpeg_source_pkg_static_usable() {
+    local spec="$1"
+    local base="${spec%% *}"
+    local -a pcf=(--static)
+    local libdir="" only_l="" l="" found=0
+
+    ffmpeg_source_static_build || return 0
+    ffmpeg_source_ensure_pkg_config_path
+    pkg-config "${pcf[@]}" --exists --print-errors "${spec}" >/dev/null 2>&1 || return 1
+    pkg-config "${pcf[@]}" --cflags "${spec}" >/dev/null 2>&1 || return 1
+    pkg-config "${pcf[@]}" --libs "${spec}" >/dev/null 2>&1 || return 1
+    libdir="$(pkg-config --variable=libdir "${base}" 2>/dev/null)" || return 1
+    only_l="$(pkg-config "${pcf[@]}" --libs-only-l "${base}" 2>/dev/null)" || return 1
+    for l in ${only_l}; do
+        l="${l#-l}"
+        if [[ -f "${libdir}/lib${l}.a" ]]; then
+            found=1
+            break
+        fi
+    done
+    (( found == 1 ))
+}
+
+ffmpeg_source_retry_configure_optional_pkg_failures() {
+    local staging="$1"
+    local attempt=0 pkg=""
+
+    while (( attempt < 20 )); do
+        pkg="$(ffmpeg_source_configure_log_first_pkg_failure)" || return 1
+        if ffmpeg_source_pkg_is_skipped "${pkg}"; then
+            return 1
+        fi
+        if ! ffmpeg_source_pkg_failure_is_skippable "${pkg}"; then
+            echo "ERROR: essential dependency ${pkg} failed pkg-config (see ffbuild/config.log)." >&2
+            return 1
+        fi
+        echo ">>> Configure failed on ${pkg} — retrying without it..." >&2
+        log_note "Static apt packages are often shared-only (.so); core codecs (x264, openssl, aom) remain."
+        ffmpeg_source_skip_pkg "${pkg}"
+        ffmpeg_source_clean_configure_tree
+        if ffmpeg_source_run_configure "${staging}"; then
+            return 0
+        fi
+        attempt=$((attempt + 1))
+    done
+    return 1
 }
 
 # FFmpeg 8.x configure: vulkan >= 1.3.277 (VK_HEADER_VERSION >= 277) and glslangValidator on PATH.
@@ -2470,15 +2642,26 @@ ffmpeg_source_try_enable_pkg() {
     local label="${4:-${flag#--enable-}}"
     local -n _args="$args_var"
 
-    if ffmpeg_pkg_config_satisfied "${pkg_spec}"; then
-        _args+=( "${flag}" )
+    if ffmpeg_source_pkg_is_skipped "${pkg_spec}"; then
         return 0
     fi
-    if pkg-config --exists "${pkg_spec}" 2>/dev/null; then
-        log_note "${label} disabled — installed but not available to pkg-config for this build (${pkg_spec})."
-    else
-        log_note "${label} disabled — ${pkg_spec} not found via pkg-config."
+    if ! ffmpeg_pkg_config_satisfied "${pkg_spec}"; then
+        if pkg-config --exists "${pkg_spec%% *}" 2>/dev/null; then
+            log_note "${label} disabled — installed but not available to pkg-config for this build (${pkg_spec})."
+        else
+            log_note "${label} disabled — ${pkg_spec} not found via pkg-config."
+        fi
+        return 0
     fi
+    if ffmpeg_source_static_build && ! ffmpeg_source_pkg_static_usable "${pkg_spec}"; then
+        if (( FFMPEG_SOURCE_BUILD_STATIC_DEPS == 0 )); then
+            log_note "${label} disabled — ${pkg_spec%% *} has no static .a in apt (set FFMPEG_SOURCE_BUILD_STATIC_DEPS=1 to build from source)."
+        else
+            log_note "${label} disabled — ${pkg_spec%% *} static library unavailable after apt and source build."
+        fi
+        return 0
+    fi
+    _args+=( "${flag}" )
     return 0
 }
 
@@ -2643,11 +2826,34 @@ install_nv_codec_headers_from_git() {
     log_note "nv-codec-headers installed under ${prefix}."
 }
 
+ffmpeg_source_load_static_deps_module() {
+    local deps_sh="" dir=""
+
+    if [[ -n "${FFMPEG_STATIC_DEPS_LOADED:-}" ]]; then
+        return 0
+    fi
+    dir="$(dirname "${BASH_SOURCE[0]}")"
+    for deps_sh in "${dir}/_ffmpeg-static-deps.sh" "/root/bin/_ffmpeg-static-deps.sh"; do
+        if [[ -f "${deps_sh}" ]]; then
+            # shellcheck disable=SC1090
+            . "${deps_sh}"
+            FFMPEG_STATIC_DEPS_LOADED=1
+            return 0
+        fi
+    done
+    log_note "Static deps module not found (_ffmpeg-static-deps.sh); shared-only apt libs may be skipped."
+    return 1
+}
+
 install_source_build_dependencies() {
     local -a pkgs=()
 
     echo
     echo "part 1 — build dependencies for official source compile (profile: ${SOURCE_PROFILE})"
+    if ffmpeg_source_static_build 2>/dev/null; then
+        echo "    Static profile: apt packages first, then source-built static libs when needed."
+        echo "    Prefix for source-built libs: ${FFMPEG_STATIC_DEPS_PREFIX}"
+    fi
     echo
     need_cmd apt-get
     log_step "Running apt-get update..."
@@ -2667,7 +2873,7 @@ install_source_build_dependencies() {
         common|max|gpu|nvidia|jellyfin)
             pkgs+=(
                 libssl-dev
-                libmp3lame-dev libx264-dev libx265-dev libvpx-dev
+                libmp3lame-dev libx264-dev libx265-dev libnuma-dev libvpx-dev
                 libopus-dev libvorbis-dev libtheora-dev libass-dev libdav1d-dev
                 libaom-dev libwebp-dev
                 libfreetype-dev libfontconfig-dev libharfbuzz-dev
@@ -2697,13 +2903,8 @@ install_source_build_dependencies() {
     esac
 
     if [[ "${SOURCE_PROFILE}" == jellyfin ]]; then
-        FFMPEG_SOURCE_HAS_FDK_AAC=0
         if apt_cache_has_package libfdk-aac-dev; then
             pkgs+=( libfdk-aac-dev )
-            FFMPEG_SOURCE_HAS_FDK_AAC=1
-        else
-            echo "ERROR: jellyfin profile requires libfdk-aac-dev (non-free)." >&2
-            return 1
         fi
         pkgs+=( libfribidi-dev libgnutls28-dev libgmp-dev )
         if ffmpeg_source_jellyfin_wants_extras; then
@@ -2713,13 +2914,8 @@ install_source_build_dependencies() {
                 libvpl-dev
         fi
     elif [[ "${SOURCE_PROFILE}" == max ]] && (( FFMPEG_SOURCE_WITH_FDK_AAC == 1 )); then
-        FFMPEG_SOURCE_HAS_FDK_AAC=0
         if apt_cache_has_package libfdk-aac-dev; then
             pkgs+=( libfdk-aac-dev )
-            FFMPEG_SOURCE_HAS_FDK_AAC=1
-        else
-            echo "ERROR: libfdk-aac-dev not available in apt; disable --source-with-fdk-aac or pick another profile." >&2
-            return 1
         fi
     else
         FFMPEG_SOURCE_HAS_FDK_AAC=0
@@ -2744,7 +2940,40 @@ install_source_build_dependencies() {
 
     log_step "Installing compiler and profile packages..."
     apt_install_packages "${pkgs[@]}"
+
+    ffmpeg_source_load_static_deps_module || true
+    if [[ "${SOURCE_PROFILE}" == jellyfin ]]; then
+        if declare -F ffmpeg_source_ensure_fdk_aac_available >/dev/null 2>&1; then
+            ffmpeg_source_ensure_fdk_aac_available || {
+                echo "ERROR: jellyfin profile requires fdk-aac (apt or source build failed)." >&2
+                return 1
+            }
+        elif ! pkg-config --exists fdk-aac 2>/dev/null; then
+            echo "ERROR: jellyfin profile requires libfdk-aac-dev (deploy _ffmpeg-static-deps.sh for source fallback)." >&2
+            return 1
+        else
+            FFMPEG_SOURCE_HAS_FDK_AAC=1
+        fi
+    elif [[ "${SOURCE_PROFILE}" == max ]] && (( FFMPEG_SOURCE_WITH_FDK_AAC == 1 )); then
+        if declare -F ffmpeg_source_ensure_fdk_aac_available >/dev/null 2>&1; then
+            ffmpeg_source_ensure_fdk_aac_available || {
+                echo "ERROR: libfdk-aac not available (apt or source build failed)." >&2
+                return 1
+            }
+        elif ! pkg-config --exists fdk-aac 2>/dev/null; then
+            echo "ERROR: libfdk-aac not available in apt; deploy _ffmpeg-static-deps.sh or disable --source-with-fdk-aac." >&2
+            return 1
+        else
+            FFMPEG_SOURCE_HAS_FDK_AAC=1
+        fi
+    fi
+    if ffmpeg_source_static_build \
+        && declare -F ffmpeg_source_install_static_deps_for_profile >/dev/null 2>&1; then
+        ffmpeg_source_install_static_deps_for_profile || true
+    fi
+
     ffmpeg_source_ensure_vulkan_build_deps
+    ffmpeg_source_ensure_pkg_config_path
     probe_source_optional_codecs
     need_cmd pkg-config
     log_note "Build dependencies installed."
@@ -2806,7 +3035,7 @@ ffmpeg_source_configure_args() {
                 --enable-libtwolame
             )
             ffmpeg_source_try_enable_pkg args x264 --enable-libx264 libx264
-            ffmpeg_source_try_enable_pkg args x265 --enable-libx265 x265
+            ffmpeg_source_try_enable_x265 args
             ffmpeg_source_try_enable_pkg args vpx --enable-libvpx vpx
             ffmpeg_source_try_enable_pkg args opus --enable-libopus opus
             ffmpeg_source_try_enable_pkg args vorbis --enable-libvorbis vorbis
@@ -2959,6 +3188,7 @@ ffmpeg_source_run_configure() {
     local staging="$1"
     local -a args=()
 
+    ffmpeg_source_ensure_pkg_config_path
     ffmpeg_source_collect_configure_args "${staging}" args
     log_note "Configure flags: ${args[*]}"
     ./configure "${args[@]}" || return 1
@@ -3615,6 +3845,8 @@ perform_install_build_from_source() {
                         return 1
                     fi
                 fi
+            elif ffmpeg_source_retry_configure_optional_pkg_failures "${staging}"; then
+                :
             else
                 echo "ERROR: ffmpeg configure failed (see ffbuild/config.log)." >&2
                 return 1
