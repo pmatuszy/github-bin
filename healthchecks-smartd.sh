@@ -1,11 +1,62 @@
 #!/bin/bash
 
+# 2026.07.16 - v. 0.4 - add -h/--help, -v/--version, --no_startup_delay (parsed before header)
 # 2026.05.26 - user-facing messages translated from Polish to English
 # 2023.01.16 - v. 0.3 - better service restart failure detection, redirection of 2> on 1>
 # 2023.01.03 - v. 0.2 - dodano random delay jesli skrypt jest wywolywany nieinteraktywnie
 # 2022.05.18 - v. 0.1 - initial release
+#
+# healthchecks-smartd.sh
+#
+# Restart smartd and report service status to Healthchecks.
+#
 
-. /root/bin/_script_header.sh
+print_version_banner() {
+  local ver=unknown date= line title verline width=60
+  while IFS= read -r line; do
+    if [[ "$line" =~ ^#\ ([0-9]{4}\.[0-9]{2}\.[0-9]{2})\ -\ v\.\ ([0-9]+(\.[0-9]+)*) ]]; then
+      date="${BASH_REMATCH[1]}"
+      ver="${BASH_REMATCH[2]}"
+      break
+    fi
+  done < "$0"
+  title="$(basename "$0")"
+  if [[ -n "$date" ]]; then
+    verline="Version: ${ver} (${date})"
+  else
+    verline="Version: ${ver}"
+  fi
+  printf '┌%*s┐\n' "$width" '' | tr ' ' '─'
+  printf '│ %-*.*s │\n' $((width - 2)) $((width - 2)) "$title"
+  printf '│ %-*.*s │\n' $((width - 2)) $((width - 2)) "$verline"
+  printf '└%*s┘\n' "$width" '' | tr ' ' '─'
+}
+
+show_help() {
+  cat <<EOF
+Usage: $(basename "$0") [-h|--help] [-v|--version] [--no_startup_delay]
+
+Restart smartd and report status to Healthchecks (fail on errors).
+Lookup URL in healthchecks-ids.txt by script basename.
+
+Options:
+  -h, --help           Show this help and exit.
+  -v, --version        Print script version and exit.
+  --no_startup_delay   Skip random startup delay (recommended for cron).
+EOF
+}
+
+HEADER_EXTRA_ARGS=()
+while [[ $# -gt 0 ]]; do
+  case $1 in
+    -h|--help) show_help; exit 0 ;;
+    -v|--version) print_version_banner; exit 0 ;;
+    --no_startup_delay) HEADER_EXTRA_ARGS+=(NO_STARTUP_DELAY); shift ;;
+    *) echo "Unknown argument: $1" >&2; echo "Try: $(basename "$0") --help" >&2; exit 1 ;;
+  esac
+done
+
+. /root/bin/_script_header.sh "${HEADER_EXTRA_ARGS[@]}"
 
 if [ -f "$HEALTHCHECKS_FILE" ];then
   HEALTHCHECK_URL=$(cat "$HEALTHCHECKS_FILE" |grep "^`basename $0`"|awk '{print $2}')
@@ -33,6 +84,6 @@ exit $?
 ######
 # template crontab entry:
 
-# @reboot ( sleep 45 && /root/bin/healthchecks-smartd.sh) 2>&1
+# @reboot ( sleep 45 && /root/bin/healthchecks-smartd.sh --no_startup_delay) 2>&1
 
-# 0 18 * * *  sleep $((RANDOM \% 60)) && /root/bin/healthchecks-smartd.sh
+# 0 18 * * *  /root/bin/healthchecks-smartd.sh --no_startup_delay
