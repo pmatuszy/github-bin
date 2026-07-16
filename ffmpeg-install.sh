@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# v. 20260716.174600 - --source-only + --source-profile: skip install/profile confirmation prompts
+# v. 20260716.174800 - source build: prlimit/ulimit bump and conservative make -j for FD limits
 
 # 2026.06.23 - v. 2.1.23 - jellyfin profile: Jellyfin-like shared build (VAAPI+NVENC+FDK-AAC); common stays default
 # 2026.06.26 - v. 2.1.22 - Ubuntu: libopenjp2-7-dev (not libopenjpeg-dev); optional pkg probe must not abort configure
@@ -2849,23 +2849,38 @@ ffmpeg_source_run_configure() {
 }
 
 ffmpeg_source_prepare_make_jobs() {
-    local ncpu="" nofile="" jobs="" max_jobs=""
+    local ncpu="" nofile="" hard="" jobs="" max_jobs=""
 
     ncpu="$(nproc 2>/dev/null || echo 2)"
     nofile="$(ulimit -n 2>/dev/null || echo 1024)"
+    hard="$(ulimit -Hn 2>/dev/null || echo "${nofile}")"
+
     if (( nofile < 65536 )); then
-        ulimit -n 65536 2>/dev/null || ulimit -n 4096 2>/dev/null || true
+        ulimit -n 65536 2>/dev/null \
+            || ulimit -n 4096 2>/dev/null \
+            || ulimit -n "${hard}" 2>/dev/null \
+            || true
+        nofile="$(ulimit -n 2>/dev/null || echo "${nofile}")"
+    fi
+    if command -v prlimit >/dev/null 2>&1; then
+        prlimit --nofile=65536:65536 --pid="$$" >/dev/null 2>&1 || true
         nofile="$(ulimit -n 2>/dev/null || echo "${nofile}")"
     fi
 
     jobs="${ncpu}"
-    max_jobs=$(( nofile / 256 ))
+    max_jobs=$(( nofile / 128 ))
     (( max_jobs < 1 )) && max_jobs=1
+    if (( nofile <= 4096 && max_jobs > 4 )); then
+        max_jobs=4
+    fi
+    if (( nofile <= 1024 )); then
+        max_jobs=2
+    fi
     if (( jobs > max_jobs )); then
-        log_note "Limiting make -j${jobs} to -j${max_jobs} (ulimit -n=${nofile})."
+        echo "    Limiting make -j${ncpu} to -j${max_jobs} (ulimit -n=${nofile}; FFmpeg needs many open files)." >&2
         jobs="${max_jobs}"
-    elif (( nofile < 65536 )); then
-        log_note "make -j${jobs} (ulimit -n=${nofile})."
+    else
+        echo "    make -j${jobs} (ulimit -n=${nofile})." >&2
     fi
     printf '%s\n' "${jobs}"
 }
