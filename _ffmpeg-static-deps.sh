@@ -475,6 +475,38 @@ ffmpeg_source_build_static_shine() {
     log_note "Static shine installed under ${prefix}."
 }
 
+ffmpeg_source_build_static_sdl2() {
+    local prefix="" jobs="" build_root="" src="" build="" old_pwd=""
+
+    prefix="$(ffmpeg_source_static_deps_prefix)"
+    jobs="$(ffmpeg_source_dep_build_jobs)"
+    build_root="$(mktemp -d "${TEMP_CATALOG}/sdl2-build.XXXXXX")"
+    src="${build_root}/SDL"
+    build="${build_root}/build"
+    old_pwd="$(pwd)"
+
+    log_step "Building static SDL2 into ${prefix} (needed for ffplay)..."
+    ffmpeg_source_git_clone_to "${src}" "https://github.com/libsdl-org/SDL.git" "release-2.30.9"
+    (
+        cmake -G "Unix Makefiles" -S "${src}" -B "${build}" \
+            -DCMAKE_INSTALL_PREFIX="${prefix}" \
+            -DSDL_SHARED=OFF \
+            -DSDL_STATIC=ON \
+            -DSDL_TEST=OFF \
+            -DCMAKE_BUILD_TYPE=Release
+        cmake --build "${build}" -- -j"${jobs}"
+        cmake --install "${build}"
+    ) || {
+        cd "${old_pwd}" || true
+        rm -rf "${build_root}"
+        return 1
+    }
+    cd "${old_pwd}" || true
+    rm -rf "${build_root}"
+    ffmpeg_source_static_deps_prepend_pkg_config
+    log_note "Static SDL2 installed under ${prefix}."
+}
+
 ffmpeg_source_build_static_openjpeg() {
     local prefix="" jobs="" build_root="" src="" build="" old_pwd=""
 
@@ -559,6 +591,10 @@ ffmpeg_source_install_static_deps_for_profile() {
 
     log_step "Ensuring static codec libraries for profile ${SOURCE_PROFILE} (prefix ${prefix})..."
     ffmpeg_source_install_static_build_tools
+
+    if ffmpeg_source_static_dep_profile_wants min common max gpu nvidia; then
+        ffmpeg_source_ensure_static_dep sdl2 ffmpeg_source_build_static_sdl2 || true
+    fi
 
     if ffmpeg_source_static_dep_profile_wants common max gpu nvidia jellyfin; then
         ffmpeg_source_ensure_static_dep x265 ffmpeg_source_build_static_x265 || true

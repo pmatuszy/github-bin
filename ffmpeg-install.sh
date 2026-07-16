@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# v. 20260716.223500 - end run summary with start/stop/duration (no script version footer)
+# v. 20260716.224500 - build ffprobe+ffplay with ffmpeg (SDL2 deps; jellyfin still skips ffplay)
 
 # 2026.06.23 - v. 2.1.23 - jellyfin profile: Jellyfin-like shared build (VAAPI+NVENC+FDK-AAC); common stays default
 # 2026.06.26 - v. 2.1.22 - Ubuntu: libopenjp2-7-dev (not libopenjpeg-dev); optional pkg probe must not abort configure
@@ -2692,6 +2692,59 @@ ffmpeg_source_try_enable_vulkan() {
     return 0
 }
 
+ffmpeg_source_sdl2_usable_for_build() {
+    ffmpeg_source_ensure_pkg_config_path
+    if ffmpeg_source_static_build; then
+        ffmpeg_source_static_deps_prepend_pkg_config
+        if ffmpeg_source_static_dep_ok_in_prefix sdl2; then
+            return 0
+        fi
+        if ffmpeg_pkg_config_satisfied sdl2 && ffmpeg_source_pkg_static_usable sdl2; then
+            return 0
+        fi
+        return 1
+    fi
+    pkg-config --exists sdl2 2>/dev/null
+}
+
+ffmpeg_source_try_enable_ffplay() {
+    local args_var="$1"
+    local -n _args="$args_var"
+
+    _args+=( --enable-ffprobe )
+
+    if ffmpeg_source_sdl2_usable_for_build; then
+        _args+=( --enable-sdl2 --enable-ffplay )
+        log_note "ffplay enabled (SDL2 available)."
+        return 0
+    fi
+
+    apt_install_optional_packages \
+        libsdl2-dev libx11-dev libxext-dev libxv-dev libxcursor-dev \
+        libxinerama-dev libxi-dev libxrandr-dev libxss-dev libxxf86vm-dev
+    ffmpeg_source_ensure_pkg_config_path
+    if ffmpeg_source_sdl2_usable_for_build || pkg-config --exists sdl2 2>/dev/null; then
+        _args+=( --enable-sdl2 --enable-ffplay )
+        log_note "ffplay enabled (SDL2 installed)."
+        return 0
+    fi
+
+    log_note "ffplay disabled — SDL2 not available for this build."
+}
+
+ffmpeg_source_log_configured_programs() {
+    local src_dir="${1:-.}"
+
+    if [[ ! -f "${src_dir}/ffbuild/config.mak" ]]; then
+        return 0
+    fi
+    if grep -qE '^CONFIG_FFPLAY=yes' "${src_dir}/ffbuild/config.mak" 2>/dev/null; then
+        log_note "Configured programs: ffmpeg, ffprobe, ffplay."
+    else
+        log_note "Configured programs: ffmpeg, ffprobe (ffplay off — SDL2 missing)."
+    fi
+}
+
 ffmpeg_source_try_enable_pkg() {
     local args_var="$1"
     local pkg_spec="$2"
@@ -2939,6 +2992,13 @@ install_source_build_dependencies() {
             )
             ;;
     esac
+
+    if [[ "${SOURCE_PROFILE}" != jellyfin ]]; then
+        pkgs+=( libsdl2-dev )
+        apt_install_optional_packages \
+            libx11-dev libxext-dev libxv-dev libxcursor-dev \
+            libxinerama-dev libxi-dev libxrandr-dev libxss-dev libxxf86vm-dev
+    fi
 
     case "${SOURCE_PROFILE}" in
         max|gpu|nvidia|jellyfin)
@@ -3194,6 +3254,10 @@ ffmpeg_source_configure_args() {
         fi
     fi
 
+    if [[ "${SOURCE_PROFILE}" != jellyfin ]]; then
+        ffmpeg_source_try_enable_ffplay args
+    fi
+
     if [[ -n "${FFMPEG_CONFIGURE_EXTRA}" ]]; then
         read -r -a configure_extra <<< "${FFMPEG_CONFIGURE_EXTRA}"
         args+=( "${configure_extra[@]}" )
@@ -3253,6 +3317,7 @@ ffmpeg_source_run_configure() {
         echo "ERROR: configure did not create ffbuild/config.mak." >&2
         return 1
     fi
+    ffmpeg_source_log_configured_programs "."
 }
 
 ffmpeg_source_clean_build_objects() {
