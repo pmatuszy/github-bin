@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# v. 20260716.182000 - source build: raise ulimit -n to hard max; retry make on EMFILE
+# v. 20260716.182500 - run make in clean subprocess (close inherited FDs before compile)
 
 # 2026.06.23 - v. 2.1.23 - jellyfin profile: Jellyfin-like shared build (VAAPI+NVENC+FDK-AAC); common stays default
 # 2026.06.26 - v. 2.1.22 - Ubuntu: libopenjp2-7-dev (not libopenjpeg-dev); optional pkg probe must not abort configure
@@ -3019,19 +3019,43 @@ ffmpeg_source_raise_nofile_limit() {
     fi
 }
 
+ffmpeg_source_count_open_fds() {
+    local -a fds=()
+
+    mapfile -t fds < <(ls -1 /proc/self/fd 2>/dev/null)
+    echo "${#fds[@]}"
+}
+
 ffmpeg_source_invoke_make() {
     local jobs="$1"
-    shift
-    local soft="" hard=""
+    local src_dir="$2"
+    local hard="" wrapper="" rc=0
 
-    soft="$(ulimit -Sn 2>/dev/null || echo "")"
-    hard="$(ulimit -Hn 2>/dev/null || echo "")"
-
-    if command -v prlimit >/dev/null 2>&1 && [[ "${soft}" =~ ^[0-9]+$ ]] && [[ "${hard}" =~ ^[0-9]+$ ]]; then
-        prlimit --nofile="${soft}:${hard}" -- make -j"${jobs}" "$@"
+    shift 2
+    hard="$(ulimit -Hn 2>/dev/null || echo 1048576)"
+    wrapper="$(mktemp "${TEMP_CATALOG}/ffmpeg-make-wrapper.XXXXXX.sh")"
+    cat > "${wrapper}" <<EOF
+#!/usr/bin/env bash
+set -e
+for fd in \$(ls /proc/self/fd 2>/dev/null); do
+    [[ "\${fd}" =~ ^[0-9]+\$ ]] || continue
+    (( fd > 2 )) || continue
+    eval "exec \${fd}>&-" 2>/dev/null || true
+done
+ulimit -n ${hard} 2>/dev/null || true
+ulimit -s unlimited 2>/dev/null || true
+cd $(printf '%q' "${src_dir}")
+exec make -j${jobs}$(printf ' %q' "$@")
+EOF
+    chmod +x "${wrapper}"
+    if command -v prlimit >/dev/null 2>&1 && [[ "${hard}" =~ ^[0-9]+$ ]]; then
+        prlimit --nofile="${hard}:${hard}" --stack=unlimited:unlimited -- "${wrapper}"
     else
-        make -j"${jobs}" "$@"
+        "${wrapper}"
     fi
+    rc=$?
+    rm -f "${wrapper}"
+    return "${rc}"
 }
 
 ffmpeg_source_prepare_make_jobs() {
@@ -3080,6 +3104,7 @@ ffmpeg_source_prepare_make_jobs() {
         echo "    Limiting make -j${jobs} to -j${FFMPEG_MAKE_JOBS} (FFMPEG_MAKE_JOBS default cap)." >&2
         jobs="${FFMPEG_MAKE_JOBS}"
     fi
+    echo "    Shell open FDs: $(ffmpeg_source_count_open_fds), ulimit -n=${nofile} (make uses a clean subprocess)." >&2
     printf '%s\n' "${jobs}"
 }
 
@@ -3109,14 +3134,14 @@ ffmpeg_source_print_too_many_open_files_help() {
     echo "  Too many open files — increase ulimit (max open file descriptors)" >&2
     echo "================================================================================" >&2
     echo >&2
-    echo "  FFmpeg's parallel compile (make -j${jobs}) needs more open files than this" >&2
-    echo "  shell allows. Configure already succeeded; you can resume the compile after" >&2
-    echo "  raising the limit." >&2
+    echo "  FFmpeg make failed with EMFILE. Often the install script shell has thousands of" >&2
+    echo "  inherited open files after apt/configure; raising ulimit alone does not close them." >&2
     echo >&2
     echo "  Current limits: soft=${soft}  hard=${hard}  (ulimit -n shows ${nofile})" >&2
+    echo "  Open FDs in this shell: $(ffmpeg_source_count_open_fds 2>/dev/null || echo '?')" >&2
     if [[ "${soft}" =~ ^[0-9]+$ && "${hard}" =~ ^[0-9]+$ ]] && (( soft >= hard )); then
-        echo "  Soft limit is already at hard max; check: cat /proc/sys/fs/file-nr" >&2
-        echo "  and close other processes, or set TEMP_CATALOG to a local ext4 path (not NFS/VMware share)." >&2
+        echo "  Soft limit is at hard max; check: cat /proc/sys/fs/file-nr" >&2
+        echo "  and set TEMP_CATALOG to a local ext4 path (not NFS/VMware share)." >&2
     fi
     echo >&2
     echo "  Quick fix (this shell only):" >&2
@@ -3127,22 +3152,26 @@ ffmpeg_source_print_too_many_open_files_help() {
         echo "    ulimit -n ${suggested}    # 3× current soft limit" >&2
     fi
     echo >&2
-    echo "  Resume in the build tree (skip configure unless it failed):" >&2
+    echo "  Resume — use a fresh shell (do not reuse the script shell if FD count is high):" >&2
     echo "    cd ${src_dir}" >&2
     if [[ "${hard}" =~ ^[0-9]+$ ]]; then
-        echo "    ulimit -s unlimited" >&2
-        echo "    ulimit -n ${hard}" >&2
+        echo "    ulimit -s unlimited && ulimit -n ${hard}" >&2
     else
-        echo "    ulimit -s unlimited" >&2
-        echo "    ulimit -n 65536" >&2
+        echo "    ulimit -s unlimited && ulimit -n 65536" >&2
     fi
     echo "    make -j1 ffmpeg ffprobe && make -j1" >&2
+    echo "    # or: ffmpeg-install.sh --source-profile jellyfin --source-only" >&2
     echo >&2
-    echo "  Permanent fix — append to /etc/security/limits.conf:" >&2
-    echo "    root soft nofile 65536" >&2
-    echo "    root hard nofile 65536" >&2
-    echo "    * soft nofile 65536" >&2
-    echo "    * hard nofile 65536" >&2
+    echo "  Permanent fix — append to /etc/security/limits.conf (match hard to soft):" >&2
+    if [[ "${hard}" =~ ^[0-9]+$ ]]; then
+        echo "    root soft nofile ${hard}" >&2
+        echo "    root hard nofile ${hard}" >&2
+        echo "    * soft nofile ${hard}" >&2
+        echo "    * hard nofile ${hard}" >&2
+    else
+        echo "    root soft nofile unlimited" >&2
+        echo "    root hard nofile unlimited" >&2
+    fi
     echo "  Log out and back in, then verify: ulimit -n" >&2
     echo >&2
     echo "  Optional system-wide (/etc/sysctl.conf or sysctl.d, then sysctl -p):" >&2
@@ -3257,7 +3286,7 @@ ffmpeg_source_run_make() {
     local log="" rc=0
 
     log="$(mktemp "${TEMP_CATALOG}/ffmpeg-make.XXXXXX.log")"
-    ( cd "${src_dir}" && ffmpeg_source_invoke_make "${jobs}" ffmpeg ffprobe ) 2>&1 | tee "${log}"
+    ffmpeg_source_invoke_make "${jobs}" "${src_dir}" ffmpeg ffprobe 2>&1 | tee "${log}"
     rc=${PIPESTATUS[0]}
     FFMPEG_SOURCE_LAST_MAKE_RC="${rc}"
     FFMPEG_SOURCE_LAST_MAKE_LOG="${log}"
@@ -3267,7 +3296,7 @@ ffmpeg_source_run_make() {
         return "${rc}"
     fi
 
-    ( cd "${src_dir}" && ffmpeg_source_invoke_make "${jobs}" ) 2>&1 | tee -a "${log}"
+    ffmpeg_source_invoke_make "${jobs}" "${src_dir}" 2>&1 | tee -a "${log}"
     rc=${PIPESTATUS[0]}
     FFMPEG_SOURCE_LAST_MAKE_RC="${rc}"
     FFMPEG_SOURCE_LAST_MAKE_LOG="${log}"
