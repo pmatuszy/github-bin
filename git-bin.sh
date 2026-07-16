@@ -1,5 +1,5 @@
 #!/bin/bash
-# v. 20260716.184000 - show git diff --stat for bin deploy (since last gitbdb pull)
+# v. 20260716.184500 - accept --no_startup_delay after pull/batch (gitbdb alias)
 
 # 20260716.165700 - deploy message: ASCII arrow (boxes mangles Unicode)
 
@@ -459,11 +459,10 @@ cmd_reset() {
 # --- main ---
 
 HEADER_EXTRA_ARGS=()
-while [[ $# -gt 0 ]]; do
-  case $1 in
-    --no_startup_delay) HEADER_EXTRA_ARGS+=(NO_STARTUP_DELAY); shift ;;
-    *) break ;;
-  esac
+for _git_bin_arg in "$@"; do
+  if [[ "${_git_bin_arg}" == --no_startup_delay ]]; then
+    HEADER_EXTRA_ARGS+=(NO_STARTUP_DELAY)
+  fi
 done
 
 . /root/bin/_script_header.sh "${HEADER_EXTRA_ARGS[@]}"
@@ -477,6 +476,7 @@ while [[ $# -gt 0 ]]; do
   case $1 in
     -h|--help) show_help; exit 0 ;;
     -v|--version) print_version_banner; exit 0 ;;
+    --no_startup_delay) shift ;;
     --no-deploy) no_deploy=1; shift ;;
     --offline) offline=1; shift ;;
     batch) batch_mode=1; shift ;;
