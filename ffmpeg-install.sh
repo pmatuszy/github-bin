@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# v. 20260716.173600 - vulkan probe: read VK_HEADER_VERSION from header file; skip vulkan when unavailable
+# v. 20260716.174000 - fix configure retry clean (Makefile); libplacebo/shaderc version probes match FFmpeg 8.x
 
 # 2026.06.23 - v. 2.1.23 - jellyfin profile: Jellyfin-like shared build (VAAPI+NVENC+FDK-AAC); common stays default
 # 2026.06.26 - v. 2.1.22 - Ubuntu: libopenjp2-7-dev (not libopenjpeg-dev); optional pkg probe must not abort configure
@@ -2756,8 +2756,8 @@ ffmpeg_source_configure_args() {
         if (( FFMPEG_SOURCE_SKIP_VULKAN == 1 )); then
             :
         elif ffmpeg_source_vulkan_configure_ready; then
-            ffmpeg_source_try_enable_pkg args shaderc --enable-libshaderc shaderc
-            ffmpeg_source_try_enable_pkg args libplacebo --enable-libplacebo libplacebo
+            ffmpeg_source_try_enable_pkg args "shaderc >= 2019.1" --enable-libshaderc shaderc
+            ffmpeg_source_try_enable_pkg args "libplacebo >= 5.229.0" --enable-libplacebo libplacebo
         else
             log_note "shaderc/libplacebo skipped — vulkan is not available for configure."
         fi
@@ -2812,7 +2812,7 @@ ffmpeg_source_clean_configure_tree() {
     if [[ -f Makefile ]]; then
         make distclean >/dev/null 2>&1 || true
     fi
-    rm -rf ffbuild config.mak config.h config.fate config.asm 2>/dev/null || true
+    rm -rf ffbuild config.mak config.h config.fate config.asm Makefile 2>/dev/null || true
 }
 
 ffmpeg_source_collect_configure_args() {
@@ -2834,6 +2834,10 @@ ffmpeg_source_run_configure() {
     ffmpeg_source_collect_configure_args "${staging}" args
     log_note "Configure flags: ${args[*]}"
     ./configure "${args[@]}" || return 1
+    if [[ ! -f ffbuild/library.mak ]]; then
+        echo "ERROR: configure finished but ffbuild/library.mak is missing." >&2
+        return 1
+    fi
 }
 
 source_build_encoder_is_available() {
@@ -3012,7 +3016,7 @@ perform_install_build_from_source() {
         local -a first_configure_args=()
         ffmpeg_source_collect_configure_args "${staging}" first_configure_args
         if ffmpeg_source_configure_args_has_vulkan "${first_configure_args[@]}"; then
-            echo ">>> Configure failed with Vulkan — retrying without vulkan, libshaderc, and libplacebo..." >&2
+            echo ">>> Configure failed with optional GPU stack — retrying without vulkan, libshaderc, and libplacebo..." >&2
             log_note "Vulkan is optional for transcoding (NVENC, VAAPI, and software paths still work)."
             FFMPEG_SOURCE_SKIP_VULKAN=1
             ffmpeg_source_clean_configure_tree
