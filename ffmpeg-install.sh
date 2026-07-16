@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# v. 20260716.175400 - source build: cap make -j by RAM; retry/help on make segfault (OOM)
+# v. 20260716.175600 - source build: default make -j2 (override with FFMPEG_MAKE_JOBS)
 
 # 2026.06.23 - v. 2.1.23 - jellyfin profile: Jellyfin-like shared build (VAAPI+NVENC+FDK-AAC); common stays default
 # 2026.06.26 - v. 2.1.22 - Ubuntu: libopenjp2-7-dev (not libopenjpeg-dev); optional pkg probe must not abort configure
@@ -72,6 +72,7 @@ FFMPEG_PROBE_TIMEOUT_SEC="${FFMPEG_PROBE_TIMEOUT_SEC:-15}"
 FFMPEG_KILL_GRACE_WAIT_SEC="${FFMPEG_KILL_GRACE_WAIT_SEC:-30}"
 FFMPEG_KILL_FORCE_WAIT_SEC="${FFMPEG_KILL_FORCE_WAIT_SEC:-10}"
 FFMPEG_CONFIGURE_EXTRA="${FFMPEG_CONFIGURE_EXTRA:-}"
+FFMPEG_MAKE_JOBS="${FFMPEG_MAKE_JOBS:-2}"
 FFMPEG_SOURCE_PROFILE="${FFMPEG_SOURCE_PROFILE:-}"
 CLI_SOURCE_PROFILE=""
 CLI_SOURCE_WITH_FDK=0
@@ -165,6 +166,7 @@ Environment:
   FFMPEG_KILL_GRACE_WAIT_SEC  seconds to wait after SIGTERM (default: 30).
   FFMPEG_KILL_FORCE_WAIT_SEC  seconds to wait after SIGKILL (default: 10).
   FFMPEG_CONFIGURE_EXTRA      Extra ./configure flags for source builds (space-separated).
+  FFMPEG_MAKE_JOBS            Parallel make jobs for source builds (default: 2).
   FFMPEG_SOURCE_PROFILE       Same as --source-profile (min|common|max|gpu|nvidia|jellyfin).
 EOF
 }
@@ -2905,6 +2907,11 @@ ffmpeg_source_prepare_make_jobs() {
     if (( jobs == ncpu )); then
         echo "    make -j${jobs} (ulimit -n=${nofile})." >&2
     fi
+
+    if [[ "${FFMPEG_MAKE_JOBS}" =~ ^[0-9]+$ ]] && (( FFMPEG_MAKE_JOBS > 0 )) && (( jobs > FFMPEG_MAKE_JOBS )); then
+        echo "    Limiting make -j${jobs} to -j${FFMPEG_MAKE_JOBS} (FFMPEG_MAKE_JOBS default cap)." >&2
+        jobs="${FFMPEG_MAKE_JOBS}"
+    fi
     printf '%s\n' "${jobs}"
 }
 
@@ -3247,10 +3254,10 @@ perform_install_build_from_source() {
     jobs="$(ffmpeg_source_prepare_make_jobs)"
     log_step "Building with make -j${jobs}..."
     if ! ffmpeg_source_run_make "${jobs}" "${src_dir}"; then
-        if (( jobs > 2 )); then
-            echo ">>> make failed — retrying with make -j2..." >&2
-            if ! ffmpeg_source_run_make 2 "${src_dir}"; then
-                echo "ERROR: ffmpeg make failed (try make -j1 in ${src_dir})." >&2
+        if (( jobs > 1 )); then
+            echo ">>> make failed — retrying with make -j1..." >&2
+            if ! ffmpeg_source_run_make 1 "${src_dir}"; then
+                echo "ERROR: ffmpeg make failed (see messages above; build tree: ${src_dir})." >&2
                 return 1
             fi
         else
