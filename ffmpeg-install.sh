@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# v. 20260716.163224 - versioning format v. YYYYMMDD.HH24MISS
+# v. 20260716.170300 - jellyfin/gpu: require glslangValidator before --enable-vulkan (FFmpeg configure)
+
 # 2026.06.23 - v. 2.1.23 - jellyfin profile: Jellyfin-like shared build (VAAPI+NVENC+FDK-AAC); common stays default
 # 2026.06.26 - v. 2.1.22 - Ubuntu: libopenjp2-7-dev (not libopenjpeg-dev); optional pkg probe must not abort configure
 # 2026.06.26 - v. 2.1.21 - source build: install apt deps before need_cmd pkg-config (was checked too early)
@@ -2206,6 +2207,29 @@ ffmpeg_pkg_config_satisfied() {
     fi
 }
 
+# FFmpeg configure checks pkg-config vulkan and requires glslangValidator on PATH.
+ffmpeg_source_vulkan_configure_ready() {
+    ffmpeg_pkg_config_satisfied vulkan || return 1
+    command -v glslangValidator >/dev/null 2>&1 || return 1
+    return 0
+}
+
+ffmpeg_source_try_enable_vulkan() {
+    local args_var="$1"
+    local -n _args="$args_var"
+
+    if ffmpeg_source_vulkan_configure_ready; then
+        _args+=( --enable-vulkan )
+        return 0
+    fi
+    if ffmpeg_pkg_config_satisfied vulkan; then
+        log_note "vulkan disabled — libvulkan-dev is present but glslangValidator not found (install glslang-tools)."
+    else
+        log_note "vulkan disabled — vulkan not found via pkg-config."
+    fi
+    return 0
+}
+
 ffmpeg_source_try_enable_pkg() {
     local args_var="$1"
     local pkg_spec="$2"
@@ -2358,7 +2382,7 @@ install_source_build_dependencies() {
         pkgs+=( libfribidi-dev libzvbi-dev libgnutls28-dev libgmp-dev )
         apt_install_optional_packages \
             ocl-icd-opencl-dev opencl-headers \
-            libshaderc-dev libplacebo-dev libvpl-dev
+            libshaderc-dev libplacebo-dev libvpl-dev glslang-tools libglslang-dev
     elif [[ "${SOURCE_PROFILE}" == max ]] && (( FFMPEG_SOURCE_WITH_FDK_AAC == 1 )); then
         FFMPEG_SOURCE_HAS_FDK_AAC=0
         if apt_cache_has_package libfdk-aac-dev; then
@@ -2373,7 +2397,7 @@ install_source_build_dependencies() {
     fi
 
     if [[ "${SOURCE_PROFILE}" == gpu || "${SOURCE_PROFILE}" == jellyfin ]]; then
-        apt_install_optional_packages libva-dev libvdpau-dev libdrm-dev libvulkan-dev
+        apt_install_optional_packages libva-dev libvdpau-dev libdrm-dev libvulkan-dev glslang-tools libglslang-dev
     fi
 
     if [[ "${SOURCE_PROFILE}" == nvidia || "${SOURCE_PROFILE}" == jellyfin ]]; then
@@ -2489,7 +2513,7 @@ ffmpeg_source_configure_args() {
     if [[ "${SOURCE_PROFILE}" == gpu ]]; then
         ffmpeg_source_try_enable_pkg args libva --enable-vaapi vaapi
         ffmpeg_source_try_enable_pkg args libdrm --enable-libdrm libdrm
-        ffmpeg_source_try_enable_pkg args vulkan --enable-vulkan vulkan
+        ffmpeg_source_try_enable_vulkan args
     fi
 
     if [[ "${SOURCE_PROFILE}" == nvidia ]]; then
@@ -2519,9 +2543,13 @@ ffmpeg_source_configure_args() {
         fi
         ffmpeg_source_try_enable_pkg args libva --enable-vaapi vaapi
         ffmpeg_source_try_enable_pkg args libdrm --enable-libdrm libdrm
-        ffmpeg_source_try_enable_pkg args vulkan --enable-vulkan vulkan
-        ffmpeg_source_try_enable_pkg args shaderc --enable-libshaderc shaderc
-        ffmpeg_source_try_enable_pkg args libplacebo --enable-libplacebo libplacebo
+        ffmpeg_source_try_enable_vulkan args
+        if ffmpeg_source_vulkan_configure_ready; then
+            ffmpeg_source_try_enable_pkg args shaderc --enable-libshaderc shaderc
+            ffmpeg_source_try_enable_pkg args libplacebo --enable-libplacebo libplacebo
+        else
+            log_note "shaderc/libplacebo skipped — vulkan is not available for configure."
+        fi
         ffmpeg_source_try_enable_pkg args amf --enable-amf amf
         ffmpeg_source_try_enable_pkg args vpl --enable-libvpl vpl
         if (( FFMPEG_SOURCE_HAS_FDK_AAC == 1 )); then
