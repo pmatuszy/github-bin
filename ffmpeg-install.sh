@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# v. 20260716.174200 - configure retry: do not rm -rf ffbuild (library.mak is source, not generated)
+# v. 20260716.174400 - source build: raise ulimit -n and cap make -j to avoid "Too many open files"
 
 # 2026.06.23 - v. 2.1.23 - jellyfin profile: Jellyfin-like shared build (VAAPI+NVENC+FDK-AAC); common stays default
 # 2026.06.26 - v. 2.1.22 - Ubuntu: libopenjp2-7-dev (not libopenjpeg-dev); optional pkg probe must not abort configure
@@ -2842,6 +2842,28 @@ ffmpeg_source_run_configure() {
     fi
 }
 
+ffmpeg_source_prepare_make_jobs() {
+    local ncpu="" nofile="" jobs="" max_jobs=""
+
+    ncpu="$(nproc 2>/dev/null || echo 2)"
+    nofile="$(ulimit -n 2>/dev/null || echo 1024)"
+    if (( nofile < 65536 )); then
+        ulimit -n 65536 2>/dev/null || ulimit -n 4096 2>/dev/null || true
+        nofile="$(ulimit -n 2>/dev/null || echo "${nofile}")"
+    fi
+
+    jobs="${ncpu}"
+    max_jobs=$(( nofile / 256 ))
+    (( max_jobs < 1 )) && max_jobs=1
+    if (( jobs > max_jobs )); then
+        log_note "Limiting make -j${jobs} to -j${max_jobs} (ulimit -n=${nofile})."
+        jobs="${max_jobs}"
+    elif (( nofile < 65536 )); then
+        log_note "make -j${jobs} (ulimit -n=${nofile})."
+    fi
+    printf '%s\n' "${jobs}"
+}
+
 source_build_encoder_is_available() {
     local ffmpeg_exe="$1" encoder="$2"
 
@@ -3032,7 +3054,7 @@ perform_install_build_from_source() {
         fi
     fi
 
-    jobs="$(nproc 2>/dev/null || echo 2)"
+    jobs="$(ffmpeg_source_prepare_make_jobs)"
     log_step "Building with make -j${jobs}..."
     make -j"${jobs}" ffmpeg ffprobe
     make -j"${jobs}"
