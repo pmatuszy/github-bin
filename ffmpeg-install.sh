@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# v. 20260716.170300 - jellyfin/gpu: require glslangValidator before --enable-vulkan (FFmpeg configure)
+# v. 20260716.171800 - jellyfin/gpu: auto-install libvulkan-dev, glslang-tools, libglslang-dev when Vulkan deps missing
 
 # 2026.06.23 - v. 2.1.23 - jellyfin profile: Jellyfin-like shared build (VAAPI+NVENC+FDK-AAC); common stays default
 # 2026.06.26 - v. 2.1.22 - Ubuntu: libopenjp2-7-dev (not libopenjpeg-dev); optional pkg probe must not abort configure
@@ -2207,9 +2207,87 @@ ffmpeg_pkg_config_satisfied() {
     fi
 }
 
-# FFmpeg configure checks pkg-config vulkan and requires glslangValidator on PATH.
+# FFmpeg 8.x configure: vulkan >= 1.3.277 (VK_HEADER_VERSION >= 277) and glslangValidator on PATH.
+ffmpeg_source_log_vulkan_probe_status() {
+    local hdr_ver=""
+
+    if command -v glslangValidator >/dev/null 2>&1; then
+        log_note "glslangValidator: $(command -v glslangValidator)"
+    else
+        log_note "glslangValidator not found."
+    fi
+    if pkg-config --exists vulkan 2>/dev/null; then
+        log_note "vulkan pkg-config: $(pkg-config --modversion vulkan 2>/dev/null)"
+        hdr_ver="$(ffmpeg_source_vulkan_header_version)"
+        if [[ -n "${hdr_ver}" ]]; then
+            log_note "VK_HEADER_VERSION: ${hdr_ver}"
+        fi
+    else
+        log_note "vulkan not visible to pkg-config."
+    fi
+    if ffmpeg_source_vulkan_configure_ready; then
+        log_note "Vulkan: ready for FFmpeg configure."
+    elif ! ffmpeg_source_vulkan_headers_acceptable; then
+        hdr_ver="$(ffmpeg_source_vulkan_header_version)"
+        if [[ -n "${hdr_ver}" ]]; then
+            log_note "Vulkan headers too old for FFmpeg 8.x (VK_HEADER_VERSION=${hdr_ver}; need >= 277 with VK_VERSION_1_3, or VK_VERSION_1_4)."
+        else
+            log_note "Vulkan headers do not meet FFmpeg 8.x requirement (vulkan >= 1.3.277)."
+        fi
+    elif ! command -v glslangValidator >/dev/null 2>&1; then
+        log_note "Vulkan blocked — glslangValidator missing (install glslang-tools)."
+    fi
+}
+
+ffmpeg_source_ensure_vulkan_build_deps() {
+    case "${SOURCE_PROFILE}" in
+        gpu|jellyfin) ;;
+        *) return 0 ;;
+    esac
+
+    if ! ffmpeg_source_vulkan_configure_ready; then
+        log_step "Ensuring Vulkan build dependencies (libvulkan-dev, glslang-tools, libglslang-dev)..."
+        apt_install_optional_packages libvulkan-dev glslang-tools libglslang-dev
+    fi
+
+    if [[ "${SOURCE_PROFILE}" == jellyfin ]]; then
+        apt_install_optional_packages libshaderc-dev libplacebo-dev
+    fi
+
+    ffmpeg_source_log_vulkan_probe_status
+}
+
+ffmpeg_source_vulkan_header_version() {
+    local cc="${CC:-gcc}"
+    echo '#include <vulkan/vulkan.h>' | ${cc} -E -dM - 2>/dev/null \
+        | awk '/^#define VK_HEADER_VERSION / { print $3; exit }'
+}
+
+ffmpeg_source_vulkan_pkg_ok() {
+    if ffmpeg_source_static_build; then
+        pkg-config --static --atleast-version=1.3.277 vulkan 2>/dev/null
+    else
+        pkg-config --atleast-version=1.3.277 vulkan 2>/dev/null
+    fi
+}
+
+ffmpeg_source_vulkan_headers_cpp_ok() {
+    local cc="${CC:-gcc}"
+    ${cc} -E - >/dev/null 2>&1 <<'EOF'
+#include <vulkan/vulkan.h>
+#if !(defined(VK_VERSION_1_4) || (defined(VK_VERSION_1_3) && VK_HEADER_VERSION >= 277))
+#error vulkan headers too old for ffmpeg 8.x
+#endif
+EOF
+}
+
+ffmpeg_source_vulkan_headers_acceptable() {
+    ffmpeg_source_vulkan_pkg_ok && return 0
+    ffmpeg_source_vulkan_headers_cpp_ok
+}
+
 ffmpeg_source_vulkan_configure_ready() {
-    ffmpeg_pkg_config_satisfied vulkan || return 1
+    ffmpeg_source_vulkan_headers_acceptable || return 1
     command -v glslangValidator >/dev/null 2>&1 || return 1
     return 0
 }
@@ -2217,16 +2295,26 @@ ffmpeg_source_vulkan_configure_ready() {
 ffmpeg_source_try_enable_vulkan() {
     local args_var="$1"
     local -n _args="$args_var"
+    local hdr_ver=""
 
     if ffmpeg_source_vulkan_configure_ready; then
         _args+=( --enable-vulkan )
         return 0
     fi
-    if ffmpeg_pkg_config_satisfied vulkan; then
-        log_note "vulkan disabled — libvulkan-dev is present but glslangValidator not found (install glslang-tools)."
-    else
+    if ! ffmpeg_pkg_config_satisfied vulkan; then
         log_note "vulkan disabled — vulkan not found via pkg-config."
+        return 0
     fi
+    if ! ffmpeg_source_vulkan_headers_acceptable; then
+        hdr_ver="$(ffmpeg_source_vulkan_header_version)"
+        if [[ -n "${hdr_ver}" ]]; then
+            log_note "vulkan disabled — Vulkan headers too old (VK_HEADER_VERSION=${hdr_ver}; FFmpeg 8.x needs >= 277 with VK_VERSION_1_3, or VK_VERSION_1_4)."
+        else
+            log_note "vulkan disabled — Vulkan headers do not meet FFmpeg 8.x requirement (vulkan >= 1.3.277)."
+        fi
+        return 0
+    fi
+    log_note "vulkan disabled — glslangValidator not found after apt install (glslang-tools may be unavailable in apt)."
     return 0
 }
 
@@ -2382,7 +2470,7 @@ install_source_build_dependencies() {
         pkgs+=( libfribidi-dev libzvbi-dev libgnutls28-dev libgmp-dev )
         apt_install_optional_packages \
             ocl-icd-opencl-dev opencl-headers \
-            libshaderc-dev libplacebo-dev libvpl-dev glslang-tools libglslang-dev
+            libvpl-dev
     elif [[ "${SOURCE_PROFILE}" == max ]] && (( FFMPEG_SOURCE_WITH_FDK_AAC == 1 )); then
         FFMPEG_SOURCE_HAS_FDK_AAC=0
         if apt_cache_has_package libfdk-aac-dev; then
@@ -2397,7 +2485,7 @@ install_source_build_dependencies() {
     fi
 
     if [[ "${SOURCE_PROFILE}" == gpu || "${SOURCE_PROFILE}" == jellyfin ]]; then
-        apt_install_optional_packages libva-dev libvdpau-dev libdrm-dev libvulkan-dev glslang-tools libglslang-dev
+        apt_install_optional_packages libva-dev libvdpau-dev libdrm-dev
     fi
 
     if [[ "${SOURCE_PROFILE}" == nvidia || "${SOURCE_PROFILE}" == jellyfin ]]; then
@@ -2407,6 +2495,7 @@ install_source_build_dependencies() {
 
     log_step "Installing compiler and profile packages..."
     apt_install_packages "${pkgs[@]}"
+    ffmpeg_source_ensure_vulkan_build_deps
     probe_source_optional_codecs
     need_cmd pkg-config
     log_note "Build dependencies installed."
@@ -2742,6 +2831,7 @@ perform_install_build_from_source() {
     echo
 
     cd "${src_dir}"
+    ffmpeg_source_ensure_vulkan_build_deps
     log_step "Running ffmpeg configure (profile ${SOURCE_PROFILE}, release ${version})..."
     configure_args=()
     while IFS= read -r flag; do
