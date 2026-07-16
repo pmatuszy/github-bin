@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# v. 20260716.175600 - source build: default make -j2 (override with FFMPEG_MAKE_JOBS)
+# v. 20260716.175800 - jellyfin: disable LTO by default; retry configure without LTO if make segfaults
 
 # 2026.06.23 - v. 2.1.23 - jellyfin profile: Jellyfin-like shared build (VAAPI+NVENC+FDK-AAC); common stays default
 # 2026.06.26 - v. 2.1.22 - Ubuntu: libopenjp2-7-dev (not libopenjpeg-dev); optional pkg probe must not abort configure
@@ -72,7 +72,9 @@ FFMPEG_PROBE_TIMEOUT_SEC="${FFMPEG_PROBE_TIMEOUT_SEC:-15}"
 FFMPEG_KILL_GRACE_WAIT_SEC="${FFMPEG_KILL_GRACE_WAIT_SEC:-30}"
 FFMPEG_KILL_FORCE_WAIT_SEC="${FFMPEG_KILL_FORCE_WAIT_SEC:-10}"
 FFMPEG_CONFIGURE_EXTRA="${FFMPEG_CONFIGURE_EXTRA:-}"
-FFMPEG_MAKE_JOBS="${FFMPEG_MAKE_JOBS:-2}"
+FFMPEG_MAKE_JOBS="${FFMPEG_MAKE_JOBS:-1}"
+FFMPEG_SOURCE_WITH_LTO="${FFMPEG_SOURCE_WITH_LTO:-0}"
+FFMPEG_SOURCE_DISABLE_LTO=0
 FFMPEG_SOURCE_PROFILE="${FFMPEG_SOURCE_PROFILE:-}"
 CLI_SOURCE_PROFILE=""
 CLI_SOURCE_WITH_FDK=0
@@ -166,7 +168,8 @@ Environment:
   FFMPEG_KILL_GRACE_WAIT_SEC  seconds to wait after SIGTERM (default: 30).
   FFMPEG_KILL_FORCE_WAIT_SEC  seconds to wait after SIGKILL (default: 10).
   FFMPEG_CONFIGURE_EXTRA      Extra ./configure flags for source builds (space-separated).
-  FFMPEG_MAKE_JOBS            Parallel make jobs for source builds (default: 2).
+  FFMPEG_MAKE_JOBS            Parallel make jobs for source builds (default: 1).
+  FFMPEG_SOURCE_WITH_LTO      Set to 1 to enable --enable-lto=auto (jellyfin; can crash on some hosts).
   FFMPEG_SOURCE_PROFILE       Same as --source-profile (min|common|max|gpu|nvidia|jellyfin).
 EOF
 }
@@ -2657,9 +2660,13 @@ ffmpeg_source_configure_args() {
             --disable-libxcb
             --disable-sdl2
             --disable-xlib
-            --enable-lto=auto
             --extra-version=Jellyfin
         )
+        if (( FFMPEG_SOURCE_DISABLE_LTO == 1 )) || (( FFMPEG_SOURCE_WITH_LTO != 1 )); then
+            args+=( --disable-lto )
+        else
+            args+=( --enable-lto=auto )
+        fi
     fi
 
     args+=(
@@ -2850,6 +2857,32 @@ ffmpeg_source_run_configure() {
     fi
 }
 
+ffmpeg_source_clean_build_objects() {
+    if [[ -f Makefile ]]; then
+        make clean >/dev/null 2>&1 || true
+    fi
+}
+
+ffmpeg_source_retry_make_without_lto() {
+    local staging="$1"
+    local src_dir="$2"
+    local jobs="$3"
+
+    (( FFMPEG_SOURCE_DISABLE_LTO == 0 )) || return 1
+    [[ "${SOURCE_PROFILE}" == jellyfin ]] || return 1
+
+    echo ">>> make failed — reconfiguring jellyfin build without LTO and rebuilding..." >&2
+    FFMPEG_SOURCE_DISABLE_LTO=1
+    cd "${src_dir}"
+    ffmpeg_source_clean_build_objects
+    ffmpeg_source_clean_configure_tree
+    if ! ffmpeg_source_run_configure "${staging}"; then
+        echo "ERROR: ffmpeg configure failed after LTO disable (see ffbuild/config.log)." >&2
+        return 1
+    fi
+    ffmpeg_source_run_make "${jobs}" "${src_dir}"
+}
+
 ffmpeg_source_mem_available_mb() {
     awk '/^MemAvailable:/ { printf "%d", int($2 / 1024); exit }' /proc/meminfo 2>/dev/null
 }
@@ -2956,7 +2989,7 @@ ffmpeg_source_print_too_many_open_files_help() {
     echo "  Resume in the build tree (skip configure unless it failed):" >&2
     echo "    cd ${src_dir}" >&2
     echo "    ulimit -n 65536" >&2
-    echo "    make -j2 ffmpeg ffprobe && make -j2" >&2
+    echo "    make -j1 ffmpeg ffprobe && make -j1" >&2
     echo >&2
     echo "  Permanent fix — append to /etc/security/limits.conf:" >&2
     echo "    root soft nofile 65536" >&2
@@ -3012,26 +3045,35 @@ ffmpeg_source_print_make_segfault_help() {
 
     echo >&2
     echo "================================================================================" >&2
-    echo "  make crashed (segmentation fault) — often out of memory on VMs" >&2
+    echo "  make crashed (segmentation fault)" >&2
     echo "================================================================================" >&2
     echo >&2
-    echo "  Parallel FFmpeg builds (especially jellyfin + LTO + NVENC) can use several" >&2
-    echo "  GB of RAM per job. make -j${jobs} may have exhausted memory; the kernel or" >&2
-    echo "  compiler then crashes with 'Segmentation fault'." >&2
+    echo "  Common causes on jellyfin builds:" >&2
+    echo "    - Link-time optimization (LTO): gcc/lld can segfault on large FFmpeg trees" >&2
+    echo "    - Out of memory: parallel jobs (NVENC/CUDA) can use several GB per job" >&2
+    echo "    - Stale build tree: partial LTO objects left from a previous configure" >&2
     echo >&2
     if [[ -n "${mem_mb}" ]]; then
-        echo "  MemAvailable now: ~${mem_mb} MiB (script targets ~3 GiB per job for jellyfin)." >&2
+        echo "  MemAvailable now: ~${mem_mb} MiB." >&2
+        if (( mem_mb >= 8192 && jobs == 1 )); then
+            echo "  With -j1 and plenty of RAM, LTO or a dirty build tree is the likely cause." >&2
+        else
+            echo "  Script targets ~3 GiB per job for jellyfin when capping parallelism." >&2
+        fi
         echo >&2
     fi
-    echo "  Quick fix — resume with fewer parallel jobs:" >&2
+    echo "  This script will retry once without LTO (jellyfin) after make -j1 fails." >&2
+    echo "  Fresh runs use --disable-lto by default (FFMPEG_SOURCE_WITH_LTO=1 to opt in)." >&2
+    echo >&2
+    echo "  Manual resume in the build tree:" >&2
     echo "    cd ${src_dir}" >&2
-    echo "    make -j1 ffmpeg ffprobe && make -j1" >&2
-    echo "    # or: make -j2 ffmpeg ffprobe && make -j2" >&2
+    echo "    make distclean && ../configure ... --disable-lto && make -j1 ffmpeg ffprobe && make -j1" >&2
+    echo "    # or re-run: ffmpeg-install.sh --source-profile jellyfin --source-only" >&2
     echo >&2
     echo "  If it still crashes:" >&2
     echo "    - Add swap (e.g. 8G): fallocate -l 8G /swapfile && chmod 600 /swapfile && mkswap /swapfile && swapon /swapfile" >&2
     echo "    - Give the VM more RAM in VMware settings" >&2
-    echo "    - Reconfigure without LTO: add --disable-lto to configure and rebuild" >&2
+    echo "    - Check dmesg for OOM killer / compiler crash lines" >&2
     echo "================================================================================" >&2
     echo >&2
 }
@@ -3256,12 +3298,13 @@ perform_install_build_from_source() {
     if ! ffmpeg_source_run_make "${jobs}" "${src_dir}"; then
         if (( jobs > 1 )); then
             echo ">>> make failed — retrying with make -j1..." >&2
-            if ! ffmpeg_source_run_make 1 "${src_dir}"; then
-                echo "ERROR: ffmpeg make failed (see messages above; build tree: ${src_dir})." >&2
-                return 1
-            fi
+        fi
+        if (( jobs > 1 )) && ffmpeg_source_run_make 1 "${src_dir}"; then
+            :
+        elif ffmpeg_source_retry_make_without_lto "${staging}" "${src_dir}" "${jobs}"; then
+            :
         else
-            echo "ERROR: ffmpeg make failed (try make -j1 in ${src_dir})." >&2
+            echo "ERROR: ffmpeg make failed (see messages above; build tree: ${src_dir})." >&2
             return 1
         fi
     fi
