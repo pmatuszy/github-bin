@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# v. 20260716.171800 - jellyfin/gpu: auto-install libvulkan-dev, glslang-tools, libglslang-dev when Vulkan deps missing
+# v. 20260716.172500 - jellyfin/gpu: upgrade Khronos Vulkan-Headers when Ubuntu 24.04 < 1.3.277
 
 # 2026.06.23 - v. 2.1.23 - jellyfin profile: Jellyfin-like shared build (VAAPI+NVENC+FDK-AAC); common stays default
 # 2026.06.26 - v. 2.1.22 - Ubuntu: libopenjp2-7-dev (not libopenjpeg-dev); optional pkg probe must not abort configure
@@ -2208,6 +2208,91 @@ ffmpeg_pkg_config_satisfied() {
 }
 
 # FFmpeg 8.x configure: vulkan >= 1.3.277 (VK_HEADER_VERSION >= 277) and glslangValidator on PATH.
+ffmpeg_source_vulkan_header_version() {
+    local cc="${CC:-gcc}"
+    printf '%s\n' '#include <vulkan/vulkan.h>' \
+        | ${cc} -E -dM - 2>/dev/null \
+        | awk '/^#define VK_HEADER_VERSION / { print $3; exit }'
+}
+
+ffmpeg_source_vulkan_headers_cpp_ok() {
+    local cc="${CC:-gcc}"
+    printf '%s\n' \
+        '#include <vulkan/vulkan.h>' \
+        '#if !(defined(VK_VERSION_1_4) || (defined(VK_VERSION_1_3) && VK_HEADER_VERSION >= 277))' \
+        '#error vulkan headers too old for ffmpeg 8.x' \
+        '#endif' \
+        | ${cc} -E - >/dev/null 2>&1
+}
+
+ffmpeg_source_vulkan_pkg_ok() {
+    if ffmpeg_source_static_build; then
+        pkg-config --static --atleast-version=1.3.277 vulkan 2>/dev/null
+    else
+        pkg-config --atleast-version=1.3.277 vulkan 2>/dev/null
+    fi
+}
+
+ffmpeg_source_vulkan_headers_acceptable() {
+    ffmpeg_source_vulkan_headers_cpp_ok
+}
+
+ffmpeg_source_patch_vulkan_pkg_config_version() {
+    local ver="${1:-1.3.283}"
+    local pc=""
+    local patched=0
+
+    while IFS= read -r pc; do
+        [[ -f "${pc}" && -w "${pc}" ]] || continue
+        sed -i "s/^Version:.*/Version: ${ver}/" "${pc}"
+        patched=1
+    done < <(find /usr/lib /usr/share -name 'vulkan.pc' 2>/dev/null)
+
+    if (( patched == 0 )); then
+        log_note "vulkan.pc not found for pkg-config version patch (headers still upgraded)."
+    fi
+}
+
+install_vulkan_headers_from_git() {
+    local tag="vulkan-sdk-1.3.283.0"
+    local pc_version="1.3.283"
+    local build_dir=""
+
+    if ffmpeg_source_vulkan_headers_acceptable && ffmpeg_source_vulkan_pkg_ok; then
+        return 0
+    fi
+
+    need_cmd git
+    need_cmd install
+    build_dir="$(mktemp -d "${TEMP_CATALOG}/vulkan-headers.XXXXXX")"
+    log_step "Installing Vulkan-Headers ${pc_version} from Khronos git (FFmpeg 8.x needs >= 1.3.277; Ubuntu 24.04 ships 1.3.275)..."
+
+    if ! git clone --depth 1 --branch "${tag}" https://github.com/KhronosGroup/Vulkan-Headers.git "${build_dir}/Vulkan-Headers"; then
+        log_note "Vulkan-Headers clone failed; vulkan/shaderc/libplacebo will be skipped."
+        rm -rf "${build_dir}"
+        return 1
+    fi
+
+    install -d /usr/include/vulkan
+    cp -a "${build_dir}/Vulkan-Headers/include/vulkan/." /usr/include/vulkan/
+    ffmpeg_source_patch_vulkan_pkg_config_version "${pc_version}"
+    rm -rf "${build_dir}"
+
+    if ffmpeg_source_vulkan_headers_acceptable; then
+        log_note "Vulkan-Headers ${pc_version} installed under /usr/include/vulkan."
+        return 0
+    fi
+    log_note "Vulkan-Headers install did not satisfy FFmpeg 8.x header requirement."
+    return 1
+}
+
+ffmpeg_source_vulkan_configure_ready() {
+    ffmpeg_source_vulkan_headers_acceptable || return 1
+    ffmpeg_source_vulkan_pkg_ok || return 1
+    command -v glslangValidator >/dev/null 2>&1 || return 1
+    return 0
+}
+
 ffmpeg_source_log_vulkan_probe_status() {
     local hdr_ver=""
 
@@ -2234,6 +2319,8 @@ ffmpeg_source_log_vulkan_probe_status() {
         else
             log_note "Vulkan headers do not meet FFmpeg 8.x requirement (vulkan >= 1.3.277)."
         fi
+    elif ! ffmpeg_source_vulkan_pkg_ok; then
+        log_note "Vulkan blocked — vulkan pkg-config below 1.3.277."
     elif ! command -v glslangValidator >/dev/null 2>&1; then
         log_note "Vulkan blocked — glslangValidator missing (install glslang-tools)."
     fi
@@ -2245,9 +2332,11 @@ ffmpeg_source_ensure_vulkan_build_deps() {
         *) return 0 ;;
     esac
 
-    if ! ffmpeg_source_vulkan_configure_ready; then
-        log_step "Ensuring Vulkan build dependencies (libvulkan-dev, glslang-tools, libglslang-dev)..."
-        apt_install_optional_packages libvulkan-dev glslang-tools libglslang-dev
+    log_step "Ensuring Vulkan build dependencies (libvulkan-dev, glslang-tools, libglslang-dev)..."
+    apt_install_optional_packages libvulkan-dev glslang-tools libglslang-dev
+
+    if ! ffmpeg_source_vulkan_headers_acceptable || ! ffmpeg_source_vulkan_pkg_ok; then
+        install_vulkan_headers_from_git || true
     fi
 
     if [[ "${SOURCE_PROFILE}" == jellyfin ]]; then
@@ -2255,41 +2344,6 @@ ffmpeg_source_ensure_vulkan_build_deps() {
     fi
 
     ffmpeg_source_log_vulkan_probe_status
-}
-
-ffmpeg_source_vulkan_header_version() {
-    local cc="${CC:-gcc}"
-    echo '#include <vulkan/vulkan.h>' | ${cc} -E -dM - 2>/dev/null \
-        | awk '/^#define VK_HEADER_VERSION / { print $3; exit }'
-}
-
-ffmpeg_source_vulkan_pkg_ok() {
-    if ffmpeg_source_static_build; then
-        pkg-config --static --atleast-version=1.3.277 vulkan 2>/dev/null
-    else
-        pkg-config --atleast-version=1.3.277 vulkan 2>/dev/null
-    fi
-}
-
-ffmpeg_source_vulkan_headers_cpp_ok() {
-    local cc="${CC:-gcc}"
-    ${cc} -E - >/dev/null 2>&1 <<'EOF'
-#include <vulkan/vulkan.h>
-#if !(defined(VK_VERSION_1_4) || (defined(VK_VERSION_1_3) && VK_HEADER_VERSION >= 277))
-#error vulkan headers too old for ffmpeg 8.x
-#endif
-EOF
-}
-
-ffmpeg_source_vulkan_headers_acceptable() {
-    ffmpeg_source_vulkan_pkg_ok && return 0
-    ffmpeg_source_vulkan_headers_cpp_ok
-}
-
-ffmpeg_source_vulkan_configure_ready() {
-    ffmpeg_source_vulkan_headers_acceptable || return 1
-    command -v glslangValidator >/dev/null 2>&1 || return 1
-    return 0
 }
 
 ffmpeg_source_try_enable_vulkan() {
@@ -2312,6 +2366,10 @@ ffmpeg_source_try_enable_vulkan() {
         else
             log_note "vulkan disabled — Vulkan headers do not meet FFmpeg 8.x requirement (vulkan >= 1.3.277)."
         fi
+        return 0
+    fi
+    if ! ffmpeg_source_vulkan_pkg_ok; then
+        log_note "vulkan disabled — vulkan pkg-config below 1.3.277 (Khronos header upgrade may have failed)."
         return 0
     fi
     log_note "vulkan disabled — glslangValidator not found after apt install (glslang-tools may be unavailable in apt)."
