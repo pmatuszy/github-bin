@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# v. 20260716.210000 - auto-build static codec deps; apt + source for all profiles
+# v. 20260716.211000 - fix make after ffprobe: skip bare 'make all' (empty ffplay strip)
 
 # 2026.06.23 - v. 2.1.23 - jellyfin profile: Jellyfin-like shared build (VAAPI+NVENC+FDK-AAC); common stays default
 # 2026.06.26 - v. 2.1.22 - Ubuntu: libopenjp2-7-dev (not libopenjpeg-dev); optional pkg probe must not abort configure
@@ -3599,13 +3599,26 @@ ffmpeg_source_retry_make_after_emfile() {
     ffmpeg_source_run_make "${jobs}" "${src_dir}"
 }
 
+ffmpeg_source_make_binary_targets() {
+    local src_dir="$1"
+    local -a targets=( ffmpeg ffprobe )
+
+    if [[ -f "${src_dir}/ffbuild/config.mak" ]] \
+        && grep -qE '^CONFIG_FFPLAY=yes' "${src_dir}/ffbuild/config.mak" 2>/dev/null; then
+        targets+=( ffplay )
+    fi
+    printf '%s\n' "${targets[@]}"
+}
+
 ffmpeg_source_run_make() {
     local jobs="$1"
     local src_dir="$2"
     local log="" rc=0
+    local -a make_targets=()
 
+    mapfile -t make_targets < <(ffmpeg_source_make_binary_targets "${src_dir}")
     log="$(mktemp "${TEMP_CATALOG}/ffmpeg-make.XXXXXX.log")"
-    ffmpeg_source_invoke_make "${jobs}" "${src_dir}" ffmpeg ffprobe 2>&1 | tee "${log}"
+    ffmpeg_source_invoke_make "${jobs}" "${src_dir}" "${make_targets[@]}" 2>&1 | tee "${log}"
     rc=${PIPESTATUS[0]}
     FFMPEG_SOURCE_LAST_MAKE_RC="${rc}"
     FFMPEG_SOURCE_LAST_MAKE_LOG="${log}"
@@ -3615,15 +3628,6 @@ ffmpeg_source_run_make() {
         return "${rc}"
     fi
 
-    ffmpeg_source_invoke_make "${jobs}" "${src_dir}" 2>&1 | tee -a "${log}"
-    rc=${PIPESTATUS[0]}
-    FFMPEG_SOURCE_LAST_MAKE_RC="${rc}"
-    FFMPEG_SOURCE_LAST_MAKE_LOG="${log}"
-    if (( rc != 0 )); then
-        ffmpeg_source_print_make_failure_help "${jobs}" "${src_dir}" "${log}" "${rc}" || true
-        ffmpeg_source_print_make_log_tail "${log}" 40
-        return "${rc}"
-    fi
     rm -f "${log}"
     FFMPEG_SOURCE_LAST_MAKE_LOG=""
     return 0
