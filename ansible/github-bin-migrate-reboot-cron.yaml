@@ -1,0 +1,30 @@
+---
+# Migrate root crontab: sprawdz-czy-reboot-required.sh → healthchecks-reboot-required.sh
+# Does not run git-pull; use when scripts are already deployed.
+#
+#   ./run-migrate-reboot-cron.sh
+#   ansible-playbook -i hosts.txt github-bin-migrate-reboot-cron.yaml --extra-vars "gdzie_uruchomic=x86_ubuntu"
+#
+- hosts: "{{ gdzie_uruchomic }}"
+  become: true
+  gather_facts: false
+
+  tasks:
+    - name: Ensure healthchecks-reboot-required.sh is installed
+      ansible.builtin.stat:
+        path: /root/bin/healthchecks-reboot-required.sh
+      register: reboot_script
+
+    - name: Fail when reboot script missing
+      ansible.builtin.fail:
+        msg: "/root/bin/healthchecks-reboot-required.sh missing — run github-bin-pull.yaml first"
+      when: not reboot_script.stat.exists
+
+    - name: Run one-shot crontab migration script
+      ansible.builtin.command: /root/bin/migrate-reboot-cron-once.sh
+      register: migrate_once
+      changed_when: "'crontab updated' in migrate_once.stdout"
+
+    - name: Show migration output
+      ansible.builtin.debug:
+        var: migrate_once.stdout_lines

@@ -1,0 +1,56 @@
+---
+# Pull github-bin on selected hosts and run post-pull hooks (migrate-reboot-cron-once.sh).
+#
+# Run from ansible control host (e.g. management-server):
+#   ./run-github-bin-pull.sh
+#   ansible-playbook -i hosts.txt github-bin-pull.yaml --extra-vars "gdzie_uruchomic=test_group"
+#
+- hosts: "{{ gdzie_uruchomic }}"
+  become: true
+  gather_facts: false
+
+  vars:
+    github_bin_repo: /root/github/github-bin
+    github_bin_remote: git+ssh://git@github.com/pmatuszy/github-bin.git
+    github_bin_pull_script: "{{ github_bin_repo }}/git-pull.sh"
+    github_bin_marker: /root/.git-bin-migrated-reboot-cron-v1
+
+  tasks:
+    - name: Ensure github-bin repository is present and up to date (bootstrap)
+      ansible.builtin.shell: |
+        set -o pipefail
+        repo="{{ github_bin_repo }}"
+        remote="{{ github_bin_remote }}"
+        mkdir -p "$(dirname "$repo")"
+        if [[ -d "$repo/.git" ]]; then
+          cd "$repo"
+          git pull "$remote"
+        else
+          git clone "$remote" "$repo"
+        fi
+      args:
+        executable: /bin/bash
+      register: github_bin_bootstrap
+      changed_when: "'Already up to date' not in github_bin_bootstrap.stdout"
+
+    - name: Deploy scripts via git-pull.sh batch
+      ansible.builtin.command:
+        argv:
+          - "{{ github_bin_pull_script }}"
+          - batch
+          - --no_startup_delay
+      register: github_bin_pull
+      changed_when: true
+
+    - name: Show git-pull tail (last 20 lines)
+      ansible.builtin.debug:
+        msg: "{{ github_bin_pull.stdout_lines[-20:] | default([]) }}"
+
+    - name: Run migrate-reboot-cron-once.sh (idempotent)
+      ansible.builtin.command: /root/bin/migrate-reboot-cron-once.sh
+      register: github_bin_migrate
+      changed_when: "'crontab updated' in github_bin_migrate.stdout"
+
+    - name: Show migration result
+      ansible.builtin.debug:
+        var: github_bin_migrate.stdout_lines
