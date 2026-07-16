@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# v. 20260716.180000 - jellyfin: omit --enable-lto by default (no --disable-lto in FFmpeg)
+# v. 20260716.181000 - source build: raise ulimit stack before make (fixes make segfault in libc)
 
 # 2026.06.23 - v. 2.1.23 - jellyfin profile: Jellyfin-like shared build (VAAPI+NVENC+FDK-AAC); common stays default
 # 2026.06.26 - v. 2.1.22 - Ubuntu: libopenjp2-7-dev (not libopenjpeg-dev); optional pkg probe must not abort configure
@@ -75,6 +75,11 @@ FFMPEG_CONFIGURE_EXTRA="${FFMPEG_CONFIGURE_EXTRA:-}"
 FFMPEG_MAKE_JOBS="${FFMPEG_MAKE_JOBS:-1}"
 FFMPEG_SOURCE_WITH_LTO="${FFMPEG_SOURCE_WITH_LTO:-0}"
 FFMPEG_SOURCE_DISABLE_LTO=0
+FFMPEG_SOURCE_WITH_CUDA_NVCC="${FFMPEG_SOURCE_WITH_CUDA_NVCC:-0}"
+FFMPEG_SOURCE_SKIP_CUDA_NVCC=0
+FFMPEG_SOURCE_MAKE_RETRY_DONE=0
+FFMPEG_SOURCE_LAST_MAKE_RC=0
+FFMPEG_SOURCE_LAST_MAKE_LOG=""
 FFMPEG_SOURCE_PROFILE="${FFMPEG_SOURCE_PROFILE:-}"
 CLI_SOURCE_PROFILE=""
 CLI_SOURCE_WITH_FDK=0
@@ -170,6 +175,7 @@ Environment:
   FFMPEG_CONFIGURE_EXTRA      Extra ./configure flags for source builds (space-separated).
   FFMPEG_MAKE_JOBS            Parallel make jobs for source builds (default: 1).
   FFMPEG_SOURCE_WITH_LTO      Set to 1 to pass --enable-lto=auto (jellyfin; off by default; can crash on some hosts).
+  FFMPEG_SOURCE_WITH_CUDA_NVCC  Set to 1 to pass --enable-cuda-nvcc (jellyfin; off by default; nvcc can segfault on VMs).
   FFMPEG_SOURCE_PROFILE       Same as --source-profile (min|common|max|gpu|nvidia|jellyfin).
 EOF
 }
@@ -2511,10 +2517,37 @@ probe_source_optional_codecs() {
     esac
 }
 
+ffmpeg_source_ffnvcodec_headers_present() {
+    local prefix="${1:-/usr/local}"
+
+    [[ -f "${prefix}/include/ffnvcodec/nvEncodeAPI.h" ]] \
+        || [[ -f /usr/include/ffnvcodec/nvEncodeAPI.h ]]
+}
+
+ffmpeg_source_jellyfin_add_cuda_args() {
+    local -n _args=$1
+
+    if (( FFMPEG_SOURCE_WITH_CUDA_NVCC == 1 )) && (( FFMPEG_SOURCE_SKIP_CUDA_NVCC == 0 )) \
+        && command -v nvcc >/dev/null 2>&1; then
+        _args+=( --enable-cuda --enable-cuda-nvcc )
+        ffmpeg_source_try_enable_pkg _args libnpp --enable-libnpp libnpp
+        return 0
+    fi
+    if ffmpeg_source_ffnvcodec_headers_present; then
+        _args+=( --enable-cuda --enable-cuda-llvm )
+        return 0
+    fi
+    if command -v nvcc >/dev/null 2>&1; then
+        log_note "cuda-llvm disabled — ffnvcodec headers not found (NVENC still enabled via ffnvcodec API)."
+        return 0
+    fi
+    log_note "cuda disabled — nvcc and ffnvcodec headers not found."
+}
+
 install_nv_codec_headers_from_git() {
     local prefix="${1:-/usr/local}"
 
-    if [[ -f "${prefix}/include/ffnvcodec/nvEncodeAPI.h" ]]; then
+    if ffmpeg_source_ffnvcodec_headers_present "${prefix}"; then
         return 0
     fi
     need_cmd git
@@ -2785,14 +2818,7 @@ ffmpeg_source_configure_args() {
             --enable-nvdec
             --enable-nvenc
         )
-        if command -v nvcc >/dev/null 2>&1; then
-            args+=( --enable-cuda --enable-cuda-nvcc )
-            ffmpeg_source_try_enable_pkg args libnpp --enable-libnpp libnpp
-        elif [[ -f /usr/local/include/ffnvcodec/nvEncodeAPI.h ]]; then
-            args+=( --enable-cuda --enable-cuda-llvm )
-        else
-            log_note "cuda disabled — nvcc and ffnvcodec headers not found."
-        fi
+        ffmpeg_source_jellyfin_add_cuda_args args
     fi
 
     if [[ -n "${FFMPEG_CONFIGURE_EXTRA}" ]]; then
@@ -2861,33 +2887,104 @@ ffmpeg_source_clean_build_objects() {
     fi
 }
 
-ffmpeg_source_retry_make_without_lto() {
+ffmpeg_source_print_make_log_tail() {
+    local log="$1"
+    local lines="${2:-40}"
+
+    [[ -f "${log}" ]] || return 0
+    echo "  Last ${lines} lines of make log (${log}):" >&2
+    tail -n "${lines}" "${log}" >&2 || true
+    echo >&2
+}
+
+ffmpeg_source_reconfigure_and_make() {
     local staging="$1"
     local src_dir="$2"
     local jobs="$3"
 
-    (( FFMPEG_SOURCE_DISABLE_LTO == 0 )) || return 1
-    [[ "${SOURCE_PROFILE}" == jellyfin ]] || return 1
-
-    echo ">>> make failed — cleaning jellyfin build tree and reconfiguring without LTO..." >&2
-    FFMPEG_SOURCE_DISABLE_LTO=1
-    FFMPEG_SOURCE_WITH_LTO=0
     cd "${src_dir}"
     ffmpeg_source_clean_build_objects
     ffmpeg_source_clean_configure_tree
     if ! ffmpeg_source_run_configure "${staging}"; then
-        echo "ERROR: ffmpeg configure failed after LTO disable (see ffbuild/config.log)." >&2
+        echo "ERROR: ffmpeg configure failed during make retry (see ffbuild/config.log)." >&2
         return 1
     fi
     ffmpeg_source_run_make "${jobs}" "${src_dir}"
+}
+
+ffmpeg_source_retry_make_after_segfault() {
+    local staging="$1"
+    local src_dir="$2"
+    local jobs="$3"
+    local rc="$4"
+    local log="$5"
+
+    if (( FFMPEG_SOURCE_MAKE_RETRY_DONE == 1 )); then
+        return 1
+    fi
+    [[ "${SOURCE_PROFILE}" == jellyfin ]] || return 1
+    ffmpeg_source_make_rc_indicates_segfault "${rc}" "${log}" || return 1
+
+    FFMPEG_SOURCE_MAKE_RETRY_DONE=1
+    FFMPEG_SOURCE_DISABLE_LTO=1
+    FFMPEG_SOURCE_WITH_LTO=0
+
+    if (( FFMPEG_SOURCE_WITH_CUDA_NVCC == 1 )); then
+        echo ">>> make segfault — reconfiguring jellyfin with cuda-llvm instead of cuda-nvcc..." >&2
+    else
+        echo ">>> make segfault — clean jellyfin rebuild (cuda-llvm, no LTO)..." >&2
+    fi
+    FFMPEG_SOURCE_SKIP_CUDA_NVCC=1
+    FFMPEG_SOURCE_WITH_CUDA_NVCC=0
+    ffmpeg_source_reconfigure_and_make "${staging}" "${src_dir}" "${jobs}"
 }
 
 ffmpeg_source_mem_available_mb() {
     awk '/^MemAvailable:/ { printf "%d", int($2 / 1024); exit }' /proc/meminfo 2>/dev/null
 }
 
+ffmpeg_source_raise_stack_limit() {
+    local soft="" hard="" target_kb=65536 raised=0
+
+    soft="$(ulimit -s 2>/dev/null || echo 8192)"
+    hard="$(ulimit -Hs 2>/dev/null || echo unlimited)"
+
+    if [[ "${soft}" == "unlimited" ]]; then
+        return 0
+    fi
+    if [[ "${soft}" =~ ^[0-9]+$ ]] && (( soft >= target_kb )); then
+        return 0
+    fi
+
+    if [[ "${hard}" == "unlimited" ]]; then
+        ulimit -s unlimited 2>/dev/null && raised=1
+        (( raised == 1 )) || ulimit -s "${target_kb}" 2>/dev/null && raised=1
+    elif [[ "${hard}" =~ ^[0-9]+$ ]]; then
+        if (( target_kb > hard )); then
+            target_kb="${hard}"
+        fi
+        ulimit -s "${target_kb}" 2>/dev/null && raised=1
+    fi
+
+    if command -v prlimit >/dev/null 2>&1; then
+        if [[ "${hard}" == "unlimited" ]]; then
+            prlimit --stack=unlimited:unlimited --pid="$$" >/dev/null 2>&1 && raised=1
+        else
+            prlimit --stack="${target_kb}:${hard}" --pid="$$" >/dev/null 2>&1 && raised=1
+        fi
+    fi
+
+    soft="$(ulimit -s 2>/dev/null || echo unknown)"
+    if (( raised == 1 )); then
+        echo "    Raised stack limit (ulimit -s=${soft}; FFmpeg make can overflow the default stack)." >&2
+    fi
+}
+
 ffmpeg_source_prepare_make_jobs() {
-    local ncpu="" nofile="" hard="" target="" jobs="" max_jobs="" mem_mb="" ram_jobs="" mb_per_job=2048
+    local ncpu="" nofile="" hard="" target="" jobs="" max_jobs="" mem_mb="" ram_jobs="" mb_per_job=2048 stack_kb=""
+
+    ffmpeg_source_raise_stack_limit
+    stack_kb="$(ulimit -s 2>/dev/null || echo unknown)"
 
     ncpu="$(nproc 2>/dev/null || echo 2)"
     nofile="$(ulimit -n 2>/dev/null || echo 1024)"
@@ -2937,7 +3034,7 @@ ffmpeg_source_prepare_make_jobs() {
     fi
 
     if (( jobs == ncpu )); then
-        echo "    make -j${jobs} (ulimit -n=${nofile})." >&2
+        echo "    make -j${jobs} (ulimit -n=${nofile}, stack=${stack_kb})." >&2
     fi
 
     if [[ "${FFMPEG_MAKE_JOBS}" =~ ^[0-9]+$ ]] && (( FFMPEG_MAKE_JOBS > 0 )) && (( jobs > FFMPEG_MAKE_JOBS )); then
@@ -3048,26 +3145,37 @@ ffmpeg_source_print_make_segfault_help() {
     echo "================================================================================" >&2
     echo >&2
     echo "  Common causes on jellyfin builds:" >&2
+    echo "    - Stack overflow (most likely if dmesg shows make[PID] segfault in libc.so.6, error 6):" >&2
+    echo "      default ulimit -s (~8 MiB) is too small for FFmpeg's recursive make" >&2
+    echo "    - CUDA NVCC compile (--enable-cuda-nvcc): nvcc can segfault on VMware VMs" >&2
     echo "    - Link-time optimization (LTO): gcc/lld can segfault on large FFmpeg trees" >&2
     echo "    - Out of memory: parallel jobs (NVENC/CUDA) can use several GB per job" >&2
-    echo "    - Stale build tree: partial LTO objects left from a previous configure" >&2
     echo >&2
     if [[ -n "${mem_mb}" ]]; then
         echo "  MemAvailable now: ~${mem_mb} MiB." >&2
         if (( mem_mb >= 8192 && jobs == 1 )); then
-            echo "  With -j1 and plenty of RAM, LTO or a dirty build tree is the likely cause." >&2
+            echo "  With -j1 and plenty of RAM, check dmesg: make+libc error 6 => raise ulimit -s." >&2
         else
             echo "  Script targets ~3 GiB per job for jellyfin when capping parallelism." >&2
         fi
         echo >&2
     fi
-    echo "  This script will retry once with a clean reconfigure (no LTO) after make fails." >&2
+    echo "  This script raises ulimit -s before make. Manual fix: ulimit -s unlimited" >&2
+    echo "  Jellyfin uses cuda-llvm by default (NVENC without nvcc). Set FFMPEG_SOURCE_WITH_CUDA_NVCC=1 to try nvcc." >&2
     echo "  LTO is off by default; set FFMPEG_SOURCE_WITH_LTO=1 to pass --enable-lto=auto." >&2
+    echo "  On segfault the script retries once with cuda-llvm and a clean reconfigure." >&2
     echo >&2
     echo "  Manual resume in the build tree:" >&2
     echo "    cd ${src_dir}" >&2
-    echo "    make distclean && ./configure ... && make -j1 ffmpeg ffprobe && make -j1" >&2
+    echo "    ulimit -s unlimited" >&2
+    echo "    make -j1 ffmpeg ffprobe && make -j1" >&2
     echo "    # or re-run: ffmpeg-install.sh --source-profile jellyfin --source-only" >&2
+    echo >&2
+    echo "  Permanent stack fix — append to /etc/security/limits.conf:" >&2
+    echo "    * soft stack unlimited" >&2
+    echo "    * hard stack unlimited" >&2
+    echo "    root soft stack unlimited" >&2
+    echo "    root hard stack unlimited" >&2
     echo >&2
     echo "  If it still crashes:" >&2
     echo "    - Add swap (e.g. 8G): fallocate -l 8G /swapfile && chmod 600 /swapfile && mkswap /swapfile && swapon /swapfile" >&2
@@ -3085,20 +3193,25 @@ ffmpeg_source_run_make() {
     log="$(mktemp "${TEMP_CATALOG}/ffmpeg-make.XXXXXX.log")"
     make -j"${jobs}" ffmpeg ffprobe 2>&1 | tee "${log}"
     rc=${PIPESTATUS[0]}
+    FFMPEG_SOURCE_LAST_MAKE_RC="${rc}"
+    FFMPEG_SOURCE_LAST_MAKE_LOG="${log}"
     if (( rc != 0 )); then
         ffmpeg_source_print_make_failure_help "${jobs}" "${src_dir}" "${log}" "${rc}" || true
-        rm -f "${log}"
+        ffmpeg_source_print_make_log_tail "${log}" 40
         return "${rc}"
     fi
 
     make -j"${jobs}" 2>&1 | tee -a "${log}"
     rc=${PIPESTATUS[0]}
+    FFMPEG_SOURCE_LAST_MAKE_RC="${rc}"
+    FFMPEG_SOURCE_LAST_MAKE_LOG="${log}"
     if (( rc != 0 )); then
         ffmpeg_source_print_make_failure_help "${jobs}" "${src_dir}" "${log}" "${rc}" || true
-        rm -f "${log}"
+        ffmpeg_source_print_make_log_tail "${log}" 40
         return "${rc}"
     fi
     rm -f "${log}"
+    FFMPEG_SOURCE_LAST_MAKE_LOG=""
     return 0
 }
 
@@ -3227,6 +3340,8 @@ perform_install_build_from_source() {
 
     ensure_source_build_profile_selected
 
+    FFMPEG_SOURCE_MAKE_RETRY_DONE=0
+
     echo
     echo "part 1 — official ffmpeg.org release source (${version}, profile: ${SOURCE_PROFILE})"
     echo
@@ -3300,7 +3415,8 @@ perform_install_build_from_source() {
         fi
         if (( jobs > 1 )) && ffmpeg_source_run_make 1 "${src_dir}"; then
             :
-        elif ffmpeg_source_retry_make_without_lto "${staging}" "${src_dir}" "${jobs}"; then
+        elif ffmpeg_source_retry_make_after_segfault "${staging}" "${src_dir}" "${jobs}" \
+            "${FFMPEG_SOURCE_LAST_MAKE_RC}" "${FFMPEG_SOURCE_LAST_MAKE_LOG}"; then
             :
         else
             echo "ERROR: ffmpeg make failed (see messages above; build tree: ${src_dir})." >&2
