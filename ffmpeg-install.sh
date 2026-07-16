@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# v. 20260716.183000 - skip cuda-nvcc unless nvcc compile probe passes (fixes ARM configure)
+# v. 20260716.190000 - jellyfin core profile (VAAPI+NVENC+FDK); FULL=1 for Vulkan/OpenCL extras
 
 # 2026.06.23 - v. 2.1.23 - jellyfin profile: Jellyfin-like shared build (VAAPI+NVENC+FDK-AAC); common stays default
 # 2026.06.26 - v. 2.1.22 - Ubuntu: libopenjp2-7-dev (not libopenjpeg-dev); optional pkg probe must not abort configure
@@ -82,6 +82,7 @@ FFMPEG_SOURCE_MAKE_RETRY_DONE=0
 FFMPEG_SOURCE_MAKE_EMFILE_RETRY_DONE=0
 FFMPEG_SOURCE_LAST_MAKE_RC=0
 FFMPEG_SOURCE_LAST_MAKE_LOG=""
+FFMPEG_SOURCE_JELLYFIN_FULL="${FFMPEG_SOURCE_JELLYFIN_FULL:-0}"
 FFMPEG_SOURCE_PROFILE="${FFMPEG_SOURCE_PROFILE:-}"
 CLI_SOURCE_PROFILE=""
 CLI_SOURCE_WITH_FDK=0
@@ -179,6 +180,7 @@ Environment:
   FFMPEG_MAKE_NOFILE          Open-file soft limit for make (default: process hard ulimit -Hn).
   FFMPEG_SOURCE_WITH_LTO      Set to 1 to pass --enable-lto=auto (jellyfin; off by default; can crash on some hosts).
   FFMPEG_SOURCE_WITH_CUDA_NVCC  Set to 1 to pass --enable-cuda-nvcc (CUDA filters; off by default).
+  FFMPEG_SOURCE_JELLYFIN_FULL    Set to 1 for full jellyfin extras (Vulkan, OpenCL, AMF, VPL); off by default (core transcode build).
   FFMPEG_SOURCE_PROFILE       Same as --source-profile (min|common|max|gpu|nvidia|jellyfin).
 EOF
 }
@@ -2120,9 +2122,9 @@ prompt_confirm_gpu_or_nvidia_profile() {
             ;;
         jellyfin)
             echo
-            echo "jellyfin profile builds a shared ffmpeg similar to Jellyfin's bundled ffmpeg:"
-            echo "  VAAPI + NVENC + FDK-AAC + many codecs (non-free; long compile)."
-            echo "  Optional GPU libraries are enabled when dev packages are present."
+            echo "jellyfin profile builds a shared ffmpeg for Jellyfin transcoding:"
+            echo "  core (default): VAAPI + NVENC + FDK-AAC + common codecs (no Vulkan/CUDA compile)."
+            echo "  set FFMPEG_SOURCE_JELLYFIN_FULL=1 for Vulkan, OpenCL, AMF, and VPL (longer, fragile on VMs)."
             if ! gpu_vaapi_runtime_looks_available && ! nvidia_runtime_looks_available; then
                 echo "WARNING: no VAAPI or NVIDIA GPU detected; hardware encode may be unusable." >&2
             fi
@@ -2406,7 +2408,10 @@ ffmpeg_source_log_vulkan_probe_status() {
 
 ffmpeg_source_ensure_vulkan_build_deps() {
     case "${SOURCE_PROFILE}" in
-        gpu|jellyfin) ;;
+        gpu) ;;
+        jellyfin)
+            ffmpeg_source_jellyfin_wants_extras || return 0
+            ;;
         *) return 0 ;;
     esac
 
@@ -2525,6 +2530,40 @@ ffmpeg_source_ffnvcodec_headers_present() {
 
     [[ -f "${prefix}/include/ffnvcodec/nvEncodeAPI.h" ]] \
         || [[ -f /usr/include/ffnvcodec/nvEncodeAPI.h ]]
+}
+
+ffmpeg_source_jellyfin_wants_extras() {
+    (( FFMPEG_SOURCE_JELLYFIN_FULL == 1 ))
+}
+
+ffmpeg_source_apply_jellyfin_defaults() {
+    [[ "${SOURCE_PROFILE}" == jellyfin ]] || return 0
+
+    FFMPEG_SOURCE_WITH_LTO=0
+    FFMPEG_SOURCE_DISABLE_LTO=1
+    FFMPEG_SOURCE_WITH_CUDA_NVCC=0
+    FFMPEG_SOURCE_SKIP_CUDA_NVCC=1
+
+    if ffmpeg_source_jellyfin_wants_extras; then
+        log_note "jellyfin full profile: Vulkan/OpenCL/AMF/VPL enabled when packages allow."
+        return 0
+    fi
+
+    FFMPEG_SOURCE_SKIP_VULKAN=1
+    log_note "jellyfin core profile: VAAPI+NVENC+FDK-AAC (set FFMPEG_SOURCE_JELLYFIN_FULL=1 for Vulkan/OpenCL extras)."
+}
+
+ffmpeg_source_retry_jellyfin_core_configure() {
+    local staging="$1"
+
+    (( FFMPEG_SOURCE_JELLYFIN_FULL == 0 )) && return 1
+    [[ "${SOURCE_PROFILE}" == jellyfin ]] || return 1
+
+    echo ">>> Configure failed on jellyfin full — retrying jellyfin core (no Vulkan/OpenCL/AMF/VPL)..." >&2
+    FFMPEG_SOURCE_JELLYFIN_FULL=0
+    ffmpeg_source_apply_jellyfin_defaults
+    ffmpeg_source_clean_configure_tree
+    ffmpeg_source_run_configure "${staging}"
 }
 
 ffmpeg_source_nvcc_configure_ready() {
@@ -2666,10 +2705,13 @@ install_source_build_dependencies() {
             echo "ERROR: jellyfin profile requires libfdk-aac-dev (non-free)." >&2
             return 1
         fi
-        pkgs+=( libfribidi-dev libzvbi-dev libgnutls28-dev libgmp-dev )
-        apt_install_optional_packages \
-            ocl-icd-opencl-dev opencl-headers \
-            libvpl-dev
+        pkgs+=( libfribidi-dev libgnutls28-dev libgmp-dev )
+        if ffmpeg_source_jellyfin_wants_extras; then
+            pkgs+=( libzvbi-dev )
+            apt_install_optional_packages \
+                ocl-icd-opencl-dev opencl-headers \
+                libvpl-dev
+        fi
     elif [[ "${SOURCE_PROFILE}" == max ]] && (( FFMPEG_SOURCE_WITH_FDK_AAC == 1 )); then
         FFMPEG_SOURCE_HAS_FDK_AAC=0
         if apt_cache_has_package libfdk-aac-dev; then
@@ -2688,12 +2730,16 @@ install_source_build_dependencies() {
     fi
 
     if [[ "${SOURCE_PROFILE}" == nvidia || "${SOURCE_PROFILE}" == jellyfin ]]; then
-        if [[ "$(uname -m)" == aarch64 ]] && ! nvidia_runtime_looks_available; then
-            log_note "Skipping nvidia-cuda-toolkit on aarch64 without NVIDIA driver (avoids broken nvcc in PATH)."
-        else
-            apt_install_optional_packages nvidia-cuda-toolkit libnpp-dev
-        fi
         install_nv_codec_headers_from_git /usr/local || true
+        if [[ "${SOURCE_PROFILE}" == nvidia ]] || (( FFMPEG_SOURCE_WITH_CUDA_NVCC == 1 )); then
+            if [[ "$(uname -m)" == aarch64 ]] && ! nvidia_runtime_looks_available; then
+                log_note "Skipping nvidia-cuda-toolkit on aarch64 without NVIDIA driver (avoids broken nvcc in PATH)."
+            else
+                apt_install_optional_packages nvidia-cuda-toolkit libnpp-dev
+            fi
+        else
+            log_note "Skipping nvidia-cuda-toolkit (NVENC uses ffnvcodec headers; set FFMPEG_SOURCE_WITH_CUDA_NVCC=1 for CUDA filters)."
+        fi
     fi
 
     log_step "Installing compiler and profile packages..."
@@ -2827,35 +2873,39 @@ ffmpeg_source_configure_args() {
         ffmpeg_source_try_enable_pkg args gmp --enable-gmp gmp
         ffmpeg_source_try_enable_pkg args harfbuzz --enable-libharfbuzz harfbuzz
         ffmpeg_source_try_enable_pkg args fribidi --enable-libfribidi fribidi
-        ffmpeg_source_try_enable_pkg args zvbi --enable-libzvbi zvbi
-        if pkg-config --exists OpenCL 2>/dev/null || [[ -f /usr/include/CL/cl.h ]]; then
-            args+=( --enable-opencl )
-        else
-            log_note "opencl disabled — OpenCL headers not found."
-        fi
         ffmpeg_source_try_enable_pkg args libva --enable-vaapi vaapi
         ffmpeg_source_try_enable_pkg args libdrm --enable-libdrm libdrm
-        ffmpeg_source_try_enable_vulkan args
-        if (( FFMPEG_SOURCE_SKIP_VULKAN == 1 )); then
-            :
-        elif ffmpeg_source_vulkan_configure_ready; then
-            ffmpeg_source_try_enable_pkg args "shaderc >= 2019.1" --enable-libshaderc shaderc
-            ffmpeg_source_try_enable_pkg args "libplacebo >= 5.229.0" --enable-libplacebo libplacebo
-        else
-            log_note "shaderc/libplacebo skipped — vulkan is not available for configure."
+        if ffmpeg_source_jellyfin_wants_extras; then
+            ffmpeg_source_try_enable_pkg args zvbi --enable-libzvbi zvbi
+            if pkg-config --exists OpenCL 2>/dev/null || [[ -f /usr/include/CL/cl.h ]]; then
+                args+=( --enable-opencl )
+            else
+                log_note "opencl disabled — OpenCL headers not found."
+            fi
+            ffmpeg_source_try_enable_vulkan args
+            if (( FFMPEG_SOURCE_SKIP_VULKAN == 0 )) && ffmpeg_source_vulkan_configure_ready; then
+                ffmpeg_source_try_enable_pkg args "shaderc >= 2019.1" --enable-libshaderc shaderc
+                ffmpeg_source_try_enable_pkg args "libplacebo >= 5.229.0" --enable-libplacebo libplacebo
+            else
+                log_note "shaderc/libplacebo skipped — vulkan is not available for configure."
+            fi
+            ffmpeg_source_try_enable_pkg args amf --enable-amf amf
+            ffmpeg_source_try_enable_pkg args vpl --enable-libvpl vpl
         fi
-        ffmpeg_source_try_enable_pkg args amf --enable-amf amf
-        ffmpeg_source_try_enable_pkg args vpl --enable-libvpl vpl
         if (( FFMPEG_SOURCE_HAS_FDK_AAC == 1 )); then
             ffmpeg_source_try_enable_pkg args fdk-aac --enable-libfdk-aac libfdk-aac
         fi
-        args+=(
-            --enable-ffnvcodec
-            --enable-cuvid
-            --enable-nvdec
-            --enable-nvenc
-        )
-        ffmpeg_source_jellyfin_add_cuda_args args
+        if ffmpeg_source_ffnvcodec_headers_present || nvidia_runtime_looks_available; then
+            args+=(
+                --enable-ffnvcodec
+                --enable-cuvid
+                --enable-nvdec
+                --enable-nvenc
+            )
+            ffmpeg_source_jellyfin_add_cuda_args args
+        else
+            log_note "NVENC/NVDEC disabled — ffnvcodec headers and NVIDIA runtime not found."
+        fi
     fi
 
     if [[ -n "${FFMPEG_CONFIGURE_EXTRA}" ]]; then
@@ -3516,16 +3566,24 @@ perform_install_build_from_source() {
     echo
 
     cd "${src_dir}"
+    if [[ "${SOURCE_PROFILE}" == jellyfin ]]; then
+        ffmpeg_source_apply_jellyfin_defaults
+    fi
     ffmpeg_source_ensure_vulkan_build_deps
-    FFMPEG_SOURCE_SKIP_VULKAN=0
-    if ! ffmpeg_source_vulkan_configure_ready; then
+    if [[ "${SOURCE_PROFILE}" == jellyfin ]] && ffmpeg_source_jellyfin_wants_extras \
+        && ! ffmpeg_source_vulkan_configure_ready; then
         FFMPEG_SOURCE_SKIP_VULKAN=1
-        log_note "Vulkan unavailable — configure will omit vulkan, libshaderc, and libplacebo (optional for jellyfin)."
+        log_note "Vulkan unavailable — configure will omit vulkan, libshaderc, and libplacebo."
+    elif [[ "${SOURCE_PROFILE}" == gpu ]] && ! ffmpeg_source_vulkan_configure_ready; then
+        FFMPEG_SOURCE_SKIP_VULKAN=1
+        log_note "Vulkan unavailable — configure will omit vulkan."
     fi
     log_step "Running ffmpeg configure (profile ${SOURCE_PROFILE}, release ${version})..."
 
     if ! ffmpeg_source_run_configure "${staging}"; then
-        if (( FFMPEG_SOURCE_SKIP_CUDA_NVCC == 0 )) && ffmpeg_source_configure_log_indicates_nvcc_failure; then
+        if ffmpeg_source_retry_jellyfin_core_configure "${staging}"; then
+            :
+        elif (( FFMPEG_SOURCE_SKIP_CUDA_NVCC == 0 )) && ffmpeg_source_configure_log_indicates_nvcc_failure; then
             echo ">>> Configure failed on cuda-nvcc — retrying without NVCC compile (NVENC via ffnvcodec)..." >&2
             FFMPEG_SOURCE_SKIP_CUDA_NVCC=1
             FFMPEG_SOURCE_WITH_CUDA_NVCC=0
@@ -3887,7 +3945,7 @@ main() {
         echo "  url:     $(ffmpeg_org_release_tarball_url "${FFMPEG_ORG_VERSION}")"
         echo "  profile: ${SOURCE_PROFILE:-common}"
         (( FFMPEG_SOURCE_WITH_FDK_AAC == 1 )) && echo "  extras:  libfdk-aac (non-free)"
-        [[ "${SOURCE_PROFILE:-}" == jellyfin ]] && echo "  extras:  Jellyfin-like shared build (FDK-AAC, VAAPI, NVENC)"
+        [[ "${SOURCE_PROFILE:-}" == jellyfin ]] && echo "  extras:  jellyfin core (VAAPI, NVENC, FDK-AAC); FFMPEG_SOURCE_JELLYFIN_FULL=1 for Vulkan/OpenCL"
     fi
     echo "  temp:    ${TEMP_CATALOG}"
     echo
