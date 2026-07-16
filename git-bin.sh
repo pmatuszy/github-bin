@@ -1,7 +1,7 @@
 #!/bin/bash
-# v. 20260716.165300 - pull: always reset to origin/master; print HEAD/origin SHA and deploy path
+# v. 20260716.165700 - deploy message: ASCII arrow (boxes mangles Unicode)
 
-# 2026.07.16 - v. 3.2 - print_version_banner from _script_header.sh (source before -v)
+# 2026.07.16 - v. 3.3 - pull: always reset to origin/master; print HEAD/origin SHA and deploy path
 
 # 2026.07.16 - v. 3.1 - chmod +x git-bin.sh and wrappers in clone after sync (git mode 644)
 # 2026.07.16 - v. 3.0 - consolidate git-pull/push/fetch/reset and _git-bin-common into one script
@@ -259,7 +259,7 @@ cmd_pull() {
 
   chmod +x ./git-bin.sh ./git-pull.sh ./git-push.sh ./git-fetch.sh 2>/dev/null || true
 
-  echo "(PGM) Deploying clone → ${profile_root}/bin" | boxes -s 70x3 -a c
+  echo "(PGM) Deploying clone -> ${profile_root}/bin" | boxes -s 70x3 -a c
   cp -a ./* "${profile_root}/bin/" || {
     echo "(PGM) ERROR: failed to copy scripts to ${profile_root}/bin" >&2
     exit 4
