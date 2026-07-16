@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# v. 20260716.174000 - fix configure retry clean (Makefile); libplacebo/shaderc version probes match FFmpeg 8.x
+# v. 20260716.174200 - configure retry: do not rm -rf ffbuild (library.mak is source, not generated)
 
 # 2026.06.23 - v. 2.1.23 - jellyfin profile: Jellyfin-like shared build (VAAPI+NVENC+FDK-AAC); common stays default
 # 2026.06.26 - v. 2.1.22 - Ubuntu: libopenjp2-7-dev (not libopenjpeg-dev); optional pkg probe must not abort configure
@@ -2812,7 +2812,9 @@ ffmpeg_source_clean_configure_tree() {
     if [[ -f Makefile ]]; then
         make distclean >/dev/null 2>&1 || true
     fi
-    rm -rf ffbuild config.mak config.h config.fate config.asm Makefile 2>/dev/null || true
+    rm -f Makefile config.mak config.h config.fate config.asm config_components.h mapfile 2>/dev/null || true
+    rm -f ffbuild/config.mak ffbuild/.config ffbuild/config.sh 2>/dev/null || true
+    rm -f ffbuild/config.* 2>/dev/null || true
 }
 
 ffmpeg_source_collect_configure_args() {
@@ -2834,8 +2836,8 @@ ffmpeg_source_run_configure() {
     ffmpeg_source_collect_configure_args "${staging}" args
     log_note "Configure flags: ${args[*]}"
     ./configure "${args[@]}" || return 1
-    if [[ ! -f ffbuild/library.mak ]]; then
-        echo "ERROR: configure finished but ffbuild/library.mak is missing." >&2
+    if [[ ! -f ffbuild/config.mak ]]; then
+        echo "ERROR: configure did not create ffbuild/config.mak." >&2
         return 1
     fi
 }
