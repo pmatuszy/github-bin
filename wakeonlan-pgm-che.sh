@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20260716.163224 - versioning format v. YYYYMMDD.HH24MISS
 
 # 2026.04.21 - v. 0.9 - WOL_* env overrides; rename target to WOL_HOST; -q loop ping; richer logger; validate inputs; footer on early-up path
 # 2026.04.21 - v. 0.8 - exit 1 when host still down after WOL; quiet consistent final ping for exit status

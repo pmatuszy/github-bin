@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20260716.163224 - versioning format v. YYYYMMDD.HH24MISS
 
 # 2026.07.15 - v. 0.2 - fix y/Y confirm (was always true); init p for nounset on read timeout
 # 2025.10.22 - v. 0.1 - initial release

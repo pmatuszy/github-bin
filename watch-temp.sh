@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20260716.163224 - versioning format v. YYYYMMDD.HH24MISS
 
 # 2026.06.02 - v. 0.9 - drop _script_cli.sh; inline print_version_banner in this script
 # 2026.06.02 - v. 0.8 - rename NO_STARTUP_DELAY to --no_startup_delay
@@ -9,27 +10,6 @@
 # 2026.06.02 - v. 0.3 - fix: run the Pi view via a temp render script executed by watch (the exported-function approach failed because watch's `sh -c` dropped the BASH_FUNC_* env entry -> "render_pi_status: command not found")
 # 2026.06.02 - v. 0.2 - Raspberry Pi: rich vcgencmd live view (SoC temp + ARM clock + core voltage + decoded throttle/under-voltage status) instead of the bare one-line `sensors`; auto-detect Pi vs x86 (x86 keeps `sensors`); fall back to sensors if vcgencmd is missing; remove stray debug echo; guard virt-what when absent
 # 2025.11.04 - v. 0.1 - initial release
-
-print_version_banner() {
-  local ver=unknown date= line title verline width=60
-  while IFS= read -r line; do
-    if [[ "$line" =~ ^#\ ([0-9]{4}\.[0-9]{2}\.[0-9]{2})\ -\ v\.\ ([0-9]+(\.[0-9]+)*) ]]; then
-      date="${BASH_REMATCH[1]}"
-      ver="${BASH_REMATCH[2]}"
-      break
-    fi
-  done < "$0"
-  title="$(basename "$0")"
-  if [[ -n "$date" ]]; then
-    verline="Version: ${ver} (${date})"
-  else
-    verline="Version: ${ver}"
-  fi
-  printf '┌%*s┐\n' "$width" '' | tr ' ' '─'
-  printf '│ %-*.*s │\n' $((width - 2)) $((width - 2)) "$title"
-  printf '│ %-*.*s │\n' $((width - 2)) $((width - 2)) "$verline"
-  printf '└%*s┘\n' "$width" '' | tr ' ' '─'
-}
 
 show_help() {
   cat <<EOF

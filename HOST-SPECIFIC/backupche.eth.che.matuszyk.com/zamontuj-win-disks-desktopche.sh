@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20260716.163224 - versioning format v. YYYYMMDD.HH24MISS
 # 2022.02.20 - v. 0.3 - zmiana nazwy komputera i dodano mkdir -p
 # 2021.04.09 - v. 0.2 - changed IP to machine DNS name 
 # 2020.0x.xx - v. 0.1 - initial release (date unknown)

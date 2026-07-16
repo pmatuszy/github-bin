@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20260716.163224 - versioning format v. YYYYMMDD.HH24MISS
 
 # 2023.05.16 - v. 0.61- bugfix: wylaczone wysylanie wiadomosci na tel_a
 # 2023.05.14 - v. 0.6 - wylaczone wysylanie wiadomosci na tel_a

@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20260716.163224 - versioning format v. YYYYMMDD.HH24MISS
 
 # 2026.04.21 - v. 0.56 - revert v0.55 single-list cache (answered y but no removals); restore per-step snap list like v0.54
 # 2026.04.21 - v. 0.54 - accept Y as yes (prompt text stays [y/N/q]); strip CR on answer

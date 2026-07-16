@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20260716.163224 - versioning format v. YYYYMMDD.HH24MISS
 # 2020.12.03 - v.1.6 - zmiania sposobu wyswietlania (by output byl troche wezszy na ekranie)
 # 2020.12.03 - v.1.5 - dodane wyswietlanie numeru seryjnego dyskow
 # 2020.11.18 - v.1.4 - zmienna scheduler - wystarczy odkomentowac, ktorego nalezy uzywac, bug fixes

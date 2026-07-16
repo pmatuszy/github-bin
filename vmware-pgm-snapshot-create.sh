@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20260716.163224 - versioning format v. YYYYMMDD.HH24MISS
 
 # 2026.07.15 - v. 0.18 - listSnapshots parse: skip noise before Total (match delete script)
 # 2026.04.22 - v. 0.17 - encrypted vmrun: DISPLAY default :0 (script clears DISPLAY); no bogus nogui on snapshot/listSnapshots

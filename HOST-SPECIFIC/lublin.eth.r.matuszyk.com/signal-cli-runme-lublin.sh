@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20260716.163224 - versioning format v. YYYYMMDD.HH24MISS
 
 # 2024.12.03 - v. 0.2 - added sleep for signal not to restart too quickly
 # 2023.01.26 - v. 0.1 - initial release

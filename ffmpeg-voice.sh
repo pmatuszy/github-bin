@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# v. 20260716.163224 - versioning format v. YYYYMMDD.HH24MISS
 # 2026.06.11 - v. 3.54 - sha512 entries: relative paths without ./ prefix (rename.sh compatible)
 # 2026.06.11 - v. 3.53 - existing pairs: require sha512 on disk; auto-backfill when only hashes missing
 # 2026.06.09 - v. 3.52 - startup defaults: colors yes, mode real, scope subdirs (Enter accepts on each prompt)

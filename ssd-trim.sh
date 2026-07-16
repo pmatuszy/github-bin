@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20260716.163224 - versioning format v. YYYYMMDD.HH24MISS
 
 # 2023.03.07 - v. 0.6 - added check if fstrim is installed
 # 2023.02.28 - v. 0.5 - curl with return_code

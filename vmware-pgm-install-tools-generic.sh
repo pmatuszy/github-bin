@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20260716.163224 - versioning format v. YYYYMMDD.HH24MISS
 
 # 2026.07.15 - v. 0.3 - pass -vp for encrypted VMs; wait for installtools; surface SSH failures
 # 2023.10.12 - v. 0.2 - if status is good there is no need to reinstall 

@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20260716.163224 - versioning format v. YYYYMMDD.HH24MISS
 
 # 2025.11.03 - v. 0.6 - small change to print the signal-cli version 
 # 2024.12.18 - v. 0.5 - changed opoznienie_miedzy_wywolaniami 5 ==> 30

@@ -1,3 +1,4 @@
+# v. 20260716.170000 - versioning format v. YYYYMMDD.HH24MISS
 # 2026.04.21 - v. 0.2 - document purpose; indentation aligned with _script_header.sh
 # 2020.09.15 - v. 0.1 - initial release
 

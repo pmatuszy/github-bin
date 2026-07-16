@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20260716.163224 - versioning format v. YYYYMMDD.HH24MISS
 # 2021.05.26 - v. 0.2 - added XDG_RUNTIME_DIR,XDG_DATA_DIR,added -u 
 # 2021.05.20 - v. 0.1 - initial release
 

@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20260716.163224 - versioning format v. YYYYMMDD.HH24MISS
 
 # 2023.02.02 - v. 0.8 - added --foreground option to be able to use Ctrl-C
 # 2022.04.13 - v. 0.7 - specyfikacja pelnej sciezki do chromium (wtedy dziala z crontaba)

@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20260716.163224 - versioning format v. YYYYMMDD.HH24MISS
 
 # 20xx.xx.xx - v. 0.1 - initial release (date unknown)
 

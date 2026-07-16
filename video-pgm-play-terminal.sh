@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20260716.163224 - versioning format v. YYYYMMDD.HH24MISS
 
 # 2026.06.23 - v. 0.6.1 - accept --start=SEC and --length=SEC (equals form)
 # 2026.06.23 - v. 0.6 - --start and --length for playing a segment (mpv seek + clip length)
@@ -7,27 +8,6 @@
 # 2026.06.23 - v. 0.3 - --width/-w and --height/-H: tct size; one dimension from video aspect ratio
 # 2026.06.23 - v. 0.2 - --silent: hide mpv status on terminal (mpv --no-terminal); --profile=sw-fast
 # 2026.06.23 - v. 0.1 - initial release: play one media file in the terminal with mpv --vo=tct
-
-print_version_banner() {
-  local ver=unknown date= line title verline width=60
-  while IFS= read -r line; do
-    if [[ "$line" =~ ^#\ ([0-9]{4}\.[0-9]{2}\.[0-9]{2})\ -\ v\.\ ([0-9]+(\.[0-9]+)*) ]]; then
-      date="${BASH_REMATCH[1]}"
-      ver="${BASH_REMATCH[2]}"
-      break
-    fi
-  done < "$0"
-  title="$(basename "$0")"
-  if [[ -n "$date" ]]; then
-    verline="Version: ${ver} (${date})"
-  else
-    verline="Version: ${ver}"
-  fi
-  printf '┌%*s┐\n' "$width" '' | tr ' ' '─'
-  printf '│ %-*.*s │\n' $((width - 2)) $((width - 2)) "$title"
-  printf '│ %-*.*s │\n' $((width - 2)) $((width - 2)) "$verline"
-  printf '└%*s┘\n' "$width" '' | tr ' ' '─'
-}
 
 show_help() {
   cat <<EOF

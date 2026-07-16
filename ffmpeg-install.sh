@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# v. 20260716.163224 - versioning format v. YYYYMMDD.HH24MISS
 # 2026.06.23 - v. 2.1.23 - jellyfin profile: Jellyfin-like shared build (VAAPI+NVENC+FDK-AAC); common stays default
 # 2026.06.26 - v. 2.1.22 - Ubuntu: libopenjp2-7-dev (not libopenjpeg-dev); optional pkg probe must not abort configure
 # 2026.06.26 - v. 2.1.21 - source build: install apt deps before need_cmd pkg-config (was checked too early)
@@ -105,27 +106,6 @@ cleanup_tmp_work_dir() {
     fi
 }
 trap cleanup_tmp_work_dir EXIT
-
-print_version_banner() {
-    local ver=unknown date= line title verline width=60
-    while IFS= read -r line; do
-        if [[ "$line" =~ ^#\ ([0-9]{4}\.[0-9]{2}\.[0-9]{2})\ -\ v\.\ ([0-9]+(\.[0-9]+)*) ]]; then
-            date="${BASH_REMATCH[1]}"
-            ver="${BASH_REMATCH[2]}"
-            break
-        fi
-    done < "$0"
-    title="$(basename "$0")"
-    if [[ -n "$date" ]]; then
-        verline="Version: ${ver} (${date})"
-    else
-        verline="Version: ${ver}"
-    fi
-    printf '┌%*s┐\n' "$width" '' | tr ' ' '─'
-    printf '│ %-*.*s │\n' $((width - 2)) $((width - 2)) "$title"
-    printf '│ %-*.*s │\n' $((width - 2)) $((width - 2)) "$verline"
-    printf '└%*s┘\n' "$width" '' | tr ' ' '─'
-}
 
 show_help() {
     cat <<EOF
@@ -3063,6 +3043,18 @@ main() {
 HEADER_EXTRA_ARGS=()
 while [[ $# -gt 0 ]]; do
     case $1 in
+        --no_startup_delay) HEADER_EXTRA_ARGS+=(NO_STARTUP_DELAY); shift ;;
+        *) break ;;
+    esac
+done
+
+if [[ -f /root/bin/_script_header.sh ]]; then
+    # shellcheck disable=SC1091
+    . /root/bin/_script_header.sh "${HEADER_EXTRA_ARGS[@]}"
+fi
+
+while [[ $# -gt 0 ]]; do
+    case $1 in
         -h|--help) show_help; exit 0 ;;
         -v|--version) print_version_banner; exit 0 ;;
         -y|--yes) ASSUME_YES=1; shift ;;
@@ -3081,15 +3073,10 @@ while [[ $# -gt 0 ]]; do
             shift 2
             ;;
         --source-with-fdk-aac) CLI_SOURCE_WITH_FDK=1; shift ;;
-        --no_startup_delay) HEADER_EXTRA_ARGS+=(NO_STARTUP_DELAY); shift ;;
         *) echo "Unknown argument: $1" >&2; echo "Try: $(basename "$0") --help" >&2; exit 1 ;;
     esac
 done
 
-if [[ -f /root/bin/_script_header.sh ]]; then
-    # shellcheck disable=SC1091
-    . /root/bin/_script_header.sh "${HEADER_EXTRA_ARGS[@]}"
-fi
 
 main "$@"
 

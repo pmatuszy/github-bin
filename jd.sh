@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20260716.163224 - versioning format v. YYYYMMDD.HH24MISS
 
 # 2026.04.22 - v. 1.11 - --details: physical sector size (blockdev --getpbsz / sysfs)
 # 2026.04.22 - v. 1.10 - --details: tight columns (label width + per-disk value width)

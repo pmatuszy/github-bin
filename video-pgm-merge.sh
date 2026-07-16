@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20260716.163224 - versioning format v. YYYYMMDD.HH24MISS
 
 # 2026.07.15 - v. 0.15.11 - seam preview defaults: 2s before join, 2s clip (0s after)
 # 2026.07.15 - v. 0.15.10 - merge outputs: …_concat_parts_01-NN.mp4 (concat before parts)
@@ -165,27 +166,6 @@ script_version() {
   else
     printf '%s version %s\n' "$(basename "$0")" "$ver"
   fi
-}
-
-print_version_banner() {
-  local ver=unknown date= line title verline width=60
-  while IFS= read -r line; do
-    if [[ "$line" =~ ^#\ ([0-9]{4}\.[0-9]{2}\.[0-9]{2})\ -\ v\.\ ([0-9]+(\.[0-9]+)*) ]]; then
-      date="${BASH_REMATCH[1]}"
-      ver="${BASH_REMATCH[2]}"
-      break
-    fi
-  done < "$0"
-  title="$(basename "$0")"
-  if [[ -n "$date" ]]; then
-    verline="Version: ${ver} (${date})"
-  else
-    verline="Version: ${ver}"
-  fi
-  printf '┌%*s┐\n' "$width" '' | tr ' ' '─'
-  printf '│ %-*.*s │\n' $((width - 2)) $((width - 2)) "$title"
-  printf '│ %-*.*s │\n' $((width - 2)) $((width - 2)) "$verline"
-  printf '└%*s┘\n' "$width" '' | tr ' ' '─'
 }
 
 # Print gyroflow/mp4-merge asset basename for this host (stdout) or return 1.

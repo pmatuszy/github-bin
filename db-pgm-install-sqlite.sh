@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# v. 20260716.163224 - versioning format v. YYYYMMDD.HH24MISS
 # 2026.06.18 - v. 1.5 - fix URI probe: SQLite 3.53+ has no -uri flag (URI via FILENAME / sqlite3_config)
 # 2026.06.16 - v. 1.4 - prompt before source compile; verify gcc/make/tar prereqs with apt hint
 # 2026.06.16 - v. 1.3 - official prebuilt zip lacks -uri; probe before install, compile autoconf with SQLITE_USE_URI=1

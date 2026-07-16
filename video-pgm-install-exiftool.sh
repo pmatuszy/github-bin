@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# v. 20260716.163224 - versioning format v. YYYYMMDD.HH24MISS
 # 2026.07.15 - v. 1.8 - run_exiftool: use env unless it is a bash function (then /bin/env)
 # 2026.07.15 - v. 1.7 - run_exiftool: call /bin/env (not bare env — a bash function named env breaks -ver)
 # 2026.06.26 - v. 1.6 - run exiftool/perl with C.UTF-8 (or C) to avoid locale warnings on minimal systems

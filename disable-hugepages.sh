@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20260716.163224 - versioning format v. YYYYMMDD.HH24MISS
 
 # 2021.02.24 - v. 0.1 - initial release - skrypt from https://github.com/maknesium/disable-hugepages
 #    autor wrote this article: 

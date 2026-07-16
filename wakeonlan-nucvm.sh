@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20260716.163224 - versioning format v. YYYYMMDD.HH24MISS
 
 # 2026.04.22 - v. 0.9 - verify same LAN and broadcast vs kernel before sending WOL
 # 2026.04.22 - v. 0.8 - remote host 192.168.200.220 (NUC VM MAC c0:3f:d5:60:73:6b)

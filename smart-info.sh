@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20260716.163224 - versioning format v. YYYYMMDD.HH24MISS
 
 # 2026.06.12 - v. 0.9 - discover disks via fdisk (jd.sh table output no longer has "Disk" lines)
 # 2026.04.21 - v. 0.8 - disk array + "$@"; quoting/redirects; grep -E; fix q/Q typo; no Enter after last disk; reset -d per disk

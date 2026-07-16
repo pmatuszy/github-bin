@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20260716.163224 - versioning format v. YYYYMMDD.HH24MISS
 
 # 2023.04.13 - v. 0.2 - added check if argonone-cli is installed
 # 2021.09.19 - v. 0.1 - inicjalna wersja skryptu

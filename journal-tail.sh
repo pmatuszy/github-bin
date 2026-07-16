@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20260716.163224 - versioning format v. YYYYMMDD.HH24MISS
 
 # 2023.01.24 - v. 0.3 - grep changed to a regexp instead of hardcoded 2022
 # 2022.12.02 - v. 0.2 - better detection of journalctl binary location with type

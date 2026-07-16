@@ -1,28 +1,8 @@
 #!/bin/bash
+# v. 20260716.163224 - versioning format v. YYYYMMDD.HH24MISS
 
 # 2026.06.02 - v. 0.2 - table: compute column widths from all rows (incl. long speed labels); align all four columns
 # 2026.06.02 - v. 0.1 - initial release: list network interfaces with link state and speed (10/100/1000 Mb/s etc.) via sysfs; ethtool fallback when speed is unknown
-
-print_version_banner() {
-  local ver=unknown date= line title verline width=60
-  while IFS= read -r line; do
-    if [[ "$line" =~ ^#\ ([0-9]{4}\.[0-9]{2}\.[0-9]{2})\ -\ v\.\ ([0-9]+(\.[0-9]+)*) ]]; then
-      date="${BASH_REMATCH[1]}"
-      ver="${BASH_REMATCH[2]}"
-      break
-    fi
-  done < "$0"
-  title="$(basename "$0")"
-  if [[ -n "$date" ]]; then
-    verline="Version: ${ver} (${date})"
-  else
-    verline="Version: ${ver}"
-  fi
-  printf '┌%*s┐\n' "$width" '' | tr ' ' '─'
-  printf '│ %-*.*s │\n' $((width - 2)) $((width - 2)) "$title"
-  printf '│ %-*.*s │\n' $((width - 2)) $((width - 2)) "$verline"
-  printf '└%*s┘\n' "$width" '' | tr ' ' '─'
-}
 
 show_help() {
   cat <<EOF

@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20260716.163224 - versioning format v. YYYYMMDD.HH24MISS
 # 2022.12.31 - v. 0.3 - this script should mount nothing from now on
 # 2022.09.11 - v. 0.2 - zmiany kosmetyczne o KeePassie
 # 2022.07.30 - v. 0.1 - initial release

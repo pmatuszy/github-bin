@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20260716.163224 - versioning format v. YYYYMMDD.HH24MISS
 
 # 2026.05.26 - v. 0.3 - English password prompt and messages
 # 2026.05.26 - v. 0.2 - interactive password; fixed --pim=0 --keyfiles= --protect-hidden=no

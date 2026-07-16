@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20260716.163224 - versioning format v. YYYYMMDD.HH24MISS
 
 # 2023.02.02 - v. 0.5 - added --foreground option to be able to use Ctrl-C
 # 2021.08.06 - v. 0.4 - sending dbus signal message

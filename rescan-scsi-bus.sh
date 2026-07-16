@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20260716.163224 - versioning format v. YYYYMMDD.HH24MISS
 
 # 2026.04.22 - v. 0.3 - nullglob, root and scan-file checks, set -euo pipefail, exit status on failure
 # 2026.04.21 - v. 0.2 - add script history header and fix SCSI rescan write payload

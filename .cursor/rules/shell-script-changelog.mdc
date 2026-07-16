@@ -19,8 +19,8 @@ Immediately after the shebang, add a new top line:
 - Use local time: `date +%Y%m%d.%H%M%S`.
 - One short line: what changed and why.
 - Do not edit or reorder older changelog lines.
-- `print_version_banner` and `_script_header.sh` read the **first** matching line — keep the new entry on top.
-- Legacy `# YYYY.MM.DD - v. MAJOR.MINOR - ...` lines remain valid for older entries only.
+- `print_version_banner` and `_script_header.sh` read the **first** `# v. YYYYMMDD.HHMMSS` line.
+- Scripts with `-v`/`--version`: parse `--no_startup_delay` first, source `_script_header.sh`, then handle `-h`/`-v` (see existing scripts).
 
 ## Section 2 — script description block
 

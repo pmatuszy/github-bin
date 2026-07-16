@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20260716.163224 - versioning format v. YYYYMMDD.HH24MISS
 
 # 2026.06.02 - v. 0.10 - add -h/--help, -v/--version, --no_startup_delay (parsed before header)
 # 2026.06.01 - v. 0.9 - support glob source paths (e.g. host:/root/config/*): expand on the remote shell so wildcards work like rsync; rename SKAD/DOKAD vars to SOURCE/DEST
@@ -10,27 +11,6 @@
 # 2023.07.06 - v. 0.3 - added --no-motd
 # 2023.06.25 - v. 0.2 - added optional parameter $3 e.g. --remove-source-files which will be passed to rsync as a parameter
 # 2023.03.13 - v. 0.1 - initial release
-
-print_version_banner() {
-  local ver=unknown date= line title verline width=60
-  while IFS= read -r line; do
-    if [[ "$line" =~ ^#\ ([0-9]{4}\.[0-9]{2}\.[0-9]{2})\ -\ v\.\ ([0-9]+(\.[0-9]+)*) ]]; then
-      date="${BASH_REMATCH[1]}"
-      ver="${BASH_REMATCH[2]}"
-      break
-    fi
-  done < "$0"
-  title="$(basename "$0")"
-  if [[ -n "$date" ]]; then
-    verline="Version: ${ver} (${date})"
-  else
-    verline="Version: ${ver}"
-  fi
-  printf '┌%*s┐\n' "$width" '' | tr ' ' '─'
-  printf '│ %-*.*s │\n' $((width - 2)) $((width - 2)) "$title"
-  printf '│ %-*.*s │\n' $((width - 2)) $((width - 2)) "$verline"
-  printf '└%*s┘\n' "$width" '' | tr ' ' '─'
-}
 
 print_usage() {
   echo

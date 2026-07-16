@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20260716.163224 - versioning format v. YYYYMMDD.HH24MISS
 
 # 2026.06.18 - v. 0.8 - show resolved script version after startup banner (PuTTY / interactive)
 # 2026.06.02 - v. 0.7 - each line: timestamp, [ avg: x.x ], then all core temps (one decimal, space-separated); x86 uses coretemp Core 0..N; single-sensor hosts show avg + one value
@@ -8,27 +9,6 @@
 # 2026.06.02 - v. 0.3 - auto-detect the real CPU sensor (x86_pkg_temp/coretemp on Intel, cpu-thermal on Raspberry Pi) instead of hard-coding thermal_zone0 (which is ambient acpitz on x86); print the chosen sensor
 # 2026.06.02 - v. 0.2 - require readable thermal_zone0; EXIT trap runs footer; modern $(date) / quoted paths
 # 2020.0x.xx - v. 0.1 - initial release (date unknown)
-
-print_version_banner() {
-  local ver=unknown date= line title verline width=60
-  while IFS= read -r line; do
-    if [[ "$line" =~ ^#\ ([0-9]{4}\.[0-9]{2}\.[0-9]{2})\ -\ v\.\ ([0-9]+(\.[0-9]+)*) ]]; then
-      date="${BASH_REMATCH[1]}"
-      ver="${BASH_REMATCH[2]}"
-      break
-    fi
-  done < "$0"
-  title="$(basename "$0")"
-  if [[ -n "$date" ]]; then
-    verline="Version: ${ver} (${date})"
-  else
-    verline="Version: ${ver}"
-  fi
-  printf '┌%*s┐\n' "$width" '' | tr ' ' '─'
-  printf '│ %-*.*s │\n' $((width - 2)) $((width - 2)) "$title"
-  printf '│ %-*.*s │\n' $((width - 2)) $((width - 2)) "$verline"
-  printf '└%*s┘\n' "$width" '' | tr ' ' '─'
-}
 
 show_help() {
   cat <<EOF

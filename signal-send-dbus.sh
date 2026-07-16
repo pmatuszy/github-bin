@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20260716.163224 - versioning format v. YYYYMMDD.HH24MISS
 # 2021.06.25 - v.1.0 - initial script release
 
 # +41......

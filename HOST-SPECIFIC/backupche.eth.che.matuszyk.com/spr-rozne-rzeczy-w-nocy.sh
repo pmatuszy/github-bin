@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20260716.163224 - versioning format v. YYYYMMDD.HH24MISS
 
 # 2022.03.29 - v. 0.2 - zmiana na krotsze nazwy skrypow bo screen sobie z dlugimi nie radzi, skrocony czas miedzy wywolaniami screena z 4m do 45s
 # 2022.03.05 - v. 0.1 - initial release (date unknown)

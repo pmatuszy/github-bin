@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20260716.163224 - versioning format v. YYYYMMDD.HH24MISS
 # 2020.11.16 - v. 0.3 - version for backupche server (specific groups of disks are named there)
 # 2020.11.15 - v. 0.2 - removed stats for dm- devicse and -x option (not needed usually)
 # 2020.11.11 - v. 0.1 - initial release

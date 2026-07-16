@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20260716.163224 - versioning format v. YYYYMMDD.HH24MISS
 
 # 2026.07.15 - v. 1.0 - visible masked Passphrase: prompt for encrypted VMs (vmrun often shows none)
 # 2026.07.15 - v. 0.9 - do not buffer start stderr (hides encrypted-VM password prompt); list still quiet

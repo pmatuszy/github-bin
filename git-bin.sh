@@ -1,6 +1,6 @@
 #!/bin/bash
+# v. 20260716.173600 - print_version_banner from _script_header.sh (source before -v)
 
-# v. 20260716.162620 - version format YYYYMMDD.HH24MISS; print_version_banner parses it
 # 2026.07.16 - v. 3.1 - chmod +x git-bin.sh and wrappers in clone after sync (git mode 644)
 # 2026.07.16 - v. 3.0 - consolidate git-pull/push/fetch/reset and _git-bin-common into one script
 #
@@ -10,32 +10,6 @@
 # Subcommands: pull (deploy to bin), push, fetch, reset.
 # pull syncs the server clone to origin/master before copying scripts to ${profile_root}/bin.
 #
-
-print_version_banner() {
-  local ver=unknown date= line title verline width=60
-  while IFS= read -r line; do
-    if [[ "$line" =~ ^#\ v\.\ ([0-9]{8}\.[0-9]{6})\ -\  ]]; then
-      ver="${BASH_REMATCH[1]}"
-      date="${ver:0:4}.${ver:4:2}.${ver:6:2} ${ver:9:2}:${ver:11:2}:${ver:13:2}"
-      break
-    fi
-    if [[ "$line" =~ ^#\ ([0-9]{4}\.[0-9]{2}\.[0-9]{2})\ -\ v\.\ ([0-9]+(\.[0-9]+)*) ]]; then
-      date="${BASH_REMATCH[1]}"
-      ver="${BASH_REMATCH[2]}"
-      break
-    fi
-  done < "$0"
-  title="$(basename "$0")"
-  if [[ -n "$date" ]]; then
-    verline="Version: ${ver} (${date})"
-  else
-    verline="Version: ${ver}"
-  fi
-  printf '┌%*s┐\n' "$width" '' | tr ' ' '─'
-  printf '│ %-*.*s │\n' $((width - 2)) $((width - 2)) "$title"
-  printf '│ %-*.*s │\n' $((width - 2)) $((width - 2)) "$verline"
-  printf '└%*s┘\n' "$width" '' | tr ' ' '─'
-}
 
 show_help() {
   cat <<EOF
@@ -393,6 +367,15 @@ cmd_reset() {
 # --- main ---
 
 HEADER_EXTRA_ARGS=()
+while [[ $# -gt 0 ]]; do
+  case $1 in
+    --no_startup_delay) HEADER_EXTRA_ARGS+=(NO_STARTUP_DELAY); shift ;;
+    *) break ;;
+  esac
+done
+
+. /root/bin/_script_header.sh "${HEADER_EXTRA_ARGS[@]}"
+
 batch_mode=0
 no_deploy=0
 offline=0
@@ -402,7 +385,6 @@ while [[ $# -gt 0 ]]; do
   case $1 in
     -h|--help) show_help; exit 0 ;;
     -v|--version) print_version_banner; exit 0 ;;
-    --no_startup_delay) HEADER_EXTRA_ARGS+=(NO_STARTUP_DELAY); shift ;;
     --no-deploy) no_deploy=1; shift ;;
     --offline) offline=1; shift ;;
     batch) batch_mode=1; shift ;;
@@ -426,13 +408,6 @@ if [[ -z "${command}" ]]; then
   echo "Missing COMMAND (pull|push|fetch|reset)" >&2
   echo "Try: $(basename "$0") --help" >&2
   exit 1
-fi
-
-if [[ "${command}" == fetch ]]; then
-  set -o nounset
-  set -o pipefail
-else
-  . /root/bin/_script_header.sh "${HEADER_EXTRA_ARGS[@]}"
 fi
 
 case "${command}" in

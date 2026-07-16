@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20260716.163224 - versioning format v. YYYYMMDD.HH24MISS
 
 # 2025.10.22 - v. 0.21 - small enhancement to display a command using boxes
 # 2025.10.22 - v. 0.2  - bugfix: added check if vmware utility exists

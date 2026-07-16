@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20260716.163224 - versioning format v. YYYYMMDD.HH24MISS
 
 # 2023.02.12 - v. 0.4 - added check for aha, mailutils and check if we are run interactively
 # 2023.02.10 - v. 0.3 - added check for smartmontools package

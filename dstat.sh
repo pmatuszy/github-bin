@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20260716.163224 - versioning format v. YYYYMMDD.HH24MISS
 
 # 2026.04.22 - v. 0.3 - omit --top-* / --cpufreq on Python 3.12+ (removed stdlib imp)
 # 2026.04.22 - v. 0.2 - PYTHONWARNINGS: hide Python 3.12+ SyntaxWarning from /usr/bin/dstat regex strings

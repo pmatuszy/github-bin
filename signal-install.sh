@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# v. 20260716.163224 - versioning format v. YYYYMMDD.HH24MISS
 # 2026.06.11 - v. 1.15 - Pi/JVM: hint --repair when automatic repair check passes
 # 2026.06.11 - v. 1.14 - Pi/JVM: repair prompt only when needed; default [y/N]
 # 2026.06.11 - v. 1.13 - Pi/JVM: quieter JNI jar patch; skip cp when JNI already in place
@@ -53,27 +54,6 @@ cleanup_tmp_work_dir() {
     fi
 }
 trap cleanup_tmp_work_dir EXIT
-
-print_version_banner() {
-    local ver=unknown date= line title verline width=60
-    while IFS= read -r line; do
-        if [[ "$line" =~ ^#\ ([0-9]{4}\.[0-9]{2}\.[0-9]{2})\ -\ v\.\ ([0-9]+(\.[0-9]+)*) ]]; then
-            date="${BASH_REMATCH[1]}"
-            ver="${BASH_REMATCH[2]}"
-            break
-        fi
-    done < "$0"
-    title="$(basename "$0")"
-    if [[ -n "$date" ]]; then
-        verline="Version: ${ver} (${date})"
-    else
-        verline="Version: ${ver}"
-    fi
-    printf '┌%*s┐\n' "$width" '' | tr ' ' '─'
-    printf '│ %-*.*s │\n' $((width - 2)) $((width - 2)) "$title"
-    printf '│ %-*.*s │\n' $((width - 2)) $((width - 2)) "$verline"
-    printf '└%*s┘\n' "$width" '' | tr ' ' '─'
-}
 
 show_help() {
     cat <<EOF

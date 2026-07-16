@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# v. 20260716.163224 - versioning format v. YYYYMMDD.HH24MISS
 # 2026.07.06 - v. 19.237.143000 - SQLite warmup: COALESCE empty string uses '' not "" (double quotes are column names)
 # 2026.07.04 - v. 19.236.143000 - Bandicam: bandicam_YYYYMMDD_HH-MM-SS-ms → YYYYMMDD_HH-MM-SS-ms_bandicam (stem or full name)
 # 2026.06.27 - v. 19.235.143000 - Unicode dashes (en/em/minus etc.) → ASCII hyphen so ls does not show $'\342\200\223'
@@ -1058,17 +1059,6 @@ print_startup_banner() {
 ' $((width - 2)) $((width - 2)) "$line7"
     printf '└%*s┘
 ' "$width" '' | tr ' ' '─'
-}
-
-print_version_banner() {
-    local width=60
-    local line1="rename.sh"
-    local line2="Version: $SCRIPT_VERSION"
-
-    printf '┌%*s┐\n' "$width" '' | tr ' ' '─'
-    printf '│ %-*.*s │\n' $((width - 2)) $((width - 2)) "$line1"
-    printf '│ %-*.*s │\n' $((width - 2)) $((width - 2)) "$line2"
-    printf '└%*s┘\n' "$width" '' | tr ' ' '─'
 }
 
 startup_progress() {
@@ -4679,6 +4669,8 @@ while (( $# > 0 )); do
     #endregion
     case "$1" in
         --version)
+            # shellcheck disable=SC1091
+            . /root/bin/_script_header.sh NO_STARTUP_DELAY
             print_version_banner
             exit 0
             ;;

@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20260716.163224 - versioning format v. YYYYMMDD.HH24MISS
 
 # 2026.06.12 - v. 1.14 - partial files use .partial.mp3 (ffmpeg needs .mp3 extension); log ffmpeg stderr on failure
 # 2026.06.11 - v. 1.13 - write .part files in output directory, not /tmp

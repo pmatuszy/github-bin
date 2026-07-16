@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20260716.163224 - versioning format v. YYYYMMDD.HH24MISS
 
 # 2026.05.26 - user-facing messages translated from Polish to English
 # 2023.04.06 - v. 0.3 - excluding temp dir /podsync-hdd/_temp/

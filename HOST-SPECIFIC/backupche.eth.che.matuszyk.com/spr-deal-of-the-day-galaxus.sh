@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20260716.163224 - versioning format v. YYYYMMDD.HH24MISS
 # 2022.02.04 - v. 0.5 - added URL to Signal message
 # 2021.08.06 - v. 0.4 - sending dbus signal message
 # 2021.06.22 - v. 0.3 - URL set and used throughout the script, added timeout as signal-cli can be run in the background and this script would never finish

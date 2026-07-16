@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20260716.163224 - versioning format v. YYYYMMDD.HH24MISS
 
 # 2026.07.15 - v. 1.3 - clear IP blad on successful retry; init HEALTHCHECK_URL for nounset
 # 2026.05.26 - user-facing messages translated from Polish to English

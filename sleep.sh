@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20260716.163224 - versioning format v. YYYYMMDD.HH24MISS
 
 # 2026.04.21 - v. 0.4 - prefer pm-suspend first and use systemctl suspend only as fallback
 # 2026.04.20 - v. 0.3 - added _script_header.sh and _script_footer.sh integration

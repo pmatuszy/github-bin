@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20260716.163224 - versioning format v. YYYYMMDD.HH24MISS
 
 # 2026.06.02 - v. 0.2 - add --no_startup_delay option (parsed before header)
 # 2026.04.22 - v. 0.1 - curl timeouts, IPv4/IPv6, fallbacks, --raw (no header), PGM output otherwise

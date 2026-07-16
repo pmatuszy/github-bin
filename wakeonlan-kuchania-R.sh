@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20260716.163224 - versioning format v. YYYYMMDD.HH24MISS
 
 # 2025.05.08 - v. 0.7 - added configurable max_attempts and smarter WOL loop
 # 2025.05.08 - v. 0.6 - improved logic to stop wakeonlan attempts as soon as host responds to ping

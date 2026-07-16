@@ -1,6 +1,7 @@
 #!/bin/bash
+# v. 20260716.173600 - print_version_banner uses CALLER_SCRIPT version fields
+# v. 20260716.163300 - versioning v. YYYYMMDD.HH24MISS; parse first # v. YYYYMMDD.HHMMSS line
 
-# v. 20260716.162620 - parse script version v. YYYYMMDD.HH24MISS
 # 2026.07.15 - v. 1.57.210402 - profile_location_dir: export only when set; no default to $HOME
 # 2026.07.15 - v. 1.57.210401 - export profile_location_dir (default: $HOME or /root)
 # 2026.07.05 - v. 1.57.210400 - fix caller script detection (BASH_SOURCE[1] was _script_header.sh inside function)
@@ -117,6 +118,22 @@ if [[ -z "$SCRIPT_VERSION_NUMBER" ]]; then
 fi
 [[ -n "$SCRIPT_VERSION_NUMBER" ]] || SCRIPT_VERSION_NUMBER=unknown
 export SCRIPT_VERSION_NUMBER SCRIPT_VERSION_DATE
+
+print_version_banner() {
+  local ver=unknown date= title verline width=60
+  ver="${SCRIPT_VERSION_NUMBER:-unknown}"
+  date="${SCRIPT_VERSION_DATE:-}"
+  title="${CALLER_SCRIPT_BASENAME:-$(basename "$0")}"
+  if [[ -n "$date" && "$ver" != unknown ]]; then
+    verline="Version: ${ver} (${date})"
+  else
+    verline="Version: ${ver}"
+  fi
+  printf '┌%*s┐\n' "$width" '' | tr ' ' '─'
+  printf '│ %-*.*s │\n' $((width - 2)) $((width - 2)) "$title"
+  printf '│ %-*.*s │\n' $((width - 2)) $((width - 2)) "$verline"
+  printf '└%*s┘\n' "$width" '' | tr ' ' '─'
+}
 
 # Optional suffix for prompt timestamps; version belongs in the window title only.
 script_version_in_prompt() {

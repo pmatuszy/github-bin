@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20260716.163224 - versioning format v. YYYYMMDD.HH24MISS
 
 # 2026.07.04 - v. 0.5.49 - no media files: do not invent empty path (printf on empty array); exit cleanly
 # 2026.06.26 - v. 0.5.48 - scan-percent prompt: one-line 1–100 help above [q/e]
@@ -73,27 +74,6 @@
 # 2026.06.16 - v. 0.2.1 - align classification legend columns (label / dB / description)
 # 2026.06.16 - v. 0.2 - dB cheat-sheet categories; optional loudnorm (standard / youtube-style); preserve mtime
 # 2026.06.16 - v. 0.1 - initial release: scan cwd for audio/video; ffmpeg volumedetect; flag too-silent files
-
-print_version_banner() {
-  local ver=unknown date= line title verline width=60
-  while IFS= read -r line; do
-    if [[ "$line" =~ ^#\ ([0-9]{4}\.[0-9]{2}\.[0-9]{2})\ -\ v\.\ ([0-9]+(\.[0-9]+)*) ]]; then
-      date="${BASH_REMATCH[1]}"
-      ver="${BASH_REMATCH[2]}"
-      break
-    fi
-  done < "$0"
-  title="$(basename "$0")"
-  if [[ -n "$date" ]]; then
-    verline="Version: ${ver} (${date})"
-  else
-    verline="Version: ${ver}"
-  fi
-  printf '┌%*s┐\n' "$width" '' | tr ' ' '─'
-  printf '│ %-*.*s │\n' $((width - 2)) $((width - 2)) "$title"
-  printf '│ %-*.*s │\n' $((width - 2)) $((width - 2)) "$verline"
-  printf '└%*s┘\n' "$width" '' | tr ' ' '─'
-}
 
 show_help() {
   cat <<EOF

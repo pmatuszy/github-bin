@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20260716.163224 - versioning format v. YYYYMMDD.HH24MISS
 
 # 2026.06.12 - v. 0.9 - discover disks via fdisk (_smart_disk_discovery.sh); no disks message
 # 2026.04.21 - v. 0.8 - no "Press ENTER" after the last disk (still between disks when interactive)

@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20260716.163224 - versioning format v. YYYYMMDD.HH24MISS
 
 # 2026.06.02 - v. 0.4 - add --no_startup_delay option (parsed before header)
 # 2026.04.21 - v. 0.3 - help text includes usage examples

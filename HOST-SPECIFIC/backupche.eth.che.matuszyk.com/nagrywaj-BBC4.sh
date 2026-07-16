@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20260716.163224 - versioning format v. YYYYMMDD.HH24MISS
 
 # 2026.05.26 - user-facing messages translated from Polish to English
 # 2023.05.22 - v. 1.2 - added NO_STARTUP_DELAY parameters to /root/bin/_script_header.sh

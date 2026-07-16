@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20260716.163224 - versioning format v. YYYYMMDD.HH24MISS
 
 # 2026.07.15 - v. 0.3 - fix y/Y confirm (was always true); init p for nounset on read timeout
 # 2023.05.09 - v. 0.2 - added checking if the script is run on the physical machine

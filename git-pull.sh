@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20260716.163224 - versioning format v. YYYYMMDD.HH24MISS
 # Compatibility wrapper — use git-bin.sh pull (see git-bin.sh v3.0).
 _GIT_BIN_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 exec bash "${_GIT_BIN_ROOT}/git-bin.sh" pull "$@"

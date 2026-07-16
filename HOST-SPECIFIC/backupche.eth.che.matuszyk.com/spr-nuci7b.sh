@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20260716.163224 - versioning format v. YYYYMMDD.HH24MISS
 
 # 2023.02.02 - v. 0.6 - added --foreground option to be able to use Ctrl-C
 # 2022.02.04 - v. 0.5 - added URL to Signal message

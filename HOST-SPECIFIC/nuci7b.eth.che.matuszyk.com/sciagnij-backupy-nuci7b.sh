@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20260716.163224 - versioning format v. YYYYMMDD.HH24MISS
 
 # 2025.10.24 - v. 0.3 - bugfix: "bash: line 1: /usr/bin/rsync: Argument list too long" - in SKAD is in double quotes and end changed to /* to /
 # 2023.12.20 - v. 0.2 - added healthchecks download

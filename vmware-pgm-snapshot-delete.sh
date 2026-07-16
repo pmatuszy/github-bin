@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20260716.163224 - versioning format v. YYYYMMDD.HH24MISS
 
 # 2026.04.22 - v. 0.16 - encrypted vmrun: DISPLAY default :0; no bogus nogui on listSnapshots/deleteSnapshot (-vp)
 # 2026.04.22 - v. 0.15 - vmrun listSnapshots/deleteSnapshot: always trailing nogui (encrypted and plain)

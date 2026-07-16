@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20260716.163224 - versioning format v. YYYYMMDD.HH24MISS
 
 # 2022.10.19 - v. 0.3 - dodane sprawdzenie czy dziala server vpn
 # 2022.09.30 - v. 0.2 - dodane wsparcie dla healthcheckow

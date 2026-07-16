@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20260716.163224 - versioning format v. YYYYMMDD.HH24MISS
 
 # 2022.12.02 - v. 0.3 - added printing of script version and sleep is now 1.5s
 # 2020.11.25 - v. 0.2 - added figlet

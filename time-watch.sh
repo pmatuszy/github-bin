@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20260716.163224 - versioning format v. YYYYMMDD.HH24MISS
 
 # 2026.06.11 - v. 0.3 - show time only (no date) in figlet display
 # 2026.04.21 - v. 0.2 - require procps-ng GNU watch (-w/--no-wrap; sub-second -n); document intent

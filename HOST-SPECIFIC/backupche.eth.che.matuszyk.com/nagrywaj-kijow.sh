@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20260716.163224 - versioning format v. YYYYMMDD.HH24MISS
 
 # 2023.04.11 - v. 0.4 - added invocation of _script_header.sh and _script_footer.sh
 # 2023.02.17 - v. 0.3 - added yt_bin variable
