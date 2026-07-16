@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# v. 20260716.174800 - source build: prlimit/ulimit bump and conservative make -j for FD limits
+# v. 20260716.175000 - source build: raise ulimit -n to 3x current (up to 196608) before make
 
 # 2026.06.23 - v. 2.1.23 - jellyfin profile: Jellyfin-like shared build (VAAPI+NVENC+FDK-AAC); common stays default
 # 2026.06.26 - v. 2.1.22 - Ubuntu: libopenjp2-7-dev (not libopenjpeg-dev); optional pkg probe must not abort configure
@@ -2849,32 +2849,42 @@ ffmpeg_source_run_configure() {
 }
 
 ffmpeg_source_prepare_make_jobs() {
-    local ncpu="" nofile="" hard="" jobs="" max_jobs=""
+    local ncpu="" nofile="" hard="" target="" jobs="" max_jobs=""
 
     ncpu="$(nproc 2>/dev/null || echo 2)"
     nofile="$(ulimit -n 2>/dev/null || echo 1024)"
     hard="$(ulimit -Hn 2>/dev/null || echo "${nofile}")"
 
-    if (( nofile < 65536 )); then
-        ulimit -n 65536 2>/dev/null \
-            || ulimit -n 4096 2>/dev/null \
-            || ulimit -n "${hard}" 2>/dev/null \
-            || true
+    target=$(( nofile * 3 ))
+    if (( target > hard )); then
+        target="${hard}"
+    fi
+    if (( target > nofile )); then
+        ulimit -n "${target}" 2>/dev/null || true
+        nofile="$(ulimit -n 2>/dev/null || echo "${nofile}")"
+    fi
+    if (( nofile < 196608 && hard >= 196608 )); then
+        ulimit -n 196608 2>/dev/null || true
+        nofile="$(ulimit -n 2>/dev/null || echo "${nofile}")"
+    elif (( nofile < 12288 && hard >= 12288 )); then
+        ulimit -n 12288 2>/dev/null || true
         nofile="$(ulimit -n 2>/dev/null || echo "${nofile}")"
     fi
     if command -v prlimit >/dev/null 2>&1; then
-        prlimit --nofile=65536:65536 --pid="$$" >/dev/null 2>&1 || true
+        prlimit --nofile="${target}:${hard}" --pid="$$" >/dev/null 2>&1 \
+            || prlimit --nofile=196608:196608 --pid="$$" >/dev/null 2>&1 \
+            || true
         nofile="$(ulimit -n 2>/dev/null || echo "${nofile}")"
     fi
 
     jobs="${ncpu}"
     max_jobs=$(( nofile / 128 ))
     (( max_jobs < 1 )) && max_jobs=1
-    if (( nofile <= 4096 && max_jobs > 4 )); then
-        max_jobs=4
+    if (( nofile <= 12288 && max_jobs > 12 )); then
+        max_jobs=12
     fi
-    if (( nofile <= 1024 )); then
-        max_jobs=2
+    if (( nofile <= 3072 )); then
+        max_jobs=6
     fi
     if (( jobs > max_jobs )); then
         echo "    Limiting make -j${ncpu} to -j${max_jobs} (ulimit -n=${nofile}; FFmpeg needs many open files)." >&2
