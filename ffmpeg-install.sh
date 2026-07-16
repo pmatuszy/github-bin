@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# v. 20260716.181500 - jellyfin: skip cuda-llvm/nvcc by default (NVENC via ffnvcodec only)
+# v. 20260716.182000 - source build: raise ulimit -n to hard max; retry make on EMFILE
 
 # 2026.06.23 - v. 2.1.23 - jellyfin profile: Jellyfin-like shared build (VAAPI+NVENC+FDK-AAC); common stays default
 # 2026.06.26 - v. 2.1.22 - Ubuntu: libopenjp2-7-dev (not libopenjpeg-dev); optional pkg probe must not abort configure
@@ -73,11 +73,13 @@ FFMPEG_KILL_GRACE_WAIT_SEC="${FFMPEG_KILL_GRACE_WAIT_SEC:-30}"
 FFMPEG_KILL_FORCE_WAIT_SEC="${FFMPEG_KILL_FORCE_WAIT_SEC:-10}"
 FFMPEG_CONFIGURE_EXTRA="${FFMPEG_CONFIGURE_EXTRA:-}"
 FFMPEG_MAKE_JOBS="${FFMPEG_MAKE_JOBS:-1}"
+FFMPEG_MAKE_NOFILE="${FFMPEG_MAKE_NOFILE:-}"
 FFMPEG_SOURCE_WITH_LTO="${FFMPEG_SOURCE_WITH_LTO:-0}"
 FFMPEG_SOURCE_DISABLE_LTO=0
 FFMPEG_SOURCE_WITH_CUDA_NVCC="${FFMPEG_SOURCE_WITH_CUDA_NVCC:-0}"
 FFMPEG_SOURCE_SKIP_CUDA_NVCC=0
 FFMPEG_SOURCE_MAKE_RETRY_DONE=0
+FFMPEG_SOURCE_MAKE_EMFILE_RETRY_DONE=0
 FFMPEG_SOURCE_LAST_MAKE_RC=0
 FFMPEG_SOURCE_LAST_MAKE_LOG=""
 FFMPEG_SOURCE_PROFILE="${FFMPEG_SOURCE_PROFILE:-}"
@@ -174,6 +176,7 @@ Environment:
   FFMPEG_KILL_FORCE_WAIT_SEC  seconds to wait after SIGKILL (default: 10).
   FFMPEG_CONFIGURE_EXTRA      Extra ./configure flags for source builds (space-separated).
   FFMPEG_MAKE_JOBS            Parallel make jobs for source builds (default: 1).
+  FFMPEG_MAKE_NOFILE          Open-file soft limit for make (default: process hard ulimit -Hn).
   FFMPEG_SOURCE_WITH_LTO      Set to 1 to pass --enable-lto=auto (jellyfin; off by default; can crash on some hosts).
   FFMPEG_SOURCE_WITH_CUDA_NVCC  Set to 1 to pass --enable-cuda-nvcc (CUDA filters; off by default).
   FFMPEG_SOURCE_PROFILE       Same as --source-profile (min|common|max|gpu|nvidia|jellyfin).
@@ -2975,31 +2978,72 @@ ffmpeg_source_raise_stack_limit() {
     fi
 }
 
+ffmpeg_source_raise_nofile_limit() {
+    local force="${1:-0}"
+    local soft="" hard="" target="" raised=0
+
+    soft="$(ulimit -Sn 2>/dev/null || echo 1024)"
+    hard="$(ulimit -Hn 2>/dev/null || echo "${soft}")"
+
+    if [[ -n "${FFMPEG_MAKE_NOFILE}" && "${FFMPEG_MAKE_NOFILE}" =~ ^[0-9]+$ ]]; then
+        target="${FFMPEG_MAKE_NOFILE}"
+    elif [[ "${hard}" =~ ^[0-9]+$ ]]; then
+        target="${hard}"
+    elif [[ "${soft}" =~ ^[0-9]+$ ]]; then
+        target=$(( soft * 3 ))
+    else
+        target=65536
+    fi
+
+    if [[ "${hard}" =~ ^[0-9]+$ ]] && (( target > hard )); then
+        target="${hard}"
+    fi
+    if (( force == 0 )) && [[ "${soft}" =~ ^[0-9]+$ ]] && (( soft >= target )); then
+        return 0
+    fi
+
+    if ulimit -n "${target}" 2>/dev/null; then
+        raised=1
+    fi
+    if command -v prlimit >/dev/null 2>&1; then
+        if [[ "${hard}" =~ ^[0-9]+$ ]]; then
+            prlimit --nofile="${target}:${hard}" --pid="$$" >/dev/null 2>&1 && raised=1
+        else
+            prlimit --nofile="${target}:${target}" --pid="$$" >/dev/null 2>&1 && raised=1
+        fi
+    fi
+
+    soft="$(ulimit -Sn 2>/dev/null || echo unknown)"
+    if (( raised == 1 )); then
+        echo "    Raised open-file limit (ulimit -n=${soft}, hard=${hard})." >&2
+    fi
+}
+
+ffmpeg_source_invoke_make() {
+    local jobs="$1"
+    shift
+    local soft="" hard=""
+
+    soft="$(ulimit -Sn 2>/dev/null || echo "")"
+    hard="$(ulimit -Hn 2>/dev/null || echo "")"
+
+    if command -v prlimit >/dev/null 2>&1 && [[ "${soft}" =~ ^[0-9]+$ ]] && [[ "${hard}" =~ ^[0-9]+$ ]]; then
+        prlimit --nofile="${soft}:${hard}" -- make -j"${jobs}" "$@"
+    else
+        make -j"${jobs}" "$@"
+    fi
+}
+
 ffmpeg_source_prepare_make_jobs() {
-    local ncpu="" nofile="" hard="" target="" jobs="" max_jobs="" mem_mb="" ram_jobs="" mb_per_job=2048 stack_kb=""
+    local ncpu="" nofile="" hard="" jobs="" max_jobs="" mem_mb="" ram_jobs="" mb_per_job=2048 stack_kb=""
 
     ffmpeg_source_raise_stack_limit
+    ffmpeg_source_raise_nofile_limit 0
     stack_kb="$(ulimit -s 2>/dev/null || echo unknown)"
 
     ncpu="$(nproc 2>/dev/null || echo 2)"
-    nofile="$(ulimit -n 2>/dev/null || echo 1024)"
+    nofile="$(ulimit -Sn 2>/dev/null || echo 1024)"
     hard="$(ulimit -Hn 2>/dev/null || echo "${nofile}")"
-
-    target=$(( nofile * 3 ))
-    if (( target > 65536 )); then
-        target=65536
-    fi
-    if (( target > hard )); then
-        target="${hard}"
-    fi
-    if (( target > nofile )); then
-        ulimit -n "${target}" 2>/dev/null || true
-        nofile="$(ulimit -n 2>/dev/null || echo "${nofile}")"
-    fi
-    if command -v prlimit >/dev/null 2>&1; then
-        prlimit --nofile="${target}:${hard}" --pid="$$" >/dev/null 2>&1 || true
-        nofile="$(ulimit -n 2>/dev/null || echo "${nofile}")"
-    fi
 
     jobs="${ncpu}"
     max_jobs=$(( nofile / 128 ))
@@ -3070,16 +3114,28 @@ ffmpeg_source_print_too_many_open_files_help() {
     echo "  raising the limit." >&2
     echo >&2
     echo "  Current limits: soft=${soft}  hard=${hard}  (ulimit -n shows ${nofile})" >&2
+    if [[ "${soft}" =~ ^[0-9]+$ && "${hard}" =~ ^[0-9]+$ ]] && (( soft >= hard )); then
+        echo "  Soft limit is already at hard max; check: cat /proc/sys/fs/file-nr" >&2
+        echo "  and close other processes, or set TEMP_CATALOG to a local ext4 path (not NFS/VMware share)." >&2
+    fi
     echo >&2
     echo "  Quick fix (this shell only):" >&2
-    echo "    ulimit -n 65536" >&2
+    if [[ "${hard}" =~ ^[0-9]+$ ]]; then
+        echo "    ulimit -n ${hard}" >&2
+    fi
     if [[ "${suggested}" =~ ^[0-9]+$ ]] && (( suggested > 0 )); then
         echo "    ulimit -n ${suggested}    # 3× current soft limit" >&2
     fi
     echo >&2
     echo "  Resume in the build tree (skip configure unless it failed):" >&2
     echo "    cd ${src_dir}" >&2
-    echo "    ulimit -n 65536" >&2
+    if [[ "${hard}" =~ ^[0-9]+$ ]]; then
+        echo "    ulimit -s unlimited" >&2
+        echo "    ulimit -n ${hard}" >&2
+    else
+        echo "    ulimit -s unlimited" >&2
+        echo "    ulimit -n 65536" >&2
+    fi
     echo "    make -j1 ffmpeg ffprobe && make -j1" >&2
     echo >&2
     echo "  Permanent fix — append to /etc/security/limits.conf:" >&2
@@ -3180,13 +3236,28 @@ ffmpeg_source_print_make_segfault_help() {
     echo >&2
 }
 
+ffmpeg_source_retry_make_after_emfile() {
+    local src_dir="$1"
+    local jobs="$2"
+    local log="$3"
+
+    (( FFMPEG_SOURCE_MAKE_EMFILE_RETRY_DONE == 0 )) || return 1
+    ffmpeg_source_make_log_indicates_emfile "${log}" || return 1
+
+    FFMPEG_SOURCE_MAKE_EMFILE_RETRY_DONE=1
+    echo ">>> make failed (too many open files) — raising ulimit -n to hard limit and retrying..." >&2
+    ffmpeg_source_raise_nofile_limit 1
+    cd "${src_dir}"
+    ffmpeg_source_run_make "${jobs}" "${src_dir}"
+}
+
 ffmpeg_source_run_make() {
     local jobs="$1"
     local src_dir="$2"
     local log="" rc=0
 
     log="$(mktemp "${TEMP_CATALOG}/ffmpeg-make.XXXXXX.log")"
-    make -j"${jobs}" ffmpeg ffprobe 2>&1 | tee "${log}"
+    ( cd "${src_dir}" && ffmpeg_source_invoke_make "${jobs}" ffmpeg ffprobe ) 2>&1 | tee "${log}"
     rc=${PIPESTATUS[0]}
     FFMPEG_SOURCE_LAST_MAKE_RC="${rc}"
     FFMPEG_SOURCE_LAST_MAKE_LOG="${log}"
@@ -3196,7 +3267,7 @@ ffmpeg_source_run_make() {
         return "${rc}"
     fi
 
-    make -j"${jobs}" 2>&1 | tee -a "${log}"
+    ( cd "${src_dir}" && ffmpeg_source_invoke_make "${jobs}" ) 2>&1 | tee -a "${log}"
     rc=${PIPESTATUS[0]}
     FFMPEG_SOURCE_LAST_MAKE_RC="${rc}"
     FFMPEG_SOURCE_LAST_MAKE_LOG="${log}"
@@ -3336,6 +3407,7 @@ perform_install_build_from_source() {
     ensure_source_build_profile_selected
 
     FFMPEG_SOURCE_MAKE_RETRY_DONE=0
+    FFMPEG_SOURCE_MAKE_EMFILE_RETRY_DONE=0
 
     echo
     echo "part 1 — official ffmpeg.org release source (${version}, profile: ${SOURCE_PROFILE})"
@@ -3409,6 +3481,8 @@ perform_install_build_from_source() {
             echo ">>> make failed — retrying with make -j1..." >&2
         fi
         if (( jobs > 1 )) && ffmpeg_source_run_make 1 "${src_dir}"; then
+            :
+        elif ffmpeg_source_retry_make_after_emfile "${src_dir}" "${jobs}" "${FFMPEG_SOURCE_LAST_MAKE_LOG}"; then
             :
         elif ffmpeg_source_retry_make_after_segfault "${staging}" "${src_dir}" "${jobs}" \
             "${FFMPEG_SOURCE_LAST_MAKE_RC}" "${FFMPEG_SOURCE_LAST_MAKE_LOG}"; then
