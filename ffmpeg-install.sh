@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# v. 20260716.174400 - source build: raise ulimit -n and cap make -j to avoid "Too many open files"
+# v. 20260716.174600 - --source-only + --source-profile: skip install/profile confirmation prompts
 
 # 2026.06.23 - v. 2.1.23 - jellyfin profile: Jellyfin-like shared build (VAAPI+NVENC+FDK-AAC); common stays default
 # 2026.06.26 - v. 2.1.22 - Ubuntu: libopenjp2-7-dev (not libopenjpeg-dev); optional pkg probe must not abort configure
@@ -150,9 +150,9 @@ Other prompts use [y/N/q]: y = yes, Enter/N = no, q = quit.
   --release            Use release static builds instead of git (master) builds.
   --dynamic-only       Install distro ffmpeg via apt only.
   --static-only        Do not fall back to apt or source build.
-  --source-only        Skip prebuilt static/apt; offer official source build only.
+  --source-only        Build from official ffmpeg.org source only (no static/apt prompts).
   --source-profile P   Source build profile: min, common, max, gpu, nvidia, or jellyfin
-                       (skips profile menu). Default when omitted: common.
+                       (with --source-only, skips profile confirmation prompts).
   --source-with-fdk-aac
                        With max profile: enable libfdk-aac (non-free, best AAC).
   --no_startup_delay   Skip random startup delay when run non-interactively.
@@ -1763,13 +1763,13 @@ prompt_install_plan() {
     fi
 
     if (( SOURCE_ONLY == 1 )); then
-        if (( ASSUME_YES == 1 )); then
-            INSTALL_PLAN="source"
-            ensure_source_build_profile_selected
-            echo "Proceeding with official source build (--yes)."
-            return 0
+        if ! ensure_ffmpeg_org_release_version; then
+            echo "ERROR: Could not determine an official ffmpeg.org release version to build." >&2
+            quit_prompt_with_optional_old_cleanup
         fi
-        prompt_build_from_source_fallback
+        INSTALL_PLAN="source"
+        ensure_source_build_profile_selected
+        echo "Proceeding with official source build (profile: ${SOURCE_PROFILE}, --source-only)."
         return 0
     fi
 
@@ -1965,6 +1965,10 @@ source_profile_is_valid() {
         min|common|max|gpu|nvidia|jellyfin) return 0 ;;
         *) return 1 ;;
     esac
+}
+
+source_profile_preset_externally() {
+    [[ -n "${CLI_SOURCE_PROFILE}" || -n "${FFMPEG_SOURCE_PROFILE}" ]]
 }
 
 source_profile_label() {
@@ -2194,7 +2198,9 @@ ensure_source_build_profile_selected() {
         prompt_source_fdk_aac_if_max
     fi
     if [[ "${SOURCE_PROFILE}" == gpu || "${SOURCE_PROFILE}" == nvidia || "${SOURCE_PROFILE}" == jellyfin ]]; then
-        if ! prompt_confirm_gpu_or_nvidia_profile; then
+        if source_profile_preset_externally || (( ASSUME_YES == 1 )); then
+            :
+        elif ! prompt_confirm_gpu_or_nvidia_profile; then
             prompt_source_build_profile_menu
         fi
     fi
