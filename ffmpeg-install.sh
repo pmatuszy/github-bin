@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# v. 20260716.211000 - fix make after ffprobe: skip bare 'make all' (empty ffplay strip)
+# v. 20260716.221600 - ffplay optional in summaries; fix print_version_banner fallback
 
 # 2026.06.23 - v. 2.1.23 - jellyfin profile: Jellyfin-like shared build (VAAPI+NVENC+FDK-AAC); common stays default
 # 2026.06.26 - v. 2.1.22 - Ubuntu: libopenjp2-7-dev (not libopenjpeg-dev); optional pkg probe must not abort configure
@@ -1270,10 +1270,13 @@ list_preserved_ffmpeg_versions() {
 
     echo "  Versioned binaries in ${BIN_DIR}/:"
     for label in "${labels[@]}"; do
+        local tools_line=""
+        tools_line="$(ffmpeg_label_installed_tools_line "${label}")"
+        [[ -n "${tools_line}" ]] || continue
         if [[ -n "${active}" && "${label}" == "${active}" ]]; then
-            echo "    ffmpeg-${label}  ffprobe-${label}  ffplay-${label}  (active)"
+            echo "    ${tools_line}  (active)"
         else
-            echo "    ffmpeg-${label}  ffprobe-${label}  ffplay-${label}"
+            echo "    ${tools_line}"
         fi
     done
 }
@@ -1890,7 +1893,7 @@ ensure_active_tool_symlink() {
     local tool="$1" label="$2"
     local path="${BIN_DIR}/${tool}" versioned="${BIN_DIR}/${tool}-${label}"
 
-    [[ -e "${versioned}" ]] || return 1
+    [[ -x "${versioned}" ]] || return 1
     if [[ -e "${path}" && ! -L "${path}" ]]; then
         move_path_aside "${path}"
     fi
@@ -1898,14 +1901,64 @@ ensure_active_tool_symlink() {
     return 0
 }
 
+ffmpeg_remove_stale_active_tool_symlink() {
+    local tool="$1"
+    local path="${BIN_DIR}/${tool}"
+
+    [[ -L "${path}" ]] || return 0
+    [[ -x "$(readlink -f "${path}" 2>/dev/null || true)" ]] && return 0
+    rm -f "${path}"
+    log_note "Removed stale ${tool} symlink (not built in this install)."
+}
+
+ffmpeg_optional_executable_path() {
+    local path="$1"
+
+    [[ -n "${path}" && -x "${path}" ]] && printf '%s\n' "${path}"
+}
+
+ffmpeg_format_active_tool_line() {
+    local path="$1" name="$2"
+    local target="" resolved=""
+
+    if [[ ! -e "${path}" && ! -L "${path}" ]]; then
+        printf '           %s: (not installed)\n' "${name}"
+        return 0
+    fi
+    target="$(readlink "${path}" 2>/dev/null || true)"
+    resolved="$(readlink -f "${path}" 2>/dev/null || true)"
+    if [[ -n "${target}" && -x "${resolved}" ]]; then
+        printf '           %s -> %s\n' "${path}" "${target}"
+    elif [[ -n "${target}" ]]; then
+        printf '           %s: broken symlink -> %s\n' "${name}" "${target}"
+    elif [[ -x "${path}" ]]; then
+        printf '           %s (real file)\n' "${path}"
+    else
+        printf '           %s: (not installed)\n' "${name}"
+    fi
+}
+
+ffmpeg_label_installed_tools_line() {
+    local label="$1"
+    local -a parts=()
+    local tool=""
+
+    for tool in ffmpeg ffprobe ffplay; do
+        [[ -x "${BIN_DIR}/${tool}-${label}" ]] && parts+=( "${tool}-${label}" )
+    done
+    ((${#parts[@]} > 0)) && printf '%s\n' "${parts[*]}"
+}
+
 link_active_ffmpeg_tools() {
     local label="$1"
     local tool="" linked=()
 
-    log_step "Pointing active symlinks to *-${label} (ffmpeg, ffprobe, ffplay)"
+    log_step "Pointing active symlinks to *-${label} (installed tools only)"
     for tool in "${FFMPEG_ACTIVE_TOOLS[@]}"; do
         if ensure_active_tool_symlink "${tool}" "${label}"; then
             linked+=( "${BIN_DIR}/${tool}" )
+        else
+            ffmpeg_remove_stale_active_tool_symlink "${tool}"
         fi
     done
     ((${#linked[@]} > 0)) && ls -l "${linked[@]}"
@@ -3895,7 +3948,8 @@ perform_install_build_from_source() {
 
     print_source_build_encoder_check "${staging}/bin/ffmpeg"
 
-    install_versioned_bins_to_local "${build_id}" "${staging}/bin/ffmpeg" "${staging}/bin/ffprobe" "${staging}/bin/ffplay"
+    install_versioned_bins_to_local "${build_id}" "${staging}/bin/ffmpeg" "${staging}/bin/ffprobe" \
+        "$(ffmpeg_optional_executable_path "${staging}/bin/ffplay")"
     print_install_success_summary "${build_id}" "official source ${SOURCE_PROFILE} ${version}"
     return 0
 }
@@ -3944,8 +3998,11 @@ print_local_bin_ffmpeg_summary() {
     done
     echo
     list_preserved_ffmpeg_versions
-    echo
-    print_version_banner
+    if declare -F print_version_banner >/dev/null 2>&1; then
+        print_version_banner
+    elif [[ -n "${SCRIPT_VERSION_NUMBER:-}" && "${SCRIPT_VERSION_NUMBER}" != unknown ]]; then
+        echo "Script version: ${SCRIPT_VERSION_NUMBER} (${SCRIPT_VERSION_DATE:-})"
+    fi
 }
 
 print_install_success_summary() {
@@ -3959,7 +4016,7 @@ print_install_success_summary() {
     fi
     echo "  Active:  ${BIN_FFMPEG} -> $(readlink "${BIN_FFMPEG}" 2>/dev/null || echo '?')"
     echo "           ${BIN_FFPROBE} -> $(readlink "${BIN_FFPROBE}" 2>/dev/null || echo '?')"
-    echo "           ${BIN_FFPLAY} -> $(readlink "${BIN_FFPLAY}" 2>/dev/null || echo '?')"
+    ffmpeg_format_active_tool_line "${BIN_FFPLAY}" "ffplay"
     list_preserved_ffmpeg_versions
     prompt_remove_old_ffmpeg_installs
 }
@@ -4038,7 +4095,8 @@ perform_install_static() {
         return 1
     fi
 
-    install_versioned_bins_to_local "${build_id}" "${extracted_dir}/ffmpeg" "${extracted_dir}/ffprobe" "${extracted_dir}/ffplay"
+    install_versioned_bins_to_local "${build_id}" "${extracted_dir}/ffmpeg" "${extracted_dir}/ffprobe" \
+        "$(ffmpeg_optional_executable_path "${extracted_dir}/ffplay")"
     print_install_success_summary "${build_id}" "static ${FFMPEG_BUILD_KIND}"
     return 0
 }
@@ -4076,7 +4134,8 @@ perform_install_dynamic() {
     [[ -n "${ver}" ]] || ver="${APT_FFMPEG_VERSION:-unknown}"
     build_id="${ver}-apt"
 
-    install_versioned_symlinks_to_local "${build_id}" "${apt_ffmpeg}" "${apt_ffprobe}" "${apt_ffplay}"
+    install_versioned_symlinks_to_local "${build_id}" "${apt_ffmpeg}" "${apt_ffprobe}" \
+        "$(ffmpeg_optional_executable_path "${apt_ffplay}")"
     print_install_success_summary "${build_id}" "dynamic apt"
     return 0
 }
@@ -4201,6 +4260,11 @@ done
 if [[ -f /root/bin/_script_header.sh ]]; then
     # shellcheck disable=SC1091
     . /root/bin/_script_header.sh "${HEADER_EXTRA_ARGS[@]}"
+fi
+if ! declare -F print_version_banner >/dev/null 2>&1; then
+    print_version_banner() {
+        printf 'ffmpeg-install.sh version: %s\n' "${SCRIPT_VERSION_NUMBER:-unknown}"
+    }
 fi
 
 while [[ $# -gt 0 ]]; do
