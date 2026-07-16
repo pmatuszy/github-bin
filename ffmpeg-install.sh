@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# v. 20260716.224500 - build ffprobe+ffplay with ffmpeg (SDL2 deps; jellyfin still skips ffplay)
+# v. 20260716.231000 - equivalent CLI echo; --dry-run for interactive plan without build
 
 # 2026.06.23 - v. 2.1.23 - jellyfin profile: Jellyfin-like shared build (VAAPI+NVENC+FDK-AAC); common stays default
 # 2026.06.26 - v. 2.1.22 - Ubuntu: libopenjp2-7-dev (not libopenjpeg-dev); optional pkg probe must not abort configure
@@ -65,6 +65,7 @@ INSTALL_PLAN=""
 DYNAMIC_ONLY=0
 STATIC_ONLY=0
 SOURCE_ONLY=0
+DRY_RUN=0
 ASSUME_YES=0
 VERBOSE=1
 NETWORK_TIMEOUT_SEC="${NETWORK_TIMEOUT_SEC:-120}"
@@ -86,6 +87,8 @@ FFMPEG_SESSION_START_EPOCH=0
 FFMPEG_SESSION_START_ISO=""
 FFMPEG_INSTALL_START_EPOCH=0
 FFMPEG_LAST_INSTALL_KIND=""
+FFMPEG_EQUIVALENT_CMD=""
+FFMPEG_NO_STARTUP_DELAY=0
 FFMPEG_SOURCE_JELLYFIN_FULL="${FFMPEG_SOURCE_JELLYFIN_FULL:-0}"
 FFMPEG_SOURCE_PROFILE="${FFMPEG_SOURCE_PROFILE:-}"
 CLI_SOURCE_PROFILE=""
@@ -129,12 +132,86 @@ cleanup_tmp_work_dir() {
 }
 trap cleanup_tmp_work_dir EXIT
 
+ffmpeg_install_equivalent_env_prefix() {
+    local -a envs=()
+
+    if [[ -n "${TEMP_CATALOG:-}" && "${TEMP_CATALOG}" != "/mnt/ffmpeg-temp" ]]; then
+        envs+=( "TEMP_CATALOG=$(printf '%q' "${TEMP_CATALOG}")" )
+    fi
+    if (( FFMPEG_SOURCE_JELLYFIN_FULL == 1 )); then
+        envs+=( "FFMPEG_SOURCE_JELLYFIN_FULL=1" )
+    fi
+    if [[ -n "${FFMPEG_MAKE_JOBS:-}" && "${FFMPEG_MAKE_JOBS}" != "1" ]]; then
+        envs+=( "FFMPEG_MAKE_JOBS=$(printf '%q' "${FFMPEG_MAKE_JOBS}")" )
+    fi
+    ((${#envs[@]} > 0)) && printf '%s ' "${envs[@]}"
+}
+
+ffmpeg_install_equivalent_command_line() {
+    local script="" env_prefix="" arg="" quoted=""
+    local -a parts=()
+
+    script="${CALLER_SCRIPT:-${BASH_SOURCE[0]:-ffmpeg-install.sh}}"
+    env_prefix="$(ffmpeg_install_equivalent_env_prefix)"
+
+    parts=( "${script}" )
+    if (( FFMPEG_NO_STARTUP_DELAY == 1 )); then
+        parts+=( --no_startup_delay )
+    fi
+    if (( VERBOSE == 0 )); then
+        parts+=( -q )
+    fi
+
+    case "${INSTALL_PLAN:-}" in
+        source)
+            parts+=( --source-only --source-profile "${SOURCE_PROFILE:-common}" )
+            if (( FFMPEG_SOURCE_WITH_FDK_AAC == 1 )); then
+                parts+=( --source-with-fdk-aac )
+            fi
+            ;;
+        static)
+            parts+=( --static-only )
+            if [[ "${FFMPEG_BUILD_KIND:-git}" == release ]]; then
+                parts+=( --release )
+            fi
+            ;;
+        dynamic)
+            parts+=( --dynamic-only )
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+
+    quoted=""
+    for arg in "${parts[@]}"; do
+        quoted+="$(printf '%q' "${arg}") "
+    done
+    printf '%s%s\n' "${env_prefix}" "${quoted% }"
+}
+
+ffmpeg_install_save_equivalent_command() {
+    FFMPEG_EQUIVALENT_CMD=""
+    FFMPEG_EQUIVALENT_CMD="$(ffmpeg_install_equivalent_command_line 2>/dev/null || true)"
+}
+
+ffmpeg_install_print_equivalent_command() {
+    local label="${1:-Equivalent command:}"
+
+    ffmpeg_install_save_equivalent_command
+    [[ -n "${FFMPEG_EQUIVALENT_CMD}" ]] || return 0
+    echo
+    echo "${label}"
+    echo "  ${FFMPEG_EQUIVALENT_CMD}"
+    echo
+}
+
 show_help() {
     cat <<EOF
 Usage: $(basename "$0") [-h|--help] [-v|--version] [-y|--yes] [-q|--quiet] [--release]
        [--dynamic-only] [--static-only] [--source-only]
        [--source-profile min|common|max|gpu|nvidia|jellyfin] [--source-with-fdk-aac]
-       [--no_startup_delay]
+       [--dry-run] [--no_startup_delay]
 
 When ffmpeg/ffprobe is running, offers graceful kill (SIGTERM), then force kill
 (SIGKILL) if needed, or [S]kip to compare running vs installable versions.
@@ -174,6 +251,8 @@ Other prompts use [y/N/q]: y = yes, Enter/N = no, q = quit.
                        (with --source-only, skips profile confirmation prompts).
   --source-with-fdk-aac
                        With max profile: enable libfdk-aac (non-free, best AAC).
+  --dry-run            Run all prompts and show the plan, then print the equivalent
+                       command line and exit without building or installing.
   --no_startup_delay   Skip random startup delay when run non-interactively.
 
 Environment:
@@ -3880,6 +3959,8 @@ perform_install_build_from_source() {
 
     ensure_source_build_profile_selected
 
+    ffmpeg_install_print_equivalent_command "Equivalent command (non-interactive replay of this build):"
+
     FFMPEG_SOURCE_MAKE_RETRY_DONE=0
     FFMPEG_SOURCE_MAKE_EMFILE_RETRY_DONE=0
 
@@ -4141,11 +4222,19 @@ print_ffmpeg_session_summary() {
     if [[ -n "${TEMP_CATALOG:-}" ]]; then
         echo "  Temp dir:  ${TEMP_CATALOG}"
     fi
+    if [[ -n "${FFMPEG_EQUIVALENT_CMD:-}" ]]; then
+        echo "  Replay as: ${FFMPEG_EQUIVALENT_CMD}"
+    else
+        ffmpeg_install_save_equivalent_command
+        [[ -n "${FFMPEG_EQUIVALENT_CMD:-}" ]] && echo "  Replay as: ${FFMPEG_EQUIVALENT_CMD}"
+    fi
     echo
 }
 
 perform_install_static() {
     local tarball url extracted_dir build_id="" static_semver=""
+
+    ffmpeg_install_print_equivalent_command "Equivalent command (non-interactive replay of this build):"
 
     echo
     echo "part 1 — download static ffmpeg (${FFMPEG_BUILD_KIND}, ${FFMPEG_ARCH})"
@@ -4226,6 +4315,8 @@ perform_install_static() {
 
 perform_install_dynamic() {
     local apt_ffmpeg="" apt_ffprobe="" versioned="" build_id="" ver=""
+
+    ffmpeg_install_print_equivalent_command "Equivalent command (non-interactive replay of this build):"
 
     echo
     echo "part 1 — dynamic ffmpeg via apt"
@@ -4372,6 +4463,14 @@ main() {
     echo "  temp:    ${TEMP_CATALOG}"
     echo
 
+    if (( DRY_RUN == 1 )); then
+        ffmpeg_install_print_equivalent_command "Dry run — equivalent command (no build performed):"
+        echo "Dry run complete — no install or build was performed."
+        FFMPEG_LAST_INSTALL_KIND="dry-run (${INSTALL_PLAN})"
+        print_local_bin_ffmpeg_summary
+        exit 0
+    fi
+
     run_install_plan
     print_local_bin_ffmpeg_summary
 }
@@ -4379,7 +4478,7 @@ main() {
 HEADER_EXTRA_ARGS=()
 while [[ $# -gt 0 ]]; do
     case $1 in
-        --no_startup_delay) HEADER_EXTRA_ARGS+=(NO_STARTUP_DELAY); shift ;;
+        --no_startup_delay) FFMPEG_NO_STARTUP_DELAY=1; HEADER_EXTRA_ARGS+=(NO_STARTUP_DELAY); shift ;;
         *) break ;;
     esac
 done
@@ -4404,6 +4503,7 @@ while [[ $# -gt 0 ]]; do
         --dynamic-only) DYNAMIC_ONLY=1; shift ;;
         --static-only) STATIC_ONLY=1; shift ;;
         --source-only) SOURCE_ONLY=1; shift ;;
+        --dry-run) DRY_RUN=1; shift ;;
         --source-profile)
             [[ $# -ge 2 ]] || { echo "Missing value for --source-profile" >&2; usage >&2; exit 1; }
             if ! source_profile_is_valid "${2}"; then
