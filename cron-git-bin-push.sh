@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.07.16 - v. 0.9 - call git-bin.sh push batch (replaces git-push.sh)
 # 2026.07.15 - v. 0.8 - repo path: ${profile_location_dir:-$HOME}/github/github-bin
 # 2026.07.15 - v. 0.7 - profile_location_dir from _script_header.sh
 # 2026.07.15 - v. 0.6 - repo path: ${profile_location_dir}/github/github-bin
@@ -34,8 +35,8 @@ show_help() {
   cat <<EOF
 Usage: $(basename "$0") [-h|--help] [-v|--version] [--no_startup_delay]
 
-Cron wrapper: run ${profile_location_dir:-$HOME}/github/github-bin/git-push.sh batch, optionally report exit code
-to Healthchecks (see healthchecks-ids.txt).
+Cron wrapper: run ${profile_location_dir:-$HOME}/github/github-bin/git-bin.sh push batch,
+optionally report exit code to Healthchecks (see healthchecks-ids.txt).
 
 Options:
   -h, --help           Show this help and exit.
@@ -60,7 +61,7 @@ if [[ -f "$HEALTHCHECKS_FILE" ]]; then
   HEALTHCHECK_URL=$(grep "^$(basename "$0")" "$HEALTHCHECKS_FILE" | awk '{print $2}')
 fi
 
-HC_message=$("${profile_location_dir:-$HOME}/github/github-bin/git-push.sh" batch 2>&1 ; exit $?)
+HC_message=$("${profile_location_dir:-$HOME}/github/github-bin/git-bin.sh" push batch 2>&1 ; exit $?)
 return_code=$?
 
 if (( script_is_run_interactively ));then

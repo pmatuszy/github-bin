@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.07.16 - v. 0.5 - repo path: ${profile_location_dir:-$HOME}/github/github-bash_profile
 # 2026.06.02 - v. 0.4 - add -h/--help, -v/--version, --no_startup_delay (parsed before header)
 # 2026.06.02 - v. 0.3 - ping Healthchecks only when HEALTHCHECK_URL is set; fix crontab comment filename
 # 2023.02.28 - v. 0.2 - curl with return_code
@@ -30,7 +31,8 @@ show_help() {
   cat <<EOF
 Usage: $(basename "$0") [-h|--help] [-v|--version] [--no_startup_delay]
 
-Cron wrapper: git push for bash profile repo, optionally report to Healthchecks.
+Cron wrapper: run ${profile_location_dir:-$HOME}/github/github-bash_profile/git-push.sh batch,
+optionally report exit code to Healthchecks (see healthchecks-ids.txt).
 
 Options:
   -h, --help           Show this help and exit.
@@ -55,7 +57,7 @@ if [[ -f "$HEALTHCHECKS_FILE" ]]; then
   HEALTHCHECK_URL=$(grep "^$(basename "$0")" "$HEALTHCHECKS_FILE" | awk '{print $2}')
 fi
 
-HC_message=$(/root/github-bash_profile/git-push.sh batch 2>&1 ; exit $?)
+HC_message=$("${profile_location_dir:-$HOME}/github/github-bash_profile/git-push.sh" batch 2>&1 ; exit $?)
 return_code=$?
 
 if (( script_is_run_interactively ));then
