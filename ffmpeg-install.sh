@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# v. 20260716.182500 - run make in clean subprocess (close inherited FDs before compile)
+# v. 20260716.183000 - skip cuda-nvcc unless nvcc compile probe passes (fixes ARM configure)
 
 # 2026.06.23 - v. 2.1.23 - jellyfin profile: Jellyfin-like shared build (VAAPI+NVENC+FDK-AAC); common stays default
 # 2026.06.26 - v. 2.1.22 - Ubuntu: libopenjp2-7-dev (not libopenjpeg-dev); optional pkg probe must not abort configure
@@ -2527,19 +2527,56 @@ ffmpeg_source_ffnvcodec_headers_present() {
         || [[ -f /usr/include/ffnvcodec/nvEncodeAPI.h ]]
 }
 
-ffmpeg_source_jellyfin_add_cuda_args() {
-    local -n _args=$1
+ffmpeg_source_nvcc_configure_ready() {
+    local nvcc_bin="" tmpcu="" tmpo=""
 
-    if (( FFMPEG_SOURCE_WITH_CUDA_NVCC == 1 )) && (( FFMPEG_SOURCE_SKIP_CUDA_NVCC == 0 )) \
-        && command -v nvcc >/dev/null 2>&1; then
-        _args+=( --enable-cuda-nvcc )
-        ffmpeg_source_try_enable_pkg _args libnpp --enable-libnpp libnpp
+    (( FFMPEG_SOURCE_SKIP_CUDA_NVCC == 1 )) && return 1
+    nvcc_bin="$(command -v nvcc 2>/dev/null || true)"
+    [[ -n "${nvcc_bin}" ]] || return 1
+
+    tmpcu="$(mktemp "${TEMP_CATALOG}/ffmpeg-nvcc-test.XXXXXX.cu")"
+    tmpo="${tmpcu%.cu}.o"
+    cat > "${tmpcu}" <<'EOF'
+extern "C" __global__ void ff_nvcc_probe(void) {}
+EOF
+    if ! "${nvcc_bin}" -c -o "${tmpo}" "${tmpcu}" >/dev/null 2>&1; then
+        rm -f "${tmpcu}" "${tmpo}"
+        return 1
+    fi
+    rm -f "${tmpcu}" "${tmpo}"
+    return 0
+}
+
+ffmpeg_source_add_cuda_compile_args() {
+    local -n _args=$1
+    local allow_auto_nvcc="${2:-0}"
+
+    if (( FFMPEG_SOURCE_SKIP_CUDA_NVCC == 1 )); then
+        _args+=( --disable-cuda-llvm )
         return 0
     fi
 
+    if ffmpeg_source_nvcc_configure_ready; then
+        if (( FFMPEG_SOURCE_WITH_CUDA_NVCC == 1 )) || (( allow_auto_nvcc == 1 )); then
+            _args+=( --enable-cuda-nvcc )
+            ffmpeg_source_try_enable_pkg _args libnpp --enable-libnpp libnpp
+            return 0
+        fi
+    elif command -v nvcc >/dev/null 2>&1; then
+        log_note "nvcc present but failed compile probe; skipping cuda-nvcc (NVENC via ffnvcodec still available)."
+    fi
+
     # FFmpeg 8.x enables cuda with ffnvcodec; NVENC/NVDEC need no cuda-nvcc/cuda-llvm.
-    # Do not pass --enable-cuda-llvm (needs clang CUDA and fails configure when absent).
     _args+=( --disable-cuda-llvm )
+}
+
+ffmpeg_source_configure_log_indicates_nvcc_failure() {
+    [[ -f ffbuild/config.log ]] || return 1
+    grep -qiE 'failed checking for nvcc|ERROR: failed checking for nvcc|check_nvcc cuda_nvcc' ffbuild/config.log 2>/dev/null
+}
+
+ffmpeg_source_jellyfin_add_cuda_args() {
+    ffmpeg_source_add_cuda_compile_args "$1" 0
 }
 
 install_nv_codec_headers_from_git() {
@@ -2651,7 +2688,11 @@ install_source_build_dependencies() {
     fi
 
     if [[ "${SOURCE_PROFILE}" == nvidia || "${SOURCE_PROFILE}" == jellyfin ]]; then
-        apt_install_optional_packages nvidia-cuda-toolkit libnpp-dev
+        if [[ "$(uname -m)" == aarch64 ]] && ! nvidia_runtime_looks_available; then
+            log_note "Skipping nvidia-cuda-toolkit on aarch64 without NVIDIA driver (avoids broken nvcc in PATH)."
+        else
+            apt_install_optional_packages nvidia-cuda-toolkit libnpp-dev
+        fi
         install_nv_codec_headers_from_git /usr/local || true
     fi
 
@@ -2772,14 +2813,12 @@ ffmpeg_source_configure_args() {
     if [[ "${SOURCE_PROFILE}" == nvidia ]]; then
         args+=(
             --enable-nonfree
-            --enable-nvenc
+            --enable-ffnvcodec
             --enable-cuvid
+            --enable-nvdec
+            --enable-nvenc
         )
-        if command -v nvcc >/dev/null 2>&1; then
-            args+=( --enable-cuda-nvcc --enable-libnpp )
-        else
-            log_note "nvcc not found; building NVENC without CUDA/NPP compile support."
-        fi
+        ffmpeg_source_add_cuda_compile_args args 1
     fi
 
     if [[ "${SOURCE_PROFILE}" == jellyfin ]]; then
@@ -3486,20 +3525,42 @@ perform_install_build_from_source() {
     log_step "Running ffmpeg configure (profile ${SOURCE_PROFILE}, release ${version})..."
 
     if ! ffmpeg_source_run_configure "${staging}"; then
-        local -a first_configure_args=()
-        ffmpeg_source_collect_configure_args "${staging}" first_configure_args
-        if ffmpeg_source_configure_args_has_vulkan "${first_configure_args[@]}"; then
-            echo ">>> Configure failed with optional GPU stack — retrying without vulkan, libshaderc, and libplacebo..." >&2
-            log_note "Vulkan is optional for transcoding (NVENC, VAAPI, and software paths still work)."
-            FFMPEG_SOURCE_SKIP_VULKAN=1
+        if (( FFMPEG_SOURCE_SKIP_CUDA_NVCC == 0 )) && ffmpeg_source_configure_log_indicates_nvcc_failure; then
+            echo ">>> Configure failed on cuda-nvcc — retrying without NVCC compile (NVENC via ffnvcodec)..." >&2
+            FFMPEG_SOURCE_SKIP_CUDA_NVCC=1
+            FFMPEG_SOURCE_WITH_CUDA_NVCC=0
             ffmpeg_source_clean_configure_tree
             if ! ffmpeg_source_run_configure "${staging}"; then
-                echo "ERROR: ffmpeg configure failed after Vulkan fallback (see ffbuild/config.log)." >&2
+                echo "ERROR: ffmpeg configure failed after cuda-nvcc fallback (see ffbuild/config.log)." >&2
                 return 1
             fi
         else
-            echo "ERROR: ffmpeg configure failed (see ffbuild/config.log)." >&2
-            return 1
+            local -a first_configure_args=()
+            ffmpeg_source_collect_configure_args "${staging}" first_configure_args
+            if ffmpeg_source_configure_args_has_vulkan "${first_configure_args[@]}"; then
+                echo ">>> Configure failed with optional GPU stack — retrying without vulkan, libshaderc, and libplacebo..." >&2
+                log_note "Vulkan is optional for transcoding (NVENC, VAAPI, and software paths still work)."
+                FFMPEG_SOURCE_SKIP_VULKAN=1
+                ffmpeg_source_clean_configure_tree
+                if ! ffmpeg_source_run_configure "${staging}"; then
+                    if (( FFMPEG_SOURCE_SKIP_CUDA_NVCC == 0 )) && ffmpeg_source_configure_log_indicates_nvcc_failure; then
+                        echo ">>> Configure failed on cuda-nvcc — retrying without NVCC compile (NVENC via ffnvcodec)..." >&2
+                        FFMPEG_SOURCE_SKIP_CUDA_NVCC=1
+                        FFMPEG_SOURCE_WITH_CUDA_NVCC=0
+                        ffmpeg_source_clean_configure_tree
+                        if ! ffmpeg_source_run_configure "${staging}"; then
+                            echo "ERROR: ffmpeg configure failed after GPU fallbacks (see ffbuild/config.log)." >&2
+                            return 1
+                        fi
+                    else
+                        echo "ERROR: ffmpeg configure failed after Vulkan fallback (see ffbuild/config.log)." >&2
+                        return 1
+                    fi
+                fi
+            else
+                echo "ERROR: ffmpeg configure failed (see ffbuild/config.log)." >&2
+                return 1
+            fi
         fi
     fi
 
