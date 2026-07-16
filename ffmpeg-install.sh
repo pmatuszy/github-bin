@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# v. 20260716.181000 - source build: raise ulimit stack before make (fixes make segfault in libc)
+# v. 20260716.181500 - jellyfin: skip cuda-llvm/nvcc by default (NVENC via ffnvcodec only)
 
 # 2026.06.23 - v. 2.1.23 - jellyfin profile: Jellyfin-like shared build (VAAPI+NVENC+FDK-AAC); common stays default
 # 2026.06.26 - v. 2.1.22 - Ubuntu: libopenjp2-7-dev (not libopenjpeg-dev); optional pkg probe must not abort configure
@@ -175,7 +175,7 @@ Environment:
   FFMPEG_CONFIGURE_EXTRA      Extra ./configure flags for source builds (space-separated).
   FFMPEG_MAKE_JOBS            Parallel make jobs for source builds (default: 1).
   FFMPEG_SOURCE_WITH_LTO      Set to 1 to pass --enable-lto=auto (jellyfin; off by default; can crash on some hosts).
-  FFMPEG_SOURCE_WITH_CUDA_NVCC  Set to 1 to pass --enable-cuda-nvcc (jellyfin; off by default; nvcc can segfault on VMs).
+  FFMPEG_SOURCE_WITH_CUDA_NVCC  Set to 1 to pass --enable-cuda-nvcc (CUDA filters; off by default).
   FFMPEG_SOURCE_PROFILE       Same as --source-profile (min|common|max|gpu|nvidia|jellyfin).
 EOF
 }
@@ -2529,19 +2529,14 @@ ffmpeg_source_jellyfin_add_cuda_args() {
 
     if (( FFMPEG_SOURCE_WITH_CUDA_NVCC == 1 )) && (( FFMPEG_SOURCE_SKIP_CUDA_NVCC == 0 )) \
         && command -v nvcc >/dev/null 2>&1; then
-        _args+=( --enable-cuda --enable-cuda-nvcc )
+        _args+=( --enable-cuda-nvcc )
         ffmpeg_source_try_enable_pkg _args libnpp --enable-libnpp libnpp
         return 0
     fi
-    if ffmpeg_source_ffnvcodec_headers_present; then
-        _args+=( --enable-cuda --enable-cuda-llvm )
-        return 0
-    fi
-    if command -v nvcc >/dev/null 2>&1; then
-        log_note "cuda-llvm disabled — ffnvcodec headers not found (NVENC still enabled via ffnvcodec API)."
-        return 0
-    fi
-    log_note "cuda disabled — nvcc and ffnvcodec headers not found."
+
+    # FFmpeg 8.x enables cuda with ffnvcodec; NVENC/NVDEC need no cuda-nvcc/cuda-llvm.
+    # Do not pass --enable-cuda-llvm (needs clang CUDA and fails configure when absent).
+    _args+=( --disable-cuda-llvm )
 }
 
 install_nv_codec_headers_from_git() {
@@ -2930,9 +2925,9 @@ ffmpeg_source_retry_make_after_segfault() {
     FFMPEG_SOURCE_WITH_LTO=0
 
     if (( FFMPEG_SOURCE_WITH_CUDA_NVCC == 1 )); then
-        echo ">>> make segfault — reconfiguring jellyfin with cuda-llvm instead of cuda-nvcc..." >&2
+        echo ">>> make segfault — reconfiguring jellyfin without cuda-nvcc..." >&2
     else
-        echo ">>> make segfault — clean jellyfin rebuild (cuda-llvm, no LTO)..." >&2
+        echo ">>> make segfault — clean jellyfin rebuild..." >&2
     fi
     FFMPEG_SOURCE_SKIP_CUDA_NVCC=1
     FFMPEG_SOURCE_WITH_CUDA_NVCC=0
@@ -3161,9 +3156,9 @@ ffmpeg_source_print_make_segfault_help() {
         echo >&2
     fi
     echo "  This script raises ulimit -s before make. Manual fix: ulimit -s unlimited" >&2
-    echo "  Jellyfin uses cuda-llvm by default (NVENC without nvcc). Set FFMPEG_SOURCE_WITH_CUDA_NVCC=1 to try nvcc." >&2
+    echo "  Jellyfin skips cuda-nvcc/cuda-llvm by default (NVENC via ffnvcodec). Set FFMPEG_SOURCE_WITH_CUDA_NVCC=1 for CUDA filters." >&2
     echo "  LTO is off by default; set FFMPEG_SOURCE_WITH_LTO=1 to pass --enable-lto=auto." >&2
-    echo "  On segfault the script retries once with cuda-llvm and a clean reconfigure." >&2
+    echo "  On segfault the script retries once with a clean reconfigure." >&2
     echo >&2
     echo "  Manual resume in the build tree:" >&2
     echo "    cd ${src_dir}" >&2
