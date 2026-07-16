@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# v. 20260716.163224 - versioning format v. YYYYMMDD.HH24MISS
+# v. 20260716.164840 - add -h/--help, -v/--version, --no_startup_delay
 # 2026.07.15 - v. 1.8 - run_exiftool: use env unless it is a bash function (then /bin/env)
 # 2026.07.15 - v. 1.7 - run_exiftool: call /bin/env (not bare env — a bash function named env breaks -ver)
 # 2026.06.26 - v. 1.6 - run exiftool/perl with C.UTF-8 (or C) to avoid locale warnings on minimal systems
@@ -25,6 +25,37 @@
 # Full Linux/Unix tarball (since ~2026, not hosted on exiftool.org):
 #   https://downloads.sourceforge.net/project/exiftool/Image-ExifTool-<version>.tar.gz
 #
+
+show_help() {
+  cat <<EOF
+Usage: $(basename "$0") [-h|--help] [-v|--version] [--no_startup_delay]
+
+video-pgm-install-exiftool.sh
+
+Options:
+  -h, --help           Show this help and exit.
+  -v, --version        Print script version and exit.
+  --no_startup_delay   Skip random startup delay (recommended for cron).
+EOF
+}
+
+HEADER_EXTRA_ARGS=()
+while [[ $# -gt 0 ]]; do
+  case $1 in
+    --no_startup_delay) HEADER_EXTRA_ARGS+=(NO_STARTUP_DELAY); shift ;;
+    *) break ;;
+  esac
+done
+
+. /root/bin/_script_header.sh "${HEADER_EXTRA_ARGS[@]}"
+
+while [[ $# -gt 0 ]]; do
+  case $1 in
+    -h|--help) show_help; exit 0 ;;
+    -v|--version) print_version_banner; exit 0 ;;
+    *) break ;;
+  esac
+done
 
 set -euo pipefail
 

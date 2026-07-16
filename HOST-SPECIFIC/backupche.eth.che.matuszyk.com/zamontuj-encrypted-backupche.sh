@@ -1,5 +1,5 @@
 #!/bin/bash
-# v. 20260716.163224 - versioning format v. YYYYMMDD.HH24MISS
+# v. 20260716.164840 - add -h/--help, -v/--version, --no_startup_delay
 
 # 2026.05.26 - user-facing messages translated from Polish to English
 # 2023.10.05 - v. 1.1 - added vgchange with 1s delay
@@ -21,7 +21,36 @@
 
 # zfs mount zfs_encrypted_file/encrypted
 
-. /root/bin/_script_header.sh
+show_help() {
+  cat <<EOF
+Usage: $(basename "$0") [-h|--help] [-v|--version] [--no_startup_delay]
+
+zpool export zfs_encrypted_file 2>/dev/null
+
+Options:
+  -h, --help           Show this help and exit.
+  -v, --version        Print script version and exit.
+  --no_startup_delay   Skip random startup delay (recommended for cron).
+EOF
+}
+
+HEADER_EXTRA_ARGS=()
+while [[ $# -gt 0 ]]; do
+  case $1 in
+    --no_startup_delay) HEADER_EXTRA_ARGS+=(NO_STARTUP_DELAY); shift ;;
+    *) break ;;
+  esac
+done
+
+. /root/bin/_script_header.sh "${HEADER_EXTRA_ARGS[@]}"
+
+while [[ $# -gt 0 ]]; do
+  case $1 in
+    -h|--help) show_help; exit 0 ;;
+    -v|--version) print_version_banner; exit 0 ;;
+    *) break ;;
+  esac
+done
 
 echo ; cat  $0|grep -e '# *20[123][0-9]'|head -n 1 | awk '{print "script version: " $5 " (dated "$2")"}' ; echo
 

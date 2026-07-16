@@ -3049,13 +3049,18 @@ do_merge() {
   return "${rc}"
 }
 
-# --- parse options before _script_header (avoids figlet/delay on --help) ---
+# --- parse options (header sourced first so -v can call print_version_banner) ---
 DO_UPDATE=0
 DO_YES=0
 MERGE_ALL_REMAINING=0
 SKIP_ALL_REMAINING=0
 GROUP_BLOBS=()
 HEADER_EXTRA_ARGS=()
+for _vpm_a in "$@"; do
+  [[ "$_vpm_a" == --no_startup_delay ]] && HEADER_EXTRA_ARGS+=(NO_STARTUP_DELAY)
+done
+. /root/bin/_script_header.sh "${HEADER_EXTRA_ARGS[@]}"
+
 PGM_SEAM_PREVIEW_BEFORE="${PGM_SEAM_PREVIEW_BEFORE:-2}"
 PGM_SEAM_PREVIEW_AFTER="${PGM_SEAM_PREVIEW_AFTER:-0}"
 while [[ $# -gt 0 ]]; do
@@ -3119,7 +3124,6 @@ while [[ $# -gt 0 ]]; do
       shift
       ;;
     --no_startup_delay)
-      HEADER_EXTRA_ARGS+=(NO_STARTUP_DELAY)
       shift
       ;;
     *)
@@ -3131,9 +3135,6 @@ while [[ $# -gt 0 ]]; do
 done
 
 pgm_init_read_timeout
-
-# shellcheck disable=SC1091
-. /root/bin/_script_header.sh "${HEADER_EXTRA_ARGS[@]}"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 MP4_MERGE_SYSTEM_DIR="${MP4_MERGE_SYSTEM_DIR:-/usr/local/bin}"

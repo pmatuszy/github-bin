@@ -1,5 +1,5 @@
 #!/bin/bash
-# v. 20260716.163224 - versioning format v. YYYYMMDD.HH24MISS
+# v. 20260716.164924 - source _script_header.sh before -v (print_version_banner)
 
 # 2026.06.02 - v. 0.2 - table: compute column widths from all rows (incl. long speed labels); align all four columns
 # 2026.06.02 - v. 0.1 - initial release: list network interfaces with link state and speed (10/100/1000 Mb/s etc.) via sysfs; ethtool fallback when speed is unknown
@@ -32,8 +32,20 @@ Options:
 EOF
 }
 
-# --- parse options before sourcing the header (avoids figlet/delay on --help/--version) ---
+# --- parse --no_startup_delay, then header, then -h/-v ---
 HEADER_EXTRA_ARGS=()
+while [[ $# -gt 0 ]]; do
+  case $1 in
+    --no_startup_delay)
+      HEADER_EXTRA_ARGS+=(NO_STARTUP_DELAY)
+      shift
+      ;;
+    *) break ;;
+  esac
+done
+
+. /root/bin/_script_header.sh "${HEADER_EXTRA_ARGS[@]}"
+
 while [[ $# -gt 0 ]]; do
   case $1 in
     -h|--help)
@@ -44,10 +56,6 @@ while [[ $# -gt 0 ]]; do
       print_version_banner
       exit 0
       ;;
-    --no_startup_delay)
-      HEADER_EXTRA_ARGS+=(NO_STARTUP_DELAY)
-      shift
-      ;;
     *)
       echo "Unknown argument: $1" >&2
       echo "Try: $(basename "$0") --help" >&2
@@ -56,7 +64,6 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-. /root/bin/_script_header.sh "${HEADER_EXTRA_ARGS[@]}"
 
 net_iface_speed_cleanup() {
   . /root/bin/_script_footer.sh

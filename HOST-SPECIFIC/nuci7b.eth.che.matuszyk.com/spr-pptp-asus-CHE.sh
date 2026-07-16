@@ -1,5 +1,5 @@
 #!/bin/bash
-# v. 20260716.163224 - versioning format v. YYYYMMDD.HH24MISS
+# v. 20260716.164840 - add -h/--help, -v/--version, --no_startup_delay
 
 # 2026.05.26 - user-facing messages translated from Polish to English
 # 2023.10.18 - v. 0.4 - added possibility to pause checking until a specific date
@@ -7,7 +7,36 @@
 # 2023.07.05 - v. 0.2 - added printing of the public IP address if there is a problem
 # 2023.06.29 - v. 0.1 - initial release
 
-. /root/bin/_script_header.sh
+show_help() {
+  cat <<EOF
+Usage: $(basename "$0") [-h|--help] [-v|--version] [--no_startup_delay]
+
+if rsync exit code is 23 and no files are transferred / created  we treat it as successful run
+
+Options:
+  -h, --help           Show this help and exit.
+  -v, --version        Print script version and exit.
+  --no_startup_delay   Skip random startup delay (recommended for cron).
+EOF
+}
+
+HEADER_EXTRA_ARGS=()
+while [[ $# -gt 0 ]]; do
+  case $1 in
+    --no_startup_delay) HEADER_EXTRA_ARGS+=(NO_STARTUP_DELAY); shift ;;
+    *) break ;;
+  esac
+done
+
+. /root/bin/_script_header.sh "${HEADER_EXTRA_ARGS[@]}"
+
+while [[ $# -gt 0 ]]; do
+  case $1 in
+    -h|--help) show_help; exit 0 ;;
+    -v|--version) print_version_banner; exit 0 ;;
+    *) echo "Unknown argument: $1" >&2; echo "Try: $(basename "$0") --help" >&2; exit 1 ;;
+  esac
+done
 
 export adres_publiczny_z_pl="31.179.173.42"
 export ROUTER_IP="192.168.200.230"

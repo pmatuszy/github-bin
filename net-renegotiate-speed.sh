@@ -1,5 +1,5 @@
 #!/bin/bash
-# v. 20260716.163224 - versioning format v. YYYYMMDD.HH24MISS
+# v. 20260716.164924 - source _script_header.sh before -v (print_version_banner)
 
 # 2026.06.02 - v. 0.4 - fix --run argv order (ifaces before options); exclude wifi; verify screen session after start
 # 2026.06.02 - v. 0.3 - resolve GNU screen binary when screen is a shell function (type -P, /usr/bin/screen, /bin/screen)
@@ -86,7 +86,12 @@ HEADER_EXTRA_ARGS=()
 CLI_IFACE=""
 declare -a WORKER_IFACES=()
 
-# --- parse options (before header for --help / --version) ---
+for _nrs_a in "$@"; do
+  [[ "$_nrs_a" == --no_startup_delay ]] && HEADER_EXTRA_ARGS+=(NO_STARTUP_DELAY)
+done
+. /root/bin/_script_header.sh "${HEADER_EXTRA_ARGS[@]}"
+
+# --- parse options ---
 while [[ $# -gt 0 ]]; do
   case $1 in
     -h|--help)
@@ -98,7 +103,6 @@ while [[ $# -gt 0 ]]; do
       exit 0
       ;;
     --no_startup_delay)
-      HEADER_EXTRA_ARGS+=(NO_STARTUP_DELAY)
       shift
       ;;
     --run)
@@ -136,8 +140,6 @@ while [[ $# -gt 0 ]]; do
       ;;
   esac
 done
-
-. /root/bin/_script_header.sh "${HEADER_EXTRA_ARGS[@]}"
 
 net_reneg_cleanup() {
   . /root/bin/_script_footer.sh

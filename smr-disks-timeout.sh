@@ -1,5 +1,5 @@
 #!/bin/bash
-# v. 20260716.163224 - versioning format v. YYYYMMDD.HH24MISS
+# v. 20260716.164840 - add -h/--help, -v/--version, --no_startup_delay
 # 2020.12.03 - v.1.6 - zmiania sposobu wyswietlania (by output byl troche wezszy na ekranie)
 # 2020.12.03 - v.1.5 - dodane wyswietlanie numeru seryjnego dyskow
 # 2020.11.18 - v.1.4 - zmienna scheduler - wystarczy odkomentowac, ktorego nalezy uzywac, bug fixes
@@ -26,6 +26,37 @@
 # has been added to the SCSI device object, which allows configuration of the timeout value for TEST UNIT READY and REQUEST SENSE 
 # commands used by the SCSI error handling code. This decreases the amount of time spent checking these unresponsive devices. 
 # The default value of eh_timeout is 10 seconds, which was the timeout value used prior to adding this functionality.
+
+show_help() {
+  cat <<EOF
+Usage: $(basename "$0") [-h|--help] [-v|--version] [--no_startup_delay]
+
+good reading: https://raid.wiki.kernel.org/index.php/Timeout_Mismatch
+
+Options:
+  -h, --help           Show this help and exit.
+  -v, --version        Print script version and exit.
+  --no_startup_delay   Skip random startup delay (recommended for cron).
+EOF
+}
+
+HEADER_EXTRA_ARGS=()
+while [[ $# -gt 0 ]]; do
+  case $1 in
+    --no_startup_delay) HEADER_EXTRA_ARGS+=(NO_STARTUP_DELAY); shift ;;
+    *) break ;;
+  esac
+done
+
+. /root/bin/_script_header.sh "${HEADER_EXTRA_ARGS[@]}"
+
+while [[ $# -gt 0 ]]; do
+  case $1 in
+    -h|--help) show_help; exit 0 ;;
+    -v|--version) print_version_banner; exit 0 ;;
+    *) echo "Unknown argument: $1" >&2; echo "Try: $(basename "$0") --help" >&2; exit 1 ;;
+  esac
+done
 
 timeout=7200
 eh_timeout=7200

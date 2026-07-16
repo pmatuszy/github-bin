@@ -1,5 +1,5 @@
 #!/bin/bash
-# v. 20260716.163224 - versioning format v. YYYYMMDD.HH24MISS
+# v. 20260716.164840 - add -h/--help, -v/--version, --no_startup_delay
 
 # 2026.06.12 - v. 0.9 - discover disks via fdisk (_smart_disk_discovery.sh); no disks message
 # 2026.04.21 - v. 0.8 - disk array + "$@"; quoting/redirects; grep -E; fix q/Q typo; no Enter after last disk; reset -d per disk; drop duplicate Seagate block
@@ -15,7 +15,37 @@
 # 2022.12.20 - v. 0.2 - now printing info about the disk as well
 # 2022.10.11 - v. 0.1 - initial release
 
-. /root/bin/_script_header.sh
+show_help() {
+  cat <<EOF
+Usage: $(basename "$0") [-h|--help] [-v|--version] [--no_startup_delay]
+
+in case of some SSD there is Power on Hours in form of 'Power On Hours:' or 'Power_On_Hours'
+
+Options:
+  -h, --help           Show this help and exit.
+  -v, --version        Print script version and exit.
+  --no_startup_delay   Skip random startup delay (recommended for cron).
+EOF
+}
+
+HEADER_EXTRA_ARGS=()
+while [[ $# -gt 0 ]]; do
+  case $1 in
+    --no_startup_delay) HEADER_EXTRA_ARGS+=(NO_STARTUP_DELAY); shift ;;
+    *) break ;;
+  esac
+done
+
+. /root/bin/_script_header.sh "${HEADER_EXTRA_ARGS[@]}"
+
+while [[ $# -gt 0 ]]; do
+  case $1 in
+    -h|--help) show_help; exit 0 ;;
+    -v|--version) print_version_banner; exit 0 ;;
+    *) break ;;
+  esac
+done
+
 . /root/bin/_smart_disk_discovery.sh
 
 check_if_installed smartctl smartmontools

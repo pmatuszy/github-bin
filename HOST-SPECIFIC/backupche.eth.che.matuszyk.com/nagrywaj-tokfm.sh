@@ -1,5 +1,5 @@
 #!/bin/bash
-# v. 20260716.163224 - versioning format v. YYYYMMDD.HH24MISS
+# v. 20260716.164840 - add -h/--help, -v/--version, --no_startup_delay
 
 # 2026.06.12 - v. 1.14 - partial files use .partial.mp3 (ffmpeg needs .mp3 extension); log ffmpeg stderr on failure
 # 2026.06.11 - v. 1.13 - write .part files in output directory, not /tmp
@@ -26,6 +26,37 @@
 # 2022.01.30 - v. 0.3 - change interactive-session detection
 # 2022.01.26 - v. 0.2 - on early ffmpeg exit, restart recording until midnight + 1 minute
 # 2022.01.13 - v. 0.1 - initial release (date unknown)
+
+show_help() {
+  cat <<EOF
+Usage: $(basename "$0") [-h|--help] [-v|--version] [--no_startup_delay]
+
+Do not pipe this function: a pipeline runs in a subshell, so FFMPEG_BIN would not
+
+Options:
+  -h, --help           Show this help and exit.
+  -v, --version        Print script version and exit.
+  --no_startup_delay   Skip random startup delay (recommended for cron).
+EOF
+}
+
+HEADER_EXTRA_ARGS=()
+while [[ $# -gt 0 ]]; do
+  case $1 in
+    --no_startup_delay) HEADER_EXTRA_ARGS+=(NO_STARTUP_DELAY); shift ;;
+    *) break ;;
+  esac
+done
+
+. /root/bin/_script_header.sh "${HEADER_EXTRA_ARGS[@]}"
+
+while [[ $# -gt 0 ]]; do
+  case $1 in
+    -h|--help) show_help; exit 0 ;;
+    -v|--version) print_version_banner; exit 0 ;;
+    *) break ;;
+  esac
+done
 
 . /root/bin/_script_header.sh --no_startup_delay
 

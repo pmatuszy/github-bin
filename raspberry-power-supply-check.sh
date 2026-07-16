@@ -1,5 +1,5 @@
 #!/bin/bash
-# v. 20260716.163224 - versioning format v. YYYYMMDD.HH24MISS
+# v. 20260716.164840 - add -h/--help, -v/--version, --no_startup_delay
 
 # 2023.02.07 - v. 0.2 - added check if sysbench is installed
 # 20xx.xx.xx - v. 0.1 - initial release (date unknown)
@@ -36,6 +36,37 @@
 # 60.7'C 1400 / 1200 MHz 1.2875V - Under-voltage, Under-voltage has occurred,
 # 60.7'C 1400 / 1200 MHz 1.2875V - Under-voltage, Under-voltage has occurred,
 
+show_help() {
+  cat <<EOF
+Usage: $(basename "$0") [-h|--help] [-v|--version] [--no_startup_delay]
+
+20xx.xx.xx - v. 0.1 - initial release (date unknown)
+
+Options:
+  -h, --help           Show this help and exit.
+  -v, --version        Print script version and exit.
+  --no_startup_delay   Skip random startup delay (recommended for cron).
+EOF
+}
+
+HEADER_EXTRA_ARGS=()
+while [[ $# -gt 0 ]]; do
+  case $1 in
+    --no_startup_delay) HEADER_EXTRA_ARGS+=(NO_STARTUP_DELAY); shift ;;
+    *) break ;;
+  esac
+done
+
+. /root/bin/_script_header.sh "${HEADER_EXTRA_ARGS[@]}"
+
+while [[ $# -gt 0 ]]; do
+  case $1 in
+    -h|--help) show_help; exit 0 ;;
+    -v|--version) print_version_banner; exit 0 ;;
+    *) break ;;
+  esac
+done
+
 function throttleCodeMask {
   perl -e "printf \"%s\", $1 & $2 ? \"$3\" : \"$4\""
 }
@@ -65,8 +96,6 @@ function throttledToText {
   throttleCodeMask $throttledCode 0x2 "Throttling has occurred, " ""
   throttleCodeMask $throttledCode 0x1 "Soft temperature limit has occurred, " ""
 }
-
-. /root/bin/_script_header.sh
 
 # Main script, kill sysbench when interrupted
 trap 'kill -HUP 0' EXIT

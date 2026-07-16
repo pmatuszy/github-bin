@@ -1,5 +1,5 @@
 #!/bin/bash
-# v. 20260716.163224 - versioning format v. YYYYMMDD.HH24MISS
+# v. 20260716.164400 - -v via _script_header.sh print_version_banner; standard CLI parse
 
 # 2026.04.21 - v. 0.9 - help text includes usage examples
 # 2026.04.21 - v. 0.8 - -v / --version prints script version and date (before header)
@@ -10,10 +10,15 @@
 # 2022.06.08 - v. 0.3 - dodalem par2 do monitorowanych komend
 # 2021.11.04 - v. 0.2 - zmiana watch na "progress -M"
 # 2021.09.19 - v. 0.1 - inicjalna wersja skryptu
+#
+# watch-progress.sh
+#
+# Monitor backup/compression tools via progress(1) --monitor-continuously.
+#
 
-if [[ "${1:-}" == -h || "${1:-}" == --help ]]; then
+show_help() {
   cat <<'EOF'
-Usage: watch-progress.sh [-h|--help|-v|--version] [PROCESS...]
+Usage: watch-progress.sh [-h|--help] [-v|--version] [--no_startup_delay] [PROCESS...]
 
 Runs progress(1) with --monitor-continuously, --wait, and extra
 --additional-command names for common backup/compression tools.
@@ -21,6 +26,8 @@ Runs progress(1) with --monitor-continuously, --wait, and extra
 Options:
   -h, --help       Show this help and exit.
   -v, --version    Print script version and exit.
+  --no_startup_delay
+                   Skip random startup delay when run non-interactively.
 
 Environment:
   WATCH_PROGRESS_EXTRA       Space-separated extra process basenames to monitor.
@@ -47,28 +54,29 @@ Examples:
   WATCH_PROGRESS_EXTRA="ffmpeg" watch-progress.sh openssl
       Env extras plus extra PROCESS names on one line (all get --additional-command).
 EOF
-  exit 0
-fi
+}
 
-if [[ "${1:-}" == -v || "${1:-}" == --version ]]; then
-  _wp_ver=unknown
-  _wp_date=
-  while IFS= read -r _wp_line; do
-    if [[ "$_wp_line" =~ ^#\ ([0-9]{4}\.[0-9]{2}\.[0-9]{2})\ -\ v\.\ ([0-9]+(\.[0-9]+)*)\ - ]]; then
-      _wp_date="${BASH_REMATCH[1]}"
-      _wp_ver="${BASH_REMATCH[2]}"
-      break
-    fi
-  done < "$0"
-  if [[ -n "$_wp_date" ]]; then
-    printf '%s version %s (%s)\n' "$(basename "$0")" "$_wp_ver" "$_wp_date"
-  else
-    printf '%s version %s\n' "$(basename "$0")" "$_wp_ver"
-  fi
-  exit 0
-fi
+HEADER_EXTRA_ARGS=()
+CLI_ARGS=()
+while [[ $# -gt 0 ]]; do
+  case $1 in
+    --no_startup_delay) HEADER_EXTRA_ARGS+=(NO_STARTUP_DELAY); shift ;;
+    -h|--help)
+      show_help
+      exit 0
+      ;;
+    -v|--version)
+      . /root/bin/_script_header.sh NO_STARTUP_DELAY
+      print_version_banner
+      exit 0
+      ;;
+    --) shift; CLI_ARGS+=("$@"); break ;;
+    -*) echo "Unknown option: $1 (try --help)" >&2; exit 1 ;;
+    *) CLI_ARGS+=("$1"); shift ;;
+  esac
+done
 
-. /root/bin/_script_header.sh
+. /root/bin/_script_header.sh "${HEADER_EXTRA_ARGS[@]}"
 
 check_if_installed progress
 
@@ -92,7 +100,7 @@ _wp_add() {
 WP_PROGRESS_ARGS=()
 for c in "${DEFAULT_CMDS[@]}"; do _wp_add "$c"; done
 for c in "${env_extra[@]}"; do _wp_add "$c"; done
-for c in "$@"; do _wp_add "$c"; done
+for c in "${CLI_ARGS[@]}"; do _wp_add "$c"; done
 
 wait_delay="${WATCH_PROGRESS_WAIT_DELAY:-0.5}"
 

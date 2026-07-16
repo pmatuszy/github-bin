@@ -1,5 +1,5 @@
 #!/bin/bash
-# v. 20260716.163224 - versioning format v. YYYYMMDD.HH24MISS
+# v. 20260716.164840 - add -h/--help, -v/--version, --no_startup_delay
 
 # 2026.06.02 - v. 0.7 - refresh template MD5 when template mtime changes; check cp/systemctl; quoted paths; EXIT trap for footer
 # 2026.05.26 - user-facing messages translated from Polish to English
@@ -10,7 +10,36 @@
 # 2021.01.13 - v. 0.2 - added "-e attrib" to inotifywait 
 # 2020.12.03 - v. 0.1 - initial release, program nie generuje zadnego output na ekran.
 
-. /root/bin/_script_header.sh
+show_help() {
+  cat <<EOF
+Usage: $(basename "$0") [-h|--help] [-v|--version] [--no_startup_delay]
+
+bylo 120s ale chyba to za malo bo 2x skrypt wyslal maila w dniu 20.01.2021
+
+Options:
+  -h, --help           Show this help and exit.
+  -v, --version        Print script version and exit.
+  --no_startup_delay   Skip random startup delay (recommended for cron).
+EOF
+}
+
+HEADER_EXTRA_ARGS=()
+while [[ $# -gt 0 ]]; do
+  case $1 in
+    --no_startup_delay) HEADER_EXTRA_ARGS+=(NO_STARTUP_DELAY); shift ;;
+    *) break ;;
+  esac
+done
+
+. /root/bin/_script_header.sh "${HEADER_EXTRA_ARGS[@]}"
+
+while [[ $# -gt 0 ]]; do
+  case $1 in
+    -h|--help) show_help; exit 0 ;;
+    -v|--version) print_version_banner; exit 0 ;;
+    *) break ;;
+  esac
+done
 
 plik=/etc/lighttpd/lighttpd.conf
 plik_template=/etc/lighttpd/lighttpd.conf.dobry-dziala

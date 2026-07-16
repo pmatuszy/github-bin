@@ -1,5 +1,5 @@
 #!/bin/bash
-# v. 20260716.163224 - versioning format v. YYYYMMDD.HH24MISS
+# v. 20260716.164840 - add -h/--help, -v/--version, --no_startup_delay
 
 # 2026.07.15 - v. 0.18 - listSnapshots parse: skip noise before Total (match delete script)
 # 2026.04.22 - v. 0.17 - encrypted vmrun: DISPLAY default :0 (script clears DISPLAY); no bogus nogui on snapshot/listSnapshots
@@ -32,7 +32,36 @@
 #     or listSnapshots (only start documents gui|nogui; extra tokens can break -vp).
 #   Non-encrypted: listSnapshots/snapshot keep a trailing nogui for headless vmrun.
 
-. /root/bin/_script_header.sh
+show_help() {
+  cat <<EOF
+Usage: $(basename "$0") [-h|--help] [-v|--version] [--no_startup_delay]
+
+Environment:
+
+Options:
+  -h, --help           Show this help and exit.
+  -v, --version        Print script version and exit.
+  --no_startup_delay   Skip random startup delay (recommended for cron).
+EOF
+}
+
+HEADER_EXTRA_ARGS=()
+while [[ $# -gt 0 ]]; do
+  case $1 in
+    --no_startup_delay) HEADER_EXTRA_ARGS+=(NO_STARTUP_DELAY); shift ;;
+    *) break ;;
+  esac
+done
+
+. /root/bin/_script_header.sh "${HEADER_EXTRA_ARGS[@]}"
+
+while [[ $# -gt 0 ]]; do
+  case $1 in
+    -h|--help) show_help; exit 0 ;;
+    -v|--version) print_version_banner; exit 0 ;;
+    *) break ;;
+  esac
+done
 
 _SCRIPT_START_EPOCH=$(date +%s)
 _SCRIPT_START_FMT=$(date '+%Y-%m-%d %H:%M:%S %Z')

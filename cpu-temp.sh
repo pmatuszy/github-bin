@@ -1,5 +1,5 @@
 #!/bin/bash
-# v. 20260716.163224 - versioning format v. YYYYMMDD.HH24MISS
+# v. 20260716.164924 - source _script_header.sh before -v (print_version_banner)
 
 # 2026.06.18 - v. 0.8 - show resolved script version after startup banner (PuTTY / interactive)
 # 2026.06.02 - v. 0.7 - each line: timestamp, [ avg: x.x ], then all core temps (one decimal, space-separated); x86 uses coretemp Core 0..N; single-sensor hosts show avg + one value
@@ -35,8 +35,20 @@ Options:
 EOF
 }
 
-# --- parse options before sourcing the header (avoids figlet/delay on --help/--version) ---
+# --- parse --no_startup_delay, then header, then -h/-v ---
 HEADER_EXTRA_ARGS=()
+while [[ $# -gt 0 ]]; do
+  case $1 in
+    --no_startup_delay)
+      HEADER_EXTRA_ARGS+=(NO_STARTUP_DELAY)
+      shift
+      ;;
+    *) break ;;
+  esac
+done
+
+. /root/bin/_script_header.sh "${HEADER_EXTRA_ARGS[@]}"
+
 while [[ $# -gt 0 ]]; do
   case $1 in
     -h|--help)
@@ -47,10 +59,6 @@ while [[ $# -gt 0 ]]; do
       print_version_banner
       exit 0
       ;;
-    --no_startup_delay)
-      HEADER_EXTRA_ARGS+=(NO_STARTUP_DELAY)
-      shift
-      ;;
     *)
       echo "Unknown argument: $1" >&2
       echo "Try: $(basename "$0") --help" >&2
@@ -59,7 +67,6 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-. /root/bin/_script_header.sh "${HEADER_EXTRA_ARGS[@]}"
 
 if [[ -n "${SCRIPT_VERSION_NUMBER:-}" && "${SCRIPT_VERSION_NUMBER}" != unknown ]]; then
   if [[ -n "${SCRIPT_VERSION_DATE:-}" ]]; then

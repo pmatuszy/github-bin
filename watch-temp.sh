@@ -1,5 +1,5 @@
 #!/bin/bash
-# v. 20260716.163224 - versioning format v. YYYYMMDD.HH24MISS
+# v. 20260716.164400 - source _script_header.sh before -v (print_version_banner lives there)
 
 # 2026.06.02 - v. 0.9 - drop _script_cli.sh; inline print_version_banner in this script
 # 2026.06.02 - v. 0.8 - rename NO_STARTUP_DELAY to --no_startup_delay
@@ -36,8 +36,20 @@ Environment:
 EOF
 }
 
-# --- parse options before sourcing the header (avoids figlet/delay on --help/--version) ---
+# --- parse --no_startup_delay, then header, then -h/-v ---
 HEADER_EXTRA_ARGS=()
+while [[ $# -gt 0 ]]; do
+  case $1 in
+    --no_startup_delay)
+      HEADER_EXTRA_ARGS+=(NO_STARTUP_DELAY)
+      shift
+      ;;
+    *) break ;;
+  esac
+done
+
+. /root/bin/_script_header.sh "${HEADER_EXTRA_ARGS[@]}"
+
 while [[ $# -gt 0 ]]; do
   case $1 in
     -h|--help)
@@ -48,10 +60,6 @@ while [[ $# -gt 0 ]]; do
       print_version_banner
       exit 0
       ;;
-    --no_startup_delay)
-      HEADER_EXTRA_ARGS+=(NO_STARTUP_DELAY)
-      shift
-      ;;
     *)
       echo "Unknown argument: $1" >&2
       echo "Try: $(basename "$0") --help" >&2
@@ -59,8 +67,6 @@ while [[ $# -gt 0 ]]; do
       ;;
   esac
 done
-
-. /root/bin/_script_header.sh "${HEADER_EXTRA_ARGS[@]}"
 
 export DISPLAY=
 WATCH_INTERVAL="${WATCH_TEMP_INTERVAL:-1}"

@@ -282,8 +282,13 @@ declare -a CLI_SELECTED_FILES=()
 CLI_BUILD_ALL_YES=1
 CLI_BUILD_NOTES=()
 
-# --- parse options before sourcing the header (avoids figlet/delay on --help/--version) ---
+# --- parse options (header sourced first so -v can call print_version_banner) ---
 HEADER_EXTRA_ARGS=()
+for _apl_a in "$@"; do
+  [[ "$_apl_a" == --no_startup_delay ]] && HEADER_EXTRA_ARGS+=(NO_STARTUP_DELAY)
+done
+. /root/bin/_script_header.sh "${HEADER_EXTRA_ARGS[@]}"
+
 while [[ $# -gt 0 ]]; do
   case $1 in
     -h|--help)
@@ -296,7 +301,6 @@ while [[ $# -gt 0 ]]; do
       ;;
     --no_startup_delay)
       ANY_CLI_OPTIONS=1
-      HEADER_EXTRA_ARGS+=(NO_STARTUP_DELAY)
       shift
       ;;
     -n|--normalize)
@@ -492,8 +496,6 @@ fi
 PRESUME_INTERACTIVE=0
 (( ! ANY_CLI_OPTIONS )) && PRESUME_INTERACTIVE=1
 (( PRINT_CLI_ONLY )) && PRESUME_INTERACTIVE=1
-
-. /root/bin/_script_header.sh "${HEADER_EXTRA_ARGS[@]}"
 
 loudness_prompt_ts() {
   printf '[%s]' "$(date '+%Y.%m.%d %H:%M:%S')"

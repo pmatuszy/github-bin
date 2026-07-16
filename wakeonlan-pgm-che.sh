@@ -1,5 +1,5 @@
 #!/bin/bash
-# v. 20260716.163224 - versioning format v. YYYYMMDD.HH24MISS
+# v. 20260716.164840 - add -h/--help, -v/--version, --no_startup_delay
 
 # 2026.04.21 - v. 0.9 - WOL_* env overrides; rename target to WOL_HOST; -q loop ping; richer logger; validate inputs; footer on early-up path
 # 2026.04.21 - v. 0.8 - exit 1 when host still down after WOL; quiet consistent final ping for exit status
@@ -11,7 +11,36 @@
 # 2023.03.07 - v. 0.2 - added check for wakeonlan package
 # 2023.01.29 - v. 0.1 - initial release
 
-. /root/bin/_script_header.sh
+show_help() {
+  cat <<EOF
+Usage: $(basename "$0") [-h|--help] [-v|--version] [--no_startup_delay]
+
+Override with e.g. WOL_HOST=other.example.com WOL_MAC='aa:bb:...' WOL_BROADCAST=192.168.1.255
+
+Options:
+  -h, --help           Show this help and exit.
+  -v, --version        Print script version and exit.
+  --no_startup_delay   Skip random startup delay (recommended for cron).
+EOF
+}
+
+HEADER_EXTRA_ARGS=()
+while [[ $# -gt 0 ]]; do
+  case $1 in
+    --no_startup_delay) HEADER_EXTRA_ARGS+=(NO_STARTUP_DELAY); shift ;;
+    *) break ;;
+  esac
+done
+
+. /root/bin/_script_header.sh "${HEADER_EXTRA_ARGS[@]}"
+
+while [[ $# -gt 0 ]]; do
+  case $1 in
+    -h|--help) show_help; exit 0 ;;
+    -v|--version) print_version_banner; exit 0 ;;
+    *) echo "Unknown argument: $1" >&2; echo "Try: $(basename "$0") --help" >&2; exit 1 ;;
+  esac
+done
 
 check_if_installed wakeonlan
 

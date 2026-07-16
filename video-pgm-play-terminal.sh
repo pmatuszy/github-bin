@@ -203,8 +203,13 @@ video_pgm_print_command_line() {
   echo
 }
 
-# --- parse options before sourcing the header (avoids figlet/delay on --help/--version) ---
+# --- parse options (header sourced first so -v can call print_version_banner) ---
 HEADER_EXTRA_ARGS=()
+for _vpp_a in "$@"; do
+  [[ "$_vpp_a" == --no_startup_delay ]] && HEADER_EXTRA_ARGS+=(NO_STARTUP_DELAY)
+done
+. /root/bin/_script_header.sh "${HEADER_EXTRA_ARGS[@]}"
+
 MEDIA_FILE=""
 PLAY_SILENT="${VIDEO_PGM_PLAY_SILENT:-1}"
 TCT_WIDTH="${VIDEO_PGM_PLAY_WIDTH:-}"
@@ -290,7 +295,6 @@ while [[ $# -gt 0 ]]; do
       shift
       ;;
     --no_startup_delay)
-      HEADER_EXTRA_ARGS+=(NO_STARTUP_DELAY)
       shift
       ;;
     --)
@@ -353,8 +357,6 @@ if [[ -z "$TCT_WIDTH" && -z "$TCT_HEIGHT" ]]; then
 else
   TCT_AUTODETECT=0
 fi
-
-. /root/bin/_script_header.sh "${HEADER_EXTRA_ARGS[@]}"
 
 if [[ -f "${BASH_SOURCE[0]}" ]]; then
   chmod 700 "${BASH_SOURCE[0]}" 2>/dev/null || true
