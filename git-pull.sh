@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# 2026.07.16 - v. 1.9 - post-pull hooks via git_bin_run_post_pull_hooks (migrate-reboot-cron-once.sh)
+# 2026.07.16 - v. 1.9 - drop post-pull hooks (fleet migrations via Ansible on control host)
 # 2026.07.15 - v. 1.8 - never use flat ${profile_root}/github-bin; self-detect repo from script path
 # 2026.07.15 - v. 1.7 - script header: changelog block + description block
 # 2026.07.15 - v. 1.6 - resolve repo from script dir; legacy /root/github-bin fallback
@@ -27,7 +27,6 @@
 #
 # Pull github-bin from GitHub; install scripts to ${profile_location_dir:-$HOME}/bin.
 # Repo: ${profile_location_dir:-$HOME}/github/github-bin only (never ${profile_root}/github-bin).
-# After copy, runs idempotent post-pull hooks from ${profile_root}/bin (e.g. migrate-reboot-cron-once.sh).
 #
 
 print_version_banner() {
@@ -173,19 +172,6 @@ if [ "${p}" == 'y' -o  "${p}" == 'y' ]; then
   # cleanup
   rm -v "${profile_root}/bin/git-pull.sh" "${profile_root}/bin/git-push.sh" "${profile_root}/bin/git-fetch.sh" "${profile_root}/bin/vmware-fix.sh" "${profile_root}/bin/65535" 2>/dev/null
   rm -v "${profile_root}/bin/"*talled*client 2>/dev/null
-
-  if [[ -f "${GIT_REPO_DIRECTORY}/_git-bin-common.sh" ]]; then
-    # shellcheck source=_git-bin-common.sh
-    . "${GIT_REPO_DIRECTORY}/_git-bin-common.sh"
-    git_bin_run_post_pull_hooks "${profile_root}"
-  elif [[ -f "${profile_root}/bin/migrate-reboot-cron-once.sh" ]]; then
-    echo
-    echo "(PGM) post-pull hook: migrate-reboot-cron-once.sh" | boxes -s 70x3 -a c
-    echo
-    bash "${profile_root}/bin/migrate-reboot-cron-once.sh" || \
-      echo "(PGM) warning: migrate-reboot-cron-once.sh failed (git-pull continues)" >&2
-  fi
-
   echo 
   echo git status | boxes -s 40x3 -a c
   echo 
