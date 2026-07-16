@@ -61,7 +61,7 @@ if [[ -f "$HEALTHCHECKS_FILE" ]]; then
   HEALTHCHECK_URL=$(grep "^$(basename "$0")" "$HEALTHCHECKS_FILE" | awk '{print $2}')
 fi
 
-HC_message=$("${profile_location_dir:-$HOME}/github/github-bin/git-bin.sh" pull batch 2>&1 ; exit $?)
+HC_message=$(bash "${profile_location_dir:-$HOME}/github/github-bin/git-bin.sh" pull batch 2>&1 ; exit $?)
 return_code=$?
 
 if (( script_is_run_interactively ));then

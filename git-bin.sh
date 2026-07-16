@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.07.16 - v. 3.1 - chmod +x git-bin.sh and wrappers in clone after sync (git mode 644)
 # 2026.07.16 - v. 3.0 - consolidate git-pull/push/fetch/reset and _git-bin-common into one script
 #
 # git-bin.sh
@@ -250,6 +251,8 @@ cmd_pull() {
     echo
     exit 3
   }
+
+  chmod +x ./git-bin.sh ./git-pull.sh ./git-push.sh ./git-fetch.sh 2>/dev/null || true
 
   cp ./* "${profile_root}/bin" 2>/dev/null
   cp ./HOST-SPECIFIC/"$(hostname)"/* "${profile_root}/bin" 2>/dev/null
