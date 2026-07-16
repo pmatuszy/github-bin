@@ -13,33 +13,31 @@ When editing any `*.sh` file in this repo, update **both** header sections at th
 Immediately after the shebang, add a new top line:
 
 ```bash
-# YYYY.MM.DD - v. MAJOR.MINOR[.PATCH] - brief what changed
+# v. YYYYMMDD.HH24MISS - brief what changed
 ```
 
-- Use today's date (`YYYY.MM.DD`).
-- Bump version from the current top entry.
+- Use local time: `date +%Y%m%d.%H%M%S`.
 - One short line: what changed and why.
 - Do not edit or reorder older changelog lines.
 - `print_version_banner` and `_script_header.sh` read the **first** matching line — keep the new entry on top.
+- Legacy `# YYYY.MM.DD - v. MAJOR.MINOR - ...` lines remain valid for older entries only.
 
 ## Section 2 — script description block
 
 After the full changelog (oldest entry last), add or update a short description block:
 
 ```bash
-# 2026.07.15 - v. 1.7 - ...
-# 2026.07.15 - v. 1.6 - ...
-# 2020.11.27 - v. 0.1 - initial release
+# v. 20260716.162620 - ...
+# 2026.07.16 - v. 3.0 - ...
 #
-# git-pull.sh
+# git-bin.sh
 #
-# Pull github-bin from GitHub; install scripts to ${profile_location_dir:-$HOME}/bin.
+# Manage github-bin clone and deploy scripts to bin.
 #
 ```
 
 - Description block comes **after all changelog lines**, before the code.
-- Add a description block to new scripts and sourced helpers (`_git-bin-common.sh`, etc.).
-- Sourced helpers need Section 1 changelog too (they have no `print_version_banner`).
+- Add a description block to new scripts.
 
 ## Also update when touched
 

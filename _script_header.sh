@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# v. 20260716.162620 - parse script version v. YYYYMMDD.HH24MISS
 # 2026.07.15 - v. 1.57.210402 - profile_location_dir: export only when set; no default to $HOME
 # 2026.07.15 - v. 1.57.210401 - export profile_location_dir (default: $HOME or /root)
 # 2026.07.05 - v. 1.57.210400 - fix caller script detection (BASH_SOURCE[1] was _script_header.sh inside function)
@@ -95,13 +96,25 @@ CALLER_SCRIPT_BASENAME="$(basename "$CALLER_SCRIPT")"
 export CALLER_SCRIPT_BASENAME
 
 SCRIPT_VERSION_NUMBER="$(
-  LC_ALL=C grep -m1 '^# [0-9]' "$CALLER_SCRIPT" 2>/dev/null \
-    | sed -E -n 's/^# [0-9]{4}\.[0-9]{2}\.[0-9]{2} - v\. ([0-9]+(\.[0-9]+)*) - .*/\1/p'
+  LC_ALL=C grep -m1 -E '^# v\. [0-9]{8}\.[0-9]{6} - ' "$CALLER_SCRIPT" 2>/dev/null \
+    | sed -E -n 's/^# v\. ([0-9]{8}\.[0-9]{6}) - .*/\1/p'
 )"
 SCRIPT_VERSION_DATE="$(
-  LC_ALL=C grep -m1 '^# [0-9]' "$CALLER_SCRIPT" 2>/dev/null \
-    | sed -E -n 's/^# ([0-9]{4}\.[0-9]{2}\.[0-9]{2}) - v\. .*/\1/p'
+  if [[ "$SCRIPT_VERSION_NUMBER" =~ ^([0-9]{4})([0-9]{2})([0-9]{2})\.([0-9]{2})([0-9]{2})([0-9]{2})$ ]]; then
+    printf '%s.%s.%s %s:%s:%s' "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}" "${BASH_REMATCH[3]}" \
+      "${BASH_REMATCH[4]}" "${BASH_REMATCH[5]}" "${BASH_REMATCH[6]}"
+  fi
 )"
+if [[ -z "$SCRIPT_VERSION_NUMBER" ]]; then
+  SCRIPT_VERSION_NUMBER="$(
+    LC_ALL=C grep -m1 '^# [0-9]' "$CALLER_SCRIPT" 2>/dev/null \
+      | sed -E -n 's/^# [0-9]{4}\.[0-9]{2}\.[0-9]{2} - v\. ([0-9]+(\.[0-9]+)*) - .*/\1/p'
+  )"
+  SCRIPT_VERSION_DATE="$(
+    LC_ALL=C grep -m1 '^# [0-9]' "$CALLER_SCRIPT" 2>/dev/null \
+      | sed -E -n 's/^# ([0-9]{4}\.[0-9]{2}\.[0-9]{2}) - v\. .*/\1/p'
+  )"
+fi
 [[ -n "$SCRIPT_VERSION_NUMBER" ]] || SCRIPT_VERSION_NUMBER=unknown
 export SCRIPT_VERSION_NUMBER SCRIPT_VERSION_DATE
 

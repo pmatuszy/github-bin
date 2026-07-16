@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# v. 20260716.162620 - version format YYYYMMDD.HH24MISS; print_version_banner parses it
 # 2026.07.16 - v. 3.1 - chmod +x git-bin.sh and wrappers in clone after sync (git mode 644)
 # 2026.07.16 - v. 3.0 - consolidate git-pull/push/fetch/reset and _git-bin-common into one script
 #
@@ -13,6 +14,11 @@
 print_version_banner() {
   local ver=unknown date= line title verline width=60
   while IFS= read -r line; do
+    if [[ "$line" =~ ^#\ v\.\ ([0-9]{8}\.[0-9]{6})\ -\  ]]; then
+      ver="${BASH_REMATCH[1]}"
+      date="${ver:0:4}.${ver:4:2}.${ver:6:2} ${ver:9:2}:${ver:11:2}:${ver:13:2}"
+      break
+    fi
     if [[ "$line" =~ ^#\ ([0-9]{4}\.[0-9]{2}\.[0-9]{2})\ -\ v\.\ ([0-9]+(\.[0-9]+)*) ]]; then
       date="${BASH_REMATCH[1]}"
       ver="${BASH_REMATCH[2]}"
