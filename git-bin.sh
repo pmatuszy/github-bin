@@ -1,5 +1,7 @@
 #!/bin/bash
-# v. 20260716.173600 - print_version_banner from _script_header.sh (source before -v)
+# v. 20260716.165300 - pull: always reset to origin/master; print HEAD/origin SHA and deploy path
+
+# 2026.07.16 - v. 3.2 - print_version_banner from _script_header.sh (source before -v)
 
 # 2026.07.16 - v. 3.1 - chmod +x git-bin.sh and wrappers in clone after sync (git mode 644)
 # 2026.07.16 - v. 3.0 - consolidate git-pull/push/fetch/reset and _git-bin-common into one script
@@ -108,11 +110,14 @@ git_bin_resolve_paths() {
 }
 
 git_bin_sync_clone_to_origin() {
-  local offline="${1:-0}" ahead=0 behind=0 need_reset=0
+  local offline="${1:-0}" always_reset="${2:-0}"
+  local head_sha origin_sha ahead=0 behind=0 need_reset=0
 
   if (( offline == 0 )); then
     echo "git fetch origin" | boxes -s 70x3 -a c
-    git fetch origin || return 3
+    if ! git fetch origin master:refs/remotes/origin/master 2>&1; then
+      git fetch origin || return 3
+    fi
   fi
 
   if ! git rev-parse --verify origin/master >/dev/null 2>&1; then
@@ -120,26 +125,46 @@ git_bin_sync_clone_to_origin() {
     return 4
   fi
 
-  if [[ -n "$(git status --porcelain 2>/dev/null)" ]]; then
+  head_sha="$(git rev-parse HEAD)"
+  origin_sha="$(git rev-parse origin/master)"
+  ahead=$(git rev-list --count origin/master..HEAD 2>/dev/null || echo 0)
+  behind=$(git rev-list --count HEAD..origin/master 2>/dev/null || echo 0)
+
+  echo "(PGM) Local HEAD:     ${head_sha:0:7} — $(git log -1 --format='%s' HEAD 2>/dev/null)"
+  echo "(PGM) origin/master:  ${origin_sha:0:7} — $(git log -1 --format='%s' origin/master 2>/dev/null)"
+  if (( ahead > 0 || behind > 0 )); then
+    echo "(PGM) Branch status: ${ahead} ahead, ${behind} behind origin/master"
+  fi
+
+  if (( always_reset == 1 )); then
     need_reset=1
-  elif [[ "$(git rev-parse HEAD)" != "$(git rev-parse origin/master)" ]]; then
+  elif [[ -n "$(git status --porcelain 2>/dev/null)" ]]; then
     need_reset=1
-    ahead=$(git rev-list --count origin/master..HEAD 2>/dev/null || echo 0)
-    behind=$(git rev-list --count HEAD..origin/master 2>/dev/null || echo 0)
+  elif [[ "${head_sha}" != "${origin_sha}" ]]; then
+    need_reset=1
   fi
 
   if (( need_reset == 1 )); then
-    if (( ahead > 0 )); then
-      echo "(PGM) Syncing to origin/master (${ahead} local commit(s) discarded)" | boxes -s 70x3 -a c
-    elif (( behind > 0 )); then
-      echo "(PGM) Syncing to origin/master (${behind} commit(s) behind)" | boxes -s 70x3 -a c
+    if [[ "${head_sha}" != "${origin_sha}" ]]; then
+      if (( ahead > 0 )); then
+        echo "(PGM) git reset --hard origin/master (${ahead} local commit(s) discarded)" | boxes -s 70x3 -a c
+      elif (( behind > 0 )); then
+        echo "(PGM) git reset --hard origin/master (${behind} commit(s) behind)" | boxes -s 70x3 -a c
+      else
+        echo "(PGM) git reset --hard origin/master" | boxes -s 70x3 -a c
+      fi
+    elif [[ -n "$(git status --porcelain 2>/dev/null)" ]]; then
+      echo "(PGM) git reset --hard origin/master (discarding uncommitted changes)" | boxes -s 70x3 -a c
     else
-      echo "(PGM) Syncing to origin/master (discarding uncommitted changes)" | boxes -s 70x3 -a c
+      echo "(PGM) git reset --hard origin/master (refresh working tree)" | boxes -s 70x3 -a c
     fi
     git reset --hard origin/master || return 5
     git clean -fd
+  else
+    echo "(PGM) Clone already matches origin/master — no reset needed"
   fi
 
+  echo "(PGM) Synced to: $(git rev-parse --short HEAD) — $(git log -1 --format='%s')"
   return 0
 }
 
@@ -225,7 +250,7 @@ cmd_pull() {
     exit 3
   }
 
-  git_bin_sync_clone_to_origin 0 || {
+  git_bin_sync_clone_to_origin 0 1 || {
     echo
     echo "Sync with origin/master was not successful... EXITING"
     echo
@@ -234,13 +259,19 @@ cmd_pull() {
 
   chmod +x ./git-bin.sh ./git-pull.sh ./git-push.sh ./git-fetch.sh 2>/dev/null || true
 
-  cp ./* "${profile_root}/bin" 2>/dev/null
-  cp ./HOST-SPECIFIC/"$(hostname)"/* "${profile_root}/bin" 2>/dev/null
-  cp ./HOST-SPECIFIC/"$(hostname)".*com/* "${profile_root}/bin" 2>/dev/null
-  chmod +x "${profile_root}/bin"/*.sh 2>/dev/null
-  cp ./HOST-SPECIFIC/"$(hostname)"*/.[a-zA-Z0-9]* "${profile_root}" 2>/dev/null
+  echo "(PGM) Deploying clone → ${profile_root}/bin" | boxes -s 70x3 -a c
+  cp -a ./* "${profile_root}/bin/" || {
+    echo "(PGM) ERROR: failed to copy scripts to ${profile_root}/bin" >&2
+    exit 4
+  }
+  cp -a ./HOST-SPECIFIC/"$(hostname)"/* "${profile_root}/bin/" 2>/dev/null || true
+  cp -a ./HOST-SPECIFIC/"$(hostname)".*com/* "${profile_root}/bin/" 2>/dev/null || true
+  chmod +x "${profile_root}/bin"/*.sh 2>/dev/null || true
+  cp -a ./HOST-SPECIFIC/"$(hostname)"*/.[a-zA-Z0-9]* "${profile_root}/" 2>/dev/null || true
 
   git_bin_cleanup_bin_copies
+
+  echo "(PGM) Deploy complete. Example check: head -1 ${profile_root}/bin/watch-argonone-cli.sh"
 
   echo
   echo git status | boxes -s 40x3 -a c
