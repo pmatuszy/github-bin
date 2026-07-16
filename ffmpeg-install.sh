@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# v. 20260716.175800 - jellyfin: disable LTO by default; retry configure without LTO if make segfaults
+# v. 20260716.180000 - jellyfin: omit --enable-lto by default (no --disable-lto in FFmpeg)
 
 # 2026.06.23 - v. 2.1.23 - jellyfin profile: Jellyfin-like shared build (VAAPI+NVENC+FDK-AAC); common stays default
 # 2026.06.26 - v. 2.1.22 - Ubuntu: libopenjp2-7-dev (not libopenjpeg-dev); optional pkg probe must not abort configure
@@ -169,7 +169,7 @@ Environment:
   FFMPEG_KILL_FORCE_WAIT_SEC  seconds to wait after SIGKILL (default: 10).
   FFMPEG_CONFIGURE_EXTRA      Extra ./configure flags for source builds (space-separated).
   FFMPEG_MAKE_JOBS            Parallel make jobs for source builds (default: 1).
-  FFMPEG_SOURCE_WITH_LTO      Set to 1 to enable --enable-lto=auto (jellyfin; can crash on some hosts).
+  FFMPEG_SOURCE_WITH_LTO      Set to 1 to pass --enable-lto=auto (jellyfin; off by default; can crash on some hosts).
   FFMPEG_SOURCE_PROFILE       Same as --source-profile (min|common|max|gpu|nvidia|jellyfin).
 EOF
 }
@@ -2662,9 +2662,7 @@ ffmpeg_source_configure_args() {
             --disable-xlib
             --extra-version=Jellyfin
         )
-        if (( FFMPEG_SOURCE_DISABLE_LTO == 1 )) || (( FFMPEG_SOURCE_WITH_LTO != 1 )); then
-            args+=( --disable-lto )
-        else
+        if (( FFMPEG_SOURCE_WITH_LTO == 1 )) && (( FFMPEG_SOURCE_DISABLE_LTO == 0 )); then
             args+=( --enable-lto=auto )
         fi
     fi
@@ -2871,8 +2869,9 @@ ffmpeg_source_retry_make_without_lto() {
     (( FFMPEG_SOURCE_DISABLE_LTO == 0 )) || return 1
     [[ "${SOURCE_PROFILE}" == jellyfin ]] || return 1
 
-    echo ">>> make failed — reconfiguring jellyfin build without LTO and rebuilding..." >&2
+    echo ">>> make failed — cleaning jellyfin build tree and reconfiguring without LTO..." >&2
     FFMPEG_SOURCE_DISABLE_LTO=1
+    FFMPEG_SOURCE_WITH_LTO=0
     cd "${src_dir}"
     ffmpeg_source_clean_build_objects
     ffmpeg_source_clean_configure_tree
@@ -3062,12 +3061,12 @@ ffmpeg_source_print_make_segfault_help() {
         fi
         echo >&2
     fi
-    echo "  This script will retry once without LTO (jellyfin) after make -j1 fails." >&2
-    echo "  Fresh runs use --disable-lto by default (FFMPEG_SOURCE_WITH_LTO=1 to opt in)." >&2
+    echo "  This script will retry once with a clean reconfigure (no LTO) after make fails." >&2
+    echo "  LTO is off by default; set FFMPEG_SOURCE_WITH_LTO=1 to pass --enable-lto=auto." >&2
     echo >&2
     echo "  Manual resume in the build tree:" >&2
     echo "    cd ${src_dir}" >&2
-    echo "    make distclean && ../configure ... --disable-lto && make -j1 ffmpeg ffprobe && make -j1" >&2
+    echo "    make distclean && ./configure ... && make -j1 ffmpeg ffprobe && make -j1" >&2
     echo "    # or re-run: ffmpeg-install.sh --source-profile jellyfin --source-only" >&2
     echo >&2
     echo "  If it still crashes:" >&2
