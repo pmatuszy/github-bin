@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# 2026.07.16 - v. 2.0 - chmod +x *.sh in bin after copy (git mode 644 must not break cron)
 # 2026.07.16 - v. 1.9 - drop post-pull hooks (fleet migrations via Ansible on control host)
 # 2026.07.15 - v. 1.8 - never use flat ${profile_root}/github-bin; self-detect repo from script path
 # 2026.07.15 - v. 1.7 - script header: changelog block + description block
@@ -165,6 +166,8 @@ if [ "${p}" == 'y' -o  "${p}" == 'y' ]; then
   cp ./* "${profile_root}/bin" 2>/dev/null
   cp ./HOST-SPECIFIC/`hostname`/* "${profile_root}/bin" 2>/dev/null
   cp ./HOST-SPECIFIC/`hostname`.*com/* "${profile_root}/bin" 2>/dev/null
+
+  chmod +x "${profile_root}/bin"/*.sh 2>/dev/null
 
   # we copy hidden files to profile root ($HOME when profile_location_dir unset)
   cp ./HOST-SPECIFIC/`hostname`*/.[a-zA-Z0-9]* "${profile_root}"   2>/dev/null
