@@ -1,7 +1,7 @@
 #!/bin/bash
-# v. 20260716.165700 - deploy message: ASCII arrow (boxes mangles Unicode)
+# v. 20260716.170000 - show git diff --stat for incoming commits (replaces old git pull output)
 
-# 2026.07.16 - v. 3.3 - pull: always reset to origin/master; print HEAD/origin SHA and deploy path
+# 20260716.165700 - deploy message: ASCII arrow (boxes mangles Unicode)
 
 # 2026.07.16 - v. 3.1 - chmod +x git-bin.sh and wrappers in clone after sync (git mode 644)
 # 2026.07.16 - v. 3.0 - consolidate git-pull/push/fetch/reset and _git-bin-common into one script
@@ -142,6 +142,14 @@ git_bin_sync_clone_to_origin() {
     need_reset=1
   elif [[ "${head_sha}" != "${origin_sha}" ]]; then
     need_reset=1
+  fi
+
+  if [[ "${head_sha}" != "${origin_sha}" ]]; then
+    echo
+    echo "Incoming changes (git diff --stat ${head_sha:0:7}..${origin_sha:0:7}):" | boxes -s 70x3 -a c
+    echo
+    git diff --stat "${head_sha}".."${origin_sha}"
+    echo
   fi
 
   if (( need_reset == 1 )); then
