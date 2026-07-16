@@ -1,5 +1,5 @@
 #!/bin/bash
-# v. 20260716.170000 - show git diff --stat for incoming commits (replaces old git pull output)
+# v. 20260716.184000 - show git diff --stat for bin deploy (since last gitbdb pull)
 
 # 20260716.165700 - deploy message: ASCII arrow (boxes mangles Unicode)
 
@@ -107,6 +107,56 @@ git_bin_resolve_paths() {
   profile_root_val="$(git_bin_profile_root)"
   export profile_root="${profile_root_val}"
   export GIT_REPO_DIRECTORY="${profile_root}/github/${github_project_name}"
+}
+
+git_bin_deploy_stamp_file() {
+  printf '%s\n' "${profile_root}/.pgm-github-bin-deployed-sha"
+}
+
+git_bin_show_deploy_diff_stat() {
+  local stamp_file="" old_sha="" new_sha=""
+
+  stamp_file="$(git_bin_deploy_stamp_file)"
+  new_sha="$(git rev-parse HEAD 2>/dev/null || true)"
+  [[ -n "${new_sha}" ]] || return 0
+
+  old_sha=""
+  if [[ -f "${stamp_file}" ]]; then
+    old_sha="$(tr -d '[:space:]' < "${stamp_file}")"
+  fi
+
+  if [[ -n "${old_sha}" && "${old_sha}" == "${new_sha}" ]]; then
+    echo "(PGM) Bin already deployed at ${new_sha:0:7} — no repo changes since last gitbdb."
+    return 0
+  fi
+
+  if [[ -n "${old_sha}" ]] && git cat-file -e "${old_sha}^{commit}" 2>/dev/null; then
+    echo
+    echo "Updated files for bin deploy (git diff --stat ${old_sha:0:7}..${new_sha:0:7}):" | boxes -s 70x3 -a c
+    echo
+    git diff --stat "${old_sha}".."${new_sha}"
+    echo
+    return 0
+  fi
+
+  if git rev-parse HEAD~1 >/dev/null 2>&1; then
+    old_sha="$(git rev-parse HEAD~1)"
+    echo
+    echo "Updated files for bin deploy (git diff --stat ${old_sha:0:7}..${new_sha:0:7}, first baseline):" | boxes -s 70x3 -a c
+    echo
+    git diff --stat "${old_sha}".."${new_sha}"
+    echo
+    return 0
+  fi
+
+  echo "(PGM) First bin deploy from this clone — baseline set to ${new_sha:0:7}."
+}
+
+git_bin_record_deploy_sha() {
+  local stamp_file=""
+
+  stamp_file="$(git_bin_deploy_stamp_file)"
+  git rev-parse HEAD > "${stamp_file}"
 }
 
 git_bin_sync_clone_to_origin() {
@@ -267,6 +317,8 @@ cmd_pull() {
 
   chmod +x ./git-bin.sh ./git-pull.sh ./git-push.sh ./git-fetch.sh 2>/dev/null || true
 
+  git_bin_show_deploy_diff_stat
+
   echo "(PGM) Deploying clone -> ${profile_root}/bin" | boxes -s 70x3 -a c
   cp -a ./* "${profile_root}/bin/" || {
     echo "(PGM) ERROR: failed to copy scripts to ${profile_root}/bin" >&2
@@ -278,6 +330,7 @@ cmd_pull() {
   cp -a ./HOST-SPECIFIC/"$(hostname)"*/.[a-zA-Z0-9]* "${profile_root}/" 2>/dev/null || true
 
   git_bin_cleanup_bin_copies
+  git_bin_record_deploy_sha
 
   echo "(PGM) Deploy complete. Example check: head -1 ${profile_root}/bin/watch-argonone-cli.sh"
 
