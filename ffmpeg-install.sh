@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# v. 20260716.172500 - jellyfin/gpu: upgrade Khronos Vulkan-Headers when Ubuntu 24.04 < 1.3.277
+# v. 20260716.173000 - jellyfin/gpu: retry configure without vulkan if first attempt fails
 
 # 2026.06.23 - v. 2.1.23 - jellyfin profile: Jellyfin-like shared build (VAAPI+NVENC+FDK-AAC); common stays default
 # 2026.06.26 - v. 2.1.22 - Ubuntu: libopenjp2-7-dev (not libopenjpeg-dev); optional pkg probe must not abort configure
@@ -81,6 +81,7 @@ FFMPEG_SOURCE_HAS_SVTAV1=0
 FFMPEG_SOURCE_HAS_DAV1D=0
 FFMPEG_SOURCE_HAS_FDK_AAC=0
 FFMPEG_SOURCE_PROFILE_READY=0
+FFMPEG_SOURCE_SKIP_VULKAN=0
 FFMPEG_ORG_VERSION=""
 FFMPEG_ORG_RELEASE_DATE=""
 REMOTE_BUILD_DATE=""
@@ -2351,6 +2352,10 @@ ffmpeg_source_try_enable_vulkan() {
     local -n _args="$args_var"
     local hdr_ver=""
 
+    if (( FFMPEG_SOURCE_SKIP_VULKAN == 1 )); then
+        return 0
+    fi
+
     if ffmpeg_source_vulkan_configure_ready; then
         _args+=( --enable-vulkan )
         return 0
@@ -2691,7 +2696,9 @@ ffmpeg_source_configure_args() {
         ffmpeg_source_try_enable_pkg args libva --enable-vaapi vaapi
         ffmpeg_source_try_enable_pkg args libdrm --enable-libdrm libdrm
         ffmpeg_source_try_enable_vulkan args
-        if ffmpeg_source_vulkan_configure_ready; then
+        if (( FFMPEG_SOURCE_SKIP_VULKAN == 1 )); then
+            :
+        elif ffmpeg_source_vulkan_configure_ready; then
             ffmpeg_source_try_enable_pkg args shaderc --enable-libshaderc shaderc
             ffmpeg_source_try_enable_pkg args libplacebo --enable-libplacebo libplacebo
         else
@@ -2722,7 +2729,54 @@ ffmpeg_source_configure_args() {
         read -r -a configure_extra <<< "${FFMPEG_CONFIGURE_EXTRA}"
         args+=( "${configure_extra[@]}" )
     fi
+    if (( FFMPEG_SOURCE_SKIP_VULKAN == 1 )); then
+        args+=(
+            --disable-vulkan
+            --disable-libshaderc
+            --disable-libplacebo
+        )
+    fi
     printf '%s\n' "${args[@]}"
+}
+
+ffmpeg_source_configure_args_has_vulkan() {
+    local -a args=("$@")
+    local flag=""
+
+    for flag in "${args[@]}"; do
+        case "${flag}" in
+            --enable-vulkan|--enable-libshaderc|--enable-libplacebo) return 0 ;;
+        esac
+    done
+    return 1
+}
+
+ffmpeg_source_clean_configure_tree() {
+    if [[ -f Makefile ]]; then
+        make distclean >/dev/null 2>&1 || true
+    fi
+    rm -rf ffbuild config.mak config.h config.fate config.asm 2>/dev/null || true
+}
+
+ffmpeg_source_collect_configure_args() {
+    local staging="$1"
+    local args_var="$2"
+    local -n _args="$args_var"
+    local flag=""
+
+    _args=()
+    while IFS= read -r flag; do
+        [[ -n "${flag}" ]] && _args+=( "${flag}" )
+    done < <(ffmpeg_source_configure_args "${staging}")
+}
+
+ffmpeg_source_run_configure() {
+    local staging="$1"
+    local -a args=()
+
+    ffmpeg_source_collect_configure_args "${staging}" args
+    log_note "Configure flags: ${args[*]}"
+    ./configure "${args[@]}"
 }
 
 source_build_encoder_is_available() {
@@ -2891,12 +2945,25 @@ perform_install_build_from_source() {
     cd "${src_dir}"
     ffmpeg_source_ensure_vulkan_build_deps
     log_step "Running ffmpeg configure (profile ${SOURCE_PROFILE}, release ${version})..."
-    configure_args=()
-    while IFS= read -r flag; do
-        [[ -n "${flag}" ]] && configure_args+=( "${flag}" )
-    done < <(ffmpeg_source_configure_args "${staging}")
-    log_note "Configure flags: ${configure_args[*]}"
-    ./configure "${configure_args[@]}"
+
+    FFMPEG_SOURCE_SKIP_VULKAN=0
+    if ! ffmpeg_source_run_configure "${staging}"; then
+        local -a first_configure_args=()
+        ffmpeg_source_collect_configure_args "${staging}" first_configure_args
+        if ffmpeg_source_configure_args_has_vulkan "${first_configure_args[@]}"; then
+            log_step "Configure failed with Vulkan — retrying without vulkan, libshaderc, and libplacebo..."
+            log_note "Vulkan is optional for transcoding (NVENC, VAAPI, and software paths still work)."
+            FFMPEG_SOURCE_SKIP_VULKAN=1
+            ffmpeg_source_clean_configure_tree
+            if ! ffmpeg_source_run_configure "${staging}"; then
+                echo "ERROR: ffmpeg configure failed after Vulkan fallback (see ffbuild/config.log)." >&2
+                return 1
+            fi
+        else
+            echo "ERROR: ffmpeg configure failed (see ffbuild/config.log)." >&2
+            return 1
+        fi
+    fi
 
     jobs="$(nproc 2>/dev/null || echo 2)"
     log_step "Building with make -j${jobs}..."
