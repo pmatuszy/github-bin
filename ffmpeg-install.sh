@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# v. 20260716.173400 - fix set -e aborting before Vulkan configure retry (configure || return 1)
+# v. 20260716.173600 - vulkan probe: read VK_HEADER_VERSION from header file; skip vulkan when unavailable
 
 # 2026.06.23 - v. 2.1.23 - jellyfin profile: Jellyfin-like shared build (VAAPI+NVENC+FDK-AAC); common stays default
 # 2026.06.26 - v. 2.1.22 - Ubuntu: libopenjp2-7-dev (not libopenjpeg-dev); optional pkg probe must not abort configure
@@ -82,6 +82,7 @@ FFMPEG_SOURCE_HAS_DAV1D=0
 FFMPEG_SOURCE_HAS_FDK_AAC=0
 FFMPEG_SOURCE_PROFILE_READY=0
 FFMPEG_SOURCE_SKIP_VULKAN=0
+FFMPEG_VULKAN_HEADERS_UPGRADE_ATTEMPTED=0
 FFMPEG_ORG_VERSION=""
 FFMPEG_ORG_RELEASE_DATE=""
 REMOTE_BUILD_DATE=""
@@ -2219,21 +2220,50 @@ ffmpeg_pkg_config_satisfied() {
 }
 
 # FFmpeg 8.x configure: vulkan >= 1.3.277 (VK_HEADER_VERSION >= 277) and glslangValidator on PATH.
+ffmpeg_source_vulkan_core_header_path() {
+    local hdr=""
+    for hdr in /usr/include/vulkan/vulkan_core.h /usr/local/include/vulkan/vulkan_core.h; do
+        [[ -f "${hdr}" ]] || continue
+        printf '%s\n' "${hdr}"
+        return 0
+    done
+    return 1
+}
+
+ffmpeg_source_vulkan_cpp_flags() {
+    pkg-config --cflags vulkan 2>/dev/null || true
+}
+
 ffmpeg_source_vulkan_header_version() {
-    local cc="${CC:-gcc}"
-    printf '%s\n' '#include <vulkan/vulkan.h>' \
-        | ${cc} -E -dM - 2>/dev/null \
-        | awk '/^#define VK_HEADER_VERSION / { print $3; exit }'
+    local hdr="" ver=""
+
+    if hdr="$(ffmpeg_source_vulkan_core_header_path)"; then
+        ver="$(awk '/^#define VK_HEADER_VERSION / { gsub(/[^0-9]/, "", $3); print $3; exit }' "${hdr}")"
+        if [[ -n "${ver}" ]]; then
+            printf '%s\n' "${ver}"
+            return 0
+        fi
+    fi
+
+    local cc="${CC:-gcc}" cflags=""
+    cflags="$(ffmpeg_source_vulkan_cpp_flags)"
+    # shellcheck disable=SC2086
+    ver="$(printf '%s\n' '#include <vulkan/vulkan.h>' \
+        | ${cc} ${cflags} -x c -E -dM - 2>/dev/null \
+        | awk '/^#define VK_HEADER_VERSION / { gsub(/[^0-9]/, "", $3); print $3; exit }')"
+    [[ -n "${ver}" ]] && printf '%s\n' "${ver}"
 }
 
 ffmpeg_source_vulkan_headers_cpp_ok() {
-    local cc="${CC:-gcc}"
+    local cc="${CC:-gcc}" cflags=""
+    cflags="$(ffmpeg_source_vulkan_cpp_flags)"
+    # shellcheck disable=SC2086
     printf '%s\n' \
         '#include <vulkan/vulkan.h>' \
         '#if !(defined(VK_VERSION_1_4) || (defined(VK_VERSION_1_3) && VK_HEADER_VERSION >= 277))' \
         '#error vulkan headers too old for ffmpeg 8.x' \
         '#endif' \
-        | ${cc} -E - >/dev/null 2>&1
+        | ${cc} ${cflags} -x c -E - >/dev/null 2>&1
 }
 
 ffmpeg_source_vulkan_pkg_ok() {
@@ -2245,6 +2275,17 @@ ffmpeg_source_vulkan_pkg_ok() {
 }
 
 ffmpeg_source_vulkan_headers_acceptable() {
+    local hdr="" hdr_ver=""
+
+    hdr_ver="$(ffmpeg_source_vulkan_header_version)"
+    if [[ -n "${hdr_ver}" && "${hdr_ver}" -ge 277 ]]; then
+        return 0
+    fi
+    if hdr="$(ffmpeg_source_vulkan_core_header_path)"; then
+        if grep -q '^#define VK_VERSION_1_4 ' "${hdr}" 2>/dev/null; then
+            return 0
+        fi
+    fi
     ffmpeg_source_vulkan_headers_cpp_ok
 }
 
@@ -2257,7 +2298,7 @@ ffmpeg_source_patch_vulkan_pkg_config_version() {
         [[ -f "${pc}" && -w "${pc}" ]] || continue
         sed -i "s/^Version:.*/Version: ${ver}/" "${pc}"
         patched=1
-    done < <(find /usr/lib /usr/share -name 'vulkan.pc' 2>/dev/null)
+    done < <(find /usr/lib /usr/local/lib /usr/share -name 'vulkan.pc' 2>/dev/null)
 
     if (( patched == 0 )); then
         log_note "vulkan.pc not found for pkg-config version patch (headers still upgraded)."
@@ -2268,10 +2309,15 @@ install_vulkan_headers_from_git() {
     local tag="vulkan-sdk-1.3.283.0"
     local pc_version="1.3.283"
     local build_dir=""
+    local hdr_ver=""
 
     if ffmpeg_source_vulkan_headers_acceptable && ffmpeg_source_vulkan_pkg_ok; then
         return 0
     fi
+    if (( FFMPEG_VULKAN_HEADERS_UPGRADE_ATTEMPTED == 1 )); then
+        return 1
+    fi
+    FFMPEG_VULKAN_HEADERS_UPGRADE_ATTEMPTED=1
 
     need_cmd git
     need_cmd install
@@ -2289,11 +2335,12 @@ install_vulkan_headers_from_git() {
     ffmpeg_source_patch_vulkan_pkg_config_version "${pc_version}"
     rm -rf "${build_dir}"
 
+    hdr_ver="$(ffmpeg_source_vulkan_header_version)"
     if ffmpeg_source_vulkan_headers_acceptable; then
-        log_note "Vulkan-Headers ${pc_version} installed under /usr/include/vulkan."
+        log_note "Vulkan-Headers ${pc_version} installed under /usr/include/vulkan (VK_HEADER_VERSION=${hdr_ver:-unknown})."
         return 0
     fi
-    log_note "Vulkan-Headers install did not satisfy FFmpeg 8.x header requirement."
+    log_note "Vulkan-Headers install did not satisfy FFmpeg 8.x header requirement (VK_HEADER_VERSION=${hdr_ver:-unknown})."
     return 1
 }
 
@@ -2954,9 +3001,13 @@ perform_install_build_from_source() {
 
     cd "${src_dir}"
     ffmpeg_source_ensure_vulkan_build_deps
+    FFMPEG_SOURCE_SKIP_VULKAN=0
+    if ! ffmpeg_source_vulkan_configure_ready; then
+        FFMPEG_SOURCE_SKIP_VULKAN=1
+        log_note "Vulkan unavailable — configure will omit vulkan, libshaderc, and libplacebo (optional for jellyfin)."
+    fi
     log_step "Running ffmpeg configure (profile ${SOURCE_PROFILE}, release ${version})..."
 
-    FFMPEG_SOURCE_SKIP_VULKAN=0
     if ! ffmpeg_source_run_configure "${staging}"; then
         local -a first_configure_args=()
         ffmpeg_source_collect_configure_args "${staging}" first_configure_args
