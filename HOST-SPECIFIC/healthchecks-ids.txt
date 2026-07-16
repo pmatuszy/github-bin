@@ -1,13 +1,13 @@
 healthchecks-ping.sh	  					
 backup	  
 ssd-trim.sh  					
-sprawdz-czy-dziala-strona-yt2podcast.com.sh     
-sprawdz-czy-dziala-server-vpn.sh                
-sprawdz-ile-apt-list--upgradable.sh		
+healthchecks-site-yt2podcast-com-up.sh     
+healthchecks-vpn-server-is-running.sh                
+healthchecks-apt-upgradable-count.sh		
 restic_backup_SS				
 restic_backup_BXL				
 restic_backup_CHE				
-sprawdz-czy-encrypted-jest-zamontowany.sh	
+healthchecks-encrypted-is-mounted.sh	
 apc-status.sh                                   
 update-restic.sh			        
 update-rclone.sh			        

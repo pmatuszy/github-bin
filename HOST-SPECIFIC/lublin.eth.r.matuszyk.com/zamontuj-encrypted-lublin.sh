@@ -107,6 +107,6 @@ zamontuj_fs_MASTER /dev/vg_crypto_20221209_RaidSonicB/lv_20221209_RaidSonicB  /m
 echo
 df -h /encrypted /mnt/luks-buffalo1 /mnt/luks-RaidSonicA /mnt/luks-RaidSonicB
 
-/root/bin/sprawdz-czy-encrypted-jest-zamontowany.sh
+/root/bin/healthchecks-encrypted-is-mounted.sh
 
 . /root/bin/_script_footer.sh

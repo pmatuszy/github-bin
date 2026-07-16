@@ -1,17 +1,17 @@
 healthchecks-ping.sh	        			https://healthchecks.matuszyk.com:8000/ping/db59ea5d-8a69-492c-bb7f-8dec097443a1
 restic_backup_CHE		        		https://healthchecks.matuszyk.com:8000/ping/a62687e4-416d-400a-9f30-6f93dfec2228	  
 ssd-trim.sh  				        	https://healthchecks.matuszyk.com:8000/ping/2d93f484-08f5-44d1-be1d-7dce5ff73467
-sprawdz-czy-dziala-strona-yt2podcast.com.sh     
-sprawdz-czy-dziala-server-vpn.sh		        https://healthchecks.matuszyk.com:8000/ping/4d6433ac-de31-48a8-b04c-526c451bf950
-sprawdz-ile-apt-list--upgradable.sh     		https://healthchecks.matuszyk.com:8000/ping/7fda08a5-c289-4ff4-9b6b-acba32e2bff1
-sprawdz-czy-encrypted-jest-zamontowany.sh       	https://healthchecks.matuszyk.com:8000/ping/a492bba1-d6f0-4d11-89b6-e94296096d56
+healthchecks-site-yt2podcast-com-up.sh     
+healthchecks-vpn-server-is-running.sh		        https://healthchecks.matuszyk.com:8000/ping/4d6433ac-de31-48a8-b04c-526c451bf950
+healthchecks-apt-upgradable-count.sh     		https://healthchecks.matuszyk.com:8000/ping/7fda08a5-c289-4ff4-9b6b-acba32e2bff1
+healthchecks-encrypted-is-mounted.sh       	https://healthchecks.matuszyk.com:8000/ping/a492bba1-d6f0-4d11-89b6-e94296096d56
 apc-status.sh	        			        https://healthchecks.matuszyk.com:8000/ping/a6d5ac36-1b33-4c59-a31f-b2d2a5ae88c1
 update-restic.sh                                        https://healthchecks.matuszyk.com:8000/ping/7c249169-e115-4f9a-866f-dc6d7dd8246b
 update-rclone.sh                                        https://healthchecks.matuszyk.com:8000/ping/d9ff5d1b-ff6d-4920-83d1-aa64e7d89a05
 healthchecks-swap-usage.sh                              https://healthchecks.matuszyk.com:8000/ping/cfdb0a79-416b-491f-8b65-871ff1a94df4
 healthchecks-lvs-sync-status.sh                 
-sprawdz-czy-dziala-strona-www.anna.matuszyk.com.sh      
-sprawdz-czy-dziala-strona-www.ontsolutions.com.sh       
+healthchecks-site-anna-matuszyk-com-up.sh      
+healthchecks-site-ontsolutions-com-up.sh       
 ssh-keychain.sh						https://healthchecks.matuszyk.com:8000/ping/bd8459db-4af5-4756-8560-c075a8f9cfd0
 cron-git-bash-pull.sh                                   https://healthchecks.matuszyk.com:8000/ping/dc9667fd-51a6-47e0-bf5b-ec3592c66bed
 cron-git-bash-push.sh                                   https://healthchecks.matuszyk.com:8000/ping/ed37851a-9b8d-447e-b365-5f69aad83bae

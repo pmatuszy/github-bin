@@ -1,5 +1,5 @@
 healthchecks-ping.sh					https://healthchecks.matuszyk.com:8000/ping/dd1ed075-1577-4f8c-b2bc-40ec0975fe1d
-sprawdz-ile-apt-list--upgradable.sh			https://healthchecks.matuszyk.com:8000/ping/0d74b0fc-b3aa-4117-9c21-9b3e55fc9a57
+healthchecks-apt-upgradable-count.sh			https://healthchecks.matuszyk.com:8000/ping/0d74b0fc-b3aa-4117-9c21-9b3e55fc9a57
 restic_backup_CHE.sh					https://healthchecks.matuszyk.com:8000/ping/0de4e292-59fd-4489-a8a1-39ced1987c1a
 update-restic.sh                    	        	https://healthchecks.matuszyk.com:8000/ping/a958b350-9848-4cf0-b172-23f5ec747ff9
 update-rclone.sh                                	https://healthchecks.matuszyk.com:8000/ping/066316c4-159e-47f9-a3e8-0c12b3dfecdd
@@ -7,8 +7,8 @@ healthchecks-swap-usage.sh                 	     	https://healthchecks.matuszyk.
 healthchecks-reboot-required.sh				https://healthchecks.matuszyk.com:8000/ping/c465bed3-3143-4627-a45c-047e2e7eaab7
 backup-mysql.sh						
 healthchecks-lvs-sync-status.sh                 
-sprawdz-czy-dziala-strona-www.anna.matuszyk.com.sh      
-sprawdz-czy-dziala-strona-www.ontsolutions.com.sh       
+healthchecks-site-anna-matuszyk-com-up.sh      
+healthchecks-site-ontsolutions-com-up.sh       
 ssh-keychain.sh						https://healthchecks.matuszyk.com:8000/ping/f31a7dd3-ea7a-4555-8064-21f6b0a02448
 cron-git-bash-pull.sh                                   
 cron-git-bash-push.sh                                   

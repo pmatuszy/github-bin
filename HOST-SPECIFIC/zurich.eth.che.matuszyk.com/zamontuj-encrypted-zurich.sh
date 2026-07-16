@@ -90,8 +90,8 @@ echo ; echo
 ps -ef |grep vpnserver | grep -v grep
 echo ; echo
 
-/root/bin/sprawdz-czy-encrypted-jest-zamontowany.sh
-/root/bin/sprawdz-czy-dziala-server-vpn.sh
+/root/bin/healthchecks-encrypted-is-mounted.sh
+/root/bin/healthchecks-vpn-server-is-running.sh
 
 
 

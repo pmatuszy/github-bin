@@ -103,5 +103,5 @@ echo
 exportfs -av
 echo
 
-/root/bin/sprawdz-czy-encrypted-jest-zamontowany.sh
+/root/bin/healthchecks-encrypted-is-mounted.sh
 

@@ -98,7 +98,7 @@ df -h /encrypted /mnt/luks-raid1-encA /mnt/luks-raid1-encB \
 
 echo ; echo startuje vpnserver ; echo
 /encrypted/vpnserver/vpnserver start
-/root/bin/sprawdz-czy-dziala-server-vpn.sh
+/root/bin/healthchecks-vpn-server-is-running.sh
 /root/bin/healthchecks-smartd.sh
 
 . /root/bin/_script_footer.sh

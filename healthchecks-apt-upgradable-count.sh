@@ -1,5 +1,5 @@
 #!/bin/bash
-
+# 2026.07.16 - v. 0.8 - rename from sprawdz-ile-apt-list--upgradable.sh; add -h/-v/--no_startup_delay
 # 2026.07.15 - v. 0.7 - fix fail-path message quoting; comment crontab examples for bash -n
 # 2026.05.26 - user-facing messages translated from Polish to English
 # 2025.11.13 - v. 0.6 - added while loop (with little help of ChatGPT)
@@ -8,9 +8,58 @@
 # 2022.06.15 - v. 0.3 - dodanie czekania jesli apt-get update jest wykonywany w tym samym czasie przez inny proces
 # 2022.05.05 - v. 0.2 - dodany uptime i hostname
 # 20xx.xx.xx - v. 0.1 - initial release (date unknown)
+#
+# healthchecks-apt-upgradable-count.sh
+#
+# Count apt upgradable packages; fail Healthchecks when count exceeds limit.
+#
 
-. /root/bin/_script_header.sh
+print_version_banner() {
+  local ver=unknown date= line title verline width=60
+  while IFS= read -r line; do
+    if [[ "$line" =~ ^#\ ([0-9]{4}\.[0-9]{2}\.[0-9]{2})\ -\ v\.\ ([0-9]+(\.[0-9]+)*) ]]; then
+      date="${BASH_REMATCH[1]}"
+      ver="${BASH_REMATCH[2]}"
+      break
+    fi
+  done < "$0"
+  title="$(basename "$0")"
+  if [[ -n "$date" ]]; then
+    verline="Version: ${ver} (${date})"
+  else
+    verline="Version: ${ver}"
+  fi
+  printf '┌%*s┐\n' "$width" '' | tr ' ' '─'
+  printf '│ %-*.*s │\n' $((width - 2)) $((width - 2)) "$title"
+  printf '│ %-*.*s │\n' $((width - 2)) $((width - 2)) "$verline"
+  printf '└%*s┘\n' "$width" '' | tr ' ' '─'
+}
 
+show_help() {
+  cat <<EOF
+Usage: $(basename "$0") [-h|--help] [-v|--version] [--no_startup_delay]
+
+Count apt upgradable packages; fail Healthchecks when count exceeds limit.
+Lookup URL in healthchecks-ids.txt by script basename.
+
+Options:
+  -h, --help           Show this help and exit.
+  -v, --version        Print script version and exit.
+  --no_startup_delay   Skip random startup delay (recommended for cron).
+EOF
+}
+
+HEADER_EXTRA_ARGS=()
+while [[ $# -gt 0 ]]; do
+  case $1 in
+    -h|--help) show_help; exit 0 ;;
+    -v|--version) print_version_banner; exit 0 ;;
+    --no_startup_delay) HEADER_EXTRA_ARGS+=(NO_STARTUP_DELAY); shift ;;
+    *) echo "Unknown argument: $1" >&2; echo "Try: $(basename "$0") --help" >&2; exit 1 ;;
+  esac
+done
+
+. /root/bin/_script_header.sh "${HEADER_EXTRA_ARGS[@]}"
 if [ -f "$HEALTHCHECKS_FILE" ]; then
   HEALTHCHECK_URL=$(cat "$HEALTHCHECKS_FILE" | grep "^`basename $0`" | awk '{print $2}')
 else
@@ -75,6 +124,6 @@ exit $?
 
 #####
 # new crontab entry
-# @reboot ( sleep 60 && /root/bin/sprawdz-ile-apt-list--upgradable.sh ) 2>&1
-# 2 */6 * * * /root/bin/sprawdz-ile-apt-list--upgradable.sh
+# @reboot ( sleep 60 && /root/bin/healthchecks-apt-upgradable-count.sh --no_startup_delay ) 2>&1
+# 2 */6 * * * /root/bin/healthchecks-apt-upgradable-count.sh --no_startup_delay
 

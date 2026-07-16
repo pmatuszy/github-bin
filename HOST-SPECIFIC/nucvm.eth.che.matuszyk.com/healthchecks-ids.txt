@@ -1,8 +1,8 @@
 healthchecks-ping.sh                                    https://healthchecks.matuszyk.com:8000/ping/1a203549-8434-48d2-8d54-3bbce33a920d
 ssd-trim.sh                                             https://healthchecks.matuszyk.com:8000/ping/6cb77b0e-0006-4ef8-94d9-0ba19dd3e972
-sprawdz-ile-apt-list--upgradable.sh		        https://healthchecks.matuszyk.com:8000/ping/24be8f32-7b16-475b-b683-76441119a08b
+healthchecks-apt-upgradable-count.sh		        https://healthchecks.matuszyk.com:8000/ping/24be8f32-7b16-475b-b683-76441119a08b
 restic_backup_SS		        		https://healthchecks.matuszyk.com:8000/ping/af9b42cf-f353-4c6d-b9cd-fd7e9fe9a5f8
-sprawdz-czy-encrypted-jest-zamontowany.sh               https://healthchecks.matuszyk.com:8000/ping/b2512f59-d0a9-478f-9be2-589902b753c6
+healthchecks-encrypted-is-mounted.sh               https://healthchecks.matuszyk.com:8000/ping/b2512f59-d0a9-478f-9be2-589902b753c6
 update-restic.sh                                        https://healthchecks.matuszyk.com:8000/ping/0f514cc4-a7b1-434d-971a-20b56a14f3d1
 update-rclone.sh                                        https://healthchecks.matuszyk.com:8000/ping/a506ee4d-b27e-47b0-b52d-368b9c810cc9
 healthchecks-swap-usage.sh                              https://healthchecks.matuszyk.com:8000/ping/a5a655b6-02f5-48c6-820b-0b024e1a952d
@@ -11,8 +11,8 @@ healthchecks-geoipupdate.sh		        	https://healthchecks.matuszyk.com:8000/pin
 healthchecks-reboot-required.sh			        https://healthchecks.matuszyk.com:8000/ping/8f338831-2a7f-4c5e-b575-83e96972e133
 healthchecks-lvs-sync-status.sh                         https://healthchecks.matuszyk.com:8000/ping/2a40cc28-f671-4d50-bd34-a288a2f1ccb0
 vmrun-check-status.sh				        https://healthchecks.matuszyk.com:8000/ping/15de789a-d5be-4c01-b46f-3999bfa6537e	
-sprawdz-czy-dziala-strona-www.anna.matuszyk.com.sh      
-sprawdz-czy-dziala-strona-www.ontsolutions.com.sh       
+healthchecks-site-anna-matuszyk-com-up.sh      
+healthchecks-site-ontsolutions-com-up.sh       
 ssh-keychain.sh						https://healthchecks.matuszyk.com:8000/ping/300c170f-f84f-44ec-a6dd-d6601bf9f7ae	
 cron-git-bash-pull.sh                                   https://healthchecks.matuszyk.com:8000/ping/0c31335f-ec01-4239-8910-0b1eccd4be5b
 cron-git-bash-push.sh                                   https://healthchecks.matuszyk.com:8000/ping/20dd41ab-76c6-4934-931c-3fadaf161226

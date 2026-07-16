@@ -140,6 +140,6 @@ echo rescan minidlna
 sudo -u minidlna /usr/sbin/minidlnad -r
 sleep 2 
 
-/root/bin/sprawdz-czy-encrypted-jest-zamontowany.sh
+/root/bin/healthchecks-encrypted-is-mounted.sh
 
 . /root/bin/_script_footer.sh
