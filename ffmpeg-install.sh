@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# v. 20260716.175000 - source build: raise ulimit -n to 3x current (up to 196608) before make
+# v. 20260716.175200 - source build: user help when make fails with too many open files (ulimit)
 
 # 2026.06.23 - v. 2.1.23 - jellyfin profile: Jellyfin-like shared build (VAAPI+NVENC+FDK-AAC); common stays default
 # 2026.06.26 - v. 2.1.22 - Ubuntu: libopenjp2-7-dev (not libopenjpeg-dev); optional pkg probe must not abort configure
@@ -2895,6 +2895,91 @@ ffmpeg_source_prepare_make_jobs() {
     printf '%s\n' "${jobs}"
 }
 
+ffmpeg_source_make_log_indicates_emfile() {
+    local log="$1"
+    [[ -f "${log}" ]] || return 1
+    grep -qiE 'too many open files|EMFILE' "${log}" 2>/dev/null
+}
+
+ffmpeg_source_print_too_many_open_files_help() {
+    local jobs="${1:-?}"
+    local src_dir="${2:-.}"
+    local nofile="" soft="" hard="" suggested=""
+
+    nofile="$(ulimit -n 2>/dev/null || echo unknown)"
+    soft="$(ulimit -Sn 2>/dev/null || echo unknown)"
+    hard="$(ulimit -Hn 2>/dev/null || echo unknown)"
+    if [[ "${nofile}" =~ ^[0-9]+$ ]]; then
+        suggested=$(( nofile * 3 ))
+        if [[ "${hard}" =~ ^[0-9]+$ ]] && (( suggested > hard )); then
+            suggested="${hard}"
+        fi
+    fi
+
+    echo >&2
+    echo "================================================================================" >&2
+    echo "  Too many open files — increase ulimit (max open file descriptors)" >&2
+    echo "================================================================================" >&2
+    echo >&2
+    echo "  FFmpeg's parallel compile (make -j${jobs}) needs more open files than this" >&2
+    echo "  shell allows. Configure already succeeded; you can resume the compile after" >&2
+    echo "  raising the limit." >&2
+    echo >&2
+    echo "  Current limits: soft=${soft}  hard=${hard}  (ulimit -n shows ${nofile})" >&2
+    echo >&2
+    echo "  Quick fix (this shell only):" >&2
+    echo "    ulimit -n 65536" >&2
+    if [[ "${suggested}" =~ ^[0-9]+$ ]] && (( suggested > 0 )); then
+        echo "    ulimit -n ${suggested}    # 3× current soft limit" >&2
+    fi
+    echo >&2
+    echo "  Resume in the build tree (skip configure unless it failed):" >&2
+    echo "    cd ${src_dir}" >&2
+    echo "    ulimit -n 65536" >&2
+    echo "    make -j2 ffmpeg ffprobe && make -j2" >&2
+    echo >&2
+    echo "  Permanent fix — append to /etc/security/limits.conf:" >&2
+    echo "    root soft nofile 65536" >&2
+    echo "    root hard nofile 65536" >&2
+    echo "    * soft nofile 65536" >&2
+    echo "    * hard nofile 65536" >&2
+    echo "  Log out and back in, then verify: ulimit -n" >&2
+    echo >&2
+    echo "  Optional system-wide (/etc/sysctl.conf or sysctl.d, then sysctl -p):" >&2
+    echo "    fs.file-max = 2097152" >&2
+    echo "================================================================================" >&2
+    echo >&2
+}
+
+ffmpeg_source_run_make() {
+    local jobs="$1"
+    local src_dir="$2"
+    local log="" rc=0
+
+    log="$(mktemp "${TEMP_CATALOG}/ffmpeg-make.XXXXXX.log")"
+    make -j"${jobs}" ffmpeg ffprobe 2>&1 | tee "${log}"
+    rc=${PIPESTATUS[0]}
+    if (( rc != 0 )); then
+        if ffmpeg_source_make_log_indicates_emfile "${log}"; then
+            ffmpeg_source_print_too_many_open_files_help "${jobs}" "${src_dir}"
+        fi
+        rm -f "${log}"
+        return "${rc}"
+    fi
+
+    make -j"${jobs}" 2>&1 | tee -a "${log}"
+    rc=${PIPESTATUS[0]}
+    if (( rc != 0 )); then
+        if ffmpeg_source_make_log_indicates_emfile "${log}"; then
+            ffmpeg_source_print_too_many_open_files_help "${jobs}" "${src_dir}"
+        fi
+        rm -f "${log}"
+        return "${rc}"
+    fi
+    rm -f "${log}"
+    return 0
+}
+
 source_build_encoder_is_available() {
     local ffmpeg_exe="$1" encoder="$2"
 
@@ -3087,8 +3172,10 @@ perform_install_build_from_source() {
 
     jobs="$(ffmpeg_source_prepare_make_jobs)"
     log_step "Building with make -j${jobs}..."
-    make -j"${jobs}" ffmpeg ffprobe
-    make -j"${jobs}"
+    if ! ffmpeg_source_run_make "${jobs}" "${src_dir}"; then
+        echo "ERROR: ffmpeg make failed." >&2
+        return 1
+    fi
 
     if [[ ! -x "${src_dir}/ffmpeg" ]]; then
         echo "ERROR: ffmpeg was not built in ${src_dir} (check ffbuild/config.log)." >&2
