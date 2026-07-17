@@ -14,7 +14,7 @@ show_help() {
   cat <<EOF
 Usage: $(basename "$0") [-h|--help] [-v|--version] [--no_startup_delay]
 
-Operational script (zamontuj-encrypted-zurich).
+Operational script (mount-encrypted-zurich).
 
 Options:
   -h, --help           Show this help and exit.

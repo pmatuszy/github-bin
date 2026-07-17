@@ -9,7 +9,7 @@ show_help() {
   cat <<EOF
 Usage: $(basename "$0") [-h|--help] [-v|--version] [--no_startup_delay]
 
-Operational script (odmontuj-encrypted-enclosures).
+Operational script (umount-encrypted-enclosures).
 
 Options:
   -h, --help           Show this help and exit.

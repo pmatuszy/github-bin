@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20260717.220000 - rename zamontuj-encrypted.sh -> mount-encrypted.sh
 # v. 20260716.164840 - add -h/--help, -v/--version, --no_startup_delay
 
 # 2026.05.26 - user-facing messages translated from Polish to English
@@ -12,7 +13,7 @@ show_help() {
   cat <<EOF
 Usage: $(basename "$0") [-h|--help] [-v|--version] [--no_startup_delay]
 
-Operational script (zamontuj-encrypted).
+Operational script (mount-encrypted).
 
 Options:
   -h, --help           Show this help and exit.
