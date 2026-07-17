@@ -1,5 +1,8 @@
 #!/usr/bin/env bash
-# v. 20260716.163224 - versioning format v. YYYYMMDD.HH24MISS
+# v. 20260717.231500 - GoPro MP4 backfill _Timewarp_/ _Timelapse_; DB signature gopro_cm:v1: caches Rate check
+# v. 20260717.230100 - GoPro MP4: _Timewarp_<rate> / _Timelapse_<interval> from exiftool Rate (rate lowercased; JPG skipped)
+# 2026.07.17 - v. 19.239.231500 - GoPro MP4 backfill _Timewarp_/ _Timelapse_ on already-renamed files; DB gopro_cm:v1: signature skips repeat exiftool Rate reads
+# 2026.07.17 - v. 19.238.230100 - GoPro MP4: _Timewarp_<rate> / _Timelapse_<interval> from exiftool Rate (rate lowercased; JPG skipped)
 # 2026.07.06 - v. 19.237.143000 - SQLite warmup: COALESCE empty string uses '' not "" (double quotes are column names)
 # 2026.07.04 - v. 19.236.143000 - Bandicam: bandicam_YYYYMMDD_HH-MM-SS-ms → YYYYMMDD_HH-MM-SS-ms_bandicam (stem or full name)
 # 2026.06.27 - v. 19.235.143000 - Unicode dashes (en/em/minus etc.) → ASCII hyphen so ls does not show $'\342\200\223'
@@ -2461,6 +2464,7 @@ db_delete_cached_row_for_path() {
     unset 'DB_CACHE_STATUS[$abs]'
     unset 'DB_CACHE_HASH_MD5[$abs]'
     unset 'DB_CACHE_HASH_SHA512[$abs]'
+    unset 'DB_CACHE_GOPRO_CAPTURE[$abs]'
     unset 'DB_CACHE_ROW_EXISTS[$abs]'
     (( ++DB_PENDING_COUNT ))
     if (( DB_PENDING_COUNT >= DB_FLUSH_EVERY )); then
@@ -2492,6 +2496,7 @@ declare -A DB_CACHE_SIG=()
 declare -A DB_CACHE_SIG_STATUS=()
 declare -A DB_CACHE_HASH_MD5=()
 declare -A DB_CACHE_HASH_SHA512=()
+declare -A DB_CACHE_GOPRO_CAPTURE=()
 declare -A DB_CACHE_ROW_EXISTS=()
 DB_PENDING_SQL_FILE=""
 DB_PENDING_COUNT=0
@@ -4155,6 +4160,9 @@ SQL
         DB_CACHE_META["$path"]="$size|$mtime"
         DB_CACHE_STATUS["$path"]="$status"
         DB_CACHE_ROW_EXISTS["$path"]=1
+        if [[ -n "$signature" && "$signature" =~ ^gopro_cm:v1:(.+)$ ]]; then
+            DB_CACHE_GOPRO_CAPTURE["$path"]="${BASH_REMATCH[1]}"
+        fi
         if [[ -n "$signature" ]]; then
             DB_CACHE_SIG["$signature"]=1
             DB_CACHE_SIG_STATUS["$signature"]="$status"
@@ -4348,6 +4356,7 @@ db_find_path_by_file_hash_in_subtree() {
         unset 'DB_CACHE_STATUS[$row_path]'
         unset 'DB_CACHE_HASH_MD5[$row_path]'
         unset 'DB_CACHE_HASH_SHA512[$row_path]'
+        unset 'DB_CACHE_GOPRO_CAPTURE[$row_path]'
         unset 'DB_CACHE_ROW_EXISTS[$row_path]'
         (( ++DB_PENDING_COUNT ))
         (( ++DB_ROWS_REMOVED ))
@@ -4471,7 +4480,48 @@ db_mark_checked() {
         sig_sql="NULL"
     fi
 
-    sql="INSERT INTO checked_paths(path, kind, size, mtime, status, last_checked, signature) VALUES ('$(sql_escape "$abs")', '$(sql_escape "$kind")', $size, $mtime, '$(sql_escape "$status")', CURRENT_TIMESTAMP, $sig_sql) ON CONFLICT(path) DO UPDATE SET kind=excluded.kind, size=excluded.size, mtime=excluded.mtime, status=excluded.status, signature=excluded.signature, last_checked=CURRENT_TIMESTAMP, file_hash_kind=COALESCE(file_hash_kind, excluded.file_hash_kind), file_hash=COALESCE(file_hash, excluded.file_hash);"
+    sql="INSERT INTO checked_paths(path, kind, size, mtime, status, last_checked, signature) VALUES ('$(sql_escape "$abs")', '$(sql_escape "$kind")', $size, $mtime, '$(sql_escape "$status")', CURRENT_TIMESTAMP, $sig_sql) ON CONFLICT(path) DO UPDATE SET kind=excluded.kind, size=excluded.size, mtime=excluded.mtime, status=excluded.status, signature=COALESCE(excluded.signature, checked_paths.signature), last_checked=CURRENT_TIMESTAMP, file_hash_kind=COALESCE(file_hash_kind, excluded.file_hash_kind), file_hash=COALESCE(file_hash, excluded.file_hash);"
+    printf '%s\n' "$sql" >> "$DB_PENDING_SQL_FILE"
+    (( ++DB_PENDING_COUNT ))
+    if (( DB_PENDING_COUNT >= DB_FLUSH_EVERY )); then
+        db_flush_pending
+    fi
+}
+
+# Persist GoPro Rate check in checked_paths.signature (gopro_cm:v1:<none|Timewarp_5x|…>).
+db_mark_gopro_capture_mode_checked() {
+    local path="$1"
+    local result="$2"
+    local abs meta size mtime sig sig_sql sql existing_row=0
+
+    (( USE_DB == 1 )) || return 0
+    [[ -e "$path" && -n "$result" ]] || return 0
+
+    meta="$(db_get_size_mtime "$path" 2>/dev/null || true)"
+    [[ -n "$meta" ]] || return 0
+    abs="$(db_abs_path "$path")"
+    size="${meta%%|*}"
+    mtime="${meta##*|}"
+    sig="gopro_cm:v1:${result}"
+    sig_sql="'$(sql_escape "$sig")'"
+
+    DB_CACHE_GOPRO_CAPTURE["$abs"]="$result"
+    DB_CACHE_META["$abs"]="$size|$mtime"
+
+    if [[ -n "${DB_CACHE_ROW_EXISTS[$abs]-}" || -n "${DB_CACHE_STATUS[$abs]-}" ]]; then
+        existing_row=1
+    fi
+
+    if (( existing_row == 1 )); then
+        ((++DB_ROWS_UPDATED))
+        sql="UPDATE checked_paths SET signature=${sig_sql}, size=${size}, mtime=${mtime}, last_checked=CURRENT_TIMESTAMP WHERE path='$(sql_escape "$abs")';"
+    else
+        ((++DB_ROWS_NEW))
+        DB_CACHE_STATUS["$abs"]="checked"
+        DB_CACHE_ROW_EXISTS["$abs"]=1
+        sql="INSERT INTO checked_paths(path, kind, size, mtime, status, last_checked, signature) VALUES ('$(sql_escape "$abs")', 'plain', ${size}, ${mtime}, 'checked', CURRENT_TIMESTAMP, ${sig_sql});"
+    fi
+
     printf '%s\n' "$sql" >> "$DB_PENDING_SQL_FILE"
     (( ++DB_PENDING_COUNT ))
     if (( DB_PENDING_COUNT >= DB_FLUSH_EVERY )); then
@@ -4545,6 +4595,10 @@ db_rewrite_subtree() {
             DB_CACHE_HASH_SHA512["$new_db_path"]="${DB_CACHE_HASH_SHA512[$old_db_path]}"
             unset 'DB_CACHE_HASH_SHA512[$old_db_path]'
         fi
+        if [[ -n "${DB_CACHE_GOPRO_CAPTURE[$old_db_path]-}" ]]; then
+            DB_CACHE_GOPRO_CAPTURE["$new_db_path"]="${DB_CACHE_GOPRO_CAPTURE[$old_db_path]}"
+            unset 'DB_CACHE_GOPRO_CAPTURE[$old_db_path]'
+        fi
         if [[ -n "${DB_CACHE_ROW_EXISTS[$old_db_path]-}" ]]; then
             DB_CACHE_ROW_EXISTS["$new_db_path"]=1
             unset 'DB_CACHE_ROW_EXISTS[$old_db_path]'
@@ -4594,6 +4648,10 @@ db_rewrite_single_path() {
     if [[ -n "${DB_CACHE_HASH_SHA512[$old_abs]-}" ]]; then
         DB_CACHE_HASH_SHA512["$new_abs"]="${DB_CACHE_HASH_SHA512[$old_abs]}"
         unset 'DB_CACHE_HASH_SHA512[$old_abs]'
+    fi
+    if [[ -n "${DB_CACHE_GOPRO_CAPTURE[$old_abs]-}" ]]; then
+        DB_CACHE_GOPRO_CAPTURE["$new_abs"]="${DB_CACHE_GOPRO_CAPTURE[$old_abs]}"
+        unset 'DB_CACHE_GOPRO_CAPTURE[$old_abs]'
     fi
     if [[ -n "${DB_CACHE_ROW_EXISTS[$old_abs]-}" ]]; then
         DB_CACHE_ROW_EXISTS["$new_abs"]=1
@@ -8577,6 +8635,153 @@ gopro_apply_camera_model_name_from_exif() {
     return 0
 }
 
+# GoPro MP4 only: Timewarp_5x / Timelapse_1_5sec from exiftool Rate value (JPG and OFF/N/A skipped).
+gopro_video_capture_mode_suffix_from_rate() {
+    local rate="${1-}"
+    local norm
+
+    [[ -n "$rate" ]] || return 0
+    norm="$(printf '%s' "$rate" | tr '[:upper:]' '[:lower:]')"
+    case "$norm" in
+        off|n/a) return 0 ;;
+        auto|[0-9]*x)
+            printf 'Timewarp_%s' "$norm"
+            ;;
+        *[0-9]sec)
+            printf 'Timelapse_%s' "$norm"
+            ;;
+    esac
+}
+
+gopro_video_capture_mode_suffix_from_exif() {
+    local exif="$1"
+    local line rate
+
+    line="$(gopro_exif_first_line "$exif" '^Rate[[:space:]]+:')"
+    rate="$(gopro_exif_value_after_colon "$line")"
+    gopro_video_capture_mode_suffix_from_rate "$rate"
+}
+
+# Fast Rate-only exiftool read for backfill on already-renamed GoPro MP4 files.
+gopro_fetch_rate_tag() {
+    local file="$1"
+    local exifloc rate
+
+    exifloc="$(resolve_rename_exiftool)" || return 1
+    rate="$("$exifloc" -api largefilesupport=1 -Rate -s3 "$file" 2>/dev/null | head -n 1)"
+    rate="${rate//$'\r'/}"
+    rate="${rate//$'\n'/}"
+    [[ -n "$rate" ]] || return 1
+    printf '%s' "$rate"
+}
+
+gopro_basename_has_capture_mode_suffix() {
+    [[ "$1" =~ _(Timewarp|Timelapse)_ ]]
+}
+
+gopro_capture_mode_suffix_from_basename() {
+    local base="$1"
+
+    if [[ "$base" =~ _(Timewarp|Timelapse)_([^_./]+)(_part_[0-9]{2})?(_Proxy)?(\.[mM][pP]4)$ ]]; then
+        printf '%s_%s' "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}"
+        return 0
+    fi
+    return 1
+}
+
+# Already metadata-renamed GoPro MP4 (YYYYMMDD…_GoPro_… / GOPRO…), not raw GH/GOPR names.
+gopro_renamed_mp4_basename_matches() {
+    local base="$1"
+    [[ "$base" =~ ^[0-9]{8}_[0-9]{6}_(-__-_|-_-_)(GoPro|GOPRO)_.+\.[mM][pP]4$ ]]
+}
+
+gopro_basename_with_capture_mode_suffix() {
+    local base="$1"
+    local mode_suffix="$2"
+
+    [[ -n "$base" && -n "$mode_suffix" ]] || return 1
+
+    if [[ "$base" =~ ^(.+)_part_([0-9]{2})(_Proxy)?(\.[mM][pP]4)$ ]]; then
+        printf '%s_%s_part_%s%s%s' "${BASH_REMATCH[1]}" "$mode_suffix" "${BASH_REMATCH[2]}" "${BASH_REMATCH[3]}" "${BASH_REMATCH[4]}"
+        return 0
+    fi
+    if [[ "$base" =~ ^(.+)_(Proxy)(\.[mM][pP]4)$ ]]; then
+        printf '%s_%s_%s%s' "${BASH_REMATCH[1]}" "$mode_suffix" "${BASH_REMATCH[2]}" "${BASH_REMATCH[3]}"
+        return 0
+    fi
+    if [[ "$base" =~ ^(.+)(\.[mM][pP]4)$ ]]; then
+        printf '%s_%s%s' "${BASH_REMATCH[1]}" "$mode_suffix" "${BASH_REMATCH[2]}"
+        return 0
+    fi
+    return 1
+}
+
+gopro_capture_mode_db_cache_hit() {
+    local path="$1"
+    local abs meta cached
+
+    (( USE_DB == 1 )) || return 1
+    (( FORCE_RECHECK == 0 )) || return 1
+    [[ -e "$path" ]] || return 1
+
+    abs="$(db_abs_path "$path")"
+    [[ -n "${DB_CACHE_GOPRO_CAPTURE[$abs]-}" ]] || return 1
+
+    if (( FAST_DB == 1 )); then
+        return 0
+    fi
+
+    cached="${DB_CACHE_META[$abs]-}"
+    meta="$(db_get_size_mtime "$path" 2>/dev/null || true)"
+    [[ -n "$meta" && "$cached" == "$meta" ]]
+}
+
+# Insert _Timewarp_/ _Timelapse_ into already-renamed GoPro MP4 names; cache negative hits in DB.
+maybe_transform_gopro_capture_mode_backfill() {
+    local f="$1"
+    local base="$2"
+    local rate="" mode_suffix="" newbase=""
+
+    gopro_renamed_mp4_basename_matches "$base" || return 1
+    gopro_basename_has_capture_mode_suffix "$base" && return 1
+
+    if gopro_capture_mode_suffix_from_basename "$base" >/dev/null 2>&1; then
+        return 1
+    fi
+
+    if gopro_capture_mode_db_cache_hit "$f"; then
+        vlog "GoPro capture mode DB cache hit for '$base' (${DB_CACHE_GOPRO_CAPTURE[$(db_abs_path "$f")]})."
+        return 1
+    fi
+
+    if ! resolve_rename_exiftool >/dev/null; then
+        return 1
+    fi
+
+    rate="$(gopro_fetch_rate_tag "$f")" || rate=""
+    mode_suffix="$(gopro_video_capture_mode_suffix_from_rate "$rate")"
+    if [[ -n "$mode_suffix" ]]; then
+        newbase="$(gopro_basename_with_capture_mode_suffix "$base" "$mode_suffix")" || return 1
+        vlog "GoPro capture mode backfill: $base -> $newbase (Rate=${rate:-?})"
+        printf '%s' "$newbase"
+        return 0
+    fi
+
+    db_mark_gopro_capture_mode_checked "$f" "none"
+    vlog "GoPro capture mode: no Timewarp/Timelapse for '$base' (Rate=${rate:-OFF}); cached in DB."
+    return 1
+}
+
+gopro_mark_capture_mode_db_from_basename() {
+    local path="$1"
+    local base="$2"
+    local cm="none"
+
+    gopro_capture_mode_suffix_from_basename "$base" >/dev/null 2>&1 \
+        && cm="$(gopro_capture_mode_suffix_from_basename "$base")"
+    db_mark_gopro_capture_mode_checked "$path" "$cm"
+}
+
 # GoPro-style raw names before exiftool rename (zmien-nazwe-CURRENT_DIRECTORY.sh patterns).
 gopro_camera_raw_basename_matches() {
     local base="$1"
@@ -9184,6 +9389,14 @@ transform_gopro_camera_basename() {
         return 1
     fi
 
+    if [[ "$czy_gopro" == 1 ]] && ! gopro_camera_raw_jpg_basename_matches "$base"; then
+        local capture_mode_suffix=""
+        capture_mode_suffix="$(gopro_video_capture_mode_suffix_from_exif "$exif")"
+        if [[ -n "$capture_mode_suffix" ]]; then
+            suffix_pliku="$capture_mode_suffix"
+        fi
+    fi
+
     if [[ "$czy_gopro" == 1 && "$gopro4" == 0 && "$base" =~ ^[cCgG][hHxX][0-9][0-9][0-9][0-9][0-9][0-9] ]]; then
         local session_key chapter_count chapter_id renamed_part_count
         session_key="$(gopro_raw_basename_session_key "$base")" || session_key=""
@@ -9194,7 +9407,11 @@ transform_gopro_camera_basename() {
             if [[ "$chapter_id" != "01" ]] \
                || { [[ "$chapter_count" =~ ^[0-9]+$ ]] && (( chapter_count > 1 )); } \
                || { [[ "$renamed_part_count" =~ ^[0-9]+$ ]] && (( renamed_part_count > 0 )); }; then
-                suffix_pliku="part_${chapter_id}"
+                if [[ -n "$suffix_pliku" ]]; then
+                    suffix_pliku="${suffix_pliku}_part_${chapter_id}"
+                else
+                    suffix_pliku="part_${chapter_id}"
+                fi
             fi
         fi
     fi
@@ -9763,6 +9980,28 @@ transform_name() {
         else
             vlog "GoPro/camera exiftool rename: no usable metadata for $base (rc=$_gopro_rc); falling back to normal rename"
         fi
+    fi
+
+    if [[ -f "$f" ]] && (( _gopro_applied == 0 && _sony_applied == 0 )) \
+        && gopro_renamed_mp4_basename_matches "$base" \
+        && ! gopro_basename_has_capture_mode_suffix "$base"; then
+        local _gopro_backfill_try="" _gopro_backfill_rc=0
+        local _tn_save_e_gpbf=0
+        [[ $- == *e* ]] && _tn_save_e_gpbf=1
+        set +e
+        _gopro_backfill_try="$(maybe_transform_gopro_capture_mode_backfill "$f" "$base")"
+        _gopro_backfill_rc=$?
+        if ((_tn_save_e_gpbf)); then
+            set -e
+        fi
+        if (( _gopro_backfill_rc == 0 )) && [[ -n "$_gopro_backfill_try" ]]; then
+            newbase="$_gopro_backfill_try"
+            _gopro_applied=1
+        fi
+    fi
+
+    if [[ -f "$f" ]] && (( _gopro_applied == 1 )); then
+        gopro_mark_capture_mode_db_from_basename "$f" "$newbase"
     fi
 
     local _olympus_applied=0 _olympus_try="" _olympus_rc=0
