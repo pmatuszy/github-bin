@@ -1,7 +1,7 @@
 #!/bin/bash
 # v. 20260716.163224 - versioning format v. YYYYMMDD.HH24MISS
 # 2026.07.16 - v. 0.3 - rename from sprawdz-czy-dziala-tor-relay.sh; add -h/-v/--no_startup_delay
-# 2023.01.03 - v. 0.2 - dodano random delay jesli skrypt jest wywolywany nieinteraktywnie
+# 2023.01.03 - v. 0.2 - added random delay when script runs non-interactively
 # 20xx.xx.xx - v. 0.1 - initial release (date unknown)
 #
 # healthchecks-tor-relay-is-running.sh
@@ -56,4 +56,3 @@ exit
 # new crontab entry
 
 3 * * * * /root/bin/healthchecks-tor-relay-is-running.sh --no_startup_delay
-

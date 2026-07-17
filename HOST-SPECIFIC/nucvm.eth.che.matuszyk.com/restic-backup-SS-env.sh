@@ -20,11 +20,10 @@ export RCLONE_STATS=1s
 
 # export RCLONE_BWLIMIT=30M
 
-# nie ograniczamy szybkosci bo uplink w CHE jest duzy
-# nie ograniczamy szybkosci bo uplink w CHE jest duzy
-# nie ograniczamy szybkosci bo uplink w CHE jest duzy
-# nie ograniczamy szybkosci bo uplink w CHE jest duzy
-# nie ograniczamy szybkosci bo uplink w CHE jest duzy
+# no speed limit because CHE uplink is fast
+# no speed limit because CHE uplink is fast
+# no speed limit because CHE uplink is fast
+# no speed limit because CHE uplink is fast
+# no speed limit because CHE uplink is fast
 
 # export RCLONE_BWLIMIT='Mon-01:00,5M Mon-07:00,3M Tue-01:00,5M Tue-07:00,3M Wed-01:00,5M Wed-07:00,3M Thu-01:00,5M Thu-07:00,3M Fri-01:00,5M Fri-07:00,3M Sat-01:00,5M Sat-07:00,3M Sun-01:00,5M Sun-08:00,3M'
-

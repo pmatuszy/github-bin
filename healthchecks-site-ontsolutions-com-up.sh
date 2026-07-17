@@ -5,7 +5,7 @@
 # 2025.07.06 - v. 0.8 - bugfix - how_many_retries was not decremented... so script was running sometimes forever
 # 2024.04.02 - v. 0.7 - added timeout command (as curl sometimes doesn't timeout )
 # 2023.04.13 - v. 0.6 - added how_many_retries and retry_delay
-# 2023.01.17 - v. 0.5 - dodano random delay jesli skrypt jest wywolywany nieinteraktywnie
+# 2023.01.17 - v. 0.5 - added random delay when script runs non-interactively
 # 2022.05.16 - v. 0.3 - commented out sending emails sections
 # 2022.05.03 - v. 0.2 - added healthcheck support
 # 2021.xx.xx - v. 0.1 - initial release
@@ -93,4 +93,3 @@ exit $?
 # new crontab entry
 # Note: Use a lock file, not the script itself
 */5 * * * * /usr/bin/flock -n /tmp/healthchecks-site-ontsolutions-com-up.lock /root/bin/healthchecks-site-ontsolutions-com-up.sh --no_startup_delay
-

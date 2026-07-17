@@ -5,8 +5,8 @@
 # 2026.04.21 - v. 0.6 - after failed selfupdate retries, exit with last rclone rc (not sleep's 0); comment crontab example; tighten up-to-date grep
 # 2023.12.18 - v. 0.5 - bugfix: check if rclone is installed
 # 2023.03.26 - v. 0.4 - added ile_prob i odstepy_miedzy_probami_sek
-# 2023.01.03 - v. 0.3 - dodano random delay jesli skrypt jest wywolywany nieinteraktywnie
-# 2022.05.20 - v. 0.2 - dodalem wypisywanie aktualnej daty
+# 2023.01.03 - v. 0.3 - added random delay when script runs non-interactively
+# 2022.05.20 - v. 0.2 - added printing of current date
 # 2022.05.11 - v. 0.1 - initial release (date unknown)
 
 show_help() {

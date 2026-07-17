@@ -2,7 +2,7 @@
 # v. 20260716.163224 - versioning format v. YYYYMMDD.HH24MISS
 
 # 2026.06.02 - v. 0.10 - add -h/--help, -v/--version, --no_startup_delay (parsed before header)
-# 2026.06.01 - v. 0.9 - support glob source paths (e.g. host:/root/config/*): expand on the remote shell so wildcards work like rsync; rename SKAD/DOKAD vars to SOURCE/DEST
+# 2026.06.01 - v. 0.9 - support glob source paths (e.g. host:/root/config/*): expand on the remote shell so wildcards work like rsync; rename SOURCE/DEST vars to SOURCE/DEST
 # 2026.06.01 - v. 0.8 - rewritten to use ssh + scp only (no rsync): ping remote first,
 #                       then per-file download, sha512 (or md5) verify, and delete the
 #                       remote file (move) ONLY after it is correctly downloaded & verified

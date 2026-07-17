@@ -2,7 +2,7 @@
 # v. 20260716.163224 - versioning format v. YYYYMMDD.HH24MISS
 # 2026.07.16 - v. 0.5 - rename from sprawdz-czy-encrypted-jest-zamontowany.sh; add -h/-v/--no_startup_delay
 # 2023.02.28 - v. 0.4 - curl with return_code
-# 2023.01.03 - v. 0.3 - dodano random delay jesli skrypt jest wywolywany nieinteraktywnie
+# 2023.01.03 - v. 0.3 - added random delay when script runs non-interactively
 # 2022.05.12 - v. 0.2 - usunieta zmienna m, ktora nie byla uzywana
 # 2022.05.03 - v. 0.1 - initial release (date unknown)
 #

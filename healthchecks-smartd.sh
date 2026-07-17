@@ -4,7 +4,7 @@
 # 2026.07.16 - v. 0.4 - add -h/--help, -v/--version, --no_startup_delay (parsed before header)
 # 2026.05.26 - user-facing messages translated from Polish to English
 # 2023.01.16 - v. 0.3 - better service restart failure detection, redirection of 2> on 1>
-# 2023.01.03 - v. 0.2 - dodano random delay jesli skrypt jest wywolywany nieinteraktywnie
+# 2023.01.03 - v. 0.2 - added random delay when script runs non-interactively
 # 2022.05.18 - v. 0.1 - initial release
 #
 # healthchecks-smartd.sh

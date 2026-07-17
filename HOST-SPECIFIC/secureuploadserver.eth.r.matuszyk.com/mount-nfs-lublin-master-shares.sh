@@ -2,7 +2,7 @@
 # v. 20260716.164840 - add -h/--help, -v/--version, --no_startup_delay
 
 # 2026.05.26 - user-facing messages translated from Polish to English
-# 2022.12.31 - v. 0.3 - dodalem funkcje zamontuj_via_nfs
+# 2022.12.31 - v. 0.3 - added mount_via_nfs function
 # 2022.09.11 - v. 0.2 - zmiany kosmetyczne o KeePassie
 # 2022.07.30 - v. 0.1 - initial release
 
@@ -51,7 +51,7 @@ read -p "Enter password: " -s PASSWD ; echo
 
 ###############################################################################################################
 ###############################################################################################################
-zamontuj_via_nfs() {
+mount_via_nfs() {
 umount "${2}" 2>/dev/null  # unmount first if already mounted, to avoid "mount error(16): Device or resource busy"
 mount.cifs -o user=p,password=$PASSWD "${1}" "${2}"
 
@@ -64,14 +64,14 @@ fi
 ###############################################################################################################
 ###############################################################################################################
 
-zamontuj_via_nfs "//lublin.eth.r.matuszyk.com/archiwum-MASTER-SOURCE_read_only"  "/mnt/rsync-master-archiwum"
-zamontuj_via_nfs "//lublin.eth.r.matuszyk.com/BBC-MASTER-SOURCE_read_only"       "/mnt/rsync-master-BBC"
-zamontuj_via_nfs "//lublin.eth.r.matuszyk.com/DivX-MASTER-SOURCE_read_only"      "/mnt/rsync-master-DivX"
-zamontuj_via_nfs "//lublin.eth.r.matuszyk.com/DVDs-MASTER-SOURCE_read_only"      "/mnt/rsync-master-DVDs"
-zamontuj_via_nfs "//lublin.eth.r.matuszyk.com/ksiazki-MASTER-SOURCE_read_only"   "/mnt/rsync-master-ksiazki"
-zamontuj_via_nfs "//lublin.eth.r.matuszyk.com/mp3-MASTER-SOURCE_read_only"       "/mnt/rsync-master-mp3"
-zamontuj_via_nfs "//lublin.eth.r.matuszyk.com/_na_DVD-MASTER-SOURCE_read_only"   "/mnt/rsync-master-_na_DVD"
-zamontuj_via_nfs "//lublin.eth.r.matuszyk.com/SkyPlus-MASTER-SOURCE_read_only"   "/mnt/rsync-master-SkyPlus"
+mount_via_nfs "//lublin.eth.r.matuszyk.com/archiwum-MASTER-SOURCE_read_only"  "/mnt/rsync-master-archiwum"
+mount_via_nfs "//lublin.eth.r.matuszyk.com/BBC-MASTER-SOURCE_read_only"       "/mnt/rsync-master-BBC"
+mount_via_nfs "//lublin.eth.r.matuszyk.com/DivX-MASTER-SOURCE_read_only"      "/mnt/rsync-master-DivX"
+mount_via_nfs "//lublin.eth.r.matuszyk.com/DVDs-MASTER-SOURCE_read_only"      "/mnt/rsync-master-DVDs"
+mount_via_nfs "//lublin.eth.r.matuszyk.com/ksiazki-MASTER-SOURCE_read_only"   "/mnt/rsync-master-ksiazki"
+mount_via_nfs "//lublin.eth.r.matuszyk.com/mp3-MASTER-SOURCE_read_only"       "/mnt/rsync-master-mp3"
+mount_via_nfs "//lublin.eth.r.matuszyk.com/_na_DVD-MASTER-SOURCE_read_only"   "/mnt/rsync-master-_na_DVD"
+mount_via_nfs "//lublin.eth.r.matuszyk.com/SkyPlus-MASTER-SOURCE_read_only"   "/mnt/rsync-master-SkyPlus"
 
 df -hP |egrep 'Filesystem|lublin.eth.r.matuszyk.com'
 

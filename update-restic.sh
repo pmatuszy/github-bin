@@ -5,8 +5,8 @@
 # 2023.12.18 - v. 0.7 - bugfix: check if restic is installed
 # 2023.03.26 - v. 0.6 - added ile_prob i odstepy_miedzy_probami_sek
 # 2023.02.28 - v. 0.5 - curl with return_code
-# 2023.01.03 - v. 0.4 - dodano random delay jesli skrypt jest wywolywany nieinteraktywnie
-# 2022.05.20 - v. 0.3 - dodalem wypisywanie aktualnej daty
+# 2023.01.03 - v. 0.4 - added random delay when script runs non-interactively
+# 2022.05.20 - v. 0.3 - added printing of current date
 # 2022.05.12 - v. 0.2 - small bux fix (use RESTIC_BIN intsead of /usr/bin/restic)
 # 2022.05.11 - v. 0.1 - initial release (date unknown)
 

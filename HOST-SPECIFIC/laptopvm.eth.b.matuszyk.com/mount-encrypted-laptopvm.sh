@@ -2,9 +2,9 @@
 # v. 20260716.164840 - add -h/--help, -v/--version, --no_startup_delay
 
 # 2026.05.26 - user-facing messages translated from Polish to English
-# 2021.09.19 - v. 0.5 - zmiana w fsck, dodana funkcja zrob_fsck
-# 2021.08.29 - v. 0.4 - exportfs po zamontowaniu obu duzych volumentow, dodano montowanie dla minidlna i restart tego serwisu
-# 2021.04.09 - v. 0.3 - bug fix: nie montowane byly backup2 i replication2 w jailu...
+# 2021.09.19 - v. 0.5 - fsck changes and added run_fsck helper
+# 2021.08.29 - v. 0.4 - exportfs after both large volumes mounted; added minidlna mount and service restart
+# 2021.04.09 - v. 0.3 - bug fix: backup2 and replication2 were not mounted in jail...
 # 2020.11.26 - v. 0.2 - added fsck before mounting the disks
 # 2020.0x.xx - v. 0.1 - initial release (date unknown)
 
@@ -44,7 +44,7 @@ read -r -p "Enter password: " -s PASSWD
 echo
 
 ################################################################################
-zrob_fsck() {
+run_fsck() {
 ################################################################################
 
 echo "################################################################################"
@@ -67,9 +67,8 @@ echo '########## /dev/vg_crypto/lv_do_luksa_16tb ==> /mnt/luks-raid1-16tb'
 echo
 echo -n "$PASSWD" | cryptsetup luksOpen /dev/vg_crypto_buffalo3/lv_do_luksa_buffalo3 luks_buffalo3 -d -
 
-zrob_fsck /dev/vg_crypto_buffalo3/lv_do_luksa_buffalo3
+run_fsck /dev/vg_crypto_buffalo3/lv_do_luksa_buffalo3
 
 mount -o noatime /dev/mapper/luks_buffalo3 /mnt/luks_buffalo3
 
 df -h /mnt/luks_buffalo3
-

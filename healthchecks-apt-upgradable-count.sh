@@ -5,9 +5,9 @@
 # 2026.05.26 - user-facing messages translated from Polish to English
 # 2025.11.13 - v. 0.6 - added while loop (with little help of ChatGPT)
 # 2023.10.14 - v. 0.5 - increased sleep delay from 100 to 600s
-# 2023.01.03 - v. 0.4 - dodano random delay jesli skrypt jest wywolywany nieinteraktywnie
-# 2022.06.15 - v. 0.3 - dodanie czekania jesli apt-get update jest wykonywany w tym samym czasie przez inny proces
-# 2022.05.05 - v. 0.2 - dodany uptime i hostname
+# 2023.01.03 - v. 0.4 - added random delay when script runs non-interactively
+# 2022.06.15 - v. 0.3 - added wait when apt-get update runs concurrently in another process
+# 2022.05.05 - v. 0.2 - added uptime and hostname
 # 20xx.xx.xx - v. 0.1 - initial release (date unknown)
 #
 # healthchecks-apt-upgradable-count.sh
@@ -112,4 +112,3 @@ exit $?
 # new crontab entry
 # @reboot ( sleep 60 && /root/bin/healthchecks-apt-upgradable-count.sh --no_startup_delay ) 2>&1
 # 2 */6 * * * /root/bin/healthchecks-apt-upgradable-count.sh --no_startup_delay
-

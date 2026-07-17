@@ -1,9 +1,9 @@
 #!/bin/bash
 # v. 20260716.164840 - add -h/--help, -v/--version, --no_startup_delay
 # 2020.12.03 - v.1.6 - zmiania sposobu wyswietlania (by output byl troche wezszy na ekranie)
-# 2020.12.03 - v.1.5 - dodane wyswietlanie numeru seryjnego dyskow
+# 2020.12.03 - v.1.5 - added display of disk serial numbers
 # 2020.11.18 - v.1.4 - zmienna scheduler - wystarczy odkomentowac, ktorego nalezy uzywac, bug fixes
-# 2020.11.11 - v.1.3 - zmiana schedulera z mq-deadline na none
+# 2020.11.11 - v.1.3 - changed scheduler from mq-deadline to none
 # 2020.10.08 - v.1.2 - male zmiany w sposobie wyswietlania 
 # 2020.10.08 - v.1.1 - showing timeouts before the setting them
 # 2020.10.04 - v.1.0 - added timeout variable and increased value of it from 180 to 300s
@@ -67,7 +67,7 @@ scheduler='mq-deadline'
 
 echo
 echo '/----------------\'
-echo '| przed zmianami |'
+echo '| before changes |'
 echo '\----------------/'
 
 echo "   disk  |  /sys/block/sd?/device/timeout  |/sys/block/sd?/device/eh_timeout |/sys/block/sd?/device/queue_depth|  /sys/block/sd?/queue/scheduler |/sys/block/sdr?queue/nr_requests |"
@@ -90,7 +90,7 @@ for p in {a..z} ; do
    # The multi-queue no-op I/O scheduler. Does no reordering of requests, minimal overhead. Ideal for fast random I/O devices such as NVME.
     echo "$scheduler" > /sys/block/sd${p}/queue/scheduler
 
-# jesli scheduler = none to ponizsza linia zwraca blad
+# if scheduler is none the line below returns an error
    if [ $scheduler != "none" ]; then
      echo "${nr_requests}" > /sys/block/sd${p}/queue/nr_requests
    fi
@@ -115,7 +115,7 @@ done
 
 echo
 echo '/-------------\'
-echo '| po zmianach |'
+echo '| after changes |'
 echo '\-------------/'
 
 echo "   disk  |  /sys/block/sd?/device/timeout  |/sys/block/sd?/device/eh_timeout |/sys/block/sd?/device/queue_depth|  /sys/block/sd?/queue/scheduler |/sys/block/sdr?queue/nr_requests |"
@@ -133,10 +133,9 @@ for p in {a..z} ; do
     echo $timeout > /sys/block/sd${p}/device/timeout
     echo ${eh_timeout} > /sys/block/sd${p}/device/eh_timeout
 #    echo ${queue_depth} > /sys/block/sd${p}/device/queue_depth
-# jesli scheduler = none to ponizsza linia zwraca blad
+# if scheduler is none the line below returns an error
 #    echo ${nr_requests} > /sys/block/sd${p}/queue/nr_requests
   fi
 done
 
 echo
-

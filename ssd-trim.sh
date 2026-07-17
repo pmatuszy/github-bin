@@ -4,7 +4,7 @@
 # 2023.03.07 - v. 0.6 - added check if fstrim is installed
 # 2023.02.28 - v. 0.5 - curl with return_code
 # 2023.02.16 - v. 0.4 - added script version and current time
-# 2023.01.03 - v. 0.3 - dodano random delay jesli skrypt jest wywolywany nieinteraktywnie
+# 2023.01.03 - v. 0.3 - added random delay when script runs non-interactively
 # 2022.04.30 - v. 0.2 - added healthcheck support
 # 2021.02.24 - v. 0.1 - initial release
 

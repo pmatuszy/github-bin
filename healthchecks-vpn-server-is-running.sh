@@ -2,7 +2,7 @@
 # v. 20260716.163224 - versioning format v. YYYYMMDD.HH24MISS
 # 2026.07.16 - v. 0.3 - rename from sprawdz-czy-dziala-server-vpn.sh; add -h/-v/--no_startup_delay
 # 2026.05.26 - user-facing messages translated from Polish to English
-# 2023.01.03 - v. 0.2 - dodano random delay jesli skrypt jest wywolywany nieinteraktywnie
+# 2023.01.03 - v. 0.2 - added random delay when script runs non-interactively
 # 20xx.xx.xx - v. 0.1 - initial release (date unknown)
 #
 # healthchecks-vpn-server-is-running.sh
@@ -63,4 +63,3 @@ exit $?
 # old crontab entry
 # spr. czy dziala vpn
 #5 */6 * * * if [ `ps -ef|grep vpnserver | awk '{print $8}'|grep -v grep|uniq|wc -l` -eq 0 ];then (echo "vpn on `hostname` is DOWN" | mailx -r root@`hostname` -a 'Content-Type: text/html' -s "(`/bin/hostname`-`date '+\%Y.\%m.\%d \%H:\%M:\%S'`) vpn is down" matuszyk+`/bin/hostname`@matuszyk.com) ; fi
-

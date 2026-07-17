@@ -43,16 +43,16 @@ echo
 source=$source_dropbox
 destination=$destination_dropbox
 cd $source
-plik=`/bin/ls -1tr *_Dropbox.rar | head -n 1`
+file=`/bin/ls -1tr *_Dropbox.rar | head -n 1`
 
 ####################################################################################
 ####################################################################################
-kopiuj() {
+copy_backup() {
 ####################################################################################
 ####################################################################################
 
 echo "`date '+%Y.%m.%d %H:%M:%S'` - ******************************************"
-echo "`date '+%Y.%m.%d %H:%M:%S'` - ****************** KOPIUJ ****************"
+echo "`date '+%Y.%m.%d %H:%M:%S'` - ****************** COPY ****************"
 echo "`date '+%Y.%m.%d %H:%M:%S'` - \$1 = $1"
 echo "`date '+%Y.%m.%d %H:%M:%S'` - \$2 = $2"
 echo "`date '+%Y.%m.%d %H:%M:%S'` - \$3 = $3"
@@ -61,10 +61,10 @@ echo "`date '+%Y.%m.%d %H:%M:%S'` - ******************************************"
 source=$1
 destination=$2
 cd $source
-plik=$3
+file=$3
 
 
-echo "`date '+%Y.%m.%d %H:%M:%S'` - Obrabiam plik $source/$plik, OK? [Y/n]"
+echo "`date '+%Y.%m.%d %H:%M:%S'` - Processing file $source/$file, OK? [Y/n]"
 read -t 10 -n 1 p     # read one character (-n) with timeout of 10 seconds
 echo
 echo
@@ -73,46 +73,46 @@ if [ "${p}" == 'N' -o  "${p}" == 'n' ]; then
   return
 fi
 
-echo "`date '+%Y.%m.%d %H:%M:%S'` - jestem w katalogu "`pwd`
-echo "`date '+%Y.%m.%d %H:%M:%S'` - robie sume kontrolna nastepujaca komenda:"
-echo "                      sha512sum ${plik} > ${plik}.sha512"
+echo "`date '+%Y.%m.%d %H:%M:%S'` - current directory is "`pwd`
+echo "`date '+%Y.%m.%d %H:%M:%S'` - computing checksum with command:"
+echo "                      sha512sum ${file} > ${file}.sha512"
 echo
 
-sha512sum "${plik}" > "${plik}.sha512"
+sha512sum "${file}" > "${file}.sha512"
 
 echo "`date '+%Y.%m.%d %H:%M:%S'` - done, now running verification"
 echo
 echo -n "                      "
-sha512sum --check "${plik}.sha512"
+sha512sum --check "${file}.sha512"
 return_code=$?
 echo "`date '+%Y.%m.%d %H:%M:%S'` - exit code = $return_code"
 echo
 
-echo "`date '+%Y.%m.%d %H:%M:%S'` - zaczynam mv na zdalny serwer"
-echo "                      rsync -ah --progress ${plik} ${plik}.sha512 ${destination}"
+echo "`date '+%Y.%m.%d %H:%M:%S'` - starting rsync to remote server"
+echo "                      rsync -ah --progress ${file} ${file}.sha512 ${destination}"
 echo "*************************************"
 
-rsync -ah --progress ${plik} ${plik}.sha512 ${destination}
+rsync -ah --progress ${file} ${file}.sha512 ${destination}
 echo "*************************************"
 return_code=$?
 echo "`date '+%Y.%m.%d %H:%M:%S'` - exit code = $return_code"
 
 echo "`date '+%Y.%m.%d %H:%M:%S'` - done, now verifying files on remote server"
-echo "                      sha512sum --check ${destination}/${plik}.sha512"
+echo "                      sha512sum --check ${destination}/${file}.sha512"
 echo
 echo -n "                      "
-sha512sum --check "${destination}/${plik}.sha512"
+sha512sum --check "${destination}/${file}.sha512"
 return_code=$?
 echo "`date '+%Y.%m.%d %H:%M:%S'` - exit code = $return_code"
 echo
 
 if (( $return_code != 0 )); then
-  echo ; echo BLAD ; echo
+  echo ; echo ERROR ; echo
   exit 2
 else
-  echo "`date '+%Y.%m.%d %H:%M:%S'` - kasuje `pwd`/{plik}.sha512 `pwd`/${plik}"
+  echo "`date '+%Y.%m.%d %H:%M:%S'` - deleting `pwd`/{file}.sha512 `pwd`/${file}"
   echo -n "                      "
-  rm -v `pwd`/${plik}.sha512 `pwd`/${plik}
+  rm -v `pwd`/${file}.sha512 `pwd`/${file}
   echo ; echo 
 fi
 }
@@ -121,15 +121,15 @@ fi
 source=$source_dropbox
 destination=$destination_dropbox
 cd $source
-plik=`/bin/ls -1tr *_Dropbox.rar | head -n 1`
+file=`/bin/ls -1tr *_Dropbox.rar | head -n 1`
 
-kopiuj $source $destination $plik
+copy_backup $source $destination $file
 
 source=$source_praca
 destination=$destination_praca
 cd $source
-plik=`/bin/ls -1tr *_praca.rar | head -n 1`
+file=`/bin/ls -1tr *_praca.rar | head -n 1`
 
-kopiuj $source $destination $plik
+copy_backup $source $destination $file
 
 echo

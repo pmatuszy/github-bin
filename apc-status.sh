@@ -2,8 +2,8 @@
 # v. 20260716.163224 - versioning format v. YYYYMMDD.HH24MISS
 
 # 2026.06.02 - v. 0.4 - add -h/--help, -v/--version, --no_startup_delay (parsed before header)
-# 2023.11.05 - v. 0.3 - dodano sprawdzanie, czy pakiet apcupsd jest zainstalowany
-# 2023.01.16 - v. 0.2 - dodano random delay jesli skrypt jest wywolywany nieinteraktywnie
+# 2023.11.05 - v. 0.3 - added check whether apcupsd package is installed
+# 2023.01.16 - v. 0.2 - added random delay when script runs non-interactively
 # 2022.05.09 - v. 0.1 - initial release
 
 show_help() {

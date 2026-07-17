@@ -6,11 +6,11 @@
 # 2023.03.27 - v. 1.0 - bugfix with fsck (instead of hardcoded /dev/mapper/encrypted_luks_device_encrypted.luks2 will use $1)
 # 2023.03.20 - v. 0.9 - bugfix with return_code
 # 2023.01.26 - v. 0.8 - added script version print
-# 2022.12.01 - v. 0.7 - zmieniona zrob_fsck na nowsza - i wymuszenie fsck -y
-# 2022.05.23 - v. 0.6 - dodane wywolanie healthchecka na koncu
-# 2021.09.19 - v. 0.5 - zmiana w fsck, dodana funkcja zrob_fsck
-# 2021.08.29 - v. 0.4 - exportfs po zamontowaniu obu duzych volumentow, dodano montowanie dla minidlna i restart tego serwisu
-# 2021.04.09 - v. 0.3 - bug fix: nie montowane byly backup2 i replication2 w jailu...
+# 2022.12.01 - v. 0.7 - updated run_fsck and forced fsck -y
+# 2022.05.23 - v. 0.6 - added healthcheck call at the end
+# 2021.09.19 - v. 0.5 - fsck changes and added run_fsck helper
+# 2021.08.29 - v. 0.4 - exportfs after both large volumes mounted; added minidlna mount and service restart
+# 2021.04.09 - v. 0.3 - bug fix: backup2 and replication2 were not mounted in jail...
 # 2020.11.26 - v. 0.2 - added fsck before mounting the disks
 # 2020.0x.xx - v. 0.1 - initial release (date unknown)
 
@@ -59,9 +59,9 @@ read -r -p "Enter password: " -s PASSWD
 echo
 
 ################################################################################
-zrob_fsck() {
+run_fsck() {
 ################################################################################
-echo ; echo "==> ###### zrob_fsck($1)"
+echo ; echo "==> ###### run_fsck($1)"
 
 echo running fsck on $1 ...
 
@@ -86,18 +86,18 @@ if (( $return_code != 0 ));then
 else
   echo "fsck completed"
 fi
-echo "<== ###### zrob_fsck($1)"
+echo "<== ###### run_fsck($1)"
 }
 ################################################################################
-zamontuj_fs_MASTER() {
+mount_fs_master() {
 ################################################################################
-echo ; echo "==> ########## zamontuj_fs_MASTER($1, $2, $3)"
-       echo "==> ########## zamontuj_fs_MASTER($1, $2, $3)"
-       echo "==> ########## zamontuj_fs_MASTER($1, $2, $3)"
+echo ; echo "==> ########## mount_fs_master($1, $2, $3)"
+       echo "==> ########## mount_fs_master($1, $2, $3)"
+       echo "==> ########## mount_fs_master($1, $2, $3)"
 
 if [ $(mountpoint -q $2 ; echo $?) -eq 0 ] ; then
    echo $1 is already mounted ... exiting
-   echo "<== ########## zamontuj_fs_MASTER($1, $2, $3)"
+   echo "<== ########## mount_fs_master($1, $2, $3)"
    return
 fi
 
@@ -105,45 +105,45 @@ echo -n "$PASSWD" | cryptsetup luksOpen "${1}" encrypted_luks_device_"$(basename
 
 if (( $? != 0 ));then
   echo  ; echo "CANNOT MOUNT $1 at $2 !!!!!!!"; echo "exiting ..."
-  echo "<== ########## zamontuj_fs_MASTER($1, $2, $3)"
+  echo "<== ########## mount_fs_master($1, $2, $3)"
   return
 fi
 
-zrob_fsck /dev/mapper/encrypted_luks_device_"$(basename ${1})"
+run_fsck /dev/mapper/encrypted_luks_device_"$(basename ${1})"
 mount -o $3 /dev/mapper/encrypted_luks_device_"$(basename ${1})" "${2}"
 
-echo "<== ########## zamontuj_fs_MASTER($1, $2, $3)"
-echo "<== ########## zamontuj_fs_MASTER($1, $2, $3)"
+echo "<== ########## mount_fs_master($1, $2, $3)"
+echo "<== ########## mount_fs_master($1, $2, $3)"
 }
 
 ################################################################################
 
-#nazwa_pliku=/encrypted.luks2
+#luks_file_path=/encrypted.luks2
 
-#echo -n "$PASSWD" | cryptsetup luksOpen ${nazwa_pliku} encrypted_luks_file_in_root -d -
-#zrob_fsck /dev/mapper/encrypted_luks_file_in_root
+#echo -n "$PASSWD" | cryptsetup luksOpen ${luks_file_path} encrypted_luks_file_in_root -d -
+#run_fsck /dev/mapper/encrypted_luks_file_in_root
 
 # echo
 # echo '########## /dev/vg_crypto/lv_do_luksa_16tb ==> /mnt/luks-raid1-16tb'
 # echo
 # echo -n "$PASSWD" | cryptsetup luksOpen /dev/vg_crypto/lv_do_luksa_16tb luks16tb-on-lv -d -
 
-# zrob_fsck /dev/mapper/luks16tb-on-lv
+# run_fsck /dev/mapper/luks16tb-on-lv
 
 # echo
 # echo '########## /dev/vg_crypto/lv_do_luksa_16tb_another ==> /mnt/luks-raid1-16tb_another'
 # echo
 # echo -n "$PASSWD" | cryptsetup luksOpen /dev/vg_crypto/lv_do_luksa_16tb_another luks16tb-on-lv_another -d -
 
-# zrob_fsck /dev/mapper/luks16tb-on-lv_another
+# run_fsck /dev/mapper/luks16tb-on-lv_another
 
 vgchange -a y
 sleep 1
 
-zamontuj_fs_MASTER /encrypted.luks2                     	/encrypted 			noatime
-zamontuj_fs_MASTER /dev/vg_crypto/lv_do_luksa_16tb      	/mnt/luks-raid1-16tb		noatime
-# zamontuj_fs_MASTER /dev/vg_crypto/lv_do_luksa_16tb_another 	/mnt/luks-raid1-16tb_another 	noatime
-zamontuj_fs_MASTER /dev/vg_crypto_20230925/lv_crypto_20230925 	/mnt/luks-raid1-16tb_another 	noatime
+mount_fs_master /encrypted.luks2                     	/encrypted 			noatime
+mount_fs_master /dev/vg_crypto/lv_do_luksa_16tb      	/mnt/luks-raid1-16tb		noatime
+# mount_fs_master /dev/vg_crypto/lv_do_luksa_16tb_another 	/mnt/luks-raid1-16tb_another 	noatime
+mount_fs_master /dev/vg_crypto_20230925/lv_crypto_20230925 	/mnt/luks-raid1-16tb_another 	noatime
 
 mount -o bind,noatime /mnt/luks-raid1-16tb/backup1/rclone_user/_restic /rclone-jail/storage-master/backup1
 mount -o bind,noatime /mnt/luks-raid1-16tb/replication1/rclone_user/_rclone/ /rclone-jail/storage-master/replication1

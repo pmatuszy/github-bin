@@ -2,7 +2,7 @@
 # v. 20260716.163224 - versioning format v. YYYYMMDD.HH24MISS
 
 # 2026.07.16 - v. 0.3 - add -h/--help, -v/--version, --no_startup_delay (parsed before header)
-# 2023.01.03 - v. 0.2 - dodano random delay jesli skrypt jest wywolywany nieinteraktywnie
+# 2023.01.03 - v. 0.2 - added random delay when script runs non-interactively
 # 2022.05.12 - v. 0.1 - initial release
 #
 # healthchecks-ping.sh

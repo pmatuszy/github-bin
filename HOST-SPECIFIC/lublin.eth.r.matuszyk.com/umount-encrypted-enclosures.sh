@@ -39,12 +39,12 @@ done
 cat  $0|grep -e '# *20[123][0-9]'|head -n 1 | awk '{print "script version: " $5 " (dated "$2")"}' ; echo ; echo 
 
 ################################################################################
-odmontuj_fs_MASTER() {
-echo ; echo "==> ########## odmontuj_fs_MASTER($1)"
+umount_fs_master() {
+echo ; echo "==> ########## umount_fs_master($1)"
 
 if [ $(mountpoint -q $1 ; echo $?) -ne 0 ] ; then
    echo $1 NIE is already mounted ... exiting
-   echo "<== ########## odmontuj_fs_MASTER($1)"
+   echo "<== ########## umount_fs_master($1)"
    return 
 fi
 
@@ -54,7 +54,7 @@ umount $1
 
 if (( $? != 0 ));then
   echo  ; echo "CANNOT UNMOUNT $1 !!!!!!!"; echo "exiting ..."
-  echo "<== ########## odmontuj_fs_MASTER($1)"
+  echo "<== ########## umount_fs_master($1)"
   umount -l $1
   sleep 5
 else
@@ -68,15 +68,15 @@ cryptsetup luksClose ${luks_device}
 
 if (( $? != 0 ));then
   echo  ; echo "CANNOT CLOSE LUKS DEVICE $1 !!!!!!!"; echo "exiting ..."
-  echo "<== ########## odmontuj_fs_MASTER($1)"
+  echo "<== ########## umount_fs_master($1)"
   return
 else
   echo "luksClose zrobiony"
 fi
 
-echo "<== ########## odmontuj_fs_MASTER($1)"
+echo "<== ########## umount_fs_master($1)"
 }
 ################################################################################
 
-odmontuj_fs_MASTER /mnt/luks-dyskD
-odmontuj_fs_MASTER /mnt/luks-buffalo1
+umount_fs_master /mnt/luks-dyskD
+umount_fs_master /mnt/luks-buffalo1

@@ -1,6 +1,6 @@
 #!/bin/bash
 # v. 20260716.164840 - add -h/--help, -v/--version, --no_startup_delay
-# 2022.02.20 - v. 0.3 - zmiana nazwy komputera i dodano mkdir -p
+# 2022.02.20 - v. 0.3 - renamed host and added mkdir -p
 # 2021.04.09 - v. 0.2 - changed IP to machine DNS name 
 # 2020.0x.xx - v. 0.1 - initial release (date unknown)
 
@@ -69,4 +69,3 @@ df -hP |egrep 'Filesystem|pgm-che.eth.che.matuszyk.com'
 set +x
 
 . /root/bin/_script_footer.sh
-

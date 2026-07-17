@@ -1,7 +1,7 @@
 #!/bin/bash
 # v. 20260716.164840 - add -h/--help, -v/--version, --no_startup_delay
 
-# 2026.06.01 - v. 0.3 - config-archive (ARCHIWUM_CONFIGOW) backups now land directly in the server folder (UBNT/<Server>/), not a nested ARCHIWUM_CONFIGOW-<Server> subdir; rename SKAD/DOKAD vars to SOURCE/DEST
+# 2026.06.01 - v. 0.3 - config-archive (ARCHIWUM_CONFIGOW) backups now land directly in the server folder (UBNT/<Server>/), not a nested ARCHIWUM_CONFIGOW-<Server> subdir; rename SOURCE/DEST vars to SOURCE/DEST
 # 2023.07.17 - v. 0.2 - added output redirection to /dev/null
 # 2023.03.14 - v. 0.1 - initial release
 

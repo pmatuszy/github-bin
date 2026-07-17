@@ -11,7 +11,7 @@ show_help() {
   cat <<EOF
 Usage: $(basename "$0") [-h|--help] [-v|--version] [--no_startup_delay]
 
-mpack -s "\${temat_maila}" -c image/jpeg "\${plik_po_cropie}" -d "\${zawartosc_maila}" matuszyk@matuszyk.com
+mpack -s "\${temat_maila}" -c image/jpeg "\${file_after_crop}" -d "\${zawartosc_maila}" matuszyk@matuszyk.com
 
 Options:
   -h, --help           Show this help and exit.
@@ -58,21 +58,21 @@ delay_po_wczytaniu_strony=1000 # w ms
 
 javascript=off
 
-plik_bez_cropa=`mktemp --dry-run --suffix=-bez-cropa.jpg`
-plik_po_cropie=`mktemp --dry-run --suffix=-po-cropie.jpg`
+file_without_crop=`mktemp --dry-run --suffix=-bez-cropa.jpg`
+file_after_crop=`mktemp --dry-run --suffix=-po-cropie.jpg`
 zawartosc_maila=`mktemp --dry-run --suffix=.txt`
-xvfb-run --server-args="-screen 0, ${rozmiar_x_ekran}x${rozmiar_y_ekran}x24" cutycapt --max-wait=${max_wait_na_strone} --delay=${delay_po_wczytaniu_strony} --min-width=${rozmiar_x_ekran} --min-height=${rozmiar_y_ekran} --javascript=${javascript} --url=${URL} --out="${plik_bez_cropa}"
+xvfb-run --server-args="-screen 0, ${rozmiar_x_ekran}x${rozmiar_y_ekran}x24" cutycapt --max-wait=${max_wait_na_strone} --delay=${delay_po_wczytaniu_strony} --min-width=${rozmiar_x_ekran} --min-height=${rozmiar_y_ekran} --javascript=${javascript} --url=${URL} --out="${file_without_crop}"
 
-convert "${plik_bez_cropa}" -crop ${rozmiar_x_crop}x${rozmiar_y_crop}+${rozmiar_x_crop_offset}+${rozmiar_y_crop_offset} "${plik_po_cropie}"
+convert "${file_without_crop}" -crop ${rozmiar_x_crop}x${rozmiar_y_crop}+${rozmiar_x_crop_offset}+${rozmiar_y_crop_offset} "${file_after_crop}"
 
 echo "${URL}" > "${zawartosc_maila}"
 
-# mpack -s "${temat_maila}" -c image/jpeg "${plik_po_cropie}" -d "${zawartosc_maila}" matuszyk@matuszyk.com
+# mpack -s "${temat_maila}" -c image/jpeg "${file_after_crop}" -d "${zawartosc_maila}" matuszyk@matuszyk.com
 
-/usr/bin/timeout --foreground --preserve-status --kill-after=$kill_after $timeout /usr/bin/dbus-send --session --type=method_call --print-reply --dest="org.asamk.Signal" /org/asamk/Signal org.asamk.Signal.sendMessage string:"${temat_maila}" array:string:"${plik_po_cropie}" string:+41763691467
+/usr/bin/timeout --foreground --preserve-status --kill-after=$kill_after $timeout /usr/bin/dbus-send --session --type=method_call --print-reply --dest="org.asamk.Signal" /org/asamk/Signal org.asamk.Signal.sendMessage string:"${temat_maila}" array:string:"${file_after_crop}" string:+41763691467
 
-# /usr/bin/timeout --foreground --preserve-status --kill-after=$kill_after $timeout /usr/bin/dbus-send --session --type=method_call --print-reply --dest="org.asamk.Signal" /org/asamk/Signal org.asamk.Signal.sendMessage string:"${temat_maila}" array:string:"${plik_po_cropie}" string:+48732250516
+# /usr/bin/timeout --foreground --preserve-status --kill-after=$kill_after $timeout /usr/bin/dbus-send --session --type=method_call --print-reply --dest="org.asamk.Signal" /org/asamk/Signal org.asamk.Signal.sendMessage string:"${temat_maila}" array:string:"${file_after_crop}" string:+48732250516
 
-# /usr/bin/timeout --foreground --preserve-status --kill-after=$kill_after $timeout /usr/bin/dbus-send --session --type=method_call --print-reply --dest="org.asamk.Signal" /org/asamk/Signal org.asamk.Signal.sendMessage string:"${temat_maila}" array:string:"${plik_po_cropie}" string:+48667734457
+# /usr/bin/timeout --foreground --preserve-status --kill-after=$kill_after $timeout /usr/bin/dbus-send --session --type=method_call --print-reply --dest="org.asamk.Signal" /org/asamk/Signal org.asamk.Signal.sendMessage string:"${temat_maila}" array:string:"${file_after_crop}" string:+48667734457
 
-rm "${plik_po_cropie}" "${plik_bez_cropa}"
+rm "${file_after_crop}" "${file_without_crop}"

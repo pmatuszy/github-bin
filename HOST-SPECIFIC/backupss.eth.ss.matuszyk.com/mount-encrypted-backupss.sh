@@ -41,9 +41,9 @@ read -r -p "Enter password: " -s PASSWD
 echo
 
 ################################################################################
-zrob_fsck() {
+run_fsck() {
 ################################################################################
-echo ; echo "==> ########## zrob_fsck($1)"
+echo ; echo "==> ########## run_fsck($1)"
 
 echo running fsck on $1 ...
 
@@ -76,15 +76,15 @@ if (( $return_code != 0 ));then
 else
   echo "fsck completed"
 fi
-echo "<== ########## zrob_fsck($1)"
+echo "<== ########## run_fsck($1)"
 }
 ################################################################################
-zamontuj_fs_MASTER() {
-echo ; echo "==> ########## zamontuj_fs_MASTER($1, $2, $3)"
+mount_fs_master() {
+echo ; echo "==> ########## mount_fs_master($1, $2, $3)"
 
 if [ $(mountpoint -q $2 ; echo $?) -eq 0 ] ; then
    echo $1 is already mounted ... exiting
-   echo "<== ########## zamontuj_fs_MASTER($1, $2, $3)"
+   echo "<== ########## mount_fs_master($1, $2, $3)"
    return
 fi
 
@@ -92,27 +92,27 @@ echo -n "$PASSWD" | cryptsetup luksOpen "${1}" encrypted_luks_device_"$(basename
 
 if (( $? != 0 ));then
   echo  ; echo "CANNOT MOUNT $1 at $2 !!!!!!!"; echo "exiting ..."
-  echo "<== ########## zamontuj_fs_MASTER($1, $2, $3)"
+  echo "<== ########## mount_fs_master($1, $2, $3)"
   return
 fi
 
-zrob_fsck /dev/mapper/encrypted_luks_device_"$(basename ${1})"
+run_fsck /dev/mapper/encrypted_luks_device_"$(basename ${1})"
 mount -o $3 /dev/mapper/encrypted_luks_device_"$(basename ${1})" "${2}"
 
 if (( $? == 0 ));then
   echo ; echo "mount of $1 under $2 was SUCCESSFUL" ; echo
 fi
 
-echo "<== ########## zamontuj_fs_MASTER($1, $2, $3)"
+echo "<== ########## mount_fs_master($1, $2, $3)"
 }
 ################################################################################
 
 vgchange -a y
 sleep 1
 
-zamontuj_fs_MASTER /encrypted.luks2                         /encrypted            noatime
-zamontuj_fs_MASTER /dev/vg_crypto_encA/lv_do_luksa_encA     /mnt/luks-raid1-encA  noatime
-zamontuj_fs_MASTER /dev/vg_crypto_encB/lv_do_luksa_encB     /mnt/luks-raid1-encB  noatime
+mount_fs_master /encrypted.luks2                         /encrypted            noatime
+mount_fs_master /dev/vg_crypto_encA/lv_do_luksa_encA     /mnt/luks-raid1-encA  noatime
+mount_fs_master /dev/vg_crypto_encB/lv_do_luksa_encB     /mnt/luks-raid1-encB  noatime
 
 sleep 1
 

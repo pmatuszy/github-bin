@@ -2,7 +2,7 @@
 # v. 20260716.164840 - add -h/--help, -v/--version, --no_startup_delay
 
 # 2025.11.03 - v. 0.6 - small change to print the signal-cli version 
-# 2024.12.18 - v. 0.5 - changed opoznienie_miedzy_wywolaniami 5 ==> 30
+# 2024.12.18 - v. 0.5 - changed delay_between_runs 5 ==> 30
 # 2024.04.11 - v. 0.4 - added --dbus as required by a new version of the daemon
 # 2023.02.02 - v. 0.3 - added --foreground option to be able to use Ctrl-C 
 # 2023.02.01 - v. 0.2 - added restart once a day
@@ -42,7 +42,7 @@ done
 czas_startu_skryptu=$(date '+%s')
 secs_to_midnight=$((($(date -d "tomorrow 00:00" +%s)-$czas_startu_skryptu)))
 let max_timestamp_dzialania_skryptu=$((($(date +%s)+$secs_to_midnight+20)))
-opoznienie_miedzy_wywolaniami=30s
+delay_between_runs=30s
 
 echo
 boxes <<< "/opt/signal-cli/bin/signal-cli version"
@@ -50,13 +50,13 @@ boxes <<< "/opt/signal-cli/bin/signal-cli version"
 echo 
 
 while : ; do
-  let secs_nagrywania=secs_to_midnight+60
+  let record_seconds=secs_to_midnight+60
 
   echo "[`date '+%Y.%m.%d %H:%M:%S'`] restart signala"
-  timeout --foreground --preserve-status --signal=HUP --kill-after=$((secs_nagrywania+120)) $((secs_nagrywania+60)) \
+  timeout --foreground --preserve-status --signal=HUP --kill-after=$((record_seconds+120)) $((record_seconds+60)) \
        /opt/signal-cli/bin/signal-cli -u +41763691467 daemon --dbus 2>&1 > /encrypted/root/signal-output-`date '+%Y%m%d__%H_%M_%S'`.log
 
-  sleep $opoznienie_miedzy_wywolaniami # opozniamy bo jak sa problemy z siecia, to by nie startowac od razu z nastepna proba...
+  sleep $delay_between_runs # opozniamy bo jak sa problemy z siecia, to by nie startowac od razu z nastepna proba...
   secs_to_midnight=$((($(date -d "tomorrow 00:00" +%s)-$(date +%s))))
 done
 

@@ -6,7 +6,7 @@
 # 2023.02.18 - v. 2.7 - fix a bug in curl "/usr/bin/curl: Argument list too long" by echoing HC_message in pipe to curl
 # 2023.02.02 - v. 2.6 - added support for /root/SECRET subdirectory
 # 2023.01.25 - v. 2.5 - added script_is_run_interactively env check (which is set in _script_header.sh)
-# 2023.01.17 - v. 2.3 - dodano random delay jesli skrypt jest wywolywany nieinteraktywnie
+# 2023.01.17 - v. 2.3 - added random delay when script runs non-interactively
 # 2022.12.21 - v. 2.2 - added interactive mode
 # 2022.08.11 - v. 2.1 - changed LICZBA_SEKUND_MIEDZY_PONOWIENIAMI_BACKUPOW ze 180 do 600
 # 2022.08.10 - v. 2.0 - small bux fix with env variable upercase name
@@ -225,4 +225,3 @@ exit
 export RESTIC_BACKUP_ENV_FILE=/root/bin/restic-backup-BXL-env.sh && /usr/bin/flock --nonblock --exclusive /root/bin/restic-backup-generic.sh -c /root/bin/restic-backup-generic.sh
 export RESTIC_BACKUP_ENV_FILE=/root/bin/restic-backup-SS-env.sh  && /usr/bin/flock --nonblock --exclusive /root/bin/restic-backup-generic.sh -c /root/bin/restic-backup-generic.sh
 export RESTIC_BACKUP_ENV_FILE=/root/bin/restic-backup-CHE-env.sh  && /usr/bin/flock --nonblock --exclusive /root/bin/restic-backup-generic.sh -c /root/bin/restic-backup-generic.sh
-

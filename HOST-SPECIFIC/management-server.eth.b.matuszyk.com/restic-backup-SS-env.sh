@@ -2,8 +2,8 @@ export RESTIC_BACKUP_NAME=restic_backup_SS
 export WHAT_TO_BACKUP_ON_TOP_OF_ROOT="/worek"
 export MY_EXCLUDE_FILE="/root/bin/restic_iexclude_file.txt"
 
-RUN_BEFORE_BACKUP='echo wylaczam unifi server ; systemctl status --no-pager unifi ; systemctl stop unifi  ; systemctl status --no-pager unifi && echo '
-RUN_AFTER_BACKUP='echo wlaczam unifi server   ; systemctl status --no-pager unifi ; systemctl start unifi ; systemctl status --no-pager unifi && echo '
+RUN_BEFORE_BACKUP='echo stopping unifi server ; systemctl status --no-pager unifi ; systemctl stop unifi  ; systemctl status --no-pager unifi && echo '
+RUN_AFTER_BACKUP='echo starting unifi server   ; systemctl status --no-pager unifi ; systemctl start unifi ; systemctl status --no-pager unifi && echo '
 
 export RESTIC_REPOSITORY=rclone:crypt-sftp-SS-ext-backupA:/management-server.eth.b.matuszyk.com
 export RCLONE_CONFIG=/root/rclone.conf

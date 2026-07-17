@@ -4,9 +4,9 @@
 
 # 2026.05.26 - user-facing messages translated from Polish to English
 # 2023.02.28 - v. 0.5 - curl with return_code
-# 2022.07.01 - v. 0.4 - dodalem wywolanie /root/bin/healthchecks-encrypted-is-mounted.sh na koncu
-# 2022.06.21 - v. 0.3 - dodalem obsluge healthcheckow
-# 2021.09.19 - v. 0.2 - dodana funkcja fsck, czytanie hasla do zmiennej
+# 2022.07.01 - v. 0.4 - added call to /root/bin/healthchecks-encrypted-is-mounted.sh at the end
+# 2022.06.21 - v. 0.3 - added healthchecks support
+# 2021.09.19 - v. 0.2 - added fsck function and password read into variable
 # 2021.01.30 - v. 0.1 - initial release (date unknown)
 
 show_help() {
@@ -49,7 +49,7 @@ read -r -p "Enter password: " -s PASSWD
 echo
 
 ################################################################################
-zrob_fsck() {
+run_fsck() {
 ################################################################################
 
 echo "################################################################################"
@@ -68,10 +68,10 @@ fsck $1
 }
 ################################################################################
 
-nazwa_pliku=/encrypted.luks2
+luks_file_path=/encrypted.luks2
 
-echo -n "$PASSWD" | cryptsetup luksOpen ${nazwa_pliku} encrypted_luks_file_in_root -d -
-zrob_fsck /dev/mapper/encrypted_luks_file_in_root
+echo -n "$PASSWD" | cryptsetup luksOpen ${luks_file_path} encrypted_luks_file_in_root -d -
+run_fsck /dev/mapper/encrypted_luks_file_in_root
 
 mount -o noatime /dev/mapper/encrypted_luks_file_in_root /encrypted
 return_code=$?

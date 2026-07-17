@@ -2,7 +2,7 @@
 # v. 20260716.164840 - add -h/--help, -v/--version, --no_startup_delay
 
 # 2026.05.26 - user-facing messages translated from Polish to English
-# 2023.08.10 - v. 1.1 - bugfix: checking if ${DOKAD} exists and if not exiting
+# 2023.08.10 - v. 1.1 - bugfix: checking if ${DEST} exists and if not exiting
 # 2023.05.22 - v. 1.0 - std_options are different for interactive and non-interactive session
 # 2023.05.20 - v. 0.9 - allow script to use keychain
 # 2023.05.20 - v. 0.8 - added calls for _script_header and _script_footer
@@ -18,7 +18,7 @@ show_help() {
   cat <<EOF
 Usage: $(basename "$0") [-h|--help] [-v|--version] [--no_startup_delay]
 
-Operational script (kopiuj-webcamy).
+Operational script (copy_backup-webcamy).
 
 Options:
   -h, --help           Show this help and exit.
@@ -53,14 +53,14 @@ if [ -f "$HEALTHCHECKS_FILE" ];then
   HEALTHCHECK_URL=$(cat "$HEALTHCHECKS_FILE" |grep "^`basename $0`"|awk '{print $2}')
 fi
 
-export SKAD_HOST="backupche.eth.che.matuszyk.com"
-export SKAD_DIR="/worek-samba/nagrania/Kijow-webcamy"
-export DOKAD="/mnt/luks-raid1-A/video-1dyne-kopie/Kijow-webcamy-ARCHIWUM/"
+export SOURCE_HOST="backupche.eth.che.matuszyk.com"
+export SOURCE_DIR="/worek-samba/nagrania/Kijow-webcamy"
+export DEST="/mnt/luks-raid1-A/video-1dyne-kopie/Kijow-webcamy-ARCHIWUM/"
 
 cat  $0|grep -e '# *20[123][0-9]'|head -n 1 | awk '{print "script version: " $5 " (dated "$2")"}' ; echo
 echo " "; echo "current date: `date '+%Y.%m.%d %H:%M:%S'`" ; echo ;
 
-echo ; echo "SKAD  = $SKAD_HOST:$SKAD_DIR" ; echo "DOKAD = $DOKAD" ; echo ; echo
+echo ; echo "SOURCE  = $SOURCE_HOST:$SOURCE_DIR" ; echo "DEST = $DEST" ; echo ; echo
 
 if (( $script_is_run_interactively == 1 )); then
   std_options='-a -v --stats --bwlimit=90000 --no-compress --progress --info=progress1 --partial  --inplace --remove-source-files'
@@ -68,42 +68,42 @@ else
   std_options='-a -v --stats --bwlimit=90000 --no-compress --partial  --inplace --remove-source-files'
 fi
 
-if [ ! -d "${DOKAD}" ];then
-  echo "(PGM) ${DOKAD} doesn't exist"
+if [ ! -d "${DEST}" ];then
+  echo "(PGM) ${DEST} doesn't exist"
   exit 1
 fi
 
 echo "Wszystkie pliki:"
-ssh "${SKAD_HOST}" "cd ${SKAD_DIR} 2>/dev/null || exit 1; /bin/ls -1tr"
+ssh "${SOURCE_HOST}" "cd ${SOURCE_DIR} 2>/dev/null || exit 1; /bin/ls -1tr"
 return_code=$?
 
 if (( $return_code != 0 ));then
-  echo ; echo "Cannot change directory to $DOKAD on server $SKAD_HOST ...";echo
+  echo ; echo "Cannot change directory to $DEST on server $SOURCE_HOST ...";echo
   exit 2
 fi
 
-ile_plikow=$(ssh "${SKAD_HOST}" "cd ${SKAD_DIR} 2>/dev/null ; /bin/ls -1tr" | wc -l)
+file_count=$(ssh "${SOURCE_HOST}" "cd ${SOURCE_DIR} 2>/dev/null ; /bin/ls -1tr" | wc -l)
 
-if (( $ile_plikow == 1 )) ; then
+if (( $file_count == 1 )) ; then
   echo ; echo "no files to copy, exiting...";echo
   exit 0
 fi
 
-echo ; echo "Pliki do skopiowania:"
+echo ; echo "Files to copy:"
        echo "~~~~~~~~~~~~~~~~~~~~~"
-ssh "${SKAD_HOST}" "cd ${SKAD_DIR} ; /bin/ls -1tr | head -n-1"
+ssh "${SOURCE_HOST}" "cd ${SOURCE_DIR} ; /bin/ls -1tr | head -n-1"
 
 echo ; echo "Plik do zostawienia:"
        echo "~~~~~~~~~~~~~~~~~~~~"
-ssh "${SKAD_HOST}" "cd ${SKAD_DIR} ; /bin/ls -1tr | tail -n-1"
+ssh "${SOURCE_HOST}" "cd ${SOURCE_DIR} ; /bin/ls -1tr | tail -n-1"
 
 echo ; echo -n "Skopiujemy "
-ssh "${SKAD_HOST}" "cd ${SKAD_DIR} ; /bin/ls -ltr | head -n-1 " | awk 'BEGIN {suma=0} {suma=suma+$5} END {print suma/1024/1024 " MB danych"}'
+ssh "${SOURCE_HOST}" "cd ${SOURCE_DIR} ; /bin/ls -ltr | head -n-1 " | awk 'BEGIN {suma=0} {suma=suma+$5} END {print suma/1024/1024 " MB danych"}'
 
-echo ; df -m $DOKAD ; echo
+echo ; df -m $DEST ; echo
 echo "Poczatek kopiowania: $(date '+%Y.%m.%d %H:%M:%S')" ; echo
 
-rsync $std_options -e "ssh -T -o Compression=no -x" --files-from=<(ssh $SKAD_HOST "cd ${SKAD_DIR} ; /bin/ls -1tr | head -n-1" ) "${SKAD_HOST}:${SKAD_DIR}" "${DOKAD}"
+rsync $std_options -e "ssh -T -o Compression=no -x" --files-from=<(ssh $SOURCE_HOST "cd ${SOURCE_DIR} ; /bin/ls -1tr | head -n-1" ) "${SOURCE_HOST}:${SOURCE_DIR}" "${DEST}"
 
 echo "koniec: $(date '+%Y.%m.%d %H:%M:%S')" ; echo
 

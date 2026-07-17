@@ -38,9 +38,9 @@ done
 policy='--relaxed --hourly="20*24" --daily=366 --weekly=56 --monthly=24 --yearly=always --ionice=idle'
 
 export HEALTHCHECKS_FORCE_ID=rotate-backups.sh-www02 
-export katalog=/mnt/luks-buffalo2/_backupy-1dyne_kopie/www02
-eval /root/bin/rotate-backups.sh $policy $katalog
+export directory=/mnt/luks-buffalo2/_backupy-1dyne_kopie/www02
+eval /root/bin/rotate-backups.sh $policy $directory
 
 export HEALTHCHECKS_FORCE_ID=rotate-backups.sh-cloud
-export katalog=/mnt/luks-buffalo2/_backupy-1dyne_kopie/cloud-var-www
-eval /root/bin/rotate-backups.sh $policy $katalog
+export directory=/mnt/luks-buffalo2/_backupy-1dyne_kopie/cloud-var-www
+eval /root/bin/rotate-backups.sh $policy $directory

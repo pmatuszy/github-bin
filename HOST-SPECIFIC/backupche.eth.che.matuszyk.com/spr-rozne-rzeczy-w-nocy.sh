@@ -1,7 +1,7 @@
 #!/bin/bash
 # v. 20260716.164840 - add -h/--help, -v/--version, --no_startup_delay
 
-# 2022.03.29 - v. 0.2 - zmiana na krotsze nazwy skrypow bo screen sobie z dlugimi nie radzi, skrocony czas miedzy wywolaniami screena z 4m do 45s
+# 2022.03.29 - v. 0.2 - shorter script names for screen; reduced delay between screen invocations from 4m to 45s
 # 2022.03.05 - v. 0.1 - initial release (date unknown)
 
 show_help() {

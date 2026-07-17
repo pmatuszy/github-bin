@@ -38,21 +38,21 @@ while [[ $# -gt 0 ]]; do
 done
 
 export url="https://www.youtube.com/watch?v=e2gC37ILQmk"
-export DOKAD_PREFIX="/worek-samba/nagrania/Kijow-webcamy"
+export DEST_PREFIX="/worek-samba/nagrania/Kijow-webcamy"
 
-opoznienie_miedzy_wywolaniami=60s
-wlasciciel_pliku="che:che"
+delay_between_runs=60s
+file_owner="che:che"
 
 yt_bin=/usr/local/bin/youtube-dl
 # yt_bin=/snap/youtube-dl/current/bin/youtube-dl
 
 while : ; do 
-  nazwa_pliku="Kijow-livecam_$(date '+%Y%m%d_%H%M%S').mp4"
-  "${yt_bin}" --ignore-errors --no-part --output "${DOKAD_PREFIX}/${nazwa_pliku}" "$url" 
-  chown "${wlasciciel_pliku}" "${DOKAD_PREFIX}/${nazwa_pliku}" 2>/dev/null
-#  (echo "koniec wykonywania $0" && ls -lr "${DOKAD_PREFIX}") | strings | aha | \
+  output_filename="Kijow-livecam_$(date '+%Y%m%d_%H%M%S').mp4"
+  "${yt_bin}" --ignore-errors --no-part --output "${DEST_PREFIX}/${output_filename}" "$url" 
+  chown "${file_owner}" "${DEST_PREFIX}/${output_filename}" 2>/dev/null
+#  (echo "koniec wykonywania $0" && ls -lr "${DEST_PREFIX}") | strings | aha | \
 #      mailx -r root@`hostname` -a 'Content-Type: text/html' -s "$0 (`/bin/hostname`-`date '+%Y.%m.%d %H:%M:%S'`)" matuszyk@matuszyk.com
-  sleep ${opoznienie_miedzy_wywolaniami}
+  sleep ${delay_between_runs}
 done
 
 . /root/bin/_script_footer.sh
