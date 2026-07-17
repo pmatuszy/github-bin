@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# v. 20260717.231500 - GoPro MP4 backfill _Timewarp_/ _Timelapse_; DB signature gopro_cm:v1: caches Rate check
-# v. 20260717.230100 - GoPro MP4: _Timewarp_<rate> / _Timelapse_<interval> from exiftool Rate (rate lowercased; JPG skipped)
+# v. 20260717.231500 - GoPro Timewarp/Timelapse; versioning YYYYMMDD.HHMMSS (aligned with _script_header.sh)
+# 2026.07.17 - migrate SCRIPT_VERSION to YYYYMMDD.HHMMSS; GoPro capture-mode suffix, MP4 backfill, DB gopro_cm:v1: cache
 # 2026.07.17 - v. 19.239.231500 - GoPro MP4 backfill _Timewarp_/ _Timelapse_ on already-renamed files; DB gopro_cm:v1: signature skips repeat exiftool Rate reads
 # 2026.07.17 - v. 19.238.230100 - GoPro MP4: _Timewarp_<rate> / _Timelapse_<interval> from exiftool Rate (rate lowercased; JPG skipped)
 # 2026.07.06 - v. 19.237.143000 - SQLite warmup: COALESCE empty string uses '' not "" (double quotes are column names)
@@ -481,9 +481,12 @@
 # 2026.03.27 - v. 1.3 - fixed top-level path handling: keep ./ prefix in transform_name()
 # 2026.03.27 - v. 1.2 - added many changes about media files
 # 2026.04.15 - v. 17.3 - escape control characters in logged paths and warn explicitly about filenames containing them
-# SCRIPT_VERSION: first # YYYY.MM.DD line; use v. aa.bbb.HHMMSS there and on each history row (aa = month counter; bbb +1 per edit; HHMMSS = six-digit local time of that edit).
-SCRIPT_VERSION="$(LC_ALL=C grep -m1 '^# [0-9]' "$0" | sed -E -n 's/^# [0-9]{4}\.[0-9]{2}\.[0-9]{2} - v\. ([0-9]+\.[0-9]+\.[0-9]{6}) - .*/\1/p')"
-[[ "$SCRIPT_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]{6}$ ]] || SCRIPT_VERSION="0.0.000000"
+# SCRIPT_VERSION: first line matching ^# v. YYYYMMDD.HHMMSS - (same scheme as _script_header.sh / operational scripts).
+SCRIPT_VERSION="$(
+    LC_ALL=C grep -m1 -E '^# v\. [0-9]{8}\.[0-9]{6} - ' "$0" \
+        | sed -E -n 's/^# v\. ([0-9]{8}\.[0-9]{6}) - .*/\1/p'
+)"
+[[ "$SCRIPT_VERSION" =~ ^[0-9]{8}\.[0-9]{6}$ ]] || SCRIPT_VERSION="00000000.000000"
 # If a checksum list has more than this many lines, ask before checking it; default answer is No ([y/N/q]).
 LARGE_HASHFILE_LINE_PROMPT_THRESHOLD="${LARGE_HASHFILE_LINE_PROMPT_THRESHOLD:-20}"
 # With a “large” line count, still skip that prompt when the sum of sizes of existing regular-file targets is below this many bytes (default 30 GiB). Set to 0 to always prompt when over the line threshold.
@@ -1109,7 +1112,7 @@ rename_sh_window_title_restore() {
 rename_sh_window_title_apply_from_saved_argv() {
     local title="" a i script0 max_len=400 cwd_bracket="" version_prefix=""
     (( ${#RENAME_SH_ORIGINAL_ARGV[@]} > 0 )) || return 0
-    if [[ -n "$SCRIPT_VERSION" && "$SCRIPT_VERSION" != "0.0.000000" ]]; then
+    if [[ -n "$SCRIPT_VERSION" && "$SCRIPT_VERSION" != "00000000.000000" ]]; then
         version_prefix="v${SCRIPT_VERSION} "
     fi
     script0="${RENAME_SH_ORIGINAL_ARGV[0]}"
