@@ -1,6 +1,7 @@
 #!/bin/bash
-# v. 20260718.093500 - _part_XX: group by camera+session; chain when prev time+duration≈next
+# v. 20260718.094500 - _part_XX: filename wall-clock gap when playback duration chain fails (timelapse)
 
+# 2026.07.18 - v. 0.15.13 - _part_XX: after duration chain, accept filename wall-clock gap (timelapse ≠ playback length)
 # 2026.07.18 - v. 0.15.12 - _part_XX: group by camera+middle (not full stem); consecutive parts merge when filename times chain (prev+duration≈next)
 # 2026.07.15 - v. 0.15.10 - merge outputs: …_concat_parts_01-NN.mp4 (concat before parts)
 # 2026.07.15 - v. 0.15.9 - size-split output: …_parts_01-NN_concat.mp4 (chapter count), fix middle/camera join
@@ -2359,13 +2360,14 @@ part_chapter_group_key_from_basename() {
   printf '%s%s\n' "$PART_STEM" "${PART_PROXY}"
 }
 
-# True when _part_XX filename times chain like size-split: same start time, or
-# previous part start + ffprobe duration ≈ next part start (± tolerance).
+# True when _part_XX filename times chain: same start time, previous start + ffprobe
+# duration ≈ next start (real-time video), or wall-clock gap between filename stamps
+# (timelapse playback length ≠ time until the next chapter starts).
 part_chapter_timestamps_follow() {
   local prev_f="$1" next_f="$2"
   local pb nb prev_base next_base
   local prev_date prev_time next_date next_time
-  local prev_epoch next_epoch dur expected delta tol min_gap max_gap gap
+  local prev_epoch next_epoch dur expected delta tol part_min_gap part_max_gap gap
   pb="${prev_f##*/}"
   nb="${next_f##*/}"
   prev_base=$(part_chapter_gopro_parse_base "$pb") || return 1
@@ -2380,11 +2382,8 @@ part_chapter_timestamps_follow() {
   fi
 
   tol="${PGM_SIZE_SPLIT_TIME_TOLERANCE_SEC:-180}"
-  min_gap="${PGM_SIZE_SPLIT_TIME_MIN_GAP_SEC:-300}"
-  max_gap="${PGM_SIZE_SPLIT_TIME_MAX_GAP_SEC:-720}"
-  if size_split_tier_for_file "$prev_f" | grep -qx 12; then
-    max_gap="${PGM_SIZE_SPLIT_12G_TIME_MAX_GAP_SEC:-2400}"
-  fi
+  part_min_gap="${PGM_PART_CHAPTER_TIME_MIN_GAP_SEC:-60}"
+  part_max_gap="${PGM_PART_CHAPTER_TIME_MAX_GAP_SEC:-7200}"
 
   dur=$(ffprobe_duration_seconds "$prev_f" 2>/dev/null) || dur=""
 
@@ -2393,11 +2392,12 @@ part_chapter_timestamps_follow() {
     if [[ -n "$dur" ]]; then
       expected=$(awk -v p="$prev_epoch" -v d="$dur" 'BEGIN{printf "%d", p+d+0.5}')
       delta=$(( next_epoch - expected ))
-      (( delta >= -tol && delta <= tol ))
-      return $?
+      if (( delta >= -tol && delta <= tol )); then
+        return 0
+      fi
     fi
     delta=$(( next_epoch - prev_epoch ))
-    (( delta >= min_gap && delta <= max_gap ))
+    (( delta >= part_min_gap && delta <= part_max_gap ))
     return $?
   fi
 
@@ -2407,14 +2407,12 @@ part_chapter_timestamps_follow() {
   if [[ -n "$dur" ]]; then
     expected=$(awk -v p="$prev_epoch" -v d="$dur" 'BEGIN{printf "%d", p+d+0.5}')
     delta=$(( next_epoch - expected ))
-    if (( next_epoch < prev_epoch )); then
-      return 1
+    if (( next_epoch >= prev_epoch && delta >= -tol && delta <= tol )); then
+      return 0
     fi
-    (( delta >= -tol && delta <= tol ))
-    return $?
   fi
   gap=$(( next_epoch - prev_epoch ))
-  (( next_epoch >= prev_epoch && gap >= min_gap && gap <= max_gap ))
+  (( next_epoch >= prev_epoch && gap >= part_min_gap && gap <= part_max_gap ))
 }
 
 # Lowest _part_XX number in a run (after numeric sort).
@@ -2626,7 +2624,7 @@ print_group_plan() {
     fi
   done
   if (( part_groups > 0 )); then
-    echo "Merge candidates (_part_XX chapters; consecutive parts from part_01; times must chain when each part has its own timestamp):"
+    echo "Merge candidates (_part_XX chapters; consecutive parts from part_01; same start time or chaining filename times):"
     gidx=0
     for blob in "${GROUP_BLOBS[@]}"; do
       group_files_to_array "$blob" files
