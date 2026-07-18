@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# v. 20260718.151800 - underscore-leading .par2: allow normalize (commas, dates); keep leading _
+# v. 20260718.162000 - Samsung photo/video: add _-_-_Samsung_<model> from exiftool metadata
 
+# 2026.07.18 - v. 19.245.162000 - Samsung timestamp media (YYYYMMDD_HHMMSS.ext): exiftool Samsung Model → Samsung_S22_Ultra etc.
 # 2026.07.18 - v. 19.244.151800 - underscore-leading .par2: run transform_basename (comma→_, date compact); preserve leading _ (was: skip rename entirely since v. 18.97)
 # 2026.07.18 - v. 19.243.142000 - GoPro: drop lone _part_XX when adding Timewarp/Timelapse; fix part detect on GoPro_Mission1_Pro names
 # 2026.07.18 - v. 19.242.120500 - GoPro Timelapse: ignore Rate …sec when audio track present; strip false _Timelapse_ suffix
@@ -9024,6 +9025,106 @@ gopro_format_camera_basename_output() {
     fi
 }
 
+# Samsung Galaxy phone photo/video: YYYYMMDD_HHMMSS.ext → YYYYMMDD_HHMMSS_-_-_Samsung_<model>.ext
+samsung_media_basename_matches() {
+    local bn="$1"
+    local lower="${bn,,}"
+    [[ "$lower" =~ ^[0-9]{8}_[0-9]{6}\.(3gp|heic|heif|jpeg|jpg|m4v|mkv|mov|mp4|png|webm)$ ]]
+}
+
+samsung_already_renamed_basename_matches() {
+    local bn="$1"
+    local lower="${bn,,}"
+    [[ "$lower" =~ ^[0-9]{8}_[0-9]{6}_(-__-_|-_-_)samsung_.+\.(3gp|heic|heif|jpeg|jpg|m4v|mkv|mov|mp4|png|webm)$ ]]
+}
+
+samsung_exif_is_samsung() {
+    local exif="$1"
+    if printf '%s\n' "$exif" | grep -qiE '^Samsung Model[[:space:]]*:'; then
+        return 0
+    fi
+    if printf '%s\n' "$exif" | grep -qiE '^Author[[:space:]]*:.*[Ss]amsung'; then
+        return 0
+    fi
+    return 1
+}
+
+samsung_model_code_from_exif() {
+    local exif="$1"
+    local model="" author=""
+
+    model="$(printf '%s\n' "$exif" | grep -i '^Samsung Model' | head -n 1 \
+        | sed -E 's/^[^:]+:[[:space:]]*//' | tr -d $'\r' | tr '[:lower:]' '[:upper:]')"
+    if [[ -n "$model" ]]; then
+        printf '%s' "$model"
+        return 0
+    fi
+
+    author="$(printf '%s\n' "$exif" | grep -i '^Author' | head -n 1 \
+        | sed -E 's/^[^:]+:[[:space:]]*//' | tr -d $'\r')"
+    if [[ "$author" =~ (SM-[A-Z0-9]+) ]]; then
+        printf '%s' "${BASH_REMATCH[1]}"
+        return 0
+    fi
+    if [[ "$author" =~ [Ss]amsung[[:space:]]+(SM-[A-Z0-9]+) ]]; then
+        printf '%s' "${BASH_REMATCH[1]}"
+        return 0
+    fi
+
+    return 1
+}
+
+samsung_friendly_model_from_code() {
+    local code="$1"
+    code="${code^^}"
+    case "$code" in
+        SM-S908*|SM-S908B) printf '%s' 'S22_Ultra' ;;
+        SM-S906*|SM-S906B) printf '%s' 'S22_Plus' ;;
+        SM-S901*|SM-S901B) printf '%s' 'S22' ;;
+        SM-S918*|SM-S918B) printf '%s' 'S23_Ultra' ;;
+        SM-S916*|SM-S916B) printf '%s' 'S23_Plus' ;;
+        SM-S911*|SM-S911B) printf '%s' 'S23' ;;
+        SM-S928*|SM-S928B) printf '%s' 'S24_Ultra' ;;
+        SM-S926*|SM-S926B) printf '%s' 'S24_Plus' ;;
+        SM-S921*|SM-S921B) printf '%s' 'S24' ;;
+        SM-S938*|SM-S938B) printf '%s' 'S25_Ultra' ;;
+        SM-S936*|SM-S936B) printf '%s' 'S25_Plus' ;;
+        SM-S931*|SM-S931B) printf '%s' 'S25' ;;
+        SM-S721*|SM-S721B) printf '%s' 'S24_FE' ;;
+        SM-S711*|SM-S711B) printf '%s' 'S23_FE' ;;
+        *)
+            code="${code#SM-}"
+            code="${code//-/_}"
+            [[ -n "$code" ]] || return 1
+            printf '%s' "$code"
+            ;;
+    esac
+}
+
+transform_samsung_media_basename() {
+    local file="$1"
+    local base="$2"
+    local exifloc exif model_code friendly_model ext stem ts
+
+    samsung_media_basename_matches "$base" || return 1
+    samsung_already_renamed_basename_matches "$base" && return 1
+
+    exifloc="$(resolve_rename_exiftool)" || return 1
+    exif="$("$exifloc" -api largefilesupport=1 "$file" 2>/dev/null)" || return 1
+    [[ -n "$exif" ]] || return 1
+    samsung_exif_is_samsung "$exif" || return 1
+
+    model_code="$(samsung_model_code_from_exif "$exif")" || return 1
+    friendly_model="$(samsung_friendly_model_from_code "$model_code")" || return 1
+
+    ext="${base##*.}"
+    stem="${base%.*}"
+    [[ "$stem" =~ ^[0-9]{8}_[0-9]{6}$ ]] || return 1
+    ts="$stem"
+
+    gopro_format_camera_basename_output "$ts" "Samsung" "$friendly_model" "" "$ext"
+}
+
 # Sony XAVC-S / professionalDisc: C0101.MP4 + C0101M01.XML (NonRealTimeMeta sidecar).
 RENAME_SIDECAR_KIND=""
 
@@ -10119,6 +10220,28 @@ transform_name() {
             vlog "Olympus voice recorder rename: $base -> $_olympus_try"
         else
             vlog "Olympus voice recorder rename: no usable timestamp for $base (rc=$_olympus_rc); falling back to normal rename"
+        fi
+    fi
+
+    local _samsung_applied=0 _samsung_try="" _samsung_rc=0
+    if [[ -f "$f" ]] && (( _gopro_applied == 0 && _sony_applied == 0 && _olympus_applied == 0 )) \
+        && samsung_media_basename_matches "$base"; then
+        local _tn_save_e_sam=0
+        [[ $- == *e* ]] && _tn_save_e_sam=1
+        set +e
+        _samsung_try="$(transform_samsung_media_basename "$f" "$base")"
+        _samsung_rc=$?
+        if ((_tn_save_e_sam)); then
+            set -e
+        else
+            set +e
+        fi
+        if (( _samsung_rc == 0 )) && [[ -n "$_samsung_try" ]]; then
+            newbase="$_samsung_try"
+            _samsung_applied=1
+            vlog "Samsung media rename: $base -> $_samsung_try"
+        else
+            vlog "Samsung media rename: no usable Samsung metadata for $base (rc=$_samsung_rc); falling back to normal rename"
         fi
     fi
 
