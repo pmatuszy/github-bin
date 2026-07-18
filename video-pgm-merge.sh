@@ -1,6 +1,7 @@
 #!/bin/bash
-# v. 20260718.101800 - seam preview prompts default to Y (play / repeat)
+# v. 20260718.105300 - seam preview: play default N, repeat default Y
 
+# 2026.07.18 - v. 0.15.18 - seam preview: play default skip; repeat default Y
 # 2026.07.18 - v. 0.15.17 - seam preview: default Y for play and repeat prompts
 # 2026.07.18 - v. 0.15.15 - _part_XX: consecutive parts from part_01 merge without timestamp chain; GoPro Rate 1_5sec timelapse detection
 # 2026.07.18 - v. 0.15.14 - _part_XX timelapse: exiftool Rate or _Timelapse_ basename; wall gap vs playback ratio (~5x for 8min→40-45min)
@@ -1119,10 +1120,10 @@ prompt_seam_terminal_previews() {
 
     echo "--- ${ord} seam (${seam_num} of ${total_seams}) ---"
     echo "  ${boundary_left[$i]} | ${boundary_right[$i]}  at  ${pos}"
-    echo "  [Y] Play output at this seam (${PGM_SEAM_PREVIEW_BEFORE}s before join, ${clip_total}s clip) (default)"
-    echo "  [n] Skip this seam"
+    echo "  [y] Play output at this seam (${PGM_SEAM_PREVIEW_BEFORE}s before join, ${clip_total}s clip)"
+    echo "  [N] Skip this seam (default)"
     echo "  [q] Quit"
-    pgm_read_key "Play ${ord} seam in terminal? [Y/n/q]: " y
+    pgm_read_key "Play ${ord} seam in terminal? [y/N/q]: " n
     choice="${REPLY,,}"
     case "$choice" in
       y)
