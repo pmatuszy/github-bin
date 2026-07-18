@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# v. 20260718.094000 - GoPro capture-mode backfill: return 0 when unchanged (set -E ERR in $(...))
+
+# 2026.07.18 - v. 19.240.094000 - GoPro capture-mode backfill: return 0 on no-change paths (fix ERR trap abort under set -E in transform_name)
 # v. 20260717.231500 - GoPro Timewarp/Timelapse; versioning YYYYMMDD.HHMMSS (aligned with _script_header.sh)
 # 2026.07.17 - migrate SCRIPT_VERSION to YYYYMMDD.HHMMSS; GoPro capture-mode suffix, MP4 backfill, DB gopro_cm:v1: cache
 # 2026.07.17 - v. 19.239.231500 - GoPro MP4 backfill _Timewarp_/ _Timelapse_ on already-renamed files; DB gopro_cm:v1: signature skips repeat exiftool Rate reads
@@ -8740,31 +8743,32 @@ gopro_capture_mode_db_cache_hit() {
 }
 
 # Insert _Timewarp_/ _Timelapse_ into already-renamed GoPro MP4 names; cache negative hits in DB.
+# Not applicable / no change must return 0 (empty stdout) — return 1 fires ERR under set -E in $(...).
 maybe_transform_gopro_capture_mode_backfill() {
     local f="$1"
     local base="$2"
     local rate="" mode_suffix="" newbase=""
 
-    gopro_renamed_mp4_basename_matches "$base" || return 1
-    gopro_basename_has_capture_mode_suffix "$base" && return 1
+    gopro_renamed_mp4_basename_matches "$base" || return 0
+    gopro_basename_has_capture_mode_suffix "$base" && return 0
 
     if gopro_capture_mode_suffix_from_basename "$base" >/dev/null 2>&1; then
-        return 1
+        return 0
     fi
 
     if gopro_capture_mode_db_cache_hit "$f"; then
         vlog "GoPro capture mode DB cache hit for '$base' (${DB_CACHE_GOPRO_CAPTURE[$(db_abs_path "$f")]})."
-        return 1
+        return 0
     fi
 
     if ! resolve_rename_exiftool >/dev/null; then
-        return 1
+        return 0
     fi
 
     rate="$(gopro_fetch_rate_tag "$f")" || rate=""
     mode_suffix="$(gopro_video_capture_mode_suffix_from_rate "$rate")"
     if [[ -n "$mode_suffix" ]]; then
-        newbase="$(gopro_basename_with_capture_mode_suffix "$base" "$mode_suffix")" || return 1
+        newbase="$(gopro_basename_with_capture_mode_suffix "$base" "$mode_suffix")" || return 0
         vlog "GoPro capture mode backfill: $base -> $newbase (Rate=${rate:-?})"
         printf '%s' "$newbase"
         return 0
@@ -8772,7 +8776,7 @@ maybe_transform_gopro_capture_mode_backfill() {
 
     db_mark_gopro_capture_mode_checked "$f" "none"
     vlog "GoPro capture mode: no Timewarp/Timelapse for '$base' (Rate=${rate:-OFF}); cached in DB."
-    return 1
+    return 0
 }
 
 gopro_mark_capture_mode_db_from_basename() {
