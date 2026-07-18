@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# v. 20260718.094000 - GoPro capture-mode backfill: return 0 when unchanged (set -E ERR in $(...))
+# v. 20260718.100800 - gopro_renamed_mp4: match GOPRO7_BLACK (not only GOPRO_…)
 
+# 2026.07.18 - v. 19.241.100800 - GoPro capture-mode backfill: recognize GOPRO7_BLACK renamed names (regex required GOPRO_ underscore)
 # 2026.07.18 - v. 19.240.094000 - GoPro capture-mode backfill: return 0 on no-change paths (fix ERR trap abort under set -E in transform_name)
 # v. 20260717.231500 - GoPro Timewarp/Timelapse; versioning YYYYMMDD.HHMMSS (aligned with _script_header.sh)
 # 2026.07.17 - migrate SCRIPT_VERSION to YYYYMMDD.HHMMSS; GoPro capture-mode suffix, MP4 backfill, DB gopro_cm:v1: cache
@@ -8695,10 +8696,10 @@ gopro_capture_mode_suffix_from_basename() {
     return 1
 }
 
-# Already metadata-renamed GoPro MP4 (YYYYMMDD…_GoPro_… / GOPRO…), not raw GH/GOPR names.
+# Already metadata-renamed GoPro MP4 (YYYYMMDD…_GoPro_… / GOPRO7_BLACK …), not raw GH/GOPR names.
 gopro_renamed_mp4_basename_matches() {
     local base="$1"
-    [[ "$base" =~ ^[0-9]{8}_[0-9]{6}_(-__-_|-_-_)(GoPro|GOPRO)_.+\.[mM][pP]4$ ]]
+    [[ "$base" =~ ^[0-9]{8}_[0-9]{6}_(-__-_|-_-_)(GoPro_[A-Za-z0-9_]+|GOPRO[0-9]+_[A-Z0-9]+|GOPRO_[A-Z0-9]+).*\.[mM][pP]4$ ]]
 }
 
 gopro_basename_with_capture_mode_suffix() {
