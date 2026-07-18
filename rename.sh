@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# v. 20260718.142000 - GoPro: omit lone _part_XX on capture-mode backfill; fix part detect
+# v. 20260718.151800 - underscore-leading .par2: allow normalize (commas, dates); keep leading _
 
+# 2026.07.18 - v. 19.244.151800 - underscore-leading .par2: run transform_basename (comma→_, date compact); preserve leading _ (was: skip rename entirely since v. 18.97)
 # 2026.07.18 - v. 19.243.142000 - GoPro: drop lone _part_XX when adding Timewarp/Timelapse; fix part detect on GoPro_Mission1_Pro names
 # 2026.07.18 - v. 19.242.120500 - GoPro Timelapse: ignore Rate …sec when audio track present; strip false _Timelapse_ suffix
 # 2026.07.18 - v. 19.241.100800 - GoPro capture-mode backfill: recognize GOPRO7_BLACK renamed names (regex required GOPRO_ underscore)
@@ -5777,9 +5778,20 @@ is_archive_compressed_file() {
     return 1
 }
 
+is_par2_file() {
+    local bn lower
+    bn="$1"
+    [[ "$bn" != */* ]] || bn="$(basename -- "$bn")"
+    lower="${bn,,}"
+    [[ "$lower" == *.par2 ]]
+}
+
 basename_preserve_leading_underscore_file() {
-    local p="$1"
-    is_checksum_file "$p" || is_archive_compressed_file "$p"
+    local p="$1" bn
+    is_checksum_file "$p" && return 0
+    is_archive_compressed_file "$p" && return 0
+    bn="$(basename -- "$p")"
+    is_par2_file "$bn" && [[ "$bn" == _* ]]
 }
 
 # Leading underscore run on stem (_ or __ etc.) — preserved through transform_basename.
@@ -6393,15 +6405,6 @@ is_okladka_cover_keep_leading_underscore() {
     [[ "$bn" != */* ]] || bn="$(basename -- "$bn")"
     lower="${bn,,}"
     [[ "$lower" == _*okladka*jpg || "$lower" == _*okladna*jpg ]]
-}
-
-# PAR2 repair sets often use a leading underscore on the volume/slice basename; keep those names untouched.
-is_protected_par2_name() {
-    local bn lower
-    bn="$1"
-    [[ "$bn" != */* ]] || bn="$(basename -- "$bn")"
-    lower="${bn,,}"
-    [[ "$bn" == _* && "$lower" == *.par2 ]]
 }
 
 # Internet shortcut: basename contains "torrent" and ends in .url (any case).
@@ -9999,19 +10002,6 @@ transform_name() {
     base="$(basename -- "$f")"
     audio_ext_re='(mp3|aac|m4a|flac|ogg|oga|opus|wav|wma|alac|aiff|ape|mka|mp2|mp1|ac3)'
     common_media_ext_re='(mp3|aac|m4a|flac|ogg|oga|opus|wav|wma|alac|aiff|ape|mka|mp2|mp1|ac3|mp4|m4v|mov|mkv|webm|avi|jpg|jpeg|png|gif|webp|heic|heif|bmp|nef|psb|psd|psdt|tif|tiff|xmp)'
-
-    if [[ -f "$f" ]] && is_protected_par2_name "$f"; then
-        if [[ "$dir" == "." ]]; then
-            if [[ "$f" == ./* ]]; then
-                printf './%s' "$base"
-            else
-                printf '%s' "$base"
-            fi
-        else
-            printf '%s/%s' "$dir" "$base"
-        fi
-        return 0
-    fi
 
     if [[ -f "$f" ]] && is_protected_checksum_name "$f"; then
         if [[ "$dir" == "." ]]; then
