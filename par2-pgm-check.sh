@@ -1,6 +1,7 @@
 #!/bin/bash
-# v. 20260718.154300 - _script_header banner; -h/-v/--no_startup_delay CLI
+# v. 20260718.154700 - auto-detect PAR2 index in cwd; rename prompt defaults Y (20s timeout)
 
+# 2026.07.18 - v. 0.1.2 - optional <par2-file>; auto-pick sole index .par2 in directory
 # 2026.07.18 - v. 0.1.1 - github-bin consistency: show_help, print_version_banner, script footer
 # 2026.07.18 - v. 0.1.0 - initial release: misnamed-file detection, hash gate, interactive PAR2 metadata update
 #
@@ -11,10 +12,10 @@
 
 show_help() {
   cat <<EOF
-Usage: $(basename "$0") [-h|--help] [-v|--version] [--no_startup_delay] <par2-file> [directory] [options]
+Usage: $(basename "$0") [-h|--help] [-v|--version] [--no_startup_delay] [par2-file] [directory] [options]
 
-  <par2-file>   Main PAR2 index file (the small .par2 without .vol in name)
-  [directory]   Directory with data files (default: directory of <par2-file>)
+  [par2-file]   Main PAR2 index file (optional if exactly one index .par2 is in the directory)
+  [directory]   Directory with data files (default: current directory or directory of <par2-file>)
 
 Options:
   -h, --help           Show this help and exit.
@@ -34,9 +35,45 @@ PAR2 metadata update, PAR2 entries in the hash file are refreshed (*_old.par2
 is omitted).
 
 Examples:
+  $(basename "$0")
   $(basename "$0") "_2015.07.19_-_kosciol,_Santa_Monica.par2"
   $(basename "$0") "archive.par2" /path/to/files --yes
 EOF
+}
+
+is_par2_index_file() {
+    local base="$1"
+    [[ "$base" == *.par2 || "$base" == *.PAR2 ]] || return 1
+    [[ "$base" == *_old.par2 ]] && return 1
+    [[ "$base" =~ \.vol[0-9]*[-+_][0-9]+\.par2$ ]] && return 1
+    return 0
+}
+
+find_par2_index_in_dir() {
+    local dir="$1"
+    local f base
+    local -a candidates=()
+
+    shopt -s nullglob
+    for f in "$dir"/*.par2 "$dir"/*.PAR2; do
+        [[ -f "$f" ]] || continue
+        base="$(basename "$f")"
+        is_par2_index_file "$base" || continue
+        candidates+=("$f")
+    done
+    shopt -u nullglob
+
+    if (( ${#candidates[@]} == 1 )); then
+        printf '%s\n' "${candidates[0]}"
+        return 0
+    fi
+    if (( ${#candidates[@]} == 0 )); then
+        return 1
+    fi
+
+    echo "Multiple PAR2 index files found in $dir - specify which one to use:" >&2
+    printf '  %s\n' "${candidates[@]}" >&2
+    return 2
 }
 
 HEADER_EXTRA_ARGS=()
@@ -61,6 +98,7 @@ OUT2_FILE=""
 RENAME_PY=""
 PAR2_FILE=""
 DATA_DIR=""
+PROMPT_TIMEOUT="${PROMPT_TIMEOUT:-20}"
 
 cleanup() {
     [[ -n "$OUT2_FILE" && -f "$OUT2_FILE" ]] && rm -f "$OUT2_FILE"
@@ -192,10 +230,14 @@ prompt_and_apply_rename() {
         echo
         echo "Misnamed files can be fixed by updating filenames inside the PAR2 set"
         echo "(disk filenames stay unchanged)."
-        read -r -p "Update PAR2 archives with the new filenames? [y/N] " ans
+        echo "PAR2 index file: $(basename "$PAR2_FILE")"
+        if ! read -t "$PROMPT_TIMEOUT" -r -p "Update PAR2 archives with the new filenames? [Y/n] (auto-yes in ${PROMPT_TIMEOUT}s) " ans; then
+            ans=Y
+            echo
+        fi
+        [[ -z "$ans" ]] && ans=Y
         case "$ans" in
-            y|Y|yes|YES) ;;
-            *) echo "Skipped PAR2 metadata update."; return 0 ;;
+            n|N|no|NO) echo "Skipped PAR2 metadata update."; return 0 ;;
         esac
     fi
 
@@ -263,7 +305,7 @@ print_summary() {
             rename_cmd+=" $(printf '%q' "${MISNAMED_PAR2[$i]}//${MISNAMED_DISK[$i]}")"
         done
         if (( NO_RENAME == 0 && AUTO_RENAME == 0 )); then
-            echo "You will be asked whether to update PAR2 metadata automatically."
+            echo "You will be asked whether to update PAR2 metadata (default: yes, ${PROMPT_TIMEOUT}s timeout)."
         elif (( AUTO_RENAME == 1 )); then
             echo "PAR2 metadata will be updated automatically (--yes)."
         else
@@ -343,10 +385,24 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
+if [[ -n "$PAR2_FILE" && -d "$PAR2_FILE" && -z "$DATA_DIR" ]]; then
+    DATA_DIR="$PAR2_FILE"
+    PAR2_FILE=""
+fi
+
 if [[ -z "$PAR2_FILE" ]]; then
-    show_help
-    return_code=1
-    finish
+    search_dir="${DATA_DIR:-.}"
+    search_dir="$(abs_path "$search_dir")"
+    [[ -d "$search_dir" ]] || die "Directory not found: $search_dir"
+    find_rc=0
+    PAR2_FILE="$(find_par2_index_in_dir "$search_dir")" || find_rc=$?
+    if (( find_rc == 1 )); then
+        show_help
+        return_code=1
+        finish
+    fi
+    (( find_rc == 0 )) || die "Could not select a PAR2 index file in: $search_dir"
+    echo "Using PAR2 index: $(basename "$PAR2_FILE")"
 fi
 
 command -v "$PAR2_CMD" >/dev/null 2>&1 || die "'$PAR2_CMD' not found. Install par2cmdline or set PAR2_CMD."
