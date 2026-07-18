@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# v. 20260718.181500 - Samsung SM-G903F (S5 Neo) friendly model name
+# v. 20260718.183500 - Nikon MAT*.nef/.xmp → YYYYMMDD_HHMMSS_-_-_Nikon_<model>
 
-# 2026.07.18 - v. 19.248.181500 - Samsung SM-G903F → S5_Neo (not raw G903F suffix)
+# 2026.07.18 - v. 19.249.183500 - Nikon MAT####.NEF+XMP: capture date prefix, Nikon_D200 suffix, RawFileName via nef_xmp pair
 # 2026.07.18 - v. 19.246.175800 - fix Samsung device suffix lost when transform_basename ran after exiftool rename
 # 2026.07.18 - v. 19.245.162000 - Samsung timestamp media (YYYYMMDD_HHMMSS.ext): exiftool Samsung Model → Samsung_S22_Ultra etc.
 # 2026.07.18 - v. 19.244.151800 - underscore-leading .par2: run transform_basename (comma→_, date compact); preserve leading _ (was: skip rename entirely since v. 18.97)
@@ -1688,6 +1688,121 @@ transform_olympus_voice_recorder_basename() {
     stem="${base%.*}"
     ext="${base##*.}"
     printf '%s_-_-_Olympus_voice_recorder-%s.%s' "$ts" "$stem" "$ext"
+}
+
+# Nikon DSLR raw: MAT####.nef / .xmp (e.g. D200) → YYYYMMDD_HHMMSS_-_-_Nikon_D200.ext
+nikon_mat_media_basename_matches() {
+    [[ "$1" =~ ^[Mm][Aa][Tt][0-9]{4}\.([nN][eE][fF]|[xX][mM][pP])$ ]]
+}
+
+nikon_mat_already_renamed_basename_matches() {
+    local lower="${1,,}"
+    [[ "$lower" =~ ^[0-9]{8}_[0-9]{6}_(-__-_|-_-_)nikon_[a-z0-9_]+\.(nef|xmp)$ ]]
+}
+
+nikon_mat_exif_source_file() {
+    local file="$1"
+    local dir base stem buddy
+
+    [[ -f "$file" ]] || return 1
+    dir="$(dirname -- "$file")"
+    base="$(basename -- "$file")"
+    stem="${base%.*}"
+    if [[ "${base,,}" == *.nef ]]; then
+        printf '%s' "$file"
+        return 0
+    fi
+    if [[ "${base,,}" == *.xmp ]]; then
+        buddy="$(nef_xmp_resolve_nef_buddy "$dir" "$stem")" || return 1
+        printf '%s' "$buddy"
+        return 0
+    fi
+    return 1
+}
+
+nikon_exif_first_value() {
+    local exif="$1"
+    local label="$2"
+    printf '%s\n' "$exif" | grep -iE "^${label}[[:space:]]*:" | head -n 1 \
+        | sed -E 's/^[^:]+:[[:space:]]*//' | tr -d $'\r'
+}
+
+nikon_exif_is_nikon() {
+    local exif="$1"
+    local make="" model=""
+
+    make="$(nikon_exif_first_value "$exif" 'Make')"
+    if [[ "$make" =~ [Nn][Ii][Kk][Oo][Nn] ]]; then
+        return 0
+    fi
+    model="$(nikon_exif_first_value "$exif" 'Camera Model Name')"
+    [[ "$model" =~ [Nn][Ii][Kk][Oo][Nn] ]]
+}
+
+nikon_model_suffix_from_exif() {
+    local exif="$1"
+    local model=""
+
+    model="$(nikon_exif_first_value "$exif" 'Camera Model Name')"
+    model="${model^^}"
+    model="${model#NIKON CORPORATION }"
+    model="${model#NIKON }"
+    model="$(sony_clip_normalize_device_token "$model")"
+    [[ -n "$model" ]] || return 1
+    printf '%s' "$model"
+}
+
+nikon_capture_timestamp_yyyymmdd_hhmmss() {
+    local file="$1"
+    local exifloc tag ts
+
+    exifloc="$(resolve_rename_exiftool)" || return 1
+    for tag in DateTimeOriginal CreateDate; do
+        ts="$("$exifloc" -api largefilesupport=1 -s3 -d '%Y%m%d_%H%M%S' "-${tag}" "$file" 2>/dev/null)" || ts=""
+        ts="${ts//$'\r'/}"
+        [[ "$ts" =~ ^[0-9]{8}_[0-9]{6}$ ]] || continue
+        printf '%s' "$ts"
+        return 0
+    done
+    return 1
+}
+
+transform_nikon_mat_media_basename() {
+    local file="$1"
+    local base="$2"
+    local exifloc exif exif_file ts model_suffix ext
+    local _nk_err_trap="" _nk_save_e=0
+
+    _transform_nikon_err_trap_restore() {
+        eval "${_nk_err_trap:-}"
+        if ((_nk_save_e)); then
+            set -e
+        else
+            set +e
+        fi
+    }
+
+    nikon_mat_media_basename_matches "$base" || return 1
+    nikon_mat_already_renamed_basename_matches "$base" && return 1
+
+    _nk_save_e=0
+    [[ $- == *e* ]] && _nk_save_e=1
+    set +e
+    _nk_err_trap="$(trap -p ERR || true)"
+    trap - ERR
+    trap '_transform_nikon_err_trap_restore' RETURN
+
+    exifloc="$(resolve_rename_exiftool)" || return 1
+    exif_file="$(nikon_mat_exif_source_file "$file")" || return 1
+    exif="$("$exifloc" -api largefilesupport=1 "$exif_file" 2>/dev/null)" || return 1
+    [[ -n "$exif" ]] || return 1
+    nikon_exif_is_nikon "$exif" || return 1
+
+    ts="$(nikon_capture_timestamp_yyyymmdd_hhmmss "$exif_file")" || return 1
+    model_suffix="$(nikon_model_suffix_from_exif "$exif")" || return 1
+
+    ext="${base##*.}"
+    gopro_format_camera_basename_output "$ts" "Nikon" "$model_suffix" "" "$ext"
 }
 
 text_file_has_crlf() {
@@ -10282,7 +10397,29 @@ transform_name() {
         fi
     fi
 
-    if [[ -f "$f" ]] && (( _gopro_applied == 0 && _sony_applied == 0 && _olympus_applied == 0 )) && [[ "$stopped_by_user" != yes ]]; then
+    local _nikon_applied=0 _nikon_try="" _nikon_rc=0
+    if [[ -f "$f" ]] && (( _gopro_applied == 0 && _sony_applied == 0 && _olympus_applied == 0 )) \
+        && nikon_mat_media_basename_matches "$base"; then
+        local _tn_save_e_nk=0
+        [[ $- == *e* ]] && _tn_save_e_nk=1
+        set +e
+        _nikon_try="$(transform_nikon_mat_media_basename "$f" "$base")"
+        _nikon_rc=$?
+        if ((_tn_save_e_nk)); then
+            set -e
+        else
+            set +e
+        fi
+        if (( _nikon_rc == 0 )) && [[ -n "$_nikon_try" ]]; then
+            newbase="$_nikon_try"
+            _nikon_applied=1
+            vlog "Nikon MAT rename: $base -> $_nikon_try"
+        else
+            vlog "Nikon MAT rename: no usable metadata for $base (rc=$_nikon_rc); falling back to normal rename"
+        fi
+    fi
+
+    if [[ -f "$f" ]] && (( _gopro_applied == 0 && _sony_applied == 0 && _olympus_applied == 0 && _nikon_applied == 0 )) && [[ "$stopped_by_user" != yes ]]; then
         local _gopro_part_rc=0 _gopro_part_err_trap=""
         local _tn_save_e_part=0
         [[ $- == *e* ]] && _tn_save_e_part=1
@@ -10308,7 +10445,7 @@ transform_name() {
     local _tn_save_e=0
     [[ $- == *e* ]] && _tn_save_e=1
     set +e
-    if (( _gopro_applied == 0 && _sony_applied == 0 && _olympus_applied == 0 )); then
+    if (( _gopro_applied == 0 && _sony_applied == 0 && _olympus_applied == 0 && _nikon_applied == 0 )); then
         newbase="$(transform_basename "$base" "$f")"
         tb_rc=$?
     else
@@ -10337,7 +10474,7 @@ transform_name() {
             done
         fi
 
-        if (( _gopro_applied == 0 && _sony_applied == 0 && _olympus_applied == 0 )); then
+        if (( _gopro_applied == 0 && _sony_applied == 0 && _olympus_applied == 0 && _nikon_applied == 0 )); then
         # YYYYMMDD + whitespace + HH-MM-SS[_tail].media -> YYYYMMDD_HH-MM-SS[_tail].media
         # (e.g. 20190202 14-28-08_0001.jpg; not covered by YYYY-MM-DD... rules above.)
         if [[ "$newbase" =~ ^([0-9]{8})[[:space:]]+([0-9]{2})-([0-9]{2})-([0-9]{2})(_[^.]*)?(\.${common_media_ext_re})$ ]]; then
@@ -10471,7 +10608,7 @@ transform_name() {
     fi
 
     local _samsung_applied=0 _samsung_try="" _samsung_rc=0
-    if [[ -f "$f" ]] && (( _gopro_applied == 0 && _sony_applied == 0 && _olympus_applied == 0 )) \
+    if [[ -f "$f" ]] && (( _gopro_applied == 0 && _sony_applied == 0 && _olympus_applied == 0 && _nikon_applied == 0 )) \
         && samsung_media_basename_matches "$newbase"; then
         local _tn_save_e_sam=0 _sam_err_trap=""
         [[ $- == *e* ]] && _tn_save_e_sam=1

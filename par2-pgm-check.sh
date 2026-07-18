@@ -1,7 +1,7 @@
 #!/bin/bash
-# v. 20260718.155800 - verbose Step 0 message when hash file is present
+# v. 20260718.182300 - restore PAR2 mtimes from *_old.par2 after metadata rename
 
-# 2026.07.18 - v. 0.1.3 - explain hash-file gate before PAR2 scanning
+# 2026.07.18 - v. 0.1.4 - Step 3b: keep active .par2 dates matching original *_old.par2 backups
 # 2026.07.18 - v. 0.1.1 - github-bin consistency: show_help, print_version_banner, script footer
 # 2026.07.18 - v. 0.1.0 - initial release: misnamed-file detection, hash gate, interactive PAR2 metadata update
 #
@@ -199,6 +199,34 @@ update_par2_hashes() {
     return "$rc"
 }
 
+restore_par2_file_timestamps() {
+    local dir="$1"
+    local f backup_base active restored=0
+
+    shopt -s nullglob
+    for f in "$dir"/*_old.par2 "$dir"/*_old.PAR2; do
+        [[ -f "$f" ]] || continue
+        backup_base="$(basename -- "$f")"
+        backup_base="${backup_base%_old.par2}"
+        backup_base="${backup_base%_old.PAR2}"
+        active=""
+        if [[ -f "$dir/${backup_base}.par2" ]]; then
+            active="$dir/${backup_base}.par2"
+        elif [[ -f "$dir/${backup_base}.PAR2" ]]; then
+            active="$dir/${backup_base}.PAR2"
+        fi
+        [[ -n "$active" ]] || continue
+        touch -r "$f" -- "$active"
+        printf '  %s\n' "$(basename -- "$active")"
+        restored=$((restored + 1))
+    done
+    shopt -u nullglob
+
+    if (( restored > 0 )); then
+        echo "Restored original timestamps on ${restored} PAR2 file(s) (from *_old.par2 backup dates)."
+    fi
+}
+
 extract_misnamed_pairs() {
     local out_file="$1"
     local disk_file par2_name
@@ -274,6 +302,11 @@ prompt_and_apply_rename() {
     run_rename_py "${rename_args[@]}"
     local rename_rc=$?
     (( rename_rc == 0 )) || die "PAR2 metadata update failed (exit $rename_rc)."
+
+    echo
+    echo "=== Step 3b: restore PAR2 file timestamps ==="
+    echo "Setting active .par2 modification times to match the original *_old.par2 backups."
+    restore_par2_file_timestamps "$DATA_DIR"
 
     echo
     echo "=== Step 4: update hash file ==="

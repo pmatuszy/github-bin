@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# v. 20260718.155800 - clearer hash verify success/failure messages
+# v. 20260718.182300 - preserve original mtime on rewritten PAR2 files (from *_old backup)
 
 # 2026.07.18 - v. 1.2.4.0 - initial release: MultiPar-compatible PAR2 filename rename (Python CLI)
 """Modify source filenames stored inside PAR2 files.
@@ -204,11 +204,28 @@ def build_rename_map(rename_args, source_names):
     return rename_map
 
 
+def restore_par2_file_times(source_path, backup_path, saved_times=None):
+    ref_path = backup_path if os.path.exists(backup_path) else None
+    if ref_path:
+        ref_stat = os.stat(ref_path)
+        os.utime(source_path, (ref_stat.st_atime, ref_stat.st_mtime))
+        return
+    if saved_times:
+        os.utime(source_path, saved_times)
+
+
 def rewrite_par2_file(folder_path, par_file_name, set_id, rename_map):
     source_path = os.path.join(folder_path, par_file_name)
     backup_path = os.path.join(folder_path, backup_par2_name(par_file_name))
     buffer = bytearray(PACKET_BUFFER)
     rename_count = 0
+    saved_times = None
+
+    try:
+        src_stat = os.stat(source_path)
+        saved_times = (src_stat.st_atime, src_stat.st_mtime)
+    except OSError:
+        pass
 
     backup_exists = os.path.exists(backup_path)
 
@@ -291,6 +308,7 @@ def rewrite_par2_file(folder_path, par_file_name, set_id, rename_map):
             else:
                 os.replace(source_path, backup_path)
                 os.replace(temp_path, source_path)
+            restore_par2_file_times(source_path, backup_path, saved_times)
         except Exception:
             if os.path.exists(temp_path):
                 os.remove(temp_path)
