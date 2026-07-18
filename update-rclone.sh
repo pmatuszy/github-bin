@@ -1,6 +1,7 @@
 #!/bin/bash
-# v. 20260716.164840 - add -h/--help, -v/--version, --no_startup_delay
+# v. 20260718.082500 - translate remaining Polish user-facing messages to English
 
+# 2026.07.18 - v. 0.7 - translate help text and backup retry messages to English
 # 2026.05.26 - user-facing messages translated from Polish to English
 # 2026.04.21 - v. 0.6 - after failed selfupdate retries, exit with last rclone rc (not sleep's 0); comment crontab example; tighten up-to-date grep
 # 2023.12.18 - v. 0.5 - bugfix: check if rclone is installed
@@ -13,7 +14,7 @@ show_help() {
   cat <<EOF
 Usage: $(basename "$0") [-h|--help] [-v|--version] [--no_startup_delay]
 
-Nie sprawdzamy czy rclone jest uruchomiony — np. rclone mount jest ciagle aktywny; selfupdate i tak wykonujemy.
+We do not check whether rclone is already running — e.g. rclone mount stays active; selfupdate runs anyway.
 
 Options:
   -h, --help           Show this help and exit.
@@ -65,7 +66,7 @@ if [ -z "${RCLONE_BIN}" ] ; then
   exit 8
 fi
 
-# Nie sprawdzamy czy rclone jest uruchomiony — np. rclone mount jest ciagle aktywny; selfupdate i tak wykonujemy.
+# We do not check whether rclone is already running — e.g. rclone mount stays active; selfupdate runs anyway.
 
 # if pgrep -f "${RCLONE_BIN}" > /dev/null ; then
 #   m=$(

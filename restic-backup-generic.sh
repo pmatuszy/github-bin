@@ -1,6 +1,7 @@
 #!/bin/bash
-# v. 20260716.164840 - add -h/--help, -v/--version, --no_startup_delay
+# v. 20260718.082500 - translate backup retry messages to English
 
+# 2026.07.18 - v. 2.9 - translate backup retry messages to English
 # 2026.05.26 - user-facing messages translated from Polish to English
 # 2024.12.16 - v. 2.8 - bugfix: pgrep changed from pgrep -x to pgrep -xf
 # 2023.02.18 - v. 2.7 - fix a bug in curl "/usr/bin/curl: Argument list too long" by echoing HC_message in pipe to curl
@@ -165,7 +166,7 @@ if (( $script_is_run_interactively == 1 )); then
       eval ${RESTIC_BIN} --cleanup-cache --iexclude=${MY_EXCLUDES} --iexclude-file=${MY_EXCLUDE_FILE} backup / $WHAT_TO_BACKUP_ON_TOP_OF_ROOT 2>&1
       return_code=$?
       if (( $return_code != 0 )); then
-        echo ; echo "blad backupu - sprobujemy jeszcze raz - czekam 2 sekundy"
+        echo ; echo "backup failed - retrying in 2 seconds"
         sleep 2
         continue
       else
@@ -183,7 +184,7 @@ else
                   eval ${RESTIC_BIN} --cleanup-cache --iexclude=${MY_EXCLUDES} --iexclude-file=${MY_EXCLUDE_FILE} backup / $WHAT_TO_BACKUP_ON_TOP_OF_ROOT 2>&1
                   return_code=$?
                   if (( $return_code != 0 )); then
-                    echo ; echo "blad backupu - sprobujemy jeszcze raz - czekam ${LICZBA_SEKUND_MIEDZY_PONOWIENIAMI_BACKUPOW}"
+                    echo ; echo "backup failed - retrying in ${LICZBA_SEKUND_MIEDZY_PONOWIENIAMI_BACKUPOW} seconds"
                     sleep ${LICZBA_SEKUND_MIEDZY_PONOWIENIAMI_BACKUPOW}
                     continue
                   else

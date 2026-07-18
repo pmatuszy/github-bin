@@ -1,7 +1,7 @@
 #!/bin/bash
-# v. 20260716.164840 - add -h/--help, -v/--version, --no_startup_delay
+# v. 20260718.082500 - translate remaining Polish runtime messages to English
 
-# 2025.11.03 - v. 0.6 - small change to print the signal-cli version 
+# 2026.07.18 - v. 0.7 - translate remaining Polish runtime messages to English
 # 2024.12.18 - v. 0.5 - changed delay_between_runs 5 ==> 30
 # 2024.04.11 - v. 0.4 - added --dbus as required by a new version of the daemon
 # 2023.02.02 - v. 0.3 - added --foreground option to be able to use Ctrl-C 
@@ -52,7 +52,7 @@ echo
 while : ; do
   let record_seconds=secs_to_midnight+60
 
-  echo "[`date '+%Y.%m.%d %H:%M:%S'`] restart signala"
+  echo "[`date '+%Y.%m.%d %H:%M:%S'`] restarting Signal"
   timeout --foreground --preserve-status --signal=HUP --kill-after=$((record_seconds+120)) $((record_seconds+60)) \
        /opt/signal-cli/bin/signal-cli -u +41763691467 daemon --dbus 2>&1 > /encrypted/root/signal-output-`date '+%Y%m%d__%H_%M_%S'`.log
 

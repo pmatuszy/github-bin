@@ -1,7 +1,7 @@
 #!/bin/bash
-# v. 20260716.164840 - add -h/--help, -v/--version, --no_startup_delay
+# v. 20260718.082500 - translate remaining Polish runtime messages to English
 
-# 2026.05.26 - user-facing messages translated from Polish to English
+# 2026.07.18 - v. 1.9 - translate remaining Polish runtime messages to English
 # (C) Paul G. Matuszyk 2020.04.20
 # first production version
 # 2026.03.24 - v. 1.8 - if log files don't exist, we pause for a couple of seconds
@@ -69,7 +69,7 @@ echo -ne "$tcScrTitleStart $0 $tcScrTitleEnd"
 first_run=1
 echo "[`date '+%Y.%m.%d %H:%M:%S'`] starting (delay=$delay_sec, max_lines=$max_error_lines)"
 pop=`( du -ks /podsync-hdd |awk '{print $1}' ) 2>/dev/null`
-echo "[`date '+%Y.%m.%d %H:%M:%S'`] wchodzimy w petle nieskonczona"
+echo "[`date '+%Y.%m.%d %H:%M:%S'`] entering infinite loop"
 
 if [ $send_email -ne 0 ] ; then  
   echo Manually restarting podsync feeds | mutt -s "[ `hostname` ] manual podsync restart (`date '+%Y.%m.%d %H:%M:%S'`)" `hostname`@matuszyk.com
@@ -82,7 +82,7 @@ while : ; do
     if [ ${#logi[@]} -gt 0 ] ; then
       break
     fi
-    echo "[`date '+%Y.%m.%d %H:%M:%S'`] brak plikow logow (${log_glob}) - spie 10s"
+    echo "[`date '+%Y.%m.%d %H:%M:%S'`] no log files (${log_glob}) - sleeping 10s"
     sleep 10
   done
 
@@ -96,10 +96,10 @@ while : ; do
      echo '#####################################################################################################'
      echo '#####################################################################################################'
      echo 
-     echo "[`date '+%Y.%m.%d %H:%M:%S'`] liczba linii z bledami, wiec restartniemy sie"
-     echo "                      liczba blednych linii w logach to: "`egrep "server responded with a 'Too Many Requests' error|Sign in to confirm you.*re not a bot" ${log_glob}|wc -l`
+     echo "[`date '+%Y.%m.%d %H:%M:%S'`] too many error lines in logs — restarting"
+     echo "                      error lines in logs: "`egrep "server responded with a 'Too Many Requests' error|Sign in to confirm you.*re not a bot" ${log_glob}|wc -l`
      if [ $send_email -ne 0 ] ; then
-       echo restartuje feedy podsynca | mutt -s "[ `hostname` ] restart podsynca (`date '+%Y.%m.%d %H:%M:%S'`)" `hostname`@matuszyk.com
+       echo restarting podsync feeds | mutt -s "[ `hostname` ] podsync restart (`date '+%Y.%m.%d %H:%M:%S'`)" `hostname`@matuszyk.com
      fi
 
 
@@ -141,7 +141,7 @@ while : ; do
            break
          else
            sleep $sleep_dynamic_delay
-           echo -en "\r[`date '+%Y.%m.%d %H:%M:%S'`] (liczba bledow w logach: `egrep "server responded with a 'Too Many Requests' error|Sign in to confirm you.*re not a bot" ${log_glob}|wc -l`)"
+           echo -en "\r[`date '+%Y.%m.%d %H:%M:%S'`] (error lines in logs: `egrep "server responded with a 'Too Many Requests' error|Sign in to confirm you.*re not a bot" ${log_glob}|wc -l`)"
            if [ `egrep "server responded with a 'Too Many Requests' error|Sign in to confirm you.*re not a bot" ${log_glob}|wc -l` -gt $max_error_lines ] ; then
              echo " (too many lines; max allowed is $max_error_lines) ==> initiating new restart"
              break
@@ -162,22 +162,22 @@ while : ; do
      free_pct=`/bin/df --output=pcent /podsync-hdd|tail -1`
      
      if [ `egrep "server responded with a 'Too Many Requests' error|Sign in to confirm you.*re not a bot" ${log_glob}|wc -l` -le $max_error_lines ] ; then
-       echo -n "[`date '+%Y.%m.%d %H:%M:%S'`] Dziala. " 
-       echo -n "# linii z bledami w logach : `egrep "server responded with a 'Too Many Requests' error|Sign in to confirm you.*re not a bot" ${log_glob}|wc -l`"
-       echo -n ". Przybylo `echo $delta_kb|awk '{printf "%7.0f\n",$1}'` kB w /podsync-hdd (BYLO zajete: "$was_used_kb kB", JEST zajete: $is_used_kb kB, wolne kB: $free_kb,${free_pct}). "
+       echo -n "[`date '+%Y.%m.%d %H:%M:%S'`] Running. "
+       echo -n "# error lines in logs: `egrep "server responded with a 'Too Many Requests' error|Sign in to confirm you.*re not a bot" ${log_glob}|wc -l`"
+       echo -n ". Added `echo $delta_kb|awk '{printf "%7.0f\n",$1}'` kB on /podsync-hdd (was used: "$was_used_kb kB", now used: $is_used_kb kB, free kB: $free_kb,${free_pct}). "
      fi
      pop=$nast
      if [ $first_run -eq 1 ] ; then   # first run: do not wait long for second screen line - shown at next full minute
-        echo "Czekam do pelnej min."
+        echo "Waiting until full minute."
         sleep $delay_first_run 
         first_run=0
      else
        if [ `egrep "server responded with a 'Too Many Requests' error|Sign in to confirm you.*re not a bot" ${log_glob}|wc -l` -le $max_error_lines ] ; then
-         echo "Czekam min. ${delay_sec}s."
+         echo "Waiting for full minute (${delay_sec}s)."
        fi
       iteration_count=`echo "(${delay_sec}-50)/$sleep_dynamic_delay"| bc` # wait so we do not skip the next full minute ... ;-)
        for (( c=0; c<$iteration_count; c++ )); do
-         echo -en "\r[`date '+%Y.%m.%d %H:%M:%S'`] (liczba bledow w logach: `egrep "server responded with a 'Too Many Requests' error|Sign in to confirm you.*re not a bot" ${log_glob}|wc -l`)"
+         echo -en "\r[`date '+%Y.%m.%d %H:%M:%S'`] (error lines in logs: `egrep "server responded with a 'Too Many Requests' error|Sign in to confirm you.*re not a bot" ${log_glob}|wc -l`)"
          if [ `egrep "server responded with a 'Too Many Requests' error|Sign in to confirm you.*re not a bot" ${log_glob}|wc -l` -gt $max_error_lines ] ; then
            echo " (too many lines; max allowed is $max_error_lines) ==> initiating new restart"
            break
