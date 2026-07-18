@@ -1,7 +1,7 @@
 #!/bin/bash
-# v. 20260716.163224 - versioning format v. YYYYMMDD.HH24MISS
+# v. 20260718.180600 - restore terminal cursor/screen after mpv tct playback
 
-# 2026.06.23 - v. 0.6.1 - accept --start=SEC and --length=SEC (equals form)
+# 2026.07.18 - v. 0.6.2 - EXIT trap: show cursor and leave alt screen (mpv tct hides cursor)
 # 2026.06.23 - v. 0.6 - --start and --length for playing a segment (mpv seek + clip length)
 # 2026.06.23 - v. 0.5 - print full mpv command line before countdown / playback
 # 2026.06.23 - v. 0.4 - autodetect terminal size (default); countdown before playback
@@ -180,6 +180,31 @@ video_pgm_playback_countdown() {
     sleep 1
   done
   echo
+}
+
+# mpv --vo=tct hides the cursor and may switch to the alternate screen (see vo_tct.c).
+# Restore the terminal even when mpv is interrupted (Ctrl-C) before its own cleanup runs.
+VIDEO_PGM_TERMINAL_RESTORED=no
+video_pgm_restore_terminal() {
+  [[ "$VIDEO_PGM_TERMINAL_RESTORED" == yes ]] && return 0
+  VIDEO_PGM_TERMINAL_RESTORED=yes
+
+  local tty_out=/dev/tty
+  [[ -w "$tty_out" ]] 2>/dev/null || tty_out=/dev/stdout
+
+  # Cursor on (cnorm), leave alternate screen, disable common mouse reporting modes.
+  printf '\033[?25h\033[?1049l\033[?47l\033[?1000l\033[?1002l\033[?1003l\033[?1006l' >"$tty_out" 2>/dev/null || true
+  command -v tput >/dev/null 2>&1 && tput cnorm >"$tty_out" 2>/dev/null || true
+  if [[ -e /dev/tty ]]; then
+    stty sane </dev/tty 2>/dev/null || stty sane -F /dev/tty 2>/dev/null || true
+  else
+    stty sane 2>/dev/null || true
+  fi
+}
+
+video_pgm_play_ctrl_c() {
+  video_pgm_restore_terminal
+  ctrl_c
 }
 
 video_pgm_print_command_line() {
@@ -426,8 +451,13 @@ if (( TCT_AUTODETECT )); then
   video_pgm_playback_countdown "$PLAY_COUNTDOWN"
 fi
 
+trap video_pgm_restore_terminal EXIT TERM HUP
+trap video_pgm_play_ctrl_c INT
+
 "$MPV_BIN" "${MPV_ARGS[@]}" -- "$MEDIA_FILE"
 return_code=$?
+
+video_pgm_restore_terminal
 
 . /root/bin/_script_footer.sh
 exit "$return_code"
