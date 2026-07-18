@@ -1,6 +1,7 @@
 #!/bin/bash
-# v. 20260718.105400 - seam preview: play default Y, repeat default N
+# v. 20260718.105800 - seam preview tct size default 100x40 terminal cells
 
+# 2026.07.18 - v. 0.15.20 - seam preview: limit tct to 100x40 cells (PGM_SEAM_PREVIEW_WIDTH/HEIGHT)
 # 2026.07.18 - v. 0.15.19 - seam preview: play default Y; repeat default N (continue)
 # 2026.07.18 - v. 0.15.17 - seam preview: default Y for play and repeat prompts
 # 2026.07.18 - v. 0.15.15 - _part_XX: consecutive parts from part_01 merge without timestamp chain; GoPro Rate 1_5sec timelapse detection
@@ -142,6 +143,8 @@ Environment:
                           Overridden by --read-timeout.
   PGM_SEAM_PREVIEW_BEFORE Seconds before each merge point in terminal preview (default: 2).
   PGM_SEAM_PREVIEW_AFTER  Seconds after each merge point in terminal preview (default: 0).
+  PGM_SEAM_PREVIEW_WIDTH  Terminal tct width for seam preview (default: 100; empty = autodetect).
+  PGM_SEAM_PREVIEW_HEIGHT Terminal tct height for seam preview (default: 40; empty = autodetect).
   RENAME_EXIFTOOL / EXIFLOC / PGM_EXIFTOOL
                           exiftool for GoPro timelapse detection on _part_XX chains (same
                           default path as rename.sh when unset).
@@ -1069,18 +1072,30 @@ find_video_pgm_play_terminal() {
 play_merge_seam_preview_once() {
   local player="$1" output_file="$2" boundary="$3" left="$4" right="$5"
   local seam_num="$6" total_seams="$7" ord="$8"
-  local start length pos clip_total
+  local start length pos clip_total preview_w preview_h
+  local -a player_args=()
 
   read -r start length < <(merge_seam_preview_start_length "$boundary" \
     "$PGM_SEAM_PREVIEW_BEFORE" "$PGM_SEAM_PREVIEW_AFTER")
   pos="$(format_output_timeline_pos "$boundary")"
   clip_total="$(merge_seam_clip_total_seconds "$PGM_SEAM_PREVIEW_BEFORE" "$PGM_SEAM_PREVIEW_AFTER")"
   [[ -n "$ord" ]] || ord="$(pgm_ordinal_seam_label "$seam_num")"
+  preview_w="${PGM_SEAM_PREVIEW_WIDTH-100}"
+  preview_h="${PGM_SEAM_PREVIEW_HEIGHT-40}"
+  player_args=( --no_startup_delay --no-countdown )
+  if [[ -n "$preview_w" && -n "$preview_h" ]]; then
+    player_args+=( --no-autodetect -w "$preview_w" -H "$preview_h" )
+  fi
+  player_args+=( --start "$start" --length "$length" )
+
   echo
   echo "Playing output file at ${ord} seam (${seam_num} of ${total_seams}): ${output_file##*/}"
   echo "  Join: ${left} | ${right}  at  ${pos}"
   echo "  Starts ${PGM_SEAM_PREVIEW_BEFORE}s before the seam; clip length ${clip_total}s (${PGM_SEAM_PREVIEW_BEFORE}s before + ${PGM_SEAM_PREVIEW_AFTER}s after)."
-  "${player}" --no_startup_delay --no-countdown --start "$start" --length "$length" "$output_file"
+  if [[ -n "$preview_w" && -n "$preview_h" ]]; then
+    echo "  Preview size: ${preview_w} x ${preview_h} terminal cells."
+  fi
+  "${player}" "${player_args[@]}" "$output_file"
 }
 
 # Return 2 if user quits from a prompt.
@@ -3317,6 +3332,8 @@ done
 
 PGM_SEAM_PREVIEW_BEFORE="${PGM_SEAM_PREVIEW_BEFORE:-2}"
 PGM_SEAM_PREVIEW_AFTER="${PGM_SEAM_PREVIEW_AFTER:-0}"
+PGM_SEAM_PREVIEW_WIDTH="${PGM_SEAM_PREVIEW_WIDTH:-100}"
+PGM_SEAM_PREVIEW_HEIGHT="${PGM_SEAM_PREVIEW_HEIGHT:-40}"
 while [[ $# -gt 0 ]]; do
   case $1 in
     -h|--help)
