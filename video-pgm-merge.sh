@@ -1,6 +1,7 @@
 #!/bin/bash
-# v. 20260718.100500 - _part_XX: trust part_01 runs; fix GoPro Rate 1_5sec timelapse parse
+# v. 20260718.101200 - _part_XX: group when _Timelapse_/_Timewarp_ in stem (strip for parse)
 
+# 2026.07.18 - v. 0.15.16 - _part_XX: strip _Timelapse_/_Timewarp_ for GoPro parse; include mode in group key
 # 2026.07.18 - v. 0.15.15 - _part_XX: consecutive parts from part_01 merge without timestamp chain; GoPro Rate 1_5sec timelapse detection
 # 2026.07.18 - v. 0.15.14 - _part_XX timelapse: exiftool Rate or _Timelapse_ basename; wall gap vs playback ratio (~5x for 8min→40-45min)
 # 2026.07.18 - v. 0.15.13 - _part_XX: after duration chain, accept filename wall-clock gap (timelapse ≠ playback length)
@@ -1458,6 +1459,25 @@ chapter_camera_from_basename() {
   return 1
 }
 
+# rename.sh capture-mode token on stem (Timelapse_2_1sec); rate may contain underscores.
+gopro_capture_mode_token_from_stem() {
+  local stem="$1"
+  if [[ "$stem" =~ ^(.+)_(Timewarp|Timelapse)_(.+)$ ]]; then
+    printf '%s_%s\n' "${BASH_REMATCH[2]}" "${BASH_REMATCH[3]}"
+    return 0
+  fi
+  return 1
+}
+
+gopro_stem_without_capture_mode() {
+  local stem="$1"
+  if [[ "$stem" =~ ^(.+)_(Timewarp|Timelapse)_.+$ ]]; then
+    printf '%s\n' "${BASH_REMATCH[1]}"
+    return 0
+  fi
+  printf '%s\n' "$stem"
+}
+
 # GoPro clip without _part_XX: YYYYMMDD_HHMMSS[a]_…_GOPRO7_BLACK.MP4 or …_GOPRO10_BLACK_GX013496.MP4
 # Optional single letter after HHMMSS (…_200322a_…) or after the camera token (…_GOPRO10_BLACKa.MP4)
 # is rename-style chapter disambiguation when several chapters share one start time.
@@ -1477,6 +1497,17 @@ gopro_camera_suffix_from_basename() {
   if [[ "$base" =~ (GOPRO[0-9]+_[A-Z0-9]+)([a-zA-Z])?\.[mM][pP]4$ ]]; then
     GOPRO_PARSED_CAM="${BASH_REMATCH[1]}"
     GOPRO_CAM_LETTER="${BASH_REMATCH[2]}"
+    printf '%s\n' "$GOPRO_PARSED_CAM"
+    return 0
+  fi
+  # rename.sh Timewarp/Timelapse before .mp4: …_GOPRO7_BLACK_Timelapse_2_1sec.mp4
+  if [[ "$base" =~ (GOPRO[0-9]+_[A-Z0-9]+)_(Timewarp|Timelapse)_[^/]+\.[mM][pP]4$ ]]; then
+    GOPRO_PARSED_CAM="${BASH_REMATCH[1]}"
+    printf '%s\n' "$GOPRO_PARSED_CAM"
+    return 0
+  fi
+  if [[ "$base" =~ (GoPro_[A-Za-z0-9_]+)_(Timewarp|Timelapse)_[^/]+\.[mM][pP]4$ ]]; then
+    GOPRO_PARSED_CAM="${BASH_REMATCH[1]}"
     printf '%s\n' "$GOPRO_PARSED_CAM"
     return 0
   fi
@@ -2461,28 +2492,29 @@ part_chapter_parse() {
   return 1
 }
 
-# Virtual basename without _part_NN for GoPro timestamp/camera parsing.
+# Virtual basename without _part_NN (and without _Timewarp_/_Timelapse_) for GoPro parsing.
 part_chapter_gopro_parse_base() {
   local base="$1"
   part_chapter_parse "$base" || return 1
-  printf '%s.%s\n' "$PART_STEM" "$PART_EXT"
+  printf '%s.%s\n' "$(gopro_stem_without_capture_mode "$PART_STEM")" "$PART_EXT"
 }
 
-# Group key: same camera + middle + proxy; leading timestamp may differ per part.
+# Group key: same camera + middle + capture mode + proxy; leading timestamp may differ per part.
 part_chapter_group_key_from_basename() {
-  local base="$1" stripped cam mid
+  local base="$1" parse_base cam mid capture_mode=""
   part_chapter_parse "$base" || return 1
-  stripped=$(part_chapter_gopro_parse_base "$base") || return 1
-  if gopro_timestamp_cam_from_basename "$stripped"; then
-    mid=$(gopro_middle_from_basename "$stripped" 2>/dev/null) || mid=""
-    printf '%s|%s%s\n' "$GOPRO_TS_CAM" "$mid" "${PART_PROXY}"
+  capture_mode="$(gopro_capture_mode_token_from_stem "$PART_STEM" 2>/dev/null)" || capture_mode=""
+  parse_base="$(gopro_stem_without_capture_mode "$PART_STEM").${PART_EXT}"
+  if gopro_timestamp_cam_from_basename "$parse_base"; then
+    mid=$(gopro_middle_from_basename "$parse_base" 2>/dev/null) || mid=""
+    printf '%s|%s|%s%s\n' "$GOPRO_TS_CAM" "$mid" "$capture_mode" "${PART_PROXY}"
     return 0
   fi
   if cam=$(chapter_camera_from_basename "$base" 2>/dev/null); then
-    printf '%s|%s%s\n' "$cam" "" "${PART_PROXY}"
+    printf '%s|%s|%s%s\n' "$cam" "" "$capture_mode" "${PART_PROXY}"
     return 0
   fi
-  printf '%s%s\n' "$PART_STEM" "${PART_PROXY}"
+  printf '%s|%s%s\n' "$(gopro_stem_without_capture_mode "$PART_STEM")" "$capture_mode" "${PART_PROXY}"
 }
 
 # True when _part_XX filename times chain: same start time; real-time previous start +
