@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# v. 20260718.175800 - Samsung enrich after transform_basename (was overwritten by basename pass)
+# v. 20260718.180100 - Samsung JPG: EXIF Make/Model; no ERR trap on non-Samsung skip
 
+# 2026.07.18 - v. 19.247.180100 - Samsung photos use Make/Model EXIF; transform returns 0 when not applicable
 # 2026.07.18 - v. 19.246.175800 - fix Samsung device suffix lost when transform_basename ran after exiftool rename
 # 2026.07.18 - v. 19.245.162000 - Samsung timestamp media (YYYYMMDD_HHMMSS.ext): exiftool Samsung Model → Samsung_S22_Ultra etc.
 # 2026.07.18 - v. 19.244.151800 - underscore-leading .par2: run transform_basename (comma→_, date compact); preserve leading _ (was: skip rename entirely since v. 18.97)
@@ -9039,30 +9040,49 @@ samsung_already_renamed_basename_matches() {
     [[ "$lower" =~ ^[0-9]{8}_[0-9]{6}_(-__-_|-_-_)samsung_.+\.(3gp|heic|heif|jpeg|jpg|m4v|mkv|mov|mp4|png|webm)$ ]]
 }
 
+samsung_exif_first_value() {
+    local exif="$1"
+    local label="$2"
+    printf '%s\n' "$exif" | grep -iE "^${label}[[:space:]]*:" | head -n 1 \
+        | sed -E 's/^[^:]+:[[:space:]]*//' | tr -d $'\r'
+}
+
 samsung_exif_is_samsung() {
     local exif="$1"
+    local make="" model=""
+
     if printf '%s\n' "$exif" | grep -qiE '^Samsung Model[[:space:]]*:'; then
         return 0
     fi
     if printf '%s\n' "$exif" | grep -qiE '^Author[[:space:]]*:.*[Ss]amsung'; then
         return 0
     fi
-    return 1
+    make="$(samsung_exif_first_value "$exif" 'Make')"
+    if [[ "$make" =~ [Ss]amsung ]]; then
+        return 0
+    fi
+    model="$(samsung_exif_first_value "$exif" 'Camera Model Name')"
+    model="${model^^}"
+    if [[ "$model" =~ ^SM-[A-Z0-9]+ ]]; then
+        return 0
+    fi
+    model="$(samsung_exif_first_value "$exif" 'Model')"
+    model="${model^^}"
+    [[ "$model" =~ ^SM-[A-Z0-9]+ ]]
 }
 
 samsung_model_code_from_exif() {
     local exif="$1"
-    local model="" author=""
+    local model="" author="" make="" raw=""
 
-    model="$(printf '%s\n' "$exif" | grep -i '^Samsung Model' | head -n 1 \
-        | sed -E 's/^[^:]+:[[:space:]]*//' | tr -d $'\r' | tr '[:lower:]' '[:upper:]')"
-    if [[ -n "$model" ]]; then
+    model="$(samsung_exif_first_value "$exif" 'Samsung Model')"
+    model="${model^^}"
+    if [[ "$model" =~ ^SM-[A-Z0-9]+ ]]; then
         printf '%s' "$model"
         return 0
     fi
 
-    author="$(printf '%s\n' "$exif" | grep -i '^Author' | head -n 1 \
-        | sed -E 's/^[^:]+:[[:space:]]*//' | tr -d $'\r')"
+    author="$(samsung_exif_first_value "$exif" 'Author')"
     if [[ "$author" =~ (SM-[A-Z0-9]+) ]]; then
         printf '%s' "${BASH_REMATCH[1]}"
         return 0
@@ -9070,6 +9090,26 @@ samsung_model_code_from_exif() {
     if [[ "$author" =~ [Ss]amsung[[:space:]]+(SM-[A-Z0-9]+) ]]; then
         printf '%s' "${BASH_REMATCH[1]}"
         return 0
+    fi
+
+    for raw in \
+        "$(samsung_exif_first_value "$exif" 'Camera Model Name')" \
+        "$(samsung_exif_first_value "$exif" 'Model')"; do
+        raw="${raw^^}"
+        if [[ "$raw" =~ (SM-[A-Z0-9]+) ]]; then
+            printf '%s' "${BASH_REMATCH[1]}"
+            return 0
+        fi
+    done
+
+    make="$(samsung_exif_first_value "$exif" 'Make')"
+    if [[ "$make" =~ [Ss]amsung ]]; then
+        raw="$(samsung_exif_first_value "$exif" 'Model')"
+        raw="${raw^^}"
+        if [[ "$raw" =~ (SM-[A-Z0-9]+) ]]; then
+            printf '%s' "${BASH_REMATCH[1]}"
+            return 0
+        fi
     fi
 
     return 1
@@ -9106,21 +9146,38 @@ transform_samsung_media_basename() {
     local file="$1"
     local base="$2"
     local exifloc exif model_code friendly_model ext stem ts
+    local _ts_err_trap="" _ts_save_e=0
 
-    samsung_media_basename_matches "$base" || return 1
-    samsung_already_renamed_basename_matches "$base" && return 1
+    _transform_samsung_err_trap_restore() {
+        eval "${_ts_err_trap:-}"
+        if ((_ts_save_e)); then
+            set -e
+        else
+            set +e
+        fi
+    }
 
-    exifloc="$(resolve_rename_exiftool)" || return 1
-    exif="$("$exifloc" -api largefilesupport=1 "$file" 2>/dev/null)" || return 1
-    [[ -n "$exif" ]] || return 1
-    samsung_exif_is_samsung "$exif" || return 1
+    _ts_save_e=0
+    [[ $- == *e* ]] && _ts_save_e=1
+    set +e
+    _ts_err_trap="$(trap -p ERR || true)"
+    trap - ERR
+    trap '_transform_samsung_err_trap_restore' RETURN
 
-    model_code="$(samsung_model_code_from_exif "$exif")" || return 1
-    friendly_model="$(samsung_friendly_model_from_code "$model_code")" || return 1
+    samsung_media_basename_matches "$base" || return 0
+    samsung_already_renamed_basename_matches "$base" && return 0
+
+    exifloc="$(resolve_rename_exiftool)" || return 0
+    exif="$("$exifloc" -api largefilesupport=1 "$file" 2>/dev/null)" || return 0
+    [[ -n "$exif" ]] || return 0
+    samsung_exif_is_samsung "$exif" || return 0
+
+    model_code="$(samsung_model_code_from_exif "$exif")" || return 0
+    friendly_model="$(samsung_friendly_model_from_code "$model_code")" || return 0
 
     ext="${base##*.}"
     stem="${base%.*}"
-    [[ "$stem" =~ ^[0-9]{8}_[0-9]{6}$ ]] || return 1
+    [[ "$stem" =~ ^[0-9]{8}_[0-9]{6}$ ]] || return 0
     ts="$stem"
 
     gopro_format_camera_basename_output "$ts" "Samsung" "$friendly_model" "" "$ext"
@@ -10415,11 +10472,14 @@ transform_name() {
     local _samsung_applied=0 _samsung_try="" _samsung_rc=0
     if [[ -f "$f" ]] && (( _gopro_applied == 0 && _sony_applied == 0 && _olympus_applied == 0 )) \
         && samsung_media_basename_matches "$newbase"; then
-        local _tn_save_e_sam=0
+        local _tn_save_e_sam=0 _sam_err_trap=""
         [[ $- == *e* ]] && _tn_save_e_sam=1
         set +e
+        _sam_err_trap="$(trap -p ERR || true)"
+        trap - ERR
         _samsung_try="$(transform_samsung_media_basename "$f" "$newbase")"
         _samsung_rc=$?
+        eval "${_sam_err_trap:-}"
         if ((_tn_save_e_sam)); then
             set -e
         else
