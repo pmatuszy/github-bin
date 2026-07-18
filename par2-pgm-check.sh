@@ -1,13 +1,53 @@
-#!/usr/bin/env bash
-# v. 20260718.153800 - find par2-pgm-rename.py in PATH or script dir (github-bin deploy)
+#!/bin/bash
+# v. 20260718.154300 - _script_header banner; -h/-v/--no_startup_delay CLI
 
+# 2026.07.18 - v. 0.1.1 - github-bin consistency: show_help, print_version_banner, script footer
 # 2026.07.18 - v. 0.1.0 - initial release: misnamed-file detection, hash gate, interactive PAR2 metadata update
+#
+# par2-pgm-check.sh
+#
 # Verify a PAR2 set and detect misnamed files in a directory.
 #
-# Usage:
-#   par2-pgm-check.sh <par2-file> [directory] [--repair] [--yes] [--no-rename]
 
-set -u
+show_help() {
+  cat <<EOF
+Usage: $(basename "$0") [-h|--help] [-v|--version] [--no_startup_delay] <par2-file> [directory] [options]
+
+  <par2-file>   Main PAR2 index file (the small .par2 without .vol in name)
+  [directory]   Directory with data files (default: directory of <par2-file>)
+
+Options:
+  -h, --help           Show this help and exit.
+  -v, --version        Print script version and exit.
+  --no_startup_delay   Skip random startup delay (recommended for cron).
+  --repair             Repair damaged data and rename misnamed files to PAR2 names
+  --yes, -y            Update PAR2 metadata without prompting when misnamed files found
+  --no-rename          Detect misnamed files but do not offer/run PAR2 metadata update
+
+Environment:
+  PAR2_CMD             par2 executable (default: par2)
+  PYTHON_CMD           python3 executable (default: python3)
+
+If a .sha512 / .sha256 / .md5 file exists in the directory, PAR2 archive
+checksums are verified before scanning for misnamed files. After a successful
+PAR2 metadata update, PAR2 entries in the hash file are refreshed (*_old.par2
+is omitted).
+
+Examples:
+  $(basename "$0") "_2015.07.19_-_kosciol,_Santa_Monica.par2"
+  $(basename "$0") "archive.par2" /path/to/files --yes
+EOF
+}
+
+HEADER_EXTRA_ARGS=()
+while [[ $# -gt 0 ]]; do
+  case $1 in
+    --no_startup_delay) HEADER_EXTRA_ARGS+=(NO_STARTUP_DELAY); shift ;;
+    *) break ;;
+  esac
+done
+
+. /root/bin/_script_header.sh "${HEADER_EXTRA_ARGS[@]}"
 
 PAR2_CMD="${PAR2_CMD:-par2}"
 PYTHON_CMD="${PYTHON_CMD:-python3}"
@@ -19,42 +59,25 @@ MISNAMED_PAR2=()
 RENAME_PAIRS=()
 OUT2_FILE=""
 RENAME_PY=""
+PAR2_FILE=""
+DATA_DIR=""
 
 cleanup() {
     [[ -n "$OUT2_FILE" && -f "$OUT2_FILE" ]] && rm -f "$OUT2_FILE"
 }
 trap cleanup EXIT
 
-usage() {
-    cat <<'EOF'
-Usage: par2-pgm-check.sh <par2-file> [directory] [options]
-
-  <par2-file>   Main PAR2 index file (the small .par2 without .vol in name)
-  [directory]   Directory with data files (default: directory of <par2-file>)
-
-Options:
-  --repair      Repair damaged data and rename misnamed files to PAR2 names
-  --yes, -y     Update PAR2 metadata without prompting when misnamed files found
-  --no-rename   Detect misnamed files but do not offer/run PAR2 metadata update
-
-Environment:
-  PAR2_CMD      par2 executable (default: par2)
-  PYTHON_CMD    python3 executable (default: python3)
-
-If a .sha512 / .sha256 / .md5 file exists in the directory, PAR2 archive
-checksums are verified before scanning for misnamed files. After a successful
-PAR2 metadata update, PAR2 entries in the hash file are refreshed (*_old.par2
-is omitted).
-
-Examples:
-  par2-pgm-check.sh "_2015.07.19_-_kosciol,_Santa_Monica.par2"
-  par2-pgm-check.sh "archive.par2" /path/to/files --yes
-EOF
-}
-
 die() {
     echo "Error: $*" >&2
+    return_code=1
+    . /root/bin/_script_footer.sh
     exit 1
+}
+
+finish() {
+    local rc="${return_code:-0}"
+    . /root/bin/_script_footer.sh
+    exit "$rc"
 }
 
 abs_path() {
@@ -278,13 +301,16 @@ print_summary() {
     return 2
 }
 
-PAR2_FILE=""
-DATA_DIR=""
-
-while (( $# > 0 )); do
-    case "$1" in
+while [[ $# -gt 0 ]]; do
+    case $1 in
         -h|--help)
-            usage
+            show_help
+            . /root/bin/_script_footer.sh
+            exit 0
+            ;;
+        -v|--version)
+            print_version_banner
+            . /root/bin/_script_footer.sh
             exit 0
             ;;
         --repair)
@@ -299,6 +325,11 @@ while (( $# > 0 )); do
             NO_RENAME=1
             shift
             ;;
+        -*)
+            echo "Unknown option: $1 (try --help)" >&2
+            return_code=1
+            finish
+            ;;
         *)
             if [[ -z "$PAR2_FILE" ]]; then
                 PAR2_FILE="$1"
@@ -312,7 +343,11 @@ while (( $# > 0 )); do
     esac
 done
 
-[[ -n "$PAR2_FILE" ]] || { usage; exit 1; }
+if [[ -z "$PAR2_FILE" ]]; then
+    show_help
+    return_code=1
+    finish
+fi
 
 command -v "$PAR2_CMD" >/dev/null 2>&1 || die "'$PAR2_CMD' not found. Install par2cmdline or set PAR2_CMD."
 command -v "$PYTHON_CMD" >/dev/null 2>&1 || die "'$PYTHON_CMD' not found."
@@ -360,7 +395,8 @@ printf '%s\n\n' "$OUT1"
 
 if echo "$OUT1" | grep -qiE 'repair is not required|all files are ok'; then
     echo "All files OK under PAR2 names."
-    exit 0
+    return_code=0
+    finish
 fi
 
 echo "=== Step 2: verify with directory scan (detect misnamed files) ==="
@@ -381,13 +417,10 @@ if (( REPAIR == 1 )); then
     echo "Note: par2 repair renames disk files to match PAR2, not the other way around."
     set +e
     run_par2 repair "$PAR2_FILE" "${DATA_FILES[@]}"
-    RC3=$?
-    set -u
-    exit "$RC3"
+    return_code=$?
+    set -e
+    finish
 fi
 
-if (( SUMMARY_RC == 0 )); then
-    exit 0
-fi
-
-exit "$SUMMARY_RC"
+return_code=$SUMMARY_RC
+finish
