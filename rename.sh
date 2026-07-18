@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# v. 20260718.120500 - GoPro Timelapse: require no audio (Rate …sec alone is not enough)
+# v. 20260718.142000 - GoPro: omit lone _part_XX on capture-mode backfill; fix part detect
 
+# 2026.07.18 - v. 19.243.142000 - GoPro: drop lone _part_XX when adding Timewarp/Timelapse; fix part detect on GoPro_Mission1_Pro names
 # 2026.07.18 - v. 19.242.120500 - GoPro Timelapse: ignore Rate …sec when audio track present; strip false _Timelapse_ suffix
 # 2026.07.18 - v. 19.241.100800 - GoPro capture-mode backfill: recognize GOPRO7_BLACK renamed names (regex required GOPRO_ underscore)
 # 2026.07.18 - v. 19.240.094000 - GoPro capture-mode backfill: return 0 on no-change paths (fix ERR trap abort under set -E in transform_name)
@@ -8845,6 +8846,7 @@ maybe_transform_gopro_capture_mode_backfill() {
     mode_suffix="$(gopro_video_capture_mode_suffix_from_file "$f")"
     if [[ -n "$mode_suffix" ]]; then
         newbase="$(gopro_basename_with_capture_mode_suffix "$base" "$mode_suffix")" || return 0
+        newbase="$(gopro_newbase_omit_lone_part_if_sole_chapter "$f" "$base" "$newbase")"
         vlog "GoPro capture mode backfill: $base -> $newbase (Rate=${rate:-?})"
         printf '%s' "$newbase"
         return 0
@@ -8928,7 +8930,7 @@ gopro_raw_session_chapter_count_in_dir() {
 }
 
 gopro_renamed_basename_has_part_segment() {
-    [[ "$1" =~ ^[0-9]{8}_[0-9]{6}_(-__-_|-_-_)[^_]+_[^_]+_part_[0-9]{2}(_Proxy)?\.[mM][pP]4$ ]]
+    [[ "$1" =~ ^[0-9]{8}_[0-9]{6}_(-__-_|-_-_).+_part_[0-9]{2}(_Proxy)?\.[mM][pP]4$ ]]
 }
 
 gopro_renamed_session_prefix_from_basename() {
@@ -8939,6 +8941,24 @@ gopro_renamed_session_prefix_from_basename() {
 gopro_renamed_basename_without_part_segment() {
     [[ "$1" =~ ^(.+)_part_[0-9]{2}(_Proxy)?(\.[mM][pP]4)$ ]] || return 1
     printf '%s%s%s' "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}" "${BASH_REMATCH[3]}"
+}
+
+# When only one _part_XX file exists for this session in the directory, drop _part_NN from newbase.
+gopro_newbase_omit_lone_part_if_sole_chapter() {
+    local f="$1"
+    local count_base="$2"
+    local newbase="$3"
+    local dir prefix part_count stripped
+
+    gopro_renamed_basename_has_part_segment "$count_base" || { printf '%s' "$newbase"; return 0; }
+    dir="$(dirname -- "$f")"
+    prefix="$(gopro_renamed_session_prefix_from_basename "$count_base")" || { printf '%s' "$newbase"; return 0; }
+    part_count="$(gopro_renamed_unique_part_count_in_dir "$dir" "$prefix")"
+    [[ "$part_count" =~ ^[0-9]+$ ]] && (( part_count == 1 )) || { printf '%s' "$newbase"; return 0; }
+    stripped="$(gopro_renamed_basename_without_part_segment "$newbase")" || { printf '%s' "$newbase"; return 0; }
+    [[ -n "$stripped" && "$stripped" != "$newbase" ]] || { printf '%s' "$newbase"; return 0; }
+    vlog "GoPro: omit lone _part_XX (single chapter in directory): $(basename -- "$newbase") -> $(basename -- "$stripped")"
+    printf '%s' "$stripped"
 }
 
 gopro_renamed_unique_part_count_in_dir() {
@@ -10081,6 +10101,10 @@ transform_name() {
             newbase="$_gopro_backfill_try"
             _gopro_applied=1
         fi
+    fi
+
+    if [[ -f "$f" ]] && (( _gopro_applied == 1 )) && gopro_renamed_basename_has_part_segment "$newbase"; then
+        newbase="$(gopro_newbase_omit_lone_part_if_sole_chapter "$f" "$newbase" "$newbase")"
     fi
 
     if [[ -f "$f" ]] && (( _gopro_applied == 1 )); then
