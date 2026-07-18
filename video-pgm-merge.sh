@@ -1,6 +1,7 @@
 #!/bin/bash
-# v. 20260718.094500 - _part_XX: filename wall-clock gap when playback duration chain fails (timelapse)
+# v. 20260718.095500 - _part_XX timelapse: detect Rate/*sec; gap/playback ratio not min/max gap
 
+# 2026.07.18 - v. 0.15.14 - _part_XX timelapse: exiftool Rate or _Timelapse_ basename; wall gap vs playback ratio (~5x for 8min→40-45min)
 # 2026.07.18 - v. 0.15.13 - _part_XX: after duration chain, accept filename wall-clock gap (timelapse ≠ playback length)
 # 2026.07.18 - v. 0.15.12 - _part_XX: group by camera+middle (not full stem); consecutive parts merge when filename times chain (prev+duration≈next)
 # 2026.07.15 - v. 0.15.10 - merge outputs: …_concat_parts_01-NN.mp4 (concat before parts)
@@ -99,9 +100,11 @@ Merge behaviour (no options):
     existing *_concat.mp4 outputs.
   - Detects GoPro-style chapter sequences (_part_01, _part_02, …). Consecutive part
     numbers only. Same stem (one start time in the name) always groups; when each part
-    has its own leading timestamp, parts merge only if times chain (previous start +
-    duration ≈ next start, same as size-split). Runs starting at part_01 merge as-is;
-    runs starting after part_01 (orphan tails) need full ~4 GB / ~12 GB chapters.
+    has its own leading timestamp, parts merge if times chain (real-time: previous start +
+    playback duration ≈ next start) or, for timelapse (exiftool Rate …sec or _Timelapse_
+    in the name), if the wall-clock gap between filename times is several times the
+    previous chapter playback length (~8 min playback → ~40–45 min gap). Runs starting
+    at part_01 merge as-is; orphan tails after part_01 need full ~4 GB / ~12 GB chapters.
   - Also groups clips without _part_XX names when they look like fixed-size splits:
     same session label, ~4 GB or ~12 GB chapters (~6:49 or longer per chapter); filename times
     that chain, or the same YYYYMMDD_HHMMSS with GX chapter suffixes
@@ -137,6 +140,15 @@ Environment:
                           Overridden by --read-timeout.
   PGM_SEAM_PREVIEW_BEFORE Seconds before each merge point in terminal preview (default: 2).
   PGM_SEAM_PREVIEW_AFTER  Seconds after each merge point in terminal preview (default: 0).
+  RENAME_EXIFTOOL / EXIFLOC / PGM_EXIFTOOL
+                          exiftool for GoPro timelapse detection on _part_XX chains (same
+                          default path as rename.sh when unset).
+  PGM_PART_TIMELAPSE_GAP_RATIO_MIN / _MAX
+                          Timelapse wall-clock gap ÷ playback duration (default 4.5–6.5;
+                          ~8 min playback → ~40–45 min between chapter filename times).
+  PGM_GOPRO_TIMELAPSE_FPS   Assumed output fps for Rate-interval ratio (default: 30).
+  PGM_PART_TIMELAPSE_GAP_RATIO_TOLERANCE
+                          Slack around interval×fps expected ratio (default: 0.35).
 
 Examples:
   $(basename "$0") -u
@@ -1812,6 +1824,101 @@ ffprobe_duration_seconds() {
   awk -v d="$d" 'BEGIN { if (d+0 >= 0) printf "%.3f\n", d+0; else exit 1 }'
 }
 
+PGM_EXIFTOOL_DEFAULT="${PGM_EXIFTOOL_DEFAULT:-/mnt/luks-buffalo2/worek/_video-JEDYNE_KOPIE/_katalog_roboczy/scripts/Image-ExifTool-12.41/exiftool}"
+PGM_EXIFTOOL="${PGM_EXIFTOOL:-${RENAME_EXIFTOOL:-${EXIFLOC:-$PGM_EXIFTOOL_DEFAULT}}}"
+PGM_EXIFTOOL_RESOLVED=""
+
+resolve_pgm_exiftool() {
+  local cmd_path
+  if [[ -n "$PGM_EXIFTOOL_RESOLVED" ]]; then
+    printf '%s' "$PGM_EXIFTOOL_RESOLVED"
+    return 0
+  fi
+  if [[ -n "$PGM_EXIFTOOL" && -x "$PGM_EXIFTOOL" ]]; then
+    PGM_EXIFTOOL_RESOLVED="$PGM_EXIFTOOL"
+    printf '%s' "$PGM_EXIFTOOL_RESOLVED"
+    return 0
+  fi
+  if cmd_path=$(command -v exiftool 2>/dev/null); then
+    PGM_EXIFTOOL_RESOLVED="$cmd_path"
+    printf '%s' "$PGM_EXIFTOOL_RESOLVED"
+    return 0
+  fi
+  return 1
+}
+
+gopro_fetch_rate_tag() {
+  local file="$1" exifloc rate
+  exifloc="$(resolve_pgm_exiftool)" || return 1
+  rate="$("$exifloc" -api largefilesupport=1 -Rate -s3 "$file" 2>/dev/null | head -n 1)"
+  rate="${rate//$'\r'/}"
+  rate="${rate//$'\n'/}"
+  [[ -n "$rate" ]] || return 1
+  printf '%s' "$rate"
+}
+
+# Timelapse interval from exiftool Rate (e.g. 2sec → 2). Prints seconds; exit 1 if not timelapse.
+gopro_rate_tag_timelapse_interval_seconds() {
+  local rate="${1,,}"
+  [[ "$rate" =~ ^([0-9]+(\.[0-9]+)?)sec$ ]] || return 1
+  printf '%s\n' "${BASH_REMATCH[1]}"
+}
+
+gopro_basename_is_timelapse() {
+  [[ "$1" =~ _Timelapse_ ]]
+}
+
+# True when file is GoPro timelapse (_Timelapse_ in name, or exiftool Rate …sec).
+gopro_file_is_timelapse() {
+  local f="$1" base="${f##*/}" rate=""
+  gopro_basename_is_timelapse "$base" && return 0
+  rate=$(gopro_fetch_rate_tag "$f" 2>/dev/null) || return 1
+  gopro_rate_tag_timelapse_interval_seconds "$rate"
+}
+
+# True when wall-clock gap between chapter filename times fits timelapse (gap >> playback).
+part_chapter_timelapse_wall_clock_ok() {
+  local prev_f="$1" gap="$2" dur="$3"
+  local rate="" interval="" fps ratio_tol ratio_min ratio_max
+
+  gopro_file_is_timelapse "$prev_f" || return 1
+  [[ -n "$dur" && -n "$gap" ]] || return 1
+  awk -v g="$gap" -v d="$dur" 'BEGIN { exit !(g+0 > 0 && d+0 > 0) }' || return 1
+
+  ratio_min="${PGM_PART_TIMELAPSE_GAP_RATIO_MIN:-4.5}"
+  ratio_max="${PGM_PART_TIMELAPSE_GAP_RATIO_MAX:-6.5}"
+  if awk -v g="$gap" -v d="$dur" -v lo="$ratio_min" -v hi="$ratio_max" \
+    'BEGIN { r = g/d; exit !(r+0 >= lo && r+0 <= hi) }'; then
+    return 0
+  fi
+
+  rate=$(gopro_fetch_rate_tag "$prev_f" 2>/dev/null) || return 1
+  interval=$(gopro_rate_tag_timelapse_interval_seconds "$rate" 2>/dev/null) || return 1
+  fps="${PGM_GOPRO_TIMELAPSE_FPS:-30}"
+  ratio_tol="${PGM_PART_TIMELAPSE_GAP_RATIO_TOLERANCE:-0.35}"
+  awk -v g="$gap" -v d="$dur" -v i="$interval" -v fps="$fps" -v tol="$ratio_tol" \
+    'BEGIN {
+      if (d+0 <= 0 || i+0 <= 0) exit 1
+      exp = i * fps
+      if (exp+0 <= 0) exit 1
+      r = g / d
+      lo = exp * (1 - tol)
+      hi = exp * (1 + tol)
+      exit !(r+0 >= lo && r+0 <= hi)
+    }'
+}
+
+part_chapter_realtime_wall_clock_gap_ok() {
+  local prev_f="$1" gap="$2"
+  local min_gap max_gap
+  min_gap="${PGM_SIZE_SPLIT_TIME_MIN_GAP_SEC:-300}"
+  max_gap="${PGM_SIZE_SPLIT_TIME_MAX_GAP_SEC:-720}"
+  if size_split_tier_for_file "$prev_f" | grep -qx 12; then
+    max_gap="${PGM_SIZE_SPLIT_12G_TIME_MAX_GAP_SEC:-2400}"
+  fi
+  (( gap >= min_gap && gap <= max_gap ))
+}
+
 duration_too_short_for_full_size_split() {
   local dur="$1" tier="${2:-4}"
   local rej="$PGM_SIZE_SPLIT_DURATION_REJECT_BELOW_SEC"
@@ -2360,14 +2467,13 @@ part_chapter_group_key_from_basename() {
   printf '%s%s\n' "$PART_STEM" "${PART_PROXY}"
 }
 
-# True when _part_XX filename times chain: same start time, previous start + ffprobe
-# duration ≈ next start (real-time video), or wall-clock gap between filename stamps
-# (timelapse playback length ≠ time until the next chapter starts).
+# True when _part_XX filename times chain: same start time; real-time previous start +
+# playback duration ≈ next start; or timelapse with wall-clock gap several × playback.
 part_chapter_timestamps_follow() {
   local prev_f="$1" next_f="$2"
   local pb nb prev_base next_base
   local prev_date prev_time next_date next_time
-  local prev_epoch next_epoch dur expected delta tol part_min_gap part_max_gap gap
+  local prev_epoch next_epoch dur expected delta tol gap
   pb="${prev_f##*/}"
   nb="${next_f##*/}"
   prev_base=$(part_chapter_gopro_parse_base "$pb") || return 1
@@ -2382,9 +2488,6 @@ part_chapter_timestamps_follow() {
   fi
 
   tol="${PGM_SIZE_SPLIT_TIME_TOLERANCE_SEC:-180}"
-  part_min_gap="${PGM_PART_CHAPTER_TIME_MIN_GAP_SEC:-60}"
-  part_max_gap="${PGM_PART_CHAPTER_TIME_MAX_GAP_SEC:-7200}"
-
   dur=$(ffprobe_duration_seconds "$prev_f" 2>/dev/null) || dur=""
 
   if prev_epoch=$(gopro_datetime_to_epoch "$prev_date" "$prev_time" 2>/dev/null) \
@@ -2396,8 +2499,9 @@ part_chapter_timestamps_follow() {
         return 0
       fi
     fi
-    delta=$(( next_epoch - prev_epoch ))
-    (( delta >= part_min_gap && delta <= part_max_gap ))
+    gap=$(( next_epoch - prev_epoch ))
+    part_chapter_timelapse_wall_clock_ok "$prev_f" "$gap" "$dur" && return 0
+    part_chapter_realtime_wall_clock_gap_ok "$prev_f" "$gap"
     return $?
   fi
 
@@ -2412,7 +2516,9 @@ part_chapter_timestamps_follow() {
     fi
   fi
   gap=$(( next_epoch - prev_epoch ))
-  (( next_epoch >= prev_epoch && gap >= part_min_gap && gap <= part_max_gap ))
+  (( next_epoch >= prev_epoch )) || return 1
+  part_chapter_timelapse_wall_clock_ok "$prev_f" "$gap" "$dur" && return 0
+  part_chapter_realtime_wall_clock_gap_ok "$prev_f" "$gap"
 }
 
 # Lowest _part_XX number in a run (after numeric sort).
