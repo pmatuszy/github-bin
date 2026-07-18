@@ -1,6 +1,7 @@
 #!/bin/bash
-# v. 20260718.095500 - _part_XX timelapse: detect Rate/*sec; gap/playback ratio not min/max gap
+# v. 20260718.100500 - _part_XX: trust part_01 runs; fix GoPro Rate 1_5sec timelapse parse
 
+# 2026.07.18 - v. 0.15.15 - _part_XX: consecutive parts from part_01 merge without timestamp chain; GoPro Rate 1_5sec timelapse detection
 # 2026.07.18 - v. 0.15.14 - _part_XX timelapse: exiftool Rate or _Timelapse_ basename; wall gap vs playback ratio (~5x for 8min→40-45min)
 # 2026.07.18 - v. 0.15.13 - _part_XX: after duration chain, accept filename wall-clock gap (timelapse ≠ playback length)
 # 2026.07.18 - v. 0.15.12 - _part_XX: group by camera+middle (not full stem); consecutive parts merge when filename times chain (prev+duration≈next)
@@ -99,12 +100,11 @@ Merge behaviour (no options):
   - Collects *.mp4 in the current working directory (case-insensitive), except
     existing *_concat.mp4 outputs.
   - Detects GoPro-style chapter sequences (_part_01, _part_02, …). Consecutive part
-    numbers only. Same stem (one start time in the name) always groups; when each part
-    has its own leading timestamp, parts merge if times chain (real-time: previous start +
-    playback duration ≈ next start) or, for timelapse (exiftool Rate …sec or _Timelapse_
-    in the name), if the wall-clock gap between filename times is several times the
-    previous chapter playback length (~8 min playback → ~40–45 min gap). Runs starting
-    at part_01 merge as-is; orphan tails after part_01 need full ~4 GB / ~12 GB chapters.
+    numbers only. Same camera + session label groups together; runs starting at part_01
+    merge as-is (each part may have its own leading timestamp). Orphan tails (part_02+
+    without part_01 in the folder) need filename times to chain, or timelapse detection
+    (exiftool Rate like 1_5SEC / _Timelapse_ in the name) with wall-clock gap several
+    times playback length. Orphan tails also need full ~4 GB / ~12 GB chapters.
   - Also groups clips without _part_XX names when they look like fixed-size splits:
     same session label, ~4 GB or ~12 GB chapters (~6:49 or longer per chapter); filename times
     that chain, or the same YYYYMMDD_HHMMSS with GX chapter suffixes
@@ -1857,23 +1857,41 @@ gopro_fetch_rate_tag() {
   printf '%s' "$rate"
 }
 
-# Timelapse interval from exiftool Rate (e.g. 2sec → 2). Prints seconds; exit 1 if not timelapse.
-gopro_rate_tag_timelapse_interval_seconds() {
+# GoPro Rate timelapse interval (1_5sec → 1.5). Same rules as rename.sh (*[0-9]sec, not *x).
+gopro_rate_tag_is_timelapse() {
   local rate="${1,,}"
-  [[ "$rate" =~ ^([0-9]+(\.[0-9]+)?)sec$ ]] || return 1
-  printf '%s\n' "${BASH_REMATCH[1]}"
+  [[ -n "$rate" ]] || return 1
+  case "$rate" in
+    off|n/a) return 1 ;;
+    auto|[0-9]*x) return 1 ;;
+    *[0-9]sec) return 0 ;;
+  esac
+  return 1
+}
+
+gopro_rate_tag_timelapse_interval_seconds() {
+  local rate="${1,,}" interval=""
+  gopro_rate_tag_is_timelapse "$rate" || return 1
+  if [[ "$rate" =~ ^([0-9]+)_([0-9]+)sec$ ]]; then
+    interval="${BASH_REMATCH[1]}.${BASH_REMATCH[2]}"
+  elif [[ "$rate" =~ ^([0-9]+(\.[0-9]+)?)sec$ ]]; then
+    interval="${BASH_REMATCH[1]}"
+  else
+    return 1
+  fi
+  printf '%s\n' "$interval"
 }
 
 gopro_basename_is_timelapse() {
   [[ "$1" =~ _Timelapse_ ]]
 }
 
-# True when file is GoPro timelapse (_Timelapse_ in name, or exiftool Rate …sec).
+# True when file is GoPro timelapse (_Timelapse_ in name, or exiftool Rate …sec / 1_5sec).
 gopro_file_is_timelapse() {
   local f="$1" base="${f##*/}" rate=""
   gopro_basename_is_timelapse "$base" && return 0
   rate=$(gopro_fetch_rate_tag "$f" 2>/dev/null) || return 1
-  gopro_rate_tag_timelapse_interval_seconds "$rate"
+  gopro_rate_tag_is_timelapse "$rate"
 }
 
 # True when wall-clock gap between chapter filename times fits timelapse (gap >> playback).
@@ -2521,6 +2539,13 @@ part_chapter_timestamps_follow() {
   part_chapter_realtime_wall_clock_gap_ok "$prev_f" "$gap"
 }
 
+# True when cur_part follows prev_part in a run. Runs from part_01 skip timestamp checks.
+part_chapter_consecutive_link_ok() {
+  local prev_f="$1" next_f="$2" run_first_part="$3"
+  (( run_first_part == 1 )) && return 0
+  part_chapter_timestamps_follow "$prev_f" "$next_f"
+}
+
 # Lowest _part_XX number in a run (after numeric sort).
 part_chapter_first_part_number() {
   local -a sorted=()
@@ -2593,26 +2618,30 @@ part_chapter_split_key_into_runs() {
   shift
   local -a key_files=("$@")
   local -a sorted=() run=()
-  local f cur_part prev_part
+  local f cur_part prev_part run_first_part
 
   part_chapter_sorted_files sorted "${key_files[@]}"
   (( ${#sorted[@]} > 0 )) || return 0
 
   run=()
   prev_part=""
+  run_first_part=""
   for f in "${sorted[@]}"; do
     cur_part=$(chapter_part_from_basename "${f##*/}") || continue
     if (( ${#run[@]} == 0 )); then
       run=( "$f" )
+      run_first_part=$cur_part
       prev_part=$cur_part
       continue
     fi
-    if (( cur_part == prev_part + 1 )) && part_chapter_timestamps_follow "${run[-1]}" "$f"; then
+    if (( cur_part == prev_part + 1 )) \
+      && part_chapter_consecutive_link_ok "${run[-1]}" "$f" "$run_first_part"; then
       run+=( "$f" )
       prev_part=$cur_part
     else
       part_chapter_append_run_to_groups_or_rest "$_rest_name" "${run[@]}"
       run=( "$f" )
+      run_first_part=$cur_part
       prev_part=$cur_part
     fi
   done
@@ -2622,9 +2651,9 @@ part_chapter_split_key_into_runs() {
 # Pull _part_NN chapter files out of the list into key-based groups. The key is
 # camera + middle label + proxy variant (or full stem when not GoPro-shaped), so
 # originals (_part_NN) and proxies (_part_NN_Proxy) go into separate groups and
-# are NEVER mixed. Within each key, only consecutive part numbers whose filename
-# times chain (or share one start time) are kept together. Runs from part_01 merge
-# at any size; orphan tails starting after part_01 need ~4 GB / ~12 GB full segments.
+# are NEVER mixed. Within each key, consecutive part numbers are kept together; runs
+# from part_01 merge without a timestamp check (rename.sh chapter split). Orphan tails
+# (first part > 01) need filename times to chain and ~4 GB / ~12 GB full segments.
 # return via the array named in $1 (e.g. rest2 from build_chapter_groups).
 build_part_chapter_groups() {
   local _rest_name=$1
@@ -2730,7 +2759,7 @@ print_group_plan() {
     fi
   done
   if (( part_groups > 0 )); then
-    echo "Merge candidates (_part_XX chapters; consecutive parts from part_01; same start time or chaining filename times):"
+    echo "Merge candidates (_part_XX chapters; consecutive parts from part_01; orphan tails need chaining times):"
     gidx=0
     for blob in "${GROUP_BLOBS[@]}"; do
       group_files_to_array "$blob" files
