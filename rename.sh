@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
-# v. 20260718.184700 - Nikon MAT D200 only; MAT#### suffix on timestamp collision
+# v. 20260718.192100 - preserve colored labels on all wrapped stdout/stderr lines
 
+# 2026.07.18 - v. 19.252.192100 - emit_wrap_old_arrow_new + verbose printers: keep label colors when paths wrap
+# 2026.07.18 - v. 19.251.192000 - emit_wrap_labeled_line: keep cyan/yellow label on line 1 when path wraps
 # 2026.07.18 - v. 19.250.184700 - Nikon MAT: restrict to D200 EXIF; append MAT#### suffix only when capture timestamp collides
 # 2026.07.18 - v. 19.249.183500 - Nikon MAT####.NEF+XMP: capture date prefix, Nikon_D200 suffix, RawFileName via nef_xmp pair
 # 2026.07.18 - v. 19.246.175800 - fix Samsung device suffix lost when transform_basename ran after exiftool rename
@@ -626,6 +628,62 @@ emit_wrap_path_body_slash_aware() {
     done
 }
 
+# Like emit_wrap_path_body_slash_aware, but line 1 prints ansi_label (colored tag) instead of plain_prefix.
+emit_wrap_labeled_body_slash_aware() {
+    local fd="$1"
+    local plain_prefix="$2"
+    local ansi_label="$3"
+    local body="$4"
+    local max_line
+    local prefix_len="${#plain_prefix}"
+    local path_indent="" remaining="$body" first=1
+    local pfx outpfx plain avail head chunk
+
+    max_line="$(rename_effective_wrap_width)"
+
+    body="${body//$'\r'/}"
+    body="${body//$'\n'/}"
+    remaining="$body"
+
+    printf -v path_indent '%*s' "$prefix_len" ''
+
+    while [[ -n "$remaining" ]]; do
+        if (( first )); then
+            pfx="$plain_prefix"
+            outpfx="$ansi_label"
+            first=0
+        else
+            pfx="$path_indent"
+            outpfx="$path_indent"
+        fi
+
+        plain="${pfx}${remaining}"
+        if (( ${#plain} <= max_line )); then
+            printf '%b%s\n' "$outpfx" "$remaining" >&"$fd"
+            return 0
+        fi
+
+        avail=$(( max_line - ${#pfx} ))
+        (( avail < 1 )) && avail=1
+
+        if (( ${#remaining} <= avail )); then
+            printf '%b%s\n' "$outpfx" "$remaining" >&"$fd"
+            return 0
+        fi
+
+        head="${remaining:0:avail}"
+        if [[ "$head" == */* ]]; then
+            chunk="${head%/*}/"
+        else
+            chunk="$head"
+        fi
+        [[ -z "$chunk" ]] && chunk="${remaining:0:avail}"
+
+        printf '%b%s\n' "$outpfx" "$chunk" >&"$fd"
+        remaining="${remaining:${#chunk}}"
+    done
+}
+
 emit_wrap_labeled_line() {
     local fd="$1"
     local plain_prefix="$2"
@@ -658,10 +716,13 @@ emit_wrap_labeled_line() {
         fi
         return 0
     fi
+    if [[ "$use_colors" != yes ]]; then
+        ansi_label="$plain_prefix"
+    fi
     if (( ${#plain} <= eff_width )); then
         printf '%b%s\n' "$ansi_label" "$body" >&"$fd"
     else
-        emit_wrap_path_body_slash_aware "$fd" "$plain_prefix" "$body" ""
+        emit_wrap_labeled_body_slash_aware "$fd" "$plain_prefix" "$ansi_label" "$body"
     fi
     if (( fd == 1 )) && [[ "$plain_prefix" == *"[DRY-RUN]"* ]]; then
         nonverbose_skip_next_main_loop_dot_after_stdout_status
@@ -673,6 +734,26 @@ emit_wrap_labeled_stdout() {
     emit_wrap_labeled_line 1 "$@"
 }
 emit_wrap_labeled_stderr() { emit_wrap_labeled_line 2 "$@"; }
+
+# stderr [VERBOSE] lines: cyan tag on line 1 when the body wraps (paths break at '/').
+emit_wrap_verbose_body_stderr() {
+    local body="$1"
+    local plain_prefix="[VERBOSE] "
+    local ansi_label="${CYAN}[VERBOSE]${RESET} "
+    local plain eff_width
+
+    (( VERBOSE == 1 )) || return 0
+    eff_width="$(rename_effective_wrap_width)"
+    plain="${plain_prefix}${body}"
+    if [[ "$use_colors" != yes ]]; then
+        ansi_label="$plain_prefix"
+    fi
+    if (( ${#plain} <= eff_width )); then
+        printf '%b%s\n' "$ansi_label" "$body" >&2
+    else
+        emit_wrap_labeled_body_slash_aware 2 "$plain_prefix" "$ansi_label" "$body"
+    fi
+}
 
 # Pad plain_tag to width; when colors are on, color the whole line (tag + path) per color_name.
 emit_wrap_padded_label_stdout() {
@@ -728,7 +809,7 @@ emit_wrap_exclude_append_message() {
 
 # Long OLD path ARROW NEW path (ARROW is set later at startup; expanded at call time).
 # When colors are on, the suggested new path is printed in green.
-# Wrapped layout: line 1 = prefix+old+arrow; line 2 = spaces (prefix width) + new so old/new paths share the same column.
+# Wrapped layout: slash-wrap OLD (+ arrow) under a colored prefix; NEW on the last line in green.
 emit_wrap_old_arrow_new_stdout() {
     nonverbose_progress_dot_endline_if_needed
     local plain_pfx="$1"
@@ -736,26 +817,62 @@ emit_wrap_old_arrow_new_stdout() {
     local old_p="$3"
     local new_p="$4"
     local sep=" ${ARROW} "
-    local plain="${plain_pfx}${old_p}${sep}${new_p}"
-    local path_col_indent=""
+    local plain_full plain_old path_col_indent eff_width
+
+    eff_width="$(rename_effective_wrap_width)"
+    plain_old="${plain_pfx}${old_p}${sep}"
+    plain_full="${plain_old}${new_p}"
     printf -v path_col_indent '%*s' "${#plain_pfx}" ''
-    if (( ${#plain} <= MAX_LINE_LENGTH )); then
+    if [[ "$use_colors" != yes ]]; then
+        ansi_pfx="$plain_pfx"
+    fi
+
+    if (( ${#plain_full} <= eff_width )); then
         if [[ "$use_colors" == yes ]]; then
             printf '%b%s%s%b%s%b\n' "$ansi_pfx" "$old_p" "$sep" "${GREEN}" "$new_p" "${RESET}"
         else
-            printf '%b%s%s%s\n' "$ansi_pfx" "$old_p" "$sep" "$new_p"
+            printf '%s%s%s%s\n' "$plain_pfx" "$old_p" "$sep" "$new_p"
         fi
     else
+        emit_wrap_labeled_body_slash_aware 1 "$plain_pfx" "$ansi_pfx" "${old_p}${sep}"
         if [[ "$use_colors" == yes ]]; then
-            printf '%b%s%s\n' "$ansi_pfx" "$old_p" "$sep"
             printf '%s%b%s%b\n' "$path_col_indent" "${GREEN}" "$new_p" "${RESET}"
         else
-            printf '%b%s%s\n' "$ansi_pfx" "$old_p" "$sep"
             printf '%s%s\n' "$path_col_indent" "$new_p"
         fi
     fi
     if [[ "$plain_pfx" == *"[DRY-RUN]"* ]] || [[ "$plain_pfx" == "Renamed: " ]]; then
         nonverbose_skip_next_main_loop_dot_after_stdout_status
+    fi
+}
+
+# Summary list: two-space indent, red arrow, green new; slash-wrap long OLD paths.
+emit_wrap_summary_rename_line_stdout() {
+    local old_p="$1"
+    local new_p="$2"
+    local plain_pfx="  "
+    local ansi_pfx="  "
+    local sep=" ${ARROW} "
+    local plain_full path_col_indent eff_width
+
+    eff_width="$(rename_effective_wrap_width)"
+    plain_full="${plain_pfx}${old_p}${sep}${new_p}"
+    printf -v path_col_indent '%*s' "${#plain_pfx}" ''
+
+    if (( ${#plain_full} <= eff_width )); then
+        if [[ "$use_colors" == yes ]]; then
+            printf "  %s %b%s%b %b%s%b\n" "$old_p" "$RED" "$ARROW" "$RESET" "${GREEN}" "$new_p" "${RESET}"
+        else
+            printf "  %s %s %s\n" "$old_p" "$ARROW" "$new_p"
+        fi
+        return 0
+    fi
+
+    emit_wrap_labeled_body_slash_aware 1 "$plain_pfx" "$ansi_pfx" "$old_p"
+    if [[ "$use_colors" == yes ]]; then
+        printf '%s%b%s%b %b%s%b\n' "$path_col_indent" "$RED" "$ARROW" "$RESET" "${GREEN}" "$new_p" "${RESET}"
+    else
+        printf '%s%s %s\n' "$path_col_indent" "$ARROW" "$new_p"
     fi
 }
 
@@ -5219,15 +5336,7 @@ print_wrapped_two_path_verbose() {
     local first_path="$2"
     local suffix="$3"
 
-    local line="${prefix}${first_path}${suffix}"
-    local indent="          "
-
-    if (( ${#line} <= MAX_LINE_LENGTH )); then
-        echo "[VERBOSE] $line" >&2
-    else
-        echo "[VERBOSE] ${prefix}${first_path} " >&2
-        echo "${indent}${suffix}" >&2
-    fi
+    emit_wrap_verbose_body_stderr "${prefix}${first_path}${suffix}"
 }
 
 print_single_target_check_verbose() {
@@ -5237,17 +5346,7 @@ print_single_target_check_verbose() {
     local target_ref="$3"
     local sum_base="$4"
 
-    local line1="Running single-target ${tool_name} check in directory '${sum_dir}'"
-    local line2="          for ref '${target_ref}' from file '${sum_base}'"
-
-    if (( ${#line1} + 11 <= MAX_LINE_LENGTH )) && (( ${#line2} <= MAX_LINE_LENGTH )); then
-        echo "[VERBOSE] ${line1}" >&2
-        echo "${line2}" >&2
-    else
-        echo "[VERBOSE] ${line1}" >&2
-        echo "          for ref '${target_ref}'" >&2
-        echo "          from file '${sum_base}'" >&2
-    fi
+    emit_wrap_verbose_body_stderr "Running single-target ${tool_name} check in directory '${sum_dir}' for ref '${target_ref}' from file '${sum_base}'"
 }
 
 print_resolved_ref_verbose() {
@@ -5255,28 +5354,15 @@ print_resolved_ref_verbose() {
     local ref="$1"
     local resolved="$2"
 
-    local line="[VERBOSE] Resolved ref '${ref}' -> '${resolved}'"
-    if (( ${#line} <= MAX_LINE_LENGTH )); then
-        echo "$line" >&2
-    else
-        echo "[VERBOSE] Resolved ref '${ref}'" >&2
-        echo "          -> '${resolved}'" >&2
-    fi
+    emit_wrap_verbose_body_stderr "Resolved ref '${ref}' -> '${resolved}'"
 }
 
 print_same_inode_no_rename_verbose() {
     (( VERBOSE == 1 )) || return 0
     local src="$1"
     local dst="$2"
-    local plain="[VERBOSE] Suggested target is the same inode as source (case-insensitive path spellings): '${src}' | '${dst}' — no rename."
 
-    if (( ${#plain} <= MAX_LINE_LENGTH )); then
-        echo -e "${CYAN}[VERBOSE]${RESET} Suggested target is the same inode as source (case-insensitive path spellings): '${src}' | '${dst}' — no rename." >&2
-    else
-        echo -e "${CYAN}[VERBOSE]${RESET} Suggested target is the same inode as source (case-insensitive path spellings) — no rename." >&2
-        echo "${WRAP_MSG_INDENT}source: '${src}'" >&2
-        echo "${WRAP_MSG_INDENT}target: '${dst}'" >&2
-    fi
+    emit_wrap_verbose_body_stderr "Suggested target is the same inode as source (case-insensitive path spellings): '${src}' | '${dst}' — no rename."
 }
 
 # Long checksum-file paths: split to two lines when plain length exceeds MAX_LINE_LENGTH (stdout, not stderr).
@@ -5358,44 +5444,20 @@ print_checksum_update_verbose() {
         local sum_file="$1"
         local old_name="$2"
         local new_name="$3"
-        local line1="[VERBOSE] Updating checksum content in '${sum_file}': '${old_name}'"
-        local line2="          -> '${new_name}'"
 
-        if (( ${#line1} <= MAX_LINE_LENGTH )) && (( ${#line2} <= MAX_LINE_LENGTH )); then
-            echo "$line1" >&2
-            echo "$line2" >&2
-        else
-            echo "[VERBOSE] Updating checksum content in '${sum_file}':" >&2
-            echo "          '${old_name}'" >&2
-            echo "$line2" >&2
-        fi
+        emit_wrap_verbose_body_stderr "Updating checksum content in '${sum_file}': '${old_name}' -> '${new_name}'"
         return 0
     fi
 
-    local first_part="$1"
-    local second_part="$2"
-    local line="[VERBOSE] ${first_part}${second_part}"
-
-    if (( ${#line} <= MAX_LINE_LENGTH )); then
-        echo "$line" >&2
-    else
-        echo "[VERBOSE] ${first_part}" >&2
-        echo "          ${second_part}" >&2
-    fi
+    emit_wrap_verbose_body_stderr "${1}${2}"
 }
 
 print_checksum_file_rename_verbose() {
     (( VERBOSE == 1 )) || return 0
     local old_sum="$1"
     local new_sum="$2"
-    local line="[VERBOSE] Renaming checksum file '${old_sum}' -> '${new_sum}'"
 
-    if (( ${#line} <= MAX_LINE_LENGTH )); then
-        echo "$line" >&2
-    else
-        echo "[VERBOSE] Renaming checksum file '${old_sum}'" >&2
-        echo "          -> '${new_sum}'" >&2
-    fi
+    emit_wrap_verbose_body_stderr "Renaming checksum file '${old_sum}' -> '${new_sum}'"
 }
 
 
@@ -5404,16 +5466,8 @@ print_checksum_file_rename_verbose() {
 print_protected_checksum_verbose() {
     (( VERBOSE == 1 )) || return 0
     local sum_file="$1"
-    local line1="Protected checksum manifest (_sumy_kontrolne.md5) — keeping filename unchanged:"
-    local line2="          '${sum_file}'"
 
-    if (( ${#line1} + 11 <= MAX_LINE_LENGTH )) && (( ${#line2} <= MAX_LINE_LENGTH )); then
-        echo "[VERBOSE] ${line1}" >&2
-        echo "${line2}" >&2
-    else
-        echo "[VERBOSE] ${line1}" >&2
-        echo "${line2}" >&2
-    fi
+    emit_wrap_verbose_body_stderr "Protected checksum manifest (_sumy_kontrolne.md5) — keeping filename unchanged: '${sum_file}'"
 }
 
 print_checksum_no_action_verbose() {
@@ -5422,13 +5476,7 @@ print_checksum_no_action_verbose() {
     local fs_skipped="${2-no}"
     local msg="All referenced files exist and no rename/update is needed for '${sum_file}' - skipping without checksum verification"
     [[ "$fs_skipped" == yes ]] && msg+=" (no case-only rename on exfat/CIFS/Samba where applicable)"
-    local plain="[VERBOSE] ${msg}"
-    if (( ${#plain} <= MAX_LINE_LENGTH )); then
-        echo -e "${CYAN}[VERBOSE]${RESET} ${msg}" >&2
-    else
-        echo -e "${CYAN}[VERBOSE]${RESET}" >&2
-        printf '%s%s\n' "$WRAP_MSG_INDENT" "$msg" >&2
-    fi
+    emit_wrap_verbose_body_stderr "$msg"
 }
 
 print_try_recover_missing_ref_verbose() {
@@ -5436,16 +5484,7 @@ print_try_recover_missing_ref_verbose() {
     local missing_ref="$1"
     local expected_hash="$2"
 
-    local line1="Trying to recover missing ref '${missing_ref}'"
-    local line2="          (expected hash: ${expected_hash:-none})"
-
-    if (( ${#line1} + 11 <= MAX_LINE_LENGTH )) && (( ${#line2} <= MAX_LINE_LENGTH )); then
-        echo "[VERBOSE] ${line1}" >&2
-        echo "${line2}" >&2
-    else
-        echo "[VERBOSE] ${line1}" >&2
-        echo "${line2}" >&2
-    fi
+    emit_wrap_verbose_body_stderr "Trying to recover missing ref '${missing_ref}' (expected hash: ${expected_hash:-none})"
 }
 
 print_recovery_success_verbose() {
@@ -5454,16 +5493,7 @@ print_recovery_success_verbose() {
     local found_ref="$2"
     local write_ref="$3"
 
-    local line1="[VERBOSE] Recovery success: '${old_ref}' -> '${found_ref}'"
-    local line2="          (write as '${write_ref}')"
-
-    if (( ${#line1} <= MAX_LINE_LENGTH )) && (( ${#line2} <= MAX_LINE_LENGTH )); then
-        echo "$line1" >&2
-        echo "$line2" >&2
-    else
-        echo "$line1" >&2
-        echo "$line2" >&2
-    fi
+    emit_wrap_verbose_body_stderr "Recovery success: '${old_ref}' -> '${found_ref}' (write as '${write_ref}')"
 }
 
 print_scan_by_checksum_verbose() {
@@ -5471,16 +5501,7 @@ print_scan_by_checksum_verbose() {
     local search_root="$1"
     local expected_hash="$2"
 
-    local line1="[VERBOSE] Name-based subtree recovery failed under '${search_root}'"
-    local line2="          scanning all files below by checksum (expected hash: ${expected_hash})"
-
-    if (( ${#line1} <= MAX_LINE_LENGTH )) && (( ${#line2} <= MAX_LINE_LENGTH )); then
-        echo "$line1" >&2
-        echo "$line2" >&2
-    else
-        echo "$line1" >&2
-        echo "$line2" >&2
-    fi
+    emit_wrap_verbose_body_stderr "Name-based subtree recovery failed under '${search_root}' — scanning all files below by checksum (expected hash: ${expected_hash})"
 }
 
 
@@ -5488,24 +5509,11 @@ print_recovery_final_status_verbose() {
     (( VERBOSE == 1 )) || return 0
     local missing_ref="$1"
     local status="$2"
-    local line=""
 
     if [[ "$status" == "success" ]]; then
-        line="[VERBOSE] Recovery FINAL STATUS: SUCCESS for '${missing_ref}'"
-        if (( ${#line} <= MAX_LINE_LENGTH )); then
-            echo "$line" >&2
-        else
-            echo "[VERBOSE] Recovery FINAL STATUS: SUCCESS" >&2
-            echo "          for '${missing_ref}'" >&2
-        fi
+        emit_wrap_verbose_body_stderr "Recovery FINAL STATUS: SUCCESS for '${missing_ref}'"
     else
-        line="[VERBOSE] Recovery FINAL STATUS: FAILED for '${missing_ref}'"
-        if (( ${#line} <= MAX_LINE_LENGTH )); then
-            echo "$line" >&2
-        else
-            echo "[VERBOSE] Recovery FINAL STATUS: FAILED" >&2
-            echo "          for '${missing_ref}'" >&2
-        fi
+        emit_wrap_verbose_body_stderr "Recovery FINAL STATUS: FAILED for '${missing_ref}'"
     fi
 }
 
@@ -5514,20 +5522,8 @@ print_db_hash_record_verbose_wrapped() {
     local head_msg="$1"
     local path="$2"
     local hash_kind="$3"
-    local full_line="[VERBOSE] ${head_msg}: '${path}' (${hash_kind})"
-    local tail_quoted_kind="'${path}' (${hash_kind})"
 
-    if (( ${#full_line} <= MAX_LINE_LENGTH )); then
-        echo "$full_line" >&2
-        return 0
-    fi
-    echo "[VERBOSE] ${head_msg}:" >&2
-    if (( ${#tail_quoted_kind} <= MAX_LINE_LENGTH )); then
-        echo "          ${tail_quoted_kind}" >&2
-    else
-        echo "          '${path}'" >&2
-        echo "          (${hash_kind})" >&2
-    fi
+    emit_wrap_verbose_body_stderr "${head_msg}: '${path}' (${hash_kind})"
 }
 
 print_db_hash_record_verbose() {
@@ -5565,25 +5561,12 @@ print_db_hash_lookup_verbose() {
     local hash_kind="$3"
     local expected_hash="$4"
     local found_path="${5-}"
-    local line=""
 
     if [[ "$status" == "hit" ]]; then
-        line="[VERBOSE] DB hash lookup HIT under '${search_root}' for ${hash_kind}=${expected_hash}"
-        if (( ${#line} <= MAX_LINE_LENGTH )); then
-            echo "$line" >&2
-        else
-            echo "[VERBOSE] DB hash lookup HIT under '${search_root}'" >&2
-            echo "          for ${hash_kind}=${expected_hash}" >&2
-        fi
-        echo "          matched path: '${found_path}'" >&2
+        emit_wrap_verbose_body_stderr "DB hash lookup HIT under '${search_root}' for ${hash_kind}=${expected_hash}"
+        emit_wrap_verbose_body_stderr "matched path: '${found_path}'"
     else
-        line="[VERBOSE] DB hash lookup MISS under '${search_root}' for ${hash_kind}=${expected_hash}"
-        if (( ${#line} <= MAX_LINE_LENGTH )); then
-            echo "$line" >&2
-        else
-            echo "[VERBOSE] DB hash lookup MISS under '${search_root}'" >&2
-            echo "          for ${hash_kind}=${expected_hash}" >&2
-        fi
+        emit_wrap_verbose_body_stderr "DB hash lookup MISS under '${search_root}' for ${hash_kind}=${expected_hash}"
     fi
 }
 
@@ -5620,37 +5603,18 @@ print_skip_path_reason() {
     local path="$1"
     local reason="$2"
     local shown
-    shown="$(format_path_for_log "$path")"
-    local line="SKIP: '$shown' $reason"
 
+    shown="$(format_path_for_log "$path")"
     if path_has_control_chars "$path"; then
         print_control_char_warning "$path"
     fi
-
-    if (( ${#line} <= MAX_LINE_LENGTH )); then
-        echo -e "${YELLOW}SKIP:${RESET} '$shown' $reason"
-    else
-        echo -e "${YELLOW}SKIP:${RESET} '$shown'"
-        echo "${WRAP_MSG_INDENT}$reason"
-    fi
+    emit_wrap_labeled_stderr "SKIP: " "${YELLOW}SKIP:${RESET} " "'$shown' $reason"
 }
 
 # Colored [VERBOSE] prefix; many older call sites still use plain "echo '[VERBOSE] ...'" (e.g. wrapped SQLite/checksum lines).
 vlog() {
     (( VERBOSE == 1 )) || return 0
-    local msg="$*"
-    local plain="[VERBOSE] ${msg}"
-    local wrap_w=$(( MAX_LINE_LENGTH - ${#WRAP_MSG_INDENT} ))
-    (( wrap_w > VERBOSE_LOG_BODY_WRAP_WIDTH )) && wrap_w=$VERBOSE_LOG_BODY_WRAP_WIDTH
-    (( wrap_w < 48 )) && wrap_w=48
-
-    if (( ${#plain} <= MAX_LINE_LENGTH )); then
-        echo -e "${CYAN}[VERBOSE]${RESET} ${msg}" >&2
-        return 0
-    fi
-
-    echo -e "${CYAN}[VERBOSE]${RESET}" >&2
-    printf '%s\n' "$msg" | fold -s -w "$wrap_w" | sed "s/^/${WRAP_MSG_INDENT}/" >&2
+    emit_wrap_verbose_body_stderr "$*"
 }
 
 # stderr; indent + single-quoted path. Wraps at '/' when possible so spaces inside a directory name stay on one line;
@@ -12943,22 +12907,14 @@ print_rename_action_verbose() {
     local new_path="$2"
     local reason="${3-}"
 
-    local line="[VERBOSE] Renaming '${old_path}' -> '${new_path}'"
-    local second=""
+    local body="Renaming '${old_path}' -> '${new_path}'"
     if [[ -n "$reason" ]]; then
-        second="due to ${reason}"
-        line="${line} ${second}"
+        body+=" due to ${reason}"
     fi
     if [[ -d "$old_path" ]]; then
-        line+=" [directory]"
+        body+=" [directory]"
     fi
-
-    if (( ${#line} <= MAX_LINE_LENGTH )); then
-        echo "$line" >&2
-    else
-        echo "[VERBOSE] Renaming '${old_path}'" >&2
-        echo "          -> '${new_path}'${second:+ ${second}}" >&2
-    fi
+    emit_wrap_verbose_body_stderr "$body"
 }
 
 print_checksum_group_preview() {
@@ -13032,30 +12988,11 @@ print_summary() {
         if (( _session_renamed > 100 )); then
             start_idx=$(( total_renamed - 100 ))
         fi
-        local _rsep=" ${ARROW} "
-        local _rplain
         for (( idx=start_idx; idx<total_renamed; idx++ )); do
             r="${renamed_list[$idx]}"
             old=${r%%|*}
             new=${r#*|}
-            _rplain="  ${old}${_rsep}${new}"
-            if (( ${#_rplain} <= MAX_LINE_LENGTH )); then
-                if [[ "$use_colors" == yes ]]; then
-                    printf "  %s %b%s%b %b%s%b\n" \
-                        "$old" \
-                        "$RED" "$ARROW" "$RESET" \
-                        "${GREEN}" "$new" "${RESET}"
-                else
-                    printf "  %s %s %s\n" "$old" "$ARROW" "$new"
-                fi
-            else
-                printf "  %s\n" "$old"
-                if [[ "$use_colors" == yes ]]; then
-                    printf "%s%b%s%b %b%s%b\n" "$WRAP_MSG_INDENT" "$RED" "$ARROW" "$RESET" "${GREEN}" "$new" "${RESET}"
-                else
-                    printf "%s%s %s\n" "$WRAP_MSG_INDENT" "$ARROW" "$new"
-                fi
-            fi
+            emit_wrap_summary_rename_line_stdout "$old" "$new"
         done
         echo
     elif (( RESUME_STATE_WAS_LOADED == 1 )); then
