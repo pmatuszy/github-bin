@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# v. 20260718.153800 - hash verify/update subcommands; complete partial rename when index already has new name
+# v. 20260718.155800 - clearer hash verify success/failure messages
 
 # 2026.07.18 - v. 1.2.4.0 - initial release: MultiPar-compatible PAR2 filename rename (Python CLI)
 """Modify source filenames stored inside PAR2 files.
@@ -388,7 +388,7 @@ def parse_hash_file(hash_file_path):
 def verify_par2_hashes(folder_path):
     hash_file = find_hash_file(folder_path)
     if hash_file is None:
-        return True, None, "No hash file found (checksum step skipped)."
+        return True, None, "No hash file found."
 
     algo = hash_algo_from_path(hash_file)
     records = parse_hash_file(hash_file)
@@ -410,13 +410,18 @@ def verify_par2_hashes(folder_path):
             errors.append(f"{par_name}: checksum mismatch")
 
     if errors:
-        message = "\n".join(errors)
+        message = "PAR2 archive checksum verification failed:\n" + "\n".join(
+            f"  - {error}" for error in errors
+        )
         return False, hash_file, message
 
     return (
         True,
         hash_file,
-        f"PAR2 checksums OK ({len(par_files)} file(s) in {os.path.basename(hash_file)})",
+        (
+            f"PAR2 archive checksums OK: all {len(par_files)} active PAR2 file(s) "
+            f"match {os.path.basename(hash_file)}."
+        ),
     )
 
 

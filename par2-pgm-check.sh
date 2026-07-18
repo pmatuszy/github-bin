@@ -1,7 +1,7 @@
 #!/bin/bash
-# v. 20260718.154700 - auto-detect PAR2 index in cwd; rename prompt defaults Y (20s timeout)
+# v. 20260718.155800 - verbose Step 0 message when hash file is present
 
-# 2026.07.18 - v. 0.1.2 - optional <par2-file>; auto-pick sole index .par2 in directory
+# 2026.07.18 - v. 0.1.3 - explain hash-file gate before PAR2 scanning
 # 2026.07.18 - v. 0.1.1 - github-bin consistency: show_help, print_version_banner, script footer
 # 2026.07.18 - v. 0.1.0 - initial release: misnamed-file detection, hash gate, interactive PAR2 metadata update
 #
@@ -147,6 +147,30 @@ collect_data_files() {
         DATA_FILES+=("$f")
     done
     shopt -u nullglob
+}
+
+find_hash_file_in_dir() {
+    local dir="$1"
+    local f
+    local -a candidates=()
+
+    shopt -s nullglob
+    for f in "$dir"/*.sha512 "$dir"/*.SHA512 \
+             "$dir"/*.sha256 "$dir"/*.SHA256 \
+             "$dir"/*.md5 "$dir"/*.MD5; do
+        [[ -f "$f" ]] && candidates+=("$f")
+    done
+    shopt -u nullglob
+
+    if (( ${#candidates[@]} == 0 )); then
+        return 1
+    fi
+
+    if (( ${#candidates[@]} > 1 )); then
+        echo "Note: multiple hash files found, using $(basename "$(printf '%s\n' "${candidates[@]}" | sort | head -1)")" >&2
+    fi
+
+    printf '%s\n' "$(printf '%s\n' "${candidates[@]}" | sort | head -1)"
 }
 
 run_par2() {
@@ -439,8 +463,21 @@ echo "Data files: ${#DATA_FILES[@]}"
 echo
 
 echo "=== Step 0: verify PAR2 archive checksums ==="
-if ! verify_par2_hashes; then
-    die "PAR2 archive checksum verification failed. Refusing to scan for misnamed files."
+HASH_FILE=""
+if HASH_FILE="$(find_hash_file_in_dir "$DATA_DIR")"; then
+    echo "Detected a hash file in the same directory:"
+    echo "  $(basename "$HASH_FILE")"
+    echo
+    echo "Before proceeding with PAR2 verification and scanning for misnamed files,"
+    echo "checking whether the checksums listed in that file still match the active"
+    echo "PAR2 archives here (*.par2, excluding *_old.par2 backups)."
+    echo
+    if ! verify_par2_hashes; then
+        die "PAR2 archive checksum verification failed. Refusing to scan for misnamed files."
+    fi
+else
+    echo "No .sha512 / .sha256 / .md5 hash file found in this directory."
+    echo "Skipping PAR2 archive checksum verification."
 fi
 echo
 
