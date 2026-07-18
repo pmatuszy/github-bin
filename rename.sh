@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# v. 20260718.180100 - Samsung JPG: EXIF Make/Model; no ERR trap on non-Samsung skip
+# v. 20260718.181500 - Samsung SM-G903F (S5 Neo) friendly model name
 
-# 2026.07.18 - v. 19.247.180100 - Samsung photos use Make/Model EXIF; transform returns 0 when not applicable
+# 2026.07.18 - v. 19.248.181500 - Samsung SM-G903F → S5_Neo (not raw G903F suffix)
 # 2026.07.18 - v. 19.246.175800 - fix Samsung device suffix lost when transform_basename ran after exiftool rename
 # 2026.07.18 - v. 19.245.162000 - Samsung timestamp media (YYYYMMDD_HHMMSS.ext): exiftool Samsung Model → Samsung_S22_Ultra etc.
 # 2026.07.18 - v. 19.244.151800 - underscore-leading .par2: run transform_basename (comma→_, date compact); preserve leading _ (was: skip rename entirely since v. 18.97)
@@ -9133,6 +9133,7 @@ samsung_friendly_model_from_code() {
         SM-S931*|SM-S931B) printf '%s' 'S25' ;;
         SM-S721*|SM-S721B) printf '%s' 'S24_FE' ;;
         SM-S711*|SM-S711B) printf '%s' 'S23_FE' ;;
+        SM-G903*|SM-G903F|G903F) printf '%s' 'S5_Neo' ;;
         *)
             code="${code#SM-}"
             code="${code//-/_}"
