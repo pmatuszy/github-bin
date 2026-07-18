@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# v. 20260718.153800 - find par2-pgm-rename.py in PATH or script dir (github-bin deploy)
+
+# 2026.07.18 - v. 0.1.0 - initial release: misnamed-file detection, hash gate, interactive PAR2 metadata update
 # Verify a PAR2 set and detect misnamed files in a directory.
 #
 # Usage:

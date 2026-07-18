@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# v. 20260718.153800 - hash verify/update subcommands; complete partial rename when index already has new name
+
+# 2026.07.18 - v. 1.2.4.0 - initial release: MultiPar-compatible PAR2 filename rename (Python CLI)
 """Modify source filenames stored inside PAR2 files.
 
 Command-line interface compatible with MultiPar's par2_rename.exe.
