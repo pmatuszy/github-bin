@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# v. 20260718.162000 - Samsung photo/video: add _-_-_Samsung_<model> from exiftool metadata
+# v. 20260718.175800 - Samsung enrich after transform_basename (was overwritten by basename pass)
 
+# 2026.07.18 - v. 19.246.175800 - fix Samsung device suffix lost when transform_basename ran after exiftool rename
 # 2026.07.18 - v. 19.245.162000 - Samsung timestamp media (YYYYMMDD_HHMMSS.ext): exiftool Samsung Model → Samsung_S22_Ultra etc.
 # 2026.07.18 - v. 19.244.151800 - underscore-leading .par2: run transform_basename (comma→_, date compact); preserve leading _ (was: skip rename entirely since v. 18.97)
 # 2026.07.18 - v. 19.243.142000 - GoPro: drop lone _part_XX when adding Timewarp/Timelapse; fix part detect on GoPro_Mission1_Pro names
@@ -10223,28 +10224,6 @@ transform_name() {
         fi
     fi
 
-    local _samsung_applied=0 _samsung_try="" _samsung_rc=0
-    if [[ -f "$f" ]] && (( _gopro_applied == 0 && _sony_applied == 0 && _olympus_applied == 0 )) \
-        && samsung_media_basename_matches "$base"; then
-        local _tn_save_e_sam=0
-        [[ $- == *e* ]] && _tn_save_e_sam=1
-        set +e
-        _samsung_try="$(transform_samsung_media_basename "$f" "$base")"
-        _samsung_rc=$?
-        if ((_tn_save_e_sam)); then
-            set -e
-        else
-            set +e
-        fi
-        if (( _samsung_rc == 0 )) && [[ -n "$_samsung_try" ]]; then
-            newbase="$_samsung_try"
-            _samsung_applied=1
-            vlog "Samsung media rename: $base -> $_samsung_try"
-        else
-            vlog "Samsung media rename: no usable Samsung metadata for $base (rc=$_samsung_rc); falling back to normal rename"
-        fi
-    fi
-
     if [[ -f "$f" ]] && (( _gopro_applied == 0 && _sony_applied == 0 && _olympus_applied == 0 )) && [[ "$stopped_by_user" != yes ]]; then
         local _gopro_part_rc=0 _gopro_part_err_trap=""
         local _tn_save_e_part=0
@@ -10430,6 +10409,28 @@ transform_name() {
                 newbase="${BASH_REMATCH[1]}_${BASH_REMATCH[2]}${BASH_REMATCH[4]}"
             fi
         fi
+        fi
+    fi
+
+    local _samsung_applied=0 _samsung_try="" _samsung_rc=0
+    if [[ -f "$f" ]] && (( _gopro_applied == 0 && _sony_applied == 0 && _olympus_applied == 0 )) \
+        && samsung_media_basename_matches "$newbase"; then
+        local _tn_save_e_sam=0
+        [[ $- == *e* ]] && _tn_save_e_sam=1
+        set +e
+        _samsung_try="$(transform_samsung_media_basename "$f" "$newbase")"
+        _samsung_rc=$?
+        if ((_tn_save_e_sam)); then
+            set -e
+        else
+            set +e
+        fi
+        if (( _samsung_rc == 0 )) && [[ -n "$_samsung_try" ]]; then
+            vlog "Samsung media rename: $newbase -> $_samsung_try"
+            newbase="$_samsung_try"
+            _samsung_applied=1
+        else
+            vlog "Samsung media rename: no usable Samsung metadata for $newbase (rc=$_samsung_rc)"
         fi
     fi
 
