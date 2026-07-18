@@ -1,6 +1,7 @@
 #!/bin/bash
-# v. 20260718.080000 - vmrun -T ws, DISPLAY=:0, env -u TPM_PASS; parse .vmx paths safely
+# v. 20260718.081500 - end-of-run summary: how many VMs still running
 
+# 2026.07.18 - v. 1.3 - print Total running VMs count at end (and run summary); show (none) when all suspended
 # 2026.07.18 - v. 1.2 - Linux vmrun: -T ws + DISPLAY default :0; freeze -vp in PGM_VMRUN_ENC_PASS + env -u TPM_PASS; list without -vp; mapfile + grep '\.vmx$'
 # 2026.07.15 - v. 1.1 - visible masked Passphrase: prompt for encrypted VMs (vmrun often shows none)
 # 2026.07.15 - v. 1.0 - do not buffer suspend stderr (hides encrypted-VM password prompt); list still quiet
@@ -164,6 +165,29 @@ _pgm_running_vmx_lines() {
   _pgm_vmrun_list | grep -E '\.vmx$' | sort -u
 }
 
+# Fills the array named by $1 with running .vmx paths.
+_pgm_collect_running_vmx() {
+  local -n _paths_ref="$1"
+  mapfile -t _paths_ref < <(_pgm_running_vmx_lines)
+}
+
+_pgm_show_running_vms_block() {
+  local heading="$1"
+  local -n _vms_ref="$2"
+  local count=${#_vms_ref[@]}
+
+  echo
+  echo "====================  ${heading}  ========================"
+  echo "(PGM) Total running VMs: ${count}"
+  if (( count == 0 )); then
+    echo "(PGM) (none)"
+  else
+    printf '%s\n' "${_vms_ref[@]}" | boxes -s 40x5 -a c 2>/dev/null || true
+    printf '%s\n' "${_vms_ref[@]}"
+  fi
+  echo
+}
+
 _pgm_vmrun_suspend() {
   local vmx="$1"
   local rc=0
@@ -178,13 +202,12 @@ _pgm_vmrun_suspend() {
   return "$rc"
 }
 
-_pgm_running_vmx_lines | boxes -s 40x5 -a c
-echo
-_pgm_running_vmx_lines
-echo
+_pgm_collect_running_vmx _running_vms
+_initial_running_count=${#_running_vms[@]}
+_pgm_show_running_vms_block "RUNNING VMs AT START" _running_vms
 
-mapfile -t _running_vms < <(_pgm_running_vmx_lines)
-
+_suspend_ok=0
+_suspend_fail=0
 suspend_all=0
 
 for p in "${_running_vms[@]}"; do
@@ -233,19 +256,21 @@ for p in "${_running_vms[@]}"; do
     echo "* * * suspending $p (PGM) * * *"
     _pgm_vmrun_suspend "$p"
     if (( $? == 0 )); then
+      ((++_suspend_ok))
       echo ; echo "(PGM) vmrun finished SUCCESSFULLY"; echo
     else
+      ((++_suspend_fail))
       echo ; echo "(PGM) vmrun finished with ERRORS !!!!!!"; echo
     fi
   fi
   sleep 0.5 ;
 done;
 
-echo ;
+_pgm_collect_running_vmx _still_running_vms
+_still_running_count=${#_still_running_vms[@]}
+_pgm_show_running_vms_block "RUNNING VMs STILL RUNNING" _still_running_vms
 
-_pgm_running_vmx_lines | boxes -s 40x5 -a c
-echo
-_pgm_running_vmx_lines
+echo "(PGM) Run summary: ${_initial_running_count} running at start, ${_suspend_ok} suspended successfully, ${_suspend_fail} suspend failed, ${_still_running_count} still running."
 echo
 
 . /root/bin/_script_footer.sh
