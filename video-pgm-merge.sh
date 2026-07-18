@@ -1131,10 +1131,10 @@ prompt_seam_terminal_previews() {
           play_merge_seam_preview_once "$player" "$output_file" \
             "${boundary_times[$i]}" "${boundary_left[$i]}" "${boundary_right[$i]}" \
             "$seam_num" "$total_seams" "$ord"
-          echo "  [Y] Repeat ${ord} seam preview (default)"
-          echo "  [n] Continue"
+          echo "  [y] Repeat ${ord} seam preview"
+          echo "  [N] Continue (default)"
           echo "  [q] Quit"
-          pgm_read_key "Repeat ${ord} seam preview? [Y/n/q]: " y
+          pgm_read_key "Repeat ${ord} seam preview? [y/N/q]: " n
           choice="${REPLY,,}"
           case "$choice" in
             y) continue ;;
