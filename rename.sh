@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# v. 20260718.183500 - Nikon MAT*.nef/.xmp → YYYYMMDD_HHMMSS_-_-_Nikon_<model>
+# v. 20260718.184700 - Nikon MAT D200 only; MAT#### suffix on timestamp collision
 
+# 2026.07.18 - v. 19.250.184700 - Nikon MAT: restrict to D200 EXIF; append MAT#### suffix only when capture timestamp collides
 # 2026.07.18 - v. 19.249.183500 - Nikon MAT####.NEF+XMP: capture date prefix, Nikon_D200 suffix, RawFileName via nef_xmp pair
 # 2026.07.18 - v. 19.246.175800 - fix Samsung device suffix lost when transform_basename ran after exiftool rename
 # 2026.07.18 - v. 19.245.162000 - Samsung timestamp media (YYYYMMDD_HHMMSS.ext): exiftool Samsung Model → Samsung_S22_Ultra etc.
@@ -1690,7 +1691,7 @@ transform_olympus_voice_recorder_basename() {
     printf '%s_-_-_Olympus_voice_recorder-%s.%s' "$ts" "$stem" "$ext"
 }
 
-# Nikon DSLR raw: MAT####.nef / .xmp (e.g. D200) → YYYYMMDD_HHMMSS_-_-_Nikon_D200.ext
+# Nikon D200 raw only: MAT####.nef / .xmp → YYYYMMDD_HHMMSS_-_-_Nikon_D200[ _MAT####].ext
 nikon_mat_media_basename_matches() {
     [[ "$1" =~ ^[Mm][Aa][Tt][0-9]{4}\.([nN][eE][fF]|[xX][mM][pP])$ ]]
 }
@@ -1727,16 +1728,76 @@ nikon_exif_first_value() {
         | sed -E 's/^[^:]+:[[:space:]]*//' | tr -d $'\r'
 }
 
-nikon_exif_is_nikon() {
+# MAT####.nef naming is used by several bodies; this rule applies to Nikon D200 only.
+nikon_mat_exif_is_d200() {
     local exif="$1"
-    local make="" model=""
+    local model=""
 
-    make="$(nikon_exif_first_value "$exif" 'Make')"
-    if [[ "$make" =~ [Nn][Ii][Kk][Oo][Nn] ]]; then
+    model="$(nikon_exif_first_value "$exif" 'Camera Model Name')"
+    model="${model^^}"
+    model="${model#NIKON CORPORATION }"
+    model="${model#NIKON }"
+    model="$(sony_clip_normalize_device_token "$model")"
+    [[ "$model" == "D200" ]]
+}
+
+nikon_mat_stem_from_basename() {
+    local base="$1"
+    local stem="${base%.*}"
+    printf '%s' "${stem^^}"
+}
+
+# Among MAT####.nef files in dir with the same D200 capture timestamp, only the lowest
+# MAT number keeps the clean basename; others get a MAT#### disambiguation suffix.
+nikon_mat_disambiguation_suffix_stem() {
+    local file="$1"
+    local base="$2"
+    local ts="$3"
+    local model_suffix="$4"
+    local dir ext candidate self_mat f bn exif_file exif other_ts peer_mat exifloc
+    local -a peer_mats=()
+    local peer_min
+
+    exifloc="$(resolve_rename_exiftool)" || return 1
+
+    dir="$(dirname -- "$file")"
+    ext="${base##*.}"
+    self_mat="$(nikon_mat_stem_from_basename "$base")"
+    candidate="$(gopro_format_camera_basename_output "$ts" "Nikon" "$model_suffix" "" "$ext")"
+
+    shopt -s nullglob
+    for f in "$dir"/*; do
+        [[ -f "$f" ]] || continue
+        bn="$(basename -- "$f")"
+        [[ "${bn,,}" == *.nef ]] || continue
+        nikon_mat_media_basename_matches "$bn" || continue
+        paths_refer_to_same_file "$f" "$file" && continue
+        exif_file="$f"
+        exif="$("$exifloc" -api largefilesupport=1 "$exif_file" 2>/dev/null)" || continue
+        [[ -n "$exif" ]] || continue
+        nikon_mat_exif_is_d200 "$exif" || continue
+        other_ts="$(nikon_capture_timestamp_yyyymmdd_hhmmss "$exif_file")" || continue
+        [[ "$other_ts" == "$ts" ]] || continue
+        peer_mat="$(nikon_mat_stem_from_basename "$bn")"
+        [[ "$peer_mat" == "$self_mat" ]] && continue
+        peer_mats+=("$peer_mat")
+    done
+    shopt -u nullglob
+
+    peer_mats+=("$self_mat")
+    peer_min="$(printf '%s\n' "${peer_mats[@]}" | LC_ALL=C sort | head -n 1)"
+    if [[ "$peer_min" != "$self_mat" ]]; then
+        printf '%s' "$self_mat"
         return 0
     fi
-    model="$(nikon_exif_first_value "$exif" 'Camera Model Name')"
-    [[ "$model" =~ [Nn][Ii][Kk][Oo][Nn] ]]
+
+    if [[ -e "$dir/$candidate" ]] && ! paths_refer_to_same_file "$dir/$candidate" "$file"; then
+        printf '%s' "$self_mat"
+        return 0
+    fi
+
+    printf ''
+    return 0
 }
 
 nikon_model_suffix_from_exif() {
@@ -1770,7 +1831,7 @@ nikon_capture_timestamp_yyyymmdd_hhmmss() {
 transform_nikon_mat_media_basename() {
     local file="$1"
     local base="$2"
-    local exifloc exif exif_file ts model_suffix ext
+    local exifloc exif exif_file ts model_suffix ext disambig_suffix
     local _nk_err_trap="" _nk_save_e=0
 
     _transform_nikon_err_trap_restore() {
@@ -1796,13 +1857,15 @@ transform_nikon_mat_media_basename() {
     exif_file="$(nikon_mat_exif_source_file "$file")" || return 1
     exif="$("$exifloc" -api largefilesupport=1 "$exif_file" 2>/dev/null)" || return 1
     [[ -n "$exif" ]] || return 1
-    nikon_exif_is_nikon "$exif" || return 1
+    nikon_mat_exif_is_d200 "$exif" || return 1
 
     ts="$(nikon_capture_timestamp_yyyymmdd_hhmmss "$exif_file")" || return 1
     model_suffix="$(nikon_model_suffix_from_exif "$exif")" || return 1
+    [[ "$model_suffix" == "D200" ]] || return 1
 
     ext="${base##*.}"
-    gopro_format_camera_basename_output "$ts" "Nikon" "$model_suffix" "" "$ext"
+    disambig_suffix="$(nikon_mat_disambiguation_suffix_stem "$file" "$base" "$ts" "$model_suffix")"
+    gopro_format_camera_basename_output "$ts" "Nikon" "$model_suffix" "$disambig_suffix" "$ext"
 }
 
 text_file_has_crlf() {
@@ -10415,7 +10478,7 @@ transform_name() {
             _nikon_applied=1
             vlog "Nikon MAT rename: $base -> $_nikon_try"
         else
-            vlog "Nikon MAT rename: no usable metadata for $base (rc=$_nikon_rc); falling back to normal rename"
+            vlog "Nikon MAT rename: no usable D200 metadata for $base (rc=$_nikon_rc); falling back to normal rename"
         fi
     fi
 
