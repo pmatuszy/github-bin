@@ -1,7 +1,7 @@
 #!/bin/bash
-# v. 20260716.163224 - versioning format v. YYYYMMDD.HH24MISS
+# v. 20260718.093500 - _part_XX: group by camera+session; chain when prev time+duration≈next
 
-# 2026.07.15 - v. 0.15.11 - seam preview defaults: 2s before join, 2s clip (0s after)
+# 2026.07.18 - v. 0.15.12 - _part_XX: group by camera+middle (not full stem); consecutive parts merge when filename times chain (prev+duration≈next)
 # 2026.07.15 - v. 0.15.10 - merge outputs: …_concat_parts_01-NN.mp4 (concat before parts)
 # 2026.07.15 - v. 0.15.9 - size-split output: …_parts_01-NN_concat.mp4 (chapter count), fix middle/camera join
 # 2026.07.15 - v. 0.15.8 - letter chapters (…BLACKa/b/c or …200322a/b): merge without ~4 GB size gate
@@ -96,8 +96,10 @@ Options:
 Merge behaviour (no options):
   - Collects *.mp4 in the current working directory (case-insensitive), except
     existing *_concat.mp4 outputs.
-  - Detects GoPro-style chapter sequences (_part_01, _part_02, … with the same
-    stem). Consecutive part numbers only. Runs starting at part_01 merge as-is;
+  - Detects GoPro-style chapter sequences (_part_01, _part_02, …). Consecutive part
+    numbers only. Same stem (one start time in the name) always groups; when each part
+    has its own leading timestamp, parts merge only if times chain (previous start +
+    duration ≈ next start, same as size-split). Runs starting at part_01 merge as-is;
     runs starting after part_01 (orphan tails) need full ~4 GB / ~12 GB chapters.
   - Also groups clips without _part_XX names when they look like fixed-size splits:
     same session label, ~4 GB or ~12 GB chapters (~6:49 or longer per chapter); filename times
@@ -2333,6 +2335,88 @@ part_chapter_parse() {
   return 1
 }
 
+# Virtual basename without _part_NN for GoPro timestamp/camera parsing.
+part_chapter_gopro_parse_base() {
+  local base="$1"
+  part_chapter_parse "$base" || return 1
+  printf '%s.%s\n' "$PART_STEM" "$PART_EXT"
+}
+
+# Group key: same camera + middle + proxy; leading timestamp may differ per part.
+part_chapter_group_key_from_basename() {
+  local base="$1" stripped cam mid
+  part_chapter_parse "$base" || return 1
+  stripped=$(part_chapter_gopro_parse_base "$base") || return 1
+  if gopro_timestamp_cam_from_basename "$stripped"; then
+    mid=$(gopro_middle_from_basename "$stripped" 2>/dev/null) || mid=""
+    printf '%s|%s%s\n' "$GOPRO_TS_CAM" "$mid" "${PART_PROXY}"
+    return 0
+  fi
+  if cam=$(chapter_camera_from_basename "$base" 2>/dev/null); then
+    printf '%s|%s%s\n' "$cam" "" "${PART_PROXY}"
+    return 0
+  fi
+  printf '%s%s\n' "$PART_STEM" "${PART_PROXY}"
+}
+
+# True when _part_XX filename times chain like size-split: same start time, or
+# previous part start + ffprobe duration ≈ next part start (± tolerance).
+part_chapter_timestamps_follow() {
+  local prev_f="$1" next_f="$2"
+  local pb nb prev_base next_base
+  local prev_date prev_time next_date next_time
+  local prev_epoch next_epoch dur expected delta tol min_gap max_gap gap
+  pb="${prev_f##*/}"
+  nb="${next_f##*/}"
+  prev_base=$(part_chapter_gopro_parse_base "$pb") || return 1
+  next_base=$(part_chapter_gopro_parse_base "$nb") || return 1
+  gopro_timestamp_cam_from_basename "$prev_base" || return 1
+  prev_date="$GOPRO_TS_DATE" prev_time="$GOPRO_TS_TIME"
+  gopro_timestamp_cam_from_basename "$next_base" || return 1
+  next_date="$GOPRO_TS_DATE" next_time="$GOPRO_TS_TIME"
+
+  if [[ "$prev_date" == "$next_date" && "$prev_time" == "$next_time" ]]; then
+    return 0
+  fi
+
+  tol="${PGM_SIZE_SPLIT_TIME_TOLERANCE_SEC:-180}"
+  min_gap="${PGM_SIZE_SPLIT_TIME_MIN_GAP_SEC:-300}"
+  max_gap="${PGM_SIZE_SPLIT_TIME_MAX_GAP_SEC:-720}"
+  if size_split_tier_for_file "$prev_f" | grep -qx 12; then
+    max_gap="${PGM_SIZE_SPLIT_12G_TIME_MAX_GAP_SEC:-2400}"
+  fi
+
+  dur=$(ffprobe_duration_seconds "$prev_f" 2>/dev/null) || dur=""
+
+  if prev_epoch=$(gopro_datetime_to_epoch "$prev_date" "$prev_time" 2>/dev/null) \
+    && next_epoch=$(gopro_datetime_to_epoch "$next_date" "$next_time" 2>/dev/null); then
+    if [[ -n "$dur" ]]; then
+      expected=$(awk -v p="$prev_epoch" -v d="$dur" 'BEGIN{printf "%d", p+d+0.5}')
+      delta=$(( next_epoch - expected ))
+      (( delta >= -tol && delta <= tol ))
+      return $?
+    fi
+    delta=$(( next_epoch - prev_epoch ))
+    (( delta >= min_gap && delta <= max_gap ))
+    return $?
+  fi
+
+  [[ "$prev_date" == "$next_date" ]] || return 1
+  prev_epoch=$(gopro_hhmmss_to_seconds "$prev_time")
+  next_epoch=$(gopro_hhmmss_to_seconds "$next_time")
+  if [[ -n "$dur" ]]; then
+    expected=$(awk -v p="$prev_epoch" -v d="$dur" 'BEGIN{printf "%d", p+d+0.5}')
+    delta=$(( next_epoch - expected ))
+    if (( next_epoch < prev_epoch )); then
+      return 1
+    fi
+    (( delta >= -tol && delta <= tol ))
+    return $?
+  fi
+  gap=$(( next_epoch - prev_epoch ))
+  (( next_epoch >= prev_epoch && gap >= min_gap && gap <= max_gap ))
+}
+
 # Lowest _part_XX number in a run (after numeric sort).
 part_chapter_first_part_number() {
   local -a sorted=()
@@ -2419,7 +2503,7 @@ part_chapter_split_key_into_runs() {
       prev_part=$cur_part
       continue
     fi
-    if (( cur_part == prev_part + 1 )); then
+    if (( cur_part == prev_part + 1 )) && part_chapter_timestamps_follow "${run[-1]}" "$f"; then
       run+=( "$f" )
       prev_part=$cur_part
     else
@@ -2431,11 +2515,12 @@ part_chapter_split_key_into_runs() {
   (( ${#run[@]} > 0 )) && part_chapter_append_run_to_groups_or_rest "$_rest_name" "${run[@]}"
 }
 
-# Pull _part_NN chapter files out of the list into key-based groups. The key is the
-# stem plus the proxy variant, so originals (_part_NN) and proxies (_part_NN_Proxy)
-# go into separate groups and are NEVER mixed. Within each key, only consecutive part
-# numbers are kept together. Runs from part_01 merge at any size; orphan tails starting
-# after part_01 need ~4 GB / ~12 GB full segments (last may be shorter). Invalid runs
+# Pull _part_NN chapter files out of the list into key-based groups. The key is
+# camera + middle label + proxy variant (or full stem when not GoPro-shaped), so
+# originals (_part_NN) and proxies (_part_NN_Proxy) go into separate groups and
+# are NEVER mixed. Within each key, only consecutive part numbers whose filename
+# times chain (or share one start time) are kept together. Runs from part_01 merge
+# at any size; orphan tails starting after part_01 need ~4 GB / ~12 GB full segments.
 # return via the array named in $1 (e.g. rest2 from build_chapter_groups).
 build_part_chapter_groups() {
   local _rest_name=$1
@@ -2453,7 +2538,10 @@ build_part_chapter_groups() {
       continue
     fi
     if part_chapter_parse "$base"; then
-      key="${PART_STEM}${PART_PROXY}"
+      key=$(part_chapter_group_key_from_basename "$base") || {
+        rest_arr+=( "$f" )
+        continue
+      }
       if [[ -z "${group_map[$key]+x}" ]]; then
         group_map["$key"]="$f"
         keys_seen+=( "$key" )
@@ -2538,7 +2626,7 @@ print_group_plan() {
     fi
   done
   if (( part_groups > 0 )); then
-    echo "Merge candidates (_part_XX chapters; consecutive parts from part_01):"
+    echo "Merge candidates (_part_XX chapters; consecutive parts from part_01; times must chain when each part has its own timestamp):"
     gidx=0
     for blob in "${GROUP_BLOBS[@]}"; do
       group_files_to_array "$blob" files
@@ -2966,7 +3054,7 @@ do_merge() {
 
   if (( mergeable_total == 0 )); then
     echo "$(pgm_ts) No multi-part chapter groups to merge."
-    echo "$(pgm_ts) Tip: sequential GoPro clips (YYYYMMDD_HHMMSS_…_GOPRO*_BLACK.MP4, ~4 GB / ~12 GB, or a/b/c letter suffixes on one start time) may be mergeable chapters."
+    echo "$(pgm_ts) Tip: sequential GoPro clips (_part_01… with chaining timestamps, YYYYMMDD_HHMMSS_… without _part_XX, ~4 GB / ~12 GB, or a/b/c letter suffixes) may be mergeable chapters."
     return 0
   fi
 
