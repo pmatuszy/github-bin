@@ -1,6 +1,7 @@
 #!/bin/bash
-# v. 20260716.164840 - add -h/--help, -v/--version, --no_startup_delay
+# v. 20260718.080000 - vmrun -T ws, DISPLAY=:0, env -u TPM_PASS; parse .vmx paths safely
 
+# 2026.07.18 - v. 1.2 - Linux vmrun: -T ws + DISPLAY default :0; freeze -vp in PGM_VMRUN_ENC_PASS + env -u TPM_PASS; list without -vp; mapfile + grep '\.vmx$'
 # 2026.07.15 - v. 1.1 - visible masked Passphrase: prompt for encrypted VMs (vmrun often shows none)
 # 2026.07.15 - v. 1.0 - do not buffer suspend stderr (hides encrypted-VM password prompt); list still quiet
 # 2026.07.05 - v. 0.9 - vmrun list only: suppress AppLoader stderr; suspend keeps stderr (VM password prompt)
@@ -108,59 +109,89 @@ _pgm_ensure_tpm_pass_for_vmx() {
     return 1
   fi
   TPM_PASS="${TPM_PASS//$'\r'/}"
+  PGM_VMRUN_ENC_PASS="${TPM_PASS}"
   if [[ -z "${TPM_PASS}" ]]; then
     echo "(PGM) Empty passphrase — vmrun may still wait on stdin without a visible prompt." >&2
   fi
   return 0
 }
 
-# vmrun list: suppress AppLoader/libaio noise. Suspend uses -vp when TPM_PASS is set.
-_pgm_vmrun_list() {
-  if [ -n "${TPM_PASS:-}" ]; then
-    vmrun -vp "${TPM_PASS}" list 2>/dev/null
-  else
-    vmrun list 2>/dev/null
-  fi
-}
-
-_pgm_vmrun() {
-  if [ -n "${TPM_PASS:-}" ]; then
-    vmrun -vp "${TPM_PASS}" "$@"
-  else
-    vmrun "$@"
-  fi
-}
-
 check_if_installed virt-what
-if (( $(virt-what | wc -l) != 0 ));then
-  echo ; echo "host is NOT a physical machine ... exiting...";echo
-  exit 1
-fi
 
-type -fP vmrun 2>&1 > /dev/null
-if (( $? != 0 )); then
-  echo ; echo "(PGM) I can't find vmrun utility... exiting ..."; echo
+virt_what_out=$(virt-what 2>/dev/null) || true
+if [[ -n "${virt_what_out//[[:space:]]/}" ]]; then
+  vw_report="${virt_what_out//$'\n'/, }"
+  vw_report="${vw_report%, }"
+  echo
+  echo "(PGM) host is NOT a physical machine (virt-what: ${vw_report}) ... exiting ..."
+  echo
   exit 1
 fi
 
 export DISPLAY=
 
-if [ -f /root/SECRET/vmware-pass.sh ];then
+if [[ -f /root/SECRET/vmware-pass.sh ]]; then
   # shellcheck source=/dev/null
   . /root/SECRET/vmware-pass.sh
   [[ -n "${TPM_PASS:-}" ]] && TPM_PASS="${TPM_PASS//$'\r'/}"
 fi
 
-_pgm_vmrun_list | boxes -s 40x5 -a c
-echo;
-_pgm_vmrun_list
+if ! type -fP vmrun &>/dev/null; then
+  echo
+  echo "(PGM) I can't find vmrun utility... exiting ..."
+  echo
+  exit 1
+fi
+
+VMRUN_PREFIX=(vmrun)
+if [[ "$(uname -s)" == Linux && -z "${VMRUN_NO_WS:-}" ]]; then
+  VMRUN_PREFIX=(vmrun -T ws)
+fi
+
+_pgm_vmrun_enc_display() {
+  printf '%s' "${PGM_VMRUN_DISPLAY:-${VMRUN_DISPLAY:-${DISPLAY:-:0}}}"
+}
+
+PGM_VMRUN_ENC_PASS="${TPM_PASS-}"
+_pgm_ed="$(_pgm_vmrun_enc_display)"
+
+# vmrun list: suppress AppLoader/libaio noise; running VM paths do not need -vp.
+_pgm_vmrun_list() {
+  "${VMRUN_PREFIX[@]}" list 2>/dev/null
+}
+
+_pgm_running_vmx_lines() {
+  _pgm_vmrun_list | grep -E '\.vmx$' | sort -u
+}
+
+_pgm_vmrun_suspend() {
+  local vmx="$1"
+  local rc=0
+
+  if _pgm_vmx_likely_encrypted "$vmx" && [[ -n "${PGM_VMRUN_ENC_PASS:-}" ]]; then
+    /bin/env -u TPM_PASS DISPLAY="$_pgm_ed" "${VMRUN_PREFIX[@]}" -vp "$PGM_VMRUN_ENC_PASS" suspend "$vmx" nogui
+    rc=$?
+  else
+    "${VMRUN_PREFIX[@]}" suspend "$vmx" nogui
+    rc=$?
+  fi
+  return "$rc"
+}
+
+_pgm_running_vmx_lines | boxes -s 40x5 -a c
+echo
+_pgm_running_vmx_lines
 echo
 
-export IFS=$'\n'
+mapfile -t _running_vms < <(_pgm_running_vmx_lines)
 
 suspend_all=0
 
-for p in `$(_pgm_vmrun_list | grep vmx)`;do
+for p in "${_running_vms[@]}"; do
+  if [[ ! -f "$p" ]]; then
+    echo "(PGM) skipping — not a .vmx file: $p" >&2
+    continue
+  fi
   do_suspend=0
 
   if (( suspend_all == 1 )); then
@@ -194,11 +225,13 @@ for p in `$(_pgm_vmrun_list | grep vmx)`;do
       echo ; echo "(PGM) skipping suspend — no passphrase for encrypted VM"; echo
       continue
     fi
-    if _pgm_vmx_likely_encrypted "$p" && [[ -n "${TPM_PASS:-}" ]]; then
+    PGM_VMRUN_ENC_PASS="${TPM_PASS-}"
+    _pgm_ed="$(_pgm_vmrun_enc_display)"
+    if _pgm_vmx_likely_encrypted "$p" && [[ -n "${PGM_VMRUN_ENC_PASS:-}" ]]; then
       echo "(PGM) suspending encrypted VM with -vp (passphrase from TPM_PASS / earlier prompt)"
     fi
     echo "* * * suspending $p (PGM) * * *"
-    _pgm_vmrun suspend "$p" nogui
+    _pgm_vmrun_suspend "$p"
     if (( $? == 0 )); then
       echo ; echo "(PGM) vmrun finished SUCCESSFULLY"; echo
     else
@@ -210,9 +243,9 @@ done;
 
 echo ;
 
-_pgm_vmrun_list | boxes -s 40x5 -a c
+_pgm_running_vmx_lines | boxes -s 40x5 -a c
 echo
-_pgm_vmrun_list
+_pgm_running_vmx_lines
 echo
 
 . /root/bin/_script_footer.sh
