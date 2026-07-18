@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# v. 20260718.100800 - gopro_renamed_mp4: match GOPRO7_BLACK (not only GOPRO_…)
+# v. 20260718.120500 - GoPro Timelapse: require no audio (Rate …sec alone is not enough)
 
+# 2026.07.18 - v. 19.242.120500 - GoPro Timelapse: ignore Rate …sec when audio track present; strip false _Timelapse_ suffix
 # 2026.07.18 - v. 19.241.100800 - GoPro capture-mode backfill: recognize GOPRO7_BLACK renamed names (regex required GOPRO_ underscore)
 # 2026.07.18 - v. 19.240.094000 - GoPro capture-mode backfill: return 0 on no-change paths (fix ERR trap abort under set -E in transform_name)
 # v. 20260717.231500 - GoPro Timewarp/Timelapse; versioning YYYYMMDD.HHMMSS (aligned with _script_header.sh)
@@ -8643,6 +8644,40 @@ gopro_apply_camera_model_name_from_exif() {
 }
 
 # GoPro MP4 only: Timewarp_5x / Timelapse_1_5sec from exiftool Rate value (JPG and OFF/N/A skipped).
+# Timelapse Rate (…sec) is ignored when the clip has an audio track — GoPro often keeps the
+# last timelapse interval in Rate even for normal video / Highlights clips.
+gopro_exif_has_audio_track() {
+    local exif="$1"
+    local line fmt ch
+
+    line="$(gopro_exif_first_line "$exif" '^Audio Format[[:space:]]+:')"
+    fmt="$(gopro_exif_value_after_colon "$line")"
+    fmt="${fmt,,}"
+    if [[ -n "$fmt" && "$fmt" != n/a && "$fmt" != off ]]; then
+        return 0
+    fi
+    line="$(gopro_exif_first_line "$exif" '^Audio Channels[[:space:]]+:')"
+    ch="$(gopro_exif_value_after_colon "$line")"
+    [[ "$ch" =~ ^[1-9][0-9]*$ ]]
+}
+
+gopro_file_has_audio_track() {
+    local file="$1" exifloc fmt ch
+
+    exifloc="$(resolve_rename_exiftool)" || return 1
+    fmt="$("$exifloc" -api largefilesupport=1 -AudioFormat -s3 "$file" 2>/dev/null | head -n 1)"
+    fmt="${fmt//$'\r'/}"
+    fmt="${fmt//$'\n'/}"
+    fmt="${fmt,,}"
+    if [[ -n "$fmt" && "$fmt" != n/a && "$fmt" != off ]]; then
+        return 0
+    fi
+    ch="$("$exifloc" -api largefilesupport=1 -AudioChannels -s3 "$file" 2>/dev/null | head -n 1)"
+    ch="${ch//$'\r'/}"
+    ch="${ch//$'\n'/}"
+    [[ "$ch" =~ ^[1-9][0-9]*$ ]]
+}
+
 gopro_video_capture_mode_suffix_from_rate() {
     local rate="${1-}"
     local norm
@@ -8662,11 +8697,30 @@ gopro_video_capture_mode_suffix_from_rate() {
 
 gopro_video_capture_mode_suffix_from_exif() {
     local exif="$1"
-    local line rate
+    local line rate mode=""
 
     line="$(gopro_exif_first_line "$exif" '^Rate[[:space:]]+:')"
     rate="$(gopro_exif_value_after_colon "$line")"
-    gopro_video_capture_mode_suffix_from_rate "$rate"
+    mode="$(gopro_video_capture_mode_suffix_from_rate "$rate")"
+    [[ -n "$mode" ]] || return 0
+    if [[ "$mode" == Timelapse_* ]] && gopro_exif_has_audio_track "$exif"; then
+        vlog "GoPro Rate ${rate}: not Timelapse (audio track present — normal video)."
+        return 0
+    fi
+    printf '%s' "$mode"
+}
+
+gopro_video_capture_mode_suffix_from_file() {
+    local file="$1" rate="" mode=""
+
+    rate="$(gopro_fetch_rate_tag "$file")" || rate=""
+    mode="$(gopro_video_capture_mode_suffix_from_rate "$rate")"
+    [[ -n "$mode" ]] || return 0
+    if [[ "$mode" == Timelapse_* ]] && gopro_file_has_audio_track "$file"; then
+        vlog "GoPro Rate ${rate}: not Timelapse (audio track present — normal video)."
+        return 0
+    fi
+    printf '%s' "$mode"
 }
 
 # Fast Rate-only exiftool read for backfill on already-renamed GoPro MP4 files.
@@ -8689,8 +8743,18 @@ gopro_basename_has_capture_mode_suffix() {
 gopro_capture_mode_suffix_from_basename() {
     local base="$1"
 
-    if [[ "$base" =~ _(Timewarp|Timelapse)_([^_./]+)(_part_[0-9]{2})?(_Proxy)?(\.[mM][pP]4)$ ]]; then
+    if [[ "$base" =~ _(Timewarp|Timelapse)_(([^./]+_)*[^./]+)(_part_[0-9]{2})?(_Proxy)?(\.[mM][pP]4)$ ]]; then
         printf '%s_%s' "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}"
+        return 0
+    fi
+    return 1
+}
+
+gopro_basename_strip_capture_mode_suffix() {
+    local base="$1"
+
+    if [[ "$base" =~ ^(.+)_(Timewarp|Timelapse)_(([^./]+_)*[^./]+)(_part_[0-9]{2})?(_Proxy)?(\.[mM][pP]4)$ ]]; then
+        printf '%s%s%s%s' "${BASH_REMATCH[1]}" "${BASH_REMATCH[4]}" "${BASH_REMATCH[5]}" "${BASH_REMATCH[6]}"
         return 0
     fi
     return 1
@@ -8751,6 +8815,21 @@ maybe_transform_gopro_capture_mode_backfill() {
     local rate="" mode_suffix="" newbase=""
 
     gopro_renamed_mp4_basename_matches "$base" || return 0
+
+    if ! resolve_rename_exiftool >/dev/null; then
+        return 0
+    fi
+
+    if [[ "$base" =~ _Timelapse_ ]] && gopro_file_has_audio_track "$f"; then
+        newbase="$(gopro_basename_strip_capture_mode_suffix "$base")" || return 0
+        if [[ "$newbase" != "$base" ]]; then
+            rate="$(gopro_fetch_rate_tag "$f" 2>/dev/null)" || rate="?"
+            vlog "GoPro: remove false Timelapse suffix (audio track; Rate ${rate} is not clip mode)."
+            printf '%s' "$newbase"
+            return 0
+        fi
+    fi
+
     gopro_basename_has_capture_mode_suffix "$base" && return 0
 
     if gopro_capture_mode_suffix_from_basename "$base" >/dev/null 2>&1; then
@@ -8762,12 +8841,8 @@ maybe_transform_gopro_capture_mode_backfill() {
         return 0
     fi
 
-    if ! resolve_rename_exiftool >/dev/null; then
-        return 0
-    fi
-
     rate="$(gopro_fetch_rate_tag "$f")" || rate=""
-    mode_suffix="$(gopro_video_capture_mode_suffix_from_rate "$rate")"
+    mode_suffix="$(gopro_video_capture_mode_suffix_from_file "$f")"
     if [[ -n "$mode_suffix" ]]; then
         newbase="$(gopro_basename_with_capture_mode_suffix "$base" "$mode_suffix")" || return 0
         vlog "GoPro capture mode backfill: $base -> $newbase (Rate=${rate:-?})"

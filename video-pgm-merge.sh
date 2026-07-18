@@ -1,7 +1,7 @@
 #!/bin/bash
-# v. 20260718.105800 - seam preview tct size default 100x40 terminal cells
+# v. 20260718.120500 - timelapse: Rate …sec only when no audio track (same as rename.sh)
 
-# 2026.07.18 - v. 0.15.20 - seam preview: limit tct to 100x40 cells (PGM_SEAM_PREVIEW_WIDTH/HEIGHT)
+# 2026.07.18 - v. 0.15.21 - timelapse detect: ignore Rate …sec when clip has audio
 # 2026.07.18 - v. 0.15.19 - seam preview: play default Y; repeat default N (continue)
 # 2026.07.18 - v. 0.15.17 - seam preview: default Y for play and repeat prompts
 # 2026.07.18 - v. 0.15.15 - _part_XX: consecutive parts from part_01 merge without timestamp chain; GoPro Rate 1_5sec timelapse detection
@@ -1904,6 +1904,22 @@ gopro_fetch_rate_tag() {
   printf '%s' "$rate"
 }
 
+gopro_file_has_audio_track() {
+  local file="$1" exifloc fmt ch
+  exifloc="$(resolve_pgm_exiftool)" || return 1
+  fmt="$("$exifloc" -api largefilesupport=1 -AudioFormat -s3 "$file" 2>/dev/null | head -n 1)"
+  fmt="${fmt//$'\r'/}"
+  fmt="${fmt//$'\n'/}"
+  fmt="${fmt,,}"
+  if [[ -n "$fmt" && "$fmt" != n/a && "$fmt" != off ]]; then
+    return 0
+  fi
+  ch="$("$exifloc" -api largefilesupport=1 -AudioChannels -s3 "$file" 2>/dev/null | head -n 1)"
+  ch="${ch//$'\r'/}"
+  ch="${ch//$'\n'/}"
+  [[ "$ch" =~ ^[1-9][0-9]*$ ]]
+}
+
 # GoPro Rate timelapse interval (1_5sec → 1.5). Same rules as rename.sh (*[0-9]sec, not *x).
 gopro_rate_tag_is_timelapse() {
   local rate="${1,,}"
@@ -1933,12 +1949,16 @@ gopro_basename_is_timelapse() {
   [[ "$1" =~ _Timelapse_ ]]
 }
 
-# True when file is GoPro timelapse (_Timelapse_ in name, or exiftool Rate …sec / 1_5sec).
+# True when file is GoPro timelapse (_Timelapse_ in name, or exiftool Rate …sec without audio).
 gopro_file_is_timelapse() {
   local f="$1" base="${f##*/}" rate=""
-  gopro_basename_is_timelapse "$base" && return 0
+  if gopro_basename_is_timelapse "$base"; then
+    gopro_file_has_audio_track "$f" && return 1
+    return 0
+  fi
   rate=$(gopro_fetch_rate_tag "$f" 2>/dev/null) || return 1
-  gopro_rate_tag_is_timelapse "$rate"
+  gopro_rate_tag_is_timelapse "$rate" || return 1
+  gopro_file_has_audio_track "$f" && return 1
 }
 
 # True when wall-clock gap between chapter filename times fits timelapse (gap >> playback).
@@ -3332,8 +3352,8 @@ done
 
 PGM_SEAM_PREVIEW_BEFORE="${PGM_SEAM_PREVIEW_BEFORE:-2}"
 PGM_SEAM_PREVIEW_AFTER="${PGM_SEAM_PREVIEW_AFTER:-0}"
-PGM_SEAM_PREVIEW_WIDTH="${PGM_SEAM_PREVIEW_WIDTH:-100}"
-PGM_SEAM_PREVIEW_HEIGHT="${PGM_SEAM_PREVIEW_HEIGHT:-40}"
+PGM_SEAM_PREVIEW_WIDTH="${PGM_SEAM_PREVIEW_WIDTH-100}"
+PGM_SEAM_PREVIEW_HEIGHT="${PGM_SEAM_PREVIEW_HEIGHT-40}"
 while [[ $# -gt 0 ]]; do
   case $1 in
     -h|--help)
