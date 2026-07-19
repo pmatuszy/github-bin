@@ -1,6 +1,7 @@
 #!/bin/bash
-# v. 20260719.093600 - hide par2 OK line from step output; show it only in RESULT box
+# v. 20260719.095800 - steps numbered from 1; split timing summary at end of run
 
+# 2026.07.19 - v. 0.1.12 - Timing summary (hash/PAR2/total); renumber steps from 1 not 0
 # 2026.07.19 - v. 0.1.11 - Suppress duplicate par2 OK line above RESULT banner
 # 2026.07.19 - v. 0.1.10 - Scope summary: data/hash counts; list only in-scope hash manifests
 # 2026.07.19 - v. 0.1.9 - Resolve PAR2 set from user path (volume ok); fix die-in-subshell fallback
@@ -37,7 +38,7 @@ Environment:
   PAR2_CMD             par2 executable (default: par2)
   PYTHON_CMD           python3 executable (default: python3)
 
-If a .sha512 / .sha256 / .md5 file exists in the directory, Step 0 scans all
+If a .sha512 / .sha256 / .md5 file exists in the directory, Step 1 scans all
 hash manifests, reports how many list in-scope PAR2 archives for this set, and
 verifies checksums only in those file(s). Other hash entries are ignored.
 
@@ -262,6 +263,7 @@ die() {
 
 finish() {
     local rc="${return_code:-0}"
+    pgm_print_timing_summary
     . /root/bin/_script_footer.sh
     exit "$rc"
 }
@@ -353,6 +355,47 @@ pgm_filter_par2_verify_output() {
 
 pgm_filter_par2_verify_stream() {
     sed -E '/^[[:space:]]*[Aa]ll files are (ok|correct).*repair is not required\.?[[:space:]]*$/Id'
+}
+
+pgm_format_elapsed() {
+    local s="${1:-0}" h m
+    (( s < 0 )) && s=0
+    h=$(( s / 3600 )); s=$(( s % 3600 ))
+    m=$(( s / 60 )); s=$(( s % 60 ))
+    if (( h > 0 )); then
+        printf '%dh %dm %ds' "$h" "$m" "$s"
+    elif (( m > 0 )); then
+        printf '%dm %ds' "$m" "$s"
+    else
+        printf '%ds' "$s"
+    fi
+}
+
+pgm_timing_lap_to() {
+    local var_name="$1"
+    local now=$SECONDS
+
+    printf -v "$var_name" '%s' "$(( now - PGM_TIMING_LAST ))"
+    PGM_TIMING_LAST=$now
+}
+
+pgm_print_timing_summary() {
+    local total=0
+
+    [[ -n "${PGM_RUN_START:-}" ]] || return 0
+    total=$(( SECONDS - PGM_RUN_START ))
+
+    echo
+    echo "--- Timing ---"
+    printf '  Hash checksum check:        %s\n' "$(pgm_format_elapsed "${PGM_TIMING_HASH_SEC:-0}")"
+    if (( ${PGM_TIMING_PAR2_SCAN_SEC:-0} > 0 )); then
+        printf '  PAR2 verify (names only):  %s\n' "$(pgm_format_elapsed "${PGM_TIMING_PAR2_NAMES_SEC:-0}")"
+        printf '  PAR2 verify (dir scan):    %s\n' "$(pgm_format_elapsed "${PGM_TIMING_PAR2_SCAN_SEC:-0}")"
+    else
+        printf '  PAR2 verify:               %s\n' "$(pgm_format_elapsed "${PGM_TIMING_PAR2_NAMES_SEC:-0}")"
+    fi
+    printf '  Total wall time:           %s\n' "$(pgm_format_elapsed "$total")"
+    echo
 }
 
 pgm_describe_path_kind() {
@@ -764,7 +807,7 @@ prompt_and_apply_rename() {
     fi
 
     echo
-    pgm_print_step_header "Step 3: update PAR2 metadata"
+    pgm_print_step_header "Step 4: update PAR2 metadata"
     rename_args=("$(basename "$PAR2_FILE")")
     for i in "${RENAME_PAIRS[@]}"; do
         rename_args+=("$i")
@@ -774,16 +817,16 @@ prompt_and_apply_rename() {
     (( rename_rc == 0 )) || die "PAR2 metadata update failed (exit $rename_rc)."
 
     echo
-    pgm_print_step_header "Step 3b: restore PAR2 file timestamps"
+    pgm_print_step_header "Step 4b: restore PAR2 file timestamps"
     echo "Setting active .par2 modification times to match the original *_old.par2 backups."
     restore_par2_file_timestamps "$DATA_DIR"
 
     echo
-    pgm_print_step_header "Step 4: update hash file"
+    pgm_print_step_header "Step 5: update hash file"
     update_par2_hashes || die "Failed to update hash file."
 
     echo
-    pgm_print_step_header "Step 5: verify after update"
+    pgm_print_step_header "Step 6: verify after update"
     run_par2 verify "$PAR2_FILE"
 }
 
@@ -858,14 +901,14 @@ print_summary() {
     if [[ -n "$wrong" ]]; then
         pgm_print_outcome warn \
             "Wrong PAR2 filename(s) detected, but rename pairs could not be parsed." \
-            "Search Step 2 output for: File: \"...\" - is a match for \"...\"."
+            "Search Step 3 output for: File: \"...\" - is a match for \"...\"."
         return 2
     fi
 
     if grep -qiE 'repair is possible' "$out_file"; then
         pgm_print_outcome warn \
             "Repair is possible (damage or rename fixable)." \
-            "Review Step 2 output above."
+            "Review Step 3 output above."
         return 2
     fi
 
@@ -878,7 +921,7 @@ print_summary() {
 
     pgm_print_outcome err \
         "Verification reported problems." \
-        "Review Step 2 output above."
+        "Review Step 3 output above."
     return 2
 }
 
@@ -972,14 +1015,22 @@ collect_data_files "$DATA_DIR"
 
 pgm_print_startup_inventory
 
-pgm_print_step_header "Step 0: verify PAR2 archive checksums"
+PGM_RUN_START=$SECONDS
+PGM_TIMING_LAST=$SECONDS
+PGM_TIMING_HASH_SEC=0
+PGM_TIMING_PAR2_NAMES_SEC=0
+PGM_TIMING_PAR2_SCAN_SEC=0
+
+pgm_print_step_header "Step 1: verify PAR2 archive checksums"
 if ! verify_par2_hashes; then
     die "PAR2 archive checksum verification failed. Refusing to scan for misnamed files."
 fi
+pgm_timing_lap_to PGM_TIMING_HASH_SEC
 
-pgm_print_step_header "Step 1: verify (PAR2 names only)"
+pgm_print_step_header "Step 2: verify (PAR2 names only)"
 OUT1=$(run_par2 verify "$PAR2_FILE" 2>&1)
 RC1=$?
+pgm_timing_lap_to PGM_TIMING_PAR2_NAMES_SEC
 printf '%s\n\n' "$(pgm_filter_par2_verify_output "$OUT1")"
 
 if pgm_par2_output_indicates_ok "$OUT1"; then
@@ -991,10 +1042,11 @@ if pgm_par2_output_indicates_ok "$OUT1"; then
     finish
 fi
 
-pgm_print_step_header "Step 2: verify with directory scan (detect misnamed files)"
+pgm_print_step_header "Step 3: verify with directory scan (detect misnamed files)"
 OUT2_FILE=$(mktemp "${TMPDIR:-/tmp}/par2-pgm-check.XXXXXX")
 run_par2 verify "$PAR2_FILE" "${DATA_FILES[@]}" 2>&1 | tee "$OUT2_FILE" | pgm_filter_par2_verify_stream
 RC2=${PIPESTATUS[0]}
+pgm_timing_lap_to PGM_TIMING_PAR2_SCAN_SEC
 echo
 
 print_summary "$OUT2_FILE"
