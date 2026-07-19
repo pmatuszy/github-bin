@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20260719.140918 - nicer PAR2 discovery summary; skip redundant single-set breakdown
 # v. 20260719.134000 - --scope subdirs|current: discover PAR2 sets in directory tree
 # v. 20260719.114307 - set-selection prompt: q/A single key, no Enter required
 # v. 20260719.112833 - timing section: wall clock only; step durations outside
@@ -7,6 +8,7 @@
 # v. 20260719.103506 - fix no-arg run: empty POSITIONAL[@]:- became one "" element
 # v. 20260719.102800 - multi-set selection: A/a, ranges 1-4, --all, multiple paths
 
+# 2026.07.19 - v. 0.1.23 - Discovery summary: plain English, no lone "." line for 1 set
 # 2026.07.19 - v. 0.1.22 - --scope subdirs|current; discover PAR2 sets under start directory
 # 2026.07.19 - v. 0.1.21 - Set-selection q/A cancel/default without pressing Enter
 # 2026.07.19 - v. 0.1.20 - Timing block: start/end/wall only; step durations separate
@@ -476,8 +478,12 @@ pgm_find_par2_indices_scoped() {
 pgm_print_par2_discovery_summary() {
     local -n _indices=$1
     local -A dir_counts=()
-    local idx dir d count n_dirs rel label
+    local idx dir count n_dirs n_sets rel dir_rel display
     local -a sorted_dirs=()
+    local start_ap d_ap
+
+    n_sets=${#_indices[@]}
+    start_ap="$(abs_path "$START_DIR")"
 
     for idx in "${_indices[@]}"; do
         dir="$(dirname "$idx")"
@@ -490,19 +496,48 @@ pgm_print_par2_discovery_summary() {
     else
         echo "Discovering PAR2 index files in $START_DIR (scope: current directory only)..."
     fi
-    echo "Found ${#_indices[@]} PAR2 set(s) in ${n_dirs} director(ies)."
+
+    if (( n_sets == 1 )); then
+        d_ap="$(abs_path "$(dirname "${_indices[0]}")")"
+        display="$(pgm_path_display_relative "${_indices[0]}" "$START_DIR")"
+        if [[ "$d_ap" == "$start_ap" ]]; then
+            echo "Found 1 PAR2 set in the start directory:"
+        else
+            dir_rel="$(pgm_path_display_relative "$d_ap" "$START_DIR")"
+            echo "Found 1 PAR2 set in subdirectory ${dir_rel}/:"
+        fi
+        printf '  %s\n' "$display"
+        echo
+        return 0
+    fi
+
+    if (( n_dirs == 1 )); then
+        d_ap="$(abs_path "$(dirname "${_indices[0]}")")"
+        if [[ "$d_ap" == "$start_ap" ]]; then
+            echo "Found ${n_sets} PAR2 sets in the start directory."
+        else
+            echo "Found ${n_sets} PAR2 sets in 1 subdirectory."
+        fi
+    else
+        echo "Found ${n_sets} PAR2 sets in ${n_dirs} directories."
+    fi
     echo
+    echo "By directory:"
 
     mapfile -t sorted_dirs < <(printf '%s\n' "${!dir_counts[@]}" | LC_ALL=C sort)
     for d in "${sorted_dirs[@]}"; do
         count="${dir_counts[$d]}"
-        rel="$(pgm_path_display_relative "$d" "$START_DIR")"
-        if [[ "$rel" == "." ]]; then
-            label="."
+        d_ap="$(abs_path "$d")"
+        if [[ "$d_ap" == "$start_ap" ]]; then
+            rel="(start directory)"
         else
-            label="${rel}/"
+            rel="$(pgm_path_display_relative "$d" "$START_DIR")/"
         fi
-        printf '  %-40s %d set(s)\n' "$label" "$count"
+        if (( count == 1 )); then
+            printf '  %-40s 1 set\n' "$rel"
+        else
+            printf '  %-40s %d sets\n' "$rel" "$count"
+        fi
     done
     echo
 }
