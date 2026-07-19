@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# v. 20260719.104346 - rename prompt [G]: auto-yes Samsung, GoPro, Nikon D200 EXIF tags for rest of run
+# v. 20260719.115122 - large checksum list prompt: full menu + [A] auto-yes rest of run
 
+# 2026.07.19 - v. 19.256.115122 - large checksum list prompt: print y/N/a/v/q menu lines; [A] yes + auto-check remaining large lists for rest of run
 # 2026.07.19 - v. 19.255.104346 - rename prompt [G]: also auto-approve Nikon D200 MAT####.NEF/.XMP exiftool renames for rest of run
 # 2026.07.19 - v. 19.254.104306 - rename prompt [G]: also auto-approve GoPro raw→exiftool metadata renames (GH/GOPR/GP…) for rest of run
 # 2026.07.19 - v. 19.253.100600 - rename prompt [G]: auto-approve known EXIF camera make/model tag appends (Samsung timestamp media) for rest of run
@@ -7462,6 +7463,14 @@ sum_bytes_of_existing_regular_files_checksum_refs() {
     printf '%d' "$total"
 }
 
+print_large_hash_check_prompt_menu() {
+    echo "  $(rename_menu_key_bracket y N) Yes — check this checksum list and continue"
+    echo "  $(rename_menu_key_bracket N N) No — skip checking this list (default)"
+    echo "  $(rename_menu_key_bracket A N) Yes, and check all remaining large checksum lists without asking (rest of this run)"
+    print_prompt_view_directory_menu_line
+    echo "  $(rename_menu_key_bracket q N) Quit — stop rename.sh"
+}
+
 confirm_large_hash_check() {
     local sum_file="$1"
     local label="$2"
@@ -7469,6 +7478,11 @@ confirm_large_hash_check() {
     local ref_array_name="${4-}"
     local answer=""
     local total_bytes=0
+
+    if [[ "$AUTO_LARGE_HASH_CHECK_SESSION" == yes ]]; then
+        vlog "Large ${label,,} list (${line_count} lines): session auto-yes for '${sum_file}'."
+        return 0
+    fi
 
     if (( line_count <= LARGE_HASHFILE_LINE_PROMPT_THRESHOLD )); then
         return 0
@@ -7490,8 +7504,8 @@ confirm_large_hash_check() {
         emit_wrap_labeled_stdout "${label} NOTICE: " "${YELLOW}${label} NOTICE:${RESET} " "'${sum_file}' contains ${line_count} checksum line(s)."
         echo "Checking it may take a long time."
         print_checksum_list_last_verify_for_prompt "$sum_file"
-        print_prompt_view_directory_menu_line
-        echo -n "$(user_prompt_ts_prefix)Check this file and continue? [y/N/v/q]: "
+        print_large_hash_check_prompt_menu
+        echo -n "$(user_prompt_ts_prefix)Check this file and continue? [y/N/a/v/q]: "
 
         flush_stdin
         read_single_key answer "$PROMPT_WAIT_SECONDS"
@@ -7502,6 +7516,11 @@ confirm_large_hash_check() {
         fi
         case "$answer" in
             y|Y)
+                return 0
+                ;;
+            a|A)
+                AUTO_LARGE_HASH_CHECK_SESSION=yes
+                vlog "Session auto-yes enabled for large checksum list verification prompts."
                 return 0
                 ;;
             q|Q)
@@ -12139,6 +12158,7 @@ AUTO_GOPRO_STRIP_PART_DIR="" # GoPro lone _part_XX prompt [D]: auto-strip for re
 AUTO_GOPRO_STRIP_PART_SESSION=no # GoPro lone _part_XX prompt [A]: auto-strip for all qualifying files this run
 AUTO_DELETE_THUMBS_DB_SESSION=no # thumbs.db prompt [O]: delete all thumbs.db for the rest of this run
 AUTO_EXIF_CAMERA_TAG_SESSION=no # rename prompt [G]: auto-yes Samsung/GoPro/Nikon D200 EXIF camera tag appends for rest of run
+AUTO_LARGE_HASH_CHECK_SESSION=no # large checksum list prompt [A]: auto-yes all remaining large list checks for rest of run
 RENAME_SH_GOPRO_STATE_FILE="${RENAME_SH_GOPRO_STATE_FILE:-${XDG_STATE_HOME:-$HOME/.local/state}/rename.sh/gopro-strip.$$}"
 
 declare -a renamed_list=()
