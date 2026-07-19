@@ -1,6 +1,7 @@
 #!/bin/bash
-# v. 20260719.093400 - startup scope: hash/data counts only; list in-scope hash files
+# v. 20260719.093600 - hide par2 OK line from step output; show it only in RESULT box
 
+# 2026.07.19 - v. 0.1.11 - Suppress duplicate par2 OK line above RESULT banner
 # 2026.07.19 - v. 0.1.10 - Scope summary: data/hash counts; list only in-scope hash manifests
 # 2026.07.19 - v. 0.1.9 - Resolve PAR2 set from user path (volume ok); fix die-in-subshell fallback
 # 2026.07.19 - v. 0.1.8 - Accept PAR2 volume/hash/data entry points; print detected files at start
@@ -342,6 +343,16 @@ pgm_extract_par2_ok_line() {
     grep -iE 'repair is not required|all files are (ok|correct)' <<< "$1" \
         | head -n 1 \
         | sed -E 's/^[[:space:]]+//;s/[[:space:]]+$//'
+}
+
+pgm_filter_par2_verify_output() {
+    local text="$1"
+    sed -E '/^[[:space:]]*[Aa]ll files are (ok|correct).*repair is not required\.?[[:space:]]*$/Id' <<< "$text" \
+        | sed -E -e :a -e '/^\s*$/{$d;N;ba' -e '}'
+}
+
+pgm_filter_par2_verify_stream() {
+    sed -E '/^[[:space:]]*[Aa]ll files are (ok|correct).*repair is not required\.?[[:space:]]*$/Id'
 }
 
 pgm_describe_path_kind() {
@@ -969,7 +980,7 @@ fi
 pgm_print_step_header "Step 1: verify (PAR2 names only)"
 OUT1=$(run_par2 verify "$PAR2_FILE" 2>&1)
 RC1=$?
-printf '%s\n\n' "$OUT1"
+printf '%s\n\n' "$(pgm_filter_par2_verify_output "$OUT1")"
 
 if pgm_par2_output_indicates_ok "$OUT1"; then
     par2_ok_line="$(pgm_extract_par2_ok_line "$OUT1")"
@@ -982,7 +993,7 @@ fi
 
 pgm_print_step_header "Step 2: verify with directory scan (detect misnamed files)"
 OUT2_FILE=$(mktemp "${TMPDIR:-/tmp}/par2-pgm-check.XXXXXX")
-run_par2 verify "$PAR2_FILE" "${DATA_FILES[@]}" 2>&1 | tee "$OUT2_FILE"
+run_par2 verify "$PAR2_FILE" "${DATA_FILES[@]}" 2>&1 | tee "$OUT2_FILE" | pgm_filter_par2_verify_stream
 RC2=${PIPESTATUS[0]}
 echo
 
