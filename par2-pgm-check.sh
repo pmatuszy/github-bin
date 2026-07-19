@@ -1,7 +1,8 @@
 #!/bin/bash
-# v. 20260719.100500 - tighten blank lines around step header boxes
+# v. 20260719.102800 - multi-set selection: A/a, ranges 1-4, --all, multiple paths
 
-# 2026.07.19 - v. 0.1.14 - One blank line before step boxes; none after
+# 2026.07.19 - v. 0.1.16 - Prompt or CLI-select multiple PAR2 sets; verify each in turn
+# 2026.07.19 - v. 0.1.15 - PROMPT_TIMEOUT default 100s (was 20s)
 # 2026.07.19 - v. 0.1.12 - Timing summary (hash/PAR2/total); renumber steps from 1 not 0
 # 2026.07.19 - v. 0.1.11 - Suppress duplicate par2 OK line above RESULT banner
 # 2026.07.19 - v. 0.1.10 - Scope summary: data/hash counts; list only in-scope hash manifests
@@ -23,21 +24,23 @@ show_help() {
   cat <<EOF
 Usage: $(basename "$0") [-h|--help] [-v|--version] [--no_startup_delay] [path] [directory] [options]
 
-  [path]        PAR2 index or volume file, hash manifest (.sha512/.sha256/.md5), data file,
-                or directory (optional if exactly one PAR2 index is in the working directory)
-  [directory]   Directory with data files (default: directory of [path] or current directory)
+  [path] ...      One or more PAR2 index/volume paths (shell globs OK when unquoted)
+  [directory]     Directory with data files (default: directory of [path] or cwd).
+                  If many PAR2 sets exist and none specified: interactive pick (or --all/-y)
 
 Options:
   -h, --help           Show this help and exit.
   -v, --version        Print script version and exit.
   --no_startup_delay   Skip random startup delay (recommended for cron).
+  --all                Verify every PAR2 index in the directory (no prompt).
   --repair             Repair damaged data and rename misnamed files to PAR2 names
-  --yes, -y            Update PAR2 metadata without prompting when misnamed files found
+  --yes, -y            Auto-yes for prompts (--all when many sets; rename metadata)
   --no-rename          Detect misnamed files but do not offer/run PAR2 metadata update
 
 Environment:
   PAR2_CMD             par2 executable (default: par2)
   PYTHON_CMD           python3 executable (default: python3)
+  PROMPT_TIMEOUT       Seconds to wait for interactive prompts (default: 100)
 
 If a .sha512 / .sha256 / .md5 file exists in the directory, Step 1 scans all
 hash manifests, reports how many list in-scope PAR2 archives for this set, and
@@ -49,7 +52,251 @@ Examples:
   $(basename "$0") "archive.vol0+1.par2"
   $(basename "$0") "archive.sha512"
   $(basename "$0") "archive.par2" /path/to/files --yes
+  $(basename "$0") /path/to/dir --all
+  $(basename "$0") set1.par2 set2.par2 '202606*.par2'
 EOF
+}
+
+pgm_arg_has_glob() {
+    case $1 in
+        *\**|*\?*|*\[*) return 0 ;;
+    esac
+    return 1
+}
+
+pgm_resolve_par2_index_path() {
+    local input="$1"
+    local ap base member mb idx=""
+    local -a members=()
+
+    RESOLVE_PAR2_ERROR=""
+    PAR2_RESOLVED_FROM=""
+
+    [[ -e "$input" ]] || {
+        RESOLVE_PAR2_ERROR="PAR2 file not found: $input"
+        return 1
+    }
+
+    ap="$(abs_path "$input")"
+    base="$(basename "$ap")"
+    if ! is_par2_any_active_file "$base"; then
+        RESOLVE_PAR2_ERROR="Not a PAR2 file: $input"
+        return 1
+    fi
+
+    collect_par2_set_for_ref_file "$ap" members
+
+    for member in "${members[@]}"; do
+        mb="$(basename "$member")"
+        if is_par2_index_file "$mb"; then
+            idx="$member"
+            break
+        fi
+    done
+
+    if [[ -z "$idx" ]]; then
+        idx="$ap"
+    fi
+
+    idx="$(abs_path "$idx")"
+    if [[ "$ap" != "$idx" ]]; then
+        PAR2_RESOLVED_FROM="$ap"
+    fi
+    printf '%s\n' "$idx"
+    return 0
+}
+
+pgm_queue_contains_par2_stem() {
+    local stem="$1"
+    local existing existing_stem
+
+    for existing in "${PAR2_SET_QUEUE[@]}"; do
+        existing_stem="$(par2_stem_from_par2_basename "$(basename "$existing")")"
+        if par2_stems_match "$stem" "$existing_stem"; then
+            return 0
+        fi
+    done
+    return 1
+}
+
+pgm_queue_add_par2_path() {
+    local input="$1"
+    local ap idx stem
+
+    ap="$(abs_path "$input")"
+    if ! idx="$(pgm_resolve_par2_index_path "$ap")"; then
+        die "$RESOLVE_PAR2_ERROR"
+    fi
+    stem="$(par2_stem_from_par2_basename "$(basename "$idx")")"
+    if pgm_queue_contains_par2_stem "$stem"; then
+        return 0
+    fi
+    PAR2_SET_QUEUE+=("$idx")
+    USER_ARG_PATHS+=("$ap")
+}
+
+pgm_expand_glob_in_dir() {
+    local pattern="$1"
+    local dir="$2"
+    local -n _out=$3
+    local f
+
+    _out=()
+    shopt -s nullglob
+    for f in "$dir"/$pattern; do
+        [[ -f "$f" ]] || continue
+        _out+=("$f")
+    done
+    shopt -u nullglob
+}
+
+pgm_parse_set_selection() {
+    local selection="$1"
+    local max_n="$2"
+    local -n _out=$3
+    local token a b i
+    local -A seen=()
+
+    _out=()
+    selection="${selection// /}"
+    [[ -z "$selection" ]] && selection="a"
+
+    if [[ "${selection,,}" == "a" ]]; then
+        for ((i = 1; i <= max_n; i++)); do
+            _out+=("$i")
+        done
+        return 0
+    fi
+    if [[ "${selection,,}" == "q" ]]; then
+        return 2
+    fi
+
+    selection="${selection//,/ }"
+    for token in $selection; do
+        if [[ "$token" =~ ^([0-9]+)-([0-9]+)$ ]]; then
+            a=${BASH_REMATCH[1]}
+            b=${BASH_REMATCH[2]}
+            if (( a > b )); then
+                i=$a
+                a=$b
+                b=$i
+            fi
+            for ((i = a; i <= b; i++)); do
+                (( i >= 1 && i <= max_n )) || die "Selection out of range: $i (max $max_n)"
+                [[ -n "${seen[$i]:-}" ]] && continue
+                seen[$i]=1
+                _out+=("$i")
+            done
+        elif [[ "$token" =~ ^[0-9]+$ ]]; then
+            i=$token
+            (( i >= 1 && i <= max_n )) || die "Selection out of range: $i (max $max_n)"
+            [[ -n "${seen[$i]:-}" ]] && continue
+            seen[$i]=1
+            _out+=("$i")
+        else
+            die "Invalid selection: '$token' (use A/a, 1-4, 7, or q)"
+        fi
+    done
+
+    ((${#_out[@]} > 0)) || die "No PAR2 sets selected."
+    return 0
+}
+
+pgm_prompt_select_par2_sets() {
+    local dir="$1"
+    local -a indices=() picks=()
+    local ans i pick_rc
+
+    find_all_par2_index_files "$dir" indices
+    ((${#indices[@]} > 0)) || return 1
+
+    if (( VERIFY_ALL_SETS )); then
+        PAR2_SET_QUEUE=("${indices[@]}")
+        return 0
+    fi
+
+    echo "Found ${#indices[@]} PAR2 index file(s) in $dir."
+    echo
+    echo "  [A] Verify all ${#indices[@]} sets (one after another)"
+    for i in "${!indices[@]}"; do
+        printf '  [%d] %s\n' "$((i + 1))" "$(basename "${indices[$i]}")"
+    done
+    echo
+    if ! read -t "$PROMPT_TIMEOUT" -r -p "Verify which set(s)? [A/1-${#indices[@]}/ranges like 1-4,q] (default: A in ${PROMPT_TIMEOUT}s): " ans; then
+        ans=A
+        echo
+    fi
+    [[ -z "$ans" ]] && ans=A
+
+    pgm_parse_set_selection "$ans" "${#indices[@]}" picks
+    pick_rc=$?
+    if (( pick_rc == 2 )); then
+        echo "Cancelled."
+        return_code=0
+        finish
+    fi
+
+    PAR2_SET_QUEUE=()
+    for i in "${picks[@]}"; do
+        PAR2_SET_QUEUE+=("${indices[$((i - 1))]}")
+    done
+}
+
+pgm_prepare_par2_set() {
+    local entry_path="$1"
+    local ap idx
+
+    ap="$(abs_path "$entry_path")"
+    if ! idx="$(pgm_resolve_par2_index_path "$ap")"; then
+        die "$RESOLVE_PAR2_ERROR"
+    fi
+    PAR2_FILE="$idx"
+    collect_par2_set_for_ref_file "${PAR2_RESOLVED_FROM:-$PAR2_FILE}" PAR2_SET_MEMBERS
+}
+
+pgm_print_multi_set_banner() {
+    local n="$1"
+    local total="$2"
+    local name="$3"
+
+    echo
+    printf '================================================================\n'
+    printf 'PAR2 set %d/%d: %s\n' "$n" "$total" "$name"
+    printf '================================================================\n'
+}
+
+pgm_record_multi_set_result() {
+    local rc="$1"
+    local name="$2"
+
+    MULTI_SET_TOTAL=$((MULTI_SET_TOTAL + 1))
+    case "$rc" in
+        0) MULTI_SET_OK=$((MULTI_SET_OK + 1)) ;;
+        3) MULTI_SET_FAIL=$((MULTI_SET_FAIL + 1)); MULTI_SET_FAILED_NAMES+=("$name") ;;
+        *) MULTI_SET_WARN=$((MULTI_SET_WARN + 1)); MULTI_SET_FAILED_NAMES+=("$name") ;;
+    esac
+    (( rc > MULTI_SET_WORST_RC )) && MULTI_SET_WORST_RC=$rc
+}
+
+pgm_print_multi_set_summary() {
+    echo
+    echo "=== Multi-set summary ==="
+    printf '  Sets checked: %d\n' "$MULTI_SET_TOTAL"
+    printf '  OK:           %d\n' "$MULTI_SET_OK"
+    if (( MULTI_SET_WARN > 0 )); then
+        printf '  WARN:         %d\n' "$MULTI_SET_WARN"
+    fi
+    if (( MULTI_SET_FAIL > 0 )); then
+        printf '  FAIL:         %d\n' "$MULTI_SET_FAIL"
+    fi
+    if ((${#MULTI_SET_FAILED_NAMES[@]} > 0)); then
+        echo "  Problem set(s):"
+        local name
+        for name in "${MULTI_SET_FAILED_NAMES[@]}"; do
+            printf '    - %s\n' "$name"
+        done
+    fi
+    echo
 }
 
 is_par2_volume_file() {
@@ -242,14 +489,23 @@ PAR2_FILE=""
 DATA_DIR=""
 PAR2_RESOLVED_FROM=""
 USER_DIR_INPUT=""
-USER_PAR2_INPUT=""
 USER_HASH_INPUT=""
 USER_DATA_INPUT=""
 USER_ARG_PATHS=()
+PAR2_SET_QUEUE=()
+DEFERRED_GLOB_ARGS=()
+VERIFY_ALL_SETS=0
+MULTI_SET_MODE=0
+MULTI_SET_TOTAL=0
+MULTI_SET_OK=0
+MULTI_SET_WARN=0
+MULTI_SET_FAIL=0
+MULTI_SET_WORST_RC=0
+MULTI_SET_FAILED_NAMES=()
 PAR2_SET_MEMBERS=()
 RESOLVE_PAR2_ERROR=""
 PGM_HASH_VERIFY_MSG=""
-PROMPT_TIMEOUT="${PROMPT_TIMEOUT:-20}"
+PROMPT_TIMEOUT="${PROMPT_TIMEOUT:-100}"
 
 cleanup() {
     [[ -n "$OUT2_FILE" && -f "$OUT2_FILE" ]] && rm -f "$OUT2_FILE"
@@ -265,6 +521,9 @@ die() {
 
 finish() {
     local rc="${return_code:-0}"
+    if (( MULTI_SET_MODE )); then
+        pgm_print_multi_set_summary
+    fi
     pgm_print_timing_summary
     . /root/bin/_script_footer.sh
     exit "$rc"
@@ -421,6 +680,23 @@ pgm_print_timing_summary() {
     local -a labels=() values=() formatted=()
     local i max_w=0 w
 
+    if (( MULTI_SET_MODE )); then
+        [[ -n "${PGM_MULTI_RUN_START:-}" ]] || return 0
+        total=$(( SECONDS - PGM_MULTI_RUN_START ))
+        formatted[0]="$MULTI_SET_TOTAL"
+        formatted[1]="$(pgm_format_elapsed "$total")"
+        max_w=${#formatted[1]}
+        w=${#formatted[0]}
+        (( w > max_w )) && max_w=$w
+
+        echo
+        echo "--- Timing (all sets) ---"
+        printf '  %-28s %*s\n' "Sets checked:" "$max_w" "${formatted[0]}"
+        printf '  %-28s %*s\n' "Total wall time:" "$max_w" "${formatted[1]}"
+        echo
+        return 0
+    fi
+
     [[ -n "${PGM_RUN_START:-}" ]] || return 0
     total=$(( SECONDS - PGM_RUN_START ))
 
@@ -494,8 +770,7 @@ apply_file_argument() {
     fi
 
     if is_par2_any_active_file "$base"; then
-        [[ -z "$USER_PAR2_INPUT" ]] || die "Multiple PAR2 files specified: $arg"
-        USER_PAR2_INPUT="$ap"
+        pgm_queue_add_par2_path "$ap"
         return 0
     fi
 
@@ -513,8 +788,8 @@ infer_data_dir_from_inputs() {
         printf '%s\n' "$USER_DIR_INPUT"
         return 0
     fi
-    if [[ -n "$USER_PAR2_INPUT" ]]; then
-        dirname "$USER_PAR2_INPUT"
+    if ((${#PAR2_SET_QUEUE[@]} > 0)); then
+        dirname "${PAR2_SET_QUEUE[0]}"
         return 0
     fi
     if [[ -n "$USER_HASH_INPUT" ]]; then
@@ -530,44 +805,13 @@ infer_data_dir_from_inputs() {
 
 resolve_par2_from_user_input() {
     local input="$1"
-    local ap base member mb idx=""
+    local idx
 
-    RESOLVE_PAR2_ERROR=""
-    PAR2_RESOLVED_FROM=""
-    PAR2_SET_MEMBERS=()
-    PAR2_FILE=""
-
-    [[ -e "$input" ]] || {
-        RESOLVE_PAR2_ERROR="PAR2 file not found: $input"
-        return 1
-    }
-
-    ap="$(abs_path "$input")"
-    base="$(basename "$ap")"
-    if ! is_par2_any_active_file "$base"; then
-        RESOLVE_PAR2_ERROR="Not a PAR2 file: $input"
+    if ! idx="$(pgm_resolve_par2_index_path "$input")"; then
         return 1
     fi
-
-    collect_par2_set_for_ref_file "$ap" PAR2_SET_MEMBERS
-
-    for member in "${PAR2_SET_MEMBERS[@]}"; do
-        mb="$(basename "$member")"
-        if is_par2_index_file "$mb"; then
-            idx="$member"
-            break
-        fi
-    done
-
-    if [[ -n "$idx" ]]; then
-        PAR2_FILE="$idx"
-        if [[ "$ap" != "$idx" ]]; then
-            PAR2_RESOLVED_FROM="$ap"
-        fi
-        return 0
-    fi
-
-    PAR2_FILE="$ap"
+    PAR2_FILE="$idx"
+    collect_par2_set_for_ref_file "${PAR2_RESOLVED_FROM:-$PAR2_FILE}" PAR2_SET_MEMBERS
     return 0
 }
 
@@ -621,7 +865,7 @@ pgm_print_startup_inventory() {
     else
         list_par2_set_members "$par2_dir" "$stem" par2_set
     fi
-    [[ -n "$USER_PAR2_INPUT" ]] && user_par2_ap="$(abs_path "$USER_PAR2_INPUT")"
+    [[ -n "$PAR2_RESOLVED_FROM" ]] && user_par2_ap="$PAR2_RESOLVED_FROM"
 
     echo "=== PAR2 check scope ==="
     echo "Data directory : $DATA_DIR"
@@ -648,7 +892,7 @@ pgm_print_startup_inventory() {
         echo "Note: no separate PAR2 index file found in this set."
     fi
 
-    if [[ -n "$USER_PAR2_INPUT" ]]; then
+    if [[ -n "$PAR2_RESOLVED_FROM" || ${#PAR2_SET_QUEUE[@]} -gt 1 ]]; then
         for i in "${index_candidates[@]}"; do
             [[ "$i" == "$PAR2_FILE" ]] && continue
             if ! pgm_path_in_array "$i" par2_set; then
@@ -996,6 +1240,75 @@ print_summary() {
     return 2
 }
 
+pgm_run_one_par2_set() {
+    local SUMMARY_RC=0
+
+    MISNAMED_DISK=()
+    MISNAMED_PAR2=()
+    RENAME_PAIRS=()
+    OUT2_FILE=""
+    PGM_HASH_VERIFY_MSG=""
+    PGM_TIMING_HASH_SEC=0
+    PGM_TIMING_PAR2_NAMES_SEC=0
+    PGM_TIMING_PAR2_SCAN_SEC=0
+    PGM_RUN_START=$SECONDS
+    PGM_TIMING_LAST=$SECONDS
+
+    pgm_print_startup_inventory
+
+    pgm_print_step_header "Step 1: verify PAR2 archive checksums"
+    if ! verify_par2_hashes; then
+        pgm_print_step_verdict 1 FAIL "PAR2 archive checksum verification failed."
+        if (( MULTI_SET_MODE )); then
+            return 3
+        fi
+        die "PAR2 archive checksum verification failed. Refusing to scan for misnamed files."
+    fi
+    pgm_print_step1_verdict_from_msg "${PGM_HASH_VERIFY_MSG:-}"
+    pgm_timing_lap_to PGM_TIMING_HASH_SEC
+
+    pgm_print_step_header "Step 2: verify (PAR2 names only)"
+    OUT1=$(run_par2 verify "$PAR2_FILE" 2>&1)
+    RC1=$?
+    pgm_timing_lap_to PGM_TIMING_PAR2_NAMES_SEC
+    printf '%s\n\n' "$(pgm_filter_par2_verify_output "$OUT1")"
+
+    if pgm_par2_output_indicates_ok "$OUT1"; then
+        par2_ok_line="$(pgm_extract_par2_ok_line "$OUT1")"
+        pgm_print_step_verdict 2 OK "All files match under PAR2 names."
+        pgm_print_outcome ok \
+            "All files OK under PAR2 names." \
+            "${par2_ok_line:-Verification passed under PAR2 names only.}"
+        return 0
+    fi
+
+    pgm_print_step_verdict 2 WARN "Not all files OK under PAR2 names; running directory scan."
+    pgm_print_step_header "Step 3: verify with directory scan (detect misnamed files)"
+    OUT2_FILE=$(mktemp "${TMPDIR:-/tmp}/par2-pgm-check.XXXXXX")
+    run_par2 verify "$PAR2_FILE" "${DATA_FILES[@]}" 2>&1 | tee "$OUT2_FILE" | pgm_filter_par2_verify_stream
+    RC2=${PIPESTATUS[0]}
+    pgm_timing_lap_to PGM_TIMING_PAR2_SCAN_SEC
+    echo
+
+    print_summary "$OUT2_FILE"
+    SUMMARY_RC=$?
+
+    if (( SUMMARY_RC == 2 && ${#RENAME_PAIRS[@]} > 0 )); then
+        prompt_and_apply_rename
+    fi
+
+    if (( REPAIR == 1 )); then
+        pgm_print_step_header "Repair (disk rename)"
+        echo "Note: par2 repair renames disk files to match PAR2, not the other way around."
+        set +e
+        run_par2 repair "$PAR2_FILE" "${DATA_FILES[@]}"
+        SUMMARY_RC=$?
+        set -e
+    fi
+
+    return "$SUMMARY_RC"
+}
+
 while [[ $# -gt 0 ]]; do
     case $1 in
         -h|--help)
@@ -1014,6 +1327,11 @@ while [[ $# -gt 0 ]]; do
             ;;
         --yes|-y)
             AUTO_RENAME=1
+            VERIFY_ALL_SETS=1
+            shift
+            ;;
+        --all)
+            VERIFY_ALL_SETS=1
             shift
             ;;
         --no-rename)
@@ -1040,6 +1358,8 @@ for arg in "${POSITIONAL[@]}"; do
         USER_ARG_PATHS+=("$USER_DIR_INPUT")
     elif [[ -e "$arg" ]]; then
         apply_file_argument "$arg"
+    elif pgm_arg_has_glob "$arg"; then
+        DEFERRED_GLOB_ARGS+=("$arg")
     else
         die "Path not found: $arg"
     fi
@@ -1049,26 +1369,38 @@ DATA_DIR="$(infer_data_dir_from_inputs)"
 DATA_DIR="$(abs_path "$DATA_DIR")"
 [[ -d "$DATA_DIR" ]] || die "Directory not found: $DATA_DIR"
 
-if [[ -n "$USER_PAR2_INPUT" ]]; then
-    if ! resolve_par2_from_user_input "$USER_PAR2_INPUT"; then
-        die "$RESOLVE_PAR2_ERROR"
-    fi
-elif [[ -z "$PAR2_FILE" ]]; then
+if ((${#DEFERRED_GLOB_ARGS[@]} > 0)); then
+    glob_arg=""
+    glob_matches=()
+    for glob_arg in "${DEFERRED_GLOB_ARGS[@]}"; do
+        glob_matches=()
+        pgm_expand_glob_in_dir "$glob_arg" "$DATA_DIR" glob_matches
+        ((${#glob_matches[@]} > 0)) || die "No files matched glob in $DATA_DIR: $glob_arg"
+        for match in "${glob_matches[@]}"; do
+            apply_file_argument "$match"
+        done
+    done
+fi
+
+if ((${#PAR2_SET_QUEUE[@]} == 0)); then
     find_rc=0
-    PAR2_FILE="$(find_par2_index_in_dir "$DATA_DIR")" || find_rc=$?
-    if (( find_rc == 1 )); then
+    single_par2=""
+    single_par2="$(find_par2_index_in_dir "$DATA_DIR")" || find_rc=$?
+    if (( find_rc == 0 )); then
+        PAR2_SET_QUEUE=("$(abs_path "$single_par2")")
+    elif (( find_rc == 2 )); then
+        pgm_prompt_select_par2_sets "$DATA_DIR"
+    elif (( find_rc == 1 )); then
         show_help
         return_code=1
         finish
     fi
-    (( find_rc == 0 )) || die "Could not select a PAR2 index file in: $DATA_DIR"
 fi
+
+((${#PAR2_SET_QUEUE[@]} > 0)) || die "No PAR2 set selected for verification."
 
 command -v "$PAR2_CMD" >/dev/null 2>&1 || die "'$PAR2_CMD' not found. Install par2cmdline or set PAR2_CMD."
 command -v "$PYTHON_CMD" >/dev/null 2>&1 || die "'$PYTHON_CMD' not found."
-
-PAR2_FILE="$(abs_path "$PAR2_FILE")"
-[[ -f "$PAR2_FILE" ]] || die "PAR2 file not found: $PAR2_FILE"
 
 RENAME_PY="$DATA_DIR/par2-pgm-rename.py"
 if [[ -f "$RENAME_PY" ]]; then
@@ -1084,62 +1416,24 @@ fi
 collect_data_files "$DATA_DIR"
 (( ${#DATA_FILES[@]} > 0 )) || die "No data files found in: $DATA_DIR"
 
-pgm_print_startup_inventory
-
-PGM_RUN_START=$SECONDS
-PGM_TIMING_LAST=$SECONDS
-PGM_TIMING_HASH_SEC=0
-PGM_TIMING_PAR2_NAMES_SEC=0
-PGM_TIMING_PAR2_SCAN_SEC=0
-
-pgm_print_step_header "Step 1: verify PAR2 archive checksums"
-if ! verify_par2_hashes; then
-    pgm_print_step_verdict 1 FAIL "PAR2 archive checksum verification failed."
-    die "PAR2 archive checksum verification failed. Refusing to scan for misnamed files."
-fi
-pgm_print_step1_verdict_from_msg "${PGM_HASH_VERIFY_MSG:-}"
-pgm_timing_lap_to PGM_TIMING_HASH_SEC
-
-pgm_print_step_header "Step 2: verify (PAR2 names only)"
-OUT1=$(run_par2 verify "$PAR2_FILE" 2>&1)
-RC1=$?
-pgm_timing_lap_to PGM_TIMING_PAR2_NAMES_SEC
-printf '%s\n\n' "$(pgm_filter_par2_verify_output "$OUT1")"
-
-if pgm_par2_output_indicates_ok "$OUT1"; then
-    par2_ok_line="$(pgm_extract_par2_ok_line "$OUT1")"
-    pgm_print_step_verdict 2 OK "All files match under PAR2 names."
-    pgm_print_outcome ok \
-        "All files OK under PAR2 names." \
-        "${par2_ok_line:-Verification passed under PAR2 names only.}"
-    return_code=0
-    finish
-fi
-
-pgm_print_step_verdict 2 WARN "Not all files OK under PAR2 names; running directory scan."
-pgm_print_step_header "Step 3: verify with directory scan (detect misnamed files)"
-OUT2_FILE=$(mktemp "${TMPDIR:-/tmp}/par2-pgm-check.XXXXXX")
-run_par2 verify "$PAR2_FILE" "${DATA_FILES[@]}" 2>&1 | tee "$OUT2_FILE" | pgm_filter_par2_verify_stream
-RC2=${PIPESTATUS[0]}
-pgm_timing_lap_to PGM_TIMING_PAR2_SCAN_SEC
-echo
-
-print_summary "$OUT2_FILE"
-SUMMARY_RC=$?
-
-if (( SUMMARY_RC == 2 && ${#RENAME_PAIRS[@]} > 0 )); then
-    prompt_and_apply_rename
-fi
-
-if (( REPAIR == 1 )); then
-    pgm_print_step_header "Repair (disk rename)"
-    echo "Note: par2 repair renames disk files to match PAR2, not the other way around."
-    set +e
-    run_par2 repair "$PAR2_FILE" "${DATA_FILES[@]}"
+if ((${#PAR2_SET_QUEUE[@]} == 1)); then
+    pgm_prepare_par2_set "${PAR2_SET_QUEUE[0]}"
+    pgm_run_one_par2_set
     return_code=$?
-    set -e
     finish
 fi
 
-return_code=$SUMMARY_RC
+MULTI_SET_MODE=1
+PGM_MULTI_RUN_START=$SECONDS
+set_idx=0
+set_rc=0
+for set_idx in "${!PAR2_SET_QUEUE[@]}"; do
+    pgm_prepare_par2_set "${PAR2_SET_QUEUE[$set_idx]}"
+    pgm_print_multi_set_banner "$((set_idx + 1))" "${#PAR2_SET_QUEUE[@]}" "$(basename "$PAR2_FILE")"
+    set_rc=0
+    pgm_run_one_par2_set || set_rc=$?
+    pgm_record_multi_set_result "$set_rc" "$(basename "$PAR2_FILE")"
+done
+
+return_code=$MULTI_SET_WORST_RC
 finish
