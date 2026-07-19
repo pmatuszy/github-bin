@@ -1,8 +1,14 @@
 #!/bin/bash
+# v. 20260719.114307 - set-selection prompt: q/A single key, no Enter required
+# v. 20260719.112833 - timing section: wall clock only; step durations outside
+# v. 20260719.112526 - timing summary: add script start and end wall-clock times
 # v. 20260719.105611 - batch rename default N; print Run settings block at startup
 # v. 20260719.103506 - fix no-arg run: empty POSITIONAL[@]:- became one "" element
 # v. 20260719.102800 - multi-set selection: A/a, ranges 1-4, --all, multiple paths
 
+# 2026.07.19 - v. 0.1.21 - Set-selection q/A cancel/default without pressing Enter
+# 2026.07.19 - v. 0.1.20 - Timing block: start/end/wall only; step durations separate
+# 2026.07.19 - v. 0.1.19 - Timing block shows script start and end wall-clock times
 # 2026.07.19 - v. 0.1.18 - Run settings banner; multi-set rename prompt defaults to no
 # 2026.07.19 - v. 0.1.17 - Fix cwd-only run: drop POSITIONAL[@]:- reassign (empty-array trap)
 # 2026.07.19 - v. 0.1.16 - Prompt or CLI-select multiple PAR2 sets; verify each in turn
@@ -157,6 +163,56 @@ pgm_expand_glob_in_dir() {
     shopt -u nullglob
 }
 
+pgm_flush_stdin() {
+    local discard drained=0 max_drain=256
+
+    while (( drained < max_drain )) && IFS= read -r -t 0.02 -n 1 discard; do
+        ((++drained))
+    done
+}
+
+# Read set-selection answer: q/A work on one key; numbers/ranges still use a line.
+pgm_prompt_read_set_selection() {
+    local max_n="$1"
+    local -n _out_ans=$2
+    local first="" rest=""
+
+    printf 'Verify which set(s)? [A/1-%d/ranges like 1-4,q] (default: A in %ds): ' \
+        "$max_n" "$PROMPT_TIMEOUT"
+    pgm_flush_stdin
+
+    if ! IFS= read -r -t "$PROMPT_TIMEOUT" -n 1 first; then
+        _out_ans=A
+        echo
+        return 0
+    fi
+
+    case "$first" in
+        ''|$'\n')
+            _out_ans=A
+            echo
+            return 0
+            ;;
+        q|Q)
+            _out_ans=q
+            echo
+            return 0
+            ;;
+        a|A)
+            _out_ans=A
+            echo
+            return 0
+            ;;
+    esac
+
+    if IFS= read -r -t "$PROMPT_TIMEOUT" rest; then
+        _out_ans="${first}${rest}"
+    else
+        _out_ans="$first"
+    fi
+    echo
+}
+
 pgm_parse_set_selection() {
     local selection="$1"
     local max_n="$2"
@@ -229,10 +285,7 @@ pgm_prompt_select_par2_sets() {
         printf '  [%d] %s\n' "$((i + 1))" "$(basename "${indices[$i]}")"
     done
     echo
-    if ! read -t "$PROMPT_TIMEOUT" -r -p "Verify which set(s)? [A/1-${#indices[@]}/ranges like 1-4,q] (default: A in ${PROMPT_TIMEOUT}s): " ans; then
-        ans=A
-        echo
-    fi
+    pgm_prompt_read_set_selection "${#indices[@]}" ans
     [[ -z "$ans" ]] && ans=A
 
     pgm_parse_set_selection "$ans" "${#indices[@]}" picks
@@ -560,6 +613,7 @@ PAR2_SET_MEMBERS=()
 RESOLVE_PAR2_ERROR=""
 PGM_HASH_VERIFY_MSG=""
 PROMPT_TIMEOUT="${PROMPT_TIMEOUT:-100}"
+PGM_SCRIPT_START_STR=""
 
 cleanup() {
     [[ -n "$OUT2_FILE" && -f "$OUT2_FILE" ]] && rm -f "$OUT2_FILE"
@@ -671,6 +725,10 @@ pgm_filter_par2_verify_stream() {
     sed -E '/^[[:space:]]*[Aa]ll files are (ok|correct).*repair is not required\.?[[:space:]]*$/Id'
 }
 
+pgm_wall_clock_now() {
+    date '+%Y.%m.%d %H:%M:%S'
+}
+
 pgm_format_elapsed() {
     local s="${1:-0}" h m
     (( s < 0 )) && s=0
@@ -730,29 +788,32 @@ pgm_timing_lap_to() {
 }
 
 pgm_print_timing_summary() {
-    local total=0
+    local total=0 end_time wall_time
     local -a labels=() values=() formatted=()
     local i max_w=0 w
+
+    end_time="$(pgm_wall_clock_now)"
 
     if (( MULTI_SET_MODE )); then
         [[ -n "${PGM_MULTI_RUN_START:-}" ]] || return 0
         total=$(( SECONDS - PGM_MULTI_RUN_START ))
-        formatted[0]="$MULTI_SET_TOTAL"
-        formatted[1]="$(pgm_format_elapsed "$total")"
-        max_w=${#formatted[1]}
-        w=${#formatted[0]}
-        (( w > max_w )) && max_w=$w
+        wall_time="$(pgm_format_elapsed "$total")"
 
         echo
         echo "--- Timing (all sets) ---"
-        printf '  %-28s %*s\n' "Sets checked:" "$max_w" "${formatted[0]}"
-        printf '  %-28s %*s\n' "Total wall time:" "$max_w" "${formatted[1]}"
+        [[ -n "${PGM_SCRIPT_START_STR:-}" ]] && \
+            printf '  %-28s %s\n' "Start time:" "$PGM_SCRIPT_START_STR"
+        printf '  %-28s %s\n' "End time:" "$end_time"
+        printf '  %-28s %s\n' "Total wall time:" "$wall_time"
+        echo
+        printf '  %-28s %d\n' "Sets checked:" "$MULTI_SET_TOTAL"
         echo
         return 0
     fi
 
     [[ -n "${PGM_RUN_START:-}" ]] || return 0
     total=$(( SECONDS - PGM_RUN_START ))
+    wall_time="$(pgm_format_elapsed "$total")"
 
     labels+=("Hash checksum check:")
     values+=("${PGM_TIMING_HASH_SEC:-0}")
@@ -767,9 +828,6 @@ pgm_print_timing_summary() {
         values+=("${PGM_TIMING_PAR2_NAMES_SEC:-0}")
     fi
 
-    labels+=("Total wall time:")
-    values+=("$total")
-
     for i in "${!values[@]}"; do
         formatted[i]="$(pgm_format_elapsed "${values[$i]}")"
         w=${#formatted[$i]}
@@ -778,6 +836,12 @@ pgm_print_timing_summary() {
 
     echo
     echo "--- Timing ---"
+    [[ -n "${PGM_SCRIPT_START_STR:-}" ]] && \
+        printf '  %-28s %s\n' "Start time:" "$PGM_SCRIPT_START_STR"
+    printf '  %-28s %s\n' "End time:" "$end_time"
+    printf '  %-28s %s\n' "Total wall time:" "$wall_time"
+    echo
+    echo "--- Step durations ---"
     for i in "${!labels[@]}"; do
         printf '  %-28s %*s\n' "${labels[$i]}" "$max_w" "${formatted[$i]}"
     done
@@ -1492,6 +1556,8 @@ fi
 
 collect_data_files "$DATA_DIR"
 (( ${#DATA_FILES[@]} > 0 )) || die "No data files found in: $DATA_DIR"
+
+PGM_SCRIPT_START_STR="$(pgm_wall_clock_now)"
 
 if ((${#PAR2_SET_QUEUE[@]} == 1)); then
     pgm_prepare_par2_set "${PAR2_SET_QUEUE[0]}"
