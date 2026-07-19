@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
-# v. 20260719.092000 - scan all hash files; verify/update only manifests listing in-scope PAR2
+# v. 20260719.093400 - hash inventory subcommand for startup scope summary
 
+# 2026.07.19 - v. 1.2.7.0 - hash inventory CLI for par2-pgm-check startup (counts + in-scope paths)
 # 2026.07.19 - v. 1.2.6.0 - hash inventory: report total hash files vs in-scope PAR2 matches
 # 2026.07.19 - v. 1.2.5.0 - hash verify/update: in-scope PAR2 set only; skip when hash has no .par2 lines
 # 2026.07.18 - v. 1.2.4.0 - initial release: MultiPar-compatible PAR2 filename rename (Python CLI)
@@ -522,6 +523,16 @@ def format_hash_inventory_lines(inventory, par_file_path=None):
     return lines
 
 
+def print_hash_inventory_brief(folder_path, par_file_path=None):
+    inventory = hash_inventory_for_scope(folder_path, par_file_path)
+    relevant = inventory["relevant"]
+    print(inventory["total_hash_files"])
+    print(inventory["with_any_par2_entries"])
+    print(len(relevant))
+    for item in relevant:
+        print(item["path"])
+
+
 def verify_par2_hashes(folder_path, par_file_path=None):
     inventory = hash_inventory_for_scope(folder_path, par_file_path)
     preamble = format_hash_inventory_lines(inventory, par_file_path)
@@ -711,8 +722,11 @@ def main(argv):
                 )
                 print(message)
                 return 0 if ok else 1
+            if argv[2] == "inventory":
+                print_hash_inventory_brief(folder_path, par_file_path)
+                return 0
             print(
-                "Usage: par2-pgm-rename.py hash verify|update <directory> [par2-index]",
+                "Usage: par2-pgm-rename.py hash verify|update|inventory <directory> [par2-index]",
                 file=sys.stderr,
             )
             return 1

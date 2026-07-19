@@ -1,6 +1,7 @@
 #!/bin/bash
-# v. 20260719.093100 - fix PAR2 volume resolution; never scan whole dir when user named a file
+# v. 20260719.093400 - startup scope: hash/data counts only; list in-scope hash files
 
+# 2026.07.19 - v. 0.1.10 - Scope summary: data/hash counts; list only in-scope hash manifests
 # 2026.07.19 - v. 0.1.9 - Resolve PAR2 set from user path (volume ok); fix die-in-subshell fallback
 # 2026.07.19 - v. 0.1.8 - Accept PAR2 volume/hash/data entry points; print detected files at start
 # 2026.07.19 - v. 0.1.7 - Step/RESULT lines use boxes (Unicode fallback) for visibility on PuTTY
@@ -211,26 +212,6 @@ list_par2_set_members() {
     shopt -u nullglob
 
     pgm_sort_path_array _members
-}
-
-collect_hash_files() {
-    local dir="$1"
-    local -n _out=$2
-    local f base
-
-    _out=()
-    shopt -s nullglob
-    for f in "$dir"/*.sha512 "$dir"/*.SHA512 "$dir"/*.sha256 "$dir"/*.SHA256 \
-        "$dir"/*.md5 "$dir"/*.MD5; do
-        [[ -f "$f" ]] || continue
-        _out+=("$(abs_path "$f")")
-    done
-    shopt -u nullglob
-
-    if (( ${#_out[@]} > 1 )); then
-        IFS=$'\n' _out=($(printf '%s\n' "${_out[@]}" | LC_ALL=C sort -f))
-        unset IFS
-    fi
 }
 
 HEADER_EXTRA_ARGS=()
@@ -491,9 +472,35 @@ pgm_path_in_array() {
     return 1
 }
 
+pgm_load_hash_inventory() {
+    local msg rc=0
+    local -a lines=()
+
+    HASH_INV_TOTAL=0
+    HASH_INV_WITH_PAR2=0
+    HASH_INV_IN_SCOPE=0
+    HASH_INV_RELEVANT=()
+    HASH_INV_ERROR=""
+
+    msg=$(run_rename_py hash inventory "$DATA_DIR" "$PAR2_FILE" 2>&1) || rc=$?
+    if (( rc != 0 )); then
+        HASH_INV_ERROR="$msg"
+        return "$rc"
+    fi
+
+    mapfile -t lines <<< "$msg"
+    HASH_INV_TOTAL="${lines[0]:-0}"
+    HASH_INV_WITH_PAR2="${lines[1]:-0}"
+    HASH_INV_IN_SCOPE="${lines[2]:-0}"
+    if (( ${#lines[@]} > 3 )); then
+        HASH_INV_RELEVANT=("${lines[@]:3}")
+    fi
+    return 0
+}
+
 pgm_print_startup_inventory() {
     local par2_dir stem user_par2_ap=""
-    local -a par2_set=() index_candidates=() hash_files=()
+    local -a par2_set=() index_candidates=()
     local i other_count=0 ignored_index_count=0 marker
 
     par2_dir="$(dirname "$PAR2_FILE")"
@@ -504,7 +511,6 @@ pgm_print_startup_inventory() {
     else
         list_par2_set_members "$par2_dir" "$stem" par2_set
     fi
-    collect_hash_files "$DATA_DIR" hash_files
     [[ -n "$USER_PAR2_INPUT" ]] && user_par2_ap="$(abs_path "$USER_PAR2_INPUT")"
 
     echo "=== PAR2 check scope ==="
@@ -573,28 +579,25 @@ pgm_print_startup_inventory() {
     fi
     echo
 
-    echo "Hash file(s) (${#hash_files[@]}):"
-    if (( ${#hash_files[@]} == 0 )); then
-        echo "  (none)"
+    if pgm_load_hash_inventory; then
+        if (( HASH_INV_TOTAL == 0 )); then
+            echo "Hash files: none in directory."
+        elif (( HASH_INV_IN_SCOPE == 0 )); then
+            echo "Hash files: ${HASH_INV_TOTAL} in directory; none list in-scope PAR2 archive(s) for this set."
+        else
+            echo "Hash files: ${HASH_INV_IN_SCOPE} of ${HASH_INV_TOTAL} list in-scope PAR2 archive(s) for this set:"
+            for i in "${HASH_INV_RELEVANT[@]}"; do
+                marker=""
+                [[ -n "$USER_HASH_INPUT" && "$(abs_path "$USER_HASH_INPUT")" == "$i" ]] && marker="  [user argument]"
+                printf '  %s%s\n' "$(basename "$i")" "$marker"
+            done
+        fi
     else
-        for i in "${hash_files[@]}"; do
-            marker=""
-            [[ -n "$USER_HASH_INPUT" && "$i" == "$USER_HASH_INPUT" ]] && marker="  [user argument]"
-            printf '  %s%s\n' "$(basename "$i")" "$marker"
-        done
+        echo "Hash files: inventory unavailable (${HASH_INV_ERROR%%$'\n'*})"
     fi
     echo
 
-    echo "Data file(s) (${#DATA_FILES[@]}):"
-    if (( ${#DATA_FILES[@]} == 0 )); then
-        echo "  (none)"
-    else
-        for i in "${DATA_FILES[@]}"; do
-            marker=""
-            [[ -n "$USER_DATA_INPUT" && "$i" == "$USER_DATA_INPUT" ]] && marker="  [user argument]"
-            printf '  %s%s\n' "$(basename "$i")" "$marker"
-        done
-    fi
+    echo "Data files: ${#DATA_FILES[@]} in directory."
     echo
 }
 
