@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20260719.134000 - --scope subdirs|current: discover PAR2 sets in directory tree
 # v. 20260719.114307 - set-selection prompt: q/A single key, no Enter required
 # v. 20260719.112833 - timing section: wall clock only; step durations outside
 # v. 20260719.112526 - timing summary: add script start and end wall-clock times
@@ -6,6 +7,7 @@
 # v. 20260719.103506 - fix no-arg run: empty POSITIONAL[@]:- became one "" element
 # v. 20260719.102800 - multi-set selection: A/a, ranges 1-4, --all, multiple paths
 
+# 2026.07.19 - v. 0.1.22 - --scope subdirs|current; discover PAR2 sets under start directory
 # 2026.07.19 - v. 0.1.21 - Set-selection q/A cancel/default without pressing Enter
 # 2026.07.19 - v. 0.1.20 - Timing block: start/end/wall only; step durations separate
 # 2026.07.19 - v. 0.1.19 - Timing block shows script start and end wall-clock times
@@ -35,14 +37,17 @@ show_help() {
 Usage: $(basename "$0") [-h|--help] [-v|--version] [--no_startup_delay] [path] [directory] [options]
 
   [path] ...      One or more PAR2 index/volume paths (shell globs OK when unquoted)
-  [directory]     Directory with data files (default: directory of [path] or cwd).
-                  If many PAR2 sets exist and none specified: interactive pick (or --all/-y)
+  [directory]     Start directory (default: directory of [path] or cwd).
+                  PAR2 sets are discovered per scope (--scope or interactive prompt).
 
 Options:
   -h, --help           Show this help and exit.
   -v, --version        Print script version and exit.
   --no_startup_delay   Skip random startup delay (recommended for cron).
-  --all                Verify every PAR2 index in the directory (no prompt).
+  --scope subdirs|current
+                       subdirs: start directory and all subdirectories (default)
+                       current: start directory only (no recursion)
+  --all                Verify every discovered PAR2 index (no set-selection prompt).
   --repair             Repair damaged data and rename misnamed files to PAR2 names
   --yes, -y            Auto-yes for prompts (--all when many sets; auto-rename metadata)
   --no-rename          Detect misnamed files but do not offer/run PAR2 metadata update
@@ -66,6 +71,7 @@ Examples:
   $(basename "$0") "archive.sha512"
   $(basename "$0") "archive.par2" /path/to/files --yes
   $(basename "$0") /path/to/dir --all
+  $(basename "$0") /path/to/dir --scope subdirs --all
   $(basename "$0") set1.par2 set2.par2 '202606*.par2'
 EOF
 }
@@ -119,29 +125,26 @@ pgm_resolve_par2_index_path() {
     return 0
 }
 
-pgm_queue_contains_par2_stem() {
-    local stem="$1"
-    local existing existing_stem
+pgm_queue_contains_par2_path() {
+    local needle="$1"
+    local existing
 
+    needle="$(abs_path "$needle")"
     for existing in "${PAR2_SET_QUEUE[@]}"; do
-        existing_stem="$(par2_stem_from_par2_basename "$(basename "$existing")")"
-        if par2_stems_match "$stem" "$existing_stem"; then
-            return 0
-        fi
+        [[ "$(abs_path "$existing")" == "$needle" ]] && return 0
     done
     return 1
 }
 
 pgm_queue_add_par2_path() {
     local input="$1"
-    local ap idx stem
+    local ap idx
 
     ap="$(abs_path "$input")"
     if ! idx="$(pgm_resolve_par2_index_path "$ap")"; then
         die "$RESOLVE_PAR2_ERROR"
     fi
-    stem="$(par2_stem_from_par2_basename "$(basename "$idx")")"
-    if pgm_queue_contains_par2_stem "$stem"; then
+    if pgm_queue_contains_par2_path "$idx"; then
         return 0
     fi
     PAR2_SET_QUEUE+=("$idx")
@@ -266,29 +269,28 @@ pgm_parse_set_selection() {
 }
 
 pgm_prompt_select_par2_sets() {
-    local dir="$1"
-    local -a indices=() picks=()
-    local ans i pick_rc
+    local -n _indices=$1
+    local -a picks=()
+    local ans i pick_rc display
 
-    find_all_par2_index_files "$dir" indices
-    ((${#indices[@]} > 0)) || return 1
+    ((${#_indices[@]} > 0)) || return 1
 
     if (( VERIFY_ALL_SETS )); then
-        PAR2_SET_QUEUE=("${indices[@]}")
+        PAR2_SET_QUEUE=("${_indices[@]}")
         return 0
     fi
 
-    echo "Found ${#indices[@]} PAR2 index file(s) in $dir."
     echo
-    echo "  [A] Verify all ${#indices[@]} sets (one after another)"
-    for i in "${!indices[@]}"; do
-        printf '  [%d] %s\n' "$((i + 1))" "$(basename "${indices[$i]}")"
+    echo "  [A] Verify all ${#_indices[@]} sets (one after another)"
+    for i in "${!_indices[@]}"; do
+        display="$(pgm_path_display_relative "${_indices[$i]}" "$START_DIR")"
+        printf '  [%d] %s\n' "$((i + 1))" "$display"
     done
     echo
-    pgm_prompt_read_set_selection "${#indices[@]}" ans
+    pgm_prompt_read_set_selection "${#_indices[@]}" ans
     [[ -z "$ans" ]] && ans=A
 
-    pgm_parse_set_selection "$ans" "${#indices[@]}" picks
+    pgm_parse_set_selection "$ans" "${#_indices[@]}" picks
     pick_rc=$?
     if (( pick_rc == 2 )); then
         echo "Cancelled."
@@ -298,7 +300,7 @@ pgm_prompt_select_par2_sets() {
 
     PAR2_SET_QUEUE=()
     for i in "${picks[@]}"; do
-        PAR2_SET_QUEUE+=("${indices[$((i - 1))]}")
+        PAR2_SET_QUEUE+=("${_indices[$((i - 1))]}")
     done
 }
 
@@ -311,6 +313,9 @@ pgm_prepare_par2_set() {
         die "$RESOLVE_PAR2_ERROR"
     fi
     PAR2_FILE="$idx"
+    DATA_DIR="$(dirname "$PAR2_FILE")"
+    collect_data_files "$DATA_DIR"
+    (( ${#DATA_FILES[@]} > 0 )) || die "No data files found in: $DATA_DIR"
     collect_par2_set_for_ref_file "${PAR2_RESOLVED_FROM:-$PAR2_FILE}" PAR2_SET_MEMBERS
 }
 
@@ -318,10 +323,12 @@ pgm_print_multi_set_banner() {
     local n="$1"
     local total="$2"
     local name="$3"
+    local dir="$4"
 
     echo
     printf '================================================================\n'
     printf 'PAR2 set %d/%d: %s\n' "$n" "$total" "$name"
+    printf 'Directory:     %s\n' "$dir"
     printf '================================================================\n'
 }
 
@@ -402,8 +409,159 @@ pgm_print_run_settings() {
     if (( n_sets > 0 )); then
         printf '  Sets queued:  %d from command line\n' "$n_sets"
     fi
-    printf '  Data dir:     %s\n' "$DATA_DIR"
+
+    if ((${#PAR2_SET_QUEUE[@]} > 0)); then
+        echo "  Scope:        not used (PAR2 set(s) specified on command line)"
+    elif [[ -n "$CLI_SCOPE" ]]; then
+        if [[ "$CHECK_SCOPE" == "subdirs" ]]; then
+            echo "  --scope:      given (subdirs — search tree under start directory)"
+        else
+            echo "  --scope:      given (current — start directory only)"
+        fi
+    else
+        printf '  --scope:      not given (prompted; selected: %s)\n' "$CHECK_SCOPE"
+    fi
+    if [[ "$CHECK_SCOPE" == "subdirs" ]]; then
+        echo "  Search:       start directory and all subdirectories"
+    else
+        echo "  Search:       start directory only (no subdirectories)"
+    fi
+    printf '  Start dir:    %s\n' "$START_DIR"
     echo
+}
+
+pgm_path_display_relative() {
+    local path="$1"
+    local root="$2"
+    local ap rp rel
+
+    ap="$(abs_path "$path")"
+    rp="$(abs_path "$root")"
+    if [[ "$ap" == "$rp" ]]; then
+        printf '.'
+        return 0
+    fi
+    if [[ "$ap" == "$rp"/* ]]; then
+        rel="${ap#"$rp"/}"
+        printf '%s' "$rel"
+        return 0
+    fi
+    printf '%s' "$ap"
+}
+
+pgm_find_par2_indices_scoped() {
+    local root="$1"
+    local scope="$2"
+    local -n _out=$3
+    local f base
+    local -a find_args=()
+
+    _out=()
+    if [[ "$scope" == "current" ]]; then
+        find_args=(find "$root" -mindepth 1 -maxdepth 1)
+    else
+        find_args=(find "$root")
+    fi
+
+    while IFS= read -r -d '' f; do
+        [[ -f "$f" ]] || continue
+        base="$(basename "$f")"
+        is_par2_index_file "$base" || continue
+        _out+=("$(abs_path "$f")")
+    done < <("${find_args[@]}" \( -iname '*.par2' \) -type f -print0 2>/dev/null)
+
+    pgm_sort_path_array _out
+}
+
+pgm_print_par2_discovery_summary() {
+    local -n _indices=$1
+    local -A dir_counts=()
+    local idx dir d count n_dirs rel label
+    local -a sorted_dirs=()
+
+    for idx in "${_indices[@]}"; do
+        dir="$(dirname "$idx")"
+        dir_counts["$dir"]=$(( ${dir_counts["$dir"]:-0} + 1 ))
+    done
+    n_dirs=${#dir_counts[@]}
+
+    if [[ "$CHECK_SCOPE" == "subdirs" ]]; then
+        echo "Discovering PAR2 index files under $START_DIR (scope: subdirs; can take time on large trees)..."
+    else
+        echo "Discovering PAR2 index files in $START_DIR (scope: current directory only)..."
+    fi
+    echo "Found ${#_indices[@]} PAR2 set(s) in ${n_dirs} director(ies)."
+    echo
+
+    mapfile -t sorted_dirs < <(printf '%s\n' "${!dir_counts[@]}" | LC_ALL=C sort)
+    for d in "${sorted_dirs[@]}"; do
+        count="${dir_counts[$d]}"
+        rel="$(pgm_path_display_relative "$d" "$START_DIR")"
+        if [[ "$rel" == "." ]]; then
+            label="."
+        else
+            label="${rel}/"
+        fi
+        printf '  %-40s %d set(s)\n' "$label" "$count"
+    done
+    echo
+}
+
+pgm_resolve_check_scope() {
+    local input=""
+
+    if [[ -n "$CLI_SCOPE" ]]; then
+        CHECK_SCOPE="$CLI_SCOPE"
+        return 0
+    fi
+
+    echo
+    echo "What should be searched for PAR2 sets?"
+    echo "  [S] Also subdirectories (default)"
+    echo "  [C] Current directory only"
+    echo "  [Q] Quit"
+    printf 'Choice [S/c/q]: '
+    pgm_flush_stdin
+    if ! IFS= read -r -t "$PROMPT_TIMEOUT" -n 1 input; then
+        input=S
+    fi
+    echo
+    case "$input" in
+        c|C) CHECK_SCOPE=current ;;
+        q|Q) echo "Cancelled."; return_code=0; finish ;;
+        *) CHECK_SCOPE=subdirs ;;
+    esac
+    echo "Scope selected: $CHECK_SCOPE"
+}
+
+pgm_discover_and_queue_par2_sets() {
+    local -a indices=()
+
+    pgm_find_par2_indices_scoped "$START_DIR" "$CHECK_SCOPE" indices
+    ((${#indices[@]} > 0)) || die "No PAR2 index files found under $START_DIR (scope: $CHECK_SCOPE)."
+
+    pgm_print_par2_discovery_summary indices
+
+    if ((${#indices[@]} == 1)); then
+        PAR2_SET_QUEUE=("${indices[0]}")
+        return 0
+    fi
+
+    pgm_prompt_select_par2_sets indices
+}
+
+pgm_resolve_rename_py() {
+    local hint="${1:-.}"
+
+    if [[ -f "$hint/par2-pgm-rename.py" ]]; then
+        RENAME_PY="$(abs_path "$hint/par2-pgm-rename.py")"
+    elif [[ -f "$(dirname "${BASH_SOURCE[0]}")/par2-pgm-rename.py" ]]; then
+        RENAME_PY="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/par2-pgm-rename.py"
+    elif command -v par2-pgm-rename.py >/dev/null 2>&1; then
+        RENAME_PY="$(command -v par2-pgm-rename.py)"
+    else
+        die "par2-pgm-rename.py not found in PATH, script directory, or: $hint"
+    fi
 }
 
 is_par2_volume_file() {
@@ -614,6 +772,9 @@ RESOLVE_PAR2_ERROR=""
 PGM_HASH_VERIFY_MSG=""
 PROMPT_TIMEOUT="${PROMPT_TIMEOUT:-100}"
 PGM_SCRIPT_START_STR=""
+START_DIR=""
+CLI_SCOPE=""
+CHECK_SCOPE=subdirs
 
 cleanup() {
     [[ -n "$OUT2_FILE" && -f "$OUT2_FILE" ]] && rm -f "$OUT2_FILE"
@@ -1110,7 +1271,11 @@ run_par2() {
 }
 
 run_rename_py() {
-    "$PYTHON_CMD" "$RENAME_PY" "$@"
+    if [[ -n "${DATA_DIR:-}" && -d "$DATA_DIR" ]]; then
+        ( cd "$DATA_DIR" && "$PYTHON_CMD" "$RENAME_PY" "$@" )
+    else
+        "$PYTHON_CMD" "$RENAME_PY" "$@"
+    fi
 }
 
 verify_par2_hashes() {
@@ -1477,6 +1642,14 @@ while [[ $# -gt 0 ]]; do
             NO_RENAME=1
             shift
             ;;
+        --scope)
+            [[ $# -ge 2 ]] || die "Missing value for --scope (use subdirs or current)"
+            case "$2" in
+                subdirs|current) CLI_SCOPE="$2" ;;
+                *) die "Invalid --scope: $2 (use subdirs or current)" ;;
+            esac
+            shift 2
+            ;;
         -*)
             echo "Unknown option: $1 (try --help)" >&2
             return_code=1
@@ -1507,6 +1680,7 @@ done
 DATA_DIR="$(infer_data_dir_from_inputs)"
 DATA_DIR="$(abs_path "$DATA_DIR")"
 [[ -d "$DATA_DIR" ]] || die "Directory not found: $DATA_DIR"
+START_DIR="$DATA_DIR"
 
 if ((${#DEFERRED_GLOB_ARGS[@]} > 0)); then
     glob_arg=""
@@ -1521,21 +1695,14 @@ if ((${#DEFERRED_GLOB_ARGS[@]} > 0)); then
     done
 fi
 
+if ((${#PAR2_SET_QUEUE[@]} == 0)); then
+    pgm_resolve_check_scope
+fi
+
 pgm_print_run_settings
 
 if ((${#PAR2_SET_QUEUE[@]} == 0)); then
-    find_rc=0
-    single_par2=""
-    single_par2="$(find_par2_index_in_dir "$DATA_DIR")" || find_rc=$?
-    if (( find_rc == 0 )); then
-        PAR2_SET_QUEUE=("$(abs_path "$single_par2")")
-    elif (( find_rc == 2 )); then
-        pgm_prompt_select_par2_sets "$DATA_DIR"
-    elif (( find_rc == 1 )); then
-        show_help
-        return_code=1
-        finish
-    fi
+    pgm_discover_and_queue_par2_sets
 fi
 
 ((${#PAR2_SET_QUEUE[@]} > 0)) || die "No PAR2 set selected for verification."
@@ -1543,19 +1710,7 @@ fi
 command -v "$PAR2_CMD" >/dev/null 2>&1 || die "'$PAR2_CMD' not found. Install par2cmdline or set PAR2_CMD."
 command -v "$PYTHON_CMD" >/dev/null 2>&1 || die "'$PYTHON_CMD' not found."
 
-RENAME_PY="$DATA_DIR/par2-pgm-rename.py"
-if [[ -f "$RENAME_PY" ]]; then
-    :
-elif [[ -f "$(dirname "${BASH_SOURCE[0]}")/par2-pgm-rename.py" ]]; then
-    RENAME_PY="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/par2-pgm-rename.py"
-elif command -v par2-pgm-rename.py >/dev/null 2>&1; then
-    RENAME_PY="$(command -v par2-pgm-rename.py)"
-else
-    die "par2-pgm-rename.py not found in PATH, script directory, or: $DATA_DIR"
-fi
-
-collect_data_files "$DATA_DIR"
-(( ${#DATA_FILES[@]} > 0 )) || die "No data files found in: $DATA_DIR"
+pgm_resolve_rename_py "$START_DIR"
 
 PGM_SCRIPT_START_STR="$(pgm_wall_clock_now)"
 
@@ -1572,10 +1727,11 @@ set_idx=0
 set_rc=0
 for set_idx in "${!PAR2_SET_QUEUE[@]}"; do
     pgm_prepare_par2_set "${PAR2_SET_QUEUE[$set_idx]}"
-    pgm_print_multi_set_banner "$((set_idx + 1))" "${#PAR2_SET_QUEUE[@]}" "$(basename "$PAR2_FILE")"
+    pgm_print_multi_set_banner "$((set_idx + 1))" "${#PAR2_SET_QUEUE[@]}" \
+        "$(pgm_path_display_relative "$PAR2_FILE" "$START_DIR")" "$(dirname "$PAR2_FILE")"
     set_rc=0
     pgm_run_one_par2_set || set_rc=$?
-    pgm_record_multi_set_result "$set_rc" "$(basename "$PAR2_FILE")"
+    pgm_record_multi_set_result "$set_rc" "$(pgm_path_display_relative "$PAR2_FILE" "$START_DIR")"
 done
 
 return_code=$MULTI_SET_WORST_RC
