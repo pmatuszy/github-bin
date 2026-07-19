@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# v. 20260719.134800 - dry-run: skip exiftool/checksum I/O, auto-continue past prompts, progress on stderr
+# v. 20260719.140038 - GoPro lone _part_XX: group by camera id not per-chapter timestamp
 
+# 2026.07.19 - v. 19.258.140038 - GoPro lone _part_XX: count chapters by camera/model id (GOPRO7_BLACK), not full timestamp prefix
 # 2026.07.19 - v. 19.257.134800 - dry-run: skip exiftool by default (RENAME_DRY_RUN_SKIP_EXIFTOOL); no sha512 recovery/verify; auto plain/flatten/lnk; analyzing line on stderr
 # 2026.07.19 - v. 19.256.115122 - large checksum list prompt: print y/N/a/v/q menu lines; [A] yes + auto-check remaining large lists for rest of run
 # 2026.07.19 - v. 19.255.104346 - rename prompt [G]: also auto-approve Nikon D200 MAT####.NEF/.XMP exiftool renames for rest of run
@@ -9134,6 +9135,30 @@ gopro_renamed_session_prefix_from_basename() {
     printf '%s' "${BASH_REMATCH[1]}"
 }
 
+# Camera/model tail after YYYYMMDD_HHMMSS_-__-_ (e.g. GOPRO7_BLACK, GOPRO7_BLACK_Timelapse_1_1sec).
+# Split chapters renamed with per-file Create Date each get a unique timestamp prefix; lone-part
+# detection must group by this id, not the full prefix including timestamp.
+gopro_renamed_camera_identity_from_basename() {
+    local bn="$1"
+    local id
+
+    gopro_renamed_mp4_basename_matches "$bn" || return 1
+
+    if [[ "$bn" =~ ^[0-9]{8}_[0-9]{6}_(-__-_|-_-_)(.+)_part_[0-9]{2}(_Proxy)?\.[mM][pP]4$ ]]; then
+        printf '%s' "${BASH_REMATCH[2]}"
+        return 0
+    fi
+    if [[ "$bn" =~ ^[0-9]{8}_[0-9]{6}_(-__-_|-_-_)(.+)\.[mM][pP]4$ ]]; then
+        id="${BASH_REMATCH[2]}"
+        id="${id%_Proxy}"
+        id="${id%_proxy}"
+        id="${id%_PROXY}"
+        printf '%s' "$id"
+        return 0
+    fi
+    return 1
+}
+
 gopro_renamed_basename_without_part_segment() {
     [[ "$1" =~ ^(.+)_part_[0-9]{2}(_Proxy)?(\.[mM][pP]4)$ ]] || return 1
     printf '%s%s%s' "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}" "${BASH_REMATCH[3]}"
@@ -9144,27 +9169,27 @@ gopro_newbase_omit_lone_part_if_sole_chapter() {
     local f="$1"
     local count_base="$2"
     local newbase="$3"
-    local dir prefix part_count stripped
+    local dir camera_id part_count stripped
 
     gopro_renamed_basename_has_part_segment "$count_base" || { printf '%s' "$newbase"; return 0; }
     dir="$(dirname -- "$f")"
-    prefix="$(gopro_renamed_session_prefix_from_basename "$count_base")" || { printf '%s' "$newbase"; return 0; }
-    part_count="$(gopro_renamed_unique_part_count_in_dir "$dir" "$prefix")"
+    camera_id="$(gopro_renamed_camera_identity_from_basename "$count_base")" || { printf '%s' "$newbase"; return 0; }
+    part_count="$(gopro_renamed_unique_part_count_in_dir "$dir" "$camera_id")"
     [[ "$part_count" =~ ^[0-9]+$ ]] && (( part_count == 1 )) || { printf '%s' "$newbase"; return 0; }
     stripped="$(gopro_renamed_basename_without_part_segment "$newbase")" || { printf '%s' "$newbase"; return 0; }
     [[ -n "$stripped" && "$stripped" != "$newbase" ]] || { printf '%s' "$newbase"; return 0; }
-    vlog "GoPro: omit lone _part_XX (single chapter in directory): $(basename -- "$newbase") -> $(basename -- "$stripped")"
+    vlog "GoPro: omit lone _part_XX (single chapter for camera id '${camera_id}' in directory): $(basename -- "$newbase") -> $(basename -- "$stripped")"
     printf '%s' "$stripped"
 }
 
 gopro_renamed_unique_part_count_in_dir() {
     local dir="$1"
-    local prefix="$2"
+    local camera_id="$2"
     local -A part_nums=()
-    local f bn p part
+    local f bn id
     local saved_nullglob
 
-    [[ -n "$dir" && -n "$prefix" ]] || { printf '0'; return 0; }
+    [[ -n "$dir" && -n "$camera_id" ]] || { printf '0'; return 0; }
 
     saved_nullglob="$(shopt -p nullglob || true)"
     shopt -s nullglob
@@ -9172,8 +9197,8 @@ gopro_renamed_unique_part_count_in_dir() {
         [[ -f "$f" ]] || continue
         bn="$(basename -- "$f")"
         gopro_renamed_basename_has_part_segment "$bn" || continue
-        p="$(gopro_renamed_session_prefix_from_basename "$bn")" || continue
-        [[ "$p" == "$prefix" ]] || continue
+        id="$(gopro_renamed_camera_identity_from_basename "$bn")" || continue
+        [[ "$id" == "$camera_id" ]] || continue
         [[ "$bn" =~ _part_([0-9]{2}) ]] || continue
         part_nums["${BASH_REMATCH[1]}"]=1
     done
@@ -9667,7 +9692,7 @@ gopro_auto_strip_lone_part_matches() {
 gopro_lone_part_strip_rename_candidate() {
     local f="$1"
     local new="$2"
-    local old_base new_base dir prefix part_count ts_prefix
+    local old_base new_base dir camera_id part_count ts_prefix
 
     [[ -f "$f" ]] || return 1
     [[ "$f" != "$new" ]] || return 1
@@ -9680,8 +9705,8 @@ gopro_lone_part_strip_rename_candidate() {
     dir="$(dirname -- "$f")"
     [[ "$dir" == "$(dirname -- "$new")" ]] || return 1
 
-    prefix="$(gopro_renamed_session_prefix_from_basename "$old_base")" || return 1
-    part_count="$(gopro_renamed_unique_part_count_in_dir "$dir" "$prefix")"
+    camera_id="$(gopro_renamed_camera_identity_from_basename "$old_base")" || return 1
+    part_count="$(gopro_renamed_unique_part_count_in_dir "$dir" "$camera_id")"
     [[ "$part_count" =~ ^[0-9]+$ ]] || return 1
     (( part_count == 1 )) || return 1
 
@@ -9707,14 +9732,14 @@ gopro_auto_rename_lone_part_strip_matches() {
 maybe_prompt_gopro_remove_lone_part_basename() {
     local f="$1"
     local base="$2"
-    local dir prefix part_count stripped answer confirm
+    local dir camera_id part_count stripped answer confirm
 
     # Not applicable is success (return 0, no output) — return 1 aborts transform_name under set -E + ERR trap in $(...).
     [[ -f "$f" ]] || return 0
     gopro_renamed_basename_has_part_segment "$base" || return 0
     dir="$(dirname -- "$f")"
-    prefix="$(gopro_renamed_session_prefix_from_basename "$base")" || return 0
-    part_count="$(gopro_renamed_unique_part_count_in_dir "$dir" "$prefix")"
+    camera_id="$(gopro_renamed_camera_identity_from_basename "$base")" || return 0
+    part_count="$(gopro_renamed_unique_part_count_in_dir "$dir" "$camera_id")"
     [[ "$part_count" =~ ^[0-9]+$ ]] || return 0
     (( part_count > 1 )) && return 0
 
