@@ -1,7 +1,7 @@
 #!/bin/bash
-# v. 20260719.100200 - per-step OK/WARN/SKIP verdicts; right-aligned timing column
+# v. 20260719.100500 - tighten blank lines around step header boxes
 
-# 2026.07.19 - v. 0.1.13 - Step verdict lines (option A); align timing units in one column
+# 2026.07.19 - v. 0.1.14 - One blank line before step boxes; none after
 # 2026.07.19 - v. 0.1.12 - Timing summary (hash/PAR2/total); renumber steps from 1 not 0
 # 2026.07.19 - v. 0.1.11 - Suppress duplicate par2 OK line above RESULT banner
 # 2026.07.19 - v. 0.1.10 - Scope summary: data/hash counts; list only in-scope hash manifests
@@ -308,7 +308,6 @@ pgm_print_step_header() {
     local title="$1"
     echo
     pgm_emit_boxed_block stone "$title"
-    echo
 }
 
 pgm_outcome_header_for_kind() {
@@ -379,7 +378,6 @@ pgm_print_step_verdict() {
     shift 2
 
     printf 'Step %s — %-6s%s\n' "$step" "${kind}:" "$*"
-    echo
 }
 
 pgm_print_step1_verdict_from_msg() {
@@ -710,7 +708,6 @@ pgm_print_startup_inventory() {
     echo
 
     echo "Data files: ${#DATA_FILES[@]} in directory."
-    echo
 }
 
 abs_path() {
@@ -871,7 +868,6 @@ prompt_and_apply_rename() {
         esac
     fi
 
-    echo
     pgm_print_step_header "Step 4: update PAR2 metadata"
     rename_args=("$(basename "$PAR2_FILE")")
     for i in "${RENAME_PAIRS[@]}"; do
@@ -882,18 +878,15 @@ prompt_and_apply_rename() {
     (( rename_rc == 0 )) || die "PAR2 metadata update failed (exit $rename_rc)."
     pgm_print_step_verdict 4 OK "PAR2 metadata updated for misnamed file(s)."
 
-    echo
     pgm_print_step_header "Step 4b: restore PAR2 file timestamps"
     echo "Setting active .par2 modification times to match the original *_old.par2 backups."
     restore_par2_file_timestamps "$DATA_DIR"
     pgm_print_step_verdict 4b OK "PAR2 file timestamps restored from *_old.par2 backups."
 
-    echo
     pgm_print_step_header "Step 5: update hash file"
     update_par2_hashes || die "Failed to update hash file."
     pgm_print_step_verdict 5 OK "Hash manifest(s) updated for in-scope PAR2 archive(s)."
 
-    echo
     pgm_print_step_header "Step 6: verify after update"
     run_par2 verify "$PAR2_FILE"
     pgm_print_step_verdict 6 OK "Post-update PAR2 verify completed."
