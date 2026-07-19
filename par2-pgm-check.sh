@@ -1,10 +1,12 @@
 #!/bin/bash
+# v. 20260719.114307 - set-selection prompt: q/A single key, no Enter required
 # v. 20260719.112833 - timing section: wall clock only; step durations outside
 # v. 20260719.112526 - timing summary: add script start and end wall-clock times
 # v. 20260719.105611 - batch rename default N; print Run settings block at startup
 # v. 20260719.103506 - fix no-arg run: empty POSITIONAL[@]:- became one "" element
 # v. 20260719.102800 - multi-set selection: A/a, ranges 1-4, --all, multiple paths
 
+# 2026.07.19 - v. 0.1.21 - Set-selection q/A cancel/default without pressing Enter
 # 2026.07.19 - v. 0.1.20 - Timing block: start/end/wall only; step durations separate
 # 2026.07.19 - v. 0.1.19 - Timing block shows script start and end wall-clock times
 # 2026.07.19 - v. 0.1.18 - Run settings banner; multi-set rename prompt defaults to no
@@ -161,6 +163,56 @@ pgm_expand_glob_in_dir() {
     shopt -u nullglob
 }
 
+pgm_flush_stdin() {
+    local discard drained=0 max_drain=256
+
+    while (( drained < max_drain )) && IFS= read -r -t 0.02 -n 1 discard; do
+        ((++drained))
+    done
+}
+
+# Read set-selection answer: q/A work on one key; numbers/ranges still use a line.
+pgm_prompt_read_set_selection() {
+    local max_n="$1"
+    local -n _out_ans=$2
+    local first="" rest=""
+
+    printf 'Verify which set(s)? [A/1-%d/ranges like 1-4,q] (default: A in %ds): ' \
+        "$max_n" "$PROMPT_TIMEOUT"
+    pgm_flush_stdin
+
+    if ! IFS= read -r -t "$PROMPT_TIMEOUT" -n 1 first; then
+        _out_ans=A
+        echo
+        return 0
+    fi
+
+    case "$first" in
+        ''|$'\n')
+            _out_ans=A
+            echo
+            return 0
+            ;;
+        q|Q)
+            _out_ans=q
+            echo
+            return 0
+            ;;
+        a|A)
+            _out_ans=A
+            echo
+            return 0
+            ;;
+    esac
+
+    if IFS= read -r -t "$PROMPT_TIMEOUT" rest; then
+        _out_ans="${first}${rest}"
+    else
+        _out_ans="$first"
+    fi
+    echo
+}
+
 pgm_parse_set_selection() {
     local selection="$1"
     local max_n="$2"
@@ -233,10 +285,7 @@ pgm_prompt_select_par2_sets() {
         printf '  [%d] %s\n' "$((i + 1))" "$(basename "${indices[$i]}")"
     done
     echo
-    if ! read -t "$PROMPT_TIMEOUT" -r -p "Verify which set(s)? [A/1-${#indices[@]}/ranges like 1-4,q] (default: A in ${PROMPT_TIMEOUT}s): " ans; then
-        ans=A
-        echo
-    fi
+    pgm_prompt_read_set_selection "${#indices[@]}" ans
     [[ -z "$ans" ]] && ans=A
 
     pgm_parse_set_selection "$ans" "${#indices[@]}" picks
