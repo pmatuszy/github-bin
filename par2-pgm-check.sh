@@ -1,6 +1,7 @@
 #!/bin/bash
-# v. 20260719.092707 - startup inventory: detect index/hash/data from user path; list full scope
+# v. 20260719.093100 - fix PAR2 volume resolution; never scan whole dir when user named a file
 
+# 2026.07.19 - v. 0.1.9 - Resolve PAR2 set from user path (volume ok); fix die-in-subshell fallback
 # 2026.07.19 - v. 0.1.8 - Accept PAR2 volume/hash/data entry points; print detected files at start
 # 2026.07.19 - v. 0.1.7 - Step/RESULT lines use boxes (Unicode fallback) for visibility on PuTTY
 # 2026.07.19 - v. 0.1.6 - Step 0: scan all hash files; report how many list in-scope PAR2 entries
@@ -147,41 +148,69 @@ find_all_par2_index_files() {
     fi
 }
 
-find_par2_index_for_stem() {
-    local dir="$1"
-    local stem="$2"
+par2_stems_match() {
+    [[ "${1,,}" == "${2,,}" ]]
+}
 
-    if [[ -f "$dir/${stem}.par2" ]]; then
-        printf '%s\n' "$(abs_path "$dir/${stem}.par2")"
-        return 0
+pgm_sort_path_array() {
+    local -n _arr=$1
+
+    if (( ${#_arr[@]} > 1 )); then
+        IFS=$'\n' _arr=($(printf '%s\n' "${_arr[@]}" | LC_ALL=C sort -f))
+        unset IFS
     fi
-    if [[ -f "$dir/${stem}.PAR2" ]]; then
-        printf '%s\n' "$(abs_path "$dir/${stem}.PAR2")"
-        return 0
+}
+
+collect_par2_set_for_ref_file() {
+    local ref="$1"
+    local -n _out=$2
+    local ap dir base stem f fb fstem
+
+    _out=()
+    ap="$(abs_path "$ref")"
+    dir="$(dirname "$ap")"
+    base="$(basename "$ap")"
+    stem="$(par2_stem_from_par2_basename "$base")"
+
+    shopt -s nullglob
+    for f in "$dir"/*.par2 "$dir"/*.PAR2; do
+        [[ -f "$f" ]] || continue
+        fb="$(basename "$f")"
+        [[ "$fb" == *_old.par2 || "$fb" == *_old.PAR2 ]] && continue
+        fstem="$(par2_stem_from_par2_basename "$fb")"
+        if par2_stems_match "$stem" "$fstem"; then
+            _out+=("$(abs_path "$f")")
+        fi
+    done
+    shopt -u nullglob
+
+    if (( ${#_out[@]} == 0 )); then
+        _out+=("$ap")
     fi
-    return 1
+
+    pgm_sort_path_array _out
 }
 
 list_par2_set_members() {
     local dir="$1"
     local stem="$2"
     local -n _members=$3
-    local f base
+    local f base fstem
 
     _members=()
     shopt -s nullglob
-    for f in "$dir"/"${stem}"*.par2 "$dir"/"${stem}"*.PAR2; do
+    for f in "$dir"/*.par2 "$dir"/*.PAR2; do
         [[ -f "$f" ]] || continue
         base="$(basename "$f")"
         [[ "$base" == *_old.par2 || "$base" == *_old.PAR2 ]] && continue
-        _members+=("$(abs_path "$f")")
+        fstem="$(par2_stem_from_par2_basename "$base")"
+        if par2_stems_match "$stem" "$fstem"; then
+            _members+=("$(abs_path "$f")")
+        fi
     done
     shopt -u nullglob
 
-    if (( ${#_members[@]} > 1 )); then
-        IFS=$'\n' _members=($(printf '%s\n' "${_members[@]}" | LC_ALL=C sort -f))
-        unset IFS
-    fi
+    pgm_sort_path_array _members
 }
 
 collect_hash_files() {
@@ -233,6 +262,8 @@ USER_PAR2_INPUT=""
 USER_HASH_INPUT=""
 USER_DATA_INPUT=""
 USER_ARG_PATHS=()
+PAR2_SET_MEMBERS=()
+RESOLVE_PAR2_ERROR=""
 PROMPT_TIMEOUT="${PROMPT_TIMEOUT:-20}"
 
 cleanup() {
@@ -406,44 +437,75 @@ infer_data_dir_from_inputs() {
     abs_path "."
 }
 
-resolve_par2_index_from_input() {
+resolve_par2_from_user_input() {
     local input="$1"
-    local ap base dir stem idx
+    local ap base member mb idx=""
+
+    RESOLVE_PAR2_ERROR=""
+    PAR2_RESOLVED_FROM=""
+    PAR2_SET_MEMBERS=()
+    PAR2_FILE=""
+
+    [[ -e "$input" ]] || {
+        RESOLVE_PAR2_ERROR="PAR2 file not found: $input"
+        return 1
+    }
 
     ap="$(abs_path "$input")"
     base="$(basename "$ap")"
-    dir="$(dirname "$ap")"
+    if ! is_par2_any_active_file "$base"; then
+        RESOLVE_PAR2_ERROR="Not a PAR2 file: $input"
+        return 1
+    fi
 
-    if is_par2_index_file "$base"; then
-        printf '%s\n' "$ap"
+    collect_par2_set_for_ref_file "$ap" PAR2_SET_MEMBERS
+
+    for member in "${PAR2_SET_MEMBERS[@]}"; do
+        mb="$(basename "$member")"
+        if is_par2_index_file "$mb"; then
+            idx="$member"
+            break
+        fi
+    done
+
+    if [[ -n "$idx" ]]; then
+        PAR2_FILE="$idx"
+        if [[ "$ap" != "$idx" ]]; then
+            PAR2_RESOLVED_FROM="$ap"
+        fi
         return 0
     fi
 
-    if is_par2_any_active_file "$base"; then
-        stem="$(par2_stem_from_par2_basename "$base")"
-        if idx="$(find_par2_index_for_stem "$dir" "$stem")"; then
-            if [[ "$ap" != "$idx" ]]; then
-                PAR2_RESOLVED_FROM="$ap"
-            fi
-            printf '%s\n' "$idx"
-            return 0
-        fi
-        die "PAR2 file specified but no index found (${stem}.par2) in: $dir"
-    fi
+    PAR2_FILE="$ap"
+    return 0
+}
 
-    die "Not a PAR2 file: $input"
+pgm_path_in_array() {
+    local needle="$1"
+    local -n _haystack=$2
+    local item
+
+    for item in "${_haystack[@]}"; do
+        [[ "$item" == "$needle" ]] && return 0
+    done
+    return 1
 }
 
 pgm_print_startup_inventory() {
-    local par2_dir stem
+    local par2_dir stem user_par2_ap=""
     local -a par2_set=() index_candidates=() hash_files=()
-    local i other_count=0 marker
+    local i other_count=0 ignored_index_count=0 marker
 
     par2_dir="$(dirname "$PAR2_FILE")"
     stem="$(par2_stem_from_par2_basename "$(basename "$PAR2_FILE")")"
     find_all_par2_index_files "$par2_dir" index_candidates
-    list_par2_set_members "$par2_dir" "$stem" par2_set
+    if (( ${#PAR2_SET_MEMBERS[@]} > 0 )); then
+        par2_set=("${PAR2_SET_MEMBERS[@]}")
+    else
+        list_par2_set_members "$par2_dir" "$stem" par2_set
+    fi
     collect_hash_files "$DATA_DIR" hash_files
+    [[ -n "$USER_PAR2_INPUT" ]] && user_par2_ap="$(abs_path "$USER_PAR2_INPUT")"
 
     echo "=== PAR2 check scope ==="
     echo "Data directory : $DATA_DIR"
@@ -457,27 +519,45 @@ pgm_print_startup_inventory() {
         for i in "${USER_ARG_PATHS[@]}"; do
             printf '  %s (%s)\n' "$(basename "$i")" "$(pgm_describe_path_kind "$i")"
         done
-        if [[ -n "$PAR2_RESOLVED_FROM" ]]; then
-            echo "  -> resolved PAR2 index: $(basename "$PAR2_FILE")"
-        fi
         echo
     fi
 
-    echo "PAR2 index (in use): $(basename "$PAR2_FILE")"
-    for i in "${index_candidates[@]}"; do
-        [[ "$i" == "$PAR2_FILE" ]] && continue
-        other_count=$((other_count + 1))
-    done
-    if (( other_count > 0 )); then
-        echo "Other PAR2 index file(s) in PAR2 directory:"
+    if [[ -n "$user_par2_ap" && "$user_par2_ap" != "$PAR2_FILE" ]]; then
+        echo "PAR2 entry (specified): $(basename "$user_par2_ap")"
+    fi
+    if is_par2_index_file "$(basename "$PAR2_FILE")"; then
+        echo "PAR2 index (in use): $(basename "$PAR2_FILE")"
+    else
+        echo "PAR2 verify file (in use): $(basename "$PAR2_FILE")"
+        echo "Note: no separate PAR2 index file found in this set."
+    fi
+
+    if [[ -n "$USER_PAR2_INPUT" ]]; then
         for i in "${index_candidates[@]}"; do
             [[ "$i" == "$PAR2_FILE" ]] && continue
-            printf '  %s\n' "$(basename "$i")"
+            if ! pgm_path_in_array "$i" par2_set; then
+                ignored_index_count=$((ignored_index_count + 1))
+            fi
         done
-    elif (( ${#index_candidates[@]} == 1 )); then
-        echo "PAR2 index file(s) in PAR2 directory: 1"
+        if (( ignored_index_count > 0 )); then
+            echo "Other PAR2 index file(s) in directory (ignored): ${ignored_index_count}"
+        fi
     else
-        echo "PAR2 index file(s) in PAR2 directory: 0"
+        for i in "${index_candidates[@]}"; do
+            [[ "$i" == "$PAR2_FILE" ]] && continue
+            other_count=$((other_count + 1))
+        done
+        if (( other_count > 0 )); then
+            echo "Other PAR2 index file(s) in PAR2 directory:"
+            for i in "${index_candidates[@]}"; do
+                [[ "$i" == "$PAR2_FILE" ]] && continue
+                printf '  %s\n' "$(basename "$i")"
+            done
+        elif (( ${#index_candidates[@]} == 1 )); then
+            echo "PAR2 index file(s) in PAR2 directory: 1"
+        else
+            echo "PAR2 index file(s) in PAR2 directory: 0"
+        fi
     fi
 
     echo "PAR2 set (${#par2_set[@]} file(s)):"
@@ -487,7 +567,7 @@ pgm_print_startup_inventory() {
         for i in "${par2_set[@]}"; do
             marker=""
             [[ "$i" == "$PAR2_FILE" ]] && marker="  [index]"
-            [[ -n "$PAR2_RESOLVED_FROM" && "$i" == "$PAR2_RESOLVED_FROM" ]] && marker="  [user argument]"
+            [[ -n "$user_par2_ap" && "$i" == "$user_par2_ap" ]] && marker="  [user argument]"
             printf '  %s%s\n' "$(basename "$i")" "$marker"
         done
     fi
@@ -842,10 +922,10 @@ DATA_DIR="$(abs_path "$DATA_DIR")"
 [[ -d "$DATA_DIR" ]] || die "Directory not found: $DATA_DIR"
 
 if [[ -n "$USER_PAR2_INPUT" ]]; then
-    PAR2_FILE="$(resolve_par2_index_from_input "$USER_PAR2_INPUT")"
-fi
-
-if [[ -z "$PAR2_FILE" ]]; then
+    if ! resolve_par2_from_user_input "$USER_PAR2_INPUT"; then
+        die "$RESOLVE_PAR2_ERROR"
+    fi
+elif [[ -z "$PAR2_FILE" ]]; then
     find_rc=0
     PAR2_FILE="$(find_par2_index_in_dir "$DATA_DIR")" || find_rc=$?
     if (( find_rc == 1 )); then
