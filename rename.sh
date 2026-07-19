@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# v. 20260718.192100 - preserve colored labels on all wrapped stdout/stderr lines
+# v. 20260719.100600 - rename prompt [G]: auto-yes Samsung/EXIF camera make-model tags for rest of run
 
+# 2026.07.19 - v. 19.253.100600 - rename prompt [G]: auto-approve known EXIF camera make/model tag appends (Samsung timestamp media) for rest of run
 # 2026.07.18 - v. 19.252.192100 - emit_wrap_old_arrow_new + verbose printers: keep label colors when paths wrap
 # 2026.07.18 - v. 19.251.192000 - emit_wrap_labeled_line: keep cyan/yellow label on line 1 when path wraps
 # 2026.07.18 - v. 19.250.184700 - Nikon MAT: restrict to D200 EXIF; append MAT#### suffix only when capture timestamp collides
@@ -9182,6 +9183,20 @@ samsung_already_renamed_basename_matches() {
     [[ "$lower" =~ ^[0-9]{8}_[0-9]{6}_(-__-_|-_-_)samsung_.+\.(3gp|heic|heif|jpeg|jpg|m4v|mkv|mov|mp4|png|webm)$ ]]
 }
 
+# True when NEW adds a Samsung EXIF camera make/model tag after a bare timestamp basename.
+rename_is_exif_camera_tag_append() {
+    local old="$1" new="$2"
+    local ob nb
+
+    [[ -n "$old" && -n "$new" ]] || return 1
+    ob="$(basename -- "$old")"
+    nb="$(basename -- "$new")"
+    [[ "$ob" != "$nb" ]] || return 1
+    samsung_media_basename_matches "$ob" || return 1
+    samsung_already_renamed_basename_matches "$nb" || return 1
+    return 0
+}
+
 samsung_exif_first_value() {
     local exif="$1"
     local label="$2"
@@ -12080,6 +12095,7 @@ AUTO_LOWERCASE_MEDIA_OFFICE_EXT_SESSION=no # [U] session: only media + MS Office
 AUTO_GOPRO_STRIP_PART_DIR="" # GoPro lone _part_XX prompt [D]: auto-strip for rest of run in this directory
 AUTO_GOPRO_STRIP_PART_SESSION=no # GoPro lone _part_XX prompt [A]: auto-strip for all qualifying files this run
 AUTO_DELETE_THUMBS_DB_SESSION=no # thumbs.db prompt [O]: delete all thumbs.db for the rest of this run
+AUTO_EXIF_CAMERA_TAG_SESSION=no # rename prompt [G]: auto-yes known EXIF camera make/model tag appends for rest of run
 RENAME_SH_GOPRO_STATE_FILE="${RENAME_SH_GOPRO_STATE_FILE:-${XDG_STATE_HOME:-$HOME/.local/state}/rename.sh/gopro-strip.$$}"
 
 declare -a renamed_list=()
@@ -12559,6 +12575,10 @@ print_rename_prompt_menu() {
     if [[ -n "$path" && -f "$path" ]]; then
         echo "  $(rename_menu_key_bracket S Y) Yes for similar names in this directory (all extensions here; leading _ only if this filename starts with _)"
         choice_hint+=/s
+    fi
+    if [[ -n "$path" && -n "$suggested_new" ]] && rename_is_exif_camera_tag_append "$path" "$suggested_new"; then
+        echo "  $(rename_menu_key_bracket G Y) Yes, and auto-approve all Samsung EXIF camera make/model tags for the rest of this run"
+        choice_hint+=/g
     fi
     if [[ -n "$path" && -n "$suggested_new" ]] && rename_suggested_only_extension_case_change "$path" "$suggested_new" \
         && ! path_filesystem_skip_case_only_rename "$path"; then
@@ -14298,6 +14318,12 @@ for f in "${ordered_paths[@]}"; do
         continue
     fi
 
+    if [[ "$AUTO_EXIF_CAMERA_TAG_SESSION" == "yes" ]] && [[ "$f" != "$new" ]] \
+        && rename_is_exif_camera_tag_append "$f" "$new"; then
+        perform_plain_or_nef_xmp_pair "EXIF camera tag auto-yes (session)" || break
+        continue
+    fi
+
     torrent_url_noop=
     thumbs_db_noop=
     if is_torrent_url_file "$f" && [[ "$f" == "$new" ]]; then
@@ -14553,6 +14579,16 @@ for f in "${ordered_paths[@]}"; do
                 if perform_thumbs_db_delete "$f"; then
                     processed["$f"]=1
                 fi
+            fi
+            ;;
+        g|G)
+            if ! rename_is_exif_camera_tag_append "$f" "$new"; then
+                echo -e "${YELLOW}[G] applies only when the suggestion adds a known EXIF camera make/model tag to a bare YYYYMMDD_HHMMSS filename.${RESET}"
+                ((++files_skipped))
+            else
+                AUTO_EXIF_CAMERA_TAG_SESSION=yes
+                vlog "Session auto-yes enabled for known EXIF camera make/model tag appends"
+                perform_plain_or_nef_xmp_pair "EXIF camera tag auto-yes (session prompt)" || break
             fi
             ;;
         l|L)
