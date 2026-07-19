@@ -1,6 +1,7 @@
 #!/bin/bash
-# v. 20260719.092000 - Step 0 reports hash-file counts and checks only relevant manifests
+# v. 20260719.092500 - boxed step headers and prominent RESULT banners
 
+# 2026.07.19 - v. 0.1.7 - Step/RESULT lines use boxes (Unicode fallback) for visibility on PuTTY
 # 2026.07.19 - v. 0.1.6 - Step 0: scan all hash files; report how many list in-scope PAR2 entries
 # 2026.07.19 - v. 0.1.5 - Step 0: verify only in-scope PAR2 set in hash file; skip if hash has no .par2 lines
 # 2026.07.18 - v. 0.1.4 - Step 3b: keep active .par2 dates matching original *_old.par2 backups
@@ -117,6 +118,85 @@ finish() {
     local rc="${return_code:-0}"
     . /root/bin/_script_footer.sh
     exit "$rc"
+}
+
+PGM_HAVE_BOXES=no
+if command -v boxes >/dev/null 2>&1; then
+    PGM_HAVE_BOXES=yes
+fi
+
+pgm_emit_unicode_box() {
+    local -a lines=( "$@" )
+    local max_len=0 line w
+
+    for line in "${lines[@]}"; do
+        (( ${#line} > max_len )) && max_len=${#line}
+    done
+    (( max_len < 52 )) && max_len=52
+    w=$(( max_len + 2 ))
+
+    printf '┌%*s┐\n' "$w" '' | tr ' ' '─'
+    for line in "${lines[@]}"; do
+        printf '│ %-*s │\n' "$max_len" "$line"
+    done
+    printf '└%*s┘\n' "$w" '' | tr ' ' '─'
+}
+
+pgm_emit_boxed_block() {
+    local design="$1"
+    shift
+    local -a lines=( "$@" )
+
+    if [[ "$PGM_HAVE_BOXES" == yes ]]; then
+        printf '%s\n' "${lines[@]}" | boxes -a c -d "$design"
+    else
+        pgm_emit_unicode_box "${lines[@]}"
+    fi
+}
+
+pgm_print_step_header() {
+    local title="$1"
+    echo
+    pgm_emit_boxed_block stone "$title"
+    echo
+}
+
+pgm_outcome_header_for_kind() {
+    case "$1" in
+        ok)   printf '%s' '*** RESULT: OK ***' ;;
+        warn) printf '%s' '*** RESULT: ATTENTION NEEDED ***' ;;
+        err)  printf '%s' '*** RESULT: PROBLEM ***' ;;
+        *)    printf '%s' '*** RESULT ***' ;;
+    esac
+}
+
+pgm_print_outcome() {
+    local kind="$1"
+    shift
+    local -a body=( "$@" )
+    local -a lines
+    local design=stone
+
+    lines=( "$(pgm_outcome_header_for_kind "$kind")" )
+    lines+=( "${body[@]}" )
+
+    case "$kind" in
+        ok) design=ada-box ;;
+    esac
+
+    echo
+    pgm_emit_boxed_block "$design" "${lines[@]}"
+    echo
+}
+
+pgm_par2_output_indicates_ok() {
+    grep -qiE 'repair is not required|all files are (ok|correct)' <<< "$1"
+}
+
+pgm_extract_par2_ok_line() {
+    grep -iE 'repair is not required|all files are (ok|correct)' <<< "$1" \
+        | head -n 1 \
+        | sed -E 's/^[[:space:]]+//;s/[[:space:]]+$//'
 }
 
 abs_path() {
@@ -271,7 +351,7 @@ prompt_and_apply_rename() {
     fi
 
     echo
-    echo "=== Step 3: update PAR2 metadata ==="
+    pgm_print_step_header "Step 3: update PAR2 metadata"
     rename_args=("$(basename "$PAR2_FILE")")
     for i in "${RENAME_PAIRS[@]}"; do
         rename_args+=("$i")
@@ -281,16 +361,16 @@ prompt_and_apply_rename() {
     (( rename_rc == 0 )) || die "PAR2 metadata update failed (exit $rename_rc)."
 
     echo
-    echo "=== Step 3b: restore PAR2 file timestamps ==="
+    pgm_print_step_header "Step 3b: restore PAR2 file timestamps"
     echo "Setting active .par2 modification times to match the original *_old.par2 backups."
     restore_par2_file_timestamps "$DATA_DIR"
 
     echo
-    echo "=== Step 4: update hash file ==="
+    pgm_print_step_header "Step 4: update hash file"
     update_par2_hashes || die "Failed to update hash file."
 
     echo
-    echo "=== Step 5: verify after update ==="
+    pgm_print_step_header "Step 5: verify after update"
     run_par2 verify "$PAR2_FILE"
 }
 
@@ -347,33 +427,45 @@ print_summary() {
             echo
             echo "$rename_cmd"
         fi
-        echo
-        echo "Result: Misnamed file(s) detected."
+        pgm_print_outcome warn \
+            "Misnamed file(s) detected (same data, different name on disk)." \
+            "See details above; update PAR2 metadata or use --no-rename."
         return 2
     fi
 
-    if grep -qiE 'repair is not required|all files are ok' "$out_file"; then
-        echo "Result: OK - verification passed."
+    if pgm_par2_output_indicates_ok "$out_file"; then
+        local par2_ok_line
+        par2_ok_line="$(pgm_extract_par2_ok_line "$out_file")"
+        pgm_print_outcome ok \
+            "Verification passed (directory scan)." \
+            "${par2_ok_line:-All files match under PAR2 names.}"
         return 0
     fi
 
     if [[ -n "$wrong" ]]; then
-        echo "Result: Wrong PAR2 filename(s) detected, but rename pairs could not be parsed."
-        echo "Search the Step 2 output for: File: \"...\" - is a match for \"...\"."
+        pgm_print_outcome warn \
+            "Wrong PAR2 filename(s) detected, but rename pairs could not be parsed." \
+            "Search Step 2 output for: File: \"...\" - is a match for \"...\"."
         return 2
     fi
 
     if grep -qiE 'repair is possible' "$out_file"; then
-        echo "Result: Repair is possible (damage or rename fixable)."
+        pgm_print_outcome warn \
+            "Repair is possible (damage or rename fixable)." \
+            "Review Step 2 output above."
         return 2
     fi
 
     if (( missing > 0 )); then
-        echo "Result: Files are missing and no content match was found in the directory."
+        pgm_print_outcome err \
+            "Files are missing and no content match was found in the directory." \
+            "Missing targets (by PAR2 name): ${missing}"
         return 3
     fi
 
-    echo "Result: Verification reported problems."
+    pgm_print_outcome err \
+        "Verification reported problems." \
+        "Review Step 2 output above."
     return 2
 }
 
@@ -472,24 +564,26 @@ echo "Directory : $DATA_DIR"
 echo "Data files: ${#DATA_FILES[@]}"
 echo
 
-echo "=== Step 0: verify PAR2 archive checksums ==="
+pgm_print_step_header "Step 0: verify PAR2 archive checksums"
 if ! verify_par2_hashes; then
     die "PAR2 archive checksum verification failed. Refusing to scan for misnamed files."
 fi
-echo
 
-echo "=== Step 1: verify (PAR2 names only) ==="
+pgm_print_step_header "Step 1: verify (PAR2 names only)"
 OUT1=$(run_par2 verify "$PAR2_FILE" 2>&1)
 RC1=$?
 printf '%s\n\n' "$OUT1"
 
-if echo "$OUT1" | grep -qiE 'repair is not required|all files are ok'; then
-    echo "All files OK under PAR2 names."
+if pgm_par2_output_indicates_ok "$OUT1"; then
+    par2_ok_line="$(pgm_extract_par2_ok_line "$OUT1")"
+    pgm_print_outcome ok \
+        "All files OK under PAR2 names." \
+        "${par2_ok_line:-Verification passed under PAR2 names only.}"
     return_code=0
     finish
 fi
 
-echo "=== Step 2: verify with directory scan (detect misnamed files) ==="
+pgm_print_step_header "Step 2: verify with directory scan (detect misnamed files)"
 OUT2_FILE=$(mktemp "${TMPDIR:-/tmp}/par2-pgm-check.XXXXXX")
 run_par2 verify "$PAR2_FILE" "${DATA_FILES[@]}" 2>&1 | tee "$OUT2_FILE"
 RC2=${PIPESTATUS[0]}
@@ -503,7 +597,7 @@ if (( SUMMARY_RC == 2 && ${#RENAME_PAIRS[@]} > 0 )); then
 fi
 
 if (( REPAIR == 1 )); then
-    echo "=== Repair (disk rename) ==="
+    pgm_print_step_header "Repair (disk rename)"
     echo "Note: par2 repair renames disk files to match PAR2, not the other way around."
     set +e
     run_par2 repair "$PAR2_FILE" "${DATA_FILES[@]}"
