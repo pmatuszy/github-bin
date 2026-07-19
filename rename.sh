@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# v. 20260719.140038 - GoPro lone _part_XX: group by camera id not per-chapter timestamp
+# v. 20260719.145553 - checksum group prompt: [H] hash groups; [A/a] session auto-yes
 
+# 2026.07.19 - v. 19.259.145553 - checksum group prompt: [H/h] all remaining hash groups; [A/a] session auto-yes (not rename_all mislabel); [D/d] checksum dir only
 # 2026.07.19 - v. 19.258.140038 - GoPro lone _part_XX: count chapters by camera/model id (GOPRO7_BLACK), not full timestamp prefix
 # 2026.07.19 - v. 19.257.134800 - dry-run: skip exiftool by default (RENAME_DRY_RUN_SKIP_EXIFTOOL); no sha512 recovery/verify; auto plain/flatten/lnk; analyzing line on stderr
 # 2026.07.19 - v. 19.256.115122 - large checksum list prompt: print y/N/a/v/q menu lines; [A] yes + auto-check remaining large lists for rest of run
@@ -12220,6 +12221,8 @@ AUTO_GOPRO_STRIP_PART_SESSION=no # GoPro lone _part_XX prompt [A]: auto-strip fo
 AUTO_DELETE_THUMBS_DB_SESSION=no # thumbs.db prompt [O]: delete all thumbs.db for the rest of this run
 AUTO_EXIF_CAMERA_TAG_SESSION=no # rename prompt [G]: auto-yes Samsung/GoPro/Nikon D200 EXIF camera tag appends for rest of run
 AUTO_LARGE_HASH_CHECK_SESSION=no # large checksum list prompt [A]: auto-yes all remaining large list checks for rest of run
+AUTO_CHECKSUM_GROUP_SESSION=no # checksum group prompt [H/h]: auto-yes all remaining checksum groups for rest of run
+AUTO_CHECKSUM_GROUP_DIR="" # checksum group prompt [D/d]: auto-yes checksum groups in this directory for rest of run
 RENAME_SH_GOPRO_STATE_FILE="${RENAME_SH_GOPRO_STATE_FILE:-${XDG_STATE_HOME:-$HOME/.local/state}/rename.sh/gopro-strip.$$}"
 
 declare -a renamed_list=()
@@ -12537,6 +12540,13 @@ auto_yes_current_dir_matches() {
     local path_dir
     path_dir="$(dirname -- "$path")"
     [[ -n "$AUTO_RENAME_DIR" && "$path_dir" == "$AUTO_RENAME_DIR" ]]
+}
+
+checksum_group_auto_yes_dir_matches() {
+    local path="$1"
+    local path_dir
+    path_dir="$(dirname -- "$path")"
+    [[ -n "$AUTO_CHECKSUM_GROUP_DIR" && "$path_dir" == "$AUTO_CHECKSUM_GROUP_DIR" ]]
 }
 
 similar_rename_dir_matches_scope() {
@@ -13041,15 +13051,16 @@ print_checksum_prompt_menu() {
     echo "    • Rewrite path lines inside the ${label_upper} file, then verify checksums"
     echo "  $(rename_menu_key_bracket Y Y) Yes — do all of the above (default)"
     echo "  $(rename_menu_key_bracket N Y) No — skip this whole group"
-    echo "  $(rename_menu_key_bracket A Y) All remaining checksum groups (same full treatment)"
-    echo "  $(rename_menu_key_bracket D Y) Yes for checksum groups in this directory"
+    echo "  $(rename_menu_key_bracket H Y) Yes, and apply to all remaining hash/checksum groups this run (same full treatment)"
+    echo "  $(rename_menu_key_bracket A Y) Session auto-yes — no more prompts until run ends (files, directories, and checksum groups)"
+    echo "  $(rename_menu_key_bracket D Y) Yes, and auto-apply checksum groups in this directory (rest of run)"
     echo "  $(rename_menu_key_bracket E Y) Add exception (skip paths matching this hash file basename via exclude filter)"
     echo "  $(rename_menu_key_bracket X Y) Exact exception (skip only this hash file path; still check other paths)"
     echo "  $(rename_menu_key_bracket F Y) Filename-only exception (skip this hash file basename in every directory)"
     echo "  $(rename_menu_key_bracket C Y) Custom exclude pattern — type any filter line (FILE=, SUBTREE=, glob, etc.)"
     print_prompt_view_directory_menu_line
     echo "  $(rename_menu_key_bracket Q Y) Quit"
-    echo -n "$(user_prompt_ts_prefix)Choice [Y/n/a/d/E/x/f/c/v/q]: "
+    echo -n "$(user_prompt_ts_prefix)Choice [Y/n/H/a/d/E/x/f/c/v/q]: "
 }
 
 print_rename_action_verbose() {
@@ -13895,7 +13906,9 @@ for f in "${ordered_paths[@]}"; do
         do_rename=no
         if [[ "$rename_all" == "yes" ]]; then
             do_rename=yes
-        elif auto_yes_current_dir_matches "$sum_file"; then
+        elif [[ "$AUTO_CHECKSUM_GROUP_SESSION" == yes ]]; then
+            do_rename=yes
+        elif checksum_group_auto_yes_dir_matches "$sum_file"; then
             do_rename=yes
         else
             while true; do
@@ -13926,8 +13939,13 @@ for f in "${ordered_paths[@]}"; do
                     ((++files_skipped))
                     do_rename=no
                     ;;
+                h|H)
+                    AUTO_CHECKSUM_GROUP_SESSION=yes
+                    vlog "Session auto-yes enabled for all remaining checksum groups (hash files)."
+                    do_rename=yes
+                    ;;
                 a|A)
-                    echo "$(user_prompt_ts_prefix)⚠️  This will rename ALL remaining files/directories."
+                    echo "$(user_prompt_ts_prefix)⚠️  Session auto-yes: no more rename or checksum-group prompts until this run ends."
                     if (( VERBOSE == 1 )); then
                         echo "[VERBOSE] [$(date '+%Y.%m.%d %H:%M:%S')] Are you sure? [y/N]:" >&2
                     fi
@@ -13937,6 +13955,8 @@ for f in "${ordered_paths[@]}"; do
                     echo
                     if [[ "$confirm" =~ [Yy] ]]; then
                         rename_all=yes
+                        AUTO_CHECKSUM_GROUP_SESSION=yes
+                        vlog "Session auto-yes enabled for all remaining files, directories, and checksum groups."
                         do_rename=yes
                     else
                         ((++files_skipped))
@@ -13944,7 +13964,8 @@ for f in "${ordered_paths[@]}"; do
                     fi
                     ;;
                 d|D)
-                    AUTO_RENAME_DIR="$(dirname -- "$sum_file")"
+                    AUTO_CHECKSUM_GROUP_DIR="$(dirname -- "$sum_file")"
+                    vlog "Per-directory auto-yes enabled for checksum groups in '$AUTO_CHECKSUM_GROUP_DIR'"
                     do_rename=yes
                     ;;
                 e|E)
