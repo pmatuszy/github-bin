@@ -1,7 +1,9 @@
 #!/bin/bash
+# v. 20260719.105611 - batch rename default N; print Run settings block at startup
 # v. 20260719.103506 - fix no-arg run: empty POSITIONAL[@]:- became one "" element
 # v. 20260719.102800 - multi-set selection: A/a, ranges 1-4, --all, multiple paths
 
+# 2026.07.19 - v. 0.1.18 - Run settings banner; multi-set rename prompt defaults to no
 # 2026.07.19 - v. 0.1.17 - Fix cwd-only run: drop POSITIONAL[@]:- reassign (empty-array trap)
 # 2026.07.19 - v. 0.1.16 - Prompt or CLI-select multiple PAR2 sets; verify each in turn
 # 2026.07.19 - v. 0.1.15 - PROMPT_TIMEOUT default 100s (was 20s)
@@ -36,8 +38,11 @@ Options:
   --no_startup_delay   Skip random startup delay (recommended for cron).
   --all                Verify every PAR2 index in the directory (no prompt).
   --repair             Repair damaged data and rename misnamed files to PAR2 names
-  --yes, -y            Auto-yes for prompts (--all when many sets; rename metadata)
+  --yes, -y            Auto-yes for prompts (--all when many sets; auto-rename metadata)
   --no-rename          Detect misnamed files but do not offer/run PAR2 metadata update
+
+Multi-set batch: rename prompt defaults to no on timeout unless --yes is given.
+Single set: rename prompt still defaults to yes on timeout.
 
 Environment:
   PAR2_CMD             par2 executable (default: par2)
@@ -298,6 +303,53 @@ pgm_print_multi_set_summary() {
             printf '    - %s\n' "$name"
         done
     fi
+    echo
+}
+
+pgm_print_run_settings() {
+    local n_sets="${#PAR2_SET_QUEUE[@]}"
+    local rename_effect
+
+    echo "=== Run settings ==="
+
+    if (( AUTO_RENAME )); then
+        echo "  -y/--yes:     given (all sets when unset; auto-rename when misnamed)"
+    elif (( VERIFY_ALL_SETS )); then
+        echo "  --all:        given (verify every PAR2 set; no selection prompt)"
+        echo "  -y/--yes:     not given"
+    else
+        echo "  --all / -y:   not given (interactive set selection when multiple sets)"
+    fi
+
+    if (( NO_RENAME )); then
+        echo "  --no-rename:  given (report misnamed files only; never update PAR2)"
+    else
+        echo "  --no-rename:  not given"
+    fi
+
+    if (( REPAIR )); then
+        echo "  --repair:     given"
+    else
+        echo "  --repair:     not given (repair disabled)"
+    fi
+
+    if (( NO_RENAME )); then
+        rename_effect="skipped (--no-rename)"
+    elif (( AUTO_RENAME )); then
+        rename_effect="automatic (--yes)"
+    elif (( n_sets > 1 )) || (( VERIFY_ALL_SETS && n_sets == 0 )); then
+        rename_effect="prompt per problem set; default no on ${PROMPT_TIMEOUT}s timeout (batch)"
+    elif (( n_sets == 1 )); then
+        rename_effect="prompt if needed; default yes on ${PROMPT_TIMEOUT}s timeout (single set)"
+    else
+        rename_effect="prompt if needed; default yes (single) / no (batch) on ${PROMPT_TIMEOUT}s timeout"
+    fi
+    printf '  Rename:       %s\n' "$rename_effect"
+
+    if (( n_sets > 0 )); then
+        printf '  Sets queued:  %d from command line\n' "$n_sets"
+    fi
+    printf '  Data dir:     %s\n' "$DATA_DIR"
     echo
 }
 
@@ -1100,18 +1152,35 @@ prompt_and_apply_rename() {
         echo "Misnamed files can be fixed by updating filenames inside the PAR2 set"
         echo "(disk filenames stay unchanged)."
         echo "PAR2 index file: $(basename "$PAR2_FILE")"
-        if ! read -t "$PROMPT_TIMEOUT" -r -p "Update PAR2 archives with the new filenames? [Y/n] (auto-yes in ${PROMPT_TIMEOUT}s) " ans; then
-            ans=Y
-            echo
+        if (( MULTI_SET_MODE )); then
+            if ! read -t "$PROMPT_TIMEOUT" -r -p "Update PAR2 archives with the new filenames? [y/N] (auto-no in ${PROMPT_TIMEOUT}s) " ans; then
+                ans=N
+                echo
+            fi
+            [[ -z "$ans" ]] && ans=N
+            case "$ans" in
+                y|Y|yes|YES)
+                    ;;
+                *)
+                    echo "Skipped PAR2 metadata update."
+                    pgm_print_step_verdict 4 SKIP "PAR2 metadata update skipped at prompt."
+                    return 0
+                    ;;
+            esac
+        else
+            if ! read -t "$PROMPT_TIMEOUT" -r -p "Update PAR2 archives with the new filenames? [Y/n] (auto-yes in ${PROMPT_TIMEOUT}s) " ans; then
+                ans=Y
+                echo
+            fi
+            [[ -z "$ans" ]] && ans=Y
+            case "$ans" in
+                n|N|no|NO)
+                    echo "Skipped PAR2 metadata update."
+                    pgm_print_step_verdict 4 SKIP "PAR2 metadata update skipped at prompt."
+                    return 0
+                    ;;
+            esac
         fi
-        [[ -z "$ans" ]] && ans=Y
-        case "$ans" in
-            n|N|no|NO)
-                echo "Skipped PAR2 metadata update."
-                pgm_print_step_verdict 4 SKIP "PAR2 metadata update skipped at prompt."
-                return 0
-                ;;
-        esac
     fi
 
     pgm_print_step_header "Step 4: update PAR2 metadata"
@@ -1183,7 +1252,11 @@ print_summary() {
             rename_cmd+=" $(printf '%q' "${MISNAMED_PAR2[$i]}//${MISNAMED_DISK[$i]}")"
         done
         if (( NO_RENAME == 0 && AUTO_RENAME == 0 )); then
-            echo "You will be asked whether to update PAR2 metadata (default: yes, ${PROMPT_TIMEOUT}s timeout)."
+            if (( MULTI_SET_MODE )); then
+                echo "You will be asked whether to update PAR2 metadata (default: no, ${PROMPT_TIMEOUT}s timeout)."
+            else
+                echo "You will be asked whether to update PAR2 metadata (default: yes, ${PROMPT_TIMEOUT}s timeout)."
+            fi
         elif (( AUTO_RENAME == 1 )); then
             echo "PAR2 metadata will be updated automatically (--yes)."
         else
@@ -1383,6 +1456,8 @@ if ((${#DEFERRED_GLOB_ARGS[@]} > 0)); then
         done
     done
 fi
+
+pgm_print_run_settings
 
 if ((${#PAR2_SET_QUEUE[@]} == 0)); then
     find_rc=0
