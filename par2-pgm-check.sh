@@ -1,9 +1,11 @@
 #!/bin/bash
+# v. 20260719.112833 - timing section: wall clock only; step durations outside
 # v. 20260719.112526 - timing summary: add script start and end wall-clock times
 # v. 20260719.105611 - batch rename default N; print Run settings block at startup
 # v. 20260719.103506 - fix no-arg run: empty POSITIONAL[@]:- became one "" element
 # v. 20260719.102800 - multi-set selection: A/a, ranges 1-4, --all, multiple paths
 
+# 2026.07.19 - v. 0.1.20 - Timing block: start/end/wall only; step durations separate
 # 2026.07.19 - v. 0.1.19 - Timing block shows script start and end wall-clock times
 # 2026.07.19 - v. 0.1.18 - Run settings banner; multi-set rename prompt defaults to no
 # 2026.07.19 - v. 0.1.17 - Fix cwd-only run: drop POSITIONAL[@]:- reassign (empty-array trap)
@@ -737,7 +739,7 @@ pgm_timing_lap_to() {
 }
 
 pgm_print_timing_summary() {
-    local total=0 end_time
+    local total=0 end_time wall_time
     local -a labels=() values=() formatted=()
     local i max_w=0 w
 
@@ -746,25 +748,23 @@ pgm_print_timing_summary() {
     if (( MULTI_SET_MODE )); then
         [[ -n "${PGM_MULTI_RUN_START:-}" ]] || return 0
         total=$(( SECONDS - PGM_MULTI_RUN_START ))
-        formatted[0]="$MULTI_SET_TOTAL"
-        formatted[1]="$(pgm_format_elapsed "$total")"
-        max_w=${#formatted[1]}
-        w=${#formatted[0]}
-        (( w > max_w )) && max_w=$w
+        wall_time="$(pgm_format_elapsed "$total")"
 
         echo
         echo "--- Timing (all sets) ---"
         [[ -n "${PGM_SCRIPT_START_STR:-}" ]] && \
             printf '  %-28s %s\n' "Start time:" "$PGM_SCRIPT_START_STR"
-        printf '  %-28s %*s\n' "Sets checked:" "$max_w" "${formatted[0]}"
         printf '  %-28s %s\n' "End time:" "$end_time"
-        printf '  %-28s %*s\n' "Total wall time:" "$max_w" "${formatted[1]}"
+        printf '  %-28s %s\n' "Total wall time:" "$wall_time"
+        echo
+        printf '  %-28s %d\n' "Sets checked:" "$MULTI_SET_TOTAL"
         echo
         return 0
     fi
 
     [[ -n "${PGM_RUN_START:-}" ]] || return 0
     total=$(( SECONDS - PGM_RUN_START ))
+    wall_time="$(pgm_format_elapsed "$total")"
 
     labels+=("Hash checksum check:")
     values+=("${PGM_TIMING_HASH_SEC:-0}")
@@ -779,9 +779,6 @@ pgm_print_timing_summary() {
         values+=("${PGM_TIMING_PAR2_NAMES_SEC:-0}")
     fi
 
-    labels+=("Total wall time:")
-    values+=("$total")
-
     for i in "${!values[@]}"; do
         formatted[i]="$(pgm_format_elapsed "${values[$i]}")"
         w=${#formatted[$i]}
@@ -792,10 +789,11 @@ pgm_print_timing_summary() {
     echo "--- Timing ---"
     [[ -n "${PGM_SCRIPT_START_STR:-}" ]] && \
         printf '  %-28s %s\n' "Start time:" "$PGM_SCRIPT_START_STR"
+    printf '  %-28s %s\n' "End time:" "$end_time"
+    printf '  %-28s %s\n' "Total wall time:" "$wall_time"
+    echo
+    echo "--- Step durations ---"
     for i in "${!labels[@]}"; do
-        if [[ "${labels[$i]}" == "Total wall time:" ]]; then
-            printf '  %-28s %s\n' "End time:" "$end_time"
-        fi
         printf '  %-28s %*s\n' "${labels[$i]}" "$max_w" "${formatted[$i]}"
     done
     echo
