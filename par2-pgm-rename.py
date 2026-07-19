@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
-# v. 20260718.182300 - preserve original mtime on rewritten PAR2 files (from *_old backup)
+# v. 20260719.091414 - hash verify/update limited to PAR2 set from index path argument
 
+# 2026.07.19 - v. 1.2.5.0 - hash verify/update: in-scope PAR2 set only; skip when hash has no .par2 lines
 # 2026.07.18 - v. 1.2.4.0 - initial release: MultiPar-compatible PAR2 filename rename (Python CLI)
 """Modify source filenames stored inside PAR2 files.
 
@@ -16,7 +17,7 @@ import struct
 import sys
 import tempfile
 
-VERSION = "1.2.4.0"
+VERSION = "1.2.5.0"
 MAX_RENAMES = 16
 INVALID_CHARS = '\\:*?"<>|'
 READ_CHUNK = 2097152
@@ -403,7 +404,32 @@ def parse_hash_file(hash_file_path):
     return records
 
 
-def verify_par2_hashes(folder_path):
+def is_par2_basename(name):
+    if not name.lower().endswith(".par2"):
+        return False
+    return not is_backup_par2(name)
+
+
+def par2_hash_entries(expected_by_basename):
+    return {
+        name: digest
+        for name, digest in expected_by_basename.items()
+        if is_par2_basename(name)
+    }
+
+
+def resolve_scoped_par2_files(folder_path, par_file_path=None):
+    if par_file_path:
+        set_folder, par_files = find_par2_set(par_file_path)
+        if os.path.abspath(set_folder) != os.path.abspath(folder_path):
+            raise ValueError(
+                f"PAR2 file is not in hash directory: {par_file_path}"
+            )
+        return par_files
+    return list_active_par2_files(folder_path)
+
+
+def verify_par2_hashes(folder_path, par_file_path=None):
     hash_file = find_hash_file(folder_path)
     if hash_file is None:
         return True, None, "No hash file found."
@@ -415,17 +441,31 @@ def verify_par2_hashes(folder_path):
         for record in records
         if record["type"] == "entry"
     }
-    par_files = list_active_par2_files(folder_path)
+    par_entries = par2_hash_entries(expected)
+    if not par_entries:
+        return (
+            True,
+            hash_file,
+            (
+                f"Skipping PAR2 archive checksum verification: "
+                f"{os.path.basename(hash_file)} contains no .par2 entries."
+            ),
+        )
+
+    par_files = resolve_scoped_par2_files(folder_path, par_file_path)
     errors = []
+    verified = 0
 
     for par_name in par_files:
-        listed_hash = expected.get(par_name)
+        listed_hash = par_entries.get(par_name)
         if listed_hash is None:
             errors.append(f"{par_name}: missing from {os.path.basename(hash_file)}")
             continue
         actual_hash = compute_file_hash(os.path.join(folder_path, par_name), algo)
         if actual_hash != listed_hash:
             errors.append(f"{par_name}: checksum mismatch")
+        else:
+            verified += 1
 
     if errors:
         message = "PAR2 archive checksum verification failed:\n" + "\n".join(
@@ -433,23 +473,28 @@ def verify_par2_hashes(folder_path):
         )
         return False, hash_file, message
 
+    scope_note = (
+        f" for PAR2 set {os.path.basename(par_file_path)}"
+        if par_file_path
+        else ""
+    )
     return (
         True,
         hash_file,
         (
-            f"PAR2 archive checksums OK: all {len(par_files)} active PAR2 file(s) "
+            f"PAR2 archive checksums OK: {verified} in-scope PAR2 file(s){scope_note} "
             f"match {os.path.basename(hash_file)}."
         ),
     )
 
 
-def update_par2_hashes(folder_path, hash_file=None):
+def update_par2_hashes(folder_path, hash_file=None, par_file_path=None):
     hash_file = hash_file or find_hash_file(folder_path)
     if hash_file is None:
         return False, "No hash file found (nothing to update)."
 
     algo = hash_algo_from_path(hash_file)
-    par_files = set(list_active_par2_files(folder_path))
+    par_files = set(resolve_scoped_par2_files(folder_path, par_file_path))
     with open(hash_file, "r", encoding="utf-8", errors="replace") as handle:
         original_text = handle.read()
 
@@ -484,7 +529,12 @@ def update_par2_hashes(folder_path, hash_file=None):
     with open(hash_file, "w", encoding="utf-8", newline="\n") as handle:
         handle.write(new_text)
 
-    return True, f"Updated PAR2 checksums in {os.path.basename(hash_file)} ({len(updated_names)} entries)"
+    appended = len(par_files - updated_names)
+    touched = len(updated_names) + appended
+    return True, (
+        f"Updated PAR2 checksums in {os.path.basename(hash_file)} "
+        f"({touched} in-scope entries)"
+    )
 
 
 def list_source_names(par_file_path):
@@ -541,16 +591,22 @@ def apply_renames(par_file_path, rename_args):
 def main(argv):
     if len(argv) >= 3 and argv[1] == "hash":
         folder_path = os.path.abspath(argv[3] if len(argv) > 3 else ".")
+        par_file_path = os.path.abspath(argv[4]) if len(argv) > 4 else None
         try:
             if argv[2] == "verify":
-                ok, _, message = verify_par2_hashes(folder_path)
+                ok, _, message = verify_par2_hashes(folder_path, par_file_path)
                 print(message)
                 return 0 if ok else 1
             if argv[2] == "update":
-                ok, message = update_par2_hashes(folder_path)
+                ok, message = update_par2_hashes(
+                    folder_path, par_file_path=par_file_path
+                )
                 print(message)
                 return 0 if ok else 1
-            print("Usage: par2-pgm-rename.py hash verify|update <directory>", file=sys.stderr)
+            print(
+                "Usage: par2-pgm-rename.py hash verify|update <directory> [par2-index]",
+                file=sys.stderr,
+            )
             return 1
         except (ValueError, OSError) as error:
             print(f"Error: {error}", file=sys.stderr)

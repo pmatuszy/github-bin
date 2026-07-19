@@ -1,6 +1,7 @@
 #!/bin/bash
-# v. 20260718.182300 - restore PAR2 mtimes from *_old.par2 after metadata rename
+# v. 20260719.091414 - hash verify/update scoped to PAR2 set from index argument
 
+# 2026.07.19 - v. 0.1.5 - Step 0: verify only in-scope PAR2 set in hash file; skip if hash has no .par2 lines
 # 2026.07.18 - v. 0.1.4 - Step 3b: keep active .par2 dates matching original *_old.par2 backups
 # 2026.07.18 - v. 0.1.1 - github-bin consistency: show_help, print_version_banner, script footer
 # 2026.07.18 - v. 0.1.0 - initial release: misnamed-file detection, hash gate, interactive PAR2 metadata update
@@ -29,10 +30,10 @@ Environment:
   PAR2_CMD             par2 executable (default: par2)
   PYTHON_CMD           python3 executable (default: python3)
 
-If a .sha512 / .sha256 / .md5 file exists in the directory, PAR2 archive
-checksums are verified before scanning for misnamed files. After a successful
-PAR2 metadata update, PAR2 entries in the hash file are refreshed (*_old.par2
-is omitted).
+If a .sha512 / .sha256 / .md5 file exists in the directory, checksums for the
+PAR2 set being checked (index + volume files) are verified before scanning.
+Other paths in the hash file and other PAR2 sets in the directory are ignored.
+If the hash file has no .par2 entries, verification is skipped with a note.
 
 Examples:
   $(basename "$0")
@@ -185,7 +186,7 @@ run_rename_py() {
 
 verify_par2_hashes() {
     local msg rc
-    msg=$(run_rename_py hash verify "$DATA_DIR" 2>&1) || true
+    msg=$(run_rename_py hash verify "$DATA_DIR" "$PAR2_FILE" 2>&1) || true
     rc=$?
     echo "$msg"
     return "$rc"
@@ -193,7 +194,7 @@ verify_par2_hashes() {
 
 update_par2_hashes() {
     local msg rc
-    msg=$(run_rename_py hash update "$DATA_DIR" 2>&1) || true
+    msg=$(run_rename_py hash update "$DATA_DIR" "$PAR2_FILE" 2>&1) || true
     rc=$?
     echo "$msg"
     return "$rc"
@@ -502,8 +503,9 @@ if HASH_FILE="$(find_hash_file_in_dir "$DATA_DIR")"; then
     echo "  $(basename "$HASH_FILE")"
     echo
     echo "Before proceeding with PAR2 verification and scanning for misnamed files,"
-    echo "checking whether the checksums listed in that file still match the active"
-    echo "PAR2 archives here (*.par2, excluding *_old.par2 backups)."
+    echo "checking whether this PAR2 set's archive checksums in that file still match"
+    echo "the active index and volume .par2 files for: $(basename "$PAR2_FILE")"
+    echo "(other hash-file entries and other PAR2 sets here are not checked)."
     echo
     if ! verify_par2_hashes; then
         die "PAR2 archive checksum verification failed. Refusing to scan for misnamed files."
