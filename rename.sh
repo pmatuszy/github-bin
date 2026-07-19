@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# v. 20260719.115122 - large checksum list prompt: full menu + [A] auto-yes rest of run
+# v. 20260719.134800 - dry-run: skip exiftool/checksum I/O, auto-continue past prompts, progress on stderr
 
+# 2026.07.19 - v. 19.257.134800 - dry-run: skip exiftool by default (RENAME_DRY_RUN_SKIP_EXIFTOOL); no sha512 recovery/verify; auto plain/flatten/lnk; analyzing line on stderr
 # 2026.07.19 - v. 19.256.115122 - large checksum list prompt: print y/N/a/v/q menu lines; [A] yes + auto-check remaining large lists for rest of run
 # 2026.07.19 - v. 19.255.104346 - rename prompt [G]: also auto-approve Nikon D200 MAT####.NEF/.XMP exiftool renames for rest of run
 # 2026.07.19 - v. 19.254.104306 - rename prompt [G]: also auto-approve GoPro raw→exiftool metadata renames (GH/GOPR/GP…) for rest of run
@@ -525,6 +526,23 @@ NEF_XMP_PAIR_LABEL_WIDTH="${NEF_XMP_PAIR_LABEL_WIDTH:-15}"
 NEF_XMP_PAIR_LABEL_WIDTH_NO_SIDECAR="${NEF_XMP_PAIR_LABEL_WIDTH_NO_SIDECAR:-5}"
 # Continuation indent for user-visible lines longer than MAX_LINE_LENGTH (checksum/HTML style).
 WRAP_MSG_INDENT="${WRAP_MSG_INDENT:-          }"
+# Dry-run: skip exiftool/metadata reads (basename rules only); much faster on large GoPro trees. Set no for full metadata preview.
+RENAME_DRY_RUN_SKIP_EXIFTOOL="${RENAME_DRY_RUN_SKIP_EXIFTOOL:-yes}"
+
+dry_run_skip_exiftool_enabled() {
+    [[ "$mode" == "dry-run" && "${RENAME_DRY_RUN_SKIP_EXIFTOOL,,}" == yes ]]
+}
+
+# Non-verbose dry-run: show which checksum group is being analyzed (transform_name can take time on RAID).
+dry_run_emit_analyzing_checksum_group() {
+    local sum_file="$1"
+    local nrefs="$2"
+    [[ "$mode" == "dry-run" ]] || return 0
+    (( VERBOSE == 1 )) && return 0
+    nonverbose_progress_dot_endline_if_needed
+    printf '[DRY-RUN %s] Analyzing checksum group (%s ref(s)): %s\n' \
+        "$(date '+%H:%M:%S')" "$nrefs" "$sum_file" >&2
+}
 
 # After a full stdout status line, skip the next main-loop progress dot (avoids lone "." between lines).
 nonverbose_skip_next_main_loop_dot_after_stdout_status() {
@@ -1137,6 +1155,8 @@ Environment / tunables (read at startup; use export or prefix on the same line a
       RENAME_CHECKSUM_VERIFY_STATE_DIR=/var/tmp/rename-checksum-state rename.sh --use-db
   RENAME_EXIFTOOL                     exiftool for GoPro camera raw files; default: bundled luks-buffalo2 path, then PATH
       RENAME_EXIFTOOL=/opt/exiftool/exiftool rename.sh --scope current
+  RENAME_DRY_RUN_SKIP_EXIFTOOL        Dry-run: yes (default) = basename rules only, no exiftool/sha512 recovery (fast preview); no = full metadata preview
+      RENAME_DRY_RUN_SKIP_EXIFTOOL=no rename.sh --mode dry-run
   START_DIR                           Working tree root (default current directory). Use an absolute path.
       START_DIR=/data/photos rename.sh --use-db --scope subdirs
   TMPDIR                              Temp directory for SQLite bootstrap mktemp etc. (POSIX; default often /tmp).
@@ -10376,6 +10396,11 @@ transform_name() {
     local dir base newbase ts stem ext media_suffix media_date media_time media_kind yy
     local dup_stem dup_ext1 dup_ext2
     local audio_ext_re common_media_ext_re
+    local _tn_skip_exif=0
+
+    if dry_run_skip_exiftool_enabled; then
+        _tn_skip_exif=1
+    fi
 
     dir="$(dirname -- "$f")"
     base="$(basename -- "$f")"
@@ -10407,7 +10432,7 @@ transform_name() {
 
     local _gopro_applied=0 _gopro_try="" _gopro_rc=0 _gopro_part_strip=""
     local _sony_applied=0 _sony_try="" _sony_rc=0
-    if [[ -f "$f" ]] && sony_clip_media_basename_matches "$base"; then
+    if [[ -f "$f" ]] && ((_tn_skip_exif == 0)) && sony_clip_media_basename_matches "$base"; then
         local _tn_save_e_sc=0
         [[ $- == *e* ]] && _tn_save_e_sc=1
         set +e
@@ -10427,7 +10452,7 @@ transform_name() {
         fi
     fi
 
-    if [[ -f "$f" ]] && (( _sony_applied == 0 )) && gopro_camera_raw_basename_matches "$base"; then
+    if [[ -f "$f" ]] && ((_tn_skip_exif == 0)) && (( _sony_applied == 0 )) && gopro_camera_raw_basename_matches "$base"; then
         if ! resolve_rename_exiftool >/dev/null; then
             prompt_gopro_exiftool_missing_action "$f"
             [[ "$stopped_by_user" != yes ]] || return 2
@@ -10454,7 +10479,7 @@ transform_name() {
         fi
     fi
 
-    if [[ -f "$f" ]] && (( _gopro_applied == 0 && _sony_applied == 0 )) \
+    if [[ -f "$f" ]] && ((_tn_skip_exif == 0)) && (( _gopro_applied == 0 && _sony_applied == 0 )) \
         && gopro_renamed_mp4_basename_matches "$base" \
         && ! gopro_basename_has_capture_mode_suffix "$base"; then
         local _gopro_backfill_try="" _gopro_backfill_rc=0
@@ -10472,16 +10497,16 @@ transform_name() {
         fi
     fi
 
-    if [[ -f "$f" ]] && (( _gopro_applied == 1 )) && gopro_renamed_basename_has_part_segment "$newbase"; then
+    if [[ -f "$f" ]] && ((_tn_skip_exif == 0)) && (( _gopro_applied == 1 )) && gopro_renamed_basename_has_part_segment "$newbase"; then
         newbase="$(gopro_newbase_omit_lone_part_if_sole_chapter "$f" "$newbase" "$newbase")"
     fi
 
-    if [[ -f "$f" ]] && (( _gopro_applied == 1 )); then
+    if [[ -f "$f" ]] && ((_tn_skip_exif == 0)) && (( _gopro_applied == 1 )); then
         gopro_mark_capture_mode_db_from_basename "$f" "$newbase"
     fi
 
     local _olympus_applied=0 _olympus_try="" _olympus_rc=0
-    if [[ -f "$f" ]] && (( _gopro_applied == 0 && _sony_applied == 0 )) && olympus_voice_recorder_raw_basename_matches "$base"; then
+    if [[ -f "$f" ]] && ((_tn_skip_exif == 0)) && (( _gopro_applied == 0 && _sony_applied == 0 )) && olympus_voice_recorder_raw_basename_matches "$base"; then
         local _tn_save_e_oly=0
         [[ $- == *e* ]] && _tn_save_e_oly=1
         set +e
@@ -10502,7 +10527,7 @@ transform_name() {
     fi
 
     local _nikon_applied=0 _nikon_try="" _nikon_rc=0
-    if [[ -f "$f" ]] && (( _gopro_applied == 0 && _sony_applied == 0 && _olympus_applied == 0 )) \
+    if [[ -f "$f" ]] && ((_tn_skip_exif == 0)) && (( _gopro_applied == 0 && _sony_applied == 0 && _olympus_applied == 0 )) \
         && nikon_mat_media_basename_matches "$base"; then
         local _tn_save_e_nk=0
         [[ $- == *e* ]] && _tn_save_e_nk=1
@@ -10523,7 +10548,7 @@ transform_name() {
         fi
     fi
 
-    if [[ -f "$f" ]] && (( _gopro_applied == 0 && _sony_applied == 0 && _olympus_applied == 0 && _nikon_applied == 0 )) && [[ "$stopped_by_user" != yes ]]; then
+    if [[ -f "$f" ]] && ((_tn_skip_exif == 0)) && (( _gopro_applied == 0 && _sony_applied == 0 && _olympus_applied == 0 && _nikon_applied == 0 )) && [[ "$stopped_by_user" != yes ]]; then
         local _gopro_part_rc=0 _gopro_part_err_trap=""
         local _tn_save_e_part=0
         [[ $- == *e* ]] && _tn_save_e_part=1
@@ -10712,7 +10737,7 @@ transform_name() {
     fi
 
     local _samsung_applied=0 _samsung_try="" _samsung_rc=0
-    if [[ -f "$f" ]] && (( _gopro_applied == 0 && _sony_applied == 0 && _olympus_applied == 0 && _nikon_applied == 0 )) \
+    if [[ -f "$f" ]] && ((_tn_skip_exif == 0)) && (( _gopro_applied == 0 && _sony_applied == 0 && _olympus_applied == 0 && _nikon_applied == 0 )) \
         && samsung_media_basename_matches "$newbase"; then
         local _tn_save_e_sam=0 _sam_err_trap=""
         [[ $- == *e* ]] && _tn_save_e_sam=1
@@ -10826,35 +10851,35 @@ checksum_check() {
     sum_dir="$(dirname -- "$sum_file")"
     sum_base="$(basename -- "$sum_file")"
 
+    if [[ "$mode" == "dry-run" ]]; then
+        vlog "Dry-run: skipping $(checksum_cmd "$sum_file") whole-file check for '$sum_file'"
+        return 0
+    fi
+
     if [[ "$mode" == "real" ]]; then
         ensure_checksum_file_unix_format "$sum_file"
     fi
 
     vlog "Running $(checksum_cmd "$sum_file") check in directory '$sum_dir' for file '$sum_base'"
 
-    if [[ "$mode" == "dry-run" ]]; then
-        (
-            cd "$sum_dir"
-            case "$kind" in
-                sha512) sha512sum -c --quiet -- <(sed 's/\r$//' -- "$sum_base") ;;
-                md5)    md5sum    -c --quiet -- <(sed 's/\r$//' -- "$sum_base") ;;
-            esac
-        )
-    else
-        (
-            cd "$sum_dir"
-            case "$kind" in
-                sha512) sha512sum -c --quiet -- "$sum_base" ;;
-                md5)    md5sum    -c --quiet -- "$sum_base" ;;
-            esac
-        )
-    fi
+    (
+        cd "$sum_dir"
+        case "$kind" in
+            sha512) sha512sum -c --quiet -- "$sum_base" ;;
+            md5)    md5sum    -c --quiet -- "$sum_base" ;;
+        esac
+    )
 }
 
 verify_single_checksum_target() {
     local sum_file="$1"
     local target_ref="$2"
     local kind sum_dir sum_base target_norm target_re matched_line
+
+    if [[ "$mode" == "dry-run" ]]; then
+        vlog "Dry-run: skipping per-reference $(checksum_cmd "$sum_file") check for '$target_ref' in '$sum_file'"
+        return 0
+    fi
 
     kind="$(checksum_kind "$sum_file")" || kind=""
     nonverbose_checksum_ref_verify_progress_letter "$kind" "$sum_file"
@@ -11962,6 +11987,11 @@ find_best_path_for_missing_ref() {
     local expected_hash="$2"
     local sum_file="$3"
 
+    if [[ "$mode" == "dry-run" ]]; then
+        vlog "Dry-run: skipping checksum recovery search for missing ref '$missing_ref' in '$sum_file'"
+        return 1
+    fi
+
     local kind wanted_base wanted_norm missing_dir search_root
     local fast_base fast_path fast_hash
     local candidate candidate_hash candidate_name indexed_candidates index_key all_candidates
@@ -12093,6 +12123,12 @@ find_best_path_for_missing_ref() {
 handle_lnk_file() {
     local f="$1"
     local answer=""
+
+    if [[ "$mode" == "dry-run" ]]; then
+        echo
+        emit_wrap_labeled_stdout "[DRY-RUN] Would prompt to remove .lnk file: " "${CYAN}[DRY-RUN] Would prompt to remove .lnk file:${RESET} " "$f"
+        return 0
+    fi
 
     while true; do
         echo
@@ -12736,6 +12772,13 @@ maybe_prompt_flatten_single_child_dir() {
     fi
 
     if ! find "$child_dir" -type f -print -quit | grep -q .; then
+        return 0
+    fi
+
+    if [[ "$mode" == "dry-run" ]]; then
+        echo
+        emit_wrap_labeled_stdout "[DRY-RUN] Would prompt to flatten directory: " "${CYAN}[DRY-RUN] Would prompt to flatten directory:${RESET} " "$parent_dir"
+        emit_wrap_labeled_stdout "  sole child with files: " "  ${CYAN}sole child with files:${RESET} " "$child_dir"
         return 0
     fi
 
@@ -13449,6 +13492,11 @@ for f in "${ordered_paths[@]}"; do
                 continue
             fi
 
+            if [[ "$mode" == "dry-run" ]]; then
+                vlog "Dry-run: not searching for missing ref '$ref' in '$sum_file'"
+                continue
+            fi
+
             vlog "Ref missing, trying recovery: '$ref'"
             _fbr_rc=0
             found_ref="$(find_best_path_for_missing_ref "$ref" "${expected_hashes[$i]}" "$sum_file")" || _fbr_rc=$?
@@ -13646,6 +13694,8 @@ for f in "${ordered_paths[@]}"; do
             processed["$sum_file"]=1
             continue
         fi
+
+        dry_run_emit_analyzing_checksum_group "$sum_file" "${#refs[@]}"
 
         _rename_cap_save_e=0
         [[ $- == *e* ]] && _rename_cap_save_e=1
@@ -14394,6 +14444,29 @@ for f in "${ordered_paths[@]}"; do
     fi
     if is_thumbs_db_file "$f" && [[ "$f" == "$new" ]]; then
         thumbs_db_noop=1
+    fi
+
+    if [[ "$mode" == "dry-run" ]]; then
+        if [[ -n "$torrent_url_noop" ]]; then
+            vlog "Dry-run: would prompt to delete torrent .URL '$f'"
+            db_backfill_missing_hashes_for_existing_file "$f" || true
+            db_mark_checked "$f" "plain" "checked"
+            ((++files_skipped))
+            processed["$f"]=1
+            continue
+        fi
+        if [[ -n "$thumbs_db_noop" ]]; then
+            vlog "Dry-run: would prompt about thumbs.db '$f'"
+            db_backfill_missing_hashes_for_existing_file "$f" || true
+            db_mark_checked "$f" "plain" "checked"
+            ((++files_skipped))
+            processed["$f"]=1
+            continue
+        fi
+        perform_plain_or_nef_xmp_pair "dry-run auto" || break
+        processed["$f"]=1
+        [[ -n "$nef_xmp_buddy" ]] && processed["$nef_xmp_buddy"]=1
+        continue
     fi
 
     nonverbose_progress_dot_prepare_for_prompt
