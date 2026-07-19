@@ -1,8 +1,10 @@
 #!/bin/bash
+# v. 20260719.112526 - timing summary: add script start and end wall-clock times
 # v. 20260719.105611 - batch rename default N; print Run settings block at startup
 # v. 20260719.103506 - fix no-arg run: empty POSITIONAL[@]:- became one "" element
 # v. 20260719.102800 - multi-set selection: A/a, ranges 1-4, --all, multiple paths
 
+# 2026.07.19 - v. 0.1.19 - Timing block shows script start and end wall-clock times
 # 2026.07.19 - v. 0.1.18 - Run settings banner; multi-set rename prompt defaults to no
 # 2026.07.19 - v. 0.1.17 - Fix cwd-only run: drop POSITIONAL[@]:- reassign (empty-array trap)
 # 2026.07.19 - v. 0.1.16 - Prompt or CLI-select multiple PAR2 sets; verify each in turn
@@ -560,6 +562,7 @@ PAR2_SET_MEMBERS=()
 RESOLVE_PAR2_ERROR=""
 PGM_HASH_VERIFY_MSG=""
 PROMPT_TIMEOUT="${PROMPT_TIMEOUT:-100}"
+PGM_SCRIPT_START_STR=""
 
 cleanup() {
     [[ -n "$OUT2_FILE" && -f "$OUT2_FILE" ]] && rm -f "$OUT2_FILE"
@@ -671,6 +674,10 @@ pgm_filter_par2_verify_stream() {
     sed -E '/^[[:space:]]*[Aa]ll files are (ok|correct).*repair is not required\.?[[:space:]]*$/Id'
 }
 
+pgm_wall_clock_now() {
+    date '+%Y.%m.%d %H:%M:%S'
+}
+
 pgm_format_elapsed() {
     local s="${1:-0}" h m
     (( s < 0 )) && s=0
@@ -730,9 +737,11 @@ pgm_timing_lap_to() {
 }
 
 pgm_print_timing_summary() {
-    local total=0
+    local total=0 end_time
     local -a labels=() values=() formatted=()
     local i max_w=0 w
+
+    end_time="$(pgm_wall_clock_now)"
 
     if (( MULTI_SET_MODE )); then
         [[ -n "${PGM_MULTI_RUN_START:-}" ]] || return 0
@@ -745,7 +754,10 @@ pgm_print_timing_summary() {
 
         echo
         echo "--- Timing (all sets) ---"
+        [[ -n "${PGM_SCRIPT_START_STR:-}" ]] && \
+            printf '  %-28s %s\n' "Start time:" "$PGM_SCRIPT_START_STR"
         printf '  %-28s %*s\n' "Sets checked:" "$max_w" "${formatted[0]}"
+        printf '  %-28s %s\n' "End time:" "$end_time"
         printf '  %-28s %*s\n' "Total wall time:" "$max_w" "${formatted[1]}"
         echo
         return 0
@@ -778,7 +790,12 @@ pgm_print_timing_summary() {
 
     echo
     echo "--- Timing ---"
+    [[ -n "${PGM_SCRIPT_START_STR:-}" ]] && \
+        printf '  %-28s %s\n' "Start time:" "$PGM_SCRIPT_START_STR"
     for i in "${!labels[@]}"; do
+        if [[ "${labels[$i]}" == "Total wall time:" ]]; then
+            printf '  %-28s %s\n' "End time:" "$end_time"
+        fi
         printf '  %-28s %*s\n' "${labels[$i]}" "$max_w" "${formatted[$i]}"
     done
     echo
@@ -1492,6 +1509,8 @@ fi
 
 collect_data_files "$DATA_DIR"
 (( ${#DATA_FILES[@]} > 0 )) || die "No data files found in: $DATA_DIR"
+
+PGM_SCRIPT_START_STR="$(pgm_wall_clock_now)"
 
 if ((${#PAR2_SET_QUEUE[@]} == 1)); then
     pgm_prepare_par2_set "${PAR2_SET_QUEUE[0]}"
