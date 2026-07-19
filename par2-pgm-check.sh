@@ -1,6 +1,7 @@
 #!/bin/bash
-# v. 20260719.091414 - hash verify/update scoped to PAR2 set from index argument
+# v. 20260719.092000 - Step 0 reports hash-file counts and checks only relevant manifests
 
+# 2026.07.19 - v. 0.1.6 - Step 0: scan all hash files; report how many list in-scope PAR2 entries
 # 2026.07.19 - v. 0.1.5 - Step 0: verify only in-scope PAR2 set in hash file; skip if hash has no .par2 lines
 # 2026.07.18 - v. 0.1.4 - Step 3b: keep active .par2 dates matching original *_old.par2 backups
 # 2026.07.18 - v. 0.1.1 - github-bin consistency: show_help, print_version_banner, script footer
@@ -30,10 +31,9 @@ Environment:
   PAR2_CMD             par2 executable (default: par2)
   PYTHON_CMD           python3 executable (default: python3)
 
-If a .sha512 / .sha256 / .md5 file exists in the directory, checksums for the
-PAR2 set being checked (index + volume files) are verified before scanning.
-Other paths in the hash file and other PAR2 sets in the directory are ignored.
-If the hash file has no .par2 entries, verification is skipped with a note.
+If a .sha512 / .sha256 / .md5 file exists in the directory, Step 0 scans all
+hash manifests, reports how many list in-scope PAR2 archives for this set, and
+verifies checksums only in those file(s). Other hash entries are ignored.
 
 Examples:
   $(basename "$0")
@@ -148,30 +148,6 @@ collect_data_files() {
         DATA_FILES+=("$f")
     done
     shopt -u nullglob
-}
-
-find_hash_file_in_dir() {
-    local dir="$1"
-    local f
-    local -a candidates=()
-
-    shopt -s nullglob
-    for f in "$dir"/*.sha512 "$dir"/*.SHA512 \
-             "$dir"/*.sha256 "$dir"/*.SHA256 \
-             "$dir"/*.md5 "$dir"/*.MD5; do
-        [[ -f "$f" ]] && candidates+=("$f")
-    done
-    shopt -u nullglob
-
-    if (( ${#candidates[@]} == 0 )); then
-        return 1
-    fi
-
-    if (( ${#candidates[@]} > 1 )); then
-        echo "Note: multiple hash files found, using $(basename "$(printf '%s\n' "${candidates[@]}" | sort | head -1)")" >&2
-    fi
-
-    printf '%s\n' "$(printf '%s\n' "${candidates[@]}" | sort | head -1)"
 }
 
 run_par2() {
@@ -497,22 +473,8 @@ echo "Data files: ${#DATA_FILES[@]}"
 echo
 
 echo "=== Step 0: verify PAR2 archive checksums ==="
-HASH_FILE=""
-if HASH_FILE="$(find_hash_file_in_dir "$DATA_DIR")"; then
-    echo "Detected a hash file in the same directory:"
-    echo "  $(basename "$HASH_FILE")"
-    echo
-    echo "Before proceeding with PAR2 verification and scanning for misnamed files,"
-    echo "checking whether this PAR2 set's archive checksums in that file still match"
-    echo "the active index and volume .par2 files for: $(basename "$PAR2_FILE")"
-    echo "(other hash-file entries and other PAR2 sets here are not checked)."
-    echo
-    if ! verify_par2_hashes; then
-        die "PAR2 archive checksum verification failed. Refusing to scan for misnamed files."
-    fi
-else
-    echo "No .sha512 / .sha256 / .md5 hash file found in this directory."
-    echo "Skipping PAR2 archive checksum verification."
+if ! verify_par2_hashes; then
+    die "PAR2 archive checksum verification failed. Refusing to scan for misnamed files."
 fi
 echo
 

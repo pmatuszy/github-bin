@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
-# v. 20260719.091414 - hash verify/update limited to PAR2 set from index path argument
+# v. 20260719.092000 - scan all hash files; verify/update only manifests listing in-scope PAR2
 
+# 2026.07.19 - v. 1.2.6.0 - hash inventory: report total hash files vs in-scope PAR2 matches
 # 2026.07.19 - v. 1.2.5.0 - hash verify/update: in-scope PAR2 set only; skip when hash has no .par2 lines
 # 2026.07.18 - v. 1.2.4.0 - initial release: MultiPar-compatible PAR2 filename rename (Python CLI)
 """Modify source filenames stored inside PAR2 files.
@@ -17,7 +18,7 @@ import struct
 import sys
 import tempfile
 
-VERSION = "1.2.5.0"
+VERSION = "1.2.6.0"
 MAX_RENAMES = 16
 INVALID_CHARS = '\\:*?"<>|'
 READ_CHUNK = 2097152
@@ -345,40 +346,6 @@ def hash_path_basename(path_field):
     return os.path.basename(path)
 
 
-def find_hash_file(folder_path):
-    candidates = []
-    for pattern in ("*.sha512", "*.SHA512", "*.sha256", "*.SHA256", "*.md5", "*.MD5"):
-        candidates.extend(glob.glob(os.path.join(folder_path, pattern)))
-    candidates = sorted(set(candidates))
-    if not candidates:
-        return None
-    if len(candidates) > 1:
-        print(
-            f"Note: multiple hash files found, using {os.path.basename(candidates[0])}",
-            file=sys.stderr,
-        )
-    return candidates[0]
-
-
-def list_active_par2_files(folder_path):
-    return sorted(
-        name
-        for name in os.listdir(folder_path)
-        if name.lower().endswith(".par2") and not is_backup_par2(name)
-    )
-
-
-def compute_file_hash(file_path, algo):
-    digest = hashlib.new(algo)
-    with open(file_path, "rb") as handle:
-        while True:
-            chunk = handle.read(READ_CHUNK)
-            if not chunk:
-                break
-            digest.update(chunk)
-    return digest.hexdigest().lower()
-
-
 def parse_hash_file(hash_file_path):
     records = []
     with open(hash_file_path, "r", encoding="utf-8", errors="replace") as handle:
@@ -404,6 +371,17 @@ def parse_hash_file(hash_file_path):
     return records
 
 
+def compute_file_hash(file_path, algo):
+    digest = hashlib.new(algo)
+    with open(file_path, "rb") as handle:
+        while True:
+            chunk = handle.read(READ_CHUNK)
+            if not chunk:
+                break
+            digest.update(chunk)
+    return digest.hexdigest().lower()
+
+
 def is_par2_basename(name):
     if not name.lower().endswith(".par2"):
         return False
@@ -418,6 +396,14 @@ def par2_hash_entries(expected_by_basename):
     }
 
 
+def list_active_par2_files(folder_path):
+    return sorted(
+        name
+        for name in os.listdir(folder_path)
+        if name.lower().endswith(".par2") and not is_backup_par2(name)
+    )
+
+
 def resolve_scoped_par2_files(folder_path, par_file_path=None):
     if par_file_path:
         set_folder, par_files = find_par2_set(par_file_path)
@@ -429,72 +415,166 @@ def resolve_scoped_par2_files(folder_path, par_file_path=None):
     return list_active_par2_files(folder_path)
 
 
-def verify_par2_hashes(folder_path, par_file_path=None):
-    hash_file = find_hash_file(folder_path)
-    if hash_file is None:
-        return True, None, "No hash file found."
+def list_hash_files(folder_path):
+    candidates = []
+    for pattern in ("*.sha512", "*.SHA512", "*.sha256", "*.SHA256", "*.md5", "*.MD5"):
+        candidates.extend(glob.glob(os.path.join(folder_path, pattern)))
+    return sorted(set(candidates))
 
-    algo = hash_algo_from_path(hash_file)
-    records = parse_hash_file(hash_file)
-    expected = {
+
+def find_hash_file(folder_path):
+    candidates = list_hash_files(folder_path)
+    if not candidates:
+        return None
+    return candidates[0]
+
+
+def entries_by_basename(hash_file_path):
+    records = parse_hash_file(hash_file_path)
+    return {
         record["basename"]: record["hash"]
         for record in records
         if record["type"] == "entry"
     }
-    par_entries = par2_hash_entries(expected)
-    if not par_entries:
-        return (
-            True,
-            hash_file,
-            (
-                f"Skipping PAR2 archive checksum verification: "
-                f"{os.path.basename(hash_file)} contains no .par2 entries."
-            ),
-        )
 
+
+def hash_inventory_for_scope(folder_path, par_file_path=None):
+    hash_files = list_hash_files(folder_path)
     par_files = resolve_scoped_par2_files(folder_path, par_file_path)
+    scope_set = set(par_files)
+    with_any_par2 = 0
+    relevant = []
+
+    for path in hash_files:
+        expected = entries_by_basename(path)
+        par_entries = par2_hash_entries(expected)
+        if par_entries:
+            with_any_par2 += 1
+        overlap = sorted(scope_set & set(par_entries.keys()))
+        if overlap:
+            relevant.append(
+                {
+                    "path": path,
+                    "overlap": overlap,
+                    "par_entries": par_entries,
+                    "algo": hash_algo_from_path(path),
+                }
+            )
+
+    return {
+        "total_hash_files": len(hash_files),
+        "with_any_par2_entries": with_any_par2,
+        "relevant": relevant,
+        "scope_par_files": par_files,
+    }
+
+
+def format_hash_inventory_lines(inventory, par_file_path=None):
+    lines = []
+    total = inventory["total_hash_files"]
+    if total == 0:
+        lines.append("No .sha512 / .sha256 / .md5 hash file found in this directory.")
+        lines.append("Skipping PAR2 archive checksum verification.")
+        return lines
+
+    any_par2 = inventory["with_any_par2_entries"]
+    relevant = inventory["relevant"]
+    scope = inventory["scope_par_files"]
+
+    lines.append(f"Found {total} hash file(s) in this directory.")
+    lines.append(
+        f"{any_par2} hash file(s) contain .par2 entries; "
+        f"{len(relevant)} hash file(s) list in-scope PAR2 archive(s) for this set."
+    )
+    if par_file_path:
+        lines.append(f"PAR2 set anchor: {os.path.basename(par_file_path)}")
+    if scope:
+        lines.append(
+            f"In-scope PAR2 file(s) ({len(scope)}): {', '.join(scope)}"
+        )
+    else:
+        lines.append("In-scope PAR2 file(s): (none)")
+    lines.append(
+        "Other hash-file paths and other PAR2 sets in this directory are not checked."
+    )
+
+    if not relevant:
+        if any_par2 == 0:
+            lines.append(
+                "Skipping PAR2 archive checksum verification: "
+                "no hash file in this directory contains .par2 entries."
+            )
+        else:
+            lines.append(
+                "Skipping PAR2 archive checksum verification: "
+                "no hash file lists any in-scope PAR2 archive for this set."
+            )
+        return lines
+
+    lines.append("Verifying checksums in:")
+    for item in relevant:
+        names = ", ".join(item["overlap"])
+        lines.append(
+            f"  - {os.path.basename(item['path'])} "
+            f"({len(item['overlap'])} in-scope .par2 entr"
+            f"{'y' if len(item['overlap']) == 1 else 'ies'}: {names})"
+        )
+    return lines
+
+
+def verify_par2_hashes(folder_path, par_file_path=None):
+    inventory = hash_inventory_for_scope(folder_path, par_file_path)
+    preamble = format_hash_inventory_lines(inventory, par_file_path)
+    if inventory["total_hash_files"] == 0:
+        return True, None, "\n".join(preamble)
+
+    relevant = inventory["relevant"]
+    if not relevant:
+        return True, None, "\n".join(preamble)
+
+    par_files = inventory["scope_par_files"]
     errors = []
     verified = 0
 
     for par_name in par_files:
-        listed_hash = par_entries.get(par_name)
-        if listed_hash is None:
-            errors.append(f"{par_name}: missing from {os.path.basename(hash_file)}")
+        sources = [item for item in relevant if par_name in item["overlap"]]
+        if not sources:
+            errors.append(
+                f"{par_name}: missing from all {inventory['total_hash_files']} hash file(s)"
+            )
             continue
-        actual_hash = compute_file_hash(os.path.join(folder_path, par_name), algo)
-        if actual_hash != listed_hash:
-            errors.append(f"{par_name}: checksum mismatch")
-        else:
-            verified += 1
+        mismatch_files = []
+        for item in sources:
+            listed_hash = item["par_entries"][par_name]
+            item_hash = compute_file_hash(
+                os.path.join(folder_path, par_name), item["algo"]
+            )
+            if item_hash != listed_hash:
+                mismatch_files.append(os.path.basename(item["path"]))
+        if mismatch_files:
+            errors.append(
+                f"{par_name}: checksum mismatch in {', '.join(mismatch_files)}"
+            )
+            continue
+        verified += 1
 
     if errors:
-        message = "PAR2 archive checksum verification failed:\n" + "\n".join(
-            f"  - {error}" for error in errors
-        )
-        return False, hash_file, message
+        message = "\n".join(preamble) + "\nPAR2 archive checksum verification failed:\n"
+        message += "\n".join(f"  - {error}" for error in errors)
+        return False, relevant[0]["path"], message
 
-    scope_note = (
-        f" for PAR2 set {os.path.basename(par_file_path)}"
-        if par_file_path
-        else ""
-    )
-    return (
-        True,
-        hash_file,
+    ok_lines = preamble + [
         (
-            f"PAR2 archive checksums OK: {verified} in-scope PAR2 file(s){scope_note} "
-            f"match {os.path.basename(hash_file)}."
-        ),
-    )
+            f"PAR2 archive checksums OK: {verified} in-scope PAR2 file(s) match "
+            f"across {len(relevant)} hash file(s)."
+        )
+    ]
+    return True, relevant[0]["path"], "\n".join(ok_lines)
 
 
-def update_par2_hashes(folder_path, hash_file=None, par_file_path=None):
-    hash_file = hash_file or find_hash_file(folder_path)
-    if hash_file is None:
-        return False, "No hash file found (nothing to update)."
-
+def _update_one_hash_file(folder_path, hash_file, par_files):
     algo = hash_algo_from_path(hash_file)
-    par_files = set(resolve_scoped_par2_files(folder_path, par_file_path))
+    par_files = set(par_files)
     with open(hash_file, "r", encoding="utf-8", errors="replace") as handle:
         original_text = handle.read()
 
@@ -531,9 +611,37 @@ def update_par2_hashes(folder_path, hash_file=None, par_file_path=None):
 
     appended = len(par_files - updated_names)
     touched = len(updated_names) + appended
+    return touched
+
+
+def update_par2_hashes(folder_path, hash_file=None, par_file_path=None):
+    if hash_file is not None:
+        par_files = resolve_scoped_par2_files(folder_path, par_file_path)
+        touched = _update_one_hash_file(folder_path, hash_file, par_files)
+        return True, (
+            f"Updated PAR2 checksums in {os.path.basename(hash_file)} "
+            f"({touched} in-scope entries)"
+        )
+
+    inventory = hash_inventory_for_scope(folder_path, par_file_path)
+    relevant = inventory["relevant"]
+    if inventory["total_hash_files"] == 0:
+        return False, "No hash file found (nothing to update)."
+    if not relevant:
+        return False, (
+            "No hash file lists in-scope PAR2 archives for this set (nothing to update)."
+        )
+
+    par_files = inventory["scope_par_files"]
+    messages = []
+    for item in relevant:
+        touched = _update_one_hash_file(folder_path, item["path"], par_files)
+        messages.append(
+            f"{os.path.basename(item['path'])} ({touched} in-scope entries)"
+        )
     return True, (
-        f"Updated PAR2 checksums in {os.path.basename(hash_file)} "
-        f"({touched} in-scope entries)"
+        f"Updated PAR2 checksums in {len(relevant)} hash file(s): "
+        + "; ".join(messages)
     )
 
 
