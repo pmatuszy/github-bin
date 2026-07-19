@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
-# v. 20260719.100600 - rename prompt [G]: auto-yes Samsung/EXIF camera make-model tags for rest of run
+# v. 20260719.104346 - rename prompt [G]: auto-yes Samsung, GoPro, Nikon D200 EXIF tags for rest of run
 
+# 2026.07.19 - v. 19.255.104346 - rename prompt [G]: also auto-approve Nikon D200 MAT####.NEF/.XMP exiftool renames for rest of run
+# 2026.07.19 - v. 19.254.104306 - rename prompt [G]: also auto-approve GoPro raw→exiftool metadata renames (GH/GOPR/GP…) for rest of run
 # 2026.07.19 - v. 19.253.100600 - rename prompt [G]: auto-approve known EXIF camera make/model tag appends (Samsung timestamp media) for rest of run
 # 2026.07.18 - v. 19.252.192100 - emit_wrap_old_arrow_new + verbose printers: keep label colors when paths wrap
 # 2026.07.18 - v. 19.251.192000 - emit_wrap_labeled_line: keep cyan/yellow label on line 1 when path wraps
@@ -8916,6 +8918,12 @@ gopro_renamed_mp4_basename_matches() {
     [[ "$base" =~ ^[0-9]{8}_[0-9]{6}_(-__-_|-_-_)(GoPro_[A-Za-z0-9_]+|GOPRO[0-9]+_[A-Z0-9]+|GOPRO_[A-Z0-9]+).*\.[mM][pP]4$ ]]
 }
 
+# Metadata-renamed GoPro MP4/JPG from exiftool (GH/GOPR/GP… raw → YYYYMMDD_HHMMSS_-_-_MODEL).
+gopro_exif_renamed_basename_matches() {
+    local base="$1"
+    [[ "$base" =~ ^[0-9]{8}_[0-9]{6}_(-__-_|-_-_)(GoPro_[A-Za-z0-9_]+|GOPRO[0-9]+_[A-Z0-9]+|GOPRO_[A-Z0-9]+).*\.([mM][pP]4|[jJ][pP][gG]|[jJ][pP][eE][gG])$ ]]
+}
+
 gopro_basename_with_capture_mode_suffix() {
     local base="$1"
     local mode_suffix="$2"
@@ -9184,7 +9192,7 @@ samsung_already_renamed_basename_matches() {
 }
 
 # True when NEW adds a Samsung EXIF camera make/model tag after a bare timestamp basename.
-rename_is_exif_camera_tag_append() {
+samsung_exif_camera_tag_append_matches() {
     local old="$1" new="$2"
     local ob nb
 
@@ -9195,6 +9203,41 @@ rename_is_exif_camera_tag_append() {
     samsung_media_basename_matches "$ob" || return 1
     samsung_already_renamed_basename_matches "$nb" || return 1
     return 0
+}
+
+# True when NEW is an exiftool metadata rename from a GoPro raw basename (GH/GX/GOPR/GP…).
+gopro_exif_camera_tag_append_matches() {
+    local old="$1" new="$2"
+    local ob nb
+
+    [[ -n "$old" && -n "$new" ]] || return 1
+    ob="$(basename -- "$old")"
+    nb="$(basename -- "$new")"
+    [[ "$ob" != "$nb" ]] || return 1
+    gopro_camera_raw_basename_matches "$ob" || return 1
+    gopro_exif_renamed_basename_matches "$nb" || return 1
+    return 0
+}
+
+# True when NEW is an exiftool metadata rename from a Nikon D200 MAT####.NEF/.XMP raw basename.
+nikon_exif_camera_tag_append_matches() {
+    local old="$1" new="$2"
+    local ob nb
+
+    [[ -n "$old" && -n "$new" ]] || return 1
+    ob="$(basename -- "$old")"
+    nb="$(basename -- "$new")"
+    [[ "$ob" != "$nb" ]] || return 1
+    nikon_mat_media_basename_matches "$ob" || return 1
+    nikon_mat_already_renamed_basename_matches "$nb" || return 1
+    return 0
+}
+
+rename_is_exif_camera_tag_append() {
+    samsung_exif_camera_tag_append_matches "$@" && return 0
+    gopro_exif_camera_tag_append_matches "$@" && return 0
+    nikon_exif_camera_tag_append_matches "$@" && return 0
+    return 1
 }
 
 samsung_exif_first_value() {
@@ -12095,7 +12138,7 @@ AUTO_LOWERCASE_MEDIA_OFFICE_EXT_SESSION=no # [U] session: only media + MS Office
 AUTO_GOPRO_STRIP_PART_DIR="" # GoPro lone _part_XX prompt [D]: auto-strip for rest of run in this directory
 AUTO_GOPRO_STRIP_PART_SESSION=no # GoPro lone _part_XX prompt [A]: auto-strip for all qualifying files this run
 AUTO_DELETE_THUMBS_DB_SESSION=no # thumbs.db prompt [O]: delete all thumbs.db for the rest of this run
-AUTO_EXIF_CAMERA_TAG_SESSION=no # rename prompt [G]: auto-yes known EXIF camera make/model tag appends for rest of run
+AUTO_EXIF_CAMERA_TAG_SESSION=no # rename prompt [G]: auto-yes Samsung/GoPro/Nikon D200 EXIF camera tag appends for rest of run
 RENAME_SH_GOPRO_STATE_FILE="${RENAME_SH_GOPRO_STATE_FILE:-${XDG_STATE_HOME:-$HOME/.local/state}/rename.sh/gopro-strip.$$}"
 
 declare -a renamed_list=()
@@ -12577,7 +12620,7 @@ print_rename_prompt_menu() {
         choice_hint+=/s
     fi
     if [[ -n "$path" && -n "$suggested_new" ]] && rename_is_exif_camera_tag_append "$path" "$suggested_new"; then
-        echo "  $(rename_menu_key_bracket G Y) Yes, and auto-approve all Samsung EXIF camera make/model tags for the rest of this run"
+        echo "  $(rename_menu_key_bracket G Y) Yes, and auto-approve all Samsung, GoPro, and Nikon D200 EXIF camera make/model tags for the rest of this run"
         choice_hint+=/g
     fi
     if [[ -n "$path" && -n "$suggested_new" ]] && rename_suggested_only_extension_case_change "$path" "$suggested_new" \
@@ -14583,11 +14626,11 @@ for f in "${ordered_paths[@]}"; do
             ;;
         g|G)
             if ! rename_is_exif_camera_tag_append "$f" "$new"; then
-                echo -e "${YELLOW}[G] applies only when the suggestion adds a known EXIF camera make/model tag to a bare YYYYMMDD_HHMMSS filename.${RESET}"
+                echo -e "${YELLOW}[G] applies only when the suggestion adds a Samsung, GoPro, or Nikon D200 EXIF camera make/model tag.${RESET}"
                 ((++files_skipped))
             else
                 AUTO_EXIF_CAMERA_TAG_SESSION=yes
-                vlog "Session auto-yes enabled for known EXIF camera make/model tag appends"
+                vlog "Session auto-yes enabled for Samsung/GoPro/Nikon D200 EXIF camera make/model tag appends"
                 perform_plain_or_nef_xmp_pair "EXIF camera tag auto-yes (session prompt)" || break
             fi
             ;;
