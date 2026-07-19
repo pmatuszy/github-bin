@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# v. 20260719.145553 - checksum group prompt: [H] hash groups; [A/a] session auto-yes
+# v. 20260719.145719 - Are you sure? prompts: [y/N/q] and Q quits the run
 
+# 2026.07.19 - v. 19.260.145719 - read_yes_no_quit_confirm: Are you sure? [y/N/q]; Q stops run (checksum session, rename_all, GoPro)
 # 2026.07.19 - v. 19.259.145553 - checksum group prompt: [H/h] all remaining hash groups; [A/a] session auto-yes (not rename_all mislabel); [D/d] checksum dir only
 # 2026.07.19 - v. 19.258.140038 - GoPro lone _part_XX: count chapters by camera/model id (GOPRO7_BLACK), not full timestamp prefix
 # 2026.07.19 - v. 19.257.134800 - dry-run: skip exiftool by default (RENAME_DRY_RUN_SKIP_EXIFTOOL); no sha512 recovery/verify; auto plain/flatten/lnk; analyzing line on stderr
@@ -1536,6 +1537,21 @@ read_single_key() {
     # Discard any extra buffered keypresses from the same burst so they do not
     # affect the next prompt or keep the pre-read drain loop busy.
     flush_stdin
+}
+
+# Yes/no confirm with quit. Echoes newline after the key. Returns 0=yes, 1=no, 2=quit.
+read_yes_no_quit_confirm() {
+    local __timeout="$1"
+    local answer=""
+
+    flush_stdin
+    read_single_key answer "$__timeout"
+    echo
+    case "$answer" in
+        q|Q) return 2 ;;
+        y|Y) return 0 ;;
+        *) return 1 ;;
+    esac
 }
 
 # After usage() on -h/--help: optional full environment-variable list (default no; 5 second timeout).
@@ -9803,13 +9819,15 @@ maybe_prompt_gopro_remove_lone_part_basename() {
             a|A)
                 echo "$(user_prompt_ts_prefix)⚠️  This will remove lone _part_XX from all qualifying GoPro files for the rest of this run." >&2
                 if (( VERBOSE == 1 )); then
-                    echo "[VERBOSE] [$(date '+%Y.%m.%d %H:%M:%S')] Are you sure? [y/N]:" >&2
+                    echo "[VERBOSE] [$(date '+%Y.%m.%d %H:%M:%S')] Are you sure? [y/N/q]:" >&2
                 fi
-                printf '%s' "$(user_prompt_ts_prefix)Are you sure? [y/N]: " >&2
-                flush_stdin
-                read_single_key confirm "$PROMPT_WAIT_SECONDS"
-                printf '\n' >&2
-                if [[ "$confirm" =~ [Yy] ]]; then
+                printf '%s' "$(user_prompt_ts_prefix)Are you sure? [y/N/q]: " >&2
+                read_yes_no_quit_confirm "$PROMPT_WAIT_SECONDS"
+                confirm_rc=$?
+                if (( confirm_rc == 2 )); then
+                    stopped_by_user=yes
+                    return 2
+                elif (( confirm_rc == 0 )); then
                     AUTO_GOPRO_STRIP_PART_SESSION=yes
                     gopro_strip_part_state_save
                     vlog "Session-wide GoPro lone _part_XX strip + auto-rename enabled"
@@ -13947,13 +13965,15 @@ for f in "${ordered_paths[@]}"; do
                 a|A)
                     echo "$(user_prompt_ts_prefix)⚠️  Session auto-yes: no more rename or checksum-group prompts until this run ends."
                     if (( VERBOSE == 1 )); then
-                        echo "[VERBOSE] [$(date '+%Y.%m.%d %H:%M:%S')] Are you sure? [y/N]:" >&2
+                        echo "[VERBOSE] [$(date '+%Y.%m.%d %H:%M:%S')] Are you sure? [y/N/q]:" >&2
                     fi
-                    echo -n "$(user_prompt_ts_prefix)Are you sure? [y/N]: "
-                    flush_stdin
-                    read_single_key confirm "$PROMPT_WAIT_SECONDS"
-                    echo
-                    if [[ "$confirm" =~ [Yy] ]]; then
+                    echo -n "$(user_prompt_ts_prefix)Are you sure? [y/N/q]: "
+                    read_yes_no_quit_confirm "$PROMPT_WAIT_SECONDS"
+                    confirm_rc=$?
+                    if (( confirm_rc == 2 )); then
+                        stopped_by_user=yes
+                        break
+                    elif (( confirm_rc == 0 )); then
                         rename_all=yes
                         AUTO_CHECKSUM_GROUP_SESSION=yes
                         vlog "Session auto-yes enabled for all remaining files, directories, and checksum groups."
@@ -14666,16 +14686,18 @@ for f in "${ordered_paths[@]}"; do
             echo
             echo "$(user_prompt_ts_prefix)⚠️  This will rename ALL remaining files/directories."
             if (( VERBOSE == 1 )); then
-                echo "[VERBOSE] [$(date '+%Y.%m.%d %H:%M:%S')] Are you sure? [y/N]:" >&2
+                echo "[VERBOSE] [$(date '+%Y.%m.%d %H:%M:%S')] Are you sure? [y/N/q]:" >&2
             else
                 nonverbose_progress_dot_endline_if_needed
             fi
-            echo -n "$(user_prompt_ts_prefix)Are you sure? [y/N]: "
-            flush_stdin
-            read_single_key confirm "$PROMPT_WAIT_SECONDS"
-            echo
+            echo -n "$(user_prompt_ts_prefix)Are you sure? [y/N/q]: "
+            read_yes_no_quit_confirm "$PROMPT_WAIT_SECONDS"
+            confirm_rc=$?
 
-            if [[ "$confirm" =~ [Yy] ]]; then
+            if (( confirm_rc == 2 )); then
+                stopped_by_user=yes
+                break
+            elif (( confirm_rc == 0 )); then
                 rename_all=yes
                 similar_rename_clear
                 AUTO_RENAME_DIR=""
