@@ -1,6 +1,8 @@
 #!/bin/bash
+# v. 20260719.103506 - fix no-arg run: empty POSITIONAL[@]:- became one "" element
 # v. 20260719.102800 - multi-set selection: A/a, ranges 1-4, --all, multiple paths
 
+# 2026.07.19 - v. 0.1.17 - Fix cwd-only run: drop POSITIONAL[@]:- reassign (empty-array trap)
 # 2026.07.19 - v. 0.1.16 - Prompt or CLI-select multiple PAR2 sets; verify each in turn
 # 2026.07.19 - v. 0.1.15 - PROMPT_TIMEOUT default 100s (was 20s)
 # 2026.07.19 - v. 0.1.12 - Timing summary (hash/PAR2/total); renumber steps from 1 not 0
@@ -1350,8 +1352,8 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-POSITIONAL=("${POSITIONAL[@]:-}")
 for arg in "${POSITIONAL[@]}"; do
+    [[ -n "$arg" ]] || continue
     if [[ -d "$arg" ]]; then
         [[ -z "$USER_DIR_INPUT" ]] || die "Multiple directories specified: $arg"
         USER_DIR_INPUT="$(abs_path "$arg")"
