@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# v. 20260719.145719 - Are you sure? prompts: [y/N/q] and Q quits the run
+# v. 20260720.104138 - checksum groups: one prompt after preview; large-list NOTICE + apply menu merged; [H] all remaining hash groups
 
+# 2026.07.20 - v. 19.261.104138 - merge large checksum NOTICE with apply-group prompt; skip redundant second question after Y/H; verify-only large list uses [H] not [A]
 # 2026.07.19 - v. 19.260.145719 - read_yes_no_quit_confirm: Are you sure? [y/N/q]; Q stops run (checksum session, rename_all, GoPro)
 # 2026.07.19 - v. 19.259.145553 - checksum group prompt: [H/h] all remaining hash groups; [A/a] session auto-yes (not rename_all mislabel); [D/d] checksum dir only
 # 2026.07.19 - v. 19.258.140038 - GoPro lone _part_XX: count chapters by camera/model id (GOPRO7_BLACK), not full timestamp prefix
@@ -7504,9 +7505,35 @@ sum_bytes_of_existing_regular_files_checksum_refs() {
 print_large_hash_check_prompt_menu() {
     echo "  $(rename_menu_key_bracket y N) Yes — check this checksum list and continue"
     echo "  $(rename_menu_key_bracket N N) No — skip checking this list (default)"
-    echo "  $(rename_menu_key_bracket A N) Yes, and check all remaining large checksum lists without asking (rest of this run)"
+    echo "  $(rename_menu_key_bracket H N) Yes, and check all remaining large checksum lists without asking (rest of this run)"
     print_prompt_view_directory_menu_line
     echo "  $(rename_menu_key_bracket q N) Quit — stop rename.sh"
+}
+
+# Return 0 when the large checksum-list warning should precede a group prompt (line count + on-disk size thresholds).
+checksum_group_should_show_large_list_warning() {
+    local sum_file="$1"
+    local label="$2"
+    local line_count="$3"
+    local ref_array_name="${4-}"
+    local total_bytes=0
+
+    if (( line_count <= LARGE_HASHFILE_LINE_PROMPT_THRESHOLD )); then
+        return 1
+    fi
+
+    if [[ -n "$ref_array_name" ]]; then
+        total_bytes="$(sum_bytes_of_existing_regular_files_checksum_refs "$ref_array_name")"
+    else
+        total_bytes="$LARGE_HASHFILE_PROMPT_MIN_TOTAL_BYTES"
+    fi
+
+    if (( LARGE_HASHFILE_PROMPT_MIN_TOTAL_BYTES > 0 && total_bytes < LARGE_HASHFILE_PROMPT_MIN_TOTAL_BYTES )); then
+        vlog "Large ${label,,} list (${line_count} lines) but total size of on-disk targets ($(format_bytes_human "$total_bytes")) is below LARGE_HASHFILE_PROMPT_MIN_TOTAL_BYTES ($(format_bytes_human "$LARGE_HASHFILE_PROMPT_MIN_TOTAL_BYTES")); no large-list warning."
+        return 1
+    fi
+
+    return 0
 }
 
 confirm_large_hash_check() {
@@ -7543,7 +7570,7 @@ confirm_large_hash_check() {
         echo "Checking it may take a long time."
         print_checksum_list_last_verify_for_prompt "$sum_file"
         print_large_hash_check_prompt_menu
-        echo -n "$(user_prompt_ts_prefix)Check this file and continue? [y/N/a/v/q]: "
+        echo -n "$(user_prompt_ts_prefix)Check this file and continue? [y/N/H/v/q]: "
 
         flush_stdin
         read_single_key answer "$PROMPT_WAIT_SECONDS"
@@ -7556,7 +7583,7 @@ confirm_large_hash_check() {
             y|Y)
                 return 0
                 ;;
-            a|A)
+            h|H)
                 AUTO_LARGE_HASH_CHECK_SESSION=yes
                 vlog "Session auto-yes enabled for large checksum list verification prompts."
                 return 0
@@ -12238,7 +12265,7 @@ AUTO_GOPRO_STRIP_PART_DIR="" # GoPro lone _part_XX prompt [D]: auto-strip for re
 AUTO_GOPRO_STRIP_PART_SESSION=no # GoPro lone _part_XX prompt [A]: auto-strip for all qualifying files this run
 AUTO_DELETE_THUMBS_DB_SESSION=no # thumbs.db prompt [O]: delete all thumbs.db for the rest of this run
 AUTO_EXIF_CAMERA_TAG_SESSION=no # rename prompt [G]: auto-yes Samsung/GoPro/Nikon D200 EXIF camera tag appends for rest of run
-AUTO_LARGE_HASH_CHECK_SESSION=no # large checksum list prompt [A]: auto-yes all remaining large list checks for rest of run
+AUTO_LARGE_HASH_CHECK_SESSION=no # verify-only large checksum list prompt [H]: auto-yes remaining large list checks for rest of run
 AUTO_CHECKSUM_GROUP_SESSION=no # checksum group prompt [H/h]: auto-yes all remaining checksum groups for rest of run
 AUTO_CHECKSUM_GROUP_DIR="" # checksum group prompt [D/d]: auto-yes checksum groups in this directory for rest of run
 RENAME_SH_GOPRO_STATE_FILE="${RENAME_SH_GOPRO_STATE_FILE:-${XDG_STATE_HOME:-$HOME/.local/state}/rename.sh/gopro-strip.$$}"
@@ -13081,6 +13108,126 @@ print_checksum_prompt_menu() {
     echo -n "$(user_prompt_ts_prefix)Choice [Y/n/H/a/d/E/x/f/c/v/q]: "
 }
 
+# Unified checksum-group gate after preview: large-list NOTICE (when applicable) + apply menu in one prompt.
+# Sets do_rename=yes|no. Return 0 continue, 2 quit (stopped_by_user).
+prompt_checksum_group_apply_decision() {
+    local sum_file="$1"
+    local label="$2"
+    local line_count="$3"
+    local ref_array_name="${4-}"
+    local input confirm_rc
+
+    do_rename=no
+
+    if [[ "$rename_all" == "yes" ]]; then
+        do_rename=yes
+        return 0
+    fi
+    if [[ "$AUTO_CHECKSUM_GROUP_SESSION" == yes ]]; then
+        do_rename=yes
+        return 0
+    fi
+    if checksum_group_auto_yes_dir_matches "$sum_file"; then
+        do_rename=yes
+        return 0
+    fi
+
+    while true; do
+        echo
+        if checksum_group_should_show_large_list_warning "$sum_file" "$label" "$line_count" "$ref_array_name"; then
+            emit_wrap_labeled_stdout "${label} NOTICE: " "${YELLOW}${label} NOTICE:${RESET} " "'${sum_file}' contains ${line_count} checksum line(s)."
+            echo "Checking it may take a long time."
+            print_checksum_list_last_verify_for_prompt "$sum_file"
+        fi
+        print_checksum_prompt_menu "${label,,}" "$sum_file"
+        flush_stdin
+        read_single_key input "$PROMPT_WAIT_SECONDS"
+        echo
+        if handle_prompt_directory_listing_choice "$input" "$sum_file"; then
+            continue
+        fi
+        if [[ "$input" =~ [Cc] ]]; then
+            if prompt_custom_exclude_pattern_from_user; then
+                input='C'
+            else
+                continue
+            fi
+        fi
+        break
+    done
+    NONVERBOSE_SKIP_NEXT_MAIN_LOOP_DOT=yes
+
+    case "$input" in
+        q|Q)
+            stopped_by_user=yes
+            return 2
+            ;;
+        n|N)
+            do_rename=no
+            return 0
+            ;;
+        h|H)
+            AUTO_CHECKSUM_GROUP_SESSION=yes
+            AUTO_LARGE_HASH_CHECK_SESSION=yes
+            vlog "Session auto-yes enabled for all remaining checksum groups (hash files) and large checksum list checks."
+            do_rename=yes
+            return 0
+            ;;
+        a|A)
+            echo "$(user_prompt_ts_prefix)⚠️  Session auto-yes: no more rename or checksum-group prompts until this run ends."
+            if (( VERBOSE == 1 )); then
+                echo "[VERBOSE] [$(date '+%Y.%m.%d %H:%M:%S')] Are you sure? [y/N/q]:" >&2
+            fi
+            echo -n "$(user_prompt_ts_prefix)Are you sure? [y/N/q]: "
+            read_yes_no_quit_confirm "$PROMPT_WAIT_SECONDS"
+            confirm_rc=$?
+            if (( confirm_rc == 2 )); then
+                stopped_by_user=yes
+                return 2
+            elif (( confirm_rc == 0 )); then
+                rename_all=yes
+                AUTO_CHECKSUM_GROUP_SESSION=yes
+                AUTO_LARGE_HASH_CHECK_SESSION=yes
+                vlog "Session auto-yes enabled for all remaining files, directories, and checksum groups."
+                do_rename=yes
+                return 0
+            else
+                do_rename=no
+                return 0
+            fi
+            ;;
+        d|D)
+            AUTO_CHECKSUM_GROUP_DIR="$(dirname -- "$sum_file")"
+            vlog "Per-directory auto-yes enabled for checksum groups in '$AUTO_CHECKSUM_GROUP_DIR'"
+            do_rename=yes
+            return 0
+            ;;
+        e|E)
+            append_path_to_exclude_filters_file "$sum_file"
+            do_rename=no
+            return 0
+            ;;
+        x|X)
+            append_exact_path_to_exclude_filters_file "$sum_file"
+            do_rename=no
+            return 0
+            ;;
+        f|F)
+            append_filename_only_exception_to_exclude_filters_file "$sum_file" >/dev/null
+            do_rename=no
+            return 0
+            ;;
+        c|C)
+            do_rename=no
+            return 0
+            ;;
+        *)
+            do_rename=yes
+            return 0
+            ;;
+    esac
+}
+
 print_rename_action_verbose() {
     (( VERBOSE == 1 )) || return 0
     local old_path="$1"
@@ -13905,118 +14052,19 @@ for f in "${ordered_paths[@]}"; do
         fi
 
         local_line_count="$(count_checksum_entries "$sum_file")"
-        if ! confirm_large_hash_check "$sum_file" "$label" "$local_line_count" refs; then
-            rc=$?
-            if [[ $rc -eq 2 ]]; then
-                break
-            fi
-            emit_wrap_labeled_stdout "SKIP: User chose not to check large ${label,,} file " "${YELLOW}SKIP:${RESET} User chose not to check large ${label,,} file " "'$sum_file'."
-            ((++files_skipped))
-            processed["$sum_file"]=1
-            for ref in "${refs[@]}"; do processed["$ref"]=1; done
-            continue
-        fi
 
         ensure_checksum_file_unix_format "$sum_file"
 
         print_checksum_group_preview "$label" "$sum_file" "$new_sum" refs new_refs
 
-        do_rename=no
-        if [[ "$rename_all" == "yes" ]]; then
-            do_rename=yes
-        elif [[ "$AUTO_CHECKSUM_GROUP_SESSION" == yes ]]; then
-            do_rename=yes
-        elif checksum_group_auto_yes_dir_matches "$sum_file"; then
-            do_rename=yes
-        else
-            while true; do
-                print_checksum_prompt_menu "${label,,}" "$sum_file"
-                flush_stdin
-                read_single_key input "$PROMPT_WAIT_SECONDS"
-                echo
-                if handle_prompt_directory_listing_choice "$input" "$sum_file"; then
-                    continue
-                fi
-                if [[ "$input" =~ [Cc] ]]; then
-                    if prompt_custom_exclude_pattern_from_user; then
-                        input='C'
-                    else
-                        continue
-                    fi
-                fi
-                break
-            done
-            NONVERBOSE_SKIP_NEXT_MAIN_LOOP_DOT=yes
-
-            case "$input" in
-                q|Q)
-                    stopped_by_user=yes
-                    break
-                    ;;
-                n|N)
-                    ((++files_skipped))
-                    do_rename=no
-                    ;;
-                h|H)
-                    AUTO_CHECKSUM_GROUP_SESSION=yes
-                    vlog "Session auto-yes enabled for all remaining checksum groups (hash files)."
-                    do_rename=yes
-                    ;;
-                a|A)
-                    echo "$(user_prompt_ts_prefix)⚠️  Session auto-yes: no more rename or checksum-group prompts until this run ends."
-                    if (( VERBOSE == 1 )); then
-                        echo "[VERBOSE] [$(date '+%Y.%m.%d %H:%M:%S')] Are you sure? [y/N/q]:" >&2
-                    fi
-                    echo -n "$(user_prompt_ts_prefix)Are you sure? [y/N/q]: "
-                    read_yes_no_quit_confirm "$PROMPT_WAIT_SECONDS"
-                    confirm_rc=$?
-                    if (( confirm_rc == 2 )); then
-                        stopped_by_user=yes
-                        break
-                    elif (( confirm_rc == 0 )); then
-                        rename_all=yes
-                        AUTO_CHECKSUM_GROUP_SESSION=yes
-                        vlog "Session auto-yes enabled for all remaining files, directories, and checksum groups."
-                        do_rename=yes
-                    else
-                        ((++files_skipped))
-                        do_rename=no
-                    fi
-                    ;;
-                d|D)
-                    AUTO_CHECKSUM_GROUP_DIR="$(dirname -- "$sum_file")"
-                    vlog "Per-directory auto-yes enabled for checksum groups in '$AUTO_CHECKSUM_GROUP_DIR'"
-                    do_rename=yes
-                    ;;
-                e|E)
-                    append_path_to_exclude_filters_file "$sum_file"
-                    ((++files_skipped))
-                    do_rename=no
-                    ;;
-                x|X)
-                    append_exact_path_to_exclude_filters_file "$sum_file"
-                    ((++files_skipped))
-                    do_rename=no
-                    ;;
-                f|F)
-                    if append_filename_only_exception_to_exclude_filters_file "$sum_file"; then
-                        ((++files_skipped))
-                    else
-                        ((++files_skipped))
-                    fi
-                    do_rename=no
-                    ;;
-                c|C)
-                    ((++files_skipped))
-                    do_rename=no
-                    ;;
-                *)
-                    do_rename=yes
-                    ;;
-            esac
+        decision_rc=0
+        prompt_checksum_group_apply_decision "$sum_file" "$label" "$local_line_count" refs || decision_rc=$?
+        if (( decision_rc == 2 )); then
+            break
         fi
 
         if [[ "$do_rename" != "yes" ]]; then
+            ((++files_skipped))
             vlog "User skipped checksum group '$sum_file'"
             processed["$sum_file"]=1
             for ref in "${refs[@]}"; do processed["$ref"]=1; done
