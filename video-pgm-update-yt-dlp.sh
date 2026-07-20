@@ -1,11 +1,19 @@
 #!/usr/bin/env bash
+# v. 20260719.190417 - rename from pgm-update-yt-dlp.sh to video-pgm-update-yt-dlp.sh
 # v. 20260716.164840 - add -h/--help, -v/--version, --no_startup_delay
 
 # 2026.02.04 - v. 0.1 - initial release
+#
+# video-pgm-update-yt-dlp.sh
+#
+# Update yt-dlp binary under /usr/local/bin (youtube-dl symlink).
+#
 
 show_help() {
   cat <<EOF
 Usage: $(basename "$0") [-h|--help] [-v|--version] [--no_startup_delay]
+
+video-pgm-update-yt-dlp.sh
 
 --- output handling: screen if interactive, mail report if not ---
 
@@ -46,9 +54,9 @@ else
 
   MAIL_TO="matuszyk+$(/bin/hostname)@matuszyk.com"
   MAIL_FROM="root@$(/bin/hostname)"
-  MAIL_SUBJECT_PREFIX="/root/bin/pgm-update-yt-dlp.sh"
+  MAIL_SUBJECT_PREFIX="/root/bin/video-pgm-update-yt-dlp.sh"
 
-  LOGFILE="$(mktemp /tmp/pgm-update-yt-dlp.XXXXXX.log)"
+  LOGFILE="$(mktemp /tmp/video-pgm-update-yt-dlp.XXXXXX.log)"
 
   send_mail_report() {
     local exit_code=$?

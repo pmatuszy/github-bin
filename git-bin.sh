@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20260719.190417 - cleanup: remove renamed pgm-update-yt-dlp.sh from bin on deploy
 # v. 20260716.184500 - accept --no_startup_delay after pull/batch (gitbdb alias)
 
 # 20260716.165700 - deploy message: ASCII arrow (boxes mangles Unicode)
@@ -239,7 +240,8 @@ git_bin_cleanup_bin_copies() {
         "${profile_root}/bin/_git-bin-common.sh" \
         "${profile_root}/bin/_git-economist-common.sh" \
         "${profile_root}/bin/git-economist-pull.sh" "${profile_root}/bin/git-economist-push.sh" \
-        "${profile_root}/bin/vmware-fix.sh" "${profile_root}/bin/65535" 2>/dev/null
+        "${profile_root}/bin/vmware-fix.sh" "${profile_root}/bin/65535" \
+        "${profile_root}/bin/pgm-update-yt-dlp.sh" 2>/dev/null
   rm -v "${profile_root}/bin/"*talled*client 2>/dev/null
 }
 
