@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# v. 20260720.104138 - checksum groups: one prompt after preview; large-list NOTICE + apply menu merged; [H] all remaining hash groups
+# v. 20260720.121523 - checksum mismatch recovery: [H] ignore this and all future mismatches this run
 
-# 2026.07.20 - v. 19.261.104138 - merge large checksum NOTICE with apply-group prompt; skip redundant second question after Y/H; verify-only large list uses [H] not [A]
+# 2026.07.20 - v. 19.262.121523 - SHA512/MD5 mismatch prompt: [H/h] session ignore (leave lists unchanged; skip future mismatch prompts)
 # 2026.07.19 - v. 19.260.145719 - read_yes_no_quit_confirm: Are you sure? [y/N/q]; Q stops run (checksum session, rename_all, GoPro)
 # 2026.07.19 - v. 19.259.145553 - checksum group prompt: [H/h] all remaining hash groups; [A/a] session auto-yes (not rename_all mislabel); [D/d] checksum dir only
 # 2026.07.19 - v. 19.258.140038 - GoPro lone _part_XX: count chapters by camera/model id (GOPRO7_BLACK), not full timestamp prefix
@@ -7679,7 +7679,7 @@ suggest_checksum_mismatch_recovery() {
     echo
 }
 
-# Return 0 if hash was updated and re-verification succeeded; 2 if user chose [I] (ignore, caller continues); 1 if user quit [Q] or invalid (caller exits).
+# Return 0 if hash was updated and re-verification succeeded; 2 if user chose [I]/[H] (ignore, caller continues); 1 if user quit [Q] or invalid (caller exits).
 prompt_refresh_checksum_hash_after_mismatch() {
     local sum_file="$1"
     local ref_in_file="$2"
@@ -7688,14 +7688,21 @@ prompt_refresh_checksum_hash_after_mismatch() {
     local label answer
 
     label="$(checksum_label "$sum_file")"
+
+    if [[ "$AUTO_CHECKSUM_MISMATCH_IGNORE_SESSION" == yes ]]; then
+        vlog "${label} mismatch auto-ignored (session [H]) for ref '${ref_in_file}' (${phase})"
+        return 2
+    fi
+
     suggest_checksum_mismatch_recovery "$sum_file" "$ref_in_file" "$path_on_disk" "$label" "$phase"
 
     while true; do
         emit_wrap_labeled_stdout "  $(rename_menu_key_bracket U Q) " "  ${GREEN}$(rename_menu_key_bracket U Q)${RESET} " "Update stored ${label,,} hash from the file on disk, then re-verify"
         emit_wrap_labeled_stdout "  $(rename_menu_key_bracket I Q) " "  ${GREEN}$(rename_menu_key_bracket I Q)${RESET} " "Ignore this mismatch and continue (checksum list unchanged; you fix it later)"
+        emit_wrap_labeled_stdout "  $(rename_menu_key_bracket H Q) " "  ${GREEN}$(rename_menu_key_bracket H Q)${RESET} " "Ignore this mismatch and all future checksum mismatches this run (lists unchanged)"
         print_prompt_view_directory_menu_line
         emit_wrap_labeled_stdout "  $(rename_menu_key_bracket Q Q) " "  ${GREEN}$(rename_menu_key_bracket Q Q)${RESET} " "Quit (abort script)"
-        echo -n "$(user_prompt_ts_prefix)Choice [U/i/v/Q]: "
+        echo -n "$(user_prompt_ts_prefix)Choice [U/i/H/v/Q]: "
         flush_stdin
         read_single_key answer "$PROMPT_WAIT_SECONDS"
         echo
@@ -7719,6 +7726,12 @@ prompt_refresh_checksum_hash_after_mismatch() {
             i|I)
                 emit_wrap_labeled_stdout "${label} IGNORE: " "${YELLOW}${label} IGNORE:${RESET} " "Continuing with stored hash for '${ref_in_file}' unchanged (${phase})."
                 vlog "${label} mismatch ignored by user for ref '${ref_in_file}' (${phase})"
+                return 2
+                ;;
+            h|H)
+                AUTO_CHECKSUM_MISMATCH_IGNORE_SESSION=yes
+                emit_wrap_labeled_stdout "${label} IGNORE (session): " "${YELLOW}${label} IGNORE (session):${RESET} " "Ignoring this mismatch and all future checksum mismatches this run; lists left unchanged (${phase})."
+                vlog "Session auto-ignore enabled for checksum mismatches; ignoring ref '${ref_in_file}' (${phase})"
                 return 2
                 ;;
             q|Q|'')
@@ -7753,8 +7766,8 @@ stop_on_checksum_user_quit_after_mismatch() {
     stopped_by_user=yes
     finish_current_operation
     echo
-    emit_wrap_labeled_stdout "STOPPING: " "${YELLOW}STOPPING:${RESET} " "You quit ([Q]) from the ${label} mismatch prompt (${phase}). Exiting without [U] (refresh hash) or [I] (ignore)."
-    emit_wrap_labeled_stdout "Note: " "${CYAN}Note:${RESET} " "This is not the same as '${label} being incorrect' — you pressed [Q] instead of [U] or [I]."
+    emit_wrap_labeled_stdout "STOPPING: " "${YELLOW}STOPPING:${RESET} " "You quit ([Q]) from the ${label} mismatch prompt (${phase}). Exiting without [U] (refresh hash), [I] (ignore once), or [H] (ignore session)."
+    emit_wrap_labeled_stdout "Note: " "${CYAN}Note:${RESET} " "This is not the same as '${label} being incorrect' — you pressed [Q] instead of [U], [I], or [H]."
     emit_wrap_labeled_stdout "Hash list: " "${CYAN}Hash list:${RESET} " "$sum_file"
     SCRIPT_FINISH_TIME="$(date '+%Y-%m-%d %H:%M:%S')"
     print_summary
@@ -12268,6 +12281,7 @@ AUTO_EXIF_CAMERA_TAG_SESSION=no # rename prompt [G]: auto-yes Samsung/GoPro/Niko
 AUTO_LARGE_HASH_CHECK_SESSION=no # verify-only large checksum list prompt [H]: auto-yes remaining large list checks for rest of run
 AUTO_CHECKSUM_GROUP_SESSION=no # checksum group prompt [H/h]: auto-yes all remaining checksum groups for rest of run
 AUTO_CHECKSUM_GROUP_DIR="" # checksum group prompt [D/d]: auto-yes checksum groups in this directory for rest of run
+AUTO_CHECKSUM_MISMATCH_IGNORE_SESSION=no # checksum mismatch recovery [H/h]: ignore all mismatches for rest of run (no [U]pdate)
 RENAME_SH_GOPRO_STATE_FILE="${RENAME_SH_GOPRO_STATE_FILE:-${XDG_STATE_HOME:-$HOME/.local/state}/rename.sh/gopro-strip.$$}"
 
 declare -a renamed_list=()
@@ -14097,7 +14111,7 @@ for f in "${ordered_paths[@]}"; do
                 stop_on_checksum_user_quit_after_mismatch "$sum_file" "before rename"
             done
             if [[ "$checksum_before_rename_ignored" == yes ]]; then
-                emit_wrap_labeled_stdout "${label} NOTE: " "${YELLOW}${label} NOTE:${RESET} " "At least one reference had a checksum mismatch you chose [I] to ignore; not all references were verified before rename."
+                emit_wrap_labeled_stdout "${label} NOTE: " "${YELLOW}${label} NOTE:${RESET} " "At least one reference had a checksum mismatch you chose [I] or [H] to ignore; not all references were verified before rename."
             else
                 print_checksum_verified_refs_line "$label" before "$sum_file"
             fi
@@ -14232,7 +14246,7 @@ for f in "${ordered_paths[@]}"; do
                 stop_on_checksum_user_quit_after_mismatch "$final_sum" "after rename"
             done
             if [[ "$checksum_after_rename_ignored" == yes ]]; then
-                emit_wrap_labeled_stdout "${label} NOTE: " "${YELLOW}${label} NOTE:${RESET} " "At least one reference still does not match the list after rename ([I] ignore); checksum file may be wrong until you fix or [U]pdate."
+                emit_wrap_labeled_stdout "${label} NOTE: " "${YELLOW}${label} NOTE:${RESET} " "At least one reference still does not match the list after rename ([I]/[H] ignore); checksum file may be wrong until you fix or [U]pdate."
             else
                 print_checksum_verified_refs_line "$label" after "$final_sum"
                 print_checksum_group_ok_line "$label" "$final_sum"
