@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20260721.150446 - defer subtree scan to Step 3; progress msg; faster nested-set skip
 # v. 20260721.144524 - recursive data scan; detect dir+file renames for par2 metadata fix
 # v. 20260719.140918 - nicer PAR2 discovery summary; skip redundant single-set breakdown
 # v. 20260719.134000 - --scope subdirs|current: discover PAR2 sets in directory tree
@@ -9,6 +10,7 @@
 # v. 20260719.103506 - fix no-arg run: empty POSITIONAL[@]:- became one "" element
 # v. 20260719.102800 - multi-set selection: A/a, ranges 1-4, --all, multiple paths
 
+# 2026.07.21 - v. 0.1.25 - Defer data-file tree scan to Step 3; show progress on large trees
 # 2026.07.21 - v. 0.1.24 - Step 3 scans subdirs; fix PAR2 paths after dir/file renames
 # 2026.07.19 - v. 0.1.23 - Discovery summary: plain English, no lone "." line for 1 set
 # 2026.07.19 - v. 0.1.22 - --scope subdirs|current; discover PAR2 sets under start directory
@@ -322,8 +324,6 @@ pgm_prepare_par2_set() {
     fi
     PAR2_FILE="$idx"
     DATA_DIR="$(dirname "$PAR2_FILE")"
-    collect_data_files "$DATA_DIR"
-    (( ${#DATA_FILES[@]} > 0 )) || die "No data files found in: $DATA_DIR"
     collect_par2_set_for_ref_file "${PAR2_RESOLVED_FROM:-$PAR2_FILE}" PAR2_SET_MEMBERS
 }
 
@@ -1271,7 +1271,7 @@ pgm_print_startup_inventory() {
     fi
     echo
 
-    echo "Data files: ${#DATA_FILES[@]} under directory tree (subdirectories included)."
+    echo "Data files: scanned only if Step 3 runs (subdirectory tree scan)."
 }
 
 abs_path() {
@@ -1288,13 +1288,20 @@ abs_path() {
 
 collect_data_files() {
     local dir="$1"
-    local f base ap dir_ap rel
+    local f base dir_ap rel
+    local -a nested_roots=()
+
     DATA_FILES=()
     dir_ap="$(abs_path "$dir")"
+    pgm_find_nested_par2_roots "$dir_ap" nested_roots
 
     while IFS= read -r -d '' f; do
         [[ -f "$f" ]] || continue
-        pgm_path_is_under_nested_par2_set "$f" "$dir_ap" && continue
+        if ((${#nested_roots[@]} > 0)); then
+            for nr in "${nested_roots[@]}"; do
+                [[ "$f" == "$nr"/* || "$f" == "$nr" ]] && continue 2
+            done
+        fi
         base="$(basename "$f")"
         case "$base" in
             *.par2|*.PAR2) continue ;;
@@ -1302,9 +1309,8 @@ collect_data_files() {
             *.sha512|*.SHA512|*.sha256|*.SHA256|*.md5|*.MD5) continue ;;
             par2-pgm-check.sh|par2-pgm-rename.py) continue ;;
         esac
-        ap="$(abs_path "$f")"
-        if [[ "$ap" == "$dir_ap"/* ]]; then
-            rel="${ap#"$dir_ap"/}"
+        if [[ "$f" == "$dir_ap"/* ]]; then
+            rel="${f#"$dir_ap"/}"
         else
             rel="$base"
         fi
@@ -1317,35 +1323,28 @@ collect_data_files() {
     fi
 }
 
-pgm_dir_has_par2_index() {
-    local dir="$1"
-    local f
+pgm_find_nested_par2_roots() {
+    local root="$1"
+    local -n _out=$2
+    local f base d_ap root_ap
 
-    shopt -s nullglob
-    for f in "$dir"/*.par2 "$dir"/*.PAR2; do
+    _out=()
+    root_ap="$(abs_path "$root")"
+    while IFS= read -r -d '' f; do
         [[ -f "$f" ]] || continue
-        is_par2_index_file "$(basename "$f")" && return 0
-    done
-    shopt -u nullglob
-    return 1
+        is_par2_index_file "$(basename "$f")" || continue
+        d_ap="$(abs_path "$(dirname "$f")")"
+        [[ "$d_ap" == "$root_ap" ]] && continue
+        _out+=("$d_ap")
+    done < <(find "$root_ap" \( -iname '*.par2' -o -iname '*.PAR2' \) -type f -print0 2>/dev/null)
 }
 
-# Skip files under a child folder that is its own PAR2 set (has an index .par2).
-pgm_path_is_under_nested_par2_set() {
-    local file_path="$1"
-    local data_dir="$2"
-    local d file_ap data_ap
-
-    file_ap="$(abs_path "$file_path")"
-    data_ap="$(abs_path "$data_dir")"
-    [[ "$file_ap" == "$data_ap"/* ]] || return 1
-
-    d="$(dirname "$file_ap")"
-    while [[ "$d" != "$data_ap" ]]; do
-        pgm_dir_has_par2_index "$d" && return 0
-        d="$(dirname "$d")"
-    done
-    return 1
+pgm_collect_data_files_for_scan() {
+    echo "Scanning data files under $DATA_DIR (including subdirectories; large trees can take several minutes)..."
+    collect_data_files "$DATA_DIR"
+    (( ${#DATA_FILES[@]} > 0 )) || die "No data files found under: $DATA_DIR"
+    echo "Found ${#DATA_FILES[@]} data file(s) for directory scan."
+    echo
 }
 
 run_par2() {
@@ -1689,6 +1688,7 @@ pgm_run_one_par2_set() {
     fi
 
     pgm_print_step_verdict 2 WARN "Not all files OK under PAR2 names; running directory scan."
+    pgm_collect_data_files_for_scan
     pgm_print_step_header "Step 3: verify with directory scan (subdirs; detect misnamed files)"
     OUT2_FILE=$(mktemp "${TMPDIR:-/tmp}/par2-pgm-check.XXXXXX")
     (
