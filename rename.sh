@@ -1,10 +1,12 @@
 #!/usr/bin/env bash
+# v. 20260721.161244 - bootstrap missing/empty hash DB from filesystem files before checksum inventory
 # v. 20260721.160630 - keep busy-timeout PRAGMA output out of SQLite count and warmup query results
 # v. 20260721.155132 - recover SQLite locks: avoid WAL on network/Windows mounts, retry batches, and fail warmup instead of loading zero rows
 # v. 20260721.142331 - add explicit hash-only DB backfill with inventory, filesystem reconciliation, progress, and resumable batches
 # v. 20260721.132007 - Samsung timestamp media: preserve optional numeric sorting prefix when appending make/model
 # v. 20260721.112812 - GoPro camera labels: GoPro_Hero4_Silver style (not GOPRO4_SILVER)
 
+# 2026.07.21 - v. 19.269.161244 - --backfill-hashes creates/bootstraps cache from filesystem files, then fills selected checksums
 # 2026.07.21 - v. 19.268.160630 - fix false locked/unreadable result caused by busy_timeout value contaminating captured SELECT output
 # 2026.07.21 - v. 19.267.155132 - SQLite lock recovery: DELETE journal on CIFS/NFS/NTFS/9p, safe WAL checkpoint, batch retries, strict warmup reads
 # 2026.07.21 - v. 19.266.142331 - --backfill-hashes md5|sha512|both: no renames; reconcile DB paths, report missing slots/bytes, progress + ETA; normal runs stop auto-backfill
@@ -976,6 +978,9 @@ DB_MAINT_HASH_BACKFILL_NEXT_PCT=5
 DB_MAINT_HASH_BACKFILL_BAR_WIDTH=80
 DB_MAINT_KNOWN_TOTAL_ROWS=0
 DB_MAINT_ROWS_TOTAL_BEFORE=0
+DB_MAINT_FS_FILES_DISCOVERED=0
+DB_MAINT_FS_FILES_EXCLUDED=0
+DB_MAINT_FS_ROWS_SEEDED=0
 DB_MAINT_LAST_SQLITE_ERR=""
 DB_MAINT_OPERATION_FAILED=0
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
@@ -4048,11 +4053,7 @@ db_open_cache_for_maintenance() {
     fi
 
     DB_MAINT_KNOWN_TOTAL_ROWS=$probe_count
-    if (( probe_count == 0 )) && [[ -s "$DB_FILE" ]]; then
-        startup_progress "SQLite maintenance: WARNING — checked_paths has 0 rows but the DB file is non-empty (unexpected; was another writer interrupted?)"
-    else
-        startup_progress "SQLite maintenance: cache ready ($probe_count rows in checked_paths)"
-    fi
+    startup_progress "SQLite maintenance: cache ready ($probe_count rows in checked_paths)"
 
     if ! db_configure_sqlite_runtime_mode startup; then
         echo "ERROR: could not configure a safe SQLite journal mode for: $DB_FILE" >&2
@@ -4121,6 +4122,112 @@ db_run_maintenance() {
     return 0
 }
 
+_db_maintenance_is_internal_file() {
+    local path="$1"
+
+    if [[ -n "${DB_MAINT_LOCAL_STAGE_ORIG:-}" ]]; then
+        case "$path" in
+            "$DB_MAINT_LOCAL_STAGE_ORIG"|"$DB_MAINT_LOCAL_STAGE_ORIG"-wal|\
+            "$DB_MAINT_LOCAL_STAGE_ORIG"-shm|"$DB_MAINT_LOCAL_STAGE_ORIG"-journal)
+                return 0
+                ;;
+        esac
+    fi
+    case "$path" in
+        "$DB_FILE"|"$DB_FILE"-wal|"$DB_FILE"-shm|"$DB_FILE"-journal|\
+        "$LEGACY_DB_FILE"|"$LEGACY_DB_FILE"-wal|"$LEGACY_DB_FILE"-shm|"$LEGACY_DB_FILE"-journal|\
+        "$EXCLUDE_FILTERS_FILE"|"$RESUME_STATE_FILE")
+            return 0
+            ;;
+    esac
+    return 1
+}
+
+# Seed files that are absent from checked_paths so an empty or partial cache can
+# be hash-backfilled directly. hash-only rows deliberately do not qualify for
+# normal rename-cache skips; a later normal run still examines and renames them.
+db_maintenance_seed_filesystem_paths() {
+    local existing_rows_file="" filesystem_file="" path="" meta="" size="" mtime="" escaped_path=""
+    local discovered_next=500 seeded_next=500
+    local -A existing_paths=()
+
+    DB_MAINT_FS_FILES_DISCOVERED=0
+    DB_MAINT_FS_FILES_EXCLUDED=0
+    DB_MAINT_FS_ROWS_SEEDED=0
+
+    startup_progress "SQLite hash backfill: discovering filesystem files missing from the cache..."
+    existing_rows_file="$(mktemp)"
+    filesystem_file="$(mktemp)"
+
+    if ! rename_sqlite3_db_run 'SELECT path FROM checked_paths;' >"$existing_rows_file" 2>/dev/null; then
+        startup_progress "SQLite hash backfill: ERROR — could not list existing cache paths"
+        rm -f -- "$existing_rows_file" "$filesystem_file"
+        return 1
+    fi
+    while IFS= read -r path; do
+        [[ -n "$path" ]] && existing_paths["$path"]=1
+    done <"$existing_rows_file"
+    rm -f -- "$existing_rows_file"
+
+    if ! find "$START_DIR" -type f -print0 >"$filesystem_file"; then
+        startup_progress "SQLite hash backfill: ERROR — filesystem discovery failed"
+        rm -f -- "$filesystem_file"
+        return 1
+    fi
+
+    while IFS= read -r -d '' path; do
+        (( ++DB_MAINT_FS_FILES_DISCOVERED ))
+        if _db_maintenance_is_internal_file "$path" || is_excluded_by_filter_file "$path"; then
+            (( ++DB_MAINT_FS_FILES_EXCLUDED ))
+            continue
+        fi
+        [[ -z "${existing_paths[$path]+x}" ]] || continue
+
+        meta="$(db_get_size_mtime "$path" 2>/dev/null)" || {
+            (( ++DB_MAINT_FS_FILES_EXCLUDED ))
+            continue
+        }
+        size="${meta%%|*}"
+        mtime="${meta##*|}"
+        [[ "$size" =~ ^[0-9]+$ && "$mtime" =~ ^-?[0-9]+$ ]] || {
+            (( ++DB_MAINT_FS_FILES_EXCLUDED ))
+            continue
+        }
+
+        escaped_path="$(sql_escape "$path")"
+        printf "INSERT INTO checked_paths(path, kind, size, mtime, status, last_checked) VALUES ('%s', 'plain', %s, %s, 'hash-only', CURRENT_TIMESTAMP) ON CONFLICT(path) DO NOTHING;\n" \
+            "$escaped_path" "$size" "$mtime" >>"$DB_PENDING_SQL_FILE"
+        existing_paths["$path"]=1
+        (( ++DB_PENDING_COUNT ))
+        (( ++DB_MAINT_FS_ROWS_SEEDED ))
+        (( ++DB_ROWS_UPDATED ))
+
+        if (( DB_PENDING_COUNT >= DB_FLUSH_EVERY )); then
+            if ! db_flush_pending; then
+                startup_progress "SQLite hash backfill: ERROR — failed to save filesystem bootstrap rows"
+                rm -f -- "$filesystem_file"
+                return 1
+            fi
+        fi
+        if (( DB_MAINT_FS_ROWS_SEEDED >= seeded_next )); then
+            startup_progress "SQLite hash bootstrap progress: discovered=$DB_MAINT_FS_FILES_DISCOVERED; inserted=$DB_MAINT_FS_ROWS_SEEDED; excluded=$DB_MAINT_FS_FILES_EXCLUDED..."
+            seeded_next=$((seeded_next + 500))
+        elif (( DB_MAINT_FS_FILES_DISCOVERED >= discovered_next )); then
+            startup_progress "SQLite hash discovery progress: discovered=$DB_MAINT_FS_FILES_DISCOVERED; inserted=$DB_MAINT_FS_ROWS_SEEDED; excluded=$DB_MAINT_FS_FILES_EXCLUDED..."
+            discovered_next=$((discovered_next + 500))
+        fi
+    done <"$filesystem_file"
+    rm -f -- "$filesystem_file"
+
+    if ! db_flush_pending; then
+        startup_progress "SQLite hash backfill: ERROR — failed to save final filesystem bootstrap rows"
+        return 1
+    fi
+    DB_MAINT_KNOWN_TOTAL_ROWS=$((DB_MAINT_KNOWN_TOTAL_ROWS + DB_MAINT_FS_ROWS_SEEDED))
+    startup_progress "SQLite hash filesystem bootstrap finished: discovered=$DB_MAINT_FS_FILES_DISCOVERED; inserted=$DB_MAINT_FS_ROWS_SEEDED; excluded=$DB_MAINT_FS_FILES_EXCLUDED; DB rows now=$DB_MAINT_KNOWN_TOTAL_ROWS"
+    return 0
+}
+
 db_run_hash_backfill() {
     local hash_mode="$1"
     local _dm_save_e=0
@@ -4142,6 +4249,9 @@ db_run_hash_backfill() {
     startup_progress "SQLite hash backfill: reconciling all cached paths with the filesystem..."
     db_prune_missing_paths
     if [[ "$stopped_by_user" != yes ]]; then
+        db_maintenance_seed_filesystem_paths || backfill_rc=$?
+    fi
+    if [[ "$stopped_by_user" != yes ]] && (( backfill_rc == 0 )); then
         db_maintenance_backfill_missing_hashes "$hash_mode" || backfill_rc=$?
     fi
     startup_progress "SQLite hash backfill finished"
@@ -4522,7 +4632,7 @@ db_maintenance_backfill_missing_hashes() {
 
     startup_progress "SQLite hash backfill: inventorying missing MD5/SHA512 slots and bytes..."
     inv_file="$(mktemp)"
-    if ! rename_sqlite3_db_run -separator '|' "PRAGMA busy_timeout=60000; ${candidate_query}" >"$inv_file" 2>/dev/null; then
+    if ! rename_sqlite3_db_run -separator '|' "$candidate_query" >"$inv_file" 2>/dev/null; then
         startup_progress "SQLite hash backfill: ERROR — could not query missing-hash candidates"
         rm -f -- "$inv_file"
         return 1
@@ -4554,7 +4664,7 @@ db_maintenance_backfill_missing_hashes() {
             fi
         fi
         (( selected_jobs > 0 )) || continue
-        size="$(get_file_size_bytes "$path" 2>/dev/null || echo 0)"
+        size="$(stat -Lc '%s' -- "$path" 2>/dev/null || echo 0)"
         [[ "$size" =~ ^[0-9]+$ ]] || size=0
         (( ++DB_MAINT_HASH_FILES_PLANNED ))
         if (( selected_jobs == 2 && DB_MAINT_HASH_DUAL_SINGLE_PASS == 1 )); then
@@ -4568,7 +4678,7 @@ db_maintenance_backfill_missing_hashes() {
     DB_MAINT_HASH_JOBS_TOTAL=$(( DB_MAINT_HASH_MD5_JOBS + DB_MAINT_HASH_SHA512_JOBS ))
     DB_MAINT_HASH_JOBS_REMAINING=$DB_MAINT_HASH_JOBS_TOTAL
 
-    startup_progress "SQLite hash inventory: DB entries now=$DB_MAINT_KNOWN_TOTAL_ROWS; existing paths=$((DB_MAINT_ROWS_CHECKED - DB_MAINT_ROWS_MISSING)); missing MD5=$DB_MAINT_HASH_MD5_MISSING; missing SHA512=$DB_MAINT_HASH_SHA512_MISSING"
+    startup_progress "SQLite hash inventory: DB entries now=$DB_MAINT_KNOWN_TOTAL_ROWS; existing paths=$((DB_MAINT_ROWS_CHECKED - DB_MAINT_ROWS_MISSING + DB_MAINT_FS_ROWS_SEEDED)); missing MD5=$DB_MAINT_HASH_MD5_MISSING; missing SHA512=$DB_MAINT_HASH_SHA512_MISSING"
     startup_progress "SQLite hash plan ($hash_mode): files=$DB_MAINT_HASH_FILES_PLANNED; hash slots=$DB_MAINT_HASH_JOBS_TOTAL (MD5=$DB_MAINT_HASH_MD5_JOBS, SHA512=$DB_MAINT_HASH_SHA512_JOBS); estimated bytes to read=$(_db_maintenance_format_bytes_human "$DB_MAINT_HASH_BYTES_PLANNED"); dual-hash single-pass=$([[ $DB_MAINT_HASH_DUAL_SINGLE_PASS -eq 1 ]] && echo yes || echo no)"
 
     if (( DB_MAINT_HASH_JOBS_TOTAL == 0 )); then
@@ -4584,7 +4694,7 @@ db_maintenance_backfill_missing_hashes() {
     fi
 
     backfill_file="$(mktemp)"
-    if ! rename_sqlite3_db_run -separator '|' "PRAGMA busy_timeout=60000; ${candidate_query}" >"$backfill_file" 2>/dev/null; then
+    if ! rename_sqlite3_db_run -separator '|' "$candidate_query" >"$backfill_file" 2>/dev/null; then
         startup_progress "SQLite hash backfill: ERROR — could not list candidates"
         rm -f -- "$backfill_file"
         _db_maintenance_hash_backfill_progress_finish
@@ -4616,7 +4726,7 @@ db_maintenance_backfill_missing_hashes() {
         fi
         (( selected_jobs > 0 )) || continue
 
-        size="$(get_file_size_bytes "$path" 2>/dev/null || echo 0)"
+        size="$(stat -Lc '%s' -- "$path" 2>/dev/null || echo 0)"
         [[ "$size" =~ ^[0-9]+$ ]] || size=0
         pass_bytes=$((size * selected_jobs))
 
@@ -4726,6 +4836,10 @@ print_db_maintenance_summary() {
     echo "  paths found on disk: $((DB_MAINT_ROWS_CHECKED - DB_MAINT_ROWS_MISSING))"
     echo "  missing on disk:     $DB_MAINT_ROWS_MISSING"
     echo "  removed from DB:     $DB_MAINT_ROWS_REMOVED"
+    echo "Filesystem bootstrap:"
+    echo "  files discovered:    $DB_MAINT_FS_FILES_DISCOVERED"
+    echo "  files excluded:      $DB_MAINT_FS_FILES_EXCLUDED"
+    echo "  rows inserted:       $DB_MAINT_FS_ROWS_SEEDED"
     echo "Hash backfill:"
     echo "  missing MD5 slots:   $DB_MAINT_HASH_MD5_MISSING"
     echo "  missing SHA512 slots: $DB_MAINT_HASH_SHA512_MISSING"
@@ -4930,6 +5044,10 @@ db_has_valid_entry() {
     abs="$(db_abs_path "$path")"
     cached="${DB_CACHE_META[$abs]-}"
     status="${DB_CACHE_STATUS[$abs]-}"
+
+    # Rows created by --backfill-hashes contain checksums only; they must not
+    # cause a later normal/FAST run to skip rename and checksum-file checks.
+    [[ "$status" == "hash-only" ]] && return 1
 
     if [[ -n "$cached" ]]; then
         if (( FAST_DB == 1 )); then
@@ -5569,8 +5687,12 @@ if (( USE_DB == 1 )); then
         db_require_sqlite
         db_migrate_legacy_file
         if [[ ! -f "$DB_FILE" ]]; then
-            echo "SQLite maintenance skipped: DB file not found: $DB_FILE"
-            exit 0
+            if (( RUN_HASH_BACKFILL == 1 )); then
+                startup_progress "SQLite hash backfill: cache not found; creating it before filesystem bootstrap"
+            else
+                echo "SQLite maintenance skipped: DB file not found: $DB_FILE"
+                exit 0
+            fi
         fi
         if ! db_open_cache_for_maintenance; then
             exit 1
