@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# v. 20260721.170803 - offer session auto-yes for GoPro legacy-label and Samsung/GoPro/Nikon camera renames
 # v. 20260721.161244 - bootstrap missing/empty hash DB from filesystem files before checksum inventory
 # v. 20260721.160630 - keep busy-timeout PRAGMA output out of SQLite count and warmup query results
 # v. 20260721.155132 - recover SQLite locks: avoid WAL on network/Windows mounts, retry batches, and fail warmup instead of loading zero rows
@@ -6,6 +7,7 @@
 # v. 20260721.132007 - Samsung timestamp media: preserve optional numeric sorting prefix when appending make/model
 # v. 20260721.112812 - GoPro camera labels: GoPro_Hero4_Silver style (not GOPRO4_SILVER)
 
+# 2026.07.21 - v. 19.270.170803 - rename prompt [G] covers GoPro legacy label normalization plus Samsung/GoPro/Nikon camera make/model renames
 # 2026.07.21 - v. 19.269.161244 - --backfill-hashes creates/bootstraps cache from filesystem files, then fills selected checksums
 # 2026.07.21 - v. 19.268.160630 - fix false locked/unreadable result caused by busy_timeout value contaminating captured SELECT output
 # 2026.07.21 - v. 19.267.155132 - SQLite lock recovery: DELETE journal on CIFS/NFS/NTFS/9p, safe WAL checkpoint, batch retries, strict warmup reads
@@ -9587,6 +9589,20 @@ maybe_transform_gopro_legacy_camera_label() {
     return 0
 }
 
+# True only when NEW is the exact known-safe modernization of a legacy
+# GOPRO#_EDITION camera label; unrelated changes are never auto-approved.
+gopro_legacy_camera_label_normalization_matches() {
+    local old="$1" new="$2"
+    local ob nb expected=""
+
+    [[ -n "$old" && -n "$new" ]] || return 1
+    ob="$(basename -- "$old")"
+    nb="$(basename -- "$new")"
+    [[ "$ob" != "$nb" ]] || return 1
+    expected="$(maybe_transform_gopro_legacy_camera_label "$ob")"
+    [[ -n "$expected" && "$nb" == "$expected" ]]
+}
+
 gopro_basename_with_capture_mode_suffix() {
     local base="$1"
     local mode_suffix="$2"
@@ -9936,6 +9952,14 @@ rename_is_exif_camera_tag_append() {
     samsung_exif_camera_tag_append_matches "$@" && return 0
     gopro_exif_camera_tag_append_matches "$@" && return 0
     nikon_exif_camera_tag_append_matches "$@" && return 0
+    return 1
+}
+
+# Camera renames eligible for [G] session auto-yes. This includes EXIF-derived
+# make/model appends and exact legacy GoPro camera-label modernization.
+rename_is_camera_make_model_change() {
+    rename_is_exif_camera_tag_append "$@" && return 0
+    gopro_legacy_camera_label_normalization_matches "$@" && return 0
     return 1
 }
 
@@ -12927,7 +12951,7 @@ AUTO_LOWERCASE_MEDIA_OFFICE_EXT_SESSION=no # [U] session: only media + MS Office
 AUTO_GOPRO_STRIP_PART_DIR="" # GoPro lone _part_XX prompt [D]: auto-strip for rest of run in this directory
 AUTO_GOPRO_STRIP_PART_SESSION=no # GoPro lone _part_XX prompt [A]: auto-strip for all qualifying files this run
 AUTO_DELETE_THUMBS_DB_SESSION=no # thumbs.db prompt [O]: delete all thumbs.db for the rest of this run
-AUTO_EXIF_CAMERA_TAG_SESSION=no # rename prompt [G]: auto-yes Samsung/GoPro/Nikon D200 EXIF camera tag appends for rest of run
+AUTO_CAMERA_MAKE_MODEL_SESSION=no # rename prompt [G]: auto-yes Samsung/GoPro/Nikon camera make/model renames for rest of run
 AUTO_LARGE_HASH_CHECK_SESSION=no # verify-only large checksum list prompt [H]: auto-yes remaining large list checks for rest of run
 AUTO_CHECKSUM_GROUP_SESSION=no # checksum group prompt [H/h]: auto-yes all remaining checksum groups for rest of run
 AUTO_CHECKSUM_GROUP_DIR="" # checksum group prompt [D/d]: auto-yes checksum groups in this directory for rest of run
@@ -13419,8 +13443,8 @@ print_rename_prompt_menu() {
         echo "  $(rename_menu_key_bracket S Y) Yes for similar names in this directory (all extensions here; leading _ only if this filename starts with _)"
         choice_hint+=/s
     fi
-    if [[ -n "$path" && -n "$suggested_new" ]] && rename_is_exif_camera_tag_append "$path" "$suggested_new"; then
-        echo "  $(rename_menu_key_bracket G Y) Yes, and auto-approve all Samsung, GoPro, and Nikon D200 EXIF camera make/model tags for the rest of this run"
+    if [[ -n "$path" && -n "$suggested_new" ]] && rename_is_camera_make_model_change "$path" "$suggested_new"; then
+        echo "  $(rename_menu_key_bracket G Y) Yes, and auto-approve future Samsung, GoPro, and Nikon camera make/model renames for the rest of this run"
         choice_hint+=/g
     fi
     if [[ -n "$path" && -n "$suggested_new" ]] && rename_suggested_only_extension_case_change "$path" "$suggested_new" \
@@ -15209,9 +15233,9 @@ for f in "${ordered_paths[@]}"; do
         continue
     fi
 
-    if [[ "$AUTO_EXIF_CAMERA_TAG_SESSION" == "yes" ]] && [[ "$f" != "$new" ]] \
-        && rename_is_exif_camera_tag_append "$f" "$new"; then
-        perform_plain_or_nef_xmp_pair "EXIF camera tag auto-yes (session)" || break
+    if [[ "$AUTO_CAMERA_MAKE_MODEL_SESSION" == "yes" ]] && [[ "$f" != "$new" ]] \
+        && rename_is_camera_make_model_change "$f" "$new"; then
+        perform_plain_or_nef_xmp_pair "camera make/model auto-yes (session)" || break
         continue
     fi
 
@@ -15498,13 +15522,13 @@ for f in "${ordered_paths[@]}"; do
             fi
             ;;
         g|G)
-            if ! rename_is_exif_camera_tag_append "$f" "$new"; then
-                echo -e "${YELLOW}[G] applies only when the suggestion adds a Samsung, GoPro, or Nikon D200 EXIF camera make/model tag.${RESET}"
+            if ! rename_is_camera_make_model_change "$f" "$new"; then
+                echo -e "${YELLOW}[G] applies only to recognized Samsung, GoPro, or Nikon camera make/model renames.${RESET}"
                 ((++files_skipped))
             else
-                AUTO_EXIF_CAMERA_TAG_SESSION=yes
-                vlog "Session auto-yes enabled for Samsung/GoPro/Nikon D200 EXIF camera make/model tag appends"
-                perform_plain_or_nef_xmp_pair "EXIF camera tag auto-yes (session prompt)" || break
+                AUTO_CAMERA_MAKE_MODEL_SESSION=yes
+                vlog "Session auto-yes enabled for Samsung/GoPro/Nikon camera make/model renames"
+                perform_plain_or_nef_xmp_pair "camera make/model auto-yes (session prompt)" || break
             fi
             ;;
         l|L)
