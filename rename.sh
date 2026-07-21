@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
+# v. 20260721.155132 - recover SQLite locks: avoid WAL on network/Windows mounts, retry batches, and fail warmup instead of loading zero rows
 # v. 20260721.142331 - add explicit hash-only DB backfill with inventory, filesystem reconciliation, progress, and resumable batches
 # v. 20260721.132007 - Samsung timestamp media: preserve optional numeric sorting prefix when appending make/model
 # v. 20260721.112812 - GoPro camera labels: GoPro_Hero4_Silver style (not GOPRO4_SILVER)
 
+# 2026.07.21 - v. 19.267.155132 - SQLite lock recovery: DELETE journal on CIFS/NFS/NTFS/9p, safe WAL checkpoint, batch retries, strict warmup reads
 # 2026.07.21 - v. 19.266.142331 - --backfill-hashes md5|sha512|both: no renames; reconcile DB paths, report missing slots/bytes, progress + ETA; normal runs stop auto-backfill
 # 2026.07.21 - v. 19.265.132007 - Samsung NUMBER_YYYYMMDD_HHMMSS media: keep sorting prefix and append Samsung_<model>
 # 2026.07.21 - v. 19.264.112812 - GoPro firmware labels GoPro_Hero#_Edition; legacy GOPRO#_EDITION names migrate on rename
@@ -917,6 +919,9 @@ LEGACY_DB_FILE="$START_DIR/rename.sh-optional-db.sqlite3"
 # Set by db_init when host FS returns SQLITE_BUSY unless opened with sqlite3 -uri '...?nolock=1' (unsafe if two writers).
 DB_SQLITE_USE_URI=""
 DB_SQLITE_URI=""
+DB_SQLITE_JOURNAL_MODE=""
+DB_SQLITE_BUSY_TIMEOUT_MS="${DB_SQLITE_BUSY_TIMEOUT_MS:-15000}"
+DB_SQLITE_FLUSH_RETRIES="${DB_SQLITE_FLUSH_RETRIES:-3}"
 # Probed on first URI open: some distros ship sqlite3 CLI without -uri (need 3.7.13+ for file:...?nolock=1).
 RENAME_SQLITE3_URI_PROBED=""
 RENAME_SQLITE3_HAS_URI_FLAG=""
@@ -3226,23 +3231,49 @@ rename_sqlite3_db_run() {
 }
 
 db_flush_pending() {
-    local err=""
+    local err="" attempt=1 attempted=0 first_error="" error_text="" retries="$DB_SQLITE_FLUSH_RETRIES"
     (( USE_DB == 1 )) || return 0
     [[ -n "$DB_PENDING_SQL_FILE" && -s "$DB_PENDING_SQL_FILE" ]] || return 0
+    [[ "$retries" =~ ^[1-9][0-9]*$ ]] || retries=3
+    [[ "$DB_SQLITE_BUSY_TIMEOUT_MS" =~ ^[1-9][0-9]*$ ]] || DB_SQLITE_BUSY_TIMEOUT_MS=15000
     err="$(mktemp)"
-    if {
-        printf 'PRAGMA busy_timeout=60000;\n'
-        printf 'BEGIN IMMEDIATE;\n'
-        cat -- "$DB_PENDING_SQL_FILE"
-        printf 'COMMIT;\n'
-    } | rename_sqlite3_db_run >/dev/null 2>"$err"; then
-        rm -f -- "$err"
-        : > "$DB_PENDING_SQL_FILE"
-        DB_PENDING_COUNT=0
-        return 0
+
+    while (( attempt <= retries )); do
+        attempted=$attempt
+        : > "$err"
+        if {
+            printf 'PRAGMA busy_timeout=%s;\n' "$DB_SQLITE_BUSY_TIMEOUT_MS"
+            printf 'BEGIN IMMEDIATE;\n'
+            cat -- "$DB_PENDING_SQL_FILE"
+            printf 'COMMIT;\n'
+        } | rename_sqlite3_db_run >/dev/null 2>"$err"; then
+            rm -f -- "$err"
+            : > "$DB_PENDING_SQL_FILE"
+            DB_PENDING_COUNT=0
+            return 0
+        fi
+
+        error_text="$(<"$err")"
+        if [[ "${error_text,,}" != *"database is locked"* && "${error_text,,}" != *"database is busy"* ]]; then
+            break
+        fi
+
+        if (( attempt < retries )); then
+            echo "WARNING: SQLite batch write is locked (attempt $attempt/$retries); pending SQL is safe, attempting automatic recovery..." >&2
+            db_configure_sqlite_runtime_mode recover >/dev/null 2>&1 || true
+            sleep "$((attempt * 2))"
+        fi
+        attempt=$((attempt + 1))
+    done
+
+    IFS= read -r first_error < "$err" || true
+    if [[ "${error_text,,}" == *"database is locked"* || "${error_text,,}" == *"database is busy"* ]]; then
+        echo "ERROR: SQLite batch write remained locked after $attempted attempt(s); pending SQL was retained until shutdown retry." >&2
+    else
+        echo "ERROR: SQLite batch write failed; pending SQL was retained until shutdown retry." >&2
     fi
-    echo "ERROR: SQLite batch write failed; pending SQL was retained for retry." >&2
-    [[ -s "$err" ]] && head -n 1 "$err" >&2
+    [[ -n "$first_error" ]] && echo "$first_error" >&2
+    echo "Close any old rename.sh/sqlite3 process using this cache and rerun." >&2
     rm -f -- "$err"
     return 1
 }
@@ -3459,6 +3490,91 @@ db_sqlite_prefer_nolock_for_cache_path() {
     return 1
 }
 
+# WAL needs reliable shared-memory locking. Keep rollback-journal mode on Windows,
+# NAS, and FUSE-style mounts even when ordinary SQLite file locks still work.
+db_sqlite_avoid_wal_for_cache_path() {
+    local target="$DB_FILE" fs
+
+    db_sqlite_prefer_nolock_for_cache_path && return 0
+    [[ -n "$target" ]] || return 1
+    [[ -f "$target" ]] || target="$(dirname -- "$target")"
+    [[ -e "$target" ]] || return 1
+
+    if ! command -v findmnt >/dev/null 2>&1; then
+        [[ "$target" == /mnt/* ]]
+        return $?
+    fi
+
+    fs="$(findmnt -n -o FSTYPE --target "$target" 2>/dev/null)" || fs=""
+    fs="${fs,,}"
+    case "$fs" in
+        9p|drvfs|fuseblk|fuse.ntfs|fuse.ntfs-3g|ntfs|ntfs3) return 0 ;;
+    esac
+    return 1
+}
+
+# Select a journal/locking mode appropriate for the cache filesystem. When a
+# WAL exists, checkpoint it through normal SQLite locking before enabling
+# ?nolock=1; deleting an uncheckpointed WAL could discard committed cache rows.
+db_configure_sqlite_runtime_mode() {
+    local reason="${1:-startup}" uri="" err=""
+
+    [[ "$DB_SQLITE_BUSY_TIMEOUT_MS" =~ ^[1-9][0-9]*$ ]] || DB_SQLITE_BUSY_TIMEOUT_MS=15000
+
+    if db_sqlite_avoid_wal_for_cache_path; then
+        if db_sqlite_cache_has_wal_sidecars; then
+            err="$(mktemp)"
+            if ! rename_sqlite3 -batch "$DB_FILE" >/dev/null 2>"$err" <<SQL
+PRAGMA busy_timeout=$DB_SQLITE_BUSY_TIMEOUT_MS;
+PRAGMA wal_checkpoint(TRUNCATE);
+PRAGMA journal_mode=DELETE;
+SQL
+            then
+                if [[ "$reason" == "recover" ]]; then
+                    echo "WARNING: automatic SQLite WAL checkpoint could not obtain the lock; sidecars were left untouched." >&2
+                fi
+                rm -f -- "$err"
+                return 1
+            fi
+            rm -f -- "$err"
+        else
+            if ! rename_sqlite3_db_run >/dev/null 2>&1 <<SQL
+PRAGMA busy_timeout=$DB_SQLITE_BUSY_TIMEOUT_MS;
+PRAGMA journal_mode=DELETE;
+SQL
+            then
+                return 1
+            fi
+        fi
+
+        if db_sqlite_prefer_nolock_for_cache_path && uri="$(db_sqlite_file_uri_nolock 2>/dev/null)"; then
+            DB_SQLITE_USE_URI=1
+            DB_SQLITE_URI="$uri"
+        fi
+        rename_sqlite3_db_run >/dev/null 2>&1 <<SQL || return 1
+PRAGMA busy_timeout=$DB_SQLITE_BUSY_TIMEOUT_MS;
+PRAGMA synchronous=FULL;
+PRAGMA temp_store=MEMORY;
+PRAGMA cache_size=-20000;
+SQL
+        DB_SQLITE_JOURNAL_MODE="DELETE"
+        return 0
+    fi
+
+    if rename_sqlite3_db_run >/dev/null 2>&1 <<SQL
+PRAGMA busy_timeout=$DB_SQLITE_BUSY_TIMEOUT_MS;
+PRAGMA journal_mode=WAL;
+PRAGMA synchronous=NORMAL;
+PRAGMA temp_store=MEMORY;
+PRAGMA cache_size=-20000;
+SQL
+    then
+        DB_SQLITE_JOURNAL_MODE="WAL"
+        return 0
+    fi
+    return 1
+}
+
 # Read checked_paths row count for maintenance; fail (non-zero) on lock/read errors — never silently return 0.
 db_sqlite_maintenance_count_rows() {
     local count err err_line rc uri
@@ -3536,6 +3652,10 @@ db_sqlite_maintenance_begin_local_stage() {
     local tmp=""
 
     [[ -f "$DB_FILE" ]] || return 1
+    if db_sqlite_cache_has_wal_sidecars; then
+        startup_progress "SQLite maintenance: refusing local staging while WAL/journal sidecars remain (checkpoint them first)"
+        return 1
+    fi
     tmp="$(mktemp "${TMPDIR:-/tmp}/rename.sh.maint.XXXXXX")" || return 1
     rm -f -- "$tmp"
     tmp="${tmp}.sqlite3"
@@ -3578,32 +3698,33 @@ db_sqlite_cache_has_wal_sidecars() {
     [[ -f "${DB_FILE}-wal" || -f "${DB_FILE}-shm" || -f "${DB_FILE}-journal" ]]
 }
 
-# Checkpoint WAL and remove sidecars (helps CIFS/SMB where -wal/-shm break reads).
+# Checkpoint WAL safely (helps CIFS/SMB where -wal/-shm break reads).
 db_sqlite_maintenance_try_wal_sidecar_recovery() {
-    local uri=""
+    local uri="" err=""
 
     [[ -f "$DB_FILE" ]] || return 1
     db_sqlite_cache_has_wal_sidecars || return 1
 
-    startup_progress "SQLite maintenance: attempting WAL sidecar recovery (checkpoint TRUNCATE, journal_mode=DELETE, remove -wal/-shm)..."
+    startup_progress "SQLite maintenance: attempting safe WAL recovery (checkpoint TRUNCATE, journal_mode=DELETE)..."
 
-    uri="$(db_sqlite_file_uri_nolock 2>/dev/null)" || uri=""
-    if [[ -n "$uri" ]]; then
-        DB_SQLITE_USE_URI=1
-        DB_SQLITE_URI="$uri"
-        rename_sqlite3_db_run >/dev/null 2>&1 <<'SQL' || true
-PRAGMA busy_timeout=60000;
+    err="$(mktemp)"
+    if ! rename_sqlite3 -batch "$DB_FILE" >/dev/null 2>"$err" <<SQL
+PRAGMA busy_timeout=$DB_SQLITE_BUSY_TIMEOUT_MS;
 PRAGMA wal_checkpoint(TRUNCATE);
 PRAGMA journal_mode=DELETE;
 SQL
-    else
-        rename_sqlite3 -cmd 'PRAGMA busy_timeout=60000' "$DB_FILE" "PRAGMA wal_checkpoint(TRUNCATE); PRAGMA journal_mode=DELETE;" >/dev/null 2>&1 || true
+    then
+        startup_progress "SQLite maintenance: WAL recovery could not get a safe lock; sidecars were left untouched"
+        rm -f -- "$err"
+        return 1
     fi
-    db_clear_sqlite_sidecar_files
+    rm -f -- "$err"
+
     if db_sqlite_prefer_nolock_for_cache_path && uri="$(db_sqlite_file_uri_nolock 2>/dev/null)"; then
         DB_SQLITE_USE_URI=1
         DB_SQLITE_URI="$uri"
     fi
+    DB_SQLITE_JOURNAL_MODE="DELETE"
     return 0
 }
 
@@ -3847,6 +3968,10 @@ db_open_cache_for_maintenance() {
     DB_MAINT_KNOWN_TOTAL_ROWS=0
     db_remove_stale_sqlite_lock_artifacts
 
+    if db_sqlite_prefer_nolock_for_cache_path && db_sqlite_cache_has_wal_sidecars; then
+        db_sqlite_maintenance_try_wal_sidecar_recovery || true
+    fi
+
     if db_sqlite_prefer_nolock_for_cache_path && uri="$(db_sqlite_file_uri_nolock 2>/dev/null)"; then
         DB_SQLITE_USE_URI=1
         DB_SQLITE_URI="$uri"
@@ -3867,17 +3992,18 @@ db_open_cache_for_maintenance() {
         DB_SQLITE_USE_URI=""
         DB_SQLITE_URI=""
         if ! db_init_create_checked_paths_schema; then
-            db_clear_sqlite_sidecar_files
-            db_remove_stale_sqlite_lock_artifacts
-            if ! db_init_create_checked_paths_schema; then
-                if db_init_create_checked_paths_schema_nolock; then
-                    opened_with_nolock=1
-                    (( VERBOSE == 1 )) && echo "[VERBOSE] SQLite maintenance: cache opened with ?nolock=1" >&2
-                elif ! db_init_create_checked_paths_schema_via_local_tmp; then
-                    echo "ERROR: could not open SQLite cache for maintenance: $DB_FILE" >&2
-                    db_sqlite_maintenance_diagnose_open_failure
-                    return 1
-                fi
+            if db_configure_sqlite_runtime_mode recover && db_init_create_checked_paths_schema_core; then
+                startup_progress "SQLite maintenance: cache recovered using $DB_SQLITE_JOURNAL_MODE journal mode"
+                [[ -n "$DB_SQLITE_USE_URI" ]] && opened_with_nolock=1
+            elif db_init_create_checked_paths_schema_nolock; then
+                opened_with_nolock=1
+                (( VERBOSE == 1 )) && echo "[VERBOSE] SQLite maintenance: cache opened with ?nolock=1" >&2
+            elif [[ ! -s "$DB_FILE" ]] && ! db_sqlite_cache_has_wal_sidecars && db_init_create_checked_paths_schema_via_local_tmp; then
+                :
+            else
+                echo "ERROR: could not open SQLite cache for maintenance: $DB_FILE" >&2
+                db_sqlite_maintenance_diagnose_open_failure
+                return 1
             fi
         fi
     fi
@@ -3892,9 +4018,10 @@ db_open_cache_for_maintenance() {
         fi
         if ! probe_count="$(db_sqlite_maintenance_count_rows 2>/dev/null)"; then
             if db_sqlite_maintenance_should_try_wal_recovery; then
-                db_sqlite_maintenance_try_wal_sidecar_recovery
-                wal_recovery_tried=1
-                probe_count="$(db_sqlite_maintenance_count_rows 2>/dev/null)" || probe_count=""
+                if db_sqlite_maintenance_try_wal_sidecar_recovery; then
+                    wal_recovery_tried=1
+                    probe_count="$(db_sqlite_maintenance_count_rows 2>/dev/null)" || probe_count=""
+                fi
             fi
         fi
         if [[ -z "$probe_count" ]] || ! [[ "$probe_count" =~ ^[0-9]+$ ]]; then
@@ -3925,13 +4052,12 @@ db_open_cache_for_maintenance() {
         startup_progress "SQLite maintenance: cache ready ($probe_count rows in checked_paths)"
     fi
 
-    rename_sqlite3_db_run >/dev/null 2>&1 <<'SQL' || true
-PRAGMA busy_timeout=60000;
-PRAGMA journal_mode=WAL;
-PRAGMA synchronous=NORMAL;
-PRAGMA temp_store=MEMORY;
-PRAGMA cache_size=-20000;
-SQL
+    if ! db_configure_sqlite_runtime_mode startup; then
+        echo "ERROR: could not configure a safe SQLite journal mode for: $DB_FILE" >&2
+        echo "Existing WAL sidecars were not deleted; close other users of the cache and retry." >&2
+        return 1
+    fi
+    startup_progress "SQLite maintenance: journal mode $DB_SQLITE_JOURNAL_MODE selected for this filesystem"
     return 0
 }
 
@@ -4652,6 +4778,8 @@ print_db_maintenance_missing_verbose() {
 db_init() {
     local warmed_rows=0
     local md5_hash sha512_hash file_hash_kind file_hash
+    local total_cached_rows=0 progress_pct=0 next_progress_pct=10
+    local cache_rows_file="" sqlite_err_file="" first_error=""
 
     (( USE_DB == 1 )) || return 0
     db_migrate_legacy_file
@@ -4661,20 +4789,18 @@ db_init() {
     # Create schema first (default journal mode). WAL/synchronous pragmas can fail on some
     # mounts or with stale -wal/-shm; applying them only after open avoids a hard init failure.
     if ! db_init_create_checked_paths_schema; then
-        db_clear_sqlite_sidecar_files
-        db_remove_stale_sqlite_lock_artifacts
-        if ! db_init_create_checked_paths_schema; then
-            if db_init_create_checked_paths_schema_nolock; then
-                (( VERBOSE == 1 )) && echo "[VERBOSE] SQLite cache opened with ?nolock=1 (host FS POSIX locking failed). Use only one rename.sh per directory; corruption risk if two writers." >&2
-            elif db_init_create_checked_paths_schema_via_local_tmp; then
-                :
-            else
-                echo "ERROR: could not create or open SQLite cache: $DB_FILE" >&2
-                echo "If you see \"database is locked\", close other rename.sh (or sqlite3) using this file, then retry." >&2
-                echo "Check write permissions on the start directory. Stale sidecar files from a crash or copy can also cause locks:" >&2
-                echo "  rm -f -- \"${DB_FILE}-wal\" \"${DB_FILE}-shm\" \"${DB_FILE}-journal\"" >&2
-                echo "sqlite3 diagnostic (first lines):" >&2
-                rename_sqlite3_db_run -batch 2>&1 <<'SQL' | head -n 25 >&2 || true
+        if db_configure_sqlite_runtime_mode recover && db_init_create_checked_paths_schema_core; then
+            startup_progress "SQLite cache recovered using $DB_SQLITE_JOURNAL_MODE journal mode"
+        elif db_init_create_checked_paths_schema_nolock; then
+            (( VERBOSE == 1 )) && echo "[VERBOSE] SQLite cache opened with ?nolock=1 (host FS POSIX locking failed). Use only one rename.sh per directory; corruption risk if two writers." >&2
+        elif [[ ! -s "$DB_FILE" ]] && ! db_sqlite_cache_has_wal_sidecars && db_init_create_checked_paths_schema_via_local_tmp; then
+            :
+        else
+            echo "ERROR: could not create or open SQLite cache: $DB_FILE" >&2
+            echo "If you see \"database is locked\", close other rename.sh (or sqlite3) using this file, then retry." >&2
+            echo "Existing non-empty database and WAL files were left untouched to avoid losing committed rows." >&2
+            echo "sqlite3 diagnostic (first lines):" >&2
+            rename_sqlite3_db_run -batch 2>&1 <<'SQL' | head -n 25 >&2 || true
 PRAGMA busy_timeout=30000;
 CREATE TABLE IF NOT EXISTS checked_paths (
     path TEXT PRIMARY KEY,
@@ -4696,25 +4822,46 @@ CREATE INDEX IF NOT EXISTS idx_checked_paths_file_md5 ON checked_paths(file_md5)
 CREATE INDEX IF NOT EXISTS idx_checked_paths_file_sha512 ON checked_paths(file_sha512);
 CREATE INDEX IF NOT EXISTS idx_checked_paths_missing_hashes ON checked_paths(path) WHERE COALESCE(file_md5,'')='' OR COALESCE(file_sha512,'');
 SQL
-                exit 1
-            fi
+            exit 1
         fi
     fi
     db_upgrade_checked_paths_schema
-    rename_sqlite3_db_run >/dev/null 2>&1 <<'SQL' || true
-PRAGMA journal_mode=WAL;
-PRAGMA synchronous=NORMAL;
-PRAGMA temp_store=MEMORY;
-PRAGMA cache_size=-20000;
-SQL
+    if ! db_configure_sqlite_runtime_mode startup; then
+        echo "ERROR: could not configure a safe SQLite journal mode for: $DB_FILE" >&2
+        echo "The cache was not modified destructively. Close old rename.sh/sqlite3 processes and retry." >&2
+        exit 1
+    fi
+    startup_progress "SQLite journal mode selected: $DB_SQLITE_JOURNAL_MODE"
     DB_PENDING_SQL_FILE="$(mktemp)"
+    cache_rows_file="$(mktemp)"
+    sqlite_err_file="$(mktemp)"
 
-    local total_cached_rows=0
-    local progress_pct=0
-    local next_progress_pct=10
+    if ! total_cached_rows="$(rename_sqlite3_db_run "PRAGMA busy_timeout=$DB_SQLITE_BUSY_TIMEOUT_MS; SELECT COUNT(*) FROM checked_paths;" 2>"$sqlite_err_file")" ||
+       ! [[ "$total_cached_rows" =~ ^[0-9]+$ ]]; then
+        startup_progress "SQLite cache count was locked/unreadable; retrying after automatic journal recovery..."
+        db_configure_sqlite_runtime_mode recover >/dev/null 2>&1 || true
+        total_cached_rows="$(rename_sqlite3_db_run "PRAGMA busy_timeout=$DB_SQLITE_BUSY_TIMEOUT_MS; SELECT COUNT(*) FROM checked_paths;" 2>"$sqlite_err_file")" || total_cached_rows=""
+    fi
+    if ! [[ "$total_cached_rows" =~ ^[0-9]+$ ]]; then
+        echo "ERROR: SQLite cache row count failed; refusing to treat an unreadable cache as empty." >&2
+        IFS= read -r first_error < "$sqlite_err_file" || true
+        [[ -n "$first_error" ]] && echo "$first_error" >&2
+        rm -f -- "$cache_rows_file" "$sqlite_err_file"
+        exit 1
+    fi
 
-    total_cached_rows="$(rename_sqlite3_db_run 'SELECT COUNT(*) FROM checked_paths;' 2>/dev/null || echo 0)"
-    [[ "$total_cached_rows" =~ ^[0-9]+$ ]] || total_cached_rows=0
+    if ! rename_sqlite3_db_run -separator '|' "PRAGMA busy_timeout=$DB_SQLITE_BUSY_TIMEOUT_MS; SELECT path, size, mtime, COALESCE(status, ''), COALESCE(signature, ''), COALESCE(file_md5, ''), COALESCE(file_sha512, ''), COALESCE(file_hash_kind, ''), COALESCE(file_hash, '') FROM checked_paths;" >"$cache_rows_file" 2>"$sqlite_err_file"; then
+        startup_progress "SQLite cache warmup read was locked; retrying after automatic journal recovery..."
+        db_configure_sqlite_runtime_mode recover >/dev/null 2>&1 || true
+        if ! rename_sqlite3_db_run -separator '|' "PRAGMA busy_timeout=$DB_SQLITE_BUSY_TIMEOUT_MS; SELECT path, size, mtime, COALESCE(status, ''), COALESCE(signature, ''), COALESCE(file_md5, ''), COALESCE(file_sha512, ''), COALESCE(file_hash_kind, ''), COALESCE(file_hash, '') FROM checked_paths;" >"$cache_rows_file" 2>"$sqlite_err_file"; then
+            echo "ERROR: SQLite cache warmup failed; no processing was started." >&2
+            IFS= read -r first_error < "$sqlite_err_file" || true
+            [[ -n "$first_error" ]] && echo "$first_error" >&2
+            rm -f -- "$cache_rows_file" "$sqlite_err_file"
+            exit 1
+        fi
+    fi
+    rm -f -- "$sqlite_err_file"
 
     if (( total_cached_rows > 0 )); then
         startup_progress "Loading cached rows from SQLite into memory: 0% (0 / $total_cached_rows rows loaded)..."
@@ -4756,9 +4903,14 @@ SQL
         elif (( warmed_rows % 50000 == 0 )); then
             startup_progress "SQLite warmup progress: $warmed_rows rows loaded..."
         fi
-    done < <(rename_sqlite3_db_run -separator '|' "SELECT path, size, mtime, COALESCE(status, ''), COALESCE(signature, ''), COALESCE(file_md5, ''), COALESCE(file_sha512, ''), COALESCE(file_hash_kind, ''), COALESCE(file_hash, '') FROM checked_paths;")
+    done < "$cache_rows_file"
+    rm -f -- "$cache_rows_file"
 
     if (( total_cached_rows > 0 )); then
+        if (( warmed_rows != total_cached_rows )); then
+            echo "ERROR: SQLite warmup loaded $warmed_rows of $total_cached_rows rows; refusing to continue with a partial cache." >&2
+            exit 1
+        fi
         startup_progress "SQLite cache warmup done: 100% ($warmed_rows / $total_cached_rows rows loaded)"
     else
         startup_progress "SQLite cache warmup done: $warmed_rows rows loaded"
