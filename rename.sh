@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
+# v. 20260721.160630 - keep busy-timeout PRAGMA output out of SQLite count and warmup query results
 # v. 20260721.155132 - recover SQLite locks: avoid WAL on network/Windows mounts, retry batches, and fail warmup instead of loading zero rows
 # v. 20260721.142331 - add explicit hash-only DB backfill with inventory, filesystem reconciliation, progress, and resumable batches
 # v. 20260721.132007 - Samsung timestamp media: preserve optional numeric sorting prefix when appending make/model
 # v. 20260721.112812 - GoPro camera labels: GoPro_Hero4_Silver style (not GOPRO4_SILVER)
 
+# 2026.07.21 - v. 19.268.160630 - fix false locked/unreadable result caused by busy_timeout value contaminating captured SELECT output
 # 2026.07.21 - v. 19.267.155132 - SQLite lock recovery: DELETE journal on CIFS/NFS/NTFS/9p, safe WAL checkpoint, batch retries, strict warmup reads
 # 2026.07.21 - v. 19.266.142331 - --backfill-hashes md5|sha512|both: no renames; reconcile DB paths, report missing slots/bytes, progress + ETA; normal runs stop auto-backfill
 # 2026.07.21 - v. 19.265.132007 - Samsung NUMBER_YYYYMMDD_HHMMSS media: keep sorting prefix and append Samsung_<model>
@@ -3582,7 +3584,7 @@ db_sqlite_maintenance_count_rows() {
     DB_MAINT_LAST_SQLITE_ERR=""
     err="$(mktemp)"
 
-    count="$(rename_sqlite3_db_run 'PRAGMA busy_timeout=60000; SELECT COUNT(*) FROM checked_paths;' 2>"$err")"
+    count="$(rename_sqlite3_db_run 'SELECT COUNT(*) FROM checked_paths;' 2>"$err")"
     rc=$?
     if (( rc == 0 )) && [[ "$count" =~ ^[0-9]+$ ]]; then
         rm -f -- "$err"
@@ -3591,7 +3593,7 @@ db_sqlite_maintenance_count_rows() {
     fi
 
     if rename_sqlite3_any_available && [[ -f "$DB_FILE" ]]; then
-        count="$(rename_sqlite3 -cmd 'PRAGMA busy_timeout=60000' "$DB_FILE" 'SELECT COUNT(*) FROM checked_paths;' 2>"$err")"
+        count="$(rename_sqlite3 -cmd '.timeout 60000' "$DB_FILE" 'SELECT COUNT(*) FROM checked_paths;' 2>"$err")"
         rc=$?
         if (( rc == 0 )) && [[ "$count" =~ ^[0-9]+$ ]]; then
             rm -f -- "$err"
@@ -3599,7 +3601,7 @@ db_sqlite_maintenance_count_rows() {
             return 0
         fi
         if uri="$(db_sqlite_file_uri_nolock 2>/dev/null)"; then
-            count="$(rename_sqlite3_uri_db_run "$uri" -cmd 'PRAGMA busy_timeout=60000' 'SELECT COUNT(*) FROM checked_paths;' 2>"$err")"
+            count="$(rename_sqlite3_uri_db_run "$uri" -cmd '.timeout 60000' 'SELECT COUNT(*) FROM checked_paths;' 2>"$err")"
             rc=$?
             if (( rc == 0 )) && [[ "$count" =~ ^[0-9]+$ ]]; then
                 DB_SQLITE_USE_URI=1
@@ -3744,12 +3746,12 @@ db_sqlite_maintenance_probe_sqlite_read() {
         if rename_sqlite3_wants_python_uri_backend; then
             DB_SQLITE_USE_URI=1
             DB_SQLITE_URI="$uri"
-            count="$(rename_sqlite3_python_db_run 'PRAGMA busy_timeout=60000; SELECT COUNT(*) FROM checked_paths;' 2>"$err")"
+            count="$(rename_sqlite3_python_db_run 'SELECT COUNT(*) FROM checked_paths;' 2>"$err")"
             rc=$?
         else
             rename_sqlite3_probe_cli_uri_support
             if (( RENAME_SQLITE3_HAS_URI_FLAG == 1 )); then
-                count="$(rename_sqlite3_uri_db_run "$uri" -cmd 'PRAGMA busy_timeout=5000' 'SELECT COUNT(*) FROM checked_paths;' 2>"$err")"
+                count="$(rename_sqlite3_uri_db_run "$uri" -cmd '.timeout 5000' 'SELECT COUNT(*) FROM checked_paths;' 2>"$err")"
                 rc=$?
             else
                 count=""
@@ -3758,7 +3760,7 @@ db_sqlite_maintenance_probe_sqlite_read() {
             fi
         fi
     else
-        count="$(rename_sqlite3 -cmd 'PRAGMA busy_timeout=5000' "$DB_FILE" 'SELECT COUNT(*) FROM checked_paths;' 2>"$err")"
+        count="$(rename_sqlite3 -cmd '.timeout 5000' "$DB_FILE" 'SELECT COUNT(*) FROM checked_paths;' 2>"$err")"
         rc=$?
     fi
     if (( rc == 0 )) && [[ "$count" =~ ^[0-9]+$ ]]; then
@@ -4185,7 +4187,7 @@ db_prune_missing_paths() {
     fi
 
     prune_paths_file="$(mktemp)"
-    if ! rename_sqlite3_db_run 'PRAGMA busy_timeout=60000; SELECT path FROM checked_paths;' >"$prune_paths_file" 2>/dev/null; then
+    if ! rename_sqlite3_db_run 'SELECT path FROM checked_paths;' >"$prune_paths_file" 2>/dev/null; then
         startup_progress "SQLite maintenance: WARNING — could not list checked_paths for filesystem crosscheck (skipped)"
         rm -f -- "$prune_paths_file"
         startup_progress "SQLite maintenance: filesystem check finished (checked: 0, missing: 0, removed: 0)"
@@ -4836,11 +4838,11 @@ SQL
     cache_rows_file="$(mktemp)"
     sqlite_err_file="$(mktemp)"
 
-    if ! total_cached_rows="$(rename_sqlite3_db_run "PRAGMA busy_timeout=$DB_SQLITE_BUSY_TIMEOUT_MS; SELECT COUNT(*) FROM checked_paths;" 2>"$sqlite_err_file")" ||
+    if ! total_cached_rows="$(rename_sqlite3_db_run "SELECT COUNT(*) FROM checked_paths;" 2>"$sqlite_err_file")" ||
        ! [[ "$total_cached_rows" =~ ^[0-9]+$ ]]; then
         startup_progress "SQLite cache count was locked/unreadable; retrying after automatic journal recovery..."
         db_configure_sqlite_runtime_mode recover >/dev/null 2>&1 || true
-        total_cached_rows="$(rename_sqlite3_db_run "PRAGMA busy_timeout=$DB_SQLITE_BUSY_TIMEOUT_MS; SELECT COUNT(*) FROM checked_paths;" 2>"$sqlite_err_file")" || total_cached_rows=""
+        total_cached_rows="$(rename_sqlite3_db_run "SELECT COUNT(*) FROM checked_paths;" 2>"$sqlite_err_file")" || total_cached_rows=""
     fi
     if ! [[ "$total_cached_rows" =~ ^[0-9]+$ ]]; then
         echo "ERROR: SQLite cache row count failed; refusing to treat an unreadable cache as empty." >&2
@@ -4850,10 +4852,10 @@ SQL
         exit 1
     fi
 
-    if ! rename_sqlite3_db_run -separator '|' "PRAGMA busy_timeout=$DB_SQLITE_BUSY_TIMEOUT_MS; SELECT path, size, mtime, COALESCE(status, ''), COALESCE(signature, ''), COALESCE(file_md5, ''), COALESCE(file_sha512, ''), COALESCE(file_hash_kind, ''), COALESCE(file_hash, '') FROM checked_paths;" >"$cache_rows_file" 2>"$sqlite_err_file"; then
+    if ! rename_sqlite3_db_run -separator '|' "SELECT path, size, mtime, COALESCE(status, ''), COALESCE(signature, ''), COALESCE(file_md5, ''), COALESCE(file_sha512, ''), COALESCE(file_hash_kind, ''), COALESCE(file_hash, '') FROM checked_paths;" >"$cache_rows_file" 2>"$sqlite_err_file"; then
         startup_progress "SQLite cache warmup read was locked; retrying after automatic journal recovery..."
         db_configure_sqlite_runtime_mode recover >/dev/null 2>&1 || true
-        if ! rename_sqlite3_db_run -separator '|' "PRAGMA busy_timeout=$DB_SQLITE_BUSY_TIMEOUT_MS; SELECT path, size, mtime, COALESCE(status, ''), COALESCE(signature, ''), COALESCE(file_md5, ''), COALESCE(file_sha512, ''), COALESCE(file_hash_kind, ''), COALESCE(file_hash, '') FROM checked_paths;" >"$cache_rows_file" 2>"$sqlite_err_file"; then
+        if ! rename_sqlite3_db_run -separator '|' "SELECT path, size, mtime, COALESCE(status, ''), COALESCE(signature, ''), COALESCE(file_md5, ''), COALESCE(file_sha512, ''), COALESCE(file_hash_kind, ''), COALESCE(file_hash, '') FROM checked_paths;" >"$cache_rows_file" 2>"$sqlite_err_file"; then
             echo "ERROR: SQLite cache warmup failed; no processing was started." >&2
             IFS= read -r first_error < "$sqlite_err_file" || true
             [[ -n "$first_error" ]] && echo "$first_error" >&2
