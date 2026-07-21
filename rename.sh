@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
+# v. 20260721.142331 - add explicit hash-only DB backfill with inventory, filesystem reconciliation, progress, and resumable batches
 # v. 20260721.132007 - Samsung timestamp media: preserve optional numeric sorting prefix when appending make/model
 # v. 20260721.112812 - GoPro camera labels: GoPro_Hero4_Silver style (not GOPRO4_SILVER)
 
+# 2026.07.21 - v. 19.266.142331 - --backfill-hashes md5|sha512|both: no renames; reconcile DB paths, report missing slots/bytes, progress + ETA; normal runs stop auto-backfill
 # 2026.07.21 - v. 19.265.132007 - Samsung NUMBER_YYYYMMDD_HHMMSS media: keep sorting prefix and append Samsung_<model>
 # 2026.07.21 - v. 19.264.112812 - GoPro firmware labels GoPro_Hero#_Edition; legacy GOPRO#_EDITION names migrate on rename
 # 2026.07.19 - v. 19.260.145719 - read_yes_no_quit_confirm: Are you sure? [y/N/q]; Q stops run (checksum session, rename_all, GoPro)
@@ -950,6 +952,13 @@ DB_MAINT_HASH_JOBS_TOTAL=0
 DB_MAINT_HASH_JOBS_REMAINING=0
 DB_MAINT_HASH_MD5_JOBS=0
 DB_MAINT_HASH_SHA512_JOBS=0
+DB_MAINT_HASH_MD5_MISSING=0
+DB_MAINT_HASH_SHA512_MISSING=0
+DB_MAINT_HASH_FILES_PLANNED=0
+DB_MAINT_HASH_FILES_DONE=0
+DB_MAINT_HASH_BYTES_PLANNED=0
+DB_MAINT_HASH_BYTES_DONE=0
+DB_MAINT_HASH_DUAL_SINGLE_PASS=0
 DB_MAINT_HASH_SKIPPED_NOT_FILE=0
 DB_MAINT_HASH_JOBS_DONE=0
 DB_MAINT_HASH_BACKFILL_TTY_BAR=no
@@ -959,7 +968,9 @@ DB_MAINT_HASH_BACKFILL_LAST_DISPLAY_EPOCH=0
 DB_MAINT_HASH_BACKFILL_NEXT_PCT=5
 DB_MAINT_HASH_BACKFILL_BAR_WIDTH=80
 DB_MAINT_KNOWN_TOTAL_ROWS=0
+DB_MAINT_ROWS_TOTAL_BEFORE=0
 DB_MAINT_LAST_SQLITE_ERR=""
+DB_MAINT_OPERATION_FAILED=0
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 WORKSPACE_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd -P)"
 DEBUG_LOG_PATH="${DEBUG_LOG_PATH:-$WORKSPACE_ROOT/debug-8439cd.log}"
@@ -1007,8 +1018,10 @@ CLI_SCOPE=""
 CLI_RESUME_STATE="resume"
 CLI_DATE_PLACEMENT=""
 CLI_DB_MAINTENANCE="full"
+CLI_HASH_BACKFILL=""
 DATE_PLACEMENT="${DATE_PLACEMENT:-front}"
 RUN_DB_MAINTENANCE=0
+RUN_HASH_BACKFILL=0
 DB_MAINT_FIX_WAL=0
 PROMPT_WAIT_SECONDS=0
 MAP_R_ACUTE="${MAP_R_ACUTE:-c}"
@@ -1065,7 +1078,7 @@ debug_log() {
 
 usage() {
     cat <<'EOF'
-Usage: rename.sh [-v|--verbose] [--use-db] [--fast] [--force-recheck] [--run-db-maintenance] [--db-maintenance auto|[full]] [--colors [yes]|no] [--mode real|[dry-run]] [--scope subdirs|[current]] [--date-placement front|[original]] [--resume-state [resume]|ask|fresh] [--wait-seconds [0]|N] [--version] [-h|--help]
+Usage: rename.sh [-v|--verbose] [--use-db] [--fast] [--force-recheck] [--backfill-hashes md5|sha512|both] [--run-db-maintenance] [--db-maintenance auto|[full]] [--colors [yes]|no] [--mode real|[dry-run]] [--scope subdirs|[current]] [--date-placement front|[original]] [--resume-state [resume]|ask|fresh] [--wait-seconds [0]|N] [--version] [-h|--help]
 
 Options:
   -v, --verbose          Show extra diagnostic output
@@ -1073,10 +1086,15 @@ Options:
   --use-db               Use SQLite cache in the start directory (_rename.sh-optional-db.sqlite3). If that file or the legacy rename.sh-optional-db.sqlite3 already exists and you omit --use-db, you are prompted whether to use it (default: yes; [q] quits).
   --fast                 With --use-db, trust cached paths without checking current size/mtime
   --force-recheck        Ignore SQLite cache and recheck everything
+  --backfill-hashes md5|sha512|both
+                         Reconcile every cached path with the filesystem, remove missing-path rows, report missing
+                         MD5/SHA512 slots, fill only the selected missing hashes, print progress/ETA, and exit.
+                         Performs no renames or ExifTool work; rerun safely to resume from hashes already committed.
   --run-db-maintenance   Run DB maintenance and exit (implies --use-db; uses --db-maintenance profile or default full)
   --db-maintenance auto|[full]
                          Run that maintenance profile and exit (implies --use-db; same exit path as --run-db-maintenance)
-                         auto: lightweight optimize/checkpoint; full: optimize + analyze + reindex + WAL truncate
+                         auto: optimize/checkpoint + filesystem reconciliation; full: optimize + analyze + reindex
+                         + WAL truncate + filesystem reconciliation. Hashing is only via --backfill-hashes.
   --db-maint-fix-wal     With --run-db-maintenance: if the cache is unreadable, try WAL checkpoint and remove -wal/-shm
                          before giving up (also attempted automatically on CIFS/SMB when sidecars exist)
   --colors [yes]|no      Skip the startup colors question
@@ -1106,6 +1124,8 @@ Optional exclude file in the start directory: _exclude-rename.sh.txt
 Example:
   rename.sh -v --use-db --colors yes --mode real --scope subdirs
   rename.sh -v --use-db --fast --colors yes --mode real --scope subdirs
+  rename.sh --backfill-hashes both
+  rename.sh --backfill-hashes sha512
   rename.sh --use-db --db-maintenance full
   rename.sh --run-db-maintenance --db-maintenance auto
   rename.sh --resume-state ask --use-db --mode real --scope subdirs
@@ -3206,15 +3226,25 @@ rename_sqlite3_db_run() {
 }
 
 db_flush_pending() {
+    local err=""
     (( USE_DB == 1 )) || return 0
     [[ -n "$DB_PENDING_SQL_FILE" && -s "$DB_PENDING_SQL_FILE" ]] || return 0
-    {
+    err="$(mktemp)"
+    if {
+        printf 'PRAGMA busy_timeout=60000;\n'
         printf 'BEGIN IMMEDIATE;\n'
         cat -- "$DB_PENDING_SQL_FILE"
         printf 'COMMIT;\n'
-    } | rename_sqlite3_db_run >/dev/null 2>&1 || true
-    : > "$DB_PENDING_SQL_FILE"
-    DB_PENDING_COUNT=0
+    } | rename_sqlite3_db_run >/dev/null 2>"$err"; then
+        rm -f -- "$err"
+        : > "$DB_PENDING_SQL_FILE"
+        DB_PENDING_COUNT=0
+        return 0
+    fi
+    echo "ERROR: SQLite batch write failed; pending SQL was retained for retry." >&2
+    [[ -s "$err" ]] && head -n 1 "$err" >&2
+    rm -f -- "$err"
+    return 1
 }
 
 cleanup_on_exit() {
@@ -3462,6 +3492,25 @@ db_sqlite_maintenance_count_rows() {
                 printf '%s' "$count"
                 return 0
             fi
+        fi
+    fi
+    if command -v python3 >/dev/null 2>&1 && [[ -f "$DB_FILE" ]]; then
+        count="$(python3 - "$DB_FILE" 2>"$err" <<'PY'
+import sqlite3
+import sys
+
+connection = sqlite3.connect(sys.argv[1], timeout=60.0)
+try:
+    print(connection.execute("SELECT COUNT(*) FROM checked_paths").fetchone()[0])
+finally:
+    connection.close()
+PY
+)"
+        rc=$?
+        if (( rc == 0 )) && [[ "$count" =~ ^[0-9]+$ ]]; then
+            rm -f -- "$err"
+            printf '%s' "$count"
+            return 0
         fi
     fi
 
@@ -3928,7 +3977,6 @@ db_run_maintenance() {
         db_maintenance_run_sql_step "PRAGMA optimize;" "PRAGMA optimize;"
         db_maintenance_run_sql_step "PRAGMA wal_checkpoint(PASSIVE);" "PRAGMA wal_checkpoint(PASSIVE);"
         db_prune_missing_paths
-        [[ "$stopped_by_user" == yes ]] || db_maintenance_backfill_missing_hashes
         startup_progress "SQLite maintenance: AUTO profile finished"
         ((_dm_save_e)) && set -e || set +e
         return 0
@@ -3940,10 +3988,37 @@ db_run_maintenance() {
     db_maintenance_run_sql_step "REINDEX checked_paths;" "REINDEX checked_paths;"
     db_maintenance_run_sql_step "PRAGMA wal_checkpoint(TRUNCATE);" "PRAGMA wal_checkpoint(TRUNCATE);"
     db_prune_missing_paths
-    [[ "$stopped_by_user" == yes ]] || db_maintenance_backfill_missing_hashes
     startup_progress "SQLite maintenance: FULL profile finished"
     ((_dm_save_e)) && set -e || set +e
     return 0
+}
+
+db_run_hash_backfill() {
+    local hash_mode="$1"
+    local _dm_save_e=0
+    local backfill_rc=0
+
+    (( USE_DB == 1 )) || return 0
+    case "$hash_mode" in
+        md5|sha512|both) ;;
+        *) return 1 ;;
+    esac
+
+    [[ $- == *e* ]] && _dm_save_e=1
+    set +e
+    if [[ -z "$DB_PENDING_SQL_FILE" || ! -e "$DB_PENDING_SQL_FILE" ]]; then
+        DB_PENDING_SQL_FILE="$(mktemp)"
+        DB_PENDING_COUNT=0
+    fi
+
+    startup_progress "SQLite hash backfill: reconciling all cached paths with the filesystem..."
+    db_prune_missing_paths
+    if [[ "$stopped_by_user" != yes ]]; then
+        db_maintenance_backfill_missing_hashes "$hash_mode" || backfill_rc=$?
+    fi
+    startup_progress "SQLite hash backfill finished"
+    ((_dm_save_e)) && set -e || set +e
+    return "$backfill_rc"
 }
 
 db_prune_missing_paths() {
@@ -3977,6 +4052,7 @@ db_prune_missing_paths() {
         return 0
     fi
     DB_MAINT_KNOWN_TOTAL_ROWS=$total_db_rows
+    DB_MAINT_ROWS_TOTAL_BEFORE=$total_db_rows
 
     if (( total_db_rows > 0 )); then
         startup_progress "SQLite maintenance: crosscheck progress 0% (0 / $total_db_rows checked, 0 missing)..."
@@ -4034,7 +4110,7 @@ db_prune_missing_paths() {
                 end_idx=$delete_total
             fi
 
-            {
+            if {
                 printf 'BEGIN IMMEDIATE;\n'
                 for (( i=start_idx; i<end_idx; i++ )); do
                     path="${missing_paths[$i]}"
@@ -4042,9 +4118,13 @@ db_prune_missing_paths() {
                     printf "DELETE FROM checked_paths WHERE path='%s';\n" "$escaped_path"
                 done
                 printf 'COMMIT;\n'
-            } | rename_sqlite3_db_run >/dev/null 2>&1
+            } | rename_sqlite3_db_run >/dev/null 2>&1; then
+                delete_processed=$end_idx
+            else
+                startup_progress "SQLite maintenance: ERROR — failed to remove missing-path rows; stopping reconciliation with DB updates retained through row $delete_processed"
+                break
+            fi
 
-            delete_processed=$end_idx
             delete_progress_pct=$(( delete_processed * 100 / delete_total ))
             delete_progress_printed_by_count=0
             if (( delete_processed >= delete_next_progress_count )); then
@@ -4065,6 +4145,7 @@ db_prune_missing_paths() {
         DB_MAINT_ROWS_REMOVED="$delete_processed"
     fi
 
+    DB_MAINT_KNOWN_TOTAL_ROWS=$((total_db_rows - DB_MAINT_ROWS_REMOVED))
     startup_progress "SQLite maintenance: filesystem check finished (checked: $DB_MAINT_ROWS_CHECKED, missing: $DB_MAINT_ROWS_MISSING, removed: $DB_MAINT_ROWS_REMOVED)"
 }
 
@@ -4117,15 +4198,59 @@ _db_maintenance_hash_backfill_format_eta() {
     fi
 }
 
+_db_maintenance_format_bytes_human() {
+    local bytes="${1:-0}"
+    awk -v b="$bytes" 'BEGIN {
+        split("B KiB MiB GiB TiB PiB", units, " ");
+        i = 1;
+        while (b >= 1024 && i < 6) {
+            b /= 1024;
+            i++;
+        }
+        if (i == 1) printf "%.0f %s", b, units[i];
+        else printf "%.2f %s", b, units[i];
+    }'
+}
+
+_db_hash_file_md5_sha512_single_pass() {
+    local path="$1"
+    python3 - "$path" <<'PY'
+import hashlib
+import sys
+
+try:
+    md5 = hashlib.md5(usedforsecurity=False)
+except TypeError:
+    md5 = hashlib.md5()
+sha512 = hashlib.sha512()
+with open(sys.argv[1], "rb", buffering=1024 * 1024) as stream:
+    while True:
+        chunk = stream.read(4 * 1024 * 1024)
+        if not chunk:
+            break
+        md5.update(chunk)
+        sha512.update(chunk)
+print(md5.hexdigest() + "\t" + sha512.hexdigest())
+PY
+}
+
 _db_maintenance_hash_backfill_progress_render() {
     local force="${1:-0}"
     local now progress_pct filled_n empty_n bar elapsed rate eta eta_str rate_str line
+    local done_human total_human
 
     (( VERBOSE == 1 )) && return 0
-    (( DB_MAINT_HASH_JOBS_TOTAL > 0 )) || return 0
+    (( DB_MAINT_HASH_FILES_PLANNED > 0 )) || return 0
 
-    progress_pct=$(( DB_MAINT_HASH_JOBS_DONE * 100 / DB_MAINT_HASH_JOBS_TOTAL ))
+    if (( DB_MAINT_HASH_BYTES_PLANNED > 0 )); then
+        progress_pct=$(( DB_MAINT_HASH_BYTES_DONE * 100 / DB_MAINT_HASH_BYTES_PLANNED ))
+    else
+        progress_pct=$(( DB_MAINT_HASH_FILES_DONE * 100 / DB_MAINT_HASH_FILES_PLANNED ))
+    fi
+    (( progress_pct > 100 )) && progress_pct=100
     now="$(date +%s)"
+    done_human="$(_db_maintenance_format_bytes_human "$DB_MAINT_HASH_BYTES_DONE")"
+    total_human="$(_db_maintenance_format_bytes_human "$DB_MAINT_HASH_BYTES_PLANNED")"
 
     if (( force != 1 )); then
         if [[ "$DB_MAINT_HASH_BACKFILL_TTY_BAR" == yes ]]; then
@@ -4142,14 +4267,14 @@ _db_maintenance_hash_backfill_progress_render() {
         empty_n=$(( DB_MAINT_HASH_BACKFILL_BAR_WIDTH - filled_n ))
         bar="$(printf '%*s' "$filled_n" '' | tr ' ' '#')$(printf '%*s' "$empty_n" '' | tr ' ' '-')"
         elapsed=$(( now - DB_MAINT_HASH_BACKFILL_START_EPOCH ))
-        if (( DB_MAINT_HASH_JOBS_DONE > 0 )) && (( elapsed > 0 )); then
-            rate=$(( DB_MAINT_HASH_JOBS_DONE / elapsed ))
-            eta=$(( (elapsed * (DB_MAINT_HASH_JOBS_TOTAL - DB_MAINT_HASH_JOBS_DONE)) / DB_MAINT_HASH_JOBS_DONE ))
+        if (( DB_MAINT_HASH_BYTES_DONE > 0 )) && (( elapsed > 0 )); then
+            rate=$(( DB_MAINT_HASH_BYTES_DONE / elapsed ))
+            eta=$(( (elapsed * (DB_MAINT_HASH_BYTES_PLANNED - DB_MAINT_HASH_BYTES_DONE)) / DB_MAINT_HASH_BYTES_DONE ))
             eta_str="$(_db_maintenance_hash_backfill_format_eta "$eta")"
-            rate_str="~${rate}/s"
-            line="$(printf 'hash backfill: [%s] %3d%% %d/%d  %s  %s' "$bar" "$progress_pct" "$DB_MAINT_HASH_JOBS_DONE" "$DB_MAINT_HASH_JOBS_TOTAL" "$rate_str" "$eta_str")"
+            rate_str="$(_db_maintenance_format_bytes_human "$rate")/s"
+            line="$(printf 'hash backfill: [%s] %3d%% files %d/%d hashes %d/%d %s/%s %s %s' "$bar" "$progress_pct" "$DB_MAINT_HASH_FILES_DONE" "$DB_MAINT_HASH_FILES_PLANNED" "$DB_MAINT_HASH_JOBS_DONE" "$DB_MAINT_HASH_JOBS_TOTAL" "$done_human" "$total_human" "$rate_str" "$eta_str")"
         else
-            line="$(printf 'hash backfill: [%s] %3d%% %d/%d' "$bar" "$progress_pct" "$DB_MAINT_HASH_JOBS_DONE" "$DB_MAINT_HASH_JOBS_TOTAL")"
+            line="$(printf 'hash backfill: [%s] %3d%% files %d/%d hashes %d/%d %s/%s' "$bar" "$progress_pct" "$DB_MAINT_HASH_FILES_DONE" "$DB_MAINT_HASH_FILES_PLANNED" "$DB_MAINT_HASH_JOBS_DONE" "$DB_MAINT_HASH_JOBS_TOTAL" "$done_human" "$total_human")"
         fi
         printf '\r%s\033[K' "$line" >/dev/tty 2>/dev/null || true
         DB_MAINT_HASH_BACKFILL_LAST_DISPLAY_PCT=$progress_pct
@@ -4158,7 +4283,7 @@ _db_maintenance_hash_backfill_progress_render() {
     fi
 
     if (( progress_pct >= DB_MAINT_HASH_BACKFILL_NEXT_PCT )) && (( DB_MAINT_HASH_BACKFILL_NEXT_PCT <= 100 )); then
-        echo "hash backfill: ${DB_MAINT_HASH_BACKFILL_NEXT_PCT}% ($DB_MAINT_HASH_JOBS_DONE / $DB_MAINT_HASH_JOBS_TOTAL)"
+        echo "hash backfill: ${DB_MAINT_HASH_BACKFILL_NEXT_PCT}% (files $DB_MAINT_HASH_FILES_DONE/$DB_MAINT_HASH_FILES_PLANNED, hashes $DB_MAINT_HASH_JOBS_DONE/$DB_MAINT_HASH_JOBS_TOTAL, $done_human/$total_human)"
         DB_MAINT_HASH_BACKFILL_NEXT_PCT=$(( DB_MAINT_HASH_BACKFILL_NEXT_PCT + 5 ))
         while (( progress_pct >= DB_MAINT_HASH_BACKFILL_NEXT_PCT )) && (( DB_MAINT_HASH_BACKFILL_NEXT_PCT <= 100 )); do
             DB_MAINT_HASH_BACKFILL_NEXT_PCT=$(( DB_MAINT_HASH_BACKFILL_NEXT_PCT + 5 ))
@@ -4179,8 +4304,8 @@ _db_maintenance_hash_backfill_progress_finish() {
         DB_MAINT_HASH_BACKFILL_TTY_BAR=no
         return 0
     fi
-    if (( DB_MAINT_HASH_JOBS_TOTAL > 0 )) && (( DB_MAINT_HASH_JOBS_DONE >= DB_MAINT_HASH_JOBS_TOTAL )) && (( DB_MAINT_HASH_BACKFILL_NEXT_PCT <= 100 )); then
-        echo "hash backfill: 100% ($DB_MAINT_HASH_JOBS_DONE / $DB_MAINT_HASH_JOBS_TOTAL)"
+    if (( DB_MAINT_HASH_FILES_PLANNED > 0 )) && (( DB_MAINT_HASH_FILES_DONE >= DB_MAINT_HASH_FILES_PLANNED )) && (( DB_MAINT_HASH_BACKFILL_NEXT_PCT <= 100 )); then
+        echo "hash backfill: 100% (files $DB_MAINT_HASH_FILES_DONE/$DB_MAINT_HASH_FILES_PLANNED, hashes $DB_MAINT_HASH_JOBS_DONE/$DB_MAINT_HASH_JOBS_TOTAL, $(_db_maintenance_format_bytes_human "$DB_MAINT_HASH_BYTES_DONE"))"
     fi
 }
 
@@ -4190,24 +4315,28 @@ _db_maintenance_hash_job_completed() {
     if (( DB_MAINT_HASH_JOBS_REMAINING > 0 )); then
         DB_MAINT_HASH_JOBS_REMAINING=$(( DB_MAINT_HASH_JOBS_REMAINING - 1 ))
     fi
+    (( ++DB_MAINT_HASH_JOBS_DONE ))
     if (( VERBOSE == 1 )); then
         print_db_maintenance_hash_job_verbose "$path" "$hash_kind"
-    else
-        (( ++DB_MAINT_HASH_JOBS_DONE ))
-        _db_maintenance_hash_backfill_progress_update
     fi
 }
 
 db_maintenance_backfill_missing_hashes() {
-    local path abs md5_hash sha512_hash file_hash_kind file_hash sql
-    local new_md5 new_sha512
-    local updated_this_row=0
-    local md5_backend=""
-    local sha512_backend=""
-    local candidate_where=""
-    local candidate_query=""
-    local need_md5=0 need_sha512=0
-    local inv_file="" backfill_file=""
+    local hash_mode="${1:-both}"
+    local path abs md5_hash sha512_hash file_hash_kind file_hash sql size
+    local new_md5 new_sha512 dual_result
+    local updated_this_row=0 selected_jobs=0 pass_bytes=0
+    local md5_backend="" sha512_backend=""
+    local candidate_where="" candidate_query=""
+    local need_md5=0 need_sha512=0 want_md5=0 want_sha512=0
+    local inv_file="" backfill_file="" hash_write_failed=0
+
+    case "$hash_mode" in
+        md5) want_md5=1 ;;
+        sha512) want_sha512=1 ;;
+        both) want_md5=1; want_sha512=1 ;;
+        *) echo "ERROR: invalid hash backfill mode: $hash_mode" >&2; return 1 ;;
+    esac
 
     DB_MAINT_HASH_ROWS_SCANNED=0
     DB_MAINT_HASH_ROWS_UPDATED=0
@@ -4217,6 +4346,13 @@ db_maintenance_backfill_missing_hashes() {
     DB_MAINT_HASH_JOBS_REMAINING=0
     DB_MAINT_HASH_MD5_JOBS=0
     DB_MAINT_HASH_SHA512_JOBS=0
+    DB_MAINT_HASH_MD5_MISSING=0
+    DB_MAINT_HASH_SHA512_MISSING=0
+    DB_MAINT_HASH_FILES_PLANNED=0
+    DB_MAINT_HASH_FILES_DONE=0
+    DB_MAINT_HASH_BYTES_PLANNED=0
+    DB_MAINT_HASH_BYTES_DONE=0
+    DB_MAINT_HASH_DUAL_SINGLE_PASS=0
     DB_MAINT_HASH_SKIPPED_NOT_FILE=0
     DB_MAINT_HASH_JOBS_DONE=0
     DB_MAINT_HASH_BACKFILL_TTY_BAR=no
@@ -4225,37 +4361,43 @@ db_maintenance_backfill_missing_hashes() {
     DB_MAINT_HASH_BACKFILL_LAST_DISPLAY_EPOCH=0
     DB_MAINT_HASH_BACKFILL_NEXT_PCT=5
 
-    if command -v md5sum >/dev/null 2>&1; then
-        md5_backend="md5sum"
-    elif command -v md5 >/dev/null 2>&1; then
-        md5_backend="md5"
-    elif command -v openssl >/dev/null 2>&1; then
-        md5_backend="openssl"
-    else
-        echo "ERROR: no md5 hash command available for maintenance backfill." >&2
-        exit 1
+    if (( want_md5 == 1 )); then
+        if command -v md5sum >/dev/null 2>&1; then
+            md5_backend="md5sum"
+        elif command -v md5 >/dev/null 2>&1; then
+            md5_backend="md5"
+        elif command -v openssl >/dev/null 2>&1; then
+            md5_backend="openssl"
+        else
+            echo "ERROR: no MD5 command available for hash backfill." >&2
+            return 1
+        fi
     fi
-
-    if command -v sha512sum >/dev/null 2>&1; then
-        sha512_backend="sha512sum"
-    elif command -v shasum >/dev/null 2>&1; then
-        sha512_backend="shasum"
-    elif command -v openssl >/dev/null 2>&1; then
-        sha512_backend="openssl"
-    else
-        echo "ERROR: no sha512 hash command available for maintenance backfill." >&2
-        exit 1
+    if (( want_sha512 == 1 )); then
+        if command -v sha512sum >/dev/null 2>&1; then
+            sha512_backend="sha512sum"
+        elif command -v shasum >/dev/null 2>&1; then
+            sha512_backend="shasum"
+        elif command -v openssl >/dev/null 2>&1; then
+            sha512_backend="openssl"
+        else
+            echo "ERROR: no SHA512 command available for hash backfill." >&2
+            return 1
+        fi
+    fi
+    if (( want_md5 == 1 && want_sha512 == 1 )) && command -v python3 >/dev/null 2>&1; then
+        DB_MAINT_HASH_DUAL_SINGLE_PASS=1
     fi
 
     candidate_where="$(_db_maintenance_hash_backfill_candidate_where)"
     candidate_query="SELECT path, COALESCE(file_md5,''), COALESCE(file_sha512,''), COALESCE(file_hash_kind,''), COALESCE(file_hash,'') FROM checked_paths WHERE ${candidate_where};"
 
-    startup_progress "SQLite maintenance: counting missing hash slots on existing files..."
+    startup_progress "SQLite hash backfill: inventorying missing MD5/SHA512 slots and bytes..."
     inv_file="$(mktemp)"
     if ! rename_sqlite3_db_run -separator '|' "PRAGMA busy_timeout=60000; ${candidate_query}" >"$inv_file" 2>/dev/null; then
-        startup_progress "SQLite maintenance: ERROR — could not query missing-hash candidates (database locked?)"
+        startup_progress "SQLite hash backfill: ERROR — could not query missing-hash candidates"
         rm -f -- "$inv_file"
-        return 0
+        return 1
     fi
     while IFS='|' read -r path md5_hash sha512_hash file_hash_kind file_hash; do
         [[ "$stopped_by_user" == yes ]] && break
@@ -4264,11 +4406,33 @@ db_maintenance_backfill_missing_hashes() {
             (( ++DB_MAINT_HASH_SKIPPED_NOT_FILE ))
             continue
         fi
+        need_md5=0
+        need_sha512=0
+        selected_jobs=0
         if ! _db_maintenance_row_has_effective_md5 "$md5_hash" "$file_hash_kind" "$file_hash"; then
-            (( ++DB_MAINT_HASH_MD5_JOBS ))
+            need_md5=1
+            (( ++DB_MAINT_HASH_MD5_MISSING ))
+            if (( want_md5 == 1 )); then
+                (( ++DB_MAINT_HASH_MD5_JOBS ))
+                (( ++selected_jobs ))
+            fi
         fi
         if ! _db_maintenance_row_has_effective_sha512 "$sha512_hash" "$file_hash_kind" "$file_hash"; then
-            (( ++DB_MAINT_HASH_SHA512_JOBS ))
+            need_sha512=1
+            (( ++DB_MAINT_HASH_SHA512_MISSING ))
+            if (( want_sha512 == 1 )); then
+                (( ++DB_MAINT_HASH_SHA512_JOBS ))
+                (( ++selected_jobs ))
+            fi
+        fi
+        (( selected_jobs > 0 )) || continue
+        size="$(get_file_size_bytes "$path" 2>/dev/null || echo 0)"
+        [[ "$size" =~ ^[0-9]+$ ]] || size=0
+        (( ++DB_MAINT_HASH_FILES_PLANNED ))
+        if (( selected_jobs == 2 && DB_MAINT_HASH_DUAL_SINGLE_PASS == 1 )); then
+            (( DB_MAINT_HASH_BYTES_PLANNED += size ))
+        else
+            (( DB_MAINT_HASH_BYTES_PLANNED += size * selected_jobs ))
         fi
     done <"$inv_file"
     rm -f -- "$inv_file"
@@ -4276,83 +4440,110 @@ db_maintenance_backfill_missing_hashes() {
     DB_MAINT_HASH_JOBS_TOTAL=$(( DB_MAINT_HASH_MD5_JOBS + DB_MAINT_HASH_SHA512_JOBS ))
     DB_MAINT_HASH_JOBS_REMAINING=$DB_MAINT_HASH_JOBS_TOTAL
 
-    startup_progress "SQLite maintenance: hash inventory — md5 missing: $DB_MAINT_HASH_MD5_JOBS, sha512 missing: $DB_MAINT_HASH_SHA512_JOBS, total jobs: $DB_MAINT_HASH_JOBS_TOTAL (skipped not on disk: $DB_MAINT_HASH_SKIPPED_NOT_FILE)"
+    startup_progress "SQLite hash inventory: DB entries now=$DB_MAINT_KNOWN_TOTAL_ROWS; existing paths=$((DB_MAINT_ROWS_CHECKED - DB_MAINT_ROWS_MISSING)); missing MD5=$DB_MAINT_HASH_MD5_MISSING; missing SHA512=$DB_MAINT_HASH_SHA512_MISSING"
+    startup_progress "SQLite hash plan ($hash_mode): files=$DB_MAINT_HASH_FILES_PLANNED; hash slots=$DB_MAINT_HASH_JOBS_TOTAL (MD5=$DB_MAINT_HASH_MD5_JOBS, SHA512=$DB_MAINT_HASH_SHA512_JOBS); estimated bytes to read=$(_db_maintenance_format_bytes_human "$DB_MAINT_HASH_BYTES_PLANNED"); dual-hash single-pass=$([[ $DB_MAINT_HASH_DUAL_SINGLE_PASS -eq 1 ]] && echo yes || echo no)"
 
     if (( DB_MAINT_HASH_JOBS_TOTAL == 0 )); then
-        if (( DB_MAINT_KNOWN_TOTAL_ROWS > 0 )); then
-            startup_progress "SQLite maintenance: hash backfill skipped (no missing hash slots on rows that exist on disk)"
-        else
-            startup_progress "SQLite maintenance: hash backfill skipped (no missing hashes on existing files)"
-        fi
+        startup_progress "SQLite hash backfill skipped: no selected missing hash slots"
         return 0
     fi
 
-    startup_progress "SQLite maintenance: hash backfill starting ($DB_MAINT_HASH_JOBS_REMAINING jobs remaining)..."
-    if (( VERBOSE == 0 )); then
-        DB_MAINT_HASH_BACKFILL_START_EPOCH="$(date +%s)"
-        if [[ -w /dev/tty ]] 2>/dev/null; then
-            DB_MAINT_HASH_BACKFILL_TTY_BAR=yes
-            _db_maintenance_hash_backfill_progress_render 1
-        fi
+    startup_progress "SQLite hash backfill starting; rerun the same command to resume any remaining slots after interruption."
+    DB_MAINT_HASH_BACKFILL_START_EPOCH="$(date +%s)"
+    if (( VERBOSE == 0 )) && [[ -w /dev/tty ]] 2>/dev/null; then
+        DB_MAINT_HASH_BACKFILL_TTY_BAR=yes
+        _db_maintenance_hash_backfill_progress_render 1
     fi
 
     backfill_file="$(mktemp)"
     if ! rename_sqlite3_db_run -separator '|' "PRAGMA busy_timeout=60000; ${candidate_query}" >"$backfill_file" 2>/dev/null; then
-        startup_progress "SQLite maintenance: ERROR — could not list hash backfill candidates (database locked?)"
+        startup_progress "SQLite hash backfill: ERROR — could not list candidates"
         rm -f -- "$backfill_file"
         _db_maintenance_hash_backfill_progress_finish
-        return 0
+        return 1
     fi
 
     while IFS='|' read -r path md5_hash sha512_hash file_hash_kind file_hash; do
         [[ "$stopped_by_user" == yes ]] && break
         [[ -n "$path" ]] || continue
         (( ++DB_MAINT_HASH_ROWS_SCANNED ))
-
-        if [[ ! -f "$path" ]]; then
-            continue
-        fi
+        [[ -f "$path" ]] || continue
 
         abs="$(db_abs_path "$path" 2>/dev/null || true)"
         [[ -n "$abs" ]] || continue
-
         new_md5="$md5_hash"
         new_sha512="$sha512_hash"
         updated_this_row=0
         need_md5=0
         need_sha512=0
+        selected_jobs=0
 
-        if ! _db_maintenance_row_has_effective_md5 "$md5_hash" "$file_hash_kind" "$file_hash"; then
+        if ! _db_maintenance_row_has_effective_md5 "$md5_hash" "$file_hash_kind" "$file_hash" && (( want_md5 == 1 )); then
             need_md5=1
+            (( ++selected_jobs ))
         fi
-        if ! _db_maintenance_row_has_effective_sha512 "$sha512_hash" "$file_hash_kind" "$file_hash"; then
+        if ! _db_maintenance_row_has_effective_sha512 "$sha512_hash" "$file_hash_kind" "$file_hash" && (( want_sha512 == 1 )); then
             need_sha512=1
+            (( ++selected_jobs ))
         fi
-        (( need_md5 == 0 && need_sha512 == 0 )) && continue
+        (( selected_jobs > 0 )) || continue
 
-        if (( need_md5 == 1 )); then
-            case "$md5_backend" in
-                md5sum)  new_md5="$(md5sum -- "$path" | awk '{print tolower($1)}')" ;;
-                md5)     new_md5="$(md5 -q -- "$path" | awk '{print tolower($1)}')" ;;
-                openssl) new_md5="$(openssl dgst -md5 -- "$path" | awk '{print tolower($NF)}')" ;;
-            esac
-            DB_CACHE_HASH_MD5["$abs"]="$new_md5"
-            (( ++DB_MAINT_HASH_MD5_FILLED ))
-            updated_this_row=1
-            _db_maintenance_hash_job_completed "$path" "md5"
+        size="$(get_file_size_bytes "$path" 2>/dev/null || echo 0)"
+        [[ "$size" =~ ^[0-9]+$ ]] || size=0
+        pass_bytes=$((size * selected_jobs))
+
+        if (( need_md5 == 1 && need_sha512 == 1 && DB_MAINT_HASH_DUAL_SINGLE_PASS == 1 )); then
+            dual_result="$(_db_hash_file_md5_sha512_single_pass "$path" 2>/dev/null)" || dual_result=""
+            if IFS=$'\t' read -r new_md5 new_sha512 <<<"$dual_result" \
+                && [[ "$new_md5" =~ ^[0-9a-fA-F]{32}$ && "$new_sha512" =~ ^[0-9a-fA-F]{128}$ ]]; then
+                new_md5="${new_md5,,}"
+                new_sha512="${new_sha512,,}"
+                (( ++DB_MAINT_HASH_MD5_FILLED ))
+                (( ++DB_MAINT_HASH_SHA512_FILLED ))
+                _db_maintenance_hash_job_completed "$path" "md5"
+                _db_maintenance_hash_job_completed "$path" "sha512"
+                updated_this_row=1
+                pass_bytes=$size
+            else
+                echo "WARNING: single-pass MD5+SHA512 failed for '$path'; leaving both slots missing." >&2
+            fi
+        else
+            if (( need_md5 == 1 )); then
+                case "$md5_backend" in
+                    md5sum)  new_md5="$(md5sum -- "$path" | awk '{print tolower($1)}')" ;;
+                    md5)     new_md5="$(md5 -q -- "$path" | awk '{print tolower($1)}')" ;;
+                    openssl) new_md5="$(openssl dgst -md5 -- "$path" | awk '{print tolower($NF)}')" ;;
+                esac
+                if [[ "$new_md5" =~ ^[0-9a-fA-F]{32}$ ]]; then
+                    new_md5="${new_md5,,}"
+                    (( ++DB_MAINT_HASH_MD5_FILLED ))
+                    _db_maintenance_hash_job_completed "$path" "md5"
+                    updated_this_row=1
+                else
+                    echo "WARNING: MD5 calculation failed for '$path'; slot remains missing." >&2
+                fi
+            fi
+            [[ "$stopped_by_user" == yes ]] && break
+            if (( need_sha512 == 1 )); then
+                case "$sha512_backend" in
+                    sha512sum) new_sha512="$(sha512sum -- "$path" | awk '{print tolower($1)}')" ;;
+                    shasum)    new_sha512="$(shasum -a 512 -- "$path" | awk '{print tolower($1)}')" ;;
+                    openssl)   new_sha512="$(openssl dgst -sha512 -- "$path" | awk '{print tolower($NF)}')" ;;
+                esac
+                if [[ "$new_sha512" =~ ^[0-9a-fA-F]{128}$ ]]; then
+                    new_sha512="${new_sha512,,}"
+                    (( ++DB_MAINT_HASH_SHA512_FILLED ))
+                    _db_maintenance_hash_job_completed "$path" "sha512"
+                    updated_this_row=1
+                else
+                    echo "WARNING: SHA512 calculation failed for '$path'; slot remains missing." >&2
+                fi
+            fi
         fi
-        [[ "$stopped_by_user" == yes ]] && break
-        if (( need_sha512 == 1 )); then
-            case "$sha512_backend" in
-                sha512sum) new_sha512="$(sha512sum -- "$path" | awk '{print tolower($1)}')" ;;
-                shasum)    new_sha512="$(shasum -a 512 -- "$path" | awk '{print tolower($1)}')" ;;
-                openssl)   new_sha512="$(openssl dgst -sha512 -- "$path" | awk '{print tolower($NF)}')" ;;
-            esac
-            DB_CACHE_HASH_SHA512["$abs"]="$new_sha512"
-            (( ++DB_MAINT_HASH_SHA512_FILLED ))
-            updated_this_row=1
-            _db_maintenance_hash_job_completed "$path" "sha512"
-        fi
+
+        (( ++DB_MAINT_HASH_FILES_DONE ))
+        (( DB_MAINT_HASH_BYTES_DONE += pass_bytes ))
+        _db_maintenance_hash_backfill_progress_update
 
         if (( updated_this_row == 1 )); then
             sql="UPDATE checked_paths SET file_md5='$(sql_escape "$new_md5")', file_sha512='$(sql_escape "$new_sha512")', last_checked=CURRENT_TIMESTAMP WHERE path='$(sql_escape "$abs")';"
@@ -4360,20 +4551,28 @@ db_maintenance_backfill_missing_hashes() {
             (( ++DB_PENDING_COUNT ))
             (( ++DB_ROWS_UPDATED ))
             (( ++DB_MAINT_HASH_ROWS_UPDATED ))
-            DB_CACHE_ROW_EXISTS["$abs"]=1
             if (( DB_PENDING_COUNT >= DB_FLUSH_EVERY )); then
-                db_flush_pending
+                if ! db_flush_pending; then
+                    hash_write_failed=1
+                    break
+                fi
             fi
         fi
     done <"$backfill_file"
     rm -f -- "$backfill_file"
 
     _db_maintenance_hash_backfill_progress_finish
-    db_flush_pending
+    if ! db_flush_pending; then
+        hash_write_failed=1
+    fi
+    if (( hash_write_failed == 1 )); then
+        startup_progress "SQLite hash backfill stopped after a database write failure; rerun the command to continue missing slots."
+        return 1
+    fi
     if [[ "$stopped_by_user" == yes ]]; then
-        startup_progress "SQLite maintenance: hash backfill interrupted (remaining: $DB_MAINT_HASH_JOBS_REMAINING, md5 filled: $DB_MAINT_HASH_MD5_FILLED, sha512 filled: $DB_MAINT_HASH_SHA512_FILLED, rows updated: $DB_MAINT_HASH_ROWS_UPDATED, skipped not on disk: $DB_MAINT_HASH_SKIPPED_NOT_FILE)"
+        startup_progress "SQLite hash backfill interrupted (remaining hash slots: $DB_MAINT_HASH_JOBS_REMAINING; files processed: $DB_MAINT_HASH_FILES_DONE/$DB_MAINT_HASH_FILES_PLANNED)"
     else
-        startup_progress "SQLite maintenance: hash backfill finished (remaining: $DB_MAINT_HASH_JOBS_REMAINING, md5 filled: $DB_MAINT_HASH_MD5_FILLED, sha512 filled: $DB_MAINT_HASH_SHA512_FILLED, rows updated: $DB_MAINT_HASH_ROWS_UPDATED, skipped not on disk: $DB_MAINT_HASH_SKIPPED_NOT_FILE)"
+        startup_progress "SQLite hash backfill finished (remaining hash slots: $DB_MAINT_HASH_JOBS_REMAINING; files processed: $DB_MAINT_HASH_FILES_DONE/$DB_MAINT_HASH_FILES_PLANNED)"
     fi
 }
 
@@ -4381,19 +4580,34 @@ print_db_maintenance_summary() {
     local profile="${CLI_DB_MAINTENANCE:-full}"
     local status="finished"
 
+    if (( RUN_HASH_BACKFILL == 1 )); then
+        profile="hash-backfill:${CLI_HASH_BACKFILL}"
+    fi
+    (( DB_MAINT_OPERATION_FAILED == 1 )) && status="failed (rerun to continue)"
     [[ "$stopped_by_user" == yes ]] && status="interrupted by user (Ctrl-C)"
 
     echo "========= SQLITE MAINTENANCE SUMMARY ($status) ========="
     echo "Profile:               $profile"
     echo "DB file:               $DB_FILE"
-    echo "DB rows (checked_paths): $DB_MAINT_KNOWN_TOTAL_ROWS"
+    echo "DB rows before sync:   $DB_MAINT_ROWS_TOTAL_BEFORE"
+    echo "DB rows after sync:    $DB_MAINT_KNOWN_TOTAL_ROWS"
     echo "Script start time:     $SCRIPT_START_TIME"
     echo "Script finish time:    ${SCRIPT_FINISH_TIME:-$(date '+%Y-%m-%d %H:%M:%S')}"
     echo "Filesystem crosscheck:"
     echo "  DB rows checked:     $DB_MAINT_ROWS_CHECKED"
+    echo "  paths found on disk: $((DB_MAINT_ROWS_CHECKED - DB_MAINT_ROWS_MISSING))"
     echo "  missing on disk:     $DB_MAINT_ROWS_MISSING"
     echo "  removed from DB:     $DB_MAINT_ROWS_REMOVED"
     echo "Hash backfill:"
+    echo "  missing MD5 slots:   $DB_MAINT_HASH_MD5_MISSING"
+    echo "  missing SHA512 slots: $DB_MAINT_HASH_SHA512_MISSING"
+    echo "  MD5 slots remaining: $((DB_MAINT_HASH_MD5_MISSING - DB_MAINT_HASH_MD5_FILLED))"
+    echo "  SHA512 slots remaining: $((DB_MAINT_HASH_SHA512_MISSING - DB_MAINT_HASH_SHA512_FILLED))"
+    echo "  files planned:       $DB_MAINT_HASH_FILES_PLANNED"
+    echo "  files processed:     $DB_MAINT_HASH_FILES_DONE"
+    echo "  bytes planned:       $(_db_maintenance_format_bytes_human "$DB_MAINT_HASH_BYTES_PLANNED")"
+    echo "  bytes processed:     $(_db_maintenance_format_bytes_human "$DB_MAINT_HASH_BYTES_DONE")"
+    echo "  dual single-pass:    $([[ $DB_MAINT_HASH_DUAL_SINGLE_PASS -eq 1 ]] && echo yes || echo no)"
     echo "  hash jobs planned:   $DB_MAINT_HASH_JOBS_TOTAL"
     echo "  hash jobs done:      $DB_MAINT_HASH_JOBS_DONE"
     echo "  hash jobs remaining: $DB_MAINT_HASH_JOBS_REMAINING"
@@ -4750,40 +4964,10 @@ db_get_cached_file_hash() {
 
 
 db_backfill_missing_hashes_for_existing_file() {
-    local path="$1"
-    local abs md5_hash sha512_hash sql
-
-    (( USE_DB == 1 )) || return 0
-    [[ -f "$path" ]] || return 0
-    is_checksum_file "$path" && return 0
-
-    abs="$(db_abs_path "$path" 2>/dev/null || true)"
-    [[ -n "$abs" ]] || return 0
-
-    [[ -n "${DB_CACHE_ROW_EXISTS[$abs]-}" ]] || return 0
-    md5_hash="${DB_CACHE_HASH_MD5[$abs]-}"
-    sha512_hash="${DB_CACHE_HASH_SHA512[$abs]-}"
-
-    # Performance rule: when a file is skipped because the DB entry is already
-    # valid, do not recompute hashes if at least one cached hash is already
-    # present. Only backfill when both hashes are missing.
-    if [[ -n "$md5_hash" || -n "$sha512_hash" ]]; then
-        return 0
-    fi
-
-    md5_hash="$(md5_of_file "$path")"
-    sha512_hash="$(checksum_of_file sha512 "$path")"
-    DB_CACHE_HASH_MD5["$abs"]="$md5_hash"
-    DB_CACHE_HASH_SHA512["$abs"]="$sha512_hash"
-
-    sql="UPDATE checked_paths SET file_md5='$(sql_escape "$md5_hash")', file_sha512='$(sql_escape "$sha512_hash")', last_checked=CURRENT_TIMESTAMP WHERE path='$(sql_escape "$abs")';"
-    printf '%s
-' "$sql" >> "$DB_PENDING_SQL_FILE"
-    (( ++DB_PENDING_COUNT ))
-    (( ++DB_ROWS_UPDATED ))
-    if (( DB_PENDING_COUNT >= DB_FLUSH_EVERY )); then
-        db_flush_pending
-    fi
+    # Normal rename runs deliberately do not hash unrelated files. Hashes are
+    # recorded when checksum/collision logic needs them, or explicitly via
+    # --backfill-hashes md5|sha512|both.
+    return 0
 }
 
 
@@ -5106,6 +5290,16 @@ while (( $# > 0 )); do
             USE_DB=1
             shift
             ;;
+        --backfill-hashes)
+            [[ $# -ge 2 ]] || { echo "Missing value for --backfill-hashes" >&2; usage >&2; exit 1; }
+            case "$2" in
+                md5|sha512|both) CLI_HASH_BACKFILL="$2" ;;
+                *) echo "Invalid value for --backfill-hashes: $2 (use md5, sha512, or both)" >&2; usage >&2; exit 1 ;;
+            esac
+            USE_DB=1
+            RUN_HASH_BACKFILL=1
+            shift 2
+            ;;
         --db-maintenance)
             [[ $# -ge 2 ]] || { echo "Missing value for --db-maintenance" >&2; usage >&2; exit 1; }
             case "$2" in
@@ -5184,6 +5378,11 @@ while (( $# > 0 )); do
     esac
 done
 
+if (( RUN_DB_MAINTENANCE == 1 && RUN_HASH_BACKFILL == 1 )); then
+    echo "ERROR: --backfill-hashes cannot be combined with --run-db-maintenance or --db-maintenance." >&2
+    exit 1
+fi
+
 rename_sh_window_title_apply_from_saved_argv
 
 if [[ -n "$CLI_DATE_PLACEMENT" ]]; then
@@ -5201,7 +5400,7 @@ print_startup_banner
 
 prompt_use_existing_sqlite_cache_if_present
 
-if (( RUN_DB_MAINTENANCE == 0 )); then
+if (( RUN_DB_MAINTENANCE == 0 && RUN_HASH_BACKFILL == 0 )); then
     prompt_resume_choice_early
 fi
 
@@ -5210,7 +5409,8 @@ startup_progress "Loading exclude filters from: $EXCLUDE_FILTERS_FILE"
 load_exclude_filters
 startup_progress "Exclude filters loaded: ${#EXCLUDE_FILTERS[@]}"
 if (( USE_DB == 1 )); then
-    if (( RUN_DB_MAINTENANCE == 1 )); then
+    if (( RUN_DB_MAINTENANCE == 1 || RUN_HASH_BACKFILL == 1 )); then
+        maintenance_rc=0
         startup_progress "Preparing SQLite maintenance support..."
         db_require_sqlite
         db_migrate_legacy_file
@@ -5222,12 +5422,18 @@ if (( USE_DB == 1 )); then
             exit 1
         fi
         trap on_interrupt_db_maintenance INT
-        startup_progress "Running manual SQLite maintenance profile: $CLI_DB_MAINTENANCE"
-        db_run_maintenance "$CLI_DB_MAINTENANCE" || true
-        db_flush_pending || true
-        db_sqlite_maintenance_finish_local_stage || true
+        if (( RUN_HASH_BACKFILL == 1 )); then
+            startup_progress "Running hash-only SQLite backfill: $CLI_HASH_BACKFILL (no renames)"
+            db_run_hash_backfill "$CLI_HASH_BACKFILL" || maintenance_rc=$?
+        else
+            startup_progress "Running manual SQLite maintenance profile: $CLI_DB_MAINTENANCE"
+            db_run_maintenance "$CLI_DB_MAINTENANCE" || maintenance_rc=$?
+        fi
+        db_flush_pending || maintenance_rc=$?
+        db_sqlite_maintenance_finish_local_stage || maintenance_rc=$?
+        (( maintenance_rc != 0 )) && DB_MAINT_OPERATION_FAILED=1
         print_db_maintenance_summary
-        exit 0
+        exit "$maintenance_rc"
     fi
 
     startup_progress "Initializing SQLite support..."
@@ -5249,8 +5455,8 @@ if (( USE_DB == 1 )); then
         echo "SQLite cache mode override: force recheck enabled"
     fi
     case "$CLI_DB_MAINTENANCE" in
-        auto) echo "SQLite maintenance profile: AUTO (optimize/checkpoint + prune + hash backfill) [only shown during interactive runs; maintenance via --db-maintenance or --run-db-maintenance]" ;;
-        full) echo "SQLite maintenance profile: FULL (optimize + analyze + reindex + WAL truncate + prune + hash backfill) [only shown during interactive runs; maintenance via --db-maintenance or --run-db-maintenance]" ;;
+        auto) echo "SQLite maintenance profile: AUTO (optimize/checkpoint + filesystem reconciliation; no hash backfill)" ;;
+        full) echo "SQLite maintenance profile: FULL (optimize + analyze + reindex + WAL truncate + filesystem reconciliation; no hash backfill)" ;;
     esac
 fi
 
