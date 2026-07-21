@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
+# v. 20260721.132007 - Samsung timestamp media: preserve optional numeric sorting prefix when appending make/model
 # v. 20260721.112812 - GoPro camera labels: GoPro_Hero4_Silver style (not GOPRO4_SILVER)
 
+# 2026.07.21 - v. 19.265.132007 - Samsung NUMBER_YYYYMMDD_HHMMSS media: keep sorting prefix and append Samsung_<model>
 # 2026.07.21 - v. 19.264.112812 - GoPro firmware labels GoPro_Hero#_Edition; legacy GOPRO#_EDITION names migrate on rename
 # 2026.07.19 - v. 19.260.145719 - read_yes_no_quit_confirm: Are you sure? [y/N/q]; Q stops run (checksum session, rename_all, GoPro)
 # 2026.07.19 - v. 19.259.145553 - checksum group prompt: [H/h] all remaining hash groups; [A/a] session auto-yes (not rename_all mislabel); [D/d] checksum dir only
@@ -9381,17 +9383,19 @@ gopro_format_camera_basename_output() {
     fi
 }
 
-# Samsung Galaxy phone photo/video: YYYYMMDD_HHMMSS.ext → YYYYMMDD_HHMMSS_-_-_Samsung_<model>.ext
+# Samsung Galaxy phone photo/video:
+#   YYYYMMDD_HHMMSS.ext        → YYYYMMDD_HHMMSS_-_-_Samsung_<model>.ext
+#   NUMBER_YYYYMMDD_HHMMSS.ext → NUMBER_YYYYMMDD_HHMMSS_-_-_Samsung_<model>.ext
 samsung_media_basename_matches() {
     local bn="$1"
     local lower="${bn,,}"
-    [[ "$lower" =~ ^[0-9]{8}_[0-9]{6}\.(3gp|heic|heif|jpeg|jpg|m4v|mkv|mov|mp4|png|webm)$ ]]
+    [[ "$lower" =~ ^([0-9]+_)?[0-9]{8}_[0-9]{6}\.(3gp|heic|heif|jpeg|jpg|m4v|mkv|mov|mp4|png|webm)$ ]]
 }
 
 samsung_already_renamed_basename_matches() {
     local bn="$1"
     local lower="${bn,,}"
-    [[ "$lower" =~ ^[0-9]{8}_[0-9]{6}_(-__-_|-_-_)samsung_.+\.(3gp|heic|heif|jpeg|jpg|m4v|mkv|mov|mp4|png|webm)$ ]]
+    [[ "$lower" =~ ^([0-9]+_)?[0-9]{8}_[0-9]{6}_(-__-_|-_-_)samsung_.+\.(3gp|heic|heif|jpeg|jpg|m4v|mkv|mov|mp4|png|webm)$ ]]
 }
 
 # Bare YYYYMMDD_HHMMSS.{mp4,m4v,mov} without a camera tag yet (e.g. phone export or GoPro without GH prefix).
@@ -9591,7 +9595,7 @@ transform_samsung_media_basename() {
 
     ext="${base##*.}"
     stem="${base%.*}"
-    [[ "$stem" =~ ^[0-9]{8}_[0-9]{6}$ ]] || return 0
+    [[ "$stem" =~ ^([0-9]+_)?[0-9]{8}_[0-9]{6}$ ]] || return 0
     ts="$stem"
 
     gopro_format_camera_basename_output "$ts" "Samsung" "$friendly_model" "" "$ext"
