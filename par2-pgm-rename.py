@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# v. 20260721.154223 - list-names subcommand; --pairs-file for large rename batches
 # v. 20260719.093400 - hash inventory subcommand for startup scope summary
 
 # 2026.07.19 - v. 1.2.7.0 - hash inventory CLI for par2-pgm-check startup (counts + in-scope paths)
@@ -31,6 +32,8 @@ def usage():
     print(f"PAR2 Rename version {VERSION} (Python CLI)")
     print()
     print("Usage : <par file> [old filename//new filename]")
+    print("        <par file> --pairs-file <path>")
+    print("        <par file> list-names")
     print()
     print("  The <par file> can be absolute-path or relative-path.")
     print("  You can specify multiple sets of [old filename//new filename].")
@@ -656,15 +659,24 @@ def update_par2_hashes(folder_path, hash_file=None, par_file_path=None):
     )
 
 
-def list_source_names(par_file_path):
-    folder_path, par_files = find_par2_set(par_file_path)
+def par2_index_file(par_files):
     index_file = par_files[0]
     for candidate in par_files:
         if ".vol" not in candidate.lower():
             index_file = candidate
             break
+    return index_file
 
-    _, source_names = read_source_names(folder_path, index_file)
+
+def read_par2_source_names(par_file_path):
+    folder_path, par_files = find_par2_set(par_file_path)
+    _, source_names = read_source_names(folder_path, par2_index_file(par_files))
+    return source_names
+
+
+def list_source_names(par_file_path):
+    folder_path, par_files = find_par2_set(par_file_path)
+    source_names = read_par2_source_names(par_file_path)
     print(f"PAR2 set in: {folder_path}")
     print(f"PAR2 files: {len(par_files)}")
     print(f"Source files: {len(source_names)}")
@@ -673,13 +685,38 @@ def list_source_names(par_file_path):
         print(name)
 
 
+def list_source_names_only(par_file_path):
+    for name in read_par2_source_names(par_file_path):
+        print(name)
+
+
+def parse_rename_argv(argv):
+    if len(argv) < 2:
+        raise ValueError("PAR2 index file required.")
+
+    par_file_path = argv[1]
+    rename_args = []
+    index = 2
+    while index < len(argv):
+        token = argv[index]
+        if token == "--pairs-file":
+            if index + 1 >= len(argv):
+                raise ValueError("--pairs-file requires a path.")
+            with open(argv[index + 1], encoding="utf-8") as handle:
+                for line in handle:
+                    line = line.strip()
+                    if line and not line.startswith("#"):
+                        rename_args.append(line)
+            index += 2
+            continue
+        rename_args.append(token)
+        index += 1
+    return par_file_path, rename_args
+
+
 def apply_renames(par_file_path, rename_args):
     folder_path, par_files = find_par2_set(par_file_path)
-    index_file = par_files[0]
-    for candidate in par_files:
-        if ".vol" not in candidate.lower():
-            index_file = candidate
-            break
+    index_file = par2_index_file(par_files)
 
     set_id, source_names = read_source_names(folder_path, index_file)
     rename_map = build_rename_map(rename_args, source_names)
@@ -738,14 +775,17 @@ def main(argv):
         usage()
         return 1
 
-    par_file_path = argv[1]
-    rename_args = argv[2:]
-
     try:
+        if len(argv) >= 3 and argv[2] == "list-names":
+            list_source_names_only(argv[1])
+            return 0
+
+        par_file_path, rename_args = parse_rename_argv(argv)
         if not rename_args:
             list_source_names(par_file_path)
             print()
             print("To rename, add pairs as: old filename//new filename")
+            print("  Or: --pairs-file <path>  (one old//new pair per line)")
             return 0
 
         apply_renames(par_file_path, rename_args)

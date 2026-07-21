@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20260721.154223 - fix ARG_MAX: chunk par2 verify; filter rename pairs; pairs-file
 # v. 20260721.150446 - defer subtree scan to Step 3; progress msg; faster nested-set skip
 # v. 20260721.144524 - recursive data scan; detect dir+file renames for par2 metadata fix
 # v. 20260719.140918 - nicer PAR2 discovery summary; skip redundant single-set breakdown
@@ -10,6 +11,7 @@
 # v. 20260719.103506 - fix no-arg run: empty POSITIONAL[@]:- became one "" element
 # v. 20260719.102800 - multi-set selection: A/a, ranges 1-4, --all, multiple paths
 
+# 2026.07.21 - v. 0.1.26 - Fix ARG_MAX on large trees: chunk verify; filter/dedupe rename pairs
 # 2026.07.21 - v. 0.1.25 - Defer data-file tree scan to Step 3; show progress on large trees
 # 2026.07.21 - v. 0.1.24 - Step 3 scans subdirs; fix PAR2 paths after dir/file renames
 # 2026.07.19 - v. 0.1.23 - Discovery summary: plain English, no lone "." line for 1 set
@@ -812,6 +814,8 @@ PAR2_SET_MEMBERS=()
 RESOLVE_PAR2_ERROR=""
 PGM_HASH_VERIFY_MSG=""
 PROMPT_TIMEOUT="${PROMPT_TIMEOUT:-100}"
+PGM_PAR2_ARG_BATCH="${PGM_PAR2_ARG_BATCH:-2000}"
+PGM_RENAME_BATCH="${PGM_RENAME_BATCH:-16}"
 PGM_SCRIPT_START_STR=""
 START_DIR=""
 CLI_SCOPE=""
@@ -1353,6 +1357,43 @@ run_par2() {
     "$PAR2_CMD" "$mode" "$@"
 }
 
+# Run par2 against DATA_FILES in chunks to stay under ARG_MAX on large trees.
+pgm_par2_run_chunked() {
+    local mode="$1"
+    local outfile="${2:-}"
+    local par2_base batch_size chunk=() i rc=0 last_rc=0
+
+    par2_base="$(basename "$PAR2_FILE")"
+    batch_size="$PGM_PAR2_ARG_BATCH"
+    (( ${#DATA_FILES[@]} > 0 )) || return 0
+
+    if [[ -n "$outfile" ]]; then
+        : > "$outfile"
+    fi
+
+    for (( i=0; i < ${#DATA_FILES[@]}; i++ )); do
+        chunk+=("${DATA_FILES[$i]}")
+        if ((${#chunk[@]} >= batch_size)) || (( i == ${#DATA_FILES[@]} - 1 )); then
+            if [[ -n "$outfile" ]]; then
+                (
+                    cd "$DATA_DIR" || exit 1
+                    run_par2 "$mode" "$par2_base" "${chunk[@]}"
+                ) >>"$outfile" 2>&1
+                last_rc=$?
+            else
+                (
+                    cd "$DATA_DIR" || exit 1
+                    run_par2 "$mode" "$par2_base" "${chunk[@]}"
+                )
+                last_rc=$?
+            fi
+            (( last_rc != 0 )) && rc=$last_rc
+            chunk=()
+        fi
+    done
+    return "$rc"
+}
+
 run_rename_py() {
     if [[ -n "${DATA_DIR:-}" && -d "$DATA_DIR" ]]; then
         ( cd "$DATA_DIR" && "$PYTHON_CMD" "$RENAME_PY" "$@" )
@@ -1409,7 +1450,7 @@ restore_par2_file_timestamps() {
 
 extract_misnamed_pairs() {
     local out_file="$1"
-    local disk_file par2_name
+    local disk_file par2_name par2_names_file
 
     MISNAMED_DISK=()
     MISNAMED_PAR2=()
@@ -1417,18 +1458,29 @@ extract_misnamed_pairs() {
 
     command -v "$PYTHON_CMD" >/dev/null 2>&1 || die "'$PYTHON_CMD' not found (needed to parse par2 output)."
 
+    par2_names_file=$(mktemp "${TMPDIR:-/tmp}/par2-pgm-check.XXXXXX")
+    if ! run_rename_py "$(basename "$PAR2_FILE")" list-names >"$par2_names_file" 2>/dev/null; then
+        : > "$par2_names_file"
+    fi
+
     while IFS='|' read -r disk_file par2_name; do
         [[ -n "$disk_file" && -n "$par2_name" ]] || continue
         MISNAMED_DISK+=("$disk_file")
         MISNAMED_PAR2+=("$par2_name")
         RENAME_PAIRS+=("${par2_name}//${disk_file}")
-    done < <("$PYTHON_CMD" - "$out_file" "$DATA_DIR" <<'PY'
+    done < <("$PYTHON_CMD" - "$out_file" "$DATA_DIR" "$par2_names_file" <<'PY'
 import os
 import re
 import sys
 
 path = sys.argv[1]
 data_dir = os.path.abspath(sys.argv[2]) if len(sys.argv) > 2 and sys.argv[2] else ""
+par2_names_path = sys.argv[3] if len(sys.argv) > 3 else ""
+
+par2_names = set()
+if par2_names_path:
+    with open(par2_names_path, encoding="utf-8") as handle:
+        par2_names = {line.strip() for line in handle if line.strip()}
 
 with open(path, "rb") as handle:
     text = handle.read().decode("utf-8", errors="replace").replace("\r", "")
@@ -1446,6 +1498,7 @@ def rel_from_data_dir(disk_path):
     return disk_path
 
 
+seen_par2 = set()
 for line in text.split("\n"):
     if "is a match for" not in line or "File:" not in line:
         continue
@@ -1459,16 +1512,52 @@ for line in text.split("\n"):
         r'File:\s*"([^"]+)"\s.*?\bis a match for\s*"([^"]+)"',
         line,
     )
-    if match:
-        disk = rel_from_data_dir(match.group(1))
-        par2_name = match.group(2).rstrip(".").replace("\\", "/")
-        print(f"{disk}|{par2_name}")
+    if not match:
+        continue
+    disk = rel_from_data_dir(match.group(1))
+    par2_name = match.group(2).rstrip(".").replace("\\", "/")
+    if par2_names and par2_name not in par2_names:
+        continue
+    if par2_name in seen_par2:
+        continue
+    seen_par2.add(par2_name)
+    print(f"{disk}|{par2_name}")
 PY
     )
+    rm -f "$par2_names_file"
+}
+
+pgm_apply_rename_from_pairs_file() {
+    local pairs_file="$1"
+    local batch_file
+    local -a batch=()
+    local line count=0 rename_rc=0
+
+    batch_file=$(mktemp "${TMPDIR:-/tmp}/par2-pgm-check.XXXXXX")
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        [[ -n "$line" ]] || continue
+        batch+=("$line")
+        count=$((count + 1))
+        if (( count >= PGM_RENAME_BATCH )); then
+            printf '%s\n' "${batch[@]}" >"$batch_file"
+            run_rename_py "$(basename "$PAR2_FILE")" --pairs-file "$batch_file" || rename_rc=$?
+            (( rename_rc == 0 )) || { rm -f "$batch_file"; return "$rename_rc"; }
+            batch=()
+            count=0
+        fi
+    done <"$pairs_file"
+
+    if (( count > 0 )); then
+        printf '%s\n' "${batch[@]}" >"$batch_file"
+        run_rename_py "$(basename "$PAR2_FILE")" --pairs-file "$batch_file" || rename_rc=$?
+    fi
+
+    rm -f "$batch_file"
+    return "$rename_rc"
 }
 
 prompt_and_apply_rename() {
-    local i ans rename_args=()
+    local ans pairs_file rename_rc=0
 
     (( ${#RENAME_PAIRS[@]} > 0 )) || return 0
 
@@ -1514,12 +1603,12 @@ prompt_and_apply_rename() {
     fi
 
     pgm_print_step_header "Step 4: update PAR2 metadata"
-    rename_args=("$(basename "$PAR2_FILE")")
-    for i in "${RENAME_PAIRS[@]}"; do
-        rename_args+=("$i")
-    done
-    run_rename_py "${rename_args[@]}"
-    local rename_rc=$?
+    pairs_file=$(mktemp "${TMPDIR:-/tmp}/par2-pgm-check.XXXXXX")
+    printf '%s\n' "${RENAME_PAIRS[@]}" >"$pairs_file"
+    echo "Applying ${#RENAME_PAIRS[@]} PAR2 metadata rename pair(s)..."
+    pgm_apply_rename_from_pairs_file "$pairs_file"
+    rename_rc=$?
+    rm -f "$pairs_file"
     (( rename_rc == 0 )) || die "PAR2 metadata update failed (exit $rename_rc)."
     pgm_print_step_verdict 4 OK "PAR2 metadata updated for misnamed file(s)."
 
@@ -1691,11 +1780,9 @@ pgm_run_one_par2_set() {
     pgm_collect_data_files_for_scan
     pgm_print_step_header "Step 3: verify with directory scan (subdirs; detect misnamed files)"
     OUT2_FILE=$(mktemp "${TMPDIR:-/tmp}/par2-pgm-check.XXXXXX")
-    (
-        cd "$DATA_DIR" || exit 1
-        run_par2 verify "$(basename "$PAR2_FILE")" "${DATA_FILES[@]}"
-    ) 2>&1 | tee "$OUT2_FILE" | pgm_filter_par2_verify_stream
-    RC2=${PIPESTATUS[0]}
+    pgm_par2_run_chunked verify "$OUT2_FILE"
+    RC2=$?
+    <"$OUT2_FILE" pgm_filter_par2_verify_stream
     pgm_timing_lap_to PGM_TIMING_PAR2_SCAN_SEC
     echo
 
@@ -1710,10 +1797,7 @@ pgm_run_one_par2_set() {
         pgm_print_step_header "Repair (disk rename)"
         echo "Note: par2 repair renames disk files to match PAR2, not the other way around."
         set +e
-        (
-            cd "$DATA_DIR" || exit 1
-            run_par2 repair "$(basename "$PAR2_FILE")" "${DATA_FILES[@]}"
-        )
+        pgm_par2_run_chunked repair
         SUMMARY_RC=$?
         set -e
     fi
