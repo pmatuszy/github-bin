@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20260721.144524 - recursive data scan; detect dir+file renames for par2 metadata fix
 # v. 20260719.140918 - nicer PAR2 discovery summary; skip redundant single-set breakdown
 # v. 20260719.134000 - --scope subdirs|current: discover PAR2 sets in directory tree
 # v. 20260719.114307 - set-selection prompt: q/A single key, no Enter required
@@ -8,6 +9,7 @@
 # v. 20260719.103506 - fix no-arg run: empty POSITIONAL[@]:- became one "" element
 # v. 20260719.102800 - multi-set selection: A/a, ranges 1-4, --all, multiple paths
 
+# 2026.07.21 - v. 0.1.24 - Step 3 scans subdirs; fix PAR2 paths after dir/file renames
 # 2026.07.19 - v. 0.1.23 - Discovery summary: plain English, no lone "." line for 1 set
 # 2026.07.19 - v. 0.1.22 - --scope subdirs|current; discover PAR2 sets under start directory
 # 2026.07.19 - v. 0.1.21 - Set-selection q/A cancel/default without pressing Enter
@@ -65,6 +67,10 @@ Environment:
 If a .sha512 / .sha256 / .md5 file exists in the directory, Step 1 scans all
 hash manifests, reports how many list in-scope PAR2 archives for this set, and
 verifies checksums only in those file(s). Other hash entries are ignored.
+
+Step 3 scans data files in the PAR2 directory and its subdirectories (skipping
+nested PAR2-set folders) to find content matches when paths on disk differ from
+names stored inside the PAR2 set (including renamed subdirectories and files).
 
 Examples:
   $(basename "$0")
@@ -1265,7 +1271,7 @@ pgm_print_startup_inventory() {
     fi
     echo
 
-    echo "Data files: ${#DATA_FILES[@]} in directory."
+    echo "Data files: ${#DATA_FILES[@]} under directory tree (subdirectories included)."
 }
 
 abs_path() {
@@ -1282,21 +1288,64 @@ abs_path() {
 
 collect_data_files() {
     local dir="$1"
-    local f base
+    local f base ap dir_ap rel
     DATA_FILES=()
-    shopt -s nullglob
-    for f in "$dir"/*; do
+    dir_ap="$(abs_path "$dir")"
+
+    while IFS= read -r -d '' f; do
         [[ -f "$f" ]] || continue
+        pgm_path_is_under_nested_par2_set "$f" "$dir_ap" && continue
         base="$(basename "$f")"
         case "$base" in
             *.par2|*.PAR2) continue ;;
-            *_old.par2) continue ;;
+            *_old.par2|*_old.PAR2) continue ;;
             *.sha512|*.SHA512|*.sha256|*.SHA256|*.md5|*.MD5) continue ;;
             par2-pgm-check.sh|par2-pgm-rename.py) continue ;;
         esac
-        DATA_FILES+=("$f")
+        ap="$(abs_path "$f")"
+        if [[ "$ap" == "$dir_ap"/* ]]; then
+            rel="${ap#"$dir_ap"/}"
+        else
+            rel="$base"
+        fi
+        DATA_FILES+=("$rel")
+    done < <(find "$dir_ap" -type f -print0 2>/dev/null)
+
+    if (( ${#DATA_FILES[@]} > 1 )); then
+        IFS=$'\n' DATA_FILES=($(printf '%s\n' "${DATA_FILES[@]}" | LC_ALL=C sort -f))
+        unset IFS
+    fi
+}
+
+pgm_dir_has_par2_index() {
+    local dir="$1"
+    local f
+
+    shopt -s nullglob
+    for f in "$dir"/*.par2 "$dir"/*.PAR2; do
+        [[ -f "$f" ]] || continue
+        is_par2_index_file "$(basename "$f")" && return 0
     done
     shopt -u nullglob
+    return 1
+}
+
+# Skip files under a child folder that is its own PAR2 set (has an index .par2).
+pgm_path_is_under_nested_par2_set() {
+    local file_path="$1"
+    local data_dir="$2"
+    local d file_ap data_ap
+
+    file_ap="$(abs_path "$file_path")"
+    data_ap="$(abs_path "$data_dir")"
+    [[ "$file_ap" == "$data_ap"/* ]] || return 1
+
+    d="$(dirname "$file_ap")"
+    while [[ "$d" != "$data_ap" ]]; do
+        pgm_dir_has_par2_index "$d" && return 0
+        d="$(dirname "$d")"
+    done
+    return 1
 }
 
 run_par2() {
@@ -1374,13 +1423,29 @@ extract_misnamed_pairs() {
         MISNAMED_DISK+=("$disk_file")
         MISNAMED_PAR2+=("$par2_name")
         RENAME_PAIRS+=("${par2_name}//${disk_file}")
-    done < <("$PYTHON_CMD" - "$out_file" <<'PY'
+    done < <("$PYTHON_CMD" - "$out_file" "$DATA_DIR" <<'PY'
+import os
 import re
 import sys
 
 path = sys.argv[1]
+data_dir = os.path.abspath(sys.argv[2]) if len(sys.argv) > 2 and sys.argv[2] else ""
+
 with open(path, "rb") as handle:
     text = handle.read().decode("utf-8", errors="replace").replace("\r", "")
+
+
+def rel_from_data_dir(disk_path):
+    disk_path = disk_path.replace("\\", "/")
+    if not data_dir:
+        return disk_path
+    if os.path.isabs(disk_path):
+        try:
+            return os.path.relpath(disk_path, data_dir).replace("\\", "/")
+        except ValueError:
+            return disk_path
+    return disk_path
+
 
 for line in text.split("\n"):
     if "is a match for" not in line or "File:" not in line:
@@ -1396,7 +1461,9 @@ for line in text.split("\n"):
         line,
     )
     if match:
-        print(f"{match.group(1)}|{match.group(2).rstrip('.')}")
+        disk = rel_from_data_dir(match.group(1))
+        par2_name = match.group(2).rstrip(".").replace("\\", "/")
+        print(f"{disk}|{par2_name}")
 PY
     )
 }
@@ -1622,9 +1689,12 @@ pgm_run_one_par2_set() {
     fi
 
     pgm_print_step_verdict 2 WARN "Not all files OK under PAR2 names; running directory scan."
-    pgm_print_step_header "Step 3: verify with directory scan (detect misnamed files)"
+    pgm_print_step_header "Step 3: verify with directory scan (subdirs; detect misnamed files)"
     OUT2_FILE=$(mktemp "${TMPDIR:-/tmp}/par2-pgm-check.XXXXXX")
-    run_par2 verify "$PAR2_FILE" "${DATA_FILES[@]}" 2>&1 | tee "$OUT2_FILE" | pgm_filter_par2_verify_stream
+    (
+        cd "$DATA_DIR" || exit 1
+        run_par2 verify "$(basename "$PAR2_FILE")" "${DATA_FILES[@]}"
+    ) 2>&1 | tee "$OUT2_FILE" | pgm_filter_par2_verify_stream
     RC2=${PIPESTATUS[0]}
     pgm_timing_lap_to PGM_TIMING_PAR2_SCAN_SEC
     echo
@@ -1640,7 +1710,10 @@ pgm_run_one_par2_set() {
         pgm_print_step_header "Repair (disk rename)"
         echo "Note: par2 repair renames disk files to match PAR2, not the other way around."
         set +e
-        run_par2 repair "$PAR2_FILE" "${DATA_FILES[@]}"
+        (
+            cd "$DATA_DIR" || exit 1
+            run_par2 repair "$(basename "$PAR2_FILE")" "${DATA_FILES[@]}"
+        )
         SUMMARY_RC=$?
         set -e
     fi
