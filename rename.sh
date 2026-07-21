@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# v. 20260721.193350 - store portable relative SQLite paths, guard mass pruning, and make debug logging non-fatal
 # v. 20260721.170803 - offer session auto-yes for GoPro legacy-label and Samsung/GoPro/Nikon camera renames
 # v. 20260721.161244 - bootstrap missing/empty hash DB from filesystem files before checksum inventory
 # v. 20260721.160630 - keep busy-timeout PRAGMA output out of SQLite count and warmup query results
@@ -7,6 +8,7 @@
 # v. 20260721.132007 - Samsung timestamp media: preserve optional numeric sorting prefix when appending make/model
 # v. 20260721.112812 - GoPro camera labels: GoPro_Hero4_Silver style (not GOPRO4_SILVER)
 
+# 2026.07.21 - v. 19.271.193350 - relative DB paths with confirmed legacy-root migration; mass-delete guard; XDG debug log fallback
 # 2026.07.21 - v. 19.270.170803 - rename prompt [G] covers GoPro legacy label normalization plus Samsung/GoPro/Nikon camera make/model renames
 # 2026.07.21 - v. 19.269.161244 - --backfill-hashes creates/bootstraps cache from filesystem files, then fills selected checksums
 # 2026.07.21 - v. 19.268.160630 - fix false locked/unreadable result caused by busy_timeout value contaminating captured SELECT output
@@ -985,11 +987,13 @@ DB_MAINT_FS_FILES_EXCLUDED=0
 DB_MAINT_FS_ROWS_SEEDED=0
 DB_MAINT_LAST_SQLITE_ERR=""
 DB_MAINT_OPERATION_FAILED=0
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
-WORKSPACE_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd -P)"
-DEBUG_LOG_PATH="${DEBUG_LOG_PATH:-$WORKSPACE_ROOT/debug-8439cd.log}"
+DEBUG_LOG_PATH="${DEBUG_LOG_PATH:-}"
+DEBUG_LOG_WARNED=0
+DEBUG_LOG_INITIALIZED=0
 DEBUG_SESSION_ID="8439cd"
 DEBUG_RUN_ID="${DEBUG_RUN_ID:-pre-fix}"
+DB_MAINT_MAX_MISSING_PERCENT="${DB_MAINT_MAX_MISSING_PERCENT:-25}"
+DB_MAINT_ALLOW_MASS_DELETE="${DB_MAINT_ALLOW_MASS_DELETE:-0}"
 
 set -Eeuo pipefail
 shopt -s nullglob
@@ -1077,6 +1081,34 @@ on_err() {
 }
 trap 'on_err "$?" "$LINENO" "$BASH_COMMAND"' ERR
 
+debug_log_init() {
+    local requested="${DEBUG_LOG_PATH:-}"
+    local state_dir="${XDG_STATE_HOME:-$HOME/.local/state}/rename.sh"
+    local candidate="" parent=""
+    local -a candidates=()
+
+    [[ -n "$requested" ]] && candidates+=("$requested")
+    candidates+=("$state_dir/debug.log" "${TMPDIR:-/tmp}/rename.sh-${UID:-$(id -u)}-debug.log")
+
+    for candidate in "${candidates[@]}"; do
+        parent="$(dirname -- "$candidate")"
+        mkdir -p -- "$parent" 2>/dev/null || true
+        if ( : >>"$candidate" ) 2>/dev/null; then
+            DEBUG_LOG_PATH="$candidate"
+            DEBUG_LOG_INITIALIZED=1
+            return 0
+        fi
+    done
+
+    DEBUG_LOG_PATH=/dev/null
+    DEBUG_LOG_INITIALIZED=1
+    if (( DEBUG_LOG_WARNED == 0 )); then
+        echo "WARNING: debug log is not writable; continuing with debug logging disabled." >&2
+        DEBUG_LOG_WARNED=1
+    fi
+    return 0
+}
+
 debug_log() {
     local hypothesis_id="$1"
     local location="$2"
@@ -1084,10 +1116,18 @@ debug_log() {
     local data="$4"
     local timestamp
     local log_id
+    (( DEBUG_LOG_INITIALIZED == 1 )) || debug_log_init
     timestamp="$(date +%s%3N 2>/dev/null || printf '%s000' "$(date +%s)")"
     log_id="log_${timestamp}_$$"
-    printf '{"sessionId":"%s","id":"%s","timestamp":%s,"location":"%s","message":"%s","data":%s,"runId":"%s","hypothesisId":"%s"}\n' \
-        "$DEBUG_SESSION_ID" "$log_id" "$timestamp" "$location" "$message" "$data" "$DEBUG_RUN_ID" "$hypothesis_id" >> "$DEBUG_LOG_PATH"
+    if ! printf '{"sessionId":"%s","id":"%s","timestamp":%s,"location":"%s","message":"%s","data":%s,"runId":"%s","hypothesisId":"%s"}\n' \
+        "$DEBUG_SESSION_ID" "$log_id" "$timestamp" "$location" "$message" "$data" "$DEBUG_RUN_ID" "$hypothesis_id" >>"$DEBUG_LOG_PATH" 2>/dev/null; then
+        DEBUG_LOG_PATH=/dev/null
+        if (( DEBUG_LOG_WARNED == 0 )); then
+            echo "WARNING: debug log became unwritable; continuing with debug logging disabled." >&2
+            DEBUG_LOG_WARNED=1
+        fi
+    fi
+    return 0
 }
 
 usage() {
@@ -1151,12 +1191,15 @@ usage_environment_tunables() {
     cat <<'EOF'
 
 Environment / tunables (read at startup; use export or prefix on the same line as rename.sh):
-  DEBUG_LOG_PATH                      JSON debug log file (default under workspace root).
+  DEBUG_LOG_PATH                      JSON debug log file (default: XDG state directory, then /tmp).
       export DEBUG_LOG_PATH=/tmp/rename-debug.log
+                                      Unwritable debug logging is disabled with a warning; it never stops renaming.
   DEBUG_RUN_ID                        runId string inside each JSON log line.
       DEBUG_RUN_ID=batch1 rename.sh -v --use-db
   DATE_PLACEMENT                      BBC/iPlayer -date_ handling: front (default) or original (same as --date-placement).
       DATE_PLACEMENT=original rename.sh --use-db --scope subdirs ./_ogladam
+  DB_MAINT_MAX_MISSING_PERCENT        Safety-stop threshold for maintenance pruning (default 25%, minimum 100 rows).
+  DB_MAINT_ALLOW_MASS_DELETE=1        Explicitly allow pruning above that threshold.
   EXIFLOC                             Override exiftool path (same as RENAME_EXIFTOOL; zmien-nazwe script name)
       EXIFLOC=/opt/exiftool/exiftool rename.sh --scope current
   LARGE_HASHFILE_LINE_PROMPT_THRESHOLD  Checksum lists with more lines than this prompt before full check ([y/N/q]); default 20.
@@ -2839,14 +2882,76 @@ db_abs_path_if_deleted() {
     fi
 }
 
+# checked_paths.path is stored relative to the directory containing the cache
+# (normally START_DIR). Runtime caches and filesystem checks still use absolute
+# paths, so moving the directory and its DB between Linux/WSL mounts is safe.
+db_path_root_abs() {
+    db_abs_path "$START_DIR" 2>/dev/null
+}
+
+db_path_to_storage() {
+    local path="$1" abs="" root="" rel=""
+
+    abs="$(db_abs_path_if_deleted "$path" 2>/dev/null || true)"
+    root="$(db_path_root_abs 2>/dev/null || true)"
+    [[ -n "$abs" && -n "$root" ]] || return 1
+    if [[ "$abs" == "$root" ]]; then
+        printf '.'
+        return 0
+    fi
+    if [[ "$abs" == "$root/"* ]]; then
+        printf '%s' "${abs#"$root/"}"
+        return 0
+    fi
+    if command -v realpath >/dev/null 2>&1; then
+        rel="$(realpath --relative-to="$root" -m -- "$abs" 2>/dev/null || true)"
+    fi
+    if [[ -z "$rel" ]] && command -v python3 >/dev/null 2>&1; then
+        rel="$(python3 - "$root" "$abs" <<'PY'
+import os
+import sys
+print(os.path.relpath(sys.argv[2], sys.argv[1]))
+PY
+)"
+    fi
+    [[ -n "$rel" ]] || return 1
+    printf '%s' "$rel"
+}
+
+db_path_from_storage() {
+    local stored="$1" root="" combined=""
+
+    [[ -n "$stored" ]] || return 1
+    if [[ "$stored" == /* ]]; then
+        printf '%s' "$stored"
+        return 0
+    fi
+    root="$(db_path_root_abs 2>/dev/null || true)"
+    [[ -n "$root" ]] || return 1
+    if [[ "$stored" == "." ]]; then
+        printf '%s' "$root"
+        return 0
+    fi
+    combined="$root/$stored"
+    if command -v realpath >/dev/null 2>&1; then
+        realpath -m -- "$combined" 2>/dev/null
+    elif command -v readlink >/dev/null 2>&1; then
+        readlink -m -- "$combined" 2>/dev/null
+    else
+        printf '%s' "$combined"
+    fi
+}
+
 db_delete_cached_row_for_path() {
     local path="$1"
-    local abs
+    local abs stored
     (( USE_DB == 1 )) || return 0
     [[ -e "$path" ]] || return 0
     abs="$(db_abs_path "$path" 2>/dev/null || true)"
     [[ -n "$abs" ]] || return 0
-    printf "DELETE FROM checked_paths WHERE path='%s';\n" "$(sql_escape "$abs")" >> "$DB_PENDING_SQL_FILE"
+    stored="$(db_path_to_storage "$abs" 2>/dev/null || true)"
+    [[ -n "$stored" ]] || return 0
+    printf "DELETE FROM checked_paths WHERE path='%s';\n" "$(sql_escape "$stored")" >> "$DB_PENDING_SQL_FILE"
     unset 'DB_CACHE_META[$abs]'
     unset 'DB_CACHE_STATUS[$abs]'
     unset 'DB_CACHE_HASH_MD5[$abs]'
@@ -3584,6 +3689,149 @@ SQL
     return 1
 }
 
+db_migrate_absolute_paths_to_relative() {
+    local absolute_file="" current_file="" legacy_file="" sql_file=""
+    local stored="" new_stored="" root="" old_root="" rel="" runtime=""
+    local absolute_count=0 current_count=0 legacy_count=0 mapped_existing=0
+    local old_esc="" new_esc="" answer=""
+
+    root="$(db_path_root_abs 2>/dev/null || true)"
+    [[ -n "$root" ]] || return 1
+    absolute_file="$(mktemp)"
+    current_file="$(mktemp)"
+    legacy_file="$(mktemp)"
+    sql_file="$(mktemp)"
+
+    if ! rename_sqlite3_db_run "SELECT path FROM checked_paths WHERE SUBSTR(path,1,1)='/';" >"$absolute_file" 2>/dev/null; then
+        rm -f -- "$absolute_file" "$current_file" "$legacy_file" "$sql_file"
+        echo "ERROR: could not inspect legacy absolute SQLite paths." >&2
+        return 1
+    fi
+
+    while IFS= read -r stored; do
+        [[ -n "$stored" ]] || continue
+        (( ++absolute_count ))
+        if [[ "$stored" == "$root" || "$stored" == "$root/"* ]]; then
+            printf '%s\n' "$stored" >>"$current_file"
+            (( ++current_count ))
+        else
+            printf '%s\n' "$stored" >>"$legacy_file"
+            (( ++legacy_count ))
+        fi
+    done <"$absolute_file"
+    rm -f -- "$absolute_file"
+
+    if (( absolute_count == 0 )); then
+        rm -f -- "$current_file" "$legacy_file" "$sql_file"
+        return 0
+    fi
+
+    if (( legacy_count > 0 )); then
+        if ! command -v python3 >/dev/null 2>&1; then
+            echo "ERROR: legacy absolute DB paths need python3 for safe root detection." >&2
+            rm -f -- "$current_file" "$legacy_file" "$sql_file"
+            return 1
+        fi
+        old_root="$(python3 - "$legacy_file" <<'PY'
+import os
+import sys
+
+with open(sys.argv[1], encoding="utf-8", errors="surrogateescape") as stream:
+    paths = [line.rstrip("\n") for line in stream if line.rstrip("\n")]
+if not paths:
+    raise SystemExit(1)
+common = os.path.commonpath(paths)
+if len(paths) == 1:
+    common = os.path.dirname(common)
+print(common or "/")
+PY
+)" || old_root=""
+        if [[ -z "$old_root" || "$old_root" == "/" ]]; then
+            echo "ERROR: could not safely infer one old database root; no rows were changed." >&2
+            echo "Current database directory: $root" >&2
+            rm -f -- "$current_file" "$legacy_file" "$sql_file"
+            return 1
+        fi
+
+        while IFS= read -r stored; do
+            [[ "$stored" == "$old_root" || "$stored" == "$old_root/"* ]] || continue
+            if [[ "$stored" == "$old_root" ]]; then
+                rel="."
+            else
+                rel="${stored#"$old_root/"}"
+            fi
+            runtime="$(db_path_from_storage "$rel" 2>/dev/null || true)"
+            [[ -e "$runtime" || -h "$runtime" ]] && (( ++mapped_existing ))
+        done <"$legacy_file"
+
+        echo
+        echo "Legacy absolute paths were found in the SQLite cache."
+        echo "  OLD ROOT: $old_root"
+        echo "  NEW ROOT: $root"
+        echo "  Rows to convert: $legacy_count"
+        echo "  Paths found under NEW ROOT: $mapped_existing / $legacy_count"
+        echo -n "Convert these paths to portable relative paths? [y/N/q]: "
+        read_single_key answer "$PROMPT_WAIT_SECONDS"
+        echo
+        case "$answer" in
+            y|Y) ;;
+            q|Q)
+                stopped_by_user=yes
+                rm -f -- "$current_file" "$legacy_file" "$sql_file"
+                return 2
+                ;;
+            *)
+                echo "SQLite path migration declined; no maintenance or cache pruning was run." >&2
+                rm -f -- "$current_file" "$legacy_file" "$sql_file"
+                return 1
+                ;;
+        esac
+    fi
+
+    printf 'BEGIN IMMEDIATE;\n' >"$sql_file"
+    while IFS= read -r stored; do
+        [[ -n "$stored" ]] || continue
+        if [[ "$stored" == "$root" ]]; then
+            new_stored="."
+        elif [[ "$stored" == "$root/"* ]]; then
+            new_stored="${stored#"$root/"}"
+        else
+            continue
+        fi
+        old_esc="$(sql_escape "$stored")"
+        new_esc="$(sql_escape "$new_stored")"
+        printf "INSERT INTO checked_paths(path,kind,size,mtime,status,last_checked,signature,file_hash_kind,file_hash,file_md5,file_sha512) SELECT '%s',kind,size,mtime,status,last_checked,signature,file_hash_kind,file_hash,file_md5,file_sha512 FROM checked_paths WHERE path='%s' ON CONFLICT(path) DO UPDATE SET file_md5=COALESCE(checked_paths.file_md5,excluded.file_md5), file_sha512=COALESCE(checked_paths.file_sha512,excluded.file_sha512), file_hash_kind=COALESCE(checked_paths.file_hash_kind,excluded.file_hash_kind), file_hash=COALESCE(checked_paths.file_hash,excluded.file_hash), signature=COALESCE(checked_paths.signature,excluded.signature); DELETE FROM checked_paths WHERE path='%s';\n" \
+            "$new_esc" "$old_esc" "$old_esc" >>"$sql_file"
+    done <"$current_file"
+
+    if (( legacy_count > 0 )); then
+        while IFS= read -r stored; do
+            [[ -n "$stored" ]] || continue
+            if [[ "$stored" == "$old_root" ]]; then
+                new_stored="."
+            elif [[ "$stored" == "$old_root/"* ]]; then
+                new_stored="${stored#"$old_root/"}"
+            else
+                continue
+            fi
+            old_esc="$(sql_escape "$stored")"
+            new_esc="$(sql_escape "$new_stored")"
+            printf "INSERT INTO checked_paths(path,kind,size,mtime,status,last_checked,signature,file_hash_kind,file_hash,file_md5,file_sha512) SELECT '%s',kind,size,mtime,status,last_checked,signature,file_hash_kind,file_hash,file_md5,file_sha512 FROM checked_paths WHERE path='%s' ON CONFLICT(path) DO UPDATE SET file_md5=COALESCE(checked_paths.file_md5,excluded.file_md5), file_sha512=COALESCE(checked_paths.file_sha512,excluded.file_sha512), file_hash_kind=COALESCE(checked_paths.file_hash_kind,excluded.file_hash_kind), file_hash=COALESCE(checked_paths.file_hash,excluded.file_hash), signature=COALESCE(checked_paths.signature,excluded.signature); DELETE FROM checked_paths WHERE path='%s';\n" \
+                "$new_esc" "$old_esc" "$old_esc" >>"$sql_file"
+        done <"$legacy_file"
+    fi
+    printf 'COMMIT;\n' >>"$sql_file"
+
+    if ! rename_sqlite3_db_run <"$sql_file" >/dev/null 2>&1; then
+        echo "ERROR: SQLite path migration failed; transaction was rolled back." >&2
+        rm -f -- "$current_file" "$legacy_file" "$sql_file"
+        return 1
+    fi
+    startup_progress "SQLite path migration complete: $absolute_count absolute row(s) converted to paths relative to $root"
+    rm -f -- "$current_file" "$legacy_file" "$sql_file"
+    return 0
+}
+
 # Read checked_paths row count for maintenance; fail (non-zero) on lock/read errors — never silently return 0.
 db_sqlite_maintenance_count_rows() {
     local count err err_line rc uri
@@ -3972,7 +4220,7 @@ db_sqlite_maintenance_diagnose_open_failure() {
 
 # Maintenance-only: ensure schema/WAL pragmas without loading every row into memory.
 db_open_cache_for_maintenance() {
-    local probe_count="" opened_with_nolock=0 uri="" wal_recovery_tried=0
+    local probe_count="" opened_with_nolock=0 uri="" wal_recovery_tried=0 migration_rc=0
 
     DB_MAINT_KNOWN_TOTAL_ROWS=0
     db_remove_stale_sqlite_lock_artifacts
@@ -4063,6 +4311,10 @@ db_open_cache_for_maintenance() {
         return 1
     fi
     startup_progress "SQLite maintenance: journal mode $DB_SQLITE_JOURNAL_MODE selected for this filesystem"
+    db_migrate_absolute_paths_to_relative || migration_rc=$?
+    (( migration_rc == 0 )) || return "$migration_rc"
+    probe_count="$(db_sqlite_maintenance_count_rows 2>/dev/null)" || return 1
+    DB_MAINT_KNOWN_TOTAL_ROWS=$probe_count
     return 0
 }
 
@@ -4088,6 +4340,7 @@ ${sql}"; then
 db_run_maintenance() {
     local mode="$1"
     local _dm_save_e=0
+    local maintenance_rc=0
 
     (( USE_DB == 1 )) || return 0
     case "$mode" in
@@ -4107,10 +4360,10 @@ db_run_maintenance() {
         startup_progress "SQLite maintenance: running AUTO profile..."
         db_maintenance_run_sql_step "PRAGMA optimize;" "PRAGMA optimize;"
         db_maintenance_run_sql_step "PRAGMA wal_checkpoint(PASSIVE);" "PRAGMA wal_checkpoint(PASSIVE);"
-        db_prune_missing_paths
+        db_prune_missing_paths || maintenance_rc=$?
         startup_progress "SQLite maintenance: AUTO profile finished"
         ((_dm_save_e)) && set -e || set +e
-        return 0
+        return "$maintenance_rc"
     fi
 
     startup_progress "SQLite maintenance: running FULL profile..."
@@ -4118,10 +4371,10 @@ db_run_maintenance() {
     db_maintenance_run_sql_step "ANALYZE;" "ANALYZE;"
     db_maintenance_run_sql_step "REINDEX checked_paths;" "REINDEX checked_paths;"
     db_maintenance_run_sql_step "PRAGMA wal_checkpoint(TRUNCATE);" "PRAGMA wal_checkpoint(TRUNCATE);"
-    db_prune_missing_paths
+    db_prune_missing_paths || maintenance_rc=$?
     startup_progress "SQLite maintenance: FULL profile finished"
     ((_dm_save_e)) && set -e || set +e
-    return 0
+    return "$maintenance_rc"
 }
 
 _db_maintenance_is_internal_file() {
@@ -4149,7 +4402,7 @@ _db_maintenance_is_internal_file() {
 # be hash-backfilled directly. hash-only rows deliberately do not qualify for
 # normal rename-cache skips; a later normal run still examines and renames them.
 db_maintenance_seed_filesystem_paths() {
-    local existing_rows_file="" filesystem_file="" path="" meta="" size="" mtime="" escaped_path=""
+    local existing_rows_file="" filesystem_file="" path="" stored="" meta="" size="" mtime="" escaped_path=""
     local discovered_next=500 seeded_next=500
     local -A existing_paths=()
 
@@ -4183,7 +4436,12 @@ db_maintenance_seed_filesystem_paths() {
             (( ++DB_MAINT_FS_FILES_EXCLUDED ))
             continue
         fi
-        [[ -z "${existing_paths[$path]+x}" ]] || continue
+        stored="$(db_path_to_storage "$path" 2>/dev/null || true)"
+        [[ -n "$stored" ]] || {
+            (( ++DB_MAINT_FS_FILES_EXCLUDED ))
+            continue
+        }
+        [[ -z "${existing_paths[$stored]+x}" ]] || continue
 
         meta="$(db_get_size_mtime "$path" 2>/dev/null)" || {
             (( ++DB_MAINT_FS_FILES_EXCLUDED ))
@@ -4196,10 +4454,10 @@ db_maintenance_seed_filesystem_paths() {
             continue
         }
 
-        escaped_path="$(sql_escape "$path")"
+        escaped_path="$(sql_escape "$stored")"
         printf "INSERT INTO checked_paths(path, kind, size, mtime, status, last_checked) VALUES ('%s', 'plain', %s, %s, 'hash-only', CURRENT_TIMESTAMP) ON CONFLICT(path) DO NOTHING;\n" \
             "$escaped_path" "$size" "$mtime" >>"$DB_PENDING_SQL_FILE"
-        existing_paths["$path"]=1
+        existing_paths["$stored"]=1
         (( ++DB_PENDING_COUNT ))
         (( ++DB_MAINT_FS_ROWS_SEEDED ))
         (( ++DB_ROWS_UPDATED ))
@@ -4249,8 +4507,8 @@ db_run_hash_backfill() {
     fi
 
     startup_progress "SQLite hash backfill: reconciling all cached paths with the filesystem..."
-    db_prune_missing_paths
-    if [[ "$stopped_by_user" != yes ]]; then
+    db_prune_missing_paths || backfill_rc=$?
+    if [[ "$stopped_by_user" != yes ]] && (( backfill_rc == 0 )); then
         db_maintenance_seed_filesystem_paths || backfill_rc=$?
     fi
     if [[ "$stopped_by_user" != yes ]] && (( backfill_rc == 0 )); then
@@ -4262,7 +4520,7 @@ db_run_hash_backfill() {
 }
 
 db_prune_missing_paths() {
-    local path escaped_path
+    local path stored runtime escaped_path
     local total_db_rows=0
     local progress_pct=0
     local next_progress_pct=5
@@ -4278,6 +4536,7 @@ db_prune_missing_paths() {
     local start_idx=0
     local end_idx=0
     local i=0
+    local missing_pct=0
     local -a missing_paths=()
     local prune_paths_file=""
 
@@ -4289,7 +4548,7 @@ db_prune_missing_paths() {
     if ! total_db_rows="$(db_sqlite_maintenance_count_rows 2>/dev/null)"; then
         startup_progress "SQLite maintenance: ERROR — could not read checked_paths row count (database locked?)"
         startup_progress "SQLite maintenance: filesystem check skipped"
-        return 0
+        return 1
     fi
     DB_MAINT_KNOWN_TOTAL_ROWS=$total_db_rows
     DB_MAINT_ROWS_TOTAL_BEFORE=$total_db_rows
@@ -4303,17 +4562,18 @@ db_prune_missing_paths() {
         startup_progress "SQLite maintenance: WARNING — could not list checked_paths for filesystem crosscheck (skipped)"
         rm -f -- "$prune_paths_file"
         startup_progress "SQLite maintenance: filesystem check finished (checked: 0, missing: 0, removed: 0)"
-        return 0
+        return 1
     fi
 
-    while IFS= read -r path; do
+    while IFS= read -r stored; do
         [[ "$stopped_by_user" == yes ]] && break
-        [[ -n "$path" ]] || continue
+        [[ -n "$stored" ]] || continue
+        runtime="$(db_path_from_storage "$stored" 2>/dev/null || true)"
         (( ++DB_MAINT_ROWS_CHECKED ))
-        if [[ ! -e "$path" ]]; then
+        if [[ -z "$runtime" || ( ! -e "$runtime" && ! -h "$runtime" ) ]]; then
             (( ++DB_MAINT_ROWS_MISSING ))
-            missing_paths+=("$path")
-            print_db_maintenance_missing_verbose "$path"
+            missing_paths+=("$stored")
+            print_db_maintenance_missing_verbose "${runtime:-$stored}"
         fi
 
         if (( total_db_rows > 0 )); then
@@ -4341,6 +4601,18 @@ db_prune_missing_paths() {
     rm -f -- "$prune_paths_file"
 
     if (( DB_MAINT_ROWS_MISSING > 0 )); then
+        [[ "$DB_MAINT_MAX_MISSING_PERCENT" =~ ^[0-9]+$ ]] || DB_MAINT_MAX_MISSING_PERCENT=25
+        [[ "$DB_MAINT_ALLOW_MASS_DELETE" =~ ^[01]$ ]] || DB_MAINT_ALLOW_MASS_DELETE=0
+        if (( total_db_rows > 0 )); then
+            missing_pct=$((DB_MAINT_ROWS_MISSING * 100 / total_db_rows))
+        fi
+        if (( DB_MAINT_ALLOW_MASS_DELETE != 1 && DB_MAINT_ROWS_MISSING >= 100 && missing_pct >= DB_MAINT_MAX_MISSING_PERCENT )); then
+            startup_progress "SQLite maintenance: SAFETY STOP — $DB_MAINT_ROWS_MISSING of $total_db_rows paths (${missing_pct}%) appear missing"
+            echo "ERROR: refusing to delete a large portion of the cache; this usually means the directory is mounted at a different path." >&2
+            echo "No missing-path rows were deleted. Fix or confirm the database root migration, then rerun." >&2
+            echo "Set DB_MAINT_ALLOW_MASS_DELETE=1 only when these files were intentionally removed." >&2
+            return 1
+        fi
         (( VERBOSE == 1 )) && echo "[VERBOSE] SQLite maintenance command: delete rows for missing filesystem paths" >&2
         delete_total="${#missing_paths[@]}"
         startup_progress "SQLite maintenance: delete progress 0% (0 / $delete_total removed from DB)..."
@@ -4387,6 +4659,7 @@ db_prune_missing_paths() {
 
     DB_MAINT_KNOWN_TOTAL_ROWS=$((total_db_rows - DB_MAINT_ROWS_REMOVED))
     startup_progress "SQLite maintenance: filesystem check finished (checked: $DB_MAINT_ROWS_CHECKED, missing: $DB_MAINT_ROWS_MISSING, removed: $DB_MAINT_ROWS_REMOVED)"
+    return 0
 }
 
 # SQL WHERE for rows with at least one missing hash slot (honours file_hash_kind/file_hash like cache warmup).
@@ -4563,7 +4836,7 @@ _db_maintenance_hash_job_completed() {
 
 db_maintenance_backfill_missing_hashes() {
     local hash_mode="${1:-both}"
-    local path abs md5_hash sha512_hash file_hash_kind file_hash sql size
+    local path stored md5_hash sha512_hash file_hash_kind file_hash sql size
     local new_md5 new_sha512 dual_result
     local updated_this_row=0 selected_jobs=0 pass_bytes=0
     local md5_backend="" sha512_backend=""
@@ -4639,9 +4912,14 @@ db_maintenance_backfill_missing_hashes() {
         rm -f -- "$inv_file"
         return 1
     fi
-    while IFS='|' read -r path md5_hash sha512_hash file_hash_kind file_hash; do
+    while IFS='|' read -r stored md5_hash sha512_hash file_hash_kind file_hash; do
         [[ "$stopped_by_user" == yes ]] && break
-        [[ -n "$path" ]] || continue
+        [[ -n "$stored" ]] || continue
+        path="$(db_path_from_storage "$stored" 2>/dev/null || true)"
+        [[ -n "$path" ]] || {
+            (( ++DB_MAINT_HASH_SKIPPED_NOT_FILE ))
+            continue
+        }
         if [[ ! -f "$path" ]]; then
             (( ++DB_MAINT_HASH_SKIPPED_NOT_FILE ))
             continue
@@ -4703,14 +4981,14 @@ db_maintenance_backfill_missing_hashes() {
         return 1
     fi
 
-    while IFS='|' read -r path md5_hash sha512_hash file_hash_kind file_hash; do
+    while IFS='|' read -r stored md5_hash sha512_hash file_hash_kind file_hash; do
         [[ "$stopped_by_user" == yes ]] && break
+        [[ -n "$stored" ]] || continue
+        path="$(db_path_from_storage "$stored" 2>/dev/null || true)"
         [[ -n "$path" ]] || continue
         (( ++DB_MAINT_HASH_ROWS_SCANNED ))
         [[ -f "$path" ]] || continue
 
-        abs="$(db_abs_path "$path" 2>/dev/null || true)"
-        [[ -n "$abs" ]] || continue
         new_md5="$md5_hash"
         new_sha512="$sha512_hash"
         updated_this_row=0
@@ -4786,7 +5064,7 @@ db_maintenance_backfill_missing_hashes() {
         _db_maintenance_hash_backfill_progress_update
 
         if (( updated_this_row == 1 )); then
-            sql="UPDATE checked_paths SET file_md5='$(sql_escape "$new_md5")', file_sha512='$(sql_escape "$new_sha512")', last_checked=CURRENT_TIMESTAMP WHERE path='$(sql_escape "$abs")';"
+            sql="UPDATE checked_paths SET file_md5='$(sql_escape "$new_md5")', file_sha512='$(sql_escape "$new_sha512")', last_checked=CURRENT_TIMESTAMP WHERE path='$(sql_escape "$stored")';"
             printf '%s\n' "$sql" >> "$DB_PENDING_SQL_FILE"
             (( ++DB_PENDING_COUNT ))
             (( ++DB_ROWS_UPDATED ))
@@ -4895,7 +5173,7 @@ print_db_maintenance_missing_verbose() {
 
 db_init() {
     local warmed_rows=0
-    local md5_hash sha512_hash file_hash_kind file_hash
+    local stored_path path md5_hash sha512_hash file_hash_kind file_hash
     local total_cached_rows=0 progress_pct=0 next_progress_pct=10
     local cache_rows_file="" sqlite_err_file="" first_error=""
 
@@ -4950,6 +5228,10 @@ SQL
         exit 1
     fi
     startup_progress "SQLite journal mode selected: $DB_SQLITE_JOURNAL_MODE"
+    if ! db_migrate_absolute_paths_to_relative; then
+        echo "ERROR: SQLite path migration was not completed; no file processing was started." >&2
+        exit 1
+    fi
     DB_PENDING_SQL_FILE="$(mktemp)"
     cache_rows_file="$(mktemp)"
     sqlite_err_file="$(mktemp)"
@@ -4987,7 +5269,9 @@ SQL
         startup_progress "Loading cached rows from SQLite into memory..."
     fi
 
-    while IFS='|' read -r path size mtime status signature md5_hash sha512_hash file_hash_kind file_hash; do
+    while IFS='|' read -r stored_path size mtime status signature md5_hash sha512_hash file_hash_kind file_hash; do
+        [[ -n "$stored_path" ]] || continue
+        path="$(db_path_from_storage "$stored_path" 2>/dev/null || true)"
         [[ -n "$path" ]] || continue
         DB_CACHE_META["$path"]="$size|$mtime"
         DB_CACHE_STATUS["$path"]="$status"
@@ -5093,13 +5377,15 @@ db_record_file_hash() {
     local path="$1"
     local hash_kind="$2"
     local hash_value="$3"
-    local abs sql specific_sql existing_hash="" write_hash_record=1 confirm_rc=0
+    local abs stored sql specific_sql existing_hash="" write_hash_record=1 confirm_rc=0
 
     (( USE_DB == 1 )) || return 0
     [[ -e "$path" && -n "$hash_kind" && -n "$hash_value" ]] || return 0
 
     abs="$(db_abs_path "$path" 2>/dev/null || true)"
     [[ -n "$abs" ]] || return 0
+    stored="$(db_path_to_storage "$abs" 2>/dev/null || true)"
+    [[ -n "$stored" ]] || return 0
 
     case "$hash_kind" in
         md5) existing_hash="${DB_CACHE_HASH_MD5[$abs]-}" ;;
@@ -5148,7 +5434,7 @@ db_record_file_hash() {
     esac
 
     if (( write_hash_record == 1 )); then
-        sql="INSERT INTO checked_paths(path, kind, size, mtime, status, last_checked, file_hash_kind, file_hash, file_md5, file_sha512) VALUES ('$(sql_escape "$abs")', 'file_hash_only', 0, 0, 'hashed', CURRENT_TIMESTAMP, '$(sql_escape "$hash_kind")', '$(sql_escape "$hash_value")', $( [[ "$hash_kind" == "md5" ]] && printf "'%s'" "$(sql_escape "$hash_value")" || printf "NULL" ), $( [[ "$hash_kind" == "sha512" ]] && printf "'%s'" "$(sql_escape "$hash_value")" || printf "NULL" )) ON CONFLICT(path) DO UPDATE SET file_hash_kind=excluded.file_hash_kind, file_hash=excluded.file_hash, last_checked=CURRENT_TIMESTAMP${specific_sql:+, $specific_sql};"
+        sql="INSERT INTO checked_paths(path, kind, size, mtime, status, last_checked, file_hash_kind, file_hash, file_md5, file_sha512) VALUES ('$(sql_escape "$stored")', 'file_hash_only', 0, 0, 'hashed', CURRENT_TIMESTAMP, '$(sql_escape "$hash_kind")', '$(sql_escape "$hash_value")', $( [[ "$hash_kind" == "md5" ]] && printf "'%s'" "$(sql_escape "$hash_value")" || printf "NULL" ), $( [[ "$hash_kind" == "sha512" ]] && printf "'%s'" "$(sql_escape "$hash_value")" || printf "NULL" )) ON CONFLICT(path) DO UPDATE SET file_hash_kind=excluded.file_hash_kind, file_hash=excluded.file_hash, last_checked=CURRENT_TIMESTAMP${specific_sql:+, $specific_sql};"
         printf '%s\n' "$sql" >> "$DB_PENDING_SQL_FILE"
         DB_CACHE_ROW_EXISTS["$abs"]=1
         if [[ "$hash_kind" == "md5" ]]; then
@@ -5169,22 +5455,30 @@ db_find_path_by_file_hash_in_subtree() {
     local search_root="$1"
     local hash_kind="$2"
     local hash_value="$3"
-    local search_abs row_path query
+    local search_abs search_stored row_stored row_path query path_condition
 
     (( USE_DB == 1 )) || return 1
     db_flush_pending >/dev/null 2>&1 || true
 
     search_abs="$(db_abs_path "$search_root" 2>/dev/null || true)"
     [[ -n "$search_abs" ]] || return 1
+    search_stored="$(db_path_to_storage "$search_abs" 2>/dev/null || true)"
+    [[ -n "$search_stored" ]] || return 1
+    if [[ "$search_stored" == "." ]]; then
+        path_condition="1=1"
+    else
+        path_condition="(path='$(sql_escape "$search_stored")' OR path LIKE '$(sql_escape "${search_stored%/}")/%')"
+    fi
 
     case "$hash_kind" in
-        md5) query="SELECT path FROM checked_paths WHERE ((file_md5='$(sql_escape "$hash_value")') OR (file_hash_kind='md5' AND file_hash='$(sql_escape "$hash_value")')) AND path LIKE '$(sql_escape "${search_abs%/}")/%' ORDER BY LENGTH(path) LIMIT 1;" ;;
-        sha512) query="SELECT path FROM checked_paths WHERE ((file_sha512='$(sql_escape "$hash_value")') OR (file_hash_kind='sha512' AND file_hash='$(sql_escape "$hash_value")')) AND path LIKE '$(sql_escape "${search_abs%/}")/%' ORDER BY LENGTH(path) LIMIT 1;" ;;
+        md5) query="SELECT path FROM checked_paths WHERE ((file_md5='$(sql_escape "$hash_value")') OR (file_hash_kind='md5' AND file_hash='$(sql_escape "$hash_value")')) AND $path_condition ORDER BY LENGTH(path) LIMIT 1;" ;;
+        sha512) query="SELECT path FROM checked_paths WHERE ((file_sha512='$(sql_escape "$hash_value")') OR (file_hash_kind='sha512' AND file_hash='$(sql_escape "$hash_value")')) AND $path_condition ORDER BY LENGTH(path) LIMIT 1;" ;;
         *) return 1 ;;
     esac
 
-    row_path="$(rename_sqlite3_db_run -separator $'\t' "$query" 2>/dev/null | head -n 1)"
-    if [[ -n "$row_path" ]]; then
+    row_stored="$(rename_sqlite3_db_run -separator $'\t' "$query" 2>/dev/null | head -n 1)"
+    if [[ -n "$row_stored" ]]; then
+        row_path="$(db_path_from_storage "$row_stored" 2>/dev/null || true)"
         if [[ -e "$row_path" ]]; then
             ((++DB_HASH_LOOKUP_HITS))
             print_db_hash_lookup_verbose "hit" "$search_root" "$hash_kind" "$hash_value" "$row_path"
@@ -5192,7 +5486,7 @@ db_find_path_by_file_hash_in_subtree() {
             return 0
         fi
 
-        printf "DELETE FROM checked_paths WHERE path='%s';\n" "$(sql_escape "$row_path")" >> "$DB_PENDING_SQL_FILE"
+        printf "DELETE FROM checked_paths WHERE path='%s';\n" "$(sql_escape "$row_stored")" >> "$DB_PENDING_SQL_FILE"
         unset 'DB_CACHE_META[$row_path]'
         unset 'DB_CACHE_STATUS[$row_path]'
         unset 'DB_CACHE_HASH_MD5[$row_path]'
@@ -5249,7 +5543,7 @@ db_mark_checked() {
     local path="$1"
     local kind="$2"
     local status="$3"
-    local abs meta size mtime sig sql sig_sql existing_row=0
+    local abs stored meta size mtime sig sql sig_sql existing_row=0
 
     (( USE_DB == 1 )) || return 0
     [[ -e "$path" ]] || return 0
@@ -5257,6 +5551,8 @@ db_mark_checked() {
     meta="$(db_get_size_mtime "$path" 2>/dev/null || true)"
     [[ -n "$meta" ]] || return 0
     abs="$(db_abs_path "$path")"
+    stored="$(db_path_to_storage "$abs" 2>/dev/null || true)"
+    [[ -n "$stored" ]] || return 0
     size="${meta%%|*}"
     mtime="${meta##*|}"
     sig=""
@@ -5291,7 +5587,7 @@ db_mark_checked() {
         sig_sql="NULL"
     fi
 
-    sql="INSERT INTO checked_paths(path, kind, size, mtime, status, last_checked, signature) VALUES ('$(sql_escape "$abs")', '$(sql_escape "$kind")', $size, $mtime, '$(sql_escape "$status")', CURRENT_TIMESTAMP, $sig_sql) ON CONFLICT(path) DO UPDATE SET kind=excluded.kind, size=excluded.size, mtime=excluded.mtime, status=excluded.status, signature=COALESCE(excluded.signature, checked_paths.signature), last_checked=CURRENT_TIMESTAMP, file_hash_kind=COALESCE(file_hash_kind, excluded.file_hash_kind), file_hash=COALESCE(file_hash, excluded.file_hash);"
+    sql="INSERT INTO checked_paths(path, kind, size, mtime, status, last_checked, signature) VALUES ('$(sql_escape "$stored")', '$(sql_escape "$kind")', $size, $mtime, '$(sql_escape "$status")', CURRENT_TIMESTAMP, $sig_sql) ON CONFLICT(path) DO UPDATE SET kind=excluded.kind, size=excluded.size, mtime=excluded.mtime, status=excluded.status, signature=COALESCE(excluded.signature, checked_paths.signature), last_checked=CURRENT_TIMESTAMP, file_hash_kind=COALESCE(file_hash_kind, excluded.file_hash_kind), file_hash=COALESCE(file_hash, excluded.file_hash);"
     printf '%s\n' "$sql" >> "$DB_PENDING_SQL_FILE"
     (( ++DB_PENDING_COUNT ))
     if (( DB_PENDING_COUNT >= DB_FLUSH_EVERY )); then
@@ -5303,7 +5599,7 @@ db_mark_checked() {
 db_mark_gopro_capture_mode_checked() {
     local path="$1"
     local result="$2"
-    local abs meta size mtime sig sig_sql sql existing_row=0
+    local abs stored meta size mtime sig sig_sql sql existing_row=0
 
     (( USE_DB == 1 )) || return 0
     [[ -e "$path" && -n "$result" ]] || return 0
@@ -5311,6 +5607,8 @@ db_mark_gopro_capture_mode_checked() {
     meta="$(db_get_size_mtime "$path" 2>/dev/null || true)"
     [[ -n "$meta" ]] || return 0
     abs="$(db_abs_path "$path")"
+    stored="$(db_path_to_storage "$abs" 2>/dev/null || true)"
+    [[ -n "$stored" ]] || return 0
     size="${meta%%|*}"
     mtime="${meta##*|}"
     sig="gopro_cm:v1:${result}"
@@ -5325,12 +5623,12 @@ db_mark_gopro_capture_mode_checked() {
 
     if (( existing_row == 1 )); then
         ((++DB_ROWS_UPDATED))
-        sql="UPDATE checked_paths SET signature=${sig_sql}, size=${size}, mtime=${mtime}, last_checked=CURRENT_TIMESTAMP WHERE path='$(sql_escape "$abs")';"
+        sql="UPDATE checked_paths SET signature=${sig_sql}, size=${size}, mtime=${mtime}, last_checked=CURRENT_TIMESTAMP WHERE path='$(sql_escape "$stored")';"
     else
         ((++DB_ROWS_NEW))
         DB_CACHE_STATUS["$abs"]="checked"
         DB_CACHE_ROW_EXISTS["$abs"]=1
-        sql="INSERT INTO checked_paths(path, kind, size, mtime, status, last_checked, signature) VALUES ('$(sql_escape "$abs")', 'plain', ${size}, ${mtime}, 'checked', CURRENT_TIMESTAMP, ${sig_sql});"
+        sql="INSERT INTO checked_paths(path, kind, size, mtime, status, last_checked, signature) VALUES ('$(sql_escape "$stored")', 'plain', ${size}, ${mtime}, 'checked', CURRENT_TIMESTAMP, ${sig_sql});"
     fi
 
     printf '%s\n' "$sql" >> "$DB_PENDING_SQL_FILE"
@@ -5353,7 +5651,7 @@ db_mark_many_checked() {
 db_rewrite_subtree() {
     local old_path="$1"
     local new_path="$2"
-    local old_abs new_abs old_prefix new_prefix old_db_path new_db_path suffix sql
+    local old_abs new_abs old_stored new_stored old_prefix new_prefix old_db_path new_db_path suffix sql
     local old_esc new_esc
     local rewritten_count=0
     local -a matched_paths=()
@@ -5364,12 +5662,15 @@ db_rewrite_subtree() {
     old_abs="$(db_abs_path_if_deleted "$old_path" 2>/dev/null || true)"
     new_abs="$(db_abs_path "$new_path" 2>/dev/null || true)"
     [[ -n "$old_abs" && -n "$new_abs" ]] || return 0
+    old_stored="$(db_path_to_storage "$old_abs" 2>/dev/null || true)"
+    new_stored="$(db_path_to_storage "$new_abs" 2>/dev/null || true)"
+    [[ -n "$old_stored" && -n "$new_stored" ]] || return 0
 
     old_prefix="${old_abs%/}/"
     new_prefix="${new_abs%/}/"
 
-    old_esc="$(sql_escape "$old_abs")"
-    new_esc="$(sql_escape "$new_abs")"
+    old_esc="$(sql_escape "$old_stored")"
+    new_esc="$(sql_escape "$new_stored")"
     # Rewrite every cached row under this directory prefix in SQLite (warm cache may omit most paths).
     sql="UPDATE checked_paths SET path = CASE WHEN path='${old_esc}' THEN '${new_esc}' ELSE '${new_esc}' || SUBSTR(path, LENGTH('${old_esc}') + 1) END WHERE path='${old_esc}' OR SUBSTR(path, 1, LENGTH('${old_esc}') + 1) = '${old_esc}' || '/';"
     printf '%s\n' "$sql" >> "$DB_PENDING_SQL_FILE"
@@ -5427,15 +5728,18 @@ db_rewrite_subtree() {
 db_rewrite_single_path() {
     local old_path="$1"
     local new_path="$2"
-    local old_abs new_abs sql
+    local old_abs new_abs old_stored new_stored sql
 
     (( USE_DB == 1 )) || return 0
 
     old_abs="$(db_abs_path_if_deleted "$old_path" 2>/dev/null || true)"
     new_abs="$(db_abs_path "$new_path" 2>/dev/null || true)"
     [[ -n "$old_abs" && -n "$new_abs" ]] || return 0
+    old_stored="$(db_path_to_storage "$old_abs" 2>/dev/null || true)"
+    new_stored="$(db_path_to_storage "$new_abs" 2>/dev/null || true)"
+    [[ -n "$old_stored" && -n "$new_stored" ]] || return 0
 
-    sql="INSERT INTO checked_paths(path, kind, size, mtime, status, last_checked, signature, file_hash_kind, file_hash, file_md5, file_sha512) SELECT '$(sql_escape "$new_abs")', kind, size, mtime, status, CURRENT_TIMESTAMP, signature, file_hash_kind, file_hash, file_md5, file_sha512 FROM checked_paths WHERE path='$(sql_escape "$old_abs")' ON CONFLICT(path) DO UPDATE SET kind=excluded.kind, size=excluded.size, mtime=excluded.mtime, status=excluded.status, signature=excluded.signature, last_checked=excluded.last_checked, file_hash_kind=COALESCE(excluded.file_hash_kind, checked_paths.file_hash_kind), file_hash=COALESCE(excluded.file_hash, checked_paths.file_hash), file_md5=COALESCE(excluded.file_md5, checked_paths.file_md5), file_sha512=COALESCE(excluded.file_sha512, checked_paths.file_sha512); DELETE FROM checked_paths WHERE path='$(sql_escape "$old_abs")';"
+    sql="INSERT INTO checked_paths(path, kind, size, mtime, status, last_checked, signature, file_hash_kind, file_hash, file_md5, file_sha512) SELECT '$(sql_escape "$new_stored")', kind, size, mtime, status, CURRENT_TIMESTAMP, signature, file_hash_kind, file_hash, file_md5, file_sha512 FROM checked_paths WHERE path='$(sql_escape "$old_stored")' ON CONFLICT(path) DO UPDATE SET kind=excluded.kind, size=excluded.size, mtime=excluded.mtime, status=excluded.status, signature=excluded.signature, last_checked=excluded.last_checked, file_hash_kind=COALESCE(excluded.file_hash_kind, checked_paths.file_hash_kind), file_hash=COALESCE(excluded.file_hash, checked_paths.file_hash), file_md5=COALESCE(excluded.file_md5, checked_paths.file_md5), file_sha512=COALESCE(excluded.file_sha512, checked_paths.file_sha512); DELETE FROM checked_paths WHERE path='$(sql_escape "$old_stored")';"
     printf '%s\n' "$sql" >> "$DB_PENDING_SQL_FILE"
     (( ++DB_PENDING_COUNT ))
     if (( DB_PENDING_COUNT >= DB_FLUSH_EVERY )); then
