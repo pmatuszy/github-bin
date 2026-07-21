@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# v. 20260721.212214 - preserve parenthesized copy numbers while appending Samsung or GoPro camera labels
 # v. 20260721.193350 - store portable relative SQLite paths, guard mass pruning, and make debug logging non-fatal
 # v. 20260721.170803 - offer session auto-yes for GoPro legacy-label and Samsung/GoPro/Nikon camera renames
 # v. 20260721.161244 - bootstrap missing/empty hash DB from filesystem files before checksum inventory
@@ -8,6 +9,7 @@
 # v. 20260721.132007 - Samsung timestamp media: preserve optional numeric sorting prefix when appending make/model
 # v. 20260721.112812 - GoPro camera labels: GoPro_Hero4_Silver style (not GOPRO4_SILVER)
 
+# 2026.07.21 - v. 19.272.212214 - timestamp media copy suffixes such as (0) keep _0 after Samsung/GoPro make-model labels
 # 2026.07.21 - v. 19.271.193350 - relative DB paths with confirmed legacy-root migration; mass-delete guard; XDG debug log fallback
 # 2026.07.21 - v. 19.270.170803 - rename prompt [G] covers GoPro legacy label normalization plus Samsung/GoPro/Nikon camera make/model renames
 # 2026.07.21 - v. 19.269.161244 - --backfill-hashes creates/bootstraps cache from filesystem files, then fills selected checksums
@@ -10186,12 +10188,13 @@ gopro_format_camera_basename_output() {
 }
 
 # Samsung Galaxy phone photo/video:
-#   YYYYMMDD_HHMMSS.ext        → YYYYMMDD_HHMMSS_-_-_Samsung_<model>.ext
-#   NUMBER_YYYYMMDD_HHMMSS.ext → NUMBER_YYYYMMDD_HHMMSS_-_-_Samsung_<model>.ext
+#   YYYYMMDD_HHMMSS.ext           → YYYYMMDD_HHMMSS_-_-_Samsung_<model>.ext
+#   YYYYMMDD_HHMMSS(0).ext        → YYYYMMDD_HHMMSS_-_-_Samsung_<model>_0.ext
+#   NUMBER_YYYYMMDD_HHMMSS.ext    → NUMBER_YYYYMMDD_HHMMSS_-_-_Samsung_<model>.ext
 samsung_media_basename_matches() {
     local bn="$1"
     local lower="${bn,,}"
-    [[ "$lower" =~ ^([0-9]+_)?[0-9]{8}_[0-9]{6}\.(3gp|heic|heif|jpeg|jpg|m4v|mkv|mov|mp4|png|webm)$ ]]
+    [[ "$lower" =~ ^([0-9]+_)?[0-9]{8}_[0-9]{6}(\([0-9]+\)|_[0-9]+)?\.(3gp|heic|heif|jpeg|jpg|m4v|mkv|mov|mp4|png|webm)$ ]]
 }
 
 samsung_already_renamed_basename_matches() {
@@ -10200,12 +10203,13 @@ samsung_already_renamed_basename_matches() {
     [[ "$lower" =~ ^([0-9]+_)?[0-9]{8}_[0-9]{6}_(-__-_|-_-_)samsung_.+\.(3gp|heic|heif|jpeg|jpg|m4v|mkv|mov|mp4|png|webm)$ ]]
 }
 
-# Bare YYYYMMDD_HHMMSS.{mp4,m4v,mov} without a camera tag yet (e.g. phone export or GoPro without GH prefix).
+# Bare YYYYMMDD_HHMMSS[(_N)].{mp4,m4v,mov} without a camera tag yet
+# (e.g. phone export or GoPro without GH prefix).
 gopro_bare_timestamp_media_basename_matches() {
     local bn="$1"
     local lower="${bn,,}"
 
-    [[ "$lower" =~ ^[0-9]{8}_[0-9]{6}\.(mp4|m4v|mov)$ ]] || return 1
+    [[ "$lower" =~ ^[0-9]{8}_[0-9]{6}(\([0-9]+\)|_[0-9]+)?\.(mp4|m4v|mov)$ ]] || return 1
     gopro_exif_renamed_basename_matches "$bn" && return 1
     return 0
 }
@@ -10373,7 +10377,7 @@ samsung_friendly_model_from_code() {
 transform_samsung_media_basename() {
     local file="$1"
     local base="$2"
-    local exifloc exif model_code friendly_model ext stem ts
+    local exifloc exif model_code friendly_model ext stem ts copy_suffix=""
     local _ts_err_trap="" _ts_save_e=0
 
     _transform_samsung_err_trap_restore() {
@@ -10405,17 +10409,18 @@ transform_samsung_media_basename() {
 
     ext="${base##*.}"
     stem="${base%.*}"
-    [[ "$stem" =~ ^([0-9]+_)?[0-9]{8}_[0-9]{6}$ ]] || return 0
-    ts="$stem"
+    [[ "$stem" =~ ^(([0-9]+_)?[0-9]{8}_[0-9]{6})(\(([0-9]+)\)|_([0-9]+))?$ ]] || return 0
+    ts="${BASH_REMATCH[1]}"
+    copy_suffix="${BASH_REMATCH[4]:-${BASH_REMATCH[5]}}"
 
-    gopro_format_camera_basename_output "$ts" "Samsung" "$friendly_model" "" "$ext"
+    gopro_format_camera_basename_output "$ts" "Samsung" "$friendly_model" "$copy_suffix" "$ext"
 }
 
 # GoPro clips already named YYYYMMDD_HHMMSS.mp4 (no GH/GOPR prefix): append _-_-_GoPro_Hero#_Edition from exiftool.
 transform_gopro_bare_timestamp_media_basename() {
     local file="$1"
     local base="$2"
-    local exifloc exif labels manuf model ext stem ts suffix_pliku=""
+    local exifloc exif labels manuf model ext stem ts suffix_pliku="" copy_suffix=""
     local _tg_err_trap="" _tg_save_e=0
 
     _transform_gopro_bare_ts_err_trap_restore() {
@@ -10445,10 +10450,14 @@ transform_gopro_bare_timestamp_media_basename() {
 
     ext="${base##*.}"
     stem="${base%.*}"
-    [[ "$stem" =~ ^[0-9]{8}_[0-9]{6}$ ]] || return 0
-    ts="$stem"
+    [[ "$stem" =~ ^([0-9]{8}_[0-9]{6})(\(([0-9]+)\)|_([0-9]+))?$ ]] || return 0
+    ts="${BASH_REMATCH[1]}"
+    copy_suffix="${BASH_REMATCH[3]:-${BASH_REMATCH[4]}}"
 
     suffix_pliku="$(gopro_video_capture_mode_suffix_from_exif "$exif")"
+    if [[ -n "$copy_suffix" ]]; then
+        suffix_pliku="${suffix_pliku:+${suffix_pliku}_}${copy_suffix}"
+    fi
 
     gopro_format_camera_basename_output "$ts" "$manuf" "$model" "$suffix_pliku" "$ext"
 }
