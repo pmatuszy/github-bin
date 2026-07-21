@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# v. 20260720.121523 - checksum mismatch recovery: [H] ignore this and all future mismatches this run
+# v. 20260721.112812 - GoPro camera labels: GoPro_Hero4_Silver style (not GOPRO4_SILVER)
 
-# 2026.07.20 - v. 19.262.121523 - SHA512/MD5 mismatch prompt: [H/h] session ignore (leave lists unchanged; skip future mismatch prompts)
+# 2026.07.21 - v. 19.264.112812 - GoPro firmware labels GoPro_Hero#_Edition; legacy GOPRO#_EDITION names migrate on rename
 # 2026.07.19 - v. 19.260.145719 - read_yes_no_quit_confirm: Are you sure? [y/N/q]; Q stops run (checksum session, rename_all, GoPro)
 # 2026.07.19 - v. 19.259.145553 - checksum group prompt: [H/h] all remaining hash groups; [A/a] session auto-yes (not rename_all mislabel); [D/d] checksum dir only
 # 2026.07.19 - v. 19.258.140038 - GoPro lone _part_XX: count chapters by camera/model id (GOPRO7_BLACK), not full timestamp prefix
@@ -8887,9 +8887,53 @@ gopro_apply_camera_model_name_from_exif() {
             ;;
     esac
     [[ -n "$norm" ]] || return 1
-    DeviceManufacturer=GOPRO
-    DeviceModelName="$norm"
+    DeviceManufacturer=GoPro
+    DeviceModelName="$(gopro_readable_model_from_camera_model_name_raw "$raw")"
+    [[ -n "$DeviceModelName" ]] || return 1
     return 0
+}
+
+# Camera Model Name → Hero7_Black (spaces/other separators → underscores; title-case each word).
+gopro_readable_model_from_camera_model_name_raw() {
+    local raw="$1" word out="" w first rest
+
+    for word in $raw; do
+        w="${word,,}"
+        [[ -n "$w" ]] || continue
+        first="${w:0:1}"
+        rest="${w:1}"
+        first="${first^^}"
+        out+="${out:+_}${first}${rest}"
+    done
+    printf '%s' "$out"
+}
+
+# stdout: MANUFACTURER<TAB>MODEL; return 0 when exif identifies a GoPro with mapped labels.
+gopro_device_labels_from_exif() {
+    local exif="$1"
+    local ktory_gopro="" manuf=xxx model=xxx
+
+    if ! printf '%s\n' "$exif" | egrep 'Compressor Name|Make[[:space:]]' | grep -qi GoPro; then
+        return 1
+    fi
+    ktory_gopro="$(gopro_firmware_prefix_from_exif "$exif")"
+    case "$ktory_gopro" in
+        HD4) manuf=GoPro; model=Hero4_Silver ;;
+        HD6) manuf=GoPro; model=Hero6_Black ;;
+        HD7) manuf=GoPro; model=Hero7_Black ;;
+        H21) manuf=GoPro; model=Hero10_Black ;;
+        H23) manuf=GoPro; model=Hero12_Black ;;
+        H26) gopro_set_mission1_pro_labels; manuf="$DeviceManufacturer"; model="$DeviceModelName" ;;
+    esac
+    if [[ "$manuf" == xxx ]]; then
+        DeviceManufacturer=xxx
+        DeviceModelName=xxx
+        gopro_apply_camera_model_name_from_exif "$exif" || return 1
+        manuf="$DeviceManufacturer"
+        model="$DeviceModelName"
+    fi
+    [[ "$manuf" != xxx && "$model" != xxx ]] || return 1
+    printf '%s\t%s' "$manuf" "$model"
 }
 
 # GoPro MP4 only: Timewarp_5x / Timelapse_1_5sec from exiftool Rate value (JPG and OFF/N/A skipped).
@@ -9009,16 +9053,54 @@ gopro_basename_strip_capture_mode_suffix() {
     return 1
 }
 
-# Already metadata-renamed GoPro MP4 (YYYYMMDD…_GoPro_… / GOPRO7_BLACK …), not raw GH/GOPR names.
+# Already metadata-renamed GoPro MP4 (YYYYMMDD…_GoPro_… / legacy GOPRO7_BLACK …), not raw GH/GOPR names.
 gopro_renamed_mp4_basename_matches() {
     local base="$1"
     [[ "$base" =~ ^[0-9]{8}_[0-9]{6}_(-__-_|-_-_)(GoPro_[A-Za-z0-9_]+|GOPRO[0-9]+_[A-Z0-9]+|GOPRO_[A-Z0-9]+).*\.[mM][pP]4$ ]]
 }
 
-# Metadata-renamed GoPro MP4/JPG from exiftool (GH/GOPR/GP… raw → YYYYMMDD_HHMMSS_-_-_MODEL).
+# Metadata-renamed GoPro MP4/JPG from exiftool (GH/GOPR/GP… raw → YYYYMMDD_HHMMSS_-_-_GoPro_…).
 gopro_exif_renamed_basename_matches() {
     local base="$1"
     [[ "$base" =~ ^[0-9]{8}_[0-9]{6}_(-__-_|-_-_)(GoPro_[A-Za-z0-9_]+|GOPRO[0-9]+_[A-Z0-9]+|GOPRO_[A-Z0-9]+).*\.([mM][pP]4|[jJ][pP][gG]|[jJ][pP][eE][gG])$ ]]
+}
+
+# Rewrite legacy GOPRO4_SILVER / GOPRO7_BLACK camera tail to GoPro_Hero4_Silver / GoPro_Hero7_Black (suffixes preserved).
+gopro_modernize_legacy_camera_tail() {
+    local tail="$1"
+
+    case "$tail" in
+        GOPRO12_BLACK*) printf 'GoPro_Hero12_Black%s' "${tail#GOPRO12_BLACK}"; return 0 ;;
+        GOPRO10_BLACK*) printf 'GoPro_Hero10_Black%s' "${tail#GOPRO10_BLACK}"; return 0 ;;
+        GOPRO7_BLACK*) printf 'GoPro_Hero7_Black%s' "${tail#GOPRO7_BLACK}"; return 0 ;;
+        GOPRO6_BLACK*) printf 'GoPro_Hero6_Black%s' "${tail#GOPRO6_BLACK}"; return 0 ;;
+        GOPRO4_SILVER*) printf 'GoPro_Hero4_Silver%s' "${tail#GOPRO4_SILVER}"; return 0 ;;
+    esac
+    return 1
+}
+
+gopro_basename_has_legacy_gopro_camera_tail() {
+    local base="$1" tail=""
+
+    gopro_renamed_mp4_basename_matches "$base" || gopro_exif_renamed_basename_matches "$base" || return 1
+    [[ "$base" =~ ^[0-9]{8}_[0-9]{6}_(-__-_|-_-_)(.+)\.[^.]+$ ]] || return 1
+    tail="${BASH_REMATCH[2]}"
+    gopro_modernize_legacy_camera_tail "$tail" >/dev/null 2>&1
+}
+
+# Return 0 with new basename on stdout when a legacy GOPRO#_EDITION camera label should be modernized.
+maybe_transform_gopro_legacy_camera_label() {
+    local base="$1"
+    local tail modern ext
+
+    gopro_renamed_mp4_basename_matches "$base" || gopro_exif_renamed_basename_matches "$base" || return 0
+    [[ "$base" =~ ^([0-9]{8}_[0-9]{6})_(-__-_|-_-_)(.+)(\.[^.]+)$ ]] || return 0
+    tail="${BASH_REMATCH[3]}"
+    ext="${BASH_REMATCH[4]}"
+    modern="$(gopro_modernize_legacy_camera_tail "$tail")" || return 0
+    [[ "$modern" != "$tail" ]] || return 0
+    printf '%s_%s%s%s' "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}" "$modern" "$ext"
+    return 0
 }
 
 gopro_basename_with_capture_mode_suffix() {
@@ -9192,7 +9274,7 @@ gopro_renamed_session_prefix_from_basename() {
     printf '%s' "${BASH_REMATCH[1]}"
 }
 
-# Camera/model tail after YYYYMMDD_HHMMSS_-__-_ (e.g. GOPRO7_BLACK, GOPRO7_BLACK_Timelapse_1_1sec).
+# Camera/model tail after YYYYMMDD_HHMMSS_-__-_ (e.g. GoPro_Hero7_Black, GoPro_Hero7_Black_Timelapse_1_1sec).
 # Split chapters renamed with per-file Create Date each get a unique timestamp prefix; lone-part
 # detection must group by this id, not the full prefix including timestamp.
 gopro_renamed_camera_identity_from_basename() {
@@ -9312,6 +9394,16 @@ samsung_already_renamed_basename_matches() {
     [[ "$lower" =~ ^[0-9]{8}_[0-9]{6}_(-__-_|-_-_)samsung_.+\.(3gp|heic|heif|jpeg|jpg|m4v|mkv|mov|mp4|png|webm)$ ]]
 }
 
+# Bare YYYYMMDD_HHMMSS.{mp4,m4v,mov} without a camera tag yet (e.g. phone export or GoPro without GH prefix).
+gopro_bare_timestamp_media_basename_matches() {
+    local bn="$1"
+    local lower="${bn,,}"
+
+    [[ "$lower" =~ ^[0-9]{8}_[0-9]{6}\.(mp4|m4v|mov)$ ]] || return 1
+    gopro_exif_renamed_basename_matches "$bn" && return 1
+    return 0
+}
+
 # True when NEW adds a Samsung EXIF camera make/model tag after a bare timestamp basename.
 samsung_exif_camera_tag_append_matches() {
     local old="$1" new="$2"
@@ -9335,7 +9427,7 @@ gopro_exif_camera_tag_append_matches() {
     ob="$(basename -- "$old")"
     nb="$(basename -- "$new")"
     [[ "$ob" != "$nb" ]] || return 1
-    gopro_camera_raw_basename_matches "$ob" || return 1
+    gopro_camera_raw_basename_matches "$ob" || gopro_bare_timestamp_media_basename_matches "$ob" || return 1
     gopro_exif_renamed_basename_matches "$nb" || return 1
     return 0
 }
@@ -9503,6 +9595,48 @@ transform_samsung_media_basename() {
     ts="$stem"
 
     gopro_format_camera_basename_output "$ts" "Samsung" "$friendly_model" "" "$ext"
+}
+
+# GoPro clips already named YYYYMMDD_HHMMSS.mp4 (no GH/GOPR prefix): append _-_-_GoPro_Hero#_Edition from exiftool.
+transform_gopro_bare_timestamp_media_basename() {
+    local file="$1"
+    local base="$2"
+    local exifloc exif labels manuf model ext stem ts suffix_pliku=""
+    local _tg_err_trap="" _tg_save_e=0
+
+    _transform_gopro_bare_ts_err_trap_restore() {
+        eval "${_tg_err_trap:-}"
+        if ((_tg_save_e)); then
+            set -e
+        else
+            set +e
+        fi
+    }
+
+    gopro_bare_timestamp_media_basename_matches "$base" || return 0
+
+    _tg_save_e=0
+    [[ $- == *e* ]] && _tg_save_e=1
+    set +e
+    _tg_err_trap="$(trap -p ERR || true)"
+    trap - ERR
+    trap '_transform_gopro_bare_ts_err_trap_restore' RETURN
+
+    exifloc="$(resolve_rename_exiftool)" || return 0
+    exif="$("$exifloc" -api largefilesupport=1 "$file" 2>/dev/null)" || return 0
+    [[ -n "$exif" ]] || return 0
+
+    labels="$(gopro_device_labels_from_exif "$exif")" || return 0
+    IFS=$'\t' read -r manuf model <<< "$labels"
+
+    ext="${base##*.}"
+    stem="${base%.*}"
+    [[ "$stem" =~ ^[0-9]{8}_[0-9]{6}$ ]] || return 0
+    ts="$stem"
+
+    suffix_pliku="$(gopro_video_capture_mode_suffix_from_exif "$exif")"
+
+    gopro_format_camera_basename_output "$ts" "$manuf" "$model" "$suffix_pliku" "$ext"
 }
 
 # Sony XAVC-S / professionalDisc: C0101.MP4 + C0101M01.XML (NonRealTimeMeta sidecar).
@@ -9929,20 +10063,14 @@ transform_gopro_camera_basename() {
         data_stworzenia_pliku_w_czasie_lokalnym="$CreationDateValue"
     fi
 
-    if printf '%s\n' "$exif" | egrep 'Compressor Name|Make   ' | grep -q GoPro; then
+    if printf '%s\n' "$exif" | egrep 'Compressor Name|Make[[:space:]]' | grep -qi GoPro; then
         czy_gopro=1
         gopro4=0
-        ktory_gopro="$(gopro_firmware_prefix_from_exif "$exif")"
-        case "$ktory_gopro" in
-            HD4) gopro4=1; DeviceManufacturer=GOPRO4; DeviceModelName=SILVER ;;
-            HD6) DeviceManufacturer=GOPRO6; DeviceModelName=BLACK ;;
-            HD7) DeviceManufacturer=GOPRO7; DeviceModelName=BLACK ;;
-            H21) DeviceManufacturer=GOPRO10; DeviceModelName=BLACK ;;
-            H23) DeviceManufacturer=GOPRO12; DeviceModelName=BLACK ;;
-            H26) gopro_set_mission1_pro_labels ;;
-        esac
-        if [[ "$DeviceManufacturer" == xxx ]]; then
-            gopro_apply_camera_model_name_from_exif "$exif" || true
+        if labels="$(gopro_device_labels_from_exif "$exif")"; then
+            IFS=$'\t' read -r DeviceManufacturer DeviceModelName <<< "$labels"
+            [[ "$(gopro_firmware_prefix_from_exif "$exif")" == HD4 ]] && gopro4=1
+        else
+            return 1
         fi
         if gopro_camera_raw_jpg_basename_matches "$base"; then
             # GOPR/GP JPG often has several Create Date tags; head -n 1 must run before tr -d newline or two timestamps glue together.
@@ -10673,6 +10801,17 @@ transform_name() {
         return 2
     fi
 
+    if [[ -f "$f" ]] && ((_tn_skip_exif == 0)) && (( _gopro_applied == 0 )) \
+        && gopro_basename_has_legacy_gopro_camera_tail "$newbase"; then
+        local _gopro_legacy_try=""
+        _gopro_legacy_try="$(maybe_transform_gopro_legacy_camera_label "$newbase")"
+        if [[ -n "$_gopro_legacy_try" && "$_gopro_legacy_try" != "$newbase" ]]; then
+            vlog "GoPro legacy camera label: $newbase -> $_gopro_legacy_try"
+            newbase="$_gopro_legacy_try"
+            _gopro_applied=1
+        fi
+    fi
+
     if [[ -e "$f" ]]; then
         if [[ ! -d "$f" ]]; then
             while [[ "$newbase" =~ ^(.+)\.([^.]+)\.([^.]+)$ ]]; do
@@ -10842,6 +10981,31 @@ transform_name() {
             _samsung_applied=1
         else
             vlog "Samsung media rename: no usable Samsung metadata for $newbase (rc=$_samsung_rc)"
+        fi
+    fi
+
+    if [[ -f "$f" ]] && ((_tn_skip_exif == 0)) && (( _gopro_applied == 0 && _sony_applied == 0 && _olympus_applied == 0 && _nikon_applied == 0 && _samsung_applied == 0 )) \
+        && gopro_bare_timestamp_media_basename_matches "$newbase"; then
+        local _tn_save_e_gpts=0 _gpts_err_trap="" _gopro_bare_try="" _gopro_bare_rc=0
+        [[ $- == *e* ]] && _tn_save_e_gpts=1
+        set +e
+        _gpts_err_trap="$(trap -p ERR || true)"
+        trap - ERR
+        _gopro_bare_try="$(transform_gopro_bare_timestamp_media_basename "$f" "$newbase")"
+        _gopro_bare_rc=$?
+        eval "${_gpts_err_trap:-}"
+        if ((_tn_save_e_gpts)); then
+            set -e
+        else
+            set +e
+        fi
+        if (( _gopro_bare_rc == 0 )) && [[ -n "$_gopro_bare_try" ]]; then
+            vlog "GoPro bare timestamp rename: $newbase -> $_gopro_bare_try"
+            newbase="$_gopro_bare_try"
+            _gopro_applied=1
+            gopro_mark_capture_mode_db_from_basename "$f" "$newbase"
+        else
+            vlog "GoPro bare timestamp rename: no usable GoPro metadata for $newbase (rc=$_gopro_bare_rc)"
         fi
     fi
 
