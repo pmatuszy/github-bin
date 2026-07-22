@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# v. 20260722.082045 - suppress expected Nikon metadata misses and keep ERR diagnostics out of generated filenames
 # v. 20260721.212214 - preserve parenthesized copy numbers while appending Samsung or GoPro camera labels
 # v. 20260721.193350 - store portable relative SQLite paths, guard mass pruning, and make debug logging non-fatal
 # v. 20260721.170803 - offer session auto-yes for GoPro legacy-label and Samsung/GoPro/Nikon camera renames
@@ -9,6 +10,7 @@
 # v. 20260721.132007 - Samsung timestamp media: preserve optional numeric sorting prefix when appending make/model
 # v. 20260721.112812 - GoPro camera labels: GoPro_Hero4_Silver style (not GOPRO4_SILVER)
 
+# 2026.07.22 - v. 19.273.082045 - Nikon metadata miss is a quiet fallback; ERR trap output cannot inject a leading newline into NEW
 # 2026.07.21 - v. 19.272.212214 - timestamp media copy suffixes such as (0) keep _0 after Samsung/GoPro make-model labels
 # 2026.07.21 - v. 19.271.193350 - relative DB paths with confirmed legacy-root migration; mass-delete guard; XDG debug log fallback
 # 2026.07.21 - v. 19.270.170803 - rename prompt [G] covers GoPro legacy label normalization plus Samsung/GoPro/Nikon camera make/model renames
@@ -1077,7 +1079,7 @@ on_err() {
     local exit_code="$1"
     local line_no="$2"
     local cmd="$3"
-    echo
+    echo >&2
     echo "ERROR: command failed at line $line_no with exit code $exit_code" >&2
     echo "FAILED COMMAND: $cmd" >&2
 }
@@ -11564,11 +11566,14 @@ transform_name() {
     local _nikon_applied=0 _nikon_try="" _nikon_rc=0
     if [[ -f "$f" ]] && ((_tn_skip_exif == 0)) && (( _gopro_applied == 0 && _sony_applied == 0 && _olympus_applied == 0 )) \
         && nikon_mat_media_basename_matches "$base"; then
-        local _tn_save_e_nk=0
+        local _tn_save_e_nk=0 _nikon_err_trap=""
         [[ $- == *e* ]] && _tn_save_e_nk=1
         set +e
+        _nikon_err_trap="$(trap -p ERR || true)"
+        trap - ERR
         _nikon_try="$(transform_nikon_mat_media_basename "$f" "$base")"
         _nikon_rc=$?
+        eval "${_nikon_err_trap:-}"
         if ((_tn_save_e_nk)); then
             set -e
         else
