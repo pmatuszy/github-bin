@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# v. 20260722.192200 - place editable basename text on the line below its timestamped prompt
 # v. 20260722.125459 - append Xiaomi_Mi_10T_Pro to timestamp media identified by Xiaomi EXIF metadata
 # v. 20260722.103843 - count legacy and modern GoPro camera labels as the same multi-part recording identity
 # v. 20260722.085951 - omit Hero7 timelapse interval details and clean existing Timelapse_N_Nsec names
@@ -14,6 +15,7 @@
 # v. 20260721.132007 - Samsung timestamp media: preserve optional numeric sorting prefix when appending make/model
 # v. 20260721.112812 - GoPro camera labels: GoPro_Hero4_Silver style (not GOPRO4_SILVER)
 
+# 2026.07.22 - v. 19.278.192200 - manual basename prompts put the prefilled editable filename on a separate line
 # 2026.07.22 - v. 19.277.125459 - Xiaomi M2007J3SG/Mi 10T Pro timestamp media gain the Xiaomi_Mi_10T_Pro camera suffix
 # 2026.07.22 - v. 19.276.103843 - lone-part detection canonicalizes GOPRO10_BLACK and GoPro_Hero10_Black before counting chapters
 # 2026.07.22 - v. 19.275.085951 - Hero7 timelapse names keep _Timelapse but omit interval details such as _2_1sec
@@ -14074,7 +14076,7 @@ maybe_prompt_flatten_single_child_dir() {
         m|M)
             echo "$(user_prompt_ts_prefix)Manual basename edit (readline enabled):"
             echo "  Use arrows/Home/End for cursor movement and editing."
-            echo -n "$(user_prompt_ts_prefix)New basename: "
+            echo "$(user_prompt_ts_prefix)New basename: "
             read_line_editable edited_base "$PROMPT_WAIT_SECONDS" "$parent_base"
             echo
             if [[ -z "$edited_base" ]]; then
@@ -14201,7 +14203,7 @@ choose_custom_rename_target() {
     echo -e "$(user_prompt_ts_prefix)${GREEN}Rename by editing target filename (basename only):${RESET}" >&2
     echo "  Use arrows/Home/End for cursor movement and editing." >&2
     echo "  Current suggestion: $suggested_base" >&2
-    echo -n "$(user_prompt_ts_prefix)New basename: " >&2
+    echo "$(user_prompt_ts_prefix)New basename: " >&2
     read_line_editable edited_base "$PROMPT_WAIT_SECONDS" "$suggested_base"
     echo >&2
 
