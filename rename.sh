@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# v. 20260722.103843 - count legacy and modern GoPro camera labels as the same multi-part recording identity
 # v. 20260722.085951 - omit Hero7 timelapse interval details and clean existing Timelapse_N_Nsec names
 # v. 20260722.082727 - make --version dependency-free instead of sourcing the installing script header
 # v. 20260722.082045 - suppress expected Nikon metadata misses and keep ERR diagnostics out of generated filenames
@@ -12,6 +13,7 @@
 # v. 20260721.132007 - Samsung timestamp media: preserve optional numeric sorting prefix when appending make/model
 # v. 20260721.112812 - GoPro camera labels: GoPro_Hero4_Silver style (not GOPRO4_SILVER)
 
+# 2026.07.22 - v. 19.276.103843 - lone-part detection canonicalizes GOPRO10_BLACK and GoPro_Hero10_Black before counting chapters
 # 2026.07.22 - v. 19.275.085951 - Hero7 timelapse names keep _Timelapse but omit interval details such as _2_1sec
 # 2026.07.22 - v. 19.274.082727 - --version prints the embedded version directly; boxes/figlet and apt are not involved
 # 2026.07.22 - v. 19.273.082045 - Nikon metadata miss is a quiet fallback; ERR trap output cannot inject a leading newline into NEW
@@ -10128,23 +10130,25 @@ gopro_renamed_session_prefix_from_basename() {
 # detection must group by this id, not the full prefix including timestamp.
 gopro_renamed_camera_identity_from_basename() {
     local bn="$1"
-    local id
+    local id modern=""
 
     gopro_renamed_mp4_basename_matches "$bn" || return 1
 
     if [[ "$bn" =~ ^[0-9]{8}_[0-9]{6}_(-__-_|-_-_)(.+)_part_[0-9]{2}(_Proxy)?\.[mM][pP]4$ ]]; then
-        printf '%s' "${BASH_REMATCH[2]}"
-        return 0
-    fi
-    if [[ "$bn" =~ ^[0-9]{8}_[0-9]{6}_(-__-_|-_-_)(.+)\.[mM][pP]4$ ]]; then
+        id="${BASH_REMATCH[2]}"
+    elif [[ "$bn" =~ ^[0-9]{8}_[0-9]{6}_(-__-_|-_-_)(.+)\.[mM][pP]4$ ]]; then
         id="${BASH_REMATCH[2]}"
         id="${id%_Proxy}"
         id="${id%_proxy}"
         id="${id%_PROXY}"
-        printf '%s' "$id"
-        return 0
+    else
+        return 1
     fi
-    return 1
+
+    modern="$(gopro_modernize_legacy_camera_tail "$id" 2>/dev/null)" || modern=""
+    [[ -n "$modern" ]] && id="$modern"
+    printf '%s' "$id"
+    return 0
 }
 
 gopro_renamed_basename_without_part_segment() {
