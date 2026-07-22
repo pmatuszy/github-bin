@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# v. 20260722.082727 - make --version dependency-free instead of sourcing the installing script header
 # v. 20260722.082045 - suppress expected Nikon metadata misses and keep ERR diagnostics out of generated filenames
 # v. 20260721.212214 - preserve parenthesized copy numbers while appending Samsung or GoPro camera labels
 # v. 20260721.193350 - store portable relative SQLite paths, guard mass pruning, and make debug logging non-fatal
@@ -10,6 +11,7 @@
 # v. 20260721.132007 - Samsung timestamp media: preserve optional numeric sorting prefix when appending make/model
 # v. 20260721.112812 - GoPro camera labels: GoPro_Hero4_Silver style (not GOPRO4_SILVER)
 
+# 2026.07.22 - v. 19.274.082727 - --version prints the embedded version directly; boxes/figlet and apt are not involved
 # 2026.07.22 - v. 19.273.082045 - Nikon metadata miss is a quiet fallback; ERR trap output cannot inject a leading newline into NEW
 # 2026.07.21 - v. 19.272.212214 - timestamp media copy suffixes such as (0) keep _0 after Samsung/GoPro make-model labels
 # 2026.07.21 - v. 19.271.193350 - relative DB paths with confirmed legacy-root migration; mass-delete guard; XDG debug log fallback
@@ -5846,9 +5848,7 @@ while (( $# > 0 )); do
     #endregion
     case "$1" in
         --version)
-            # shellcheck disable=SC1091
-            . /root/bin/_script_header.sh NO_STARTUP_DELAY
-            print_version_banner
+            printf '%s\nVersion: %s\n' "${0##*/}" "$SCRIPT_VERSION"
             exit 0
             ;;
         -v|--verbose)
