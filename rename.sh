@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# v. 20260722.125459 - append Xiaomi_Mi_10T_Pro to timestamp media identified by Xiaomi EXIF metadata
 # v. 20260722.103843 - count legacy and modern GoPro camera labels as the same multi-part recording identity
 # v. 20260722.085951 - omit Hero7 timelapse interval details and clean existing Timelapse_N_Nsec names
 # v. 20260722.082727 - make --version dependency-free instead of sourcing the installing script header
@@ -13,6 +14,7 @@
 # v. 20260721.132007 - Samsung timestamp media: preserve optional numeric sorting prefix when appending make/model
 # v. 20260721.112812 - GoPro camera labels: GoPro_Hero4_Silver style (not GOPRO4_SILVER)
 
+# 2026.07.22 - v. 19.277.125459 - Xiaomi M2007J3SG/Mi 10T Pro timestamp media gain the Xiaomi_Mi_10T_Pro camera suffix
 # 2026.07.22 - v. 19.276.103843 - lone-part detection canonicalizes GOPRO10_BLACK and GoPro_Hero10_Black before counting chapters
 # 2026.07.22 - v. 19.275.085951 - Hero7 timelapse names keep _Timelapse but omit interval details such as _2_1sec
 # 2026.07.22 - v. 19.274.082727 - --version prints the embedded version directly; boxes/figlet and apt are not involved
@@ -10250,6 +10252,16 @@ samsung_already_renamed_basename_matches() {
     [[ "$lower" =~ ^([0-9]+_)?[0-9]{8}_[0-9]{6}_(-__-_|-_-_)samsung_.+\.(3gp|heic|heif|jpeg|jpg|m4v|mkv|mov|mp4|png|webm)$ ]]
 }
 
+xiaomi_media_basename_matches() {
+    samsung_media_basename_matches "$1"
+}
+
+xiaomi_already_renamed_basename_matches() {
+    local bn="$1"
+    local lower="${bn,,}"
+    [[ "$lower" =~ ^([0-9]+_)?[0-9]{8}_[0-9]{6}_(-__-_|-_-_)xiaomi_mi_10t_pro(_[0-9]+)?\.(3gp|heic|heif|jpeg|jpg|m4v|mkv|mov|mp4|png|webm)$ ]]
+}
+
 # Bare YYYYMMDD_HHMMSS[(_N)].{mp4,m4v,mov} without a camera tag yet
 # (e.g. phone export or GoPro without GH prefix).
 gopro_bare_timestamp_media_basename_matches() {
@@ -10272,6 +10284,20 @@ samsung_exif_camera_tag_append_matches() {
     [[ "$ob" != "$nb" ]] || return 1
     samsung_media_basename_matches "$ob" || return 1
     samsung_already_renamed_basename_matches "$nb" || return 1
+    return 0
+}
+
+# True when NEW adds the Xiaomi Mi 10T Pro EXIF camera tag after a timestamp basename.
+xiaomi_exif_camera_tag_append_matches() {
+    local old="$1" new="$2"
+    local ob nb
+
+    [[ -n "$old" && -n "$new" ]] || return 1
+    ob="$(basename -- "$old")"
+    nb="$(basename -- "$new")"
+    [[ "$ob" != "$nb" ]] || return 1
+    xiaomi_media_basename_matches "$ob" || return 1
+    xiaomi_already_renamed_basename_matches "$nb" || return 1
     return 0
 }
 
@@ -10305,6 +10331,7 @@ nikon_exif_camera_tag_append_matches() {
 
 rename_is_exif_camera_tag_append() {
     samsung_exif_camera_tag_append_matches "$@" && return 0
+    xiaomi_exif_camera_tag_append_matches "$@" && return 0
     gopro_exif_camera_tag_append_matches "$@" && return 0
     nikon_exif_camera_tag_append_matches "$@" && return 0
     return 1
@@ -10461,6 +10488,44 @@ transform_samsung_media_basename() {
     copy_suffix="${BASH_REMATCH[4]:-${BASH_REMATCH[5]}}"
 
     gopro_format_camera_basename_output "$ts" "Samsung" "$friendly_model" "$copy_suffix" "$ext"
+}
+
+xiaomi_exif_is_mi_10t_pro() {
+    local exif="$1"
+    local make="" model="" xiaomi_model=""
+
+    make="$(samsung_exif_first_value "$exif" 'Make')"
+    [[ "${make,,}" == "xiaomi" ]] || return 1
+
+    model="$(samsung_exif_first_value "$exif" 'Camera Model Name')"
+    model="${model^^}"
+    [[ "$model" == "M2007J3SG" ]] && return 0
+
+    xiaomi_model="$(samsung_exif_first_value "$exif" 'Xiaomi Model')"
+    xiaomi_model="${xiaomi_model^^}"
+    [[ "$xiaomi_model" == "MI 10T PRO" ]]
+}
+
+transform_xiaomi_media_basename() {
+    local file="$1"
+    local base="$2"
+    local exifloc exif ext stem ts copy_suffix=""
+
+    xiaomi_media_basename_matches "$base" || return 0
+    xiaomi_already_renamed_basename_matches "$base" && return 0
+
+    exifloc="$(resolve_rename_exiftool)" || return 0
+    exif="$("$exifloc" -api largefilesupport=1 "$file" 2>/dev/null)" || return 0
+    [[ -n "$exif" ]] || return 0
+    xiaomi_exif_is_mi_10t_pro "$exif" || return 0
+
+    ext="${base##*.}"
+    stem="${base%.*}"
+    [[ "$stem" =~ ^(([0-9]+_)?[0-9]{8}_[0-9]{6})(\(([0-9]+)\)|_([0-9]+))?$ ]] || return 0
+    ts="${BASH_REMATCH[1]}"
+    copy_suffix="${BASH_REMATCH[4]:-${BASH_REMATCH[5]}}"
+
+    gopro_format_camera_basename_output "$ts" "Xiaomi" "Mi_10T_Pro" "$copy_suffix" "$ext"
 }
 
 # GoPro clips already named YYYYMMDD_HHMMSS.mp4 (no GH/GOPR prefix): append _-_-_GoPro_Hero#_Edition from exiftool.
@@ -11859,7 +11924,32 @@ transform_name() {
         fi
     fi
 
+    local _xiaomi_applied=0 _xiaomi_try="" _xiaomi_rc=0
     if [[ -f "$f" ]] && ((_tn_skip_exif == 0)) && (( _gopro_applied == 0 && _sony_applied == 0 && _olympus_applied == 0 && _nikon_applied == 0 && _samsung_applied == 0 )) \
+        && xiaomi_media_basename_matches "$newbase"; then
+        local _tn_save_e_xiaomi=0 _xiaomi_err_trap=""
+        [[ $- == *e* ]] && _tn_save_e_xiaomi=1
+        set +e
+        _xiaomi_err_trap="$(trap -p ERR || true)"
+        trap - ERR
+        _xiaomi_try="$(transform_xiaomi_media_basename "$f" "$newbase")"
+        _xiaomi_rc=$?
+        eval "${_xiaomi_err_trap:-}"
+        if ((_tn_save_e_xiaomi)); then
+            set -e
+        else
+            set +e
+        fi
+        if (( _xiaomi_rc == 0 )) && [[ -n "$_xiaomi_try" ]]; then
+            vlog "Xiaomi media rename: $newbase -> $_xiaomi_try"
+            newbase="$_xiaomi_try"
+            _xiaomi_applied=1
+        else
+            vlog "Xiaomi media rename: no usable Mi 10T Pro metadata for $newbase (rc=$_xiaomi_rc)"
+        fi
+    fi
+
+    if [[ -f "$f" ]] && ((_tn_skip_exif == 0)) && (( _gopro_applied == 0 && _sony_applied == 0 && _olympus_applied == 0 && _nikon_applied == 0 && _samsung_applied == 0 && _xiaomi_applied == 0 )) \
         && gopro_bare_timestamp_media_basename_matches "$newbase"; then
         local _tn_save_e_gpts=0 _gpts_err_trap="" _gopro_bare_try="" _gopro_bare_rc=0
         [[ $- == *e* ]] && _tn_save_e_gpts=1
