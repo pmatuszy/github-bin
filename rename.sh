@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# v. 20260722.085951 - omit Hero7 timelapse interval details and clean existing Timelapse_N_Nsec names
 # v. 20260722.082727 - make --version dependency-free instead of sourcing the installing script header
 # v. 20260722.082045 - suppress expected Nikon metadata misses and keep ERR diagnostics out of generated filenames
 # v. 20260721.212214 - preserve parenthesized copy numbers while appending Samsung or GoPro camera labels
@@ -11,6 +12,7 @@
 # v. 20260721.132007 - Samsung timestamp media: preserve optional numeric sorting prefix when appending make/model
 # v. 20260721.112812 - GoPro camera labels: GoPro_Hero4_Silver style (not GOPRO4_SILVER)
 
+# 2026.07.22 - v. 19.275.085951 - Hero7 timelapse names keep _Timelapse but omit interval details such as _2_1sec
 # 2026.07.22 - v. 19.274.082727 - --version prints the embedded version directly; boxes/figlet and apt are not involved
 # 2026.07.22 - v. 19.273.082045 - Nikon metadata miss is a quiet fallback; ERR trap output cannot inject a leading newline into NEW
 # 2026.07.21 - v. 19.272.212214 - timestamp media copy suffixes such as (0) keep _0 after Samsung/GoPro make-model labels
@@ -9823,13 +9825,42 @@ gopro_fetch_rate_tag() {
     printf '%s' "$rate"
 }
 
+gopro_capture_mode_suffix_for_model() {
+    local model="$1"
+    local mode_suffix="$2"
+
+    if [[ "$model" == "Hero7_Black" && "$mode_suffix" == Timelapse_* && "$mode_suffix" == *sec ]]; then
+        printf '%s' 'Timelapse'
+    else
+        printf '%s' "$mode_suffix"
+    fi
+}
+
+gopro_hero7_timelapse_interval_basename_normalized() {
+    local base="$1"
+
+    if [[ "$base" =~ ^(.+_GoPro_Hero7_Black_Timelapse)_[0-9]+(_[0-9]+)?sec((_part_[0-9]{2})?(_Proxy)?(\.[mM][pP]4))$ ]]; then
+        printf '%s%s' "${BASH_REMATCH[1]}" "${BASH_REMATCH[3]}"
+        return 0
+    fi
+    return 1
+}
+
+gopro_hero7_timelapse_interval_basename_matches() {
+    gopro_hero7_timelapse_interval_basename_normalized "$1" >/dev/null 2>&1
+}
+
 gopro_basename_has_capture_mode_suffix() {
-    [[ "$1" =~ _(Timewarp|Timelapse)_ ]]
+    [[ "$1" =~ _(Timewarp|Timelapse)(_|\.) ]]
 }
 
 gopro_capture_mode_suffix_from_basename() {
     local base="$1"
 
+    if [[ "$base" =~ _GoPro_Hero7_Black_(Timelapse)(_part_[0-9]{2})?(_Proxy)?(\.[mM][pP]4)$ ]]; then
+        printf '%s' "${BASH_REMATCH[1]}"
+        return 0
+    fi
     if [[ "$base" =~ _(Timewarp|Timelapse)_(([^./]+_)*[^./]+)(_part_[0-9]{2})?(_Proxy)?(\.[mM][pP]4)$ ]]; then
         printf '%s_%s' "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}"
         return 0
@@ -9961,6 +9992,13 @@ maybe_transform_gopro_capture_mode_backfill() {
 
     gopro_renamed_mp4_basename_matches "$base" || return 0
 
+    newbase="$(gopro_hero7_timelapse_interval_basename_normalized "$base" 2>/dev/null)" || newbase=""
+    if [[ -n "$newbase" && "$newbase" != "$base" ]]; then
+        vlog "GoPro Hero7: remove timelapse interval detail: $base -> $newbase"
+        printf '%s' "$newbase"
+        return 0
+    fi
+
     if ! resolve_rename_exiftool >/dev/null; then
         return 0
     fi
@@ -9988,6 +10026,9 @@ maybe_transform_gopro_capture_mode_backfill() {
 
     rate="$(gopro_fetch_rate_tag "$f")" || rate=""
     mode_suffix="$(gopro_video_capture_mode_suffix_from_file "$f")"
+    if [[ "$base" == *_GoPro_Hero7_Black* ]]; then
+        mode_suffix="$(gopro_capture_mode_suffix_for_model "Hero7_Black" "$mode_suffix")"
+    fi
     if [[ -n "$mode_suffix" ]]; then
         newbase="$(gopro_basename_with_capture_mode_suffix "$base" "$mode_suffix")" || return 0
         newbase="$(gopro_newbase_omit_lone_part_if_sole_chapter "$f" "$base" "$newbase")"
@@ -10457,6 +10498,7 @@ transform_gopro_bare_timestamp_media_basename() {
     copy_suffix="${BASH_REMATCH[3]:-${BASH_REMATCH[4]}}"
 
     suffix_pliku="$(gopro_video_capture_mode_suffix_from_exif "$exif")"
+    suffix_pliku="$(gopro_capture_mode_suffix_for_model "$model" "$suffix_pliku")"
     if [[ -n "$copy_suffix" ]]; then
         suffix_pliku="${suffix_pliku:+${suffix_pliku}_}${copy_suffix}"
     fi
@@ -10934,6 +10976,7 @@ transform_gopro_camera_basename() {
     if [[ "$czy_gopro" == 1 ]] && ! gopro_camera_raw_jpg_basename_matches "$base"; then
         local capture_mode_suffix=""
         capture_mode_suffix="$(gopro_video_capture_mode_suffix_from_exif "$exif")"
+        capture_mode_suffix="$(gopro_capture_mode_suffix_for_model "$DeviceModelName" "$capture_mode_suffix")"
         if [[ -n "$capture_mode_suffix" ]]; then
             suffix_pliku="$capture_mode_suffix"
         fi
@@ -11518,7 +11561,7 @@ transform_name() {
 
     if [[ -f "$f" ]] && ((_tn_skip_exif == 0)) && (( _gopro_applied == 0 && _sony_applied == 0 )) \
         && gopro_renamed_mp4_basename_matches "$base" \
-        && ! gopro_basename_has_capture_mode_suffix "$base"; then
+        && { ! gopro_basename_has_capture_mode_suffix "$base" || gopro_hero7_timelapse_interval_basename_matches "$base"; }; then
         local _gopro_backfill_try="" _gopro_backfill_rc=0
         local _tn_save_e_gpbf=0
         [[ $- == *e* ]] && _tn_save_e_gpbf=1
