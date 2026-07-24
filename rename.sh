@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# v. 20260724.223042 - apply embedded timezone offsets to Mission 1 Pro UTC capture timestamps
 # v. 20260722.192200 - place editable basename text on the line below its timestamped prompt
 # v. 20260722.125459 - append Xiaomi_Mi_10T_Pro to timestamp media identified by Xiaomi EXIF metadata
 # v. 20260722.103843 - count legacy and modern GoPro camera labels as the same multi-part recording identity
@@ -15,6 +16,7 @@
 # v. 20260721.132007 - Samsung timestamp media: preserve optional numeric sorting prefix when appending make/model
 # v. 20260721.112812 - GoPro camera labels: GoPro_Hero4_Silver style (not GOPRO4_SILVER)
 
+# 2026.07.24 - v. 19.279.223042 - Mission 1 Pro raw and existing names convert UTC Create Date using embedded Time Zone
 # 2026.07.22 - v. 19.278.192200 - manual basename prompts put the prefilled editable filename on a separate line
 # 2026.07.22 - v. 19.277.125459 - Xiaomi M2007J3SG/Mi 10T Pro timestamp media gain the Xiaomi_Mi_10T_Pro camera suffix
 # 2026.07.22 - v. 19.276.103843 - lone-part detection canonicalizes GOPRO10_BLACK and GoPro_Hero10_Black before counting chapters
@@ -9646,6 +9648,33 @@ gopro_exif_value_after_colon() {
     printf '%s' "$val"
 }
 
+gopro_mission1_local_timestamp_from_exif() {
+    local exif="$1"
+    local create_line="" create_value="" timezone_line="" timezone_value=""
+    local utc_timestamp="" utc_epoch="" local_epoch=""
+    local sign="" offset_hours="" offset_minutes="" offset_seconds=0
+
+    create_line="$(gopro_exif_first_line "$exif" '^Create Date[[:space:]]+:')"
+    create_value="$(gopro_exif_value_after_colon "$create_line")"
+    [[ "$create_value" =~ ^([0-9]{4}):([0-9]{2}):([0-9]{2})[[:space:]]+([0-9]{2}):([0-9]{2}):([0-9]{2}) ]] || return 1
+    utc_timestamp="${BASH_REMATCH[1]}${BASH_REMATCH[2]}${BASH_REMATCH[3]}_${BASH_REMATCH[4]}${BASH_REMATCH[5]}${BASH_REMATCH[6]}"
+
+    timezone_line="$(gopro_exif_first_line "$exif" '^Time Zone[[:space:]]+:')"
+    timezone_value="$(gopro_exif_value_after_colon "$timezone_line")"
+    [[ "$timezone_value" =~ ^([+-])([0-9]{2}):([0-9]{2})$ ]] || return 1
+    sign="${BASH_REMATCH[1]}"
+    offset_hours="${BASH_REMATCH[2]}"
+    offset_minutes="${BASH_REMATCH[3]}"
+    (( 10#$offset_hours <= 23 && 10#$offset_minutes <= 59 )) || return 1
+
+    utc_epoch="$(TZ=UTC date -d "${utc_timestamp:0:4}-${utc_timestamp:4:2}-${utc_timestamp:6:2} ${utc_timestamp:9:2}:${utc_timestamp:11:2}:${utc_timestamp:13:2} UTC" +%s 2>/dev/null)" || return 1
+    offset_seconds=$((10#$offset_hours * 3600 + 10#$offset_minutes * 60))
+    [[ "$sign" == "-" ]] && offset_seconds=$((-offset_seconds))
+    local_epoch=$((utc_epoch + offset_seconds))
+
+    TZ=UTC date -d "@${local_epoch}" +'%Y%m%d_%H%M%S' 2>/dev/null
+}
+
 # Firmware Version or Software prefix before the first dot (HD4, H21, …); empty when absent.
 gopro_firmware_prefix_from_exif() {
     local exif="$1" line val=""
@@ -9888,6 +9917,29 @@ gopro_basename_strip_capture_mode_suffix() {
 gopro_renamed_mp4_basename_matches() {
     local base="$1"
     [[ "$base" =~ ^[0-9]{8}_[0-9]{6}_(-__-_|-_-_)(GoPro_[A-Za-z0-9_]+|GOPRO[0-9]+_[A-Z0-9]+|GOPRO_[A-Z0-9]+).*\.[mM][pP]4$ ]]
+}
+
+gopro_mission1_renamed_mp4_basename_matches() {
+    [[ "$1" =~ ^[0-9]{8}_[0-9]{6}_(-__-_|-_-_)GoPro_Mission1_Pro.*\.[mM][pP]4$ ]]
+}
+
+transform_gopro_mission1_embedded_timezone_basename() {
+    local file="$1"
+    local base="$2"
+    local exifloc="" exif="" labels="" manuf="" model="" local_ts="" suffix=""
+
+    gopro_mission1_renamed_mp4_basename_matches "$base" || return 0
+    exifloc="$(resolve_rename_exiftool)" || return 0
+    exif="$("$exifloc" -api largefilesupport=1 "$file" 2>/dev/null)" || return 0
+    [[ -n "$exif" ]] || return 0
+    labels="$(gopro_device_labels_from_exif "$exif")" || return 0
+    IFS=$'\t' read -r manuf model <<< "$labels"
+    [[ "$manuf" == "GoPro" && "$model" == "Mission1_Pro" ]] || return 0
+    local_ts="$(gopro_mission1_local_timestamp_from_exif "$exif")" || return 0
+    [[ "$base" =~ ^[0-9]{8}_[0-9]{6}(.+)$ ]] || return 0
+    suffix="${BASH_REMATCH[1]}"
+    [[ "${base:0:15}" != "$local_ts" ]] || return 0
+    printf '%s%s' "$local_ts" "$suffix"
 }
 
 # Metadata-renamed GoPro MP4/JPG from exiftool (GH/GOPR/GP… raw → YYYYMMDD_HHMMSS_-_-_GoPro_…).
@@ -10964,7 +11016,7 @@ transform_gopro_camera_basename() {
     local czy_sony=0 czy_gopro=0 czy_contour=0 czy_LGv20=0
     local gopro4=0 DeviceManufacturer DeviceModelName
     local data_stworzenia_pliku_w_czasie_lokalnym Duration suffix_pliku ext
-    local ktory_gopro TrackCreateDate CreationDateValue data
+    local ktory_gopro TrackCreateDate CreationDateValue data mission1_local_ts=""
     local _tg_err_trap="" _tg_save_e=0
 
     _transform_gopro_err_trap_restore() {
@@ -11017,6 +11069,13 @@ transform_gopro_camera_basename() {
             TrackCreateDate="$("$exifloc" -api largefilesupport=1 -d '%Y%m%d_%H%M%S' "$file" | grep '^Create Date' | head -n 1 | tr 'a-z' 'A-Z' | sed 's/^CREATE DATE *: //' | tr -d ':' | tr ' ' '_' | tr -d $'\r')"
         fi
         data_stworzenia_pliku_w_czasie_lokalnym="$TrackCreateDate"
+        if [[ "$DeviceModelName" == "Mission1_Pro" ]]; then
+            mission1_local_ts="$(gopro_mission1_local_timestamp_from_exif "$exif")" || mission1_local_ts=""
+            if [[ -n "$mission1_local_ts" ]]; then
+                vlog "GoPro Mission 1 Pro: UTC timestamp $TrackCreateDate adjusted by embedded Time Zone to $mission1_local_ts"
+                data_stworzenia_pliku_w_czasie_lokalnym="$mission1_local_ts"
+            fi
+        fi
     fi
 
     if printf '%s\n' "$exif" | grep "Compressor Name" | grep -q "Ambarella AVC encoder"; then
@@ -11581,7 +11640,7 @@ transform_name() {
         done
     fi
 
-    local _gopro_applied=0 _gopro_try="" _gopro_rc=0 _gopro_part_strip=""
+    local _gopro_applied=0 _gopro_try="" _gopro_rc=0 _gopro_part_strip="" _gopro_timezone_applied=0
     local _sony_applied=0 _sony_try="" _sony_rc=0
     if [[ -f "$f" ]] && ((_tn_skip_exif == 0)) && sony_clip_media_basename_matches "$base"; then
         local _tn_save_e_sc=0
@@ -11631,6 +11690,30 @@ transform_name() {
     fi
 
     if [[ -f "$f" ]] && ((_tn_skip_exif == 0)) && (( _gopro_applied == 0 && _sony_applied == 0 )) \
+        && gopro_mission1_renamed_mp4_basename_matches "$base"; then
+        local _gopro_timezone_try="" _gopro_timezone_rc=0 _gopro_timezone_err_trap=""
+        local _tn_save_e_gptz=0
+        [[ $- == *e* ]] && _tn_save_e_gptz=1
+        set +e
+        _gopro_timezone_err_trap="$(trap -p ERR || true)"
+        trap - ERR
+        _gopro_timezone_try="$(transform_gopro_mission1_embedded_timezone_basename "$f" "$base")"
+        _gopro_timezone_rc=$?
+        eval "${_gopro_timezone_err_trap:-}"
+        if ((_tn_save_e_gptz)); then
+            set -e
+        else
+            set +e
+        fi
+        if (( _gopro_timezone_rc == 0 )) && [[ -n "$_gopro_timezone_try" ]]; then
+            newbase="$_gopro_timezone_try"
+            _gopro_applied=1
+            _gopro_timezone_applied=1
+            vlog "GoPro Mission 1 Pro embedded timezone correction: $base -> $newbase"
+        fi
+    fi
+
+    if [[ -f "$f" ]] && ((_tn_skip_exif == 0)) && (( _gopro_applied == 0 && _sony_applied == 0 )) \
         && gopro_renamed_mp4_basename_matches "$base" \
         && { ! gopro_basename_has_capture_mode_suffix "$base" || gopro_hero7_timelapse_interval_basename_matches "$base"; }; then
         local _gopro_backfill_try="" _gopro_backfill_rc=0
@@ -11648,7 +11731,7 @@ transform_name() {
         fi
     fi
 
-    if [[ -f "$f" ]] && ((_tn_skip_exif == 0)) && (( _gopro_applied == 1 )) && gopro_renamed_basename_has_part_segment "$newbase"; then
+    if [[ -f "$f" ]] && ((_tn_skip_exif == 0)) && (( _gopro_applied == 1 && _gopro_timezone_applied == 0 )) && gopro_renamed_basename_has_part_segment "$newbase"; then
         newbase="$(gopro_newbase_omit_lone_part_if_sole_chapter "$f" "$newbase" "$newbase")"
     fi
 
