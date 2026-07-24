@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# v. 20260724.224207 - add -R/--recheck-renames canonical-name audit with scoped approval prompts
 # v. 20260724.223042 - apply embedded timezone offsets to Mission 1 Pro UTC capture timestamps
 # v. 20260722.192200 - place editable basename text on the line below its timestamped prompt
 # v. 20260722.125459 - append Xiaomi_Mi_10T_Pro to timestamp media identified by Xiaomi EXIF metadata
@@ -16,6 +17,7 @@
 # v. 20260721.132007 - Samsung timestamp media: preserve optional numeric sorting prefix when appending make/model
 # v. 20260721.112812 - GoPro camera labels: GoPro_Hero4_Silver style (not GOPRO4_SILVER)
 
+# 2026.07.24 - v. 19.280.224207 - -R/--recheck-renames audits current naming rules and offers file/directory/run approvals
 # 2026.07.24 - v. 19.279.223042 - Mission 1 Pro raw and existing names convert UTC Create Date using embedded Time Zone
 # 2026.07.22 - v. 19.278.192200 - manual basename prompts put the prefilled editable filename on a separate line
 # 2026.07.22 - v. 19.277.125459 - Xiaomi M2007J3SG/Mi 10T Pro timestamp media gain the Xiaomi_Mi_10T_Pro camera suffix
@@ -564,7 +566,7 @@ WRAP_MSG_INDENT="${WRAP_MSG_INDENT:-          }"
 RENAME_DRY_RUN_SKIP_EXIFTOOL="${RENAME_DRY_RUN_SKIP_EXIFTOOL:-yes}"
 
 dry_run_skip_exiftool_enabled() {
-    [[ "$mode" == "dry-run" && "${RENAME_DRY_RUN_SKIP_EXIFTOOL,,}" == yes ]]
+    [[ "$mode" == "dry-run" && "${RENAME_DRY_RUN_SKIP_EXIFTOOL,,}" == yes && "$RECHECK_RENAMES" -eq 0 ]]
 }
 
 # Non-verbose dry-run: show which checksum group is being analyzed (transform_name can take time on RAID).
@@ -937,6 +939,7 @@ START_DIR="${START_DIR:-$RENAME_SH_INVOCATION_CWD}"
 EXCLUDE_FILTERS_FILE="$START_DIR/_exclude-rename.sh.txt"
 USE_DB=0
 FORCE_RECHECK=0
+RECHECK_RENAMES=0
 FAST_DB=0
 DB_FILE="$START_DIR/_rename.sh-optional-db.sqlite3"
 LEGACY_DB_FILE="$START_DIR/rename.sh-optional-db.sqlite3"
@@ -1148,10 +1151,13 @@ debug_log() {
 
 usage() {
     cat <<'EOF'
-Usage: rename.sh [-v|--verbose] [--use-db] [--fast] [--force-recheck] [--backfill-hashes md5|sha512|both] [--run-db-maintenance] [--db-maintenance auto|[full]] [--colors [yes]|no] [--mode real|[dry-run]] [--scope subdirs|[current]] [--date-placement front|[original]] [--resume-state [resume]|ask|fresh] [--wait-seconds [0]|N] [--version] [-h|--help]
+Usage: rename.sh [-v|--verbose] [-R|--recheck-renames] [--use-db] [--fast] [--force-recheck] [--backfill-hashes md5|sha512|both] [--run-db-maintenance] [--db-maintenance auto|[full]] [--colors [yes]|no] [--mode real|[dry-run]] [--scope subdirs|[current]] [--date-placement front|[original]] [--resume-state [resume]|ask|fresh] [--wait-seconds [0]|N] [--version] [-h|--help]
 
 Options:
   -v, --verbose          Show extra diagnostic output
+  -R, --recheck-renames  Audit every regular non-checksum file against current naming rules, bypass rename cache skips,
+                         and prompt for discrepancies with separate file/directory/run approvals.
+                         With --mode dry-run, list all discrepancies without changing files.
   --version              Print a short version banner and exit
   --use-db               Use SQLite cache in the start directory (_rename.sh-optional-db.sqlite3). If that file or the legacy rename.sh-optional-db.sqlite3 already exists and you omit --use-db, you are prompted whether to use it (default: yes; [q] quits).
   --fast                 With --use-db, trust cached paths without checking current size/mtime
@@ -1193,6 +1199,8 @@ Optional exclude file in the start directory: _exclude-rename.sh.txt
 
 Example:
   rename.sh -v --use-db --colors yes --mode real --scope subdirs
+  rename.sh -R --mode dry-run --scope subdirs
+  rename.sh --recheck-renames --mode real --scope current
   rename.sh -v --use-db --fast --colors yes --mode real --scope subdirs
   rename.sh --backfill-hashes both
   rename.sh --backfill-hashes sha512
@@ -5865,6 +5873,10 @@ while (( $# > 0 )); do
             VERBOSE=1
             shift
             ;;
+        -R|--recheck-renames)
+            RECHECK_RENAMES=1
+            shift
+            ;;
         --use-db)
             USE_DB=1
             shift
@@ -5970,8 +5982,15 @@ while (( $# > 0 )); do
     esac
 done
 
+if (( RECHECK_RENAMES == 1 )); then
+    CLI_RESUME_STATE=fresh
+fi
 if (( RUN_DB_MAINTENANCE == 1 && RUN_HASH_BACKFILL == 1 )); then
     echo "ERROR: --backfill-hashes cannot be combined with --run-db-maintenance or --db-maintenance." >&2
+    exit 1
+fi
+if (( RECHECK_RENAMES == 1 && (RUN_DB_MAINTENANCE == 1 || RUN_HASH_BACKFILL == 1) )); then
+    echo "ERROR: --recheck-renames cannot be combined with database maintenance or hash backfill." >&2
     exit 1
 fi
 
@@ -5990,7 +6009,9 @@ esac
 
 print_startup_banner
 
-prompt_use_existing_sqlite_cache_if_present
+if (( RECHECK_RENAMES == 0 )); then
+    prompt_use_existing_sqlite_cache_if_present
+fi
 
 if (( RUN_DB_MAINTENANCE == 0 && RUN_HASH_BACKFILL == 0 )); then
     prompt_resume_choice_early
@@ -6037,6 +6058,9 @@ if (( USE_DB == 1 )); then
 fi
 startup_progress "Startup preparation finished"
 startup_progress "Interactive prompt wait: $(print_prompt_wait_description)"
+if (( RECHECK_RENAMES == 1 )); then
+    startup_progress "Rename recheck mode enabled: cache rename skips and resume checkpoints are bypassed"
+fi
 
 
 if (( USE_DB == 1 )); then
@@ -6054,6 +6078,11 @@ if (( USE_DB == 1 )); then
         auto) echo "SQLite maintenance profile: AUTO (optimize/checkpoint + filesystem reconciliation; no hash backfill)" ;;
         full) echo "SQLite maintenance profile: FULL (optimize + analyze + reindex + WAL truncate + filesystem reconciliation; no hash backfill)" ;;
     esac
+fi
+if (( RECHECK_RENAMES == 1 )); then
+    echo
+    echo "Rename recheck mode: audit current canonical naming rules (-R/--recheck-renames)"
+    echo "Rename cache skips: bypassed; resume state: fresh; checksum groups and directories: not processed"
 fi
 
 if [[ -f "$EXCLUDE_FILTERS_FILE" ]]; then
@@ -6155,6 +6184,7 @@ print_verbose_options_box() {
     lines+=("Verbose        : on - print extra diagnostic information")
     lines+=("Colors         : ${color_text}")
     lines+=("Mode           : ${mode} - $( [[ "$mode" == "real" ]] && printf '%s' 'perform interactive real renames' || printf '%s' 'show planned changes only' )")
+    lines+=("Rename recheck : $( (( RECHECK_RENAMES == 1 )) && printf '%s' 'enabled - audit current rules with dedicated approvals' || printf '%s' 'disabled' )")
     lines+=("Scope          : ${scope_text}")
     lines+=("Date placement : ${DATE_PLACEMENT} - $( [[ "$DATE_PLACEMENT" == original ]] && printf '%s' 'BBC/iPlayer -date_ compact stamp stays in title' || printf '%s' 'BBC/iPlayer -date_ stamp moved to front' )")
     lines+=("SQLite cache   : ${db_mode}")
@@ -10025,6 +10055,7 @@ gopro_capture_mode_db_cache_hit() {
     local path="$1"
     local abs meta cached
 
+    (( RECHECK_RENAMES == 0 )) || return 1
     (( USE_DB == 1 )) || return 1
     (( FORCE_RECHECK == 0 )) || return 1
     [[ -e "$path" ]] || return 1
@@ -11786,25 +11817,32 @@ transform_name() {
     fi
 
     if [[ -f "$f" ]] && ((_tn_skip_exif == 0)) && (( _gopro_applied == 0 && _sony_applied == 0 && _olympus_applied == 0 && _nikon_applied == 0 )) && [[ "$stopped_by_user" != yes ]]; then
-        local _gopro_part_rc=0 _gopro_part_err_trap=""
-        local _tn_save_e_part=0
-        [[ $- == *e* ]] && _tn_save_e_part=1
-        set +e
-        _gopro_part_err_trap="$(trap -p ERR || true)"
-        trap - ERR
-        _gopro_part_strip="$(maybe_prompt_gopro_remove_lone_part_basename "$f" "$base")"
-        _gopro_part_rc=$?
-        eval "${_gopro_part_err_trap:-}"
-        if ((_tn_save_e_part)); then
-            set -e
+        if (( RECHECK_RENAMES == 1 )); then
+            _gopro_part_strip="$(gopro_newbase_omit_lone_part_if_sole_chapter "$f" "$base" "$base")"
+            if [[ -n "$_gopro_part_strip" && "$_gopro_part_strip" != "$base" ]]; then
+                MANUAL_BASENAME_OVERRIDE="$_gopro_part_strip"
+            fi
         else
+            local _gopro_part_rc=0 _gopro_part_err_trap=""
+            local _tn_save_e_part=0
+            [[ $- == *e* ]] && _tn_save_e_part=1
             set +e
-        fi
-        if (( _gopro_part_rc == 2 )) || [[ "$stopped_by_user" == yes ]]; then
-            return 2
-        fi
-        if (( _gopro_part_rc == 0 )) && [[ -n "$_gopro_part_strip" ]]; then
-            MANUAL_BASENAME_OVERRIDE="$_gopro_part_strip"
+            _gopro_part_err_trap="$(trap -p ERR || true)"
+            trap - ERR
+            _gopro_part_strip="$(maybe_prompt_gopro_remove_lone_part_basename "$f" "$base")"
+            _gopro_part_rc=$?
+            eval "${_gopro_part_err_trap:-}"
+            if ((_tn_save_e_part)); then
+                set -e
+            else
+                set +e
+            fi
+            if (( _gopro_part_rc == 2 )) || [[ "$stopped_by_user" == yes ]]; then
+                return 2
+            fi
+            if (( _gopro_part_rc == 0 )) && [[ -n "$_gopro_part_strip" ]]; then
+                MANUAL_BASENAME_OVERRIDE="$_gopro_part_strip"
+            fi
         fi
     fi
 
@@ -13476,6 +13514,13 @@ MAIN_LOOP_RESUME_PROGRESS_OFFSET=0
 MAIN_LOOP_LAST_MILESTONE_VALUE=-1
 files_affected=0
 files_skipped=0
+RECHECK_FILES_AUDITED=0
+RECHECK_ALREADY_CURRENT=0
+RECHECK_DIFFERENCES_FOUND=0
+RECHECK_DIFFERENCES_APPLIED=0
+RECHECK_DIFFERENCES_DECLINED=0
+AUTO_RECHECK_RENAME_DIR=""
+AUTO_RECHECK_RENAME_SESSION=no
 rename_all=no
 AUTO_RENAME_DIR=""
 AUTO_RENAME_SIMILAR_DIR=""
@@ -13501,6 +13546,7 @@ RENAME_SH_GOPRO_STATE_FILE="${RENAME_SH_GOPRO_STATE_FILE:-${XDG_STATE_HOME:-$HOM
 declare -a renamed_list=()
 declare -A recorded
 declare -A processed
+declare -A RECHECK_AUDITED_PATHS
 # Index into renamed_list where THIS run's renames begin. On resume it is set to the
 # number of entries restored from the checkpoint, so the summary can list only the
 # entries affected during the current run (0 for fresh runs).
@@ -14310,6 +14356,158 @@ choose_custom_rename_target() {
     fi
 }
 
+recheck_mark_current_entry_processed() {
+    processed["$f"]=1
+    [[ -n "$nef_xmp_buddy" ]] && processed["$nef_xmp_buddy"]=1
+}
+
+recheck_register_audited_path() {
+    local path="$1"
+    [[ -n "${RECHECK_AUDITED_PATHS[$path]+x}" ]] && return 0
+    RECHECK_AUDITED_PATHS["$path"]=1
+    ((++RECHECK_FILES_AUDITED))
+}
+
+recheck_apply_current_difference() {
+    local reason="$1"
+    if ! perform_plain_or_nef_xmp_pair "$reason"; then
+        return 1
+    fi
+    ((++RECHECK_DIFFERENCES_APPLIED))
+    recheck_mark_current_entry_processed
+    return 0
+}
+
+print_recheck_rename_menu() {
+    echo "$(user_prompt_ts_prefix)Apply this updated naming rule?"
+    echo "  $(rename_menu_key_bracket Y Y) Yes (default)"
+    echo "  $(rename_menu_key_bracket N Y) No"
+    echo "  $(rename_menu_key_bracket M Y) Edit target filename"
+    echo "  $(rename_menu_key_bracket D Y) Yes, and apply remaining recheck differences in this directory"
+    echo "  $(rename_menu_key_bracket A Y) Yes, and apply all remaining recheck differences in this run"
+    echo "  $(rename_menu_key_bracket V Y) List the directory containing this path"
+    echo "  $(rename_menu_key_bracket Q Y) Quit"
+    echo -n "$(user_prompt_ts_prefix)Choice [Y/n/m/d/a/v/q]: "
+}
+
+recheck_rename_reason_text() {
+    if rename_is_camera_make_model_change "$f" "$new"; then
+        printf '%s' "recognized camera metadata or camera-label normalization"
+    elif rename_suggested_only_extension_case_change "$f" "$new"; then
+        printf '%s' "extension case normalization"
+    elif [[ "$(basename -- "$f")" == *_part_[0-9][0-9]* ]] && [[ "$(basename -- "$new")" != *_part_[0-9][0-9]* ]]; then
+        printf '%s' "single-chapter GoPro _part_XX normalization"
+    else
+        printf '%s' "deterministic canonical basename rules produce a different name"
+    fi
+}
+
+handle_recheck_rename_difference() {
+    local input="" custom_new="" confirm_rc=0 current_dir=""
+
+    current_dir="$(dirname -- "$f")"
+
+    if [[ "$mode" == "dry-run" ]]; then
+        recheck_apply_current_difference "rename recheck dry-run" || return 1
+        return 0
+    fi
+    if [[ "$AUTO_RECHECK_RENAME_SESSION" == yes ]]; then
+        recheck_apply_current_difference "rename recheck session auto-yes" || return 1
+        return 0
+    fi
+    if [[ -n "$AUTO_RECHECK_RENAME_DIR" && "$current_dir" == "$AUTO_RECHECK_RENAME_DIR" ]]; then
+        recheck_apply_current_difference "rename recheck directory auto-yes" || return 1
+        return 0
+    fi
+
+    while true; do
+        nonverbose_progress_dot_prepare_for_prompt
+        echo
+        echo -e "${CYAN}================ RENAME RECHECK DIFFERENCE ================${RESET}"
+        echo "Current script version: $SCRIPT_VERSION"
+        echo "Rule: recalculate the canonical filename with the current deterministic rename pipeline."
+        echo "Reason: $(recheck_rename_reason_text)."
+        echo
+        emit_wrap_nef_xmp_pair_label_stdout "OLD: " yellow "$f" "$NEF_XMP_PAIR_LABEL_WIDTH_NO_SIDECAR"
+        emit_wrap_nef_xmp_pair_label_stdout "CURRENT RULE RESULT: " green "$new" 21
+        if [[ -n "$nef_xmp_buddy" ]]; then
+            emit_wrap_nef_xmp_pair_label_stdout "OLD (sidecar): " yellow "$nef_xmp_buddy" "$NEF_XMP_PAIR_LABEL_WIDTH"
+            emit_wrap_nef_xmp_pair_label_stdout "RULE RESULT (sidecar): " green "$nef_xmp_new" 23
+        fi
+        echo -e "${CYAN}===========================================================${RESET}"
+        print_recheck_rename_menu
+        flush_stdin
+        read_single_key input "$PROMPT_WAIT_SECONDS"
+        echo
+        if handle_prompt_directory_listing_choice "$input" "$f" "$new"; then
+            continue
+        fi
+
+        case "$input" in
+            q|Q)
+                stopped_by_user=yes
+                return 2
+                ;;
+            n|N)
+                ((++RECHECK_DIFFERENCES_DECLINED))
+                ((++files_skipped))
+                recheck_mark_current_entry_processed
+                return 0
+                ;;
+            m|M)
+                custom_new="$(choose_custom_rename_target "$f" "$new" || true)"
+                if [[ -z "$custom_new" || "$custom_new" == "$f" ]]; then
+                    ((++RECHECK_DIFFERENCES_DECLINED))
+                    ((++files_skipped))
+                    recheck_mark_current_entry_processed
+                    return 0
+                fi
+                if [[ -n "$nef_xmp_buddy" ]]; then
+                    perform_plain_entry_rename "$f" "$custom_new" || return 1
+                    perform_plain_entry_rename "$nef_xmp_buddy" "$nef_xmp_new" || return 1
+                    if nef_xmp_pair_set_final_paths_from_primary_and_buddy_new "$custom_new" "$nef_xmp_new"; then
+                        nef_xmp_sync_sidecar_raw_file_name_to_nef "$NEF_XMP_FINAL_NEF" "$NEF_XMP_FINAL_XMP" || true
+                        nef_xmp_verify_sidecar_raw_file_name_interactive "$NEF_XMP_FINAL_NEF" "$NEF_XMP_FINAL_XMP" || return $?
+                    fi
+                else
+                    perform_plain_entry_rename "$f" "$custom_new" || return 1
+                fi
+                ((++RECHECK_DIFFERENCES_APPLIED))
+                recheck_mark_current_entry_processed
+                return 0
+                ;;
+            d|D)
+                AUTO_RECHECK_RENAME_DIR="$current_dir"
+                vlog "Rename recheck directory auto-yes enabled for '$AUTO_RECHECK_RENAME_DIR'"
+                recheck_apply_current_difference "rename recheck directory auto-yes (prompt)" || return 1
+                return 0
+                ;;
+            a|A)
+                echo
+                echo "$(user_prompt_ts_prefix)⚠️  Apply ALL remaining rename-recheck differences in this run?"
+                echo -n "$(user_prompt_ts_prefix)Are you sure? [y/N/q]: "
+                read_yes_no_quit_confirm "$PROMPT_WAIT_SECONDS"
+                confirm_rc=$?
+                if (( confirm_rc == 2 )); then
+                    stopped_by_user=yes
+                    return 2
+                fi
+                if (( confirm_rc == 0 )); then
+                    AUTO_RECHECK_RENAME_SESSION=yes
+                    AUTO_RECHECK_RENAME_DIR=""
+                    vlog "Rename recheck session auto-yes enabled"
+                    recheck_apply_current_difference "rename recheck session auto-yes (prompt)" || return 1
+                    return 0
+                fi
+                ;;
+            *)
+                recheck_apply_current_difference "rename recheck interactive default" || return 1
+                return 0
+                ;;
+        esac
+    done
+}
+
 print_checksum_prompt_menu() {
     nonverbose_progress_dot_prepare_for_prompt
     local label_lower="$1"
@@ -14569,6 +14767,14 @@ print_summary() {
     echo "Entries affected:      $files_affected"
     echo "Entries skipped:       $files_skipped"
     echo "Stopped by user:       $stopped_by_user"
+    if (( RECHECK_RENAMES == 1 )); then
+        echo "Rename recheck:        enabled"
+        echo "  files audited:       $RECHECK_FILES_AUDITED"
+        echo "  already canonical:   $RECHECK_ALREADY_CURRENT"
+        echo "  differences found:   $RECHECK_DIFFERENCES_FOUND"
+        echo "  accepted/simulated:  $RECHECK_DIFFERENCES_APPLIED"
+        echo "  declined:            $RECHECK_DIFFERENCES_DECLINED"
+    fi
     if (( USE_DB == 1 )); then
         echo "DB used:               yes"
         echo "DB hashes added:       $DB_HASHES_ADDED"
@@ -14808,6 +15014,14 @@ for f in "${ordered_paths[@]}"; do
         continue
     fi
 
+    if (( RECHECK_RENAMES == 1 )); then
+        if [[ ! -f "$f" ]] || is_checksum_file "$f" || [[ "$f" == *.lnk ]]; then
+            processed["$f"]=1
+            continue
+        fi
+        recheck_register_audited_path "$f"
+    fi
+
     if [[ -f "$f" && "$f" == *.lnk ]]; then
         if ! handle_lnk_file "$f"; then
             break
@@ -14824,7 +15038,7 @@ for f in "${ordered_paths[@]}"; do
         fi
     fi
 
-    if db_has_valid_entry "$f" && ! path_has_control_chars "$f"; then
+    if (( RECHECK_RENAMES == 0 )) && db_has_valid_entry "$f" && ! path_has_control_chars "$f"; then
         _rename_cap_save_e=0
         [[ $- == *e* ]] && _rename_cap_save_e=1
         set +e
@@ -15513,6 +15727,9 @@ for f in "${ordered_paths[@]}"; do
             fi
         fi
     fi
+    if (( RECHECK_RENAMES == 1 )) && [[ -n "$nef_xmp_buddy" ]]; then
+        recheck_register_audited_path "$nef_xmp_buddy"
+    fi
 
     if [[ -f "$f" ]]; then
         base="${f%.*}"
@@ -15586,6 +15803,25 @@ for f in "${ordered_paths[@]}"; do
         && should_skip_case_only_rename_on_fs "$nef_xmp_buddy" "$nef_xmp_new"; then
         verbose_fs_skip_sidecar=yes
         nef_xmp_new="$nef_xmp_buddy"
+    fi
+
+    if (( RECHECK_RENAMES == 1 )); then
+        recheck_has_difference=no
+        [[ "$f" != "$new" ]] && recheck_has_difference=yes
+        [[ -n "$nef_xmp_buddy" && "$nef_xmp_buddy" != "$nef_xmp_new" ]] && recheck_has_difference=yes
+        if [[ "$recheck_has_difference" == no ]]; then
+            ((++RECHECK_ALREADY_CURRENT))
+            processed["$f"]=1
+            [[ -n "$nef_xmp_buddy" ]] && processed["$nef_xmp_buddy"]=1
+            continue
+        fi
+        ((++RECHECK_DIFFERENCES_FOUND))
+        recheck_rc=0
+        handle_recheck_rename_difference || recheck_rc=$?
+        if (( recheck_rc != 0 )); then
+            break
+        fi
+        continue
     fi
 
     if [[ -z "$nef_xmp_buddy" ]]; then
