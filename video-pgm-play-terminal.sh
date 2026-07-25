@@ -1,6 +1,8 @@
 #!/bin/bash
+# v. 20260725.151453 - ask before apt-installing missing packages; default N, 300s timeout
 # v. 20260718.180600 - restore terminal cursor/screen after mpv tct playback
 
+# 2026.07.25 - v. 0.6.3 - before installing missing packages: single-key [y/N] prompt, 300s timeout
 # 2026.07.18 - v. 0.6.2 - EXIT trap: show cursor and leave alt screen (mpv tct hides cursor)
 # 2026.06.23 - v. 0.6 - --start and --length for playing a segment (mpv seek + clip length)
 # 2026.06.23 - v. 0.5 - print full mpv command line before countdown / playback
@@ -8,6 +10,11 @@
 # 2026.06.23 - v. 0.3 - --width/-w and --height/-H: tct size; one dimension from video aspect ratio
 # 2026.06.23 - v. 0.2 - --silent: hide mpv status on terminal (mpv --no-terminal); --profile=sw-fast
 # 2026.06.23 - v. 0.1 - initial release: play one media file in the terminal with mpv --vo=tct
+#
+# video-pgm-play-terminal.sh
+#
+# Play one media file in the terminal with mpv --vo=tct.
+#
 
 show_help() {
   cat <<EOF
@@ -66,6 +73,10 @@ Environment:
                        (default: 3).
   VIDEO_PGM_PLAY_START   Same as --start (seconds).
   VIDEO_PGM_PLAY_LENGTH  Same as --length (seconds).
+  VIDEO_PGM_PLAY_READ_TIMEOUT
+                       Seconds to wait for the install-permission prompt when a
+                       package is missing (default: 300). Empty answer or timeout
+                       means no (default [N]).
 
 Examples:
   $(basename "$0") clip.mp4
@@ -77,6 +88,83 @@ Examples:
   $(basename "$0") --no-autodetect clip.mp4
   $(basename "$0") -- -odd-name.mkv
 EOF
+}
+
+VIDEO_PGM_PLAY_READ_TIMEOUT="${VIDEO_PGM_PLAY_READ_TIMEOUT:-300}"
+
+flush_stdin() {
+  while read -r -t 0.001 -n 10000 _garbage 2>/dev/null; do :; done
+}
+
+# Read one key (no Enter). Sets REPLY; empty answer / timeout uses default_key.
+video_pgm_read_key() {
+  local prompt="$1"
+  local default_key="${2:-}"
+  local timeout="${3:-${VIDEO_PGM_PLAY_READ_TIMEOUT}}"
+  local answer=""
+
+  if [[ ! -t 0 ]]; then
+    REPLY="$default_key"
+    return 0
+  fi
+
+  printf '%s' "$prompt"
+  flush_stdin
+  if [[ "$timeout" =~ ^[0-9]+$ ]] && (( timeout > 0 )); then
+    read -t "$timeout" -n 1 answer || answer=""
+  else
+    read -n 1 answer || answer=""
+  fi
+  echo
+  if [[ -z "$answer" ]]; then
+    REPLY="$default_key"
+  else
+    REPLY="$answer"
+  fi
+}
+
+# Ensure a command is on PATH; if missing, ask before apt-get install (default N).
+# Args: command [apt_package]
+# Returns 0 if command is available afterward, 1 otherwise.
+video_pgm_ensure_installed() {
+  local cmd="$1"
+  local pkg="${2:-$1}"
+
+  if type -fP "$cmd" &>/dev/null; then
+    return 0
+  fi
+
+  echo
+  echo "(PGM) ${cmd} not found."
+  if [[ ! -t 0 ]] || (( ! ${script_is_run_interactively:-0} )); then
+    echo "Non-interactive session — not installing (default [N])."
+    return 1
+  fi
+  if [ "$(id -u)" -ne 0 ]; then
+    echo "Not root — cannot install ${pkg}. Try: apt install ${pkg}"
+    return 1
+  fi
+
+  video_pgm_read_key "Install ${pkg} now? [y/N]: " n "${VIDEO_PGM_PLAY_READ_TIMEOUT}"
+  case "${REPLY}" in
+    y|Y)
+      echo "Proceeding with install..."
+      echo "#######################################################"
+      apt-get -y install "$pkg" || true
+      echo "#######################################################"
+      echo
+      ;;
+    *)
+      echo "Not installing ${pkg}."
+      return 1
+      ;;
+  esac
+
+  if type -fP "$cmd" &>/dev/null; then
+    return 0
+  fi
+  echo "(PGM) ${cmd} is still unavailable after install attempt." >&2
+  return 1
 }
 
 video_pgm_positive_int() {
@@ -121,7 +209,7 @@ video_pgm_resolve_tct_dimensions() {
     return 0
   fi
 
-  check_if_installed ffprobe || true
+  video_pgm_ensure_installed ffprobe ffmpeg || true
   if ! command -v ffprobe >/dev/null 2>&1; then
     echo "ERROR: ffprobe is required to compute the missing tct dimension." >&2
     echo "Install ffmpeg/ffprobe, or pass both --width and --height." >&2
@@ -387,9 +475,10 @@ if [[ -f "${BASH_SOURCE[0]}" ]]; then
   chmod 700 "${BASH_SOURCE[0]}" 2>/dev/null || true
 fi
 
-check_if_installed mpv
-
 MPV_BIN="${MPV_BIN:-mpv}"
+if [[ "$MPV_BIN" == "mpv" ]]; then
+  video_pgm_ensure_installed mpv || true
+fi
 if ! command -v "$MPV_BIN" >/dev/null 2>&1; then
   echo "ERROR: mpv is required but was not found (MPV_BIN=${MPV_BIN})." >&2
   echo "Try: apt install mpv   or set MPV_BIN=/path/to/mpv" >&2
