@@ -1,8 +1,48 @@
 #!/usr/bin/env bash
+# v. 20260725.100435 - Mission 1: use Offset Time as Time Zone fallback; GPS+zone is authoritative local time
+# v. 20260725.100002 - Mission 1 timezone audit for JPEG/JPG; avoid double-offset when Offset Time/GPS present
+# v. 20260725.093648 - pair media.ext with media.ext.xmp sidecars; rename orphans; prompt only when XMP refs exist
+# v. 20260725.091842 - align recheck OLD/CURRENT RULE RESULT paths to the same column
+# v. 20260725.091524 - prefer PATH exiftool over stale bundled 12.41; read Mission 1 CreationDate via -s3
+# v. 20260724.225708 - Mission 1 timezone fix: prefer Creation Date; do not require a second device-label parse
+# v. 20260724.224207 - add -R/--recheck-renames canonical-name audit with scoped approval prompts
+# v. 20260724.223042 - apply embedded timezone offsets to Mission 1 Pro UTC capture timestamps
+# v. 20260722.192200 - place editable basename text on the line below its timestamped prompt
+# v. 20260722.125459 - append Xiaomi_Mi_10T_Pro to timestamp media identified by Xiaomi EXIF metadata
+# v. 20260722.103843 - count legacy and modern GoPro camera labels as the same multi-part recording identity
+# v. 20260722.085951 - omit Hero7 timelapse interval details and clean existing Timelapse_N_Nsec names
+# v. 20260722.082727 - make --version dependency-free instead of sourcing the installing script header
+# v. 20260722.082045 - suppress expected Nikon metadata misses and keep ERR diagnostics out of generated filenames
+# v. 20260721.212214 - preserve parenthesized copy numbers while appending Samsung or GoPro camera labels
+# v. 20260721.193350 - store portable relative SQLite paths, guard mass pruning, and make debug logging non-fatal
+# v. 20260721.170803 - offer session auto-yes for GoPro legacy-label and Samsung/GoPro/Nikon camera renames
+# v. 20260721.161244 - bootstrap missing/empty hash DB from filesystem files before checksum inventory
+# v. 20260721.160630 - keep busy-timeout PRAGMA output out of SQLite count and warmup query results
+# v. 20260721.155132 - recover SQLite locks: avoid WAL on network/Windows mounts, retry batches, and fail warmup instead of loading zero rows
 # v. 20260721.142331 - add explicit hash-only DB backfill with inventory, filesystem reconciliation, progress, and resumable batches
 # v. 20260721.132007 - Samsung timestamp media: preserve optional numeric sorting prefix when appending make/model
 # v. 20260721.112812 - GoPro camera labels: GoPro_Hero4_Silver style (not GOPRO4_SILVER)
 
+# 2026.07.25 - v. 19.286.100435 - Mission 1 local time: Offset Time fills missing Time Zone; GPS+zone wins over UTC Create Date
+# 2026.07.25 - v. 19.285.100002 - Mission 1 Pro JPEG/JPG timezone recheck; GPS/Offset Time prevent +02 double-shift on stills
+# 2026.07.25 - v. 19.284.093648 - media.ext.xmp sidecars rename with media; Mission1 UTC orphan XMPs; ref prompts only when present
+# 2026.07.25 - v. 19.283.091842 - recheck difference prompt pads OLD and CURRENT RULE RESULT so paths share one column
+# 2026.07.25 - v. 19.282.091524 - PATH exiftool wins over bundled 12.41; Mission 1 local time uses -s3 CreationDate/CreateDate/TimeZone
+# 2026.07.24 - v. 19.281.225708 - Mission 1 Pro uses Creation Date (or Create Date+TZ); renamed files no longer need a second label parse
+# 2026.07.24 - v. 19.280.224207 - -R/--recheck-renames audits current naming rules and offers file/directory/run approvals
+# 2026.07.24 - v. 19.279.223042 - Mission 1 Pro raw and existing names convert UTC Create Date using embedded Time Zone
+# 2026.07.22 - v. 19.278.192200 - manual basename prompts put the prefilled editable filename on a separate line
+# 2026.07.22 - v. 19.277.125459 - Xiaomi M2007J3SG/Mi 10T Pro timestamp media gain the Xiaomi_Mi_10T_Pro camera suffix
+# 2026.07.22 - v. 19.276.103843 - lone-part detection canonicalizes GOPRO10_BLACK and GoPro_Hero10_Black before counting chapters
+# 2026.07.22 - v. 19.275.085951 - Hero7 timelapse names keep _Timelapse but omit interval details such as _2_1sec
+# 2026.07.22 - v. 19.274.082727 - --version prints the embedded version directly; boxes/figlet and apt are not involved
+# 2026.07.22 - v. 19.273.082045 - Nikon metadata miss is a quiet fallback; ERR trap output cannot inject a leading newline into NEW
+# 2026.07.21 - v. 19.272.212214 - timestamp media copy suffixes such as (0) keep _0 after Samsung/GoPro make-model labels
+# 2026.07.21 - v. 19.271.193350 - relative DB paths with confirmed legacy-root migration; mass-delete guard; XDG debug log fallback
+# 2026.07.21 - v. 19.270.170803 - rename prompt [G] covers GoPro legacy label normalization plus Samsung/GoPro/Nikon camera make/model renames
+# 2026.07.21 - v. 19.269.161244 - --backfill-hashes creates/bootstraps cache from filesystem files, then fills selected checksums
+# 2026.07.21 - v. 19.268.160630 - fix false locked/unreadable result caused by busy_timeout value contaminating captured SELECT output
+# 2026.07.21 - v. 19.267.155132 - SQLite lock recovery: DELETE journal on CIFS/NFS/NTFS/9p, safe WAL checkpoint, batch retries, strict warmup reads
 # 2026.07.21 - v. 19.266.142331 - --backfill-hashes md5|sha512|both: no renames; reconcile DB paths, report missing slots/bytes, progress + ETA; normal runs stop auto-backfill
 # 2026.07.21 - v. 19.265.132007 - Samsung NUMBER_YYYYMMDD_HHMMSS media: keep sorting prefix and append Samsung_<model>
 # 2026.07.21 - v. 19.264.112812 - GoPro firmware labels GoPro_Hero#_Edition; legacy GOPRO#_EDITION names migrate on rename
@@ -507,6 +547,11 @@
 # 2026.03.27 - v. 1.3 - fixed top-level path handling: keep ./ prefix in transform_name()
 # 2026.03.27 - v. 1.2 - added many changes about media files
 # 2026.04.15 - v. 17.3 - escape control characters in logged paths and warn explicitly about filenames containing them
+#
+# rename.sh
+#
+# Interactive media/checksum renamer: NEF+XMP, media.ext.xmp, Sony clip XML pairs, GoPro/Mission1 rules, DB cache.
+#
 # SCRIPT_VERSION: first line matching ^# v. YYYYMMDD.HHMMSS - (same scheme as _script_header.sh / operational scripts).
 SCRIPT_VERSION="$(
     LC_ALL=C grep -m1 -E '^# v\. [0-9]{8}\.[0-9]{6} - ' "$0" \
@@ -520,7 +565,7 @@ LARGE_HASHFILE_PROMPT_MIN_TOTAL_BYTES="${LARGE_HASHFILE_PROMPT_MIN_TOTAL_BYTES:-
 # Per-path state files for last successful full checksum-list verification (epoch + content digest). Default: ~/.local/state/rename.sh/checksum-verify/
 RENAME_CHECKSUM_VERIFY_STATE_DIR="${RENAME_CHECKSUM_VERIFY_STATE_DIR:-}"
 # exiftool for GoPro/Sony/Contour/LG camera raw filenames (GH010001.MP4, GOPR0123.JPG, GP010032.JPG).
-# Default when neither RENAME_EXIFTOOL nor EXIFLOC is set: bundled copy on luks-buffalo2; then exiftool on PATH.
+# Resolution order: EXIFLOC / explicit RENAME_EXIFTOOL, then PATH, then this bundled fallback.
 RENAME_EXIFTOOL_DEFAULT='/mnt/luks-buffalo2/worek/_video-JEDYNE_KOPIE/_katalog_roboczy/scripts/Image-ExifTool-12.41/exiftool'
 RENAME_EXIFTOOL="${RENAME_EXIFTOOL:-${EXIFLOC:-$RENAME_EXIFTOOL_DEFAULT}}"
 MAX_LINE_LENGTH="${MAX_LINE_LENGTH:-200}"
@@ -538,7 +583,7 @@ WRAP_MSG_INDENT="${WRAP_MSG_INDENT:-          }"
 RENAME_DRY_RUN_SKIP_EXIFTOOL="${RENAME_DRY_RUN_SKIP_EXIFTOOL:-yes}"
 
 dry_run_skip_exiftool_enabled() {
-    [[ "$mode" == "dry-run" && "${RENAME_DRY_RUN_SKIP_EXIFTOOL,,}" == yes ]]
+    [[ "$mode" == "dry-run" && "${RENAME_DRY_RUN_SKIP_EXIFTOOL,,}" == yes && "$RECHECK_RENAMES" -eq 0 ]]
 }
 
 # Non-verbose dry-run: show which checksum group is being analyzed (transform_name can take time on RAID).
@@ -911,12 +956,16 @@ START_DIR="${START_DIR:-$RENAME_SH_INVOCATION_CWD}"
 EXCLUDE_FILTERS_FILE="$START_DIR/_exclude-rename.sh.txt"
 USE_DB=0
 FORCE_RECHECK=0
+RECHECK_RENAMES=0
 FAST_DB=0
 DB_FILE="$START_DIR/_rename.sh-optional-db.sqlite3"
 LEGACY_DB_FILE="$START_DIR/rename.sh-optional-db.sqlite3"
 # Set by db_init when host FS returns SQLITE_BUSY unless opened with sqlite3 -uri '...?nolock=1' (unsafe if two writers).
 DB_SQLITE_USE_URI=""
 DB_SQLITE_URI=""
+DB_SQLITE_JOURNAL_MODE=""
+DB_SQLITE_BUSY_TIMEOUT_MS="${DB_SQLITE_BUSY_TIMEOUT_MS:-15000}"
+DB_SQLITE_FLUSH_RETRIES="${DB_SQLITE_FLUSH_RETRIES:-3}"
 # Probed on first URI open: some distros ship sqlite3 CLI without -uri (need 3.7.13+ for file:...?nolock=1).
 RENAME_SQLITE3_URI_PROBED=""
 RENAME_SQLITE3_HAS_URI_FLAG=""
@@ -969,13 +1018,18 @@ DB_MAINT_HASH_BACKFILL_NEXT_PCT=5
 DB_MAINT_HASH_BACKFILL_BAR_WIDTH=80
 DB_MAINT_KNOWN_TOTAL_ROWS=0
 DB_MAINT_ROWS_TOTAL_BEFORE=0
+DB_MAINT_FS_FILES_DISCOVERED=0
+DB_MAINT_FS_FILES_EXCLUDED=0
+DB_MAINT_FS_ROWS_SEEDED=0
 DB_MAINT_LAST_SQLITE_ERR=""
 DB_MAINT_OPERATION_FAILED=0
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
-WORKSPACE_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd -P)"
-DEBUG_LOG_PATH="${DEBUG_LOG_PATH:-$WORKSPACE_ROOT/debug-8439cd.log}"
+DEBUG_LOG_PATH="${DEBUG_LOG_PATH:-}"
+DEBUG_LOG_WARNED=0
+DEBUG_LOG_INITIALIZED=0
 DEBUG_SESSION_ID="8439cd"
 DEBUG_RUN_ID="${DEBUG_RUN_ID:-pre-fix}"
+DB_MAINT_MAX_MISSING_PERCENT="${DB_MAINT_MAX_MISSING_PERCENT:-25}"
+DB_MAINT_ALLOW_MASS_DELETE="${DB_MAINT_ALLOW_MASS_DELETE:-0}"
 
 set -Eeuo pipefail
 shopt -s nullglob
@@ -1057,11 +1111,39 @@ on_err() {
     local exit_code="$1"
     local line_no="$2"
     local cmd="$3"
-    echo
+    echo >&2
     echo "ERROR: command failed at line $line_no with exit code $exit_code" >&2
     echo "FAILED COMMAND: $cmd" >&2
 }
 trap 'on_err "$?" "$LINENO" "$BASH_COMMAND"' ERR
+
+debug_log_init() {
+    local requested="${DEBUG_LOG_PATH:-}"
+    local state_dir="${XDG_STATE_HOME:-$HOME/.local/state}/rename.sh"
+    local candidate="" parent=""
+    local -a candidates=()
+
+    [[ -n "$requested" ]] && candidates+=("$requested")
+    candidates+=("$state_dir/debug.log" "${TMPDIR:-/tmp}/rename.sh-${UID:-$(id -u)}-debug.log")
+
+    for candidate in "${candidates[@]}"; do
+        parent="$(dirname -- "$candidate")"
+        mkdir -p -- "$parent" 2>/dev/null || true
+        if ( : >>"$candidate" ) 2>/dev/null; then
+            DEBUG_LOG_PATH="$candidate"
+            DEBUG_LOG_INITIALIZED=1
+            return 0
+        fi
+    done
+
+    DEBUG_LOG_PATH=/dev/null
+    DEBUG_LOG_INITIALIZED=1
+    if (( DEBUG_LOG_WARNED == 0 )); then
+        echo "WARNING: debug log is not writable; continuing with debug logging disabled." >&2
+        DEBUG_LOG_WARNED=1
+    fi
+    return 0
+}
 
 debug_log() {
     local hypothesis_id="$1"
@@ -1070,18 +1152,29 @@ debug_log() {
     local data="$4"
     local timestamp
     local log_id
+    (( DEBUG_LOG_INITIALIZED == 1 )) || debug_log_init
     timestamp="$(date +%s%3N 2>/dev/null || printf '%s000' "$(date +%s)")"
     log_id="log_${timestamp}_$$"
-    printf '{"sessionId":"%s","id":"%s","timestamp":%s,"location":"%s","message":"%s","data":%s,"runId":"%s","hypothesisId":"%s"}\n' \
-        "$DEBUG_SESSION_ID" "$log_id" "$timestamp" "$location" "$message" "$data" "$DEBUG_RUN_ID" "$hypothesis_id" >> "$DEBUG_LOG_PATH"
+    if ! printf '{"sessionId":"%s","id":"%s","timestamp":%s,"location":"%s","message":"%s","data":%s,"runId":"%s","hypothesisId":"%s"}\n' \
+        "$DEBUG_SESSION_ID" "$log_id" "$timestamp" "$location" "$message" "$data" "$DEBUG_RUN_ID" "$hypothesis_id" >>"$DEBUG_LOG_PATH" 2>/dev/null; then
+        DEBUG_LOG_PATH=/dev/null
+        if (( DEBUG_LOG_WARNED == 0 )); then
+            echo "WARNING: debug log became unwritable; continuing with debug logging disabled." >&2
+            DEBUG_LOG_WARNED=1
+        fi
+    fi
+    return 0
 }
 
 usage() {
     cat <<'EOF'
-Usage: rename.sh [-v|--verbose] [--use-db] [--fast] [--force-recheck] [--backfill-hashes md5|sha512|both] [--run-db-maintenance] [--db-maintenance auto|[full]] [--colors [yes]|no] [--mode real|[dry-run]] [--scope subdirs|[current]] [--date-placement front|[original]] [--resume-state [resume]|ask|fresh] [--wait-seconds [0]|N] [--version] [-h|--help]
+Usage: rename.sh [-v|--verbose] [-R|--recheck-renames] [--use-db] [--fast] [--force-recheck] [--backfill-hashes md5|sha512|both] [--run-db-maintenance] [--db-maintenance auto|[full]] [--colors [yes]|no] [--mode real|[dry-run]] [--scope subdirs|[current]] [--date-placement front|[original]] [--resume-state [resume]|ask|fresh] [--wait-seconds [0]|N] [--version] [-h|--help]
 
 Options:
   -v, --verbose          Show extra diagnostic output
+  -R, --recheck-renames  Audit every regular non-checksum file against current naming rules, bypass rename cache skips,
+                         and prompt for discrepancies with separate file/directory/run approvals.
+                         With --mode dry-run, list all discrepancies without changing files.
   --version              Print a short version banner and exit
   --use-db               Use SQLite cache in the start directory (_rename.sh-optional-db.sqlite3). If that file or the legacy rename.sh-optional-db.sqlite3 already exists and you omit --use-db, you are prompted whether to use it (default: yes; [q] quits).
   --fast                 With --use-db, trust cached paths without checking current size/mtime
@@ -1123,6 +1216,8 @@ Optional exclude file in the start directory: _exclude-rename.sh.txt
 
 Example:
   rename.sh -v --use-db --colors yes --mode real --scope subdirs
+  rename.sh -R --mode dry-run --scope subdirs
+  rename.sh --recheck-renames --mode real --scope current
   rename.sh -v --use-db --fast --colors yes --mode real --scope subdirs
   rename.sh --backfill-hashes both
   rename.sh --backfill-hashes sha512
@@ -1137,12 +1232,15 @@ usage_environment_tunables() {
     cat <<'EOF'
 
 Environment / tunables (read at startup; use export or prefix on the same line as rename.sh):
-  DEBUG_LOG_PATH                      JSON debug log file (default under workspace root).
+  DEBUG_LOG_PATH                      JSON debug log file (default: XDG state directory, then /tmp).
       export DEBUG_LOG_PATH=/tmp/rename-debug.log
+                                      Unwritable debug logging is disabled with a warning; it never stops renaming.
   DEBUG_RUN_ID                        runId string inside each JSON log line.
       DEBUG_RUN_ID=batch1 rename.sh -v --use-db
   DATE_PLACEMENT                      BBC/iPlayer -date_ handling: front (default) or original (same as --date-placement).
       DATE_PLACEMENT=original rename.sh --use-db --scope subdirs ./_ogladam
+  DB_MAINT_MAX_MISSING_PERCENT        Safety-stop threshold for maintenance pruning (default 25%, minimum 100 rows).
+  DB_MAINT_ALLOW_MASS_DELETE=1        Explicitly allow pruning above that threshold.
   EXIFLOC                             Override exiftool path (same as RENAME_EXIFTOOL; zmien-nazwe script name)
       EXIFLOC=/opt/exiftool/exiftool rename.sh --scope current
   LARGE_HASHFILE_LINE_PROMPT_THRESHOLD  Checksum lists with more lines than this prompt before full check ([y/N/q]); default 20.
@@ -2825,14 +2923,76 @@ db_abs_path_if_deleted() {
     fi
 }
 
+# checked_paths.path is stored relative to the directory containing the cache
+# (normally START_DIR). Runtime caches and filesystem checks still use absolute
+# paths, so moving the directory and its DB between Linux/WSL mounts is safe.
+db_path_root_abs() {
+    db_abs_path "$START_DIR" 2>/dev/null
+}
+
+db_path_to_storage() {
+    local path="$1" abs="" root="" rel=""
+
+    abs="$(db_abs_path_if_deleted "$path" 2>/dev/null || true)"
+    root="$(db_path_root_abs 2>/dev/null || true)"
+    [[ -n "$abs" && -n "$root" ]] || return 1
+    if [[ "$abs" == "$root" ]]; then
+        printf '.'
+        return 0
+    fi
+    if [[ "$abs" == "$root/"* ]]; then
+        printf '%s' "${abs#"$root/"}"
+        return 0
+    fi
+    if command -v realpath >/dev/null 2>&1; then
+        rel="$(realpath --relative-to="$root" -m -- "$abs" 2>/dev/null || true)"
+    fi
+    if [[ -z "$rel" ]] && command -v python3 >/dev/null 2>&1; then
+        rel="$(python3 - "$root" "$abs" <<'PY'
+import os
+import sys
+print(os.path.relpath(sys.argv[2], sys.argv[1]))
+PY
+)"
+    fi
+    [[ -n "$rel" ]] || return 1
+    printf '%s' "$rel"
+}
+
+db_path_from_storage() {
+    local stored="$1" root="" combined=""
+
+    [[ -n "$stored" ]] || return 1
+    if [[ "$stored" == /* ]]; then
+        printf '%s' "$stored"
+        return 0
+    fi
+    root="$(db_path_root_abs 2>/dev/null || true)"
+    [[ -n "$root" ]] || return 1
+    if [[ "$stored" == "." ]]; then
+        printf '%s' "$root"
+        return 0
+    fi
+    combined="$root/$stored"
+    if command -v realpath >/dev/null 2>&1; then
+        realpath -m -- "$combined" 2>/dev/null
+    elif command -v readlink >/dev/null 2>&1; then
+        readlink -m -- "$combined" 2>/dev/null
+    else
+        printf '%s' "$combined"
+    fi
+}
+
 db_delete_cached_row_for_path() {
     local path="$1"
-    local abs
+    local abs stored
     (( USE_DB == 1 )) || return 0
     [[ -e "$path" ]] || return 0
     abs="$(db_abs_path "$path" 2>/dev/null || true)"
     [[ -n "$abs" ]] || return 0
-    printf "DELETE FROM checked_paths WHERE path='%s';\n" "$(sql_escape "$abs")" >> "$DB_PENDING_SQL_FILE"
+    stored="$(db_path_to_storage "$abs" 2>/dev/null || true)"
+    [[ -n "$stored" ]] || return 0
+    printf "DELETE FROM checked_paths WHERE path='%s';\n" "$(sql_escape "$stored")" >> "$DB_PENDING_SQL_FILE"
     unset 'DB_CACHE_META[$abs]'
     unset 'DB_CACHE_STATUS[$abs]'
     unset 'DB_CACHE_HASH_MD5[$abs]'
@@ -3226,23 +3386,49 @@ rename_sqlite3_db_run() {
 }
 
 db_flush_pending() {
-    local err=""
+    local err="" attempt=1 attempted=0 first_error="" error_text="" retries="$DB_SQLITE_FLUSH_RETRIES"
     (( USE_DB == 1 )) || return 0
     [[ -n "$DB_PENDING_SQL_FILE" && -s "$DB_PENDING_SQL_FILE" ]] || return 0
+    [[ "$retries" =~ ^[1-9][0-9]*$ ]] || retries=3
+    [[ "$DB_SQLITE_BUSY_TIMEOUT_MS" =~ ^[1-9][0-9]*$ ]] || DB_SQLITE_BUSY_TIMEOUT_MS=15000
     err="$(mktemp)"
-    if {
-        printf 'PRAGMA busy_timeout=60000;\n'
-        printf 'BEGIN IMMEDIATE;\n'
-        cat -- "$DB_PENDING_SQL_FILE"
-        printf 'COMMIT;\n'
-    } | rename_sqlite3_db_run >/dev/null 2>"$err"; then
-        rm -f -- "$err"
-        : > "$DB_PENDING_SQL_FILE"
-        DB_PENDING_COUNT=0
-        return 0
+
+    while (( attempt <= retries )); do
+        attempted=$attempt
+        : > "$err"
+        if {
+            printf 'PRAGMA busy_timeout=%s;\n' "$DB_SQLITE_BUSY_TIMEOUT_MS"
+            printf 'BEGIN IMMEDIATE;\n'
+            cat -- "$DB_PENDING_SQL_FILE"
+            printf 'COMMIT;\n'
+        } | rename_sqlite3_db_run >/dev/null 2>"$err"; then
+            rm -f -- "$err"
+            : > "$DB_PENDING_SQL_FILE"
+            DB_PENDING_COUNT=0
+            return 0
+        fi
+
+        error_text="$(<"$err")"
+        if [[ "${error_text,,}" != *"database is locked"* && "${error_text,,}" != *"database is busy"* ]]; then
+            break
+        fi
+
+        if (( attempt < retries )); then
+            echo "WARNING: SQLite batch write is locked (attempt $attempt/$retries); pending SQL is safe, attempting automatic recovery..." >&2
+            db_configure_sqlite_runtime_mode recover >/dev/null 2>&1 || true
+            sleep "$((attempt * 2))"
+        fi
+        attempt=$((attempt + 1))
+    done
+
+    IFS= read -r first_error < "$err" || true
+    if [[ "${error_text,,}" == *"database is locked"* || "${error_text,,}" == *"database is busy"* ]]; then
+        echo "ERROR: SQLite batch write remained locked after $attempted attempt(s); pending SQL was retained until shutdown retry." >&2
+    else
+        echo "ERROR: SQLite batch write failed; pending SQL was retained until shutdown retry." >&2
     fi
-    echo "ERROR: SQLite batch write failed; pending SQL was retained for retry." >&2
-    [[ -s "$err" ]] && head -n 1 "$err" >&2
+    [[ -n "$first_error" ]] && echo "$first_error" >&2
+    echo "Close any old rename.sh/sqlite3 process using this cache and rerun." >&2
     rm -f -- "$err"
     return 1
 }
@@ -3459,6 +3645,234 @@ db_sqlite_prefer_nolock_for_cache_path() {
     return 1
 }
 
+# WAL needs reliable shared-memory locking. Keep rollback-journal mode on Windows,
+# NAS, and FUSE-style mounts even when ordinary SQLite file locks still work.
+db_sqlite_avoid_wal_for_cache_path() {
+    local target="$DB_FILE" fs
+
+    db_sqlite_prefer_nolock_for_cache_path && return 0
+    [[ -n "$target" ]] || return 1
+    [[ -f "$target" ]] || target="$(dirname -- "$target")"
+    [[ -e "$target" ]] || return 1
+
+    if ! command -v findmnt >/dev/null 2>&1; then
+        [[ "$target" == /mnt/* ]]
+        return $?
+    fi
+
+    fs="$(findmnt -n -o FSTYPE --target "$target" 2>/dev/null)" || fs=""
+    fs="${fs,,}"
+    case "$fs" in
+        9p|drvfs|fuseblk|fuse.ntfs|fuse.ntfs-3g|ntfs|ntfs3) return 0 ;;
+    esac
+    return 1
+}
+
+# Select a journal/locking mode appropriate for the cache filesystem. When a
+# WAL exists, checkpoint it through normal SQLite locking before enabling
+# ?nolock=1; deleting an uncheckpointed WAL could discard committed cache rows.
+db_configure_sqlite_runtime_mode() {
+    local reason="${1:-startup}" uri="" err=""
+
+    [[ "$DB_SQLITE_BUSY_TIMEOUT_MS" =~ ^[1-9][0-9]*$ ]] || DB_SQLITE_BUSY_TIMEOUT_MS=15000
+
+    if db_sqlite_avoid_wal_for_cache_path; then
+        if db_sqlite_cache_has_wal_sidecars; then
+            err="$(mktemp)"
+            if ! rename_sqlite3 -batch "$DB_FILE" >/dev/null 2>"$err" <<SQL
+PRAGMA busy_timeout=$DB_SQLITE_BUSY_TIMEOUT_MS;
+PRAGMA wal_checkpoint(TRUNCATE);
+PRAGMA journal_mode=DELETE;
+SQL
+            then
+                if [[ "$reason" == "recover" ]]; then
+                    echo "WARNING: automatic SQLite WAL checkpoint could not obtain the lock; sidecars were left untouched." >&2
+                fi
+                rm -f -- "$err"
+                return 1
+            fi
+            rm -f -- "$err"
+        else
+            if ! rename_sqlite3_db_run >/dev/null 2>&1 <<SQL
+PRAGMA busy_timeout=$DB_SQLITE_BUSY_TIMEOUT_MS;
+PRAGMA journal_mode=DELETE;
+SQL
+            then
+                return 1
+            fi
+        fi
+
+        if db_sqlite_prefer_nolock_for_cache_path && uri="$(db_sqlite_file_uri_nolock 2>/dev/null)"; then
+            DB_SQLITE_USE_URI=1
+            DB_SQLITE_URI="$uri"
+        fi
+        rename_sqlite3_db_run >/dev/null 2>&1 <<SQL || return 1
+PRAGMA busy_timeout=$DB_SQLITE_BUSY_TIMEOUT_MS;
+PRAGMA synchronous=FULL;
+PRAGMA temp_store=MEMORY;
+PRAGMA cache_size=-20000;
+SQL
+        DB_SQLITE_JOURNAL_MODE="DELETE"
+        return 0
+    fi
+
+    if rename_sqlite3_db_run >/dev/null 2>&1 <<SQL
+PRAGMA busy_timeout=$DB_SQLITE_BUSY_TIMEOUT_MS;
+PRAGMA journal_mode=WAL;
+PRAGMA synchronous=NORMAL;
+PRAGMA temp_store=MEMORY;
+PRAGMA cache_size=-20000;
+SQL
+    then
+        DB_SQLITE_JOURNAL_MODE="WAL"
+        return 0
+    fi
+    return 1
+}
+
+db_migrate_absolute_paths_to_relative() {
+    local absolute_file="" current_file="" legacy_file="" sql_file=""
+    local stored="" new_stored="" root="" old_root="" rel="" runtime=""
+    local absolute_count=0 current_count=0 legacy_count=0 mapped_existing=0
+    local old_esc="" new_esc="" answer=""
+
+    root="$(db_path_root_abs 2>/dev/null || true)"
+    [[ -n "$root" ]] || return 1
+    absolute_file="$(mktemp)"
+    current_file="$(mktemp)"
+    legacy_file="$(mktemp)"
+    sql_file="$(mktemp)"
+
+    if ! rename_sqlite3_db_run "SELECT path FROM checked_paths WHERE SUBSTR(path,1,1)='/';" >"$absolute_file" 2>/dev/null; then
+        rm -f -- "$absolute_file" "$current_file" "$legacy_file" "$sql_file"
+        echo "ERROR: could not inspect legacy absolute SQLite paths." >&2
+        return 1
+    fi
+
+    while IFS= read -r stored; do
+        [[ -n "$stored" ]] || continue
+        (( ++absolute_count ))
+        if [[ "$stored" == "$root" || "$stored" == "$root/"* ]]; then
+            printf '%s\n' "$stored" >>"$current_file"
+            (( ++current_count ))
+        else
+            printf '%s\n' "$stored" >>"$legacy_file"
+            (( ++legacy_count ))
+        fi
+    done <"$absolute_file"
+    rm -f -- "$absolute_file"
+
+    if (( absolute_count == 0 )); then
+        rm -f -- "$current_file" "$legacy_file" "$sql_file"
+        return 0
+    fi
+
+    if (( legacy_count > 0 )); then
+        if ! command -v python3 >/dev/null 2>&1; then
+            echo "ERROR: legacy absolute DB paths need python3 for safe root detection." >&2
+            rm -f -- "$current_file" "$legacy_file" "$sql_file"
+            return 1
+        fi
+        old_root="$(python3 - "$legacy_file" <<'PY'
+import os
+import sys
+
+with open(sys.argv[1], encoding="utf-8", errors="surrogateescape") as stream:
+    paths = [line.rstrip("\n") for line in stream if line.rstrip("\n")]
+if not paths:
+    raise SystemExit(1)
+common = os.path.commonpath(paths)
+if len(paths) == 1:
+    common = os.path.dirname(common)
+print(common or "/")
+PY
+)" || old_root=""
+        if [[ -z "$old_root" || "$old_root" == "/" ]]; then
+            echo "ERROR: could not safely infer one old database root; no rows were changed." >&2
+            echo "Current database directory: $root" >&2
+            rm -f -- "$current_file" "$legacy_file" "$sql_file"
+            return 1
+        fi
+
+        while IFS= read -r stored; do
+            [[ "$stored" == "$old_root" || "$stored" == "$old_root/"* ]] || continue
+            if [[ "$stored" == "$old_root" ]]; then
+                rel="."
+            else
+                rel="${stored#"$old_root/"}"
+            fi
+            runtime="$(db_path_from_storage "$rel" 2>/dev/null || true)"
+            [[ -e "$runtime" || -h "$runtime" ]] && (( ++mapped_existing ))
+        done <"$legacy_file"
+
+        echo
+        echo "Legacy absolute paths were found in the SQLite cache."
+        echo "  OLD ROOT: $old_root"
+        echo "  NEW ROOT: $root"
+        echo "  Rows to convert: $legacy_count"
+        echo "  Paths found under NEW ROOT: $mapped_existing / $legacy_count"
+        echo -n "Convert these paths to portable relative paths? [y/N/q]: "
+        read_single_key answer "$PROMPT_WAIT_SECONDS"
+        echo
+        case "$answer" in
+            y|Y) ;;
+            q|Q)
+                stopped_by_user=yes
+                rm -f -- "$current_file" "$legacy_file" "$sql_file"
+                return 2
+                ;;
+            *)
+                echo "SQLite path migration declined; no maintenance or cache pruning was run." >&2
+                rm -f -- "$current_file" "$legacy_file" "$sql_file"
+                return 1
+                ;;
+        esac
+    fi
+
+    printf 'BEGIN IMMEDIATE;\n' >"$sql_file"
+    while IFS= read -r stored; do
+        [[ -n "$stored" ]] || continue
+        if [[ "$stored" == "$root" ]]; then
+            new_stored="."
+        elif [[ "$stored" == "$root/"* ]]; then
+            new_stored="${stored#"$root/"}"
+        else
+            continue
+        fi
+        old_esc="$(sql_escape "$stored")"
+        new_esc="$(sql_escape "$new_stored")"
+        printf "INSERT INTO checked_paths(path,kind,size,mtime,status,last_checked,signature,file_hash_kind,file_hash,file_md5,file_sha512) SELECT '%s',kind,size,mtime,status,last_checked,signature,file_hash_kind,file_hash,file_md5,file_sha512 FROM checked_paths WHERE path='%s' ON CONFLICT(path) DO UPDATE SET file_md5=COALESCE(checked_paths.file_md5,excluded.file_md5), file_sha512=COALESCE(checked_paths.file_sha512,excluded.file_sha512), file_hash_kind=COALESCE(checked_paths.file_hash_kind,excluded.file_hash_kind), file_hash=COALESCE(checked_paths.file_hash,excluded.file_hash), signature=COALESCE(checked_paths.signature,excluded.signature); DELETE FROM checked_paths WHERE path='%s';\n" \
+            "$new_esc" "$old_esc" "$old_esc" >>"$sql_file"
+    done <"$current_file"
+
+    if (( legacy_count > 0 )); then
+        while IFS= read -r stored; do
+            [[ -n "$stored" ]] || continue
+            if [[ "$stored" == "$old_root" ]]; then
+                new_stored="."
+            elif [[ "$stored" == "$old_root/"* ]]; then
+                new_stored="${stored#"$old_root/"}"
+            else
+                continue
+            fi
+            old_esc="$(sql_escape "$stored")"
+            new_esc="$(sql_escape "$new_stored")"
+            printf "INSERT INTO checked_paths(path,kind,size,mtime,status,last_checked,signature,file_hash_kind,file_hash,file_md5,file_sha512) SELECT '%s',kind,size,mtime,status,last_checked,signature,file_hash_kind,file_hash,file_md5,file_sha512 FROM checked_paths WHERE path='%s' ON CONFLICT(path) DO UPDATE SET file_md5=COALESCE(checked_paths.file_md5,excluded.file_md5), file_sha512=COALESCE(checked_paths.file_sha512,excluded.file_sha512), file_hash_kind=COALESCE(checked_paths.file_hash_kind,excluded.file_hash_kind), file_hash=COALESCE(checked_paths.file_hash,excluded.file_hash), signature=COALESCE(checked_paths.signature,excluded.signature); DELETE FROM checked_paths WHERE path='%s';\n" \
+                "$new_esc" "$old_esc" "$old_esc" >>"$sql_file"
+        done <"$legacy_file"
+    fi
+    printf 'COMMIT;\n' >>"$sql_file"
+
+    if ! rename_sqlite3_db_run <"$sql_file" >/dev/null 2>&1; then
+        echo "ERROR: SQLite path migration failed; transaction was rolled back." >&2
+        rm -f -- "$current_file" "$legacy_file" "$sql_file"
+        return 1
+    fi
+    startup_progress "SQLite path migration complete: $absolute_count absolute row(s) converted to paths relative to $root"
+    rm -f -- "$current_file" "$legacy_file" "$sql_file"
+    return 0
+}
+
 # Read checked_paths row count for maintenance; fail (non-zero) on lock/read errors — never silently return 0.
 db_sqlite_maintenance_count_rows() {
     local count err err_line rc uri
@@ -3466,7 +3880,7 @@ db_sqlite_maintenance_count_rows() {
     DB_MAINT_LAST_SQLITE_ERR=""
     err="$(mktemp)"
 
-    count="$(rename_sqlite3_db_run 'PRAGMA busy_timeout=60000; SELECT COUNT(*) FROM checked_paths;' 2>"$err")"
+    count="$(rename_sqlite3_db_run 'SELECT COUNT(*) FROM checked_paths;' 2>"$err")"
     rc=$?
     if (( rc == 0 )) && [[ "$count" =~ ^[0-9]+$ ]]; then
         rm -f -- "$err"
@@ -3475,7 +3889,7 @@ db_sqlite_maintenance_count_rows() {
     fi
 
     if rename_sqlite3_any_available && [[ -f "$DB_FILE" ]]; then
-        count="$(rename_sqlite3 -cmd 'PRAGMA busy_timeout=60000' "$DB_FILE" 'SELECT COUNT(*) FROM checked_paths;' 2>"$err")"
+        count="$(rename_sqlite3 -cmd '.timeout 60000' "$DB_FILE" 'SELECT COUNT(*) FROM checked_paths;' 2>"$err")"
         rc=$?
         if (( rc == 0 )) && [[ "$count" =~ ^[0-9]+$ ]]; then
             rm -f -- "$err"
@@ -3483,7 +3897,7 @@ db_sqlite_maintenance_count_rows() {
             return 0
         fi
         if uri="$(db_sqlite_file_uri_nolock 2>/dev/null)"; then
-            count="$(rename_sqlite3_uri_db_run "$uri" -cmd 'PRAGMA busy_timeout=60000' 'SELECT COUNT(*) FROM checked_paths;' 2>"$err")"
+            count="$(rename_sqlite3_uri_db_run "$uri" -cmd '.timeout 60000' 'SELECT COUNT(*) FROM checked_paths;' 2>"$err")"
             rc=$?
             if (( rc == 0 )) && [[ "$count" =~ ^[0-9]+$ ]]; then
                 DB_SQLITE_USE_URI=1
@@ -3536,6 +3950,10 @@ db_sqlite_maintenance_begin_local_stage() {
     local tmp=""
 
     [[ -f "$DB_FILE" ]] || return 1
+    if db_sqlite_cache_has_wal_sidecars; then
+        startup_progress "SQLite maintenance: refusing local staging while WAL/journal sidecars remain (checkpoint them first)"
+        return 1
+    fi
     tmp="$(mktemp "${TMPDIR:-/tmp}/rename.sh.maint.XXXXXX")" || return 1
     rm -f -- "$tmp"
     tmp="${tmp}.sqlite3"
@@ -3578,32 +3996,33 @@ db_sqlite_cache_has_wal_sidecars() {
     [[ -f "${DB_FILE}-wal" || -f "${DB_FILE}-shm" || -f "${DB_FILE}-journal" ]]
 }
 
-# Checkpoint WAL and remove sidecars (helps CIFS/SMB where -wal/-shm break reads).
+# Checkpoint WAL safely (helps CIFS/SMB where -wal/-shm break reads).
 db_sqlite_maintenance_try_wal_sidecar_recovery() {
-    local uri=""
+    local uri="" err=""
 
     [[ -f "$DB_FILE" ]] || return 1
     db_sqlite_cache_has_wal_sidecars || return 1
 
-    startup_progress "SQLite maintenance: attempting WAL sidecar recovery (checkpoint TRUNCATE, journal_mode=DELETE, remove -wal/-shm)..."
+    startup_progress "SQLite maintenance: attempting safe WAL recovery (checkpoint TRUNCATE, journal_mode=DELETE)..."
 
-    uri="$(db_sqlite_file_uri_nolock 2>/dev/null)" || uri=""
-    if [[ -n "$uri" ]]; then
-        DB_SQLITE_USE_URI=1
-        DB_SQLITE_URI="$uri"
-        rename_sqlite3_db_run >/dev/null 2>&1 <<'SQL' || true
-PRAGMA busy_timeout=60000;
+    err="$(mktemp)"
+    if ! rename_sqlite3 -batch "$DB_FILE" >/dev/null 2>"$err" <<SQL
+PRAGMA busy_timeout=$DB_SQLITE_BUSY_TIMEOUT_MS;
 PRAGMA wal_checkpoint(TRUNCATE);
 PRAGMA journal_mode=DELETE;
 SQL
-    else
-        rename_sqlite3 -cmd 'PRAGMA busy_timeout=60000' "$DB_FILE" "PRAGMA wal_checkpoint(TRUNCATE); PRAGMA journal_mode=DELETE;" >/dev/null 2>&1 || true
+    then
+        startup_progress "SQLite maintenance: WAL recovery could not get a safe lock; sidecars were left untouched"
+        rm -f -- "$err"
+        return 1
     fi
-    db_clear_sqlite_sidecar_files
+    rm -f -- "$err"
+
     if db_sqlite_prefer_nolock_for_cache_path && uri="$(db_sqlite_file_uri_nolock 2>/dev/null)"; then
         DB_SQLITE_USE_URI=1
         DB_SQLITE_URI="$uri"
     fi
+    DB_SQLITE_JOURNAL_MODE="DELETE"
     return 0
 }
 
@@ -3623,12 +4042,12 @@ db_sqlite_maintenance_probe_sqlite_read() {
         if rename_sqlite3_wants_python_uri_backend; then
             DB_SQLITE_USE_URI=1
             DB_SQLITE_URI="$uri"
-            count="$(rename_sqlite3_python_db_run 'PRAGMA busy_timeout=60000; SELECT COUNT(*) FROM checked_paths;' 2>"$err")"
+            count="$(rename_sqlite3_python_db_run 'SELECT COUNT(*) FROM checked_paths;' 2>"$err")"
             rc=$?
         else
             rename_sqlite3_probe_cli_uri_support
             if (( RENAME_SQLITE3_HAS_URI_FLAG == 1 )); then
-                count="$(rename_sqlite3_uri_db_run "$uri" -cmd 'PRAGMA busy_timeout=5000' 'SELECT COUNT(*) FROM checked_paths;' 2>"$err")"
+                count="$(rename_sqlite3_uri_db_run "$uri" -cmd '.timeout 5000' 'SELECT COUNT(*) FROM checked_paths;' 2>"$err")"
                 rc=$?
             else
                 count=""
@@ -3637,7 +4056,7 @@ db_sqlite_maintenance_probe_sqlite_read() {
             fi
         fi
     else
-        count="$(rename_sqlite3 -cmd 'PRAGMA busy_timeout=5000' "$DB_FILE" 'SELECT COUNT(*) FROM checked_paths;' 2>"$err")"
+        count="$(rename_sqlite3 -cmd '.timeout 5000' "$DB_FILE" 'SELECT COUNT(*) FROM checked_paths;' 2>"$err")"
         rc=$?
     fi
     if (( rc == 0 )) && [[ "$count" =~ ^[0-9]+$ ]]; then
@@ -3842,10 +4261,14 @@ db_sqlite_maintenance_diagnose_open_failure() {
 
 # Maintenance-only: ensure schema/WAL pragmas without loading every row into memory.
 db_open_cache_for_maintenance() {
-    local probe_count="" opened_with_nolock=0 uri="" wal_recovery_tried=0
+    local probe_count="" opened_with_nolock=0 uri="" wal_recovery_tried=0 migration_rc=0
 
     DB_MAINT_KNOWN_TOTAL_ROWS=0
     db_remove_stale_sqlite_lock_artifacts
+
+    if db_sqlite_prefer_nolock_for_cache_path && db_sqlite_cache_has_wal_sidecars; then
+        db_sqlite_maintenance_try_wal_sidecar_recovery || true
+    fi
 
     if db_sqlite_prefer_nolock_for_cache_path && uri="$(db_sqlite_file_uri_nolock 2>/dev/null)"; then
         DB_SQLITE_USE_URI=1
@@ -3867,17 +4290,18 @@ db_open_cache_for_maintenance() {
         DB_SQLITE_USE_URI=""
         DB_SQLITE_URI=""
         if ! db_init_create_checked_paths_schema; then
-            db_clear_sqlite_sidecar_files
-            db_remove_stale_sqlite_lock_artifacts
-            if ! db_init_create_checked_paths_schema; then
-                if db_init_create_checked_paths_schema_nolock; then
-                    opened_with_nolock=1
-                    (( VERBOSE == 1 )) && echo "[VERBOSE] SQLite maintenance: cache opened with ?nolock=1" >&2
-                elif ! db_init_create_checked_paths_schema_via_local_tmp; then
-                    echo "ERROR: could not open SQLite cache for maintenance: $DB_FILE" >&2
-                    db_sqlite_maintenance_diagnose_open_failure
-                    return 1
-                fi
+            if db_configure_sqlite_runtime_mode recover && db_init_create_checked_paths_schema_core; then
+                startup_progress "SQLite maintenance: cache recovered using $DB_SQLITE_JOURNAL_MODE journal mode"
+                [[ -n "$DB_SQLITE_USE_URI" ]] && opened_with_nolock=1
+            elif db_init_create_checked_paths_schema_nolock; then
+                opened_with_nolock=1
+                (( VERBOSE == 1 )) && echo "[VERBOSE] SQLite maintenance: cache opened with ?nolock=1" >&2
+            elif [[ ! -s "$DB_FILE" ]] && ! db_sqlite_cache_has_wal_sidecars && db_init_create_checked_paths_schema_via_local_tmp; then
+                :
+            else
+                echo "ERROR: could not open SQLite cache for maintenance: $DB_FILE" >&2
+                db_sqlite_maintenance_diagnose_open_failure
+                return 1
             fi
         fi
     fi
@@ -3892,9 +4316,10 @@ db_open_cache_for_maintenance() {
         fi
         if ! probe_count="$(db_sqlite_maintenance_count_rows 2>/dev/null)"; then
             if db_sqlite_maintenance_should_try_wal_recovery; then
-                db_sqlite_maintenance_try_wal_sidecar_recovery
-                wal_recovery_tried=1
-                probe_count="$(db_sqlite_maintenance_count_rows 2>/dev/null)" || probe_count=""
+                if db_sqlite_maintenance_try_wal_sidecar_recovery; then
+                    wal_recovery_tried=1
+                    probe_count="$(db_sqlite_maintenance_count_rows 2>/dev/null)" || probe_count=""
+                fi
             fi
         fi
         if [[ -z "$probe_count" ]] || ! [[ "$probe_count" =~ ^[0-9]+$ ]]; then
@@ -3919,19 +4344,18 @@ db_open_cache_for_maintenance() {
     fi
 
     DB_MAINT_KNOWN_TOTAL_ROWS=$probe_count
-    if (( probe_count == 0 )) && [[ -s "$DB_FILE" ]]; then
-        startup_progress "SQLite maintenance: WARNING — checked_paths has 0 rows but the DB file is non-empty (unexpected; was another writer interrupted?)"
-    else
-        startup_progress "SQLite maintenance: cache ready ($probe_count rows in checked_paths)"
-    fi
+    startup_progress "SQLite maintenance: cache ready ($probe_count rows in checked_paths)"
 
-    rename_sqlite3_db_run >/dev/null 2>&1 <<'SQL' || true
-PRAGMA busy_timeout=60000;
-PRAGMA journal_mode=WAL;
-PRAGMA synchronous=NORMAL;
-PRAGMA temp_store=MEMORY;
-PRAGMA cache_size=-20000;
-SQL
+    if ! db_configure_sqlite_runtime_mode startup; then
+        echo "ERROR: could not configure a safe SQLite journal mode for: $DB_FILE" >&2
+        echo "Existing WAL sidecars were not deleted; close other users of the cache and retry." >&2
+        return 1
+    fi
+    startup_progress "SQLite maintenance: journal mode $DB_SQLITE_JOURNAL_MODE selected for this filesystem"
+    db_migrate_absolute_paths_to_relative || migration_rc=$?
+    (( migration_rc == 0 )) || return "$migration_rc"
+    probe_count="$(db_sqlite_maintenance_count_rows 2>/dev/null)" || return 1
+    DB_MAINT_KNOWN_TOTAL_ROWS=$probe_count
     return 0
 }
 
@@ -3957,6 +4381,7 @@ ${sql}"; then
 db_run_maintenance() {
     local mode="$1"
     local _dm_save_e=0
+    local maintenance_rc=0
 
     (( USE_DB == 1 )) || return 0
     case "$mode" in
@@ -3976,10 +4401,10 @@ db_run_maintenance() {
         startup_progress "SQLite maintenance: running AUTO profile..."
         db_maintenance_run_sql_step "PRAGMA optimize;" "PRAGMA optimize;"
         db_maintenance_run_sql_step "PRAGMA wal_checkpoint(PASSIVE);" "PRAGMA wal_checkpoint(PASSIVE);"
-        db_prune_missing_paths
+        db_prune_missing_paths || maintenance_rc=$?
         startup_progress "SQLite maintenance: AUTO profile finished"
         ((_dm_save_e)) && set -e || set +e
-        return 0
+        return "$maintenance_rc"
     fi
 
     startup_progress "SQLite maintenance: running FULL profile..."
@@ -3987,9 +4412,120 @@ db_run_maintenance() {
     db_maintenance_run_sql_step "ANALYZE;" "ANALYZE;"
     db_maintenance_run_sql_step "REINDEX checked_paths;" "REINDEX checked_paths;"
     db_maintenance_run_sql_step "PRAGMA wal_checkpoint(TRUNCATE);" "PRAGMA wal_checkpoint(TRUNCATE);"
-    db_prune_missing_paths
+    db_prune_missing_paths || maintenance_rc=$?
     startup_progress "SQLite maintenance: FULL profile finished"
     ((_dm_save_e)) && set -e || set +e
+    return "$maintenance_rc"
+}
+
+_db_maintenance_is_internal_file() {
+    local path="$1"
+
+    if [[ -n "${DB_MAINT_LOCAL_STAGE_ORIG:-}" ]]; then
+        case "$path" in
+            "$DB_MAINT_LOCAL_STAGE_ORIG"|"$DB_MAINT_LOCAL_STAGE_ORIG"-wal|\
+            "$DB_MAINT_LOCAL_STAGE_ORIG"-shm|"$DB_MAINT_LOCAL_STAGE_ORIG"-journal)
+                return 0
+                ;;
+        esac
+    fi
+    case "$path" in
+        "$DB_FILE"|"$DB_FILE"-wal|"$DB_FILE"-shm|"$DB_FILE"-journal|\
+        "$LEGACY_DB_FILE"|"$LEGACY_DB_FILE"-wal|"$LEGACY_DB_FILE"-shm|"$LEGACY_DB_FILE"-journal|\
+        "$EXCLUDE_FILTERS_FILE"|"$RESUME_STATE_FILE")
+            return 0
+            ;;
+    esac
+    return 1
+}
+
+# Seed files that are absent from checked_paths so an empty or partial cache can
+# be hash-backfilled directly. hash-only rows deliberately do not qualify for
+# normal rename-cache skips; a later normal run still examines and renames them.
+db_maintenance_seed_filesystem_paths() {
+    local existing_rows_file="" filesystem_file="" path="" stored="" meta="" size="" mtime="" escaped_path=""
+    local discovered_next=500 seeded_next=500
+    local -A existing_paths=()
+
+    DB_MAINT_FS_FILES_DISCOVERED=0
+    DB_MAINT_FS_FILES_EXCLUDED=0
+    DB_MAINT_FS_ROWS_SEEDED=0
+
+    startup_progress "SQLite hash backfill: discovering filesystem files missing from the cache..."
+    existing_rows_file="$(mktemp)"
+    filesystem_file="$(mktemp)"
+
+    if ! rename_sqlite3_db_run 'SELECT path FROM checked_paths;' >"$existing_rows_file" 2>/dev/null; then
+        startup_progress "SQLite hash backfill: ERROR — could not list existing cache paths"
+        rm -f -- "$existing_rows_file" "$filesystem_file"
+        return 1
+    fi
+    while IFS= read -r path; do
+        [[ -n "$path" ]] && existing_paths["$path"]=1
+    done <"$existing_rows_file"
+    rm -f -- "$existing_rows_file"
+
+    if ! find "$START_DIR" -type f -print0 >"$filesystem_file"; then
+        startup_progress "SQLite hash backfill: ERROR — filesystem discovery failed"
+        rm -f -- "$filesystem_file"
+        return 1
+    fi
+
+    while IFS= read -r -d '' path; do
+        (( ++DB_MAINT_FS_FILES_DISCOVERED ))
+        if _db_maintenance_is_internal_file "$path" || is_excluded_by_filter_file "$path"; then
+            (( ++DB_MAINT_FS_FILES_EXCLUDED ))
+            continue
+        fi
+        stored="$(db_path_to_storage "$path" 2>/dev/null || true)"
+        [[ -n "$stored" ]] || {
+            (( ++DB_MAINT_FS_FILES_EXCLUDED ))
+            continue
+        }
+        [[ -z "${existing_paths[$stored]+x}" ]] || continue
+
+        meta="$(db_get_size_mtime "$path" 2>/dev/null)" || {
+            (( ++DB_MAINT_FS_FILES_EXCLUDED ))
+            continue
+        }
+        size="${meta%%|*}"
+        mtime="${meta##*|}"
+        [[ "$size" =~ ^[0-9]+$ && "$mtime" =~ ^-?[0-9]+$ ]] || {
+            (( ++DB_MAINT_FS_FILES_EXCLUDED ))
+            continue
+        }
+
+        escaped_path="$(sql_escape "$stored")"
+        printf "INSERT INTO checked_paths(path, kind, size, mtime, status, last_checked) VALUES ('%s', 'plain', %s, %s, 'hash-only', CURRENT_TIMESTAMP) ON CONFLICT(path) DO NOTHING;\n" \
+            "$escaped_path" "$size" "$mtime" >>"$DB_PENDING_SQL_FILE"
+        existing_paths["$stored"]=1
+        (( ++DB_PENDING_COUNT ))
+        (( ++DB_MAINT_FS_ROWS_SEEDED ))
+        (( ++DB_ROWS_UPDATED ))
+
+        if (( DB_PENDING_COUNT >= DB_FLUSH_EVERY )); then
+            if ! db_flush_pending; then
+                startup_progress "SQLite hash backfill: ERROR — failed to save filesystem bootstrap rows"
+                rm -f -- "$filesystem_file"
+                return 1
+            fi
+        fi
+        if (( DB_MAINT_FS_ROWS_SEEDED >= seeded_next )); then
+            startup_progress "SQLite hash bootstrap progress: discovered=$DB_MAINT_FS_FILES_DISCOVERED; inserted=$DB_MAINT_FS_ROWS_SEEDED; excluded=$DB_MAINT_FS_FILES_EXCLUDED..."
+            seeded_next=$((seeded_next + 500))
+        elif (( DB_MAINT_FS_FILES_DISCOVERED >= discovered_next )); then
+            startup_progress "SQLite hash discovery progress: discovered=$DB_MAINT_FS_FILES_DISCOVERED; inserted=$DB_MAINT_FS_ROWS_SEEDED; excluded=$DB_MAINT_FS_FILES_EXCLUDED..."
+            discovered_next=$((discovered_next + 500))
+        fi
+    done <"$filesystem_file"
+    rm -f -- "$filesystem_file"
+
+    if ! db_flush_pending; then
+        startup_progress "SQLite hash backfill: ERROR — failed to save final filesystem bootstrap rows"
+        return 1
+    fi
+    DB_MAINT_KNOWN_TOTAL_ROWS=$((DB_MAINT_KNOWN_TOTAL_ROWS + DB_MAINT_FS_ROWS_SEEDED))
+    startup_progress "SQLite hash filesystem bootstrap finished: discovered=$DB_MAINT_FS_FILES_DISCOVERED; inserted=$DB_MAINT_FS_ROWS_SEEDED; excluded=$DB_MAINT_FS_FILES_EXCLUDED; DB rows now=$DB_MAINT_KNOWN_TOTAL_ROWS"
     return 0
 }
 
@@ -4012,8 +4548,11 @@ db_run_hash_backfill() {
     fi
 
     startup_progress "SQLite hash backfill: reconciling all cached paths with the filesystem..."
-    db_prune_missing_paths
-    if [[ "$stopped_by_user" != yes ]]; then
+    db_prune_missing_paths || backfill_rc=$?
+    if [[ "$stopped_by_user" != yes ]] && (( backfill_rc == 0 )); then
+        db_maintenance_seed_filesystem_paths || backfill_rc=$?
+    fi
+    if [[ "$stopped_by_user" != yes ]] && (( backfill_rc == 0 )); then
         db_maintenance_backfill_missing_hashes "$hash_mode" || backfill_rc=$?
     fi
     startup_progress "SQLite hash backfill finished"
@@ -4022,7 +4561,7 @@ db_run_hash_backfill() {
 }
 
 db_prune_missing_paths() {
-    local path escaped_path
+    local path stored runtime escaped_path
     local total_db_rows=0
     local progress_pct=0
     local next_progress_pct=5
@@ -4038,6 +4577,7 @@ db_prune_missing_paths() {
     local start_idx=0
     local end_idx=0
     local i=0
+    local missing_pct=0
     local -a missing_paths=()
     local prune_paths_file=""
 
@@ -4049,7 +4589,7 @@ db_prune_missing_paths() {
     if ! total_db_rows="$(db_sqlite_maintenance_count_rows 2>/dev/null)"; then
         startup_progress "SQLite maintenance: ERROR — could not read checked_paths row count (database locked?)"
         startup_progress "SQLite maintenance: filesystem check skipped"
-        return 0
+        return 1
     fi
     DB_MAINT_KNOWN_TOTAL_ROWS=$total_db_rows
     DB_MAINT_ROWS_TOTAL_BEFORE=$total_db_rows
@@ -4059,21 +4599,22 @@ db_prune_missing_paths() {
     fi
 
     prune_paths_file="$(mktemp)"
-    if ! rename_sqlite3_db_run 'PRAGMA busy_timeout=60000; SELECT path FROM checked_paths;' >"$prune_paths_file" 2>/dev/null; then
+    if ! rename_sqlite3_db_run 'SELECT path FROM checked_paths;' >"$prune_paths_file" 2>/dev/null; then
         startup_progress "SQLite maintenance: WARNING — could not list checked_paths for filesystem crosscheck (skipped)"
         rm -f -- "$prune_paths_file"
         startup_progress "SQLite maintenance: filesystem check finished (checked: 0, missing: 0, removed: 0)"
-        return 0
+        return 1
     fi
 
-    while IFS= read -r path; do
+    while IFS= read -r stored; do
         [[ "$stopped_by_user" == yes ]] && break
-        [[ -n "$path" ]] || continue
+        [[ -n "$stored" ]] || continue
+        runtime="$(db_path_from_storage "$stored" 2>/dev/null || true)"
         (( ++DB_MAINT_ROWS_CHECKED ))
-        if [[ ! -e "$path" ]]; then
+        if [[ -z "$runtime" || ( ! -e "$runtime" && ! -h "$runtime" ) ]]; then
             (( ++DB_MAINT_ROWS_MISSING ))
-            missing_paths+=("$path")
-            print_db_maintenance_missing_verbose "$path"
+            missing_paths+=("$stored")
+            print_db_maintenance_missing_verbose "${runtime:-$stored}"
         fi
 
         if (( total_db_rows > 0 )); then
@@ -4101,6 +4642,18 @@ db_prune_missing_paths() {
     rm -f -- "$prune_paths_file"
 
     if (( DB_MAINT_ROWS_MISSING > 0 )); then
+        [[ "$DB_MAINT_MAX_MISSING_PERCENT" =~ ^[0-9]+$ ]] || DB_MAINT_MAX_MISSING_PERCENT=25
+        [[ "$DB_MAINT_ALLOW_MASS_DELETE" =~ ^[01]$ ]] || DB_MAINT_ALLOW_MASS_DELETE=0
+        if (( total_db_rows > 0 )); then
+            missing_pct=$((DB_MAINT_ROWS_MISSING * 100 / total_db_rows))
+        fi
+        if (( DB_MAINT_ALLOW_MASS_DELETE != 1 && DB_MAINT_ROWS_MISSING >= 100 && missing_pct >= DB_MAINT_MAX_MISSING_PERCENT )); then
+            startup_progress "SQLite maintenance: SAFETY STOP — $DB_MAINT_ROWS_MISSING of $total_db_rows paths (${missing_pct}%) appear missing"
+            echo "ERROR: refusing to delete a large portion of the cache; this usually means the directory is mounted at a different path." >&2
+            echo "No missing-path rows were deleted. Fix or confirm the database root migration, then rerun." >&2
+            echo "Set DB_MAINT_ALLOW_MASS_DELETE=1 only when these files were intentionally removed." >&2
+            return 1
+        fi
         (( VERBOSE == 1 )) && echo "[VERBOSE] SQLite maintenance command: delete rows for missing filesystem paths" >&2
         delete_total="${#missing_paths[@]}"
         startup_progress "SQLite maintenance: delete progress 0% (0 / $delete_total removed from DB)..."
@@ -4147,6 +4700,7 @@ db_prune_missing_paths() {
 
     DB_MAINT_KNOWN_TOTAL_ROWS=$((total_db_rows - DB_MAINT_ROWS_REMOVED))
     startup_progress "SQLite maintenance: filesystem check finished (checked: $DB_MAINT_ROWS_CHECKED, missing: $DB_MAINT_ROWS_MISSING, removed: $DB_MAINT_ROWS_REMOVED)"
+    return 0
 }
 
 # SQL WHERE for rows with at least one missing hash slot (honours file_hash_kind/file_hash like cache warmup).
@@ -4323,7 +4877,7 @@ _db_maintenance_hash_job_completed() {
 
 db_maintenance_backfill_missing_hashes() {
     local hash_mode="${1:-both}"
-    local path abs md5_hash sha512_hash file_hash_kind file_hash sql size
+    local path stored md5_hash sha512_hash file_hash_kind file_hash sql size
     local new_md5 new_sha512 dual_result
     local updated_this_row=0 selected_jobs=0 pass_bytes=0
     local md5_backend="" sha512_backend=""
@@ -4394,14 +4948,19 @@ db_maintenance_backfill_missing_hashes() {
 
     startup_progress "SQLite hash backfill: inventorying missing MD5/SHA512 slots and bytes..."
     inv_file="$(mktemp)"
-    if ! rename_sqlite3_db_run -separator '|' "PRAGMA busy_timeout=60000; ${candidate_query}" >"$inv_file" 2>/dev/null; then
+    if ! rename_sqlite3_db_run -separator '|' "$candidate_query" >"$inv_file" 2>/dev/null; then
         startup_progress "SQLite hash backfill: ERROR — could not query missing-hash candidates"
         rm -f -- "$inv_file"
         return 1
     fi
-    while IFS='|' read -r path md5_hash sha512_hash file_hash_kind file_hash; do
+    while IFS='|' read -r stored md5_hash sha512_hash file_hash_kind file_hash; do
         [[ "$stopped_by_user" == yes ]] && break
-        [[ -n "$path" ]] || continue
+        [[ -n "$stored" ]] || continue
+        path="$(db_path_from_storage "$stored" 2>/dev/null || true)"
+        [[ -n "$path" ]] || {
+            (( ++DB_MAINT_HASH_SKIPPED_NOT_FILE ))
+            continue
+        }
         if [[ ! -f "$path" ]]; then
             (( ++DB_MAINT_HASH_SKIPPED_NOT_FILE ))
             continue
@@ -4426,7 +4985,7 @@ db_maintenance_backfill_missing_hashes() {
             fi
         fi
         (( selected_jobs > 0 )) || continue
-        size="$(get_file_size_bytes "$path" 2>/dev/null || echo 0)"
+        size="$(stat -Lc '%s' -- "$path" 2>/dev/null || echo 0)"
         [[ "$size" =~ ^[0-9]+$ ]] || size=0
         (( ++DB_MAINT_HASH_FILES_PLANNED ))
         if (( selected_jobs == 2 && DB_MAINT_HASH_DUAL_SINGLE_PASS == 1 )); then
@@ -4440,7 +4999,7 @@ db_maintenance_backfill_missing_hashes() {
     DB_MAINT_HASH_JOBS_TOTAL=$(( DB_MAINT_HASH_MD5_JOBS + DB_MAINT_HASH_SHA512_JOBS ))
     DB_MAINT_HASH_JOBS_REMAINING=$DB_MAINT_HASH_JOBS_TOTAL
 
-    startup_progress "SQLite hash inventory: DB entries now=$DB_MAINT_KNOWN_TOTAL_ROWS; existing paths=$((DB_MAINT_ROWS_CHECKED - DB_MAINT_ROWS_MISSING)); missing MD5=$DB_MAINT_HASH_MD5_MISSING; missing SHA512=$DB_MAINT_HASH_SHA512_MISSING"
+    startup_progress "SQLite hash inventory: DB entries now=$DB_MAINT_KNOWN_TOTAL_ROWS; existing paths=$((DB_MAINT_ROWS_CHECKED - DB_MAINT_ROWS_MISSING + DB_MAINT_FS_ROWS_SEEDED)); missing MD5=$DB_MAINT_HASH_MD5_MISSING; missing SHA512=$DB_MAINT_HASH_SHA512_MISSING"
     startup_progress "SQLite hash plan ($hash_mode): files=$DB_MAINT_HASH_FILES_PLANNED; hash slots=$DB_MAINT_HASH_JOBS_TOTAL (MD5=$DB_MAINT_HASH_MD5_JOBS, SHA512=$DB_MAINT_HASH_SHA512_JOBS); estimated bytes to read=$(_db_maintenance_format_bytes_human "$DB_MAINT_HASH_BYTES_PLANNED"); dual-hash single-pass=$([[ $DB_MAINT_HASH_DUAL_SINGLE_PASS -eq 1 ]] && echo yes || echo no)"
 
     if (( DB_MAINT_HASH_JOBS_TOTAL == 0 )); then
@@ -4456,21 +5015,21 @@ db_maintenance_backfill_missing_hashes() {
     fi
 
     backfill_file="$(mktemp)"
-    if ! rename_sqlite3_db_run -separator '|' "PRAGMA busy_timeout=60000; ${candidate_query}" >"$backfill_file" 2>/dev/null; then
+    if ! rename_sqlite3_db_run -separator '|' "$candidate_query" >"$backfill_file" 2>/dev/null; then
         startup_progress "SQLite hash backfill: ERROR — could not list candidates"
         rm -f -- "$backfill_file"
         _db_maintenance_hash_backfill_progress_finish
         return 1
     fi
 
-    while IFS='|' read -r path md5_hash sha512_hash file_hash_kind file_hash; do
+    while IFS='|' read -r stored md5_hash sha512_hash file_hash_kind file_hash; do
         [[ "$stopped_by_user" == yes ]] && break
+        [[ -n "$stored" ]] || continue
+        path="$(db_path_from_storage "$stored" 2>/dev/null || true)"
         [[ -n "$path" ]] || continue
         (( ++DB_MAINT_HASH_ROWS_SCANNED ))
         [[ -f "$path" ]] || continue
 
-        abs="$(db_abs_path "$path" 2>/dev/null || true)"
-        [[ -n "$abs" ]] || continue
         new_md5="$md5_hash"
         new_sha512="$sha512_hash"
         updated_this_row=0
@@ -4488,7 +5047,7 @@ db_maintenance_backfill_missing_hashes() {
         fi
         (( selected_jobs > 0 )) || continue
 
-        size="$(get_file_size_bytes "$path" 2>/dev/null || echo 0)"
+        size="$(stat -Lc '%s' -- "$path" 2>/dev/null || echo 0)"
         [[ "$size" =~ ^[0-9]+$ ]] || size=0
         pass_bytes=$((size * selected_jobs))
 
@@ -4546,7 +5105,7 @@ db_maintenance_backfill_missing_hashes() {
         _db_maintenance_hash_backfill_progress_update
 
         if (( updated_this_row == 1 )); then
-            sql="UPDATE checked_paths SET file_md5='$(sql_escape "$new_md5")', file_sha512='$(sql_escape "$new_sha512")', last_checked=CURRENT_TIMESTAMP WHERE path='$(sql_escape "$abs")';"
+            sql="UPDATE checked_paths SET file_md5='$(sql_escape "$new_md5")', file_sha512='$(sql_escape "$new_sha512")', last_checked=CURRENT_TIMESTAMP WHERE path='$(sql_escape "$stored")';"
             printf '%s\n' "$sql" >> "$DB_PENDING_SQL_FILE"
             (( ++DB_PENDING_COUNT ))
             (( ++DB_ROWS_UPDATED ))
@@ -4598,6 +5157,10 @@ print_db_maintenance_summary() {
     echo "  paths found on disk: $((DB_MAINT_ROWS_CHECKED - DB_MAINT_ROWS_MISSING))"
     echo "  missing on disk:     $DB_MAINT_ROWS_MISSING"
     echo "  removed from DB:     $DB_MAINT_ROWS_REMOVED"
+    echo "Filesystem bootstrap:"
+    echo "  files discovered:    $DB_MAINT_FS_FILES_DISCOVERED"
+    echo "  files excluded:      $DB_MAINT_FS_FILES_EXCLUDED"
+    echo "  rows inserted:       $DB_MAINT_FS_ROWS_SEEDED"
     echo "Hash backfill:"
     echo "  missing MD5 slots:   $DB_MAINT_HASH_MD5_MISSING"
     echo "  missing SHA512 slots: $DB_MAINT_HASH_SHA512_MISSING"
@@ -4651,7 +5214,9 @@ print_db_maintenance_missing_verbose() {
 
 db_init() {
     local warmed_rows=0
-    local md5_hash sha512_hash file_hash_kind file_hash
+    local stored_path path md5_hash sha512_hash file_hash_kind file_hash
+    local total_cached_rows=0 progress_pct=0 next_progress_pct=10
+    local cache_rows_file="" sqlite_err_file="" first_error=""
 
     (( USE_DB == 1 )) || return 0
     db_migrate_legacy_file
@@ -4661,20 +5226,18 @@ db_init() {
     # Create schema first (default journal mode). WAL/synchronous pragmas can fail on some
     # mounts or with stale -wal/-shm; applying them only after open avoids a hard init failure.
     if ! db_init_create_checked_paths_schema; then
-        db_clear_sqlite_sidecar_files
-        db_remove_stale_sqlite_lock_artifacts
-        if ! db_init_create_checked_paths_schema; then
-            if db_init_create_checked_paths_schema_nolock; then
-                (( VERBOSE == 1 )) && echo "[VERBOSE] SQLite cache opened with ?nolock=1 (host FS POSIX locking failed). Use only one rename.sh per directory; corruption risk if two writers." >&2
-            elif db_init_create_checked_paths_schema_via_local_tmp; then
-                :
-            else
-                echo "ERROR: could not create or open SQLite cache: $DB_FILE" >&2
-                echo "If you see \"database is locked\", close other rename.sh (or sqlite3) using this file, then retry." >&2
-                echo "Check write permissions on the start directory. Stale sidecar files from a crash or copy can also cause locks:" >&2
-                echo "  rm -f -- \"${DB_FILE}-wal\" \"${DB_FILE}-shm\" \"${DB_FILE}-journal\"" >&2
-                echo "sqlite3 diagnostic (first lines):" >&2
-                rename_sqlite3_db_run -batch 2>&1 <<'SQL' | head -n 25 >&2 || true
+        if db_configure_sqlite_runtime_mode recover && db_init_create_checked_paths_schema_core; then
+            startup_progress "SQLite cache recovered using $DB_SQLITE_JOURNAL_MODE journal mode"
+        elif db_init_create_checked_paths_schema_nolock; then
+            (( VERBOSE == 1 )) && echo "[VERBOSE] SQLite cache opened with ?nolock=1 (host FS POSIX locking failed). Use only one rename.sh per directory; corruption risk if two writers." >&2
+        elif [[ ! -s "$DB_FILE" ]] && ! db_sqlite_cache_has_wal_sidecars && db_init_create_checked_paths_schema_via_local_tmp; then
+            :
+        else
+            echo "ERROR: could not create or open SQLite cache: $DB_FILE" >&2
+            echo "If you see \"database is locked\", close other rename.sh (or sqlite3) using this file, then retry." >&2
+            echo "Existing non-empty database and WAL files were left untouched to avoid losing committed rows." >&2
+            echo "sqlite3 diagnostic (first lines):" >&2
+            rename_sqlite3_db_run -batch 2>&1 <<'SQL' | head -n 25 >&2 || true
 PRAGMA busy_timeout=30000;
 CREATE TABLE IF NOT EXISTS checked_paths (
     path TEXT PRIMARY KEY,
@@ -4696,25 +5259,50 @@ CREATE INDEX IF NOT EXISTS idx_checked_paths_file_md5 ON checked_paths(file_md5)
 CREATE INDEX IF NOT EXISTS idx_checked_paths_file_sha512 ON checked_paths(file_sha512);
 CREATE INDEX IF NOT EXISTS idx_checked_paths_missing_hashes ON checked_paths(path) WHERE COALESCE(file_md5,'')='' OR COALESCE(file_sha512,'');
 SQL
-                exit 1
-            fi
+            exit 1
         fi
     fi
     db_upgrade_checked_paths_schema
-    rename_sqlite3_db_run >/dev/null 2>&1 <<'SQL' || true
-PRAGMA journal_mode=WAL;
-PRAGMA synchronous=NORMAL;
-PRAGMA temp_store=MEMORY;
-PRAGMA cache_size=-20000;
-SQL
+    if ! db_configure_sqlite_runtime_mode startup; then
+        echo "ERROR: could not configure a safe SQLite journal mode for: $DB_FILE" >&2
+        echo "The cache was not modified destructively. Close old rename.sh/sqlite3 processes and retry." >&2
+        exit 1
+    fi
+    startup_progress "SQLite journal mode selected: $DB_SQLITE_JOURNAL_MODE"
+    if ! db_migrate_absolute_paths_to_relative; then
+        echo "ERROR: SQLite path migration was not completed; no file processing was started." >&2
+        exit 1
+    fi
     DB_PENDING_SQL_FILE="$(mktemp)"
+    cache_rows_file="$(mktemp)"
+    sqlite_err_file="$(mktemp)"
 
-    local total_cached_rows=0
-    local progress_pct=0
-    local next_progress_pct=10
+    if ! total_cached_rows="$(rename_sqlite3_db_run "SELECT COUNT(*) FROM checked_paths;" 2>"$sqlite_err_file")" ||
+       ! [[ "$total_cached_rows" =~ ^[0-9]+$ ]]; then
+        startup_progress "SQLite cache count was locked/unreadable; retrying after automatic journal recovery..."
+        db_configure_sqlite_runtime_mode recover >/dev/null 2>&1 || true
+        total_cached_rows="$(rename_sqlite3_db_run "SELECT COUNT(*) FROM checked_paths;" 2>"$sqlite_err_file")" || total_cached_rows=""
+    fi
+    if ! [[ "$total_cached_rows" =~ ^[0-9]+$ ]]; then
+        echo "ERROR: SQLite cache row count failed; refusing to treat an unreadable cache as empty." >&2
+        IFS= read -r first_error < "$sqlite_err_file" || true
+        [[ -n "$first_error" ]] && echo "$first_error" >&2
+        rm -f -- "$cache_rows_file" "$sqlite_err_file"
+        exit 1
+    fi
 
-    total_cached_rows="$(rename_sqlite3_db_run 'SELECT COUNT(*) FROM checked_paths;' 2>/dev/null || echo 0)"
-    [[ "$total_cached_rows" =~ ^[0-9]+$ ]] || total_cached_rows=0
+    if ! rename_sqlite3_db_run -separator '|' "SELECT path, size, mtime, COALESCE(status, ''), COALESCE(signature, ''), COALESCE(file_md5, ''), COALESCE(file_sha512, ''), COALESCE(file_hash_kind, ''), COALESCE(file_hash, '') FROM checked_paths;" >"$cache_rows_file" 2>"$sqlite_err_file"; then
+        startup_progress "SQLite cache warmup read was locked; retrying after automatic journal recovery..."
+        db_configure_sqlite_runtime_mode recover >/dev/null 2>&1 || true
+        if ! rename_sqlite3_db_run -separator '|' "SELECT path, size, mtime, COALESCE(status, ''), COALESCE(signature, ''), COALESCE(file_md5, ''), COALESCE(file_sha512, ''), COALESCE(file_hash_kind, ''), COALESCE(file_hash, '') FROM checked_paths;" >"$cache_rows_file" 2>"$sqlite_err_file"; then
+            echo "ERROR: SQLite cache warmup failed; no processing was started." >&2
+            IFS= read -r first_error < "$sqlite_err_file" || true
+            [[ -n "$first_error" ]] && echo "$first_error" >&2
+            rm -f -- "$cache_rows_file" "$sqlite_err_file"
+            exit 1
+        fi
+    fi
+    rm -f -- "$sqlite_err_file"
 
     if (( total_cached_rows > 0 )); then
         startup_progress "Loading cached rows from SQLite into memory: 0% (0 / $total_cached_rows rows loaded)..."
@@ -4722,7 +5310,9 @@ SQL
         startup_progress "Loading cached rows from SQLite into memory..."
     fi
 
-    while IFS='|' read -r path size mtime status signature md5_hash sha512_hash file_hash_kind file_hash; do
+    while IFS='|' read -r stored_path size mtime status signature md5_hash sha512_hash file_hash_kind file_hash; do
+        [[ -n "$stored_path" ]] || continue
+        path="$(db_path_from_storage "$stored_path" 2>/dev/null || true)"
         [[ -n "$path" ]] || continue
         DB_CACHE_META["$path"]="$size|$mtime"
         DB_CACHE_STATUS["$path"]="$status"
@@ -4756,9 +5346,14 @@ SQL
         elif (( warmed_rows % 50000 == 0 )); then
             startup_progress "SQLite warmup progress: $warmed_rows rows loaded..."
         fi
-    done < <(rename_sqlite3_db_run -separator '|' "SELECT path, size, mtime, COALESCE(status, ''), COALESCE(signature, ''), COALESCE(file_md5, ''), COALESCE(file_sha512, ''), COALESCE(file_hash_kind, ''), COALESCE(file_hash, '') FROM checked_paths;")
+    done < "$cache_rows_file"
+    rm -f -- "$cache_rows_file"
 
     if (( total_cached_rows > 0 )); then
+        if (( warmed_rows != total_cached_rows )); then
+            echo "ERROR: SQLite warmup loaded $warmed_rows of $total_cached_rows rows; refusing to continue with a partial cache." >&2
+            exit 1
+        fi
         startup_progress "SQLite cache warmup done: 100% ($warmed_rows / $total_cached_rows rows loaded)"
     else
         startup_progress "SQLite cache warmup done: $warmed_rows rows loaded"
@@ -4776,6 +5371,10 @@ db_has_valid_entry() {
     abs="$(db_abs_path "$path")"
     cached="${DB_CACHE_META[$abs]-}"
     status="${DB_CACHE_STATUS[$abs]-}"
+
+    # Rows created by --backfill-hashes contain checksums only; they must not
+    # cause a later normal/FAST run to skip rename and checksum-file checks.
+    [[ "$status" == "hash-only" ]] && return 1
 
     if [[ -n "$cached" ]]; then
         if (( FAST_DB == 1 )); then
@@ -4819,13 +5418,15 @@ db_record_file_hash() {
     local path="$1"
     local hash_kind="$2"
     local hash_value="$3"
-    local abs sql specific_sql existing_hash="" write_hash_record=1 confirm_rc=0
+    local abs stored sql specific_sql existing_hash="" write_hash_record=1 confirm_rc=0
 
     (( USE_DB == 1 )) || return 0
     [[ -e "$path" && -n "$hash_kind" && -n "$hash_value" ]] || return 0
 
     abs="$(db_abs_path "$path" 2>/dev/null || true)"
     [[ -n "$abs" ]] || return 0
+    stored="$(db_path_to_storage "$abs" 2>/dev/null || true)"
+    [[ -n "$stored" ]] || return 0
 
     case "$hash_kind" in
         md5) existing_hash="${DB_CACHE_HASH_MD5[$abs]-}" ;;
@@ -4874,7 +5475,7 @@ db_record_file_hash() {
     esac
 
     if (( write_hash_record == 1 )); then
-        sql="INSERT INTO checked_paths(path, kind, size, mtime, status, last_checked, file_hash_kind, file_hash, file_md5, file_sha512) VALUES ('$(sql_escape "$abs")', 'file_hash_only', 0, 0, 'hashed', CURRENT_TIMESTAMP, '$(sql_escape "$hash_kind")', '$(sql_escape "$hash_value")', $( [[ "$hash_kind" == "md5" ]] && printf "'%s'" "$(sql_escape "$hash_value")" || printf "NULL" ), $( [[ "$hash_kind" == "sha512" ]] && printf "'%s'" "$(sql_escape "$hash_value")" || printf "NULL" )) ON CONFLICT(path) DO UPDATE SET file_hash_kind=excluded.file_hash_kind, file_hash=excluded.file_hash, last_checked=CURRENT_TIMESTAMP${specific_sql:+, $specific_sql};"
+        sql="INSERT INTO checked_paths(path, kind, size, mtime, status, last_checked, file_hash_kind, file_hash, file_md5, file_sha512) VALUES ('$(sql_escape "$stored")', 'file_hash_only', 0, 0, 'hashed', CURRENT_TIMESTAMP, '$(sql_escape "$hash_kind")', '$(sql_escape "$hash_value")', $( [[ "$hash_kind" == "md5" ]] && printf "'%s'" "$(sql_escape "$hash_value")" || printf "NULL" ), $( [[ "$hash_kind" == "sha512" ]] && printf "'%s'" "$(sql_escape "$hash_value")" || printf "NULL" )) ON CONFLICT(path) DO UPDATE SET file_hash_kind=excluded.file_hash_kind, file_hash=excluded.file_hash, last_checked=CURRENT_TIMESTAMP${specific_sql:+, $specific_sql};"
         printf '%s\n' "$sql" >> "$DB_PENDING_SQL_FILE"
         DB_CACHE_ROW_EXISTS["$abs"]=1
         if [[ "$hash_kind" == "md5" ]]; then
@@ -4895,22 +5496,30 @@ db_find_path_by_file_hash_in_subtree() {
     local search_root="$1"
     local hash_kind="$2"
     local hash_value="$3"
-    local search_abs row_path query
+    local search_abs search_stored row_stored row_path query path_condition
 
     (( USE_DB == 1 )) || return 1
     db_flush_pending >/dev/null 2>&1 || true
 
     search_abs="$(db_abs_path "$search_root" 2>/dev/null || true)"
     [[ -n "$search_abs" ]] || return 1
+    search_stored="$(db_path_to_storage "$search_abs" 2>/dev/null || true)"
+    [[ -n "$search_stored" ]] || return 1
+    if [[ "$search_stored" == "." ]]; then
+        path_condition="1=1"
+    else
+        path_condition="(path='$(sql_escape "$search_stored")' OR path LIKE '$(sql_escape "${search_stored%/}")/%')"
+    fi
 
     case "$hash_kind" in
-        md5) query="SELECT path FROM checked_paths WHERE ((file_md5='$(sql_escape "$hash_value")') OR (file_hash_kind='md5' AND file_hash='$(sql_escape "$hash_value")')) AND path LIKE '$(sql_escape "${search_abs%/}")/%' ORDER BY LENGTH(path) LIMIT 1;" ;;
-        sha512) query="SELECT path FROM checked_paths WHERE ((file_sha512='$(sql_escape "$hash_value")') OR (file_hash_kind='sha512' AND file_hash='$(sql_escape "$hash_value")')) AND path LIKE '$(sql_escape "${search_abs%/}")/%' ORDER BY LENGTH(path) LIMIT 1;" ;;
+        md5) query="SELECT path FROM checked_paths WHERE ((file_md5='$(sql_escape "$hash_value")') OR (file_hash_kind='md5' AND file_hash='$(sql_escape "$hash_value")')) AND $path_condition ORDER BY LENGTH(path) LIMIT 1;" ;;
+        sha512) query="SELECT path FROM checked_paths WHERE ((file_sha512='$(sql_escape "$hash_value")') OR (file_hash_kind='sha512' AND file_hash='$(sql_escape "$hash_value")')) AND $path_condition ORDER BY LENGTH(path) LIMIT 1;" ;;
         *) return 1 ;;
     esac
 
-    row_path="$(rename_sqlite3_db_run -separator $'\t' "$query" 2>/dev/null | head -n 1)"
-    if [[ -n "$row_path" ]]; then
+    row_stored="$(rename_sqlite3_db_run -separator $'\t' "$query" 2>/dev/null | head -n 1)"
+    if [[ -n "$row_stored" ]]; then
+        row_path="$(db_path_from_storage "$row_stored" 2>/dev/null || true)"
         if [[ -e "$row_path" ]]; then
             ((++DB_HASH_LOOKUP_HITS))
             print_db_hash_lookup_verbose "hit" "$search_root" "$hash_kind" "$hash_value" "$row_path"
@@ -4918,7 +5527,7 @@ db_find_path_by_file_hash_in_subtree() {
             return 0
         fi
 
-        printf "DELETE FROM checked_paths WHERE path='%s';\n" "$(sql_escape "$row_path")" >> "$DB_PENDING_SQL_FILE"
+        printf "DELETE FROM checked_paths WHERE path='%s';\n" "$(sql_escape "$row_stored")" >> "$DB_PENDING_SQL_FILE"
         unset 'DB_CACHE_META[$row_path]'
         unset 'DB_CACHE_STATUS[$row_path]'
         unset 'DB_CACHE_HASH_MD5[$row_path]'
@@ -4975,7 +5584,7 @@ db_mark_checked() {
     local path="$1"
     local kind="$2"
     local status="$3"
-    local abs meta size mtime sig sql sig_sql existing_row=0
+    local abs stored meta size mtime sig sql sig_sql existing_row=0
 
     (( USE_DB == 1 )) || return 0
     [[ -e "$path" ]] || return 0
@@ -4983,6 +5592,8 @@ db_mark_checked() {
     meta="$(db_get_size_mtime "$path" 2>/dev/null || true)"
     [[ -n "$meta" ]] || return 0
     abs="$(db_abs_path "$path")"
+    stored="$(db_path_to_storage "$abs" 2>/dev/null || true)"
+    [[ -n "$stored" ]] || return 0
     size="${meta%%|*}"
     mtime="${meta##*|}"
     sig=""
@@ -5017,7 +5628,7 @@ db_mark_checked() {
         sig_sql="NULL"
     fi
 
-    sql="INSERT INTO checked_paths(path, kind, size, mtime, status, last_checked, signature) VALUES ('$(sql_escape "$abs")', '$(sql_escape "$kind")', $size, $mtime, '$(sql_escape "$status")', CURRENT_TIMESTAMP, $sig_sql) ON CONFLICT(path) DO UPDATE SET kind=excluded.kind, size=excluded.size, mtime=excluded.mtime, status=excluded.status, signature=COALESCE(excluded.signature, checked_paths.signature), last_checked=CURRENT_TIMESTAMP, file_hash_kind=COALESCE(file_hash_kind, excluded.file_hash_kind), file_hash=COALESCE(file_hash, excluded.file_hash);"
+    sql="INSERT INTO checked_paths(path, kind, size, mtime, status, last_checked, signature) VALUES ('$(sql_escape "$stored")', '$(sql_escape "$kind")', $size, $mtime, '$(sql_escape "$status")', CURRENT_TIMESTAMP, $sig_sql) ON CONFLICT(path) DO UPDATE SET kind=excluded.kind, size=excluded.size, mtime=excluded.mtime, status=excluded.status, signature=COALESCE(excluded.signature, checked_paths.signature), last_checked=CURRENT_TIMESTAMP, file_hash_kind=COALESCE(file_hash_kind, excluded.file_hash_kind), file_hash=COALESCE(file_hash, excluded.file_hash);"
     printf '%s\n' "$sql" >> "$DB_PENDING_SQL_FILE"
     (( ++DB_PENDING_COUNT ))
     if (( DB_PENDING_COUNT >= DB_FLUSH_EVERY )); then
@@ -5029,7 +5640,7 @@ db_mark_checked() {
 db_mark_gopro_capture_mode_checked() {
     local path="$1"
     local result="$2"
-    local abs meta size mtime sig sig_sql sql existing_row=0
+    local abs stored meta size mtime sig sig_sql sql existing_row=0
 
     (( USE_DB == 1 )) || return 0
     [[ -e "$path" && -n "$result" ]] || return 0
@@ -5037,6 +5648,8 @@ db_mark_gopro_capture_mode_checked() {
     meta="$(db_get_size_mtime "$path" 2>/dev/null || true)"
     [[ -n "$meta" ]] || return 0
     abs="$(db_abs_path "$path")"
+    stored="$(db_path_to_storage "$abs" 2>/dev/null || true)"
+    [[ -n "$stored" ]] || return 0
     size="${meta%%|*}"
     mtime="${meta##*|}"
     sig="gopro_cm:v1:${result}"
@@ -5051,12 +5664,12 @@ db_mark_gopro_capture_mode_checked() {
 
     if (( existing_row == 1 )); then
         ((++DB_ROWS_UPDATED))
-        sql="UPDATE checked_paths SET signature=${sig_sql}, size=${size}, mtime=${mtime}, last_checked=CURRENT_TIMESTAMP WHERE path='$(sql_escape "$abs")';"
+        sql="UPDATE checked_paths SET signature=${sig_sql}, size=${size}, mtime=${mtime}, last_checked=CURRENT_TIMESTAMP WHERE path='$(sql_escape "$stored")';"
     else
         ((++DB_ROWS_NEW))
         DB_CACHE_STATUS["$abs"]="checked"
         DB_CACHE_ROW_EXISTS["$abs"]=1
-        sql="INSERT INTO checked_paths(path, kind, size, mtime, status, last_checked, signature) VALUES ('$(sql_escape "$abs")', 'plain', ${size}, ${mtime}, 'checked', CURRENT_TIMESTAMP, ${sig_sql});"
+        sql="INSERT INTO checked_paths(path, kind, size, mtime, status, last_checked, signature) VALUES ('$(sql_escape "$stored")', 'plain', ${size}, ${mtime}, 'checked', CURRENT_TIMESTAMP, ${sig_sql});"
     fi
 
     printf '%s\n' "$sql" >> "$DB_PENDING_SQL_FILE"
@@ -5079,7 +5692,7 @@ db_mark_many_checked() {
 db_rewrite_subtree() {
     local old_path="$1"
     local new_path="$2"
-    local old_abs new_abs old_prefix new_prefix old_db_path new_db_path suffix sql
+    local old_abs new_abs old_stored new_stored old_prefix new_prefix old_db_path new_db_path suffix sql
     local old_esc new_esc
     local rewritten_count=0
     local -a matched_paths=()
@@ -5090,12 +5703,15 @@ db_rewrite_subtree() {
     old_abs="$(db_abs_path_if_deleted "$old_path" 2>/dev/null || true)"
     new_abs="$(db_abs_path "$new_path" 2>/dev/null || true)"
     [[ -n "$old_abs" && -n "$new_abs" ]] || return 0
+    old_stored="$(db_path_to_storage "$old_abs" 2>/dev/null || true)"
+    new_stored="$(db_path_to_storage "$new_abs" 2>/dev/null || true)"
+    [[ -n "$old_stored" && -n "$new_stored" ]] || return 0
 
     old_prefix="${old_abs%/}/"
     new_prefix="${new_abs%/}/"
 
-    old_esc="$(sql_escape "$old_abs")"
-    new_esc="$(sql_escape "$new_abs")"
+    old_esc="$(sql_escape "$old_stored")"
+    new_esc="$(sql_escape "$new_stored")"
     # Rewrite every cached row under this directory prefix in SQLite (warm cache may omit most paths).
     sql="UPDATE checked_paths SET path = CASE WHEN path='${old_esc}' THEN '${new_esc}' ELSE '${new_esc}' || SUBSTR(path, LENGTH('${old_esc}') + 1) END WHERE path='${old_esc}' OR SUBSTR(path, 1, LENGTH('${old_esc}') + 1) = '${old_esc}' || '/';"
     printf '%s\n' "$sql" >> "$DB_PENDING_SQL_FILE"
@@ -5153,15 +5769,18 @@ db_rewrite_subtree() {
 db_rewrite_single_path() {
     local old_path="$1"
     local new_path="$2"
-    local old_abs new_abs sql
+    local old_abs new_abs old_stored new_stored sql
 
     (( USE_DB == 1 )) || return 0
 
     old_abs="$(db_abs_path_if_deleted "$old_path" 2>/dev/null || true)"
     new_abs="$(db_abs_path "$new_path" 2>/dev/null || true)"
     [[ -n "$old_abs" && -n "$new_abs" ]] || return 0
+    old_stored="$(db_path_to_storage "$old_abs" 2>/dev/null || true)"
+    new_stored="$(db_path_to_storage "$new_abs" 2>/dev/null || true)"
+    [[ -n "$old_stored" && -n "$new_stored" ]] || return 0
 
-    sql="INSERT INTO checked_paths(path, kind, size, mtime, status, last_checked, signature, file_hash_kind, file_hash, file_md5, file_sha512) SELECT '$(sql_escape "$new_abs")', kind, size, mtime, status, CURRENT_TIMESTAMP, signature, file_hash_kind, file_hash, file_md5, file_sha512 FROM checked_paths WHERE path='$(sql_escape "$old_abs")' ON CONFLICT(path) DO UPDATE SET kind=excluded.kind, size=excluded.size, mtime=excluded.mtime, status=excluded.status, signature=excluded.signature, last_checked=excluded.last_checked, file_hash_kind=COALESCE(excluded.file_hash_kind, checked_paths.file_hash_kind), file_hash=COALESCE(excluded.file_hash, checked_paths.file_hash), file_md5=COALESCE(excluded.file_md5, checked_paths.file_md5), file_sha512=COALESCE(excluded.file_sha512, checked_paths.file_sha512); DELETE FROM checked_paths WHERE path='$(sql_escape "$old_abs")';"
+    sql="INSERT INTO checked_paths(path, kind, size, mtime, status, last_checked, signature, file_hash_kind, file_hash, file_md5, file_sha512) SELECT '$(sql_escape "$new_stored")', kind, size, mtime, status, CURRENT_TIMESTAMP, signature, file_hash_kind, file_hash, file_md5, file_sha512 FROM checked_paths WHERE path='$(sql_escape "$old_stored")' ON CONFLICT(path) DO UPDATE SET kind=excluded.kind, size=excluded.size, mtime=excluded.mtime, status=excluded.status, signature=excluded.signature, last_checked=excluded.last_checked, file_hash_kind=COALESCE(excluded.file_hash_kind, checked_paths.file_hash_kind), file_hash=COALESCE(excluded.file_hash, checked_paths.file_hash), file_md5=COALESCE(excluded.file_md5, checked_paths.file_md5), file_sha512=COALESCE(excluded.file_sha512, checked_paths.file_sha512); DELETE FROM checked_paths WHERE path='$(sql_escape "$old_stored")';"
     printf '%s\n' "$sql" >> "$DB_PENDING_SQL_FILE"
     (( ++DB_PENDING_COUNT ))
     if (( DB_PENDING_COUNT >= DB_FLUSH_EVERY )); then
@@ -5264,13 +5883,15 @@ while (( $# > 0 )); do
     #endregion
     case "$1" in
         --version)
-            # shellcheck disable=SC1091
-            . /root/bin/_script_header.sh NO_STARTUP_DELAY
-            print_version_banner
+            printf '%s\nVersion: %s\n' "${0##*/}" "$SCRIPT_VERSION"
             exit 0
             ;;
         -v|--verbose)
             VERBOSE=1
+            shift
+            ;;
+        -R|--recheck-renames)
+            RECHECK_RENAMES=1
             shift
             ;;
         --use-db)
@@ -5378,8 +5999,15 @@ while (( $# > 0 )); do
     esac
 done
 
+if (( RECHECK_RENAMES == 1 )); then
+    CLI_RESUME_STATE=fresh
+fi
 if (( RUN_DB_MAINTENANCE == 1 && RUN_HASH_BACKFILL == 1 )); then
     echo "ERROR: --backfill-hashes cannot be combined with --run-db-maintenance or --db-maintenance." >&2
+    exit 1
+fi
+if (( RECHECK_RENAMES == 1 && (RUN_DB_MAINTENANCE == 1 || RUN_HASH_BACKFILL == 1) )); then
+    echo "ERROR: --recheck-renames cannot be combined with database maintenance or hash backfill." >&2
     exit 1
 fi
 
@@ -5398,7 +6026,9 @@ esac
 
 print_startup_banner
 
-prompt_use_existing_sqlite_cache_if_present
+if (( RECHECK_RENAMES == 0 )); then
+    prompt_use_existing_sqlite_cache_if_present
+fi
 
 if (( RUN_DB_MAINTENANCE == 0 && RUN_HASH_BACKFILL == 0 )); then
     prompt_resume_choice_early
@@ -5415,8 +6045,12 @@ if (( USE_DB == 1 )); then
         db_require_sqlite
         db_migrate_legacy_file
         if [[ ! -f "$DB_FILE" ]]; then
-            echo "SQLite maintenance skipped: DB file not found: $DB_FILE"
-            exit 0
+            if (( RUN_HASH_BACKFILL == 1 )); then
+                startup_progress "SQLite hash backfill: cache not found; creating it before filesystem bootstrap"
+            else
+                echo "SQLite maintenance skipped: DB file not found: $DB_FILE"
+                exit 0
+            fi
         fi
         if ! db_open_cache_for_maintenance; then
             exit 1
@@ -5441,6 +6075,9 @@ if (( USE_DB == 1 )); then
 fi
 startup_progress "Startup preparation finished"
 startup_progress "Interactive prompt wait: $(print_prompt_wait_description)"
+if (( RECHECK_RENAMES == 1 )); then
+    startup_progress "Rename recheck mode enabled: cache rename skips and resume checkpoints are bypassed"
+fi
 
 
 if (( USE_DB == 1 )); then
@@ -5458,6 +6095,11 @@ if (( USE_DB == 1 )); then
         auto) echo "SQLite maintenance profile: AUTO (optimize/checkpoint + filesystem reconciliation; no hash backfill)" ;;
         full) echo "SQLite maintenance profile: FULL (optimize + analyze + reindex + WAL truncate + filesystem reconciliation; no hash backfill)" ;;
     esac
+fi
+if (( RECHECK_RENAMES == 1 )); then
+    echo
+    echo "Rename recheck mode: audit current canonical naming rules (-R/--recheck-renames)"
+    echo "Rename cache skips: bypassed; resume state: fresh; checksum groups and directories: not processed"
 fi
 
 if [[ -f "$EXCLUDE_FILTERS_FILE" ]]; then
@@ -5559,6 +6201,7 @@ print_verbose_options_box() {
     lines+=("Verbose        : on - print extra diagnostic information")
     lines+=("Colors         : ${color_text}")
     lines+=("Mode           : ${mode} - $( [[ "$mode" == "real" ]] && printf '%s' 'perform interactive real renames' || printf '%s' 'show planned changes only' )")
+    lines+=("Rename recheck : $( (( RECHECK_RENAMES == 1 )) && printf '%s' 'enabled - audit current rules with dedicated approvals' || printf '%s' 'disabled' )")
     lines+=("Scope          : ${scope_text}")
     lines+=("Date placement : ${DATE_PLACEMENT} - $( [[ "$DATE_PLACEMENT" == original ]] && printf '%s' 'BBC/iPlayer -date_ compact stamp stays in title' || printf '%s' 'BBC/iPlayer -date_ stamp moved to front' )")
     lines+=("SQLite cache   : ${db_mode}")
@@ -6306,6 +6949,323 @@ nef_xmp_should_attach_buddy() {
     nef_xmp_pairing_allowed "$f" "$other"
 }
 
+# Full-basename media sidecar: media.ext + media.ext.xmp (digiKam / ExifTool), not Lightroom stem.xmp.
+media_xmp_is_sidecar_path() {
+    local f="$1" base media_base
+    [[ -f "$f" ]] || return 1
+    base="$(basename -- "$f")"
+    [[ "$base" =~ ^(.+)[.][xX][mM][pP]$ ]] || return 1
+    media_base="${BASH_REMATCH[1]}"
+    [[ "$media_base" == *.* ]] || return 1
+    [[ "${media_base,,}" == *.xmp ]] && return 1
+    is_media_file "$media_base" || return 1
+    # NEF Lightroom pairs use stem.xmp (not stem.nef.xmp); exclude same-stem .nef buddy style.
+    [[ "${media_base,,}" == *.nef ]] && return 1
+    return 0
+}
+
+media_xmp_embedded_media_path() {
+    local f="$1" dir base media_base
+    media_xmp_is_sidecar_path "$f" || return 1
+    dir="$(dirname -- "$f")"
+    base="$(basename -- "$f")"
+    [[ "$base" =~ ^(.+)[.][xX][mM][pP]$ ]] || return 1
+    media_base="${BASH_REMATCH[1]}"
+    if [[ "$dir" == "." ]]; then
+        if [[ "$f" == ./* ]]; then
+            printf './%s' "$media_base"
+        else
+            printf '%s' "$media_base"
+        fi
+    else
+        printf '%s/%s' "$dir" "$media_base"
+    fi
+}
+
+media_xmp_sidecar_path() {
+    local media="$1" p
+    [[ -f "$media" ]] || return 1
+    [[ "${media,,}" == *.xmp ]] && return 1
+    is_media_file "$media" || return 1
+    for p in "${media}.xmp" "${media}.XMP"; do
+        [[ -f "$p" ]] || continue
+        printf '%s' "$p"
+        return 0
+    done
+    return 1
+}
+
+media_xmp_sidecar_ext_for_buddy() {
+    local buddy="$1"
+    if [[ "$buddy" == *.XMP ]]; then
+        printf '%s' '.XMP'
+    else
+        printf '%s' '.xmp'
+    fi
+}
+
+media_xmp_new_path_for_media_new() {
+    local media_new="$1" buddy_old="$2"
+    printf '%s%s' "$media_new" "$(media_xmp_sidecar_ext_for_buddy "$buddy_old")"
+}
+
+# Compact CreateDate (UTC) from media file for Mission 1 orphan sidecar lookup.
+media_xmp_utc_timestamp_from_media_file() {
+    local file="$1"
+    local exifloc create compact
+    exifloc="$(resolve_rename_exiftool)" || return 1
+    create="$(gopro_exiftool_s3_tag "$exifloc" "$file" CreateDate)"
+    compact="$(gopro_mission1_compact_timestamp_from_value "$create")" || return 1
+    printf '%s' "$compact"
+}
+
+# When media is already at local Mission 1 time, find leftover UTC-named media.ext.xmp.
+media_xmp_find_orphan_sidecar_for_media() {
+    local media="$1"
+    local base dir suffix local_ts utc_ts orphan
+    [[ -f "$media" ]] || return 1
+    base="$(basename -- "$media")"
+    dir="$(dirname -- "$media")"
+    gopro_mission1_renamed_mp4_basename_matches "$base" || return 1
+    local_ts="$(gopro_mission1_local_timestamp_from_file "$media")" || return 1
+    [[ "${base:0:15}" == "$local_ts" ]] || return 1
+    utc_ts="$(media_xmp_utc_timestamp_from_media_file "$media")" || return 1
+    [[ "$utc_ts" != "$local_ts" ]] || return 1
+    [[ "$base" =~ ^[0-9]{8}_[0-9]{6}(.+)$ ]] || return 1
+    suffix="${BASH_REMATCH[1]}"
+    if [[ "$dir" == "." ]]; then
+        orphan="./${utc_ts}${suffix}.xmp"
+        [[ -f "$orphan" ]] || orphan="./${utc_ts}${suffix}.XMP"
+        [[ -f "$orphan" ]] || orphan="${utc_ts}${suffix}.xmp"
+        [[ -f "$orphan" ]] || orphan="${utc_ts}${suffix}.XMP"
+    else
+        orphan="${dir}/${utc_ts}${suffix}.xmp"
+        [[ -f "$orphan" ]] || orphan="${dir}/${utc_ts}${suffix}.XMP"
+    fi
+    [[ -f "$orphan" ]] || return 1
+    printf '%s' "$orphan"
+    return 0
+}
+
+# Orphan sidecar visit: find media whose CreateDate UTC matches this sidecar's timestamp prefix.
+media_xmp_find_media_for_orphan_sidecar() {
+    local sidecar="$1"
+    local emb emb_base emb_ts suffix dir cand cand_base utc_ts local_ts
+    emb="$(media_xmp_embedded_media_path "$sidecar")" || return 1
+    [[ -f "$emb" ]] && return 1
+    emb_base="$(basename -- "$emb")"
+    dir="$(dirname -- "$sidecar")"
+    gopro_mission1_renamed_mp4_basename_matches "$emb_base" || return 1
+    [[ "$emb_base" =~ ^([0-9]{8}_[0-9]{6})(.+)$ ]] || return 1
+    emb_ts="${BASH_REMATCH[1]}"
+    suffix="${BASH_REMATCH[2]}"
+    shopt -s nullglob
+    local -a cands=()
+    if [[ "$dir" == "." ]]; then
+        cands=( ./*"$suffix" ./"$suffix" )
+    else
+        cands=( "$dir"/*"$suffix" )
+    fi
+    shopt -u nullglob
+    for cand in "${cands[@]}"; do
+        [[ -f "$cand" ]] || continue
+        [[ "${cand,,}" == *.xmp ]] && continue
+        cand_base="$(basename -- "$cand")"
+        gopro_mission1_renamed_mp4_basename_matches "$cand_base" || continue
+        utc_ts="$(media_xmp_utc_timestamp_from_media_file "$cand")" || continue
+        [[ "$utc_ts" == "$emb_ts" ]] || continue
+        local_ts="$(gopro_mission1_local_timestamp_from_file "$cand")" || continue
+        [[ "${cand_base:0:15}" == "$local_ts" ]] || continue
+        printf '%s' "$cand"
+        return 0
+    done
+    return 1
+}
+
+media_xmp_pair_other_path() {
+    local f="$1" other=""
+    [[ -f "$f" ]] || return 1
+    if media_xmp_is_sidecar_path "$f"; then
+        other="$(media_xmp_embedded_media_path "$f")" || return 1
+        [[ -f "$other" ]] || return 1
+        printf '%s' "$other"
+        return 0
+    fi
+    [[ "${f,,}" == *.xmp ]] && return 1
+    is_media_file "$f" || return 1
+    if other="$(media_xmp_sidecar_path "$f")"; then
+        printf '%s' "$other"
+        return 0
+    fi
+    media_xmp_find_orphan_sidecar_for_media "$f"
+}
+
+media_xmp_should_defer_sidecar() {
+    local f="$1" other="$2"
+    media_xmp_is_sidecar_path "$f" || return 1
+    [[ -f "$other" ]] || return 1
+    nef_xmp_pairing_allowed "$f" "$other"
+}
+
+media_xmp_should_attach_buddy() {
+    local f="$1" other="$2"
+    [[ -f "$f" && -f "$other" ]] || return 1
+    media_xmp_is_sidecar_path "$other" || return 1
+    [[ "${f,,}" == *.xmp ]] && return 1
+    is_media_file "$f" || return 1
+    nef_xmp_pairing_allowed "$f" "$other"
+}
+
+# Replace old media basename string inside sidecar when present (non-RawFileName refs).
+media_xmp_sidecar_contains_literal() {
+    local xmp="$1" needle="$2"
+    [[ -f "$xmp" && -n "$needle" ]] || return 1
+    grep -Fq -- "$needle" "$xmp" 2>/dev/null
+}
+
+media_xmp_replace_literal_preserving_times() {
+    local xmp="$1" old_bn="$2" new_bn="$3"
+    local mt at
+    [[ -f "$xmp" && -n "$old_bn" && -n "$new_bn" && "$old_bn" != "$new_bn" ]] || return 1
+    media_xmp_sidecar_contains_literal "$xmp" "$old_bn" || return 1
+    mt="$(stat -c %Y -- "$xmp" 2>/dev/null || true)"
+    at="$(stat -c %X -- "$xmp" 2>/dev/null || true)"
+    if ! python3 - "$xmp" "$old_bn" "$new_bn" <<'PY'
+import pathlib, sys
+path = pathlib.Path(sys.argv[1])
+old, new = sys.argv[2], sys.argv[3]
+data = path.read_bytes()
+ob, nb = old.encode("utf-8"), new.encode("utf-8")
+if ob not in data:
+    sys.exit(1)
+path.write_bytes(data.replace(ob, nb))
+PY
+    then
+        return 1
+    fi
+    if [[ -n "$mt" && -n "$at" ]]; then
+        touch -d "@${mt}" -- "$xmp" 2>/dev/null || true
+        touch -a -d "@${at}" -- "$xmp" 2>/dev/null || true
+    fi
+    return 0
+}
+
+# After media+sidecar rename: update RawFileName and/or literal old basename when present.
+media_xmp_run_sidecar_reference_checks() {
+    local media_path="$1" xmp_path="$2" old_media_path="${3-}"
+    local want cur old_bn xdir ans
+    [[ -f "$media_path" && -f "$xmp_path" ]] || return 0
+    [[ "${xmp_path,,}" == *.xmp ]] || return 0
+
+    want="$(basename -- "$media_path")"
+    old_bn=""
+    [[ -n "$old_media_path" ]] && old_bn="$(basename -- "$old_media_path")"
+
+    if nef_xmp_sidecar_has_raw_file_name_markup "$xmp_path"; then
+        cur="$(nef_xmp_extract_raw_file_name_value "$xmp_path")"
+        if [[ "${cur,,}" != "${want,,}" ]]; then
+            if [[ "$mode" == "dry-run" ]]; then
+                emit_wrap_labeled_stdout "NOTE: " "${YELLOW}NOTE:${RESET} " "Would update XMP RawFileName from '${cur:-<empty>}' to '${want}' for '$xmp_path'."
+            else
+                xdir="$(nef_xmp_canonical_dir_for_pair "$xmp_path")"
+                if [[ -n "$MEDIA_XMP_REF_AUTO_DIR" && -n "$xdir" && "$xdir" == "$MEDIA_XMP_REF_AUTO_DIR" ]]; then
+                    if nef_xmp_replace_raw_file_name_preserving_times "$xmp_path" "$want"; then
+                        emit_wrap_labeled_stdout "OK: " "${GREEN}OK:${RESET} " "Updated RawFileName in '$xmp_path' (directory batch)."
+                    fi
+                else
+                    echo
+                    echo "XMP sidecar media reference check: '$xmp_path'"
+                    echo "  RawFileName inside XMP: '${cur:-<empty>}' -> '${want}' (paired media basename)."
+                    while true; do
+                        echo "  Keys:"
+                        echo "    [Y] Yes / Enter - patch this .xmp only (default)"
+                        echo "    [d] Yes + auto-patch remaining media-XMP refs in this directory"
+                        echo "    [n] No"
+                        print_prompt_view_directory_menu_line
+                        echo "    [q] Quit run"
+                        printf '%s' "$(user_prompt_ts_prefix)Update RawFileName in this .xmp? [Y/n/d/v/q]: "
+                        flush_stdin
+                        read_single_key ans "$PROMPT_WAIT_SECONDS"
+                        echo
+                        if handle_prompt_directory_listing_choice "$ans" "$xmp_path" "$media_path"; then
+                            continue
+                        fi
+                        case "$ans" in
+                            q|Q) stopped_by_user=yes; return 2 ;;
+                            n|N) break ;;
+                            d|D)
+                                MEDIA_XMP_REF_AUTO_DIR="$xdir"
+                                nef_xmp_replace_raw_file_name_preserving_times "$xmp_path" "$want" || true
+                                break
+                                ;;
+                            *)
+                                nef_xmp_replace_raw_file_name_preserving_times "$xmp_path" "$want" || true
+                                break
+                                ;;
+                        esac
+                    done
+                fi
+            fi
+        fi
+        return 0
+    fi
+
+    [[ -n "$old_bn" && "$old_bn" != "$want" ]] || return 0
+    media_xmp_sidecar_contains_literal "$xmp_path" "$old_bn" || return 0
+
+    if [[ "$mode" == "dry-run" ]]; then
+        emit_wrap_labeled_stdout "NOTE: " "${YELLOW}NOTE:${RESET} " "Would replace media basename '${old_bn}' with '${want}' inside '$xmp_path'."
+        return 0
+    fi
+    xdir="$(nef_xmp_canonical_dir_for_pair "$xmp_path")"
+    if [[ -n "$MEDIA_XMP_REF_AUTO_DIR" && -n "$xdir" && "$xdir" == "$MEDIA_XMP_REF_AUTO_DIR" ]]; then
+        if media_xmp_replace_literal_preserving_times "$xmp_path" "$old_bn" "$want"; then
+            emit_wrap_labeled_stdout "OK: " "${GREEN}OK:${RESET} " "Updated media basename reference in '$xmp_path' (directory batch)."
+        fi
+        return 0
+    fi
+    echo
+    echo "XMP sidecar media reference check: '$xmp_path'"
+    echo "  Literal media basename inside XMP: '${old_bn}' -> '${want}'."
+    while true; do
+        echo "  Keys:"
+        echo "    [Y] Yes / Enter - patch this .xmp only (default)"
+        echo "    [d] Yes + auto-patch remaining media-XMP refs in this directory"
+        echo "    [n] No"
+        print_prompt_view_directory_menu_line
+        echo "    [q] Quit run"
+        printf '%s' "$(user_prompt_ts_prefix)Update media basename inside this .xmp? [Y/n/d/v/q]: "
+        flush_stdin
+        read_single_key ans "$PROMPT_WAIT_SECONDS"
+        echo
+        if handle_prompt_directory_listing_choice "$ans" "$xmp_path" "$media_path"; then
+            continue
+        fi
+        case "$ans" in
+            q|Q) stopped_by_user=yes; return 2 ;;
+            n|N) return 0 ;;
+            d|D)
+                MEDIA_XMP_REF_AUTO_DIR="$xdir"
+                media_xmp_replace_literal_preserving_times "$xmp_path" "$old_bn" "$want" || true
+                return 0
+                ;;
+            *)
+                media_xmp_replace_literal_preserving_times "$xmp_path" "$old_bn" "$want" || true
+                return 0
+                ;;
+        esac
+    done
+}
+
+perform_media_xmp_pair_plain_renames() {
+    local primary_old="$1" primary_new="$2" buddy_old="$3" buddy_new="$4"
+    perform_plain_entry_rename "$primary_old" "$primary_new" || return 1
+    perform_plain_entry_rename "$buddy_old" "$buddy_new" || return 1
+    media_xmp_run_sidecar_reference_checks "$primary_new" "$buddy_new" "$primary_old" || return $?
+    processed["$buddy_old"]=1
+    return 0
+}
+
 perform_nef_xmp_pair_plain_renames() {
     local primary_old="$1" primary_new="$2" buddy_old="$3" buddy_new="$4"
     perform_plain_entry_rename "$primary_old" "$primary_new" || return 1
@@ -6748,6 +7708,10 @@ nef_xmp_verify_sidecar_raw_file_name_interactive() {
 nef_xmp_pair_run_sidecar_metadata_checks() {
     [[ -n "$nef_xmp_buddy" ]] || return 0
     [[ "$RENAME_SIDECAR_KIND" == sony_clip ]] && return 0
+    if [[ "$RENAME_SIDECAR_KIND" == media_xmp ]]; then
+        media_xmp_run_sidecar_reference_checks "$1" "$2" "$f" || return $?
+        return 0
+    fi
     nef_xmp_pair_set_final_paths_from_primary_and_buddy_new "$1" "$2" || return 0
     nef_xmp_verify_sidecar_raw_file_name_interactive "$NEF_XMP_FINAL_NEF" "$NEF_XMP_FINAL_XMP" || return $?
 }
@@ -6759,13 +7723,28 @@ perform_plain_or_nef_xmp_pair() {
         print_rename_action_verbose "$f" "$new" "${reason} (Sony clip pair)"
         print_rename_action_verbose "$nef_xmp_buddy" "$nef_xmp_new" "${reason} (Sony clip pair)"
         perform_sony_clip_pair_plain_renames "$f" "$new" "$nef_xmp_buddy" "$nef_xmp_new" || return $?
+    elif [[ "$RENAME_SIDECAR_KIND" == media_xmp && -n "$nef_xmp_buddy" ]]; then
+        print_rename_action_verbose "$f" "$new" "${reason} (media+XMP pair)"
+        print_rename_action_verbose "$nef_xmp_buddy" "$nef_xmp_new" "${reason} (media+XMP pair)"
+        perform_media_xmp_pair_plain_renames "$f" "$new" "$nef_xmp_buddy" "$nef_xmp_new" || return $?
     elif [[ -n "$nef_xmp_buddy" ]]; then
         print_rename_action_verbose "$f" "$new" "${reason} (NEF+XMP pair)"
         print_rename_action_verbose "$nef_xmp_buddy" "$nef_xmp_new" "${reason} (NEF+XMP pair)"
         perform_nef_xmp_pair_plain_renames "$f" "$new" "$nef_xmp_buddy" "$nef_xmp_new" || return $?
     else
+        local _plain_old="$f" _plain_old_media="" _plain_new_media=""
+        if media_xmp_is_sidecar_path "$f"; then
+            _plain_old_media="$(media_xmp_embedded_media_path "$f" || true)"
+        fi
         print_rename_action_verbose "$f" "$new" "$reason"
-        perform_plain_entry_rename "$f" "$new"
+        perform_plain_entry_rename "$f" "$new" || return $?
+        # Orphan media.ext.xmp renamed alone to match an already-corrected media file.
+        if [[ -n "$_plain_old_media" ]] && media_xmp_is_sidecar_path "$new"; then
+            _plain_new_media="$(media_xmp_embedded_media_path "$new" || true)"
+            if [[ -n "$_plain_new_media" && -f "$_plain_new_media" ]]; then
+                media_xmp_run_sidecar_reference_checks "$_plain_new_media" "$new" "$_plain_old_media" || return $?
+            fi
+        fi
     fi
 }
 
@@ -8930,20 +9909,37 @@ RENAME_EXIFTOOL_MISSING_WARNED=""
 # Per-run decision when exiftool is missing for GoPro/camera raw files: "" (ask) or "skip".
 GOPRO_EXIFTOOL_MISSING_ACTION=""
 
-# Resolve exiftool once: RENAME_EXIFTOOL (includes script default), then PATH. Prints path; exit 1 if unavailable.
+# Resolve exiftool once. Prints path; exit 1 if unavailable.
+# Order: explicit EXIFLOC / non-default RENAME_EXIFTOOL, then PATH (usually newer),
+# then the bundled Image-ExifTool-12.41 default (may miss Mission 1 CreationDate/TimeZone).
 resolve_rename_exiftool() {
     local cmd_path
     if [[ -n "$RENAME_EXIFTOOL_RESOLVED" ]]; then
         printf '%s' "$RENAME_EXIFTOOL_RESOLVED"
         return 0
     fi
-    if [[ -n "$RENAME_EXIFTOOL" && -x "$RENAME_EXIFTOOL" ]]; then
+    if [[ -n "${EXIFLOC:-}" && -x "$EXIFLOC" ]]; then
+        RENAME_EXIFTOOL_RESOLVED="$EXIFLOC"
+        printf '%s' "$RENAME_EXIFTOOL_RESOLVED"
+        return 0
+    fi
+    if [[ -n "$RENAME_EXIFTOOL" && "$RENAME_EXIFTOOL" != "$RENAME_EXIFTOOL_DEFAULT" && -x "$RENAME_EXIFTOOL" ]]; then
         RENAME_EXIFTOOL_RESOLVED="$RENAME_EXIFTOOL"
         printf '%s' "$RENAME_EXIFTOOL_RESOLVED"
         return 0
     fi
     if cmd_path="$(command -v exiftool 2>/dev/null)" && [[ -n "$cmd_path" && -x "$cmd_path" ]]; then
         RENAME_EXIFTOOL_RESOLVED="$cmd_path"
+        printf '%s' "$RENAME_EXIFTOOL_RESOLVED"
+        return 0
+    fi
+    if [[ -x "$RENAME_EXIFTOOL_DEFAULT" ]]; then
+        RENAME_EXIFTOOL_RESOLVED="$RENAME_EXIFTOOL_DEFAULT"
+        printf '%s' "$RENAME_EXIFTOOL_RESOLVED"
+        return 0
+    fi
+    if [[ -n "$RENAME_EXIFTOOL" && -x "$RENAME_EXIFTOOL" ]]; then
+        RENAME_EXIFTOOL_RESOLVED="$RENAME_EXIFTOOL"
         printf '%s' "$RENAME_EXIFTOOL_RESOLVED"
         return 0
     fi
@@ -8955,7 +9951,7 @@ warn_gopro_exiftool_missing_once() {
     [[ -z "$RENAME_EXIFTOOL_MISSING_WARNED" ]] || return 0
     RENAME_EXIFTOOL_MISSING_WARNED=1
     emit_wrap_labeled_stderr "GOPRO/CAMERA: " "${YELLOW}GOPRO/CAMERA:${RESET} " "Would rename GoPro/camera raw files (GH/GX/GOPR/GP…) using exiftool metadata, but exiftool was not found — those files are left unchanged."
-    emit_wrap_labeled_stderr "GOPRO/CAMERA: " "${YELLOW}GOPRO/CAMERA:${RESET} " "Tried, in order: ${RENAME_EXIFTOOL}, exiftool on PATH."
+    emit_wrap_labeled_stderr "GOPRO/CAMERA: " "${YELLOW}GOPRO/CAMERA:${RESET} " "Tried, in order: EXIFLOC/RENAME_EXIFTOOL override, exiftool on PATH, then ${RENAME_EXIFTOOL_DEFAULT}."
     emit_wrap_labeled_stderr "GOPRO/CAMERA: " "${YELLOW}GOPRO/CAMERA:${RESET} " "Install exiftool first, e.g. run as root: sudo bash video-pgm-install-exiftool.sh"
     emit_wrap_labeled_stderr "GOPRO/CAMERA: " "${YELLOW}GOPRO/CAMERA:${RESET} " "Override with RENAME_EXIFTOOL or EXIFLOC, e.g.: export RENAME_EXIFTOOL='/path/to/exiftool'"
     emit_wrap_labeled_stderr "GOPRO/CAMERA: " "${YELLOW}GOPRO/CAMERA:${RESET} " "Or run: EXIFLOC=/path/to/exiftool rename.sh --scope current"
@@ -9050,6 +10046,226 @@ gopro_exif_value_after_colon() {
     val="${val//$'\r'/}"
     val="${val//$'\n'/}"
     printf '%s' "$val"
+}
+
+# Trim leading/trailing whitespace from an exiftool value.
+gopro_trim_exif_value() {
+    local val="${1-}"
+    val="${val#"${val%%[![:space:]]*}"}"
+    val="${val%"${val##*[![:space:]]}"}"
+    printf '%s' "$val"
+}
+
+# Parse YYYY:MM:DD HH:MM:SS… into YYYYMMDD_HHMMSS (optional timezone suffix ignored).
+gopro_mission1_compact_timestamp_from_value() {
+    local value="$1"
+    value="$(gopro_trim_exif_value "$value")"
+    [[ "$value" =~ ^([0-9]{4}):([0-9]{2}):([0-9]{2})[[:space:]]+([0-9]{2}):([0-9]{2}):([0-9]{2}) ]] || return 1
+    printf '%s%s%s_%s%s%s' \
+        "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}" "${BASH_REMATCH[3]}" \
+        "${BASH_REMATCH[4]}" "${BASH_REMATCH[5]}" "${BASH_REMATCH[6]}"
+}
+
+# Apply ±HH:MM to a compact UTC YYYYMMDD_HHMMSS timestamp.
+gopro_mission1_apply_timezone_offset() {
+    local utc_timestamp="$1"
+    local timezone_value="$2"
+    local sign="" offset_hours="" offset_minutes="" offset_seconds=0
+    local utc_epoch="" local_epoch=""
+
+    timezone_value="$(gopro_trim_exif_value "$timezone_value")"
+    [[ "$timezone_value" =~ ^([+-])([0-9]{2}):([0-9]{2})$ ]] || return 1
+    sign="${BASH_REMATCH[1]}"
+    offset_hours="${BASH_REMATCH[2]}"
+    offset_minutes="${BASH_REMATCH[3]}"
+    (( 10#$offset_hours <= 23 && 10#$offset_minutes <= 59 )) || return 1
+
+    utc_epoch="$(TZ=UTC date -d "${utc_timestamp:0:4}-${utc_timestamp:4:2}-${utc_timestamp:6:2} ${utc_timestamp:9:2}:${utc_timestamp:11:2}:${utc_timestamp:13:2} UTC" +%s 2>/dev/null)" || return 1
+    offset_seconds=$((10#$offset_hours * 3600 + 10#$offset_minutes * 60))
+    [[ "$sign" == "-" ]] && offset_seconds=$((-offset_seconds))
+    local_epoch=$((utc_epoch + offset_seconds))
+    TZ=UTC date -d "@${local_epoch}" +'%Y%m%d_%H%M%S' 2>/dev/null
+}
+
+# Epoch seconds (UTC interpretation) for compact YYYYMMDD_HHMMSS.
+gopro_mission1_compact_timestamp_epoch() {
+    local ts="$1"
+    [[ "$ts" =~ ^[0-9]{8}_[0-9]{6}$ ]] || return 1
+    TZ=UTC date -d "${ts:0:4}-${ts:4:2}-${ts:6:2} ${ts:9:2}:${ts:11:2}:${ts:13:2} UTC" +%s 2>/dev/null
+}
+
+# True when two compact timestamps are within max_delta seconds (default 120).
+gopro_mission1_timestamps_near() {
+    local a="$1" b="$2" max_delta="${3:-120}"
+    local ea eb d
+    ea="$(gopro_mission1_compact_timestamp_epoch "$a")" || return 1
+    eb="$(gopro_mission1_compact_timestamp_epoch "$b")" || return 1
+    d=$((ea - eb))
+    (( d < 0 )) && d=$((-d))
+    (( d <= max_delta ))
+}
+
+# Pick Mission 1 local wall-clock timestamp from candidate EXIF values.
+# GPS DateTime is UTC; with Time Zone / Offset Time it is the authoritative local wall-clock.
+# Stills often already store Create Date in local time (Offset Time present); MP4 Create Date is often UTC.
+gopro_mission1_resolve_local_timestamp() {
+    local creation_value="$1"
+    local create_value="$2"
+    local timezone_value="$3"
+    local offset_value="$4"
+    local gps_value="$5"
+    local creation_ts="" create_ts="" gps_ts="" gps_local="" create_plus_tz=""
+
+    timezone_value="$(gopro_trim_exif_value "$timezone_value")"
+    offset_value="$(gopro_trim_exif_value "$offset_value")"
+    # MakerNotes "Time Zone" is sometimes missing from -s3; Offset Time is the same ±HH:MM.
+    if [[ -z "$timezone_value" && -n "$offset_value" ]]; then
+        timezone_value="$offset_value"
+    fi
+
+    creation_ts="$(gopro_mission1_compact_timestamp_from_value "$creation_value" 2>/dev/null || true)"
+    create_ts="$(gopro_mission1_compact_timestamp_from_value "$create_value" 2>/dev/null || true)"
+    gps_ts="$(gopro_mission1_compact_timestamp_from_value "$gps_value" 2>/dev/null || true)"
+    if [[ -n "$gps_ts" && -n "$timezone_value" ]]; then
+        gps_local="$(gopro_mission1_apply_timezone_offset "$gps_ts" "$timezone_value" 2>/dev/null || true)"
+    fi
+    if [[ -n "$create_ts" && -n "$timezone_value" ]]; then
+        create_plus_tz="$(gopro_mission1_apply_timezone_offset "$create_ts" "$timezone_value" 2>/dev/null || true)"
+    fi
+
+    # GPS + zone is authoritative. Prefer Create/Creation Date only when they already match GPS local
+    # (avoids double-shifting stills whose Create Date is already local).
+    if [[ -n "$gps_local" ]]; then
+        if [[ -n "$creation_ts" ]] && gopro_mission1_timestamps_near "$creation_ts" "$gps_local"; then
+            printf '%s' "$creation_ts"
+            return 0
+        fi
+        if [[ -n "$create_ts" ]] && gopro_mission1_timestamps_near "$create_ts" "$gps_local"; then
+            printf '%s' "$create_ts"
+            return 0
+        fi
+        printf '%s' "$gps_local"
+        return 0
+    fi
+
+    # No GPS: EXIF Offset Time means CreateDate is already local — do not add the offset again.
+    if [[ -n "$offset_value" ]]; then
+        if [[ -n "$creation_ts" ]]; then
+            printf '%s' "$creation_ts"
+            return 0
+        fi
+        if [[ -n "$create_ts" ]]; then
+            printf '%s' "$create_ts"
+            return 0
+        fi
+    fi
+
+    # No GPS / no Offset Time: QuickTime Creation Date is usually local; else UTC Create Date + zone.
+    if [[ -n "$creation_ts" ]]; then
+        printf '%s' "$creation_ts"
+        return 0
+    fi
+    if [[ -n "$create_plus_tz" ]]; then
+        printf '%s' "$create_plus_tz"
+        return 0
+    fi
+    if [[ -n "$create_ts" ]]; then
+        printf '%s' "$create_ts"
+        return 0
+    fi
+    return 1
+}
+
+# Read one exiftool tag value (-s3) for a file.
+gopro_exiftool_s3_tag() {
+    local exifloc="$1"
+    local file="$2"
+    local tag="$3"
+    local val=""
+    val="$("$exifloc" -api largefilesupport=1 -s3 -"$tag" "$file" 2>/dev/null | head -n1)" || true
+    gopro_trim_exif_value "$val"
+}
+
+# Mission 1 Pro: local wall-clock YYYYMMDD_HHMMSS from an already-captured exiftool dump.
+gopro_mission1_local_timestamp_from_exif() {
+    local exif="$1"
+    local creation_value="" create_value="" timezone_value="" offset_value="" gps_value=""
+    local gps_date="" gps_time="" line=""
+
+    line="$(gopro_exif_first_line "$exif" '^Creation Date[[:space:]]+:')"
+    creation_value="$(gopro_exif_value_after_colon "$line")"
+    line="$(gopro_exif_first_line "$exif" '^Create Date[[:space:]]+:')"
+    create_value="$(gopro_exif_value_after_colon "$line")"
+    if [[ -z "$create_value" ]]; then
+        line="$(gopro_exif_first_line "$exif" '^Date/Time Original[[:space:]]+:')"
+        create_value="$(gopro_exif_value_after_colon "$line")"
+    fi
+    line="$(gopro_exif_first_line "$exif" '^Time Zone[[:space:]]+:')"
+    timezone_value="$(gopro_exif_value_after_colon "$line")"
+    line="$(gopro_exif_first_line "$exif" '^Offset Time Original[[:space:]]+:')"
+    offset_value="$(gopro_exif_value_after_colon "$line")"
+    if [[ -z "$offset_value" ]]; then
+        line="$(gopro_exif_first_line "$exif" '^Offset Time[[:space:]]+:')"
+        offset_value="$(gopro_exif_value_after_colon "$line")"
+    fi
+    if [[ -z "$offset_value" ]]; then
+        line="$(gopro_exif_first_line "$exif" '^Offset Time Digitized[[:space:]]+:')"
+        offset_value="$(gopro_exif_value_after_colon "$line")"
+    fi
+    line="$(gopro_exif_first_line "$exif" '^GPS Date/Time[[:space:]]+:')"
+    gps_value="$(gopro_exif_value_after_colon "$line")"
+    if [[ -z "$gps_value" ]]; then
+        line="$(gopro_exif_first_line "$exif" '^GPS Date Time[[:space:]]+:')"
+        gps_value="$(gopro_exif_value_after_colon "$line")"
+    fi
+    if [[ -z "$gps_value" ]]; then
+        line="$(gopro_exif_first_line "$exif" '^GPS Date Stamp[[:space:]]+:')"
+        gps_date="$(gopro_exif_value_after_colon "$line")"
+        line="$(gopro_exif_first_line "$exif" '^GPS Time Stamp[[:space:]]+:')"
+        gps_time="$(gopro_exif_value_after_colon "$line")"
+        if [[ -n "$gps_date" && -n "$gps_time" ]]; then
+            gps_value="${gps_date} ${gps_time}"
+        fi
+    fi
+    gopro_mission1_resolve_local_timestamp \
+        "$creation_value" "$create_value" "$timezone_value" "$offset_value" "$gps_value"
+}
+
+# Mission 1 Pro: local wall-clock YYYYMMDD_HHMMSS via targeted -s3 tag reads (avoids stale dump parsing).
+gopro_mission1_local_timestamp_from_file() {
+    local file="$1"
+    local exifloc="${2-}"
+    local creation="" create="" timezone="" offset="" gps="" gps_date="" gps_time=""
+
+    if [[ -z "$exifloc" ]]; then
+        exifloc="$(resolve_rename_exiftool)" || return 1
+    fi
+    creation="$(gopro_exiftool_s3_tag "$exifloc" "$file" CreationDate)"
+    create="$(gopro_exiftool_s3_tag "$exifloc" "$file" CreateDate)"
+    if [[ -z "$create" ]]; then
+        create="$(gopro_exiftool_s3_tag "$exifloc" "$file" DateTimeOriginal)"
+    fi
+    timezone="$(gopro_exiftool_s3_tag "$exifloc" "$file" TimeZone)"
+    if [[ -z "$timezone" ]]; then
+        timezone="$(gopro_exiftool_s3_tag "$exifloc" "$file" Timezone)"
+    fi
+    offset="$(gopro_exiftool_s3_tag "$exifloc" "$file" OffsetTimeOriginal)"
+    if [[ -z "$offset" ]]; then
+        offset="$(gopro_exiftool_s3_tag "$exifloc" "$file" OffsetTime)"
+    fi
+    if [[ -z "$offset" ]]; then
+        offset="$(gopro_exiftool_s3_tag "$exifloc" "$file" OffsetTimeDigitized)"
+    fi
+    gps="$(gopro_exiftool_s3_tag "$exifloc" "$file" GPSDateTime)"
+    if [[ -z "$gps" ]]; then
+        gps_date="$(gopro_exiftool_s3_tag "$exifloc" "$file" GPSDateStamp)"
+        gps_time="$(gopro_exiftool_s3_tag "$exifloc" "$file" GPSTimeStamp)"
+        if [[ -n "$gps_date" && -n "$gps_time" ]]; then
+            # GPSDateStamp is often YYYY:MM:DD; GPSTimeStamp HH:MM:SS — compose a parseable value.
+            gps="${gps_date} ${gps_time}"
+        fi
+    fi
+    gopro_mission1_resolve_local_timestamp "$creation" "$create" "$timezone" "$offset" "$gps"
 }
 
 # Firmware Version or Software prefix before the first dot (HD4, H21, …); empty when absent.
@@ -9237,13 +10453,42 @@ gopro_fetch_rate_tag() {
     printf '%s' "$rate"
 }
 
+gopro_capture_mode_suffix_for_model() {
+    local model="$1"
+    local mode_suffix="$2"
+
+    if [[ "$model" == "Hero7_Black" && "$mode_suffix" == Timelapse_* && "$mode_suffix" == *sec ]]; then
+        printf '%s' 'Timelapse'
+    else
+        printf '%s' "$mode_suffix"
+    fi
+}
+
+gopro_hero7_timelapse_interval_basename_normalized() {
+    local base="$1"
+
+    if [[ "$base" =~ ^(.+_GoPro_Hero7_Black_Timelapse)_[0-9]+(_[0-9]+)?sec((_part_[0-9]{2})?(_Proxy)?(\.[mM][pP]4))$ ]]; then
+        printf '%s%s' "${BASH_REMATCH[1]}" "${BASH_REMATCH[3]}"
+        return 0
+    fi
+    return 1
+}
+
+gopro_hero7_timelapse_interval_basename_matches() {
+    gopro_hero7_timelapse_interval_basename_normalized "$1" >/dev/null 2>&1
+}
+
 gopro_basename_has_capture_mode_suffix() {
-    [[ "$1" =~ _(Timewarp|Timelapse)_ ]]
+    [[ "$1" =~ _(Timewarp|Timelapse)(_|\.) ]]
 }
 
 gopro_capture_mode_suffix_from_basename() {
     local base="$1"
 
+    if [[ "$base" =~ _GoPro_Hero7_Black_(Timelapse)(_part_[0-9]{2})?(_Proxy)?(\.[mM][pP]4)$ ]]; then
+        printf '%s' "${BASH_REMATCH[1]}"
+        return 0
+    fi
     if [[ "$base" =~ _(Timewarp|Timelapse)_(([^./]+_)*[^./]+)(_part_[0-9]{2})?(_Proxy)?(\.[mM][pP]4)$ ]]; then
         printf '%s_%s' "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}"
         return 0
@@ -9265,6 +10510,37 @@ gopro_basename_strip_capture_mode_suffix() {
 gopro_renamed_mp4_basename_matches() {
     local base="$1"
     [[ "$base" =~ ^[0-9]{8}_[0-9]{6}_(-__-_|-_-_)(GoPro_[A-Za-z0-9_]+|GOPRO[0-9]+_[A-Z0-9]+|GOPRO_[A-Z0-9]+).*\.[mM][pP]4$ ]]
+}
+
+# Already-renamed Mission 1 Pro media (MP4 and JPEG/JPG) eligible for embedded-timezone audit.
+gopro_mission1_renamed_mp4_basename_matches() {
+    [[ "$1" =~ ^[0-9]{8}_[0-9]{6}_(-__-_|-_-_)GoPro_Mission1_Pro.*\.([mM][pP]4|[jJ][pP][eE]?[gG])$ ]]
+}
+
+transform_gopro_mission1_embedded_timezone_basename() {
+    local file="$1"
+    local base="$2"
+    local exifloc="" local_ts="" suffix=""
+
+    # Basename already identifies Mission 1 Pro; do not require a second device-label
+    # parse (that path can fail on older exiftool/egrep setups and silently skip the fix).
+    gopro_mission1_renamed_mp4_basename_matches "$base" || return 0
+    exifloc="$(resolve_rename_exiftool)" || {
+        vlog "GoPro Mission 1 Pro timezone: exiftool not found for '$file'"
+        return 0
+    }
+    local_ts="$(gopro_mission1_local_timestamp_from_file "$file" "$exifloc")" || {
+        vlog "GoPro Mission 1 Pro timezone: no CreationDate/CreateDate+TimeZone/GPS for '$file' via '$exifloc'"
+        return 0
+    }
+    [[ "$base" =~ ^[0-9]{8}_[0-9]{6}(.+)$ ]] || return 0
+    suffix="${BASH_REMATCH[1]}"
+    if [[ "${base:0:15}" == "$local_ts" ]]; then
+        vlog "GoPro Mission 1 Pro timezone: '$base' already local ($local_ts) via '$exifloc'"
+        return 0
+    fi
+    vlog "GoPro Mission 1 Pro timezone via '$exifloc': ${base:0:15} -> $local_ts"
+    printf '%s%s' "$local_ts" "$suffix"
 }
 
 # Metadata-renamed GoPro MP4/JPG from exiftool (GH/GOPR/GP… raw → YYYYMMDD_HHMMSS_-_-_GoPro_…).
@@ -9311,6 +10587,20 @@ maybe_transform_gopro_legacy_camera_label() {
     return 0
 }
 
+# True only when NEW is the exact known-safe modernization of a legacy
+# GOPRO#_EDITION camera label; unrelated changes are never auto-approved.
+gopro_legacy_camera_label_normalization_matches() {
+    local old="$1" new="$2"
+    local ob nb expected=""
+
+    [[ -n "$old" && -n "$new" ]] || return 1
+    ob="$(basename -- "$old")"
+    nb="$(basename -- "$new")"
+    [[ "$ob" != "$nb" ]] || return 1
+    expected="$(maybe_transform_gopro_legacy_camera_label "$ob")"
+    [[ -n "$expected" && "$nb" == "$expected" ]]
+}
+
 gopro_basename_with_capture_mode_suffix() {
     local base="$1"
     local mode_suffix="$2"
@@ -9336,6 +10626,7 @@ gopro_capture_mode_db_cache_hit() {
     local path="$1"
     local abs meta cached
 
+    (( RECHECK_RENAMES == 0 )) || return 1
     (( USE_DB == 1 )) || return 1
     (( FORCE_RECHECK == 0 )) || return 1
     [[ -e "$path" ]] || return 1
@@ -9360,6 +10651,13 @@ maybe_transform_gopro_capture_mode_backfill() {
     local rate="" mode_suffix="" newbase=""
 
     gopro_renamed_mp4_basename_matches "$base" || return 0
+
+    newbase="$(gopro_hero7_timelapse_interval_basename_normalized "$base" 2>/dev/null)" || newbase=""
+    if [[ -n "$newbase" && "$newbase" != "$base" ]]; then
+        vlog "GoPro Hero7: remove timelapse interval detail: $base -> $newbase"
+        printf '%s' "$newbase"
+        return 0
+    fi
 
     if ! resolve_rename_exiftool >/dev/null; then
         return 0
@@ -9388,6 +10686,9 @@ maybe_transform_gopro_capture_mode_backfill() {
 
     rate="$(gopro_fetch_rate_tag "$f")" || rate=""
     mode_suffix="$(gopro_video_capture_mode_suffix_from_file "$f")"
+    if [[ "$base" == *_GoPro_Hero7_Black* ]]; then
+        mode_suffix="$(gopro_capture_mode_suffix_for_model "Hero7_Black" "$mode_suffix")"
+    fi
     if [[ -n "$mode_suffix" ]]; then
         newbase="$(gopro_basename_with_capture_mode_suffix "$base" "$mode_suffix")" || return 0
         newbase="$(gopro_newbase_omit_lone_part_if_sole_chapter "$f" "$base" "$newbase")"
@@ -9487,23 +10788,25 @@ gopro_renamed_session_prefix_from_basename() {
 # detection must group by this id, not the full prefix including timestamp.
 gopro_renamed_camera_identity_from_basename() {
     local bn="$1"
-    local id
+    local id modern=""
 
     gopro_renamed_mp4_basename_matches "$bn" || return 1
 
     if [[ "$bn" =~ ^[0-9]{8}_[0-9]{6}_(-__-_|-_-_)(.+)_part_[0-9]{2}(_Proxy)?\.[mM][pP]4$ ]]; then
-        printf '%s' "${BASH_REMATCH[2]}"
-        return 0
-    fi
-    if [[ "$bn" =~ ^[0-9]{8}_[0-9]{6}_(-__-_|-_-_)(.+)\.[mM][pP]4$ ]]; then
+        id="${BASH_REMATCH[2]}"
+    elif [[ "$bn" =~ ^[0-9]{8}_[0-9]{6}_(-__-_|-_-_)(.+)\.[mM][pP]4$ ]]; then
         id="${BASH_REMATCH[2]}"
         id="${id%_Proxy}"
         id="${id%_proxy}"
         id="${id%_PROXY}"
-        printf '%s' "$id"
-        return 0
+    else
+        return 1
     fi
-    return 1
+
+    modern="$(gopro_modernize_legacy_camera_tail "$id" 2>/dev/null)" || modern=""
+    [[ -n "$modern" ]] && id="$modern"
+    printf '%s' "$id"
+    return 0
 }
 
 gopro_renamed_basename_without_part_segment() {
@@ -9590,12 +10893,13 @@ gopro_format_camera_basename_output() {
 }
 
 # Samsung Galaxy phone photo/video:
-#   YYYYMMDD_HHMMSS.ext        → YYYYMMDD_HHMMSS_-_-_Samsung_<model>.ext
-#   NUMBER_YYYYMMDD_HHMMSS.ext → NUMBER_YYYYMMDD_HHMMSS_-_-_Samsung_<model>.ext
+#   YYYYMMDD_HHMMSS.ext           → YYYYMMDD_HHMMSS_-_-_Samsung_<model>.ext
+#   YYYYMMDD_HHMMSS(0).ext        → YYYYMMDD_HHMMSS_-_-_Samsung_<model>_0.ext
+#   NUMBER_YYYYMMDD_HHMMSS.ext    → NUMBER_YYYYMMDD_HHMMSS_-_-_Samsung_<model>.ext
 samsung_media_basename_matches() {
     local bn="$1"
     local lower="${bn,,}"
-    [[ "$lower" =~ ^([0-9]+_)?[0-9]{8}_[0-9]{6}\.(3gp|heic|heif|jpeg|jpg|m4v|mkv|mov|mp4|png|webm)$ ]]
+    [[ "$lower" =~ ^([0-9]+_)?[0-9]{8}_[0-9]{6}(\([0-9]+\)|_[0-9]+)?\.(3gp|heic|heif|jpeg|jpg|m4v|mkv|mov|mp4|png|webm)$ ]]
 }
 
 samsung_already_renamed_basename_matches() {
@@ -9604,12 +10908,23 @@ samsung_already_renamed_basename_matches() {
     [[ "$lower" =~ ^([0-9]+_)?[0-9]{8}_[0-9]{6}_(-__-_|-_-_)samsung_.+\.(3gp|heic|heif|jpeg|jpg|m4v|mkv|mov|mp4|png|webm)$ ]]
 }
 
-# Bare YYYYMMDD_HHMMSS.{mp4,m4v,mov} without a camera tag yet (e.g. phone export or GoPro without GH prefix).
+xiaomi_media_basename_matches() {
+    samsung_media_basename_matches "$1"
+}
+
+xiaomi_already_renamed_basename_matches() {
+    local bn="$1"
+    local lower="${bn,,}"
+    [[ "$lower" =~ ^([0-9]+_)?[0-9]{8}_[0-9]{6}_(-__-_|-_-_)xiaomi_mi_10t_pro(_[0-9]+)?\.(3gp|heic|heif|jpeg|jpg|m4v|mkv|mov|mp4|png|webm)$ ]]
+}
+
+# Bare YYYYMMDD_HHMMSS[(_N)].{mp4,m4v,mov} without a camera tag yet
+# (e.g. phone export or GoPro without GH prefix).
 gopro_bare_timestamp_media_basename_matches() {
     local bn="$1"
     local lower="${bn,,}"
 
-    [[ "$lower" =~ ^[0-9]{8}_[0-9]{6}\.(mp4|m4v|mov)$ ]] || return 1
+    [[ "$lower" =~ ^[0-9]{8}_[0-9]{6}(\([0-9]+\)|_[0-9]+)?\.(mp4|m4v|mov)$ ]] || return 1
     gopro_exif_renamed_basename_matches "$bn" && return 1
     return 0
 }
@@ -9625,6 +10940,20 @@ samsung_exif_camera_tag_append_matches() {
     [[ "$ob" != "$nb" ]] || return 1
     samsung_media_basename_matches "$ob" || return 1
     samsung_already_renamed_basename_matches "$nb" || return 1
+    return 0
+}
+
+# True when NEW adds the Xiaomi Mi 10T Pro EXIF camera tag after a timestamp basename.
+xiaomi_exif_camera_tag_append_matches() {
+    local old="$1" new="$2"
+    local ob nb
+
+    [[ -n "$old" && -n "$new" ]] || return 1
+    ob="$(basename -- "$old")"
+    nb="$(basename -- "$new")"
+    [[ "$ob" != "$nb" ]] || return 1
+    xiaomi_media_basename_matches "$ob" || return 1
+    xiaomi_already_renamed_basename_matches "$nb" || return 1
     return 0
 }
 
@@ -9658,8 +10987,17 @@ nikon_exif_camera_tag_append_matches() {
 
 rename_is_exif_camera_tag_append() {
     samsung_exif_camera_tag_append_matches "$@" && return 0
+    xiaomi_exif_camera_tag_append_matches "$@" && return 0
     gopro_exif_camera_tag_append_matches "$@" && return 0
     nikon_exif_camera_tag_append_matches "$@" && return 0
+    return 1
+}
+
+# Camera renames eligible for [G] session auto-yes. This includes EXIF-derived
+# make/model appends and exact legacy GoPro camera-label modernization.
+rename_is_camera_make_model_change() {
+    rename_is_exif_camera_tag_append "$@" && return 0
+    gopro_legacy_camera_label_normalization_matches "$@" && return 0
     return 1
 }
 
@@ -9769,7 +11107,7 @@ samsung_friendly_model_from_code() {
 transform_samsung_media_basename() {
     local file="$1"
     local base="$2"
-    local exifloc exif model_code friendly_model ext stem ts
+    local exifloc exif model_code friendly_model ext stem ts copy_suffix=""
     local _ts_err_trap="" _ts_save_e=0
 
     _transform_samsung_err_trap_restore() {
@@ -9801,17 +11139,56 @@ transform_samsung_media_basename() {
 
     ext="${base##*.}"
     stem="${base%.*}"
-    [[ "$stem" =~ ^([0-9]+_)?[0-9]{8}_[0-9]{6}$ ]] || return 0
-    ts="$stem"
+    [[ "$stem" =~ ^(([0-9]+_)?[0-9]{8}_[0-9]{6})(\(([0-9]+)\)|_([0-9]+))?$ ]] || return 0
+    ts="${BASH_REMATCH[1]}"
+    copy_suffix="${BASH_REMATCH[4]:-${BASH_REMATCH[5]}}"
 
-    gopro_format_camera_basename_output "$ts" "Samsung" "$friendly_model" "" "$ext"
+    gopro_format_camera_basename_output "$ts" "Samsung" "$friendly_model" "$copy_suffix" "$ext"
+}
+
+xiaomi_exif_is_mi_10t_pro() {
+    local exif="$1"
+    local make="" model="" xiaomi_model=""
+
+    make="$(samsung_exif_first_value "$exif" 'Make')"
+    [[ "${make,,}" == "xiaomi" ]] || return 1
+
+    model="$(samsung_exif_first_value "$exif" 'Camera Model Name')"
+    model="${model^^}"
+    [[ "$model" == "M2007J3SG" ]] && return 0
+
+    xiaomi_model="$(samsung_exif_first_value "$exif" 'Xiaomi Model')"
+    xiaomi_model="${xiaomi_model^^}"
+    [[ "$xiaomi_model" == "MI 10T PRO" ]]
+}
+
+transform_xiaomi_media_basename() {
+    local file="$1"
+    local base="$2"
+    local exifloc exif ext stem ts copy_suffix=""
+
+    xiaomi_media_basename_matches "$base" || return 0
+    xiaomi_already_renamed_basename_matches "$base" && return 0
+
+    exifloc="$(resolve_rename_exiftool)" || return 0
+    exif="$("$exifloc" -api largefilesupport=1 "$file" 2>/dev/null)" || return 0
+    [[ -n "$exif" ]] || return 0
+    xiaomi_exif_is_mi_10t_pro "$exif" || return 0
+
+    ext="${base##*.}"
+    stem="${base%.*}"
+    [[ "$stem" =~ ^(([0-9]+_)?[0-9]{8}_[0-9]{6})(\(([0-9]+)\)|_([0-9]+))?$ ]] || return 0
+    ts="${BASH_REMATCH[1]}"
+    copy_suffix="${BASH_REMATCH[4]:-${BASH_REMATCH[5]}}"
+
+    gopro_format_camera_basename_output "$ts" "Xiaomi" "Mi_10T_Pro" "$copy_suffix" "$ext"
 }
 
 # GoPro clips already named YYYYMMDD_HHMMSS.mp4 (no GH/GOPR prefix): append _-_-_GoPro_Hero#_Edition from exiftool.
 transform_gopro_bare_timestamp_media_basename() {
     local file="$1"
     local base="$2"
-    local exifloc exif labels manuf model ext stem ts suffix_pliku=""
+    local exifloc exif labels manuf model ext stem ts suffix_pliku="" copy_suffix=""
     local _tg_err_trap="" _tg_save_e=0
 
     _transform_gopro_bare_ts_err_trap_restore() {
@@ -9841,10 +11218,15 @@ transform_gopro_bare_timestamp_media_basename() {
 
     ext="${base##*.}"
     stem="${base%.*}"
-    [[ "$stem" =~ ^[0-9]{8}_[0-9]{6}$ ]] || return 0
-    ts="$stem"
+    [[ "$stem" =~ ^([0-9]{8}_[0-9]{6})(\(([0-9]+)\)|_([0-9]+))?$ ]] || return 0
+    ts="${BASH_REMATCH[1]}"
+    copy_suffix="${BASH_REMATCH[3]:-${BASH_REMATCH[4]}}"
 
     suffix_pliku="$(gopro_video_capture_mode_suffix_from_exif "$exif")"
+    suffix_pliku="$(gopro_capture_mode_suffix_for_model "$model" "$suffix_pliku")"
+    if [[ -n "$copy_suffix" ]]; then
+        suffix_pliku="${suffix_pliku:+${suffix_pliku}_}${copy_suffix}"
+    fi
 
     gopro_format_camera_basename_output "$ts" "$manuf" "$model" "$suffix_pliku" "$ext"
 }
@@ -10236,7 +11618,7 @@ transform_gopro_camera_basename() {
     local czy_sony=0 czy_gopro=0 czy_contour=0 czy_LGv20=0
     local gopro4=0 DeviceManufacturer DeviceModelName
     local data_stworzenia_pliku_w_czasie_lokalnym Duration suffix_pliku ext
-    local ktory_gopro TrackCreateDate CreationDateValue data
+    local ktory_gopro TrackCreateDate CreationDateValue data mission1_local_ts=""
     local _tg_err_trap="" _tg_save_e=0
 
     _transform_gopro_err_trap_restore() {
@@ -10289,6 +11671,13 @@ transform_gopro_camera_basename() {
             TrackCreateDate="$("$exifloc" -api largefilesupport=1 -d '%Y%m%d_%H%M%S' "$file" | grep '^Create Date' | head -n 1 | tr 'a-z' 'A-Z' | sed 's/^CREATE DATE *: //' | tr -d ':' | tr ' ' '_' | tr -d $'\r')"
         fi
         data_stworzenia_pliku_w_czasie_lokalnym="$TrackCreateDate"
+        if [[ "$DeviceModelName" == "Mission1_Pro" ]]; then
+            mission1_local_ts="$(gopro_mission1_local_timestamp_from_exif "$exif")" || mission1_local_ts=""
+            if [[ -n "$mission1_local_ts" ]]; then
+                vlog "GoPro Mission 1 Pro: UTC timestamp $TrackCreateDate adjusted by embedded Time Zone to $mission1_local_ts"
+                data_stworzenia_pliku_w_czasie_lokalnym="$mission1_local_ts"
+            fi
+        fi
     fi
 
     if printf '%s\n' "$exif" | grep "Compressor Name" | grep -q "Ambarella AVC encoder"; then
@@ -10319,6 +11708,7 @@ transform_gopro_camera_basename() {
     if [[ "$czy_gopro" == 1 ]] && ! gopro_camera_raw_jpg_basename_matches "$base"; then
         local capture_mode_suffix=""
         capture_mode_suffix="$(gopro_video_capture_mode_suffix_from_exif "$exif")"
+        capture_mode_suffix="$(gopro_capture_mode_suffix_for_model "$DeviceModelName" "$capture_mode_suffix")"
         if [[ -n "$capture_mode_suffix" ]]; then
             suffix_pliku="$capture_mode_suffix"
         fi
@@ -10852,7 +12242,7 @@ transform_name() {
         done
     fi
 
-    local _gopro_applied=0 _gopro_try="" _gopro_rc=0 _gopro_part_strip=""
+    local _gopro_applied=0 _gopro_try="" _gopro_rc=0 _gopro_part_strip="" _gopro_timezone_applied=0
     local _sony_applied=0 _sony_try="" _sony_rc=0
     if [[ -f "$f" ]] && ((_tn_skip_exif == 0)) && sony_clip_media_basename_matches "$base"; then
         local _tn_save_e_sc=0
@@ -10902,8 +12292,32 @@ transform_name() {
     fi
 
     if [[ -f "$f" ]] && ((_tn_skip_exif == 0)) && (( _gopro_applied == 0 && _sony_applied == 0 )) \
+        && gopro_mission1_renamed_mp4_basename_matches "$base"; then
+        local _gopro_timezone_try="" _gopro_timezone_rc=0 _gopro_timezone_err_trap=""
+        local _tn_save_e_gptz=0
+        [[ $- == *e* ]] && _tn_save_e_gptz=1
+        set +e
+        _gopro_timezone_err_trap="$(trap -p ERR || true)"
+        trap - ERR
+        _gopro_timezone_try="$(transform_gopro_mission1_embedded_timezone_basename "$f" "$base")"
+        _gopro_timezone_rc=$?
+        eval "${_gopro_timezone_err_trap:-}"
+        if ((_tn_save_e_gptz)); then
+            set -e
+        else
+            set +e
+        fi
+        if (( _gopro_timezone_rc == 0 )) && [[ -n "$_gopro_timezone_try" ]]; then
+            newbase="$_gopro_timezone_try"
+            _gopro_applied=1
+            _gopro_timezone_applied=1
+            vlog "GoPro Mission 1 Pro embedded timezone correction: $base -> $newbase"
+        fi
+    fi
+
+    if [[ -f "$f" ]] && ((_tn_skip_exif == 0)) && (( _gopro_applied == 0 && _sony_applied == 0 )) \
         && gopro_renamed_mp4_basename_matches "$base" \
-        && ! gopro_basename_has_capture_mode_suffix "$base"; then
+        && { ! gopro_basename_has_capture_mode_suffix "$base" || gopro_hero7_timelapse_interval_basename_matches "$base"; }; then
         local _gopro_backfill_try="" _gopro_backfill_rc=0
         local _tn_save_e_gpbf=0
         [[ $- == *e* ]] && _tn_save_e_gpbf=1
@@ -10919,7 +12333,7 @@ transform_name() {
         fi
     fi
 
-    if [[ -f "$f" ]] && ((_tn_skip_exif == 0)) && (( _gopro_applied == 1 )) && gopro_renamed_basename_has_part_segment "$newbase"; then
+    if [[ -f "$f" ]] && ((_tn_skip_exif == 0)) && (( _gopro_applied == 1 && _gopro_timezone_applied == 0 )) && gopro_renamed_basename_has_part_segment "$newbase"; then
         newbase="$(gopro_newbase_omit_lone_part_if_sole_chapter "$f" "$newbase" "$newbase")"
     fi
 
@@ -10951,11 +12365,14 @@ transform_name() {
     local _nikon_applied=0 _nikon_try="" _nikon_rc=0
     if [[ -f "$f" ]] && ((_tn_skip_exif == 0)) && (( _gopro_applied == 0 && _sony_applied == 0 && _olympus_applied == 0 )) \
         && nikon_mat_media_basename_matches "$base"; then
-        local _tn_save_e_nk=0
+        local _tn_save_e_nk=0 _nikon_err_trap=""
         [[ $- == *e* ]] && _tn_save_e_nk=1
         set +e
+        _nikon_err_trap="$(trap -p ERR || true)"
+        trap - ERR
         _nikon_try="$(transform_nikon_mat_media_basename "$f" "$base")"
         _nikon_rc=$?
+        eval "${_nikon_err_trap:-}"
         if ((_tn_save_e_nk)); then
             set -e
         else
@@ -10971,25 +12388,32 @@ transform_name() {
     fi
 
     if [[ -f "$f" ]] && ((_tn_skip_exif == 0)) && (( _gopro_applied == 0 && _sony_applied == 0 && _olympus_applied == 0 && _nikon_applied == 0 )) && [[ "$stopped_by_user" != yes ]]; then
-        local _gopro_part_rc=0 _gopro_part_err_trap=""
-        local _tn_save_e_part=0
-        [[ $- == *e* ]] && _tn_save_e_part=1
-        set +e
-        _gopro_part_err_trap="$(trap -p ERR || true)"
-        trap - ERR
-        _gopro_part_strip="$(maybe_prompt_gopro_remove_lone_part_basename "$f" "$base")"
-        _gopro_part_rc=$?
-        eval "${_gopro_part_err_trap:-}"
-        if ((_tn_save_e_part)); then
-            set -e
+        if (( RECHECK_RENAMES == 1 )); then
+            _gopro_part_strip="$(gopro_newbase_omit_lone_part_if_sole_chapter "$f" "$base" "$base")"
+            if [[ -n "$_gopro_part_strip" && "$_gopro_part_strip" != "$base" ]]; then
+                MANUAL_BASENAME_OVERRIDE="$_gopro_part_strip"
+            fi
         else
+            local _gopro_part_rc=0 _gopro_part_err_trap=""
+            local _tn_save_e_part=0
+            [[ $- == *e* ]] && _tn_save_e_part=1
             set +e
-        fi
-        if (( _gopro_part_rc == 2 )) || [[ "$stopped_by_user" == yes ]]; then
-            return 2
-        fi
-        if (( _gopro_part_rc == 0 )) && [[ -n "$_gopro_part_strip" ]]; then
-            MANUAL_BASENAME_OVERRIDE="$_gopro_part_strip"
+            _gopro_part_err_trap="$(trap -p ERR || true)"
+            trap - ERR
+            _gopro_part_strip="$(maybe_prompt_gopro_remove_lone_part_basename "$f" "$base")"
+            _gopro_part_rc=$?
+            eval "${_gopro_part_err_trap:-}"
+            if ((_tn_save_e_part)); then
+                set -e
+            else
+                set +e
+            fi
+            if (( _gopro_part_rc == 2 )) || [[ "$stopped_by_user" == yes ]]; then
+                return 2
+            fi
+            if (( _gopro_part_rc == 0 )) && [[ -n "$_gopro_part_strip" ]]; then
+                MANUAL_BASENAME_OVERRIDE="$_gopro_part_strip"
+            fi
         fi
     fi
 
@@ -11194,7 +12618,32 @@ transform_name() {
         fi
     fi
 
+    local _xiaomi_applied=0 _xiaomi_try="" _xiaomi_rc=0
     if [[ -f "$f" ]] && ((_tn_skip_exif == 0)) && (( _gopro_applied == 0 && _sony_applied == 0 && _olympus_applied == 0 && _nikon_applied == 0 && _samsung_applied == 0 )) \
+        && xiaomi_media_basename_matches "$newbase"; then
+        local _tn_save_e_xiaomi=0 _xiaomi_err_trap=""
+        [[ $- == *e* ]] && _tn_save_e_xiaomi=1
+        set +e
+        _xiaomi_err_trap="$(trap -p ERR || true)"
+        trap - ERR
+        _xiaomi_try="$(transform_xiaomi_media_basename "$f" "$newbase")"
+        _xiaomi_rc=$?
+        eval "${_xiaomi_err_trap:-}"
+        if ((_tn_save_e_xiaomi)); then
+            set -e
+        else
+            set +e
+        fi
+        if (( _xiaomi_rc == 0 )) && [[ -n "$_xiaomi_try" ]]; then
+            vlog "Xiaomi media rename: $newbase -> $_xiaomi_try"
+            newbase="$_xiaomi_try"
+            _xiaomi_applied=1
+        else
+            vlog "Xiaomi media rename: no usable Mi 10T Pro metadata for $newbase (rc=$_xiaomi_rc)"
+        fi
+    fi
+
+    if [[ -f "$f" ]] && ((_tn_skip_exif == 0)) && (( _gopro_applied == 0 && _sony_applied == 0 && _olympus_applied == 0 && _nikon_applied == 0 && _samsung_applied == 0 && _xiaomi_applied == 0 )) \
         && gopro_bare_timestamp_media_basename_matches "$newbase"; then
         local _tn_save_e_gpts=0 _gpts_err_trap="" _gopro_bare_try="" _gopro_bare_rc=0
         [[ $- == *e* ]] && _tn_save_e_gpts=1
@@ -12636,6 +14085,13 @@ MAIN_LOOP_RESUME_PROGRESS_OFFSET=0
 MAIN_LOOP_LAST_MILESTONE_VALUE=-1
 files_affected=0
 files_skipped=0
+RECHECK_FILES_AUDITED=0
+RECHECK_ALREADY_CURRENT=0
+RECHECK_DIFFERENCES_FOUND=0
+RECHECK_DIFFERENCES_APPLIED=0
+RECHECK_DIFFERENCES_DECLINED=0
+AUTO_RECHECK_RENAME_DIR=""
+AUTO_RECHECK_RENAME_SESSION=no
 rename_all=no
 AUTO_RENAME_DIR=""
 AUTO_RENAME_SIMILAR_DIR=""
@@ -12646,12 +14102,14 @@ AUTO_COLLISION_OTHER_DIR=""
 AUTO_COLLISION_OVERWRITE_DIR=""
 # When set to realpath of a directory: RawFileName mismatch prompts auto-apply without asking for every paired XMP in that dir.
 NEF_XMP_RAWFIX_AUTO_DIR=""
+# When set to realpath of a directory: media.ext.xmp reference prompts auto-apply for remaining pairs in that dir.
+MEDIA_XMP_REF_AUTO_DIR=""
 AUTO_LOWERCASE_3_EXT_SESSION=no # [L] session: any extension case-only lowercasing (name kept for compatibility)
 AUTO_LOWERCASE_MEDIA_OFFICE_EXT_SESSION=no # [U] session: only media + MS Office extension case-only lowercasing
 AUTO_GOPRO_STRIP_PART_DIR="" # GoPro lone _part_XX prompt [D]: auto-strip for rest of run in this directory
 AUTO_GOPRO_STRIP_PART_SESSION=no # GoPro lone _part_XX prompt [A]: auto-strip for all qualifying files this run
 AUTO_DELETE_THUMBS_DB_SESSION=no # thumbs.db prompt [O]: delete all thumbs.db for the rest of this run
-AUTO_EXIF_CAMERA_TAG_SESSION=no # rename prompt [G]: auto-yes Samsung/GoPro/Nikon D200 EXIF camera tag appends for rest of run
+AUTO_CAMERA_MAKE_MODEL_SESSION=no # rename prompt [G]: auto-yes Samsung/GoPro/Nikon camera make/model renames for rest of run
 AUTO_LARGE_HASH_CHECK_SESSION=no # verify-only large checksum list prompt [H]: auto-yes remaining large list checks for rest of run
 AUTO_CHECKSUM_GROUP_SESSION=no # checksum group prompt [H/h]: auto-yes all remaining checksum groups for rest of run
 AUTO_CHECKSUM_GROUP_DIR="" # checksum group prompt [D/d]: auto-yes checksum groups in this directory for rest of run
@@ -12661,6 +14119,7 @@ RENAME_SH_GOPRO_STATE_FILE="${RENAME_SH_GOPRO_STATE_FILE:-${XDG_STATE_HOME:-$HOM
 declare -a renamed_list=()
 declare -A recorded
 declare -A processed
+declare -A RECHECK_AUDITED_PATHS
 # Index into renamed_list where THIS run's renames begin. On resume it is set to the
 # number of entries restored from the checkpoint, so the summary can list only the
 # entries affected during the current run (0 for fresh runs).
@@ -13143,8 +14602,8 @@ print_rename_prompt_menu() {
         echo "  $(rename_menu_key_bracket S Y) Yes for similar names in this directory (all extensions here; leading _ only if this filename starts with _)"
         choice_hint+=/s
     fi
-    if [[ -n "$path" && -n "$suggested_new" ]] && rename_is_exif_camera_tag_append "$path" "$suggested_new"; then
-        echo "  $(rename_menu_key_bracket G Y) Yes, and auto-approve all Samsung, GoPro, and Nikon D200 EXIF camera make/model tags for the rest of this run"
+    if [[ -n "$path" && -n "$suggested_new" ]] && rename_is_camera_make_model_change "$path" "$suggested_new"; then
+        echo "  $(rename_menu_key_bracket G Y) Yes, and auto-approve future Samsung, GoPro, and Nikon camera make/model renames for the rest of this run"
         choice_hint+=/g
     fi
     if [[ -n "$path" && -n "$suggested_new" ]] && rename_suggested_only_extension_case_change "$path" "$suggested_new" \
@@ -13319,7 +14778,7 @@ maybe_prompt_flatten_single_child_dir() {
         m|M)
             echo "$(user_prompt_ts_prefix)Manual basename edit (readline enabled):"
             echo "  Use arrows/Home/End for cursor movement and editing."
-            echo -n "$(user_prompt_ts_prefix)New basename: "
+            echo "$(user_prompt_ts_prefix)New basename: "
             read_line_editable edited_base "$PROMPT_WAIT_SECONDS" "$parent_base"
             echo
             if [[ -z "$edited_base" ]]; then
@@ -13446,7 +14905,7 @@ choose_custom_rename_target() {
     echo -e "$(user_prompt_ts_prefix)${GREEN}Rename by editing target filename (basename only):${RESET}" >&2
     echo "  Use arrows/Home/End for cursor movement and editing." >&2
     echo "  Current suggestion: $suggested_base" >&2
-    echo -n "$(user_prompt_ts_prefix)New basename: " >&2
+    echo "$(user_prompt_ts_prefix)New basename: " >&2
     read_line_editable edited_base "$PROMPT_WAIT_SECONDS" "$suggested_base"
     echo >&2
 
@@ -13468,6 +14927,175 @@ choose_custom_rename_target() {
     else
         printf '%s/%s' "$dir" "$edited_base"
     fi
+}
+
+recheck_mark_current_entry_processed() {
+    processed["$f"]=1
+    [[ -n "$nef_xmp_buddy" ]] && processed["$nef_xmp_buddy"]=1
+}
+
+recheck_register_audited_path() {
+    local path="$1"
+    [[ -n "${RECHECK_AUDITED_PATHS[$path]+x}" ]] && return 0
+    RECHECK_AUDITED_PATHS["$path"]=1
+    ((++RECHECK_FILES_AUDITED))
+}
+
+recheck_apply_current_difference() {
+    local reason="$1"
+    if ! perform_plain_or_nef_xmp_pair "$reason"; then
+        return 1
+    fi
+    ((++RECHECK_DIFFERENCES_APPLIED))
+    recheck_mark_current_entry_processed
+    return 0
+}
+
+print_recheck_rename_menu() {
+    echo "$(user_prompt_ts_prefix)Apply this updated naming rule?"
+    echo "  $(rename_menu_key_bracket Y Y) Yes (default)"
+    echo "  $(rename_menu_key_bracket N Y) No"
+    echo "  $(rename_menu_key_bracket M Y) Edit target filename"
+    echo "  $(rename_menu_key_bracket D Y) Yes, and apply remaining recheck differences in this directory"
+    echo "  $(rename_menu_key_bracket A Y) Yes, and apply all remaining recheck differences in this run"
+    echo "  $(rename_menu_key_bracket V Y) List the directory containing this path"
+    echo "  $(rename_menu_key_bracket Q Y) Quit"
+    echo -n "$(user_prompt_ts_prefix)Choice [Y/n/m/d/a/v/q]: "
+}
+
+recheck_rename_reason_text() {
+    if rename_is_camera_make_model_change "$f" "$new"; then
+        printf '%s' "recognized camera metadata or camera-label normalization"
+    elif rename_suggested_only_extension_case_change "$f" "$new"; then
+        printf '%s' "extension case normalization"
+    elif [[ "$(basename -- "$f")" == *_part_[0-9][0-9]* ]] && [[ "$(basename -- "$new")" != *_part_[0-9][0-9]* ]]; then
+        printf '%s' "single-chapter GoPro _part_XX normalization"
+    else
+        printf '%s' "deterministic canonical basename rules produce a different name"
+    fi
+}
+
+handle_recheck_rename_difference() {
+    local input="" custom_new="" confirm_rc=0 current_dir=""
+    local label_old="OLD: "
+    local label_new="CURRENT RULE RESULT: "
+    local label_old_sc="OLD (sidecar): "
+    local label_new_sc="RULE RESULT (sidecar): "
+    local label_width=${#label_new}
+
+    current_dir="$(dirname -- "$f")"
+    if [[ -n "$nef_xmp_buddy" ]] && (( ${#label_new_sc} > label_width )); then
+        label_width=${#label_new_sc}
+    fi
+    (( ${#label_old} > label_width )) && label_width=${#label_old}
+    (( ${#label_old_sc} > label_width )) && label_width=${#label_old_sc}
+
+    if [[ "$mode" == "dry-run" ]]; then
+        recheck_apply_current_difference "rename recheck dry-run" || return 1
+        return 0
+    fi
+    if [[ "$AUTO_RECHECK_RENAME_SESSION" == yes ]]; then
+        recheck_apply_current_difference "rename recheck session auto-yes" || return 1
+        return 0
+    fi
+    if [[ -n "$AUTO_RECHECK_RENAME_DIR" && "$current_dir" == "$AUTO_RECHECK_RENAME_DIR" ]]; then
+        recheck_apply_current_difference "rename recheck directory auto-yes" || return 1
+        return 0
+    fi
+
+    while true; do
+        nonverbose_progress_dot_prepare_for_prompt
+        echo
+        echo -e "${CYAN}================ RENAME RECHECK DIFFERENCE ================${RESET}"
+        echo "Current script version: $SCRIPT_VERSION"
+        echo "Rule: recalculate the canonical filename with the current deterministic rename pipeline."
+        echo "Reason: $(recheck_rename_reason_text)."
+        echo
+        emit_wrap_nef_xmp_pair_label_stdout "$label_old" yellow "$f" "$label_width"
+        emit_wrap_nef_xmp_pair_label_stdout "$label_new" green "$new" "$label_width"
+        if [[ -n "$nef_xmp_buddy" ]]; then
+            emit_wrap_nef_xmp_pair_label_stdout "$label_old_sc" yellow "$nef_xmp_buddy" "$label_width"
+            emit_wrap_nef_xmp_pair_label_stdout "$label_new_sc" green "$nef_xmp_new" "$label_width"
+        fi
+        echo -e "${CYAN}===========================================================${RESET}"
+        print_recheck_rename_menu
+        flush_stdin
+        read_single_key input "$PROMPT_WAIT_SECONDS"
+        echo
+        if handle_prompt_directory_listing_choice "$input" "$f" "$new"; then
+            continue
+        fi
+
+        case "$input" in
+            q|Q)
+                stopped_by_user=yes
+                return 2
+                ;;
+            n|N)
+                ((++RECHECK_DIFFERENCES_DECLINED))
+                ((++files_skipped))
+                recheck_mark_current_entry_processed
+                return 0
+                ;;
+            m|M)
+                custom_new="$(choose_custom_rename_target "$f" "$new" || true)"
+                if [[ -z "$custom_new" || "$custom_new" == "$f" ]]; then
+                    ((++RECHECK_DIFFERENCES_DECLINED))
+                    ((++files_skipped))
+                    recheck_mark_current_entry_processed
+                    return 0
+                fi
+                if [[ -n "$nef_xmp_buddy" ]]; then
+                    if [[ "$RENAME_SIDECAR_KIND" == media_xmp ]]; then
+                        nef_xmp_new="$(media_xmp_new_path_for_media_new "$custom_new" "$nef_xmp_buddy")"
+                        perform_media_xmp_pair_plain_renames "$f" "$custom_new" "$nef_xmp_buddy" "$nef_xmp_new" || return 1
+                    elif [[ "$RENAME_SIDECAR_KIND" == sony_clip ]]; then
+                        perform_sony_clip_pair_plain_renames "$f" "$custom_new" "$nef_xmp_buddy" "$nef_xmp_new" || return 1
+                    else
+                        perform_plain_entry_rename "$f" "$custom_new" || return 1
+                        perform_plain_entry_rename "$nef_xmp_buddy" "$nef_xmp_new" || return 1
+                        if nef_xmp_pair_set_final_paths_from_primary_and_buddy_new "$custom_new" "$nef_xmp_new"; then
+                            nef_xmp_sync_sidecar_raw_file_name_to_nef "$NEF_XMP_FINAL_NEF" "$NEF_XMP_FINAL_XMP" || true
+                            nef_xmp_verify_sidecar_raw_file_name_interactive "$NEF_XMP_FINAL_NEF" "$NEF_XMP_FINAL_XMP" || return $?
+                        fi
+                    fi
+                else
+                    perform_plain_entry_rename "$f" "$custom_new" || return 1
+                fi
+                ((++RECHECK_DIFFERENCES_APPLIED))
+                recheck_mark_current_entry_processed
+                return 0
+                ;;
+            d|D)
+                AUTO_RECHECK_RENAME_DIR="$current_dir"
+                vlog "Rename recheck directory auto-yes enabled for '$AUTO_RECHECK_RENAME_DIR'"
+                recheck_apply_current_difference "rename recheck directory auto-yes (prompt)" || return 1
+                return 0
+                ;;
+            a|A)
+                echo
+                echo "$(user_prompt_ts_prefix)⚠️  Apply ALL remaining rename-recheck differences in this run?"
+                echo -n "$(user_prompt_ts_prefix)Are you sure? [y/N/q]: "
+                read_yes_no_quit_confirm "$PROMPT_WAIT_SECONDS"
+                confirm_rc=$?
+                if (( confirm_rc == 2 )); then
+                    stopped_by_user=yes
+                    return 2
+                fi
+                if (( confirm_rc == 0 )); then
+                    AUTO_RECHECK_RENAME_SESSION=yes
+                    AUTO_RECHECK_RENAME_DIR=""
+                    vlog "Rename recheck session auto-yes enabled"
+                    recheck_apply_current_difference "rename recheck session auto-yes (prompt)" || return 1
+                    return 0
+                fi
+                ;;
+            *)
+                recheck_apply_current_difference "rename recheck interactive default" || return 1
+                return 0
+                ;;
+        esac
+    done
 }
 
 print_checksum_prompt_menu() {
@@ -13729,6 +15357,14 @@ print_summary() {
     echo "Entries affected:      $files_affected"
     echo "Entries skipped:       $files_skipped"
     echo "Stopped by user:       $stopped_by_user"
+    if (( RECHECK_RENAMES == 1 )); then
+        echo "Rename recheck:        enabled"
+        echo "  files audited:       $RECHECK_FILES_AUDITED"
+        echo "  already canonical:   $RECHECK_ALREADY_CURRENT"
+        echo "  differences found:   $RECHECK_DIFFERENCES_FOUND"
+        echo "  accepted/simulated:  $RECHECK_DIFFERENCES_APPLIED"
+        echo "  declined:            $RECHECK_DIFFERENCES_DECLINED"
+    fi
     if (( USE_DB == 1 )); then
         echo "DB used:               yes"
         echo "DB hashes added:       $DB_HASHES_ADDED"
@@ -13968,6 +15604,14 @@ for f in "${ordered_paths[@]}"; do
         continue
     fi
 
+    if (( RECHECK_RENAMES == 1 )); then
+        if [[ ! -f "$f" ]] || is_checksum_file "$f" || [[ "$f" == *.lnk ]]; then
+            processed["$f"]=1
+            continue
+        fi
+        recheck_register_audited_path "$f"
+    fi
+
     if [[ -f "$f" && "$f" == *.lnk ]]; then
         if ! handle_lnk_file "$f"; then
             break
@@ -13984,7 +15628,7 @@ for f in "${ordered_paths[@]}"; do
         fi
     fi
 
-    if db_has_valid_entry "$f" && ! path_has_control_chars "$f"; then
+    if (( RECHECK_RENAMES == 0 )) && db_has_valid_entry "$f" && ! path_has_control_chars "$f"; then
         _rename_cap_save_e=0
         [[ $- == *e* ]] && _rename_cap_save_e=1
         set +e
@@ -14660,6 +16304,26 @@ for f in "${ordered_paths[@]}"; do
             fi
         fi
         if [[ -z "$nef_xmp_buddy" ]]; then
+            _mx_other=""
+            if _mx_other="$(media_xmp_pair_other_path "$f")"; then
+                if media_xmp_should_defer_sidecar "$f" "$_mx_other"; then
+                    vlog "Deferring media XMP sidecar '$f' until media+XMP pair with '$_mx_other'"
+                    continue
+                fi
+                if media_xmp_should_attach_buddy "$f" "$_mx_other"; then
+                    nef_xmp_buddy="$_mx_other"
+                    RENAME_SIDECAR_KIND=media_xmp
+                fi
+            elif media_xmp_is_sidecar_path "$f"; then
+                # Orphan *.ext.xmp (media already renamed): map to corrected media via Mission 1 CreateDate.
+                _mx_orphan_media=""
+                if _mx_orphan_media="$(media_xmp_find_media_for_orphan_sidecar "$f")"; then
+                    precomputed_new="$(media_xmp_new_path_for_media_new "$_mx_orphan_media" "$f")"
+                    vlog "Orphan media XMP '$f' maps to media '$_mx_orphan_media' -> '$precomputed_new'"
+                fi
+            fi
+        fi
+        if [[ -z "$nef_xmp_buddy" ]]; then
             _sc_other=""
             if _sc_other="$(sony_clip_pair_other_path "$f")"; then
                 if sony_clip_should_defer_xml "$f" "$_sc_other"; then
@@ -14672,6 +16336,9 @@ for f in "${ordered_paths[@]}"; do
                 fi
             fi
         fi
+    fi
+    if (( RECHECK_RENAMES == 1 )) && [[ -n "$nef_xmp_buddy" ]]; then
+        recheck_register_audited_path "$nef_xmp_buddy"
     fi
 
     if [[ -f "$f" ]]; then
@@ -14721,19 +16388,24 @@ for f in "${ordered_paths[@]}"; do
 
     nef_xmp_new=""
     if [[ -n "$nef_xmp_buddy" ]]; then
-        _rename_cap_save_e=0
-        [[ $- == *e* ]] && _rename_cap_save_e=1
-        set +e
-        nef_xmp_new="$(transform_name "$nef_xmp_buddy")"
-        tnb=$?
-        nef_xmp_new="$(collapse_stacked_other_suffix_in_path "$nef_xmp_new")"
-        if ((_rename_cap_save_e)); then
-            set -e
+        if [[ "$RENAME_SIDECAR_KIND" == media_xmp ]]; then
+            # Keep sidecar glued to the media target name (do not transform .xmp independently).
+            nef_xmp_new="$(media_xmp_new_path_for_media_new "$new" "$nef_xmp_buddy")"
         else
+            _rename_cap_save_e=0
+            [[ $- == *e* ]] && _rename_cap_save_e=1
             set +e
-        fi
-        if (( tnb == 2 )); then
-            break
+            nef_xmp_new="$(transform_name "$nef_xmp_buddy")"
+            tnb=$?
+            nef_xmp_new="$(collapse_stacked_other_suffix_in_path "$nef_xmp_new")"
+            if ((_rename_cap_save_e)); then
+                set -e
+            else
+                set +e
+            fi
+            if (( tnb == 2 )); then
+                break
+            fi
         fi
     fi
 
@@ -14746,6 +16418,25 @@ for f in "${ordered_paths[@]}"; do
         && should_skip_case_only_rename_on_fs "$nef_xmp_buddy" "$nef_xmp_new"; then
         verbose_fs_skip_sidecar=yes
         nef_xmp_new="$nef_xmp_buddy"
+    fi
+
+    if (( RECHECK_RENAMES == 1 )); then
+        recheck_has_difference=no
+        [[ "$f" != "$new" ]] && recheck_has_difference=yes
+        [[ -n "$nef_xmp_buddy" && "$nef_xmp_buddy" != "$nef_xmp_new" ]] && recheck_has_difference=yes
+        if [[ "$recheck_has_difference" == no ]]; then
+            ((++RECHECK_ALREADY_CURRENT))
+            processed["$f"]=1
+            [[ -n "$nef_xmp_buddy" ]] && processed["$nef_xmp_buddy"]=1
+            continue
+        fi
+        ((++RECHECK_DIFFERENCES_FOUND))
+        recheck_rc=0
+        handle_recheck_rename_difference || recheck_rc=$?
+        if (( recheck_rc != 0 )); then
+            break
+        fi
+        continue
     fi
 
     if [[ -z "$nef_xmp_buddy" ]]; then
@@ -14933,9 +16624,9 @@ for f in "${ordered_paths[@]}"; do
         continue
     fi
 
-    if [[ "$AUTO_EXIF_CAMERA_TAG_SESSION" == "yes" ]] && [[ "$f" != "$new" ]] \
-        && rename_is_exif_camera_tag_append "$f" "$new"; then
-        perform_plain_or_nef_xmp_pair "EXIF camera tag auto-yes (session)" || break
+    if [[ "$AUTO_CAMERA_MAKE_MODEL_SESSION" == "yes" ]] && [[ "$f" != "$new" ]] \
+        && rename_is_camera_make_model_change "$f" "$new"; then
+        perform_plain_or_nef_xmp_pair "camera make/model auto-yes (session)" || break
         continue
     fi
 
@@ -14975,6 +16666,8 @@ for f in "${ordered_paths[@]}"; do
     echo
     if [[ "$RENAME_SIDECAR_KIND" == sony_clip && -n "$nef_xmp_buddy" ]]; then
         echo -e "${CYAN}Sony clip pair (C####.MP4 + C####M01.XML; both renamed together):${RESET}"
+    elif [[ "$RENAME_SIDECAR_KIND" == media_xmp && -n "$nef_xmp_buddy" ]]; then
+        echo -e "${CYAN}Media+XMP pair (media.ext + media.ext.xmp; both renamed together):${RESET}"
     elif [[ -n "$nef_xmp_buddy" ]]; then
         echo -e "${CYAN}NEF+XMP pair (same stem; both renamed together):${RESET}"
     fi
@@ -14991,6 +16684,23 @@ for f in "${ordered_paths[@]}"; do
             emit_wrap_nef_xmp_pair_label_stdout "NEW (XML): " green "$nef_xmp_new" "$NEF_XMP_PAIR_LABEL_WIDTH"
             echo
             echo -e "${CYAN}Sony NonRealTimeMeta XML is renamed with the clip; CreationDate local wall-clock is used for both names.${RESET}"
+        elif [[ "$RENAME_SIDECAR_KIND" == media_xmp ]]; then
+            emit_wrap_nef_xmp_pair_label_stdout "OLD (sidecar): " yellow "$nef_xmp_buddy" "$NEF_XMP_PAIR_LABEL_WIDTH"
+            emit_wrap_nef_xmp_pair_label_stdout "NEW (sidecar): " green "$nef_xmp_new" "$NEF_XMP_PAIR_LABEL_WIDTH"
+            echo
+            echo -e "${CYAN}Sidecar XMP metadata (after you confirm):${RESET}"
+            if [[ "$mode" == "dry-run" ]]; then
+                printf '%s\n' \
+                    '[Dry-run] A Yes-style answer only simulates the two renames on disk.' \
+                    'If the sidecar contains RawFileName or the old media basename, the script would describe updating that reference.' \
+                    'digiKam-tag-only sidecars with no media filename reference are left unchanged. No files are modified in dry-run.'
+            else
+                printf '%s\n' \
+                    'After a Yes-style answer, both paths are renamed on disk.' \
+                    'A follow-up prompt appears only if the sidecar contains RawFileName or the old media basename as text.' \
+                    'digiKam-tag-only sidecars with no media filename reference are left unchanged (no prompt).' \
+                    "When a reference is patched, the XMP file's timestamps are preserved."
+            fi
         else
             emit_wrap_nef_xmp_pair_label_stdout "OLD (sidecar): " yellow "$nef_xmp_buddy" "$NEF_XMP_PAIR_LABEL_WIDTH"
             emit_wrap_nef_xmp_pair_label_stdout "NEW (sidecar): " green "$nef_xmp_new" "$NEF_XMP_PAIR_LABEL_WIDTH"
@@ -15063,13 +16773,24 @@ for f in "${ordered_paths[@]}"; do
                 ((++files_skipped))
             else
                 if [[ -n "$nef_xmp_buddy" ]]; then
-                    print_rename_action_verbose "$f" "$custom_new" "manual edit (NEF+XMP pair)"
-                    print_rename_action_verbose "$nef_xmp_buddy" "$nef_xmp_new" "manual edit (NEF+XMP pair; sidecar keeps script suggestion)"
-                    perform_plain_entry_rename "$f" "$custom_new" || break
-                    perform_plain_entry_rename "$nef_xmp_buddy" "$nef_xmp_new" || break
-                    if nef_xmp_pair_set_final_paths_from_primary_and_buddy_new "$custom_new" "$nef_xmp_new"; then
-                        nef_xmp_sync_sidecar_raw_file_name_to_nef "$NEF_XMP_FINAL_NEF" "$NEF_XMP_FINAL_XMP" || true
-                        nef_xmp_verify_sidecar_raw_file_name_interactive "$NEF_XMP_FINAL_NEF" "$NEF_XMP_FINAL_XMP" || break
+                    if [[ "$RENAME_SIDECAR_KIND" == media_xmp ]]; then
+                        nef_xmp_new="$(media_xmp_new_path_for_media_new "$custom_new" "$nef_xmp_buddy")"
+                        print_rename_action_verbose "$f" "$custom_new" "manual edit (media+XMP pair)"
+                        print_rename_action_verbose "$nef_xmp_buddy" "$nef_xmp_new" "manual edit (media+XMP pair; sidecar follows media)"
+                        perform_media_xmp_pair_plain_renames "$f" "$custom_new" "$nef_xmp_buddy" "$nef_xmp_new" || break
+                    elif [[ "$RENAME_SIDECAR_KIND" == sony_clip ]]; then
+                        print_rename_action_verbose "$f" "$custom_new" "manual edit (Sony clip pair)"
+                        print_rename_action_verbose "$nef_xmp_buddy" "$nef_xmp_new" "manual edit (Sony clip pair; sidecar keeps script suggestion)"
+                        perform_sony_clip_pair_plain_renames "$f" "$custom_new" "$nef_xmp_buddy" "$nef_xmp_new" || break
+                    else
+                        print_rename_action_verbose "$f" "$custom_new" "manual edit (NEF+XMP pair)"
+                        print_rename_action_verbose "$nef_xmp_buddy" "$nef_xmp_new" "manual edit (NEF+XMP pair; sidecar keeps script suggestion)"
+                        perform_plain_entry_rename "$f" "$custom_new" || break
+                        perform_plain_entry_rename "$nef_xmp_buddy" "$nef_xmp_new" || break
+                        if nef_xmp_pair_set_final_paths_from_primary_and_buddy_new "$custom_new" "$nef_xmp_new"; then
+                            nef_xmp_sync_sidecar_raw_file_name_to_nef "$NEF_XMP_FINAL_NEF" "$NEF_XMP_FINAL_XMP" || true
+                            nef_xmp_verify_sidecar_raw_file_name_interactive "$NEF_XMP_FINAL_NEF" "$NEF_XMP_FINAL_XMP" || break
+                        fi
                     fi
                     processed["$nef_xmp_buddy"]=1
                 else
@@ -15222,13 +16943,13 @@ for f in "${ordered_paths[@]}"; do
             fi
             ;;
         g|G)
-            if ! rename_is_exif_camera_tag_append "$f" "$new"; then
-                echo -e "${YELLOW}[G] applies only when the suggestion adds a Samsung, GoPro, or Nikon D200 EXIF camera make/model tag.${RESET}"
+            if ! rename_is_camera_make_model_change "$f" "$new"; then
+                echo -e "${YELLOW}[G] applies only to recognized Samsung, GoPro, or Nikon camera make/model renames.${RESET}"
                 ((++files_skipped))
             else
-                AUTO_EXIF_CAMERA_TAG_SESSION=yes
-                vlog "Session auto-yes enabled for Samsung/GoPro/Nikon D200 EXIF camera make/model tag appends"
-                perform_plain_or_nef_xmp_pair "EXIF camera tag auto-yes (session prompt)" || break
+                AUTO_CAMERA_MAKE_MODEL_SESSION=yes
+                vlog "Session auto-yes enabled for Samsung/GoPro/Nikon camera make/model renames"
+                perform_plain_or_nef_xmp_pair "camera make/model auto-yes (session prompt)" || break
             fi
             ;;
         l|L)

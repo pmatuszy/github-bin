@@ -1,6 +1,8 @@
 #!/bin/bash
+# v. 20260725.133510 - size summary: always print full input/output basenames (no ellipsis truncation)
 # v. 20260718.120500 - timelapse: Rate …sec only when no audio track (same as rename.sh)
 
+# 2026.07.25 - v. 0.15.22 - size summary INPUT lines show full basenames instead of 52-char ellipsis
 # 2026.07.18 - v. 0.15.21 - timelapse detect: ignore Rate …sec when clip has audio
 # 2026.07.18 - v. 0.15.19 - seam preview: play default Y; repeat default N (continue)
 # 2026.07.18 - v. 0.15.17 - seam preview: default Y for play and repeat prompts
@@ -72,6 +74,11 @@
 # 2026.05.26 - v. 0.3 - add -h/--help and -u/--update (install mp4_merge from gyroflow/mp4-merge)
 # 2026.05.26 - v. 0.2 - renamed from gopro-mp4-merge.sh
 # 2026.05.26 - v. 0.1 - merge GoPro chapter MP4s (Windows merge-gopro batch port)
+#
+# video-pgm-merge.sh
+#
+# Merge GoPro chapter MP4s in the current directory via mp4_merge (gyroflow/mp4-merge).
+#
 
 MP4_MERGE_REPO="${MP4_MERGE_REPO:-gyroflow/mp4-merge}"
 
@@ -1191,32 +1198,21 @@ print_chapter_file_line() {
   printf '%s%s\n' "$indent" "$(chapter_file_summary_line "$f")"
 }
 
-# Truncate for fixed-width columns (ellipsis if needed).
-pgm_truncate_str() {
-  local s="$1" max="$2"
-  if ((${#s} <= max)); then
-    printf '%s' "$s"
-  else
-    printf '%s...' "${s:0:$(( max - 3 ))}"
-  fi
-}
-
-# Fixed widths so '|' in size strings lines up across input lines.
+# Print full basename (never truncate — long GoPro names must stay readable).
+# Layout: part label + name on line 1; size + duration indented on line 2 so '|' columns still align.
 PGM_IO_PART_W=8
-PGM_IO_NAME_W=52
 
 pgm_io_input_line() {
   local part_lbl="$1" f="$2"
-  local base="${f##*/}" sz dur dur_disp name_disp
-  name_disp=$(pgm_truncate_str "$base" "$PGM_IO_NAME_W")
+  local base="${f##*/}" sz dur dur_disp
   sz=$(file_size_bytes "$f")
   if dur=$(ffprobe_duration_seconds "$f" 2>/dev/null) && [[ -n "$dur" ]]; then
     dur_disp=$(format_duration_display "$dur")
   else
     dur_disp="—"
   fi
-  printf '  %-*s %-*s %s  %s\n' "$PGM_IO_PART_W" "$part_lbl" "$PGM_IO_NAME_W" "$name_disp" \
-    "$(format_bytes_human_aligned "$sz")" "$dur_disp"
+  printf '  %-*s %s\n' "$PGM_IO_PART_W" "$part_lbl" "$base"
+  printf '  %-*s %s  %s\n' "$PGM_IO_PART_W" "" "$(format_bytes_human_aligned "$sz")" "$dur_disp"
 }
 
 # INPUT section, then OUTPUT section (narrower than side-by-side layout).
@@ -1266,13 +1262,13 @@ print_merge_group_io_block() {
   else
     input_dur_s="—"
   fi
-  printf '  %-*s %-*s %s  %s\n' "$PGM_IO_PART_W" "Total:" "$PGM_IO_NAME_W" "" \
+  printf '  %-*s %s  %s\n' "$PGM_IO_PART_W" "Total:" \
     "$input_total_s" "$input_dur_s"
   echo
   echo "  OUTPUT"
   printf '  %s\n' "$sep"
   printf '  %s\n' "${output_file}"
-  printf '  %-*s %-*s Total: %s  %s\n' "$PGM_IO_PART_W" "" "$PGM_IO_NAME_W" "" \
+  printf '  %-*s Total: %s  %s\n' "$PGM_IO_PART_W" "" \
     "$output_total_s" "$output_note"
 }
 

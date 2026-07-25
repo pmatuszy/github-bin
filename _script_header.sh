@@ -1,7 +1,9 @@
 #!/bin/bash
+# v. 20260722.084451 - let scripts continue with plain banners when optional boxes or figlet installation fails
 # v. 20260716.173600 - print_version_banner uses CALLER_SCRIPT version fields
 # v. 20260716.163300 - versioning v. YYYYMMDD.HH24MISS; parse first # v. YYYYMMDD.HHMMSS line
 
+# 2026.07.22 - v. 1.58.084451 - boxes/figlet checks are errexit-safe and fall back to plain startup text
 # 2026.07.15 - v. 1.57.210402 - profile_location_dir: export only when set; no default to $HOME
 # 2026.07.15 - v. 1.57.210401 - export profile_location_dir (default: $HOME or /root)
 # 2026.07.05 - v. 1.57.210400 - fix caller script detection (BASH_SOURCE[1] was _script_header.sh inside function)
@@ -27,8 +29,12 @@
 # 2020.09.15 - v. 0.2 - initial release
 # 2020.09.15 - v. 0.1 - initial release
 
+# _script_header.sh
+#
+# Provide shared startup, version, dependency-check, and terminal helpers.
+#
 # Contract: sourced (not executed) by sibling scripts. Enables nounset and pipefail,
-# sets LC_ALL=C, defines check_if_installed and ctrl_c, installs boxes/figlet when root,
+# sets LC_ALL=C, defines check_if_installed and ctrl_c, optionally installs boxes/figlet when root,
 # sets GNU Screen window title when STY is set, optional RANDOM_DELAY when not on a tty.
 
 if [[ "$0" = "/bin/bash" ]] || [[ "$0" = "/usr/bin/bash" ]] || [[ "$0" = "/usr/local/bin/bash" ]] ; then
@@ -159,29 +165,34 @@ function ctrl_c() {
 }
 #######################################################################################
 function check_if_installed() {
+  local install_package="${2:-BRAK}"
+  local requirement="${3:-REQUIRED}"
 
   if [ "$(id -u)" -ne 0 ]; then
     # script is not run as root so we don't want to progress with the installation
     return 1
   fi
 
-  type -fP "${1}" &>/dev/null
-
-  if (( $? != 0 ));then
+  if ! type -fP "${1}" &>/dev/null; then
     echo ; echo "#######################################################"
     echo "(PGM) ${1} not found - I will install it..."
-    if [ "${2:-BRAK}" != "BRAK" ];then
-      apt-get -y install "${2}"
+    if [ "${install_package}" != "BRAK" ];then
+      apt-get -y install "${install_package}" || true
     else
-      apt-get -y install "${1}"
+      apt-get -y install "${1}" || true
     fi
     echo "#######################################################";echo
   fi
-  type -fP "${1}" 2>&1 > /dev/null
-  if (( $? != 0 )); then
-    echo ; echo "(PGM) I can't find ${1} utility... exiting ..."; echo
+
+  if ! type -fP "${1}" &>/dev/null; then
+    if [[ "${requirement}" == "OPTIONAL" ]]; then
+      echo "(PGM) Optional utility ${1} is still unavailable; continuing with plain output." >&2
+      return 1
+    fi
+    echo ; echo "(PGM) I can't find ${1} utility... exiting ..." >&2; echo
     exit 1
   fi
+  return 0
 }
 #######################################################################################
 
@@ -189,13 +200,17 @@ function check_if_installed() {
 export tcScrTitleStart="\ek"
 export tcScrTitleEnd="\033\\"
 
-check_if_installed boxes
-check_if_installed figlet
+check_if_installed boxes BRAK OPTIONAL || true
+check_if_installed figlet BRAK OPTIONAL || true
 
 tty 2>&1 >/dev/null
 if (( $? == 0 )); then
   echo -ne "\033]0;$(script_version_title_prefix)${CALLER_SCRIPT_BASENAME}\007"
-  figlet -w 280 "${CALLER_SCRIPT_BASENAME}"
+  if type -fP figlet &>/dev/null; then
+    figlet -w 280 "${CALLER_SCRIPT_BASENAME}"
+  else
+    printf '%s\n' "${CALLER_SCRIPT_BASENAME}"
+  fi
 fi
 
 if [ -n "${STY:-}" ]; then    # checking if we are running within screen
@@ -226,7 +241,12 @@ export SCRIPT_VERSION_TMP=$(
   echo "script is run on $(hostname)" ; echo ; echo
 )
 
-export SCRIPT_VERSION=$(echo "${SCRIPT_VERSION_TMP}"  | boxes -s 50x3 -a c -d ada-box )
+if type -fP boxes &>/dev/null; then
+  SCRIPT_VERSION="$(printf '%s\n' "${SCRIPT_VERSION_TMP}" | boxes -s 50x3 -a c -d ada-box)"
+else
+  SCRIPT_VERSION="${SCRIPT_VERSION_TMP}"
+fi
+export SCRIPT_VERSION
 
 
 FORCE_NO_STARTUP_DELAY_var=0
