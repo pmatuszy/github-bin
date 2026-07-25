@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# v. 20260725.091524 - prefer PATH exiftool over stale bundled 12.41; read Mission 1 CreationDate via -s3
 # v. 20260724.225708 - Mission 1 timezone fix: prefer Creation Date; do not require a second device-label parse
 # v. 20260724.224207 - add -R/--recheck-renames canonical-name audit with scoped approval prompts
 # v. 20260724.223042 - apply embedded timezone offsets to Mission 1 Pro UTC capture timestamps
@@ -18,6 +19,7 @@
 # v. 20260721.132007 - Samsung timestamp media: preserve optional numeric sorting prefix when appending make/model
 # v. 20260721.112812 - GoPro camera labels: GoPro_Hero4_Silver style (not GOPRO4_SILVER)
 
+# 2026.07.25 - v. 19.282.091524 - PATH exiftool wins over bundled 12.41; Mission 1 local time uses -s3 CreationDate/CreateDate/TimeZone
 # 2026.07.24 - v. 19.281.225708 - Mission 1 Pro uses Creation Date (or Create Date+TZ); renamed files no longer need a second label parse
 # 2026.07.24 - v. 19.280.224207 - -R/--recheck-renames audits current naming rules and offers file/directory/run approvals
 # 2026.07.24 - v. 19.279.223042 - Mission 1 Pro raw and existing names convert UTC Create Date using embedded Time Zone
@@ -550,7 +552,7 @@ LARGE_HASHFILE_PROMPT_MIN_TOTAL_BYTES="${LARGE_HASHFILE_PROMPT_MIN_TOTAL_BYTES:-
 # Per-path state files for last successful full checksum-list verification (epoch + content digest). Default: ~/.local/state/rename.sh/checksum-verify/
 RENAME_CHECKSUM_VERIFY_STATE_DIR="${RENAME_CHECKSUM_VERIFY_STATE_DIR:-}"
 # exiftool for GoPro/Sony/Contour/LG camera raw filenames (GH010001.MP4, GOPR0123.JPG, GP010032.JPG).
-# Default when neither RENAME_EXIFTOOL nor EXIFLOC is set: bundled copy on luks-buffalo2; then exiftool on PATH.
+# Resolution order: EXIFLOC / explicit RENAME_EXIFTOOL, then PATH, then this bundled fallback.
 RENAME_EXIFTOOL_DEFAULT='/mnt/luks-buffalo2/worek/_video-JEDYNE_KOPIE/_katalog_roboczy/scripts/Image-ExifTool-12.41/exiftool'
 RENAME_EXIFTOOL="${RENAME_EXIFTOOL:-${EXIFLOC:-$RENAME_EXIFTOOL_DEFAULT}}"
 MAX_LINE_LENGTH="${MAX_LINE_LENGTH:-200}"
@@ -9558,20 +9560,37 @@ RENAME_EXIFTOOL_MISSING_WARNED=""
 # Per-run decision when exiftool is missing for GoPro/camera raw files: "" (ask) or "skip".
 GOPRO_EXIFTOOL_MISSING_ACTION=""
 
-# Resolve exiftool once: RENAME_EXIFTOOL (includes script default), then PATH. Prints path; exit 1 if unavailable.
+# Resolve exiftool once. Prints path; exit 1 if unavailable.
+# Order: explicit EXIFLOC / non-default RENAME_EXIFTOOL, then PATH (usually newer),
+# then the bundled Image-ExifTool-12.41 default (may miss Mission 1 CreationDate/TimeZone).
 resolve_rename_exiftool() {
     local cmd_path
     if [[ -n "$RENAME_EXIFTOOL_RESOLVED" ]]; then
         printf '%s' "$RENAME_EXIFTOOL_RESOLVED"
         return 0
     fi
-    if [[ -n "$RENAME_EXIFTOOL" && -x "$RENAME_EXIFTOOL" ]]; then
+    if [[ -n "${EXIFLOC:-}" && -x "$EXIFLOC" ]]; then
+        RENAME_EXIFTOOL_RESOLVED="$EXIFLOC"
+        printf '%s' "$RENAME_EXIFTOOL_RESOLVED"
+        return 0
+    fi
+    if [[ -n "$RENAME_EXIFTOOL" && "$RENAME_EXIFTOOL" != "$RENAME_EXIFTOOL_DEFAULT" && -x "$RENAME_EXIFTOOL" ]]; then
         RENAME_EXIFTOOL_RESOLVED="$RENAME_EXIFTOOL"
         printf '%s' "$RENAME_EXIFTOOL_RESOLVED"
         return 0
     fi
     if cmd_path="$(command -v exiftool 2>/dev/null)" && [[ -n "$cmd_path" && -x "$cmd_path" ]]; then
         RENAME_EXIFTOOL_RESOLVED="$cmd_path"
+        printf '%s' "$RENAME_EXIFTOOL_RESOLVED"
+        return 0
+    fi
+    if [[ -x "$RENAME_EXIFTOOL_DEFAULT" ]]; then
+        RENAME_EXIFTOOL_RESOLVED="$RENAME_EXIFTOOL_DEFAULT"
+        printf '%s' "$RENAME_EXIFTOOL_RESOLVED"
+        return 0
+    fi
+    if [[ -n "$RENAME_EXIFTOOL" && -x "$RENAME_EXIFTOOL" ]]; then
+        RENAME_EXIFTOOL_RESOLVED="$RENAME_EXIFTOOL"
         printf '%s' "$RENAME_EXIFTOOL_RESOLVED"
         return 0
     fi
@@ -9583,7 +9602,7 @@ warn_gopro_exiftool_missing_once() {
     [[ -z "$RENAME_EXIFTOOL_MISSING_WARNED" ]] || return 0
     RENAME_EXIFTOOL_MISSING_WARNED=1
     emit_wrap_labeled_stderr "GOPRO/CAMERA: " "${YELLOW}GOPRO/CAMERA:${RESET} " "Would rename GoPro/camera raw files (GH/GX/GOPR/GP…) using exiftool metadata, but exiftool was not found — those files are left unchanged."
-    emit_wrap_labeled_stderr "GOPRO/CAMERA: " "${YELLOW}GOPRO/CAMERA:${RESET} " "Tried, in order: ${RENAME_EXIFTOOL}, exiftool on PATH."
+    emit_wrap_labeled_stderr "GOPRO/CAMERA: " "${YELLOW}GOPRO/CAMERA:${RESET} " "Tried, in order: EXIFLOC/RENAME_EXIFTOOL override, exiftool on PATH, then ${RENAME_EXIFTOOL_DEFAULT}."
     emit_wrap_labeled_stderr "GOPRO/CAMERA: " "${YELLOW}GOPRO/CAMERA:${RESET} " "Install exiftool first, e.g. run as root: sudo bash video-pgm-install-exiftool.sh"
     emit_wrap_labeled_stderr "GOPRO/CAMERA: " "${YELLOW}GOPRO/CAMERA:${RESET} " "Override with RENAME_EXIFTOOL or EXIFLOC, e.g.: export RENAME_EXIFTOOL='/path/to/exiftool'"
     emit_wrap_labeled_stderr "GOPRO/CAMERA: " "${YELLOW}GOPRO/CAMERA:${RESET} " "Or run: EXIFLOC=/path/to/exiftool rename.sh --scope current"
@@ -9680,37 +9699,32 @@ gopro_exif_value_after_colon() {
     printf '%s' "$val"
 }
 
-# Mission 1 Pro: local wall-clock YYYYMMDD_HHMMSS for filenames.
-# Prefer QuickTime Creation Date (already local). Fall back to UTC Create Date + Time Zone
-# when older exiftool builds omit Creation Date or Time Zone alone is available.
-gopro_mission1_local_timestamp_from_exif() {
-    local exif="$1"
-    local create_line="" create_value="" timezone_line="" timezone_value=""
-    local utc_timestamp="" utc_epoch="" local_epoch=""
+# Trim leading/trailing whitespace from an exiftool value.
+gopro_trim_exif_value() {
+    local val="${1-}"
+    val="${val#"${val%%[![:space:]]*}"}"
+    val="${val%"${val##*[![:space:]]}"}"
+    printf '%s' "$val"
+}
+
+# Parse YYYY:MM:DD HH:MM:SS… into YYYYMMDD_HHMMSS (optional timezone suffix ignored).
+gopro_mission1_compact_timestamp_from_value() {
+    local value="$1"
+    value="$(gopro_trim_exif_value "$value")"
+    [[ "$value" =~ ^([0-9]{4}):([0-9]{2}):([0-9]{2})[[:space:]]+([0-9]{2}):([0-9]{2}):([0-9]{2}) ]] || return 1
+    printf '%s%s%s_%s%s%s' \
+        "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}" "${BASH_REMATCH[3]}" \
+        "${BASH_REMATCH[4]}" "${BASH_REMATCH[5]}" "${BASH_REMATCH[6]}"
+}
+
+# Apply ±HH:MM to a compact UTC YYYYMMDD_HHMMSS timestamp.
+gopro_mission1_apply_timezone_offset() {
+    local utc_timestamp="$1"
+    local timezone_value="$2"
     local sign="" offset_hours="" offset_minutes="" offset_seconds=0
+    local utc_epoch="" local_epoch=""
 
-    create_line="$(gopro_exif_first_line "$exif" '^Creation Date[[:space:]]+:')"
-    create_value="$(gopro_exif_value_after_colon "$create_line")"
-    create_value="${create_value#"${create_value%%[![:space:]]*}"}"
-    create_value="${create_value%"${create_value##*[![:space:]]}"}"
-    if [[ "$create_value" =~ ^([0-9]{4}):([0-9]{2}):([0-9]{2})[[:space:]]+([0-9]{2}):([0-9]{2}):([0-9]{2}) ]]; then
-        printf '%s%s%s_%s%s%s' \
-            "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}" "${BASH_REMATCH[3]}" \
-            "${BASH_REMATCH[4]}" "${BASH_REMATCH[5]}" "${BASH_REMATCH[6]}"
-        return 0
-    fi
-
-    create_line="$(gopro_exif_first_line "$exif" '^Create Date[[:space:]]+:')"
-    create_value="$(gopro_exif_value_after_colon "$create_line")"
-    create_value="${create_value#"${create_value%%[![:space:]]*}"}"
-    create_value="${create_value%"${create_value##*[![:space:]]}"}"
-    [[ "$create_value" =~ ^([0-9]{4}):([0-9]{2}):([0-9]{2})[[:space:]]+([0-9]{2}):([0-9]{2}):([0-9]{2}) ]] || return 1
-    utc_timestamp="${BASH_REMATCH[1]}${BASH_REMATCH[2]}${BASH_REMATCH[3]}_${BASH_REMATCH[4]}${BASH_REMATCH[5]}${BASH_REMATCH[6]}"
-
-    timezone_line="$(gopro_exif_first_line "$exif" '^Time Zone[[:space:]]+:')"
-    timezone_value="$(gopro_exif_value_after_colon "$timezone_line")"
-    timezone_value="${timezone_value#"${timezone_value%%[![:space:]]*}"}"
-    timezone_value="${timezone_value%"${timezone_value##*[![:space:]]}"}"
+    timezone_value="$(gopro_trim_exif_value "$timezone_value")"
     [[ "$timezone_value" =~ ^([+-])([0-9]{2}):([0-9]{2})$ ]] || return 1
     sign="${BASH_REMATCH[1]}"
     offset_hours="${BASH_REMATCH[2]}"
@@ -9721,8 +9735,61 @@ gopro_mission1_local_timestamp_from_exif() {
     offset_seconds=$((10#$offset_hours * 3600 + 10#$offset_minutes * 60))
     [[ "$sign" == "-" ]] && offset_seconds=$((-offset_seconds))
     local_epoch=$((utc_epoch + offset_seconds))
-
     TZ=UTC date -d "@${local_epoch}" +'%Y%m%d_%H%M%S' 2>/dev/null
+}
+
+# Read one exiftool tag value (-s3) for a file.
+gopro_exiftool_s3_tag() {
+    local exifloc="$1"
+    local file="$2"
+    local tag="$3"
+    local val=""
+    val="$("$exifloc" -api largefilesupport=1 -s3 -"$tag" "$file" 2>/dev/null | head -n1)" || true
+    gopro_trim_exif_value "$val"
+}
+
+# Mission 1 Pro: local wall-clock YYYYMMDD_HHMMSS from an already-captured exiftool dump.
+# Prefer QuickTime Creation Date (already local). Fall back to UTC Create Date + Time Zone.
+gopro_mission1_local_timestamp_from_exif() {
+    local exif="$1"
+    local create_line="" create_value="" timezone_line="" timezone_value="" utc_timestamp=""
+
+    create_line="$(gopro_exif_first_line "$exif" '^Creation Date[[:space:]]+:')"
+    create_value="$(gopro_exif_value_after_colon "$create_line")"
+    if utc_timestamp="$(gopro_mission1_compact_timestamp_from_value "$create_value")"; then
+        printf '%s' "$utc_timestamp"
+        return 0
+    fi
+
+    create_line="$(gopro_exif_first_line "$exif" '^Create Date[[:space:]]+:')"
+    create_value="$(gopro_exif_value_after_colon "$create_line")"
+    utc_timestamp="$(gopro_mission1_compact_timestamp_from_value "$create_value")" || return 1
+    timezone_line="$(gopro_exif_first_line "$exif" '^Time Zone[[:space:]]+:')"
+    timezone_value="$(gopro_exif_value_after_colon "$timezone_line")"
+    gopro_mission1_apply_timezone_offset "$utc_timestamp" "$timezone_value"
+}
+
+# Mission 1 Pro: local wall-clock YYYYMMDD_HHMMSS via targeted -s3 tag reads (avoids stale dump parsing).
+gopro_mission1_local_timestamp_from_file() {
+    local file="$1"
+    local exifloc="${2-}"
+    local creation="" create="" timezone="" utc_timestamp=""
+
+    if [[ -z "$exifloc" ]]; then
+        exifloc="$(resolve_rename_exiftool)" || return 1
+    fi
+    creation="$(gopro_exiftool_s3_tag "$exifloc" "$file" CreationDate)"
+    if utc_timestamp="$(gopro_mission1_compact_timestamp_from_value "$creation")"; then
+        printf '%s' "$utc_timestamp"
+        return 0
+    fi
+    create="$(gopro_exiftool_s3_tag "$exifloc" "$file" CreateDate)"
+    utc_timestamp="$(gopro_mission1_compact_timestamp_from_value "$create")" || return 1
+    timezone="$(gopro_exiftool_s3_tag "$exifloc" "$file" TimeZone)"
+    if [[ -z "$timezone" ]]; then
+        timezone="$(gopro_exiftool_s3_tag "$exifloc" "$file" Timezone)"
+    fi
+    gopro_mission1_apply_timezone_offset "$utc_timestamp" "$timezone"
 }
 
 # Firmware Version or Software prefix before the first dot (HD4, H21, …); empty when absent.
@@ -9976,18 +10043,23 @@ gopro_mission1_renamed_mp4_basename_matches() {
 transform_gopro_mission1_embedded_timezone_basename() {
     local file="$1"
     local base="$2"
-    local exifloc="" exif="" local_ts="" suffix=""
+    local exifloc="" local_ts="" suffix=""
 
     # Basename already identifies Mission 1 Pro; do not require a second device-label
     # parse (that path can fail on older exiftool/egrep setups and silently skip the fix).
     gopro_mission1_renamed_mp4_basename_matches "$base" || return 0
-    exifloc="$(resolve_rename_exiftool)" || return 0
-    exif="$("$exifloc" -api largefilesupport=1 "$file" 2>/dev/null)" || return 0
-    [[ -n "$exif" ]] || return 0
-    local_ts="$(gopro_mission1_local_timestamp_from_exif "$exif")" || return 0
+    exifloc="$(resolve_rename_exiftool)" || {
+        vlog "GoPro Mission 1 Pro timezone: exiftool not found for '$file'"
+        return 0
+    }
+    local_ts="$(gopro_mission1_local_timestamp_from_file "$file" "$exifloc")" || {
+        vlog "GoPro Mission 1 Pro timezone: no CreationDate/CreateDate+TimeZone for '$file' via '$exifloc'"
+        return 0
+    }
     [[ "$base" =~ ^[0-9]{8}_[0-9]{6}(.+)$ ]] || return 0
     suffix="${BASH_REMATCH[1]}"
     [[ "${base:0:15}" != "$local_ts" ]] || return 0
+    vlog "GoPro Mission 1 Pro timezone via '$exifloc': ${base:0:15} -> $local_ts"
     printf '%s%s' "$local_ts" "$suffix"
 }
 
