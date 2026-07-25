@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20260725.191229 - discover volume-only PAR2 sets when no index .par2 exists
 # v. 20260721.154223 - fix ARG_MAX: chunk par2 verify; filter rename pairs; pairs-file
 # v. 20260721.150446 - defer subtree scan to Step 3; progress msg; faster nested-set skip
 # v. 20260721.144524 - recursive data scan; detect dir+file renames for par2 metadata fix
@@ -11,6 +12,7 @@
 # v. 20260719.103506 - fix no-arg run: empty POSITIONAL[@]:- became one "" element
 # v. 20260719.102800 - multi-set selection: A/a, ranges 1-4, --all, multiple paths
 
+# 2026.07.25 - v. 0.1.27 - Discover PAR2 sets from volume files when index .par2 is missing
 # 2026.07.21 - v. 0.1.26 - Fix ARG_MAX on large trees: chunk verify; filter/dedupe rename pairs
 # 2026.07.21 - v. 0.1.25 - Defer data-file tree scan to Step 3; show progress on large trees
 # 2026.07.21 - v. 0.1.24 - Step 3 scans subdirs; fix PAR2 paths after dir/file renames
@@ -459,12 +461,18 @@ pgm_path_display_relative() {
     printf '%s' "$ap"
 }
 
+pgm_par2_set_key() {
+    local f="$1"
+    printf '%s|%s' "$(abs_path "$(dirname "$f")")" "$(par2_stem_from_par2_basename "$(basename "$f")")"
+}
+
 pgm_find_par2_indices_scoped() {
     local root="$1"
     local scope="$2"
     local -n _out=$3
     local f base
-    local -a find_args=()
+    local -a find_args=() all_par2=()
+    local -A queued_sets=()
 
     _out=()
     if [[ "$scope" == "current" ]]; then
@@ -476,9 +484,24 @@ pgm_find_par2_indices_scoped() {
     while IFS= read -r -d '' f; do
         [[ -f "$f" ]] || continue
         base="$(basename "$f")"
-        is_par2_index_file "$base" || continue
-        _out+=("$(abs_path "$f")")
+        is_par2_any_active_file "$base" || continue
+        all_par2+=("$(abs_path "$f")")
     done < <("${find_args[@]}" \( -iname '*.par2' \) -type f -print0 2>/dev/null)
+
+    for f in "${all_par2[@]}"; do
+        base="$(basename "$f")"
+        is_par2_index_file "$base" || continue
+        _out+=("$f")
+        queued_sets["$(pgm_par2_set_key "$f")"]=1
+    done
+
+    for f in "${all_par2[@]}"; do
+        base="$(basename "$f")"
+        is_par2_volume_file "$base" || continue
+        [[ -n "${queued_sets[$(pgm_par2_set_key "$f")]:-}" ]] && continue
+        queued_sets["$(pgm_par2_set_key "$f")"]=1
+        _out+=("$f")
+    done
 
     pgm_sort_path_array _out
 }
@@ -500,9 +523,9 @@ pgm_print_par2_discovery_summary() {
     n_dirs=${#dir_counts[@]}
 
     if [[ "$CHECK_SCOPE" == "subdirs" ]]; then
-        echo "Discovering PAR2 index files under $START_DIR (scope: subdirs; can take time on large trees)..."
+        echo "Discovering PAR2 sets under $START_DIR (scope: subdirs; can take time on large trees)..."
     else
-        echo "Discovering PAR2 index files in $START_DIR (scope: current directory only)..."
+        echo "Discovering PAR2 sets in $START_DIR (scope: current directory only)..."
     fi
 
     if (( n_sets == 1 )); then
@@ -581,7 +604,7 @@ pgm_discover_and_queue_par2_sets() {
     local -a indices=()
 
     pgm_find_par2_indices_scoped "$START_DIR" "$CHECK_SCOPE" indices
-    ((${#indices[@]} > 0)) || die "No PAR2 index files found under $START_DIR (scope: $CHECK_SCOPE)."
+    ((${#indices[@]} > 0)) || die "No PAR2 sets found under $START_DIR (scope: $CHECK_SCOPE)."
 
     pgm_print_par2_discovery_summary indices
 
@@ -1331,16 +1354,38 @@ pgm_find_nested_par2_roots() {
     local root="$1"
     local -n _out=$2
     local f base d_ap root_ap
+    local -a all_par2=()
+    local -A dir_index_stems=() nested_dirs=()
 
     _out=()
     root_ap="$(abs_path "$root")"
     while IFS= read -r -d '' f; do
         [[ -f "$f" ]] || continue
-        is_par2_index_file "$(basename "$f")" || continue
+        all_par2+=("$f")
+    done < <(find "$root_ap" \( -iname '*.par2' -o -iname '*.PAR2' \) -type f -print0 2>/dev/null)
+
+    for f in "${all_par2[@]}"; do
+        base="$(basename "$f")"
+        is_par2_index_file "$base" || continue
+        d_ap="$(abs_path "$(dirname "$f")")"
+        dir_index_stems["$(pgm_par2_set_key "$f")"]=1
+    done
+
+    for f in "${all_par2[@]}"; do
+        base="$(basename "$f")"
+        is_par2_any_active_file "$base" || continue
         d_ap="$(abs_path "$(dirname "$f")")"
         [[ "$d_ap" == "$root_ap" ]] && continue
-        _out+=("$d_ap")
-    done < <(find "$root_ap" \( -iname '*.par2' -o -iname '*.PAR2' \) -type f -print0 2>/dev/null)
+        if is_par2_index_file "$base"; then
+            nested_dirs["$d_ap"]=1
+        elif is_par2_volume_file "$base"; then
+            [[ -n "${dir_index_stems[$(pgm_par2_set_key "$f")]:-}" ]] && continue
+            nested_dirs["$d_ap"]=1
+        fi
+    done
+
+    _out=("${!nested_dirs[@]}")
+    pgm_sort_path_array _out
 }
 
 pgm_collect_data_files_for_scan() {
