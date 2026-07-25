@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# v. 20260725.100435 - Mission 1: use Offset Time as Time Zone fallback; GPS+zone is authoritative local time
 # v. 20260725.100002 - Mission 1 timezone audit for JPEG/JPG; avoid double-offset when Offset Time/GPS present
 # v. 20260725.093648 - pair media.ext with media.ext.xmp sidecars; rename orphans; prompt only when XMP refs exist
 # v. 20260725.091842 - align recheck OLD/CURRENT RULE RESULT paths to the same column
@@ -22,6 +23,7 @@
 # v. 20260721.132007 - Samsung timestamp media: preserve optional numeric sorting prefix when appending make/model
 # v. 20260721.112812 - GoPro camera labels: GoPro_Hero4_Silver style (not GOPRO4_SILVER)
 
+# 2026.07.25 - v. 19.286.100435 - Mission 1 local time: Offset Time fills missing Time Zone; GPS+zone wins over UTC Create Date
 # 2026.07.25 - v. 19.285.100002 - Mission 1 Pro JPEG/JPG timezone recheck; GPS/Offset Time prevent +02 double-shift on stills
 # 2026.07.25 - v. 19.284.093648 - media.ext.xmp sidecars rename with media; Mission1 UTC orphan XMPs; ref prompts only when present
 # 2026.07.25 - v. 19.283.091842 - recheck difference prompt pads OLD and CURRENT RULE RESULT so paths share one column
@@ -10104,8 +10106,8 @@ gopro_mission1_timestamps_near() {
 }
 
 # Pick Mission 1 local wall-clock timestamp from candidate EXIF values.
-# Stills often store Create Date already in local time (Offset Time present); MP4 Create Date is often UTC.
-# When GPS DateTime exists, prefer the candidate that matches GPS+TimeZone (avoids double-applying +02:00 on JPEGs).
+# GPS DateTime is UTC; with Time Zone / Offset Time it is the authoritative local wall-clock.
+# Stills often already store Create Date in local time (Offset Time present); MP4 Create Date is often UTC.
 gopro_mission1_resolve_local_timestamp() {
     local creation_value="$1"
     local create_value="$2"
@@ -10113,6 +10115,13 @@ gopro_mission1_resolve_local_timestamp() {
     local offset_value="$4"
     local gps_value="$5"
     local creation_ts="" create_ts="" gps_ts="" gps_local="" create_plus_tz=""
+
+    timezone_value="$(gopro_trim_exif_value "$timezone_value")"
+    offset_value="$(gopro_trim_exif_value "$offset_value")"
+    # MakerNotes "Time Zone" is sometimes missing from -s3; Offset Time is the same ±HH:MM.
+    if [[ -z "$timezone_value" && -n "$offset_value" ]]; then
+        timezone_value="$offset_value"
+    fi
 
     creation_ts="$(gopro_mission1_compact_timestamp_from_value "$creation_value" 2>/dev/null || true)"
     create_ts="$(gopro_mission1_compact_timestamp_from_value "$create_value" 2>/dev/null || true)"
@@ -10124,28 +10133,23 @@ gopro_mission1_resolve_local_timestamp() {
         create_plus_tz="$(gopro_mission1_apply_timezone_offset "$create_ts" "$timezone_value" 2>/dev/null || true)"
     fi
 
-    # EXIF Offset Time*: CreateDate is already local wall-clock — do not add Time Zone again.
-    if [[ -n "$offset_value" ]]; then
-        if [[ -n "$gps_local" ]]; then
-            if [[ -n "$creation_ts" ]] && gopro_mission1_timestamps_near "$creation_ts" "$gps_local"; then
-                printf '%s' "$creation_ts"
-                return 0
-            fi
-            if [[ -n "$create_ts" ]] && gopro_mission1_timestamps_near "$create_ts" "$gps_local"; then
-                printf '%s' "$create_ts"
-                return 0
-            fi
-            # Values look like UTC (match GPS UTC); convert with Time Zone.
-            if [[ -n "$create_ts" && -n "$gps_ts" ]] && gopro_mission1_timestamps_near "$create_ts" "$gps_ts" \
-                && [[ -n "$create_plus_tz" ]]; then
-                printf '%s' "$create_plus_tz"
-                return 0
-            fi
-            if [[ -n "$gps_local" ]]; then
-                printf '%s' "$gps_local"
-                return 0
-            fi
+    # GPS + zone is authoritative. Prefer Create/Creation Date only when they already match GPS local
+    # (avoids double-shifting stills whose Create Date is already local).
+    if [[ -n "$gps_local" ]]; then
+        if [[ -n "$creation_ts" ]] && gopro_mission1_timestamps_near "$creation_ts" "$gps_local"; then
+            printf '%s' "$creation_ts"
+            return 0
         fi
+        if [[ -n "$create_ts" ]] && gopro_mission1_timestamps_near "$create_ts" "$gps_local"; then
+            printf '%s' "$create_ts"
+            return 0
+        fi
+        printf '%s' "$gps_local"
+        return 0
+    fi
+
+    # No GPS: EXIF Offset Time means CreateDate is already local — do not add the offset again.
+    if [[ -n "$offset_value" ]]; then
         if [[ -n "$creation_ts" ]]; then
             printf '%s' "$creation_ts"
             return 0
@@ -10156,25 +10160,7 @@ gopro_mission1_resolve_local_timestamp() {
         fi
     fi
 
-    # GPS available: prefer the candidate nearest to GPS local wall-clock.
-    if [[ -n "$gps_local" ]]; then
-        if [[ -n "$creation_ts" ]] && gopro_mission1_timestamps_near "$creation_ts" "$gps_local"; then
-            printf '%s' "$creation_ts"
-            return 0
-        fi
-        if [[ -n "$create_ts" ]] && gopro_mission1_timestamps_near "$create_ts" "$gps_local"; then
-            printf '%s' "$create_ts"
-            return 0
-        fi
-        if [[ -n "$create_plus_tz" ]] && gopro_mission1_timestamps_near "$create_plus_tz" "$gps_local"; then
-            printf '%s' "$create_plus_tz"
-            return 0
-        fi
-        printf '%s' "$gps_local"
-        return 0
-    fi
-
-    # No GPS: QuickTime Creation Date is usually already local; else UTC Create Date + Time Zone.
+    # No GPS / no Offset Time: QuickTime Creation Date is usually local; else UTC Create Date + zone.
     if [[ -n "$creation_ts" ]]; then
         printf '%s' "$creation_ts"
         return 0
@@ -10204,12 +10190,16 @@ gopro_exiftool_s3_tag() {
 gopro_mission1_local_timestamp_from_exif() {
     local exif="$1"
     local creation_value="" create_value="" timezone_value="" offset_value="" gps_value=""
-    local line=""
+    local gps_date="" gps_time="" line=""
 
     line="$(gopro_exif_first_line "$exif" '^Creation Date[[:space:]]+:')"
     creation_value="$(gopro_exif_value_after_colon "$line")"
     line="$(gopro_exif_first_line "$exif" '^Create Date[[:space:]]+:')"
     create_value="$(gopro_exif_value_after_colon "$line")"
+    if [[ -z "$create_value" ]]; then
+        line="$(gopro_exif_first_line "$exif" '^Date/Time Original[[:space:]]+:')"
+        create_value="$(gopro_exif_value_after_colon "$line")"
+    fi
     line="$(gopro_exif_first_line "$exif" '^Time Zone[[:space:]]+:')"
     timezone_value="$(gopro_exif_value_after_colon "$line")"
     line="$(gopro_exif_first_line "$exif" '^Offset Time Original[[:space:]]+:')"
@@ -10218,11 +10208,24 @@ gopro_mission1_local_timestamp_from_exif() {
         line="$(gopro_exif_first_line "$exif" '^Offset Time[[:space:]]+:')"
         offset_value="$(gopro_exif_value_after_colon "$line")"
     fi
+    if [[ -z "$offset_value" ]]; then
+        line="$(gopro_exif_first_line "$exif" '^Offset Time Digitized[[:space:]]+:')"
+        offset_value="$(gopro_exif_value_after_colon "$line")"
+    fi
     line="$(gopro_exif_first_line "$exif" '^GPS Date/Time[[:space:]]+:')"
     gps_value="$(gopro_exif_value_after_colon "$line")"
     if [[ -z "$gps_value" ]]; then
         line="$(gopro_exif_first_line "$exif" '^GPS Date Time[[:space:]]+:')"
         gps_value="$(gopro_exif_value_after_colon "$line")"
+    fi
+    if [[ -z "$gps_value" ]]; then
+        line="$(gopro_exif_first_line "$exif" '^GPS Date Stamp[[:space:]]+:')"
+        gps_date="$(gopro_exif_value_after_colon "$line")"
+        line="$(gopro_exif_first_line "$exif" '^GPS Time Stamp[[:space:]]+:')"
+        gps_time="$(gopro_exif_value_after_colon "$line")"
+        if [[ -n "$gps_date" && -n "$gps_time" ]]; then
+            gps_value="${gps_date} ${gps_time}"
+        fi
     fi
     gopro_mission1_resolve_local_timestamp \
         "$creation_value" "$create_value" "$timezone_value" "$offset_value" "$gps_value"
@@ -10232,13 +10235,16 @@ gopro_mission1_local_timestamp_from_exif() {
 gopro_mission1_local_timestamp_from_file() {
     local file="$1"
     local exifloc="${2-}"
-    local creation="" create="" timezone="" offset="" gps=""
+    local creation="" create="" timezone="" offset="" gps="" gps_date="" gps_time=""
 
     if [[ -z "$exifloc" ]]; then
         exifloc="$(resolve_rename_exiftool)" || return 1
     fi
     creation="$(gopro_exiftool_s3_tag "$exifloc" "$file" CreationDate)"
     create="$(gopro_exiftool_s3_tag "$exifloc" "$file" CreateDate)"
+    if [[ -z "$create" ]]; then
+        create="$(gopro_exiftool_s3_tag "$exifloc" "$file" DateTimeOriginal)"
+    fi
     timezone="$(gopro_exiftool_s3_tag "$exifloc" "$file" TimeZone)"
     if [[ -z "$timezone" ]]; then
         timezone="$(gopro_exiftool_s3_tag "$exifloc" "$file" Timezone)"
@@ -10247,7 +10253,18 @@ gopro_mission1_local_timestamp_from_file() {
     if [[ -z "$offset" ]]; then
         offset="$(gopro_exiftool_s3_tag "$exifloc" "$file" OffsetTime)"
     fi
+    if [[ -z "$offset" ]]; then
+        offset="$(gopro_exiftool_s3_tag "$exifloc" "$file" OffsetTimeDigitized)"
+    fi
     gps="$(gopro_exiftool_s3_tag "$exifloc" "$file" GPSDateTime)"
+    if [[ -z "$gps" ]]; then
+        gps_date="$(gopro_exiftool_s3_tag "$exifloc" "$file" GPSDateStamp)"
+        gps_time="$(gopro_exiftool_s3_tag "$exifloc" "$file" GPSTimeStamp)"
+        if [[ -n "$gps_date" && -n "$gps_time" ]]; then
+            # GPSDateStamp is often YYYY:MM:DD; GPSTimeStamp HH:MM:SS — compose a parseable value.
+            gps="${gps_date} ${gps_time}"
+        fi
+    fi
     gopro_mission1_resolve_local_timestamp "$creation" "$create" "$timezone" "$offset" "$gps"
 }
 
@@ -10513,12 +10530,15 @@ transform_gopro_mission1_embedded_timezone_basename() {
         return 0
     }
     local_ts="$(gopro_mission1_local_timestamp_from_file "$file" "$exifloc")" || {
-        vlog "GoPro Mission 1 Pro timezone: no CreationDate/CreateDate+TimeZone for '$file' via '$exifloc'"
+        vlog "GoPro Mission 1 Pro timezone: no CreationDate/CreateDate+TimeZone/GPS for '$file' via '$exifloc'"
         return 0
     }
     [[ "$base" =~ ^[0-9]{8}_[0-9]{6}(.+)$ ]] || return 0
     suffix="${BASH_REMATCH[1]}"
-    [[ "${base:0:15}" != "$local_ts" ]] || return 0
+    if [[ "${base:0:15}" == "$local_ts" ]]; then
+        vlog "GoPro Mission 1 Pro timezone: '$base' already local ($local_ts) via '$exifloc'"
+        return 0
+    fi
     vlog "GoPro Mission 1 Pro timezone via '$exifloc': ${base:0:15} -> $local_ts"
     printf '%s%s' "$local_ts" "$suffix"
 }
