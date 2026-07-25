@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# v. 20260725.093648 - pair media.ext with media.ext.xmp sidecars; rename orphans; prompt only when XMP refs exist
 # v. 20260725.091842 - align recheck OLD/CURRENT RULE RESULT paths to the same column
 # v. 20260725.091524 - prefer PATH exiftool over stale bundled 12.41; read Mission 1 CreationDate via -s3
 # v. 20260724.225708 - Mission 1 timezone fix: prefer Creation Date; do not require a second device-label parse
@@ -20,6 +21,7 @@
 # v. 20260721.132007 - Samsung timestamp media: preserve optional numeric sorting prefix when appending make/model
 # v. 20260721.112812 - GoPro camera labels: GoPro_Hero4_Silver style (not GOPRO4_SILVER)
 
+# 2026.07.25 - v. 19.284.093648 - media.ext.xmp sidecars rename with media; Mission1 UTC orphan XMPs; ref prompts only when present
 # 2026.07.25 - v. 19.283.091842 - recheck difference prompt pads OLD and CURRENT RULE RESULT so paths share one column
 # 2026.07.25 - v. 19.282.091524 - PATH exiftool wins over bundled 12.41; Mission 1 local time uses -s3 CreationDate/CreateDate/TimeZone
 # 2026.07.24 - v. 19.281.225708 - Mission 1 Pro uses Creation Date (or Create Date+TZ); renamed files no longer need a second label parse
@@ -541,6 +543,11 @@
 # 2026.03.27 - v. 1.3 - fixed top-level path handling: keep ./ prefix in transform_name()
 # 2026.03.27 - v. 1.2 - added many changes about media files
 # 2026.04.15 - v. 17.3 - escape control characters in logged paths and warn explicitly about filenames containing them
+#
+# rename.sh
+#
+# Interactive media/checksum renamer: NEF+XMP, media.ext.xmp, Sony clip XML pairs, GoPro/Mission1 rules, DB cache.
+#
 # SCRIPT_VERSION: first line matching ^# v. YYYYMMDD.HHMMSS - (same scheme as _script_header.sh / operational scripts).
 SCRIPT_VERSION="$(
     LC_ALL=C grep -m1 -E '^# v\. [0-9]{8}\.[0-9]{6} - ' "$0" \
@@ -6938,6 +6945,323 @@ nef_xmp_should_attach_buddy() {
     nef_xmp_pairing_allowed "$f" "$other"
 }
 
+# Full-basename media sidecar: media.ext + media.ext.xmp (digiKam / ExifTool), not Lightroom stem.xmp.
+media_xmp_is_sidecar_path() {
+    local f="$1" base media_base
+    [[ -f "$f" ]] || return 1
+    base="$(basename -- "$f")"
+    [[ "$base" =~ ^(.+)[.][xX][mM][pP]$ ]] || return 1
+    media_base="${BASH_REMATCH[1]}"
+    [[ "$media_base" == *.* ]] || return 1
+    [[ "${media_base,,}" == *.xmp ]] && return 1
+    is_media_file "$media_base" || return 1
+    # NEF Lightroom pairs use stem.xmp (not stem.nef.xmp); exclude same-stem .nef buddy style.
+    [[ "${media_base,,}" == *.nef ]] && return 1
+    return 0
+}
+
+media_xmp_embedded_media_path() {
+    local f="$1" dir base media_base
+    media_xmp_is_sidecar_path "$f" || return 1
+    dir="$(dirname -- "$f")"
+    base="$(basename -- "$f")"
+    [[ "$base" =~ ^(.+)[.][xX][mM][pP]$ ]] || return 1
+    media_base="${BASH_REMATCH[1]}"
+    if [[ "$dir" == "." ]]; then
+        if [[ "$f" == ./* ]]; then
+            printf './%s' "$media_base"
+        else
+            printf '%s' "$media_base"
+        fi
+    else
+        printf '%s/%s' "$dir" "$media_base"
+    fi
+}
+
+media_xmp_sidecar_path() {
+    local media="$1" p
+    [[ -f "$media" ]] || return 1
+    [[ "${media,,}" == *.xmp ]] && return 1
+    is_media_file "$media" || return 1
+    for p in "${media}.xmp" "${media}.XMP"; do
+        [[ -f "$p" ]] || continue
+        printf '%s' "$p"
+        return 0
+    done
+    return 1
+}
+
+media_xmp_sidecar_ext_for_buddy() {
+    local buddy="$1"
+    if [[ "$buddy" == *.XMP ]]; then
+        printf '%s' '.XMP'
+    else
+        printf '%s' '.xmp'
+    fi
+}
+
+media_xmp_new_path_for_media_new() {
+    local media_new="$1" buddy_old="$2"
+    printf '%s%s' "$media_new" "$(media_xmp_sidecar_ext_for_buddy "$buddy_old")"
+}
+
+# Compact CreateDate (UTC) from media file for Mission 1 orphan sidecar lookup.
+media_xmp_utc_timestamp_from_media_file() {
+    local file="$1"
+    local exifloc create compact
+    exifloc="$(resolve_rename_exiftool)" || return 1
+    create="$(gopro_exiftool_s3_tag "$exifloc" "$file" CreateDate)"
+    compact="$(gopro_mission1_compact_timestamp_from_value "$create")" || return 1
+    printf '%s' "$compact"
+}
+
+# When media is already at local Mission 1 time, find leftover UTC-named media.ext.xmp.
+media_xmp_find_orphan_sidecar_for_media() {
+    local media="$1"
+    local base dir suffix local_ts utc_ts orphan
+    [[ -f "$media" ]] || return 1
+    base="$(basename -- "$media")"
+    dir="$(dirname -- "$media")"
+    gopro_mission1_renamed_mp4_basename_matches "$base" || return 1
+    local_ts="$(gopro_mission1_local_timestamp_from_file "$media")" || return 1
+    [[ "${base:0:15}" == "$local_ts" ]] || return 1
+    utc_ts="$(media_xmp_utc_timestamp_from_media_file "$media")" || return 1
+    [[ "$utc_ts" != "$local_ts" ]] || return 1
+    [[ "$base" =~ ^[0-9]{8}_[0-9]{6}(.+)$ ]] || return 1
+    suffix="${BASH_REMATCH[1]}"
+    if [[ "$dir" == "." ]]; then
+        orphan="./${utc_ts}${suffix}.xmp"
+        [[ -f "$orphan" ]] || orphan="./${utc_ts}${suffix}.XMP"
+        [[ -f "$orphan" ]] || orphan="${utc_ts}${suffix}.xmp"
+        [[ -f "$orphan" ]] || orphan="${utc_ts}${suffix}.XMP"
+    else
+        orphan="${dir}/${utc_ts}${suffix}.xmp"
+        [[ -f "$orphan" ]] || orphan="${dir}/${utc_ts}${suffix}.XMP"
+    fi
+    [[ -f "$orphan" ]] || return 1
+    printf '%s' "$orphan"
+    return 0
+}
+
+# Orphan sidecar visit: find media whose CreateDate UTC matches this sidecar's timestamp prefix.
+media_xmp_find_media_for_orphan_sidecar() {
+    local sidecar="$1"
+    local emb emb_base emb_ts suffix dir cand cand_base utc_ts local_ts
+    emb="$(media_xmp_embedded_media_path "$sidecar")" || return 1
+    [[ -f "$emb" ]] && return 1
+    emb_base="$(basename -- "$emb")"
+    dir="$(dirname -- "$sidecar")"
+    gopro_mission1_renamed_mp4_basename_matches "$emb_base" || return 1
+    [[ "$emb_base" =~ ^([0-9]{8}_[0-9]{6})(.+)$ ]] || return 1
+    emb_ts="${BASH_REMATCH[1]}"
+    suffix="${BASH_REMATCH[2]}"
+    shopt -s nullglob
+    local -a cands=()
+    if [[ "$dir" == "." ]]; then
+        cands=( ./*"$suffix" ./"$suffix" )
+    else
+        cands=( "$dir"/*"$suffix" )
+    fi
+    shopt -u nullglob
+    for cand in "${cands[@]}"; do
+        [[ -f "$cand" ]] || continue
+        [[ "${cand,,}" == *.xmp ]] && continue
+        cand_base="$(basename -- "$cand")"
+        gopro_mission1_renamed_mp4_basename_matches "$cand_base" || continue
+        utc_ts="$(media_xmp_utc_timestamp_from_media_file "$cand")" || continue
+        [[ "$utc_ts" == "$emb_ts" ]] || continue
+        local_ts="$(gopro_mission1_local_timestamp_from_file "$cand")" || continue
+        [[ "${cand_base:0:15}" == "$local_ts" ]] || continue
+        printf '%s' "$cand"
+        return 0
+    done
+    return 1
+}
+
+media_xmp_pair_other_path() {
+    local f="$1" other=""
+    [[ -f "$f" ]] || return 1
+    if media_xmp_is_sidecar_path "$f"; then
+        other="$(media_xmp_embedded_media_path "$f")" || return 1
+        [[ -f "$other" ]] || return 1
+        printf '%s' "$other"
+        return 0
+    fi
+    [[ "${f,,}" == *.xmp ]] && return 1
+    is_media_file "$f" || return 1
+    if other="$(media_xmp_sidecar_path "$f")"; then
+        printf '%s' "$other"
+        return 0
+    fi
+    media_xmp_find_orphan_sidecar_for_media "$f"
+}
+
+media_xmp_should_defer_sidecar() {
+    local f="$1" other="$2"
+    media_xmp_is_sidecar_path "$f" || return 1
+    [[ -f "$other" ]] || return 1
+    nef_xmp_pairing_allowed "$f" "$other"
+}
+
+media_xmp_should_attach_buddy() {
+    local f="$1" other="$2"
+    [[ -f "$f" && -f "$other" ]] || return 1
+    media_xmp_is_sidecar_path "$other" || return 1
+    [[ "${f,,}" == *.xmp ]] && return 1
+    is_media_file "$f" || return 1
+    nef_xmp_pairing_allowed "$f" "$other"
+}
+
+# Replace old media basename string inside sidecar when present (non-RawFileName refs).
+media_xmp_sidecar_contains_literal() {
+    local xmp="$1" needle="$2"
+    [[ -f "$xmp" && -n "$needle" ]] || return 1
+    grep -Fq -- "$needle" "$xmp" 2>/dev/null
+}
+
+media_xmp_replace_literal_preserving_times() {
+    local xmp="$1" old_bn="$2" new_bn="$3"
+    local mt at
+    [[ -f "$xmp" && -n "$old_bn" && -n "$new_bn" && "$old_bn" != "$new_bn" ]] || return 1
+    media_xmp_sidecar_contains_literal "$xmp" "$old_bn" || return 1
+    mt="$(stat -c %Y -- "$xmp" 2>/dev/null || true)"
+    at="$(stat -c %X -- "$xmp" 2>/dev/null || true)"
+    if ! python3 - "$xmp" "$old_bn" "$new_bn" <<'PY'
+import pathlib, sys
+path = pathlib.Path(sys.argv[1])
+old, new = sys.argv[2], sys.argv[3]
+data = path.read_bytes()
+ob, nb = old.encode("utf-8"), new.encode("utf-8")
+if ob not in data:
+    sys.exit(1)
+path.write_bytes(data.replace(ob, nb))
+PY
+    then
+        return 1
+    fi
+    if [[ -n "$mt" && -n "$at" ]]; then
+        touch -d "@${mt}" -- "$xmp" 2>/dev/null || true
+        touch -a -d "@${at}" -- "$xmp" 2>/dev/null || true
+    fi
+    return 0
+}
+
+# After media+sidecar rename: update RawFileName and/or literal old basename when present.
+media_xmp_run_sidecar_reference_checks() {
+    local media_path="$1" xmp_path="$2" old_media_path="${3-}"
+    local want cur old_bn xdir ans
+    [[ -f "$media_path" && -f "$xmp_path" ]] || return 0
+    [[ "${xmp_path,,}" == *.xmp ]] || return 0
+
+    want="$(basename -- "$media_path")"
+    old_bn=""
+    [[ -n "$old_media_path" ]] && old_bn="$(basename -- "$old_media_path")"
+
+    if nef_xmp_sidecar_has_raw_file_name_markup "$xmp_path"; then
+        cur="$(nef_xmp_extract_raw_file_name_value "$xmp_path")"
+        if [[ "${cur,,}" != "${want,,}" ]]; then
+            if [[ "$mode" == "dry-run" ]]; then
+                emit_wrap_labeled_stdout "NOTE: " "${YELLOW}NOTE:${RESET} " "Would update XMP RawFileName from '${cur:-<empty>}' to '${want}' for '$xmp_path'."
+            else
+                xdir="$(nef_xmp_canonical_dir_for_pair "$xmp_path")"
+                if [[ -n "$MEDIA_XMP_REF_AUTO_DIR" && -n "$xdir" && "$xdir" == "$MEDIA_XMP_REF_AUTO_DIR" ]]; then
+                    if nef_xmp_replace_raw_file_name_preserving_times "$xmp_path" "$want"; then
+                        emit_wrap_labeled_stdout "OK: " "${GREEN}OK:${RESET} " "Updated RawFileName in '$xmp_path' (directory batch)."
+                    fi
+                else
+                    echo
+                    echo "XMP sidecar media reference check: '$xmp_path'"
+                    echo "  RawFileName inside XMP: '${cur:-<empty>}' -> '${want}' (paired media basename)."
+                    while true; do
+                        echo "  Keys:"
+                        echo "    [Y] Yes / Enter - patch this .xmp only (default)"
+                        echo "    [d] Yes + auto-patch remaining media-XMP refs in this directory"
+                        echo "    [n] No"
+                        print_prompt_view_directory_menu_line
+                        echo "    [q] Quit run"
+                        printf '%s' "$(user_prompt_ts_prefix)Update RawFileName in this .xmp? [Y/n/d/v/q]: "
+                        flush_stdin
+                        read_single_key ans "$PROMPT_WAIT_SECONDS"
+                        echo
+                        if handle_prompt_directory_listing_choice "$ans" "$xmp_path" "$media_path"; then
+                            continue
+                        fi
+                        case "$ans" in
+                            q|Q) stopped_by_user=yes; return 2 ;;
+                            n|N) break ;;
+                            d|D)
+                                MEDIA_XMP_REF_AUTO_DIR="$xdir"
+                                nef_xmp_replace_raw_file_name_preserving_times "$xmp_path" "$want" || true
+                                break
+                                ;;
+                            *)
+                                nef_xmp_replace_raw_file_name_preserving_times "$xmp_path" "$want" || true
+                                break
+                                ;;
+                        esac
+                    done
+                fi
+            fi
+        fi
+        return 0
+    fi
+
+    [[ -n "$old_bn" && "$old_bn" != "$want" ]] || return 0
+    media_xmp_sidecar_contains_literal "$xmp_path" "$old_bn" || return 0
+
+    if [[ "$mode" == "dry-run" ]]; then
+        emit_wrap_labeled_stdout "NOTE: " "${YELLOW}NOTE:${RESET} " "Would replace media basename '${old_bn}' with '${want}' inside '$xmp_path'."
+        return 0
+    fi
+    xdir="$(nef_xmp_canonical_dir_for_pair "$xmp_path")"
+    if [[ -n "$MEDIA_XMP_REF_AUTO_DIR" && -n "$xdir" && "$xdir" == "$MEDIA_XMP_REF_AUTO_DIR" ]]; then
+        if media_xmp_replace_literal_preserving_times "$xmp_path" "$old_bn" "$want"; then
+            emit_wrap_labeled_stdout "OK: " "${GREEN}OK:${RESET} " "Updated media basename reference in '$xmp_path' (directory batch)."
+        fi
+        return 0
+    fi
+    echo
+    echo "XMP sidecar media reference check: '$xmp_path'"
+    echo "  Literal media basename inside XMP: '${old_bn}' -> '${want}'."
+    while true; do
+        echo "  Keys:"
+        echo "    [Y] Yes / Enter - patch this .xmp only (default)"
+        echo "    [d] Yes + auto-patch remaining media-XMP refs in this directory"
+        echo "    [n] No"
+        print_prompt_view_directory_menu_line
+        echo "    [q] Quit run"
+        printf '%s' "$(user_prompt_ts_prefix)Update media basename inside this .xmp? [Y/n/d/v/q]: "
+        flush_stdin
+        read_single_key ans "$PROMPT_WAIT_SECONDS"
+        echo
+        if handle_prompt_directory_listing_choice "$ans" "$xmp_path" "$media_path"; then
+            continue
+        fi
+        case "$ans" in
+            q|Q) stopped_by_user=yes; return 2 ;;
+            n|N) return 0 ;;
+            d|D)
+                MEDIA_XMP_REF_AUTO_DIR="$xdir"
+                media_xmp_replace_literal_preserving_times "$xmp_path" "$old_bn" "$want" || true
+                return 0
+                ;;
+            *)
+                media_xmp_replace_literal_preserving_times "$xmp_path" "$old_bn" "$want" || true
+                return 0
+                ;;
+        esac
+    done
+}
+
+perform_media_xmp_pair_plain_renames() {
+    local primary_old="$1" primary_new="$2" buddy_old="$3" buddy_new="$4"
+    perform_plain_entry_rename "$primary_old" "$primary_new" || return 1
+    perform_plain_entry_rename "$buddy_old" "$buddy_new" || return 1
+    media_xmp_run_sidecar_reference_checks "$primary_new" "$buddy_new" "$primary_old" || return $?
+    processed["$buddy_old"]=1
+    return 0
+}
+
 perform_nef_xmp_pair_plain_renames() {
     local primary_old="$1" primary_new="$2" buddy_old="$3" buddy_new="$4"
     perform_plain_entry_rename "$primary_old" "$primary_new" || return 1
@@ -7380,6 +7704,10 @@ nef_xmp_verify_sidecar_raw_file_name_interactive() {
 nef_xmp_pair_run_sidecar_metadata_checks() {
     [[ -n "$nef_xmp_buddy" ]] || return 0
     [[ "$RENAME_SIDECAR_KIND" == sony_clip ]] && return 0
+    if [[ "$RENAME_SIDECAR_KIND" == media_xmp ]]; then
+        media_xmp_run_sidecar_reference_checks "$1" "$2" "$f" || return $?
+        return 0
+    fi
     nef_xmp_pair_set_final_paths_from_primary_and_buddy_new "$1" "$2" || return 0
     nef_xmp_verify_sidecar_raw_file_name_interactive "$NEF_XMP_FINAL_NEF" "$NEF_XMP_FINAL_XMP" || return $?
 }
@@ -7391,13 +7719,28 @@ perform_plain_or_nef_xmp_pair() {
         print_rename_action_verbose "$f" "$new" "${reason} (Sony clip pair)"
         print_rename_action_verbose "$nef_xmp_buddy" "$nef_xmp_new" "${reason} (Sony clip pair)"
         perform_sony_clip_pair_plain_renames "$f" "$new" "$nef_xmp_buddy" "$nef_xmp_new" || return $?
+    elif [[ "$RENAME_SIDECAR_KIND" == media_xmp && -n "$nef_xmp_buddy" ]]; then
+        print_rename_action_verbose "$f" "$new" "${reason} (media+XMP pair)"
+        print_rename_action_verbose "$nef_xmp_buddy" "$nef_xmp_new" "${reason} (media+XMP pair)"
+        perform_media_xmp_pair_plain_renames "$f" "$new" "$nef_xmp_buddy" "$nef_xmp_new" || return $?
     elif [[ -n "$nef_xmp_buddy" ]]; then
         print_rename_action_verbose "$f" "$new" "${reason} (NEF+XMP pair)"
         print_rename_action_verbose "$nef_xmp_buddy" "$nef_xmp_new" "${reason} (NEF+XMP pair)"
         perform_nef_xmp_pair_plain_renames "$f" "$new" "$nef_xmp_buddy" "$nef_xmp_new" || return $?
     else
+        local _plain_old="$f" _plain_old_media="" _plain_new_media=""
+        if media_xmp_is_sidecar_path "$f"; then
+            _plain_old_media="$(media_xmp_embedded_media_path "$f" || true)"
+        fi
         print_rename_action_verbose "$f" "$new" "$reason"
-        perform_plain_entry_rename "$f" "$new"
+        perform_plain_entry_rename "$f" "$new" || return $?
+        # Orphan media.ext.xmp renamed alone to match an already-corrected media file.
+        if [[ -n "$_plain_old_media" ]] && media_xmp_is_sidecar_path "$new"; then
+            _plain_new_media="$(media_xmp_embedded_media_path "$new" || true)"
+            if [[ -n "$_plain_new_media" && -f "$_plain_new_media" ]]; then
+                media_xmp_run_sidecar_reference_checks "$_plain_new_media" "$new" "$_plain_old_media" || return $?
+            fi
+        fi
     fi
 }
 
@@ -13624,6 +13967,8 @@ AUTO_COLLISION_OTHER_DIR=""
 AUTO_COLLISION_OVERWRITE_DIR=""
 # When set to realpath of a directory: RawFileName mismatch prompts auto-apply without asking for every paired XMP in that dir.
 NEF_XMP_RAWFIX_AUTO_DIR=""
+# When set to realpath of a directory: media.ext.xmp reference prompts auto-apply for remaining pairs in that dir.
+MEDIA_XMP_REF_AUTO_DIR=""
 AUTO_LOWERCASE_3_EXT_SESSION=no # [L] session: any extension case-only lowercasing (name kept for compatibility)
 AUTO_LOWERCASE_MEDIA_OFFICE_EXT_SESSION=no # [U] session: only media + MS Office extension case-only lowercasing
 AUTO_GOPRO_STRIP_PART_DIR="" # GoPro lone _part_XX prompt [D]: auto-strip for rest of run in this directory
@@ -14566,11 +14911,18 @@ handle_recheck_rename_difference() {
                     return 0
                 fi
                 if [[ -n "$nef_xmp_buddy" ]]; then
-                    perform_plain_entry_rename "$f" "$custom_new" || return 1
-                    perform_plain_entry_rename "$nef_xmp_buddy" "$nef_xmp_new" || return 1
-                    if nef_xmp_pair_set_final_paths_from_primary_and_buddy_new "$custom_new" "$nef_xmp_new"; then
-                        nef_xmp_sync_sidecar_raw_file_name_to_nef "$NEF_XMP_FINAL_NEF" "$NEF_XMP_FINAL_XMP" || true
-                        nef_xmp_verify_sidecar_raw_file_name_interactive "$NEF_XMP_FINAL_NEF" "$NEF_XMP_FINAL_XMP" || return $?
+                    if [[ "$RENAME_SIDECAR_KIND" == media_xmp ]]; then
+                        nef_xmp_new="$(media_xmp_new_path_for_media_new "$custom_new" "$nef_xmp_buddy")"
+                        perform_media_xmp_pair_plain_renames "$f" "$custom_new" "$nef_xmp_buddy" "$nef_xmp_new" || return 1
+                    elif [[ "$RENAME_SIDECAR_KIND" == sony_clip ]]; then
+                        perform_sony_clip_pair_plain_renames "$f" "$custom_new" "$nef_xmp_buddy" "$nef_xmp_new" || return 1
+                    else
+                        perform_plain_entry_rename "$f" "$custom_new" || return 1
+                        perform_plain_entry_rename "$nef_xmp_buddy" "$nef_xmp_new" || return 1
+                        if nef_xmp_pair_set_final_paths_from_primary_and_buddy_new "$custom_new" "$nef_xmp_new"; then
+                            nef_xmp_sync_sidecar_raw_file_name_to_nef "$NEF_XMP_FINAL_NEF" "$NEF_XMP_FINAL_XMP" || true
+                            nef_xmp_verify_sidecar_raw_file_name_interactive "$NEF_XMP_FINAL_NEF" "$NEF_XMP_FINAL_XMP" || return $?
+                        fi
                     fi
                 else
                     perform_plain_entry_rename "$f" "$custom_new" || return 1
@@ -15817,6 +16169,26 @@ for f in "${ordered_paths[@]}"; do
             fi
         fi
         if [[ -z "$nef_xmp_buddy" ]]; then
+            _mx_other=""
+            if _mx_other="$(media_xmp_pair_other_path "$f")"; then
+                if media_xmp_should_defer_sidecar "$f" "$_mx_other"; then
+                    vlog "Deferring media XMP sidecar '$f' until media+XMP pair with '$_mx_other'"
+                    continue
+                fi
+                if media_xmp_should_attach_buddy "$f" "$_mx_other"; then
+                    nef_xmp_buddy="$_mx_other"
+                    RENAME_SIDECAR_KIND=media_xmp
+                fi
+            elif media_xmp_is_sidecar_path "$f"; then
+                # Orphan *.ext.xmp (media already renamed): map to corrected media via Mission 1 CreateDate.
+                _mx_orphan_media=""
+                if _mx_orphan_media="$(media_xmp_find_media_for_orphan_sidecar "$f")"; then
+                    precomputed_new="$(media_xmp_new_path_for_media_new "$_mx_orphan_media" "$f")"
+                    vlog "Orphan media XMP '$f' maps to media '$_mx_orphan_media' -> '$precomputed_new'"
+                fi
+            fi
+        fi
+        if [[ -z "$nef_xmp_buddy" ]]; then
             _sc_other=""
             if _sc_other="$(sony_clip_pair_other_path "$f")"; then
                 if sony_clip_should_defer_xml "$f" "$_sc_other"; then
@@ -15881,19 +16253,24 @@ for f in "${ordered_paths[@]}"; do
 
     nef_xmp_new=""
     if [[ -n "$nef_xmp_buddy" ]]; then
-        _rename_cap_save_e=0
-        [[ $- == *e* ]] && _rename_cap_save_e=1
-        set +e
-        nef_xmp_new="$(transform_name "$nef_xmp_buddy")"
-        tnb=$?
-        nef_xmp_new="$(collapse_stacked_other_suffix_in_path "$nef_xmp_new")"
-        if ((_rename_cap_save_e)); then
-            set -e
+        if [[ "$RENAME_SIDECAR_KIND" == media_xmp ]]; then
+            # Keep sidecar glued to the media target name (do not transform .xmp independently).
+            nef_xmp_new="$(media_xmp_new_path_for_media_new "$new" "$nef_xmp_buddy")"
         else
+            _rename_cap_save_e=0
+            [[ $- == *e* ]] && _rename_cap_save_e=1
             set +e
-        fi
-        if (( tnb == 2 )); then
-            break
+            nef_xmp_new="$(transform_name "$nef_xmp_buddy")"
+            tnb=$?
+            nef_xmp_new="$(collapse_stacked_other_suffix_in_path "$nef_xmp_new")"
+            if ((_rename_cap_save_e)); then
+                set -e
+            else
+                set +e
+            fi
+            if (( tnb == 2 )); then
+                break
+            fi
         fi
     fi
 
@@ -16154,6 +16531,8 @@ for f in "${ordered_paths[@]}"; do
     echo
     if [[ "$RENAME_SIDECAR_KIND" == sony_clip && -n "$nef_xmp_buddy" ]]; then
         echo -e "${CYAN}Sony clip pair (C####.MP4 + C####M01.XML; both renamed together):${RESET}"
+    elif [[ "$RENAME_SIDECAR_KIND" == media_xmp && -n "$nef_xmp_buddy" ]]; then
+        echo -e "${CYAN}Media+XMP pair (media.ext + media.ext.xmp; both renamed together):${RESET}"
     elif [[ -n "$nef_xmp_buddy" ]]; then
         echo -e "${CYAN}NEF+XMP pair (same stem; both renamed together):${RESET}"
     fi
@@ -16170,6 +16549,23 @@ for f in "${ordered_paths[@]}"; do
             emit_wrap_nef_xmp_pair_label_stdout "NEW (XML): " green "$nef_xmp_new" "$NEF_XMP_PAIR_LABEL_WIDTH"
             echo
             echo -e "${CYAN}Sony NonRealTimeMeta XML is renamed with the clip; CreationDate local wall-clock is used for both names.${RESET}"
+        elif [[ "$RENAME_SIDECAR_KIND" == media_xmp ]]; then
+            emit_wrap_nef_xmp_pair_label_stdout "OLD (sidecar): " yellow "$nef_xmp_buddy" "$NEF_XMP_PAIR_LABEL_WIDTH"
+            emit_wrap_nef_xmp_pair_label_stdout "NEW (sidecar): " green "$nef_xmp_new" "$NEF_XMP_PAIR_LABEL_WIDTH"
+            echo
+            echo -e "${CYAN}Sidecar XMP metadata (after you confirm):${RESET}"
+            if [[ "$mode" == "dry-run" ]]; then
+                printf '%s\n' \
+                    '[Dry-run] A Yes-style answer only simulates the two renames on disk.' \
+                    'If the sidecar contains RawFileName or the old media basename, the script would describe updating that reference.' \
+                    'digiKam-tag-only sidecars with no media filename reference are left unchanged. No files are modified in dry-run.'
+            else
+                printf '%s\n' \
+                    'After a Yes-style answer, both paths are renamed on disk.' \
+                    'A follow-up prompt appears only if the sidecar contains RawFileName or the old media basename as text.' \
+                    'digiKam-tag-only sidecars with no media filename reference are left unchanged (no prompt).' \
+                    "When a reference is patched, the XMP file's timestamps are preserved."
+            fi
         else
             emit_wrap_nef_xmp_pair_label_stdout "OLD (sidecar): " yellow "$nef_xmp_buddy" "$NEF_XMP_PAIR_LABEL_WIDTH"
             emit_wrap_nef_xmp_pair_label_stdout "NEW (sidecar): " green "$nef_xmp_new" "$NEF_XMP_PAIR_LABEL_WIDTH"
@@ -16242,13 +16638,24 @@ for f in "${ordered_paths[@]}"; do
                 ((++files_skipped))
             else
                 if [[ -n "$nef_xmp_buddy" ]]; then
-                    print_rename_action_verbose "$f" "$custom_new" "manual edit (NEF+XMP pair)"
-                    print_rename_action_verbose "$nef_xmp_buddy" "$nef_xmp_new" "manual edit (NEF+XMP pair; sidecar keeps script suggestion)"
-                    perform_plain_entry_rename "$f" "$custom_new" || break
-                    perform_plain_entry_rename "$nef_xmp_buddy" "$nef_xmp_new" || break
-                    if nef_xmp_pair_set_final_paths_from_primary_and_buddy_new "$custom_new" "$nef_xmp_new"; then
-                        nef_xmp_sync_sidecar_raw_file_name_to_nef "$NEF_XMP_FINAL_NEF" "$NEF_XMP_FINAL_XMP" || true
-                        nef_xmp_verify_sidecar_raw_file_name_interactive "$NEF_XMP_FINAL_NEF" "$NEF_XMP_FINAL_XMP" || break
+                    if [[ "$RENAME_SIDECAR_KIND" == media_xmp ]]; then
+                        nef_xmp_new="$(media_xmp_new_path_for_media_new "$custom_new" "$nef_xmp_buddy")"
+                        print_rename_action_verbose "$f" "$custom_new" "manual edit (media+XMP pair)"
+                        print_rename_action_verbose "$nef_xmp_buddy" "$nef_xmp_new" "manual edit (media+XMP pair; sidecar follows media)"
+                        perform_media_xmp_pair_plain_renames "$f" "$custom_new" "$nef_xmp_buddy" "$nef_xmp_new" || break
+                    elif [[ "$RENAME_SIDECAR_KIND" == sony_clip ]]; then
+                        print_rename_action_verbose "$f" "$custom_new" "manual edit (Sony clip pair)"
+                        print_rename_action_verbose "$nef_xmp_buddy" "$nef_xmp_new" "manual edit (Sony clip pair; sidecar keeps script suggestion)"
+                        perform_sony_clip_pair_plain_renames "$f" "$custom_new" "$nef_xmp_buddy" "$nef_xmp_new" || break
+                    else
+                        print_rename_action_verbose "$f" "$custom_new" "manual edit (NEF+XMP pair)"
+                        print_rename_action_verbose "$nef_xmp_buddy" "$nef_xmp_new" "manual edit (NEF+XMP pair; sidecar keeps script suggestion)"
+                        perform_plain_entry_rename "$f" "$custom_new" || break
+                        perform_plain_entry_rename "$nef_xmp_buddy" "$nef_xmp_new" || break
+                        if nef_xmp_pair_set_final_paths_from_primary_and_buddy_new "$custom_new" "$nef_xmp_new"; then
+                            nef_xmp_sync_sidecar_raw_file_name_to_nef "$NEF_XMP_FINAL_NEF" "$NEF_XMP_FINAL_XMP" || true
+                            nef_xmp_verify_sidecar_raw_file_name_interactive "$NEF_XMP_FINAL_NEF" "$NEF_XMP_FINAL_XMP" || break
+                        fi
                     fi
                     processed["$nef_xmp_buddy"]=1
                 else
