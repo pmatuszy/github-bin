@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# v. 20260725.091842 - align recheck OLD/CURRENT RULE RESULT paths to the same column
 # v. 20260725.091524 - prefer PATH exiftool over stale bundled 12.41; read Mission 1 CreationDate via -s3
 # v. 20260724.225708 - Mission 1 timezone fix: prefer Creation Date; do not require a second device-label parse
 # v. 20260724.224207 - add -R/--recheck-renames canonical-name audit with scoped approval prompts
@@ -19,6 +20,7 @@
 # v. 20260721.132007 - Samsung timestamp media: preserve optional numeric sorting prefix when appending make/model
 # v. 20260721.112812 - GoPro camera labels: GoPro_Hero4_Silver style (not GOPRO4_SILVER)
 
+# 2026.07.25 - v. 19.283.091842 - recheck difference prompt pads OLD and CURRENT RULE RESULT so paths share one column
 # 2026.07.25 - v. 19.282.091524 - PATH exiftool wins over bundled 12.41; Mission 1 local time uses -s3 CreationDate/CreateDate/TimeZone
 # 2026.07.24 - v. 19.281.225708 - Mission 1 Pro uses Creation Date (or Create Date+TZ); renamed files no longer need a second label parse
 # 2026.07.24 - v. 19.280.224207 - -R/--recheck-renames audits current naming rules and offers file/directory/run approvals
@@ -14495,8 +14497,18 @@ recheck_rename_reason_text() {
 
 handle_recheck_rename_difference() {
     local input="" custom_new="" confirm_rc=0 current_dir=""
+    local label_old="OLD: "
+    local label_new="CURRENT RULE RESULT: "
+    local label_old_sc="OLD (sidecar): "
+    local label_new_sc="RULE RESULT (sidecar): "
+    local label_width=${#label_new}
 
     current_dir="$(dirname -- "$f")"
+    if [[ -n "$nef_xmp_buddy" ]] && (( ${#label_new_sc} > label_width )); then
+        label_width=${#label_new_sc}
+    fi
+    (( ${#label_old} > label_width )) && label_width=${#label_old}
+    (( ${#label_old_sc} > label_width )) && label_width=${#label_old_sc}
 
     if [[ "$mode" == "dry-run" ]]; then
         recheck_apply_current_difference "rename recheck dry-run" || return 1
@@ -14519,11 +14531,11 @@ handle_recheck_rename_difference() {
         echo "Rule: recalculate the canonical filename with the current deterministic rename pipeline."
         echo "Reason: $(recheck_rename_reason_text)."
         echo
-        emit_wrap_nef_xmp_pair_label_stdout "OLD: " yellow "$f" "$NEF_XMP_PAIR_LABEL_WIDTH_NO_SIDECAR"
-        emit_wrap_nef_xmp_pair_label_stdout "CURRENT RULE RESULT: " green "$new" 21
+        emit_wrap_nef_xmp_pair_label_stdout "$label_old" yellow "$f" "$label_width"
+        emit_wrap_nef_xmp_pair_label_stdout "$label_new" green "$new" "$label_width"
         if [[ -n "$nef_xmp_buddy" ]]; then
-            emit_wrap_nef_xmp_pair_label_stdout "OLD (sidecar): " yellow "$nef_xmp_buddy" "$NEF_XMP_PAIR_LABEL_WIDTH"
-            emit_wrap_nef_xmp_pair_label_stdout "RULE RESULT (sidecar): " green "$nef_xmp_new" 23
+            emit_wrap_nef_xmp_pair_label_stdout "$label_old_sc" yellow "$nef_xmp_buddy" "$label_width"
+            emit_wrap_nef_xmp_pair_label_stdout "$label_new_sc" green "$nef_xmp_new" "$label_width"
         fi
         echo -e "${CYAN}===========================================================${RESET}"
         print_recheck_rename_menu
