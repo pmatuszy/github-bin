@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20260730.114155 - parse Target/perfect-match par2 lines for misnamed-file rename prompt
 # v. 20260725.191229 - discover volume-only PAR2 sets when no index .par2 exists
 # v. 20260721.154223 - fix ARG_MAX: chunk par2 verify; filter rename pairs; pairs-file
 # v. 20260721.150446 - defer subtree scan to Step 3; progress msg; faster nested-set skip
@@ -12,6 +13,7 @@
 # v. 20260719.103506 - fix no-arg run: empty POSITIONAL[@]:- became one "" element
 # v. 20260719.102800 - multi-set selection: A/a, ranges 1-4, --all, multiple paths
 
+# 2026.07.30 - v. 0.1.28 - Parse Target/perfect-match par2 lines; misnamed rename prompt
 # 2026.07.25 - v. 0.1.27 - Discover PAR2 sets from volume files when index .par2 is missing
 # 2026.07.21 - v. 0.1.26 - Fix ARG_MAX on large trees: chunk verify; filter/dedupe rename pairs
 # 2026.07.21 - v. 0.1.25 - Defer data-file tree scan to Step 3; show progress on large trees
@@ -1543,30 +1545,50 @@ def rel_from_data_dir(disk_path):
     return disk_path
 
 
-seen_par2 = set()
-for line in text.split("\n"):
-    if "is a match for" not in line or "File:" not in line:
-        continue
-    line = (
+def normalize_quotes(line):
+    return (
         line.replace("\u201c", '"')
         .replace("\u201d", '"')
         .replace("\u00ab", '"')
         .replace("\u00bb", '"')
     )
-    match = re.search(
-        r'File:\s*"([^"]+)"\s.*?\bis a match for\s*"([^"]+)"',
-        line,
-    )
-    if not match:
-        continue
-    disk = rel_from_data_dir(match.group(1))
-    par2_name = match.group(2).rstrip(".").replace("\\", "/")
+
+
+seen_par2 = set()
+
+
+def add_pair(disk_raw, par2_raw):
+    disk = rel_from_data_dir(disk_raw.strip().replace("\\", "/"))
+    par2_name = par2_raw.strip().rstrip(".").replace("\\", "/")
+    if not disk or not par2_name or disk == par2_name:
+        return
     if par2_names and par2_name not in par2_names:
-        continue
+        return
     if par2_name in seen_par2:
-        continue
+        return
     seen_par2.add(par2_name)
     print(f"{disk}|{par2_name}")
+
+
+match_patterns = (
+    r'File:\s*"([^"]+)"\s*-\s*is a match for\s*"([^"]+)"',
+    r'Target:\s*"([^"]+)"\s*-\s*is a match for\s*"([^"]+)"',
+)
+
+for line in text.split("\n"):
+    line = normalize_quotes(line)
+    matched = False
+    for pattern in match_patterns:
+        match = re.search(pattern, line)
+        if match:
+            add_pair(match.group(1), match.group(2))
+            matched = True
+            break
+    if matched:
+        continue
+    match = re.match(r"^(.+?) is a perfect match for (.+?)\s*$", line.strip())
+    if match:
+        add_pair(match.group(1), match.group(2))
 PY
     )
     rm -f "$par2_names_file"
@@ -1751,7 +1773,7 @@ print_summary() {
             "Wrong PAR2 filename(s) detected; rename pairs could not be parsed."
         pgm_print_outcome warn \
             "Wrong PAR2 filename(s) detected, but rename pairs could not be parsed." \
-            "Search Step 3 output for: File: \"...\" - is a match for \"...\"."
+            "Search Step 3 output for: File/Target: \"...\" - is a match for \"...\"."
         return 2
     fi
 
