@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# v. 20260731.154652 - align [v] menu line indent under Keys: blocks (4 spaces like sibling keys)
 # v. 20260731.154246 - plain rename: verify/update only affected checksum rows (no whole-list -c)
 # v. 20260731.152333 - current-dir scope: per checksum file ask check vs ignore (default N, 300s timeout)
 # v. 20260725.100435 - Mission 1: use Offset Time as Time Zone fallback; GPS+zone is authoritative local time
@@ -25,6 +26,7 @@
 # v. 20260721.132007 - Samsung timestamp media: preserve optional numeric sorting prefix when appending make/model
 # v. 20260721.112812 - GoPro camera labels: GoPro_Hero4_Silver style (not GOPRO4_SILVER)
 
+# 2026.07.31 - v. 19.289.154652 - Keys: menus pass 4-space indent to [v] list-directory line so keys align
 # 2026.07.31 - v. 19.288.154246 - plain rename: per-affected-row checksum verify before/after; skip whole-list md5sum -c
 # 2026.07.31 - v. 19.287.152333 - current-dir scope: per .md5/.sha512 prompt check or ignore (default ignore, 300s)
 # 2026.07.25 - v. 19.286.100435 - Mission 1 local time: Offset Time fills missing Time Zone; GPS+zone wins over UTC Create Date
@@ -1731,13 +1733,17 @@ rename_menu_key_bracket() {
 }
 
 # Shared [v] directory listing for interactive prompts (stdout menu line).
+# Optional indent (default two spaces). Pass four spaces under a "Keys:" block so [v] lines up with sibling keys.
 print_prompt_view_directory_menu_line() {
-    echo "  $(rename_menu_key_bracket v) List directory where this path exists (parent; mark OLD/NEW basenames when given)"
+    local indent="${1-  }"
+    echo "${indent}$(rename_menu_key_bracket v) List directory where this path exists (parent; mark OLD/NEW basenames when given)"
 }
 
 # Shared [v] directory listing for stderr prompts (mapping helpers, GoPro, exiftool).
+# Optional indent (default two spaces); same as print_prompt_view_directory_menu_line.
 print_prompt_view_directory_menu_line_stderr() {
-    echo "  $(rename_menu_key_bracket v) List directory where this path exists (parent; mark OLD/NEW basenames when given)" >&2
+    local indent="${1-  }"
+    echo "${indent}$(rename_menu_key_bracket v) List directory where this path exists (parent; mark OLD/NEW basenames when given)" >&2
 }
 
 # Print one user-visible question line with (YYYY.MM.DD HH:MM:SS). Optional second arg "2" / "stderr" for helpers that must not write to stdout.
@@ -7189,7 +7195,7 @@ media_xmp_run_sidecar_reference_checks() {
                         echo "    [Y] Yes / Enter - patch this .xmp only (default)"
                         echo "    [d] Yes + auto-patch remaining media-XMP refs in this directory"
                         echo "    [n] No"
-                        print_prompt_view_directory_menu_line
+                        print_prompt_view_directory_menu_line "    "
                         echo "    [q] Quit run"
                         printf '%s' "$(user_prompt_ts_prefix)Update RawFileName in this .xmp? [Y/n/d/v/q]: "
                         flush_stdin
@@ -7240,7 +7246,7 @@ media_xmp_run_sidecar_reference_checks() {
         echo "    [Y] Yes / Enter - patch this .xmp only (default)"
         echo "    [d] Yes + auto-patch remaining media-XMP refs in this directory"
         echo "    [n] No"
-        print_prompt_view_directory_menu_line
+        print_prompt_view_directory_menu_line "    "
         echo "    [q] Quit run"
         printf '%s' "$(user_prompt_ts_prefix)Update media basename inside this .xmp? [Y/n/d/v/q]: "
         flush_stdin
@@ -7669,7 +7675,7 @@ nef_xmp_verify_sidecar_raw_file_name_interactive() {
         echo "    [Y] Yes / Enter - patch this .xmp only (default)"
         echo "    [d] Yes + auto-patch every RawFileName fix in this directory"
         echo "    [n] No"
-        print_prompt_view_directory_menu_line
+        print_prompt_view_directory_menu_line "    "
         echo "    [q] Quit run"
         if (( VERBOSE == 1 )); then
             echo "[VERBOSE] [$(date '+%Y.%m.%d %H:%M:%S')] Write RawFileName into this .xmp on disk? (metadata only) [Y/n/d/v/q]:" >&2
@@ -8823,7 +8829,7 @@ prompt_current_scope_checksum_file_decision() {
         echo "  Keys:"
         echo "    $(rename_menu_key_bracket y N) Yes — process this checksum file (verify / recover / rename refs)"
         echo "    $(rename_menu_key_bracket N N) No — ignore this checksum file for this run (default)"
-        print_prompt_view_directory_menu_line
+        print_prompt_view_directory_menu_line "    "
         echo "    $(rename_menu_key_bracket q N) Quit"
         printf '%s' "$(user_prompt_ts_prefix)Process this checksum file? [y/N/v/q] (${timeout_note}): "
         flush_stdin
