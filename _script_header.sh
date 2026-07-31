@@ -1,8 +1,10 @@
 #!/bin/bash
+# v. 20260731.211609 - ask before apt install (default Y, no timeout); no silent auto-install
 # v. 20260722.084451 - let scripts continue with plain banners when optional boxes or figlet installation fails
 # v. 20260716.173600 - print_version_banner uses CALLER_SCRIPT version fields
 # v. 20260716.163300 - versioning v. YYYYMMDD.HH24MISS; parse first # v. YYYYMMDD.HHMMSS line
 
+# 2026.07.31 - v. 1.59.211609 - check_if_installed: prompt before apt (default Y; no timeout; no auto-install)
 # 2026.07.22 - v. 1.58.084451 - boxes/figlet checks are errexit-safe and fall back to plain startup text
 # 2026.07.15 - v. 1.57.210402 - profile_location_dir: export only when set; no default to $HOME
 # 2026.07.15 - v. 1.57.210401 - export profile_location_dir (default: $HOME or /root)
@@ -34,8 +36,8 @@
 # Provide shared startup, version, dependency-check, and terminal helpers.
 #
 # Contract: sourced (not executed) by sibling scripts. Enables nounset and pipefail,
-# sets LC_ALL=C, defines check_if_installed and ctrl_c, optionally installs boxes/figlet when root,
-# sets GNU Screen window title when STY is set, optional RANDOM_DELAY when not on a tty.
+# sets LC_ALL=C, defines check_if_installed and ctrl_c, optionally installs boxes/figlet when root
+# (after interactive [Y/n] prompt), sets GNU Screen window title when STY is set, optional RANDOM_DELAY when not on a tty.
 
 if [[ "$0" = "/bin/bash" ]] || [[ "$0" = "/usr/bin/bash" ]] || [[ "$0" = "/usr/local/bin/bash" ]] ; then
   echo do not run the script standalone - only from the script ...
@@ -164,32 +166,91 @@ function ctrl_c() {
   exit
 }
 #######################################################################################
-function check_if_installed() {
-  local install_package="${2:-BRAK}"
-  local requirement="${3:-REQUIRED}"
+#######################################################################################
+# Prompt before apt-get install. Default Y on Enter; waits indefinitely (no timeout).
+# Returns 0 if the user agrees, 1 if declined or install is not possible.
+pgm_prompt_before_apt_install() {
+  local pkg_list="" pkg
 
-  if [ "$(id -u)" -ne 0 ]; then
-    # script is not run as root so we don't want to progress with the installation
+  if ((${#@} == 0)); then
     return 1
   fi
 
-  if ! type -fP "${1}" &>/dev/null; then
-    echo ; echo "#######################################################"
-    echo "(PGM) ${1} not found - I will install it..."
-    if [ "${install_package}" != "BRAK" ];then
-      apt-get -y install "${install_package}" || true
-    else
-      apt-get -y install "${1}" || true
-    fi
-    echo "#######################################################";echo
+  for pkg in "$@"; do
+    pkg_list+="${pkg} "
+  done
+  pkg_list="${pkg_list% }"
+
+  if ! command -v apt-get &>/dev/null; then
+    echo "(PGM) apt-get not found; cannot install: ${pkg_list}" >&2
+    return 1
   fi
 
-  if ! type -fP "${1}" &>/dev/null; then
+  if (( ! ${script_is_run_interactively:-0} )); then
+    echo "(PGM) Non-interactive session — not installing: ${pkg_list}" >&2
+    return 1
+  fi
+
+  if [ "$(id -u)" -ne 0 ]; then
+    echo "(PGM) Not root — cannot install: ${pkg_list}. Try: apt install ${pkg_list}" >&2
+    return 1
+  fi
+
+  read -r -p "Install package(s) ${pkg_list} now? [Y/n]: " ans
+  case "${ans}" in
+    n|N|no|NO)
+      echo "(PGM) Skipped installation of: ${pkg_list}"
+      return 1
+      ;;
+    ''|y|Y|yes|YES)
+      return 0
+      ;;
+    *)
+      echo "(PGM) Skipped installation of: ${pkg_list}"
+      return 1
+      ;;
+  esac
+}
+
+pgm_apt_install_packages() {
+  echo "#######################################################"
+  apt-get -y install "$@" || true
+  echo "#######################################################"
+}
+
+function check_if_installed() {
+  local cmd="$1"
+  local install_package="${2:-BRAK}"
+  local requirement="${3:-REQUIRED}"
+  local pkg
+
+  if type -fP "${cmd}" &>/dev/null; then
+    return 0
+  fi
+
+  if [ "${install_package}" != "BRAK" ]; then
+    pkg="${install_package}"
+  else
+    pkg="${cmd}"
+  fi
+
+  echo
+  echo "#######################################################"
+  echo "(PGM) ${cmd} not found."
+
+  if pgm_prompt_before_apt_install "${pkg}"; then
+    echo "Proceeding with install..."
+    pgm_apt_install_packages "${pkg}"
+  fi
+  echo "#######################################################"
+  echo
+
+  if ! type -fP "${cmd}" &>/dev/null; then
     if [[ "${requirement}" == "OPTIONAL" ]]; then
-      echo "(PGM) Optional utility ${1} is still unavailable; continuing with plain output." >&2
+      echo "(PGM) Optional utility ${cmd} is still unavailable; continuing with plain output." >&2
       return 1
     fi
-    echo ; echo "(PGM) I can't find ${1} utility... exiting ..." >&2; echo
+    echo "(PGM) I can't find ${cmd} utility... exiting ..." >&2
     exit 1
   fi
   return 0

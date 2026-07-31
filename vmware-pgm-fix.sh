@@ -1,6 +1,8 @@
 #!/bin/bash
+# v. 20260731.211609 - prompt before apt install of build packages (default Y, no timeout)
 # v. 20260716.164840 - add -h/--help, -v/--version, --no_startup_delay
 
+# 2026.07.31 - v. 0.4 - prompt before apt install of kernel/build packages
 # 2026.07.15 - v. 0.3 - fix y/Y confirm (was always true); init p for nounset on read timeout
 # 2023.05.09 - v. 0.2 - added checking if the script is run on the physical machine
 # 2023.02.09 - v. 0.1 - initial release
@@ -71,7 +73,13 @@ if [[ ! "${p}" =~ ^[yY]$ ]]; then
   exit 1
 fi
 
-apt install -y gcc build-essential linux-headers-generic linux-headers-$(uname -r) ;
+VMWARE_FIX_PKGS=(gcc build-essential linux-headers-generic "linux-headers-$(uname -r)")
+if pgm_prompt_before_apt_install "${VMWARE_FIX_PKGS[@]}"; then
+  echo "Proceeding with install..."
+  pgm_apt_install_packages "${VMWARE_FIX_PKGS[@]}"
+else
+  echo "Build packages not installed — vmware-modconfig may fail."
+fi
 
 vmware-modconfig --console --install-all ;
 systemctl restart vmware.service ;

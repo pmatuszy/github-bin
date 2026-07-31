@@ -1,7 +1,9 @@
 #!/bin/bash
+# v. 20260731.211609 - use shared apt-install prompt from _script_header (default Y, no timeout)
 # v. 20260725.151453 - ask before apt-installing missing packages; default N, 300s timeout
 # v. 20260718.180600 - restore terminal cursor/screen after mpv tct playback
 
+# 2026.07.31 - v. 0.6.4 - missing packages: shared prompt [Y/n], default Y, wait indefinitely
 # 2026.07.25 - v. 0.6.3 - before installing missing packages: single-key [y/N] prompt, 300s timeout
 # 2026.07.18 - v. 0.6.2 - EXIT trap: show cursor and leave alt screen (mpv tct hides cursor)
 # 2026.06.23 - v. 0.6 - --start and --length for playing a segment (mpv seek + clip length)
@@ -123,7 +125,7 @@ video_pgm_read_key() {
   fi
 }
 
-# Ensure a command is on PATH; if missing, ask before apt-get install (default N).
+# Ensure a command is on PATH; if missing, ask before apt-get install (default Y).
 # Args: command [apt_package]
 # Returns 0 if command is available afterward, 1 otherwise.
 video_pgm_ensure_installed() {
@@ -136,29 +138,12 @@ video_pgm_ensure_installed() {
 
   echo
   echo "(PGM) ${cmd} not found."
-  if [[ ! -t 0 ]] || (( ! ${script_is_run_interactively:-0} )); then
-    echo "Non-interactive session — not installing (default [N])."
-    return 1
-  fi
-  if [ "$(id -u)" -ne 0 ]; then
-    echo "Not root — cannot install ${pkg}. Try: apt install ${pkg}"
+  if ! pgm_prompt_before_apt_install "${pkg}"; then
     return 1
   fi
 
-  video_pgm_read_key "Install ${pkg} now? [y/N]: " n "${VIDEO_PGM_PLAY_READ_TIMEOUT}"
-  case "${REPLY}" in
-    y|Y)
-      echo "Proceeding with install..."
-      echo "#######################################################"
-      apt-get -y install "$pkg" || true
-      echo "#######################################################"
-      echo
-      ;;
-    *)
-      echo "Not installing ${pkg}."
-      return 1
-      ;;
-  esac
+  echo "Proceeding with install..."
+  pgm_apt_install_packages "${pkg}"
 
   if type -fP "$cmd" &>/dev/null; then
     return 0
