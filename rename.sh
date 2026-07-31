@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# v. 20260731.154246 - plain rename: verify/update only affected checksum rows (no whole-list -c)
 # v. 20260731.152333 - current-dir scope: per checksum file ask check vs ignore (default N, 300s timeout)
 # v. 20260725.100435 - Mission 1: use Offset Time as Time Zone fallback; GPS+zone is authoritative local time
 # v. 20260725.100002 - Mission 1 timezone audit for JPEG/JPG; avoid double-offset when Offset Time/GPS present
@@ -24,6 +25,7 @@
 # v. 20260721.132007 - Samsung timestamp media: preserve optional numeric sorting prefix when appending make/model
 # v. 20260721.112812 - GoPro camera labels: GoPro_Hero4_Silver style (not GOPRO4_SILVER)
 
+# 2026.07.31 - v. 19.288.154246 - plain rename: per-affected-row checksum verify before/after; skip whole-list md5sum -c
 # 2026.07.31 - v. 19.287.152333 - current-dir scope: per .md5/.sha512 prompt check or ignore (default ignore, 300s)
 # 2026.07.25 - v. 19.286.100435 - Mission 1 local time: Offset Time fills missing Time Zone; GPS+zone wins over UTC Create Date
 # 2026.07.25 - v. 19.285.100002 - Mission 1 Pro JPEG/JPG timezone recheck; GPS/Offset Time prevent +02 double-shift on stills
@@ -13623,6 +13625,41 @@ collect_local_checksum_ref_summaries() {
     done
 }
 
+# Verify only rows collected into LOCAL_UPDATE_* (phase: before|after). Warn on failure; do not run whole-list checksum_check.
+verify_collected_local_checksum_refs() {
+    local phase="$1"
+    local i sum_file ref vrc phase_label
+
+    (( ${#LOCAL_UPDATE_SUM_FILES[@]} > 0 )) || return 0
+
+    case "$phase" in
+        before) phase_label="before plain rename" ;;
+        after)  phase_label="after plain rename" ;;
+        *)      phase_label="$phase" ;;
+    esac
+
+    for i in "${!LOCAL_UPDATE_SUM_FILES[@]}"; do
+        sum_file="${LOCAL_UPDATE_SUM_FILES[$i]}"
+        if [[ "$phase" == "before" ]]; then
+            ref="${LOCAL_UPDATE_OLD_REFS[$i]}"
+        else
+            ref="${LOCAL_UPDATE_NEW_REFS[$i]}"
+        fi
+        vrc=0
+        verify_single_checksum_target "$sum_file" "$ref" || vrc=$?
+        if (( vrc == 0 )); then
+            continue
+        fi
+        if (( vrc == 2 )); then
+            emit_wrap_labeled_stdout "CHECKSUM WARNING: No matching checksum line ${phase_label} for: " "${YELLOW}CHECKSUM WARNING:${RESET} No matching checksum line ${phase_label} for: " "$ref"
+            emit_wrap_labeled_stdout "    list: " "    list: " "$sum_file"
+            continue
+        fi
+        emit_wrap_labeled_stdout "CHECKSUM WARNING: Affected reference check failed ${phase_label}: " "${YELLOW}CHECKSUM WARNING:${RESET} Affected reference check failed ${phase_label}: " "$ref"
+        emit_wrap_labeled_stdout "    list: " "    list: " "$sum_file"
+    done
+}
+
 apply_local_checksum_ref_updates_after_rename() {
     local target_old="$1"
     local target_new="$2"
@@ -13653,11 +13690,10 @@ apply_local_checksum_ref_updates_after_rename() {
 
     [[ "$changed_any" == "yes" ]] || return 0
 
+    # Only re-hash affected rows — never whole-list md5sum/sha512sum -c after a plain rename.
+    verify_collected_local_checksum_refs after
+
     for sum_file in "${LOCAL_UPDATE_VERIFY_FILES[@]}"; do
-        if ! checksum_check "$sum_file"; then
-            emit_wrap_labeled_stdout "CHECKSUM WARNING: After plain rename, checksum file check failed: " "${YELLOW}CHECKSUM WARNING:${RESET} After plain rename, checksum file check failed: " "$sum_file"
-            emit_wrap_labeled_stdout "NOTE: " "${YELLOW}NOTE:${RESET} " "failure may come from other missing/changed files already listed there."
-        fi
         db_mark_checked "$sum_file" "checksum_group" "checked"
     done
 }
@@ -13758,6 +13794,10 @@ perform_plain_entry_rename() {
         fi
         return 0
     fi
+
+    # While source still exists: verify only affected checksum rows (not the whole .md5/.sha512 list).
+    collect_local_checksum_ref_updates "$old" "$new" "$target_kind"
+    verify_collected_local_checksum_refs before
 
     old_was_dir=no
     [[ -d "$old" ]] && old_was_dir=yes
