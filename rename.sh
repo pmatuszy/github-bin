@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# v. 20260731.154652 - align [v] menu line indent under Keys: blocks (4 spaces like sibling keys)
+# v. 20260731.154246 - plain rename: verify/update only affected checksum rows (no whole-list -c)
+# v. 20260731.152333 - current-dir scope: per checksum file ask check vs ignore (default N, 300s timeout)
 # v. 20260725.100435 - Mission 1: use Offset Time as Time Zone fallback; GPS+zone is authoritative local time
 # v. 20260725.100002 - Mission 1 timezone audit for JPEG/JPG; avoid double-offset when Offset Time/GPS present
 # v. 20260725.093648 - pair media.ext with media.ext.xmp sidecars; rename orphans; prompt only when XMP refs exist
@@ -23,6 +26,9 @@
 # v. 20260721.132007 - Samsung timestamp media: preserve optional numeric sorting prefix when appending make/model
 # v. 20260721.112812 - GoPro camera labels: GoPro_Hero4_Silver style (not GOPRO4_SILVER)
 
+# 2026.07.31 - v. 19.289.154652 - Keys: menus pass 4-space indent to [v] list-directory line so keys align
+# 2026.07.31 - v. 19.288.154246 - plain rename: per-affected-row checksum verify before/after; skip whole-list md5sum -c
+# 2026.07.31 - v. 19.287.152333 - current-dir scope: per .md5/.sha512 prompt check or ignore (default ignore, 300s)
 # 2026.07.25 - v. 19.286.100435 - Mission 1 local time: Offset Time fills missing Time Zone; GPS+zone wins over UTC Create Date
 # 2026.07.25 - v. 19.285.100002 - Mission 1 Pro JPEG/JPG timezone recheck; GPS/Offset Time prevent +02 double-shift on stills
 # 2026.07.25 - v. 19.284.093648 - media.ext.xmp sidecars rename with media; Mission1 UTC orphan XMPs; ref prompts only when present
@@ -562,6 +568,8 @@ SCRIPT_VERSION="$(
 LARGE_HASHFILE_LINE_PROMPT_THRESHOLD="${LARGE_HASHFILE_LINE_PROMPT_THRESHOLD:-20}"
 # With a “large” line count, still skip that prompt when the sum of sizes of existing regular-file targets is below this many bytes (default 30 GiB). Set to 0 to always prompt when over the line threshold.
 LARGE_HASHFILE_PROMPT_MIN_TOTAL_BYTES="${LARGE_HASHFILE_PROMPT_MIN_TOTAL_BYTES:-32212254720}"
+# Current-directory scope only: seconds to wait on the per-checksum-file check/ignore prompt (default 300). Timeout or empty → ignore that file for this run. 0 = wait forever.
+CURRENT_SCOPE_CHECKSUM_PROMPT_SECONDS="${CURRENT_SCOPE_CHECKSUM_PROMPT_SECONDS:-300}"
 # Per-path state files for last successful full checksum-list verification (epoch + content digest). Default: ~/.local/state/rename.sh/checksum-verify/
 RENAME_CHECKSUM_VERIFY_STATE_DIR="${RENAME_CHECKSUM_VERIFY_STATE_DIR:-}"
 # exiftool for GoPro/Sony/Contour/LG camera raw filenames (GH010001.MP4, GOPR0123.JPG, GP010032.JPG).
@@ -1247,6 +1255,8 @@ Environment / tunables (read at startup; use export or prefix on the same line a
       LARGE_HASHFILE_LINE_PROMPT_THRESHOLD=50 rename.sh --use-db
   LARGE_HASHFILE_PROMPT_MIN_TOTAL_BYTES  With a large line count, skip the prompt if the sum of on-disk regular-file target sizes is below this many bytes (default 32212254720 ≈ 30 GiB). Use 0 to always prompt.
       LARGE_HASHFILE_PROMPT_MIN_TOTAL_BYTES=0 rename.sh --use-db
+  CURRENT_SCOPE_CHECKSUM_PROMPT_SECONDS  Current-dir scope: timeout (seconds) for per-.md5/.sha512 check-or-ignore prompt (default 300; timeout/N = ignore). 0 = wait forever.
+      CURRENT_SCOPE_CHECKSUM_PROMPT_SECONDS=60 rename.sh --scope current
   MAP_AT_SIGN                         Replacement for @ in basename mapping prompts (default a).
       MAP_AT_SIGN=x rename.sh
   MAP_R_ACUTE                         Replacement for acute accent (default c).
@@ -1723,13 +1733,17 @@ rename_menu_key_bracket() {
 }
 
 # Shared [v] directory listing for interactive prompts (stdout menu line).
+# Optional indent (default two spaces). Pass four spaces under a "Keys:" block so [v] lines up with sibling keys.
 print_prompt_view_directory_menu_line() {
-    echo "  $(rename_menu_key_bracket v) List directory where this path exists (parent; mark OLD/NEW basenames when given)"
+    local indent="${1-  }"
+    echo "${indent}$(rename_menu_key_bracket v) List directory where this path exists (parent; mark OLD/NEW basenames when given)"
 }
 
 # Shared [v] directory listing for stderr prompts (mapping helpers, GoPro, exiftool).
+# Optional indent (default two spaces); same as print_prompt_view_directory_menu_line.
 print_prompt_view_directory_menu_line_stderr() {
-    echo "  $(rename_menu_key_bracket v) List directory where this path exists (parent; mark OLD/NEW basenames when given)" >&2
+    local indent="${1-  }"
+    echo "${indent}$(rename_menu_key_bracket v) List directory where this path exists (parent; mark OLD/NEW basenames when given)" >&2
 }
 
 # Print one user-visible question line with (YYYY.MM.DD HH:MM:SS). Optional second arg "2" / "stderr" for helpers that must not write to stdout.
@@ -7181,7 +7195,7 @@ media_xmp_run_sidecar_reference_checks() {
                         echo "    [Y] Yes / Enter - patch this .xmp only (default)"
                         echo "    [d] Yes + auto-patch remaining media-XMP refs in this directory"
                         echo "    [n] No"
-                        print_prompt_view_directory_menu_line
+                        print_prompt_view_directory_menu_line "    "
                         echo "    [q] Quit run"
                         printf '%s' "$(user_prompt_ts_prefix)Update RawFileName in this .xmp? [Y/n/d/v/q]: "
                         flush_stdin
@@ -7232,7 +7246,7 @@ media_xmp_run_sidecar_reference_checks() {
         echo "    [Y] Yes / Enter - patch this .xmp only (default)"
         echo "    [d] Yes + auto-patch remaining media-XMP refs in this directory"
         echo "    [n] No"
-        print_prompt_view_directory_menu_line
+        print_prompt_view_directory_menu_line "    "
         echo "    [q] Quit run"
         printf '%s' "$(user_prompt_ts_prefix)Update media basename inside this .xmp? [Y/n/d/v/q]: "
         flush_stdin
@@ -7661,7 +7675,7 @@ nef_xmp_verify_sidecar_raw_file_name_interactive() {
         echo "    [Y] Yes / Enter - patch this .xmp only (default)"
         echo "    [d] Yes + auto-patch every RawFileName fix in this directory"
         echo "    [n] No"
-        print_prompt_view_directory_menu_line
+        print_prompt_view_directory_menu_line "    "
         echo "    [q] Quit run"
         if (( VERBOSE == 1 )); then
             echo "[VERBOSE] [$(date '+%Y.%m.%d %H:%M:%S')] Write RawFileName into this .xmp on disk? (metadata only) [Y/n/d/v/q]:" >&2
@@ -8784,6 +8798,95 @@ confirm_large_hash_check() {
                 ;;
         esac
     done
+}
+
+# Current-directory scope: ask whether to process one checksum file (verify/recover can follow subdir refs).
+# Returns 0=process, 1=ignore this run, 2=quit. Default / timeout → ignore.
+prompt_current_scope_checksum_file_decision() {
+    local sum_file="$1"
+    local label line_count answer timeout_s=""
+    local timeout_note=""
+
+    label="$(checksum_label "$sum_file")"
+    line_count="$(wc -l <"$sum_file" 2>/dev/null | tr -d '[:space:]')"
+    [[ "$line_count" =~ ^[0-9]+$ ]] || line_count=0
+
+    timeout_s="${CURRENT_SCOPE_CHECKSUM_PROMPT_SECONDS:-300}"
+    [[ "$timeout_s" =~ ^[0-9]+$ ]] || timeout_s=300
+    if (( timeout_s == 0 )); then
+        timeout_note="wait forever"
+    else
+        timeout_note="timeout ${timeout_s}s → N"
+    fi
+
+    while true; do
+        nonverbose_progress_dot_prepare_for_prompt
+        echo
+        echo "$(user_prompt_ts_prefix)Current-directory scope: checksum file found"
+        echo "  Checking it may follow paths into subdirectories and take a long time."
+        emit_wrap_labeled_stdout "  File: " "  File: " "$sum_file"
+        echo "  Type: ${label}  |  lines: ${line_count}"
+        echo "  Keys:"
+        echo "    $(rename_menu_key_bracket y N) Yes — process this checksum file (verify / recover / rename refs)"
+        echo "    $(rename_menu_key_bracket N N) No — ignore this checksum file for this run (default)"
+        print_prompt_view_directory_menu_line "    "
+        echo "    $(rename_menu_key_bracket q N) Quit"
+        printf '%s' "$(user_prompt_ts_prefix)Process this checksum file? [y/N/v/q] (${timeout_note}): "
+        flush_stdin
+        read_single_key answer "$timeout_s"
+        echo
+        if handle_prompt_directory_listing_choice "$answer" "$sum_file"; then
+            continue
+        fi
+        case "$answer" in
+            y|Y) return 0 ;;
+            q|Q)
+                stopped_by_user=yes
+                return 2
+                ;;
+            *)
+                # Empty (timeout), N/n, or any other key → ignore
+                return 1
+                ;;
+        esac
+    done
+}
+
+# After discovery in current-dir scope: per checksum file, ask check vs ignore (default ignore).
+# Ignored files are marked processed so the main loop skips them. Returns 2 if user quits.
+prompt_ignore_checksum_files_for_current_scope() {
+    local f rc=0 ignored=0 will_check=0
+
+    [[ "$process_scope" == "current" ]] || return 0
+    (( RECHECK_RENAMES == 1 )) && return 0
+
+    for f in "${ordered_paths[@]}"; do
+        [[ -f "$f" ]] || continue
+        is_checksum_file "$f" || continue
+        [[ -n "${processed[$f]+x}" ]] && continue
+
+        rc=0
+        prompt_current_scope_checksum_file_decision "$f" || rc=$?
+        if (( rc == 2 )); then
+            return 2
+        fi
+        if (( rc == 1 )); then
+            emit_wrap_labeled_stdout "SKIP: " "${YELLOW}SKIP:${RESET} " "Ignoring checksum file for this run: '$f'"
+            vlog "Current-dir scope: user ignored checksum file '$f'"
+            ((++ignored))
+            ((++files_skipped))
+            processed["$f"]=1
+            NONVERBOSE_SKIP_NEXT_MAIN_LOOP_DOT=yes
+        else
+            vlog "Current-dir scope: will process checksum file '$f'"
+            ((++will_check))
+        fi
+    done
+
+    if (( ignored > 0 || will_check > 0 )); then
+        echo "$(user_prompt_ts_prefix)Checksum files this run: process ${will_check}, ignore ${ignored}."
+    fi
+    return 0
 }
 
 # Before [U]/[Q]: list file metadata, hash stored in the list for this ref, and on-disk file metadata + current hash.
@@ -13528,6 +13631,41 @@ collect_local_checksum_ref_summaries() {
     done
 }
 
+# Verify only rows collected into LOCAL_UPDATE_* (phase: before|after). Warn on failure; do not run whole-list checksum_check.
+verify_collected_local_checksum_refs() {
+    local phase="$1"
+    local i sum_file ref vrc phase_label
+
+    (( ${#LOCAL_UPDATE_SUM_FILES[@]} > 0 )) || return 0
+
+    case "$phase" in
+        before) phase_label="before plain rename" ;;
+        after)  phase_label="after plain rename" ;;
+        *)      phase_label="$phase" ;;
+    esac
+
+    for i in "${!LOCAL_UPDATE_SUM_FILES[@]}"; do
+        sum_file="${LOCAL_UPDATE_SUM_FILES[$i]}"
+        if [[ "$phase" == "before" ]]; then
+            ref="${LOCAL_UPDATE_OLD_REFS[$i]}"
+        else
+            ref="${LOCAL_UPDATE_NEW_REFS[$i]}"
+        fi
+        vrc=0
+        verify_single_checksum_target "$sum_file" "$ref" || vrc=$?
+        if (( vrc == 0 )); then
+            continue
+        fi
+        if (( vrc == 2 )); then
+            emit_wrap_labeled_stdout "CHECKSUM WARNING: No matching checksum line ${phase_label} for: " "${YELLOW}CHECKSUM WARNING:${RESET} No matching checksum line ${phase_label} for: " "$ref"
+            emit_wrap_labeled_stdout "    list: " "    list: " "$sum_file"
+            continue
+        fi
+        emit_wrap_labeled_stdout "CHECKSUM WARNING: Affected reference check failed ${phase_label}: " "${YELLOW}CHECKSUM WARNING:${RESET} Affected reference check failed ${phase_label}: " "$ref"
+        emit_wrap_labeled_stdout "    list: " "    list: " "$sum_file"
+    done
+}
+
 apply_local_checksum_ref_updates_after_rename() {
     local target_old="$1"
     local target_new="$2"
@@ -13558,11 +13696,10 @@ apply_local_checksum_ref_updates_after_rename() {
 
     [[ "$changed_any" == "yes" ]] || return 0
 
+    # Only re-hash affected rows — never whole-list md5sum/sha512sum -c after a plain rename.
+    verify_collected_local_checksum_refs after
+
     for sum_file in "${LOCAL_UPDATE_VERIFY_FILES[@]}"; do
-        if ! checksum_check "$sum_file"; then
-            emit_wrap_labeled_stdout "CHECKSUM WARNING: After plain rename, checksum file check failed: " "${YELLOW}CHECKSUM WARNING:${RESET} After plain rename, checksum file check failed: " "$sum_file"
-            emit_wrap_labeled_stdout "NOTE: " "${YELLOW}NOTE:${RESET} " "failure may come from other missing/changed files already listed there."
-        fi
         db_mark_checked "$sum_file" "checksum_group" "checked"
     done
 }
@@ -13663,6 +13800,10 @@ perform_plain_entry_rename() {
         fi
         return 0
     fi
+
+    # While source still exists: verify only affected checksum rows (not the whole .md5/.sha512 list).
+    collect_local_checksum_ref_updates "$old" "$new" "$target_kind"
+    verify_collected_local_checksum_refs before
 
     old_was_dir=no
     [[ -d "$old" ]] && old_was_dir=yes
@@ -15526,11 +15667,21 @@ if verbose:
     )
 fi
 startup_progress "Entry discovery and sort complete: ${#ordered_paths[@]} entries"
-startup_progress "Entering main processing loop..."
 
 vlog "Discovered entries to process: ${#ordered_paths[@]}"
 vlog "Progress box updates every ${VERBOSE_MAIN_EVERY} slot index; non-verbose 'k out of total' = this-session examined + resume offset (continues from the checkpoint position, capped at total)."
 maybe_resume_from_checkpoint
+
+# Current-dir only: decide per .md5/.sha512 before any long verify/recover work starts.
+_cscope_rc=0
+prompt_ignore_checksum_files_for_current_scope || _cscope_rc=$?
+if (( _cscope_rc == 2 )) || [[ "$stopped_by_user" == yes ]]; then
+    echo "Quitting."
+    print_summary || true
+    exit 0
+fi
+
+startup_progress "Entering main processing loop..."
 
 if (( RESUME_STATE_WAS_LOADED == 1 )); then
     resume_ordered_hits=0
