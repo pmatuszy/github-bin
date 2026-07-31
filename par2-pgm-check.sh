@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20260731.205848 - report and skip *_old.par2 backup files from prior metadata updates
 # v. 20260730.114155 - parse Target/perfect-match par2 lines for misnamed-file rename prompt
 # v. 20260725.191229 - discover volume-only PAR2 sets when no index .par2 exists
 # v. 20260721.154223 - fix ARG_MAX: chunk par2 verify; filter rename pairs; pairs-file
@@ -13,6 +14,7 @@
 # v. 20260719.103506 - fix no-arg run: empty POSITIONAL[@]:- became one "" element
 # v. 20260719.102800 - multi-set selection: A/a, ranges 1-4, --all, multiple paths
 
+# 2026.07.31 - v. 0.1.29 - Report and skip *_old.par2 backups left from prior PAR2 metadata updates
 # 2026.07.30 - v. 0.1.28 - Parse Target/perfect-match par2 lines; misnamed rename prompt
 # 2026.07.25 - v. 0.1.27 - Discover PAR2 sets from volume files when index .par2 is missing
 # 2026.07.21 - v. 0.1.26 - Fix ARG_MAX on large trees: chunk verify; filter/dedupe rename pairs
@@ -114,6 +116,10 @@ pgm_resolve_par2_index_path() {
 
     ap="$(abs_path "$input")"
     base="$(basename "$ap")"
+    if is_par2_backup_file "$base"; then
+        RESOLVE_PAR2_ERROR="PAR2 backup file ignored (use the active .par2, not *_old.par2): $input"
+        return 1
+    fi
     if ! is_par2_any_active_file "$base"; then
         RESOLVE_PAR2_ERROR="Not a PAR2 file: $input"
         return 1
@@ -602,6 +608,61 @@ pgm_resolve_check_scope() {
     echo "Scope selected: $CHECK_SCOPE"
 }
 
+pgm_find_old_par2_backups_scoped() {
+    local root="$1"
+    local scope="$2"
+    local -n _out=$3
+    local f base
+    local -a find_args=()
+
+    _out=()
+    if [[ "$scope" == "current" ]]; then
+        find_args=(find "$root" -mindepth 1 -maxdepth 1)
+    else
+        find_args=(find "$root")
+    fi
+
+    while IFS= read -r -d '' f; do
+        [[ -f "$f" ]] || continue
+        base="$(basename "$f")"
+        is_par2_backup_file "$base" || continue
+        _out+=("$(abs_path "$f")")
+    done < <("${find_args[@]}" \( -iname '*_old.par2' \) -type f -print0 2>/dev/null)
+
+    pgm_sort_path_array _out
+}
+
+pgm_report_skipped_old_par2_backups() {
+    local -a backups=()
+    local scope_label rel i
+
+    pgm_find_old_par2_backups_scoped "$START_DIR" "${CHECK_SCOPE:-subdirs}" backups
+    ((${#backups[@]} > 0)) || return 0
+
+    if [[ "${CHECK_SCOPE:-subdirs}" == "current" ]]; then
+        scope_label="in $START_DIR"
+    else
+        scope_label="under $START_DIR (including subdirectories)"
+    fi
+
+    echo
+    echo "Found ${#backups[@]} *_old.par2 backup file(s) ${scope_label}."
+    echo "Skipping them (leftovers from prior PAR2 metadata updates; not part of the active set)."
+    if ((${#backups[@]} <= 8)); then
+        for i in "${backups[@]}"; do
+            rel="$(pgm_path_display_relative "$i" "$START_DIR")"
+            printf '  %s\n' "$rel"
+        done
+    else
+        for i in "${backups[@]:0:5}"; do
+            rel="$(pgm_path_display_relative "$i" "$START_DIR")"
+            printf '  %s\n' "$rel"
+        done
+        echo "  ... and $((${#backups[@]} - 5)) more"
+    fi
+    echo
+}
+
 pgm_discover_and_queue_par2_sets() {
     local -a indices=()
 
@@ -637,10 +698,18 @@ is_par2_volume_file() {
     [[ "$base" =~ \.vol[0-9]*[-+_][0-9]+\.par2$ ]] || [[ "$base" =~ \.vol[0-9]*[-+_][0-9]+\.PAR2$ ]]
 }
 
+is_par2_backup_file() {
+    local base="$1"
+    case "$base" in
+        *_old.par2|*_old.PAR2) return 0 ;;
+    esac
+    return 1
+}
+
 is_par2_any_active_file() {
     local base="$1"
     [[ "$base" == *.par2 || "$base" == *.PAR2 ]] || return 1
-    [[ "$base" == *_old.par2 || "$base" == *_old.PAR2 ]] && return 1
+    is_par2_backup_file "$base" && return 1
     return 0
 }
 
@@ -679,7 +748,7 @@ par2_stem_from_par2_basename() {
 is_par2_index_file() {
     local base="$1"
     [[ "$base" == *.par2 || "$base" == *.PAR2 ]] || return 1
-    [[ "$base" == *_old.par2 ]] && return 1
+    is_par2_backup_file "$base" && return 1
     [[ "$base" =~ \.vol[0-9]*[-+_][0-9]+\.par2$ ]] && return 1
     return 0
 }
@@ -760,7 +829,7 @@ collect_par2_set_for_ref_file() {
     for f in "$dir"/*.par2 "$dir"/*.PAR2; do
         [[ -f "$f" ]] || continue
         fb="$(basename "$f")"
-        [[ "$fb" == *_old.par2 || "$fb" == *_old.PAR2 ]] && continue
+        is_par2_backup_file "$fb" && continue
         fstem="$(par2_stem_from_par2_basename "$fb")"
         if par2_stems_match "$stem" "$fstem"; then
             _out+=("$(abs_path "$f")")
@@ -786,7 +855,7 @@ list_par2_set_members() {
     for f in "$dir"/*.par2 "$dir"/*.PAR2; do
         [[ -f "$f" ]] || continue
         base="$(basename "$f")"
-        [[ "$base" == *_old.par2 || "$base" == *_old.PAR2 ]] && continue
+        is_par2_backup_file "$base" && continue
         fstem="$(par2_stem_from_par2_basename "$base")"
         if par2_stems_match "$stem" "$fstem"; then
             _members+=("$(abs_path "$f")")
@@ -1116,6 +1185,10 @@ apply_file_argument() {
         [[ -z "$USER_HASH_INPUT" ]] || die "Multiple hash files specified: $arg"
         USER_HASH_INPUT="$ap"
         return 0
+    fi
+
+    if is_par2_backup_file "$base"; then
+        die "PAR2 backup file ignored (use the active .par2, not *_old.par2): $base"
     fi
 
     if is_par2_any_active_file "$base"; then
@@ -1959,6 +2032,8 @@ if ((${#PAR2_SET_QUEUE[@]} == 0)); then
 fi
 
 pgm_print_run_settings
+
+pgm_report_skipped_old_par2_backups
 
 if ((${#PAR2_SET_QUEUE[@]} == 0)); then
     pgm_discover_and_queue_par2_sets
