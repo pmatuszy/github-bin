@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20260801.155625 - GoPro pass2: tmcd from pass1 write_tmcd, MET from source (fixes tag/order)
 # v. 20260801.154820 - GoPro pass2: map TCD before MET (-tag:d gpmd); -write_tmcd 0 stops order swap
 # v. 20260801.154133 - GoPro pass2: skip tmcd (cannot stream-copy to MP4); copy gpmd by index only
 # v. 20260801.152430 - fix nameref circular ref in pass2 append (pass map_args name not map_ref)
@@ -131,8 +132,8 @@ Normalization (non-PERFECT by default; PERFECT is never offered for standard mod
 
 Video files: loudnorm on every audio track; video, subtitles, chapters, metadata,
 and other non-audio streams are copied. Audio is re-encoded (AAC for MP4/MKV, etc.).
-GoPro MP4: gpmd/MET/SOS copied by stream index with -copy_unknown; tmcd is remuxed
-from metadata (plain -map 0:N -c copy of tmcd fails in MP4). GoPro files use a
+GoPro MP4: gpmd/MET/SOS copied by stream index with -copy_unknown; tmcd is written in
+pass1 (-write_tmcd) then copied at stream #2; MET follows at #3. GoPro files use a
 two-pass remux so loudnorm does not drop the gpmd telemetry stream.
 After a successful in-place replace, the output file gets the original timestamps
 (mtime/atime) back via touch -r.
@@ -2634,6 +2635,45 @@ normalize_stream_probe_field() {
   ffprobe "${fp_args[@]}" 2>/dev/null || true
 }
 
+normalize_stream_probe_tag() {
+  local file="$1" idx="$2" tag="$3"
+  local -a fp_args=(-v error)
+
+  loudness_ffprobe_input_opts_for_file "$file" fp_args
+  fp_args+=(
+    -select_streams "$idx"
+    -show_entries "stream_tags=${tag}"
+    -of default=nw=1:nk=1
+    -- "$file"
+  )
+  ffprobe "${fp_args[@]}" 2>/dev/null || true
+}
+
+# SMPTE timecode for GoPro pass1 -write_tmcd (video tag, else tmcd stream tag).
+normalize_probe_file_timecode() {
+  local file="$1" line idx ctype cname ctag handler tc
+
+  tc="$(normalize_stream_probe_tag "$file" 0 timecode)"
+  [[ -n "$tc" ]] && { echo "$tc"; return 0; }
+
+  for line in "${NORMALIZE_STREAM_TABLE[@]}"; do
+    IFS='|' read -r idx ctype cname ctag handler <<<"$line"
+    normalize_stream_is_mp4_tmcd "$ctype" "$cname" "$ctag" "$handler" || continue
+    tc="$(normalize_stream_probe_tag "$file" "$idx" timecode)"
+    [[ -n "$tc" ]] && { echo "$tc"; return 0; }
+  done
+  return 1
+}
+
+normalize_file_stream_count() {
+  local file="$1"
+  local -a fp_args=(-v error)
+
+  loudness_ffprobe_input_opts_for_file "$file" fp_args
+  fp_args+=(-show_entries format=nb_streams -of default=nw=1:nk=1 -- "$file")
+  ffprobe "${fp_args[@]}" 2>/dev/null || echo 0
+}
+
 normalize_load_stream_table() {
   local file="$1"
   local -a fp_args=()
@@ -2791,7 +2831,7 @@ normalize_build_mp4_ffmpeg_args() {
 
 normalize_print_mux_note() {
   if (( NORMALIZE_GOPRO_TWO_PASS )); then
-    echo '    Note: GoPro MP4 two-pass (loudnorm v/a, then remux TCD+MET from source in order)'
+    echo '    Note: GoPro MP4 two-pass (loudnorm v/a+tmcd, then remux MET from source)'
   elif (( NORMALIZE_GOPRO_MUX )); then
     echo '    Note: GoPro MP4 mux (gpmd/MET by index + -copy_unknown; tmcd from metadata)'
   elif (( NORMALIZE_MP4_SAFE_MUX )); then
@@ -2799,42 +2839,20 @@ normalize_print_mux_note() {
   fi
 }
 
-# Pass 2: remux data from input 0 in source index order (TCD then MET).
-# tmcd needs -tag:d gpmd (not tmcd) for MP4 copy; pass2 ffmpeg uses -write_tmcd 0 so metadata
-# does not append a second timecode track after MET (which swaps stream order).
-normalize_append_gopro_pass2_data_map() {
-  local -n out_map=$1
-  local -n out_tag=$2
-  local data_n="$3" idx="$4" ctype="$5" cname="$6" ctag="$7" handler="$8"
-  local tag="${ctag,,}" mux_handler="$handler"
-
-  if normalize_stream_is_mp4_tmcd "$ctype" "$cname" "$ctag" "$handler"; then
-    if [[ "$handler" == *TCD* ]]; then
-      out_map+=(-map "0:m:handler_name:${handler}")
-    else
-      out_map+=(-map "0:${idx}")
-    fi
-    tag=gpmd
-    [[ -z "$mux_handler" ]] && mux_handler='GoPro TCD'
-  else
-    out_map+=(-map "0:${idx}")
-    [[ -z "$tag" || "$tag" == none ]] && tag=gpmd
-    [[ "$tag" == fdsc ]] && tag=gpmd
-  fi
-
-  out_tag+=(-tag:d:"$data_n" "$tag")
-  [[ -n "$mux_handler" ]] && out_tag+=(-metadata:s:d:"$data_n" "handler=${mux_handler}")
-  return 0
-}
-
-# Pass 2 maps: input 0 = original (data), input 1 = loudnorm temp (v/a).
+# Pass 2: v/a/tmcd from pass1 input 1 (stream 2 = write_tmcd), copyable data from source input 0.
+# Source tmcd is not stream-copied (codec none / tag issues); pass1 already muxed tmcd at #2.
 normalize_build_gopro_two_pass_remux_args() {
   local -n out_map=$1
   local -n out_tag=$2
+  local pass1_tmcd="${3:-0}"
   local line idx ctype cname ctag handler data_n=0
 
   out_map=(-copy_unknown -map 1:v -map 1:a)
   out_tag=()
+  if (( pass1_tmcd )); then
+    out_map+=(-map 1:2)
+    data_n=1
+  fi
 
   while IFS= read -r line; do
     [[ -n "$line" ]] || continue
@@ -2842,9 +2860,9 @@ normalize_build_gopro_two_pass_remux_args() {
     case "${ctype,,}" in
       video|audio|subtitle) continue ;;
     esac
-    if normalize_append_gopro_pass2_data_map "$1" "$2" "$data_n" "$idx" "$ctype" "$cname" "$ctag" "$handler"; then
-      (( data_n++ )) || true
-    fi
+    normalize_stream_is_mp4_tmcd "$ctype" "$cname" "$ctag" "$handler" && continue
+    normalize_append_mp4_data_stream_map "$1" "$2" "$data_n" "$idx" "$ctag" "$handler" 1
+    (( data_n++ )) || true
   done < <(printf '%s\n' "${NORMALIZE_STREAM_TABLE[@]}" | sort -t'|' -k1 -n)
 }
 
@@ -2867,12 +2885,19 @@ normalize_file_inplace_gopro_two_pass() {
   mapfile -t encoder_args < <(normalize_audio_encoder_args "$dest")
   normalize_print_mux_note
 
-  # Pass 1: loudnorm video/audio only (no data streams).
+  local timecode pass1_tmcd=0
+  timecode="$(normalize_probe_file_timecode "$src" 2>/dev/null || true)"
+
+  # Pass 1: loudnorm video/audio; mux SMPTE tmcd at stream #2 (source tmcd cannot be stream-copied).
+  local -a pass1_extra=(-write_tmcd 1 -map_metadata 0 -movflags use_metadata_tags)
+  [[ -n "$timecode" ]] && pass1_extra+=(-timecode "$timecode")
+
   ffmpeg -hide_banner -nostats -y -i "$src" \
     -map 0:v -map 0:a \
     -filter:a "$filter" \
     -c:v copy \
     "${encoder_args[@]}" \
+    "${pass1_extra[@]}" \
     -- "$tmp_norm" 2>"$stderr_log1" || ffmpeg_rc=$?
 
   if (( ffmpeg_rc != 0 )) || [[ ! -s "$tmp_norm" ]]; then
@@ -2883,7 +2908,11 @@ normalize_file_inplace_gopro_two_pass() {
   fi
   rm -f -- "$stderr_log1"
 
-  normalize_build_gopro_two_pass_remux_args map_args tag_args
+  if [[ "$(normalize_file_stream_count "$tmp_norm")" -ge 3 ]]; then
+    pass1_tmcd=1
+  fi
+
+  normalize_build_gopro_two_pass_remux_args map_args tag_args "$pass1_tmcd"
   ffmpeg_rc=0
   ffmpeg -hide_banner -nostats -y -i "$src" -i "$tmp_norm" \
     "${map_args[@]}" \
@@ -4081,7 +4110,7 @@ normalize_candidate_files() {
 
   echo "Normalization mode: ${NORMALIZE_MODE} (${filter})"
   echo "All audio tracks are loudnorm-filtered; video, subtitles, and other streams are copied."
-  echo "GoPro MP4: two-pass remux keeps gpmd/MET; tmcd remuxed from metadata."
+  echo "GoPro MP4: two-pass remux (pass1 write_tmcd at #2, pass2 copies MET/gpmd from source)."
   if (( LOUDNESS_SAVE_ORIGINAL )); then
     echo "Originals are moved to *.backup.deleteme before each file is normalized."
   fi
