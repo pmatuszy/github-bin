@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20260801.150708 - GoPro MP4: map gpmd/MET by stream index (not handler_name); skip tmcd
 # v. 20260801.145659 - fix stream probe (ffprobe flat keys); MP4 always uses safe/gopro mux
 # v. 20260801.145558 - YouTube PERFECT prompt defaults to no [y/N/q]
 # v. 20260801.145313 - fix MP4/GoPro mux when src is *.backup.deleteme (use dest ext for container)
@@ -124,9 +125,8 @@ Normalization (non-PERFECT by default; PERFECT is never offered for standard mod
 
 Video files: loudnorm on every audio track; video, subtitles, chapters, metadata,
 and other non-audio streams are copied. Audio is re-encoded (AAC for MP4/MKV, etc.).
-GoPro MP4: telemetry/timecode data (TCD, MET, SOS, gpmd) is preserved via handler
-mapping and -copy_unknown (required for MP4; plain -map 0:2 tmcd copy fails).
-Other MP4: SMPTE tmcd is remuxed from stream metadata when direct copy is impossible.
+GoPro MP4: gpmd/MET/SOS copied by stream index with -copy_unknown; tmcd is remuxed
+from metadata (plain -map 0:N -c copy of tmcd fails in MP4).
 After a successful in-place replace, the output file gets the original timestamps
 (mtime/atime) back via touch -r.
 
@@ -2675,18 +2675,6 @@ normalize_file_is_gopro() {
   return 1
 }
 
-normalize_gopro_has_handler_streams() {
-  local line idx ctype cname ctag handler
-  for line in "${NORMALIZE_STREAM_TABLE[@]}"; do
-    IFS='|' read -r idx ctype cname ctag handler <<<"$line"
-    case "${ctype,,}" in
-      video|audio|subtitle) continue ;;
-    esac
-    [[ -n "$handler" ]] && return 0
-  done
-  return 1
-}
-
 # tmcd cannot be -map 0:N -c copy into MP4; omit so the muxer keeps timecode metadata.
 normalize_stream_is_mp4_tmcd() {
   local codec_type="$1" codec_name="$2" codec_tag="$3" handler="$4"
@@ -2699,10 +2687,27 @@ normalize_stream_is_mp4_tmcd() {
   return 1
 }
 
-# GoPro MP4: map data by handler_name (TCD/MET/SOS) with gpmd tags — preserves all GoPro streams.
-normalize_build_gopro_mp4_ffmpeg_args() {
+# Append -map 0:N for a copyable MP4 data stream; optional GoPro -tag:d / handler metadata.
+normalize_append_mp4_data_stream_map() {
   local -n _map_out=$1
   local -n _tag_out=$2
+  local data_n="$3" idx="$4" ctag="$5" handler="$6" gopro_tags="$7"
+  local tag="${ctag,,}"
+
+  _map_out+=(-map "0:${idx}")
+  (( gopro_tags )) || return 0
+  [[ -z "$tag" || "$tag" == none ]] && tag=gpmd
+  [[ "$tag" == fdsc ]] && tag=gpmd
+  _tag_out+=(-tag:d:"$data_n" "$tag")
+  [[ -n "$handler" ]] && _tag_out+=(-metadata:s:d:"$data_n" "handler=${handler}")
+}
+
+# MP4 mux: video/audio + copyable data by index; skip tmcd (MP4 cannot stream-copy it).
+# gopro_tags=1 adds -tag:d / handler metadata for gpmd/MET/SOS (index map, not handler_name).
+normalize_build_mp4_ffmpeg_args() {
+  local -n _map_out=$1
+  local -n _tag_out=$2
+  local gopro_tags="${3:-0}"
   local line idx ctype cname ctag handler
   local data_n=0 has_video=0 has_audio=0
 
@@ -2728,58 +2733,23 @@ normalize_build_gopro_mp4_ffmpeg_args() {
         _map_out+=(-map "0:${idx}")
         ;;
       *)
-        if [[ -n "$handler" ]]; then
-          _map_out+=(-map "0:m:handler_name:${handler}")
-          _tag_out+=(-tag:d:"$data_n" gpmd)
-          _tag_out+=(-metadata:s:d:"$data_n" "handler=${handler}")
-          (( data_n++ )) || true
-        elif ! normalize_stream_is_mp4_tmcd "$ctype" "$cname" "$ctag" "$handler"; then
-          _map_out+=(-map "0:${idx}")
-        fi
-        ;;
-    esac
-  done
-}
-
-# MP4 without GoPro handler map: video/audio + copyable data; never -map tmcd by index.
-normalize_build_mp4_safe_ffmpeg_args() {
-  local -n _map_out=$1
-  local line idx ctype cname ctag handler
-  local has_video=0 has_audio=0
-
-  _map_out=(-copy_unknown)
-
-  for line in "${NORMALIZE_STREAM_TABLE[@]}"; do
-    IFS='|' read -r idx ctype cname ctag handler <<<"$line"
-    case "${ctype,,}" in
-      video) has_video=1 ;;
-      audio) has_audio=1 ;;
-    esac
-  done
-
-  (( has_video )) && _map_out+=(-map 0:v)
-  (( has_audio )) && _map_out+=(-map 0:a)
-
-  for line in "${NORMALIZE_STREAM_TABLE[@]}"; do
-    IFS='|' read -r idx ctype cname ctag handler <<<"$line"
-    case "${ctype,,}" in
-      video|audio) continue ;;
-      subtitle)
-        _map_out+=(-map "0:${idx}")
-        ;;
-      *)
         normalize_stream_is_mp4_tmcd "$ctype" "$cname" "$ctag" "$handler" && continue
-        _map_out+=(-map "0:${idx}")
+        normalize_append_mp4_data_stream_map _map_out _tag_out "$data_n" "$idx" "$ctag" "$handler" "$gopro_tags"
+        (( data_n++ )) || true
         ;;
     esac
   done
 
-  NORMALIZE_MP4_SAFE_MUX=1
+  if (( gopro_tags )); then
+    NORMALIZE_GOPRO_MUX=1
+  else
+    NORMALIZE_MP4_SAFE_MUX=1
+  fi
 }
 
 normalize_print_mux_note() {
   if (( NORMALIZE_GOPRO_MUX )); then
-    echo '    Note: GoPro MP4 mux (handler map + -copy_unknown)'
+    echo '    Note: GoPro MP4 mux (gpmd/MET by index + -copy_unknown; tmcd from metadata)'
   elif (( NORMALIZE_MP4_SAFE_MUX )); then
     echo '    Note: MP4 mux (video/audio + data; tmcd remuxed from metadata)'
   fi
@@ -2814,12 +2784,9 @@ normalize_build_ffmpeg_stream_map_args() {
   fi
 
   if (( mp4_family )); then
-    if normalize_file_is_gopro "$src_file" && normalize_gopro_has_handler_streams; then
-      normalize_build_gopro_mp4_ffmpeg_args _map_out _tag_out
-      NORMALIZE_GOPRO_MUX=1
-    else
-      normalize_build_mp4_safe_ffmpeg_args _map_out
-    fi
+    local gopro_tags=0
+    normalize_file_is_gopro "$src_file" && gopro_tags=1
+    normalize_build_mp4_ffmpeg_args _map_out _tag_out "$gopro_tags"
     return 0
   fi
 
@@ -3947,7 +3914,7 @@ normalize_candidate_files() {
 
   echo "Normalization mode: ${NORMALIZE_MODE} (${filter})"
   echo "All audio tracks are loudnorm-filtered; video, subtitles, and other streams are copied."
-  echo "GoPro MP4: TCD/MET/SOS data streams are preserved via handler mapping."
+  echo "GoPro MP4: gpmd/MET copied by stream index; tmcd remuxed from metadata."
   if (( LOUDNESS_SAVE_ORIGINAL )); then
     echo "Originals are moved to *.backup.deleteme before each file is normalized."
   fi
