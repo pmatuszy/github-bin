@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20260801.152210 - GoPro two-pass remux: preserve data stream order (TCD then MET)
 # v. 20260801.151801 - fix nameref circular ref; GoPro H21 firmware; always two-pass GoPro MP4
 # v. 20260801.151444 - GoPro MP4: two-pass loudnorm + remux gpmd from source (single-pass drops MET)
 # v. 20260801.150708 - GoPro MP4: map gpmd/MET by stream index (not handler_name); skip tmcd
@@ -2761,7 +2762,8 @@ normalize_build_mp4_ffmpeg_args() {
   (( has_video )) && map_ref+=(-map 0:v)
   (( has_audio )) && map_ref+=(-map 0:a)
 
-  for line in "${NORMALIZE_STREAM_TABLE[@]}"; do
+  while IFS= read -r line; do
+    [[ -n "$line" ]] || continue
     IFS='|' read -r idx ctype cname ctag handler <<<"$line"
     case "${ctype,,}" in
       video|audio) continue ;;
@@ -2774,7 +2776,7 @@ normalize_build_mp4_ffmpeg_args() {
         (( data_n++ )) || true
         ;;
     esac
-  done
+  done < <(printf '%s\n' "${NORMALIZE_STREAM_TABLE[@]}" | sort -t'|' -k1 -n)
 
   if (( gopro_tags )); then
     NORMALIZE_GOPRO_MUX=1
@@ -2793,29 +2795,46 @@ normalize_print_mux_note() {
   fi
 }
 
+# Pass 2: one data stream in source index order (TCD before MET). tmcd uses handler map.
+normalize_append_gopro_pass2_data_map() {
+  local -n map_ref=$1
+  local -n tag_ref=$2
+  local data_n="$3" idx="$4" ctype="$5" cname="$6" ctag="$7" handler="$8"
+  local tag="${ctag,,}"
+
+  if normalize_stream_is_mp4_tmcd "$ctype" "$cname" "$ctag" "$handler"; then
+    [[ -n "$handler" ]] || return 1
+    map_ref+=(-map "0:m:handler_name:${handler}")
+  else
+    map_ref+=(-map "0:${idx}")
+  fi
+
+  [[ -z "$tag" || "$tag" == none ]] && tag=gpmd
+  [[ "$tag" == fdsc ]] && tag=gpmd
+  tag_ref+=(-tag:d:"$data_n" "$tag")
+  [[ -n "$handler" ]] && tag_ref+=(-metadata:s:d:"$data_n" "handler=${handler}")
+  return 0
+}
+
 # Pass 2 maps: input 0 = original (data), input 1 = loudnorm temp (v/a).
 normalize_build_gopro_two_pass_remux_args() {
   local -n map_ref=$1
   local -n tag_ref=$2
-  local line idx ctype cname ctag handler data_n=0 tag
+  local line idx ctype cname ctag handler data_n=0
 
   map_ref=(-copy_unknown -map 1:v -map 1:a)
   tag_ref=()
 
-  for line in "${NORMALIZE_STREAM_TABLE[@]}"; do
+  while IFS= read -r line; do
+    [[ -n "$line" ]] || continue
     IFS='|' read -r idx ctype cname ctag handler <<<"$line"
     case "${ctype,,}" in
       video|audio|subtitle) continue ;;
     esac
-    normalize_stream_is_mp4_tmcd "$ctype" "$cname" "$ctag" "$handler" && continue
-    map_ref+=(-map "0:${idx}")
-    tag="${ctag,,}"
-    [[ -z "$tag" || "$tag" == none ]] && tag=gpmd
-    [[ "$tag" == fdsc ]] && tag=gpmd
-    tag_ref+=(-tag:d:"$data_n" "$tag")
-    [[ -n "$handler" ]] && tag_ref+=(-metadata:s:d:"$data_n" "handler=${handler}")
-    (( data_n++ )) || true
-  done
+    if normalize_append_gopro_pass2_data_map map_ref tag_ref "$data_n" "$idx" "$ctype" "$cname" "$ctag" "$handler"; then
+      (( data_n++ )) || true
+    fi
+  done < <(printf '%s\n' "${NORMALIZE_STREAM_TABLE[@]}" | sort -t'|' -k1 -n)
 }
 
 normalize_file_inplace_gopro_two_pass() {
