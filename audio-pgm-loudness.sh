@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20260801.161802 - fix pass3 handler metadata quoting (GoPro TCD was parsed as output file)
 # v. 20260801.161343 - GoPro: pass2 MET-only then pass3 swap data streams for TCD/MET order
 # v. 20260801.161139 - GoPro pass2: MOV intermediate (tmcd copies to MOV, then remux MP4)
 # v. 20260801.160914 - GoPro: two-pass remux with handler TCD map + ffprobe order verify
@@ -2877,11 +2878,13 @@ normalize_gopro_pass3_reorder_data_streams() {
     local -a ff_args=(
       -hide_banner -nostats -y
       -i "$src_file"
+      -copy_unknown
       -map 0:v -map 0:a -map 0:3 -map 0:2
       -movflags use_metadata_tags
       -map_metadata 0
       -write_tmcd 0
       -c copy
+      -max_muxing_queue_size 9999
       -- "$dest_tmp"
     )
     case "$variant" in
@@ -2889,13 +2892,15 @@ normalize_gopro_pass3_reorder_data_streams() {
         ff_args=(
           -hide_banner -nostats -y
           -i "$src_file"
+          -copy_unknown
           -map 0:v -map 0:a -map 0:3 -map 0:2
-          -tag:d:0 tmcd -metadata:s:d:0 handler=GoPro TCD
-          -tag:d:1 gpmd -metadata:s:d:1 handler=GoPro MET
+          -tag:d:0 tmcd -metadata:s:d:0 "handler=GoPro TCD"
+          -tag:d:1 gpmd -metadata:s:d:1 "handler=GoPro MET"
           -movflags use_metadata_tags
           -map_metadata 0
           -write_tmcd 0
           -c copy
+          -max_muxing_queue_size 9999
           -- "$dest_tmp"
         )
         ;;
@@ -2903,13 +2908,15 @@ normalize_gopro_pass3_reorder_data_streams() {
         ff_args=(
           -hide_banner -nostats -y
           -i "$src_file"
+          -copy_unknown
           -map 0:v -map 0:a -map 0:3 -map 0:2
-          -tag:d:0 gpmd -metadata:s:d:0 handler=GoPro TCD
-          -tag:d:1 gpmd -metadata:s:d:1 handler=GoPro MET
+          -tag:d:0 gpmd -metadata:s:d:0 "handler=GoPro TCD"
+          -tag:d:1 gpmd -metadata:s:d:1 "handler=GoPro MET"
           -movflags use_metadata_tags
           -map_metadata 0
           -write_tmcd 0
           -c copy
+          -max_muxing_queue_size 9999
           -- "$dest_tmp"
         )
         ;;
