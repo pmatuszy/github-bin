@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20260801.154820 - GoPro pass2: map TCD before MET (-tag:d gpmd); -write_tmcd 0 stops order swap
 # v. 20260801.154133 - GoPro pass2: skip tmcd (cannot stream-copy to MP4); copy gpmd by index only
 # v. 20260801.152430 - fix nameref circular ref in pass2 append (pass map_args name not map_ref)
 # v. 20260801.152210 - GoPro two-pass remux: preserve data stream order (TCD then MET)
@@ -2790,7 +2791,7 @@ normalize_build_mp4_ffmpeg_args() {
 
 normalize_print_mux_note() {
   if (( NORMALIZE_GOPRO_TWO_PASS )); then
-    echo '    Note: GoPro MP4 two-pass (loudnorm v/a, then remux gpmd/MET from source)'
+    echo '    Note: GoPro MP4 two-pass (loudnorm v/a, then remux TCD+MET from source in order)'
   elif (( NORMALIZE_GOPRO_MUX )); then
     echo '    Note: GoPro MP4 mux (gpmd/MET by index + -copy_unknown; tmcd from metadata)'
   elif (( NORMALIZE_MP4_SAFE_MUX )); then
@@ -2798,14 +2799,31 @@ normalize_print_mux_note() {
   fi
 }
 
-# Pass 2: copy gpmd/MET/SOS from source (input 0); skip tmcd (MP4 cannot stream-copy it).
+# Pass 2: remux data from input 0 in source index order (TCD then MET).
+# tmcd needs -tag:d gpmd (not tmcd) for MP4 copy; pass2 ffmpeg uses -write_tmcd 0 so metadata
+# does not append a second timecode track after MET (which swaps stream order).
 normalize_append_gopro_pass2_data_map() {
   local -n out_map=$1
   local -n out_tag=$2
   local data_n="$3" idx="$4" ctype="$5" cname="$6" ctag="$7" handler="$8"
+  local tag="${ctag,,}" mux_handler="$handler"
 
-  normalize_stream_is_mp4_tmcd "$ctype" "$cname" "$ctag" "$handler" && return 1
-  normalize_append_mp4_data_stream_map "$1" "$2" "$data_n" "$idx" "$ctag" "$handler" 1
+  if normalize_stream_is_mp4_tmcd "$ctype" "$cname" "$ctag" "$handler"; then
+    if [[ "$handler" == *TCD* ]]; then
+      out_map+=(-map "0:m:handler_name:${handler}")
+    else
+      out_map+=(-map "0:${idx}")
+    fi
+    tag=gpmd
+    [[ -z "$mux_handler" ]] && mux_handler='GoPro TCD'
+  else
+    out_map+=(-map "0:${idx}")
+    [[ -z "$tag" || "$tag" == none ]] && tag=gpmd
+    [[ "$tag" == fdsc ]] && tag=gpmd
+  fi
+
+  out_tag+=(-tag:d:"$data_n" "$tag")
+  [[ -n "$mux_handler" ]] && out_tag+=(-metadata:s:d:"$data_n" "handler=${mux_handler}")
   return 0
 }
 
@@ -2872,6 +2890,7 @@ normalize_file_inplace_gopro_two_pass() {
     "${tag_args[@]}" \
     -movflags use_metadata_tags \
     -map_metadata 0 \
+    -write_tmcd 0 \
     -c copy \
     -max_muxing_queue_size 9999 \
     -- "$tmp" 2>"$stderr_log2" || ffmpeg_rc=$?
