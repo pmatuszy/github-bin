@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20260801.152430 - fix nameref circular ref in pass2 append (pass map_args name not map_ref)
 # v. 20260801.152210 - GoPro two-pass remux: preserve data stream order (TCD then MET)
 # v. 20260801.151801 - fix nameref circular ref; GoPro H21 firmware; always two-pass GoPro MP4
 # v. 20260801.151444 - GoPro MP4: two-pass loudnorm + remux gpmd from source (single-pass drops MET)
@@ -2725,31 +2726,32 @@ normalize_file_is_gopro() {
 }
 
 # Append -map 0:N for a copyable MP4 data stream; optional GoPro -tag:d / handler metadata.
+# Args $1/$2 are nameref names (e.g. map_args tag_args) — do not pass map_ref literally.
 normalize_append_mp4_data_stream_map() {
-  local -n map_ref=$1
-  local -n tag_ref=$2
+  local -n out_map=$1
+  local -n out_tag=$2
   local data_n="$3" idx="$4" ctag="$5" handler="$6" gopro_tags="$7"
   local tag="${ctag,,}"
 
-  map_ref+=(-map "0:${idx}")
+  out_map+=(-map "0:${idx}")
   (( gopro_tags )) || return 0
   [[ -z "$tag" || "$tag" == none ]] && tag=gpmd
   [[ "$tag" == fdsc ]] && tag=gpmd
-  tag_ref+=(-tag:d:"$data_n" "$tag")
-  [[ -n "$handler" ]] && tag_ref+=(-metadata:s:d:"$data_n" "handler=${handler}")
+  out_tag+=(-tag:d:"$data_n" "$tag")
+  [[ -n "$handler" ]] && out_tag+=(-metadata:s:d:"$data_n" "handler=${handler}")
 }
 
 # MP4 mux: video/audio + copyable data by index; skip tmcd (MP4 cannot stream-copy it).
 # gopro_tags=1 adds -tag:d / handler metadata for gpmd/MET/SOS (index map, not handler_name).
 normalize_build_mp4_ffmpeg_args() {
-  local -n map_ref=$1
-  local -n tag_ref=$2
+  local -n out_map=$1
+  local -n out_tag=$2
   local gopro_tags="${3:-0}"
   local line idx ctype cname ctag handler
   local data_n=0 has_video=0 has_audio=0
 
-  map_ref=(-copy_unknown)
-  tag_ref=()
+  out_map=(-copy_unknown)
+  out_tag=()
 
   for line in "${NORMALIZE_STREAM_TABLE[@]}"; do
     IFS='|' read -r idx ctype cname ctag handler <<<"$line"
@@ -2759,8 +2761,8 @@ normalize_build_mp4_ffmpeg_args() {
     esac
   done
 
-  (( has_video )) && map_ref+=(-map 0:v)
-  (( has_audio )) && map_ref+=(-map 0:a)
+  (( has_video )) && out_map+=(-map 0:v)
+  (( has_audio )) && out_map+=(-map 0:a)
 
   while IFS= read -r line; do
     [[ -n "$line" ]] || continue
@@ -2768,11 +2770,11 @@ normalize_build_mp4_ffmpeg_args() {
     case "${ctype,,}" in
       video|audio) continue ;;
       subtitle)
-        map_ref+=(-map "0:${idx}")
+        out_map+=(-map "0:${idx}")
         ;;
       *)
         normalize_stream_is_mp4_tmcd "$ctype" "$cname" "$ctag" "$handler" && continue
-        normalize_append_mp4_data_stream_map map_ref tag_ref "$data_n" "$idx" "$ctag" "$handler" "$gopro_tags"
+        normalize_append_mp4_data_stream_map "$1" "$2" "$data_n" "$idx" "$ctag" "$handler" "$gopro_tags"
         (( data_n++ )) || true
         ;;
     esac
@@ -2797,33 +2799,33 @@ normalize_print_mux_note() {
 
 # Pass 2: one data stream in source index order (TCD before MET). tmcd uses handler map.
 normalize_append_gopro_pass2_data_map() {
-  local -n map_ref=$1
-  local -n tag_ref=$2
+  local -n out_map=$1
+  local -n out_tag=$2
   local data_n="$3" idx="$4" ctype="$5" cname="$6" ctag="$7" handler="$8"
   local tag="${ctag,,}"
 
   if normalize_stream_is_mp4_tmcd "$ctype" "$cname" "$ctag" "$handler"; then
     [[ -n "$handler" ]] || return 1
-    map_ref+=(-map "0:m:handler_name:${handler}")
+    out_map+=(-map "0:m:handler_name:${handler}")
   else
-    map_ref+=(-map "0:${idx}")
+    out_map+=(-map "0:${idx}")
   fi
 
   [[ -z "$tag" || "$tag" == none ]] && tag=gpmd
   [[ "$tag" == fdsc ]] && tag=gpmd
-  tag_ref+=(-tag:d:"$data_n" "$tag")
-  [[ -n "$handler" ]] && tag_ref+=(-metadata:s:d:"$data_n" "handler=${handler}")
+  out_tag+=(-tag:d:"$data_n" "$tag")
+  [[ -n "$handler" ]] && out_tag+=(-metadata:s:d:"$data_n" "handler=${handler}")
   return 0
 }
 
 # Pass 2 maps: input 0 = original (data), input 1 = loudnorm temp (v/a).
 normalize_build_gopro_two_pass_remux_args() {
-  local -n map_ref=$1
-  local -n tag_ref=$2
+  local -n out_map=$1
+  local -n out_tag=$2
   local line idx ctype cname ctag handler data_n=0
 
-  map_ref=(-copy_unknown -map 1:v -map 1:a)
-  tag_ref=()
+  out_map=(-copy_unknown -map 1:v -map 1:a)
+  out_tag=()
 
   while IFS= read -r line; do
     [[ -n "$line" ]] || continue
@@ -2831,7 +2833,7 @@ normalize_build_gopro_two_pass_remux_args() {
     case "${ctype,,}" in
       video|audio|subtitle) continue ;;
     esac
-    if normalize_append_gopro_pass2_data_map map_ref tag_ref "$data_n" "$idx" "$ctype" "$cname" "$ctag" "$handler"; then
+    if normalize_append_gopro_pass2_data_map "$1" "$2" "$data_n" "$idx" "$ctype" "$cname" "$ctag" "$handler"; then
       (( data_n++ )) || true
     fi
   done < <(printf '%s\n' "${NORMALIZE_STREAM_TABLE[@]}" | sort -t'|' -k1 -n)
@@ -2908,13 +2910,13 @@ normalize_file_inplace_gopro_two_pass() {
 # src_file is probed for streams; container_ref sets output muxer (use dest .mp4, not *.backup.deleteme).
 normalize_build_ffmpeg_stream_map_args() {
   local src_file="$1" container_ref="$2"
-  local -n map_ref=$3
-  local -n tag_ref=$4
+  local -n out_map=$3
+  local -n out_tag=$4
   local line idx ctype cname ctag handler
   local mp4_family=0
 
-  map_ref=()
-  tag_ref=()
+  out_map=()
+  out_tag=()
   NORMALIZE_GOPRO_MUX=0
   NORMALIZE_MP4_SAFE_MUX=0
 
@@ -2925,10 +2927,10 @@ normalize_build_ffmpeg_stream_map_args() {
 
   if ! normalize_load_stream_table "$src_file"; then
     if (( mp4_family )); then
-      map_ref=(-copy_unknown -map 0:v -map 0:a)
+      out_map=(-copy_unknown -map 0:v -map 0:a)
       NORMALIZE_MP4_SAFE_MUX=1
     else
-      map_ref=(-map 0)
+      out_map=(-map 0)
     fi
     return 0
   fi
@@ -2936,13 +2938,13 @@ normalize_build_ffmpeg_stream_map_args() {
   if (( mp4_family )); then
     local gopro_tags=0
     normalize_file_is_gopro "$src_file" && gopro_tags=1
-    normalize_build_mp4_ffmpeg_args map_ref tag_ref "$gopro_tags"
+    normalize_build_mp4_ffmpeg_args "$3" "$4" "$gopro_tags"
     return 0
   fi
 
   for line in "${NORMALIZE_STREAM_TABLE[@]}"; do
     IFS='|' read -r idx ctype cname ctag handler <<<"$line"
-    map_ref+=(-map "0:${idx}")
+    out_map+=(-map "0:${idx}")
   done
 }
 
