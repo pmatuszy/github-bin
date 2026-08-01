@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20260801.145313 - fix MP4/GoPro mux when src is *.backup.deleteme (use dest ext for container)
 # v. 20260801.144826 - GoPro MP4: preserve all data streams via handler map and -copy_unknown
 # v. 20260801.144550 - normalize: map streams individually; skip MP4-unmappable timecode (tmcd) only
 # v. 20260716.163224 - versioning format v. YYYYMMDD.HH24MISS
@@ -2618,7 +2619,8 @@ normalize_output_is_mp4_family() {
 normalize_load_stream_table() {
   local file="$1"
   local -a fp_args=()
-  local line idx ctype cname ctag handler
+  local flat_key flat_val idx field
+  local -a stream_indices=()
 
   NORMALIZE_STREAM_TABLE=()
 
@@ -2626,46 +2628,62 @@ normalize_load_stream_table() {
     return 1
   fi
 
-  if command -v python3 >/dev/null 2>&1; then
-    while IFS= read -r line; do
-      [[ -n "$line" ]] && NORMALIZE_STREAM_TABLE+=("$line")
-    done < <(LOUDNESS_FFPROBE_FILE="$file" python3 <<'PY'
-import json, os, subprocess, sys
-
-file = os.environ["LOUDNESS_FFPROBE_FILE"]
-cmd = [
-    "ffprobe", "-v", "error",
-    "-show_entries", "stream=index,codec_type,codec_name,codec_tag_string",
-    "-show_entries", "stream_tags=handler_name",
-    "-of", "json", "--", file,
-]
-raw = subprocess.check_output(cmd, stderr=subprocess.DEVNULL)
-for stream in json.loads(raw).get("streams", []):
-    tags = stream.get("tags") or {}
-    handler = tags.get("handler_name", "").replace("|", "/")
-    print("|".join([
-        str(stream.get("index", "")),
-        stream.get("codec_type", ""),
-        stream.get("codec_name", ""),
-        stream.get("codec_tag_string", ""),
-        handler,
-    ]))
-PY
-)
-    ((${#NORMALIZE_STREAM_TABLE[@]} > 0)) && return 0
-  fi
-
   loudness_ffprobe_input_opts_for_file "$file" fp_args
   fp_args+=(
     -v error
     -show_entries stream=index,codec_type,codec_name,codec_tag_string
-    -of csv=p=0:s=:
+    -show_entries stream_tags=handler_name
+    -of flat=s=_
     -- "$file"
   )
-  while IFS=: read -r idx ctype cname ctag; do
-    [[ "$idx" =~ ^[0-9]+$ ]] || continue
-    NORMALIZE_STREAM_TABLE+=("${idx}|${ctype}|${cname}|${ctag}|")
+
+  declare -A norm_stream_type=() norm_stream_name=() norm_stream_tag=() norm_stream_handler=()
+
+  while IFS='=' read -r flat_key flat_val; do
+    [[ "$flat_key" =~ ^stream_([0-9]+)_(.+)$ ]] || continue
+    idx="${BASH_REMATCH[1]}"
+    field="${BASH_REMATCH[2]}"
+    case "$field" in
+      index)
+        stream_indices+=("$idx")
+        ;;
+      codec_type)
+        norm_stream_type[$idx]="$flat_val"
+        ;;
+      codec_name)
+        norm_stream_name[$idx]="$flat_val"
+        ;;
+      codec_tag_string)
+        norm_stream_tag[$idx]="$flat_val"
+        ;;
+      tags_handler_name)
+        norm_stream_handler[$idx]="${flat_val//|/\/}"
+        ;;
+    esac
   done < <(ffprobe "${fp_args[@]}" 2>/dev/null || true)
+
+  if ((${#stream_indices[@]} == 0)); then
+    fp_args=()
+    loudness_ffprobe_input_opts_for_file "$file" fp_args
+    fp_args+=(
+      -v error
+      -show_entries stream=index,codec_type,codec_name,codec_tag_string
+      -of csv=p=0:s=:
+      -- "$file"
+    )
+    while IFS=: read -r idx ctype cname ctag; do
+      [[ "$idx" =~ ^[0-9]+$ ]] || continue
+      NORMALIZE_STREAM_TABLE+=("${idx}|${ctype}|${cname}|${ctag}|")
+    done < <(ffprobe "${fp_args[@]}" 2>/dev/null || true)
+  else
+    local sorted_idx
+    for sorted_idx in $(printf '%s\n' "${stream_indices[@]}" | sort -nu); do
+      NORMALIZE_STREAM_TABLE+=(
+        "${sorted_idx}|${norm_stream_type[$sorted_idx]:-}|${norm_stream_name[$sorted_idx]:-}|${norm_stream_tag[$sorted_idx]:-}|${norm_stream_handler[$sorted_idx]:-}"
+      )
+    done
+  fi
+
   ((${#NORMALIZE_STREAM_TABLE[@]} > 0))
 }
 
@@ -2695,9 +2713,12 @@ normalize_gopro_has_handler_streams() {
 # tmcd cannot be -map 0:N -c copy into MP4; omit so the muxer keeps timecode metadata.
 normalize_stream_is_mp4_tmcd() {
   local codec_type="$1" codec_name="$2" codec_tag="$3" handler="$4"
-  [[ "${codec_type,,}" == data ]] || return 1
   [[ "${codec_tag,,}" == tmcd ]] && return 0
   [[ "$handler" == *TCD* ]] && return 0
+  [[ "${codec_name,,}" == none && "${codec_tag,,}" != gpmd && "${codec_tag,,}" != fdsc ]] || return 1
+  case "${codec_type,,}" in
+    data|unknown|'') return 0 ;;
+  esac
   return 1
 }
 
@@ -2748,11 +2769,11 @@ normalize_print_gopro_mux_note() {
   echo '    Note: GoPro data streams mapped by handler (TCD/MET/SOS preserved in MP4)'
 }
 
-# Sets map/tag ffmpeg args; GoPro MP4 uses handler map, otherwise per-stream -map 0:N.
+# src_file is probed for streams; container_ref sets output muxer (use dest .mp4, not *.backup.deleteme).
 normalize_build_ffmpeg_stream_map_args() {
-  local file="$1"
-  local -n _map_out=$2
-  local -n _tag_out=$3
+  local src_file="$1" container_ref="$2"
+  local -n _map_out=$3
+  local -n _tag_out=$4
   local line idx ctype cname ctag handler
   local mp4_family=0 need_copy_unknown=0
 
@@ -2760,14 +2781,14 @@ normalize_build_ffmpeg_stream_map_args() {
   _tag_out=()
   NORMALIZE_GOPRO_MUX=0
 
-  if ! normalize_load_stream_table "$file"; then
+  if ! normalize_load_stream_table "$src_file"; then
     _map_out=(-map 0)
     return 0
   fi
 
-  normalize_output_is_mp4_family "$file" && mp4_family=1
+  normalize_output_is_mp4_family "$container_ref" && mp4_family=1
 
-  if (( mp4_family )) && normalize_file_is_gopro "$file" && normalize_gopro_has_handler_streams; then
+  if (( mp4_family )) && normalize_file_is_gopro "$src_file" && normalize_gopro_has_handler_streams; then
     normalize_build_gopro_mp4_ffmpeg_args _map_out _tag_out
     NORMALIZE_GOPRO_MUX=1
     return 0
@@ -2826,7 +2847,7 @@ normalize_file_inplace() {
   LOUDNESS_TMP_FILE="$tmp"
 
   mapfile -t encoder_args < <(normalize_audio_encoder_args "$dest")
-  normalize_build_ffmpeg_stream_map_args "$src" map_args tag_args
+  normalize_build_ffmpeg_stream_map_args "$src" "$dest" map_args tag_args
   normalize_print_gopro_mux_note
   if (( NORMALIZE_GOPRO_MUX )); then
     movflags_args=(-movflags use_metadata_tags)
