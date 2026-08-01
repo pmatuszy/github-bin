@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20260801.161343 - GoPro: pass2 MET-only then pass3 swap data streams for TCD/MET order
 # v. 20260801.161139 - GoPro pass2: MOV intermediate (tmcd copies to MOV, then remux MP4)
 # v. 20260801.160914 - GoPro: two-pass remux with handler TCD map + ffprobe order verify
 # v. 20260801.160042 - GoPro: single-pass tmcd+MET (-tag:d tmcd); drop broken two-pass remux
@@ -135,8 +136,8 @@ Normalization (non-PERFECT by default; PERFECT is never offered for standard mod
 
 Video files: loudnorm on every audio track; video, subtitles, chapters, metadata,
 and other non-audio streams are copied. Audio is re-encoded (AAC for MP4/MKV, etc.).
-GoPro MP4: pass1 loudnorm v/a; pass2 remuxes via MOV (MP4 cannot copy tmcd), then to MP4
-with TCD (#2) and MET (#3) order verified by ffprobe.
+GoPro MP4: pass1 loudnorm v/a; pass2 remux MET from source (MP4 cannot copy source tmcd);
+pass3 reorders data streams so ffprobe shows TCD at #2 and MET at #3.
 After a successful in-place replace, the output file gets the original timestamps
 (mtime/atime) back via touch -r.
 
@@ -2717,6 +2718,21 @@ normalize_gopro_mp4_stream_order_ok() {
     normalize_stream_is_gopro_met data none "$c3" "$h3"
 }
 
+# After MET-only pass2: stream #2 = MET, #3 = muxed tmcd (wrong order, swappable).
+normalize_gopro_mp4_stream_order_swapped() {
+  local file="$1" h2 c2 h3 c3 ctype3
+
+  h2="$(normalize_stream_handler_name "$file" 2)"
+  c2="$(normalize_stream_probe_field "$file" 2 codec_tag_string)"
+  ctype3="$(normalize_stream_probe_field "$file" 3 codec_type)"
+  [[ -n "$ctype3" ]] || return 1
+  h3="$(normalize_stream_handler_name "$file" 3)"
+  c3="$(normalize_stream_probe_field "$file" 3 codec_tag_string)"
+
+  normalize_stream_is_gopro_met data none "$c2" "$h2" && \
+    normalize_stream_is_mp4_tmcd data none "$c3" "$h3"
+}
+
 normalize_output_is_mp4_family() {
   local ref="$1" base="${1##*/}"
   case "${ref##*.}" in
@@ -2824,14 +2840,11 @@ normalize_print_mux_note() {
   fi
 }
 
-# Pass 2: input 0 = source (TCD/MET), input 1 = loudnorm temp (v/a only).
-# strategy: handler_tcd | handler_both | index_gpmd | index_tmcd
-normalize_build_gopro_pass2_remux_args() {
+# Pass 2: norm v/a + MET/gpmd from source only (source tmcd cannot be copied into MP4).
+normalize_build_gopro_pass2_met_only_args() {
   local -n out_map=$1
   local -n out_tag=$2
-  local strategy="$3"
-  local line idx ctype cname ctag handler data_n=0
-  local mux_handler tag
+  local line idx ctype cname ctag handler data_n=0 mux_handler
 
   out_map=(-copy_unknown -map 1:v -map 1:a)
   out_tag=()
@@ -2842,159 +2855,87 @@ normalize_build_gopro_pass2_remux_args() {
     case "${ctype,,}" in
       video|audio|subtitle) continue ;;
     esac
-
-    if normalize_stream_is_mp4_tmcd "$ctype" "$cname" "$ctag" "$handler"; then
-      mux_handler="$handler"
-      [[ -z "$mux_handler" ]] && mux_handler='GoPro TCD'
-      case "$strategy" in
-        handler_tcd|handler_both)
-          out_map+=(-map "0:m:handler_name:${mux_handler}")
-          ;;
-        *)
-          out_map+=(-map "0:${idx}")
-          ;;
-      esac
-      case "$strategy" in
-        index_tmcd) tag=tmcd ;;
-        *) tag=gpmd ;;
-      esac
-      out_tag+=(-tag:d:"$data_n" "$tag")
-      out_tag+=(-metadata:s:d:"$data_n" "handler=${mux_handler}")
-      (( data_n++ )) || true
-      continue
-    fi
-
-    if normalize_stream_is_gopro_met "$ctype" "$cname" "$ctag" "$handler"; then
-      mux_handler="$handler"
-      [[ -z "$mux_handler" ]] && mux_handler='GoPro MET'
-      case "$strategy" in
-        handler_both)
-          out_map+=(-map "0:m:handler_name:${mux_handler}")
-          ;;
-        *)
-          out_map+=(-map "0:${idx}")
-          ;;
-      esac
-      tag=gpmd
-      [[ "${ctag,,}" == fdsc ]] && tag=gpmd
-      out_tag+=(-tag:d:"$data_n" "$tag")
-      out_tag+=(-metadata:s:d:"$data_n" "handler=${mux_handler}")
-      (( data_n++ )) || true
-      continue
-    fi
-
-    normalize_append_mp4_data_stream_map "$1" "$2" "$data_n" "$idx" "$ctag" "$handler" 1
-    (( data_n++ )) || true
-  done < <(printf '%s\n' "${NORMALIZE_STREAM_TABLE[@]}" | sort -t'|' -k1 -n)
-}
-
-# Pass 2 MOV step: norm v/a (input 1) + all source data streams (input 0) by index.
-normalize_build_gopro_pass2_mov_maps() {
-  local -n out_map=$1
-  local line idx ctype cname ctag handler
-
-  out_map=(-copy_unknown -map 1:v -map 1:a)
-  while IFS= read -r line; do
-    [[ -n "$line" ]] || continue
-    IFS='|' read -r idx ctype cname ctag handler <<<"$line"
-    case "${ctype,,}" in
-      video|audio|subtitle) continue ;;
-    esac
+    normalize_stream_is_mp4_tmcd "$ctype" "$cname" "$ctag" "$handler" && continue
+    mux_handler="$handler"
+    [[ -z "$mux_handler" ]] && mux_handler='GoPro MET'
     out_map+=(-map "0:${idx}")
+    out_tag+=(-tag:d:"$data_n" gpmd)
+    out_tag+=(-metadata:s:d:"$data_n" "handler=${mux_handler}")
+    (( data_n++ )) || true
   done < <(printf '%s\n' "${NORMALIZE_STREAM_TABLE[@]}" | sort -t'|' -k1 -n)
 }
 
-# MP4 muxer rejects source tmcd; MOV accepts it. Remux MOV -> MP4 with tag variants.
-normalize_gopro_pass2_mov_to_mp4() {
-  local src="$1" tmp_norm="$2" dest_tmp="$3" stderr_log="$4"
-  local tmp_mov ffmpeg_rc=0 variant
-  local -a map_args=() conv_base=() conv_tags=() mp4_variants=(plain gpmd_tags tmcd_tags)
-  local line idx ctype cname ctag handler data_n=0 mux_handler tag
+# Pass 3: swap MET (#2) and muxed tmcd (#3) — copies already-muxed tracks, not source tmcd.
+normalize_gopro_pass3_reorder_data_streams() {
+  local src_file="$1" dest_tmp="$2" stderr_log="$3"
+  local ffmpeg_rc=0
+  local -a variants=(plain tagged_tmcd tagged_gpmd)
 
-  tmp_mov="$(mktemp "${TMPDIR:-/tmp}/gopro.XXXXXX.mov")"
-  normalize_build_gopro_pass2_mov_maps map_args
-
-  ffmpeg -hide_banner -nostats -y -i "$src" -i "$tmp_norm" \
-    "${map_args[@]}" \
-    -map_metadata 0 \
-    -c copy \
-    -- "$tmp_mov" 2>"$stderr_log" || ffmpeg_rc=$?
-
-  if (( ffmpeg_rc != 0 )) || [[ ! -s "$tmp_mov" ]]; then
-    rm -f -- "$tmp_mov"
-    return 1
-  fi
-
-  if ! normalize_gopro_mp4_stream_order_ok "$tmp_mov"; then
-    rm -f -- "$tmp_mov"
-    return 1
-  fi
-
-  conv_base=(-hide_banner -nostats -y -i "$tmp_mov" -map 0:v -map 0:a)
-  data_n=0
-  while IFS= read -r line; do
-    [[ -n "$line" ]] || continue
-    IFS='|' read -r idx ctype cname ctag handler <<<"$line"
-    case "${ctype,,}" in
-      video|audio|subtitle) continue ;;
-    esac
-    conv_base+=(-map "0:${idx}")
-    (( data_n++ )) || true
-  done < <(printf '%s\n' "${NORMALIZE_STREAM_TABLE[@]}" | sort -t'|' -k1 -n)
-
-  for variant in "${mp4_variants[@]}"; do
+  local variant
+  for variant in "${variants[@]}"; do
     ffmpeg_rc=0
-    conv_tags=("${conv_base[@]}")
-    data_n=0
-    while IFS= read -r line; do
-      [[ -n "$line" ]] || continue
-      IFS='|' read -r idx ctype cname ctag handler <<<"$line"
-      case "${ctype,,}" in
-        video|audio|subtitle) continue ;;
-      esac
-      mux_handler="$handler"
-      if normalize_stream_is_mp4_tmcd "$ctype" "$cname" "$ctag" "$handler"; then
-        [[ -z "$mux_handler" ]] && mux_handler='GoPro TCD'
-        case "$variant" in
-          tmcd_tags) tag=tmcd ;;
-          *) tag=gpmd ;;
-        esac
-      else
-        [[ -z "$mux_handler" ]] && mux_handler='GoPro MET'
-        tag=gpmd
-      fi
-      if [[ "$variant" != plain ]]; then
-        conv_tags+=(-tag:d:"$data_n" "$tag")
-        conv_tags+=(-metadata:s:d:"$data_n" "handler=${mux_handler}")
-      fi
-      (( data_n++ )) || true
-    done < <(printf '%s\n' "${NORMALIZE_STREAM_TABLE[@]}" | sort -t'|' -k1 -n)
+    local -a ff_args=(
+      -hide_banner -nostats -y
+      -i "$src_file"
+      -map 0:v -map 0:a -map 0:3 -map 0:2
+      -movflags use_metadata_tags
+      -map_metadata 0
+      -write_tmcd 0
+      -c copy
+      -- "$dest_tmp"
+    )
+    case "$variant" in
+      tagged_tmcd)
+        ff_args=(
+          -hide_banner -nostats -y
+          -i "$src_file"
+          -map 0:v -map 0:a -map 0:3 -map 0:2
+          -tag:d:0 tmcd -metadata:s:d:0 handler=GoPro TCD
+          -tag:d:1 gpmd -metadata:s:d:1 handler=GoPro MET
+          -movflags use_metadata_tags
+          -map_metadata 0
+          -write_tmcd 0
+          -c copy
+          -- "$dest_tmp"
+        )
+        ;;
+      tagged_gpmd)
+        ff_args=(
+          -hide_banner -nostats -y
+          -i "$src_file"
+          -map 0:v -map 0:a -map 0:3 -map 0:2
+          -tag:d:0 gpmd -metadata:s:d:0 handler=GoPro TCD
+          -tag:d:1 gpmd -metadata:s:d:1 handler=GoPro MET
+          -movflags use_metadata_tags
+          -map_metadata 0
+          -write_tmcd 0
+          -c copy
+          -- "$dest_tmp"
+        )
+        ;;
+    esac
 
-    conv_tags+=(-movflags use_metadata_tags -write_tmcd 0 -c copy -- "$dest_tmp")
-    ffmpeg "${conv_tags[@]}" 2>"$stderr_log" || ffmpeg_rc=$?
-
+    ffmpeg "${ff_args[@]}" 2>"$stderr_log" || ffmpeg_rc=$?
     if (( ffmpeg_rc != 0 )) || [[ ! -s "$dest_tmp" ]]; then
       rm -f -- "$dest_tmp"
       continue
     fi
     if normalize_gopro_mp4_stream_order_ok "$dest_tmp"; then
-      rm -f -- "$tmp_mov"
       return 0
     fi
     rm -f -- "$dest_tmp"
   done
-
-  rm -f -- "$tmp_mov"
   return 1
 }
 
 normalize_file_inplace_gopro_two_pass() {
   local src="$1" dest="$2" filter="$3"
-  local tmp tmp_norm ref ffmpeg_rc=0
-  local stderr_log1 stderr_log2 strategy pass2_ok=0
-  local -a encoder_args=() map_args=() tag_args=() strategies=()
+  local tmp tmp_wrong tmp_norm ref ffmpeg_rc=0
+  local stderr_log1 stderr_log2 pass2_ok=0
+  local -a encoder_args=() map_args=() tag_args=()
 
   tmp="$(normalize_temp_output_path "$dest" "$$")"
+  tmp_wrong="$(mktemp "${TMPDIR:-/tmp}/gopro_wrong.XXXXXX.mp4")"
   tmp_norm="$(mktemp "${TMPDIR:-/tmp}/loudnorm.XXXXXX.mp4")"
   ref="$(mktemp)"
   stderr_log1="$(mktemp)"
@@ -3006,7 +2947,7 @@ normalize_file_inplace_gopro_two_pass() {
 
   mapfile -t encoder_args < <(normalize_audio_encoder_args "$dest")
 
-  # Pass 1: loudnorm video/audio only (no data streams — avoids dropping gpmd in one pass).
+  # Pass 1: loudnorm video/audio only.
   ffmpeg -hide_banner -nostats -y -i "$src" \
     -map 0:v -map 0:a \
     -filter:a "$filter" \
@@ -3016,57 +2957,58 @@ normalize_file_inplace_gopro_two_pass() {
 
   if (( ffmpeg_rc != 0 )) || [[ ! -s "$tmp_norm" ]]; then
     print_ffmpeg_error_tail "$stderr_log1"
-    rm -f -- "$tmp" "$tmp_norm" "$ref" "$stderr_log1" "$stderr_log2"
+    rm -f -- "$tmp" "$tmp_wrong" "$tmp_norm" "$ref" "$stderr_log1" "$stderr_log2"
     LOUDNESS_TMP_FILE=""
     return 1
   fi
   rm -f -- "$stderr_log1"
 
-  NORMALIZE_GOPRO_PASS2_STRATEGY=mov_intermediate
+  # Pass 2: MET from source; ffmpeg appends muxed tmcd after MET (wrong order).
+  NORMALIZE_GOPRO_PASS2_STRATEGY=met_only
+  normalize_build_gopro_pass2_met_only_args map_args tag_args
   normalize_print_mux_note
-  if normalize_gopro_pass2_mov_to_mp4 "$src" "$tmp_norm" "$tmp" "$stderr_log2"; then
+  ffmpeg_rc=0
+  ffmpeg -hide_banner -nostats -y -i "$src" -i "$tmp_norm" \
+    "${map_args[@]}" \
+    "${tag_args[@]}" \
+    -movflags use_metadata_tags \
+    -map_metadata 0 \
+    -c copy \
+    -max_muxing_queue_size 9999 \
+    -- "$tmp_wrong" 2>"$stderr_log2" || ffmpeg_rc=$?
+
+  rm -f -- "$tmp_norm"
+
+  if (( ffmpeg_rc != 0 )) || [[ ! -s "$tmp_wrong" ]]; then
+    print_ffmpeg_error_tail "$stderr_log2"
+    rm -f -- "$tmp" "$tmp_wrong" "$ref" "$stderr_log2"
+    LOUDNESS_TMP_FILE=""
+    return 1
+  fi
+
+  if normalize_gopro_mp4_stream_order_ok "$tmp_wrong"; then
     pass2_ok=1
+    mv -f -- "$tmp_wrong" "$tmp"
+  elif normalize_gopro_mp4_stream_order_swapped "$tmp_wrong"; then
+    NORMALIZE_GOPRO_PASS2_STRATEGY=stream_reorder
+    normalize_print_mux_note
+    if normalize_gopro_pass3_reorder_data_streams "$tmp_wrong" "$tmp" "$stderr_log2"; then
+      pass2_ok=1
+    fi
+    rm -f -- "$tmp_wrong"
   else
-    rm -f -- "$tmp"
-    strategies=(handler_tcd handler_both index_gpmd index_tmcd)
-    for strategy in "${strategies[@]}"; do
-      ffmpeg_rc=0
-      NORMALIZE_GOPRO_PASS2_STRATEGY="$strategy"
-      normalize_build_gopro_pass2_remux_args map_args tag_args "$strategy"
-      normalize_print_mux_note
-
-      ffmpeg -hide_banner -nostats -y -i "$src" -i "$tmp_norm" \
-        "${map_args[@]}" \
-        "${tag_args[@]}" \
-        -movflags use_metadata_tags \
-        -map_metadata 0 \
-        -write_tmcd 0 \
-        -c copy \
-        -max_muxing_queue_size 9999 \
-        -- "$tmp" 2>"$stderr_log2" || ffmpeg_rc=$?
-
-      if (( ffmpeg_rc != 0 )) || [[ ! -s "$tmp" ]]; then
-        rm -f -- "$tmp"
-        continue
-      fi
-      if normalize_gopro_mp4_stream_order_ok "$tmp"; then
-        pass2_ok=1
-        break
-      fi
-      echo "    Note: pass2 ${strategy} muxed but stream order wrong; trying next method" >&2
-      rm -f -- "$tmp"
-    done
+    rm -f -- "$tmp_wrong"
   fi
 
   if ! (( pass2_ok )); then
     print_ffmpeg_error_tail "$stderr_log2"
     echo "    GoPro remux failed: could not preserve TCD (#2) then MET (#3) stream order." >&2
-    rm -f -- "$tmp" "$tmp_norm" "$ref" "$stderr_log2"
+    rm -f -- "$tmp" "$ref" "$stderr_log2"
     LOUDNESS_TMP_FILE=""
     return 1
   fi
 
-  rm -f -- "$tmp_norm" "$stderr_log2"
+  rm -f -- "$stderr_log2"
 
   if ! mv -f -- "$tmp" "$dest"; then
     rm -f -- "$tmp" "$ref"
@@ -4242,7 +4184,7 @@ normalize_candidate_files() {
 
   echo "Normalization mode: ${NORMALIZE_MODE} (${filter})"
   echo "All audio tracks are loudnorm-filtered; video, subtitles, and other streams are copied."
-  echo "GoPro MP4: pass1 loudnorm; pass2 via MOV (tmcd), then MP4 with order check."
+  echo "GoPro MP4: pass1 loudnorm; pass2 MET; pass3 swap data streams for TCD/MET order."
   if (( LOUDNESS_SAVE_ORIGINAL )); then
     echo "Originals are moved to *.backup.deleteme before each file is normalized."
   fi
