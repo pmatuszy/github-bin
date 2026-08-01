@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20260801.115737 - list missing PAR2 targets in summary and after final verify
 # v. 20260731.205848 - report and skip *_old.par2 backup files from prior metadata updates
 # v. 20260730.114155 - parse Target/perfect-match par2 lines for misnamed-file rename prompt
 # v. 20260725.191229 - discover volume-only PAR2 sets when no index .par2 exists
@@ -14,6 +15,7 @@
 # v. 20260719.103506 - fix no-arg run: empty POSITIONAL[@]:- became one "" element
 # v. 20260719.102800 - multi-set selection: A/a, ranges 1-4, --all, multiple paths
 
+# 2026.08.01 - v. 0.1.30 - Print consolidated list of missing PAR2 target files
 # 2026.07.31 - v. 0.1.29 - Report and skip *_old.par2 backups left from prior PAR2 metadata updates
 # 2026.07.30 - v. 0.1.28 - Parse Target/perfect-match par2 lines; misnamed rename prompt
 # 2026.07.25 - v. 0.1.27 - Discover PAR2 sets from volume files when index .par2 is missing
@@ -884,6 +886,7 @@ NO_RENAME=0
 POSITIONAL=()
 MISNAMED_DISK=()
 MISNAMED_PAR2=()
+MISSING_PAR2_TARGETS=()
 RENAME_PAIRS=()
 OUT2_FILE=""
 RENAME_PY=""
@@ -1762,8 +1765,51 @@ prompt_and_apply_rename() {
     pgm_print_step_verdict 5 OK "Hash manifest(s) updated for in-scope PAR2 archive(s)."
 
     pgm_print_step_header "Step 6: verify after update"
-    run_par2 verify "$PAR2_FILE"
+    local OUT6_FILE
+    OUT6_FILE=$(mktemp "${TMPDIR:-/tmp}/par2-pgm-check.XXXXXX")
+    run_par2 verify "$PAR2_FILE" >"$OUT6_FILE" 2>&1
+    <"$OUT6_FILE" pgm_filter_par2_verify_stream
+    echo
+    pgm_collect_missing_targets "$OUT6_FILE"
+    pgm_print_missing_targets_report
+    rm -f "$OUT6_FILE"
     pgm_print_step_verdict 6 OK "Post-update PAR2 verify completed."
+}
+
+pgm_collect_missing_targets() {
+    local out_file="$1"
+    local line
+
+    MISSING_PAR2_TARGETS=()
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        line="${line//$'\r'/}"
+        case "$line" in
+            Target:*" - missing.")
+                MISSING_PAR2_TARGETS+=("$line")
+                ;;
+        esac
+    done <"$out_file"
+}
+
+pgm_print_missing_targets_report() {
+    local n=${#MISSING_PAR2_TARGETS[@]}
+    local i max_show=500
+
+    (( n > 0 )) || return 0
+
+    echo
+    echo "Missing PAR2 target file(s) (${n}):"
+    if (( n <= max_show )); then
+        for i in "${MISSING_PAR2_TARGETS[@]}"; do
+            printf '  %s\n' "$i"
+        done
+    else
+        for i in "${!MISSING_PAR2_TARGETS[@]}"; do
+            (( i < max_show )) || break
+            printf '  %s\n' "${MISSING_PAR2_TARGETS[$i]}"
+        done
+        echo "  ... and $(( n - max_show )) more"
+    fi
 }
 
 print_summary() {
@@ -1773,17 +1819,9 @@ print_summary() {
     local wrong=""
     local rename_cmd
     local i
-    local line
 
-    while IFS= read -r line || [[ -n "$line" ]]; do
-        line="${line//$'\r'/}"
-        case "$line" in
-            Target:*" - missing.")
-                echo "$line"
-                missing=$((missing + 1))
-                ;;
-        esac
-    done < "$out_file"
+    pgm_collect_missing_targets "$out_file"
+    missing=${#MISSING_PAR2_TARGETS[@]}
 
     wrong=$(grep -E '[0-9]+ file\(s\) have the wrong name\.' "$out_file" | head -1 || true)
 
@@ -1799,6 +1837,7 @@ print_summary() {
     echo "  Missing targets (by PAR2 name): ${missing}"
     echo "  Content matches found on disk:  ${matches}"
     [[ -n "$wrong" ]] && echo "  ${wrong}"
+    pgm_print_missing_targets_report
 
     if (( matches > 0 )); then
         echo
@@ -1854,7 +1893,7 @@ print_summary() {
         pgm_print_step_verdict 3 WARN "Repair is possible (damage or rename fixable)."
         pgm_print_outcome warn \
             "Repair is possible (damage or rename fixable)." \
-            "Review Step 3 output above."
+            "See missing file list above (if any)."
         return 2
     fi
 
