@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20260801.154133 - GoPro pass2: skip tmcd (cannot stream-copy to MP4); copy gpmd by index only
 # v. 20260801.152430 - fix nameref circular ref in pass2 append (pass map_args name not map_ref)
 # v. 20260801.152210 - GoPro two-pass remux: preserve data stream order (TCD then MET)
 # v. 20260801.151801 - fix nameref circular ref; GoPro H21 firmware; always two-pass GoPro MP4
@@ -2797,24 +2798,14 @@ normalize_print_mux_note() {
   fi
 }
 
-# Pass 2: one data stream in source index order (TCD before MET). tmcd uses handler map.
+# Pass 2: copy gpmd/MET/SOS from source (input 0); skip tmcd (MP4 cannot stream-copy it).
 normalize_append_gopro_pass2_data_map() {
   local -n out_map=$1
   local -n out_tag=$2
   local data_n="$3" idx="$4" ctype="$5" cname="$6" ctag="$7" handler="$8"
-  local tag="${ctag,,}"
 
-  if normalize_stream_is_mp4_tmcd "$ctype" "$cname" "$ctag" "$handler"; then
-    [[ -n "$handler" ]] || return 1
-    out_map+=(-map "0:m:handler_name:${handler}")
-  else
-    out_map+=(-map "0:${idx}")
-  fi
-
-  [[ -z "$tag" || "$tag" == none ]] && tag=gpmd
-  [[ "$tag" == fdsc ]] && tag=gpmd
-  out_tag+=(-tag:d:"$data_n" "$tag")
-  [[ -n "$handler" ]] && out_tag+=(-metadata:s:d:"$data_n" "handler=${handler}")
+  normalize_stream_is_mp4_tmcd "$ctype" "$cname" "$ctag" "$handler" && return 1
+  normalize_append_mp4_data_stream_map "$1" "$2" "$data_n" "$idx" "$ctag" "$handler" 1
   return 0
 }
 
