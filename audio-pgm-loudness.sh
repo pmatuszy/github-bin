@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20260801.151444 - GoPro MP4: two-pass loudnorm + remux gpmd from source (single-pass drops MET)
 # v. 20260801.150708 - GoPro MP4: map gpmd/MET by stream index (not handler_name); skip tmcd
 # v. 20260801.145659 - fix stream probe (ffprobe flat keys); MP4 always uses safe/gopro mux
 # v. 20260801.145558 - YouTube PERFECT prompt defaults to no [y/N/q]
@@ -126,7 +127,8 @@ Normalization (non-PERFECT by default; PERFECT is never offered for standard mod
 Video files: loudnorm on every audio track; video, subtitles, chapters, metadata,
 and other non-audio streams are copied. Audio is re-encoded (AAC for MP4/MKV, etc.).
 GoPro MP4: gpmd/MET/SOS copied by stream index with -copy_unknown; tmcd is remuxed
-from metadata (plain -map 0:N -c copy of tmcd fails in MP4).
+from metadata (plain -map 0:N -c copy of tmcd fails in MP4). GoPro files use a
+two-pass remux so loudnorm does not drop the gpmd telemetry stream.
 After a successful in-place replace, the output file gets the original timestamps
 (mtime/atime) back via touch -r.
 
@@ -2611,6 +2613,80 @@ restore_original_from_backup() {
 NORMALIZE_STREAM_TABLE=()
 NORMALIZE_GOPRO_MUX=0
 NORMALIZE_MP4_SAFE_MUX=0
+NORMALIZE_GOPRO_TWO_PASS=0
+
+normalize_stream_probe_field() {
+  local file="$1" idx="$2" field="$3"
+  local -a fp_args=(-v error)
+
+  loudness_ffprobe_input_opts_for_file "$file" fp_args
+  fp_args+=(
+    -select_streams "$idx"
+    -show_entries "stream=${field}"
+    -of default=nw=1:nk=1
+    -- "$file"
+  )
+  ffprobe "${fp_args[@]}" 2>/dev/null || true
+}
+
+normalize_load_stream_table() {
+  local file="$1"
+  local -a fp_args=()
+  local idx ctype cname ctag handler
+
+  NORMALIZE_STREAM_TABLE=()
+
+  if ! command -v ffprobe >/dev/null 2>&1; then
+    return 1
+  fi
+
+  loudness_ffprobe_input_opts_for_file "$file" fp_args
+  fp_args+=(
+    -v error
+    -show_entries stream=index
+    -of csv=p=0
+    -- "$file"
+  )
+
+  while IFS= read -r idx; do
+    [[ "$idx" =~ ^[0-9]+$ ]] || continue
+    ctype="$(normalize_stream_probe_field "$file" "$idx" codec_type)"
+    cname="$(normalize_stream_probe_field "$file" "$idx" codec_name)"
+    ctag="$(normalize_stream_probe_field "$file" "$idx" codec_tag_string)"
+    handler="$(normalize_stream_handler_name "$file" "$idx")"
+    NORMALIZE_STREAM_TABLE+=("${idx}|${ctype}|${cname}|${ctag}|${handler}")
+  done < <(ffprobe "${fp_args[@]}" 2>/dev/null || true)
+
+  ((${#NORMALIZE_STREAM_TABLE[@]} > 0))
+}
+
+# True when src has at least one non-tmcd data stream to remux (e.g. gpmd/MET).
+normalize_file_has_mp4_data_streams() {
+  local line idx ctype cname ctag handler
+  for line in "${NORMALIZE_STREAM_TABLE[@]}"; do
+    IFS='|' read -r idx ctype cname ctag handler <<<"$line"
+    case "${ctype,,}" in
+      video|audio|subtitle) continue ;;
+    esac
+    normalize_stream_is_mp4_tmcd "$ctype" "$cname" "$ctag" "$handler" && continue
+    return 0
+  done
+  return 1
+}
+
+normalize_file_needs_gopro_two_pass() {
+  local src="$1" dest="$2"
+  local mp4_family=0
+
+  normalize_output_is_mp4_family "$dest" && mp4_family=1
+  if ! (( mp4_family )); then
+    normalize_output_is_mp4_family "$src" && mp4_family=1
+  fi
+  (( mp4_family )) || return 1
+  normalize_load_stream_table "$src" || return 1
+  normalize_file_is_gopro "$src" || return 1
+  normalize_file_has_mp4_data_streams
+}
 
 normalize_output_is_mp4_family() {
   local ref="$1" base="${1##*/}"
@@ -2634,34 +2710,6 @@ normalize_stream_handler_name() {
     -- "$file"
   )
   ffprobe "${fp_args[@]}" 2>/dev/null || true
-}
-
-normalize_load_stream_table() {
-  local file="$1"
-  local -a fp_args=()
-  local idx ctype cname ctag handler
-
-  NORMALIZE_STREAM_TABLE=()
-
-  if ! command -v ffprobe >/dev/null 2>&1; then
-    return 1
-  fi
-
-  loudness_ffprobe_input_opts_for_file "$file" fp_args
-  fp_args+=(
-    -v error
-    -show_entries stream=index,codec_type,codec_name,codec_tag_string
-    -of csv=p=0:s=:
-    -- "$file"
-  )
-
-  while IFS=: read -r idx ctype cname ctag; do
-    [[ "$idx" =~ ^[0-9]+$ ]] || continue
-    handler="$(normalize_stream_handler_name "$file" "$idx")"
-    NORMALIZE_STREAM_TABLE+=("${idx}|${ctype}|${cname}|${ctag}|${handler}")
-  done < <(ffprobe "${fp_args[@]}" 2>/dev/null || true)
-
-  ((${#NORMALIZE_STREAM_TABLE[@]} > 0))
 }
 
 normalize_file_is_gopro() {
@@ -2748,11 +2796,106 @@ normalize_build_mp4_ffmpeg_args() {
 }
 
 normalize_print_mux_note() {
-  if (( NORMALIZE_GOPRO_MUX )); then
+  if (( NORMALIZE_GOPRO_TWO_PASS )); then
+    echo '    Note: GoPro MP4 two-pass (loudnorm v/a, then remux gpmd/MET from source)'
+  elif (( NORMALIZE_GOPRO_MUX )); then
     echo '    Note: GoPro MP4 mux (gpmd/MET by index + -copy_unknown; tmcd from metadata)'
   elif (( NORMALIZE_MP4_SAFE_MUX )); then
     echo '    Note: MP4 mux (video/audio + data; tmcd remuxed from metadata)'
   fi
+}
+
+# Pass 2 maps: input 0 = original (data), input 1 = loudnorm temp (v/a).
+normalize_build_gopro_two_pass_remux_args() {
+  local -n _map_out=$1
+  local -n _tag_out=$2
+  local line idx ctype cname ctag handler data_n=0 tag
+
+  _map_out=(-copy_unknown -map 1:v -map 1:a)
+  _tag_out=()
+
+  for line in "${NORMALIZE_STREAM_TABLE[@]}"; do
+    IFS='|' read -r idx ctype cname ctag handler <<<"$line"
+    case "${ctype,,}" in
+      video|audio|subtitle) continue ;;
+    esac
+    normalize_stream_is_mp4_tmcd "$ctype" "$cname" "$ctag" "$handler" && continue
+    _map_out+=(-map "0:${idx}")
+    tag="${ctag,,}"
+    [[ -z "$tag" || "$tag" == none ]] && tag=gpmd
+    [[ "$tag" == fdsc ]] && tag=gpmd
+    _tag_out+=(-tag:d:"$data_n" "$tag")
+    [[ -n "$handler" ]] && _tag_out+=(-metadata:s:d:"$data_n" "handler=${handler}")
+    (( data_n++ )) || true
+  done
+}
+
+normalize_file_inplace_gopro_two_pass() {
+  local src="$1" dest="$2" filter="$3"
+  local tmp tmp_norm ref ffmpeg_rc=0
+  local stderr_log1 stderr_log2
+  local -a encoder_args=() map_args=() tag_args=()
+
+  tmp="$(normalize_temp_output_path "$dest" "$$")"
+  tmp_norm="$(mktemp "${TMPDIR:-/tmp}/loudnorm.XXXXXX.mp4")"
+  ref="$(mktemp)"
+  stderr_log1="$(mktemp)"
+  stderr_log2="$(mktemp)"
+  touch -r "$src" "$ref"
+  LOUDNESS_TMP_FILE="$tmp"
+  NORMALIZE_GOPRO_TWO_PASS=1
+  NORMALIZE_GOPRO_MUX=1
+
+  mapfile -t encoder_args < <(normalize_audio_encoder_args "$dest")
+  normalize_print_mux_note
+
+  # Pass 1: loudnorm video/audio only (no data streams).
+  ffmpeg -hide_banner -nostats -y -i "$src" \
+    -map 0:v -map 0:a \
+    -filter:a "$filter" \
+    -c:v copy \
+    "${encoder_args[@]}" \
+    -- "$tmp_norm" 2>"$stderr_log1" || ffmpeg_rc=$?
+
+  if (( ffmpeg_rc != 0 )) || [[ ! -s "$tmp_norm" ]]; then
+    print_ffmpeg_error_tail "$stderr_log1"
+    rm -f -- "$tmp" "$tmp_norm" "$ref" "$stderr_log1" "$stderr_log2"
+    LOUDNESS_TMP_FILE=""
+    return 1
+  fi
+  rm -f -- "$stderr_log1"
+
+  normalize_build_gopro_two_pass_remux_args map_args tag_args
+  ffmpeg_rc=0
+  ffmpeg -hide_banner -nostats -y -i "$src" -i "$tmp_norm" \
+    "${map_args[@]}" \
+    "${tag_args[@]}" \
+    -movflags use_metadata_tags \
+    -map_metadata 0 \
+    -c copy \
+    -max_muxing_queue_size 9999 \
+    -- "$tmp" 2>"$stderr_log2" || ffmpeg_rc=$?
+
+  rm -f -- "$tmp_norm"
+
+  if (( ffmpeg_rc != 0 )) || [[ ! -s "$tmp" ]]; then
+    print_ffmpeg_error_tail "$stderr_log2"
+    rm -f -- "$tmp" "$ref" "$stderr_log2"
+    LOUDNESS_TMP_FILE=""
+    return 1
+  fi
+  rm -f -- "$stderr_log2"
+
+  if ! mv -f -- "$tmp" "$dest"; then
+    rm -f -- "$tmp" "$ref"
+    LOUDNESS_TMP_FILE=""
+    return 1
+  fi
+  LOUDNESS_TMP_FILE=""
+
+  restore_file_timestamps_from_ref "$dest" "$ref"
+  rm -f -- "$ref"
+  return 0
 }
 
 # src_file is probed for streams; container_ref sets output muxer (use dest .mp4, not *.backup.deleteme).
@@ -2823,6 +2966,11 @@ normalize_file_inplace() {
   local src="$1" dest="$2" filter="$3"
   local tmp ref ffmpeg_rc=0 ts_ref stderr_log
   local -a encoder_args=() map_args=() tag_args=() movflags_args=()
+
+  if normalize_file_needs_gopro_two_pass "$src" "$dest"; then
+    normalize_file_inplace_gopro_two_pass "$src" "$dest" "$filter"
+    return $?
+  fi
 
   tmp="$(normalize_temp_output_path "$dest" "$$")"
   ts_ref="$(mktemp)"
@@ -3914,7 +4062,7 @@ normalize_candidate_files() {
 
   echo "Normalization mode: ${NORMALIZE_MODE} (${filter})"
   echo "All audio tracks are loudnorm-filtered; video, subtitles, and other streams are copied."
-  echo "GoPro MP4: gpmd/MET copied by stream index; tmcd remuxed from metadata."
+  echo "GoPro MP4: two-pass remux keeps gpmd/MET; tmcd remuxed from metadata."
   if (( LOUDNESS_SAVE_ORIGINAL )); then
     echo "Originals are moved to *.backup.deleteme before each file is normalized."
   fi
