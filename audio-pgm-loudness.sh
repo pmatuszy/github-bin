@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20260802.224401 - fix aac "Unsupported channel layout 6 channels" (pin unspecified layouts)
 # v. 20260801.162132 - GoPro order: swap trak boxes in moov (ffmpeg cannot copy or reorder tmcd)
 # v. 20260801.161802 - fix pass3 handler metadata quoting (GoPro TCD was parsed as output file)
 # v. 20260801.161343 - GoPro: pass2 MET-only then pass3 swap data streams for TCD/MET order
@@ -138,6 +139,8 @@ Normalization (non-PERFECT by default; PERFECT is never offered for standard mod
 
 Video files: loudnorm on every audio track; video, subtitles, chapters, metadata,
 and other non-audio streams are copied. Audio is re-encoded (AAC for MP4/MKV, etc.).
+Audio tracks with an unspecified channel layout are pinned to the default layout for
+their channel count; the native aac encoder rejects layouts like "6 channels".
 GoPro MP4: pass1 loudnorm v/a; pass2 remuxes MET from source and lets ffmpeg rebuild the
 timecode track; a final moov trak swap restores TCD at #2 and MET at #3.
 After a successful in-place replace, the output file gets the original timestamps
@@ -2171,9 +2174,35 @@ restore_file_timestamps_from_ref() {
   touch -r "$ref" "$file"
 }
 
+# Per-audio-stream -filter:a:N args. Streams whose channel layout is unspecified are
+# pinned to the default layout for their channel count ("6 channels" is rejected by the
+# native aac encoder). Channel count is never changed, so 6.1 and friends stay untouched.
+normalize_audio_filter_args() {
+  local file="$1" filter="$2"
+  local channels layout n=0
+  local -a args=()
+
+  while IFS=',' read -r channels layout; do
+    [[ "$channels" =~ ^[0-9]+$ ]] || continue
+    if [[ -z "$layout" || "$layout" == unknown || "$layout" == *"channels" ]]; then
+      args+=(-filter:a:"$n" "${filter},aformat=channel_layouts=${channels}c")
+    else
+      args+=(-filter:a:"$n" "$filter")
+    fi
+    (( n++ )) || true
+  done < <(ffprobe -v error -select_streams a \
+    -show_entries stream=channels,channel_layout -of csv=p=0 -- "$file" 2>/dev/null || true)
+
+  if (( n == 0 )); then
+    args=(-filter:a "$filter")
+  fi
+  printf '%s\n' "${args[@]}"
+}
+
 # Audio encoder flags for filtered output (cannot use -c:a copy with loudnorm).
 normalize_audio_encoder_args() {
-  local file="$1" ext="${file##*.}"
+  local file="$1"
+  local ext="${file##*.}"
   case "${ext,,}" in
     mp3)  printf '%s\n' '-c:a' 'libmp3lame' '-q:a' '2' ;;
     flac) printf '%s\n' '-c:a' 'flac' ;;
@@ -2978,7 +3007,7 @@ normalize_file_inplace_gopro_two_pass() {
   local src="$1" dest="$2" filter="$3"
   local tmp tmp_wrong tmp_norm ref ffmpeg_rc=0
   local stderr_log1 stderr_log2
-  local -a encoder_args=() map_args=() tag_args=()
+  local -a encoder_args=() map_args=() tag_args=() filter_args=()
 
   tmp="$(normalize_temp_output_path "$dest" "$$")"
   tmp_wrong="$(mktemp "${TMPDIR:-/tmp}/gopro_wrong.XXXXXX.mp4")"
@@ -2994,9 +3023,10 @@ normalize_file_inplace_gopro_two_pass() {
   mapfile -t encoder_args < <(normalize_audio_encoder_args "$dest")
 
   # Pass 1: loudnorm video/audio only.
+  mapfile -t filter_args < <(normalize_audio_filter_args "$src" "$filter")
   ffmpeg -hide_banner -nostats -y -i "$src" \
     -map 0:v -map 0:a \
-    -filter:a "$filter" \
+    "${filter_args[@]}" \
     -c:v copy \
     "${encoder_args[@]}" \
     -- "$tmp_norm" 2>"$stderr_log1" || ffmpeg_rc=$?
@@ -3130,7 +3160,7 @@ normalize_temp_output_path() {
 normalize_file_inplace() {
   local src="$1" dest="$2" filter="$3"
   local tmp ref ffmpeg_rc=0 ts_ref stderr_log
-  local -a encoder_args=() map_args=() tag_args=() movflags_args=()
+  local -a encoder_args=() map_args=() tag_args=() movflags_args=() filter_args=()
 
   if normalize_file_should_gopro_two_pass "$src" "$dest"; then
     normalize_file_inplace_gopro_two_pass "$src" "$dest" "$filter"
@@ -3144,6 +3174,7 @@ normalize_file_inplace() {
   LOUDNESS_TMP_FILE="$tmp"
 
   mapfile -t encoder_args < <(normalize_audio_encoder_args "$dest")
+  mapfile -t filter_args < <(normalize_audio_filter_args "$src" "$filter")
   normalize_build_ffmpeg_stream_map_args "$src" "$dest" map_args tag_args
   normalize_print_mux_note
   if (( NORMALIZE_GOPRO_MUX )); then
@@ -3156,7 +3187,7 @@ normalize_file_inplace() {
     "${movflags_args[@]}" \
     -map_metadata 0 \
     -map_chapters 0 \
-    -filter:a "$filter" \
+    "${filter_args[@]}" \
     -c copy \
     "${encoder_args[@]}" \
     -max_muxing_queue_size 9999 \
