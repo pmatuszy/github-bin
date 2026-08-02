@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20260802.135100 - interactive prompts wait indefinitely by default (no timeout)
 # v. 20260802.114532 - PROMPT_TIMEOUT default 900s (was 100s)
 # v. 20260801.115737 - list missing PAR2 targets in summary and after final verify
 # v. 20260731.205848 - report and skip *_old.par2 backup files from prior metadata updates
@@ -16,6 +17,7 @@
 # v. 20260719.103506 - fix no-arg run: empty POSITIONAL[@]:- became one "" element
 # v. 20260719.102800 - multi-set selection: A/a, ranges 1-4, --all, multiple paths
 
+# 2026.08.02 - v. 0.1.32 - Interactive prompts wait indefinitely unless PROMPT_TIMEOUT is set
 # 2026.08.02 - v. 0.1.31 - Interactive prompt timeout default 900s (was 100s)
 # 2026.08.01 - v. 0.1.30 - Print consolidated list of missing PAR2 target files
 # 2026.07.31 - v. 0.1.29 - Report and skip *_old.par2 backups left from prior PAR2 metadata updates
@@ -76,7 +78,7 @@ Single set: rename prompt still defaults to yes on timeout.
 Environment:
   PAR2_CMD             par2 executable (default: par2)
   PYTHON_CMD           python3 executable (default: python3)
-  PROMPT_TIMEOUT       Seconds to wait for interactive prompts (default: 900)
+  PROMPT_TIMEOUT       Seconds to wait for interactive prompts (unset = no timeout)
 
 If a .sha512 / .sha256 / .md5 file exists in the directory, Step 1 scans all
 hash manifests, reports how many list in-scope PAR2 archives for this set, and
@@ -200,17 +202,60 @@ pgm_flush_stdin() {
     done
 }
 
+pgm_prompt_has_timeout() {
+    [[ -n "${PROMPT_TIMEOUT:-}" && "${PROMPT_TIMEOUT}" =~ ^[1-9][0-9]*$ ]]
+}
+
+pgm_prompt_timeout_label() {
+    if pgm_prompt_has_timeout; then
+        printf '%ss timeout' "$PROMPT_TIMEOUT"
+    else
+        printf '%s' 'no timeout'
+    fi
+}
+
+pgm_read_key_with_timeout() {
+    local __var="$1"
+
+    if pgm_prompt_has_timeout; then
+        IFS= read -r -t "$PROMPT_TIMEOUT" -n 1 "$__var"
+    else
+        IFS= read -r -n 1 "$__var"
+    fi
+}
+
+pgm_read_line_with_timeout() {
+    local __var="$1"
+
+    if pgm_prompt_has_timeout; then
+        IFS= read -r -t "$PROMPT_TIMEOUT" "$__var"
+    else
+        IFS= read -r "$__var"
+    fi
+}
+
+pgm_read_prompt_with_timeout() {
+    local __var="$1"
+    local __prompt="$2"
+
+    if pgm_prompt_has_timeout; then
+        read -t "$PROMPT_TIMEOUT" -r -p "$__prompt" "$__var"
+    else
+        read -r -p "$__prompt" "$__var"
+    fi
+}
+
 # Read set-selection answer: q/A work on one key; numbers/ranges still use a line.
 pgm_prompt_read_set_selection() {
     local max_n="$1"
     local -n _out_ans=$2
     local first="" rest=""
 
-    printf 'Verify which set(s)? [A/1-%d/ranges like 1-4,q] (default: A in %ds): ' \
-        "$max_n" "$PROMPT_TIMEOUT"
+    printf 'Verify which set(s)? [A/1-%d/ranges like 1-4,q] (default: A, %s): ' \
+        "$max_n" "$(pgm_prompt_timeout_label)"
     pgm_flush_stdin
 
-    if ! IFS= read -r -t "$PROMPT_TIMEOUT" -n 1 first; then
+    if ! pgm_read_key_with_timeout first; then
         _out_ans=A
         echo
         return 0
@@ -234,7 +279,7 @@ pgm_prompt_read_set_selection() {
             ;;
     esac
 
-    if IFS= read -r -t "$PROMPT_TIMEOUT" rest; then
+    if pgm_read_line_with_timeout rest; then
         _out_ans="${first}${rest}"
     else
         _out_ans="$first"
@@ -422,11 +467,11 @@ pgm_print_run_settings() {
     elif (( AUTO_RENAME )); then
         rename_effect="automatic (--yes)"
     elif (( n_sets > 1 )) || (( VERIFY_ALL_SETS && n_sets == 0 )); then
-        rename_effect="prompt per problem set; default no on ${PROMPT_TIMEOUT}s timeout (batch)"
+        rename_effect="prompt per problem set; default no ($(pgm_prompt_timeout_label), batch)"
     elif (( n_sets == 1 )); then
-        rename_effect="prompt if needed; default yes on ${PROMPT_TIMEOUT}s timeout (single set)"
+        rename_effect="prompt if needed; default yes ($(pgm_prompt_timeout_label), single set)"
     else
-        rename_effect="prompt if needed; default yes (single) / no (batch) on ${PROMPT_TIMEOUT}s timeout"
+        rename_effect="prompt if needed; default yes (single) / no (batch), $(pgm_prompt_timeout_label)"
     fi
     printf '  Rename:       %s\n' "$rename_effect"
 
@@ -600,7 +645,7 @@ pgm_resolve_check_scope() {
     echo "  [Q] Quit"
     printf 'Choice [S/c/q]: '
     pgm_flush_stdin
-    if ! IFS= read -r -t "$PROMPT_TIMEOUT" -n 1 input; then
+    if ! pgm_read_key_with_timeout input; then
         input=S
     fi
     echo
@@ -912,7 +957,7 @@ MULTI_SET_FAILED_NAMES=()
 PAR2_SET_MEMBERS=()
 RESOLVE_PAR2_ERROR=""
 PGM_HASH_VERIFY_MSG=""
-PROMPT_TIMEOUT="${PROMPT_TIMEOUT:-900}"
+PROMPT_TIMEOUT="${PROMPT_TIMEOUT-}"
 PGM_PAR2_ARG_BATCH="${PGM_PAR2_ARG_BATCH:-2000}"
 PGM_RENAME_BATCH="${PGM_RENAME_BATCH:-16}"
 PGM_SCRIPT_START_STR=""
@@ -1717,7 +1762,8 @@ prompt_and_apply_rename() {
         echo "(disk filenames stay unchanged)."
         echo "PAR2 index file: $(basename "$PAR2_FILE")"
         if (( MULTI_SET_MODE )); then
-            if ! read -t "$PROMPT_TIMEOUT" -r -p "Update PAR2 archives with the new filenames? [y/N] (auto-no in ${PROMPT_TIMEOUT}s) " ans; then
+            if ! pgm_read_prompt_with_timeout ans \
+                "Update PAR2 archives with the new filenames? [y/N] ($(pgm_prompt_timeout_label)) "; then
                 ans=N
                 echo
             fi
@@ -1732,7 +1778,8 @@ prompt_and_apply_rename() {
                     ;;
             esac
         else
-            if ! read -t "$PROMPT_TIMEOUT" -r -p "Update PAR2 archives with the new filenames? [Y/n] (auto-yes in ${PROMPT_TIMEOUT}s) " ans; then
+            if ! pgm_read_prompt_with_timeout ans \
+                "Update PAR2 archives with the new filenames? [Y/n] ($(pgm_prompt_timeout_label)) "; then
                 ans=Y
                 echo
             fi
@@ -1853,9 +1900,9 @@ print_summary() {
         done
         if (( NO_RENAME == 0 && AUTO_RENAME == 0 )); then
             if (( MULTI_SET_MODE )); then
-                echo "You will be asked whether to update PAR2 metadata (default: no, ${PROMPT_TIMEOUT}s timeout)."
+                echo "You will be asked whether to update PAR2 metadata (default: no, $(pgm_prompt_timeout_label))."
             else
-                echo "You will be asked whether to update PAR2 metadata (default: yes, ${PROMPT_TIMEOUT}s timeout)."
+                echo "You will be asked whether to update PAR2 metadata (default: yes, $(pgm_prompt_timeout_label))."
             fi
         elif (( AUTO_RENAME == 1 )); then
             echo "PAR2 metadata will be updated automatically (--yes)."
