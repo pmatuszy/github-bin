@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# v. 20260801.124321 - scope [D]: pick a subdirectory by number/path; recurse under it; keep root DB/excludes
 # v. 20260731.154652 - align [v] menu line indent under Keys: blocks (4 spaces like sibling keys)
 # v. 20260731.154246 - plain rename: verify/update only affected checksum rows (no whole-list -c)
 # v. 20260731.152333 - current-dir scope: per checksum file ask check vs ignore (default N, 300s timeout)
@@ -26,6 +27,7 @@
 # v. 20260721.132007 - Samsung timestamp media: preserve optional numeric sorting prefix when appending make/model
 # v. 20260721.112812 - GoPro camera labels: GoPro_Hero4_Silver style (not GOPRO4_SILVER)
 
+# 2026.08.01 - v. 19.290.124321 - scope menu [D]: numbered subdirectory pick (or typed path); recurse under it; START_DIR DB/excludes unchanged
 # 2026.07.31 - v. 19.289.154652 - Keys: menus pass 4-space indent to [v] list-directory line so keys align
 # 2026.07.31 - v. 19.288.154246 - plain rename: per-affected-row checksum verify before/after; skip whole-list md5sum -c
 # 2026.07.31 - v. 19.287.152333 - current-dir scope: per .md5/.sha512 prompt check or ignore (default ignore, 300s)
@@ -1077,6 +1079,8 @@ NONVERBOSE_SKIP_NEXT_MAIN_LOOP_DOT=no
 CLI_COLORS=""
 CLI_MODE=""
 CLI_SCOPE=""
+# When process_scope=subdir: relative discovery root under the start directory (e.g. ./Photos/2026). Empty otherwise.
+SCOPE_SUBDIR=""
 CLI_RESUME_STATE="resume"
 CLI_DATE_PLACEMENT=""
 CLI_DB_MAINTENANCE="full"
@@ -1201,7 +1205,10 @@ Options:
   --colors [yes]|no      Skip the startup colors question
   --mode real|[dry-run]  Skip the startup mode question
   --scope subdirs|[current]
-                         Skip the startup scope question
+                         Skip the startup scope question.
+                         Interactive menu also offers [D] choose a subdirectory (numbered list or typed
+                         relative path); always recurses under that directory. DB, excludes, and resume
+                         stay in the start directory.
   --date-placement front|[original]
                          BBC/iPlayer-style names with -date_YYYY-MM-DD_HH_MM_SS:
                          front = YYYYMMDD_HHMMSS_ at the start (default);
@@ -6202,6 +6209,8 @@ print_verbose_options_box() {
 
     if [[ "$process_scope" == "subdirs" ]]; then
         scope_text="subdirs - process the current directory and all subdirectories"
+    elif [[ "$process_scope" == "subdir" ]]; then
+        scope_text="subdir - recurse under chosen directory only (${SCOPE_SUBDIR:-?}); DB/excludes stay at start dir"
     else
         scope_text="current - immediate children only (find -maxdepth 1; does not descend into subfolders)"
     fi
@@ -6768,32 +6777,174 @@ fi
 
 echo -e "Mode selected: ${CYAN}$mode${RESET}"
 
+# Resume/checkpoint key: include chosen subdirectory so resume requires the same discovery root.
+resume_scope_storage_key() {
+    if [[ "$process_scope" == "subdir" && -n "$SCOPE_SUBDIR" ]]; then
+        printf 'subdir:%s' "$SCOPE_SUBDIR"
+    else
+        printf '%s' "$process_scope"
+    fi
+}
+
+# Validate raw number/path choice; set SCOPE_SUBDIR to ./relative under the start directory (cwd).
+# Rejects the start directory itself and anything outside it. Return 0 on success, 1 on failure.
+validate_and_set_scope_subdir() {
+    local raw="$1"
+    local candidate="" abs_choice="" abs_root="" rel=""
+
+    raw="${raw#"${raw%%[![:space:]]*}"}"
+    raw="${raw%"${raw##*[![:space:]]}"}"
+    [[ -n "$raw" ]] || {
+        echo "Empty choice; enter a list number or a relative directory path."
+        return 1
+    }
+
+    raw="${raw%/}"
+    if [[ "$raw" == /* ]]; then
+        candidate="$raw"
+    else
+        raw="${raw#./}"
+        candidate="./$raw"
+    fi
+
+    if [[ ! -d "$candidate" ]]; then
+        emit_wrap_labeled_stdout "ERROR: Not a directory: " "${YELLOW}ERROR:${RESET} Not a directory: " "$candidate"
+        return 1
+    fi
+
+    abs_choice="$(db_abs_path "$candidate" 2>/dev/null || true)"
+    abs_root="$(db_abs_path "." 2>/dev/null || true)"
+    if [[ -z "$abs_choice" || -z "$abs_root" ]]; then
+        echo "ERROR: Could not resolve directory paths for scope validation."
+        return 1
+    fi
+
+    if [[ "$abs_choice" == "$abs_root" ]]; then
+        echo "ERROR: Choose a subdirectory, not the start directory itself (use [S] for the whole tree)."
+        return 1
+    fi
+    if [[ "$abs_choice" != "$abs_root/"* ]]; then
+        emit_wrap_labeled_stdout "ERROR: Directory must be under the start directory: " "${YELLOW}ERROR:${RESET} Directory must be under the start directory: " "$abs_root"
+        return 1
+    fi
+
+    rel="${abs_choice#"$abs_root"/}"
+    [[ -n "$rel" && "$rel" != "$abs_choice" ]] || {
+        echo "ERROR: Could not compute a relative path under the start directory."
+        return 1
+    }
+    SCOPE_SUBDIR="./$rel"
+    return 0
+}
+
+# Interactive [D]: list immediate subdirectories; accept number or typed relative/absolute path under start.
+# Sets SCOPE_SUBDIR. Return 0 ok, 2 quit script, 1 back to scope menu.
+prompt_choose_scope_subdirectory() {
+    local -a dirs=()
+    local i choice idx
+
+    SCOPE_SUBDIR=""
+    mapfile -d '' -t dirs < <(find . -mindepth 1 -maxdepth 1 -type d -print0 | LC_ALL=C sort -z)
+
+    echo
+    echo "Choose a subdirectory to process (always recurses under it)."
+    echo "DB, exclude filters, and resume stay in the start directory."
+    echo "Immediate subdirectories:"
+    if (( ${#dirs[@]} == 0 )); then
+        echo "  (none found — you can still type a deeper relative path, or [q] to go back)"
+    else
+        for i in "${!dirs[@]}"; do
+            printf '  [%d] %s\n' "$((i + 1))" "${dirs[$i]}"
+        done
+    fi
+    echo "  Enter a number from the list, or a relative path under the start directory."
+    echo "  [q] Back to scope menu"
+
+    while true; do
+        printf '%s' "$(user_prompt_ts_prefix)Subdirectory number or path: "
+        flush_stdin
+        read_line_editable choice "$PROMPT_WAIT_SECONDS" ""
+        echo
+        choice="${choice#"${choice%%[![:space:]]*}"}"
+        choice="${choice%"${choice##*[![:space:]]}"}"
+
+        if [[ -z "$choice" ]]; then
+            echo "Please enter a number, a path, or q."
+            continue
+        fi
+        if [[ "$choice" =~ ^[Qq]$ ]]; then
+            return 1
+        fi
+
+        if [[ "$choice" =~ ^[0-9]+$ ]]; then
+            idx=$((10#$choice))
+            if (( ${#dirs[@]} == 0 )); then
+                echo "No numbered directories listed; type a relative path under the start directory, or q."
+                continue
+            fi
+            if (( idx < 1 || idx > ${#dirs[@]} )); then
+                echo "Invalid number (valid: 1-${#dirs[@]}), or type a path / q."
+                continue
+            fi
+            if validate_and_set_scope_subdir "${dirs[$((idx - 1))]}"; then
+                return 0
+            fi
+            continue
+        fi
+
+        if validate_and_set_scope_subdir "$choice"; then
+            return 0
+        fi
+    done
+}
+
 process_scope="subdirs"
 input=""
+SCOPE_SUBDIR=""
 
 if [[ -n "$CLI_SCOPE" ]]; then
     process_scope="$CLI_SCOPE"
 else
-    echo
-    verbose_question_timestamp "What should be processed?"
-    echo "  $(rename_menu_key_bracket S S) Also subdirectories (default)"
-    echo "  $(rename_menu_key_bracket C S) Current directory only"
-    echo "  $(rename_menu_key_bracket Q S) Quit"
-    echo -n "$(user_prompt_ts_prefix)Choice [S/c/q]: "
+    while true; do
+        echo
+        verbose_question_timestamp "What should be processed?"
+        echo "  $(rename_menu_key_bracket S S) Also subdirectories (default) — whole tree under the start directory"
+        echo "  $(rename_menu_key_bracket C S) Current directory only — immediate children of the start directory"
+        echo "  $(rename_menu_key_bracket D S) Choose a subdirectory — recurse under it; DB/excludes stay at start dir"
+        echo "  $(rename_menu_key_bracket Q S) Quit"
+        echo -n "$(user_prompt_ts_prefix)Choice [S/c/d/q]: "
 
-    flush_stdin
-    read_single_key input "$PROMPT_WAIT_SECONDS"
-    echo
+        flush_stdin
+        read_single_key input "$PROMPT_WAIT_SECONDS"
+        echo
 
-    if [[ "$input" =~ [Qq] ]]; then
-        echo "Quitting."
-        exit 0
-    elif [[ "$input" =~ [Cc] ]]; then
-        process_scope="current"
-    fi
+        if [[ "$input" =~ [Qq] ]]; then
+            echo "Quitting."
+            exit 0
+        elif [[ "$input" =~ [Cc] ]]; then
+            process_scope="current"
+            SCOPE_SUBDIR=""
+            break
+        elif [[ "$input" =~ [Dd] ]]; then
+            if prompt_choose_scope_subdirectory; then
+                process_scope="subdir"
+                break
+            fi
+            # Back to scope menu
+            continue
+        else
+            process_scope="subdirs"
+            SCOPE_SUBDIR=""
+            break
+        fi
+    done
 fi
 
-echo -e "Scope selected: ${CYAN}$process_scope${RESET}"
+if [[ "$process_scope" == "subdir" ]]; then
+    echo -e "Scope selected: ${CYAN}subdir${RESET} (recurse under ${CYAN}${SCOPE_SUBDIR}${RESET})"
+else
+    echo -e "Scope selected: ${CYAN}$process_scope${RESET}"
+fi
 
 
 sleep 1
@@ -14311,7 +14462,7 @@ save_resume_checkpoint() {
             printf '%s\0' "$p"
         done
     } | python3 - "$RESUME_STATE_FILE" "$tmp_renamed" \
-        "$SCRIPT_VERSION" "$START_DIR" "$mode" "$process_scope" \
+        "$SCRIPT_VERSION" "$START_DIR" "$mode" "$(resume_scope_storage_key)" \
         "$USE_DB" "$FAST_DB" "$FORCE_RECHECK" "$PROMPT_WAIT_SECONDS" "$DATE_PLACEMENT" \
         "$files_examined" "$files_affected" "$files_skipped" "$FILES_HASHED" \
         "$SCRIPT_START_TIME" <<'PY'
@@ -14411,7 +14562,7 @@ load_resume_checkpoint() {
     tmp_processed="$(mktemp)"
     tmp_renamed="$(mktemp)"
     verbose_status_timestamp "Loading resume checkpoint metadata from: $RESUME_STATE_FILE"
-    if ! meta="$(python3 - "$RESUME_STATE_FILE" "$tmp_processed" "$tmp_renamed" "$START_DIR" "$mode" "$process_scope" "$USE_DB" "$FAST_DB" "$FORCE_RECHECK" "$PROMPT_WAIT_SECONDS" "$DATE_PLACEMENT" <<'PY'
+    if ! meta="$(python3 - "$RESUME_STATE_FILE" "$tmp_processed" "$tmp_renamed" "$START_DIR" "$mode" "$(resume_scope_storage_key)" "$USE_DB" "$FAST_DB" "$FORCE_RECHECK" "$PROMPT_WAIT_SECONDS" "$DATE_PLACEMENT" <<'PY'
 import json
 import pathlib
 import sys
@@ -15490,7 +15641,11 @@ print_summary() {
     echo "Mode:                  $mode"
     echo "Colors enabled:        $use_colors"
     echo "Verbose:               $VERBOSE"
-    echo "Scope:                 $process_scope"
+    if [[ "$process_scope" == "subdir" ]]; then
+        echo "Scope:                 subdir (${SCOPE_SUBDIR})"
+    else
+        echo "Scope:                 $process_scope"
+    fi
     echo "Date placement:        $DATE_PLACEMENT"
     echo "Entries examined:      $files_examined"
     echo "Files processed:       $files_examined"
@@ -15553,6 +15708,8 @@ trap on_interrupt INT
 
 if [[ "$process_scope" == "current" ]]; then
     startup_progress "Listing immediate children of the current directory (find -maxdepth 1; no recursion into subfolders)..."
+elif [[ "$process_scope" == "subdir" ]]; then
+    startup_progress "Discovering and sorting entries under chosen subdirectory: $SCOPE_SUBDIR (can take time on large trees)..."
 else
     startup_progress "Discovering and sorting entries under this tree (can take time on very large directories)..."
 fi
@@ -15596,8 +15753,19 @@ PY
 )"
     )
 else
+    # subdirs (whole tree) or subdir (chosen directory + descendants). Keep START_DIR for DB/excludes.
+    _discovery_root="."
+    _discovery_mindepth=1
+    if [[ "$process_scope" == "subdir" ]]; then
+        if [[ -z "$SCOPE_SUBDIR" || ! -d "$SCOPE_SUBDIR" ]]; then
+            echo "ERROR: Scope subdirectory is missing or not a directory: '${SCOPE_SUBDIR}'" >&2
+            exit 1
+        fi
+        _discovery_root="$SCOPE_SUBDIR"
+        _discovery_mindepth=0
+    fi
     mapfile -d '' -t ordered_paths < <(
-        find . -depth -mindepth 1 -print0 |
+        find "$_discovery_root" -depth -mindepth "$_discovery_mindepth" -print0 |
         python3 -c '
 import sys
 from datetime import datetime
