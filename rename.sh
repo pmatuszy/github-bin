@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# v. 20260802.221218 - M3U subtree match: ignore find SIGPIPE 141 on early exact hit; tighten fuzzy keys
 # v. 20260801.124321 - scope [D]: pick a subdirectory by number/path; recurse under it; keep root DB/excludes
 # v. 20260731.154652 - align [v] menu line indent under Keys: blocks (4 spaces like sibling keys)
 # v. 20260731.154246 - plain rename: verify/update only affected checksum rows (no whole-list -c)
@@ -27,6 +28,7 @@
 # v. 20260721.132007 - Samsung timestamp media: preserve optional numeric sorting prefix when appending make/model
 # v. 20260721.112812 - GoPro camera labels: GoPro_Hero4_Silver style (not GOPRO4_SILVER)
 
+# 2026.08.02 - v. 19.291.221218 - M3U: find SIGPIPE 141 after exact match is not an error; fuzzy match needs long similar keys
 # 2026.08.01 - v. 19.290.124321 - scope menu [D]: numbered subdirectory pick (or typed path); recurse under it; START_DIR DB/excludes unchanged
 # 2026.07.31 - v. 19.289.154652 - Keys: menus pass 4-space indent to [v] list-directory line so keys align
 # 2026.07.31 - v. 19.288.154246 - plain rename: per-affected-row checksum verify before/after; skip whole-list md5sum -c
@@ -8336,24 +8338,62 @@ PY
 find_best_m3u_subtree_match() {
     local m3u_file="$1"
     local missing_entry="$2"
-    local playlist_dir candidate wanted_key candidate_key best=""
+    local playlist_dir candidate wanted_key candidate_key best="" best_fuzzy=""
+    local wanted_len=0 cand_len=0 shorter=0 longer=0 best_fuzzy_len=0
+    # Substring fuzzy match rejected below this length (avoids keys like "i" from "+ I -.Mp3").
+    local min_fuzzy_len=8
+
     playlist_dir="$(dirname -- "$m3u_file")"
     wanted_key="$(normalize_m3u_candidate_key "$missing_entry")"
     [[ -n "$wanted_key" ]] || return 1
+    wanted_len=${#wanted_key}
 
+    # || true: early break after an exact match closes the pipe; find then exits 141 (SIGPIPE)
+    # which would trip set -o pipefail / ERR even though the match succeeded.
     while IFS= read -r -d '' candidate; do
         candidate_key="$(normalize_m3u_candidate_key "$candidate")"
+        [[ -n "$candidate_key" ]] || continue
+        cand_len=${#candidate_key}
+
         if [[ "$candidate_key" == "$wanted_key" ]]; then
             best="$candidate"
             break
         fi
-        if [[ -z "$best" && -n "$candidate_key" && ( "$candidate_key" == *"$wanted_key"* || "$wanted_key" == *"$candidate_key"* ) ]]; then
-            best="$candidate"
-        fi
-    done < <(find "$playlist_dir" -type f -print0 2>/dev/null)
 
-    [[ -n "$best" ]] || return 1
-    printf '%s' "$best"
+        # Fuzzy substring only when both keys are long enough and similar in length.
+        if (( cand_len < min_fuzzy_len || wanted_len < min_fuzzy_len )); then
+            continue
+        fi
+        if [[ "$candidate_key" != *"$wanted_key"* && "$wanted_key" != *"$candidate_key"* ]]; then
+            continue
+        fi
+        if (( cand_len <= wanted_len )); then
+            shorter=$cand_len
+            longer=$wanted_len
+        else
+            shorter=$wanted_len
+            longer=$cand_len
+        fi
+        # Shorter key must be at least half the longer key (blocks tiny accidental substrings).
+        if (( shorter * 2 < longer )); then
+            continue
+        fi
+        # Prefer the longer (more specific) fuzzy key when several match.
+        if [[ -z "$best_fuzzy" ]] || (( cand_len > best_fuzzy_len )); then
+            best_fuzzy="$candidate"
+            best_fuzzy_len=$cand_len
+        fi
+    done < <(find "$playlist_dir" -type f -print0 2>/dev/null || true)
+
+    if [[ -n "$best" ]]; then
+        printf '%s' "$best"
+        return 0
+    fi
+    if [[ -n "$best_fuzzy" ]]; then
+        printf '%s' "$best_fuzzy"
+        return 0
+    fi
+    return 1
 }
 
 
