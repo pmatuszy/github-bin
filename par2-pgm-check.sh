@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20260802.114532 - PROMPT_TIMEOUT default 900s (was 100s)
 # v. 20260801.115737 - list missing PAR2 targets in summary and after final verify
 # v. 20260731.205848 - report and skip *_old.par2 backup files from prior metadata updates
 # v. 20260730.114155 - parse Target/perfect-match par2 lines for misnamed-file rename prompt
@@ -15,6 +16,7 @@
 # v. 20260719.103506 - fix no-arg run: empty POSITIONAL[@]:- became one "" element
 # v. 20260719.102800 - multi-set selection: A/a, ranges 1-4, --all, multiple paths
 
+# 2026.08.02 - v. 0.1.31 - Interactive prompt timeout default 900s (was 100s)
 # 2026.08.01 - v. 0.1.30 - Print consolidated list of missing PAR2 target files
 # 2026.07.31 - v. 0.1.29 - Report and skip *_old.par2 backups left from prior PAR2 metadata updates
 # 2026.07.30 - v. 0.1.28 - Parse Target/perfect-match par2 lines; misnamed rename prompt
@@ -74,7 +76,7 @@ Single set: rename prompt still defaults to yes on timeout.
 Environment:
   PAR2_CMD             par2 executable (default: par2)
   PYTHON_CMD           python3 executable (default: python3)
-  PROMPT_TIMEOUT       Seconds to wait for interactive prompts (default: 100)
+  PROMPT_TIMEOUT       Seconds to wait for interactive prompts (default: 900)
 
 If a .sha512 / .sha256 / .md5 file exists in the directory, Step 1 scans all
 hash manifests, reports how many list in-scope PAR2 archives for this set, and
@@ -910,7 +912,7 @@ MULTI_SET_FAILED_NAMES=()
 PAR2_SET_MEMBERS=()
 RESOLVE_PAR2_ERROR=""
 PGM_HASH_VERIFY_MSG=""
-PROMPT_TIMEOUT="${PROMPT_TIMEOUT:-100}"
+PROMPT_TIMEOUT="${PROMPT_TIMEOUT:-900}"
 PGM_PAR2_ARG_BATCH="${PGM_PAR2_ARG_BATCH:-2000}"
 PGM_RENAME_BATCH="${PGM_RENAME_BATCH:-16}"
 PGM_SCRIPT_START_STR=""
