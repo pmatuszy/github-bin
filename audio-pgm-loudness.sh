@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20260802.225739 - revert normalize when the result measures quieter than the original
 # v. 20260802.224401 - fix aac "Unsupported channel layout 6 channels" (pin unspecified layouts)
 # v. 20260801.162132 - GoPro order: swap trak boxes in moov (ffmpeg cannot copy or reorder tmcd)
 # v. 20260801.161802 - fix pass3 handler metadata quoting (GoPro TCD was parsed as output file)
@@ -141,6 +142,8 @@ Video files: loudnorm on every audio track; video, subtitles, chapters, metadata
 and other non-audio streams are copied. Audio is re-encoded (AAC for MP4/MKV, etc.).
 Audio tracks with an unspecified channel layout are pinned to the default layout for
 their channel count; the native aac encoder rejects layouts like "6 channels".
+If the normalized file measures a lower mean than the original, the change is pointless
+and gets reverted from the backup (needs --save-original) and counted as "reverted".
 GoPro MP4: pass1 loudnorm v/a; pass2 remuxes MET from source and lets ffmpeg rebuild the
 timecode track; a final moov trak swap restores TCD at #2 and MET at #3.
 After a successful in-place replace, the output file gets the original timestamps
@@ -576,6 +579,7 @@ LOUDNESS_STATS_NORM_OK=0
 LOUDNESS_STATS_NORM_SKIP=0
 LOUDNESS_STATS_NORM_FAIL=0
 LOUDNESS_STATS_NORM_BACKUP_SKIP=0
+LOUDNESS_STATS_NORM_REVERT=0
 LOUDNESS_SUMMARY_DONE=no
 LOUDNESS_STOPPED_BY_USER=no
 LOUDNESS_INTERRUPTED=no
@@ -1665,6 +1669,42 @@ get_scan_loudness_for_file() {
   measure_loudness "$file"
 }
 
+# 0 when dB value $1 is lower (quieter) than $2. Non-numeric values (—, n/a) never match.
+loudness_mean_is_lower() {
+  local a="$1" b="$2"
+  [[ "$a" =~ ^-?[0-9]+(\.[0-9]+)?$ && "$b" =~ ^-?[0-9]+(\.[0-9]+)?$ ]] || return 1
+  awk -v a="$a" -v b="$b" 'BEGIN { exit !(a+0 < b+0) }'
+}
+
+# 0 when the normalized file measures quieter than the original, so the change is
+# pointless and gets rolled back. A partial scan window is confirmed against a full
+# measurement of the original first, otherwise the two numbers are not comparable.
+normalize_result_got_quieter() {
+  local backup="$1" before_mean="$2" after_mean="$3"
+  local line ref_max ref_mean
+
+  loudness_mean_is_lower "$after_mean" "$before_mean" || return 1
+  [[ -n "$backup" && -f "$backup" ]] || return 0
+  loudness_scan_window_for_file "$backup" >/dev/null || return 0
+
+  line="$(measure_loudness "$backup" full)" || return 0
+  read -r ref_max ref_mean <<<"$line"
+  printf '    Original (full measure): max %10s  mean %10s\n' \
+    "$(format_db_display_value "$ref_max")" "$(format_db_display_value "$ref_mean")"
+  loudness_mean_is_lower "$after_mean" "$ref_mean"
+}
+
+# Put the original back after a normalize that made the file quieter.
+normalize_revert_quieter_result() {
+  local dest="$1" backup="$2"
+  echo '    Normalized result is quieter than the original — reverting.'
+  if [[ -z "$backup" || ! -f "$backup" ]]; then
+    echo '    WARNING: no backup to revert to (use --save-original); keeping normalized file.' >&2
+    return 1
+  fi
+  restore_original_from_backup "$backup" "$dest"
+}
+
 print_normalize_before_after() {
   local before_max="$1" before_mean="$2" after_max="$3" after_mean="$4"
   printf '    Before: max %10s  mean %10s\n' \
@@ -1726,7 +1766,21 @@ loudness_stats_record_norm_result() {
     1) (( ++LOUDNESS_STATS_NORM_FAIL )) ;;
     2) (( ++LOUDNESS_STATS_NORM_BACKUP_SKIP )) ;;
     skip) (( ++LOUDNESS_STATS_NORM_SKIP )) ;;
+    revert) (( ++LOUDNESS_STATS_NORM_REVERT )) ;;
   esac
+}
+
+loudness_norm_result_line() {
+  local line
+  if (( LOUDNESS_STATS_NORM_BACKUP_SKIP > 0 )); then
+    line="${LOUDNESS_STATS_NORM_OK} OK, $(( LOUDNESS_STATS_NORM_SKIP + LOUDNESS_STATS_NORM_BACKUP_SKIP )) skipped (${LOUDNESS_STATS_NORM_BACKUP_SKIP} backup conflict), ${LOUDNESS_STATS_NORM_FAIL} failed"
+  else
+    line="${LOUDNESS_STATS_NORM_OK} OK, ${LOUDNESS_STATS_NORM_SKIP} skipped, ${LOUDNESS_STATS_NORM_FAIL} failed"
+  fi
+  if (( LOUDNESS_STATS_NORM_REVERT > 0 )); then
+    line="${line}, ${LOUDNESS_STATS_NORM_REVERT} reverted (quieter)"
+  fi
+  printf '%s\n' "$line"
 }
 
 loudness_add_norm_proc_sec() {
@@ -1803,11 +1857,7 @@ loudness_print_run_summary_once() {
     if (( LOUDNESS_SAVE_ORIGINAL )); then
       loudness_summary_kv "Originals backup" '*.backup.deleteme (moved aside)'
     fi
-    if (( LOUDNESS_STATS_NORM_BACKUP_SKIP > 0 )); then
-      norm_line="${LOUDNESS_STATS_NORM_OK} OK, $(( LOUDNESS_STATS_NORM_SKIP + LOUDNESS_STATS_NORM_BACKUP_SKIP )) skipped (${LOUDNESS_STATS_NORM_BACKUP_SKIP} backup conflict), ${LOUDNESS_STATS_NORM_FAIL} failed"
-    else
-      norm_line="${LOUDNESS_STATS_NORM_OK} OK, ${LOUDNESS_STATS_NORM_SKIP} skipped, ${LOUDNESS_STATS_NORM_FAIL} failed"
-    fi
+    norm_line="$(loudness_norm_result_line)"
     loudness_summary_kv "Normalization" "$norm_line"
   elif (( SCAN_ONLY )); then
     loudness_summary_kv "Normalize" 'scan-only (not run)'
@@ -3985,7 +4035,7 @@ normalize_one_selected_file() {
   local i="$1" filter="$2"
   local file="${NORMALIZE_FILES[$i]}"
   local before_max before_mean after_max after_mean measure_line measure_rc
-  local backup src dest prep_rc audio_n norm_start norm_elapsed
+  local backup src dest prep_rc audio_n norm_start norm_elapsed reverted=0
 
   before_max=""
   before_mean=""
@@ -4026,12 +4076,19 @@ normalize_one_selected_file() {
     if (( measure_rc == 0 )); then
       read -r after_max after_mean <<<"$measure_line"
       print_normalize_before_after "$before_max" "$before_mean" "$after_max" "$after_mean"
+      if normalize_result_got_quieter "$backup" "$before_mean" "$after_mean"; then
+        normalize_revert_quieter_result "$dest" "$backup" && reverted=1
+      fi
     else
       echo '    After: could not measure loudness'
     fi
     norm_elapsed=$(( SECONDS - norm_start ))
     loudness_add_norm_proc_sec "$norm_elapsed"
-    loudness_stats_record_norm_result 0
+    if (( reverted )); then
+      loudness_stats_record_norm_result revert
+    else
+      loudness_stats_record_norm_result 0
+    fi
     echo
     return 0
   fi
@@ -4303,13 +4360,9 @@ normalize_candidate_files() {
   fi
 
   echo
-  if (( LOUDNESS_STATS_NORM_BACKUP_SKIP > 0 )); then
-    printf 'Normalization: %d OK, %d skipped (%d backup conflict), %d failed\n' \
-      "$LOUDNESS_STATS_NORM_OK" "$(( LOUDNESS_STATS_NORM_SKIP + LOUDNESS_STATS_NORM_BACKUP_SKIP ))" \
-      "$LOUDNESS_STATS_NORM_BACKUP_SKIP" "$LOUDNESS_STATS_NORM_FAIL"
-  else
-    printf 'Normalization: %d OK, %d skipped, %d failed\n' \
-      "$LOUDNESS_STATS_NORM_OK" "$LOUDNESS_STATS_NORM_SKIP" "$LOUDNESS_STATS_NORM_FAIL"
+  printf 'Normalization: %s\n' "$(loudness_norm_result_line)"
+  if (( LOUDNESS_STATS_NORM_REVERT > 0 )); then
+    echo 'Reverted files were left unchanged (normalizing made them quieter).'
   fi
   if (( LOUDNESS_STATS_NORM_FAIL > 0 )); then
     echo 'Check FAILED entries above for ffmpeg errors or backup problems.'
