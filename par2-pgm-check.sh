@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20260802.154500 - exclude misnamed targets from missing-file count/list
 # v. 20260802.135100 - interactive prompts wait indefinitely by default (no timeout)
 # v. 20260802.114532 - PROMPT_TIMEOUT default 900s (was 100s)
 # v. 20260801.115737 - list missing PAR2 targets in summary and after final verify
@@ -17,6 +18,7 @@
 # v. 20260719.103506 - fix no-arg run: empty POSITIONAL[@]:- became one "" element
 # v. 20260719.102800 - multi-set selection: A/a, ranges 1-4, --all, multiple paths
 
+# 2026.08.02 - v. 0.1.33 - Do not list misnamed PAR2 targets as missing files
 # 2026.08.02 - v. 0.1.32 - Interactive prompts wait indefinitely unless PROMPT_TIMEOUT is set
 # 2026.08.02 - v. 0.1.31 - Interactive prompt timeout default 900s (was 100s)
 # 2026.08.01 - v. 0.1.30 - Print consolidated list of missing PAR2 target files
@@ -1861,6 +1863,21 @@ pgm_print_missing_targets_report() {
     fi
 }
 
+pgm_filter_missing_targets_excluding_misnamed() {
+    local -a filtered=()
+    local line par2_target i
+
+    for line in "${MISSING_PAR2_TARGETS[@]}"; do
+        par2_target="${line#Target: \"}"
+        par2_target="${par2_target%\" - missing.}"
+        for i in "${MISNAMED_PAR2[@]}"; do
+            [[ "$i" == "$par2_target" ]] && continue 2
+        done
+        filtered+=("$line")
+    done
+    MISSING_PAR2_TARGETS=("${filtered[@]}")
+}
+
 print_summary() {
     local out_file="$1"
     local missing=0
@@ -1870,11 +1887,12 @@ print_summary() {
     local i
 
     pgm_collect_missing_targets "$out_file"
-    missing=${#MISSING_PAR2_TARGETS[@]}
 
     wrong=$(grep -E '[0-9]+ file\(s\) have the wrong name\.' "$out_file" | head -1 || true)
 
     extract_misnamed_pairs "$out_file"
+    pgm_filter_missing_targets_excluding_misnamed
+    missing=${#MISSING_PAR2_TARGETS[@]}
     matches=${#MISNAMED_DISK[@]}
 
     for i in "${!MISNAMED_DISK[@]}"; do

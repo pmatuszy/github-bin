@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# v. 20260802.154500 - read PAR2 metadata from volume-only sets; fix packet buffer refill
 # v. 20260721.154223 - list-names subcommand; --pairs-file for large rename batches
 # v. 20260719.093400 - hash inventory subcommand for startup scope summary
 
@@ -26,6 +27,7 @@ INVALID_CHARS = '\\:*?"<>|'
 READ_CHUNK = 2097152
 REFILL_AT = 1048576
 PACKET_BUFFER = 65536
+MAX_PACKET_BYTES = 16 * 1024 * 1024
 
 
 def usage():
@@ -136,19 +138,30 @@ def read_source_names(folder_path, par_file_name):
         data_size = len(data)
         offset = 0
 
-        while offset + 64 < data_size:
+        while offset + 64 <= data_size:
             if data[offset : offset + 8] != b"PAR2\x00PKT":
                 offset += 1
                 continue
 
             packet_size = struct.unpack_from("Q", data, offset + 8)[0]
+            if packet_size < 64 or packet_size > MAX_PACKET_BYTES:
+                offset += 1
+                continue
+
+            while offset + packet_size > data_size:
+                more = handle.read(READ_CHUNK)
+                if not more:
+                    break
+                data = data + more
+                data_size = len(data)
+
             if offset + packet_size > data_size:
-                offset += 8
+                offset += 1
                 continue
 
             packet_hash = hashlib.md5(data[offset + 32 : offset + packet_size]).digest()
             if data[offset + 16 : offset + 32] != packet_hash:
-                offset += 8
+                offset += 1
                 continue
 
             packet_set_id = data[offset + 32 : offset + 48]
@@ -176,12 +189,60 @@ def read_source_names(folder_path, par_file_name):
             offset += packet_size
 
             if offset >= REFILL_AT:
-                data = data[offset:data_size] + handle.read(READ_CHUNK - (data_size - offset))
+                data = data[offset:data_size] + handle.read(READ_CHUNK)
+                data_size = len(data)
+                offset = 0
+            elif offset + 64 > data_size:
+                more = handle.read(READ_CHUNK)
+                if not more:
+                    break
+                data = data[offset:data_size] + more
                 data_size = len(data)
                 offset = 0
 
     if set_id is None:
         raise ValueError(f"Could not read PAR2 set metadata from: {par_file_name}")
+
+    return set_id, source_names
+
+
+def par2_metadata_file_order(folder_path, par_files):
+    def sort_key(name):
+        path = os.path.join(folder_path, name)
+        try:
+            size = os.path.getsize(path)
+        except OSError:
+            size = 1 << 62
+        has_vol = 1 if ".vol" in name.lower() else 0
+        return (has_vol, size, name.lower())
+
+    return sorted(par_files, key=sort_key)
+
+
+def read_set_metadata(folder_path, par_files):
+    set_id = None
+    source_names = []
+    seen_names = set()
+    errors = []
+
+    for par_file_name in par2_metadata_file_order(folder_path, par_files):
+        try:
+            file_set_id, file_names = read_source_names(folder_path, par_file_name)
+        except ValueError as error:
+            errors.append(str(error))
+            continue
+        if set_id is None:
+            set_id = file_set_id
+        for name in file_names:
+            if name not in seen_names:
+                seen_names.add(name)
+                source_names.append(name)
+
+    if set_id is None:
+        detail = errors[0] if errors else "no readable PAR2 packets found"
+        raise ValueError(
+            f"Could not read PAR2 set metadata from files in: {folder_path} ({detail})"
+        )
 
     return set_id, source_names
 
@@ -670,7 +731,7 @@ def par2_index_file(par_files):
 
 def read_par2_source_names(par_file_path):
     folder_path, par_files = find_par2_set(par_file_path)
-    _, source_names = read_source_names(folder_path, par2_index_file(par_files))
+    _, source_names = read_set_metadata(folder_path, par_files)
     return source_names
 
 
@@ -716,9 +777,8 @@ def parse_rename_argv(argv):
 
 def apply_renames(par_file_path, rename_args):
     folder_path, par_files = find_par2_set(par_file_path)
-    index_file = par2_index_file(par_files)
 
-    set_id, source_names = read_source_names(folder_path, index_file)
+    set_id, source_names = read_set_metadata(folder_path, par_files)
     rename_map = build_rename_map(rename_args, source_names)
 
     total_packets = 0
