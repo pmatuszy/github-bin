@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20260803.213000 - prompt to repair when damage is fixable; --no-repair; verify after repair
 # v. 20260803.073000 - rename prompt: single-key y/n/q; q quits multi-set run
 # v. 20260803.072500 - after PAR2 rename re-verify Step 2; Step 6 must pass before OK
 # v. 20260802.154500 - exclude misnamed targets from missing-file count/list
@@ -20,6 +21,7 @@
 # v. 20260719.103506 - fix no-arg run: empty POSITIONAL[@]:- became one "" element
 # v. 20260719.102800 - multi-set selection: A/a, ranges 1-4, --all, multiple paths
 
+# 2026.08.03 - v. 0.1.36 - Ask to repair damaged files; --no-repair; re-verify after repair
 # 2026.08.03 - v. 0.1.35 - Rename prompt: single-key y/n/q; q quits run
 # 2026.08.03 - v. 0.1.34 - Re-verify after PAR2 metadata rename; Step 6 must pass
 # 2026.08.02 - v. 0.1.33 - Do not list misnamed PAR2 targets as missing files
@@ -74,12 +76,14 @@ Options:
                        subdirs: start directory and all subdirectories (default)
                        current: start directory only (no recursion)
   --all                Verify every discovered PAR2 index (no set-selection prompt).
-  --repair             Repair damaged data and rename misnamed files to PAR2 names
+  --repair             Repair damaged data without asking (also renames disk files)
+  --no-repair          Report damage but never offer/run repair
   --yes, -y            Auto-yes for prompts (--all when many sets; auto-rename metadata)
   --no-rename          Detect misnamed files but do not offer/run PAR2 metadata update
 
-Multi-set batch: rename prompt defaults to no on timeout unless --yes is given.
-Single set: rename prompt still defaults to yes on timeout.
+Rename and repair prompts take one key: y, n, or q (q cancels the whole run).
+Multi-set batch: both prompts default to no unless --yes / --repair is given.
+Single set: both prompts default to yes.
 
 Environment:
   PAR2_CMD             par2 executable (default: par2)
@@ -200,8 +204,12 @@ pgm_expand_glob_in_dir() {
     shopt -u nullglob
 }
 
+# Discard keys typed by accident during a long verify. Only meaningful on a
+# terminal: on a pipe or file this would swallow the answer itself.
 pgm_flush_stdin() {
     local discard drained=0 max_drain=256
+
+    [[ -t 0 ]] || return 0
 
     while (( drained < max_drain )) && IFS= read -r -t 0.02 -n 1 discard; do
         ((++drained))
@@ -293,18 +301,27 @@ pgm_prompt_read_set_selection() {
     echo
 }
 
-# Read rename prompt: y/n/q on one key (Enter = default); q quits the script.
 pgm_prompt_read_rename_choice() {
+    pgm_prompt_read_yes_no_quit "$1" "$2" \
+        "Update PAR2 archives with the new filenames?"
+}
+
+pgm_prompt_read_repair_choice() {
+    pgm_prompt_read_yes_no_quit "$1" "$2" \
+        "Repair damaged file(s) with par2 now?"
+}
+
+# Answer on one key (Enter = default); q quits the script. Sets 0=yes, 1=no, 2=quit.
+pgm_prompt_read_yes_no_quit() {
     local default_yes="$1"
     local -n _out=$2
+    local question="$3"
     local key="" rest=""
 
     if (( default_yes )); then
-        printf 'Update PAR2 archives with the new filenames? [Y/n/q] (%s): ' \
-            "$(pgm_prompt_timeout_label)"
+        printf '%s [Y/n/q] (%s): ' "$question" "$(pgm_prompt_timeout_label)"
     else
-        printf 'Update PAR2 archives with the new filenames? [y/N/q] (%s): ' \
-            "$(pgm_prompt_timeout_label)"
+        printf '%s [y/N/q] (%s): ' "$question" "$(pgm_prompt_timeout_label)"
     fi
     pgm_flush_stdin
 
@@ -520,9 +537,11 @@ pgm_print_run_settings() {
     fi
 
     if (( REPAIR )); then
-        echo "  --repair:     given"
+        echo "  --repair:     given (repair damaged files without asking)"
+    elif (( NO_REPAIR )); then
+        echo "  --no-repair:  given (report damage only; never repair)"
     else
-        echo "  --repair:     not given (repair disabled)"
+        echo "  --repair:     not given (prompt when repair is possible)"
     fi
 
     if (( NO_RENAME )); then
@@ -991,12 +1010,15 @@ done
 PAR2_CMD="${PAR2_CMD:-par2}"
 PYTHON_CMD="${PYTHON_CMD:-python3}"
 REPAIR=0
+NO_REPAIR=0
 AUTO_RENAME=0
 NO_RENAME=0
 POSITIONAL=()
 MISNAMED_DISK=()
 MISNAMED_PAR2=()
 MISSING_PAR2_TARGETS=()
+DAMAGED_PAR2_TARGETS=()
+REPAIR_POSSIBLE=0
 RENAME_PAIRS=()
 OUT2_FILE=""
 RENAME_PY=""
@@ -1882,6 +1904,55 @@ prompt_and_apply_rename() {
     die "PAR2 metadata update did not resolve all name mismatches (see Step 6 output)."
 }
 
+prompt_and_apply_repair() {
+    local repair_choice=0 repair_rc=0
+
+    (( REPAIR_POSSIBLE == 1 )) || return 1
+
+    if (( NO_REPAIR == 1 )); then
+        pgm_print_step_verdict 7 SKIP "Repair skipped (--no-repair)."
+        return 1
+    fi
+
+    if (( REPAIR == 0 )); then
+        echo
+        echo "par2 can rebuild the damaged file(s) from the recovery blocks."
+        echo "Note: par2 repair also renames disk files to match PAR2 names."
+        if (( MULTI_SET_MODE )); then
+            pgm_prompt_read_repair_choice 0 repair_choice
+        else
+            pgm_prompt_read_repair_choice 1 repair_choice
+        fi
+        case "$repair_choice" in
+            0)
+                ;;
+            1)
+                echo "Skipped repair."
+                pgm_print_step_verdict 7 SKIP "Repair skipped at prompt."
+                return 1
+                ;;
+            2)
+                echo "Cancelled."
+                return_code=0
+                finish
+                ;;
+        esac
+    fi
+
+    pgm_print_step_header "Step 7: repair damaged file(s)"
+    (( ${#DATA_FILES[@]} > 0 )) || pgm_collect_data_files_for_scan
+    set +e
+    pgm_par2_run_chunked repair
+    repair_rc=$?
+    set -e
+    if (( repair_rc != 0 )); then
+        pgm_print_step_verdict 7 FAIL "par2 repair failed (exit $repair_rc)."
+        return 1
+    fi
+    pgm_print_step_verdict 7 OK "par2 repair completed."
+    return 0
+}
+
 pgm_collect_missing_targets() {
     local out_file="$1"
     local line
@@ -1918,6 +1989,65 @@ pgm_print_missing_targets_report() {
     fi
 }
 
+pgm_collect_damaged_targets() {
+    local out_file="$1"
+    local line name
+
+    DAMAGED_PAR2_TARGETS=()
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        line="${line//$'\r'/}"
+        case "$line" in
+            Target:*" - damaged."*)
+                name="${line#Target: \"}"
+                name="${name%%\" - damaged.*}"
+                DAMAGED_PAR2_TARGETS+=("$name")
+                ;;
+        esac
+    done <"$out_file"
+}
+
+# Damaged .par2 / hash files usually mean this set protects a nested set whose
+# metadata we updated on purpose; repairing would roll that update back.
+pgm_print_damaged_targets_report() {
+    local n=${#DAMAGED_PAR2_TARGETS[@]}
+    local i base max_show=100
+    local -a metadata=()
+
+    (( n > 0 )) || return 0
+
+    echo
+    echo "Damaged file(s) (${n}):"
+    for i in "${!DAMAGED_PAR2_TARGETS[@]}"; do
+        (( i < max_show )) || { echo "  ... and $(( n - max_show )) more"; break; }
+        printf '  %s\n' "${DAMAGED_PAR2_TARGETS[$i]}"
+    done
+
+    for i in "${DAMAGED_PAR2_TARGETS[@]}"; do
+        base="$(basename -- "$i")"
+        if is_par2_any_active_file "$base" || pgm_is_hash_file_name "$base"; then
+            metadata+=("$i")
+        fi
+    done
+
+    (( ${#metadata[@]} > 0 )) || return 0
+
+    echo
+    echo "Caution: ${#metadata[@]} damaged file(s) are PAR2 or hash files of a nested set:"
+    for i in "${metadata[@]}"; do
+        printf '  %s\n' "$i"
+    done
+    echo "If a nested set had its PAR2 metadata updated (misnamed-file fix), this"
+    echo "set still stores the old content. Repairing would undo that update."
+    echo "Regenerate this set instead if the nested change was intentional."
+}
+
+pgm_is_hash_file_name() {
+    case "${1,,}" in
+        *.sha512|*.sha256|*.md5) return 0 ;;
+    esac
+    return 1
+}
+
 pgm_filter_missing_targets_excluding_misnamed() {
     local -a filtered=()
     local line par2_target i
@@ -1942,6 +2072,10 @@ print_summary() {
     local i
 
     pgm_collect_missing_targets "$out_file"
+    pgm_collect_damaged_targets "$out_file"
+
+    REPAIR_POSSIBLE=0
+    grep -qiE 'repair is possible' "$out_file" && REPAIR_POSSIBLE=1
 
     wrong=$(grep -E '[0-9]+ file\(s\) have the wrong name\.' "$out_file" | head -1 || true)
 
@@ -1958,6 +2092,7 @@ print_summary() {
     echo "Summary:"
     echo "  Missing targets (by PAR2 name): ${missing}"
     echo "  Content matches found on disk:  ${matches}"
+    echo "  Damaged files:                  ${#DAMAGED_PAR2_TARGETS[@]}"
     [[ -n "$wrong" ]] && echo "  ${wrong}"
     pgm_print_missing_targets_report
 
@@ -2011,7 +2146,19 @@ print_summary() {
         return 2
     fi
 
-    if grep -qiE 'repair is possible' "$out_file"; then
+    if (( REPAIR_POSSIBLE )); then
+        pgm_print_damaged_targets_report
+        if (( NO_REPAIR == 0 && REPAIR == 0 )); then
+            echo
+            if (( MULTI_SET_MODE )); then
+                echo "You will be asked whether to repair (default: no, q quits, $(pgm_prompt_timeout_label))."
+            else
+                echo "You will be asked whether to repair (default: yes, q quits, $(pgm_prompt_timeout_label))."
+            fi
+        elif (( REPAIR == 1 )); then
+            echo
+            echo "Damaged file(s) will be repaired automatically (--repair)."
+        fi
         pgm_print_step_verdict 3 WARN "Repair is possible (damage or rename fixable)."
         pgm_print_outcome warn \
             "Repair is possible (damage or rename fixable)." \
@@ -2041,6 +2188,8 @@ pgm_run_one_par2_set() {
     MISNAMED_DISK=()
     MISNAMED_PAR2=()
     RENAME_PAIRS=()
+    DAMAGED_PAR2_TARGETS=()
+    REPAIR_POSSIBLE=0
     OUT2_FILE=""
     PGM_HASH_VERIFY_MSG=""
     PGM_TIMING_HASH_SEC=0
@@ -2105,13 +2254,30 @@ pgm_run_one_par2_set() {
         fi
     fi
 
-    if (( REPAIR == 1 )); then
-        pgm_print_step_header "Repair (disk rename)"
-        echo "Note: par2 repair renames disk files to match PAR2, not the other way around."
-        set +e
-        pgm_par2_run_chunked repair
-        SUMMARY_RC=$?
-        set -e
+    if (( SUMMARY_RC != 0 && REPAIR_POSSIBLE == 1 )); then
+        if prompt_and_apply_repair; then
+            local OUT8_FILE out8_text
+            pgm_print_step_header "Step 8: verify after repair"
+            OUT8_FILE=$(mktemp "${TMPDIR:-/tmp}/par2-pgm-check.XXXXXX")
+            pgm_par2_run_chunked verify "$OUT8_FILE"
+            <"$OUT8_FILE" pgm_filter_par2_verify_stream
+            echo
+            out8_text=$(<"$OUT8_FILE")
+            rm -f "$OUT8_FILE"
+            if pgm_par2_output_indicates_ok "$out8_text"; then
+                SUMMARY_RC=0
+                pgm_print_step_verdict 8 OK "Post-repair verify passed."
+                pgm_print_outcome ok \
+                    "Repair completed; all files verify." \
+                    "$(pgm_extract_par2_ok_line "$out8_text")"
+            else
+                pgm_print_step_verdict 8 FAIL "Post-repair verify still reports problems."
+                pgm_print_outcome err \
+                    "Repair ran but verification still reports problems." \
+                    "Review Step 8 output above."
+                SUMMARY_RC=3
+            fi
+        fi
     fi
 
     return "$SUMMARY_RC"
@@ -2131,6 +2297,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --repair)
             REPAIR=1
+            shift
+            ;;
+        --no-repair)
+            NO_REPAIR=1
             shift
             ;;
         --yes|-y)
