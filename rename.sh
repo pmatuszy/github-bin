@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# v. 20260803.073738 - subdir scope: M3U checks stay under chosen dir; skip any path outside SCOPE_SUBDIR
 # v. 20260802.221218 - M3U subtree match: ignore find SIGPIPE 141 on early exact hit; tighten fuzzy keys
 # v. 20260801.124321 - scope [D]: pick a subdirectory by number/path; recurse under it; keep root DB/excludes
 # v. 20260731.154652 - align [v] menu line indent under Keys: blocks (4 spaces like sibling keys)
@@ -28,6 +29,7 @@
 # v. 20260721.132007 - Samsung timestamp media: preserve optional numeric sorting prefix when appending make/model
 # v. 20260721.112812 - GoPro camera labels: GoPro_Hero4_Silver style (not GOPRO4_SILVER)
 
+# 2026.08.03 - v. 19.292.073738 - scope [D]: end-of-run M3U scan uses SCOPE_SUBDIR (not whole START_DIR); main loop rejects out-of-scope paths
 # 2026.08.02 - v. 19.291.221218 - M3U: find SIGPIPE 141 after exact match is not an error; fuzzy match needs long similar keys
 # 2026.08.01 - v. 19.290.124321 - scope menu [D]: numbered subdirectory pick (or typed path); recurse under it; START_DIR DB/excludes unchanged
 # 2026.07.31 - v. 19.289.154652 - Keys: menus pass 4-space indent to [v] list-directory line so keys align
@@ -6788,6 +6790,30 @@ resume_scope_storage_key() {
     fi
 }
 
+# Root for scope-limited filesystem walks (discovery already uses SCOPE_SUBDIR; M3U checks must too).
+# DB / exclude filters / resume stay at START_DIR.
+scope_work_root() {
+    if [[ "${process_scope:-}" == "subdir" && -n "${SCOPE_SUBDIR:-}" ]]; then
+        printf '%s' "$SCOPE_SUBDIR"
+    else
+        printf '%s' "${START_DIR:-.}"
+    fi
+}
+
+# True when path is inside the chosen subdirectory scope (or scope is not subdir).
+path_is_within_scope_subdir() {
+    local p="$1"
+    local abs_p="" abs_root=""
+
+    if [[ "${process_scope:-}" != "subdir" || -z "${SCOPE_SUBDIR:-}" ]]; then
+        return 0
+    fi
+    abs_p="$(db_abs_path_if_deleted "$p" 2>/dev/null || db_abs_path "$p" 2>/dev/null || true)"
+    abs_root="$(db_abs_path "$SCOPE_SUBDIR" 2>/dev/null || true)"
+    [[ -n "$abs_p" && -n "$abs_root" ]] || return 1
+    [[ "$abs_p" == "$abs_root" || "$abs_p" == "$abs_root/"* ]]
+}
+
 # Validate raw number/path choice; set SCOPE_SUBDIR to ./relative under the start directory (cwd).
 # Rejects the start directory itself and anything outside it. Return 0 on success, 1 on failure.
 validate_and_set_scope_subdir() {
@@ -8309,10 +8335,11 @@ PY
 update_all_m3u_files_for_rename() {
     local old_path="$1"
     local new_path="$2"
-    local start="${START_DIR:-.}"
+    local start
+    start="$(scope_work_root)"
     while IFS= read -r -d '' m3u; do
         update_m3u_references_in_file "$m3u" "$old_path" "$new_path"
-    done < <(find "$start" -type f -iname '*.m3u' -print0 2>/dev/null)
+    done < <(find "$start" -type f -iname '*.m3u' -print0 2>/dev/null || true)
 }
 
 normalize_m3u_candidate_key() {
@@ -8569,10 +8596,12 @@ check_m3u_targets() {
 
 
 check_all_m3u_files() {
-    local start="${START_DIR:-.}"
+    local start
+    start="$(scope_work_root)"
+    vlog "M3U check root (respects scope): $start"
     while IFS= read -r -d '' m3u; do
         check_m3u_targets "$m3u"
-    done < <(find "$start" -type f -iname '*.m3u' -print0 2>/dev/null)
+    done < <(find "$start" -type f -iname '*.m3u' -print0 2>/dev/null || true)
 }
 
 
@@ -15923,6 +15952,14 @@ for f in "${ordered_paths[@]}"; do
     fi
 
     [[ -n "${processed[$f]+x}" ]] && continue
+
+    # Belt-and-suspenders: never process siblings outside a chosen [D] subdirectory.
+    if ! path_is_within_scope_subdir "$f"; then
+        vlog "Skipping path outside chosen scope subdirectory (${SCOPE_SUBDIR}): '$f'"
+        processed["$f"]=1
+        continue
+    fi
+
     ((++files_examined))
     _fe_mile=$((files_examined - MAIN_LOOP_FILES_EXAMINED_MILESTONE_BASE))
     (( _fe_mile < 0 )) && _fe_mile=0
