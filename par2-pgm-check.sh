@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20260803.073000 - rename prompt: single-key y/n/q; q quits multi-set run
 # v. 20260803.072500 - after PAR2 rename re-verify Step 2; Step 6 must pass before OK
 # v. 20260802.154500 - exclude misnamed targets from missing-file count/list
 # v. 20260802.135100 - interactive prompts wait indefinitely by default (no timeout)
@@ -19,6 +20,7 @@
 # v. 20260719.103506 - fix no-arg run: empty POSITIONAL[@]:- became one "" element
 # v. 20260719.102800 - multi-set selection: A/a, ranges 1-4, --all, multiple paths
 
+# 2026.08.03 - v. 0.1.35 - Rename prompt: single-key y/n/q; q quits run
 # 2026.08.03 - v. 0.1.34 - Re-verify after PAR2 metadata rename; Step 6 must pass
 # 2026.08.02 - v. 0.1.33 - Do not list misnamed PAR2 targets as missing files
 # 2026.08.02 - v. 0.1.32 - Interactive prompts wait indefinitely unless PROMPT_TIMEOUT is set
@@ -287,6 +289,63 @@ pgm_prompt_read_set_selection() {
         _out_ans="${first}${rest}"
     else
         _out_ans="$first"
+    fi
+    echo
+}
+
+# Read rename prompt: y/n/q on one key (Enter = default); q quits the script.
+pgm_prompt_read_rename_choice() {
+    local default_yes="$1"
+    local -n _out=$2
+    local key="" rest=""
+
+    if (( default_yes )); then
+        printf 'Update PAR2 archives with the new filenames? [Y/n/q] (%s): ' \
+            "$(pgm_prompt_timeout_label)"
+    else
+        printf 'Update PAR2 archives with the new filenames? [y/N/q] (%s): ' \
+            "$(pgm_prompt_timeout_label)"
+    fi
+    pgm_flush_stdin
+
+    if ! pgm_read_key_with_timeout key; then
+        _out=$(( default_yes ? 0 : 1 ))
+        echo
+        return 0
+    fi
+
+    case "$key" in
+        ''|$'\n')
+            _out=$(( default_yes ? 0 : 1 ))
+            echo
+            return 0
+            ;;
+        q|Q)
+            _out=2
+            echo
+            return 0
+            ;;
+        y|Y)
+            _out=0
+            echo
+            return 0
+            ;;
+        n|N)
+            _out=1
+            echo
+            return 0
+            ;;
+    esac
+
+    if pgm_read_line_with_timeout rest; then
+        case "${key}${rest}" in
+            y|Y|yes|YES) _out=0 ;;
+            n|N|no|NO) _out=1 ;;
+            q|Q) _out=2 ;;
+            *) _out=$(( default_yes ? 0 : 1 )) ;;
+        esac
+    else
+        _out=$(( default_yes ? 0 : 1 ))
     fi
     echo
 }
@@ -1751,7 +1810,7 @@ pgm_apply_rename_from_pairs_file() {
 }
 
 prompt_and_apply_rename() {
-    local ans pairs_file rename_rc=0
+    local pairs_file rename_rc=0 rename_choice=0
 
     (( ${#RENAME_PAIRS[@]} > 0 )) || return 0
 
@@ -1766,36 +1825,24 @@ prompt_and_apply_rename() {
         echo "(disk filenames stay unchanged)."
         echo "PAR2 index file: $(basename "$PAR2_FILE")"
         if (( MULTI_SET_MODE )); then
-            if ! pgm_read_prompt_with_timeout ans \
-                "Update PAR2 archives with the new filenames? [y/N] ($(pgm_prompt_timeout_label)) "; then
-                ans=N
-                echo
-            fi
-            [[ -z "$ans" ]] && ans=N
-            case "$ans" in
-                y|Y|yes|YES)
-                    ;;
-                *)
-                    echo "Skipped PAR2 metadata update."
-                    pgm_print_step_verdict 4 SKIP "PAR2 metadata update skipped at prompt."
-                    return 1
-                    ;;
-            esac
+            pgm_prompt_read_rename_choice 0 rename_choice
         else
-            if ! pgm_read_prompt_with_timeout ans \
-                "Update PAR2 archives with the new filenames? [Y/n] ($(pgm_prompt_timeout_label)) "; then
-                ans=Y
-                echo
-            fi
-            [[ -z "$ans" ]] && ans=Y
-            case "$ans" in
-                n|N|no|NO)
-                    echo "Skipped PAR2 metadata update."
-                    pgm_print_step_verdict 4 SKIP "PAR2 metadata update skipped at prompt."
-                    return 1
-                    ;;
-            esac
+            pgm_prompt_read_rename_choice 1 rename_choice
         fi
+        case "$rename_choice" in
+            0)
+                ;;
+            1)
+                echo "Skipped PAR2 metadata update."
+                pgm_print_step_verdict 4 SKIP "PAR2 metadata update skipped at prompt."
+                return 1
+                ;;
+            2)
+                echo "Cancelled."
+                return_code=0
+                finish
+                ;;
+        esac
     fi
 
     pgm_print_step_header "Step 4: update PAR2 metadata"
@@ -1926,9 +1973,9 @@ print_summary() {
         done
         if (( NO_RENAME == 0 && AUTO_RENAME == 0 )); then
             if (( MULTI_SET_MODE )); then
-                echo "You will be asked whether to update PAR2 metadata (default: no, $(pgm_prompt_timeout_label))."
+                echo "You will be asked whether to update PAR2 metadata (default: no, q quits, $(pgm_prompt_timeout_label))."
             else
-                echo "You will be asked whether to update PAR2 metadata (default: yes, $(pgm_prompt_timeout_label))."
+                echo "You will be asked whether to update PAR2 metadata (default: yes, q quits, $(pgm_prompt_timeout_label))."
             fi
         elif (( AUTO_RENAME == 1 )); then
             echo "PAR2 metadata will be updated automatically (--yes)."
