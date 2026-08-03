@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20260803.072500 - after PAR2 rename re-verify Step 2; Step 6 must pass before OK
 # v. 20260802.154500 - exclude misnamed targets from missing-file count/list
 # v. 20260802.135100 - interactive prompts wait indefinitely by default (no timeout)
 # v. 20260802.114532 - PROMPT_TIMEOUT default 900s (was 100s)
@@ -18,6 +19,7 @@
 # v. 20260719.103506 - fix no-arg run: empty POSITIONAL[@]:- became one "" element
 # v. 20260719.102800 - multi-set selection: A/a, ranges 1-4, --all, multiple paths
 
+# 2026.08.03 - v. 0.1.34 - Re-verify after PAR2 metadata rename; Step 6 must pass
 # 2026.08.02 - v. 0.1.33 - Do not list misnamed PAR2 targets as missing files
 # 2026.08.02 - v. 0.1.32 - Interactive prompts wait indefinitely unless PROMPT_TIMEOUT is set
 # 2026.08.02 - v. 0.1.31 - Interactive prompt timeout default 900s (was 100s)
@@ -1755,7 +1757,7 @@ prompt_and_apply_rename() {
 
     if (( NO_RENAME == 1 )); then
         pgm_print_step_verdict 4 SKIP "PAR2 metadata update skipped (--no-rename)."
-        return 0
+        return 1
     fi
 
     if (( AUTO_RENAME == 0 )); then
@@ -1776,7 +1778,7 @@ prompt_and_apply_rename() {
                 *)
                     echo "Skipped PAR2 metadata update."
                     pgm_print_step_verdict 4 SKIP "PAR2 metadata update skipped at prompt."
-                    return 0
+                    return 1
                     ;;
             esac
         else
@@ -1790,7 +1792,7 @@ prompt_and_apply_rename() {
                 n|N|no|NO)
                     echo "Skipped PAR2 metadata update."
                     pgm_print_step_verdict 4 SKIP "PAR2 metadata update skipped at prompt."
-                    return 0
+                    return 1
                     ;;
             esac
         fi
@@ -1816,15 +1818,21 @@ prompt_and_apply_rename() {
     pgm_print_step_verdict 5 OK "Hash manifest(s) updated for in-scope PAR2 archive(s)."
 
     pgm_print_step_header "Step 6: verify after update"
-    local OUT6_FILE
+    local OUT6_FILE out6_text
     OUT6_FILE=$(mktemp "${TMPDIR:-/tmp}/par2-pgm-check.XXXXXX")
     run_par2 verify "$PAR2_FILE" >"$OUT6_FILE" 2>&1
     <"$OUT6_FILE" pgm_filter_par2_verify_stream
     echo
     pgm_collect_missing_targets "$OUT6_FILE"
     pgm_print_missing_targets_report
+    out6_text=$(<"$OUT6_FILE")
     rm -f "$OUT6_FILE"
-    pgm_print_step_verdict 6 OK "Post-update PAR2 verify completed."
+    if pgm_par2_output_indicates_ok "$out6_text"; then
+        pgm_print_step_verdict 6 OK "Post-update PAR2 verify passed."
+        return 0
+    fi
+    pgm_print_step_verdict 6 FAIL "Post-update PAR2 verify still reports problems."
+    die "PAR2 metadata update did not resolve all name mismatches (see Step 6 output)."
 }
 
 pgm_collect_missing_targets() {
@@ -2036,7 +2044,18 @@ pgm_run_one_par2_set() {
     SUMMARY_RC=$?
 
     if (( SUMMARY_RC == 2 && ${#RENAME_PAIRS[@]} > 0 )); then
-        prompt_and_apply_rename
+        if prompt_and_apply_rename; then
+            OUT1=$(run_par2 verify "$PAR2_FILE" 2>&1)
+            if pgm_par2_output_indicates_ok "$OUT1"; then
+                par2_ok_line="$(pgm_extract_par2_ok_line "$OUT1")"
+                SUMMARY_RC=0
+                echo
+                pgm_print_step_verdict 2 OK "All files match under PAR2 names after metadata update."
+                pgm_print_outcome ok \
+                    "All files OK under PAR2 names." \
+                    "${par2_ok_line:-Verification passed under PAR2 names only.}"
+            fi
+        fi
     fi
 
     if (( REPAIR == 1 )); then
