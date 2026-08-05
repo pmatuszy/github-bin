@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20260805.191500 - Step 1 reports unreadable manifest lines; offers ';' to '#' fix when unprotected
 # v. 20260805.182700 - Step 6 fails only on unresolved names; damage goes to repair step
 # v. 20260803.213000 - prompt to repair when damage is fixable; --no-repair; verify after repair
 # v. 20260803.073000 - rename prompt: single-key y/n/q; q quits multi-set run
@@ -22,6 +23,7 @@
 # v. 20260719.103506 - fix no-arg run: empty POSITIONAL[@]:- became one "" element
 # v. 20260719.102800 - multi-set selection: A/a, ranges 1-4, --all, multiple paths
 
+# 2026.08.05 - v. 0.1.38 - Hash manifest review in Step 1; offer ';' to '#' when set does not protect it
 # 2026.08.05 - v. 0.1.37 - Rename step no longer fails on unrelated damage; detect "no data found"
 # 2026.08.03 - v. 0.1.36 - Ask to repair damaged files; --no-repair; re-verify after repair
 # 2026.08.03 - v. 0.1.35 - Rename prompt: single-key y/n/q; q quits run
@@ -82,6 +84,8 @@ Options:
   --no-repair          Report damage but never offer/run repair
   --yes, -y            Auto-yes for prompts (--all when many sets; auto-rename metadata)
   --no-rename          Detect misnamed files but do not offer/run PAR2 metadata update
+  --hash-tidy          Convert ';' comments to '#' in unprotected hash manifests
+  --no-hash-tidy       Report ';' comments in hash manifests but never convert them
 
 Rename and repair prompts take one key: y, n, or q (q cancels the whole run).
 Multi-set batch: both prompts default to no unless --yes / --repair is given.
@@ -311,6 +315,11 @@ pgm_prompt_read_rename_choice() {
 pgm_prompt_read_repair_choice() {
     pgm_prompt_read_yes_no_quit "$1" "$2" \
         "Repair damaged file(s) with par2 now?"
+}
+
+pgm_prompt_read_hash_tidy_choice() {
+    pgm_prompt_read_yes_no_quit "$1" "$2" \
+        "Convert ';' comments to '#' in the hash manifest(s)?"
 }
 
 # Answer on one key (Enter = default); q quits the script. Sets 0=yes, 1=no, 2=quit.
@@ -544,6 +553,12 @@ pgm_print_run_settings() {
         echo "  --no-repair:  given (report damage only; never repair)"
     else
         echo "  --repair:     not given (prompt when repair is possible)"
+    fi
+
+    if (( AUTO_HASH_TIDY )); then
+        echo "  --hash-tidy:  given (convert ';' comments in unprotected manifests)"
+    elif (( NO_HASH_TIDY )); then
+        echo "  --no-hash-tidy: given (report ';' comments only)"
     fi
 
     if (( NO_RENAME )); then
@@ -1015,6 +1030,8 @@ REPAIR=0
 NO_REPAIR=0
 AUTO_RENAME=0
 NO_RENAME=0
+AUTO_HASH_TIDY=0
+NO_HASH_TIDY=0
 POSITIONAL=()
 MISNAMED_DISK=()
 MISNAMED_PAR2=()
@@ -1678,6 +1695,85 @@ update_par2_hashes() {
     return "$rc"
 }
 
+# Report manifests md5sum -c would choke on, and offer to fix the ones this
+# PAR2 set does not protect. Tidying a protected manifest would change a file
+# the set stores, which shows up as damage on the next verify.
+pgm_review_hash_manifests() {
+    local -a lint=() tidy_candidates=() protected_notes=() invalid_notes=()
+    local line path entries comments semis invalid in_set base
+    local tidy_choice=0 msg
+
+    mapfile -t lint < <(run_rename_py hash lint "$DATA_DIR" "$PAR2_FILE" 2>/dev/null) || true
+    (( ${#lint[@]} > 0 )) || return 0
+
+    for line in "${lint[@]}"; do
+        IFS=$'\t' read -r path entries comments semis invalid in_set <<< "$line"
+        [[ -n "$path" ]] || continue
+        base="$(basename -- "$path")"
+
+        if (( invalid > 0 )); then
+            invalid_notes+=("$base: $entries checksum entry(ies), $invalid unreadable line(s)")
+        fi
+        (( semis > 0 )) || continue
+        if [[ "$in_set" == "yes" ]]; then
+            protected_notes+=("$base: $semis ';' comment line(s)")
+        else
+            tidy_candidates+=("$path")
+        fi
+    done
+
+    if (( ${#invalid_notes[@]} > 0 )); then
+        echo
+        echo "Hash manifest lines that could not be read (not verified):"
+        printf '  %s\n' "${invalid_notes[@]}"
+    fi
+
+    if (( ${#protected_notes[@]} > 0 )); then
+        echo
+        echo "Hash manifest(s) using ';' comments, which 'md5sum -c' reports as"
+        echo "improperly formatted (harmless unless you use --strict):"
+        printf '  %s\n' "${protected_notes[@]}"
+        echo "Not offering to convert them: this PAR2 set protects these file(s),"
+        echo "so changing them would show up as damage until the set is rebuilt."
+    fi
+
+    (( ${#tidy_candidates[@]} > 0 )) || return 0
+    echo
+    echo "Hash manifest(s) using ';' comments, not protected by this PAR2 set:"
+    printf '  %s\n' "${tidy_candidates[@]##*/}"
+    echo "Converting ';' to '#' makes 'md5sum -c' quiet; checksum lines and the"
+    echo "modification date are left unchanged."
+
+    if (( NO_HASH_TIDY == 1 )); then
+        echo "Skipping conversion (--no-hash-tidy)."
+        return 0
+    fi
+
+    if (( AUTO_HASH_TIDY == 0 )); then
+        if (( MULTI_SET_MODE )); then
+            pgm_prompt_read_hash_tidy_choice 0 tidy_choice
+        else
+            pgm_prompt_read_hash_tidy_choice 1 tidy_choice
+        fi
+        case "$tidy_choice" in
+            1)
+                echo "Left hash manifest(s) unchanged."
+                return 0
+                ;;
+            2)
+                echo "Cancelled."
+                return_code=0
+                finish
+                ;;
+        esac
+    fi
+
+    for path in "${tidy_candidates[@]}"; do
+        msg=$(run_rename_py hash tidy "$path" 2>&1) || true
+        printf '  %s\n' "$msg"
+    done
+}
+
 restore_par2_file_timestamps() {
     local dir="$1"
     local f backup_base active restored=0
@@ -2254,6 +2350,7 @@ pgm_run_one_par2_set() {
         fi
         die "PAR2 archive checksum verification failed. Refusing to scan for misnamed files."
     fi
+    pgm_review_hash_manifests
     pgm_print_step1_verdict_from_msg "${PGM_HASH_VERIFY_MSG:-}"
     pgm_timing_lap_to PGM_TIMING_HASH_SEC
 
@@ -2354,6 +2451,14 @@ while [[ $# -gt 0 ]]; do
             ;;
         --no-repair)
             NO_REPAIR=1
+            shift
+            ;;
+        --hash-tidy)
+            AUTO_HASH_TIDY=1
+            shift
+            ;;
+        --no-hash-tidy)
+            NO_HASH_TIDY=1
             shift
             ;;
         --yes|-y)

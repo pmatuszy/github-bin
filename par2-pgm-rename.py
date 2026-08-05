@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# v. 20260805.190000 - hash lint/tidy subcommands; accept filenames with spaces in manifests
 # v. 20260803.152000 - scan whole volume for FileDesc packets; patch in place when size is unchanged
 # v. 20260803.072300 - rewrite volume PAR2: index head only + copy rest; verify rename stuck
 # v. 20260802.154500 - read PAR2 metadata from volume-only sets; fix packet buffer refill
@@ -428,7 +429,10 @@ HASH_EXTENSIONS = {
     ".md5": "md5",
 }
 
-HASH_LINE_RE = re.compile(r"^([a-fA-F0-9]+)\s+(\S+)\s*$")
+# Digest, separator, then the rest of the line as the path: filenames may
+# contain spaces. Anchoring the digest length keeps prose from matching.
+HASH_LINE_RE = re.compile(r"^([a-fA-F0-9]{32,128})[ \t]+(\S.*?)[ \t]*$")
+COMMENT_PREFIXES = ("#", ";")
 
 
 def hash_algo_from_path(path):
@@ -450,14 +454,25 @@ def hash_path_basename(path_field):
 def parse_hash_file(hash_file_path):
     records = []
     with open(hash_file_path, "r", encoding="utf-8", errors="replace") as handle:
-        for line in handle:
+        for number, line in enumerate(handle, start=1):
             stripped = line.rstrip("\r\n")
-            if not stripped.strip() or stripped.lstrip().startswith("#"):
-                records.append({"type": "raw", "raw": stripped})
+            lstripped = stripped.lstrip()
+            if not stripped.strip():
+                records.append({"type": "blank", "raw": stripped, "line": number})
+                continue
+            if lstripped.startswith(COMMENT_PREFIXES):
+                records.append(
+                    {
+                        "type": "comment",
+                        "raw": stripped,
+                        "marker": lstripped[0],
+                        "line": number,
+                    }
+                )
                 continue
             match = HASH_LINE_RE.match(stripped.strip())
             if not match:
-                records.append({"type": "raw", "raw": stripped})
+                records.append({"type": "invalid", "raw": stripped, "line": number})
                 continue
             path_field = match.group(2)
             records.append(
@@ -467,9 +482,121 @@ def parse_hash_file(hash_file_path):
                     "path": path_field,
                     "basename": hash_path_basename(path_field),
                     "raw": stripped,
+                    "line": number,
                 }
             )
     return records
+
+
+def hash_file_lint(hash_file_path):
+    records = parse_hash_file(hash_file_path)
+    counts = {"entries": 0, "comments": 0, "blank": 0, "invalid": 0, "semicolons": 0}
+    invalid_lines = []
+
+    for record in records:
+        if record["type"] == "entry":
+            counts["entries"] += 1
+        elif record["type"] == "comment":
+            counts["comments"] += 1
+            if record["marker"] == ";":
+                counts["semicolons"] += 1
+        elif record["type"] == "blank":
+            counts["blank"] += 1
+        else:
+            counts["invalid"] += 1
+            if len(invalid_lines) < 5:
+                invalid_lines.append(record["line"])
+
+    counts["invalid_lines"] = invalid_lines
+    return counts
+
+
+def set_source_basenames(folder_path, par_file_path):
+    """Basenames of the files the PAR2 set protects, or None when unknown."""
+    if not par_file_path:
+        return None
+    try:
+        set_folder, par_files = find_par2_set(par_file_path)
+        _set_id, source_names = read_set_metadata(set_folder, par_files)
+    except (ValueError, OSError):
+        return None
+    return {os.path.basename(name.replace("\\", "/")) for name in source_names}
+
+
+def print_hash_lint(folder_path, par_file_path=None):
+    """One tab-separated row per hash file, for the shell to act on."""
+    protected = set_source_basenames(folder_path, par_file_path)
+
+    for path in list_hash_files(folder_path):
+        counts = hash_file_lint(path)
+        if protected is None:
+            in_set = "unknown"
+        elif os.path.basename(path) in protected:
+            in_set = "yes"
+        else:
+            in_set = "no"
+        print(
+            "\t".join(
+                (
+                    path,
+                    str(counts["entries"]),
+                    str(counts["comments"]),
+                    str(counts["semicolons"]),
+                    str(counts["invalid"]),
+                    in_set,
+                )
+            )
+        )
+
+
+def tidy_hash_file(hash_file_path):
+    """Convert leading ';' comment markers to '#', which md5sum -c ignores.
+
+    Rewrites the existing inode and restores the timestamps, so ownership,
+    permissions and the modification date all survive.
+    """
+    before = hash_file_lint(hash_file_path)
+    if before["semicolons"] == 0:
+        return 0, f"No ';' comment lines in {os.path.basename(hash_file_path)}."
+
+    with open(hash_file_path, "r", encoding="utf-8", errors="replace") as handle:
+        original = handle.read()
+
+    converted = 0
+    lines = []
+    for line in original.splitlines():
+        stripped = line.lstrip()
+        if stripped.startswith(";"):
+            indent = line[: len(line) - len(stripped)]
+            lines.append(f"{indent}#{stripped[1:]}")
+            converted += 1
+        else:
+            lines.append(line)
+
+    new_text = "\n".join(lines)
+    if original.endswith("\n"):
+        new_text += "\n"
+
+    stat_before = os.stat(hash_file_path)
+    # Truncate and rewrite in place: a new inode would drop owner and mode.
+    with open(hash_file_path, "r+", encoding="utf-8", newline="") as handle:
+        handle.seek(0)
+        handle.write(new_text)
+        handle.truncate()
+    os.utime(hash_file_path, (stat_before.st_atime, stat_before.st_mtime))
+
+    after = hash_file_lint(hash_file_path)
+    if after["entries"] != before["entries"]:
+        raise ValueError(
+            f"Entry count changed while tidying {os.path.basename(hash_file_path)} "
+            f"({before['entries']} -> {after['entries']}); file left as written."
+        )
+
+    return converted, (
+        f"Converted {converted} ';' comment line(s) to '#' in "
+        f"{os.path.basename(hash_file_path)} "
+        f"({after['entries']} checksum entries unchanged, timestamp preserved)."
+    )
 
 
 def compute_file_hash(file_path, algo):
@@ -866,8 +993,24 @@ def main(argv):
             if argv[2] == "inventory":
                 print_hash_inventory_brief(folder_path, par_file_path)
                 return 0
+            if argv[2] == "lint":
+                print_hash_lint(folder_path, par_file_path)
+                return 0
+            if argv[2] == "tidy":
+                # Here argv[3] is the hash file itself, not a directory.
+                if len(argv) < 4:
+                    print(
+                        "Usage: par2-pgm-rename.py hash tidy <hash-file>",
+                        file=sys.stderr,
+                    )
+                    return 1
+                converted, message = tidy_hash_file(os.path.abspath(argv[3]))
+                print(message)
+                return 0 if converted else 1
             print(
-                "Usage: par2-pgm-rename.py hash verify|update|inventory <directory> [par2-index]",
+                "Usage: par2-pgm-rename.py hash "
+                "verify|update|inventory|lint <directory> [par2-index]\n"
+                "       par2-pgm-rename.py hash tidy <hash-file>",
                 file=sys.stderr,
             )
             return 1
