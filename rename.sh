@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# v. 20260805.194904 - offer to strip FastSum ';' checksum headers during normalize; verify ignores those lines
 # v. 20260805.104910 - pad OLD in dry-run/Renamed/summary old→new lines so NEW names share a column
 # v. 20260805.104019 - dry-run: use ExifTool by default so previews match real renames (opt out with SKIP=yes)
 # v. 20260803.073738 - subdir scope: M3U checks stay under chosen dir; skip any path outside SCOPE_SUBDIR
@@ -31,6 +32,7 @@
 # v. 20260721.132007 - Samsung timestamp media: preserve optional numeric sorting prefix when appending make/model
 # v. 20260721.112812 - GoPro camera labels: GoPro_Hero4_Silver style (not GOPRO4_SILVER)
 
+# 2026.08.05 - v. 19.295.194904 - checksum normalize: prompt to strip FastSum ; comment headers; md5sum -c uses entry lines only
 # 2026.08.05 - v. 19.294.104910 - dry-run/Renamed/summary: pad OLD path width so → NEW aligns; pairs note both paths first
 # 2026.08.05 - v. 19.293.104019 - dry-run defaults to full ExifTool preview (same names as real); RENAME_DRY_RUN_SKIP_EXIFTOOL=yes for fast basename-only
 # 2026.08.03 - v. 19.292.073738 - scope [D]: end-of-run M3U scan uses SCOPE_SUBDIR (not whole START_DIR); main loop rejects out-of-scope paths
@@ -13092,6 +13094,83 @@ normalize_checksum_file() {
     normalize_text_file_to_unix "$sum_file"
 }
 
+# FastSum (and similar Windows tools) write '; ...' header comments that GNU md5sum/sha*sum reject as "improperly formatted".
+checksum_file_count_fastsum_semicolon_comments() {
+    local sum_file="$1"
+    local n
+    n="$(sed -E 's/\r$//' -- "$sum_file" | grep -cE '^[[:space:]]*;' || true)"
+    [[ "$n" =~ ^[0-9]+$ ]] || n=0
+    printf '%s' "$n"
+}
+
+strip_checksum_file_fastsum_semicolon_comments() {
+    local sum_file="$1"
+    # Drop comment lines only; leave blank lines and real hash entries untouched.
+    preserve_timestamps_inplace "$sum_file" sed -i -E '/^[[:space:]]*;/d' -- "$sum_file"
+}
+
+# Offer to strip FastSum ';' headers so the on-disk list is Linux *sum -c compatible.
+# Return 0 continue, 2 quit (stopped_by_user).
+prompt_strip_fastsum_checksum_comments() {
+    local sum_file="$1"
+    local label n answer
+
+    label="$(checksum_label "$sum_file")"
+    n="$(checksum_file_count_fastsum_semicolon_comments "$sum_file")"
+    (( n > 0 )) || return 0
+
+    if [[ "$mode" == "dry-run" ]]; then
+        emit_wrap_labeled_stdout "[DRY-RUN] Would offer to strip ${n} FastSum ';' comment line(s) from: " "${CYAN}[DRY-RUN] Would offer to strip ${n} FastSum ';' comment line(s) from:${RESET} " "$sum_file"
+        return 0
+    fi
+
+    if [[ "${AUTO_STRIP_FASTSUM_COMMENTS_SESSION:-no}" == yes ]]; then
+        emit_wrap_labeled_stdout "${label} NORMALIZE: stripping ${n} FastSum ';' comment line(s) (session auto-yes): " "${CYAN}${label} NORMALIZE:${RESET} stripping ${n} FastSum ';' comment line(s) (session auto-yes): " "$sum_file"
+        strip_checksum_file_fastsum_semicolon_comments "$sum_file"
+        emit_wrap_labeled_stdout "${label} NORMALIZE DONE: FastSum ';' comments removed: " "${CYAN}${label} NORMALIZE DONE:${RESET} FastSum ';' comments removed: " "$sum_file"
+        return 0
+    fi
+
+    while true; do
+        nonverbose_progress_dot_prepare_for_prompt
+        echo
+        emit_wrap_labeled_stdout "${label} NOTICE: " "${YELLOW}${label} NOTICE:${RESET} " "$sum_file"
+        echo "  This checksum file has ${n} line(s) starting with ';' (typical FastSum / Windows headers)."
+        echo "  GNU md5sum/sha512sum treat those as improperly formatted and are not Linux-compatible."
+        echo "  Keys:"
+        echo "    $(rename_menu_key_bracket Y Y) Yes — strip ';' comment lines now (keep hash entries; timestamps preserved)"
+        echo "    $(rename_menu_key_bracket n Y) No — leave comments on disk"
+        echo "    $(rename_menu_key_bracket a Y) Yes + strip on all remaining checksum files this run"
+        echo "    $(rename_menu_key_bracket q Y) Quit"
+        printf '%s' "$(user_prompt_ts_prefix)Strip FastSum ';' comments? [Y/n/a/q]: "
+        flush_stdin
+        read_single_key answer "$PROMPT_WAIT_SECONDS"
+        echo
+        case "$answer" in
+            q|Q)
+                stopped_by_user=yes
+                return 2
+                ;;
+            n|N)
+                vlog "Left FastSum ';' comments in place: '$sum_file'"
+                return 0
+                ;;
+            a|A)
+                AUTO_STRIP_FASTSUM_COMMENTS_SESSION=yes
+                ;&
+            y|Y|"")
+                emit_wrap_labeled_stdout "${label} NORMALIZE: stripping ${n} FastSum ';' comment line(s): " "${CYAN}${label} NORMALIZE:${RESET} stripping ${n} FastSum ';' comment line(s): " "$sum_file"
+                strip_checksum_file_fastsum_semicolon_comments "$sum_file"
+                emit_wrap_labeled_stdout "${label} NORMALIZE DONE: FastSum ';' comments removed (Linux *sum -c compatible): " "${CYAN}${label} NORMALIZE DONE:${RESET} FastSum ';' comments removed (Linux *sum -c compatible): " "$sum_file"
+                return 0
+                ;;
+            *)
+                echo "Please choose Y, n, a, or q."
+                ;;
+        esac
+    done
+}
+
 ensure_checksum_file_unix_format() {
     local sum_file="$1"
     local label
@@ -13106,12 +13185,30 @@ ensure_checksum_file_unix_format() {
             emit_wrap_labeled_stdout "${label} NORMALIZE DONE: converted from Windows format to Unix format: " "${CYAN}${label} NORMALIZE DONE:${RESET} converted from Windows format to Unix format: " "$sum_file"
         fi
     fi
+
+    prompt_strip_fastsum_checksum_comments "$sum_file" || return $?
+}
+
+# Print only lines GNU *sum -c accepts (skip FastSum ';' / '#' comments and junk).
+checksum_file_emit_verifiable_lines() {
+    local sum_file="$1"
+    local line
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        line="${line%$'\r'}"
+        [[ -n "$line" ]] || continue
+        [[ "$line" =~ ^[[:space:]]*\; ]] && continue
+        [[ "$line" =~ ^[[:space:]]*# ]] && continue
+        if [[ "$line" =~ ^[0-9a-fA-F]+[[:space:]]+\*? ]]; then
+            printf '%s\n' "$line"
+        fi
+    done < "$sum_file"
 }
 
 extract_checksum_entries() {
     local sum_file="$1"
     sed -E 's/\r$//' -- "$sum_file" | while IFS= read -r line; do
         [[ -n "$line" ]] || continue
+        [[ "$line" =~ ^[[:space:]]*\; ]] && continue
         if [[ "$line" =~ ^([0-9a-fA-F]+)[[:space:]]+\*?(.*)$ ]]; then
             printf '%s\t%s\n' "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}"
         fi
@@ -13120,7 +13217,7 @@ extract_checksum_entries() {
 
 checksum_check() {
     local sum_file="$1"
-    local kind sum_dir sum_base
+    local kind sum_dir sum_base ensure_rc=0
     kind="$(checksum_kind "$sum_file")"
     nonverbose_checksum_ref_verify_progress_letter "$kind"
     sum_dir="$(dirname -- "$sum_file")"
@@ -13128,20 +13225,25 @@ checksum_check() {
 
     if [[ "$mode" == "dry-run" ]]; then
         vlog "Dry-run: skipping $(checksum_cmd "$sum_file") whole-file check for '$sum_file'"
+        ensure_checksum_file_unix_format "$sum_file" || true
         return 0
     fi
 
     if [[ "$mode" == "real" ]]; then
-        ensure_checksum_file_unix_format "$sum_file"
+        ensure_checksum_file_unix_format "$sum_file" || ensure_rc=$?
+        if (( ensure_rc == 2 )) || [[ "$stopped_by_user" == yes ]]; then
+            return 2
+        fi
     fi
 
-    vlog "Running $(checksum_cmd "$sum_file") check in directory '$sum_dir' for file '$sum_base'"
+    vlog "Running $(checksum_cmd "$sum_file") check in directory '$sum_dir' for file '$sum_base' (entry lines only; FastSum ';' comments ignored)"
 
     (
         cd "$sum_dir"
         case "$kind" in
-            sha512) sha512sum -c --quiet -- "$sum_base" ;;
-            md5)    md5sum    -c --quiet -- "$sum_base" ;;
+            # Pipe only verifiable lines so leftover FastSum ';' headers cannot warn/fail the check.
+            sha512) checksum_file_emit_verifiable_lines "$sum_base" | sha512sum -c --quiet --status ;;
+            md5)    checksum_file_emit_verifiable_lines "$sum_base" | md5sum    -c --quiet --status ;;
         esac
     )
 }
@@ -13954,7 +14056,10 @@ apply_local_checksum_ref_updates_after_rename() {
     fi
 
     for i in "${!LOCAL_UPDATE_SUM_FILES[@]}"; do
-        ensure_checksum_file_unix_format "${LOCAL_UPDATE_SUM_FILES[$i]}"
+        ensure_checksum_file_unix_format "${LOCAL_UPDATE_SUM_FILES[$i]}" || {
+            [[ "$stopped_by_user" == yes ]] && return 2
+            true
+        }
         update_checksum_content_refs "${LOCAL_UPDATE_SUM_FILES[$i]}" "${LOCAL_UPDATE_OLD_REFS[$i]}" "${LOCAL_UPDATE_NEW_REFS[$i]}"
         changed_any=yes
     done
@@ -14520,6 +14625,7 @@ AUTO_LARGE_HASH_CHECK_SESSION=no # verify-only large checksum list prompt [H]: a
 AUTO_CHECKSUM_GROUP_SESSION=no # checksum group prompt [H/h]: auto-yes all remaining checksum groups for rest of run
 AUTO_CHECKSUM_GROUP_DIR="" # checksum group prompt [D/d]: auto-yes checksum groups in this directory for rest of run
 AUTO_CHECKSUM_MISMATCH_IGNORE_SESSION=no # checksum mismatch recovery [H/h]: ignore all mismatches for rest of run (no [U]pdate)
+AUTO_STRIP_FASTSUM_COMMENTS_SESSION=no # FastSum ; header strip prompt [A]: strip on all remaining checksum files this run
 RENAME_SH_GOPRO_STATE_FILE="${RENAME_SH_GOPRO_STATE_FILE:-${XDG_STATE_HOME:-$HOME/.local/state}/rename.sh/gopro-strip.$$}"
 
 declare -a renamed_list=()
@@ -16135,8 +16241,10 @@ for f in "${ordered_paths[@]}"; do
 
         vlog "Processing checksum file '$sum_file'"
 
-        if [[ "$mode" == "real" ]]; then
-            ensure_checksum_file_unix_format "$sum_file"
+        # CRLF + FastSum ';' normalize (dry-run only reports; real may prompt to strip comments).
+        ensure_checksum_file_unix_format "$sum_file" || true
+        if [[ "$stopped_by_user" == yes ]]; then
+            break
         fi
 
         refs_raw=()
@@ -16531,7 +16639,10 @@ for f in "${ordered_paths[@]}"; do
 
         local_line_count="$(count_checksum_entries "$sum_file")"
 
-        ensure_checksum_file_unix_format "$sum_file"
+        ensure_checksum_file_unix_format "$sum_file" || true
+        if [[ "$stopped_by_user" == yes ]]; then
+            break
+        fi
 
         print_checksum_group_preview "$label" "$sum_file" "$new_sum" refs new_refs
 
