@@ -1,5 +1,8 @@
 #!/usr/bin/env bash
-# v. 20260716.164840 - add -h/--help, -v/--version, --no_startup_delay
+# v. 20260805.091802 - install/reinstall prompts: show [q] quit in [y/N/q] and [Y/n/q]
+
+# 2026.08.05 - v. 1.9 - install/reinstall/update prompts: print [q] quit option; handle q/Q explicitly
+# 2026.07.16 - v. 1.8 - add -h/--help, -v/--version, --no_startup_delay
 # 2026.07.15 - v. 1.8 - run_exiftool: use env unless it is a bash function (then /bin/env)
 # 2026.07.15 - v. 1.7 - run_exiftool: call /bin/env (not bare env — a bash function named env breaks -ver)
 # 2026.06.26 - v. 1.6 - run exiftool/perl with C.UTF-8 (or C) to avoid locale warnings on minimal systems
@@ -237,9 +240,10 @@ prompt_install_if_missing() {
         echo "Non-interactive session — not installing (default [N])."
         exit 0
     fi
-    exiftool_read_key "Install ExifTool now? [y/N]: " n "${INSTALL_EXIFTOOL_READ_TIMEOUT}"
+    exiftool_read_key "Install ExifTool now? [y/N/q]: " n "${INSTALL_EXIFTOOL_READ_TIMEOUT}"
     case "${REPLY}" in
         y|Y) echo "Proceeding with install..." ;;
+        q|Q) echo "Quitting — no changes made."; exit 0 ;;
         *) echo "Quitting — no changes made."; exit 0 ;;
     esac
 }
@@ -270,9 +274,9 @@ prompt_if_already_installed() {
 
     if [[ -n "${installed}" && "${installed}" == "${latest}" ]]; then
         echo "You already have the latest version."
-        echo -n "Reinstall it anyway? [y/N] "
+        echo -n "Reinstall it anyway? [y/N/q] "
     else
-        echo -n "Update/install version ${latest} now? [Y/n] "
+        echo -n "Update/install version ${latest} now? [Y/n/q] "
     fi
 
     read -r -n 1 reply || reply=""
@@ -281,11 +285,12 @@ prompt_if_already_installed() {
     if [[ -n "${installed}" && "${installed}" == "${latest}" ]]; then
         case "${reply}" in
             y|Y|yes|YES) echo "Reinstalling..." ;;
+            q|Q) echo "Quitting — no changes made."; exit 0 ;;
             *) echo "Quitting — no changes made."; exit 0 ;;
         esac
     else
         case "${reply}" in
-            n|N|no|NO) echo "Quitting — no changes made."; exit 0 ;;
+            q|Q|n|N|no|NO) echo "Quitting — no changes made."; exit 0 ;;
             *) echo "Proceeding with update/install..." ;;
         esac
     fi
