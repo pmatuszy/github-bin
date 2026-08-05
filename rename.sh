@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# v. 20260805.104019 - dry-run: use ExifTool by default so previews match real renames (opt out with SKIP=yes)
 # v. 20260803.073738 - subdir scope: M3U checks stay under chosen dir; skip any path outside SCOPE_SUBDIR
 # v. 20260802.221218 - M3U subtree match: ignore find SIGPIPE 141 on early exact hit; tighten fuzzy keys
 # v. 20260801.124321 - scope [D]: pick a subdirectory by number/path; recurse under it; keep root DB/excludes
@@ -29,6 +30,7 @@
 # v. 20260721.132007 - Samsung timestamp media: preserve optional numeric sorting prefix when appending make/model
 # v. 20260721.112812 - GoPro camera labels: GoPro_Hero4_Silver style (not GOPRO4_SILVER)
 
+# 2026.08.05 - v. 19.293.104019 - dry-run defaults to full ExifTool preview (same names as real); RENAME_DRY_RUN_SKIP_EXIFTOOL=yes for fast basename-only
 # 2026.08.03 - v. 19.292.073738 - scope [D]: end-of-run M3U scan uses SCOPE_SUBDIR (not whole START_DIR); main loop rejects out-of-scope paths
 # 2026.08.02 - v. 19.291.221218 - M3U: find SIGPIPE 141 after exact match is not an error; fuzzy match needs long similar keys
 # 2026.08.01 - v. 19.290.124321 - scope menu [D]: numbered subdirectory pick (or typed path); recurse under it; START_DIR DB/excludes unchanged
@@ -593,8 +595,9 @@ NEF_XMP_PAIR_LABEL_WIDTH="${NEF_XMP_PAIR_LABEL_WIDTH:-15}"
 NEF_XMP_PAIR_LABEL_WIDTH_NO_SIDECAR="${NEF_XMP_PAIR_LABEL_WIDTH_NO_SIDECAR:-5}"
 # Continuation indent for user-visible lines longer than MAX_LINE_LENGTH (checksum/HTML style).
 WRAP_MSG_INDENT="${WRAP_MSG_INDENT:-          }"
-# Dry-run: skip exiftool/metadata reads (basename rules only); much faster on large GoPro trees. Set no for full metadata preview.
-RENAME_DRY_RUN_SKIP_EXIFTOOL="${RENAME_DRY_RUN_SKIP_EXIFTOOL:-yes}"
+# Dry-run: by default run the same exiftool/metadata path as real mode so previews match real renames.
+# Set yes for a fast basename-only preview on huge trees (no Sony/GoPro/Mission1 metadata names).
+RENAME_DRY_RUN_SKIP_EXIFTOOL="${RENAME_DRY_RUN_SKIP_EXIFTOOL:-no}"
 
 dry_run_skip_exiftool_enabled() {
     [[ "$mode" == "dry-run" && "${RENAME_DRY_RUN_SKIP_EXIFTOOL,,}" == yes && "$RECHECK_RENAMES" -eq 0 ]]
@@ -1300,8 +1303,8 @@ Environment / tunables (read at startup; use export or prefix on the same line a
       RENAME_CHECKSUM_VERIFY_STATE_DIR=/var/tmp/rename-checksum-state rename.sh --use-db
   RENAME_EXIFTOOL                     exiftool for GoPro camera raw files; default: bundled luks-buffalo2 path, then PATH
       RENAME_EXIFTOOL=/opt/exiftool/exiftool rename.sh --scope current
-  RENAME_DRY_RUN_SKIP_EXIFTOOL        Dry-run: yes (default) = basename rules only, no exiftool/sha512 recovery (fast preview); no = full metadata preview
-      RENAME_DRY_RUN_SKIP_EXIFTOOL=no rename.sh --mode dry-run
+  RENAME_DRY_RUN_SKIP_EXIFTOOL        Dry-run: no (default) = same exiftool/metadata preview as real renames; yes = fast basename-only (no Sony/GoPro metadata names)
+      RENAME_DRY_RUN_SKIP_EXIFTOOL=yes rename.sh --mode dry-run
   START_DIR                           Working tree root (default current directory). Use an absolute path.
       START_DIR=/data/photos rename.sh --use-db --scope subdirs
   TMPDIR                              Temp directory for SQLite bootstrap mktemp etc. (POSIX; default often /tmp).
@@ -6780,6 +6783,14 @@ else
 fi
 
 echo -e "Mode selected: ${CYAN}$mode${RESET}"
+if [[ "$mode" == "dry-run" ]]; then
+    if dry_run_skip_exiftool_enabled; then
+        echo "Dry-run preview: basename rules only (ExifTool skipped; RENAME_DRY_RUN_SKIP_EXIFTOOL=yes)."
+        echo "  For the same proposed names as real mode: RENAME_DRY_RUN_SKIP_EXIFTOOL=no rename.sh"
+    else
+        echo "Dry-run preview: full metadata path (same ExifTool/Sony/GoPro rules as real mode)."
+    fi
+fi
 
 # Resume/checkpoint key: include chosen subdirectory so resume requires the same discovery root.
 resume_scope_storage_key() {
