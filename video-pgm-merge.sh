@@ -1,7 +1,7 @@
 #!/bin/bash
-# v. 20260725.133510 - size summary: always print full input/output basenames (no ellipsis truncation)
-# v. 20260718.120500 - timelapse: Rate …sec only when no audio track (same as rename.sh)
+# v. 20260805.111450 - bare _Timelapse: parse + size-split chain with orphan _part_01
 
+# 2026.08.05 - v. 0.15.23 - bare _Timelapse (Hero7 rename): parse camera; size-split use timelapse wall gaps; orphan _part_XX joins size-split
 # 2026.07.25 - v. 0.15.22 - size summary INPUT lines show full basenames instead of 52-char ellipsis
 # 2026.07.18 - v. 0.15.21 - timelapse detect: ignore Rate …sec when clip has audio
 # 2026.07.18 - v. 0.15.19 - seam preview: play default Y; repeat default N (continue)
@@ -1471,9 +1471,13 @@ chapter_camera_from_basename() {
   return 1
 }
 
-# rename.sh capture-mode token on stem (Timelapse_2_1sec); rate may contain underscores.
+# rename.sh capture-mode token on stem (Timelapse_2_1sec or bare Timelapse); rate may contain underscores.
 gopro_capture_mode_token_from_stem() {
   local stem="$1"
+  if [[ "$stem" =~ ^(.+)_(Timewarp|Timelapse)$ ]]; then
+    printf '%s\n' "${BASH_REMATCH[2]}"
+    return 0
+  fi
   if [[ "$stem" =~ ^(.+)_(Timewarp|Timelapse)_(.+)$ ]]; then
     printf '%s_%s\n' "${BASH_REMATCH[2]}" "${BASH_REMATCH[3]}"
     return 0
@@ -1483,6 +1487,10 @@ gopro_capture_mode_token_from_stem() {
 
 gopro_stem_without_capture_mode() {
   local stem="$1"
+  if [[ "$stem" =~ ^(.+)_(Timewarp|Timelapse)$ ]]; then
+    printf '%s\n' "${BASH_REMATCH[1]}"
+    return 0
+  fi
   if [[ "$stem" =~ ^(.+)_(Timewarp|Timelapse)_.+$ ]]; then
     printf '%s\n' "${BASH_REMATCH[1]}"
     return 0
@@ -1512,16 +1520,36 @@ gopro_camera_suffix_from_basename() {
     printf '%s\n' "$GOPRO_PARSED_CAM"
     return 0
   fi
-  # rename.sh Timewarp/Timelapse before .mp4: …_GOPRO7_BLACK_Timelapse_2_1sec.mp4
-  if [[ "$base" =~ (GOPRO[0-9]+_[A-Z0-9]+)_(Timewarp|Timelapse)_[^/]+\.[mM][pP]4$ ]]; then
+  # rename.sh Timewarp/Timelapse before .mp4 (bare, with rate, and/or _part_XX):
+  # …_GOPRO7_BLACK_Timelapse.mp4 / …_Timelapse_2_1sec.mp4 / …_Timelapse_part_01.mp4
+  if [[ "$base" =~ (GOPRO[0-9]+_[A-Z0-9]+)_(Timewarp|Timelapse)(_part_[0-9]{2})?(_Proxy)?\.[mM][pP]4$ ]]; then
     GOPRO_PARSED_CAM="${BASH_REMATCH[1]}"
     printf '%s\n' "$GOPRO_PARSED_CAM"
     return 0
   fi
-  if [[ "$base" =~ (GoPro_[A-Za-z0-9_]+)_(Timewarp|Timelapse)_[^/]+\.[mM][pP]4$ ]]; then
+  if [[ "$base" =~ (GOPRO[0-9]+_[A-Z0-9]+)_(Timewarp|Timelapse)_[^./]+(_part_[0-9]{2})?(_Proxy)?\.[mM][pP]4$ ]]; then
     GOPRO_PARSED_CAM="${BASH_REMATCH[1]}"
     printf '%s\n' "$GOPRO_PARSED_CAM"
     return 0
+  fi
+  if [[ "$base" =~ (GoPro_[A-Za-z0-9_]+)_(Timewarp|Timelapse)(_part_[0-9]{2})?(_Proxy)?\.[mM][pP]4$ ]]; then
+    GOPRO_PARSED_CAM="${BASH_REMATCH[1]}"
+    printf '%s\n' "$GOPRO_PARSED_CAM"
+    return 0
+  fi
+  if [[ "$base" =~ (GoPro_[A-Za-z0-9_]+)_(Timewarp|Timelapse)_[^./]+(_part_[0-9]{2})?(_Proxy)?\.[mM][pP]4$ ]]; then
+    GOPRO_PARSED_CAM="${BASH_REMATCH[1]}"
+    printf '%s\n' "$GOPRO_PARSED_CAM"
+    return 0
+  fi
+  # Plain rename.sh camera token: …_GoPro_Hero7_Black.mp4 / …_GoPro_Hero7_Black_part_01.mp4
+  if [[ "$base" =~ (GoPro_[A-Za-z0-9_]+)(_part_[0-9]{2})?(_Proxy)?\.[mM][pP]4$ ]]; then
+    GOPRO_PARSED_CAM="${BASH_REMATCH[1]}"
+    # Reject if the "camera" still ends with Timewarp/Timelapse (should have matched above).
+    if [[ ! "$GOPRO_PARSED_CAM" =~ _(Timewarp|Timelapse)$ ]]; then
+      printf '%s\n' "$GOPRO_PARSED_CAM"
+      return 0
+    fi
   fi
   return 1
 }
@@ -1580,7 +1608,13 @@ gopro_middle_from_basename() {
   gopro_timestamp_cam_from_basename "$base" || return 1
   if [[ "$base" =~ ^[0-9]{8}_[0-9]{6}[a-zA-Z]?_(.*)_((GOPRO[0-9]+_[A-Z0-9]+))_([A-Z]{2}[0-9]{4,6})\.[mM][pP]4$ ]]; then
     mid="${BASH_REMATCH[1]}"
-  elif [[ "$base" =~ ^[0-9]{8}_[0-9]{6}[a-zA-Z]?_(.*)_(GOPRO[0-9]+_[A-Z0-9]+)[a-zA-Z]?\.[mM][pP]4$ ]]; then
+  elif [[ "$base" =~ ^[0-9]{8}_[0-9]{6}[a-zA-Z]?_(.*)_(GOPRO[0-9]+_[A-Z0-9]+)_(Timewarp|Timelapse)(_[^./]+)?(_part_[0-9]{2})?(_Proxy)?\.[mM][pP]4$ ]]; then
+    mid="${BASH_REMATCH[1]}"
+  elif [[ "$base" =~ ^[0-9]{8}_[0-9]{6}[a-zA-Z]?_(.*)_(GOPRO[0-9]+_[A-Z0-9]+)[a-zA-Z]?(_part_[0-9]{2})?(_Proxy)?\.[mM][pP]4$ ]]; then
+    mid="${BASH_REMATCH[1]}"
+  elif [[ "$base" =~ ^[0-9]{8}_[0-9]{6}[a-zA-Z]?_(.*)_(GoPro_[A-Za-z0-9_]+)_(Timewarp|Timelapse)(_[^./]+)?(_part_[0-9]{2})?(_Proxy)?\.[mM][pP]4$ ]]; then
+    mid="${BASH_REMATCH[1]}"
+  elif [[ "$base" =~ ^[0-9]{8}_[0-9]{6}[a-zA-Z]?_(.*)_(GoPro_[A-Za-z0-9_]+)(_part_[0-9]{2})?(_Proxy)?\.[mM][pP]4$ ]]; then
     mid="${BASH_REMATCH[1]}"
   else
     return 1
@@ -1679,7 +1713,7 @@ gopro_datetime_to_epoch() {
 size_split_chapter_timestamps_follow() {
   local prev_f="$1" next_f="$2"
   local pb nb prev_date prev_time next_date next_time
-  local prev_epoch next_epoch dur expected delta tol min_gap max_gap
+  local prev_epoch next_epoch dur expected delta tol min_gap max_gap gap
   pb="${prev_f##*/}"
   nb="${next_f##*/}"
   gopro_timestamp_cam_from_basename "$pb" || return 1
@@ -1706,11 +1740,21 @@ size_split_chapter_timestamps_follow() {
     if [[ -n "$dur" ]]; then
       expected=$(awk -v p="$prev_epoch" -v d="$dur" 'BEGIN{printf "%d", p+d+0.5}')
       delta=$(( next_epoch - expected ))
-      (( delta >= -tol && delta <= tol ))
-      return $?
+      if (( delta >= -tol && delta <= tol )); then
+        return 0
+      fi
     fi
-    delta=$(( next_epoch - prev_epoch ))
-    (( delta >= min_gap && delta <= max_gap ))
+    gap=$(( next_epoch - prev_epoch ))
+    part_chapter_timelapse_wall_clock_ok "$prev_f" "$gap" "$dur" && return 0
+    # Without duration: bare _Timelapse chapters often sit ~20–80 min apart (Hero7 ~4 GB).
+    if [[ -z "$dur" ]] && gopro_basename_is_timelapse "$pb" \
+      && (( gap >= 1200 && gap <= 4800 )); then
+      return 0
+    fi
+    if [[ -n "$dur" ]]; then
+      return 1
+    fi
+    (( gap >= min_gap && gap <= max_gap ))
     return $?
   fi
 
@@ -1718,18 +1762,24 @@ size_split_chapter_timestamps_follow() {
   [[ "$prev_date" == "$next_date" ]] || return 1
   prev_epoch=$(gopro_hhmmss_to_seconds "$prev_time")
   next_epoch=$(gopro_hhmmss_to_seconds "$next_time")
+  (( next_epoch >= prev_epoch )) || return 1
   if [[ -n "$dur" ]]; then
     expected=$(awk -v p="$prev_epoch" -v d="$dur" 'BEGIN{printf "%d", p+d+0.5}')
     delta=$(( next_epoch - expected ))
-    # Midnight wrap: next chapter on same day usually does not roll past 24h.
-    if (( next_epoch < prev_epoch )); then
-      return 1
+    if (( delta >= -tol && delta <= tol )); then
+      return 0
     fi
-    (( delta >= -tol && delta <= tol ))
-    return $?
   fi
   gap=$(( next_epoch - prev_epoch ))
-  (( next_epoch >= prev_epoch && gap >= min_gap && gap <= max_gap ))
+  part_chapter_timelapse_wall_clock_ok "$prev_f" "$gap" "$dur" && return 0
+  if [[ -z "$dur" ]] && gopro_basename_is_timelapse "$pb" \
+    && (( gap >= 1200 && gap <= 4800 )); then
+    return 0
+  fi
+  if [[ -n "$dur" ]]; then
+    return 1
+  fi
+  (( gap >= min_gap && gap <= max_gap ))
 }
 
 gopro_token_is_noise() {
@@ -1840,11 +1890,13 @@ size_split_tier_for_file() {
 }
 
 gopro_camera_is_gopro7() {
-  [[ "$1" == *GOPRO7* ]]
+  local c="${1^^}"
+  [[ "$c" == *GOPRO7* || "$c" == *HERO7* ]]
 }
 
 gopro_camera_uses_4gb_chapter_duration() {
-  [[ "$1" == *GOPRO* ]]
+  local c="${1^^}"
+  [[ "$c" == *GOPRO* ]]
 }
 
 gopro7_size_in_chapter_range() {
@@ -1942,7 +1994,8 @@ gopro_rate_tag_timelapse_interval_seconds() {
 }
 
 gopro_basename_is_timelapse() {
-  [[ "$1" =~ _Timelapse_ ]]
+  # rename.sh Hero7: bare _Timelapse.mp4; others: _Timelapse_2_1sec; with parts: _Timelapse_part_01
+  [[ "$1" =~ _Timelapse(_|\.) ]]
 }
 
 # True when file is GoPro timelapse (_Timelapse_ in name, or exiftool Rate …sec without audio).
@@ -2167,12 +2220,10 @@ group_is_size_split() {
   (( ${#files[@]} >= 2 )) || return 1
   for f in "${files[@]}"; do
     base="${f##*/}"
-    if chapter_part_from_basename "$base" >/dev/null 2>&1; then
-      return 1
-    fi
     gopro_timestamp_cam_from_basename "$base" || return 1
   done
   # Letter a,b,c… on one start time is enough (any size); else require ~4 GB / ~12 GB chapters.
+  # Orphan _part_XX singles may join a size-split/timelapse chain (no letter run).
   gopro_letter_chapter_run_ok "${files[@]}" && return 0
   size_split_run_valid "${files[@]}"
 }
@@ -2293,14 +2344,12 @@ build_size_split_groups() {
       continue
     fi
     base="${files[0]##*/}"
-    if chapter_part_from_basename "$base" >/dev/null 2>&1; then
+    # Orphan single _part_XX (e.g. only part_01 kept the suffix) may still chain with
+    # bare-Timelapse / size-split siblings that share camera + session timestamps.
+    if ! gopro_timestamp_cam_from_basename "$base"; then
       kept+=("$blob")
       continue
     fi
-    gopro_timestamp_cam_from_basename "$base" || {
-      kept+=("$blob")
-      continue
-    }
     singles+=("${files[0]}")
   done
 
@@ -3251,7 +3300,7 @@ do_merge() {
 
   if (( mergeable_total == 0 )); then
     echo "$(pgm_ts) No multi-part chapter groups to merge."
-    echo "$(pgm_ts) Tip: sequential GoPro clips (_part_01… with chaining timestamps, YYYYMMDD_HHMMSS_… without _part_XX, ~4 GB / ~12 GB, or a/b/c letter suffixes) may be mergeable chapters."
+    echo "$(pgm_ts) Tip: sequential GoPro clips (_part_01… with chaining timestamps, bare _Timelapse chapters without _part_XX, YYYYMMDD_HHMMSS_… ~4 GB / ~12 GB, or a/b/c letter suffixes) may be mergeable chapters."
     return 0
   fi
 
