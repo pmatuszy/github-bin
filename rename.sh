@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# v. 20260805.104910 - pad OLD in dry-run/Renamed/summary old→new lines so NEW names share a column
 # v. 20260805.104019 - dry-run: use ExifTool by default so previews match real renames (opt out with SKIP=yes)
 # v. 20260803.073738 - subdir scope: M3U checks stay under chosen dir; skip any path outside SCOPE_SUBDIR
 # v. 20260802.221218 - M3U subtree match: ignore find SIGPIPE 141 on early exact hit; tighten fuzzy keys
@@ -30,6 +31,7 @@
 # v. 20260721.132007 - Samsung timestamp media: preserve optional numeric sorting prefix when appending make/model
 # v. 20260721.112812 - GoPro camera labels: GoPro_Hero4_Silver style (not GOPRO4_SILVER)
 
+# 2026.08.05 - v. 19.294.104910 - dry-run/Renamed/summary: pad OLD path width so → NEW aligns; pairs note both paths first
 # 2026.08.05 - v. 19.293.104019 - dry-run defaults to full ExifTool preview (same names as real); RENAME_DRY_RUN_SKIP_EXIFTOOL=yes for fast basename-only
 # 2026.08.03 - v. 19.292.073738 - scope [D]: end-of-run M3U scan uses SCOPE_SUBDIR (not whole START_DIR); main loop rejects out-of-scope paths
 # 2026.08.02 - v. 19.291.221218 - M3U: find SIGPIPE 141 after exact match is not an error; fuzzy match needs long similar keys
@@ -902,6 +904,26 @@ emit_wrap_exclude_append_message() {
 # Long OLD path ARROW NEW path (ARROW is set later at startup; expanded at call time).
 # When colors are on, the suggested new path is printed in green.
 # Wrapped layout: slash-wrap OLD (+ arrow) under a colored prefix; NEW on the last line in green.
+# For dry-run / Renamed one-liners, pad OLD so NEW paths share a column across consecutive lines.
+# Pad width grows for the run; pair renames should call rename_arrow_note_old_path_widths first.
+RENAME_ARROW_OLD_PAD_WIDTH="${RENAME_ARROW_OLD_PAD_WIDTH:-0}"
+
+rename_arrow_note_old_path_widths() {
+    local p
+    for p in "$@"; do
+        [[ -n "$p" ]] || continue
+        if (( ${#p} > RENAME_ARROW_OLD_PAD_WIDTH )); then
+            RENAME_ARROW_OLD_PAD_WIDTH=${#p}
+        fi
+    done
+}
+
+rename_arrow_pad_old_path() {
+    local old_p="$1"
+    rename_arrow_note_old_path_widths "$old_p"
+    printf '%-*s' "$RENAME_ARROW_OLD_PAD_WIDTH" "$old_p"
+}
+
 emit_wrap_old_arrow_new_stdout() {
     nonverbose_progress_dot_endline_if_needed
     local plain_pfx="$1"
@@ -909,10 +931,15 @@ emit_wrap_old_arrow_new_stdout() {
     local old_p="$3"
     local new_p="$4"
     local sep=" ${ARROW} "
-    local plain_full plain_old path_col_indent eff_width
+    local plain_full plain_old path_col_indent eff_width old_display
+
+    old_display="$old_p"
+    if [[ "$plain_pfx" == "[DRY-RUN] Would rename: " || "$plain_pfx" == "Renamed: " ]]; then
+        old_display="$(rename_arrow_pad_old_path "$old_p")"
+    fi
 
     eff_width="$(rename_effective_wrap_width)"
-    plain_old="${plain_pfx}${old_p}${sep}"
+    plain_old="${plain_pfx}${old_display}${sep}"
     plain_full="${plain_old}${new_p}"
     printf -v path_col_indent '%*s' "${#plain_pfx}" ''
     if [[ "$use_colors" != yes ]]; then
@@ -921,12 +948,12 @@ emit_wrap_old_arrow_new_stdout() {
 
     if (( ${#plain_full} <= eff_width )); then
         if [[ "$use_colors" == yes ]]; then
-            printf '%b%s%s%b%s%b\n' "$ansi_pfx" "$old_p" "$sep" "${GREEN}" "$new_p" "${RESET}"
+            printf '%b%s%s%b%s%b\n' "$ansi_pfx" "$old_display" "$sep" "${GREEN}" "$new_p" "${RESET}"
         else
-            printf '%s%s%s%s\n' "$plain_pfx" "$old_p" "$sep" "$new_p"
+            printf '%s%s%s%s\n' "$plain_pfx" "$old_display" "$sep" "$new_p"
         fi
     else
-        emit_wrap_labeled_body_slash_aware 1 "$plain_pfx" "$ansi_pfx" "${old_p}${sep}"
+        emit_wrap_labeled_body_slash_aware 1 "$plain_pfx" "$ansi_pfx" "${old_display}${sep}"
         if [[ "$use_colors" == yes ]]; then
             printf '%s%b%s%b\n' "$path_col_indent" "${GREEN}" "$new_p" "${RESET}"
         else
@@ -939,28 +966,30 @@ emit_wrap_old_arrow_new_stdout() {
 }
 
 # Summary list: two-space indent, red arrow, green new; slash-wrap long OLD paths.
+# Pads OLD to RENAME_ARROW_OLD_PAD_WIDTH (call rename_arrow_note_old_path_widths over the batch first).
 emit_wrap_summary_rename_line_stdout() {
     local old_p="$1"
     local new_p="$2"
     local plain_pfx="  "
     local ansi_pfx="  "
     local sep=" ${ARROW} "
-    local plain_full path_col_indent eff_width
+    local plain_full path_col_indent eff_width old_display
 
+    old_display="$(rename_arrow_pad_old_path "$old_p")"
     eff_width="$(rename_effective_wrap_width)"
-    plain_full="${plain_pfx}${old_p}${sep}${new_p}"
+    plain_full="${plain_pfx}${old_display}${sep}${new_p}"
     printf -v path_col_indent '%*s' "${#plain_pfx}" ''
 
     if (( ${#plain_full} <= eff_width )); then
         if [[ "$use_colors" == yes ]]; then
-            printf "  %s %b%s%b %b%s%b\n" "$old_p" "$RED" "$ARROW" "$RESET" "${GREEN}" "$new_p" "${RESET}"
+            printf "  %s %b%s%b %b%s%b\n" "$old_display" "$RED" "$ARROW" "$RESET" "${GREEN}" "$new_p" "${RESET}"
         else
-            printf "  %s %s %s\n" "$old_p" "$ARROW" "$new_p"
+            printf "  %s %s %s\n" "$old_display" "$ARROW" "$new_p"
         fi
         return 0
     fi
 
-    emit_wrap_labeled_body_slash_aware 1 "$plain_pfx" "$ansi_pfx" "$old_p"
+    emit_wrap_labeled_body_slash_aware 1 "$plain_pfx" "$ansi_pfx" "$old_display"
     if [[ "$use_colors" == yes ]]; then
         printf '%s%b%s%b %b%s%b\n' "$path_col_indent" "$RED" "$ARROW" "$RESET" "${GREEN}" "$new_p" "${RESET}"
     else
@@ -1305,6 +1334,8 @@ Environment / tunables (read at startup; use export or prefix on the same line a
       RENAME_EXIFTOOL=/opt/exiftool/exiftool rename.sh --scope current
   RENAME_DRY_RUN_SKIP_EXIFTOOL        Dry-run: no (default) = same exiftool/metadata preview as real renames; yes = fast basename-only (no Sony/GoPro metadata names)
       RENAME_DRY_RUN_SKIP_EXIFTOOL=yes rename.sh --mode dry-run
+  RENAME_ARROW_OLD_PAD_WIDTH          Minimum plain width for OLD paths in dry-run/Renamed/summary old→new lines (default 0 = grow to longest seen). Pair renames set this from both paths before printing.
+      RENAME_ARROW_OLD_PAD_WIDTH=40 rename.sh --mode dry-run
   START_DIR                           Working tree root (default current directory). Use an absolute path.
       START_DIR=/data/photos rename.sh --use-db --scope subdirs
   TMPDIR                              Temp directory for SQLite bootstrap mktemp etc. (POSIX; default often /tmp).
@@ -7924,14 +7955,17 @@ nef_xmp_pair_run_sidecar_metadata_checks() {
 perform_plain_or_nef_xmp_pair() {
     local reason="$1"
     if [[ "$RENAME_SIDECAR_KIND" == sony_clip && -n "$nef_xmp_buddy" ]]; then
+        rename_arrow_note_old_path_widths "$f" "$nef_xmp_buddy"
         print_rename_action_verbose "$f" "$new" "${reason} (Sony clip pair)"
         print_rename_action_verbose "$nef_xmp_buddy" "$nef_xmp_new" "${reason} (Sony clip pair)"
         perform_sony_clip_pair_plain_renames "$f" "$new" "$nef_xmp_buddy" "$nef_xmp_new" || return $?
     elif [[ "$RENAME_SIDECAR_KIND" == media_xmp && -n "$nef_xmp_buddy" ]]; then
+        rename_arrow_note_old_path_widths "$f" "$nef_xmp_buddy"
         print_rename_action_verbose "$f" "$new" "${reason} (media+XMP pair)"
         print_rename_action_verbose "$nef_xmp_buddy" "$nef_xmp_new" "${reason} (media+XMP pair)"
         perform_media_xmp_pair_plain_renames "$f" "$new" "$nef_xmp_buddy" "$nef_xmp_new" || return $?
     elif [[ -n "$nef_xmp_buddy" ]]; then
+        rename_arrow_note_old_path_widths "$f" "$nef_xmp_buddy"
         print_rename_action_verbose "$f" "$new" "${reason} (NEF+XMP pair)"
         print_rename_action_verbose "$nef_xmp_buddy" "$nef_xmp_new" "${reason} (NEF+XMP pair)"
         perform_nef_xmp_pair_plain_renames "$f" "$new" "$nef_xmp_buddy" "$nef_xmp_new" || return $?
@@ -15703,6 +15737,11 @@ print_summary() {
         if (( _session_renamed > 100 )); then
             start_idx=$(( total_renamed - 100 ))
         fi
+        # Pad OLD paths to the longest in this summary batch so NEW stays in one column.
+        for (( idx=start_idx; idx<total_renamed; idx++ )); do
+            r="${renamed_list[$idx]}"
+            rename_arrow_note_old_path_widths "${r%%|*}"
+        done
         for (( idx=start_idx; idx<total_renamed; idx++ )); do
             r="${renamed_list[$idx]}"
             old=${r%%|*}
