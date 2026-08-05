@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# v. 20260803.152000 - scan whole volume for FileDesc packets; patch in place when size is unchanged
 # v. 20260803.072300 - rewrite volume PAR2: index head only + copy rest; verify rename stuck
 # v. 20260802.154500 - read PAR2 metadata from volume-only sets; fix packet buffer refill
 # v. 20260721.154223 - list-names subcommand; --pairs-file for large rename batches
@@ -27,10 +28,10 @@ VERSION = "1.2.6.0"
 MAX_RENAMES = 16
 INVALID_CHARS = '\\:*?"<>|'
 READ_CHUNK = 2097152
-REFILL_AT = 1048576
-PACKET_BUFFER = 65536
+SCAN_WINDOW = 65536
 MAX_PACKET_BYTES = 16 * 1024 * 1024
-INDEX_SCAN_BYTES = 64 * 1024 * 1024
+PACKET_MAIN = b"PAR 2.0\x00Main\x00\x00\x00\x00"
+PACKET_FILEDESC = b"PAR 2.0\x00FileDesc"
 
 
 def usage():
@@ -130,78 +131,97 @@ def find_par2_set(par_file_path):
     return folder_path, par_files
 
 
+def iter_par2_packets(handle, file_size, wanted_types):
+    """Yield (offset, packet_size, packet) for packets of the wanted types.
+
+    Positions are absolute, so hops over multi-megabyte recovery packets stay
+    in sync no matter where in the file the critical packets live. Only wanted
+    packets are read in full and checksum-verified.
+    """
+    window = b""
+    window_at = 0
+    cursor = 0
+
+    def window_index(needed):
+        nonlocal window, window_at
+        index = cursor - window_at
+        if index < 0 or index + needed > len(window):
+            window_at = cursor
+            handle.seek(window_at)
+            window = handle.read(max(needed, SCAN_WINDOW))
+            index = 0
+        return index
+
+    while cursor + 64 <= file_size:
+        index = window_index(64)
+        if len(window) - index < 64:
+            break
+
+        if window[index : index + 8] != b"PAR2\x00PKT":
+            cursor += 1
+            continue
+
+        packet_size = struct.unpack_from("Q", window, index + 8)[0]
+        if (
+            packet_size < 64
+            or packet_size % 4
+            or packet_size > MAX_PACKET_BYTES
+            or cursor + packet_size > file_size
+        ):
+            cursor += 1
+            continue
+
+        if window[index + 48 : index + 64] not in wanted_types:
+            cursor += packet_size
+            continue
+
+        index = window_index(packet_size)
+        packet = window[index : index + packet_size]
+        if (
+            len(packet) < packet_size
+            or hashlib.md5(packet[32:]).digest() != packet[16:32]
+        ):
+            cursor += 1
+            continue
+
+        yield cursor, packet_size, packet
+        cursor += packet_size
+
+
+def filedesc_packet_name(packet, packet_size):
+    name_end = packet_size
+    while packet[name_end - 1] == 0:
+        name_end -= 1
+    return packet[120:name_end].decode("utf-8")
+
+
 def read_source_names(folder_path, par_file_name):
     file_path = os.path.join(folder_path, par_file_name)
+    file_size = os.path.getsize(file_path)
     set_id = None
     source_names = []
     expected_count = 0
 
     with open(file_path, "rb") as handle:
-        data = handle.read(READ_CHUNK)
-        data_size = len(data)
-        offset = 0
-
-        while offset + 64 <= data_size:
-            if data[offset : offset + 8] != b"PAR2\x00PKT":
-                offset += 1
-                continue
-
-            packet_size = struct.unpack_from("Q", data, offset + 8)[0]
-            if packet_size < 64 or packet_size > MAX_PACKET_BYTES:
-                offset += 1
-                continue
-
-            while offset + packet_size > data_size:
-                more = handle.read(READ_CHUNK)
-                if not more:
-                    break
-                data = data + more
-                data_size = len(data)
-
-            if offset + packet_size > data_size:
-                offset += 1
-                continue
-
-            packet_hash = hashlib.md5(data[offset + 32 : offset + packet_size]).digest()
-            if data[offset + 16 : offset + 32] != packet_hash:
-                offset += 1
-                continue
-
-            packet_set_id = data[offset + 32 : offset + 48]
+        packets = iter_par2_packets(handle, file_size, (PACKET_MAIN, PACKET_FILEDESC))
+        for _offset, packet_size, packet in packets:
+            packet_set_id = packet[32:48]
             if set_id is None:
                 set_id = packet_set_id
             elif set_id != packet_set_id:
-                offset += packet_size
                 continue
 
-            packet_type = data[offset + 48 : offset + 64]
-            if packet_type == b"PAR 2.0\x00Main\x00\x00\x00\x00":
-                expected_count = struct.unpack_from("I", data, offset + 72)[0]
+            if packet[48:64] == PACKET_MAIN:
+                expected_count = struct.unpack_from("I", packet, 72)[0]
                 if expected_count == 0:
                     break
-            elif packet_type == b"PAR 2.0\x00FileDesc":
-                name_end = packet_size
-                while data[offset + name_end - 1] == 0:
-                    name_end -= 1
-                source_name = data[offset + 120 : offset + name_end].decode("utf-8")
-                if source_name not in source_names:
-                    source_names.append(source_name)
-                if expected_count and len(source_names) == expected_count:
-                    break
+                continue
 
-            offset += packet_size
-
-            if offset >= REFILL_AT:
-                data = data[offset:data_size] + handle.read(READ_CHUNK)
-                data_size = len(data)
-                offset = 0
-            elif offset + 64 > data_size:
-                more = handle.read(READ_CHUNK)
-                if not more:
-                    break
-                data = data[offset:data_size] + more
-                data_size = len(data)
-                offset = 0
+            source_name = filedesc_packet_name(packet, packet_size)
+            if source_name not in source_names:
+                source_names.append(source_name)
+            if expected_count and len(source_names) == expected_count:
+                break
 
     if set_id is None:
         raise ValueError(f"Could not read PAR2 set metadata from: {par_file_name}")
@@ -284,185 +304,122 @@ def restore_par2_file_times(source_path, backup_path, saved_times=None):
         os.utime(source_path, saved_times)
 
 
-def rewrite_packets_in_data(data, writer, set_id, rename_map, buffer):
-    rename_count = 0
-    offset = 0
-    data_size = len(data)
+def build_filedesc_packet(packet_head, new_name):
+    name_bytes = new_name.encode("utf-8")
+    padded_len = len(name_bytes) + (-len(name_bytes) % 4)
+    body_len = 120 + padded_len
 
-    while offset + 64 <= data_size:
-        if data[offset : offset + 8] != b"PAR2\x00PKT":
-            writer.write(data[offset : offset + 1])
-            offset += 1
-            continue
+    packet = bytearray(body_len)
+    packet[0:120] = packet_head[0:120]
+    packet[120 : 120 + len(name_bytes)] = name_bytes
+    struct.pack_into("Q", packet, 8, body_len)
+    packet[16:32] = hashlib.md5(bytes(packet[32:body_len])).digest()
+    return bytes(packet)
 
-        packet_size = struct.unpack_from("Q", data, offset + 8)[0]
-        if packet_size < 64 or packet_size > MAX_PACKET_BYTES:
-            writer.write(data[offset : offset + 1])
-            offset += 1
-            continue
 
-        if offset + packet_size > data_size:
-            writer.write(data[offset:data_size])
-            break
+def scan_rename_targets(file_path, set_id, rename_map):
+    """Locate every FileDesc packet that needs renaming, anywhere in the file.
 
-        packet_hash = hashlib.md5(data[offset + 32 : offset + packet_size]).digest()
-        if data[offset + 16 : offset + 32] != packet_hash:
-            writer.write(data[offset : offset + 1])
-            offset += 1
-            continue
+    Recovery volumes keep their critical packets after the recovery blocks, so
+    the whole file has to be walked, not just its head.
+    """
+    targets = []
+    file_size = os.path.getsize(file_path)
 
-        if set_id != data[offset + 32 : offset + 48]:
-            writer.write(data[offset : offset + packet_size])
-            offset += packet_size
-            continue
-
-        wrote_packet = False
-        if data[offset + 48 : offset + 64] == b"PAR 2.0\x00FileDesc":
-            name_end = packet_size
-            while data[offset + name_end - 1] == 0:
-                name_end -= 1
-            current_name = data[offset + 120 : offset + name_end].decode("utf-8")
+    with open(file_path, "rb") as handle:
+        for offset, packet_size, packet in iter_par2_packets(
+            handle, file_size, (PACKET_FILEDESC,)
+        ):
+            if packet[32:48] != set_id:
+                continue
+            current_name = filedesc_packet_name(packet, packet_size)
             new_name = rename_map.get(current_name)
             if new_name and new_name != current_name:
-                buffer[0:120] = data[offset : offset + 120]
-                name_bytes = new_name.encode("utf-8")
-                name_len = len(name_bytes)
-                buffer[120 : 120 + name_len] = name_bytes
+                targets.append(
+                    (offset, packet_size, build_filedesc_packet(packet, new_name))
+                )
 
-                while name_len % 4 != 0:
-                    buffer[120 + name_len] = 0
-                    name_len += 1
-
-                buffer[8:16] = struct.pack("Q", 120 + name_len)
-                buffer[16:32] = hashlib.md5(buffer[32 : 120 + name_len]).digest()
-                writer.write(buffer[0 : 120 + name_len])
-                rename_count += 1
-                wrote_packet = True
-
-        if not wrote_packet:
-            writer.write(data[offset : offset + packet_size])
-
-        offset += packet_size
-
-    return rename_count
+    return targets
 
 
-def finalize_par2_rewrite(source_path, backup_path, temp_path, backup_exists, saved_times, rename_count):
-    if rename_count == 0:
-        os.remove(temp_path)
-        return 0
-
-    if backup_exists:
-        os.replace(temp_path, source_path)
-    else:
-        os.replace(source_path, backup_path)
-        os.replace(temp_path, source_path)
-    restore_par2_file_times(source_path, backup_path, saved_times)
-    return rename_count
+def patch_par2_packets_in_place(source_path, targets, saved_times):
+    with open(source_path, "r+b") as handle:
+        for offset, _packet_size, packet in targets:
+            handle.seek(offset)
+            handle.write(packet)
+        handle.flush()
+        os.fsync(handle.fileno())
+    if saved_times:
+        os.utime(source_path, saved_times)
 
 
-def rewrite_par2_file_index_head_and_copy_rest(
-    folder_path, par_file_name, set_id, rename_map, file_size
-):
+def copy_file_range(reader, writer, start, end):
+    reader.seek(start)
+    remaining = end - start
+    while remaining > 0:
+        chunk = reader.read(min(READ_CHUNK, remaining))
+        if not chunk:
+            break
+        writer.write(chunk)
+        remaining -= len(chunk)
+
+
+def rewrite_par2_file_with_targets(folder_path, par_file_name, targets, saved_times):
     source_path = os.path.join(folder_path, par_file_name)
     backup_path = os.path.join(folder_path, backup_par2_name(par_file_name))
-    buffer = bytearray(PACKET_BUFFER)
-    saved_times = None
+    backup_exists = os.path.exists(backup_path)
+
+    temp_fd, temp_path = tempfile.mkstemp(
+        prefix=f".{par_file_name}.",
+        suffix=".tmp",
+        dir=folder_path,
+    )
+    os.close(temp_fd)
 
     try:
-        src_stat = os.stat(source_path)
-        saved_times = (src_stat.st_atime, src_stat.st_mtime)
-    except OSError:
-        pass
+        with open(source_path, "rb") as reader, open(temp_path, "wb") as writer:
+            position = 0
+            for offset, packet_size, packet in targets:
+                copy_file_range(reader, writer, position, offset)
+                writer.write(packet)
+                position = offset + packet_size
+            reader.seek(position)
+            shutil.copyfileobj(reader, writer, READ_CHUNK)
 
-    backup_exists = os.path.exists(backup_path)
-    head_size = min(file_size, INDEX_SCAN_BYTES)
-
-    with open(source_path, "rb") as reader:
-        head = reader.read(head_size)
-        temp_fd, temp_path = tempfile.mkstemp(
-            prefix=f".{par_file_name}.",
-            suffix=".tmp",
-            dir=folder_path,
-        )
-        os.close(temp_fd)
-
-        try:
-            with open(temp_path, "wb") as writer:
-                rename_count = rewrite_packets_in_data(
-                    head, writer, set_id, rename_map, buffer
-                )
-                shutil.copyfileobj(reader, writer)
-
-            return finalize_par2_rewrite(
-                source_path,
-                backup_path,
-                temp_path,
-                backup_exists,
-                saved_times,
-                rename_count,
-            )
-        except Exception:
-            if os.path.exists(temp_path):
-                os.remove(temp_path)
-            if not backup_exists and os.path.exists(backup_path) and not os.path.exists(source_path):
-                os.replace(backup_path, source_path)
-            raise
+        if backup_exists:
+            os.replace(temp_path, source_path)
+        else:
+            os.replace(source_path, backup_path)
+            os.replace(temp_path, source_path)
+        restore_par2_file_times(source_path, backup_path, saved_times)
+    except Exception:
+        if os.path.exists(temp_path):
+            os.remove(temp_path)
+        if not backup_exists and os.path.exists(backup_path) and not os.path.exists(source_path):
+            os.replace(backup_path, source_path)
+        raise
 
 
 def rewrite_par2_file(folder_path, par_file_name, set_id, rename_map):
     source_path = os.path.join(folder_path, par_file_name)
-    backup_path = os.path.join(folder_path, backup_par2_name(par_file_name))
-    buffer = bytearray(PACKET_BUFFER)
     saved_times = None
-
-    try:
-        file_size = os.path.getsize(source_path)
-    except OSError as error:
-        raise ValueError(f"PAR2 file not found: {par_file_name}") from error
-
-    if ".vol" in par_file_name.lower() and file_size > INDEX_SCAN_BYTES:
-        return rewrite_par2_file_index_head_and_copy_rest(
-            folder_path, par_file_name, set_id, rename_map, file_size
-        )
 
     try:
         src_stat = os.stat(source_path)
         saved_times = (src_stat.st_atime, src_stat.st_mtime)
-    except OSError:
-        pass
+    except OSError as error:
+        raise ValueError(f"PAR2 file not found: {par_file_name}") from error
 
-    backup_exists = os.path.exists(backup_path)
+    targets = scan_rename_targets(source_path, set_id, rename_map)
+    if not targets:
+        return 0
 
-    with open(source_path, "rb") as reader:
-        data = reader.read()
-        temp_fd, temp_path = tempfile.mkstemp(
-            prefix=f".{par_file_name}.",
-            suffix=".tmp",
-            dir=folder_path,
-        )
-        os.close(temp_fd)
+    if all(len(packet) == packet_size for _o, packet_size, packet in targets):
+        patch_par2_packets_in_place(source_path, targets, saved_times)
+    else:
+        rewrite_par2_file_with_targets(folder_path, par_file_name, targets, saved_times)
 
-        try:
-            with open(temp_path, "wb") as writer:
-                rename_count = rewrite_packets_in_data(
-                    data, writer, set_id, rename_map, buffer
-                )
-
-            return finalize_par2_rewrite(
-                source_path,
-                backup_path,
-                temp_path,
-                backup_exists,
-                saved_times,
-                rename_count,
-            )
-        except Exception:
-            if os.path.exists(temp_path):
-                os.remove(temp_path)
-            if not backup_exists and os.path.exists(backup_path) and not os.path.exists(source_path):
-                os.replace(backup_path, source_path)
-            raise
+    return len(targets)
 
 
 HASH_EXTENSIONS = {
