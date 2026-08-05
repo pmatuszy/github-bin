@@ -1,6 +1,7 @@
 #!/bin/bash
-# v. 20260805.111450 - bare _Timelapse: parse + size-split chain with orphan _part_01
+# v. 20260805.154826 - after merge: copy GPS/dates from first chapter; FS times via touch -r
 
+# 2026.08.05 - v. 0.15.24 - post-merge: copy GPS/CreateDate/Make/Model from first chapter (exiftool); FS mtime via touch -r; title via exiftool not ffmpeg
 # 2026.08.05 - v. 0.15.23 - bare _Timelapse (Hero7 rename): parse camera; size-split use timelapse wall gaps; orphan _part_XX joins size-split
 # 2026.07.25 - v. 0.15.22 - size summary INPUT lines show full basenames instead of 52-char ellipsis
 # 2026.07.18 - v. 0.15.21 - timelapse detect: ignore Rate …sec when clip has audio
@@ -124,8 +125,9 @@ Merge behaviour (no options):
     Letter runs a,b,c… on the same timestamp merge like part_01 chapters (any file size).
   - Shows each multi-part group (with file sizes) and asks whether to merge
     (single-key Y/N/A/M/Q, no Enter — like rename.sh).
-  - After a successful merge: merge-boundary times in the output timeline (where each
-    chapter join occurs), size summary, optional per-seam terminal preview (asked one
+  - After a successful merge: copy GPS / create&modify dates / Make/Model from the first
+    chapter (exiftool; filesystem mtime via touch -r), set title from the session label,
+    then merge-boundary times, size summary, optional per-seam terminal preview (asked one
     seam at a time), and optional deletion of the source chapter files (single-key Y/N).
   - If the expected _concat output already exists: skip (default), redo merge [r],
     preview merge seams [p], or delete input chapters [d] (keeps merged output).
@@ -2192,26 +2194,70 @@ group_merge_description_label() {
   printf '%s\n' "$middle"
 }
 
+# Copy GPS / create&modify dates / camera tags from the first chapter onto the merge
+# output (selective — not -All:All, which would overwrite Duration etc.). Then set
+# optional title/description via exiftool (ffmpeg remux was stripping GPS). Finally
+# restore filesystem mtime/atime from the first chapter with touch -r.
+# Birth/creation time on Linux is often immutable; FileCreateDate is set when exiftool can.
 apply_merge_output_metadata() {
-  local output_file="$1" label="$2"
-  local tmp rc
-  [[ -n "$label" && -f "$output_file" ]] || return 0
-  if ! command -v ffmpeg >/dev/null 2>&1; then
-    pgm_log_kv "Metadata" "skipped (ffmpeg not installed)"
-    return 0
-  fi
-  tmp="${output_file}.meta.tmp.$$"
-  if ffmpeg -y -v error -i "$output_file" -codec copy \
-    -metadata "title=${label}" -metadata "description=${label}" \
-    -metadata "comment=${label}" "$tmp" 2>/dev/null; then
-    if mv -f -- "$tmp" "$output_file"; then
-      pgm_log_kv "Metadata title" "$label"
-      return 0
+  local output_file="$1" source_file="$2" label="${3-}"
+  local exifloc="" rc=0
+
+  [[ -f "$output_file" && -f "$source_file" ]] || return 0
+
+  if exifloc="$(resolve_pgm_exiftool 2>/dev/null)"; then
+    # -P: do not bump FS mtime during tag write; we re-apply touch -r afterward.
+    if "$exifloc" -overwrite_original -P -api QuickTimeUTC=1 \
+      -TagsFromFile "$source_file" \
+      -time:all -gps:all \
+      -Make -Model -Software -Artist -Copyright \
+      -Keys:Make -Keys:Model -Keys:GPSCoordinates \
+      -ItemList:Make -ItemList:Model \
+      -QuickTime:GPSCoordinates \
+      -FileCreateDate -FileModifyDate \
+      -- "$output_file" >/dev/null 2>&1; then
+      pgm_log_kv "Metadata" "copied GPS/dates/camera from ${source_file##*/}"
+    else
+      pgm_log_kv "Metadata" "exiftool TagsFromFile failed (GPS/dates may be incomplete)"
+      rc=1
+    fi
+    if [[ -n "$label" ]]; then
+      if "$exifloc" -overwrite_original -P \
+        -QuickTime:Title="$label" \
+        -QuickTime:Description="$label" \
+        -QuickTime:Comment="$label" \
+        -ItemList:Title="$label" \
+        -- "$output_file" >/dev/null 2>&1; then
+        pgm_log_kv "Metadata title" "$label"
+      else
+        pgm_log_kv "Metadata title" "could not write via exiftool"
+        rc=1
+      fi
+    fi
+  else
+    pgm_log_kv "Metadata" "exiftool not found — skipped GPS/date copy from first chapter"
+    if [[ -n "$label" ]] && command -v ffmpeg >/dev/null 2>&1; then
+      local tmp="${output_file}.meta.tmp.$$"
+      if ffmpeg -y -v error -i "$output_file" -codec copy \
+        -metadata "title=${label}" -metadata "description=${label}" \
+        -metadata "comment=${label}" "$tmp" 2>/dev/null \
+        && mv -f -- "$tmp" "$output_file"; then
+        pgm_log_kv "Metadata title" "$label (ffmpeg fallback; may strip some tags)"
+      else
+        rm -f -- "$tmp"
+        pgm_log_kv "Metadata" "could not write title (ffmpeg fallback failed)"
+        rc=1
+      fi
     fi
   fi
-  rm -f -- "$tmp"
-  pgm_log_kv "Metadata" "could not write (ffmpeg copy failed)"
-  return 1
+
+  if touch -r "$source_file" -- "$output_file" 2>/dev/null; then
+    pgm_log_kv "Filesystem times" "mtime/atime from ${source_file##*/}"
+  else
+    pgm_log_kv "Filesystem times" "touch -r failed"
+    rc=1
+  fi
+  return "$rc"
 }
 
 group_is_size_split() {
@@ -3130,10 +3176,9 @@ run_merge_group() {
   VIDEO_MERGE_OUT_FILE=""
   if (( rc == 0 )); then
     echo "$(pgm_ts) Done: ${output_file}"
-    local meta_label
-    if meta_label=$(group_merge_description_label "${files[@]}" 2>/dev/null); then
-      apply_merge_output_metadata "$output_file" "$meta_label"
-    fi
+    local meta_label=""
+    meta_label=$(group_merge_description_label "${files[@]}" 2>/dev/null) || meta_label=""
+    apply_merge_output_metadata "$output_file" "${files[0]}" "$meta_label" || true
     echo
     print_merge_size_summary "$output_file" "${files[@]}"
     print_merge_boundaries_report "$output_file" "${files[@]}"
