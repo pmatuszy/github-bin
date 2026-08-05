@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20260805.182700 - Step 6 fails only on unresolved names; damage goes to repair step
 # v. 20260803.213000 - prompt to repair when damage is fixable; --no-repair; verify after repair
 # v. 20260803.073000 - rename prompt: single-key y/n/q; q quits multi-set run
 # v. 20260803.072500 - after PAR2 rename re-verify Step 2; Step 6 must pass before OK
@@ -21,6 +22,7 @@
 # v. 20260719.103506 - fix no-arg run: empty POSITIONAL[@]:- became one "" element
 # v. 20260719.102800 - multi-set selection: A/a, ranges 1-4, --all, multiple paths
 
+# 2026.08.05 - v. 0.1.37 - Rename step no longer fails on unrelated damage; detect "no data found"
 # 2026.08.03 - v. 0.1.36 - Ask to repair damaged files; --no-repair; re-verify after repair
 # 2026.08.03 - v. 0.1.35 - Rename prompt: single-key y/n/q; q quits run
 # 2026.08.03 - v. 0.1.34 - Re-verify after PAR2 metadata rename; Step 6 must pass
@@ -1019,6 +1021,7 @@ MISNAMED_PAR2=()
 MISSING_PAR2_TARGETS=()
 DAMAGED_PAR2_TARGETS=()
 REPAIR_POSSIBLE=0
+PGM_POST_RENAME_OUT=""
 RENAME_PAIRS=()
 OUT2_FILE=""
 RENAME_PY=""
@@ -1887,21 +1890,43 @@ prompt_and_apply_rename() {
     pgm_print_step_verdict 5 OK "Hash manifest(s) updated for in-scope PAR2 archive(s)."
 
     pgm_print_step_header "Step 6: verify after update"
-    local OUT6_FILE out6_text
+    local OUT6_FILE
     OUT6_FILE=$(mktemp "${TMPDIR:-/tmp}/par2-pgm-check.XXXXXX")
     run_par2 verify "$PAR2_FILE" >"$OUT6_FILE" 2>&1
     <"$OUT6_FILE" pgm_filter_par2_verify_stream
     echo
     pgm_collect_missing_targets "$OUT6_FILE"
     pgm_print_missing_targets_report
-    out6_text=$(<"$OUT6_FILE")
+    PGM_POST_RENAME_OUT=$(<"$OUT6_FILE")
     rm -f "$OUT6_FILE"
-    if pgm_par2_output_indicates_ok "$out6_text"; then
-        pgm_print_step_verdict 6 OK "Post-update PAR2 verify passed."
-        return 0
+
+    if pgm_post_rename_names_unresolved "$PGM_POST_RENAME_OUT"; then
+        pgm_print_step_verdict 6 FAIL "PAR2 names still do not match the files on disk."
+        die "PAR2 metadata update did not resolve all name mismatches (see Step 6 output)."
     fi
-    pgm_print_step_verdict 6 FAIL "Post-update PAR2 verify still reports problems."
-    die "PAR2 metadata update did not resolve all name mismatches (see Step 6 output)."
+
+    # Damage unrelated to naming is left for the repair step, not treated as a
+    # failed rename.
+    if pgm_par2_output_indicates_ok "$PGM_POST_RENAME_OUT"; then
+        pgm_print_step_verdict 6 OK "Post-update PAR2 verify passed."
+    else
+        pgm_print_step_verdict 6 OK \
+            "PAR2 names now match on disk; other problems remain (see below)."
+    fi
+    return 0
+}
+
+# True while par2 still reports naming problems for the files we just renamed.
+pgm_post_rename_names_unresolved() {
+    local text="$1"
+    local name
+
+    grep -qE '[0-9]+ file\(s\) have the wrong name\.' <<< "$text" && return 0
+
+    for name in "${MISNAMED_PAR2[@]}"; do
+        grep -qF "Target: \"${name}\" - missing." <<< "$text" && return 0
+    done
+    return 1
 }
 
 prompt_and_apply_repair() {
@@ -1991,23 +2016,43 @@ pgm_print_missing_targets_report() {
 
 pgm_collect_damaged_targets() {
     local out_file="$1"
-    local line name
+    local line name in_extras=0
+    local -A seen=()
 
     DAMAGED_PAR2_TARGETS=()
     while IFS= read -r line || [[ -n "$line" ]]; do
         line="${line//$'\r'/}"
         case "$line" in
+            "Scanning extra files:"*)
+                in_extras=1
+                continue
+                ;;
+            "Verifying source files:"*)
+                in_extras=0
+                continue
+                ;;
             Target:*" - damaged."*)
                 name="${line#Target: \"}"
                 name="${name%%\" - damaged.*}"
-                DAMAGED_PAR2_TARGETS+=("$name")
+                ;;
+            # A source file that exists but matches no block at all.
+            File:*" - no data found."*)
+                (( in_extras )) && continue
+                name="${line#File: \"}"
+                name="${name%%\" - no data found.*}"
+                ;;
+            *)
+                continue
                 ;;
         esac
+        [[ -n "${seen[$name]:-}" ]] && continue
+        seen[$name]=1
+        DAMAGED_PAR2_TARGETS+=("$name")
     done <"$out_file"
 }
 
-# Damaged .par2 / hash files usually mean this set protects a nested set whose
-# metadata we updated on purpose; repairing would roll that update back.
+# A damaged .par2 / hash file is often one this run (or an earlier one) updated
+# on purpose, so repairing it from the recovery blocks rolls that update back.
 pgm_print_damaged_targets_report() {
     local n=${#DAMAGED_PAR2_TARGETS[@]}
     local i base max_show=100
@@ -2032,13 +2077,13 @@ pgm_print_damaged_targets_report() {
     (( ${#metadata[@]} > 0 )) || return 0
 
     echo
-    echo "Caution: ${#metadata[@]} damaged file(s) are PAR2 or hash files of a nested set:"
+    echo "Caution: ${#metadata[@]} damaged file(s) are PAR2 or hash metadata:"
     for i in "${metadata[@]}"; do
         printf '  %s\n' "$i"
     done
-    echo "If a nested set had its PAR2 metadata updated (misnamed-file fix), this"
-    echo "set still stores the old content. Repairing would undo that update."
-    echo "Regenerate this set instead if the nested change was intentional."
+    echo "If that metadata was updated on purpose (a misnamed-file fix here or in"
+    echo "a nested set), this set still stores the old content and repairing would"
+    echo "undo the update. Regenerate this set instead when the change was wanted."
 }
 
 pgm_is_hash_file_name() {
@@ -2190,6 +2235,7 @@ pgm_run_one_par2_set() {
     RENAME_PAIRS=()
     DAMAGED_PAR2_TARGETS=()
     REPAIR_POSSIBLE=0
+    PGM_POST_RENAME_OUT=""
     OUT2_FILE=""
     PGM_HASH_VERIFY_MSG=""
     PGM_TIMING_HASH_SEC=0
@@ -2241,15 +2287,22 @@ pgm_run_one_par2_set() {
 
     if (( SUMMARY_RC == 2 && ${#RENAME_PAIRS[@]} > 0 )); then
         if prompt_and_apply_rename; then
-            OUT1=$(run_par2 verify "$PAR2_FILE" 2>&1)
-            if pgm_par2_output_indicates_ok "$OUT1"; then
-                par2_ok_line="$(pgm_extract_par2_ok_line "$OUT1")"
+            if pgm_par2_output_indicates_ok "$PGM_POST_RENAME_OUT"; then
+                par2_ok_line="$(pgm_extract_par2_ok_line "$PGM_POST_RENAME_OUT")"
                 SUMMARY_RC=0
-                echo
-                pgm_print_step_verdict 2 OK "All files match under PAR2 names after metadata update."
                 pgm_print_outcome ok \
                     "All files OK under PAR2 names." \
                     "${par2_ok_line:-Verification passed under PAR2 names only.}"
+            else
+                printf '%s\n' "$PGM_POST_RENAME_OUT" >"$OUT2_FILE"
+                REPAIR_POSSIBLE=0
+                grep -qiE 'repair is possible' "$OUT2_FILE" && REPAIR_POSSIBLE=1
+                pgm_collect_damaged_targets "$OUT2_FILE"
+                pgm_print_damaged_targets_report
+                SUMMARY_RC=2
+                pgm_print_outcome warn \
+                    "PAR2 names updated; damaged file(s) still need attention." \
+                    "See the damaged file list above."
             fi
         fi
     fi
