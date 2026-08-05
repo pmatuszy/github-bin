@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# v. 20260805.200257 - always print === Run settings === after mode/scope (like par2-pgm-check)
 # v. 20260805.194904 - offer to strip FastSum ';' checksum headers during normalize; verify ignores those lines
 # v. 20260805.104910 - pad OLD in dry-run/Renamed/summary old→new lines so NEW names share a column
 # v. 20260805.104019 - dry-run: use ExifTool by default so previews match real renames (opt out with SKIP=yes)
@@ -32,6 +33,7 @@
 # v. 20260721.132007 - Samsung timestamp media: preserve optional numeric sorting prefix when appending make/model
 # v. 20260721.112812 - GoPro camera labels: GoPro_Hero4_Silver style (not GOPRO4_SILVER)
 
+# 2026.08.05 - v. 19.296.200257 - always show === Run settings === after prompts (mode/scope/db/exif/resume/start dir)
 # 2026.08.05 - v. 19.295.194904 - checksum normalize: prompt to strip FastSum ; comment headers; md5sum -c uses entry lines only
 # 2026.08.05 - v. 19.294.104910 - dry-run/Renamed/summary: pad OLD path width so → NEW aligns; pairs note both paths first
 # 2026.08.05 - v. 19.293.104019 - dry-run defaults to full ExifTool preview (same names as real); RENAME_DRY_RUN_SKIP_EXIFTOOL=yes for fast basename-only
@@ -6215,6 +6217,92 @@ fi
 
 ARROW="→"
 
+# Always-on startup summary (same idea as par2-pgm-check.sh "=== Run settings ===").
+print_run_settings() {
+    local scope_line db_line dry_exif_line wait_line
+
+    echo
+    echo "=== Run settings ==="
+
+    if [[ -n "$CLI_MODE" ]]; then
+        printf '  --mode:              given (%s)\n' "$mode"
+    else
+        printf '  --mode:              not given (prompted; selected: %s)\n' "$mode"
+    fi
+    if [[ "$mode" == "dry-run" ]]; then
+        if dry_run_skip_exiftool_enabled; then
+            dry_exif_line="yes — basename-only preview (no ExifTool/Sony/GoPro metadata names)"
+        else
+            dry_exif_line="no — full ExifTool preview (same proposed names as real mode)"
+        fi
+        printf '  Dry-run ExifTool:    skip=%s\n' "$dry_exif_line"
+    fi
+
+    if [[ -n "$CLI_COLORS" ]]; then
+        printf '  --colors:            given (%s)\n' "$use_colors"
+    else
+        printf '  --colors:            not given (prompted; selected: %s)\n' "$use_colors"
+    fi
+
+    if (( VERBOSE == 1 )); then
+        echo "  -v/--verbose:        given (extra diagnostics)"
+    else
+        echo "  -v/--verbose:        not given"
+    fi
+
+    if (( RECHECK_RENAMES == 1 )); then
+        echo "  -R/--recheck-renames: given (audit current naming rules)"
+    else
+        echo "  -R/--recheck-renames: not given"
+    fi
+
+    if [[ -n "$CLI_SCOPE" ]]; then
+        printf '  --scope:             given (%s)\n' "$process_scope"
+    else
+        printf '  --scope:             not given (prompted; selected: %s)\n' "$process_scope"
+    fi
+    case "$process_scope" in
+        subdirs) scope_line="start directory and all subdirectories" ;;
+        current) scope_line="immediate children of start directory only" ;;
+        subdir)  scope_line="recurse under ${SCOPE_SUBDIR:-?} only (DB/excludes stay at start dir)" ;;
+        *)       scope_line="$process_scope" ;;
+    esac
+    printf '  Search:              %s\n' "$scope_line"
+
+    if (( USE_DB == 1 )); then
+        db_line="enabled"
+        (( FAST_DB == 1 )) && db_line+=", FAST (path-only skips)"
+        (( FAST_DB == 0 )) && db_line+=", SAFE (size/mtime checks)"
+        (( FORCE_RECHECK == 1 )) && db_line+=", force-recheck"
+        printf '  --use-db:            given (%s)\n' "$db_line"
+        printf '  SQLite cache:        %s\n' "$DB_FILE"
+    else
+        echo "  --use-db:            not given (no SQLite rename cache)"
+    fi
+
+    if [[ -n "$CLI_DATE_PLACEMENT" ]]; then
+        printf '  --date-placement:    given (%s)\n' "$DATE_PLACEMENT"
+    else
+        printf '  --date-placement:    %s (default/env)\n' "$DATE_PLACEMENT"
+    fi
+
+    printf '  --resume-state:      %s\n' "$CLI_RESUME_STATE"
+    if (( PROMPT_WAIT_SECONDS == 0 )); then
+        wait_line="0 — wait forever for each interactive answer"
+    else
+        wait_line="${PROMPT_WAIT_SECONDS}s timeout per interactive answer"
+    fi
+    printf '  --wait-seconds:      %s\n' "$wait_line"
+    printf '  Start dir:           %s\n' "$START_DIR"
+    printf '  Exclude file:        %s\n' "$EXCLUDE_FILTERS_FILE"
+    if [[ -f "$EXCLUDE_FILTERS_FILE" ]]; then
+        printf '  Exclude filters:     %d loaded\n' "${#EXCLUDE_FILTERS[@]}"
+    else
+        echo "  Exclude filters:     (file not present yet)"
+    fi
+    echo
+}
+
 print_verbose_options_box() {
     (( VERBOSE == 1 )) || return 0
 
@@ -7021,6 +7109,7 @@ fi
 
 sleep 1
 
+print_run_settings
 vlog "Verbose mode enabled"
 print_verbose_options_box
 
