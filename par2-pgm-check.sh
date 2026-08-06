@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20260806.222350 - hash --hash-tidy: Linux normalize CRLF, ';', backslash paths
 # v. 20260806.214403 - file-based grep noise filter; auto-skip empty-only repair; Step8 empty WARN
 # v. 20260806.193137 - regenerate: -b >= file count; drop 0-byte sources before par2 create
 # v. 20260806.184043 - list empty PAR2 targets; empty-only "damage" explains skip-repair is normal
@@ -36,6 +37,7 @@
 # v. 20260719.103506 - fix no-arg run: empty POSITIONAL[@]:- became one "" element
 # v. 20260719.102800 - multi-set selection: A/a, ranges 1-4, --all, multiple paths
 
+# 2026.08.06 - v. 0.1.52 - --hash-tidy: CRLF, ';'→'#', Windows backslash paths→'/'
 # 2026.08.06 - v. 0.1.51 - File-based grep noise filter; never offer empty-only repair; Step8 WARN
 # 2026.08.06 - v. 0.1.50 - Regenerate: set -b >= file count; exclude 0-byte files from create
 # 2026.08.06 - v. 0.1.49 - List empty PAR2 targets; empty-only damage: explain skip repair is normal
@@ -110,8 +112,8 @@ Options:
   --no-repair          Report damage but never offer/run repair
   --yes, -y            Auto-yes for prompts (--all when many sets; auto-rename metadata)
   --no-rename          Detect misnamed files but do not offer/run PAR2 metadata update
-  --hash-tidy          Convert ';' comments to '#' in unprotected hash manifests
-  --no-hash-tidy       Report ';' comments in hash manifests but never convert them
+  --hash-tidy          Normalize unprotected hash manifests for Linux (CRLF, ';', \\ paths)
+  --no-hash-tidy       Report hash manifest issues but never normalize them
   --regenerate         Auto-yes for regenerate when the set still has problems
   --no-regenerate      Never offer to regenerate the PAR2 set
   --hash-par2-check    Auto-yes: verify .par2 lines in hash manifests when any exist
@@ -362,7 +364,26 @@ pgm_prompt_read_repair_choice() {
 
 pgm_prompt_read_hash_tidy_choice() {
     pgm_prompt_read_yes_no_quit "$1" "$2" \
-        "Convert ';' comments to '#' in the hash manifest(s)?"
+        "Normalize hash manifest(s) for Linux (CRLF, ';' comments, backslash paths)?"
+}
+
+pgm_hash_lint_format_issues() {
+    local semis="$1" backslashes="$2" crlf="$3"
+    local -a parts=()
+
+    (( semis > 0 )) && parts+=("${semis} ';' comment line(s)")
+    (( backslashes > 0 )) && parts+=("${backslashes} Windows backslash path(s)")
+    (( crlf > 0 )) && parts+=("CRLF line endings")
+
+    if ((${#parts[@]} == 0)); then
+        return 1
+    fi
+    local joined="${parts[0]}"
+    local i
+    for (( i=1; i < ${#parts[@]}; i++ )); do
+        joined+=", ${parts[$i]}"
+    done
+    printf '%s' "$joined"
 }
 
 pgm_prompt_read_regenerate_choice() {
@@ -632,9 +653,9 @@ pgm_print_run_settings() {
     fi
 
     if (( AUTO_HASH_TIDY )); then
-        echo "  --hash-tidy:  given (convert ';' comments in unprotected manifests)"
+        echo "  --hash-tidy:  given (normalize unprotected manifests for Linux md5sum -c)"
     elif (( NO_HASH_TIDY )); then
-        echo "  --no-hash-tidy: given (report ';' comments only)"
+        echo "  --no-hash-tidy: given (report hash manifest issues only)"
     fi
 
     if (( AUTO_REGENERATE )); then
@@ -1827,23 +1848,30 @@ update_par2_hashes() {
 # the set stores, which shows up as damage on the next verify.
 pgm_review_hash_manifests() {
     local -a lint=() tidy_candidates=() protected_notes=() invalid_notes=()
-    local line path entries comments semis invalid in_set base
-    local tidy_choice=0 msg
+    local line path entries comments semis backslashes crlf invalid in_set base issues
+    local tidy_choice=0 msg needs_tidy=0
 
     mapfile -t lint < <(run_rename_py hash lint "$DATA_DIR" "$PAR2_FILE" 2>/dev/null) || true
     (( ${#lint[@]} > 0 )) || return 0
 
     for line in "${lint[@]}"; do
-        IFS=$'\t' read -r path entries comments semis invalid in_set <<< "$line"
+        IFS=$'\t' read -r path entries comments semis backslashes crlf invalid in_set <<< "$line"
         [[ -n "$path" ]] || continue
         base="$(basename -- "$path")"
 
         if (( invalid > 0 )); then
             invalid_notes+=("$base: $entries checksum entry(ies), $invalid unreadable line(s)")
         fi
-        (( semis > 0 )) || continue
+
+        needs_tidy=0
+        if (( semis > 0 || backslashes > 0 || crlf > 0 )); then
+            needs_tidy=1
+        fi
+        (( needs_tidy == 1 )) || continue
+
+        issues="$(pgm_hash_lint_format_issues "$semis" "$backslashes" "$crlf")"
         if [[ "$in_set" == "yes" ]]; then
-            protected_notes+=("$base: $semis ';' comment line(s)")
+            protected_notes+=("$base: $issues")
         else
             tidy_candidates+=("$path")
         fi
@@ -1857,22 +1885,21 @@ pgm_review_hash_manifests() {
 
     if (( ${#protected_notes[@]} > 0 )); then
         echo
-        echo "Hash manifest(s) using ';' comments, which 'md5sum -c' reports as"
-        echo "improperly formatted (harmless unless you use --strict):"
+        echo "Hash manifest(s) not in Linux md5sum -c format (harmless unless you use --strict):"
         printf '  %s\n' "${protected_notes[@]}"
-        echo "Not offering to convert them: this PAR2 set protects these file(s),"
+        echo "Not offering to normalize them: this PAR2 set protects these file(s),"
         echo "so changing them would show up as damage until the set is rebuilt."
     fi
 
     (( ${#tidy_candidates[@]} > 0 )) || return 0
     echo
-    echo "Hash manifest(s) using ';' comments, not protected by this PAR2 set:"
+    echo "Hash manifest(s) to normalize for Linux (not protected by this PAR2 set):"
     printf '  %s\n' "${tidy_candidates[@]##*/}"
-    echo "Converting ';' to '#' makes 'md5sum -c' quiet; checksum lines and the"
-    echo "modification date are left unchanged."
+    echo "Normalize: CRLF→LF, ';' comments→'#', Windows backslash paths→'/'."
+    echo "Checksum digests and modification date are preserved."
 
     if (( NO_HASH_TIDY == 1 )); then
-        echo "Skipping conversion (--no-hash-tidy)."
+        echo "Skipping normalization (--no-hash-tidy)."
         return 0
     fi
 

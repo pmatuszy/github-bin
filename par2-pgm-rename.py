@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# v. 20260806.222350 - hash tidy: Linux normalize CRLF, ';'→'#', backslash paths→'/'
 # v. 20260806.132600 - write md5sum-safe 'HASH *file' (one space); detect 'HASH  *file' breakage
 # v. 20260806.131800 - scan-par2-refs: flag missing .par2 names as likely old archives
 # v. 20260806.130000 - hash list/verify/fix-par2-refs for stale .par2 lines in manifests
@@ -11,6 +12,7 @@
 # v. 20260721.154223 - list-names subcommand; --pairs-file for large rename batches
 # v. 20260719.093400 - hash inventory subcommand for startup scope summary
 
+# 2026.08.06 - v. 1.2.9.0 - hash tidy: CRLF→LF, ';'→'#', Windows backslash paths→'/'
 # 2026.08.06 - v. 1.2.8.0 - Write md5sum-safe 'HASH *file'; detect 'HASH  *file' breakage
 # 2026.07.19 - v. 1.2.7.0 - hash inventory CLI for par2-pgm-check startup (counts + in-scope paths)
 # 2026.07.19 - v. 1.2.6.0 - hash inventory: report total hash files vs in-scope PAR2 matches
@@ -31,7 +33,7 @@ import struct
 import sys
 import tempfile
 
-VERSION = "1.2.8.0"
+VERSION = "1.2.9.0"
 MAX_RENAMES = 16
 INVALID_CHARS = '\\:*?"<>|'
 READ_CHUNK = 2097152
@@ -469,6 +471,25 @@ def format_md5sum_binary_line(digest, basename):
     return f"{digest} *{basename}"
 
 
+def hash_file_has_crlf(hash_file_path):
+    with open(hash_file_path, "rb") as handle:
+        sample = handle.read(1048576)
+    return b"\r" in sample
+
+
+def normalize_hash_entry_path_field(path_field):
+    """Backslashes as path separators become '/'; keep a leading md5sum '*' marker."""
+    path = path_field.strip()
+    if path.startswith("*"):
+        return "*" + path[1:].replace("\\", "/")
+    return path.replace("\\", "/")
+
+
+def format_hash_entry_line_unix(digest, path_field):
+    """One-space md5sum -c line with Unix-style relative path."""
+    return f"{digest} {normalize_hash_entry_path_field(path_field)}"
+
+
 def raw_hash_line_has_broken_star_path(raw_line):
     """True when digest is followed by 2+ spaces then '*' (broken for md5sum -c)."""
     return bool(re.match(r"^[a-fA-F0-9]{32,128}[ \t]{2,}\*", raw_line.strip()))
@@ -513,12 +534,22 @@ def parse_hash_file(hash_file_path):
 
 def hash_file_lint(hash_file_path):
     records = parse_hash_file(hash_file_path)
-    counts = {"entries": 0, "comments": 0, "blank": 0, "invalid": 0, "semicolons": 0}
+    counts = {
+        "entries": 0,
+        "comments": 0,
+        "blank": 0,
+        "invalid": 0,
+        "semicolons": 0,
+        "backslashes": 0,
+        "crlf": 1 if hash_file_has_crlf(hash_file_path) else 0,
+    }
     invalid_lines = []
 
     for record in records:
         if record["type"] == "entry":
             counts["entries"] += 1
+            if "\\" in record["path"]:
+                counts["backslashes"] += 1
         elif record["type"] == "comment":
             counts["comments"] += 1
             if record["marker"] == ";":
@@ -565,6 +596,8 @@ def print_hash_lint(folder_path, par_file_path=None):
                     str(counts["entries"]),
                     str(counts["comments"]),
                     str(counts["semicolons"]),
+                    str(counts["backslashes"]),
+                    str(counts["crlf"]),
                     str(counts["invalid"]),
                     in_set,
                 )
@@ -573,35 +606,76 @@ def print_hash_lint(folder_path, par_file_path=None):
 
 
 def tidy_hash_file(hash_file_path):
-    """Convert leading ';' comment markers to '#', which md5sum -c ignores.
+    """Normalize a hash manifest for Linux md5sum/sha*sum -c.
 
-    Rewrites the existing inode and restores the timestamps, so ownership,
-    permissions and the modification date all survive.
+    - CRLF → LF
+    - FastSum ';' comment lines → '#'
+    - Windows backslash paths in checksum entries → '/'
+    - 'HASH  *path' (two spaces) → 'HASH *path'
+
+    Rewrites the existing inode and restores timestamps.
     """
     before = hash_file_lint(hash_file_path)
-    if before["semicolons"] == 0:
-        return 0, f"No ';' comment lines in {os.path.basename(hash_file_path)}."
+    needs = (
+        before["semicolons"] > 0
+        or before["backslashes"] > 0
+        or before["crlf"] > 0
+    )
+    if not needs:
+        return 0, (
+            f"No Linux normalization needed in "
+            f"{os.path.basename(hash_file_path)}."
+        )
 
-    with open(hash_file_path, "r", encoding="utf-8", errors="replace") as handle:
-        original = handle.read()
+    with open(hash_file_path, "rb") as handle:
+        raw = handle.read()
+    text = raw.decode("utf-8", errors="replace")
+    if "\r" in text:
+        text = text.replace("\r\n", "\n").replace("\r", "\n")
 
-    converted = 0
-    lines = []
-    for line in original.splitlines():
-        stripped = line.lstrip()
-        if stripped.startswith(";"):
-            indent = line[: len(line) - len(stripped)]
-            lines.append(f"{indent}#{stripped[1:]}")
-            converted += 1
+    converted_semicolons = 0
+    converted_paths = 0
+    fixed_star = 0
+    output_lines = []
+
+    for line in text.splitlines():
+        stripped = line
+        lstripped = stripped.lstrip()
+        if not stripped.strip():
+            output_lines.append(stripped)
+            continue
+        if lstripped.startswith(COMMENT_PREFIXES):
+            if lstripped.startswith(";"):
+                indent = stripped[: len(stripped) - len(lstripped)]
+                output_lines.append(f"{indent}#{lstripped[1:]}")
+                converted_semicolons += 1
+            else:
+                output_lines.append(stripped)
+            continue
+        match = HASH_LINE_RE.match(stripped.strip())
+        if not match:
+            output_lines.append(stripped)
+            continue
+
+        digest = match.group(1)
+        path_field = match.group(2)
+        had_broken = raw_hash_line_has_broken_star_path(stripped)
+        had_backslash = "\\" in path_field
+        new_line = format_hash_entry_line_unix(digest, path_field)
+        if had_broken:
+            fixed_star += 1
+        if had_backslash:
+            converted_paths += 1
+        if new_line != stripped.strip() or had_broken:
+            output_lines.append(new_line)
         else:
-            lines.append(line)
+            output_lines.append(stripped)
 
-    new_text = "\n".join(lines)
-    if original.endswith("\n"):
+    new_text = "\n".join(output_lines)
+    if text.endswith("\n") or (text and output_lines):
         new_text += "\n"
 
     stat_before = os.stat(hash_file_path)
-    # Truncate and rewrite in place: a new inode would drop owner and mode.
     with open(hash_file_path, "r+", encoding="utf-8", newline="") as handle:
         handle.seek(0)
         handle.write(new_text)
@@ -611,14 +685,27 @@ def tidy_hash_file(hash_file_path):
     after = hash_file_lint(hash_file_path)
     if after["entries"] != before["entries"]:
         raise ValueError(
-            f"Entry count changed while tidying {os.path.basename(hash_file_path)} "
+            f"Entry count changed while normalizing {os.path.basename(hash_file_path)} "
             f"({before['entries']} -> {after['entries']}); file left as written."
         )
 
-    return converted, (
-        f"Converted {converted} ';' comment line(s) to '#' in "
-        f"{os.path.basename(hash_file_path)} "
-        f"({after['entries']} checksum entries unchanged, timestamp preserved)."
+    changes = []
+    if before["crlf"]:
+        changes.append("CRLF→LF")
+    if converted_semicolons:
+        changes.append(f"{converted_semicolons} ';'→'#'")
+    if converted_paths:
+        changes.append(f"{converted_paths} backslash path(s)→'/'")
+    if fixed_star:
+        changes.append(f"{fixed_star} md5sum path format fix(es)")
+
+    detail = ", ".join(changes) if changes else "normalized"
+    return (
+        max(1, len(changes)),
+        (
+            f"Normalized {os.path.basename(hash_file_path)} for Linux ({detail}; "
+            f"{after['entries']} checksum entries unchanged, timestamp preserved)."
+        ),
     )
 
 
