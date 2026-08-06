@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20260806.160156 - prefix interactive prompts with (YYYY.MM.DD HH:MM:SS) like rename.sh
 # v. 20260806.144545 - clearer Step 6 / RESULT / repair vs regenerate wording
 # v. 20260806.132630 - detect/fix md5sum-breaking 'HASH  *file' lines in manifests
 # v. 20260806.131800 - flag missing .par2 hash lines as old archives; offer remove (default no)
@@ -30,6 +31,7 @@
 # v. 20260719.103506 - fix no-arg run: empty POSITIONAL[@]:- became one "" element
 # v. 20260719.102800 - multi-set selection: A/a, ranges 1-4, --all, multiple paths
 
+# 2026.08.06 - v. 0.1.46 - Interactive prompts prefixed with (YYYY.MM.DD HH:MM:SS) like rename.sh
 # 2026.08.06 - v. 0.1.45 - Clearer Step 6 / RESULT / repair-vs-regenerate wording
 # 2026.08.06 - v. 0.1.44 - Detect/fix 'HASH  *par2' (two spaces) so md5sum -c works
 # 2026.08.06 - v. 0.1.43 - Missing .par2 hash lines: show vs current PAR2; offer remove (default no)
@@ -250,6 +252,12 @@ pgm_prompt_has_timeout() {
     [[ -n "${PROMPT_TIMEOUT:-}" && "${PROMPT_TIMEOUT}" =~ ^[1-9][0-9]*$ ]]
 }
 
+# Local-time prefix for interactive prompts, e.g. "(2026.08.06 16:01:00) " — trailing space.
+# Same style as rename.sh user_prompt_ts_prefix.
+pgm_user_prompt_ts_prefix() {
+    printf '(%s) ' "$(date '+%Y.%m.%d %H:%M:%S')"
+}
+
 pgm_prompt_timeout_label() {
     if pgm_prompt_has_timeout; then
         printf '%ss timeout' "$PROMPT_TIMEOUT"
@@ -295,8 +303,8 @@ pgm_prompt_read_set_selection() {
     local -n _out_ans=$2
     local first="" rest=""
 
-    printf 'Verify which set(s)? [A/1-%d/ranges like 1-4,q] (default: A, %s): ' \
-        "$max_n" "$(pgm_prompt_timeout_label)"
+    printf '%sVerify which set(s)? [A/1-%d/ranges like 1-4,q] (default: A, %s): ' \
+        "$(pgm_user_prompt_ts_prefix)" "$max_n" "$(pgm_prompt_timeout_label)"
     pgm_flush_stdin
 
     if ! pgm_read_key_with_timeout first; then
@@ -386,9 +394,11 @@ pgm_prompt_read_yes_no_quit() {
     local key="" rest=""
 
     if (( default_yes )); then
-        printf '%s [Y/n/q] (%s): ' "$question" "$(pgm_prompt_timeout_label)"
+        printf '%s%s [Y/n/q] (%s): ' \
+            "$(pgm_user_prompt_ts_prefix)" "$question" "$(pgm_prompt_timeout_label)"
     else
-        printf '%s [y/N/q] (%s): ' "$question" "$(pgm_prompt_timeout_label)"
+        printf '%s%s [y/N/q] (%s): ' \
+            "$(pgm_user_prompt_ts_prefix)" "$question" "$(pgm_prompt_timeout_label)"
     fi
     pgm_flush_stdin
 
@@ -812,7 +822,7 @@ pgm_resolve_check_scope() {
     echo "  [S] Also subdirectories (default)"
     echo "  [C] Current directory only"
     echo "  [Q] Quit"
-    printf 'Choice [S/c/q]: '
+    printf '%sChoice [S/c/q]: ' "$(pgm_user_prompt_ts_prefix)"
     pgm_flush_stdin
     if ! pgm_read_key_with_timeout input; then
         input=S
@@ -2378,8 +2388,8 @@ pgm_prompt_recovery_percent() {
 
     [[ "$suggested" =~ ^[1-9][0-9]?$|^100$ ]] || suggested=20
 
-    printf 'Recovery percent for new PAR2 set [1-100] (default: %s%%, %s): ' \
-        "$suggested" "$(pgm_prompt_timeout_label)"
+    printf '%sRecovery percent for new PAR2 set [1-100] (default: %s%%, %s): ' \
+        "$(pgm_user_prompt_ts_prefix)" "$suggested" "$(pgm_prompt_timeout_label)"
     if ! pgm_read_line_with_timeout ans; then
         ans=""
         echo
