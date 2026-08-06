@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# v. 20260806.081000 - regen hash sync also drops FastSum ';' comment lines
 # v. 20260806.080500 - hash sync after PAR2 regenerate: drop old .par2 names, add new
 # v. 20260805.190000 - hash lint/tidy subcommands; accept filenames with spaces in manifests
 # v. 20260803.152000 - scan whole volume for FileDesc packets; patch in place when size is unchanged
@@ -903,9 +904,11 @@ def _write_hash_file_preserving_times(hash_file, new_text):
 def sync_hash_files_after_regen(folder_path, remove_names, new_par_names):
     """Refresh every hash manifest after a PAR2 set was regenerated.
 
-    Drops checksum lines for retired PAR2 basenames, then ensures each new
-    PAR2 archive has a current digest. Manifests that never listed .par2 files
-    still get the new entries. Modification times are preserved.
+    Drops checksum lines for retired PAR2 basenames, drops FastSum-style ';'
+    comment lines (md5sum -c treats them as malformed), then ensures each new
+    PAR2 archive has a current digest. '#' comments and blank lines stay.
+    Manifests that never listed .par2 files still get the new entries.
+    Modification times are preserved.
     """
     remove_set = {os.path.basename(name) for name in remove_names}
     new_names = sorted({os.path.basename(name) for name in new_par_names})
@@ -925,8 +928,12 @@ def sync_hash_files_after_regen(folder_path, remove_names, new_par_names):
         output_lines = []
         updated = set()
         removed = 0
+        dropped_semicolons = 0
 
         for record in records:
+            if record["type"] == "comment" and record.get("marker") == ";":
+                dropped_semicolons += 1
+                continue
             if record["type"] != "entry":
                 output_lines.append(record["raw"])
                 continue
@@ -957,16 +964,19 @@ def sync_hash_files_after_regen(folder_path, remove_names, new_par_names):
             appended += 1
 
         new_text = "\n".join(output_lines)
-        if original_text.endswith("\n"):
+        if original_text.endswith("\n") or new_text:
             new_text += "\n"
 
         if new_text != original_text:
             _write_hash_file_preserving_times(hash_file, new_text)
 
-        messages.append(
-            f"{os.path.basename(hash_file)} "
-            f"(updated {len(updated)}, added {appended}, removed {removed})"
+        detail = (
+            f"updated {len(updated)}, added {appended}, "
+            f"removed {removed} old .par2"
         )
+        if dropped_semicolons:
+            detail += f", dropped {dropped_semicolons} ';' comment line(s)"
+        messages.append(f"{os.path.basename(hash_file)} ({detail})")
 
     return True, (
         f"Synced PAR2 checksums in {len(hash_files)} hash file(s): "

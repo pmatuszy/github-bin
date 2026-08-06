@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20260806.081000 - regen hash sync also strips FastSum ';' comment lines
 # v. 20260806.080500 - offer regenerate on set problems; volume-only create; exclude hashes; sync manifests
 # v. 20260805.191500 - Step 1 reports unreadable manifest lines; offers ';' to '#' fix when unprotected
 # v. 20260805.182700 - Step 6 fails only on unresolved names; damage goes to repair step
@@ -24,6 +25,7 @@
 # v. 20260719.103506 - fix no-arg run: empty POSITIONAL[@]:- became one "" element
 # v. 20260719.102800 - multi-set selection: A/a, ranges 1-4, --all, multiple paths
 
+# 2026.08.06 - v. 0.1.40 - Regenerate hash sync also removes FastSum ';' comment lines
 # 2026.08.06 - v. 0.1.39 - Offer PAR2 regenerate on problems (default no); exclude hash files; sync manifests
 # 2026.08.05 - v. 0.1.38 - Hash manifest review in Step 1; offer ';' to '#' when set does not protect it
 # 2026.08.05 - v. 0.1.37 - Rename step no longer fails on unrelated damage; detect "no data found"
@@ -2251,6 +2253,8 @@ prompt_and_regenerate_par2_set() {
     echo "Regenerate rebuilds the PAR2 set from current disk files."
     echo "Hash manifests (*.md5 / *.sha512 / *.sha256) are excluded from the set"
     echo "so updating them later will not make PAR2 report them as damaged."
+    echo "During hash sync, FastSum-style ';' comment lines are removed so"
+    echo "'md5sum -c' stays quiet; checksum lines and '#' comments are kept."
     echo "New layout: one volume-only archive (no separate index file)."
     echo "Current set file(s):"
     for member in "${PAR2_SET_MEMBERS[@]}"; do
