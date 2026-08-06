@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20260806.080500 - offer regenerate on set problems; volume-only create; exclude hashes; sync manifests
 # v. 20260805.191500 - Step 1 reports unreadable manifest lines; offers ';' to '#' fix when unprotected
 # v. 20260805.182700 - Step 6 fails only on unresolved names; damage goes to repair step
 # v. 20260803.213000 - prompt to repair when damage is fixable; --no-repair; verify after repair
@@ -23,6 +24,7 @@
 # v. 20260719.103506 - fix no-arg run: empty POSITIONAL[@]:- became one "" element
 # v. 20260719.102800 - multi-set selection: A/a, ranges 1-4, --all, multiple paths
 
+# 2026.08.06 - v. 0.1.39 - Offer PAR2 regenerate on problems (default no); exclude hash files; sync manifests
 # 2026.08.05 - v. 0.1.38 - Hash manifest review in Step 1; offer ';' to '#' when set does not protect it
 # 2026.08.05 - v. 0.1.37 - Rename step no longer fails on unrelated damage; detect "no data found"
 # 2026.08.03 - v. 0.1.36 - Ask to repair damaged files; --no-repair; re-verify after repair
@@ -86,10 +88,16 @@ Options:
   --no-rename          Detect misnamed files but do not offer/run PAR2 metadata update
   --hash-tidy          Convert ';' comments to '#' in unprotected hash manifests
   --no-hash-tidy       Report ';' comments in hash manifests but never convert them
+  --regenerate         Auto-yes for regenerate when the set still has problems
+  --no-regenerate      Never offer to regenerate the PAR2 set
 
 Rename and repair prompts take one key: y, n, or q (q cancels the whole run).
-Multi-set batch: both prompts default to no unless --yes / --repair is given.
-Single set: both prompts default to yes.
+Multi-set batch: rename/repair default to no unless --yes / --repair is given.
+Single set: rename/repair default to yes.
+Regenerate always defaults to no (Enter skips), even for a single set.
+Regenerate builds one volume-only archive, excludes hash manifests from the set,
+renames old .par2 to *.par2.old by default, then syncs hash manifests with the
+new PAR2 checksums.
 
 Environment:
   PAR2_CMD             par2 executable (default: par2)
@@ -320,6 +328,17 @@ pgm_prompt_read_repair_choice() {
 pgm_prompt_read_hash_tidy_choice() {
     pgm_prompt_read_yes_no_quit "$1" "$2" \
         "Convert ';' comments to '#' in the hash manifest(s)?"
+}
+
+pgm_prompt_read_regenerate_choice() {
+    # Always default no — regenerating is deliberate.
+    pgm_prompt_read_yes_no_quit 0 "$1" \
+        "Regenerate this PAR2 set from current files?"
+}
+
+pgm_prompt_read_backup_old_par2_choice() {
+    pgm_prompt_read_yes_no_quit 1 "$1" \
+        "Rename old PAR2 files to *.par2.old before creating the new set?"
 }
 
 # Answer on one key (Enter = default); q quits the script. Sets 0=yes, 1=no, 2=quit.
@@ -561,6 +580,14 @@ pgm_print_run_settings() {
         echo "  --no-hash-tidy: given (report ';' comments only)"
     fi
 
+    if (( AUTO_REGENERATE )); then
+        echo "  --regenerate: given (regenerate set without asking when still broken)"
+    elif (( NO_REGENERATE )); then
+        echo "  --no-regenerate: given (never offer regenerate)"
+    else
+        echo "  --regenerate: not given (prompt when set still has problems; default no)"
+    fi
+
     if (( NO_RENAME )); then
         rename_effect="skipped (--no-rename)"
     elif (( AUTO_RENAME )); then
@@ -775,7 +802,7 @@ pgm_find_old_par2_backups_scoped() {
         base="$(basename "$f")"
         is_par2_backup_file "$base" || continue
         _out+=("$(abs_path "$f")")
-    done < <("${find_args[@]}" \( -iname '*_old.par2' \) -type f -print0 2>/dev/null)
+    done < <("${find_args[@]}" \( -iname '*_old.par2' -o -iname '*.par2.old' \) -type f -print0 2>/dev/null)
 
     pgm_sort_path_array _out
 }
@@ -794,8 +821,8 @@ pgm_report_skipped_old_par2_backups() {
     fi
 
     echo
-    echo "Found ${#backups[@]} *_old.par2 backup file(s) ${scope_label}."
-    echo "Skipping them (leftovers from prior PAR2 metadata updates; not part of the active set)."
+    echo "Found ${#backups[@]} PAR2 backup file(s) (*_old.par2 / *.par2.old) ${scope_label}."
+    echo "Skipping them (leftovers from prior updates/regenerates; not part of the active set)."
     if ((${#backups[@]} <= 8)); then
         for i in "${backups[@]}"; do
             rel="$(pgm_path_display_relative "$i" "$START_DIR")"
@@ -850,6 +877,7 @@ is_par2_backup_file() {
     local base="$1"
     case "$base" in
         *_old.par2|*_old.PAR2) return 0 ;;
+        *.par2.old|*.PAR2.old|*.par2.OLD|*.PAR2.OLD) return 0 ;;
     esac
     return 1
 }
@@ -874,6 +902,7 @@ is_data_file_basename() {
     case "$base" in
         *.par2|*.PAR2) return 1 ;;
         *_old.par2|*_old.PAR2) return 1 ;;
+        *.par2.old|*.PAR2.old|*.par2.OLD|*.PAR2.OLD) return 1 ;;
         *.sha512|*.SHA512|*.sha256|*.SHA256|*.md5|*.MD5) return 1 ;;
         par2-pgm-check.sh|par2-pgm-rename.py) return 1 ;;
     esac
@@ -1032,6 +1061,8 @@ AUTO_RENAME=0
 NO_RENAME=0
 AUTO_HASH_TIDY=0
 NO_HASH_TIDY=0
+AUTO_REGENERATE=0
+NO_REGENERATE=0
 POSITIONAL=()
 MISNAMED_DISK=()
 MISNAMED_PAR2=()
@@ -1560,12 +1591,7 @@ collect_data_files() {
             done
         fi
         base="$(basename "$f")"
-        case "$base" in
-            *.par2|*.PAR2) continue ;;
-            *_old.par2|*_old.PAR2) continue ;;
-            *.sha512|*.SHA512|*.sha256|*.SHA256|*.md5|*.MD5) continue ;;
-            par2-pgm-check.sh|par2-pgm-rename.py) continue ;;
-        esac
+        is_data_file_basename "$base" || continue
         if [[ "$f" == "$dir_ap"/* ]]; then
             rel="${f#"$dir_ap"/}"
         else
@@ -2074,6 +2100,300 @@ prompt_and_apply_repair() {
     return 0
 }
 
+pgm_estimate_recovery_percent_from_text() {
+    local text="$1"
+    local data_blocks="" recovery_blocks="" pct
+
+    data_blocks=$(sed -nE 's/.*[Tt]here are a total of ([0-9]+) data blocks.*/\1/p' <<< "$text" | head -n 1)
+    recovery_blocks=$(sed -nE 's/.*[Yy]ou have ([0-9]+) recovery blocks available.*/\1/p' <<< "$text" | head -n 1)
+    [[ -n "$data_blocks" && -n "$recovery_blocks" && "$data_blocks" -gt 0 ]] || return 1
+    pct=$(( (recovery_blocks * 100 + data_blocks / 2) / data_blocks ))
+    (( pct < 1 )) && pct=1
+    (( pct > 100 )) && pct=100
+    printf '%s' "$pct"
+}
+
+pgm_prompt_recovery_percent() {
+    local -n _out=$1
+    local suggested="${2:-20}"
+    local ans=""
+
+    [[ "$suggested" =~ ^[1-9][0-9]?$|^100$ ]] || suggested=20
+
+    printf 'Recovery percent for new PAR2 set [1-100] (default: %s%%, %s): ' \
+        "$suggested" "$(pgm_prompt_timeout_label)"
+    if ! pgm_read_line_with_timeout ans; then
+        ans=""
+        echo
+    fi
+    ans="${ans//[[:space:]]/}"
+    ans="${ans%%%}"
+    [[ -z "$ans" ]] && ans="$suggested"
+    if [[ ! "$ans" =~ ^[1-9][0-9]?$|^100$ ]]; then
+        echo "Invalid percent '$ans'; using ${suggested}%."
+        ans="$suggested"
+    fi
+    _out="$ans"
+}
+
+pgm_restore_par2_from_dot_old() {
+    local -a backups=("$@")
+    local bak active
+
+    for bak in "${backups[@]}"; do
+        [[ -f "$bak" ]] || continue
+        active="${bak%.old}"
+        active="${active%.OLD}"
+        if [[ -e "$active" ]]; then
+            rm -f -- "$active"
+        fi
+        mv -- "$bak" "$active" || true
+    done
+}
+
+pgm_par2_create_volume_only() {
+    local stem="$1"
+    local percent="$2"
+    shift 2
+    local -a sources=("$@")
+    local index_path vol create_rc=0
+    local -a vols=()
+
+    (( ${#sources[@]} > 0 )) || {
+        echo "Error: no data files to protect." >&2
+        return 1
+    }
+
+    (
+        cd "$DATA_DIR" || exit 1
+        run_par2 create -n1 -r"$percent" -- "${stem}.par2" "${sources[@]}"
+    )
+    create_rc=$?
+    (( create_rc == 0 )) || return "$create_rc"
+
+    index_path="$DATA_DIR/${stem}.par2"
+    shopt -s nullglob
+    vols=("$DATA_DIR/${stem}".vol*.par2 "$DATA_DIR/${stem}".vol*.PAR2)
+    shopt -u nullglob
+
+    if (( ${#vols[@]} == 0 )); then
+        echo "Error: par2 create did not produce a volume file for ${stem}." >&2
+        [[ -f "$index_path" ]] && rm -f -- "$index_path"
+        return 1
+    fi
+
+    # Prefer a single volume-only set: drop the small index after create -n1.
+    if [[ -f "$index_path" ]]; then
+        rm -f -- "$index_path"
+        echo "Removed index ${stem}.par2 (keeping volume-only set)."
+    fi
+
+    if (( ${#vols[@]} > 1 )); then
+        echo "Note: par2 created ${#vols[@]} volume files; using all of them as the set."
+    fi
+
+    PAR2_SET_MEMBERS=("${vols[@]}")
+    PAR2_FILE="${vols[0]}"
+    return 0
+}
+
+pgm_sync_hashes_after_regen() {
+    local -a remove_names=("$@")
+    local -a add_names=()
+    local args=() m msg rc=0
+
+    for m in "${PAR2_SET_MEMBERS[@]}"; do
+        add_names+=("$(basename -- "$m")")
+    done
+
+    args=(hash sync-regen "$DATA_DIR" --remove)
+    if ((${#remove_names[@]} > 0)); then
+        args+=("${remove_names[@]}")
+    fi
+    args+=(--add)
+    if ((${#add_names[@]} > 0)); then
+        args+=("${add_names[@]}")
+    else
+        echo "No new PAR2 files to sync into hash manifests."
+        return 0
+    fi
+
+    msg=$(run_rename_py "${args[@]}" 2>&1) || rc=$?
+    echo "$msg"
+    return "$rc"
+}
+
+prompt_and_regenerate_par2_set() {
+    local regen_choice=0 backup_choice=0 percent=20 suggested=20 tmp=""
+    local stem member base src dst create_rc=0
+    local -a old_basenames=() backed_up=()
+    local OUT9_FILE out9_text
+
+    (( SUMMARY_RC != 0 )) || return 1
+
+    if (( NO_REGENERATE == 1 )); then
+        pgm_print_step_verdict 9 SKIP "Regenerate skipped (--no-regenerate)."
+        return 1
+    fi
+
+    suggested=20
+    if tmp=$(pgm_estimate_recovery_percent_from_text "${OUT1:-}"); then
+        suggested="$tmp"
+    fi
+    if [[ -n "${OUT2_FILE:-}" && -f "${OUT2_FILE:-}" ]]; then
+        if tmp=$(pgm_estimate_recovery_percent_from_text "$(<"$OUT2_FILE")"); then
+            suggested="$tmp"
+        fi
+    fi
+    [[ "$suggested" =~ ^[1-9][0-9]?$|^100$ ]] || suggested=20
+
+    echo
+    echo "Regenerate rebuilds the PAR2 set from current disk files."
+    echo "Hash manifests (*.md5 / *.sha512 / *.sha256) are excluded from the set"
+    echo "so updating them later will not make PAR2 report them as damaged."
+    echo "New layout: one volume-only archive (no separate index file)."
+    echo "Current set file(s):"
+    for member in "${PAR2_SET_MEMBERS[@]}"; do
+        printf '  %s\n' "$(basename -- "$member")"
+        old_basenames+=("$(basename -- "$member")")
+    done
+
+    if (( AUTO_REGENERATE == 0 )); then
+        pgm_prompt_read_regenerate_choice regen_choice
+        case "$regen_choice" in
+            0)
+                ;;
+            1)
+                echo "Skipped regenerate."
+                pgm_print_step_verdict 9 SKIP "Regenerate skipped at prompt."
+                return 1
+                ;;
+            2)
+                echo "Cancelled."
+                return_code=0
+                finish
+                ;;
+        esac
+    else
+        echo "Regenerating automatically (--regenerate)."
+    fi
+
+    pgm_prompt_recovery_percent percent "$suggested"
+
+    if (( AUTO_REGENERATE == 0 )); then
+        pgm_prompt_read_backup_old_par2_choice backup_choice
+        case "$backup_choice" in
+            0)
+                ;;
+            1)
+                echo "Refusing to overwrite active PAR2 files without *.par2.old backup."
+                pgm_print_step_verdict 9 SKIP "Regenerate aborted (no backup of old PAR2 files)."
+                return 1
+                ;;
+            2)
+                echo "Cancelled."
+                return_code=0
+                finish
+                ;;
+        esac
+    fi
+
+    pgm_print_step_header "Step 9: regenerate PAR2 set"
+    (( ${#DATA_FILES[@]} > 0 )) || pgm_collect_data_files_for_scan
+    if (( ${#DATA_FILES[@]} == 0 )); then
+        pgm_print_step_verdict 9 FAIL "No data files found to protect (hash/PAR2 files are excluded)."
+        return 1
+    fi
+
+    stem="$(par2_stem_from_par2_basename "$(basename "$PAR2_FILE")")"
+    [[ -n "$stem" ]] || {
+        pgm_print_step_verdict 9 FAIL "Could not derive PAR2 stem from $(basename "$PAR2_FILE")."
+        return 1
+    }
+
+    echo "Stem:            $stem"
+    echo "Recovery:        ${percent}%"
+    echo "Data files:      ${#DATA_FILES[@]} (hash manifests excluded)"
+    echo "Old PAR2 files:  moved to *.par2.old"
+
+    for member in "${PAR2_SET_MEMBERS[@]}"; do
+        base="$(basename -- "$member")"
+        src="$DATA_DIR/$base"
+        dst="${src}.old"
+        [[ -f "$src" ]] || src="$member"
+        [[ -f "$src" ]] || {
+            pgm_print_step_verdict 9 FAIL "Missing set member: $base"
+            pgm_restore_par2_from_dot_old "${backed_up[@]}"
+            return 1
+        }
+        if [[ -e "$dst" ]]; then
+            pgm_print_step_verdict 9 FAIL "Backup already exists: $(basename -- "$dst") (remove/rename it first)."
+            pgm_restore_par2_from_dot_old "${backed_up[@]}"
+            return 1
+        fi
+        mv -- "$src" "$dst" || {
+            pgm_print_step_verdict 9 FAIL "Failed to rename $base to $(basename -- "$dst")."
+            pgm_restore_par2_from_dot_old "${backed_up[@]}"
+            return 1
+        }
+        printf '  %s -> %s\n' "$base" "$(basename -- "$dst")"
+        backed_up+=("$dst")
+    done
+
+    set +e
+    pgm_par2_create_volume_only "$stem" "$percent" "${DATA_FILES[@]}"
+    create_rc=$?
+    set -e
+    if (( create_rc != 0 )); then
+        echo "par2 create failed (exit $create_rc); restoring previous PAR2 files."
+        # Remove any partial new archives for this stem.
+        shopt -s nullglob
+        rm -f -- "$DATA_DIR/${stem}.par2" "$DATA_DIR/${stem}".vol*.par2 "$DATA_DIR/${stem}".vol*.PAR2
+        shopt -u nullglob
+        pgm_restore_par2_from_dot_old "${backed_up[@]}"
+        pgm_print_step_verdict 9 FAIL "par2 create failed; old PAR2 files restored."
+        return 1
+    fi
+
+    echo "New PAR2 set:"
+    for member in "${PAR2_SET_MEMBERS[@]}"; do
+        printf '  %s\n' "$(basename -- "$member")"
+    done
+    pgm_print_step_verdict 9 OK "PAR2 set regenerated (volume-only; hash files not protected)."
+
+    pgm_print_step_header "Step 9b: sync hash manifests with new PAR2 files"
+    if pgm_sync_hashes_after_regen "${old_basenames[@]}"; then
+        pgm_print_step_verdict 9b OK "Hash manifest(s) updated for new PAR2 archive(s)."
+    else
+        pgm_print_step_verdict 9b WARN "Hash sync reported a problem (see above)."
+    fi
+
+    pgm_print_step_header "Step 10: verify after regenerate"
+    OUT9_FILE=$(mktemp "${TMPDIR:-/tmp}/par2-pgm-check.XXXXXX")
+    (
+        cd "$DATA_DIR" || exit 1
+        run_par2 verify "$(basename "$PAR2_FILE")"
+    ) >"$OUT9_FILE" 2>&1 || true
+    <"$OUT9_FILE" pgm_filter_par2_verify_stream
+    echo
+    out9_text=$(<"$OUT9_FILE")
+    rm -f "$OUT9_FILE"
+    if pgm_par2_output_indicates_ok "$out9_text"; then
+        pgm_print_step_verdict 10 OK "Post-regenerate verify passed."
+        pgm_print_outcome ok \
+            "PAR2 set regenerated; verification passed." \
+            "$(pgm_extract_par2_ok_line "$out9_text")"
+        SUMMARY_RC=0
+        return 0
+    fi
+    pgm_print_step_verdict 10 FAIL "Post-regenerate verify still reports problems."
+    pgm_print_outcome err \
+        "Regenerate finished but verification still reports problems." \
+        "Review Step 10 output above. Old files remain as *.par2.old."
+    SUMMARY_RC=3
+    return 1
+}
+
 pgm_collect_missing_targets() {
     local out_file="$1"
     local line
@@ -2430,6 +2750,10 @@ pgm_run_one_par2_set() {
         fi
     fi
 
+    if (( SUMMARY_RC != 0 )); then
+        prompt_and_regenerate_par2_set || true
+    fi
+
     return "$SUMMARY_RC"
 }
 
@@ -2459,6 +2783,14 @@ while [[ $# -gt 0 ]]; do
             ;;
         --no-hash-tidy)
             NO_HASH_TIDY=1
+            shift
+            ;;
+        --regenerate)
+            AUTO_REGENERATE=1
+            shift
+            ;;
+        --no-regenerate)
+            NO_REGENERATE=1
             shift
             ;;
         --yes|-y)

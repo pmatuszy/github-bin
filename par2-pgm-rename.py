@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# v. 20260806.080500 - hash sync after PAR2 regenerate: drop old .par2 names, add new
 # v. 20260805.190000 - hash lint/tidy subcommands; accept filenames with spaces in manifests
 # v. 20260803.152000 - scan whole volume for FileDesc packets; patch in place when size is unchanged
 # v. 20260803.072300 - rewrite volume PAR2: index head only + copy rest; verify rename stuck
@@ -883,6 +884,96 @@ def update_par2_hashes(folder_path, hash_file=None, par_file_path=None):
     )
 
 
+def _write_hash_file_preserving_times(hash_file, new_text):
+    try:
+        stat_before = os.stat(hash_file)
+        times = (stat_before.st_atime, stat_before.st_mtime)
+    except OSError:
+        times = None
+
+    with open(hash_file, "r+", encoding="utf-8", newline="") as handle:
+        handle.seek(0)
+        handle.write(new_text)
+        handle.truncate()
+
+    if times:
+        os.utime(hash_file, times)
+
+
+def sync_hash_files_after_regen(folder_path, remove_names, new_par_names):
+    """Refresh every hash manifest after a PAR2 set was regenerated.
+
+    Drops checksum lines for retired PAR2 basenames, then ensures each new
+    PAR2 archive has a current digest. Manifests that never listed .par2 files
+    still get the new entries. Modification times are preserved.
+    """
+    remove_set = {os.path.basename(name) for name in remove_names}
+    new_names = sorted({os.path.basename(name) for name in new_par_names})
+    hash_files = list_hash_files(folder_path)
+    if not hash_files:
+        return True, "No hash file in directory (nothing to update after regenerate)."
+    if not new_names:
+        return False, "No new PAR2 files given for hash sync."
+
+    messages = []
+    for hash_file in hash_files:
+        algo = hash_algo_from_path(hash_file)
+        with open(hash_file, "r", encoding="utf-8", errors="replace") as handle:
+            original_text = handle.read()
+
+        records = parse_hash_file(hash_file)
+        output_lines = []
+        updated = set()
+        removed = 0
+
+        for record in records:
+            if record["type"] != "entry":
+                output_lines.append(record["raw"])
+                continue
+            base = record["basename"]
+            if base in remove_set:
+                removed += 1
+                continue
+            if base in new_names:
+                new_hash = compute_file_hash(os.path.join(folder_path, base), algo)
+                path_field = record["path"]
+                if "  " in record["raw"]:
+                    sep = "  "
+                elif "\t" in record["raw"]:
+                    sep = "\t"
+                else:
+                    sep = " "
+                output_lines.append(f"{new_hash}{sep}{path_field}")
+                updated.add(base)
+                continue
+            output_lines.append(record["raw"])
+
+        appended = 0
+        for par_name in new_names:
+            if par_name in updated:
+                continue
+            new_hash = compute_file_hash(os.path.join(folder_path, par_name), algo)
+            output_lines.append(f"{new_hash}  *./{par_name}")
+            appended += 1
+
+        new_text = "\n".join(output_lines)
+        if original_text.endswith("\n"):
+            new_text += "\n"
+
+        if new_text != original_text:
+            _write_hash_file_preserving_times(hash_file, new_text)
+
+        messages.append(
+            f"{os.path.basename(hash_file)} "
+            f"(updated {len(updated)}, added {appended}, removed {removed})"
+        )
+
+    return True, (
+        f"Synced PAR2 checksums in {len(hash_files)} hash file(s): "
+        + "; ".join(messages)
+    )
+
+
 def par2_index_file(par_files):
     index_file = par_files[0]
     for candidate in par_files:
@@ -1007,10 +1098,40 @@ def main(argv):
                 converted, message = tidy_hash_file(os.path.abspath(argv[3]))
                 print(message)
                 return 0 if converted else 1
+            if argv[2] == "sync-regen":
+                # hash sync-regen <dir> --remove a.par2 b.par2 --add c.par2
+                remove_names = []
+                add_names = []
+                mode = None
+                for token in argv[4:]:
+                    if token == "--remove":
+                        mode = "remove"
+                        continue
+                    if token == "--add":
+                        mode = "add"
+                        continue
+                    if mode == "remove":
+                        remove_names.append(token)
+                    elif mode == "add":
+                        add_names.append(token)
+                    else:
+                        print(
+                            "Usage: par2-pgm-rename.py hash sync-regen <directory> "
+                            "--remove old.par2... --add new.par2...",
+                            file=sys.stderr,
+                        )
+                        return 1
+                ok, message = sync_hash_files_after_regen(
+                    folder_path, remove_names, add_names
+                )
+                print(message)
+                return 0 if ok else 1
             print(
                 "Usage: par2-pgm-rename.py hash "
                 "verify|update|inventory|lint <directory> [par2-index]\n"
-                "       par2-pgm-rename.py hash tidy <hash-file>",
+                "       par2-pgm-rename.py hash tidy <hash-file>\n"
+                "       par2-pgm-rename.py hash sync-regen <directory> "
+                "--remove old.par2... --add new.par2...",
                 file=sys.stderr,
             )
             return 1
