@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20260806.131800 - flag missing .par2 hash lines as old archives; offer remove (default no)
 # v. 20260806.130000 - after PAR2 OK, fast-scan hash files for .par2 refs; optional verify/fix
 # v. 20260806.112600 - repair prompt always defaults to no (Enter skips)
 # v. 20260806.081000 - regen hash sync also strips FastSum ';' comment lines
@@ -27,6 +28,7 @@
 # v. 20260719.103506 - fix no-arg run: empty POSITIONAL[@]:- became one "" element
 # v. 20260719.102800 - multi-set selection: A/a, ranges 1-4, --all, multiple paths
 
+# 2026.08.06 - v. 0.1.43 - Missing .par2 hash lines: show vs current PAR2; offer remove (default no)
 # 2026.08.06 - v. 0.1.42 - Fast-scan hash manifests for .par2 refs; optional verify/fix (default no)
 # 2026.08.06 - v. 0.1.41 - Repair prompt defaults to no (same as regenerate)
 # 2026.08.06 - v. 0.1.40 - Regenerate hash sync also removes FastSum ';' comment lines
@@ -102,10 +104,12 @@ Options:
 Rename prompts take one key: y, n, or q (q cancels the whole run).
 Multi-set batch: rename defaults to no unless --yes is given.
 Single set: rename defaults to yes.
-Repair, regenerate, and hash .par2-ref check always default to no (Enter skips).
+Repair, regenerate, and hash .par2-ref prompts always default to no (Enter skips).
 Regenerate builds one volume-only archive, excludes hash manifests from the set,
 renames old .par2 to *.par2.old by default, then syncs hash manifests with the
 new PAR2 checksums.
+Missing .par2 names in hash files are reported as likely old archives after
+recreate; you can remove those references (default no) and sync current PAR2 names.
 
 Environment:
   PAR2_CMD             par2 executable (default: par2)
@@ -358,6 +362,11 @@ pgm_prompt_read_hash_par2_check_choice() {
 pgm_prompt_read_hash_par2_fix_choice() {
     pgm_prompt_read_yes_no_quit 0 "$1" \
         "Update hash file(s) to match PAR2 files on disk?"
+}
+
+pgm_prompt_read_hash_par2_remove_stale_choice() {
+    pgm_prompt_read_yes_no_quit 0 "$1" \
+        "Remove those missing (old) .par2 references from the hash file(s)?"
 }
 
 # Answer on one key (Enter = default); q quits the script. Sets 0=yes, 1=no, 2=quit.
@@ -1828,12 +1837,15 @@ pgm_review_hash_manifests() {
     done
 }
 
-# Fast parse of hash manifests for .par2 lines (no hashing). If any exist, ask
-# (default no) whether to verify those entries and optionally fix the manifests.
+# Fast parse of hash manifests for .par2 lines (stat only, no hashing). Missing
+# names are treated as likely old PAR2 archives after recreate. Optionally
+# verify digests and rewrite manifests (all prompts default to no).
 pgm_review_par2_hash_refs() {
-    local -a refs=()
-    local line path count names base
-    local check_choice=0 fix_choice=0 msg rc=0
+    local -a refs=() active=() stale_names=()
+    local -A stale_seen=()
+    local line path count missing_count names missing_csv base name
+    local check_choice=0 fix_choice=0 remove_choice=0 msg rc=0
+    local has_missing=0 has_present=0
 
     (( NO_HASH_PAR2_CHECK == 1 )) && return 0
     (( PGM_HASH_SYNCED_THIS_SET == 1 )) && return 0
@@ -1841,20 +1853,87 @@ pgm_review_par2_hash_refs() {
     mapfile -t refs < <(run_rename_py hash list-par2-refs "$DATA_DIR" 2>/dev/null) || true
     (( ${#refs[@]} > 0 )) || return 0
 
+    mapfile -t active < <(run_rename_py hash list-active-par2 "$DATA_DIR" 2>/dev/null) || true
+
     echo
     echo "Hash file(s) in this directory list .par2 checksum entries:"
     for line in "${refs[@]}"; do
-        IFS=$'\t' read -r path count names <<< "$line"
+        IFS=$'\t' read -r path count missing_count names missing_csv <<< "$line"
         [[ -n "$path" ]] || continue
         base="$(basename -- "$path")"
         printf '  %s (%s entr' "$base" "$count"
         if [[ "$count" == "1" ]]; then
-            printf 'y): %s\n' "$names"
+            printf 'y'
         else
-            printf 'ies): %s\n' "$names"
+            printf 'ies'
+        fi
+        if (( ${missing_count:-0} > 0 )); then
+            printf ', %s missing on disk' "$missing_count"
+            has_missing=1
+        fi
+        printf '): %s\n' "$names"
+        if [[ -n "$missing_csv" ]]; then
+            IFS=',' read -r -a stale_chunk <<< "$missing_csv"
+            for name in "${stale_chunk[@]}"; do
+                [[ -n "$name" ]] || continue
+                [[ -n "${stale_seen[$name]:-}" ]] && continue
+                stale_seen[$name]=1
+                stale_names+=("$name")
+            done
+        fi
+        if (( ${count:-0} > ${missing_count:-0} )); then
+            has_present=1
         fi
     done
-    echo "No hashes were recalculated yet (name scan only)."
+    echo "No hashes were recalculated yet (name/existence scan only)."
+
+    if (( has_missing )); then
+        echo
+        echo "Missing .par2 name(s) in hash file(s) — likely old PAR2 archive(s)"
+        echo "left after recreate/regenerate (file no longer on disk):"
+        for name in "${stale_names[@]}"; do
+            printf '  %s\n' "$name"
+        done
+        echo
+        echo "Current PAR2 file(s) in this directory:"
+        if ((${#active[@]} > 0)); then
+            for name in "${active[@]}"; do
+                printf '  %s\n' "$name"
+            done
+        else
+            echo "  (none)"
+        fi
+        echo
+        echo "You can remove those missing references from the hash file(s)."
+        echo "If you agree, current PAR2 files will also be added/refreshed there."
+        echo "Manifest modification time is preserved."
+        pgm_prompt_read_hash_par2_remove_stale_choice remove_choice
+        case "$remove_choice" in
+            0)
+                pgm_print_step_header "Step H: update hash manifests (drop old .par2 names)"
+                msg=$(run_rename_py hash fix-par2-refs "$DATA_DIR" 2>&1) || rc=$?
+                echo "$msg"
+                if (( rc == 0 )); then
+                    pgm_print_step_verdict H OK "Stale .par2 hash references removed; manifests updated."
+                    PGM_HASH_SYNCED_THIS_SET=1
+                    return 0
+                fi
+                pgm_print_step_verdict H FAIL "Hash manifest update reported a problem."
+                return 0
+                ;;
+            1)
+                echo "Left missing .par2 hash references unchanged."
+                ;;
+            2)
+                echo "Cancelled."
+                return_code=0
+                finish
+                ;;
+        esac
+    fi
+
+    # Digest check only for .par2 names that still exist (optional, default no).
+    (( has_present )) || return 0
 
     if (( AUTO_HASH_PAR2_CHECK == 0 )); then
         pgm_prompt_read_hash_par2_check_choice check_choice
@@ -1862,7 +1941,7 @@ pgm_review_par2_hash_refs() {
             0)
                 ;;
             1)
-                echo "Skipped .par2 hash-entry check."
+                echo "Skipped .par2 hash digest check."
                 return 0
                 ;;
             2)
@@ -1872,22 +1951,23 @@ pgm_review_par2_hash_refs() {
                 ;;
         esac
     else
-        echo "Verifying .par2 hash entries automatically (--hash-par2-check)."
+        echo "Verifying .par2 hash digests automatically (--hash-par2-check)."
     fi
 
-    pgm_print_step_header "Step H: verify .par2 entries in hash manifests"
+    pgm_print_step_header "Step H: verify .par2 digests in hash manifests"
+    rc=0
     msg=$(run_rename_py hash verify-par2-refs "$DATA_DIR" 2>&1) || rc=$?
     echo "$msg"
     if (( rc == 0 )); then
         pgm_print_step_verdict H OK "All .par2 hash entries match files on disk."
         return 0
     fi
-    pgm_print_step_verdict H WARN "Some .par2 hash entries are missing or stale."
+    pgm_print_step_verdict H WARN "Some .par2 hash entries are missing or have wrong digests."
 
     echo
-    echo "Hash file(s) can be updated: remove missing .par2 names, refresh digests"
-    echo "for PAR2 files that still exist, and add any active .par2 files in this"
-    echo "directory that are not listed yet. Manifest mtime is preserved."
+    echo "Update hash file(s): remove any still-missing .par2 names, refresh digests"
+    echo "for PAR2 files that exist, and add active .par2 files not listed yet."
+    echo "Manifest modification time is preserved."
     pgm_prompt_read_hash_par2_fix_choice fix_choice
     case "$fix_choice" in
         0)
@@ -1904,10 +1984,12 @@ pgm_review_par2_hash_refs() {
     esac
 
     pgm_print_step_header "Step H2: update hash manifests for PAR2 files"
+    rc=0
     msg=$(run_rename_py hash fix-par2-refs "$DATA_DIR" 2>&1) || rc=$?
     echo "$msg"
     if (( rc == 0 )); then
         pgm_print_step_verdict H2 OK "Hash manifest(s) updated for PAR2 files."
+        PGM_HASH_SYNCED_THIS_SET=1
     else
         pgm_print_step_verdict H2 FAIL "Hash manifest update reported a problem."
     fi

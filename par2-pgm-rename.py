@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# v. 20260806.131800 - scan-par2-refs: flag missing .par2 names as likely old archives
 # v. 20260806.130000 - hash list/verify/fix-par2-refs for stale .par2 lines in manifests
 # v. 20260806.081000 - regen hash sync also drops FastSum ';' comment lines
 # v. 20260806.080500 - hash sync after PAR2 regenerate: drop old .par2 names, add new
@@ -925,9 +926,26 @@ def list_par2_refs_in_hash_files(folder_path):
 
 
 def print_par2_refs_brief(folder_path):
-    """One tab-separated row per hash file that lists .par2 names (no hashing)."""
+    """One tab-separated row per hash file that lists .par2 names (no hashing).
+
+    Columns: path, ref_count, missing_count, refs_csv, missing_csv
+    """
     for hash_file, names in list_par2_refs_in_hash_files(folder_path):
-        print(f"{hash_file}\t{len(names)}\t{','.join(names)}")
+        missing = [
+            name
+            for name in names
+            if not os.path.isfile(os.path.join(folder_path, name))
+        ]
+        print(
+            f"{hash_file}\t{len(names)}\t{len(missing)}\t"
+            f"{','.join(names)}\t{','.join(missing)}"
+        )
+
+
+def print_active_par2_brief(folder_path):
+    """Active (non-backup) .par2 basenames in folder_path, one per line."""
+    for name in list_active_par2_files(folder_path):
+        print(name)
 
 
 def verify_par2_refs_in_hash_files(folder_path):
@@ -936,38 +954,43 @@ def verify_par2_refs_in_hash_files(folder_path):
     if not rows:
         return True, "No hash file lists .par2 entries."
 
-    problems = []
+    missing = []
+    mismatches = []
     checked = 0
     for hash_file, names in rows:
         algo = hash_algo_from_path(hash_file)
         expected = entries_by_basename(hash_file)
+        base = os.path.basename(hash_file)
         for name in names:
             checked += 1
             path = os.path.join(folder_path, name)
             if not os.path.isfile(path):
-                problems.append(
-                    f"{os.path.basename(hash_file)}: {name} — missing on disk"
-                )
+                missing.append(f"{base}: {name}")
                 continue
             actual = compute_file_hash(path, algo)
             if actual != expected[name].lower():
-                problems.append(
-                    f"{os.path.basename(hash_file)}: {name} — checksum mismatch"
-                )
+                mismatches.append(f"{base}: {name}")
 
-    if problems:
-        message = (
-            f"Checked {checked} .par2 hash entr"
-            f"{'y' if checked == 1 else 'ies'} in {len(rows)} file(s); "
-            f"{len(problems)} problem(s):\n"
+    if not missing and not mismatches:
+        return True, (
+            f"All {checked} .par2 hash entr"
+            f"{'y' if checked == 1 else 'ies'} OK across {len(rows)} hash file(s)."
         )
-        message += "\n".join(f"  - {item}" for item in problems)
-        return False, message
 
-    return True, (
-        f"All {checked} .par2 hash entr"
-        f"{'y' if checked == 1 else 'ies'} OK across {len(rows)} hash file(s)."
-    )
+    lines = [
+        f"Checked {checked} .par2 hash entr"
+        f"{'y' if checked == 1 else 'ies'} in {len(rows)} file(s)."
+    ]
+    if missing:
+        lines.append(
+            f"Missing on disk ({len(missing)}) — likely old PAR2 archive name(s) "
+            "left after recreate:"
+        )
+        lines.extend(f"  - {item}" for item in missing)
+    if mismatches:
+        lines.append(f"Checksum mismatch ({len(mismatches)}):")
+        lines.extend(f"  - {item}" for item in mismatches)
+    return False, "\n".join(lines)
 
 
 def fix_par2_refs_in_hash_files(folder_path):
@@ -1265,6 +1288,9 @@ def main(argv):
             if argv[2] == "list-par2-refs":
                 print_par2_refs_brief(folder_path)
                 return 0
+            if argv[2] == "list-active-par2":
+                print_active_par2_brief(folder_path)
+                return 0
             if argv[2] == "verify-par2-refs":
                 ok, message = verify_par2_refs_in_hash_files(folder_path)
                 print(message)
@@ -1315,7 +1341,8 @@ def main(argv):
             print(
                 "Usage: par2-pgm-rename.py hash "
                 "verify|update|inventory|lint|"
-                "list-par2-refs|verify-par2-refs|fix-par2-refs "
+                "list-par2-refs|list-active-par2|"
+                "verify-par2-refs|fix-par2-refs "
                 "<directory> [par2-index]\n"
                 "       par2-pgm-rename.py hash tidy <hash-file>\n"
                 "       par2-pgm-rename.py hash sync-regen <directory> "
