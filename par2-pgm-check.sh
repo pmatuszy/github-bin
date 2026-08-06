@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20260806.184043 - list empty PAR2 targets; empty-only "damage" explains skip-repair is normal
 # v. 20260806.181727 - also hide Target empty; strip CR so Opening/found filter always matches
 # v. 20260806.181027 - hide par2 Opening/found/0-byte noise; keep full log for parsing
 # v. 20260806.160156 - prefix interactive prompts with (YYYY.MM.DD HH:MM:SS) like rename.sh
@@ -33,6 +34,7 @@
 # v. 20260719.103506 - fix no-arg run: empty POSITIONAL[@]:- became one "" element
 # v. 20260719.102800 - multi-set selection: A/a, ranges 1-4, --all, multiple paths
 
+# 2026.08.06 - v. 0.1.49 - List empty PAR2 targets; empty-only damage: explain skip repair is normal
 # 2026.08.06 - v. 0.1.48 - Also hide Target empty; harden Opening/found filter against CR
 # 2026.08.06 - v. 0.1.47 - Hide par2 Opening/found/0-byte noise on screen (full log kept for parsing)
 # 2026.08.06 - v. 0.1.46 - Interactive prompts prefixed with (YYYY.MM.DD HH:MM:SS) like rename.sh
@@ -350,8 +352,13 @@ pgm_prompt_read_rename_choice() {
 
 pgm_prompt_read_repair_choice() {
     # Always default no — repair can rename disk files and undo intentional edits.
-    pgm_prompt_read_yes_no_quit 0 "$1" \
-        "Repair damaged DATA file(s) from recovery blocks now?"
+    if (( PGM_EMPTY_ONLY_DAMAGE == 1 )); then
+        pgm_prompt_read_yes_no_quit 0 "$1" \
+            "Still run par2 repair on those empty file(s)? (usually skip)"
+    else
+        pgm_prompt_read_yes_no_quit 0 "$1" \
+            "Repair damaged DATA file(s) from recovery blocks now?"
+    fi
 }
 
 pgm_prompt_read_hash_tidy_choice() {
@@ -1128,6 +1135,8 @@ MISNAMED_DISK=()
 MISNAMED_PAR2=()
 MISSING_PAR2_TARGETS=()
 DAMAGED_PAR2_TARGETS=()
+EMPTY_PAR2_TARGETS=()
+PGM_EMPTY_ONLY_DAMAGE=0
 REPAIR_POSSIBLE=0
 PGM_POST_RENAME_OUT=""
 RENAME_PAIRS=()
@@ -2347,21 +2356,35 @@ prompt_and_apply_repair() {
 
     if (( REPAIR == 0 )); then
         echo
-        echo "=== Repair (optional) ==="
-        echo "What it does: keep THIS PAR2 set; rebuild damaged DATA file(s) from"
-        echo "  recovery blocks so their content matches what PAR2 expects."
-        echo "Side effect: par2 may also rename disk files to the names stored in PAR2."
-        echo "Choose this when the PAR2 archives are the trusted copy and the data"
-        echo "  file(s) on disk are wrong/corrupt."
-        echo "Skip this if you want to leave damaged data as-is, or if you plan to"
-        echo "  Regenerate (accept current disk files as the new baseline)."
+        if (( PGM_EMPTY_ONLY_DAMAGE == 1 )); then
+            echo "=== Repair (optional — usually skip) ==="
+            echo "par2cmdline flagged ${#EMPTY_PAR2_TARGETS[@]} empty (0-byte) file(s) as damaged."
+            echo "Real data files already verify OK. Repair of empties rarely changes anything"
+            echo "(par2cmdline known limitation; MultiPar ignores these)."
+            echo "Recommended: N / Enter (skip). Use Regenerate later if you want a set"
+            echo "without empty files (create skips 0-byte files)."
+        else
+            echo "=== Repair (optional) ==="
+            echo "What it does: keep THIS PAR2 set; rebuild damaged DATA file(s) from"
+            echo "  recovery blocks so their content matches what PAR2 expects."
+            echo "Side effect: par2 may also rename disk files to the names stored in PAR2."
+            echo "Choose this when the PAR2 archives are the trusted copy and the data"
+            echo "  file(s) on disk are wrong/corrupt."
+            echo "Skip this if you want to leave damaged data as-is, or if you plan to"
+            echo "  Regenerate (accept current disk files as the new baseline)."
+        fi
         pgm_prompt_read_repair_choice repair_choice
         case "$repair_choice" in
             0)
                 ;;
             1)
-                echo "Skipped repair."
-                pgm_print_step_verdict 7 SKIP "Repair skipped at prompt."
+                if (( PGM_EMPTY_ONLY_DAMAGE == 1 )); then
+                    echo "Skipped empty-file repair (recommended)."
+                    pgm_print_step_verdict 7 SKIP "Empty-file repair skipped (normal for 0-byte stubs)."
+                else
+                    echo "Skipped repair."
+                    pgm_print_step_verdict 7 SKIP "Repair skipped at prompt."
+                fi
                 return 1
                 ;;
             2)
@@ -2540,6 +2563,10 @@ prompt_and_regenerate_par2_set() {
     echo "  content becomes the new 'correct' baseline."
     echo "Choose this only when you accept today's disk files (including any"
     echo "  damage you skipped repairing) as the new master copies."
+    if (( PGM_EMPTY_ONLY_DAMAGE == 1 )); then
+        echo "For this set: useful if you want to drop ${#EMPTY_PAR2_TARGETS[@]} empty"
+        echo "  (0-byte) stub(s) that par2cmdline keeps flagging (create skips them)."
+    fi
     echo "Layout: one volume-only archive (no separate index .par2)."
     echo "Hash manifests (*.md5 / *.sha512 / *.sha256) are excluded from the set,"
     echo "  then synced afterward (FastSum ';' comment lines stripped)."
@@ -2759,6 +2786,70 @@ pgm_collect_damaged_targets() {
     done <"$out_file"
 }
 
+# Empty (0-byte) files that Multipar often puts in a set; par2cmdline reports them
+# as "damaged" even when every real data file is OK.
+pgm_collect_empty_targets() {
+    local out_file="$1"
+    local line name path
+    local -A seen=()
+
+    EMPTY_PAR2_TARGETS=()
+
+    if [[ -n "$out_file" && -f "$out_file" ]]; then
+        while IFS= read -r line || [[ -n "$line" ]]; do
+            line="${line//$'\r'/}"
+            case "$line" in
+                Target:*" - empty."*)
+                    name="${line#Target: \"}"
+                    name="${name%%\" - empty.*}"
+                    ;;
+                *)
+                    continue
+                    ;;
+            esac
+            [[ -n "$name" ]] || continue
+            [[ -n "${seen[$name]:-}" ]] && continue
+            seen[$name]=1
+            EMPTY_PAR2_TARGETS+=("$name")
+        done <"$out_file"
+    fi
+
+    # Full list from PAR2 metadata + on-disk size (verify log often omits most empties).
+    if [[ -n "${PAR2_FILE:-}" && -n "${DATA_DIR:-}" ]]; then
+        while IFS= read -r name || [[ -n "$name" ]]; do
+            [[ -n "$name" ]] || continue
+            path="$DATA_DIR/$name"
+            if [[ -f "$path" && ! -s "$path" ]]; then
+                [[ -n "${seen[$name]:-}" ]] && continue
+                seen[$name]=1
+                EMPTY_PAR2_TARGETS+=("$name")
+            fi
+        done < <(run_rename_py "$(basename -- "$PAR2_FILE")" list-names 2>/dev/null || true)
+    fi
+
+    if ((${#EMPTY_PAR2_TARGETS[@]} > 1)); then
+        mapfile -t EMPTY_PAR2_TARGETS < <(printf '%s\n' "${EMPTY_PAR2_TARGETS[@]}" | LC_ALL=C sort -u)
+    fi
+}
+
+pgm_print_empty_targets_report() {
+    local n=${#EMPTY_PAR2_TARGETS[@]}
+    local i max_show=40
+
+    (( n > 0 )) || return 0
+
+    echo
+    echo "Empty (0-byte) file(s) listed in this PAR2 set (${n}):"
+    for i in "${!EMPTY_PAR2_TARGETS[@]}"; do
+        (( i < max_show )) || { echo "  ... and $(( n - max_show )) more"; break; }
+        printf '  %s\n' "${EMPTY_PAR2_TARGETS[$i]}"
+    done
+    echo
+    echo "Note: par2cmdline treats empty files as \"damaged\". MultiPar usually ignores"
+    echo "them. Repair rarely helps (often writes 0 bytes again). Skipping repair is normal."
+    echo "To drop them from a future set, regenerate (par2 create skips 0-byte files)."
+}
+
 # A damaged .par2 / hash file is often one this run (or an earlier one) updated
 # on purpose, so repairing it from the recovery blocks rolls that update back.
 pgm_print_damaged_targets_report() {
@@ -2769,7 +2860,7 @@ pgm_print_damaged_targets_report() {
     (( n > 0 )) || return 0
 
     echo
-    echo "Damaged file(s) (${n}):"
+    echo "Damaged file(s) — content mismatch (${n}):"
     for i in "${!DAMAGED_PAR2_TARGETS[@]}"; do
         (( i < max_show )) || { echo "  ... and $(( n - max_show )) more"; break; }
         printf '  %s\n' "${DAMAGED_PAR2_TARGETS[$i]}"
@@ -2826,8 +2917,10 @@ print_summary() {
 
     pgm_collect_missing_targets "$out_file"
     pgm_collect_damaged_targets "$out_file"
+    pgm_collect_empty_targets "$out_file"
 
     REPAIR_POSSIBLE=0
+    PGM_EMPTY_ONLY_DAMAGE=0
     grep -qiE 'repair is possible' "$out_file" && REPAIR_POSSIBLE=1
 
     wrong=$(grep -E '[0-9]+ file\(s\) have the wrong name\.' "$out_file" | head -1 || true)
@@ -2837,6 +2930,17 @@ print_summary() {
     missing=${#MISSING_PAR2_TARGETS[@]}
     matches=${#MISNAMED_DISK[@]}
 
+    # par2cmdline: empty files counted as "damaged"; often "none of the recovery
+    # blocks will be used". Treat as empty-only when no real content damage.
+    if (( ${#DAMAGED_PAR2_TARGETS[@]} == 0 && ${#EMPTY_PAR2_TARGETS[@]} > 0 \
+        && missing == 0 && matches == 0 )); then
+        if (( REPAIR_POSSIBLE == 1 )) \
+            || grep -qiE 'none of the recovery blocks will be used' "$out_file"; then
+            PGM_EMPTY_ONLY_DAMAGE=1
+            REPAIR_POSSIBLE=1
+        fi
+    fi
+
     for i in "${!MISNAMED_DISK[@]}"; do
         echo "File: \"${MISNAMED_DISK[$i]}\" - is a match for \"${MISNAMED_PAR2[$i]}\"."
     done
@@ -2845,9 +2949,11 @@ print_summary() {
     echo "Summary:"
     echo "  Missing targets (by PAR2 name): ${missing}"
     echo "  Content matches found on disk:  ${matches}"
-    echo "  Damaged files:                  ${#DAMAGED_PAR2_TARGETS[@]}"
+    echo "  Damaged files (content):        ${#DAMAGED_PAR2_TARGETS[@]}"
+    echo "  Empty files (0-byte in set):    ${#EMPTY_PAR2_TARGETS[@]}"
     [[ -n "$wrong" ]] && echo "  ${wrong}"
     pgm_print_missing_targets_report
+    pgm_print_empty_targets_report
 
     if (( matches > 0 )); then
         echo
@@ -2901,6 +3007,22 @@ print_summary() {
 
     if (( REPAIR_POSSIBLE )); then
         pgm_print_damaged_targets_report
+        if (( PGM_EMPTY_ONLY_DAMAGE == 1 )); then
+            if (( NO_REPAIR == 0 && REPAIR == 0 )); then
+                echo
+                echo "You will be asked about repair (default: no / skip — recommended here)."
+            elif (( REPAIR == 1 )); then
+                echo
+                echo "Empty-file \"repair\" will run automatically (--repair); often a no-op."
+            fi
+            pgm_print_step_verdict 3 WARN \
+                "Only empty (0-byte) files flagged; real data files are OK."
+            pgm_print_outcome warn \
+                "What looks wrong: ${#EMPTY_PAR2_TARGETS[@]} empty file(s) in the PAR2 set." \
+                "Real data files verify OK; par2cmdline calls empties \"damaged\"." \
+                "Recommended: skip repair (Enter/N). Optional: regenerate to drop empties."
+            return 2
+        fi
         if (( NO_REPAIR == 0 && REPAIR == 0 )); then
             echo
             echo "You will be asked whether to repair (default: no, q quits, $(pgm_prompt_timeout_label))."
@@ -2939,6 +3061,8 @@ pgm_run_one_par2_set() {
     MISNAMED_PAR2=()
     RENAME_PAIRS=()
     DAMAGED_PAR2_TARGETS=()
+    EMPTY_PAR2_TARGETS=()
+    PGM_EMPTY_ONLY_DAMAGE=0
     REPAIR_POSSIBLE=0
     PGM_POST_RENAME_OUT=""
     OUT2_FILE=""
