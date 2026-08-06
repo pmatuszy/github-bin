@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20260806.204438 - per-file prompt: status/dB before filename; Selected: echo after answers
 # v. 20260802.225739 - revert normalize when the result measures quieter than the original
 # v. 20260802.224401 - fix aac "Unsupported channel layout 6 channels" (pin unspecified layouts)
 # v. 20260801.162132 - GoPro order: swap trak boxes in moov (ffmpeg cannot copy or reorder tmcd)
@@ -132,7 +133,9 @@ runs in interactive mode: it asks about terminal colors and scan scope, how much
 of each large file to scan (middle window, default 100%), whether to scan, and
 (after results are shown) whether to offer normalization. Each result row is
 printed as soon as that file is measured. With --colors yes, PERFECT rows are
-green in the scan table.
+green in the scan table. After each interactive answer a timestamped
+"Selected:" line records the resolved choice. Per-file normalize prompts put
+status/max/mean before the filename for easier scanning.
 
 Normalization (non-PERFECT by default; PERFECT is never offered for standard mode):
   standard   ffmpeg loudnorm (default filter parameters)
@@ -210,8 +213,10 @@ Options:
 Interactive normalization prompts (per file, in batches like ffmpeg-voice.sh):
   Ask about up to N files (batch size, default 50), then normalize only the
   files you selected in that batch before the next batch of prompts.
-  Per-file normalize (batch prompts; default Y for NORMAL/TOO QUIET, N for
-  PERFECT or NO_PROCESS):
+  Per-file line: (STATUS, max … dB, mean … dB) Normalize: path? — status and
+  levels come before the filename. After each answer a "Selected:" line with
+  timestamp records the choice. Default Y for NORMAL/TOO QUIET, N for PERFECT
+  or NO_PROCESS:
   [Y]/[n] yes/no, [d] rest of directory, [a] all remaining in batch,
   [f] finish batch (normalize selected; stop asking), [g] normalize selected and
   skip all further prompts, [q] quit.
@@ -528,6 +533,11 @@ loudness_prompt_ts() {
   printf '[%s]' "$(date '+%Y.%m.%d %H:%M:%S')"
 }
 
+# Echo a short, timestamped confirmation of what the user just chose.
+loudness_print_selected() {
+  printf '%s Selected: %s\n' "$(loudness_prompt_ts)" "$*"
+}
+
 if [[ -f "${BASH_SOURCE[0]}" ]]; then
   chmod 700 "${BASH_SOURCE[0]}" 2>/dev/null || true
 fi
@@ -666,6 +676,11 @@ prompt_use_colors() {
     N) LOUDNESS_USE_COLORS=no ;;
     *) LOUDNESS_USE_COLORS=yes ;;
   esac
+  if [[ "$LOUDNESS_USE_COLORS" == yes ]]; then
+    loudness_print_selected 'yes (use colors)'
+  else
+    loudness_print_selected 'no (colors off)'
+  fi
   if (( colors_uncertain )) && [[ "$LOUDNESS_USE_COLORS" == no ]]; then
     loudness_init_colors
   fi
@@ -762,7 +777,7 @@ loudness_wants_per_file_prompts() {
 
 loudness_quit_now() {
   LOUDNESS_STOPPED_BY_USER=yes
-  echo "Quit requested."
+  loudness_print_selected 'quit'
   return_code=0
   exit 0
 }
@@ -1205,6 +1220,11 @@ prompt_youtube_include_perfect_print_cli() {
     N) LOUDNESS_INCLUDE_PERFECT=0 ;;
     *) LOUDNESS_INCLUDE_PERFECT=1 ;;
   esac
+  if (( LOUDNESS_INCLUDE_PERFECT )); then
+    loudness_print_selected 'yes (include PERFECT)'
+  else
+    loudness_print_selected 'no (leave PERFECT out)'
+  fi
   echo
 }
 
@@ -1240,7 +1260,7 @@ prompt_scan_scope() {
     C) LOUDNESS_SCAN_SCOPE=current ;;
     *) LOUDNESS_SCAN_SCOPE=subdirs ;;
   esac
-  echo "Scope: $(loudness_scan_scope_label)"
+  loudness_print_selected "$(loudness_scan_scope_label)"
   cli_equiv_note "CLI: --scope ${LOUDNESS_SCAN_SCOPE}"
 }
 
@@ -1496,7 +1516,11 @@ prompt_scan_percent_interactive() {
     echo 'Invalid scan percent. Using default: 100'
     LOUDNESS_SCAN_PERCENT=100
   fi
-  echo "Scan sample: $(loudness_scan_sample_description)"
+  if (( LOUDNESS_SCAN_PERCENT == 100 )); then
+    loudness_print_selected 'scan 100% (full file)'
+  else
+    loudness_print_selected "scan ${LOUDNESS_SCAN_PERCENT}% of each large file"
+  fi
   if (( LOUDNESS_SCAN_PERCENT != 100 )); then
     cli_equiv_note "CLI: --scan-percent ${LOUDNESS_SCAN_PERCENT}"
   fi
@@ -2192,7 +2216,7 @@ prompt_normalize_classes() {
   fi
   LOUDNESS_CLASSES_RESOLVED=1
   LOUDNESS_CLASSES="$(loudness_classes_cli_spec)"
-  echo "Selected classes: $(loudness_classes_label)"
+  loudness_print_selected "classes $(loudness_classes_label)"
   cli_equiv_note "CLI: --classes ${LOUDNESS_CLASSES}"
 }
 
@@ -2475,9 +2499,15 @@ loudness_confirm_normalize_disk_space() {
 
   loudness_read_yn_key 'Proceed with normalization anyway? [y/N/q]: ' N
   case "${REPLY^^}" in
-    Y|YES) return 0 ;;
+    Y|YES)
+      loudness_print_selected 'yes (proceed despite low free space)'
+      return 0
+      ;;
     Q) loudness_quit_now ;;
-    *) return 1 ;;
+    *)
+      loudness_print_selected 'no (abort — not enough free space)'
+      return 1
+      ;;
   esac
 }
 
@@ -2602,13 +2632,18 @@ resolve_backup_conflict() {
     echo '    Only the backup remains — cannot normalize without the original file.'
     loudness_read_yn_key 'Restore backup to original name and skip normalize? [Y/n/q]: ' Y
     case "${REPLY^^}" in
-      Q) _result=quit ; return 0 ;;
+      Q)
+        loudness_print_selected 'quit'
+        _result=quit
+        return 0
+        ;;
       N)
-        echo '    Skipped.'
+        loudness_print_selected 'no — leave backup; skip normalize'
         _result=skip
         return 0
         ;;
       *)
+        loudness_print_selected 'restore backup; skip normalize'
         if mv -- "$backup" "$file"; then
           echo "    Restored ${file} from backup (not normalized)."
           _result=skip
@@ -2629,18 +2664,22 @@ resolve_backup_conflict() {
   echo '  [q] Quit'
   loudness_read_key "Backup conflict for ${file}? [y/k/S/q]: " S
   case "${REPLY^^}" in
-    Q) _result=quit ;;
+    Q)
+      loudness_print_selected 'quit'
+      _result=quit
+      ;;
     Y)
+      loudness_print_selected 'replace old backup and move current aside'
       if remove_old_backup_and_move_aside "$file" "$backup"; then
         _result=moved
       fi
       ;;
     K)
-      echo '    Keeping existing backup; normalizing in place.'
+      loudness_print_selected 'keep old backup; normalize in place'
       _result=inplace
       ;;
     *)
-      echo '    Skipped: backup left unchanged.'
+      loudness_print_selected 'skip this file (backup left unchanged)'
       _result=skip
       ;;
   esac
@@ -3745,12 +3784,21 @@ prompt_startup_interactive() {
     Q) loudness_quit_now ;;
     N)
       if (( PRINT_CLI_ONLY )); then
+        loudness_print_selected 'no (omit scan from built command)'
         echo 'No command built (scan step declined).'
       else
+        loudness_print_selected 'no (skip scan)'
         echo 'Scan skipped.'
       fi
       return_code=0
       exit 0
+      ;;
+    *)
+      if (( PRINT_CLI_ONLY )); then
+        loudness_print_selected 'yes (include scan in built command)'
+      else
+        loudness_print_selected 'yes (run scan)'
+      fi
       ;;
   esac
 }
@@ -3804,6 +3852,11 @@ prompt_offer_normalize_after_scan() {
       fi
       ;;
   esac
+  if (( LOUDNESS_OFFER_NORMALIZE )); then
+    loudness_print_selected 'yes (open loudnorm wizard)'
+  else
+    loudness_print_selected 'no (skip normalize)'
+  fi
   cli_equiv_note "Offer normalize after scan: $(( LOUDNESS_OFFER_NORMALIZE ))"
 }
 
@@ -3832,6 +3885,11 @@ prompt_normalize_mode() {
     S) NORMALIZE_MODE=standard ;;
     N) NORMALIZE_MODE=none ;;
     *) NORMALIZE_MODE=youtube ;;
+  esac
+  case "$NORMALIZE_MODE" in
+    standard) loudness_print_selected 'standard loudnorm' ;;
+    youtube)  loudness_print_selected 'youtube-style loudnorm' ;;
+    *)        loudness_print_selected 'skip normalization' ;;
   esac
   if (( PRINT_CLI_ONLY )); then
     if [[ "$NORMALIZE_MODE" == none ]]; then
@@ -3863,7 +3921,10 @@ prompt_youtube_include_perfect() {
       ;;
   esac
   if (( LOUDNESS_INCLUDE_PERFECT )); then
+    loudness_print_selected 'yes (include PERFECT)'
     cli_equiv_note 'CLI: --include-perfect'
+  else
+    loudness_print_selected 'no (leave PERFECT out)'
   fi
 }
 
@@ -3876,7 +3937,10 @@ prompt_save_original_aside() {
     *) LOUDNESS_SAVE_ORIGINAL=1 ;;
   esac
   if (( LOUDNESS_SAVE_ORIGINAL )); then
+    loudness_print_selected 'yes (*.backup.deleteme)'
     cli_equiv_note 'CLI: --save-original'
+  else
+    loudness_print_selected 'no (do not move originals aside)'
   fi
 }
 
@@ -3930,7 +3994,7 @@ loudness_read_normalize_batch_choice() {
     echo '  [f] Finish batch now (normalize selected only; stop asking for rest of batch)'
     echo '  [g] Normalize selected; skip all further prompts this run'
     echo '  [q] Quit'
-    prompt="Normalize ${file} (${status}, max ${max_disp}, mean ${mean_disp})? [Y/n/d/a/f/g/q]: "
+    prompt="(${status}, max ${max_disp}, mean ${mean_disp}) Normalize: ${file}? [Y/n/d/a/f/g/q]: "
     loudness_read_yn_key "$prompt" Y
   else
     echo '  [y] Yes normalize'
@@ -3940,7 +4004,7 @@ loudness_read_normalize_batch_choice() {
     echo '  [f] Finish batch now (normalize selected only; stop asking for rest of batch)'
     echo '  [g] Normalize selected; skip all further prompts this run'
     echo '  [q] Quit'
-    prompt="Normalize ${file} (${status}, max ${max_disp}, mean ${mean_disp})? [y/N/d/a/f/g/q]: "
+    prompt="(${status}, max ${max_disp}, mean ${mean_disp}) Normalize: ${file}? [y/N/d/a/f/g/q]: "
     loudness_read_yn_key "$prompt" N
   fi
 
@@ -3961,6 +4025,31 @@ loudness_read_normalize_batch_choice() {
         LOUDNESS_BATCH_CHOICE_DECISION='no'
       fi
       LOUDNESS_BATCH_CHOICE_ACTION=decided
+      ;;
+  esac
+
+  case "$LOUDNESS_BATCH_CHOICE_ACTION" in
+    quit)
+      loudness_print_selected 'quit'
+      ;;
+    decided)
+      if [[ "$LOUDNESS_BATCH_CHOICE_DECISION" == yes ]]; then
+        loudness_print_selected "yes — normalize ${file}"
+      else
+        loudness_print_selected "no — skip ${file}"
+      fi
+      ;;
+    decided_dir)
+      loudness_print_selected "yes + rest of directory $(dirname -- "$file")/"
+      ;;
+    accept_all)
+      loudness_print_selected 'yes for all remaining in this batch'
+      ;;
+    finish_batch)
+      loudness_print_selected 'finish batch now (normalize already-selected only)'
+      ;;
+    skip_all)
+      loudness_print_selected 'normalize selected; skip all further prompts'
       ;;
   esac
 }
@@ -3992,7 +4081,7 @@ prompt_batch_size_interactive() {
     BATCH_SIZE=50
   fi
   LOUDNESS_BATCH_SIZE="$BATCH_SIZE"
-  echo "Batch size: ${BATCH_SIZE}"
+  loudness_print_selected "batch size ${BATCH_SIZE}"
   cli_equiv_note "CLI: --batch-size ${BATCH_SIZE}"
 }
 
@@ -4189,18 +4278,15 @@ normalize_run_batch_prompt_loop() {
       case "$LOUDNESS_BATCH_CHOICE_ACTION" in
         quit)
           LOUDNESS_STOPPED_BY_USER=yes
-          echo 'Quit requested.'
           return 2
           ;;
         finish_batch)
           finish_batch_now='yes'
-          echo "Finishing this batch — normalizing ${batch_yes} selected file(s) only."
           break
           ;;
         skip_all)
           skip_remaining='yes'
           finish_batch_now='yes'
-          echo "Skipping all further normalize prompts — normalizing ${batch_yes} selected file(s) from this batch."
           break
           ;;
         accept_all)
@@ -4267,7 +4353,7 @@ normalize_run_batch_prompt_loop() {
             normalize_one_selected_file "${batch_indices[$j]}" "$filter" || rc=$?
             case "$rc" in
               2) (( ++_norm_backup_skip )); loudness_stats_record_norm_result 2 ;;
-              3) LOUDNESS_STOPPED_BY_USER=yes; echo 'Quit requested.' ; return 2 ;;
+              3) LOUDNESS_STOPPED_BY_USER=yes; return 2 ;;
             esac
           done
         fi
@@ -4337,7 +4423,7 @@ normalize_candidate_files() {
       normalize_one_selected_file "$i" "$filter" || rc=$?
       case "$rc" in
         2) (( ++norm_backup_skip )); loudness_stats_record_norm_result 2 ;;
-        3) LOUDNESS_STOPPED_BY_USER=yes; LOUDNESS_STATS_NORM_SKIP=$norm_skip; echo 'Quit requested.' ; return 2 ;;
+        3) LOUDNESS_STOPPED_BY_USER=yes; LOUDNESS_STATS_NORM_SKIP=$norm_skip; return 2 ;;
       esac
     done
     LOUDNESS_STATS_NORM_SKIP=$norm_skip
