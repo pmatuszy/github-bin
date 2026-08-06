@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20260806.214403 - file-based grep noise filter; auto-skip empty-only repair; Step8 empty WARN
 # v. 20260806.193137 - regenerate: -b >= file count; drop 0-byte sources before par2 create
 # v. 20260806.184043 - list empty PAR2 targets; empty-only "damage" explains skip-repair is normal
 # v. 20260806.181727 - also hide Target empty; strip CR so Opening/found filter always matches
@@ -35,6 +36,7 @@
 # v. 20260719.103506 - fix no-arg run: empty POSITIONAL[@]:- became one "" element
 # v. 20260719.102800 - multi-set selection: A/a, ranges 1-4, --all, multiple paths
 
+# 2026.08.06 - v. 0.1.51 - File-based grep noise filter; never offer empty-only repair; Step8 WARN
 # 2026.08.06 - v. 0.1.50 - Regenerate: set -b >= file count; exclude 0-byte files from create
 # 2026.08.06 - v. 0.1.49 - List empty PAR2 targets; empty-only damage: explain skip repair is normal
 # 2026.08.06 - v. 0.1.48 - Also hide Target empty; harden Opening/found filter against CR
@@ -354,13 +356,8 @@ pgm_prompt_read_rename_choice() {
 
 pgm_prompt_read_repair_choice() {
     # Always default no — repair can rename disk files and undo intentional edits.
-    if (( PGM_EMPTY_ONLY_DAMAGE == 1 )); then
-        pgm_prompt_read_yes_no_quit 0 "$1" \
-            "Still run par2 repair on those empty file(s)? (usually skip)"
-    else
-        pgm_prompt_read_yes_no_quit 0 "$1" \
-            "Repair damaged DATA file(s) from recovery blocks now?"
-    fi
+    pgm_prompt_read_yes_no_quit 0 "$1" \
+        "Repair damaged DATA file(s) from recovery blocks now?"
 }
 
 pgm_prompt_read_hash_tidy_choice() {
@@ -1262,37 +1259,56 @@ pgm_print_outcome() {
     echo
 }
 
+# $1 = path to a log file, or raw par2 text (not an existing path).
 pgm_par2_output_indicates_ok() {
-    grep -qiE 'repair is not required|all files are (ok|correct)' <<< "$1"
+    local src="$1"
+    if [[ -n "$src" && -f "$src" ]]; then
+        grep -qiE 'repair is not required|all files are (ok|correct)' "$src"
+    else
+        grep -qiE 'repair is not required|all files are (ok|correct)' <<< "$src"
+    fi
 }
 
 pgm_extract_par2_ok_line() {
-    grep -iE 'repair is not required|all files are (ok|correct)' <<< "$1" \
-        | head -n 1 \
-        | sed -E 's/^[[:space:]]+//;s/[[:space:]]+$//'
+    local src="$1"
+    if [[ -n "$src" && -f "$src" ]]; then
+        grep -iE 'repair is not required|all files are (ok|correct)' "$src"
+    else
+        grep -iE 'repair is not required|all files are (ok|correct)' <<< "$src"
+    fi | head -n 1 | sed -E 's/^[[:space:]]+//;s/[[:space:]]+$//'
 }
 
 # Drop high-volume par2 progress noise from what the user sees.
 # Full unfiltered output stays in temp files for rename/damage parsing.
-# Strip CR so DOS line endings still match; keep missing/damaged/match lines.
-pgm_filter_par2_noise_sed() {
-    sed -E \
-        -e 's/\r$//' \
-        -e '/^[[:space:]]*Opening:/d' \
-        -e '/^[[:space:]]*Target: .* - found\.?[[:space:]]*$/d' \
-        -e '/^[[:space:]]*Target: .* - empty\.?[[:space:]]*$/d' \
-        -e '/^[[:space:]]*Skipping 0 byte file:/d' \
-        -e '/^[[:space:]]*[Aa]ll files are (ok|correct).*repair is not required\.?[[:space:]]*$/Id'
-}
-
-pgm_filter_par2_verify_output() {
-    local text="$1"
-    pgm_filter_par2_noise_sed <<< "$text" \
-        | sed -E -e :a -e '/^\s*$/{$d;N;ba' -e '}'
-}
-
+# Use grep (not sed+here-string): huge Step 2/3 logs break ARG_MAX / <<< reliably.
 pgm_filter_par2_verify_stream() {
-    pgm_filter_par2_noise_sed
+    tr -d '\r' \
+        | grep -vE '^[[:space:]]*(Opening:|Skipping 0 byte file:)' \
+        | grep -vE '^[[:space:]]*Target: .* - (found|empty)\.?[[:space:]]*$' \
+        | grep -viE '^[[:space:]]*All files are (ok|correct).*repair is not required' \
+        || true
+}
+
+pgm_filter_par2_verify_file() {
+    local f="$1"
+    [[ -n "$f" && -f "$f" ]] || return 0
+    <"$f" pgm_filter_par2_verify_stream
+    echo
+}
+
+pgm_estimate_recovery_percent_from_file() {
+    local f="$1"
+    local data_blocks="" recovery_blocks="" pct
+    [[ -n "$f" && -f "$f" ]] || return 1
+    data_blocks=$(grep -oE '[Tt]here are a total of [0-9]+ data blocks' "$f" \
+        | head -n 1 | grep -oE '[0-9]+' | head -n 1)
+    recovery_blocks=$(grep -oE '[Yy]ou have [0-9]+ recovery blocks available' "$f" \
+        | head -n 1 | grep -oE '[0-9]+' | head -n 1)
+    [[ -n "$data_blocks" && -n "$recovery_blocks" && "$data_blocks" -gt 0 ]] || return 1
+    pct=$(( (recovery_blocks * 100 + data_blocks / 2) / data_blocks ))
+    (( pct < 1 )) && pct=1
+    (( pct > 100 )) && pct=100
+    printf '%s' "$pct"
 }
 
 pgm_wall_clock_now() {
@@ -2309,8 +2325,7 @@ prompt_and_apply_rename() {
     local OUT6_FILE
     OUT6_FILE=$(mktemp "${TMPDIR:-/tmp}/par2-pgm-check.XXXXXX")
     run_par2 verify "$PAR2_FILE" >"$OUT6_FILE" 2>&1
-    <"$OUT6_FILE" pgm_filter_par2_verify_stream
-    echo
+    pgm_filter_par2_verify_file "$OUT6_FILE"
     pgm_collect_missing_targets "$OUT6_FILE"
     pgm_print_missing_targets_report
     PGM_POST_RENAME_OUT=$(<"$OUT6_FILE")
@@ -2356,37 +2371,36 @@ prompt_and_apply_repair() {
         return 1
     fi
 
+    # Empty stubs: par2cmdline calls them damaged but repair is a multi-hour no-op
+    # ("None of the recovery blocks will be used"). Never offer / never run.
+    if (( PGM_EMPTY_ONLY_DAMAGE == 1 )); then
+        echo
+        echo "=== Repair skipped (empty 0-byte stubs only) ==="
+        echo "par2cmdline flagged ${#EMPTY_PAR2_TARGETS[@]} empty file(s) as damaged."
+        echo "Real data files already verify OK. Repair cannot fix 0-byte stubs"
+        echo "(often writes 0 bytes again; MultiPar ignores these)."
+        echo "Next: Regenerate if you want a PAR2 set without empty files."
+        pgm_print_step_verdict 7 SKIP "Empty-only case: repair not offered (would be a no-op)."
+        return 1
+    fi
+
     if (( REPAIR == 0 )); then
         echo
-        if (( PGM_EMPTY_ONLY_DAMAGE == 1 )); then
-            echo "=== Repair (optional — usually skip) ==="
-            echo "par2cmdline flagged ${#EMPTY_PAR2_TARGETS[@]} empty (0-byte) file(s) as damaged."
-            echo "Real data files already verify OK. Repair of empties rarely changes anything"
-            echo "(par2cmdline known limitation; MultiPar ignores these)."
-            echo "Recommended: N / Enter (skip). Use Regenerate later if you want a set"
-            echo "without empty files (create skips 0-byte files)."
-        else
-            echo "=== Repair (optional) ==="
-            echo "What it does: keep THIS PAR2 set; rebuild damaged DATA file(s) from"
-            echo "  recovery blocks so their content matches what PAR2 expects."
-            echo "Side effect: par2 may also rename disk files to the names stored in PAR2."
-            echo "Choose this when the PAR2 archives are the trusted copy and the data"
-            echo "  file(s) on disk are wrong/corrupt."
-            echo "Skip this if you want to leave damaged data as-is, or if you plan to"
-            echo "  Regenerate (accept current disk files as the new baseline)."
-        fi
+        echo "=== Repair (optional) ==="
+        echo "What it does: keep THIS PAR2 set; rebuild damaged DATA file(s) from"
+        echo "  recovery blocks so their content matches what PAR2 expects."
+        echo "Side effect: par2 may also rename disk files to the names stored in PAR2."
+        echo "Choose this when the PAR2 archives are the trusted copy and the data"
+        echo "  file(s) on disk are wrong/corrupt."
+        echo "Skip this if you want to leave damaged data as-is, or if you plan to"
+        echo "  Regenerate (accept current disk files as the new baseline)."
         pgm_prompt_read_repair_choice repair_choice
         case "$repair_choice" in
             0)
                 ;;
             1)
-                if (( PGM_EMPTY_ONLY_DAMAGE == 1 )); then
-                    echo "Skipped empty-file repair (recommended)."
-                    pgm_print_step_verdict 7 SKIP "Empty-file repair skipped (normal for 0-byte stubs)."
-                else
-                    echo "Skipped repair."
-                    pgm_print_step_verdict 7 SKIP "Repair skipped at prompt."
-                fi
+                echo "Skipped repair."
+                pgm_print_step_verdict 7 SKIP "Repair skipped at prompt."
                 return 1
                 ;;
             2)
@@ -2566,7 +2580,7 @@ prompt_and_regenerate_par2_set() {
     local regen_choice=0 backup_choice=0 percent=20 suggested=20 tmp=""
     local stem member base src dst create_rc=0
     local -a old_basenames=() backed_up=()
-    local OUT9_FILE out9_text
+    local OUT9_FILE
 
     (( SUMMARY_RC != 0 )) || return 1
 
@@ -2576,11 +2590,17 @@ prompt_and_regenerate_par2_set() {
     fi
 
     suggested=20
-    if tmp=$(pgm_estimate_recovery_percent_from_text "${OUT1:-}"); then
-        suggested="$tmp"
+    if [[ -n "${OUT1_FILE:-}" && -f "${OUT1_FILE:-}" ]]; then
+        if tmp=$(pgm_estimate_recovery_percent_from_file "$OUT1_FILE"); then
+            suggested="$tmp"
+        fi
+    elif [[ -n "${OUT1:-}" ]]; then
+        if tmp=$(pgm_estimate_recovery_percent_from_text "$OUT1"); then
+            suggested="$tmp"
+        fi
     fi
     if [[ -n "${OUT2_FILE:-}" && -f "${OUT2_FILE:-}" ]]; then
-        if tmp=$(pgm_estimate_recovery_percent_from_text "$(<"$OUT2_FILE")"); then
+        if tmp=$(pgm_estimate_recovery_percent_from_file "$OUT2_FILE"); then
             suggested="$tmp"
         fi
     fi
@@ -2723,15 +2743,13 @@ prompt_and_regenerate_par2_set() {
         cd "$DATA_DIR" || exit 1
         run_par2 verify "$(basename "$PAR2_FILE")"
     ) >"$OUT9_FILE" 2>&1 || true
-    <"$OUT9_FILE" pgm_filter_par2_verify_stream
-    echo
-    out9_text=$(<"$OUT9_FILE")
-    rm -f "$OUT9_FILE"
-    if pgm_par2_output_indicates_ok "$out9_text"; then
+    pgm_filter_par2_verify_file "$OUT9_FILE"
+    if pgm_par2_output_indicates_ok "$OUT9_FILE"; then
         pgm_print_step_verdict 10 OK "Post-regenerate verify passed."
         pgm_print_outcome ok \
             "PAR2 set regenerated; verification passed." \
-            "$(pgm_extract_par2_ok_line "$out9_text")"
+            "$(pgm_extract_par2_ok_line "$OUT9_FILE")"
+        rm -f "$OUT9_FILE"
         SUMMARY_RC=0
         return 0
     fi
@@ -2739,6 +2757,7 @@ prompt_and_regenerate_par2_set() {
     pgm_print_outcome err \
         "Regenerate finished but verification still reports problems." \
         "Review Step 10 output above. Old files remain as *.par2.old."
+    rm -f "$OUT9_FILE"
     SUMMARY_RC=3
     return 1
 }
@@ -3038,19 +3057,15 @@ print_summary() {
     if (( REPAIR_POSSIBLE )); then
         pgm_print_damaged_targets_report
         if (( PGM_EMPTY_ONLY_DAMAGE == 1 )); then
-            if (( NO_REPAIR == 0 && REPAIR == 0 )); then
-                echo
-                echo "You will be asked about repair (default: no / skip — recommended here)."
-            elif (( REPAIR == 1 )); then
-                echo
-                echo "Empty-file \"repair\" will run automatically (--repair); often a no-op."
-            fi
+            echo
+            echo "Repair will be skipped automatically (empty stubs only; no-op for par2cmdline)."
+            echo "You can regenerate next to drop empty files from the set."
             pgm_print_step_verdict 3 WARN \
                 "Only empty (0-byte) files flagged; real data files are OK."
             pgm_print_outcome warn \
                 "What looks wrong: ${#EMPTY_PAR2_TARGETS[@]} empty file(s) in the PAR2 set." \
                 "Real data files verify OK; par2cmdline calls empties \"damaged\"." \
-                "Recommended: skip repair (Enter/N). Optional: regenerate to drop empties."
+                "Repair skipped automatically. Optional: regenerate to drop empties."
             return 2
         fi
         if (( NO_REPAIR == 0 && REPAIR == 0 )); then
@@ -3095,6 +3110,8 @@ pgm_run_one_par2_set() {
     PGM_EMPTY_ONLY_DAMAGE=0
     REPAIR_POSSIBLE=0
     PGM_POST_RENAME_OUT=""
+    OUT1=""
+    OUT1_FILE=""
     OUT2_FILE=""
     PGM_HASH_VERIFY_MSG=""
     PGM_HASH_SYNCED_THIS_SET=0
@@ -3119,13 +3136,18 @@ pgm_run_one_par2_set() {
     pgm_timing_lap_to PGM_TIMING_HASH_SEC
 
     pgm_print_step_header "Step 2: verify (PAR2 names only)"
-    OUT1=$(run_par2 verify "$PAR2_FILE" 2>&1)
+    OUT1_FILE=$(mktemp "${TMPDIR:-/tmp}/par2-pgm-check.XXXXXX")
+    set +e
+    run_par2 verify "$PAR2_FILE" >"$OUT1_FILE" 2>&1
     RC1=$?
+    set -e
     pgm_timing_lap_to PGM_TIMING_PAR2_NAMES_SEC
-    printf '%s\n\n' "$(pgm_filter_par2_verify_output "$OUT1")"
+    pgm_filter_par2_verify_file "$OUT1_FILE"
 
-    if pgm_par2_output_indicates_ok "$OUT1"; then
-        par2_ok_line="$(pgm_extract_par2_ok_line "$OUT1")"
+    if pgm_par2_output_indicates_ok "$OUT1_FILE"; then
+        par2_ok_line="$(pgm_extract_par2_ok_line "$OUT1_FILE")"
+        rm -f "$OUT1_FILE"
+        OUT1_FILE=""
         pgm_print_step_verdict 2 OK "All files match under PAR2 names."
         pgm_print_outcome ok \
             "All files OK under PAR2 names." \
@@ -3140,9 +3162,8 @@ pgm_run_one_par2_set() {
     OUT2_FILE=$(mktemp "${TMPDIR:-/tmp}/par2-pgm-check.XXXXXX")
     pgm_par2_run_chunked verify "$OUT2_FILE"
     RC2=$?
-    <"$OUT2_FILE" pgm_filter_par2_verify_stream
+    pgm_filter_par2_verify_file "$OUT2_FILE"
     pgm_timing_lap_to PGM_TIMING_PAR2_SCAN_SEC
-    echo
 
     print_summary "$OUT2_FILE"
     SUMMARY_RC=$?
@@ -3173,33 +3194,49 @@ pgm_run_one_par2_set() {
 
     if (( SUMMARY_RC != 0 && REPAIR_POSSIBLE == 1 )); then
         if prompt_and_apply_repair; then
-            local OUT8_FILE out8_text
+            local OUT8_FILE empty_after=0
             pgm_print_step_header "Step 8: verify after repair"
             OUT8_FILE=$(mktemp "${TMPDIR:-/tmp}/par2-pgm-check.XXXXXX")
             pgm_par2_run_chunked verify "$OUT8_FILE"
-            <"$OUT8_FILE" pgm_filter_par2_verify_stream
-            echo
-            out8_text=$(<"$OUT8_FILE")
-            rm -f "$OUT8_FILE"
-            if pgm_par2_output_indicates_ok "$out8_text"; then
+            pgm_filter_par2_verify_file "$OUT8_FILE"
+            if pgm_par2_output_indicates_ok "$OUT8_FILE"; then
                 SUMMARY_RC=0
                 pgm_print_step_verdict 8 OK "Post-repair verify passed."
                 pgm_print_outcome ok \
                     "Repair completed; all files verify." \
-                    "$(pgm_extract_par2_ok_line "$out8_text")"
+                    "$(pgm_extract_par2_ok_line "$OUT8_FILE")"
             else
-                pgm_print_step_verdict 8 FAIL "Post-repair verify still reports problems."
-                pgm_print_outcome err \
-                    "Repair ran but verification still reports problems." \
-                    "Review Step 8 output above."
-                SUMMARY_RC=3
+                pgm_collect_damaged_targets "$OUT8_FILE"
+                pgm_collect_empty_targets "$OUT8_FILE"
+                if (( ${#DAMAGED_PAR2_TARGETS[@]} == 0 && ${#EMPTY_PAR2_TARGETS[@]} > 0 )); then
+                    empty_after=1
+                fi
+                if (( empty_after == 1 )); then
+                    PGM_EMPTY_ONLY_DAMAGE=1
+                    SUMMARY_RC=2
+                    pgm_print_step_verdict 8 WARN \
+                        "Only empty (0-byte) stubs still flagged; real data OK."
+                    pgm_print_outcome warn \
+                        "Repair finished; ${#EMPTY_PAR2_TARGETS[@]} empty stub(s) remain (expected)." \
+                        "par2cmdline cannot fix 0-byte files. Regenerate to drop them."
+                else
+                    pgm_print_step_verdict 8 FAIL "Post-repair verify still reports problems."
+                    pgm_print_outcome err \
+                        "Repair ran but verification still reports problems." \
+                        "Review Step 8 output above."
+                    SUMMARY_RC=3
+                fi
             fi
+            rm -f "$OUT8_FILE"
         fi
     fi
 
     if (( SUMMARY_RC != 0 )); then
         prompt_and_regenerate_par2_set || true
     fi
+
+    [[ -n "${OUT1_FILE:-}" && -f "${OUT1_FILE:-}" ]] && rm -f -- "$OUT1_FILE"
+    OUT1_FILE=""
 
     pgm_review_par2_hash_refs
 
