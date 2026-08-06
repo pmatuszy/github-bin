@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20260806.193137 - regenerate: -b >= file count; drop 0-byte sources before par2 create
 # v. 20260806.184043 - list empty PAR2 targets; empty-only "damage" explains skip-repair is normal
 # v. 20260806.181727 - also hide Target empty; strip CR so Opening/found filter always matches
 # v. 20260806.181027 - hide par2 Opening/found/0-byte noise; keep full log for parsing
@@ -34,6 +35,7 @@
 # v. 20260719.103506 - fix no-arg run: empty POSITIONAL[@]:- became one "" element
 # v. 20260719.102800 - multi-set selection: A/a, ranges 1-4, --all, multiple paths
 
+# 2026.08.06 - v. 0.1.50 - Regenerate: set -b >= file count; exclude 0-byte files from create
 # 2026.08.06 - v. 0.1.49 - List empty PAR2 targets; empty-only damage: explain skip repair is normal
 # 2026.08.06 - v. 0.1.48 - Also hide Target empty; harden Opening/found filter against CR
 # 2026.08.06 - v. 0.1.47 - Hide par2 Opening/found/0-byte noise on screen (full log kept for parsing)
@@ -2460,24 +2462,52 @@ pgm_restore_par2_from_dot_old() {
     done
 }
 
+# PAR2 requires block_count >= number of source files (default -b is 2000).
+# Cap is 32768 (16-bit GF). Exclude 0-byte files — create skips them anyway.
 pgm_par2_create_volume_only() {
     local stem="$1"
     local percent="$2"
     shift 2
-    local -a sources=("$@")
-    local index_path vol create_rc=0
+    local -a sources=("$@") nonempty=()
+    local index_path create_rc=0 block_count=0 skipped_empty=0 rel
     local -a vols=()
+    local max_par2_blocks=32768
 
     (( ${#sources[@]} > 0 )) || {
         echo "Error: no data files to protect." >&2
         return 1
     }
 
+    for rel in "${sources[@]}"; do
+        if [[ -f "$DATA_DIR/$rel" && -s "$DATA_DIR/$rel" ]]; then
+            nonempty+=("$rel")
+        else
+            ((skipped_empty++)) || true
+        fi
+    done
+
+    (( ${#nonempty[@]} > 0 )) || {
+        echo "Error: no non-empty data files to protect." >&2
+        return 1
+    }
+
+    block_count=${#nonempty[@]}
+    if (( block_count > max_par2_blocks )); then
+        echo "Error: ${block_count} non-empty files exceeds PAR2 max block count (${max_par2_blocks})." >&2
+        echo "Split the tree or archive first; a single PAR2 set cannot cover this many files." >&2
+        return 1
+    fi
+
+    if (( skipped_empty > 0 )); then
+        echo "Excluding ${skipped_empty} empty (0-byte) file(s) from the new set."
+    fi
+    echo "par2 create: ${#nonempty[@]} file(s), -b${block_count} (blocks >= files), -r${percent}%, -n1"
+
     (
         cd "$DATA_DIR" || exit 1
-        run_par2 create -n1 -r"$percent" -- "${stem}.par2" "${sources[@]}"
-    )
-    create_rc=$?
+        run_par2 create -n1 -b"$block_count" -r"$percent" -- "${stem}.par2" "${nonempty[@]}"
+    ) 2>&1 | pgm_filter_par2_verify_stream
+    create_rc=${PIPESTATUS[0]}
     (( create_rc == 0 )) || return "$create_rc"
 
     index_path="$DATA_DIR/${stem}.par2"
