@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# v. 20260806.132600 - write md5sum-safe 'HASH *file' (one space); detect 'HASH  *file' breakage
 # v. 20260806.131800 - scan-par2-refs: flag missing .par2 names as likely old archives
 # v. 20260806.130000 - hash list/verify/fix-par2-refs for stale .par2 lines in manifests
 # v. 20260806.081000 - regen hash sync also drops FastSum ';' comment lines
@@ -10,6 +11,7 @@
 # v. 20260721.154223 - list-names subcommand; --pairs-file for large rename batches
 # v. 20260719.093400 - hash inventory subcommand for startup scope summary
 
+# 2026.08.06 - v. 1.2.8.0 - Write md5sum-safe 'HASH *file'; detect 'HASH  *file' breakage
 # 2026.07.19 - v. 1.2.7.0 - hash inventory CLI for par2-pgm-check startup (counts + in-scope paths)
 # 2026.07.19 - v. 1.2.6.0 - hash inventory: report total hash files vs in-scope PAR2 matches
 # 2026.07.19 - v. 1.2.5.0 - hash verify/update: in-scope PAR2 set only; skip when hash has no .par2 lines
@@ -29,7 +31,7 @@ import struct
 import sys
 import tempfile
 
-VERSION = "1.2.6.0"
+VERSION = "1.2.8.0"
 MAX_RENAMES = 16
 INVALID_CHARS = '\\:*?"<>|'
 READ_CHUNK = 2097152
@@ -458,6 +460,20 @@ def hash_path_basename(path_field):
     return os.path.basename(path)
 
 
+def format_md5sum_binary_line(digest, basename):
+    """GNU md5sum -c line: one space then '*', then the filename.
+
+    Two spaces before '*' make md5sum treat '*./file' as a literal path, so
+    check fails even when basename exists. Always emit the safe form here.
+    """
+    return f"{digest} *{basename}"
+
+
+def raw_hash_line_has_broken_star_path(raw_line):
+    """True when digest is followed by 2+ spaces then '*' (broken for md5sum -c)."""
+    return bool(re.match(r"^[a-fA-F0-9]{32,128}[ \t]{2,}\*", raw_line.strip()))
+
+
 def parse_hash_file(hash_file_path):
     records = []
     with open(hash_file_path, "r", encoding="utf-8", errors="replace") as handle:
@@ -839,19 +855,12 @@ def _update_one_hash_file(folder_path, hash_file, par_files):
             continue
 
         new_hash = compute_file_hash(os.path.join(folder_path, record["basename"]), algo)
-        path_field = record["path"]
-        if "  " in record["raw"]:
-            sep = "  "
-        elif "\t" in record["raw"]:
-            sep = "\t"
-        else:
-            sep = " "
-        output_lines.append(f"{new_hash}{sep}{path_field}")
+        output_lines.append(format_md5sum_binary_line(new_hash, record["basename"]))
         updated_names.add(record["basename"])
 
     for par_name in sorted(par_files - updated_names):
         new_hash = compute_file_hash(os.path.join(folder_path, par_name), algo)
-        output_lines.append(f"{new_hash}  *./{par_name}")
+        output_lines.append(format_md5sum_binary_line(new_hash, par_name))
 
     new_text = "\n".join(output_lines)
     if original_text.endswith("\n"):
@@ -928,17 +937,28 @@ def list_par2_refs_in_hash_files(folder_path):
 def print_par2_refs_brief(folder_path):
     """One tab-separated row per hash file that lists .par2 names (no hashing).
 
-    Columns: path, ref_count, missing_count, refs_csv, missing_csv
+    Columns: path, ref_count, missing_count, bad_path_count, refs_csv,
+    missing_csv, bad_path_csv
     """
     for hash_file, names in list_par2_refs_in_hash_files(folder_path):
-        missing = [
-            name
-            for name in names
-            if not os.path.isfile(os.path.join(folder_path, name))
-        ]
+        missing = []
+        bad_paths = []
+        records = parse_hash_file(hash_file)
+        for record in records:
+            if record["type"] != "entry":
+                continue
+            name = record["basename"]
+            if name not in names:
+                continue
+            if not os.path.isfile(os.path.join(folder_path, name)):
+                if name not in missing:
+                    missing.append(name)
+            if raw_hash_line_has_broken_star_path(record["raw"]):
+                if name not in bad_paths:
+                    bad_paths.append(name)
         print(
-            f"{hash_file}\t{len(names)}\t{len(missing)}\t"
-            f"{','.join(names)}\t{','.join(missing)}"
+            f"{hash_file}\t{len(names)}\t{len(missing)}\t{len(bad_paths)}\t"
+            f"{','.join(names)}\t{','.join(missing)}\t{','.join(bad_paths)}"
         )
 
 
@@ -949,20 +969,29 @@ def print_active_par2_brief(folder_path):
 
 
 def verify_par2_refs_in_hash_files(folder_path):
-    """Check existence and digests for every .par2 line in every hash file."""
+    """Check existence, digests, and md5sum -c path format for .par2 lines."""
     rows = list_par2_refs_in_hash_files(folder_path)
     if not rows:
         return True, "No hash file lists .par2 entries."
 
     missing = []
     mismatches = []
+    bad_paths = []
     checked = 0
     for hash_file, names in rows:
         algo = hash_algo_from_path(hash_file)
         expected = entries_by_basename(hash_file)
         base = os.path.basename(hash_file)
+        records_by_base = {
+            record["basename"]: record
+            for record in parse_hash_file(hash_file)
+            if record["type"] == "entry"
+        }
         for name in names:
             checked += 1
+            record = records_by_base.get(name)
+            if record and raw_hash_line_has_broken_star_path(record["raw"]):
+                bad_paths.append(f"{base}: {name}")
             path = os.path.join(folder_path, name)
             if not os.path.isfile(path):
                 missing.append(f"{base}: {name}")
@@ -971,7 +1000,7 @@ def verify_par2_refs_in_hash_files(folder_path):
             if actual != expected[name].lower():
                 mismatches.append(f"{base}: {name}")
 
-    if not missing and not mismatches:
+    if not missing and not mismatches and not bad_paths:
         return True, (
             f"All {checked} .par2 hash entr"
             f"{'y' if checked == 1 else 'ies'} OK across {len(rows)} hash file(s)."
@@ -981,6 +1010,13 @@ def verify_par2_refs_in_hash_files(folder_path):
         f"Checked {checked} .par2 hash entr"
         f"{'y' if checked == 1 else 'ies'} in {len(rows)} file(s)."
     ]
+    if bad_paths:
+        lines.append(
+            f"Bad path format for md5sum -c ({len(bad_paths)}) — "
+            "line uses two spaces before '*', so md5sum looks for a literal "
+            "'*./filename' that does not exist:"
+        )
+        lines.extend(f"  - {item}" for item in bad_paths)
     if missing:
         lines.append(
             f"Missing on disk ({len(missing)}) — likely old PAR2 archive name(s) "
@@ -1045,16 +1081,10 @@ def fix_par2_refs_in_hash_files(folder_path):
                 continue
 
             new_hash = compute_file_hash(path, algo)
-            path_field = record["path"]
-            if "  " in record["raw"]:
-                sep = "  "
-            elif "\t" in record["raw"]:
-                sep = "\t"
-            else:
-                sep = " "
-            output_lines.append(f"{new_hash}{sep}{path_field}")
+            new_line = format_md5sum_binary_line(new_hash, base)
+            output_lines.append(new_line)
             updated.add(base)
-            if new_hash != record["hash"]:
+            if new_hash != record["hash"] or new_line != record["raw"].rstrip("\r\n"):
                 refreshed += 1
 
         appended = 0
@@ -1062,7 +1092,7 @@ def fix_par2_refs_in_hash_files(folder_path):
             if par_name in updated:
                 continue
             new_hash = compute_file_hash(os.path.join(folder_path, par_name), algo)
-            output_lines.append(f"{new_hash}  *./{par_name}")
+            output_lines.append(format_md5sum_binary_line(new_hash, par_name))
             appended += 1
 
         new_text = "\n".join(output_lines)
@@ -1131,15 +1161,16 @@ def sync_hash_files_after_regen(folder_path, remove_names, new_par_names):
                 continue
             if base in new_names:
                 new_hash = compute_file_hash(os.path.join(folder_path, base), algo)
-                path_field = record["path"]
-                if "  " in record["raw"]:
-                    sep = "  "
-                elif "\t" in record["raw"]:
-                    sep = "\t"
-                else:
-                    sep = " "
-                output_lines.append(f"{new_hash}{sep}{path_field}")
+                output_lines.append(format_md5sum_binary_line(new_hash, base))
                 updated.add(base)
+                continue
+            # Fix md5sum-breaking 'HASH  *file' lines without rehashing.
+            if is_par2_hash_ref_name(base) and raw_hash_line_has_broken_star_path(
+                record["raw"]
+            ):
+                output_lines.append(
+                    format_md5sum_binary_line(record["hash"].lower(), base)
+                )
                 continue
             output_lines.append(record["raw"])
 
@@ -1148,7 +1179,7 @@ def sync_hash_files_after_regen(folder_path, remove_names, new_par_names):
             if par_name in updated:
                 continue
             new_hash = compute_file_hash(os.path.join(folder_path, par_name), algo)
-            output_lines.append(f"{new_hash}  *./{par_name}")
+            output_lines.append(format_md5sum_binary_line(new_hash, par_name))
             appended += 1
 
         new_text = "\n".join(output_lines)

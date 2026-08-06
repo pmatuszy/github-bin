@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20260806.132630 - detect/fix md5sum-breaking 'HASH  *file' lines in manifests
 # v. 20260806.131800 - flag missing .par2 hash lines as old archives; offer remove (default no)
 # v. 20260806.130000 - after PAR2 OK, fast-scan hash files for .par2 refs; optional verify/fix
 # v. 20260806.112600 - repair prompt always defaults to no (Enter skips)
@@ -28,6 +29,7 @@
 # v. 20260719.103506 - fix no-arg run: empty POSITIONAL[@]:- became one "" element
 # v. 20260719.102800 - multi-set selection: A/a, ranges 1-4, --all, multiple paths
 
+# 2026.08.06 - v. 0.1.44 - Detect/fix 'HASH  *par2' (two spaces) so md5sum -c works
 # 2026.08.06 - v. 0.1.43 - Missing .par2 hash lines: show vs current PAR2; offer remove (default no)
 # 2026.08.06 - v. 0.1.42 - Fast-scan hash manifests for .par2 refs; optional verify/fix (default no)
 # 2026.08.06 - v. 0.1.41 - Repair prompt defaults to no (same as regenerate)
@@ -367,6 +369,11 @@ pgm_prompt_read_hash_par2_fix_choice() {
 pgm_prompt_read_hash_par2_remove_stale_choice() {
     pgm_prompt_read_yes_no_quit 0 "$1" \
         "Remove those missing (old) .par2 references from the hash file(s)?"
+}
+
+pgm_prompt_read_hash_par2_fix_path_choice() {
+    pgm_prompt_read_yes_no_quit 0 "$1" \
+        "Rewrite those .par2 hash lines to md5sum-safe form (HASH *file)?"
 }
 
 # Answer on one key (Enter = default); q quits the script. Sets 0=yes, 1=no, 2=quit.
@@ -1838,14 +1845,15 @@ pgm_review_hash_manifests() {
 }
 
 # Fast parse of hash manifests for .par2 lines (stat only, no hashing). Missing
-# names are treated as likely old PAR2 archives after recreate. Optionally
-# verify digests and rewrite manifests (all prompts default to no).
+# names are treated as likely old PAR2 archives after recreate. Also detect
+# 'HASH  *file' (two spaces) which breaks GNU md5sum -c. Optionally verify
+# digests and rewrite manifests (all prompts default to no).
 pgm_review_par2_hash_refs() {
-    local -a refs=() active=() stale_names=()
-    local -A stale_seen=()
-    local line path count missing_count names missing_csv base name
-    local check_choice=0 fix_choice=0 remove_choice=0 msg rc=0
-    local has_missing=0 has_present=0
+    local -a refs=() active=() stale_names=() bad_names=()
+    local -A stale_seen=() bad_seen=()
+    local line path count missing_count bad_count names missing_csv bad_csv base name
+    local check_choice=0 fix_choice=0 remove_choice=0 path_choice=0 msg rc=0
+    local has_missing=0 has_present=0 has_bad_path=0
 
     (( NO_HASH_PAR2_CHECK == 1 )) && return 0
     (( PGM_HASH_SYNCED_THIS_SET == 1 )) && return 0
@@ -1858,7 +1866,7 @@ pgm_review_par2_hash_refs() {
     echo
     echo "Hash file(s) in this directory list .par2 checksum entries:"
     for line in "${refs[@]}"; do
-        IFS=$'\t' read -r path count missing_count names missing_csv <<< "$line"
+        IFS=$'\t' read -r path count missing_count bad_count names missing_csv bad_csv <<< "$line"
         [[ -n "$path" ]] || continue
         base="$(basename -- "$path")"
         printf '  %s (%s entr' "$base" "$count"
@@ -1871,6 +1879,10 @@ pgm_review_par2_hash_refs() {
             printf ', %s missing on disk' "$missing_count"
             has_missing=1
         fi
+        if (( ${bad_count:-0} > 0 )); then
+            printf ', %s bad md5sum path format' "$bad_count"
+            has_bad_path=1
+        fi
         printf '): %s\n' "$names"
         if [[ -n "$missing_csv" ]]; then
             IFS=',' read -r -a stale_chunk <<< "$missing_csv"
@@ -1881,11 +1893,20 @@ pgm_review_par2_hash_refs() {
                 stale_names+=("$name")
             done
         fi
+        if [[ -n "$bad_csv" ]]; then
+            IFS=',' read -r -a bad_chunk <<< "$bad_csv"
+            for name in "${bad_chunk[@]}"; do
+                [[ -n "$name" ]] || continue
+                [[ -n "${bad_seen[$name]:-}" ]] && continue
+                bad_seen[$name]=1
+                bad_names+=("$name")
+            done
+        fi
         if (( ${count:-0} > ${missing_count:-0} )); then
             has_present=1
         fi
     done
-    echo "No hashes were recalculated yet (name/existence scan only)."
+    echo "No hashes were recalculated yet (name/existence/format scan only)."
 
     if (( has_missing )); then
         echo
@@ -1932,6 +1953,43 @@ pgm_review_par2_hash_refs() {
         esac
     fi
 
+    if (( has_bad_path )); then
+        echo
+        echo "Bad path format for GNU md5sum -c (${#bad_names[@]} .par2 line(s)):"
+        echo "  digest is followed by two spaces then '*', so md5sum looks for a"
+        echo "  literal '*./filename' path that does not exist (even when the file is here)."
+        for name in "${bad_names[@]}"; do
+            printf '  %s\n' "$name"
+        done
+        echo
+        echo "Rewrite to safe form: HASH *filename  (one space, no './')."
+        echo "Digest values are refreshed; manifest modification time is preserved."
+        pgm_prompt_read_hash_par2_fix_path_choice path_choice
+        case "$path_choice" in
+            0)
+                pgm_print_step_header "Step H: rewrite .par2 hash lines for md5sum -c"
+                rc=0
+                msg=$(run_rename_py hash fix-par2-refs "$DATA_DIR" 2>&1) || rc=$?
+                echo "$msg"
+                if (( rc == 0 )); then
+                    pgm_print_step_verdict H OK "Hash lines rewritten to md5sum-safe form."
+                    PGM_HASH_SYNCED_THIS_SET=1
+                    return 0
+                fi
+                pgm_print_step_verdict H FAIL "Hash manifest update reported a problem."
+                return 0
+                ;;
+            1)
+                echo "Left broken md5sum path format unchanged."
+                ;;
+            2)
+                echo "Cancelled."
+                return_code=0
+                finish
+                ;;
+        esac
+    fi
+
     # Digest check only for .par2 names that still exist (optional, default no).
     (( has_present )) || return 0
 
@@ -1962,11 +2020,11 @@ pgm_review_par2_hash_refs() {
         pgm_print_step_verdict H OK "All .par2 hash entries match files on disk."
         return 0
     fi
-    pgm_print_step_verdict H WARN "Some .par2 hash entries are missing or have wrong digests."
+    pgm_print_step_verdict H WARN "Some .par2 hash entries need fixing (digest/format/missing)."
 
     echo
-    echo "Update hash file(s): remove any still-missing .par2 names, refresh digests"
-    echo "for PAR2 files that exist, and add active .par2 files not listed yet."
+    echo "Update hash file(s): remove any still-missing .par2 names, refresh digests,"
+    echo "normalize path format for md5sum -c, and add active .par2 files not listed yet."
     echo "Manifest modification time is preserved."
     pgm_prompt_read_hash_par2_fix_choice fix_choice
     case "$fix_choice" in
