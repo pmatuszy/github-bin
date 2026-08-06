@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20260806.112600 - repair prompt always defaults to no (Enter skips)
 # v. 20260806.081000 - regen hash sync also strips FastSum ';' comment lines
 # v. 20260806.080500 - offer regenerate on set problems; volume-only create; exclude hashes; sync manifests
 # v. 20260805.191500 - Step 1 reports unreadable manifest lines; offers ';' to '#' fix when unprotected
@@ -25,6 +26,7 @@
 # v. 20260719.103506 - fix no-arg run: empty POSITIONAL[@]:- became one "" element
 # v. 20260719.102800 - multi-set selection: A/a, ranges 1-4, --all, multiple paths
 
+# 2026.08.06 - v. 0.1.41 - Repair prompt defaults to no (same as regenerate)
 # 2026.08.06 - v. 0.1.40 - Regenerate hash sync also removes FastSum ';' comment lines
 # 2026.08.06 - v. 0.1.39 - Offer PAR2 regenerate on problems (default no); exclude hash files; sync manifests
 # 2026.08.05 - v. 0.1.38 - Hash manifest review in Step 1; offer ';' to '#' when set does not protect it
@@ -93,10 +95,10 @@ Options:
   --regenerate         Auto-yes for regenerate when the set still has problems
   --no-regenerate      Never offer to regenerate the PAR2 set
 
-Rename and repair prompts take one key: y, n, or q (q cancels the whole run).
-Multi-set batch: rename/repair default to no unless --yes / --repair is given.
-Single set: rename/repair default to yes.
-Regenerate always defaults to no (Enter skips), even for a single set.
+Rename prompts take one key: y, n, or q (q cancels the whole run).
+Multi-set batch: rename defaults to no unless --yes is given.
+Single set: rename defaults to yes.
+Repair and regenerate always default to no (Enter skips), even for a single set.
 Regenerate builds one volume-only archive, excludes hash manifests from the set,
 renames old .par2 to *.par2.old by default, then syncs hash manifests with the
 new PAR2 checksums.
@@ -323,7 +325,8 @@ pgm_prompt_read_rename_choice() {
 }
 
 pgm_prompt_read_repair_choice() {
-    pgm_prompt_read_yes_no_quit "$1" "$2" \
+    # Always default no — repair can rename disk files and undo intentional edits.
+    pgm_prompt_read_yes_no_quit 0 "$1" \
         "Repair damaged file(s) with par2 now?"
 }
 
@@ -2067,11 +2070,7 @@ prompt_and_apply_repair() {
         echo
         echo "par2 can rebuild the damaged file(s) from the recovery blocks."
         echo "Note: par2 repair also renames disk files to match PAR2 names."
-        if (( MULTI_SET_MODE )); then
-            pgm_prompt_read_repair_choice 0 repair_choice
-        else
-            pgm_prompt_read_repair_choice 1 repair_choice
-        fi
+        pgm_prompt_read_repair_choice repair_choice
         case "$repair_choice" in
             0)
                 ;;
@@ -2615,11 +2614,7 @@ print_summary() {
         pgm_print_damaged_targets_report
         if (( NO_REPAIR == 0 && REPAIR == 0 )); then
             echo
-            if (( MULTI_SET_MODE )); then
-                echo "You will be asked whether to repair (default: no, q quits, $(pgm_prompt_timeout_label))."
-            else
-                echo "You will be asked whether to repair (default: yes, q quits, $(pgm_prompt_timeout_label))."
-            fi
+            echo "You will be asked whether to repair (default: no, q quits, $(pgm_prompt_timeout_label))."
         elif (( REPAIR == 1 )); then
             echo
             echo "Damaged file(s) will be repaired automatically (--repair)."
