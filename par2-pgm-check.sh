@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20260806.181727 - also hide Target empty; strip CR so Opening/found filter always matches
 # v. 20260806.181027 - hide par2 Opening/found/0-byte noise; keep full log for parsing
 # v. 20260806.160156 - prefix interactive prompts with (YYYY.MM.DD HH:MM:SS) like rename.sh
 # v. 20260806.144545 - clearer Step 6 / RESULT / repair vs regenerate wording
@@ -32,6 +33,7 @@
 # v. 20260719.103506 - fix no-arg run: empty POSITIONAL[@]:- became one "" element
 # v. 20260719.102800 - multi-set selection: A/a, ranges 1-4, --all, multiple paths
 
+# 2026.08.06 - v. 0.1.48 - Also hide Target empty; harden Opening/found filter against CR
 # 2026.08.06 - v. 0.1.47 - Hide par2 Opening/found/0-byte noise on screen (full log kept for parsing)
 # 2026.08.06 - v. 0.1.46 - Interactive prompts prefixed with (YYYY.MM.DD HH:MM:SS) like rename.sh
 # 2026.08.06 - v. 0.1.45 - Clearer Step 6 / RESULT / repair-vs-regenerate wording
@@ -1261,11 +1263,14 @@ pgm_extract_par2_ok_line() {
 
 # Drop high-volume par2 progress noise from what the user sees.
 # Full unfiltered output stays in temp files for rename/damage parsing.
+# Strip CR so DOS line endings still match; keep missing/damaged/match lines.
 pgm_filter_par2_noise_sed() {
     sed -E \
-        -e '/^[[:space:]]*Opening: /d' \
-        -e '/^[[:space:]]*Target: .* - found\.[[:space:]]*$/d' \
-        -e '/^[[:space:]]*Skipping 0 byte file: /d' \
+        -e 's/\r$//' \
+        -e '/^[[:space:]]*Opening:/d' \
+        -e '/^[[:space:]]*Target: .* - found\.?[[:space:]]*$/d' \
+        -e '/^[[:space:]]*Target: .* - empty\.?[[:space:]]*$/d' \
+        -e '/^[[:space:]]*Skipping 0 byte file:/d' \
         -e '/^[[:space:]]*[Aa]ll files are (ok|correct).*repair is not required\.?[[:space:]]*$/Id'
 }
 
