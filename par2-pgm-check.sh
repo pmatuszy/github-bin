@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20260806.181027 - hide par2 Opening/found/0-byte noise; keep full log for parsing
 # v. 20260806.160156 - prefix interactive prompts with (YYYY.MM.DD HH:MM:SS) like rename.sh
 # v. 20260806.144545 - clearer Step 6 / RESULT / repair vs regenerate wording
 # v. 20260806.132630 - detect/fix md5sum-breaking 'HASH  *file' lines in manifests
@@ -31,6 +32,7 @@
 # v. 20260719.103506 - fix no-arg run: empty POSITIONAL[@]:- became one "" element
 # v. 20260719.102800 - multi-set selection: A/a, ranges 1-4, --all, multiple paths
 
+# 2026.08.06 - v. 0.1.47 - Hide par2 Opening/found/0-byte noise on screen (full log kept for parsing)
 # 2026.08.06 - v. 0.1.46 - Interactive prompts prefixed with (YYYY.MM.DD HH:MM:SS) like rename.sh
 # 2026.08.06 - v. 0.1.45 - Clearer Step 6 / RESULT / repair-vs-regenerate wording
 # 2026.08.06 - v. 0.1.44 - Detect/fix 'HASH  *par2' (two spaces) so md5sum -c works
@@ -1257,14 +1259,24 @@ pgm_extract_par2_ok_line() {
         | sed -E 's/^[[:space:]]+//;s/[[:space:]]+$//'
 }
 
+# Drop high-volume par2 progress noise from what the user sees.
+# Full unfiltered output stays in temp files for rename/damage parsing.
+pgm_filter_par2_noise_sed() {
+    sed -E \
+        -e '/^[[:space:]]*Opening: /d' \
+        -e '/^[[:space:]]*Target: .* - found\.[[:space:]]*$/d' \
+        -e '/^[[:space:]]*Skipping 0 byte file: /d' \
+        -e '/^[[:space:]]*[Aa]ll files are (ok|correct).*repair is not required\.?[[:space:]]*$/Id'
+}
+
 pgm_filter_par2_verify_output() {
     local text="$1"
-    sed -E '/^[[:space:]]*[Aa]ll files are (ok|correct).*repair is not required\.?[[:space:]]*$/Id' <<< "$text" \
+    pgm_filter_par2_noise_sed <<< "$text" \
         | sed -E -e :a -e '/^\s*$/{$d;N;ba' -e '}'
 }
 
 pgm_filter_par2_verify_stream() {
-    sed -E '/^[[:space:]]*[Aa]ll files are (ok|correct).*repair is not required\.?[[:space:]]*$/Id'
+    pgm_filter_par2_noise_sed
 }
 
 pgm_wall_clock_now() {
@@ -1738,11 +1750,12 @@ pgm_par2_run_chunked() {
                 ) >>"$outfile" 2>&1
                 last_rc=$?
             else
+                # Live repair/verify: filter display only; preserve par2 exit status.
                 (
                     cd "$DATA_DIR" || exit 1
                     run_par2 "$mode" "$par2_base" "${chunk[@]}"
-                )
-                last_rc=$?
+                ) 2>&1 | pgm_filter_par2_verify_stream
+                last_rc=${PIPESTATUS[0]}
             fi
             (( last_rc != 0 )) && rc=$last_rc
             chunk=()
