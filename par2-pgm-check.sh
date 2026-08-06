@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20260806.130000 - after PAR2 OK, fast-scan hash files for .par2 refs; optional verify/fix
 # v. 20260806.112600 - repair prompt always defaults to no (Enter skips)
 # v. 20260806.081000 - regen hash sync also strips FastSum ';' comment lines
 # v. 20260806.080500 - offer regenerate on set problems; volume-only create; exclude hashes; sync manifests
@@ -26,6 +27,7 @@
 # v. 20260719.103506 - fix no-arg run: empty POSITIONAL[@]:- became one "" element
 # v. 20260719.102800 - multi-set selection: A/a, ranges 1-4, --all, multiple paths
 
+# 2026.08.06 - v. 0.1.42 - Fast-scan hash manifests for .par2 refs; optional verify/fix (default no)
 # 2026.08.06 - v. 0.1.41 - Repair prompt defaults to no (same as regenerate)
 # 2026.08.06 - v. 0.1.40 - Regenerate hash sync also removes FastSum ';' comment lines
 # 2026.08.06 - v. 0.1.39 - Offer PAR2 regenerate on problems (default no); exclude hash files; sync manifests
@@ -94,11 +96,13 @@ Options:
   --no-hash-tidy       Report ';' comments in hash manifests but never convert them
   --regenerate         Auto-yes for regenerate when the set still has problems
   --no-regenerate      Never offer to regenerate the PAR2 set
+  --hash-par2-check    Auto-yes: verify .par2 lines in hash manifests when any exist
+  --no-hash-par2-check Never offer to verify .par2 lines in hash manifests
 
 Rename prompts take one key: y, n, or q (q cancels the whole run).
 Multi-set batch: rename defaults to no unless --yes is given.
 Single set: rename defaults to yes.
-Repair and regenerate always default to no (Enter skips), even for a single set.
+Repair, regenerate, and hash .par2-ref check always default to no (Enter skips).
 Regenerate builds one volume-only archive, excludes hash manifests from the set,
 renames old .par2 to *.par2.old by default, then syncs hash manifests with the
 new PAR2 checksums.
@@ -346,6 +350,16 @@ pgm_prompt_read_backup_old_par2_choice() {
         "Rename old PAR2 files to *.par2.old before creating the new set?"
 }
 
+pgm_prompt_read_hash_par2_check_choice() {
+    pgm_prompt_read_yes_no_quit 0 "$1" \
+        "Verify .par2 checksum entries in those hash file(s) now?"
+}
+
+pgm_prompt_read_hash_par2_fix_choice() {
+    pgm_prompt_read_yes_no_quit 0 "$1" \
+        "Update hash file(s) to match PAR2 files on disk?"
+}
+
 # Answer on one key (Enter = default); q quits the script. Sets 0=yes, 1=no, 2=quit.
 pgm_prompt_read_yes_no_quit() {
     local default_yes="$1"
@@ -591,6 +605,12 @@ pgm_print_run_settings() {
         echo "  --no-regenerate: given (never offer regenerate)"
     else
         echo "  --regenerate: not given (prompt when set still has problems; default no)"
+    fi
+
+    if (( AUTO_HASH_PAR2_CHECK )); then
+        echo "  --hash-par2-check: given (verify .par2 hash lines without asking)"
+    elif (( NO_HASH_PAR2_CHECK )); then
+        echo "  --no-hash-par2-check: given (never offer .par2 hash-line check)"
     fi
 
     if (( NO_RENAME )); then
@@ -1068,6 +1088,9 @@ AUTO_HASH_TIDY=0
 NO_HASH_TIDY=0
 AUTO_REGENERATE=0
 NO_REGENERATE=0
+AUTO_HASH_PAR2_CHECK=0
+NO_HASH_PAR2_CHECK=0
+PGM_HASH_SYNCED_THIS_SET=0
 POSITIONAL=()
 MISNAMED_DISK=()
 MISNAMED_PAR2=()
@@ -1805,6 +1828,91 @@ pgm_review_hash_manifests() {
     done
 }
 
+# Fast parse of hash manifests for .par2 lines (no hashing). If any exist, ask
+# (default no) whether to verify those entries and optionally fix the manifests.
+pgm_review_par2_hash_refs() {
+    local -a refs=()
+    local line path count names base
+    local check_choice=0 fix_choice=0 msg rc=0
+
+    (( NO_HASH_PAR2_CHECK == 1 )) && return 0
+    (( PGM_HASH_SYNCED_THIS_SET == 1 )) && return 0
+
+    mapfile -t refs < <(run_rename_py hash list-par2-refs "$DATA_DIR" 2>/dev/null) || true
+    (( ${#refs[@]} > 0 )) || return 0
+
+    echo
+    echo "Hash file(s) in this directory list .par2 checksum entries:"
+    for line in "${refs[@]}"; do
+        IFS=$'\t' read -r path count names <<< "$line"
+        [[ -n "$path" ]] || continue
+        base="$(basename -- "$path")"
+        printf '  %s (%s entr' "$base" "$count"
+        if [[ "$count" == "1" ]]; then
+            printf 'y): %s\n' "$names"
+        else
+            printf 'ies): %s\n' "$names"
+        fi
+    done
+    echo "No hashes were recalculated yet (name scan only)."
+
+    if (( AUTO_HASH_PAR2_CHECK == 0 )); then
+        pgm_prompt_read_hash_par2_check_choice check_choice
+        case "$check_choice" in
+            0)
+                ;;
+            1)
+                echo "Skipped .par2 hash-entry check."
+                return 0
+                ;;
+            2)
+                echo "Cancelled."
+                return_code=0
+                finish
+                ;;
+        esac
+    else
+        echo "Verifying .par2 hash entries automatically (--hash-par2-check)."
+    fi
+
+    pgm_print_step_header "Step H: verify .par2 entries in hash manifests"
+    msg=$(run_rename_py hash verify-par2-refs "$DATA_DIR" 2>&1) || rc=$?
+    echo "$msg"
+    if (( rc == 0 )); then
+        pgm_print_step_verdict H OK "All .par2 hash entries match files on disk."
+        return 0
+    fi
+    pgm_print_step_verdict H WARN "Some .par2 hash entries are missing or stale."
+
+    echo
+    echo "Hash file(s) can be updated: remove missing .par2 names, refresh digests"
+    echo "for PAR2 files that still exist, and add any active .par2 files in this"
+    echo "directory that are not listed yet. Manifest mtime is preserved."
+    pgm_prompt_read_hash_par2_fix_choice fix_choice
+    case "$fix_choice" in
+        0)
+            ;;
+        1)
+            echo "Left hash manifest(s) unchanged."
+            return 0
+            ;;
+        2)
+            echo "Cancelled."
+            return_code=0
+            finish
+            ;;
+    esac
+
+    pgm_print_step_header "Step H2: update hash manifests for PAR2 files"
+    msg=$(run_rename_py hash fix-par2-refs "$DATA_DIR" 2>&1) || rc=$?
+    echo "$msg"
+    if (( rc == 0 )); then
+        pgm_print_step_verdict H2 OK "Hash manifest(s) updated for PAR2 files."
+    else
+        pgm_print_step_verdict H2 FAIL "Hash manifest update reported a problem."
+    fi
+}
+
 restore_par2_file_timestamps() {
     local dir="$1"
     local f backup_base active restored=0
@@ -2367,6 +2475,7 @@ prompt_and_regenerate_par2_set() {
     pgm_print_step_header "Step 9b: sync hash manifests with new PAR2 files"
     if pgm_sync_hashes_after_regen "${old_basenames[@]}"; then
         pgm_print_step_verdict 9b OK "Hash manifest(s) updated for new PAR2 archive(s)."
+        PGM_HASH_SYNCED_THIS_SET=1
     else
         pgm_print_step_verdict 9b WARN "Hash sync reported a problem (see above)."
     fi
@@ -2653,6 +2762,7 @@ pgm_run_one_par2_set() {
     PGM_POST_RENAME_OUT=""
     OUT2_FILE=""
     PGM_HASH_VERIFY_MSG=""
+    PGM_HASH_SYNCED_THIS_SET=0
     PGM_TIMING_HASH_SEC=0
     PGM_TIMING_PAR2_NAMES_SEC=0
     PGM_TIMING_PAR2_SCAN_SEC=0
@@ -2685,6 +2795,7 @@ pgm_run_one_par2_set() {
         pgm_print_outcome ok \
             "All files OK under PAR2 names." \
             "${par2_ok_line:-Verification passed under PAR2 names only.}"
+        pgm_review_par2_hash_refs
         return 0
     fi
 
@@ -2753,6 +2864,8 @@ pgm_run_one_par2_set() {
         prompt_and_regenerate_par2_set || true
     fi
 
+    pgm_review_par2_hash_refs
+
     return "$SUMMARY_RC"
 }
 
@@ -2790,6 +2903,14 @@ while [[ $# -gt 0 ]]; do
             ;;
         --no-regenerate)
             NO_REGENERATE=1
+            shift
+            ;;
+        --hash-par2-check)
+            AUTO_HASH_PAR2_CHECK=1
+            shift
+            ;;
+        --no-hash-par2-check)
+            NO_HASH_PAR2_CHECK=1
             shift
             ;;
         --yes|-y)

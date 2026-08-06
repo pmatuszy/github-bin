@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# v. 20260806.130000 - hash list/verify/fix-par2-refs for stale .par2 lines in manifests
 # v. 20260806.081000 - regen hash sync also drops FastSum ';' comment lines
 # v. 20260806.080500 - hash sync after PAR2 regenerate: drop old .par2 names, add new
 # v. 20260805.190000 - hash lint/tidy subcommands; accept filenames with spaces in manifests
@@ -87,6 +88,9 @@ def parse_rename_pair(arg):
 
 
 def is_backup_par2(file_name):
+    lower = file_name.lower()
+    if lower.endswith(".par2.old"):
+        return True
     file_base, file_ext = os.path.splitext(file_name)
     return file_ext.lower() == ".par2" and file_base.endswith("_old")
 
@@ -618,6 +622,12 @@ def is_par2_basename(name):
     return not is_backup_par2(name)
 
 
+def is_par2_hash_ref_name(name):
+    """Any .par2 basename a hash manifest might list (including retired backups)."""
+    lower = name.lower()
+    return lower.endswith(".par2") or lower.endswith(".par2.old")
+
+
 def par2_hash_entries(expected_by_basename):
     return {
         name: digest
@@ -901,6 +911,161 @@ def _write_hash_file_preserving_times(hash_file, new_text):
         os.utime(hash_file, times)
 
 
+def list_par2_refs_in_hash_files(folder_path):
+    """Fast parse-only scan: which hash files list any .par2 basenames."""
+    rows = []
+    for hash_file in list_hash_files(folder_path):
+        expected = entries_by_basename(hash_file)
+        names = sorted(
+            name for name in expected if is_par2_hash_ref_name(name)
+        )
+        if names:
+            rows.append((hash_file, names))
+    return rows
+
+
+def print_par2_refs_brief(folder_path):
+    """One tab-separated row per hash file that lists .par2 names (no hashing)."""
+    for hash_file, names in list_par2_refs_in_hash_files(folder_path):
+        print(f"{hash_file}\t{len(names)}\t{','.join(names)}")
+
+
+def verify_par2_refs_in_hash_files(folder_path):
+    """Check existence and digests for every .par2 line in every hash file."""
+    rows = list_par2_refs_in_hash_files(folder_path)
+    if not rows:
+        return True, "No hash file lists .par2 entries."
+
+    problems = []
+    checked = 0
+    for hash_file, names in rows:
+        algo = hash_algo_from_path(hash_file)
+        expected = entries_by_basename(hash_file)
+        for name in names:
+            checked += 1
+            path = os.path.join(folder_path, name)
+            if not os.path.isfile(path):
+                problems.append(
+                    f"{os.path.basename(hash_file)}: {name} — missing on disk"
+                )
+                continue
+            actual = compute_file_hash(path, algo)
+            if actual != expected[name].lower():
+                problems.append(
+                    f"{os.path.basename(hash_file)}: {name} — checksum mismatch"
+                )
+
+    if problems:
+        message = (
+            f"Checked {checked} .par2 hash entr"
+            f"{'y' if checked == 1 else 'ies'} in {len(rows)} file(s); "
+            f"{len(problems)} problem(s):\n"
+        )
+        message += "\n".join(f"  - {item}" for item in problems)
+        return False, message
+
+    return True, (
+        f"All {checked} .par2 hash entr"
+        f"{'y' if checked == 1 else 'ies'} OK across {len(rows)} hash file(s)."
+    )
+
+
+def fix_par2_refs_in_hash_files(folder_path):
+    """Repair .par2 lines in hash manifests: drop missing, refresh digests, add active.
+
+    Also drops FastSum ';' comment lines. Preserves each manifest's mtime.
+    """
+    hash_files = list_hash_files(folder_path)
+    if not hash_files:
+        return True, "No hash file in directory (nothing to fix)."
+
+    active = list_active_par2_files(folder_path)
+    messages = []
+
+    for hash_file in hash_files:
+        algo = hash_algo_from_path(hash_file)
+        with open(hash_file, "r", encoding="utf-8", errors="replace") as handle:
+            original_text = handle.read()
+
+        records = parse_hash_file(hash_file)
+        output_lines = []
+        updated = set()
+        removed_missing = 0
+        dropped_semicolons = 0
+        refreshed = 0
+        had_par2_ref = False
+
+        for record in records:
+            if record["type"] == "entry" and is_par2_hash_ref_name(record["basename"]):
+                had_par2_ref = True
+                break
+
+        if not had_par2_ref:
+            continue
+
+        for record in records:
+            if record["type"] == "comment" and record.get("marker") == ";":
+                dropped_semicolons += 1
+                continue
+            if record["type"] != "entry":
+                output_lines.append(record["raw"])
+                continue
+
+            base = record["basename"]
+            if not is_par2_hash_ref_name(base):
+                output_lines.append(record["raw"])
+                continue
+
+            path = os.path.join(folder_path, base)
+            if not os.path.isfile(path) or is_backup_par2(base):
+                removed_missing += 1
+                continue
+
+            new_hash = compute_file_hash(path, algo)
+            path_field = record["path"]
+            if "  " in record["raw"]:
+                sep = "  "
+            elif "\t" in record["raw"]:
+                sep = "\t"
+            else:
+                sep = " "
+            output_lines.append(f"{new_hash}{sep}{path_field}")
+            updated.add(base)
+            if new_hash != record["hash"]:
+                refreshed += 1
+
+        appended = 0
+        for par_name in active:
+            if par_name in updated:
+                continue
+            new_hash = compute_file_hash(os.path.join(folder_path, par_name), algo)
+            output_lines.append(f"{new_hash}  *./{par_name}")
+            appended += 1
+
+        new_text = "\n".join(output_lines)
+        if original_text.endswith("\n") or new_text:
+            new_text += "\n"
+
+        if new_text == original_text:
+            continue
+
+        _write_hash_file_preserving_times(hash_file, new_text)
+        detail = (
+            f"removed {removed_missing} missing/backup, "
+            f"refreshed {refreshed}, added {appended}"
+        )
+        if dropped_semicolons:
+            detail += f", dropped {dropped_semicolons} ';' comment line(s)"
+        messages.append(f"{os.path.basename(hash_file)} ({detail})")
+
+    if not messages:
+        return True, "Hash manifests already match active PAR2 files on disk."
+
+    return True, (
+        f"Updated {len(messages)} hash file(s): " + "; ".join(messages)
+    )
+
+
 def sync_hash_files_after_regen(folder_path, remove_names, new_par_names):
     """Refresh every hash manifest after a PAR2 set was regenerated.
 
@@ -1097,6 +1262,17 @@ def main(argv):
             if argv[2] == "lint":
                 print_hash_lint(folder_path, par_file_path)
                 return 0
+            if argv[2] == "list-par2-refs":
+                print_par2_refs_brief(folder_path)
+                return 0
+            if argv[2] == "verify-par2-refs":
+                ok, message = verify_par2_refs_in_hash_files(folder_path)
+                print(message)
+                return 0 if ok else 1
+            if argv[2] == "fix-par2-refs":
+                ok, message = fix_par2_refs_in_hash_files(folder_path)
+                print(message)
+                return 0 if ok else 1
             if argv[2] == "tidy":
                 # Here argv[3] is the hash file itself, not a directory.
                 if len(argv) < 4:
@@ -1138,7 +1314,9 @@ def main(argv):
                 return 0 if ok else 1
             print(
                 "Usage: par2-pgm-rename.py hash "
-                "verify|update|inventory|lint <directory> [par2-index]\n"
+                "verify|update|inventory|lint|"
+                "list-par2-refs|verify-par2-refs|fix-par2-refs "
+                "<directory> [par2-index]\n"
                 "       par2-pgm-rename.py hash tidy <hash-file>\n"
                 "       par2-pgm-rename.py hash sync-regen <directory> "
                 "--remove old.par2... --add new.par2...",
