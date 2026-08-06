@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20260806.144545 - clearer Step 6 / RESULT / repair vs regenerate wording
 # v. 20260806.132630 - detect/fix md5sum-breaking 'HASH  *file' lines in manifests
 # v. 20260806.131800 - flag missing .par2 hash lines as old archives; offer remove (default no)
 # v. 20260806.130000 - after PAR2 OK, fast-scan hash files for .par2 refs; optional verify/fix
@@ -29,6 +30,7 @@
 # v. 20260719.103506 - fix no-arg run: empty POSITIONAL[@]:- became one "" element
 # v. 20260719.102800 - multi-set selection: A/a, ranges 1-4, --all, multiple paths
 
+# 2026.08.06 - v. 0.1.45 - Clearer Step 6 / RESULT / repair-vs-regenerate wording
 # 2026.08.06 - v. 0.1.44 - Detect/fix 'HASH  *par2' (two spaces) so md5sum -c works
 # 2026.08.06 - v. 0.1.43 - Missing .par2 hash lines: show vs current PAR2; offer remove (default no)
 # 2026.08.06 - v. 0.1.42 - Fast-scan hash manifests for .par2 refs; optional verify/fix (default no)
@@ -337,7 +339,7 @@ pgm_prompt_read_rename_choice() {
 pgm_prompt_read_repair_choice() {
     # Always default no — repair can rename disk files and undo intentional edits.
     pgm_prompt_read_yes_no_quit 0 "$1" \
-        "Repair damaged file(s) with par2 now?"
+        "Repair damaged DATA file(s) from recovery blocks now?"
 }
 
 pgm_prompt_read_hash_tidy_choice() {
@@ -348,7 +350,7 @@ pgm_prompt_read_hash_tidy_choice() {
 pgm_prompt_read_regenerate_choice() {
     # Always default no — regenerating is deliberate.
     pgm_prompt_read_yes_no_quit 0 "$1" \
-        "Regenerate this PAR2 set from current files?"
+        "Regenerate PAR2 from current disk files (accept as-is; does not repair data)?"
 }
 
 pgm_prompt_read_backup_old_par2_choice() {
@@ -2281,12 +2283,13 @@ prompt_and_apply_rename() {
     fi
 
     # Damage unrelated to naming is left for the repair step, not treated as a
-    # failed rename.
+    # failed rename. "OK" here means the rename goal succeeded, not that the
+    # whole set is clean.
     if pgm_par2_output_indicates_ok "$PGM_POST_RENAME_OUT"; then
-        pgm_print_step_verdict 6 OK "Post-update PAR2 verify passed."
+        pgm_print_step_verdict 6 OK "Post-update PAR2 verify passed (names and data OK)."
     else
         pgm_print_step_verdict 6 OK \
-            "PAR2 names now match on disk; other problems remain (see below)."
+            "Rename succeeded: PAR2 names match disk. Data damage still present (not a rename failure)."
     fi
     return 0
 }
@@ -2316,8 +2319,14 @@ prompt_and_apply_repair() {
 
     if (( REPAIR == 0 )); then
         echo
-        echo "par2 can rebuild the damaged file(s) from the recovery blocks."
-        echo "Note: par2 repair also renames disk files to match PAR2 names."
+        echo "=== Repair (optional) ==="
+        echo "What it does: keep THIS PAR2 set; rebuild damaged DATA file(s) from"
+        echo "  recovery blocks so their content matches what PAR2 expects."
+        echo "Side effect: par2 may also rename disk files to the names stored in PAR2."
+        echo "Choose this when the PAR2 archives are the trusted copy and the data"
+        echo "  file(s) on disk are wrong/corrupt."
+        echo "Skip this if you want to leave damaged data as-is, or if you plan to"
+        echo "  Regenerate (accept current disk files as the new baseline)."
         pgm_prompt_read_repair_choice repair_choice
         case "$repair_choice" in
             0)
@@ -2497,13 +2506,16 @@ prompt_and_regenerate_par2_set() {
     [[ "$suggested" =~ ^[1-9][0-9]?$|^100$ ]] || suggested=20
 
     echo
-    echo "Regenerate rebuilds the PAR2 set from current disk files."
-    echo "Hash manifests (*.md5 / *.sha512 / *.sha256) are excluded from the set"
-    echo "so updating them later will not make PAR2 report them as damaged."
-    echo "During hash sync, FastSum-style ';' comment lines are removed so"
-    echo "'md5sum -c' stays quiet; checksum lines and '#' comments are kept."
-    echo "New layout: one volume-only archive (no separate index file)."
-    echo "Current set file(s):"
+    echo "=== Regenerate (optional) ==="
+    echo "What it does: discard this PAR2 set and create a NEW one from the files"
+    echo "  as they are NOW on disk. Damaged data is NOT repaired — current disk"
+    echo "  content becomes the new 'correct' baseline."
+    echo "Choose this only when you accept today's disk files (including any"
+    echo "  damage you skipped repairing) as the new master copies."
+    echo "Layout: one volume-only archive (no separate index .par2)."
+    echo "Hash manifests (*.md5 / *.sha512 / *.sha256) are excluded from the set,"
+    echo "  then synced afterward (FastSum ';' comment lines stripped)."
+    echo "Current set file(s) that would be replaced:"
     for member in "${PAR2_SET_MEMBERS[@]}"; do
         printf '  %s\n' "$(basename -- "$member")"
         old_basenames+=("$(basename -- "$member")")
@@ -2870,8 +2882,9 @@ print_summary() {
         fi
         pgm_print_step_verdict 3 WARN "Repair is possible (damage or rename fixable)."
         pgm_print_outcome warn \
-            "Repair is possible (damage or rename fixable)." \
-            "See missing file list above (if any)."
+            "PAR2 reports problems that can still be fixed." \
+            "Repair = rebuild damaged data from recovery blocks (keep this PAR2 set)." \
+            "Or rename first if only names are wrong (asked earlier when applicable)."
         return 2
     fi
 
@@ -2968,8 +2981,10 @@ pgm_run_one_par2_set() {
                 pgm_print_damaged_targets_report
                 SUMMARY_RC=2
                 pgm_print_outcome warn \
-                    "PAR2 names updated; damaged file(s) still need attention." \
-                    "See the damaged file list above."
+                    "What worked: PAR2 metadata rename (names on disk now match PAR2)." \
+                    "What remains: data file content still damaged (see list above)." \
+                    "Next: Repair rebuilds damaged data from recovery blocks;" \
+                    "Regenerate does not fix damage — it accepts disk files as-is."
             fi
         fi
     fi
