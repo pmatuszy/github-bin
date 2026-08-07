@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20260807.085811 - RUN SUMMARY box at end of each PAR2 set check
 # v. 20260807.075913 - explain par2cmdline "no data found" (source, meaning, what to do)
 # v. 20260807.075314 - strip Loading/Scanning progress glue; ASCII dashes in boxed text
 # v. 20260807.074654 - RUN FINISHED banner; Step 2->3 transition; par2 chunk progress
@@ -40,6 +41,7 @@
 # v. 20260719.103506 - fix no-arg run: empty POSITIONAL[@]:- became one "" element
 # v. 20260719.102800 - multi-set selection: A/a, ranges 1-4, --all, multiple paths
 
+# 2026.08.07 - v. 0.1.56 - RUN SUMMARY box at end of each set (verdict, counts, next step)
 # 2026.08.07 - v. 0.1.55 - Explain par2cmdline "no data found" in verify output and summary
 # 2026.08.07 - v. 0.1.54 - Strip glued Loading/Scanning progress; ASCII dashes in boxes
 # 2026.08.07 - v. 0.1.53 - RUN FINISHED exit banner; Step 2->3 transition; par2 chunk progress
@@ -1346,6 +1348,97 @@ pgm_print_step_transition() {
     echo
     pgm_emit_boxed_block stone "$title" "$@"
     echo
+}
+
+pgm_final_verdict_label() {
+    local rc="$1"
+
+    case "$rc" in
+        0) printf '%s' 'OK - verification passed' ;;
+        2) printf '%s' 'Issues remain - review counts and hints below' ;;
+        3) printf '%s' 'Failed - verification or repair did not pass' ;;
+        *) printf '%s' "Finished with exit code $rc" ;;
+    esac
+}
+
+pgm_final_next_step_hint() {
+    local rc="$1"
+    local -a hints=()
+    local joined i
+
+    if (( rc == 0 )); then
+        printf '%s' 'No action required.'
+        return 0
+    fi
+
+    if (( ${#NO_DATA_FOUND_TARGETS[@]} > 0 )); then
+        hints+=("regenerate PAR2 if edited hash manifest(s) on disk should stay as-is")
+    fi
+    if (( ${#MISNAMED_DISK[@]} > 0 )); then
+        hints+=("update PAR2 metadata or rename files on disk for misnamed match(es)")
+    fi
+    if (( ${#MISSING_PAR2_TARGETS[@]} > 0 )); then
+        hints+=("restore or rename ${#MISSING_PAR2_TARGETS[@]} missing PAR2 target(s)")
+    fi
+    if (( PGM_EMPTY_ONLY_DAMAGE == 1 )); then
+        hints+=("optional: regenerate to drop ${#EMPTY_PAR2_TARGETS[@]} empty (0-byte) stub(s)")
+    elif (( ${#EMPTY_PAR2_TARGETS[@]} > 0 )); then
+        hints+=("${#EMPTY_PAR2_TARGETS[@]} empty stub(s): usually safe to skip repair")
+    fi
+    if (( REPAIR_POSSIBLE == 1 && PGM_EMPTY_ONLY_DAMAGE == 0 )); then
+        hints+=("repair can rebuild damaged data from recovery blocks (default prompt: skip)")
+    fi
+    if (( rc != 0 && ${#hints[@]} == 0 )); then
+        hints+=("review Step 2/3 output and RESULT boxes above")
+    fi
+
+    ((${#hints[@]} > 0)) || return 0
+
+    joined="${hints[0]}"
+    for (( i=1; i < ${#hints[@]}; i++ )); do
+        joined+="; ${hints[$i]}"
+    done
+    printf '%s' "$joined"
+}
+
+pgm_print_final_run_summary() {
+    local rc="${1:-0}"
+    local -a lines=()
+    local kind verdict next
+
+    kind="$(pgm_exit_kind_from_rc "$rc")"
+    verdict="$(pgm_final_verdict_label "$rc")"
+    next="$(pgm_final_next_step_hint "$rc")"
+
+    lines+=( "*** RUN SUMMARY ***" )
+    if [[ -n "${PAR2_FILE:-}" ]]; then
+        lines+=( "PAR2 set: $(basename -- "$PAR2_FILE")" )
+    fi
+    lines+=( "Verdict: $verdict" )
+
+    if (( ${#MISSING_PAR2_TARGETS[@]} > 0 || ${#MISNAMED_DISK[@]} > 0 \
+        || ${#DAMAGED_PAR2_TARGETS[@]} > 0 || ${#NO_DATA_FOUND_TARGETS[@]} > 0 \
+        || ${#EMPTY_PAR2_TARGETS[@]} > 0 )); then
+        lines+=(
+            "Counts: missing=${#MISSING_PAR2_TARGETS[@]}, misnamed=${#MISNAMED_DISK[@]}, damaged=${#DAMAGED_PAR2_TARGETS[@]}, no-data-found=${#NO_DATA_FOUND_TARGETS[@]}, empty=${#EMPTY_PAR2_TARGETS[@]}"
+        )
+    fi
+
+    [[ -n "$next" ]] && lines+=( "Suggested next: $next" )
+
+    echo
+    case "$kind" in
+        ok) pgm_emit_boxed_block ada-box "${lines[@]}" ;;
+        *)  pgm_emit_boxed_block stone "${lines[@]}" ;;
+    esac
+    echo
+}
+
+pgm_run_one_par2_set_end() {
+    local rc="$1"
+
+    pgm_print_final_run_summary "$rc"
+    return "$rc"
 }
 
 # $1 = path to a log file, or raw par2 text (not an existing path).
@@ -3328,6 +3421,7 @@ pgm_run_one_par2_set() {
     if ! verify_par2_hashes; then
         pgm_print_step_verdict 1 FAIL "PAR2 archive checksum verification failed."
         if (( MULTI_SET_MODE )); then
+            pgm_run_one_par2_set_end 3
             return 3
         fi
         die "PAR2 archive checksum verification failed. Refusing to scan for misnamed files."
@@ -3354,6 +3448,7 @@ pgm_run_one_par2_set() {
             "All files OK under PAR2 names." \
             "${par2_ok_line:-Verification passed under PAR2 names only.}"
         pgm_review_par2_hash_refs
+        pgm_run_one_par2_set_end 0
         return 0
     fi
 
@@ -3446,6 +3541,7 @@ pgm_run_one_par2_set() {
 
     pgm_review_par2_hash_refs
 
+    pgm_run_one_par2_set_end "$SUMMARY_RC"
     return "$SUMMARY_RC"
 }
 
