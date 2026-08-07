@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20260807.075913 - explain par2cmdline "no data found" (source, meaning, what to do)
 # v. 20260807.075314 - strip Loading/Scanning progress glue; ASCII dashes in boxed text
 # v. 20260807.074654 - RUN FINISHED banner; Step 2->3 transition; par2 chunk progress
 # v. 20260806.222350 - hash --hash-tidy: Linux normalize CRLF, ';', backslash paths
@@ -39,6 +40,7 @@
 # v. 20260719.103506 - fix no-arg run: empty POSITIONAL[@]:- became one "" element
 # v. 20260719.102800 - multi-set selection: A/a, ranges 1-4, --all, multiple paths
 
+# 2026.08.07 - v. 0.1.55 - Explain par2cmdline "no data found" in verify output and summary
 # 2026.08.07 - v. 0.1.54 - Strip glued Loading/Scanning progress; ASCII dashes in boxes
 # 2026.08.07 - v. 0.1.53 - RUN FINISHED exit banner; Step 2->3 transition; par2 chunk progress
 # 2026.08.06 - v. 0.1.52 - --hash-tidy: CRLF, ';'→'#', Windows backslash paths→'/'
@@ -1160,6 +1162,7 @@ MISNAMED_PAR2=()
 MISSING_PAR2_TARGETS=()
 DAMAGED_PAR2_TARGETS=()
 EMPTY_PAR2_TARGETS=()
+NO_DATA_FOUND_TARGETS=()
 PGM_EMPTY_ONLY_DAMAGE=0
 REPAIR_POSSIBLE=0
 PGM_POST_RENAME_OUT=""
@@ -1369,6 +1372,40 @@ pgm_extract_par2_ok_line() {
 # "Scanning/Loading/Opening: NN%" into megabytes of junk. Strip those tokens,
 # split on real status phrases, then drop found/empty target lines.
 # Full unfiltered output stays in temp files for rename/damage parsing.
+pgm_annotate_par2_verify_line() {
+    local line="$1"
+    local name stripped hint
+
+    stripped="${line#"${line%%[![:space:]]*}"}"
+    [[ -n "${stripped//[[:space:]]/}" ]] || return 0
+
+    case "$stripped" in
+        File:*" - no data found."*)
+            name="${stripped#File: \"}"
+            name="${name%%\" - no data found.*}"
+            hint="The on-disk file no longer matches what this PAR2 set was built from."
+            if pgm_is_hash_file_name "$(basename -- "$name")"; then
+                hint="Hash manifest on disk differs from the copy in this PAR2 set (often after editing line endings, comments, or path separators)."
+            fi
+            echo
+            echo "--- par2cmdline reported (explained by par2-pgm-check) ---"
+            echo "File: \"$name\" - no data found."
+            echo
+            pgm_emit_boxed_block stone \
+                "Content mismatch - verify NOT OK for this file" \
+                "Source: par2cmdline verify output (not a message from this script)." \
+                "Meaning: \"$name\" exists on disk but matches no source block in the PAR2 set." \
+                "$hint" \
+                "Repair would restore the OLD in-set version from recovery blocks." \
+                "Regenerate rebuilds the set from today's files (usual fix if you edited the manifest on purpose)."
+            echo
+            ;;
+        *)
+            printf '%s\n' "$stripped"
+            ;;
+    esac
+}
+
 pgm_filter_par2_verify_stream() {
     tr -d '\r' \
         | sed -E \
@@ -1396,7 +1433,9 @@ pgm_filter_par2_verify_stream() {
         | grep -vE 'Skipping 0 byte file:' \
         | grep -vE 'Target: .* - (found|empty)\.[[:space:]]*$' \
         | grep -viE '^[[:space:]]*All files are (ok|correct).*repair is not required' \
-        || true
+        | while IFS= read -r line || [[ -n "$line" ]]; do
+            pgm_annotate_par2_verify_line "$line"
+        done
 }
 
 pgm_filter_par2_verify_file() {
@@ -2934,6 +2973,7 @@ pgm_collect_damaged_targets() {
     local -A seen=()
 
     DAMAGED_PAR2_TARGETS=()
+    NO_DATA_FOUND_TARGETS=()
     while IFS= read -r line || [[ -n "$line" ]]; do
         line="${line//$'\r'/}"
         case "$line" in
@@ -2954,6 +2994,7 @@ pgm_collect_damaged_targets() {
                 (( in_extras )) && continue
                 name="${line#File: \"}"
                 name="${name%%\" - no data found.*}"
+                NO_DATA_FOUND_TARGETS+=("$name")
                 ;;
             *)
                 continue
@@ -2963,6 +3004,10 @@ pgm_collect_damaged_targets() {
         seen[$name]=1
         DAMAGED_PAR2_TARGETS+=("$name")
     done <"$out_file"
+
+    if ((${#NO_DATA_FOUND_TARGETS[@]} > 1)); then
+        mapfile -t NO_DATA_FOUND_TARGETS < <(printf '%s\n' "${NO_DATA_FOUND_TARGETS[@]}" | LC_ALL=C sort -u)
+    fi
 }
 
 # Empty (0-byte) files that Multipar often puts in a set; par2cmdline reports them
@@ -3027,6 +3072,29 @@ pgm_print_empty_targets_report() {
     echo "Note: par2cmdline treats empty files as \"damaged\". MultiPar usually ignores"
     echo "them. Repair rarely helps (often writes 0 bytes again). Skipping repair is normal."
     echo "To drop them from a future set, regenerate (par2 create skips 0-byte files)."
+}
+
+pgm_print_no_data_found_report() {
+    local n=${#NO_DATA_FOUND_TARGETS[@]}
+    local i name base hint
+
+    (( n > 0 )) || return 0
+
+    echo
+    echo "par2cmdline \"no data found\" (${n} file(s)) - content mismatch, verify NOT OK:"
+    for i in "${!NO_DATA_FOUND_TARGETS[@]}"; do
+        name="${NO_DATA_FOUND_TARGETS[$i]}"
+        base="$(basename -- "$name")"
+        hint="On-disk bytes do not match any block stored in this PAR2 set."
+        if pgm_is_hash_file_name "$base"; then
+            hint="Hash manifest differs from the copy embedded in the set (edits to CRLF, comments, or paths are a common cause)."
+        fi
+        printf '  %s\n' "$name"
+        printf '    %s\n' "$hint"
+    done
+    echo
+    echo "This message comes from par2cmdline, not par2-pgm-check. Repair restores the"
+    echo "old in-set version; regenerate keeps today's file and rebuilds the PAR2 set."
 }
 
 # A damaged .par2 / hash file is often one this run (or an earlier one) updated
@@ -3129,9 +3197,11 @@ print_summary() {
     echo "  Missing targets (by PAR2 name): ${missing}"
     echo "  Content matches found on disk:  ${matches}"
     echo "  Damaged files (content):        ${#DAMAGED_PAR2_TARGETS[@]}"
+    echo "  No data in set (exists, wrong): ${#NO_DATA_FOUND_TARGETS[@]}"
     echo "  Empty files (0-byte in set):    ${#EMPTY_PAR2_TARGETS[@]}"
     [[ -n "$wrong" ]] && echo "  ${wrong}"
     pgm_print_missing_targets_report
+    pgm_print_no_data_found_report
     pgm_print_empty_targets_report
 
     if (( matches > 0 )); then
@@ -3237,6 +3307,7 @@ pgm_run_one_par2_set() {
     RENAME_PAIRS=()
     DAMAGED_PAR2_TARGETS=()
     EMPTY_PAR2_TARGETS=()
+    NO_DATA_FOUND_TARGETS=()
     PGM_EMPTY_ONLY_DAMAGE=0
     REPAIR_POSSIBLE=0
     PGM_POST_RENAME_OUT=""
