@@ -1,5 +1,6 @@
 #!/bin/bash
-# v. 20260807.074654 - RUN FINISHED banner; Step 2→3 transition; par2 chunk progress
+# v. 20260807.075314 - strip Loading/Scanning progress glue; ASCII dashes in boxed text
+# v. 20260807.074654 - RUN FINISHED banner; Step 2->3 transition; par2 chunk progress
 # v. 20260806.222350 - hash --hash-tidy: Linux normalize CRLF, ';', backslash paths
 # v. 20260806.214403 - file-based grep noise filter; auto-skip empty-only repair; Step8 empty WARN
 # v. 20260806.193137 - regenerate: -b >= file count; drop 0-byte sources before par2 create
@@ -38,7 +39,8 @@
 # v. 20260719.103506 - fix no-arg run: empty POSITIONAL[@]:- became one "" element
 # v. 20260719.102800 - multi-set selection: A/a, ranges 1-4, --all, multiple paths
 
-# 2026.08.07 - v. 0.1.53 - RUN FINISHED exit banner; Step 2→3 transition; par2 chunk progress
+# 2026.08.07 - v. 0.1.54 - Strip glued Loading/Scanning progress; ASCII dashes in boxes
+# 2026.08.07 - v. 0.1.53 - RUN FINISHED exit banner; Step 2->3 transition; par2 chunk progress
 # 2026.08.06 - v. 0.1.52 - --hash-tidy: CRLF, ';'→'#', Windows backslash paths→'/'
 # 2026.08.06 - v. 0.1.51 - File-based grep noise filter; never offer empty-only repair; Step8 WARN
 # 2026.08.06 - v. 0.1.50 - Regenerate: set -b >= file count; exclude 0-byte files from create
@@ -695,9 +697,9 @@ pgm_print_run_settings() {
         echo "  Scope:        not used (PAR2 set(s) specified on command line)"
     elif [[ -n "$CLI_SCOPE" ]]; then
         if [[ "$CHECK_SCOPE" == "subdirs" ]]; then
-            echo "  --scope:      given (subdirs — search tree under start directory)"
+            echo "  --scope:      given (subdirs - search tree under start directory)"
         else
-            echo "  --scope:      given (current — start directory only)"
+            echo "  --scope:      given (current - start directory only)"
         fi
     else
         printf '  --scope:      not given (prompted; selected: %s)\n' "$CHECK_SCOPE"
@@ -1324,7 +1326,7 @@ pgm_print_run_finished() {
 
     [[ -n "$set_label" ]] && lines+=( "PAR2 set: $set_label" )
     lines+=( "$(pgm_exit_status_blurb "$rc")" )
-    lines+=( "Normal exit — the shell prompt returning means the script completed." )
+    lines+=( "Normal exit - the shell prompt returning means the script completed." )
 
     echo
     case "$kind" in
@@ -1363,14 +1365,36 @@ pgm_extract_par2_ok_line() {
 }
 
 # Drop high-volume par2 progress noise from what the user sees.
+# par2cmdline uses CR to overwrite progress on one line; tr -d '\r' glues
+# "Scanning/Loading/Opening: NN%" into megabytes of junk. Strip those tokens,
+# split on real status phrases, then drop found/empty target lines.
 # Full unfiltered output stays in temp files for rename/damage parsing.
-# Use grep (not sed+here-string): huge Step 2/3 logs break ARG_MAX / <<< reliably.
 pgm_filter_par2_verify_stream() {
     tr -d '\r' \
-        | grep -vE 'Opening:' \
+        | sed -E \
+            -e 's/Loaded ([0-9]+ new packets)/\nLoaded \1/g' \
+            -e 's/Loading "([^"]+)"/\nLoading "\1"/g' \
+            -e 's/Verifying source files:/\nVerifying source files:/g' \
+            -e 's/Scanning extra files:/\nScanning extra files:/g' \
+            -e 's/Repair is required\./\nRepair is required./g' \
+            -e 's/There are ([0-9]+ recoverable)/\nThere are \1/g' \
+            -e 's/The block size used/\nThe block size used/g' \
+            -e 's/There are a total of/\nThere are a total of/g' \
+            -e 's/The total size of/\nThe total size of/g' \
+            -e 's/([0-9]+) file\(s\) exist but are damaged\./\n\1 file(s) exist but are damaged./g' \
+            -e 's/([0-9]+) file\(s\) are ok\./\n\1 file(s) are ok./g' \
+            -e 's/You have ([0-9]+ out of [0-9]+ data blocks)/\nYou have \1/g' \
+            -e 's/You have ([0-9]+ recovery blocks)/\nYou have \1/g' \
+            -e 's/Repair is possible\./\nRepair is possible./g' \
+            -e 's/([0-9]+) recovery blocks will be used/\n\1 recovery blocks will be used/g' \
+            -e 's/File: "/\nFile: "/g' \
+            -e 's/Target: "/\nTarget: "/g' \
+            -e 's/(Scanning|Loading|Opening): [0-9.]+%//g' \
+            -e 's/[A-Za-z]*ing: [0-9.]+%//g' \
+        | grep -vE '^[[:space:]]*$' \
+        | grep -vE '^[%[:space:].,;:-]*$' \
         | grep -vE 'Skipping 0 byte file:' \
         | grep -vE 'Target: .* - (found|empty)\.[[:space:]]*$' \
-        | grep -vE '^[[:space:]]*Scanning:[[:space:]]*[0-9.]+%[[:space:]]*$' \
         | grep -viE '^[[:space:]]*All files are (ok|correct).*repair is not required' \
         || true
 }
@@ -1426,7 +1450,7 @@ pgm_print_step_verdict() {
     local kind="$2"
     shift 2
 
-    printf 'Step %s — %-6s%s\n' "$step" "${kind}:" "$*"
+    printf 'Step %s - %-6s%s\n' "$step" "${kind}:" "$*"
 }
 
 pgm_print_step1_verdict_from_msg() {
@@ -1974,7 +1998,7 @@ pgm_review_hash_manifests() {
     echo
     echo "Hash manifest(s) to normalize for Linux (not protected by this PAR2 set):"
     printf '  %s\n' "${tidy_candidates[@]##*/}"
-    echo "Normalize: CRLF→LF, ';' comments→'#', Windows backslash paths→'/'."
+    echo "Normalize: CRLF->LF, ';' comments->'#', Windows backslash paths->'/'."
     echo "Checksum digests and modification date are preserved."
 
     if (( NO_HASH_TIDY == 1 )); then
@@ -2073,7 +2097,7 @@ pgm_review_par2_hash_refs() {
 
     if (( has_missing )); then
         echo
-        echo "Missing .par2 name(s) in hash file(s) — likely old PAR2 archive(s)"
+        echo "Missing .par2 name(s) in hash file(s) - likely old PAR2 archive(s)"
         echo "left after recreate/regenerate (file no longer on disk):"
         for name in "${stale_names[@]}"; do
             printf '  %s\n' "$name"
@@ -2715,7 +2739,7 @@ prompt_and_regenerate_par2_set() {
     echo
     echo "=== Regenerate (optional) ==="
     echo "What it does: discard this PAR2 set and create a NEW one from the files"
-    echo "  as they are NOW on disk. Damaged data is NOT repaired — current disk"
+    echo "  as they are NOW on disk. Damaged data is NOT repaired - current disk"
     echo "  content becomes the new 'correct' baseline."
     echo "Choose this only when you accept today's disk files (including any"
     echo "  damage you skipped repairing) as the new master copies."
@@ -3015,7 +3039,7 @@ pgm_print_damaged_targets_report() {
     (( n > 0 )) || return 0
 
     echo
-    echo "Damaged file(s) — content mismatch (${n}):"
+    echo "Damaged file(s) - content mismatch (${n}):"
     for i in "${!DAMAGED_PAR2_TARGETS[@]}"; do
         (( i < max_show )) || { echo "  ... and $(( n - max_show )) more"; break; }
         printf '  %s\n' "${DAMAGED_PAR2_TARGETS[$i]}"
@@ -3263,10 +3287,10 @@ pgm_run_one_par2_set() {
     fi
 
     pgm_print_step_verdict 2 WARN "Not all files OK under PAR2 names; running directory scan."
-    pgm_print_step_transition "Continuing — Step 3 next" \
+    pgm_print_step_transition "Continuing - Step 3 next" \
         "The par2 summary above is from Step 2 (expected when files need attention)." \
         "Next: scan the directory tree for misnamed files; this may take several minutes." \
-        "While par2 runs you may see little output between chunk lines — that is normal."
+        "While par2 runs you may see little output between chunk lines - that is normal."
     pgm_collect_data_files_for_scan
     pgm_print_step_header "Step 3: verify with directory scan (subdirs; detect misnamed files)"
     OUT2_FILE=$(mktemp "${TMPDIR:-/tmp}/par2-pgm-check.XXXXXX")
@@ -3298,7 +3322,7 @@ pgm_run_one_par2_set() {
                     "What worked: PAR2 metadata rename (names on disk now match PAR2)." \
                     "What remains: data file content still damaged (see list above)." \
                     "Next: Repair rebuilds damaged data from recovery blocks;" \
-                    "Regenerate does not fix damage — it accepts disk files as-is."
+                    "Regenerate does not fix damage - it accepts disk files as-is."
             fi
         fi
     fi
