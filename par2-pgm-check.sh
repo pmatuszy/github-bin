@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20260807.074654 - RUN FINISHED banner; Step 2→3 transition; par2 chunk progress
 # v. 20260806.222350 - hash --hash-tidy: Linux normalize CRLF, ';', backslash paths
 # v. 20260806.214403 - file-based grep noise filter; auto-skip empty-only repair; Step8 empty WARN
 # v. 20260806.193137 - regenerate: -b >= file count; drop 0-byte sources before par2 create
@@ -37,6 +38,7 @@
 # v. 20260719.103506 - fix no-arg run: empty POSITIONAL[@]:- became one "" element
 # v. 20260719.102800 - multi-set selection: A/a, ranges 1-4, --all, multiple paths
 
+# 2026.08.07 - v. 0.1.53 - RUN FINISHED exit banner; Step 2→3 transition; par2 chunk progress
 # 2026.08.06 - v. 0.1.52 - --hash-tidy: CRLF, ';'→'#', Windows backslash paths→'/'
 # 2026.08.06 - v. 0.1.51 - File-based grep noise filter; never offer empty-only repair; Step8 WARN
 # 2026.08.06 - v. 0.1.50 - Regenerate: set -b >= file count; exclude 0-byte files from create
@@ -1198,6 +1200,7 @@ trap cleanup EXIT
 die() {
     echo "Error: $*" >&2
     return_code=1
+    pgm_print_run_finished 1
     . /root/bin/_script_footer.sh
     exit 1
 }
@@ -1208,6 +1211,7 @@ finish() {
         pgm_print_multi_set_summary
     fi
     pgm_print_timing_summary
+    pgm_print_run_finished "$rc"
     . /root/bin/_script_footer.sh
     exit "$rc"
 }
@@ -1280,6 +1284,65 @@ pgm_print_outcome() {
     echo
 }
 
+pgm_exit_kind_from_rc() {
+    local rc="$1"
+    case "$rc" in
+        0) printf '%s' ok ;;
+        1|3) printf '%s' err ;;
+        *) printf '%s' warn ;;
+    esac
+}
+
+pgm_exit_status_blurb() {
+    local rc="$1"
+    case "$rc" in
+        0) printf '%s' 'All checks passed (or only expected skips).' ;;
+        1) printf '%s' 'Stopped on error (see messages above).' ;;
+        2) printf '%s' 'Finished with open issues (repair/regenerate may still be needed).' ;;
+        3) printf '%s' 'Verification or repair failed.' ;;
+        *) printf '%s' "Finished with exit code $rc." ;;
+    esac
+}
+
+pgm_print_run_finished() {
+    local rc="${1:-0}"
+    local kind set_label
+    local -a lines=()
+
+    kind="$(pgm_exit_kind_from_rc "$rc")"
+    set_label=""
+    if [[ -n "${PAR2_FILE:-}" ]]; then
+        set_label="$(basename -- "$PAR2_FILE")"
+    fi
+
+    case "$kind" in
+        ok)   lines+=( "*** RUN FINISHED: OK (exit $rc) ***" ) ;;
+        warn) lines+=( "*** RUN FINISHED: ATTENTION NEEDED (exit $rc) ***" ) ;;
+        err)  lines+=( "*** RUN FINISHED: PROBLEM (exit $rc) ***" ) ;;
+        *)    lines+=( "*** RUN FINISHED (exit $rc) ***" ) ;;
+    esac
+
+    [[ -n "$set_label" ]] && lines+=( "PAR2 set: $set_label" )
+    lines+=( "$(pgm_exit_status_blurb "$rc")" )
+    lines+=( "Normal exit — the shell prompt returning means the script completed." )
+
+    echo
+    case "$kind" in
+        ok) pgm_emit_boxed_block ada-box "${lines[@]}" ;;
+        *)  pgm_emit_boxed_block stone "${lines[@]}" ;;
+    esac
+    echo
+}
+
+pgm_print_step_transition() {
+    local title="$1"
+    shift
+
+    echo
+    pgm_emit_boxed_block stone "$title" "$@"
+    echo
+}
+
 # $1 = path to a log file, or raw par2 text (not an existing path).
 pgm_par2_output_indicates_ok() {
     local src="$1"
@@ -1304,15 +1367,23 @@ pgm_extract_par2_ok_line() {
 # Use grep (not sed+here-string): huge Step 2/3 logs break ARG_MAX / <<< reliably.
 pgm_filter_par2_verify_stream() {
     tr -d '\r' \
-        | grep -vE '^[[:space:]]*(Opening:|Skipping 0 byte file:)' \
-        | grep -vE '^[[:space:]]*Target: .* - (found|empty)\.?[[:space:]]*$' \
+        | grep -vE 'Opening:' \
+        | grep -vE 'Skipping 0 byte file:' \
+        | grep -vE 'Target: .* - (found|empty)\.[[:space:]]*$' \
+        | grep -vE '^[[:space:]]*Scanning:[[:space:]]*[0-9.]+%[[:space:]]*$' \
         | grep -viE '^[[:space:]]*All files are (ok|correct).*repair is not required' \
         || true
 }
 
 pgm_filter_par2_verify_file() {
     local f="$1"
+    local label="${2:-}"
+
     [[ -n "$f" && -f "$f" ]] || return 0
+    if [[ -n "$label" ]]; then
+        echo
+        echo "=== $label (filtered) ==="
+    fi
     <"$f" pgm_filter_par2_verify_stream
     echo
 }
@@ -1784,19 +1855,27 @@ pgm_par2_run_chunked() {
     local mode="$1"
     local outfile="${2:-}"
     local par2_base batch_size chunk=() i rc=0 last_rc=0
+    local chunk_num=0 total_files chunk_end total_chunks
 
     par2_base="$(basename "$PAR2_FILE")"
     batch_size="$PGM_PAR2_ARG_BATCH"
     (( ${#DATA_FILES[@]} > 0 )) || return 0
 
+    total_files=${#DATA_FILES[@]}
+    total_chunks=$(( (total_files + batch_size - 1) / batch_size ))
+
     if [[ -n "$outfile" ]]; then
         : > "$outfile"
+        echo "Running par2 $mode on $total_files file(s) in $total_chunks chunk(s); please wait..."
     fi
 
-    for (( i=0; i < ${#DATA_FILES[@]}; i++ )); do
+    for (( i=0; i < total_files; i++ )); do
         chunk+=("${DATA_FILES[$i]}")
-        if ((${#chunk[@]} >= batch_size)) || (( i == ${#DATA_FILES[@]} - 1 )); then
+        if ((${#chunk[@]} >= batch_size)) || (( i == total_files - 1 )); then
             if [[ -n "$outfile" ]]; then
+                chunk_num+=1
+                chunk_end=$((i + 1))
+                echo "  par2 $mode: chunk $chunk_num/$total_chunks ($chunk_end/$total_files files)..."
                 (
                     cd "$DATA_DIR" || exit 1
                     run_par2 "$mode" "$par2_base" "${chunk[@]}"
@@ -3169,7 +3248,7 @@ pgm_run_one_par2_set() {
     RC1=$?
     set -e
     pgm_timing_lap_to PGM_TIMING_PAR2_NAMES_SEC
-    pgm_filter_par2_verify_file "$OUT1_FILE"
+    pgm_filter_par2_verify_file "$OUT1_FILE" "Step 2 par2 output"
 
     if pgm_par2_output_indicates_ok "$OUT1_FILE"; then
         par2_ok_line="$(pgm_extract_par2_ok_line "$OUT1_FILE")"
@@ -3184,12 +3263,17 @@ pgm_run_one_par2_set() {
     fi
 
     pgm_print_step_verdict 2 WARN "Not all files OK under PAR2 names; running directory scan."
+    pgm_print_step_transition "Continuing — Step 3 next" \
+        "The par2 summary above is from Step 2 (expected when files need attention)." \
+        "Next: scan the directory tree for misnamed files; this may take several minutes." \
+        "While par2 runs you may see little output between chunk lines — that is normal."
     pgm_collect_data_files_for_scan
     pgm_print_step_header "Step 3: verify with directory scan (subdirs; detect misnamed files)"
     OUT2_FILE=$(mktemp "${TMPDIR:-/tmp}/par2-pgm-check.XXXXXX")
     pgm_par2_run_chunked verify "$OUT2_FILE"
     RC2=$?
-    pgm_filter_par2_verify_file "$OUT2_FILE"
+    echo "Step 3 par2 verify finished; showing filtered summary..."
+    pgm_filter_par2_verify_file "$OUT2_FILE" "Step 3 par2 output"
     pgm_timing_lap_to PGM_TIMING_PAR2_SCAN_SEC
 
     print_summary "$OUT2_FILE"
