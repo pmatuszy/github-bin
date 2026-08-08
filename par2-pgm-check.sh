@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20260808.114700 - fix set -e abort in missing-line collapse (466+ missing files)
 # v. 20260808.114400 - -f alias for --fix; fix mode prompts repair when possible
 # v. 20260808.114000 - --fix: auto regenerate PAR2 + sync/tidy hash; skip useless repair
 # v. 20260807.085811 - RUN SUMMARY box at end of each PAR2 set check
@@ -43,6 +44,7 @@
 # v. 20260719.103506 - fix no-arg run: empty POSITIONAL[@]:- became one "" element
 # v. 20260719.102800 - multi-set selection: A/a, ranges 1-4, --all, multiple paths
 
+# 2026.08.08 - v. 0.1.59 - Fix crash filtering many "Target: missing" lines under set -e
 # 2026.08.08 - v. 0.1.58 - -f alias for --fix; fix mode still prompts repair when possible
 # 2026.08.08 - v. 0.1.57 - --fix: rebuild PAR2 + hash from disk; fast path when repair impossible
 # 2026.08.07 - v. 0.1.56 - RUN SUMMARY box at end of each set (verdict, counts, next step)
@@ -1496,8 +1498,10 @@ pgm_collapse_par2_missing_lines() {
             Target:*" - missing."*)
                 name="${line#Target: \"}"
                 name="${name%%\" - missing.*}"
-                (( missing_count++ ))
-                ((${#samples[@]} < max_show)) && samples+=("$name")
+                missing_count=$(( missing_count + 1 ))
+                if ((${#samples[@]} < max_show)); then
+                    samples+=("$name")
+                fi
                 ;;
             *)
                 if (( missing_count > 0 )); then
@@ -1634,7 +1638,9 @@ pgm_filter_par2_verify_file() {
         echo
         echo "=== $label (filtered) ==="
     fi
+    set +e
     <"$f" pgm_filter_par2_verify_stream | pgm_collapse_par2_missing_lines
+    set -e
     echo
 }
 
