@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20260808.115352 - set +e around Step3 verify; offer rebuild when repair impossible
 # v. 20260808.114700 - fix set -e abort in missing-line collapse (466+ missing files)
 # v. 20260808.114400 - -f alias for --fix; fix mode prompts repair when possible
 # v. 20260808.114000 - --fix: auto regenerate PAR2 + sync/tidy hash; skip useless repair
@@ -44,6 +45,7 @@
 # v. 20260719.103506 - fix no-arg run: empty POSITIONAL[@]:- became one "" element
 # v. 20260719.102800 - multi-set selection: A/a, ranges 1-4, --all, multiple paths
 
+# 2026.08.08 - v. 0.1.60 - set +e on Step3 verify; prompt rebuild when repair impossible
 # 2026.08.08 - v. 0.1.59 - Fix crash filtering many "Target: missing" lines under set -e
 # 2026.08.08 - v. 0.1.58 - -f alias for --fix; fix mode still prompts repair when possible
 # 2026.08.08 - v. 0.1.57 - --fix: rebuild PAR2 + hash from disk; fast path when repair impossible
@@ -383,6 +385,12 @@ pgm_prompt_read_repair_choice() {
 pgm_prompt_read_hash_tidy_choice() {
     pgm_prompt_read_yes_no_quit "$1" "$2" \
         "Normalize hash manifest(s) for Linux (CRLF, ';' comments, backslash paths)?"
+}
+
+pgm_prompt_read_rebuild_choice() {
+    # Default yes for single-set rebuild when repair is impossible.
+    pgm_prompt_read_yes_no_quit 1 "$1" \
+        "Rebuild PAR2 + hash from files on disk now (repair is not possible)?"
 }
 
 pgm_hash_lint_format_issues() {
@@ -2965,16 +2973,48 @@ pgm_tidy_all_hash_manifests() {
     done
 }
 
-pgm_fix_should_fast_regen_after_step2() {
+pgm_step2_needs_rebuild_from_disk() {
     local out_file="$1"
     local missing_n=0
 
-    (( FIX_MODE )) || return 1
     [[ -n "$out_file" && -f "$out_file" ]] || return 1
     pgm_par2_output_repair_not_possible "$out_file" || return 1
     missing_n=$(pgm_par2_missing_target_count "$out_file")
     (( missing_n > 0 )) || return 1
     return 0
+}
+
+pgm_offer_rebuild_after_step2() {
+    local rebuild_choice=0
+
+    (( NO_REGENERATE == 1 )) && return 1
+
+    if (( FIX_MODE || AUTO_REGENERATE )); then
+        return 0
+    fi
+
+    echo
+    echo "=== Rebuild needed (repair is not possible) ==="
+    echo "par2cmdline cannot repair this set (paths on disk no longer match PAR2 names)."
+    echo "Rebuilding creates a NEW PAR2 set from today's files and syncs the hash manifest."
+    echo "Tip: next time use -f / --fix to do this automatically."
+    pgm_prompt_read_rebuild_choice rebuild_choice
+    case "$rebuild_choice" in
+        0)
+            pgm_enable_fix_mode
+            return 0
+            ;;
+        1)
+            echo "Skipped rebuild; continuing with directory scan (check-only)."
+            return 1
+            ;;
+        2)
+            echo "Cancelled."
+            return_code=0
+            finish
+            ;;
+    esac
+    return 1
 }
 
 pgm_run_fix_fast_regen_from_disk() {
@@ -2984,13 +3024,14 @@ pgm_run_fix_fast_regen_from_disk() {
     REPAIR_NOT_POSSIBLE=1
     REPAIR_POSSIBLE=0
     PGM_EMPTY_ONLY_DAMAGE=0
+    SUMMARY_RC=2
     pgm_collect_missing_targets "$OUT1_FILE"
     pgm_collect_damaged_targets "$OUT1_FILE"
     pgm_collect_empty_targets "$OUT1_FILE"
 
     echo
     pgm_emit_boxed_block stone \
-        "Fix mode: rebuild PAR2 from disk" \
+        "Rebuild PAR2 + hash from disk" \
         "par2cmdline: repair is NOT possible for this set." \
         "${missing_n} file(s) missing under old PAR2 path names." \
         "Skipping Step 3 scan; rebuilding PAR2 + hash from ${#DATA_FILES[@]} file(s) on disk."
@@ -3644,10 +3685,12 @@ pgm_run_one_par2_set() {
 
     pgm_print_step_verdict 2 WARN "Not all files OK under PAR2 names; running directory scan."
 
-    if pgm_fix_should_fast_regen_after_step2 "$OUT1_FILE"; then
-        pgm_collect_data_files_for_scan
-        pgm_run_fix_fast_regen_from_disk
-        return $?
+    if pgm_step2_needs_rebuild_from_disk "$OUT1_FILE"; then
+        if pgm_offer_rebuild_after_step2; then
+            pgm_collect_data_files_for_scan
+            pgm_run_fix_fast_regen_from_disk
+            return $?
+        fi
     fi
 
     pgm_print_step_transition "Continuing - Step 3 next" \
@@ -3657,8 +3700,11 @@ pgm_run_one_par2_set() {
     pgm_collect_data_files_for_scan
     pgm_print_step_header "Step 3: verify with directory scan (subdirs; detect misnamed files)"
     OUT2_FILE=$(mktemp "${TMPDIR:-/tmp}/par2-pgm-check.XXXXXX")
+    # par2 verify returns non-zero when files are missing/damaged; do not abort under set -e.
+    set +e
     pgm_par2_run_chunked verify "$OUT2_FILE"
     RC2=$?
+    set -e
     echo "Step 3 par2 verify finished; showing filtered summary..."
     pgm_filter_par2_verify_file "$OUT2_FILE" "Step 3 par2 output"
     pgm_timing_lap_to PGM_TIMING_PAR2_SCAN_SEC
@@ -3695,7 +3741,9 @@ pgm_run_one_par2_set() {
             local OUT8_FILE empty_after=0
             pgm_print_step_header "Step 8: verify after repair"
             OUT8_FILE=$(mktemp "${TMPDIR:-/tmp}/par2-pgm-check.XXXXXX")
+            set +e
             pgm_par2_run_chunked verify "$OUT8_FILE"
+            set -e
             pgm_filter_par2_verify_file "$OUT8_FILE"
             if pgm_par2_output_indicates_ok "$OUT8_FILE"; then
                 SUMMARY_RC=0
