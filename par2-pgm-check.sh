@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20260808.114000 - --fix: auto regenerate PAR2 + sync/tidy hash; skip useless repair
 # v. 20260807.085811 - RUN SUMMARY box at end of each PAR2 set check
 # v. 20260807.075913 - explain par2cmdline "no data found" (source, meaning, what to do)
 # v. 20260807.075314 - strip Loading/Scanning progress glue; ASCII dashes in boxed text
@@ -41,6 +42,7 @@
 # v. 20260719.103506 - fix no-arg run: empty POSITIONAL[@]:- became one "" element
 # v. 20260719.102800 - multi-set selection: A/a, ranges 1-4, --all, multiple paths
 
+# 2026.08.08 - v. 0.1.57 - --fix: rebuild PAR2 + hash from disk; fast path when repair impossible
 # 2026.08.07 - v. 0.1.56 - RUN SUMMARY box at end of each set (verdict, counts, next step)
 # 2026.08.07 - v. 0.1.55 - Explain par2cmdline "no data found" in verify output and summary
 # 2026.08.07 - v. 0.1.54 - Strip glued Loading/Scanning progress; ASCII dashes in boxes
@@ -126,6 +128,8 @@ Options:
   --no-regenerate      Never offer to regenerate the PAR2 set
   --hash-par2-check    Auto-yes: verify .par2 lines in hash manifests when any exist
   --no-hash-par2-check Never offer to verify .par2 lines in hash manifests
+  --fix                Rebuild broken sets: auto-regenerate PAR2 from disk, sync + tidy
+                       hash manifests, auto-rename metadata; skip repair (use with -y)
 
 Rename prompts take one key: y, n, or q (q cancels the whole run).
 Multi-set batch: rename defaults to no unless --yes is given.
@@ -158,6 +162,7 @@ Examples:
   $(basename "$0") "archive.par2" /path/to/files --yes
   $(basename "$0") /path/to/dir --all
   $(basename "$0") /path/to/dir --scope subdirs --all
+  $(basename "$0") G_#05 --fix
   $(basename "$0") set1.par2 set2.par2 '202606*.par2'
 EOF
 }
@@ -674,6 +679,10 @@ pgm_print_run_settings() {
         echo "  --regenerate: not given (prompt when set still has problems; default no)"
     fi
 
+    if (( FIX_MODE )); then
+        echo "  --fix:        given (regenerate PAR2 + sync/tidy hash; skip repair)"
+    fi
+
     if (( AUTO_HASH_PAR2_CHECK )); then
         echo "  --hash-par2-check: given (verify .par2 hash lines without asking)"
     elif (( NO_HASH_PAR2_CHECK )); then
@@ -1157,6 +1166,8 @@ AUTO_REGENERATE=0
 NO_REGENERATE=0
 AUTO_HASH_PAR2_CHECK=0
 NO_HASH_PAR2_CHECK=0
+FIX_MODE=0
+REPAIR_NOT_POSSIBLE=0
 PGM_HASH_SYNCED_THIS_SET=0
 POSITIONAL=()
 MISNAMED_DISK=()
@@ -1371,7 +1382,11 @@ pgm_final_next_step_hint() {
         return 0
     fi
 
-    if (( ${#NO_DATA_FOUND_TARGETS[@]} > 0 )); then
+    if (( FIX_MODE )); then
+        hints+=("re-run with --fix if PAR2/hash were not rebuilt automatically")
+    elif (( REPAIR_NOT_POSSIBLE )); then
+        hints+=("regenerate PAR2 from disk (--fix or --regenerate)")
+    elif (( ${#NO_DATA_FOUND_TARGETS[@]} > 0 )); then
         hints+=("regenerate PAR2 if edited hash manifest(s) on disk should stay as-is")
     fi
     if (( ${#MISNAMED_DISK[@]} > 0 )); then
@@ -1439,6 +1454,74 @@ pgm_run_one_par2_set_end() {
 
     pgm_print_final_run_summary "$rc"
     return "$rc"
+}
+
+pgm_par2_output_repair_not_possible() {
+    local src="$1"
+
+    if [[ -n "$src" && -f "$src" ]]; then
+        grep -qiE 'repair is not possible' "$src"
+    else
+        grep -qiE 'repair is not possible' <<< "$src"
+    fi
+}
+
+pgm_par2_missing_target_count() {
+    local src="$1"
+
+    if [[ -n "$src" && -f "$src" ]]; then
+        grep -cE 'Target:.* - missing\.' "$src" 2>/dev/null || true
+    else
+        grep -cE 'Target:.* - missing\.' <<< "$src" 2>/dev/null || true
+    fi
+}
+
+pgm_collapse_par2_missing_lines() {
+    local line name missing_count=0 max_show=12
+    local -a samples=()
+
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        case "$line" in
+            Target:*" - missing."*)
+                name="${line#Target: \"}"
+                name="${name%%\" - missing.*}"
+                (( missing_count++ ))
+                ((${#samples[@]} < max_show)) && samples+=("$name")
+                ;;
+            *)
+                if (( missing_count > 0 )); then
+                    echo
+                    echo "[par2cmdline] ${missing_count} file(s) missing under PAR2 stored name(s)."
+                    echo "Examples (in PAR2 set but not on disk at that exact path):"
+                    for name in "${samples[@]}"; do
+                        printf '  %s\n' "$name"
+                    done
+                    if (( missing_count > max_show )); then
+                        echo "  ... and $(( missing_count - max_show )) more (full list in Summary below)"
+                    fi
+                    echo "Verdict: NOT OK. Regenerate rebuilds PAR2 from today's files on disk."
+                    echo
+                    missing_count=0
+                    samples=()
+                fi
+                printf '%s\n' "$line"
+                ;;
+        esac
+    done
+
+    if (( missing_count > 0 )); then
+        echo
+        echo "[par2cmdline] ${missing_count} file(s) missing under PAR2 stored name(s)."
+        echo "Examples (in PAR2 set but not on disk at that exact path):"
+        for name in "${samples[@]}"; do
+            printf '  %s\n' "$name"
+        done
+        if (( missing_count > max_show )); then
+            echo "  ... and $(( missing_count - max_show )) more (full list in Summary below)"
+        fi
+        echo "Verdict: NOT OK. Regenerate rebuilds PAR2 from today's files on disk."
+        echo
+    fi
 }
 
 # $1 = path to a log file, or raw par2 text (not an existing path).
@@ -1540,7 +1623,7 @@ pgm_filter_par2_verify_file() {
         echo
         echo "=== $label (filtered) ==="
     fi
-    <"$f" pgm_filter_par2_verify_stream
+    <"$f" pgm_filter_par2_verify_stream | pgm_collapse_par2_missing_lines
     echo
 }
 
@@ -2707,6 +2790,12 @@ pgm_prompt_recovery_percent() {
 
     [[ "$suggested" =~ ^[1-9][0-9]?$|^100$ ]] || suggested=20
 
+    if (( FIX_MODE || AUTO_REGENERATE )); then
+        _out="$suggested"
+        echo "Recovery percent for new PAR2 set: ${suggested}% (automatic)."
+        return 0
+    fi
+
     printf '%sRecovery percent for new PAR2 set [1-100] (default: %s%%, %s): ' \
         "$(pgm_user_prompt_ts_prefix)" "$suggested" "$(pgm_prompt_timeout_label)"
     if ! pgm_read_line_with_timeout ans; then
@@ -2838,6 +2927,60 @@ pgm_sync_hashes_after_regen() {
     return "$rc"
 }
 
+pgm_tidy_all_hash_manifests() {
+    local -a lint=()
+    local line path msg
+
+    mapfile -t lint < <(run_rename_py hash lint "$DATA_DIR" "$PAR2_FILE" 2>/dev/null) || true
+    ((${#lint[@]} > 0)) || return 0
+
+    echo "Normalizing hash manifest(s) for Linux md5sum -c..."
+    for line in "${lint[@]}"; do
+        IFS=$'\t' read -r path _ <<< "$line"
+        [[ -n "$path" && -f "$path" ]] || continue
+        msg=$(run_rename_py hash tidy "$path" 2>&1) || true
+        [[ -n "$msg" ]] && echo "$msg"
+    done
+}
+
+pgm_fix_should_fast_regen_after_step2() {
+    local out_file="$1"
+    local missing_n=0
+
+    (( FIX_MODE )) || return 1
+    [[ -n "$out_file" && -f "$out_file" ]] || return 1
+    pgm_par2_output_repair_not_possible "$out_file" || return 1
+    missing_n=$(pgm_par2_missing_target_count "$out_file")
+    (( missing_n > 0 )) || return 1
+    return 0
+}
+
+pgm_run_fix_fast_regen_from_disk() {
+    local missing_n=0 sum_rc=2
+
+    missing_n=$(pgm_par2_missing_target_count "$OUT1_FILE")
+    REPAIR_NOT_POSSIBLE=1
+    REPAIR_POSSIBLE=0
+    PGM_EMPTY_ONLY_DAMAGE=0
+    pgm_collect_missing_targets "$OUT1_FILE"
+    pgm_collect_damaged_targets "$OUT1_FILE"
+    pgm_collect_empty_targets "$OUT1_FILE"
+
+    echo
+    pgm_emit_boxed_block stone \
+        "Fix mode: rebuild PAR2 from disk" \
+        "par2cmdline: repair is NOT possible for this set." \
+        "${missing_n} file(s) missing under old PAR2 path names." \
+        "Skipping Step 3 scan; rebuilding PAR2 + hash from ${#DATA_FILES[@]} file(s) on disk."
+
+    if prompt_and_regenerate_par2_set; then
+        sum_rc=0
+    fi
+    pgm_review_par2_hash_refs
+    pgm_run_one_par2_set_end "$sum_rc"
+    return "$sum_rc"
+}
+
 prompt_and_regenerate_par2_set() {
     local regen_choice=0 backup_choice=0 percent=20 suggested=20 tmp=""
     local stem member base src dst create_rc=0
@@ -2849,6 +2992,12 @@ prompt_and_regenerate_par2_set() {
     if (( NO_REGENERATE == 1 )); then
         pgm_print_step_verdict 9 SKIP "Regenerate skipped (--no-regenerate)."
         return 1
+    fi
+
+    if (( FIX_MODE )); then
+        echo
+        echo "=== Fix mode: regenerate PAR2 + sync hash manifests ==="
+        echo "Rebuilds the PAR2 set from files on disk now, then updates hash file(s)."
     fi
 
     suggested=20
@@ -2904,6 +3053,8 @@ prompt_and_regenerate_par2_set() {
                 finish
                 ;;
         esac
+    elif (( FIX_MODE )); then
+        echo "Regenerating automatically (--fix)."
     else
         echo "Regenerating automatically (--regenerate)."
     fi
@@ -2926,6 +3077,8 @@ prompt_and_regenerate_par2_set() {
                 finish
                 ;;
         esac
+    elif (( FIX_MODE )); then
+        echo "Backing up old PAR2 files to *.par2.old (automatic --fix)."
     fi
 
     pgm_print_step_header "Step 9: regenerate PAR2 set"
@@ -2997,6 +3150,12 @@ prompt_and_regenerate_par2_set() {
         PGM_HASH_SYNCED_THIS_SET=1
     else
         pgm_print_step_verdict 9b WARN "Hash sync reported a problem (see above)."
+    fi
+
+    if (( FIX_MODE || AUTO_HASH_TIDY )); then
+        pgm_print_step_header "Step 9c: normalize hash manifest(s) for Linux"
+        pgm_tidy_all_hash_manifests
+        pgm_print_step_verdict 9c OK "Hash manifest normalization finished."
     fi
 
     pgm_print_step_header "Step 10: verify after regenerate"
@@ -3260,8 +3419,10 @@ print_summary() {
     pgm_collect_empty_targets "$out_file"
 
     REPAIR_POSSIBLE=0
+    REPAIR_NOT_POSSIBLE=0
     PGM_EMPTY_ONLY_DAMAGE=0
     grep -qiE 'repair is possible' "$out_file" && REPAIR_POSSIBLE=1
+    pgm_par2_output_repair_not_possible "$out_file" && REPAIR_NOT_POSSIBLE=1
 
     wrong=$(grep -E '[0-9]+ file\(s\) have the wrong name\.' "$out_file" | head -1 || true)
 
@@ -3377,12 +3538,18 @@ print_summary() {
     fi
 
     if (( missing > 0 )); then
-        pgm_print_step_verdict 3 FAIL \
-            "Files missing with no content match on disk (${missing} target(s))."
-        pgm_print_outcome err \
-            "Files are missing and no content match was found in the directory." \
-            "Missing targets (by PAR2 name): ${missing}"
-        return 3
+        echo
+        if (( REPAIR_NOT_POSSIBLE )); then
+            echo "par2cmdline: repair is NOT possible for this damage pattern."
+            echo "Practical fix: regenerate PAR2 from files currently on disk (--fix or --regenerate)."
+        fi
+        pgm_print_step_verdict 3 WARN \
+            "${missing} PAR2 target(s) missing under stored names."
+        pgm_print_outcome warn \
+            "PAR2 paths do not match files on disk (${missing} missing by name)." \
+            "If only names moved: metadata rename may help; else regenerate rebuilds PAR2 + hash." \
+            "Run with --fix to do this automatically."
+        return 2
     fi
 
     pgm_print_step_verdict 3 FAIL "Verification reported problems (see output above)."
@@ -3403,6 +3570,7 @@ pgm_run_one_par2_set() {
     NO_DATA_FOUND_TARGETS=()
     PGM_EMPTY_ONLY_DAMAGE=0
     REPAIR_POSSIBLE=0
+    REPAIR_NOT_POSSIBLE=0
     PGM_POST_RENAME_OUT=""
     OUT1=""
     OUT1_FILE=""
@@ -3453,6 +3621,13 @@ pgm_run_one_par2_set() {
     fi
 
     pgm_print_step_verdict 2 WARN "Not all files OK under PAR2 names; running directory scan."
+
+    if pgm_fix_should_fast_regen_after_step2 "$OUT1_FILE"; then
+        pgm_collect_data_files_for_scan
+        pgm_run_fix_fast_regen_from_disk
+        return $?
+    fi
+
     pgm_print_step_transition "Continuing - Step 3 next" \
         "The par2 summary above is from Step 2 (expected when files need attention)." \
         "Next: scan the directory tree for misnamed files; this may take several minutes." \
@@ -3493,7 +3668,7 @@ pgm_run_one_par2_set() {
         fi
     fi
 
-    if (( SUMMARY_RC != 0 && REPAIR_POSSIBLE == 1 )); then
+    if (( SUMMARY_RC != 0 && REPAIR_POSSIBLE == 1 && REPAIR_NOT_POSSIBLE == 0 && NO_REPAIR == 0 )); then
         if prompt_and_apply_repair; then
             local OUT8_FILE empty_after=0
             pgm_print_step_header "Step 8: verify after repair"
@@ -3579,6 +3754,15 @@ while [[ $# -gt 0 ]]; do
             ;;
         --no-regenerate)
             NO_REGENERATE=1
+            shift
+            ;;
+        --fix)
+            FIX_MODE=1
+            AUTO_REGENERATE=1
+            AUTO_HASH_TIDY=1
+            AUTO_HASH_PAR2_CHECK=1
+            AUTO_RENAME=1
+            NO_REPAIR=1
             shift
             ;;
         --hash-par2-check)
