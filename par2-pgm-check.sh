@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20260808.143737 - clear pre-repair summary when only leftover is hash-in-PAR2 mismatch
 # v. 20260808.142411 - set -e: capture print_summary / single-set rc so rename prompt runs
 # v. 20260808.141817 - Step3 rename scan before rebuild; remove early Step2 rebuild skip
 # v. 20260808.115352 - set +e around Step3 verify; offer rebuild when repair impossible
@@ -47,6 +48,7 @@
 # v. 20260719.103506 - fix no-arg run: empty POSITIONAL[@]:- became one "" element
 # v. 20260719.102800 - multi-set selection: A/a, ranges 1-4, --all, multiple paths
 
+# 2026.08.08 - v. 0.1.63 - Before repair prompt: explain hash-only leftover after rename
 # 2026.08.08 - v. 0.1.62 - set -e: keep going after print_summary WARN so rename prompt runs
 # 2026.08.08 - v. 0.1.61 - Step 3 rename scan before rebuild; do not skip scan after Step 2
 # 2026.08.08 - v. 0.1.60 - set +e on Step3 verify; prompt rebuild when repair impossible
@@ -2735,8 +2737,44 @@ pgm_post_rename_names_unresolved() {
     return 1
 }
 
+# True when every damaged target is a hash manifest (*.md5 / *.sha256 / *.sha512).
+pgm_damaged_targets_are_hash_only() {
+    local t
+
+    (( ${#DAMAGED_PAR2_TARGETS[@]} > 0 )) || return 1
+    for t in "${DAMAGED_PAR2_TARGETS[@]}"; do
+        pgm_is_hash_file_name "$(basename -- "$t")" || return 1
+    done
+    return 0
+}
+
+# Plain-English briefing before the repair prompt when rename already fixed data files
+# and the only leftover is a hash manifest still protected by this PAR2 set.
+pgm_print_hash_only_repair_briefing() {
+    local t
+
+    echo
+    pgm_emit_boxed_block stone \
+        "*** SHORT SUMMARY (read this before Repair) ***" \
+        "Rename already succeeded: real data files match PAR2 names on disk." \
+        "Only leftover: hash manifest(s) still listed INSIDE this PAR2 set," \
+        "but the file on disk no longer matches the old in-set copy." \
+        "That is a hash/PAR2 metadata mismatch - not corrupt game data." \
+        "Recommended: answer N (skip repair), then Y to rebuild PAR2." \
+        "Rebuild excludes hash files from the new set and syncs the manifest." \
+        "Repair would restore the OLD hash file from PAR2 (usually wrong here)."
+
+    echo
+    echo "Hash file(s) still protected by this PAR2 set:"
+    for t in "${DAMAGED_PAR2_TARGETS[@]}"; do
+        printf '  %s\n' "$t"
+    done
+    echo
+}
+
 prompt_and_apply_repair() {
     local repair_choice=0 repair_rc=0
+    local hash_only=0
 
     (( REPAIR_POSSIBLE == 1 )) || return 1
 
@@ -2758,27 +2796,48 @@ prompt_and_apply_repair() {
         return 1
     fi
 
+    if pgm_damaged_targets_are_hash_only; then
+        hash_only=1
+        pgm_print_hash_only_repair_briefing
+    fi
+
     if (( REPAIR == 0 )); then
         echo
-        if (( FIX_MODE )); then
+        if (( hash_only == 1 )); then
+            echo "=== Repair? (usually skip when only the hash file differs) ==="
+            echo "Default N: keep today's hash file on disk."
+            echo "Next step after N: rebuild PAR2 so the hash file is no longer a"
+            echo "  PAR2 source and future checks stay clean."
+            echo "Y here would overwrite the hash file with the OLD copy from PAR2."
+        elif (( FIX_MODE )); then
             echo "=== Fix mode: repair damaged file(s)? (optional) ==="
             echo "Fix mode will regenerate PAR2 + sync hash afterward if problems remain."
+            echo "What it does: keep THIS PAR2 set; rebuild damaged DATA file(s) from"
+            echo "  recovery blocks so their content matches what PAR2 expects."
+            echo "Side effect: par2 may also rename disk files to the names stored in PAR2."
+            echo "Choose this when the PAR2 archives are the trusted copy and the data"
+            echo "  file(s) on disk are wrong/corrupt."
+            echo "Skip this if you want to leave damaged data as-is, or if you plan to"
+            echo "  Regenerate (accept current disk files as the new baseline)."
         else
             echo "=== Repair (optional) ==="
+            echo "What it does: keep THIS PAR2 set; rebuild damaged DATA file(s) from"
+            echo "  recovery blocks so their content matches what PAR2 expects."
+            echo "Side effect: par2 may also rename disk files to the names stored in PAR2."
+            echo "Choose this when the PAR2 archives are the trusted copy and the data"
+            echo "  file(s) on disk are wrong/corrupt."
+            echo "Skip this if you want to leave damaged data as-is, or if you plan to"
+            echo "  Regenerate (accept current disk files as the new baseline)."
         fi
-        echo "What it does: keep THIS PAR2 set; rebuild damaged DATA file(s) from"
-        echo "  recovery blocks so their content matches what PAR2 expects."
-        echo "Side effect: par2 may also rename disk files to the names stored in PAR2."
-        echo "Choose this when the PAR2 archives are the trusted copy and the data"
-        echo "  file(s) on disk are wrong/corrupt."
-        echo "Skip this if you want to leave damaged data as-is, or if you plan to"
-        echo "  Regenerate (accept current disk files as the new baseline)."
         pgm_prompt_read_repair_choice repair_choice
         case "$repair_choice" in
             0)
                 ;;
             1)
                 echo "Skipped repair."
+                if (( hash_only == 1 )); then
+                    echo "Good: next you will be asked to rebuild PAR2 (recommended for hash mismatch)."
+                fi
                 pgm_print_step_verdict 7 SKIP "Repair skipped at prompt."
                 return 1
                 ;;
@@ -3714,11 +3773,18 @@ pgm_run_one_par2_set() {
                 pgm_collect_missing_targets "$OUT2_FILE"
                 pgm_print_damaged_targets_report
                 SUMMARY_RC=2
-                pgm_print_outcome warn \
-                    "What worked: PAR2 metadata rename (names on disk now match PAR2)." \
-                    "What remains: data file content still damaged (see list above)." \
-                    "Next: Repair rebuilds damaged data from recovery blocks;" \
-                    "Regenerate does not fix damage - it accepts disk files as-is."
+                if pgm_damaged_targets_are_hash_only; then
+                    pgm_print_outcome warn \
+                        "Rename OK: data file names match PAR2." \
+                        "Only leftover: hash file(s) still inside this PAR2 set differ on disk." \
+                        "Next: skip Repair (N), then rebuild PAR2 so hash is not a PAR2 source."
+                else
+                    pgm_print_outcome warn \
+                        "What worked: PAR2 metadata rename (names on disk now match PAR2)." \
+                        "What remains: data file content still damaged (see list above)." \
+                        "Next: Repair rebuilds damaged data from recovery blocks;" \
+                        "Regenerate does not fix damage - it accepts disk files as-is."
+                fi
             fi
         fi
     fi
