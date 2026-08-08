@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20260808.142411 - set -e: capture print_summary / single-set rc so rename prompt runs
 # v. 20260808.141817 - Step3 rename scan before rebuild; remove early Step2 rebuild skip
 # v. 20260808.115352 - set +e around Step3 verify; offer rebuild when repair impossible
 # v. 20260808.114700 - fix set -e abort in missing-line collapse (466+ missing files)
@@ -46,6 +47,7 @@
 # v. 20260719.103506 - fix no-arg run: empty POSITIONAL[@]:- became one "" element
 # v. 20260719.102800 - multi-set selection: A/a, ranges 1-4, --all, multiple paths
 
+# 2026.08.08 - v. 0.1.62 - set -e: keep going after print_summary WARN so rename prompt runs
 # 2026.08.08 - v. 0.1.61 - Step 3 rename scan before rebuild; do not skip scan after Step 2
 # 2026.08.08 - v. 0.1.60 - set +e on Step3 verify; prompt rebuild when repair impossible
 # 2026.08.08 - v. 0.1.59 - Fix crash filtering many "Target: missing" lines under set -e
@@ -3690,8 +3692,9 @@ pgm_run_one_par2_set() {
     pgm_filter_par2_verify_file "$OUT2_FILE" "Step 3 par2 output"
     pgm_timing_lap_to PGM_TIMING_PAR2_SCAN_SEC
 
-    print_summary "$OUT2_FILE"
-    SUMMARY_RC=$?
+    # print_summary returns 2 for misnamed/WARN cases; must not abort under set -e.
+    SUMMARY_RC=0
+    print_summary "$OUT2_FILE" || SUMMARY_RC=$?
 
     if (( SUMMARY_RC == 2 && ${#RENAME_PAIRS[@]} > 0 )); then
         if prompt_and_apply_rename; then
@@ -3913,8 +3916,8 @@ PGM_SCRIPT_START_STR="$(pgm_wall_clock_now)"
 
 if ((${#PAR2_SET_QUEUE[@]} == 1)); then
     pgm_prepare_par2_set "${PAR2_SET_QUEUE[0]}"
-    pgm_run_one_par2_set
-    return_code=$?
+    return_code=0
+    pgm_run_one_par2_set || return_code=$?
     finish
 fi
 
