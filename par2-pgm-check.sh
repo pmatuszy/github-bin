@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20260808.151212 - fix chunk counter: use arithmetic ++ not string +=1
 # v. 20260808.143737 - clear pre-repair summary when only leftover is hash-in-PAR2 mismatch
 # v. 20260808.142411 - set -e: capture print_summary / single-set rc so rename prompt runs
 # v. 20260808.141817 - Step3 rename scan before rebuild; remove early Step2 rebuild skip
@@ -48,6 +49,7 @@
 # v. 20260719.103506 - fix no-arg run: empty POSITIONAL[@]:- became one "" element
 # v. 20260719.102800 - multi-set selection: A/a, ranges 1-4, --all, multiple paths
 
+# 2026.08.08 - v. 0.1.64 - Fix Step 3 chunk counter (arithmetic ++, not string append)
 # 2026.08.08 - v. 0.1.63 - Before repair prompt: explain hash-only leftover after rename
 # 2026.08.08 - v. 0.1.62 - set -e: keep going after print_summary WARN so rename prompt runs
 # 2026.08.08 - v. 0.1.61 - Step 3 rename scan before rebuild; do not skip scan after Step 2
@@ -2143,7 +2145,7 @@ pgm_par2_run_chunked() {
         chunk+=("${DATA_FILES[$i]}")
         if ((${#chunk[@]} >= batch_size)) || (( i == total_files - 1 )); then
             if [[ -n "$outfile" ]]; then
-                chunk_num+=1
+                chunk_num=$((chunk_num + 1))
                 chunk_end=$((i + 1))
                 echo "  par2 $mode: chunk $chunk_num/$total_chunks ($chunk_end/$total_files files)..."
                 (
