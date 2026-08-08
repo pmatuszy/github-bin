@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20260808.081906 - skip MP4 mp4s/Systems tracks (Tag mp4s incompatible with codec id 0)
 # v. 20260806.204438 - per-file prompt: status/dB before filename; Selected: echo after answers
 # v. 20260802.225739 - revert normalize when the result measures quieter than the original
 # v. 20260802.224401 - fix aac "Unsupported channel layout 6 channels" (pin unspecified layouts)
@@ -147,6 +148,8 @@ Audio tracks with an unspecified channel layout are pinned to the default layout
 their channel count; the native aac encoder rejects layouts like "6 channels".
 If the normalized file measures a lower mean than the original, the change is pointless
 and gets reverted from the backup (needs --save-original) and counted as "reverted".
+MP4: streams are mapped by index; unmappable data (tmcd, MPEG-4 Systems mp4s, other
+codec-id-0 bin_data) is skipped so the muxer does not fail with tag errors.
 GoPro MP4: pass1 loudnorm v/a; pass2 remuxes MET from source and lets ffmpeg rebuild the
 timecode track; a final moov trak swap restores TCD at #2 and MET at #3.
 After a successful in-place replace, the output file gets the original timestamps
@@ -2790,7 +2793,7 @@ normalize_load_stream_table() {
   ((${#NORMALIZE_STREAM_TABLE[@]} > 0))
 }
 
-# True when src has at least one non-tmcd data stream to remux (e.g. gpmd/MET).
+# True when the stream is a timecode track (tmcd / GoPro TCD / codec-none data).
 normalize_stream_is_mp4_tmcd() {
   local codec_type="$1" codec_name="$2" codec_tag="$3" handler="$4"
   [[ "${codec_tag,,}" == tmcd ]] && return 0
@@ -2798,6 +2801,30 @@ normalize_stream_is_mp4_tmcd() {
   [[ "${codec_name,,}" == none && "${codec_tag,,}" != gpmd && "${codec_tag,,}" != fdsc ]] || return 1
   case "${codec_type,,}" in
     data|unknown|'') return 0 ;;
+  esac
+  return 1
+}
+
+# True when a data stream cannot be stream-copied into MP4 (ffmpeg rejects the tag).
+# Covers tmcd, MPEG-4 Systems (mp4s), and other codec-id-0 bin_data tracks.
+# Known-good tags (gpmd/fdsc) are kept. mp4s is skipped for any codec_type —
+# ffprobe sometimes reports it as unknown/video rather than data/bin_data.
+normalize_stream_is_mp4_unmappable_data() {
+  local codec_type="$1" codec_name="$2" codec_tag="$3" handler="$4"
+  local tag="${codec_tag,,}" name="${codec_name,,}"
+
+  [[ "$tag" == mp4s ]] && return 0
+  normalize_stream_is_mp4_tmcd "$@" && return 0
+
+  case "$name" in
+    bin_data|none)
+      case "$tag" in
+        gpmd|fdsc|tmcd) return 1 ;; # tmcd already handled above when tag/handler match
+      esac
+      case "${codec_type,,}" in
+        data|unknown|'') return 0 ;;
+      esac
+      ;;
   esac
   return 1
 }
@@ -2914,38 +2941,32 @@ normalize_append_mp4_data_stream_map() {
   [[ -n "$handler" ]] && out_tag+=(-metadata:s:d:"$data_n" "handler=${handler}")
 }
 
-# MP4 mux: video/audio + copyable data by index; skip tmcd (remuxed in GoPro two-pass).
+# MP4 mux: map each stream by index so mp4s (often typed as video/unknown) is not
+# pulled in by a blanket -map 0:v. Skip tmcd/mp4s and other unmappable data.
 normalize_build_mp4_ffmpeg_args() {
   local -n out_map=$1
   local -n out_tag=$2
   local gopro_tags="${3:-0}"
   local line idx ctype cname ctag handler
-  local data_n=0 has_video=0 has_audio=0
+  local data_n=0
 
   out_map=(-copy_unknown)
   out_tag=()
-
-  for line in "${NORMALIZE_STREAM_TABLE[@]}"; do
-    IFS='|' read -r idx ctype cname ctag handler <<<"$line"
-    case "${ctype,,}" in
-      video) has_video=1 ;;
-      audio) has_audio=1 ;;
-    esac
-  done
-
-  (( has_video )) && out_map+=(-map 0:v)
-  (( has_audio )) && out_map+=(-map 0:a)
 
   while IFS= read -r line; do
     [[ -n "$line" ]] || continue
     IFS='|' read -r idx ctype cname ctag handler <<<"$line"
     case "${ctype,,}" in
-      video|audio) continue ;;
+      video|audio)
+        # mp4s Systems tracks are sometimes reported as video/unknown — never map them.
+        normalize_stream_is_mp4_unmappable_data "$ctype" "$cname" "$ctag" "$handler" && continue
+        out_map+=(-map "0:${idx}")
+        ;;
       subtitle)
         out_map+=(-map "0:${idx}")
         ;;
       *)
-        normalize_stream_is_mp4_tmcd "$ctype" "$cname" "$ctag" "$handler" && continue
+        normalize_stream_is_mp4_unmappable_data "$ctype" "$cname" "$ctag" "$handler" && continue
         normalize_append_mp4_data_stream_map "$1" "$2" "$data_n" "$idx" "$ctag" "$handler" "$gopro_tags"
         (( data_n++ )) || true
         ;;
@@ -2965,7 +2986,7 @@ normalize_print_mux_note() {
   elif (( NORMALIZE_GOPRO_MUX )); then
     echo '    Note: GoPro MP4 mux (gpmd/MET by index + -copy_unknown; tmcd from metadata)'
   elif (( NORMALIZE_MP4_SAFE_MUX )); then
-    echo '    Note: MP4 mux (video/audio + data; tmcd remuxed from metadata)'
+    echo '    Note: MP4 mux (video/audio + copyable data; skip tmcd/mp4s)'
   fi
 }
 
@@ -2984,7 +3005,7 @@ normalize_build_gopro_pass2_met_only_args() {
     case "${ctype,,}" in
       video|audio|subtitle) continue ;;
     esac
-    normalize_stream_is_mp4_tmcd "$ctype" "$cname" "$ctag" "$handler" && continue
+    normalize_stream_is_mp4_unmappable_data "$ctype" "$cname" "$ctag" "$handler" && continue
     mux_handler="$handler"
     [[ -z "$mux_handler" ]] && mux_handler='GoPro MET'
     out_map+=(-map "0:${idx}")
