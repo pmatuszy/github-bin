@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20260808.114400 - -f alias for --fix; fix mode prompts repair when possible
 # v. 20260808.114000 - --fix: auto regenerate PAR2 + sync/tidy hash; skip useless repair
 # v. 20260807.085811 - RUN SUMMARY box at end of each PAR2 set check
 # v. 20260807.075913 - explain par2cmdline "no data found" (source, meaning, what to do)
@@ -42,6 +43,7 @@
 # v. 20260719.103506 - fix no-arg run: empty POSITIONAL[@]:- became one "" element
 # v. 20260719.102800 - multi-set selection: A/a, ranges 1-4, --all, multiple paths
 
+# 2026.08.08 - v. 0.1.58 - -f alias for --fix; fix mode still prompts repair when possible
 # 2026.08.08 - v. 0.1.57 - --fix: rebuild PAR2 + hash from disk; fast path when repair impossible
 # 2026.08.07 - v. 0.1.56 - RUN SUMMARY box at end of each set (verdict, counts, next step)
 # 2026.08.07 - v. 0.1.55 - Explain par2cmdline "no data found" in verify output and summary
@@ -128,8 +130,9 @@ Options:
   --no-regenerate      Never offer to regenerate the PAR2 set
   --hash-par2-check    Auto-yes: verify .par2 lines in hash manifests when any exist
   --no-hash-par2-check Never offer to verify .par2 lines in hash manifests
-  --fix                Rebuild broken sets: auto-regenerate PAR2 from disk, sync + tidy
-                       hash manifests, auto-rename metadata; skip repair (use with -y)
+  -f, --fix            Rebuild broken sets: auto-regenerate PAR2 from disk, sync + tidy
+                       hash manifests, auto-rename metadata; ask to repair first when
+                       par2cmdline says repair is possible (default at prompt: skip)
 
 Rename prompts take one key: y, n, or q (q cancels the whole run).
 Multi-set batch: rename defaults to no unless --yes is given.
@@ -162,7 +165,7 @@ Examples:
   $(basename "$0") "archive.par2" /path/to/files --yes
   $(basename "$0") /path/to/dir --all
   $(basename "$0") /path/to/dir --scope subdirs --all
-  $(basename "$0") G_#05 --fix
+  $(basename "$0") G_#05 -f
   $(basename "$0") set1.par2 set2.par2 '202606*.par2'
 EOF
 }
@@ -680,7 +683,7 @@ pgm_print_run_settings() {
     fi
 
     if (( FIX_MODE )); then
-        echo "  --fix:        given (regenerate PAR2 + sync/tidy hash; skip repair)"
+        echo "  --fix / -f:   given (auto rebuild PAR2 + hash; repair prompted if possible)"
     fi
 
     if (( AUTO_HASH_PAR2_CHECK )); then
@@ -1352,6 +1355,14 @@ pgm_print_run_finished() {
     echo
 }
 
+pgm_enable_fix_mode() {
+    FIX_MODE=1
+    AUTO_REGENERATE=1
+    AUTO_HASH_TIDY=1
+    AUTO_HASH_PAR2_CHECK=1
+    AUTO_RENAME=1
+}
+
 pgm_print_step_transition() {
     local title="$1"
     shift
@@ -1383,7 +1394,7 @@ pgm_final_next_step_hint() {
     fi
 
     if (( FIX_MODE )); then
-        hints+=("re-run with --fix if PAR2/hash were not rebuilt automatically")
+        hints+=("re-run with -f / --fix if PAR2/hash were not rebuilt automatically")
     elif (( REPAIR_NOT_POSSIBLE )); then
         hints+=("regenerate PAR2 from disk (--fix or --regenerate)")
     elif (( ${#NO_DATA_FOUND_TARGETS[@]} > 0 )); then
@@ -2731,7 +2742,12 @@ prompt_and_apply_repair() {
 
     if (( REPAIR == 0 )); then
         echo
-        echo "=== Repair (optional) ==="
+        if (( FIX_MODE )); then
+            echo "=== Fix mode: repair damaged file(s)? (optional) ==="
+            echo "Fix mode will regenerate PAR2 + sync hash afterward if problems remain."
+        else
+            echo "=== Repair (optional) ==="
+        fi
         echo "What it does: keep THIS PAR2 set; rebuild damaged DATA file(s) from"
         echo "  recovery blocks so their content matches what PAR2 expects."
         echo "Side effect: par2 may also rename disk files to the names stored in PAR2."
@@ -3548,7 +3564,7 @@ print_summary() {
         pgm_print_outcome warn \
             "PAR2 paths do not match files on disk (${missing} missing by name)." \
             "If only names moved: metadata rename may help; else regenerate rebuilds PAR2 + hash." \
-            "Run with --fix to do this automatically."
+            "Run with -f or --fix to rebuild PAR2 + hash automatically."
         return 2
     fi
 
@@ -3756,13 +3772,8 @@ while [[ $# -gt 0 ]]; do
             NO_REGENERATE=1
             shift
             ;;
-        --fix)
-            FIX_MODE=1
-            AUTO_REGENERATE=1
-            AUTO_HASH_TIDY=1
-            AUTO_HASH_PAR2_CHECK=1
-            AUTO_RENAME=1
-            NO_REPAIR=1
+        -f|--fix)
+            pgm_enable_fix_mode
             shift
             ;;
         --hash-par2-check)
