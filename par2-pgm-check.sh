@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20260808.141817 - Step3 rename scan before rebuild; remove early Step2 rebuild skip
 # v. 20260808.115352 - set +e around Step3 verify; offer rebuild when repair impossible
 # v. 20260808.114700 - fix set -e abort in missing-line collapse (466+ missing files)
 # v. 20260808.114400 - -f alias for --fix; fix mode prompts repair when possible
@@ -45,6 +46,7 @@
 # v. 20260719.103506 - fix no-arg run: empty POSITIONAL[@]:- became one "" element
 # v. 20260719.102800 - multi-set selection: A/a, ranges 1-4, --all, multiple paths
 
+# 2026.08.08 - v. 0.1.61 - Step 3 rename scan before rebuild; do not skip scan after Step 2
 # 2026.08.08 - v. 0.1.60 - set +e on Step3 verify; prompt rebuild when repair impossible
 # 2026.08.08 - v. 0.1.59 - Fix crash filtering many "Target: missing" lines under set -e
 # 2026.08.08 - v. 0.1.58 - -f alias for --fix; fix mode still prompts repair when possible
@@ -134,9 +136,9 @@ Options:
   --no-regenerate      Never offer to regenerate the PAR2 set
   --hash-par2-check    Auto-yes: verify .par2 lines in hash manifests when any exist
   --no-hash-par2-check Never offer to verify .par2 lines in hash manifests
-  -f, --fix            Rebuild broken sets: auto-regenerate PAR2 from disk, sync + tidy
-                       hash manifests, auto-rename metadata; ask to repair first when
-                       par2cmdline says repair is possible (default at prompt: skip)
+  -f, --fix            After Step 3 rename scan (and optional repair): auto-regenerate
+                       PAR2 from disk, sync + tidy hash manifests, auto-rename metadata.
+                       Prefer this when you want broken sets fixed end-to-end.
 
 Rename prompts take one key: y, n, or q (q cancels the whole run).
 Multi-set batch: rename defaults to no unless --yes is given.
@@ -388,9 +390,9 @@ pgm_prompt_read_hash_tidy_choice() {
 }
 
 pgm_prompt_read_rebuild_choice() {
-    # Default yes for single-set rebuild when repair is impossible.
+    # Used after Step 3 when rename/repair did not clear the set.
     pgm_prompt_read_yes_no_quit 1 "$1" \
-        "Rebuild PAR2 + hash from files on disk now (repair is not possible)?"
+        "Rebuild PAR2 + hash from files on disk now?"
 }
 
 pgm_hash_lint_format_issues() {
@@ -1404,9 +1406,9 @@ pgm_final_next_step_hint() {
     fi
 
     if (( FIX_MODE )); then
-        hints+=("re-run with -f / --fix if PAR2/hash were not rebuilt automatically")
+        hints+=("re-run with -f / --fix after Step 3 if rename did not clear the set")
     elif (( REPAIR_NOT_POSSIBLE )); then
-        hints+=("regenerate PAR2 from disk (--fix or --regenerate)")
+        hints+=("rebuild PAR2 from disk after rename check (--fix / -f or regenerate prompt)")
     elif (( ${#NO_DATA_FOUND_TARGETS[@]} > 0 )); then
         hints+=("regenerate PAR2 if edited hash manifest(s) on disk should stay as-is")
     fi
@@ -2973,20 +2975,11 @@ pgm_tidy_all_hash_manifests() {
     done
 }
 
-pgm_step2_needs_rebuild_from_disk() {
-    local out_file="$1"
-    local missing_n=0
-
-    [[ -n "$out_file" && -f "$out_file" ]] || return 1
-    pgm_par2_output_repair_not_possible "$out_file" || return 1
-    missing_n=$(pgm_par2_missing_target_count "$out_file")
-    (( missing_n > 0 )) || return 1
-    return 0
-}
-
-pgm_offer_rebuild_after_step2() {
+# After Step 3: offer rebuild only if rename/repair left the set still broken.
+pgm_offer_rebuild_after_step3() {
     local rebuild_choice=0
 
+    (( SUMMARY_RC != 0 )) || return 1
     (( NO_REGENERATE == 1 )) && return 1
 
     if (( FIX_MODE || AUTO_REGENERATE )); then
@@ -2994,10 +2987,18 @@ pgm_offer_rebuild_after_step2() {
     fi
 
     echo
-    echo "=== Rebuild needed (repair is not possible) ==="
-    echo "par2cmdline cannot repair this set (paths on disk no longer match PAR2 names)."
-    echo "Rebuilding creates a NEW PAR2 set from today's files and syncs the hash manifest."
-    echo "Tip: next time use -f / --fix to do this automatically."
+    echo "=== Rebuild PAR2 + hash? (after directory scan) ==="
+    echo "Step 3 already looked for renamed files (same content, different path)."
+    if (( ${#MISNAMED_DISK[@]} > 0 )); then
+        echo "Misnamed matches found: ${#MISNAMED_DISK[@]} (rename was offered above if enabled)."
+    else
+        echo "No content matches for the missing PAR2 path names were reported."
+    fi
+    if (( REPAIR_NOT_POSSIBLE )); then
+        echo "par2cmdline: repair is NOT possible for what remains."
+    fi
+    echo "Rebuild creates a NEW PAR2 set from today's on-disk files and syncs hash manifests."
+    echo "Tip: -f / --fix does rename (when found), then repair (if possible), then rebuild."
     pgm_prompt_read_rebuild_choice rebuild_choice
     case "$rebuild_choice" in
         0)
@@ -3005,7 +3006,7 @@ pgm_offer_rebuild_after_step2() {
             return 0
             ;;
         1)
-            echo "Skipped rebuild; continuing with directory scan (check-only)."
+            echo "Skipped rebuild."
             return 1
             ;;
         2)
@@ -3015,33 +3016,6 @@ pgm_offer_rebuild_after_step2() {
             ;;
     esac
     return 1
-}
-
-pgm_run_fix_fast_regen_from_disk() {
-    local missing_n=0 sum_rc=2
-
-    missing_n=$(pgm_par2_missing_target_count "$OUT1_FILE")
-    REPAIR_NOT_POSSIBLE=1
-    REPAIR_POSSIBLE=0
-    PGM_EMPTY_ONLY_DAMAGE=0
-    SUMMARY_RC=2
-    pgm_collect_missing_targets "$OUT1_FILE"
-    pgm_collect_damaged_targets "$OUT1_FILE"
-    pgm_collect_empty_targets "$OUT1_FILE"
-
-    echo
-    pgm_emit_boxed_block stone \
-        "Rebuild PAR2 + hash from disk" \
-        "par2cmdline: repair is NOT possible for this set." \
-        "${missing_n} file(s) missing under old PAR2 path names." \
-        "Skipping Step 3 scan; rebuilding PAR2 + hash from ${#DATA_FILES[@]} file(s) on disk."
-
-    if prompt_and_regenerate_par2_set; then
-        sum_rc=0
-    fi
-    pgm_review_par2_hash_refs
-    pgm_run_one_par2_set_end "$sum_rc"
-    return "$sum_rc"
 }
 
 prompt_and_regenerate_par2_set() {
@@ -3085,11 +3059,20 @@ prompt_and_regenerate_par2_set() {
     echo "What it does: discard this PAR2 set and create a NEW one from the files"
     echo "  as they are NOW on disk. Damaged data is NOT repaired - current disk"
     echo "  content becomes the new 'correct' baseline."
+    echo "Step 3 already scanned for renamed files (same content, different path);"
+    echo "  use rebuild only if rename/repair did not clear the set."
     echo "Choose this only when you accept today's disk files (including any"
     echo "  damage you skipped repairing) as the new master copies."
     if (( PGM_EMPTY_ONLY_DAMAGE == 1 )); then
         echo "For this set: useful if you want to drop ${#EMPTY_PAR2_TARGETS[@]} empty"
         echo "  (0-byte) stub(s) that par2cmdline keeps flagging (create skips them)."
+    fi
+    if (( ${#MISNAMED_DISK[@]} > 0 )); then
+        echo "Note: ${#MISNAMED_DISK[@]} misnamed match(es) were detected earlier;"
+        echo "  prefer PAR2 metadata rename when that still applies."
+    fi
+    if (( REPAIR_NOT_POSSIBLE )); then
+        echo "par2cmdline: repair is NOT possible for remaining problems."
     fi
     echo "Layout: one volume-only archive (no separate index .par2)."
     echo "Hash manifests (*.md5 / *.sha512 / *.sha256) are excluded from the set,"
@@ -3101,7 +3084,11 @@ prompt_and_regenerate_par2_set() {
     done
 
     if (( AUTO_REGENERATE == 0 )); then
-        pgm_prompt_read_regenerate_choice regen_choice
+        if (( REPAIR_NOT_POSSIBLE )); then
+            pgm_prompt_read_rebuild_choice regen_choice
+        else
+            pgm_prompt_read_regenerate_choice regen_choice
+        fi
         case "$regen_choice" in
             0)
                 ;;
@@ -3117,7 +3104,7 @@ prompt_and_regenerate_par2_set() {
                 ;;
         esac
     elif (( FIX_MODE )); then
-        echo "Regenerating automatically (--fix)."
+        echo "Regenerating automatically (--fix / -f)."
     else
         echo "Regenerating automatically (--regenerate)."
     fi
@@ -3685,18 +3672,12 @@ pgm_run_one_par2_set() {
 
     pgm_print_step_verdict 2 WARN "Not all files OK under PAR2 names; running directory scan."
 
-    if pgm_step2_needs_rebuild_from_disk "$OUT1_FILE"; then
-        if pgm_offer_rebuild_after_step2; then
-            pgm_collect_data_files_for_scan
-            pgm_run_fix_fast_regen_from_disk
-            return $?
-        fi
-    fi
-
-    pgm_print_step_transition "Continuing - Step 3 next" \
-        "The par2 summary above is from Step 2 (expected when files need attention)." \
-        "Next: scan the directory tree for misnamed files; this may take several minutes." \
-        "While par2 runs you may see little output between chunk lines - that is normal."
+    pgm_print_step_transition "Continuing - Step 3 next (rename check)" \
+        "Step 2 only checks paths stored inside the PAR2 set." \
+        "Missing there often means files were renamed (directory and/or filename)." \
+        "Step 3 scans on-disk files for the same content under new paths," \
+        "then offers a PAR2 metadata rename when matches are found." \
+        "Rebuild is offered only later if rename/repair cannot clear the set."
     pgm_collect_data_files_for_scan
     pgm_print_step_header "Step 3: verify with directory scan (subdirs; detect misnamed files)"
     OUT2_FILE=$(mktemp "${TMPDIR:-/tmp}/par2-pgm-check.XXXXXX")
@@ -3723,8 +3704,11 @@ pgm_run_one_par2_set() {
             else
                 printf '%s\n' "$PGM_POST_RENAME_OUT" >"$OUT2_FILE"
                 REPAIR_POSSIBLE=0
+                REPAIR_NOT_POSSIBLE=0
                 grep -qiE 'repair is possible' "$OUT2_FILE" && REPAIR_POSSIBLE=1
+                pgm_par2_output_repair_not_possible "$OUT2_FILE" && REPAIR_NOT_POSSIBLE=1
                 pgm_collect_damaged_targets "$OUT2_FILE"
+                pgm_collect_missing_targets "$OUT2_FILE"
                 pgm_print_damaged_targets_report
                 SUMMARY_RC=2
                 pgm_print_outcome warn \
@@ -3778,7 +3762,9 @@ pgm_run_one_par2_set() {
     fi
 
     if (( SUMMARY_RC != 0 )); then
-        prompt_and_regenerate_par2_set || true
+        if pgm_offer_rebuild_after_step3; then
+            prompt_and_regenerate_par2_set || true
+        fi
     fi
 
     [[ -n "${OUT1_FILE:-}" && -f "${OUT1_FILE:-}" ]] && rm -f -- "$OUT1_FILE"
