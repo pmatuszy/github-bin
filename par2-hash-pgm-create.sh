@@ -1,15 +1,17 @@
 #!/bin/bash
+# v. 20260809.165517 - hash menu: detect *sum tools; numbered pick; q quits; re-ask
 # v. 20260809.164003 - fix -b: use enough blocks so -r% ≈ data size (not file-count)
 # v. 20260809.155541 - prompt to exclude rename.sh helpers from PAR2 (default yes)
 # v. 20260806.224414 - initial: create volume-only PAR2 + SHA-512/MD5 hash for cwd subtree
 
+# 2026.08.09 - v. 0.1.3 - Detect system *sum tools; numbered hash menu (q=quit, invalid=retry)
 # 2026.08.09 - v. 0.1.2 - Fix PAR2 -b: floor at 2000 / aim ~1MiB blocks (avoid huge recovery)
 # 2026.08.09 - v. 0.1.1 - Ask to exclude rename.sh helper files from PAR2 (default yes); still hash them
 # 2026.08.06 - v. 0.1.0 - initial release: _<dir>.par2 volume set + __<dir>.sha512|md5 for whole subtree
 #
 # par2-hash-pgm-create.sh
 #
-# Create a PAR2 archive and a SHA-512 (default) or MD5 hash file for the current directory tree.
+# Create a PAR2 archive and a hash file for the current directory tree.
 #
 
 show_help() {
@@ -21,11 +23,11 @@ Create a volume-only PAR2 set and a hash manifest for the current directory
 
 Naming (from the parent directory basename, e.g. cwd .../MyAlbum):
   PAR2 stem:  _MyAlbum.par2  (volume-only: _MyAlbum.vol….par2; index removed)
-  Hash file:  __MyAlbum.sha512  (or __MyAlbum.md5)
+  Hash file:  __MyAlbum.<ext>  (ext from chosen hash, e.g. .sha512 / .md5 / .b2)
 
 Order:
   1) Create PAR2 for all non-empty data files under the tree
-     (excludes *.par2 / backups and hash manifests *.md5|*.sha512|*.sha256).
+     (excludes *.par2 / backups and hash manifests).
      Optionally excludes rename.sh helper files (prompt; default yes).
   2) Write the hash file for every regular file in the tree, including the new
      PAR2 volume(s), excluding the hash file being written.
@@ -35,8 +37,10 @@ Options:
   -h, --help           Show this help and exit.
   -v, --version        Print script version and exit.
   --no_startup_delay   Skip random startup delay (recommended for cron).
-  --sha512             Prefer SHA-512 for the hash file (default).
-  --md5                Prefer MD5 for the hash file.
+  --hash ALG           Prefer ALG (sha512|sha384|sha256|sha224|sha1|md5|b2).
+  --sha512             Prefer SHA-512 (default when available).
+  --sha256             Prefer SHA-256.
+  --md5                Prefer MD5.
   --recovery N         Recovery percent 1-100 (skips the recovery prompt).
   --exclude-rename-helpers
                        Exclude rename.sh helper files from PAR2 (no prompt).
@@ -47,7 +51,8 @@ Options:
   -n, --dry-run        Show what would be done; create nothing.
 
 Interactive prompts (unless --yes / flag already set):
-  Hash algorithm: Enter accepts the preferred default (SHA-512 unless --md5).
+  Hash algorithm: numbered list of *sum tools found on PATH; Enter = default;
+                  q/Q = quit; invalid input asks again.
   Recovery %:     Enter accepts 20% (or --recovery value).
   Rename helpers: Exclude from PAR2? [Y/n] (default yes). Files:
                     _exclude-rename.sh.txt, _rename.sh-optional-db.sqlite3
@@ -60,8 +65,8 @@ Environment:
 
 Examples:
   cd /path/to/MyAlbum && $(basename "$0")
-  $(basename "$0") --md5 --recovery 10
-  $(basename "$0") --yes
+  $(basename "$0") --hash sha256 --recovery 10
+  $(basename "$0") --md5 --yes
   $(basename "$0") --include-rename-helpers
   $(basename "$0") -n
 EOF
@@ -80,6 +85,11 @@ done
 PAR2_CMD="${PAR2_CMD:-par2}"
 PROMPT_TIMEOUT="${PROMPT_TIMEOUT-}"
 HASH_PREF=""
+# Parallel arrays filled by discover_hash_tools (id, label, cmd, ext).
+HASH_IDS=()
+HASH_LABELS=()
+HASH_CMDS=()
+HASH_EXTS=()
 RECOVERY_CLI=""
 AUTO_YES=0
 DRY_RUN=0
@@ -102,6 +112,7 @@ HASH_ALGO=""
 HASH_EXT=""
 HASH_CMD=""
 HASH_FILE=""
+HASH_LABEL=""
 RECOVERY_PCT=20
 SCRIPT_START_STR=""
 SCRIPT_START_EPOCH=0
@@ -164,7 +175,7 @@ is_par2_basename() {
 is_hash_manifest_basename() {
   local base="$1"
   case "${base,,}" in
-    *.sha512|*.sha256|*.md5) return 0 ;;
+    *.sha512|*.sha384|*.sha256|*.sha224|*.sha1|*.md5|*.b2) return 0 ;;
   esac
   return 1
 }
@@ -273,40 +284,138 @@ list_existing_stem_par2() {
 }
 
 prompt_hash_algo() {
-  local preferred="${1:-sha512}"
-  local ans="" def_label
+  local preferred="${1:-}"
+  local ans="" i n def_idx=1 id label cmd
 
-  case "$preferred" in
-    md5) def_label="MD5" ;;
-    *) preferred="sha512"; def_label="SHA-512" ;;
-  esac
+  discover_hash_tools
+  ((${#HASH_IDS[@]} > 0)) || die "No hash tools found (need one of: sha512sum sha384sum sha256sum sha224sum sha1sum md5sum b2sum)."
+
+  # Resolve preferred id to an available entry; default sha512 then first.
+  if [[ -z "$preferred" ]]; then
+    preferred="sha512"
+  fi
+  preferred="$(normalize_hash_id "$preferred")"
+  def_idx="$(hash_index_for_id "$preferred")"
+  if (( def_idx == 0 )); then
+    if [[ -n "$HASH_PREF" ]]; then
+      echo "Preferred hash '$HASH_PREF' is not available on this system; using ${HASH_LABELS[0]}."
+    fi
+    preferred="${HASH_IDS[0]}"
+    def_idx=1
+  else
+    preferred="${HASH_IDS[def_idx - 1]}"
+  fi
 
   if (( AUTO_YES == 1 )); then
     HASH_ALGO="$preferred"
+    apply_hash_algo
     return 0
   fi
 
-  printf '%sHash algorithm [sha512|md5] (default: %s, %s): ' \
-    "$(user_prompt_ts_prefix)" "$def_label" "$(prompt_timeout_label)"
-  if ! read_line_with_timeout ans; then
-    ans=""
-    echo
-  fi
-  ans="${ans//[[:space:]]/}"
-  ans="${ans,,}"
-  [[ -z "$ans" ]] && ans="$preferred"
-  case "$ans" in
-    sha512|sha-512|512)
-      HASH_ALGO="sha512"
-      ;;
-    md5)
-      HASH_ALGO="md5"
-      ;;
-    *)
-      echo "Invalid choice '$ans'; using ${def_label}."
-      HASH_ALGO="$preferred"
-      ;;
+  n=${#HASH_IDS[@]}
+  echo "Hash algorithms available on this system:"
+  for (( i = 0; i < n; i++ )); do
+    id="${HASH_IDS[$i]}"
+    label="${HASH_LABELS[$i]}"
+    cmd="${HASH_CMDS[$i]}"
+    if (( i + 1 == def_idx )); then
+      printf '  %d) %-8s (%s)  [default]\n' "$((i + 1))" "$label" "$cmd"
+    else
+      printf '  %d) %-8s (%s)\n' "$((i + 1))" "$label" "$cmd"
+    fi
+  done
+  echo
+
+  while true; do
+    printf '%sChoose hash [1-%d] (default: %d = %s; q=quit, %s): ' \
+      "$(user_prompt_ts_prefix)" "$n" "$def_idx" "${HASH_LABELS[def_idx - 1]}" \
+      "$(prompt_timeout_label)"
+    if ! read_line_with_timeout ans; then
+      ans=""
+      echo
+    fi
+    ans="${ans//[[:space:]]/}"
+    case "$ans" in
+      "")
+        HASH_ALGO="${HASH_IDS[def_idx - 1]}"
+        apply_hash_algo
+        return 0
+        ;;
+      q|Q)
+        echo "Quit."
+        return_code=0
+        finish
+        ;;
+    esac
+    ans="${ans,,}"
+    if [[ "$ans" =~ ^[1-9][0-9]*$ ]] && (( ans >= 1 && ans <= n )); then
+      HASH_ALGO="${HASH_IDS[ans - 1]}"
+      apply_hash_algo
+      return 0
+    fi
+    id="$(normalize_hash_id "$ans")"
+    i="$(hash_index_for_id "$id")"
+    if (( i > 0 )); then
+      HASH_ALGO="${HASH_IDS[i - 1]}"
+      apply_hash_algo
+      return 0
+    fi
+    echo "Invalid choice '$ans'. Enter a number 1-${n}, a hash name, Enter for default, or q to quit."
+  done
+}
+
+normalize_hash_id() {
+  local raw="${1,,}"
+  raw="${raw//[[:space:]]/}"
+  case "$raw" in
+    sha512|sha-512|512) printf 'sha512\n' ;;
+    sha384|sha-384|384) printf 'sha384\n' ;;
+    sha256|sha-256|256) printf 'sha256\n' ;;
+    sha224|sha-224|224) printf 'sha224\n' ;;
+    sha1|sha-1) printf 'sha1\n' ;;
+    md5) printf 'md5\n' ;;
+    b2|blake2|blake2b) printf 'b2\n' ;;
+    *) printf '%s\n' "$raw" ;;
   esac
+}
+
+# Populate HASH_IDS / HASH_LABELS / HASH_CMDS / HASH_EXTS for tools on PATH.
+discover_hash_tools() {
+  local -a specs=(
+    "sha512|SHA-512|sha512sum|sha512"
+    "sha384|SHA-384|sha384sum|sha384"
+    "sha256|SHA-256|sha256sum|sha256"
+    "sha224|SHA-224|sha224sum|sha224"
+    "sha1|SHA-1|sha1sum|sha1"
+    "md5|MD5|md5sum|md5"
+    "b2|BLAKE2|b2sum|b2"
+  )
+  local spec id label cmd ext
+
+  HASH_IDS=()
+  HASH_LABELS=()
+  HASH_CMDS=()
+  HASH_EXTS=()
+
+  for spec in "${specs[@]}"; do
+    IFS='|' read -r id label cmd ext <<< "$spec"
+    command -v "$cmd" >/dev/null 2>&1 || continue
+    HASH_IDS+=("$id")
+    HASH_LABELS+=("$label")
+    HASH_CMDS+=("$cmd")
+    HASH_EXTS+=("$ext")
+  done
+}
+
+hash_index_for_id() {
+  local want="$1" i
+  for i in "${!HASH_IDS[@]}"; do
+    if [[ "${HASH_IDS[$i]}" == "$want" ]]; then
+      printf '%s\n' "$((i + 1))"
+      return 0
+    fi
+  done
+  printf '0\n'
 }
 
 prompt_recovery_percent() {
@@ -409,19 +518,17 @@ prompt_exclude_rename_helpers() {
 }
 
 apply_hash_algo() {
-  case "$HASH_ALGO" in
-    md5)
-      HASH_EXT="md5"
-      HASH_CMD="md5sum"
-      ;;
-    sha512)
-      HASH_EXT="sha512"
-      HASH_CMD="sha512sum"
-      ;;
-    *)
-      die "Unsupported hash algorithm: $HASH_ALGO"
-      ;;
-  esac
+  local i idx=0
+  [[ -n "$HASH_ALGO" ]] || die "Internal error: HASH_ALGO empty."
+  if ((${#HASH_IDS[@]} == 0)); then
+    discover_hash_tools
+  fi
+  idx="$(hash_index_for_id "$HASH_ALGO")"
+  (( idx > 0 )) || die "Hash algorithm not available on this system: $HASH_ALGO"
+  i=$((idx - 1))
+  HASH_LABEL="${HASH_LABELS[$i]}"
+  HASH_CMD="${HASH_CMDS[$i]}"
+  HASH_EXT="${HASH_EXTS[$i]}"
   HASH_FILE="${WORK_DIR}/__${DIR_NAME}.${HASH_EXT}"
 }
 
@@ -622,7 +729,7 @@ print_run_settings() {
   echo "  Parent name:   $DIR_NAME"
   echo "  PAR2 stem:     ${PAR2_STEM}.par2 (volume-only)"
   echo "  Hash file:     __${DIR_NAME}.${HASH_EXT}"
-  echo "  Hash algo:     ${HASH_ALGO}"
+  echo "  Hash algo:     ${HASH_LABEL} (${HASH_CMD})"
   echo "  Recovery:      ${RECOVERY_PCT}%"
   if (( EXCLUDE_RENAME_HELPERS == 1 )); then
     echo "  Rename helpers: excluded from PAR2 (still hashed)"
@@ -656,9 +763,34 @@ while [[ $# -gt 0 ]]; do
       HASH_PREF="sha512"
       shift
       ;;
+    --sha384)
+      HASH_PREF="sha384"
+      shift
+      ;;
+    --sha256)
+      HASH_PREF="sha256"
+      shift
+      ;;
+    --sha224)
+      HASH_PREF="sha224"
+      shift
+      ;;
+    --sha1)
+      HASH_PREF="sha1"
+      shift
+      ;;
     --md5)
       HASH_PREF="md5"
       shift
+      ;;
+    --b2)
+      HASH_PREF="b2"
+      shift
+      ;;
+    --hash)
+      [[ $# -ge 2 ]] || die "Missing value for --hash (e.g. sha512, md5, b2)."
+      HASH_PREF="$(normalize_hash_id "$2")"
+      shift 2
       ;;
     --recovery)
       [[ $# -ge 2 ]] || die "Missing value for --recovery (1-100)."
@@ -706,8 +838,7 @@ PAR2_STEM="_${DIR_NAME}"
 SCRIPT_START_EPOCH=$(date +%s)
 SCRIPT_START_STR="$(date '+%Y.%m.%d %H:%M:%S')"
 
-prompt_hash_algo "${HASH_PREF:-sha512}"
-apply_hash_algo
+prompt_hash_algo "${HASH_PREF:-}"
 
 if [[ -n "$RECOVERY_CLI" ]]; then
   RECOVERY_PCT="$RECOVERY_CLI"

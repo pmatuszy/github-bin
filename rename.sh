@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# v. 20260809.165749 - checksum manifests: also sha384/sha256/sha224/sha1/b2
 # v. 20260805.200257 - always print === Run settings === after mode/scope (like par2-pgm-check)
 # v. 20260805.194904 - offer to strip FastSum ';' checksum headers during normalize; verify ignores those lines
 # v. 20260805.104910 - pad OLD in dry-run/Renamed/summary old→new lines so NEW names share a column
@@ -33,6 +34,7 @@
 # v. 20260721.132007 - Samsung timestamp media: preserve optional numeric sorting prefix when appending make/model
 # v. 20260721.112812 - GoPro camera labels: GoPro_Hero4_Silver style (not GOPRO4_SILVER)
 
+# 2026.08.09 - v. 19.297.165749 - Treat .sha384/.sha256/.sha224/.sha1/.b2 like .md5/.sha512 checksum manifests
 # 2026.08.05 - v. 19.296.200257 - always show === Run settings === after prompts (mode/scope/db/exif/resume/start dir)
 # 2026.08.05 - v. 19.295.194904 - checksum normalize: prompt to strip FastSum ; comment headers; md5sum -c uses entry lines only
 # 2026.08.05 - v. 19.294.104910 - dry-run/Renamed/summary: pad OLD path width so → NEW aligns; pairs note both paths first
@@ -5916,9 +5918,8 @@ checksum_file_has_renamable_refs() {
 print_checksum_sibling_notice_verbose() {
     (( VERBOSE == 1 )) || return 0
     local file_path="$1"
-    local sha_path="$2"
-    local md5_path="$3"
-    local has_any=0
+    shift
+    local sibling="" kind="" has_any=0
     local line="[VERBOSE] Renaming '$file_path' now (checksum sibling(s) exist):"
 
     if (( ${#line} <= MAX_LINE_LENGTH )); then
@@ -5927,14 +5928,12 @@ print_checksum_sibling_notice_verbose() {
         echo "[VERBOSE] Renaming '$file_path'" >&2
         echo "          now (checksum sibling(s) exist):" >&2
     fi
-    if [[ -e "$sha_path" ]]; then
-        echo "          sha512: '$sha_path'" >&2
+    for sibling in "$@"; do
+        [[ -n "$sibling" && -e "$sibling" ]] || continue
+        kind="$(checksum_kind "$sibling" 2>/dev/null || printf 'hash')"
+        echo "          ${kind}: '$sibling'" >&2
         has_any=1
-    fi
-    if [[ -e "$md5_path" ]]; then
-        echo "          md5:    '$md5_path'" >&2
-        has_any=1
-    fi
+    done
     if (( has_any == 1 )); then
         echo "          local checksum references will be updated during this rename." >&2
     fi
@@ -7119,8 +7118,12 @@ is_excluded_path() {
 }
 
 is_checksum_file() {
-    local p="$1"
-    [[ "$p" == *.sha512 || "$p" == *.md5 ]]
+    local p="$1" lower
+    lower="${p,,}"
+    case "$lower" in
+        *.sha512|*.sha384|*.sha256|*.sha224|*.sha1|*.md5|*.b2) return 0 ;;
+    esac
+    return 1
 }
 
 # Archive / compression containers and common split-volume suffixes (.r00, .001, …).
@@ -8915,21 +8918,30 @@ PY
 }
 
 checksum_kind() {
-    local p="$1"
-    if [[ "$p" == *.sha512 ]]; then
-        printf 'sha512'
-    elif [[ "$p" == *.md5 ]]; then
-        printf 'md5'
-    else
-        return 1
-    fi
+    local p="$1" lower
+    lower="${p,,}"
+    case "$lower" in
+        *.sha512) printf 'sha512' ;;
+        *.sha384) printf 'sha384' ;;
+        *.sha256) printf 'sha256' ;;
+        *.sha224) printf 'sha224' ;;
+        *.sha1)   printf 'sha1' ;;
+        *.md5)    printf 'md5' ;;
+        *.b2)     printf 'b2' ;;
+        *) return 1 ;;
+    esac
 }
 
 checksum_label() {
     local p="$1"
     case "$(checksum_kind "$p")" in
         sha512) printf 'SHA512' ;;
+        sha384) printf 'SHA384' ;;
+        sha256) printf 'SHA256' ;;
+        sha224) printf 'SHA224' ;;
+        sha1)   printf 'SHA1' ;;
         md5)    printf 'MD5' ;;
+        b2)     printf 'BLAKE2' ;;
     esac
 }
 
@@ -8937,7 +8949,12 @@ checksum_cmd() {
     local p="$1"
     case "$(checksum_kind "$p")" in
         sha512) printf 'sha512sum' ;;
+        sha384) printf 'sha384sum' ;;
+        sha256) printf 'sha256sum' ;;
+        sha224) printf 'sha224sum' ;;
+        sha1)   printf 'sha1sum' ;;
         md5)    printf 'md5sum' ;;
+        b2)     printf 'b2sum' ;;
     esac
 }
 
@@ -13331,8 +13348,12 @@ checksum_check() {
         cd "$sum_dir"
         case "$kind" in
             # Pipe only verifiable lines so leftover FastSum ';' headers cannot warn/fail the check.
-            sha512) checksum_file_emit_verifiable_lines "$sum_base" | sha512sum -c --quiet --status ;;
-            md5)    checksum_file_emit_verifiable_lines "$sum_base" | md5sum    -c --quiet --status ;;
+            sha512|sha384|sha256|sha224|sha1|md5|b2)
+                checksum_file_emit_verifiable_lines "$sum_base" | "$(checksum_cmd "$sum_file")" -c --quiet --status
+                ;;
+            *)
+                return 1
+                ;;
         esac
     )
 }
@@ -13363,8 +13384,12 @@ verify_single_checksum_target() {
     (
         cd "$sum_dir"
         case "$kind" in
-            sha512) printf '%s\n' "$matched_line" | sha512sum -c --quiet --status ;;
-            md5)    printf '%s\n' "$matched_line" | md5sum    -c --quiet --status ;;
+            sha512|sha384|sha256|sha224|sha1|md5|b2)
+                printf '%s\n' "$matched_line" | "$(checksum_cmd "$sum_file")" -c --quiet --status
+                ;;
+            *)
+                return 1
+                ;;
         esac
     ) || return 1
     return 0
@@ -13383,7 +13408,12 @@ checksum_of_file() {
 
     case "$kind" in
         sha512) out="$(sha512sum -- "$file" | awk '{print tolower($1)}')" ;;
+        sha384) out="$(sha384sum -- "$file" | awk '{print tolower($1)}')" ;;
+        sha256) out="$(sha256sum -- "$file" | awk '{print tolower($1)}')" ;;
+        sha224) out="$(sha224sum -- "$file" | awk '{print tolower($1)}')" ;;
+        sha1)   out="$(sha1sum   -- "$file" | awk '{print tolower($1)}')" ;;
         md5)    out="$(md5sum    -- "$file" | awk '{print tolower($1)}')" ;;
+        b2)     out="$(b2sum     -- "$file" | awk '{print tolower($1)}')" ;;
         *) return 1 ;;
     esac
 
@@ -14002,7 +14032,10 @@ collect_local_checksum_ref_updates() {
 
     current_dir="$(dirname -- "$target_old")"
 
-    for sum_file in "$current_dir"/*.sha512 "$current_dir"/*.md5; do
+    for sum_file in "$current_dir"/*.sha512 "$current_dir"/*.sha384 \
+                    "$current_dir"/*.sha256 "$current_dir"/*.sha224 \
+                    "$current_dir"/*.sha1 "$current_dir"/*.md5 \
+                    "$current_dir"/*.b2; do
         [[ -f "$sum_file" ]] || continue
         is_checksum_file "$sum_file" || continue
 
@@ -14059,7 +14092,10 @@ collect_local_checksum_ref_summaries() {
     PLAIN_REF_SUM_FILES=()
     current_dir="$(dirname -- "$target_old")"
 
-    for sum_file in "$current_dir"/*.sha512 "$current_dir"/*.md5; do
+    for sum_file in "$current_dir"/*.sha512 "$current_dir"/*.sha384 \
+                    "$current_dir"/*.sha256 "$current_dir"/*.sha224 \
+                    "$current_dir"/*.sha1 "$current_dir"/*.md5 \
+                    "$current_dir"/*.b2; do
         [[ -f "$sum_file" ]] || continue
         is_checksum_file "$sum_file" || continue
 
@@ -16052,7 +16088,9 @@ def depth(p: bytes) -> int:
 
 def is_checksum(p: bytes) -> int:
     s = p.decode("utf-8", "surrogateescape")
-    return 0 if (s.endswith(".sha512") or s.endswith(".md5")) else 1
+    return 0 if s.endswith((
+        ".sha512", ".sha384", ".sha256", ".sha224", ".sha1", ".md5", ".b2",
+    )) else 1
 
 
 items.sort(key=lambda p: (-depth(p), is_checksum(p), p))
@@ -16114,7 +16152,9 @@ def depth(p: bytes) -> int:
     return s.count("/")
 def is_checksum(p: bytes) -> int:
     s = p.decode("utf-8", "surrogateescape")
-    return 0 if (s.endswith(".sha512") or s.endswith(".md5")) else 1
+    return 0 if s.endswith((
+        ".sha512", ".sha384", ".sha256", ".sha224", ".sha1", ".md5", ".b2",
+    )) else 1
 sort_start = time.monotonic()
 items.sort(key=lambda p: (-depth(p), is_checksum(p), p))
 if verbose:
@@ -17008,8 +17048,15 @@ for f in "${ordered_paths[@]}"; do
             fi
             precomputed_new="$new"
         fi
-        if [[ "$f" != "$new" && ( -e "$base.sha512" || -e "$base.md5" ) ]]; then
-            print_checksum_sibling_notice_verbose "$f" "$base.sha512" "$base.md5"
+        if [[ "$f" != "$new" ]]; then
+            _cs_siblings=()
+            for _cs_ext in sha512 sha384 sha256 sha224 sha1 md5 b2; do
+                [[ -e "$base.$_cs_ext" ]] && _cs_siblings+=("$base.$_cs_ext")
+            done
+            if ((${#_cs_siblings[@]} > 0)); then
+                print_checksum_sibling_notice_verbose "$f" "${_cs_siblings[@]}"
+            fi
+            unset _cs_ext _cs_siblings
         fi
     fi
 

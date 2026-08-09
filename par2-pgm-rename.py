@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# v. 20260809.165517 - recognize sha384/sha224/sha1/b2 hash manifests
 # v. 20260806.222350 - hash tidy: Linux normalize CRLF, ';'→'#', backslash paths→'/'
 # v. 20260806.132600 - write md5sum-safe 'HASH *file' (one space); detect 'HASH  *file' breakage
 # v. 20260806.131800 - scan-par2-refs: flag missing .par2 names as likely old archives
@@ -12,6 +13,7 @@
 # v. 20260721.154223 - list-names subcommand; --pairs-file for large rename batches
 # v. 20260719.093400 - hash inventory subcommand for startup scope summary
 
+# 2026.08.09 - v. 1.2.10.0 - Hash manifests: sha384/sha224/sha1/b2 (blake2b) as well as sha512/sha256/md5
 # 2026.08.06 - v. 1.2.9.0 - hash tidy: CRLF→LF, ';'→'#', Windows backslash paths→'/'
 # 2026.08.06 - v. 1.2.8.0 - Write md5sum-safe 'HASH *file'; detect 'HASH  *file' breakage
 # 2026.07.19 - v. 1.2.7.0 - hash inventory CLI for par2-pgm-check startup (counts + in-scope paths)
@@ -33,7 +35,7 @@ import struct
 import sys
 import tempfile
 
-VERSION = "1.2.9.0"
+VERSION = "1.2.10.0"
 MAX_RENAMES = 16
 INVALID_CHARS = '\\:*?"<>|'
 READ_CHUNK = 2097152
@@ -436,12 +438,21 @@ def rewrite_par2_file(folder_path, par_file_name, set_id, rename_map):
 
 HASH_EXTENSIONS = {
     ".sha512": "sha512",
+    ".sha384": "sha384",
     ".sha256": "sha256",
+    ".sha224": "sha224",
+    ".sha1": "sha1",
     ".md5": "md5",
+    ".b2": "blake2b",
 }
+
+HASH_EXT_LABELS = " / ".join(
+    f".{ext.lstrip('.')}" for ext in sorted(HASH_EXTENSIONS, key=lambda e: e.lower())
+)
 
 # Digest, separator, then the rest of the line as the path: filenames may
 # contain spaces. Anchoring the digest length keeps prose from matching.
+# blake2b default digest is 64 bytes (128 hex chars); md5 is 32.
 HASH_LINE_RE = re.compile(r"^([a-fA-F0-9]{32,128})[ \t]+(\S.*?)[ \t]*$")
 COMMENT_PREFIXES = ("#", ";")
 
@@ -452,6 +463,17 @@ def hash_algo_from_path(path):
     if algo is None:
         raise ValueError(f"Unsupported hash file type: {path}")
     return algo
+
+
+def compute_file_hash(file_path, algo):
+    digest = hashlib.new(algo)
+    with open(file_path, "rb") as handle:
+        while True:
+            chunk = handle.read(READ_CHUNK)
+            if not chunk:
+                break
+            digest.update(chunk)
+    return digest.hexdigest().lower()
 
 
 def hash_path_basename(path_field):
@@ -709,17 +731,6 @@ def tidy_hash_file(hash_file_path):
     )
 
 
-def compute_file_hash(file_path, algo):
-    digest = hashlib.new(algo)
-    with open(file_path, "rb") as handle:
-        while True:
-            chunk = handle.read(READ_CHUNK)
-            if not chunk:
-                break
-            digest.update(chunk)
-    return digest.hexdigest().lower()
-
-
 def is_par2_basename(name):
     if not name.lower().endswith(".par2"):
         return False
@@ -761,8 +772,11 @@ def resolve_scoped_par2_files(folder_path, par_file_path=None):
 
 def list_hash_files(folder_path):
     candidates = []
-    for pattern in ("*.sha512", "*.SHA512", "*.sha256", "*.SHA256", "*.md5", "*.MD5"):
-        candidates.extend(glob.glob(os.path.join(folder_path, pattern)))
+    for ext in HASH_EXTENSIONS:
+        candidates.extend(glob.glob(os.path.join(folder_path, f"*{ext}")))
+        upper = ext.upper()
+        if upper != ext:
+            candidates.extend(glob.glob(os.path.join(folder_path, f"*{upper}")))
     return sorted(set(candidates))
 
 
@@ -817,7 +831,7 @@ def format_hash_inventory_lines(inventory, par_file_path=None):
     lines = []
     total = inventory["total_hash_files"]
     if total == 0:
-        lines.append("No .sha512 / .sha256 / .md5 hash file found in this directory.")
+        lines.append(f"No {HASH_EXT_LABELS} hash file found in this directory.")
         lines.append("Skipping PAR2 archive checksum verification.")
         return lines
 

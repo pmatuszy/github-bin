@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20260809.165517 - hash manifests: also sha384/sha224/sha1/b2
 # v. 20260809.164003 - regenerate -b: enough blocks so -r% ≈ data size (not file-count)
 # v. 20260808.151212 - fix chunk counter: use arithmetic ++ not string +=1
 # v. 20260808.143737 - clear pre-repair summary when only leftover is hash-in-PAR2 mismatch
@@ -50,6 +51,7 @@
 # v. 20260719.103506 - fix no-arg run: empty POSITIONAL[@]:- became one "" element
 # v. 20260719.102800 - multi-set selection: A/a, ranges 1-4, --all, multiple paths
 
+# 2026.08.09 - v. 0.1.66 - Hash manifests: also .sha384/.sha224/.sha1/.b2 (with create/rename)
 # 2026.08.09 - v. 0.1.65 - Regenerate -b: enough blocks so -r% ≈ data size (not file-count * largest)
 # 2026.08.08 - v. 0.1.64 - Fix Step 3 chunk counter (arithmetic ++, not string append)
 # 2026.08.08 - v. 0.1.63 - Before repair prompt: explain hash-only leftover after rename
@@ -163,9 +165,10 @@ Environment:
   PYTHON_CMD           python3 executable (default: python3)
   PROMPT_TIMEOUT       Seconds to wait for interactive prompts (unset = no timeout)
 
-If a .sha512 / .sha256 / .md5 file exists in the directory, Step 1 scans all
-hash manifests, reports how many list in-scope PAR2 archives for this set, and
-verifies checksums only in those file(s). Other hash entries are ignored.
+If a .sha512 / .sha384 / .sha256 / .sha224 / .sha1 / .md5 / .b2 file exists in the
+directory, Step 1 scans all hash manifests, reports how many list in-scope PAR2
+archives for this set, and verifies checksums only in those file(s). Other hash
+entries are ignored.
 
 Step 3 scans data files in the PAR2 directory and its subdirectories (skipping
 nested PAR2-set folders) to find content matches when paths on disk differ from
@@ -1015,8 +1018,8 @@ is_par2_any_active_file() {
 
 is_hash_manifest_file() {
     local base="$1"
-    case "$base" in
-        *.sha512|*.SHA512|*.sha256|*.SHA256|*.md5|*.MD5) return 0 ;;
+    case "${base,,}" in
+        *.sha512|*.sha384|*.sha256|*.sha224|*.sha1|*.md5|*.b2) return 0 ;;
     esac
     return 1
 }
@@ -1027,8 +1030,10 @@ is_data_file_basename() {
         *.par2|*.PAR2) return 1 ;;
         *_old.par2|*_old.PAR2) return 1 ;;
         *.par2.old|*.PAR2.old|*.par2.OLD|*.PAR2.OLD) return 1 ;;
-        *.sha512|*.SHA512|*.sha256|*.SHA256|*.md5|*.MD5) return 1 ;;
-        par2-pgm-check.sh|par2-pgm-rename.py) return 1 ;;
+    esac
+    is_hash_manifest_file "$base" && return 1
+    case "$base" in
+        par2-pgm-check.sh|par2-pgm-rename.py|par2-hash-pgm-create.sh) return 1 ;;
     esac
     return 0
 }
@@ -1708,7 +1713,7 @@ pgm_print_step1_verdict_from_msg() {
     local ok_line
 
     if grep -qi 'Skipping PAR2 archive checksum verification' <<< "$msg"; then
-        if grep -qi 'No .sha512 / .sha256 / .md5 hash file found' <<< "$msg"; then
+        if grep -qi 'No .* hash file found in this directory' <<< "$msg"; then
             pgm_print_step_verdict 1 SKIP "No hash files in directory; checksum step not run."
         elif grep -qi 'no hash file lists any in-scope PAR2 archive' <<< "$msg"; then
             pgm_print_step_verdict 1 SKIP "No in-scope hash manifests for this PAR2 set."
@@ -2741,7 +2746,7 @@ pgm_post_rename_names_unresolved() {
     return 1
 }
 
-# True when every damaged target is a hash manifest (*.md5 / *.sha256 / *.sha512).
+# True when every damaged target is a hash manifest (*.md5 / *.sha* / *.b2).
 pgm_damaged_targets_are_hash_only() {
     local t
 
@@ -3198,7 +3203,7 @@ prompt_and_regenerate_par2_set() {
         echo "par2cmdline: repair is NOT possible for remaining problems."
     fi
     echo "Layout: one volume-only archive (no separate index .par2)."
-    echo "Hash manifests (*.md5 / *.sha512 / *.sha256) are excluded from the set,"
+    echo "Hash manifests (*.md5 / *.sha* / *.b2) are excluded from the set,"
     echo "  then synced afterward (FastSum ';' comment lines stripped)."
     echo "Current set file(s) that would be replaced:"
     for member in "${PAR2_SET_MEMBERS[@]}"; do
@@ -3559,7 +3564,7 @@ pgm_print_damaged_targets_report() {
 
 pgm_is_hash_file_name() {
     case "${1,,}" in
-        *.sha512|*.sha256|*.md5) return 0 ;;
+        *.sha512|*.sha384|*.sha256|*.sha224|*.sha1|*.md5|*.b2) return 0 ;;
     esac
     return 1
 }
