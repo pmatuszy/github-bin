@@ -1,10 +1,12 @@
 #!/bin/bash
+# v. 20260809.170555 - end with boxed RUN SUMMARY / RUN FINISHED like par2-pgm-check
 # v. 20260809.170153 - hash menu: q/Q quits immediately (no Enter)
 # v. 20260809.165517 - hash menu: detect *sum tools; numbered pick; q quits; re-ask
 # v. 20260809.164003 - fix -b: use enough blocks so -r% ≈ data size (not file-count)
 # v. 20260809.155541 - prompt to exclude rename.sh helpers from PAR2 (default yes)
 # v. 20260806.224414 - initial: create volume-only PAR2 + SHA-512/MD5 hash for cwd subtree
 
+# 2026.08.09 - v. 0.1.5 - Boxed RUN SUMMARY / RUN FINISHED at end (like par2-pgm-check)
 # 2026.08.09 - v. 0.1.4 - Hash menu: q/Q quits on keypress (no Enter required)
 # 2026.08.09 - v. 0.1.3 - Detect system *sum tools; numbered hash menu (q=quit, invalid=retry)
 # 2026.08.09 - v. 0.1.2 - Fix PAR2 -b: floor at 2000 / aim ~1MiB blocks (avoid huge recovery)
@@ -119,18 +121,144 @@ RECOVERY_PCT=20
 SCRIPT_START_STR=""
 SCRIPT_START_EPOCH=0
 RENAME_HELPERS_FOUND=()
+CREATED_PAR2_VOLS=()
+PAR2_SOURCE_COUNT=0
+PAR2_SOURCE_BYTES=0
+HASH_ENTRY_COUNT=0
+SUMMARY_PRINTED=0
+# ok | quit | error — controls end banner wording
+RUN_OUTCOME=""
+
+PGM_HAVE_BOXES=no
+if command -v boxes >/dev/null 2>&1; then
+  PGM_HAVE_BOXES=yes
+fi
 
 die() {
   echo "Error: $*" >&2
   return_code=1
+  RUN_OUTCOME=error
+  print_run_finished_banner
   . /root/bin/_script_footer.sh
   exit 1
 }
 
 finish() {
   local rc="${return_code:-0}"
+  [[ -n "$RUN_OUTCOME" ]] || {
+    if (( rc == 0 )); then
+      RUN_OUTCOME=ok
+    else
+      RUN_OUTCOME=error
+    fi
+  }
+  print_run_finished_banner
   . /root/bin/_script_footer.sh
   exit "$rc"
+}
+
+emit_unicode_box() {
+  local -a lines=( "$@" )
+  local max_len=0 line w
+
+  for line in "${lines[@]}"; do
+    (( ${#line} > max_len )) && max_len=${#line}
+  done
+  (( max_len < 52 )) && max_len=52
+  w=$(( max_len + 2 ))
+
+  printf '┌%*s┐\n' "$w" '' | tr ' ' '─'
+  for line in "${lines[@]}"; do
+    printf '│ %-*s │\n' "$max_len" "$line"
+  done
+  printf '└%*s┘\n' "$w" '' | tr ' ' '─'
+}
+
+emit_boxed_block() {
+  local design="$1"
+  shift
+  local -a lines=( "$@" )
+
+  if [[ "$PGM_HAVE_BOXES" == yes ]]; then
+    printf '%s\n' "${lines[@]}" | boxes -a c -d "$design"
+  else
+    emit_unicode_box "${lines[@]}"
+  fi
+}
+
+print_run_summary() {
+  local finished_str elapsed_human vol="" hash_entries_word="entries"
+  local -a lines=()
+
+  (( SUMMARY_PRINTED == 0 )) || return 0
+  SUMMARY_PRINTED=1
+
+  finished_str="$(date '+%Y.%m.%d %H:%M:%S')"
+  elapsed_human="$(format_elapsed "$(( $(date +%s) - SCRIPT_START_EPOCH ))")"
+  (( HASH_ENTRY_COUNT == 1 )) && hash_entries_word="entry"
+
+  lines+=( "*** RUN SUMMARY ***" )
+  if (( DRY_RUN == 1 )); then
+    lines+=( "Mode: dry-run (nothing written)" )
+  else
+    lines+=( "Mode: created PAR2 + hash manifest" )
+  fi
+  lines+=( "Directory: $WORK_DIR" )
+  lines+=( "PAR2 stem: ${PAR2_STEM}.par2 (volume-only, -r${RECOVERY_PCT}%)" )
+  if ((${#CREATED_PAR2_VOLS[@]} > 0)); then
+    for vol in "${CREATED_PAR2_VOLS[@]}"; do
+      lines+=( "PAR2 file: $vol" )
+    done
+  else
+    lines+=( "PAR2 file: ${PAR2_STEM}.vol*.par2" )
+  fi
+  lines+=( "Protected: ${PAR2_SOURCE_COUNT} file(s), $(format_bytes_approx "$PAR2_SOURCE_BYTES")" )
+  if [[ -n "${HASH_FILE:-}" ]]; then
+    lines+=( "Hash file: $(basename -- "$HASH_FILE") (${HASH_LABEL:-$HASH_ALGO}, ${HASH_ENTRY_COUNT} ${hash_entries_word})" )
+  fi
+  if (( EXCLUDE_RENAME_HELPERS == 1 && ${#RENAME_HELPERS_FOUND[@]} > 0 )); then
+    lines+=( "Rename helpers excluded from PAR2: ${#RENAME_HELPERS_FOUND[@]}" )
+  fi
+  lines+=( "Started:  $SCRIPT_START_STR" )
+  lines+=( "Finished: $finished_str" )
+  lines+=( "Elapsed:  $elapsed_human" )
+
+  echo
+  emit_boxed_block ada-box "${lines[@]}"
+  echo
+}
+
+print_run_finished_banner() {
+  local rc="${return_code:-0}"
+  local -a lines=()
+
+  case "${RUN_OUTCOME:-}" in
+    quit)
+      lines+=( "*** RUN FINISHED: QUIT (exit $rc) ***" )
+      lines+=( "Stopped at user request (q)." )
+      ;;
+    ok)
+      print_run_summary
+      lines+=( "*** RUN FINISHED: OK (exit $rc) ***" )
+      if (( DRY_RUN == 1 )); then
+        lines+=( "Dry-run completed; no files were written." )
+      else
+        lines+=( "PAR2 archive and hash file are ready." )
+      fi
+      ;;
+    *)
+      lines+=( "*** RUN FINISHED: PROBLEM (exit $rc) ***" )
+      lines+=( "Stopped with an error (see messages above)." )
+      ;;
+  esac
+  lines+=( "Normal exit - the shell prompt returning means the script completed." )
+
+  echo
+  case "${RUN_OUTCOME:-}" in
+    ok) emit_boxed_block ada-box "${lines[@]}" ;;
+    *)  emit_boxed_block stone "${lines[@]}" ;;
+  esac
+  echo
 }
 
 user_prompt_ts_prefix() {
@@ -383,6 +511,7 @@ prompt_hash_algo() {
       2)
         echo "Quit."
         return_code=0
+        RUN_OUTCOME=quit
         finish
         ;;
     esac
@@ -396,6 +525,7 @@ prompt_hash_algo() {
       q|Q)
         echo "Quit."
         return_code=0
+        RUN_OUTCOME=quit
         finish
         ;;
     esac
@@ -688,6 +818,10 @@ create_par2_volume_only() {
   block_count="$(choose_par2_block_count "${#sources[@]}" "$total_bytes")"
   [[ "$block_count" =~ ^[1-9][0-9]*$ ]] || die "Could not choose a PAR2 block count."
 
+  PAR2_SOURCE_COUNT=${#sources[@]}
+  PAR2_SOURCE_BYTES=$total_bytes
+  CREATED_PAR2_VOLS=()
+
   approx_block=$(( (total_bytes + block_count - 1) / block_count ))
   approx_recovery=$(( total_bytes * percent / 100 ))
 
@@ -699,6 +833,7 @@ create_par2_volume_only() {
 
   if (( DRY_RUN == 1 )); then
     echo "  [dry-run] ${PAR2_CMD} create -n1 -b${block_count} -r${percent} -- ${stem}.par2 <${#sources[@]} files>"
+    CREATED_PAR2_VOLS=( "${stem}.vol*.par2 (dry-run)" )
     return 0
   fi
 
@@ -727,6 +862,7 @@ create_par2_volume_only() {
   echo "New PAR2 volume(s):"
   for f in "${vols[@]}"; do
     printf '  %s\n' "$(basename -- "$f")"
+    CREATED_PAR2_VOLS+=( "$(basename -- "$f")" )
   done
 }
 
@@ -743,6 +879,7 @@ write_hash_manifest() {
 
   if (( DRY_RUN == 1 )); then
     echo "  [dry-run] would write ${#rels[@]} lines to $(basename -- "$out_file")"
+    HASH_ENTRY_COUNT=${#rels[@]}
     return 0
   fi
 
@@ -772,6 +909,7 @@ write_hash_manifest() {
     rm -f -- "$tmp"
     die "Failed to write $out_file"
   fi
+  HASH_ENTRY_COUNT=$line_count
   echo "Wrote ${line_count} checksum line(s): $(basename -- "$out_file")"
 }
 
@@ -930,6 +1068,7 @@ if ((${#existing_par2[@]} > 0)); then
       *)
         echo "Aborted (existing PAR2 left unchanged)."
         return_code=0
+        RUN_OUTCOME=quit
         finish
         ;;
     esac
@@ -958,6 +1097,7 @@ if [[ -e "$HASH_FILE" ]]; then
       *)
         echo "Aborted (hash file left unchanged)."
         return_code=0
+        RUN_OUTCOME=quit
         finish
         ;;
     esac
@@ -993,17 +1133,6 @@ hash_rel="$(basename -- "$HASH_FILE")"
 collect_sorted_relpaths "$WORK_DIR" hash-all hash_targets "$hash_rel"
 write_hash_manifest "$HASH_FILE" "$HASH_CMD" "${hash_targets[@]}"
 
-elapsed=$(( $(date +%s) - SCRIPT_START_EPOCH ))
-echo
-echo "=== Done ==="
-echo "  Started:  $SCRIPT_START_STR"
-echo "  Finished: $(date '+%Y.%m.%d %H:%M:%S')"
-echo "  Elapsed:  $(format_elapsed "$elapsed")"
-echo "  PAR2:     ${PAR2_STEM}.vol*.par2"
-echo "  Hash:     $(basename -- "$HASH_FILE")"
-if (( DRY_RUN == 1 )); then
-  echo "  (dry-run: nothing written)"
-fi
-
+RUN_OUTCOME=ok
 return_code=0
 finish
