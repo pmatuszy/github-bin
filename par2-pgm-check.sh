@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20260809.164003 - regenerate -b: enough blocks so -r% ≈ data size (not file-count)
 # v. 20260808.151212 - fix chunk counter: use arithmetic ++ not string +=1
 # v. 20260808.143737 - clear pre-repair summary when only leftover is hash-in-PAR2 mismatch
 # v. 20260808.142411 - set -e: capture print_summary / single-set rc so rename prompt runs
@@ -49,6 +50,7 @@
 # v. 20260719.103506 - fix no-arg run: empty POSITIONAL[@]:- became one "" element
 # v. 20260719.102800 - multi-set selection: A/a, ranges 1-4, --all, multiple paths
 
+# 2026.08.09 - v. 0.1.65 - Regenerate -b: enough blocks so -r% ≈ data size (not file-count * largest)
 # 2026.08.08 - v. 0.1.64 - Fix Step 3 chunk counter (arithmetic ++, not string append)
 # 2026.08.08 - v. 0.1.63 - Before repair prompt: explain hash-only leftover after rename
 # 2026.08.08 - v. 0.1.62 - set -e: keep going after print_summary WARN so rename prompt runs
@@ -2922,14 +2924,58 @@ pgm_restore_par2_from_dot_old() {
     done
 }
 
-# PAR2 requires block_count >= number of source files (default -b is 2000).
+# PAR2 requires block_count >= number of source files (par2cmdline default -b is 2000).
 # Cap is 32768 (16-bit GF). Exclude 0-byte files — create skips them anyway.
+# Do NOT set -b to only the file count when that count is small: with few huge
+# files each source file becomes one block (block size ≈ largest file), so
+# -r20% recovery is ~0.2*N*largest_file and can dwarf the source tree.
+pgm_choose_par2_block_count() {
+    local nfiles="$1"
+    local total_bytes="$2"
+    local max_blocks=32768
+    local min_default=2000
+    local target_block=$((1024 * 1024))
+    local blocks by_size
+
+    (( nfiles > 0 )) || { printf '0\n'; return 1; }
+    if (( nfiles > max_blocks )); then
+        printf '0\n'
+        return 1
+    fi
+
+    blocks=$nfiles
+    if (( total_bytes > 0 )); then
+        by_size=$(( (total_bytes + target_block - 1) / target_block ))
+        (( by_size > blocks )) && blocks=$by_size
+    fi
+    (( blocks < min_default )) && blocks=$min_default
+    (( blocks > max_blocks )) && blocks=$max_blocks
+    (( blocks < nfiles )) && blocks=$nfiles
+    printf '%s\n' "$blocks"
+}
+
+pgm_format_bytes_approx() {
+    local b="${1:-0}"
+    if (( b >= 1099511627776 )); then
+        awk -v b="$b" 'BEGIN { printf "%.1fT", b/1099511627776 }'
+    elif (( b >= 1073741824 )); then
+        awk -v b="$b" 'BEGIN { printf "%.1fG", b/1073741824 }'
+    elif (( b >= 1048576 )); then
+        awk -v b="$b" 'BEGIN { printf "%.1fM", b/1048576 }'
+    elif (( b >= 1024 )); then
+        awk -v b="$b" 'BEGIN { printf "%.1fK", b/1024 }'
+    else
+        printf '%sB' "$b"
+    fi
+}
+
 pgm_par2_create_volume_only() {
     local stem="$1"
     local percent="$2"
     shift 2
     local -a sources=("$@") nonempty=()
     local index_path create_rc=0 block_count=0 skipped_empty=0 rel
+    local total_bytes=0 sz approx_block=0 approx_recovery=0
     local -a vols=()
     local max_par2_blocks=32768
 
@@ -2941,6 +2987,9 @@ pgm_par2_create_volume_only() {
     for rel in "${sources[@]}"; do
         if [[ -f "$DATA_DIR/$rel" && -s "$DATA_DIR/$rel" ]]; then
             nonempty+=("$rel")
+            sz=$(stat -c '%s' -- "$DATA_DIR/$rel" 2>/dev/null) || sz=0
+            [[ "$sz" =~ ^[0-9]+$ ]] || sz=0
+            total_bytes=$(( total_bytes + sz ))
         else
             ((skipped_empty++)) || true
         fi
@@ -2951,17 +3000,28 @@ pgm_par2_create_volume_only() {
         return 1
     }
 
-    block_count=${#nonempty[@]}
-    if (( block_count > max_par2_blocks )); then
-        echo "Error: ${block_count} non-empty files exceeds PAR2 max block count (${max_par2_blocks})." >&2
+    if (( ${#nonempty[@]} > max_par2_blocks )); then
+        echo "Error: ${#nonempty[@]} non-empty files exceeds PAR2 max block count (${max_par2_blocks})." >&2
         echo "Split the tree or archive first; a single PAR2 set cannot cover this many files." >&2
         return 1
     fi
 
+    block_count="$(pgm_choose_par2_block_count "${#nonempty[@]}" "$total_bytes")"
+    [[ "$block_count" =~ ^[1-9][0-9]*$ ]] || {
+        echo "Error: could not choose a PAR2 block count." >&2
+        return 1
+    }
+
+    approx_block=$(( (total_bytes + block_count - 1) / block_count ))
+    approx_recovery=$(( total_bytes * percent / 100 ))
+
     if (( skipped_empty > 0 )); then
         echo "Excluding ${skipped_empty} empty (0-byte) file(s) from the new set."
     fi
-    echo "par2 create: ${#nonempty[@]} file(s), -b${block_count} (blocks >= files), -r${percent}%, -n1"
+    echo "par2 create: ${#nonempty[@]} file(s), -b${block_count} (blocks >= files; ~1MiB target), -r${percent}%, -n1"
+    echo "  source data:    $(pgm_format_bytes_approx "$total_bytes")"
+    echo "  ~block size:    $(pgm_format_bytes_approx "$approx_block")"
+    echo "  ~recovery size: $(pgm_format_bytes_approx "$approx_recovery") (about ${percent}% of source)"
 
     (
         cd "$DATA_DIR" || exit 1

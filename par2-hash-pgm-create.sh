@@ -1,7 +1,9 @@
 #!/bin/bash
+# v. 20260809.164003 - fix -b: use enough blocks so -r% ≈ data size (not file-count)
 # v. 20260809.155541 - prompt to exclude rename.sh helpers from PAR2 (default yes)
 # v. 20260806.224414 - initial: create volume-only PAR2 + SHA-512/MD5 hash for cwd subtree
 
+# 2026.08.09 - v. 0.1.2 - Fix PAR2 -b: floor at 2000 / aim ~1MiB blocks (avoid huge recovery)
 # 2026.08.09 - v. 0.1.1 - Ask to exclude rename.sh helper files from PAR2 (default yes); still hash them
 # 2026.08.06 - v. 0.1.0 - initial release: _<dir>.par2 volume set + __<dir>.sha512|md5 for whole subtree
 #
@@ -85,6 +87,12 @@ DRY_RUN=0
 EXCLUDE_RENAME_HELPERS_CLI=-1
 EXCLUDE_RENAME_HELPERS=1
 MAX_PAR2_BLOCKS=32768
+# par2cmdline default block count; also the floor when file count is lower.
+# Using -b == file count with few huge files makes each block ≈ largest file,
+# so -r20% recovery becomes (0.2 * N) * largest_file (can be >> source total).
+MIN_PAR2_BLOCKS=2000
+# Prefer roughly 1 MiB source blocks when data size allows (capped at MAX).
+TARGET_PAR2_BLOCK_BYTES=$((1024 * 1024))
 return_code=0
 
 WORK_DIR=""
@@ -431,6 +439,57 @@ format_elapsed() {
   fi
 }
 
+format_bytes_approx() {
+  local b="${1:-0}"
+  if (( b >= 1099511627776 )); then
+    awk -v b="$b" 'BEGIN { printf "%.1fT", b/1099511627776 }'
+  elif (( b >= 1073741824 )); then
+    awk -v b="$b" 'BEGIN { printf "%.1fG", b/1073741824 }'
+  elif (( b >= 1048576 )); then
+    awk -v b="$b" 'BEGIN { printf "%.1fM", b/1048576 }'
+  elif (( b >= 1024 )); then
+    awk -v b="$b" 'BEGIN { printf "%.1fK", b/1024 }'
+  else
+    printf '%sB' "$b"
+  fi
+}
+
+# PAR2 needs block_count >= file count (max 32768). Prefer enough blocks so
+# -rN% recovery size ≈ N% of source data (not N% of file-count * largest file).
+choose_par2_block_count() {
+  local nfiles="$1"
+  local total_bytes="$2"
+  local blocks by_size
+
+  (( nfiles > 0 )) || { printf '0\n'; return 1; }
+  if (( nfiles > MAX_PAR2_BLOCKS )); then
+    printf '0\n'
+    return 1
+  fi
+
+  blocks=$nfiles
+  if (( total_bytes > 0 )); then
+    by_size=$(( (total_bytes + TARGET_PAR2_BLOCK_BYTES - 1) / TARGET_PAR2_BLOCK_BYTES ))
+    (( by_size > blocks )) && blocks=$by_size
+  fi
+  (( blocks < MIN_PAR2_BLOCKS )) && blocks=$MIN_PAR2_BLOCKS
+  (( blocks > MAX_PAR2_BLOCKS )) && blocks=$MAX_PAR2_BLOCKS
+  (( blocks < nfiles )) && blocks=$nfiles
+  printf '%s\n' "$blocks"
+}
+
+sum_source_bytes() {
+  local root="$1"
+  shift
+  local rel total=0 sz
+  for rel in "$@"; do
+    sz=$(stat -c '%s' -- "$root/$rel" 2>/dev/null) || sz=0
+    [[ "$sz" =~ ^[0-9]+$ ]] || sz=0
+    total=$(( total + sz ))
+  done
+  printf '%s\n' "$total"
+}
+
 backup_existing_stem_par2() {
   local -a members=("$@")
   local src dst base
@@ -457,21 +516,30 @@ create_par2_volume_only() {
   local percent="$2"
   shift 2
   local -a sources=("$@")
-  local block_count create_rc=0 index_path
+  local block_count create_rc=0 index_path total_bytes=0 approx_block=0 approx_recovery=0
   local -a vols=()
 
   ((${#sources[@]} > 0)) || die "No non-empty data files to protect."
 
-  block_count=${#sources[@]}
-  if (( block_count > MAX_PAR2_BLOCKS )); then
-    die "${block_count} non-empty files exceeds PAR2 max block count (${MAX_PAR2_BLOCKS}). Split the tree first."
+  if ((${#sources[@]} > MAX_PAR2_BLOCKS)); then
+    die "${#sources[@]} non-empty files exceeds PAR2 max block count (${MAX_PAR2_BLOCKS}). Split the tree first."
   fi
 
+  total_bytes="$(sum_source_bytes "$WORK_DIR" "${sources[@]}")"
+  block_count="$(choose_par2_block_count "${#sources[@]}" "$total_bytes")"
+  [[ "$block_count" =~ ^[1-9][0-9]*$ ]] || die "Could not choose a PAR2 block count."
+
+  approx_block=$(( (total_bytes + block_count - 1) / block_count ))
+  approx_recovery=$(( total_bytes * percent / 100 ))
+
   echo "par2 create: ${#sources[@]} file(s), -b${block_count}, -r${percent}%, -n1"
+  echo "  source data:   $(format_bytes_approx "$total_bytes") (${total_bytes} bytes)"
+  echo "  ~block size:   $(format_bytes_approx "$approx_block")"
+  echo "  ~recovery size:$(format_bytes_approx "$approx_recovery") (about ${percent}% of source)"
   echo "  stem: ${stem}.par2 (volume-only; index removed after create)"
 
   if (( DRY_RUN == 1 )); then
-    echo "  [dry-run] ${PAR2_CMD} create -n1 -b${block_count} -r${percent} -- ${stem}.par2 <${block_count} files>"
+    echo "  [dry-run] ${PAR2_CMD} create -n1 -b${block_count} -r${percent} -- ${stem}.par2 <${#sources[@]} files>"
     return 0
   fi
 
