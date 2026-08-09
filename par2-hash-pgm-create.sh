@@ -1,9 +1,11 @@
 #!/bin/bash
+# v. 20260809.170153 - hash menu: q/Q quits immediately (no Enter)
 # v. 20260809.165517 - hash menu: detect *sum tools; numbered pick; q quits; re-ask
 # v. 20260809.164003 - fix -b: use enough blocks so -r% ≈ data size (not file-count)
 # v. 20260809.155541 - prompt to exclude rename.sh helpers from PAR2 (default yes)
 # v. 20260806.224414 - initial: create volume-only PAR2 + SHA-512/MD5 hash for cwd subtree
 
+# 2026.08.09 - v. 0.1.4 - Hash menu: q/Q quits on keypress (no Enter required)
 # 2026.08.09 - v. 0.1.3 - Detect system *sum tools; numbered hash menu (q=quit, invalid=retry)
 # 2026.08.09 - v. 0.1.2 - Fix PAR2 -b: floor at 2000 / aim ~1MiB blocks (avoid huge recovery)
 # 2026.08.09 - v. 0.1.1 - Ask to exclude rename.sh helper files from PAR2 (default yes); still hash them
@@ -52,7 +54,7 @@ Options:
 
 Interactive prompts (unless --yes / flag already set):
   Hash algorithm: numbered list of *sum tools found on PATH; Enter = default;
-                  q/Q = quit; invalid input asks again.
+                  q/Q = quit immediately (no Enter); invalid input asks again.
   Recovery %:     Enter accepts 20% (or --recovery value).
   Rename helpers: Exclude from PAR2? [Y/n] (default yes). Files:
                     _exclude-rename.sh.txt, _rename.sh-optional-db.sqlite3
@@ -154,6 +156,48 @@ read_line_with_timeout() {
   else
     IFS= read -r "$__var"
   fi
+}
+
+# First key with -n1 so q/Q can quit without Enter; then read the rest of the line
+# for numbers/names. Empty first key (Enter) = default. Sets REPLY-style via nameref.
+# Returns: 0 ok, 1 timeout/EOF (treat as default), 2 quit requested.
+read_hash_choice_with_timeout() {
+  local __var="$1"
+  local first="" rest=""
+
+  if prompt_has_timeout; then
+    IFS= read -r -t "$PROMPT_TIMEOUT" -n 1 first || {
+      printf -v "$__var" '%s' ""
+      return 1
+    }
+  else
+    IFS= read -r -n 1 first || {
+      printf -v "$__var" '%s' ""
+      return 1
+    }
+  fi
+
+  case "$first" in
+    q|Q)
+      echo
+      printf -v "$__var" '%s' "$first"
+      return 2
+      ;;
+    ""|$'\n')
+      printf -v "$__var" '%s' ""
+      return 0
+      ;;
+  esac
+
+  # Echo the first char (read -n 1 is silent) then finish the line.
+  printf '%s' "$first"
+  if prompt_has_timeout; then
+    IFS= read -r -t "$PROMPT_TIMEOUT" rest || rest=""
+  else
+    IFS= read -r rest || rest=""
+  fi
+  printf -v "$__var" '%s' "${first}${rest}"
+  return 0
 }
 
 is_par2_backup_basename() {
@@ -330,10 +374,18 @@ prompt_hash_algo() {
     printf '%sChoose hash [1-%d] (default: %d = %s; q=quit, %s): ' \
       "$(user_prompt_ts_prefix)" "$n" "$def_idx" "${HASH_LABELS[def_idx - 1]}" \
       "$(prompt_timeout_label)"
-    if ! read_line_with_timeout ans; then
-      ans=""
-      echo
-    fi
+    read_hash_choice_with_timeout ans
+    case $? in
+      1)
+        ans=""
+        echo
+        ;;
+      2)
+        echo "Quit."
+        return_code=0
+        finish
+        ;;
+    esac
     ans="${ans//[[:space:]]/}"
     case "$ans" in
       "")
