@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20260809.231400 - clearer optional prompt: verify PAR2 archive(s) vs hash file
 # v. 20260809.165517 - hash manifests: also sha384/sha224/sha1/b2
 # v. 20260809.164003 - regenerate -b: enough blocks so -r% ≈ data size (not file-count)
 # v. 20260808.151212 - fix chunk counter: use arithmetic ++ not string +=1
@@ -51,6 +52,7 @@
 # v. 20260719.103506 - fix no-arg run: empty POSITIONAL[@]:- became one "" element
 # v. 20260719.102800 - multi-set selection: A/a, ranges 1-4, --all, multiple paths
 
+# 2026.08.09 - v. 0.1.67 - Clearer optional prompt: verify PAR2 archive(s) against hash file
 # 2026.08.09 - v. 0.1.66 - Hash manifests: also .sha384/.sha224/.sha1/.b2 (with create/rename)
 # 2026.08.09 - v. 0.1.65 - Regenerate -b: enough blocks so -r% ≈ data size (not file-count * largest)
 # 2026.08.08 - v. 0.1.64 - Fix Step 3 chunk counter (arithmetic ++, not string append)
@@ -438,7 +440,7 @@ pgm_prompt_read_backup_old_par2_choice() {
 
 pgm_prompt_read_hash_par2_check_choice() {
     pgm_prompt_read_yes_no_quit 0 "$1" \
-        "Verify .par2 checksum entries in those hash file(s) now?"
+        "Verify PAR2 archive(s) vs hash file?"
 }
 
 pgm_prompt_read_hash_par2_fix_choice() {
@@ -2296,6 +2298,7 @@ pgm_review_par2_hash_refs() {
     local line path count missing_count bad_count names missing_csv bad_csv base name
     local check_choice=0 fix_choice=0 remove_choice=0 path_choice=0 msg rc=0
     local has_missing=0 has_present=0 has_bad_path=0
+    local -a name_list=() stale_chunk=() bad_chunk=()
 
     (( NO_HASH_PAR2_CHECK == 1 )) && return 0
     (( PGM_HASH_SYNCED_THIS_SET == 1 )) && return 0
@@ -2325,7 +2328,17 @@ pgm_review_par2_hash_refs() {
             printf ', %s bad md5sum path format' "$bad_count"
             has_bad_path=1
         fi
-        printf '): %s\n' "$names"
+        printf '):\n'
+        # One .par2 name per line under the hash file (clearer than a CSV blob).
+        if [[ -n "$names" ]]; then
+            IFS=',' read -r -a name_list <<< "$names"
+            for name in "${name_list[@]}"; do
+                [[ -n "$name" ]] || continue
+                printf '    -> %s\n' "$name"
+            done
+        else
+            echo "    -> (none)"
+        fi
         if [[ -n "$missing_csv" ]]; then
             IFS=',' read -r -a stale_chunk <<< "$missing_csv"
             for name in "${stale_chunk[@]}"; do
@@ -2348,7 +2361,6 @@ pgm_review_par2_hash_refs() {
             has_present=1
         fi
     done
-    echo "No hashes were recalculated yet (name/existence/format scan only)."
 
     if (( has_missing )); then
         echo
@@ -2435,13 +2447,25 @@ pgm_review_par2_hash_refs() {
     # Digest check only for .par2 names that still exist (optional, default no).
     (( has_present )) || return 0
 
+    echo
+    pgm_emit_boxed_block stone \
+        "Optional: verify PAR2 archive(s) against the hash file" \
+        "Data files already verified OK under PAR2 names (earlier step passed)." \
+        "The hash manifest also lists checksum(s) for PAR2 archive file(s)" \
+        "(the recovery volumes), not only your data files." \
+        "So far: only checked that those .par2 names exist / look well-formed." \
+        "No digests of the .par2 files have been recalculated yet." \
+        "Y = re-hash listed .par2 file(s) and compare to the hash file" \
+        "N = skip (default) - data is already OK; skip archive checksum check" \
+        "q = quit"
+
     if (( AUTO_HASH_PAR2_CHECK == 0 )); then
         pgm_prompt_read_hash_par2_check_choice check_choice
         case "$check_choice" in
             0)
                 ;;
             1)
-                echo "Skipped .par2 hash digest check."
+                echo "Skipped PAR2 archive vs hash-file check."
                 return 0
                 ;;
             2)
@@ -2451,10 +2475,10 @@ pgm_review_par2_hash_refs() {
                 ;;
         esac
     else
-        echo "Verifying .par2 hash digests automatically (--hash-par2-check)."
+        echo "Verifying PAR2 archive(s) vs hash file automatically (--hash-par2-check)."
     fi
 
-    pgm_print_step_header "Step H: verify .par2 digests in hash manifests"
+    pgm_print_step_header "Step H: verify PAR2 archive digests in hash manifests"
     rc=0
     msg=$(run_rename_py hash verify-par2-refs "$DATA_DIR" 2>&1) || rc=$?
     echo "$msg"
