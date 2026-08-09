@@ -1,6 +1,8 @@
 #!/bin/bash
+# v. 20260809.155541 - prompt to exclude rename.sh helpers from PAR2 (default yes)
 # v. 20260806.224414 - initial: create volume-only PAR2 + SHA-512/MD5 hash for cwd subtree
 
+# 2026.08.09 - v. 0.1.1 - Ask to exclude rename.sh helper files from PAR2 (default yes); still hash them
 # 2026.08.06 - v. 0.1.0 - initial release: _<dir>.par2 volume set + __<dir>.sha512|md5 for whole subtree
 #
 # par2-hash-pgm-create.sh
@@ -22,8 +24,10 @@ Naming (from the parent directory basename, e.g. cwd .../MyAlbum):
 Order:
   1) Create PAR2 for all non-empty data files under the tree
      (excludes *.par2 / backups and hash manifests *.md5|*.sha512|*.sha256).
+     Optionally excludes rename.sh helper files (prompt; default yes).
   2) Write the hash file for every regular file in the tree, including the new
      PAR2 volume(s), excluding the hash file being written.
+     (rename.sh helpers are still hashed even when excluded from PAR2.)
 
 Options:
   -h, --help           Show this help and exit.
@@ -32,12 +36,21 @@ Options:
   --sha512             Prefer SHA-512 for the hash file (default).
   --md5                Prefer MD5 for the hash file.
   --recovery N         Recovery percent 1-100 (skips the recovery prompt).
-  --yes, -y            Accept prompt defaults (hash algo + recovery) without asking.
+  --exclude-rename-helpers
+                       Exclude rename.sh helper files from PAR2 (no prompt).
+  --include-rename-helpers
+                       Include rename.sh helper files in PAR2 (no prompt).
+  --yes, -y            Accept prompt defaults (hash algo, recovery, exclude
+                       rename helpers = yes) without asking.
   -n, --dry-run        Show what would be done; create nothing.
 
 Interactive prompts (unless --yes / flag already set):
   Hash algorithm: Enter accepts the preferred default (SHA-512 unless --md5).
   Recovery %:     Enter accepts 20% (or --recovery value).
+  Rename helpers: Exclude from PAR2? [Y/n] (default yes). Files:
+                    _exclude-rename.sh.txt, _rename.sh-optional-db.sqlite3
+                    (+ -wal/-shm/-journal), legacy rename.sh-optional-db.sqlite3,
+                    _rename.sh.resume-state.json
 
 Environment:
   PAR2_CMD             par2 executable (default: par2)
@@ -47,6 +60,7 @@ Examples:
   cd /path/to/MyAlbum && $(basename "$0")
   $(basename "$0") --md5 --recovery 10
   $(basename "$0") --yes
+  $(basename "$0") --include-rename-helpers
   $(basename "$0") -n
 EOF
 }
@@ -67,6 +81,9 @@ HASH_PREF=""
 RECOVERY_CLI=""
 AUTO_YES=0
 DRY_RUN=0
+# -1 = ask (default yes); 1 = exclude; 0 = include
+EXCLUDE_RENAME_HELPERS_CLI=-1
+EXCLUDE_RENAME_HELPERS=1
 MAX_PAR2_BLOCKS=32768
 return_code=0
 
@@ -80,6 +97,7 @@ HASH_FILE=""
 RECOVERY_PCT=20
 SCRIPT_START_STR=""
 SCRIPT_START_EPOCH=0
+RENAME_HELPERS_FOUND=()
 
 die() {
   echo "Error: $*" >&2
@@ -143,6 +161,26 @@ is_hash_manifest_basename() {
   return 1
 }
 
+# rename.sh sidecar / helper files (matched by basename anywhere in the tree).
+is_rename_helper_basename() {
+  local base="$1"
+  case "$base" in
+    _exclude-rename.sh.txt)
+      return 0
+      ;;
+    _rename.sh.resume-state.json|rename.sh.resume-state.json)
+      return 0
+      ;;
+    _rename.sh-optional-db.sqlite3|rename.sh-optional-db.sqlite3|\
+    _rename.sh-optional-db.sqlite3-wal|rename.sh-optional-db.sqlite3-wal|\
+    _rename.sh-optional-db.sqlite3-shm|rename.sh-optional-db.sqlite3-shm|\
+    _rename.sh-optional-db.sqlite3-journal|rename.sh-optional-db.sqlite3-journal)
+      return 0
+      ;;
+  esac
+  return 1
+}
+
 # Files protected by the new PAR2 set (excludes PAR2 archives and hash manifests).
 is_par2_source_basename() {
   local base="$1"
@@ -152,6 +190,9 @@ is_par2_source_basename() {
     *.par2.old|*.PAR2.old|*.par2.OLD|*.PAR2.OLD) return 1 ;;
   esac
   is_hash_manifest_basename "$base" && return 1
+  if (( EXCLUDE_RENAME_HELPERS == 1 )) && is_rename_helper_basename "$base"; then
+    return 1
+  fi
   return 0
 }
 
@@ -285,6 +326,78 @@ prompt_recovery_percent() {
     ans="$suggested"
   fi
   RECOVERY_PCT="$ans"
+}
+
+find_rename_helpers() {
+  local root="$1"
+  local -n _out=$2
+  local f base rel
+  local -a found=()
+
+  _out=()
+  while IFS= read -r -d '' f; do
+    [[ -f "$f" ]] || continue
+    base="$(basename -- "$f")"
+    is_rename_helper_basename "$base" || continue
+    rel="$(relpath_from_root "$f" "$root")"
+    found+=("$rel")
+  done < <(find "$root" -type f -print0 2>/dev/null)
+
+  if ((${#found[@]} > 1)); then
+    IFS=$'\n' found=($(printf '%s\n' "${found[@]}" | LC_ALL=C sort -f))
+    unset IFS
+  fi
+  _out=("${found[@]}")
+}
+
+prompt_exclude_rename_helpers() {
+  local ans="" rel
+
+  if (( EXCLUDE_RENAME_HELPERS_CLI == 0 || EXCLUDE_RENAME_HELPERS_CLI == 1 )); then
+    EXCLUDE_RENAME_HELPERS="$EXCLUDE_RENAME_HELPERS_CLI"
+    return 0
+  fi
+
+  if (( AUTO_YES == 1 )); then
+    EXCLUDE_RENAME_HELPERS=1
+    return 0
+  fi
+
+  RENAME_HELPERS_FOUND=()
+  find_rename_helpers "$WORK_DIR" RENAME_HELPERS_FOUND
+
+  if ((${#RENAME_HELPERS_FOUND[@]} == 0)); then
+    echo "No rename.sh helper files found under this tree."
+    EXCLUDE_RENAME_HELPERS=1
+    return 0
+  fi
+
+  echo "Found ${#RENAME_HELPERS_FOUND[@]} rename.sh helper file(s) (database, exclude list, resume state):"
+  for rel in "${RENAME_HELPERS_FOUND[@]}"; do
+    printf '  %s\n' "$rel"
+  done
+  echo "These are typically regenerated by rename.sh and do not need PAR2 recovery."
+
+  printf '%sExclude rename.sh helper files from the PAR2 set? [Y/n] (%s): ' \
+    "$(user_prompt_ts_prefix)" "$(prompt_timeout_label)"
+  if ! read_line_with_timeout ans; then
+    ans=""
+    echo
+  fi
+  ans="${ans//[[:space:]]/}"
+  ans="${ans,,}"
+  case "$ans" in
+    ""|y|yes)
+      EXCLUDE_RENAME_HELPERS=1
+      ;;
+    n|no)
+      EXCLUDE_RENAME_HELPERS=0
+      ;;
+    *)
+      echo "Invalid choice '$ans'; excluding helpers (default yes)."
+      EXCLUDE_RENAME_HELPERS=1
+      ;;
+  esac
 }
 
 apply_hash_algo() {
@@ -443,6 +556,11 @@ print_run_settings() {
   echo "  Hash file:     __${DIR_NAME}.${HASH_EXT}"
   echo "  Hash algo:     ${HASH_ALGO}"
   echo "  Recovery:      ${RECOVERY_PCT}%"
+  if (( EXCLUDE_RENAME_HELPERS == 1 )); then
+    echo "  Rename helpers: excluded from PAR2 (still hashed)"
+  else
+    echo "  Rename helpers: included in PAR2"
+  fi
   echo "  PAR2_CMD:      $PAR2_CMD"
   if (( DRY_RUN == 1 )); then
     echo "  Mode:          dry-run (no changes)"
@@ -479,6 +597,14 @@ while [[ $# -gt 0 ]]; do
       RECOVERY_CLI="$2"
       [[ "$RECOVERY_CLI" =~ ^[1-9][0-9]?$|^100$ ]] || die "Invalid --recovery '$RECOVERY_CLI' (use 1-100)."
       shift 2
+      ;;
+    --exclude-rename-helpers)
+      EXCLUDE_RENAME_HELPERS_CLI=1
+      shift
+      ;;
+    --include-rename-helpers)
+      EXCLUDE_RENAME_HELPERS_CLI=0
+      shift
       ;;
     --yes|-y)
       AUTO_YES=1
@@ -520,6 +646,8 @@ if [[ -n "$RECOVERY_CLI" ]]; then
 else
   prompt_recovery_percent 20
 fi
+
+prompt_exclude_rename_helpers
 
 print_run_settings
 
@@ -589,6 +717,17 @@ fi
 echo "=== Step 1: collect PAR2 source files (subtree; exclude PAR2 + hash manifests) ==="
 par2_sources=()
 collect_sorted_relpaths "$WORK_DIR" par2-sources par2_sources
+if (( EXCLUDE_RENAME_HELPERS == 1 )); then
+  if ((${#RENAME_HELPERS_FOUND[@]} == 0)); then
+    find_rename_helpers "$WORK_DIR" RENAME_HELPERS_FOUND
+  fi
+  if ((${#RENAME_HELPERS_FOUND[@]} > 0)); then
+    echo "Excluding ${#RENAME_HELPERS_FOUND[@]} rename.sh helper file(s) from PAR2:"
+    for rel in "${RENAME_HELPERS_FOUND[@]}"; do
+      printf '  %s\n' "$rel"
+    done
+  fi
+fi
 echo "Found ${#par2_sources[@]} non-empty data file(s) to protect."
 ((${#par2_sources[@]} > 0)) || die "No data files to protect under: $WORK_DIR"
 
