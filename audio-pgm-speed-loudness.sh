@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# v. 20260810.160147 - pre-scan volumedetect table; before/after dB; end-of-run summary
 # v. 20260810.152506 - rename to audio-pgm-speed-loudness.sh (drop CURRENT-DIRECTORY suffix)
 # v. 20260810.152137 - add English rewrite: cwd atempo+speechnorm, fix find grouping, safe file loop
 # 2024.10.20 - v. 0.7 - with ffmpeg 7.0.2, -shortest shortened outputs incorrectly; removed it
@@ -13,6 +14,7 @@
 #
 # In the current directory: speed up speech audio (ffmpeg atempo) and apply speechnorm,
 # write mono AAC, move sources into org/, then pack org/ into org.rar.
+# Pre-scans loudness (volumedetect) and reports before/after dB plus an end-of-run summary.
 #
 
 set -euo pipefail
@@ -23,6 +25,10 @@ Usage: $(basename "$0") [-h|--help] [-v|--version] [--no_startup_delay] [SPEED]
 
 Process *.mp3, *.m4a, and *.aac in the current directory only (not subdirs).
 Skips files whose names already contain SPEECHNORM_SPEEDUP.
+
+Before converting, scan each file with ffmpeg volumedetect and print max/mean dB.
+After each successful convert, measure the output AAC and print before → after dB.
+At the end (or on Ctrl-C), print a run summary with timing and before/after list.
 
 For each file, run ffmpeg with:
   - mono (-ac 1)
@@ -136,6 +142,202 @@ require_cmd() {
   command -v "$name" >/dev/null 2>&1 || die "'$name' not found on PATH (required)."
 }
 
+# ---------------------------------------------------------------------------
+# Session / summary state
+# ---------------------------------------------------------------------------
+SESSION_START_SEC=$SECONDS
+SESSION_START_EPOCH="$(date '+%Y.%m.%d %H:%M:%S')"
+SUMMARY_DONE=0
+RUN_EXIT_CODE=0
+RUN_OUTCOME=ok
+SCAN_PROC_SEC=0
+CONVERT_PROC_SEC=0
+COUNT_FOUND=0
+COUNT_OK=0
+COUNT_FAILED=0
+COUNT_SCAN_ERROR=0
+FFMPEG_RESOLVED=""
+WORK_DIR=""
+
+declare -a SCAN_FILE=()
+declare -a SCAN_MAX=()
+declare -a SCAN_MEAN=()
+declare -a OUT_FILE=()
+declare -a OUT_SRC=()
+declare -a OUT_BEFORE_MAX=()
+declare -a OUT_BEFORE_MEAN=()
+declare -a OUT_MAX=()
+declare -a OUT_MEAN=()
+
+format_elapsed() {
+  local sec="${1:-0}"
+  local h m s
+  if (( sec < 0 )); then
+    sec=0
+  fi
+  h=$(( sec / 3600 ))
+  m=$(( (sec % 3600) / 60 ))
+  s=$(( sec % 60 ))
+  if (( h > 0 )); then
+    printf '%dh %02dm %02ds' "$h" "$m" "$s"
+  elif (( m > 0 )); then
+    printf '%dm %02ds' "$m" "$s"
+  else
+    printf '%ds' "$s"
+  fi
+}
+
+summary_kv() {
+  printf '  %-22s %s\n' "$1:" "$2"
+}
+
+format_db_cell() {
+  local value="${1:-}"
+  local num
+  if [[ -z "$value" || "$value" == '—' || "$value" == '-' || "$value" == ERROR ]]; then
+    printf '%10s' '—'
+    return 0
+  fi
+  num="${value%%[[:space:]]dB*}"
+  num="${num//[[:space:]]/}"
+  awk -v v="$num" 'BEGIN {
+    v = v + 0
+    s = sprintf("%.1f", v)
+    if (s == "-0.0") s = "0.0"
+    printf "%7.1f dB", s + 0
+  }'
+}
+
+parse_volumedetect_db() {
+  local blob="$1" key="$2"
+  awk -v key="$key" '
+    index($0, key ":") {
+      for (i = 1; i <= NF; i++) {
+        if ($i ~ /^-?[0-9]+(\.[0-9]+)?$/ && (i == NF || $(i + 1) == "dB")) {
+          print $i
+          exit
+        }
+      }
+    }
+  ' <<<"$blob"
+}
+
+# Sets VD_MAX / VD_MEAN. Returns 0 if max_volume parsed.
+measure_volumedetect() {
+  local file="$1"
+  local stderr_blob="" rc=0
+
+  VD_MAX=""
+  VD_MEAN=""
+  stderr_blob="$("${FFMPEG_BIN}" -hide_banner -nostats -i "$file" -vn -af volumedetect -f null /dev/null 2>&1)" || rc=$?
+  VD_MAX="$(parse_volumedetect_db "$stderr_blob" max_volume)"
+  VD_MEAN="$(parse_volumedetect_db "$stderr_blob" mean_volume)"
+  if [[ -n "$VD_MAX" ]]; then
+    return 0
+  fi
+  # Simple fallback without -vn (some odd containers).
+  stderr_blob="$("${FFMPEG_BIN}" -hide_banner -nostats -i "$file" -af volumedetect -f null /dev/null 2>&1)" || rc=$?
+  VD_MAX="$(parse_volumedetect_db "$stderr_blob" max_volume)"
+  VD_MEAN="$(parse_volumedetect_db "$stderr_blob" mean_volume)"
+  [[ -n "$VD_MAX" ]]
+}
+
+print_scan_table_header() {
+  local file_w="$1"
+  printf '%-*s  %s  %s\n' "$file_w" 'FILE' ' MAX_VOLUME' ' MEAN_VOLUME'
+  printf '%-*s  %s  %s\n' "$file_w" "$(printf '%*s' "$file_w" '' | tr ' ' '-')" '-----------' '-----------'
+}
+
+print_scan_table_row() {
+  local file_w="$1" name="$2" max_db="$3" mean_db="$4"
+  printf '%-*s  %s  %s\n' "$file_w" "$name" "$(format_db_cell "$max_db")" "$(format_db_cell "$mean_db")"
+}
+
+print_run_summary() {
+  local i total_sec other_sec finished_str
+  local max_b mean_b max_a mean_a
+
+  (( SUMMARY_DONE == 0 )) || return 0
+  SUMMARY_DONE=1
+
+  finished_str="$(date '+%Y.%m.%d %H:%M:%S')"
+  total_sec=$(( SECONDS - SESSION_START_SEC ))
+  other_sec=$(( total_sec - SCAN_PROC_SEC - CONVERT_PROC_SEC ))
+  if (( other_sec < 0 )); then
+    other_sec=0
+  fi
+
+  echo
+  echo '--- Run summary ---'
+  summary_kv "Working directory" "${WORK_DIR:-$(pwd -P 2>/dev/null || pwd)}"
+  summary_kv "Speed factor" "atempo=${SPEED_FACTOR}"
+  if [[ -n "${FFMPEG_RESOLVED}" ]]; then
+    summary_kv "ffmpeg" "$FFMPEG_RESOLVED"
+  fi
+  summary_kv "Files found" "$COUNT_FOUND"
+  summary_kv "Converted OK" "$COUNT_OK"
+  summary_kv "Convert failed" "$COUNT_FAILED"
+  if (( COUNT_SCAN_ERROR > 0 )); then
+    summary_kv "Scan measure errors" "$COUNT_SCAN_ERROR"
+  fi
+
+  if (( COUNT_OK > 0 )); then
+    echo
+    echo '--- Before → after (max / mean) ---'
+    for i in "${!OUT_SRC[@]}"; do
+      max_b="$(format_db_cell "${OUT_BEFORE_MAX[$i]:-}")"
+      mean_b="$(format_db_cell "${OUT_BEFORE_MEAN[$i]:-}")"
+      max_a="$(format_db_cell "${OUT_MAX[$i]:-}")"
+      mean_a="$(format_db_cell "${OUT_MEAN[$i]:-}")"
+      printf '  %s\n' "${OUT_SRC[$i]}"
+      printf '    before %s / %s  →  after %s / %s\n' "$max_b" "$mean_b" "$max_a" "$mean_a"
+      printf '    output %s\n' "${OUT_FILE[$i]}"
+    done
+  fi
+
+  echo
+  echo '--- Timing ---'
+  summary_kv "Started" "$SESSION_START_EPOCH"
+  summary_kv "Finished" "$finished_str"
+  summary_kv "Total wall time" "$(format_elapsed "$total_sec")"
+  summary_kv "Scan processing" "$(format_elapsed "$SCAN_PROC_SEC")  (ffmpeg volumedetect)"
+  summary_kv "Convert processing" "$(format_elapsed "$CONVERT_PROC_SEC")  (atempo+speechnorm + re-measure)"
+  summary_kv "Other overhead" "$(format_elapsed "$other_sec")"
+  case "$RUN_OUTCOME" in
+    interrupted)
+      summary_kv "Exit" "interrupted (Ctrl-C), code ${RUN_EXIT_CODE}"
+      ;;
+    failed)
+      summary_kv "Exit" "failed, code ${RUN_EXIT_CODE}"
+      ;;
+    *)
+      summary_kv "Exit" "ok, code ${RUN_EXIT_CODE}"
+      ;;
+  esac
+  echo
+  echo "---- Script end   $0 ($finished_str)"
+}
+
+on_interrupt() {
+  RUN_OUTCOME=interrupted
+  RUN_EXIT_CODE=130
+  exit 130
+}
+
+on_exit() {
+  local rc=$?
+  if (( RUN_EXIT_CODE == 0 )) && (( rc != 0 )); then
+    RUN_EXIT_CODE=$rc
+  fi
+  if [[ "$RUN_OUTCOME" == ok ]] && (( RUN_EXIT_CODE != 0 )); then
+    RUN_OUTCOME=failed
+  fi
+  print_run_summary
+}
+
+trap on_interrupt INT
+trap on_exit EXIT
+
 # Perl rename expressions applied to cwd basename and to selected files.
 RENAME_EXPRS=(
   's/ /_/g'
@@ -203,7 +405,6 @@ sanitize_cwd_basename() {
 }
 
 cwd_media_doc_globs() {
-  # Caller must enable nullglob; prints matching names as separate words via array assign.
   shopt -s nullglob
   local -a targets=( *.mp3 *.m4a *.aac *.jpg *.doc *.pdf *.rtf *.txt *.MP3 *.M4A *.AAC *.JPG *.DOC *.PDF *.RTF *.TXT )
   shopt -u nullglob
@@ -258,6 +459,7 @@ require_cmd rar
 
 FFMPEG_RESOLVED="$(readlink -f "${FFMPEG_BIN}" 2>/dev/null || printf '%s' "${FFMPEG_BIN}")"
 FFMPEG_VERSION="$("${FFMPEG_BIN}" -hide_banner -version 2>/dev/null | head -n1 || true)"
+WORK_DIR="$(pwd -P 2>/dev/null || pwd)"
 
 SOURCE_DIR="."
 MONO_ARGS=( -ac 1 )
@@ -279,6 +481,7 @@ echo
 
 sanitize_cwd_basename
 sanitize_files_in_cwd
+WORK_DIR="$(pwd -P 2>/dev/null || pwd)"
 
 mapfile -d '' -t audio_files < <(
   find "${SOURCE_DIR}" -maxdepth 1 -type f \
@@ -290,12 +493,60 @@ if (( ${#audio_files[@]} == 1 )) && [[ -z "${audio_files[0]:-}" ]]; then
   audio_files=()
 fi
 
-if (( ${#audio_files[@]} == 0 )); then
-  echo "No .mp3 / .m4a / .aac files to process in: $(pwd -P)"
+# Normalize paths to basename-relative (drop ./)
+for i in "${!audio_files[@]}"; do
+  audio_files[$i]="${audio_files[$i]#./}"
+done
+
+COUNT_FOUND=${#audio_files[@]}
+
+if (( COUNT_FOUND == 0 )); then
+  echo "No .mp3 / .m4a / .aac files to process in: $WORK_DIR"
 else
+  # ---- Pre-scan ----
+  echo "=== Pre-scan (ffmpeg volumedetect) ==="
+  file_w=4
   for src in "${audio_files[@]}"; do
-    # find may return ./file; normalize
-    src="${src#./}"
+    if (( ${#src} > file_w )); then
+      file_w=${#src}
+    fi
+  done
+  if (( file_w > 80 )); then
+    file_w=80
+  fi
+  print_scan_table_header "$file_w"
+
+  scan_t0=$SECONDS
+  for src in "${audio_files[@]}"; do
+    SCAN_FILE+=("$src")
+    if [[ ! -f "$src" ]]; then
+      SCAN_MAX+=("")
+      SCAN_MEAN+=("")
+      print_scan_table_row "$file_w" "$src" "" ""
+      (( ++COUNT_SCAN_ERROR )) || true
+      continue
+    fi
+    if measure_volumedetect "$src"; then
+      SCAN_MAX+=("$VD_MAX")
+      SCAN_MEAN+=("${VD_MEAN:-}")
+      print_scan_table_row "$file_w" "$src" "$VD_MAX" "${VD_MEAN:-}"
+    else
+      SCAN_MAX+=("")
+      SCAN_MEAN+=("")
+      print_scan_table_row "$file_w" "$src" "" ""
+      echo "  (scan failed for $src — will still attempt convert)" >&2
+      (( ++COUNT_SCAN_ERROR )) || true
+    fi
+  done
+  SCAN_PROC_SEC=$(( SECONDS - scan_t0 ))
+  echo
+  echo "Pre-scan done in $(format_elapsed "$SCAN_PROC_SEC")."
+  echo
+
+  # ---- Convert ----
+  convert_t0=$SECONDS
+  for i in "${!audio_files[@]}"; do
+    src="${audio_files[$i]}"
     if [[ ! -f "$src" ]]; then
       continue
     fi
@@ -312,6 +563,7 @@ else
 
     echo "Processing: $src"
     echo "Output:     $output_file"
+    echo "Before: max $(format_db_cell "${SCAN_MAX[$i]:-}")  mean $(format_db_cell "${SCAN_MEAN[$i]:-}")"
 
     if ! "${FFMPEG_BIN}" "${FFMPEG_COMMON_ARGS[@]}" -i "$src" "${MONO_ARGS[@]}" \
       -filter:a "atempo=${SPEED_FACTOR},speechnorm" "$output_file"; then
@@ -320,15 +572,38 @@ else
       echo "Exiting."
       echo
       rm -f -- "$output_file"
+      (( ++COUNT_FAILED )) || true
+      CONVERT_PROC_SEC=$(( SECONDS - convert_t0 ))
+      RUN_OUTCOME=failed
+      RUN_EXIT_CODE=2
       exit 2
     fi
+
+    after_max=""
+    after_mean=""
+    if measure_volumedetect "$output_file"; then
+      after_max="$VD_MAX"
+      after_mean="${VD_MEAN:-}"
+    else
+      (( ++COUNT_SCAN_ERROR )) || true
+    fi
+    echo "After:  max $(format_db_cell "$after_max")  mean $(format_db_cell "$after_mean")   ($(basename -- "$output_file"))"
 
     chmod --reference="$src" -- "$output_file" 2>/dev/null || true
     chown --reference="$src" -- "$output_file" 2>/dev/null || true
     touch --reference="$src" -- "$output_file" 2>/dev/null || true
     mv -v -- "$src" org/
+
+    OUT_SRC+=("$src")
+    OUT_FILE+=("$output_file")
+    OUT_BEFORE_MAX+=("${SCAN_MAX[$i]:-}")
+    OUT_BEFORE_MEAN+=("${SCAN_MEAN[$i]:-}")
+    OUT_MAX+=("$after_max")
+    OUT_MEAN+=("$after_mean")
+    (( ++COUNT_OK )) || true
     sleep 0.2
   done
+  CONVERT_PROC_SEC=$(( SECONDS - convert_t0 ))
 fi
 
 cd -- "$SOURCE_DIR"
@@ -340,5 +615,5 @@ elif [[ -d org ]]; then
   echo "org/ is empty; skipping rar pack."
 fi
 
-echo "---- Script end   $0 ($(date '+%Y.%m.%d %H:%M:%S'))"
+RUN_EXIT_CODE=0
 exit 0
