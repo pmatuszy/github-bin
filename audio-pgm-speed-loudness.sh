@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# v. 20260810.170715 - show duration before/after (ffprobe) in scan, per-file, and summary
+# v. 20260810.164307 - replace spaces with underscores via mv (not only perl rename)
 # v. 20260810.162410 - embed single cwd jpg/jpeg/png as cover (output .m4a when cover present)
 # v. 20260810.160147 - pre-scan volumedetect table; before/after dB; end-of-run summary
 # v. 20260810.152506 - rename to audio-pgm-speed-loudness.sh (drop CURRENT-DIRECTORY suffix)
@@ -28,9 +30,9 @@ Usage: $(basename "$0") [-h|--help] [-v|--version] [--no_startup_delay] [SPEED]
 Process *.mp3, *.m4a, and *.aac in the current directory only (not subdirs).
 Skips files whose names already contain SPEECHNORM_SPEEDUP.
 
-Before converting, scan each file with ffmpeg volumedetect and print max/mean dB.
-After each successful convert, measure the output and print before → after dB.
-At the end (or on Ctrl-C), print a run summary with timing and before/after list.
+Before converting, scan each file with ffmpeg volumedetect and ffprobe duration;
+print max/mean dB and duration. After each successful convert, re-measure and print
+before → after dB and duration. At the end (or on Ctrl-C), print a run summary.
 
 If the current directory contains exactly one image (.jpg / .jpeg / .png), embed it
 as album cover (attached_pic) in every output. Cover needs an MP4 container, so
@@ -46,8 +48,9 @@ Output: <basename>_SPEECHNORM_SPEEDUP_<SPEED>.aac  (or .m4a with cover)
 On success: copy mode/owner/mtime from the source, move the source into org/.
 After all files: zero-pad _1_.._9_ in names, then rar-pack org/ into org.rar.
 
-Also sanitizes the cwd basename and common media/doc filenames (spaces, commas,
-Polish diacritics, brackets) using Debian/Ubuntu perl rename(1).
+Also sanitizes the cwd basename and filenames: spaces become underscores (via mv),
+then commas / Polish diacritics / brackets via Debian/Ubuntu perl rename(1) on
+common media/doc extensions.
 
 ffmpeg resolution (first match wins):
   1. FFMPEG_BIN environment variable (if executable)
@@ -140,6 +143,29 @@ resolve_ffmpeg_bin() {
   command -v ffmpeg 2>/dev/null || return 1
 }
 
+resolve_ffprobe_bin() {
+  local candidate="" ffmpeg_dir=""
+
+  if [[ -n "${FFPROBE_BIN:-}" && -x "${FFPROBE_BIN}" ]]; then
+    printf '%s\n' "${FFPROBE_BIN}"
+    return 0
+  fi
+  if [[ -n "${FFMPEG_BIN:-}" ]]; then
+    ffmpeg_dir="$(dirname -- "${FFMPEG_BIN}")"
+    if [[ -x "${ffmpeg_dir}/ffprobe" ]]; then
+      printf '%s\n' "${ffmpeg_dir}/ffprobe"
+      return 0
+    fi
+  fi
+  for candidate in /usr/local/bin/ffprobe /usr/bin/ffprobe; do
+    if [[ -x "${candidate}" ]]; then
+      printf '%s\n' "${candidate}"
+      return 0
+    fi
+  done
+  command -v ffprobe 2>/dev/null || return 1
+}
+
 die() {
   echo "ERROR: $*" >&2
   exit 1
@@ -165,6 +191,7 @@ COUNT_OK=0
 COUNT_FAILED=0
 COUNT_SCAN_ERROR=0
 FFMPEG_RESOLVED=""
+FFPROBE_BIN=""
 WORK_DIR=""
 COVER_IMAGE=""
 OUTPUT_EXT=aac
@@ -172,12 +199,15 @@ OUTPUT_EXT=aac
 declare -a SCAN_FILE=()
 declare -a SCAN_MAX=()
 declare -a SCAN_MEAN=()
+declare -a SCAN_DUR=()
 declare -a OUT_FILE=()
 declare -a OUT_SRC=()
 declare -a OUT_BEFORE_MAX=()
 declare -a OUT_BEFORE_MEAN=()
+declare -a OUT_BEFORE_DUR=()
 declare -a OUT_MAX=()
 declare -a OUT_MEAN=()
+declare -a OUT_DUR=()
 
 format_elapsed() {
   local sec="${1:-0}"
@@ -218,6 +248,48 @@ format_db_cell() {
   }'
 }
 
+# Seconds → "M:SS" or "H:MM:SS" (or em dash), fixed width for tables.
+format_duration_cell() {
+  local sec="${1:-}"
+  if [[ -z "$sec" || "$sec" == '—' || "$sec" == '-' ]]; then
+    printf '%10s' '—'
+    return 0
+  fi
+  awk -v d="$sec" 'BEGIN {
+    if (d + 0 <= 0) { printf "%10s", "—"; exit }
+    t = int(d + 0.5)
+    h = int(t / 3600)
+    m = int((t % 3600) / 60)
+    s = t % 60
+    if (h > 0) printf "%10s", sprintf("%d:%02d:%02d", h, m, s)
+    else printf "%10s", sprintf("%d:%02d", m, s)
+  }'
+}
+
+# Sum of duration seconds from an array of numeric strings; empty skipped.
+sum_duration_seconds() {
+  local -n _arr=$1
+  local x total=0
+  for x in "${_arr[@]+"${_arr[@]}"}"; do
+    [[ -n "$x" ]] || continue
+    total="$(awk -v a="$total" -v b="$x" 'BEGIN { printf "%.3f", a + b }')"
+  done
+  printf '%s' "$total"
+}
+
+media_duration_seconds() {
+  local file="$1" d probe=""
+  probe="${FFPROBE_BIN:-}"
+  if [[ -z "$probe" || ! -x "$probe" ]]; then
+    probe="$(resolve_ffprobe_bin 2>/dev/null || true)"
+  fi
+  [[ -n "$probe" && -x "$probe" ]] || return 1
+  d="$("$probe" -v error -show_entries format=duration \
+    -of default=noprint_wrappers=1:nokey=1 -- "$file" 2>/dev/null)" || return 1
+  [[ -n "$d" ]] || return 1
+  awk -v d="$d" 'BEGIN { if (d+0 > 0) printf "%.3f\n", d+0; else exit 1 }'
+}
+
 parse_volumedetect_db() {
   local blob="$1" key="$2"
   awk -v key="$key" '
@@ -254,18 +326,20 @@ measure_volumedetect() {
 
 print_scan_table_header() {
   local file_w="$1"
-  printf '%-*s  %s  %s\n' "$file_w" 'FILE' ' MAX_VOLUME' ' MEAN_VOLUME'
-  printf '%-*s  %s  %s\n' "$file_w" "$(printf '%*s' "$file_w" '' | tr ' ' '-')" '-----------' '-----------'
+  printf '%-*s  %s  %s  %s\n' "$file_w" 'FILE' ' MAX_VOLUME' ' MEAN_VOLUME' '  DURATION'
+  printf '%-*s  %s  %s  %s\n' "$file_w" "$(printf '%*s' "$file_w" '' | tr ' ' '-')" '-----------' '-----------' '----------'
 }
 
 print_scan_table_row() {
-  local file_w="$1" name="$2" max_db="$3" mean_db="$4"
-  printf '%-*s  %s  %s\n' "$file_w" "$name" "$(format_db_cell "$max_db")" "$(format_db_cell "$mean_db")"
+  local file_w="$1" name="$2" max_db="$3" mean_db="$4" dur_sec="${5:-}"
+  printf '%-*s  %s  %s  %s\n' "$file_w" "$name" \
+    "$(format_db_cell "$max_db")" "$(format_db_cell "$mean_db")" "$(format_duration_cell "$dur_sec")"
 }
 
 print_run_summary() {
   local i total_sec other_sec finished_str
-  local max_b mean_b max_a mean_a
+  local max_b mean_b max_a mean_a dur_b dur_a
+  local sum_before sum_after
 
   (( SUMMARY_DONE == 0 )) || return 0
   SUMMARY_DONE=1
@@ -284,6 +358,9 @@ print_run_summary() {
   if [[ -n "${FFMPEG_RESOLVED}" ]]; then
     summary_kv "ffmpeg" "$FFMPEG_RESOLVED"
   fi
+  if [[ -n "${FFPROBE_BIN}" ]]; then
+    summary_kv "ffprobe" "$FFPROBE_BIN"
+  fi
   if [[ -n "${COVER_IMAGE}" ]]; then
     summary_kv "Cover image" "$COVER_IMAGE (embedded → .${OUTPUT_EXT})"
   else
@@ -297,15 +374,22 @@ print_run_summary() {
   fi
 
   if (( COUNT_OK > 0 )); then
+    sum_before="$(sum_duration_seconds OUT_BEFORE_DUR)"
+    sum_after="$(sum_duration_seconds OUT_DUR)"
+    summary_kv "Total duration before" "$(format_duration_cell "$sum_before" | sed 's/^[[:space:]]*//')"
+    summary_kv "Total duration after" "$(format_duration_cell "$sum_after" | sed 's/^[[:space:]]*//')"
     echo
-    echo '--- Before → after (max / mean) ---'
+    echo '--- Before → after (max / mean / duration) ---'
     for i in "${!OUT_SRC[@]}"; do
       max_b="$(format_db_cell "${OUT_BEFORE_MAX[$i]:-}")"
       mean_b="$(format_db_cell "${OUT_BEFORE_MEAN[$i]:-}")"
+      dur_b="$(format_duration_cell "${OUT_BEFORE_DUR[$i]:-}")"
       max_a="$(format_db_cell "${OUT_MAX[$i]:-}")"
       mean_a="$(format_db_cell "${OUT_MEAN[$i]:-}")"
+      dur_a="$(format_duration_cell "${OUT_DUR[$i]:-}")"
       printf '  %s\n' "${OUT_SRC[$i]}"
-      printf '    before %s / %s  →  after %s / %s\n' "$max_b" "$mean_b" "$max_a" "$mean_a"
+      printf '    before %s / %s / %s  →  after %s / %s / %s\n' \
+        "$max_b" "$mean_b" "$dur_b" "$max_a" "$mean_a" "$dur_a"
       printf '    output %s\n' "${OUT_FILE[$i]}"
     done
   fi
@@ -315,7 +399,7 @@ print_run_summary() {
   summary_kv "Started" "$SESSION_START_EPOCH"
   summary_kv "Finished" "$finished_str"
   summary_kv "Total wall time" "$(format_elapsed "$total_sec")"
-  summary_kv "Scan processing" "$(format_elapsed "$SCAN_PROC_SEC")  (ffmpeg volumedetect)"
+  summary_kv "Scan processing" "$(format_elapsed "$SCAN_PROC_SEC")  (volumedetect + duration)"
   summary_kv "Convert processing" "$(format_elapsed "$CONVERT_PROC_SEC")  (atempo+speechnorm + re-measure)"
   summary_kv "Other overhead" "$(format_elapsed "$other_sec")"
   case "$RUN_OUTCOME" in
@@ -397,15 +481,55 @@ run_perl_rename() {
   rename "$expr" "$@" || true
 }
 
+# Reliable space→underscore (works even when rename(1) is util-linux, not perl).
+replace_spaces_with_underscores_file() {
+  local path="$1"
+  local dir base new
+  [[ -e "$path" ]] || return 0
+  dir="$(dirname -- "$path")"
+  base="$(basename -- "$path")"
+  new="${base// /_}"
+  if [[ "$base" == "$new" ]]; then
+    return 0
+  fi
+  if [[ -e "${dir}/${new}" ]]; then
+    echo "  skip space→underscore (target exists): $path → ${dir}/${new}" >&2
+    return 0
+  fi
+  mv -v -- "$path" "${dir}/${new}"
+}
+
+replace_spaces_in_cwd_files() {
+  local f
+  while IFS= read -r -d '' f; do
+    f="${f#./}"
+    replace_spaces_with_underscores_file "$f"
+  done < <(find . -maxdepth 1 -type f -name '* *' -print0 | sort -z)
+}
+
 sanitize_cwd_basename() {
   local cwd_name expr
-  local parent
+  local parent new_name
 
   parent="$(dirname -- "$(readlink -f .)")"
   cwd_name="$(basename -- "$(readlink -f .)")"
   echo "cwd basename (before sanitize) = $cwd_name"
 
+  # Spaces first, via mv (do not depend on perl rename).
+  if [[ "$cwd_name" == *' '* ]]; then
+    new_name="${cwd_name// /_}"
+    if [[ ! -e "${parent}/${new_name}" ]]; then
+      mv -v -- "${parent}/${cwd_name}" "${parent}/${new_name}"
+      cwd_name="$new_name"
+    else
+      echo "  skip cwd space→underscore (target exists): ${parent}/${new_name}" >&2
+    fi
+    cd -- "${parent}/${cwd_name}"
+  fi
+
   for expr in "${RENAME_EXPRS[@]}"; do
+    # Skip space expr — already handled above with mv.
+    [[ "$expr" == 's/ /_/g' ]] && continue
     cwd_name="$(basename -- "$(readlink -f .)")"
     (
       cd -- "$parent"
@@ -488,6 +612,9 @@ sanitize_files_in_cwd() {
   local expr
   local -a targets=()
 
+  # Spaces first via mv (all files in cwd), then other sanitize via rename on media/docs.
+  replace_spaces_in_cwd_files
+
   mapfile -d '' -t targets < <(cwd_media_doc_globs)
   if (( ${#targets[@]} == 1 )) && [[ -z "${targets[0]:-}" ]]; then
     targets=()
@@ -497,6 +624,7 @@ sanitize_files_in_cwd() {
   fi
 
   for expr in "${RENAME_EXPRS[@]}"; do
+    [[ "$expr" == 's/ /_/g' ]] && continue
     mapfile -d '' -t targets < <(cwd_media_doc_globs)
     if (( ${#targets[@]} == 1 )) && [[ -z "${targets[0]:-}" ]]; then
       targets=()
@@ -532,6 +660,7 @@ require_cmd rar
 
 FFMPEG_RESOLVED="$(readlink -f "${FFMPEG_BIN}" 2>/dev/null || printf '%s' "${FFMPEG_BIN}")"
 FFMPEG_VERSION="$("${FFMPEG_BIN}" -hide_banner -version 2>/dev/null | head -n1 || true)"
+FFPROBE_BIN="$(resolve_ffprobe_bin 2>/dev/null || true)"
 WORK_DIR="$(pwd -P 2>/dev/null || pwd)"
 
 SOURCE_DIR="."
@@ -549,6 +678,11 @@ echo "(PGM) speed factor (atempo) = $SPEED_FACTOR"
 echo "ffmpeg: ${FFMPEG_RESOLVED}"
 if [[ -n "${FFMPEG_VERSION}" ]]; then
   echo "  ${FFMPEG_VERSION}"
+fi
+if [[ -n "${FFPROBE_BIN}" ]]; then
+  echo "ffprobe: ${FFPROBE_BIN}"
+else
+  echo "ffprobe: (not found — duration columns will be —)"
 fi
 echo
 
@@ -578,7 +712,7 @@ if (( COUNT_FOUND == 0 )); then
   echo "No .mp3 / .m4a / .aac files to process in: $WORK_DIR"
 else
   # ---- Pre-scan ----
-  echo "=== Pre-scan (ffmpeg volumedetect) ==="
+  echo "=== Pre-scan (volumedetect + duration) ==="
   file_w=4
   for src in "${audio_files[@]}"; do
     if (( ${#src} > file_w )); then
@@ -593,22 +727,30 @@ else
   scan_t0=$SECONDS
   for src in "${audio_files[@]}"; do
     SCAN_FILE+=("$src")
+    dur=""
     if [[ ! -f "$src" ]]; then
       SCAN_MAX+=("")
       SCAN_MEAN+=("")
-      print_scan_table_row "$file_w" "$src" "" ""
+      SCAN_DUR+=("")
+      print_scan_table_row "$file_w" "$src" "" "" ""
       (( ++COUNT_SCAN_ERROR )) || true
       continue
     fi
+    if dur="$(media_duration_seconds "$src")"; then
+      :
+    else
+      dur=""
+    fi
+    SCAN_DUR+=("$dur")
     if measure_volumedetect "$src"; then
       SCAN_MAX+=("$VD_MAX")
       SCAN_MEAN+=("${VD_MEAN:-}")
-      print_scan_table_row "$file_w" "$src" "$VD_MAX" "${VD_MEAN:-}"
+      print_scan_table_row "$file_w" "$src" "$VD_MAX" "${VD_MEAN:-}" "$dur"
     else
       SCAN_MAX+=("")
       SCAN_MEAN+=("")
-      print_scan_table_row "$file_w" "$src" "" ""
-      echo "  (scan failed for $src — will still attempt convert)" >&2
+      print_scan_table_row "$file_w" "$src" "" "" "$dur"
+      echo "  (volumedetect failed for $src — will still attempt convert)" >&2
       (( ++COUNT_SCAN_ERROR )) || true
     fi
   done
@@ -640,7 +782,7 @@ else
     if [[ -n "${COVER_IMAGE}" ]]; then
       echo "Cover:      $COVER_IMAGE"
     fi
-    echo "Before: max $(format_db_cell "${SCAN_MAX[$i]:-}")  mean $(format_db_cell "${SCAN_MEAN[$i]:-}")"
+    echo "Before: max $(format_db_cell "${SCAN_MAX[$i]:-}")  mean $(format_db_cell "${SCAN_MEAN[$i]:-}")  duration $(format_duration_cell "${SCAN_DUR[$i]:-}")"
 
     if ! run_ffmpeg_convert "$src" "$output_file"; then
       echo
@@ -657,13 +799,20 @@ else
 
     after_max=""
     after_mean=""
+    after_dur=""
     if measure_volumedetect "$output_file"; then
       after_max="$VD_MAX"
       after_mean="${VD_MEAN:-}"
     else
       (( ++COUNT_SCAN_ERROR )) || true
     fi
-    echo "After:  max $(format_db_cell "$after_max")  mean $(format_db_cell "$after_mean")   ($(basename -- "$output_file"))"
+    if after_dur="$(media_duration_seconds "$output_file")"; then
+      :
+    else
+      after_dur=""
+      (( ++COUNT_SCAN_ERROR )) || true
+    fi
+    echo "After:  max $(format_db_cell "$after_max")  mean $(format_db_cell "$after_mean")  duration $(format_duration_cell "$after_dur")   ($(basename -- "$output_file"))"
 
     chmod --reference="$src" -- "$output_file" 2>/dev/null || true
     chown --reference="$src" -- "$output_file" 2>/dev/null || true
@@ -674,8 +823,10 @@ else
     OUT_FILE+=("$output_file")
     OUT_BEFORE_MAX+=("${SCAN_MAX[$i]:-}")
     OUT_BEFORE_MEAN+=("${SCAN_MEAN[$i]:-}")
+    OUT_BEFORE_DUR+=("${SCAN_DUR[$i]:-}")
     OUT_MAX+=("$after_max")
     OUT_MEAN+=("$after_mean")
+    OUT_DUR+=("$after_dur")
     (( ++COUNT_OK )) || true
     sleep 0.2
   done
