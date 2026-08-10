@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# v. 20260810.173904 - drop redundant output basename on After: line
 # v. 20260810.173552 - show input → output on one line per file
 # v. 20260810.173421 - omit ./ prefix on cwd output paths in messages and filenames
 # v. 20260810.172924 - proceed prompt: single-key [y/N/q] (like loudness)
@@ -920,7 +921,7 @@ else
         after_dur=""
         (( ++COUNT_SCAN_ERROR )) || true
       fi
-      echo "After:  max $(format_db_cell "$after_max")  mean $(format_db_cell "$after_mean")  duration $(format_duration_cell "$after_dur")   ($(basename -- "$output_file"))"
+      echo "After:  max $(format_db_cell "$after_max")  mean $(format_db_cell "$after_mean")  duration $(format_duration_cell "$after_dur")"
 
       chmod --reference="$src" -- "$output_file" 2>/dev/null || true
       chown --reference="$src" -- "$output_file" 2>/dev/null || true
