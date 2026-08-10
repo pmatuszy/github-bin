@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# v. 20260810.180157 - episode zero-pad only after single-key consent [y/N/q] (default N)
 # v. 20260810.175918 - zero-pad trailing _1.._9 before ext when multi-digit episodes exist
 # v. 20260810.175612 - create org/ only when moving a converted source (not on empty/decline)
 # v. 20260810.175506 - summary: input → output on first line, then before/after
@@ -66,8 +67,8 @@ After all files: zero-pad _1_.._9_ in names, then rar-pack org/ into org.rar.
 Also sanitizes the cwd basename and filenames: spaces become underscores (via mv),
 then commas / Polish diacritics / brackets via Debian/Ubuntu perl rename(1) on
 common media/doc extensions. If the directory has multi-digit episode numbers
-(e.g. _10 or _02) and a trailing single-digit sibling (_1.mp3), renames it to
-_01.mp3 so lexical order matches episode order.
+(e.g. _10 or _02) and a trailing single-digit sibling (_1.mp3), offers to rename
+to _01.mp3 after a single-key confirm (default No: [y/N/q]).
 
 ffmpeg resolution (first match wins):
   1. FFMPEG_BIN environment variable (if executable)
@@ -213,6 +214,8 @@ FFPROBE_BIN=""
 WORK_DIR=""
 COVER_IMAGE=""
 OUTPUT_EXT=aac
+declare -a EPISODE_PAD_FROM=()
+declare -a EPISODE_PAD_TO=()
 
 declare -a SCAN_FILE=()
 declare -a SCAN_MAX=()
@@ -743,8 +746,6 @@ sanitize_files_in_cwd() {
     fi
     run_perl_rename "$expr" "${targets[@]}"
   done
-
-  zero_pad_trailing_single_digit_episodes
 }
 
 # True when cwd has a media file whose last _segment is 2+ digits (e.g. _10, _02).
@@ -767,11 +768,13 @@ cwd_has_multidigit_episode_numbers() {
   return 1
 }
 
-# Klopot_z_Zelenskim_1.mp3 → _01.mp3 when siblings like _02 / _10 exist.
-zero_pad_trailing_single_digit_episodes() {
+# Fill EPISODE_PAD_FROM / EPISODE_PAD_TO with pending _1.mp3 → _01.mp3 renames.
+collect_trailing_single_digit_episode_renames() {
   local f base stem ext last new
   local -a files=()
-  local renamed=0
+
+  EPISODE_PAD_FROM=()
+  EPISODE_PAD_TO=()
 
   if ! cwd_has_multidigit_episode_numbers; then
     return 0
@@ -792,18 +795,63 @@ zero_pad_trailing_single_digit_episodes() {
     fi
     new="${stem%_*}_0${last}.${ext}"
     if [[ -e "$new" ]]; then
-      echo "  skip zero-pad (target exists): $f → $new" >&2
+      echo "  skip zero-pad candidate (target exists): $f → $new" >&2
       continue
     fi
-    if (( renamed == 0 )); then
-      echo "Zero-padding trailing single-digit episode numbers (_1.mp3 → _01.mp3)..."
-    fi
-    mv -v -- "$f" "$new"
-    renamed=1
+    EPISODE_PAD_FROM+=("$f")
+    EPISODE_PAD_TO+=("$new")
   done
-  if (( renamed )); then
-    echo
+}
+
+# Detect → show → ask [y/N/q] → rename only on y. Never renames without consent.
+prompt_and_apply_trailing_episode_zero_pad() {
+  local i answer=""
+
+  collect_trailing_single_digit_episode_renames
+  if (( ${#EPISODE_PAD_FROM[@]} == 0 )); then
+    return 0
   fi
+
+  echo "Detected trailing single-digit episode number(s) with multi-digit siblings:"
+  for i in "${!EPISODE_PAD_FROM[@]}"; do
+    echo "  ${EPISODE_PAD_FROM[$i]}  →  ${EPISODE_PAD_TO[$i]}"
+  done
+  echo
+
+  if [[ ! -t 0 ]]; then
+    echo "Non-interactive stdin — defaulting to No (skip episode zero-pad)."
+    echo
+    return 0
+  fi
+
+  printf '%s Zero-pad these episode number(s) now? [y/N/q]: ' "$(prompt_ts)"
+  while read -r -t 0 -n 1; do :; done 2>/dev/null || true
+  read -r -n 1 answer || answer=
+  echo
+  if [[ -z "${answer}" || "$answer" == $'\n' ]]; then
+    answer=n
+  fi
+  case "${answer,,}" in
+    y)
+      printf '%s Selected: yes — renaming.\n' "$(prompt_ts)"
+      for i in "${!EPISODE_PAD_FROM[@]}"; do
+        if [[ -e "${EPISODE_PAD_FROM[$i]}" && ! -e "${EPISODE_PAD_TO[$i]}" ]]; then
+          mv -v -- "${EPISODE_PAD_FROM[$i]}" "${EPISODE_PAD_TO[$i]}"
+        fi
+      done
+      echo
+      ;;
+    q)
+      printf '%s Selected: quit.\n' "$(prompt_ts)"
+      RUN_OUTCOME=quit
+      RUN_EXIT_CODE=0
+      exit 0
+      ;;
+    *)
+      printf '%s Selected: no — leaving names unchanged.\n' "$(prompt_ts)"
+      echo
+      ;;
+  esac
 }
 
 ensure_org_dir() {
@@ -820,7 +868,7 @@ zero_pad_single_digit_indices() {
   local n
   local -a targets=()
 
-  # Middle-of-name _N_ → _0N_ (legacy).
+  # Middle-of-name _N_ → _0N_ (legacy; only after user already consented to process).
   for n in 1 2 3 4 5 6 7 8 9; do
     mapfile -d '' -t targets < <(cwd_media_doc_globs)
     if (( ${#targets[@]} == 1 )) && [[ -z "${targets[0]:-}" ]]; then
@@ -831,9 +879,6 @@ zero_pad_single_digit_indices() {
     fi
     rename --verbose "s|_${n}_|_0${n}_|g" "${targets[@]}" || true
   done
-
-  # Trailing _N.ext → _0N.ext when multi-digit siblings exist.
-  zero_pad_trailing_single_digit_episodes
 }
 
 echo "---- Script start $0 ($(date '+%Y.%m.%d %H:%M:%S'))"
@@ -867,6 +912,7 @@ echo
 
 sanitize_cwd_basename
 sanitize_files_in_cwd
+prompt_and_apply_trailing_episode_zero_pad
 WORK_DIR="$(pwd -P 2>/dev/null || pwd)"
 resolve_cover_image
 
