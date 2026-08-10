@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# v. 20260810.190038 - summary: file sizes + move totals after per-file before/after block
 # v. 20260810.184417 - clarify duration-saved percent as "N% shorter than input"
 # v. 20260810.184308 - summary: show how much shorter output is vs total input duration
 # v. 20260810.184102 - summary: total input/output duration + average max/mean dB before/after
@@ -35,7 +36,7 @@
 #
 # In the current directory: speed up speech audio (ffmpeg atempo) and apply speechnorm,
 # write mono AAC (or .m4a with cover), move sources into org/, then pack org/ into org.rar.
-# Pre-scans loudness (volumedetect) and reports before/after dB plus an end-of-run summary.
+# Pre-scans loudness (volumedetect) and reports before/after dB, duration, size, plus end-of-run totals.
 # If exactly one .jpg/.jpeg/.png is in the cwd, embed it as album cover (attached_pic).
 #
 
@@ -229,9 +230,11 @@ declare -a OUT_FILE=()
 declare -a OUT_BEFORE_MAX=()
 declare -a OUT_BEFORE_MEAN=()
 declare -a OUT_BEFORE_DUR=()
+declare -a OUT_BEFORE_SIZE=()
 declare -a OUT_MAX=()
 declare -a OUT_MEAN=()
 declare -a OUT_DUR=()
+declare -a OUT_SIZE=()
 
 format_elapsed() {
   local sec="${1:-0}"
@@ -320,6 +323,40 @@ sum_duration_seconds() {
     total="$(awk -v a="$total" -v b="$x" 'BEGIN { printf "%.3f", a + b }')"
   done
   printf '%s' "$total"
+}
+
+sum_integer_array() {
+  local -n _arr=$1
+  local x total=0
+  for x in "${_arr[@]+"${_arr[@]}"}"; do
+    [[ -n "$x" && "$x" =~ ^[0-9]+$ ]] || continue
+    total=$(( total + x ))
+  done
+  printf '%s' "$total"
+}
+
+file_size_bytes() {
+  local f="$1"
+  stat -c '%s' -- "$f" 2>/dev/null || stat -f '%z' -- "$f" 2>/dev/null || printf ''
+}
+
+format_bytes_human() {
+  local b="${1:-}"
+  if [[ -z "$b" || ! "$b" =~ ^[0-9]+$ ]]; then
+    printf '%s' '—'
+    return 0
+  fi
+  if (( b >= 1099511627776 )); then
+    awk -v b="$b" 'BEGIN { printf "%.2f TiB", b/1099511627776 }'
+  elif (( b >= 1073741824 )); then
+    awk -v b="$b" 'BEGIN { printf "%.2f GiB", b/1073741824 }'
+  elif (( b >= 1048576 )); then
+    awk -v b="$b" 'BEGIN { printf "%.1f MiB", b/1048576 }'
+  elif (( b >= 1024 )); then
+    awk -v b="$b" 'BEGIN { printf "%.1f KiB", b/1024 }'
+  else
+    printf '%s B' "$b"
+  fi
 }
 
 # Average of numeric dB values in named array; empty if none usable. Prints bare number (e.g. -18.1).
@@ -464,10 +501,10 @@ print_scan_table_row() {
 
 print_run_summary() {
   local i total_sec other_sec finished_str
-  local max_b mean_b max_a mean_a dur_b dur_a
-  local sum_before sum_after
+  local max_b mean_b max_a mean_a dur_b dur_a size_b size_a
+  local sum_before sum_after sum_size_in sum_size_out
   local avg_max_b avg_mean_b avg_max_a avg_mean_a
-  local dur_diff_sec dur_pct
+  local dur_diff_sec dur_pct size_diff size_pct
 
   (( SUMMARY_DONE == 0 )) || return 0
   SUMMARY_DONE=1
@@ -505,6 +542,24 @@ print_run_summary() {
   fi
 
   if (( COUNT_OK > 0 )); then
+    echo
+    echo '--- Before → after (max / mean / duration / size) ---'
+    for i in "${!OUT_SRC[@]}"; do
+      max_b="$(format_db_cell "${OUT_BEFORE_MAX[$i]:-}")"
+      mean_b="$(format_db_cell "${OUT_BEFORE_MEAN[$i]:-}")"
+      dur_b="$(format_duration_cell "${OUT_BEFORE_DUR[$i]:-}")"
+      size_b="$(format_bytes_human "${OUT_BEFORE_SIZE[$i]:-}")"
+      max_a="$(format_db_cell "${OUT_MAX[$i]:-}")"
+      mean_a="$(format_db_cell "${OUT_MEAN[$i]:-}")"
+      dur_a="$(format_duration_cell "${OUT_DUR[$i]:-}")"
+      size_a="$(format_bytes_human "${OUT_SIZE[$i]:-}")"
+      printf '  %s  →  %s\n' "${OUT_SRC[$i]}" "${OUT_FILE[$i]}"
+      printf '    before %s / %s / %s / %s\n' "$max_b" "$mean_b" "$dur_b" "$size_b"
+      printf '    after  %s / %s / %s / %s\n' "$max_a" "$mean_a" "$dur_a" "$size_a"
+    done
+
+    echo
+    echo '--- Totals ---'
     sum_before="$(sum_duration_seconds OUT_BEFORE_DUR)"
     sum_after="$(sum_duration_seconds OUT_DUR)"
     summary_kv "Total input duration" "$(format_duration_cell "$sum_before" | sed 's/^[[:space:]]*//')"
@@ -526,28 +581,37 @@ print_run_summary() {
       summary_kv "Shorter by" "unchanged"
     fi
 
+    sum_size_in="$(sum_integer_array OUT_BEFORE_SIZE)"
+    sum_size_out="$(sum_integer_array OUT_SIZE)"
+    summary_kv "Total input size" "$(format_bytes_human "$sum_size_in")"
+    summary_kv "Total output size" "$(format_bytes_human "$sum_size_out")"
+    size_diff=$(( sum_size_in - sum_size_out ))
+    if (( size_diff > 0 )); then
+      size_pct="$(awk -v b="$sum_size_in" -v d="$size_diff" 'BEGIN {
+        if (b + 0 <= 0) { print ""; exit }
+        printf "%.0f", 100.0 * d / b
+      }')"
+      if [[ -n "$size_pct" ]]; then
+        summary_kv "Smaller by" "$(format_bytes_human "$size_diff")  (${size_pct}% smaller than input)"
+      else
+        summary_kv "Smaller by" "$(format_bytes_human "$size_diff")"
+      fi
+    elif (( size_diff < 0 )); then
+      summary_kv "Larger by" "$(format_bytes_human "$(( -size_diff ))")"
+    else
+      summary_kv "Smaller by" "unchanged"
+    fi
+
     avg_max_b="$(average_db_from_array OUT_BEFORE_MAX || true)"
     avg_mean_b="$(average_db_from_array OUT_BEFORE_MEAN || true)"
     avg_max_a="$(average_db_from_array OUT_MAX || true)"
     avg_mean_a="$(average_db_from_array OUT_MEAN || true)"
     summary_kv "Avg max / mean before" "$(format_db_cell "$avg_max_b") / $(format_db_cell "$avg_mean_b")"
     summary_kv "Avg max / mean after" "$(format_db_cell "$avg_max_a") / $(format_db_cell "$avg_mean_a")"
-
-    echo
-    echo '--- Before → after (max / mean / duration) ---'
-    for i in "${!OUT_SRC[@]}"; do
-      max_b="$(format_db_cell "${OUT_BEFORE_MAX[$i]:-}")"
-      mean_b="$(format_db_cell "${OUT_BEFORE_MEAN[$i]:-}")"
-      dur_b="$(format_duration_cell "${OUT_BEFORE_DUR[$i]:-}")"
-      max_a="$(format_db_cell "${OUT_MAX[$i]:-}")"
-      mean_a="$(format_db_cell "${OUT_MEAN[$i]:-}")"
-      dur_a="$(format_duration_cell "${OUT_DUR[$i]:-}")"
-      printf '  %s  →  %s\n' "${OUT_SRC[$i]}" "${OUT_FILE[$i]}"
-      printf '    before %s / %s / %s\n' "$max_b" "$mean_b" "$dur_b"
-      printf '    after  %s / %s / %s\n' "$max_a" "$mean_a" "$dur_a"
-    done
   elif (( COUNT_FOUND > 0 )) && (( ${#SCAN_DUR[@]} > 0 )); then
     # Scan-only / declined convert: still report total input duration from pre-scan.
+    echo
+    echo '--- Totals ---'
     summary_kv "Total input duration" "$(format_duration_cell "$(sum_duration_seconds SCAN_DUR)" | sed 's/^[[:space:]]*//')"
     avg_max_b="$(average_db_from_array SCAN_MAX || true)"
     avg_mean_b="$(average_db_from_array SCAN_MEAN || true)"
@@ -1096,6 +1160,9 @@ else
       fi
       echo "After:  max $(format_db_cell "$after_max")  mean $(format_db_cell "$after_mean")  duration $(format_duration_cell "$after_dur")"
 
+      size_in="$(file_size_bytes "$src")"
+      size_out="$(file_size_bytes "$output_file")"
+
       chmod --reference="$src" -- "$output_file" 2>/dev/null || true
       chown --reference="$src" -- "$output_file" 2>/dev/null || true
       touch --reference="$src" -- "$output_file" 2>/dev/null || true
@@ -1107,9 +1174,11 @@ else
       OUT_BEFORE_MAX+=("${SCAN_MAX[$i]:-}")
       OUT_BEFORE_MEAN+=("${SCAN_MEAN[$i]:-}")
       OUT_BEFORE_DUR+=("${SCAN_DUR[$i]:-}")
+      OUT_BEFORE_SIZE+=("$size_in")
       OUT_MAX+=("$after_max")
       OUT_MEAN+=("$after_mean")
       OUT_DUR+=("$after_dur")
+      OUT_SIZE+=("$size_out")
       (( ++COUNT_OK )) || true
       sleep 0.2
     done
