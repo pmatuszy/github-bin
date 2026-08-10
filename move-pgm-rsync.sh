@@ -1,9 +1,11 @@
 #!/bin/bash
+# v. 20260810.115956 - fix bash (( )) + =~ error; robust rsync stats byte parsing
 # v. 20260806.172432 - transfer plan and result timing; dual MiB/MB GiB/GB TiB/TB size display
 # v. 20260725.182831 - boxed SUCCESS/FAILURE summary; remove empty source dirs after verified move
 # v. 20260724.203756 - avoid startup delay when displaying help or version information
 # v. 20260724.203704 - initial network move with uncompressed SSH, source removal, and dry-run support
 
+# 2026.08.10 - v. 0.3.1 - fix result size fallback test; parse rsync stats numbers reliably
 # 2026.08.06 - v. 0.3 - preflight transfer plan (files, size, ETA); timing and rate in result box
 # 2026.07.25 - v. 0.2 - print boxed result summary; verify source has no files and remove empty dirs
 # 2026.07.24 - v. 0.1 - initial release
@@ -114,13 +116,20 @@ move_pgm_parse_rsync_stats_text() {
   local var_prefix="${2:-MOVE_PGM_STAT}"
 
   printf -v "${var_prefix}_FILES" '%s' "$(
-    awk '/^Number of files:/{gsub(/,/,"",$4); print $4; exit}' <<< "$text"
+    awk '/^Number of regular files transferred:/{gsub(/,/,"",$6); print $6; exit}
+         /^Number of files:/{gsub(/,/,"",$4); print $4; exit}' <<< "$text"
   )"
   printf -v "${var_prefix}_TOTAL_BYTES" '%s' "$(
-    awk '/^Total file size:/{gsub(/,/,"",$4); print $4; exit}' <<< "$text"
+    awk '/^Total file size:/{
+      for (i = 1; i <= NF; i++)
+        if ($i ~ /^[0-9][0-9,]*$/) { gsub(/,/, "", $i); print $i; exit }
+    }' <<< "$text"
   )"
   printf -v "${var_prefix}_TRANSFERRED_BYTES" '%s' "$(
-    awk '/^Total transferred file size:/{gsub(/,/,"",$5); print $5; exit}' <<< "$text"
+    awk '/^Total transferred file size:/{
+      for (i = 1; i <= NF; i++)
+        if ($i ~ /^[0-9][0-9,]*$/) { gsub(/,/, "", $i); print $i; exit }
+    }' <<< "$text"
   )"
   printf -v "${var_prefix}_BYTES_PER_SEC" '%s' "$(
     awk '/^sent / {
@@ -386,7 +395,8 @@ move_pgm_print_result() {
 
   transferred_bytes="${MOVE_PGM_ACTUAL_BYTES:-0}"
   [[ "$transferred_bytes" =~ ^[0-9]+$ ]] || transferred_bytes=0
-  if (( transferred_bytes == 0 && "${MOVE_PGM_PLAN_BYTES:-0}" =~ ^[0-9]+$ )); then
+  if (( transferred_bytes == 0 )) && [[ "${MOVE_PGM_PLAN_BYTES:-0}" =~ ^[0-9]+$ ]] \
+    && (( MOVE_PGM_PLAN_BYTES > 0 )); then
     transferred_bytes="$MOVE_PGM_PLAN_BYTES"
   fi
 
