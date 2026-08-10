@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# v. 20260810.171749 - align pre-scan table columns (FILE / max / mean / duration)
 # v. 20260810.171439 - after pre-scan, ask to process with default [y/N] (N)
 # v. 20260810.170715 - show duration before/after (ffprobe) in scan, per-file, and summary
 # v. 20260810.164307 - replace spaces with underscores via mv (not only perl rename)
@@ -236,37 +237,58 @@ summary_kv() {
 
 format_db_cell() {
   local value="${1:-}"
-  local num
+  local num cell
+  local width="${2:-11}"
   if [[ -z "$value" || "$value" == '—' || "$value" == '-' || "$value" == ERROR ]]; then
-    printf '%10s' '—'
+    printf '%*s' "$width" '—'
     return 0
   fi
   num="${value%%[[:space:]]dB*}"
   num="${num//[[:space:]]/}"
-  awk -v v="$num" 'BEGIN {
+  cell="$(awk -v v="$num" 'BEGIN {
     v = v + 0
     s = sprintf("%.1f", v)
     if (s == "-0.0") s = "0.0"
     printf "%7.1f dB", s + 0
-  }'
+  }')"
+  printf '%*s' "$width" "$cell"
 }
 
 # Seconds → "M:SS" or "H:MM:SS" (or em dash), fixed width for tables.
 format_duration_cell() {
   local sec="${1:-}"
+  local width="${2:-10}"
   if [[ -z "$sec" || "$sec" == '—' || "$sec" == '-' ]]; then
-    printf '%10s' '—'
+    printf '%*s' "$width" '—'
     return 0
   fi
-  awk -v d="$sec" 'BEGIN {
-    if (d + 0 <= 0) { printf "%10s", "—"; exit }
+  awk -v d="$sec" -v w="$width" 'BEGIN {
+    if (d + 0 <= 0) { printf "%*s", w, "—"; exit }
     t = int(d + 0.5)
     h = int(t / 3600)
     m = int((t % 3600) / 60)
     s = t % 60
-    if (h > 0) printf "%10s", sprintf("%d:%02d:%02d", h, m, s)
-    else printf "%10s", sprintf("%d:%02d", m, s)
+    if (h > 0) printf "%*s", w, sprintf("%d:%02d:%02d", h, m, s)
+    else printf "%*s", w, sprintf("%d:%02d", m, s)
   }'
+}
+
+pad_center() {
+  local text="$1" width="$2"
+  local len=${#text} pad left right
+  if (( len >= width )); then
+    printf '%s' "$text"
+    return 0
+  fi
+  pad=$(( width - len ))
+  left=$(( pad / 2 ))
+  right=$(( pad - left ))
+  printf '%*s%s%*s' "$left" '' "$text" "$right" ''
+}
+
+dash_col() {
+  local width="$1"
+  printf '%*s' "$width" '' | tr ' ' '-'
 }
 
 # Sum of duration seconds from an array of numeric strings; empty skipped.
@@ -361,16 +383,32 @@ measure_volumedetect() {
   [[ -n "$VD_MAX" ]]
 }
 
+# Fixed numeric column widths (must match header / separator / cells).
+SCAN_COL_DB_W=11
+SCAN_COL_DUR_W=10
+SCAN_COL_GAP='  '
+
 print_scan_table_header() {
   local file_w="$1"
-  printf '%-*s  %s  %s  %s\n' "$file_w" 'FILE' ' MAX_VOLUME' ' MEAN_VOLUME' '  DURATION'
-  printf '%-*s  %s  %s  %s\n' "$file_w" "$(printf '%*s' "$file_w" '' | tr ' ' '-')" '-----------' '-----------' '----------'
+  printf '%-*s%s%s%s%s%s%s\n' \
+    "$file_w" 'FILE' \
+    "$SCAN_COL_GAP" "$(pad_center 'MAX_VOLUME' "$SCAN_COL_DB_W")" \
+    "$SCAN_COL_GAP" "$(pad_center 'MEAN_VOLUME' "$SCAN_COL_DB_W")" \
+    "$SCAN_COL_GAP" "$(pad_center 'DURATION' "$SCAN_COL_DUR_W")"
+  printf '%s%s%s%s%s%s%s\n' \
+    "$(dash_col "$file_w")" \
+    "$SCAN_COL_GAP" "$(dash_col "$SCAN_COL_DB_W")" \
+    "$SCAN_COL_GAP" "$(dash_col "$SCAN_COL_DB_W")" \
+    "$SCAN_COL_GAP" "$(dash_col "$SCAN_COL_DUR_W")"
 }
 
 print_scan_table_row() {
   local file_w="$1" name="$2" max_db="$3" mean_db="$4" dur_sec="${5:-}"
-  printf '%-*s  %s  %s  %s\n' "$file_w" "$name" \
-    "$(format_db_cell "$max_db")" "$(format_db_cell "$mean_db")" "$(format_duration_cell "$dur_sec")"
+  printf '%-*s%s%s%s%s%s%s\n' \
+    "$file_w" "$name" \
+    "$SCAN_COL_GAP" "$(format_db_cell "$max_db" "$SCAN_COL_DB_W")" \
+    "$SCAN_COL_GAP" "$(format_db_cell "$mean_db" "$SCAN_COL_DB_W")" \
+    "$SCAN_COL_GAP" "$(format_duration_cell "$dur_sec" "$SCAN_COL_DUR_W")"
 }
 
 print_run_summary() {
