@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# v. 20260810.172924 - proceed prompt: single-key [y/N/q] (like loudness)
 # v. 20260810.172518 - proceed prompt prefixed with [YYYY.MM.DD HH:MM:SS] like loudness
 # v. 20260810.172405 - MAX_VOLUME column width 10 (one dash less than before)
 # v. 20260810.172202 - duration column width matches DURATION header (8)
@@ -36,9 +37,9 @@ Process *.mp3, *.m4a, and *.aac in the current directory only (not subdirs).
 Skips files whose names already contain SPEECHNORM_SPEEDUP.
 
 Before converting, scan each file with ffmpeg volumedetect and ffprobe duration;
-print max/mean dB and duration. Then ask whether to process (default No: [y/N]).
+print max/mean dB and duration. Then ask whether to process with a single keypress (default No: [y/N/q]).
 After each successful convert, re-measure and print before → after dB and duration.
-At the end (or on Ctrl-C), print a run summary.
+At the end (or on Ctrl-C / q), print a run summary.
 
 If the current directory contains exactly one image (.jpg / .jpeg / .png), embed it
 as album cover (attached_pic) in every output. Cover needs an MP4 container, so
@@ -332,7 +333,8 @@ parse_volumedetect_db() {
   ' <<<"$blob"
 }
 
-# Ask before convert. Default No ([y/N]). Returns 0 = proceed, 1 = decline.
+# Ask before convert. Default No ([y/N/q]). Single keypress. Returns 0 = proceed, 1 = decline.
+# q exits the script (summary via EXIT trap).
 prompt_ts() {
   printf '[%s]' "$(date '+%Y.%m.%d %H:%M:%S')"
 }
@@ -351,17 +353,25 @@ prompt_proceed_process() {
     return 1
   fi
 
-  printf '%s Process these files now? [y/N]: ' "$(prompt_ts)"
-  # Wait forever (no timeout), like interactive loudness prompts.
-  read -r answer || answer=
+  printf '%s Process these files now? [y/N/q]: ' "$(prompt_ts)"
+  # Discard any pending typeahead, then wait forever for one key (no Enter).
+  while read -r -t 0 -n 1; do :; done 2>/dev/null || true
+  read -r -n 1 answer || answer=
+  echo
   # Empty / Enter → default N
-  if [[ -z "${answer}" ]]; then
+  if [[ -z "${answer}" || "$answer" == $'\n' ]]; then
     answer=n
   fi
   case "${answer,,}" in
-    y|yes)
+    y)
       printf '%s Selected: yes — converting.\n' "$(prompt_ts)"
       return 0
+      ;;
+    q)
+      printf '%s Selected: quit.\n' "$(prompt_ts)"
+      RUN_OUTCOME=quit
+      RUN_EXIT_CODE=0
+      exit 0
       ;;
     *)
       printf '%s Selected: no — skipping convert.\n' "$(prompt_ts)"
@@ -492,6 +502,9 @@ print_run_summary() {
   case "$RUN_OUTCOME" in
     interrupted)
       summary_kv "Exit" "interrupted (Ctrl-C), code ${RUN_EXIT_CODE}"
+      ;;
+    quit)
+      summary_kv "Exit" "quit (q), code ${RUN_EXIT_CODE}"
       ;;
     failed)
       summary_kv "Exit" "failed, code ${RUN_EXIT_CODE}"
