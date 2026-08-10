@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# v. 20260810.184417 - clarify duration-saved percent as "N% shorter than input"
+# v. 20260810.184308 - summary: show how much shorter output is vs total input duration
+# v. 20260810.184102 - summary: total input/output duration + average max/mean dB before/after
 # v. 20260810.180157 - episode zero-pad only after single-key consent [y/N/q] (default N)
 # v. 20260810.175918 - zero-pad trailing _1.._9 before ext when multi-digit episodes exist
 # v. 20260810.175612 - create org/ only when moving a converted source (not on empty/decline)
@@ -319,6 +322,22 @@ sum_duration_seconds() {
   printf '%s' "$total"
 }
 
+# Average of numeric dB values in named array; empty if none usable. Prints bare number (e.g. -18.1).
+average_db_from_array() {
+  local -n _arr=$1
+  local x count=0 sum=0
+  for x in "${_arr[@]+"${_arr[@]}"}"; do
+    [[ -n "$x" && "$x" != '—' && "$x" != '-' ]] || continue
+    sum="$(awk -v a="$sum" -v b="$x" 'BEGIN { printf "%.6f", a + (b+0) }')"
+    (( ++count )) || true
+  done
+  if (( count == 0 )); then
+    printf ''
+    return 1
+  fi
+  awk -v s="$sum" -v c="$count" 'BEGIN { printf "%.1f", s / c }'
+}
+
 media_duration_seconds() {
   local file="$1" d probe=""
   probe="${FFPROBE_BIN:-}"
@@ -447,6 +466,8 @@ print_run_summary() {
   local i total_sec other_sec finished_str
   local max_b mean_b max_a mean_a dur_b dur_a
   local sum_before sum_after
+  local avg_max_b avg_mean_b avg_max_a avg_mean_a
+  local dur_diff_sec dur_pct
 
   (( SUMMARY_DONE == 0 )) || return 0
   SUMMARY_DONE=1
@@ -486,8 +507,32 @@ print_run_summary() {
   if (( COUNT_OK > 0 )); then
     sum_before="$(sum_duration_seconds OUT_BEFORE_DUR)"
     sum_after="$(sum_duration_seconds OUT_DUR)"
-    summary_kv "Total duration before" "$(format_duration_cell "$sum_before" | sed 's/^[[:space:]]*//')"
-    summary_kv "Total duration after" "$(format_duration_cell "$sum_after" | sed 's/^[[:space:]]*//')"
+    summary_kv "Total input duration" "$(format_duration_cell "$sum_before" | sed 's/^[[:space:]]*//')"
+    summary_kv "Total output duration" "$(format_duration_cell "$sum_after" | sed 's/^[[:space:]]*//')"
+    dur_diff_sec="$(awk -v b="$sum_before" -v a="$sum_after" 'BEGIN { printf "%d", int((b + 0) - (a + 0) + 0.5) }')"
+    if (( dur_diff_sec > 0 )); then
+      dur_pct="$(awk -v b="$sum_before" -v d="$dur_diff_sec" 'BEGIN {
+        if (b + 0 <= 0) { print ""; exit }
+        printf "%.0f", 100.0 * d / b
+      }')"
+      if [[ -n "$dur_pct" ]]; then
+        summary_kv "Shorter by" "$(format_elapsed "$dur_diff_sec")  (${dur_pct}% shorter than input)"
+      else
+        summary_kv "Shorter by" "$(format_elapsed "$dur_diff_sec")"
+      fi
+    elif (( dur_diff_sec < 0 )); then
+      summary_kv "Longer by" "$(format_elapsed "$(( -dur_diff_sec ))")"
+    else
+      summary_kv "Shorter by" "unchanged"
+    fi
+
+    avg_max_b="$(average_db_from_array OUT_BEFORE_MAX || true)"
+    avg_mean_b="$(average_db_from_array OUT_BEFORE_MEAN || true)"
+    avg_max_a="$(average_db_from_array OUT_MAX || true)"
+    avg_mean_a="$(average_db_from_array OUT_MEAN || true)"
+    summary_kv "Avg max / mean before" "$(format_db_cell "$avg_max_b") / $(format_db_cell "$avg_mean_b")"
+    summary_kv "Avg max / mean after" "$(format_db_cell "$avg_max_a") / $(format_db_cell "$avg_mean_a")"
+
     echo
     echo '--- Before → after (max / mean / duration) ---'
     for i in "${!OUT_SRC[@]}"; do
@@ -501,6 +546,12 @@ print_run_summary() {
       printf '    before %s / %s / %s\n' "$max_b" "$mean_b" "$dur_b"
       printf '    after  %s / %s / %s\n' "$max_a" "$mean_a" "$dur_a"
     done
+  elif (( COUNT_FOUND > 0 )) && (( ${#SCAN_DUR[@]} > 0 )); then
+    # Scan-only / declined convert: still report total input duration from pre-scan.
+    summary_kv "Total input duration" "$(format_duration_cell "$(sum_duration_seconds SCAN_DUR)" | sed 's/^[[:space:]]*//')"
+    avg_max_b="$(average_db_from_array SCAN_MAX || true)"
+    avg_mean_b="$(average_db_from_array SCAN_MEAN || true)"
+    summary_kv "Avg max / mean (scan)" "$(format_db_cell "$avg_max_b") / $(format_db_cell "$avg_mean_b")"
   fi
 
   echo
