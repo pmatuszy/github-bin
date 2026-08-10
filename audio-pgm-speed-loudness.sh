@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# v. 20260810.172518 - proceed prompt prefixed with [YYYY.MM.DD HH:MM:SS] like loudness
+# v. 20260810.172405 - MAX_VOLUME column width 10 (one dash less than before)
 # v. 20260810.172202 - duration column width matches DURATION header (8)
 # v. 20260810.171749 - align pre-scan table columns (FILE / max / mean / duration)
 # v. 20260810.171439 - after pre-scan, ask to process with default [y/N] (N)
@@ -239,7 +241,7 @@ summary_kv() {
 format_db_cell() {
   local value="${1:-}"
   local num cell
-  local width="${2:-11}"
+  local width="${2:-10}"
   if [[ -z "$value" || "$value" == '—' || "$value" == '-' || "$value" == ERROR ]]; then
     printf '%*s' "$width" '—'
     return 0
@@ -331,6 +333,10 @@ parse_volumedetect_db() {
 }
 
 # Ask before convert. Default No ([y/N]). Returns 0 = proceed, 1 = decline.
+prompt_ts() {
+  printf '[%s]' "$(date '+%Y.%m.%d %H:%M:%S')"
+}
+
 prompt_proceed_process() {
   local answer=""
   local cover_note=""
@@ -345,7 +351,7 @@ prompt_proceed_process() {
     return 1
   fi
 
-  printf 'Process these files now? [y/N]: '
+  printf '%s Process these files now? [y/N]: ' "$(prompt_ts)"
   # Wait forever (no timeout), like interactive loudness prompts.
   read -r answer || answer=
   # Empty / Enter → default N
@@ -354,11 +360,11 @@ prompt_proceed_process() {
   fi
   case "${answer,,}" in
     y|yes)
-      echo "Selected: yes — converting."
+      printf '%s Selected: yes — converting.\n' "$(prompt_ts)"
       return 0
       ;;
     *)
-      echo "Selected: no — skipping convert."
+      printf '%s Selected: no — skipping convert.\n' "$(prompt_ts)"
       return 1
       ;;
   esac
@@ -385,7 +391,9 @@ measure_volumedetect() {
 }
 
 # Fixed numeric column widths (must match header / separator / cells).
-SCAN_COL_DB_W=11
+# MAX_VOLUME=10, MEAN_VOLUME=11, DURATION=8
+SCAN_COL_MAX_W=10
+SCAN_COL_MEAN_W=11
 SCAN_COL_DUR_W=8
 SCAN_COL_GAP='  '
 
@@ -393,13 +401,13 @@ print_scan_table_header() {
   local file_w="$1"
   printf '%-*s%s%s%s%s%s%s\n' \
     "$file_w" 'FILE' \
-    "$SCAN_COL_GAP" "$(pad_center 'MAX_VOLUME' "$SCAN_COL_DB_W")" \
-    "$SCAN_COL_GAP" "$(pad_center 'MEAN_VOLUME' "$SCAN_COL_DB_W")" \
+    "$SCAN_COL_GAP" "$(pad_center 'MAX_VOLUME' "$SCAN_COL_MAX_W")" \
+    "$SCAN_COL_GAP" "$(pad_center 'MEAN_VOLUME' "$SCAN_COL_MEAN_W")" \
     "$SCAN_COL_GAP" "$(pad_center 'DURATION' "$SCAN_COL_DUR_W")"
   printf '%s%s%s%s%s%s%s\n' \
     "$(dash_col "$file_w")" \
-    "$SCAN_COL_GAP" "$(dash_col "$SCAN_COL_DB_W")" \
-    "$SCAN_COL_GAP" "$(dash_col "$SCAN_COL_DB_W")" \
+    "$SCAN_COL_GAP" "$(dash_col "$SCAN_COL_MAX_W")" \
+    "$SCAN_COL_GAP" "$(dash_col "$SCAN_COL_MEAN_W")" \
     "$SCAN_COL_GAP" "$(dash_col "$SCAN_COL_DUR_W")"
 }
 
@@ -407,8 +415,8 @@ print_scan_table_row() {
   local file_w="$1" name="$2" max_db="$3" mean_db="$4" dur_sec="${5:-}"
   printf '%-*s%s%s%s%s%s%s\n' \
     "$file_w" "$name" \
-    "$SCAN_COL_GAP" "$(format_db_cell "$max_db" "$SCAN_COL_DB_W")" \
-    "$SCAN_COL_GAP" "$(format_db_cell "$mean_db" "$SCAN_COL_DB_W")" \
+    "$SCAN_COL_GAP" "$(format_db_cell "$max_db" "$SCAN_COL_MAX_W")" \
+    "$SCAN_COL_GAP" "$(format_db_cell "$mean_db" "$SCAN_COL_MEAN_W")" \
     "$SCAN_COL_GAP" "$(format_duration_cell "$dur_sec" "$SCAN_COL_DUR_W")"
 }
 
