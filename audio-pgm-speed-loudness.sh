@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# v. 20260810.175506 - summary: input → output on first line, then before/after
+# v. 20260810.175420 - before→after summary: before and after on separate lines
+# v. 20260810.175340 - omit redundant output path line in before→after summary
 # v. 20260810.173904 - drop redundant output basename on After: line
 # v. 20260810.173552 - show input → output on one line per file
 # v. 20260810.173421 - omit ./ prefix on cwd output paths in messages and filenames
@@ -211,8 +214,8 @@ declare -a SCAN_FILE=()
 declare -a SCAN_MAX=()
 declare -a SCAN_MEAN=()
 declare -a SCAN_DUR=()
-declare -a OUT_FILE=()
 declare -a OUT_SRC=()
+declare -a OUT_FILE=()
 declare -a OUT_BEFORE_MAX=()
 declare -a OUT_BEFORE_MEAN=()
 declare -a OUT_BEFORE_DUR=()
@@ -487,10 +490,9 @@ print_run_summary() {
       max_a="$(format_db_cell "${OUT_MAX[$i]:-}")"
       mean_a="$(format_db_cell "${OUT_MEAN[$i]:-}")"
       dur_a="$(format_duration_cell "${OUT_DUR[$i]:-}")"
-      printf '  %s\n' "${OUT_SRC[$i]}"
-      printf '    before %s / %s / %s  →  after %s / %s / %s\n' \
-        "$max_b" "$mean_b" "$dur_b" "$max_a" "$mean_a" "$dur_a"
-      printf '    output %s\n' "${OUT_FILE[$i]}"
+      printf '  %s  →  %s\n' "${OUT_SRC[$i]}" "${OUT_FILE[$i]}"
+      printf '    before %s / %s / %s\n' "$max_b" "$mean_b" "$dur_b"
+      printf '    after  %s / %s / %s\n' "$max_a" "$mean_a" "$dur_a"
     done
   fi
 
