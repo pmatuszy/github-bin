@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# v. 20260810.194016 - add -f/--format (flac|mp3|m4a|aac); warn when cover present but format cannot embed
 # v. 20260810.190038 - summary: file sizes + move totals after per-file before/after block
 # v. 20260810.184417 - clarify duration-saved percent as "N% shorter than input"
 # v. 20260810.184308 - summary: show how much shorter output is vs total input duration
@@ -35,16 +36,18 @@
 # audio-pgm-speed-loudness.sh
 #
 # In the current directory: speed up speech audio (ffmpeg atempo) and apply speechnorm,
-# write mono AAC (or .m4a with cover), move sources into org/, then pack org/ into org.rar.
+# write mono audio (default .aac, or .m4a when embedding a cover; override with -f/--format),
+# move sources into org/, then pack org/ into org.rar.
 # Pre-scans loudness (volumedetect) and reports before/after dB, duration, size, plus end-of-run totals.
-# If exactly one .jpg/.jpeg/.png is in the cwd, embed it as album cover (attached_pic).
+# If exactly one .jpg/.jpeg/.png is in the cwd and the output format supports covers, embed it.
 #
 
 set -euo pipefail
 
 show_help() {
   cat <<EOF
-Usage: $(basename "$0") [-h|--help] [-v|--version] [--no_startup_delay] [SPEED]
+Usage: $(basename "$0") [-h|--help] [-v|--version] [--no_startup_delay]
+                    [-f|--format FORMAT] [SPEED]
 
 Process *.mp3, *.m4a, and *.aac in the current directory only (not subdirs).
 Skips files whose names already contain SPEECHNORM_SPEEDUP.
@@ -54,17 +57,21 @@ print max/mean dB and duration. Then ask whether to process with a single keypre
 After each successful convert, re-measure and print before → after dB and duration.
 At the end (or on Ctrl-C / q), print a run summary.
 
-If the current directory contains exactly one image (.jpg / .jpeg / .png), embed it
-as album cover (attached_pic) in every output. Cover needs an MP4 container, so
-those outputs are written as .m4a (not raw .aac). With 0 or 2+ images, no cover
-is embedded and output stays .aac.
+Output format (-f / --format): aac, m4a, mp3, or flac.
+Default (no -f): .aac, or .m4a when embedding a cover.
+
+If the current directory contains exactly one image (.jpg / .jpeg / .png) and the
+chosen format supports album art (m4a, mp3, flac), embed it as cover. Raw .aac
+cannot carry a cover — if images are present and output is aac, a warning is
+printed and conversion continues without embedding. With 0 or 2+ images, no
+cover is embedded (need exactly one).
 
 For each file, run ffmpeg with:
   - mono (-ac 1)
   - atempo=SPEED (default 1.6)
   - speechnorm
-  - optional cover image as attached_pic (when exactly one image in cwd)
-Output: <basename>_SPEECHNORM_SPEEDUP_<SPEED>.aac  (or .m4a with cover)
+  - optional cover image (when exactly one image and format supports it)
+Output: <basename>_SPEECHNORM_SPEEDUP_<SPEED>.<ext>
 On success: copy mode/owner/mtime from the source, move the source into org/.
 After all files: zero-pad _1_.._9_ in names, then rar-pack org/ into org.rar.
 
@@ -86,17 +93,23 @@ Options:
   -h, --help            Show this help and exit.
   -v, --version         Print script version and exit.
   --no_startup_delay    Skip random startup delay (see _script_header.sh).
+  -f, --format FORMAT   Output format: aac | m4a | mp3 | flac
+                        (default: aac, or m4a when embedding a cover)
   SPEED                 atempo factor (default: 1.6), e.g. 1.5 or 2.0
 
 Examples:
   cd /path/to/files && $(basename "$0")
   cd /path/to/files && $(basename "$0") 1.8
+  cd /path/to/files && $(basename "$0") -f flac 1.6
+  cd /path/to/files && $(basename "$0") --format mp3
   FFMPEG_BIN=/opt/ffmpeg/bin/ffmpeg $(basename "$0") --no_startup_delay
 EOF
 }
 
 HEADER_EXTRA_ARGS=()
 SPEED_FACTOR=1.6
+SPEED_SET=0
+OUTPUT_FORMAT="" # empty = auto (aac, or m4a when embedding cover)
 
 while [[ $# -gt 0 ]]; do
   case $1 in
@@ -118,6 +131,18 @@ while [[ $# -gt 0 ]]; do
       fi
       exit 0
       ;;
+    -f|--format)
+      if [[ $# -lt 2 ]]; then
+        echo "ERROR: $1 requires a format (aac|m4a|mp3|flac)" >&2
+        exit 1
+      fi
+      OUTPUT_FORMAT=$2
+      shift 2
+      ;;
+    --format=*)
+      OUTPUT_FORMAT=${1#*=}
+      shift
+      ;;
     --)
       shift
       break
@@ -128,13 +153,14 @@ while [[ $# -gt 0 ]]; do
       exit 1
       ;;
     *)
-      SPEED_FACTOR=$1
-      shift
-      if [[ $# -gt 0 ]]; then
+      if (( SPEED_SET )); then
         echo "Unexpected argument: $1" >&2
         echo "Try: $(basename "$0") --help" >&2
         exit 1
       fi
+      SPEED_FACTOR=$1
+      SPEED_SET=1
+      shift
       ;;
   esac
 done
@@ -142,6 +168,18 @@ done
 if [[ ! "$SPEED_FACTOR" =~ ^[0-9]+([.][0-9]+)?$ ]]; then
   echo "ERROR: SPEED must be a positive number (got: $SPEED_FACTOR)" >&2
   exit 1
+fi
+
+OUTPUT_FORMAT="${OUTPUT_FORMAT#.}"
+OUTPUT_FORMAT="${OUTPUT_FORMAT,,}"
+if [[ -n "$OUTPUT_FORMAT" ]]; then
+  case "$OUTPUT_FORMAT" in
+    aac|m4a|mp3|flac) ;;
+    *)
+      echo "ERROR: unsupported --format '$OUTPUT_FORMAT' (use: aac|m4a|mp3|flac)" >&2
+      exit 1
+      ;;
+  esac
 fi
 
 if [[ -f /root/bin/_script_header.sh ]]; then
@@ -520,6 +558,11 @@ print_run_summary() {
   echo '--- Run summary ---'
   summary_kv "Working directory" "${WORK_DIR:-$(pwd -P 2>/dev/null || pwd)}"
   summary_kv "Speed factor" "atempo=${SPEED_FACTOR}"
+  if [[ -n "$OUTPUT_FORMAT" ]]; then
+    summary_kv "Output format" ".${OUTPUT_EXT} (requested via --format)"
+  else
+    summary_kv "Output format" ".${OUTPUT_EXT} (auto)"
+  fi
   if [[ -n "${FFMPEG_RESOLVED}" ]]; then
     summary_kv "ffmpeg" "$FFMPEG_RESOLVED"
   fi
@@ -773,20 +816,33 @@ sanitize_cwd_basename() {
 cwd_media_doc_globs() {
   shopt -s nullglob
   local -a targets=(
-    *.mp3 *.m4a *.aac *.jpg *.jpeg *.png *.doc *.pdf *.rtf *.txt
-    *.MP3 *.M4A *.AAC *.JPG *.JPEG *.PNG *.DOC *.PDF *.RTF *.TXT
+    *.mp3 *.m4a *.aac *.flac *.jpg *.jpeg *.png *.doc *.pdf *.rtf *.txt
+    *.MP3 *.M4A *.AAC *.FLAC *.JPG *.JPEG *.PNG *.DOC *.PDF *.RTF *.TXT
   )
   shopt -u nullglob
   printf '%s\0' "${targets[@]}"
 }
 
-# Sets COVER_IMAGE and OUTPUT_EXT. Exactly one jpg/jpeg/png → embed as cover (.m4a).
+# Sets COVER_IMAGE and OUTPUT_EXT.
+# Exactly one jpg/jpeg/png → embed when OUTPUT_EXT supports album art.
+# Default format (no -f): .aac, or .m4a when embedding a cover.
+format_supports_cover() {
+  case "$1" in
+    m4a|mp3|flac) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
 resolve_cover_image() {
   local -a imgs=()
   local f
 
   COVER_IMAGE=""
-  OUTPUT_EXT=aac
+  if [[ -n "$OUTPUT_FORMAT" ]]; then
+    OUTPUT_EXT="$OUTPUT_FORMAT"
+  else
+    OUTPUT_EXT=aac
+  fi
 
   mapfile -d '' -t imgs < <(
     find "${SOURCE_DIR:-.}" -maxdepth 1 -type f \
@@ -801,37 +857,93 @@ resolve_cover_image() {
   done
 
   if (( ${#imgs[@]} == 1 )); then
-    COVER_IMAGE="${imgs[0]}"
-    OUTPUT_EXT=m4a
-    echo "Cover image (exactly one): $COVER_IMAGE → outputs will be .m4a with attached_pic"
+    if [[ -z "$OUTPUT_FORMAT" ]]; then
+      OUTPUT_EXT=m4a
+    fi
+    if format_supports_cover "$OUTPUT_EXT"; then
+      COVER_IMAGE="${imgs[0]}"
+      echo "Cover image (exactly one): $COVER_IMAGE → embed in .${OUTPUT_EXT}"
+    else
+      echo "WARNING: cover image present (${imgs[0]}) but .${OUTPUT_EXT} does not support embedded album art — continuing without cover." >&2
+      echo "         Use -f m4a, -f mp3, or -f flac to embed the cover." >&2
+    fi
   elif (( ${#imgs[@]} == 0 )); then
-    echo "Cover image: none found (jpg/jpeg/png) → outputs will be .aac"
+    echo "Cover image: none found (jpg/jpeg/png) → outputs will be .${OUTPUT_EXT}"
   else
     echo "Cover image: ${#imgs[@]} images found — not embedding (need exactly one):"
     for f in "${imgs[@]}"; do
       echo "  - $f"
     done
-    echo "Outputs will be .aac"
+    if ! format_supports_cover "$OUTPUT_EXT"; then
+      echo "WARNING: image file(s) present but .${OUTPUT_EXT} does not support embedded album art." >&2
+      echo "         Use -f m4a, -f mp3, or -f flac if you want a single cover embedded." >&2
+    fi
+    echo "Outputs will be .${OUTPUT_EXT}"
   fi
   echo
 }
 
 run_ffmpeg_convert() {
   local src="$1" output_file="$2"
+  local -a acodec_args=()
+
+  case "$OUTPUT_EXT" in
+    mp3) acodec_args=(-c:a libmp3lame) ;;
+    flac) acodec_args=(-c:a flac) ;;
+    aac|m4a) acodec_args=(-c:a aac) ;;
+    *) acodec_args=(-c:a aac) ;;
+  esac
 
   if [[ -n "${COVER_IMAGE}" ]]; then
-    "${FFMPEG_BIN}" "${FFMPEG_COMMON_ARGS[@]}" \
-      -i "$src" -i "$COVER_IMAGE" \
-      -map 0:a:0 -map 1:0 \
-      "${MONO_ARGS[@]}" \
-      -filter:a "atempo=${SPEED_FACTOR},speechnorm" \
-      -c:v mjpeg -disposition:v:0 attached_pic \
-      -metadata:s:v:0 title="Album cover" \
-      -metadata:s:v:0 comment="Cover (front)" \
-      "$output_file"
+    case "$OUTPUT_EXT" in
+      m4a)
+        "${FFMPEG_BIN}" "${FFMPEG_COMMON_ARGS[@]}" \
+          -i "$src" -i "$COVER_IMAGE" \
+          -map 0:a:0 -map 1:0 \
+          "${MONO_ARGS[@]}" \
+          -filter:a "atempo=${SPEED_FACTOR},speechnorm" \
+          "${acodec_args[@]}" \
+          -c:v mjpeg -disposition:v:0 attached_pic \
+          -metadata:s:v:0 title="Album cover" \
+          -metadata:s:v:0 comment="Cover (front)" \
+          "$output_file"
+        ;;
+      mp3)
+        "${FFMPEG_BIN}" "${FFMPEG_COMMON_ARGS[@]}" \
+          -i "$src" -i "$COVER_IMAGE" \
+          -map 0:a:0 -map 1:0 \
+          "${MONO_ARGS[@]}" \
+          -filter:a "atempo=${SPEED_FACTOR},speechnorm" \
+          "${acodec_args[@]}" \
+          -c:v copy -disposition:v:0 attached_pic \
+          -id3v2_version 3 \
+          -metadata:s:v:0 title="Album cover" \
+          -metadata:s:v:0 comment="Cover (front)" \
+          "$output_file"
+        ;;
+      flac)
+        "${FFMPEG_BIN}" "${FFMPEG_COMMON_ARGS[@]}" \
+          -i "$src" -i "$COVER_IMAGE" \
+          -map 0:a:0 -map 1:0 \
+          "${MONO_ARGS[@]}" \
+          -filter:a "atempo=${SPEED_FACTOR},speechnorm" \
+          "${acodec_args[@]}" \
+          -c:v copy -disposition:v:0 attached_pic \
+          -metadata:s:v:0 title="Album cover" \
+          -metadata:s:v:0 comment="Cover (front)" \
+          "$output_file"
+        ;;
+      *)
+        # Formats without cover support should not set COVER_IMAGE.
+        "${FFMPEG_BIN}" "${FFMPEG_COMMON_ARGS[@]}" -i "$src" "${MONO_ARGS[@]}" \
+          -filter:a "atempo=${SPEED_FACTOR},speechnorm" \
+          "${acodec_args[@]}" "$output_file"
+        ;;
+    esac
   else
     "${FFMPEG_BIN}" "${FFMPEG_COMMON_ARGS[@]}" -i "$src" "${MONO_ARGS[@]}" \
-      -filter:a "atempo=${SPEED_FACTOR},speechnorm" "$output_file"
+      -filter:a "atempo=${SPEED_FACTOR},speechnorm" \
+      "${acodec_args[@]}" "$output_file"
   fi
 }
 
@@ -869,7 +981,7 @@ cwd_has_multidigit_episode_numbers() {
   local -a files=()
 
   shopt -s nullglob
-  files=( *.mp3 *.m4a *.aac *.MP3 *.M4A *.AAC )
+  files=( *.mp3 *.m4a *.aac *.flac *.MP3 *.M4A *.AAC *.FLAC )
   shopt -u nullglob
   for f in "${files[@]}"; do
     [[ "$f" == *SPEECHNORM_SPEEDUP* ]] && continue
@@ -896,7 +1008,7 @@ collect_trailing_single_digit_episode_renames() {
   fi
 
   shopt -s nullglob
-  files=( *.mp3 *.m4a *.aac *.MP3 *.M4A *.AAC )
+  files=( *.mp3 *.m4a *.aac *.flac *.MP3 *.M4A *.AAC *.FLAC )
   shopt -u nullglob
 
   for f in "${files[@]}"; do
@@ -1014,6 +1126,11 @@ FFMPEG_COMMON_ARGS=( -y -hide_banner -loglevel error )
 ls -l -- "$SOURCE_DIR"
 
 echo "(PGM) speed factor (atempo) = $SPEED_FACTOR"
+if [[ -n "$OUTPUT_FORMAT" ]]; then
+  echo "(PGM) output format = .${OUTPUT_FORMAT} (requested)"
+else
+  echo "(PGM) output format = auto (.aac, or .m4a when embedding a cover)"
+fi
 echo "ffmpeg: ${FFMPEG_RESOLVED}"
 if [[ -n "${FFMPEG_VERSION}" ]]; then
   echo "  ${FFMPEG_VERSION}"
