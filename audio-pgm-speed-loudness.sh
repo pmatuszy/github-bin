@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# v. 20260810.173552 - show input → output on one line per file
 # v. 20260810.173421 - omit ./ prefix on cwd output paths in messages and filenames
 # v. 20260810.172924 - proceed prompt: single-key [y/N/q] (like loudness)
 # v. 20260810.172518 - proceed prompt prefixed with [YYYY.MM.DD HH:MM:SS] like loudness
@@ -885,10 +886,9 @@ else
         output_file="${dir}/${base}_SPEECHNORM_SPEEDUP_${SPEED_FACTOR}.${OUTPUT_EXT}"
       fi
 
-      echo "Processing: $src"
-      echo "Output:     $output_file"
+      echo "$src  →  $output_file"
       if [[ -n "${COVER_IMAGE}" ]]; then
-        echo "Cover:      $COVER_IMAGE"
+        echo "Cover: $COVER_IMAGE"
       fi
       echo "Before: max $(format_db_cell "${SCAN_MAX[$i]:-}")  mean $(format_db_cell "${SCAN_MEAN[$i]:-}")  duration $(format_duration_cell "${SCAN_DUR[$i]:-}")"
 
