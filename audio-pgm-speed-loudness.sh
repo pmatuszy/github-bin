@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# v. 20260810.162410 - embed single cwd jpg/jpeg/png as cover (output .m4a when cover present)
 # v. 20260810.160147 - pre-scan volumedetect table; before/after dB; end-of-run summary
 # v. 20260810.152506 - rename to audio-pgm-speed-loudness.sh (drop CURRENT-DIRECTORY suffix)
 # v. 20260810.152137 - add English rewrite: cwd atempo+speechnorm, fix find grouping, safe file loop
@@ -13,8 +14,9 @@
 # audio-pgm-speed-loudness.sh
 #
 # In the current directory: speed up speech audio (ffmpeg atempo) and apply speechnorm,
-# write mono AAC, move sources into org/, then pack org/ into org.rar.
+# write mono AAC (or .m4a with cover), move sources into org/, then pack org/ into org.rar.
 # Pre-scans loudness (volumedetect) and reports before/after dB plus an end-of-run summary.
+# If exactly one .jpg/.jpeg/.png is in the cwd, embed it as album cover (attached_pic).
 #
 
 set -euo pipefail
@@ -27,14 +29,20 @@ Process *.mp3, *.m4a, and *.aac in the current directory only (not subdirs).
 Skips files whose names already contain SPEECHNORM_SPEEDUP.
 
 Before converting, scan each file with ffmpeg volumedetect and print max/mean dB.
-After each successful convert, measure the output AAC and print before → after dB.
+After each successful convert, measure the output and print before → after dB.
 At the end (or on Ctrl-C), print a run summary with timing and before/after list.
+
+If the current directory contains exactly one image (.jpg / .jpeg / .png), embed it
+as album cover (attached_pic) in every output. Cover needs an MP4 container, so
+those outputs are written as .m4a (not raw .aac). With 0 or 2+ images, no cover
+is embedded and output stays .aac.
 
 For each file, run ffmpeg with:
   - mono (-ac 1)
   - atempo=SPEED (default 1.6)
   - speechnorm
-Output: <basename>_SPEECHNORM_SPEEDUP_<SPEED>.aac
+  - optional cover image as attached_pic (when exactly one image in cwd)
+Output: <basename>_SPEECHNORM_SPEEDUP_<SPEED>.aac  (or .m4a with cover)
 On success: copy mode/owner/mtime from the source, move the source into org/.
 After all files: zero-pad _1_.._9_ in names, then rar-pack org/ into org.rar.
 
@@ -158,6 +166,8 @@ COUNT_FAILED=0
 COUNT_SCAN_ERROR=0
 FFMPEG_RESOLVED=""
 WORK_DIR=""
+COVER_IMAGE=""
+OUTPUT_EXT=aac
 
 declare -a SCAN_FILE=()
 declare -a SCAN_MAX=()
@@ -273,6 +283,11 @@ print_run_summary() {
   summary_kv "Speed factor" "atempo=${SPEED_FACTOR}"
   if [[ -n "${FFMPEG_RESOLVED}" ]]; then
     summary_kv "ffmpeg" "$FFMPEG_RESOLVED"
+  fi
+  if [[ -n "${COVER_IMAGE}" ]]; then
+    summary_kv "Cover image" "$COVER_IMAGE (embedded → .${OUTPUT_EXT})"
+  else
+    summary_kv "Cover image" "(none — output .${OUTPUT_EXT})"
   fi
   summary_kv "Files found" "$COUNT_FOUND"
   summary_kv "Converted OK" "$COUNT_OK"
@@ -406,9 +421,67 @@ sanitize_cwd_basename() {
 
 cwd_media_doc_globs() {
   shopt -s nullglob
-  local -a targets=( *.mp3 *.m4a *.aac *.jpg *.doc *.pdf *.rtf *.txt *.MP3 *.M4A *.AAC *.JPG *.DOC *.PDF *.RTF *.TXT )
+  local -a targets=(
+    *.mp3 *.m4a *.aac *.jpg *.jpeg *.png *.doc *.pdf *.rtf *.txt
+    *.MP3 *.M4A *.AAC *.JPG *.JPEG *.PNG *.DOC *.PDF *.RTF *.TXT
+  )
   shopt -u nullglob
   printf '%s\0' "${targets[@]}"
+}
+
+# Sets COVER_IMAGE and OUTPUT_EXT. Exactly one jpg/jpeg/png → embed as cover (.m4a).
+resolve_cover_image() {
+  local -a imgs=()
+  local f
+
+  COVER_IMAGE=""
+  OUTPUT_EXT=aac
+
+  mapfile -d '' -t imgs < <(
+    find "${SOURCE_DIR:-.}" -maxdepth 1 -type f \
+      \( -iname '*.jpg' -o -iname '*.jpeg' -o -iname '*.png' \) \
+      -print0 | sort -z
+  )
+  if (( ${#imgs[@]} == 1 )) && [[ -z "${imgs[0]:-}" ]]; then
+    imgs=()
+  fi
+  for i in "${!imgs[@]}"; do
+    imgs[$i]="${imgs[$i]#./}"
+  done
+
+  if (( ${#imgs[@]} == 1 )); then
+    COVER_IMAGE="${imgs[0]}"
+    OUTPUT_EXT=m4a
+    echo "Cover image (exactly one): $COVER_IMAGE → outputs will be .m4a with attached_pic"
+  elif (( ${#imgs[@]} == 0 )); then
+    echo "Cover image: none found (jpg/jpeg/png) → outputs will be .aac"
+  else
+    echo "Cover image: ${#imgs[@]} images found — not embedding (need exactly one):"
+    for f in "${imgs[@]}"; do
+      echo "  - $f"
+    done
+    echo "Outputs will be .aac"
+  fi
+  echo
+}
+
+run_ffmpeg_convert() {
+  local src="$1" output_file="$2"
+
+  if [[ -n "${COVER_IMAGE}" ]]; then
+    "${FFMPEG_BIN}" "${FFMPEG_COMMON_ARGS[@]}" \
+      -i "$src" -i "$COVER_IMAGE" \
+      -map 0:a:0 -map 1:0 \
+      "${MONO_ARGS[@]}" \
+      -filter:a "atempo=${SPEED_FACTOR},speechnorm" \
+      -c:v mjpeg -disposition:v:0 attached_pic \
+      -metadata:s:v:0 title="Album cover" \
+      -metadata:s:v:0 comment="Cover (front)" \
+      "$output_file"
+  else
+    "${FFMPEG_BIN}" "${FFMPEG_COMMON_ARGS[@]}" -i "$src" "${MONO_ARGS[@]}" \
+      -filter:a "atempo=${SPEED_FACTOR},speechnorm" "$output_file"
+  fi
 }
 
 sanitize_files_in_cwd() {
@@ -482,6 +555,7 @@ echo
 sanitize_cwd_basename
 sanitize_files_in_cwd
 WORK_DIR="$(pwd -P 2>/dev/null || pwd)"
+resolve_cover_image
 
 mapfile -d '' -t audio_files < <(
   find "${SOURCE_DIR}" -maxdepth 1 -type f \
@@ -559,14 +633,16 @@ else
     ext="${src##*.}"
     base="$(basename -- "$src" ".$ext")"
     dir="$(dirname -- "$src")"
-    output_file="${dir}/${base}_SPEECHNORM_SPEEDUP_${SPEED_FACTOR}.aac"
+    output_file="${dir}/${base}_SPEECHNORM_SPEEDUP_${SPEED_FACTOR}.${OUTPUT_EXT}"
 
     echo "Processing: $src"
     echo "Output:     $output_file"
+    if [[ -n "${COVER_IMAGE}" ]]; then
+      echo "Cover:      $COVER_IMAGE"
+    fi
     echo "Before: max $(format_db_cell "${SCAN_MAX[$i]:-}")  mean $(format_db_cell "${SCAN_MEAN[$i]:-}")"
 
-    if ! "${FFMPEG_BIN}" "${FFMPEG_COMMON_ARGS[@]}" -i "$src" "${MONO_ARGS[@]}" \
-      -filter:a "atempo=${SPEED_FACTOR},speechnorm" "$output_file"; then
+    if ! run_ffmpeg_convert "$src" "$output_file"; then
       echo
       echo "!!!!! ffmpeg failed for file: $src !!!!!!!!"
       echo "Exiting."
