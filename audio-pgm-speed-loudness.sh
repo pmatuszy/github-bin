@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# v. 20260810.171439 - after pre-scan, ask to process with default [y/N] (N)
 # v. 20260810.170715 - show duration before/after (ffprobe) in scan, per-file, and summary
 # v. 20260810.164307 - replace spaces with underscores via mv (not only perl rename)
 # v. 20260810.162410 - embed single cwd jpg/jpeg/png as cover (output .m4a when cover present)
@@ -31,8 +32,9 @@ Process *.mp3, *.m4a, and *.aac in the current directory only (not subdirs).
 Skips files whose names already contain SPEECHNORM_SPEEDUP.
 
 Before converting, scan each file with ffmpeg volumedetect and ffprobe duration;
-print max/mean dB and duration. After each successful convert, re-measure and print
-before → after dB and duration. At the end (or on Ctrl-C), print a run summary.
+print max/mean dB and duration. Then ask whether to process (default No: [y/N]).
+After each successful convert, re-measure and print before → after dB and duration.
+At the end (or on Ctrl-C), print a run summary.
 
 If the current directory contains exactly one image (.jpg / .jpeg / .png), embed it
 as album cover (attached_pic) in every output. Cover needs an MP4 container, so
@@ -190,6 +192,7 @@ COUNT_FOUND=0
 COUNT_OK=0
 COUNT_FAILED=0
 COUNT_SCAN_ERROR=0
+CONVERT_DECLINED=0
 FFMPEG_RESOLVED=""
 FFPROBE_BIN=""
 WORK_DIR=""
@@ -304,6 +307,40 @@ parse_volumedetect_db() {
   ' <<<"$blob"
 }
 
+# Ask before convert. Default No ([y/N]). Returns 0 = proceed, 1 = decline.
+prompt_proceed_process() {
+  local answer=""
+  local cover_note=""
+
+  if [[ -n "${COVER_IMAGE}" ]]; then
+    cover_note=", cover=${COVER_IMAGE}"
+  fi
+
+  echo "About to process ${COUNT_FOUND} file(s): atempo=${SPEED_FACTOR}, speechnorm, output .${OUTPUT_EXT}${cover_note}"
+  if [[ ! -t 0 ]]; then
+    echo "Non-interactive stdin — defaulting to No (skip convert)."
+    return 1
+  fi
+
+  printf 'Process these files now? [y/N]: '
+  # Wait forever (no timeout), like interactive loudness prompts.
+  read -r answer || answer=
+  # Empty / Enter → default N
+  if [[ -z "${answer}" ]]; then
+    answer=n
+  fi
+  case "${answer,,}" in
+    y|yes)
+      echo "Selected: yes — converting."
+      return 0
+      ;;
+    *)
+      echo "Selected: no — skipping convert."
+      return 1
+      ;;
+  esac
+}
+
 # Sets VD_MAX / VD_MEAN. Returns 0 if max_volume parsed.
 measure_volumedetect() {
   local file="$1"
@@ -369,6 +406,9 @@ print_run_summary() {
   summary_kv "Files found" "$COUNT_FOUND"
   summary_kv "Converted OK" "$COUNT_OK"
   summary_kv "Convert failed" "$COUNT_FAILED"
+  if (( CONVERT_DECLINED )); then
+    summary_kv "Convert" "declined by user (default N)"
+  fi
   if (( COUNT_SCAN_ERROR > 0 )); then
     summary_kv "Scan measure errors" "$COUNT_SCAN_ERROR"
   fi
@@ -759,78 +799,82 @@ else
   echo "Pre-scan done in $(format_elapsed "$SCAN_PROC_SEC")."
   echo
 
-  # ---- Convert ----
-  convert_t0=$SECONDS
-  for i in "${!audio_files[@]}"; do
-    src="${audio_files[$i]}"
-    if [[ ! -f "$src" ]]; then
-      continue
-    fi
-    if [[ "$src" == *SPEECHNORM_SPEEDUP* ]]; then
-      continue
-    fi
+  if ! prompt_proceed_process; then
+    CONVERT_DECLINED=1
+  else
+    # ---- Convert ----
+    convert_t0=$SECONDS
+    for i in "${!audio_files[@]}"; do
+      src="${audio_files[$i]}"
+      if [[ ! -f "$src" ]]; then
+        continue
+      fi
+      if [[ "$src" == *SPEECHNORM_SPEEDUP* ]]; then
+        continue
+      fi
 
-    echo "######################################"
-    echo
-    ext="${src##*.}"
-    base="$(basename -- "$src" ".$ext")"
-    dir="$(dirname -- "$src")"
-    output_file="${dir}/${base}_SPEECHNORM_SPEEDUP_${SPEED_FACTOR}.${OUTPUT_EXT}"
-
-    echo "Processing: $src"
-    echo "Output:     $output_file"
-    if [[ -n "${COVER_IMAGE}" ]]; then
-      echo "Cover:      $COVER_IMAGE"
-    fi
-    echo "Before: max $(format_db_cell "${SCAN_MAX[$i]:-}")  mean $(format_db_cell "${SCAN_MEAN[$i]:-}")  duration $(format_duration_cell "${SCAN_DUR[$i]:-}")"
-
-    if ! run_ffmpeg_convert "$src" "$output_file"; then
+      echo "######################################"
       echo
-      echo "!!!!! ffmpeg failed for file: $src !!!!!!!!"
-      echo "Exiting."
-      echo
-      rm -f -- "$output_file"
-      (( ++COUNT_FAILED )) || true
-      CONVERT_PROC_SEC=$(( SECONDS - convert_t0 ))
-      RUN_OUTCOME=failed
-      RUN_EXIT_CODE=2
-      exit 2
-    fi
+      ext="${src##*.}"
+      base="$(basename -- "$src" ".$ext")"
+      dir="$(dirname -- "$src")"
+      output_file="${dir}/${base}_SPEECHNORM_SPEEDUP_${SPEED_FACTOR}.${OUTPUT_EXT}"
 
-    after_max=""
-    after_mean=""
-    after_dur=""
-    if measure_volumedetect "$output_file"; then
-      after_max="$VD_MAX"
-      after_mean="${VD_MEAN:-}"
-    else
-      (( ++COUNT_SCAN_ERROR )) || true
-    fi
-    if after_dur="$(media_duration_seconds "$output_file")"; then
-      :
-    else
+      echo "Processing: $src"
+      echo "Output:     $output_file"
+      if [[ -n "${COVER_IMAGE}" ]]; then
+        echo "Cover:      $COVER_IMAGE"
+      fi
+      echo "Before: max $(format_db_cell "${SCAN_MAX[$i]:-}")  mean $(format_db_cell "${SCAN_MEAN[$i]:-}")  duration $(format_duration_cell "${SCAN_DUR[$i]:-}")"
+
+      if ! run_ffmpeg_convert "$src" "$output_file"; then
+        echo
+        echo "!!!!! ffmpeg failed for file: $src !!!!!!!!"
+        echo "Exiting."
+        echo
+        rm -f -- "$output_file"
+        (( ++COUNT_FAILED )) || true
+        CONVERT_PROC_SEC=$(( SECONDS - convert_t0 ))
+        RUN_OUTCOME=failed
+        RUN_EXIT_CODE=2
+        exit 2
+      fi
+
+      after_max=""
+      after_mean=""
       after_dur=""
-      (( ++COUNT_SCAN_ERROR )) || true
-    fi
-    echo "After:  max $(format_db_cell "$after_max")  mean $(format_db_cell "$after_mean")  duration $(format_duration_cell "$after_dur")   ($(basename -- "$output_file"))"
+      if measure_volumedetect "$output_file"; then
+        after_max="$VD_MAX"
+        after_mean="${VD_MEAN:-}"
+      else
+        (( ++COUNT_SCAN_ERROR )) || true
+      fi
+      if after_dur="$(media_duration_seconds "$output_file")"; then
+        :
+      else
+        after_dur=""
+        (( ++COUNT_SCAN_ERROR )) || true
+      fi
+      echo "After:  max $(format_db_cell "$after_max")  mean $(format_db_cell "$after_mean")  duration $(format_duration_cell "$after_dur")   ($(basename -- "$output_file"))"
 
-    chmod --reference="$src" -- "$output_file" 2>/dev/null || true
-    chown --reference="$src" -- "$output_file" 2>/dev/null || true
-    touch --reference="$src" -- "$output_file" 2>/dev/null || true
-    mv -v -- "$src" org/
+      chmod --reference="$src" -- "$output_file" 2>/dev/null || true
+      chown --reference="$src" -- "$output_file" 2>/dev/null || true
+      touch --reference="$src" -- "$output_file" 2>/dev/null || true
+      mv -v -- "$src" org/
 
-    OUT_SRC+=("$src")
-    OUT_FILE+=("$output_file")
-    OUT_BEFORE_MAX+=("${SCAN_MAX[$i]:-}")
-    OUT_BEFORE_MEAN+=("${SCAN_MEAN[$i]:-}")
-    OUT_BEFORE_DUR+=("${SCAN_DUR[$i]:-}")
-    OUT_MAX+=("$after_max")
-    OUT_MEAN+=("$after_mean")
-    OUT_DUR+=("$after_dur")
-    (( ++COUNT_OK )) || true
-    sleep 0.2
-  done
-  CONVERT_PROC_SEC=$(( SECONDS - convert_t0 ))
+      OUT_SRC+=("$src")
+      OUT_FILE+=("$output_file")
+      OUT_BEFORE_MAX+=("${SCAN_MAX[$i]:-}")
+      OUT_BEFORE_MEAN+=("${SCAN_MEAN[$i]:-}")
+      OUT_BEFORE_DUR+=("${SCAN_DUR[$i]:-}")
+      OUT_MAX+=("$after_max")
+      OUT_MEAN+=("$after_mean")
+      OUT_DUR+=("$after_dur")
+      (( ++COUNT_OK )) || true
+      sleep 0.2
+    done
+    CONVERT_PROC_SEC=$(( SECONDS - convert_t0 ))
+  fi
 fi
 
 cd -- "$SOURCE_DIR"
