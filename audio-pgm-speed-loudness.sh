@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# v. 20260810.173421 - omit ./ prefix on cwd output paths in messages and filenames
 # v. 20260810.172924 - proceed prompt: single-key [y/N/q] (like loudness)
 # v. 20260810.172518 - proceed prompt prefixed with [YYYY.MM.DD HH:MM:SS] like loudness
 # v. 20260810.172405 - MAX_VOLUME column width 10 (one dash less than before)
@@ -878,7 +879,11 @@ else
       ext="${src##*.}"
       base="$(basename -- "$src" ".$ext")"
       dir="$(dirname -- "$src")"
-      output_file="${dir}/${base}_SPEECHNORM_SPEEDUP_${SPEED_FACTOR}.${OUTPUT_EXT}"
+      if [[ "$dir" == "." ]]; then
+        output_file="${base}_SPEECHNORM_SPEEDUP_${SPEED_FACTOR}.${OUTPUT_EXT}"
+      else
+        output_file="${dir}/${base}_SPEECHNORM_SPEEDUP_${SPEED_FACTOR}.${OUTPUT_EXT}"
+      fi
 
       echo "Processing: $src"
       echo "Output:     $output_file"
