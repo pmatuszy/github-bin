@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# v. 20260810.175612 - create org/ only when moving a converted source (not on empty/decline)
 # v. 20260810.175506 - summary: input → output on first line, then before/after
 # v. 20260810.175420 - before→after summary: before and after on separate lines
 # v. 20260810.175340 - omit redundant output path line in before→after summary
@@ -741,6 +742,16 @@ sanitize_files_in_cwd() {
   done
 }
 
+ensure_org_dir() {
+  if [[ -d org ]]; then
+    return 0
+  fi
+  mkdir -p -- org
+  chmod --reference=. org 2>/dev/null || true
+  chown --reference=. org 2>/dev/null || true
+  touch --reference=. org 2>/dev/null || true
+}
+
 zero_pad_single_digit_indices() {
   local n
   local -a targets=()
@@ -771,11 +782,6 @@ WORK_DIR="$(pwd -P 2>/dev/null || pwd)"
 SOURCE_DIR="."
 MONO_ARGS=( -ac 1 )
 FFMPEG_COMMON_ARGS=( -y -hide_banner -loglevel error )
-
-mkdir -p -- org
-chmod --reference=. org 2>/dev/null || true
-chown --reference=. org 2>/dev/null || true
-touch --reference=. org 2>/dev/null || true
 
 ls -l -- "$SOURCE_DIR"
 
@@ -928,6 +934,7 @@ else
       chmod --reference="$src" -- "$output_file" 2>/dev/null || true
       chown --reference="$src" -- "$output_file" 2>/dev/null || true
       touch --reference="$src" -- "$output_file" 2>/dev/null || true
+      ensure_org_dir
       mv -v -- "$src" org/
 
       OUT_SRC+=("$src")
@@ -951,7 +958,7 @@ zero_pad_single_digit_indices
 if [[ -d org ]] && compgen -G 'org/*' >/dev/null 2>&1; then
   rar m -htb -m5 org.rar org
 elif [[ -d org ]]; then
-  echo "org/ is empty; skipping rar pack."
+  rmdir -- org 2>/dev/null || true
 fi
 
 RUN_EXIT_CODE=0
