@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# v. 20260810.172202 - duration column width matches DURATION header (8)
 # v. 20260810.171749 - align pre-scan table columns (FILE / max / mean / duration)
 # v. 20260810.171439 - after pre-scan, ask to process with default [y/N] (N)
 # v. 20260810.170715 - show duration before/after (ffprobe) in scan, per-file, and summary
@@ -257,7 +258,7 @@ format_db_cell() {
 # Seconds → "M:SS" or "H:MM:SS" (or em dash), fixed width for tables.
 format_duration_cell() {
   local sec="${1:-}"
-  local width="${2:-10}"
+  local width="${2:-8}"
   if [[ -z "$sec" || "$sec" == '—' || "$sec" == '-' ]]; then
     printf '%*s' "$width" '—'
     return 0
@@ -385,7 +386,7 @@ measure_volumedetect() {
 
 # Fixed numeric column widths (must match header / separator / cells).
 SCAN_COL_DB_W=11
-SCAN_COL_DUR_W=10
+SCAN_COL_DUR_W=8
 SCAN_COL_GAP='  '
 
 print_scan_table_header() {
