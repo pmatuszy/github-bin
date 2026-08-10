@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# v. 20260810.175918 - zero-pad trailing _1.._9 before ext when multi-digit episodes exist
 # v. 20260810.175612 - create org/ only when moving a converted source (not on empty/decline)
 # v. 20260810.175506 - summary: input → output on first line, then before/after
 # v. 20260810.175420 - before→after summary: before and after on separate lines
@@ -64,7 +65,9 @@ After all files: zero-pad _1_.._9_ in names, then rar-pack org/ into org.rar.
 
 Also sanitizes the cwd basename and filenames: spaces become underscores (via mv),
 then commas / Polish diacritics / brackets via Debian/Ubuntu perl rename(1) on
-common media/doc extensions.
+common media/doc extensions. If the directory has multi-digit episode numbers
+(e.g. _10 or _02) and a trailing single-digit sibling (_1.mp3), renames it to
+_01.mp3 so lexical order matches episode order.
 
 ffmpeg resolution (first match wins):
   1. FFMPEG_BIN environment variable (if executable)
@@ -740,6 +743,67 @@ sanitize_files_in_cwd() {
     fi
     run_perl_rename "$expr" "${targets[@]}"
   done
+
+  zero_pad_trailing_single_digit_episodes
+}
+
+# True when cwd has a media file whose last _segment is 2+ digits (e.g. _10, _02).
+cwd_has_multidigit_episode_numbers() {
+  local f base stem last
+  local -a files=()
+
+  shopt -s nullglob
+  files=( *.mp3 *.m4a *.aac *.MP3 *.M4A *.AAC )
+  shopt -u nullglob
+  for f in "${files[@]}"; do
+    [[ "$f" == *SPEECHNORM_SPEEDUP* ]] && continue
+    base="${f##*/}"
+    stem="${base%.*}"
+    last="${stem##*_}"
+    if [[ "$last" =~ ^[0-9]{2,}$ ]]; then
+      return 0
+    fi
+  done
+  return 1
+}
+
+# Klopot_z_Zelenskim_1.mp3 → _01.mp3 when siblings like _02 / _10 exist.
+zero_pad_trailing_single_digit_episodes() {
+  local f base stem ext last new
+  local -a files=()
+  local renamed=0
+
+  if ! cwd_has_multidigit_episode_numbers; then
+    return 0
+  fi
+
+  shopt -s nullglob
+  files=( *.mp3 *.m4a *.aac *.MP3 *.M4A *.AAC )
+  shopt -u nullglob
+
+  for f in "${files[@]}"; do
+    [[ "$f" == *SPEECHNORM_SPEEDUP* ]] && continue
+    base="${f##*/}"
+    ext="${base##*.}"
+    stem="${base%.*}"
+    last="${stem##*_}"
+    if [[ ! "$last" =~ ^[1-9]$ ]]; then
+      continue
+    fi
+    new="${stem%_*}_0${last}.${ext}"
+    if [[ -e "$new" ]]; then
+      echo "  skip zero-pad (target exists): $f → $new" >&2
+      continue
+    fi
+    if (( renamed == 0 )); then
+      echo "Zero-padding trailing single-digit episode numbers (_1.mp3 → _01.mp3)..."
+    fi
+    mv -v -- "$f" "$new"
+    renamed=1
+  done
+  if (( renamed )); then
+    echo
+  fi
 }
 
 ensure_org_dir() {
@@ -756,16 +820,20 @@ zero_pad_single_digit_indices() {
   local n
   local -a targets=()
 
+  # Middle-of-name _N_ → _0N_ (legacy).
   for n in 1 2 3 4 5 6 7 8 9; do
     mapfile -d '' -t targets < <(cwd_media_doc_globs)
     if (( ${#targets[@]} == 1 )) && [[ -z "${targets[0]:-}" ]]; then
       targets=()
     fi
     if (( ${#targets[@]} == 0 )); then
-      return 0
+      break
     fi
     rename --verbose "s|_${n}_|_0${n}_|g" "${targets[@]}" || true
   done
+
+  # Trailing _N.ext → _0N.ext when multi-digit siblings exist.
+  zero_pad_trailing_single_digit_episodes
 }
 
 echo "---- Script start $0 ($(date '+%Y.%m.%d %H:%M:%S'))"
