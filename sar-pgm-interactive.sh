@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20260811.152756 - UI mode default: 1 if dialog installed, else 2; Quit tag q
 # v. 20260811.152232 - after report return to main menu; single-key pause (no Enter / no "again?" ask)
 # v. 20260811.151804 - run sar with S_COLORS=... prefix; avoid shadowed env shell function
 # v. 20260811.151030 - nicer WithDialog look: dialogrc colors/shadows, PuTTY-safe line drawing
@@ -20,7 +21,10 @@ Interactive wrapper around sar (sysstat).
 
 UI modes:
   WithDialog     — dialog menus / yes-no boxes (install offered only as root, default N)
-  WithoutDialog  — plain questions (default mode)
+  WithoutDialog  — plain questions
+
+Default UI mode: 1 if dialog is installed, otherwise 2.
+UI mode prompt: single key 1/2/q (no Enter).
 
 Always starts without the random cron startup delay.
 
@@ -269,17 +273,55 @@ ask_input() {
 
 choose_ui_mode() {
   # Always plain prompts here (dialog may be missing; USE_DIALOG still unset).
+  # Single key 1 / 2 / q — no Enter required.
+  # Default: 1 if dialog is installed, else 2.
+  local key="" default_key=2
+  if type -fP dialog &>/dev/null; then
+    default_key=1
+  fi
+
   while true; do
-    if ask_menu "UI mode" "Choose UI mode:" "2" \
-        1 "WithDialog — menus / yes-no boxes (dialog)" \
-        2 "WithoutDialog — plain questions"; then
-      case "${MENU_CHOICE}" in
-        1) USE_DIALOG=1 ;;
-        *) USE_DIALOG=0 ;;
-      esac
-      return 0
+    echo
+    echo "Choose UI mode:"
+    echo
+    echo "  1) WithDialog — menus / yes-no boxes (dialog)"
+    echo "  2) WithoutDialog — plain questions"
+    echo "  q) Quit"
+    echo
+    if [[ "${default_key}" == "1" ]]; then
+      echo "(PGM) dialog found — default WithDialog."
+    else
+      echo "(PGM) dialog not found — default WithoutDialog."
     fi
-    echo "(PGM) Please choose 1 or 2 (default 2)."
+    printf '%s' "Choice [${default_key}]: "
+    key=""
+    read -r -n 1 key || true
+    echo
+    case "${key}" in
+      1)
+        USE_DIALOG=1
+        return 0
+        ;;
+      2)
+        USE_DIALOG=0
+        return 0
+        ;;
+      '')
+        if [[ "${default_key}" == "1" ]]; then
+          USE_DIALOG=1
+        else
+          USE_DIALOG=0
+        fi
+        return 0
+        ;;
+      q|Q)
+        echo "(PGM) Done."
+        exit 0
+        ;;
+      *)
+        echo "(PGM) Please press 1, 2, or q."
+        ;;
+    esac
   done
 }
 
@@ -527,11 +569,11 @@ choose_stat_type() {
       5 "Block I/O totals (sar -b)" \
       6 "Network interfaces (sar -n DEV)" \
       7 "Load / run queue (sar -q)" \
-      0 "Quit"; then
+      q "Quit"; then
     return 1
   fi
   case "${MENU_CHOICE}" in
-    0) return 1 ;;
+    q|Q) return 1 ;;
     1) SAR_OPTS=(-u) ;;
     2) SAR_OPTS=(-r) ;;
     3) SAR_OPTS=(-S) ;;
