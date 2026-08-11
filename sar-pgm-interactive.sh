@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20260811.153209 - show sar command at top of report screen (after clear)
 # v. 20260811.152756 - UI mode default: 1 if dialog installed, else 2; Quit tag q
 # v. 20260811.152232 - after report return to main menu; single-key pause (no Enter / no "again?" ask)
 # v. 20260811.151804 - run sar with S_COLORS=... prefix; avoid shadowed env shell function
@@ -671,16 +672,15 @@ choose_and_run_report() {
       echo "(PGM) Invalid time range."; return 1 ;;
   esac
 
-  echo
+  # Leave dialog screen; show command + sar on the real terminal
+  if (( USE_DIALOG )); then
+    clear
+  fi
   echo "(PGM) Running:"
   printf '  S_COLORS=%q ' "${S_COLORS_VALUE}"
   printf '%q ' "${cmd[@]}"
   echo
   echo
-  # Leave dialog screen; show sar on the real terminal
-  if (( USE_DIALOG )); then
-    clear
-  fi
   # Do not use "env VAR=val cmd" — a shell function named env may shadow /usr/bin/env
   S_COLORS="${S_COLORS_VALUE}" "${cmd[@]}"
   local rc=$?
