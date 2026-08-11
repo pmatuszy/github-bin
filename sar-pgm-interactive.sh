@@ -1,4 +1,6 @@
 #!/bin/bash
+# v. 20260811.225554 - after specific-day report return to day list; title shows SA path + count
+# v. 20260811.225430 - day list: show SA dir path + file count; menu height lists all (scroll)
 # v. 20260811.224531 - specific day: pick from sa* list (YYYY.MM.DD, weekday, days ago)
 # v. 20260811.164738 - color toggle: show currently ON/OFF in menu and after toggle
 # v. 20260811.164425 - statistics menu: c color toggle only (no dashed separator row)
@@ -81,6 +83,7 @@ DIALOG_RC_FILE=""
 SAR_PGM_IN_REPORT=0
 SAR_PGM_INTERRUPTED=0
 CHOSEN_SA_FILE=""
+LAST_CHOSEN_SA_FILE=""
 
 # Interactive browser: Ctrl-C during a report returns to the menu (do not exit).
 # Outside a report, keep the usual exit behaviour from _script_header.sh.
@@ -716,7 +719,7 @@ sa_day_rel_label() {
 # Returns 0 on success, 1 on cancel / no files.
 choose_sa_day_file() {
   local f mtime ymd dow today_mid file_mid diff_days rel label entry
-  local default_tag=1 i n ans
+  local default_tag=1 i n ans tmp rc menu_h title prompt
   local -a entries=() files=() labels=() menu_args=() sorted=()
 
   CHOSEN_SA_FILE=""
@@ -726,6 +729,7 @@ choose_sa_day_file() {
     return 1
   fi
 
+  # All readable sa* data files (no artificial limit; dialog scrolls if needed)
   for f in "${SA_DIR}"/sa[0-9]*; do
     [[ -f "${f}" && -r "${f}" ]] || continue
     mtime="$(stat -c %Y "${f}" 2>/dev/null || true)"
@@ -758,19 +762,34 @@ choose_sa_day_file() {
     if (( diff_days == 0 )); then
       default_tag="${i}"
     fi
+    if [[ -n "${LAST_CHOSEN_SA_FILE}" && "${f}" == "${LAST_CHOSEN_SA_FILE}" ]]; then
+      default_tag="${i}"
+    fi
   done
   n="${#files[@]}"
-  menu_args+=(q "Cancel")
+  menu_args+=(q "Cancel / back")
+  menu_h=$((n + 1))
+  title="Day: ${SA_DIR}"
+  prompt="Choose SAR day — ${n} file(s) in ${SA_DIR} (arrows scroll):"
 
   if (( USE_DIALOG )); then
-    if ! ask_menu "Day" "Choose SAR day (from collected logs):" "${default_tag}" "${menu_args[@]}"; then
-      return 1
+    tmp="$(mktemp)"
+    # menu-height = all items so every file is in the list (scroll on small terminals)
+    if run_dialog --title "${title}" --default-item "${default_tag}" \
+        --menu "${prompt}" 0 78 "${menu_h}" "${menu_args[@]}" 2>"${tmp}"; then
+      MENU_CHOICE="$(cat "${tmp}")"
+      rm -f "${tmp}"
+    else
+      rc=$?
+      rm -f "${tmp}"
+      return "${rc}"
     fi
     case "${MENU_CHOICE}" in
       q|Q) return 1 ;;
     esac
     if [[ "${MENU_CHOICE}" =~ ^[0-9]+$ ]] && (( MENU_CHOICE >= 1 && MENU_CHOICE <= n )); then
       CHOSEN_SA_FILE="${files[$((MENU_CHOICE - 1))]}"
+      LAST_CHOSEN_SA_FILE="${CHOSEN_SA_FILE}"
       return 0
     fi
     echo "(PGM) Invalid day choice." >&2
@@ -779,12 +798,13 @@ choose_sa_day_file() {
 
   # WithoutDialog: numbered list; Enter after number (supports 10+ days).
   echo
-  echo "Choose SAR day (from collected logs):"
+  echo "SA dir: ${SA_DIR}  (${n} file(s))"
+  echo "Choose SAR day:"
   echo
   for ((i = 0; i < n; i++)); do
     printf "  %2d) %s\n" "$((i + 1))" "${labels[$i]}"
   done
-  echo "   q) Cancel"
+  echo "   q) Cancel / back"
   echo
   while true; do
     printf '%s' "Choice [${default_tag}]: "
@@ -796,16 +816,67 @@ choose_sa_day_file() {
     esac
     if [[ "${ans}" =~ ^[0-9]+$ ]] && (( ans >= 1 && ans <= n )); then
       CHOSEN_SA_FILE="${files[$((ans - 1))]}"
+      LAST_CHOSEN_SA_FILE="${CHOSEN_SA_FILE}"
       return 0
     fi
     echo "(PGM) Please enter 1-${n}, or q to cancel."
   done
 }
 
+# Run sar (optional pager). Args: use_pager (0/1), then command words (sar ...).
+run_sar_report_cmd() {
+  local use_pager="$1"
+  shift
+  local -a cmd=("$@")
+  local color_for_run paged=0 rc
+
+  if (( USE_DIALOG )); then
+    clear
+  fi
+  echo "(PGM) Running:"
+  printf '  S_COLORS=%q ' "${S_COLORS_VALUE}"
+  printf '%q ' "${cmd[@]}"
+  echo
+  echo
+  SAR_PGM_INTERRUPTED=0
+  SAR_PGM_IN_REPORT=1
+
+  color_for_run="${S_COLORS_VALUE}"
+  if (( use_pager )) && type -fP less &>/dev/null; then
+    [[ "${color_for_run}" == "auto" ]] && color_for_run=always
+    echo "(PGM) Paging with less (-R); press q to leave the pager."
+    S_COLORS="${color_for_run}" "${cmd[@]}" | less -R || true
+    paged=1
+  elif (( use_pager )) && type -fP more &>/dev/null; then
+    [[ "${color_for_run}" == "auto" ]] && color_for_run=always
+    echo "(PGM) Paging with more; press q or space as usual."
+    S_COLORS="${color_for_run}" "${cmd[@]}" | more || true
+    paged=1
+  else
+    if (( use_pager )); then
+      echo "(PGM) No less/more found — printing without a pager."
+    fi
+    S_COLORS="${S_COLORS_VALUE}" "${cmd[@]}" || true
+  fi
+  rc=$?
+  echo
+  if (( SAR_PGM_INTERRUPTED )); then
+    SAR_PGM_IN_REPORT=0
+    return 0
+  fi
+  if (( rc != 0 && ! paged )); then
+    echo "(PGM) sar exited with status ${rc}." >&2
+  fi
+  if (( ! paged )); then
+    pause_to_read_report
+  fi
+  SAR_PGM_IN_REPORT=0
+  return 0
+}
+
 choose_and_run_report() {
-  local mode day start_t end_t interval count sa_file
+  local mode start_t end_t interval count sa_file
   local use_pager=1
-  local color_for_run paged=0
   local -a cmd
 
   if ! ask_menu "Time range" "Time range?" "1" \
@@ -824,18 +895,21 @@ choose_and_run_report() {
       ;;
   esac
 
+  # Specific day: pick → report → back to day list until Cancel
+  if [[ "${mode}" == "2" ]]; then
+    while true; do
+      if ! choose_sa_day_file; then
+        return 1
+      fi
+      echo "(PGM) Using ${CHOSEN_SA_FILE}"
+      run_sar_report_cmd 1 sar "${SAR_OPTS[@]}" -f "${CHOSEN_SA_FILE}"
+    done
+  fi
+
   cmd=(sar "${SAR_OPTS[@]}")
 
   case "${mode}" in
     1)
-      ;;
-    2)
-      if ! choose_sa_day_file; then
-        return 1
-      fi
-      sa_file="${CHOSEN_SA_FILE}"
-      echo "(PGM) Using ${sa_file}"
-      cmd+=(-f "${sa_file}")
       ;;
     3)
       use_pager=0
@@ -864,52 +938,7 @@ choose_and_run_report() {
       echo "(PGM) Invalid time range."; return 1 ;;
   esac
 
-  # Leave dialog screen; show command + sar on the real terminal
-  if (( USE_DIALOG )); then
-    clear
-  fi
-  echo "(PGM) Running:"
-  printf '  S_COLORS=%q ' "${S_COLORS_VALUE}"
-  printf '%q ' "${cmd[@]}"
-  echo
-  echo
-  SAR_PGM_INTERRUPTED=0
-  SAR_PGM_IN_REPORT=1
-
-  color_for_run="${S_COLORS_VALUE}"
-  # Do not use "env VAR=val cmd" — a shell function named env may shadow /usr/bin/env
-  if (( use_pager )) && type -fP less &>/dev/null; then
-    # Piped sar is not a TTY; force colors when user asked for auto
-    [[ "${color_for_run}" == "auto" ]] && color_for_run=always
-    echo "(PGM) Paging with less (-R); press q to leave the pager."
-    S_COLORS="${color_for_run}" "${cmd[@]}" | less -R || true
-    paged=1
-  elif (( use_pager )) && type -fP more &>/dev/null; then
-    [[ "${color_for_run}" == "auto" ]] && color_for_run=always
-    echo "(PGM) Paging with more; press q or space as usual."
-    S_COLORS="${color_for_run}" "${cmd[@]}" | more || true
-    paged=1
-  else
-    if (( use_pager )); then
-      echo "(PGM) No less/more found — printing without a pager."
-    fi
-    S_COLORS="${S_COLORS_VALUE}" "${cmd[@]}" || true
-  fi
-  local rc=$?
-  echo
-  if (( SAR_PGM_INTERRUPTED )); then
-    SAR_PGM_IN_REPORT=0
-    return 0
-  fi
-  if (( rc != 0 && ! paged )); then
-    echo "(PGM) sar exited with status ${rc}." >&2
-  fi
-  # After less/more the user already dismissed the view; skip extra key pause
-  if (( ! paged )); then
-    pause_to_read_report
-  fi
-  SAR_PGM_IN_REPORT=0
-  return 0
+  run_sar_report_cmd "${use_pager}" "${cmd[@]}"
 }
 
 pause_to_read_report() {
