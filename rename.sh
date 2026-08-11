@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# v. 20260811.230514 - mismatch Choice hint: only default [Q] uppercase ([u/i/h/v/Q], not U/H)
 # v. 20260811.222437 - checksum recovery: strip '_.' before ext in normalize; accept same-rules path even if nested list hash drifted
 # v. 20260811.213354 - checksum refs: treat '\' like '/' so Windows paths recover under renamed subdirs
 # v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
@@ -37,6 +38,7 @@
 # v. 20260721.132007 - Samsung timestamp media: preserve optional numeric sorting prefix when appending make/model
 # v. 20260721.112812 - GoPro camera labels: GoPro_Hero4_Silver style (not GOPRO4_SILVER)
 
+# 2026.08.11 - v. 19.300.230514 - checksum mismatch prompt: Choice line uppercases only default Q ([u/i/h/v/Q])
 # 2026.08.11 - v. 19.299.222437 - checksum recovery: normalize strips '_.' before extension (dotted-date early path left '_…_.ext'); accept unique same-rules path when nested .sha512 content hash drifted
 # 2026.08.11 - v. 19.298.213354 - checksum missing-ref recovery: normalize '\' to '/' (Windows lists) so renamed subdir+file are found
 # 2026.08.11 - v. 19.297.095711 - add --history (paged changelog via _script_header.sh print_script_history)
@@ -9383,7 +9385,7 @@ prompt_refresh_checksum_hash_after_mismatch() {
         emit_wrap_labeled_stdout "  $(rename_menu_key_bracket H Q) " "  ${GREEN}$(rename_menu_key_bracket H Q)${RESET} " "Ignore this mismatch and all future checksum mismatches this run (lists unchanged)"
         print_prompt_view_directory_menu_line
         emit_wrap_labeled_stdout "  $(rename_menu_key_bracket Q Q) " "  ${GREEN}$(rename_menu_key_bracket Q Q)${RESET} " "Quit (abort script)"
-        echo -n "$(user_prompt_ts_prefix)Choice [U/i/H/v/Q]: "
+        echo -n "$(user_prompt_ts_prefix)Choice [u/i/h/v/Q]: "
         flush_stdin
         read_single_key answer "$PROMPT_WAIT_SECONDS"
         echo
