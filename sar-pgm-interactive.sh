@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20260811.153637 - Ctrl-C during report returns to menu (q still quits); override header exit trap
 # v. 20260811.153209 - show sar command at top of report screen (after clear)
 # v. 20260811.152756 - UI mode default: 1 if dialog installed, else 2; Quit tag q
 # v. 20260811.152232 - after report return to main menu; single-key pause (no Enter / no "again?" ask)
@@ -28,6 +29,9 @@ Default UI mode: 1 if dialog is installed, otherwise 2.
 UI mode prompt: single key 1/2/q (no Enter).
 
 Always starts without the random cron startup delay.
+
+Ctrl-C while a report is running cancels that report and returns to the
+statistics menu (choose q to quit). Ctrl-C outside a report exits.
 
 WithDialog appearance uses a private dialogrc (colors + shadows) and
 NCURSES_NO_UTF8_ACS=1 so frames render better in PuTTY. If boxes still look
@@ -62,6 +66,26 @@ S_COLORS_VALUE=never
 SAR_OPTS=()
 SA_DIR=""
 DIALOG_RC_FILE=""
+SAR_PGM_IN_REPORT=0
+SAR_PGM_INTERRUPTED=0
+
+# Interactive browser: Ctrl-C during a report returns to the menu (do not exit).
+# Outside a report, keep the usual exit behaviour from _script_header.sh.
+sar_pgm_on_int() {
+  echo
+  if (( SAR_PGM_IN_REPORT )); then
+    SAR_PGM_INTERRUPTED=1
+    echo "(PGM) Interrupted — returning to menu (choose q to quit)."
+    return 0
+  fi
+  echo "(PGM) Interrupted — exiting."
+  cleanup_dialog_rc
+  if [ -n "${STY:-}" ]; then
+    echo -ne "${tcScrTitleStart}bash${tcScrTitleEnd}"
+  fi
+  exit 130
+}
+trap sar_pgm_on_int INT
 
 ################################################################################
 # Helpers
@@ -681,15 +705,22 @@ choose_and_run_report() {
   printf '%q ' "${cmd[@]}"
   echo
   echo
+  SAR_PGM_INTERRUPTED=0
+  SAR_PGM_IN_REPORT=1
   # Do not use "env VAR=val cmd" — a shell function named env may shadow /usr/bin/env
-  S_COLORS="${S_COLORS_VALUE}" "${cmd[@]}"
+  S_COLORS="${S_COLORS_VALUE}" "${cmd[@]}" || true
   local rc=$?
   echo
+  if (( SAR_PGM_INTERRUPTED )); then
+    SAR_PGM_IN_REPORT=0
+    return 0
+  fi
   if (( rc != 0 )); then
     echo "(PGM) sar exited with status ${rc}." >&2
   fi
   # dialog redraws the whole screen; wait so the user can read sar output first
   pause_to_read_report
+  SAR_PGM_IN_REPORT=0
   return 0
 }
 
