@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20260811.164738 - color toggle: show currently ON/OFF in menu and after toggle
 # v. 20260811.164425 - statistics menu: c color toggle only (no dashed separator row)
 # v. 20260811.164149 - statistics menu: dashed separator + c color toggle (ON/OFF)
 # v. 20260811.163640 - always use ASCII dialog borders (--ascii-lines); drop frame auto-detect
@@ -622,21 +623,27 @@ maybe_offer_enable_collection() {
 
 colors_menu_label() {
   if [[ "${S_COLORS_VALUE}" == "never" ]]; then
-    printf '%s' "Colors: OFF (toggle to enable)"
+    printf '%s' "Toggle colors (currently OFF)"
   else
-    printf '%s' "Colors: ON  (toggle to disable)"
+    printf '%s' "Toggle colors (currently ON)"
   fi
 }
 
 toggle_sar_colors() {
+  local state
   if [[ "${S_COLORS_VALUE}" == "never" ]]; then
     S_COLORS_VALUE=auto
-    echo "(PGM) Colors: on (S_COLORS=auto)."
+    state="ON"
   else
     S_COLORS_VALUE=never
-    echo "(PGM) Colors: off (S_COLORS=never)."
+    state="OFF"
   fi
   export S_COLORS="${S_COLORS_VALUE}"
+  if (( USE_DIALOG )); then
+    run_dialog --title "Colors" --msgbox "Colors are currently ${state}.\n\n(S_COLORS=${S_COLORS_VALUE})" 8 42
+  else
+    echo "(PGM) Colors are currently ${state} (S_COLORS=${S_COLORS_VALUE})."
+  fi
 }
 
 choose_stat_type() {
