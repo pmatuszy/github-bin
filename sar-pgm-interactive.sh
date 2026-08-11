@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20260811.155854 - WithoutDialog menus: single-key choice; time range has q to quit
 # v. 20260811.155244 - Ctrl-C during any-key pause returns to menu immediately (no second key)
 # v. 20260811.154553 - colors prompt defaults to Y (S_COLORS=auto)
 # v. 20260811.153637 - Ctrl-C during report returns to menu (q still quits); override header exit trap
@@ -28,7 +29,7 @@ UI modes:
   WithoutDialog  — plain questions
 
 Default UI mode: 1 if dialog is installed, otherwise 2.
-UI mode prompt: single key 1/2/q (no Enter).
+WithoutDialog prompts use a single key (no Enter); menus include q to quit.
 
 Always starts without the random cron startup delay.
 
@@ -172,23 +173,27 @@ resolve_sa_dir() {
 }
 
 prompt_yn_default_no() {
-  # WithoutDialog yes/no; default N. Returns 0=yes, 1=no.
+  # WithoutDialog yes/no; default N. Single key, no Enter. Returns 0=yes, 1=no.
   local prompt="$1"
   local ans=""
-  read -r -p "${prompt} [y/N]: " ans || true
+  printf '%s' "${prompt} [y/N]: "
+  read -r -n 1 ans || true
+  echo
   case "${ans}" in
-    y|Y|yes|YES) return 0 ;;
+    y|Y) return 0 ;;
     *) return 1 ;;
   esac
 }
 
 prompt_yn_default_yes() {
-  # WithoutDialog yes/no; default Y. Returns 0=yes, 1=no.
+  # WithoutDialog yes/no; default Y. Single key, no Enter. Returns 0=yes, 1=no.
   local prompt="$1"
   local ans=""
-  read -r -p "${prompt} [Y/n]: " ans || true
+  printf '%s' "${prompt} [Y/n]: "
+  read -r -n 1 ans || true
+  echo
   case "${ans}" in
-    n|N|no|NO) return 1 ;;
+    n|N) return 1 ;;
     *) return 0 ;;
   esac
 }
@@ -229,11 +234,11 @@ ask_yes_no_default_yes() {
 
 plain_menu() {
   # Args: prompt default_key then pairs of key label...
-  # Sets PLAIN_MENU_CHOICE. Returns 1 on quit/empty cancel.
+  # Sets PLAIN_MENU_CHOICE. Single key, no Enter. Retries on invalid.
   local prompt="$1"
   local default_key="$2"
   shift 2
-  local key label
+  local key label ans k
   local -a keys=()
   echo
   echo "${prompt}"
@@ -246,18 +251,21 @@ plain_menu() {
     printf "  %s) %s\n" "${key}" "${label}"
   done
   echo
-  local ans=""
-  read -r -p "Choice [${default_key}]: " ans || true
-  ans="${ans:-${default_key}}"
-  local k
-  for k in "${keys[@]}"; do
-    if [[ "${ans}" == "${k}" ]]; then
-      PLAIN_MENU_CHOICE="${ans}"
-      return 0
-    fi
+  while true; do
+    printf '%s' "Choice [${default_key}]: "
+    ans=""
+    read -r -n 1 ans || true
+    echo
+    ans="${ans:-${default_key}}"
+    [[ "${ans}" == "Q" ]] && ans=q
+    for k in "${keys[@]}"; do
+      if [[ "${ans}" == "${k}" ]]; then
+        PLAIN_MENU_CHOICE="${ans}"
+        return 0
+      fi
+    done
+    echo "(PGM) Please press one of: ${keys[*]} (or Enter for ${default_key})."
   done
-  echo "(PGM) Invalid choice: ${ans}" >&2
-  return 1
 }
 
 dialog_menu() {
@@ -676,10 +684,17 @@ choose_and_run_report() {
       1 "Today (from collected logs)" \
       2 "Specific day (saDD file)" \
       3 "Live sample (interval x count)" \
-      4 "Time window today"; then
+      4 "Time window today" \
+      q "Quit"; then
     return 1
   fi
   mode="${MENU_CHOICE}"
+  case "${mode}" in
+    q|Q)
+      echo "(PGM) Done."
+      exit 0
+      ;;
+  esac
 
   cmd=(sar "${SAR_OPTS[@]}")
 
