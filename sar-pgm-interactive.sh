@@ -1,0 +1,541 @@
+#!/bin/bash
+# v. 20260811.145638 - interactive sar browser: WithDialog/WithoutDialog, colors, collection check
+#
+# sar-pgm-interactive.sh
+#
+# Interactive wrapper around sar (sysstat): choose UI mode, colors, optionally
+# enable data collection, then pick CPU/memory/swap/disk/network/load reports.
+#
+
+show_help() {
+  cat <<EOF
+Usage: $(basename "$0") [-h|--help] [-v|--version] [--history]
+
+Interactive wrapper around sar (sysstat).
+
+UI modes:
+  WithDialog     — dialog menus / yes-no boxes (install offered only as root, default N)
+  WithoutDialog  — plain questions (default mode)
+
+Always starts without the random cron startup delay.
+
+Options:
+  -h, --help     Show this help and exit.
+  -v, --version  Print script version and exit.
+  --history      Print script changelog from the header and exit.
+EOF
+}
+
+. /root/bin/_script_header.sh NO_STARTUP_DELAY
+
+while [[ $# -gt 0 ]]; do
+  case $1 in
+    -h|--help) show_help; exit 0 ;;
+    -v|--version) print_version_banner; exit 0 ;;
+    --history) print_script_history; exit 0 ;;
+    *) echo "Unknown argument: $1" >&2; echo "Try: $(basename "$0") --help" >&2; exit 1 ;;
+  esac
+done
+
+check_if_installed sar sysstat
+
+################################################################################
+# Globals
+################################################################################
+
+USE_DIALOG=0
+S_COLORS_VALUE=never
+SAR_OPTS=()
+SA_DIR=""
+
+################################################################################
+# Helpers
+################################################################################
+
+is_root() {
+  [ "$(id -u)" -eq 0 ]
+}
+
+resolve_sa_dir() {
+  if [[ -d /var/log/sysstat ]]; then
+    SA_DIR=/var/log/sysstat
+  elif [[ -d /var/log/sa ]]; then
+    SA_DIR=/var/log/sa
+  else
+    SA_DIR=/var/log/sysstat
+  fi
+}
+
+prompt_yn_default_no() {
+  # WithoutDialog yes/no; default N. Returns 0=yes, 1=no.
+  local prompt="$1"
+  local ans=""
+  read -r -p "${prompt} [y/N]: " ans || true
+  case "${ans}" in
+    y|Y|yes|YES) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+dialog_yesno_default_no() {
+  # Returns 0=yes, 1=no/cancel.
+  local title="$1"
+  local text="$2"
+  dialog --title "${title}" --defaultno --yesno "${text}" 10 60
+}
+
+ask_yes_no_default_no() {
+  local title="$1"
+  local text="$2"
+  if (( USE_DIALOG )); then
+    dialog_yesno_default_no "${title}" "${text}"
+  else
+    prompt_yn_default_no "${text}"
+  fi
+}
+
+plain_menu() {
+  # Args: prompt default_key then pairs of key label...
+  # Sets PLAIN_MENU_CHOICE. Returns 1 on quit/empty cancel.
+  local prompt="$1"
+  local default_key="$2"
+  shift 2
+  local key label
+  local -a keys=()
+  echo
+  echo "${prompt}"
+  echo
+  while [[ $# -gt 0 ]]; do
+    key="$1"
+    label="$2"
+    shift 2
+    keys+=("${key}")
+    printf "  %s) %s\n" "${key}" "${label}"
+  done
+  echo
+  local ans=""
+  read -r -p "Choice [${default_key}]: " ans || true
+  ans="${ans:-${default_key}}"
+  local k
+  for k in "${keys[@]}"; do
+    if [[ "${ans}" == "${k}" ]]; then
+      PLAIN_MENU_CHOICE="${ans}"
+      return 0
+    fi
+  done
+  echo "(PGM) Invalid choice: ${ans}" >&2
+  return 1
+}
+
+dialog_menu() {
+  # Args: title prompt default_tag then pairs of tag item...
+  # Sets DIALOG_MENU_CHOICE. Returns 1 on cancel.
+  local title="$1"
+  local prompt="$2"
+  local default_tag="$3"
+  shift 3
+  local tmp rc
+  tmp="$(mktemp)"
+  # dialog --menu text height width menu-height tag item ...
+  if dialog --title "${title}" --default-item "${default_tag}" --menu "${prompt}" 0 0 0 "$@" 2>"${tmp}"; then
+    DIALOG_MENU_CHOICE="$(cat "${tmp}")"
+    rm -f "${tmp}"
+    return 0
+  fi
+  rc=$?
+  rm -f "${tmp}"
+  return "${rc}"
+}
+
+ask_menu() {
+  # Sets MENU_CHOICE. title prompt default then tag label pairs.
+  local title="$1"
+  local prompt="$2"
+  local default_tag="$3"
+  shift 3
+  if (( USE_DIALOG )); then
+    if dialog_menu "${title}" "${prompt}" "${default_tag}" "$@"; then
+      MENU_CHOICE="${DIALOG_MENU_CHOICE}"
+      return 0
+    fi
+    return 1
+  fi
+  if plain_menu "${prompt}" "${default_tag}" "$@"; then
+    MENU_CHOICE="${PLAIN_MENU_CHOICE}"
+    return 0
+  fi
+  return 1
+}
+
+ask_input() {
+  # Sets INPUT_VALUE. title prompt default
+  local title="$1"
+  local prompt="$2"
+  local default="$3"
+  local tmp ans
+  if (( USE_DIALOG )); then
+    tmp="$(mktemp)"
+    if dialog --title "${title}" --inputbox "${prompt}" 10 60 "${default}" 2>"${tmp}"; then
+      INPUT_VALUE="$(cat "${tmp}")"
+      rm -f "${tmp}"
+      INPUT_VALUE="${INPUT_VALUE:-${default}}"
+      return 0
+    fi
+    rm -f "${tmp}"
+    return 1
+  fi
+  read -r -p "${prompt} [${default}]: " ans || true
+  INPUT_VALUE="${ans:-${default}}"
+  return 0
+}
+
+################################################################################
+# UI mode + dialog install
+################################################################################
+
+choose_ui_mode() {
+  # Always plain prompts here (dialog may be missing; USE_DIALOG still unset).
+  while true; do
+    if ask_menu "UI mode" "Choose UI mode:" "2" \
+        1 "WithDialog — menus / yes-no boxes (dialog)" \
+        2 "WithoutDialog — plain questions"; then
+      case "${MENU_CHOICE}" in
+        1) USE_DIALOG=1 ;;
+        *) USE_DIALOG=0 ;;
+      esac
+      return 0
+    fi
+    echo "(PGM) Please choose 1 or 2 (default 2)."
+  done
+}
+
+ensure_dialog_if_needed() {
+  if (( ! USE_DIALOG )); then
+    return 0
+  fi
+  if type -fP dialog &>/dev/null; then
+    echo "(PGM) Using WithDialog."
+    return 0
+  fi
+
+  echo
+  echo "(PGM) 'dialog' is not installed (needed for WithDialog)."
+
+  if ! is_root; then
+    echo "(PGM) Not running as root — cannot install packages."
+    echo "(PGM) Falling back to WithoutDialog."
+    USE_DIALOG=0
+    return 0
+  fi
+
+  if ! command -v apt-get &>/dev/null; then
+    echo "(PGM) apt-get not found; cannot install dialog."
+    echo "(PGM) Falling back to WithoutDialog."
+    USE_DIALOG=0
+    return 0
+  fi
+
+  if prompt_yn_default_no "Install package 'dialog' now?"; then
+    echo "Proceeding with install..."
+    pgm_apt_install_packages dialog
+  else
+    echo "(PGM) Skipped installation of: dialog"
+  fi
+
+  if type -fP dialog &>/dev/null; then
+    echo "(PGM) Continuing with WithDialog."
+    USE_DIALOG=1
+  else
+    echo "(PGM) dialog still unavailable — falling back to WithoutDialog."
+    USE_DIALOG=0
+  fi
+}
+
+################################################################################
+# Colors
+################################################################################
+
+choose_colors() {
+  if ask_yes_no_default_no "Colors" "Use colors in sar output?"; then
+    S_COLORS_VALUE=auto
+    echo "(PGM) Colors: on (S_COLORS=auto)."
+  else
+    S_COLORS_VALUE=never
+    echo "(PGM) Colors: off (S_COLORS=never)."
+  fi
+  export S_COLORS="${S_COLORS_VALUE}"
+}
+
+################################################################################
+# Collection detect / enable
+################################################################################
+
+collection_looks_active() {
+  if [[ -f /etc/default/sysstat ]]; then
+    if grep -Eq '^ENABLED=["'\'']?true["'\'']?' /etc/default/sysstat; then
+      # ENABLED=true is enough on Debian even before first sample
+      return 0
+    fi
+  fi
+
+  if systemctl is-active --quiet sysstat-collect.timer 2>/dev/null; then
+    return 0
+  fi
+  if systemctl is-active --quiet sysstat.service 2>/dev/null; then
+    return 0
+  fi
+  if systemctl is-active --quiet sysstat 2>/dev/null; then
+    return 0
+  fi
+
+  # Any recent sa file in the last 2 days
+  if [[ -d "${SA_DIR}" ]] && find "${SA_DIR}" -maxdepth 1 -type f \( -name 'sa[0-9][0-9]' -o -name 'sa[0-9]' \) -mtime -2 2>/dev/null | grep -q .; then
+    return 0
+  fi
+
+  return 1
+}
+
+print_collection_status() {
+  local today
+  today="$(date +%d)"
+  echo
+  echo "(PGM) Checking sysstat / SAR data collection..."
+  echo "  data dir .......... ${SA_DIR}"
+  if type -fP systemctl &>/dev/null; then
+    if systemctl is-active --quiet sysstat-collect.timer 2>/dev/null; then
+      echo "  collect timer ..... active"
+    elif systemctl is-active --quiet sysstat 2>/dev/null; then
+      echo "  sysstat ........... active"
+    else
+      echo "  systemd ........... no active sysstat collect timer/service"
+    fi
+  fi
+  if [[ -f /etc/default/sysstat ]]; then
+    if grep -Eq '^ENABLED=["'\'']?true["'\'']?' /etc/default/sysstat; then
+      echo "  ENABLED ........... true (/etc/default/sysstat)"
+    else
+      echo "  ENABLED ........... false/other (/etc/default/sysstat)"
+    fi
+  fi
+  if [[ -f "${SA_DIR}/sa${today}" ]]; then
+    echo "  today's file ...... sa${today} (present)"
+  else
+    echo "  today's file ...... sa${today} (missing)"
+  fi
+}
+
+enable_sar_collection() {
+  echo
+  echo "(PGM) Enabling SAR data collection..."
+
+  if [[ -f /etc/default/sysstat ]]; then
+    if grep -q '^ENABLED=' /etc/default/sysstat; then
+      sed -i 's/^ENABLED=.*/ENABLED="true"/' /etc/default/sysstat
+    else
+      echo 'ENABLED="true"' >> /etc/default/sysstat
+    fi
+    echo "(PGM) Set ENABLED=\"true\" in /etc/default/sysstat"
+  fi
+
+  if type -fP systemctl &>/dev/null; then
+    systemctl enable --now sysstat 2>/dev/null || true
+    systemctl enable --now sysstat-collect.timer 2>/dev/null || true
+    systemctl enable --now sysstat-summary.timer 2>/dev/null || true
+    # Debian package often uses sysstat.service which manages the timers
+    systemctl restart sysstat 2>/dev/null || true
+  fi
+
+  if type -fP service &>/dev/null; then
+    service sysstat start 2>/dev/null || true
+  fi
+
+  # Seed one sample if sa1 exists
+  if [[ -x /usr/lib/sysstat/sa1 ]]; then
+    /usr/lib/sysstat/sa1 1 1 2>/dev/null || true
+  elif [[ -x /usr/lib64/sa/sa1 ]]; then
+    /usr/lib64/sa/sa1 1 1 2>/dev/null || true
+  fi
+
+  echo "(PGM) Enable steps finished."
+  echo "(PGM) Note: richer history appears after further collect intervals (~10 min)."
+}
+
+maybe_offer_enable_collection() {
+  print_collection_status
+  if collection_looks_active; then
+    echo "(PGM) SAR data collection looks active."
+    return 0
+  fi
+
+  echo
+  echo "(PGM) SAR data collection does not appear to be running."
+  echo "(PGM) Without it, history (today / past days) may be empty; live sampling still works."
+
+  if ! is_root; then
+    echo "(PGM) Not running as root — cannot enable collection."
+    return 0
+  fi
+
+  if ask_yes_no_default_no "Enable collection" "Enable SAR data collection now?"; then
+    enable_sar_collection
+  else
+    echo "(PGM) Continuing without enabling collection."
+  fi
+}
+
+################################################################################
+# Stats + time range + run
+################################################################################
+
+choose_stat_type() {
+  if ! ask_menu "Statistics" "What would you like to see?" "1" \
+      1 "CPU utilization (sar -u)" \
+      2 "Memory (sar -r)" \
+      3 "Swap (sar -S)" \
+      4 "Disk I/O per device (sar -d -p)" \
+      5 "Block I/O totals (sar -b)" \
+      6 "Network interfaces (sar -n DEV)" \
+      7 "Load / run queue (sar -q)" \
+      0 "Quit"; then
+    return 1
+  fi
+  case "${MENU_CHOICE}" in
+    0) return 1 ;;
+    1) SAR_OPTS=(-u) ;;
+    2) SAR_OPTS=(-r) ;;
+    3) SAR_OPTS=(-S) ;;
+    4) SAR_OPTS=(-d -p) ;;
+    5) SAR_OPTS=(-b) ;;
+    6) SAR_OPTS=(-n DEV) ;;
+    7) SAR_OPTS=(-q) ;;
+    *) echo "(PGM) Invalid choice."; return 1 ;;
+  esac
+  return 0
+}
+
+normalize_time() {
+  # Accept HH:MM or HH:MM:SS → HH:MM:SS
+  local t="$1"
+  if [[ "${t}" =~ ^[0-9]{1,2}:[0-9]{2}$ ]]; then
+    printf '%s:00' "${t}"
+  else
+    printf '%s' "${t}"
+  fi
+}
+
+list_sa_days_hint() {
+  local f found=0
+  if [[ ! -d "${SA_DIR}" ]]; then
+    echo "(PGM) No SA dir yet: ${SA_DIR}"
+    return
+  fi
+  echo "(PGM) Available files in ${SA_DIR}:"
+  for f in "${SA_DIR}"/sa[0-9]*; do
+    [[ -f "${f}" ]] || continue
+    printf "  %s\n" "$(basename "${f}")"
+    found=1
+  done
+  if (( ! found )); then
+    echo "  (none)"
+  fi
+}
+
+choose_and_run_report() {
+  local mode day start_t end_t interval count sa_file
+  local -a cmd
+
+  if ! ask_menu "Time range" "Time range?" "1" \
+      1 "Today (from collected logs)" \
+      2 "Specific day (saDD file)" \
+      3 "Live sample (interval x count)" \
+      4 "Time window today"; then
+    return 1
+  fi
+  mode="${MENU_CHOICE}"
+
+  cmd=(env "S_COLORS=${S_COLORS_VALUE}" sar "${SAR_OPTS[@]}")
+
+  case "${mode}" in
+    1)
+      ;;
+    2)
+      list_sa_days_hint
+      day="$(date +%d)"
+      if ! ask_input "Day" "Day number (DD)" "${day}"; then
+        return 1
+      fi
+      day="$(printf '%02d' "$((10#${INPUT_VALUE}))" 2>/dev/null || printf '%s' "${INPUT_VALUE}")"
+      sa_file="${SA_DIR}/sa${day}"
+      if [[ ! -f "${sa_file}" ]]; then
+        echo "(PGM) File not found: ${sa_file}" >&2
+        return 1
+      fi
+      cmd+=(-f "${sa_file}")
+      ;;
+    3)
+      if ! ask_input "Interval" "Interval in seconds" "1"; then
+        return 1
+      fi
+      interval="${INPUT_VALUE}"
+      if ! ask_input "Samples" "Number of samples" "5"; then
+        return 1
+      fi
+      count="${INPUT_VALUE}"
+      cmd+=("${interval}" "${count}")
+      ;;
+    4)
+      if ! ask_input "Start" "Start time (HH:MM or HH:MM:SS)" "00:00:00"; then
+        return 1
+      fi
+      start_t="$(normalize_time "${INPUT_VALUE}")"
+      if ! ask_input "End" "End time (HH:MM or HH:MM:SS)" "23:59:59"; then
+        return 1
+      fi
+      end_t="$(normalize_time "${INPUT_VALUE}")"
+      cmd+=(-s "${start_t}" -e "${end_t}")
+      ;;
+    *)
+      echo "(PGM) Invalid time range."; return 1 ;;
+  esac
+
+  echo
+  echo "(PGM) Running:"
+  printf '  '; printf '%q ' "${cmd[@]}"; echo
+  echo
+  # Leave dialog screen; show sar on the real terminal
+  if (( USE_DIALOG )); then
+    clear
+  fi
+  "${cmd[@]}"
+  local rc=$?
+  echo
+  if (( rc != 0 )); then
+    echo "(PGM) sar exited with status ${rc}." >&2
+  fi
+  return 0
+}
+
+################################################################################
+# Main
+################################################################################
+
+resolve_sa_dir
+choose_ui_mode
+ensure_dialog_if_needed
+choose_colors
+maybe_offer_enable_collection
+
+while true; do
+  if ! choose_stat_type; then
+    echo "(PGM) Done."
+    break
+  fi
+  choose_and_run_report || true
+  if ! ask_yes_no_default_no "Again" "Another report?"; then
+    echo "(PGM) Done."
+    break
+  fi
+done
+
+. /root/bin/_script_footer.sh
