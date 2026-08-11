@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20260811.163343 - auto ASCII dialog frames when TERM/UTF-8 ACS likely broken; optional frame check
 # v. 20260811.160740 - page long history reports with less (else more); live samples stay unpaged
 # v. 20260811.155854 - WithoutDialog menus: single-key choice; time range has q to quit
 # v. 20260811.155244 - Ctrl-C during any-key pause returns to menu immediately (no second key)
@@ -41,8 +42,9 @@ History / time-window reports are paged with less if available, otherwise more.
 Live samples are not paged (they stream to the terminal).
 
 WithDialog appearance uses a private dialogrc (colors + shadows) and
-NCURSES_NO_UTF8_ACS=1 so frames render better in PuTTY. If boxes still look
-wrong, run:  SAR_DIALOG_ASCII_LINES=1 $(basename "$0")
+NCURSES_NO_UTF8_ACS=1. If TERM+UTF-8 is a known-bad ACS combo (e.g. PuTTY as
+xterm), ASCII borders (+ - |) are selected automatically. Override with
+SAR_DIALOG_ASCII_LINES=0|1. If unsure, a one-time frame check may ask you.
 
 Options:
   -h, --help     Show this help and exit.
@@ -145,16 +147,71 @@ form_item_readonly_color = (CYAN,WHITE,ON)
 gauge_color = (BLUE,WHITE,ON)
 EOF
   export DIALOGRC="${DIALOG_RC_FILE}"
-  # PuTTY + UTF-8 often breaks ACS frames; prefer Unicode box-drawing chars
+  # Prefer Unicode box-drawing over VT100 ACS (ACS often prints as q/x/l/k in PuTTY)
   export NCURSES_NO_UTF8_ACS=1
   export DIALOGOPTS="--backtitle sar-pgm-interactive.sh --shadow"
   trap cleanup_dialog_rc EXIT
+  choose_dialog_frame_style
+}
+
+# True visual "looks nice?" cannot be seen by the script. Heuristic: UTF-8 locale
+# with TERM=xterm/screen/tmux (common PuTTY default) often shows ACS as letters.
+dialog_frames_likely_broken() {
+  local loc="${LC_ALL:-${LC_CTYPE:-${LANG:-}}}"
+  case "${loc}" in
+    *UTF-8*|*utf8*|*UTF8*) ;;
+    *) return 1 ;;
+  esac
+  case "${TERM:-}" in
+    putty|putty-*|linux|linux-*|cygwin|konsole*|rxvt*|rxvt-unicode*|st|st-*)
+      return 1
+      ;;
+    xterm|xterm-*|screen|screen-*|tmux|tmux-*|vt100|ansi|"")
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+choose_dialog_frame_style() {
+  # SAR_DIALOG_ASCII_LINES: 1=ASCII + - |, 0=line drawing. If unset, auto-detect.
+  if [[ -n "${SAR_DIALOG_ASCII_LINES+x}" ]]; then
+    if [[ "${SAR_DIALOG_ASCII_LINES}" == "1" ]]; then
+      echo "(PGM) Dialog frames: ASCII (SAR_DIALOG_ASCII_LINES=1)."
+    else
+      echo "(PGM) Dialog frames: line-drawing (SAR_DIALOG_ASCII_LINES=${SAR_DIALOG_ASCII_LINES})."
+    fi
+    return 0
+  fi
+
+  if dialog_frames_likely_broken; then
+    SAR_DIALOG_ASCII_LINES=1
+    echo "(PGM) Dialog frames: auto ASCII (TERM=${TERM:-?} + UTF-8 often shows borders as q/x/l/k)."
+    echo "(PGM) Force line-drawing: SAR_DIALOG_ASCII_LINES=0 $0"
+    return 0
+  fi
+
+  # Environment looks OK — still let the user reject bad frames (this box is the sample).
+  if dialog --title "Frame check" --yesno \
+      "Do the borders of THIS box look correct?
+
+Good: solid lines forming a clean rectangle.
+Bad: letters like q  x  l  k  m  j  instead of lines.
+
+Yes = keep line-drawing
+No  = use plain ASCII borders (+ - |)" 14 60; then
+    SAR_DIALOG_ASCII_LINES=0
+    echo "(PGM) Dialog frames: line-drawing."
+  else
+    SAR_DIALOG_ASCII_LINES=1
+    echo "(PGM) Dialog frames: ASCII (+ - |) for this session."
+  fi
 }
 
 run_dialog() {
   # Single entry point so look/options stay consistent.
-  # --ascii-lines is a fallback only when Unicode frames still look wrong:
-  # set SAR_DIALOG_ASCII_LINES=1 to force ASCII + - | frames.
   if [[ "${SAR_DIALOG_ASCII_LINES:-0}" == "1" ]]; then
     dialog --ascii-lines "$@"
   else
@@ -398,8 +455,7 @@ ensure_dialog_if_needed() {
   fi
   if type -fP dialog &>/dev/null; then
     setup_dialog_look
-    echo "(PGM) Using WithDialog (colors/shadows; PuTTY-safe frames)."
-    echo "(PGM) If frames still look wrong: SAR_DIALOG_ASCII_LINES=1 $0"
+    echo "(PGM) Using WithDialog."
     return 0
   fi
 
@@ -429,8 +485,7 @@ ensure_dialog_if_needed() {
 
   if type -fP dialog &>/dev/null; then
     setup_dialog_look
-    echo "(PGM) Continuing with WithDialog (colors/shadows; PuTTY-safe frames)."
-    echo "(PGM) If frames still look wrong: SAR_DIALOG_ASCII_LINES=1 $0"
+    echo "(PGM) Continuing with WithDialog."
     USE_DIALOG=1
   else
     echo "(PGM) dialog still unavailable — falling back to WithoutDialog."
