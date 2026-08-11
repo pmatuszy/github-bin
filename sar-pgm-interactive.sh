@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20260811.155244 - Ctrl-C during any-key pause returns to menu immediately (no second key)
 # v. 20260811.154553 - colors prompt defaults to Y (S_COLORS=auto)
 # v. 20260811.153637 - Ctrl-C during report returns to menu (q still quits); override header exit trap
 # v. 20260811.153209 - show sar command at top of report screen (after clear)
@@ -754,12 +755,22 @@ choose_and_run_report() {
 }
 
 pause_to_read_report() {
+  # One key continues; Ctrl-C sets SAR_PGM_INTERRUPTED in the trap.
+  # read -n 1 alone would still block after the trap (Ctrl-C is not the key),
+  # so use a short timeout loop and exit as soon as the flag is set.
   local _ans=""
   echo
   printf '%s' "(PGM) Press any key to continue..."
-  # -n 1: one character; no Enter needed (-s: do not echo the key)
-  read -r -n 1 -s _ans || true
-  echo
+  while true; do
+    if (( SAR_PGM_INTERRUPTED )); then
+      echo
+      return 0
+    fi
+    if read -r -n 1 -s -t 1 _ans; then
+      echo
+      return 0
+    fi
+  done
 }
 
 ################################################################################
