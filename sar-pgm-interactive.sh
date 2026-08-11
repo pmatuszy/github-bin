@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20260811.224531 - specific day: pick from sa* list (YYYY.MM.DD, weekday, days ago)
 # v. 20260811.164738 - color toggle: show currently ON/OFF in menu and after toggle
 # v. 20260811.164425 - statistics menu: c color toggle only (no dashed separator row)
 # v. 20260811.164149 - statistics menu: dashed separator + c color toggle (ON/OFF)
@@ -79,6 +80,7 @@ SA_DIR=""
 DIALOG_RC_FILE=""
 SAR_PGM_IN_REPORT=0
 SAR_PGM_INTERRUPTED=0
+CHOSEN_SA_FILE=""
 
 # Interactive browser: Ctrl-C during a report returns to the menu (do not exit).
 # Outside a report, keep the usual exit behaviour from _script_header.sh.
@@ -697,21 +699,107 @@ normalize_time() {
   fi
 }
 
-list_sa_days_hint() {
-  local f found=0
+# Relative day label: 0 days, -1 day, -2 days, ...
+sa_day_rel_label() {
+  local diff="$1"
+  if (( diff == 0 )); then
+    printf '0 days'
+  elif (( diff == -1 || diff == 1 )); then
+    printf '%d day' "${diff}"
+  else
+    printf '%d days' "${diff}"
+  fi
+}
+
+# Build CHOSEN_SA_FILE from an interactive list of existing sa* files.
+# Labels use file mtime: YYYY.MM.DD (Wed)  -N days  [saDD]
+# Returns 0 on success, 1 on cancel / no files.
+choose_sa_day_file() {
+  local f mtime ymd dow today_mid file_mid diff_days rel label entry
+  local default_tag=1 i n ans
+  local -a entries=() files=() labels=() menu_args=() sorted=()
+
+  CHOSEN_SA_FILE=""
+
   if [[ ! -d "${SA_DIR}" ]]; then
-    echo "(PGM) No SA dir yet: ${SA_DIR}"
-    return
+    echo "(PGM) No SA dir yet: ${SA_DIR}" >&2
+    return 1
   fi
-  echo "(PGM) Available files in ${SA_DIR}:"
+
   for f in "${SA_DIR}"/sa[0-9]*; do
-    [[ -f "${f}" ]] || continue
-    printf "  %s\n" "$(basename "${f}")"
-    found=1
+    [[ -f "${f}" && -r "${f}" ]] || continue
+    mtime="$(stat -c %Y "${f}" 2>/dev/null || true)"
+    [[ -n "${mtime}" ]] || continue
+    entries+=("${mtime}|${f}")
   done
-  if (( ! found )); then
-    echo "  (none)"
+
+  if ((${#entries[@]} == 0)); then
+    echo "(PGM) No readable sa* files in ${SA_DIR}." >&2
+    return 1
   fi
+
+  mapfile -t sorted < <(printf '%s\n' "${entries[@]}" | sort -t'|' -k1,1nr)
+
+  today_mid="$(date -d "$(date +%Y-%m-%d)" +%s)"
+  i=0
+  for entry in "${sorted[@]}"; do
+    mtime="${entry%%|*}"
+    f="${entry#*|}"
+    ymd="$(date -d "@${mtime}" +%Y.%m.%d)"
+    dow="$(date -d "@${mtime}" +%a)"
+    file_mid="$(date -d "$(date -d "@${mtime}" +%Y-%m-%d)" +%s)"
+    diff_days=$(( (file_mid - today_mid) / 86400 ))
+    rel="$(sa_day_rel_label "${diff_days}")"
+    label="$(printf '%s (%s)  %7s  [%s]' "${ymd}" "${dow}" "${rel}" "$(basename "${f}")")"
+    ((i++)) || true
+    files+=("${f}")
+    labels+=("${label}")
+    menu_args+=("${i}" "${label}")
+    if (( diff_days == 0 )); then
+      default_tag="${i}"
+    fi
+  done
+  n="${#files[@]}"
+  menu_args+=(q "Cancel")
+
+  if (( USE_DIALOG )); then
+    if ! ask_menu "Day" "Choose SAR day (from collected logs):" "${default_tag}" "${menu_args[@]}"; then
+      return 1
+    fi
+    case "${MENU_CHOICE}" in
+      q|Q) return 1 ;;
+    esac
+    if [[ "${MENU_CHOICE}" =~ ^[0-9]+$ ]] && (( MENU_CHOICE >= 1 && MENU_CHOICE <= n )); then
+      CHOSEN_SA_FILE="${files[$((MENU_CHOICE - 1))]}"
+      return 0
+    fi
+    echo "(PGM) Invalid day choice." >&2
+    return 1
+  fi
+
+  # WithoutDialog: numbered list; Enter after number (supports 10+ days).
+  echo
+  echo "Choose SAR day (from collected logs):"
+  echo
+  for ((i = 0; i < n; i++)); do
+    printf "  %2d) %s\n" "$((i + 1))" "${labels[$i]}"
+  done
+  echo "   q) Cancel"
+  echo
+  while true; do
+    printf '%s' "Choice [${default_tag}]: "
+    ans=""
+    read -r ans || true
+    ans="${ans:-${default_tag}}"
+    case "${ans}" in
+      q|Q) return 1 ;;
+    esac
+    if [[ "${ans}" =~ ^[0-9]+$ ]] && (( ans >= 1 && ans <= n )); then
+      CHOSEN_SA_FILE="${files[$((ans - 1))]}"
+      return 0
+    fi
+    echo "(PGM) Please enter 1-${n}, or q to cancel."
+  done
 }
 
 choose_and_run_report() {
@@ -722,7 +810,7 @@ choose_and_run_report() {
 
   if ! ask_menu "Time range" "Time range?" "1" \
       1 "Today (from collected logs)" \
-      2 "Specific day (saDD file)" \
+      2 "Specific day (from list)" \
       3 "Live sample (interval x count)" \
       4 "Time window today" \
       q "Quit"; then
@@ -742,17 +830,11 @@ choose_and_run_report() {
     1)
       ;;
     2)
-      list_sa_days_hint
-      day="$(date +%d)"
-      if ! ask_input "Day" "Day number (DD)" "${day}"; then
+      if ! choose_sa_day_file; then
         return 1
       fi
-      day="$(printf '%02d' "$((10#${INPUT_VALUE}))" 2>/dev/null || printf '%s' "${INPUT_VALUE}")"
-      sa_file="${SA_DIR}/sa${day}"
-      if [[ ! -f "${sa_file}" ]]; then
-        echo "(PGM) File not found: ${sa_file}" >&2
-        return 1
-      fi
+      sa_file="${CHOSEN_SA_FILE}"
+      echo "(PGM) Using ${sa_file}"
       cmd+=(-f "${sa_file}")
       ;;
     3)
