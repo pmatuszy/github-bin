@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20260811.150417 - non-root: check usable SAR history; only root is asked to enable collection
 # v. 20260811.145638 - interactive sar browser: WithDialog/WithoutDialog, colors, collection check
 #
 # sar-pgm-interactive.sh
@@ -361,27 +362,79 @@ enable_sar_collection() {
   echo "(PGM) Note: richer history appears after further collect intervals (~10 min)."
 }
 
+can_use_sar_history() {
+  # Non-root (and root): can we actually read collected sa files?
+  local f today
+  today="$(date +%d)"
+
+  if [[ ! -d "${SA_DIR}" ]]; then
+    echo "(PGM) History: SA dir missing (${SA_DIR}) — live sampling only."
+    return 1
+  fi
+  if [[ ! -r "${SA_DIR}" ]]; then
+    echo "(PGM) History: SA dir not readable (${SA_DIR}) — live sampling only."
+    return 1
+  fi
+
+  # Prefer today's file; otherwise any readable saDD
+  if [[ -f "${SA_DIR}/sa${today}" ]]; then
+    if [[ -r "${SA_DIR}/sa${today}" ]]; then
+      if env S_COLORS=never sar -u -f "${SA_DIR}/sa${today}" 1>/dev/null 2>&1; then
+        echo "(PGM) History: usable (can read ${SA_DIR}/sa${today})."
+        return 0
+      fi
+      echo "(PGM) History: sa${today} present but sar cannot read it — live sampling only."
+      return 1
+    fi
+    echo "(PGM) History: sa${today} present but not readable — live sampling only."
+    return 1
+  fi
+
+  for f in "${SA_DIR}"/sa[0-9]*; do
+    [[ -f "${f}" && -r "${f}" ]] || continue
+    if env S_COLORS=never sar -u -f "${f}" 1>/dev/null 2>&1; then
+      echo "(PGM) History: usable (can read $(basename "${f}"); today's sa${today} missing)."
+      return 0
+    fi
+  done
+
+  echo "(PGM) History: no readable sa* files in ${SA_DIR} — live sampling only."
+  return 1
+}
+
 maybe_offer_enable_collection() {
   print_collection_status
-  if collection_looks_active; then
-    echo "(PGM) SAR data collection looks active."
+
+  if is_root; then
+    if collection_looks_active; then
+      echo "(PGM) SAR data collection looks active."
+      can_use_sar_history || true
+      return 0
+    fi
+
+    echo
+    echo "(PGM) SAR data collection does not appear to be running."
+    echo "(PGM) Without it, history (today / past days) may be empty; live sampling still works."
+
+    if ask_yes_no_default_no "Enable collection" "Enable SAR data collection now?"; then
+      enable_sar_collection
+      can_use_sar_history || true
+    else
+      echo "(PGM) Continuing without enabling collection."
+      can_use_sar_history || true
+    fi
     return 0
   fi
 
+  # Non-root: never ask to enable; only report whether history is usable.
   echo
-  echo "(PGM) SAR data collection does not appear to be running."
-  echo "(PGM) Without it, history (today / past days) may be empty; live sampling still works."
-
-  if ! is_root; then
-    echo "(PGM) Not running as root — cannot enable collection."
-    return 0
-  fi
-
-  if ask_yes_no_default_no "Enable collection" "Enable SAR data collection now?"; then
-    enable_sar_collection
+  if collection_looks_active; then
+    echo "(PGM) SAR data collection looks active on this host."
   else
-    echo "(PGM) Continuing without enabling collection."
+    echo "(PGM) SAR data collection does not appear to be running on this host."
   fi
+  echo "(PGM) Not root — will not offer to enable collection."
+  can_use_sar_history || true
 }
 
 ################################################################################
