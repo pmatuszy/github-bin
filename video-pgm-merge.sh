@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
 # v. 20260805.154826 - after merge: copy GPS/dates from first chapter; FS times via touch -r
 
 # 2026.08.05 - v. 0.15.24 - post-merge: copy GPS/CreateDate/Make/Model from first chapter (exiftool); FS mtime via touch -r; title via exiftool not ffmpeg
@@ -97,6 +98,7 @@ Options:
   -u, --update         Check installed mp4_merge (SHA-256 vs GitHub releases), show
                        version if known, then prompt to install or replace (or use -y).
   -v, --version        Print script version and exit.
+  --history            Print script changelog from the header and exit.
   -y, --yes            Merge every detected multi-part group without prompts (for cron).
   --read-timeout SEC   Single-key prompt timeout in seconds (0 = wait forever).
                        Default: wait forever. Env: PGM_READ_TIMEOUT (e.g. 300).
@@ -3452,6 +3454,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     -v|--version)
       print_version_banner
+      exit 0
+      ;;
+    --history)
+      print_script_history
       exit 0
       ;;
     -u|--update)

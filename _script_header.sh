@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20260811.095711 - print_script_history: paged --history from caller changelog header
 # v. 20260731.211609 - ask before apt install (default Y, no timeout); no silent auto-install
 # v. 20260722.084451 - let scripts continue with plain banners when optional boxes or figlet installation fails
 # v. 20260716.173600 - print_version_banner uses CALLER_SCRIPT version fields
@@ -30,10 +31,11 @@
 # 2021.07.05 - v. 0.3 - added figlet displaying the current script name
 # 2020.09.15 - v. 0.2 - initial release
 # 2020.09.15 - v. 0.1 - initial release
-
+#
 # _script_header.sh
 #
 # Provide shared startup, version, dependency-check, and terminal helpers.
+# print_script_history (--history): paged dump of the caller script's header changelog.
 #
 # Contract: sourced (not executed) by sibling scripts. Enables nounset and pipefail,
 # sets LC_ALL=C, defines check_if_installed and ctrl_c, optionally installs boxes/figlet when root
@@ -141,6 +143,114 @@ print_version_banner() {
   printf '│ %-*.*s │\n' $((width - 2)) $((width - 2)) "$title"
   printf '│ %-*.*s │\n' $((width - 2)) $((width - 2)) "$verline"
   printf '└%*s┘\n' "$width" '' | tr ' ' '─'
+}
+
+# Changelog lines from the caller script header (new # v. YYYYMMDD… and old # YYYY.MM.DD - v. …).
+# Lenient: other # comments and blank lines in the preamble are skipped so mid-header
+# notes do not truncate the list; the first non-comment code line ends the scan.
+script_collect_history_lines() {
+  local script="${1:-${CALLER_SCRIPT:-}}"
+  [[ -n "$script" && -r "$script" ]] || return 1
+  awk '
+    NR == 1 && /^#!/ { next }
+    /^# v\. [0-9]{8}\.[0-9]{6}[[:space:]]*-/ {
+      sub(/^#[[:space:]]*/, "")
+      print
+      next
+    }
+    /^# [0-9]{4}\.[0-9]{2}\.[0-9]{2}[[:space:]]*-[[:space:]]*v\./ {
+      sub(/^#[[:space:]]*/, "")
+      print
+      next
+    }
+    /^#/ { next }
+    /^[[:space:]]*$/ { next }
+    { exit }
+  ' "$script"
+}
+
+script_history_page_size() {
+  local rows
+  rows="$(tput lines 2>/dev/null || true)"
+  [[ "$rows" =~ ^[0-9]+$ ]] || rows="${LINES:-24}"
+  [[ "$rows" =~ ^[0-9]+$ ]] || rows=24
+  if (( rows < 8 )); then
+    printf '%s\n' 5
+  else
+    printf '%s\n' $(( rows - 3 ))
+  fi
+}
+
+# Print caller script changelog. TTY stdout: one page at a time; More? [Y/n/q]
+# (default Y, 200s). Answers from /dev/tty (SCRIPT_HISTORY_TTY override for tests).
+# Piped stdout: full dump.
+print_script_history() {
+  local -a lines=()
+  local total page i end answer timeout=200
+  local script_name script_path tty_dev hist_tty_fd=-1
+
+  script_path="${CALLER_SCRIPT:-}"
+  [[ -n "$script_path" && -r "$script_path" ]] || script_path="${BASH_SOURCE[1]:-${BASH_SOURCE[0]}}"
+  script_name="$(basename -- "${CALLER_SCRIPT_BASENAME:-$script_path}")"
+
+  mapfile -t lines < <(script_collect_history_lines "$script_path")
+  total=${#lines[@]}
+
+  if (( total == 0 )); then
+    echo "${script_name}: no changelog entries found in header." >&2
+    return 1
+  fi
+
+  if (( total == 1 )); then
+    printf '%s changelog (1 entry):\n' "$script_name"
+  else
+    printf '%s changelog (%d entries):\n' "$script_name" "$total"
+  fi
+
+  tty_dev="${SCRIPT_HISTORY_TTY:-${LOUDNESS_HISTORY_TTY:-/dev/tty}}"
+  if [[ ! -t 1 || ! -r "$tty_dev" ]]; then
+    printf '%s\n' "${lines[@]}"
+    return 0
+  fi
+  exec {hist_tty_fd}<"$tty_dev" || {
+    printf '%s\n' "${lines[@]}"
+    return 0
+  }
+
+  page="$(script_history_page_size)"
+  i=0
+  while (( i < total )); do
+    end=$(( i + page ))
+    (( end > total )) && end=$total
+    printf '%s\n' "${lines[@]:i:end-i}"
+    i=$end
+    (( i >= total )) && break
+
+    printf '[%s] More history? [Y/n/q] (%d/%d shown): ' \
+      "$(date '+%Y.%m.%d %H:%M:%S')" "$i" "$total"
+    answer=""
+    if ! IFS= read -r -n 1 -t "$timeout" -u "$hist_tty_fd" answer; then
+      answer=Y
+    fi
+    echo
+    case "${answer^^}" in
+      Q)
+        printf '[%s] Selected: quit\n' "$(date '+%Y.%m.%d %H:%M:%S')"
+        exec {hist_tty_fd}<&-
+        return 0
+        ;;
+      N)
+        printf '[%s] Selected: no (stop)\n' "$(date '+%Y.%m.%d %H:%M:%S')"
+        exec {hist_tty_fd}<&-
+        return 0
+        ;;
+      *)
+        printf '[%s] Selected: yes (more)\n' "$(date '+%Y.%m.%d %H:%M:%S')"
+        ;;
+    esac
+  done
+  exec {hist_tty_fd}<&-
+  return 0
 }
 
 # Optional suffix for prompt timestamps; version belongs in the window title only.

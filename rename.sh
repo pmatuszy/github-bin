@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
 # v. 20260809.165749 - checksum manifests: also sha384/sha256/sha224/sha1/b2
 # v. 20260805.200257 - always print === Run settings === after mode/scope (like par2-pgm-check)
 # v. 20260805.194904 - offer to strip FastSum ';' checksum headers during normalize; verify ignores those lines
@@ -1222,7 +1223,7 @@ debug_log() {
 
 usage() {
     cat <<'EOF'
-Usage: rename.sh [-v|--verbose] [-R|--recheck-renames] [--use-db] [--fast] [--force-recheck] [--backfill-hashes md5|sha512|both] [--run-db-maintenance] [--db-maintenance auto|[full]] [--colors [yes]|no] [--mode real|[dry-run]] [--scope subdirs|[current]] [--date-placement front|[original]] [--resume-state [resume]|ask|fresh] [--wait-seconds [0]|N] [--version] [-h|--help]
+Usage: rename.sh [-v|--verbose] [-R|--recheck-renames] [--use-db] [--fast] [--force-recheck] [--backfill-hashes md5|sha512|both] [--run-db-maintenance] [--db-maintenance auto|[full]] [--colors [yes]|no] [--mode real|[dry-run]] [--scope subdirs|[current]] [--date-placement front|[original]] [--resume-state [resume]|ask|fresh] [--wait-seconds [0]|N] [--version] [--history] [-h|--help]
 
 Options:
   -v, --verbose          Show extra diagnostic output
@@ -1230,6 +1231,7 @@ Options:
                          and prompt for discrepancies with separate file/directory/run approvals.
                          With --mode dry-run, list all discrepancies without changing files.
   --version              Print a short version banner and exit
+  --history              Print script changelog from the header and exit
   --use-db               Use SQLite cache in the start directory (_rename.sh-optional-db.sqlite3). If that file or the legacy rename.sh-optional-db.sqlite3 already exists and you omit --use-db, you are prompted whether to use it (default: yes; [q] quits).
   --fast                 With --use-db, trust cached paths without checking current size/mtime
   --force-recheck        Ignore SQLite cache and recheck everything
@@ -5946,6 +5948,17 @@ while (( $# > 0 )); do
     case "$1" in
         --version)
             printf '%s\nVersion: %s\n' "${0##*/}" "$SCRIPT_VERSION"
+            exit 0
+            ;;
+        --history)
+            if [[ -f /root/bin/_script_header.sh ]]; then
+                # shellcheck source=/dev/null
+                . /root/bin/_script_header.sh NO_STARTUP_DELAY
+                print_script_history
+            else
+                echo "${0##*/}: _script_header.sh not found; cannot print history." >&2
+                exit 1
+            fi
             exit 0
             ;;
         -v|--verbose)

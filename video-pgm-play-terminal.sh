@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
 # v. 20260731.211609 - use shared apt-install prompt from _script_header (default Y, no timeout)
 # v. 20260725.151453 - ask before apt-installing missing packages; default N, 300s timeout
 # v. 20260718.180600 - restore terminal cursor/screen after mpv tct playback
@@ -31,6 +32,7 @@ Terminal video output driver (tct).
 Options:
   -h, --help           Show this help and exit.
   -v, --version        Print script version and exit.
+  --history            Print script changelog from the header and exit.
   --silent             Quiet mpv playback: no status line (e.g. Dropped: N) over
                        the video. Uses mpv --no-terminal and --profile=sw-fast.
                        Recommended for tct over SSH/PuTTY. Default unless
@@ -324,6 +326,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     -v|--version)
       print_version_banner
+      exit 0
+      ;;
+    --history)
+      print_script_history
       exit 0
       ;;
     --autodetect)

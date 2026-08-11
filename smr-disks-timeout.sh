@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
 # v. 20260716.164840 - add -h/--help, -v/--version, --no_startup_delay
 # 2020.12.03 - v.1.6 - zmiania sposobu wyswietlania (by output byl troche wezszy na ekranie)
 # 2020.12.03 - v.1.5 - added display of disk serial numbers
@@ -36,6 +37,7 @@ good reading: https://raid.wiki.kernel.org/index.php/Timeout_Mismatch
 Options:
   -h, --help           Show this help and exit.
   -v, --version        Print script version and exit.
+  --history            Print script changelog from the header and exit.
   --no_startup_delay   Skip random startup delay (recommended for cron).
 EOF
 }
@@ -54,6 +56,7 @@ while [[ $# -gt 0 ]]; do
   case $1 in
     -h|--help) show_help; exit 0 ;;
     -v|--version) print_version_banner; exit 0 ;;
+    --history) print_script_history; exit 0 ;;
     *) echo "Unknown argument: $1" >&2; echo "Try: $(basename "$0") --help" >&2; exit 1 ;;
   esac
 done

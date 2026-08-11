@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
 # v. 20260716.164840 - add -h/--help, -v/--version, --no_startup_delay
 
 # 2026.05.26 - user-facing messages translated from Polish to English
@@ -15,6 +16,7 @@ Operational script (mount-nfs-lublin-master-shares).
 Options:
   -h, --help           Show this help and exit.
   -v, --version        Print script version and exit.
+  --history            Print script changelog from the header and exit.
   --no_startup_delay   Skip random startup delay (recommended for cron).
 EOF
 }
@@ -33,6 +35,7 @@ while [[ $# -gt 0 ]]; do
   case $1 in
     -h|--help) show_help; exit 0 ;;
     -v|--version) print_version_banner; exit 0 ;;
+    --history) print_script_history; exit 0 ;;
     *) echo "Unknown argument: $1" >&2; echo "Try: $(basename "$0") --help" >&2; exit 1 ;;
   esac
 done

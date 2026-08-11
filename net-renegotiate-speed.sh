@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
 # v. 20260716.164924 - source _script_header.sh before -v (print_version_banner)
 
 # 2026.06.02 - v. 0.4 - fix --run argv order (ifaces before options); exclude wifi; verify screen session after start
@@ -32,6 +33,7 @@ Inside the screen session, for each selected interface:
 Options:
   -h, --help           Show this help and exit.
   -v, --version        Print script version and exit.
+  --history            Print script changelog from the header and exit.
   --no_startup_delay   Skip random startup delay (see _script_header.sh).
   -i IFACE             Test only this interface (must be a physical ethernet NIC).
   -t SECONDS           Ping test timeout per interface (default: 20).
@@ -100,6 +102,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     -v|--version)
       print_version_banner
+      exit 0
+      ;;
+    --history)
+      print_script_history
       exit 0
       ;;
     --no_startup_delay)

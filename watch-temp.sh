@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
 # v. 20260716.164400 - source _script_header.sh before -v (print_version_banner lives there)
 
 # 2026.06.02 - v. 0.9 - drop _script_cli.sh; inline print_version_banner in this script
@@ -27,6 +28,7 @@ Hardware-aware display:
 Options:
   -h, --help        Show this help and exit.
   -v, --version     Print script version and exit.
+  --history            Print script changelog from the header and exit.
   --no_startup_delay
                     Skip the random startup delay when run non-interactively
                     (see _script_header.sh).
@@ -58,6 +60,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     -v|--version)
       print_version_banner
+      exit 0
+      ;;
+    --history)
+      print_script_history
       exit 0
       ;;
     *)

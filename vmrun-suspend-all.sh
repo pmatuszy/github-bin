@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
 # v. 20260718.081500 - end-of-run summary: how many VMs still running
 
 # 2026.07.18 - v. 1.3 - print Total running VMs count at end (and run summary); show (none) when all suspended
@@ -24,6 +25,7 @@ Local-time prefix for interactive prompts, e.g. "(2026.07.05 17:16:00) "
 Options:
   -h, --help           Show this help and exit.
   -v, --version        Print script version and exit.
+  --history            Print script changelog from the header and exit.
   --no_startup_delay   Skip random startup delay (recommended for cron).
 EOF
 }
@@ -42,6 +44,7 @@ while [[ $# -gt 0 ]]; do
   case $1 in
     -h|--help) show_help; exit 0 ;;
     -v|--version) print_version_banner; exit 0 ;;
+    --history) print_script_history; exit 0 ;;
     *) break ;;
   esac
 done

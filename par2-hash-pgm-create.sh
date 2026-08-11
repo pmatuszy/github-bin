@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
 # v. 20260809.170555 - end with boxed RUN SUMMARY / RUN FINISHED like par2-pgm-check
 # v. 20260809.170153 - hash menu: q/Q quits immediately (no Enter)
 # v. 20260809.165517 - hash menu: detect *sum tools; numbered pick; q quits; re-ask
@@ -40,6 +41,7 @@ Order:
 Options:
   -h, --help           Show this help and exit.
   -v, --version        Print script version and exit.
+  --history            Print script changelog from the header and exit.
   --no_startup_delay   Skip random startup delay (recommended for cron).
   --hash ALG           Prefer ALG (sha512|sha384|sha256|sha224|sha1|md5|b2).
   --sha512             Prefer SHA-512 (default when available).
@@ -947,6 +949,10 @@ while [[ $# -gt 0 ]]; do
     -v|--version)
       print_version_banner
       . /root/bin/_script_footer.sh
+      exit 0
+      ;;
+    --history)
+      print_script_history
       exit 0
       ;;
     --sha512)

@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
 # v. 20260716.163224 - versioning format v. YYYYMMDD.HH24MISS
 
 # 2026.06.02 - v. 0.4 - add --no_startup_delay option (parsed before header)
@@ -44,6 +45,17 @@ while [[ $# -gt 0 ]]; do
   case $1 in
     -h|--help) show_help; exit 0 ;;
     -v|--version) print_version_line; exit 0 ;;
+    --history)
+      if [[ -f /root/bin/_script_header.sh ]]; then
+        # shellcheck source=/dev/null
+        . /root/bin/_script_header.sh NO_STARTUP_DELAY
+        print_script_history
+      else
+        echo "${0##*/}: _script_header.sh not found; cannot print history." >&2
+        exit 1
+      fi
+      exit 0
+      ;;
     --no_startup_delay) HEADER_EXTRA_ARGS+=(NO_STARTUP_DELAY); shift ;;
     *) echo "(PGM) Unknown argument: $1" >&2; echo "Try: $(basename "$0") --help" >&2; exit 1 ;;
   esac

@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
 # v. 20260719.190417 - cleanup: remove renamed pgm-update-yt-dlp.sh from bin on deploy
 # v. 20260716.184500 - accept --no_startup_delay after pull/batch (gitbdb alias)
 
@@ -29,6 +30,7 @@ Commands:
 Global options:
   -h, --help                Show this help and exit.
   -v, --version             Print script version and exit.
+  --history            Print script changelog from the header and exit.
   --no_startup_delay        Skip random startup delay (recommended for cron).
 
 Command options (reset):
@@ -478,6 +480,7 @@ while [[ $# -gt 0 ]]; do
   case $1 in
     -h|--help) show_help; exit 0 ;;
     -v|--version) print_version_banner; exit 0 ;;
+    --history) print_script_history; exit 0 ;;
     --no_startup_delay) shift ;;
     --no-deploy) no_deploy=1; shift ;;
     --offline) offline=1; shift ;;

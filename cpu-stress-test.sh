@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
 # v. 20260716.163224 - versioning format v. YYYYMMDD.HH24MISS
 
 # 2026.06.02 - v. 0.3 - inline print_version_banner (no _script_cli.sh)
@@ -15,6 +16,7 @@ Run stress-ng on all CPU cores until Ctrl-C or for DURATION_SEC seconds.
 Options:
   -h, --help           Show this help and exit.
   -v, --version        Print script version and exit.
+  --history            Print script changelog from the header and exit.
   --no_startup_delay   Skip random startup delay when run non-interactively
                        (see _script_header.sh).
 
@@ -46,6 +48,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     -v|--version)
       print_version_banner
+      exit 0
+      ;;
+    --history)
+      print_script_history
       exit 0
       ;;
     -*)

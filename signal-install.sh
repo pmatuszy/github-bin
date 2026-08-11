@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
 # v. 20260716.163224 - versioning format v. YYYYMMDD.HH24MISS
 # 2026.06.11 - v. 1.15 - Pi/JVM: hint --repair when automatic repair check passes
 # 2026.06.11 - v. 1.14 - Pi/JVM: repair prompt only when needed; default [y/N]
@@ -66,6 +67,7 @@ Linux-native tarball; on Raspberry Pi / arm builds libsignal JNI from source.
 Options:
   -h, --help           Show this help and exit.
   -v, --version        Print script version and exit.
+  --history            Print script changelog from the header and exit.
   -y, --yes            Install/update without prompting (non-interactive OK).
   -q, --quiet          Less progress output (errors still shown).
   --repair             Pi/JVM only: install Java 25+ and re-patch JNI jar from an
@@ -1414,6 +1416,7 @@ while [[ $# -gt 0 ]]; do
     case $1 in
         -h|--help) show_help; exit 0 ;;
         -v|--version) print_version_banner; exit 0 ;;
+        --history) print_script_history; exit 0 ;;
         -y|--yes) ASSUME_YES=1; shift ;;
         -q|--quiet) VERBOSE=0; shift ;;
         --repair) REPAIR_PI_ONLY=1; shift ;;

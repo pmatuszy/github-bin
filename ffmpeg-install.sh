@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
 # v. 20260716.231000 - equivalent CLI echo; --dry-run for interactive plan without build
 
 # 2026.06.23 - v. 2.1.23 - jellyfin profile: Jellyfin-like shared build (VAAPI+NVENC+FDK-AAC); common stays default
@@ -237,6 +238,7 @@ Install layout (/usr/local/bin):
 Options:
   -h, --help           Show this help and exit.
   -v, --version        Print script version and exit.
+  --history            Print script changelog from the header and exit.
   -y, --yes            Install without prompting: official source build (common
                        profile) if ffmpeg.org version is known; else static or apt.
   -q, --quiet          Less progress output (errors still shown).
@@ -4497,6 +4499,7 @@ while [[ $# -gt 0 ]]; do
     case $1 in
         -h|--help) show_help; exit 0 ;;
         -v|--version) print_version_banner; exit 0 ;;
+        --history) print_script_history; exit 0 ;;
         -y|--yes) ASSUME_YES=1; shift ;;
         -q|--quiet) VERBOSE=0; shift ;;
         --release) FFMPEG_BUILD_KIND="release"; shift ;;

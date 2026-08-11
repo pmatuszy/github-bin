@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
 # v. 20260716.163224 - versioning format v. YYYYMMDD.HH24MISS
 # 2026.07.16 - v. 1.1 - rename from sprawdz-czy-dziala-strona-www.anna.matuszyk.com.sh; add -h/-v/--no_startup_delay
 # 2025.09.12 - v  1.0 - bugfix - added to curl Uses https:// + -L to follow redirects and -4 to avoid IPv6 edge cases.
@@ -27,6 +28,7 @@ Lookup URL in healthchecks-ids.txt by script basename.
 Options:
   -h, --help           Show this help and exit.
   -v, --version        Print script version and exit.
+  --history            Print script changelog from the header and exit.
   --no_startup_delay   Skip random startup delay (recommended for cron).
 EOF
 }
@@ -45,6 +47,7 @@ while [[ $# -gt 0 ]]; do
   case $1 in
     -h|--help) show_help; exit 0 ;;
     -v|--version) print_version_banner; exit 0 ;;
+    --history) print_script_history; exit 0 ;;
     *) echo "Unknown argument: $1" >&2; echo "Try: $(basename "$0") --help" >&2; exit 1 ;;
   esac
 done

@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
 # v. 20260716.163224 - versioning format v. YYYYMMDD.HH24MISS
 # 2026.06.11 - v. 3.54 - sha512 entries: relative paths without ./ prefix (rename.sh compatible)
 # 2026.06.11 - v. 3.53 - existing pairs: require sha512 on disk; auto-backfill when only hashes missing
@@ -163,6 +164,17 @@ parse_cli_args() {
                 ;;
             -v|--version)
                 script_version
+                exit 0
+                ;;
+            --history)
+                if [[ -f /root/bin/_script_header.sh ]]; then
+                    # shellcheck source=/dev/null
+                    . /root/bin/_script_header.sh NO_STARTUP_DELAY
+                    print_script_history
+                else
+                    echo "${0##*/}: _script_header.sh not found; cannot print history." >&2
+                    exit 1
+                fi
                 exit 0
                 ;;
             --no_startup_delay)

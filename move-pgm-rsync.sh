@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
 # v. 20260810.115956 - fix bash (( )) + =~ error; robust rsync stats byte parsing
 # v. 20260806.172432 - transfer plan and result timing; dual MiB/MB GiB/GB TiB/TB size display
 # v. 20260725.182831 - boxed SUCCESS/FAILURE summary; remove empty source dirs after verified move
@@ -462,6 +463,7 @@ DESTINATION use normal rsync syntax; one is normally [user@]host:/path.
 Options:
   -h, --help             Show this help and exit.
   -v, --version          Print script version and exit.
+  --history            Print script changelog from the header and exit.
   -n, --dry-run          Show what would be transferred and removed, but change nothing.
   --bwlimit RATE         Limit bandwidth using rsync RATE syntax (for example 5000 or 10m).
                          By default no bandwidth limit is applied.
@@ -531,6 +533,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     -v|--version)
       print_version_banner
+      exit 0
+      ;;
+    --history)
+      print_script_history
       exit 0
       ;;
     -n|--dry-run)

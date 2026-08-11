@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20260811.095711 - --history uses shared print_script_history from _script_header.sh
 # v. 20260810.225413 - --history: paged changelog from header (more? default Y, 200s, q quits)
 # v. 20260808.081906 - skip MP4 mp4s/Systems tracks (Tag mp4s incompatible with codec id 0)
 # v. 20260806.204438 - per-file prompt: status/dB before filename; Selected: echo after answers
@@ -102,7 +103,7 @@
 # audio-pgm-loudness.sh
 #
 # Scan media loudness (ffmpeg volumedetect) and optionally loudnorm-normalize.
-# --history prints the header changelog (paged when the terminal is interactive).
+# --history (via _script_header.sh) prints the header changelog.
 #
 
 show_help() {
@@ -279,114 +280,6 @@ Examples:
   $(basename "$0") -n standard -- quiet_interview.mkv
   $(basename "$0") --history --no_startup_delay
 EOF
-}
-
-# Changelog lines from this script's header (new # v. YYYYMMDD… and old # YYYY.MM.DD - v. …).
-# Blank lines between the two changelog sections are skipped; description/code ends the scan.
-loudness_collect_script_history_lines() {
-  local script="${BASH_SOURCE[0]}"
-  awk '
-    NR == 1 && /^#!/ { next }
-    /^# v\. [0-9]{8}\.[0-9]{6}[[:space:]]*-/ {
-      sub(/^#[[:space:]]*/, "")
-      print
-      next
-    }
-    /^# [0-9]{4}\.[0-9]{2}\.[0-9]{2}[[:space:]]*-[[:space:]]*v\./ {
-      sub(/^#[[:space:]]*/, "")
-      print
-      next
-    }
-    /^#[[:space:]]*$/ { next }
-    /^[[:space:]]*$/ { next }
-    { exit }
-  ' "$script"
-}
-
-loudness_history_page_size() {
-  local rows
-  rows="$(tput lines 2>/dev/null || true)"
-  [[ "$rows" =~ ^[0-9]+$ ]] || rows="${LINES:-24}"
-  [[ "$rows" =~ ^[0-9]+$ ]] || rows=24
-  if (( rows < 8 )); then
-    printf '%s\n' 5
-  else
-    # Leave room for title + More? prompt.
-    printf '%s\n' $(( rows - 3 ))
-  fi
-}
-
-# Print header changelog. On a TTY, one page at a time; More? [Y/n/q] (default Y, 200s).
-print_script_history() {
-  local -a lines=()
-  local total page i end answer timeout=200
-  local script_name
-
-  script_name="$(basename -- "${BASH_SOURCE[0]}")"
-  mapfile -t lines < <(loudness_collect_script_history_lines)
-  total=${#lines[@]}
-
-  if (( total == 0 )); then
-    echo "${script_name}: no changelog entries found in header." >&2
-    return 1
-  fi
-
-  if (( total == 1 )); then
-    printf '%s changelog (1 entry):\n' "$script_name"
-  else
-    printf '%s changelog (%d entries):\n' "$script_name" "$total"
-  fi
-
-  # Piped/redirected stdout: dump everything. Answers are read from /dev/tty
-  # (like more(1)) so a redirected stdin still pages on a real terminal.
-  # LOUDNESS_HISTORY_TTY overrides the answer device (tests).
-  local tty_dev="${LOUDNESS_HISTORY_TTY:-/dev/tty}"
-  local hist_tty_fd=-1
-  if [[ ! -t 1 || ! -r "$tty_dev" ]]; then
-    printf '%s\n' "${lines[@]}"
-    return 0
-  fi
-  # Keep one FD open so sequential answers work (file harness and /dev/tty).
-  exec {hist_tty_fd}<"$tty_dev" || {
-    printf '%s\n' "${lines[@]}"
-    return 0
-  }
-
-  page="$(loudness_history_page_size)"
-  i=0
-  while (( i < total )); do
-    end=$(( i + page ))
-    (( end > total )) && end=$total
-    printf '%s\n' "${lines[@]:i:end-i}"
-    i=$end
-    (( i >= total )) && break
-
-    # Prompt on stdout (with the changelog); read the key from the tty FD only.
-    printf '[%s] More history? [Y/n/q] (%d/%d shown): ' \
-      "$(date '+%Y.%m.%d %H:%M:%S')" "$i" "$total"
-    answer=""
-    if ! IFS= read -r -n 1 -t "$timeout" -u "$hist_tty_fd" answer; then
-      answer=Y
-    fi
-    echo
-    case "${answer^^}" in
-      Q)
-        printf '[%s] Selected: quit\n' "$(date '+%Y.%m.%d %H:%M:%S')"
-        exec {hist_tty_fd}<&-
-        return 0
-        ;;
-      N)
-        printf '[%s] Selected: no (stop)\n' "$(date '+%Y.%m.%d %H:%M:%S')"
-        exec {hist_tty_fd}<&-
-        return 0
-        ;;
-      *)
-        printf '[%s] Selected: yes (more)\n' "$(date '+%Y.%m.%d %H:%M:%S')"
-        ;;
-    esac
-  done
-  exec {hist_tty_fd}<&-
-  return 0
 }
 
 LOUDNESS_INVOCATION_CWD="$(pwd -P 2>/dev/null || pwd)"

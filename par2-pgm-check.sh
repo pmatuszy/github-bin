@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
 # v. 20260809.231400 - clearer optional prompt: verify PAR2 archive(s) vs hash file
 # v. 20260809.165517 - hash manifests: also sha384/sha224/sha1/b2
 # v. 20260809.164003 - regenerate -b: enough blocks so -r% ≈ data size (not file-count)
@@ -133,6 +134,7 @@ Usage: $(basename "$0") [-h|--help] [-v|--version] [--no_startup_delay] [path] [
 Options:
   -h, --help           Show this help and exit.
   -v, --version        Print script version and exit.
+  --history            Print script changelog from the header and exit.
   --no_startup_delay   Skip random startup delay (recommended for cron).
   --scope subdirs|current
                        subdirs: start directory and all subdirectories (default)
@@ -3946,6 +3948,10 @@ while [[ $# -gt 0 ]]; do
         -v|--version)
             print_version_banner
             . /root/bin/_script_footer.sh
+            exit 0
+            ;;
+        --history)
+            print_script_history
             exit 0
             ;;
         --repair)

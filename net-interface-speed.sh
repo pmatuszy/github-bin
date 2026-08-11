@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
 # v. 20260716.164924 - source _script_header.sh before -v (print_version_banner)
 
 # 2026.06.02 - v. 0.2 - table: compute column widths from all rows (incl. long speed labels); align all four columns
@@ -27,6 +28,7 @@ Columns:
 Options:
   -h, --help           Show this help and exit.
   -v, --version        Print script version and exit.
+  --history            Print script changelog from the header and exit.
   --no_startup_delay   Skip random startup delay when run non-interactively
                        (see _script_header.sh).
 EOF
@@ -54,6 +56,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     -v|--version)
       print_version_banner
+      exit 0
+      ;;
+    --history)
+      print_script_history
       exit 0
       ;;
     *)

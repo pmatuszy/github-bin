@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
 # v. 20260716.163224 - versioning format v. YYYYMMDD.HH24MISS
 
 # 2026.06.02 - v. 0.4 - add --no_startup_delay option (parsed before header)
@@ -66,6 +67,17 @@ EOF
         printf '%s version %s (%s)\n' "$(basename "$0")" "$_ds_ver" "$_ds_date"
       else
         printf '%s version %s\n' "$(basename "$0")" "$_ds_ver"
+      fi
+      exit 0
+      ;;
+    --history)
+      if [[ -f /root/bin/_script_header.sh ]]; then
+        # shellcheck source=/dev/null
+        . /root/bin/_script_header.sh NO_STARTUP_DELAY
+        print_script_history
+      else
+        echo "${0##*/}: _script_header.sh not found; cannot print history." >&2
+        exit 1
       fi
       exit 0
       ;;

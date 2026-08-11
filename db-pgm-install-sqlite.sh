@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
 # v. 20260716.163224 - versioning format v. YYYYMMDD.HH24MISS
 # 2026.06.18 - v. 1.5 - fix URI probe: SQLite 3.53+ has no -uri flag (URI via FILENAME / sqlite3_config)
 # 2026.06.16 - v. 1.4 - prompt before source compile; verify gcc/make/tar prereqs with apt hint
@@ -55,6 +56,7 @@ Install SQLite CLI with -uri / ?nolock=1 support into /usr/local/bin (root requi
 Options:
   -y, --yes              Proceed without interactive prompts (includes compile if needed)
   --version X.Y.Z        Install this release (default: latest from sqlite.org)
+  --history              Print this script's changelog and exit
   -h, --help             Show this help
 
 Source compile (when official zip lacks -uri) needs: gcc or cc, make, sed, tar, gzip.
@@ -616,6 +618,17 @@ parse_args() {
                 [[ $# -ge 2 ]] || { echo "Missing value for --version" >&2; usage >&2; exit 1; }
                 CLI_PIN_VERSION="$2"
                 shift 2
+                ;;
+            --history)
+                if [[ -f /root/bin/_script_header.sh ]]; then
+                    # shellcheck source=/dev/null
+                    . /root/bin/_script_header.sh NO_STARTUP_DELAY
+                    print_script_history
+                else
+                    echo "${0##*/}: _script_header.sh not found; cannot print history." >&2
+                    exit 1
+                fi
+                exit 0
                 ;;
             -h|--help)
                 usage

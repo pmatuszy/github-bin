@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
 # v. 20260716.164924 - source _script_header.sh before -v (print_version_banner)
 
 # 2026.06.18 - v. 0.8 - show resolved script version after startup banner (PuTTY / interactive)
@@ -29,6 +30,7 @@ Sensor selection:
 Options:
   -h, --help        Show this help and exit.
   -v, --version     Print script version and exit.
+  --history            Print script changelog from the header and exit.
   --no_startup_delay
                     Skip the random startup delay when run non-interactively
                     (see _script_header.sh).
@@ -57,6 +59,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     -v|--version)
       print_version_banner
+      exit 0
+      ;;
+    --history)
+      print_script_history
       exit 0
       ;;
     *)

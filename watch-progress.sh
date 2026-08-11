@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
 # v. 20260716.164400 - -v via _script_header.sh print_version_banner; standard CLI parse
 
 # 2026.04.21 - v. 0.9 - help text includes usage examples
@@ -68,6 +69,11 @@ while [[ $# -gt 0 ]]; do
     -v|--version)
       . /root/bin/_script_header.sh NO_STARTUP_DELAY
       print_version_banner
+      exit 0
+      ;;
+    --history)
+      . /root/bin/_script_header.sh NO_STARTUP_DELAY
+      print_script_history
       exit 0
       ;;
     --) shift; CLI_ARGS+=("$@"); break ;;

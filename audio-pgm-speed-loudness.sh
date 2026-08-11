@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
 # v. 20260810.194016 - add -f/--format (flac|mp3|m4a|aac); warn when cover present but format cannot embed
 # v. 20260810.190038 - summary: file sizes + move totals after per-file before/after block
 # v. 20260810.184417 - clarify duration-saved percent as "N% shorter than input"
@@ -92,6 +93,7 @@ Required tools: ffmpeg, rename (perl File::Rename style), rar.
 Options:
   -h, --help            Show this help and exit.
   -v, --version         Print script version and exit.
+  --history            Print script changelog from the header and exit.
   --no_startup_delay    Skip random startup delay (see _script_header.sh).
   -f, --format FORMAT   Output format: aac | m4a | mp3 | flac
                         (default: aac, or m4a when embedding a cover)
@@ -128,6 +130,17 @@ while [[ $# -gt 0 ]]; do
         print_version_banner
       else
         head -n1 "$0"
+      fi
+      exit 0
+      ;;
+    --history)
+      if [[ -f /root/bin/_script_header.sh ]]; then
+        # shellcheck source=/dev/null
+        . /root/bin/_script_header.sh NO_STARTUP_DELAY
+        print_script_history
+      else
+        echo "${0##*/}: _script_header.sh not found; cannot print history." >&2
+        exit 1
       fi
       exit 0
       ;;
