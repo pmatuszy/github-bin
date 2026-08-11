@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20260811.230009 - day list: ASCII prompt (no Unicode dash); align relative day column
 # v. 20260811.225554 - after specific-day report return to day list; title shows SA path + count
 # v. 20260811.225430 - day list: show SA dir path + file count; menu height lists all (scroll)
 # v. 20260811.224531 - specific day: pick from sa* list (YYYY.MM.DD, weekday, days ago)
@@ -702,16 +703,9 @@ normalize_time() {
   fi
 }
 
-# Relative day label: 0 days, -1 day, -2 days, ...
+# Relative day label: always "days" so column width stays aligned (-1 days vs -2 days).
 sa_day_rel_label() {
-  local diff="$1"
-  if (( diff == 0 )); then
-    printf '0 days'
-  elif (( diff == -1 || diff == 1 )); then
-    printf '%d day' "${diff}"
-  else
-    printf '%d days' "${diff}"
-  fi
+  printf '%d days' "$1"
 }
 
 # Build CHOSEN_SA_FILE from an interactive list of existing sa* files.
@@ -754,7 +748,7 @@ choose_sa_day_file() {
     file_mid="$(date -d "$(date -d "@${mtime}" +%Y-%m-%d)" +%s)"
     diff_days=$(( (file_mid - today_mid) / 86400 ))
     rel="$(sa_day_rel_label "${diff_days}")"
-    label="$(printf '%s (%s)  %7s  [%s]' "${ymd}" "${dow}" "${rel}" "$(basename "${f}")")"
+    label="$(printf '%s (%s)  %8s  [%s]' "${ymd}" "${dow}" "${rel}" "$(basename "${f}")")"
     ((i++)) || true
     files+=("${f}")
     labels+=("${label}")
@@ -770,7 +764,8 @@ choose_sa_day_file() {
   menu_args+=(q "Cancel / back")
   menu_h=$((n + 1))
   title="Day: ${SA_DIR}"
-  prompt="Choose SAR day — ${n} file(s) in ${SA_DIR} (arrows scroll):"
+  # ASCII only in dialog text (Unicode dashes become garbage like ~@~T)
+  prompt="Choose SAR day - ${n} file(s) in ${SA_DIR} (arrows scroll):"
 
   if (( USE_DIALOG )); then
     tmp="$(mktemp)"
