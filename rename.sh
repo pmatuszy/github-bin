@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# v. 20260811.222437 - checksum recovery: strip '_.' before ext in normalize; accept same-rules path even if nested list hash drifted
 # v. 20260811.213354 - checksum refs: treat '\' like '/' so Windows paths recover under renamed subdirs
 # v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
 # v. 20260809.165749 - checksum manifests: also sha384/sha256/sha224/sha1/b2
@@ -36,6 +37,7 @@
 # v. 20260721.132007 - Samsung timestamp media: preserve optional numeric sorting prefix when appending make/model
 # v. 20260721.112812 - GoPro camera labels: GoPro_Hero4_Silver style (not GOPRO4_SILVER)
 
+# 2026.08.11 - v. 19.299.222437 - checksum recovery: normalize strips '_.' before extension (dotted-date early path left '_…_.ext'); accept unique same-rules path when nested .sha512 content hash drifted
 # 2026.08.11 - v. 19.298.213354 - checksum missing-ref recovery: normalize '\' to '/' (Windows lists) so renamed subdir+file are found
 # 2026.08.11 - v. 19.297.095711 - add --history (paged changelog via _script_header.sh print_script_history)
 # 2026.08.09 - v. 19.297.165749 - Treat .sha384/.sha256/.sha224/.sha1/.b2 like .md5/.sha512 checksum manifests
@@ -10306,6 +10308,8 @@ _normalize_basename_separators() {
     local input="$1"
     local preserve="${2-}"
     input="$(_transform_basename_unicode_dashes_to_hyphen "$input")"
+    # s/_\././g matters when this runs on a full "stem.ext" (dotted-date early return):
+    # "(title).ext" → "_title_.ext" and s/_+$// cannot strip the '_' before the dot.
     if [[ "$preserve" == preserve-leading-underscore ]]; then
         printf '%s' "$input" | sed -E '
             s/[[:space:]]+/_/g;
@@ -10320,6 +10324,7 @@ _normalize_basename_separators() {
             s/\}+/_/g;
             s/"|'\''/_/g;
             s/_+/_/g;
+            s/_\././g;
             s/_+$//;
         '
     else
@@ -10336,6 +10341,7 @@ _normalize_basename_separators() {
             s/\}+/_/g;
             s/"|'\''/_/g;
             s/_+/_/g;
+            s/_\././g;
             s/^_+//;
             s/_+$//;
         '
@@ -14650,21 +14656,23 @@ find_best_path_for_missing_ref() {
         return 2
     fi
     if ((_seg_rc == 0)) && [[ -n "$rebuilt" ]] && [[ -f "$rebuilt" ]]; then
+        # Same-rules path is unique by construction. Accept even when the stored hash no longer
+        # matches (common for nested .sha512/.md5 lists whose content was updated after the parent
+        # list was written). Later verify can refresh the parent hash via [U].
         vlog "Per-segment basename-transform recovery candidate: '$rebuilt'"
         if [[ -n "$expected_hash" ]]; then
             rebuilt_hash="$(checksum_of_file "$kind" "$rebuilt")"
             vlog "Per-segment candidate has $kind=$rebuilt_hash"
             if [[ "${rebuilt_hash,,}" == "${expected_hash,,}" ]]; then
                 vlog "Per-segment basename-transform recovery checksum matches"
-                printf '%s' "$rebuilt"
-                return 0
+            else
+                vlog "Per-segment basename-transform recovery: path exists under same rules; accepting despite checksum mismatch (nested list content may have changed)"
             fi
-            vlog "Per-segment basename-transform recovery checksum does not match"
         else
             vlog "Per-segment basename-transform recovery accepted (no expected hash available)"
-            printf '%s' "$rebuilt"
-            return 0
         fi
+        printf '%s' "$rebuilt"
+        return 0
     fi
 
     if [[ -n "$expected_hash" ]]; then
@@ -16460,7 +16468,7 @@ for f in "${ordered_paths[@]}"; do
                 checksum_content_modified=yes
                 print_recovery_success_verbose "$ref" "$found_ref" "$replacement_ref"
                 print_recovery_final_status_verbose "$ref" "success"
-                emit_wrap_labeled_stdout "${label} RECOVERY CANDIDATE VERIFIED: " "${CYAN}${label} RECOVERY CANDIDATE VERIFIED:${RESET} " "'$found_ref' matches the stored ${label,,}."
+                emit_wrap_labeled_stdout "${label} RECOVERY CANDIDATE FOUND: " "${CYAN}${label} RECOVERY CANDIDATE FOUND:${RESET} " "'$found_ref' (hash will be checked in normal processing)."
             else
                 vlog "Recovery failed for '$ref'"
                 print_recovery_final_status_verbose "$ref" "failed"
