@@ -1,4 +1,6 @@
 #!/bin/bash
+# v. 20260811.151030 - nicer WithDialog look: dialogrc colors/shadows, PuTTY-safe line drawing
+# v. 20260811.150911 - pause after sar output so dialog does not wipe the report immediately
 # v. 20260811.150417 - non-root: check usable SAR history; only root is asked to enable collection
 # v. 20260811.145638 - interactive sar browser: WithDialog/WithoutDialog, colors, collection check
 #
@@ -19,6 +21,10 @@ UI modes:
   WithoutDialog  — plain questions (default mode)
 
 Always starts without the random cron startup delay.
+
+WithDialog appearance uses a private dialogrc (colors + shadows) and
+NCURSES_NO_UTF8_ACS=1 so frames render better in PuTTY. If boxes still look
+wrong, run:  SAR_DIALOG_ASCII_LINES=1 $(basename "$0")
 
 Options:
   -h, --help     Show this help and exit.
@@ -48,10 +54,75 @@ USE_DIALOG=0
 S_COLORS_VALUE=never
 SAR_OPTS=()
 SA_DIR=""
+DIALOG_RC_FILE=""
 
 ################################################################################
 # Helpers
 ################################################################################
+
+cleanup_dialog_rc() {
+  if [[ -n "${DIALOG_RC_FILE:-}" && -f "${DIALOG_RC_FILE}" ]]; then
+    rm -f "${DIALOG_RC_FILE}"
+  fi
+}
+
+setup_dialog_look() {
+  # Colors + shadows via a private dialogrc; fix broken frames in PuTTY/SSH.
+  DIALOG_RC_FILE="$(mktemp "${TMPDIR:-/tmp}/sar-pgm-dialogrc.XXXXXX")"
+  cat > "${DIALOG_RC_FILE}" <<'EOF'
+# Temporary dialogrc for sar-pgm-interactive.sh
+aspect = 0
+separate_widget = ""
+tab_len = 0
+visit_items = ON
+use_shadow = ON
+use_colors = ON
+screen_color = (CYAN,BLACK,ON)
+shadow_color = (BLACK,BLACK,ON)
+dialog_color = (BLACK,WHITE,OFF)
+title_color = (BLUE,WHITE,ON)
+border_color = (WHITE,WHITE,ON)
+border2_color = border_color
+button_active_color = (WHITE,BLUE,ON)
+button_inactive_color = (BLACK,WHITE,OFF)
+button_key_active_color = (WHITE,BLUE,ON)
+button_key_inactive_color = (RED,WHITE,OFF)
+button_label_active_color = (YELLOW,BLUE,ON)
+button_label_inactive_color = (BLACK,WHITE,ON)
+inputbox_color = dialog_color
+inputbox_border_color = border_color
+inputbox_border2_color = border_color
+menubox_color = dialog_color
+menubox_border_color = border_color
+menubox_border2_color = border_color
+item_color = dialog_color
+item_selected_color = button_active_color
+tag_color = (BLUE,WHITE,ON)
+tag_selected_color = (WHITE,BLUE,ON)
+tag_key_color = (RED,WHITE,OFF)
+tag_key_selected_color = (YELLOW,BLUE,ON)
+form_active_text_color = button_active_color
+form_text_color = dialog_color
+form_item_readonly_color = (CYAN,WHITE,ON)
+gauge_color = (BLUE,WHITE,ON)
+EOF
+  export DIALOGRC="${DIALOG_RC_FILE}"
+  # PuTTY + UTF-8 often breaks ACS frames; prefer Unicode box-drawing chars
+  export NCURSES_NO_UTF8_ACS=1
+  export DIALOGOPTS="--backtitle sar-pgm-interactive.sh --shadow"
+  trap cleanup_dialog_rc EXIT
+}
+
+run_dialog() {
+  # Single entry point so look/options stay consistent.
+  # --ascii-lines is a fallback only when Unicode frames still look wrong:
+  # set SAR_DIALOG_ASCII_LINES=1 to force ASCII + - | frames.
+  if [[ "${SAR_DIALOG_ASCII_LINES:-0}" == "1" ]]; then
+    dialog --ascii-lines "$@"
+  else
+    dialog "$@"
+  fi
+}
 
 is_root() {
   [ "$(id -u)" -eq 0 ]
@@ -82,7 +153,7 @@ dialog_yesno_default_no() {
   # Returns 0=yes, 1=no/cancel.
   local title="$1"
   local text="$2"
-  dialog --title "${title}" --defaultno --yesno "${text}" 10 60
+  run_dialog --title "${title}" --defaultno --yesno "${text}" 10 60
 }
 
 ask_yes_no_default_no() {
@@ -138,7 +209,7 @@ dialog_menu() {
   local tmp rc
   tmp="$(mktemp)"
   # dialog --menu text height width menu-height tag item ...
-  if dialog --title "${title}" --default-item "${default_tag}" --menu "${prompt}" 0 0 0 "$@" 2>"${tmp}"; then
+  if run_dialog --title "${title}" --default-item "${default_tag}" --menu "${prompt}" 0 0 0 "$@" 2>"${tmp}"; then
     DIALOG_MENU_CHOICE="$(cat "${tmp}")"
     rm -f "${tmp}"
     return 0
@@ -176,7 +247,7 @@ ask_input() {
   local tmp ans
   if (( USE_DIALOG )); then
     tmp="$(mktemp)"
-    if dialog --title "${title}" --inputbox "${prompt}" 10 60 "${default}" 2>"${tmp}"; then
+    if run_dialog --title "${title}" --inputbox "${prompt}" 10 60 "${default}" 2>"${tmp}"; then
       INPUT_VALUE="$(cat "${tmp}")"
       rm -f "${tmp}"
       INPUT_VALUE="${INPUT_VALUE:-${default}}"
@@ -215,7 +286,9 @@ ensure_dialog_if_needed() {
     return 0
   fi
   if type -fP dialog &>/dev/null; then
-    echo "(PGM) Using WithDialog."
+    setup_dialog_look
+    echo "(PGM) Using WithDialog (colors/shadows; PuTTY-safe frames)."
+    echo "(PGM) If frames still look wrong: SAR_DIALOG_ASCII_LINES=1 $0"
     return 0
   fi
 
@@ -244,7 +317,9 @@ ensure_dialog_if_needed() {
   fi
 
   if type -fP dialog &>/dev/null; then
-    echo "(PGM) Continuing with WithDialog."
+    setup_dialog_look
+    echo "(PGM) Continuing with WithDialog (colors/shadows; PuTTY-safe frames)."
+    echo "(PGM) If frames still look wrong: SAR_DIALOG_ASCII_LINES=1 $0"
     USE_DIALOG=1
   else
     echo "(PGM) dialog still unavailable — falling back to WithoutDialog."
@@ -566,7 +641,15 @@ choose_and_run_report() {
   if (( rc != 0 )); then
     echo "(PGM) sar exited with status ${rc}." >&2
   fi
+  # dialog redraws the whole screen; wait so the user can read sar output first
+  pause_to_read_report
   return 0
+}
+
+pause_to_read_report() {
+  local _ans=""
+  echo
+  read -r -p "(PGM) Press Enter to continue..." _ans || true
 }
 
 ################################################################################
