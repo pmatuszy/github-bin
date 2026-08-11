@@ -1,4 +1,6 @@
 #!/bin/bash
+# v. 20260811.164425 - statistics menu: c color toggle only (no dashed separator row)
+# v. 20260811.164149 - statistics menu: dashed separator + c color toggle (ON/OFF)
 # v. 20260811.163640 - always use ASCII dialog borders (--ascii-lines); drop frame auto-detect
 # v. 20260811.163343 - auto ASCII dialog frames when TERM/UTF-8 ACS likely broken; optional frame check
 # v. 20260811.160740 - page long history reports with less (else more); live samples stay unpaged
@@ -618,30 +620,64 @@ maybe_offer_enable_collection() {
 # Stats + time range + run
 ################################################################################
 
-choose_stat_type() {
-  if ! ask_menu "Statistics" "What would you like to see?" "1" \
-      1 "CPU utilization (sar -u)" \
-      2 "Memory (sar -r)" \
-      3 "Swap (sar -S)" \
-      4 "Disk I/O per device (sar -d -p)" \
-      5 "Block I/O totals (sar -b)" \
-      6 "Network interfaces (sar -n DEV)" \
-      7 "Load / run queue (sar -q)" \
-      q "Quit"; then
-    return 1
+colors_menu_label() {
+  if [[ "${S_COLORS_VALUE}" == "never" ]]; then
+    printf '%s' "Colors: OFF (toggle to enable)"
+  else
+    printf '%s' "Colors: ON  (toggle to disable)"
   fi
-  case "${MENU_CHOICE}" in
-    q|Q) return 1 ;;
-    1) SAR_OPTS=(-u) ;;
-    2) SAR_OPTS=(-r) ;;
-    3) SAR_OPTS=(-S) ;;
-    4) SAR_OPTS=(-d -p) ;;
-    5) SAR_OPTS=(-b) ;;
-    6) SAR_OPTS=(-n DEV) ;;
-    7) SAR_OPTS=(-q) ;;
-    *) echo "(PGM) Invalid choice."; return 1 ;;
-  esac
-  return 0
+}
+
+toggle_sar_colors() {
+  if [[ "${S_COLORS_VALUE}" == "never" ]]; then
+    S_COLORS_VALUE=auto
+    echo "(PGM) Colors: on (S_COLORS=auto)."
+  else
+    S_COLORS_VALUE=never
+    echo "(PGM) Colors: off (S_COLORS=never)."
+  fi
+  export S_COLORS="${S_COLORS_VALUE}"
+}
+
+choose_stat_type() {
+  local default_tag=1
+  local color_lbl
+  while true; do
+    color_lbl="$(colors_menu_label)"
+    if ! ask_menu "Statistics" "What would you like to see?" "${default_tag}" \
+        1 "CPU utilization (sar -u)" \
+        2 "Memory (sar -r)" \
+        3 "Swap (sar -S)" \
+        4 "Disk I/O per device (sar -d -p)" \
+        5 "Block I/O totals (sar -b)" \
+        6 "Network interfaces (sar -n DEV)" \
+        7 "Load / run queue (sar -q)" \
+        c "${color_lbl}" \
+        q "Quit"; then
+      return 1
+    fi
+    case "${MENU_CHOICE}" in
+      c|C)
+        toggle_sar_colors
+        default_tag=c
+        continue
+        ;;
+      q|Q) return 1 ;;
+      1) SAR_OPTS=(-u) ;;
+      2) SAR_OPTS=(-r) ;;
+      3) SAR_OPTS=(-S) ;;
+      4) SAR_OPTS=(-d -p) ;;
+      5) SAR_OPTS=(-b) ;;
+      6) SAR_OPTS=(-n DEV) ;;
+      7) SAR_OPTS=(-q) ;;
+      *)
+        echo "(PGM) Invalid choice."
+        default_tag=1
+        continue
+        ;;
+    esac
+    return 0
+  done
 }
 
 normalize_time() {
