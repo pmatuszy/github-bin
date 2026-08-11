@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20260811.151804 - run sar with S_COLORS=... prefix; avoid shadowed env shell function
 # v. 20260811.151030 - nicer WithDialog look: dialogrc colors/shadows, PuTTY-safe line drawing
 # v. 20260811.150911 - pause after sar output so dialog does not wipe the report immediately
 # v. 20260811.150417 - non-root: check usable SAR history; only root is asked to enable collection
@@ -454,7 +455,7 @@ can_use_sar_history() {
   # Prefer today's file; otherwise any readable saDD
   if [[ -f "${SA_DIR}/sa${today}" ]]; then
     if [[ -r "${SA_DIR}/sa${today}" ]]; then
-      if env S_COLORS=never sar -u -f "${SA_DIR}/sa${today}" 1>/dev/null 2>&1; then
+      if S_COLORS=never sar -u -f "${SA_DIR}/sa${today}" 1>/dev/null 2>&1; then
         echo "(PGM) History: usable (can read ${SA_DIR}/sa${today})."
         return 0
       fi
@@ -467,7 +468,7 @@ can_use_sar_history() {
 
   for f in "${SA_DIR}"/sa[0-9]*; do
     [[ -f "${f}" && -r "${f}" ]] || continue
-    if env S_COLORS=never sar -u -f "${f}" 1>/dev/null 2>&1; then
+    if S_COLORS=never sar -u -f "${f}" 1>/dev/null 2>&1; then
       echo "(PGM) History: usable (can read $(basename "${f}"); today's sa${today} missing)."
       return 0
     fi
@@ -582,7 +583,7 @@ choose_and_run_report() {
   fi
   mode="${MENU_CHOICE}"
 
-  cmd=(env "S_COLORS=${S_COLORS_VALUE}" sar "${SAR_OPTS[@]}")
+  cmd=(sar "${SAR_OPTS[@]}")
 
   case "${mode}" in
     1)
@@ -629,13 +630,16 @@ choose_and_run_report() {
 
   echo
   echo "(PGM) Running:"
-  printf '  '; printf '%q ' "${cmd[@]}"; echo
+  printf '  S_COLORS=%q ' "${S_COLORS_VALUE}"
+  printf '%q ' "${cmd[@]}"
+  echo
   echo
   # Leave dialog screen; show sar on the real terminal
   if (( USE_DIALOG )); then
     clear
   fi
-  "${cmd[@]}"
+  # Do not use "env VAR=val cmd" — a shell function named env may shadow /usr/bin/env
+  S_COLORS="${S_COLORS_VALUE}" "${cmd[@]}"
   local rc=$?
   echo
   if (( rc != 0 )); then
