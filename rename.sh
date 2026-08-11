@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# v. 20260811.213354 - checksum refs: treat '\' like '/' so Windows paths recover under renamed subdirs
 # v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
 # v. 20260809.165749 - checksum manifests: also sha384/sha256/sha224/sha1/b2
 # v. 20260805.200257 - always print === Run settings === after mode/scope (like par2-pgm-check)
@@ -35,6 +36,8 @@
 # v. 20260721.132007 - Samsung timestamp media: preserve optional numeric sorting prefix when appending make/model
 # v. 20260721.112812 - GoPro camera labels: GoPro_Hero4_Silver style (not GOPRO4_SILVER)
 
+# 2026.08.11 - v. 19.298.213354 - checksum missing-ref recovery: normalize '\' to '/' (Windows lists) so renamed subdir+file are found
+# 2026.08.11 - v. 19.297.095711 - add --history (paged changelog via _script_header.sh print_script_history)
 # 2026.08.09 - v. 19.297.165749 - Treat .sha384/.sha256/.sha224/.sha1/.b2 like .md5/.sha512 checksum manifests
 # 2026.08.05 - v. 19.296.200257 - always show === Run settings === after prompts (mode/scope/db/exif/resume/start dir)
 # 2026.08.05 - v. 19.295.194904 - checksum normalize: prompt to strip FastSum ; comment headers; md5sum -c uses entry lines only
@@ -14372,11 +14375,18 @@ perform_plain_entry_rename() {
     return 0
 }
 
+# FastSum/Windows checksum lists often use '\' path separators; Linux basename/dirname/find only split on '/'.
+checksum_ref_normalize_separators() {
+    local r="$1"
+    printf '%s' "${r//\\//}"
+}
+
 resolve_checksum_ref_path() {
     local sum_file="$1"
     local ref="$2"
     local sum_dir candidate
 
+    ref="$(checksum_ref_normalize_separators "$ref")"
     sum_dir="$(dirname -- "$sum_file")"
 
     if [[ "$ref" == /* ]]; then
@@ -14488,6 +14498,8 @@ build_recovery_file_index() {
 # Strip leading ./ then compare: print path of fullpath relative to root (no leading slash). Exit 1 if fullpath is not under root.
 relative_path_under_dir_for_recovery() {
     local root="$1" fullpath="$2"
+    fullpath="$(checksum_ref_normalize_separators "$fullpath")"
+    root="$(checksum_ref_normalize_separators "$root")"
     fullpath="${fullpath#./}"
     root="${root#./}"
     root="${root%/}"
@@ -14513,6 +14525,8 @@ checksum_rebuilt_ref_path_by_segments() {
     local missing_ref="$2"
     local rel OIFS parts p t out tb_rc _cr_save_e=0
 
+    missing_ref="$(checksum_ref_normalize_separators "$missing_ref")"
+    search_root="$(checksum_ref_normalize_separators "$search_root")"
     rel="$(relative_path_under_dir_for_recovery "$search_root" "$missing_ref")" || return 1
     [[ -n "$rel" ]] || return 1
 
@@ -14553,6 +14567,9 @@ find_best_path_for_missing_ref() {
     local candidate candidate_hash candidate_name indexed_candidates index_key all_candidates
     local -a candidate_names=()
     local rebuilt rebuilt_hash _wn_save_e _wn_rc _seg_save_e _seg_rc
+
+    # Windows '\' must become '/' before basename/dirname or name recovery looks for the wrong string.
+    missing_ref="$(checksum_ref_normalize_separators "$missing_ref")"
 
     kind="$(checksum_kind "$sum_file")"
     wanted_base="$(basename -- "$missing_ref")"
