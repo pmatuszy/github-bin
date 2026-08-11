@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20260811.152232 - after report return to main menu; single-key pause (no Enter / no "again?" ask)
 # v. 20260811.151804 - run sar with S_COLORS=... prefix; avoid shadowed env shell function
 # v. 20260811.151030 - nicer WithDialog look: dialogrc colors/shadows, PuTTY-safe line drawing
 # v. 20260811.150911 - pause after sar output so dialog does not wipe the report immediately
@@ -653,7 +654,10 @@ choose_and_run_report() {
 pause_to_read_report() {
   local _ans=""
   echo
-  read -r -p "(PGM) Press Enter to continue..." _ans || true
+  printf '%s' "(PGM) Press any key to continue..."
+  # -n 1: one character; no Enter needed (-s: do not echo the key)
+  read -r -n 1 -s _ans || true
+  echo
 }
 
 ################################################################################
@@ -672,10 +676,7 @@ while true; do
     break
   fi
   choose_and_run_report || true
-  if ! ask_yes_no_default_no "Again" "Another report?"; then
-    echo "(PGM) Done."
-    break
-  fi
+  # After the report + key pause, return to the main statistics menu
 done
 
 . /root/bin/_script_footer.sh
