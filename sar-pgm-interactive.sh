@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20260811.160740 - page long history reports with less (else more); live samples stay unpaged
 # v. 20260811.155854 - WithoutDialog menus: single-key choice; time range has q to quit
 # v. 20260811.155244 - Ctrl-C during any-key pause returns to menu immediately (no second key)
 # v. 20260811.154553 - colors prompt defaults to Y (S_COLORS=auto)
@@ -35,6 +36,9 @@ Always starts without the random cron startup delay.
 
 Ctrl-C while a report is running cancels that report and returns to the
 statistics menu (choose q to quit). Ctrl-C outside a report exits.
+
+History / time-window reports are paged with less if available, otherwise more.
+Live samples are not paged (they stream to the terminal).
 
 WithDialog appearance uses a private dialogrc (colors + shadows) and
 NCURSES_NO_UTF8_ACS=1 so frames render better in PuTTY. If boxes still look
@@ -678,6 +682,8 @@ list_sa_days_hint() {
 
 choose_and_run_report() {
   local mode day start_t end_t interval count sa_file
+  local use_pager=1
+  local color_for_run paged=0
   local -a cmd
 
   if ! ask_menu "Time range" "Time range?" "1" \
@@ -716,6 +722,7 @@ choose_and_run_report() {
       cmd+=(-f "${sa_file}")
       ;;
     3)
+      use_pager=0
       if ! ask_input "Interval" "Interval in seconds" "1"; then
         return 1
       fi
@@ -752,19 +759,39 @@ choose_and_run_report() {
   echo
   SAR_PGM_INTERRUPTED=0
   SAR_PGM_IN_REPORT=1
+
+  color_for_run="${S_COLORS_VALUE}"
   # Do not use "env VAR=val cmd" — a shell function named env may shadow /usr/bin/env
-  S_COLORS="${S_COLORS_VALUE}" "${cmd[@]}" || true
+  if (( use_pager )) && type -fP less &>/dev/null; then
+    # Piped sar is not a TTY; force colors when user asked for auto
+    [[ "${color_for_run}" == "auto" ]] && color_for_run=always
+    echo "(PGM) Paging with less (-R); press q to leave the pager."
+    S_COLORS="${color_for_run}" "${cmd[@]}" | less -R || true
+    paged=1
+  elif (( use_pager )) && type -fP more &>/dev/null; then
+    [[ "${color_for_run}" == "auto" ]] && color_for_run=always
+    echo "(PGM) Paging with more; press q or space as usual."
+    S_COLORS="${color_for_run}" "${cmd[@]}" | more || true
+    paged=1
+  else
+    if (( use_pager )); then
+      echo "(PGM) No less/more found — printing without a pager."
+    fi
+    S_COLORS="${S_COLORS_VALUE}" "${cmd[@]}" || true
+  fi
   local rc=$?
   echo
   if (( SAR_PGM_INTERRUPTED )); then
     SAR_PGM_IN_REPORT=0
     return 0
   fi
-  if (( rc != 0 )); then
+  if (( rc != 0 && ! paged )); then
     echo "(PGM) sar exited with status ${rc}." >&2
   fi
-  # dialog redraws the whole screen; wait so the user can read sar output first
-  pause_to_read_report
+  # After less/more the user already dismissed the view; skip extra key pause
+  if (( ! paged )); then
+    pause_to_read_report
+  fi
   SAR_PGM_IN_REPORT=0
   return 0
 }
