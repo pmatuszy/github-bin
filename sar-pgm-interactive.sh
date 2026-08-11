@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20260811.154553 - colors prompt defaults to Y (S_COLORS=auto)
 # v. 20260811.153637 - Ctrl-C during report returns to menu (q still quits); override header exit trap
 # v. 20260811.153209 - show sar command at top of report screen (after clear)
 # v. 20260811.152756 - UI mode default: 1 if dialog installed, else 2; Quit tag q
@@ -11,8 +12,8 @@
 #
 # sar-pgm-interactive.sh
 #
-# Interactive wrapper around sar (sysstat): choose UI mode, colors, optionally
-# enable data collection, then pick CPU/memory/swap/disk/network/load reports.
+# Interactive wrapper around sar (sysstat): choose UI mode, colors (default on),
+# optionally enable data collection, then pick CPU/memory/swap/disk/network/load reports.
 #
 
 show_help() {
@@ -62,7 +63,7 @@ check_if_installed sar sysstat
 ################################################################################
 
 USE_DIALOG=0
-S_COLORS_VALUE=never
+S_COLORS_VALUE=auto
 SAR_OPTS=()
 SA_DIR=""
 DIALOG_RC_FILE=""
@@ -180,11 +181,29 @@ prompt_yn_default_no() {
   esac
 }
 
+prompt_yn_default_yes() {
+  # WithoutDialog yes/no; default Y. Returns 0=yes, 1=no.
+  local prompt="$1"
+  local ans=""
+  read -r -p "${prompt} [Y/n]: " ans || true
+  case "${ans}" in
+    n|N|no|NO) return 1 ;;
+    *) return 0 ;;
+  esac
+}
+
 dialog_yesno_default_no() {
   # Returns 0=yes, 1=no/cancel.
   local title="$1"
   local text="$2"
   run_dialog --title "${title}" --defaultno --yesno "${text}" 10 60
+}
+
+dialog_yesno_default_yes() {
+  # Returns 0=yes, 1=no/cancel. Yes is the default button.
+  local title="$1"
+  local text="$2"
+  run_dialog --title "${title}" --yesno "${text}" 10 60
 }
 
 ask_yes_no_default_no() {
@@ -194,6 +213,16 @@ ask_yes_no_default_no() {
     dialog_yesno_default_no "${title}" "${text}"
   else
     prompt_yn_default_no "${text}"
+  fi
+}
+
+ask_yes_no_default_yes() {
+  local title="$1"
+  local text="$2"
+  if (( USE_DIALOG )); then
+    dialog_yesno_default_yes "${title}" "${text}"
+  else
+    prompt_yn_default_yes "${text}"
   fi
 }
 
@@ -401,7 +430,7 @@ ensure_dialog_if_needed() {
 ################################################################################
 
 choose_colors() {
-  if ask_yes_no_default_no "Colors" "Use colors in sar output?"; then
+  if ask_yes_no_default_yes "Colors" "Use colors in sar output?"; then
     S_COLORS_VALUE=auto
     echo "(PGM) Colors: on (S_COLORS=auto)."
   else
