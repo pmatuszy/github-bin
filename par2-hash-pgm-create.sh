@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20260812.133230 - existing-PAR2 recreate prompt defaults to N
 # v. 20260812.132634 - Y/n single-key; keep hash-only when declining PAR2 recreate
 # v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
 # v. 20260809.170555 - end with boxed RUN SUMMARY / RUN FINISHED like par2-pgm-check
@@ -8,6 +9,7 @@
 # v. 20260809.155541 - prompt to exclude rename.sh helpers from PAR2 (default yes)
 # v. 20260806.224414 - initial: create volume-only PAR2 + SHA-512/MD5 hash for cwd subtree
 
+# 2026.08.12 - v. 0.1.7 - Existing-PAR2 recreate prompt defaults to N (keep set; offer hash-only)
 # 2026.08.12 - v. 0.1.6 - Y/n prompts are single-key; N on existing PAR2 still offers hash-only
 # 2026.08.09 - v. 0.1.5 - Boxed RUN SUMMARY / RUN FINISHED at end (like par2-pgm-check)
 # 2026.08.09 - v. 0.1.4 - Hash menu: q/Q quits on keypress (no Enter required)
@@ -63,8 +65,8 @@ Interactive prompts (unless --yes / flag already set):
                   q/Q = quit immediately (no Enter); invalid input asks again.
   Recovery %:     Enter accepts 20% (or --recovery value).
   Rename helpers: Exclude from PAR2? [Y/n/q] — single key, no Enter (default yes).
-  Existing PAR2:  Rename to *.par2.old? [Y/n/q] — single key. N keeps PAR2 and
-                  offers hash-only creation.
+  Existing PAR2:  Rename to *.par2.old and recreate? [y/N/q] — single key
+                  (default N = keep PAR2, then offer hash-only).
   Existing hash:  Overwrite? [Y/n/q] — single key (default yes).
 
 Environment:
@@ -1117,13 +1119,14 @@ if ((${#existing_par2[@]} > 0)); then
     printf '  %s\n' "$(basename -- "$f")"
   done
   if (( AUTO_YES == 1 )); then
-    echo "Renaming them to *.par2.old (--yes)."
-    backup_existing_stem_par2 "${existing_par2[@]}"
+    echo "Keeping existing PAR2 unchanged (--yes; recreate defaults to no)."
+    CREATE_PAR2=0
+    echo "Will create hash file only (--yes)."
   else
     ans=""
-    printf '%sRename existing PAR2 to *.par2.old and recreate? [Y/n/q] (%s): ' \
+    printf '%sRename existing PAR2 to *.par2.old and recreate? [y/N/q] (%s): ' \
       "$(user_prompt_ts_prefix)" "$(prompt_timeout_label)"
-    read_yn_key_with_timeout ans y
+    read_yn_key_with_timeout ans n
     case $? in
       2)
         echo "Quit."
