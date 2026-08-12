@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20260812.180711 - Ctrl-C: remove incomplete PAR2/hash temp; restore *.par2.old
 # v. 20260812.133413 - hash-only prompt: explain missing hash; default N
 # v. 20260812.133230 - existing-PAR2 recreate prompt defaults to N
 # v. 20260812.132634 - Y/n single-key; keep hash-only when declining PAR2 recreate
@@ -10,6 +11,7 @@
 # v. 20260809.155541 - prompt to exclude rename.sh helpers from PAR2 (default yes)
 # v. 20260806.224414 - initial: create volume-only PAR2 + SHA-512/MD5 hash for cwd subtree
 
+# 2026.08.12 - v. 0.1.9 - Ctrl-C removes incomplete PAR2/hash temp and restores *.par2.old
 # 2026.08.12 - v. 0.1.8 - Hash-only offer explains PAR2-without-hash; default N
 # 2026.08.12 - v. 0.1.7 - Existing-PAR2 recreate prompt defaults to N (keep set; offer hash-only)
 # 2026.08.12 - v. 0.1.6 - Y/n prompts are single-key; N on existing PAR2 still offers hash-only
@@ -139,11 +141,111 @@ SUMMARY_PRINTED=0
 RUN_OUTCOME=""
 # 1 = create/replace PAR2; 0 = skip PAR2 create (hash-only)
 CREATE_PAR2=1
+# Interrupt cleanup: incomplete outputs from this run only.
+PAR2_CREATE_IN_PROGRESS=0
+HASH_TEMP=""
+# Absolute paths of *.par2.old we created; restore on interrupt until create succeeds.
+CLEANUP_RESTORE_OLDPATHS=()
 
 PGM_HAVE_BOXES=no
 if command -v boxes >/dev/null 2>&1; then
   PGM_HAVE_BOXES=yes
 fi
+
+# Remove incomplete stem outputs (index + volumes) written during this create.
+# Echoes each removed basename; returns count via CLEANUP_REMOVED_COUNT.
+cleanup_remove_new_par2_outputs() {
+  local f
+  CLEANUP_REMOVED_COUNT=0
+  [[ -n "${WORK_DIR:-}" && -n "${PAR2_STEM:-}" ]] || return 0
+  shopt -s nullglob
+  for f in \
+    "${WORK_DIR}/${PAR2_STEM}.par2" \
+    "${WORK_DIR}/${PAR2_STEM}".vol*.par2 \
+    "${WORK_DIR}/${PAR2_STEM}.PAR2" \
+    "${WORK_DIR}/${PAR2_STEM}".vol*.PAR2
+  do
+    [[ -e "$f" ]] || continue
+    if rm -f -- "$f"; then
+      printf '  removed: %s\n' "$(basename -- "$f")"
+      CLEANUP_REMOVED_COUNT=$((CLEANUP_REMOVED_COUNT + 1))
+    fi
+  done
+  shopt -u nullglob
+  return 0
+}
+
+# Restore PAR2 members we renamed to *.par2.old before a recreate.
+cleanup_restore_par2_backups() {
+  local old_path active
+  CLEANUP_RESTORED_COUNT=0
+  for old_path in "${CLEANUP_RESTORE_OLDPATHS[@]+"${CLEANUP_RESTORE_OLDPATHS[@]}"}"; do
+    [[ -n "$old_path" && -e "$old_path" ]] || continue
+    active="${old_path%.old}"
+    if [[ -e "$active" ]]; then
+      rm -f -- "$active" || true
+    fi
+    if mv -- "$old_path" "$active"; then
+      printf '  restored: %s (from %s)\n' "$(basename -- "$active")" "$(basename -- "$old_path")"
+      CLEANUP_RESTORED_COUNT=$((CLEANUP_RESTORED_COUNT + 1))
+    fi
+  done
+  CLEANUP_RESTORE_OLDPATHS=()
+  return 0
+}
+
+cleanup_hash_temp() {
+  if [[ -n "${HASH_TEMP:-}" && -e "$HASH_TEMP" ]]; then
+    rm -f -- "$HASH_TEMP" || true
+    printf '  removed temp: %s\n' "$HASH_TEMP"
+    HASH_TEMP=""
+    return 0
+  fi
+  HASH_TEMP=""
+  return 1
+}
+
+cleanup_on_interrupt() {
+  local did=0
+  CLEANUP_REMOVED_COUNT=0
+  CLEANUP_RESTORED_COUNT=0
+  echo "Cleaning up files created by this run..."
+
+  if cleanup_hash_temp; then
+    did=1
+  fi
+
+  # Incomplete PAR2 (create in progress) or recreate: remove new stem files, then restore backups.
+  if (( PAR2_CREATE_IN_PROGRESS == 1 )) || ((${#CLEANUP_RESTORE_OLDPATHS[@]} > 0)); then
+    cleanup_remove_new_par2_outputs
+    (( CLEANUP_REMOVED_COUNT > 0 )) && did=1
+  fi
+  if ((${#CLEANUP_RESTORE_OLDPATHS[@]} > 0)); then
+    cleanup_restore_par2_backups
+    (( CLEANUP_RESTORED_COUNT > 0 )) && did=1
+  fi
+
+  PAR2_CREATE_IN_PROGRESS=0
+
+  if (( did == 0 )); then
+    echo "  (nothing to clean up)"
+  else
+    echo "  Cleanup finished."
+  fi
+}
+
+# Override header's ctrl_c so INT actually removes incomplete outputs.
+ctrl_c() {
+  echo
+  echo "** Trapped CTRL-C - cleaning up...."
+  cleanup_on_interrupt
+  echo
+  if [ -n "${STY:-}" ]; then
+    echo -ne "${tcScrTitleStart}${CALLER_SCRIPT_BASENAME}${tcScrTitleEnd}"
+  fi
+  exit 130
+}
+trap ctrl_c INT
 
 die() {
   echo "Error: $*" >&2
@@ -865,6 +967,7 @@ backup_existing_stem_par2() {
     mv -- "$src" "$dst" || die "Failed to rename $base to $(basename -- "$dst")."
     printf '  %s -> %s\n' "$base" "$(basename -- "$dst")"
     backed+=("$dst")
+    CLEANUP_RESTORE_OLDPATHS+=("$dst")
   done
 }
 
@@ -905,12 +1008,21 @@ create_par2_volume_only() {
     return 0
   fi
 
+  PAR2_CREATE_IN_PROGRESS=1
   (
     cd "$WORK_DIR" || exit 1
     "$PAR2_CMD" create -n1 -b"$block_count" -r"$percent" -- "${stem}.par2" "${sources[@]}"
   )
   create_rc=$?
-  (( create_rc == 0 )) || die "par2 create failed (exit ${create_rc})."
+  if (( create_rc != 0 )); then
+    echo "par2 create failed (exit ${create_rc}); removing incomplete outputs..."
+    cleanup_remove_new_par2_outputs
+    if ((${#CLEANUP_RESTORE_OLDPATHS[@]} > 0)); then
+      cleanup_restore_par2_backups
+    fi
+    PAR2_CREATE_IN_PROGRESS=0
+    die "par2 create failed (exit ${create_rc})."
+  fi
 
   index_path="${WORK_DIR}/${stem}.par2"
   shopt -s nullglob
@@ -919,6 +1031,10 @@ create_par2_volume_only() {
 
   if ((${#vols[@]} == 0)); then
     [[ -f "$index_path" ]] && rm -f -- "$index_path"
+    if ((${#CLEANUP_RESTORE_OLDPATHS[@]} > 0)); then
+      cleanup_restore_par2_backups
+    fi
+    PAR2_CREATE_IN_PROGRESS=0
     die "par2 create did not produce a volume file for ${stem}."
   fi
 
@@ -926,6 +1042,10 @@ create_par2_volume_only() {
     rm -f -- "$index_path"
     echo "Removed index ${stem}.par2 (keeping volume-only set)."
   fi
+
+  # Create succeeded: keep new volumes; leave *.par2.old on disk; do not restore on later Ctrl-C.
+  PAR2_CREATE_IN_PROGRESS=0
+  CLEANUP_RESTORE_OLDPATHS=()
 
   echo "New PAR2 volume(s):"
   for f in "${vols[@]}"; do
@@ -939,7 +1059,7 @@ write_hash_manifest() {
   local algo_cmd="$2"
   shift 2
   local -a rels=("$@")
-  local rel digest tmp line_count=0
+  local rel digest line_count=0
 
   ((${#rels[@]} > 0)) || die "No files to hash."
 
@@ -953,30 +1073,34 @@ write_hash_manifest() {
 
   command -v "$algo_cmd" >/dev/null 2>&1 || die "'$algo_cmd' not found."
 
-  tmp=$(mktemp "${TMPDIR:-/tmp}/par2-hash-pgm-create.XXXXXX") || die "mktemp failed."
+  HASH_TEMP=$(mktemp "${TMPDIR:-/tmp}/par2-hash-pgm-create.XXXXXX") || die "mktemp failed."
 
   for rel in "${rels[@]}"; do
     if [[ ! -f "${WORK_DIR}/${rel}" ]]; then
-      rm -f -- "$tmp"
+      rm -f -- "$HASH_TEMP"
+      HASH_TEMP=""
       die "Missing file while hashing: $rel"
     fi
     digest="$("$algo_cmd" -- "${WORK_DIR}/${rel}" | awk '{print tolower($1)}')"
     if [[ -z "$digest" ]]; then
-      rm -f -- "$tmp"
+      rm -f -- "$HASH_TEMP"
+      HASH_TEMP=""
       die "Failed to hash: $rel"
     fi
     # GNU *sum -c binary form: one space then '*', then relative path.
-    printf '%s *%s\n' "$digest" "$rel" >>"$tmp"
+    printf '%s *%s\n' "$digest" "$rel" >>"$HASH_TEMP"
     ((++line_count))
     if (( line_count % 100 == 0 )); then
       printf '  ... hashed %d / %d\n' "$line_count" "${#rels[@]}"
     fi
   done
 
-  if ! mv -- "$tmp" "$out_file"; then
-    rm -f -- "$tmp"
+  if ! mv -- "$HASH_TEMP" "$out_file"; then
+    rm -f -- "$HASH_TEMP"
+    HASH_TEMP=""
     die "Failed to write $out_file"
   fi
+  HASH_TEMP=""
   HASH_ENTRY_COUNT=$line_count
   echo "Wrote ${line_count} checksum line(s): $(basename -- "$out_file")"
 }
