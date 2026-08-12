@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20260812.132634 - Y/n single-key; keep hash-only when declining PAR2 recreate
 # v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
 # v. 20260809.170555 - end with boxed RUN SUMMARY / RUN FINISHED like par2-pgm-check
 # v. 20260809.170153 - hash menu: q/Q quits immediately (no Enter)
@@ -7,6 +8,7 @@
 # v. 20260809.155541 - prompt to exclude rename.sh helpers from PAR2 (default yes)
 # v. 20260806.224414 - initial: create volume-only PAR2 + SHA-512/MD5 hash for cwd subtree
 
+# 2026.08.12 - v. 0.1.6 - Y/n prompts are single-key; N on existing PAR2 still offers hash-only
 # 2026.08.09 - v. 0.1.5 - Boxed RUN SUMMARY / RUN FINISHED at end (like par2-pgm-check)
 # 2026.08.09 - v. 0.1.4 - Hash menu: q/Q quits on keypress (no Enter required)
 # 2026.08.09 - v. 0.1.3 - Detect system *sum tools; numbered hash menu (q=quit, invalid=retry)
@@ -60,10 +62,10 @@ Interactive prompts (unless --yes / flag already set):
   Hash algorithm: numbered list of *sum tools found on PATH; Enter = default;
                   q/Q = quit immediately (no Enter); invalid input asks again.
   Recovery %:     Enter accepts 20% (or --recovery value).
-  Rename helpers: Exclude from PAR2? [Y/n] (default yes). Files:
-                    _exclude-rename.sh.txt, _rename.sh-optional-db.sqlite3
-                    (+ -wal/-shm/-journal), legacy rename.sh-optional-db.sqlite3,
-                    _rename.sh.resume-state.json
+  Rename helpers: Exclude from PAR2? [Y/n/q] — single key, no Enter (default yes).
+  Existing PAR2:  Rename to *.par2.old? [Y/n/q] — single key. N keeps PAR2 and
+                  offers hash-only creation.
+  Existing hash:  Overwrite? [Y/n/q] — single key (default yes).
 
 Environment:
   PAR2_CMD             par2 executable (default: par2)
@@ -130,6 +132,8 @@ HASH_ENTRY_COUNT=0
 SUMMARY_PRINTED=0
 # ok | quit | error — controls end banner wording
 RUN_OUTCOME=""
+# 1 = create/replace PAR2; 0 = skip PAR2 create (hash-only)
+CREATE_PAR2=1
 
 PGM_HAVE_BOXES=no
 if command -v boxes >/dev/null 2>&1; then
@@ -202,19 +206,25 @@ print_run_summary() {
   lines+=( "*** RUN SUMMARY ***" )
   if (( DRY_RUN == 1 )); then
     lines+=( "Mode: dry-run (nothing written)" )
+  elif (( CREATE_PAR2 == 0 )); then
+    lines+=( "Mode: hash-only (existing PAR2 left unchanged)" )
   else
     lines+=( "Mode: created PAR2 + hash manifest" )
   fi
   lines+=( "Directory: $WORK_DIR" )
-  lines+=( "PAR2 stem: ${PAR2_STEM}.par2 (volume-only, -r${RECOVERY_PCT}%)" )
-  if ((${#CREATED_PAR2_VOLS[@]} > 0)); then
-    for vol in "${CREATED_PAR2_VOLS[@]}"; do
-      lines+=( "PAR2 file: $vol" )
-    done
+  if (( CREATE_PAR2 == 1 )); then
+    lines+=( "PAR2 stem: ${PAR2_STEM}.par2 (volume-only, -r${RECOVERY_PCT}%)" )
+    if ((${#CREATED_PAR2_VOLS[@]} > 0)); then
+      for vol in "${CREATED_PAR2_VOLS[@]}"; do
+        lines+=( "PAR2 file: $vol" )
+      done
+    else
+      lines+=( "PAR2 file: ${PAR2_STEM}.vol*.par2" )
+    fi
+    lines+=( "Protected: ${PAR2_SOURCE_COUNT} file(s), $(format_bytes_approx "$PAR2_SOURCE_BYTES")" )
   else
-    lines+=( "PAR2 file: ${PAR2_STEM}.vol*.par2" )
+    lines+=( "PAR2: left existing set unchanged (${PAR2_STEM}*)" )
   fi
-  lines+=( "Protected: ${PAR2_SOURCE_COUNT} file(s), $(format_bytes_approx "$PAR2_SOURCE_BYTES")" )
   if [[ -n "${HASH_FILE:-}" ]]; then
     lines+=( "Hash file: $(basename -- "$HASH_FILE") (${HASH_LABEL:-$HASH_ALGO}, ${HASH_ENTRY_COUNT} ${hash_entries_word})" )
   fi
@@ -244,6 +254,8 @@ print_run_finished_banner() {
       lines+=( "*** RUN FINISHED: OK (exit $rc) ***" )
       if (( DRY_RUN == 1 )); then
         lines+=( "Dry-run completed; no files were written." )
+      elif (( CREATE_PAR2 == 0 )); then
+        lines+=( "Hash file created; existing PAR2 left unchanged." )
       else
         lines+=( "PAR2 archive and hash file are ready." )
       fi
@@ -328,6 +340,59 @@ read_hash_choice_with_timeout() {
   fi
   printf -v "$__var" '%s' "${first}${rest}"
   return 0
+}
+
+# Single-key Y/n/q (no Enter). Enter uses default (y or n).
+# Sets __var to y|n|q. Returns 0=answer, 1=timeout→default, 2=quit.
+read_yn_key_with_timeout() {
+  local __var="$1"
+  local default="${2:-y}"
+  local first=""
+
+  [[ "$default" == y || "$default" == n ]] || default=y
+
+  while true; do
+    if prompt_has_timeout; then
+      IFS= read -r -t "$PROMPT_TIMEOUT" -n 1 first || {
+        echo
+        printf -v "$__var" '%s' "$default"
+        return 1
+      }
+    else
+      IFS= read -r -n 1 first || {
+        echo
+        printf -v "$__var" '%s' "$default"
+        return 1
+      }
+    fi
+
+    case "$first" in
+      ""|$'\n')
+        printf -v "$__var" '%s' "$default"
+        return 0
+        ;;
+      y|Y)
+        echo
+        printf -v "$__var" '%s' y
+        return 0
+        ;;
+      n|N)
+        echo
+        printf -v "$__var" '%s' n
+        return 0
+        ;;
+      q|Q)
+        echo
+        printf -v "$__var" '%s' q
+        return 2
+        ;;
+      *)
+        echo
+        printf '%sInvalid key "%s". Press Y, N, Q, or Enter for default (%s): ' \
+          "$(user_prompt_ts_prefix)" "$first" "${default^^}"
+        ;;
+    esac
+  done
 }
 
 is_par2_backup_basename() {
@@ -679,25 +744,21 @@ prompt_exclude_rename_helpers() {
   done
   echo "These are typically regenerated by rename.sh and do not need PAR2 recovery."
 
-  printf '%sExclude rename.sh helper files from the PAR2 set? [Y/n] (%s): ' \
+  printf '%sExclude rename.sh helper files from the PAR2 set? [Y/n/q] (%s): ' \
     "$(user_prompt_ts_prefix)" "$(prompt_timeout_label)"
-  if ! read_line_with_timeout ans; then
-    ans=""
-    echo
-  fi
-  ans="${ans//[[:space:]]/}"
-  ans="${ans,,}"
+  read_yn_key_with_timeout ans y
+  case $? in
+    2)
+      echo "Quit."
+      return_code=0
+      RUN_OUTCOME=quit
+      finish
+      ;;
+  esac
   case "$ans" in
-    ""|y|yes)
-      EXCLUDE_RENAME_HELPERS=1
-      ;;
-    n|no)
-      EXCLUDE_RENAME_HELPERS=0
-      ;;
-    *)
-      echo "Invalid choice '$ans'; excluding helpers (default yes)."
-      EXCLUDE_RENAME_HELPERS=1
-      ;;
+    y) EXCLUDE_RENAME_HELPERS=1 ;;
+    n) EXCLUDE_RENAME_HELPERS=0 ;;
+    *) EXCLUDE_RENAME_HELPERS=1 ;;
   esac
 }
 
@@ -1049,6 +1110,7 @@ print_run_settings
 # Existing PAR2 for this stem?
 existing_par2=()
 list_existing_stem_par2 "$WORK_DIR" "$PAR2_STEM" existing_par2
+CREATE_PAR2=1
 if ((${#existing_par2[@]} > 0)); then
   echo "Existing PAR2 file(s) for stem ${PAR2_STEM}:"
   for f in "${existing_par2[@]}"; do
@@ -1059,20 +1121,50 @@ if ((${#existing_par2[@]} > 0)); then
     backup_existing_stem_par2 "${existing_par2[@]}"
   else
     ans=""
-    printf '%sRename existing PAR2 to *.par2.old and continue? [Y/n] (%s): ' \
+    printf '%sRename existing PAR2 to *.par2.old and recreate? [Y/n/q] (%s): ' \
       "$(user_prompt_ts_prefix)" "$(prompt_timeout_label)"
-    if ! read_line_with_timeout ans; then
-      ans=""
-      echo
-    fi
-    ans="${ans//[[:space:]]/}"
-    ans="${ans,,}"
+    read_yn_key_with_timeout ans y
+    case $? in
+      2)
+        echo "Quit."
+        return_code=0
+        RUN_OUTCOME=quit
+        finish
+        ;;
+    esac
     case "$ans" in
-      ""|y|yes)
+      y)
         backup_existing_stem_par2 "${existing_par2[@]}"
+        CREATE_PAR2=1
+        ;;
+      n)
+        echo "Keeping existing PAR2 unchanged."
+        CREATE_PAR2=0
+        printf '%sCreate hash file only (for this directory tree)? [Y/n/q] (%s): ' \
+          "$(user_prompt_ts_prefix)" "$(prompt_timeout_label)"
+        read_yn_key_with_timeout ans y
+        case $? in
+          2)
+            echo "Quit."
+            return_code=0
+            RUN_OUTCOME=quit
+            finish
+            ;;
+        esac
+        case "$ans" in
+          y)
+            echo "Will create hash file only."
+            ;;
+          *)
+            echo "Aborted (no PAR2 recreate, no hash file)."
+            return_code=0
+            RUN_OUTCOME=quit
+            finish
+            ;;
+        esac
         ;;
       *)
-        echo "Aborted (existing PAR2 left unchanged)."
+        echo "Quit."
         return_code=0
         RUN_OUTCOME=quit
         finish
@@ -1089,16 +1181,19 @@ if [[ -e "$HASH_FILE" ]]; then
     echo "Will overwrite (--yes)."
   else
     ans=""
-    printf '%sOverwrite existing hash file? [Y/n] (%s): ' \
+    printf '%sOverwrite existing hash file? [Y/n/q] (%s): ' \
       "$(user_prompt_ts_prefix)" "$(prompt_timeout_label)"
-    if ! read_line_with_timeout ans; then
-      ans=""
-      echo
-    fi
-    ans="${ans//[[:space:]]/}"
-    ans="${ans,,}"
+    read_yn_key_with_timeout ans y
+    case $? in
+      2)
+        echo "Quit."
+        return_code=0
+        RUN_OUTCOME=quit
+        finish
+        ;;
+    esac
     case "$ans" in
-      ""|y|yes)
+      y)
         ;;
       *)
         echo "Aborted (hash file left unchanged)."
@@ -1111,26 +1206,30 @@ if [[ -e "$HASH_FILE" ]]; then
   echo
 fi
 
-echo "=== Step 1: collect PAR2 source files (subtree; exclude PAR2 + hash manifests) ==="
-par2_sources=()
-collect_sorted_relpaths "$WORK_DIR" par2-sources par2_sources
-if (( EXCLUDE_RENAME_HELPERS == 1 )); then
-  if ((${#RENAME_HELPERS_FOUND[@]} == 0)); then
-    find_rename_helpers "$WORK_DIR" RENAME_HELPERS_FOUND
+if (( CREATE_PAR2 == 1 )); then
+  echo "=== Step 1: collect PAR2 source files (subtree; exclude PAR2 + hash manifests) ==="
+  par2_sources=()
+  collect_sorted_relpaths "$WORK_DIR" par2-sources par2_sources
+  if (( EXCLUDE_RENAME_HELPERS == 1 )); then
+    if ((${#RENAME_HELPERS_FOUND[@]} == 0)); then
+      find_rename_helpers "$WORK_DIR" RENAME_HELPERS_FOUND
+    fi
+    if ((${#RENAME_HELPERS_FOUND[@]} > 0)); then
+      echo "Excluding ${#RENAME_HELPERS_FOUND[@]} rename.sh helper file(s) from PAR2:"
+      for rel in "${RENAME_HELPERS_FOUND[@]}"; do
+        printf '  %s\n' "$rel"
+      done
+    fi
   fi
-  if ((${#RENAME_HELPERS_FOUND[@]} > 0)); then
-    echo "Excluding ${#RENAME_HELPERS_FOUND[@]} rename.sh helper file(s) from PAR2:"
-    for rel in "${RENAME_HELPERS_FOUND[@]}"; do
-      printf '  %s\n' "$rel"
-    done
-  fi
-fi
-echo "Found ${#par2_sources[@]} non-empty data file(s) to protect."
-((${#par2_sources[@]} > 0)) || die "No data files to protect under: $WORK_DIR"
+  echo "Found ${#par2_sources[@]} non-empty data file(s) to protect."
+  ((${#par2_sources[@]} > 0)) || die "No data files to protect under: $WORK_DIR"
 
-echo
-echo "=== Step 2: create PAR2 (volume-only) ==="
-create_par2_volume_only "$PAR2_STEM" "$RECOVERY_PCT" "${par2_sources[@]}"
+  echo
+  echo "=== Step 2: create PAR2 (volume-only) ==="
+  create_par2_volume_only "$PAR2_STEM" "$RECOVERY_PCT" "${par2_sources[@]}"
+else
+  echo "=== Step 1-2: skipped (keeping existing PAR2; hash-only mode) ==="
+fi
 
 echo
 echo "=== Step 3: write hash manifest (all files including PAR2; exclude hash file itself) ==="
