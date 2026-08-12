@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20260812.143651 - end-of-run: offer to delete *_old.par2 / *.par2.old if any exist
 # v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
 # v. 20260809.231400 - clearer optional prompt: verify PAR2 archive(s) vs hash file
 # v. 20260809.165517 - hash manifests: also sha384/sha224/sha1/b2
@@ -53,6 +54,7 @@
 # v. 20260719.103506 - fix no-arg run: empty POSITIONAL[@]:- became one "" element
 # v. 20260719.102800 - multi-set selection: A/a, ranges 1-4, --all, multiple paths
 
+# 2026.08.12 - v. 0.1.68 - End of run: offer to delete old PAR2 backups if any exist
 # 2026.08.09 - v. 0.1.67 - Clearer optional prompt: verify PAR2 archive(s) against hash file
 # 2026.08.09 - v. 0.1.66 - Hash manifests: also .sha384/.sha224/.sha1/.b2 (with create/rename)
 # 2026.08.09 - v. 0.1.65 - Regenerate -b: enough blocks so -r% ≈ data size (not file-count * largest)
@@ -161,6 +163,8 @@ Repair, regenerate, and hash .par2-ref prompts always default to no (Enter skips
 Regenerate builds one volume-only archive, excludes hash manifests from the set,
 renames old .par2 to *.par2.old by default, then syncs hash manifests with the
 new PAR2 checksums.
+At the end of a run, if *_old.par2 / *.par2.old leftovers exist, you are asked
+whether to delete them (default no).
 Missing .par2 names in hash files are reported as likely old archives after
 recreate; you can remove those references (default no) and sync current PAR2 names.
 
@@ -438,6 +442,12 @@ pgm_prompt_read_regenerate_choice() {
 pgm_prompt_read_backup_old_par2_choice() {
     pgm_prompt_read_yes_no_quit 1 "$1" \
         "Rename old PAR2 files to *.par2.old before creating the new set?"
+}
+
+pgm_prompt_read_remove_old_par2_choice() {
+    # Default no — deleting backups is deliberate.
+    pgm_prompt_read_yes_no_quit 0 "$1" \
+        "Delete those old PAR2 backup file(s) now?"
 }
 
 pgm_prompt_read_hash_par2_check_choice() {
@@ -969,6 +979,74 @@ pgm_report_skipped_old_par2_backups() {
     echo
 }
 
+# End of run: offer to delete leftover PAR2 backups created by rename/regenerate.
+# Asks only when at least one *_old.par2 / *.par2.old exists in the run scope.
+pgm_offer_remove_old_par2_backups() {
+    local -a backups=()
+    local scope_label rel i choice=0 removed=0 failed=0
+
+    [[ -n "${START_DIR:-}" && -d "${START_DIR:-}" ]] || return 0
+
+    pgm_find_old_par2_backups_scoped "$START_DIR" "${CHECK_SCOPE:-subdirs}" backups
+    ((${#backups[@]} > 0)) || return 0
+
+    if [[ "${CHECK_SCOPE:-subdirs}" == "current" ]]; then
+        scope_label="in $START_DIR"
+    else
+        scope_label="under $START_DIR (including subdirectories)"
+    fi
+
+    echo
+    echo "=== Old PAR2 backups (optional cleanup) ==="
+    echo "Found ${#backups[@]} leftover PAR2 backup file(s) (*_old.par2 / *.par2.old) ${scope_label}."
+    echo "These are not part of the active set (from prior metadata update / regenerate)."
+    if ((${#backups[@]} <= 20)); then
+        for i in "${backups[@]}"; do
+            rel="$(pgm_path_display_relative "$i" "$START_DIR")"
+            printf '  %s\n' "$rel"
+        done
+    else
+        for i in "${backups[@]:0:10}"; do
+            rel="$(pgm_path_display_relative "$i" "$START_DIR")"
+            printf '  %s\n' "$rel"
+        done
+        echo "  ... and $((${#backups[@]} - 10)) more"
+    fi
+    echo
+    echo "Deleting frees disk space. Keep them if you may need to roll back."
+    pgm_prompt_read_remove_old_par2_choice choice
+    case "$choice" in
+        0)
+            ;;
+        1)
+            echo "Kept old PAR2 backup file(s)."
+            return 0
+            ;;
+        2)
+            echo "Cancelled."
+            return_code=0
+            finish
+            ;;
+    esac
+
+    echo "Deleting ${#backups[@]} old PAR2 backup file(s)..."
+    for i in "${backups[@]}"; do
+        if rm -f -- "$i"; then
+            removed=$((removed + 1))
+            printf '  removed %s\n' "$(pgm_path_display_relative "$i" "$START_DIR")"
+        else
+            failed=$((failed + 1))
+            printf '  FAILED  %s\n' "$(pgm_path_display_relative "$i" "$START_DIR")" >&2
+        fi
+    done
+    if (( failed > 0 )); then
+        echo "Removed ${removed}; failed ${failed}."
+    else
+        echo "Removed ${removed} old PAR2 backup file(s)."
+    fi
+    echo
+}
+
 pgm_discover_and_queue_par2_sets() {
     local -a indices=()
 
@@ -1261,6 +1339,12 @@ finish() {
         pgm_print_multi_set_summary
     fi
     pgm_print_timing_summary
+    # Avoid recurse if user answers q (this helper can call finish).
+    if [[ "${PGM_REMOVING_OLD_PAR2:-0}" != "1" ]]; then
+        PGM_REMOVING_OLD_PAR2=1
+        pgm_offer_remove_old_par2_backups || true
+        PGM_REMOVING_OLD_PAR2=0
+    fi
     pgm_print_run_finished "$rc"
     . /root/bin/_script_footer.sh
     exit "$rc"
