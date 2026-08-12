@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20260812.145813 - after deleting old PAR2 backups, offer to drop their hash-file refs if any
 # v. 20260812.143651 - end-of-run: offer to delete *_old.par2 / *.par2.old if any exist
 # v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
 # v. 20260809.231400 - clearer optional prompt: verify PAR2 archive(s) vs hash file
@@ -54,6 +55,7 @@
 # v. 20260719.103506 - fix no-arg run: empty POSITIONAL[@]:- became one "" element
 # v. 20260719.102800 - multi-set selection: A/a, ranges 1-4, --all, multiple paths
 
+# 2026.08.12 - v. 0.1.69 - After deleting old PAR2 backups, offer to remove hash-file refs if listed
 # 2026.08.12 - v. 0.1.68 - End of run: offer to delete old PAR2 backups if any exist
 # 2026.08.09 - v. 0.1.67 - Clearer optional prompt: verify PAR2 archive(s) against hash file
 # 2026.08.09 - v. 0.1.66 - Hash manifests: also .sha384/.sha224/.sha1/.b2 (with create/rename)
@@ -164,7 +166,8 @@ Regenerate builds one volume-only archive, excludes hash manifests from the set,
 renames old .par2 to *.par2.old by default, then syncs hash manifests with the
 new PAR2 checksums.
 At the end of a run, if *_old.par2 / *.par2.old leftovers exist, you are asked
-whether to delete them (default no).
+whether to delete them (default no). If those names are listed in hash manifests,
+you are then asked whether to remove those hash references (default no).
 Missing .par2 names in hash files are reported as likely old archives after
 recreate; you can remove those references (default no) and sync current PAR2 names.
 
@@ -448,6 +451,12 @@ pgm_prompt_read_remove_old_par2_choice() {
     # Default no — deleting backups is deliberate.
     pgm_prompt_read_yes_no_quit 0 "$1" \
         "Delete those old PAR2 backup file(s) now?"
+}
+
+pgm_prompt_read_remove_old_par2_hash_refs_choice() {
+    # Default no — editing hash manifests is deliberate.
+    pgm_prompt_read_yes_no_quit 0 "$1" \
+        "Also remove those old PAR2 backup name(s) from the hash file(s)?"
 }
 
 pgm_prompt_read_hash_par2_check_choice() {
@@ -979,11 +988,61 @@ pgm_report_skipped_old_par2_backups() {
     echo
 }
 
+# For old PAR2 backup paths, find same-dir hash manifests that list those basenames.
+# Sets: ref_lines (display), fix_dirs (unique directories to run fix-par2-refs on).
+pgm_find_hash_refs_for_old_par2_backups() {
+    local -n _backups=$1
+    local -n _ref_lines=$2
+    local -n _fix_dirs=$3
+    local -A backup_bases_lower=()
+    local -A dirs_with_backups=()
+    local -A dirs_seen=()
+    local -A hit_keys=()
+    local b dir base line path count missing_count bad_count names missing_csv bad_csv name name_l key rel
+    local -a ref_rows=() name_list=()
+
+    _ref_lines=()
+    _fix_dirs=()
+    ((${#_backups[@]} > 0)) || return 0
+
+    for b in "${_backups[@]}"; do
+        dir="$(dirname -- "$b")"
+        base="$(basename -- "$b")"
+        backup_bases_lower["${base,,}"]=1
+        dirs_with_backups["$dir"]=1
+    done
+
+    for dir in "${!dirs_with_backups[@]}"; do
+        ref_rows=()
+        mapfile -t ref_rows < <(run_rename_py hash list-par2-refs "$dir" 2>/dev/null) || true
+        for line in "${ref_rows[@]}"; do
+            IFS=$'\t' read -r path count missing_count bad_count names missing_csv bad_csv <<< "$line"
+            [[ -n "$path" && -n "$names" ]] || continue
+            IFS=',' read -r -a name_list <<< "$names"
+            for name in "${name_list[@]}"; do
+                [[ -n "$name" ]] || continue
+                name_l="${name,,}"
+                [[ -n "${backup_bases_lower[$name_l]:-}" ]] || continue
+                key="${path}"$'\t'"${name}"
+                [[ -n "${hit_keys[$key]:-}" ]] && continue
+                hit_keys["$key"]=1
+                rel="$(pgm_path_display_relative "$path" "${START_DIR:-$dir}")"
+                _ref_lines+=("$rel lists: $name")
+                if [[ -z "${dirs_seen[$dir]:-}" ]]; then
+                    dirs_seen["$dir"]=1
+                    _fix_dirs+=("$dir")
+                fi
+            done
+        done
+    done
+}
+
 # End of run: offer to delete leftover PAR2 backups created by rename/regenerate.
 # Asks only when at least one *_old.par2 / *.par2.old exists in the run scope.
+# If those names are listed in hash files, also offer to drop those hash lines.
 pgm_offer_remove_old_par2_backups() {
-    local -a backups=()
-    local scope_label rel i choice=0 removed=0 failed=0
+    local -a backups=() ref_lines=() fix_dirs=()
+    local scope_label rel i choice=0 hash_choice=0 removed=0 failed=0 msg rc=0
 
     [[ -n "${START_DIR:-}" && -d "${START_DIR:-}" ]] || return 0
 
@@ -995,6 +1054,8 @@ pgm_offer_remove_old_par2_backups() {
     else
         scope_label="under $START_DIR (including subdirectories)"
     fi
+
+    pgm_find_hash_refs_for_old_par2_backups backups ref_lines fix_dirs
 
     echo
     echo "=== Old PAR2 backups (optional cleanup) ==="
@@ -1011,6 +1072,21 @@ pgm_offer_remove_old_par2_backups() {
             printf '  %s\n' "$rel"
         done
         echo "  ... and $((${#backups[@]} - 10)) more"
+    fi
+    if ((${#ref_lines[@]} > 0)); then
+        echo
+        echo "Hash file(s) also list ${#ref_lines[@]} of those old backup name(s):"
+        if ((${#ref_lines[@]} <= 20)); then
+            for i in "${ref_lines[@]}"; do
+                printf '  %s\n' "$i"
+            done
+        else
+            for i in "${ref_lines[@]:0:10}"; do
+                printf '  %s\n' "$i"
+            done
+            echo "  ... and $((${#ref_lines[@]} - 10)) more"
+        fi
+        echo "If you delete the files, you can also remove those hash references."
     fi
     echo
     echo "Deleting frees disk space. Keep them if you may need to roll back."
@@ -1044,9 +1120,61 @@ pgm_offer_remove_old_par2_backups() {
     else
         echo "Removed ${removed} old PAR2 backup file(s)."
     fi
+
+    if ((${#ref_lines[@]} == 0)); then
+        echo
+        return 0
+    fi
+
+    echo
+    echo "=== Hash file references to deleted old PAR2 backups ==="
+    echo "Those backup name(s) are still listed in hash file(s):"
+    if ((${#ref_lines[@]} <= 20)); then
+        for i in "${ref_lines[@]}"; do
+            printf '  %s\n' "$i"
+        done
+    else
+        for i in "${ref_lines[@]:0:10}"; do
+            printf '  %s\n' "$i"
+        done
+        echo "  ... and $((${#ref_lines[@]} - 10)) more"
+    fi
+    echo
+    echo "Removing drops those old backup lines and refreshes active .par2 digests"
+    echo "in the same hash file(s). Manifest modification time is preserved."
+    pgm_prompt_read_remove_old_par2_hash_refs_choice hash_choice
+    case "$hash_choice" in
+        0)
+            ;;
+        1)
+            echo "Left old PAR2 backup names in hash file(s)."
+            echo
+            return 0
+            ;;
+        2)
+            echo "Cancelled."
+            return_code=0
+            finish
+            ;;
+    esac
+
+    echo -n "Updating hash file(s) in ${#fix_dirs[@]} director"
+    if ((${#fix_dirs[@]} == 1)); then
+        echo "y..."
+    else
+        echo "ies..."
+    fi
+    for i in "${fix_dirs[@]}"; do
+        rc=0
+        msg=$(run_rename_py hash fix-par2-refs "$i" 2>&1) || rc=$?
+        printf '  %s: %s\n' "$(pgm_path_display_relative "$i" "$START_DIR")" "$msg"
+        if (( rc != 0 )); then
+            printf '  WARN: hash update reported a problem in %s\n' \
+                "$(pgm_path_display_relative "$i" "$START_DIR")" >&2
+        fi
+    done
     echo
 }
-
 pgm_discover_and_queue_par2_sets() {
     local -a indices=()
 
