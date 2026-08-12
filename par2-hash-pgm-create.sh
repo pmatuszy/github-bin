@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20260812.133413 - hash-only prompt: explain missing hash; default N
 # v. 20260812.133230 - existing-PAR2 recreate prompt defaults to N
 # v. 20260812.132634 - Y/n single-key; keep hash-only when declining PAR2 recreate
 # v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
@@ -9,6 +10,7 @@
 # v. 20260809.155541 - prompt to exclude rename.sh helpers from PAR2 (default yes)
 # v. 20260806.224414 - initial: create volume-only PAR2 + SHA-512/MD5 hash for cwd subtree
 
+# 2026.08.12 - v. 0.1.8 - Hash-only offer explains PAR2-without-hash; default N
 # 2026.08.12 - v. 0.1.7 - Existing-PAR2 recreate prompt defaults to N (keep set; offer hash-only)
 # 2026.08.12 - v. 0.1.6 - Y/n prompts are single-key; N on existing PAR2 still offers hash-only
 # 2026.08.09 - v. 0.1.5 - Boxed RUN SUMMARY / RUN FINISHED at end (like par2-pgm-check)
@@ -66,7 +68,8 @@ Interactive prompts (unless --yes / flag already set):
   Recovery %:     Enter accepts 20% (or --recovery value).
   Rename helpers: Exclude from PAR2? [Y/n/q] — single key, no Enter (default yes).
   Existing PAR2:  Rename to *.par2.old and recreate? [y/N/q] — single key
-                  (default N = keep PAR2, then offer hash-only).
+                  (default N = keep PAR2). If kept and no hash file exists,
+                  offers to create one [y/N/q] (default N).
   Existing hash:  Overwrite? [Y/n/q] — single key (default yes).
 
 Environment:
@@ -1121,7 +1124,12 @@ if ((${#existing_par2[@]} > 0)); then
   if (( AUTO_YES == 1 )); then
     echo "Keeping existing PAR2 unchanged (--yes; recreate defaults to no)."
     CREATE_PAR2=0
-    echo "Will create hash file only (--yes)."
+    if [[ ! -e "$HASH_FILE" ]]; then
+      echo "No hash file present; skipping hash create (--yes; that prompt defaults to no)."
+      return_code=0
+      RUN_OUTCOME=quit
+      finish
+    fi
   else
     ans=""
     printf '%sRename existing PAR2 to *.par2.old and recreate? [y/N/q] (%s): ' \
@@ -1143,28 +1151,37 @@ if ((${#existing_par2[@]} > 0)); then
       n)
         echo "Keeping existing PAR2 unchanged."
         CREATE_PAR2=0
-        printf '%sCreate hash file only (for this directory tree)? [Y/n/q] (%s): ' \
-          "$(user_prompt_ts_prefix)" "$(prompt_timeout_label)"
-        read_yn_key_with_timeout ans y
-        case $? in
-          2)
-            echo "Quit."
-            return_code=0
-            RUN_OUTCOME=quit
-            finish
-            ;;
-        esac
-        case "$ans" in
-          y)
-            echo "Will create hash file only."
-            ;;
-          *)
-            echo "Aborted (no PAR2 recreate, no hash file)."
-            return_code=0
-            RUN_OUTCOME=quit
-            finish
-            ;;
-        esac
+        if [[ ! -e "$HASH_FILE" ]]; then
+          echo
+          echo "Situation: PAR2 archive(s) exist for this directory, but there is no"
+          echo "  hash manifest yet (expected: $(basename -- "$HASH_FILE"))."
+          echo "Suggestion: create a hash file covering all files in this tree,"
+          echo "  including the existing PAR2 file(s). PAR2 will not be modified."
+          printf '%sCreate hash file now? [y/N/q] (%s): ' \
+            "$(user_prompt_ts_prefix)" "$(prompt_timeout_label)"
+          read_yn_key_with_timeout ans n
+          case $? in
+            2)
+              echo "Quit."
+              return_code=0
+              RUN_OUTCOME=quit
+              finish
+              ;;
+          esac
+          case "$ans" in
+            y)
+              echo "Will create hash file only."
+              ;;
+            *)
+              echo "Aborted (no PAR2 recreate, no hash file)."
+              return_code=0
+              RUN_OUTCOME=quit
+              finish
+              ;;
+          esac
+        else
+          echo "Hash file already present: $(basename -- "$HASH_FILE") (overwrite prompt follows if needed)."
+        fi
         ;;
       *)
         echo "Quit."
