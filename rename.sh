@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# v. 20260812.114541 - date-range rename: run separator normalize so " - title" becomes "_-_title" (checksum/media)
 # v. 20260811.230514 - mismatch Choice hint: only default [Q] uppercase ([u/i/h/v/Q], not U/H)
 # v. 20260811.222437 - checksum recovery: strip '_.' before ext in normalize; accept same-rules path even if nested list hash drifted
 # v. 20260811.213354 - checksum refs: treat '\' like '/' so Windows paths recover under renamed subdirs
@@ -38,6 +39,7 @@
 # v. 20260721.132007 - Samsung timestamp media: preserve optional numeric sorting prefix when appending make/model
 # v. 20260721.112812 - GoPro camera labels: GoPro_Hero4_Silver style (not GOPRO4_SILVER)
 
+# 2026.08.12 - v. 19.301.114541 - transform_basename date-range early return: pass through _normalize_basename_separators (spaces in tail were kept, e.g. _20160305-20160311 - Dallas.sha512)
 # 2026.08.11 - v. 19.300.230514 - checksum mismatch prompt: Choice line uppercases only default Q ([u/i/h/v/Q])
 # 2026.08.11 - v. 19.299.222437 - checksum recovery: normalize strips '_.' before extension (dotted-date early path left '_…_.ext'); accept unique same-rules path when nested .sha512 content hash drifted
 # 2026.08.11 - v. 19.298.213354 - checksum missing-ref recovery: normalize '\' to '/' (Windows lists) so renamed subdir+file are found
@@ -12459,20 +12461,25 @@ transform_basename() {
     fi
 
     # YYYY.MM.DD-YYYY.MM.DD[_tail] — date range → YYYYMMDD-YYYYMMDD_tail (trip folders etc.; must run before single YYYY.MM.DD- rule).
+    # Must normalize separators: early return used to leave spaces in the tail (e.g. " - Dallas.sha512").
     if [[ "$new" =~ ^([0-9]{4})\.([0-9]{2})\.([0-9]{2})-([0-9]{4})\.([0-9]{2})\.([0-9]{2})(.*)$ ]]; then
-        _tb_emit "$(printf '%s%s%s-%s%s%s%s' \
+        local _daterange_out
+        _daterange_out="$(printf '%s%s%s-%s%s%s%s' \
             "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}" "${BASH_REMATCH[3]}" \
             "${BASH_REMATCH[4]}" "${BASH_REMATCH[5]}" "${BASH_REMATCH[6]}" \
             "${BASH_REMATCH[7]}")"
+        _tb_emit "$(_normalize_basename_separators "$_daterange_out")"
         return
     fi
 
     # YYYY.MM.DD-YYYY.MM-DD[_tail] — mixed dotted/hyphen end date (e.g. ...13-...03-17-ZRH) → YYYYMMDD-YYYYMMDD_tail.
     if [[ "$new" =~ ^([0-9]{4})\.([0-9]{2})\.([0-9]{2})-([0-9]{4})\.([0-9]{2})-([0-9]{2})(.*)$ ]]; then
-        _tb_emit "$(printf '%s%s%s-%s%s%s%s' \
+        local _daterange_mix_out
+        _daterange_mix_out="$(printf '%s%s%s-%s%s%s%s' \
             "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}" "${BASH_REMATCH[3]}" \
             "${BASH_REMATCH[4]}" "${BASH_REMATCH[5]}" "${BASH_REMATCH[6]}" \
             "${BASH_REMATCH[7]}")"
+        _tb_emit "$(_normalize_basename_separators "$_daterange_mix_out")"
         return
     fi
 
@@ -12493,10 +12500,12 @@ transform_basename() {
 
     # YYYY.MM.DD-tail.ext -> YYYYMMDD_tail.ext (dotted calendar date before hyphen + title; any extension).
     if [[ "$new" =~ ^([0-9]{4})\.([0-9]{2})\.([0-9]{2})-(.+)(\.[^.]+)$ ]]; then
-        _tb_emit "$(printf '%s%s%s_%s%s' \
+        local _dotdate_hyphen_tail_out
+        _dotdate_hyphen_tail_out="$(printf '%s%s%s_%s%s' \
             "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}" "${BASH_REMATCH[3]}" \
             "${BASH_REMATCH[4]}" \
             "${BASH_REMATCH[5]}")"
+        _tb_emit "$(_normalize_basename_separators "$_dotdate_hyphen_tail_out")"
         return
     fi
 
