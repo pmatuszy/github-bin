@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# v. 20260830.232929 - same-second index: pipefail-safe subsec read; keep this-run SCRIPT_START_TIME on resume
 # v. 20260830.230453 - same-second collision: prefer EXIF subsec over IMG_/VID_ filename ms (can disagree)
 # v. 20260830.223333 - collision: same-second photo/video → HHMMSS_0/_1… by subsec (menu only if subsec same/missing)
 # v. 20260830.211115 - Motorola Edge 50 Fusion: VID_/IMG_ → YYYYMMDD_HHMMSS_-_-_Motorola_Edge_50_Fusion[_HDR]
@@ -44,6 +45,7 @@
 # v. 20260721.132007 - Samsung timestamp media: preserve optional numeric sorting prefix when appending make/model
 # v. 20260721.112812 - GoPro camera labels: GoPro_Hero4_Silver style (not GOPRO4_SILVER)
 
+# 2026.08.30 - v. 19.307.232929 - same-second collision: avoid exiftool|head SIGPIPE under pipefail (subsec was empty → menu); do not restore SCRIPT_START_TIME from resume checkpoint
 # 2026.08.30 - v. 19.306.230453 - same-second collision index: read SubSec from EXIF first (IMG_/VID_ filename ms only as fallback)
 # 2026.08.30 - v. 19.305.223333 - media collision: if same YYYYMMDD_HHMMSS target but different subsec, auto-index HHMMSS_0/_1… (sorted); menu only when subsec same/missing
 # 2026.08.30 - v. 19.304.211115 - Motorola Edge 50 Fusion: VID_YYYYMMDD_HHMMSSmmm.mp4 (filename time) / IMG_…[_HDR].jpg (Date/Time Original) → …_-_-_Motorola_Edge_50_Fusion[_HDR]
@@ -13908,38 +13910,51 @@ collision_is_photo_or_video() {
 
 # Numeric subsecond for sorting (empty → caller treats as unknown). Prefer EXIF; IMG_/VID_ ms tail is fallback only
 # (filename ms can disagree with SubSecTimeOriginal, e.g. IMG_…204651832 vs EXIF .545944).
+# Must be pipefail-safe: never pipe exiftool to head (SIGPIPE → empty subsec → false collision menu).
 collision_media_subsec() {
     local f="$1"
     local bn exifloc v
+    local _cs_save_e=0
     bn="$(basename -- "$f")"
+
+    _cs_save_e=0
+    [[ $- == *e* ]] && _cs_save_e=1
+    set +e
+
     exifloc="$(resolve_rename_exiftool 2>/dev/null)" || exifloc=""
     if [[ -n "$exifloc" ]]; then
-        v="$("$exifloc" -api largefilesupport=1 -s3 -SubSecTimeOriginal -- "$f" 2>/dev/null | head -n 1 | tr -d $'\r')"
+        v="$("$exifloc" -api largefilesupport=1 -s3 -SubSecTimeOriginal -fast2 -- "$f" 2>/dev/null | tr -d $'\r\n')"
         if [[ "$v" =~ ^[0-9]+$ ]]; then
+            ((_cs_save_e)) && set -e || set +e
             printf '%s' "$v"
             return 0
         fi
-        v="$("$exifloc" -api largefilesupport=1 -s3 -SubSecTime -- "$f" 2>/dev/null | head -n 1 | tr -d $'\r')"
+        v="$("$exifloc" -api largefilesupport=1 -s3 -SubSecTime -fast2 -- "$f" 2>/dev/null | tr -d $'\r\n')"
         if [[ "$v" =~ ^[0-9]+$ ]]; then
+            ((_cs_save_e)) && set -e || set +e
             printf '%s' "$v"
             return 0
         fi
-        v="$("$exifloc" -api largefilesupport=1 -s3 -SubSecTimeDigitized -- "$f" 2>/dev/null | head -n 1 | tr -d $'\r')"
+        v="$("$exifloc" -api largefilesupport=1 -s3 -SubSecTimeDigitized -fast2 -- "$f" 2>/dev/null | tr -d $'\r\n')"
         if [[ "$v" =~ ^[0-9]+$ ]]; then
+            ((_cs_save_e)) && set -e || set +e
             printf '%s' "$v"
             return 0
         fi
-        v="$("$exifloc" -api largefilesupport=1 -s3 -DateTimeOriginal -- "$f" 2>/dev/null | head -n 1 | tr -d $'\r')"
+        v="$("$exifloc" -api largefilesupport=1 -s3 -DateTimeOriginal -fast2 -- "$f" 2>/dev/null | tr -d $'\r\n')"
         if [[ "$v" =~ \.([0-9]+) ]]; then
+            ((_cs_save_e)) && set -e || set +e
             printf '%s' "${BASH_REMATCH[1]}"
             return 0
         fi
-        v="$("$exifloc" -api largefilesupport=1 -s3 -CreateDate -- "$f" 2>/dev/null | head -n 1 | tr -d $'\r')"
+        v="$("$exifloc" -api largefilesupport=1 -s3 -CreateDate -fast2 -- "$f" 2>/dev/null | tr -d $'\r\n')"
         if [[ "$v" =~ \.([0-9]+) ]]; then
+            ((_cs_save_e)) && set -e || set +e
             printf '%s' "${BASH_REMATCH[1]}"
             return 0
         fi
     fi
+    ((_cs_save_e)) && set -e || set +e
     if [[ "$bn" =~ ^[Ii][Mm][Gg]_[0-9]{8}_[0-9]{6}([0-9]+) ]]; then
         printf '%s' "${BASH_REMATCH[1]}"
         return 0
@@ -15613,7 +15628,9 @@ PY
         return 1
     fi
 
-    IFS=$'\t' read -r files_examined files_affected files_skipped FILES_HASHED SCRIPT_START_TIME <<< "$meta"
+    IFS=$'\t' read -r files_examined files_affected files_skipped FILES_HASHED _resume_script_start_time <<< "$meta"
+    # Keep this process's wall-clock start in SCRIPT_START_TIME (do not inherit a prior run's start from the checkpoint).
+    unset _resume_script_start_time
     MAIN_LOOP_FILES_EXAMINED_MILESTONE_BASE=$files_examined
 
     unset processed
