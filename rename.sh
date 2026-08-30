@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# v. 20260830.211115 - Motorola Edge 50 Fusion: VID_/IMG_ → YYYYMMDD_HHMMSS_-_-_Motorola_Edge_50_Fusion[_HDR]
 # v. 20260830.184136 - Panasonic HC-X camcorder clips (A###C###_YYMMDD_XXXX.MP4) → YYYYMMDD_HHMMSS_-_-_Panasonic_<model>
 # v. 20260830.182231 - Samsung G990B/G965U1 → Galaxy_S21_FE_5G / Galaxy_S9Plus; rewrite existing Samsung_<code> labels
 # v. 20260812.114541 - date-range rename: run separator normalize so " - title" becomes "_-_title" (checksum/media)
@@ -41,6 +42,7 @@
 # v. 20260721.132007 - Samsung timestamp media: preserve optional numeric sorting prefix when appending make/model
 # v. 20260721.112812 - GoPro camera labels: GoPro_Hero4_Silver style (not GOPRO4_SILVER)
 
+# 2026.08.30 - v. 19.304.211115 - Motorola Edge 50 Fusion: VID_YYYYMMDD_HHMMSSmmm.mp4 (filename time) / IMG_…[_HDR].jpg (Date/Time Original) → …_-_-_Motorola_Edge_50_Fusion[_HDR]
 # 2026.08.30 - v. 19.303.184136 - Panasonic HC-X / P2-style clips A###C###_YYMMDD_XXXX.MP4 → YYYYMMDD_HHMMSS_-_-_Panasonic_<model> (Shoot Start Date local; no reel/clip id)
 # 2026.08.30 - v. 19.302.182231 - Samsung friendly names: G990B→Galaxy_S21_FE_5G, G965U1→Galaxy_S9Plus; upgrade existing Samsung_<rawcode> labels (dry-run+real)
 # 2026.08.12 - v. 19.301.114541 - transform_basename date-range early return: pass through _normalize_basename_separators (spaces in tail were kept, e.g. _20160305-20160311 - Dallas.sha512)
@@ -11497,6 +11499,7 @@ rename_is_exif_camera_tag_append() {
     gopro_exif_camera_tag_append_matches "$@" && return 0
     nikon_exif_camera_tag_append_matches "$@" && return 0
     panasonic_camcorder_exif_camera_tag_append_matches "$@" && return 0
+    motorola_exif_camera_tag_append_matches "$@" && return 0
     return 1
 }
 
@@ -11733,6 +11736,120 @@ transform_xiaomi_media_basename() {
     copy_suffix="${BASH_REMATCH[4]:-${BASH_REMATCH[5]}}"
 
     gopro_format_camera_basename_output "$ts" "Xiaomi" "Mi_10T_Pro" "$copy_suffix" "$ext"
+}
+
+# Motorola Android gallery names, e.g.:
+#   VID_20260816_225231377.mp4 → 20260816_225231_-_-_Motorola_Edge_50_Fusion.mp4  (time from filename)
+#   IMG_20260816_183941716_HDR.jpg → 20260816_183942_-_-_Motorola_Edge_50_Fusion_HDR.jpg  (Date/Time Original)
+motorola_android_media_basename_matches() {
+    local bn="$1"
+    [[ "$bn" =~ ^[Vv][Ii][Dd]_[0-9]{8}_[0-9]{6}[0-9]*\.[mM][pP]4$ ]] && return 0
+    [[ "$bn" =~ ^[Ii][Mm][Gg]_[0-9]{8}_[0-9]{6}[0-9]*(_[Hh][Dd][Rr])?\.(jpe?g|JPE?G)$ ]]
+}
+
+motorola_already_renamed_basename_matches() {
+    local bn="$1"
+    local lower="${bn,,}"
+    [[ "$lower" =~ ^[0-9]{8}_[0-9]{6}_(-__-_|-_-_)motorola_edge_50_fusion(_hdr)?\.(mp4|jpg|jpeg)$ ]]
+}
+
+motorola_exif_camera_tag_append_matches() {
+    local old="$1" new="$2"
+    local ob nb
+
+    [[ -n "$old" && -n "$new" ]] || return 1
+    ob="$(basename -- "$old")"
+    nb="$(basename -- "$new")"
+    [[ "$ob" != "$nb" ]] || return 1
+    motorola_android_media_basename_matches "$ob" || return 1
+    motorola_already_renamed_basename_matches "$nb" || return 1
+    return 0
+}
+
+motorola_exif_is_edge_50_fusion() {
+    local exif="$1"
+    local make="" model=""
+    local make_l model_l
+
+    make="$(samsung_exif_first_value "$exif" 'Android Make')"
+    [[ -n "$make" ]] || make="$(samsung_exif_first_value "$exif" 'Make')"
+    model="$(samsung_exif_first_value "$exif" 'Android Model')"
+    [[ -n "$model" ]] || model="$(samsung_exif_first_value "$exif" 'Camera Model Name')"
+    [[ -n "$model" ]] || model="$(samsung_exif_first_value "$exif" 'Model')"
+
+    make_l="${make,,}"
+    model_l="${model,,}"
+    [[ "$make_l" == *motorola* ]] || return 1
+    # "motorola edge 50 fusion" or "edge 50 fusion"
+    [[ "$model_l" == *"edge 50 fusion"* || "$model_l" == *"edge_50_fusion"* ]]
+}
+
+motorola_parse_exif_datetime_to_ts() {
+    local raw="$1"
+    if [[ "$raw" =~ ([0-9]{4}):([0-9]{2}):([0-9]{2})[[:space:]]+([0-9]{2}):([0-9]{2}):([0-9]{2}) ]]; then
+        printf '%s%s%s_%s%s%s' \
+            "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}" "${BASH_REMATCH[3]}" \
+            "${BASH_REMATCH[4]}" "${BASH_REMATCH[5]}" "${BASH_REMATCH[6]}"
+        return 0
+    fi
+    return 1
+}
+
+# Empty stdout / return 0 = no change (safe under set -e $(...)).
+transform_motorola_media_basename() {
+    local file="$1"
+    local base="$2"
+    local exifloc exif ext ts="" hdr_suffix="" dto=""
+    local _mo_err_trap="" _mo_save_e=0
+
+    _transform_motorola_err_trap_restore() {
+        eval "${_mo_err_trap:-}"
+        if ((_mo_save_e)); then
+            set -e
+        else
+            set +e
+        fi
+    }
+
+    motorola_android_media_basename_matches "$base" || return 0
+    motorola_already_renamed_basename_matches "$base" && return 0
+
+    _mo_save_e=0
+    [[ $- == *e* ]] && _mo_save_e=1
+    set +e
+    _mo_err_trap="$(trap -p ERR || true)"
+    trap - ERR
+    trap '_transform_motorola_err_trap_restore' RETURN
+
+    exifloc="$(resolve_rename_exiftool)" || return 0
+    exif="$("$exifloc" -api largefilesupport=1 "$file" 2>/dev/null)" || return 0
+    [[ -n "$exif" ]] || return 0
+    motorola_exif_is_edge_50_fusion "$exif" || return 0
+
+    ext="${base##*.}"
+
+    if [[ "$base" =~ ^[Vv][Ii][Dd]_([0-9]{8})_([0-9]{6})[0-9]*\.[mM][pP]4$ ]]; then
+        # Video: prefer embedded filename clock (local); ignore millisecond tail.
+        ts="${BASH_REMATCH[1]}_${BASH_REMATCH[2]}"
+        gopro_format_camera_basename_output "$ts" "Motorola" "Edge_50_Fusion" "" "$ext"
+        return 0
+    fi
+
+    if [[ "$base" =~ ^[Ii][Mm][Gg]_([0-9]{8})_([0-9]{6})[0-9]*(_[Hh][Dd][Rr])?\.(jpe?g|JPE?G)$ ]]; then
+        ts="${BASH_REMATCH[1]}_${BASH_REMATCH[2]}"
+        [[ -n "${BASH_REMATCH[3]-}" ]] && hdr_suffix="HDR"
+        dto="$(samsung_exif_first_value "$exif" 'Date/Time Original')"
+        [[ -n "$dto" ]] || dto="$(samsung_exif_first_value "$exif" 'Create Date')"
+        if [[ -n "$dto" ]]; then
+            local _dto_ts=""
+            _dto_ts="$(motorola_parse_exif_datetime_to_ts "$dto" || true)"
+            [[ -n "$_dto_ts" ]] && ts="$_dto_ts"
+        fi
+        gopro_format_camera_basename_output "$ts" "Motorola" "Edge_50_Fusion" "$hdr_suffix" "$ext"
+        return 0
+    fi
+
+    return 0
 }
 
 # GoPro clips already named YYYYMMDD_HHMMSS.mp4 (no GH/GOPR prefix): append _-_-_GoPro_Hero#_Edition from exiftool.
@@ -12954,6 +13071,31 @@ transform_name() {
             vlog "Panasonic camcorder rename: $base -> $_pc_try"
         else
             vlog "Panasonic camcorder rename: no usable metadata for $base (rc=$_pc_rc); falling back to normal rename"
+        fi
+    fi
+
+    # Motorola Edge 50 Fusion gallery VID_/IMG_ (shares early pro-camera gate with Sony/Panasonic).
+    if [[ -f "$f" ]] && ((_tn_skip_exif == 0)) && (( _sony_applied == 0 )) \
+        && motorola_android_media_basename_matches "$base"; then
+        local _tn_save_e_mo=0 _mo_try="" _mo_rc=0 _mo_err_trap=""
+        [[ $- == *e* ]] && _tn_save_e_mo=1
+        set +e
+        _mo_err_trap="$(trap -p ERR || true)"
+        trap - ERR
+        _mo_try="$(transform_motorola_media_basename "$f" "$base")"
+        _mo_rc=$?
+        eval "${_mo_err_trap:-}"
+        if ((_tn_save_e_mo)); then
+            set -e
+        else
+            set +e
+        fi
+        if (( _mo_rc == 0 )) && [[ -n "$_mo_try" ]]; then
+            newbase="$_mo_try"
+            _sony_applied=1
+            vlog "Motorola media rename: $base -> $_mo_try"
+        else
+            vlog "Motorola media rename: no usable Edge 50 Fusion metadata for $base (rc=$_mo_rc); falling back to normal rename"
         fi
     fi
 
@@ -15483,7 +15625,7 @@ print_rename_prompt_menu() {
         choice_hint+=/s
     fi
     if [[ -n "$path" && -n "$suggested_new" ]] && rename_is_camera_make_model_change "$path" "$suggested_new"; then
-        echo "  $(rename_menu_key_bracket G Y) Yes, and auto-approve future Samsung, GoPro, Nikon, and Panasonic camera make/model renames for the rest of this run"
+        echo "  $(rename_menu_key_bracket G Y) Yes, and auto-approve future Samsung, GoPro, Nikon, Panasonic, and Motorola camera make/model renames for the rest of this run"
         choice_hint+=/g
     fi
     if [[ -n "$path" && -n "$suggested_new" ]] && rename_suggested_only_extension_case_change "$path" "$suggested_new" \
@@ -17880,7 +18022,7 @@ for f in "${ordered_paths[@]}"; do
             ;;
         g|G)
             if ! rename_is_camera_make_model_change "$f" "$new"; then
-                echo -e "${YELLOW}[G] applies only to recognized Samsung, GoPro, Nikon, or Panasonic camera make/model renames.${RESET}"
+                echo -e "${YELLOW}[G] applies only to recognized Samsung, GoPro, Nikon, Panasonic, or Motorola camera make/model renames.${RESET}"
                 ((++files_skipped))
             else
                 AUTO_CAMERA_MAKE_MODEL_SESSION=yes
