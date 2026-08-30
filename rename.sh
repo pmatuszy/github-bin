@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# v. 20260831.000133 - Run settings: align Equivalent CLI value column with other settings lines
+# v. 20260830.235231 - same-second index: read subsec from full EXIF (not -fast2) so renamed JPEGs resolve
 # v. 20260830.233310 - Run settings: print equivalent CLI matching prompted choices
 # v. 20260830.232929 - same-second index: pipefail-safe subsec read; keep this-run SCRIPT_START_TIME on resume
 # v. 20260830.230453 - same-second collision: prefer EXIF subsec over IMG_/VID_ filename ms (can disagree)
@@ -6284,13 +6286,13 @@ print_run_settings_equivalent_cli() {
 
     q_start="$(printf '%q' "$START_DIR")"
     if [[ "$mode" == "dry-run" ]] && dry_run_skip_exiftool_enabled; then
-        printf '  Equivalent CLI:    RENAME_DRY_RUN_SKIP_EXIFTOOL=yes cd %s && %s\n' "$q_start" "$out"
+        printf '  %-21s%s\n' "Equivalent CLI:" "RENAME_DRY_RUN_SKIP_EXIFTOOL=yes cd $q_start && $out"
     else
-        printf '  Equivalent CLI:    cd %s && %s\n' "$q_start" "$out"
+        printf '  %-21s%s\n' "Equivalent CLI:" "cd $q_start && $out"
     fi
     if [[ "$process_scope" == "subdir" && -n "${SCOPE_SUBDIR:-}" ]]; then
-        printf '  Note:              prompted scope [D] (%s) has no exact CLI flag; line above uses --scope subdirs.\n' "$SCOPE_SUBDIR"
-        printf '                     ([D] keeps DB/excludes/resume at start dir while only recursing under that subdir.)\n'
+        printf '  %-21s%s\n' "Note:" "prompted scope [D] ($SCOPE_SUBDIR) has no exact CLI flag; line above uses --scope subdirs."
+        printf '  %-21s%s\n' "" "([D] keeps DB/excludes/resume at start dir while only recursing under that subdir.)"
     fi
 }
 
@@ -13952,12 +13954,35 @@ collision_is_photo_or_video() {
         || "$lower" == *.webm || "$lower" == *.avi || "$lower" == *.3gp || "$lower" == *.mts || "$lower" == *.m2ts ]]
 }
 
+# Numeric subsecond from full exiftool output (-fast2 often omits SubSec* on JPEG; breaks same-second index on renamed targets).
+collision_media_subsec_from_exif() {
+    local exif="$1"
+    local v="" label
+
+    for label in 'Sub Sec Time Original' 'Sub Sec Time' 'Sub Sec Time Digitized'; do
+        v="$(samsung_exif_first_value "$exif" "$label")"
+        if [[ "$v" =~ ^[0-9]+$ ]]; then
+            printf '%s' "$v"
+            return 0
+        fi
+    done
+
+    for label in 'Date/Time Original' 'Create Date' 'Date Time Original'; do
+        v="$(samsung_exif_first_value "$exif" "$label")"
+        if [[ "$v" =~ \.([0-9]+) ]]; then
+            printf '%s' "${BASH_REMATCH[1]}"
+            return 0
+        fi
+    done
+    return 1
+}
+
 # Numeric subsecond for sorting (empty → caller treats as unknown). Prefer EXIF; IMG_/VID_ ms tail is fallback only
 # (filename ms can disagree with SubSecTimeOriginal, e.g. IMG_…204651832 vs EXIF .545944).
 # Must be pipefail-safe: never pipe exiftool to head (SIGPIPE → empty subsec → false collision menu).
 collision_media_subsec() {
     local f="$1"
-    local bn exifloc v
+    local bn exifloc exif v tag
     local _cs_save_e=0
     bn="$(basename -- "$f")"
 
@@ -13967,36 +13992,31 @@ collision_media_subsec() {
 
     exifloc="$(resolve_rename_exiftool 2>/dev/null)" || exifloc=""
     if [[ -n "$exifloc" ]]; then
-        v="$("$exifloc" -api largefilesupport=1 -s3 -SubSecTimeOriginal -fast2 -- "$f" 2>/dev/null | tr -d $'\r\n')"
-        if [[ "$v" =~ ^[0-9]+$ ]]; then
-            ((_cs_save_e)) && set -e || set +e
-            printf '%s' "$v"
-            return 0
+        exif="$("$exifloc" -api largefilesupport=1 "$f" 2>/dev/null)"
+        if [[ -n "$exif" ]]; then
+            v="$(collision_media_subsec_from_exif "$exif" 2>/dev/null || true)"
+            if [[ "$v" =~ ^[0-9]+$ ]]; then
+                ((_cs_save_e)) && set -e || set +e
+                printf '%s' "$v"
+                return 0
+            fi
         fi
-        v="$("$exifloc" -api largefilesupport=1 -s3 -SubSecTime -fast2 -- "$f" 2>/dev/null | tr -d $'\r\n')"
-        if [[ "$v" =~ ^[0-9]+$ ]]; then
-            ((_cs_save_e)) && set -e || set +e
-            printf '%s' "$v"
-            return 0
-        fi
-        v="$("$exifloc" -api largefilesupport=1 -s3 -SubSecTimeDigitized -fast2 -- "$f" 2>/dev/null | tr -d $'\r\n')"
-        if [[ "$v" =~ ^[0-9]+$ ]]; then
-            ((_cs_save_e)) && set -e || set +e
-            printf '%s' "$v"
-            return 0
-        fi
-        v="$("$exifloc" -api largefilesupport=1 -s3 -DateTimeOriginal -fast2 -- "$f" 2>/dev/null | tr -d $'\r\n')"
-        if [[ "$v" =~ \.([0-9]+) ]]; then
-            ((_cs_save_e)) && set -e || set +e
-            printf '%s' "${BASH_REMATCH[1]}"
-            return 0
-        fi
-        v="$("$exifloc" -api largefilesupport=1 -s3 -CreateDate -fast2 -- "$f" 2>/dev/null | tr -d $'\r\n')"
-        if [[ "$v" =~ \.([0-9]+) ]]; then
-            ((_cs_save_e)) && set -e || set +e
-            printf '%s' "${BASH_REMATCH[1]}"
-            return 0
-        fi
+        for tag in SubSecTimeOriginal SubSecTime SubSecTimeDigitized; do
+            v="$("$exifloc" -api largefilesupport=1 -s3 "-$tag" -- "$f" 2>/dev/null | tr -d $'\r\n')"
+            if [[ "$v" =~ ^[0-9]+$ ]]; then
+                ((_cs_save_e)) && set -e || set +e
+                printf '%s' "$v"
+                return 0
+            fi
+        done
+        for tag in DateTimeOriginal CreateDate; do
+            v="$("$exifloc" -api largefilesupport=1 -s3 "-$tag" -- "$f" 2>/dev/null | tr -d $'\r\n')"
+            if [[ "$v" =~ \.([0-9]+) ]]; then
+                ((_cs_save_e)) && set -e || set +e
+                printf '%s' "${BASH_REMATCH[1]}"
+                return 0
+            fi
+        done
     fi
     ((_cs_save_e)) && set -e || set +e
     if [[ "$bn" =~ ^[Ii][Mm][Gg]_[0-9]{8}_[0-9]{6}([0-9]+) ]]; then
@@ -14066,8 +14086,14 @@ try_resolve_collision_with_same_second_index() {
 
     old_sub="$(collision_media_subsec "$old" || true)"
     new_sub="$(collision_media_subsec "$new" || true)"
-    [[ -n "$old_sub" && -n "$new_sub" ]] || return 1
-    [[ "$(collision_subsec_sort_key "$old_sub")" != "$(collision_subsec_sort_key "$new_sub")" ]] || return 1
+    if [[ -z "$old_sub" || -z "$new_sub" ]]; then
+        vlog "Same-second index: skip (subsec missing: old='${old_sub:-<empty>}' new='${new_sub:-<empty>}')"
+        return 1
+    fi
+    if [[ "$(collision_subsec_sort_key "$old_sub")" == "$(collision_subsec_sort_key "$new_sub")" ]]; then
+        vlog "Same-second index: skip (subsec equal: $old_sub)"
+        return 1
+    fi
 
     rest_re="$(sed_escape_regex "$rest")"
     bn_re="^$(sed_escape_regex "$ymd")_$(sed_escape_regex "$hms")(_[0-9]+)?${rest_re}$"
