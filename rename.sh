@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# v. 20260830.182231 - Samsung G990B/G965U1 → Galaxy_S21_FE_5G / Galaxy_S9Plus; rewrite existing Samsung_<code> labels
 # v. 20260812.114541 - date-range rename: run separator normalize so " - title" becomes "_-_title" (checksum/media)
 # v. 20260811.230514 - mismatch Choice hint: only default [Q] uppercase ([u/i/h/v/Q], not U/H)
 # v. 20260811.222437 - checksum recovery: strip '_.' before ext in normalize; accept same-rules path even if nested list hash drifted
@@ -39,6 +40,7 @@
 # v. 20260721.132007 - Samsung timestamp media: preserve optional numeric sorting prefix when appending make/model
 # v. 20260721.112812 - GoPro camera labels: GoPro_Hero4_Silver style (not GOPRO4_SILVER)
 
+# 2026.08.30 - v. 19.302.182231 - Samsung friendly names: G990B→Galaxy_S21_FE_5G, G965U1→Galaxy_S9Plus; upgrade existing Samsung_<rawcode> labels (dry-run+real)
 # 2026.08.12 - v. 19.301.114541 - transform_basename date-range early return: pass through _normalize_basename_separators (spaces in tail were kept, e.g. _20160305-20160311 - Dallas.sha512)
 # 2026.08.11 - v. 19.300.230514 - checksum mismatch prompt: Choice line uppercases only default Q ([u/i/h/v/Q])
 # 2026.08.11 - v. 19.299.222437 - checksum recovery: normalize strips '_.' before extension (dotted-date early path left '_…_.ext'); accept unique same-rules path when nested .sha512 content hash drifted
@@ -11496,10 +11498,12 @@ rename_is_exif_camera_tag_append() {
 }
 
 # Camera renames eligible for [G] session auto-yes. This includes EXIF-derived
-# make/model appends and exact legacy GoPro camera-label modernization.
+# make/model appends, exact legacy GoPro camera-label modernization, and Samsung
+# raw model-code → marketing-name upgrades (e.g. Samsung_G990B → Samsung_Galaxy_S21_FE_5G).
 rename_is_camera_make_model_change() {
     rename_is_exif_camera_tag_append "$@" && return 0
     gopro_legacy_camera_label_normalization_matches "$@" && return 0
+    samsung_raw_model_label_normalization_matches "$@" && return 0
     return 1
 }
 
@@ -11596,6 +11600,8 @@ samsung_friendly_model_from_code() {
         SM-S931*|SM-S931B) printf '%s' 'S25' ;;
         SM-S721*|SM-S721B) printf '%s' 'S24_FE' ;;
         SM-S711*|SM-S711B) printf '%s' 'S23_FE' ;;
+        SM-G990*|G990*) printf '%s' 'Galaxy_S21_FE_5G' ;;
+        SM-G965U1|G965U1) printf '%s' 'Galaxy_S9Plus' ;;
         SM-G903*|SM-G903F|G903F) printf '%s' 'S5_Neo' ;;
         *)
             code="${code#SM-}"
@@ -11604,6 +11610,46 @@ samsung_friendly_model_from_code() {
             printf '%s' "$code"
             ;;
     esac
+}
+
+# Upgrade already-tagged Samsung_<rawcode> basenames when the friendly map returns a
+# marketing name (e.g. Samsung_G990B → Samsung_Galaxy_S21_FE_5G). No EXIF required.
+# Empty stdout / return 0 = no change (safe under set -e command substitution).
+maybe_transform_samsung_raw_model_label() {
+    local base="$1"
+    local ts model_and_copy ext model copy="" friendly
+
+    samsung_already_renamed_basename_matches "$base" || return 0
+    [[ "$base" =~ ^(([0-9]+_)?[0-9]{8}_[0-9]{6})_(-__-_|-_-_)[Ss]amsung_(.+)(\.[^.]+)$ ]] || return 0
+    ts="${BASH_REMATCH[1]}"
+    model_and_copy="${BASH_REMATCH[4]}"
+    ext="${BASH_REMATCH[5]}"
+    ext="${ext#.}"
+
+    model="$model_and_copy"
+    friendly="$(samsung_friendly_model_from_code "$model_and_copy")" || return 0
+    if [[ "${friendly^^}" == "${model_and_copy^^}" ]] && [[ "$model_and_copy" =~ ^(.+)_([0-9]+)$ ]]; then
+        friendly="$(samsung_friendly_model_from_code "${BASH_REMATCH[1]}")" || return 0
+        [[ "${friendly^^}" != "${BASH_REMATCH[1]^^}" ]] || return 0
+        model="${BASH_REMATCH[1]}"
+        copy="${BASH_REMATCH[2]}"
+    fi
+    [[ "${friendly^^}" != "${model^^}" ]] || return 0
+
+    gopro_format_camera_basename_output "$ts" "Samsung" "$friendly" "$copy" "$ext"
+}
+
+# True when NEW is only a Samsung raw-code → marketing-name upgrade of OLD.
+samsung_raw_model_label_normalization_matches() {
+    local old="$1" new="$2"
+    local ob nb expected=""
+
+    [[ -n "$old" && -n "$new" ]] || return 1
+    ob="$(basename -- "$old")"
+    nb="$(basename -- "$new")"
+    [[ "$ob" != "$nb" ]] || return 1
+    expected="$(maybe_transform_samsung_raw_model_label "$ob")"
+    [[ -n "$expected" && "$nb" == "$expected" ]]
 }
 
 transform_samsung_media_basename() {
@@ -13103,7 +13149,17 @@ transform_name() {
     fi
 
     local _samsung_applied=0 _samsung_try="" _samsung_rc=0
-    if [[ -f "$f" ]] && ((_tn_skip_exif == 0)) && (( _gopro_applied == 0 && _sony_applied == 0 && _olympus_applied == 0 && _nikon_applied == 0 )) \
+    # Raw-code → marketing-name upgrades need no EXIF (table lookup only).
+    if [[ -f "$f" ]] && (( _gopro_applied == 0 && _sony_applied == 0 && _olympus_applied == 0 && _nikon_applied == 0 )) \
+        && samsung_already_renamed_basename_matches "$newbase"; then
+        _samsung_try="$(maybe_transform_samsung_raw_model_label "$newbase")"
+        if [[ -n "$_samsung_try" && "$_samsung_try" != "$newbase" ]]; then
+            vlog "Samsung raw model label: $newbase -> $_samsung_try"
+            newbase="$_samsung_try"
+            _samsung_applied=1
+        fi
+    fi
+    if [[ -f "$f" ]] && ((_tn_skip_exif == 0)) && (( _gopro_applied == 0 && _sony_applied == 0 && _olympus_applied == 0 && _nikon_applied == 0 && _samsung_applied == 0 )) \
         && samsung_media_basename_matches "$newbase"; then
         local _tn_save_e_sam=0 _sam_err_trap=""
         [[ $- == *e* ]] && _tn_save_e_sam=1
