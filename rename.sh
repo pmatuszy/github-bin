@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# v. 20260830.223333 - collision: same-second photo/video → HHMMSS_0/_1… by subsec (menu only if subsec same/missing)
 # v. 20260830.211115 - Motorola Edge 50 Fusion: VID_/IMG_ → YYYYMMDD_HHMMSS_-_-_Motorola_Edge_50_Fusion[_HDR]
 # v. 20260830.184136 - Panasonic HC-X camcorder clips (A###C###_YYMMDD_XXXX.MP4) → YYYYMMDD_HHMMSS_-_-_Panasonic_<model>
 # v. 20260830.182231 - Samsung G990B/G965U1 → Galaxy_S21_FE_5G / Galaxy_S9Plus; rewrite existing Samsung_<code> labels
@@ -42,6 +43,7 @@
 # v. 20260721.132007 - Samsung timestamp media: preserve optional numeric sorting prefix when appending make/model
 # v. 20260721.112812 - GoPro camera labels: GoPro_Hero4_Silver style (not GOPRO4_SILVER)
 
+# 2026.08.30 - v. 19.305.223333 - media collision: if same YYYYMMDD_HHMMSS target but different subsec, auto-index HHMMSS_0/_1… (sorted); menu only when subsec same/missing
 # 2026.08.30 - v. 19.304.211115 - Motorola Edge 50 Fusion: VID_YYYYMMDD_HHMMSSmmm.mp4 (filename time) / IMG_…[_HDR].jpg (Date/Time Original) → …_-_-_Motorola_Edge_50_Fusion[_HDR]
 # 2026.08.30 - v. 19.303.184136 - Panasonic HC-X / P2-style clips A###C###_YYMMDD_XXXX.MP4 → YYYYMMDD_HHMMSS_-_-_Panasonic_<model> (Shoot Start Date local; no reel/clip id)
 # 2026.08.30 - v. 19.302.182231 - Samsung friendly names: G990B→Galaxy_S21_FE_5G, G965U1→Galaxy_S9Plus; upgrade existing Samsung_<rawcode> labels (dry-run+real)
@@ -13893,6 +13895,249 @@ make_other_suffix_path() {
     printf '%s' "$candidate"
 }
 
+# Stills + movies for same-second collision indexing (includes JPEG etc.; broader than is_media_file).
+collision_is_photo_or_video() {
+    local lower="${1,,}"
+    [[ "$lower" == *.jpg || "$lower" == *.jpeg || "$lower" == *.png || "$lower" == *.gif || "$lower" == *.webp \
+        || "$lower" == *.heic || "$lower" == *.heif || "$lower" == *.bmp || "$lower" == *.tif || "$lower" == *.tiff \
+        || "$lower" == *.nef || "$lower" == *.mp4 || "$lower" == *.m4v || "$lower" == *.mov || "$lower" == *.mkv \
+        || "$lower" == *.webm || "$lower" == *.avi || "$lower" == *.3gp || "$lower" == *.mts || "$lower" == *.m2ts ]]
+}
+
+# Numeric subsecond for sorting (empty → caller treats as unknown). Prefer EXIF, else IMG_/VID_ ms tail.
+collision_media_subsec() {
+    local f="$1"
+    local bn exifloc v
+    bn="$(basename -- "$f")"
+    if [[ "$bn" =~ ^[Ii][Mm][Gg]_[0-9]{8}_[0-9]{6}([0-9]+) ]]; then
+        printf '%s' "${BASH_REMATCH[1]}"
+        return 0
+    fi
+    if [[ "$bn" =~ ^[Vv][Ii][Dd]_[0-9]{8}_[0-9]{6}([0-9]+) ]]; then
+        printf '%s' "${BASH_REMATCH[1]}"
+        return 0
+    fi
+    exifloc="$(resolve_rename_exiftool 2>/dev/null)" || return 1
+    v="$("$exifloc" -api largefilesupport=1 -s3 -SubSecTimeOriginal -- "$f" 2>/dev/null | head -n 1 | tr -d $'\r')"
+    if [[ "$v" =~ ^[0-9]+$ ]]; then
+        printf '%s' "$v"
+        return 0
+    fi
+    v="$("$exifloc" -api largefilesupport=1 -s3 -SubSecTime -- "$f" 2>/dev/null | head -n 1 | tr -d $'\r')"
+    if [[ "$v" =~ ^[0-9]+$ ]]; then
+        printf '%s' "$v"
+        return 0
+    fi
+    v="$("$exifloc" -api largefilesupport=1 -s3 -SubSecTimeDigitized -- "$f" 2>/dev/null | head -n 1 | tr -d $'\r')"
+    if [[ "$v" =~ ^[0-9]+$ ]]; then
+        printf '%s' "$v"
+        return 0
+    fi
+    v="$("$exifloc" -api largefilesupport=1 -s3 -DateTimeOriginal -- "$f" 2>/dev/null | head -n 1 | tr -d $'\r')"
+    if [[ "$v" =~ \.([0-9]+) ]]; then
+        printf '%s' "${BASH_REMATCH[1]}"
+        return 0
+    fi
+    v="$("$exifloc" -api largefilesupport=1 -s3 -CreateDate -- "$f" 2>/dev/null | head -n 1 | tr -d $'\r')"
+    if [[ "$v" =~ \.([0-9]+) ]]; then
+        printf '%s' "${BASH_REMATCH[1]}"
+        return 0
+    fi
+    return 1
+}
+
+collision_subsec_sort_key() {
+    local s="$1"
+    while (( ${#s} < 9 )); do
+        s="${s}0"
+    done
+    printf '%s' "${s:0:9}"
+}
+
+# Parse proposed media target basename: optional NUMBER_ + YYYYMMDD_HHMMSS + optional _INDEX + rest.
+# Prints: ymd<TAB>hms<TAB>index_or_empty<TAB>rest (rest starts with _ and includes extension).
+collision_parse_yyyymmdd_hhmmss_target_basename() {
+    local base="$1"
+    if [[ "$base" =~ ^(([0-9]+_)?[0-9]{8})_([0-9]{6})(_([0-9]+))?(_.+)$ ]]; then
+        printf '%s\t%s\t%s\t%s' "${BASH_REMATCH[1]}" "${BASH_REMATCH[3]}" "${BASH_REMATCH[5]-}" "${BASH_REMATCH[6]}"
+        return 0
+    fi
+    return 1
+}
+
+collision_build_indexed_target_path() {
+    local dir="$1" ymd="$2" hms="$3" idx="$4" rest="$5" width="$6"
+    local idx_fmt
+    idx_fmt="$(printf "%0${width}d" "$((10#$idx))")"
+    if [[ "$dir" == "." ]]; then
+        printf './%s_%s_%s%s' "$ymd" "$hms" "$idx_fmt" "$rest"
+    else
+        printf '%s/%s_%s_%s%s' "$dir" "$ymd" "$hms" "$idx_fmt" "$rest"
+    fi
+}
+
+# On media collision with different subsecs: assign HHMMSS_0/_1… (sorted by subsec).
+# Sets COLLISION_OTHER_PATH to the source's indexed target. May rename existing siblings in real mode.
+# Return 0 if resolved; 1 if not applicable (caller shows collision menu).
+try_resolve_collision_with_same_second_index() {
+    local old="$1"
+    local new="$2"
+    local dir new_base parsed ymd hms cur_idx rest
+    local old_sub new_sub
+    local -a mem_paths=() mem_subs=() mem_keys=()
+    local -a sort_idx=() desired=()
+    local p bn bn_re rest_re cand i j count width width_tmp tmp_prefix
+    local old_abs m_abs already=no source_desired=""
+
+    COLLISION_OTHER_PATH=""
+    [[ -f "$old" && -f "$new" ]] || return 1
+    collision_is_photo_or_video "$old" || return 1
+    collision_is_photo_or_video "$new" || return 1
+
+    dir="$(dirname -- "$new")"
+    new_base="$(basename -- "$new")"
+    parsed="$(collision_parse_yyyymmdd_hhmmss_target_basename "$new_base")" || return 1
+    IFS=$'\t' read -r ymd hms cur_idx rest <<< "$parsed"
+    [[ -n "$ymd" && -n "$hms" && -n "$rest" ]] || return 1
+
+    old_sub="$(collision_media_subsec "$old" || true)"
+    new_sub="$(collision_media_subsec "$new" || true)"
+    [[ -n "$old_sub" && -n "$new_sub" ]] || return 1
+    [[ "$(collision_subsec_sort_key "$old_sub")" != "$(collision_subsec_sort_key "$new_sub")" ]] || return 1
+
+    rest_re="$(sed_escape_regex "$rest")"
+    bn_re="^$(sed_escape_regex "$ymd")_$(sed_escape_regex "$hms")(_[0-9]+)?${rest_re}$"
+
+    shopt -s nullglob
+    for cand in "$dir"/*; do
+        [[ -f "$cand" ]] || continue
+        bn="$(basename -- "$cand")"
+        [[ "$bn" =~ $bn_re ]] || continue
+        mem_paths+=( "$cand" )
+    done
+    shopt -u nullglob
+
+    old_abs="$(db_abs_path "$old" 2>/dev/null || printf '%s' "$old")"
+    for p in "${mem_paths[@]}"; do
+        m_abs="$(db_abs_path "$p" 2>/dev/null || printf '%s' "$p")"
+        if [[ "$m_abs" == "$old_abs" ]]; then
+            already=yes
+            break
+        fi
+    done
+    [[ "$already" == yes ]] || mem_paths+=( "$old" )
+
+    count=${#mem_paths[@]}
+    (( count >= 2 )) || return 1
+
+    local sub=""
+    for p in "${mem_paths[@]}"; do
+        sub="$(collision_media_subsec "$p" || true)"
+        [[ -n "$sub" ]] || return 1
+        mem_subs+=( "$sub" )
+        mem_keys+=( "$(collision_subsec_sort_key "$sub")" )
+    done
+
+    for ((i = 0; i < count; i++)); do
+        for ((j = i + 1; j < count; j++)); do
+            [[ "${mem_keys[$i]}" == "${mem_keys[$j]}" ]] && return 1
+        done
+    done
+
+    sort_idx=()
+    for ((i = 0; i < count; i++)); do
+        sort_idx+=( "$i" )
+    done
+    local a b swapped
+    for ((a = 0; a < count; a++)); do
+        for ((b = a + 1; b < count; b++)); do
+            if [[ "${mem_keys[${sort_idx[$a]}]}" > "${mem_keys[${sort_idx[$b]}]}" ]]; then
+                swapped="${sort_idx[$a]}"
+                sort_idx[$a]="${sort_idx[$b]}"
+                sort_idx[$b]="$swapped"
+            fi
+        done
+    done
+
+    width_tmp=$((count - 1))
+    width=${#width_tmp}
+    (( width < 1 )) && width=1
+
+    desired=()
+    for ((i = 0; i < count; i++)); do
+        desired+=( "$(collision_build_indexed_target_path "$dir" "$ymd" "$hms" "$i" "$rest" "$width")" )
+    done
+
+    for ((i = 0; i < count; i++)); do
+        p="${mem_paths[${sort_idx[$i]}]}"
+        m_abs="$(db_abs_path "$p" 2>/dev/null || printf '%s' "$p")"
+        if [[ "$m_abs" == "$old_abs" ]]; then
+            source_desired="${desired[$i]}"
+            break
+        fi
+    done
+    [[ -n "$source_desired" ]] || return 1
+
+    local cand_abs member
+    for ((i = 0; i < count; i++)); do
+        cand="${desired[$i]}"
+        [[ -e "$cand" ]] || continue
+        cand_abs="$(db_abs_path "$cand" 2>/dev/null || printf '%s' "$cand")"
+        member=no
+        for p in "${mem_paths[@]}"; do
+            m_abs="$(db_abs_path "$p" 2>/dev/null || printf '%s' "$p")"
+            if [[ "$m_abs" == "$cand_abs" ]]; then
+                member=yes
+                break
+            fi
+        done
+        [[ "$member" == yes ]] || return 1
+    done
+
+    if [[ "$mode" == "dry-run" ]]; then
+        emit_wrap_labeled_stdout "SAME-SECOND INDEX: " "${CYAN}SAME-SECOND INDEX:${RESET} " "different subsec — would use indexed names (sorted by subsec)."
+        emit_wrap_labeled_stdout "  SOURCE would become: " "  ${GREEN}SOURCE would become:${RESET} " "$source_desired"
+        for ((i = 0; i < count; i++)); do
+            p="${mem_paths[${sort_idx[$i]}]}"
+            m_abs="$(db_abs_path "$p" 2>/dev/null || printf '%s' "$p")"
+            [[ "$m_abs" == "$old_abs" ]] && continue
+            cand="${desired[$i]}"
+            if [[ "$(db_abs_path "$p" 2>/dev/null || printf '%s' "$p")" != "$(db_abs_path "$cand" 2>/dev/null || printf '%s' "$cand")" ]]; then
+                emit_wrap_old_arrow_new_stdout "  Sibling would become: " "  ${CYAN}Sibling would become:${RESET} " "$p" "$cand"
+            fi
+        done
+        COLLISION_OTHER_PATH="$source_desired"
+        vlog "Same-second collision index (dry-run): '$old' -> '$source_desired'"
+        return 0
+    fi
+
+    tmp_prefix="${dir}/.__same_sec_idx_$$"
+    for ((i = 0; i < count; i++)); do
+        p="${mem_paths[${sort_idx[$i]}]}"
+        m_abs="$(db_abs_path "$p" 2>/dev/null || printf '%s' "$p")"
+        [[ "$m_abs" == "$old_abs" ]] && continue
+        cand="${desired[$i]}"
+        if [[ "$(db_abs_path "$p" 2>/dev/null || printf '%s' "$p")" != "$(db_abs_path "$cand" 2>/dev/null || printf '%s' "$cand")" ]]; then
+            mv -n -- "$p" "${tmp_prefix}_${i}" || return 1
+        fi
+    done
+    for ((i = 0; i < count; i++)); do
+        p="${mem_paths[${sort_idx[$i]}]}"
+        m_abs="$(db_abs_path "$p" 2>/dev/null || printf '%s' "$p")"
+        [[ "$m_abs" == "$old_abs" ]] && continue
+        cand="${desired[$i]}"
+        if [[ -e "${tmp_prefix}_${i}" ]]; then
+            mv -n -- "${tmp_prefix}_${i}" "$cand" || return 1
+        fi
+    done
+
+    COLLISION_OTHER_PATH="$source_desired"
+    emit_wrap_labeled_stdout "SAME-SECOND INDEX: " "${CYAN}SAME-SECOND INDEX:${RESET} " "different subsec — assigning HHMMSS_N by capture order within the second."
+    emit_wrap_labeled_stdout "  SOURCE will become: " "  ${GREEN}SOURCE will become:${RESET} " "$source_desired"
+    vlog "Same-second collision index: '$old' -> '$source_desired' (subsec $old_sub vs dest $new_sub)"
+    return 0
+}
+
 # When set: collision prompts skip [o/r/d/c/p/v/S/q] and apply _OTHER (like [R]) if the source file's directory matches this path (see similar_rename_dir_matches_scope).
 collision_auto_other_dir_matches_source() {
     local old="$1"
@@ -14091,6 +14336,10 @@ handle_existing_target_collision() {
     COLLISION_RENAMED_TARGET=""
 
     if [[ "$mode" == "dry-run" ]]; then
+        if try_resolve_collision_with_same_second_index "$old" "$new"; then
+            COLLISION_RENAMED_TARGET="$COLLISION_OTHER_PATH"
+            return 3
+        fi
         emit_wrap_labeled_stdout "COLLISION: " "${YELLOW}COLLISION:${RESET} " "Target file already exists."
         emit_wrap_old_arrow_new_stdout "[DRY-RUN] Would compare MD5, size, and timestamps of source/destination and ask what to do: " "${CYAN}[DRY-RUN] Would compare MD5, size, and timestamps of source/destination and ask what to do:${RESET} " "$old" "$new"
         emit_wrap_labeled_stdout "[DRY-RUN] Choices would include: " "${CYAN}[DRY-RUN] Choices would include:${RESET} " "[o] remove destination then rename; [c] overwrite all in this directory; [r]/[d] _OTHER; [p] remove source only; [v] list directory; [S] skip; [q] quit."
@@ -14107,7 +14356,7 @@ handle_existing_target_collision() {
     elif [[ $collision_decision_rc -eq 2 ]]; then
         return 2
     elif [[ $collision_decision_rc -eq 3 ]]; then
-        emit_wrap_labeled_stdout "RENAME WITH _OTHER: source will be renamed to: " "${CYAN}RENAME WITH _OTHER:${RESET} source will be renamed to: " "$COLLISION_OTHER_PATH"
+        emit_wrap_labeled_stdout "RENAME TO ALTERNATE: source will be renamed to: " "${CYAN}RENAME TO ALTERNATE:${RESET} source will be renamed to: " "$COLLISION_OTHER_PATH"
         COLLISION_RENAMED_TARGET="$COLLISION_OTHER_PATH"
         return 3
     elif [[ $collision_decision_rc -eq 4 ]]; then
@@ -14156,6 +14405,9 @@ can_overwrite_collision_with_identical_md5() {
         echo "Files are identical."
     else
         echo "Files are different."
+        if try_resolve_collision_with_same_second_index "$old" "$new"; then
+            return 3
+        fi
     fi
 
     old_other_path="$(make_other_suffix_path "$new")"
