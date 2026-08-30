@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# v. 20260830.230453 - same-second collision: prefer EXIF subsec over IMG_/VID_ filename ms (can disagree)
 # v. 20260830.223333 - collision: same-second photo/video → HHMMSS_0/_1… by subsec (menu only if subsec same/missing)
 # v. 20260830.211115 - Motorola Edge 50 Fusion: VID_/IMG_ → YYYYMMDD_HHMMSS_-_-_Motorola_Edge_50_Fusion[_HDR]
 # v. 20260830.184136 - Panasonic HC-X camcorder clips (A###C###_YYMMDD_XXXX.MP4) → YYYYMMDD_HHMMSS_-_-_Panasonic_<model>
@@ -43,6 +44,7 @@
 # v. 20260721.132007 - Samsung timestamp media: preserve optional numeric sorting prefix when appending make/model
 # v. 20260721.112812 - GoPro camera labels: GoPro_Hero4_Silver style (not GOPRO4_SILVER)
 
+# 2026.08.30 - v. 19.306.230453 - same-second collision index: read SubSec from EXIF first (IMG_/VID_ filename ms only as fallback)
 # 2026.08.30 - v. 19.305.223333 - media collision: if same YYYYMMDD_HHMMSS target but different subsec, auto-index HHMMSS_0/_1… (sorted); menu only when subsec same/missing
 # 2026.08.30 - v. 19.304.211115 - Motorola Edge 50 Fusion: VID_YYYYMMDD_HHMMSSmmm.mp4 (filename time) / IMG_…[_HDR].jpg (Date/Time Original) → …_-_-_Motorola_Edge_50_Fusion[_HDR]
 # 2026.08.30 - v. 19.303.184136 - Panasonic HC-X / P2-style clips A###C###_YYMMDD_XXXX.MP4 → YYYYMMDD_HHMMSS_-_-_Panasonic_<model> (Shoot Start Date local; no reel/clip id)
@@ -13904,42 +13906,45 @@ collision_is_photo_or_video() {
         || "$lower" == *.webm || "$lower" == *.avi || "$lower" == *.3gp || "$lower" == *.mts || "$lower" == *.m2ts ]]
 }
 
-# Numeric subsecond for sorting (empty → caller treats as unknown). Prefer EXIF, else IMG_/VID_ ms tail.
+# Numeric subsecond for sorting (empty → caller treats as unknown). Prefer EXIF; IMG_/VID_ ms tail is fallback only
+# (filename ms can disagree with SubSecTimeOriginal, e.g. IMG_…204651832 vs EXIF .545944).
 collision_media_subsec() {
     local f="$1"
     local bn exifloc v
     bn="$(basename -- "$f")"
+    exifloc="$(resolve_rename_exiftool 2>/dev/null)" || exifloc=""
+    if [[ -n "$exifloc" ]]; then
+        v="$("$exifloc" -api largefilesupport=1 -s3 -SubSecTimeOriginal -- "$f" 2>/dev/null | head -n 1 | tr -d $'\r')"
+        if [[ "$v" =~ ^[0-9]+$ ]]; then
+            printf '%s' "$v"
+            return 0
+        fi
+        v="$("$exifloc" -api largefilesupport=1 -s3 -SubSecTime -- "$f" 2>/dev/null | head -n 1 | tr -d $'\r')"
+        if [[ "$v" =~ ^[0-9]+$ ]]; then
+            printf '%s' "$v"
+            return 0
+        fi
+        v="$("$exifloc" -api largefilesupport=1 -s3 -SubSecTimeDigitized -- "$f" 2>/dev/null | head -n 1 | tr -d $'\r')"
+        if [[ "$v" =~ ^[0-9]+$ ]]; then
+            printf '%s' "$v"
+            return 0
+        fi
+        v="$("$exifloc" -api largefilesupport=1 -s3 -DateTimeOriginal -- "$f" 2>/dev/null | head -n 1 | tr -d $'\r')"
+        if [[ "$v" =~ \.([0-9]+) ]]; then
+            printf '%s' "${BASH_REMATCH[1]}"
+            return 0
+        fi
+        v="$("$exifloc" -api largefilesupport=1 -s3 -CreateDate -- "$f" 2>/dev/null | head -n 1 | tr -d $'\r')"
+        if [[ "$v" =~ \.([0-9]+) ]]; then
+            printf '%s' "${BASH_REMATCH[1]}"
+            return 0
+        fi
+    fi
     if [[ "$bn" =~ ^[Ii][Mm][Gg]_[0-9]{8}_[0-9]{6}([0-9]+) ]]; then
         printf '%s' "${BASH_REMATCH[1]}"
         return 0
     fi
     if [[ "$bn" =~ ^[Vv][Ii][Dd]_[0-9]{8}_[0-9]{6}([0-9]+) ]]; then
-        printf '%s' "${BASH_REMATCH[1]}"
-        return 0
-    fi
-    exifloc="$(resolve_rename_exiftool 2>/dev/null)" || return 1
-    v="$("$exifloc" -api largefilesupport=1 -s3 -SubSecTimeOriginal -- "$f" 2>/dev/null | head -n 1 | tr -d $'\r')"
-    if [[ "$v" =~ ^[0-9]+$ ]]; then
-        printf '%s' "$v"
-        return 0
-    fi
-    v="$("$exifloc" -api largefilesupport=1 -s3 -SubSecTime -- "$f" 2>/dev/null | head -n 1 | tr -d $'\r')"
-    if [[ "$v" =~ ^[0-9]+$ ]]; then
-        printf '%s' "$v"
-        return 0
-    fi
-    v="$("$exifloc" -api largefilesupport=1 -s3 -SubSecTimeDigitized -- "$f" 2>/dev/null | head -n 1 | tr -d $'\r')"
-    if [[ "$v" =~ ^[0-9]+$ ]]; then
-        printf '%s' "$v"
-        return 0
-    fi
-    v="$("$exifloc" -api largefilesupport=1 -s3 -DateTimeOriginal -- "$f" 2>/dev/null | head -n 1 | tr -d $'\r')"
-    if [[ "$v" =~ \.([0-9]+) ]]; then
-        printf '%s' "${BASH_REMATCH[1]}"
-        return 0
-    fi
-    v="$("$exifloc" -api largefilesupport=1 -s3 -CreateDate -- "$f" 2>/dev/null | head -n 1 | tr -d $'\r')"
-    if [[ "$v" =~ \.([0-9]+) ]]; then
         printf '%s' "${BASH_REMATCH[1]}"
         return 0
     fi
