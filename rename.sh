@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# v. 20260830.233310 - Run settings: print equivalent CLI matching prompted choices
 # v. 20260830.232929 - same-second index: pipefail-safe subsec read; keep this-run SCRIPT_START_TIME on resume
 # v. 20260830.230453 - same-second collision: prefer EXIF subsec over IMG_/VID_ filename ms (can disagree)
 # v. 20260830.223333 - collision: same-second photo/video → HHMMSS_0/_1… by subsec (menu only if subsec same/missing)
@@ -45,6 +46,7 @@
 # v. 20260721.132007 - Samsung timestamp media: preserve optional numeric sorting prefix when appending make/model
 # v. 20260721.112812 - GoPro camera labels: GoPro_Hero4_Silver style (not GOPRO4_SILVER)
 
+# 2026.08.30 - v. 19.308.233310 - === Run settings ===: show Equivalent CLI for the same mode/colors/scope/resume/wait/db choices
 # 2026.08.30 - v. 19.307.232929 - same-second collision: avoid exiftool|head SIGPIPE under pipefail (subsec was empty → menu); do not restore SCRIPT_START_TIME from resume checkpoint
 # 2026.08.30 - v. 19.306.230453 - same-second collision index: read SubSec from EXIF first (IMG_/VID_ filename ms only as fallback)
 # 2026.08.30 - v. 19.305.223333 - media collision: if same YYYYMMDD_HHMMSS target but different subsec, auto-index HHMMSS_0/_1… (sorted); menu only when subsec same/missing
@@ -6251,6 +6253,47 @@ fi
 ARROW="→"
 
 # Always-on startup summary (same idea as par2-pgm-check.sh "=== Run settings ===").
+print_run_settings_equivalent_cli() {
+    local cmd="" out="" p q_start
+    local -a parts=()
+
+    cmd="$(basename -- "${BASH_SOURCE[0]:-$0}")"
+    [[ -n "$cmd" ]] || cmd="rename.sh"
+
+    (( VERBOSE == 1 )) && parts+=("-v")
+    (( RECHECK_RENAMES == 1 )) && parts+=("-R")
+    (( USE_DB == 1 )) && parts+=("--use-db")
+    (( USE_DB == 1 && FAST_DB == 1 )) && parts+=("--fast")
+    (( USE_DB == 1 && FORCE_RECHECK == 1 )) && parts+=("--force-recheck")
+    parts+=("--colors" "$use_colors")
+    parts+=("--mode" "$mode")
+    if [[ "$process_scope" == "current" ]]; then
+        parts+=("--scope" "current")
+    else
+        # subdirs, or interactive [D] subdir (no exact CLI; see note below)
+        parts+=("--scope" "subdirs")
+    fi
+    parts+=("--date-placement" "$DATE_PLACEMENT")
+    parts+=("--resume-state" "$CLI_RESUME_STATE")
+    parts+=("--wait-seconds" "$PROMPT_WAIT_SECONDS")
+
+    out="$(printf '%q' "$cmd")"
+    for p in "${parts[@]}"; do
+        out+=" $(printf '%q' "$p")"
+    done
+
+    q_start="$(printf '%q' "$START_DIR")"
+    if [[ "$mode" == "dry-run" ]] && dry_run_skip_exiftool_enabled; then
+        printf '  Equivalent CLI:    RENAME_DRY_RUN_SKIP_EXIFTOOL=yes cd %s && %s\n' "$q_start" "$out"
+    else
+        printf '  Equivalent CLI:    cd %s && %s\n' "$q_start" "$out"
+    fi
+    if [[ "$process_scope" == "subdir" && -n "${SCOPE_SUBDIR:-}" ]]; then
+        printf '  Note:              prompted scope [D] (%s) has no exact CLI flag; line above uses --scope subdirs.\n' "$SCOPE_SUBDIR"
+        printf '                     ([D] keeps DB/excludes/resume at start dir while only recursing under that subdir.)\n'
+    fi
+}
+
 print_run_settings() {
     local scope_line db_line dry_exif_line wait_line
 
@@ -6333,6 +6376,7 @@ print_run_settings() {
     else
         echo "  Exclude filters:     (file not present yet)"
     fi
+    print_run_settings_equivalent_cli
     echo
 }
 
