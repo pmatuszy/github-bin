@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# v. 20260830.184136 - Panasonic HC-X camcorder clips (A###C###_YYMMDD_XXXX.MP4) → YYYYMMDD_HHMMSS_-_-_Panasonic_<model>
 # v. 20260830.182231 - Samsung G990B/G965U1 → Galaxy_S21_FE_5G / Galaxy_S9Plus; rewrite existing Samsung_<code> labels
 # v. 20260812.114541 - date-range rename: run separator normalize so " - title" becomes "_-_title" (checksum/media)
 # v. 20260811.230514 - mismatch Choice hint: only default [Q] uppercase ([u/i/h/v/Q], not U/H)
@@ -40,6 +41,7 @@
 # v. 20260721.132007 - Samsung timestamp media: preserve optional numeric sorting prefix when appending make/model
 # v. 20260721.112812 - GoPro camera labels: GoPro_Hero4_Silver style (not GOPRO4_SILVER)
 
+# 2026.08.30 - v. 19.303.184136 - Panasonic HC-X / P2-style clips A###C###_YYMMDD_XXXX.MP4 → YYYYMMDD_HHMMSS_-_-_Panasonic_<model> (Shoot Start Date local; no reel/clip id)
 # 2026.08.30 - v. 19.302.182231 - Samsung friendly names: G990B→Galaxy_S21_FE_5G, G965U1→Galaxy_S9Plus; upgrade existing Samsung_<rawcode> labels (dry-run+real)
 # 2026.08.12 - v. 19.301.114541 - transform_basename date-range early return: pass through _normalize_basename_separators (spaces in tail were kept, e.g. _20160305-20160311 - Dallas.sha512)
 # 2026.08.11 - v. 19.300.230514 - checksum mismatch prompt: Choice line uppercases only default Q ([u/i/h/v/Q])
@@ -11494,6 +11496,7 @@ rename_is_exif_camera_tag_append() {
     xiaomi_exif_camera_tag_append_matches "$@" && return 0
     gopro_exif_camera_tag_append_matches "$@" && return 0
     nikon_exif_camera_tag_append_matches "$@" && return 0
+    panasonic_camcorder_exif_camera_tag_append_matches "$@" && return 0
     return 1
 }
 
@@ -11978,6 +11981,116 @@ transform_sony_clip_basename() {
 
     IFS=$'\t' read -r _sc_manuf _sc_model _sc_ts <<< "$meta"
     gopro_format_camera_basename_output "$_sc_ts" "$_sc_manuf" "$_sc_model" "$suffix_stem" "$ext"
+}
+
+# Panasonic HC-X / P2-style User Clip Name: A005C004_260828_A6L8.MP4
+# → 20260828_174803_-_-_Panasonic_HC-X1600.MP4 (Shoot Start Date local; no reel/clip id).
+panasonic_camcorder_raw_basename_matches() {
+    local bn="$1"
+    [[ "$bn" =~ ^[A-Za-z][0-9]{3}[Cc][0-9]{3}_[0-9]{6}_[A-Za-z0-9]{4}\.[mM][pP]4$ ]]
+}
+
+panasonic_camcorder_already_renamed_basename_matches() {
+    local bn="$1"
+    local lower="${bn,,}"
+    [[ "$lower" =~ ^[0-9]{8}_[0-9]{6}_(-__-_|-_-_)panasonic_.+\.mp4$ ]]
+}
+
+panasonic_camcorder_exif_camera_tag_append_matches() {
+    local old="$1" new="$2"
+    local ob nb
+
+    [[ -n "$old" && -n "$new" ]] || return 1
+    ob="$(basename -- "$old")"
+    nb="$(basename -- "$new")"
+    [[ "$ob" != "$nb" ]] || return 1
+    panasonic_camcorder_raw_basename_matches "$ob" || return 1
+    panasonic_camcorder_already_renamed_basename_matches "$nb" || return 1
+    return 0
+}
+
+panasonic_exif_field_by_substr() {
+    local exif="$1"
+    local needle="$2"
+    printf '%s\n' "$exif" | grep -iF "$needle" | head -n 1 \
+        | sed -E 's/^[^:]+:[[:space:]]*//' | tr -d $'\r'
+}
+
+panasonic_parse_local_datetime_to_ts() {
+    local raw="$1"
+    # 2026:08:28 17:48:03+02:00  or  2026:08:28 17:48:03
+    if [[ "$raw" =~ ([0-9]{4}):([0-9]{2}):([0-9]{2})[[:space:]]+([0-9]{2}):([0-9]{2}):([0-9]{2}) ]]; then
+        printf '%s%s%s_%s%s%s' \
+            "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}" "${BASH_REMATCH[3]}" \
+            "${BASH_REMATCH[4]}" "${BASH_REMATCH[5]}" "${BASH_REMATCH[6]}"
+        return 0
+    fi
+    return 1
+}
+
+panasonic_normalize_model_token() {
+    local t="$1"
+    t="${t// /_}"
+    t="${t//__/_}"
+    printf '%s' "$t"
+}
+
+panasonic_exif_is_panasonic() {
+    local exif="$1"
+    local v=""
+    v="$(panasonic_exif_field_by_substr "$exif" 'Device Manufacturer')"
+    [[ "${v,,}" == *panasonic* ]] && return 0
+    v="$(panasonic_exif_field_by_substr "$exif" 'Handler Description')"
+    [[ "${v,,}" == *panasonic* ]] && return 0
+    v="$(samsung_exif_first_value "$exif" 'Make')"
+    [[ "${v,,}" == *panasonic* ]] && return 0
+    return 1
+}
+
+# Empty stdout / return 0 = no change; non-empty basename on success (safe under set -e $(...)).
+transform_panasonic_camcorder_basename() {
+    local file="$1"
+    local base="$2"
+    local exifloc exif model="" shoot="" ts="" ext
+    local _pc_err_trap="" _pc_save_e=0
+
+    _transform_panasonic_err_trap_restore() {
+        eval "${_pc_err_trap:-}"
+        if ((_pc_save_e)); then
+            set -e
+        else
+            set +e
+        fi
+    }
+
+    panasonic_camcorder_raw_basename_matches "$base" || return 0
+    panasonic_camcorder_already_renamed_basename_matches "$base" && return 0
+
+    _pc_save_e=0
+    [[ $- == *e* ]] && _pc_save_e=1
+    set +e
+    _pc_err_trap="$(trap -p ERR || true)"
+    trap - ERR
+    trap '_transform_panasonic_err_trap_restore' RETURN
+
+    exifloc="$(resolve_rename_exiftool)" || return 0
+    exif="$("$exifloc" -api largefilesupport=1 "$file" 2>/dev/null)" || return 0
+    [[ -n "$exif" ]] || return 0
+    panasonic_exif_is_panasonic "$exif" || return 0
+
+    model="$(samsung_exif_first_value "$exif" 'Camera Model Name')"
+    [[ -n "$model" ]] || model="$(panasonic_exif_field_by_substr "$exif" 'Device Model Name')"
+    [[ -n "$model" ]] || return 0
+    model="$(panasonic_normalize_model_token "$model")"
+    [[ -n "$model" ]] || return 0
+
+    # Prefer Shoot Start Date (local + offset). Create Date is often UTC and wrong for filenames.
+    shoot="$(panasonic_exif_field_by_substr "$exif" 'Shoot Start Date')"
+    [[ -n "$shoot" ]] || shoot="$(panasonic_exif_field_by_substr "$exif" 'Access Creation Date')"
+    ts="$(panasonic_parse_local_datetime_to_ts "$shoot")" || return 0
+
+    ext="${base##*.}"
+    gopro_format_camera_basename_output "$ts" "Panasonic" "$model" "" "$ext"
 }
 
 perform_sony_clip_pair_plain_renames() {
@@ -12816,6 +12929,31 @@ transform_name() {
             vlog "Sony clip rename: $base -> $_sony_try"
         else
             vlog "Sony clip rename: no usable metadata for $base (rc=$_sony_rc); falling back to normal rename"
+        fi
+    fi
+
+    # Panasonic HC-X / P2-style clips share the early "pro clip" gate with Sony (_sony_applied).
+    if [[ -f "$f" ]] && ((_tn_skip_exif == 0)) && (( _sony_applied == 0 )) \
+        && panasonic_camcorder_raw_basename_matches "$base"; then
+        local _tn_save_e_pc=0 _pc_try="" _pc_rc=0 _pc_err_trap=""
+        [[ $- == *e* ]] && _tn_save_e_pc=1
+        set +e
+        _pc_err_trap="$(trap -p ERR || true)"
+        trap - ERR
+        _pc_try="$(transform_panasonic_camcorder_basename "$f" "$base")"
+        _pc_rc=$?
+        eval "${_pc_err_trap:-}"
+        if ((_tn_save_e_pc)); then
+            set -e
+        else
+            set +e
+        fi
+        if (( _pc_rc == 0 )) && [[ -n "$_pc_try" ]]; then
+            newbase="$_pc_try"
+            _sony_applied=1
+            vlog "Panasonic camcorder rename: $base -> $_pc_try"
+        else
+            vlog "Panasonic camcorder rename: no usable metadata for $base (rc=$_pc_rc); falling back to normal rename"
         fi
     fi
 
@@ -15345,7 +15483,7 @@ print_rename_prompt_menu() {
         choice_hint+=/s
     fi
     if [[ -n "$path" && -n "$suggested_new" ]] && rename_is_camera_make_model_change "$path" "$suggested_new"; then
-        echo "  $(rename_menu_key_bracket G Y) Yes, and auto-approve future Samsung, GoPro, and Nikon camera make/model renames for the rest of this run"
+        echo "  $(rename_menu_key_bracket G Y) Yes, and auto-approve future Samsung, GoPro, Nikon, and Panasonic camera make/model renames for the rest of this run"
         choice_hint+=/g
     fi
     if [[ -n "$path" && -n "$suggested_new" ]] && rename_suggested_only_extension_case_change "$path" "$suggested_new" \
@@ -17742,7 +17880,7 @@ for f in "${ordered_paths[@]}"; do
             ;;
         g|G)
             if ! rename_is_camera_make_model_change "$f" "$new"; then
-                echo -e "${YELLOW}[G] applies only to recognized Samsung, GoPro, or Nikon camera make/model renames.${RESET}"
+                echo -e "${YELLOW}[G] applies only to recognized Samsung, GoPro, Nikon, or Panasonic camera make/model renames.${RESET}"
                 ((++files_skipped))
             else
                 AUTO_CAMERA_MAKE_MODEL_SESSION=yes
