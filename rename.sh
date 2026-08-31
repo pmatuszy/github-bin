@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# v. 20260831.082346 - fix same-second index never firing: tab-split dropped empty index field; log skip reasons
 # v. 20260831.000133 - Run settings: align Equivalent CLI value column with other settings lines
 # v. 20260830.235231 - same-second index: read subsec from full EXIF (not -fast2) so renamed JPEGs resolve
 # v. 20260830.233310 - Run settings: print equivalent CLI matching prompted choices
@@ -48,6 +49,9 @@
 # v. 20260721.132007 - Samsung timestamp media: preserve optional numeric sorting prefix when appending make/model
 # v. 20260721.112812 - GoPro camera labels: GoPro_Hero4_Silver style (not GOPRO4_SILVER)
 
+# 2026.08.31 - v. 19.311.082346 - same-second collision index never fired: IFS=$'\t' read merged the two tabs around an empty index, so rest/basename tail was lost; parse now sets globals and every skip path is logged
+# 2026.08.31 - v. 19.310.000133 - === Run settings ===: pad Equivalent CLI (and scope [D] note) to the same value column as the other lines
+# 2026.08.30 - v. 19.309.235231 - same-second collision: read SubSec* from full exiftool output; -fast2 often omits it on JPEG, so already-renamed destinations had no subsec
 # 2026.08.30 - v. 19.308.233310 - === Run settings ===: show Equivalent CLI for the same mode/colors/scope/resume/wait/db choices
 # 2026.08.30 - v. 19.307.232929 - same-second collision: avoid exiftool|head SIGPIPE under pipefail (subsec was empty → menu); do not restore SCRIPT_START_TIME from resume checkpoint
 # 2026.08.30 - v. 19.306.230453 - same-second collision index: read SubSec from EXIF first (IMG_/VID_ filename ms only as fallback)
@@ -14039,14 +14043,31 @@ collision_subsec_sort_key() {
 }
 
 # Parse proposed media target basename: optional NUMBER_ + YYYYMMDD_HHMMSS + optional _INDEX + rest.
-# Prints: ymd<TAB>hms<TAB>index_or_empty<TAB>rest (rest starts with _ and includes extension).
+# Sets COLLISION_PARSE_{YMD,HMS,INDEX,REST}; rest starts with _ and includes the extension.
+# Globals, not a tab-joined line: IFS=$'\t' read merges the two tabs around an empty index, so rest would be lost.
 collision_parse_yyyymmdd_hhmmss_target_basename() {
     local base="$1"
+    COLLISION_PARSE_YMD=""
+    COLLISION_PARSE_HMS=""
+    COLLISION_PARSE_INDEX=""
+    COLLISION_PARSE_REST=""
     if [[ "$base" =~ ^(([0-9]+_)?[0-9]{8})_([0-9]{6})(_([0-9]+))?(_.+)$ ]]; then
-        printf '%s\t%s\t%s\t%s' "${BASH_REMATCH[1]}" "${BASH_REMATCH[3]}" "${BASH_REMATCH[5]-}" "${BASH_REMATCH[6]}"
+        COLLISION_PARSE_YMD="${BASH_REMATCH[1]}"
+        COLLISION_PARSE_HMS="${BASH_REMATCH[3]}"
+        COLLISION_PARSE_INDEX="${BASH_REMATCH[5]-}"
+        COLLISION_PARSE_REST="${BASH_REMATCH[6]}"
         return 0
     fi
     return 1
+}
+
+# Identity key for comparing two paths. Falls back to the literal path so an empty result can never
+# make two unrelated files look like the same file.
+collision_abs_path() {
+    local p="$1" abs=""
+    abs="$(db_abs_path "$p" 2>/dev/null || true)"
+    [[ -n "$abs" ]] || abs="$p"
+    printf '%s' "$abs"
 }
 
 collision_build_indexed_target_path() {
@@ -14066,7 +14087,7 @@ collision_build_indexed_target_path() {
 try_resolve_collision_with_same_second_index() {
     local old="$1"
     local new="$2"
-    local dir new_base parsed ymd hms cur_idx rest
+    local dir new_base ymd hms cur_idx rest
     local old_sub new_sub
     local -a mem_paths=() mem_subs=() mem_keys=()
     local -a sort_idx=() desired=()
@@ -14080,9 +14101,18 @@ try_resolve_collision_with_same_second_index() {
 
     dir="$(dirname -- "$new")"
     new_base="$(basename -- "$new")"
-    parsed="$(collision_parse_yyyymmdd_hhmmss_target_basename "$new_base")" || return 1
-    IFS=$'\t' read -r ymd hms cur_idx rest <<< "$parsed"
-    [[ -n "$ymd" && -n "$hms" && -n "$rest" ]] || return 1
+    if ! collision_parse_yyyymmdd_hhmmss_target_basename "$new_base"; then
+        vlog "Same-second index: skip (target basename is not YYYYMMDD_HHMMSS…: '$new_base')"
+        return 1
+    fi
+    ymd="$COLLISION_PARSE_YMD"
+    hms="$COLLISION_PARSE_HMS"
+    cur_idx="$COLLISION_PARSE_INDEX"
+    rest="$COLLISION_PARSE_REST"
+    if [[ -z "$ymd" || -z "$hms" || -z "$rest" ]]; then
+        vlog "Same-second index: skip (incomplete parse of '$new_base': ymd='$ymd' hms='$hms' idx='$cur_idx' rest='$rest')"
+        return 1
+    fi
 
     old_sub="$(collision_media_subsec "$old" || true)"
     new_sub="$(collision_media_subsec "$new" || true)"
@@ -14107,9 +14137,9 @@ try_resolve_collision_with_same_second_index() {
     done
     shopt -u nullglob
 
-    old_abs="$(db_abs_path "$old" 2>/dev/null || printf '%s' "$old")"
+    old_abs="$(collision_abs_path "$old")"
     for p in "${mem_paths[@]}"; do
-        m_abs="$(db_abs_path "$p" 2>/dev/null || printf '%s' "$p")"
+        m_abs="$(collision_abs_path "$p")"
         if [[ "$m_abs" == "$old_abs" ]]; then
             already=yes
             break
@@ -14118,19 +14148,28 @@ try_resolve_collision_with_same_second_index() {
     [[ "$already" == yes ]] || mem_paths+=( "$old" )
 
     count=${#mem_paths[@]}
-    (( count >= 2 )) || return 1
+    if (( count < 2 )); then
+        vlog "Same-second index: skip (only $count file matches '$bn_re' in '$dir')"
+        return 1
+    fi
 
     local sub=""
     for p in "${mem_paths[@]}"; do
         sub="$(collision_media_subsec "$p" || true)"
-        [[ -n "$sub" ]] || return 1
+        if [[ -z "$sub" ]]; then
+            vlog "Same-second index: skip (no subsec for '$p')"
+            return 1
+        fi
         mem_subs+=( "$sub" )
         mem_keys+=( "$(collision_subsec_sort_key "$sub")" )
     done
 
     for ((i = 0; i < count; i++)); do
         for ((j = i + 1; j < count; j++)); do
-            [[ "${mem_keys[$i]}" == "${mem_keys[$j]}" ]] && return 1
+            if [[ "${mem_keys[$i]}" == "${mem_keys[$j]}" ]]; then
+                vlog "Same-second index: skip (equal subsec ${mem_subs[$i]} for '${mem_paths[$i]}' and '${mem_paths[$j]}')"
+                return 1
+            fi
         done
     done
 
@@ -14160,28 +14199,34 @@ try_resolve_collision_with_same_second_index() {
 
     for ((i = 0; i < count; i++)); do
         p="${mem_paths[${sort_idx[$i]}]}"
-        m_abs="$(db_abs_path "$p" 2>/dev/null || printf '%s' "$p")"
+        m_abs="$(collision_abs_path "$p")"
         if [[ "$m_abs" == "$old_abs" ]]; then
             source_desired="${desired[$i]}"
             break
         fi
     done
-    [[ -n "$source_desired" ]] || return 1
+    if [[ -z "$source_desired" ]]; then
+        vlog "Same-second index: skip (source '$old' not found among matched files)"
+        return 1
+    fi
 
     local cand_abs member
     for ((i = 0; i < count; i++)); do
         cand="${desired[$i]}"
         [[ -e "$cand" ]] || continue
-        cand_abs="$(db_abs_path "$cand" 2>/dev/null || printf '%s' "$cand")"
+        cand_abs="$(collision_abs_path "$cand")"
         member=no
         for p in "${mem_paths[@]}"; do
-            m_abs="$(db_abs_path "$p" 2>/dev/null || printf '%s' "$p")"
+            m_abs="$(collision_abs_path "$p")"
             if [[ "$m_abs" == "$cand_abs" ]]; then
                 member=yes
                 break
             fi
         done
-        [[ "$member" == yes ]] || return 1
+        if [[ "$member" == no ]]; then
+            vlog "Same-second index: skip (indexed name '$cand' already used by an unrelated file)"
+            return 1
+        fi
     done
 
     if [[ "$mode" == "dry-run" ]]; then
@@ -14189,10 +14234,10 @@ try_resolve_collision_with_same_second_index() {
         emit_wrap_labeled_stdout "  SOURCE would become: " "  ${GREEN}SOURCE would become:${RESET} " "$source_desired"
         for ((i = 0; i < count; i++)); do
             p="${mem_paths[${sort_idx[$i]}]}"
-            m_abs="$(db_abs_path "$p" 2>/dev/null || printf '%s' "$p")"
+            m_abs="$(collision_abs_path "$p")"
             [[ "$m_abs" == "$old_abs" ]] && continue
             cand="${desired[$i]}"
-            if [[ "$(db_abs_path "$p" 2>/dev/null || printf '%s' "$p")" != "$(db_abs_path "$cand" 2>/dev/null || printf '%s' "$cand")" ]]; then
+            if [[ "$m_abs" != "$(collision_abs_path "$cand")" ]]; then
                 emit_wrap_old_arrow_new_stdout "  Sibling would become: " "  ${CYAN}Sibling would become:${RESET} " "$p" "$cand"
             fi
         done
@@ -14204,16 +14249,16 @@ try_resolve_collision_with_same_second_index() {
     tmp_prefix="${dir}/.__same_sec_idx_$$"
     for ((i = 0; i < count; i++)); do
         p="${mem_paths[${sort_idx[$i]}]}"
-        m_abs="$(db_abs_path "$p" 2>/dev/null || printf '%s' "$p")"
+        m_abs="$(collision_abs_path "$p")"
         [[ "$m_abs" == "$old_abs" ]] && continue
         cand="${desired[$i]}"
-        if [[ "$(db_abs_path "$p" 2>/dev/null || printf '%s' "$p")" != "$(db_abs_path "$cand" 2>/dev/null || printf '%s' "$cand")" ]]; then
+        if [[ "$m_abs" != "$(collision_abs_path "$cand")" ]]; then
             mv -n -- "$p" "${tmp_prefix}_${i}" || return 1
         fi
     done
     for ((i = 0; i < count; i++)); do
         p="${mem_paths[${sort_idx[$i]}]}"
-        m_abs="$(db_abs_path "$p" 2>/dev/null || printf '%s' "$p")"
+        m_abs="$(collision_abs_path "$p")"
         [[ "$m_abs" == "$old_abs" ]] && continue
         cand="${desired[$i]}"
         if [[ -e "${tmp_prefix}_${i}" ]]; then
