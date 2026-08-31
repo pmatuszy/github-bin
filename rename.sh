@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# v. 20260831.131638 - Motorola: accept/keep any camera mode suffix chain (_HDR_AE, _NIGHT, …), not just _HDR
 # v. 20260831.082346 - fix same-second index never firing: tab-split dropped empty index field; log skip reasons
 # v. 20260831.000133 - Run settings: align Equivalent CLI value column with other settings lines
 # v. 20260830.235231 - same-second index: read subsec from full EXIF (not -fast2) so renamed JPEGs resolve
@@ -49,6 +50,7 @@
 # v. 20260721.132007 - Samsung timestamp media: preserve optional numeric sorting prefix when appending make/model
 # v. 20260721.112812 - GoPro camera labels: GoPro_Hero4_Silver style (not GOPRO4_SILVER)
 
+# 2026.08.31 - v. 19.312.131638 - Motorola Edge 50 Fusion: IMG_/VID_ names may carry a chain of camera mode tags (_HDR_AE, _NIGHT, _MP…); match them all and keep them in the target name; already-renamed guard also tolerates same-second _N index
 # 2026.08.31 - v. 19.311.082346 - same-second collision index never fired: IFS=$'\t' read merged the two tabs around an empty index, so rest/basename tail was lost; parse now sets globals and every skip path is logged
 # 2026.08.31 - v. 19.310.000133 - === Run settings ===: pad Equivalent CLI (and scope [D] note) to the same value column as the other lines
 # 2026.08.30 - v. 19.309.235231 - same-second collision: read SubSec* from full exiftool output; -fast2 often omits it on JPEG, so already-renamed destinations had no subsec
@@ -11797,16 +11799,27 @@ transform_xiaomi_media_basename() {
 # Motorola Android gallery names, e.g.:
 #   VID_20260816_225231377.mp4 → 20260816_225231_-_-_Motorola_Edge_50_Fusion.mp4  (time from filename)
 #   IMG_20260816_183941716_HDR.jpg → 20260816_183942_-_-_Motorola_Edge_50_Fusion_HDR.jpg  (Date/Time Original)
+# Camera mode tags the phone appends after the millisecond tail: _HDR, _AE, _HDR_AE, _NIGHT, _PANO, _MP, …
+# Kept generic (any _WORD chain) so new modes do not silently block the rename; tokens are preserved in the target name.
+MOTOROLA_MODE_SUFFIX_RE='((_[A-Za-z][A-Za-z0-9]*)*)'
+
 motorola_android_media_basename_matches() {
     local bn="$1"
-    [[ "$bn" =~ ^[Vv][Ii][Dd]_[0-9]{8}_[0-9]{6}[0-9]*\.[mM][pP]4$ ]] && return 0
-    [[ "$bn" =~ ^[Ii][Mm][Gg]_[0-9]{8}_[0-9]{6}[0-9]*(_[Hh][Dd][Rr])?\.(jpe?g|JPE?G)$ ]]
+    [[ "$bn" =~ ^[Vv][Ii][Dd]_[0-9]{8}_[0-9]{6}[0-9]*${MOTOROLA_MODE_SUFFIX_RE}\.[mM][pP]4$ ]] && return 0
+    [[ "$bn" =~ ^[Ii][Mm][Gg]_[0-9]{8}_[0-9]{6}[0-9]*${MOTOROLA_MODE_SUFFIX_RE}\.(jpe?g|JPE?G)$ ]]
 }
 
 motorola_already_renamed_basename_matches() {
     local bn="$1"
     local lower="${bn,,}"
-    [[ "$lower" =~ ^[0-9]{8}_[0-9]{6}_(-__-_|-_-_)motorola_edge_50_fusion(_hdr)?\.(mp4|jpg|jpeg)$ ]]
+    [[ "$lower" =~ ^[0-9]{8}_[0-9]{6}(_[0-9]+)?_(-__-_|-_-_)motorola_edge_50_fusion(_[a-z0-9]+)*\.(mp4|jpg|jpeg)$ ]]
+}
+
+# "_HDR_AE" → "HDR_AE" (upper case, matching the earlier _HDR-only output).
+motorola_mode_suffix_label() {
+    local raw="$1"
+    raw="${raw#_}"
+    printf '%s' "${raw^^}"
 }
 
 motorola_exif_camera_tag_append_matches() {
@@ -11884,16 +11897,17 @@ transform_motorola_media_basename() {
 
     ext="${base##*.}"
 
-    if [[ "$base" =~ ^[Vv][Ii][Dd]_([0-9]{8})_([0-9]{6})[0-9]*\.[mM][pP]4$ ]]; then
+    if [[ "$base" =~ ^[Vv][Ii][Dd]_([0-9]{8})_([0-9]{6})[0-9]*${MOTOROLA_MODE_SUFFIX_RE}\.[mM][pP]4$ ]]; then
         # Video: prefer embedded filename clock (local); ignore millisecond tail.
         ts="${BASH_REMATCH[1]}_${BASH_REMATCH[2]}"
-        gopro_format_camera_basename_output "$ts" "Motorola" "Edge_50_Fusion" "" "$ext"
+        hdr_suffix="$(motorola_mode_suffix_label "${BASH_REMATCH[3]-}")"
+        gopro_format_camera_basename_output "$ts" "Motorola" "Edge_50_Fusion" "$hdr_suffix" "$ext"
         return 0
     fi
 
-    if [[ "$base" =~ ^[Ii][Mm][Gg]_([0-9]{8})_([0-9]{6})[0-9]*(_[Hh][Dd][Rr])?\.(jpe?g|JPE?G)$ ]]; then
+    if [[ "$base" =~ ^[Ii][Mm][Gg]_([0-9]{8})_([0-9]{6})[0-9]*${MOTOROLA_MODE_SUFFIX_RE}\.(jpe?g|JPE?G)$ ]]; then
         ts="${BASH_REMATCH[1]}_${BASH_REMATCH[2]}"
-        [[ -n "${BASH_REMATCH[3]-}" ]] && hdr_suffix="HDR"
+        hdr_suffix="$(motorola_mode_suffix_label "${BASH_REMATCH[3]-}")"
         dto="$(samsung_exif_first_value "$exif" 'Date/Time Original')"
         [[ -n "$dto" ]] || dto="$(samsung_exif_first_value "$exif" 'Create Date')"
         if [[ -n "$dto" ]]; then
