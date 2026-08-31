@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# v. 20260831.132115 - phone IMG_/VID_ with no camera make/model in EXIF (panoramas) → plain YYYYMMDD_HHMMSS name
 # v. 20260831.131638 - Motorola: accept/keep any camera mode suffix chain (_HDR_AE, _NIGHT, …), not just _HDR
 # v. 20260831.082346 - fix same-second index never firing: tab-split dropped empty index field; log skip reasons
 # v. 20260831.000133 - Run settings: align Equivalent CLI value column with other settings lines
@@ -50,6 +51,7 @@
 # v. 20260721.132007 - Samsung timestamp media: preserve optional numeric sorting prefix when appending make/model
 # v. 20260721.112812 - GoPro camera labels: GoPro_Hero4_Silver style (not GOPRO4_SILVER)
 
+# 2026.08.31 - v. 19.313.132115 - phone IMG_/VID_ files whose EXIF has no Make/Model at all (panorama stitcher output, stripped exports) are renamed to a plain YYYYMMDD_HHMMSS[_MODE] name with no camera label instead of being left alone
 # 2026.08.31 - v. 19.312.131638 - Motorola Edge 50 Fusion: IMG_/VID_ names may carry a chain of camera mode tags (_HDR_AE, _NIGHT, _MP…); match them all and keep them in the target name; already-renamed guard also tolerates same-second _N index
 # 2026.08.31 - v. 19.311.082346 - same-second collision index never fired: IFS=$'\t' read merged the two tabs around an empty index, so rest/basename tail was lost; parse now sets globals and every skip path is logged
 # 2026.08.31 - v. 19.310.000133 - === Run settings ===: pad Equivalent CLI (and scope [D] note) to the same value column as the other lines
@@ -11853,6 +11855,16 @@ motorola_exif_is_edge_50_fusion() {
     [[ "$model_l" == *"edge 50 fusion"* || "$model_l" == *"edge_50_fusion"* ]]
 }
 
+android_exif_has_camera_identity() {
+    local exif="$1"
+    local label v
+    for label in 'Android Make' 'Make' 'Android Model' 'Camera Model Name' 'Model'; do
+        v="$(samsung_exif_first_value "$exif" "$label")"
+        [[ -n "$v" ]] && return 0
+    done
+    return 1
+}
+
 motorola_parse_exif_datetime_to_ts() {
     local raw="$1"
     if [[ "$raw" =~ ([0-9]{4}):([0-9]{2}):([0-9]{2})[[:space:]]+([0-9]{2}):([0-9]{2}):([0-9]{2}) ]]; then
@@ -11862,6 +11874,40 @@ motorola_parse_exif_datetime_to_ts() {
         return 0
     fi
     return 1
+}
+
+# Phone IMG_/VID_ files whose EXIF carries no camera identity at all (panorama stitcher output, edited exports):
+# keep the capture time, drop the IMG_/VID_ prefix and the millisecond tail, add no camera label.
+android_media_plain_timestamp_basename() {
+    local base="$1"
+    local exif="$2"
+    local ext ts="" suffix="" dto="" dto_ts=""
+
+    android_exif_has_camera_identity "$exif" && return 0
+
+    ext="${base##*.}"
+    if [[ "$base" =~ ^[Vv][Ii][Dd]_([0-9]{8})_([0-9]{6})[0-9]*${MOTOROLA_MODE_SUFFIX_RE}\.[mM][pP]4$ ]]; then
+        ts="${BASH_REMATCH[1]}_${BASH_REMATCH[2]}"
+        suffix="$(motorola_mode_suffix_label "${BASH_REMATCH[3]-}")"
+    elif [[ "$base" =~ ^[Ii][Mm][Gg]_([0-9]{8})_([0-9]{6})[0-9]*${MOTOROLA_MODE_SUFFIX_RE}\.(jpe?g|JPE?G)$ ]]; then
+        ts="${BASH_REMATCH[1]}_${BASH_REMATCH[2]}"
+        suffix="$(motorola_mode_suffix_label "${BASH_REMATCH[3]-}")"
+        dto="$(samsung_exif_first_value "$exif" 'Date/Time Original')"
+        [[ -n "$dto" ]] || dto="$(samsung_exif_first_value "$exif" 'Create Date')"
+        if [[ -n "$dto" ]]; then
+            dto_ts="$(motorola_parse_exif_datetime_to_ts "$dto" || true)"
+            [[ -n "$dto_ts" ]] && ts="$dto_ts"
+        fi
+    else
+        return 0
+    fi
+
+    [[ -n "$ts" ]] || return 0
+    if [[ -n "$suffix" ]]; then
+        printf '%s_%s.%s' "$ts" "$suffix" "$ext"
+    else
+        printf '%s.%s' "$ts" "$ext"
+    fi
 }
 
 # Empty stdout / return 0 = no change (safe under set -e $(...)).
@@ -11893,7 +11939,10 @@ transform_motorola_media_basename() {
     exifloc="$(resolve_rename_exiftool)" || return 0
     exif="$("$exifloc" -api largefilesupport=1 "$file" 2>/dev/null)" || return 0
     [[ -n "$exif" ]] || return 0
-    motorola_exif_is_edge_50_fusion "$exif" || return 0
+    if ! motorola_exif_is_edge_50_fusion "$exif"; then
+        android_media_plain_timestamp_basename "$base" "$exif"
+        return 0
+    fi
 
     ext="${base##*.}"
 
@@ -13163,9 +13212,9 @@ transform_name() {
         if (( _mo_rc == 0 )) && [[ -n "$_mo_try" ]]; then
             newbase="$_mo_try"
             _sony_applied=1
-            vlog "Motorola media rename: $base -> $_mo_try"
+            vlog "Phone media rename: $base -> $_mo_try"
         else
-            vlog "Motorola media rename: no usable Edge 50 Fusion metadata for $base (rc=$_mo_rc); falling back to normal rename"
+            vlog "Phone media rename: no usable camera metadata for $base (rc=$_mo_rc); falling back to normal rename"
         fi
     fi
 
