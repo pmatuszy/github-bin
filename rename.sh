@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# v. 20260915.190839 - Xiaomi: also read Android Make/Model (Mi 10T Pro MP4 M2007J3SG)
 # v. 20260915.190135 - Android 9 no-Make Mi MIX 3 5G video heuristic only when capture year ≤ 2023
 # v. 20260915.182513 - Android 9 MP4 with no Make/Model + Android Capture FPS → Xiaomi_Mi_MIX_3_5G
 # v. 20260915.173938 - Xiaomi Mi MIX 3 5G timestamp media → YYYYMMDD_HHMMSS_-_-_Xiaomi_Mi_MIX_3_5G
@@ -55,6 +56,7 @@
 # v. 20260721.132007 - Samsung timestamp media: preserve optional numeric sorting prefix when appending make/model
 # v. 20260721.112812 - GoPro camera labels: GoPro_Hero4_Silver style (not GOPRO4_SILVER)
 
+# 2026.09.15 - v. 19.318.190839 - Xiaomi timestamp media: recognize Android Make/Android Model (e.g. Mi 10T Pro MP4 M2007J3SG) in addition to Make/Camera Model Name
 # 2026.09.15 - v. 19.317.190135 - Android 9 no-Make/Model + Capture FPS → Mi_MIX_3_5G only when EXIF Create/Media/Track Create Date year is ≤ 2023
 # 2026.09.15 - v. 19.316.182513 - Android 9 timestamp videos with no Make/Model but Android Capture FPS (Mi MIX 3 5G MP4 fingerprint) → YYYYMMDD_HHMMSS_-_-_Xiaomi_Mi_MIX_3_5G
 # 2026.09.15 - v. 19.315.173938 - Xiaomi Mi MIX 3 5G timestamp photo/video (Make Xiaomi, Camera Model Name Mi MIX 3 5G) → YYYYMMDD_HHMMSS_-_-_Xiaomi_Mi_MIX_3_5G; Xiaomi already-renamed guard accepts any Xiaomi_* label
@@ -11774,11 +11776,13 @@ xiaomi_friendly_model_from_exif() {
     local make="" raw="" raw_norm="" android_ver="" android_fps=""
 
     make="$(samsung_exif_first_value "$exif" 'Make')"
+    [[ -z "$make" ]] && make="$(samsung_exif_first_value "$exif" 'Android Make')"
     if [[ "${make,,}" == "xiaomi" ]]; then
         for raw in \
             "$(samsung_exif_first_value "$exif" 'Camera Model Name')" \
             "$(samsung_exif_first_value "$exif" 'Model')" \
-            "$(samsung_exif_first_value "$exif" 'Xiaomi Model')"; do
+            "$(samsung_exif_first_value "$exif" 'Xiaomi Model')" \
+            "$(samsung_exif_first_value "$exif" 'Android Model')"; do
             [[ -n "$raw" ]] || continue
             raw_norm="$(printf '%s' "$raw" | tr '[:lower:]' '[:upper:]' | sed -E 's/[^A-Z0-9]+/_/g; s/^_+//; s/_+$//')"
             case "$raw_norm" in
