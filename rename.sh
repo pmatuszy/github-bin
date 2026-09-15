@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# v. 20260915.190135 - Android 9 no-Make Mi MIX 3 5G video heuristic only when capture year ≤ 2023
 # v. 20260915.182513 - Android 9 MP4 with no Make/Model + Android Capture FPS → Xiaomi_Mi_MIX_3_5G
 # v. 20260915.173938 - Xiaomi Mi MIX 3 5G timestamp media → YYYYMMDD_HHMMSS_-_-_Xiaomi_Mi_MIX_3_5G
 # v. 20260915.173536 - bare YYYYMMDD_HHMMSS GoPro stills (JPG) get _-_-_GoPro_Hero#_Edition like video; skip Rate/Timelapse on JPG
@@ -54,6 +55,7 @@
 # v. 20260721.132007 - Samsung timestamp media: preserve optional numeric sorting prefix when appending make/model
 # v. 20260721.112812 - GoPro camera labels: GoPro_Hero4_Silver style (not GOPRO4_SILVER)
 
+# 2026.09.15 - v. 19.317.190135 - Android 9 no-Make/Model + Capture FPS → Mi_MIX_3_5G only when EXIF Create/Media/Track Create Date year is ≤ 2023
 # 2026.09.15 - v. 19.316.182513 - Android 9 timestamp videos with no Make/Model but Android Capture FPS (Mi MIX 3 5G MP4 fingerprint) → YYYYMMDD_HHMMSS_-_-_Xiaomi_Mi_MIX_3_5G
 # 2026.09.15 - v. 19.315.173938 - Xiaomi Mi MIX 3 5G timestamp photo/video (Make Xiaomi, Camera Model Name Mi MIX 3 5G) → YYYYMMDD_HHMMSS_-_-_Xiaomi_Mi_MIX_3_5G; Xiaomi already-renamed guard accepts any Xiaomi_* label
 # 2026.09.15 - v. 19.314.173536 - bare YYYYMMDD_HHMMSS GoPro stills (JPG/JPEG, e.g. HERO7 Black exports without GOPR prefix) append _-_-_GoPro_Hero#_Edition like bare video; Rate/Timelapse skipped for stills
@@ -11794,13 +11796,22 @@ xiaomi_friendly_model_from_exif() {
     fi
 
     # Mi MIX 3 5G videos often omit Make/Model; Android 9 + Android Capture FPS is the usable fingerprint.
+    # Limit to captures through 2023 so later Android 9 exports are not mislabeled.
     [[ -z "$make" ]] || return 1
     android_ver="$(samsung_exif_first_value "$exif" 'Android Version')"
     [[ "$android_ver" == "9" ]] || return 1
     android_fps="$(samsung_exif_first_value "$exif" 'Android Capture FPS')"
     [[ -n "$android_fps" ]] || return 1
-    printf '%s' 'Mi_MIX_3_5G'
-    return 0
+    for raw in \
+        "$(samsung_exif_first_value "$exif" 'Create Date')" \
+        "$(samsung_exif_first_value "$exif" 'Media Create Date')" \
+        "$(samsung_exif_first_value "$exif" 'Track Create Date')"; do
+        [[ "$raw" =~ ^([0-9]{4}) ]] || continue
+        (( 10#${BASH_REMATCH[1]} <= 2023 )) || return 1
+        printf '%s' 'Mi_MIX_3_5G'
+        return 0
+    done
+    return 1
 }
 
 transform_xiaomi_media_basename() {
