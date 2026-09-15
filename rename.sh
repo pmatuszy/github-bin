@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# v. 20260915.182513 - Android 9 MP4 with no Make/Model + Android Capture FPS → Xiaomi_Mi_MIX_3_5G
 # v. 20260915.173938 - Xiaomi Mi MIX 3 5G timestamp media → YYYYMMDD_HHMMSS_-_-_Xiaomi_Mi_MIX_3_5G
 # v. 20260915.173536 - bare YYYYMMDD_HHMMSS GoPro stills (JPG) get _-_-_GoPro_Hero#_Edition like video; skip Rate/Timelapse on JPG
 # v. 20260831.132115 - phone IMG_/VID_ with no camera make/model in EXIF (panoramas) → plain YYYYMMDD_HHMMSS name
@@ -53,6 +54,7 @@
 # v. 20260721.132007 - Samsung timestamp media: preserve optional numeric sorting prefix when appending make/model
 # v. 20260721.112812 - GoPro camera labels: GoPro_Hero4_Silver style (not GOPRO4_SILVER)
 
+# 2026.09.15 - v. 19.316.182513 - Android 9 timestamp videos with no Make/Model but Android Capture FPS (Mi MIX 3 5G MP4 fingerprint) → YYYYMMDD_HHMMSS_-_-_Xiaomi_Mi_MIX_3_5G
 # 2026.09.15 - v. 19.315.173938 - Xiaomi Mi MIX 3 5G timestamp photo/video (Make Xiaomi, Camera Model Name Mi MIX 3 5G) → YYYYMMDD_HHMMSS_-_-_Xiaomi_Mi_MIX_3_5G; Xiaomi already-renamed guard accepts any Xiaomi_* label
 # 2026.09.15 - v. 19.314.173536 - bare YYYYMMDD_HHMMSS GoPro stills (JPG/JPEG, e.g. HERO7 Black exports without GOPR prefix) append _-_-_GoPro_Hero#_Edition like bare video; Rate/Timelapse skipped for stills
 # 2026.08.31 - v. 19.313.132115 - phone IMG_/VID_ files whose EXIF has no Make/Model at all (panorama stitcher output, stripped exports) are renamed to a plain YYYYMMDD_HHMMSS[_MODE] name with no camera label instead of being left alone
@@ -11767,29 +11769,38 @@ transform_samsung_media_basename() {
 # stdout: friendly model label (Mi_10T_Pro, Mi_MIX_3_5G, …); return 0 when EXIF is a known Xiaomi phone.
 xiaomi_friendly_model_from_exif() {
     local exif="$1"
-    local make="" raw="" raw_norm=""
+    local make="" raw="" raw_norm="" android_ver="" android_fps=""
 
     make="$(samsung_exif_first_value "$exif" 'Make')"
-    [[ "${make,,}" == "xiaomi" ]] || return 1
+    if [[ "${make,,}" == "xiaomi" ]]; then
+        for raw in \
+            "$(samsung_exif_first_value "$exif" 'Camera Model Name')" \
+            "$(samsung_exif_first_value "$exif" 'Model')" \
+            "$(samsung_exif_first_value "$exif" 'Xiaomi Model')"; do
+            [[ -n "$raw" ]] || continue
+            raw_norm="$(printf '%s' "$raw" | tr '[:lower:]' '[:upper:]' | sed -E 's/[^A-Z0-9]+/_/g; s/^_+//; s/_+$//')"
+            case "$raw_norm" in
+                M2007J3SG|MI_10T_PRO)
+                    printf '%s' 'Mi_10T_Pro'
+                    return 0
+                    ;;
+                MI_MIX_3_5G)
+                    printf '%s' 'Mi_MIX_3_5G'
+                    return 0
+                    ;;
+            esac
+        done
+        return 1
+    fi
 
-    for raw in \
-        "$(samsung_exif_first_value "$exif" 'Camera Model Name')" \
-        "$(samsung_exif_first_value "$exif" 'Model')" \
-        "$(samsung_exif_first_value "$exif" 'Xiaomi Model')"; do
-        [[ -n "$raw" ]] || continue
-        raw_norm="$(printf '%s' "$raw" | tr '[:lower:]' '[:upper:]' | sed -E 's/[^A-Z0-9]+/_/g; s/^_+//; s/_+$//')"
-        case "$raw_norm" in
-            M2007J3SG|MI_10T_PRO)
-                printf '%s' 'Mi_10T_Pro'
-                return 0
-                ;;
-            MI_MIX_3_5G)
-                printf '%s' 'Mi_MIX_3_5G'
-                return 0
-                ;;
-        esac
-    done
-    return 1
+    # Mi MIX 3 5G videos often omit Make/Model; Android 9 + Android Capture FPS is the usable fingerprint.
+    [[ -z "$make" ]] || return 1
+    android_ver="$(samsung_exif_first_value "$exif" 'Android Version')"
+    [[ "$android_ver" == "9" ]] || return 1
+    android_fps="$(samsung_exif_first_value "$exif" 'Android Capture FPS')"
+    [[ -n "$android_fps" ]] || return 1
+    printf '%s' 'Mi_MIX_3_5G'
+    return 0
 }
 
 transform_xiaomi_media_basename() {
