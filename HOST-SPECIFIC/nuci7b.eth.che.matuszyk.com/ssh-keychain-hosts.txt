@@ -17,29 +17,29 @@
 
 # --- che ---
 backupche.eth.che.matuszyk.com
-#bitcoinnetworknode.eth.che.matuszyk.com
-#fr24.eth.che.matuszyk.com
+bitcoinnetworknode.eth.che.matuszyk.com
+fr24.eth.che.matuszyk.com
 nucvm.eth.che.matuszyk.com
 vpn-che.eth.che.matuszyk.com
-#yt2podcast.eth.che.matuszyk.com
+        #yt2podcast.eth.che.matuszyk.com
 yt2podcast2.eth.che.matuszyk.com
-#zurich.eth.che.matuszyk.com
+        #zurich.eth.che.matuszyk.com
 
 # --- r ---
 cloud.eth.r.matuszyk.com
 lublin.eth.r.matuszyk.com
-#minecraft1.eth.r.matuszyk.com
-#nuci7.eth.r.matuszyk.com
-#rpi3.eth.r.matuszyk.com
-#rpir2.eth.r.matuszyk.com
-#secureuploadserver.eth.r.matuszyk.com
-#vpn-r.eth.r.matuszyk.com
-#www02.eth.r.matuszyk.com
+        #minecraft1.eth.r.matuszyk.com
+nuci7.eth.r.matuszyk.com
+        #rpi3.eth.r.matuszyk.com
+rpir2.eth.r.matuszyk.com
+secureuploadserver.eth.r.matuszyk.com
+vpn-r.eth.r.matuszyk.com
+www02.eth.r.matuszyk.com
 
 # --- b ---
-#laptopvm.eth.b.matuszyk.com
+        #laptopvm.eth.b.matuszyk.com
 #management-server.eth.b.matuszyk.com
-#rpi42b.eth.b.matuszyk.com
+        #rpi42b.eth.b.matuszyk.com
 
 # --- ss ---
-#backupss.eth.ss.matuszyk.com
+backupss.eth.ss.matuszyk.com
