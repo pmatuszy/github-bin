@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20260916.114700 - unreachable hosts: red banner, consecutive-failure count, boxed cycle summary
 # v. 20260916.114400 - host list sorted (and deduplicated) before printing and visiting
 # v. 20260916.114200 - each cycle starts by listing the hosts it is about to visit
 # v. 20260916.114000 - remote cycle every 1h instead of 10 min (SSH_KEYCHAIN_DAEMON_SLEEP default 3600)
@@ -96,6 +97,22 @@ REMOTE_CMD="${SSH_KEYCHAIN_REMOTE_CMD:-/root/bin/ssh-keychain.sh --no_startup_de
 CONNECT_TIMEOUT="${SSH_KEYCHAIN_CONNECT_TIMEOUT:-20}"
 REMOTE_TIMEOUT="${SSH_KEYCHAIN_REMOTE_TIMEOUT:-180}"
 SEND_PASSPHRASE="${SSH_KEYCHAIN_SEND_PASSPHRASE:-1}"
+
+if [[ -t 1 ]]; then
+  RED=$'\033[1;31m'
+  YELLOW=$'\033[1;33m'
+  GREEN=$'\033[32m'
+  RESET=$'\033[0m'
+else
+  RED=""
+  YELLOW=""
+  GREEN=""
+  RESET=""
+fi
+
+# consecutive failures per host, so an outage reads differently from a single miss
+declare -A SKD_FAIL_COUNT=()
+declare -A SKD_FAIL_SINCE=()
 ASKPASS_FILE=""
 PASSWD=""
 
@@ -190,6 +207,57 @@ skd_remote_load_keys() {
   return ${PIPESTATUS[1]}
 }
 
+skd_note_failure() {
+  local host="$1"
+
+  SKD_FAIL_COUNT["${host}"]=$(( ${SKD_FAIL_COUNT["${host}"]:-0} + 1 ))
+  if [[ -z "${SKD_FAIL_SINCE["${host}"]:-}" ]]; then
+    SKD_FAIL_SINCE["${host}"]="$(date '+%Y.%m.%d %H:%M:%S')"
+  fi
+}
+
+skd_note_success() {
+  local host="$1" fails="${SKD_FAIL_COUNT["${host}"]:-0}"
+
+  if (( fails > 0 )); then
+    echo "    ${GREEN}[${host}] (PGM) RECOVERED after ${fails} failed cycle(s)${RESET}"
+    unset "SKD_FAIL_COUNT[${host}]" "SKD_FAIL_SINCE[${host}]"
+  fi
+}
+
+skd_downtime_line() {
+  local host="$1" fails="${SKD_FAIL_COUNT["${host}"]:-0}" since="${SKD_FAIL_SINCE["${host}"]:-}"
+
+  if (( fails > 1 )); then
+    printf 'failing for %d cycles in a row, first seen %s' "${fails}" "${since}"
+  else
+    printf 'first failed cycle (%s)' "${since}"
+  fi
+}
+
+# hash-fenced block sized to its content, so it stays visible while the log scrolls.
+# Keep the text ASCII: a multi-byte character would push the right border out of line.
+skd_loud_banner() {
+  local color="$1"; shift
+  local -a lines=("$@")
+  local line bar="" width=0 i
+
+  for line in "${lines[@]}"; do
+    (( ${#line} > width )) && width=${#line}
+  done
+  for (( i = 0; i < width + 10; i++ )); do
+    bar+="#"
+  done
+
+  echo
+  printf '%s    %s%s\n' "${color}" "${bar}" "${RESET}"
+  for line in "${lines[@]}"; do
+    printf '%s    ###  %-*s  ###%s\n' "${color}" "${width}" "${line}" "${RESET}"
+  done
+  printf '%s    %s%s\n' "${color}" "${bar}" "${RESET}"
+  echo
+}
+
 skd_run_remote() {
   local host="$1" rc
 
@@ -198,15 +266,34 @@ skd_run_remote() {
   rc=$?
 
   case ${rc} in
-    0)       echo "    [${host}] (PGM) all keys already loaded — passphrase not sent" ; return 0 ;;
-    124|137) echo "    [${host}] (PGM) TIMEOUT — killed after ${REMOTE_TIMEOUT}s (rc=${rc})" ; return "${rc}" ;;
-    255)     echo "    [${host}] (PGM) ssh connection FAILED (rc=255) — host down, key or BatchMode problem" ; return "${rc}" ;;
+    0)
+      echo "    ${GREEN}[${host}] (PGM) all keys already loaded — passphrase not sent${RESET}"
+      skd_note_success "${host}"
+      return 0
+      ;;
+    124|137)
+      skd_note_failure "${host}"
+      skd_loud_banner "${RED}" \
+        "HOST UNREACHABLE: ${host}" \
+        "no answer - killed after ${REMOTE_TIMEOUT}s (rc=${rc})" \
+        "$(skd_downtime_line "${host}")"
+      return "${rc}"
+      ;;
+    255)
+      skd_note_failure "${host}"
+      skd_loud_banner "${RED}" \
+        "HOST UNREACHABLE: ${host}" \
+        "ssh gave up after ${CONNECT_TIMEOUT}s (rc=255) - host down, host key or auth problem" \
+        "$(skd_downtime_line "${host}")"
+      return "${rc}"
+      ;;
   esac
 
-  echo "    [${host}] (PGM) keys not loaded there (rc=${rc}) — host restarted?"
+  echo "    ${YELLOW}[${host}] (PGM) keys not loaded there (rc=${rc}) — host restarted?${RESET}"
 
   if (( ! SEND_PASSPHRASE )); then
-    echo "    [${host}] (PGM) passphrase transfer disabled (SSH_KEYCHAIN_SEND_PASSPHRASE=0) — leaving it unloaded"
+    skd_note_failure "${host}"
+    echo "    ${YELLOW}[${host}] (PGM) passphrase transfer disabled (SSH_KEYCHAIN_SEND_PASSPHRASE=0) — leaving it unloaded${RESET}"
     return "${rc}"
   fi
 
@@ -214,19 +301,34 @@ skd_run_remote() {
   skd_remote_load_keys "${host}"
   rc=$?
 
+  if (( rc == 0 )); then
+    echo "    ${GREEN}[${host}] (PGM) keys loaded OK${RESET}"
+    skd_note_success "${host}"
+    return 0
+  fi
+
+  skd_note_failure "${host}"
   case ${rc} in
-    0)       echo "    [${host}] (PGM) keys loaded OK" ;;
-    124|137) echo "    [${host}] (PGM) TIMEOUT while loading keys (rc=${rc})" ;;
-    255)     echo "    [${host}] (PGM) ssh connection FAILED while loading keys (rc=255)" ;;
-    91)      echo "    [${host}] (PGM) remote bootstrap could not create its askpass helper (rc=91)" ;;
-    *)       echo "    [${host}] (PGM) keys still not fully loaded (rc=${rc}) — wrong passphrase or missing key files?" ;;
+    124|137) echo "    ${RED}[${host}] (PGM) TIMEOUT while loading keys (rc=${rc})${RESET}" ;;
+    255)     echo "    ${RED}[${host}] (PGM) ssh connection FAILED while loading keys (rc=255)${RESET}" ;;
+    91)      echo "    ${RED}[${host}] (PGM) remote bootstrap could not create its askpass helper (rc=91)${RESET}" ;;
+    *)       echo "    ${RED}[${host}] (PGM) keys still not loaded (rc=${rc}) — wrong passphrase or missing key files?${RESET}" ;;
   esac
+  echo "    ${RED}[${host}] (PGM) $(skd_downtime_line "${host}")${RESET}"
   return "${rc}"
 }
 
+skd_boxed() {
+  if type -fP boxes &>/dev/null; then
+    boxes -s 64x3 -a l -d ada-box
+  else
+    sed 's/^/    /'
+  fi
+}
+
 skd_remote_cycle() {
-  local -a hosts=()
-  local host
+  local -a hosts=() down=() badkeys=()
+  local host rc ok=0
 
   if [[ ! -r "${HOSTS_FILE}" ]]; then
     echo "(PGM) host list ${HOSTS_FILE} not readable — skipping remote refresh"
@@ -254,7 +356,32 @@ skd_remote_cycle() {
 
   for host in "${hosts[@]}"; do
     skd_run_remote "${host}"
+    rc=$?
+    case ${rc} in
+      0)           (( ++ok )) ;;
+      124|137|255) down+=("${host}") ;;
+      *)           badkeys+=("${host}") ;;
+    esac
   done
+
+  echo
+  if (( ${#down[@]} == 0 && ${#badkeys[@]} == 0 )); then
+    printf '%s' "${GREEN}"
+    echo "cycle summary: all ${#hosts[@]} host(s) OK" | skd_boxed
+    printf '%s' "${RESET}"
+  else
+    printf '%s' "${RED}"
+    {
+      echo "cycle summary: ${ok} OK / ${#down[@]} UNREACHABLE / ${#badkeys[@]} with keys not loaded"
+      for host in ${down[@]+"${down[@]}"}; do
+        printf 'UNREACHABLE   %s (%s cycle(s) in a row)\n' "${host}" "${SKD_FAIL_COUNT["${host}"]:-1}"
+      done
+      for host in ${badkeys[@]+"${badkeys[@]}"}; do
+        printf 'KEYS MISSING  %s (%s cycle(s) in a row)\n' "${host}" "${SKD_FAIL_COUNT["${host}"]:-1}"
+      done
+    } | skd_boxed
+    printf '%s' "${RESET}"
+  fi
   echo
 }
 
