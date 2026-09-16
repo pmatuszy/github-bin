@@ -16,18 +16,18 @@
 # Do not list nuci7b itself: its keys are loaded locally when the daemon starts.
 
 # --- che ---
-#backupche.eth.che.matuszyk.com
+backupche.eth.che.matuszyk.com
 #bitcoinnetworknode.eth.che.matuszyk.com
 #fr24.eth.che.matuszyk.com
-#nucvm.eth.che.matuszyk.com
-#vpn-che.eth.che.matuszyk.com
+nucvm.eth.che.matuszyk.com
+vpn-che.eth.che.matuszyk.com
 #yt2podcast.eth.che.matuszyk.com
-#yt2podcast2.eth.che.matuszyk.com
+yt2podcast2.eth.che.matuszyk.com
 #zurich.eth.che.matuszyk.com
 
 # --- r ---
-#cloud.eth.r.matuszyk.com
-#lublin.eth.r.matuszyk.com
+cloud.eth.r.matuszyk.com
+lublin.eth.r.matuszyk.com
 #minecraft1.eth.r.matuszyk.com
 #nuci7.eth.r.matuszyk.com
 #rpi3.eth.r.matuszyk.com
