@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20260916.110900 - each cycle also runs ssh-keychain.sh on hosts from ssh-keychain-hosts.txt (ssh timeouts)
 # v. 20260909.201114 - ask passphrase once; reuse via SSH_ASKPASS in the loop (no X11)
 # v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
 # v. 20260718.082000 - English password prompt; track script in github-bin
@@ -11,6 +12,8 @@
 #
 # GNU screen helper: load SSH keys into keychain/ssh-agent. Prompts for the
 # passphrase once, then refreshes every 10 minutes without prompting again.
+# Every cycle also runs /root/bin/ssh-keychain.sh over ssh on each host listed
+# in ssh-keychain-hosts.txt; unreachable hosts are skipped after a timeout.
 # A private SSH_ASKPASS helper supplies the saved passphrase; DISPLAY is a
 # dummy so ssh-add never opens X11 ssh-askpass.
 # Do not pass --nogui to the add keychain call: 2.8.5 then unsets SSH_ASKPASS
@@ -24,6 +27,12 @@ Long-running screen helper: load SSH keys into keychain/ssh-agent after reboot.
 Asks for the key passphrase once, then refreshes every 10 minutes (missing
 keys only) without prompting again.
 
+Each cycle also runs /root/bin/ssh-keychain.sh over ssh on every host from the
+host list file (one host or user@host per line, # comments and blank lines are
+ignored, file re-read every cycle). Hosts that do not answer within
+SSH_KEYCHAIN_CONNECT_TIMEOUT seconds are logged and skipped; the loop keeps
+going regardless of what a remote run returns.
+
 Options:
   -h, --help           Show this help and exit.
   -v, --version        Print script version and exit.
@@ -31,8 +40,13 @@ Options:
   --no_startup_delay   Skip random startup delay.
 
 Environment:
-  SSH_KEYCHAIN_DAEMON_SLEEP  Seconds between cycles (default: 600).
-  SSH_KEYCHAIN_DISPLAY       DISPLAY for keychain's askpass path (default: dummy:0).
+  SSH_KEYCHAIN_DAEMON_SLEEP     Seconds between cycles (default: 600).
+  SSH_KEYCHAIN_DISPLAY          DISPLAY for keychain's askpass path (default: dummy:0).
+  SSH_KEYCHAIN_HOSTS_FILE       Host list (default: /root/bin/ssh-keychain-hosts.txt).
+  SSH_KEYCHAIN_REMOTE_CMD       Command run on each host
+                                (default: /root/bin/ssh-keychain.sh --no_startup_delay batch).
+  SSH_KEYCHAIN_CONNECT_TIMEOUT  ssh ConnectTimeout in seconds (default: 20).
+  SSH_KEYCHAIN_REMOTE_TIMEOUT   Hard limit for one remote run in seconds (default: 180).
 EOF
 }
 
@@ -56,8 +70,16 @@ while [[ $# -gt 0 ]]; do
 done
 
 check_if_installed keychain
+check_if_installed ssh openssh-client
+check_if_installed timeout coreutils
 
 SLEEP_SEC="${SSH_KEYCHAIN_DAEMON_SLEEP:-600}"
+HOSTS_FILE="${SSH_KEYCHAIN_HOSTS_FILE:-/root/bin/ssh-keychain-hosts.txt}"
+# Both flags are needed: ssh-keychain.sh sources _script_header.sh twice, and each
+# source adds a random delay of up to MAX_RANDOM_DELAY_IN_SEC when there is no tty.
+REMOTE_CMD="${SSH_KEYCHAIN_REMOTE_CMD:-/root/bin/ssh-keychain.sh --no_startup_delay batch}"
+CONNECT_TIMEOUT="${SSH_KEYCHAIN_CONNECT_TIMEOUT:-20}"
+REMOTE_TIMEOUT="${SSH_KEYCHAIN_REMOTE_TIMEOUT:-180}"
 ASKPASS_FILE=""
 PASSWD=""
 
@@ -90,9 +112,66 @@ skd_cleanup() {
 
 trap skd_cleanup EXIT
 
+skd_read_host_list() {
+  local line
+  while IFS= read -r line || [[ -n "${line}" ]]; do
+    line="${line%%#*}"
+    line="${line#"${line%%[![:space:]]*}"}"
+    line="${line%"${line##*[![:space:]]}"}"
+    [[ -n "${line}" ]] && printf '%s\n' "${line}"
+  done < "$1"
+}
+
+skd_run_remote() {
+  local host="$1" rc
+
+  echo "[$(date '+%Y.%m.%d %H:%M:%S')] (PGM) ${host}: ${REMOTE_CMD}"
+  # env -u: our SSH_ASKPASS helper prints the key passphrase, so ssh must never be
+  # able to use it to answer a remote password prompt. BatchMode=yes on top of that.
+  timeout --kill-after=10 "${REMOTE_TIMEOUT}" \
+    env -u SSH_ASKPASS -u SSH_ASKPASS_REQUIRE -u DISPLAY -u PASSWD \
+      ssh -n -T -o BatchMode=yes -o ConnectTimeout="${CONNECT_TIMEOUT}" \
+             -o ServerAliveInterval=10 -o ServerAliveCountMax=3 \
+             "${host}" "${REMOTE_CMD}" 2>&1 | sed "s/^/    [${host}] /"
+  rc=${PIPESTATUS[0]}
+
+  case ${rc} in
+    0)       echo "    [${host}] (PGM) OK" ;;
+    124|137) echo "    [${host}] (PGM) TIMEOUT — killed after ${REMOTE_TIMEOUT}s (rc=${rc})" ;;
+    255)     echo "    [${host}] (PGM) ssh connection FAILED (rc=255) — host down, key or BatchMode problem" ;;
+    *)       echo "    [${host}] (PGM) remote script reported problems (rc=${rc})" ;;
+  esac
+}
+
+skd_remote_cycle() {
+  local -a hosts=()
+  local host
+
+  if [[ ! -r "${HOSTS_FILE}" ]]; then
+    echo "(PGM) host list ${HOSTS_FILE} not readable — skipping remote refresh"
+    echo
+    return 0
+  fi
+
+  mapfile -t hosts < <(skd_read_host_list "${HOSTS_FILE}")
+
+  if (( ${#hosts[@]} == 0 )); then
+    echo "(PGM) host list ${HOSTS_FILE} contains no hosts — skipping remote refresh"
+    echo
+    return 0
+  fi
+
+  echo "(PGM) remote refresh on ${#hosts[@]} host(s) from ${HOSTS_FILE}"
+  for host in "${hosts[@]}"; do
+    skd_run_remote "${host}"
+  done
+  echo
+}
+
 echo
 echo "(PGM) ssh-keychain-daemon — GNU screen helper on ${HOSTNAME}"
 echo "(PGM) Will load ${expected_key_count} key(s): ${klucze}"
+echo "(PGM) Remote refresh each cycle from ${HOSTS_FILE} (connect timeout ${CONNECT_TIMEOUT}s)"
 echo
 
 if [[ ! -t 0 ]]; then
@@ -132,6 +211,9 @@ while : ; do
 
   keychain --nogui --nocolor -l 2>&1
   echo
+
+  skd_remote_cycle
+
   if (( SLEEP_SEC == 600 )); then
     echo "(PGM) sleeping 10 minutes before next cycle (Ctrl-C to stop)..."
   else
