@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20260916.111800 - load local keys once at startup; the loop now only refreshes the remote hosts
 # v. 20260916.110900 - each cycle also runs ssh-keychain.sh on hosts from ssh-keychain-hosts.txt (ssh timeouts)
 # v. 20260909.201114 - ask passphrase once; reuse via SSH_ASKPASS in the loop (no X11)
 # v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
@@ -11,8 +12,8 @@
 # ssh-keychain-daemon.sh
 #
 # GNU screen helper: load SSH keys into keychain/ssh-agent. Prompts for the
-# passphrase once, then refreshes every 10 minutes without prompting again.
-# Every cycle also runs /root/bin/ssh-keychain.sh over ssh on each host listed
+# passphrase once and loads the local keys once, at startup. After that it loops
+# every 10 minutes running /root/bin/ssh-keychain.sh over ssh on each host listed
 # in ssh-keychain-hosts.txt; unreachable hosts are skipped after a timeout.
 # A private SSH_ASKPASS helper supplies the saved passphrase; DISPLAY is a
 # dummy so ssh-add never opens X11 ssh-askpass.
@@ -24,14 +25,14 @@ show_help() {
 Usage: $(basename "$0") [-h|--help] [-v|--version] [--no_startup_delay]
 
 Long-running screen helper: load SSH keys into keychain/ssh-agent after reboot.
-Asks for the key passphrase once, then refreshes every 10 minutes (missing
-keys only) without prompting again.
+Asks for the key passphrase once and loads the local keys once, at startup.
 
-Each cycle also runs /root/bin/ssh-keychain.sh over ssh on every host from the
-host list file (one host or user@host per line, # comments and blank lines are
-ignored, file re-read every cycle). Hosts that do not answer within
-SSH_KEYCHAIN_CONNECT_TIMEOUT seconds are logged and skipped; the loop keeps
-going regardless of what a remote run returns.
+It then loops every SSH_KEYCHAIN_DAEMON_SLEEP seconds, each cycle running
+/root/bin/ssh-keychain.sh over ssh on every host from the host list file (one
+host or user@host per line, # comments and blank lines are ignored, file re-read
+every cycle). Hosts that do not answer within SSH_KEYCHAIN_CONNECT_TIMEOUT
+seconds are logged and skipped; the loop keeps going regardless of what a remote
+run returns.
 
 Options:
   -h, --help           Show this help and exit.
@@ -199,19 +200,19 @@ export SSH_ASKPASS="${ASKPASS_FILE}"
 export SSH_ASKPASS_REQUIRE=force
 export DISPLAY="${SSH_KEYCHAIN_DISPLAY:-dummy:0}"
 
+echo "[$(date '+%Y.%m.%d %H:%M:%S')] (PGM) keychain --nocolor --agents ssh ${klucze}"
+# Do not pass --nogui: that unsets SSH_ASKPASS and forces a TTY prompt.
+keychain --nocolor --agents ssh ${klucze} 2>&1
+
+if [[ -f "${HOME}/.keychain/${HOSTNAME}-sh" ]]; then
+  # shellcheck source=/dev/null
+  . "${HOME}/.keychain/${HOSTNAME}-sh"
+fi
+
+keychain --nogui --nocolor -l 2>&1
+echo
+
 while : ; do
-  echo "[$(date '+%Y.%m.%d %H:%M:%S')] (PGM) keychain --nocolor --agents ssh ${klucze}"
-  # Do not pass --nogui: that unsets SSH_ASKPASS and forces a TTY prompt.
-  keychain --nocolor --agents ssh ${klucze} 2>&1
-
-  if [[ -f "${HOME}/.keychain/${HOSTNAME}-sh" ]]; then
-    # shellcheck source=/dev/null
-    . "${HOME}/.keychain/${HOSTNAME}-sh"
-  fi
-
-  keychain --nogui --nocolor -l 2>&1
-  echo
-
   skd_remote_cycle
 
   if (( SLEEP_SEC == 600 )); then
