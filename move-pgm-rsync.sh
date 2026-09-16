@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20260916.133341 - print === Run settings === before the transfer, with Equivalent CLI
 # v. 20260916.130951 - boxed output: draw rules with sed; tr truncated ─ to one invalid byte
 # v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
 # v. 20260810.115956 - fix bash (( )) + =~ error; robust rsync stats byte parsing
@@ -7,6 +8,7 @@
 # v. 20260724.203756 - avoid startup delay when displaying help or version information
 # v. 20260724.203704 - initial network move with uncompressed SSH, source removal, and dry-run support
 
+# 2026.09.16 - v. 0.3.3 - before the transfer: print "=== Run settings ===" with -n/--dry-run and --bwlimit as given or not given, SOURCE/DESTINATION, and an "Equivalent CLI:" line that repeats the run
 # 2026.09.16 - v. 0.3.2 - boxed result summary: horizontal rules via sed 's/ /─/g'; tr is byte-wise and cut the 3-byte ─ (U+2500) down to a lone 0xE2, printing invalid UTF-8
 # 2026.08.10 - v. 0.3.1 - fix result size fallback test; parse rsync stats numbers reliably
 # 2026.08.06 - v. 0.3 - preflight transfer plan (files, size, ETA); timing and rate in result box
@@ -193,6 +195,45 @@ move_pgm_run_transfer_preflight() {
   [[ "$MOVE_PGM_PLAN_BYTES" =~ ^[0-9]+$ ]] || MOVE_PGM_PLAN_BYTES=0
   [[ "$MOVE_PGM_PLAN_FILES" =~ ^[0-9]+$ ]] || MOVE_PGM_PLAN_FILES=0
   return 0
+}
+
+# Command line that reproduces this run (flags given plus source/destination).
+move_pgm_print_run_settings_equivalent_cli() {
+  local cmd="" out="" p
+  local -a parts=()
+
+  cmd="$(basename -- "${BASH_SOURCE[0]:-$0}")"
+  [[ -n "$cmd" ]] || cmd="move-pgm-rsync.sh"
+
+  (( DRY_RUN == 1 )) && parts+=("--dry-run")
+  [[ -n "$BWLIMIT" ]] && parts+=("--bwlimit" "$BWLIMIT")
+  parts+=("--" "$SOURCE" "$DESTINATION")
+
+  out="$(printf '%q' "$cmd")"
+  for p in "${parts[@]}"; do
+    out+=" $(printf '%q' "$p")"
+  done
+  printf '  %-17s%s\n' "Equivalent CLI:" "$out"
+}
+
+# Always-on startup summary (same idea as rename.sh / par2-pgm-check.sh).
+move_pgm_print_run_settings() {
+  echo
+  echo "=== Run settings ==="
+  if (( DRY_RUN == 1 )); then
+    printf '  %-17s%s\n' "-n/--dry-run:" "given (itemize changes; nothing transferred or removed)"
+  else
+    printf '  %-17s%s\n' "-n/--dry-run:" "not given (files are moved: copied, then removed from SOURCE)"
+  fi
+  if [[ -n "$BWLIMIT" ]]; then
+    printf '  %-17s%s\n' "--bwlimit:" "given ($BWLIMIT)"
+  else
+    printf '  %-17s%s\n' "--bwlimit:" "not given (no rate limit)"
+  fi
+  printf '  %-17s%s\n' "SOURCE:" "$SOURCE"
+  printf '  %-17s%s\n' "DESTINATION:" "$DESTINATION"
+  move_pgm_print_run_settings_equivalent_cli
+  echo
 }
 
 move_pgm_print_transfer_plan() {
@@ -611,6 +652,8 @@ if (( DRY_RUN == 1 )); then
   RSYNC_ARGS+=(--dry-run --itemize-changes)
   echo "DRY RUN: no files will be transferred or removed."
 fi
+
+move_pgm_print_run_settings
 
 MOVE_PGM_START_STR="$(move_pgm_wall_clock_now)"
 MOVE_PGM_RUN_START=$SECONDS

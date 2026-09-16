@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20260916.133341 - print === Run settings === after the UI/colors prompts; label report command as equivalent CLI
 # v. 20260811.230009 - day list: ASCII prompt (no Unicode dash); align relative day column
 # v. 20260811.225554 - after specific-day report return to day list; title shows SA path + count
 # v. 20260811.225430 - day list: show SA dir path + file count; menu height lists all (scroll)
@@ -26,6 +27,8 @@
 #
 # Interactive wrapper around sar (sysstat): choose UI mode, colors (default on),
 # optionally enable data collection, then pick CPU/memory/swap/disk/network/load reports.
+# Prints "=== Run settings ===" after the prompts; each report prints the sar
+# command line it runs (there are no runtime flags besides -h/-v/--history).
 #
 
 show_help() {
@@ -828,7 +831,7 @@ run_sar_report_cmd() {
   if (( USE_DIALOG )); then
     clear
   fi
-  echo "(PGM) Running:"
+  echo "(PGM) Running (equivalent CLI):"
   printf '  S_COLORS=%q ' "${S_COLORS_VALUE}"
   printf '%q ' "${cmd[@]}"
   echo
@@ -936,6 +939,23 @@ choose_and_run_report() {
   run_sar_report_cmd "${use_pager}" "${cmd[@]}"
 }
 
+# Startup summary. This script has no runtime flags beyond -h/-v/--history, so the
+# block reports the prompted answers; each report prints its own sar command line.
+print_run_settings() {
+  echo
+  echo "=== Run settings ==="
+  if (( USE_DIALOG )); then
+    printf '  %-16s%s\n' "UI:" "prompted; selected: dialog boxes"
+  else
+    printf '  %-16s%s\n' "UI:" "prompted; selected: plain text menus"
+  fi
+  printf '  %-16s%s\n' "S_COLORS:" "prompted; selected: ${S_COLORS_VALUE}"
+  printf '  %-16s%s\n' "sa directory:" "${SA_DIR}"
+  printf '  %-16s%s\n' "CLI options:" "none (-h/-v/--history only); reports are chosen in the menus"
+  printf '  %-16s%s\n' "Equivalent CLI:" "printed per report as \"S_COLORS=… sar …\" before it runs"
+  echo
+}
+
 pause_to_read_report() {
   # One key continues; Ctrl-C sets SAR_PGM_INTERRUPTED in the trap.
   # read -n 1 alone would still block after the trap (Ctrl-C is not the key),
@@ -964,6 +984,7 @@ choose_ui_mode
 ensure_dialog_if_needed
 choose_colors
 maybe_offer_enable_collection
+print_run_settings
 
 while true; do
   if ! choose_stat_type; then

@@ -1,9 +1,11 @@
 #!/bin/bash
+# v. 20260916.133341 - print === Run settings === before playback; Equivalent CLI pins detected size
 # v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
 # v. 20260731.211609 - use shared apt-install prompt from _script_header (default Y, no timeout)
 # v. 20260725.151453 - ask before apt-installing missing packages; default N, 300s timeout
 # v. 20260718.180600 - restore terminal cursor/screen after mpv tct playback
 
+# 2026.09.16 - v. 0.6.5 - before playback: print "=== Run settings ===" with each option as given, env, or default (autodetected width/height shown as the effective cell size) and an "Equivalent CLI:" line that replays the file at the same geometry
 # 2026.07.31 - v. 0.6.4 - missing packages: shared prompt [Y/n], default Y, wait indefinitely
 # 2026.07.25 - v. 0.6.3 - before installing missing packages: single-key [y/N] prompt, 300s timeout
 # 2026.07.18 - v. 0.6.2 - EXIT trap: show cursor and leave alt screen (mpv tct hides cursor)
@@ -282,6 +284,111 @@ video_pgm_play_ctrl_c() {
   ctrl_c
 }
 
+# Command line that reproduces this run, including the geometry actually used.
+video_pgm_print_run_settings_equivalent_cli() {
+  local cmd="" out="" p q_file
+  local -a parts=()
+
+  cmd="$(basename -- "${BASH_SOURCE[0]:-$0}")"
+  [[ -n "$cmd" ]] || cmd="video-pgm-play-terminal.sh"
+
+  if (( PLAY_SILENT )); then
+    parts+=("--silent")
+  else
+    parts+=("--no-silent")
+  fi
+  # Autodetected geometry is passed explicitly so a replay uses the same cell size.
+  [[ -n "$TCT_WIDTH" ]] && parts+=("--width" "$TCT_WIDTH")
+  [[ -n "$TCT_HEIGHT" ]] && parts+=("--height" "$TCT_HEIGHT")
+  (( TCT_AUTODETECT )) || parts+=("--no-autodetect")
+  parts+=("--countdown" "$PLAY_COUNTDOWN")
+  [[ -n "$PLAY_START" ]] && parts+=("--start" "$PLAY_START")
+  [[ -n "$PLAY_LENGTH" ]] && parts+=("--length" "$PLAY_LENGTH")
+
+  out="$(printf '%q' "$cmd")"
+  for p in "${parts[@]}"; do
+    out+=" $(printf '%q' "$p")"
+  done
+  q_file="$(printf '%q' "$MEDIA_FILE")"
+  printf '  %-21s%s\n' "Equivalent CLI:" "$out -- $q_file"
+}
+
+# Always-on startup summary (same idea as rename.sh / par2-pgm-check.sh).
+video_pgm_print_run_settings() {
+  echo
+  echo "=== Run settings ==="
+
+  if (( PLAY_SILENT_CLI )); then
+    printf '  %-21s%s\n' "--silent/--no-silent:" \
+      "given ($( (( PLAY_SILENT )) && printf 'silent' || printf 'mpv terminal output' ))"
+  elif [[ -n "${VIDEO_PGM_PLAY_SILENT:-}" ]]; then
+    printf '  %-21s%s\n' "--silent:" \
+      "$( (( PLAY_SILENT )) && printf 'silent' || printf 'mpv terminal output' ) (env VIDEO_PGM_PLAY_SILENT)"
+  else
+    printf '  %-21s%s\n' "--silent:" \
+      "not given ($( (( PLAY_SILENT )) && printf 'silent, the default' || printf 'mpv terminal output' ))"
+  fi
+
+  if (( TCT_AUTODETECT_CLI )); then
+    printf '  %-21s%s\n' "--autodetect:" \
+      "given ($( (( TCT_AUTODETECT )) && printf 'detect terminal cells' || printf 'off' ))"
+  elif [[ -n "${VIDEO_PGM_PLAY_AUTODETECT:-}" ]]; then
+    printf '  %-21s%s\n' "--autodetect:" \
+      "$( (( TCT_AUTODETECT )) && printf 'on' || printf 'off' ) (env VIDEO_PGM_PLAY_AUTODETECT)"
+  elif (( TCT_AUTODETECT )); then
+    printf '  %-21s%s\n' "--autodetect:" "not given (on by default when no size is requested)"
+  else
+    printf '  %-21s%s\n' "--autodetect:" "not given (off: explicit --width/--height win)"
+  fi
+
+  if (( TCT_WIDTH_CLI )); then
+    printf '  %-21s%s\n' "-w/--width:" "given (${TCT_WIDTH} cells)"
+  elif [[ -n "${VIDEO_PGM_PLAY_WIDTH:-}" ]]; then
+    printf '  %-21s%s\n' "-w/--width:" "${TCT_WIDTH} cells (env VIDEO_PGM_PLAY_WIDTH)"
+  else
+    printf '  %-21s%s\n' "-w/--width:" "not given (effective: ${TCT_WIDTH:-auto} cells)"
+  fi
+
+  if (( TCT_HEIGHT_CLI )); then
+    printf '  %-21s%s\n' "--height:" "given (${TCT_HEIGHT} cells)"
+  elif [[ -n "${VIDEO_PGM_PLAY_HEIGHT:-}" ]]; then
+    printf '  %-21s%s\n' "--height:" "${TCT_HEIGHT} cells (env VIDEO_PGM_PLAY_HEIGHT)"
+  else
+    printf '  %-21s%s\n' "--height:" "not given (effective: ${TCT_HEIGHT:-auto} cells)"
+  fi
+
+  if (( PLAY_COUNTDOWN_CLI )); then
+    printf '  %-21s%s\n' "--countdown:" "given (${PLAY_COUNTDOWN}s)"
+  elif [[ -n "${VIDEO_PGM_PLAY_COUNTDOWN:-}" ]]; then
+    printf '  %-21s%s\n' "--countdown:" "${PLAY_COUNTDOWN}s (env VIDEO_PGM_PLAY_COUNTDOWN)"
+  else
+    printf '  %-21s%s\n' "--countdown:" "${PLAY_COUNTDOWN}s (default)"
+  fi
+  if (( ! TCT_AUTODETECT )); then
+    printf '  %-21s%s\n' "" "(countdown only runs with autodetected geometry)"
+  fi
+
+  if (( PLAY_START_CLI )); then
+    printf '  %-21s%s\n' "--start:" "given (${PLAY_START}s)"
+  elif [[ -n "$PLAY_START" ]]; then
+    printf '  %-21s%s\n' "--start:" "${PLAY_START}s (env VIDEO_PGM_PLAY_START)"
+  else
+    printf '  %-21s%s\n' "--start:" "not given (from the beginning)"
+  fi
+
+  if (( PLAY_LENGTH_CLI )); then
+    printf '  %-21s%s\n' "--length:" "given (${PLAY_LENGTH}s)"
+  elif [[ -n "$PLAY_LENGTH" ]]; then
+    printf '  %-21s%s\n' "--length:" "${PLAY_LENGTH}s (env VIDEO_PGM_PLAY_LENGTH)"
+  else
+    printf '  %-21s%s\n' "--length:" "not given (play to the end)"
+  fi
+
+  printf '  %-21s%s\n' "File:" "$MEDIA_FILE"
+  video_pgm_print_run_settings_equivalent_cli
+  echo
+}
+
 video_pgm_print_command_line() {
   echo "Playing: $MEDIA_FILE"
   echo "mpv: ${mpv_resolved}"
@@ -318,6 +425,14 @@ TCT_AUTODETECT="${VIDEO_PGM_PLAY_AUTODETECT:-}"
 PLAY_COUNTDOWN="${VIDEO_PGM_PLAY_COUNTDOWN:-3}"
 PLAY_START="${VIDEO_PGM_PLAY_START:-}"
 PLAY_LENGTH="${VIDEO_PGM_PLAY_LENGTH:-}"
+# Was the value an explicit flag? "=== Run settings ===" needs env/default kept apart.
+PLAY_SILENT_CLI=0
+TCT_WIDTH_CLI=0
+TCT_HEIGHT_CLI=0
+TCT_AUTODETECT_CLI=0
+PLAY_COUNTDOWN_CLI=0
+PLAY_START_CLI=0
+PLAY_LENGTH_CLI=0
 while [[ $# -gt 0 ]]; do
   case $1 in
     -h|--help)
@@ -334,68 +449,81 @@ while [[ $# -gt 0 ]]; do
       ;;
     --autodetect)
       TCT_AUTODETECT=1
+      TCT_AUTODETECT_CLI=1
       shift
       ;;
     --no-autodetect)
       TCT_AUTODETECT=0
+      TCT_AUTODETECT_CLI=1
       shift
       ;;
     --countdown)
       [[ $# -ge 2 ]] || { echo "ERROR: missing value for --countdown" >&2; exit 1; }
       [[ "$2" =~ ^[0-9]+$ ]] || { echo "ERROR: invalid --countdown: $2 (use 0 or a positive integer)" >&2; exit 1; }
       PLAY_COUNTDOWN="$2"
+      PLAY_COUNTDOWN_CLI=1
       shift 2
       ;;
     --no-countdown)
       PLAY_COUNTDOWN=0
+      PLAY_COUNTDOWN_CLI=1
       shift
       ;;
     --start)
       [[ $# -ge 2 ]] || video_pgm_invalid_seconds "start" ""
       video_pgm_valid_seconds "$2" || video_pgm_invalid_seconds "start" "$2"
       PLAY_START="$2"
+      PLAY_START_CLI=1
       shift 2
       ;;
     --start=*)
       PLAY_START="${1#*=}"
       video_pgm_valid_seconds "$PLAY_START" || video_pgm_invalid_seconds "start" "$PLAY_START"
+      PLAY_START_CLI=1
       shift
       ;;
     --length)
       [[ $# -ge 2 ]] || video_pgm_invalid_seconds "length" ""
       video_pgm_valid_seconds "$2" || video_pgm_invalid_seconds "length" "$2"
       PLAY_LENGTH="$2"
+      PLAY_LENGTH_CLI=1
       shift 2
       ;;
     --length=*)
       PLAY_LENGTH="${1#*=}"
       video_pgm_valid_seconds "$PLAY_LENGTH" || video_pgm_invalid_seconds "length" "$PLAY_LENGTH"
+      PLAY_LENGTH_CLI=1
       shift
       ;;
     -w|--width)
       [[ $# -ge 2 ]] || video_pgm_invalid_dimension "width" ""
       video_pgm_positive_int "$2" || video_pgm_invalid_dimension "width" "$2"
       TCT_WIDTH="$2"
+      TCT_WIDTH_CLI=1
       shift 2
       ;;
     --height)
       [[ $# -ge 2 ]] || video_pgm_invalid_dimension "height" ""
       video_pgm_positive_int "$2" || video_pgm_invalid_dimension "height" "$2"
       TCT_HEIGHT="$2"
+      TCT_HEIGHT_CLI=1
       shift 2
       ;;
     -H)
       [[ $# -ge 2 ]] || video_pgm_invalid_dimension "height" ""
       video_pgm_positive_int "$2" || video_pgm_invalid_dimension "height" "$2"
       TCT_HEIGHT="$2"
+      TCT_HEIGHT_CLI=1
       shift 2
       ;;
     --silent)
       PLAY_SILENT=1
+      PLAY_SILENT_CLI=1
       shift
       ;;
     --no-silent)
       PLAY_SILENT=0
+      PLAY_SILENT_CLI=1
       shift
       ;;
     --no_startup_delay)
@@ -525,6 +653,7 @@ if [[ -n "$PLAY_LENGTH" ]]; then
   MPV_ARGS+=( --length="$PLAY_LENGTH" )
 fi
 
+video_pgm_print_run_settings
 video_pgm_print_command_line
 
 if (( TCT_AUTODETECT )); then

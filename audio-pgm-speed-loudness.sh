@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# v. 20260916.133341 - replace (PGM) speed/format lines with === Run settings === + Equivalent CLI
 # v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
 # v. 20260810.194016 - add -f/--format (flac|mp3|m4a|aac); warn when cover present but format cannot embed
 # v. 20260810.190038 - summary: file sizes + move totals after per-file before/after block
@@ -26,6 +27,7 @@
 # v. 20260810.160147 - pre-scan volumedetect table; before/after dB; end-of-run summary
 # v. 20260810.152506 - rename to audio-pgm-speed-loudness.sh (drop CURRENT-DIRECTORY suffix)
 # v. 20260810.152137 - add English rewrite: cwd atempo+speechnorm, fix find grouping, safe file loop
+# 2026.09.16 - v. 0.8 - startup: the two "(PGM) speed factor / output format" lines become a "=== Run settings ===" block that marks SPEED and -f/--format as given or default and adds an "Equivalent CLI:" line repeating the run
 # 2024.10.20 - v. 0.7 - with ffmpeg 7.0.2, -shortest shortened outputs incorrectly; removed it
 # 2024.08.13 - v. 0.6 - zero-pad _1_,_2_,_3_ to _01_,_02_,_03_ in names
 # 2024.07.31 - v. 0.5 - rar-compress org/ so phone sync does not show it as an extra subfolder
@@ -526,6 +528,43 @@ SCAN_COL_MAX_W=10
 SCAN_COL_MEAN_W=11
 SCAN_COL_DUR_W=8
 SCAN_COL_GAP='  '
+
+# Command line that reproduces this run (speed operand plus the resolved format).
+print_run_settings_equivalent_cli() {
+  local cmd="" out="" p q_dir
+  local -a parts=()
+
+  cmd="$(basename -- "${BASH_SOURCE[0]:-$0}")"
+  [[ -n "$cmd" ]] || cmd="audio-pgm-speed-loudness.sh"
+
+  [[ -n "$OUTPUT_FORMAT" ]] && parts+=("--format" "$OUTPUT_FORMAT")
+  parts+=("$SPEED_FACTOR")
+
+  out="$(printf '%q' "$cmd")"
+  for p in "${parts[@]}"; do
+    out+=" $(printf '%q' "$p")"
+  done
+  q_dir="$(printf '%q' "$WORK_DIR")"
+  printf '  %-18s%s\n' "Equivalent CLI:" "cd $q_dir && $out"
+}
+
+# Always-on startup summary (same idea as rename.sh / par2-pgm-check.sh).
+print_run_settings() {
+  echo "=== Run settings ==="
+  if (( SPEED_SET )); then
+    printf '  %-18s%s\n' "SPEED (atempo):" "given ($SPEED_FACTOR)"
+  else
+    printf '  %-18s%s\n' "SPEED (atempo):" "$SPEED_FACTOR (default)"
+  fi
+  if [[ -n "$OUTPUT_FORMAT" ]]; then
+    printf '  %-18s%s\n' "-f/--format:" "given (.${OUTPUT_FORMAT})"
+  else
+    printf '  %-18s%s\n' "-f/--format:" "not given (auto: .aac, or .m4a when embedding a cover)"
+  fi
+  printf '  %-18s%s\n' "Work dir:" "$WORK_DIR"
+  print_run_settings_equivalent_cli
+  echo
+}
 
 print_scan_table_header() {
   local file_w="$1"
@@ -1138,12 +1177,7 @@ FFMPEG_COMMON_ARGS=( -y -hide_banner -loglevel error )
 
 ls -l -- "$SOURCE_DIR"
 
-echo "(PGM) speed factor (atempo) = $SPEED_FACTOR"
-if [[ -n "$OUTPUT_FORMAT" ]]; then
-  echo "(PGM) output format = .${OUTPUT_FORMAT} (requested)"
-else
-  echo "(PGM) output format = auto (.aac, or .m4a when embedding a cover)"
-fi
+print_run_settings
 echo "ffmpeg: ${FFMPEG_RESOLVED}"
 if [[ -n "${FFMPEG_VERSION}" ]]; then
   echo "  ${FFMPEG_VERSION}"

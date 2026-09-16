@@ -1,7 +1,9 @@
 #!/bin/bash
+# v. 20260916.133341 - print === Run settings === at startup, with Equivalent CLI
 # v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
 # v. 20260805.154826 - after merge: copy GPS/dates from first chapter; FS times via touch -r
 
+# 2026.09.16 - v. 0.15.25 - startup: print "=== Run settings ===" (like rename.sh) with -u/-y/--read-timeout/--seam-before/--seam-after as given, env, or default, the seam preview size, and an "Equivalent CLI:" line that repeats the run
 # 2026.08.05 - v. 0.15.24 - post-merge: copy GPS/CreateDate/Make/Model from first chapter (exiftool); FS mtime via touch -r; title via exiftool not ffmpeg
 # 2026.08.05 - v. 0.15.23 - bare _Timelapse (Hero7 rename): parse camera; size-split use timelapse wall gaps; orphan _part_XX joins size-split
 # 2026.07.25 - v. 0.15.22 - size summary INPUT lines show full basenames instead of 52-char ellipsis
@@ -806,6 +808,81 @@ pgm_log_kv() {
   local label="$1"
   shift
   printf '%s %-*s  %s\n' "$(pgm_ts)" 26 "${label}:" "$*"
+}
+
+# Command line that reproduces this run (flags given plus resolved seam-preview values).
+pgm_print_run_settings_equivalent_cli() {
+  local cmd="" out="" p q_dir
+  local -a parts=()
+
+  cmd="$(basename -- "${BASH_SOURCE[0]:-$0}")"
+  [[ -n "$cmd" ]] || cmd="video-pgm-merge.sh"
+
+  (( DO_UPDATE )) && parts+=("--update")
+  (( DO_YES )) && parts+=("--yes")
+  pgm_read_timeout_is_limited && parts+=("--read-timeout" "$PGM_READ_TIMEOUT")
+  parts+=("--seam-before" "$PGM_SEAM_PREVIEW_BEFORE")
+  parts+=("--seam-after" "$PGM_SEAM_PREVIEW_AFTER")
+
+  out="$(printf '%q' "$cmd")"
+  for p in "${parts[@]}"; do
+    out+=" $(printf '%q' "$p")"
+  done
+
+  q_dir="$(printf '%q' "$PWD")"
+  printf '  %-21s%s\n' "Equivalent CLI:" "cd $q_dir && $out"
+}
+
+# Always-on startup summary (same idea as rename.sh / par2-pgm-check.sh).
+pgm_print_run_settings() {
+  echo
+  echo "=== Run settings ==="
+
+  if (( DO_UPDATE )); then
+    echo "  -u/--update:         given (install or update mp4_merge, then exit)"
+  else
+    echo "  -u/--update:         not given"
+  fi
+
+  if (( DO_YES )); then
+    echo "  -y/--yes:            given (accept defaults; merge without per-group prompts)"
+  else
+    echo "  -y/--yes:            not given (prompt per mergeable group)"
+  fi
+
+  if (( PGM_READ_TIMEOUT_CLI )); then
+    if pgm_read_timeout_is_limited; then
+      printf '  %-21s%s\n' "--read-timeout:" "given (${PGM_READ_TIMEOUT}s per key, then default choice)"
+    else
+      printf '  %-21s%s\n' "--read-timeout:" "given (${PGM_READ_TIMEOUT} — wait for keypress)"
+    fi
+  elif pgm_read_timeout_is_limited; then
+    printf '  %-21s%s\n' "--read-timeout:" "not given (env PGM_READ_TIMEOUT=${PGM_READ_TIMEOUT}s)"
+  else
+    printf '  %-21s%s\n' "--read-timeout:" "not given (wait for keypress)"
+  fi
+
+  if (( PGM_SEAM_BEFORE_CLI )); then
+    printf '  %-21s%s\n' "--seam-before:" "given (${PGM_SEAM_PREVIEW_BEFORE}s before each seam)"
+  elif (( PGM_SEAM_BEFORE_FROM_ENV )); then
+    printf '  %-21s%s\n' "--seam-before:" "${PGM_SEAM_PREVIEW_BEFORE}s (env PGM_SEAM_PREVIEW_BEFORE)"
+  else
+    printf '  %-21s%s\n' "--seam-before:" "${PGM_SEAM_PREVIEW_BEFORE}s (default)"
+  fi
+
+  if (( PGM_SEAM_AFTER_CLI )); then
+    printf '  %-21s%s\n' "--seam-after:" "given (${PGM_SEAM_PREVIEW_AFTER}s after each seam)"
+  elif (( PGM_SEAM_AFTER_FROM_ENV )); then
+    printf '  %-21s%s\n' "--seam-after:" "${PGM_SEAM_PREVIEW_AFTER}s (env PGM_SEAM_PREVIEW_AFTER)"
+  else
+    printf '  %-21s%s\n' "--seam-after:" "${PGM_SEAM_PREVIEW_AFTER}s (default)"
+  fi
+
+  printf '  %-21s%sx%s (env PGM_SEAM_PREVIEW_WIDTH/HEIGHT)\n' \
+    "Seam preview size:" "${PGM_SEAM_PREVIEW_WIDTH:-auto}" "${PGM_SEAM_PREVIEW_HEIGHT:-auto}"
+  printf '  %-21s%s\n' "Work dir:" "$PWD"
+  pgm_print_run_settings_equivalent_cli
+  echo
 }
 
 pgm_time_now_ns() {
@@ -3442,6 +3519,15 @@ for _vpm_a in "$@"; do
 done
 . /root/bin/_script_header.sh "${HEADER_EXTRA_ARGS[@]}"
 
+# Remember where the seam-preview values came from, so "=== Run settings ===" can tell
+# env/default apart from an explicit flag (set below in the --seam-* branches).
+PGM_SEAM_BEFORE_FROM_ENV=0
+PGM_SEAM_AFTER_FROM_ENV=0
+[[ -n "${PGM_SEAM_PREVIEW_BEFORE:-}" ]] && PGM_SEAM_BEFORE_FROM_ENV=1
+[[ -n "${PGM_SEAM_PREVIEW_AFTER:-}" ]] && PGM_SEAM_AFTER_FROM_ENV=1
+PGM_SEAM_BEFORE_CLI=0
+PGM_SEAM_AFTER_CLI=0
+
 PGM_SEAM_PREVIEW_BEFORE="${PGM_SEAM_PREVIEW_BEFORE:-2}"
 PGM_SEAM_PREVIEW_AFTER="${PGM_SEAM_PREVIEW_AFTER:-0}"
 PGM_SEAM_PREVIEW_WIDTH="${PGM_SEAM_PREVIEW_WIDTH-100}"
@@ -3490,24 +3576,28 @@ while [[ $# -gt 0 ]]; do
       [[ $# -ge 2 ]] || pgm_invalid_seam_seconds "seam-before" ""
       pgm_valid_seam_seconds "$2" || pgm_invalid_seam_seconds "seam-before" "$2"
       PGM_SEAM_PREVIEW_BEFORE="$2"
+      PGM_SEAM_BEFORE_CLI=1
       shift 2
       ;;
     --seam-before=*)
       PGM_SEAM_PREVIEW_BEFORE="${1#*=}"
       pgm_valid_seam_seconds "$PGM_SEAM_PREVIEW_BEFORE" \
         || pgm_invalid_seam_seconds "seam-before" "$PGM_SEAM_PREVIEW_BEFORE"
+      PGM_SEAM_BEFORE_CLI=1
       shift
       ;;
     --seam-after)
       [[ $# -ge 2 ]] || pgm_invalid_seam_seconds "seam-after" ""
       pgm_valid_seam_seconds "$2" || pgm_invalid_seam_seconds "seam-after" "$2"
       PGM_SEAM_PREVIEW_AFTER="$2"
+      PGM_SEAM_AFTER_CLI=1
       shift 2
       ;;
     --seam-after=*)
       PGM_SEAM_PREVIEW_AFTER="${1#*=}"
       pgm_valid_seam_seconds "$PGM_SEAM_PREVIEW_AFTER" \
         || pgm_invalid_seam_seconds "seam-after" "$PGM_SEAM_PREVIEW_AFTER"
+      PGM_SEAM_AFTER_CLI=1
       shift
       ;;
     --no_startup_delay)
@@ -3534,6 +3624,8 @@ fi
 pgm_record_script_start
 
 print_version_banner
+
+pgm_print_run_settings
 
 if (( script_is_run_interactively )) && ! (( DO_YES )); then
   if pgm_read_timeout_is_limited; then

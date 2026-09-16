@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20260916.133341 - always print === Run settings === after the wizard, with Equivalent CLI
 # v. 20260811.095711 - --history uses shared print_script_history from _script_header.sh
 # v. 20260810.225413 - --history: paged changelog from header (more? default Y, 200s, q quits)
 # v. 20260808.081906 - skip MP4 mp4s/Systems tracks (Tag mp4s incompatible with codec id 0)
@@ -26,6 +27,7 @@
 # v. 20260801.144550 - normalize: map streams individually; skip MP4-unmappable timecode (tmcd) only
 # v. 20260716.163224 - versioning format v. YYYYMMDD.HH24MISS
 
+# 2026.09.16 - v. 0.5.50 - startup: always print "=== Run settings ===" once the wizard is done — each option as given / env / prompted (with the selected value), plus an "Equivalent CLI:" line that reproduces the run non-interactively (rename.sh style); --print-cli-only keeps its own equivalent-command section
 # 2026.07.04 - v. 0.5.49 - no media files: do not invent empty path (printf on empty array); exit cleanly
 # 2026.06.26 - v. 0.5.48 - scan-percent prompt: one-line 1–100 help above [q/e]
 # 2026.06.26 - v. 0.5.47 - scan STATUS NO_PROCESS when mean volume below --mean-skip-db (default -60 dB)
@@ -287,6 +289,7 @@ LOUDNESS_ORIGINAL_ARGV=( "$0" "$@" )
 LOUDNESS_WINDOW_TITLE_PUSHED=0
 
 NORMALIZE_MODE="${LOUDNESS_NORMALIZE:-}"
+NORMALIZE_MODE_CLI=0
 AUTO_YES=0
 LOUDNESS_FORCE="${LOUDNESS_FORCE:-0}"
 LOUDNESS_FORCE_CLI=0
@@ -359,6 +362,7 @@ while [[ $# -gt 0 ]]; do
       ANY_CLI_OPTIONS=1
       [[ $# -ge 2 ]] || { echo "Missing value for --normalize" >&2; exit 1; }
       NORMALIZE_MODE="$2"
+      NORMALIZE_MODE_CLI=1
       shift 2
       ;;
     -y|--yes)
@@ -1266,6 +1270,172 @@ loudness_scan_scope_label() {
     subdirs) printf '%s' 'current directory and subdirectories' ;;
     *)       printf '%s' 'current directory only' ;;
   esac
+}
+
+# Command line that reproduces this run: flags given plus the wizard answers.
+# Per-file choices are not included (those are what --print-cli-only records).
+loudness_print_run_settings_equivalent_cli() {
+  local cmd="" out="" p q_dir
+  local -a parts=()
+
+  cmd="$(basename -- "${BASH_SOURCE[0]:-$0}")"
+  [[ -n "$cmd" ]] || cmd="audio-pgm-loudness.sh"
+
+  if [[ -n "$NORMALIZE_MODE" && "$NORMALIZE_MODE" != none ]]; then
+    parts+=("-n" "$NORMALIZE_MODE")
+  fi
+  (( AUTO_YES )) && parts+=("-y")
+  (( SCAN_ONLY )) && parts+=("--scan-only")
+  if (( LOUDNESS_CLASSES_RESOLVED )) && ! loudness_classes_is_default; then
+    parts+=("--classes" "$(loudness_classes_cli_spec)")
+  elif (( LOUDNESS_INCLUDE_PERFECT )); then
+    parts+=("--include-perfect")
+  fi
+  (( LOUDNESS_SAVE_ORIGINAL )) && parts+=("--save-original")
+  (( LOUDNESS_REPLACE_BACKUP )) && parts+=("--replace-backup")
+  (( LOUDNESS_FORCE )) && parts+=("--force")
+  if ((${#CLI_FILES[@]} == 0)) && [[ -n "$LOUDNESS_SCAN_SCOPE" ]]; then
+    parts+=("--scope" "$LOUDNESS_SCAN_SCOPE")
+  fi
+  if [[ -n "$LOUDNESS_BATCH_SIZE" && "$LOUDNESS_BATCH_SIZE" != 50 ]]; then
+    parts+=("--batch-size" "$LOUDNESS_BATCH_SIZE")
+  fi
+  [[ "$LOUDNESS_SCAN_PERCENT" != 100 ]] && parts+=("--scan-percent" "$LOUDNESS_SCAN_PERCENT")
+  if [[ "$LOUDNESS_SCAN_PERCENT_MIN_MB" != 200 ]]; then
+    parts+=("--scan-percent-min-mb" "$LOUDNESS_SCAN_PERCENT_MIN_MB")
+  fi
+  if [[ -z "$LOUDNESS_MEAN_SKIP_DB" ]]; then
+    parts+=("--mean-skip-db" "off")
+  elif [[ "$LOUDNESS_MEAN_SKIP_DB" != "-60" ]]; then
+    parts+=("--mean-skip-db" "$LOUDNESS_MEAN_SKIP_DB")
+  fi
+  [[ -n "$LOUDNESS_USE_COLORS" ]] && parts+=("--colors" "$LOUDNESS_USE_COLORS")
+  (( LOUDNESS_READ_TIMEOUT_CLI )) && parts+=("--timeout" "$LOUDNESS_READ_TIMEOUT")
+
+  out="$(printf '%q' "$cmd")"
+  for p in "${parts[@]}"; do
+    out+=" $(printf '%q' "$p")"
+  done
+
+  q_dir="$(printf '%q' "$LOUDNESS_INVOCATION_CWD")"
+  printf '  %-25s%s\n' "Equivalent CLI:" "cd $q_dir && $out"
+  if ((${#CLI_FILES[@]} > 0)); then
+    printf '  %-25s%s\n' "Note:" \
+      "${#CLI_FILES[@]} explicit file operand(s) given; append them after -- to repeat this run."
+  fi
+}
+
+# Always-on startup summary (same idea as rename.sh / par2-pgm-check.sh).
+loudness_print_run_settings() {
+  local classes_label
+
+  echo
+  echo "=== Run settings ==="
+
+  if (( NORMALIZE_MODE_CLI )); then
+    printf '  %-25s%s\n' "-n/--normalize:" "given (${NORMALIZE_MODE:-none})"
+  elif [[ -n "${LOUDNESS_NORMALIZE:-}" ]]; then
+    printf '  %-25s%s\n' "-n/--normalize:" "${NORMALIZE_MODE:-none} (env LOUDNESS_NORMALIZE)"
+  elif [[ -n "$NORMALIZE_MODE" && "$NORMALIZE_MODE" != none ]]; then
+    printf '  %-25s%s\n' "-n/--normalize:" "not given (prompted; selected: ${NORMALIZE_MODE})"
+  else
+    printf '  %-25s%s\n' "-n/--normalize:" "not given (measure only, no normalization)"
+  fi
+
+  if (( AUTO_YES )); then
+    printf '  %-25s%s\n' "-y/--yes:" "given (no per-file prompts)"
+  else
+    printf '  %-25s%s\n' "-y/--yes:" "not given (prompt per file/batch)"
+  fi
+
+  if (( SCAN_ONLY )); then
+    printf '  %-25s%s\n' "--scan-only:" "given (measure and report only)"
+  fi
+
+  if ((${#CLI_FILES[@]} > 0)); then
+    printf '  %-25s%s\n' "--scope:" "not used (${#CLI_FILES[@]} file operand(s) on command line)"
+  elif (( LOUDNESS_SCAN_SCOPE_CLI )); then
+    printf '  %-25s%s\n' "--scope:" "given (${LOUDNESS_SCAN_SCOPE})"
+  else
+    printf '  %-25s%s\n' "--scope:" "not given (prompted; selected: ${LOUDNESS_SCAN_SCOPE})"
+  fi
+  printf '  %-25s%s\n' "Search:" "$(loudness_scan_scope_label)"
+
+  classes_label="$(loudness_classes_cli_spec)"
+  [[ -n "$classes_label" ]] || classes_label="(none selected)"
+  if (( LOUDNESS_CLASSES_CLI )); then
+    printf '  %-25s%s\n' "--classes:" "given (${classes_label})"
+  elif (( LOUDNESS_INCLUDE_PERFECT_CLI )); then
+    printf '  %-25s%s\n' "--include-perfect:" "given (classes: ${classes_label})"
+  else
+    printf '  %-25s%s\n' "--classes:" "not given (normalize classes: ${classes_label})"
+  fi
+
+  if (( LOUDNESS_SAVE_ORIGINAL_CLI )); then
+    printf '  %-25s%s\n' "--save-original:" "given (keep a copy of each original)"
+  elif (( LOUDNESS_SAVE_ORIGINAL )); then
+    printf '  %-25s%s\n' "--save-original:" "not given (prompted/env; selected: keep originals)"
+  else
+    printf '  %-25s%s\n' "--save-original:" "not given (originals are replaced in place)"
+  fi
+
+  if (( LOUDNESS_REPLACE_BACKUP_CLI )); then
+    printf '  %-25s%s\n' "--replace-backup:" "given (overwrite an existing backup)"
+  elif (( LOUDNESS_REPLACE_BACKUP )); then
+    printf '  %-25s%s\n' "--replace-backup:" "not given (prompted/env; selected: overwrite backup)"
+  fi
+
+  if (( LOUDNESS_FORCE_CLI )); then
+    printf '  %-25s%s\n' "--force:" "given (normalize even when already in range)"
+  elif (( LOUDNESS_FORCE )); then
+    printf '  %-25s%s\n' "--force:" "env LOUDNESS_FORCE=1"
+  fi
+
+  if (( LOUDNESS_SCAN_PERCENT_CLI )); then
+    printf '  %-25s%s\n' "--scan-percent:" "given (${LOUDNESS_SCAN_PERCENT}%)"
+  else
+    printf '  %-25s%s\n' "--scan-percent:" "${LOUDNESS_SCAN_PERCENT}% (default/env)"
+  fi
+  if (( LOUDNESS_SCAN_PERCENT_MIN_MB_CLI )); then
+    printf '  %-25s%s\n' "--scan-percent-min-mb:" "given (${LOUDNESS_SCAN_PERCENT_MIN_MB} MB)"
+  else
+    printf '  %-25s%s\n' "--scan-percent-min-mb:" "${LOUDNESS_SCAN_PERCENT_MIN_MB} MB (default/env)"
+  fi
+
+  if (( LOUDNESS_MEAN_SKIP_DB_CLI )); then
+    printf '  %-25s%s\n' "--mean-skip-db:" "given (${LOUDNESS_MEAN_SKIP_DB:-off})"
+  else
+    printf '  %-25s%s\n' "--mean-skip-db:" "${LOUDNESS_MEAN_SKIP_DB:-off} (default/env)"
+  fi
+
+  if (( LOUDNESS_BATCH_SIZE_CLI )); then
+    printf '  %-25s%s\n' "--batch-size:" "given (${LOUDNESS_BATCH_SIZE})"
+  else
+    printf '  %-25s%s\n' "--batch-size:" "${LOUDNESS_BATCH_SIZE:-$BATCH_SIZE} (default/env)"
+  fi
+
+  if (( LOUDNESS_COLORS_CLI )); then
+    printf '  %-25s%s\n' "--colors:" "given (${LOUDNESS_USE_COLORS})"
+  else
+    printf '  %-25s%s\n' "--colors:" "not given (prompted/auto; selected: ${LOUDNESS_USE_COLORS:-no})"
+  fi
+
+  if (( LOUDNESS_READ_TIMEOUT_CLI )); then
+    if (( LOUDNESS_READ_TIMEOUT == 0 )); then
+      printf '  %-25s%s\n' "--timeout:" "given (0 — wait forever for each answer)"
+    else
+      printf '  %-25s%s\n' "--timeout:" "given (${LOUDNESS_READ_TIMEOUT}s per interactive answer)"
+    fi
+  elif (( LOUDNESS_READ_TIMEOUT == 0 )); then
+    printf '  %-25s%s\n' "--timeout:" "not given (wait forever for each answer)"
+  else
+    printf '  %-25s%s\n' "--timeout:" "${LOUDNESS_READ_TIMEOUT}s (env LOUDNESS_READ_TIMEOUT)"
+  fi
+
+  printf '  %-25s%s\n' "Start dir:" "$LOUDNESS_INVOCATION_CWD"
+  printf '  %-25s%s\n' "Files to consider:" "${#MEDIA_FILES[@]}"
+  loudness_print_run_settings_equivalent_cli
+  echo
 }
 
 prompt_scan_scope() {
@@ -4553,6 +4723,9 @@ fi
 
 if (( ! PRINT_CLI_ONLY )); then
   resolve_scan_percent_settings || exit 1
+  # Print after the wizard so prompted answers show as "selected", not as defaults.
+  # --print-cli-only has its own equivalent-command section at the end of the session.
+  loudness_print_run_settings
 fi
 
 if (( ${#CLI_FILES[@]} > 0 )); then

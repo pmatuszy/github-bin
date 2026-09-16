@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20260916.133341 - Run settings: add Equivalent CLI line and PROMPT_TIMEOUT value
 # v. 20260916.130951 - boxed output: draw rules with sed; tr truncated ─ to one invalid byte
 # v. 20260812.145813 - after deleting old PAR2 backups, offer to drop their hash-file refs if any
 # v. 20260812.143651 - end-of-run: offer to delete *_old.par2 / *.par2.old if any exist
@@ -56,6 +57,7 @@
 # v. 20260719.103506 - fix no-arg run: empty POSITIONAL[@]:- became one "" element
 # v. 20260719.102800 - multi-set selection: A/a, ranges 1-4, --all, multiple paths
 
+# 2026.09.16 - v. 0.1.71 - === Run settings ===: add an "Equivalent CLI:" line that repeats this run non-interactively (flags given plus the prompted --scope) and show the effective PROMPT_TIMEOUT; explicit PAR2 set arguments get a note instead of a --scope flag
 # 2026.09.16 - v. 0.1.70 - Boxed summaries: horizontal rules via sed 's/ /─/g'; tr is byte-wise and cut the 3-byte ─ (U+2500) down to a lone 0xE2, printing invalid UTF-8
 # 2026.08.12 - v. 0.1.69 - After deleting old PAR2 backups, offer to remove hash-file refs if listed
 # 2026.08.12 - v. 0.1.68 - End of run: offer to delete old PAR2 backups if any exist
@@ -687,6 +689,45 @@ pgm_print_multi_set_summary() {
     echo
 }
 
+# Command line that reproduces this run: flags actually given plus the prompted scope choice.
+pgm_print_run_settings_equivalent_cli() {
+    local cmd="" out="" p q_start
+    local -a parts=()
+
+    cmd="$(basename -- "${BASH_SOURCE[0]:-$0}")"
+    [[ -n "$cmd" ]] || cmd="par2-pgm-check.sh"
+
+    (( FIX_MODE )) && parts+=("--fix")
+    (( AUTO_RENAME )) && parts+=("--yes")
+    (( VERIFY_ALL_SETS && AUTO_RENAME == 0 )) && parts+=("--all")
+    (( NO_RENAME )) && parts+=("--no-rename")
+    (( REPAIR )) && parts+=("--repair")
+    (( NO_REPAIR )) && parts+=("--no-repair")
+    (( AUTO_HASH_TIDY )) && parts+=("--hash-tidy")
+    (( NO_HASH_TIDY )) && parts+=("--no-hash-tidy")
+    (( AUTO_REGENERATE )) && parts+=("--regenerate")
+    (( NO_REGENERATE )) && parts+=("--no-regenerate")
+    (( AUTO_HASH_PAR2_CHECK )) && parts+=("--hash-par2-check")
+    (( NO_HASH_PAR2_CHECK )) && parts+=("--no-hash-par2-check")
+    # --scope only matters while discovering sets; explicit set arguments bypass it.
+    ((${#PAR2_SET_QUEUE[@]} == 0)) && parts+=("--scope" "$CHECK_SCOPE")
+
+    out="$(printf '%q' "$cmd")"
+    for p in "${parts[@]}"; do
+        out+=" $(printf '%q' "$p")"
+    done
+
+    q_start="$(printf '%q' "$START_DIR")"
+    if pgm_prompt_has_timeout; then
+        printf '  %-16s%s\n' "Equivalent CLI:" "PROMPT_TIMEOUT=${PROMPT_TIMEOUT} cd $q_start && $out"
+    else
+        printf '  %-16s%s\n' "Equivalent CLI:" "cd $q_start && $out"
+    fi
+    if ((${#PAR2_SET_QUEUE[@]} > 0)); then
+        printf '  %-16s%s\n' "Note:" "PAR2 set(s) came from the command line; append those paths to repeat this exact selection."
+    fi
+}
+
 pgm_print_run_settings() {
     local n_sets="${#PAR2_SET_QUEUE[@]}"
     local rename_effect
@@ -774,6 +815,8 @@ pgm_print_run_settings() {
         echo "  Search:       start directory only (no subdirectories)"
     fi
     printf '  Start dir:    %s\n' "$START_DIR"
+    printf '  PROMPT_TIMEOUT: %s\n' "$(pgm_prompt_timeout_label)"
+    pgm_print_run_settings_equivalent_cli
     echo
 }
 

@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20260916.133341 - Run settings: mark hash/recovery/helpers given vs prompted; add Equivalent CLI
 # v. 20260916.130951 - boxed output: draw rules with sed; tr truncated ─ to one invalid byte
 # v. 20260812.180711 - Ctrl-C: remove incomplete PAR2/hash temp; restore *.par2.old
 # v. 20260812.133413 - hash-only prompt: explain missing hash; default N
@@ -12,6 +13,7 @@
 # v. 20260809.155541 - prompt to exclude rename.sh helpers from PAR2 (default yes)
 # v. 20260806.224414 - initial: create volume-only PAR2 + SHA-512/MD5 hash for cwd subtree
 
+# 2026.09.16 - v. 0.1.11 - === Run settings ===: report --hash / --recovery / rename-helper choices as given, --yes default, or prompted (with the selected value), show the effective PROMPT_TIMEOUT, and add an "Equivalent CLI:" line that repeats the run non-interactively
 # 2026.09.16 - v. 0.1.10 - Boxed summaries: horizontal rules via sed 's/ /─/g'; tr is byte-wise and cut the 3-byte ─ (U+2500) down to a lone 0xE2, printing invalid UTF-8
 # 2026.08.12 - v. 0.1.9 - Ctrl-C removes incomplete PAR2/hash temp and restores *.par2.old
 # 2026.08.12 - v. 0.1.8 - Hash-only offer explains PAR2-without-hash; default N
@@ -1107,18 +1109,65 @@ write_hash_manifest() {
   echo "Wrote ${line_count} checksum line(s): $(basename -- "$out_file")"
 }
 
+# Command line that reproduces this run: the resolved hash/recovery/helper answers as flags.
+print_run_settings_equivalent_cli() {
+  local cmd="" out="" p q_dir
+  local -a parts=()
+
+  cmd="$(basename -- "${BASH_SOURCE[0]:-$0}")"
+  [[ -n "$cmd" ]] || cmd="par2-hash-pgm-create.sh"
+
+  parts+=("--hash" "$HASH_ALGO")
+  parts+=("--recovery" "$RECOVERY_PCT")
+  if (( EXCLUDE_RENAME_HELPERS == 1 )); then
+    parts+=("--exclude-rename-helpers")
+  else
+    parts+=("--include-rename-helpers")
+  fi
+  (( AUTO_YES == 1 )) && parts+=("--yes")
+  (( DRY_RUN == 1 )) && parts+=("--dry-run")
+
+  out="$(printf '%q' "$cmd")"
+  for p in "${parts[@]}"; do
+    out+=" $(printf '%q' "$p")"
+  done
+
+  q_dir="$(printf '%q' "$WORK_DIR")"
+  if prompt_has_timeout; then
+    printf '  %-16s%s\n' "Equivalent CLI:" "PROMPT_TIMEOUT=${PROMPT_TIMEOUT} cd $q_dir && $out"
+  else
+    printf '  %-16s%s\n' "Equivalent CLI:" "cd $q_dir && $out"
+  fi
+}
+
 print_run_settings() {
   echo "=== Run settings ==="
   echo "  Directory:     $WORK_DIR"
   echo "  Parent name:   $DIR_NAME"
   echo "  PAR2 stem:     ${PAR2_STEM}.par2 (volume-only)"
   echo "  Hash file:     __${DIR_NAME}.${HASH_EXT}"
-  echo "  Hash algo:     ${HASH_LABEL} (${HASH_CMD})"
-  echo "  Recovery:      ${RECOVERY_PCT}%"
-  if (( EXCLUDE_RENAME_HELPERS == 1 )); then
-    echo "  Rename helpers: excluded from PAR2 (still hashed)"
+  if [[ -n "$HASH_PREF" ]]; then
+    echo "  --hash:        given (${HASH_LABEL} / ${HASH_CMD})"
+  elif (( AUTO_YES == 1 )); then
+    echo "  --hash:        not given (--yes default: ${HASH_LABEL} / ${HASH_CMD})"
   else
-    echo "  Rename helpers: included in PAR2"
+    echo "  --hash:        not given (prompted; selected: ${HASH_LABEL} / ${HASH_CMD})"
+  fi
+  if [[ -n "$RECOVERY_CLI" ]]; then
+    echo "  --recovery:    given (${RECOVERY_PCT}%)"
+  elif (( AUTO_YES == 1 )); then
+    echo "  --recovery:    not given (--yes default: ${RECOVERY_PCT}%)"
+  else
+    echo "  --recovery:    not given (prompted; selected: ${RECOVERY_PCT}%)"
+  fi
+  if (( EXCLUDE_RENAME_HELPERS_CLI == 1 )); then
+    echo "  Rename helpers: --exclude-rename-helpers given (excluded from PAR2, still hashed)"
+  elif (( EXCLUDE_RENAME_HELPERS_CLI == 0 )); then
+    echo "  Rename helpers: --include-rename-helpers given (included in PAR2)"
+  elif (( EXCLUDE_RENAME_HELPERS == 1 )); then
+    echo "  Rename helpers: not given (prompted; selected: excluded from PAR2, still hashed)"
+  else
+    echo "  Rename helpers: not given (prompted; selected: included in PAR2)"
   fi
   echo "  PAR2_CMD:      $PAR2_CMD"
   if (( DRY_RUN == 1 )); then
@@ -1128,6 +1177,8 @@ print_run_settings() {
   else
     echo "  Mode:          interactive"
   fi
+  echo "  PROMPT_TIMEOUT: $(prompt_timeout_label)"
+  print_run_settings_equivalent_cli
   echo
 }
 
