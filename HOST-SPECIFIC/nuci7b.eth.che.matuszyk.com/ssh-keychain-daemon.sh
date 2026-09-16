@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20260916.112500 - send passphrase (stdin, never argv/disk) only to hosts whose keys are not loaded
 # v. 20260916.111800 - load local keys once at startup; the loop now only refreshes the remote hosts
 # v. 20260916.110900 - each cycle also runs ssh-keychain.sh on hosts from ssh-keychain-hosts.txt (ssh timeouts)
 # v. 20260909.201114 - ask passphrase once; reuse via SSH_ASKPASS in the loop (no X11)
@@ -15,6 +16,9 @@
 # passphrase once and loads the local keys once, at startup. After that it loops
 # every 10 minutes running /root/bin/ssh-keychain.sh over ssh on each host listed
 # in ssh-keychain-hosts.txt; unreachable hosts are skipped after a timeout.
+# The passphrase lives only in this machine's memory and is pushed to a remote
+# host (on stdin of bash -s, never in argv and never to remote disk) only when
+# that host reports its keys are not loaded — typically after it was restarted.
 # A private SSH_ASKPASS helper supplies the saved passphrase; DISPLAY is a
 # dummy so ssh-add never opens X11 ssh-askpass.
 # Do not pass --nogui to the add keychain call: 2.8.5 then unsets SSH_ASKPASS
@@ -34,6 +38,11 @@ every cycle). Hosts that do not answer within SSH_KEYCHAIN_CONNECT_TIMEOUT
 seconds are logged and skipped; the loop keeps going regardless of what a remote
 run returns.
 
+The passphrase stays in this machine's memory. A host whose keys are all loaded
+never receives it: only when the remote ssh-keychain.sh reports missing keys
+(typically after that host was restarted) is the passphrase sent, on stdin of a
+remote 'bash -s', to load the keys into the keychain there.
+
 Options:
   -h, --help           Show this help and exit.
   -v, --version        Print script version and exit.
@@ -48,6 +57,8 @@ Environment:
                                 (default: /root/bin/ssh-keychain.sh --no_startup_delay batch).
   SSH_KEYCHAIN_CONNECT_TIMEOUT  ssh ConnectTimeout in seconds (default: 20).
   SSH_KEYCHAIN_REMOTE_TIMEOUT   Hard limit for one remote run in seconds (default: 180).
+  SSH_KEYCHAIN_SEND_PASSPHRASE  1 = send the passphrase to hosts whose keys are not
+                                loaded, 0 = only report them (default: 1).
 EOF
 }
 
@@ -81,6 +92,7 @@ HOSTS_FILE="${SSH_KEYCHAIN_HOSTS_FILE:-/root/bin/ssh-keychain-hosts.txt}"
 REMOTE_CMD="${SSH_KEYCHAIN_REMOTE_CMD:-/root/bin/ssh-keychain.sh --no_startup_delay batch}"
 CONNECT_TIMEOUT="${SSH_KEYCHAIN_CONNECT_TIMEOUT:-20}"
 REMOTE_TIMEOUT="${SSH_KEYCHAIN_REMOTE_TIMEOUT:-180}"
+SEND_PASSPHRASE="${SSH_KEYCHAIN_SEND_PASSPHRASE:-1}"
 ASKPASS_FILE=""
 PASSWD=""
 
@@ -123,25 +135,90 @@ skd_read_host_list() {
   done < "$1"
 }
 
-skd_run_remote() {
-  local host="$1" rc
+# Pass 1: no secret leaves this machine. ssh-keychain.sh exits non-zero when not all
+# keys are loaded there, which is our signal that the host was restarted.
+# env -u: our SSH_ASKPASS helper prints the key passphrase, so ssh must never be
+# able to use it to answer a remote password prompt. BatchMode=yes on top of that.
+skd_remote_check() {
+  local host="$1"
 
-  echo "[$(date '+%Y.%m.%d %H:%M:%S')] (PGM) ${host}: ${REMOTE_CMD}"
-  # env -u: our SSH_ASKPASS helper prints the key passphrase, so ssh must never be
-  # able to use it to answer a remote password prompt. BatchMode=yes on top of that.
   timeout --kill-after=10 "${REMOTE_TIMEOUT}" \
     env -u SSH_ASKPASS -u SSH_ASKPASS_REQUIRE -u DISPLAY -u PASSWD \
       ssh -n -T -o BatchMode=yes -o ConnectTimeout="${CONNECT_TIMEOUT}" \
              -o ServerAliveInterval=10 -o ServerAliveCountMax=3 \
              "${host}" "${REMOTE_CMD}" 2>&1 | sed "s/^/    [${host}] /"
-  rc=${PIPESTATUS[0]}
+  return ${PIPESTATUS[0]}
+}
+
+# The passphrase travels only inside the encrypted ssh channel, on stdin of a remote
+# bash -s: never in argv (visible in ps), never in the ssh environment, never on the
+# remote disk. The remote askpass helper holds no secret either — it prints PASSWD
+# from the environment of that one short-lived bash, exactly like the local helper.
+skd_remote_bootstrap_script() {
+  printf 'PASSWD=%q\nexport PASSWD\n' "${PASSWD}"
+  printf 'REMOTE_CMD=%q\n' "${REMOTE_CMD}"
+  cat <<'REMOTE'
+umask 077
+askpass_dir=/dev/shm
+{ [ -d "${askpass_dir}" ] && [ -w "${askpass_dir}" ]; } || askpass_dir="${TMPDIR:-/tmp}"
+helper=$(mktemp "${askpass_dir}/ssh-keychain-askpass.XXXXXX") || exit 91
+trap 'rm -f -- "${helper}"' EXIT INT TERM
+printf '%s\n' '#!/bin/sh' 'printf "%s\n" "${PASSWD-}"' > "${helper}"
+chmod 700 "${helper}"
+SSH_ASKPASS="${helper}" SSH_ASKPASS_REQUIRE=force DISPLAY="${DISPLAY:-dummy:0}" \
+  ${REMOTE_CMD}
+rc=$?
+rm -f -- "${helper}"
+unset PASSWD
+exit ${rc}
+REMOTE
+}
+
+# Pass 2: only reached when the host really needs the keys loaded.
+skd_remote_load_keys() {
+  local host="$1"
+
+  skd_remote_bootstrap_script \
+    | timeout --kill-after=10 "${REMOTE_TIMEOUT}" \
+        env -u SSH_ASKPASS -u SSH_ASKPASS_REQUIRE -u DISPLAY -u PASSWD \
+          ssh -T -o BatchMode=yes -o ConnectTimeout="${CONNECT_TIMEOUT}" \
+                 -o ServerAliveInterval=10 -o ServerAliveCountMax=3 \
+                 "${host}" 'bash -s' 2>&1 | sed "s/^/    [${host}] /"
+  return ${PIPESTATUS[1]}
+}
+
+skd_run_remote() {
+  local host="$1" rc
+
+  echo "[$(date '+%Y.%m.%d %H:%M:%S')] (PGM) ${host}: ${REMOTE_CMD}"
+  skd_remote_check "${host}"
+  rc=$?
 
   case ${rc} in
-    0)       echo "    [${host}] (PGM) OK" ;;
-    124|137) echo "    [${host}] (PGM) TIMEOUT — killed after ${REMOTE_TIMEOUT}s (rc=${rc})" ;;
-    255)     echo "    [${host}] (PGM) ssh connection FAILED (rc=255) — host down, key or BatchMode problem" ;;
-    *)       echo "    [${host}] (PGM) remote script reported problems (rc=${rc})" ;;
+    0)       echo "    [${host}] (PGM) all keys already loaded — passphrase not sent" ; return 0 ;;
+    124|137) echo "    [${host}] (PGM) TIMEOUT — killed after ${REMOTE_TIMEOUT}s (rc=${rc})" ; return "${rc}" ;;
+    255)     echo "    [${host}] (PGM) ssh connection FAILED (rc=255) — host down, key or BatchMode problem" ; return "${rc}" ;;
   esac
+
+  echo "    [${host}] (PGM) keys not loaded there (rc=${rc}) — host restarted?"
+
+  if (( ! SEND_PASSPHRASE )); then
+    echo "    [${host}] (PGM) passphrase transfer disabled (SSH_KEYCHAIN_SEND_PASSPHRASE=0) — leaving it unloaded"
+    return "${rc}"
+  fi
+
+  echo "    [${host}] (PGM) sending the passphrase over the ssh channel to load the keys"
+  skd_remote_load_keys "${host}"
+  rc=$?
+
+  case ${rc} in
+    0)       echo "    [${host}] (PGM) keys loaded OK" ;;
+    124|137) echo "    [${host}] (PGM) TIMEOUT while loading keys (rc=${rc})" ;;
+    255)     echo "    [${host}] (PGM) ssh connection FAILED while loading keys (rc=255)" ;;
+    91)      echo "    [${host}] (PGM) remote bootstrap could not create its askpass helper (rc=91)" ;;
+    *)       echo "    [${host}] (PGM) keys still not fully loaded (rc=${rc}) — wrong passphrase or missing key files?" ;;
+  esac
+  return "${rc}"
 }
 
 skd_remote_cycle() {
