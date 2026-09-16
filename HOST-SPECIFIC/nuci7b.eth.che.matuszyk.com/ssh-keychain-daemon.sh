@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20260916.114200 - each cycle starts by listing the hosts it is about to visit
 # v. 20260916.114000 - remote cycle every 1h instead of 10 min (SSH_KEYCHAIN_DAEMON_SLEEP default 3600)
 # v. 20260916.112500 - send passphrase (stdin, never argv/disk) only to hosts whose keys are not loaded
 # v. 20260916.111800 - load local keys once at startup; the loop now only refreshes the remote hosts
@@ -240,7 +241,14 @@ skd_remote_cycle() {
     return 0
   fi
 
-  echo "(PGM) remote refresh on ${#hosts[@]} host(s) from ${HOSTS_FILE}"
+  echo "[$(date '+%Y.%m.%d %H:%M:%S')] (PGM) cycle start — ${#hosts[@]} host(s) from ${HOSTS_FILE}:"
+  local i=1
+  for host in "${hosts[@]}"; do
+    printf '    %2d) %s\n' "${i}" "${host}"
+    (( i++ ))
+  done
+  echo
+
   for host in "${hosts[@]}"; do
     skd_run_remote "${host}"
   done
