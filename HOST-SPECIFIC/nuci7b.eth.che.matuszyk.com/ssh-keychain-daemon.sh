@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20260916.114400 - host list sorted (and deduplicated) before printing and visiting
 # v. 20260916.114200 - each cycle starts by listing the hosts it is about to visit
 # v. 20260916.114000 - remote cycle every 1h instead of 10 min (SSH_KEYCHAIN_DAEMON_SLEEP default 3600)
 # v. 20260916.112500 - send passphrase (stdin, never argv/disk) only to hosts whose keys are not loaded
@@ -233,7 +234,9 @@ skd_remote_cycle() {
     return 0
   fi
 
-  mapfile -t hosts < <(skd_read_host_list "${HOSTS_FILE}")
+  # sort -u: stable, predictable order no matter how the file is grouped, and a host
+  # listed twice is visited only once
+  mapfile -t hosts < <(skd_read_host_list "${HOSTS_FILE}" | sort -u)
 
   if (( ${#hosts[@]} == 0 )); then
     echo "(PGM) host list ${HOSTS_FILE} contains no hosts — skipping remote refresh"
