@@ -1,10 +1,12 @@
 #!/bin/bash
+# v. 20260916.130951 - print_version_banner: draw box rules with sed; tr truncated ─ to one invalid byte
 # v. 20260811.095711 - print_script_history: paged --history from caller changelog header
 # v. 20260731.211609 - ask before apt install (default Y, no timeout); no silent auto-install
 # v. 20260722.084451 - let scripts continue with plain banners when optional boxes or figlet installation fails
 # v. 20260716.173600 - print_version_banner uses CALLER_SCRIPT version fields
 # v. 20260716.163300 - versioning v. YYYYMMDD.HH24MISS; parse first # v. YYYYMMDD.HHMMSS line
 
+# 2026.09.16 - v. 1.60.130951 - print_version_banner: horizontal rules via sed 's/ /─/g'; tr is byte-wise and reduced the 3-byte ─ (U+2500) to a lone 0xE2, so banners printed invalid UTF-8
 # 2026.07.31 - v. 1.59.211609 - check_if_installed: prompt before apt (default Y; no timeout; no auto-install)
 # 2026.07.22 - v. 1.58.084451 - boxes/figlet checks are errexit-safe and fall back to plain startup text
 # 2026.07.15 - v. 1.57.210402 - profile_location_dir: export only when set; no default to $HOME
@@ -139,10 +141,10 @@ print_version_banner() {
   else
     verline="Version: ${ver}"
   fi
-  printf '┌%*s┐\n' "$width" '' | tr ' ' '─'
+  printf '┌%*s┐\n' "$width" '' | sed 's/ /─/g'
   printf '│ %-*.*s │\n' $((width - 2)) $((width - 2)) "$title"
   printf '│ %-*.*s │\n' $((width - 2)) $((width - 2)) "$verline"
-  printf '└%*s┘\n' "$width" '' | tr ' ' '─'
+  printf '└%*s┘\n' "$width" '' | sed 's/ /─/g'
 }
 
 # Changelog lines from the caller script header (new # v. YYYYMMDD… and old # YYYY.MM.DD - v. …).

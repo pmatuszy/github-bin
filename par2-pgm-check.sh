@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20260916.130951 - boxed output: draw rules with sed; tr truncated ─ to one invalid byte
 # v. 20260812.145813 - after deleting old PAR2 backups, offer to drop their hash-file refs if any
 # v. 20260812.143651 - end-of-run: offer to delete *_old.par2 / *.par2.old if any exist
 # v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
@@ -55,6 +56,7 @@
 # v. 20260719.103506 - fix no-arg run: empty POSITIONAL[@]:- became one "" element
 # v. 20260719.102800 - multi-set selection: A/a, ranges 1-4, --all, multiple paths
 
+# 2026.09.16 - v. 0.1.70 - Boxed summaries: horizontal rules via sed 's/ /─/g'; tr is byte-wise and cut the 3-byte ─ (U+2500) down to a lone 0xE2, printing invalid UTF-8
 # 2026.08.12 - v. 0.1.69 - After deleting old PAR2 backups, offer to remove hash-file refs if listed
 # 2026.08.12 - v. 0.1.68 - End of run: offer to delete old PAR2 backups if any exist
 # 2026.08.09 - v. 0.1.67 - Clearer optional prompt: verify PAR2 archive(s) against hash file
@@ -1493,11 +1495,11 @@ pgm_emit_unicode_box() {
     (( max_len < 52 )) && max_len=52
     w=$(( max_len + 2 ))
 
-    printf '┌%*s┐\n' "$w" '' | tr ' ' '─'
+    printf '┌%*s┐\n' "$w" '' | sed 's/ /─/g'
     for line in "${lines[@]}"; do
         printf '│ %-*s │\n' "$max_len" "$line"
     done
-    printf '└%*s┘\n' "$w" '' | tr ' ' '─'
+    printf '└%*s┘\n' "$w" '' | sed 's/ /─/g'
 }
 
 pgm_emit_boxed_block() {

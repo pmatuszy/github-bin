@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# v. 20260916.130951 - fix mangled box lines: tr is byte-wise and truncated ─ to one byte; use sed
 # v. 20260915.190839 - Xiaomi: also read Android Make/Model (Mi 10T Pro MP4 M2007J3SG)
 # v. 20260915.190135 - Android 9 no-Make Mi MIX 3 5G video heuristic only when capture year ≤ 2023
 # v. 20260915.182513 - Android 9 MP4 with no Make/Model + Android Capture FPS → Xiaomi_Mi_MIX_3_5G
@@ -56,6 +57,7 @@
 # v. 20260721.132007 - Samsung timestamp media: preserve optional numeric sorting prefix when appending make/model
 # v. 20260721.112812 - GoPro camera labels: GoPro_Hero4_Silver style (not GOPRO4_SILVER)
 
+# 2026.09.16 - v. 19.319.130951 - banner/options/NEF-XMP boxes: build horizontal rules with sed instead of tr; tr truncates the 3-byte ─ (U+2500) to a lone 0xE2, so every fill byte was invalid UTF-8 and terminals/screen showed replacement characters
 # 2026.09.15 - v. 19.318.190839 - Xiaomi timestamp media: recognize Android Make/Android Model (e.g. Mi 10T Pro MP4 M2007J3SG) in addition to Make/Camera Model Name
 # 2026.09.15 - v. 19.317.190135 - Android 9 no-Make/Model + Capture FPS → Mi_MIX_3_5G only when EXIF Create/Media/Track Create Date year is ≤ 2023
 # 2026.09.15 - v. 19.316.182513 - Android 9 timestamp videos with no Make/Model but Android Capture FPS (Mi MIX 3 5G MP4 fingerprint) → YYYYMMDD_HHMMSS_-_-_Xiaomi_Mi_MIX_3_5G
@@ -1426,13 +1428,13 @@ print_startup_banner() {
     #endregion
 
     printf '┌%*s┐
-' "$width" '' | tr ' ' '─'
+' "$width" '' | sed 's/ /─/g'
     printf '│ %-*.*s │
 ' $((width - 2)) $((width - 2)) "$line1"
     printf '│ %-*.*s │
 ' $((width - 2)) $((width - 2)) "$line2"
     printf '├%*s┤
-' "$width" '' | tr ' ' '─'
+' "$width" '' | sed 's/ /─/g'
     printf '│ %-*.*s │
 ' $((width - 2)) $((width - 2)) "$line3"
     printf '│ %-*.*s │
@@ -1446,7 +1448,7 @@ print_startup_banner() {
     printf '│ %-*.*s │
 ' $((width - 2)) $((width - 2)) "$line7"
     printf '└%*s┘
-' "$width" '' | tr ' ' '─'
+' "$width" '' | sed 's/ /─/g'
 }
 
 startup_progress() {
@@ -6463,13 +6465,13 @@ print_verbose_options_box() {
         (( ${#line} > box_width )) && box_width=${#line}
     done
 
-    printf '┌%*s┐\n' $((box_width + 2)) '' | tr ' ' '─'
+    printf '┌%*s┐\n' $((box_width + 2)) '' | sed 's/ /─/g'
     printf '│ %-*s │\n' "$box_width" "Effective options (verbose mode)"
-    printf '├%*s┤\n' $((box_width + 2)) '' | tr ' ' '─'
+    printf '├%*s┤\n' $((box_width + 2)) '' | sed 's/ /─/g'
     for line in "${lines[@]}"; do
         printf '│ %-*s │\n' "$box_width" "$line"
     done
-    printf '└%*s┘\n' $((box_width + 2)) '' | tr ' ' '─'
+    printf '└%*s┘\n' $((box_width + 2)) '' | sed 's/ /─/g'
 }
 
 print_wrapped_two_path_verbose() {
@@ -7913,15 +7915,15 @@ nef_xmp_emit_text_box() {
     done
     (( max_len < 52 )) && max_len=52
 
-    printf '┌%*s┐\n' "$((max_len + 2))" '' | tr ' ' '─'
+    printf '┌%*s┐\n' "$((max_len + 2))" '' | sed 's/ /─/g'
     for r in "${title_rows[@]}"; do
         printf '│ %-*s │\n' "$max_len" "$r"
     done
-    printf '├%*s┤\n' "$((max_len + 2))" '' | tr ' ' '─'
+    printf '├%*s┤\n' "$((max_len + 2))" '' | sed 's/ /─/g'
     for r in "${rows[@]}"; do
         printf '│ %-*s │\n' "$max_len" "$r"
     done
-    printf '└%*s┘\n' "$((max_len + 2))" '' | tr ' ' '─'
+    printf '└%*s┘\n' "$((max_len + 2))" '' | sed 's/ /─/g'
     echo
 }
 

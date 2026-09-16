@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20260916.130951 - boxed output: draw rules with sed; tr truncated ─ to one invalid byte
 # v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
 # v. 20260810.115956 - fix bash (( )) + =~ error; robust rsync stats byte parsing
 # v. 20260806.172432 - transfer plan and result timing; dual MiB/MB GiB/GB TiB/TB size display
@@ -6,6 +7,7 @@
 # v. 20260724.203756 - avoid startup delay when displaying help or version information
 # v. 20260724.203704 - initial network move with uncompressed SSH, source removal, and dry-run support
 
+# 2026.09.16 - v. 0.3.2 - boxed result summary: horizontal rules via sed 's/ /─/g'; tr is byte-wise and cut the 3-byte ─ (U+2500) down to a lone 0xE2, printing invalid UTF-8
 # 2026.08.10 - v. 0.3.1 - fix result size fallback test; parse rsync stats numbers reliably
 # 2026.08.06 - v. 0.3 - preflight transfer plan (files, size, ETA); timing and rate in result box
 # 2026.07.25 - v. 0.2 - print boxed result summary; verify source has no files and remove empty dirs
@@ -245,11 +247,11 @@ move_pgm_emit_unicode_box() {
   (( max_len < 52 )) && max_len=52
   w=$(( max_len + 2 ))
 
-  printf '┌%*s┐\n' "$w" '' | tr ' ' '─'
+  printf '┌%*s┐\n' "$w" '' | sed 's/ /─/g'
   for line in "${lines[@]}"; do
     printf '│ %-*s │\n' "$max_len" "$line"
   done
-  printf '└%*s┘\n' "$w" '' | tr ' ' '─'
+  printf '└%*s┘\n' "$w" '' | sed 's/ /─/g'
 }
 
 move_pgm_emit_boxed_block() {
