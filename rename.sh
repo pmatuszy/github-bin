@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# v. 20260920.194806 - Xiaomi: JPEG_/IMG_/VID_YYYYMMDD_HHMMSS gallery names; stills prefer Date/Time Original
 # v. 20260920.194411 - GoPro stills: also match GPAA#### (TimeLapse Photo), GS_/GP_####, G####### burst/group JPG
 # v. 20260920.190838 - GoPro Mission1/Hero: pair GX######.WAV with same-stem MP4 (bundle + orphan→already-renamed)
 # v. 20260916.130951 - fix mangled box lines: tr is byte-wise and truncated ─ to one byte; use sed
@@ -59,6 +60,7 @@
 # v. 20260721.132007 - Samsung timestamp media: preserve optional numeric sorting prefix when appending make/model
 # v. 20260721.112812 - GoPro camera labels: GoPro_Hero4_Silver style (not GOPRO4_SILVER)
 
+# 2026.09.20 - v. 19.322.194806 - Xiaomi Mi MIX 3 5G / Mi 10T Pro: also rename MIUI gallery JPEG_/IMG_/VID_YYYYMMDD_HHMMSS names (not only bare timestamps); stills prefer Date/Time Original when filename clock disagrees
 # 2026.09.20 - v. 19.321.194411 - GoPro JPG raw names: recognize GPAA#### (HERO TimeLapse Photo), GS_#### / GP_####, and G####### burst/group stills; also accept .jpeg
 # 2026.09.20 - v. 19.320.190838 - GoPro Mission 1 / Hero: rename GX######.WAV with its MP4 (same-stem bundle); orphan WAV beside already-renamed GoPro MP4 follows that MP4's timestamp+camera label (exact CreateDate match, else unique ≤120s)
 # 2026.09.16 - v. 19.319.130951 - banner/options/NEF-XMP boxes: build horizontal rules with sed instead of tr; tr truncates the 3-byte ─ (U+2500) to a lone 0xE2, so every fill byte was invalid UTF-8 and terminals/screen showed replacement characters
@@ -11782,7 +11784,11 @@ samsung_already_renamed_basename_matches() {
 }
 
 xiaomi_media_basename_matches() {
-    samsung_media_basename_matches "$1"
+    local bn="$1"
+    local lower="${bn,,}"
+    # Bare Galaxy-style timestamps, or MIUI gallery JPEG_/IMG_/VID_YYYYMMDD_HHMMSS[mmm][_tag].ext
+    samsung_media_basename_matches "$bn" && return 0
+    [[ "$lower" =~ ^(jpeg|img|vid)_[0-9]{8}_[0-9]{6}([0-9]+)?(_[a-z0-9]+)*\.(3gp|heic|heif|jpeg|jpg|m4v|mkv|mov|mp4|png|webm)$ ]]
 }
 
 xiaomi_already_renamed_basename_matches() {
@@ -12116,7 +12122,7 @@ xiaomi_friendly_model_from_exif() {
 transform_xiaomi_media_basename() {
     local file="$1"
     local base="$2"
-    local exifloc exif ext stem ts copy_suffix="" friendly_model=""
+    local exifloc exif ext stem ts copy_suffix="" friendly_model="" dto="" dto_ts="" mode_suffix=""
 
     xiaomi_media_basename_matches "$base" || return 0
     xiaomi_already_renamed_basename_matches "$base" && return 0
@@ -12128,9 +12134,40 @@ transform_xiaomi_media_basename() {
 
     ext="${base##*.}"
     stem="${base%.*}"
-    [[ "$stem" =~ ^(([0-9]+_)?[0-9]{8}_[0-9]{6})(\(([0-9]+)\)|_([0-9]+))?$ ]] || return 0
-    ts="${BASH_REMATCH[1]}"
-    copy_suffix="${BASH_REMATCH[4]:-${BASH_REMATCH[5]}}"
+    if [[ "$stem" =~ ^(([0-9]+_)?[0-9]{8}_[0-9]{6})(\(([0-9]+)\)|_([0-9]+))?$ ]]; then
+        ts="${BASH_REMATCH[1]}"
+        copy_suffix="${BASH_REMATCH[4]:-${BASH_REMATCH[5]}}"
+    elif [[ "$stem" =~ ^[Jj][Pp][Ee][Gg]_([0-9]{8})_([0-9]{6})([0-9]*)((_[A-Za-z][A-Za-z0-9]*)*)$ ]]; then
+        ts="${BASH_REMATCH[1]}_${BASH_REMATCH[2]}"
+        mode_suffix="$(printf '%s' "${BASH_REMATCH[4]-}" | sed 's/^_//')"
+        mode_suffix="${mode_suffix^^}"
+    elif [[ "$stem" =~ ^[Ii][Mm][Gg]_([0-9]{8})_([0-9]{6})([0-9]*)((_[A-Za-z][A-Za-z0-9]*)*)$ ]]; then
+        ts="${BASH_REMATCH[1]}_${BASH_REMATCH[2]}"
+        mode_suffix="$(printf '%s' "${BASH_REMATCH[4]-}" | sed 's/^_//')"
+        mode_suffix="${mode_suffix^^}"
+    elif [[ "$stem" =~ ^[Vv][Ii][Dd]_([0-9]{8})_([0-9]{6})([0-9]*)((_[A-Za-z][A-Za-z0-9]*)*)$ ]]; then
+        ts="${BASH_REMATCH[1]}_${BASH_REMATCH[2]}"
+        mode_suffix="$(printf '%s' "${BASH_REMATCH[4]-}" | sed 's/^_//')"
+        mode_suffix="${mode_suffix^^}"
+    else
+        return 0
+    fi
+
+    # Stills: prefer Date/Time Original (filename clock can disagree — e.g. JPEG_…121649 vs EXIF 12:17:07).
+    if [[ "${ext,,}" =~ ^(jpe?g|png|heic|heif)$ ]]; then
+        dto="$(samsung_exif_first_value "$exif" 'Date/Time Original')"
+        [[ -n "$dto" ]] || dto="$(samsung_exif_first_value "$exif" 'Create Date')"
+        if [[ -n "$dto" ]]; then
+            dto_ts="$(motorola_parse_exif_datetime_to_ts "$dto" || true)"
+            [[ -n "$dto_ts" ]] && ts="$dto_ts"
+        fi
+    fi
+
+    if [[ -n "$mode_suffix" && -n "$copy_suffix" ]]; then
+        copy_suffix="${mode_suffix}_${copy_suffix}"
+    elif [[ -n "$mode_suffix" ]]; then
+        copy_suffix="$mode_suffix"
+    fi
 
     gopro_format_camera_basename_output "$ts" "Xiaomi" "$friendly_model" "$copy_suffix" "$ext"
 }
