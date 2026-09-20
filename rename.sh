@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# v. 20260920.190838 - GoPro Mission1/Hero: pair GX######.WAV with same-stem MP4 (bundle + orphan→already-renamed)
 # v. 20260916.130951 - fix mangled box lines: tr is byte-wise and truncated ─ to one byte; use sed
 # v. 20260915.190839 - Xiaomi: also read Android Make/Model (Mi 10T Pro MP4 M2007J3SG)
 # v. 20260915.190135 - Android 9 no-Make Mi MIX 3 5G video heuristic only when capture year ≤ 2023
@@ -57,6 +58,7 @@
 # v. 20260721.132007 - Samsung timestamp media: preserve optional numeric sorting prefix when appending make/model
 # v. 20260721.112812 - GoPro camera labels: GoPro_Hero4_Silver style (not GOPRO4_SILVER)
 
+# 2026.09.20 - v. 19.320.190838 - GoPro Mission 1 / Hero: rename GX######.WAV with its MP4 (same-stem bundle); orphan WAV beside already-renamed GoPro MP4 follows that MP4's timestamp+camera label (exact CreateDate match, else unique ≤120s)
 # 2026.09.16 - v. 19.319.130951 - banner/options/NEF-XMP boxes: build horizontal rules with sed instead of tr; tr truncates the 3-byte ─ (U+2500) to a lone 0xE2, so every fill byte was invalid UTF-8 and terminals/screen showed replacement characters
 # 2026.09.15 - v. 19.318.190839 - Xiaomi timestamp media: recognize Android Make/Android Model (e.g. Mi 10T Pro MP4 M2007J3SG) in addition to Make/Camera Model Name
 # 2026.09.15 - v. 19.317.190135 - Android 9 no-Make/Model + Capture FPS → Mi_MIX_3_5G only when EXIF Create/Media/Track Create Date year is ≤ 2023
@@ -618,7 +620,7 @@
 #
 # rename.sh
 #
-# Interactive media/checksum renamer: NEF+XMP, media.ext.xmp, Sony clip XML pairs, GoPro/Mission1 rules, DB cache.
+# Interactive media/checksum renamer: NEF+XMP, media.ext.xmp, Sony clip XML pairs, GoPro/Mission1 MP4+WAV, DB cache.
 #
 # SCRIPT_VERSION: first line matching ^# v. YYYYMMDD.HHMMSS - (same scheme as _script_header.sh / operational scripts).
 SCRIPT_VERSION="$(
@@ -8137,6 +8139,7 @@ nef_xmp_verify_sidecar_raw_file_name_interactive() {
 nef_xmp_pair_run_sidecar_metadata_checks() {
     [[ -n "$nef_xmp_buddy" ]] || return 0
     [[ "$RENAME_SIDECAR_KIND" == sony_clip ]] && return 0
+    [[ "$RENAME_SIDECAR_KIND" == gopro_wav ]] && return 0
     if [[ "$RENAME_SIDECAR_KIND" == media_xmp ]]; then
         media_xmp_run_sidecar_reference_checks "$1" "$2" "$f" || return $?
         return 0
@@ -8153,6 +8156,11 @@ perform_plain_or_nef_xmp_pair() {
         print_rename_action_verbose "$f" "$new" "${reason} (Sony clip pair)"
         print_rename_action_verbose "$nef_xmp_buddy" "$nef_xmp_new" "${reason} (Sony clip pair)"
         perform_sony_clip_pair_plain_renames "$f" "$new" "$nef_xmp_buddy" "$nef_xmp_new" || return $?
+    elif [[ "$RENAME_SIDECAR_KIND" == gopro_wav && -n "$nef_xmp_buddy" ]]; then
+        rename_arrow_note_old_path_widths "$f" "$nef_xmp_buddy"
+        print_rename_action_verbose "$f" "$new" "${reason} (GoPro MP4+WAV pair)"
+        print_rename_action_verbose "$nef_xmp_buddy" "$nef_xmp_new" "${reason} (GoPro MP4+WAV pair)"
+        perform_gopro_wav_pair_plain_renames "$f" "$new" "$nef_xmp_buddy" "$nef_xmp_new" || return $?
     elif [[ "$RENAME_SIDECAR_KIND" == media_xmp && -n "$nef_xmp_buddy" ]]; then
         rename_arrow_note_old_path_widths "$f" "$nef_xmp_buddy"
         print_rename_action_verbose "$f" "$new" "${reason} (media+XMP pair)"
@@ -11297,6 +11305,279 @@ gopro_camera_raw_basename_matches() {
     local base="$1"
     [[ "$base" =~ ^[cCgG][hHxX][0-9][0-9][0-9][0-9][0-9][0-9](_Proxy)?\.[mM][pP]4$ ]] && return 0
     gopro_camera_raw_jpg_basename_matches "$base"
+}
+
+# Mission 1 (and other GoPros) can write a raw PCM sidecar next to the clip: GX010963.MP4 + GX010963.WAV.
+gopro_raw_mp4_basename_matches() {
+    local bn="$1"
+    [[ "$bn" =~ ^[cCgG][hHxX][0-9]{6}(_Proxy)?\.[mM][pP]4$ ]]
+}
+
+gopro_raw_wav_basename_matches() {
+    local bn="$1"
+    [[ "$bn" =~ ^[cCgG][hHxX][0-9]{6}(_Proxy)?\.[wW][aA][vV]$ ]]
+}
+
+gopro_renamed_wav_basename_matches() {
+    local bn="$1"
+    [[ "$bn" =~ ^[0-9]{8}_[0-9]{6}_(-__-_|-_-_)(GoPro_[A-Za-z0-9_]+|GOPRO[0-9]+_[A-Z0-9]+|GOPRO_[A-Z0-9]+).*\.[wW][aA][vV]$ ]]
+}
+
+gopro_wav_resolve_same_stem_buddy() {
+    local dir="$1" stem="$2"
+    shift 2
+    local ext cand
+    for ext in "$@"; do
+        for cand in "$dir/${stem}.${ext}"; do
+            [[ -f "$cand" ]] || continue
+            printf '%s' "$cand"
+            return 0
+        done
+    done
+    return 1
+}
+
+gopro_wav_new_path_for_mp4_path() {
+    local mp4_path="$1" wav_old="$2"
+    local dir stem wav_ext
+    dir="$(dirname -- "$mp4_path")"
+    stem="$(basename -- "$mp4_path")"
+    stem="${stem%.*}"
+    wav_ext="$(basename -- "$wav_old")"
+    wav_ext="${wav_ext##*.}"
+    # Prefer lowercase .wav to match typical media extension normalization; keep odd cases if already lower.
+    wav_ext="${wav_ext,,}"
+    [[ "$wav_ext" == "wav" ]] || wav_ext="wav"
+    if [[ "$dir" == "." ]]; then
+        printf './%s.%s' "$stem" "$wav_ext"
+    else
+        printf '%s/%s.%s' "$dir" "$stem" "$wav_ext"
+    fi
+}
+
+# Compact YYYYMMDD_HHMMSS from a WAV (or any media) for pairing with an already-renamed GoPro MP4.
+gopro_wav_compact_timestamp_from_file() {
+    local file="$1"
+    local exifloc="" ts="" create="" track="" modify=""
+    local _gw_save_e=0
+
+    _gw_save_e=0
+    [[ $- == *e* ]] && _gw_save_e=1
+    set +e
+
+    if ts="$(gopro_mission1_local_timestamp_from_file "$file" 2>/dev/null)" && [[ -n "$ts" ]]; then
+        ((_gw_save_e)) && set -e || set +e
+        printf '%s' "$ts"
+        return 0
+    fi
+
+    exifloc="$(resolve_rename_exiftool 2>/dev/null)" || exifloc=""
+    if [[ -n "$exifloc" ]]; then
+        create="$("$exifloc" -api largefilesupport=1 -s3 -CreateDate -d '%Y%m%d_%H%M%S' -- "$file" 2>/dev/null | tr -d $'\r\n')"
+        if [[ "$create" =~ ^[0-9]{8}_[0-9]{6}$ ]]; then
+            ((_gw_save_e)) && set -e || set +e
+            printf '%s' "$create"
+            return 0
+        fi
+        track="$("$exifloc" -api largefilesupport=1 -s3 -TrackCreateDate -d '%Y%m%d_%H%M%S' -- "$file" 2>/dev/null | tr -d $'\r\n')"
+        if [[ "$track" =~ ^[0-9]{8}_[0-9]{6}$ ]]; then
+            ((_gw_save_e)) && set -e || set +e
+            printf '%s' "$track"
+            return 0
+        fi
+        modify="$("$exifloc" -api largefilesupport=1 -s3 -FileModifyDate -d '%Y%m%d_%H%M%S' -- "$file" 2>/dev/null | tr -d $'\r\n')"
+        if [[ "$modify" =~ ^[0-9]{8}_[0-9]{6}$ ]]; then
+            ((_gw_save_e)) && set -e || set +e
+            printf '%s' "$modify"
+            return 0
+        fi
+    fi
+
+    if ts="$(date -r "$file" +'%Y%m%d_%H%M%S' 2>/dev/null)" && [[ "$ts" =~ ^[0-9]{8}_[0-9]{6}$ ]]; then
+        ((_gw_save_e)) && set -e || set +e
+        printf '%s' "$ts"
+        return 0
+    fi
+
+    ((_gw_save_e)) && set -e || set +e
+    return 1
+}
+
+# Orphan GX######.WAV after its MP4 was already renamed: match by capture timestamp (exact, else unique nearest ≤120s).
+gopro_wav_find_renamed_mp4_for_orphan_wav() {
+    local wav="$1"
+    local dir bn ts cand cand_bn cand_ts ea eb d
+    local best="" best_d=999999 exact="" exact_count=0 near_count=0
+    local saved_nullglob
+
+    [[ -f "$wav" ]] || return 1
+    bn="$(basename -- "$wav")"
+    gopro_raw_wav_basename_matches "$bn" || return 1
+    dir="$(dirname -- "$wav")"
+    ts="$(gopro_wav_compact_timestamp_from_file "$wav")" || return 1
+    ea="$(gopro_mission1_compact_timestamp_epoch "$ts")" || return 1
+
+    saved_nullglob="$(shopt -p nullglob || true)"
+    shopt -s nullglob
+    for cand in "$dir"/*; do
+        [[ -f "$cand" ]] || continue
+        cand_bn="$(basename -- "$cand")"
+        gopro_renamed_mp4_basename_matches "$cand_bn" || continue
+        cand_ts="${cand_bn:0:15}"
+        [[ "$cand_ts" =~ ^[0-9]{8}_[0-9]{6}$ ]] || continue
+        if [[ "$cand_ts" == "$ts" ]]; then
+            exact="$cand"
+            ((++exact_count))
+            continue
+        fi
+        eb="$(gopro_mission1_compact_timestamp_epoch "$cand_ts")" || continue
+        d=$((ea - eb))
+        (( d < 0 )) && d=$((-d))
+        (( d > 120 )) && continue
+        if (( d < best_d )); then
+            best="$cand"
+            best_d=$d
+            near_count=1
+        elif (( d == best_d )); then
+            ((++near_count))
+        fi
+    done
+    eval "$saved_nullglob"
+
+    if (( exact_count == 1 )); then
+        printf '%s' "$exact"
+        return 0
+    fi
+    if (( exact_count > 1 )); then
+        vlog "GoPro WAV orphan: ambiguous exact timestamp match ($ts) for '$wav'"
+        return 1
+    fi
+    if (( near_count == 1 && best_d <= 120 )); then
+        printf '%s' "$best"
+        return 0
+    fi
+    if (( near_count > 1 )); then
+        vlog "GoPro WAV orphan: ambiguous near timestamp match for '$wav' (delta=${best_d}s)"
+        return 1
+    fi
+    return 1
+}
+
+# Orphan raw WAV still present beside an already-renamed GoPro MP4 (inverse of find_renamed_mp4).
+gopro_wav_find_orphan_wav_for_renamed_mp4() {
+    local mp4="$1"
+    local dir bn mp4_ts wav_ts cand cand_bn ea eb d
+    local best="" best_d=999999 exact="" exact_count=0 near_count=0
+    local saved_nullglob
+
+    [[ -f "$mp4" ]] || return 1
+    bn="$(basename -- "$mp4")"
+    gopro_renamed_mp4_basename_matches "$bn" || return 1
+    mp4_ts="${bn:0:15}"
+    [[ "$mp4_ts" =~ ^[0-9]{8}_[0-9]{6}$ ]] || return 1
+    dir="$(dirname -- "$mp4")"
+    ea="$(gopro_mission1_compact_timestamp_epoch "$mp4_ts")" || return 1
+
+    saved_nullglob="$(shopt -p nullglob || true)"
+    shopt -s nullglob
+    for cand in "$dir"/*; do
+        [[ -f "$cand" ]] || continue
+        cand_bn="$(basename -- "$cand")"
+        gopro_raw_wav_basename_matches "$cand_bn" || continue
+        wav_ts="$(gopro_wav_compact_timestamp_from_file "$cand")" || continue
+        if [[ "$wav_ts" == "$mp4_ts" ]]; then
+            exact="$cand"
+            ((++exact_count))
+            continue
+        fi
+        eb="$(gopro_mission1_compact_timestamp_epoch "$wav_ts")" || continue
+        d=$((ea - eb))
+        (( d < 0 )) && d=$((-d))
+        (( d > 120 )) && continue
+        if (( d < best_d )); then
+            best="$cand"
+            best_d=$d
+            near_count=1
+        elif (( d == best_d )); then
+            ((++near_count))
+        fi
+    done
+    eval "$saved_nullglob"
+
+    if (( exact_count == 1 )); then
+        printf '%s' "$exact"
+        return 0
+    fi
+    (( exact_count > 1 )) && return 1
+    if (( near_count == 1 && best_d <= 120 )); then
+        printf '%s' "$best"
+        return 0
+    fi
+    return 1
+}
+
+gopro_wav_pair_other_path() {
+    local f="$1" dir base stem other
+    [[ -f "$f" ]] || return 1
+    dir="$(dirname -- "$f")"
+    base="$(basename -- "$f")"
+
+    if gopro_raw_mp4_basename_matches "$base"; then
+        stem="$(gopro_raw_stem_core_from_basename "$base")"
+        gopro_wav_resolve_same_stem_buddy "$dir" "$stem" WAV wav Wav || return 1
+        return 0
+    fi
+
+    if gopro_renamed_mp4_basename_matches "$base"; then
+        gopro_wav_find_orphan_wav_for_renamed_mp4 "$f"
+        return $?
+    fi
+
+    if gopro_raw_wav_basename_matches "$base"; then
+        stem="$(gopro_raw_stem_core_from_basename "$base")"
+        if other="$(gopro_wav_resolve_same_stem_buddy "$dir" "$stem" MP4 mp4 Mp4)"; then
+            printf '%s' "$other"
+            return 0
+        fi
+        gopro_wav_find_renamed_mp4_for_orphan_wav "$f"
+        return $?
+    fi
+    return 1
+}
+
+gopro_wav_pairing_allowed() {
+    local a="$1" b="$2"
+    ! exception_exists_for_path "$a" && ! exception_exists_for_path "$b"
+}
+
+# Defer raw WAV until its raw same-stem MP4 is processed as the primary of the pair.
+gopro_wav_should_defer_wav() {
+    local f="$1" other="$2"
+    gopro_raw_wav_basename_matches "$(basename -- "$f")" || return 1
+    gopro_raw_mp4_basename_matches "$(basename -- "$other")" || return 1
+    gopro_wav_pairing_allowed "$f" "$other"
+}
+
+# Attach WAV when visiting MP4 (raw or already-renamed with orphan WAV).
+gopro_wav_should_attach_buddy() {
+    local f="$1" other="$2"
+    local f_bn other_bn
+    f_bn="$(basename -- "$f")"
+    other_bn="$(basename -- "$other")"
+    gopro_raw_wav_basename_matches "$other_bn" || return 1
+    { gopro_raw_mp4_basename_matches "$f_bn" || gopro_renamed_mp4_basename_matches "$f_bn"; } || return 1
+    gopro_wav_pairing_allowed "$f" "$other"
+}
+
+perform_gopro_wav_pair_plain_renames() {
+    local primary_old="$1" primary_new="$2" buddy_old="$3" buddy_new="$4"
+    # Primary may already be at the final name (orphan WAV beside renamed MP4).
+    if [[ "$primary_old" != "$primary_new" ]]; then
+        perform_plain_entry_rename "$primary_old" "$primary_new" || return 1
+    fi
+    perform_plain_entry_rename "$buddy_old" "$buddy_new" || return 1
+    processed["$buddy_old"]=1
+    return 0
 }
 
 gopro_raw_stem_core_from_basename() {
@@ -16572,6 +16853,9 @@ handle_recheck_rename_difference() {
                     if [[ "$RENAME_SIDECAR_KIND" == media_xmp ]]; then
                         nef_xmp_new="$(media_xmp_new_path_for_media_new "$custom_new" "$nef_xmp_buddy")"
                         perform_media_xmp_pair_plain_renames "$f" "$custom_new" "$nef_xmp_buddy" "$nef_xmp_new" || return 1
+                    elif [[ "$RENAME_SIDECAR_KIND" == gopro_wav ]]; then
+                        nef_xmp_new="$(gopro_wav_new_path_for_mp4_path "$custom_new" "$nef_xmp_buddy")"
+                        perform_gopro_wav_pair_plain_renames "$f" "$custom_new" "$nef_xmp_buddy" "$nef_xmp_new" || return 1
                     elif [[ "$RENAME_SIDECAR_KIND" == sony_clip ]]; then
                         perform_sony_clip_pair_plain_renames "$f" "$custom_new" "$nef_xmp_buddy" "$nef_xmp_new" || return 1
                     else
@@ -17908,6 +18192,24 @@ for f in "${ordered_paths[@]}"; do
                 fi
             fi
         fi
+        if [[ -z "$nef_xmp_buddy" ]]; then
+            _gw_other=""
+            if _gw_other="$(gopro_wav_pair_other_path "$f")"; then
+                if gopro_wav_should_defer_wav "$f" "$_gw_other"; then
+                    vlog "Deferring GoPro WAV sidecar '$f' until MP4+WAV pair with '$_gw_other'"
+                    continue
+                fi
+                if gopro_wav_should_attach_buddy "$f" "$_gw_other"; then
+                    nef_xmp_buddy="$_gw_other"
+                    RENAME_SIDECAR_KIND=gopro_wav
+                elif gopro_raw_wav_basename_matches "$(basename -- "$f")" \
+                    && gopro_renamed_mp4_basename_matches "$(basename -- "$_gw_other")"; then
+                    # Orphan GX######.WAV beside already-renamed GoPro MP4: rename WAV alone to match.
+                    precomputed_new="$(gopro_wav_new_path_for_mp4_path "$_gw_other" "$f")"
+                    vlog "Orphan GoPro WAV '$f' maps to renamed MP4 '$_gw_other' -> '$precomputed_new'"
+                fi
+            fi
+        fi
     fi
     if (( RECHECK_RENAMES == 1 )) && [[ -n "$nef_xmp_buddy" ]]; then
         recheck_register_audited_path "$nef_xmp_buddy"
@@ -17970,6 +18272,9 @@ for f in "${ordered_paths[@]}"; do
         if [[ "$RENAME_SIDECAR_KIND" == media_xmp ]]; then
             # Keep sidecar glued to the media target name (do not transform .xmp independently).
             nef_xmp_new="$(media_xmp_new_path_for_media_new "$new" "$nef_xmp_buddy")"
+        elif [[ "$RENAME_SIDECAR_KIND" == gopro_wav ]]; then
+            # WAV always follows the MP4 target stem (same GoPro Mission1 / Hero label).
+            nef_xmp_new="$(gopro_wav_new_path_for_mp4_path "$new" "$nef_xmp_buddy")"
         else
             _rename_cap_save_e=0
             [[ $- == *e* ]] && _rename_cap_save_e=1
@@ -18245,6 +18550,8 @@ for f in "${ordered_paths[@]}"; do
     echo
     if [[ "$RENAME_SIDECAR_KIND" == sony_clip && -n "$nef_xmp_buddy" ]]; then
         echo -e "${CYAN}Sony clip pair (C####.MP4 + C####M01.XML; both renamed together):${RESET}"
+    elif [[ "$RENAME_SIDECAR_KIND" == gopro_wav && -n "$nef_xmp_buddy" ]]; then
+        echo -e "${CYAN}GoPro MP4+WAV pair (GX######.MP4 + GX######.WAV; both renamed together):${RESET}"
     elif [[ "$RENAME_SIDECAR_KIND" == media_xmp && -n "$nef_xmp_buddy" ]]; then
         echo -e "${CYAN}Media+XMP pair (media.ext + media.ext.xmp; both renamed together):${RESET}"
     elif [[ -n "$nef_xmp_buddy" ]]; then
@@ -18263,6 +18570,11 @@ for f in "${ordered_paths[@]}"; do
             emit_wrap_nef_xmp_pair_label_stdout "NEW (XML): " green "$nef_xmp_new" "$NEF_XMP_PAIR_LABEL_WIDTH"
             echo
             echo -e "${CYAN}Sony NonRealTimeMeta XML is renamed with the clip; CreationDate local wall-clock is used for both names.${RESET}"
+        elif [[ "$RENAME_SIDECAR_KIND" == gopro_wav ]]; then
+            emit_wrap_nef_xmp_pair_label_stdout "OLD (WAV): " yellow "$nef_xmp_buddy" "$NEF_XMP_PAIR_LABEL_WIDTH"
+            emit_wrap_nef_xmp_pair_label_stdout "NEW (WAV): " green "$nef_xmp_new" "$NEF_XMP_PAIR_LABEL_WIDTH"
+            echo
+            echo -e "${CYAN}GoPro Mission 1 / Hero raw WAV sidecar is renamed with the MP4 (same timestamp + camera label).${RESET}"
         elif [[ "$RENAME_SIDECAR_KIND" == media_xmp ]]; then
             emit_wrap_nef_xmp_pair_label_stdout "OLD (sidecar): " yellow "$nef_xmp_buddy" "$NEF_XMP_PAIR_LABEL_WIDTH"
             emit_wrap_nef_xmp_pair_label_stdout "NEW (sidecar): " green "$nef_xmp_new" "$NEF_XMP_PAIR_LABEL_WIDTH"
@@ -18357,6 +18669,11 @@ for f in "${ordered_paths[@]}"; do
                         print_rename_action_verbose "$f" "$custom_new" "manual edit (media+XMP pair)"
                         print_rename_action_verbose "$nef_xmp_buddy" "$nef_xmp_new" "manual edit (media+XMP pair; sidecar follows media)"
                         perform_media_xmp_pair_plain_renames "$f" "$custom_new" "$nef_xmp_buddy" "$nef_xmp_new" || break
+                    elif [[ "$RENAME_SIDECAR_KIND" == gopro_wav ]]; then
+                        nef_xmp_new="$(gopro_wav_new_path_for_mp4_path "$custom_new" "$nef_xmp_buddy")"
+                        print_rename_action_verbose "$f" "$custom_new" "manual edit (GoPro MP4+WAV pair)"
+                        print_rename_action_verbose "$nef_xmp_buddy" "$nef_xmp_new" "manual edit (GoPro MP4+WAV pair; WAV follows MP4)"
+                        perform_gopro_wav_pair_plain_renames "$f" "$custom_new" "$nef_xmp_buddy" "$nef_xmp_new" || break
                     elif [[ "$RENAME_SIDECAR_KIND" == sony_clip ]]; then
                         print_rename_action_verbose "$f" "$custom_new" "manual edit (Sony clip pair)"
                         print_rename_action_verbose "$nef_xmp_buddy" "$nef_xmp_new" "manual edit (Sony clip pair; sidecar keeps script suggestion)"
