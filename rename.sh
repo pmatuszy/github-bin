@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# v. 20260920.223547 - GoPro WAV: follow titled/described MP4 (same capture ts+camera; spaces→underscores)
 # v. 20260920.200800 - Panasonic HC-X: pipefail-safe EXIF field read + vlog skip reasons; allow 3–4 digit clip ids
 # v. 20260920.194806 - Xiaomi: JPEG_/IMG_/VID_YYYYMMDD_HHMMSS gallery names; stills prefer Date/Time Original
 # v. 20260920.194411 - GoPro stills: also match GPAA#### (TimeLapse Photo), GS_/GP_####, G####### burst/group JPG
@@ -61,6 +62,7 @@
 # v. 20260721.132007 - Samsung timestamp media: preserve optional numeric sorting prefix when appending make/model
 # v. 20260721.112812 - GoPro camera labels: GoPro_Hero4_Silver style (not GOPRO4_SILVER)
 
+# 2026.09.20 - v. 19.324.223547 - GoPro Mission 1 WAV: when MP4 has a title/description (…_-_title_-_GoPro_…) and WAV is still plain (…_-_-_GoPro_…), pair by same capture timestamp+camera and rename WAV to the MP4 stem (spaces→underscores); also works if WAV is visited alone after MP4 already renamed
 # 2026.09.20 - v. 19.323.200800 - Panasonic HC-X clips: pipefail-safe Shoot Start Date / manufacturer field reads (grep|head under pipefail could empty the date and silently skip); log each skip reason with -v; accept 3–4 digit clip numbers
 # 2026.09.20 - v. 19.322.194806 - Xiaomi Mi MIX 3 5G / Mi 10T Pro: also rename MIUI gallery JPEG_/IMG_/VID_YYYYMMDD_HHMMSS names (not only bare timestamps); stills prefer Date/Time Original when filename clock disagrees
 # 2026.09.20 - v. 19.321.194411 - GoPro JPG raw names: recognize GPAA#### (HERO TimeLapse Photo), GS_#### / GP_####, and G####### burst/group stills; also accept .jpeg
@@ -11339,6 +11341,55 @@ gopro_renamed_wav_basename_matches() {
     [[ "$bn" =~ ^[0-9]{8}_[0-9]{6}_(-__-_|-_-_)(GoPro_[A-Za-z0-9_]+|GOPRO[0-9]+_[A-Z0-9]+|GOPRO_[A-Z0-9]+).*\.[wW][aA][vV]$ ]]
 }
 
+# Already-renamed GoPro MP4 that may include a user title between the timestamp and camera label,
+# e.g. 20260919_123737_-_fajne_patenty_w_hotelu_-_GoPro_Mission1_Pro.mp4 (spaces allowed before normalize).
+gopro_renamed_titled_mp4_basename_matches() {
+    local bn="$1"
+    gopro_renamed_mp4_basename_matches "$bn" && return 1
+    [[ "$bn" =~ ^[0-9]{8}_[0-9]{6}_.+(GoPro_|GOPRO)[A-Za-z0-9_].*\.[mM][pP]4$ ]]
+}
+
+gopro_clip_pairable_mp4_basename_matches() {
+    local bn="$1"
+    gopro_raw_mp4_basename_matches "$bn" && return 0
+    gopro_renamed_mp4_basename_matches "$bn" && return 0
+    gopro_renamed_titled_mp4_basename_matches "$bn"
+}
+
+gopro_clip_pairable_wav_basename_matches() {
+    local bn="$1"
+    gopro_raw_wav_basename_matches "$bn" && return 0
+    gopro_renamed_wav_basename_matches "$bn"
+}
+
+gopro_renamed_clip_timestamp_from_basename() {
+    local bn="$1"
+    [[ "$bn" =~ ^([0-9]{8}_[0-9]{6}) ]] || return 1
+    printf '%s' "${BASH_REMATCH[1]}"
+}
+
+# Trailing GoPro_/GOPRO* camera label (Mission1_Pro, Hero7_Black_Timelapse, …) before the extension.
+gopro_renamed_clip_camera_label_from_basename() {
+    local stem="${1%.*}"
+    if [[ "$stem" =~ (GoPro_[A-Za-z0-9_]+|GOPRO[0-9]+_[A-Z0-9]+|GOPRO_[A-Z0-9_]+)$ ]]; then
+        printf '%s' "${BASH_REMATCH[1]}"
+        return 0
+    fi
+    return 1
+}
+
+# Same capture clock + same camera label (title/description may differ).
+gopro_renamed_clips_same_capture() {
+    local a="$1" b="$2"
+    local ta tb ca cb
+    ta="$(gopro_renamed_clip_timestamp_from_basename "$a")" || return 1
+    tb="$(gopro_renamed_clip_timestamp_from_basename "$b")" || return 1
+    [[ "$ta" == "$tb" ]] || return 1
+    ca="$(gopro_renamed_clip_camera_label_from_basename "$a")" || return 1
+    cb="$(gopro_renamed_clip_camera_label_from_basename "$b")" || return 1
+    [[ "$ca" == "$cb" ]]
+}
+
 gopro_wav_resolve_same_stem_buddy() {
     local dir="$1" stem="$2"
     shift 2
@@ -11438,9 +11489,9 @@ gopro_wav_find_renamed_mp4_for_orphan_wav() {
     for cand in "$dir"/*; do
         [[ -f "$cand" ]] || continue
         cand_bn="$(basename -- "$cand")"
-        gopro_renamed_mp4_basename_matches "$cand_bn" || continue
-        cand_ts="${cand_bn:0:15}"
-        [[ "$cand_ts" =~ ^[0-9]{8}_[0-9]{6}$ ]] || continue
+        gopro_clip_pairable_mp4_basename_matches "$cand_bn" || continue
+        gopro_raw_mp4_basename_matches "$cand_bn" && continue
+        cand_ts="$(gopro_renamed_clip_timestamp_from_basename "$cand_bn")" || continue
         if [[ "$cand_ts" == "$ts" ]]; then
             exact="$cand"
             ((++exact_count))
@@ -11479,6 +11530,92 @@ gopro_wav_find_renamed_mp4_for_orphan_wav() {
     return 1
 }
 
+# Find a WAV that should follow this MP4: raw GX sidecar, or renamed WAV same capture with a different stem
+# (e.g. MP4 has a title/description, WAV is still plain _-_-_GoPro_…).
+gopro_wav_find_wav_buddy_for_mp4() {
+    local mp4="$1"
+    local dir bn mp4_stem cand cand_bn cand_stem hit="" hit_count=0
+    local saved_nullglob
+
+    [[ -f "$mp4" ]] || return 1
+    bn="$(basename -- "$mp4")"
+    dir="$(dirname -- "$mp4")"
+    mp4_stem="${bn%.*}"
+
+    if hit="$(gopro_wav_find_orphan_wav_for_renamed_mp4 "$mp4" 2>/dev/null)"; then
+        printf '%s' "$hit"
+        return 0
+    fi
+
+    gopro_clip_pairable_mp4_basename_matches "$bn" || return 1
+    gopro_raw_mp4_basename_matches "$bn" && return 1
+
+    saved_nullglob="$(shopt -p nullglob || true)"
+    shopt -s nullglob
+    hit=""
+    hit_count=0
+    for cand in "$dir"/*; do
+        [[ -f "$cand" ]] || continue
+        cand_bn="$(basename -- "$cand")"
+        gopro_clip_pairable_wav_basename_matches "$cand_bn" || continue
+        gopro_raw_wav_basename_matches "$cand_bn" && continue
+        gopro_renamed_clips_same_capture "$bn" "$cand_bn" || continue
+        cand_stem="${cand_bn%.*}"
+        [[ "$cand_stem" != "$mp4_stem" ]] || continue
+        hit="$cand"
+        ((++hit_count))
+    done
+    eval "$saved_nullglob"
+
+    if (( hit_count == 1 )); then
+        printf '%s' "$hit"
+        return 0
+    fi
+    if (( hit_count > 1 )); then
+        vlog "GoPro WAV title-follow: ambiguous same-capture WAV match for '$mp4'"
+        return 1
+    fi
+    return 1
+}
+
+# Renamed WAV looking for same-capture MP4 (plain or titled) whose stem it should adopt.
+gopro_wav_find_mp4_buddy_for_renamed_wav() {
+    local wav="$1"
+    local dir bn wav_stem cand cand_bn cand_stem hit="" hit_count=0
+    local saved_nullglob
+
+    [[ -f "$wav" ]] || return 1
+    bn="$(basename -- "$wav")"
+    gopro_renamed_wav_basename_matches "$bn" || return 1
+    dir="$(dirname -- "$wav")"
+    wav_stem="${bn%.*}"
+
+    saved_nullglob="$(shopt -p nullglob || true)"
+    shopt -s nullglob
+    for cand in "$dir"/*; do
+        [[ -f "$cand" ]] || continue
+        cand_bn="$(basename -- "$cand")"
+        gopro_clip_pairable_mp4_basename_matches "$cand_bn" || continue
+        gopro_raw_mp4_basename_matches "$cand_bn" && continue
+        gopro_renamed_clips_same_capture "$bn" "$cand_bn" || continue
+        cand_stem="${cand_bn%.*}"
+        [[ "$cand_stem" != "$wav_stem" ]] || continue
+        hit="$cand"
+        ((++hit_count))
+    done
+    eval "$saved_nullglob"
+
+    if (( hit_count == 1 )); then
+        printf '%s' "$hit"
+        return 0
+    fi
+    if (( hit_count > 1 )); then
+        vlog "GoPro WAV title-follow: ambiguous same-capture MP4 match for '$wav'"
+        return 1
+    fi
+    return 1
+}
+
 # Orphan raw WAV still present beside an already-renamed GoPro MP4 (inverse of find_renamed_mp4).
 gopro_wav_find_orphan_wav_for_renamed_mp4() {
     local mp4="$1"
@@ -11488,9 +11625,9 @@ gopro_wav_find_orphan_wav_for_renamed_mp4() {
 
     [[ -f "$mp4" ]] || return 1
     bn="$(basename -- "$mp4")"
-    gopro_renamed_mp4_basename_matches "$bn" || return 1
-    mp4_ts="${bn:0:15}"
-    [[ "$mp4_ts" =~ ^[0-9]{8}_[0-9]{6}$ ]] || return 1
+    gopro_clip_pairable_mp4_basename_matches "$bn" || return 1
+    gopro_raw_mp4_basename_matches "$bn" && return 1
+    mp4_ts="$(gopro_renamed_clip_timestamp_from_basename "$bn")" || return 1
     dir="$(dirname -- "$mp4")"
     ea="$(gopro_mission1_compact_timestamp_epoch "$mp4_ts")" || return 1
 
@@ -11544,8 +11681,8 @@ gopro_wav_pair_other_path() {
         return 0
     fi
 
-    if gopro_renamed_mp4_basename_matches "$base"; then
-        gopro_wav_find_orphan_wav_for_renamed_mp4 "$f"
+    if gopro_clip_pairable_mp4_basename_matches "$base"; then
+        gopro_wav_find_wav_buddy_for_mp4 "$f"
         return $?
     fi
 
@@ -11558,6 +11695,11 @@ gopro_wav_pair_other_path() {
         gopro_wav_find_renamed_mp4_for_orphan_wav "$f"
         return $?
     fi
+
+    if gopro_renamed_wav_basename_matches "$base"; then
+        gopro_wav_find_mp4_buddy_for_renamed_wav "$f"
+        return $?
+    fi
     return 1
 }
 
@@ -11566,23 +11708,56 @@ gopro_wav_pairing_allowed() {
     ! exception_exists_for_path "$a" && ! exception_exists_for_path "$b"
 }
 
-# Defer raw WAV until its raw same-stem MP4 is processed as the primary of the pair.
+# Defer WAV until its MP4 buddy is processed (raw same-stem, or renamed WAV following a titled MP4).
 gopro_wav_should_defer_wav() {
     local f="$1" other="$2"
-    gopro_raw_wav_basename_matches "$(basename -- "$f")" || return 1
-    gopro_raw_mp4_basename_matches "$(basename -- "$other")" || return 1
-    gopro_wav_pairing_allowed "$f" "$other"
-}
-
-# Attach WAV when visiting MP4 (raw or already-renamed with orphan WAV).
-gopro_wav_should_attach_buddy() {
-    local f="$1" other="$2"
-    local f_bn other_bn
+    local f_bn other_bn f_stem other_stem
     f_bn="$(basename -- "$f")"
     other_bn="$(basename -- "$other")"
-    gopro_raw_wav_basename_matches "$other_bn" || return 1
-    { gopro_raw_mp4_basename_matches "$f_bn" || gopro_renamed_mp4_basename_matches "$f_bn"; } || return 1
-    gopro_wav_pairing_allowed "$f" "$other"
+
+    if gopro_raw_wav_basename_matches "$f_bn" && gopro_raw_mp4_basename_matches "$other_bn"; then
+        gopro_wav_pairing_allowed "$f" "$other"
+        return $?
+    fi
+
+    # Renamed plain WAV beside titled/described MP4: process MP4 first so the pair prompt shows both.
+    if gopro_renamed_wav_basename_matches "$f_bn" && gopro_clip_pairable_mp4_basename_matches "$other_bn"; then
+        gopro_raw_mp4_basename_matches "$other_bn" && return 1
+        gopro_renamed_clips_same_capture "$f_bn" "$other_bn" || return 1
+        f_stem="${f_bn%.*}"
+        other_stem="${other_bn%.*}"
+        [[ "$f_stem" != "$other_stem" ]] || return 1
+        gopro_wav_pairing_allowed "$f" "$other"
+        return $?
+    fi
+    return 1
+}
+
+# Attach WAV when visiting MP4 (raw GX sidecar, or renamed WAV that should adopt the MP4 stem/title).
+gopro_wav_should_attach_buddy() {
+    local f="$1" other="$2"
+    local f_bn other_bn f_stem other_stem
+    f_bn="$(basename -- "$f")"
+    other_bn="$(basename -- "$other")"
+
+    if gopro_raw_wav_basename_matches "$other_bn"; then
+        { gopro_raw_mp4_basename_matches "$f_bn" || gopro_clip_pairable_mp4_basename_matches "$f_bn"; } || return 1
+        gopro_wav_pairing_allowed "$f" "$other"
+        return $?
+    fi
+
+    if gopro_renamed_wav_basename_matches "$other_bn" && gopro_clip_pairable_mp4_basename_matches "$f_bn"; then
+        gopro_raw_mp4_basename_matches "$f_bn" && return 1
+        gopro_renamed_clips_same_capture "$f_bn" "$other_bn" || return 1
+        f_stem="${f_bn%.*}"
+        other_stem="${other_bn%.*}"
+        # Attach when stems already differ, or when transform_name may still change the MP4 stem
+        # (spaces in title); pair_other_path only returns a buddy when stems differ on disk.
+        [[ "$f_stem" != "$other_stem" ]] || return 1
+        gopro_wav_pairing_allowed "$f" "$other"
+        return $?
+    fi
+    return 1
 }
 
 perform_gopro_wav_pair_plain_renames() {
@@ -11591,7 +11766,9 @@ perform_gopro_wav_pair_plain_renames() {
     if [[ "$primary_old" != "$primary_new" ]]; then
         perform_plain_entry_rename "$primary_old" "$primary_new" || return 1
     fi
-    perform_plain_entry_rename "$buddy_old" "$buddy_new" || return 1
+    if [[ "$buddy_old" != "$buddy_new" ]]; then
+        perform_plain_entry_rename "$buddy_old" "$buddy_new" || return 1
+    fi
     processed["$buddy_old"]=1
     return 0
 }
@@ -18286,11 +18463,16 @@ for f in "${ordered_paths[@]}"; do
                 if gopro_wav_should_attach_buddy "$f" "$_gw_other"; then
                     nef_xmp_buddy="$_gw_other"
                     RENAME_SIDECAR_KIND=gopro_wav
-                elif gopro_raw_wav_basename_matches "$(basename -- "$f")" \
-                    && gopro_renamed_mp4_basename_matches "$(basename -- "$_gw_other")"; then
-                    # Orphan GX######.WAV beside already-renamed GoPro MP4: rename WAV alone to match.
+                elif gopro_clip_pairable_wav_basename_matches "$(basename -- "$f")" \
+                    && gopro_clip_pairable_mp4_basename_matches "$(basename -- "$_gw_other")"; then
+                    # WAV alone (raw GX or plain renamed) beside an MP4 with a different stem/title: follow MP4.
                     precomputed_new="$(gopro_wav_new_path_for_mp4_path "$_gw_other" "$f")"
-                    vlog "Orphan GoPro WAV '$f' maps to renamed MP4 '$_gw_other' -> '$precomputed_new'"
+                    if [[ "$precomputed_new" != "$f" ]] \
+                        && [[ "$(basename -- "$precomputed_new")" != "$(basename -- "$f")" ]]; then
+                        vlog "GoPro WAV '$f' follows MP4 '$_gw_other' -> '$precomputed_new'"
+                    else
+                        precomputed_new=""
+                    fi
                 fi
             fi
         fi
