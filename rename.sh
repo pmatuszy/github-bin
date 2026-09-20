@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# v. 20260920.200800 - Panasonic HC-X: pipefail-safe EXIF field read + vlog skip reasons; allow 3–4 digit clip ids
 # v. 20260920.194806 - Xiaomi: JPEG_/IMG_/VID_YYYYMMDD_HHMMSS gallery names; stills prefer Date/Time Original
 # v. 20260920.194411 - GoPro stills: also match GPAA#### (TimeLapse Photo), GS_/GP_####, G####### burst/group JPG
 # v. 20260920.190838 - GoPro Mission1/Hero: pair GX######.WAV with same-stem MP4 (bundle + orphan→already-renamed)
@@ -60,6 +61,7 @@
 # v. 20260721.132007 - Samsung timestamp media: preserve optional numeric sorting prefix when appending make/model
 # v. 20260721.112812 - GoPro camera labels: GoPro_Hero4_Silver style (not GOPRO4_SILVER)
 
+# 2026.09.20 - v. 19.323.200800 - Panasonic HC-X clips: pipefail-safe Shoot Start Date / manufacturer field reads (grep|head under pipefail could empty the date and silently skip); log each skip reason with -v; accept 3–4 digit clip numbers
 # 2026.09.20 - v. 19.322.194806 - Xiaomi Mi MIX 3 5G / Mi 10T Pro: also rename MIUI gallery JPEG_/IMG_/VID_YYYYMMDD_HHMMSS names (not only bare timestamps); stills prefer Date/Time Original when filename clock disagrees
 # 2026.09.20 - v. 19.321.194411 - GoPro JPG raw names: recognize GPAA#### (HERO TimeLapse Photo), GS_#### / GP_####, and G####### burst/group stills; also accept .jpeg
 # 2026.09.20 - v. 19.320.190838 - GoPro Mission 1 / Hero: rename GX######.WAV with its MP4 (same-stem bundle); orphan WAV beside already-renamed GoPro MP4 follows that MP4's timestamp+camera label (exact CreateDate match, else unique ≤120s)
@@ -12600,9 +12602,10 @@ transform_sony_clip_basename() {
 
 # Panasonic HC-X / P2-style User Clip Name: A005C004_260828_A6L8.MP4
 # → 20260828_174803_-_-_Panasonic_HC-X1600.MP4 (Shoot Start Date local; no reel/clip id).
+# Clip number may be 3–4 digits; camera id after the date is 2–8 alnum chars.
 panasonic_camcorder_raw_basename_matches() {
     local bn="$1"
-    [[ "$bn" =~ ^[A-Za-z][0-9]{3}[Cc][0-9]{3}_[0-9]{6}_[A-Za-z0-9]{4}\.[mM][pP]4$ ]]
+    [[ "$bn" =~ ^[A-Za-z][0-9]{3}[Cc][0-9]{3,4}_[0-9]{6}_[A-Za-z0-9]{2,8}\.[mM][pP]4$ ]]
 }
 
 panasonic_camcorder_already_renamed_basename_matches() {
@@ -12624,16 +12627,24 @@ panasonic_camcorder_exif_camera_tag_append_matches() {
     return 0
 }
 
+# Pipefail-safe: never pipe grep to head under set -o pipefail (SIGPIPE → empty field → silent skip).
 panasonic_exif_field_by_substr() {
     local exif="$1"
     local needle="$2"
-    printf '%s\n' "$exif" | grep -iF "$needle" | head -n 1 \
-        | sed -E 's/^[^:]+:[[:space:]]*//' | tr -d $'\r'
+    local line="" pipefail_was_on=0
+    shopt -oq pipefail 2>/dev/null && pipefail_was_on=1
+    set +o pipefail
+    line="$(printf '%s\n' "$exif" | grep -iF "$needle" | head -n 1 | tr -d $'\r')" || line=""
+    ((pipefail_was_on)) && set -o pipefail
+    [[ -n "$line" ]] || return 0
+    if [[ "$line" =~ :[[:space:]]+(.*)$ ]]; then
+        printf '%s' "${BASH_REMATCH[1]}"
+    fi
 }
 
 panasonic_parse_local_datetime_to_ts() {
     local raw="$1"
-    # 2026:08:28 17:48:03+02:00  or  2026:08:28 17:48:03
+    # 2026:08:28 17:48:03+02:00  or  2026:08:28 17:48:03  or  with fractional seconds
     if [[ "$raw" =~ ([0-9]{4}):([0-9]{2}):([0-9]{2})[[:space:]]+([0-9]{2}):([0-9]{2}):([0-9]{2}) ]]; then
         printf '%s%s%s_%s%s%s' \
             "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}" "${BASH_REMATCH[3]}" \
@@ -12657,6 +12668,8 @@ panasonic_exif_is_panasonic() {
     [[ "${v,,}" == *panasonic* ]] && return 0
     v="$(panasonic_exif_field_by_substr "$exif" 'Handler Description')"
     [[ "${v,,}" == *panasonic* ]] && return 0
+    v="$(panasonic_exif_field_by_substr "$exif" 'Handler Type')"
+    [[ "${v,,}" == *panasonic* ]] && return 0
     v="$(samsung_exif_first_value "$exif" 'Make')"
     [[ "${v,,}" == *panasonic* ]] && return 0
     return 1
@@ -12678,8 +12691,12 @@ transform_panasonic_camcorder_basename() {
         fi
     }
 
-    panasonic_camcorder_raw_basename_matches "$base" || return 0
-    panasonic_camcorder_already_renamed_basename_matches "$base" && return 0
+    if ! panasonic_camcorder_raw_basename_matches "$base"; then
+        return 0
+    fi
+    if panasonic_camcorder_already_renamed_basename_matches "$base"; then
+        return 0
+    fi
 
     _pc_save_e=0
     [[ $- == *e* ]] && _pc_save_e=1
@@ -12688,21 +12705,39 @@ transform_panasonic_camcorder_basename() {
     trap - ERR
     trap '_transform_panasonic_err_trap_restore' RETURN
 
-    exifloc="$(resolve_rename_exiftool)" || return 0
-    exif="$("$exifloc" -api largefilesupport=1 "$file" 2>/dev/null)" || return 0
-    [[ -n "$exif" ]] || return 0
-    panasonic_exif_is_panasonic "$exif" || return 0
+    exifloc="$(resolve_rename_exiftool)" || {
+        vlog "Panasonic camcorder: exiftool not found for '$base'"
+        return 0
+    }
+    exif="$("$exifloc" -api largefilesupport=1 "$file" 2>/dev/null)" || exif=""
+    if [[ -z "$exif" ]]; then
+        vlog "Panasonic camcorder: empty exiftool dump for '$base'"
+        return 0
+    fi
+    if ! panasonic_exif_is_panasonic "$exif"; then
+        vlog "Panasonic camcorder: no Panasonic manufacturer/handler markers in EXIF for '$base'"
+        return 0
+    fi
 
     model="$(samsung_exif_first_value "$exif" 'Camera Model Name')"
     [[ -n "$model" ]] || model="$(panasonic_exif_field_by_substr "$exif" 'Device Model Name')"
-    [[ -n "$model" ]] || return 0
+    [[ -n "$model" ]] || model="$(panasonic_exif_field_by_substr "$exif" 'Camera Model Name')"
+    [[ -n "$model" ]] || model="$(samsung_exif_first_value "$exif" 'Model')"
     model="$(panasonic_normalize_model_token "$model")"
-    [[ -n "$model" ]] || return 0
+    if [[ -z "$model" ]]; then
+        vlog "Panasonic camcorder: no camera model in EXIF for '$base'"
+        return 0
+    fi
 
     # Prefer Shoot Start Date (local + offset). Create Date is often UTC and wrong for filenames.
     shoot="$(panasonic_exif_field_by_substr "$exif" 'Shoot Start Date')"
     [[ -n "$shoot" ]] || shoot="$(panasonic_exif_field_by_substr "$exif" 'Access Creation Date')"
-    ts="$(panasonic_parse_local_datetime_to_ts "$shoot")" || return 0
+    [[ -n "$shoot" ]] || shoot="$(panasonic_exif_field_by_substr "$exif" 'Shoot End Date')"
+    ts="$(panasonic_parse_local_datetime_to_ts "$shoot")" || ts=""
+    if [[ -z "$ts" ]]; then
+        vlog "Panasonic camcorder: no parseable Shoot Start/Access Creation Date for '$base' (got '${shoot:-<empty>}')"
+        return 0
+    fi
 
     ext="${base##*.}"
     gopro_format_camera_basename_output "$ts" "Panasonic" "$model" "" "$ext"
