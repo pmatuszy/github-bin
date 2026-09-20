@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# v. 20260920.194411 - GoPro stills: also match GPAA#### (TimeLapse Photo), GS_/GP_####, G####### burst/group JPG
 # v. 20260920.190838 - GoPro Mission1/Hero: pair GX######.WAV with same-stem MP4 (bundle + orphan→already-renamed)
 # v. 20260916.130951 - fix mangled box lines: tr is byte-wise and truncated ─ to one byte; use sed
 # v. 20260915.190839 - Xiaomi: also read Android Make/Model (Mi 10T Pro MP4 M2007J3SG)
@@ -58,6 +59,7 @@
 # v. 20260721.132007 - Samsung timestamp media: preserve optional numeric sorting prefix when appending make/model
 # v. 20260721.112812 - GoPro camera labels: GoPro_Hero4_Silver style (not GOPRO4_SILVER)
 
+# 2026.09.20 - v. 19.321.194411 - GoPro JPG raw names: recognize GPAA#### (HERO TimeLapse Photo), GS_#### / GP_####, and G####### burst/group stills; also accept .jpeg
 # 2026.09.20 - v. 19.320.190838 - GoPro Mission 1 / Hero: rename GX######.WAV with its MP4 (same-stem bundle); orphan WAV beside already-renamed GoPro MP4 follows that MP4's timestamp+camera label (exact CreateDate match, else unique ≤120s)
 # 2026.09.16 - v. 19.319.130951 - banner/options/NEF-XMP boxes: build horizontal rules with sed instead of tr; tr truncates the 3-byte ─ (U+2500) to a lone 0xE2, so every fill byte was invalid UTF-8 and terminals/screen showed replacement characters
 # 2026.09.15 - v. 19.318.190839 - Xiaomi timestamp media: recognize Android Make/Android Model (e.g. Mi 10T Pro MP4 M2007J3SG) in addition to Make/Camera Model Name
@@ -10609,11 +10611,21 @@ _transform_name_return_unchanged() {
     fi
 }
 
-# GoPro JPG raw names: legacy GOPR####.JPG and Mission 1 GP######.JPG.
+# GoPro JPG raw names (official prefixes; see GoPro Camera File Naming Convention):
+#   GOPR####     — single photo (legacy)
+#   GP######     — Mission 1 / 6-digit photo
+#   GPAA####     — HERO TimeLapse Photo
+#   GS_####      — HERO single photo (newer)
+#   GP_####      — PowerPano
+#   G#######     — burst / grouped Timelapse (G + 3-digit group + 4-digit file, e.g. G0241121)
 gopro_camera_raw_jpg_basename_matches() {
     local base="$1"
-    [[ "$base" =~ ^[gG][oO][pP][rR][0-9][0-9][0-9][0-9]\.[jJ][pP][gG]$ ]] && return 0
-    [[ "$base" =~ ^[gG][pP][0-9][0-9][0-9][0-9][0-9][0-9]\.[jJ][pP][gG]$ ]] && return 0
+    [[ "$base" =~ ^[gG][oO][pP][rR][0-9]{4}\.[jJ][pP][eE]?[gG]$ ]] && return 0
+    [[ "$base" =~ ^[gG][pP][0-9]{6}\.[jJ][pP][eE]?[gG]$ ]] && return 0
+    [[ "$base" =~ ^[gG][pP][aA][aA][0-9]{4}\.[jJ][pP][eE]?[gG]$ ]] && return 0
+    [[ "$base" =~ ^[gG][sS]_[0-9]{4}\.[jJ][pP][eE]?[gG]$ ]] && return 0
+    [[ "$base" =~ ^[gG][pP]_[0-9]{4}\.[jJ][pP][eE]?[gG]$ ]] && return 0
+    [[ "$base" =~ ^[gG][0-9]{7}\.[jJ][pP][eE]?[gG]$ ]] && return 0
     return 1
 }
 
