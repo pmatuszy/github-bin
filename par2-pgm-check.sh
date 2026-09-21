@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20260921.200018 - fix coverage: init DATA_FILES (set -u unbound on early OK path)
 # v. 20260921.182207 - end of set: report data files not covered by PAR2 and/or hash manifests
 # v. 20260916.133341 - Run settings: add Equivalent CLI line and PROMPT_TIMEOUT value
 # v. 20260916.130951 - boxed output: draw rules with sed; tr truncated ─ to one invalid byte
@@ -58,6 +59,7 @@
 # v. 20260719.103506 - fix no-arg run: empty POSITIONAL[@]:- became one "" element
 # v. 20260719.102800 - multi-set selection: A/a, ranges 1-4, --all, multiple paths
 
+# 2026.09.21 - v. 0.1.73 - Fix Protection coverage under set -u: initialize DATA_FILES before length check (early OK path never ran Step 3)
 # 2026.09.21 - v. 0.1.72 - End of each PAR2 set: report on-disk data files not listed in this PAR2 set and/or not listed in any .sha*/.md5/.b2 hash manifest (counts + sample names); also note files covered by only one of the two
 # 2026.09.16 - v. 0.1.71 - === Run settings ===: add an "Equivalent CLI:" line that repeats this run non-interactively (flags given plus the prompted --scope) and show the effective PROMPT_TIMEOUT; explicit PAR2 set arguments get a note instead of a --scope flag
 # 2026.09.16 - v. 0.1.70 - Boxed summaries: horizontal rules via sed 's/ /─/g'; tr is byte-wise and cut the 3-byte ─ (U+2500) down to a lone 0xE2, printing invalid UTF-8
@@ -1490,6 +1492,7 @@ MULTI_SET_FAILED_NAMES=()
 PAR2_SET_MEMBERS=()
 RESOLVE_PAR2_ERROR=""
 PGM_HASH_VERIFY_MSG=""
+DATA_FILES=()
 PROMPT_TIMEOUT="${PROMPT_TIMEOUT-}"
 PGM_PAR2_ARG_BATCH="${PGM_PAR2_ARG_BATCH:-2000}"
 PGM_RENAME_BATCH="${PGM_RENAME_BATCH:-16}"
@@ -1763,6 +1766,10 @@ pgm_report_protection_coverage() {
 
     echo
     echo "Protection coverage (data files vs this PAR2 set and hash manifest(s)):"
+    # Early OK path never runs Step 3; DATA_FILES may still be unset under set -u.
+    if [[ ! -v DATA_FILES ]]; then
+        DATA_FILES=()
+    fi
     if (( ${#DATA_FILES[@]} == 0 )); then
         echo "  Scanning data files under $DATA_DIR ..."
         collect_data_files "$DATA_DIR"
