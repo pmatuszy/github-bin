@@ -1,6 +1,10 @@
 #!/bin/bash
+# v. 20260921.091719 - --help: include suggested crontab entries
 # v. 20260921.085840 - --mail/--mail-to: email script log before reboot (and on give-up)
 # v. 20260921.085347 - initial release: reboot when /var/run/reboot-required and system is idle
+# 2026.09.21 - v. 0.3 - --help lists suggested crontab entries (night reboot, dry-run, daytime
+#                       monitor, @reboot Healthchecks) so they are easy to copy without opening
+#                       the script source
 # 2026.09.21 - v. 0.2 - Optional mailx report (--mail / --mail-to / REBOOT_MAIL_TO): tee the run
 #                       into a temp log and send it before shutdown -r (and when giving up after
 #                       the retry window). No post-reboot mail from this script — use Healthchecks
@@ -68,6 +72,23 @@ Mail:
   script gives up after the retry window. Not sent when reboot is simply not
   required. There is no post-reboot mail from this script — Healthchecks
   @reboot (healthchecks-reboot-required.sh) already confirms the host is back.
+
+Suggested crontab entries:
+
+  # Daytime monitor only (keep separate from this script):
+  0 7-22 * * * /root/bin/healthchecks-reboot-required.sh --no_startup_delay
+
+  # First try on a host (mail + dry-run, no real reboot):
+  20 3 * * * /root/bin/reboot-when-required.sh --no_startup_delay --verbose --dry-run --mail
+
+  # Night idle reboot (script retries up to ~2h by itself):
+  20 3 * * * /root/bin/reboot-when-required.sh --no_startup_delay --verbose --mail
+
+  # After reboot: confirm the host is back (reboot-required cleared):
+  @reboot ( /root/bin/healthchecks-reboot-required.sh --no_startup_delay ) 2>&1
+
+  # Optional: add Healthchecks URL for this script in /root/bin/healthchecks-ids.txt:
+  #   reboot-when-required.sh https://hc-ping.com/<uuid>
 
 EOF
 }
