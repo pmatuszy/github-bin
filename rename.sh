@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# v. 20260921.202625 - checksum session mem cache: reuse digests across recovery scans (path+size+mtime)
 # v. 20260921.161550 - Quik dashboard: wire GX######_<id> → <source>-dashboard into transform_name
 # v. 20260921.161319 - Quik GX######_<id> exports: pair to renamed source MP4 → same name + -dashboard
 # v. 20260920.224150 - GoPro MP4+WAV: bidirectional title sync; prompt when both descriptions differ
@@ -65,6 +66,7 @@
 # v. 20260721.132007 - Samsung timestamp media: preserve optional numeric sorting prefix when appending make/model
 # v. 20260721.112812 - GoPro camera labels: GoPro_Hero4_Silver style (not GOPRO4_SILVER)
 
+# 2026.09.21 - v. 19.328.202625 - Checksum recovery: session memory cache of digests (keyed by kind+abs path+size+mtime) plus digest→path index so each file content is hashed at most once per run when searching missing refs; summary shows mem hits/misses
 # 2026.09.21 - v. 19.327.161550 - Quik dashboard rename runs in transform_name (before plain GX###### camera path); leaves export unchanged when no unique renamed source
 # 2026.09.21 - v. 19.326.161319 - GoPro Quik/app exports GX######_<longid>[_N].mp4: find same-dir already-renamed source MP4 by CreateDate (exact/near, or UTC↔local ±1/2/3h) and rename to <source_stem>-dashboard[_N].mp4 (e.g. …_Timewarp_5x.mp4 → …_Timewarp_5x-dashboard.mp4)
 # 2026.09.20 - v. 19.325.224150 - GoPro Mission 1 MP4+WAV: title/description syncs both ways (titled WAV renames plain MP4 too); if both files have different descriptions, prompt [M] MP4 / [w] WAV / [n] skip (default MP4; auto-yes/[a] keeps MP4)
@@ -1213,6 +1215,10 @@ SCRIPT_FINISH_TIME=""
 SUMMARY_PRINTED=0
 stopped_by_user=no
 FILES_HASHED=0
+CHECKSUM_MEM_HITS=0
+CHECKSUM_MEM_MISSES=0
+declare -A CHECKSUM_MEM_DIGEST=()
+declare -A CHECKSUM_MEM_PATH_BY_DIGEST=()
 RESUME_STATE_FILE="$START_DIR/_rename.sh.resume-state.json"
 RESUME_STATE_WAS_LOADED=0
 RESUME_CHECKPOINT_PROCESSED_LINES_LOADED=0
@@ -14788,17 +14794,103 @@ verify_single_checksum_target() {
     return 0
 }
 
+# Session-memory digest cache (path+size+mtime+kind → digest, and digest → path).
+# Avoids re-reading multi-GB files when recovery walks the tree for each missing ref.
+checksum_mem_file_identity() {
+    local file="$1"
+    local abs size mtime
+
+    abs="$(db_abs_path "$file" 2>/dev/null || true)"
+    [[ -n "$abs" ]] || return 1
+    size="$(get_file_size_bytes "$abs")"
+    mtime="$(get_file_mtime_epoch "$abs")"
+    [[ -n "$size" && -n "$mtime" ]] || return 1
+    printf '%s|%s|%s' "$abs" "$size" "$mtime"
+}
+
+checksum_mem_get() {
+    local kind="$1"
+    local file="$2"
+    local id abs size mtime key dig
+
+    (( FORCE_RECHECK == 0 )) || return 1
+    id="$(checksum_mem_file_identity "$file")" || return 1
+    abs="${id%%|*}"
+    size="${id#*|}"
+    mtime="${size#*|}"
+    size="${size%%|*}"
+    key="${kind}"$'\x1f'"${abs}"$'\x1f'"${size}"$'\x1f'"${mtime}"
+    dig="${CHECKSUM_MEM_DIGEST[$key]-}"
+    [[ -n "$dig" ]] || return 1
+    printf '%s' "$dig"
+}
+
+checksum_mem_put() {
+    local kind="$1"
+    local file="$2"
+    local dig="$3"
+    local id abs size mtime key rkey
+
+    [[ -n "$kind" && -n "$dig" ]] || return 0
+    dig="${dig,,}"
+    dig="${dig//$'\r'/}"
+    dig="${dig//$'\n'/}"
+    id="$(checksum_mem_file_identity "$file")" || return 0
+    abs="${id%%|*}"
+    size="${id#*|}"
+    mtime="${size#*|}"
+    size="${size%%|*}"
+    key="${kind}"$'\x1f'"${abs}"$'\x1f'"${size}"$'\x1f'"${mtime}"
+    CHECKSUM_MEM_DIGEST["$key"]="$dig"
+    rkey="${kind}"$'\x1f'"$dig"
+    if [[ -z "${CHECKSUM_MEM_PATH_BY_DIGEST[$rkey]-}" ]]; then
+        CHECKSUM_MEM_PATH_BY_DIGEST["$rkey"]="$abs"
+    fi
+}
+
+# Find a previously hashed file by digest (same session). Verifies size/mtime still match.
+checksum_mem_find_by_digest() {
+    local kind="$1"
+    local dig="$2"
+    local rkey path cur
+
+    dig="${dig,,}"
+    dig="${dig//$'\r'/}"
+    dig="${dig//$'\n'/}"
+    [[ -n "$kind" && -n "$dig" ]] || return 1
+    rkey="${kind}"$'\x1f'"$dig"
+    path="${CHECKSUM_MEM_PATH_BY_DIGEST[$rkey]-}"
+    [[ -n "$path" && -f "$path" ]] || return 1
+    cur="$(checksum_mem_get "$kind" "$path" || true)"
+    if [[ -n "$cur" && "${cur,,}" == "$dig" ]]; then
+        printf '%s' "$path"
+        return 0
+    fi
+    unset "CHECKSUM_MEM_PATH_BY_DIGEST[$rkey]"
+    return 1
+}
+
 checksum_of_file() {
     local kind="$1"
     local file="$2"
     local out cached
 
-    cached="$(db_get_cached_file_hash "$file" "$kind" || true)"
+    cached="$(checksum_mem_get "$kind" "$file" || true)"
     if [[ -n "$cached" ]]; then
+        ((++CHECKSUM_MEM_HITS))
         printf '%s\n' "$cached"
         return 0
     fi
 
+    cached="$(db_get_cached_file_hash "$file" "$kind" || true)"
+    if [[ -n "$cached" ]]; then
+        checksum_mem_put "$kind" "$file" "$cached"
+        ((++CHECKSUM_MEM_HITS))
+        printf '%s\n' "$cached"
+        return 0
+    fi
+
+    ((++CHECKSUM_MEM_MISSES))
     case "$kind" in
         sha512) out="$(sha512sum -- "$file" | awk '{print tolower($1)}')" ;;
         sha384) out="$(sha384sum -- "$file" | awk '{print tolower($1)}')" ;;
@@ -14811,6 +14903,7 @@ checksum_of_file() {
     esac
 
     ((++FILES_HASHED))
+    checksum_mem_put "$kind" "$file" "$out"
     db_record_file_hash "$file" "$kind" "$out"
     printf '%s\n' "$out"
 }
@@ -14819,14 +14912,25 @@ md5_of_file() {
     local file="$1"
     local out cached
 
-    cached="$(db_get_cached_file_hash "$file" "md5" || true)"
+    cached="$(checksum_mem_get "md5" "$file" || true)"
     if [[ -n "$cached" ]]; then
+        ((++CHECKSUM_MEM_HITS))
         printf '%s\n' "$cached"
         return 0
     fi
 
+    cached="$(db_get_cached_file_hash "$file" "md5" || true)"
+    if [[ -n "$cached" ]]; then
+        checksum_mem_put "md5" "$file" "$cached"
+        ((++CHECKSUM_MEM_HITS))
+        printf '%s\n' "$cached"
+        return 0
+    fi
+
+    ((++CHECKSUM_MEM_MISSES))
     out="$(md5sum -- "$file" | awk '{print tolower($1)}')"
     ((++FILES_HASHED))
+    checksum_mem_put "md5" "$file" "$out"
     db_record_file_hash "$file" "md5" "$out"
     printf '%s\n' "$out"
 }
@@ -16378,9 +16482,19 @@ find_best_path_for_missing_ref() {
     fi
 
     if [[ -n "$expected_hash" ]]; then
+        candidate="$(checksum_mem_find_by_digest "$kind" "$expected_hash" || true)"
+        if [[ -n "$candidate" ]]; then
+            vlog "Subtree recovery candidate by session hash cache: '$candidate'"
+            ((++CHECKSUM_MEM_HITS))
+            printf '%s' "$candidate"
+            return 0
+        fi
+
         candidate="$(db_find_path_by_file_hash_in_subtree "$search_root" "$kind" "$expected_hash" || true)"
         if [[ -n "$candidate" ]]; then
             vlog "Subtree recovery candidate by DB hash matches: '$candidate'"
+            # Seed session cache so later missing refs skip disk for this path too.
+            checksum_mem_put "$kind" "$candidate" "$expected_hash"
             printf '%s' "$candidate"
             return 0
         fi
@@ -17745,6 +17859,8 @@ print_summary() {
     echo "Entries examined:      $files_examined"
     echo "Files processed:       $files_examined"
     echo "Files hashed:          $FILES_HASHED"
+    echo "Checksum mem hits:     $CHECKSUM_MEM_HITS"
+    echo "Checksum mem misses:   $CHECKSUM_MEM_MISSES"
     echo "Entries affected:      $files_affected"
     echo "Entries skipped:       $files_skipped"
     echo "Stopped by user:       $stopped_by_user"
