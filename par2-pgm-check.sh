@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20260921.182207 - end of set: report data files not covered by PAR2 and/or hash manifests
 # v. 20260916.133341 - Run settings: add Equivalent CLI line and PROMPT_TIMEOUT value
 # v. 20260916.130951 - boxed output: draw rules with sed; tr truncated ─ to one invalid byte
 # v. 20260812.145813 - after deleting old PAR2 backups, offer to drop their hash-file refs if any
@@ -57,6 +58,7 @@
 # v. 20260719.103506 - fix no-arg run: empty POSITIONAL[@]:- became one "" element
 # v. 20260719.102800 - multi-set selection: A/a, ranges 1-4, --all, multiple paths
 
+# 2026.09.21 - v. 0.1.72 - End of each PAR2 set: report on-disk data files not listed in this PAR2 set and/or not listed in any .sha*/.md5/.b2 hash manifest (counts + sample names); also note files covered by only one of the two
 # 2026.09.16 - v. 0.1.71 - === Run settings ===: add an "Equivalent CLI:" line that repeats this run non-interactively (flags given plus the prompted --scope) and show the effective PROMPT_TIMEOUT; explicit PAR2 set arguments get a note instead of a --scope flag
 # 2026.09.16 - v. 0.1.70 - Boxed summaries: horizontal rules via sed 's/ /─/g'; tr is byte-wise and cut the 3-byte ─ (U+2500) down to a lone 0xE2, printing invalid UTF-8
 # 2026.08.12 - v. 0.1.69 - After deleting old PAR2 backups, offer to remove hash-file refs if listed
@@ -129,6 +131,7 @@
 # par2-pgm-check.sh
 #
 # Verify a PAR2 set and detect misnamed files in a directory.
+# At end of each set, also report data files on disk that are not in this PAR2 set and/or not listed in hash manifests.
 #
 
 show_help() {
@@ -184,6 +187,8 @@ If a .sha512 / .sha384 / .sha256 / .sha224 / .sha1 / .md5 / .b2 file exists in t
 directory, Step 1 scans all hash manifests, reports how many list in-scope PAR2
 archives for this set, and verifies checksums only in those file(s). Other hash
 entries are ignored.
+At the end of each set, a coverage report compares on-disk data files with this
+PAR2 set and hash manifests (files in neither, or only in one of the two).
 
 Step 3 scans data files in the PAR2 directory and its subdirectories (skipping
 nested PAR2-set folders) to find content matches when paths on disk differ from
@@ -1746,9 +1751,112 @@ pgm_print_final_run_summary() {
     echo
 }
 
+# Compare on-disk data files vs this PAR2 set and hash manifests; report gaps.
+# Informational only (does not change exit status). Skips nested PAR2 roots like Step 3.
+pgm_report_protection_coverage() {
+    local -A in_par2_path=() in_par2_base=() in_hash_path=() in_hash_base=()
+    local -a untracked=() only_par2=() only_hash=()
+    local name base rel in_p in_h max_show=25 i
+    local disk_n=0 par2_n=0 hash_n=0
+
+    [[ -n "${PAR2_FILE:-}" && -n "${DATA_DIR:-}" && -d "$DATA_DIR" ]] || return 0
+
+    echo
+    echo "Protection coverage (data files vs this PAR2 set and hash manifest(s)):"
+    if (( ${#DATA_FILES[@]} == 0 )); then
+        echo "  Scanning data files under $DATA_DIR ..."
+        collect_data_files "$DATA_DIR"
+    fi
+    disk_n=${#DATA_FILES[@]}
+
+    while IFS= read -r name || [[ -n "$name" ]]; do
+        [[ -n "$name" ]] || continue
+        name="${name//\\//}"
+        name="${name#./}"
+        in_par2_path["$name"]=1
+        base="$(basename -- "$name")"
+        in_par2_base["$base"]=1
+    done < <(run_rename_py "$(basename -- "$PAR2_FILE")" list-names 2>/dev/null || true)
+    par2_n=${#in_par2_path[@]}
+
+    while IFS= read -r name || [[ -n "$name" ]]; do
+        [[ -n "$name" ]] || continue
+        name="${name//\\//}"
+        name="${name#./}"
+        in_hash_path["$name"]=1
+        base="$(basename -- "$name")"
+        in_hash_base["$base"]=1
+    done < <(run_rename_py hash list-data-paths "$DATA_DIR" 2>/dev/null || true)
+    hash_n=${#in_hash_path[@]}
+
+    for rel in "${DATA_FILES[@]}"; do
+        rel="${rel//\\//}"
+        rel="${rel#./}"
+        base="$(basename -- "$rel")"
+        in_p=0
+        in_h=0
+        # PAR2: prefer exact relative path; basename-only entries match flat disk names.
+        if [[ -n "${in_par2_path[$rel]:-}" ]]; then
+            in_p=1
+        elif [[ "$rel" == "$base" && -n "${in_par2_base[$base]:-}" ]]; then
+            in_p=1
+        fi
+        # Hash manifests usually store basename (*file); accept path or basename.
+        if [[ -n "${in_hash_path[$rel]:-}" || -n "${in_hash_base[$base]:-}" ]]; then
+            in_h=1
+        fi
+        if (( in_p == 0 && in_h == 0 )); then
+            untracked+=("$rel")
+        elif (( in_p == 1 && in_h == 0 )); then
+            only_par2+=("$rel")
+        elif (( in_p == 0 && in_h == 1 )); then
+            only_hash+=("$rel")
+        fi
+    done
+
+    echo "  On disk (data files):              $disk_n"
+    echo "  Listed in this PAR2 set:           $par2_n"
+    echo "  Listed in hash manifest(s):        $hash_n"
+    echo "  On disk, not in PAR2 and not hash: ${#untracked[@]}"
+    echo "  On disk, PAR2 only (not in hash):  ${#only_par2[@]}"
+    echo "  On disk, hash only (not in PAR2):  ${#only_hash[@]}"
+
+    if (( ${#untracked[@]} > 0 )); then
+        echo
+        echo "  Untracked on disk (neither PAR2 nor hash) — sample:"
+        for i in "${!untracked[@]}"; do
+            (( i < max_show )) || { echo "    ... and $(( ${#untracked[@]} - max_show )) more"; break; }
+            printf '    %s\n' "${untracked[$i]}"
+        done
+        echo "  Tip: regenerate PAR2 / refresh hash manifests if these should be protected."
+    elif (( disk_n > 0 )); then
+        echo "  All on-disk data files are listed in PAR2 and/or a hash manifest."
+    fi
+
+    if (( ${#only_par2[@]} > 0 && ${#only_par2[@]} <= max_show )); then
+        echo
+        echo "  In PAR2 but not in any hash manifest (${#only_par2[@]}):"
+        printf '    %s\n' "${only_par2[@]}"
+    elif (( ${#only_par2[@]} > max_show )); then
+        echo
+        echo "  In PAR2 but not in any hash manifest: ${#only_par2[@]} (not listing; use hash sync/create if needed)."
+    fi
+
+    if (( ${#only_hash[@]} > 0 && ${#only_hash[@]} <= max_show )); then
+        echo
+        echo "  In a hash manifest but not in this PAR2 set (${#only_hash[@]}):"
+        printf '    %s\n' "${only_hash[@]}"
+    elif (( ${#only_hash[@]} > max_show )); then
+        echo
+        echo "  In a hash manifest but not in this PAR2 set: ${#only_hash[@]} (not listing; consider regenerating PAR2)."
+    fi
+    echo
+}
+
 pgm_run_one_par2_set_end() {
     local rc="$1"
 
+    pgm_report_protection_coverage || true
     pgm_print_final_run_summary "$rc"
     return "$rc"
 }

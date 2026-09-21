@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# v. 20260921.182207 - hash list-data-paths: non-.par2 data entries for coverage report
 # v. 20260809.165517 - recognize sha384/sha224/sha1/b2 hash manifests
 # v. 20260806.222350 - hash tidy: Linux normalize CRLF, ';'→'#', backslash paths→'/'
 # v. 20260806.132600 - write md5sum-safe 'HASH *file' (one space); detect 'HASH  *file' breakage
@@ -13,6 +14,7 @@
 # v. 20260721.154223 - list-names subcommand; --pairs-file for large rename batches
 # v. 20260719.093400 - hash inventory subcommand for startup scope summary
 
+# 2026.09.21 - v. 1.2.11.0 - hash list-data-paths: list non-.par2 / non-hash-manifest paths from manifests (for par2-pgm-check coverage)
 # 2026.08.09 - v. 1.2.10.0 - Hash manifests: sha384/sha224/sha1/b2 (blake2b) as well as sha512/sha256/md5
 # 2026.08.06 - v. 1.2.9.0 - hash tidy: CRLF→LF, ';'→'#', Windows backslash paths→'/'
 # 2026.08.06 - v. 1.2.8.0 - Write md5sum-safe 'HASH *file'; detect 'HASH  *file' breakage
@@ -35,7 +37,7 @@ import struct
 import sys
 import tempfile
 
-VERSION = "1.2.10.0"
+VERSION = "1.2.11.0"
 MAX_RENAMES = 16
 INVALID_CHARS = '\\:*?"<>|'
 READ_CHUNK = 2097152
@@ -780,6 +782,31 @@ def list_hash_files(folder_path):
     return sorted(set(candidates))
 
 
+def _hash_entry_is_par2_or_manifest(basename):
+    lower = basename.lower()
+    if lower.endswith(".par2") or lower.endswith(".par2.old"):
+        return True
+    ext = os.path.splitext(basename)[1].lower()
+    return ext in HASH_EXTENSIONS
+
+
+def print_hash_data_paths(folder_path):
+    """Print unique non-.par2 data paths listed in hash manifests (one per line)."""
+    seen = set()
+    for hash_path in list_hash_files(folder_path):
+        for record in parse_hash_file(hash_path):
+            if record["type"] != "entry":
+                continue
+            basename = record["basename"]
+            if _hash_entry_is_par2_or_manifest(basename):
+                continue
+            rel = record["path"].lstrip("*").replace("\\", "/").lstrip("./")
+            if not rel or rel in seen:
+                continue
+            seen.add(rel)
+            print(rel)
+
+
 def find_hash_file(folder_path):
     candidates = list_hash_files(folder_path)
     if not candidates:
@@ -1420,6 +1447,9 @@ def main(argv):
             if argv[2] == "list-par2-refs":
                 print_par2_refs_brief(folder_path)
                 return 0
+            if argv[2] == "list-data-paths":
+                print_hash_data_paths(folder_path)
+                return 0
             if argv[2] == "list-active-par2":
                 print_active_par2_brief(folder_path)
                 return 0
@@ -1473,7 +1503,7 @@ def main(argv):
             print(
                 "Usage: par2-pgm-rename.py hash "
                 "verify|update|inventory|lint|"
-                "list-par2-refs|list-active-par2|"
+                "list-par2-refs|list-data-paths|list-active-par2|"
                 "verify-par2-refs|fix-par2-refs "
                 "<directory> [par2-index]\n"
                 "       par2-pgm-rename.py hash tidy <hash-file>\n"
