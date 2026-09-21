@@ -1,7 +1,10 @@
 #!/bin/bash
+# v. 20260921.091916 - make "reboot not required" outcome a boxed notice (harder to miss)
 # v. 20260921.091719 - --help: include suggested crontab entries
 # v. 20260921.085840 - --mail/--mail-to: email script log before reboot (and on give-up)
 # v. 20260921.085347 - initial release: reboot when /var/run/reboot-required and system is idle
+# 2026.09.21 - v. 0.4 - "Reboot not required" prints as a boxed *** notice *** (boxes or Unicode
+#                       frame) so a quiet cron/TTY run does not bury the outcome in a one-line log
 # 2026.09.21 - v. 0.3 - --help lists suggested crontab entries (night reboot, dry-run, daytime
 #                       monitor, @reboot Healthchecks) so they are easy to copy without opening
 #                       the script source
@@ -253,6 +256,30 @@ log() {
 vlog() {
   (( VERBOSE )) || return 0
   printf '%s [verbose] %s\n' "$(ts)" "$*"
+}
+
+# High-visibility notice for outcomes that are easy to miss in a quiet cron/TTY log.
+# Prefer boxes(1); fall back to a Unicode frame (sed, not tr — multibyte ─).
+print_status_box() {
+  local -a lines=( "$@" )
+  local line max_len=0 w
+
+  if command -v boxes >/dev/null 2>&1; then
+    printf '%s\n' "${lines[@]}" | boxes -a c -d stone
+    return 0
+  fi
+
+  for line in "${lines[@]}"; do
+    (( ${#line} > max_len )) && max_len=${#line}
+  done
+  w=$(( max_len + 2 ))
+  echo
+  printf '┌%*s┐\n' "$w" '' | sed 's/ /─/g'
+  for line in "${lines[@]}"; do
+    printf '│ %-*s │\n' "$max_len" "$line"
+  done
+  printf '└%*s┘\n' "$w" '' | sed 's/ /─/g'
+  echo
 }
 
 ################################################################################
@@ -662,7 +689,10 @@ hc_ping "/start"
 
 # Fast path: if reboot is not required, do not sit in the 2-hour retry loop.
 if [[ ! -f /var/run/reboot-required ]]; then
-  log "Reboot not required (/var/run/reboot-required absent). Exiting."
+  print_status_box \
+    "*** REBOOT NOT REQUIRED ***" \
+    "/var/run/reboot-required absent — nothing to do." \
+    "Exiting."
   hc_ping "" "$(printf '%s\n' "${SCRIPT_VERSION}" "reboot not required")"
   . /root/bin/_script_footer.sh
   exit 0
