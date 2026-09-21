@@ -1,5 +1,10 @@
 #!/bin/bash
+# v. 20260921.085840 - --mail/--mail-to: email script log before reboot (and on give-up)
 # v. 20260921.085347 - initial release: reboot when /var/run/reboot-required and system is idle
+# 2026.09.21 - v. 0.2 - Optional mailx report (--mail / --mail-to / REBOOT_MAIL_TO): tee the run
+#                       into a temp log and send it before shutdown -r (and when giving up after
+#                       the retry window). No post-reboot mail from this script — use Healthchecks
+#                       @reboot for "host is back".
 # 2026.09.21 - v. 0.1 - Reboot only when /var/run/reboot-required exists and apt/dpkg are idle,
 #                       load is low, and uptime is past a floor; retry every 5 minutes for up to
 #                       2 hours, then give up; --verbose explains each gate; -n/--dry-run never reboots
@@ -16,6 +21,7 @@ DEFAULT_RETRY_INTERVAL=300
 DEFAULT_RETRY_WINDOW=7200
 DEFAULT_MIN_UPTIME=3600
 DEFAULT_SHUTDOWN_DELAY=1
+DEFAULT_MAIL_TO="matuszyk+$(hostname)@matuszyk.com"
 
 show_help() {
   cat <<EOF
@@ -39,6 +45,9 @@ Options:
   --shutdown-delay MIN    Minutes argument for shutdown -r (default: ${DEFAULT_SHUTDOWN_DELAY}).
   --allow-users           Do not treat logged-in users (who) as a blocker.
   --require-no-users      Refuse reboot when who(1) shows any user (default).
+  --mail                  Email the run log before reboot (and on give-up).
+                          Default To: ${DEFAULT_MAIL_TO}
+  --mail-to ADDR          Like --mail, but send to ADDR.
 
 Environment (overridden by flags when set):
   REBOOT_RETRY_INTERVAL   Same as --retry-interval
@@ -47,11 +56,18 @@ Environment (overridden by flags when set):
   REBOOT_MIN_UPTIME       Same as --min-uptime
   REBOOT_SHUTDOWN_DELAY   Same as --shutdown-delay
   REBOOT_ALLOW_USERS=1    Same as --allow-users
+  REBOOT_MAIL_TO          Enable mail to this address (same as --mail-to)
 
 Exit codes:
   0  reboot not required, or reboot initiated (or dry-run would have rebooted)
   1  gave up after the retry window (conditions never met)
   2  usage / privilege / configuration error
+
+Mail:
+  Sent only when a reboot is initiated (or dry-run would reboot), and when the
+  script gives up after the retry window. Not sent when reboot is simply not
+  required. There is no post-reboot mail from this script — Healthchecks
+  @reboot (healthchecks-reboot-required.sh) already confirms the host is back.
 
 EOF
 }
@@ -73,6 +89,11 @@ RETRY_WINDOW="${REBOOT_RETRY_WINDOW:-$DEFAULT_RETRY_WINDOW}"
 LOAD_MAX="${REBOOT_LOAD_MAX:-}"
 MIN_UPTIME="${REBOOT_MIN_UPTIME:-$DEFAULT_MIN_UPTIME}"
 SHUTDOWN_DELAY="${REBOOT_SHUTDOWN_DELAY:-$DEFAULT_SHUTDOWN_DELAY}"
+# Empty = mail disabled; non-empty = mail enabled (env or --mail / --mail-to).
+MAIL_TO="${REBOOT_MAIL_TO:-}"
+MAIL_FROM=""
+LOGFILE=""
+MAIL_SENT=0
 ALLOW_USERS=0
 case "${REBOOT_ALLOW_USERS:-0}" in
   1|yes|true|Y|y) ALLOW_USERS=1 ;;
@@ -85,6 +106,7 @@ LOAD_MAX_CLI=0
 MIN_UPTIME_CLI=0
 SHUTDOWN_DELAY_CLI=0
 ALLOW_USERS_CLI=0
+MAIL_CLI=0
 
 while [[ $# -gt 0 ]]; do
   case $1 in
@@ -165,6 +187,20 @@ while [[ $# -gt 0 ]]; do
       ALLOW_USERS_CLI=1
       shift
       ;;
+    --mail)
+      MAIL_CLI=1
+      [[ -n "$MAIL_TO" ]] || MAIL_TO="$DEFAULT_MAIL_TO"
+      shift
+      ;;
+    --mail-to)
+      [[ $# -ge 2 && -n "$2" ]] || {
+        echo "ERROR: --mail-to needs a non-empty address." >&2
+        exit 2
+      }
+      MAIL_TO="$2"
+      MAIL_CLI=1
+      shift 2
+      ;;
     --no_startup_delay)
       shift
       ;;
@@ -208,6 +244,63 @@ NPROC="$(nproc 2>/dev/null || echo 1)"
 if [[ -z "$LOAD_MAX" ]]; then
   LOAD_MAX="$(awk -v c="$NPROC" 'BEGIN { printf "%.2f", (c < 1 ? 1 : c) * 0.25 }')"
 fi
+
+MAIL_FROM="root@$(hostname)"
+
+################################################################################
+# Optional email: tee stdout/stderr into a temp log; send before reboot / on give-up
+################################################################################
+
+setup_mail_logging() {
+  [[ -n "$MAIL_TO" ]] || return 0
+
+  if ! command -v mailx >/dev/null 2>&1; then
+    echo "ERROR: --mail/--mail-to requested but mailx is not installed (apt: mailutils)." >&2
+    exit 2
+  fi
+
+  LOGFILE="$(mktemp /tmp/reboot-when-required.XXXXXX.log)"
+  # Keep a copy of the run for the mail body; still print to the terminal/cron log.
+  exec > >(tee -a "$LOGFILE") 2>&1
+  # shellcheck disable=SC2064
+  trap "rm -f -- '$LOGFILE'" EXIT
+}
+
+# outcome examples: "reboot initiated", "dry-run: would reboot", "gave up after retry window"
+send_script_mail() {
+  local outcome="$1"
+  local subject host ts_now
+
+  [[ -n "$MAIL_TO" && -n "$LOGFILE" && -f "$LOGFILE" ]] || return 0
+  (( MAIL_SENT )) && return 0
+
+  # Give the tee process a moment to flush the last lines into LOGFILE.
+  sleep 0.5
+
+  host="$(hostname)"
+  ts_now="$(date '+%Y.%m.%d %H:%M:%S')"
+  subject="(${host}-${ts_now}) reboot-when-required.sh: ${outcome}"
+
+  log "Sending mail to ${MAIL_TO}: ${subject}"
+
+  if command -v aha >/dev/null 2>&1 && command -v strings >/dev/null 2>&1; then
+    strings "$LOGFILE" | aha | /usr/bin/mailx -r "$MAIL_FROM" \
+      -a 'Content-Type: text/html' \
+      -s "$subject" \
+      "$MAIL_TO" || {
+      log "WARNING: mailx failed (HTML path); trying plain text."
+      /usr/bin/mailx -r "$MAIL_FROM" -s "$subject" "$MAIL_TO" <"$LOGFILE" || \
+        log "WARNING: mailx failed; continuing anyway."
+    }
+  else
+    /usr/bin/mailx -r "$MAIL_FROM" -s "$subject" "$MAIL_TO" <"$LOGFILE" || \
+      log "WARNING: mailx failed; continuing anyway."
+  fi
+
+  MAIL_SENT=1
+}
+
+setup_mail_logging
 
 ################################################################################
 # Healthchecks (optional; same pattern as other healthchecks-*.sh scripts)
@@ -253,6 +346,9 @@ print_run_settings_equivalent_cli() {
     parts+=("--allow-users")
   else
     parts+=("--require-no-users")
+  fi
+  if [[ -n "$MAIL_TO" ]]; then
+    parts+=("--mail-to" "$MAIL_TO")
   fi
 
   out="$(printf '%q' "$cmd")"
@@ -316,6 +412,16 @@ print_run_settings() {
     printf '  %-22s%s\n' "Logged-in users:" "ignored (--allow-users)"
   else
     printf '  %-22s%s\n' "Logged-in users:" "must be none (--require-no-users)"
+  fi
+  if [[ -n "$MAIL_TO" ]]; then
+    if (( MAIL_CLI )); then
+      printf '  %-22s%s\n' "--mail/--mail-to:" "given (${MAIL_TO})"
+    else
+      printf '  %-22s%s\n' "--mail/--mail-to:" "${MAIL_TO} (env REBOOT_MAIL_TO)"
+    fi
+    printf '  %-22s%s\n' "Mail when:" "reboot initiated / dry-run would reboot / give-up"
+  else
+    printf '  %-22s%s\n' "--mail/--mail-to:" "not given (no email)"
   fi
   printf '  %-22s%s\n' "Reboot signal:" "/var/run/reboot-required"
   print_run_settings_equivalent_cli
@@ -502,6 +608,7 @@ initiate_reboot() {
 
   if (( DRY_RUN )); then
     log "DRY-RUN: would run: shutdown -r ${SHUTDOWN_DELAY} $(printf '%q' "$msg")"
+    send_script_mail "dry-run: would reboot"
     return 0
   fi
 
@@ -511,6 +618,8 @@ initiate_reboot() {
   fi
 
   log "Initiating reboot in ${SHUTDOWN_DELAY} minute(s): $msg"
+  # Mail the full run log now, while the box is still up (shutdown -r waits SHUTDOWN_DELAY minutes).
+  send_script_mail "reboot initiated (shutdown -r ${SHUTDOWN_DELAY})"
   # wall message goes out automatically with shutdown -r.
   shutdown -r "$SHUTDOWN_DELAY" "$msg"
 }
@@ -586,6 +695,7 @@ while true; do
   if (( NOW >= DEADLINE )); then
     log "Giving up after ${ATTEMPT} attempt(s): conditions not met within ${RETRY_WINDOW}s."
     log "Last failure: ${LAST_FAIL_REASON:-unknown}"
+    send_script_mail "gave up after retry window"
     hc_ping "/fail" "$(printf '%s\n' "${SCRIPT_VERSION}" \
       "gave up after ${ATTEMPT} attempt(s) / ${RETRY_WINDOW}s" \
       "last failure: ${LAST_FAIL_REASON:-unknown}")"
@@ -618,10 +728,14 @@ done
 #   0 7-22 * * * /root/bin/healthchecks-reboot-required.sh --no_startup_delay
 #
 # Attempt an idle reboot once per night (adjust host as needed):
-#   20 3 * * * /root/bin/reboot-when-required.sh --no_startup_delay --verbose
+#   20 3 * * * /root/bin/reboot-when-required.sh --no_startup_delay --verbose --mail
 #
 # Dry-run first on a host:
-#   20 3 * * * /root/bin/reboot-when-required.sh --no_startup_delay --verbose --dry-run
+#   20 3 * * * /root/bin/reboot-when-required.sh --no_startup_delay --verbose --dry-run --mail
 #
 # Optional Healthchecks: add a line to /root/bin/healthchecks-ids.txt:
 #   reboot-when-required.sh https://hc-ping.com/<uuid>
+#
+# Post-reboot: do not mail from this script. Rely on:
+#   @reboot ( /root/bin/healthchecks-reboot-required.sh --no_startup_delay ) 2>&1
+# (success ping means the host is back and reboot-required is cleared).
