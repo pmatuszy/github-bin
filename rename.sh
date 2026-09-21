@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# v. 20260921.161550 - Quik dashboard: wire GX######_<id> → <source>-dashboard into transform_name
+# v. 20260921.161319 - Quik GX######_<id> exports: pair to renamed source MP4 → same name + -dashboard
 # v. 20260920.224150 - GoPro MP4+WAV: bidirectional title sync; prompt when both descriptions differ
 # v. 20260920.223547 - GoPro WAV: follow titled/described MP4 (same capture ts+camera; spaces→underscores)
 # v. 20260920.200800 - Panasonic HC-X: pipefail-safe EXIF field read + vlog skip reasons; allow 3–4 digit clip ids
@@ -63,6 +65,8 @@
 # v. 20260721.132007 - Samsung timestamp media: preserve optional numeric sorting prefix when appending make/model
 # v. 20260721.112812 - GoPro camera labels: GoPro_Hero4_Silver style (not GOPRO4_SILVER)
 
+# 2026.09.21 - v. 19.327.161550 - Quik dashboard rename runs in transform_name (before plain GX###### camera path); leaves export unchanged when no unique renamed source
+# 2026.09.21 - v. 19.326.161319 - GoPro Quik/app exports GX######_<longid>[_N].mp4: find same-dir already-renamed source MP4 by CreateDate (exact/near, or UTC↔local ±1/2/3h) and rename to <source_stem>-dashboard[_N].mp4 (e.g. …_Timewarp_5x.mp4 → …_Timewarp_5x-dashboard.mp4)
 # 2026.09.20 - v. 19.325.224150 - GoPro Mission 1 MP4+WAV: title/description syncs both ways (titled WAV renames plain MP4 too); if both files have different descriptions, prompt [M] MP4 / [w] WAV / [n] skip (default MP4; auto-yes/[a] keeps MP4)
 # 2026.09.20 - v. 19.324.223547 - GoPro Mission 1 WAV: when MP4 has a title/description (…_-_title_-_GoPro_…) and WAV is still plain (…_-_-_GoPro_…), pair by same capture timestamp+camera and rename WAV to the MP4 stem (spaces→underscores); also works if WAV is visited alone after MP4 already renamed
 # 2026.09.20 - v. 19.323.200800 - Panasonic HC-X clips: pipefail-safe Shoot Start Date / manufacturer field reads (grep|head under pipefail could empty the date and silently skip); log each skip reason with -v; accept 3–4 digit clip numbers
@@ -11333,6 +11337,127 @@ gopro_raw_mp4_basename_matches() {
     [[ "$bn" =~ ^[cCgG][hHxX][0-9]{6}(_Proxy)?\.[mM][pP]4$ ]]
 }
 
+# GoPro Quik / phone-app re-export: GX010491_1784278264779.mp4 or GX010595_…_2.mp4
+# (chapter id + long media id; not a plain camera raw name, so the normal GX######.MP4 path misses it).
+gopro_quik_dashboard_export_basename_matches() {
+    local bn="$1"
+    [[ "$bn" =~ ^[cCgG][hHxX][0-9]{6}_[0-9]{10,}(_[0-9]+)?\.[mM][pP]4$ ]]
+}
+
+# Optional copy index from Quik name: GX…_178…_2.mp4 → 2 (for -dashboard_2).
+gopro_quik_dashboard_copy_index_from_basename() {
+    local bn="$1"
+    if [[ "$bn" =~ ^[cCgG][hHxX][0-9]{6}_[0-9]{10,}_([0-9]+)\.[mM][pP]4$ ]]; then
+        printf '%s' "${BASH_REMATCH[1]}"
+        return 0
+    fi
+    return 1
+}
+
+# Already-renamed GoPro MP4 that is a Quik "source" candidate (not itself a -dashboard twin).
+gopro_renamed_source_mp4_not_dashboard_matches() {
+    local bn="$1" stem
+    gopro_clip_pairable_mp4_basename_matches "$bn" || return 1
+    gopro_raw_mp4_basename_matches "$bn" && return 1
+    gopro_quik_dashboard_export_basename_matches "$bn" && return 1
+    stem="${bn%.*}"
+    [[ "$stem" == *-dashboard ]] && return 1
+    [[ "$stem" =~ -dashboard_[0-9]+$ ]] && return 1
+    return 0
+}
+
+# Quik export CreateDate is often UTC while the source basename uses local wall-clock (±1/2/3h).
+gopro_dashboard_timestamps_compatible() {
+    local export_ts="$1" source_ts="$2"
+    local ee es d abs zd
+
+    [[ "$export_ts" =~ ^[0-9]{8}_[0-9]{6}$ ]] || return 1
+    [[ "$source_ts" =~ ^[0-9]{8}_[0-9]{6}$ ]] || return 1
+    [[ "$export_ts" == "$source_ts" ]] && return 0
+    gopro_mission1_timestamps_near "$export_ts" "$source_ts" 180 && return 0
+
+    ee="$(gopro_mission1_compact_timestamp_epoch "$export_ts")" || return 1
+    es="$(gopro_mission1_compact_timestamp_epoch "$source_ts")" || return 1
+    d=$((es - ee))
+    for zd in 0 3600 7200 10800 -3600 -7200 -10800; do
+        abs=$((d - zd))
+        (( abs < 0 )) && abs=$((-abs))
+        (( abs <= 180 )) && return 0
+    done
+    return 1
+}
+
+# Same-directory already-renamed source MP4 for a Quik export (unique CreateDate / zone match).
+gopro_quik_find_renamed_source_mp4() {
+    local export_mp4="$1"
+    local dir bn ts cand cand_bn cand_ts
+    local hit="" hit_count=0
+    local saved_nullglob
+
+    [[ -f "$export_mp4" ]] || return 1
+    bn="$(basename -- "$export_mp4")"
+    gopro_quik_dashboard_export_basename_matches "$bn" || return 1
+    dir="$(dirname -- "$export_mp4")"
+    ts="$(gopro_wav_compact_timestamp_from_file "$export_mp4")" || return 1
+
+    saved_nullglob="$(shopt -p nullglob || true)"
+    shopt -s nullglob
+    for cand in "$dir"/*; do
+        [[ -f "$cand" ]] || continue
+        [[ "$cand" -ef "$export_mp4" ]] && continue
+        cand_bn="$(basename -- "$cand")"
+        gopro_renamed_source_mp4_not_dashboard_matches "$cand_bn" || continue
+        cand_ts="$(gopro_renamed_clip_timestamp_from_basename "$cand_bn")" || continue
+        gopro_dashboard_timestamps_compatible "$ts" "$cand_ts" || continue
+        hit="$cand"
+        ((++hit_count))
+    done
+    eval "$saved_nullglob"
+
+    if (( hit_count == 1 )); then
+        printf '%s' "$hit"
+        return 0
+    fi
+    if (( hit_count > 1 )); then
+        vlog "GoPro Quik dashboard: ambiguous source match for '$export_mp4' (ts=$ts, hits=$hit_count)"
+        return 1
+    fi
+    vlog "GoPro Quik dashboard: no renamed source MP4 for '$export_mp4' (ts=$ts)"
+    return 1
+}
+
+# Quik/app export → <source_stem>-dashboard[_N].ext (same name as the edited original + -dashboard).
+transform_gopro_quik_dashboard_basename() {
+    local f="$1"
+    local base="${2:-$(basename -- "$f")}"
+    local src src_bn src_stem ext idx target
+    local _tq_save_e=0
+
+    gopro_quik_dashboard_export_basename_matches "$base" || return 1
+
+    _tq_save_e=0
+    [[ $- == *e* ]] && _tq_save_e=1
+    set +e
+
+    src="$(gopro_quik_find_renamed_source_mp4 "$f")" || {
+        ((_tq_save_e)) && set -e || set +e
+        return 1
+    }
+    src_bn="$(basename -- "$src")"
+    src_stem="${src_bn%.*}"
+    ext="${base##*.}"
+    if idx="$(gopro_quik_dashboard_copy_index_from_basename "$base")"; then
+        target="${src_stem}-dashboard_${idx}.${ext}"
+    else
+        target="${src_stem}-dashboard.${ext}"
+    fi
+
+    ((_tq_save_e)) && set -e || set +e
+    vlog "GoPro Quik dashboard: $base -> $target (source=$(basename -- "$src"))"
+    printf '%s' "$target"
+    return 0
+}
+
 gopro_raw_wav_basename_matches() {
     local bn="$1"
     [[ "$bn" =~ ^[cCgG][hHxX][0-9]{6}(_Proxy)?\.[wW][aA][vV]$ ]]
@@ -13970,6 +14095,31 @@ transform_name() {
             vlog "Phone media rename: $base -> $_mo_try"
         else
             vlog "Phone media rename: no usable camera metadata for $base (rc=$_mo_rc); falling back to normal rename"
+        fi
+    fi
+
+    if [[ -f "$f" ]] && ((_tn_skip_exif == 0)) && (( _sony_applied == 0 )) \
+        && gopro_quik_dashboard_export_basename_matches "$base"; then
+        if ! resolve_rename_exiftool >/dev/null; then
+            prompt_gopro_exiftool_missing_action "$f"
+            [[ "$stopped_by_user" != yes ]] || return 2
+            _transform_name_return_unchanged "$f"
+            return 0
+        fi
+        local _tn_save_e_qd=0 _quik_dash_try="" _quik_dash_rc=0
+        [[ $- == *e* ]] && _tn_save_e_qd=1
+        set +e
+        _quik_dash_try="$(transform_gopro_quik_dashboard_basename "$f" "$base")"
+        _quik_dash_rc=$?
+        if ((_tn_save_e_qd)); then
+            set -e
+        fi
+        if (( _quik_dash_rc == 0 )) && [[ -n "$_quik_dash_try" ]]; then
+            newbase="$_quik_dash_try"
+            _gopro_applied=1
+            vlog "GoPro Quik dashboard rename: $base -> $_quik_dash_try"
+        else
+            vlog "GoPro Quik dashboard rename: no unique renamed source for $base (rc=$_quik_dash_rc); leaving unchanged"
         fi
     fi
 
