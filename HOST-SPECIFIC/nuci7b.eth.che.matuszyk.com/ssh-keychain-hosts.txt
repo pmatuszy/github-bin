@@ -24,6 +24,7 @@ vpn-che.eth.che.matuszyk.com
         #yt2podcast.eth.che.matuszyk.com
 yt2podcast2.eth.che.matuszyk.com
         #zurich.eth.che.matuszyk.com
+management-server.eth.r.matuszyk.com
 
 # --- r ---
 cloud.eth.r.matuszyk.com
@@ -38,7 +39,7 @@ www02.eth.r.matuszyk.com
 
 # --- b ---
         #laptopvm.eth.b.matuszyk.com
-management-server.eth.b.matuszyk.com
+# management-server.eth.b.matuszyk.com
         #rpi42b.eth.b.matuszyk.com
 
 # --- ss ---
