@@ -38,7 +38,7 @@ www02.eth.r.matuszyk.com
 
 # --- b ---
         #laptopvm.eth.b.matuszyk.com
-#management-server.eth.b.matuszyk.com
+management-server.eth.b.matuszyk.com
         #rpi42b.eth.b.matuszyk.com
 
 # --- ss ---
