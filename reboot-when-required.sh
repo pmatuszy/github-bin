@@ -1,8 +1,11 @@
 #!/bin/bash
+# v. 20260921.092438 - --help: drop dry-run crontab example
 # v. 20260921.091916 - make "reboot not required" outcome a boxed notice (harder to miss)
 # v. 20260921.091719 - --help: include suggested crontab entries
 # v. 20260921.085840 - --mail/--mail-to: email script log before reboot (and on give-up)
 # v. 20260921.085347 - initial release: reboot when /var/run/reboot-required and system is idle
+# 2026.09.21 - v. 0.5 - --help suggested crontab: remove the dry-run --mail example line (keep it
+#                       as a one-off manual command in the script footer comments only)
 # 2026.09.21 - v. 0.4 - "Reboot not required" prints as a boxed *** notice *** (boxes or Unicode
 #                       frame) so a quiet cron/TTY run does not bury the outcome in a one-line log
 # 2026.09.21 - v. 0.3 - --help lists suggested crontab entries (night reboot, dry-run, daytime
@@ -80,9 +83,6 @@ Suggested crontab entries:
 
   # Daytime monitor only (keep separate from this script):
   0 7-22 * * * /root/bin/healthchecks-reboot-required.sh --no_startup_delay
-
-  # First try on a host (mail + dry-run, no real reboot):
-  20 3 * * * /root/bin/reboot-when-required.sh --no_startup_delay --verbose --dry-run --mail
 
   # Night idle reboot (script retries up to ~2h by itself):
   20 3 * * * /root/bin/reboot-when-required.sh --no_startup_delay --verbose --mail
@@ -781,8 +781,8 @@ done
 # Attempt an idle reboot once per night (adjust host as needed):
 #   20 3 * * * /root/bin/reboot-when-required.sh --no_startup_delay --verbose --mail
 #
-# Dry-run first on a host:
-#   20 3 * * * /root/bin/reboot-when-required.sh --no_startup_delay --verbose --dry-run --mail
+# Dry-run first on a host (manual / one-off, not a lasting crontab line):
+#   /root/bin/reboot-when-required.sh --no_startup_delay --verbose --dry-run --mail
 #
 # Optional Healthchecks: add a line to /root/bin/healthchecks-ids.txt:
 #   reboot-when-required.sh https://hc-ping.com/<uuid>
