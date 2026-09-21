@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20260921.114432 - remote cycle every 10 min again (SSH_KEYCHAIN_DAEMON_SLEEP default 600)
 # v. 20260916.115600 - drop red/yellow coloring; only OK lines are green, problems use plain text
 # v. 20260916.114700 - unreachable hosts: red banner, consecutive-failure count, boxed cycle summary
 # v. 20260916.114400 - host list sorted (and deduplicated) before printing and visiting
@@ -11,6 +12,7 @@
 # v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
 # v. 20260718.082000 - English password prompt; track script in github-bin
 
+# 2026.09.21 - v. 1.1 - remote cycle sleep default 600s (10 min) again; was 3600s / 1h
 # 2026.07.18 - v. 1.0 - add to repo; translate Wpisz haslo -> Enter password
 # 2026.05.26 - user-facing messages translated from Polish to English
 # 202x.xx.xx - v. 0.1 - initial release (nuci7b GNU screen window)
@@ -19,7 +21,7 @@
 #
 # GNU screen helper: load SSH keys into keychain/ssh-agent. Prompts for the
 # passphrase once and loads the local keys once, at startup. After that it loops
-# every hour running /root/bin/ssh-keychain.sh over ssh on each host listed
+# every 10 minutes running /root/bin/ssh-keychain.sh over ssh on each host listed
 # in ssh-keychain-hosts.txt; unreachable hosts are skipped after a timeout.
 # The passphrase lives only in this machine's memory and is pushed to a remote
 # host (on stdin of bash -s, never in argv and never to remote disk) only when
@@ -36,7 +38,7 @@ Usage: $(basename "$0") [-h|--help] [-v|--version] [--no_startup_delay]
 Long-running screen helper: load SSH keys into keychain/ssh-agent after reboot.
 Asks for the key passphrase once and loads the local keys once, at startup.
 
-It then loops every SSH_KEYCHAIN_DAEMON_SLEEP seconds (1 hour by default), each cycle running
+It then loops every SSH_KEYCHAIN_DAEMON_SLEEP seconds (10 minutes by default), each cycle running
 /root/bin/ssh-keychain.sh over ssh on every host from the host list file (one
 host or user@host per line, # comments and blank lines are ignored, file re-read
 every cycle). Hosts that do not answer within SSH_KEYCHAIN_CONNECT_TIMEOUT
@@ -55,7 +57,7 @@ Options:
   --no_startup_delay   Skip random startup delay.
 
 Environment:
-  SSH_KEYCHAIN_DAEMON_SLEEP     Seconds between cycles (default: 3600).
+  SSH_KEYCHAIN_DAEMON_SLEEP     Seconds between cycles (default: 600).
   SSH_KEYCHAIN_DISPLAY          DISPLAY for keychain's askpass path (default: dummy:0).
   SSH_KEYCHAIN_HOSTS_FILE       Host list (default: /root/bin/ssh-keychain-hosts.txt).
   SSH_KEYCHAIN_REMOTE_CMD       Command run on each host
@@ -90,7 +92,7 @@ check_if_installed keychain
 check_if_installed ssh openssh-client
 check_if_installed timeout coreutils
 
-SLEEP_SEC="${SSH_KEYCHAIN_DAEMON_SLEEP:-3600}"
+SLEEP_SEC="${SSH_KEYCHAIN_DAEMON_SLEEP:-600}"
 HOSTS_FILE="${SSH_KEYCHAIN_HOSTS_FILE:-/root/bin/ssh-keychain-hosts.txt}"
 # Both flags are needed: ssh-keychain.sh sources _script_header.sh twice, and each
 # source adds a random delay of up to MAX_RANDOM_DELAY_IN_SEC when there is no tty.
@@ -427,7 +429,9 @@ echo
 while : ; do
   skd_remote_cycle
 
-  if (( SLEEP_SEC == 3600 )); then
+  if (( SLEEP_SEC == 600 )); then
+    echo "(PGM) sleeping 10 minutes before next cycle (Ctrl-C to stop)..."
+  elif (( SLEEP_SEC == 3600 )); then
     echo "(PGM) sleeping 1 hour before next cycle (Ctrl-C to stop)..."
   else
     echo "(PGM) sleeping ${SLEEP_SEC}s before next cycle (Ctrl-C to stop)..."
