@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20260922.082714 - recovery percent prompt: q/Q quits instead of falling back to the default
 # v. 20260922.082433 - hash menu: drop manual echo of first key; tty already echoes it (showed "11")
 # v. 20260916.133341 - Run settings: mark hash/recovery/helpers given vs prompted; add Equivalent CLI
 # v. 20260916.130951 - boxed output: draw rules with sed; tr truncated ─ to one invalid byte
@@ -14,6 +15,7 @@
 # v. 20260809.155541 - prompt to exclude rename.sh helpers from PAR2 (default yes)
 # v. 20260806.224414 - initial: create volume-only PAR2 + SHA-512/MD5 hash for cwd subtree
 
+# 2026.09.22 - v. 0.1.13 - Recovery percent prompt accepts q/Q to quit (advertised in the prompt); previously q was just an invalid percent and the run continued with the default
 # 2026.09.22 - v. 0.1.12 - Hash menu echoed the typed digit twice ("11" for 1): read -n 1 leaves terminal ECHO on (only read -s turns it off), so the extra printf of the first key was redundant
 # 2026.09.16 - v. 0.1.11 - === Run settings ===: report --hash / --recovery / rename-helper choices as given, --yes default, or prompted (with the selected value), show the effective PROMPT_TIMEOUT, and add an "Equivalent CLI:" line that repeats the run non-interactively
 # 2026.09.16 - v. 0.1.10 - Boxed summaries: horizontal rules via sed 's/ /─/g'; tr is byte-wise and cut the 3-byte ─ (U+2500) down to a lone 0xE2, printing invalid UTF-8
@@ -789,13 +791,21 @@ prompt_recovery_percent() {
     return 0
   fi
 
-  printf '%sRecovery percent for PAR2 set [1-100] (default: %s%%, %s): ' \
+  printf '%sRecovery percent for PAR2 set [1-100] (default: %s%%; q=quit, %s): ' \
     "$(user_prompt_ts_prefix)" "$suggested" "$(prompt_timeout_label)"
   if ! read_line_with_timeout ans; then
     ans=""
     echo
   fi
   ans="${ans//[[:space:]]/}"
+  case "$ans" in
+    q|Q)
+      echo "Quit."
+      return_code=0
+      RUN_OUTCOME=quit
+      finish
+      ;;
+  esac
   ans="${ans%%%}"
   [[ -z "$ans" ]] && ans="$suggested"
   if [[ ! "$ans" =~ ^[1-9][0-9]?$|^100$ ]]; then
