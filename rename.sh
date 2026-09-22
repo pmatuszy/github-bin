@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# v. 20260922.101226 - plain rename: update checksum refs in same dir and ancestors up to START_DIR
 # v. 20260921.202625 - checksum session mem cache: reuse digests across recovery scans (path+size+mtime)
 # v. 20260921.161550 - Quik dashboard: wire GX######_<id> → <source>-dashboard into transform_name
 # v. 20260921.161319 - Quik GX######_<id> exports: pair to renamed source MP4 → same name + -dashboard
@@ -66,6 +67,7 @@
 # v. 20260721.132007 - Samsung timestamp media: preserve optional numeric sorting prefix when appending make/model
 # v. 20260721.112812 - GoPro camera labels: GoPro_Hero4_Silver style (not GOPRO4_SILVER)
 
+# 2026.09.22 - v. 19.329.101226 - Plain rename / thumbs.db delete: rewrite checksum refs not only in the file's directory but in every ancestor hash manifest up to START_DIR (e.g. photos/foo.jpg updates ./album.sha512); still no climb above the run root
 # 2026.09.21 - v. 19.328.202625 - Checksum recovery: session memory cache of digests (keyed by kind+abs path+size+mtime) plus digest→path index so each file content is hashed at most once per run when searching missing refs; summary shows mem hits/misses
 # 2026.09.21 - v. 19.327.161550 - Quik dashboard rename runs in transform_name (before plain GX###### camera path); leaves export unchanged when no unique renamed source
 # 2026.09.21 - v. 19.326.161319 - GoPro Quik/app exports GX######_<longid>[_N].mp4: find same-dir already-renamed source MP4 by CreateDate (exact/near, or UTC↔local ±1/2/3h) and rename to <source_stem>-dashboard[_N].mp4 (e.g. …_Timewarp_5x.mp4 → …_Timewarp_5x-dashboard.mp4)
@@ -6004,7 +6006,7 @@ print_checksum_sibling_notice_verbose() {
         has_any=1
     done
     if (( has_any == 1 )); then
-        echo "          local checksum references will be updated during this rename." >&2
+        echo "          checksum references (same dir + ancestors up to start dir) will be updated during this rename." >&2
     fi
 }
 
@@ -15845,12 +15847,62 @@ declare -a LOCAL_UPDATE_OLD_REFS=()
 declare -a LOCAL_UPDATE_NEW_REFS=()
 declare -a LOCAL_UPDATE_VERIFY_FILES=()
 
+# Directories from dirname(path) up to and including START_DIR (inclusive).
+# Keeps the same path style as dirname(path) so resolve_checksum_ref_path string-matches work.
+# Does not climb above START_DIR. Nameref: _out_dirs.
+collect_checksum_scan_dirs_up_to_start() {
+    local path="$1"
+    local -n _out_dirs=$2
+    local scan_dir start_abs scan_abs parent parent_abs
+    local -A seen=()
+
+    _out_dirs=()
+    start_abs="$(db_abs_path "$START_DIR" 2>/dev/null || true)"
+    [[ -n "$start_abs" ]] || start_abs="$START_DIR"
+
+    scan_dir="$(dirname -- "$path")"
+    while true; do
+        scan_abs="$(db_abs_path "$scan_dir" 2>/dev/null || true)"
+        if [[ -z "$scan_abs" ]]; then
+            if [[ -z "${seen[$scan_dir]+x}" ]]; then
+                seen["$scan_dir"]=1
+                _out_dirs+=( "$scan_dir" )
+            fi
+            break
+        fi
+        if [[ -n "${seen[$scan_abs]+x}" ]]; then
+            break
+        fi
+        seen["$scan_abs"]=1
+        _out_dirs+=( "$scan_dir" )
+
+        if [[ "$scan_abs" == "$start_abs" ]]; then
+            break
+        fi
+        # Outside the start tree: keep the file's own dir (already recorded), do not climb further.
+        if [[ "$scan_abs" != "$start_abs"/* ]]; then
+            break
+        fi
+
+        parent="$(dirname -- "$scan_dir")"
+        parent_abs="$(db_abs_path "$parent" 2>/dev/null || true)"
+        if [[ -z "$parent_abs" || "$parent_abs" == "$scan_abs" ]]; then
+            break
+        fi
+        if [[ "$parent_abs" != "$start_abs" && "$parent_abs" != "$start_abs"/* ]]; then
+            break
+        fi
+        scan_dir="$parent"
+    done
+}
+
 collect_local_checksum_ref_updates() {
     local target_old="$1"
     local target_new="$2"
     local target_kind="$3"
 
     local current_dir sum_file hash ref resolved suffix new_actual old_ref_for_write new_ref_for_write
+    local -a scan_dirs=()
     local -A seen_sum_files=()
 
     LOCAL_UPDATE_SUM_FILES=()
@@ -15858,53 +15910,55 @@ collect_local_checksum_ref_updates() {
     LOCAL_UPDATE_NEW_REFS=()
     LOCAL_UPDATE_VERIFY_FILES=()
 
-    current_dir="$(dirname -- "$target_old")"
+    collect_checksum_scan_dirs_up_to_start "$target_old" scan_dirs
 
-    for sum_file in "$current_dir"/*.sha512 "$current_dir"/*.sha384 \
-                    "$current_dir"/*.sha256 "$current_dir"/*.sha224 \
-                    "$current_dir"/*.sha1 "$current_dir"/*.md5 \
-                    "$current_dir"/*.b2; do
-        [[ -f "$sum_file" ]] || continue
-        is_checksum_file "$sum_file" || continue
+    for current_dir in "${scan_dirs[@]}"; do
+        for sum_file in "$current_dir"/*.sha512 "$current_dir"/*.sha384 \
+                        "$current_dir"/*.sha256 "$current_dir"/*.sha224 \
+                        "$current_dir"/*.sha1 "$current_dir"/*.md5 \
+                        "$current_dir"/*.b2; do
+            [[ -f "$sum_file" ]] || continue
+            is_checksum_file "$sum_file" || continue
 
-        while IFS=$'	' read -r hash ref; do
-            [[ -n "$ref" ]] || continue
-            resolved="$(resolve_checksum_ref_path "$sum_file" "$ref")"
+            while IFS=$'	' read -r hash ref; do
+                [[ -n "$ref" ]] || continue
+                resolved="$(resolve_checksum_ref_path "$sum_file" "$ref")"
 
-            case "$target_kind" in
-                file)
-                    [[ "$resolved" == "$target_old" ]] || continue
-                    new_actual="$target_new"
-                    ;;
-                directory)
-                    if [[ "$resolved" == "$target_old" ]]; then
+                case "$target_kind" in
+                    file)
+                        [[ "$resolved" == "$target_old" ]] || continue
                         new_actual="$target_new"
-                    elif [[ "$resolved" == "$target_old/"* ]]; then
-                        suffix="${resolved#"$target_old"}"
-                        new_actual="${target_new}${suffix}"
-                    else
+                        ;;
+                    directory)
+                        if [[ "$resolved" == "$target_old" ]]; then
+                            new_actual="$target_new"
+                        elif [[ "$resolved" == "$target_old/"* ]]; then
+                            suffix="${resolved#"$target_old"}"
+                            new_actual="${target_new}${suffix}"
+                        else
+                            continue
+                        fi
+                        ;;
+                    *)
                         continue
-                    fi
-                    ;;
-                *)
-                    continue
-                    ;;
-            esac
+                        ;;
+                esac
 
-            old_ref_for_write="$(format_ref_for_checksum_file "$sum_file" "$ref" "$resolved")"
-            new_ref_for_write="$(format_ref_for_checksum_file "$sum_file" "$ref" "$new_actual")"
+                old_ref_for_write="$(format_ref_for_checksum_file "$sum_file" "$ref" "$resolved")"
+                new_ref_for_write="$(format_ref_for_checksum_file "$sum_file" "$ref" "$new_actual")"
 
-            [[ "$old_ref_for_write" == "$new_ref_for_write" ]] && continue
+                [[ "$old_ref_for_write" == "$new_ref_for_write" ]] && continue
 
-            LOCAL_UPDATE_SUM_FILES+=( "$sum_file" )
-            LOCAL_UPDATE_OLD_REFS+=( "$old_ref_for_write" )
-            LOCAL_UPDATE_NEW_REFS+=( "$new_ref_for_write" )
+                LOCAL_UPDATE_SUM_FILES+=( "$sum_file" )
+                LOCAL_UPDATE_OLD_REFS+=( "$old_ref_for_write" )
+                LOCAL_UPDATE_NEW_REFS+=( "$new_ref_for_write" )
 
-            if [[ -z "${seen_sum_files[$sum_file]+x}" ]]; then
-                seen_sum_files["$sum_file"]=1
-                LOCAL_UPDATE_VERIFY_FILES+=( "$sum_file" )
-            fi
-        done < <(extract_checksum_entries "$sum_file")
+                if [[ -z "${seen_sum_files[$sum_file]+x}" ]]; then
+                    seen_sum_files["$sum_file"]=1
+                    LOCAL_UPDATE_VERIFY_FILES+=( "$sum_file" )
+                fi
+            done < <(extract_checksum_entries "$sum_file")
+        done
     done
 }
 
@@ -15915,39 +15969,42 @@ collect_local_checksum_ref_summaries() {
     local target_kind="$2"
 
     local current_dir sum_file hash ref resolved
+    local -a scan_dirs=()
     local -A seen=()
 
     PLAIN_REF_SUM_FILES=()
-    current_dir="$(dirname -- "$target_old")"
+    collect_checksum_scan_dirs_up_to_start "$target_old" scan_dirs
 
-    for sum_file in "$current_dir"/*.sha512 "$current_dir"/*.sha384 \
-                    "$current_dir"/*.sha256 "$current_dir"/*.sha224 \
-                    "$current_dir"/*.sha1 "$current_dir"/*.md5 \
-                    "$current_dir"/*.b2; do
-        [[ -f "$sum_file" ]] || continue
-        is_checksum_file "$sum_file" || continue
+    for current_dir in "${scan_dirs[@]}"; do
+        for sum_file in "$current_dir"/*.sha512 "$current_dir"/*.sha384 \
+                        "$current_dir"/*.sha256 "$current_dir"/*.sha224 \
+                        "$current_dir"/*.sha1 "$current_dir"/*.md5 \
+                        "$current_dir"/*.b2; do
+            [[ -f "$sum_file" ]] || continue
+            is_checksum_file "$sum_file" || continue
 
-        while IFS=$'	' read -r hash ref; do
-            [[ -n "$ref" ]] || continue
-            resolved="$(resolve_checksum_ref_path "$sum_file" "$ref")"
+            while IFS=$'	' read -r hash ref; do
+                [[ -n "$ref" ]] || continue
+                resolved="$(resolve_checksum_ref_path "$sum_file" "$ref")"
 
-            case "$target_kind" in
-                file)
-                    [[ "$resolved" == "$target_old" ]] || continue
-                    ;;
-                directory)
-                    [[ "$resolved" == "$target_old" || "$resolved" == "$target_old/"* ]] || continue
-                    ;;
-                *)
-                    continue
-                    ;;
-            esac
+                case "$target_kind" in
+                    file)
+                        [[ "$resolved" == "$target_old" ]] || continue
+                        ;;
+                    directory)
+                        [[ "$resolved" == "$target_old" || "$resolved" == "$target_old/"* ]] || continue
+                        ;;
+                    *)
+                        continue
+                        ;;
+                esac
 
-            if [[ -z "${seen[$sum_file]+x}" ]]; then
-                seen["$sum_file"]=1
-                PLAIN_REF_SUM_FILES+=( "$sum_file" )
-            fi
-        done < <(extract_checksum_entries "$sum_file")
+                if [[ -z "${seen[$sum_file]+x}" ]]; then
+                    seen["$sum_file"]=1
+                    PLAIN_REF_SUM_FILES+=( "$sum_file" )
+                fi
+            done < <(extract_checksum_entries "$sum_file")
+        done
     done
 }
 
@@ -15996,7 +16053,7 @@ apply_local_checksum_ref_updates_after_rename() {
     (( ${#LOCAL_UPDATE_SUM_FILES[@]} > 0 )) || return 0
 
     if [[ "$mode" == "dry-run" ]]; then
-        emit_wrap_labeled_stdout "[DRY-RUN] Would update checksum reference(s) in local hash file(s) for rename: " "${CYAN}[DRY-RUN] Would update checksum reference(s) in local hash file(s) for rename:${RESET} " "$target_old"
+        emit_wrap_labeled_stdout "[DRY-RUN] Would update checksum reference(s) in hash file(s) (same dir + ancestors up to start dir) for rename: " "${CYAN}[DRY-RUN] Would update checksum reference(s) in hash file(s) (same dir + ancestors up to start dir) for rename:${RESET} " "$target_old"
         for sum_file in "${LOCAL_UPDATE_VERIFY_FILES[@]}"; do
             emit_wrap_labeled_stdout "    " "    " "$sum_file"
         done
