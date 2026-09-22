@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# v. 20260922.150008 - plain-rename verify mismatch: ask [U]/[I]/[H]/[s]/[v]/[Q] (default Ignore)
 # v. 20260922.144342 - clarify plain-rename hash-verify prompt: verify digest vs skip
 # v. 20260922.114706 - wrap: prefer intact quoted paths; recovery success one path per line
 # v. 20260922.113836 - display digests as first10.....last10 (format_hash_for_display)
@@ -77,6 +78,7 @@
 # v. 20260721.132007 - Samsung timestamp media: preserve optional numeric sorting prefix when appending make/model
 # v. 20260721.112812 - GoPro camera labels: GoPro_Hero4_Silver style (not GOPRO4_SILVER)
 
+# 2026.09.22 - v. 19.340.150008 - Plain-rename digest verify mismatch: prompt [U] update hash / [I] ignore once (default Enter) / [H] ignore session / [s] skip this rename (before only) / [v] / [Q]; checksum-group mismatch menu still defaults to [Q]
 # 2026.09.22 - v. 19.339.144342 - Plain-rename hash-verify menu wording: spell out verify digest before/after vs rename+update path only; [D]/[E]/[A]/[S] as Like [Y]/[n] for directory/run
 # 2026.09.22 - v. 19.338.114706 - Path wrap prefers breaks outside single-quoted paths (and soft seps like " -> "); recovery-success verbose prints from/to/write-as on separate lines so paths stay intact when they fit
 # 2026.09.22 - v. 19.337.113836 - Screen/log digests via format_hash_for_display (first 10 + ..... + last 10): recovery/scan verbose, DB hash lookup verbose, mismatch stored/on-disk hashes, DB replace-hash prompt, recovery candidate vlogs; comparisons still use full digests
@@ -9585,15 +9587,23 @@ suggest_checksum_mismatch_recovery() {
     echo
 }
 
-# Return 0 if hash was updated and re-verification succeeded; 2 if user chose [I]/[H] (ignore, caller continues); 1 if user quit [Q] or invalid (caller exits).
+# Return 0 if hash was updated and re-verification succeeded; 2 if user chose [I]/[H] (ignore, caller continues);
+# 3 if user chose [s] skip rename (only when allow_skip=yes); 1 if user quit [Q] or invalid (caller exits).
+# $5 default_key: I or Q (default Q). Empty Enter selects the default.
+# $6 allow_skip: yes|no (default no). When yes, [s] skips this rename (plain-rename before-verify).
 prompt_refresh_checksum_hash_after_mismatch() {
     local sum_file="$1"
     local ref_in_file="$2"
     local path_on_disk="$3"
     local phase="$4"
-    local label answer
+    local default_key="${5:-Q}"
+    local allow_skip="${6:-no}"
+    local label answer choice_hint
 
     label="$(checksum_label "$sum_file")"
+    default_key="${default_key:0:1}"
+    default_key="${default_key^^}"
+    [[ "$default_key" == "I" || "$default_key" == "Q" ]] || default_key=Q
 
     if [[ "$AUTO_CHECKSUM_MISMATCH_IGNORE_SESSION" == yes ]]; then
         vlog "${label} mismatch auto-ignored (session [H]) for ref '${ref_in_file}' (${phase})"
@@ -9603,18 +9613,35 @@ prompt_refresh_checksum_hash_after_mismatch() {
     suggest_checksum_mismatch_recovery "$sum_file" "$ref_in_file" "$path_on_disk" "$label" "$phase"
 
     while true; do
-        emit_wrap_labeled_stdout "  $(rename_menu_key_bracket U Q) " "  ${GREEN}$(rename_menu_key_bracket U Q)${RESET} " "Update stored ${label,,} hash from the file on disk, then re-verify"
-        emit_wrap_labeled_stdout "  $(rename_menu_key_bracket I Q) " "  ${GREEN}$(rename_menu_key_bracket I Q)${RESET} " "Ignore this mismatch and continue (checksum list unchanged; you fix it later)"
-        emit_wrap_labeled_stdout "  $(rename_menu_key_bracket H Q) " "  ${GREEN}$(rename_menu_key_bracket H Q)${RESET} " "Ignore this mismatch and all future checksum mismatches this run (lists unchanged)"
+        emit_wrap_labeled_stdout "  $(rename_menu_key_bracket U "$default_key") " "  ${GREEN}$(rename_menu_key_bracket U "$default_key")${RESET} " "Update stored ${label,,} hash from the file on disk, then re-verify"
+        emit_wrap_labeled_stdout "  $(rename_menu_key_bracket I "$default_key") " "  ${GREEN}$(rename_menu_key_bracket I "$default_key")${RESET} " "Ignore this mismatch and continue (checksum list unchanged; you fix it later)"
+        emit_wrap_labeled_stdout "  $(rename_menu_key_bracket H "$default_key") " "  ${GREEN}$(rename_menu_key_bracket H "$default_key")${RESET} " "Ignore this mismatch and all future checksum mismatches this run (lists unchanged)"
+        if [[ "$allow_skip" == yes ]]; then
+            emit_wrap_labeled_stdout "  $(rename_menu_key_bracket s "$default_key") " "  ${GREEN}$(rename_menu_key_bracket s "$default_key")${RESET} " "Skip this rename — do not rename; leave checksum list unchanged for this file"
+        fi
         print_prompt_view_directory_menu_line
-        emit_wrap_labeled_stdout "  $(rename_menu_key_bracket Q Q) " "  ${GREEN}$(rename_menu_key_bracket Q Q)${RESET} " "Quit (abort script)"
-        echo -n "$(user_prompt_ts_prefix)Choice [u/i/h/v/Q]: "
+        emit_wrap_labeled_stdout "  $(rename_menu_key_bracket Q "$default_key") " "  ${GREEN}$(rename_menu_key_bracket Q "$default_key")${RESET} " "Quit (abort script)"
+        if [[ "$allow_skip" == yes ]]; then
+            if [[ "$default_key" == I ]]; then
+                choice_hint="[U/i/H/s/v/Q]"
+            else
+                choice_hint="[u/i/h/s/v/Q]"
+            fi
+        else
+            if [[ "$default_key" == I ]]; then
+                choice_hint="[U/i/H/v/Q]"
+            else
+                choice_hint="[u/i/h/v/Q]"
+            fi
+        fi
+        echo -n "$(user_prompt_ts_prefix)Choice ${choice_hint}: "
         flush_stdin
         read_single_key answer "$PROMPT_WAIT_SECONDS"
         echo
         if handle_prompt_directory_listing_choice "$answer" "$path_on_disk"; then
             continue
         fi
+        [[ -z "$answer" ]] && answer="$default_key"
         case "$answer" in
             u|U)
                 if [[ ! -f "$path_on_disk" ]]; then
@@ -9640,7 +9667,15 @@ prompt_refresh_checksum_hash_after_mismatch() {
                 vlog "Session auto-ignore enabled for checksum mismatches; ignoring ref '${ref_in_file}' (${phase})"
                 return 2
                 ;;
-            q|Q|'')
+            s|S)
+                if [[ "$allow_skip" == yes ]]; then
+                    emit_wrap_labeled_stdout "${label} SKIP: " "${YELLOW}${label} SKIP:${RESET} " "Skipping this rename; checksum list left unchanged (${phase})."
+                    vlog "${label} mismatch: user skipped rename for ref '${ref_in_file}' (${phase})"
+                    return 3
+                fi
+                return 1
+                ;;
+            q|Q)
                 return 1
                 ;;
             *)
@@ -16121,17 +16156,29 @@ collect_local_checksum_ref_summaries() {
     done
 }
 
-# Verify only rows collected into LOCAL_UPDATE_* (phase: before|after). Warn on failure; do not run whole-list checksum_check.
+# Verify only rows collected into LOCAL_UPDATE_* (phase: before|after).
+# On digest mismatch: prompt [U]/[I default]/[H]/[s before-only]/[v]/[Q].
+# Returns: 0=ok/continue, 1=user quit, 3=skip this rename (before + [s] only).
 verify_collected_local_checksum_refs() {
     local phase="$1"
-    local i sum_file ref vrc phase_label
+    local i sum_file ref vrc phase_label label path_on_disk
+    local mismatch_menu_rc allow_skip=no ignored_any=no
 
     (( ${#LOCAL_UPDATE_SUM_FILES[@]} > 0 )) || return 0
 
     case "$phase" in
-        before) phase_label="before plain rename" ;;
-        after)  phase_label="after plain rename" ;;
-        *)      phase_label="$phase" ;;
+        before)
+            phase_label="before plain rename"
+            allow_skip=yes
+            ;;
+        after)
+            phase_label="after plain rename"
+            allow_skip=no
+            ;;
+        *)
+            phase_label="$phase"
+            allow_skip=no
+            ;;
     esac
 
     for i in "${!LOCAL_UPDATE_SUM_FILES[@]}"; do
@@ -16151,9 +16198,29 @@ verify_collected_local_checksum_refs() {
             emit_wrap_labeled_stdout "    list: " "    list: " "$sum_file"
             continue
         fi
-        emit_wrap_labeled_stdout "CHECKSUM WARNING: Affected reference check failed ${phase_label}: " "${YELLOW}CHECKSUM WARNING:${RESET} Affected reference check failed ${phase_label}: " "$ref"
-        emit_wrap_labeled_stdout "    list: " "    list: " "$sum_file"
+
+        label="$(checksum_label "$sum_file")"
+        path_on_disk="$(resolve_checksum_ref_path "$sum_file" "$ref")"
+        print_checksum_fail_mismatch_line "$label" "$ref" "$sum_file"
+        mismatch_menu_rc=0
+        prompt_refresh_checksum_hash_after_mismatch "$sum_file" "$ref" "$path_on_disk" "$phase_label" I "$allow_skip" || mismatch_menu_rc=$?
+        if (( mismatch_menu_rc == 0 )); then
+            continue
+        fi
+        if (( mismatch_menu_rc == 2 )); then
+            ignored_any=yes
+            continue
+        fi
+        if (( mismatch_menu_rc == 3 )); then
+            return 3
+        fi
+        stop_on_checksum_user_quit_after_mismatch "$sum_file" "$phase_label"
     done
+
+    if [[ "$ignored_any" == yes ]]; then
+        emit_wrap_labeled_stdout "CHECKSUM NOTE: " "${YELLOW}CHECKSUM NOTE:${RESET} " "At least one reference had a checksum mismatch you chose [I] or [H] to ignore (${phase_label}); rename/path update still proceeds."
+    fi
+    return 0
 }
 
 # Ask whether to verify digests for this file's affected hash-list row(s) before/after
@@ -16340,6 +16407,7 @@ perform_plain_entry_rename() {
     local old_companion_dir="" new_companion_dir="" old_companion_name="" new_companion_name=""
     local html_reference_update_only=no
     local target_kind=file
+    local plain_verify_rc=0
 
     if paths_refer_to_same_file "$old" "$new"; then
         if is_case_only_rename_pair "$old" "$new"; then
@@ -16439,7 +16507,17 @@ perform_plain_entry_rename() {
             return 1
         fi
         if [[ "$PLAIN_RENAME_DO_HASH_VERIFY" == yes ]]; then
-            verify_collected_local_checksum_refs before
+            plain_verify_rc=0
+            verify_collected_local_checksum_refs before || plain_verify_rc=$?
+            if (( plain_verify_rc == 3 )); then
+                emit_wrap_labeled_stdout "SKIP: " "${YELLOW}SKIP:${RESET} " "Plain rename skipped after checksum mismatch ([s]): '$old'"
+                ((++files_skipped))
+                return 0
+            fi
+            # mismatch [Q] calls stop_on_checksum_user_quit_after_mismatch (exits); other non-zero → abort
+            if (( plain_verify_rc != 0 )); then
+                return 1
+            fi
         else
             vlog "Skipped pre-rename hash verify for '$old' (user chose skip verify)."
         fi
