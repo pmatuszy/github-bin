@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# v. 20260922.104714 - compact hash-update log: one line after Renamed, no duplicate paths
 # v. 20260922.103416 - fix set -u crash: hash-update header must pass empty body to emit_wrap_labeled_stdout
 # v. 20260922.102856 - plain rename: clearer message when ancestor/sibling hash files are updated
 # v. 20260922.102753 - plain rename: keep ./ in resolve so ancestor hash refs still match after mv
@@ -70,6 +71,7 @@
 # v. 20260721.132007 - Samsung timestamp media: preserve optional numeric sorting prefix when appending make/model
 # v. 20260721.112812 - GoPro camera labels: GoPro_Hero4_Silver style (not GOPRO4_SILVER)
 
+# 2026.09.22 - v. 19.333.104714 - Compact hash-update log after plain rename: keep Renamed: line; follow with one line "Also updated hash (old name referenced): <path>[, …]" (no duplicate rename paths); dry-run uses "Would also update hash…"
 # 2026.09.22 - v. 19.332.103416 - Fix set -u abort after plain rename hash update: emit_wrap_labeled_stdout header line omitted the required body arg ($4 unbound); pass ""
 # 2026.09.22 - v. 19.331.102856 - After plain rename that rewrites checksum refs, print a clear note that hash file(s) were updated because they referenced the old name (list each hash path); same wording for dry-run
 # 2026.09.22 - v. 19.330.102753 - Plain rename ancestor-hash update was a no-op after mv: resolve_checksum_ref_path dropped the ./ prefix when the old path no longer existed (photos/foo.jpg ≠ ./photos/foo.jpg); always keep ./ under sum_dir=., reuse pre-mv LOCAL_UPDATE_*, and print CHECKSUM REF UPDATED
@@ -16054,6 +16056,7 @@ apply_local_checksum_ref_updates_after_rename() {
     local target_new="$2"
     local target_kind="$3"
     local sum_file i changed_any=no
+    local hash_list=""
 
     # Prefer the pre-mv collection (perform_plain_entry_rename fills LOCAL_UPDATE_* while
     # the old path still exists). Re-collect only when empty (dry-run, or no prior pass).
@@ -16062,12 +16065,17 @@ apply_local_checksum_ref_updates_after_rename() {
     fi
     (( ${#LOCAL_UPDATE_SUM_FILES[@]} > 0 )) || return 0
 
+    hash_list=""
+    for sum_file in "${LOCAL_UPDATE_VERIFY_FILES[@]}"; do
+        if [[ -z "$hash_list" ]]; then
+            hash_list="$sum_file"
+        else
+            hash_list+=", $sum_file"
+        fi
+    done
+
     if [[ "$mode" == "dry-run" ]]; then
-        emit_wrap_labeled_stdout "[DRY-RUN] After that rename, would also update hash file(s) — old name is referenced there:" "${CYAN}[DRY-RUN] After that rename, would also update hash file(s) — old name is referenced there:${RESET}" ""
-        emit_wrap_labeled_stdout "  rename: " "  rename: " "$target_old → $target_new"
-        for sum_file in "${LOCAL_UPDATE_VERIFY_FILES[@]}"; do
-            emit_wrap_labeled_stdout "  hash file: " "  hash file: " "$sum_file"
-        done
+        emit_wrap_labeled_stdout "[DRY-RUN] Would also update hash (old name referenced): " "${CYAN}[DRY-RUN] Would also update hash (old name referenced):${RESET} " "$hash_list"
         if (( VERBOSE == 1 )); then
             for i in "${!LOCAL_UPDATE_SUM_FILES[@]}"; do
                 print_checksum_update_verbose "${LOCAL_UPDATE_SUM_FILES[$i]}" "${LOCAL_UPDATE_OLD_REFS[$i]}" "${LOCAL_UPDATE_NEW_REFS[$i]}"
@@ -16087,13 +16095,7 @@ apply_local_checksum_ref_updates_after_rename() {
 
     [[ "$changed_any" == "yes" ]] || return 0
 
-    echo
-    emit_wrap_labeled_stdout "After that rename, also updated hash file(s) — old name was referenced there:" "${CYAN}After that rename, also updated hash file(s) — old name was referenced there:${RESET}" ""
-    emit_wrap_labeled_stdout "  renamed: " "  renamed: " "$target_old → $target_new"
-    for sum_file in "${LOCAL_UPDATE_VERIFY_FILES[@]}"; do
-        emit_wrap_labeled_stdout "  hash file: " "  hash file: " "$sum_file"
-    done
-    echo
+    emit_wrap_labeled_stdout "Also updated hash (old name referenced): " "${CYAN}Also updated hash (old name referenced):${RESET} " "$hash_list"
 
     # Only re-hash affected rows — never whole-list md5sum/sha512sum -c after a plain rename.
     verify_collected_local_checksum_refs after
