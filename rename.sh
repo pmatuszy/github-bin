@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# v. 20260922.102753 - plain rename: keep ./ in resolve so ancestor hash refs still match after mv
 # v. 20260922.101226 - plain rename: update checksum refs in same dir and ancestors up to START_DIR
 # v. 20260921.202625 - checksum session mem cache: reuse digests across recovery scans (path+size+mtime)
 # v. 20260921.161550 - Quik dashboard: wire GX######_<id> → <source>-dashboard into transform_name
@@ -67,6 +68,7 @@
 # v. 20260721.132007 - Samsung timestamp media: preserve optional numeric sorting prefix when appending make/model
 # v. 20260721.112812 - GoPro camera labels: GoPro_Hero4_Silver style (not GOPRO4_SILVER)
 
+# 2026.09.22 - v. 19.330.102753 - Plain rename ancestor-hash update was a no-op after mv: resolve_checksum_ref_path dropped the ./ prefix when the old path no longer existed (photos/foo.jpg ≠ ./photos/foo.jpg); always keep ./ under sum_dir=., reuse pre-mv LOCAL_UPDATE_*, and print CHECKSUM REF UPDATED
 # 2026.09.22 - v. 19.329.101226 - Plain rename / thumbs.db delete: rewrite checksum refs not only in the file's directory but in every ancestor hash manifest up to START_DIR (e.g. photos/foo.jpg updates ./album.sha512); still no climb above the run root
 # 2026.09.21 - v. 19.328.202625 - Checksum recovery: session memory cache of digests (keyed by kind+abs path+size+mtime) plus digest→path index so each file content is hashed at most once per run when searching missing refs; summary shows mem hits/misses
 # 2026.09.21 - v. 19.327.161550 - Quik dashboard rename runs in transform_name (before plain GX###### camera path); leaves export unchanged when no unique renamed source
@@ -16049,7 +16051,11 @@ apply_local_checksum_ref_updates_after_rename() {
     local target_kind="$3"
     local sum_file i changed_any=no
 
-    collect_local_checksum_ref_updates "$target_old" "$target_new" "$target_kind"
+    # Prefer the pre-mv collection (perform_plain_entry_rename fills LOCAL_UPDATE_* while
+    # the old path still exists). Re-collect only when empty (dry-run, or no prior pass).
+    if (( ${#LOCAL_UPDATE_SUM_FILES[@]} == 0 )); then
+        collect_local_checksum_ref_updates "$target_old" "$target_new" "$target_kind"
+    fi
     (( ${#LOCAL_UPDATE_SUM_FILES[@]} > 0 )) || return 0
 
     if [[ "$mode" == "dry-run" ]]; then
@@ -16075,6 +16081,11 @@ apply_local_checksum_ref_updates_after_rename() {
     done
 
     [[ "$changed_any" == "yes" ]] || return 0
+
+    emit_wrap_labeled_stdout "CHECKSUM REF UPDATED after rename: " "${CYAN}CHECKSUM REF UPDATED after rename:${RESET} " "$target_old → $target_new"
+    for sum_file in "${LOCAL_UPDATE_VERIFY_FILES[@]}"; do
+        emit_wrap_labeled_stdout "    " "    " "$sum_file"
+    done
 
     # Only re-hash affected rows — never whole-list md5sum/sha512sum -c after a plain rename.
     verify_collected_local_checksum_refs after
@@ -16273,11 +16284,10 @@ resolve_checksum_ref_path() {
     fi
 
     if [[ "$sum_dir" == "." ]]; then
-        if [[ -e "./$ref" ]]; then
-            printf './%s' "$ref"
-        else
-            printf '%s' "$ref"
-        fi
+        # Always keep the ./ prefix. Do not key off -e: after a plain rename the old
+        # path is gone, and dropping ./ here made ancestor-hash refs fail to match
+        # target_old (e.g. photos/foo.jpg vs ./photos/foo.jpg) so the list was never updated.
+        printf './%s' "$ref"
     else
         candidate="$sum_dir/$ref"
         printf '%s' "$candidate"
