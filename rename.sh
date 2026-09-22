@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# v. 20260922.144342 - clarify plain-rename hash-verify prompt: verify digest vs skip
 # v. 20260922.114706 - wrap: prefer intact quoted paths; recovery success one path per line
 # v. 20260922.113836 - display digests as first10.....last10 (format_hash_for_display)
 # v. 20260922.112116 - missing-ref recovery: hash same-extension candidates before other types
@@ -76,6 +77,7 @@
 # v. 20260721.132007 - Samsung timestamp media: preserve optional numeric sorting prefix when appending make/model
 # v. 20260721.112812 - GoPro camera labels: GoPro_Hero4_Silver style (not GOPRO4_SILVER)
 
+# 2026.09.22 - v. 19.339.144342 - Plain-rename hash-verify menu wording: spell out verify digest before/after vs rename+update path only; [D]/[E]/[A]/[S] as Like [Y]/[n] for directory/run
 # 2026.09.22 - v. 19.338.114706 - Path wrap prefers breaks outside single-quoted paths (and soft seps like " -> "); recovery-success verbose prints from/to/write-as on separate lines so paths stay intact when they fit
 # 2026.09.22 - v. 19.337.113836 - Screen/log digests via format_hash_for_display (first 10 + ..... + last 10): recovery/scan verbose, DB hash lookup verbose, mismatch stored/on-disk hashes, DB replace-hash prompt, recovery candidate vlogs; comparisons still use full digests
 # 2026.09.22 - v. 19.336.112116 - Missing-ref checksum scan: digest same-extension candidates first (case-insensitive .jpg/.JPG, .mp4/…), then other extensions — avoids hashing large videos while recovering a missing still
@@ -16200,13 +16202,14 @@ prompt_plain_rename_hash_verify_decision() {
     while true; do
         echo
         emit_wrap_labeled_stdout "This file is referenced in hash file(s): " "${CYAN}This file is referenced in hash file(s):${RESET} " "$hash_list"
-        echo "Check the hash for this file before/after updating the list?"
-        echo "  [Y] Check hash (default)"
-        echo "  [n] Just rename + update path(s), skip verify"
-        echo "  [d] Check for remaining files in this directory"
-        echo "  [e] Skip verify for remaining files in this directory"
-        echo "  [a] Check for all remaining this run"
-        echo "  [s] Skip verify for all remaining this run"
+        echo "Before rewriting the path in those list(s), verify this file's digest"
+        echo "against the stored hash (before and after the rename)?"
+        echo "  [Y] Yes — verify this file's hash, then rename + update path(s) (default)"
+        echo "  [n] No — rename + update path(s) only; do not verify the digest"
+        echo "  [d] Like [Y] for all remaining files in this directory"
+        echo "  [e] Like [n] for all remaining files in this directory"
+        echo "  [a] Like [Y] for all remaining files this run"
+        echo "  [s] Like [n] for all remaining files this run"
         echo "  [v] List directory where this path exists"
         echo "  [q] Quit"
         echo -n "$(user_prompt_ts_prefix)Choice [Y/n/d/e/a/s/v/q]: "
