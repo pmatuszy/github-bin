@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# v. 20260922.113836 - display digests as first10.....last10 (format_hash_for_display)
 # v. 20260922.112116 - missing-ref recovery: hash same-extension candidates before other types
 # v. 20260922.111216 - plain rename hash-verify prompt: add [d]/[e] for this directory
 # v. 20260922.110638 - plain rename: ask check-hash vs skip-verify before updating hash refs
@@ -74,6 +75,7 @@
 # v. 20260721.132007 - Samsung timestamp media: preserve optional numeric sorting prefix when appending make/model
 # v. 20260721.112812 - GoPro camera labels: GoPro_Hero4_Silver style (not GOPRO4_SILVER)
 
+# 2026.09.22 - v. 19.337.113836 - Screen/log digests via format_hash_for_display (first 10 + ..... + last 10): recovery/scan verbose, DB hash lookup verbose, mismatch stored/on-disk hashes, DB replace-hash prompt, recovery candidate vlogs; comparisons still use full digests
 # 2026.09.22 - v. 19.336.112116 - Missing-ref checksum scan: digest same-extension candidates first (case-insensitive .jpg/.JPG, .mp4/…), then other extensions — avoids hashing large videos while recovering a missing still
 # 2026.09.22 - v. 19.335.111216 - Plain rename hash-verify prompt: [D] check / [E] skip-verify for remaining files in this directory (parent of the file); keep [Y] default check, [n]/[a]/[s]/[v]/[q]
 # 2026.09.22 - v. 19.334.110638 - Plain rename that hits hash list(s): prompt to check this file's digest before/after updating the path, or skip verify and only rewrite the ref; [A]/[S] session for rest of run; path update always happens
@@ -1923,8 +1925,8 @@ confirm_db_hash_update_for_existing_entry() {
     echo "DB hash differs for existing entry:"
     echo "  path:     $path"
     echo "  kind:     $hash_kind"
-    echo "  stored:   $old_hash"
-    echo "  computed: $new_hash"
+    echo "  stored:   $(format_hash_for_display "$old_hash")"
+    echo "  computed: $(format_hash_for_display "$new_hash")"
     while true; do
         echo "$(user_prompt_ts_prefix)Replace stored hash with computed value?"
         echo "  $(rename_menu_key_bracket Y Y) Yes (default)"
@@ -6666,7 +6668,7 @@ print_try_recover_missing_ref_verbose() {
     local missing_ref="$1"
     local expected_hash="$2"
 
-    emit_wrap_verbose_body_stderr "Trying to recover missing ref '${missing_ref}' (expected hash: ${expected_hash:-none})"
+    emit_wrap_verbose_body_stderr "Trying to recover missing ref '${missing_ref}' (expected hash: $(format_hash_for_display "${expected_hash:-none}"))"
 }
 
 print_recovery_success_verbose() {
@@ -6683,16 +6685,18 @@ print_scan_by_checksum_verbose() {
     local search_root="$1"
     local expected_hash="$2"
     local phase="${3-}"
+    local hash_disp
+    hash_disp="$(format_hash_for_display "$expected_hash")"
 
     case "$phase" in
         same_ext)
-            emit_wrap_verbose_body_stderr "Name-based subtree recovery failed under '${search_root}' — scanning same-extension files by checksum first (expected hash: ${expected_hash})"
+            emit_wrap_verbose_body_stderr "Name-based subtree recovery failed under '${search_root}' — scanning same-extension files by checksum first (expected hash: ${hash_disp})"
             ;;
         other_ext)
-            emit_wrap_verbose_body_stderr "Same-extension checksum scan missed under '${search_root}' — scanning other extensions (expected hash: ${expected_hash})"
+            emit_wrap_verbose_body_stderr "Same-extension checksum scan missed under '${search_root}' — scanning other extensions (expected hash: ${hash_disp})"
             ;;
         *)
-            emit_wrap_verbose_body_stderr "Name-based subtree recovery failed under '${search_root}' — scanning all files below by checksum (expected hash: ${expected_hash})"
+            emit_wrap_verbose_body_stderr "Name-based subtree recovery failed under '${search_root}' — scanning all files below by checksum (expected hash: ${hash_disp})"
             ;;
     esac
 }
@@ -6754,12 +6758,14 @@ print_db_hash_lookup_verbose() {
     local hash_kind="$3"
     local expected_hash="$4"
     local found_path="${5-}"
+    local hash_disp
+    hash_disp="$(format_hash_for_display "$expected_hash")"
 
     if [[ "$status" == "hit" ]]; then
-        emit_wrap_verbose_body_stderr "DB hash lookup HIT under '${search_root}' for ${hash_kind}=${expected_hash}"
+        emit_wrap_verbose_body_stderr "DB hash lookup HIT under '${search_root}' for ${hash_kind}=${hash_disp}"
         emit_wrap_verbose_body_stderr "matched path: '${found_path}'"
     else
-        emit_wrap_verbose_body_stderr "DB hash lookup MISS under '${search_root}' for ${hash_kind}=${expected_hash}"
+        emit_wrap_verbose_body_stderr "DB hash lookup MISS under '${search_root}' for ${hash_kind}=${hash_disp}"
     fi
 }
 
@@ -6777,6 +6783,24 @@ format_path_for_log() {
     s=${s//$'\r'/\\r}
     s=${s//$'\t'/\\t}
     printf '%s' "$s"
+}
+
+# Shorten digests for screen/log display: first 10 + ..... + last 10.
+# Empty / "none" / length<=20 kept as-is. Comparisons still use the full hash.
+format_hash_for_display() {
+    local h="$1"
+    local n
+    h="${h//$'\r'/}"
+    h="${h//$'\n'/}"
+    h="${h//[[:space:]]/}"
+    [[ -n "$h" ]] || { printf '%s' ""; return 0; }
+    [[ "$h" == "none" ]] && { printf '%s' "none"; return 0; }
+    n="${#h}"
+    if (( n <= 20 )); then
+        printf '%s' "$h"
+        return 0
+    fi
+    printf '%s.....%s' "${h:0:10}" "${h:n-10:10}"
 }
 
 sanitize_basename_control_chars() {
@@ -9444,7 +9468,7 @@ print_checksum_mismatch_decision_context() {
         echo "    (not readable as a regular file here — cannot show size/times)"
     fi
     if [[ -n "$stored_hash" ]]; then
-        emit_wrap_labeled_stdout "    Stored ${kind} in list for this reference: " "    ${CYAN}Stored ${kind} in list for this reference:${RESET} " "$stored_hash"
+        emit_wrap_labeled_stdout "    Stored ${kind} in list for this reference: " "    ${CYAN}Stored ${kind} in list for this reference:${RESET} " "$(format_hash_for_display "$stored_hash")"
     else
         echo "    (No matching checksum line found for this reference in the list.)"
     fi
@@ -9457,7 +9481,7 @@ print_checksum_mismatch_decision_context() {
         echo "    modified:   $(format_epoch_human "$(get_file_mtime_epoch "$path_on_disk")")"
         disk_hash="$(checksum_of_file "$kind" "$path_on_disk" || true)"
         if [[ -n "$disk_hash" ]]; then
-            emit_wrap_labeled_stdout "    Current ${kind} of file: " "    ${CYAN}Current ${kind} of file:${RESET} " "$disk_hash"
+            emit_wrap_labeled_stdout "    Current ${kind} of file: " "    ${CYAN}Current ${kind} of file:${RESET} " "$(format_hash_for_display "$disk_hash")"
         else
             echo "    (Could not compute ${kind} for this path.)"
         fi
@@ -16634,7 +16658,7 @@ find_best_path_for_missing_ref() {
         vlog "Fast recovery candidate in same directory: '$fast_path'"
         if [[ -n "$expected_hash" ]]; then
             fast_hash="$(checksum_of_file "$kind" "$fast_path")"
-            vlog "Fast recovery candidate has $kind=$fast_hash"
+            vlog "Fast recovery candidate has $kind=$(format_hash_for_display "$fast_hash")"
             if [[ "${fast_hash,,}" == "${expected_hash,,}" ]]; then
                 vlog "Fast recovery candidate checksum matches"
                 printf '%s' "$fast_path"
@@ -16666,7 +16690,7 @@ find_best_path_for_missing_ref() {
             vlog "Subtree recovery candidate by name: '$candidate'"
             if [[ -n "$expected_hash" ]]; then
                 candidate_hash="$(checksum_of_file "$kind" "$candidate")"
-                vlog "Subtree recovery candidate by name has $kind=$candidate_hash"
+                vlog "Subtree recovery candidate by name has $kind=$(format_hash_for_display "$candidate_hash")"
                 if [[ "${candidate_hash,,}" == "${expected_hash,,}" ]]; then
                     vlog "Subtree recovery candidate by name checksum matches"
                     printf '%s' "$candidate"
@@ -16696,7 +16720,7 @@ find_best_path_for_missing_ref() {
         vlog "Per-segment basename-transform recovery candidate: '$rebuilt'"
         if [[ -n "$expected_hash" ]]; then
             rebuilt_hash="$(checksum_of_file "$kind" "$rebuilt")"
-            vlog "Per-segment candidate has $kind=$rebuilt_hash"
+            vlog "Per-segment candidate has $kind=$(format_hash_for_display "$rebuilt_hash")"
             if [[ "${rebuilt_hash,,}" == "${expected_hash,,}" ]]; then
                 vlog "Per-segment basename-transform recovery checksum matches"
             else
