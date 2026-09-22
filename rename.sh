@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# v. 20260922.110638 - plain rename: ask check-hash vs skip-verify before updating hash refs
 # v. 20260922.104714 - compact hash-update log: one line after Renamed, no duplicate paths
 # v. 20260922.103416 - fix set -u crash: hash-update header must pass empty body to emit_wrap_labeled_stdout
 # v. 20260922.102856 - plain rename: clearer message when ancestor/sibling hash files are updated
@@ -71,6 +72,7 @@
 # v. 20260721.132007 - Samsung timestamp media: preserve optional numeric sorting prefix when appending make/model
 # v. 20260721.112812 - GoPro camera labels: GoPro_Hero4_Silver style (not GOPRO4_SILVER)
 
+# 2026.09.22 - v. 19.334.110638 - Plain rename that hits hash list(s): prompt to check this file's digest before/after updating the path, or skip verify and only rewrite the ref; [A]/[S] session for rest of run; path update always happens
 # 2026.09.22 - v. 19.333.104714 - Compact hash-update log after plain rename: keep Renamed: line; follow with one line "Also updated hash (old name referenced): <path>[, …]" (no duplicate rename paths); dry-run uses "Would also update hash…"
 # 2026.09.22 - v. 19.332.103416 - Fix set -u abort after plain rename hash update: emit_wrap_labeled_stdout header line omitted the required body arg ($4 unbound); pass ""
 # 2026.09.22 - v. 19.331.102856 - After plain rename that rewrites checksum refs, print a clear note that hash file(s) were updated because they referenced the old name (list each hash path); same wording for dry-run
@@ -16051,12 +16053,97 @@ verify_collected_local_checksum_refs() {
     done
 }
 
+# Ask whether to verify digests for this file's affected hash-list row(s) before/after
+# rewriting the path. Always still updates the path in the hash file(s).
+# Sets PLAIN_RENAME_DO_HASH_VERIFY=yes|no. Returns 0=ok, 2=quit.
+prompt_plain_rename_hash_verify_decision() {
+    local target_old="$1"
+    local answer="" sum_file hash_list=""
+
+    PLAIN_RENAME_DO_HASH_VERIFY=yes
+
+    (( ${#LOCAL_UPDATE_VERIFY_FILES[@]} > 0 )) || return 0
+
+    if [[ "$AUTO_PLAIN_HASH_VERIFY_SESSION" == yes ]]; then
+        PLAIN_RENAME_DO_HASH_VERIFY=yes
+        vlog "Plain rename hash verify: session auto-check for '$target_old'"
+        return 0
+    fi
+    if [[ "$AUTO_PLAIN_HASH_SKIP_VERIFY_SESSION" == yes ]]; then
+        PLAIN_RENAME_DO_HASH_VERIFY=no
+        vlog "Plain rename hash verify: session skip-check for '$target_old'"
+        return 0
+    fi
+
+    hash_list=""
+    for sum_file in "${LOCAL_UPDATE_VERIFY_FILES[@]}"; do
+        if [[ -z "$hash_list" ]]; then
+            hash_list="$sum_file"
+        else
+            hash_list+=", $sum_file"
+        fi
+    done
+
+    while true; do
+        echo
+        emit_wrap_labeled_stdout "This file is referenced in hash file(s): " "${CYAN}This file is referenced in hash file(s):${RESET} " "$hash_list"
+        echo "Check the hash for this file before/after updating the list, or just rename and rewrite the path?"
+        echo "  [Y] Check hash (default)"
+        echo "  [n] Just rename + update hash path(s), skip verify"
+        echo "  [a] Check for all remaining this run"
+        echo "  [s] Skip verify for all remaining this run"
+        echo "  [v] List directory where this path exists"
+        echo "  [q] Quit"
+        echo -n "$(user_prompt_ts_prefix)Choice [Y/n/a/s/v/q]: "
+
+        flush_stdin
+        read_single_key answer "$PROMPT_WAIT_SECONDS"
+        echo
+
+        if handle_prompt_directory_listing_choice "$answer" "$target_old"; then
+            continue
+        fi
+        case "$answer" in
+            ""|y|Y)
+                PLAIN_RENAME_DO_HASH_VERIFY=yes
+                return 0
+                ;;
+            n|N)
+                PLAIN_RENAME_DO_HASH_VERIFY=no
+                return 0
+                ;;
+            a|A)
+                AUTO_PLAIN_HASH_VERIFY_SESSION=yes
+                AUTO_PLAIN_HASH_SKIP_VERIFY_SESSION=no
+                PLAIN_RENAME_DO_HASH_VERIFY=yes
+                vlog "Session auto-check enabled for plain-rename hash verify prompts."
+                return 0
+                ;;
+            s|S)
+                AUTO_PLAIN_HASH_SKIP_VERIFY_SESSION=yes
+                AUTO_PLAIN_HASH_VERIFY_SESSION=no
+                PLAIN_RENAME_DO_HASH_VERIFY=no
+                vlog "Session skip-verify enabled for plain-rename hash verify prompts."
+                return 0
+                ;;
+            q|Q)
+                stopped_by_user=yes
+                return 2
+                ;;
+            *)
+                echo "Invalid choice."
+                ;;
+        esac
+    done
+}
+
 apply_local_checksum_ref_updates_after_rename() {
     local target_old="$1"
     local target_new="$2"
     local target_kind="$3"
     local sum_file i changed_any=no
     local hash_list=""
+    local do_verify="${PLAIN_RENAME_DO_HASH_VERIFY:-yes}"
 
     # Prefer the pre-mv collection (perform_plain_entry_rename fills LOCAL_UPDATE_* while
     # the old path still exists). Re-collect only when empty (dry-run, or no prior pass).
@@ -16098,7 +16185,11 @@ apply_local_checksum_ref_updates_after_rename() {
     emit_wrap_labeled_stdout "Also updated hash (old name referenced): " "${CYAN}Also updated hash (old name referenced):${RESET} " "$hash_list"
 
     # Only re-hash affected rows — never whole-list md5sum/sha512sum -c after a plain rename.
-    verify_collected_local_checksum_refs after
+    if [[ "$do_verify" == yes ]]; then
+        verify_collected_local_checksum_refs after
+    else
+        vlog "Skipped post-rename hash verify for '$target_new' (user chose skip verify)."
+    fi
 
     for sum_file in "${LOCAL_UPDATE_VERIFY_FILES[@]}"; do
         db_mark_checked "$sum_file" "checksum_group" "checked"
@@ -16202,9 +16293,19 @@ perform_plain_entry_rename() {
         return 0
     fi
 
-    # While source still exists: verify only affected checksum rows (not the whole .md5/.sha512 list).
+    # While source still exists: collect affected checksum rows; optionally verify before mv.
+    PLAIN_RENAME_DO_HASH_VERIFY=yes
     collect_local_checksum_ref_updates "$old" "$new" "$target_kind"
-    verify_collected_local_checksum_refs before
+    if (( ${#LOCAL_UPDATE_SUM_FILES[@]} > 0 )); then
+        if ! prompt_plain_rename_hash_verify_decision "$old"; then
+            return 1
+        fi
+        if [[ "$PLAIN_RENAME_DO_HASH_VERIFY" == yes ]]; then
+            verify_collected_local_checksum_refs before
+        else
+            vlog "Skipped pre-rename hash verify for '$old' (user chose skip verify)."
+        fi
+    fi
 
     old_was_dir=no
     [[ -d "$old" ]] && old_was_dir=yes
@@ -16678,6 +16779,9 @@ AUTO_GOPRO_STRIP_PART_SESSION=no # GoPro lone _part_XX prompt [A]: auto-strip fo
 AUTO_DELETE_THUMBS_DB_SESSION=no # thumbs.db prompt [O]: delete all thumbs.db for the rest of this run
 AUTO_CAMERA_MAKE_MODEL_SESSION=no # rename prompt [G]: auto-yes Samsung/GoPro/Nikon camera make/model renames for rest of run
 AUTO_LARGE_HASH_CHECK_SESSION=no # verify-only large checksum list prompt [H]: auto-yes remaining large list checks for rest of run
+AUTO_PLAIN_HASH_VERIFY_SESSION=no # plain rename hash-ref prompt [A]: verify digests for all remaining this run
+AUTO_PLAIN_HASH_SKIP_VERIFY_SESSION=no # plain rename hash-ref prompt [S]: skip digest verify for all remaining this run
+PLAIN_RENAME_DO_HASH_VERIFY=yes # per-rename: verify affected hash-list row(s) before/after path rewrite
 AUTO_CHECKSUM_GROUP_SESSION=no # checksum group prompt [H/h]: auto-yes all remaining checksum groups for rest of run
 AUTO_CHECKSUM_GROUP_DIR="" # checksum group prompt [D/d]: auto-yes checksum groups in this directory for rest of run
 AUTO_CHECKSUM_MISMATCH_IGNORE_SESSION=no # checksum mismatch recovery [H/h]: ignore all mismatches for rest of run (no [U]pdate)
