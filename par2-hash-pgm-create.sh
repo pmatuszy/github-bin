@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20260922.082433 - hash menu: drop manual echo of first key; tty already echoes it (showed "11")
 # v. 20260916.133341 - Run settings: mark hash/recovery/helpers given vs prompted; add Equivalent CLI
 # v. 20260916.130951 - boxed output: draw rules with sed; tr truncated ─ to one invalid byte
 # v. 20260812.180711 - Ctrl-C: remove incomplete PAR2/hash temp; restore *.par2.old
@@ -13,6 +14,7 @@
 # v. 20260809.155541 - prompt to exclude rename.sh helpers from PAR2 (default yes)
 # v. 20260806.224414 - initial: create volume-only PAR2 + SHA-512/MD5 hash for cwd subtree
 
+# 2026.09.22 - v. 0.1.12 - Hash menu echoed the typed digit twice ("11" for 1): read -n 1 leaves terminal ECHO on (only read -s turns it off), so the extra printf of the first key was redundant
 # 2026.09.16 - v. 0.1.11 - === Run settings ===: report --hash / --recovery / rename-helper choices as given, --yes default, or prompted (with the selected value), show the effective PROMPT_TIMEOUT, and add an "Equivalent CLI:" line that repeats the run non-interactively
 # 2026.09.16 - v. 0.1.10 - Boxed summaries: horizontal rules via sed 's/ /─/g'; tr is byte-wise and cut the 3-byte ─ (U+2500) down to a lone 0xE2, printing invalid UTF-8
 # 2026.08.12 - v. 0.1.9 - Ctrl-C removes incomplete PAR2/hash temp and restores *.par2.old
@@ -442,8 +444,6 @@ read_hash_choice_with_timeout() {
       ;;
   esac
 
-  # Echo the first char (read -n 1 is silent) then finish the line.
-  printf '%s' "$first"
   if prompt_has_timeout; then
     IFS= read -r -t "$PROMPT_TIMEOUT" rest || rest=""
   else
