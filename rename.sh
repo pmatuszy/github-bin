@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# v. 20260922.163726 - checksum-group: skip after-rename digest recheck when list contents unchanged
 # v. 20260922.150008 - plain-rename verify mismatch: ask [U]/[I]/[H]/[s]/[v]/[Q] (default Ignore)
 # v. 20260922.144342 - clarify plain-rename hash-verify prompt: verify digest vs skip
 # v. 20260922.114706 - wrap: prefer intact quoted paths; recovery success one path per line
@@ -78,6 +79,7 @@
 # v. 20260721.132007 - Samsung timestamp media: preserve optional numeric sorting prefix when appending make/model
 # v. 20260721.112812 - GoPro camera labels: GoPro_Hero4_Silver style (not GOPRO4_SILVER)
 
+# 2026.09.22 - v. 19.341.163726 - Checksum-group: skip after-rename per-ref digest recheck when no path columns or digests in the list were rewritten (e.g. only the .sha512/.md5 filename renamed); before-rename verify already covered the bytes; still recheck when refs/paths/hashes inside the list changed
 # 2026.09.22 - v. 19.340.150008 - Plain-rename digest verify mismatch: prompt [U] update hash / [I] ignore once (default Enter) / [H] ignore session / [s] skip this rename (before only) / [v] / [Q]; checksum-group mismatch menu still defaults to [Q]
 # 2026.09.22 - v. 19.339.144342 - Plain-rename hash-verify menu wording: spell out verify digest before/after vs rename+update path only; [D]/[E]/[A]/[S] as Like [Y]/[n] for directory/run
 # 2026.09.22 - v. 19.338.114706 - Path wrap prefers breaks outside single-quoted paths (and soft seps like " -> "); recovery-success verbose prints from/to/write-as on separate lines so paths stay intact when they fit
@@ -19057,7 +19059,24 @@ for f in "${ordered_paths[@]}"; do
             resolve_checksum_group_rename_collisions "$sum_file" new_sum refs new_refs \
                 html_companion_apply html_companion_old_dirs html_companion_new_dirs || true
             emit_wrap_labeled_stdout "[DRY-RUN] Would update ${label,,} content references inside: " "${CYAN}[DRY-RUN] Would update ${label,,} content references inside:${RESET} " "$sum_file"
-            emit_wrap_labeled_stdout "[DRY-RUN] Would check ${label} reference(s) after rename: " "${CYAN}[DRY-RUN] Would check ${label} reference(s) after rename:${RESET} " "$new_sum"
+            dry_run_need_after_verify=no
+            for i in "${!refs[@]}"; do
+                old_ref_for_write="$(format_ref_for_checksum_file "$sum_file" "${refs_raw[$i]}" "${refs[$i]}")"
+                new_ref_for_write="$(format_ref_for_checksum_file "$sum_file" "${refs_raw[$i]}" "${new_refs[$i]}")"
+                if [[ "$old_ref_for_write" != "$new_ref_for_write" ]]; then
+                    dry_run_need_after_verify=yes
+                    break
+                fi
+                if [[ "${html_companion_apply[$i]:-no}" == yes ]]; then
+                    dry_run_need_after_verify=yes
+                    break
+                fi
+            done
+            if [[ "$dry_run_need_after_verify" == yes ]]; then
+                emit_wrap_labeled_stdout "[DRY-RUN] Would check ${label} reference(s) after rename: " "${CYAN}[DRY-RUN] Would check ${label} reference(s) after rename:${RESET} " "$new_sum"
+            else
+                emit_wrap_labeled_stdout "[DRY-RUN] Would skip after-rename digest check (list contents unchanged): " "${CYAN}[DRY-RUN] Would skip after-rename digest check (list contents unchanged):${RESET} " "$new_sum"
+            fi
             echo "----------------------------------------"
 
             ((++files_affected))
@@ -19204,15 +19223,18 @@ for f in "${ordered_paths[@]}"; do
             fi
         done
 
+        checksum_list_content_changed=no
         for i in "${!refs[@]}"; do
             old_ref_for_write="$(format_ref_for_checksum_file "$sum_file" "${refs_raw[$i]}" "${refs[$i]}")"
             new_ref_for_write="$(format_ref_for_checksum_file "$sum_file" "${refs_raw[$i]}" "${new_refs[$i]}")"
             if [[ "$old_ref_for_write" != "$new_ref_for_write" ]]; then
                 update_checksum_content_refs "$sum_file" "$old_ref_for_write" "$new_ref_for_write"
+                checksum_list_content_changed=yes
             fi
 
             if [[ "${html_hash_needs_refresh[$i]}" == "yes" ]]; then
                 update_checksum_hash_for_ref "$sum_file" "$new_ref_for_write" "${new_refs[$i]}"
+                checksum_list_content_changed=yes
             fi
         done
 
@@ -19230,36 +19252,45 @@ for f in "${ordered_paths[@]}"; do
         fi
 
         if (( ${#refs[@]} > 0 )); then
-            print_checksum_verify_progress_line "$label" after "$final_sum"
-            checksum_after_rename_ignored=no
-            for i in "${!refs[@]}"; do
-                new_ref_for_verify="$(format_ref_for_checksum_file "$final_sum" "${refs_raw[$i]}" "${new_refs[$i]}")"
-                vrc=0
-                verify_single_checksum_target "$final_sum" "$new_ref_for_verify" || vrc=$?
-                if (( vrc == 0 )); then
-                    continue
+            if [[ "$checksum_list_content_changed" != yes ]]; then
+                # Only the list filename (or nothing) changed — digests/paths inside are identical to the before-rename check.
+                vlog "Skipping after-rename ${label} verify for '$final_sum' (list contents unchanged; before-rename check already covered digests)"
+                emit_wrap_labeled_stdout "${label} NOTE: " "${CYAN}${label} NOTE:${RESET} " "Skipped after-rename digest check — list contents unchanged (before-rename check already covered digests)."
+                if [[ "${checksum_before_rename_ignored:-no}" != yes ]]; then
+                    record_checksum_list_full_verify_success "$final_sum"
                 fi
-                if (( vrc == 2 )); then
-                    print_checksum_fail_after_no_line "$label" "$new_ref_for_verify" "$final_sum"
-                    emit_wrap_labeled_stdout "NOTE: " "${YELLOW}NOTE:${RESET} " "Files were renamed; checksum file may be inconsistent."
-                    stop_on_checksum_failure "$final_sum" "after rename"
-                fi
-                print_checksum_fail_after_validate_line "$label" "$new_ref_for_verify" "$final_sum"
-                emit_wrap_labeled_stdout "NOTE: " "${YELLOW}NOTE:${RESET} " "Files were renamed, but checksum verification after update failed."
-                mismatch_menu_rc=0
-                prompt_refresh_checksum_hash_after_mismatch "$final_sum" "$new_ref_for_verify" "${new_refs[$i]}" "after rename" || mismatch_menu_rc=$?
-                if (( mismatch_menu_rc == 0 || mismatch_menu_rc == 2 )); then
-                    (( mismatch_menu_rc == 2 )) && checksum_after_rename_ignored=yes
-                    continue
-                fi
-                stop_on_checksum_user_quit_after_mismatch "$final_sum" "after rename"
-            done
-            if [[ "$checksum_after_rename_ignored" == yes ]]; then
-                emit_wrap_labeled_stdout "${label} NOTE: " "${YELLOW}${label} NOTE:${RESET} " "At least one reference still does not match the list after rename ([I]/[H] ignore); checksum file may be wrong until you fix or [U]pdate."
             else
-                print_checksum_verified_refs_line "$label" after "$final_sum"
-                print_checksum_group_ok_line "$label" "$final_sum"
-                record_checksum_list_full_verify_success "$final_sum"
+                print_checksum_verify_progress_line "$label" after "$final_sum"
+                checksum_after_rename_ignored=no
+                for i in "${!refs[@]}"; do
+                    new_ref_for_verify="$(format_ref_for_checksum_file "$final_sum" "${refs_raw[$i]}" "${new_refs[$i]}")"
+                    vrc=0
+                    verify_single_checksum_target "$final_sum" "$new_ref_for_verify" || vrc=$?
+                    if (( vrc == 0 )); then
+                        continue
+                    fi
+                    if (( vrc == 2 )); then
+                        print_checksum_fail_after_no_line "$label" "$new_ref_for_verify" "$final_sum"
+                        emit_wrap_labeled_stdout "NOTE: " "${YELLOW}NOTE:${RESET} " "Files were renamed; checksum file may be inconsistent."
+                        stop_on_checksum_failure "$final_sum" "after rename"
+                    fi
+                    print_checksum_fail_after_validate_line "$label" "$new_ref_for_verify" "$final_sum"
+                    emit_wrap_labeled_stdout "NOTE: " "${YELLOW}NOTE:${RESET} " "Files were renamed, but checksum verification after update failed."
+                    mismatch_menu_rc=0
+                    prompt_refresh_checksum_hash_after_mismatch "$final_sum" "$new_ref_for_verify" "${new_refs[$i]}" "after rename" || mismatch_menu_rc=$?
+                    if (( mismatch_menu_rc == 0 || mismatch_menu_rc == 2 )); then
+                        (( mismatch_menu_rc == 2 )) && checksum_after_rename_ignored=yes
+                        continue
+                    fi
+                    stop_on_checksum_user_quit_after_mismatch "$final_sum" "after rename"
+                done
+                if [[ "$checksum_after_rename_ignored" == yes ]]; then
+                    emit_wrap_labeled_stdout "${label} NOTE: " "${YELLOW}${label} NOTE:${RESET} " "At least one reference still does not match the list after rename ([I]/[H] ignore); checksum file may be wrong until you fix or [U]pdate."
+                else
+                    print_checksum_verified_refs_line "$label" after "$final_sum"
+                    print_checksum_group_ok_line "$label" "$final_sum"
+                    record_checksum_list_full_verify_success "$final_sum"
+                fi
             fi
         fi
 
