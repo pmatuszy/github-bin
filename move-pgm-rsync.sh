@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20260922.174213 - result Avg rate: also show Mbps (megabits/s)
 # v. 20260916.133341 - print === Run settings === before the transfer, with Equivalent CLI
 # v. 20260916.130951 - boxed output: draw rules with sed; tr truncated ─ to one invalid byte
 # v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
@@ -8,6 +9,7 @@
 # v. 20260724.203756 - avoid startup delay when displaying help or version information
 # v. 20260724.203704 - initial network move with uncompressed SSH, source removal, and dry-run support
 
+# 2026.09.22 - v. 0.3.4 - result box Avg rate: append decimal Mbps (bytes/s * 8 / 1e6) after MiB/s and MB/s
 # 2026.09.16 - v. 0.3.3 - before the transfer: print "=== Run settings ===" with -n/--dry-run and --bwlimit as given or not given, SOURCE/DESTINATION, and an "Equivalent CLI:" line that repeats the run
 # 2026.09.16 - v. 0.3.2 - boxed result summary: horizontal rules via sed 's/ /─/g'; tr is byte-wise and cut the 3-byte ─ (U+2500) down to a lone 0xE2, printing invalid UTF-8
 # 2026.08.10 - v. 0.3.1 - fix result size fallback test; parse rsync stats numbers reliably
@@ -112,7 +114,7 @@ move_pgm_format_rate() {
   [[ "$bps" =~ ^[0-9]+$ ]] || bps=0
   awk -v r="$bps" 'BEGIN {
     if (r <= 0) { print "n/a"; exit }
-    printf "%.2f MiB/s / %.2f MB/s", r / 1048576, r / 1e6
+    printf "%.2f MiB/s / %.2f MB/s / %.2f Mbps", r / 1048576, r / 1e6, (r * 8) / 1e6
   }'
 }
 
