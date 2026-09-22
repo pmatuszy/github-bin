@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# v. 20260922.114706 - wrap: prefer intact quoted paths; recovery success one path per line
 # v. 20260922.113836 - display digests as first10.....last10 (format_hash_for_display)
 # v. 20260922.112116 - missing-ref recovery: hash same-extension candidates before other types
 # v. 20260922.111216 - plain rename hash-verify prompt: add [d]/[e] for this directory
@@ -75,6 +76,7 @@
 # v. 20260721.132007 - Samsung timestamp media: preserve optional numeric sorting prefix when appending make/model
 # v. 20260721.112812 - GoPro camera labels: GoPro_Hero4_Silver style (not GOPRO4_SILVER)
 
+# 2026.09.22 - v. 19.338.114706 - Path wrap prefers breaks outside single-quoted paths (and soft seps like " -> "); recovery-success verbose prints from/to/write-as on separate lines so paths stay intact when they fit
 # 2026.09.22 - v. 19.337.113836 - Screen/log digests via format_hash_for_display (first 10 + ..... + last 10): recovery/scan verbose, DB hash lookup verbose, mismatch stored/on-disk hashes, DB replace-hash prompt, recovery candidate vlogs; comparisons still use full digests
 # 2026.09.22 - v. 19.336.112116 - Missing-ref checksum scan: digest same-extension candidates first (case-insensitive .jpg/.JPG, .mp4/…), then other extensions — avoids hashing large videos while recovering a missing still
 # 2026.09.22 - v. 19.335.111216 - Plain rename hash-verify prompt: [D] check / [E] skip-verify for remaining files in this directory (parent of the file); keep [Y] default check, [n]/[a]/[s]/[v]/[q]
@@ -741,10 +743,60 @@ rename_effective_wrap_width() {
     fi
 }
 
+# Choose a wrap cut inside $1 (already clipped to the available width). Prefers breaks
+# outside single-quoted paths (at '/' or soft separators like " -> ") so a quoted path
+# stays on one line when it fits on the continuation. Prints the chunk; exit 1 → hard break.
+wrap_select_chunk_prefer_intact_paths() {
+    local head="$1"
+    local i c in_q=0 last_good=0 last_quote_open=-1
+    local n=${#head}
+
+    (( n > 0 )) || return 1
+
+    for (( i = 0; i < n; i++ )); do
+        c="${head:i:1}"
+        if [[ "$c" == "'" ]]; then
+            if (( in_q == 0 )); then
+                last_quote_open=$i
+                in_q=1
+            else
+                in_q=0
+                last_quote_open=-1
+            fi
+            continue
+        fi
+        if (( in_q == 0 )); then
+            if [[ "$c" == "/" ]]; then
+                last_good=$((i + 1))
+            fi
+            if (( i >= 3 )) && [[ "${head:$((i - 3)):4}" == " -> " ]]; then
+                last_good=$((i + 1))
+            fi
+            if (( i >= 11 )) && [[ "${head:$((i - 11)):12}" == " (write as '" ]]; then
+                last_good=$((i - 11))
+            fi
+            if (( i >= 9 )) && [[ "${head:$((i - 9)):10}" == " matches: " ]]; then
+                last_good=$((i + 1))
+            fi
+        fi
+    done
+
+    if (( last_good > 0 )); then
+        printf '%s' "${head:0:last_good}"
+        return 0
+    fi
+    # Inside a quoted path with no '/' break outside quotes: move the whole quote to the next line.
+    if (( in_q == 1 && last_quote_open > 0 )); then
+        printf '%s' "${head:0:last_quote_open}"
+        return 0
+    fi
+    return 1
+}
+
 # plain_prefix + body == full visible line (no ANSI). fd 1=stdout, 2=stderr.
 # Optional 5th arg full_line_color (green|red|cyan|yellow): when use_colors=yes, the entire
 # visible line (prefix + body) uses that color — used for OLD/NEW suggested path lines.
-# Long paths: break at '/' when possible; continuation lines align under the label column.
+# Long paths: break at '/' / soft seps outside quotes when possible; continuation under label.
 emit_wrap_path_body_slash_aware() {
     local fd="$1"
     local plain_prefix="$2"
@@ -794,10 +846,13 @@ emit_wrap_path_body_slash_aware() {
         fi
 
         head="${remaining:0:avail}"
-        if [[ "$head" == */* ]]; then
-            chunk="${head%/*}/"
-        else
-            chunk="$head"
+        chunk="$(wrap_select_chunk_prefer_intact_paths "$head" || true)"
+        if [[ -z "$chunk" ]]; then
+            if [[ "$head" == */* ]]; then
+                chunk="${head%/*}/"
+            else
+                chunk="$head"
+            fi
         fi
         [[ -z "$chunk" ]] && chunk="${remaining:0:avail}"
 
@@ -854,10 +909,13 @@ emit_wrap_labeled_body_slash_aware() {
         fi
 
         head="${remaining:0:avail}"
-        if [[ "$head" == */* ]]; then
-            chunk="${head%/*}/"
-        else
-            chunk="$head"
+        chunk="$(wrap_select_chunk_prefer_intact_paths "$head" || true)"
+        if [[ -z "$chunk" ]]; then
+            if [[ "$head" == */* ]]; then
+                chunk="${head%/*}/"
+            else
+                chunk="$head"
+            fi
         fi
         [[ -z "$chunk" ]] && chunk="${remaining:0:avail}"
 
@@ -6677,7 +6735,11 @@ print_recovery_success_verbose() {
     local found_ref="$2"
     local write_ref="$3"
 
-    emit_wrap_verbose_body_stderr "Recovery success: '${old_ref}' -> '${found_ref}' (write as '${write_ref}')"
+    # One path per line so wrap does not split a quoted path across lines when avoidable.
+    emit_wrap_verbose_body_stderr "Recovery success:"
+    emit_wrap_verbose_body_stderr "  from: '${old_ref}'"
+    emit_wrap_verbose_body_stderr "  to:   '${found_ref}'"
+    emit_wrap_verbose_body_stderr "  write as: '${write_ref}'"
 }
 
 print_scan_by_checksum_verbose() {
