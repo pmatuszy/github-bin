@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# v. 20260922.112116 - missing-ref recovery: hash same-extension candidates before other types
 # v. 20260922.111216 - plain rename hash-verify prompt: add [d]/[e] for this directory
 # v. 20260922.110638 - plain rename: ask check-hash vs skip-verify before updating hash refs
 # v. 20260922.104714 - compact hash-update log: one line after Renamed, no duplicate paths
@@ -73,6 +74,7 @@
 # v. 20260721.132007 - Samsung timestamp media: preserve optional numeric sorting prefix when appending make/model
 # v. 20260721.112812 - GoPro camera labels: GoPro_Hero4_Silver style (not GOPRO4_SILVER)
 
+# 2026.09.22 - v. 19.336.112116 - Missing-ref checksum scan: digest same-extension candidates first (case-insensitive .jpg/.JPG, .mp4/…), then other extensions — avoids hashing large videos while recovering a missing still
 # 2026.09.22 - v. 19.335.111216 - Plain rename hash-verify prompt: [D] check / [E] skip-verify for remaining files in this directory (parent of the file); keep [Y] default check, [n]/[a]/[s]/[v]/[q]
 # 2026.09.22 - v. 19.334.110638 - Plain rename that hits hash list(s): prompt to check this file's digest before/after updating the path, or skip verify and only rewrite the ref; [A]/[S] session for rest of run; path update always happens
 # 2026.09.22 - v. 19.333.104714 - Compact hash-update log after plain rename: keep Renamed: line; follow with one line "Also updated hash (old name referenced): <path>[, …]" (no duplicate rename paths); dry-run uses "Would also update hash…"
@@ -6680,8 +6682,19 @@ print_scan_by_checksum_verbose() {
     (( VERBOSE == 1 )) || return 0
     local search_root="$1"
     local expected_hash="$2"
+    local phase="${3-}"
 
-    emit_wrap_verbose_body_stderr "Name-based subtree recovery failed under '${search_root}' — scanning all files below by checksum (expected hash: ${expected_hash})"
+    case "$phase" in
+        same_ext)
+            emit_wrap_verbose_body_stderr "Name-based subtree recovery failed under '${search_root}' — scanning same-extension files by checksum first (expected hash: ${expected_hash})"
+            ;;
+        other_ext)
+            emit_wrap_verbose_body_stderr "Same-extension checksum scan missed under '${search_root}' — scanning other extensions (expected hash: ${expected_hash})"
+            ;;
+        *)
+            emit_wrap_verbose_body_stderr "Name-based subtree recovery failed under '${search_root}' — scanning all files below by checksum (expected hash: ${expected_hash})"
+            ;;
+    esac
 }
 
 
@@ -16591,6 +16604,7 @@ find_best_path_for_missing_ref() {
     local kind wanted_base wanted_norm missing_dir search_root
     local fast_base fast_path fast_hash
     local candidate candidate_hash candidate_name indexed_candidates index_key all_candidates
+    local wanted_ext_lc candidate_base candidate_ext_lc
     local -a candidate_names=()
     local rebuilt rebuilt_hash _wn_save_e _wn_rc _seg_save_e _seg_rc
 
@@ -16713,17 +16727,61 @@ find_best_path_for_missing_ref() {
             return 0
         fi
 
-        print_scan_by_checksum_verbose "$search_root" "$expected_hash"
         all_candidates="${RECOVERY_INDEX_ALL_FILES[$search_root]-}"
-        while IFS= read -r candidate; do
-            [[ -n "$candidate" ]] || continue
-            candidate_hash="$(checksum_of_file "$kind" "$candidate")"
-            if [[ "${candidate_hash,,}" == "${expected_hash,,}" ]]; then
-                vlog "Subtree recovery candidate by checksum matches: '$candidate'"
-                printf '%s' "$candidate"
-                return 0
-            fi
-        done <<< "$all_candidates"
+
+        # Prefer hashing candidates with the same extension (case-insensitive) so a missing
+        # .jpg does not force digesting large .mp4/.avi/etc. first. Fall back to other ext.
+        wanted_ext_lc=""
+        if [[ "$wanted_base" == *.* && "$wanted_base" != .* ]]; then
+            wanted_ext_lc="${wanted_base##*.}"
+            wanted_ext_lc="${wanted_ext_lc,,}"
+        fi
+
+        if [[ -n "$wanted_ext_lc" ]]; then
+            print_scan_by_checksum_verbose "$search_root" "$expected_hash" "same_ext"
+            while IFS= read -r candidate; do
+                [[ -n "$candidate" ]] || continue
+                candidate_base="$(basename -- "$candidate")"
+                [[ "$candidate_base" == *.* ]] || continue
+                candidate_ext_lc="${candidate_base##*.}"
+                candidate_ext_lc="${candidate_ext_lc,,}"
+                [[ "$candidate_ext_lc" == "$wanted_ext_lc" ]] || continue
+                candidate_hash="$(checksum_of_file "$kind" "$candidate")"
+                if [[ "${candidate_hash,,}" == "${expected_hash,,}" ]]; then
+                    vlog "Subtree recovery candidate by checksum (same ext .${wanted_ext_lc}) matches: '$candidate'"
+                    printf '%s' "$candidate"
+                    return 0
+                fi
+            done <<< "$all_candidates"
+
+            print_scan_by_checksum_verbose "$search_root" "$expected_hash" "other_ext"
+            while IFS= read -r candidate; do
+                [[ -n "$candidate" ]] || continue
+                candidate_base="$(basename -- "$candidate")"
+                if [[ "$candidate_base" == *.* ]]; then
+                    candidate_ext_lc="${candidate_base##*.}"
+                    candidate_ext_lc="${candidate_ext_lc,,}"
+                    [[ "$candidate_ext_lc" == "$wanted_ext_lc" ]] && continue
+                fi
+                candidate_hash="$(checksum_of_file "$kind" "$candidate")"
+                if [[ "${candidate_hash,,}" == "${expected_hash,,}" ]]; then
+                    vlog "Subtree recovery candidate by checksum (other ext) matches: '$candidate'"
+                    printf '%s' "$candidate"
+                    return 0
+                fi
+            done <<< "$all_candidates"
+        else
+            print_scan_by_checksum_verbose "$search_root" "$expected_hash"
+            while IFS= read -r candidate; do
+                [[ -n "$candidate" ]] || continue
+                candidate_hash="$(checksum_of_file "$kind" "$candidate")"
+                if [[ "${candidate_hash,,}" == "${expected_hash,,}" ]]; then
+                    vlog "Subtree recovery candidate by checksum matches: '$candidate'"
+                    printf '%s' "$candidate"
+                    return 0
+                fi
+            done <<< "$all_candidates"
+        fi
     fi
 
     vlog "Subtree recovery failed for '$missing_ref' under '$search_root'"
