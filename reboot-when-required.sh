@@ -1,9 +1,11 @@
 #!/bin/bash
+# v. 20260923.082359 - apt-idle: ignore running /usr/libexec/packagekitd (process and lock holder)
 # v. 20260921.092438 - --help: drop dry-run crontab example
 # v. 20260921.091916 - make "reboot not required" outcome a boxed notice (harder to miss)
 # v. 20260921.091719 - --help: include suggested crontab entries
 # v. 20260921.085840 - --mail/--mail-to: email script log before reboot (and on give-up)
 # v. 20260921.085347 - initial release: reboot when /var/run/reboot-required and system is idle
+# 2026.09.23 - v. 0.6 - apt-idle gate ignores /usr/libexec/packagekitd: a resident PackageKit daemon (and locks held only by it) no longer blocks reboot
 # 2026.09.21 - v. 0.5 - --help suggested crontab: remove the dry-run --mail example line (keep it
 #                       as a one-off manual command in the script footer comments only)
 # 2026.09.21 - v. 0.4 - "Reboot not required" prints as a boxed *** notice *** (boxes or Unicode
@@ -22,7 +24,8 @@
 # reboot-when-required.sh
 #
 # If the system needs a reboot (/var/run/reboot-required), wait until it is safe
-# (no apt/dpkg activity, load low enough, minimum uptime), then reboot. When a
+# (no apt/dpkg activity, load low enough, minimum uptime), then reboot. A resident
+# /usr/libexec/packagekitd is ignored (process and locks held only by it). When a
 # gate fails, retry for a configurable window (default: every 5 minutes for 2 hours).
 # Intended for a night cron window; keep healthchecks-reboot-required.sh as the monitor.
 #
@@ -503,9 +506,20 @@ gate_reboot_required() {
   return 1
 }
 
+# PackageKit's daemon stays running when idle; do not treat it as apt/dpkg activity.
+pid_is_packagekitd() {
+  local pid="$1" exe
+  [[ "$pid" =~ ^[0-9]+$ ]] || return 1
+  exe="$(readlink -f "/proc/${pid}/exe" 2>/dev/null || true)"
+  exe="${exe% (deleted)}"
+  [[ "$exe" == "/usr/libexec/packagekitd" ]]
+}
+
 # Apt/dpkg lock files or package-manager processes → not idle.
+# /usr/libexec/packagekitd is ignored (resident daemon, not a transaction).
 gate_apt_idle() {
-  local lock locks pids pid busy=0 detail="" holders
+  local lock locks pids pid busy=0 detail="" holders token holder_pid
+  local -a blocking=() ignored_pk=()
 
   locks=(
     /var/lib/dpkg/lock
@@ -520,12 +534,28 @@ gate_apt_idle() {
       holders="$(fuser "$lock" 2>/dev/null | tr -s '[:space:]' ' ')"
       holders="${holders# }"
       holders="${holders% }"
-      if [[ -n "$holders" ]]; then
+      blocking=()
+      ignored_pk=()
+      for token in $holders; do
+        holder_pid="${token%%[!0-9]*}"
+        [[ -n "$holder_pid" ]] || continue
+        if pid_is_packagekitd "$holder_pid"; then
+          ignored_pk+=("$holder_pid")
+        else
+          blocking+=("$holder_pid")
+        fi
+      done
+      if ((${#ignored_pk[@]} > 0)); then
+        vlog "  lock ${lock}: ignoring packagekitd$(format_pids "${ignored_pk[@]}")"
+      fi
+      if ((${#blocking[@]} > 0)); then
         busy=1
-        detail+=" lock ${lock} held by${holders};"
-        vlog "  lock busy: $lock ->$holders"
-      else
+        detail+=" lock ${lock} held by$(format_pids "${blocking[@]}");"
+        vlog "  lock busy: $lock ->$(format_pids "${blocking[@]}")"
+      elif [[ -z "$holders" ]]; then
         vlog "  lock free: $lock"
+      else
+        vlog "  lock free: $lock (only packagekitd)"
       fi
     else
       vlog "  fuser not installed; skipping lock probe for $lock"
@@ -533,20 +563,32 @@ gate_apt_idle() {
   done
 
   # Exact process names that mean a package transaction may be in progress.
+  # packagekitd is intentionally omitted: /usr/libexec/packagekitd is usually idle.
   pids=()
-  for name in apt apt-get aptitude dpkg unattended-upgrade unattended-upgrades packagekitd; do
+  for name in apt apt-get aptitude dpkg unattended-upgrade unattended-upgrades; do
     while read -r pid; do
       [[ -n "$pid" ]] || continue
       pids+=("$pid")
     done < <(pgrep -x "$name" 2>/dev/null || true)
   done
 
+  ignored_pk=()
+  while read -r pid; do
+    [[ -n "$pid" ]] || continue
+    if pid_is_packagekitd "$pid"; then
+      ignored_pk+=("$pid")
+    fi
+  done < <(pgrep -x packagekitd 2>/dev/null || true)
+  if ((${#ignored_pk[@]} > 0)); then
+    vlog "  ignoring packagekitd$(format_pids "${ignored_pk[@]}")"
+  fi
+
   if ((${#pids[@]} > 0)); then
     busy=1
     detail+=" processes:$(format_pids "${pids[@]}")"
     vlog "  package-manager process(es) running:$(format_pids "${pids[@]}")"
   else
-    vlog "  no apt/apt-get/aptitude/dpkg/unattended-upgrade/packagekitd process"
+    vlog "  no apt/apt-get/aptitude/dpkg/unattended-upgrade process"
   fi
 
   if (( busy )); then
