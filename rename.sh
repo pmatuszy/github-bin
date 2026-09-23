@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# v. 20260923.153655 - readable checksum-list log: header, [i/n] rows, recovery block with steps/result/hint; fix hash cache across subshells
 # v. 20260923.132314 - non-verbose: print s/m/h per checksum list skipped with no rename (shows progress)
 # v. 20260923.121320 - --checksum-verify changed|none|all (+ prompt): hash only renamed/recovered refs by default
 # v. 20260922.163726 - checksum-group: skip after-rename digest recheck when list contents unchanged
@@ -81,6 +82,7 @@
 # v. 20260721.132007 - Samsung timestamp media: preserve optional numeric sorting prefix when appending make/model
 # v. 20260721.112812 - GoPro camera labels: GoPro_Hero4_Silver style (not GOPRO4_SILVER)
 
+# 2026.09.23 - v. 19.344.153655 - Checksum-list log readability: verbose header "── SHA512 list #N: '<list>' (n entries)", one "[i/n] OK|MISSING '<name>'" row per entry (names relative to the list dir; "resolves to" note only when the path column points elsewhere), one Result line (present/missing counts + why not hashed); missing entry → RECOVERY block in both modes naming the list, entry number, missing name and digest, verbose Step 1-6 lines (same folder / same name / rebuilt path / known digest / hash same-ext / other-ext, with [k/N] per file read and size), RESULT FOUND|NOT FOUND with files hashed, bytes and time, and a HINT (proxy/LRV/THM often deleted on purpose). Wrap: lines with quoted paths break at spaces outside quotes (no more "rename/" split). Fix: session hash cache and Files hashed / mem hits / misses counters were lost in $(...) subshells — now merged via a session spool file; summary shows bytes read
 # 2026.09.23 - v. 19.343.132314 - Non-verbose progress: one lowercase s (SHA512) / m (MD5) / h (other) on the dot row per checksum list that needed no rename and was not hashed, so runs over many small .sha512/.md5 lists no longer look idle; uppercase S/M/H still mean hashing
 # 2026.09.23 - v. 19.342.121320 - New startup question / --checksum-verify changed|none|all (env RENAME_CHECKSUM_VERIFY): changed (default) hashes only checksum-listed files being renamed or recovered, once (after-rename checks the rewritten line as text); none never hashes to verify; all keeps the old full behavior (also lists needing no rename, whole-list check after deleted-file ref removal). Missing-ref content search still hashes in every mode; shown in Run settings / Equivalent CLI / verbose box; stored in resume checkpoint
 # 2026.09.22 - v. 19.341.163726 - Checksum-group: skip after-rename per-ref digest recheck when no path columns or digests in the list were rewritten (e.g. only the .sha512/.md5 filename renamed); before-rename verify already covered the bytes; still recheck when refs/paths/hashes inside the list changed
@@ -758,7 +760,8 @@ rename_effective_wrap_width() {
 # stays on one line when it fits on the continuation. Prints the chunk; exit 1 → hard break.
 wrap_select_chunk_prefer_intact_paths() {
     local head="$1"
-    local i c in_q=0 last_good=0 last_quote_open=-1
+    local whole="${2-$1}"
+    local i c in_q=0 last_good=0 last_quote_open=-1 last_space=0
     local n=${#head}
 
     (( n > 0 )) || return 1
@@ -776,6 +779,7 @@ wrap_select_chunk_prefer_intact_paths() {
             continue
         fi
         if (( in_q == 0 )); then
+            [[ "$c" == " " ]] && last_space=$((i + 1))
             if [[ "$c" == "/" ]]; then
                 last_good=$((i + 1))
             fi
@@ -791,6 +795,12 @@ wrap_select_chunk_prefer_intact_paths() {
         fi
     done
 
+    # Lines with quoted paths: text outside quotes is prose ("rename/update"), so break at a word
+    # boundary there instead of at a '/' — the quoted path then starts the next line intact.
+    if [[ "$whole" == *"'"* ]] && (( last_space > 0 )); then
+        printf '%s' "${head:0:last_space}"
+        return 0
+    fi
     if (( last_good > 0 )); then
         printf '%s' "${head:0:last_good}"
         return 0
@@ -798,6 +808,10 @@ wrap_select_chunk_prefer_intact_paths() {
     # Inside a quoted path with no '/' break outside quotes: move the whole quote to the next line.
     if (( in_q == 1 && last_quote_open > 0 )); then
         printf '%s' "${head:0:last_quote_open}"
+        return 0
+    fi
+    if (( last_space > 0 )); then
+        printf '%s' "${head:0:last_space}"
         return 0
     fi
     return 1
@@ -856,7 +870,7 @@ emit_wrap_path_body_slash_aware() {
         fi
 
         head="${remaining:0:avail}"
-        chunk="$(wrap_select_chunk_prefer_intact_paths "$head" || true)"
+        chunk="$(wrap_select_chunk_prefer_intact_paths "$head" "$remaining" || true)"
         if [[ -z "$chunk" ]]; then
             if [[ "$head" == */* ]]; then
                 chunk="${head%/*}/"
@@ -919,7 +933,7 @@ emit_wrap_labeled_body_slash_aware() {
         fi
 
         head="${remaining:0:avail}"
-        chunk="$(wrap_select_chunk_prefer_intact_paths "$head" || true)"
+        chunk="$(wrap_select_chunk_prefer_intact_paths "$head" "$remaining" || true)"
         if [[ -z "$chunk" ]]; then
             if [[ "$head" == */* ]]; then
                 chunk="${head%/*}/"
@@ -1309,8 +1323,14 @@ stopped_by_user=no
 FILES_HASHED=0
 CHECKSUM_MEM_HITS=0
 CHECKSUM_MEM_MISSES=0
+CHECKSUM_MEM_BYTES_HASHED=0
 declare -A CHECKSUM_MEM_DIGEST=()
 declare -A CHECKSUM_MEM_PATH_BY_DIGEST=()
+# Hashing always runs inside $(...) subshells, so digests/counters are appended to this spool and
+# merged back into the arrays above by checksum_mem_sync_from_spool (byte offset below).
+CHECKSUM_MEM_SPOOL="$(mktemp "${TMPDIR:-/tmp}/rename.sh-hashmem.XXXXXX" 2>/dev/null || true)"
+CHECKSUM_MEM_SPOOL_OFFSET=0
+CHECKSUM_LIST_SEEN_N=0
 RESUME_STATE_FILE="$START_DIR/_rename.sh.resume-state.json"
 RESUME_STATE_WAS_LOADED=0
 RESUME_CHECKPOINT_PROCESSED_LINES_LOADED=0
@@ -3693,6 +3713,7 @@ cleanup_on_exit() {
         fi
     fi
     [[ -n "${RENAME_SH_GOPRO_STATE_FILE:-}" && -f "$RENAME_SH_GOPRO_STATE_FILE" ]] && rm -f -- "$RENAME_SH_GOPRO_STATE_FILE"
+    [[ -n "${CHECKSUM_MEM_SPOOL:-}" && -f "$CHECKSUM_MEM_SPOOL" ]] && rm -f -- "$CHECKSUM_MEM_SPOOL"
     exit $rc
 }
 trap cleanup_on_exit EXIT
@@ -6668,12 +6689,64 @@ print_single_target_check_verbose() {
     emit_wrap_verbose_body_stderr "Running single-target ${tool_name} check in directory '${sum_dir}' for ref '${target_ref}' from file '${sum_base}'"
 }
 
+# Only when the list's path column resolves somewhere other than "<list dir>/<ref>" (e.g. ../, absolute, \).
 print_resolved_ref_verbose() {
     (( VERBOSE == 1 )) || return 0
     local ref="$1"
     local resolved="$2"
+    local sum_file="${3-}"
+    local sum_dir
 
-    emit_wrap_verbose_body_stderr "Resolved ref '${ref}' -> '${resolved}'"
+    if [[ -n "$sum_file" ]]; then
+        sum_dir="${sum_file%/*}"
+        [[ "$sum_dir" == "$sum_file" ]] && sum_dir="."
+        [[ "$resolved" == "$ref" || "$resolved" == "./$ref" || "$resolved" == "${sum_dir}/${ref}" ]] && return 0
+    fi
+    emit_wrap_verbose_body_stderr "   list path '${ref}' resolves to '${resolved}'"
+}
+
+# Entry path shown relative to the checksum list's own directory.
+checksum_ref_display_name() {
+    local sum_file="$1"
+    local ref="$2"
+    local sum_dir="${sum_file%/*}"
+
+    [[ "$sum_dir" == "$sum_file" ]] && sum_dir="."
+    if [[ "$sum_dir" == "." ]]; then
+        ref="${ref#./}"
+    elif [[ "$ref" == "${sum_dir}/"* ]]; then
+        ref="${ref#"${sum_dir}/"}"
+    fi
+    printf '%s' "$ref"
+}
+
+print_checksum_list_header_verbose() {
+    (( VERBOSE == 1 )) || return 0
+    local label="$1"
+    local sum_file="$2"
+    local nrefs="$3"
+
+    emit_wrap_verbose_body_stderr "── ${label} list #${CHECKSUM_LIST_SEEN_N}: '${sum_file}' (${nrefs} entries)"
+}
+
+# status: OK | MISSING; optional note appended after the name.
+print_checksum_list_entry_verbose() {
+    (( VERBOSE == 1 )) || return 0
+    local idx="$1" total="$2" status="$3" name="$4" note="${5-}"
+    local line
+
+    printf -v line '   [%d/%d] %-7s %s' "$idx" "$total" "$status" "'${name}'"
+    [[ -n "$note" ]] && line+=" ${note}"
+    emit_wrap_verbose_body_stderr "$line"
+}
+
+format_elapsed_short() {
+    local s="${1:-0}"
+    if (( s < 60 )); then
+        printf '%ds' "$s"
+    else
+        printf '%dm%02ds' $(( s / 60 )) $(( s % 60 ))
+    fi
 }
 
 print_same_inode_no_rename_verbose() {
@@ -6793,64 +6866,19 @@ print_checksum_no_action_verbose() {
     (( VERBOSE == 1 )) || return 0
     local sum_file="$1"
     local fs_skipped="${2-no}"
-    local msg="All referenced files exist and no rename/update is needed for '${sum_file}' - skipping without checksum verification"
-    [[ "$fs_skipped" == yes ]] && msg+=" (no case-only rename on exfat/CIFS/Samba where applicable)"
-    emit_wrap_verbose_body_stderr "$msg"
-}
+    local nrefs="${3-0}"
+    local nmissing="${4-0}"
+    local verify_note="${5-}"
+    local msg
 
-print_try_recover_missing_ref_verbose() {
-    (( VERBOSE == 1 )) || return 0
-    local missing_ref="$1"
-    local expected_hash="$2"
-
-    emit_wrap_verbose_body_stderr "Trying to recover missing ref '${missing_ref}' (expected hash: $(format_hash_for_display "${expected_hash:-none}"))"
-}
-
-print_recovery_success_verbose() {
-    (( VERBOSE == 1 )) || return 0
-    local old_ref="$1"
-    local found_ref="$2"
-    local write_ref="$3"
-
-    # One path per line so wrap does not split a quoted path across lines when avoidable.
-    emit_wrap_verbose_body_stderr "Recovery success:"
-    emit_wrap_verbose_body_stderr "  from: '${old_ref}'"
-    emit_wrap_verbose_body_stderr "  to:   '${found_ref}'"
-    emit_wrap_verbose_body_stderr "  write as: '${write_ref}'"
-}
-
-print_scan_by_checksum_verbose() {
-    (( VERBOSE == 1 )) || return 0
-    local search_root="$1"
-    local expected_hash="$2"
-    local phase="${3-}"
-    local hash_disp
-    hash_disp="$(format_hash_for_display "$expected_hash")"
-
-    case "$phase" in
-        same_ext)
-            emit_wrap_verbose_body_stderr "Name-based subtree recovery failed under '${search_root}' — scanning same-extension files by checksum first (expected hash: ${hash_disp})"
-            ;;
-        other_ext)
-            emit_wrap_verbose_body_stderr "Same-extension checksum scan missed under '${search_root}' — scanning other extensions (expected hash: ${hash_disp})"
-            ;;
-        *)
-            emit_wrap_verbose_body_stderr "Name-based subtree recovery failed under '${search_root}' — scanning all files below by checksum (expected hash: ${hash_disp})"
-            ;;
-    esac
-}
-
-
-print_recovery_final_status_verbose() {
-    (( VERBOSE == 1 )) || return 0
-    local missing_ref="$1"
-    local status="$2"
-
-    if [[ "$status" == "success" ]]; then
-        emit_wrap_verbose_body_stderr "Recovery FINAL STATUS: SUCCESS for '${missing_ref}'"
+    if (( nmissing > 0 )); then
+        msg="   Result: $(( nrefs - nmissing )) of ${nrefs} entries present, ${nmissing} missing (not found); nothing to rename"
     else
-        emit_wrap_verbose_body_stderr "Recovery FINAL STATUS: FAILED for '${missing_ref}'"
+        msg="   Result: all ${nrefs} entries present; nothing to rename"
     fi
+    [[ "$fs_skipped" == yes ]] && msg+=" (case-only renames skipped on exfat/CIFS/Samba)"
+    [[ -n "$verify_note" ]] && msg+=" — ${verify_note}"
+    emit_wrap_verbose_body_stderr "$msg"
 }
 
 # head_msg is the text after "[VERBOSE] " and before ": 'path'..." (same wording as one-line messages).
@@ -15066,12 +15094,52 @@ checksum_mem_file_identity() {
     printf '%s|%s|%s' "$abs" "$size" "$mtime"
 }
 
+# Spool line: type US kind US abs US size US mtime US digest  (US = \x1f)
+#   H = hashed from disk (a cache miss), D = digest taken from the SQLite cache, h = session-cache hit.
+checksum_mem_spool_append() {
+    local type="$1" kind="${2-}" abs="${3-}" size="${4-}" mtime="${5-}" dig="${6-}"
+    [[ -n "${CHECKSUM_MEM_SPOOL:-}" && -f "$CHECKSUM_MEM_SPOOL" ]] || return 0
+    [[ "$abs" == *$'\n'* ]] && return 0
+    printf '%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\n' "$type" "$kind" "$abs" "$size" "$mtime" "$dig" >> "$CHECKSUM_MEM_SPOOL" 2>/dev/null || true
+}
+
+checksum_mem_note_hit() {
+    checksum_mem_spool_append h
+}
+
+# Merge spool lines written since the last sync (usually by subshells) into this shell's cache and counters.
+checksum_mem_sync_from_spool() {
+    local LC_ALL=C
+    local line type kind abs size mtime dig key rkey
+    [[ -n "${CHECKSUM_MEM_SPOOL:-}" && -s "$CHECKSUM_MEM_SPOOL" ]] || return 0
+    while IFS= read -r line; do
+        CHECKSUM_MEM_SPOOL_OFFSET=$(( CHECKSUM_MEM_SPOOL_OFFSET + ${#line} + 1 ))
+        IFS=$'\x1f' read -r type kind abs size mtime dig <<< "$line"
+        case "$type" in
+            h) ((++CHECKSUM_MEM_HITS)); continue ;;
+            D) ((++CHECKSUM_MEM_HITS)) ;;
+            H)
+                ((++CHECKSUM_MEM_MISSES))
+                ((++FILES_HASHED))
+                [[ "$size" =~ ^[0-9]+$ ]] && CHECKSUM_MEM_BYTES_HASHED=$(( CHECKSUM_MEM_BYTES_HASHED + size ))
+                ;;
+            *) continue ;;
+        esac
+        [[ -n "$kind" && -n "$abs" && -n "$dig" ]] || continue
+        key="${kind}"$'\x1f'"${abs}"$'\x1f'"${size}"$'\x1f'"${mtime}"
+        CHECKSUM_MEM_DIGEST["$key"]="$dig"
+        rkey="${kind}"$'\x1f'"$dig"
+        [[ -n "${CHECKSUM_MEM_PATH_BY_DIGEST[$rkey]-}" ]] || CHECKSUM_MEM_PATH_BY_DIGEST["$rkey"]="$abs"
+    done < <(tail -c +"$(( CHECKSUM_MEM_SPOOL_OFFSET + 1 ))" -- "$CHECKSUM_MEM_SPOOL" 2>/dev/null)
+}
+
 checksum_mem_get() {
     local kind="$1"
     local file="$2"
     local id abs size mtime key dig
 
     (( FORCE_RECHECK == 0 )) || return 1
+    checksum_mem_sync_from_spool
     id="$(checksum_mem_file_identity "$file")" || return 1
     abs="${id%%|*}"
     size="${id#*|}"
@@ -15087,6 +15155,7 @@ checksum_mem_put() {
     local kind="$1"
     local file="$2"
     local dig="$3"
+    local src="${4-D}"
     local id abs size mtime key rkey
 
     [[ -n "$kind" && -n "$dig" ]] || return 0
@@ -15098,6 +15167,9 @@ checksum_mem_put() {
     size="${id#*|}"
     mtime="${size#*|}"
     size="${size%%|*}"
+    checksum_mem_spool_append "$src" "$kind" "$abs" "$size" "$mtime" "$dig"
+    # Main shell: absorb our own line now so the offset stays current.
+    checksum_mem_sync_from_spool
     key="${kind}"$'\x1f'"${abs}"$'\x1f'"${size}"$'\x1f'"${mtime}"
     CHECKSUM_MEM_DIGEST["$key"]="$dig"
     rkey="${kind}"$'\x1f'"$dig"
@@ -15116,6 +15188,7 @@ checksum_mem_find_by_digest() {
     dig="${dig//$'\r'/}"
     dig="${dig//$'\n'/}"
     [[ -n "$kind" && -n "$dig" ]] || return 1
+    checksum_mem_sync_from_spool
     rkey="${kind}"$'\x1f'"$dig"
     path="${CHECKSUM_MEM_PATH_BY_DIGEST[$rkey]-}"
     [[ -n "$path" && -f "$path" ]] || return 1
@@ -15135,20 +15208,18 @@ checksum_of_file() {
 
     cached="$(checksum_mem_get "$kind" "$file" || true)"
     if [[ -n "$cached" ]]; then
-        ((++CHECKSUM_MEM_HITS))
+        checksum_mem_note_hit
         printf '%s\n' "$cached"
         return 0
     fi
 
     cached="$(db_get_cached_file_hash "$file" "$kind" || true)"
     if [[ -n "$cached" ]]; then
-        checksum_mem_put "$kind" "$file" "$cached"
-        ((++CHECKSUM_MEM_HITS))
+        checksum_mem_put "$kind" "$file" "$cached" D
         printf '%s\n' "$cached"
         return 0
     fi
 
-    ((++CHECKSUM_MEM_MISSES))
     case "$kind" in
         sha512) out="$(sha512sum -- "$file" | awk '{print tolower($1)}')" ;;
         sha384) out="$(sha384sum -- "$file" | awk '{print tolower($1)}')" ;;
@@ -15160,8 +15231,7 @@ checksum_of_file() {
         *) return 1 ;;
     esac
 
-    ((++FILES_HASHED))
-    checksum_mem_put "$kind" "$file" "$out"
+    checksum_mem_put "$kind" "$file" "$out" H
     db_record_file_hash "$file" "$kind" "$out"
     printf '%s\n' "$out"
 }
@@ -15172,23 +15242,20 @@ md5_of_file() {
 
     cached="$(checksum_mem_get "md5" "$file" || true)"
     if [[ -n "$cached" ]]; then
-        ((++CHECKSUM_MEM_HITS))
+        checksum_mem_note_hit
         printf '%s\n' "$cached"
         return 0
     fi
 
     cached="$(db_get_cached_file_hash "$file" "md5" || true)"
     if [[ -n "$cached" ]]; then
-        checksum_mem_put "md5" "$file" "$cached"
-        ((++CHECKSUM_MEM_HITS))
+        checksum_mem_put "md5" "$file" "$cached" D
         printf '%s\n' "$cached"
         return 0
     fi
 
-    ((++CHECKSUM_MEM_MISSES))
     out="$(md5sum -- "$file" | awk '{print tolower($1)}')"
-    ((++FILES_HASHED))
-    checksum_mem_put "md5" "$file" "$out"
+    checksum_mem_put "md5" "$file" "$out" H
     db_record_file_hash "$file" "md5" "$out"
     printf '%s\n' "$out"
 }
@@ -15199,6 +15266,18 @@ format_bytes_human() {
         kb = b / 1024.0;
         mb = b / 1048576.0;
         printf "%d bytes | %.2f kB | %.2f MB", b, kb, mb
+    }'
+}
+
+# One short unit: 512 B, 3.4 MiB, 3.81 GiB.
+format_bytes_short() {
+    local bytes="${1:-0}"
+    [[ "$bytes" =~ ^[0-9]+$ ]] || bytes=0
+    awk -v b="$bytes" 'BEGIN {
+        if (b < 1024) printf "%d B", b;
+        else if (b < 1048576) printf "%.1f KiB", b / 1024.0;
+        else if (b < 1073741824) printf "%.1f MiB", b / 1048576.0;
+        else printf "%.2f GiB", b / 1073741824.0;
     }'
 }
 
@@ -16914,28 +16993,32 @@ find_best_path_for_missing_ref() {
     missing_dir="$(dirname -- "$missing_ref")"
     search_root="$(dirname -- "$sum_file")"
 
-    print_try_recover_missing_ref_verbose "$missing_ref" "${expected_hash:-none}"
+    local -a same_ext_candidates=() other_ext_candidates=()
+    local c_total
+
+    checksum_mem_sync_from_spool
 
     fast_base="$wanted_norm"
     fast_path="${missing_dir}/${fast_base}"
 
-    if [[ -f "$fast_path" ]]; then
-        vlog "Fast recovery candidate in same directory: '$fast_path'"
+    if [[ "$fast_path" == "$missing_ref" ]]; then
+        vlog "   Step 1 (same folder, name under current rules): skipped — listed name already follows current rules"
+    elif [[ -f "$fast_path" ]]; then
         if [[ -n "$expected_hash" ]]; then
             fast_hash="$(checksum_of_file "$kind" "$fast_path")"
-            vlog "Fast recovery candidate has $kind=$(format_hash_for_display "$fast_hash")"
             if [[ "${fast_hash,,}" == "${expected_hash,,}" ]]; then
-                vlog "Fast recovery candidate checksum matches"
+                vlog "   Step 1 (same folder, name under current rules): '${fast_path}' → digest matches"
                 printf '%s' "$fast_path"
                 return 0
-            else
-                vlog "Fast recovery candidate checksum does not match"
             fi
+            vlog "   Step 1 (same folder, name under current rules): '${fast_path}' → digest differs ($(format_hash_for_display "$fast_hash"))"
         else
-            vlog "Fast recovery candidate accepted (no expected hash available)"
+            vlog "   Step 1 (same folder, name under current rules): '${fast_path}' → accepted (list has no digest)"
             printf '%s' "$fast_path"
             return 0
         fi
+    else
+        vlog "   Step 1 (same folder, name under current rules): '${fast_path}' → not present"
     fi
 
     if [[ "$wanted_base" == "$wanted_norm" ]]; then
@@ -16946,28 +17029,30 @@ find_best_path_for_missing_ref() {
 
     build_recovery_file_index "$search_root"
 
+    c_total=0
     for candidate_name in "${candidate_names[@]}"; do
         index_key="${search_root}"$'\x1f'"${candidate_name}"
         indexed_candidates="${RECOVERY_INDEX_BY_BASENAME[$index_key]-}"
         [[ -n "$indexed_candidates" ]] || continue
         while IFS= read -r candidate; do
             [[ -n "$candidate" ]] || continue
-            vlog "Subtree recovery candidate by name: '$candidate'"
+            ((++c_total))
             if [[ -n "$expected_hash" ]]; then
                 candidate_hash="$(checksum_of_file "$kind" "$candidate")"
-                vlog "Subtree recovery candidate by name has $kind=$(format_hash_for_display "$candidate_hash")"
                 if [[ "${candidate_hash,,}" == "${expected_hash,,}" ]]; then
-                    vlog "Subtree recovery candidate by name checksum matches"
+                    vlog "   Step 2 (same file name anywhere under '${search_root}'): '${candidate}' → digest matches"
                     printf '%s' "$candidate"
                     return 0
                 fi
+                vlog "   Step 2 (same file name anywhere under '${search_root}'): '${candidate}' → digest differs"
             else
-                vlog "Subtree recovery candidate by name accepted (no expected hash available)"
+                vlog "   Step 2 (same file name anywhere under '${search_root}'): '${candidate}' → accepted (list has no digest)"
                 printf '%s' "$candidate"
                 return 0
             fi
         done <<< "$indexed_candidates"
     done
+    (( c_total == 0 )) && vlog "   Step 2 (same file name anywhere under '${search_root}'): no file with that name"
 
     _seg_save_e=0
     [[ $- == *e* ]] && _seg_save_e=1
@@ -16982,98 +17067,118 @@ find_best_path_for_missing_ref() {
         # Same-rules path is unique by construction. Accept even when the stored hash no longer
         # matches (common for nested .sha512/.md5 lists whose content was updated after the parent
         # list was written). Later verify can refresh the parent hash via [U].
-        vlog "Per-segment basename-transform recovery candidate: '$rebuilt'"
         if [[ -n "$expected_hash" ]]; then
             rebuilt_hash="$(checksum_of_file "$kind" "$rebuilt")"
-            vlog "Per-segment candidate has $kind=$(format_hash_for_display "$rebuilt_hash")"
             if [[ "${rebuilt_hash,,}" == "${expected_hash,,}" ]]; then
-                vlog "Per-segment basename-transform recovery checksum matches"
+                vlog "   Step 3 (whole path rebuilt with current naming rules): '${rebuilt}' → digest matches"
             else
-                vlog "Per-segment basename-transform recovery: path exists under same rules; accepting despite checksum mismatch (nested list content may have changed)"
+                vlog "   Step 3 (whole path rebuilt with current naming rules): '${rebuilt}' → accepted although digest differs (nested list content may have changed)"
             fi
         else
-            vlog "Per-segment basename-transform recovery accepted (no expected hash available)"
+            vlog "   Step 3 (whole path rebuilt with current naming rules): '${rebuilt}' → accepted (list has no digest)"
         fi
         printf '%s' "$rebuilt"
         return 0
     fi
+    vlog "   Step 3 (whole path rebuilt with current naming rules): no such path"
 
-    if [[ -n "$expected_hash" ]]; then
-        candidate="$(checksum_mem_find_by_digest "$kind" "$expected_hash" || true)"
-        if [[ -n "$candidate" ]]; then
-            vlog "Subtree recovery candidate by session hash cache: '$candidate'"
-            ((++CHECKSUM_MEM_HITS))
-            printf '%s' "$candidate"
-            return 0
-        fi
-
-        candidate="$(db_find_path_by_file_hash_in_subtree "$search_root" "$kind" "$expected_hash" || true)"
-        if [[ -n "$candidate" ]]; then
-            vlog "Subtree recovery candidate by DB hash matches: '$candidate'"
-            # Seed session cache so later missing refs skip disk for this path too.
-            checksum_mem_put "$kind" "$candidate" "$expected_hash"
-            printf '%s' "$candidate"
-            return 0
-        fi
-
-        all_candidates="${RECOVERY_INDEX_ALL_FILES[$search_root]-}"
-
-        # Prefer hashing candidates with the same extension (case-insensitive) so a missing
-        # .jpg does not force digesting large .mp4/.avi/etc. first. Fall back to other ext.
-        wanted_ext_lc=""
-        if [[ "$wanted_base" == *.* && "$wanted_base" != .* ]]; then
-            wanted_ext_lc="${wanted_base##*.}"
-            wanted_ext_lc="${wanted_ext_lc,,}"
-        fi
-
-        if [[ -n "$wanted_ext_lc" ]]; then
-            print_scan_by_checksum_verbose "$search_root" "$expected_hash" "same_ext"
-            while IFS= read -r candidate; do
-                [[ -n "$candidate" ]] || continue
-                candidate_base="$(basename -- "$candidate")"
-                [[ "$candidate_base" == *.* ]] || continue
-                candidate_ext_lc="${candidate_base##*.}"
-                candidate_ext_lc="${candidate_ext_lc,,}"
-                [[ "$candidate_ext_lc" == "$wanted_ext_lc" ]] || continue
-                candidate_hash="$(checksum_of_file "$kind" "$candidate")"
-                if [[ "${candidate_hash,,}" == "${expected_hash,,}" ]]; then
-                    vlog "Subtree recovery candidate by checksum (same ext .${wanted_ext_lc}) matches: '$candidate'"
-                    printf '%s' "$candidate"
-                    return 0
-                fi
-            done <<< "$all_candidates"
-
-            print_scan_by_checksum_verbose "$search_root" "$expected_hash" "other_ext"
-            while IFS= read -r candidate; do
-                [[ -n "$candidate" ]] || continue
-                candidate_base="$(basename -- "$candidate")"
-                if [[ "$candidate_base" == *.* ]]; then
-                    candidate_ext_lc="${candidate_base##*.}"
-                    candidate_ext_lc="${candidate_ext_lc,,}"
-                    [[ "$candidate_ext_lc" == "$wanted_ext_lc" ]] && continue
-                fi
-                candidate_hash="$(checksum_of_file "$kind" "$candidate")"
-                if [[ "${candidate_hash,,}" == "${expected_hash,,}" ]]; then
-                    vlog "Subtree recovery candidate by checksum (other ext) matches: '$candidate'"
-                    printf '%s' "$candidate"
-                    return 0
-                fi
-            done <<< "$all_candidates"
-        else
-            print_scan_by_checksum_verbose "$search_root" "$expected_hash"
-            while IFS= read -r candidate; do
-                [[ -n "$candidate" ]] || continue
-                candidate_hash="$(checksum_of_file "$kind" "$candidate")"
-                if [[ "${candidate_hash,,}" == "${expected_hash,,}" ]]; then
-                    vlog "Subtree recovery candidate by checksum matches: '$candidate'"
-                    printf '%s' "$candidate"
-                    return 0
-                fi
-            done <<< "$all_candidates"
-        fi
+    if [[ -z "$expected_hash" ]]; then
+        vlog "   Steps 4-5 skipped: the list has no digest for this entry, so content search is impossible"
+        return 1
     fi
 
-    vlog "Subtree recovery failed for '$missing_ref' under '$search_root'"
+    candidate="$(checksum_mem_find_by_digest "$kind" "$expected_hash" || true)"
+    if [[ -n "$candidate" ]]; then
+        vlog "   Step 4 (digest already known — hashed earlier this run): '${candidate}'"
+        checksum_mem_note_hit
+        printf '%s' "$candidate"
+        return 0
+    fi
+
+    candidate="$(db_find_path_by_file_hash_in_subtree "$search_root" "$kind" "$expected_hash" || true)"
+    if [[ -n "$candidate" ]]; then
+        vlog "   Step 4 (digest already known — SQLite cache): '${candidate}'"
+        # Seed session cache so later missing refs skip disk for this path too.
+        checksum_mem_put "$kind" "$candidate" "$expected_hash"
+        printf '%s' "$candidate"
+        return 0
+    fi
+    vlog "   Step 4 (digest already known — this run / SQLite cache): no"
+
+    all_candidates="${RECOVERY_INDEX_ALL_FILES[$search_root]-}"
+
+    # Prefer hashing candidates with the same extension (case-insensitive) so a missing
+    # .jpg does not force digesting large .mp4/.avi/etc. first. Fall back to other ext.
+    wanted_ext_lc=""
+    if [[ "$wanted_base" == *.* && "$wanted_base" != .* ]]; then
+        wanted_ext_lc="${wanted_base##*.}"
+        wanted_ext_lc="${wanted_ext_lc,,}"
+    fi
+
+    while IFS= read -r candidate; do
+        [[ -n "$candidate" ]] || continue
+        candidate_base="${candidate##*/}"
+        candidate_ext_lc=""
+        if [[ "$candidate_base" == *.* ]]; then
+            candidate_ext_lc="${candidate_base##*.}"
+            candidate_ext_lc="${candidate_ext_lc,,}"
+        fi
+        if [[ -n "$wanted_ext_lc" && "$candidate_ext_lc" == "$wanted_ext_lc" ]]; then
+            same_ext_candidates+=( "$candidate" )
+        else
+            other_ext_candidates+=( "$candidate" )
+        fi
+    done <<< "$all_candidates"
+
+    if [[ -n "$wanted_ext_lc" ]]; then
+        recovery_hash_scan_candidates "5" "same-extension .${wanted_ext_lc}" "$search_root" "$kind" "$expected_hash" same_ext_candidates && return 0
+        recovery_hash_scan_candidates "6" "other-extension" "$search_root" "$kind" "$expected_hash" other_ext_candidates && return 0
+    else
+        recovery_hash_scan_candidates "5" "all" "$search_root" "$kind" "$expected_hash" other_ext_candidates && return 0
+    fi
+
+    return 1
+}
+
+# Hash each candidate (nameref array) until one matches expected digest; prints match on stdout.
+# Progress goes to stderr: verbose → one line per file actually read from disk; non-verbose → one start line.
+recovery_hash_scan_candidates() {
+    local step="$1" what="$2" search_root="$3" kind="$4" expected_hash="$5"
+    local -n _cands="$6"
+    local total=${#_cands[@]} idx=0 cached=0 candidate candidate_hash size cached_note=""
+
+    if (( total == 0 )); then
+        vlog "   Step ${step} (hash ${what} files under '${search_root}'): no candidates"
+        return 1
+    fi
+    checksum_mem_sync_from_spool
+    # Counting cache hits costs a few stat calls per file; skip for very large candidate sets.
+    if (( total <= 500 )); then
+        for candidate in "${_cands[@]}"; do
+            checksum_mem_get "$kind" "$candidate" >/dev/null 2>&1 && ((++cached))
+        done
+        cached_note=", ${cached} already hashed this run"
+    fi
+    if (( VERBOSE == 1 )); then
+        vlog "   Step ${step} (hash ${what} files under '${search_root}'): ${total} candidate(s)${cached_note}"
+    else
+        emit_wrap_labeled_stderr "  SEARCHING: " "  ${CYAN}SEARCHING:${RESET} " "hashing ${total} ${what} file(s) under '${search_root}'${cached_note}..."
+    fi
+
+    for candidate in "${_cands[@]}"; do
+        ((++idx))
+        if (( VERBOSE == 1 )) && ! checksum_mem_get "$kind" "$candidate" >/dev/null 2>&1; then
+            size="$(get_file_size_bytes "$candidate")"
+            vlog "      [${idx}/${total}] hashing '${candidate}' ($(format_bytes_short "$size"))"
+        fi
+        candidate_hash="$(checksum_of_file "$kind" "$candidate")"
+        if [[ "${candidate_hash,,}" == "${expected_hash,,}" ]]; then
+            vlog "   Step ${step}: '${candidate}' → digest matches"
+            printf '%s' "$candidate"
+            return 0
+        fi
+    done
+    vlog "   Step ${step}: no match among ${total} file(s)"
     return 1
 }
 
@@ -17214,6 +17319,7 @@ save_resume_checkpoint() {
         return 0
     fi
 
+    checksum_mem_sync_from_spool
     tmp_renamed="$(mktemp)"
 
     for r in "${renamed_list[@]}"; do
@@ -18429,7 +18535,8 @@ print_summary() {
     echo "Date placement:        $DATE_PLACEMENT"
     echo "Entries examined:      $files_examined"
     echo "Files processed:       $files_examined"
-    echo "Files hashed:          $FILES_HASHED"
+    checksum_mem_sync_from_spool
+    echo "Files hashed:          $FILES_HASHED ($(format_bytes_short "$CHECKSUM_MEM_BYTES_HASHED") read)"
     echo "Checksum mem hits:     $CHECKSUM_MEM_HITS"
     echo "Checksum mem misses:   $CHECKSUM_MEM_MISSES"
     echo "Entries affected:      $files_affected"
@@ -18800,8 +18907,6 @@ for f in "${ordered_paths[@]}"; do
         label="$(checksum_label "$sum_file")"
         sum_file_check_kind="$(checksum_kind "$sum_file")" || sum_file_check_kind=""
 
-        vlog "Processing checksum file '$sum_file'"
-
         # CRLF + FastSum ';' normalize (dry-run only reports; real may prompt to strip comments).
         ensure_checksum_file_unix_format "$sum_file" || true
         if [[ "$stopped_by_user" == yes ]]; then
@@ -18818,7 +18923,6 @@ for f in "${ordered_paths[@]}"; do
             refs_raw+=( "$ref" )
             refs+=( "$(resolve_checksum_ref_path "$sum_file" "$ref")" )
             nonverbose_checksum_ref_verify_progress_letter "$sum_file_check_kind" "$sum_file"
-            print_resolved_ref_verbose "$ref" "${refs[-1]}"
         done < <(extract_checksum_entries "$sum_file")
 
         if (( ${#refs[@]} == 0 )) || [[ -z "${refs[0]}" ]]; then
@@ -18828,27 +18932,52 @@ for f in "${ordered_paths[@]}"; do
             continue
         fi
 
+        ((++CHECKSUM_LIST_SEEN_N))
+        print_checksum_list_header_verbose "$label" "$sum_file" "${#refs[@]}"
+
         declare -a recovered_old_refs=()
         declare -a recovered_new_real_refs=()
         declare -a recovered_new_written_refs=()
         declare -A checksum_recovered_idx=()
         checksum_content_modified=no
+        checksum_missing_count=0
 
         for i in "${!refs[@]}"; do
             ref="${refs[$i]}"
+            ref_disp="$(checksum_ref_display_name "$sum_file" "$ref")"
             if [[ -e "$ref" ]]; then
-                vlog "Ref exists already: '$ref'"
+                print_checksum_list_entry_verbose "$((i + 1))" "${#refs[@]}" OK "$ref_disp"
+                print_resolved_ref_verbose "${refs_raw[$i]}" "$ref" "$sum_file"
                 continue
             fi
 
             if [[ "$mode" == "dry-run" ]]; then
-                vlog "Dry-run: not searching for missing ref '$ref' in '$sum_file'"
+                print_checksum_list_entry_verbose "$((i + 1))" "${#refs[@]}" MISSING "$ref_disp" "(dry-run: not searched)"
+                ((++checksum_missing_count))
                 continue
             fi
 
-            vlog "Ref missing, trying recovery: '$ref'"
+            print_checksum_list_entry_verbose "$((i + 1))" "${#refs[@]}" MISSING "$ref_disp"
+            print_resolved_ref_verbose "${refs_raw[$i]}" "$ref" "$sum_file"
+            recovery_search_root="${sum_file%/*}"
+            [[ "$recovery_search_root" == "$sum_file" ]] && recovery_search_root="."
+            nonverbose_progress_dot_endline_if_needed
+            echo
+            emit_wrap_labeled_stdout "${label} RECOVERY: " "${CYAN}${label} RECOVERY:${RESET} " "entry $((i + 1)) of ${#refs[@]} in '${sum_file}' is not on disk"
+            emit_wrap_labeled_stdout "  MISSING:     " "  ${YELLOW}MISSING:${RESET}     " "'${ref_disp}'"
+            if [[ -n "${expected_hashes[$i]}" ]]; then
+                emit_wrap_labeled_stdout "  LOOKING FOR: " "  ${CYAN}LOOKING FOR:${RESET} " "${label} $(format_hash_for_display "${expected_hashes[$i]}") under '${recovery_search_root}' — by name first, then by file content (may hash many files)"
+            else
+                emit_wrap_labeled_stdout "  LOOKING FOR: " "  ${CYAN}LOOKING FOR:${RESET} " "same name under '${recovery_search_root}' (list has no digest for this entry)"
+            fi
+            checksum_mem_sync_from_spool
+            recovery_hashed_before=$CHECKSUM_MEM_MISSES
+            recovery_bytes_before=$CHECKSUM_MEM_BYTES_HASHED
+            recovery_t0=$SECONDS
             _fbr_rc=0
             found_ref="$(find_best_path_for_missing_ref "$ref" "${expected_hashes[$i]}" "$sum_file")" || _fbr_rc=$?
+            checksum_mem_sync_from_spool
+            recovery_stats="hashed $(( CHECKSUM_MEM_MISSES - recovery_hashed_before )) file(s), $(format_bytes_short "$(( CHECKSUM_MEM_BYTES_HASHED - recovery_bytes_before ))"), $(format_elapsed_short "$(( SECONDS - recovery_t0 ))")"
             if ((_fbr_rc == 2)); then
                 stopped_by_user=yes
                 break
@@ -18862,12 +18991,18 @@ for f in "${ordered_paths[@]}"; do
                 refs[$i]="$found_ref"
                 checksum_recovered_idx[$i]=1
                 checksum_content_modified=yes
-                print_recovery_success_verbose "$ref" "$found_ref" "$replacement_ref"
-                print_recovery_final_status_verbose "$ref" "success"
-                emit_wrap_labeled_stdout "${label} RECOVERY CANDIDATE FOUND: " "${CYAN}${label} RECOVERY CANDIDATE FOUND:${RESET} " "'$found_ref' (hash will be checked in normal processing)."
+                emit_wrap_labeled_stdout "  RESULT:      " "  ${GREEN}RESULT:${RESET}      " "FOUND '${found_ref}' (${recovery_stats}); the list will be updated below"
             else
-                vlog "Recovery failed for '$ref'"
-                print_recovery_final_status_verbose "$ref" "failed"
+                ((++checksum_missing_count))
+                emit_wrap_labeled_stdout "  RESULT:      " "  ${YELLOW}RESULT:${RESET}      " "NOT FOUND under '${recovery_search_root}' (${recovery_stats}); the entry stays in the list unchanged"
+                shopt -s nocasematch
+                if [[ "${ref_disp##*/}" == *_proxy.* || "${ref_disp##*/}" == *.lrv || "${ref_disp##*/}" == *.thm ]]; then
+                    shopt -u nocasematch
+                    emit_wrap_labeled_stdout "  HINT:        " "  ${CYAN}HINT:${RESET}        " "this looks like an editor/GoPro proxy or preview file, which is often deleted on purpose; if so, remove its line from '${sum_file}'"
+                else
+                    shopt -u nocasematch
+                    emit_wrap_labeled_stdout "  HINT:        " "  ${CYAN}HINT:${RESET}        " "if it was deleted on purpose, remove its line from '${sum_file}'; files moved outside '${recovery_search_root}' are not searched"
+                fi
             fi
         done
 
@@ -19117,12 +19252,19 @@ for f in "${ordered_paths[@]}"; do
             if (( ${#checksum_fs_dropped_refs[@]} > 0 )) || [[ "$checksum_fs_sum_skipped" == yes ]]; then
                 checksum_no_action_fs_note=yes
             fi
-            print_checksum_no_action_verbose "$sum_file" "$checksum_no_action_fs_note"
+            if [[ "$mode" == "dry-run" ]]; then
+                checksum_no_action_verify_note="dry-run, no hashing"
+            elif [[ "$CHECKSUM_VERIFY" != all ]]; then
+                checksum_no_action_verify_note="not hashed (--checksum-verify ${CHECKSUM_VERIFY})"
+            else
+                checksum_no_action_verify_note="verifying digests (--checksum-verify all)"
+            fi
+            print_checksum_no_action_verbose "$sum_file" "$checksum_no_action_fs_note" "${#refs[@]}" "$checksum_missing_count" "$checksum_no_action_verify_note"
             if [[ "$mode" == "dry-run" || "$CHECKSUM_VERIFY" != all ]]; then
                 nonverbose_checksum_list_skipped_letter "$sum_file_check_kind"
             fi
             if [[ "$mode" == "real" && "$CHECKSUM_VERIFY" != all ]] && (( ${#refs[@]} > 0 )); then
-                vlog "Skipping digest check for '$sum_file' (no rename needed; --checksum-verify $CHECKSUM_VERIFY)"
+                :
             elif [[ "$mode" == "real" ]] && (( ${#refs[@]} > 0 )); then
                 local_line_count="$(count_checksum_entries "$sum_file")"
                 if confirm_large_hash_check "$sum_file" "$label" "$local_line_count" refs; then
