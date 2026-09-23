@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# v. 20260923.121320 - --checksum-verify changed|none|all (+ prompt): hash only renamed/recovered refs by default
 # v. 20260922.163726 - checksum-group: skip after-rename digest recheck when list contents unchanged
 # v. 20260922.150008 - plain-rename verify mismatch: ask [U]/[I]/[H]/[s]/[v]/[Q] (default Ignore)
 # v. 20260922.144342 - clarify plain-rename hash-verify prompt: verify digest vs skip
@@ -79,6 +80,7 @@
 # v. 20260721.132007 - Samsung timestamp media: preserve optional numeric sorting prefix when appending make/model
 # v. 20260721.112812 - GoPro camera labels: GoPro_Hero4_Silver style (not GOPRO4_SILVER)
 
+# 2026.09.23 - v. 19.342.121320 - New startup question / --checksum-verify changed|none|all (env RENAME_CHECKSUM_VERIFY): changed (default) hashes only checksum-listed files being renamed or recovered, once (after-rename checks the rewritten line as text); none never hashes to verify; all keeps the old full behavior (also lists needing no rename, whole-list check after deleted-file ref removal). Missing-ref content search still hashes in every mode; shown in Run settings / Equivalent CLI / verbose box; stored in resume checkpoint
 # 2026.09.22 - v. 19.341.163726 - Checksum-group: skip after-rename per-ref digest recheck when no path columns or digests in the list were rewritten (e.g. only the .sha512/.md5 filename renamed); before-rename verify already covered the bytes; still recheck when refs/paths/hashes inside the list changed
 # 2026.09.22 - v. 19.340.150008 - Plain-rename digest verify mismatch: prompt [U] update hash / [I] ignore once (default Enter) / [H] ignore session / [s] skip this rename (before only) / [v] / [Q]; checksum-group mismatch menu still defaults to [Q]
 # 2026.09.22 - v. 19.339.144342 - Plain-rename hash-verify menu wording: spell out verify digest before/after vs rename+update path only; [D]/[E]/[A]/[S] as Like [Y]/[n] for directory/run
@@ -1271,6 +1273,12 @@ CLI_SCOPE=""
 SCOPE_SUBDIR=""
 CLI_RESUME_STATE="resume"
 CLI_DATE_PLACEMENT=""
+# Checksum digest verification during rename: changed (default) | none | all.
+# changed: hash only refs that are renamed or recovered; none: text-only line checks; all: every listed ref.
+# Missing-ref recovery by content always hashes (any mode). Env RENAME_CHECKSUM_VERIFY skips the prompt.
+CLI_CHECKSUM_VERIFY=""
+CHECKSUM_VERIFY=""
+CHECKSUM_VERIFY_SOURCE=""
 CLI_DB_MAINTENANCE="full"
 CLI_HASH_BACKFILL=""
 DATE_PLACEMENT="${DATE_PLACEMENT:-front}"
@@ -1406,6 +1414,13 @@ Options:
                          BBC/iPlayer-style names with -date_YYYY-MM-DD_HH_MM_SS:
                          front = YYYYMMDD_HHMMSS_ at the start (default);
                          original = compact YYYYMMDD_HHMMSS stays in the title (not moved to the front)
+  --checksum-verify [changed]|none|all
+                         Skip the startup checksum-verify question. Controls digest checks for files
+                         listed in .sha512/.md5/.sha256/... manifests:
+                         changed = hash only files that are renamed or recovered (default);
+                         none    = never hash for verification; rewritten manifest lines are checked as text;
+                         all     = hash every listed file (also lists whose names are already correct).
+                         Searching for a missing listed file by content still hashes in every mode.
   --resume-state [resume]|ask|fresh
                          [resume]: automatically resume from checkpoint if it exists (default)
                          ask: if checkpoint exists, ask to resume or restart
@@ -1447,6 +1462,8 @@ Environment / tunables (read at startup; use export or prefix on the same line a
       DEBUG_RUN_ID=batch1 rename.sh -v --use-db
   DATE_PLACEMENT                      BBC/iPlayer -date_ handling: front (default) or original (same as --date-placement).
       DATE_PLACEMENT=original rename.sh --use-db --scope subdirs ./_ogladam
+  RENAME_CHECKSUM_VERIFY              changed (default), none, or all (same as --checksum-verify; skips the prompt).
+      RENAME_CHECKSUM_VERIFY=none rename.sh --scope subdirs
   DB_MAINT_MAX_MISSING_PERCENT        Safety-stop threshold for maintenance pruning (default 25%, minimum 100 rows).
   DB_MAINT_ALLOW_MASS_DELETE=1        Explicitly allow pruning above that threshold.
   EXIFLOC                             Override exiftool path (same as RENAME_EXIFTOOL; zmien-nazwe script name)
@@ -6199,6 +6216,14 @@ while (( $# > 0 )); do
             esac
             shift 2
             ;;
+        --checksum-verify)
+            [[ $# -ge 2 ]] || { echo "Missing value for --checksum-verify" >&2; usage >&2; exit 1; }
+            case "$2" in
+                changed|none|all) CLI_CHECKSUM_VERIFY="$2" ;;
+                *) echo "Invalid value for --checksum-verify: $2 (use changed, none, or all)" >&2; usage >&2; exit 1 ;;
+            esac
+            shift 2
+            ;;
         --wait-seconds)
             [[ $# -ge 2 ]] || { echo "Missing value for --wait-seconds" >&2; usage >&2; exit 1; }
             [[ "$2" =~ ^[0-9]+$ ]] || { echo "Invalid value for --wait-seconds: $2 (use 0 or a positive integer)" >&2; usage >&2; exit 1; }
@@ -6236,6 +6261,22 @@ if (( RECHECK_RENAMES == 1 && (RUN_DB_MAINTENANCE == 1 || RUN_HASH_BACKFILL == 1
 fi
 
 rename_sh_window_title_apply_from_saved_argv
+
+if [[ -n "$CLI_CHECKSUM_VERIFY" ]]; then
+    CHECKSUM_VERIFY="$CLI_CHECKSUM_VERIFY"
+    CHECKSUM_VERIFY_SOURCE="cli"
+elif [[ -n "${RENAME_CHECKSUM_VERIFY:-}" ]]; then
+    case "$RENAME_CHECKSUM_VERIFY" in
+        changed|none|all)
+            CHECKSUM_VERIFY="$RENAME_CHECKSUM_VERIFY"
+            CHECKSUM_VERIFY_SOURCE="env"
+            ;;
+        *)
+            echo "Invalid RENAME_CHECKSUM_VERIFY: $RENAME_CHECKSUM_VERIFY (use changed, none, or all)" >&2
+            exit 1
+            ;;
+    esac
+fi
 
 if [[ -n "$CLI_DATE_PLACEMENT" ]]; then
     DATE_PLACEMENT="$CLI_DATE_PLACEMENT"
@@ -6400,6 +6441,7 @@ print_run_settings_equivalent_cli() {
         parts+=("--scope" "subdirs")
     fi
     parts+=("--date-placement" "$DATE_PLACEMENT")
+    parts+=("--checksum-verify" "${CHECKSUM_VERIFY:-changed}")
     parts+=("--resume-state" "$CLI_RESUME_STATE")
     parts+=("--wait-seconds" "$PROMPT_WAIT_SECONDS")
 
@@ -6488,6 +6530,13 @@ print_run_settings() {
         printf '  --date-placement:    %s (default/env)\n' "$DATE_PLACEMENT"
     fi
 
+    case "$CHECKSUM_VERIFY_SOURCE" in
+        cli)     printf '  --checksum-verify:   given (%s)\n' "$CHECKSUM_VERIFY" ;;
+        env)     printf '  --checksum-verify:   %s (RENAME_CHECKSUM_VERIFY)\n' "$CHECKSUM_VERIFY" ;;
+        prompt)  printf '  --checksum-verify:   not given (prompted; selected: %s)\n' "$CHECKSUM_VERIFY" ;;
+        *)       printf '  --checksum-verify:   %s (default; dry-run never hashes)\n' "$CHECKSUM_VERIFY" ;;
+    esac
+
     printf '  --resume-state:      %s\n' "$CLI_RESUME_STATE"
     if (( PROMPT_WAIT_SECONDS == 0 )); then
         wait_line="0 — wait forever for each interactive answer"
@@ -6558,6 +6607,11 @@ print_verbose_options_box() {
     lines+=("Rename recheck : $( (( RECHECK_RENAMES == 1 )) && printf '%s' 'enabled - audit current rules with dedicated approvals' || printf '%s' 'disabled' )")
     lines+=("Scope          : ${scope_text}")
     lines+=("Date placement : ${DATE_PLACEMENT} - $( [[ "$DATE_PLACEMENT" == original ]] && printf '%s' 'BBC/iPlayer -date_ compact stamp stays in title' || printf '%s' 'BBC/iPlayer -date_ stamp moved to front' )")
+    case "$CHECKSUM_VERIFY" in
+        none) lines+=("Checksum verify: none - no digest verification; manifest lines checked as text") ;;
+        all)  lines+=("Checksum verify: all - hash every file listed in checksum manifests") ;;
+        *)    lines+=("Checksum verify: changed - hash only renamed/recovered checksum-listed files") ;;
+    esac
     lines+=("SQLite cache   : ${db_mode}")
     lines+=("DB maintenance : ${db_maintenance_text}")
     lines+=("Resume state   : ${CLI_RESUME_STATE} - checkpoint behavior after Ctrl-C")
@@ -7345,6 +7399,41 @@ if [[ "$process_scope" == "subdir" ]]; then
 else
     echo -e "Scope selected: ${CYAN}$process_scope${RESET}"
 fi
+
+if [[ -z "$CHECKSUM_VERIFY" ]]; then
+    if [[ "$mode" == "dry-run" ]]; then
+        CHECKSUM_VERIFY="changed"
+        CHECKSUM_VERIFY_SOURCE="dry-run"
+    else
+        while true; do
+            echo
+            verbose_question_timestamp "Which checksum-listed files should be hashed to verify them?"
+            echo "  $(rename_menu_key_bracket C S) Changed (default) — only files being renamed or recovered; other lines checked as text"
+            echo "  $(rename_menu_key_bracket N S) None — never hash to verify; rewritten manifest lines checked as text"
+            echo "  $(rename_menu_key_bracket A S) All — hash every listed file, also in lists that need no rename (slow on big lists)"
+            echo "  $(rename_menu_key_bracket Q S) Quit"
+            echo -n "$(user_prompt_ts_prefix)Choice [C/n/a/q]: "
+
+            flush_stdin
+            read_single_key input "$PROMPT_WAIT_SECONDS"
+            echo
+
+            if [[ "$input" =~ [Qq] ]]; then
+                echo "Quitting."
+                exit 0
+            elif [[ "$input" =~ [Nn] ]]; then
+                CHECKSUM_VERIFY="none"
+            elif [[ "$input" =~ [Aa] ]]; then
+                CHECKSUM_VERIFY="all"
+            else
+                CHECKSUM_VERIFY="changed"
+            fi
+            break
+        done
+        CHECKSUM_VERIFY_SOURCE="prompt"
+    fi
+fi
+echo -e "Checksum verify selected: ${CYAN}$CHECKSUM_VERIFY${RESET}"
 
 
 sleep 1
@@ -15984,6 +16073,11 @@ update_local_checksums_after_deleted_file() {
 
     [[ "$changed_any" == "yes" ]] || return 0
 
+    if [[ "$CHECKSUM_VERIFY" != all ]]; then
+        vlog "Skipped full-list checksum check after deleted-file reference removal (--checksum-verify $CHECKSUM_VERIFY)."
+        return 0
+    fi
+
     for sum_file in "${verify_files[@]}"; do
         if ! checksum_check "$sum_file"; then
             emit_wrap_labeled_stdout "CHECKSUM WARNING: After removing deleted-file references, checksum file check failed: " "${YELLOW}CHECKSUM WARNING:${RESET} After removing deleted-file references, checksum file check failed: " "$sum_file"
@@ -16191,7 +16285,11 @@ verify_collected_local_checksum_refs() {
             ref="${LOCAL_UPDATE_NEW_REFS[$i]}"
         fi
         vrc=0
-        verify_single_checksum_target "$sum_file" "$ref" || vrc=$?
+        if [[ "$phase" == "after" && "$CHECKSUM_VERIFY" != all ]]; then
+            [[ -n "$(find_checksum_line_for_ref "$sum_file" "$ref")" ]] || vrc=2
+        else
+            verify_single_checksum_target "$sum_file" "$ref" || vrc=$?
+        fi
         if (( vrc == 0 )); then
             continue
         fi
@@ -16392,7 +16490,8 @@ apply_local_checksum_ref_updates_after_rename() {
     emit_wrap_labeled_stdout "Also updated hash (old name referenced): " "${CYAN}Also updated hash (old name referenced):${RESET} " "$hash_list"
 
     # Only re-hash affected rows — never whole-list md5sum/sha512sum -c after a plain rename.
-    if [[ "$do_verify" == yes ]]; then
+    # Outside --checksum-verify all the after-phase is a text-only line check (no hashing).
+    if [[ "$do_verify" == yes || "$CHECKSUM_VERIFY" != all ]]; then
         verify_collected_local_checksum_refs after
     else
         vlog "Skipped post-rename hash verify for '$target_new' (user chose skip verify)."
@@ -16505,7 +16604,11 @@ perform_plain_entry_rename() {
     PLAIN_RENAME_DO_HASH_VERIFY=yes
     collect_local_checksum_ref_updates "$old" "$new" "$target_kind"
     if (( ${#LOCAL_UPDATE_SUM_FILES[@]} > 0 )); then
-        if ! prompt_plain_rename_hash_verify_decision "$old"; then
+        if [[ "$CHECKSUM_VERIFY" == none ]]; then
+            PLAIN_RENAME_DO_HASH_VERIFY=no
+        elif [[ "$CHECKSUM_VERIFY" == all ]]; then
+            PLAIN_RENAME_DO_HASH_VERIFY=yes
+        elif ! prompt_plain_rename_hash_verify_decision "$old"; then
             return 1
         fi
         if [[ "$PLAIN_RENAME_DO_HASH_VERIFY" == yes ]]; then
@@ -17110,7 +17213,7 @@ save_resume_checkpoint() {
         "$SCRIPT_VERSION" "$START_DIR" "$mode" "$(resume_scope_storage_key)" \
         "$USE_DB" "$FAST_DB" "$FORCE_RECHECK" "$PROMPT_WAIT_SECONDS" "$DATE_PLACEMENT" \
         "$files_examined" "$files_affected" "$files_skipped" "$FILES_HASHED" \
-        "$SCRIPT_START_TIME" <<'PY'
+        "$SCRIPT_START_TIME" "${CHECKSUM_VERIFY:-changed}" <<'PY'
 import json
 import pathlib
 import sys
@@ -17166,6 +17269,7 @@ payload = {
     "filesSkipped": int(sys.argv[14]),
     "filesHashed": int(sys.argv[15]),
     "scriptStartTime": sys.argv[16],
+    "checksumVerify": sys.argv[17],
     "processed": processed_list,
     "renamedList": renamed_list,
 }
@@ -17207,7 +17311,7 @@ load_resume_checkpoint() {
     tmp_processed="$(mktemp)"
     tmp_renamed="$(mktemp)"
     verbose_status_timestamp "Loading resume checkpoint metadata from: $RESUME_STATE_FILE"
-    if ! meta="$(python3 - "$RESUME_STATE_FILE" "$tmp_processed" "$tmp_renamed" "$START_DIR" "$mode" "$(resume_scope_storage_key)" "$USE_DB" "$FAST_DB" "$FORCE_RECHECK" "$PROMPT_WAIT_SECONDS" "$DATE_PLACEMENT" <<'PY'
+    if ! meta="$(python3 - "$RESUME_STATE_FILE" "$tmp_processed" "$tmp_renamed" "$START_DIR" "$mode" "$(resume_scope_storage_key)" "$USE_DB" "$FAST_DB" "$FORCE_RECHECK" "$PROMPT_WAIT_SECONDS" "$DATE_PLACEMENT" "${CHECKSUM_VERIFY:-changed}" <<'PY'
 import json
 import pathlib
 import sys
@@ -17241,6 +17345,10 @@ for key, expected in numeric_checks:
 
 if str(data.get("datePlacement", "front")) != sys.argv[11]:
     print("mismatch:datePlacement")
+    sys.exit(2)
+
+if "checksumVerify" in data and str(data.get("checksumVerify")) != sys.argv[12]:
+    print("mismatch:checksumVerify")
     sys.exit(2)
 
 processed = data.get("processed", [])
@@ -18706,6 +18814,7 @@ for f in "${ordered_paths[@]}"; do
         declare -a recovered_old_refs=()
         declare -a recovered_new_real_refs=()
         declare -a recovered_new_written_refs=()
+        declare -A checksum_recovered_idx=()
         checksum_content_modified=no
 
         for i in "${!refs[@]}"; do
@@ -18734,6 +18843,7 @@ for f in "${ordered_paths[@]}"; do
                 recovered_new_written_refs+=( "$replacement_ref" )
                 refs_raw[$i]="$replacement_ref"
                 refs[$i]="$found_ref"
+                checksum_recovered_idx[$i]=1
                 checksum_content_modified=yes
                 print_recovery_success_verbose "$ref" "$found_ref" "$replacement_ref"
                 print_recovery_final_status_verbose "$ref" "success"
@@ -18991,7 +19101,9 @@ for f in "${ordered_paths[@]}"; do
                 checksum_no_action_fs_note=yes
             fi
             print_checksum_no_action_verbose "$sum_file" "$checksum_no_action_fs_note"
-            if [[ "$mode" == "real" ]] && (( ${#refs[@]} > 0 )); then
+            if [[ "$mode" == "real" && "$CHECKSUM_VERIFY" != all ]] && (( ${#refs[@]} > 0 )); then
+                vlog "Skipping digest check for '$sum_file' (no rename needed; --checksum-verify $CHECKSUM_VERIFY)"
+            elif [[ "$mode" == "real" ]] && (( ${#refs[@]} > 0 )); then
                 local_line_count="$(count_checksum_entries "$sum_file")"
                 if confirm_large_hash_check "$sum_file" "$label" "$local_line_count" refs; then
                     ensure_checksum_file_unix_format "$sum_file"
@@ -19115,10 +19227,30 @@ for f in "${ordered_paths[@]}"; do
 
         begin_current_operation "$label" "$sum_file" "$new_sum"
 
-        if (( ${#refs[@]} > 0 )); then
+        checksum_before_rename_partial=no
+        [[ "$CHECKSUM_VERIFY" != all ]] && checksum_before_rename_partial=yes
+        checksum_before_rename_hash_count=0
+        if [[ "$CHECKSUM_VERIFY" != all ]]; then
+            for i in "${!refs[@]}"; do
+                if [[ "$CHECKSUM_VERIFY" == changed ]] \
+                    && { [[ "${new_refs[$i]}" != "${refs[$i]}" ]] || [[ -n "${checksum_recovered_idx[$i]:-}" ]]; }; then
+                    ((++checksum_before_rename_hash_count))
+                fi
+            done
+        else
+            checksum_before_rename_hash_count=${#refs[@]}
+        fi
+
+        if (( ${#refs[@]} > 0 && checksum_before_rename_hash_count == 0 )); then
+            checksum_before_rename_ignored=no
+            vlog "Skipping before-rename digest check for '$sum_file' (--checksum-verify $CHECKSUM_VERIFY; no renamed/recovered refs to hash)"
+        elif (( ${#refs[@]} > 0 )); then
             print_checksum_verify_progress_line "$label" before "$sum_file"
             checksum_before_rename_ignored=no
             for i in "${!refs[@]}"; do
+                if [[ "$CHECKSUM_VERIFY" == changed && "${new_refs[$i]}" == "${refs[$i]}" && -z "${checksum_recovered_idx[$i]:-}" ]]; then
+                    continue
+                fi
                 vrc=0
                 verify_single_checksum_target "$sum_file" "${refs_raw[$i]}" || vrc=$?
                 if (( vrc == 0 )); then
@@ -19255,8 +19387,12 @@ for f in "${ordered_paths[@]}"; do
             if [[ "$checksum_list_content_changed" != yes ]]; then
                 # Only the list filename (or nothing) changed — digests/paths inside are identical to the before-rename check.
                 vlog "Skipping after-rename ${label} verify for '$final_sum' (list contents unchanged; before-rename check already covered digests)"
-                emit_wrap_labeled_stdout "${label} NOTE: " "${CYAN}${label} NOTE:${RESET} " "Skipped after-rename digest check — list contents unchanged (before-rename check already covered digests)."
-                if [[ "${checksum_before_rename_ignored:-no}" != yes ]]; then
+                if [[ "$checksum_before_rename_partial" == yes ]]; then
+                    emit_wrap_labeled_stdout "${label} NOTE: " "${CYAN}${label} NOTE:${RESET} " "Skipped after-rename digest check — list contents unchanged (--checksum-verify ${CHECKSUM_VERIFY})."
+                else
+                    emit_wrap_labeled_stdout "${label} NOTE: " "${CYAN}${label} NOTE:${RESET} " "Skipped after-rename digest check — list contents unchanged (before-rename check already covered digests)."
+                fi
+                if [[ "${checksum_before_rename_ignored:-no}" != yes && "$checksum_before_rename_partial" != yes ]]; then
                     record_checksum_list_full_verify_success "$final_sum"
                 fi
             else
@@ -19265,7 +19401,11 @@ for f in "${ordered_paths[@]}"; do
                 for i in "${!refs[@]}"; do
                     new_ref_for_verify="$(format_ref_for_checksum_file "$final_sum" "${refs_raw[$i]}" "${new_refs[$i]}")"
                     vrc=0
-                    verify_single_checksum_target "$final_sum" "$new_ref_for_verify" || vrc=$?
+                    if [[ "$CHECKSUM_VERIFY" != all && "${html_hash_needs_refresh[$i]}" != yes ]]; then
+                        [[ -n "$(find_checksum_line_for_ref "$final_sum" "$new_ref_for_verify")" ]] || vrc=2
+                    else
+                        verify_single_checksum_target "$final_sum" "$new_ref_for_verify" || vrc=$?
+                    fi
                     if (( vrc == 0 )); then
                         continue
                     fi
@@ -19289,7 +19429,9 @@ for f in "${ordered_paths[@]}"; do
                 else
                     print_checksum_verified_refs_line "$label" after "$final_sum"
                     print_checksum_group_ok_line "$label" "$final_sum"
-                    record_checksum_list_full_verify_success "$final_sum"
+                    if [[ "$checksum_before_rename_partial" != yes ]]; then
+                        record_checksum_list_full_verify_success "$final_sum"
+                    fi
                 fi
             fi
         fi
