@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# v. 20260923.132314 - non-verbose: print s/m/h per checksum list skipped with no rename (shows progress)
 # v. 20260923.121320 - --checksum-verify changed|none|all (+ prompt): hash only renamed/recovered refs by default
 # v. 20260922.163726 - checksum-group: skip after-rename digest recheck when list contents unchanged
 # v. 20260922.150008 - plain-rename verify mismatch: ask [U]/[I]/[H]/[s]/[v]/[Q] (default Ignore)
@@ -80,6 +81,7 @@
 # v. 20260721.132007 - Samsung timestamp media: preserve optional numeric sorting prefix when appending make/model
 # v. 20260721.112812 - GoPro camera labels: GoPro_Hero4_Silver style (not GOPRO4_SILVER)
 
+# 2026.09.23 - v. 19.343.132314 - Non-verbose progress: one lowercase s (SHA512) / m (MD5) / h (other) on the dot row per checksum list that needed no rename and was not hashed, so runs over many small .sha512/.md5 lists no longer look idle; uppercase S/M/H still mean hashing
 # 2026.09.23 - v. 19.342.121320 - New startup question / --checksum-verify changed|none|all (env RENAME_CHECKSUM_VERIFY): changed (default) hashes only checksum-listed files being renamed or recovered, once (after-rename checks the rewritten line as text); none never hashes to verify; all keeps the old full behavior (also lists needing no rename, whole-list check after deleted-file ref removal). Missing-ref content search still hashes in every mode; shown in Run settings / Equivalent CLI / verbose box; stored in resume checkpoint
 # 2026.09.22 - v. 19.341.163726 - Checksum-group: skip after-rename per-ref digest recheck when no path columns or digests in the list were rewritten (e.g. only the .sha512/.md5 filename renamed); before-rename verify already covered the bytes; still recheck when refs/paths/hashes inside the list changed
 # 2026.09.22 - v. 19.340.150008 - Plain-rename digest verify mismatch: prompt [U] update hash / [I] ignore once (default Enter) / [H] ignore session / [s] skip this rename (before only) / [v] / [Q]; checksum-group mismatch menu still defaults to [Q]
@@ -1497,6 +1499,7 @@ Environment / tunables (read at startup; use export or prefix on the same line a
   NONVERBOSE_CHECKSUM_LIST_MAX_ENTRIES_PER_PROGRESS_CHAR  Large checksum lists: max entries represented by one progress letter (default 50).
       NONVERBOSE_CHECKSUM_LIST_MAX_ENTRIES_PER_PROGRESS_CHAR=40 rename.sh --use-db
   NONVERBOSE_CHECKSUM_LIST_PER_LETTER_THRESHOLD  Below this many list lines, NO progress letters (small/single-reference lists stay quiet); at or above, batched S/M/H letters (default 3000).
+                                      Lowercase s/m/h on the dot row = one SHA512/MD5/other list that needed no rename and was not hashed.
       NONVERBOSE_CHECKSUM_LIST_PER_LETTER_THRESHOLD=5000 rename.sh --use-db
   NONVERBOSE_CHECKSUM_RAMP_CHARS        Non-verbose checksum ramp glyphs between S/M/H (maps to in-cell redraw order). Default is a long punctuation set; use single quotes when exporting.
       export NONVERBOSE_CHECKSUM_RAMP_CHARS='.:-=+*'
@@ -1675,6 +1678,20 @@ nonverbose_main_loop_progress_dot() {
     fi
     NONVERBOSE_CHECKSUM_RAMP_CELL_ACTIVE=no
     nonverbose_progress_stdout_line_char '.'
+}
+
+# Lowercase s/m/h on the dot row for a checksum list that needed no rename and was not hashed
+# (uppercase S/M/H stay reserved for lists being hashed).
+nonverbose_checksum_list_skipped_letter() {
+    local kind="${1-}" letter
+    (( VERBOSE == 1 )) && return 0
+    case "$kind" in
+        md5) letter=m ;;
+        sha512) letter=s ;;
+        *) letter=h ;;
+    esac
+    NONVERBOSE_CHECKSUM_RAMP_CELL_ACTIVE=no
+    nonverbose_progress_stdout_line_char "$letter"
 }
 
 # End the current dot row, then print "n out of total" (non-verbose only). n = paths examined this session (caller subtracts MAIN_LOOP_FILES_EXAMINED_MILESTONE_BASE from files_examined).
@@ -19101,6 +19118,9 @@ for f in "${ordered_paths[@]}"; do
                 checksum_no_action_fs_note=yes
             fi
             print_checksum_no_action_verbose "$sum_file" "$checksum_no_action_fs_note"
+            if [[ "$mode" == "dry-run" || "$CHECKSUM_VERIFY" != all ]]; then
+                nonverbose_checksum_list_skipped_letter "$sum_file_check_kind"
+            fi
             if [[ "$mode" == "real" && "$CHECKSUM_VERIFY" != all ]] && (( ${#refs[@]} > 0 )); then
                 vlog "Skipping digest check for '$sum_file' (no rename needed; --checksum-verify $CHECKSUM_VERIFY)"
             elif [[ "$mode" == "real" ]] && (( ${#refs[@]} > 0 )); then
