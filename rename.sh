@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# v. 20260923.155707 - missing-ref content search: hash candidates with the most similar names first
 # v. 20260923.153655 - readable checksum-list log: header, [i/n] rows, recovery block with steps/result/hint; fix hash cache across subshells
 # v. 20260923.132314 - non-verbose: print s/m/h per checksum list skipped with no rename (shows progress)
 # v. 20260923.121320 - --checksum-verify changed|none|all (+ prompt): hash only renamed/recovered refs by default
@@ -82,6 +83,7 @@
 # v. 20260721.132007 - Samsung timestamp media: preserve optional numeric sorting prefix when appending make/model
 # v. 20260721.112812 - GoPro camera labels: GoPro_Hero4_Silver style (not GOPRO4_SILVER)
 
+# 2026.09.23 - v. 19.345.155707 - Missing-ref recovery by content: before hashing, sort same-extension and other-extension candidates by name similarity to the missing file (python3 difflib on names without extension/case/spaces/punctuation; ties prefer the missing file's folder), so renamed files are usually found on the first hash; verbose [k/N] lines show "name NN% similar"; without python3 the old order is kept
 # 2026.09.23 - v. 19.344.153655 - Checksum-list log readability: verbose header "── SHA512 list #N: '<list>' (n entries)", one "[i/n] OK|MISSING '<name>'" row per entry (names relative to the list dir; "resolves to" note only when the path column points elsewhere), one Result line (present/missing counts + why not hashed); missing entry → RECOVERY block in both modes naming the list, entry number, missing name and digest, verbose Step 1-6 lines (same folder / same name / rebuilt path / known digest / hash same-ext / other-ext, with [k/N] per file read and size), RESULT FOUND|NOT FOUND with files hashed, bytes and time, and a HINT (proxy/LRV/THM often deleted on purpose). Wrap: lines with quoted paths break at spaces outside quotes (no more "rename/" split). Fix: session hash cache and Files hashed / mem hits / misses counters were lost in $(...) subshells — now merged via a session spool file; summary shows bytes read
 # 2026.09.23 - v. 19.343.132314 - Non-verbose progress: one lowercase s (SHA512) / m (MD5) / h (other) on the dot row per checksum list that needed no rename and was not hashed, so runs over many small .sha512/.md5 lists no longer look idle; uppercase S/M/H still mean hashing
 # 2026.09.23 - v. 19.342.121320 - New startup question / --checksum-verify changed|none|all (env RENAME_CHECKSUM_VERIFY): changed (default) hashes only checksum-listed files being renamed or recovered, once (after-rename checks the rewritten line as text); none never hashes to verify; all keeps the old full behavior (also lists needing no rename, whole-list check after deleted-file ref removal). Missing-ref content search still hashes in every mode; shown in Run settings / Equivalent CLI / verbose box; stored in resume checkpoint
@@ -1331,6 +1333,7 @@ declare -A CHECKSUM_MEM_PATH_BY_DIGEST=()
 CHECKSUM_MEM_SPOOL="$(mktemp "${TMPDIR:-/tmp}/rename.sh-hashmem.XXXXXX" 2>/dev/null || true)"
 CHECKSUM_MEM_SPOOL_OFFSET=0
 CHECKSUM_LIST_SEEN_N=0
+declare -A RECOVERY_NAME_SIMILARITY=() # candidate path → name similarity % (missing-ref content search order)
 RESUME_STATE_FILE="$START_DIR/_rename.sh.resume-state.json"
 RESUME_STATE_WAS_LOADED=0
 RESUME_CHECKPOINT_PROCESSED_LINES_LOADED=0
@@ -17131,26 +17134,71 @@ find_best_path_for_missing_ref() {
     done <<< "$all_candidates"
 
     if [[ -n "$wanted_ext_lc" ]]; then
-        recovery_hash_scan_candidates "5" "same-extension .${wanted_ext_lc}" "$search_root" "$kind" "$expected_hash" same_ext_candidates && return 0
-        recovery_hash_scan_candidates "6" "other-extension" "$search_root" "$kind" "$expected_hash" other_ext_candidates && return 0
+        recovery_hash_scan_candidates "5" "same-extension .${wanted_ext_lc}" "$search_root" "$kind" "$expected_hash" same_ext_candidates "$wanted_base" "$missing_dir" && return 0
+        recovery_hash_scan_candidates "6" "other-extension" "$search_root" "$kind" "$expected_hash" other_ext_candidates "$wanted_base" "$missing_dir" && return 0
     else
-        recovery_hash_scan_candidates "5" "all" "$search_root" "$kind" "$expected_hash" other_ext_candidates && return 0
+        recovery_hash_scan_candidates "5" "all" "$search_root" "$kind" "$expected_hash" other_ext_candidates "$wanted_base" "$missing_dir" && return 0
     fi
 
     return 1
 }
 
+# Reorder candidate paths (nameref array) so names most similar to the missing file come first.
+# Names are compared without extension, case, spaces and punctuation; ties prefer the missing file's
+# folder, then the original order. Without python3 the order is left unchanged.
+recovery_sort_candidates_by_name_similarity() {
+    local wanted="$1" missing_dir="$2"
+    local -n _sort_arr="$3"
+    local -a sorted=()
+    local rec path
+    local py='
+import difflib, os, re, sys
+def norm(p):
+    b = os.path.basename(p)
+    if "." in b[1:]:
+        b = b.rsplit(".", 1)[0]
+    return re.sub(r"[\W_]+", "", b.lower())
+target = norm(sys.argv[1])
+mdir = sys.argv[2]
+items = []
+for i, raw in enumerate(sys.stdin.buffer.read().split(b"\0")):
+    if not raw:
+        continue
+    p = raw.decode("utf-8", "surrogateescape")
+    r = difflib.SequenceMatcher(None, target, norm(p), autojunk=False).ratio()
+    items.append((-r, 0 if os.path.dirname(p) == mdir else 1, i, p))
+items.sort()
+out = sys.stdout.buffer
+for r, _, _, p in items:
+    out.write(("%d\t%s\0" % (round(-r * 100), p)).encode("utf-8", "surrogateescape"))
+'
+
+    (( ${#_sort_arr[@]} > 0 )) || return 0
+    command -v python3 >/dev/null 2>&1 || return 0
+    while IFS= read -r -d '' rec; do
+        path="${rec#*$'\t'}"
+        sorted+=( "$path" )
+        RECOVERY_NAME_SIMILARITY["$path"]="${rec%%$'\t'*}"
+    done < <(printf '%s\0' "${_sort_arr[@]}" | python3 -c "$py" "$wanted" "$missing_dir" 2>/dev/null)
+    if (( ${#sorted[@]} == ${#_sort_arr[@]} )); then
+        _sort_arr=( "${sorted[@]}" )
+    fi
+}
+
 # Hash each candidate (nameref array) until one matches expected digest; prints match on stdout.
-# Progress goes to stderr: verbose → one line per file actually read from disk; non-verbose → one start line.
+# Candidates are hashed most-similar name first. Progress goes to stderr: verbose → one line per file
+# actually read from disk; non-verbose → one start line.
 recovery_hash_scan_candidates() {
     local step="$1" what="$2" search_root="$3" kind="$4" expected_hash="$5"
     local -n _cands="$6"
-    local total=${#_cands[@]} idx=0 cached=0 candidate candidate_hash size cached_note=""
+    local wanted_base="${7-}" missing_dir="${8-}"
+    local total=${#_cands[@]} idx=0 cached=0 candidate candidate_hash size cached_note="" sim_note
 
     if (( total == 0 )); then
         vlog "   Step ${step} (hash ${what} files under '${search_root}'): no candidates"
         return 1
     fi
+    [[ -n "$wanted_base" ]] && recovery_sort_candidates_by_name_similarity "$wanted_base" "$missing_dir" "$6"
     checksum_mem_sync_from_spool
     # Counting cache hits costs a few stat calls per file; skip for very large candidate sets.
     if (( total <= 500 )); then
@@ -17160,7 +17208,7 @@ recovery_hash_scan_candidates() {
         cached_note=", ${cached} already hashed this run"
     fi
     if (( VERBOSE == 1 )); then
-        vlog "   Step ${step} (hash ${what} files under '${search_root}'): ${total} candidate(s)${cached_note}"
+        vlog "   Step ${step} (hash ${what} files under '${search_root}', most similar names first): ${total} candidate(s)${cached_note}"
     else
         emit_wrap_labeled_stderr "  SEARCHING: " "  ${CYAN}SEARCHING:${RESET} " "hashing ${total} ${what} file(s) under '${search_root}'${cached_note}..."
     fi
@@ -17169,7 +17217,9 @@ recovery_hash_scan_candidates() {
         ((++idx))
         if (( VERBOSE == 1 )) && ! checksum_mem_get "$kind" "$candidate" >/dev/null 2>&1; then
             size="$(get_file_size_bytes "$candidate")"
-            vlog "      [${idx}/${total}] hashing '${candidate}' ($(format_bytes_short "$size"))"
+            sim_note=""
+            [[ -n "${RECOVERY_NAME_SIMILARITY[$candidate]-}" ]] && sim_note=", name ${RECOVERY_NAME_SIMILARITY[$candidate]}% similar"
+            vlog "      [${idx}/${total}] hashing '${candidate}' ($(format_bytes_short "$size")${sim_note})"
         fi
         candidate_hash="$(checksum_of_file "$kind" "$candidate")"
         if [[ "${candidate_hash,,}" == "${expected_hash,,}" ]]; then
