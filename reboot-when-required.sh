@@ -1,10 +1,12 @@
 #!/bin/bash
+# v. 20260923.082630 - default: reboot even when who(1) shows logged-in users
 # v. 20260923.082359 - apt-idle: ignore running /usr/libexec/packagekitd (process and lock holder)
 # v. 20260921.092438 - --help: drop dry-run crontab example
 # v. 20260921.091916 - make "reboot not required" outcome a boxed notice (harder to miss)
 # v. 20260921.091719 - --help: include suggested crontab entries
 # v. 20260921.085840 - --mail/--mail-to: email script log before reboot (and on give-up)
 # v. 20260921.085347 - initial release: reboot when /var/run/reboot-required and system is idle
+# 2026.09.23 - v. 0.7 - Logged-in users no longer block reboot (who sessions ignored by default); --require-no-users restores the old gate
 # 2026.09.23 - v. 0.6 - apt-idle gate ignores /usr/libexec/packagekitd: a resident PackageKit daemon (and locks held only by it) no longer blocks reboot
 # 2026.09.21 - v. 0.5 - --help suggested crontab: remove the dry-run --mail example line (keep it
 #                       as a one-off manual command in the script footer comments only)
@@ -24,7 +26,8 @@
 # reboot-when-required.sh
 #
 # If the system needs a reboot (/var/run/reboot-required), wait until it is safe
-# (no apt/dpkg activity, load low enough, minimum uptime), then reboot. A resident
+# (no apt/dpkg activity, load low enough, minimum uptime), then reboot. Logged-in
+# users do not block reboot unless --require-no-users. A resident
 # /usr/libexec/packagekitd is ignored (process and locks held only by it). When a
 # gate fails, retry for a configurable window (default: every 5 minutes for 2 hours).
 # Intended for a night cron window; keep healthchecks-reboot-required.sh as the monitor.
@@ -41,7 +44,8 @@ show_help() {
 Usage: $(basename "$0") [options]
 
 Reboot when /var/run/reboot-required is present and the machine looks idle
-(no apt/dpkg activity, load below threshold, minimum uptime). If a gate fails,
+(no apt/dpkg activity, load below threshold, minimum uptime). Logged-in users
+do not block the reboot unless --require-no-users is given. If a gate fails,
 retry until the retry window expires, then give up.
 
 Options:
@@ -56,8 +60,8 @@ Options:
   --load-max N            Max 1-minute loadavg allowed (default: 0.25 * nproc).
   --min-uptime SEC        Refuse reboot if uptime is below this (default: ${DEFAULT_MIN_UPTIME}).
   --shutdown-delay MIN    Minutes argument for shutdown -r (default: ${DEFAULT_SHUTDOWN_DELAY}).
-  --allow-users           Do not treat logged-in users (who) as a blocker.
-  --require-no-users      Refuse reboot when who(1) shows any user (default).
+  --allow-users           Do not treat logged-in users (who) as a blocker (default).
+  --require-no-users      Refuse reboot when who(1) shows any user.
   --mail                  Email the run log before reboot (and on give-up).
                           Default To: ${DEFAULT_MAIL_TO}
   --mail-to ADDR          Like --mail, but send to ADDR.
@@ -68,7 +72,7 @@ Environment (overridden by flags when set):
   REBOOT_LOAD_MAX         Same as --load-max
   REBOOT_MIN_UPTIME       Same as --min-uptime
   REBOOT_SHUTDOWN_DELAY   Same as --shutdown-delay
-  REBOOT_ALLOW_USERS=1    Same as --allow-users
+  REBOOT_ALLOW_USERS=1    Same as --allow-users (default). Set to 0 for --require-no-users.
   REBOOT_MAIL_TO          Enable mail to this address (same as --mail-to)
 
 Exit codes:
@@ -121,12 +125,15 @@ MAIL_TO="${REBOOT_MAIL_TO:-}"
 MAIL_FROM=""
 LOGFILE=""
 MAIL_SENT=0
-ALLOW_USERS=0
-case "${REBOOT_ALLOW_USERS:-0}" in
-  1|yes|true|Y|y) ALLOW_USERS=1 ;;
+# Default: logged-in users do not block reboot. --require-no-users opts back in.
+ALLOW_USERS=1
+REQUIRE_NO_USERS=0
+case "${REBOOT_ALLOW_USERS:-1}" in
+  0|no|false|N|n)
+    ALLOW_USERS=0
+    REQUIRE_NO_USERS=1
+    ;;
 esac
-# Default: require no interactive users unless --allow-users.
-REQUIRE_NO_USERS=1
 RETRY_INTERVAL_CLI=0
 RETRY_WINDOW_CLI=0
 LOAD_MAX_CLI=0
@@ -460,7 +467,11 @@ print_run_settings() {
     printf '  %-22s%s\n' "--shutdown-delay:" "${SHUTDOWN_DELAY} min (default)"
   fi
   if (( ALLOW_USERS )); then
-    printf '  %-22s%s\n' "Logged-in users:" "ignored (--allow-users)"
+    if (( ALLOW_USERS_CLI )); then
+      printf '  %-22s%s\n' "Logged-in users:" "ignored (--allow-users)"
+    else
+      printf '  %-22s%s\n' "Logged-in users:" "ignored (default)"
+    fi
   else
     printf '  %-22s%s\n' "Logged-in users:" "must be none (--require-no-users)"
   fi
@@ -634,7 +645,7 @@ gate_min_uptime() {
 gate_no_users() {
   local who_out
   if (( ! REQUIRE_NO_USERS )); then
-    vlog "SKIP users: --allow-users (logged-in users are ignored)"
+    vlog "SKIP users: logged-in users are ignored"
     return 0
   fi
   who_out="$(who 2>/dev/null || true)"
