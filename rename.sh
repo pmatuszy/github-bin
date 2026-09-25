@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# v. 20260925.115032 - plain rename: per hash list say "path updated (digest unchanged)" + whether content was checked
 # v. 20260923.155707 - missing-ref content search: hash candidates with the most similar names first
 # v. 20260923.153655 - readable checksum-list log: header, [i/n] rows, recovery block with steps/result/hint; fix hash cache across subshells
 # v. 20260923.132314 - non-verbose: print s/m/h per checksum list skipped with no rename (shows progress)
@@ -83,6 +84,7 @@
 # v. 20260721.132007 - Samsung timestamp media: preserve optional numeric sorting prefix when appending make/model
 # v. 20260721.112812 - GoPro camera labels: GoPro_Hero4_Silver style (not GOPRO4_SILVER)
 
+# 2026.09.25 - v. 19.346.115032 - Plain rename hash-list line replaces misleading "Also updated hash (old name referenced)": one line per list "  SHA512 list <list>: path updated (digest unchanged); content checked: OK" / "OK before and after rename" (--checksum-verify all) / "content NOT checked (you chose skip | skip for this folder | skip for this run | --checksum-verify none)" / "content MISMATCH — ignored at your request ([I]/[H])" / "digest REPLACED with current content ([U] after mismatch)"; N paths for directory renames; dry-run "would update path (digest unchanged); content not checked in dry-run"; summary line "Hash-list paths: N updated by renames; per list: … OK, … not checked, … mismatches ignored, … digests replaced"; verify prompt wording says the path is always updated and only the before-rename content check is optional
 # 2026.09.23 - v. 19.345.155707 - Missing-ref recovery by content: before hashing, sort same-extension and other-extension candidates by name similarity to the missing file (python3 difflib on names without extension/case/spaces/punctuation; ties prefer the missing file's folder), so renamed files are usually found on the first hash; verbose [k/N] lines show "name NN% similar"; without python3 the old order is kept
 # 2026.09.23 - v. 19.344.153655 - Checksum-list log readability: verbose header "── SHA512 list #N: '<list>' (n entries)", one "[i/n] OK|MISSING '<name>'" row per entry (names relative to the list dir; "resolves to" note only when the path column points elsewhere), one Result line (present/missing counts + why not hashed); missing entry → RECOVERY block in both modes naming the list, entry number, missing name and digest, verbose Step 1-6 lines (same folder / same name / rebuilt path / known digest / hash same-ext / other-ext, with [k/N] per file read and size), RESULT FOUND|NOT FOUND with files hashed, bytes and time, and a HINT (proxy/LRV/THM often deleted on purpose). Wrap: lines with quoted paths break at spaces outside quotes (no more "rename/" split). Fix: session hash cache and Files hashed / mem hits / misses counters were lost in $(...) subshells — now merged via a session spool file; summary shows bytes read
 # 2026.09.23 - v. 19.343.132314 - Non-verbose progress: one lowercase s (SHA512) / m (MD5) / h (other) on the dot row per checksum list that needed no rename and was not hashed, so runs over many small .sha512/.md5 lists no longer look idle; uppercase S/M/H still mean hashing
@@ -16351,6 +16353,26 @@ collect_local_checksum_ref_summaries() {
     done
 }
 
+# Record the worst outcome per hash list for this rename: replaced > ignored > noline > ok.
+plain_verify_mark_status() {
+    local phase="$1" sum_file="$2" status="$3" cur
+    local -A rank=( [ok]=1 [noline]=2 [ignored]=3 [replaced]=4 )
+
+    if [[ "$phase" == before ]]; then
+        cur="${PLAIN_VERIFY_BEFORE[$sum_file]-}"
+    else
+        cur="${PLAIN_VERIFY_AFTER[$sum_file]-}"
+    fi
+    if [[ -n "$cur" ]] && (( ${rank[$cur]:-0} >= ${rank[$status]:-0} )); then
+        return 0
+    fi
+    if [[ "$phase" == before ]]; then
+        PLAIN_VERIFY_BEFORE["$sum_file"]="$status"
+    else
+        PLAIN_VERIFY_AFTER["$sum_file"]="$status"
+    fi
+}
+
 # Verify only rows collected into LOCAL_UPDATE_* (phase: before|after).
 # On digest mismatch: prompt [U]/[I default]/[H]/[s before-only]/[v]/[Q].
 # Returns: 0=ok/continue, 1=user quit, 3=skip this rename (before + [s] only).
@@ -16390,9 +16412,11 @@ verify_collected_local_checksum_refs() {
             verify_single_checksum_target "$sum_file" "$ref" || vrc=$?
         fi
         if (( vrc == 0 )); then
+            plain_verify_mark_status "$phase" "$sum_file" ok
             continue
         fi
         if (( vrc == 2 )); then
+            plain_verify_mark_status "$phase" "$sum_file" noline
             emit_wrap_labeled_stdout "CHECKSUM WARNING: No matching checksum line ${phase_label} for: " "${YELLOW}CHECKSUM WARNING:${RESET} No matching checksum line ${phase_label} for: " "$ref"
             emit_wrap_labeled_stdout "    list: " "    list: " "$sum_file"
             continue
@@ -16404,9 +16428,11 @@ verify_collected_local_checksum_refs() {
         mismatch_menu_rc=0
         prompt_refresh_checksum_hash_after_mismatch "$sum_file" "$ref" "$path_on_disk" "$phase_label" I "$allow_skip" || mismatch_menu_rc=$?
         if (( mismatch_menu_rc == 0 )); then
+            plain_verify_mark_status "$phase" "$sum_file" replaced
             continue
         fi
         if (( mismatch_menu_rc == 2 )); then
+            plain_verify_mark_status "$phase" "$sum_file" ignored
             ignored_any=yes
             continue
         fi
@@ -16430,6 +16456,7 @@ prompt_plain_rename_hash_verify_decision() {
     local answer="" sum_file hash_list="" target_dir=""
 
     PLAIN_RENAME_DO_HASH_VERIFY=yes
+    PLAIN_RENAME_VERIFY_SKIP_REASON=""
 
     (( ${#LOCAL_UPDATE_VERIFY_FILES[@]} > 0 )) || return 0
 
@@ -16442,6 +16469,7 @@ prompt_plain_rename_hash_verify_decision() {
     fi
     if [[ "$AUTO_PLAIN_HASH_SKIP_VERIFY_SESSION" == yes ]]; then
         PLAIN_RENAME_DO_HASH_VERIFY=no
+        PLAIN_RENAME_VERIFY_SKIP_REASON="skip for this run"
         vlog "Plain rename hash verify: session skip-check for '$target_old'"
         return 0
     fi
@@ -16452,6 +16480,7 @@ prompt_plain_rename_hash_verify_decision() {
     fi
     if [[ -n "$AUTO_PLAIN_HASH_SKIP_VERIFY_DIR" && "$target_dir" == "$AUTO_PLAIN_HASH_SKIP_VERIFY_DIR" ]]; then
         PLAIN_RENAME_DO_HASH_VERIFY=no
+        PLAIN_RENAME_VERIFY_SKIP_REASON="skip for this folder"
         vlog "Plain rename hash verify: directory skip-check for '$target_old' (dir='$target_dir')"
         return 0
     fi
@@ -16468,8 +16497,8 @@ prompt_plain_rename_hash_verify_decision() {
     while true; do
         echo
         emit_wrap_labeled_stdout "This file is referenced in hash file(s): " "${CYAN}This file is referenced in hash file(s):${RESET} " "$hash_list"
-        echo "Before rewriting the path in those list(s), verify this file's digest"
-        echo "against the stored hash (before and after the rename)?"
+        echo "The path in those list(s) is always updated (the stored digest is not changed)."
+        echo "Also check this file's content against the stored digest before the rename?"
         echo "  [Y] Yes — verify this file's hash, then rename + update path(s) (default)"
         echo "  [n] No — rename + update path(s) only; do not verify the digest"
         echo "  [d] Like [Y] for all remaining files in this directory"
@@ -16494,6 +16523,7 @@ prompt_plain_rename_hash_verify_decision() {
                 ;;
             n|N)
                 PLAIN_RENAME_DO_HASH_VERIFY=no
+                PLAIN_RENAME_VERIFY_SKIP_REASON="you chose skip"
                 return 0
                 ;;
             d|D)
@@ -16509,6 +16539,7 @@ prompt_plain_rename_hash_verify_decision() {
                 AUTO_PLAIN_HASH_VERIFY_DIR=""
                 AUTO_PLAIN_HASH_VERIFY_SESSION=no
                 PLAIN_RENAME_DO_HASH_VERIFY=no
+                PLAIN_RENAME_VERIFY_SKIP_REASON="skip for this folder"
                 vlog "Per-directory skip-verify enabled for plain-rename hash verify in '$AUTO_PLAIN_HASH_SKIP_VERIFY_DIR'"
                 return 0
                 ;;
@@ -16527,6 +16558,7 @@ prompt_plain_rename_hash_verify_decision() {
                 AUTO_PLAIN_HASH_VERIFY_DIR=""
                 AUTO_PLAIN_HASH_SKIP_VERIFY_DIR=""
                 PLAIN_RENAME_DO_HASH_VERIFY=no
+                PLAIN_RENAME_VERIFY_SKIP_REASON="skip for this run"
                 vlog "Session skip-verify enabled for plain-rename hash verify prompts."
                 return 0
                 ;;
@@ -16538,6 +16570,78 @@ prompt_plain_rename_hash_verify_decision() {
                 echo "Invalid choice."
                 ;;
         esac
+    done
+}
+
+# One line per hash list touched by a plain rename: what changed in the list and whether the
+# file content was checked (uses PLAIN_VERIFY_* / PLAIN_RENAME_*; also updates run totals).
+print_plain_hashlist_update_lines() {
+    local do_verify="$1"
+    local sum_file i n label paths_word unchanged text color b a
+    local -A n_by_list=()
+
+    for i in "${!LOCAL_UPDATE_SUM_FILES[@]}"; do
+        sum_file="${LOCAL_UPDATE_SUM_FILES[$i]}"
+        n_by_list["$sum_file"]=$(( ${n_by_list[$sum_file]:-0} + 1 ))
+    done
+
+    for sum_file in "${LOCAL_UPDATE_VERIFY_FILES[@]}"; do
+        n=${n_by_list[$sum_file]:-0}
+        (( n > 0 )) || continue
+        label="$(checksum_label "$sum_file")"
+
+        if [[ "$mode" == "dry-run" ]]; then
+            if (( n == 1 )); then
+                text="would update path (digest unchanged); content not checked in dry-run"
+            else
+                text="would update ${n} paths (digests unchanged); content not checked in dry-run"
+            fi
+            PLAIN_HASHLIST_PATHS_UPDATED=$(( PLAIN_HASHLIST_PATHS_UPDATED + n ))
+            emit_wrap_labeled_stdout "  ${label} list " "  ${CYAN}${label} list${RESET} " "${sum_file}: ${text}"
+            continue
+        fi
+
+        PLAIN_HASHLIST_PATHS_UPDATED=$(( PLAIN_HASHLIST_PATHS_UPDATED + n ))
+        if (( n == 1 )); then
+            paths_word="path updated"
+            unchanged="(digest unchanged)"
+        else
+            paths_word="${n} paths updated"
+            unchanged="(digests unchanged)"
+        fi
+        b="${PLAIN_VERIFY_BEFORE[$sum_file]-}"
+        a="${PLAIN_VERIFY_AFTER[$sum_file]-}"
+        color=""
+        if [[ "$b" == replaced || "$a" == replaced ]]; then
+            text="${paths_word}; digest REPLACED with current content ([U] after mismatch)"
+            color=cyan
+            ((++PLAIN_HASHLIST_DIGEST_REPLACED))
+        elif [[ "$b" == ignored || "$a" == ignored ]]; then
+            text="${paths_word} ${unchanged}; content MISMATCH — ignored at your request ([I]/[H])"
+            color=yellow
+            ((++PLAIN_HASHLIST_MISMATCH_IGNORED))
+        elif [[ "$do_verify" != yes ]]; then
+            text="${paths_word} ${unchanged}; content NOT checked (${PLAIN_RENAME_VERIFY_SKIP_REASON:-not requested})"
+            color=yellow
+            ((++PLAIN_HASHLIST_NOT_CHECKED))
+        elif [[ "$b" == noline ]]; then
+            text="${paths_word} ${unchanged}; content NOT checked (no matching line in the list before rename)"
+            color=yellow
+            ((++PLAIN_HASHLIST_NOT_CHECKED))
+        elif [[ "$a" == noline ]]; then
+            text="${paths_word} ${unchanged}; content checked: OK, but the updated line was not found after rename"
+            color=yellow
+            ((++PLAIN_HASHLIST_CHECK_OK))
+        elif [[ "$CHECKSUM_VERIFY" == all ]]; then
+            text="${paths_word} ${unchanged}; content checked: OK before and after rename"
+            color=green
+            ((++PLAIN_HASHLIST_CHECK_OK))
+        else
+            text="${paths_word} ${unchanged}; content checked: OK"
+            color=green
+            ((++PLAIN_HASHLIST_CHECK_OK))
+        fi
+        emit_wrap_labeled_stdout "  ${label} list " "  ${CYAN}${label} list${RESET} " "${sum_file}: ${text}" "$color"
     done
 }
 
@@ -16566,7 +16670,7 @@ apply_local_checksum_ref_updates_after_rename() {
     done
 
     if [[ "$mode" == "dry-run" ]]; then
-        emit_wrap_labeled_stdout "[DRY-RUN] Would also update hash (old name referenced): " "${CYAN}[DRY-RUN] Would also update hash (old name referenced):${RESET} " "$hash_list"
+        print_plain_hashlist_update_lines no
         if (( VERBOSE == 1 )); then
             for i in "${!LOCAL_UPDATE_SUM_FILES[@]}"; do
                 print_checksum_update_verbose "${LOCAL_UPDATE_SUM_FILES[$i]}" "${LOCAL_UPDATE_OLD_REFS[$i]}" "${LOCAL_UPDATE_NEW_REFS[$i]}"
@@ -16586,8 +16690,6 @@ apply_local_checksum_ref_updates_after_rename() {
 
     [[ "$changed_any" == "yes" ]] || return 0
 
-    emit_wrap_labeled_stdout "Also updated hash (old name referenced): " "${CYAN}Also updated hash (old name referenced):${RESET} " "$hash_list"
-
     # Only re-hash affected rows — never whole-list md5sum/sha512sum -c after a plain rename.
     # Outside --checksum-verify all the after-phase is a text-only line check (no hashing).
     if [[ "$do_verify" == yes || "$CHECKSUM_VERIFY" != all ]]; then
@@ -16595,6 +16697,7 @@ apply_local_checksum_ref_updates_after_rename() {
     else
         vlog "Skipped post-rename hash verify for '$target_new' (user chose skip verify)."
     fi
+    print_plain_hashlist_update_lines "$do_verify"
 
     for sum_file in "${LOCAL_UPDATE_VERIFY_FILES[@]}"; do
         db_mark_checked "$sum_file" "checksum_group" "checked"
@@ -16701,10 +16804,14 @@ perform_plain_entry_rename() {
 
     # While source still exists: collect affected checksum rows; optionally verify before mv.
     PLAIN_RENAME_DO_HASH_VERIFY=yes
+    PLAIN_RENAME_VERIFY_SKIP_REASON=""
+    PLAIN_VERIFY_BEFORE=()
+    PLAIN_VERIFY_AFTER=()
     collect_local_checksum_ref_updates "$old" "$new" "$target_kind"
     if (( ${#LOCAL_UPDATE_SUM_FILES[@]} > 0 )); then
         if [[ "$CHECKSUM_VERIFY" == none ]]; then
             PLAIN_RENAME_DO_HASH_VERIFY=no
+            PLAIN_RENAME_VERIFY_SKIP_REASON="--checksum-verify none"
         elif [[ "$CHECKSUM_VERIFY" == all ]]; then
             PLAIN_RENAME_DO_HASH_VERIFY=yes
         elif ! prompt_plain_rename_hash_verify_decision "$old"; then
@@ -17322,6 +17429,14 @@ AUTO_PLAIN_HASH_SKIP_VERIFY_SESSION=no # plain rename hash-ref prompt [S]: skip 
 AUTO_PLAIN_HASH_VERIFY_DIR="" # plain rename hash-ref prompt [D]: auto-check for files in this directory
 AUTO_PLAIN_HASH_SKIP_VERIFY_DIR="" # plain rename hash-ref prompt [E]: skip verify for files in this directory
 PLAIN_RENAME_DO_HASH_VERIFY=yes # per-rename: verify affected hash-list row(s) before/after path rewrite
+PLAIN_RENAME_VERIFY_SKIP_REASON="" # per-rename: why the digest was not checked (shown on the hash-list line)
+declare -A PLAIN_VERIFY_BEFORE=() # per-rename: hash list → ok|noline|ignored|replaced (before mv)
+declare -A PLAIN_VERIFY_AFTER=()  # per-rename: same, after the path rewrite
+PLAIN_HASHLIST_PATHS_UPDATED=0 # run totals for the summary (plain renames only)
+PLAIN_HASHLIST_CHECK_OK=0
+PLAIN_HASHLIST_NOT_CHECKED=0
+PLAIN_HASHLIST_MISMATCH_IGNORED=0
+PLAIN_HASHLIST_DIGEST_REPLACED=0
 AUTO_CHECKSUM_GROUP_SESSION=no # checksum group prompt [H/h]: auto-yes all remaining checksum groups for rest of run
 AUTO_CHECKSUM_GROUP_DIR="" # checksum group prompt [D/d]: auto-yes checksum groups in this directory for rest of run
 AUTO_CHECKSUM_MISMATCH_IGNORE_SESSION=no # checksum mismatch recovery [H/h]: ignore all mismatches for rest of run (no [U]pdate)
@@ -18589,6 +18704,13 @@ print_summary() {
     echo "Files hashed:          $FILES_HASHED ($(format_bytes_short "$CHECKSUM_MEM_BYTES_HASHED") read)"
     echo "Checksum mem hits:     $CHECKSUM_MEM_HITS"
     echo "Checksum mem misses:   $CHECKSUM_MEM_MISSES"
+    if (( PLAIN_HASHLIST_PATHS_UPDATED > 0 )); then
+        if [[ "$mode" == "dry-run" ]]; then
+            echo "Hash-list paths:       ${PLAIN_HASHLIST_PATHS_UPDATED} would be updated by renames (content not checked in dry-run)"
+        else
+            echo "Hash-list paths:       ${PLAIN_HASHLIST_PATHS_UPDATED} updated by renames; per list: ${PLAIN_HASHLIST_CHECK_OK} content checks OK, ${PLAIN_HASHLIST_NOT_CHECKED} not checked, ${PLAIN_HASHLIST_MISMATCH_IGNORED} mismatches ignored, ${PLAIN_HASHLIST_DIGEST_REPLACED} digests replaced"
+        fi
+    fi
     echo "Entries affected:      $files_affected"
     echo "Entries skipped:       $files_skipped"
     echo "Stopped by user:       $stopped_by_user"
