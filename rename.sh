@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# v. 20260925.171847 - Quik dashboard: no ERR-trap noise when no source found; never re-time -dashboard exports (UTC CreateDate)
 # v. 20260925.115032 - plain rename: per hash list say "path updated (digest unchanged)" + whether content was checked
 # v. 20260923.155707 - missing-ref content search: hash candidates with the most similar names first
 # v. 20260923.153655 - readable checksum-list log: header, [i/n] rows, recovery block with steps/result/hint; fix hash cache across subshells
@@ -84,6 +85,7 @@
 # v. 20260721.132007 - Samsung timestamp media: preserve optional numeric sorting prefix when appending make/model
 # v. 20260721.112812 - GoPro camera labels: GoPro_Hero4_Silver style (not GOPRO4_SILVER)
 
+# 2026.09.25 - v. 19.347.171847 - GoPro Quik dashboard: suspend the ERR trap around transform_gopro_quik_dashboard_basename (no source match returned 1 and printed "ERROR: command failed … return 1" twice although nothing failed); Mission 1 Pro embedded-timezone audit skips *-dashboard / *-dashboard_N exports — their name comes from the source clip and Quik writes CreateDate in UTC without a zone tag, which was proposed as a -2h rename
 # 2026.09.25 - v. 19.346.115032 - Plain rename hash-list line replaces misleading "Also updated hash (old name referenced)": one line per list "  SHA512 list <list>: path updated (digest unchanged); content checked: OK" / "OK before and after rename" (--checksum-verify all) / "content NOT checked (you chose skip | skip for this folder | skip for this run | --checksum-verify none)" / "content MISMATCH — ignored at your request ([I]/[H])" / "digest REPLACED with current content ([U] after mismatch)"; N paths for directory renames; dry-run "would update path (digest unchanged); content not checked in dry-run"; summary line "Hash-list paths: N updated by renames; per list: … OK, … not checked, … mismatches ignored, … digests replaced"; verify prompt wording says the path is always updated and only the before-rename content check is optional
 # 2026.09.23 - v. 19.345.155707 - Missing-ref recovery by content: before hashing, sort same-extension and other-extension candidates by name similarity to the missing file (python3 difflib on names without extension/case/spaces/punctuation; ties prefer the missing file's folder), so renamed files are usually found on the first hash; verbose [k/N] lines show "name NN% similar"; without python3 the old order is kept
 # 2026.09.23 - v. 19.344.153655 - Checksum-list log readability: verbose header "── SHA512 list #N: '<list>' (n entries)", one "[i/n] OK|MISSING '<name>'" row per entry (names relative to the list dir; "resolves to" note only when the path column points elsewhere), one Result line (present/missing counts + why not hashed); missing entry → RECOVERY block in both modes naming the list, entry number, missing name and digest, verbose Step 1-6 lines (same folder / same name / rebuilt path / known digest / hash same-ext / other-ext, with [k/N] per file read and size), RESULT FOUND|NOT FOUND with files hashed, bytes and time, and a HINT (proxy/LRV/THM often deleted on purpose). Wrap: lines with quoted paths break at spaces outside quotes (no more "rename/" split). Fix: session hash cache and Files hashed / mem hits / misses counters were lost in $(...) subshells — now merged via a session spool file; summary shows bytes read
@@ -11434,6 +11436,11 @@ transform_gopro_mission1_embedded_timezone_basename() {
     # Basename already identifies Mission 1 Pro; do not require a second device-label
     # parse (that path can fail on older exiftool/egrep setups and silently skip the fix).
     gopro_mission1_renamed_mp4_basename_matches "$base" || return 0
+    # Quik/app exports: name comes from the source clip; their CreateDate is UTC without a zone tag.
+    if [[ "${base%.*}" == *-dashboard || "${base%.*}" =~ -dashboard_[0-9]+$ ]]; then
+        vlog "GoPro Mission 1 Pro timezone: '$base' is a Quik dashboard export (time taken from the source clip); not re-timed"
+        return 0
+    fi
     exifloc="$(resolve_rename_exiftool)" || {
         vlog "GoPro Mission 1 Pro timezone: exiftool not found for '$file'"
         return 0
@@ -14403,11 +14410,14 @@ transform_name() {
             _transform_name_return_unchanged "$f"
             return 0
         fi
-        local _tn_save_e_qd=0 _quik_dash_try="" _quik_dash_rc=0
+        local _tn_save_e_qd=0 _quik_dash_try="" _quik_dash_rc=0 _quik_dash_err_trap=""
         [[ $- == *e* ]] && _tn_save_e_qd=1
         set +e
+        _quik_dash_err_trap="$(trap -p ERR || true)"
+        trap - ERR
         _quik_dash_try="$(transform_gopro_quik_dashboard_basename "$f" "$base")"
         _quik_dash_rc=$?
+        eval "${_quik_dash_err_trap:-}"
         if ((_tn_save_e_qd)); then
             set -e
         fi
