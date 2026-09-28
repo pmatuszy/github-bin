@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20260928.140213 - skip exclude prompt when a mask is given; write audio-pgm-loudness-rollback script
 # v. 20260928.114410 - operands may be files, folders or masks; add --exclude
 # v. 20260916.133341 - always print === Run settings === after the wizard, with Equivalent CLI
 # v. 20260811.095711 - --history uses shared print_script_history from _script_header.sh
@@ -28,6 +29,7 @@
 # v. 20260801.144550 - normalize: map streams individually; skip MP4-unmappable timecode (tmcd) only
 # v. 20260716.163224 - versioning format v. YYYYMMDD.HH24MISS
 
+# 2026.09.28 - v. 0.5.52 - a command-line mask skips the exclude question; a successful --save-original run writes audio-pgm-loudness-rollback-YYYYMMDD.HHMMSS.sh (one file per run, batch headings inside) to put backups back one file at a time
 # 2026.09.28 - v. 0.5.51 - positional arguments may be files, folders, or masks (quote a mask so the shell does not expand it); --exclude MASK / LOUDNESS_EXCLUDE drops matches afterwards; interactive exclude prompt when none was given; --scan-only keeps those operands
 # 2026.09.16 - v. 0.5.50 - startup: always print "=== Run settings ===" once the wizard is done — each option as given / env / prompted (with the selected value), plus an "Equivalent CLI:" line that reproduces the run non-interactively (rename.sh style); --print-cli-only keeps its own equivalent-command section
 # 2026.07.04 - v. 0.5.49 - no media files: do not invent empty path (printf on empty array); exit cleanly
@@ -158,9 +160,10 @@ directory — current folder only by default, or the whole tree with --scope
 subdirs (interactive default: subdirs).
 
 --exclude is applied last, including to files you named. It does not turn
-off the interactive wizard. In interactive mode, when no exclude mask was
-given, the script asks for one after the file list is known (Enter keeps
-them all; if the mask matches every file, it asks again).
+off the interactive wizard. In interactive mode, when no file mask and no
+--exclude mask was given, the script asks for an exclude mask after the
+file list is known (Enter keeps them all; if the mask matches every file,
+it asks again). A mask already on the command line skips that question.
 
 When no command-line options are given (FILE, DIR, and MASK arguments, and
 --exclude / --timeout, do not count as options), the script runs in
@@ -214,7 +217,13 @@ Options:
                        whose mean volume is below --mean-skip-db. Interactive
                        per-file prompts still default to [N] for those files.
   --save-original      Move each original to *.backup.deleteme before normalizing
-                       (skip the interactive backup question).
+                       (skip the interactive backup question). Each file that
+                       stays normalized is appended to
+                       audio-pgm-loudness-rollback-YYYYMMDD.HHMMSS.sh in the
+                       start directory (one script per run, grouped by batch).
+                       Run that script later to put backups back, one file
+                       at a time. It asks only when both the modified file
+                       and the backup are still there.
   --replace-backup     When *.backup.deleteme already exists, remove it and move
                        the current file aside (non-interactive; no prompt).
   --print-cli-only     Interactive dry-run: answer the usual prompts but do not
@@ -321,6 +330,7 @@ Examples:
   $(basename "$0") --scope subdirs '*GoPro*' --scan-only
   $(basename "$0") wywiady/ --exclude '*Proxy*'
   $(basename "$0") --scope subdirs --exclude '*_old*' --exclude 'backup/*'
+  bash audio-pgm-loudness-rollback-20260928.135912.sh
   $(basename "$0") --history --no_startup_delay
 EOF
 }
@@ -347,6 +357,10 @@ LOUDNESS_EXCLUDE_PROMPTED=0
 LOUDNESS_SKIPPED_NONMEDIA=0
 LOUDNESS_MATCHED_BEFORE_EXCLUDE=0
 LOUDNESS_EXCLUDED_COUNT=0
+LOUDNESS_ROLLBACK_PATH=""
+LOUDNESS_ROLLBACK_BATCH=0
+LOUDNESS_ROLLBACK_BATCH_WRITTEN=0
+LOUDNESS_ROLLBACK_COUNT=0
 ANY_CLI_OPTIONS=0
 PRINT_CLI_ONLY=0
 SCAN_ONLY=0
@@ -2507,6 +2521,9 @@ loudness_print_run_summary_once() {
     loudness_summary_kv "Normalize mode" "${NORMALIZE_MODE:-none}"
     if (( LOUDNESS_SAVE_ORIGINAL )); then
       loudness_summary_kv "Originals backup" '*.backup.deleteme (moved aside)'
+    fi
+    if [[ -n "$LOUDNESS_ROLLBACK_PATH" && -f "$LOUDNESS_ROLLBACK_PATH" ]]; then
+      loudness_summary_kv "Rollback script" "${LOUDNESS_ROLLBACK_PATH} (${LOUDNESS_ROLLBACK_COUNT} file(s))"
     fi
     norm_line="$(loudness_norm_result_line)"
     loudness_summary_kv "Normalization" "$norm_line"
@@ -4764,6 +4781,121 @@ print_normalize_file_start() {
   printf '%s ...\n' "$file"
 }
 
+loudness_rollback_stamp_from_session() {
+  local ts d t
+  ts="${LOUDNESS_SESSION_START_EPOCH:-}"
+  [[ -n "$ts" ]] || ts="$(date '+%Y.%m.%d %H:%M:%S')"
+  d="${ts%% *}"
+  t="${ts#* }"
+  d="${d//./}"
+  t="${t//:/}"
+  printf '%s.%s' "$d" "$t"
+}
+
+loudness_rollback_ensure_script() {
+  local stamp dir
+  [[ -n "$LOUDNESS_ROLLBACK_PATH" && -f "$LOUDNESS_ROLLBACK_PATH" ]] && return 0
+  stamp="$(loudness_rollback_stamp_from_session)"
+  dir="$LOUDNESS_INVOCATION_CWD"
+  LOUDNESS_ROLLBACK_PATH="${dir}/audio-pgm-loudness-rollback-${stamp}.sh"
+  if [[ -e "$LOUDNESS_ROLLBACK_PATH" ]]; then
+    LOUDNESS_ROLLBACK_PATH="${dir}/audio-pgm-loudness-rollback-${stamp}.$$.sh"
+  fi
+  {
+    printf '%s\n' '#!/bin/bash'
+    printf '%s\n' '# audio-pgm-loudness rollback'
+    printf '# Run started: %s\n' "${LOUDNESS_SESSION_START_EPOCH:-unknown}"
+    printf '# Start directory: %s\n' "$dir"
+    printf '%s\n' '# Asks once per file, only when the modified file and the backup are both still there.'
+    cat <<'EOF'
+set -u
+
+cd "$(dirname -- "$0")" || exit 1
+
+rollback_stamp() {
+  date '+%Y%m%d.%H%M%S'
+}
+
+rollback_size() {
+  stat -c %s -- "$1" 2>/dev/null || stat -f %z -- "$1" 2>/dev/null || printf '%s' ''
+}
+
+rollback_mtime() {
+  date -r "$1" '+%Y-%m-%d %H:%M:%S' 2>/dev/null || printf '%s' ''
+}
+
+rollback_du() {
+  du -h -- "$1" 2>/dev/null | awk '{print $1}'
+}
+
+revert_entry() {
+  local backup="$1" dest="$2" rec_size="$3" rec_mtime="$4"
+  local now_size now_mtime reply="" base side stamp
+  [[ -f "$backup" && -f "$dest" ]] || return 0
+  now_size="$(rollback_size "$backup")"
+  now_mtime="$(rollback_mtime "$backup")"
+  base="$(basename -- "$dest")"
+  echo
+  printf 'Backup:  %s  (%s, %s)\n' "$backup" "$(rollback_du "$backup")" "${now_mtime:-?}"
+  printf 'Current: %s  (%s, %s)  — modified file\n' "$dest" "$(rollback_du "$dest")" "$(rollback_mtime "$dest")"
+  if [[ -n "$rec_size" && ( "$now_size" != "$rec_size" || "$now_mtime" != "$rec_mtime" ) ]]; then
+    echo 'WARNING: backup size or time changed since this rollback script was written.'
+    printf '  recorded: %s bytes, %s\n' "$rec_size" "${rec_mtime:-?}"
+    printf '  now:      %s bytes, %s\n' "${now_size:-?}" "${now_mtime:-?}"
+  fi
+  printf 'Revert the backup to %s? [y/N/q] ' "$base"
+  read -r reply || reply=""
+  reply="${reply%$'\r'}"
+  case "${reply,,}" in
+    q)
+      echo 'Stopped.'
+      exit 0
+      ;;
+    y)
+      stamp="$(rollback_stamp)"
+      side="${dest}.replaced-${stamp}"
+      if [[ -e "$side" ]]; then
+        side="${dest}.replaced-${stamp}.$$"
+      fi
+      if ! mv -- "$dest" "$side"; then
+        echo "ERROR: could not move ${dest} aside." >&2
+        return 0
+      fi
+      if ! mv -- "$backup" "$dest"; then
+        echo "ERROR: could not move ${backup} to ${dest}." >&2
+        mv -- "$side" "$dest" || echo "ERROR: could not put ${dest} back from ${side}." >&2
+        return 0
+      fi
+      echo "Restored ${dest}"
+      echo "Modified file kept as ${side}"
+      ;;
+  esac
+}
+
+EOF
+  } > "$LOUDNESS_ROLLBACK_PATH" || return 1
+  chmod +x -- "$LOUDNESS_ROLLBACK_PATH" 2>/dev/null || true
+  echo "Rollback script: ${LOUDNESS_ROLLBACK_PATH}"
+  return 0
+}
+
+loudness_rollback_note_success() {
+  local dest="$1" backup="$2" size mtime
+  [[ -n "$backup" && -f "$backup" && -f "$dest" ]] || return 0
+  loudness_rollback_ensure_script || return 0
+  if (( LOUDNESS_ROLLBACK_BATCH < 1 )); then
+    LOUDNESS_ROLLBACK_BATCH=1
+  fi
+  if (( LOUDNESS_ROLLBACK_BATCH_WRITTEN != LOUDNESS_ROLLBACK_BATCH )); then
+    printf '\n# batch %s\n' "$LOUDNESS_ROLLBACK_BATCH" >> "$LOUDNESS_ROLLBACK_PATH"
+    LOUDNESS_ROLLBACK_BATCH_WRITTEN=$LOUDNESS_ROLLBACK_BATCH
+  fi
+  size="$(stat -c %s -- "$backup" 2>/dev/null || stat -f %z -- "$backup" 2>/dev/null || printf '%s' 0)"
+  mtime="$(date -r "$backup" '+%Y-%m-%d %H:%M:%S' 2>/dev/null || printf '%s' unknown)"
+  printf 'revert_entry %q %q %q %q\n' "$backup" "$dest" "$size" "$mtime" >> "$LOUDNESS_ROLLBACK_PATH"
+  LOUDNESS_ROLLBACK_COUNT=$(( LOUDNESS_ROLLBACK_COUNT + 1 ))
+}
+
 # Returns 0 OK, 1 FAILED, 2 skipped (backup conflict), 3 quit requested.
 normalize_one_selected_file() {
   local i="$1" filter="$2"
@@ -4822,6 +4954,7 @@ normalize_one_selected_file() {
       loudness_stats_record_norm_result revert
     else
       loudness_stats_record_norm_result 0
+      loudness_rollback_note_success "$dest" "$backup"
     fi
     echo
     return 0
@@ -4985,6 +5118,7 @@ normalize_run_batch_prompt_loop() {
 
       if (( selected_total > 0 )); then
         if (( ! cli_only )); then
+          LOUDNESS_ROLLBACK_BATCH=$(( LOUDNESS_ROLLBACK_BATCH + 1 ))
           selected_pos=0
           for j in "${!batch_indices[@]}"; do
             [[ "${batch_selected[$j]}" == yes ]] || continue
@@ -5052,6 +5186,7 @@ normalize_candidate_files() {
 
   if ! loudness_wants_per_file_prompts; then
     local i file mean_db status prep_rc
+    LOUDNESS_ROLLBACK_BATCH=1
     for i in "${!NORMALIZE_FILES[@]}"; do
       file="${NORMALIZE_FILES[$i]}"
       mean_db="${NORMALIZE_MEAN[$i]}"
@@ -5097,6 +5232,9 @@ normalize_candidate_files() {
   fi
   if (( LOUDNESS_STATS_NORM_FAIL > 0 )); then
     echo 'Check FAILED entries above for ffmpeg errors or backup problems.'
+  fi
+  if [[ -n "$LOUDNESS_ROLLBACK_PATH" && -f "$LOUDNESS_ROLLBACK_PATH" ]]; then
+    echo "Rollback script: ${LOUDNESS_ROLLBACK_PATH} (${LOUDNESS_ROLLBACK_COUNT} file(s))"
   fi
   (( LOUDNESS_STATS_NORM_FAIL > 0 )) && return 1
   return 0
@@ -5163,7 +5301,7 @@ if (( ${#LOUDNESS_EXCLUDE_MASKS[@]} > 0 )); then
   loudness_apply_exclude_masks
 fi
 
-if loudness_wants_wizard_prompts && (( ! LOUDNESS_EXCLUDE_CLI )) && (( ! LOUDNESS_EXCLUDE_FROM_ENV )); then
+if loudness_wants_wizard_prompts && (( ! LOUDNESS_EXCLUDE_CLI )) && (( ! LOUDNESS_EXCLUDE_FROM_ENV )) && (( ${#CLI_MASK_OPERANDS[@]} == 0 )); then
   prompt_exclude_interactive
 fi
 
