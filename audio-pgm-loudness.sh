@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20260928.114410 - operands may be files, folders or masks; add --exclude
 # v. 20260916.133341 - always print === Run settings === after the wizard, with Equivalent CLI
 # v. 20260811.095711 - --history uses shared print_script_history from _script_header.sh
 # v. 20260810.225413 - --history: paged changelog from header (more? default Y, 200s, q quits)
@@ -27,6 +28,7 @@
 # v. 20260801.144550 - normalize: map streams individually; skip MP4-unmappable timecode (tmcd) only
 # v. 20260716.163224 - versioning format v. YYYYMMDD.HH24MISS
 
+# 2026.09.28 - v. 0.5.51 - positional arguments may be files, folders, or masks (quote a mask so the shell does not expand it); --exclude MASK / LOUDNESS_EXCLUDE drops matches afterwards; interactive exclude prompt when none was given; --scan-only keeps those operands
 # 2026.09.16 - v. 0.5.50 - startup: always print "=== Run settings ===" once the wizard is done — each option as given / env / prompted (with the selected value), plus an "Equivalent CLI:" line that reproduces the run non-interactively (rename.sh style); --print-cli-only keeps its own equivalent-command section
 # 2026.07.04 - v. 0.5.49 - no media files: do not invent empty path (printf on empty array); exit cleanly
 # 2026.06.26 - v. 0.5.48 - scan-percent prompt: one-line 1–100 help above [q/e]
@@ -112,9 +114,10 @@ show_help() {
   cat <<EOF
 Usage: $(basename "$0") [-h|--help] [-v|--version] [--history] [--no_startup_delay]
        [-n standard|youtube|none] [-y] [--colors yes|no] [--scope current|subdirs]
-       [--batch-size N] [--classes SPEC] [--timeout SEC] [--scan-only]
-       [--scan-percent N] [--scan-percent-min-mb N] [--mean-skip-db DB|off]
-       [--force] [--print-cli-only] [-- FILE ...]
+       [--exclude MASK] [--batch-size N] [--classes SPEC] [--timeout SEC]
+       [--scan-only] [--scan-percent N] [--scan-percent-min-mb N]
+       [--mean-skip-db DB|off] [--force] [--print-cli-only]
+       [-- FILE|DIR|MASK ...]
 
 Scan for audio and video files and measure loudness with ffmpeg volumedetect
 (video is ignored for speed). Each file is classified by peak level (max_volume):
@@ -135,12 +138,34 @@ Supported extensions (case-insensitive):
   Video: .avi .mp4 .mkv .mov .wmv .mpeg .mpg .m4v .webm .ts
   Audio: .mp3 .flac .wav .m4a .aac .ogg .opus .wma
 
-With FILE operands, only those paths are checked (must exist). Without FILE,
-media files are discovered in the working directory — current folder only by
-default, or the whole tree with --scope subdirs (interactive default: subdirs).
+Arguments that are not options choose what is scanned. Each one is:
 
-When no command-line options are given (only optional FILE operands), the script
-runs in interactive mode: it asks about terminal colors and scan scope, how much
+  an existing file     Included when it has a supported media extension.
+                       Other files are skipped, with one summary note.
+  an existing folder   Media files in that folder. --scope subdirs also
+                       enters its subfolders; otherwise only the folder itself.
+  a mask (* ? or [)    Used when that argument is not an existing file or
+                       folder (quote it so the shell does not expand it).
+                       Matched case-insensitively. Without "/", the mask
+                       matches the file name at any depth in the scope;
+                       with "/", it matches the relative path (* matches
+                       across "/").
+  anything else        Error: not found.
+
+Several arguments are combined (a file is taken if it matches any of them).
+Without them, every supported media file is discovered in the working
+directory — current folder only by default, or the whole tree with --scope
+subdirs (interactive default: subdirs).
+
+--exclude is applied last, including to files you named. It does not turn
+off the interactive wizard. In interactive mode, when no exclude mask was
+given, the script asks for one after the file list is known (Enter keeps
+them all; if the mask matches every file, it asks again).
+
+When no command-line options are given (FILE, DIR, and MASK arguments, and
+--exclude / --timeout, do not count as options), the script runs in
+interactive mode: it asks about terminal colors and scan scope (skipped when
+you named only files, because scope does not apply), how much
 of each large file to scan (middle window, default 100%), whether to scan, and
 (after results are shown) whether to offer normalization. Each result row is
 printed as soon as that file is measured. With --colors yes, PERFECT rows are
@@ -183,7 +208,8 @@ Options:
   -y, --yes            Do not ask per file; normalize every eligible file when
                        -n standard or -n youtube is selected (except files
                        with mean volume below --mean-skip-db unless --force).
-                       With any CLI option, startup wizard prompts are also skipped.
+                       With any CLI option, startup wizard prompts are also skipped
+                       (--timeout and --exclude do not count).
   --force              With -y or non-interactive normalize, also process files
                        whose mean volume is below --mean-skip-db. Interactive
                        per-file prompts still default to [N] for those files.
@@ -195,7 +221,8 @@ Options:
                        scan, normalize, or modify any file. Prints an equivalent
                        non-interactive command at the end.
   --scan-only          Measure loudness only; no prompts and no normalization
-                       (exit 0 when scan completes).
+                       (exit 0 when scan completes). FILE, DIR, and MASK
+                       arguments still limit what is measured.
   --scan-percent N     Fraction of each large file to measure (1–100; default 100).
                        Values below 100 scan the middle portion only (e.g. 50 scans
                        from 25% to 75% of duration). Applies only to files larger
@@ -209,6 +236,14 @@ Options:
   --scope current|subdirs
                        current = files in cwd only; subdirs = cwd and all
                        subfolders (skip the interactive scope question).
+                       Also applies to folder and mask arguments. Ignored
+                       when every operand is an existing file.
+  --exclude MASK       Skip files matching MASK (repeatable). Same matching
+                       rules as a mask argument. Applied after files, folders,
+                       and masks are collected, so it can also drop a file you
+                       named. Does not turn off the startup wizard.
+                       LOUDNESS_EXCLUDE is the same, with masks separated by
+                       ";". --exclude overrides LOUDNESS_EXCLUDE.
   --batch-size N       Per-file normalize prompts: ask N files at a time before
                        processing (default 50; skip the interactive batch question).
   --colors yes|no      Use terminal colors (skip the interactive colors question).
@@ -225,7 +260,7 @@ Options:
                        --classes; with -n youtube; skipped when -n standard).
   --no_startup_delay   Skip random startup delay when run non-interactively
                        (see _script_header.sh).
-  -- FILE              Explicit file operands (use when a name starts with -).
+  -- FILE|DIR|MASK     Operands (use when a name starts with -).
 
 Interactive normalization prompts (per file, in batches like ffmpeg-voice.sh):
   Ask about up to N files (batch size, default 50), then normalize only the
@@ -252,6 +287,8 @@ Environment:
   LOUDNESS_BACKUP_ON_CONFLICT  Non-interactive when backup exists: replace, keep
                               (normalize in place; default), or skip.
   LOUDNESS_SCAN_SCOPE       current or subdirs (same as --scope).
+  LOUDNESS_EXCLUDE          Exclude masks separated by ";" (same as repeating
+                              --exclude). Overridden when --exclude is passed.
   LOUDNESS_BATCH_SIZE       Batch size for per-file normalize prompts (same as
                               --batch-size; default 50).
   LOUDNESS_CLASSES          Candidate classes for normalization (same as --classes).
@@ -280,6 +317,10 @@ Examples:
   $(basename "$0") -n youtube -y --save-original --colors yes
   $(basename "$0") --print-cli-only
   $(basename "$0") -n standard -- quiet_interview.mkv
+  $(basename "$0") clip1.mp4 clip2.mkv
+  $(basename "$0") --scope subdirs '*GoPro*' --scan-only
+  $(basename "$0") wywiady/ --exclude '*Proxy*'
+  $(basename "$0") --scope subdirs --exclude '*_old*' --exclude 'backup/*'
   $(basename "$0") --history --no_startup_delay
 EOF
 }
@@ -296,6 +337,16 @@ LOUDNESS_FORCE_CLI=0
 LOUDNESS_MEAN_SKIP_DB="${LOUDNESS_MEAN_SKIP_DB:--60}"
 LOUDNESS_MEAN_SKIP_DB_CLI=0
 CLI_FILES=()
+CLI_FILE_OPERANDS=()
+CLI_DIR_OPERANDS=()
+CLI_MASK_OPERANDS=()
+LOUDNESS_EXCLUDE_MASKS=()
+LOUDNESS_EXCLUDE_CLI=0
+LOUDNESS_EXCLUDE_FROM_ENV=0
+LOUDNESS_EXCLUDE_PROMPTED=0
+LOUDNESS_SKIPPED_NONMEDIA=0
+LOUDNESS_MATCHED_BEFORE_EXCLUDE=0
+LOUDNESS_EXCLUDED_COUNT=0
 ANY_CLI_OPTIONS=0
 PRINT_CLI_ONLY=0
 SCAN_ONLY=0
@@ -428,6 +479,17 @@ while [[ $# -gt 0 ]]; do
       LOUDNESS_FORCE_CLI=1
       shift
       ;;
+    --exclude)
+      # Passive modifier: do NOT set ANY_CLI_OPTIONS so the interactive wizard stays on.
+      [[ $# -ge 2 ]] || { echo "Missing value for --exclude" >&2; exit 1; }
+      if [[ -z "${2//[[:space:]]/}" ]]; then
+        echo "Empty value for --exclude" >&2
+        exit 1
+      fi
+      LOUDNESS_EXCLUDE_MASKS+=( "$2" )
+      LOUDNESS_EXCLUDE_CLI=1
+      shift 2
+      ;;
     --scope)
       ANY_CLI_OPTIONS=1
       [[ $# -ge 2 ]] || { echo "Missing value for --scope" >&2; exit 1; }
@@ -542,13 +604,10 @@ if (( SCAN_ONLY )); then
     echo "NOTE: --scan-only ignores -n ${NORMALIZE_MODE} (no normalization)." >&2
   fi
   NORMALIZE_MODE=none
-  if (( ${#CLI_FILES[@]} > 0 )); then
-    echo 'NOTE: --scan-only ignores FILE operands; scanning by scope instead.' >&2
-    CLI_FILES=()
-  fi
 fi
 
-# No flags at all (FILE operands alone are OK): presume interactive prompts and streaming scan.
+# No "real" flags (FILE/DIR/MASK operands, --exclude, and --timeout are OK):
+# presume interactive prompts and streaming scan.
 PRESUME_INTERACTIVE=0
 (( ! ANY_CLI_OPTIONS )) && PRESUME_INTERACTIVE=1
 (( PRINT_CLI_ONLY )) && PRESUME_INTERACTIVE=1
@@ -1043,7 +1102,7 @@ cli_setup_print_cli_normalize_queue() {
 
 cli_print_built_command() {
   local -a parts=() script_path f quoted note
-  local use_y=0 file_count=0
+  local use_y=0 file_count=0 list_selected=0 m
 
   script_path="${LOUDNESS_ORIGINAL_ARGV[0]}"
   if [[ -e "$script_path" ]]; then
@@ -1063,9 +1122,6 @@ cli_print_built_command() {
   fi
   (( LOUDNESS_SAVE_ORIGINAL )) && parts+=( --save-original )
   (( LOUDNESS_REPLACE_BACKUP )) && parts+=( --replace-backup )
-  if [[ -n "$LOUDNESS_SCAN_SCOPE" && ${#CLI_FILES[@]} == 0 ]]; then
-    parts+=( --scope "$LOUDNESS_SCAN_SCOPE" )
-  fi
   if [[ -n "$LOUDNESS_BATCH_SIZE" && "$LOUDNESS_BATCH_SIZE" != 50 ]]; then
     parts+=( --batch-size "$LOUDNESS_BATCH_SIZE" )
   fi
@@ -1086,6 +1142,9 @@ cli_print_built_command() {
   elif (( LOUDNESS_COLORS_CLI )) && [[ "$LOUDNESS_USE_COLORS" == yes ]]; then
     parts+=( --colors yes )
   fi
+  for m in "${LOUDNESS_EXCLUDE_MASKS[@]}"; do
+    parts+=( --exclude "$m" )
+  done
 
   file_count="${#CLI_SELECTED_FILES[@]}"
   if (( file_count > 1 )); then
@@ -1098,8 +1157,22 @@ cli_print_built_command() {
     use_y=1
     parts+=( -y )
   else
+    list_selected=1
+  fi
+
+  # Scope and the original operands reproduce discovery. An explicit per-file
+  # selection already names the paths, so scope and the original masks are not added.
+  if (( ! list_selected )) && loudness_operands_need_scope && [[ -n "$LOUDNESS_SCAN_SCOPE" ]]; then
+    parts+=( --scope "$LOUDNESS_SCAN_SCOPE" )
+  fi
+  if (( list_selected )); then
     parts+=( -- )
     for f in "${CLI_SELECTED_FILES[@]}"; do
+      parts+=( "$f" )
+    done
+  elif (( ${#CLI_FILES[@]} > 0 )); then
+    parts+=( -- )
+    for f in "${CLI_FILES[@]}"; do
       parts+=( "$f" )
     done
   fi
@@ -1111,7 +1184,7 @@ cli_print_built_command() {
   printf '  cd %q && \\\n' "$LOUDNESS_INVOCATION_CWD"
   printf '  '
   for f in "${parts[@]}"; do
-    printf '%q ' "$f"
+    printf '%s ' "$(loudness_shell_quote "$f")"
   done
   echo
   echo
@@ -1157,8 +1230,7 @@ run_print_cli_only_session() {
   loudness_print_cli_only_banner
 
   if (( ${#MEDIA_FILES[@]} == 0 )); then
-    echo "No supported audio/video files found under $(pwd) ($(loudness_scan_scope_label))."
-    echo "Extensions: ${MEDIA_EXTENSIONS[*]}"
+    loudness_print_no_media_message
     return_code=0
     exit 0
   fi
@@ -1294,9 +1366,12 @@ loudness_print_run_settings_equivalent_cli() {
   (( LOUDNESS_SAVE_ORIGINAL )) && parts+=("--save-original")
   (( LOUDNESS_REPLACE_BACKUP )) && parts+=("--replace-backup")
   (( LOUDNESS_FORCE )) && parts+=("--force")
-  if ((${#CLI_FILES[@]} == 0)) && [[ -n "$LOUDNESS_SCAN_SCOPE" ]]; then
+  if loudness_operands_need_scope && [[ -n "$LOUDNESS_SCAN_SCOPE" ]]; then
     parts+=("--scope" "$LOUDNESS_SCAN_SCOPE")
   fi
+  for p in "${LOUDNESS_EXCLUDE_MASKS[@]}"; do
+    parts+=("--exclude" "$p")
+  done
   if [[ -n "$LOUDNESS_BATCH_SIZE" && "$LOUDNESS_BATCH_SIZE" != 50 ]]; then
     parts+=("--batch-size" "$LOUDNESS_BATCH_SIZE")
   fi
@@ -1311,18 +1386,18 @@ loudness_print_run_settings_equivalent_cli() {
   fi
   [[ -n "$LOUDNESS_USE_COLORS" ]] && parts+=("--colors" "$LOUDNESS_USE_COLORS")
   (( LOUDNESS_READ_TIMEOUT_CLI )) && parts+=("--timeout" "$LOUDNESS_READ_TIMEOUT")
+  if ((${#CLI_FILES[@]} > 0)); then
+    parts+=("--")
+    parts+=("${CLI_FILES[@]}")
+  fi
 
-  out="$(printf '%q' "$cmd")"
+  out="$(loudness_shell_quote "$cmd")"
   for p in "${parts[@]}"; do
-    out+=" $(printf '%q' "$p")"
+    out+=" $(loudness_shell_quote "$p")"
   done
 
   q_dir="$(printf '%q' "$LOUDNESS_INVOCATION_CWD")"
   printf '  %-25s%s\n' "Equivalent CLI:" "cd $q_dir && $out"
-  if ((${#CLI_FILES[@]} > 0)); then
-    printf '  %-25s%s\n' "Note:" \
-      "${#CLI_FILES[@]} explicit file operand(s) given; append them after -- to repeat this run."
-  fi
 }
 
 # Always-on startup summary (same idea as rename.sh / par2-pgm-check.sh).
@@ -1352,14 +1427,27 @@ loudness_print_run_settings() {
     printf '  %-25s%s\n' "--scan-only:" "given (measure and report only)"
   fi
 
-  if ((${#CLI_FILES[@]} > 0)); then
-    printf '  %-25s%s\n' "--scope:" "not used (${#CLI_FILES[@]} file operand(s) on command line)"
+  if ! loudness_operands_need_scope; then
+    printf '  %-25s%s\n' "--scope:" "not used (only files named; folders and masks use scope)"
   elif (( LOUDNESS_SCAN_SCOPE_CLI )); then
     printf '  %-25s%s\n' "--scope:" "given (${LOUDNESS_SCAN_SCOPE})"
   else
     printf '  %-25s%s\n' "--scope:" "not given (prompted; selected: ${LOUDNESS_SCAN_SCOPE})"
   fi
-  printf '  %-25s%s\n' "Search:" "$(loudness_scan_scope_label)"
+  if loudness_operands_need_scope; then
+    printf '  %-25s%s\n' "Search:" "$(loudness_scan_scope_label)"
+  fi
+
+  if (( LOUDNESS_EXCLUDE_CLI )); then
+    printf '  %-25s%s\n' "--exclude:" "given ($(loudness_exclude_label))"
+  elif (( LOUDNESS_EXCLUDE_PROMPTED )); then
+    printf '  %-25s%s\n' "--exclude:" "prompted ($(loudness_exclude_label))"
+  elif (( LOUDNESS_EXCLUDE_FROM_ENV )); then
+    printf '  %-25s%s\n' "--exclude:" "env LOUDNESS_EXCLUDE ($(loudness_exclude_label))"
+  else
+    printf '  %-25s%s\n' "--exclude:" "not given"
+  fi
+  printf '  %-25s%s\n' "Files:" "$(loudness_files_settings_value)"
 
   classes_label="$(loudness_classes_cli_spec)"
   [[ -n "$classes_label" ]] || classes_label="(none selected)"
@@ -1433,7 +1521,6 @@ loudness_print_run_settings() {
   fi
 
   printf '  %-25s%s\n' "Start dir:" "$LOUDNESS_INVOCATION_CWD"
-  printf '  %-25s%s\n' "Files to consider:" "${#MEDIA_FILES[@]}"
   loudness_print_run_settings_equivalent_cli
   echo
 }
@@ -1454,9 +1541,308 @@ prompt_scan_scope() {
   cli_equiv_note "CLI: --scope ${LOUDNESS_SCAN_SCOPE}"
 }
 
-collect_media_files_current_dir() {
-  local -a found=() f ext
+loudness_trim() {
+  local s="$1"
+  s="${s#"${s%%[![:space:]]*}"}"
+  s="${s%"${s##*[![:space:]]}"}"
+  printf '%s' "$s"
+}
+
+loudness_operand_looks_like_mask() {
+  local s="$1"
+  [[ "$s" == *'*'* || "$s" == *'?'* || "$s" == *'['* ]]
+}
+
+loudness_classify_cli_operands() {
+  local f
+  CLI_FILE_OPERANDS=()
+  CLI_DIR_OPERANDS=()
+  CLI_MASK_OPERANDS=()
+  (( ${#CLI_FILES[@]} == 0 )) && return 0
+  for f in "${CLI_FILES[@]}"; do
+    if [[ -f "$f" ]]; then
+      CLI_FILE_OPERANDS+=( "$f" )
+    elif [[ -d "$f" ]]; then
+      CLI_DIR_OPERANDS+=( "$f" )
+    elif loudness_operand_looks_like_mask "$f"; then
+      CLI_MASK_OPERANDS+=( "$f" )
+    elif [[ -e "$f" ]]; then
+      echo "ERROR: not a regular file or directory: $f" >&2
+      return 1
+    else
+      echo "ERROR: not found: $f" >&2
+      return 1
+    fi
+  done
+  return 0
+}
+
+# Scope matters for a full-tree scan, a folder, or a mask. Named files do not use it.
+loudness_operands_need_scope() {
+  (( ${#CLI_FILES[@]} == 0 )) && return 0
+  (( ${#CLI_DIR_OPERANDS[@]} > 0 )) && return 0
+  (( ${#CLI_MASK_OPERANDS[@]} > 0 )) && return 0
+  return 1
+}
+
+loudness_is_media_path() {
+  local f="$1" ext e
+  ext="${f##*.}"
+  ext="${ext,,}"
+  [[ -n "$ext" && "$ext" != "$f" ]] || return 1
+  for e in "${MEDIA_EXTENSIONS[@]}"; do
+    [[ "$ext" == "$e" ]] && return 0
+  done
+  return 1
+}
+
+# Case-insensitive glob. A mask with "/" matches the relative path (* matches
+# across "/"); otherwise it matches the file name only.
+loudness_path_matches_mask() {
+  local rel="$1" mask="$2" base rc=0 had=0
+  rel="${rel#./}"
+  base="${rel##*/}"
+  shopt -q nocasematch && had=1
+  shopt -s nocasematch
+  if [[ "$mask" == */* ]]; then
+    [[ "$rel" == $mask ]] || rc=1
+  else
+    [[ "$base" == $mask ]] || rc=1
+  fi
+  if (( had )); then
+    shopt -s nocasematch
+  else
+    shopt -u nocasematch
+  fi
+  return "$rc"
+}
+
+loudness_file_matches_exclude() {
+  local f="$1" m
+  (( ${#LOUDNESS_EXCLUDE_MASKS[@]} == 0 )) && return 1
+  for m in "${LOUDNESS_EXCLUDE_MASKS[@]}"; do
+    loudness_path_matches_mask "$f" "$m" && return 0
+  done
+  return 1
+}
+
+loudness_append_exclude_list() {
+  local raw="$1" part
+  local -a parts=()
+  IFS=';' read -r -a parts <<< "$raw"
+  for part in "${parts[@]}"; do
+    part="$(loudness_trim "$part")"
+    [[ -n "$part" ]] && LOUDNESS_EXCLUDE_MASKS+=( "$part" )
+  done
+}
+
+loudness_resolve_exclude_from_env() {
+  local -a cleaned=()
+  local m t
+  if (( ${#LOUDNESS_EXCLUDE_MASKS[@]} > 0 )); then
+    for m in "${LOUDNESS_EXCLUDE_MASKS[@]}"; do
+      t="$(loudness_trim "$m")"
+      [[ -n "$t" ]] && cleaned+=( "$t" )
+    done
+    LOUDNESS_EXCLUDE_MASKS=( "${cleaned[@]}" )
+  fi
+  if (( LOUDNESS_EXCLUDE_CLI )); then
+    if [[ -n "${LOUDNESS_EXCLUDE:-}" ]]; then
+      echo "NOTE: --exclude overrides LOUDNESS_EXCLUDE." >&2
+    fi
+    return 0
+  fi
+  [[ -n "${LOUDNESS_EXCLUDE:-}" ]] || return 0
+  loudness_append_exclude_list "$LOUDNESS_EXCLUDE"
+  if (( ${#LOUDNESS_EXCLUDE_MASKS[@]} > 0 )); then
+    LOUDNESS_EXCLUDE_FROM_ENV=1
+  fi
+}
+
+loudness_exclude_label() {
+  local IFS=';'
+  printf '%s' "${LOUDNESS_EXCLUDE_MASKS[*]}"
+}
+
+loudness_shell_quote() {
+  local s="$1"
+  if [[ -z "$s" || "$s" == *[![:alnum:]_./@=+-]* ]]; then
+    if [[ "$s" != *\'* ]]; then
+      printf "'%s'" "$s"
+      return 0
+    fi
+  fi
+  printf '%q' "$s"
+}
+
+loudness_operands_brief() {
+  local -a shown=()
+  local n i limit=4 out="" item
+  n=${#CLI_FILES[@]}
+  (( n == 0 )) && return 0
+  if (( n <= 6 )); then
+    for (( i = 0; i < n; i++ )); do
+      shown+=( "$(loudness_shell_quote "${CLI_FILES[$i]}")" )
+    done
+  else
+    for (( i = 0; i < limit; i++ )); do
+      shown+=( "$(loudness_shell_quote "${CLI_FILES[$i]}")" )
+    done
+    shown+=( "and $(( n - limit )) more" )
+  fi
+  for item in "${shown[@]}"; do
+    if [[ -n "$out" ]]; then
+      out+=", "
+    fi
+    out+="$item"
+  done
+  printf '%s' "$out"
+}
+
+loudness_files_settings_value() {
+  local s
+  if (( ${#CLI_FILES[@]} == 0 )); then
+    printf 'not given (all media in scope; %s to process)' "${#MEDIA_FILES[@]}"
+    return 0
+  fi
+  s="given ($(loudness_operands_brief) → ${LOUDNESS_MATCHED_BEFORE_EXCLUDE} matched"
+  if (( LOUDNESS_SKIPPED_NONMEDIA > 0 )); then
+    s+=", ${LOUDNESS_SKIPPED_NONMEDIA} non-media skipped"
+  fi
+  if (( LOUDNESS_EXCLUDED_COUNT > 0 )); then
+    s+=", ${LOUDNESS_EXCLUDED_COUNT} excluded"
+  fi
+  s+=", ${#MEDIA_FILES[@]} to process)"
+  printf '%s' "$s"
+}
+
+loudness_found_source_note() {
+  if (( ${#CLI_FILES[@]} == 0 )); then
+    printf 'scope: %s' "$(loudness_scan_scope_label)"
+    return 0
+  fi
+  if loudness_operands_need_scope; then
+    printf 'from %s, scope: %s' "$(loudness_operands_brief)" "$(loudness_scan_scope_label)"
+  else
+    printf 'from %s' "$(loudness_operands_brief)"
+  fi
+}
+
+loudness_print_no_media_message() {
+  if (( LOUDNESS_MATCHED_BEFORE_EXCLUDE > 0 )) && (( ${#MEDIA_FILES[@]} == 0 )); then
+    echo "All ${LOUDNESS_MATCHED_BEFORE_EXCLUDE} matching media file(s) were excluded."
+  elif (( ${#CLI_FILES[@]} > 0 )); then
+    echo "No supported audio/video files matched the files, folders, or masks given."
+    if loudness_operands_need_scope; then
+      echo "Scope: $(loudness_scan_scope_label)."
+    fi
+  else
+    echo "No supported audio/video files found under $(pwd) ($(loudness_scan_scope_label))."
+  fi
+  echo "Extensions: ${MEDIA_EXTENSIONS[*]}"
+}
+
+loudness_apply_exclude_masks() {
+  local -a kept=()
+  local f excluded=0
+  (( ${#LOUDNESS_EXCLUDE_MASKS[@]} == 0 )) && return 0
+  for f in "${MEDIA_FILES[@]}"; do
+    if loudness_file_matches_exclude "$f"; then
+      excluded=$(( excluded + 1 ))
+    else
+      kept+=( "$f" )
+    fi
+  done
+  LOUDNESS_EXCLUDED_COUNT=$excluded
+  if (( ${#kept[@]} > 0 )); then
+    MEDIA_FILES=( "${kept[@]}" )
+  else
+    MEDIA_FILES=()
+  fi
+}
+
+prompt_exclude_interactive() {
+  local input="" before part
+  local -a original=() trial=() parts=()
+
+  (( ${#MEDIA_FILES[@]} == 0 )) && return 0
+
+  before=${#MEDIA_FILES[@]}
+  original=( "${MEDIA_FILES[@]}" )
+
+  (( PRINT_CLI_ONLY )) && loudness_print_cli_only_section 'Exclude'
+  echo "$(loudness_prompt_ts) Found $(loudness_media_files_scan_summary) ($(loudness_found_source_note))"
+  loudness_print_question 'Exclude any of these files?'
+  echo '  [Enter] None (default) — scan every file listed above'
+  echo '  masks   Case-insensitive globs, separated by ;   e.g. *Proxy*;backup/*'
+  echo '          No "/" matches the file name; "/" matches the relative path (* crosses "/")'
+  echo '  [q/e]   Quit'
+
+  while true; do
+    loudness_printf_prompt '%s Exclude mask(s) [Enter=none]: ' "$(loudness_prompt_ts)"
+    flush_stdin
+    loudness_prompt_wait_begin
+    if loudness_read_line_timed input; then
+      :
+    else
+      input=""
+    fi
+    loudness_prompt_wait_end
+    input="${input%$'\r'}"
+    if loudness_line_input_is_quit "$input"; then
+      loudness_quit_now
+    fi
+    input="$(loudness_trim "$input")"
+    if [[ -z "$input" ]]; then
+      loudness_print_selected 'exclude none'
+      return 0
+    fi
+
+    trial=()
+    IFS=';' read -r -a parts <<< "$input"
+    for part in "${parts[@]}"; do
+      part="$(loudness_trim "$part")"
+      [[ -n "$part" ]] && trial+=( "$part" )
+    done
+    if (( ${#trial[@]} == 0 )); then
+      loudness_print_selected 'exclude none'
+      return 0
+    fi
+
+    LOUDNESS_EXCLUDE_MASKS=( "${trial[@]}" )
+    MEDIA_FILES=( "${original[@]}" )
+    loudness_apply_exclude_masks
+    if (( ${#MEDIA_FILES[@]} == 0 )); then
+      echo "No files left (all ${before} excluded by $(loudness_exclude_label)). Try a different mask, or Enter for none."
+      MEDIA_FILES=( "${original[@]}" )
+      LOUDNESS_EXCLUDE_MASKS=()
+      LOUDNESS_EXCLUDED_COUNT=0
+      continue
+    fi
+
+    LOUDNESS_EXCLUDE_PROMPTED=1
+    loudness_print_selected "exclude $(loudness_exclude_label) — ${#MEDIA_FILES[@]} file(s) left"
+    for part in "${LOUDNESS_EXCLUDE_MASKS[@]}"; do
+      cli_equiv_note "CLI: --exclude ${part}"
+    done
+    return 0
+  done
+}
+
+# Empty "${found[@]}" still runs printf once → blank line → fake empty path.
+_collect_media_find() {
+  local root="$1" recursive="$2"
+  local -a found=() depth=()
+  local f ext
   declare -A seen=()
+
+  if [[ "$root" != "/" ]]; then
+    root="${root%/}"
+  fi
+  [[ -n "$root" ]] || root="."
+  if (( ! recursive )); then
+    depth=( -maxdepth 1 )
+  fi
 
   for ext in "${MEDIA_EXTENSIONS[@]}"; do
     while IFS= read -r -d '' f; do
@@ -1465,57 +1851,105 @@ collect_media_files_current_dir() {
       [[ -n "${seen[$f]+x}" ]] && continue
       seen[$f]=1
       found+=( "$f" )
-    done < <(find . -maxdepth 1 -type f -iname "*.${ext}" -print0 2>/dev/null)
+    done < <(find "$root" "${depth[@]}" -type f -iname "*.${ext}" -print0 2>/dev/null)
   done
 
-  # Empty "${found[@]}" still runs printf once → blank line → fake empty path.
   (( ${#found[@]} > 0 )) && printf '%s\n' "${found[@]}"
+}
+
+collect_media_files_current_dir() {
+  _collect_media_find . 0
 }
 
 collect_media_files_subdirs() {
-  local -a found=() f ext
-  declare -A seen=()
+  _collect_media_find . 1
+}
 
-  for ext in "${MEDIA_EXTENSIONS[@]}"; do
-    while IFS= read -r -d '' f; do
-      f="${f#./}"
-      [[ -f "$f" ]] || continue
-      [[ -n "${seen[$f]+x}" ]] && continue
-      seen[$f]=1
-      found+=( "$f" )
-    done < <(find . -type f -iname "*.${ext}" -print0 2>/dev/null)
-  done
+collect_media_files_under_dir() {
+  local rec=0
+  [[ "$LOUDNESS_SCAN_SCOPE" == subdirs ]] && rec=1
+  _collect_media_find "$1" "$rec"
+}
 
-  (( ${#found[@]} > 0 )) && printf '%s\n' "${found[@]}"
+loudness_collect_reset() {
+  _LOUDNESS_COLLECT_FOUND=()
+  unset _LOUDNESS_COLLECT_SEEN
+  declare -gA _LOUDNESS_COLLECT_SEEN=()
+  unset _LOUDNESS_NONMEDIA_SEEN
+  declare -gA _LOUDNESS_NONMEDIA_SEEN=()
+}
+
+loudness_collect_add() {
+  local p="$1"
+  [[ -n "$p" ]] || return 0
+  p="${p#./}"
+  [[ -f "$p" ]] || return 0
+  [[ -n "${_LOUDNESS_COLLECT_SEEN[$p]+x}" ]] && return 0
+  _LOUDNESS_COLLECT_SEEN["$p"]=1
+  _LOUDNESS_COLLECT_FOUND+=( "$p" )
 }
 
 collect_media_files() {
-  local -a found=()
-  declare -A seen=()
+  local -a pool=() dirfiles=()
+  local f d m p
 
-  if (( ${#CLI_FILES[@]} > 0 )); then
-    for f in "${CLI_FILES[@]}"; do
-      [[ -e "$f" ]] || { echo "ERROR: file not found: $f" >&2; return 1; }
-      [[ -f "$f" ]] || { echo "ERROR: not a regular file: $f" >&2; return 1; }
-      if [[ -n "${seen[$f]+x}" ]]; then
+  loudness_collect_reset
+  LOUDNESS_SKIPPED_NONMEDIA=0
+
+  if (( ${#CLI_FILES[@]} == 0 )); then
+    if [[ "$LOUDNESS_SCAN_SCOPE" == subdirs ]]; then
+      mapfile -t pool < <(collect_media_files_subdirs)
+    else
+      mapfile -t pool < <(collect_media_files_current_dir)
+    fi
+    for f in "${pool[@]}"; do
+      loudness_collect_add "$f"
+    done
+  else
+    for f in "${CLI_FILE_OPERANDS[@]}"; do
+      if ! loudness_is_media_path "$f"; then
+        [[ -n "${_LOUDNESS_NONMEDIA_SEEN[$f]+x}" ]] && continue
+        _LOUDNESS_NONMEDIA_SEEN["$f"]=1
+        LOUDNESS_SKIPPED_NONMEDIA=$(( LOUDNESS_SKIPPED_NONMEDIA + 1 ))
         continue
       fi
-      seen[$f]=1
-      found+=( "$f" )
+      loudness_collect_add "$f"
     done
-  elif [[ "$LOUDNESS_SCAN_SCOPE" == subdirs ]]; then
-    mapfile -t found < <(collect_media_files_subdirs)
-  else
-    mapfile -t found < <(collect_media_files_current_dir)
+
+    for f in "${CLI_DIR_OPERANDS[@]}"; do
+      dirfiles=()
+      mapfile -t dirfiles < <(collect_media_files_under_dir "$f")
+      for d in "${dirfiles[@]}"; do
+        loudness_collect_add "$d"
+      done
+    done
+
+    if (( ${#CLI_MASK_OPERANDS[@]} > 0 )); then
+      pool=()
+      if [[ "$LOUDNESS_SCAN_SCOPE" == subdirs ]]; then
+        mapfile -t pool < <(collect_media_files_subdirs)
+      else
+        mapfile -t pool < <(collect_media_files_current_dir)
+      fi
+      for p in "${pool[@]}"; do
+        [[ -n "$p" ]] || continue
+        for m in "${CLI_MASK_OPERANDS[@]}"; do
+          if loudness_path_matches_mask "$p" "$m"; then
+            loudness_collect_add "$p"
+            break
+          fi
+        done
+      done
+    fi
   fi
 
-  if (( ${#found[@]} == 0 )); then
+  if (( ${#_LOUDNESS_COLLECT_FOUND[@]} == 0 )); then
     MEDIA_FILES=()
     return 0
   fi
 
   mapfile -t MEDIA_FILES < <(
-    for f in "${found[@]}"; do
+    for f in "${_LOUDNESS_COLLECT_FOUND[@]}"; do
       [[ -n "$f" ]] || continue
       printf '%s\n' "$f"
     done | LC_ALL=C sort -u
@@ -2047,7 +2481,10 @@ loudness_print_run_summary_once() {
   echo '--- Run summary ---'
   loudness_summary_kv "Working directory" "$(pwd)"
   if (( ${#CLI_FILES[@]} > 0 )); then
-    loudness_summary_kv "Input" "${#MEDIA_FILES[@]} explicit file(s)"
+    loudness_summary_kv "Input" "${#MEDIA_FILES[@]} file(s) from the command line"
+    if (( LOUDNESS_EXCLUDED_COUNT > 0 )); then
+      loudness_summary_kv "Excluded" "${LOUDNESS_EXCLUDED_COUNT} by mask"
+    fi
   else
     loudness_summary_kv "Scope" "$(loudness_scan_scope_label)"
   fi
@@ -4691,7 +5128,13 @@ loudness_finalize_mean_skip_db || exit 1
 
 loudness_resolve_use_colors
 
-if (( ${#CLI_FILES[@]} == 0 )); then
+if ! loudness_classify_cli_operands; then
+  return_code=1
+  exit 1
+fi
+loudness_resolve_exclude_from_env
+
+if loudness_operands_need_scope; then
   if loudness_wants_wizard_prompts && (( ! LOUDNESS_SCAN_SCOPE_CLI )); then
     prompt_scan_scope
   fi
@@ -4710,9 +5153,22 @@ if ! collect_media_files; then
   exit 1
 fi
 
+LOUDNESS_MATCHED_BEFORE_EXCLUDE=${#MEDIA_FILES[@]}
+
+if (( LOUDNESS_SKIPPED_NONMEDIA > 0 )); then
+  echo "NOTE: skipped ${LOUDNESS_SKIPPED_NONMEDIA} non-media file(s) (supported extensions only)."
+fi
+
+if (( ${#LOUDNESS_EXCLUDE_MASKS[@]} > 0 )); then
+  loudness_apply_exclude_masks
+fi
+
+if loudness_wants_wizard_prompts && (( ! LOUDNESS_EXCLUDE_CLI )) && (( ! LOUDNESS_EXCLUDE_FROM_ENV )); then
+  prompt_exclude_interactive
+fi
+
 if (( ${#MEDIA_FILES[@]} == 0 )); then
-  echo "No supported audio/video files found under $(pwd) ($(loudness_scan_scope_label))."
-  echo "Extensions: ${MEDIA_EXTENSIONS[*]}"
+  loudness_print_no_media_message
   return_code=0
   exit 0
 fi
@@ -4730,7 +5186,7 @@ fi
 
 if (( ${#CLI_FILES[@]} > 0 )); then
   loudness_record_session_start
-  echo "Audio loudness scan: $(pwd) (${#MEDIA_FILES[@]} explicit file(s))"
+  echo "Audio loudness scan: $(pwd) (${#MEDIA_FILES[@]} file(s) from the command line)"
 else
   loudness_record_session_start
   echo "Audio loudness scan: $(pwd) ($(loudness_scan_scope_label))"
