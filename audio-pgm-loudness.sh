@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20260928.143252 - FFmpeg 9 ffprobe: one value per stream so GoPro pass 2 does not map 0:aac
 # v. 20260928.140213 - skip exclude prompt when a mask is given; write audio-pgm-loudness-rollback script
 # v. 20260928.114410 - operands may be files, folders or masks; add --exclude
 # v. 20260916.133341 - always print === Run settings === after the wizard, with Equivalent CLI
@@ -29,6 +30,7 @@
 # v. 20260801.144550 - normalize: map streams individually; skip MP4-unmappable timecode (tmcd) only
 # v. 20260716.163224 - versioning format v. YYYYMMDD.HH24MISS
 
+# 2026.09.28 - v. 0.5.53 - FFmpeg 9 ffprobe also prints timecode track-reference streams; keep one value per field so GoPro pass 2 maps numeric indexes only (not 0:aac)
 # 2026.09.28 - v. 0.5.52 - a command-line mask skips the exclude question; a successful --save-original run writes audio-pgm-loudness-rollback-YYYYMMDD.HHMMSS.sh (one file per run, batch headings inside) to put backups back one file at a time
 # 2026.09.28 - v. 0.5.51 - positional arguments may be files, folders, or masks (quote a mask so the shell does not expand it); --exclude MASK / LOUDNESS_EXCLUDE drops matches afterwards; interactive exclude prompt when none was given; --scan-only keeps those operands
 # 2026.09.16 - v. 0.5.50 - startup: always print "=== Run settings ===" once the wizard is done — each option as given / env / prompted (with the selected value), plus an "Equivalent CLI:" line that reproduces the run non-interactively (rename.sh style); --print-cli-only keeps its own equivalent-command section
@@ -3389,6 +3391,20 @@ NORMALIZE_MP4_SAFE_MUX=0
 NORMALIZE_GOPRO_TWO_PASS=0
 NORMALIZE_GOPRO_PASS2_STRATEGY=
 
+# FFmpeg 9 names stream-group members "stream" too (GoPro tmcd track references),
+# so one -show_entries stream= query prints the same field more than once.
+# A later newline would be read as another stream and become -map 0:aac.
+normalize_ffprobe_one_value() {
+  local line
+  while IFS= read -r line; do
+    line="${line//$'\r'/}"
+    [[ -n "$line" ]] || continue
+    printf '%s\n' "$line"
+    return 0
+  done
+  return 0
+}
+
 normalize_stream_probe_field() {
   local file="$1" idx="$2" field="$3"
   local -a fp_args=(-v error)
@@ -3400,12 +3416,13 @@ normalize_stream_probe_field() {
     -of default=nw=1:nk=1
     -- "$file"
   )
-  ffprobe "${fp_args[@]}" 2>/dev/null || true
+  ffprobe "${fp_args[@]}" 2>/dev/null | normalize_ffprobe_one_value || true
 }
 
 normalize_load_stream_table() {
   local file="$1"
   local -a fp_args=()
+  local -A seen_idx=()
   local idx ctype cname ctag handler
 
   NORMALIZE_STREAM_TABLE=()
@@ -3423,7 +3440,10 @@ normalize_load_stream_table() {
   )
 
   while IFS= read -r idx; do
+    idx="${idx//$'\r'/}"
     [[ "$idx" =~ ^[0-9]+$ ]] || continue
+    [[ -n "${seen_idx[$idx]+x}" ]] && continue
+    seen_idx[$idx]=1
     ctype="$(normalize_stream_probe_field "$file" "$idx" codec_type)"
     cname="$(normalize_stream_probe_field "$file" "$idx" codec_name)"
     ctag="$(normalize_stream_probe_field "$file" "$idx" codec_tag_string)"
@@ -3551,7 +3571,7 @@ normalize_stream_handler_name() {
     -of default=nw=1:nk=1
     -- "$file"
   )
-  ffprobe "${fp_args[@]}" 2>/dev/null || true
+  ffprobe "${fp_args[@]}" 2>/dev/null | normalize_ffprobe_one_value || true
 }
 
 normalize_file_is_gopro() {
@@ -3597,6 +3617,7 @@ normalize_build_mp4_ffmpeg_args() {
   while IFS= read -r line; do
     [[ -n "$line" ]] || continue
     IFS='|' read -r idx ctype cname ctag handler <<<"$line"
+    [[ "$idx" =~ ^[0-9]+$ ]] || continue
     case "${ctype,,}" in
       video|audio)
         # mp4s Systems tracks are sometimes reported as video/unknown — never map them.
@@ -3643,6 +3664,7 @@ normalize_build_gopro_pass2_met_only_args() {
   while IFS= read -r line; do
     [[ -n "$line" ]] || continue
     IFS='|' read -r idx ctype cname ctag handler <<<"$line"
+    [[ "$idx" =~ ^[0-9]+$ ]] || continue
     case "${ctype,,}" in
       video|audio|subtitle) continue ;;
     esac
@@ -3881,6 +3903,7 @@ normalize_build_ffmpeg_stream_map_args() {
 
   for line in "${NORMALIZE_STREAM_TABLE[@]}"; do
     IFS='|' read -r idx ctype cname ctag handler <<<"$line"
+    [[ "$idx" =~ ^[0-9]+$ ]] || continue
     out_map+=(-map "0:${idx}")
   done
 }
