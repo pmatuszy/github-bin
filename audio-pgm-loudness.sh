@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20260928.144348 - rollback script: one key, no Enter (Y restore, N skip, Q stop)
 # v. 20260928.143252 - FFmpeg 9 ffprobe: one value per stream so GoPro pass 2 does not map 0:aac
 # v. 20260928.140213 - skip exclude prompt when a mask is given; write audio-pgm-loudness-rollback script
 # v. 20260928.114410 - operands may be files, folders or masks; add --exclude
@@ -30,6 +31,7 @@
 # v. 20260801.144550 - normalize: map streams individually; skip MP4-unmappable timecode (tmcd) only
 # v. 20260716.163224 - versioning format v. YYYYMMDD.HH24MISS
 
+# 2026.09.28 - v. 0.5.54 - rollback script waits for one key and does not need Enter: Y restores, N skips, Q stops; any other key is no
 # 2026.09.28 - v. 0.5.53 - FFmpeg 9 ffprobe also prints timecode track-reference streams; keep one value per field so GoPro pass 2 maps numeric indexes only (not 0:aac)
 # 2026.09.28 - v. 0.5.52 - a command-line mask skips the exclude question; a successful --save-original run writes audio-pgm-loudness-rollback-YYYYMMDD.HHMMSS.sh (one file per run, batch headings inside) to put backups back one file at a time
 # 2026.09.28 - v. 0.5.51 - positional arguments may be files, folders, or masks (quote a mask so the shell does not expand it); --exclude MASK / LOUDNESS_EXCLUDE drops matches afterwards; interactive exclude prompt when none was given; --scan-only keeps those operands
@@ -225,7 +227,8 @@ Options:
                        start directory (one script per run, grouped by batch).
                        Run that script later to put backups back, one file
                        at a time. It asks only when both the modified file
-                       and the backup are still there.
+                       and the backup are still there. One key, no Enter:
+                       Y restores, N skips, Q stops (any other key skips).
   --replace-backup     When *.backup.deleteme already exists, remove it and move
                        the current file aside (non-interactive; no prompt).
   --print-cli-only     Interactive dry-run: answer the usual prompts but do not
@@ -4866,10 +4869,23 @@ revert_entry() {
     printf '  recorded: %s bytes, %s\n' "$rec_size" "${rec_mtime:-?}"
     printf '  now:      %s bytes, %s\n' "${now_size:-?}" "${now_mtime:-?}"
   fi
-  printf 'Revert the backup to %s? [y/N/q] ' "$base"
-  read -r reply || reply=""
+  if [[ -r /dev/tty && -w /dev/tty ]]; then
+    printf 'Revert the backup to %s? [y/N/q] ' "$base" >/dev/tty
+    IFS= read -r -n 1 reply </dev/tty || reply=""
+  else
+    printf 'Revert the backup to %s? [y/N/q] ' "$base"
+    IFS= read -r -n 1 reply || reply=""
+  fi
   reply="${reply%$'\r'}"
+  if [[ -n "$reply" ]]; then
+    if [[ -w /dev/tty ]]; then
+      printf '\n' >/dev/tty
+    else
+      printf '\n'
+    fi
+  fi
   case "${reply,,}" in
+    n) ;;
     q)
       echo 'Stopped.'
       exit 0
