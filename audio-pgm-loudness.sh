@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20260928.180359 - originals move to name.ext.original-backup.ext and are skipped
 # v. 20260928.144348 - rollback script: one key, no Enter (Y restore, N skip, Q stop)
 # v. 20260928.143252 - FFmpeg 9 ffprobe: one value per stream so GoPro pass 2 does not map 0:aac
 # v. 20260928.140213 - skip exclude prompt when a mask is given; write audio-pgm-loudness-rollback script
@@ -31,6 +32,7 @@
 # v. 20260801.144550 - normalize: map streams individually; skip MP4-unmappable timecode (tmcd) only
 # v. 20260716.163224 - versioning format v. YYYYMMDD.HH24MISS
 
+# 2026.09.28 - v. 0.5.55 - original is moved to name.ext.original-backup.ext (still opens on double-click); those files are left out of scan and normalize
 # 2026.09.28 - v. 0.5.54 - rollback script waits for one key and does not need Enter: Y restores, N skips, Q stops; any other key is no
 # 2026.09.28 - v. 0.5.53 - FFmpeg 9 ffprobe also prints timecode track-reference streams; keep one value per field so GoPro pass 2 maps numeric indexes only (not 0:aac)
 # 2026.09.28 - v. 0.5.52 - a command-line mask skips the exclude question; a successful --save-original run writes audio-pgm-loudness-rollback-YYYYMMDD.HHMMSS.sh (one file per run, batch headings inside) to put backups back one file at a time
@@ -197,8 +199,8 @@ timecode track; a final moov trak swap restores TCD at #2 and MET at #3.
 After a successful in-place replace, the output file gets the original timestamps
 (mtime/atime) back via touch -r.
 
-Optionally move each original aside before normalizing (delete *.backup.deleteme when satisfied):
-  e.g. clip.mp4 -> clip.mp4.backup.deleteme   (same directory)
+Optionally move each original aside before normalizing (delete *.original-backup.<ext> when satisfied):
+  e.g. clip.mp4 -> clip.mp4.original-backup.mp4   (same directory; double-click still opens it)
   If that backup path already exists, interactive mode explains the conflict and
   offers to replace the old backup, keep it and normalize in place, or skip.
 
@@ -220,16 +222,16 @@ Options:
   --force              With -y or non-interactive normalize, also process files
                        whose mean volume is below --mean-skip-db. Interactive
                        per-file prompts still default to [N] for those files.
-  --save-original      Move each original to *.backup.deleteme before normalizing
-                       (skip the interactive backup question). Each file that
-                       stays normalized is appended to
+  --save-original      Move each original to name.ext.original-backup.ext before
+                       normalizing (skip the interactive backup question).
+                       Each file that stays normalized is appended to
                        audio-pgm-loudness-rollback-YYYYMMDD.HHMMSS.sh in the
                        start directory (one script per run, grouped by batch).
                        Run that script later to put backups back, one file
                        at a time. It asks only when both the modified file
                        and the backup are still there. One key, no Enter:
                        Y restores, N skips, Q stops (any other key skips).
-  --replace-backup     When *.backup.deleteme already exists, remove it and move
+  --replace-backup     When *.original-backup.<ext> already exists, remove it and move
                        the current file aside (non-interactive; no prompt).
   --print-cli-only     Interactive dry-run: answer the usual prompts but do not
                        scan, normalize, or modify any file. Prints an equivalent
@@ -293,10 +295,10 @@ Interactive normalization prompts (per file, in batches like ffmpeg-voice.sh):
 
 Environment:
   LOUDNESS_NORMALIZE        Same as -n / --normalize (CLI overrides).
-  LOUDNESS_SAVE_ORIGINAL    1 = move originals to *.backup.deleteme (same as --save-original).
+  LOUDNESS_SAVE_ORIGINAL    1 = move originals to name.ext.original-backup.ext (same as --save-original).
   LOUDNESS_INCLUDE_PERFECT  1 = with youtube mode, include PERFECT files (same as
                               --include-perfect).
-  LOUDNESS_REPLACE_BACKUP   1 = remove existing *.backup.deleteme before moving
+  LOUDNESS_REPLACE_BACKUP   1 = remove existing *.original-backup.<ext> before moving
                               aside (same as --replace-backup).
   LOUDNESS_BACKUP_ON_CONFLICT  Non-interactive when backup exists: replace, keep
                               (normalize in place; default), or skip.
@@ -360,6 +362,7 @@ LOUDNESS_EXCLUDE_CLI=0
 LOUDNESS_EXCLUDE_FROM_ENV=0
 LOUDNESS_EXCLUDE_PROMPTED=0
 LOUDNESS_SKIPPED_NONMEDIA=0
+LOUDNESS_SKIPPED_ORIGINAL_BACKUP=0
 LOUDNESS_MATCHED_BEFORE_EXCLUDE=0
 LOUDNESS_EXCLUDED_COUNT=0
 LOUDNESS_ROLLBACK_PATH=""
@@ -1615,6 +1618,21 @@ loudness_is_media_path() {
   return 1
 }
 
+# True for an aside original: clip.mp4.original-backup.mp4 (same extension twice).
+loudness_is_original_backup() {
+  local base="${1##*/}" ext stem inner inner_ext
+  [[ "$base" == *.* ]] || return 1
+  ext="${base##*.}"
+  ext="${ext,,}"
+  stem="${base%.*}"
+  [[ "${stem,,}" == *.original-backup ]] || return 1
+  inner="${stem:0:${#stem}-16}"
+  [[ "$inner" == *.* ]] || return 1
+  inner_ext="${inner##*.}"
+  [[ "${inner_ext,,}" == "$ext" ]] || return 1
+  loudness_is_media_path "$1"
+}
+
 # Case-insensitive glob. A mask with "/" matches the relative path (* matches
 # across "/"); otherwise it matches the file name only.
 loudness_path_matches_mask() {
@@ -1904,6 +1922,11 @@ loudness_collect_add() {
   p="${p#./}"
   [[ -f "$p" ]] || return 0
   [[ -n "${_LOUDNESS_COLLECT_SEEN[$p]+x}" ]] && return 0
+  if loudness_is_original_backup "$p"; then
+    _LOUDNESS_COLLECT_SEEN["$p"]=1
+    LOUDNESS_SKIPPED_ORIGINAL_BACKUP=$(( LOUDNESS_SKIPPED_ORIGINAL_BACKUP + 1 ))
+    return 0
+  fi
   _LOUDNESS_COLLECT_SEEN["$p"]=1
   _LOUDNESS_COLLECT_FOUND+=( "$p" )
 }
@@ -1914,6 +1937,7 @@ collect_media_files() {
 
   loudness_collect_reset
   LOUDNESS_SKIPPED_NONMEDIA=0
+  LOUDNESS_SKIPPED_ORIGINAL_BACKUP=0
 
   if (( ${#CLI_FILES[@]} == 0 )); then
     if [[ "$LOUDNESS_SCAN_SCOPE" == subdirs ]]; then
@@ -2525,7 +2549,7 @@ loudness_print_run_summary_once() {
   if (( LOUDNESS_NORMALIZE_RAN )); then
     loudness_summary_kv "Normalize mode" "${NORMALIZE_MODE:-none}"
     if (( LOUDNESS_SAVE_ORIGINAL )); then
-      loudness_summary_kv "Originals backup" '*.backup.deleteme (moved aside)'
+      loudness_summary_kv "Originals backup" '*.original-backup.<ext> (moved aside)'
     fi
     if [[ -n "$LOUDNESS_ROLLBACK_PATH" && -f "$LOUDNESS_ROLLBACK_PATH" ]]; then
       loudness_summary_kv "Rollback script" "${LOUDNESS_ROLLBACK_PATH} (${LOUDNESS_ROLLBACK_COUNT} file(s))"
@@ -3069,7 +3093,7 @@ loudness_confirm_normalize_disk_space() {
   echo
   echo 'Disk space check before normalization (includes 15% safety margin):'
   if (( LOUDNESS_SAVE_ORIGINAL )); then
-    echo '  Estimate: ~2× queued file sizes (original *.backup.deleteme + normalized output).'
+    echo '  Estimate: ~2× queued file sizes (original *.original-backup.<ext> + normalized output).'
   else
     echo '  Estimate: queued file sizes + one temp copy of the largest file per directory during ffmpeg.'
   fi
@@ -3160,22 +3184,28 @@ loudness_confirm_normalize_disk_space() {
   esac
 }
 
-# Path for original moved aside: <dir>/<basename>.backup.deleteme
-backup_deleteme_path() {
-  local file="$1" dir base
+# Path for original moved aside: <dir>/<basename>.original-backup.<ext>
+backup_original_path() {
+  local file="$1" dir base ext name
   dir="$(dirname -- "$file")"
   base="$(basename -- "$file")"
-  if [[ "$dir" == . ]]; then
-    printf '%s' "${base}.backup.deleteme"
+  if [[ "$base" == *.* ]]; then
+    ext="${base##*.}"
+    name="${base}.original-backup.${ext}"
   else
-    printf '%s' "${dir}/${base}.backup.deleteme"
+    name="${base}.original-backup"
+  fi
+  if [[ "$dir" == . ]]; then
+    printf '%s' "$name"
+  else
+    printf '%s' "${dir}/${name}"
   fi
 }
 
-# Move original to <path/name>.backup.deleteme in the same directory.
+# Move original to <path/name>.original-backup.<ext> in the same directory.
 move_original_to_backup() {
   local file="$1" dest
-  dest="$(backup_deleteme_path "$file")"
+  dest="$(backup_original_path "$file")"
   if [[ -e "$dest" ]]; then
     return 2
   fi
@@ -3306,7 +3336,7 @@ resolve_backup_conflict() {
   fi
 
   echo '  [y] Remove old backup, move current file aside, then normalize'
-  echo '      (the previous original in .backup.deleteme will be deleted)'
+  echo '      (the previous original in .original-backup.<ext> will be deleted)'
   echo '  [k] Keep old backup; normalize current file in place'
   echo '      (safe for re-normalizing; backup still holds the first original)'
   echo '  [S] Skip this file (default)'
@@ -3341,7 +3371,7 @@ prepare_normalize_with_backup() {
   local -n _backup=$3
   local conflict_action prep_rc=0
 
-  _backup="$(backup_deleteme_path "$file")"
+  _backup="$(backup_original_path "$file")"
   _src="$file"
 
   prep_rc=0
@@ -3558,7 +3588,8 @@ normalize_output_is_mp4_family() {
   case "${ref##*.}" in
     [mM][pP]4|[mM]4[vV]|[mM][oO][vV]|3[gG][pP]) return 0 ;;
   esac
-  # *.mp4.backup.deleteme and similar: basename still contains ".mp4."
+  # Old aside name file.mp4.backup.deleteme still contains ".mp4."
+  # name.ext.original-backup.ext already ends in the real extension.
   [[ "$base" =~ \.[mM][pP]4(\.|$) ]] && return 0
   return 1
 }
@@ -3869,7 +3900,7 @@ normalize_file_inplace_gopro_two_pass() {
   return 0
 }
 
-# src_file is probed for streams; container_ref sets output muxer (use dest .mp4, not *.backup.deleteme).
+# src_file is probed for streams; container_ref sets output muxer (use dest .mp4).
 normalize_build_ffmpeg_stream_map_args() {
   local src_file="$1" container_ref="$2"
   local -n out_map=$3
@@ -4617,7 +4648,7 @@ prompt_youtube_include_perfect() {
 }
 
 prompt_save_original_aside() {
-  echo "Backup pattern: <filename>.backup.deleteme (original is moved, not copied)."
+  echo "Backup pattern: <filename>.<ext>.original-backup.<ext> (original is moved, not copied)."
   loudness_read_yn_key 'Move originals aside before normalizing? [Y/n/q]: ' Y
   case "${REPLY^^}" in
     Q) loudness_quit_now ;;
@@ -4625,7 +4656,7 @@ prompt_save_original_aside() {
     *) LOUDNESS_SAVE_ORIGINAL=1 ;;
   esac
   if (( LOUDNESS_SAVE_ORIGINAL )); then
-    loudness_print_selected 'yes (*.backup.deleteme)'
+    loudness_print_selected 'yes (*.original-backup.<ext>)'
     cli_equiv_note 'CLI: --save-original'
   else
     loudness_print_selected 'no (do not move originals aside)'
@@ -5219,7 +5250,7 @@ normalize_candidate_files() {
   echo "All audio tracks are loudnorm-filtered; video, subtitles, and other streams are copied."
   echo "GoPro MP4: pass1 loudnorm; pass2 MET; moov trak swap restores TCD/MET order."
   if (( LOUDNESS_SAVE_ORIGINAL )); then
-    echo "Originals are moved to *.backup.deleteme before each file is normalized."
+    echo "Originals are moved to *.original-backup.<ext> before each file is normalized."
   fi
   echo "Timestamps on the normalized file are preserved."
 
@@ -5334,6 +5365,9 @@ LOUDNESS_MATCHED_BEFORE_EXCLUDE=${#MEDIA_FILES[@]}
 
 if (( LOUDNESS_SKIPPED_NONMEDIA > 0 )); then
   echo "NOTE: skipped ${LOUDNESS_SKIPPED_NONMEDIA} non-media file(s) (supported extensions only)."
+fi
+if (( LOUDNESS_SKIPPED_ORIGINAL_BACKUP > 0 )); then
+  echo "NOTE: skipped ${LOUDNESS_SKIPPED_ORIGINAL_BACKUP} original-backup file(s)."
 fi
 
 if (( ${#LOUDNESS_EXCLUDE_MASKS[@]} > 0 )); then
