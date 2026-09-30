@@ -1,10 +1,12 @@
 #!/bin/bash
+# v. 20260930.214500 - INPUT lines: name, size, and duration on one line when they fit
 # v. 20260930.213000 - 70mai merge name: start_end_70mai-A510_camera_concat
 # v. 20260930.180600 - 70mai journeys: write a .gpx beside the merged file
 # v. 20260916.133341 - print === Run settings === at startup, with Equivalent CLI
 # v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
 # v. 20260805.154826 - after merge: copy GPS/dates from first chapter; FS times via touch -r
 
+# 2026.09.30 - v. 0.15.28 - merge INPUT: filename, size, and duration on one line when they fit the terminal (else name, then size)
 # 2026.09.30 - v. 0.15.27 - 70mai journey output: YYYYMMDD-HHMMSS_YYYYMMDD-HHMMSS_70mai-A510_FrontCam_concat.mp4 and the same stem .gpx
 # 2026.09.30 - v. 0.15.26 - 70mai NOYYYYMMDD-HHMMSS-NNNNNNX clips: group a continuous journey (sequence +1 and ~60s start gap) and write a .gpx beside the merged file (same name)
 # 2026.09.16 - v. 0.15.25 - startup: print "=== Run settings ===" (like rename.sh) with -u/-y/--read-timeout/--seam-before/--seam-after as given, env, or default, the seam preview size, and an "Equivalent CLI:" line that repeats the run
@@ -183,6 +185,8 @@ Environment:
                           journey (default: 90). Gaps above this start a new group.
   PGM_DASHCAM_LABEL       Make and model in 70mai journey filenames (default: 70mai-A510).
                           Spaces become hyphens.
+  MAX_LINE_LENGTH         Longest status line kept on one row (default: 200). The
+                          real limit is the smaller of this and the terminal width.
 
 Examples:
   $(basename "$0") -u
@@ -1296,20 +1300,57 @@ print_chapter_file_line() {
 }
 
 # Print full basename (never truncate — long GoPro names must stay readable).
-# Layout: part label + name on line 1; size + duration indented on line 2 so '|' columns still align.
+# One line when name + size + duration fit the terminal (and MAX_LINE_LENGTH).
+# Otherwise: name on line 1, size + duration indented on line 2 so '|' columns still align.
 PGM_IO_PART_W=8
+MAX_LINE_LENGTH="${MAX_LINE_LENGTH:-200}"
+
+# Usable width: the terminal, but never more than MAX_LINE_LENGTH.
+pgm_terminal_columns() {
+  local cols=""
+  if [[ -t 1 ]]; then
+    cols="$(tput cols 2>/dev/null || true)"
+  fi
+  if [[ -w /dev/tty ]] 2>/dev/null && [[ ! "$cols" =~ ^[0-9]+$ ]]; then
+    cols="$(tput cols </dev/tty 2>/dev/null || true)"
+  fi
+  if [[ ! "$cols" =~ ^[0-9]+$ || "$cols" -lt 1 ]]; then
+    cols="${COLUMNS:-}"
+  fi
+  if [[ ! "$cols" =~ ^[0-9]+$ || "$cols" -lt 1 ]]; then
+    cols=80
+  fi
+  printf '%s' "$cols"
+}
+
+pgm_effective_line_width() {
+  local cols max="${MAX_LINE_LENGTH:-200}"
+  cols="$(pgm_terminal_columns)"
+  if (( cols < max )); then
+    printf '%s' "$cols"
+  else
+    printf '%s' "$max"
+  fi
+}
 
 pgm_io_input_line() {
   local part_lbl="$1" f="$2"
-  local base="${f##*/}" sz dur dur_disp
+  local base="${f##*/}" sz dur dur_disp size_s line width
   sz=$(file_size_bytes "$f")
+  size_s="$(format_bytes_human_aligned "$sz")"
   if dur=$(ffprobe_duration_seconds "$f" 2>/dev/null) && [[ -n "$dur" ]]; then
     dur_disp=$(format_duration_display "$dur")
   else
     dur_disp="—"
   fi
+  printf -v line '  %-*s %s  %s  %s' "$PGM_IO_PART_W" "$part_lbl" "$base" "$size_s" "$dur_disp"
+  width="$(pgm_effective_line_width)"
+  if (( ${#line} <= width )); then
+    printf '%s\n' "$line"
+    return 0
+  fi
   printf '  %-*s %s\n' "$PGM_IO_PART_W" "$part_lbl" "$base"
-  printf '  %-*s %s  %s\n' "$PGM_IO_PART_W" "" "$(format_bytes_human_aligned "$sz")" "$dur_disp"
+  printf '  %-*s %s  %s\n' "$PGM_IO_PART_W" "" "$size_s" "$dur_disp"
 }
 
 # INPUT section, then OUTPUT section (narrower than side-by-side layout).
@@ -1319,7 +1360,7 @@ print_merge_group_io_block() {
   local -a files=("$@")
   local f input_total=0 out_sz=0 input_dur_total=0
   local base part_lbl dur
-  local input_total_s output_total_s output_note input_dur_s sep
+  local input_total_s output_total_s output_note input_dur_s sep line width
 
   for f in "${files[@]}"; do
     sz=$(file_size_bytes "$f")
@@ -1364,9 +1405,15 @@ print_merge_group_io_block() {
   echo
   echo "  OUTPUT"
   printf '  %s\n' "$sep"
-  printf '  %s\n' "${output_file}"
-  printf '  %-*s Total: %s  %s\n' "$PGM_IO_PART_W" "" \
-    "$output_total_s" "$output_note"
+  printf -v line '  %s  Total: %s  %s' "${output_file}" "$output_total_s" "$output_note"
+  width="$(pgm_effective_line_width)"
+  if (( ${#line} <= width )); then
+    printf '%s\n' "$line"
+  else
+    printf '  %s\n' "${output_file}"
+    printf '  %-*s Total: %s  %s\n' "$PGM_IO_PART_W" "" \
+      "$output_total_s" "$output_note"
+  fi
 }
 
 # Absolute size difference (always non-negative).
