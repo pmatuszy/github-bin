@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20260930.221200 - drop --no_startup_delay; this script is interactive
 # v. 20260930.221000 - seam preview: [a] skips the rest of the seams in this file
 # v. 20260930.214500 - INPUT lines: name, size, and duration on one line when they fit
 # v. 20260930.213000 - 70mai merge name: start_end_70mai-A510_camera_concat
@@ -7,6 +8,7 @@
 # v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
 # v. 20260805.154826 - after merge: copy GPS/dates from first chapter; FS times via touch -r
 
+# 2026.09.30 - v. 0.15.30 - drop --no_startup_delay; this script is interactive
 # 2026.09.30 - v. 0.15.29 - seam preview: [a] skips every remaining seam in this merged file
 # 2026.09.30 - v. 0.15.28 - merge INPUT: filename, size, and duration on one line when they fit the terminal (else name, then size)
 # 2026.09.30 - v. 0.15.27 - 70mai journey output: YYYYMMDD-HHMMSS_YYYYMMDD-HHMMSS_70mai-A510_FrontCam_concat.mp4 and the same stem .gpx
@@ -98,7 +100,6 @@ show_help() {
   cat <<EOF
 Usage: $(basename "$0") [-h|--help] [-u|--update] [-v|--version] [-y|--yes]
        [--read-timeout SEC] [--seam-before SEC] [--seam-after SEC]
-       [--no_startup_delay]
 
 Merge chapter MP4 files in the current directory (e.g. GoPro splits) into one
 file using mp4_merge from https://github.com/gyroflow/mp4-merge
@@ -116,8 +117,6 @@ Options:
                        Env: PGM_SEAM_PREVIEW_BEFORE.
   --seam-after SEC     Terminal seam preview: seconds after each join (default 0).
                        Env: PGM_SEAM_PREVIEW_AFTER.
-  --no_startup_delay   Skip random startup delay when run non-interactively (see
-                       _script_header.sh).
 
 Merge behaviour (no options):
   - Collects *.mp4 in the current working directory (case-insensitive), except
@@ -197,11 +196,8 @@ Examples:
   cd /path/to/chapters && $(basename "$0")
       Merge all chapter MP4s in that folder.
 
-  $(basename "$0") -y --no_startup_delay
-      Merge all chapter groups without prompts (cron).
-
-  $(basename "$0") --no_startup_delay
-      Interactive merge plan with per-group prompts.
+  $(basename "$0") -y
+      Merge all chapter groups without prompts.
 
 Upstream: https://github.com/gyroflow/mp4-merge
 EOF
@@ -1192,7 +1188,7 @@ play_merge_seam_preview_once() {
   [[ -n "$ord" ]] || ord="$(pgm_ordinal_seam_label "$seam_num")"
   preview_w="${PGM_SEAM_PREVIEW_WIDTH-100}"
   preview_h="${PGM_SEAM_PREVIEW_HEIGHT-40}"
-  player_args=( --no_startup_delay --no-countdown )
+  player_args=( --no-countdown )
   if [[ -n "$preview_w" && -n "$preview_h" ]]; then
     player_args+=( --no-autodetect -w "$preview_w" -H "$preview_h" )
   fi
@@ -3977,11 +3973,7 @@ DO_YES=0
 MERGE_ALL_REMAINING=0
 SKIP_ALL_REMAINING=0
 GROUP_BLOBS=()
-HEADER_EXTRA_ARGS=()
-for _vpm_a in "$@"; do
-  [[ "$_vpm_a" == --no_startup_delay ]] && HEADER_EXTRA_ARGS+=(NO_STARTUP_DELAY)
-done
-. /root/bin/_script_header.sh "${HEADER_EXTRA_ARGS[@]}"
+. /root/bin/_script_header.sh
 
 # Remember where the seam-preview values came from, so "=== Run settings ===" can tell
 # env/default apart from an explicit flag (set below in the --seam-* branches).
@@ -4062,9 +4054,6 @@ while [[ $# -gt 0 ]]; do
       pgm_valid_seam_seconds "$PGM_SEAM_PREVIEW_AFTER" \
         || pgm_invalid_seam_seconds "seam-after" "$PGM_SEAM_PREVIEW_AFTER"
       PGM_SEAM_AFTER_CLI=1
-      shift
-      ;;
-    --no_startup_delay)
       shift
       ;;
     *)

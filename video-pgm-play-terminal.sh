@@ -1,10 +1,12 @@
 #!/bin/bash
+# v. 20260930.221200 - drop --no_startup_delay; this script is interactive
 # v. 20260916.133341 - print === Run settings === before playback; Equivalent CLI pins detected size
 # v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
 # v. 20260731.211609 - use shared apt-install prompt from _script_header (default Y, no timeout)
 # v. 20260725.151453 - ask before apt-installing missing packages; default N, 300s timeout
 # v. 20260718.180600 - restore terminal cursor/screen after mpv tct playback
 
+# 2026.09.30 - v. 0.6.6 - drop --no_startup_delay; this script is interactive
 # 2026.09.16 - v. 0.6.5 - before playback: print "=== Run settings ===" with each option as given, env, or default (autodetected width/height shown as the effective cell size) and an "Equivalent CLI:" line that replays the file at the same geometry
 # 2026.07.31 - v. 0.6.4 - missing packages: shared prompt [Y/n], default Y, wait indefinitely
 # 2026.07.25 - v. 0.6.3 - before installing missing packages: single-key [y/N] prompt, 300s timeout
@@ -26,7 +28,7 @@ show_help() {
 Usage: $(basename "$0") [-h|--help] [-v|--version] [--silent] [--no-silent]
        [--autodetect] [--no-autodetect] [--countdown SEC] [--no-countdown]
        [--start SEC] [--length SEC]
-       [-w|--width COLS] [--height|-H ROWS] [--no_startup_delay] FILE
+       [-w|--width COLS] [--height|-H ROWS] FILE
 
 Play one audio or video file in the terminal using mpv with the True Color
 Terminal video output driver (tct).
@@ -57,8 +59,6 @@ Options:
                        --vo-tct-height). With --width omitted, width is computed
                        from the video aspect ratio.
   -H ROWS              Short form of --height (-h is reserved for --help).
-  --no_startup_delay   Skip random startup delay when run non-interactively
-                       (see _script_header.sh).
 
 Arguments:
   FILE                 Path to the media file to play (required). Use -- before
@@ -411,11 +411,7 @@ video_pgm_print_command_line() {
 }
 
 # --- parse options (header sourced first so -v can call print_version_banner) ---
-HEADER_EXTRA_ARGS=()
-for _vpp_a in "$@"; do
-  [[ "$_vpp_a" == --no_startup_delay ]] && HEADER_EXTRA_ARGS+=(NO_STARTUP_DELAY)
-done
-. /root/bin/_script_header.sh "${HEADER_EXTRA_ARGS[@]}"
+. /root/bin/_script_header.sh
 
 MEDIA_FILE=""
 PLAY_SILENT="${VIDEO_PGM_PLAY_SILENT:-1}"
@@ -524,9 +520,6 @@ while [[ $# -gt 0 ]]; do
     --no-silent)
       PLAY_SILENT=0
       PLAY_SILENT_CLI=1
-      shift
-      ;;
-    --no_startup_delay)
       shift
       ;;
     --)
