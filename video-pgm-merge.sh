@@ -1,9 +1,11 @@
 #!/bin/bash
+# v. 20260930.213000 - 70mai merge name: start_end_70mai-A510_camera_concat
 # v. 20260930.180600 - 70mai journeys: write a .gpx beside the merged file
 # v. 20260916.133341 - print === Run settings === at startup, with Equivalent CLI
 # v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
 # v. 20260805.154826 - after merge: copy GPS/dates from first chapter; FS times via touch -r
 
+# 2026.09.30 - v. 0.15.27 - 70mai journey output: YYYYMMDD-HHMMSS_YYYYMMDD-HHMMSS_70mai-A510_FrontCam_concat.mp4 and the same stem .gpx
 # 2026.09.30 - v. 0.15.26 - 70mai NOYYYYMMDD-HHMMSS-NNNNNNX clips: group a continuous journey (sequence +1 and ~60s start gap) and write a .gpx beside the merged file (same name)
 # 2026.09.16 - v. 0.15.25 - startup: print "=== Run settings ===" (like rename.sh) with -u/-y/--read-timeout/--seam-before/--seam-after as given, env, or default, the seam preview size, and an "Equivalent CLI:" line that repeats the run
 # 2026.08.05 - v. 0.15.24 - post-merge: copy GPS/CreateDate/Make/Model from first chapter (exiftool); FS mtime via touch -r; title via exiftool not ffmpeg
@@ -132,9 +134,11 @@ Merge behaviour (no options):
   - Also groups 70mai-style clips NOYYYYMMDD-HHMMSS-NNNNNNX.MP4 (same camera letter)
     into a continuous journey: sequence number increases by 1 and the filename start
     times are about one minute apart (default gap 50–90s; PGM_DASHCAM_MAX_GAP_SEC).
-    A longer gap starts the next journey. After that journey is merged, a GPS track
-    is written next to the MP4: same name with a .gpx extension, from GPSData*.txt
-    in this directory or its parent.
+    A longer gap starts the next journey. The merged file is named from the first
+    and last clip times plus the dashcam label (default 70mai-A510) and camera
+    letter, for example 20260926-110627_20260926-130427_70mai-A510_FrontCam_concat.mp4.
+    A GPS track with the same stem and a .gpx extension is written beside it,
+    from GPSData*.txt in this directory or its parent.
   - Shows each multi-part group (with file sizes) and asks whether to merge
     (single-key Y/N/A/M/Q, no Enter — like rename.sh).
   - After a successful merge: copy GPS / create&modify dates / Make/Model from the first
@@ -177,6 +181,8 @@ Environment:
                           Slack around interval×fps expected ratio (default: 0.35).
   PGM_DASHCAM_MAX_GAP_SEC Max seconds between 70mai clip start times to stay in one
                           journey (default: 90). Gaps above this start a new group.
+  PGM_DASHCAM_LABEL       Make and model in 70mai journey filenames (default: 70mai-A510).
+                          Spaces become hyphens.
 
 Examples:
   $(basename "$0") -u
@@ -2983,6 +2989,42 @@ dashcam_gpx_beside_output() {
   printf '%s.gpx\n' "${output_file%.*}"
 }
 
+# Filename token for the dashcam. Default is the 70mai A510. Override with PGM_DASHCAM_LABEL.
+dashcam_label() {
+  local label="${PGM_DASHCAM_LABEL:-70mai-A510}"
+  label=$(printf '%s' "$label" | tr ' ' '-' | tr -cd 'A-Za-z0-9._-')
+  [[ -n "$label" ]] || label="70mai-A510"
+  printf '%s\n' "$label"
+}
+
+# Filename token for the camera letter on a 70mai clip. F and B are the usual pair.
+dashcam_camera_place() {
+  local letter="$1"
+  case "$letter" in
+    F) printf '%s\n' FrontCam ;;
+    B) printf '%s\n' BackCam ;;
+    *) printf '%s\n' "$letter" ;;
+  esac
+}
+
+# 20260926-110627_20260926-130427_70mai-A510_FrontCam_concat.mp4
+dashcam_group_output_file() {
+  local -a files=("$@")
+  local start_date start_time end_date end_time cam label place
+  group_is_dashcam "${files[@]}" || return 1
+  dashcam_parse_basename "${files[0]##*/}" || return 1
+  start_date="$DASHCAM_DATE"
+  start_time="$DASHCAM_TIME"
+  cam="$DASHCAM_CAM"
+  dashcam_parse_basename "${files[-1]##*/}" || return 1
+  end_date="$DASHCAM_DATE"
+  end_time="$DASHCAM_TIME"
+  label=$(dashcam_label)
+  place=$(dashcam_camera_place "$cam")
+  printf '%s-%s_%s-%s_%s_%s_concat.mp4\n' \
+    "$start_date" "$start_time" "$end_date" "$end_time" "$label" "$place"
+}
+
 # Every GPSData*.txt in this directory or its parent.
 dashcam_gps_logs() {
   local d f found=0
@@ -3485,6 +3527,9 @@ print_group_plan() {
 group_output_file() {
   local -a files=("$@")
   local f base stem part min_part= max_part= got_part=0 suffix_proxy=
+  if (( ${#files[@]} >= 2 )) && group_is_dashcam "${files[@]}"; then
+    dashcam_group_output_file "${files[@]}" && return 0
+  fi
   if (( ${#files[@]} >= 2 )) && group_is_size_split "${files[@]}"; then
     size_split_group_output_file "${files[@]}" && return 0
   fi
