@@ -1,6 +1,8 @@
 #!/bin/bash
+# v. 20260930.221500 - file prompts: one key, no Enter
 # v. 20260930.220400 - faster viewing copy of a merged video (2, 5, 10, 20, …)
 
+# 2026.09.30 - v. 0.2 - file prompts read one key and do not wait for Enter
 # 2026.09.30 - v. 0.1 - initial release: write stem_xN.mp4 beside an input; 2× keeps audio, faster speeds drop it; NVENC when ffmpeg lists it, else libx264
 #
 # video-pgm-timelapse.sh
@@ -42,7 +44,7 @@ Examples:
   $(basename "$0") --speed 10 trip_concat.mp4
   $(basename "$0") -y --speed 20 /path/to/merged/
   $(basename "$0")
-      Ask for a speed, then confirm each file in the current directory.
+      Ask for a speed, then confirm each file with one key (no Enter).
 EOF
 }
 
@@ -298,6 +300,27 @@ tl_add_directory() {
   done
 }
 
+tl_flush_stdin() {
+  local discard drained=0
+  while (( drained < 256 )) && IFS= read -r -t 0.02 -n 1 discard; do
+    (( drained++ )) || true
+  done
+}
+
+# One key, no Enter. Sets REPLY. An empty read uses default_key.
+tl_read_key() {
+  local prompt="$1" default_key="${2:-}" answer=""
+  printf '%s' "$prompt"
+  tl_flush_stdin
+  read -n 1 answer || answer=""
+  echo
+  if [[ -z "$answer" ]]; then
+    REPLY="$default_key"
+  else
+    REPLY="$answer"
+  fi
+}
+
 tl_prompt_speed() {
   local answer=""
   local default="${PGM_TIMELAPSE_SPEED:-10}"
@@ -349,9 +372,8 @@ tl_prompt_file_action() {
     echo "  [r] Redo — replace ${dest##*/}"
     echo "  [a] Skip all remaining"
     echo "  [q] Quit"
-    printf 'Already exists — file %s/%s [N/r/a/q]: ' "$n" "$total"
-    IFS= read -r choice || choice=""
-    choice="${choice,,}"
+    tl_read_key "Already exists — file ${n}/${total} [N/r/a/q]: " n
+    choice="${REPLY,,}"
     case "$choice" in
       ''|n) REPLY=skip ;;
       r)    REPLY=redo ;;
@@ -366,9 +388,8 @@ tl_prompt_file_action() {
   echo "  [a] Skip all remaining"
   echo "  [m] Encode all remaining"
   echo "  [q] Quit"
-  printf 'File %s/%s [Y/n/a/m/q]: ' "$n" "$total"
-  IFS= read -r choice || choice=""
-  choice="${choice,,}"
+  tl_read_key "File ${n}/${total} [Y/n/a/m/q]: " y
+  choice="${REPLY,,}"
   case "$choice" in
     ''|y) REPLY=encode ;;
     n)    REPLY=skip ;;
