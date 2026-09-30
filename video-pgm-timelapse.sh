@@ -1,7 +1,9 @@
 #!/bin/bash
+# v. 20260930.221800 - quiet ffmpeg log; print the ffmpeg version in a box
 # v. 20260930.221500 - file prompts: one key, no Enter
 # v. 20260930.220400 - faster viewing copy of a merged video (2, 5, 10, 20, …)
 
+# 2026.09.30 - v. 0.3 - encode log is errors plus the progress line; print the ffmpeg version in a box
 # 2026.09.30 - v. 0.2 - file prompts read one key and do not wait for Enter
 # 2026.09.30 - v. 0.1 - initial release: write stem_xN.mp4 beside an input; 2× keeps audio, faster speeds drop it; NVENC when ffmpeg lists it, else libx264
 #
@@ -114,6 +116,24 @@ tl_encoder_available() {
   grep -Eq "(^|[[:space:]])${name}([[:space:]]|$)" <<<"$TL_ENCODER_LIST"
 }
 
+# First line of `ffmpeg -version`, drawn in a box when `boxes` is installed.
+tl_print_ffmpeg_version() {
+  local ver width bar
+  ver="$(ffmpeg -version 2>/dev/null | awk 'NR==1 { print; exit }' || true)"
+  [[ -n "$ver" ]] || ver="ffmpeg version unknown"
+  echo
+  if type -fP boxes >/dev/null 2>&1; then
+    printf '%s\n' "$ver" | boxes -a c -d ada-box
+  else
+    width=${#ver}
+    bar="$(printf '%*s' "$((width + 2))" '' | tr ' ' '-')"
+    echo "+${bar}+"
+    echo "| ${ver} |"
+    echo "+${bar}+"
+  fi
+  echo
+}
+
 tl_load_encoders() {
   TL_ENCODER_LIST="$(ffmpeg -hide_banner -encoders 2>/dev/null || true)"
 }
@@ -188,7 +208,7 @@ tl_run_ffmpeg() {
   partial="${dest}.partial.$$.mp4"
   TL_PARTIAL="$partial"
   if (( keep_audio )); then
-    ffmpeg -y -hide_banner -stats -i "$src" \
+    ffmpeg -y -hide_banner -loglevel error -stats -i "$src" \
       -filter_complex "[0:v]${vfilter}[v];[0:a]atempo=${speed}.0[a]" \
       -map "[v]" -map "[a]" \
       "${TL_ENC_ARGS[@]}" \
@@ -196,7 +216,7 @@ tl_run_ffmpeg() {
       -movflags +faststart \
       "$partial"
   else
-    ffmpeg -y -hide_banner -stats -i "$src" \
+    ffmpeg -y -hide_banner -loglevel error -stats -i "$src" \
       -an \
       -filter:v "$vfilter" \
       "${TL_ENC_ARGS[@]}" \
@@ -522,6 +542,7 @@ if ! command -v ffmpeg >/dev/null 2>&1 || ! command -v ffprobe >/dev/null 2>&1; 
   echo "$(tl_ts) ffmpeg and ffprobe are required." >&2
   exit 1
 fi
+tl_print_ffmpeg_version
 tl_load_encoders
 tl_resolve_encoder_kind "$ENCODER" >/dev/null || {
   echo "$(tl_ts) No usable video encoder for '${ENCODER}'." >&2
