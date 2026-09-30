@@ -1,8 +1,10 @@
 #!/bin/bash
+# v. 20260930.222600 - encode display: normal progress bar, or verbose frames
 # v. 20260930.221800 - quiet ffmpeg log; print the ffmpeg version in a box
 # v. 20260930.221500 - file prompts: one key, no Enter
 # v. 20260930.220400 - faster viewing copy of a merged video (2, 5, 10, 20, …)
 
+# 2026.09.30 - v. 0.4 - encode display: normal is a progress bar (default); verbose keeps the ffmpeg frame line
 # 2026.09.30 - v. 0.3 - encode log is errors plus the progress line; print the ffmpeg version in a box
 # 2026.09.30 - v. 0.2 - file prompts read one key and do not wait for Enter
 # 2026.09.30 - v. 0.1 - initial release: write stem_xN.mp4 beside an input; 2× keeps audio, faster speeds drop it; NVENC when ffmpeg lists it, else libx264
@@ -16,8 +18,8 @@
 show_help() {
   cat <<EOF
 Usage: $(basename "$0") [-h|--help] [-v|--version] [--history]
-       [-y|--yes] [--speed N] [--redo] [--encoder auto|nvenc|x264|x265]
-       [FILE|DIR ...]
+       [-y|--yes] [--speed N] [--redo] [--verbose]
+       [--encoder auto|nvenc|x264|x265] [FILE|DIR ...]
 
 Write a faster copy beside each video. A 10× copy of a two-hour drive is about
 twelve minutes. The original file is not changed.
@@ -37,16 +39,20 @@ Options:
   --encoder KIND       auto (default), nvenc, x264, or x265.
                        auto uses hevc_nvenc when this ffmpeg lists it, and
                        libx264 if that encode fails or NVENC is absent.
+  --verbose            Show ffmpeg frame stats instead of the progress bar.
+                       -y otherwise keeps the progress bar.
 
 Environment:
   PGM_TIMELAPSE_SPEED     Same as --speed.
   PGM_TIMELAPSE_ENCODER   Same as --encoder (auto, nvenc, x264, x265).
+  PGM_TIMELAPSE_DISPLAY   normal (default) or verbose. verbose matches --verbose.
 
 Examples:
   $(basename "$0") --speed 10 trip_concat.mp4
+  $(basename "$0") --verbose --speed 10 trip_concat.mp4
   $(basename "$0") -y --speed 20 /path/to/merged/
   $(basename "$0")
-      Ask for a speed, then confirm each file with one key (no Enter).
+      Ask for a speed, then normal or verbose display, then each file (one key, no Enter).
 EOF
 }
 
@@ -102,6 +108,91 @@ tl_format_seconds() {
     else if (m > 0) printf "%dm %ds", m, x
     else printf "%ds", int(s + 0.5)
   }'
+}
+
+tl_format_clock() {
+  awk -v s="${1:-0}" 'BEGIN {
+    if (s == "" || s < 0) s = 0
+    t = int(s + 0.5)
+    h = int(t / 3600)
+    m = int((t % 3600) / 60)
+    sec = t % 60
+    printf "%02d:%02d:%02d", h, m, sec
+  }'
+}
+
+# ffmpeg out_time is HH:MM:SS.microseconds. A leading minus is the preroll.
+tl_out_time_seconds() {
+  awk -v t="$1" 'BEGIN {
+    if (t == "" || t ~ /^-/) { print 0; exit }
+    n = split(t, a, ":")
+    if (n != 3) { print 0; exit }
+    printf "%.3f\n", (a[1] * 3600) + (a[2] * 60) + a[3]
+  }'
+}
+
+# One updating line. frac is 0..1, or empty when the output length is unknown.
+tl_draw_progress() {
+  local frac="$1" elapsed="$2" total="$3" speedx="$4"
+  local width=24 filled=0 empty bar pct el_clock tot_clock
+  if [[ -n "$frac" ]]; then
+    pct="$(awk -v f="$frac" 'BEGIN { p=int(f*100+0.5); if (p>100) p=100; if (p<0) p=0; printf "%3d", p }')"
+    filled="$(awk -v f="$frac" -v w="$width" 'BEGIN { n=int(f*w+0.5); if (n>w) n=w; if (n<0) n=0; printf "%d", n }')"
+  else
+    pct=" --"
+  fi
+  empty=$((width - filled))
+  bar="$(printf '%*s' "$filled" '' | tr ' ' '#')"
+  bar+="$(printf '%*s' "$empty" '' | tr ' ' '-')"
+  el_clock="$(tl_format_clock "$elapsed")"
+  if [[ -n "$total" ]]; then
+    tot_clock="$(tl_format_clock "$total")"
+  else
+    tot_clock="--:--:--"
+  fi
+  printf '\r[%s] %s%%  %s / %s  %s\033[K' "$bar" "$pct" "$el_clock" "$tot_clock" "$speedx"
+}
+
+# Read ffmpeg -progress blocks on stdin and redraw the bar.
+tl_progress_reader() {
+  local total_sec="$1"
+  local line key val out_s=0 spd="--" frac=""
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    [[ "$line" == *=* ]] || continue
+    key="${line%%=*}"
+    val="${line#*=}"
+    case "$key" in
+      out_time) out_s="$(tl_out_time_seconds "$val")" ;;
+      speed)
+        spd="$val"
+        [[ "$spd" == "N/A" ]] && spd="--"
+        ;;
+      progress)
+        frac=""
+        if [[ "$val" == end && -n "$total_sec" ]]; then
+          frac=1
+        elif [[ -n "$total_sec" ]] && awk -v t="$total_sec" 'BEGIN { exit !(t+0 > 0) }'; then
+          frac="$(awk -v e="$out_s" -v t="$total_sec" 'BEGIN { f=e/t; if (f<0) f=0; if (f>1) f=1; printf "%.4f", f }')"
+        fi
+        tl_draw_progress "$frac" "$out_s" "$total_sec" "$spd"
+        ;;
+    esac
+  done
+  printf '\n'
+}
+
+# ffmpeg args follow total_sec. Progress is on stdout; the video path is the last arg.
+tl_ffmpeg_progress() {
+  local total_sec="$1"
+  shift
+  local rc=0
+  if command -v stdbuf >/dev/null 2>&1; then
+    stdbuf -oL ffmpeg "$@" | tl_progress_reader "$total_sec"
+  else
+    ffmpeg "$@" | tl_progress_reader "$total_sec"
+  fi
+  rc=${PIPESTATUS[0]}
+  return "$rc"
 }
 
 # Keep 1 frame out of N, then play those frames at the source frame rate.
@@ -201,29 +292,41 @@ tl_cleanup_partial() {
 
 # Encode one file at SPEED into its _xN sibling. Uses TL_ENC_ARGS.
 # On failure removes the partial file and returns 1.
+# total_sec is the expected output length (input duration / speed).
 tl_run_ffmpeg() {
-  local src="$1" dest="$2" speed="$3" keep_audio="$4"
+  local src="$1" dest="$2" speed="$3" keep_audio="$4" total_sec="${5:-}"
   local vfilter partial rc
+  local -a enc_args=()
   vfilter="$(tl_video_filter "$speed")"
   partial="${dest}.partial.$$.mp4"
   TL_PARTIAL="$partial"
+  enc_args=(-i "$src")
   if (( keep_audio )); then
-    ffmpeg -y -hide_banner -loglevel error -stats -i "$src" \
-      -filter_complex "[0:v]${vfilter}[v];[0:a]atempo=${speed}.0[a]" \
-      -map "[v]" -map "[a]" \
-      "${TL_ENC_ARGS[@]}" \
-      -c:a aac -b:a 128k \
-      -movflags +faststart \
-      "$partial"
+    enc_args+=(
+      -filter_complex "[0:v]${vfilter}[v];[0:a]atempo=${speed}.0[a]"
+      -map "[v]" -map "[a]"
+      "${TL_ENC_ARGS[@]}"
+      -c:a aac -b:a 128k
+    )
   else
-    ffmpeg -y -hide_banner -loglevel error -stats -i "$src" \
-      -an \
-      -filter:v "$vfilter" \
-      "${TL_ENC_ARGS[@]}" \
-      -movflags +faststart \
-      "$partial"
+    enc_args+=(
+      -an
+      -filter:v "$vfilter"
+      "${TL_ENC_ARGS[@]}"
+    )
   fi
-  rc=$?
+  enc_args+=(-movflags +faststart)
+  if [[ "$TL_DISPLAY" == verbose ]]; then
+    ffmpeg -y -hide_banner -loglevel error -stats "${enc_args[@]}" "$partial"
+    rc=$?
+  elif [[ -t 1 ]]; then
+    tl_ffmpeg_progress "$total_sec" -y -hide_banner -loglevel error -nostats \
+      -progress pipe:1 "${enc_args[@]}" "$partial"
+    rc=$?
+  else
+    ffmpeg -y -hide_banner -loglevel error -nostats "${enc_args[@]}" "$partial"
+    rc=$?
+  fi
   if (( rc != 0 )) || [[ ! -s "$partial" ]]; then
     rm -f -- "$partial"
     TL_PARTIAL=""
@@ -240,7 +343,7 @@ tl_run_ffmpeg() {
 
 tl_encode_one() {
   local src="$1" speed="$2" redo="$3" encoder_want="$4"
-  local dest dur out_dur kind keep_audio=0 label
+  local dest dur out_dur="" kind keep_audio=0 label
   dest="$(tl_output_path "$src" "$speed")"
   if [[ -e "$dest" && "$redo" -eq 0 ]]; then
     echo "$(tl_ts) Already exists, skipping: ${dest}"
@@ -272,14 +375,14 @@ tl_encode_one() {
   [[ "$kind" == x264 ]] && label="libx264"
   [[ "$kind" == x265 ]] && label="libx265"
   echo "$(tl_ts) Encoder: ${label}"
-  if tl_run_ffmpeg "$src" "$dest" "$speed" "$keep_audio"; then
+  if tl_run_ffmpeg "$src" "$dest" "$speed" "$keep_audio" "$out_dur"; then
     echo "$(tl_ts) Done: ${dest}"
     return 0
   fi
   if [[ "$encoder_want" == auto && "$kind" == nvenc ]] && tl_encoder_available libx264; then
     echo "$(tl_ts) NVENC failed; retrying with libx264."
     tl_set_encoder_args x264 || return 1
-    if tl_run_ffmpeg "$src" "$dest" "$speed" "$keep_audio"; then
+    if tl_run_ffmpeg "$src" "$dest" "$speed" "$keep_audio" "$out_dur"; then
       echo "$(tl_ts) Done: ${dest}"
       return 0
     fi
@@ -420,6 +523,33 @@ tl_prompt_file_action() {
   esac
 }
 
+tl_prompt_display() {
+  local choice=""
+  if (( TL_DISPLAY_FROM_CLI )) || [[ -n "$TL_DISPLAY" ]]; then
+    return 0
+  fi
+  if (( DO_YES )) || (( ! script_is_run_interactively )); then
+    TL_DISPLAY=normal
+    return 0
+  fi
+  echo
+  echo "Encode display?"
+  echo "  [N] Normal (progress bar) (default)"
+  echo "  [v] Verbose (frames)"
+  tl_read_key "Display [N/v]: " n
+  choice="${REPLY,,}"
+  choice="${choice//$'\r'/}"
+  choice="${choice//$'\n'/}"
+  case "$choice" in
+    ''|n) TL_DISPLAY=normal ;;
+    v)    TL_DISPLAY=verbose ;;
+    *)
+      echo "$(tl_ts) Unknown choice: ${REPLY}; using normal (progress bar)."
+      TL_DISPLAY=normal
+      ;;
+  esac
+}
+
 # --- parse options (header sourced first so -v can call print_version_banner) ---
 # shellcheck disable=SC1091
 . /root/bin/_script_header.sh
@@ -430,6 +560,8 @@ ENCODE_ALL=0
 SKIP_ALL=0
 SPEED="${PGM_TIMELAPSE_SPEED:-}"
 ENCODER="${PGM_TIMELAPSE_ENCODER:-auto}"
+TL_DISPLAY="${PGM_TIMELAPSE_DISPLAY:-}"
+TL_DISPLAY_FROM_CLI=0
 SPEED_FROM_CLI=0
 TL_INPUTS=()
 TL_PARTIAL=""
@@ -482,6 +614,11 @@ while [[ $# -gt 0 ]]; do
       ENCODER="${1#--encoder=}"
       shift
       ;;
+    --verbose)
+      TL_DISPLAY=verbose
+      TL_DISPLAY_FROM_CLI=1
+      shift
+      ;;
     --)
       shift
       POSITIONALS+=("$@")
@@ -510,6 +647,14 @@ if [[ -n "$SPEED" ]] && ! tl_is_speed "$SPEED"; then
   echo "ERROR: invalid speed: ${SPEED} (integer from 2 to 240)" >&2
   exit 1
 fi
+
+case "$TL_DISPLAY" in
+  ''|normal|verbose) ;;
+  *)
+    echo "ERROR: invalid PGM_TIMELAPSE_DISPLAY: ${TL_DISPLAY} (normal or verbose)" >&2
+    exit 1
+    ;;
+esac
 
 if (( ${#POSITIONALS[@]} == 0 )); then
   tl_add_directory "."
@@ -543,13 +688,14 @@ if ! command -v ffmpeg >/dev/null 2>&1 || ! command -v ffprobe >/dev/null 2>&1; 
   exit 1
 fi
 tl_print_ffmpeg_version
+tl_prompt_display
 tl_load_encoders
 tl_resolve_encoder_kind "$ENCODER" >/dev/null || {
   echo "$(tl_ts) No usable video encoder for '${ENCODER}'." >&2
   exit 1
 }
 
-echo "$(tl_ts) Speed: ${SPEED}×    files: ${#TL_INPUTS[@]}    encoder request: ${ENCODER}"
+echo "$(tl_ts) Speed: ${SPEED}×    files: ${#TL_INPUTS[@]}    encoder request: ${ENCODER}    display: ${TL_DISPLAY}"
 if (( SPEED == 2 )); then
   echo "$(tl_ts) Audio is kept at 2×. The .gpx beside the source still uses real time."
 else
