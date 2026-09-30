@@ -1,0 +1,553 @@
+#!/bin/bash
+# v. 20260930.220400 - faster viewing copy of a merged video (2, 5, 10, 20, …)
+
+# 2026.09.30 - v. 0.1 - initial release: write stem_xN.mp4 beside an input; 2× keeps audio, faster speeds drop it; NVENC when ffmpeg lists it, else libx264
+#
+# video-pgm-timelapse.sh
+#
+# Make a faster viewing copy of a video (typically a video-pgm-merge.sh result).
+# The source file and any .gpx beside it are left unchanged.
+#
+
+show_help() {
+  cat <<EOF
+Usage: $(basename "$0") [-h|--help] [-v|--version] [--history]
+       [-y|--yes] [--speed N] [--redo] [--encoder auto|nvenc|x264|x265]
+       [FILE|DIR ...]
+
+Write a faster copy beside each video. A 10× copy of a two-hour drive is about
+twelve minutes. The original file is not changed.
+
+With no FILE or DIR, use the current directory. If that directory contains
+*_concat.mp4 files, only those are used. Otherwise every other .mp4 in the
+directory is used. Files already named *_xN.mp4 are skipped.
+
+Options:
+  -h, --help           Show this help and exit.
+  -v, --version        Print script version and exit.
+  --history            Print script changelog from the header and exit.
+  -y, --yes            Encode every selected file without prompts.
+  --speed N            Integer speed, 2 or more (default when -y: 10).
+                       2 keeps audio. 5, 10, 20, and any higher speed drop audio.
+  --redo               Replace an existing *_xN.mp4.
+  --encoder KIND       auto (default), nvenc, x264, or x265.
+                       auto uses hevc_nvenc when this ffmpeg lists it, and
+                       libx264 if that encode fails or NVENC is absent.
+
+Environment:
+  PGM_TIMELAPSE_SPEED     Same as --speed.
+  PGM_TIMELAPSE_ENCODER   Same as --encoder (auto, nvenc, x264, x265).
+
+Examples:
+  $(basename "$0") --speed 10 trip_concat.mp4
+  $(basename "$0") -y --speed 20 /path/to/merged/
+  $(basename "$0")
+      Ask for a speed, then confirm each file in the current directory.
+EOF
+}
+
+tl_ts() {
+  date '+%Y.%m.%d %H:%M:%S'
+}
+
+tl_is_speed() {
+  local n="$1"
+  [[ "$n" =~ ^[0-9]+$ ]] && (( n >= 2 && n <= 240 ))
+}
+
+tl_is_timelapse_output() {
+  local base="${1##*/}"
+  [[ "$base" =~ _x[0-9]+\.[mM][pP]4$ ]]
+}
+
+tl_is_concat_output() {
+  local base="${1##*/}"
+  [[ "$base" =~ _concat\.[mM][pP]4$ ]]
+}
+
+# Output path for this speed: <stem>_xN.mp4 next to the source.
+tl_output_path() {
+  local src="$1" speed="$2" dir stem
+  dir="$(dirname -- "$src")"
+  stem="$(basename -- "$src")"
+  stem="${stem%.*}"
+  printf '%s/%s_x%s.mp4\n' "$dir" "$stem" "$speed"
+}
+
+tl_ffprobe_duration() {
+  local f="$1" dur
+  dur="$(ffprobe -v error -show_entries format=duration -of csv=p=0 -- "$f" 2>/dev/null || true)"
+  [[ "$dur" =~ ^[0-9]+([.][0-9]+)?$ ]] || return 1
+  printf '%s\n' "$dur"
+}
+
+tl_has_audio() {
+  local f="$1" kind
+  kind="$(ffprobe -v error -select_streams a:0 -show_entries stream=codec_type -of csv=p=0 -- "$f" 2>/dev/null || true)"
+  [[ "$kind" == "audio" ]]
+}
+
+tl_format_seconds() {
+  local sec="$1"
+  awk -v s="$sec" 'BEGIN {
+    if (s < 0) s = 0
+    h = int(s / 3600)
+    m = int((s - h * 3600) / 60)
+    x = int(s + 0.5) % 60
+    if (h > 0) printf "%dh %dm %ds", h, m, x
+    else if (m > 0) printf "%dm %ds", m, x
+    else printf "%ds", int(s + 0.5)
+  }'
+}
+
+# Keep 1 frame out of N, then play those frames at the source frame rate.
+tl_video_filter() {
+  local speed="$1"
+  printf "select='not(mod(n\\,%s))',setpts=N/FRAME_RATE/TB,format=yuv420p" "$speed"
+}
+
+tl_encoder_available() {
+  local name="$1"
+  [[ -n "${TL_ENCODER_LIST:-}" ]] || return 1
+  grep -Eq "(^|[[:space:]])${name}([[:space:]]|$)" <<<"$TL_ENCODER_LIST"
+}
+
+tl_load_encoders() {
+  TL_ENCODER_LIST="$(ffmpeg -hide_banner -encoders 2>/dev/null || true)"
+}
+
+tl_set_encoder_args() {
+  local kind="$1"
+  TL_ENC_KIND="$kind"
+  TL_ENC_ARGS=()
+  case "$kind" in
+    nvenc)
+      TL_ENC_ARGS=(-c:v hevc_nvenc -preset p4 -rc vbr -cq 28 -tag:v hvc1)
+      ;;
+    x265)
+      TL_ENC_ARGS=(-c:v libx265 -preset fast -crf 28 -tag:v hvc1)
+      ;;
+    x264)
+      TL_ENC_ARGS=(-c:v libx264 -preset veryfast -crf 22 -pix_fmt yuv420p)
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+# Pick auto/nvenc/x264/x265. Prints the kind. Returns 1 if that encoder is missing.
+tl_resolve_encoder_kind() {
+  local want="$1"
+  case "$want" in
+    auto)
+      if tl_encoder_available hevc_nvenc; then
+        printf '%s\n' nvenc
+      elif tl_encoder_available libx264; then
+        printf '%s\n' x264
+      elif tl_encoder_available libx265; then
+        printf '%s\n' x265
+      else
+        return 1
+      fi
+      ;;
+    nvenc)
+      tl_encoder_available hevc_nvenc || return 1
+      printf '%s\n' nvenc
+      ;;
+    x264)
+      tl_encoder_available libx264 || return 1
+      printf '%s\n' x264
+      ;;
+    x265)
+      tl_encoder_available libx265 || return 1
+      printf '%s\n' x265
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+tl_cleanup_partial() {
+  if [[ -n "${TL_PARTIAL:-}" && -e "$TL_PARTIAL" ]]; then
+    rm -f -- "$TL_PARTIAL"
+    echo "$(tl_ts) Removed incomplete output: ${TL_PARTIAL}"
+  fi
+  TL_PARTIAL=""
+}
+
+# Encode one file at SPEED into its _xN sibling. Uses TL_ENC_ARGS.
+# On failure removes the partial file and returns 1.
+tl_run_ffmpeg() {
+  local src="$1" dest="$2" speed="$3" keep_audio="$4"
+  local vfilter partial rc
+  vfilter="$(tl_video_filter "$speed")"
+  partial="${dest}.partial.$$.mp4"
+  TL_PARTIAL="$partial"
+  if (( keep_audio )); then
+    ffmpeg -y -hide_banner -stats -i "$src" \
+      -filter_complex "[0:v]${vfilter}[v];[0:a]atempo=${speed}.0[a]" \
+      -map "[v]" -map "[a]" \
+      "${TL_ENC_ARGS[@]}" \
+      -c:a aac -b:a 128k \
+      -movflags +faststart \
+      "$partial"
+  else
+    ffmpeg -y -hide_banner -stats -i "$src" \
+      -an \
+      -filter:v "$vfilter" \
+      "${TL_ENC_ARGS[@]}" \
+      -movflags +faststart \
+      "$partial"
+  fi
+  rc=$?
+  if (( rc != 0 )) || [[ ! -s "$partial" ]]; then
+    rm -f -- "$partial"
+    TL_PARTIAL=""
+    return 1
+  fi
+  if ! mv -f -- "$partial" "$dest"; then
+    rm -f -- "$partial"
+    TL_PARTIAL=""
+    return 1
+  fi
+  TL_PARTIAL=""
+  return 0
+}
+
+tl_encode_one() {
+  local src="$1" speed="$2" redo="$3" encoder_want="$4"
+  local dest dur out_dur kind keep_audio=0 label
+  dest="$(tl_output_path "$src" "$speed")"
+  if [[ -e "$dest" && "$redo" -eq 0 ]]; then
+    echo "$(tl_ts) Already exists, skipping: ${dest}"
+    return 0
+  fi
+  if tl_has_audio "$src" && (( speed == 2 )); then
+    keep_audio=1
+  fi
+  dur="$(tl_ffprobe_duration "$src" || true)"
+  echo
+  echo "$(tl_ts) Source: ${src}"
+  if [[ -n "$dur" ]]; then
+    out_dur="$(awk -v d="$dur" -v s="$speed" 'BEGIN{printf "%.3f", d/s}')"
+    echo "$(tl_ts) Duration: $(tl_format_seconds "$dur") → $(tl_format_seconds "$out_dur") at ${speed}×"
+  fi
+  if (( keep_audio )); then
+    echo "$(tl_ts) Audio: kept, played at ${speed}×"
+  else
+    echo "$(tl_ts) Audio: omitted"
+  fi
+  echo "$(tl_ts) Output: ${dest}"
+  kind="$(tl_resolve_encoder_kind "$encoder_want")" || {
+    echo "$(tl_ts) No usable video encoder for '${encoder_want}'." >&2
+    return 1
+  }
+  tl_set_encoder_args "$kind" || return 1
+  label="$kind"
+  [[ "$kind" == nvenc ]] && label="hevc_nvenc"
+  [[ "$kind" == x264 ]] && label="libx264"
+  [[ "$kind" == x265 ]] && label="libx265"
+  echo "$(tl_ts) Encoder: ${label}"
+  if tl_run_ffmpeg "$src" "$dest" "$speed" "$keep_audio"; then
+    echo "$(tl_ts) Done: ${dest}"
+    return 0
+  fi
+  if [[ "$encoder_want" == auto && "$kind" == nvenc ]] && tl_encoder_available libx264; then
+    echo "$(tl_ts) NVENC failed; retrying with libx264."
+    tl_set_encoder_args x264 || return 1
+    if tl_run_ffmpeg "$src" "$dest" "$speed" "$keep_audio"; then
+      echo "$(tl_ts) Done: ${dest}"
+      return 0
+    fi
+  fi
+  echo "$(tl_ts) Encode failed: ${src}" >&2
+  return 1
+}
+
+tl_add_mp4_file() {
+  local f="$1"
+  [[ -f "$f" ]] || return 0
+  tl_is_timelapse_output "$f" && return 0
+  TL_INPUTS+=("$f")
+}
+
+# Directory: *_concat.mp4 when any exist, otherwise every other .mp4.
+tl_add_directory() {
+  local dir="$1" f
+  local -a found=() concats=()
+  shopt -s nullglob nocaseglob
+  found=( "$dir"/*.mp4 )
+  shopt -u nullglob nocaseglob
+  (( ${#found[@]} == 0 )) && return 0
+  for f in "${found[@]}"; do
+    tl_is_timelapse_output "$f" && continue
+    if tl_is_concat_output "$f"; then
+      concats+=("$f")
+    fi
+  done
+  if (( ${#concats[@]} > 0 )); then
+    mapfile -t concats < <(printf '%s\n' "${concats[@]}" | LC_ALL=C sort)
+    TL_INPUTS+=("${concats[@]}")
+    return 0
+  fi
+  mapfile -t found < <(printf '%s\n' "${found[@]}" | LC_ALL=C sort)
+  for f in "${found[@]}"; do
+    tl_add_mp4_file "$f"
+  done
+}
+
+tl_prompt_speed() {
+  local answer=""
+  local default="${PGM_TIMELAPSE_SPEED:-10}"
+  tl_is_speed "$default" || default=10
+  if (( DO_YES )) || (( ! script_is_run_interactively )); then
+    SPEED="$default"
+    return 0
+  fi
+  echo "How much faster?"
+  echo "  2   keeps audio"
+  echo "  5, 10, 20, or any integer from 2 to 240   picture only"
+  printf 'Speed [%s]: ' "$default"
+  IFS= read -r answer || answer=""
+  if [[ -z "$answer" ]]; then
+    SPEED="$default"
+  else
+    SPEED="$answer"
+  fi
+  if ! tl_is_speed "$SPEED"; then
+    echo "$(tl_ts) Invalid speed: ${SPEED} (use an integer from 2 to 240)" >&2
+    return 1
+  fi
+  return 0
+}
+
+tl_prompt_file_action() {
+  local n="$1" total="$2" dest="$3"
+  local choice=""
+  REPLY=encode
+  if (( DO_YES )) || (( ENCODE_ALL )); then
+    if [[ -e "$dest" && "$REDO" -eq 0 ]]; then
+      REPLY=skip
+    else
+      REPLY=encode
+    fi
+    return 0
+  fi
+  if (( SKIP_ALL )); then
+    REPLY=skip
+    return 0
+  fi
+  if (( ! script_is_run_interactively )); then
+    echo "$(tl_ts) Non-interactive: skipping (use -y to encode)."
+    REPLY=skip
+    return 0
+  fi
+  if [[ -e "$dest" && "$REDO" -eq 0 ]]; then
+    echo "  [N] Skip — keep existing file (default)"
+    echo "  [r] Redo — replace ${dest##*/}"
+    echo "  [a] Skip all remaining"
+    echo "  [q] Quit"
+    printf 'Already exists — file %s/%s [N/r/a/q]: ' "$n" "$total"
+    IFS= read -r choice || choice=""
+    choice="${choice,,}"
+    case "$choice" in
+      ''|n) REPLY=skip ;;
+      r)    REPLY=redo ;;
+      a)    REPLY=skip_all ;;
+      q)    REPLY=quit ;;
+      *)    echo "$(tl_ts) Unknown choice: ${choice}"; REPLY=skip ;;
+    esac
+    return 0
+  fi
+  echo "  [Y] Encode this file (default)"
+  echo "  [n] Skip this file"
+  echo "  [a] Skip all remaining"
+  echo "  [m] Encode all remaining"
+  echo "  [q] Quit"
+  printf 'File %s/%s [Y/n/a/m/q]: ' "$n" "$total"
+  IFS= read -r choice || choice=""
+  choice="${choice,,}"
+  case "$choice" in
+    ''|y) REPLY=encode ;;
+    n)    REPLY=skip ;;
+    a)    REPLY=skip_all ;;
+    m)    REPLY=encode_all ;;
+    q)    REPLY=quit ;;
+    *)    echo "$(tl_ts) Unknown choice: ${choice}"; REPLY=skip ;;
+  esac
+}
+
+# --- parse options (header sourced first so -v can call print_version_banner) ---
+# shellcheck disable=SC1091
+. /root/bin/_script_header.sh
+
+DO_YES=0
+REDO=0
+ENCODE_ALL=0
+SKIP_ALL=0
+SPEED="${PGM_TIMELAPSE_SPEED:-}"
+ENCODER="${PGM_TIMELAPSE_ENCODER:-auto}"
+SPEED_FROM_CLI=0
+TL_INPUTS=()
+TL_PARTIAL=""
+TL_ENC_ARGS=()
+TL_ENC_KIND=""
+TL_ENCODER_LIST=""
+POSITIONALS=()
+
+trap tl_cleanup_partial EXIT
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -h|--help)
+      show_help
+      exit 0
+      ;;
+    -v|--version)
+      print_version_banner
+      exit 0
+      ;;
+    --history)
+      print_script_history
+      exit 0
+      ;;
+    -y|--yes)
+      DO_YES=1
+      shift
+      ;;
+    --redo)
+      REDO=1
+      shift
+      ;;
+    --speed)
+      [[ $# -ge 2 ]] || { echo "ERROR: missing value for --speed" >&2; exit 1; }
+      SPEED="$2"
+      SPEED_FROM_CLI=1
+      shift 2
+      ;;
+    --speed=*)
+      SPEED="${1#--speed=}"
+      SPEED_FROM_CLI=1
+      shift
+      ;;
+    --encoder)
+      [[ $# -ge 2 ]] || { echo "ERROR: missing value for --encoder" >&2; exit 1; }
+      ENCODER="$2"
+      shift 2
+      ;;
+    --encoder=*)
+      ENCODER="${1#--encoder=}"
+      shift
+      ;;
+    --)
+      shift
+      POSITIONALS+=("$@")
+      break
+      ;;
+    -*)
+      echo "ERROR: unknown option: $1" >&2
+      exit 1
+      ;;
+    *)
+      POSITIONALS+=("$1")
+      shift
+      ;;
+  esac
+done
+
+case "$ENCODER" in
+  auto|nvenc|x264|x265) ;;
+  *)
+    echo "ERROR: invalid --encoder: ${ENCODER} (auto, nvenc, x264, x265)" >&2
+    exit 1
+    ;;
+esac
+
+if [[ -n "$SPEED" ]] && ! tl_is_speed "$SPEED"; then
+  echo "ERROR: invalid speed: ${SPEED} (integer from 2 to 240)" >&2
+  exit 1
+fi
+
+if (( ${#POSITIONALS[@]} == 0 )); then
+  tl_add_directory "."
+else
+  for _tl_path in "${POSITIONALS[@]}"; do
+    if [[ -d "$_tl_path" ]]; then
+      tl_add_directory "$_tl_path"
+    elif [[ -f "$_tl_path" ]]; then
+      tl_add_mp4_file "$_tl_path"
+    else
+      echo "ERROR: not a file or directory: ${_tl_path}" >&2
+      exit 1
+    fi
+  done
+fi
+
+if (( ${#TL_INPUTS[@]} == 0 )); then
+  echo "$(tl_ts) No input videos."
+  return_code=0
+  # shellcheck disable=SC1091
+  . /root/bin/_script_footer.sh
+  exit 0
+fi
+
+if [[ -z "$SPEED" ]]; then
+  tl_prompt_speed || exit 1
+fi
+
+if ! command -v ffmpeg >/dev/null 2>&1 || ! command -v ffprobe >/dev/null 2>&1; then
+  echo "$(tl_ts) ffmpeg and ffprobe are required." >&2
+  exit 1
+fi
+tl_load_encoders
+tl_resolve_encoder_kind "$ENCODER" >/dev/null || {
+  echo "$(tl_ts) No usable video encoder for '${ENCODER}'." >&2
+  exit 1
+}
+
+echo "$(tl_ts) Speed: ${SPEED}×    files: ${#TL_INPUTS[@]}    encoder request: ${ENCODER}"
+if (( SPEED == 2 )); then
+  echo "$(tl_ts) Audio is kept at 2×. The .gpx beside the source still uses real time."
+else
+  echo "$(tl_ts) Audio is omitted. The .gpx beside the source still uses real time."
+fi
+
+return_code=0
+tl_i=0
+tl_total=${#TL_INPUTS[@]}
+for tl_src in "${TL_INPUTS[@]}"; do
+  (( tl_i++ )) || true
+  tl_dest="$(tl_output_path "$tl_src" "$SPEED")"
+  echo
+  echo "=== $(basename -- "$tl_src") ==="
+  tl_prompt_file_action "$tl_i" "$tl_total" "$tl_dest"
+  case "$REPLY" in
+    encode)
+      tl_encode_one "$tl_src" "$SPEED" "$REDO" "$ENCODER" || return_code=1
+      ;;
+    redo)
+      tl_encode_one "$tl_src" "$SPEED" 1 "$ENCODER" || return_code=1
+      ;;
+    skip)
+      echo "$(tl_ts) Skipped: ${tl_src}"
+      ;;
+    skip_all)
+      SKIP_ALL=1
+      echo "$(tl_ts) Skipping remaining files."
+      ;;
+    encode_all)
+      ENCODE_ALL=1
+      tl_encode_one "$tl_src" "$SPEED" "$REDO" "$ENCODER" || return_code=1
+      ;;
+    quit)
+      echo "$(tl_ts) Quit."
+      break
+      ;;
+  esac
+done
+
+# shellcheck disable=SC1091
+. /root/bin/_script_footer.sh
+exit "$return_code"
