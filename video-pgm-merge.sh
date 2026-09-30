@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20260930.221000 - seam preview: [a] skips the rest of the seams in this file
 # v. 20260930.214500 - INPUT lines: name, size, and duration on one line when they fit
 # v. 20260930.213000 - 70mai merge name: start_end_70mai-A510_camera_concat
 # v. 20260930.180600 - 70mai journeys: write a .gpx beside the merged file
@@ -6,6 +7,7 @@
 # v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
 # v. 20260805.154826 - after merge: copy GPS/dates from first chapter; FS times via touch -r
 
+# 2026.09.30 - v. 0.15.29 - seam preview: [a] skips every remaining seam in this merged file
 # 2026.09.30 - v. 0.15.28 - merge INPUT: filename, size, and duration on one line when they fit the terminal (else name, then size)
 # 2026.09.30 - v. 0.15.27 - 70mai journey output: YYYYMMDD-HHMMSS_YYYYMMDD-HHMMSS_70mai-A510_FrontCam_concat.mp4 and the same stem .gpx
 # 2026.09.30 - v. 0.15.26 - 70mai NOYYYYMMDD-HHMMSS-NNNNNNX clips: group a continuous journey (sequence +1 and ~60s start gap) and write a .gpx beside the merged file (same name)
@@ -146,7 +148,7 @@ Merge behaviour (no options):
   - After a successful merge: copy GPS / create&modify dates / Make/Model from the first
     chapter (exiftool; filesystem mtime via touch -r), set title from the session label,
     then merge-boundary times, size summary, optional per-seam terminal preview (asked one
-    seam at a time), and optional deletion of the source chapter files (single-key Y/N).
+    seam at a time; [a] skips the remaining seams), and optional deletion of the source chapter files (single-key Y/N).
   - If the expected _concat output already exists: skip (default), redo merge [r],
     preview merge seams [p], or delete input chapters [d] (keeps merged output).
   - Output file per group: <first_chapter_stem>_concat_parts_<first>-<last>.mp4
@@ -1212,7 +1214,7 @@ prompt_seam_terminal_previews() {
   shift
   local -a files=("$@")
   local -a boundary_times=() boundary_left=() boundary_right=()
-  local player i choice seam_num total_seams ord pos clip_total
+  local player i choice seam_num total_seams ord pos clip_total skip_rest=0
 
   if (( DO_YES )) || (( ! script_is_run_interactively )); then
     return 0
@@ -1245,8 +1247,9 @@ prompt_seam_terminal_previews() {
     echo "  ${boundary_left[$i]} | ${boundary_right[$i]}  at  ${pos}"
     echo "  [Y] Play output at this seam (${PGM_SEAM_PREVIEW_BEFORE}s before join, ${clip_total}s clip) (default)"
     echo "  [n] Skip this seam"
+    echo "  [a] Skip all remaining seams"
     echo "  [q] Quit"
-    pgm_read_key "Play ${ord} seam in terminal? [Y/n/q]: " y
+    pgm_read_key "Play ${ord} seam in terminal? [Y/n/a/q]: " y
     choice="${REPLY,,}"
     case "$choice" in
       y)
@@ -1256,15 +1259,25 @@ prompt_seam_terminal_previews() {
             "$seam_num" "$total_seams" "$ord"
           echo "  [y] Repeat ${ord} seam preview"
           echo "  [N] Continue (default)"
+          echo "  [a] Skip all remaining seams"
           echo "  [q] Quit"
-          pgm_read_key "Repeat ${ord} seam preview? [y/N/q]: " n
+          pgm_read_key "Repeat ${ord} seam preview? [y/N/a/q]: " n
           choice="${REPLY,,}"
           case "$choice" in
             y) continue ;;
+            a)
+              echo "$(pgm_ts) Skipping remaining seams."
+              skip_rest=1
+              break
+              ;;
             q) return 2 ;;
             *) break ;;
           esac
         done
+        ;;
+      a)
+        echo "$(pgm_ts) Skipping remaining seams."
+        skip_rest=1
         ;;
       q)
         return 2
@@ -1272,6 +1285,7 @@ prompt_seam_terminal_previews() {
       *)
         ;;
     esac
+    (( skip_rest )) && break
   done
   echo
   return 0
