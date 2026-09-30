@@ -1,9 +1,13 @@
 #!/bin/bash
+# v. 20260930.223700 - auto encoder follows the source codec
+# v. 20260930.223600 - name the source video codec and the output encoder separately
 # v. 20260930.222600 - encode display: normal progress bar, or verbose frames
 # v. 20260930.221800 - quiet ffmpeg log; print the ffmpeg version in a box
 # v. 20260930.221500 - file prompts: one key, no Enter
 # v. 20260930.220400 - faster viewing copy of a merged video (2, 5, 10, 20, …)
 
+# 2026.09.30 - v. 0.6 - auto output encoder follows the source codec (HEVC prefers hevc_nvenc, then libx265; H.264 prefers h264_nvenc, then libx264)
+# 2026.09.30 - v. 0.5 - print the source video codec and label the encoder that will write the new file
 # 2026.09.30 - v. 0.4 - encode display: normal is a progress bar (default); verbose keeps the ffmpeg frame line
 # 2026.09.30 - v. 0.3 - encode log is errors plus the progress line; print the ffmpeg version in a box
 # 2026.09.30 - v. 0.2 - file prompts read one key and do not wait for Enter
@@ -37,8 +41,10 @@ Options:
                        2 keeps audio. 5, 10, 20, and any higher speed drop audio.
   --redo               Replace an existing *_xN.mp4.
   --encoder KIND       auto (default), nvenc, x264, or x265.
-                       auto uses hevc_nvenc when this ffmpeg lists it, and
-                       libx264 if that encode fails or NVENC is absent.
+                       auto follows the source codec. HEVC prefers hevc_nvenc,
+                       then libx265. H.264 prefers h264_nvenc, then libx264.
+                       A missing or failed encoder falls through to the next.
+                       nvenc, x264, and x265 force that one encoder.
   --verbose            Show ffmpeg frame stats instead of the progress bar.
                        -y otherwise keeps the progress bar.
 
@@ -95,6 +101,15 @@ tl_has_audio() {
   local f="$1" kind
   kind="$(ffprobe -v error -select_streams a:0 -show_entries stream=codec_type -of csv=p=0 -- "$f" 2>/dev/null || true)"
   [[ "$kind" == "audio" ]]
+}
+
+# Video codec stored in the source file (hevc, h264, …). Empty if unknown.
+tl_source_video_codec() {
+  local f="$1" codec
+  codec="$(ffprobe -v error -select_streams v:0 -show_entries stream=codec_name -of csv=p=0 -- "$f" 2>/dev/null | awk 'NR==1 { print; exit }' || true)"
+  codec="${codec//$'\r'/}"
+  codec="${codec//$'\n'/}"
+  printf '%s\n' "$codec"
 }
 
 tl_format_seconds() {
@@ -237,6 +252,9 @@ tl_set_encoder_args() {
     nvenc)
       TL_ENC_ARGS=(-c:v hevc_nvenc -preset p4 -rc vbr -cq 28 -tag:v hvc1)
       ;;
+    h264nv)
+      TL_ENC_ARGS=(-c:v h264_nvenc -preset p4 -rc vbr -cq 23 -pix_fmt yuv420p)
+      ;;
     x265)
       TL_ENC_ARGS=(-c:v libx265 -preset fast -crf 28 -tag:v hvc1)
       ;;
@@ -249,37 +267,60 @@ tl_set_encoder_args() {
   esac
 }
 
-# Pick auto/nvenc/x264/x265. Prints the kind. Returns 1 if that encoder is missing.
-tl_resolve_encoder_kind() {
-  local want="$1"
+tl_codec_family() {
+  local codec="${1,,}"
+  case "$codec" in
+    hevc|h265|hev1) printf '%s\n' hevc ;;
+    h264|avc|avc1) printf '%s\n' h264 ;;
+    *) printf '%s\n' other ;;
+  esac
+}
+
+tl_kind_for_name() {
+  case "$1" in
+    hevc_nvenc) printf '%s\n' nvenc ;;
+    h264_nvenc) printf '%s\n' h264nv ;;
+    libx265) printf '%s\n' x265 ;;
+    libx264) printf '%s\n' x264 ;;
+    *) return 1 ;;
+  esac
+}
+
+tl_encoder_label() {
+  case "$1" in
+    nvenc) printf '%s\n' hevc_nvenc ;;
+    h264nv) printf '%s\n' h264_nvenc ;;
+    x265) printf '%s\n' libx265 ;;
+    x264) printf '%s\n' libx264 ;;
+    *) printf '%s\n' "$1" ;;
+  esac
+}
+
+# One kind per line, in the order to try. Returns 1 when none of them exist.
+tl_encoder_candidates() {
+  local want="$1" codec="${2:-}" family name kind printed=0
+  local -a names=()
   case "$want" in
     auto)
-      if tl_encoder_available hevc_nvenc; then
-        printf '%s\n' nvenc
-      elif tl_encoder_available libx264; then
-        printf '%s\n' x264
-      elif tl_encoder_available libx265; then
-        printf '%s\n' x265
-      else
-        return 1
-      fi
+      family="$(tl_codec_family "$codec")"
+      case "$family" in
+        hevc) names=(hevc_nvenc libx265 libx264) ;;
+        h264) names=(h264_nvenc libx264 hevc_nvenc libx265) ;;
+        *)    names=(hevc_nvenc libx264 libx265) ;;
+      esac
       ;;
-    nvenc)
-      tl_encoder_available hevc_nvenc || return 1
-      printf '%s\n' nvenc
-      ;;
-    x264)
-      tl_encoder_available libx264 || return 1
-      printf '%s\n' x264
-      ;;
-    x265)
-      tl_encoder_available libx265 || return 1
-      printf '%s\n' x265
-      ;;
-    *)
-      return 1
-      ;;
+    nvenc) names=(hevc_nvenc) ;;
+    x264)  names=(libx264) ;;
+    x265)  names=(libx265) ;;
+    *) return 1 ;;
   esac
+  for name in "${names[@]}"; do
+    tl_encoder_available "$name" || continue
+    kind="$(tl_kind_for_name "$name")" || continue
+    printf '%s\n' "$kind"
+    printed=1
+  done
+  (( printed )) || return 1
 }
 
 tl_cleanup_partial() {
@@ -343,7 +384,8 @@ tl_run_ffmpeg() {
 
 tl_encode_one() {
   local src="$1" speed="$2" redo="$3" encoder_want="$4"
-  local dest dur out_dur="" kind keep_audio=0 label
+  local dest dur out_dur="" kind keep_audio=0 label label_prev="" src_codec i
+  local -a kinds=()
   dest="$(tl_output_path "$src" "$speed")"
   if [[ -e "$dest" && "$redo" -eq 0 ]]; then
     echo "$(tl_ts) Already exists, skipping: ${dest}"
@@ -365,28 +407,31 @@ tl_encode_one() {
     echo "$(tl_ts) Audio: omitted"
   fi
   echo "$(tl_ts) Output: ${dest}"
-  kind="$(tl_resolve_encoder_kind "$encoder_want")" || {
+  src_codec="$(tl_source_video_codec "$src")"
+  if [[ -n "$src_codec" ]]; then
+    echo "$(tl_ts) Source video codec: ${src_codec}"
+  else
+    echo "$(tl_ts) Source video codec: unknown"
+  fi
+  mapfile -t kinds < <(tl_encoder_candidates "$encoder_want" "$src_codec")
+  if (( ${#kinds[@]} == 0 )); then
     echo "$(tl_ts) No usable video encoder for '${encoder_want}'." >&2
     return 1
-  }
-  tl_set_encoder_args "$kind" || return 1
-  label="$kind"
-  [[ "$kind" == nvenc ]] && label="hevc_nvenc"
-  [[ "$kind" == x264 ]] && label="libx264"
-  [[ "$kind" == x265 ]] && label="libx265"
-  echo "$(tl_ts) Encoder: ${label}"
-  if tl_run_ffmpeg "$src" "$dest" "$speed" "$keep_audio" "$out_dur"; then
-    echo "$(tl_ts) Done: ${dest}"
-    return 0
   fi
-  if [[ "$encoder_want" == auto && "$kind" == nvenc ]] && tl_encoder_available libx264; then
-    echo "$(tl_ts) NVENC failed; retrying with libx264."
-    tl_set_encoder_args x264 || return 1
+  for i in "${!kinds[@]}"; do
+    kind="${kinds[$i]}"
+    tl_set_encoder_args "$kind" || return 1
+    label="$(tl_encoder_label "$kind")"
+    if (( i > 0 )); then
+      echo "$(tl_ts) ${label_prev} failed; retrying with ${label}."
+    fi
+    echo "$(tl_ts) Output encoder: ${label}"
     if tl_run_ffmpeg "$src" "$dest" "$speed" "$keep_audio" "$out_dur"; then
       echo "$(tl_ts) Done: ${dest}"
       return 0
     fi
-  fi
+    label_prev="$label"
+  done
   echo "$(tl_ts) Encode failed: ${src}" >&2
   return 1
 }
@@ -690,7 +735,7 @@ fi
 tl_print_ffmpeg_version
 tl_prompt_display
 tl_load_encoders
-tl_resolve_encoder_kind "$ENCODER" >/dev/null || {
+tl_encoder_candidates "$ENCODER" "" >/dev/null || {
   echo "$(tl_ts) No usable video encoder for '${ENCODER}'." >&2
   exit 1
 }
