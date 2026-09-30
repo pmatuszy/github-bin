@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# v. 20260930.213145 - Nikon Coolpix P900: DSCN#### stills/movies → YYYYMMDD_HHMMSS_-_-_Nikon_COOLPIX_P900 from DateTimeOriginal
 # v. 20260925.171847 - Quik dashboard: no ERR-trap noise when no source found; never re-time -dashboard exports (UTC CreateDate)
 # v. 20260925.115032 - plain rename: per hash list say "path updated (digest unchanged)" + whether content was checked
 # v. 20260923.155707 - missing-ref content search: hash candidates with the most similar names first
@@ -85,6 +86,7 @@
 # v. 20260721.132007 - Samsung timestamp media: preserve optional numeric sorting prefix when appending make/model
 # v. 20260721.112812 - GoPro camera labels: GoPro_Hero4_Silver style (not GOPRO4_SILVER)
 
+# 2026.09.30 - v. 19.348.213145 - Nikon Coolpix P900: DSCN####.JPG/.JPEG/.MOV/.MP4/.AVI with Make NIKON and Camera Model Name COOLPIX P900 → YYYYMMDD_HHMMSS_-_-_Nikon_COOLPIX_P900.ext from Date/Time Original (then Create Date); other DSCN cameras are left unchanged
 # 2026.09.25 - v. 19.347.171847 - GoPro Quik dashboard: suspend the ERR trap around transform_gopro_quik_dashboard_basename (no source match returned 1 and printed "ERROR: command failed … return 1" twice although nothing failed); Mission 1 Pro embedded-timezone audit skips *-dashboard / *-dashboard_N exports — their name comes from the source clip and Quik writes CreateDate in UTC without a zone tag, which was proposed as a -2h rename
 # 2026.09.25 - v. 19.346.115032 - Plain rename hash-list line replaces misleading "Also updated hash (old name referenced)": one line per list "  SHA512 list <list>: path updated (digest unchanged); content checked: OK" / "OK before and after rename" (--checksum-verify all) / "content NOT checked (you chose skip | skip for this folder | skip for this run | --checksum-verify none)" / "content MISMATCH — ignored at your request ([I]/[H])" / "digest REPLACED with current content ([U] after mismatch)"; N paths for directory renames; dry-run "would update path (digest unchanged); content not checked in dry-run"; summary line "Hash-list paths: N updated by renames; per list: … OK, … not checked, … mismatches ignored, … digests replaced"; verify prompt wording says the path is always updated and only the before-rename content check is optional
 # 2026.09.23 - v. 19.345.155707 - Missing-ref recovery by content: before hashing, sort same-extension and other-extension candidates by name similarity to the missing file (python3 difflib on names without extension/case/spaces/punctuation; ties prefer the missing file's folder), so renamed files are usually found on the first hash; verbose [k/N] lines show "name NN% similar"; without python3 the old order is kept
@@ -2423,6 +2425,74 @@ transform_nikon_mat_media_basename() {
     ext="${base##*.}"
     disambig_suffix="$(nikon_mat_disambiguation_suffix_stem "$file" "$base" "$ts" "$model_suffix")"
     gopro_format_camera_basename_output "$ts" "Nikon" "$model_suffix" "$disambig_suffix" "$ext"
+}
+
+# Nikon Coolpix P900 stills and movies: DSCN####.JPG / .MOV (and jpeg/mp4/avi).
+# DSCN names are shared by other Coolpix bodies, so EXIF must be this model.
+# Capture clock is Date/Time Original, not the file's later copy mtime.
+nikon_coolpix_p900_raw_basename_matches() {
+    [[ "$1" =~ ^[Dd][Ss][Cc][Nn][0-9]{4}\.([jJ][pP][gG]|[jJ][pP][eE][gG]|[mM][oO][vV]|[mM][pP]4|[aA][vV][iI])$ ]]
+}
+
+nikon_coolpix_p900_already_renamed_basename_matches() {
+    local lower="${1,,}"
+    [[ "$lower" =~ ^[0-9]{8}_[0-9]{6}(_[0-9]+)?_(-__-_|-_-_)nikon_coolpix_p900\.(jpg|jpeg|mov|mp4|avi)$ ]]
+}
+
+nikon_exif_is_coolpix_p900() {
+    local exif="$1"
+    local make="" model=""
+
+    make="$(nikon_exif_first_value "$exif" 'Make')"
+    make="${make#"${make%%[![:space:]]*}"}"
+    make="${make%"${make##*[![:space:]]}"}"
+    [[ "${make^^}" == *NIKON* ]] || return 1
+    model="$(nikon_model_suffix_from_exif "$exif")" || return 1
+    while [[ "$model" == *__* ]]; do
+        model="${model//__/_}"
+    done
+    model="${model%_}"
+    [[ "$model" == "COOLPIX_P900" ]]
+}
+
+transform_nikon_coolpix_p900_basename() {
+    local file="$1"
+    local base="$2"
+    local exifloc exif ts model_suffix ext
+    local _nk_err_trap="" _nk_save_e=0
+
+    _transform_nikon_p900_err_trap_restore() {
+        eval "${_nk_err_trap:-}"
+        if ((_nk_save_e)); then
+            set -e
+        else
+            set +e
+        fi
+    }
+
+    nikon_coolpix_p900_raw_basename_matches "$base" || return 1
+    nikon_coolpix_p900_already_renamed_basename_matches "$base" && return 1
+
+    _nk_save_e=0
+    [[ $- == *e* ]] && _nk_save_e=1
+    set +e
+    _nk_err_trap="$(trap -p ERR || true)"
+    trap - ERR
+    trap '_transform_nikon_p900_err_trap_restore' RETURN
+
+    exifloc="$(resolve_rename_exiftool)" || return 1
+    exif="$("$exifloc" -api largefilesupport=1 "$file" 2>/dev/null)" || return 1
+    [[ -n "$exif" ]] || return 1
+    nikon_exif_is_coolpix_p900 "$exif" || return 1
+    ts="$(nikon_capture_timestamp_yyyymmdd_hhmmss "$file")" || return 1
+    model_suffix="$(nikon_model_suffix_from_exif "$exif")" || return 1
+    while [[ "$model_suffix" == *__* ]]; do
+        model_suffix="${model_suffix//__/_}"
+    done
+    model_suffix="${model_suffix%_}"
+    [[ "$model_suffix" == "COOLPIX_P900" ]] || return 1
+    ext="${base##*.}"
+    gopro_format_camera_basename_output "$ts" "Nikon" "$model_suffix" "" "$ext"
 }
 
 text_file_has_crlf() {
@@ -12622,7 +12692,8 @@ gopro_exif_camera_tag_append_matches() {
     return 0
 }
 
-# True when NEW is an exiftool metadata rename from a Nikon D200 MAT####.NEF/.XMP raw basename.
+# True when NEW is an exiftool metadata rename from a Nikon D200 MAT#### raw name
+# or a Coolpix P900 DSCN#### still/movie.
 nikon_exif_camera_tag_append_matches() {
     local old="$1" new="$2"
     local ob nb
@@ -12631,9 +12702,13 @@ nikon_exif_camera_tag_append_matches() {
     ob="$(basename -- "$old")"
     nb="$(basename -- "$new")"
     [[ "$ob" != "$nb" ]] || return 1
-    nikon_mat_media_basename_matches "$ob" || return 1
-    nikon_mat_already_renamed_basename_matches "$nb" || return 1
-    return 0
+    if nikon_mat_media_basename_matches "$ob" && nikon_mat_already_renamed_basename_matches "$nb"; then
+        return 0
+    fi
+    if nikon_coolpix_p900_raw_basename_matches "$ob" && nikon_coolpix_p900_already_renamed_basename_matches "$nb"; then
+        return 0
+    fi
+    return 1
 }
 
 rename_is_exif_camera_tag_append() {
@@ -14550,6 +14625,30 @@ transform_name() {
             vlog "Nikon MAT rename: $base -> $_nikon_try"
         else
             vlog "Nikon MAT rename: no usable D200 metadata for $base (rc=$_nikon_rc); falling back to normal rename"
+        fi
+    fi
+
+    if [[ -f "$f" ]] && ((_tn_skip_exif == 0)) && (( _gopro_applied == 0 && _sony_applied == 0 && _olympus_applied == 0 && _nikon_applied == 0 )) \
+        && nikon_coolpix_p900_raw_basename_matches "$base"; then
+        local _tn_save_e_p900=0 _nikon_p900_err_trap=""
+        [[ $- == *e* ]] && _tn_save_e_p900=1
+        set +e
+        _nikon_p900_err_trap="$(trap -p ERR || true)"
+        trap - ERR
+        _nikon_try="$(transform_nikon_coolpix_p900_basename "$f" "$base")"
+        _nikon_rc=$?
+        eval "${_nikon_p900_err_trap:-}"
+        if ((_tn_save_e_p900)); then
+            set -e
+        else
+            set +e
+        fi
+        if (( _nikon_rc == 0 )) && [[ -n "$_nikon_try" ]]; then
+            newbase="$_nikon_try"
+            _nikon_applied=1
+            vlog "Nikon Coolpix P900 rename: $base -> $_nikon_try"
+        else
+            vlog "Nikon Coolpix P900 rename: no usable P900 metadata for $base (rc=$_nikon_rc); falling back to normal rename"
         fi
     fi
 
