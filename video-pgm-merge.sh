@@ -1,8 +1,10 @@
 #!/bin/bash
+# v. 20260930.180600 - 70mai journeys: write a .gpx beside the merged file
 # v. 20260916.133341 - print === Run settings === at startup, with Equivalent CLI
 # v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
 # v. 20260805.154826 - after merge: copy GPS/dates from first chapter; FS times via touch -r
 
+# 2026.09.30 - v. 0.15.26 - 70mai NOYYYYMMDD-HHMMSS-NNNNNNX clips: group a continuous journey (sequence +1 and ~60s start gap) and write a .gpx beside the merged file (same name)
 # 2026.09.16 - v. 0.15.25 - startup: print "=== Run settings ===" (like rename.sh) with -u/-y/--read-timeout/--seam-before/--seam-after as given, env, or default, the seam preview size, and an "Equivalent CLI:" line that repeats the run
 # 2026.08.05 - v. 0.15.24 - post-merge: copy GPS/CreateDate/Make/Model from first chapter (exiftool); FS mtime via touch -r; title via exiftool not ffmpeg
 # 2026.08.05 - v. 0.15.23 - bare _Timelapse (Hero7 rename): parse camera; size-split use timelapse wall gaps; orphan _part_XX joins size-split
@@ -127,6 +129,12 @@ Merge behaviour (no options):
     only in the leading timestamp and share the same middle label, or share one start time with
     a trailing chapter letter on the time (…_200322a_…) or camera token (…_GOPRO10_BLACKa.MP4).
     Letter runs a,b,c… on the same timestamp merge like part_01 chapters (any file size).
+  - Also groups 70mai-style clips NOYYYYMMDD-HHMMSS-NNNNNNX.MP4 (same camera letter)
+    into a continuous journey: sequence number increases by 1 and the filename start
+    times are about one minute apart (default gap 50–90s; PGM_DASHCAM_MAX_GAP_SEC).
+    A longer gap starts the next journey. After that journey is merged, a GPS track
+    is written next to the MP4: same name with a .gpx extension, from GPSData*.txt
+    in this directory or its parent.
   - Shows each multi-part group (with file sizes) and asks whether to merge
     (single-key Y/N/A/M/Q, no Enter — like rename.sh).
   - After a successful merge: copy GPS / create&modify dates / Make/Model from the first
@@ -167,6 +175,8 @@ Environment:
   PGM_GOPRO_TIMELAPSE_FPS   Assumed output fps for Rate-interval ratio (default: 30).
   PGM_PART_TIMELAPSE_GAP_RATIO_TOLERANCE
                           Slack around interval×fps expected ratio (default: 0.35).
+  PGM_DASHCAM_MAX_GAP_SEC Max seconds between 70mai clip start times to stay in one
+                          journey (default: 90). Gaps above this start a new group.
 
 Examples:
   $(basename "$0") -u
@@ -2934,6 +2944,311 @@ build_part_chapter_groups() {
   done
 }
 
+# 70mai dashcam: NO20260926-110627-000678F.MP4 → date, start time, sequence, camera letter.
+dashcam_parse_basename() {
+  local base="$1"
+  DASHCAM_DATE=""
+  DASHCAM_TIME=""
+  DASHCAM_SEQ=""
+  DASHCAM_CAM=""
+  if [[ "$base" =~ ^NO([0-9]{8})-([0-9]{6})-([0-9]{6})([A-Za-z])\.[mM][pP]4$ ]]; then
+    DASHCAM_DATE="${BASH_REMATCH[1]}"
+    DASHCAM_TIME="${BASH_REMATCH[2]}"
+    DASHCAM_SEQ=$((10#${BASH_REMATCH[3]}))
+    DASHCAM_CAM=$(printf '%s' "${BASH_REMATCH[4]}" | tr '[:lower:]' '[:upper:]')
+    return 0
+  fi
+  return 1
+}
+
+# True when every file is a 70mai NO* clip from the same camera letter.
+group_is_dashcam() {
+  local -a files=("$@")
+  local f cam=""
+  (( ${#files[@]} >= 2 )) || return 1
+  for f in "${files[@]}"; do
+    dashcam_parse_basename "${f##*/}" || return 1
+    if [[ -z "$cam" ]]; then
+      cam="$DASHCAM_CAM"
+    elif [[ "$cam" != "$DASHCAM_CAM" ]]; then
+      return 1
+    fi
+  done
+  return 0
+}
+
+# Merged MP4 path → GPX path (same stem, .gpx), written beside the merged file.
+dashcam_gpx_beside_output() {
+  local output_file="$1"
+  printf '%s.gpx\n' "${output_file%.*}"
+}
+
+# Every GPSData*.txt in this directory or its parent.
+dashcam_gps_logs() {
+  local d f found=0
+  shopt -s nullglob
+  for d in . ..; do
+    for f in "$d"/GPSData*.txt; do
+      printf '%s\n' "$f"
+      found=1
+    done
+  done
+  shopt -u nullglob
+  (( found )) || return 1
+  return 0
+}
+
+# First GPSData*.txt in this directory or its parent, if any.
+dashcam_gps_log_hint() {
+  dashcam_gps_logs | head -n 1
+}
+
+print_dashcam_gpx_suggestion() {
+  local output_file="$1" indent="${2:-      }"
+  local gpx log
+  gpx=$(dashcam_gpx_beside_output "$output_file")
+  printf '%sGPS: %s is written beside the merged file (same name, .gpx)\n' \
+    "$indent" "$gpx"
+  if log=$(dashcam_gps_log_hint 2>/dev/null) && [[ -n "$log" ]]; then
+    printf '%sGPS log: %s\n' "$indent" "$log"
+  else
+    printf '%sGPS log: no GPSData*.txt in this directory or its parent\n' "$indent"
+  fi
+}
+
+# Clock fields → Unix time in the machine's local timezone (same reading as date -d).
+# tz_corr = local epoch of a civil time minus that civil time read as UTC.
+dashcam_local_epoch_tz_corr() {
+  local local_noon utc_noon
+  local_noon=$(date -d "2026-09-26 12:00:00" +%s) || return 1
+  utc_noon=$(date -u -d "2026-09-26 12:00:00" +%s) || return 1
+  printf '%s\n' "$(( local_noon - utc_noon ))"
+}
+
+# Write one GPX for this journey next to the merged MP4.
+# Points come from GPSData*.txt. The log clock is aligned to the NO* filename
+# times (the camera clock), then stored in the GPX as UTC.
+dashcam_write_gpx_for_group() {
+  local output_mp4="$1"
+  shift
+  local -a files=("$@")
+  local gpx tmp first_epoch last_epoch tz_corr nlog
+  local -a logs=()
+  gpx=$(dashcam_gpx_beside_output "$output_mp4")
+  mapfile -t logs < <(dashcam_gps_logs || true)
+  if (( ${#logs[@]} == 0 )); then
+    echo "$(pgm_ts) GPS: no GPSData*.txt in . or .. — did not write ${gpx##*/}"
+    return 0
+  fi
+  dashcam_parse_basename "${files[0]##*/}" || return 1
+  first_epoch=$(gopro_datetime_to_epoch "$DASHCAM_DATE" "$DASHCAM_TIME") || return 1
+  dashcam_parse_basename "${files[-1]##*/}" || return 1
+  last_epoch=$(gopro_datetime_to_epoch "$DASHCAM_DATE" "$DASHCAM_TIME") || return 1
+  tz_corr=$(dashcam_local_epoch_tz_corr) || return 1
+  tmp="${gpx}.tmp.$$"
+  if ! nlog=$(awk -v first_epoch="$first_epoch" -v last_epoch="$last_epoch" -v tz_corr="$tz_corr" \
+      -v track_name="${gpx##*/}" -v out="$tmp" '
+    function civil_as_utc(y, mo, d, H, M, S,    a, yy, mm, jd) {
+      a = int((14 - mo) / 12)
+      yy = y + 4800 - a
+      mm = mo + 12 * a - 3
+      jd = d + int((153 * mm + 2) / 5) + 365 * yy + int(yy / 4) - int(yy / 100) + int(yy / 400) - 32045
+      return (jd - 2440588) * 86400 + H * 3600 + M * 60 + S
+    }
+    function abs(x) { return x < 0 ? -x : x }
+    {
+      sub(/\r$/, "")
+      if ($0 !~ /^[0-9]+,A,/) next
+      n = split($0, f, ",")
+      ts = f[1] + 0
+      lat = f[3] + 0
+      lon = f[4] + 0
+      fn = ""
+      for (i = 5; i <= n; i++) {
+        if (f[i] ~ /^NO[0-9]{8}-[0-9]{6}-[0-9]{6}[A-Za-z]\.[Mm][Pp]4$/) {
+          fn = f[i]
+          break
+        }
+      }
+      if (fn == "") next
+      if (ts in pts) next
+      y = substr(fn, 3, 4) + 0
+      mo = substr(fn, 7, 2) + 0
+      d = substr(fn, 9, 2) + 0
+      H = substr(fn, 12, 2) + 0
+      M = substr(fn, 14, 2) + 0
+      S = substr(fn, 16, 2) + 0
+      file_epoch = civil_as_utc(y, mo, d, H, M, S) + tz_corr
+      delta = ts - file_epoch
+      pts[ts] = lat SUBSEP lon
+      deltas[++nd] = delta
+    }
+    END {
+      if (nd < 1) {
+        print "0"
+        exit 0
+      }
+      # Median of (log time − filename start). Samples sit 0–60s into a clip.
+      for (i = 1; i <= nd; i++) ord[i] = deltas[i]
+      asort(ord)
+      mid = int((nd + 1) / 2)
+      median = ord[mid]
+      nb = 0
+      for (i = 1; i <= nd; i++) {
+        if (abs(deltas[i] - median) <= 180) near[++nb] = deltas[i]
+      }
+      if (nb < 1) {
+        print "0"
+        exit 0
+      }
+      asort(near)
+      # Low end of the in-clip spread ≈ the constant log-clock bias.
+      bias = near[int(nb * 0.05) + 1]
+      lo = first_epoch + bias - 3
+      hi = last_epoch + bias + 75
+      m = 0
+      for (ts in pts) {
+        if (ts + 0 < lo || ts + 0 > hi) continue
+        split(pts[ts], ll, SUBSEP)
+        utc = ts - bias
+        m++
+        rows[m] = sprintf("%010d\t%.6f\t%.6f\t%s", utc, ll[1], ll[2], strftime("%Y-%m-%dT%H:%M:%SZ", utc, 1))
+      }
+      if (m < 1) {
+        print "0"
+        exit 0
+      }
+      asort(rows)
+      print "<?xml version=\"1.0\" encoding=\"UTF-8\"?>" > out
+      print "<gpx version=\"1.1\" creator=\"video-pgm-merge.sh\" xmlns=\"http://www.topografix.com/GPX/1/1\">" > out
+      print "  <trk>" > out
+      print "    <name>" track_name "</name>" > out
+      print "    <trkseg>" > out
+      for (i = 1; i <= m; i++) {
+        split(rows[i], c, "\t")
+        printf "      <trkpt lat=\"%s\" lon=\"%s\"><time>%s</time></trkpt>\n", c[2], c[3], c[4] > out
+      }
+      print "    </trkseg>" > out
+      print "  </trk>" > out
+      print "</gpx>" > out
+      close(out)
+      print m
+    }
+  ' "${logs[@]}"); then
+    rm -f -- "$tmp"
+    echo "$(pgm_ts) GPS: could not build ${gpx##*/}" >&2
+    return 1
+  fi
+  if [[ ! "$nlog" =~ ^[0-9]+$ ]] || (( nlog < 1 )) || [[ ! -s "$tmp" ]]; then
+    rm -f -- "$tmp"
+    echo "$(pgm_ts) GPS: no points in this journey — did not write ${gpx##*/}"
+    return 0
+  fi
+  if mv -f -- "$tmp" "$gpx"; then
+    echo "$(pgm_ts) GPS: wrote ${nlog} points → ${gpx}"
+  else
+    rm -f -- "$tmp"
+    echo "$(pgm_ts) GPS: could not write ${gpx}" >&2
+    return 1
+  fi
+}
+
+# Write the journey GPX once the merged MP4 is on disk.
+dashcam_write_gpx_if_merged() {
+  local output_file="$1"
+  shift
+  group_is_dashcam "$@" || return 0
+  [[ -f "$output_file" ]] || return 0
+  dashcam_write_gpx_for_group "$output_file" "$@" || true
+}
+
+# Group 70mai NO* singles into continuous journeys.
+# Same camera letter, sequence +1, filename start gap about one clip (default ≤90s).
+# A longer gap (parking / power-off) starts a new journey. Front and rear stay apart.
+build_dashcam_journey_groups() {
+  local -a kept=() new_groups=() keys_seen=() files=() key_files=() run=()
+  local -A by_key=()
+  local blob f base key prev_seq prev_epoch cur_seq cur_epoch gap max_gap
+
+  max_gap="${PGM_DASHCAM_MAX_GAP_SEC:-90}"
+  [[ "$max_gap" =~ ^[0-9]+$ ]] || max_gap=90
+
+  for blob in "${GROUP_BLOBS[@]}"; do
+    group_files_to_array "$blob" files
+    if (( ${#files[@]} >= 2 )); then
+      kept+=("$blob")
+      continue
+    fi
+    f="${files[0]}"
+    base="${f##*/}"
+    if ! dashcam_parse_basename "$base"; then
+      kept+=("$f")
+      continue
+    fi
+    key="$DASHCAM_CAM"
+    if [[ -z "${by_key[$key]+x}" ]]; then
+      by_key["$key"]="$f"
+      keys_seen+=("$key")
+    else
+      by_key["$key"]+=$'\n'"$f"
+    fi
+  done
+
+  for key in "${keys_seen[@]}"; do
+    key_files=()
+    mapfile -t key_files < <(
+      while IFS= read -r f || [[ -n "$f" ]]; do
+        [[ -z "$f" ]] && continue
+        dashcam_parse_basename "${f##*/}" || continue
+        printf '%06d\t%s\n' "$DASHCAM_SEQ" "$f"
+      done <<< "${by_key[$key]}" | LC_ALL=C sort -t $'\t' -k1,1n | cut -f2-
+    )
+    run=()
+    prev_seq=""
+    prev_epoch=""
+    for f in "${key_files[@]}"; do
+      [[ -z "$f" ]] && continue
+      dashcam_parse_basename "${f##*/}" || {
+        kept+=("$f")
+        continue
+      }
+      cur_seq=$DASHCAM_SEQ
+      cur_epoch=$(gopro_datetime_to_epoch "$DASHCAM_DATE" "$DASHCAM_TIME" 2>/dev/null) || cur_epoch=""
+      if (( ${#run[@]} == 0 )); then
+        run=( "$f" )
+        prev_seq=$cur_seq
+        prev_epoch=$cur_epoch
+        continue
+      fi
+      gap=""
+      if [[ -n "$prev_epoch" && -n "$cur_epoch" ]]; then
+        gap=$(( cur_epoch - prev_epoch ))
+      fi
+      if [[ -n "$gap" ]] && (( cur_seq == prev_seq + 1 && gap >= 50 && gap <= max_gap )); then
+        run+=( "$f" )
+        prev_seq=$cur_seq
+        prev_epoch=$cur_epoch
+      else
+        if (( ${#run[@]} >= 2 )); then
+          new_groups+=("$(printf '%s\n' "${run[@]}")")
+        else
+          kept+=( "${run[@]}" )
+        fi
+        run=( "$f" )
+        prev_seq=$cur_seq
+        prev_epoch=$cur_epoch
+      fi
+    done
+    if (( ${#run[@]} >= 2 )); then
+      new_groups+=("$(printf '%s\n' "${run[@]}")")
+    elif (( ${#run[@]} == 1 )); then
+      kept+=( "${run[0]}" )
+    fi
+  done
+
+  GROUP_BLOBS=( "${kept[@]}" "${new_groups[@]}" )
+}
+
 # Build merge groups: each element of GROUP_BLOBS is a newline-separated file list (sorted).
 build_chapter_groups() {
   local -a sorted=("$@")
@@ -2956,6 +3271,8 @@ build_chapter_groups() {
   build_letter_chapter_groups
   # 5) ~4 GB / ~12 GB size-split chapters without letter / _part_XX names
   build_size_split_groups
+  # 6) 70mai NO* continuous journeys (sequence +1, ~1 min between starts)
+  build_dashcam_journey_groups
 }
 
 group_files_to_array() {
@@ -2978,7 +3295,7 @@ print_size_split_group_hint() {
 
 print_group_plan() {
   local -a all_mp4=("$@")
-  local gidx=0 mergeable=0 size_split_groups=0 part_groups=0 raw_gopro_groups=0 standalone=0
+  local gidx=0 mergeable=0 size_split_groups=0 part_groups=0 raw_gopro_groups=0 dashcam_groups=0 standalone=0
   local -a files=()
   local f base part cam blob out_name is_ss
   local group_bytes=0 sz
@@ -2990,6 +3307,8 @@ print_group_plan() {
     (( mergeable++ )) || true
     if group_is_raw_gopro "${files[@]}"; then
       (( raw_gopro_groups++ )) || true
+    elif group_is_dashcam "${files[@]}"; then
+      (( dashcam_groups++ )) || true
     elif group_is_size_split "${files[@]}"; then
       (( size_split_groups++ )) || true
     else
@@ -3003,6 +3322,7 @@ print_group_plan() {
       group_files_to_array "$blob" files
       (( ${#files[@]} < 2 )) && continue
       group_is_raw_gopro "${files[@]}" && continue
+      group_is_dashcam "${files[@]}" && continue
       group_is_size_split "${files[@]}" && continue
       (( gidx++ )) || true
       out_name=$(group_output_file "${files[@]}")
@@ -3101,6 +3421,34 @@ print_group_plan() {
       echo
     done
   fi
+  if (( dashcam_groups > 0 )); then
+    echo "Merge candidates (70mai NO* continuous journey; sequence +1 and ~1 min between starts; a longer gap starts a new journey):"
+    gidx=0
+    for blob in "${GROUP_BLOBS[@]}"; do
+      group_files_to_array "$blob" files
+      (( ${#files[@]} < 2 )) && continue
+      group_is_dashcam "${files[@]}" || continue
+      (( gidx++ )) || true
+      out_name=$(group_output_file "${files[@]}")
+      dashcam_parse_basename "${files[0]##*/}" || true
+      if [[ -e "$out_name" ]]; then
+        printf '  [group %d/%d] camera %s, %d clips → %s  (already merged)\n' \
+          "$gidx" "$dashcam_groups" "$DASHCAM_CAM" "${#files[@]}" "$out_name"
+      else
+        printf '  [group %d/%d] camera %s, %d clips → %s\n' \
+          "$gidx" "$dashcam_groups" "$DASHCAM_CAM" "${#files[@]}" "$out_name"
+      fi
+      print_dashcam_gpx_suggestion "$out_name" '      '
+      group_bytes=0
+      for f in "${files[@]}"; do
+        print_chapter_file_line '      ' "$f"
+        sz=$(file_size_bytes "$f")
+        (( group_bytes += sz ))
+      done
+      printf '      input total (%d files): %s\n' "${#files[@]}" "$(format_bytes_human "$group_bytes")"
+      echo
+    done
+  fi
   for blob in "${GROUP_BLOBS[@]}"; do
     group_files_to_array "$blob" files
     (( ${#files[@]} < 2 )) && (( standalone++ )) || true
@@ -3125,6 +3473,7 @@ print_group_plan() {
   (( part_groups > 0 )) && breakdown+="${breakdown:+, }${part_groups} _part_XX"
   (( raw_gopro_groups > 0 )) && breakdown+="${breakdown:+, }${raw_gopro_groups} GoPro chapter"
   (( size_split_groups > 0 )) && breakdown+="${breakdown:+, }${size_split_groups} size-split"
+  (( dashcam_groups > 0 )) && breakdown+="${breakdown:+, }${dashcam_groups} 70mai journey"
   if [[ -n "$breakdown" ]]; then
     echo "$(pgm_ts) Summary: ${mergeable} merge group(s) (${breakdown}), ${standalone} standalone file(s), ${PGM_ORPHAN_CONCAT_COUNT} merged output(s) without input chapters."
   else
@@ -3236,6 +3585,7 @@ run_merge_group() {
   output_file=$(group_output_file "${files[@]}")
   if [[ -e "$output_file" ]]; then
     if (( ! redo )); then
+      dashcam_write_gpx_if_merged "$output_file" "${files[@]}"
       return 0
     fi
     if ! rm -f -- "$output_file"; then
@@ -3258,6 +3608,7 @@ run_merge_group() {
     local meta_label=""
     meta_label=$(group_merge_description_label "${files[@]}" 2>/dev/null) || meta_label=""
     apply_merge_output_metadata "$output_file" "${files[0]}" "$meta_label" || true
+    dashcam_write_gpx_if_merged "$output_file" "${files[@]}"
     echo
     print_merge_size_summary "$output_file" "${files[@]}"
     print_merge_boundaries_report "$output_file" "${files[@]}"
@@ -3365,6 +3716,9 @@ show_merge_group_detail() {
   echo
   echo "=== Merge group ${group_num} of ${group_total} (${#files[@]} parts) ==="
   print_merge_group_io_block "$output_file" "${files[@]}"
+  if group_is_dashcam "${files[@]}"; then
+    print_dashcam_gpx_suggestion "$output_file" '  '
+  fi
   echo
 }
 
@@ -3424,7 +3778,7 @@ do_merge() {
 
   if (( mergeable_total == 0 )); then
     echo "$(pgm_ts) No multi-part chapter groups to merge."
-    echo "$(pgm_ts) Tip: sequential GoPro clips (_part_01… with chaining timestamps, bare _Timelapse chapters without _part_XX, YYYYMMDD_HHMMSS_… ~4 GB / ~12 GB, or a/b/c letter suffixes) may be mergeable chapters."
+    echo "$(pgm_ts) Tip: sequential GoPro clips (_part_01… with chaining timestamps, bare _Timelapse chapters without _part_XX, YYYYMMDD_HHMMSS_… ~4 GB / ~12 GB, a/b/c letter suffixes, or 70mai NOYYYYMMDD-HHMMSS-NNNNNNX journeys) may be mergeable chapters."
     return 0
   fi
 
@@ -3452,6 +3806,7 @@ do_merge() {
         ;;
       delete_inputs)
         if [[ -e "$output_file" ]]; then
+          dashcam_write_gpx_if_merged "$output_file" "${files[@]}"
           prompt_delete_merged_inputs already_merged "${files[@]}" || rc=$?
           if (( rc == 2 )); then
             echo "$(pgm_ts) Quit at group ${group_num}."
@@ -3463,6 +3818,7 @@ do_merge() {
         ;;
       skip)
         if [[ -e "$output_file" ]]; then
+          dashcam_write_gpx_if_merged "$output_file" "${files[@]}"
           print_merge_boundaries_report "$output_file" "${files[@]}"
         else
           echo "$(pgm_ts) Skipped group ${group_num}."
@@ -3470,6 +3826,7 @@ do_merge() {
         ;;
       preview_seams)
         if [[ -e "$output_file" ]]; then
+          dashcam_write_gpx_if_merged "$output_file" "${files[@]}"
           print_merge_boundaries_report "$output_file" "${files[@]}"
           prompt_seam_terminal_previews "$output_file" "${files[@]}" || rc=$?
           if (( rc == 2 )); then
@@ -3487,6 +3844,7 @@ do_merge() {
       merge_all)
         MERGE_ALL_REMAINING=1
         if [[ -e "$output_file" ]]; then
+          dashcam_write_gpx_if_merged "$output_file" "${files[@]}"
           echo "$(pgm_ts) Keeping existing output for group ${group_num}."
         else
           run_merge_group "$merger" 0 "${files[@]}" || rc=$?
