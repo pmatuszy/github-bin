@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261001.221000 - ffmpeg probe shows the real error, not "version unknown"
 # v. 20261001.220200 - startup box: ffmpeg version and GPU encoders in this build
 # v. 20260930.221200 - drop --no_startup_delay; this script is interactive
 # v. 20260930.221000 - seam preview: [a] skips the rest of the seams in this file
@@ -9,6 +10,7 @@
 # v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
 # v. 20260805.154826 - after merge: copy GPS/dates from first chapter; FS times via touch -r
 
+# 2026.10.01 - v. 0.15.32 - ffmpeg startup probe keeps the real error instead of "version unknown"
 # 2026.10.01 - v. 0.15.31 - startup: print the ffmpeg version and whether this build has a GPU encoder
 # 2026.09.30 - v. 0.15.30 - drop --no_startup_delay; this script is interactive
 # 2026.09.30 - v. 0.15.29 - seam preview: [a] skips every remaining seam in this merged file
@@ -929,6 +931,10 @@ pgm_print_box_lines() {
 }
 
 # Encoders this ffmpeg binary can run on a GPU. Empty means the build has none.
+pgm_ffmpeg_capture() {
+  ffmpeg "$@" 2>&1 || true
+}
+
 pgm_ffmpeg_gpu_encoder_line() {
   local list name out=""
   local -a want=(
@@ -937,7 +943,7 @@ pgm_ffmpeg_gpu_encoder_line() {
     hevc_qsv h264_qsv
     hevc_amf h264_amf
   )
-  list="$(ffmpeg -hide_banner -encoders 2>/dev/null || true)"
+  list="$(pgm_ffmpeg_capture -hide_banner -encoders)"
   for name in "${want[@]}"; do
     grep -Eq "(^|[[:space:]])${name}([[:space:]]|$)" <<<"$list" || continue
     if [[ -n "$out" ]]; then
@@ -954,14 +960,23 @@ pgm_ffmpeg_gpu_encoder_line() {
 }
 
 pgm_print_ffmpeg_box() {
-  local ver
+  local ver out bin
   local -a lines=()
   echo
   if ! command -v ffmpeg >/dev/null 2>&1; then
     lines=("ffmpeg: not found")
   else
-    ver="$(ffmpeg -version 2>/dev/null | awk 'NR==1 { print; exit }' || true)"
-    [[ -n "$ver" ]] || ver="ffmpeg version unknown"
+    bin="$(command -v ffmpeg)"
+    out="$(pgm_ffmpeg_capture -version)"
+    ver="$(printf '%s\n' "$out" | awk '/^ffmpeg version / { print; exit }')"
+    if [[ -z "$ver" ]]; then
+      ver="$(printf '%s\n' "$out" | awk 'NF { print; exit }')"
+      if [[ -n "$ver" ]]; then
+        ver="ffmpeg (${bin}): ${ver}"
+      else
+        ver="ffmpeg version unknown (${bin})"
+      fi
+    fi
     lines=("$ver" "$(pgm_ffmpeg_gpu_encoder_line)")
   fi
   pgm_print_box_lines "${lines[@]}"

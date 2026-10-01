@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261001.221000 - ffmpeg probe shows the real error, not "version unknown"
 # v. 20261001.220200 - startup box: ffmpeg version and GPU encoders in this build
 # v. 20260930.223700 - auto encoder follows the source codec
 # v. 20260930.223600 - name the source video codec and the output encoder separately
@@ -7,6 +8,7 @@
 # v. 20260930.221500 - file prompts: one key, no Enter
 # v. 20260930.220400 - faster viewing copy of a merged video (2, 5, 10, 20, …)
 
+# 2026.10.01 - v. 0.8 - ffmpeg probe shows the real error, not "version unknown"
 # 2026.10.01 - v. 0.7 - startup box adds which GPU encoders this ffmpeg was built with
 # 2026.09.30 - v. 0.6 - auto output encoder follows the source codec (HEVC prefers hevc_nvenc, then libx265; H.264 prefers h264_nvenc, then libx264)
 # 2026.09.30 - v. 0.5 - print the source video codec and label the encoder that will write the new file
@@ -246,6 +248,10 @@ tl_print_box_lines() {
   echo "+${bar}+"
 }
 
+tl_ffmpeg_capture() {
+  ffmpeg "$@" 2>&1 || true
+}
+
 tl_ffmpeg_gpu_encoder_line() {
   local list name out=""
   local -a want=(
@@ -254,7 +260,7 @@ tl_ffmpeg_gpu_encoder_line() {
     hevc_qsv h264_qsv
     hevc_amf h264_amf
   )
-  list="$(ffmpeg -hide_banner -encoders 2>/dev/null || true)"
+  list="$(tl_ffmpeg_capture -hide_banner -encoders)"
   for name in "${want[@]}"; do
     grep -Eq "(^|[[:space:]])${name}([[:space:]]|$)" <<<"$list" || continue
     if [[ -n "$out" ]]; then
@@ -271,14 +277,23 @@ tl_ffmpeg_gpu_encoder_line() {
 }
 
 tl_print_ffmpeg_version() {
-  local ver
+  local ver out bin
   local -a lines=()
   echo
   if ! command -v ffmpeg >/dev/null 2>&1; then
     lines=("ffmpeg: not found")
   else
-    ver="$(ffmpeg -version 2>/dev/null | awk 'NR==1 { print; exit }' || true)"
-    [[ -n "$ver" ]] || ver="ffmpeg version unknown"
+    bin="$(command -v ffmpeg)"
+    out="$(tl_ffmpeg_capture -version)"
+    ver="$(printf '%s\n' "$out" | awk '/^ffmpeg version / { print; exit }')"
+    if [[ -z "$ver" ]]; then
+      ver="$(printf '%s\n' "$out" | awk 'NF { print; exit }')"
+      if [[ -n "$ver" ]]; then
+        ver="ffmpeg (${bin}): ${ver}"
+      else
+        ver="ffmpeg version unknown (${bin})"
+      fi
+    fi
     lines=("$ver" "$(tl_ffmpeg_gpu_encoder_line)")
   fi
   tl_print_box_lines "${lines[@]}"
@@ -286,7 +301,17 @@ tl_print_ffmpeg_version() {
 }
 
 tl_load_encoders() {
-  TL_ENCODER_LIST="$(ffmpeg -hide_banner -encoders 2>/dev/null || true)"
+  TL_ENCODER_LIST="$(tl_ffmpeg_capture -hide_banner -encoders)"
+}
+
+tl_note_encoder_probe_failure() {
+  local hint=""
+  if [[ "${TL_ENCODER_LIST:-}" != *Encoders:* ]]; then
+    hint="$(printf '%s\n' "${TL_ENCODER_LIST:-}" | awk 'NF { print; exit }')"
+  fi
+  if [[ -n "$hint" ]]; then
+    echo "$(tl_ts) ${hint}" >&2
+  fi
 }
 
 tl_set_encoder_args() {
@@ -461,6 +486,7 @@ tl_encode_one() {
   mapfile -t kinds < <(tl_encoder_candidates "$encoder_want" "$src_codec")
   if (( ${#kinds[@]} == 0 )); then
     echo "$(tl_ts) No usable video encoder for '${encoder_want}'." >&2
+    tl_note_encoder_probe_failure
     return 1
   fi
   for i in "${!kinds[@]}"; do
@@ -782,6 +808,7 @@ tl_prompt_display
 tl_load_encoders
 tl_encoder_candidates "$ENCODER" "" >/dev/null || {
   echo "$(tl_ts) No usable video encoder for '${ENCODER}'." >&2
+  tl_note_encoder_probe_failure
   exit 1
 }
 
