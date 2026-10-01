@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
+# v. 20261001.215000 - common build: offer NVENC or VAAPI when that GPU is present
 # v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
 # v. 20260716.231000 - equivalent CLI echo; --dry-run for interactive plan without build
 
+# 2026.10.01 - v. 2.1.24 - common build asks to compile in NVENC when nvidia-smi works, or VAAPI when /dev/dri is present; -y stays on common
 # 2026.06.23 - v. 2.1.23 - jellyfin profile: Jellyfin-like shared build (VAAPI+NVENC+FDK-AAC); common stays default
 # 2026.06.26 - v. 2.1.22 - Ubuntu: libopenjp2-7-dev (not libopenjpeg-dev); optional pkg probe must not abort configure
 # 2026.06.26 - v. 2.1.21 - source build: install apt deps before need_cmd pkg-config (was checked too early)
@@ -100,6 +102,7 @@ FFMPEG_SOURCE_HAS_SVTAV1=0
 FFMPEG_SOURCE_HAS_DAV1D=0
 FFMPEG_SOURCE_HAS_FDK_AAC=0
 FFMPEG_SOURCE_PROFILE_READY=0
+FFMPEG_HW_SUGGEST_ACCEPTED=0
 FFMPEG_SOURCE_SKIP_VULKAN=0
 FFMPEG_SOURCE_SKIP_X265="${FFMPEG_SOURCE_SKIP_X265:-0}"
 FFMPEG_SOURCE_SKIP_PKG_LIST="${FFMPEG_SOURCE_SKIP_PKG_LIST:-}"
@@ -251,6 +254,9 @@ Other prompts use [y/N/q]: y = yes, Enter/N = no, q = quit.
   --source-only        Build from official ffmpeg.org source only (no static/apt prompts).
   --source-profile P   Source build profile: min, common, max, gpu, nvidia, or jellyfin
                        (with --source-only, skips profile confirmation prompts).
+                       An interactive common build asks to compile in NVENC when
+                       nvidia-smi works, or VAAPI when /dev/dri is present.
+                       -y without a profile stays on common.
   --source-with-fdk-aac
                        With max profile: enable libfdk-aac (non-free, best AAC).
   --dry-run            Run all prompts and show the plan, then print the equivalent
@@ -2212,6 +2218,63 @@ nvidia_runtime_looks_available() {
     nvidia-smi >/dev/null 2>&1
 }
 
+nvidia_gpu_name() {
+    nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null \
+        | awk 'NR==1 { gsub(/\r/, ""); gsub(/^[[:space:]]+|[[:space:]]+$/, ""); print; exit }' \
+        || true
+}
+
+# Common profile only. Y switches to nvidia or gpu. -y and a non-tty stay on common.
+# Sets FFMPEG_HW_SUGGEST_ACCEPTED=1 when the profile changes.
+prompt_suggest_hardware_encoder() {
+    local reply="" gpu_name=""
+
+    FFMPEG_HW_SUGGEST_ACCEPTED=0
+    [[ "${SOURCE_PROFILE}" == common ]] || return 0
+    (( ASSUME_YES == 1 )) && return 0
+    [[ -t 0 ]] || return 0
+
+    if nvidia_runtime_looks_available; then
+        gpu_name="$(nvidia_gpu_name)"
+        echo
+        if [[ -n "${gpu_name}" ]]; then
+            echo "${gpu_name} detected. Compiling NVENC uses this GPU for encoding."
+        else
+            echo "NVIDIA GPU detected. Compiling NVENC uses this GPU for encoding."
+        fi
+        echo ">>> Waiting for your answer:"
+        echo -n "Compile in NVENC? [Y/n/q] "
+        read -r -n 1 reply || reply=""
+        echo
+        if prompt_reply_is_quit "${reply}"; then
+            echo "Quitting — no changes made."
+            quit_prompt_with_optional_old_cleanup
+        fi
+        if ! prompt_reply_is_no "${reply}"; then
+            SOURCE_PROFILE=nvidia
+            FFMPEG_HW_SUGGEST_ACCEPTED=1
+            return 0
+        fi
+    fi
+
+    if gpu_vaapi_runtime_looks_available; then
+        echo
+        echo "VAAPI device detected (/dev/dri). Compiling VAAPI uses an Intel or AMD GPU for encoding."
+        echo ">>> Waiting for your answer:"
+        echo -n "Compile in VAAPI? [Y/n/q] "
+        read -r -n 1 reply || reply=""
+        echo
+        if prompt_reply_is_quit "${reply}"; then
+            echo "Quitting — no changes made."
+            quit_prompt_with_optional_old_cleanup
+        fi
+        if ! prompt_reply_is_no "${reply}"; then
+            SOURCE_PROFILE=gpu
+            FFMPEG_HW_SUGGEST_ACCEPTED=1
+        fi
+    fi
+}
+
 prompt_source_fdk_aac_if_max() {
     local reply=""
 
@@ -2358,8 +2421,9 @@ ensure_source_build_profile_selected() {
     if [[ "${SOURCE_PROFILE}" == max ]]; then
         prompt_source_fdk_aac_if_max
     fi
+    prompt_suggest_hardware_encoder
     if [[ "${SOURCE_PROFILE}" == gpu || "${SOURCE_PROFILE}" == nvidia || "${SOURCE_PROFILE}" == jellyfin ]]; then
-        if source_profile_preset_externally || (( ASSUME_YES == 1 )); then
+        if (( FFMPEG_HW_SUGGEST_ACCEPTED == 1 )) || source_profile_preset_externally || (( ASSUME_YES == 1 )); then
             :
         elif ! prompt_confirm_gpu_or_nvidia_profile; then
             prompt_source_build_profile_menu
