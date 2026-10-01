@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261001.220200 - startup box: ffmpeg version and GPU encoders in this build
 # v. 20260930.221200 - drop --no_startup_delay; this script is interactive
 # v. 20260930.221000 - seam preview: [a] skips the rest of the seams in this file
 # v. 20260930.214500 - INPUT lines: name, size, and duration on one line when they fit
@@ -8,6 +9,7 @@
 # v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
 # v. 20260805.154826 - after merge: copy GPS/dates from first chapter; FS times via touch -r
 
+# 2026.10.01 - v. 0.15.31 - startup: print the ffmpeg version and whether this build has a GPU encoder
 # 2026.09.30 - v. 0.15.30 - drop --no_startup_delay; this script is interactive
 # 2026.09.30 - v. 0.15.29 - seam preview: [a] skips every remaining seam in this merged file
 # 2026.09.30 - v. 0.15.28 - merge INPUT: filename, size, and duration on one line when they fit the terminal (else name, then size)
@@ -900,7 +902,69 @@ pgm_print_run_settings() {
     "Seam preview size:" "${PGM_SEAM_PREVIEW_WIDTH:-auto}" "${PGM_SEAM_PREVIEW_HEIGHT:-auto}"
   printf '  %-21s%s\n' "Work dir:" "$PWD"
   pgm_print_run_settings_equivalent_cli
+  pgm_print_ffmpeg_box
   echo
+}
+
+# Draw lines in an ada box when boxes is installed, otherwise a plain frame.
+pgm_print_box_lines() {
+  local -a lines=("$@")
+  local line width=0 bar
+  if (( ${#lines[@]} == 0 )); then
+    return 0
+  fi
+  if type -fP boxes >/dev/null 2>&1; then
+    printf '%s\n' "${lines[@]}" | boxes -a c -d ada-box
+    return 0
+  fi
+  for line in "${lines[@]}"; do
+    (( ${#line} > width )) && width=${#line}
+  done
+  bar="$(printf '%*s' "$((width + 2))" '' | tr ' ' '-')"
+  echo "+${bar}+"
+  for line in "${lines[@]}"; do
+    printf '| %-*s |\n' "$width" "$line"
+  done
+  echo "+${bar}+"
+}
+
+# Encoders this ffmpeg binary can run on a GPU. Empty means the build has none.
+pgm_ffmpeg_gpu_encoder_line() {
+  local list name out=""
+  local -a want=(
+    hevc_nvenc h264_nvenc
+    hevc_vaapi h264_vaapi
+    hevc_qsv h264_qsv
+    hevc_amf h264_amf
+  )
+  list="$(ffmpeg -hide_banner -encoders 2>/dev/null || true)"
+  for name in "${want[@]}"; do
+    grep -Eq "(^|[[:space:]])${name}([[:space:]]|$)" <<<"$list" || continue
+    if [[ -n "$out" ]]; then
+      out+=", ${name}"
+    else
+      out="$name"
+    fi
+  done
+  if [[ -n "$out" ]]; then
+    printf 'GPU encoders: %s\n' "$out"
+  else
+    printf '%s\n' "GPU encoders: none"
+  fi
+}
+
+pgm_print_ffmpeg_box() {
+  local ver
+  local -a lines=()
+  echo
+  if ! command -v ffmpeg >/dev/null 2>&1; then
+    lines=("ffmpeg: not found")
+  else
+    ver="$(ffmpeg -version 2>/dev/null | awk 'NR==1 { print; exit }' || true)"
+    [[ -n "$ver" ]] || ver="ffmpeg version unknown"
+    lines=("$ver" "$(pgm_ffmpeg_gpu_encoder_line)")
+  fi
+  pgm_print_box_lines "${lines[@]}"
 }
 
 pgm_time_now_ns() {

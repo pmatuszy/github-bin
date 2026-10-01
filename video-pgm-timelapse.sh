@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261001.220200 - startup box: ffmpeg version and GPU encoders in this build
 # v. 20260930.223700 - auto encoder follows the source codec
 # v. 20260930.223600 - name the source video codec and the output encoder separately
 # v. 20260930.222600 - encode display: normal progress bar, or verbose frames
@@ -6,6 +7,7 @@
 # v. 20260930.221500 - file prompts: one key, no Enter
 # v. 20260930.220400 - faster viewing copy of a merged video (2, 5, 10, 20, …)
 
+# 2026.10.01 - v. 0.7 - startup box adds which GPU encoders this ffmpeg was built with
 # 2026.09.30 - v. 0.6 - auto output encoder follows the source codec (HEVC prefers hevc_nvenc, then libx265; H.264 prefers h264_nvenc, then libx264)
 # 2026.09.30 - v. 0.5 - print the source video codec and label the encoder that will write the new file
 # 2026.09.30 - v. 0.4 - encode display: normal is a progress bar (default); verbose keeps the ffmpeg frame line
@@ -222,21 +224,64 @@ tl_encoder_available() {
   grep -Eq "(^|[[:space:]])${name}([[:space:]]|$)" <<<"$TL_ENCODER_LIST"
 }
 
-# First line of `ffmpeg -version`, drawn in a box when `boxes` is installed.
-tl_print_ffmpeg_version() {
-  local ver width bar
-  ver="$(ffmpeg -version 2>/dev/null | awk 'NR==1 { print; exit }' || true)"
-  [[ -n "$ver" ]] || ver="ffmpeg version unknown"
-  echo
-  if type -fP boxes >/dev/null 2>&1; then
-    printf '%s\n' "$ver" | boxes -a c -d ada-box
-  else
-    width=${#ver}
-    bar="$(printf '%*s' "$((width + 2))" '' | tr ' ' '-')"
-    echo "+${bar}+"
-    echo "| ${ver} |"
-    echo "+${bar}+"
+# First line of `ffmpeg -version`, plus which GPU encoders this build has.
+tl_print_box_lines() {
+  local -a lines=("$@")
+  local line width=0 bar
+  if (( ${#lines[@]} == 0 )); then
+    return 0
   fi
+  if type -fP boxes >/dev/null 2>&1; then
+    printf '%s\n' "${lines[@]}" | boxes -a c -d ada-box
+    return 0
+  fi
+  for line in "${lines[@]}"; do
+    (( ${#line} > width )) && width=${#line}
+  done
+  bar="$(printf '%*s' "$((width + 2))" '' | tr ' ' '-')"
+  echo "+${bar}+"
+  for line in "${lines[@]}"; do
+    printf '| %-*s |\n' "$width" "$line"
+  done
+  echo "+${bar}+"
+}
+
+tl_ffmpeg_gpu_encoder_line() {
+  local list name out=""
+  local -a want=(
+    hevc_nvenc h264_nvenc
+    hevc_vaapi h264_vaapi
+    hevc_qsv h264_qsv
+    hevc_amf h264_amf
+  )
+  list="$(ffmpeg -hide_banner -encoders 2>/dev/null || true)"
+  for name in "${want[@]}"; do
+    grep -Eq "(^|[[:space:]])${name}([[:space:]]|$)" <<<"$list" || continue
+    if [[ -n "$out" ]]; then
+      out+=", ${name}"
+    else
+      out="$name"
+    fi
+  done
+  if [[ -n "$out" ]]; then
+    printf 'GPU encoders: %s\n' "$out"
+  else
+    printf '%s\n' "GPU encoders: none"
+  fi
+}
+
+tl_print_ffmpeg_version() {
+  local ver
+  local -a lines=()
+  echo
+  if ! command -v ffmpeg >/dev/null 2>&1; then
+    lines=("ffmpeg: not found")
+  else
+    ver="$(ffmpeg -version 2>/dev/null | awk 'NR==1 { print; exit }' || true)"
+    [[ -n "$ver" ]] || ver="ffmpeg version unknown"
+    lines=("$ver" "$(tl_ffmpeg_gpu_encoder_line)")
+  fi
+  tl_print_box_lines "${lines[@]}"
   echo
 }
 
@@ -728,11 +773,11 @@ if [[ -z "$SPEED" ]]; then
   tl_prompt_speed || exit 1
 fi
 
+tl_print_ffmpeg_version
 if ! command -v ffmpeg >/dev/null 2>&1 || ! command -v ffprobe >/dev/null 2>&1; then
   echo "$(tl_ts) ffmpeg and ffprobe are required." >&2
   exit 1
 fi
-tl_print_ffmpeg_version
 tl_prompt_display
 tl_load_encoders
 tl_encoder_candidates "$ENCODER" "" >/dev/null || {
