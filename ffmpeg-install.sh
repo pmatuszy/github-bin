@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
+# v. 20261001.222400 - shared GPU builds install libav*.so into /usr/local/lib
 # v. 20261001.215000 - common build: offer NVENC or VAAPI when that GPU is present
 # v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
 # v. 20260716.231000 - equivalent CLI echo; --dry-run for interactive plan without build
 
+# 2026.10.01 - v. 2.1.25 - gpu/nvidia/jellyfin: install shared libav libraries into /usr/local/lib and link with rpath
 # 2026.10.01 - v. 2.1.24 - common build asks to compile in NVENC when nvidia-smi works, or VAAPI when /dev/dri is present; -y stays on common
 # 2026.06.23 - v. 2.1.23 - jellyfin profile: Jellyfin-like shared build (VAAPI+NVENC+FDK-AAC); common stays default
 # 2026.06.26 - v. 2.1.22 - Ubuntu: libopenjp2-7-dev (not libopenjpeg-dev); optional pkg probe must not abort configure
@@ -257,6 +259,8 @@ Other prompts use [y/N/q]: y = yes, Enter/N = no, q = quit.
                        An interactive common build asks to compile in NVENC when
                        nvidia-smi works, or VAAPI when /dev/dri is present.
                        -y without a profile stays on common.
+                       gpu, nvidia, and jellyfin also install libav*.so into
+                       /usr/local/lib (the programs are linked with that rpath).
   --source-with-fdk-aac
                        With max profile: enable libfdk-aac (non-free, best AAC).
   --dry-run            Run all prompts and show the plan, then print the equivalent
@@ -3256,6 +3260,7 @@ ffmpeg_source_configure_args() {
 
     if [[ "${SOURCE_PROFILE}" == gpu || "${SOURCE_PROFILE}" == nvidia || "${SOURCE_PROFILE}" == jellyfin ]]; then
         args+=( --enable-shared --disable-static )
+        args+=( --extra-ldflags="-Wl,-rpath,/usr/local/lib" )
         pkg_config_flags=""
         extra_libs="-lpthread -lm -ldl"
     else
@@ -4162,11 +4167,47 @@ perform_install_build_from_source() {
         return 1
     fi
 
+    if ! ffmpeg_source_install_shared_libs "${staging}"; then
+        return 1
+    fi
+
     print_source_build_encoder_check "${staging}/bin/ffmpeg"
 
     install_versioned_bins_to_local "${build_id}" "${staging}/bin/ffmpeg" "${staging}/bin/ffprobe" \
         "$(ffmpeg_optional_executable_path "${staging}/bin/ffplay")"
     print_install_success_summary "${build_id}" "official source ${SOURCE_PROFILE} ${version}"
+    return 0
+}
+
+# gpu/nvidia/jellyfin link against libav*.so. Those files live in the staging
+# prefix and disappear when the build directory is removed, so copy them to
+# /usr/local/lib before that. Static profiles have no shared libraries.
+ffmpeg_source_install_shared_libs() {
+    local staging="$1"
+    local libdir="${staging}/lib"
+    local dest="/usr/local/lib"
+    local count=0
+
+    if ffmpeg_source_static_build; then
+        return 0
+    fi
+    if [[ ! -d "${libdir}" ]]; then
+        echo "ERROR: shared ffmpeg build produced no ${libdir}." >&2
+        return 1
+    fi
+    count="$(find "${libdir}" -maxdepth 1 -name '*.so*' -print | wc -l)"
+    count="${count//[[:space:]]/}"
+    if [[ "${count}" == "0" ]]; then
+        echo "ERROR: ${libdir} contains no shared libraries." >&2
+        return 1
+    fi
+    mkdir -p "${dest}"
+    log_step "Installing shared libraries into ${dest}..."
+    cp -a "${libdir}/." "${dest}/"
+    if command -v ldconfig >/dev/null 2>&1; then
+        ldconfig || echo "WARNING: ldconfig failed. The binaries still use rpath ${dest}." >&2
+    fi
+    log_note "Installed shared libraries into ${dest} (${count} files)."
     return 0
 }
 
