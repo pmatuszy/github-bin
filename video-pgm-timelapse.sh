@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261001.230600 - progress bar shows time left and the arrival clock
 # v. 20261001.221000 - ffmpeg probe shows the real error, not "version unknown"
 # v. 20261001.220200 - startup box: ffmpeg version and GPU encoders in this build
 # v. 20260930.223700 - auto encoder follows the source codec
@@ -8,6 +9,7 @@
 # v. 20260930.221500 - file prompts: one key, no Enter
 # v. 20260930.220400 - faster viewing copy of a merged video (2, 5, 10, 20, …)
 
+# 2026.10.01 - v. 0.9 - progress bar adds time left and the local arrival clock (date only when it is not today)
 # 2026.10.01 - v. 0.8 - ffmpeg probe shows the real error, not "version unknown"
 # 2026.10.01 - v. 0.7 - startup box adds which GPU encoders this ffmpeg was built with
 # 2026.09.30 - v. 0.6 - auto output encoder follows the source codec (HEVC prefers hevc_nvenc, then libx265; H.264 prefers h264_nvenc, then libx264)
@@ -150,10 +152,65 @@ tl_out_time_seconds() {
   }'
 }
 
+# Wall-clock time still to wait, from output seconds left and ffmpeg's speed.
+# Under an hour: "6m 7s". From one hour: "1h 2m" (no seconds).
+tl_eta_left() {
+  awk -v s="$1" 'BEGIN {
+    if (s < 0) s = 0
+    t = int(s + 0.5)
+    h = int(t / 3600)
+    m = int((t % 3600) / 60)
+    sec = t % 60
+    if (h > 0) printf "%dh %dm", h, m
+    else if (m > 0) printf "%dm %ds", m, sec
+    else printf "%ds", sec
+  }'
+}
+
+# Local arrival, rounded to the nearest minute. Date only when that minute is not today.
+tl_eta_arrival() {
+  local remain="$1"
+  local now arrival today day clock
+  now="$(date +%s)"
+  arrival="$(awk -v n="$now" -v r="$remain" 'BEGIN {
+    a = int(n + r + 0.5)
+    s = a % 60
+    if (s >= 30) a += 60 - s
+    else a -= s
+    printf "%d", a
+  }')"
+  today="$(date '+%Y.%m.%d')"
+  day="$(date -d "@${arrival}" '+%Y.%m.%d')"
+  clock="$(date -d "@${arrival}" '+%H:%M')"
+  if [[ "$day" == "$today" ]]; then
+    printf 'at %s' "$clock"
+  else
+    printf 'at %s %s' "$day" "$clock"
+  fi
+}
+
+# "left 6m 7s  at 22:41", or "left --  at --" until speed and length are known.
+tl_eta_phrase() {
+  local elapsed="$1" total="$2" speedx="$3"
+  local spd="${speedx%x}" remain=""
+  spd="${spd%X}"
+  if [[ -z "$total" ]] || [[ ! "$spd" =~ ^[0-9]+([.][0-9]+)?$ ]] \
+      || ! awk -v s="$spd" 'BEGIN { exit !(s+0 > 0) }'; then
+    printf 'left --  at --'
+    return 0
+  fi
+  remain="$(awk -v e="$elapsed" -v t="$total" -v s="$spd" 'BEGIN {
+    r = (t - e) / s
+    if (r < 0) r = 0
+    printf "%.3f", r
+  }')"
+  printf 'left %s  %s' "$(tl_eta_left "$remain")" "$(tl_eta_arrival "$remain")"
+}
+
 # One updating line. frac is 0..1, or empty when the output length is unknown.
 tl_draw_progress() {
   local frac="$1" elapsed="$2" total="$3" speedx="$4"
-  local width=24 filled=0 empty bar pct el_clock tot_clock
+  local width=24 filled=0 empty bar pct el_clock tot_clock eta
   if [[ -n "$frac" ]]; then
     pct="$(awk -v f="$frac" 'BEGIN { p=int(f*100+0.5); if (p>100) p=100; if (p<0) p=0; printf "%3d", p }')"
     filled="$(awk -v f="$frac" -v w="$width" 'BEGIN { n=int(f*w+0.5); if (n>w) n=w; if (n<0) n=0; printf "%d", n }')"
@@ -169,7 +226,8 @@ tl_draw_progress() {
   else
     tot_clock="--:--:--"
   fi
-  printf '\r[%s] %s%%  %s / %s  %s\033[K' "$bar" "$pct" "$el_clock" "$tot_clock" "$speedx"
+  eta="$(tl_eta_phrase "$elapsed" "$total" "$speedx")"
+  printf '\r[%s] %s%%  %s / %s  %s  %s\033[K' "$bar" "$pct" "$el_clock" "$tot_clock" "$speedx" "$eta"
 }
 
 # Read ffmpeg -progress blocks on stdin and redraw the bar.
