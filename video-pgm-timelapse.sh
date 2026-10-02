@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261002.093100 - keyframe spacing defaults to the same interval as the source
 # v. 20261002.092400 - an existing output is explained, then keep, replace, rename, or a new name
 # v. 20261002.084500 - print the equivalent command and confirm before encoding
 # v. 20261002.084000 - speed menu lists q to quit
@@ -19,6 +20,7 @@
 # v. 20260930.221500 - file prompts: one key, no Enter
 # v. 20260930.220400 - faster viewing copy of a merged video (2, 5, 10, 20, …)
 
+# 2026.10.02 - v. 0.20 - keyframe spacing defaults to the same interval as the source
 # 2026.10.02 - v. 0.19 - an existing output is explained, then keep, replace, rename, or a new name
 # 2026.10.02 - v. 0.18 - each choice has a command-line option; show that command and confirm before encoding
 # 2026.10.02 - v. 0.17 - speed menu lists q to quit
@@ -83,6 +85,7 @@ Options:
                        A missing or failed encoder falls through to the next.
                        nvenc, x264, and x265 force that one encoder.
   --gop SPEC           default, source, a number of seconds (2s), or frames (30f).
+                       The question defaults to source, the first 2 minutes.
   --keyframe-minutes N Read this many minutes from the start when --gop source.
                        Default 2.
   --keyframe-percent N Read this percent from the start when --gop source.
@@ -846,6 +849,7 @@ tl_reset_advanced() {
   TL_OUT_FPS=30
   TL_GOP_MODE=default
   TL_GOP_KIND=default
+  TL_GOP_EXPLICIT=0
   TL_GOP_SECONDS=1
   TL_GOP_FRAMES=30
   TL_DO_SCAN=0
@@ -1539,19 +1543,28 @@ tl_prompt_keyframe_span() {
 }
 
 tl_prompt_gop() {
-  local choice="" answer="" gkey=d sec_def=1 frame_def=30
+  local choice="" answer="" gkey=s sec_def=1 frame_def=30 s_note=""
   case "${TL_GOP_KIND:-default}" in
     source) gkey=s ;;
     seconds) gkey=c; sec_def="$TL_GOP_SECONDS" ;;
     frames) gkey=f; frame_def="$TL_GOP_FRAMES" ;;
-    *) gkey=d ;;
+    *)
+      if (( ${TL_GOP_EXPLICIT:-0} )); then
+        gkey=d
+      else
+        gkey=s
+      fi
+      ;;
   esac
+  if [[ "$gkey" == s && "${TL_GOP_KIND:-default}" == default && ${TL_GOP_EXPLICIT:-0} -eq 0 ]]; then
+    s_note=" (default)"
+  fi
   echo
   echo "Keyframe spacing [D/s/c/f]"
   echo "  [D] Encoder default"
   echo "      Leave the interval to hevc_nvenc or libx265. That is often"
   echo "      about 10 seconds. Fine when you watch straight through."
-  echo "  [s] Same as the source"
+  echo "  [s] Same as the source${s_note}"
   echo "      Read part of this file and use the keyframe interval it has."
   echo "      You choose 2 minutes, another number of minutes, or a percent."
   echo "      Nothing is assumed."
@@ -1565,6 +1578,7 @@ tl_prompt_gop() {
     d)
       TL_GOP_KIND=default
       TL_GOP_MODE=default
+      TL_GOP_EXPLICIT=1
       ;;
     s)
       TL_KEYFRAME_MEASURED=0
@@ -1579,6 +1593,7 @@ tl_prompt_gop() {
         echo "$(tl_ts) No keyframe spacing found. Using the encoder default."
         TL_GOP_KIND=default
         TL_GOP_MODE=default
+        TL_GOP_EXPLICIT=1
       fi
       ;;
     c)
@@ -1592,6 +1607,7 @@ tl_prompt_gop() {
         echo "$(tl_ts) Invalid seconds: ${answer} (use 1 to 60). Using the encoder default."
         TL_GOP_KIND=default
         TL_GOP_MODE=default
+        TL_GOP_EXPLICIT=1
       fi
       ;;
     f)
@@ -1605,6 +1621,7 @@ tl_prompt_gop() {
         echo "$(tl_ts) Invalid frame count: ${answer} (use 1 to 3000). Using the encoder default."
         TL_GOP_KIND=default
         TL_GOP_MODE=default
+        TL_GOP_EXPLICIT=1
       fi
       ;;
     *)
@@ -1849,6 +1866,7 @@ tl_set_gop_spec() {
     default)
       TL_GOP_KIND=default
       TL_GOP_MODE=default
+      TL_GOP_EXPLICIT=1
       ;;
     source)
       TL_GOP_KIND=source
@@ -1922,6 +1940,7 @@ TL_BLEND_AFTER=1
 TL_OUT_FPS=30
 TL_GOP_MODE=default
 TL_GOP_KIND=default
+TL_GOP_EXPLICIT=0
 TL_GOP_SECONDS=1
 TL_GOP_FRAMES=30
 TL_KF_UNIT=minutes
