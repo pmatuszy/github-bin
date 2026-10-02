@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261002.112900 - output name includes the date and time
 # v. 20261002.104400 - --speed and --speedup are the same; the printed command uses --speedup
 # v. 20261002.100200 - the confirmation says the picture scan is already done
 # v. 20261002.095700 - keyframe menu lists same as the source first
@@ -26,6 +27,7 @@
 # v. 20260930.221500 - file prompts: one key, no Enter
 # v. 20260930.220400 - faster viewing copy of a merged video (2, 5, 10, 20, …)
 
+# 2026.10.02 - v. 0.27 - every output is stem_xN_YYYYMMDD-HHMMSS.mp4
 # 2026.10.02 - v. 0.26 - --speed and --speedup are the same option; the printed command uses --speedup
 # 2026.10.02 - v. 0.25 - after a picture scan, the confirmation says it is already done and the command does not scan again
 # 2026.10.02 - v. 0.24 - keyframe menu lists same as the source first, with S as the capital letter
@@ -72,11 +74,14 @@ Usage: $(basename "$0") [-h|--help] [-v|--version] [--history]
        [FILE|DIR ...]
 
 Write a faster copy beside each video. A 10× copy of a two-hour drive is about
-twelve minutes. The original file is not changed.
+twelve minutes. The original file is not changed. The copy is named
+stem_xN_YYYYMMDD-HHMMSS.mp4, using the time the encode starts. A short try is
+stem_xN_test-1m-at20_YYYYMMDD-HHMMSS.mp4.
 
 With no FILE or DIR, use the current directory. If that directory contains
 *_concat.mp4 files, only those are used. Otherwise every other .mp4 in the
-directory is used. Files already named *_xN.mp4 are skipped.
+directory is used. Files already named *_xN.mp4 or *_xN_YYYYMMDD-HHMMSS.mp4
+are skipped.
 
 Options:
   -h, --help           Show this help and exit.
@@ -107,7 +112,7 @@ Options:
   --test-minutes N     Encode 1, 2, or 5 minutes of the result, not the whole file.
   --test-at N          Where the test starts: 0, 10, 20, 30, 50, 70, or 90.
                        0 is the beginning.
-  --redo               Replace an existing *_xN.mp4.
+  --redo               Replace the output if that exact name already exists.
                        Without this, an interactive run asks whether to keep,
                        replace, rename, or write a new name. -y skips the file
                        and prints which output is already there.
@@ -201,19 +206,26 @@ tl_is_concat_output() {
   [[ "$base" =~ _concat\.[mM][pP]4$ ]]
 }
 
-# Output path for this speed: <stem>_xN.mp4 next to the source.
-# A test clip is <stem>_xN_test-1m-at20.mp4 so it does not replace the full file.
+# Output path: <stem>_xN_YYYYMMDD-HHMMSS.mp4 next to the source.
+# A test clip is <stem>_xN_test-1m-at20_YYYYMMDD-HHMMSS.mp4.
+# If that exact name exists, _2, _3, … is added.
 tl_output_path() {
-  local src="$1" speed="$2" dir stem
+  local src="$1" speed="$2" dir stem stamp base candidate n=0
   dir="$(dirname -- "$src")"
   stem="$(basename -- "$src")"
   stem="${stem%.*}"
+  stamp="$(date '+%Y%m%d-%H%M%S')"
   if (( ${TL_TEST:-0} )); then
-    printf '%s/%s_x%s_test-%sm-at%s.mp4\n' \
-      "$dir" "$stem" "$speed" "$TL_TEST_MINUTES" "$TL_TEST_PERCENT"
+    base="${stem}_x${speed}_test-${TL_TEST_MINUTES}m-at${TL_TEST_PERCENT}_${stamp}"
   else
-    printf '%s/%s_x%s.mp4\n' "$dir" "$stem" "$speed"
+    base="${stem}_x${speed}_${stamp}"
   fi
+  candidate="${dir}/${base}.mp4"
+  while [[ -e "$candidate" ]]; do
+    n=$((n + 1))
+    candidate="${dir}/${base}_${n}.mp4"
+  done
+  printf '%s\n' "$candidate"
 }
 
 tl_ffprobe_duration() {
@@ -2454,9 +2466,11 @@ for tl_src in "${TL_INPUTS[@]}"; do
   tl_prompt_file_action "$tl_i" "$tl_total" "$tl_dest"
   case "$REPLY" in
     encode)
+      [[ -n "${TL_DEST_OVERRIDE:-}" ]] || TL_DEST_OVERRIDE="$tl_dest"
       tl_encode_one "$tl_src" "$SPEED" "$REDO" "$ENCODER" || return_code=1
       ;;
     redo)
+      [[ -n "${TL_DEST_OVERRIDE:-}" ]] || TL_DEST_OVERRIDE="$tl_dest"
       tl_encode_one "$tl_src" "$SPEED" 1 "$ENCODER" || return_code=1
       ;;
     skip)
@@ -2472,6 +2486,7 @@ for tl_src in "${TL_INPUTS[@]}"; do
       ;;
     encode_all)
       ENCODE_ALL=1
+      [[ -n "${TL_DEST_OVERRIDE:-}" ]] || TL_DEST_OVERRIDE="$tl_dest"
       tl_encode_one "$tl_src" "$SPEED" "$REDO" "$ENCODER" || return_code=1
       ;;
     quit)
