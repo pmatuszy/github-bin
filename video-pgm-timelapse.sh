@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261002.065500 - progress bar is 48 characters wide
 # v. 20261001.230600 - progress bar shows time left and the arrival clock
 # v. 20261001.221000 - ffmpeg probe shows the real error, not "version unknown"
 # v. 20261001.220200 - startup box: ffmpeg version and GPU encoders in this build
@@ -9,6 +10,7 @@
 # v. 20260930.221500 - file prompts: one key, no Enter
 # v. 20260930.220400 - faster viewing copy of a merged video (2, 5, 10, 20, …)
 
+# 2026.10.02 - v. 0.10 - progress bar is twice as wide (48 characters)
 # 2026.10.01 - v. 0.9 - progress bar adds time left and the local arrival clock (date only when it is not today)
 # 2026.10.01 - v. 0.8 - ffmpeg probe shows the real error, not "version unknown"
 # 2026.10.01 - v. 0.7 - startup box adds which GPU encoders this ffmpeg was built with
@@ -210,7 +212,7 @@ tl_eta_phrase() {
 # One updating line. frac is 0..1, or empty when the output length is unknown.
 tl_draw_progress() {
   local frac="$1" elapsed="$2" total="$3" speedx="$4"
-  local width=24 filled=0 empty bar pct el_clock tot_clock eta
+  local width=48 filled=0 empty bar pct el_clock tot_clock eta
   if [[ -n "$frac" ]]; then
     pct="$(awk -v f="$frac" 'BEGIN { p=int(f*100+0.5); if (p>100) p=100; if (p<0) p=0; printf "%3d", p }')"
     filled="$(awk -v f="$frac" -v w="$width" 'BEGIN { n=int(f*w+0.5); if (n>w) n=w; if (n<0) n=0; printf "%d", n }')"
