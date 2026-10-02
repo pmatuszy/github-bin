@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261002.134300 - end of run summary: files, durations, processing, and wait
 # v. 20261002.114100 - status times are in brackets; the keyframe file name is on its own line
 # v. 20261002.112900 - output name includes the date and time
 # v. 20261002.104400 - --speed and --speedup are the same; the printed command uses --speedup
@@ -28,6 +29,7 @@
 # v. 20260930.221500 - file prompts: one key, no Enter
 # v. 20260930.220400 - faster viewing copy of a merged video (2, 5, 10, 20, …)
 
+# 2026.10.02 - v. 0.29 - end of run summary: files, durations, processing, and wait
 # 2026.10.02 - v. 0.28 - status times are in brackets; the keyframe file name is on its own line
 # 2026.10.02 - v. 0.27 - every output is stem_xN_YYYYMMDD-HHMMSS.mp4
 # 2026.10.02 - v. 0.26 - --speed and --speedup are the same option; the printed command uses --speedup
@@ -140,6 +142,138 @@ EOF
 
 tl_ts() {
   date '+[ %Y.%m.%d %H:%M:%S ]'
+}
+
+tl_time_now_ns() {
+  date +%s.%N
+}
+
+# Wall-clock span for the summary. Hundredths of a second, or 0s.
+tl_format_elapsed() {
+  awk -v s="${1:-0}" 'BEGIN {
+    if (s < 0) s = 0
+    if (s < 0.005) { printf "0s"; exit }
+    h = int(s / 3600)
+    m = int((s - h * 3600) / 60)
+    x = s - h * 3600 - m * 60
+    if (h > 0) printf "%dh %02dm %05.2fs", h, m, x
+    else if (m > 0) printf "%dm %05.2fs", m, x
+    else printf "%.2fs", x
+  }'
+}
+
+tl_format_wall_clock() {
+  local ns="$1"
+  date -d "@${ns%.*}" '+%Y.%m.%d %H:%M:%S' 2>/dev/null \
+    || date '+%Y.%m.%d %H:%M:%S'
+}
+
+tl_summary_kv() {
+  printf '%-*s  %s\n' 22 "${1}:" "$2"
+}
+
+tl_summary_add() {
+  TL_SUM_SRC+=("$1")
+  TL_SUM_IN_DUR+=("$2")
+  TL_SUM_OUT+=("$3")
+  TL_SUM_OUT_DUR+=("$4")
+  TL_SUM_PROC+=("$5")
+}
+
+tl_summary_note_skip() {
+  local src="$1" dur=""
+  dur="$(tl_ffprobe_duration "$src" || true)"
+  tl_summary_add "$src" "$dur" "" "" "0"
+}
+
+# Keyframe read, picture scan, and encode. An encode slice also fills TL_FILE_PROC.
+tl_processing_begin() {
+  TL_SLICE_IS_ENCODE=0
+  TL_SLICE_START="$(tl_time_now_ns)"
+  TL_SLICE_OPEN=1
+}
+
+tl_encode_slice_begin() {
+  tl_processing_begin
+  TL_SLICE_IS_ENCODE=1
+}
+
+tl_processing_end() {
+  local now delta
+  (( ${TL_SLICE_OPEN:-0} )) || return 0
+  TL_SLICE_OPEN=0
+  now="$(tl_time_now_ns)"
+  delta="$(awk -v a="${TL_SLICE_START:-0}" -v b="$now" 'BEGIN { d = b - a; if (d < 0) d = 0; printf "%.6f", d }')"
+  TL_PROCESSING_SEC="$(awk -v a="${TL_PROCESSING_SEC:-0}" -v d="$delta" 'BEGIN { printf "%.6f", a + d }')"
+  if (( ${TL_SLICE_IS_ENCODE:-0} )); then
+    TL_FILE_PROC="$(awk -v a="${TL_FILE_PROC:-0}" -v d="$delta" 'BEGIN { printf "%.6f", a + d }')"
+    TL_SLICE_IS_ENCODE=0
+  fi
+}
+
+tl_summary_flush_open_encode() {
+  (( ${TL_ENCODE_OPEN:-0} )) || return 0
+  (( ${TL_ENCODE_RECORDED:-0} )) && return 0
+  tl_summary_add "${TL_ENCODE_SRC:-}" "${TL_ENCODE_IN_DUR:-}" "" "" "${TL_FILE_PROC:-0}"
+  TL_ENCODE_RECORDED=1
+  TL_ENCODE_OPEN=0
+}
+
+tl_print_run_summary() {
+  local i count end_ns total_sec wait_sec
+  echo
+  echo "--- Run summary ---"
+  tl_summary_kv "Started" "$(tl_format_wall_clock "${TL_SCRIPT_START_NS:-}")"
+  tl_summary_kv "Finished" "$(date '+%Y.%m.%d %H:%M:%S')"
+  count=${#TL_SUM_SRC[@]}
+  for (( i = 0; i < count; i++ )); do
+    (( i > 0 )) && echo
+    echo "Input:"
+    echo "${TL_SUM_SRC[$i]##*/}"
+    if [[ -n "${TL_SUM_IN_DUR[$i]}" ]]; then
+      tl_summary_kv "Input duration" "$(tl_format_seconds "${TL_SUM_IN_DUR[$i]}")"
+    fi
+    if [[ -n "${TL_SUM_OUT[$i]}" ]]; then
+      echo "Output:"
+      echo "${TL_SUM_OUT[$i]##*/}"
+      if [[ -n "${TL_SUM_OUT_DUR[$i]}" ]]; then
+        tl_summary_kv "Output duration" "$(tl_format_seconds "${TL_SUM_OUT_DUR[$i]}")"
+      fi
+    else
+      tl_summary_kv "Output" "not written"
+    fi
+    tl_summary_kv "Process this file" "$(tl_format_elapsed "${TL_SUM_PROC[$i]}")  (encode)"
+  done
+  end_ns="$(tl_time_now_ns)"
+  total_sec="$(awk -v s0="${TL_SCRIPT_START_NS:-0}" -v s1="$end_ns" 'BEGIN { printf "%.6f", s1 - s0 }')"
+  wait_sec="$(awk -v t="$total_sec" -v p="${TL_PROCESSING_SEC:-0}" 'BEGIN { w = t - p; if (w < 0) w = 0; printf "%.6f", w }')"
+  tl_summary_kv "Total wall time" "$(tl_format_elapsed "$total_sec")"
+  tl_summary_kv "Processing time" "$(tl_format_elapsed "${TL_PROCESSING_SEC:-0}")  (keyframes, picture scan, encode)"
+  tl_summary_kv "Other/wait time" "$(tl_format_elapsed "$wait_sec")  (prompts, startup, overhead)"
+  if [[ "${TL_STOPPED:-no}" == yes ]]; then
+    tl_summary_kv "Stopped by user" "yes"
+  fi
+  echo
+}
+
+tl_ctrl_c() {
+  TL_STOPPED=yes
+  ctrl_c
+}
+
+tl_on_exit() {
+  tl_processing_end
+  tl_summary_flush_open_encode
+  tl_cleanup_partial
+  if (( ${TL_SUMMARY:-0} )) && (( ! ${TL_SUMMARY_DONE:-0} )); then
+    TL_SUMMARY_DONE=1
+    tl_print_run_summary
+  fi
+  if (( ${TL_SUMMARY:-0} )) && (( ! ${TL_FOOTER_DONE:-0} )); then
+    TL_FOOTER_DONE=1
+    # shellcheck disable=SC1091
+    . /root/bin/_script_footer.sh
+  fi
 }
 
 tl_is_speed() {
@@ -701,6 +835,7 @@ tl_run_ffmpeg() {
   if [[ -n "${TL_OUT_T:-}" ]]; then
     enc_args+=(-t "$TL_OUT_T")
   fi
+  tl_encode_slice_begin
   if [[ "$TL_DISPLAY" == verbose ]]; then
     ffmpeg -y -hide_banner -loglevel error -stats "${enc_args[@]}" "$partial"
     rc=$?
@@ -712,6 +847,7 @@ tl_run_ffmpeg() {
     ffmpeg -y -hide_banner -loglevel error -nostats "${enc_args[@]}" "$partial"
     rc=$?
   fi
+  tl_processing_end
   if (( rc != 0 )) || [[ ! -s "$partial" ]]; then
     rm -f -- "$partial"
     TL_PARTIAL=""
@@ -736,11 +872,22 @@ tl_encode_one() {
   else
     dest="$(tl_output_path "$src" "$speed")"
   fi
+  TL_ENCODE_OPEN=1
+  TL_ENCODE_RECORDED=0
+  TL_ENCODE_SRC="$src"
+  TL_ENCODE_IN_DUR=""
+  TL_FILE_PROC=0
   if [[ -e "$dest" && "$redo" -eq 0 ]]; then
     echo "$(tl_ts) Already exists, skipping: ${dest}"
+    dur="$(tl_ffprobe_duration "$src" || true)"
+    out_dur="$(tl_ffprobe_duration "$dest" || true)"
+    tl_summary_add "$src" "$dur" "$dest" "$out_dur" "0"
+    TL_ENCODE_RECORDED=1
+    TL_ENCODE_OPEN=0
     return 0
   fi
   dur="$(tl_ffprobe_duration "$src" || true)"
+  TL_ENCODE_IN_DUR="$dur"
   echo
   echo "$(tl_ts) Source: ${src}"
   if [[ -n "$dur" ]]; then
@@ -748,7 +895,12 @@ tl_encode_one() {
     echo "$(tl_ts) Duration: $(tl_format_seconds "$dur") → $(tl_format_seconds "$out_dur") at ${speed}×"
   fi
   if (( ${TL_TEST:-0} )); then
-    tl_set_test_window "$dur" "$speed" || return 1
+    if ! tl_set_test_window "$dur" "$speed"; then
+      tl_summary_add "$src" "$dur" "" "" "${TL_FILE_PROC:-0}"
+      TL_ENCODE_RECORDED=1
+      TL_ENCODE_OPEN=0
+      return 1
+    fi
     out_dur="$TL_TEST_OUT_DUR"
   else
     TL_SS=""
@@ -767,6 +919,9 @@ tl_encode_one() {
   if (( ${#kinds[@]} == 0 )); then
     echo "$(tl_ts) No usable video encoder for '${encoder_want}'." >&2
     tl_note_encoder_probe_failure
+    tl_summary_add "$src" "$dur" "" "" "${TL_FILE_PROC:-0}"
+    TL_ENCODE_RECORDED=1
+    TL_ENCODE_OPEN=0
     return 1
   fi
   gop_fps="$(tl_gop_fps "$src")"
@@ -785,11 +940,17 @@ tl_encode_one() {
     echo "$(tl_ts) Output encoder: ${label}"
     if tl_run_ffmpeg "$src" "$dest" "$speed" "$out_dur"; then
       echo "$(tl_ts) Done: ${dest}"
+      tl_summary_add "$src" "$dur" "$dest" "$out_dur" "${TL_FILE_PROC:-0}"
+      TL_ENCODE_RECORDED=1
+      TL_ENCODE_OPEN=0
       return 0
     fi
     label_prev="$label"
   done
   echo "$(tl_ts) Encode failed: ${src}" >&2
+  tl_summary_add "$src" "$dur" "" "" "${TL_FILE_PROC:-0}"
+  TL_ENCODE_RECORDED=1
+  TL_ENCODE_OPEN=0
   return 1
 }
 
@@ -848,9 +1009,8 @@ tl_read_key() {
 
 tl_quit_script() {
   echo "$(tl_ts) Quit."
+  TL_STOPPED=yes
   return_code=0
-  # shellcheck disable=SC1091
-  . /root/bin/_script_footer.sh
   exit 0
 }
 
@@ -1463,6 +1623,7 @@ tl_measure_keyframe_gap() {
     probe+=(-read_intervals "%+${limit_sec}")
   fi
   probe+=(-- "$src")
+  tl_processing_begin
   gap_line="$("${probe[@]}" 2>/dev/null | awk -F, '
     $1 ~ /^[0-9]/ && $2 ~ /K/ {
       if (have) {
@@ -1483,6 +1644,7 @@ tl_measure_keyframe_gap() {
       other = n - best_n
       printf "%d %s %d %d\n", kf, best, best_n, other
     }' || true)"
+  tl_processing_end
   if [[ "$gap_line" == none || -z "$gap_line" ]]; then
     echo "$(tl_ts) Keyframes: none found."
     return 1
@@ -1726,6 +1888,7 @@ tl_scan_source() {
   fi
   fps="$(tl_source_fps "$src")"
   echo "$(tl_ts) Pictures: decoding $(tl_format_seconds "$total_sec") from the start, to check frame timing..."
+  tl_processing_begin
   probe=(ffprobe -v error -select_streams v:0 -show_entries frame=duration_time -of csv=p=0 -read_intervals "%+${sample_sec}" -- "$src")
   if command -v stdbuf >/dev/null 2>&1; then
     probe=(stdbuf -oL "${probe[@]}")
@@ -1763,6 +1926,7 @@ tl_scan_source() {
       fflush()
       printf "done %d %s %d\n", n, best, best_n
     }')
+  tl_processing_end
   if (( script_is_run_interactively )); then
     echo
   fi
@@ -2067,6 +2231,8 @@ tl_require_encoder() {
 }
 
 # --- parse options (header sourced first so -v can call print_version_banner) ---
+# Started before the header so the startup delay counts as wait time.
+TL_SCRIPT_START_NS="$(LC_ALL=C date +%s.%N)"
 # shellcheck disable=SC1091
 . /root/bin/_script_header.sh
 
@@ -2113,8 +2279,27 @@ TL_TEST_OUT_DUR=""
 TL_SS=""
 TL_OUT_T=""
 POSITIONALS=()
+TL_PROCESSING_SEC=0
+TL_SLICE_OPEN=0
+TL_SLICE_IS_ENCODE=0
+TL_SLICE_START=""
+TL_FILE_PROC=0
+TL_ENCODE_OPEN=0
+TL_ENCODE_RECORDED=0
+TL_ENCODE_SRC=""
+TL_ENCODE_IN_DUR=""
+TL_SUMMARY=0
+TL_SUMMARY_DONE=0
+TL_FOOTER_DONE=0
+TL_STOPPED=no
+TL_SUM_SRC=()
+TL_SUM_IN_DUR=()
+TL_SUM_OUT=()
+TL_SUM_OUT_DUR=()
+TL_SUM_PROC=()
 
-trap tl_cleanup_partial EXIT
+trap tl_on_exit EXIT
+trap tl_ctrl_c INT
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -2391,20 +2576,19 @@ fi
 
 if (( ${#TL_INPUTS[@]} == 0 )); then
   echo "$(tl_ts) No input videos."
+  TL_SUMMARY=1
   return_code=0
-  # shellcheck disable=SC1091
-  . /root/bin/_script_footer.sh
   exit 0
 fi
+TL_SUMMARY=1
 
 tl_ask_speed() {
   tl_prompt_speed
   case $? in
     0) ;;
     2)
+      TL_STOPPED=yes
       return_code=0
-      # shellcheck disable=SC1091
-      . /root/bin/_script_footer.sh
       exit 0
       ;;
     *) exit 1 ;;
@@ -2442,9 +2626,8 @@ if (( script_is_run_interactively )) && (( ! DO_YES )); then
         ;;
       q)
         echo "$(tl_ts) Quit."
+        TL_STOPPED=yes
         return_code=0
-        # shellcheck disable=SC1091
-        . /root/bin/_script_footer.sh
         exit 0
         ;;
       *)
@@ -2486,6 +2669,7 @@ for tl_src in "${TL_INPUTS[@]}"; do
       tl_encode_one "$tl_src" "$SPEED" 1 "$ENCODER" || return_code=1
       ;;
     skip)
+      tl_summary_note_skip "$tl_src"
       if (( ${TL_SKIP_EXPLAINED:-0} )); then
         TL_SKIP_EXPLAINED=0
       else
@@ -2495,6 +2679,7 @@ for tl_src in "${TL_INPUTS[@]}"; do
     skip_all)
       SKIP_ALL=1
       echo "$(tl_ts) Skipping remaining files."
+      tl_summary_note_skip "$tl_src"
       ;;
     encode_all)
       ENCODE_ALL=1
@@ -2503,11 +2688,11 @@ for tl_src in "${TL_INPUTS[@]}"; do
       ;;
     quit)
       echo "$(tl_ts) Quit."
+      TL_STOPPED=yes
+      tl_summary_note_skip "$tl_src"
       break
       ;;
   esac
 done
 
-# shellcheck disable=SC1091
-. /root/bin/_script_footer.sh
 exit "$return_code"
