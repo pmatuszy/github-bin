@@ -1,4 +1,6 @@
 #!/bin/bash
+# v. 20261002.075200 - advanced encoding menu: picture, keyframes, scan, test clip
+# v. 20261002.073700 - output encoder line says GPU hardware or CPU only
 # v. 20261002.065500 - progress bar is 48 characters wide
 # v. 20261001.230600 - progress bar shows time left and the arrival clock
 # v. 20261001.221000 - ffmpeg probe shows the real error, not "version unknown"
@@ -10,6 +12,8 @@
 # v. 20260930.221500 - file prompts: one key, no Enter
 # v. 20260930.220400 - faster viewing copy of a merged video (2, 5, 10, 20, …)
 
+# 2026.10.02 - v. 0.12 - advanced encoding menu, default no: steady or blended picture, keyframe spacing, a source scan, and a short test clip
+# 2026.10.02 - v. 0.11 - output encoder line says GPU hardware or CPU only
 # 2026.10.02 - v. 0.10 - progress bar is twice as wide (48 characters)
 # 2026.10.01 - v. 0.9 - progress bar adds time left and the local arrival clock (date only when it is not today)
 # 2026.10.01 - v. 0.8 - ffmpeg probe shows the real error, not "version unknown"
@@ -56,6 +60,11 @@ Options:
   --verbose            Show ffmpeg frame stats instead of the progress bar.
                        -y otherwise keeps the progress bar.
 
+An interactive run asks for advanced encoding after the speed. Enter means no:
+the current picture (every Nth frame at 25 fps), the whole file. Yes asks for
+a steady or blended picture, keyframe spacing, an optional source scan, and
+an optional short test clip. -y skips that menu.
+
 Environment:
   PGM_TIMELAPSE_SPEED     Same as --speed.
   PGM_TIMELAPSE_ENCODER   Same as --encoder (auto, nvenc, x264, x265).
@@ -81,7 +90,7 @@ tl_is_speed() {
 
 tl_is_timelapse_output() {
   local base="${1##*/}"
-  [[ "$base" =~ _x[0-9]+\.[mM][pP]4$ ]]
+  [[ "$base" =~ _x[0-9]+(_test-[0-9]+m-at[0-9]+)?\.[mM][pP]4$ ]]
 }
 
 tl_is_concat_output() {
@@ -90,12 +99,18 @@ tl_is_concat_output() {
 }
 
 # Output path for this speed: <stem>_xN.mp4 next to the source.
+# A test clip is <stem>_xN_test-1m-at20.mp4 so it does not replace the full file.
 tl_output_path() {
   local src="$1" speed="$2" dir stem
   dir="$(dirname -- "$src")"
   stem="$(basename -- "$src")"
   stem="${stem%.*}"
-  printf '%s/%s_x%s.mp4\n' "$dir" "$stem" "$speed"
+  if (( ${TL_TEST:-0} )); then
+    printf '%s/%s_x%s_test-%sm-at%s.mp4\n' \
+      "$dir" "$stem" "$speed" "$TL_TEST_MINUTES" "$TL_TEST_PERCENT"
+  else
+    printf '%s/%s_x%s.mp4\n' "$dir" "$stem" "$speed"
+  fi
 }
 
 tl_ffprobe_duration() {
@@ -274,10 +289,88 @@ tl_ffmpeg_progress() {
   return "$rc"
 }
 
-# Keep 1 frame out of N, then play those frames at the source frame rate.
+# Plain keeps every Nth frame at the source rate.
+# Steady and soft speed the timeline up and land on TL_OUT_FPS.
+# Soft averages TL_BLEND_BEFORE frames before the kept frame and
+# TL_BLEND_AFTER frames after it, then shifts the timestamp back
+# onto that center frame.
 tl_video_filter() {
   local speed="$1"
-  printf "select='not(mod(n\\,%s))',setpts=N/FRAME_RATE/TB,format=yuv420p" "$speed"
+  local fps blend
+  case "${TL_PICTURE:-plain}" in
+    steady)
+      fps="${TL_OUT_FPS:-30}"
+      printf 'setpts=(PTS-STARTPTS)/%s,fps=%s,format=yuv420p' "$speed" "$fps"
+      ;;
+    soft)
+      fps="${TL_OUT_FPS:-30}"
+      blend=$(( ${TL_BLEND_BEFORE:-1} + ${TL_BLEND_AFTER:-1} + 1 ))
+      if (( blend <= 1 )); then
+        printf 'setpts=(PTS-STARTPTS)/%s,fps=%s,format=yuv420p' "$speed" "$fps"
+        return 0
+      fi
+      printf 'tmix=frames=%s,setpts=(PTS-STARTPTS-%s/(FRAME_RATE*TB))/%s,fps=%s,format=yuv420p' \
+        "$blend" "${TL_BLEND_AFTER:-1}" "$speed" "$fps"
+      ;;
+    *)
+      printf "select='not(mod(n\\,%s))',setpts=N/FRAME_RATE/TB,format=yuv420p" "$speed"
+      ;;
+  esac
+}
+
+tl_source_fps() {
+  local f="$1" rate
+  rate="$(ffprobe -v error -select_streams v:0 -show_entries stream=avg_frame_rate -of csv=p=0 -- "$f" 2>/dev/null | awk 'NR==1 { print; exit }' || true)"
+  rate="${rate//$'\r'/}"
+  awk -v r="$rate" 'BEGIN {
+    if (r ~ /^[0-9]+\/[0-9]+$/) {
+      split(r, a, "/")
+      if (a[2] + 0 > 0) { printf "%.6f", a[1] / a[2]; exit }
+    }
+    if (r + 0 > 0) { printf "%.6f", r + 0; exit }
+    printf "25"
+  }'
+}
+
+# Output frame rate used for a "one second" keyframe interval.
+tl_gop_fps() {
+  local src="$1"
+  if [[ "${TL_PICTURE:-plain}" == plain ]]; then
+    tl_source_fps "$src"
+  else
+    printf '%s\n' "${TL_OUT_FPS:-30}"
+  fi
+}
+
+# Add a fixed keyframe interval when the menu asked for one.
+tl_append_gop_args() {
+  local kind="$1" fps="$2" n=""
+  case "${TL_GOP_MODE:-default}" in
+    seconds)
+      n="$(awk -v f="$fps" -v s="$TL_GOP_SECONDS" 'BEGIN {
+        n = int(f * s + 0.5)
+        if (n < 1) n = 1
+        printf "%d", n
+      }')"
+      ;;
+    frames)
+      n="$TL_GOP_FRAMES"
+      ;;
+    *)
+      return 0
+      ;;
+  esac
+  case "$kind" in
+    nvenc|h264nv)
+      TL_ENC_ARGS+=(-g "$n" -forced-idr 1)
+      ;;
+    x265)
+      TL_ENC_ARGS+=(-x265-params "keyint=${n}:min-keyint=${n}:scenecut=0")
+      ;;
+    x264)
+      TL_ENC_ARGS+=(-g "$n" -keyint_min "$n" -sc_threshold 0)
+      ;;
+  esac
 }
 
 tl_encoder_available() {
@@ -426,6 +519,14 @@ tl_encoder_label() {
   esac
 }
 
+# nvenc runs on the GPU. libx264 and libx265 run on the CPU.
+tl_encoder_where() {
+  case "$1" in
+    nvenc|h264nv) printf '%s\n' "GPU hardware" ;;
+    x265|x264) printf '%s\n' "CPU only" ;;
+  esac
+}
+
 # One kind per line, in the order to try. Returns 1 when none of them exist.
 tl_encoder_candidates() {
   local want="$1" codec="${2:-}" family name kind printed=0
@@ -471,7 +572,11 @@ tl_run_ffmpeg() {
   vfilter="$(tl_video_filter "$speed")"
   partial="${dest}.partial.$$.mp4"
   TL_PARTIAL="$partial"
-  enc_args=(-i "$src")
+  enc_args=()
+  if [[ -n "${TL_SS:-}" ]]; then
+    enc_args+=(-ss "$TL_SS")
+  fi
+  enc_args+=(-i "$src")
   if (( keep_audio )); then
     enc_args+=(
       -filter_complex "[0:v]${vfilter}[v];[0:a]atempo=${speed}.0[a]"
@@ -487,6 +592,9 @@ tl_run_ffmpeg() {
     )
   fi
   enc_args+=(-movflags +faststart)
+  if [[ -n "${TL_OUT_T:-}" ]]; then
+    enc_args+=(-t "$TL_OUT_T")
+  fi
   if [[ "$TL_DISPLAY" == verbose ]]; then
     ffmpeg -y -hide_banner -loglevel error -stats "${enc_args[@]}" "$partial"
     rc=$?
@@ -514,7 +622,7 @@ tl_run_ffmpeg() {
 
 tl_encode_one() {
   local src="$1" speed="$2" redo="$3" encoder_want="$4"
-  local dest dur out_dur="" kind keep_audio=0 label label_prev="" src_codec i
+  local dest dur out_dur="" kind keep_audio=0 label label_prev="" src_codec i where gop_fps
   local -a kinds=()
   dest="$(tl_output_path "$src" "$speed")"
   if [[ -e "$dest" && "$redo" -eq 0 ]]; then
@@ -531,12 +639,20 @@ tl_encode_one() {
     out_dur="$(awk -v d="$dur" -v s="$speed" 'BEGIN{printf "%.3f", d/s}')"
     echo "$(tl_ts) Duration: $(tl_format_seconds "$dur") → $(tl_format_seconds "$out_dur") at ${speed}×"
   fi
+  if (( ${TL_TEST:-0} )); then
+    tl_set_test_window "$dur" "$speed" || return 1
+    out_dur="$TL_TEST_OUT_DUR"
+  else
+    TL_SS=""
+    TL_OUT_T=""
+  fi
   if (( keep_audio )); then
     echo "$(tl_ts) Audio: kept, played at ${speed}×"
   else
     echo "$(tl_ts) Audio: omitted"
   fi
   echo "$(tl_ts) Output: ${dest}"
+  echo "$(tl_ts) Picture: $(tl_picture_summary)"
   src_codec="$(tl_source_video_codec "$src")"
   if [[ -n "$src_codec" ]]; then
     echo "$(tl_ts) Source video codec: ${src_codec}"
@@ -549,10 +665,16 @@ tl_encode_one() {
     tl_note_encoder_probe_failure
     return 1
   fi
+  gop_fps="$(tl_gop_fps "$src")"
   for i in "${!kinds[@]}"; do
     kind="${kinds[$i]}"
     tl_set_encoder_args "$kind" || return 1
+    tl_append_gop_args "$kind" "$gop_fps"
     label="$(tl_encoder_label "$kind")"
+    where="$(tl_encoder_where "$kind")"
+    if [[ -n "$where" ]]; then
+      label="${label} (${where})"
+    fi
     if (( i > 0 )); then
       echo "$(tl_ts) ${label_prev} failed; retrying with ${label}."
     fi
@@ -699,6 +821,495 @@ tl_prompt_file_action() {
   esac
 }
 
+tl_choice() {
+  local c="${1,,}"
+  c="${c//$'\r'/}"
+  c="${c//$'\n'/}"
+  printf '%s\n' "$c"
+}
+
+tl_read_line() {
+  local prompt="$1" default="$2" answer=""
+  printf '%s' "$prompt"
+  IFS= read -r answer || answer=""
+  if [[ -z "$answer" ]]; then
+    REPLY="$default"
+  else
+    REPLY="$answer"
+  fi
+}
+
+tl_minutes_word() {
+  if [[ "$1" == "1" ]]; then
+    printf '1 minute'
+  else
+    printf '%s minutes' "$1"
+  fi
+}
+
+tl_picture_summary() {
+  case "${TL_PICTURE:-plain}" in
+    steady)
+      printf 'steady %s fps, %s' "${TL_OUT_FPS:-30}" "$(tl_gop_summary)"
+      ;;
+    soft)
+      printf 'soft %s before, %s after, %s fps, %s' \
+        "${TL_BLEND_BEFORE:-1}" "${TL_BLEND_AFTER:-1}" "${TL_OUT_FPS:-30}" "$(tl_gop_summary)"
+      ;;
+    *)
+      printf 'plain, %s' "$(tl_gop_summary)"
+      ;;
+  esac
+}
+
+tl_gop_summary() {
+  case "${TL_GOP_MODE:-default}" in
+    seconds)
+      printf 'keyframe every %ss' "$TL_GOP_SECONDS"
+      ;;
+    frames)
+      printf 'keyframe every %s frames' "$TL_GOP_FRAMES"
+      ;;
+    *)
+      printf 'encoder keyframe default'
+      ;;
+  esac
+}
+
+# Place a test clip. Sets TL_SS, TL_OUT_T, and TL_TEST_OUT_DUR.
+tl_set_test_window() {
+  local dur="$1" speed="$2"
+  local start span_src span_out remain
+  if [[ -z "$dur" ]]; then
+    echo "$(tl_ts) Test clip needs a duration, and this file has none." >&2
+    return 1
+  fi
+  start="$(awk -v d="$dur" -v p="$TL_TEST_PERCENT" 'BEGIN { printf "%.3f", d * p / 100 }')"
+  span_out=$(( TL_TEST_MINUTES * 60 ))
+  span_src="$(awk -v o="$span_out" -v s="$speed" 'BEGIN { printf "%.3f", o * s }')"
+  remain="$(awk -v d="$dur" -v a="$start" 'BEGIN { printf "%.3f", d - a }')"
+  if ! awk -v r="$remain" 'BEGIN { exit !(r + 0 > 1) }'; then
+    echo "$(tl_ts) Test clip starts past the end of the file." >&2
+    return 1
+  fi
+  if awk -v a="$span_src" -v r="$remain" 'BEGIN { exit !(a > r) }'; then
+    span_src="$remain"
+    span_out="$(awk -v r="$remain" -v s="$speed" 'BEGIN { printf "%.3f", r / s }')"
+    echo "$(tl_ts) Test clip shortened to the time left in the file."
+  fi
+  if awk -v a="$start" 'BEGIN { exit !(a >= 0.05) }'; then
+    TL_SS="$start"
+  else
+    TL_SS=""
+  fi
+  TL_OUT_T="$span_out"
+  TL_TEST_OUT_DUR="$span_out"
+  if (( TL_TEST_PERCENT == 0 )); then
+    echo "$(tl_ts) Test clip: $(tl_minutes_word "$TL_TEST_MINUTES") of output from the beginning (reading $(tl_format_seconds "$span_src"))."
+  else
+    echo "$(tl_ts) Test clip: $(tl_minutes_word "$TL_TEST_MINUTES") of output from ${TL_TEST_PERCENT}% (source $(tl_format_clock "$start"), reading $(tl_format_seconds "$span_src"))."
+  fi
+}
+
+tl_prompt_blend_count() {
+  local side="$1" dest="$2" answer=""
+  printf 'Frames %s the kept frame [1]: ' "$side"
+  IFS= read -r answer || answer=""
+  if [[ -z "$answer" ]]; then
+    answer=1
+  fi
+  if [[ ! "$answer" =~ ^[0-9]+$ ]] || (( answer > 8 )); then
+    echo "$(tl_ts) Invalid blend count: ${answer} (use 0 to 8). Using 1." >&2
+    answer=1
+  fi
+  printf -v "$dest" '%s' "$answer"
+}
+
+tl_prompt_out_fps() {
+  local choice=""
+  echo
+  echo "Output frames per second?"
+  echo "  [3] 30 fps (default)"
+  echo "      On a 60 Hz screen each picture stays for two refreshes,"
+  echo "      so the fast-slow pulse goes away."
+  echo "  [6] 60 fps"
+  echo "      One refresh per picture on a 60 Hz screen."
+  echo "  [2] 25 fps"
+  echo "      The same rate as this dashcam."
+  tl_read_key "Frames per second [3/6/2]: " 3
+  choice="$(tl_choice "$REPLY")"
+  case "$choice" in
+    3) TL_OUT_FPS=30 ;;
+    6) TL_OUT_FPS=60 ;;
+    2) TL_OUT_FPS=25 ;;
+    *)
+      echo "$(tl_ts) Unknown choice: ${REPLY}; using 30 fps."
+      TL_OUT_FPS=30
+      ;;
+  esac
+}
+
+tl_prompt_picture() {
+  local choice=""
+  echo
+  echo "Picture [P/t/b]"
+  echo "  [P] Plain (default)"
+  echo "      Keep one frame and drop the next ones, then play the kept"
+  echo "      frames at 25 fps, the same rate as this dashcam."
+  echo "      Enter leaves the encode as it is today."
+  echo "  [t] Steady"
+  echo "      Speed the timeline up, then lay the pictures on a chosen"
+  echo "      frame rate (setpts=PTS/N,fps=…). 30 fps sits evenly on a"
+  echo "      60 Hz screen."
+  echo "  [b] Soft"
+  echo "      Average a few frames before and after each kept picture,"
+  echo "      then use that same steady frame rate. The road and the"
+  echo "      camera shake smear a little instead of jumping."
+  tl_read_key "Picture [P/t/b]: " p
+  choice="$(tl_choice "$REPLY")"
+  case "$choice" in
+    p) TL_PICTURE=plain ;;
+    t) TL_PICTURE=steady ;;
+    b) TL_PICTURE=soft ;;
+    *)
+      echo "$(tl_ts) Unknown choice: ${REPLY}; using plain."
+      TL_PICTURE=plain
+      ;;
+  esac
+  if [[ "$TL_PICTURE" == soft ]]; then
+    echo
+    echo "How many neighboring frames should be averaged?"
+    echo "  Enter uses 1 before and 1 after (0.12 seconds at 25 fps)."
+    echo "  If the road still jumps, try 2 and 2, then 4 and 4."
+    echo "  Each side can be 0 to 8."
+    TL_BLEND_BEFORE=1
+    TL_BLEND_AFTER=1
+    tl_prompt_blend_count before TL_BLEND_BEFORE
+    tl_prompt_blend_count after TL_BLEND_AFTER
+    if (( TL_BLEND_BEFORE == 0 && TL_BLEND_AFTER == 0 )); then
+      echo "$(tl_ts) No frames to blend. Using steady instead."
+      TL_PICTURE=steady
+    fi
+  fi
+  if [[ "$TL_PICTURE" != plain ]]; then
+    tl_prompt_out_fps
+  fi
+}
+
+tl_prompt_encoder_menu() {
+  local choice=""
+  if (( ENCODER_FROM_CLI )); then
+    return 0
+  fi
+  echo
+  echo "Encoder [A/n/4/5]"
+  echo "  [A] Auto (default)"
+  echo "      Match the source codec. HEVC tries hevc_nvenc on the GPU,"
+  echo "      then libx265 on the CPU. H.264 tries h264_nvenc, then libx264."
+  echo "  [n] hevc_nvenc"
+  echo "      GPU hardware. One encoder, with no CPU fallback."
+  echo "  [4] libx264"
+  echo "      CPU only. Writes H.264."
+  echo "  [5] libx265"
+  echo "      CPU only. Writes HEVC without the GPU."
+  tl_read_key "Encoder [A/n/4/5]: " a
+  choice="$(tl_choice "$REPLY")"
+  case "$choice" in
+    a) ENCODER=auto ;;
+    n) ENCODER=nvenc ;;
+    4) ENCODER=x264 ;;
+    5) ENCODER=x265 ;;
+    *)
+      echo "$(tl_ts) Unknown choice: ${REPLY}; using auto."
+      ENCODER=auto
+      ;;
+  esac
+}
+
+tl_prompt_gop() {
+  local choice="" answer=""
+  echo
+  echo "Keyframe spacing [D/s/c/f]"
+  echo "  [D] Encoder default"
+  echo "      Leave the interval to hevc_nvenc or libx265. That is often"
+  echo "      about 10 seconds. Fine when you watch straight through."
+  echo "      Enter keeps this."
+  echo "  [s] Same as the source"
+  echo "      This dashcam places a keyframe every 1 second. The output"
+  echo "      gets that same one second. At 30 fps that is 30 frames;"
+  echo "      at 25 fps it is 25 frames."
+  echo "  [c] Custom seconds"
+  echo "      Type how often, in seconds of the output, a keyframe is written."
+  echo "  [f] Custom frames"
+  echo "      Type a frame count of the output, not of the dashcam."
+  tl_read_key "Keyframe spacing [D/s/c/f]: " d
+  choice="$(tl_choice "$REPLY")"
+  case "$choice" in
+    d)
+      TL_GOP_MODE=default
+      ;;
+    s)
+      TL_GOP_MODE=seconds
+      TL_GOP_SECONDS=1
+      ;;
+    c)
+      tl_read_line "Seconds between keyframes [1]: " 1
+      answer="$REPLY"
+      if [[ "$answer" =~ ^[0-9]+$ ]] && (( answer >= 1 && answer <= 60 )); then
+        TL_GOP_MODE=seconds
+        TL_GOP_SECONDS="$answer"
+      else
+        echo "$(tl_ts) Invalid seconds: ${answer} (use 1 to 60). Using the encoder default."
+        TL_GOP_MODE=default
+      fi
+      ;;
+    f)
+      tl_read_line "Frames between keyframes [30]: " 30
+      answer="$REPLY"
+      if [[ "$answer" =~ ^[0-9]+$ ]] && (( answer >= 1 && answer <= 3000 )); then
+        TL_GOP_MODE=frames
+        TL_GOP_FRAMES="$answer"
+      else
+        echo "$(tl_ts) Invalid frame count: ${answer} (use 1 to 3000). Using the encoder default."
+        TL_GOP_MODE=default
+      fi
+      ;;
+    *)
+      echo "$(tl_ts) Unknown choice: ${REPLY}; using the encoder default."
+      TL_GOP_MODE=default
+      ;;
+  esac
+}
+
+# Whole-file keyframe gaps from packet headers, plus a decoded timing sample.
+tl_scan_source() {
+  local src="$1" minutes="$2" sample_sec gap_line frame_line
+  sample_sec=$(( minutes * 60 ))
+  echo
+  echo "$(tl_ts) Reading keyframe spacing for the whole file..."
+  gap_line="$(ffprobe -v error -select_streams v:0 -show_entries packet=pts_time,flags -of csv=p=0 -- "$src" 2>/dev/null | awk -F, '
+    $1 ~ /^[0-9]/ && $2 ~ /K/ {
+      if (have) {
+        d = $1 - prev
+        if (d >= 0.05) {
+          key = sprintf("%.3f", d)
+          count[key]++
+          n++
+          if (count[key] > best_n) { best_n = count[key]; best = key }
+        }
+      }
+      prev = $1
+      have = 1
+      kf++
+    }
+    END {
+      if (kf + 0 == 0) { print "none"; exit }
+      other = n - best_n
+      printf "%d %s %d %d\n", kf, best, best_n, other
+    }' || true)"
+  echo "$(tl_ts) Decoding the first $(tl_minutes_word "$minutes") to check frame timing..."
+  frame_line="$(ffprobe -v error -select_streams v:0 -show_entries frame=duration_time -of csv=p=0 -read_intervals "%+${sample_sec}" -- "$src" 2>/dev/null | awk '
+    $1 ~ /^[0-9]/ {
+      key = sprintf("%.3f", $1 + 0)
+      count[key]++
+      n++
+      if (count[key] > best_n) { best_n = count[key]; best = key }
+    }
+    END {
+      if (n + 0 == 0) { print "none"; exit }
+      printf "%d %s %d\n", n, best, best_n
+    }' || true)"
+  echo
+  echo "Scan of ${src##*/}"
+  TL_SCAN_GAP=""
+  if [[ "$gap_line" == none || -z "$gap_line" ]]; then
+    echo "  Keyframes: none found"
+  else
+    # shellcheck disable=SC2086
+    set -- $gap_line
+    echo "  Keyframes: $1 across the whole file"
+    echo "  Most gaps: ${2}s (${3})"
+    echo "  Other gaps: ${4} (a clip join is often shorter than the camera interval)"
+    TL_SCAN_GAP="$2"
+  fi
+  if [[ "$frame_line" == none || -z "$frame_line" ]]; then
+    echo "  Frame timing: no frames decoded"
+  else
+    # shellcheck disable=SC2086
+    set -- $frame_line
+    echo "  Frame timing, first $(tl_minutes_word "$minutes"): $1 frames, most of them ${2}s (${3})"
+  fi
+  if (( ${#TL_INPUTS[@]} > 1 )); then
+    echo "  Scanned the first file. The others are assumed to be the same camera."
+  fi
+}
+
+tl_apply_scan_suggestion() {
+  local choice="" gap_note="the encoder default (no keyframe gap was measured)"
+  local suggest_seconds=""
+  echo
+  if [[ -n "$TL_SCAN_GAP" ]]; then
+    suggest_seconds="$(awk -v g="$TL_SCAN_GAP" 'BEGIN {
+      if (g >= 0.95 && g <= 1.05) { printf "1"; exit }
+      n = int(g + 0.5)
+      if (n < 1) n = 1
+      printf "%d", n
+    }')"
+    gap_note="every ${suggest_seconds}s, like the source"
+  fi
+  if [[ "$TL_PICTURE" == soft ]]; then
+    echo "Suggestion: keep the blend, use ${TL_OUT_FPS:-30} fps, keyframe ${gap_note}."
+  else
+    echo "Suggestion: steady 30 fps, keyframe ${gap_note}."
+    echo "  30 fps is the rate that sits evenly on a 60 Hz screen."
+  fi
+  echo "  [N] Keep the choices you already made (default)"
+  echo "  [y] Apply this suggestion"
+  tl_read_key "Apply suggestion? [N/y]: " n
+  choice="$(tl_choice "$REPLY")"
+  if [[ "$choice" != y ]]; then
+    echo "$(tl_ts) Keeping the choices already made."
+    return 0
+  fi
+  if [[ "$TL_PICTURE" != soft ]]; then
+    TL_PICTURE=steady
+    TL_OUT_FPS=30
+  fi
+  if [[ -n "$suggest_seconds" ]]; then
+    TL_GOP_MODE=seconds
+    TL_GOP_SECONDS="$suggest_seconds"
+  fi
+  echo "$(tl_ts) Applied. Picture: $(tl_picture_summary)"
+}
+
+tl_prompt_scan() {
+  local choice=""
+  echo
+  echo "Scan the source before encoding? [N/y]"
+  echo "  [N] Skip the scan (default)"
+  echo "      Encode with the choices above."
+  echo "  [y] Read this file"
+  echo "      Keyframe spacing comes from the whole file, without decoding"
+  echo "      pictures. Frame timing is decoded for a piece at the start."
+  tl_read_key "Scan the source? [N/y]: " n
+  choice="$(tl_choice "$REPLY")"
+  if [[ "$choice" != y ]]; then
+    return 0
+  fi
+  echo
+  echo "How long a piece should be decoded? [2/5/t]"
+  echo "  [5] 5 minutes (default)"
+  echo "      Long enough to cross several dashcam clips."
+  echo "  [2] 2 minutes"
+  echo "      A shorter look. It may still be a single clip."
+  echo "  [t] 10 minutes"
+  echo "      A longer look. Decoding it takes a few minutes."
+  tl_read_key "Decode length [2/5/t]: " 5
+  choice="$(tl_choice "$REPLY")"
+  case "$choice" in
+    2) TL_SCAN_MINUTES=2 ;;
+    5) TL_SCAN_MINUTES=5 ;;
+    t) TL_SCAN_MINUTES=10 ;;
+    *)
+      echo "$(tl_ts) Unknown choice: ${REPLY}; using 5 minutes."
+      TL_SCAN_MINUTES=5
+      ;;
+  esac
+  tl_scan_source "${TL_INPUTS[0]}" "$TL_SCAN_MINUTES"
+  tl_apply_scan_suggestion
+}
+
+tl_prompt_test_clip() {
+  local choice=""
+  echo
+  echo "Test clip instead of the whole file? [N/y]"
+  echo "  [N] Whole file (default)"
+  echo "      Encode the full sped-up drive."
+  echo "  [y] A short piece of the result you will watch"
+  echo "      So you can judge the picture before waiting for the whole file."
+  tl_read_key "Test clip? [N/y]: " n
+  choice="$(tl_choice "$REPLY")"
+  if [[ "$choice" != y ]]; then
+    TL_TEST=0
+    return 0
+  fi
+  TL_TEST=1
+  echo
+  echo "How long should the result be? [1/2/5]"
+  echo "  [1] 1 minute of output (default)"
+  echo "      At 20× this reads 20 minutes of the dashcam."
+  echo "  [2] 2 minutes of output"
+  echo "  [5] 5 minutes of output"
+  tl_read_key "Clip length [1/2/5]: " 1
+  choice="$(tl_choice "$REPLY")"
+  case "$choice" in
+    1) TL_TEST_MINUTES=1 ;;
+    2) TL_TEST_MINUTES=2 ;;
+    5) TL_TEST_MINUTES=5 ;;
+    *)
+      echo "$(tl_ts) Unknown choice: ${REPLY}; using 1 minute."
+      TL_TEST_MINUTES=1
+      ;;
+  esac
+  echo
+  echo "Where should the clip start? [B/1/2/3/5/7/9]"
+  echo "  [B] Beginning (default)"
+  echo "  [1] 10%   [2] 20%   [3] 30%"
+  echo "  [5] 50%   [7] 70%   [9] 90%"
+  echo "      The percentage is of this file. The script prints the clock time."
+  tl_read_key "Start at [B/1/2/3/5/7/9]: " b
+  choice="$(tl_choice "$REPLY")"
+  case "$choice" in
+    b) TL_TEST_PERCENT=0 ;;
+    1) TL_TEST_PERCENT=10 ;;
+    2) TL_TEST_PERCENT=20 ;;
+    3) TL_TEST_PERCENT=30 ;;
+    5) TL_TEST_PERCENT=50 ;;
+    7) TL_TEST_PERCENT=70 ;;
+    9) TL_TEST_PERCENT=90 ;;
+    *)
+      echo "$(tl_ts) Unknown choice: ${REPLY}; starting at the beginning."
+      TL_TEST_PERCENT=0
+      ;;
+  esac
+}
+
+# Asked once. Enter keeps today's encode: every Nth frame, the whole file.
+tl_prompt_advanced() {
+  local choice=""
+  TL_PICTURE=plain
+  TL_BLEND_BEFORE=1
+  TL_BLEND_AFTER=1
+  TL_OUT_FPS=30
+  TL_GOP_MODE=default
+  TL_GOP_SECONDS=1
+  TL_GOP_FRAMES=30
+  TL_TEST=0
+  TL_TEST_MINUTES=1
+  TL_TEST_PERCENT=0
+  TL_SS=""
+  TL_OUT_T=""
+  if (( DO_YES )) || (( ! script_is_run_interactively )); then
+    return 0
+  fi
+  echo
+  echo "Advanced encoding? [N/y]"
+  echo "  [N] Plain (default)"
+  echo "      Every Nth frame, played at 25 fps, for the whole file."
+  echo "  [y] Choose the picture, the keyframes, a source scan,"
+  echo "      and an optional test clip."
+  tl_read_key "Advanced encoding? [N/y]: " n
+  choice="$(tl_choice "$REPLY")"
+  if [[ "$choice" != y ]]; then
+    return 0
+  fi
+  tl_prompt_picture
+  tl_prompt_encoder_menu
+  tl_prompt_gop
+  tl_prompt_scan
+  tl_prompt_test_clip
+}
+
 tl_prompt_display() {
   local choice=""
   if (( TL_DISPLAY_FROM_CLI )) || [[ -n "$TL_DISPLAY" ]]; then
@@ -736,6 +1347,10 @@ ENCODE_ALL=0
 SKIP_ALL=0
 SPEED="${PGM_TIMELAPSE_SPEED:-}"
 ENCODER="${PGM_TIMELAPSE_ENCODER:-auto}"
+ENCODER_FROM_CLI=0
+if [[ -n "${PGM_TIMELAPSE_ENCODER:-}" ]]; then
+  ENCODER_FROM_CLI=1
+fi
 TL_DISPLAY="${PGM_TIMELAPSE_DISPLAY:-}"
 TL_DISPLAY_FROM_CLI=0
 SPEED_FROM_CLI=0
@@ -744,6 +1359,21 @@ TL_PARTIAL=""
 TL_ENC_ARGS=()
 TL_ENC_KIND=""
 TL_ENCODER_LIST=""
+TL_PICTURE=plain
+TL_BLEND_BEFORE=1
+TL_BLEND_AFTER=1
+TL_OUT_FPS=30
+TL_GOP_MODE=default
+TL_GOP_SECONDS=1
+TL_GOP_FRAMES=30
+TL_SCAN_GAP=""
+TL_SCAN_MINUTES=5
+TL_TEST=0
+TL_TEST_MINUTES=1
+TL_TEST_PERCENT=0
+TL_TEST_OUT_DUR=""
+TL_SS=""
+TL_OUT_T=""
 POSITIONALS=()
 
 trap tl_cleanup_partial EXIT
@@ -784,10 +1414,12 @@ while [[ $# -gt 0 ]]; do
     --encoder)
       [[ $# -ge 2 ]] || { echo "ERROR: missing value for --encoder" >&2; exit 1; }
       ENCODER="$2"
+      ENCODER_FROM_CLI=1
       shift 2
       ;;
     --encoder=*)
       ENCODER="${1#--encoder=}"
+      ENCODER_FROM_CLI=1
       shift
       ;;
     --verbose)
@@ -866,6 +1498,7 @@ if ! command -v ffmpeg >/dev/null 2>&1 || ! command -v ffprobe >/dev/null 2>&1; 
 fi
 tl_prompt_display
 tl_load_encoders
+tl_prompt_advanced
 tl_encoder_candidates "$ENCODER" "" >/dev/null || {
   echo "$(tl_ts) No usable video encoder for '${ENCODER}'." >&2
   tl_note_encoder_probe_failure
@@ -873,6 +1506,7 @@ tl_encoder_candidates "$ENCODER" "" >/dev/null || {
 }
 
 echo "$(tl_ts) Speed: ${SPEED}×    files: ${#TL_INPUTS[@]}    encoder request: ${ENCODER}    display: ${TL_DISPLAY}"
+echo "$(tl_ts) Picture: $(tl_picture_summary)"
 if (( SPEED == 2 )); then
   echo "$(tl_ts) Audio is kept at 2×. The .gpx beside the source still uses real time."
 else
