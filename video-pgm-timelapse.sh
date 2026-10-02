@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261002.080800 - scan messages separate whole-file keyframes from the decoded piece
 # v. 20261002.075200 - advanced encoding menu: picture, keyframes, scan, test clip
 # v. 20261002.073700 - output encoder line says GPU hardware or CPU only
 # v. 20261002.065500 - progress bar is 48 characters wide
@@ -12,6 +13,7 @@
 # v. 20260930.221500 - file prompts: one key, no Enter
 # v. 20260930.220400 - faster viewing copy of a merged video (2, 5, 10, 20, …)
 
+# 2026.10.02 - v. 0.13 - scan says keyframes are the whole file, and the 2/5/10 minutes are only the decoded piece
 # 2026.10.02 - v. 0.12 - advanced encoding menu, default no: steady or blended picture, keyframe spacing, a source scan, and a short test clip
 # 2026.10.02 - v. 0.11 - output encoder line says GPU hardware or CPU only
 # 2026.10.02 - v. 0.10 - progress bar is twice as wide (48 characters)
@@ -1086,7 +1088,7 @@ tl_scan_source() {
   local src="$1" minutes="$2" sample_sec gap_line frame_line
   sample_sec=$(( minutes * 60 ))
   echo
-  echo "$(tl_ts) Reading keyframe spacing for the whole file..."
+  echo "$(tl_ts) Keyframes: the whole file, from packet headers. This does not decode pictures, and it is not limited to the $(tl_minutes_word "$minutes") you chose."
   gap_line="$(ffprobe -v error -select_streams v:0 -show_entries packet=pts_time,flags -of csv=p=0 -- "$src" 2>/dev/null | awk -F, '
     $1 ~ /^[0-9]/ && $2 ~ /K/ {
       if (have) {
@@ -1107,7 +1109,7 @@ tl_scan_source() {
       other = n - best_n
       printf "%d %s %d %d\n", kf, best, best_n, other
     }' || true)"
-  echo "$(tl_ts) Decoding the first $(tl_minutes_word "$minutes") to check frame timing..."
+  echo "$(tl_ts) Pictures: decoding the first $(tl_minutes_word "$minutes") you chose, to check frame timing..."
   frame_line="$(ffprobe -v error -select_streams v:0 -show_entries frame=duration_time -of csv=p=0 -read_intervals "%+${sample_sec}" -- "$src" 2>/dev/null | awk '
     $1 ~ /^[0-9]/ {
       key = sprintf("%.3f", $1 + 0)
@@ -1197,11 +1199,15 @@ tl_prompt_scan() {
     return 0
   fi
   echo
-  echo "How long a piece should be decoded? [2/5/t]"
-  echo "  [5] 5 minutes (default)"
-  echo "      Long enough to cross several dashcam clips."
+  echo "How long a piece of pictures should be decoded? [2/5/t]"
+  echo "  Keyframe spacing is a separate pass over the whole file."
+  echo "  It reads packet headers and does not decode pictures."
+  echo "  These minutes are only the piece at the start that we decode"
+  echo "  to check that each frame lasts the same time."
   echo "  [2] 2 minutes"
   echo "      A shorter look. It may still be a single clip."
+  echo "  [5] 5 minutes (default)"
+  echo "      Long enough to cross several dashcam clips."
   echo "  [t] 10 minutes"
   echo "      A longer look. Decoding it takes a few minutes."
   tl_read_key "Decode length [2/5/t]: " 5
