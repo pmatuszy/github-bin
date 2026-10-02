@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261002.094000 - every question lists q to quit
 # v. 20261002.093800 - the last question asks for the whole file or a short try
 # v. 20261002.093100 - keyframe spacing defaults to the same interval as the source
 # v. 20261002.092400 - an existing output is explained, then keep, replace, rename, or a new name
@@ -21,6 +22,7 @@
 # v. 20260930.221500 - file prompts: one key, no Enter
 # v. 20260930.220400 - faster viewing copy of a merged video (2, 5, 10, 20, …)
 
+# 2026.10.02 - v. 0.22 - every question lists q to quit
 # 2026.10.02 - v. 0.21 - the last question asks whether to encode everything or try a short piece first
 # 2026.10.02 - v. 0.20 - keyframe spacing defaults to the same interval as the source
 # 2026.10.02 - v. 0.19 - an existing output is explained, then keep, replace, rename, or a new name
@@ -817,6 +819,14 @@ tl_read_key() {
   fi
 }
 
+tl_quit_script() {
+  echo "$(tl_ts) Quit."
+  return_code=0
+  # shellcheck disable=SC1091
+  . /root/bin/_script_footer.sh
+  exit 0
+}
+
 tl_speed_menu_key() {
   case "${1:-5}" in
     2) printf '1\n' ;;
@@ -1006,7 +1016,7 @@ tl_prompt_speed() {
   echo "  [c] Custom  type an integer from 2 to 240"
   echo "  [q] Quit"
   echo
-  tl_read_key "Speed [${def}]: " "$def"
+  tl_read_key "Speed [${def}/q]: " "$def"
   choice="$(tl_choice "$REPLY")"
   case "$choice" in
     1) SPEED=2 ;;
@@ -1017,8 +1027,11 @@ tl_prompt_speed() {
     6) SPEED=25 ;;
     7) SPEED=30 ;;
     c)
-      tl_read_line "Custom speed [${custom_def}]: " "$custom_def"
+      tl_read_line "Custom speed [${custom_def}] (q quits): " "$custom_def"
       answer="$REPLY"
+      if [[ "$(tl_choice "$answer")" == q ]]; then
+        tl_quit_script
+      fi
       if tl_is_speed "$answer"; then
         SPEED="$answer"
       elif tl_is_speed "${SPEED:-}"; then
@@ -1029,8 +1042,7 @@ tl_prompt_speed() {
       fi
       ;;
     q)
-      echo "$(tl_ts) Quit."
-      return 2
+      tl_quit_script
       ;;
     *)
       if tl_is_speed "${SPEED:-}"; then
@@ -1255,8 +1267,11 @@ tl_set_test_window() {
 
 tl_prompt_blend_count() {
   local side="$1" dest="$2" cur="${!2:-1}" answer=""
-  printf 'Frames %s the kept frame [%s]: ' "$side" "$cur"
+  printf 'Frames %s the kept frame [%s] (q quits): ' "$side" "$cur"
   IFS= read -r answer || answer=""
+  if [[ "$(tl_choice "$answer")" == q ]]; then
+    tl_quit_script
+  fi
   if [[ -z "$answer" ]]; then
     answer="$cur"
   fi
@@ -1283,12 +1298,14 @@ tl_prompt_out_fps() {
   echo "      One refresh per picture on a 60 Hz screen."
   echo "  [2] 25 fps"
   echo "      The same rate as this dashcam."
-  tl_read_key "Frames per second [3/6/2]: " "$fkey"
+  echo "  [q] Quit"
+  tl_read_key "Frames per second [3/6/2/q]: " "$fkey"
   choice="$(tl_choice "$REPLY")"
   case "$choice" in
     3) TL_OUT_FPS=30 ;;
     6) TL_OUT_FPS=60 ;;
     2) TL_OUT_FPS=25 ;;
+    q) tl_quit_script ;;
     *)
       echo "$(tl_ts) Unknown choice: ${REPLY}; keeping ${TL_OUT_FPS} fps."
       ;;
@@ -1303,7 +1320,7 @@ tl_prompt_picture() {
     *) pkey=p; TL_PICTURE=plain ;;
   esac
   echo
-  echo "Picture [P/t/b]"
+  echo "Picture [P/t/b/q]"
   echo "  [P] Plain"
   echo "      Keep one frame and drop the next ones, then play the kept"
   echo "      frames at 25 fps, the same rate as this dashcam."
@@ -1315,12 +1332,14 @@ tl_prompt_picture() {
   echo "      Average a few frames before and after each kept picture,"
   echo "      then use that same steady frame rate. The road and the"
   echo "      camera shake smear a little instead of jumping."
-  tl_read_key "Picture [P/t/b]: " "$pkey"
+  echo "  [q] Quit"
+  tl_read_key "Picture [P/t/b/q]: " "$pkey"
   choice="$(tl_choice "$REPLY")"
   case "$choice" in
     p) TL_PICTURE=plain ;;
     t) TL_PICTURE=steady ;;
     b) TL_PICTURE=soft ;;
+    q) tl_quit_script ;;
     *)
       echo "$(tl_ts) Unknown choice: ${REPLY}; keeping ${TL_PICTURE}."
       ;;
@@ -1328,7 +1347,7 @@ tl_prompt_picture() {
   if [[ "$TL_PICTURE" == soft ]]; then
     echo
     echo "How many neighboring frames should be averaged?"
-    echo "  Enter keeps the number in brackets."
+    echo "  Enter keeps the number in brackets. q quits."
     echo "  If the road still jumps, try 2 and 2, then 4 and 4."
     echo "  Each side can be 0 to 8."
     tl_prompt_blend_count before TL_BLEND_BEFORE
@@ -1352,7 +1371,7 @@ tl_prompt_encoder_menu() {
     *) ekey=a; ENCODER=auto ;;
   esac
   echo
-  echo "Encoder [A/n/4/5]"
+  echo "Encoder [A/n/4/5/q]"
   echo "  [A] Auto"
   echo "      Match the source codec. HEVC tries hevc_nvenc on the GPU,"
   echo "      then libx265 on the CPU. H.264 tries h264_nvenc, then libx264."
@@ -1362,13 +1381,15 @@ tl_prompt_encoder_menu() {
   echo "      CPU only. Writes H.264."
   echo "  [5] libx265"
   echo "      CPU only. Writes HEVC without the GPU."
-  tl_read_key "Encoder [A/n/4/5]: " "$ekey"
+  echo "  [q] Quit"
+  tl_read_key "Encoder [A/n/4/5/q]: " "$ekey"
   choice="$(tl_choice "$REPLY")"
   case "$choice" in
     a) ENCODER=auto ;;
     n) ENCODER=nvenc ;;
     4) ENCODER=x264 ;;
     5) ENCODER=x265 ;;
+    q) tl_quit_script ;;
     *)
       echo "$(tl_ts) Unknown choice: ${REPLY}; keeping ${ENCODER}."
       ;;
@@ -1489,7 +1510,7 @@ tl_prompt_keyframe_span() {
     def=m
   fi
   echo
-  echo "How much of the file should be read for keyframes? [2/m/p]"
+  echo "How much of the file should be read for keyframes? [2/m/p/q]"
   echo "  [2] First 2 minutes"
   echo "      From the start of the file. Packet headers only, so pictures"
   echo "      are not decoded."
@@ -1499,7 +1520,8 @@ tl_prompt_keyframe_span() {
   echo "  [p] Percent"
   echo "      Type a percent of this file, again from the start."
   echo "      10 is the first tenth. 100 is the whole file."
-  tl_read_key "Keyframe sample [2/m/p]: " "$def"
+  echo "  [q] Quit"
+  tl_read_key "Keyframe sample [2/m/p/q]: " "$def"
   choice="$(tl_choice "$REPLY")"
   case "$choice" in
     2)
@@ -1508,8 +1530,11 @@ tl_prompt_keyframe_span() {
       tl_keyframe_span_minutes "$src" 2
       ;;
     m)
-      tl_read_line "Minutes from the start [${min_def}]: " "$min_def"
+      tl_read_line "Minutes from the start [${min_def}] (q quits): " "$min_def"
       answer="$REPLY"
+      if [[ "$(tl_choice "$answer")" == q ]]; then
+        tl_quit_script
+      fi
       if [[ "$answer" =~ ^[0-9]+$ ]] && (( answer >= 1 )); then
         TL_KF_UNIT=minutes
         TL_KF_MINUTES="$answer"
@@ -1522,8 +1547,11 @@ tl_prompt_keyframe_span() {
       fi
       ;;
     p)
-      tl_read_line "Percent from the start [${pct_def}]: " "$pct_def"
+      tl_read_line "Percent from the start [${pct_def}] (q quits): " "$pct_def"
       answer="$REPLY"
+      if [[ "$(tl_choice "$answer")" == q ]]; then
+        tl_quit_script
+      fi
       if [[ "$answer" =~ ^[0-9]+$ ]] && (( answer >= 1 && answer <= 100 )); then
         TL_KF_UNIT=percent
         TL_KF_PERCENT="$answer"
@@ -1534,6 +1562,9 @@ tl_prompt_keyframe_span() {
         TL_KF_MINUTES=2
         tl_keyframe_span_minutes "$src" 2
       fi
+      ;;
+    q)
+      tl_quit_script
       ;;
     *)
       echo "$(tl_ts) Unknown choice: ${REPLY}. Reading the first 2 minutes."
@@ -1562,7 +1593,7 @@ tl_prompt_gop() {
     s_note=" (default)"
   fi
   echo
-  echo "Keyframe spacing [D/s/c/f]"
+  echo "Keyframe spacing [D/s/c/f/q]"
   echo "  [D] Encoder default"
   echo "      Leave the interval to hevc_nvenc or libx265. That is often"
   echo "      about 10 seconds. Fine when you watch straight through."
@@ -1574,7 +1605,8 @@ tl_prompt_gop() {
   echo "      Type how often, in seconds of the output, a keyframe is written."
   echo "  [f] Custom frames"
   echo "      Type a frame count of the output, not of the dashcam."
-  tl_read_key "Keyframe spacing [D/s/c/f]: " "$gkey"
+  echo "  [q] Quit"
+  tl_read_key "Keyframe spacing [D/s/c/f/q]: " "$gkey"
   choice="$(tl_choice "$REPLY")"
   case "$choice" in
     d)
@@ -1599,8 +1631,11 @@ tl_prompt_gop() {
       fi
       ;;
     c)
-      tl_read_line "Seconds between keyframes [${sec_def}]: " "$sec_def"
+      tl_read_line "Seconds between keyframes [${sec_def}] (q quits): " "$sec_def"
       answer="$REPLY"
+      if [[ "$(tl_choice "$answer")" == q ]]; then
+        tl_quit_script
+      fi
       if [[ "$answer" =~ ^[0-9]+$ ]] && (( answer >= 1 && answer <= 60 )); then
         TL_GOP_KIND=seconds
         TL_GOP_MODE=seconds
@@ -1613,8 +1648,11 @@ tl_prompt_gop() {
       fi
       ;;
     f)
-      tl_read_line "Frames between keyframes [${frame_def}]: " "$frame_def"
+      tl_read_line "Frames between keyframes [${frame_def}] (q quits): " "$frame_def"
       answer="$REPLY"
+      if [[ "$(tl_choice "$answer")" == q ]]; then
+        tl_quit_script
+      fi
       if [[ "$answer" =~ ^[0-9]+$ ]] && (( answer >= 1 && answer <= 3000 )); then
         TL_GOP_KIND=frames
         TL_GOP_MODE=frames
@@ -1625,6 +1663,9 @@ tl_prompt_gop() {
         TL_GOP_MODE=default
         TL_GOP_EXPLICIT=1
       fi
+      ;;
+    q)
+      tl_quit_script
       ;;
     *)
       echo "$(tl_ts) Unknown choice: ${REPLY}; keeping the current keyframe choice."
@@ -1675,8 +1716,12 @@ tl_apply_scan_suggestion() {
   fi
   echo "  [N] Keep the choices you already made (default)"
   echo "  [y] Apply this suggestion"
-  tl_read_key "Apply suggestion? [N/y]: " n
+  echo "  [q] Quit"
+  tl_read_key "Apply suggestion? [N/y/q]: " n
   choice="$(tl_choice "$REPLY")"
+  if [[ "$choice" == q ]]; then
+    tl_quit_script
+  fi
   if [[ "$choice" != y ]]; then
     echo "$(tl_ts) Keeping the choices already made."
     return 0
@@ -1704,21 +1749,25 @@ tl_prompt_scan() {
     *) lkey=5 ;;
   esac
   echo
-  echo "Scan the source before encoding? [N/y]"
+  echo "Scan the source before encoding? [N/y/q]"
   echo "  [N] Skip the scan"
   echo "      Encode with the choices above."
   echo "  [y] Read this file"
   echo "      Decodes a piece at the start to check that each frame lasts"
   echo "      the same time. Keyframe spacing is chosen above, not here."
-  tl_read_key "Scan the source? [N/y]: " "$skey"
+  echo "  [q] Quit"
+  tl_read_key "Scan the source? [N/y/q]: " "$skey"
   choice="$(tl_choice "$REPLY")"
+  if [[ "$choice" == q ]]; then
+    tl_quit_script
+  fi
   if [[ "$choice" != y ]]; then
     TL_DO_SCAN=0
     return 0
   fi
   TL_DO_SCAN=1
   echo
-  echo "How long a piece of pictures should be decoded? [2/5/t]"
+  echo "How long a piece of pictures should be decoded? [2/5/t/q]"
   echo "  These minutes are only the piece at the start that we decode"
   echo "  to check that each frame lasts the same time."
   echo "  Keyframe spacing was already chosen above."
@@ -1728,12 +1777,14 @@ tl_prompt_scan() {
   echo "      Long enough to cross several dashcam clips."
   echo "  [t] 10 minutes"
   echo "      A longer look. Decoding it takes a few minutes."
-  tl_read_key "Decode length [2/5/t]: " "$lkey"
+  echo "  [q] Quit"
+  tl_read_key "Decode length [2/5/t/q]: " "$lkey"
   choice="$(tl_choice "$REPLY")"
   case "$choice" in
     2) TL_SCAN_MINUTES=2 ;;
     5) TL_SCAN_MINUTES=5 ;;
     t) TL_SCAN_MINUTES=10 ;;
+    q) tl_quit_script ;;
     *)
       echo "$(tl_ts) Unknown choice: ${REPLY}; keeping ${TL_SCAN_MINUTES} minutes."
       ;;
@@ -1756,7 +1807,7 @@ tl_prompt_test_clip() {
   esac
   skey="$(tl_test_start_key "${TL_TEST_PERCENT:-0}")"
   echo
-  echo "Encode everything, or try a short piece first? [N/y]"
+  echo "Encode everything, or try a short piece first? [N/y/q]"
   echo "  [N] Everything${n_note}"
   echo "      The whole sped-up drive. A two-hour recording at 5×"
   echo "      becomes about 24 minutes, saved as the usual *_x5.mp4."
@@ -1766,36 +1817,43 @@ tl_prompt_test_clip() {
   echo "      if the picture is right before waiting for the whole file."
   echo "      The short piece is saved under its own name, so a full"
   echo "      *_x5.mp4 is left alone."
-  tl_read_key "Encode everything? [N/y]: " "$tkey"
+  echo "  [q] Quit"
+  tl_read_key "Encode everything? [N/y/q]: " "$tkey"
   choice="$(tl_choice "$REPLY")"
+  if [[ "$choice" == q ]]; then
+    tl_quit_script
+  fi
   if [[ "$choice" != y ]]; then
     TL_TEST=0
     return 0
   fi
   TL_TEST=1
   echo
-  echo "How long should the result be? [1/2/5]"
+  echo "How long should the result be? [1/2/5/q]"
   echo "  [1] 1 minute of output"
   echo "      At 20× this reads 20 minutes of the dashcam."
   echo "  [2] 2 minutes of output"
   echo "  [5] 5 minutes of output"
-  tl_read_key "Clip length [1/2/5]: " "$lkey"
+  echo "  [q] Quit"
+  tl_read_key "Clip length [1/2/5/q]: " "$lkey"
   choice="$(tl_choice "$REPLY")"
   case "$choice" in
     1) TL_TEST_MINUTES=1 ;;
     2) TL_TEST_MINUTES=2 ;;
     5) TL_TEST_MINUTES=5 ;;
+    q) tl_quit_script ;;
     *)
       echo "$(tl_ts) Unknown choice: ${REPLY}; keeping $(tl_minutes_word "$TL_TEST_MINUTES")."
       ;;
   esac
   echo
-  echo "Where should the clip start? [B/1/2/3/5/7/9]"
+  echo "Where should the clip start? [B/1/2/3/5/7/9/q]"
   echo "  [B] Beginning"
   echo "  [1] 10%   [2] 20%   [3] 30%"
   echo "  [5] 50%   [7] 70%   [9] 90%"
   echo "      The percentage is of this file. The script prints the clock time."
-  tl_read_key "Start at [B/1/2/3/5/7/9]: " "$skey"
+  echo "  [q] Quit"
+  tl_read_key "Start at [B/1/2/3/5/7/9/q]: " "$skey"
   choice="$(tl_choice "$REPLY")"
   case "$choice" in
     b) TL_TEST_PERCENT=0 ;;
@@ -1805,6 +1863,7 @@ tl_prompt_test_clip() {
     5) TL_TEST_PERCENT=50 ;;
     7) TL_TEST_PERCENT=70 ;;
     9) TL_TEST_PERCENT=90 ;;
+    q) tl_quit_script ;;
     *)
       echo "$(tl_ts) Unknown choice: ${REPLY}; keeping the current start."
       ;;
@@ -1821,13 +1880,17 @@ tl_prompt_advanced() {
     akey=y
   fi
   echo
-  echo "Advanced encoding? [N/y]"
+  echo "Advanced encoding? [N/y/q]"
   echo "  [N] Plain"
   echo "      Every Nth frame, played at 25 fps, for the whole file."
   echo "  [y] Choose the picture, the keyframes, a source scan,"
   echo "      and an optional test clip."
-  tl_read_key "Advanced encoding? [N/y]: " "$akey"
+  echo "  [q] Quit"
+  tl_read_key "Advanced encoding? [N/y/q]: " "$akey"
   choice="$(tl_choice "$REPLY")"
+  if [[ "$choice" == q ]]; then
+    tl_quit_script
+  fi
   if [[ "$choice" != y ]]; then
     tl_reset_advanced
     return 0
@@ -1856,13 +1919,15 @@ tl_prompt_display() {
   echo "Encode display?"
   echo "  [N] Normal (progress bar)"
   echo "  [v] Verbose (frames)"
-  tl_read_key "Display [N/v]: " "$dkey"
+  echo "  [q] Quit"
+  tl_read_key "Display [N/v/q]: " "$dkey"
   choice="${REPLY,,}"
   choice="${choice//$'\r'/}"
   choice="${choice//$'\n'/}"
   case "$choice" in
     n) TL_DISPLAY=normal ;;
     v) TL_DISPLAY=verbose ;;
+    q) tl_quit_script ;;
     *)
       echo "$(tl_ts) Unknown choice: ${REPLY}; keeping ${TL_DISPLAY}."
       ;;
