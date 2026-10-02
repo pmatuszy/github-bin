@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261002.092400 - an existing output is explained, then keep, replace, rename, or a new name
 # v. 20261002.084500 - print the equivalent command and confirm before encoding
 # v. 20261002.084000 - speed menu lists q to quit
 # v. 20261002.083700 - speed menu defaults to 5× and always omits audio
@@ -18,6 +19,7 @@
 # v. 20260930.221500 - file prompts: one key, no Enter
 # v. 20260930.220400 - faster viewing copy of a merged video (2, 5, 10, 20, …)
 
+# 2026.10.02 - v. 0.19 - an existing output is explained, then keep, replace, rename, or a new name
 # 2026.10.02 - v. 0.18 - each choice has a command-line option; show that command and confirm before encoding
 # 2026.10.02 - v. 0.17 - speed menu lists q to quit
 # 2026.10.02 - v. 0.16 - speed menu is 2, 5, 10, 15, 20, 25, 30, or custom; default 5×; audio is always omitted
@@ -90,6 +92,9 @@ Options:
   --test-at N          Where the test starts: 0, 10, 20, 30, 50, 70, or 90.
                        0 is the beginning.
   --redo               Replace an existing *_xN.mp4.
+                       Without this, an interactive run asks whether to keep,
+                       replace, rename, or write a new name. -y skips the file
+                       and prints which output is already there.
 
 An interactive run asks the questions, then prints the equivalent command and
 asks whether to encode. Answering no walks the questions again, and Enter
@@ -121,7 +126,58 @@ tl_is_speed() {
 
 tl_is_timelapse_output() {
   local base="${1##*/}"
-  [[ "$base" =~ _x[0-9]+(_test-[0-9]+m-at[0-9]+)?\.[mM][pP]4$ ]]
+  [[ "$base" =~ _x[0-9]+(_test-[0-9]+m-at[0-9]+)?(_[0-9]{8}-[0-9]{6}(_[0-9]+)?|_[0-9]+)?\.[mM][pP]4$ ]]
+}
+
+tl_human_size() {
+  awk -v b="${1:-0}" 'BEGIN {
+    split("B K M G T", u, " ")
+    i = 1
+    if (b !~ /^[0-9]+$/) b = 0
+    while (b >= 1024 && i < 5) { b /= 1024; i++ }
+    if (i == 1) printf "%d%s", b, u[i]
+    else printf "%.1f%s", b, u[i]
+  }'
+}
+
+tl_existing_note() {
+  local dest="$1" bytes="" when=""
+  bytes="$(stat -c %s -- "$dest" 2>/dev/null || true)"
+  when="$(date -d "@$(stat -c %Y -- "$dest" 2>/dev/null || echo 0)" '+%Y.%m.%d %H:%M' 2>/dev/null || true)"
+  echo "Output already exists"
+  echo "  ${dest}"
+  if [[ -n "$bytes" && -n "$when" ]]; then
+    echo "  $(tl_human_size "$bytes"), written ${when}"
+  fi
+}
+
+# Old file moved aside: same name plus the time it was written.
+tl_aside_name() {
+  local dest="$1" dir stem when candidate n=0
+  dir="$(dirname -- "$dest")"
+  stem="$(basename -- "$dest")"
+  stem="${stem%.*}"
+  when="$(date -d "@$(stat -c %Y -- "$dest")" '+%Y%m%d-%H%M%S')"
+  candidate="${dir}/${stem}_${when}.mp4"
+  while [[ -e "$candidate" ]]; do
+    n=$((n + 1))
+    candidate="${dir}/${stem}_${when}_${n}.mp4"
+  done
+  printf '%s\n' "$candidate"
+}
+
+# Next free take: stem_x5_2.mp4, then _3, and so on.
+tl_next_take_name() {
+  local dest="$1" dir stem n=2 candidate
+  dir="$(dirname -- "$dest")"
+  stem="$(basename -- "$dest")"
+  stem="${stem%.*}"
+  while true; do
+    candidate="${dir}/${stem}_${n}.mp4"
+    [[ -e "$candidate" ]] || break
+    n=$((n + 1))
+  done
+  printf '%s\n' "$candidate"
 }
 
 tl_is_concat_output() {
@@ -640,7 +696,12 @@ tl_encode_one() {
   local src="$1" speed="$2" redo="$3" encoder_want="$4"
   local dest dur out_dur="" kind label label_prev="" src_codec i where gop_fps
   local -a kinds=()
-  dest="$(tl_output_path "$src" "$speed")"
+  if [[ -n "${TL_DEST_OVERRIDE:-}" ]]; then
+    dest="$TL_DEST_OVERRIDE"
+    TL_DEST_OVERRIDE=""
+  else
+    dest="$(tl_output_path "$src" "$speed")"
+  fi
   if [[ -e "$dest" && "$redo" -eq 0 ]]; then
     echo "$(tl_ts) Already exists, skipping: ${dest}"
     return 0
@@ -977,13 +1038,71 @@ tl_prompt_speed() {
   return 0
 }
 
+tl_prompt_existing_output() {
+  local dest="$1" choice="" aside="" next=""
+  tl_existing_note "$dest"
+  if (( DO_YES )) || (( ! script_is_run_interactively )); then
+    echo "$(tl_ts) Skipping. Add --redo to replace it."
+    REPLY=skip
+    TL_SKIP_EXPLAINED=1
+    return 0
+  fi
+  aside="$(tl_aside_name "$dest")"
+  next="$(tl_next_take_name "$dest")"
+  echo
+  echo "This file was not encoded. [K/r/m/n/q]"
+  echo "  [K] Keep it and skip (default)"
+  echo "  [r] Replace it with this encode"
+  echo "  [m] Rename it, then encode to the usual name"
+  echo "      ${aside##*/}"
+  echo "  [n] Leave it, and write this encode under a new name"
+  echo "      ${next##*/}"
+  echo "  [q] Quit"
+  tl_read_key "Existing file [K/r/m/n/q]: " k
+  choice="$(tl_choice "$REPLY")"
+  case "$choice" in
+    k)
+      echo "$(tl_ts) Kept existing file: ${dest}"
+      REPLY=skip
+      TL_SKIP_EXPLAINED=1
+      ;;
+    r)
+      echo "$(tl_ts) Replacing ${dest}"
+      REPLY=redo
+      ;;
+    m)
+      if ! mv -n -- "$dest" "$aside"; then
+        echo "$(tl_ts) Could not rename ${dest}. Skipping." >&2
+        REPLY=skip
+        TL_SKIP_EXPLAINED=1
+        return 0
+      fi
+      echo "$(tl_ts) Renamed the old file to ${aside}"
+      REPLY=encode
+      ;;
+    n)
+      TL_DEST_OVERRIDE="$next"
+      echo "$(tl_ts) New file: ${next}"
+      REPLY=encode
+      ;;
+    q)
+      REPLY=quit
+      ;;
+    *)
+      echo "$(tl_ts) Unknown choice: ${REPLY}. Kept existing file: ${dest}"
+      REPLY=skip
+      TL_SKIP_EXPLAINED=1
+      ;;
+  esac
+}
+
 tl_prompt_file_action() {
   local n="$1" total="$2" dest="$3"
   local choice=""
   REPLY=encode
   if (( DO_YES )) || (( ENCODE_ALL )); then
     if [[ -e "$dest" && "$REDO" -eq 0 ]]; then
-      REPLY=skip
+      tl_prompt_existing_output "$dest"
     else
       REPLY=encode
     fi
@@ -2191,7 +2310,11 @@ for tl_src in "${TL_INPUTS[@]}"; do
       tl_encode_one "$tl_src" "$SPEED" 1 "$ENCODER" || return_code=1
       ;;
     skip)
-      echo "$(tl_ts) Skipped: ${tl_src}"
+      if (( ${TL_SKIP_EXPLAINED:-0} )); then
+        TL_SKIP_EXPLAINED=0
+      else
+        echo "$(tl_ts) Skipped: ${tl_src}"
+      fi
       ;;
     skip_all)
       SKIP_ALL=1
