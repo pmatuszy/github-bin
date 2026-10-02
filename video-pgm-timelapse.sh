@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261002.114100 - status times are in brackets; the keyframe file name is on its own line
 # v. 20261002.112900 - output name includes the date and time
 # v. 20261002.104400 - --speed and --speedup are the same; the printed command uses --speedup
 # v. 20261002.100200 - the confirmation says the picture scan is already done
@@ -27,6 +28,7 @@
 # v. 20260930.221500 - file prompts: one key, no Enter
 # v. 20260930.220400 - faster viewing copy of a merged video (2, 5, 10, 20, …)
 
+# 2026.10.02 - v. 0.28 - status times are in brackets; the keyframe file name is on its own line
 # 2026.10.02 - v. 0.27 - every output is stem_xN_YYYYMMDD-HHMMSS.mp4
 # 2026.10.02 - v. 0.26 - --speed and --speedup are the same option; the printed command uses --speedup
 # 2026.10.02 - v. 0.25 - after a picture scan, the confirmation says it is already done and the command does not scan again
@@ -137,7 +139,7 @@ EOF
 }
 
 tl_ts() {
-  date '+%Y.%m.%d %H:%M:%S'
+  date '+[ %Y.%m.%d %H:%M:%S ]'
 }
 
 tl_is_speed() {
@@ -1449,7 +1451,13 @@ tl_measure_keyframe_gap() {
   TL_KEYFRAME_MEASURED=1
   TL_SCAN_GAP=""
   echo
-  echo "$(tl_ts) Reading keyframes: ${TL_KF_READ_LABEL:-the file}."
+  if [[ -n "${TL_KF_READ_HEAD:-}" ]]; then
+    echo "$(tl_ts) Reading keyframes: ${TL_KF_READ_HEAD}"
+    echo "${src##*/}"
+    echo "${TL_KF_READ_TAIL}"
+  else
+    echo "$(tl_ts) Reading keyframes: the file."
+  fi
   probe=(ffprobe -v error -select_streams v:0 -show_entries packet=pts_time,flags -of csv=p=0)
   if [[ -n "$limit_sec" ]]; then
     probe+=(-read_intervals "%+${limit_sec}")
@@ -1494,19 +1502,21 @@ tl_measure_keyframe_gap() {
   return 0
 }
 
-# Sets TL_KF_LIMIT_SEC (empty = whole file), TL_KF_PIECE, and TL_KF_READ_LABEL.
+# Sets TL_KF_LIMIT_SEC (empty = whole file), TL_KF_PIECE, TL_KF_READ_HEAD, and TL_KF_READ_TAIL.
 tl_keyframe_span_minutes() {
   local src="$1" minutes="$2" dur="" want=0
   dur="$(tl_ffprobe_duration "$src" || true)"
   want=$(( minutes * 60 ))
   TL_KF_PIECE=piece
   TL_KF_LIMIT_SEC="$want"
-  TL_KF_READ_LABEL="first $(tl_minutes_word "$minutes") of ${src##*/} (packet headers, no picture decode)"
+  TL_KF_READ_HEAD="first $(tl_minutes_word "$minutes") of"
+  TL_KF_READ_TAIL="(packet headers, no picture decode)."
   if [[ -n "$dur" ]] && awk -v w="$want" -v d="$dur" 'BEGIN { exit !(w + 0 >= d - 0.5) }'; then
     echo "$(tl_ts) The file is $(tl_format_seconds "$dur"), shorter than $(tl_minutes_word "$minutes"). Reading the whole file."
     TL_KF_PIECE=file
     TL_KF_LIMIT_SEC=""
-    TL_KF_READ_LABEL="the whole file (packet headers, no picture decode)"
+    TL_KF_READ_HEAD="the whole file"
+    TL_KF_READ_TAIL="(packet headers, no picture decode)."
   fi
 }
 
@@ -1521,13 +1531,15 @@ tl_keyframe_span_percent() {
   if (( pct >= 100 )); then
     TL_KF_PIECE=file
     TL_KF_LIMIT_SEC=""
-    TL_KF_READ_LABEL="the whole file (packet headers, no picture decode)"
+    TL_KF_READ_HEAD="the whole file"
+    TL_KF_READ_TAIL="(packet headers, no picture decode)."
     return 0
   fi
   want="$(awk -v d="$dur" -v p="$pct" 'BEGIN { printf "%.3f", d * p / 100 }')"
   TL_KF_PIECE=piece
   TL_KF_LIMIT_SEC="$want"
-  TL_KF_READ_LABEL="first ${pct}% ($(tl_format_clock "$want") of $(tl_format_clock "$dur"))"
+  TL_KF_READ_HEAD="first ${pct}% of"
+  TL_KF_READ_TAIL="($(tl_format_clock "$want") of $(tl_format_clock "$dur"), packet headers, no picture decode)."
 }
 
 tl_prompt_keyframe_span() {
