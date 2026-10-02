@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261002.104400 - --speed and --speedup are the same; the printed command uses --speedup
 # v. 20261002.100200 - the confirmation says the picture scan is already done
 # v. 20261002.095700 - keyframe menu lists same as the source first
 # v. 20261002.094300 - picture scan shows a progress bar while it decodes
@@ -25,6 +26,7 @@
 # v. 20260930.221500 - file prompts: one key, no Enter
 # v. 20260930.220400 - faster viewing copy of a merged video (2, 5, 10, 20, …)
 
+# 2026.10.02 - v. 0.26 - --speed and --speedup are the same option; the printed command uses --speedup
 # 2026.10.02 - v. 0.25 - after a picture scan, the confirmation says it is already done and the command does not scan again
 # 2026.10.02 - v. 0.24 - keyframe menu lists same as the source first, with S as the capital letter
 # 2026.10.02 - v. 0.23 - picture scan shows a progress bar for the piece being decoded
@@ -60,7 +62,7 @@
 show_help() {
   cat <<EOF
 Usage: $(basename "$0") [-h|--help] [-v|--version] [--history]
-       [-y|--yes] [--redo] [--speed N] [--display normal|verbose]
+       [-y|--yes] [--redo] [--speedup N] [--display normal|verbose]
        [--picture plain|steady|soft] [--blend-before N] [--blend-after N]
        [--fps 25|30|60] [--encoder auto|nvenc|x264|x265]
        [--gop default|source|Ns|Nf]
@@ -81,7 +83,8 @@ Options:
   -v, --version        Print script version and exit.
   --history            Print script changelog from the header and exit.
   -y, --yes            Do not ask. Encode with the options below.
-  --speed N            Integer speed, 2 to 240. Default 5.
+  --speedup N          Integer speed, 2 to 240. Default 5.
+                       --speed is the same option. The printed command uses --speedup.
                        Audio is always omitted.
   --display MODE       normal (progress bar) or verbose (frames).
   --verbose            Same as --display verbose.
@@ -115,14 +118,14 @@ keeps each current answer. -y skips the questions and that confirmation.
 A pasted command with -y encodes without asking.
 
 Environment:
-  PGM_TIMELAPSE_SPEED     Same as --speed.
+  PGM_TIMELAPSE_SPEED     Same as --speedup.
   PGM_TIMELAPSE_ENCODER   Same as --encoder (auto, nvenc, x264, x265).
   PGM_TIMELAPSE_DISPLAY   normal (default) or verbose. verbose matches --verbose.
 
 Examples:
-  $(basename "$0") --speed 10 trip_concat.mp4
-  $(basename "$0") -y --speed 20 --picture steady --fps 30 trip_concat.mp4
-  $(basename "$0") -y --speed 5 --gop source --keyframe-minutes 2 trip_concat.mp4
+  $(basename "$0") --speedup 10 trip_concat.mp4
+  $(basename "$0") -y --speedup 20 --picture steady --fps 30 trip_concat.mp4
+  $(basename "$0") -y --speedup 5 --gop source --keyframe-minutes 2 trip_concat.mp4
   $(basename "$0")
       Ask the questions (speed defaults to 5×), then confirm before encoding.
 EOF
@@ -886,7 +889,7 @@ tl_reset_advanced() {
 tl_equivalent_command() {
   local -a cmd=()
   local f part out=""
-  cmd+=("$(basename "$0")" -y --speed "${SPEED:-5}" --display "${TL_DISPLAY:-normal}")
+  cmd+=("$(basename "$0")" -y --speedup "${SPEED:-5}" --display "${TL_DISPLAY:-normal}")
   cmd+=(--picture "${TL_PICTURE:-plain}")
   if [[ "${TL_PICTURE:-plain}" == soft ]]; then
     cmd+=(--blend-before "${TL_BLEND_BEFORE:-1}" --blend-after "${TL_BLEND_AFTER:-1}")
@@ -2111,14 +2114,14 @@ while [[ $# -gt 0 ]]; do
       REDO=1
       shift
       ;;
-    --speed)
-      [[ $# -ge 2 ]] || { echo "ERROR: missing value for --speed" >&2; exit 1; }
+    --speed|--speedup)
+      [[ $# -ge 2 ]] || { echo "ERROR: missing value for $1" >&2; exit 1; }
       SPEED="$2"
       SPEED_FROM_CLI=1
       shift 2
       ;;
-    --speed=*)
-      SPEED="${1#--speed=}"
+    --speed=*|--speedup=*)
+      SPEED="${1#*=}"
       SPEED_FROM_CLI=1
       shift
       ;;
