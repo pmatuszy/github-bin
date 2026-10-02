@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261002.083700 - speed menu defaults to 5× and always omits audio
 # v. 20261002.081600 - keyframe sample is 2 minutes, or minutes or a percent you type
 # v. 20261002.081500 - same-as-source keyframes are measured, not assumed to be 1 second
 # v. 20261002.080800 - scan messages separate whole-file keyframes from the decoded piece
@@ -15,6 +16,7 @@
 # v. 20260930.221500 - file prompts: one key, no Enter
 # v. 20260930.220400 - faster viewing copy of a merged video (2, 5, 10, 20, …)
 
+# 2026.10.02 - v. 0.16 - speed menu is 2, 5, 10, 15, 20, 25, 30, or custom; default 5×; audio is always omitted
 # 2026.10.02 - v. 0.15 - same as the source reads the first 2 minutes, or a typed number of minutes or a percent
 # 2026.10.02 - v. 0.14 - same as the source measures this file's keyframe gap instead of assuming 1 second
 # 2026.10.02 - v. 0.13 - scan says keyframes are the whole file, and the 2/5/10 minutes are only the decoded piece
@@ -55,8 +57,8 @@ Options:
   -v, --version        Print script version and exit.
   --history            Print script changelog from the header and exit.
   -y, --yes            Encode every selected file without prompts.
-  --speed N            Integer speed, 2 or more (default when -y: 10).
-                       2 keeps audio. 5, 10, 20, and any higher speed drop audio.
+  --speed N            Integer speed, 2 or more (default when -y: 5).
+                       Audio is always omitted.
   --redo               Replace an existing *_xN.mp4.
   --encoder KIND       auto (default), nvenc, x264, or x265.
                        auto follows the source codec. HEVC prefers hevc_nvenc,
@@ -81,7 +83,7 @@ Examples:
   $(basename "$0") --verbose --speed 10 trip_concat.mp4
   $(basename "$0") -y --speed 20 /path/to/merged/
   $(basename "$0")
-      Ask for a speed, then normal or verbose display, then each file (one key, no Enter).
+      Ask for a speed (default 5×), then normal or verbose display, then each file (one key, no Enter).
 EOF
 }
 
@@ -124,12 +126,6 @@ tl_ffprobe_duration() {
   dur="$(ffprobe -v error -show_entries format=duration -of csv=p=0 -- "$f" 2>/dev/null || true)"
   [[ "$dur" =~ ^[0-9]+([.][0-9]+)?$ ]] || return 1
   printf '%s\n' "$dur"
-}
-
-tl_has_audio() {
-  local f="$1" kind
-  kind="$(ffprobe -v error -select_streams a:0 -show_entries stream=codec_type -of csv=p=0 -- "$f" 2>/dev/null || true)"
-  [[ "$kind" == "audio" ]]
 }
 
 # Video codec stored in the source file (hevc, h264, …). Empty if unknown.
@@ -572,7 +568,7 @@ tl_cleanup_partial() {
 # On failure removes the partial file and returns 1.
 # total_sec is the expected output length (input duration / speed).
 tl_run_ffmpeg() {
-  local src="$1" dest="$2" speed="$3" keep_audio="$4" total_sec="${5:-}"
+  local src="$1" dest="$2" speed="$3" total_sec="${4:-}"
   local vfilter partial rc
   local -a enc_args=()
   vfilter="$(tl_video_filter "$speed")"
@@ -583,20 +579,11 @@ tl_run_ffmpeg() {
     enc_args+=(-ss "$TL_SS")
   fi
   enc_args+=(-i "$src")
-  if (( keep_audio )); then
-    enc_args+=(
-      -filter_complex "[0:v]${vfilter}[v];[0:a]atempo=${speed}.0[a]"
-      -map "[v]" -map "[a]"
-      "${TL_ENC_ARGS[@]}"
-      -c:a aac -b:a 128k
-    )
-  else
-    enc_args+=(
-      -an
-      -filter:v "$vfilter"
-      "${TL_ENC_ARGS[@]}"
-    )
-  fi
+  enc_args+=(
+    -an
+    -filter:v "$vfilter"
+    "${TL_ENC_ARGS[@]}"
+  )
   enc_args+=(-movflags +faststart)
   if [[ -n "${TL_OUT_T:-}" ]]; then
     enc_args+=(-t "$TL_OUT_T")
@@ -628,15 +615,12 @@ tl_run_ffmpeg() {
 
 tl_encode_one() {
   local src="$1" speed="$2" redo="$3" encoder_want="$4"
-  local dest dur out_dur="" kind keep_audio=0 label label_prev="" src_codec i where gop_fps
+  local dest dur out_dur="" kind label label_prev="" src_codec i where gop_fps
   local -a kinds=()
   dest="$(tl_output_path "$src" "$speed")"
   if [[ -e "$dest" && "$redo" -eq 0 ]]; then
     echo "$(tl_ts) Already exists, skipping: ${dest}"
     return 0
-  fi
-  if tl_has_audio "$src" && (( speed == 2 )); then
-    keep_audio=1
   fi
   dur="$(tl_ffprobe_duration "$src" || true)"
   echo
@@ -652,11 +636,7 @@ tl_encode_one() {
     TL_SS=""
     TL_OUT_T=""
   fi
-  if (( keep_audio )); then
-    echo "$(tl_ts) Audio: kept, played at ${speed}×"
-  else
-    echo "$(tl_ts) Audio: omitted"
-  fi
+  echo "$(tl_ts) Audio: omitted"
   echo "$(tl_ts) Output: ${dest}"
   echo "$(tl_ts) Picture: $(tl_picture_summary)"
   src_codec="$(tl_source_video_codec "$src")"
@@ -685,7 +665,7 @@ tl_encode_one() {
       echo "$(tl_ts) ${label_prev} failed; retrying with ${label}."
     fi
     echo "$(tl_ts) Output encoder: ${label}"
-    if tl_run_ffmpeg "$src" "$dest" "$speed" "$keep_audio" "$out_dur"; then
+    if tl_run_ffmpeg "$src" "$dest" "$speed" "$out_dur"; then
       echo "$(tl_ts) Done: ${dest}"
       return 0
     fi
@@ -749,27 +729,48 @@ tl_read_key() {
 }
 
 tl_prompt_speed() {
-  local answer=""
-  local default="${PGM_TIMELAPSE_SPEED:-10}"
-  tl_is_speed "$default" || default=10
+  local choice="" answer=""
   if (( DO_YES )) || (( ! script_is_run_interactively )); then
-    SPEED="$default"
+    SPEED="${PGM_TIMELAPSE_SPEED:-5}"
+    tl_is_speed "$SPEED" || SPEED=5
     return 0
   fi
-  echo "How much faster?"
-  echo "  2   keeps audio"
-  echo "  5, 10, 20, or any integer from 2 to 240   picture only"
-  printf 'Speed [%s]: ' "$default"
-  IFS= read -r answer || answer=""
-  if [[ -z "$answer" ]]; then
-    SPEED="$default"
-  else
-    SPEED="$answer"
-  fi
-  if ! tl_is_speed "$SPEED"; then
-    echo "$(tl_ts) Invalid speed: ${SPEED} (use an integer from 2 to 240)" >&2
-    return 1
-  fi
+  echo "How much faster? [1/2/3/4/5/6/7/c]"
+  echo
+  echo "  [1]  2×"
+  echo "  [2]  5×     (default)"
+  echo "  [3] 10×"
+  echo "  [4] 15×"
+  echo "  [5] 20×"
+  echo "  [6] 25×"
+  echo "  [7] 30×"
+  echo "  [c] Custom  type an integer from 2 to 240"
+  echo
+  tl_read_key "Speed [2]: " 2
+  choice="$(tl_choice "$REPLY")"
+  case "$choice" in
+    1) SPEED=2 ;;
+    2) SPEED=5 ;;
+    3) SPEED=10 ;;
+    4) SPEED=15 ;;
+    5) SPEED=20 ;;
+    6) SPEED=25 ;;
+    7) SPEED=30 ;;
+    c)
+      tl_read_line "Custom speed [5]: " 5
+      answer="$REPLY"
+      if tl_is_speed "$answer"; then
+        SPEED="$answer"
+      else
+        echo "$(tl_ts) Invalid speed: ${answer} (use an integer from 2 to 240). Using 5."
+        SPEED=5
+      fi
+      ;;
+    *)
+      echo "$(tl_ts) Unknown choice: ${REPLY}. Using 5."
+      SPEED=5
+      ;;
+  esac
   return 0
 }
 
@@ -1635,11 +1636,7 @@ tl_encoder_candidates "$ENCODER" "" >/dev/null || {
 
 echo "$(tl_ts) Speed: ${SPEED}×    files: ${#TL_INPUTS[@]}    encoder request: ${ENCODER}    display: ${TL_DISPLAY}"
 echo "$(tl_ts) Picture: $(tl_picture_summary)"
-if (( SPEED == 2 )); then
-  echo "$(tl_ts) Audio is kept at 2×. The .gpx beside the source still uses real time."
-else
-  echo "$(tl_ts) Audio is omitted. The .gpx beside the source still uses real time."
-fi
+echo "$(tl_ts) Audio is omitted. The .gpx beside the source still uses real time."
 
 return_code=0
 tl_i=0
