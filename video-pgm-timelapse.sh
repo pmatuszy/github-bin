@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261002.084500 - print the equivalent command and confirm before encoding
 # v. 20261002.084000 - speed menu lists q to quit
 # v. 20261002.083700 - speed menu defaults to 5× and always omits audio
 # v. 20261002.081600 - keyframe sample is 2 minutes, or minutes or a percent you type
@@ -17,6 +18,7 @@
 # v. 20260930.221500 - file prompts: one key, no Enter
 # v. 20260930.220400 - faster viewing copy of a merged video (2, 5, 10, 20, …)
 
+# 2026.10.02 - v. 0.18 - each choice has a command-line option; show that command and confirm before encoding
 # 2026.10.02 - v. 0.17 - speed menu lists q to quit
 # 2026.10.02 - v. 0.16 - speed menu is 2, 5, 10, 15, 20, 25, 30, or custom; default 5×; audio is always omitted
 # 2026.10.02 - v. 0.15 - same as the source reads the first 2 minutes, or a typed number of minutes or a percent
@@ -44,8 +46,14 @@
 show_help() {
   cat <<EOF
 Usage: $(basename "$0") [-h|--help] [-v|--version] [--history]
-       [-y|--yes] [--speed N] [--redo] [--verbose]
-       [--encoder auto|nvenc|x264|x265] [FILE|DIR ...]
+       [-y|--yes] [--redo] [--speed N] [--display normal|verbose]
+       [--picture plain|steady|soft] [--blend-before N] [--blend-after N]
+       [--fps 25|30|60] [--encoder auto|nvenc|x264|x265]
+       [--gop default|source|Ns|Nf]
+       [--keyframe-minutes N | --keyframe-percent N]
+       [--scan-minutes 2|5|10]
+       [--test-minutes 1|2|5] [--test-at N]
+       [FILE|DIR ...]
 
 Write a faster copy beside each video. A 10× copy of a two-hour drive is about
 twelve minutes. The original file is not changed.
@@ -58,22 +66,35 @@ Options:
   -h, --help           Show this help and exit.
   -v, --version        Print script version and exit.
   --history            Print script changelog from the header and exit.
-  -y, --yes            Encode every selected file without prompts.
-  --speed N            Integer speed, 2 or more (default when -y: 5).
+  -y, --yes            Do not ask. Encode with the options below.
+  --speed N            Integer speed, 2 to 240. Default 5.
                        Audio is always omitted.
-  --redo               Replace an existing *_xN.mp4.
+  --display MODE       normal (progress bar) or verbose (frames).
+  --verbose            Same as --display verbose.
+  --picture MODE       plain (every Nth frame at 25 fps), steady, or soft.
+  --blend-before N     Frames before the kept one. 0 to 8. Soft only.
+  --blend-after N      Frames after the kept one. 0 to 8. Soft only.
+  --fps N              25, 30, or 60. Steady and soft only. Default 30.
   --encoder KIND       auto (default), nvenc, x264, or x265.
                        auto follows the source codec. HEVC prefers hevc_nvenc,
                        then libx265. H.264 prefers h264_nvenc, then libx264.
                        A missing or failed encoder falls through to the next.
                        nvenc, x264, and x265 force that one encoder.
-  --verbose            Show ffmpeg frame stats instead of the progress bar.
-                       -y otherwise keeps the progress bar.
+  --gop SPEC           default, source, a number of seconds (2s), or frames (30f).
+  --keyframe-minutes N Read this many minutes from the start when --gop source.
+                       Default 2.
+  --keyframe-percent N Read this percent from the start when --gop source.
+                       100 is the whole file.
+  --scan-minutes N     Decode 2, 5, or 10 minutes to check frame timing.
+  --test-minutes N     Encode 1, 2, or 5 minutes of the result, not the whole file.
+  --test-at N          Where the test starts: 0, 10, 20, 30, 50, 70, or 90.
+                       0 is the beginning.
+  --redo               Replace an existing *_xN.mp4.
 
-An interactive run asks for advanced encoding after the speed. Enter means no:
-the current picture (every Nth frame at 25 fps), the whole file. Yes asks for
-a steady or blended picture, keyframe spacing, an optional source scan, and
-an optional short test clip. -y skips that menu.
+An interactive run asks the questions, then prints the equivalent command and
+asks whether to encode. Answering no walks the questions again, and Enter
+keeps each current answer. -y skips the questions and that confirmation.
+A pasted command with -y encodes without asking.
 
 Environment:
   PGM_TIMELAPSE_SPEED     Same as --speed.
@@ -82,10 +103,10 @@ Environment:
 
 Examples:
   $(basename "$0") --speed 10 trip_concat.mp4
-  $(basename "$0") --verbose --speed 10 trip_concat.mp4
-  $(basename "$0") -y --speed 20 /path/to/merged/
+  $(basename "$0") -y --speed 20 --picture steady --fps 30 trip_concat.mp4
+  $(basename "$0") -y --speed 5 --gop source --keyframe-minutes 2 trip_concat.mp4
   $(basename "$0")
-      Ask for a speed (default 5×), then normal or verbose display, then each file (one key, no Enter).
+      Ask the questions (speed defaults to 5×), then confirm before encoding.
 EOF
 }
 
@@ -730,17 +751,186 @@ tl_read_key() {
   fi
 }
 
+tl_speed_menu_key() {
+  case "${1:-5}" in
+    2) printf '1\n' ;;
+    5) printf '2\n' ;;
+    10) printf '3\n' ;;
+    15) printf '4\n' ;;
+    20) printf '5\n' ;;
+    25) printf '6\n' ;;
+    30) printf '7\n' ;;
+    *) printf 'c\n' ;;
+  esac
+}
+
+tl_test_start_key() {
+  case "${1:-0}" in
+    0) printf 'b\n' ;;
+    10) printf '1\n' ;;
+    20) printf '2\n' ;;
+    30) printf '3\n' ;;
+    50) printf '5\n' ;;
+    70) printf '7\n' ;;
+    90) printf '9\n' ;;
+    *) printf 'b\n' ;;
+  esac
+}
+
+tl_reset_advanced() {
+  TL_ADV_ON=0
+  TL_PICTURE=plain
+  TL_BLEND_BEFORE=1
+  TL_BLEND_AFTER=1
+  TL_OUT_FPS=30
+  TL_GOP_MODE=default
+  TL_GOP_KIND=default
+  TL_GOP_SECONDS=1
+  TL_GOP_FRAMES=30
+  TL_DO_SCAN=0
+  TL_TEST=0
+  TL_TEST_MINUTES=1
+  TL_TEST_PERCENT=0
+  TL_SS=""
+  TL_OUT_T=""
+}
+
+tl_equivalent_command() {
+  local -a cmd=()
+  local f part out=""
+  cmd+=("$(basename "$0")" -y --speed "${SPEED:-5}" --display "${TL_DISPLAY:-normal}")
+  cmd+=(--picture "${TL_PICTURE:-plain}")
+  if [[ "${TL_PICTURE:-plain}" == soft ]]; then
+    cmd+=(--blend-before "${TL_BLEND_BEFORE:-1}" --blend-after "${TL_BLEND_AFTER:-1}")
+  fi
+  if [[ "${TL_PICTURE:-plain}" != plain ]]; then
+    cmd+=(--fps "${TL_OUT_FPS:-30}")
+  fi
+  cmd+=(--encoder "${ENCODER:-auto}")
+  case "${TL_GOP_KIND:-default}" in
+    source)
+      cmd+=(--gop source)
+      if [[ "${TL_KF_UNIT:-minutes}" == percent ]]; then
+        cmd+=(--keyframe-percent "${TL_KF_PERCENT:-10}")
+      else
+        cmd+=(--keyframe-minutes "${TL_KF_MINUTES:-2}")
+      fi
+      ;;
+    seconds) cmd+=(--gop "${TL_GOP_SECONDS}s") ;;
+    frames) cmd+=(--gop "${TL_GOP_FRAMES}f") ;;
+    *) cmd+=(--gop default) ;;
+  esac
+  if (( ${TL_DO_SCAN:-0} )); then
+    cmd+=(--scan-minutes "$TL_SCAN_MINUTES")
+  fi
+  if (( ${TL_TEST:-0} )); then
+    cmd+=(--test-minutes "$TL_TEST_MINUTES" --test-at "$TL_TEST_PERCENT")
+  fi
+  if (( REDO )); then
+    cmd+=(--redo)
+  fi
+  cmd+=(--)
+  for f in "${TL_INPUTS[@]}"; do
+    cmd+=("$f")
+  done
+  for part in "${cmd[@]}"; do
+    printf -v part '%q' "$part"
+    out+="${out:+ }${part}"
+  done
+  printf '%s\n' "$out"
+}
+
+tl_print_plan() {
+  echo
+  echo "Chosen"
+  printf '  %-18s %s\n' "Speed" "${SPEED}×"
+  if [[ "${TL_DISPLAY:-normal}" == verbose ]]; then
+    printf '  %-18s %s\n' "Display" "verbose (frames)"
+  else
+    printf '  %-18s %s\n' "Display" "normal (progress bar)"
+  fi
+  local pic="" kf=""
+  case "${TL_PICTURE:-plain}" in
+    steady) pic="steady, ${TL_OUT_FPS:-30} fps" ;;
+    soft) pic="soft, ${TL_BLEND_BEFORE:-1} before, ${TL_BLEND_AFTER:-1} after, ${TL_OUT_FPS:-30} fps" ;;
+    *) pic="plain, every Nth frame at 25 fps" ;;
+  esac
+  kf="$(tl_gop_summary)"
+  if [[ "${TL_GOP_KIND:-default}" == source && -n "${TL_SCAN_GAP:-}" ]]; then
+    kf+=", measured ${TL_SCAN_GAP}s"
+  fi
+  printf '  %-18s %s\n' "Picture" "$pic"
+  printf '  %-18s %s\n' "Encoder" "$ENCODER"
+  printf '  %-18s %s\n' "Keyframes" "$kf"
+  if (( ${TL_DO_SCAN:-0} )); then
+    printf '  %-18s %s\n' "Picture scan" "first $(tl_minutes_word "$TL_SCAN_MINUTES")"
+  else
+    printf '  %-18s %s\n' "Picture scan" "no"
+  fi
+  if (( ${TL_TEST:-0} )); then
+    if (( TL_TEST_PERCENT == 0 )); then
+      printf '  %-18s %s\n' "Test clip" "$(tl_minutes_word "$TL_TEST_MINUTES") of output from the beginning"
+    else
+      printf '  %-18s %s\n' "Test clip" "$(tl_minutes_word "$TL_TEST_MINUTES") of output from ${TL_TEST_PERCENT}%"
+    fi
+  else
+    printf '  %-18s %s\n' "Test clip" "whole file"
+  fi
+  echo
+  echo "Command"
+  echo "  $(tl_equivalent_command)"
+  echo
+  echo "Proceed with these choices? [Y/n/q]"
+  echo "  [Y] Encode (default)"
+  echo "  [n] Go through the questions again. Enter keeps each answer above."
+  echo "  [q] Quit"
+}
+
+tl_prepare_unattended() {
+  local src="${TL_INPUTS[0]}"
+  [[ -n "$SPEED" ]] || SPEED=5
+  [[ -n "$TL_DISPLAY" ]] || TL_DISPLAY=normal
+  if [[ "${TL_GOP_KIND:-default}" == source ]]; then
+    TL_KEYFRAME_MEASURED=0
+    TL_SCAN_GAP=""
+    if [[ "${TL_KF_UNIT:-minutes}" == percent ]]; then
+      tl_keyframe_span_percent "$src" "${TL_KF_PERCENT:-10}"
+    else
+      tl_keyframe_span_minutes "$src" "${TL_KF_MINUTES:-2}"
+    fi
+    if tl_measure_keyframe_gap "$src" "${TL_KF_LIMIT_SEC:-}"; then
+      TL_GOP_MODE=seconds
+      TL_GOP_SECONDS="$(tl_gap_seconds_from_measured "$TL_SCAN_GAP")"
+      echo "$(tl_ts) Most source gaps are ${TL_SCAN_GAP}s. Output keyframes: every ${TL_GOP_SECONDS}s."
+    else
+      echo "$(tl_ts) No keyframe spacing found. Using the encoder default."
+      TL_GOP_KIND=default
+      TL_GOP_MODE=default
+    fi
+  fi
+  if (( ${TL_DO_SCAN:-0} )); then
+    tl_scan_source "$src" "$TL_SCAN_MINUTES"
+  fi
+}
+
 tl_prompt_speed() {
-  local choice="" answer=""
+  local choice="" answer="" cur def five_note="" custom_def=5
   if (( DO_YES )) || (( ! script_is_run_interactively )); then
-    SPEED="${PGM_TIMELAPSE_SPEED:-5}"
+    SPEED="${SPEED:-${PGM_TIMELAPSE_SPEED:-5}}"
     tl_is_speed "$SPEED" || SPEED=5
     return 0
   fi
+  cur="${SPEED:-5}"
+  tl_is_speed "$cur" || cur=5
+  def="$(tl_speed_menu_key "$cur")"
+  if [[ "$def" == c ]]; then
+    custom_def="$cur"
+  fi
+  [[ "$def" == 2 ]] && five_note=" (default)"
   echo "How much faster? [1/2/3/4/5/6/7/c/q]"
   echo
   echo "  [1]  2×"
-  echo "  [2]  5×     (default)"
+  echo "  [2]  5×${five_note}"
   echo "  [3] 10×"
   echo "  [4] 15×"
   echo "  [5] 20×"
@@ -749,7 +939,7 @@ tl_prompt_speed() {
   echo "  [c] Custom  type an integer from 2 to 240"
   echo "  [q] Quit"
   echo
-  tl_read_key "Speed [2]: " 2
+  tl_read_key "Speed [${def}]: " "$def"
   choice="$(tl_choice "$REPLY")"
   case "$choice" in
     1) SPEED=2 ;;
@@ -760,10 +950,12 @@ tl_prompt_speed() {
     6) SPEED=25 ;;
     7) SPEED=30 ;;
     c)
-      tl_read_line "Custom speed [5]: " 5
+      tl_read_line "Custom speed [${custom_def}]: " "$custom_def"
       answer="$REPLY"
       if tl_is_speed "$answer"; then
         SPEED="$answer"
+      elif tl_is_speed "${SPEED:-}"; then
+        echo "$(tl_ts) Invalid speed: ${answer} (use an integer from 2 to 240). Keeping ${SPEED}."
       else
         echo "$(tl_ts) Invalid speed: ${answer} (use an integer from 2 to 240). Using 5."
         SPEED=5
@@ -774,8 +966,12 @@ tl_prompt_speed() {
       return 2
       ;;
     *)
-      echo "$(tl_ts) Unknown choice: ${REPLY}. Using 5."
-      SPEED=5
+      if tl_is_speed "${SPEED:-}"; then
+        echo "$(tl_ts) Unknown choice: ${REPLY}. Keeping ${SPEED}."
+      else
+        echo "$(tl_ts) Unknown choice: ${REPLY}. Using 5."
+        SPEED=5
+      fi
       ;;
   esac
   return 0
@@ -877,7 +1073,14 @@ tl_picture_summary() {
 }
 
 tl_gop_summary() {
-  case "${TL_GOP_MODE:-default}" in
+  case "${TL_GOP_KIND:-default}" in
+    source)
+      if [[ "${TL_KF_UNIT:-minutes}" == percent ]]; then
+        printf 'same as the source, first %s%%' "${TL_KF_PERCENT:-10}"
+      else
+        printf 'same as the source, first %s minutes' "${TL_KF_MINUTES:-2}"
+      fi
+      ;;
     seconds)
       printf 'keyframe every %ss' "$TL_GOP_SECONDS"
       ;;
@@ -926,51 +1129,59 @@ tl_set_test_window() {
 }
 
 tl_prompt_blend_count() {
-  local side="$1" dest="$2" answer=""
-  printf 'Frames %s the kept frame [1]: ' "$side"
+  local side="$1" dest="$2" cur="${!2:-1}" answer=""
+  printf 'Frames %s the kept frame [%s]: ' "$side" "$cur"
   IFS= read -r answer || answer=""
   if [[ -z "$answer" ]]; then
-    answer=1
+    answer="$cur"
   fi
   if [[ ! "$answer" =~ ^[0-9]+$ ]] || (( answer > 8 )); then
-    echo "$(tl_ts) Invalid blend count: ${answer} (use 0 to 8). Using 1." >&2
-    answer=1
+    echo "$(tl_ts) Invalid blend count: ${answer} (use 0 to 8). Keeping ${cur}." >&2
+    answer="$cur"
   fi
   printf -v "$dest" '%s' "$answer"
 }
 
 tl_prompt_out_fps() {
-  local choice=""
+  local choice="" fkey=3
+  case "${TL_OUT_FPS:-30}" in
+    60) fkey=6 ;;
+    25) fkey=2 ;;
+    *) fkey=3; TL_OUT_FPS=30 ;;
+  esac
   echo
   echo "Output frames per second?"
-  echo "  [3] 30 fps (default)"
+  echo "  [3] 30 fps"
   echo "      On a 60 Hz screen each picture stays for two refreshes,"
   echo "      so the fast-slow pulse goes away."
   echo "  [6] 60 fps"
   echo "      One refresh per picture on a 60 Hz screen."
   echo "  [2] 25 fps"
   echo "      The same rate as this dashcam."
-  tl_read_key "Frames per second [3/6/2]: " 3
+  tl_read_key "Frames per second [3/6/2]: " "$fkey"
   choice="$(tl_choice "$REPLY")"
   case "$choice" in
     3) TL_OUT_FPS=30 ;;
     6) TL_OUT_FPS=60 ;;
     2) TL_OUT_FPS=25 ;;
     *)
-      echo "$(tl_ts) Unknown choice: ${REPLY}; using 30 fps."
-      TL_OUT_FPS=30
+      echo "$(tl_ts) Unknown choice: ${REPLY}; keeping ${TL_OUT_FPS} fps."
       ;;
   esac
 }
 
 tl_prompt_picture() {
-  local choice=""
+  local choice="" pkey=p
+  case "${TL_PICTURE:-plain}" in
+    steady) pkey=t ;;
+    soft) pkey=b ;;
+    *) pkey=p; TL_PICTURE=plain ;;
+  esac
   echo
   echo "Picture [P/t/b]"
-  echo "  [P] Plain (default)"
+  echo "  [P] Plain"
   echo "      Keep one frame and drop the next ones, then play the kept"
   echo "      frames at 25 fps, the same rate as this dashcam."
-  echo "      Enter leaves the encode as it is today."
   echo "  [t] Steady"
   echo "      Speed the timeline up, then lay the pictures on a chosen"
   echo "      frame rate (setpts=PTS/N,fps=…). 30 fps sits evenly on a"
@@ -979,25 +1190,22 @@ tl_prompt_picture() {
   echo "      Average a few frames before and after each kept picture,"
   echo "      then use that same steady frame rate. The road and the"
   echo "      camera shake smear a little instead of jumping."
-  tl_read_key "Picture [P/t/b]: " p
+  tl_read_key "Picture [P/t/b]: " "$pkey"
   choice="$(tl_choice "$REPLY")"
   case "$choice" in
     p) TL_PICTURE=plain ;;
     t) TL_PICTURE=steady ;;
     b) TL_PICTURE=soft ;;
     *)
-      echo "$(tl_ts) Unknown choice: ${REPLY}; using plain."
-      TL_PICTURE=plain
+      echo "$(tl_ts) Unknown choice: ${REPLY}; keeping ${TL_PICTURE}."
       ;;
   esac
   if [[ "$TL_PICTURE" == soft ]]; then
     echo
     echo "How many neighboring frames should be averaged?"
-    echo "  Enter uses 1 before and 1 after (0.12 seconds at 25 fps)."
+    echo "  Enter keeps the number in brackets."
     echo "  If the road still jumps, try 2 and 2, then 4 and 4."
     echo "  Each side can be 0 to 8."
-    TL_BLEND_BEFORE=1
-    TL_BLEND_AFTER=1
     tl_prompt_blend_count before TL_BLEND_BEFORE
     tl_prompt_blend_count after TL_BLEND_AFTER
     if (( TL_BLEND_BEFORE == 0 && TL_BLEND_AFTER == 0 )); then
@@ -1011,13 +1219,16 @@ tl_prompt_picture() {
 }
 
 tl_prompt_encoder_menu() {
-  local choice=""
-  if (( ENCODER_FROM_CLI )); then
-    return 0
-  fi
+  local choice="" ekey=a
+  case "${ENCODER:-auto}" in
+    nvenc) ekey=n ;;
+    x264) ekey=4 ;;
+    x265) ekey=5 ;;
+    *) ekey=a; ENCODER=auto ;;
+  esac
   echo
   echo "Encoder [A/n/4/5]"
-  echo "  [A] Auto (default)"
+  echo "  [A] Auto"
   echo "      Match the source codec. HEVC tries hevc_nvenc on the GPU,"
   echo "      then libx265 on the CPU. H.264 tries h264_nvenc, then libx264."
   echo "  [n] hevc_nvenc"
@@ -1026,7 +1237,7 @@ tl_prompt_encoder_menu() {
   echo "      CPU only. Writes H.264."
   echo "  [5] libx265"
   echo "      CPU only. Writes HEVC without the GPU."
-  tl_read_key "Encoder [A/n/4/5]: " a
+  tl_read_key "Encoder [A/n/4/5]: " "$ekey"
   choice="$(tl_choice "$REPLY")"
   case "$choice" in
     a) ENCODER=auto ;;
@@ -1034,8 +1245,7 @@ tl_prompt_encoder_menu() {
     4) ENCODER=x264 ;;
     5) ENCODER=x265 ;;
     *)
-      echo "$(tl_ts) Unknown choice: ${REPLY}; using auto."
-      ENCODER=auto
+      echo "$(tl_ts) Unknown choice: ${REPLY}; keeping ${ENCODER}."
       ;;
   esac
 }
@@ -1145,59 +1355,83 @@ tl_keyframe_span_percent() {
 }
 
 tl_prompt_keyframe_span() {
-  local src="$1" choice="" answer=""
+  local src="$1" choice="" answer="" def=2 min_def pct_def
+  min_def="${TL_KF_MINUTES:-2}"
+  pct_def="${TL_KF_PERCENT:-10}"
+  if [[ "${TL_KF_UNIT:-minutes}" == percent ]]; then
+    def=p
+  elif [[ "$min_def" != 2 ]]; then
+    def=m
+  fi
   echo
   echo "How much of the file should be read for keyframes? [2/m/p]"
-  echo "  [2] First 2 minutes (default)"
+  echo "  [2] First 2 minutes"
   echo "      From the start of the file. Packet headers only, so pictures"
-  echo "      are not decoded. Enter keeps this."
+  echo "      are not decoded."
   echo "  [m] Minutes"
   echo "      Type how many minutes from the start. 5 or 10 crosses more"
   echo "      dashcam clips than 2 does."
   echo "  [p] Percent"
   echo "      Type a percent of this file, again from the start."
   echo "      10 is the first tenth. 100 is the whole file."
-  tl_read_key "Keyframe sample [2/m/p]: " 2
+  tl_read_key "Keyframe sample [2/m/p]: " "$def"
   choice="$(tl_choice "$REPLY")"
   case "$choice" in
     2)
+      TL_KF_UNIT=minutes
+      TL_KF_MINUTES=2
       tl_keyframe_span_minutes "$src" 2
       ;;
     m)
-      tl_read_line "Minutes from the start [2]: " 2
+      tl_read_line "Minutes from the start [${min_def}]: " "$min_def"
       answer="$REPLY"
       if [[ "$answer" =~ ^[0-9]+$ ]] && (( answer >= 1 )); then
+        TL_KF_UNIT=minutes
+        TL_KF_MINUTES="$answer"
         tl_keyframe_span_minutes "$src" "$answer"
       else
-        echo "$(tl_ts) Invalid minutes: ${answer}. Reading the first 2 minutes."
-        tl_keyframe_span_minutes "$src" 2
+        echo "$(tl_ts) Invalid minutes: ${answer}. Reading the first ${min_def} minutes."
+        TL_KF_UNIT=minutes
+        TL_KF_MINUTES="$min_def"
+        tl_keyframe_span_minutes "$src" "$min_def"
       fi
       ;;
     p)
-      tl_read_line "Percent from the start [10]: " 10
+      tl_read_line "Percent from the start [${pct_def}]: " "$pct_def"
       answer="$REPLY"
       if [[ "$answer" =~ ^[0-9]+$ ]] && (( answer >= 1 && answer <= 100 )); then
+        TL_KF_UNIT=percent
+        TL_KF_PERCENT="$answer"
         tl_keyframe_span_percent "$src" "$answer"
       else
         echo "$(tl_ts) Invalid percent: ${answer} (use 1 to 100). Reading the first 2 minutes."
+        TL_KF_UNIT=minutes
+        TL_KF_MINUTES=2
         tl_keyframe_span_minutes "$src" 2
       fi
       ;;
     *)
       echo "$(tl_ts) Unknown choice: ${REPLY}. Reading the first 2 minutes."
+      TL_KF_UNIT=minutes
+      TL_KF_MINUTES=2
       tl_keyframe_span_minutes "$src" 2
       ;;
   esac
 }
 
 tl_prompt_gop() {
-  local choice="" answer=""
+  local choice="" answer="" gkey=d sec_def=1 frame_def=30
+  case "${TL_GOP_KIND:-default}" in
+    source) gkey=s ;;
+    seconds) gkey=c; sec_def="$TL_GOP_SECONDS" ;;
+    frames) gkey=f; frame_def="$TL_GOP_FRAMES" ;;
+    *) gkey=d ;;
+  esac
   echo
   echo "Keyframe spacing [D/s/c/f]"
   echo "  [D] Encoder default"
   echo "      Leave the interval to hevc_nvenc or libx265. That is often"
   echo "      about 10 seconds. Fine when you watch straight through."
-  echo "      Enter keeps this."
   echo "  [s] Same as the source"
   echo "      Read part of this file and use the keyframe interval it has."
   echo "      You choose 2 minutes, another number of minutes, or a percent."
@@ -1206,48 +1440,56 @@ tl_prompt_gop() {
   echo "      Type how often, in seconds of the output, a keyframe is written."
   echo "  [f] Custom frames"
   echo "      Type a frame count of the output, not of the dashcam."
-  tl_read_key "Keyframe spacing [D/s/c/f]: " d
+  tl_read_key "Keyframe spacing [D/s/c/f]: " "$gkey"
   choice="$(tl_choice "$REPLY")"
   case "$choice" in
     d)
+      TL_GOP_KIND=default
       TL_GOP_MODE=default
       ;;
     s)
+      TL_KEYFRAME_MEASURED=0
+      TL_SCAN_GAP=""
       tl_prompt_keyframe_span "${TL_INPUTS[0]}"
       if tl_measure_keyframe_gap "${TL_INPUTS[0]}" "${TL_KF_LIMIT_SEC:-}"; then
+        TL_GOP_KIND=source
         TL_GOP_MODE=seconds
         TL_GOP_SECONDS="$(tl_gap_seconds_from_measured "$TL_SCAN_GAP")"
         echo "$(tl_ts) Most source gaps are ${TL_SCAN_GAP}s. Output keyframes: every ${TL_GOP_SECONDS}s."
       else
         echo "$(tl_ts) No keyframe spacing found. Using the encoder default."
+        TL_GOP_KIND=default
         TL_GOP_MODE=default
       fi
       ;;
     c)
-      tl_read_line "Seconds between keyframes [1]: " 1
+      tl_read_line "Seconds between keyframes [${sec_def}]: " "$sec_def"
       answer="$REPLY"
       if [[ "$answer" =~ ^[0-9]+$ ]] && (( answer >= 1 && answer <= 60 )); then
+        TL_GOP_KIND=seconds
         TL_GOP_MODE=seconds
         TL_GOP_SECONDS="$answer"
       else
         echo "$(tl_ts) Invalid seconds: ${answer} (use 1 to 60). Using the encoder default."
+        TL_GOP_KIND=default
         TL_GOP_MODE=default
       fi
       ;;
     f)
-      tl_read_line "Frames between keyframes [30]: " 30
+      tl_read_line "Frames between keyframes [${frame_def}]: " "$frame_def"
       answer="$REPLY"
       if [[ "$answer" =~ ^[0-9]+$ ]] && (( answer >= 1 && answer <= 3000 )); then
+        TL_GOP_KIND=frames
         TL_GOP_MODE=frames
         TL_GOP_FRAMES="$answer"
       else
         echo "$(tl_ts) Invalid frame count: ${answer} (use 1 to 3000). Using the encoder default."
+        TL_GOP_KIND=default
         TL_GOP_MODE=default
       fi
       ;;
     *)
-      echo "$(tl_ts) Unknown choice: ${REPLY}; using the encoder default."
-      TL_GOP_MODE=default
+      echo "$(tl_ts) Unknown choice: ${REPLY}; keeping the current keyframe choice."
       ;;
   esac
 }
@@ -1306,6 +1548,7 @@ tl_apply_scan_suggestion() {
     TL_OUT_FPS=30
   fi
   if [[ -n "$suggest_seconds" ]]; then
+    TL_GOP_KIND=seconds
     TL_GOP_MODE=seconds
     TL_GOP_SECONDS="$suggest_seconds"
   fi
@@ -1313,19 +1556,29 @@ tl_apply_scan_suggestion() {
 }
 
 tl_prompt_scan() {
-  local choice=""
+  local choice="" skey=n lkey=5
+  if (( ${TL_DO_SCAN:-0} )); then
+    skey=y
+  fi
+  case "${TL_SCAN_MINUTES:-5}" in
+    2) lkey=2 ;;
+    10) lkey=t ;;
+    *) lkey=5 ;;
+  esac
   echo
   echo "Scan the source before encoding? [N/y]"
-  echo "  [N] Skip the scan (default)"
+  echo "  [N] Skip the scan"
   echo "      Encode with the choices above."
   echo "  [y] Read this file"
   echo "      Decodes a piece at the start to check that each frame lasts"
   echo "      the same time. Keyframe spacing is chosen above, not here."
-  tl_read_key "Scan the source? [N/y]: " n
+  tl_read_key "Scan the source? [N/y]: " "$skey"
   choice="$(tl_choice "$REPLY")"
   if [[ "$choice" != y ]]; then
+    TL_DO_SCAN=0
     return 0
   fi
+  TL_DO_SCAN=1
   echo
   echo "How long a piece of pictures should be decoded? [2/5/t]"
   echo "  These minutes are only the piece at the start that we decode"
@@ -1333,19 +1586,18 @@ tl_prompt_scan() {
   echo "  Keyframe spacing was already chosen above."
   echo "  [2] 2 minutes"
   echo "      A shorter look. It may still be a single clip."
-  echo "  [5] 5 minutes (default)"
+  echo "  [5] 5 minutes"
   echo "      Long enough to cross several dashcam clips."
   echo "  [t] 10 minutes"
   echo "      A longer look. Decoding it takes a few minutes."
-  tl_read_key "Decode length [2/5/t]: " 5
+  tl_read_key "Decode length [2/5/t]: " "$lkey"
   choice="$(tl_choice "$REPLY")"
   case "$choice" in
     2) TL_SCAN_MINUTES=2 ;;
     5) TL_SCAN_MINUTES=5 ;;
     t) TL_SCAN_MINUTES=10 ;;
     *)
-      echo "$(tl_ts) Unknown choice: ${REPLY}; using 5 minutes."
-      TL_SCAN_MINUTES=5
+      echo "$(tl_ts) Unknown choice: ${REPLY}; keeping ${TL_SCAN_MINUTES} minutes."
       ;;
   esac
   tl_scan_source "${TL_INPUTS[0]}" "$TL_SCAN_MINUTES"
@@ -1353,14 +1605,23 @@ tl_prompt_scan() {
 }
 
 tl_prompt_test_clip() {
-  local choice=""
+  local choice="" tkey=n lkey=1 skey=b
+  if (( ${TL_TEST:-0} )); then
+    tkey=y
+  fi
+  case "${TL_TEST_MINUTES:-1}" in
+    2) lkey=2 ;;
+    5) lkey=5 ;;
+    *) lkey=1 ;;
+  esac
+  skey="$(tl_test_start_key "${TL_TEST_PERCENT:-0}")"
   echo
   echo "Test clip instead of the whole file? [N/y]"
-  echo "  [N] Whole file (default)"
+  echo "  [N] Whole file"
   echo "      Encode the full sped-up drive."
   echo "  [y] A short piece of the result you will watch"
   echo "      So you can judge the picture before waiting for the whole file."
-  tl_read_key "Test clip? [N/y]: " n
+  tl_read_key "Test clip? [N/y]: " "$tkey"
   choice="$(tl_choice "$REPLY")"
   if [[ "$choice" != y ]]; then
     TL_TEST=0
@@ -1369,28 +1630,27 @@ tl_prompt_test_clip() {
   TL_TEST=1
   echo
   echo "How long should the result be? [1/2/5]"
-  echo "  [1] 1 minute of output (default)"
+  echo "  [1] 1 minute of output"
   echo "      At 20× this reads 20 minutes of the dashcam."
   echo "  [2] 2 minutes of output"
   echo "  [5] 5 minutes of output"
-  tl_read_key "Clip length [1/2/5]: " 1
+  tl_read_key "Clip length [1/2/5]: " "$lkey"
   choice="$(tl_choice "$REPLY")"
   case "$choice" in
     1) TL_TEST_MINUTES=1 ;;
     2) TL_TEST_MINUTES=2 ;;
     5) TL_TEST_MINUTES=5 ;;
     *)
-      echo "$(tl_ts) Unknown choice: ${REPLY}; using 1 minute."
-      TL_TEST_MINUTES=1
+      echo "$(tl_ts) Unknown choice: ${REPLY}; keeping $(tl_minutes_word "$TL_TEST_MINUTES")."
       ;;
   esac
   echo
   echo "Where should the clip start? [B/1/2/3/5/7/9]"
-  echo "  [B] Beginning (default)"
+  echo "  [B] Beginning"
   echo "  [1] 10%   [2] 20%   [3] 30%"
   echo "  [5] 50%   [7] 70%   [9] 90%"
   echo "      The percentage is of this file. The script prints the clock time."
-  tl_read_key "Start at [B/1/2/3/5/7/9]: " b
+  tl_read_key "Start at [B/1/2/3/5/7/9]: " "$skey"
   choice="$(tl_choice "$REPLY")"
   case "$choice" in
     b) TL_TEST_PERCENT=0 ;;
@@ -1401,43 +1661,33 @@ tl_prompt_test_clip() {
     7) TL_TEST_PERCENT=70 ;;
     9) TL_TEST_PERCENT=90 ;;
     *)
-      echo "$(tl_ts) Unknown choice: ${REPLY}; starting at the beginning."
-      TL_TEST_PERCENT=0
+      echo "$(tl_ts) Unknown choice: ${REPLY}; keeping the current start."
       ;;
   esac
 }
 
-# Asked once. Enter keeps today's encode: every Nth frame, the whole file.
+# Enter on No returns to a plain whole-file encode. Yes keeps the current answers.
 tl_prompt_advanced() {
-  local choice=""
-  TL_PICTURE=plain
-  TL_BLEND_BEFORE=1
-  TL_BLEND_AFTER=1
-  TL_OUT_FPS=30
-  TL_GOP_MODE=default
-  TL_GOP_SECONDS=1
-  TL_GOP_FRAMES=30
-  TL_KEYFRAME_MEASURED=0
-  TL_SCAN_GAP=""
-  TL_TEST=0
-  TL_TEST_MINUTES=1
-  TL_TEST_PERCENT=0
-  TL_SS=""
-  TL_OUT_T=""
+  local choice="" akey=n
   if (( DO_YES )) || (( ! script_is_run_interactively )); then
     return 0
   fi
+  if (( ${TL_ADV_ON:-0} )); then
+    akey=y
+  fi
   echo
   echo "Advanced encoding? [N/y]"
-  echo "  [N] Plain (default)"
+  echo "  [N] Plain"
   echo "      Every Nth frame, played at 25 fps, for the whole file."
   echo "  [y] Choose the picture, the keyframes, a source scan,"
   echo "      and an optional test clip."
-  tl_read_key "Advanced encoding? [N/y]: " n
+  tl_read_key "Advanced encoding? [N/y]: " "$akey"
   choice="$(tl_choice "$REPLY")"
   if [[ "$choice" != y ]]; then
+    tl_reset_advanced
     return 0
   fi
+  TL_ADV_ON=1
   tl_prompt_picture
   tl_prompt_encoder_menu
   tl_prompt_gop
@@ -1446,30 +1696,83 @@ tl_prompt_advanced() {
 }
 
 tl_prompt_display() {
-  local choice=""
-  if (( TL_DISPLAY_FROM_CLI )) || [[ -n "$TL_DISPLAY" ]]; then
+  local choice="" dkey=n
+  if (( DO_YES )) || (( ! script_is_run_interactively )); then
+    [[ -n "$TL_DISPLAY" ]] || TL_DISPLAY=normal
     return 0
   fi
-  if (( DO_YES )) || (( ! script_is_run_interactively )); then
-    TL_DISPLAY=normal
-    return 0
+  if [[ "${TL_DISPLAY:-normal}" == verbose ]]; then
+    dkey=v
+  else
+    dkey=n
+    [[ -n "$TL_DISPLAY" ]] || TL_DISPLAY=normal
   fi
   echo
   echo "Encode display?"
-  echo "  [N] Normal (progress bar) (default)"
+  echo "  [N] Normal (progress bar)"
   echo "  [v] Verbose (frames)"
-  tl_read_key "Display [N/v]: " n
+  tl_read_key "Display [N/v]: " "$dkey"
   choice="${REPLY,,}"
   choice="${choice//$'\r'/}"
   choice="${choice//$'\n'/}"
   case "$choice" in
-    ''|n) TL_DISPLAY=normal ;;
-    v)    TL_DISPLAY=verbose ;;
+    n) TL_DISPLAY=normal ;;
+    v) TL_DISPLAY=verbose ;;
     *)
-      echo "$(tl_ts) Unknown choice: ${REPLY}; using normal (progress bar)."
-      TL_DISPLAY=normal
+      echo "$(tl_ts) Unknown choice: ${REPLY}; keeping ${TL_DISPLAY}."
       ;;
   esac
+}
+
+tl_set_gop_spec() {
+  local spec="${1,,}" n=""
+  case "$spec" in
+    default)
+      TL_GOP_KIND=default
+      TL_GOP_MODE=default
+      ;;
+    source)
+      TL_GOP_KIND=source
+      TL_ADV_ON=1
+      ;;
+    *s)
+      n="${spec%s}"
+      if [[ "$n" =~ ^[0-9]+$ ]] && (( n >= 1 && n <= 60 )); then
+        TL_GOP_KIND=seconds
+        TL_GOP_MODE=seconds
+        TL_GOP_SECONDS="$n"
+        TL_ADV_ON=1
+      else
+        echo "ERROR: invalid --gop: ${1} (seconds 1 to 60, written as 2s)" >&2
+        exit 1
+      fi
+      ;;
+    *f)
+      n="${spec%f}"
+      if [[ "$n" =~ ^[0-9]+$ ]] && (( n >= 1 && n <= 3000 )); then
+        TL_GOP_KIND=frames
+        TL_GOP_MODE=frames
+        TL_GOP_FRAMES="$n"
+        TL_ADV_ON=1
+      else
+        echo "ERROR: invalid --gop: ${1} (frames 1 to 3000, written as 30f)" >&2
+        exit 1
+      fi
+      ;;
+    *)
+      echo "ERROR: invalid --gop: ${1} (default, source, Ns, or Nf)" >&2
+      exit 1
+      ;;
+  esac
+}
+
+tl_require_encoder() {
+  tl_load_encoders
+  tl_encoder_candidates "$ENCODER" "" >/dev/null || {
+    echo "$(tl_ts) No usable video encoder for '${ENCODER}'." >&2
+    tl_note_encoder_probe_failure
+    exit 1
+  }
 }
 
 # --- parse options (header sourced first so -v can call print_version_banner) ---
@@ -1499,8 +1802,14 @@ TL_BLEND_BEFORE=1
 TL_BLEND_AFTER=1
 TL_OUT_FPS=30
 TL_GOP_MODE=default
+TL_GOP_KIND=default
 TL_GOP_SECONDS=1
 TL_GOP_FRAMES=30
+TL_KF_UNIT=minutes
+TL_KF_MINUTES=2
+TL_KF_PERCENT=10
+TL_DO_SCAN=0
+TL_ADV_ON=0
 TL_KEYFRAME_MEASURED=0
 TL_SCAN_GAP=""
 TL_SCAN_MINUTES=5
@@ -1563,6 +1872,125 @@ while [[ $# -gt 0 ]]; do
       TL_DISPLAY_FROM_CLI=1
       shift
       ;;
+    --display)
+      [[ $# -ge 2 ]] || { echo "ERROR: missing value for --display" >&2; exit 1; }
+      TL_DISPLAY="$2"
+      TL_DISPLAY_FROM_CLI=1
+      shift 2
+      ;;
+    --display=*)
+      TL_DISPLAY="${1#--display=}"
+      TL_DISPLAY_FROM_CLI=1
+      shift
+      ;;
+    --picture)
+      [[ $# -ge 2 ]] || { echo "ERROR: missing value for --picture" >&2; exit 1; }
+      TL_PICTURE="$2"
+      [[ "$2" == plain ]] || TL_ADV_ON=1
+      shift 2
+      ;;
+    --picture=*)
+      TL_PICTURE="${1#--picture=}"
+      [[ "$TL_PICTURE" == plain ]] || TL_ADV_ON=1
+      shift
+      ;;
+    --blend-before)
+      [[ $# -ge 2 ]] || { echo "ERROR: missing value for --blend-before" >&2; exit 1; }
+      TL_BLEND_BEFORE="$2"
+      shift 2
+      ;;
+    --blend-before=*)
+      TL_BLEND_BEFORE="${1#--blend-before=}"
+      shift
+      ;;
+    --blend-after)
+      [[ $# -ge 2 ]] || { echo "ERROR: missing value for --blend-after" >&2; exit 1; }
+      TL_BLEND_AFTER="$2"
+      shift 2
+      ;;
+    --blend-after=*)
+      TL_BLEND_AFTER="${1#--blend-after=}"
+      shift
+      ;;
+    --fps)
+      [[ $# -ge 2 ]] || { echo "ERROR: missing value for --fps" >&2; exit 1; }
+      TL_OUT_FPS="$2"
+      shift 2
+      ;;
+    --fps=*)
+      TL_OUT_FPS="${1#--fps=}"
+      shift
+      ;;
+    --gop)
+      [[ $# -ge 2 ]] || { echo "ERROR: missing value for --gop" >&2; exit 1; }
+      tl_set_gop_spec "$2"
+      shift 2
+      ;;
+    --gop=*)
+      tl_set_gop_spec "${1#--gop=}"
+      shift
+      ;;
+    --keyframe-minutes)
+      [[ $# -ge 2 ]] || { echo "ERROR: missing value for --keyframe-minutes" >&2; exit 1; }
+      TL_KF_UNIT=minutes
+      TL_KF_MINUTES="$2"
+      shift 2
+      ;;
+    --keyframe-minutes=*)
+      TL_KF_UNIT=minutes
+      TL_KF_MINUTES="${1#--keyframe-minutes=}"
+      shift
+      ;;
+    --keyframe-percent)
+      [[ $# -ge 2 ]] || { echo "ERROR: missing value for --keyframe-percent" >&2; exit 1; }
+      TL_KF_UNIT=percent
+      TL_KF_PERCENT="$2"
+      shift 2
+      ;;
+    --keyframe-percent=*)
+      TL_KF_UNIT=percent
+      TL_KF_PERCENT="${1#--keyframe-percent=}"
+      shift
+      ;;
+    --scan-minutes)
+      [[ $# -ge 2 ]] || { echo "ERROR: missing value for --scan-minutes" >&2; exit 1; }
+      TL_SCAN_MINUTES="$2"
+      TL_DO_SCAN=1
+      TL_ADV_ON=1
+      shift 2
+      ;;
+    --scan-minutes=*)
+      TL_SCAN_MINUTES="${1#--scan-minutes=}"
+      TL_DO_SCAN=1
+      TL_ADV_ON=1
+      shift
+      ;;
+    --test-minutes)
+      [[ $# -ge 2 ]] || { echo "ERROR: missing value for --test-minutes" >&2; exit 1; }
+      TL_TEST_MINUTES="$2"
+      TL_TEST=1
+      TL_ADV_ON=1
+      shift 2
+      ;;
+    --test-minutes=*)
+      TL_TEST_MINUTES="${1#--test-minutes=}"
+      TL_TEST=1
+      TL_ADV_ON=1
+      shift
+      ;;
+    --test-at)
+      [[ $# -ge 2 ]] || { echo "ERROR: missing value for --test-at" >&2; exit 1; }
+      TL_TEST_PERCENT="$2"
+      TL_TEST=1
+      TL_ADV_ON=1
+      shift 2
+      ;;
+    --test-at=*)
+      TL_TEST_PERCENT="${1#--test-at=}"
+      TL_TEST=1
+      TL_ADV_ON=1
+      shift
+      ;;
     --)
       shift
       POSITIONALS+=("$@")
@@ -1595,7 +2023,60 @@ fi
 case "$TL_DISPLAY" in
   ''|normal|verbose) ;;
   *)
-    echo "ERROR: invalid PGM_TIMELAPSE_DISPLAY: ${TL_DISPLAY} (normal or verbose)" >&2
+    echo "ERROR: invalid --display: ${TL_DISPLAY} (normal or verbose)" >&2
+    exit 1
+    ;;
+esac
+
+case "$TL_PICTURE" in
+  plain|steady|soft) ;;
+  *)
+    echo "ERROR: invalid --picture: ${TL_PICTURE} (plain, steady, or soft)" >&2
+    exit 1
+    ;;
+esac
+
+if [[ ! "$TL_BLEND_BEFORE" =~ ^[0-9]+$ ]] || (( TL_BLEND_BEFORE > 8 )); then
+  echo "ERROR: invalid --blend-before: ${TL_BLEND_BEFORE} (0 to 8)" >&2
+  exit 1
+fi
+if [[ ! "$TL_BLEND_AFTER" =~ ^[0-9]+$ ]] || (( TL_BLEND_AFTER > 8 )); then
+  echo "ERROR: invalid --blend-after: ${TL_BLEND_AFTER} (0 to 8)" >&2
+  exit 1
+fi
+case "$TL_OUT_FPS" in
+  25|30|60) ;;
+  *)
+    echo "ERROR: invalid --fps: ${TL_OUT_FPS} (25, 30, or 60)" >&2
+    exit 1
+    ;;
+esac
+if [[ ! "$TL_KF_MINUTES" =~ ^[0-9]+$ ]] || (( TL_KF_MINUTES < 1 )); then
+  echo "ERROR: invalid --keyframe-minutes: ${TL_KF_MINUTES} (1 or more)" >&2
+  exit 1
+fi
+if [[ ! "$TL_KF_PERCENT" =~ ^[0-9]+$ ]] || (( TL_KF_PERCENT < 1 || TL_KF_PERCENT > 100 )); then
+  echo "ERROR: invalid --keyframe-percent: ${TL_KF_PERCENT} (1 to 100)" >&2
+  exit 1
+fi
+case "$TL_SCAN_MINUTES" in
+  2|5|10) ;;
+  *)
+    echo "ERROR: invalid --scan-minutes: ${TL_SCAN_MINUTES} (2, 5, or 10)" >&2
+    exit 1
+    ;;
+esac
+case "$TL_TEST_MINUTES" in
+  1|2|5) ;;
+  *)
+    echo "ERROR: invalid --test-minutes: ${TL_TEST_MINUTES} (1, 2, or 5)" >&2
+    exit 1
+    ;;
+esac
+case "$TL_TEST_PERCENT" in
+  0|10|20|30|50|70|90) ;;
+  *)
+    echo "ERROR: invalid --test-at: ${TL_TEST_PERCENT} (0, 10, 20, 30, 50, 70, or 90)" >&2
     exit 1
     ;;
 esac
@@ -1623,7 +2104,7 @@ if (( ${#TL_INPUTS[@]} == 0 )); then
   exit 0
 fi
 
-if [[ -z "$SPEED" ]]; then
+tl_ask_speed() {
   tl_prompt_speed
   case $? in
     0) ;;
@@ -1635,6 +2116,10 @@ if [[ -z "$SPEED" ]]; then
       ;;
     *) exit 1 ;;
   esac
+}
+
+if (( script_is_run_interactively )) && (( ! DO_YES )); then
+  tl_ask_speed
 fi
 
 tl_print_ffmpeg_version
@@ -1642,14 +2127,48 @@ if ! command -v ffmpeg >/dev/null 2>&1 || ! command -v ffprobe >/dev/null 2>&1; 
   echo "$(tl_ts) ffmpeg and ffprobe are required." >&2
   exit 1
 fi
-tl_prompt_display
-tl_load_encoders
-tl_prompt_advanced
-tl_encoder_candidates "$ENCODER" "" >/dev/null || {
-  echo "$(tl_ts) No usable video encoder for '${ENCODER}'." >&2
-  tl_note_encoder_probe_failure
-  exit 1
-}
+
+if (( script_is_run_interactively )) && (( ! DO_YES )); then
+  [[ -n "$SPEED" ]] || SPEED=5
+  [[ -n "$TL_DISPLAY" ]] || TL_DISPLAY=normal
+  tl_prompt_display
+  tl_require_encoder
+  tl_prompt_advanced
+  while true; do
+    tl_print_plan
+    tl_read_key "Proceed with these choices? [Y/n/q]: " y
+    case "$(tl_choice "$REPLY")" in
+      y)
+        break
+        ;;
+      n)
+        tl_ask_speed
+        tl_prompt_display
+        tl_prompt_advanced
+        tl_require_encoder
+        ;;
+      q)
+        echo "$(tl_ts) Quit."
+        return_code=0
+        # shellcheck disable=SC1091
+        . /root/bin/_script_footer.sh
+        exit 0
+        ;;
+      *)
+        echo "$(tl_ts) Unknown choice: ${REPLY}. Encoding with the choices above."
+        break
+        ;;
+    esac
+  done
+  ENCODE_ALL=1
+else
+  [[ -n "$SPEED" ]] || SPEED=5
+  [[ -n "$TL_DISPLAY" ]] || TL_DISPLAY=normal
+  tl_require_encoder
+  if (( DO_YES )); then
+    tl_prepare_unattended
+  fi
+fi
 
 echo "$(tl_ts) Speed: ${SPEED}×    files: ${#TL_INPUTS[@]}    encoder request: ${ENCODER}    display: ${TL_DISPLAY}"
 echo "$(tl_ts) Picture: $(tl_picture_summary)"
