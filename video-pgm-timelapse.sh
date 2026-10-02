@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261002.093800 - the last question asks for the whole file or a short try
 # v. 20261002.093100 - keyframe spacing defaults to the same interval as the source
 # v. 20261002.092400 - an existing output is explained, then keep, replace, rename, or a new name
 # v. 20261002.084500 - print the equivalent command and confirm before encoding
@@ -20,6 +21,7 @@
 # v. 20260930.221500 - file prompts: one key, no Enter
 # v. 20260930.220400 - faster viewing copy of a merged video (2, 5, 10, 20, …)
 
+# 2026.10.02 - v. 0.21 - the last question asks whether to encode everything or try a short piece first
 # 2026.10.02 - v. 0.20 - keyframe spacing defaults to the same interval as the source
 # 2026.10.02 - v. 0.19 - an existing output is explained, then keep, replace, rename, or a new name
 # 2026.10.02 - v. 0.18 - each choice has a command-line option; show that command and confirm before encoding
@@ -1741,9 +1743,11 @@ tl_prompt_scan() {
 }
 
 tl_prompt_test_clip() {
-  local choice="" tkey=n lkey=1 skey=b
+  local choice="" tkey=n lkey=1 skey=b n_note=""
   if (( ${TL_TEST:-0} )); then
     tkey=y
+  else
+    n_note=" (default)"
   fi
   case "${TL_TEST_MINUTES:-1}" in
     2) lkey=2 ;;
@@ -1752,12 +1756,17 @@ tl_prompt_test_clip() {
   esac
   skey="$(tl_test_start_key "${TL_TEST_PERCENT:-0}")"
   echo
-  echo "Test clip instead of the whole file? [N/y]"
-  echo "  [N] Whole file"
-  echo "      Encode the full sped-up drive."
-  echo "  [y] A short piece of the result you will watch"
-  echo "      So you can judge the picture before waiting for the whole file."
-  tl_read_key "Test clip? [N/y]: " "$tkey"
+  echo "Encode everything, or try a short piece first? [N/y]"
+  echo "  [N] Everything${n_note}"
+  echo "      The whole sped-up drive. A two-hour recording at 5×"
+  echo "      becomes about 24 minutes, saved as the usual *_x5.mp4."
+  echo "  [y] A short try first"
+  echo "      Encode only 1, 2, or 5 minutes of the video you will watch,"
+  echo "      from the beginning or from later in the drive. You can see"
+  echo "      if the picture is right before waiting for the whole file."
+  echo "      The short piece is saved under its own name, so a full"
+  echo "      *_x5.mp4 is left alone."
+  tl_read_key "Encode everything? [N/y]: " "$tkey"
   choice="$(tl_choice "$REPLY")"
   if [[ "$choice" != y ]]; then
     TL_TEST=0
