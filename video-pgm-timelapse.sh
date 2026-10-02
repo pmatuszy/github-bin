@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261002.095700 - keyframe menu lists same as the source first
 # v. 20261002.094300 - picture scan shows a progress bar while it decodes
 # v. 20261002.094000 - every question lists q to quit
 # v. 20261002.093800 - the last question asks for the whole file or a short try
@@ -23,6 +24,7 @@
 # v. 20260930.221500 - file prompts: one key, no Enter
 # v. 20260930.220400 - faster viewing copy of a merged video (2, 5, 10, 20, …)
 
+# 2026.10.02 - v. 0.24 - keyframe menu lists same as the source first, with S as the capital letter
 # 2026.10.02 - v. 0.23 - picture scan shows a progress bar for the piece being decoded
 # 2026.10.02 - v. 0.22 - every question lists q to quit
 # 2026.10.02 - v. 0.21 - the last question asks whether to encode everything or try a short piece first
@@ -1582,7 +1584,7 @@ tl_prompt_keyframe_span() {
 }
 
 tl_prompt_gop() {
-  local choice="" answer="" gkey=s sec_def=1 frame_def=30 s_note=""
+  local choice="" answer="" gkey=s sec_def=1 frame_def=30
   case "${TL_GOP_KIND:-default}" in
     source) gkey=s ;;
     seconds) gkey=c; sec_def="$TL_GOP_SECONDS" ;;
@@ -1595,24 +1597,20 @@ tl_prompt_gop() {
       fi
       ;;
   esac
-  if [[ "$gkey" == s && "${TL_GOP_KIND:-default}" == default && ${TL_GOP_EXPLICIT:-0} -eq 0 ]]; then
-    s_note=" (default)"
-  fi
   echo
-  echo "Keyframe spacing [D/s/c/f/q]"
-  echo "  [D] Encoder default"
-  echo "      Leave the interval to hevc_nvenc or libx265. That is often"
-  echo "      about 10 seconds. Fine when you watch straight through."
-  echo "  [s] Same as the source${s_note}"
+  echo "  [S] Same as the source (default)"
   echo "      Read part of this file and use the keyframe interval it has."
   echo "      You choose 2 minutes, another number of minutes, or a percent."
   echo "      Nothing is assumed."
+  echo "  [d] Encoder default"
+  echo "      Leave the interval to hevc_nvenc or libx265. That is often"
+  echo "      about 10 seconds. Fine when you watch straight through."
   echo "  [c] Custom seconds"
   echo "      Type how often, in seconds of the output, a keyframe is written."
   echo "  [f] Custom frames"
   echo "      Type a frame count of the output, not of the dashcam."
   echo "  [q] Quit"
-  tl_read_key "Keyframe spacing [D/s/c/f/q]: " "$gkey"
+  tl_read_key "Keyframe spacing [S/d/c/f/q]: " "$gkey"
   choice="$(tl_choice "$REPLY")"
   case "$choice" in
     d)
