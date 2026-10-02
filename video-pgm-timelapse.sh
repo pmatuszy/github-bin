@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261002.100200 - the confirmation says the picture scan is already done
 # v. 20261002.095700 - keyframe menu lists same as the source first
 # v. 20261002.094300 - picture scan shows a progress bar while it decodes
 # v. 20261002.094000 - every question lists q to quit
@@ -24,6 +25,7 @@
 # v. 20260930.221500 - file prompts: one key, no Enter
 # v. 20260930.220400 - faster viewing copy of a merged video (2, 5, 10, 20, …)
 
+# 2026.10.02 - v. 0.25 - after a picture scan, the confirmation says it is already done and the command does not scan again
 # 2026.10.02 - v. 0.24 - keyframe menu lists same as the source first, with S as the capital letter
 # 2026.10.02 - v. 0.23 - picture scan shows a progress bar for the piece being decoded
 # 2026.10.02 - v. 0.22 - every question lists q to quit
@@ -873,6 +875,7 @@ tl_reset_advanced() {
   TL_GOP_SECONDS=1
   TL_GOP_FRAMES=30
   TL_DO_SCAN=0
+  TL_SCAN_DONE=0
   TL_TEST=0
   TL_TEST_MINUTES=1
   TL_TEST_PERCENT=0
@@ -905,7 +908,7 @@ tl_equivalent_command() {
     frames) cmd+=(--gop "${TL_GOP_FRAMES}f") ;;
     *) cmd+=(--gop default) ;;
   esac
-  if (( ${TL_DO_SCAN:-0} )); then
+  if (( ${TL_DO_SCAN:-0} && ! ${TL_SCAN_DONE:-0} )); then
     cmd+=(--scan-minutes "$TL_SCAN_MINUTES")
   fi
   if (( ${TL_TEST:-0} )); then
@@ -948,7 +951,11 @@ tl_print_plan() {
   printf '  %-18s %s\n' "Encoder" "$ENCODER"
   printf '  %-18s %s\n' "Keyframes" "$kf"
   if (( ${TL_DO_SCAN:-0} )); then
-    printf '  %-18s %s\n' "Picture scan" "first $(tl_minutes_word "$TL_SCAN_MINUTES")"
+    if (( ${TL_SCAN_DONE:-0} )); then
+      printf '  %-18s %s\n' "Picture scan" "first $(tl_minutes_word "$TL_SCAN_MINUTES"), already done"
+    else
+      printf '  %-18s %s\n' "Picture scan" "first $(tl_minutes_word "$TL_SCAN_MINUTES")"
+    fi
   else
     printf '  %-18s %s\n' "Picture scan" "no"
   fi
@@ -1736,10 +1743,12 @@ tl_scan_source() {
   echo "Scan of ${src##*/}"
   if [[ "$frame_line" == none || -z "$frame_line" ]]; then
     echo "  Frame timing: no frames decoded"
+    TL_SCAN_DONE=1
   else
     # shellcheck disable=SC2086
     set -- $frame_line
     echo "  Frame timing, first $(tl_format_seconds "$total_sec"): $1 frames, most of them ${2}s (${3})"
+    TL_SCAN_DONE=1
   fi
 }
 
@@ -1806,6 +1815,7 @@ tl_prompt_scan() {
   fi
   if [[ "$choice" != y ]]; then
     TL_DO_SCAN=0
+    TL_SCAN_DONE=0
     return 0
   fi
   TL_DO_SCAN=1
@@ -2064,6 +2074,7 @@ TL_KF_UNIT=minutes
 TL_KF_MINUTES=2
 TL_KF_PERCENT=10
 TL_DO_SCAN=0
+TL_SCAN_DONE=0
 TL_ADV_ON=0
 TL_KEYFRAME_MEASURED=0
 TL_SCAN_GAP=""
