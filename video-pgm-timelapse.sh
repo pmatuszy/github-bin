@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261002.094300 - picture scan shows a progress bar while it decodes
 # v. 20261002.094000 - every question lists q to quit
 # v. 20261002.093800 - the last question asks for the whole file or a short try
 # v. 20261002.093100 - keyframe spacing defaults to the same interval as the source
@@ -22,6 +23,7 @@
 # v. 20260930.221500 - file prompts: one key, no Enter
 # v. 20260930.220400 - faster viewing copy of a merged video (2, 5, 10, 20, …)
 
+# 2026.10.02 - v. 0.23 - picture scan shows a progress bar for the piece being decoded
 # 2026.10.02 - v. 0.22 - every question lists q to quit
 # 2026.10.02 - v. 0.21 - the last question asks whether to encode everything or try a short piece first
 # 2026.10.02 - v. 0.20 - keyframe spacing defaults to the same interval as the source
@@ -332,7 +334,11 @@ tl_draw_progress() {
     tot_clock="--:--:--"
   fi
   eta="$(tl_eta_phrase "$elapsed" "$total" "$speedx")"
-  printf '\r[%s] %s%%  %s / %s  %s  %s\033[K' "$bar" "$pct" "$el_clock" "$tot_clock" "$speedx" "$eta"
+  if [[ -n "${5:-}" ]]; then
+    printf '\r%s [%s] %s%%  %s / %s  %s  %s\033[K' "$5" "$bar" "$pct" "$el_clock" "$tot_clock" "$speedx" "$eta"
+  else
+    printf '\r[%s] %s%%  %s / %s  %s  %s\033[K' "$bar" "$pct" "$el_clock" "$tot_clock" "$speedx" "$eta"
+  fi
 }
 
 # Read ffmpeg -progress blocks on stdin and redraw the bar.
@@ -1674,21 +1680,60 @@ tl_prompt_gop() {
 }
 
 # Decoded frame-timing sample. Keyframes are measured only when [s] was chosen.
+# One ffprobe pass. On a terminal the same pass draws the progress bar.
 tl_scan_source() {
-  local src="$1" minutes="$2" sample_sec frame_line
+  local src="$1" minutes="$2" sample_sec dur="" fps="" total_sec=""
+  local frame_line="" tag="" media="" start_s="" now_s="" wall="" spd="" frac=""
+  local -a probe=()
   sample_sec=$(( minutes * 60 ))
-  echo "$(tl_ts) Pictures: decoding the first $(tl_minutes_word "$minutes") you chose, to check frame timing..."
-  frame_line="$(ffprobe -v error -select_streams v:0 -show_entries frame=duration_time -of csv=p=0 -read_intervals "%+${sample_sec}" -- "$src" 2>/dev/null | awk '
+  total_sec="$sample_sec"
+  dur="$(tl_ffprobe_duration "$src" || true)"
+  if [[ -n "$dur" ]] && awk -v s="$sample_sec" -v d="$dur" 'BEGIN { exit !(d + 0 < s - 0.5) }'; then
+    echo "$(tl_ts) The file is $(tl_format_seconds "$dur"), shorter than $(tl_minutes_word "$minutes"). Decoding the whole file."
+    total_sec="$dur"
+  fi
+  fps="$(tl_source_fps "$src")"
+  echo "$(tl_ts) Pictures: decoding $(tl_format_seconds "$total_sec") from the start, to check frame timing..."
+  probe=(ffprobe -v error -select_streams v:0 -show_entries frame=duration_time -of csv=p=0 -read_intervals "%+${sample_sec}" -- "$src")
+  if command -v stdbuf >/dev/null 2>&1; then
+    probe=(stdbuf -oL "${probe[@]}")
+  fi
+  start_s="$(date +%s%N)"
+  while read -r tag media || [[ -n "$tag" ]]; do
+    case "$tag" in
+      prog)
+        if (( script_is_run_interactively )); then
+          now_s="$(date +%s%N)"
+          wall="$(awk -v a="$start_s" -v b="$now_s" 'BEGIN { w = (b - a) / 1000000000; if (w < 0.05) w = 0.05; printf "%.3f", w }')"
+          spd="$(awk -v m="$media" -v w="$wall" 'BEGIN { printf "%.2fx", (m + 0) / w }')"
+          frac="$(awk -v m="$media" -v t="$total_sec" 'BEGIN { f = (m + 0) / t; if (f > 1) f = 1; if (f < 0) f = 0; printf "%.4f", f }')"
+          tl_draw_progress "$frac" "$media" "$total_sec" "$spd" "Pictures"
+        fi
+        ;;
+      done)
+        frame_line="$media"
+        ;;
+    esac
+  done < <("${probe[@]}" | awk -v fps="$fps" '
     $1 ~ /^[0-9]/ {
       key = sprintf("%.3f", $1 + 0)
       count[key]++
       n++
       if (count[key] > best_n) { best_n = count[key]; best = key }
+      if (n == 1 || n % 25 == 0) {
+        printf "prog %.3f\n", n / fps
+        fflush()
+      }
     }
     END {
-      if (n + 0 == 0) { print "none"; exit }
-      printf "%d %s %d\n", n, best, best_n
-    }' || true)"
+      if (n + 0 == 0) { print "done none"; exit }
+      printf "prog %.3f\n", n / fps
+      fflush()
+      printf "done %d %s %d\n", n, best, best_n
+    }')
+  if (( script_is_run_interactively )); then
+    echo
+  fi
   echo
   echo "Scan of ${src##*/}"
   if [[ "$frame_line" == none || -z "$frame_line" ]]; then
@@ -1696,7 +1741,7 @@ tl_scan_source() {
   else
     # shellcheck disable=SC2086
     set -- $frame_line
-    echo "  Frame timing, first $(tl_minutes_word "$minutes"): $1 frames, most of them ${2}s (${3})"
+    echo "  Frame timing, first $(tl_format_seconds "$total_sec"): $1 frames, most of them ${2}s (${3})"
   fi
 }
 
