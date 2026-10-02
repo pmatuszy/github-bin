@@ -1,4 +1,6 @@
 #!/bin/bash
+# v. 20261002.081600 - keyframe sample is 2 minutes, or minutes or a percent you type
+# v. 20261002.081500 - same-as-source keyframes are measured, not assumed to be 1 second
 # v. 20261002.080800 - scan messages separate whole-file keyframes from the decoded piece
 # v. 20261002.075200 - advanced encoding menu: picture, keyframes, scan, test clip
 # v. 20261002.073700 - output encoder line says GPU hardware or CPU only
@@ -13,6 +15,8 @@
 # v. 20260930.221500 - file prompts: one key, no Enter
 # v. 20260930.220400 - faster viewing copy of a merged video (2, 5, 10, 20, …)
 
+# 2026.10.02 - v. 0.15 - same as the source reads the first 2 minutes, or a typed number of minutes or a percent
+# 2026.10.02 - v. 0.14 - same as the source measures this file's keyframe gap instead of assuming 1 second
 # 2026.10.02 - v. 0.13 - scan says keyframes are the whole file, and the 2/5/10 minutes are only the decoded piece
 # 2026.10.02 - v. 0.12 - advanced encoding menu, default no: steady or blended picture, keyframe spacing, a source scan, and a short test clip
 # 2026.10.02 - v. 0.11 - output encoder line says GPU hardware or CPU only
@@ -1028,6 +1032,156 @@ tl_prompt_encoder_menu() {
   esac
 }
 
+tl_gap_seconds_from_measured() {
+  awk -v g="$1" 'BEGIN {
+    if (g >= 0.95 && g <= 1.05) { printf "1"; exit }
+    n = int(g + 0.5)
+    if (n < 1) n = 1
+    printf "%d", n
+  }'
+}
+
+# Read keyframe gaps from packet headers.
+# $2 is how many seconds from the start to read. Empty means the whole file.
+# Sets TL_SCAN_GAP to the most common gap, in seconds. Returns 1 when none are found.
+# A second call reuses the first result.
+tl_measure_keyframe_gap() {
+  local src="$1" limit_sec="${2:-}" gap_line kf="" best="" best_n="" other=""
+  local -a probe=()
+  if (( ${TL_KEYFRAME_MEASURED:-0} )); then
+    [[ -n "${TL_SCAN_GAP:-}" ]]
+    return
+  fi
+  TL_KEYFRAME_MEASURED=1
+  TL_SCAN_GAP=""
+  echo
+  echo "$(tl_ts) Reading keyframes: ${TL_KF_READ_LABEL:-the file}."
+  probe=(ffprobe -v error -select_streams v:0 -show_entries packet=pts_time,flags -of csv=p=0)
+  if [[ -n "$limit_sec" ]]; then
+    probe+=(-read_intervals "%+${limit_sec}")
+  fi
+  probe+=(-- "$src")
+  gap_line="$("${probe[@]}" 2>/dev/null | awk -F, '
+    $1 ~ /^[0-9]/ && $2 ~ /K/ {
+      if (have) {
+        d = $1 - prev
+        if (d >= 0.05) {
+          key = sprintf("%.3f", d)
+          count[key]++
+          n++
+          if (count[key] > best_n) { best_n = count[key]; best = key }
+        }
+      }
+      prev = $1
+      have = 1
+      kf++
+    }
+    END {
+      if (kf + 0 == 0) { print "none"; exit }
+      other = n - best_n
+      printf "%d %s %d %d\n", kf, best, best_n, other
+    }' || true)"
+  if [[ "$gap_line" == none || -z "$gap_line" ]]; then
+    echo "$(tl_ts) Keyframes: none found."
+    return 1
+  fi
+  read -r kf best best_n other <<<"$gap_line"
+  if [[ "${TL_KF_PIECE:-piece}" == file ]]; then
+    echo "  Keyframes: ${kf} across the whole file"
+  else
+    echo "  Keyframes: ${kf} in this piece"
+  fi
+  echo "  Most gaps: ${best}s (${best_n})"
+  echo "  Other gaps: ${other} (a clip join is often shorter than the usual interval)"
+  TL_SCAN_GAP="$best"
+  if (( ${#TL_INPUTS[@]} > 1 )); then
+    echo "  Scanned the first file. The others are assumed to be the same camera."
+  fi
+  return 0
+}
+
+# Sets TL_KF_LIMIT_SEC (empty = whole file), TL_KF_PIECE, and TL_KF_READ_LABEL.
+tl_keyframe_span_minutes() {
+  local src="$1" minutes="$2" dur="" want=0
+  dur="$(tl_ffprobe_duration "$src" || true)"
+  want=$(( minutes * 60 ))
+  TL_KF_PIECE=piece
+  TL_KF_LIMIT_SEC="$want"
+  TL_KF_READ_LABEL="first $(tl_minutes_word "$minutes") of ${src##*/} (packet headers, no picture decode)"
+  if [[ -n "$dur" ]] && awk -v w="$want" -v d="$dur" 'BEGIN { exit !(w + 0 >= d - 0.5) }'; then
+    echo "$(tl_ts) The file is $(tl_format_seconds "$dur"), shorter than $(tl_minutes_word "$minutes"). Reading the whole file."
+    TL_KF_PIECE=file
+    TL_KF_LIMIT_SEC=""
+    TL_KF_READ_LABEL="the whole file (packet headers, no picture decode)"
+  fi
+}
+
+tl_keyframe_span_percent() {
+  local src="$1" pct="$2" dur="" want=""
+  dur="$(tl_ffprobe_duration "$src" || true)"
+  if [[ -z "$dur" ]]; then
+    echo "$(tl_ts) This file has no duration, so a percent cannot be placed. Reading the first 2 minutes."
+    tl_keyframe_span_minutes "$src" 2
+    return 0
+  fi
+  if (( pct >= 100 )); then
+    TL_KF_PIECE=file
+    TL_KF_LIMIT_SEC=""
+    TL_KF_READ_LABEL="the whole file (packet headers, no picture decode)"
+    return 0
+  fi
+  want="$(awk -v d="$dur" -v p="$pct" 'BEGIN { printf "%.3f", d * p / 100 }')"
+  TL_KF_PIECE=piece
+  TL_KF_LIMIT_SEC="$want"
+  TL_KF_READ_LABEL="first ${pct}% ($(tl_format_clock "$want") of $(tl_format_clock "$dur"))"
+}
+
+tl_prompt_keyframe_span() {
+  local src="$1" choice="" answer=""
+  echo
+  echo "How much of the file should be read for keyframes? [2/m/p]"
+  echo "  [2] First 2 minutes (default)"
+  echo "      From the start of the file. Packet headers only, so pictures"
+  echo "      are not decoded. Enter keeps this."
+  echo "  [m] Minutes"
+  echo "      Type how many minutes from the start. 5 or 10 crosses more"
+  echo "      dashcam clips than 2 does."
+  echo "  [p] Percent"
+  echo "      Type a percent of this file, again from the start."
+  echo "      10 is the first tenth. 100 is the whole file."
+  tl_read_key "Keyframe sample [2/m/p]: " 2
+  choice="$(tl_choice "$REPLY")"
+  case "$choice" in
+    2)
+      tl_keyframe_span_minutes "$src" 2
+      ;;
+    m)
+      tl_read_line "Minutes from the start [2]: " 2
+      answer="$REPLY"
+      if [[ "$answer" =~ ^[0-9]+$ ]] && (( answer >= 1 )); then
+        tl_keyframe_span_minutes "$src" "$answer"
+      else
+        echo "$(tl_ts) Invalid minutes: ${answer}. Reading the first 2 minutes."
+        tl_keyframe_span_minutes "$src" 2
+      fi
+      ;;
+    p)
+      tl_read_line "Percent from the start [10]: " 10
+      answer="$REPLY"
+      if [[ "$answer" =~ ^[0-9]+$ ]] && (( answer >= 1 && answer <= 100 )); then
+        tl_keyframe_span_percent "$src" "$answer"
+      else
+        echo "$(tl_ts) Invalid percent: ${answer} (use 1 to 100). Reading the first 2 minutes."
+        tl_keyframe_span_minutes "$src" 2
+      fi
+      ;;
+    *)
+      echo "$(tl_ts) Unknown choice: ${REPLY}. Reading the first 2 minutes."
+      tl_keyframe_span_minutes "$src" 2
+      ;;
+  esac
+}
+
 tl_prompt_gop() {
   local choice="" answer=""
   echo
@@ -1037,9 +1191,9 @@ tl_prompt_gop() {
   echo "      about 10 seconds. Fine when you watch straight through."
   echo "      Enter keeps this."
   echo "  [s] Same as the source"
-  echo "      This dashcam places a keyframe every 1 second. The output"
-  echo "      gets that same one second. At 30 fps that is 30 frames;"
-  echo "      at 25 fps it is 25 frames."
+  echo "      Read part of this file and use the keyframe interval it has."
+  echo "      You choose 2 minutes, another number of minutes, or a percent."
+  echo "      Nothing is assumed."
   echo "  [c] Custom seconds"
   echo "      Type how often, in seconds of the output, a keyframe is written."
   echo "  [f] Custom frames"
@@ -1051,8 +1205,15 @@ tl_prompt_gop() {
       TL_GOP_MODE=default
       ;;
     s)
-      TL_GOP_MODE=seconds
-      TL_GOP_SECONDS=1
+      tl_prompt_keyframe_span "${TL_INPUTS[0]}"
+      if tl_measure_keyframe_gap "${TL_INPUTS[0]}" "${TL_KF_LIMIT_SEC:-}"; then
+        TL_GOP_MODE=seconds
+        TL_GOP_SECONDS="$(tl_gap_seconds_from_measured "$TL_SCAN_GAP")"
+        echo "$(tl_ts) Most source gaps are ${TL_SCAN_GAP}s. Output keyframes: every ${TL_GOP_SECONDS}s."
+      else
+        echo "$(tl_ts) No keyframe spacing found. Using the encoder default."
+        TL_GOP_MODE=default
+      fi
       ;;
     c)
       tl_read_line "Seconds between keyframes [1]: " 1
@@ -1083,32 +1244,10 @@ tl_prompt_gop() {
   esac
 }
 
-# Whole-file keyframe gaps from packet headers, plus a decoded timing sample.
+# Decoded frame-timing sample. Keyframes are measured only when [s] was chosen.
 tl_scan_source() {
-  local src="$1" minutes="$2" sample_sec gap_line frame_line
+  local src="$1" minutes="$2" sample_sec frame_line
   sample_sec=$(( minutes * 60 ))
-  echo
-  echo "$(tl_ts) Keyframes: the whole file, from packet headers. This does not decode pictures, and it is not limited to the $(tl_minutes_word "$minutes") you chose."
-  gap_line="$(ffprobe -v error -select_streams v:0 -show_entries packet=pts_time,flags -of csv=p=0 -- "$src" 2>/dev/null | awk -F, '
-    $1 ~ /^[0-9]/ && $2 ~ /K/ {
-      if (have) {
-        d = $1 - prev
-        if (d >= 0.05) {
-          key = sprintf("%.3f", d)
-          count[key]++
-          n++
-          if (count[key] > best_n) { best_n = count[key]; best = key }
-        }
-      }
-      prev = $1
-      have = 1
-      kf++
-    }
-    END {
-      if (kf + 0 == 0) { print "none"; exit }
-      other = n - best_n
-      printf "%d %s %d %d\n", kf, best, best_n, other
-    }' || true)"
   echo "$(tl_ts) Pictures: decoding the first $(tl_minutes_word "$minutes") you chose, to check frame timing..."
   frame_line="$(ffprobe -v error -select_streams v:0 -show_entries frame=duration_time -of csv=p=0 -read_intervals "%+${sample_sec}" -- "$src" 2>/dev/null | awk '
     $1 ~ /^[0-9]/ {
@@ -1123,26 +1262,12 @@ tl_scan_source() {
     }' || true)"
   echo
   echo "Scan of ${src##*/}"
-  TL_SCAN_GAP=""
-  if [[ "$gap_line" == none || -z "$gap_line" ]]; then
-    echo "  Keyframes: none found"
-  else
-    # shellcheck disable=SC2086
-    set -- $gap_line
-    echo "  Keyframes: $1 across the whole file"
-    echo "  Most gaps: ${2}s (${3})"
-    echo "  Other gaps: ${4} (a clip join is often shorter than the camera interval)"
-    TL_SCAN_GAP="$2"
-  fi
   if [[ "$frame_line" == none || -z "$frame_line" ]]; then
     echo "  Frame timing: no frames decoded"
   else
     # shellcheck disable=SC2086
     set -- $frame_line
     echo "  Frame timing, first $(tl_minutes_word "$minutes"): $1 frames, most of them ${2}s (${3})"
-  fi
-  if (( ${#TL_INPUTS[@]} > 1 )); then
-    echo "  Scanned the first file. The others are assumed to be the same camera."
   fi
 }
 
@@ -1151,12 +1276,7 @@ tl_apply_scan_suggestion() {
   local suggest_seconds=""
   echo
   if [[ -n "$TL_SCAN_GAP" ]]; then
-    suggest_seconds="$(awk -v g="$TL_SCAN_GAP" 'BEGIN {
-      if (g >= 0.95 && g <= 1.05) { printf "1"; exit }
-      n = int(g + 0.5)
-      if (n < 1) n = 1
-      printf "%d", n
-    }')"
+    suggest_seconds="$(tl_gap_seconds_from_measured "$TL_SCAN_GAP")"
     gap_note="every ${suggest_seconds}s, like the source"
   fi
   if [[ "$TL_PICTURE" == soft ]]; then
@@ -1191,8 +1311,8 @@ tl_prompt_scan() {
   echo "  [N] Skip the scan (default)"
   echo "      Encode with the choices above."
   echo "  [y] Read this file"
-  echo "      Keyframe spacing comes from the whole file, without decoding"
-  echo "      pictures. Frame timing is decoded for a piece at the start."
+  echo "      Decodes a piece at the start to check that each frame lasts"
+  echo "      the same time. Keyframe spacing is chosen above, not here."
   tl_read_key "Scan the source? [N/y]: " n
   choice="$(tl_choice "$REPLY")"
   if [[ "$choice" != y ]]; then
@@ -1200,10 +1320,9 @@ tl_prompt_scan() {
   fi
   echo
   echo "How long a piece of pictures should be decoded? [2/5/t]"
-  echo "  Keyframe spacing is a separate pass over the whole file."
-  echo "  It reads packet headers and does not decode pictures."
   echo "  These minutes are only the piece at the start that we decode"
   echo "  to check that each frame lasts the same time."
+  echo "  Keyframe spacing was already chosen above."
   echo "  [2] 2 minutes"
   echo "      A shorter look. It may still be a single clip."
   echo "  [5] 5 minutes (default)"
@@ -1290,6 +1409,8 @@ tl_prompt_advanced() {
   TL_GOP_MODE=default
   TL_GOP_SECONDS=1
   TL_GOP_FRAMES=30
+  TL_KEYFRAME_MEASURED=0
+  TL_SCAN_GAP=""
   TL_TEST=0
   TL_TEST_MINUTES=1
   TL_TEST_PERCENT=0
@@ -1372,6 +1493,7 @@ TL_OUT_FPS=30
 TL_GOP_MODE=default
 TL_GOP_SECONDS=1
 TL_GOP_FRAMES=30
+TL_KEYFRAME_MEASURED=0
 TL_SCAN_GAP=""
 TL_SCAN_MINUTES=5
 TL_TEST=0
