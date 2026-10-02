@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261002.084000 - speed menu lists q to quit
 # v. 20261002.083700 - speed menu defaults to 5× and always omits audio
 # v. 20261002.081600 - keyframe sample is 2 minutes, or minutes or a percent you type
 # v. 20261002.081500 - same-as-source keyframes are measured, not assumed to be 1 second
@@ -16,6 +17,7 @@
 # v. 20260930.221500 - file prompts: one key, no Enter
 # v. 20260930.220400 - faster viewing copy of a merged video (2, 5, 10, 20, …)
 
+# 2026.10.02 - v. 0.17 - speed menu lists q to quit
 # 2026.10.02 - v. 0.16 - speed menu is 2, 5, 10, 15, 20, 25, 30, or custom; default 5×; audio is always omitted
 # 2026.10.02 - v. 0.15 - same as the source reads the first 2 minutes, or a typed number of minutes or a percent
 # 2026.10.02 - v. 0.14 - same as the source measures this file's keyframe gap instead of assuming 1 second
@@ -735,7 +737,7 @@ tl_prompt_speed() {
     tl_is_speed "$SPEED" || SPEED=5
     return 0
   fi
-  echo "How much faster? [1/2/3/4/5/6/7/c]"
+  echo "How much faster? [1/2/3/4/5/6/7/c/q]"
   echo
   echo "  [1]  2×"
   echo "  [2]  5×     (default)"
@@ -745,6 +747,7 @@ tl_prompt_speed() {
   echo "  [6] 25×"
   echo "  [7] 30×"
   echo "  [c] Custom  type an integer from 2 to 240"
+  echo "  [q] Quit"
   echo
   tl_read_key "Speed [2]: " 2
   choice="$(tl_choice "$REPLY")"
@@ -765,6 +768,10 @@ tl_prompt_speed() {
         echo "$(tl_ts) Invalid speed: ${answer} (use an integer from 2 to 240). Using 5."
         SPEED=5
       fi
+      ;;
+    q)
+      echo "$(tl_ts) Quit."
+      return 2
       ;;
     *)
       echo "$(tl_ts) Unknown choice: ${REPLY}. Using 5."
@@ -1617,7 +1624,17 @@ if (( ${#TL_INPUTS[@]} == 0 )); then
 fi
 
 if [[ -z "$SPEED" ]]; then
-  tl_prompt_speed || exit 1
+  tl_prompt_speed
+  case $? in
+    0) ;;
+    2)
+      return_code=0
+      # shellcheck disable=SC1091
+      . /root/bin/_script_footer.sh
+      exit 0
+      ;;
+    *) exit 1 ;;
+  esac
 fi
 
 tl_print_ffmpeg_version
