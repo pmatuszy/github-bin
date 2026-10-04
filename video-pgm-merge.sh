@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261004.142217 - seam preview defaults: 1s before and 1s after each join
 # v. 20261004.142009 - q quits on the temp-directory questions
 # v. 20261004.141841 - temp-merge prompt says move the file back, not copy
 # v. 20261004.141633 - box the merge-group summary before the merge question
@@ -20,6 +21,7 @@
 # v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
 # v. 20260805.154826 - after merge: copy GPS/dates from first chapter; FS times via touch -r
 
+# 2026.10.04 - v. 0.15.41 - seam preview defaults: 1s before and 1s after each join
 # 2026.10.04 - v. 0.15.40 - [q] on the temp-directory questions quits (does not start the merge)
 # 2026.10.04 - v. 0.15.39 - temp-merge prompt: move the finished file back (wording)
 # 2026.10.04 - v. 0.15.38 - merge prompt: boxed summary with file count, first/last file, start/finish/length
@@ -135,9 +137,9 @@ Options:
   -y, --yes            Merge every detected multi-part group without prompts (for cron).
   --read-timeout SEC   Single-key prompt timeout in seconds (0 = wait forever).
                        Default: wait forever. Env: PGM_READ_TIMEOUT (e.g. 300).
-  --seam-before SEC    Terminal seam preview: seconds before each join (default 2).
+  --seam-before SEC    Terminal seam preview: seconds before each join (default 1).
                        Env: PGM_SEAM_PREVIEW_BEFORE.
-  --seam-after SEC     Terminal seam preview: seconds after each join (default 0).
+  --seam-after SEC     Terminal seam preview: seconds after each join (default 1).
                        Env: PGM_SEAM_PREVIEW_AFTER.
   --temp-dir DIR       Write the temporary merge file in DIR when that directory
                        is on another disk, you can create files there, and it has
@@ -207,8 +209,8 @@ Environment:
   MP4_MERGE_REPO          GitHub repo for releases (default: gyroflow/mp4-merge).
   PGM_READ_TIMEOUT        Seconds per single-key prompt; unset or 0 = wait forever.
                           Overridden by --read-timeout.
-  PGM_SEAM_PREVIEW_BEFORE Seconds before each merge point in terminal preview (default: 2).
-  PGM_SEAM_PREVIEW_AFTER  Seconds after each merge point in terminal preview (default: 0).
+  PGM_SEAM_PREVIEW_BEFORE Seconds before each merge point in terminal preview (default: 1).
+  PGM_SEAM_PREVIEW_AFTER  Seconds after each merge point in terminal preview (default: 1).
   PGM_SEAM_PREVIEW_WIDTH  Terminal tct width for seam preview (default: 100; empty = autodetect).
   PGM_SEAM_PREVIEW_HEIGHT Terminal tct height for seam preview (default: 40; empty = autodetect).
   RENAME_EXIFTOOL / EXIFLOC / PGM_EXIFTOOL
@@ -4637,8 +4639,8 @@ PGM_MERGE_TEMP_FROM_ENV=0
 PGM_MERGE_TEMP_CLI=0
 [[ -n "${PGM_MERGE_TEMP:-}" ]] && PGM_MERGE_TEMP_FROM_ENV=1
 
-PGM_SEAM_PREVIEW_BEFORE="${PGM_SEAM_PREVIEW_BEFORE:-2}"
-PGM_SEAM_PREVIEW_AFTER="${PGM_SEAM_PREVIEW_AFTER:-0}"
+PGM_SEAM_PREVIEW_BEFORE="${PGM_SEAM_PREVIEW_BEFORE:-1}"
+PGM_SEAM_PREVIEW_AFTER="${PGM_SEAM_PREVIEW_AFTER:-1}"
 PGM_SEAM_PREVIEW_WIDTH="${PGM_SEAM_PREVIEW_WIDTH-100}"
 PGM_SEAM_PREVIEW_HEIGHT="${PGM_SEAM_PREVIEW_HEIGHT-40}"
 while [[ $# -gt 0 ]]; do
