@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261004.152334 - Ctrl-C during the move back removes the temp merge file
 # v. 20261004.151844 - s turns seam preview off for the rest of the run
 # v. 20261004.144348 - ask to build a missing GPX instead of treating the merge as done
 # v. 20261004.143910 - GPX build works with mawk (no gawk asort/strftime)
@@ -28,6 +29,7 @@
 # v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
 # v. 20260805.154826 - after merge: copy GPS/dates from first chapter; FS times via touch -r
 
+# 2026.10.04 - v. 0.15.49 - Ctrl-C while moving the merge back deletes the temp file and any partial copy
 # 2026.10.04 - v. 0.15.48 - seam preview: [s] never plays seams again in this run
 # 2026.10.04 - v. 0.15.47 - already-merged skip only when the 70mai GPX is present; otherwise ask to generate it
 # 2026.10.04 - v. 0.15.46 - 70mai GPX: sort and UTC timestamps without gawk (mawk has no asort/strftime)
@@ -4336,11 +4338,15 @@ run_merge_group() {
   "${merger}" "${files[@]}" --out "${write_path}"
   rc=$?
   pgm_processing_end
-  trap ctrl_c INT
-  VIDEO_MERGE_OUT_FILE=""
   if (( rc == 0 )); then
     if [[ -n "$MERGE_TMP_DIR" ]]; then
+      # Stay on video_merge_ctrl_c: Ctrl-C during the move must drop the temp
+      # directory and the partial file at the final name.
+      VIDEO_MERGE_OUT_FILE="$output_file"
       if ! merge_copy_back_with_progress "$write_path" "$output_file"; then
+        rm -f -- "$output_file"
+        trap ctrl_c INT
+        VIDEO_MERGE_OUT_FILE=""
         echo "$(pgm_ts) Merge finished, but could not copy ${write_path} to ${output_file}" >&2
         echo "$(pgm_ts) Merged file left at ${write_path}" >&2
         MERGE_TMP_DIR=""
@@ -4350,6 +4356,8 @@ run_merge_group() {
       MERGE_TMP_DIR=""
       echo "$(pgm_ts) Moved merged file to ${output_file}"
     fi
+    trap ctrl_c INT
+    VIDEO_MERGE_OUT_FILE=""
     echo "$(pgm_ts) Done: ${output_file}"
     local meta_label=""
     meta_label=$(group_merge_description_label "${files[@]}" 2>/dev/null) || meta_label=""
@@ -4371,6 +4379,8 @@ run_merge_group() {
     rc=0
   else
     merge_clear_temp_work
+    trap ctrl_c INT
+    VIDEO_MERGE_OUT_FILE=""
     echo "$(pgm_ts) Merge failed (exit ${rc})." >&2
   fi
   return "${rc}"
