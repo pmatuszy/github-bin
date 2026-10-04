@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261004.135736 - --temp-dir, SSD default, space and permission checks, copy-back progress
 # v. 20261004.135247 - offer merge via another disk when /tmp has room, then move the file back
 # v. 20261004.134138 - merge prompt: group file count, first/last file, start/finish time
 # v. 20261004.131846 - before merge prompt, sort files and groups oldest to newest
@@ -13,6 +14,7 @@
 # v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
 # v. 20260805.154826 - after merge: copy GPS/dates from first chapter; FS times via touch -r
 
+# 2026.10.04 - v. 0.15.34 - --temp-dir; default the off-disk merge to yes when the source is not an SSD; copy back with a progress bar
 # 2026.10.04 - v. 0.15.33 - when /tmp (or TMPDIR) is another disk with room, offer to merge there and move the file back
 # 2026.10.01 - v. 0.15.32 - ffmpeg startup probe keeps the real error instead of "version unknown"
 # 2026.10.01 - v. 0.15.31 - startup: print the ffmpeg version and whether this build has a GPU encoder
@@ -107,7 +109,7 @@ MP4_MERGE_REPO="${MP4_MERGE_REPO:-gyroflow/mp4-merge}"
 show_help() {
   cat <<EOF
 Usage: $(basename "$0") [-h|--help] [-u|--update] [-v|--version] [-y|--yes]
-       [--read-timeout SEC] [--seam-before SEC] [--seam-after SEC]
+       [--read-timeout SEC] [--seam-before SEC] [--seam-after SEC] [--temp-dir DIR]
 
 Merge chapter MP4 files in the current directory (e.g. GoPro splits) into one
 file using mp4_merge from https://github.com/gyroflow/mp4-merge
@@ -125,6 +127,11 @@ Options:
                        Env: PGM_SEAM_PREVIEW_BEFORE.
   --seam-after SEC     Terminal seam preview: seconds after each join (default 0).
                        Env: PGM_SEAM_PREVIEW_AFTER.
+  --temp-dir DIR       Write the temporary merge file in DIR when that directory
+                       is on another disk, you can create files there, and it has
+                       room for the output plus spare space. Then copy the finished
+                       file back here with a progress bar.
+                       Env: PGM_MERGE_TEMP. If omitted, TMPDIR, then /tmp.
 
 Merge behaviour (no options):
   - Collects *.mp4 in the current working directory (case-insensitive), except
@@ -156,9 +163,13 @@ Merge behaviour (no options):
     present, otherwise filesystem mtime) before that prompt. After the input and
     output lists, the prompt shows how many files are in that group, the first and
     last file, and the start and finish timestamps (finish line includes total length).
-  - After you choose to merge: if /tmp (or TMPDIR) is on another disk and has room for
-    the output plus spare space, asks whether to write the merge there and move the
-    finished file back here. -y and non-interactive runs write in this directory.
+  - After you choose to merge: if the temp directory (--temp-dir, else
+    PGM_MERGE_TEMP, else TMPDIR, else /tmp) is on another disk, you can create
+    files there, and it has room for the output plus spare space, asks whether to
+    write the merge there and copy the finished file back here (progress bar).
+    Default is yes when the source disk is not an SSD, or when that cannot be
+    checked. Default is no when the source disk is an SSD. -y and non-interactive
+    runs write in this directory.
   - After a successful merge: copy GPS / create&modify dates / Make/Model from the first
     chapter (exiftool; filesystem mtime via touch -r), set title from the session label,
     then merge-boundary times, size summary, optional per-seam terminal preview (asked one
@@ -201,8 +212,11 @@ Environment:
                           journey (default: 90). Gaps above this start a new group.
   PGM_DASHCAM_LABEL       Make and model in 70mai journey filenames (default: 70mai-A510).
                           Spaces become hyphens.
-  TMPDIR                  Directory offered for an off-disk merge when it is another
-                          filesystem with spare room (default: /tmp).
+  PGM_MERGE_TEMP          Temp directory for an off-disk merge (same as --temp-dir).
+                          If unset: TMPDIR, then /tmp. Used only when it is another
+                          disk, writable by you, and large enough for the output.
+  TMPDIR                  Fallback temp directory when --temp-dir and PGM_MERGE_TEMP
+                          are unset.
   MAX_LINE_LENGTH         Longest status line kept on one row (default: 200). The
                           real limit is the smaller of this and the terminal width.
 
@@ -212,6 +226,9 @@ Examples:
 
   cd /path/to/chapters && $(basename "$0")
       Merge all chapter MP4s in that folder.
+
+  $(basename "$0") --temp-dir /mnt/scratch
+      Offer /mnt/scratch as the temporary merge disk when it has room.
 
   $(basename "$0") -y
       Merge all chapter groups without prompts.
@@ -860,6 +877,9 @@ pgm_print_run_settings_equivalent_cli() {
   pgm_read_timeout_is_limited && parts+=("--read-timeout" "$PGM_READ_TIMEOUT")
   parts+=("--seam-before" "$PGM_SEAM_PREVIEW_BEFORE")
   parts+=("--seam-after" "$PGM_SEAM_PREVIEW_AFTER")
+  if [[ -n "${PGM_MERGE_TEMP:-}" ]]; then
+    parts+=("--temp-dir" "$PGM_MERGE_TEMP")
+  fi
 
   out="$(printf '%q' "$cmd")"
   for p in "${parts[@]}"; do
@@ -913,6 +933,16 @@ pgm_print_run_settings() {
     printf '  %-21s%s\n' "--seam-after:" "${PGM_SEAM_PREVIEW_AFTER}s (env PGM_SEAM_PREVIEW_AFTER)"
   else
     printf '  %-21s%s\n' "--seam-after:" "${PGM_SEAM_PREVIEW_AFTER}s (default)"
+  fi
+
+  if (( PGM_MERGE_TEMP_CLI )); then
+    printf '  %-21s%s\n' "--temp-dir:" "given (${PGM_MERGE_TEMP})"
+  elif (( PGM_MERGE_TEMP_FROM_ENV )); then
+    printf '  %-21s%s\n' "--temp-dir:" "${PGM_MERGE_TEMP} (env PGM_MERGE_TEMP)"
+  elif [[ -n "${TMPDIR:-}" ]]; then
+    printf '  %-21s%s\n' "--temp-dir:" "${TMPDIR} (env TMPDIR)"
+  else
+    printf '  %-21s%s\n' "--temp-dir:" "/tmp (default)"
   fi
 
   printf '  %-21s%sx%s (env PGM_SEAM_PREVIEW_WIDTH/HEIGHT)\n' \
@@ -3786,12 +3816,27 @@ prompt_delete_merged_inputs() {
   esac
 }
 
-# Writable temp directory for an off-disk merge. TMPDIR when set, otherwise /tmp.
-merge_temp_dir() {
-  local d="${TMPDIR:-/tmp}"
+# Candidate directory for an off-disk merge: --temp-dir / PGM_MERGE_TEMP, else TMPDIR, else /tmp.
+merge_temp_dir_candidate() {
+  local d=""
+  if [[ -n "${PGM_MERGE_TEMP:-}" ]]; then
+    d="$PGM_MERGE_TEMP"
+  elif [[ -n "${TMPDIR:-}" ]]; then
+    d="$TMPDIR"
+  else
+    d=/tmp
+  fi
   d="${d%/}"
-  [[ -n "$d" && -d "$d" && -w "$d" ]] || return 1
   printf '%s\n' "$d"
+}
+
+# 0 when this user can create a file in $1 (a real create, not only the write bit).
+merge_dir_writable() {
+  local d="$1" probe
+  [[ -n "$d" && -d "$d" ]] || return 1
+  probe=$(mktemp "${d}/.pgm-merge-write.XXXXXX" 2>/dev/null) || return 1
+  rm -f -- "$probe"
+  return 0
 }
 
 # Filesystem device id (Linux stat -c, else BSD stat -f).
@@ -3813,19 +3858,135 @@ fs_avail_bytes() {
   printf '%s\n' "$n"
 }
 
-# 0 when the temp dir is a different disk and can hold $1 bytes with spare room.
-# Spare is 10% of the file or 1 GiB, whichever is larger.
-merge_temp_dir_fits() {
+# rotational flag for a /sys/block name: 0 SSD, 1 spinning, unreadable, or missing.
+# Device-mapper and md devices follow their slaves. 1 wins if any slave spins.
+disk_rotational_flag() {
+  local name="$1" depth="${2:-0}" rota slave hdd=0 ssd=0
+  name="${name##*/}"
+  (( depth > 4 )) && { printf '%s\n' missing; return 0; }
+  if [[ ! -d "/sys/block/${name}" ]]; then
+    if [[ "$name" =~ ^(nvme[0-9]+n[0-9]+)p[0-9]+$ ]]; then
+      name="${BASH_REMATCH[1]}"
+    elif [[ "$name" =~ ^(mmcblk[0-9]+)p[0-9]+$ ]]; then
+      name="${BASH_REMATCH[1]}"
+    elif [[ "$name" =~ ^([a-z]+)[0-9]+$ ]]; then
+      name="${BASH_REMATCH[1]}"
+    fi
+  fi
+  if [[ -d "/sys/block/${name}/slaves" ]]; then
+    for slave in "/sys/block/${name}/slaves"/*; do
+      [[ -e "$slave" ]] || continue
+      saw=1
+      rota=$(disk_rotational_flag "$(basename -- "$slave")" $(( depth + 1 )))
+      case "$rota" in
+        1) hdd=1 ;;
+        0) ssd=1 ;;
+        unreadable)
+          printf '%s\n' unreadable
+          return 0
+          ;;
+      esac
+    done
+    if (( hdd )); then
+      printf '1\n'
+      return 0
+    fi
+    if (( ssd )); then
+      printf '0\n'
+      return 0
+    fi
+  fi
+  if [[ -r "/sys/block/${name}/queue/rotational" ]]; then
+    rota=$(tr -d '[:space:]' < "/sys/block/${name}/queue/rotational")
+    if [[ "$rota" == 0 || "$rota" == 1 ]]; then
+      printf '%s\n' "$rota"
+      return 0
+    fi
+  elif [[ -e "/sys/block/${name}/queue/rotational" ]]; then
+    printf '%s\n' unreadable
+    return 0
+  fi
+  printf '%s\n' missing
+}
+
+# Sets SOURCE_DISK_KIND to ssd, hdd, or unknown, and SOURCE_DISK_KIND_WHY to a sentence.
+refresh_source_disk_kind() {
+  local src="" real="" name="" flag=""
+  SOURCE_DISK_KIND=unknown
+  SOURCE_DISK_KIND_WHY="Cannot tell whether the source disk is an SSD."
+  src=$(findmnt -n -o SOURCE -T . 2>/dev/null || true)
+  [[ -n "$src" ]] || src=$(df -P . 2>/dev/null | awk 'NR==2 {print $1}')
+  src="${src%%\[*}"
+  if [[ -z "$src" ]]; then
+    SOURCE_DISK_KIND_WHY="Cannot tell whether the source disk is an SSD (mount source unknown)."
+    return 0
+  fi
+  if [[ "$src" != /dev/* ]]; then
+    SOURCE_DISK_KIND_WHY="Cannot tell whether the source disk is an SSD (${src} is not a local block device)."
+    return 0
+  fi
+  real=$(readlink -f -- "$src" 2>/dev/null || printf '%s' "$src")
+  name="${real##*/}"
+  flag=$(disk_rotational_flag "$name")
+  case "$flag" in
+    0)
+      SOURCE_DISK_KIND=ssd
+      SOURCE_DISK_KIND_WHY="Source disk is an SSD."
+      ;;
+    1)
+      SOURCE_DISK_KIND=hdd
+      SOURCE_DISK_KIND_WHY="Source disk is not an SSD."
+      ;;
+    unreadable)
+      SOURCE_DISK_KIND=unknown
+      SOURCE_DISK_KIND_WHY="Cannot tell whether the source disk is an SSD (no permission to read the rotational flag)."
+      ;;
+    *)
+      SOURCE_DISK_KIND=unknown
+      SOURCE_DISK_KIND_WHY="Cannot tell whether the source disk is an SSD (no rotational flag for ${name})."
+      ;;
+  esac
+}
+
+# Prints a reason and returns 1 when $1 bytes will not fit in the temp dir with spare room.
+# Spare is 10% of the file or 1 GiB, whichever is larger. Returns 0 when the dir is usable.
+merge_temp_unfit_reason() {
   local need="$1" tdir dest_dev tmp_dev avail spare
-  [[ "$need" =~ ^[0-9]+$ ]] && (( need > 0 )) || return 1
-  tdir=$(merge_temp_dir) || return 1
-  dest_dev=$(fs_device_id .) || return 1
-  tmp_dev=$(fs_device_id "$tdir") || return 1
-  [[ "$dest_dev" != "$tmp_dev" ]] || return 1
-  avail=$(fs_avail_bytes "$tdir") || return 1
+  [[ "$need" =~ ^[0-9]+$ ]] && (( need > 0 )) || {
+    printf '%s\n' "merge size is unknown"
+    return 1
+  }
+  tdir=$(merge_temp_dir_candidate)
+  if [[ ! -d "$tdir" ]]; then
+    printf '%s\n' "${tdir} is not a directory"
+    return 1
+  fi
+  if ! merge_dir_writable "$tdir"; then
+    printf '%s\n' "cannot create files in ${tdir}"
+    return 1
+  fi
+  dest_dev=$(fs_device_id .) || {
+    printf '%s\n' "cannot tell which disk holds the source files"
+    return 1
+  }
+  tmp_dev=$(fs_device_id "$tdir") || {
+    printf '%s\n' "cannot tell which disk holds ${tdir}"
+    return 1
+  }
+  if [[ "$dest_dev" == "$tmp_dev" ]]; then
+    printf '%s\n' "${tdir} is on the same disk as the source files"
+    return 1
+  fi
+  avail=$(fs_avail_bytes "$tdir") || {
+    printf '%s\n' "cannot read free space on ${tdir}"
+    return 1
+  }
   spare=$(( need / 10 ))
   (( spare < 1073741824 )) && spare=1073741824
-  (( avail >= need + spare )) || return 1
+  if (( avail < need + spare )); then
+    printf '%s\n' "${tdir} has $(format_bytes_human "$avail") free; this merge needs about $(format_bytes_human $(( need + spare )))"
+    return 1
+  fi
   return 0
 }
 
@@ -3836,13 +3997,33 @@ merge_clear_temp_work() {
   MERGE_TMP_DIR=""
 }
 
+# Copy $1 to $2 with a progress bar, then remove $1.
+merge_copy_back_with_progress() {
+  local src="$1" dst="$2"
+  echo "$(pgm_ts) Copying merged file back to ${dst}"
+  if command -v rsync >/dev/null 2>&1; then
+    if rsync --info=help >/dev/null 2>&1; then
+      rsync -a --info=progress2 -- "$src" "$dst"
+    else
+      rsync -a --progress -- "$src" "$dst"
+    fi
+  elif command -v pv >/dev/null 2>&1; then
+    pv -f -p -t -e -r -b -- "$src" > "$dst"
+  else
+    echo "$(pgm_ts) No rsync or pv — copying without a progress bar."
+    cp -f -- "$src" "$dst"
+  fi || return 1
+  rm -f -- "$src"
+  return 0
+}
+
 # Sets MERGE_WRITE_PATH to the path mp4_merge should write.
 # Asks to use the temp dir only for an interactive single-group merge.
 choose_merge_output_path() {
   local final="$1"
   shift
   local -a files=("$@")
-  local tdir avail sz=0 n f choice work base
+  local tdir avail sz=0 n f choice work base reason="" default_key prompt_key
   MERGE_WRITE_PATH="$final"
   MERGE_TMP_DIR=""
   if (( DO_YES )) || (( MERGE_ALL_REMAINING )) || (( ! script_is_run_interactively )); then
@@ -3852,14 +4033,31 @@ choose_merge_output_path() {
     n=$(file_size_bytes "$f")
     sz=$(( sz + n ))
   done
-  merge_temp_dir_fits "$sz" || return 0
-  tdir=$(merge_temp_dir) || return 0
+  tdir=$(merge_temp_dir_candidate)
+  if ! reason=$(merge_temp_unfit_reason "$sz"); then
+    if (( PGM_MERGE_TEMP_CLI )) || (( PGM_MERGE_TEMP_FROM_ENV )); then
+      echo "$(pgm_ts) Not using ${tdir} for this merge: ${reason}."
+      echo "$(pgm_ts) Writing the output in this directory."
+    fi
+    return 0
+  fi
   avail=$(fs_avail_bytes "$tdir") || return 0
+  refresh_source_disk_kind
+  echo "$(pgm_ts) ${SOURCE_DISK_KIND_WHY}"
   echo "$(pgm_ts) ${tdir} is on another disk ($(format_bytes_human "$avail") free)."
   echo "$(pgm_ts) This merge is about $(format_bytes_human "$sz"). Writing it there keeps reading and writing off the same disk."
-  echo "  [y] Yes — merge in ${tdir}, then move the file here"
-  echo "  [N] No — write the output in this directory (default)"
-  pgm_read_key "Merge via ${tdir}? [y/N]: " n
+  if [[ "$SOURCE_DISK_KIND" == ssd ]]; then
+    default_key=n
+    prompt_key="y/N"
+    echo "  [y] Yes — merge in ${tdir}, then copy the file back here"
+    echo "  [N] No — write the output in this directory (default)"
+  else
+    default_key=y
+    prompt_key="Y/n"
+    echo "  [Y] Yes — merge in ${tdir}, then copy the file back here (default)"
+    echo "  [n] No — write the output in this directory"
+  fi
+  pgm_read_key "Merge via ${tdir}? [${prompt_key}]: " "$default_key"
   choice="${REPLY,,}"
   [[ "$choice" == y ]] || return 0
   work=$(mktemp -d "${tdir}/pgm-merge.XXXXXX") || {
@@ -3894,7 +4092,7 @@ run_merge_group() {
   VIDEO_MERGE_OUT_FILE="${write_path}"
   if [[ -n "$MERGE_TMP_DIR" ]]; then
     echo "$(pgm_ts) Merging ${#files[@]} chapter(s) → ${write_path}"
-    echo "$(pgm_ts) Finished file will move to ${output_file}"
+    echo "$(pgm_ts) Finished file will be copied back to ${output_file}"
   else
     echo "$(pgm_ts) Merging ${#files[@]} chapter(s) → ${output_file}"
   fi
@@ -3907,14 +4105,15 @@ run_merge_group() {
   VIDEO_MERGE_OUT_FILE=""
   if (( rc == 0 )); then
     if [[ -n "$MERGE_TMP_DIR" ]]; then
-      if ! mv -f -- "$write_path" "$output_file"; then
-        echo "$(pgm_ts) Merge finished, but could not move ${write_path} to ${output_file}" >&2
+      if ! merge_copy_back_with_progress "$write_path" "$output_file"; then
+        echo "$(pgm_ts) Merge finished, but could not copy ${write_path} to ${output_file}" >&2
+        echo "$(pgm_ts) Merged file left at ${write_path}" >&2
         MERGE_TMP_DIR=""
         return 1
       fi
       rmdir -- "$MERGE_TMP_DIR" 2>/dev/null || rm -rf -- "$MERGE_TMP_DIR"
       MERGE_TMP_DIR=""
-      echo "$(pgm_ts) Moved merged file to ${output_file}"
+      echo "$(pgm_ts) Copied merged file to ${output_file}"
     fi
     echo "$(pgm_ts) Done: ${output_file}"
     local meta_label=""
@@ -4340,6 +4539,9 @@ PGM_SEAM_AFTER_FROM_ENV=0
 [[ -n "${PGM_SEAM_PREVIEW_AFTER:-}" ]] && PGM_SEAM_AFTER_FROM_ENV=1
 PGM_SEAM_BEFORE_CLI=0
 PGM_SEAM_AFTER_CLI=0
+PGM_MERGE_TEMP_FROM_ENV=0
+PGM_MERGE_TEMP_CLI=0
+[[ -n "${PGM_MERGE_TEMP:-}" ]] && PGM_MERGE_TEMP_FROM_ENV=1
 
 PGM_SEAM_PREVIEW_BEFORE="${PGM_SEAM_PREVIEW_BEFORE:-2}"
 PGM_SEAM_PREVIEW_AFTER="${PGM_SEAM_PREVIEW_AFTER:-0}"
@@ -4411,6 +4613,24 @@ while [[ $# -gt 0 ]]; do
       pgm_valid_seam_seconds "$PGM_SEAM_PREVIEW_AFTER" \
         || pgm_invalid_seam_seconds "seam-after" "$PGM_SEAM_PREVIEW_AFTER"
       PGM_SEAM_AFTER_CLI=1
+      shift
+      ;;
+    --temp-dir)
+      if [[ -z "${2:-}" ]]; then
+        echo "$(pgm_ts) --temp-dir requires a directory path." >&2
+        exit 1
+      fi
+      PGM_MERGE_TEMP="$2"
+      PGM_MERGE_TEMP_CLI=1
+      shift 2
+      ;;
+    --temp-dir=*)
+      PGM_MERGE_TEMP="${1#*=}"
+      if [[ -z "$PGM_MERGE_TEMP" ]]; then
+        echo "$(pgm_ts) --temp-dir requires a directory path." >&2
+        exit 1
+      fi
+      PGM_MERGE_TEMP_CLI=1
       shift
       ;;
     *)
