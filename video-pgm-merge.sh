@@ -1,4 +1,6 @@
 #!/bin/bash
+# v. 20261004.134138 - merge prompt: group file count, first/last file, start/finish time
+# v. 20261004.131846 - before merge prompt, sort files and groups oldest to newest
 # v. 20261001.221000 - ffmpeg probe shows the real error, not "version unknown"
 # v. 20261001.220200 - startup box: ffmpeg version and GPU encoders in this build
 # v. 20260930.221200 - drop --no_startup_delay; this script is interactive
@@ -147,7 +149,11 @@ Merge behaviour (no options):
     A GPS track with the same stem and a .gpx extension is written beside it,
     from GPSData*.txt in this directory or its parent.
   - Shows each multi-part group (with file sizes) and asks whether to merge
-    (single-key Y/N/A/M/Q, no Enter — like rename.sh).
+    (single-key Y/N/A/M/Q, no Enter — like rename.sh). Files in a group, and the
+    groups themselves, are ordered oldest to newest (filename YYYYMMDD_HHMMSS when
+    present, otherwise filesystem mtime) before that prompt. After the input and
+    output lists, the prompt shows how many files are in that group, the first and
+    last file, and the start and finish timestamps (finish line includes total length).
   - After a successful merge: copy GPS / create&modify dates / Make/Model from the first
     chapter (exiftool; filesystem mtime via touch -r), set title from the session label,
     then merge-boundary times, size summary, optional per-seam terminal preview (asked one
@@ -1115,6 +1121,14 @@ format_duration_display() {
     if (s >= 60) { s -= 60; m += 1 }
     printf "%.1f s (%d:%02d)", d+0, m, s
   }'
+}
+
+# Seconds as "5090.0 s (1h 24min 50s)" for the merge-prompt summary.
+format_duration_hms_display() {
+  local dur="$1" hms
+  [[ -n "$dur" ]] || return 1
+  hms=$(format_output_timeline_pos "$dur") || return 1
+  awk -v d="$dur" -v hms="$hms" 'BEGIN { printf "%.1f s (%s)", d+0, hms }'
 }
 
 # Position in merged output as "8min 15s" / "1h 2min 3s".
@@ -3888,6 +3902,149 @@ prompt_merge_group_action() {
   done
 }
 
+# Recording-time sort key: filename YYYYMMDD_HHMMSS when present, else filesystem mtime.
+# Tie-break: chapter letter, numeric part / raw chapter, then basename (oldest first).
+file_age_sort_key() {
+  local f="$1" base parse_base date="" time="" letter="_" part=0 p epoch stamp
+  base="${f##*/}"
+  if gopro_timestamp_cam_from_basename "$base"; then
+    date="$GOPRO_TS_DATE"
+    time="$GOPRO_TS_TIME"
+    [[ -n "${GOPRO_TS_LETTER}" ]] && letter="${GOPRO_TS_LETTER,,}"
+  elif part_chapter_parse "$base"; then
+    parse_base="$(part_chapter_gopro_parse_base "$base" 2>/dev/null || true)"
+    if [[ -n "$parse_base" ]] && gopro_timestamp_cam_from_basename "$parse_base"; then
+      date="$GOPRO_TS_DATE"
+      time="$GOPRO_TS_TIME"
+      [[ -n "${GOPRO_TS_LETTER}" ]] && letter="${GOPRO_TS_LETTER,,}"
+    fi
+  elif dashcam_parse_basename "$base"; then
+    date="$DASHCAM_DATE"
+    time="$DASHCAM_TIME"
+    part="$DASHCAM_SEQ"
+  fi
+  if [[ -z "$date" || -z "$time" ]]; then
+    epoch="$(stat -c %Y -- "$f" 2>/dev/null || stat -f %m -- "$f" 2>/dev/null || printf '0')"
+    stamp="$(date -d "@${epoch}" +%Y%m%d_%H%M%S 2>/dev/null \
+      || date -r "${epoch}" +%Y%m%d_%H%M%S 2>/dev/null \
+      || printf '00000000_000000')"
+    date="${stamp%%_*}"
+    time="${stamp##*_}"
+    letter="_"
+  fi
+  if p="$(chapter_part_from_basename "$base" 2>/dev/null)"; then
+    part="$p"
+  elif gopro_raw_chapter_parse "$base"; then
+    part=$((10#$RAW_GP_CHAPTER))
+  fi
+  printf '%s_%s_%s_%06d_%s\n' "$date" "$time" "$letter" "$part" "$base"
+}
+
+# Rewrite _out as paths from oldest to newest.
+sort_paths_oldest_to_newest() {
+  local -n _out=$1
+  shift
+  local -a files=("$@")
+  local f
+  if (( ${#files[@]} < 2 )); then
+    _out=("${files[@]}")
+    return 0
+  fi
+  mapfile -t _out < <(
+    for f in "${files[@]}"; do
+      printf '%s\t%s\n' "$(file_age_sort_key "$f")" "$f"
+    done | LC_ALL=C sort -t $'\t' -k1,1 | cut -f2-
+  )
+}
+
+# Each blob's files oldest→newest, then blobs by their oldest file.
+# Chapter plan and merge prompts both use this order.
+sort_group_blobs_oldest_to_newest() {
+  local -a sorted_store=() order_lines=() files=() sorted_files=()
+  local blob i=0 idx oldest_key
+  (( ${#GROUP_BLOBS[@]} )) || return 0
+  for blob in "${GROUP_BLOBS[@]}"; do
+    group_files_to_array "$blob" files
+    sort_paths_oldest_to_newest sorted_files "${files[@]}"
+    if (( ${#sorted_files[@]} )); then
+      sorted_store+=("$(printf '%s\n' "${sorted_files[@]}")")
+      oldest_key="$(file_age_sort_key "${sorted_files[0]}")"
+    else
+      sorted_store+=("$blob")
+      oldest_key="~"
+    fi
+    order_lines+=("${oldest_key}"$'\t'"${i}")
+    (( i++ )) || true
+  done
+  GROUP_BLOBS=()
+  while IFS=$'\t' read -r _ idx; do
+    [[ "$idx" =~ ^[0-9]+$ ]] || continue
+    GROUP_BLOBS+=("${sorted_store[$idx]}")
+  done < <(printf '%s\n' "${order_lines[@]}" | LC_ALL=C sort -t $'\t' -k1,1)
+}
+
+# Human date and time: filename YYYYMMDD_HHMMSS when present, else filesystem mtime.
+file_recording_timestamp_display() {
+  local f="$1" base parse_base date="" time="" epoch stamp
+  base="${f##*/}"
+  if gopro_timestamp_cam_from_basename "$base"; then
+    date="$GOPRO_TS_DATE"
+    time="$GOPRO_TS_TIME"
+  elif part_chapter_parse "$base"; then
+    parse_base="$(part_chapter_gopro_parse_base "$base" 2>/dev/null || true)"
+    if [[ -n "$parse_base" ]] && gopro_timestamp_cam_from_basename "$parse_base"; then
+      date="$GOPRO_TS_DATE"
+      time="$GOPRO_TS_TIME"
+    fi
+  elif dashcam_parse_basename "$base"; then
+    date="$DASHCAM_DATE"
+    time="$DASHCAM_TIME"
+  fi
+  if [[ ${#date} -eq 8 && ${#time} -eq 6 ]]; then
+    printf '%s-%s-%s %s:%s:%s\n' \
+      "${date:0:4}" "${date:4:2}" "${date:6:2}" \
+      "${time:0:2}" "${time:2:2}" "${time:4:2}"
+    return 0
+  fi
+  epoch="$(stat -c %Y -- "$f" 2>/dev/null || stat -f %m -- "$f" 2>/dev/null || printf '0')"
+  stamp="$(date -d "@${epoch}" +%Y-%m-%d_%H:%M:%S 2>/dev/null \
+    || date -r "${epoch}" +%Y-%m-%d_%H:%M:%S 2>/dev/null \
+    || printf '0000-00-00_00:00:00')"
+  printf '%s %s\n' "${stamp%%_*}" "${stamp##*_}"
+}
+
+# After the input/output lists: file count, first/last name, start/finish time.
+# Names share a column; timestamps share a column.
+print_merge_group_sequence_summary() {
+  local -a files=("$@")
+  local n first last start_ts finish_ts total=0 len_disp f d
+  n=${#files[@]}
+  (( n > 0 )) || return 0
+  if (( n == 1 )); then
+    echo "  1 file in this merge group"
+  else
+    echo "  ${n} files in this merge group"
+  fi
+  first="${files[0]##*/}"
+  last="${files[-1]##*/}"
+  start_ts=$(file_recording_timestamp_display "${files[0]}")
+  finish_ts=$(file_recording_timestamp_display "${files[-1]}")
+  for f in "${files[@]}"; do
+    if d=$(ffprobe_duration_seconds "$f" 2>/dev/null) && [[ -n "$d" ]]; then
+      total=$(awk -v a="$total" -v b="$d" 'BEGIN{printf "%.3f", a+b}')
+    fi
+  done
+  if awk -v d="$total" 'BEGIN{exit !(d>0)}'; then
+    len_disp=$(format_duration_hms_display "$total")
+  else
+    len_disp="—"
+  fi
+  printf '  %-13s %s\n' "First file is" "$first"
+  printf '  %-13s %s\n' "Last file is" "$last"
+  printf '  %-19s %s\n' "Start timestamp is" "$start_ts"
+  printf '  %-19s %s, total length %s\n' "Finish timestamp is" "$finish_ts" "$len_disp"
+}
+
 show_merge_group_detail() {
   local group_num="$1" group_total="$2"
   shift 2
@@ -3900,6 +4057,8 @@ show_merge_group_detail() {
   if group_is_dashcam "${files[@]}"; then
     print_dashcam_gpx_suggestion "$output_file" '  '
   fi
+  echo
+  print_merge_group_sequence_summary "${files[@]}"
   echo
 }
 
@@ -3938,6 +4097,7 @@ do_merge() {
   mapfile -t sorted_mp4 < <(printf '%s\n' "${mp4_files[@]}" | LC_ALL=C sort)
 
   build_chapter_groups "${sorted_mp4[@]}"
+  sort_group_blobs_oldest_to_newest
 
   MERGE_ALL_REMAINING=0
   SKIP_ALL_REMAINING=0
