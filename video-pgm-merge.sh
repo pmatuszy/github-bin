@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261004.141633 - box the merge-group summary before the merge question
 # v. 20261004.140923 - free-space check always calls /bin/df
 # v. 20261004.140859 - free-space check calls command df, not the shell df function
 # v. 20261004.140553 - say why the temp dir was skipped, and ask for another path
@@ -17,6 +18,7 @@
 # v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
 # v. 20260805.154826 - after merge: copy GPS/dates from first chapter; FS times via touch -r
 
+# 2026.10.04 - v. 0.15.38 - merge prompt: boxed summary with file count, first/last file, start/finish/length
 # 2026.10.04 - v. 0.15.37 - free-space check always calls /bin/df
 # 2026.10.04 - v. 0.15.36 - free-space check uses command df so a shell df function cannot hide the byte count
 # 2026.10.04 - v. 0.15.35 - when the temp dir cannot be used, say why and ask for another path
@@ -167,8 +169,8 @@ Merge behaviour (no options):
     (single-key Y/N/A/M/Q, no Enter — like rename.sh). Files in a group, and the
     groups themselves, are ordered oldest to newest (filename YYYYMMDD_HHMMSS when
     present, otherwise filesystem mtime) before that prompt. After the input and
-    output lists, the prompt shows how many files are in that group, the first and
-    last file, and the start and finish timestamps (finish line includes total length).
+    output lists, a boxed summary shows how many files are in that group, the first
+    and last file, and the start time, finish time, and total length.
   - After you choose to merge: if the temp directory (--temp-dir, else
     PGM_MERGE_TEMP, else TMPDIR, else /tmp) is on another disk, you can create
     files there, and it has room for the output plus spare space, asks whether to
@@ -4369,18 +4371,41 @@ file_recording_timestamp_display() {
   printf '%s %s\n' "${stamp%%_*}" "${stamp##*_}"
 }
 
-# After the input/output lists: file count, first/last name, start/finish time.
-# Names share a column; timestamps share a column.
+# After the input/output lists: boxed file count, first/last name, start/finish/length.
+# Values share one column. Title is centered when boxes is not installed.
+print_merge_summary_box() {
+  local title="$1"
+  shift
+  local -a rows=("$@")
+  local line width=0 pad title_line bar
+  (( ${#rows[@]} > 0 )) || return 0
+  for line in "$title" "${rows[@]}"; do
+    (( ${#line} > width )) && width=${#line}
+  done
+  if type -fP boxes >/dev/null 2>&1; then
+    printf '%s\n' "$title" "${rows[@]}" | boxes -a l -d ada-box
+    return 0
+  fi
+  pad=$(( (width - ${#title}) / 2 ))
+  (( pad < 0 )) && pad=0
+  title_line="$(printf '%*s%s' "$pad" '' "$title")"
+  bar="$(printf '%*s' "$((width + 2))" '' | tr ' ' '-')"
+  echo "+${bar}+"
+  printf '| %-*s |\n' "$width" "$title_line"
+  for line in "${rows[@]}"; do
+    printf '| %-*s |\n' "$width" "$line"
+  done
+  echo "+${bar}+"
+}
+
 print_merge_group_sequence_summary() {
+  local group_num="$1" group_total="$2"
+  shift 2
   local -a files=("$@")
   local n first last start_ts finish_ts total=0 len_disp f d
+  local -a rows=()
   n=${#files[@]}
   (( n > 0 )) || return 0
-  if (( n == 1 )); then
-    echo "  1 file in this merge group"
-  else
-    echo "  ${n} files in this merge group"
-  fi
   first="${files[0]##*/}"
   last="${files[-1]##*/}"
   start_ts=$(file_recording_timestamp_display "${files[0]}")
@@ -4395,10 +4420,13 @@ print_merge_group_sequence_summary() {
   else
     len_disp="—"
   fi
-  printf '  %-13s %s\n' "First file is" "$first"
-  printf '  %-13s %s\n' "Last file is" "$last"
-  printf '  %-19s %s\n' "Start timestamp is" "$start_ts"
-  printf '  %-19s %s, total length %s\n' "Finish timestamp is" "$finish_ts" "$len_disp"
+  rows+=("$(printf '%-8s%s' "Files:" "$n")")
+  rows+=("$(printf '%-8s%s' "First:" "$first")")
+  rows+=("$(printf '%-8s%s' "Last:" "$last")")
+  rows+=("$(printf '%-8s%s' "Start:" "$start_ts")")
+  rows+=("$(printf '%-8s%s' "Finish:" "$finish_ts")")
+  rows+=("$(printf '%-8s%s' "Length:" "$len_disp")")
+  print_merge_summary_box "Merge group ${group_num} of ${group_total}" "${rows[@]}"
 }
 
 show_merge_group_detail() {
@@ -4414,7 +4442,7 @@ show_merge_group_detail() {
     print_dashcam_gpx_suggestion "$output_file" '  '
   fi
   echo
-  print_merge_group_sequence_summary "${files[@]}"
+  print_merge_group_sequence_summary "$group_num" "$group_total" "${files[@]}"
   echo
 }
 
