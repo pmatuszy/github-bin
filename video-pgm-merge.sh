@@ -1,4 +1,6 @@
 #!/bin/bash
+# v. 20261004.142643 - rest-of-run temp dir hotkey is d
+# v. 20261004.142415 - temp dir can be kept for the rest of the run
 # v. 20261004.142217 - seam preview defaults: 1s before and 1s after each join
 # v. 20261004.142009 - q quits on the temp-directory questions
 # v. 20261004.141841 - temp-merge prompt says move the file back, not copy
@@ -21,6 +23,8 @@
 # v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
 # v. 20260805.154826 - after merge: copy GPS/dates from first chapter; FS times via touch -r
 
+# 2026.10.04 - v. 0.15.43 - temp-merge prompt: [d] keeps that directory for the rest of this run
+# 2026.10.04 - v. 0.15.42 - temp-merge prompt: [r] keeps that directory for the rest of this run
 # 2026.10.04 - v. 0.15.41 - seam preview defaults: 1s before and 1s after each join
 # 2026.10.04 - v. 0.15.40 - [q] on the temp-directory questions quits (does not start the merge)
 # 2026.10.04 - v. 0.15.39 - temp-merge prompt: move the finished file back (wording)
@@ -181,9 +185,10 @@ Merge behaviour (no options):
     PGM_MERGE_TEMP, else TMPDIR, else /tmp) is on another disk, you can create
     files there, and it has room for the output plus spare space, asks whether to
     write the merge there and move the finished file back here (progress bar).
-    Default is yes when the source disk is not an SSD, or when that cannot be
-    checked. Default is no when the source disk is an SSD. -y and non-interactive
-    runs write in this directory.
+    [Y] uses that directory for this file only. [d] keeps it for every later merge
+    in this run. Default is yes (this file only) when the source disk is not an
+    SSD, or when that cannot be checked. Default is no when the source disk is an
+    SSD. -y and non-interactive runs write in this directory.
   - After a successful merge: copy GPS / create&modify dates / Make/Model from the first
     chapter (exiftool; filesystem mtime via touch -r), set title from the session label,
     then merge-boundary times, size summary, optional per-seam terminal preview (asked one
@@ -862,6 +867,8 @@ find_merger() {
 VIDEO_MERGE_OUT_FILE=""
 # Temp directory holding an in-progress off-disk merge (empty when writing in place).
 MERGE_TMP_DIR=""
+# Set when the user keeps one temp directory for every later merge in this run.
+MERGE_TEMP_FOR_RUN=""
 PGM_READ_TIMEOUT_CLI=0
 PGM_SCRIPT_START_NS=""
 PGM_PROCESSING_SEC=0
@@ -4055,13 +4062,27 @@ choose_merge_output_path() {
   local tdir avail sz=0 n f choice work base reason="" default_key prompt_key alt
   MERGE_WRITE_PATH="$final"
   MERGE_TMP_DIR=""
-  if (( DO_YES )) || (( MERGE_ALL_REMAINING )) || (( ! script_is_run_interactively )); then
-    return 0
-  fi
   for f in "${files[@]}"; do
     n=$(file_size_bytes "$f")
     sz=$(( sz + n ))
   done
+  if [[ -n "$MERGE_TEMP_FOR_RUN" ]]; then
+    tdir="$MERGE_TEMP_FOR_RUN"
+    if ! reason=$(merge_temp_unfit_reason "$sz" "$tdir"); then
+      echo "$(pgm_ts) Not using ${tdir} for this merge: ${reason}."
+      echo "$(pgm_ts) Writing the output in this directory."
+      return 0
+    fi
+    if ! merge_open_temp_work "$tdir" "$final"; then
+      echo "$(pgm_ts) Could not create a temp directory in ${tdir}; writing here." >&2
+      return 0
+    fi
+    echo "$(pgm_ts) Merging in ${tdir} (chosen for the rest of this run)."
+    return 0
+  fi
+  if (( DO_YES )) || (( MERGE_ALL_REMAINING )) || (( ! script_is_run_interactively )); then
+    return 0
+  fi
   tdir=$(merge_temp_dir_candidate)
   if ! reason=$(merge_temp_unfit_reason "$sz" "$tdir"); then
     echo "$(pgm_ts) Not using ${tdir} for this merge: ${reason}."
@@ -4106,13 +4127,15 @@ choose_merge_output_path() {
   echo "$(pgm_ts) This merge is about $(format_bytes_human "$sz"). Writing it there keeps reading and writing off the same disk."
   if [[ "$SOURCE_DISK_KIND" == ssd ]]; then
     default_key=n
-    prompt_key="y/N/q"
-    echo "  [y] Yes — merge in ${tdir}, then move the file back here"
+    prompt_key="y/d/N/q"
+    echo "  [y] Yes — merge this file in ${tdir}, then move it back here"
+    echo "  [d] Yes — use ${tdir} for the rest of this run as well"
     echo "  [N] No — write the output in this directory (default)"
   else
     default_key=y
-    prompt_key="Y/n/q"
-    echo "  [Y] Yes — merge in ${tdir}, then move the file back here (default)"
+    prompt_key="Y/d/n/q"
+    echo "  [Y] Yes — merge this file in ${tdir}, then move it back here (default)"
+    echo "  [d] Yes — use ${tdir} for the rest of this run as well"
     echo "  [n] No — write the output in this directory"
   fi
   echo "  [q] Quit"
@@ -4123,6 +4146,11 @@ choose_merge_output_path() {
       q)
         echo "$(pgm_ts) Quit."
         return 2
+        ;;
+      d)
+        MERGE_TEMP_FOR_RUN="$tdir"
+        echo "$(pgm_ts) Using ${tdir} for this merge and the rest of this run."
+        break
         ;;
       y) break ;;
       n|'') return 0 ;;
@@ -4514,6 +4542,7 @@ do_merge() {
 
   MERGE_ALL_REMAINING=0
   SKIP_ALL_REMAINING=0
+  MERGE_TEMP_FOR_RUN=""
 
   print_group_plan "${sorted_mp4[@]}"
 
