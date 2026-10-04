@@ -1,4 +1,7 @@
 #!/bin/bash
+# v. 20261004.140923 - free-space check always calls /bin/df
+# v. 20261004.140859 - free-space check calls command df, not the shell df function
+# v. 20261004.140553 - say why the temp dir was skipped, and ask for another path
 # v. 20261004.135736 - --temp-dir, SSD default, space and permission checks, copy-back progress
 # v. 20261004.135247 - offer merge via another disk when /tmp has room, then move the file back
 # v. 20261004.134138 - merge prompt: group file count, first/last file, start/finish time
@@ -14,6 +17,9 @@
 # v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
 # v. 20260805.154826 - after merge: copy GPS/dates from first chapter; FS times via touch -r
 
+# 2026.10.04 - v. 0.15.37 - free-space check always calls /bin/df
+# 2026.10.04 - v. 0.15.36 - free-space check uses command df so a shell df function cannot hide the byte count
+# 2026.10.04 - v. 0.15.35 - when the temp dir cannot be used, say why and ask for another path
 # 2026.10.04 - v. 0.15.34 - --temp-dir; default the off-disk merge to yes when the source is not an SSD; copy back with a progress bar
 # 2026.10.04 - v. 0.15.33 - when /tmp (or TMPDIR) is another disk with room, offer to merge there and move the file back
 # 2026.10.01 - v. 0.15.32 - ffmpeg startup probe keeps the real error instead of "version unknown"
@@ -3842,7 +3848,7 @@ merge_dir_writable() {
 # Filesystem device id (Linux stat -c, else BSD stat -f).
 fs_device_id() {
   local p="$1" id
-  id=$(stat -c %d -- "$p" 2>/dev/null || stat -f %d -- "$p" 2>/dev/null) || return 1
+  id=$(command stat -c %d -- "$p" 2>/dev/null || command stat -f %d -- "$p" 2>/dev/null) || return 1
   [[ "$id" =~ ^[0-9]+$ ]] || return 1
   printf '%s\n' "$id"
 }
@@ -3850,9 +3856,9 @@ fs_device_id() {
 # Free bytes on the filesystem that holds $1.
 fs_avail_bytes() {
   local p="$1" n
-  n=$(df -B1 --output=avail -- "$p" 2>/dev/null | awk 'NR==2 {print $1}')
+  n=$(/bin/df -B1 --output=avail -- "$p" 2>/dev/null | awk 'NR==2 {print $1}')
   if [[ ! "$n" =~ ^[0-9]+$ ]]; then
-    n=$(df -P -k -- "$p" 2>/dev/null | awk 'NR==2 {printf "%.0f", $4 * 1024}')
+    n=$(/bin/df -P -k -- "$p" 2>/dev/null | awk 'NR==2 {printf "%.0f", $4 * 1024}')
   fi
   [[ "$n" =~ ^[0-9]+$ ]] || return 1
   printf '%s\n' "$n"
@@ -3915,7 +3921,7 @@ refresh_source_disk_kind() {
   SOURCE_DISK_KIND=unknown
   SOURCE_DISK_KIND_WHY="Cannot tell whether the source disk is an SSD."
   src=$(findmnt -n -o SOURCE -T . 2>/dev/null || true)
-  [[ -n "$src" ]] || src=$(df -P . 2>/dev/null | awk 'NR==2 {print $1}')
+  [[ -n "$src" ]] || src=$(/bin/df -P . 2>/dev/null | awk 'NR==2 {print $1}')
   src="${src%%\[*}"
   if [[ -z "$src" ]]; then
     SOURCE_DISK_KIND_WHY="Cannot tell whether the source disk is an SSD (mount source unknown)."
@@ -3949,14 +3955,18 @@ refresh_source_disk_kind() {
 }
 
 # Prints a reason and returns 1 when $1 bytes will not fit in the temp dir with spare room.
+# $2 is the directory to test; omitted means the configured candidate.
 # Spare is 10% of the file or 1 GiB, whichever is larger. Returns 0 when the dir is usable.
 merge_temp_unfit_reason() {
-  local need="$1" tdir dest_dev tmp_dev avail spare
+  local need="$1" tdir="${2:-}" dest_dev tmp_dev avail spare
   [[ "$need" =~ ^[0-9]+$ ]] && (( need > 0 )) || {
     printf '%s\n' "merge size is unknown"
     return 1
   }
-  tdir=$(merge_temp_dir_candidate)
+  if [[ -z "$tdir" ]]; then
+    tdir=$(merge_temp_dir_candidate)
+  fi
+  tdir="${tdir%/}"
   if [[ ! -d "$tdir" ]]; then
     printf '%s\n' "${tdir} is not a directory"
     return 1
@@ -4017,13 +4027,24 @@ merge_copy_back_with_progress() {
   return 0
 }
 
+# Create pgm-merge.XXXXXX under $1 and point MERGE_WRITE_PATH at the output name.
+merge_open_temp_work() {
+  local tdir="$1" final="$2" work base
+  tdir="${tdir%/}"
+  work=$(mktemp -d "${tdir}/pgm-merge.XXXXXX") || return 1
+  base="${final##*/}"
+  MERGE_TMP_DIR="$work"
+  MERGE_WRITE_PATH="${work}/${base}"
+  return 0
+}
+
 # Sets MERGE_WRITE_PATH to the path mp4_merge should write.
 # Asks to use the temp dir only for an interactive single-group merge.
 choose_merge_output_path() {
   local final="$1"
   shift
   local -a files=("$@")
-  local tdir avail sz=0 n f choice work base reason="" default_key prompt_key
+  local tdir avail sz=0 n f choice work base reason="" default_key prompt_key alt
   MERGE_WRITE_PATH="$final"
   MERGE_TMP_DIR=""
   if (( DO_YES )) || (( MERGE_ALL_REMAINING )) || (( ! script_is_run_interactively )); then
@@ -4034,10 +4055,31 @@ choose_merge_output_path() {
     sz=$(( sz + n ))
   done
   tdir=$(merge_temp_dir_candidate)
-  if ! reason=$(merge_temp_unfit_reason "$sz"); then
-    if (( PGM_MERGE_TEMP_CLI )) || (( PGM_MERGE_TEMP_FROM_ENV )); then
-      echo "$(pgm_ts) Not using ${tdir} for this merge: ${reason}."
+  if ! reason=$(merge_temp_unfit_reason "$sz" "$tdir"); then
+    echo "$(pgm_ts) Not using ${tdir} for this merge: ${reason}."
+    echo "  [p] Type another temp directory"
+    echo "  [N] Write the output in this directory (default)"
+    pgm_read_key "Temp directory? [p/N]: " n
+    [[ "${REPLY,,}" == p ]] || {
       echo "$(pgm_ts) Writing the output in this directory."
+      return 0
+    }
+    flush_stdin
+    printf '%s' "Temp directory: "
+    IFS= read -r alt || alt=""
+    alt="${alt%/}"
+    if [[ -z "$alt" ]]; then
+      echo "$(pgm_ts) Writing the output in this directory."
+      return 0
+    fi
+    if ! reason=$(merge_temp_unfit_reason "$sz" "$alt"); then
+      echo "$(pgm_ts) Not using ${alt}: ${reason}."
+      echo "$(pgm_ts) Writing the output in this directory."
+      return 0
+    fi
+    if ! merge_open_temp_work "$alt" "$final"; then
+      echo "$(pgm_ts) Could not create a temp directory in ${alt}; writing here." >&2
+      return 0
     fi
     return 0
   fi
@@ -4060,13 +4102,10 @@ choose_merge_output_path() {
   pgm_read_key "Merge via ${tdir}? [${prompt_key}]: " "$default_key"
   choice="${REPLY,,}"
   [[ "$choice" == y ]] || return 0
-  work=$(mktemp -d "${tdir}/pgm-merge.XXXXXX") || {
+  if ! merge_open_temp_work "$tdir" "$final"; then
     echo "$(pgm_ts) Could not create a temp directory in ${tdir}; writing here." >&2
     return 0
-  }
-  base="${final##*/}"
-  MERGE_TMP_DIR="$work"
-  MERGE_WRITE_PATH="${work}/${base}"
+  fi
 }
 
 run_merge_group() {
