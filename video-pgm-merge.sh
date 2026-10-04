@@ -1,4 +1,6 @@
 #!/bin/bash
+# v. 20261004.142009 - q quits on the temp-directory questions
+# v. 20261004.141841 - temp-merge prompt says move the file back, not copy
 # v. 20261004.141633 - box the merge-group summary before the merge question
 # v. 20261004.140923 - free-space check always calls /bin/df
 # v. 20261004.140859 - free-space check calls command df, not the shell df function
@@ -18,6 +20,8 @@
 # v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
 # v. 20260805.154826 - after merge: copy GPS/dates from first chapter; FS times via touch -r
 
+# 2026.10.04 - v. 0.15.40 - [q] on the temp-directory questions quits (does not start the merge)
+# 2026.10.04 - v. 0.15.39 - temp-merge prompt: move the finished file back (wording)
 # 2026.10.04 - v. 0.15.38 - merge prompt: boxed summary with file count, first/last file, start/finish/length
 # 2026.10.04 - v. 0.15.37 - free-space check always calls /bin/df
 # 2026.10.04 - v. 0.15.36 - free-space check uses command df so a shell df function cannot hide the byte count
@@ -137,7 +141,7 @@ Options:
                        Env: PGM_SEAM_PREVIEW_AFTER.
   --temp-dir DIR       Write the temporary merge file in DIR when that directory
                        is on another disk, you can create files there, and it has
-                       room for the output plus spare space. Then copy the finished
+                       room for the output plus spare space. Then move the finished
                        file back here with a progress bar.
                        Env: PGM_MERGE_TEMP. If omitted, TMPDIR, then /tmp.
 
@@ -174,7 +178,7 @@ Merge behaviour (no options):
   - After you choose to merge: if the temp directory (--temp-dir, else
     PGM_MERGE_TEMP, else TMPDIR, else /tmp) is on another disk, you can create
     files there, and it has room for the output plus spare space, asks whether to
-    write the merge there and copy the finished file back here (progress bar).
+    write the merge there and move the finished file back here (progress bar).
     Default is yes when the source disk is not an SSD, or when that cannot be
     checked. Default is no when the source disk is an SSD. -y and non-interactive
     runs write in this directory.
@@ -4012,7 +4016,7 @@ merge_clear_temp_work() {
 # Copy $1 to $2 with a progress bar, then remove $1.
 merge_copy_back_with_progress() {
   local src="$1" dst="$2"
-  echo "$(pgm_ts) Copying merged file back to ${dst}"
+  echo "$(pgm_ts) Moving merged file back to ${dst}"
   if command -v rsync >/dev/null 2>&1; then
     if rsync --info=help >/dev/null 2>&1; then
       rsync -a --info=progress2 -- "$src" "$dst"
@@ -4061,11 +4065,19 @@ choose_merge_output_path() {
     echo "$(pgm_ts) Not using ${tdir} for this merge: ${reason}."
     echo "  [p] Type another temp directory"
     echo "  [N] Write the output in this directory (default)"
-    pgm_read_key "Temp directory? [p/N]: " n
-    [[ "${REPLY,,}" == p ]] || {
-      echo "$(pgm_ts) Writing the output in this directory."
-      return 0
-    }
+    echo "  [q] Quit"
+    pgm_read_key "Temp directory? [p/N/q]: " n
+    case "${REPLY,,}" in
+      q)
+        echo "$(pgm_ts) Quit."
+        return 2
+        ;;
+      p) ;;
+      *)
+        echo "$(pgm_ts) Writing the output in this directory."
+        return 0
+        ;;
+    esac
     flush_stdin
     printf '%s' "Temp directory: "
     IFS= read -r alt || alt=""
@@ -4092,18 +4104,29 @@ choose_merge_output_path() {
   echo "$(pgm_ts) This merge is about $(format_bytes_human "$sz"). Writing it there keeps reading and writing off the same disk."
   if [[ "$SOURCE_DISK_KIND" == ssd ]]; then
     default_key=n
-    prompt_key="y/N"
-    echo "  [y] Yes — merge in ${tdir}, then copy the file back here"
+    prompt_key="y/N/q"
+    echo "  [y] Yes — merge in ${tdir}, then move the file back here"
     echo "  [N] No — write the output in this directory (default)"
   else
     default_key=y
-    prompt_key="Y/n"
-    echo "  [Y] Yes — merge in ${tdir}, then copy the file back here (default)"
+    prompt_key="Y/n/q"
+    echo "  [Y] Yes — merge in ${tdir}, then move the file back here (default)"
     echo "  [n] No — write the output in this directory"
   fi
-  pgm_read_key "Merge via ${tdir}? [${prompt_key}]: " "$default_key"
-  choice="${REPLY,,}"
-  [[ "$choice" == y ]] || return 0
+  echo "  [q] Quit"
+  while true; do
+    pgm_read_key "Merge via ${tdir}? [${prompt_key}]: " "$default_key"
+    choice="${REPLY,,}"
+    case "$choice" in
+      q)
+        echo "$(pgm_ts) Quit."
+        return 2
+        ;;
+      y) break ;;
+      n|'') return 0 ;;
+      *) echo "$(pgm_ts) Unknown choice: ${REPLY}" ;;
+    esac
+  done
   if ! merge_open_temp_work "$tdir" "$final"; then
     echo "$(pgm_ts) Could not create a temp directory in ${tdir}; writing here." >&2
     return 0
@@ -4127,13 +4150,17 @@ run_merge_group() {
     fi
     echo "$(pgm_ts) Removed existing output for redo merge."
   fi
-  local write_path
+  local write_path choose_rc
   choose_merge_output_path "$output_file" "${files[@]}"
+  choose_rc=$?
+  if (( choose_rc != 0 )); then
+    return "$choose_rc"
+  fi
   write_path="$MERGE_WRITE_PATH"
   VIDEO_MERGE_OUT_FILE="${write_path}"
   if [[ -n "$MERGE_TMP_DIR" ]]; then
     echo "$(pgm_ts) Merging ${#files[@]} chapter(s) → ${write_path}"
-    echo "$(pgm_ts) Finished file will be copied back to ${output_file}"
+    echo "$(pgm_ts) Finished file will be moved back to ${output_file}"
   else
     echo "$(pgm_ts) Merging ${#files[@]} chapter(s) → ${output_file}"
   fi
@@ -4154,7 +4181,7 @@ run_merge_group() {
       fi
       rmdir -- "$MERGE_TMP_DIR" 2>/dev/null || rm -rf -- "$MERGE_TMP_DIR"
       MERGE_TMP_DIR=""
-      echo "$(pgm_ts) Copied merged file to ${output_file}"
+      echo "$(pgm_ts) Moved merged file to ${output_file}"
     fi
     echo "$(pgm_ts) Done: ${output_file}"
     local meta_label=""
