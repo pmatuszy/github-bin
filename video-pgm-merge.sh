@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261004.135247 - offer merge via another disk when /tmp has room, then move the file back
 # v. 20261004.134138 - merge prompt: group file count, first/last file, start/finish time
 # v. 20261004.131846 - before merge prompt, sort files and groups oldest to newest
 # v. 20261001.221000 - ffmpeg probe shows the real error, not "version unknown"
@@ -12,6 +13,7 @@
 # v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
 # v. 20260805.154826 - after merge: copy GPS/dates from first chapter; FS times via touch -r
 
+# 2026.10.04 - v. 0.15.33 - when /tmp (or TMPDIR) is another disk with room, offer to merge there and move the file back
 # 2026.10.01 - v. 0.15.32 - ffmpeg startup probe keeps the real error instead of "version unknown"
 # 2026.10.01 - v. 0.15.31 - startup: print the ffmpeg version and whether this build has a GPU encoder
 # 2026.09.30 - v. 0.15.30 - drop --no_startup_delay; this script is interactive
@@ -154,6 +156,9 @@ Merge behaviour (no options):
     present, otherwise filesystem mtime) before that prompt. After the input and
     output lists, the prompt shows how many files are in that group, the first and
     last file, and the start and finish timestamps (finish line includes total length).
+  - After you choose to merge: if /tmp (or TMPDIR) is on another disk and has room for
+    the output plus spare space, asks whether to write the merge there and move the
+    finished file back here. -y and non-interactive runs write in this directory.
   - After a successful merge: copy GPS / create&modify dates / Make/Model from the first
     chapter (exiftool; filesystem mtime via touch -r), set title from the session label,
     then merge-boundary times, size summary, optional per-seam terminal preview (asked one
@@ -196,6 +201,8 @@ Environment:
                           journey (default: 90). Gaps above this start a new group.
   PGM_DASHCAM_LABEL       Make and model in 70mai journey filenames (default: 70mai-A510).
                           Spaces become hyphens.
+  TMPDIR                  Directory offered for an off-disk merge when it is another
+                          filesystem with spare room (default: /tmp).
   MAX_LINE_LENGTH         Longest status line kept on one row (default: 200). The
                           real limit is the smaller of this and the terminal width.
 
@@ -822,6 +829,8 @@ find_merger() {
 
 # Set by do_merge; used by trap on Ctrl-C to drop a partial output file.
 VIDEO_MERGE_OUT_FILE=""
+# Temp directory holding an in-progress off-disk merge (empty when writing in place).
+MERGE_TMP_DIR=""
 PGM_READ_TIMEOUT_CLI=0
 PGM_SCRIPT_START_NS=""
 PGM_PROCESSING_SEC=0
@@ -1547,6 +1556,11 @@ video_merge_ctrl_c() {
   if [[ -n "${VIDEO_MERGE_OUT_FILE}" && -e "${VIDEO_MERGE_OUT_FILE}" ]]; then
     rm -f "${VIDEO_MERGE_OUT_FILE}"
     echo "$(pgm_ts) Removed incomplete output: ${VIDEO_MERGE_OUT_FILE}"
+  fi
+  if [[ -n "${MERGE_TMP_DIR}" && -d "${MERGE_TMP_DIR}" ]]; then
+    rm -rf -- "${MERGE_TMP_DIR}"
+    echo "$(pgm_ts) Removed temp merge directory: ${MERGE_TMP_DIR}"
+    MERGE_TMP_DIR=""
   fi
   ctrl_c
 }
@@ -3772,6 +3786,91 @@ prompt_delete_merged_inputs() {
   esac
 }
 
+# Writable temp directory for an off-disk merge. TMPDIR when set, otherwise /tmp.
+merge_temp_dir() {
+  local d="${TMPDIR:-/tmp}"
+  d="${d%/}"
+  [[ -n "$d" && -d "$d" && -w "$d" ]] || return 1
+  printf '%s\n' "$d"
+}
+
+# Filesystem device id (Linux stat -c, else BSD stat -f).
+fs_device_id() {
+  local p="$1" id
+  id=$(stat -c %d -- "$p" 2>/dev/null || stat -f %d -- "$p" 2>/dev/null) || return 1
+  [[ "$id" =~ ^[0-9]+$ ]] || return 1
+  printf '%s\n' "$id"
+}
+
+# Free bytes on the filesystem that holds $1.
+fs_avail_bytes() {
+  local p="$1" n
+  n=$(df -B1 --output=avail -- "$p" 2>/dev/null | awk 'NR==2 {print $1}')
+  if [[ ! "$n" =~ ^[0-9]+$ ]]; then
+    n=$(df -P -k -- "$p" 2>/dev/null | awk 'NR==2 {printf "%.0f", $4 * 1024}')
+  fi
+  [[ "$n" =~ ^[0-9]+$ ]] || return 1
+  printf '%s\n' "$n"
+}
+
+# 0 when the temp dir is a different disk and can hold $1 bytes with spare room.
+# Spare is 10% of the file or 1 GiB, whichever is larger.
+merge_temp_dir_fits() {
+  local need="$1" tdir dest_dev tmp_dev avail spare
+  [[ "$need" =~ ^[0-9]+$ ]] && (( need > 0 )) || return 1
+  tdir=$(merge_temp_dir) || return 1
+  dest_dev=$(fs_device_id .) || return 1
+  tmp_dev=$(fs_device_id "$tdir") || return 1
+  [[ "$dest_dev" != "$tmp_dev" ]] || return 1
+  avail=$(fs_avail_bytes "$tdir") || return 1
+  spare=$(( need / 10 ))
+  (( spare < 1073741824 )) && spare=1073741824
+  (( avail >= need + spare )) || return 1
+  return 0
+}
+
+merge_clear_temp_work() {
+  if [[ -n "${MERGE_TMP_DIR}" && -d "${MERGE_TMP_DIR}" ]]; then
+    rm -rf -- "${MERGE_TMP_DIR}"
+  fi
+  MERGE_TMP_DIR=""
+}
+
+# Sets MERGE_WRITE_PATH to the path mp4_merge should write.
+# Asks to use the temp dir only for an interactive single-group merge.
+choose_merge_output_path() {
+  local final="$1"
+  shift
+  local -a files=("$@")
+  local tdir avail sz=0 n f choice work base
+  MERGE_WRITE_PATH="$final"
+  MERGE_TMP_DIR=""
+  if (( DO_YES )) || (( MERGE_ALL_REMAINING )) || (( ! script_is_run_interactively )); then
+    return 0
+  fi
+  for f in "${files[@]}"; do
+    n=$(file_size_bytes "$f")
+    sz=$(( sz + n ))
+  done
+  merge_temp_dir_fits "$sz" || return 0
+  tdir=$(merge_temp_dir) || return 0
+  avail=$(fs_avail_bytes "$tdir") || return 0
+  echo "$(pgm_ts) ${tdir} is on another disk ($(format_bytes_human "$avail") free)."
+  echo "$(pgm_ts) This merge is about $(format_bytes_human "$sz"). Writing it there keeps reading and writing off the same disk."
+  echo "  [y] Yes — merge in ${tdir}, then move the file here"
+  echo "  [N] No — write the output in this directory (default)"
+  pgm_read_key "Merge via ${tdir}? [y/N]: " n
+  choice="${REPLY,,}"
+  [[ "$choice" == y ]] || return 0
+  work=$(mktemp -d "${tdir}/pgm-merge.XXXXXX") || {
+    echo "$(pgm_ts) Could not create a temp directory in ${tdir}; writing here." >&2
+    return 0
+  }
+  base="${final##*/}"
+  MERGE_TMP_DIR="$work"
+  MERGE_WRITE_PATH="${work}/${base}"
+}
+
 run_merge_group() {
   local merger="$1" redo="${2:-0}"
   shift 2
@@ -3789,16 +3888,34 @@ run_merge_group() {
     fi
     echo "$(pgm_ts) Removed existing output for redo merge."
   fi
-  VIDEO_MERGE_OUT_FILE="${output_file}"
-  echo "$(pgm_ts) Merging ${#files[@]} chapter(s) → ${output_file}"
+  local write_path
+  choose_merge_output_path "$output_file" "${files[@]}"
+  write_path="$MERGE_WRITE_PATH"
+  VIDEO_MERGE_OUT_FILE="${write_path}"
+  if [[ -n "$MERGE_TMP_DIR" ]]; then
+    echo "$(pgm_ts) Merging ${#files[@]} chapter(s) → ${write_path}"
+    echo "$(pgm_ts) Finished file will move to ${output_file}"
+  else
+    echo "$(pgm_ts) Merging ${#files[@]} chapter(s) → ${output_file}"
+  fi
   trap video_merge_ctrl_c INT
   pgm_processing_begin
-  "${merger}" "${files[@]}" --out "${output_file}"
+  "${merger}" "${files[@]}" --out "${write_path}"
   rc=$?
   pgm_processing_end
   trap ctrl_c INT
   VIDEO_MERGE_OUT_FILE=""
   if (( rc == 0 )); then
+    if [[ -n "$MERGE_TMP_DIR" ]]; then
+      if ! mv -f -- "$write_path" "$output_file"; then
+        echo "$(pgm_ts) Merge finished, but could not move ${write_path} to ${output_file}" >&2
+        MERGE_TMP_DIR=""
+        return 1
+      fi
+      rmdir -- "$MERGE_TMP_DIR" 2>/dev/null || rm -rf -- "$MERGE_TMP_DIR"
+      MERGE_TMP_DIR=""
+      echo "$(pgm_ts) Moved merged file to ${output_file}"
+    fi
     echo "$(pgm_ts) Done: ${output_file}"
     local meta_label=""
     meta_label=$(group_merge_description_label "${files[@]}" 2>/dev/null) || meta_label=""
@@ -3819,6 +3936,7 @@ run_merge_group() {
     fi
     rc=0
   else
+    merge_clear_temp_work
     echo "$(pgm_ts) Merge failed (exit ${rc})." >&2
   fi
   return "${rc}"
