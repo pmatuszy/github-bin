@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261004.151844 - s turns seam preview off for the rest of the run
 # v. 20261004.144348 - ask to build a missing GPX instead of treating the merge as done
 # v. 20261004.143910 - GPX build works with mawk (no gawk asort/strftime)
 # v. 20261004.143006 - rest-of-run write-here hotkey is r
@@ -27,6 +28,7 @@
 # v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
 # v. 20260805.154826 - after merge: copy GPS/dates from first chapter; FS times via touch -r
 
+# 2026.10.04 - v. 0.15.48 - seam preview: [s] never plays seams again in this run
 # 2026.10.04 - v. 0.15.47 - already-merged skip only when the 70mai GPX is present; otherwise ask to generate it
 # 2026.10.04 - v. 0.15.46 - 70mai GPX: sort and UTC timestamps without gawk (mawk has no asort/strftime)
 # 2026.10.04 - v. 0.15.45 - temp-merge prompt: [r] writes in this directory for the rest of this run
@@ -201,7 +203,8 @@ Merge behaviour (no options):
   - After a successful merge: copy GPS / create&modify dates / Make/Model from the first
     chapter (exiftool; filesystem mtime via touch -r), set title from the session label,
     then merge-boundary times, size summary, optional per-seam terminal preview (asked one
-    seam at a time; [a] skips the remaining seams), and optional deletion of the source chapter files (single-key Y/N).
+    seam at a time; [a] skips the remaining seams in this file, [s] never plays seams
+    again in this run), and optional deletion of the source chapter files (single-key Y/N).
   - If the expected _concat output already exists: skip (default), redo merge [r],
     preview merge seams [p], or delete input chapters [d] (keeps merged output).
     A 70mai journey is finished only when a valid .gpx sits beside that file.
@@ -883,6 +886,8 @@ MERGE_TMP_DIR=""
 MERGE_TEMP_FOR_RUN=""
 # 1 when later merges in this run write in the current directory.
 MERGE_IN_PLACE_FOR_RUN=0
+# 1 when seam preview stays off for the rest of this run.
+SEAM_PREVIEW_SKIP_RUN=0
 PGM_READ_TIMEOUT_CLI=0
 PGM_SCRIPT_START_NS=""
 PGM_PROCESSING_SEC=0
@@ -1372,13 +1377,22 @@ play_merge_seam_preview_once() {
 }
 
 # Return 2 if user quits from a prompt.
+# Optional leading --force plays even when seam preview was turned off for this run.
 prompt_seam_terminal_previews() {
+  local force=0
+  if [[ "${1:-}" == --force ]]; then
+    force=1
+    shift
+  fi
   local output_file="$1"
   shift
   local -a files=("$@")
   local -a boundary_times=() boundary_left=() boundary_right=()
   local player i choice seam_num total_seams ord pos clip_total skip_rest=0
 
+  if (( SEAM_PREVIEW_SKIP_RUN && ! force )); then
+    return 0
+  fi
   if (( DO_YES )) || (( ! script_is_run_interactively )); then
     return 0
   fi
@@ -1411,8 +1425,9 @@ prompt_seam_terminal_previews() {
     echo "  [Y] Play output at this seam (${PGM_SEAM_PREVIEW_BEFORE}s before join, ${clip_total}s clip) (default)"
     echo "  [n] Skip this seam"
     echo "  [a] Skip all remaining seams"
+    echo "  [s] Never play seams for the rest of this run"
     echo "  [q] Quit"
-    pgm_read_key "Play ${ord} seam in terminal? [Y/n/a/q]: " y
+    pgm_read_key "Play ${ord} seam in terminal? [Y/n/a/s/q]: " y
     choice="${REPLY,,}"
     case "$choice" in
       y)
@@ -1423,13 +1438,20 @@ prompt_seam_terminal_previews() {
           echo "  [y] Repeat ${ord} seam preview"
           echo "  [N] Continue (default)"
           echo "  [a] Skip all remaining seams"
+          echo "  [s] Never play seams for the rest of this run"
           echo "  [q] Quit"
-          pgm_read_key "Repeat ${ord} seam preview? [y/N/a/q]: " n
+          pgm_read_key "Repeat ${ord} seam preview? [y/N/a/s/q]: " n
           choice="${REPLY,,}"
           case "$choice" in
             y) continue ;;
             a)
               echo "$(pgm_ts) Skipping remaining seams."
+              skip_rest=1
+              break
+              ;;
+            s)
+              SEAM_PREVIEW_SKIP_RUN=1
+              echo "$(pgm_ts) Seam preview off for the rest of this run."
               skip_rest=1
               break
               ;;
@@ -1440,6 +1462,11 @@ prompt_seam_terminal_previews() {
         ;;
       a)
         echo "$(pgm_ts) Skipping remaining seams."
+        skip_rest=1
+        ;;
+      s)
+        SEAM_PREVIEW_SKIP_RUN=1
+        echo "$(pgm_ts) Seam preview off for the rest of this run."
         skip_rest=1
         ;;
       q)
@@ -4719,6 +4746,7 @@ do_merge() {
   SKIP_ALL_REMAINING=0
   MERGE_TEMP_FOR_RUN=""
   MERGE_IN_PLACE_FOR_RUN=0
+  SEAM_PREVIEW_SKIP_RUN=0
 
   print_group_plan "${sorted_mp4[@]}"
 
@@ -4786,7 +4814,7 @@ do_merge() {
         if [[ -e "$output_file" ]]; then
           dashcam_write_gpx_if_merged "$output_file" "${files[@]}"
           print_merge_boundaries_report "$output_file" "${files[@]}"
-          prompt_seam_terminal_previews "$output_file" "${files[@]}" || rc=$?
+          prompt_seam_terminal_previews --force "$output_file" "${files[@]}" || rc=$?
           if (( rc == 2 )); then
             echo "$(pgm_ts) Quit at group ${group_num}."
             return "${rc}"
