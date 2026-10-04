@@ -1,4 +1,6 @@
 #!/bin/bash
+# v. 20261004.144348 - ask to build a missing GPX instead of treating the merge as done
+# v. 20261004.143910 - GPX build works with mawk (no gawk asort/strftime)
 # v. 20261004.143006 - rest-of-run write-here hotkey is r
 # v. 20261004.142834 - h writes later merges in this directory
 # v. 20261004.142643 - rest-of-run temp dir hotkey is d
@@ -25,6 +27,8 @@
 # v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
 # v. 20260805.154826 - after merge: copy GPS/dates from first chapter; FS times via touch -r
 
+# 2026.10.04 - v. 0.15.47 - already-merged skip only when the 70mai GPX is present; otherwise ask to generate it
+# 2026.10.04 - v. 0.15.46 - 70mai GPX: sort and UTC timestamps without gawk (mawk has no asort/strftime)
 # 2026.10.04 - v. 0.15.45 - temp-merge prompt: [r] writes in this directory for the rest of this run
 # 2026.10.04 - v. 0.15.44 - temp-merge prompt: [h] writes in this directory for the rest of this run
 # 2026.10.04 - v. 0.15.43 - temp-merge prompt: [d] keeps that directory for the rest of this run
@@ -200,6 +204,9 @@ Merge behaviour (no options):
     seam at a time; [a] skips the remaining seams), and optional deletion of the source chapter files (single-key Y/N).
   - If the expected _concat output already exists: skip (default), redo merge [r],
     preview merge seams [p], or delete input chapters [d] (keeps merged output).
+    A 70mai journey is finished only when a valid .gpx sits beside that file.
+    If the GPX is missing and a GPSData*.txt log is available, the prompt asks
+    to generate it.
   - Output file per group: <first_chapter_stem>_concat_parts_<first>-<last>.mp4
     (timestamp from the first part; size-split/letter groups use 01-<N> for chapter count,
     e.g. …_GOPRO10_BLACK_concat_parts_01-06.mp4). Legacy …_parts_*-*_concat.mp4 still recognized.
@@ -3267,12 +3274,40 @@ dashcam_gps_log_hint() {
   dashcam_gps_logs | head -n 1
 }
 
+# 0 when $1 is a non-empty GPX track (at least one point).
+dashcam_gpx_is_valid() {
+  local gpx="$1"
+  [[ -s "$gpx" ]] || return 1
+  grep -q '<trkpt' -- "$gpx"
+}
+
+# 0 when the merged file is enough to treat the group as done.
+# A 70mai journey also needs a valid GPX beside the MP4.
+group_output_is_complete() {
+  local output_file="$1"
+  shift
+  [[ -e "$output_file" ]] || return 1
+  if group_is_dashcam "$@"; then
+    dashcam_gpx_is_valid "$(dashcam_gpx_beside_output "$output_file")"
+    return
+  fi
+  return 0
+}
+
 print_dashcam_gpx_suggestion() {
   local output_file="$1" indent="${2:-      }"
   local gpx log
   gpx=$(dashcam_gpx_beside_output "$output_file")
-  printf '%sGPS: %s is written beside the merged file (same name, .gpx)\n' \
-    "$indent" "$gpx"
+  if dashcam_gpx_is_valid "$gpx"; then
+    printf '%sGPS: %s (present)\n' "$indent" "$gpx"
+  elif [[ -e "$gpx" ]]; then
+    printf '%sGPS: %s (not a valid track)\n' "$indent" "$gpx"
+  elif [[ -e "$output_file" ]]; then
+    printf '%sGPS: %s (missing)\n' "$indent" "$gpx"
+  else
+    printf '%sGPS: %s will be written beside the merged file (same name, .gpx)\n' \
+      "$indent" "$gpx"
+  fi
   if log=$(dashcam_gps_log_hint 2>/dev/null) && [[ -n "$log" ]]; then
     printf '%sGPS log: %s\n' "$indent" "$log"
   else
@@ -3320,6 +3355,54 @@ dashcam_write_gpx_for_group() {
       return (jd - 2440588) * 86400 + H * 3600 + M * 60 + S
     }
     function abs(x) { return x < 0 ? -x : x }
+    function is_leap(y) { return (y % 4 == 0 && y % 100 != 0) || (y % 400 == 0) }
+    function utc_iso(epoch,    days, sod, y, diy, mo, dim, d, H, M, S) {
+      if (epoch < 0) epoch = 0
+      days = int(epoch / 86400)
+      sod = epoch % 86400
+      H = int(sod / 3600)
+      M = int((sod % 3600) / 60)
+      S = sod % 60
+      y = 1970
+      while (1) {
+        diy = is_leap(y) ? 366 : 365
+        if (days < diy) break
+        days -= diy
+        y++
+      }
+      mo = 1
+      while (mo <= 12) {
+        if (mo == 2) dim = is_leap(y) ? 29 : 28
+        else if (mo == 4 || mo == 6 || mo == 9 || mo == 11) dim = 30
+        else dim = 31
+        if (days < dim) break
+        days -= dim
+        mo++
+      }
+      d = days + 1
+      return sprintf("%04d-%02d-%02dT%02d:%02d:%02dZ", y, mo, d, H, M, S)
+    }
+    # 1-based heapsort. num=1 compares numbers; otherwise the whole string.
+    function sift(a, n, i, num,    l, r, best, tmp) {
+      while (1) {
+        l = i * 2
+        r = l + 1
+        best = i
+        if (l <= n && (num ? (a[l] + 0) > (a[best] + 0) : a[l] > a[best])) best = l
+        if (r <= n && (num ? (a[r] + 0) > (a[best] + 0) : a[r] > a[best])) best = r
+        if (best == i) return
+        tmp = a[i]; a[i] = a[best]; a[best] = tmp
+        i = best
+      }
+    }
+    function sort_n(a, n, num,    i, tmp) {
+      if (n < 2) return
+      for (i = int(n / 2); i >= 1; i--) sift(a, n, i, num)
+      for (i = n; i > 1; i--) {
+        tmp = a[1]; a[1] = a[i]; a[i] = tmp
+        sift(a, i - 1, 1, num)
+      }
+    }
     {
       sub(/\r$/, "")
       if ($0 !~ /^[0-9]+,A,/) next
@@ -3354,7 +3437,7 @@ dashcam_write_gpx_for_group() {
       }
       # Median of (log time − filename start). Samples sit 0–60s into a clip.
       for (i = 1; i <= nd; i++) ord[i] = deltas[i]
-      asort(ord)
+      sort_n(ord, nd, 1)
       mid = int((nd + 1) / 2)
       median = ord[mid]
       nb = 0
@@ -3365,7 +3448,7 @@ dashcam_write_gpx_for_group() {
         print "0"
         exit 0
       }
-      asort(near)
+      sort_n(near, nb, 1)
       # Low end of the in-clip spread ≈ the constant log-clock bias.
       bias = near[int(nb * 0.05) + 1]
       lo = first_epoch + bias - 3
@@ -3376,13 +3459,13 @@ dashcam_write_gpx_for_group() {
         split(pts[ts], ll, SUBSEP)
         utc = ts - bias
         m++
-        rows[m] = sprintf("%010d\t%.6f\t%.6f\t%s", utc, ll[1], ll[2], strftime("%Y-%m-%dT%H:%M:%SZ", utc, 1))
+        rows[m] = sprintf("%010d\t%.6f\t%.6f\t%s", utc, ll[1], ll[2], utc_iso(utc))
       }
       if (m < 1) {
         print "0"
         exit 0
       }
-      asort(rows)
+      sort_n(rows, m, 0)
       print "<?xml version=\"1.0\" encoding=\"UTF-8\"?>" > out
       print "<gpx version=\"1.1\" creator=\"video-pgm-merge.sh\" xmlns=\"http://www.topografix.com/GPX/1/1\">" > out
       print "  <trk>" > out
@@ -3695,8 +3778,11 @@ print_group_plan() {
       (( gidx++ )) || true
       out_name=$(group_output_file "${files[@]}")
       dashcam_parse_basename "${files[0]##*/}" || true
-      if [[ -e "$out_name" ]]; then
+      if [[ -e "$out_name" ]] && dashcam_gpx_is_valid "$(dashcam_gpx_beside_output "$out_name")"; then
         printf '  [group %d/%d] camera %s, %d clips → %s  (already merged)\n' \
+          "$gidx" "$dashcam_groups" "$DASHCAM_CAM" "${#files[@]}" "$out_name"
+      elif [[ -e "$out_name" ]]; then
+        printf '  [group %d/%d] camera %s, %d clips → %s  (merged, GPX missing)\n' \
           "$gidx" "$dashcam_groups" "$DASHCAM_CAM" "${#files[@]}" "$out_name"
       else
         printf '  [group %d/%d] camera %s, %d clips → %s\n' \
@@ -4263,17 +4349,37 @@ run_merge_group() {
   return "${rc}"
 }
 
-# Sets REPLY to: merge | redo | skip | skip_all | merge_all | delete_inputs | quit
-# $3 = expected output file (may already exist).
+# Sets REPLY to: merge | redo | skip | skip_all | merge_all | delete_inputs | write_gpx | quit
+# $3 = expected output file (may already exist). Remaining args are the chapter files.
+# A 70mai group is "already merged" only when the MP4 and a valid GPX are both there.
 prompt_merge_group_action() {
   local group_num="$1" group_total="$2" output_file="${3:-}"
-  local already_merged=0 choice
+  shift 3
+  local -a files=("$@")
+  local output_exists=0 gpx_ok=1 can_gpx=0 complete=0 choice gps_log=""
   REPLY=skip
   if [[ -n "$output_file" && -e "$output_file" ]]; then
-    already_merged=1
+    output_exists=1
+  fi
+  if (( output_exists )) && group_is_dashcam "${files[@]}"; then
+    if dashcam_gpx_is_valid "$(dashcam_gpx_beside_output "$output_file")"; then
+      gpx_ok=1
+    else
+      gpx_ok=0
+      gps_log=$(dashcam_gps_log_hint 2>/dev/null || true)
+      [[ -n "$gps_log" ]] && can_gpx=1
+    fi
+  fi
+  if group_output_is_complete "$output_file" "${files[@]}"; then
+    complete=1
   fi
   if (( DO_YES )); then
-    if (( already_merged )); then
+    if (( complete )); then
+      echo "$(pgm_ts) Output already exists, skipping: ${output_file}"
+      REPLY=skip
+    elif (( output_exists && can_gpx )); then
+      REPLY=write_gpx
+    elif (( output_exists )); then
       echo "$(pgm_ts) Output already exists, skipping: ${output_file}"
       REPLY=skip
     else
@@ -4282,7 +4388,11 @@ prompt_merge_group_action() {
     return 0
   fi
   if (( MERGE_ALL_REMAINING )); then
-    if (( already_merged )); then
+    if (( complete )); then
+      REPLY=skip
+    elif (( output_exists && can_gpx )); then
+      REPLY=write_gpx
+    elif (( output_exists )); then
       REPLY=skip
     else
       REPLY=merge
@@ -4294,7 +4404,7 @@ prompt_merge_group_action() {
     return 0
   fi
   if (( ! script_is_run_interactively )); then
-    if (( already_merged )); then
+    if (( output_exists )); then
       echo "$(pgm_ts) Output already exists, skipping: ${output_file}"
     else
       echo "$(pgm_ts) Non-interactive: skipping group ${group_num} (use -y to merge all)."
@@ -4303,7 +4413,48 @@ prompt_merge_group_action() {
     return 0
   fi
   while true; do
-    if (( already_merged )); then
+    if (( complete )); then
+      echo "  [N] Skip — keep output and input files (default)"
+      echo "  [r] Redo merge — replace output file"
+      echo "  [p] Preview merge seams in terminal"
+      echo "  [d] Delete input chapter files — keep merged output"
+      echo "  [a] Skip all remaining groups"
+      echo "  [q] Quit"
+      pgm_read_key "Already merged — group ${group_num}/${group_total} [N/r/p/d/a/q]: " n
+      choice="${REPLY,,}"
+      case "$choice" in
+        ''|n)  REPLY=skip; pgm_log_kv "Action" "Keeping existing output and inputs."; return 0 ;;
+        r)     REPLY=redo; return 0 ;;
+        p)     REPLY=preview_seams; return 0 ;;
+        d)     REPLY=delete_inputs; return 0 ;;
+        a)     REPLY=skip_all; return 0 ;;
+        q)     REPLY=quit; return 0 ;;
+        *)     echo "$(pgm_ts) Unknown choice: ${REPLY}" ;;
+      esac
+    elif (( output_exists && can_gpx )); then
+      echo "  [Y] Generate the GPX beside the merged file (default)"
+      echo "  [n] Skip — leave the merged file without a GPX"
+      echo "  [r] Redo merge — replace output file"
+      echo "  [p] Preview merge seams in terminal"
+      echo "  [d] Delete input chapter files — keep merged output"
+      echo "  [a] Skip all remaining groups"
+      echo "  [q] Quit"
+      pgm_read_key "No GPX beside the merged file — group ${group_num}/${group_total} [Y/n/r/p/d/a/q]: " y
+      choice="${REPLY,,}"
+      case "$choice" in
+        ''|y)  REPLY=write_gpx; return 0 ;;
+        n)     REPLY=skip; pgm_log_kv "Action" "Leaving the merged file without a GPX."; return 0 ;;
+        r)     REPLY=redo; return 0 ;;
+        p)     REPLY=preview_seams; return 0 ;;
+        d)     REPLY=delete_inputs; return 0 ;;
+        a)     REPLY=skip_all; return 0 ;;
+        q)     REPLY=quit; return 0 ;;
+        *)     echo "$(pgm_ts) Unknown choice: ${REPLY}" ;;
+      esac
+    elif (( output_exists )); then
+      if (( ! gpx_ok )); then
+        echo "$(pgm_ts) Merged file is here, but the GPX is missing and there is no GPSData*.txt to build it."
+      fi
       echo "  [N] Skip — keep output and input files (default)"
       echo "  [r] Redo merge — replace output file"
       echo "  [p] Preview merge seams in terminal"
@@ -4595,7 +4746,7 @@ do_merge() {
     (( group_num++ )) || true
     output_file=$(group_output_file "${files[@]}")
     show_merge_group_detail "$group_num" "$mergeable_total" "${files[@]}"
-    prompt_merge_group_action "$group_num" "$mergeable_total" "$output_file"
+    prompt_merge_group_action "$group_num" "$mergeable_total" "$output_file" "${files[@]}"
     action=$REPLY
     case "$action" in
       merge)
@@ -4626,7 +4777,6 @@ do_merge() {
         ;;
       skip)
         if [[ -e "$output_file" ]]; then
-          dashcam_write_gpx_if_merged "$output_file" "${files[@]}"
           print_merge_boundaries_report "$output_file" "${files[@]}"
         else
           echo "$(pgm_ts) Skipped group ${group_num}."
@@ -4661,6 +4811,9 @@ do_merge() {
             return "${rc}"
           fi
         fi
+        ;;
+      write_gpx)
+        dashcam_write_gpx_if_merged "$output_file" "${files[@]}"
         ;;
       quit)
         echo "$(pgm_ts) Quit at group ${group_num}."
