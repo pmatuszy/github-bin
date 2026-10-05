@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261005.143200 - the temp line says not used, writing in this directory
 # v. 20261005.110900 - GPS logs are GPSData??????.txt here and one or two levels above
 # v. 20261005.110800 - GPS logs are GPSData??????.txt here and up to three levels above
 # v. 20261005.110200 - merge-all asks once about the temp directory; clocks sit in brackets
@@ -41,6 +42,7 @@
 # v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
 # v. 20260805.154826 - after merge: copy GPS/dates from first chapter; FS times via touch -r
 
+# 2026.10.05 - v. 0.15.62 - temp line uses plain text: not used, writing in this directory
 # 2026.10.05 - v. 0.15.61 - GPS logs are GPSData??????.txt in this directory and one or two levels above
 # 2026.10.05 - v. 0.15.60 - GPS logs are GPSData??????.txt in this directory and up to three levels above
 # 2026.10.05 - v. 0.15.59 - [m] asks once whether the remaining merges use the temp directory; status lines put the clock in brackets
@@ -4653,7 +4655,7 @@ run_merge_group() {
     echo "$(pgm_ts) Finished file will be moved back to ${output_file}"
   else
     echo "$(pgm_ts) Input files: $(merge_inputs_dir "${files[0]}")"
-    echo "$(pgm_ts) Temp dir: not used — writing in this directory"
+    echo "$(pgm_ts) Temp dir: not used, writing in this directory"
     echo "$(pgm_ts) Merging ${#files[@]} chapter(s) → ${output_file}"
   fi
   trap video_merge_ctrl_c INT
@@ -5040,7 +5042,7 @@ print_merge_group_sequence_summary() {
   if [[ -n "${MERGE_TEMP_FOR_RUN:-}" ]]; then
     rows+=("$(printf '%-8s%s' "Temp:" "${MERGE_TEMP_FOR_RUN} (for the rest of this run)")")
   elif (( ${MERGE_IN_PLACE_FOR_RUN:-0} )); then
-    rows+=("$(printf '%-8s%s' "Temp:" "not used — writing in this directory")")
+    rows+=("$(printf '%-8s%s' "Temp:" "not used, writing in this directory")")
   fi
   print_merge_summary_box "Merge group ${group_num} of ${group_total}" "${rows[@]}"
 }
