@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# v. 20261005.200000 - ask to install libopenmpt-dev when the nvidia/max configure probe fails
 # v. 20261005.195200 - libmp3lame probe links lame_set_VBR_quality; lame.h has no LAME_MAJOR_VERSION macro
 # v. 20261005.194500 - source compile: ask to install nasm and libmp3lame-dev when the probe fails
 # v. 20261001.222400 - shared GPU builds install libav*.so into /usr/local/lib
@@ -6,6 +7,7 @@
 # v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
 # v. 20260716.231000 - equivalent CLI echo; --dry-run for interactive plan without build
 
+# 2026.10.05 - v. 2.1.28 - before configure, ask to install libopenmpt-dev; skip it when declined
 # 2026.10.05 - v. 2.1.27 - libmp3lame check links the library; do not require LAME_MAJOR_VERSION in lame.h
 # 2026.10.05 - v. 2.1.26 - before configure, ask to install nasm and libmp3lame-dev if the compile probe fails
 # 2026.10.01 - v. 2.1.25 - gpu/nvidia/jellyfin: install shared libav libraries into /usr/local/lib and link with rpath
@@ -2553,11 +2555,12 @@ ffmpeg_source_configure_log_first_pkg_failure() {
     local pkg=""
 
     [[ -f ffbuild/config.log ]] || return 1
+    # "libopenmpt >= 0.2.6557 not found using pkg-config" — keep the module name only.
     pkg="$(
-        grep -oE 'ERROR: [a-zA-Z0-9._+-]+ not found using pkg-config' ffbuild/config.log 2>/dev/null \
-            | head -1 \
-            | sed -E 's/^ERROR: ([a-zA-Z0-9._+-]+) not found using pkg-config/\1/'
+        grep -m1 -E 'ERROR: .+ not found using pkg-config' ffbuild/config.log 2>/dev/null \
+            | sed -E 's/^ERROR: (.+) not found using pkg-config.*$/\1/' || true
     )"
+    pkg="${pkg%% *}"
     [[ -n "${pkg}" ]] || return 1
     printf '%s\n' "${pkg}"
 }
@@ -4091,6 +4094,7 @@ ffmpeg_source_show_lame_probe_log() {
 ffmpeg_source_prompt_install_compile_package() {
     local reason="$1"
     local pkg="$2"
+    local required="${3:-1}"
     local reply=""
 
     echo
@@ -4107,13 +4111,96 @@ ffmpeg_source_prompt_install_compile_package() {
             quit_prompt_with_optional_old_cleanup
         fi
         if prompt_reply_is_no "${reply}"; then
-            echo "ERROR: ${pkg} is required to compile this ffmpeg." >&2
+            if (( required == 1 )); then
+                echo "ERROR: ${pkg} is required to compile this ffmpeg." >&2
+            fi
             return 1
         fi
     fi
     apt-get update
     apt-get install -y "${pkg}"
     hash -r
+    return 0
+}
+
+# FFmpeg: require_pkg_config libopenmpt "libopenmpt >= 0.2.6557" libopenmpt/libopenmpt.h
+ffmpeg_source_libopenmpt_usable() {
+    local cc="${CC:-gcc}"
+    local src="" out="" log="" cflags_raw="" libs_raw=""
+    local -a cflags=() libs=()
+
+    FFMPEG_OPENMPT_PROBE_LOG=""
+    ffmpeg_source_ensure_pkg_config_path
+    pkg-config --exists 'libopenmpt >= 0.2.6557' >/dev/null 2>&1 || return 1
+    command -v "${cc}" >/dev/null 2>&1 || return 1
+    cflags_raw="$(pkg-config --cflags 'libopenmpt >= 0.2.6557' 2>/dev/null || true)"
+    libs_raw="$(pkg-config --libs 'libopenmpt >= 0.2.6557' 2>/dev/null || true)"
+    [[ -n "${libs_raw}" ]] || return 1
+    # shellcheck disable=SC2206
+    cflags=( ${cflags_raw} )
+    # shellcheck disable=SC2206
+    libs=( ${libs_raw} )
+    src="$(mktemp --suffix=.c)"
+    out="$(mktemp)"
+    log="$(mktemp)"
+    cat > "${src}" <<'EOF'
+#include <libopenmpt/libopenmpt.h>
+int main(void) {
+    return openmpt_get_library_version() == 0;
+}
+EOF
+    if "${cc}" "${cflags[@]}" "${src}" -o "${out}" "${libs[@]}" >"${log}" 2>&1; then
+        rm -f "${src}" "${out}" "${log}"
+        return 0
+    fi
+    FFMPEG_OPENMPT_PROBE_LOG="${log}"
+    rm -f "${src}" "${out}"
+    return 1
+}
+
+ffmpeg_source_show_openmpt_probe_log() {
+    [[ -n "${FFMPEG_OPENMPT_PROBE_LOG:-}" && -f "${FFMPEG_OPENMPT_PROBE_LOG}" ]] || return 0
+    echo "  Compiler probe:" >&2
+    sed 's/^/  /' "${FFMPEG_OPENMPT_PROBE_LOG}" >&2
+    rm -f "${FFMPEG_OPENMPT_PROBE_LOG}"
+    FFMPEG_OPENMPT_PROBE_LOG=""
+}
+
+ffmpeg_source_profile_wants_libopenmpt() {
+    case "${SOURCE_PROFILE}" in
+        max|gpu|nvidia|jellyfin) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+ffmpeg_source_ensure_libopenmpt() {
+    local reason=""
+
+    ffmpeg_source_profile_wants_libopenmpt || return 0
+    if ffmpeg_source_pkg_is_skipped libopenmpt; then
+        return 0
+    fi
+    if ffmpeg_source_libopenmpt_usable; then
+        log_note "Compile check: libopenmpt usable."
+        return 0
+    fi
+
+    if pkg-config --exists libopenmpt >/dev/null 2>&1; then
+        reason="libopenmpt is installed but not usable (FFmpeg needs libopenmpt >= 0.2.6557 via pkg-config)."
+    else
+        reason="libopenmpt >= 0.2.6557 is not installed (FFmpeg looks for it with pkg-config)."
+    fi
+    if ffmpeg_source_prompt_install_compile_package "${reason}" libopenmpt-dev 0; then
+        if ffmpeg_source_libopenmpt_usable; then
+            log_note "Compile check: libopenmpt usable."
+            return 0
+        fi
+        echo "WARNING: libopenmpt is still not usable after installing libopenmpt-dev. Continuing without it." >&2
+        ffmpeg_source_show_openmpt_probe_log
+    else
+        log_note "libopenmpt disabled — not installed."
+    fi
+    ffmpeg_source_skip_pkg libopenmpt
     return 0
 }
 
@@ -4246,6 +4333,7 @@ perform_install_build_from_source() {
         log_note "Vulkan unavailable — configure will omit vulkan."
     fi
     ffmpeg_source_ensure_nasm_and_libmp3lame || return 1
+    ffmpeg_source_ensure_libopenmpt || return 1
 
     log_step "Running ffmpeg configure (profile ${SOURCE_PROFILE}, release ${version})..."
 
