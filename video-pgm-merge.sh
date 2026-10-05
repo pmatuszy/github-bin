@@ -1,4 +1,7 @@
 #!/bin/bash
+# v. 20261005.073800 - already-merged groups can be skipped for the rest of the run; delete asks twice
+# v. 20261005.073000 - temp prompt names the directory of the input files
+# v. 20261005.071900 - say when a temp dir is in use for this merge
 # v. 20261005.071200 - delete question can keep input files for the rest of the run
 # v. 20261004.152334 - Ctrl-C during the move back removes the temp merge file
 # v. 20261004.151844 - s turns seam preview off for the rest of the run
@@ -30,6 +33,9 @@
 # v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
 # v. 20260805.154826 - after merge: copy GPS/dates from first chapter; FS times via touch -r
 
+# 2026.10.05 - v. 0.15.53 - already-merged: don't ask again this run; delete confirms with default No
+# 2026.10.05 - v. 0.15.52 - temp prompt and merge lines name the directory of the input files
+# 2026.10.05 - v. 0.15.51 - the group summary and the merge line say whether a temp dir is in use
 # 2026.10.05 - v. 0.15.50 - delete question: [k] never deletes input files for the rest of this run
 # 2026.10.04 - v. 0.15.49 - Ctrl-C while moving the merge back deletes the temp file and any partial copy
 # 2026.10.04 - v. 0.15.48 - seam preview: [s] never plays seams again in this run
@@ -895,6 +901,8 @@ MERGE_IN_PLACE_FOR_RUN=0
 SEAM_PREVIEW_SKIP_RUN=0
 # 1 when input chapter files stay for the rest of this run.
 KEEP_INPUTS_FOR_RUN=0
+# 1 when groups that are already merged are not asked about again this run.
+SKIP_MERGED_PROMPTS=0
 PGM_READ_TIMEOUT_CLI=0
 PGM_SCRIPT_START_NS=""
 PGM_PROCESSING_SEC=0
@@ -3941,7 +3949,8 @@ prompt_delete_merged_inputs() {
   for f in "${files[@]}"; do
     printf '    %s\n' "${f##*/}"
   done
-  echo "  [y] Yes — delete merged input chapter files"
+  echo "  Choosing yes asks once more before anything is deleted."
+  echo "  [y] Yes — go on to the confirmation"
   echo "  [N] No — keep input files (default)"
   echo "  [k] Never delete input files for the rest of this run"
   echo "  [q] Quit"
@@ -3949,6 +3958,12 @@ prompt_delete_merged_inputs() {
   choice="${REPLY,,}"
   case "$choice" in
     y)
+      prompt_confirm_delete_inputs "${files[@]}"
+      case $? in
+        0) ;;
+        2) return 2 ;;
+        *) return 0 ;;
+      esac
       for f in "${files[@]}"; do
         if rm -f -- "$f"; then
           echo "$(pgm_ts) Deleted: ${f##*/}"
@@ -3970,6 +3985,33 @@ prompt_delete_merged_inputs() {
     *)
       echo "$(pgm_ts) Input files kept."
       return 0
+      ;;
+  esac
+}
+
+# Second question before input files are removed. Default is keep. Return 2 to quit.
+prompt_confirm_delete_inputs() {
+  local -a files=("$@")
+  local f choice
+  echo
+  echo "Delete these ${#files[@]} input file(s)? The merged file stays. This cannot be undone."
+  for f in "${files[@]}"; do
+    printf '    %s\n' "${f##*/}"
+  done
+  echo "  [y] Yes — delete these input files"
+  echo "  [N] No — keep input files (default)"
+  echo "  [q] Quit"
+  pgm_read_key "Delete these input files? [y/N/q]: " n
+  choice="${REPLY,,}"
+  case "$choice" in
+    y) return 0 ;;
+    q)
+      echo "$(pgm_ts) Quit."
+      return 2
+      ;;
+    *)
+      echo "$(pgm_ts) Input files kept."
+      return 1
       ;;
   esac
 }
@@ -4179,6 +4221,17 @@ merge_copy_back_with_progress() {
   return 0
 }
 
+# Directory that holds the chapter files. A bare name uses the current directory.
+merge_inputs_dir() {
+  local f="${1:-}" d
+  if [[ -z "$f" || "$f" != */* ]]; then
+    pwd
+    return 0
+  fi
+  d="$(dirname -- "$f")"
+  (cd -- "$d" && pwd) 2>/dev/null || printf '%s\n' "$d"
+}
+
 # Create pgm-merge.XXXXXX under $1 and point MERGE_WRITE_PATH at the output name.
 merge_open_temp_work() {
   local tdir="$1" final="$2" work base
@@ -4200,6 +4253,7 @@ choose_merge_output_path() {
   MERGE_WRITE_PATH="$final"
   MERGE_TMP_DIR=""
   if (( MERGE_IN_PLACE_FOR_RUN )); then
+    echo "$(pgm_ts) Input files: $(merge_inputs_dir "${files[0]}")"
     echo "$(pgm_ts) Writing in this directory (chosen for the rest of this run)."
     return 0
   fi
@@ -4210,6 +4264,7 @@ choose_merge_output_path() {
   if [[ -n "$MERGE_TEMP_FOR_RUN" ]]; then
     tdir="$MERGE_TEMP_FOR_RUN"
     if ! reason=$(merge_temp_unfit_reason "$sz" "$tdir"); then
+      echo "$(pgm_ts) Input files: $(merge_inputs_dir "${files[0]}")"
       echo "$(pgm_ts) Not using ${tdir} for this merge: ${reason}."
       echo "$(pgm_ts) Writing the output in this directory."
       return 0
@@ -4218,6 +4273,7 @@ choose_merge_output_path() {
       echo "$(pgm_ts) Could not create a temp directory in ${tdir}; writing here." >&2
       return 0
     fi
+    echo "$(pgm_ts) Input files: $(merge_inputs_dir "${files[0]}")"
     echo "$(pgm_ts) Merging in ${tdir} (chosen for the rest of this run)."
     return 0
   fi
@@ -4226,6 +4282,7 @@ choose_merge_output_path() {
   fi
   tdir=$(merge_temp_dir_candidate)
   if ! reason=$(merge_temp_unfit_reason "$sz" "$tdir"); then
+    echo "$(pgm_ts) Input files: $(merge_inputs_dir "${files[0]}")"
     echo "$(pgm_ts) Not using ${tdir} for this merge: ${reason}."
     echo "  [p] Type another temp directory"
     echo "  [N] Write the output in this directory (default)"
@@ -4269,6 +4326,7 @@ choose_merge_output_path() {
   fi
   avail=$(fs_avail_bytes "$tdir") || return 0
   refresh_source_disk_kind
+  echo "$(pgm_ts) Input files: $(merge_inputs_dir "${files[0]}")"
   echo "$(pgm_ts) ${SOURCE_DISK_KIND_WHY}"
   echo "$(pgm_ts) ${tdir} is on another disk ($(format_bytes_human "$avail") free)."
   echo "$(pgm_ts) This merge is about $(format_bytes_human "$sz"). Writing it there keeps reading and writing off the same disk."
@@ -4343,9 +4401,13 @@ run_merge_group() {
   write_path="$MERGE_WRITE_PATH"
   VIDEO_MERGE_OUT_FILE="${write_path}"
   if [[ -n "$MERGE_TMP_DIR" ]]; then
+    echo "$(pgm_ts) Input files: $(merge_inputs_dir "${files[0]}")"
+    echo "$(pgm_ts) Temp dir: ${MERGE_TMP_DIR}"
     echo "$(pgm_ts) Merging ${#files[@]} chapter(s) → ${write_path}"
     echo "$(pgm_ts) Finished file will be moved back to ${output_file}"
   else
+    echo "$(pgm_ts) Input files: $(merge_inputs_dir "${files[0]}")"
+    echo "$(pgm_ts) Temp dir: not used — writing in this directory"
     echo "$(pgm_ts) Merging ${#files[@]} chapter(s) → ${output_file}"
   fi
   trap video_merge_ctrl_c INT
@@ -4455,6 +4517,11 @@ prompt_merge_group_action() {
     REPLY=skip
     return 0
   fi
+  if (( SKIP_MERGED_PROMPTS && complete )); then
+    echo "$(pgm_ts) Already merged — not asking again this run: ${output_file##*/}"
+    REPLY=skip
+    return 0
+  fi
   if (( ! script_is_run_interactively )); then
     if (( output_exists )); then
       echo "$(pgm_ts) Output already exists, skipping: ${output_file}"
@@ -4467,19 +4534,25 @@ prompt_merge_group_action() {
   while true; do
     if (( complete )); then
       echo "  [N] Skip — keep output and input files (default)"
+      echo "  [a] Already merged — don't ask again this run"
       echo "  [r] Redo merge — replace output file"
       echo "  [p] Preview merge seams in terminal"
-      echo "  [d] Delete input chapter files — keep merged output"
-      echo "  [a] Skip all remaining groups"
+      echo "  [d] Delete input chapter files — keep merged output; you confirm before delete"
       echo "  [q] Quit"
-      pgm_read_key "Already merged — group ${group_num}/${group_total} [N/r/p/d/a/q]: " n
+      pgm_read_key "Already merged — group ${group_num}/${group_total} [N/a/r/p/d/q]: " n
       choice="${REPLY,,}"
       case "$choice" in
         ''|n)  REPLY=skip; pgm_log_kv "Action" "Keeping existing output and inputs."; return 0 ;;
+        a)
+          SKIP_MERGED_PROMPTS=1
+          echo "$(pgm_ts) Already-merged groups will not be asked about again this run."
+          REPLY=skip
+          pgm_log_kv "Action" "Keeping existing output and inputs."
+          return 0
+          ;;
         r)     REPLY=redo; return 0 ;;
         p)     REPLY=preview_seams; return 0 ;;
         d)     REPLY=delete_inputs; return 0 ;;
-        a)     REPLY=skip_all; return 0 ;;
         q)     REPLY=quit; return 0 ;;
         *)     echo "$(pgm_ts) Unknown choice: ${REPLY}" ;;
       esac
@@ -4488,7 +4561,7 @@ prompt_merge_group_action() {
       echo "  [n] Skip — leave the merged file without a GPX"
       echo "  [r] Redo merge — replace output file"
       echo "  [p] Preview merge seams in terminal"
-      echo "  [d] Delete input chapter files — keep merged output"
+      echo "  [d] Delete input chapter files — keep merged output; you confirm before delete"
       echo "  [a] Skip all remaining groups"
       echo "  [q] Quit"
       pgm_read_key "No GPX beside the merged file — group ${group_num}/${group_total} [Y/n/r/p/d/a/q]: " y
@@ -4508,19 +4581,25 @@ prompt_merge_group_action() {
         echo "$(pgm_ts) Merged file is here, but the GPX is missing and there is no GPSData*.txt to build it."
       fi
       echo "  [N] Skip — keep output and input files (default)"
+      echo "  [a] Already merged — don't ask again this run"
       echo "  [r] Redo merge — replace output file"
       echo "  [p] Preview merge seams in terminal"
-      echo "  [d] Delete input chapter files — keep merged output"
-      echo "  [a] Skip all remaining groups"
+      echo "  [d] Delete input chapter files — keep merged output; you confirm before delete"
       echo "  [q] Quit"
-      pgm_read_key "Already merged — group ${group_num}/${group_total} [N/r/p/d/a/q]: " n
+      pgm_read_key "Already merged — group ${group_num}/${group_total} [N/a/r/p/d/q]: " n
       choice="${REPLY,,}"
       case "$choice" in
         ''|n)  REPLY=skip; pgm_log_kv "Action" "Keeping existing output and inputs."; return 0 ;;
+        a)
+          SKIP_MERGED_PROMPTS=1
+          echo "$(pgm_ts) Already-merged groups will not be asked about again this run."
+          REPLY=skip
+          pgm_log_kv "Action" "Keeping existing output and inputs."
+          return 0
+          ;;
         r)     REPLY=redo; return 0 ;;
         p)     REPLY=preview_seams; return 0 ;;
         d)     REPLY=delete_inputs; return 0 ;;
-        a)     REPLY=skip_all; return 0 ;;
         q)     REPLY=quit; return 0 ;;
         *)     echo "$(pgm_ts) Unknown choice: ${REPLY}" ;;
       esac
@@ -4710,6 +4789,12 @@ print_merge_group_sequence_summary() {
   rows+=("$(printf '%-8s%s' "Start:" "$start_ts")")
   rows+=("$(printf '%-8s%s' "Finish:" "$finish_ts")")
   rows+=("$(printf '%-8s%s' "Length:" "$len_disp")")
+  rows+=("$(printf '%-8s%s' "Inputs:" "$(merge_inputs_dir "${files[0]}")")")
+  if [[ -n "${MERGE_TEMP_FOR_RUN:-}" ]]; then
+    rows+=("$(printf '%-8s%s' "Temp:" "${MERGE_TEMP_FOR_RUN} (for the rest of this run)")")
+  elif (( ${MERGE_IN_PLACE_FOR_RUN:-0} )); then
+    rows+=("$(printf '%-8s%s' "Temp:" "not used — writing in this directory")")
+  fi
   print_merge_summary_box "Merge group ${group_num} of ${group_total}" "${rows[@]}"
 }
 
@@ -4773,6 +4858,7 @@ do_merge() {
   MERGE_IN_PLACE_FOR_RUN=0
   SEAM_PREVIEW_SKIP_RUN=0
   KEEP_INPUTS_FOR_RUN=0
+  SKIP_MERGED_PROMPTS=0
 
   print_group_plan "${sorted_mp4[@]}"
 
