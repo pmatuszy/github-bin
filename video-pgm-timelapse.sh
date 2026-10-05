@@ -1,4 +1,6 @@
 #!/bin/bash
+# v. 20261005.180900 - decode length defaults to 2 minutes and says so
+# v. 20261005.180600 - run summary size pipes stay in the same column
 # v. 20261005.170100 - run summary sizes are rounded and marked with a tilde
 # v. 20261005.165800 - run summary is totals, encoder, and input and output sizes
 # v. 20261002.134300 - end of run summary: files, durations, processing, and wait
@@ -31,6 +33,8 @@
 # v. 20260930.221500 - file prompts: one key, no Enter
 # v. 20260930.220400 - faster viewing copy of a merged video (2, 5, 10, 20, …)
 
+# 2026.10.05 - v. 0.33 - the picture-scan length question defaults to 2 minutes and marks that choice
+# 2026.10.05 - v. 0.32 - run summary size pipes line up between the input and output lines
 # 2026.10.05 - v. 0.31 - run summary sizes are rounded to a short number and marked with ~
 # 2026.10.05 - v. 0.30 - run summary lists encoded files, GPU or CPU, total durations, and sizes in MB, MiB, GB, and GiB
 # 2026.10.02 - v. 0.29 - end of run summary: files, durations, processing, and wait
@@ -116,7 +120,7 @@ Options:
                        Default 2.
   --keyframe-percent N Read this percent from the start when --gop source.
                        100 is the whole file.
-  --scan-minutes N     Decode 2, 5, or 10 minutes to check frame timing.
+  --scan-minutes N     Decode 2, 5, or 10 minutes to check frame timing. Default 2.
   --test-minutes N     Encode 1, 2, or 5 minutes of the result, not the whole file.
   --test-at N          Where the test starts: 0, 10, 20, 30, 50, 70, or 90.
                        0 is the beginning.
@@ -194,9 +198,10 @@ tl_file_bytes() {
   printf '%s\n' "$n"
 }
 
+# Two lines, input then output. Each | sits in the same column on both lines.
 # Nearest short number, marked approximate. 100 and above are whole; smaller values keep one decimal.
-tl_format_size_summary() {
-  awk -v b="${1:-0}" '
+tl_format_size_pair() {
+  awk -v ib="${1:-0}" -v ob="${2:-0}" '
     function approx(x,    n) {
       if (x < 0) x = 0
       if (x >= 100) n = sprintf("%.0f", x)
@@ -204,10 +209,24 @@ tl_format_size_summary() {
       sub(/\.0$/, "", n)
       return "~" n
     }
+    function piece(bytes, div, unit) {
+      return approx(bytes / div) " " unit
+    }
+    function wider(a, b) {
+      return length(a) > length(b) ? length(a) : length(b)
+    }
     BEGIN {
-      if (b < 0) b = 0
-      printf "%s MB | %s MiB | %s GB | %s GiB", \
-        approx(b/1000000), approx(b/1048576), approx(b/1000000000), approx(b/1073741824)
+      if (ib < 0) ib = 0
+      if (ob < 0) ob = 0
+      split("1000000 1048576 1000000000 1073741824", divs)
+      split("MB MiB GB GiB", units)
+      for (i = 1; i <= 4; i++) {
+        inn[i] = piece(ib, divs[i], units[i])
+        outt[i] = piece(ob, divs[i], units[i])
+        w[i] = wider(inn[i], outt[i])
+      }
+      printf "%-*s | %-*s | %-*s | %s\n", w[1], inn[1], w[2], inn[2], w[3], inn[3], inn[4]
+      printf "%-*s | %-*s | %-*s | %s\n", w[1], outt[1], w[2], outt[2], w[3], outt[3], outt[4]
     }'
 }
 
@@ -255,6 +274,7 @@ tl_print_run_summary() {
   local encoded=0 not_written=0 already=0 gpu=0 cpu=0
   local in_dur=0 out_dur=0 in_bytes=0 out_bytes=0
   local enc="" b
+  local -a size_lines=()
   echo
   echo "--- Run summary ---"
   count=${#TL_SUM_SRC[@]}
@@ -294,8 +314,9 @@ tl_print_run_summary() {
   (( already > 0 )) && tl_summary_kv "Already present" "${already} file(s)"
   tl_summary_kv "Input duration" "$(tl_format_seconds "$in_dur")"
   tl_summary_kv "Output duration" "$(tl_format_seconds "$out_dur")"
-  tl_summary_kv "Input size" "$(tl_format_size_summary "$in_bytes")"
-  tl_summary_kv "Output size" "$(tl_format_size_summary "$out_bytes")"
+  mapfile -t size_lines < <(tl_format_size_pair "$in_bytes" "$out_bytes")
+  tl_summary_kv "Input size" "${size_lines[0]}"
+  tl_summary_kv "Output size" "${size_lines[1]}"
   echo
   echo "--- Timing ---"
   end_ns="$(tl_time_now_ns)"
@@ -2038,14 +2059,19 @@ tl_apply_scan_suggestion() {
 }
 
 tl_prompt_scan() {
-  local choice="" skey=n lkey=5
+  local choice="" skey=n lkey=2 two_note="" five_note="" ten_note=""
   if (( ${TL_DO_SCAN:-0} )); then
     skey=y
   fi
-  case "${TL_SCAN_MINUTES:-5}" in
-    2) lkey=2 ;;
+  case "${TL_SCAN_MINUTES:-2}" in
+    5) lkey=5 ;;
     10) lkey=t ;;
-    *) lkey=5 ;;
+    *) lkey=2 ;;
+  esac
+  case "$lkey" in
+    5) five_note=" (default)" ;;
+    t) ten_note=" (default)" ;;
+    *) two_note=" (default)" ;;
   esac
   echo
   echo "Scan the source before encoding? [N/y/q]"
@@ -2071,11 +2097,11 @@ tl_prompt_scan() {
   echo "  These minutes are only the piece at the start that we decode"
   echo "  to check that each frame lasts the same time."
   echo "  Keyframe spacing was already chosen above."
-  echo "  [2] 2 minutes"
+  echo "  [2] 2 minutes${two_note}"
   echo "      A shorter look. It may still be a single clip."
-  echo "  [5] 5 minutes"
+  echo "  [5] 5 minutes${five_note}"
   echo "      Long enough to cross several dashcam clips."
-  echo "  [t] 10 minutes"
+  echo "  [t] 10 minutes${ten_note}"
   echo "      A longer look. Decoding it takes a few minutes."
   echo "  [q] Quit"
   tl_read_key "Decode length [2/5/t/q]: " "$lkey"
@@ -2327,7 +2353,7 @@ TL_SCAN_DONE=0
 TL_ADV_ON=0
 TL_KEYFRAME_MEASURED=0
 TL_SCAN_GAP=""
-TL_SCAN_MINUTES=5
+TL_SCAN_MINUTES=2
 TL_TEST=0
 TL_TEST_MINUTES=1
 TL_TEST_PERCENT=0
