@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261005.110900 - GPS logs are GPSData??????.txt here and one or two levels above
 # v. 20261005.110800 - GPS logs are GPSData??????.txt here and up to three levels above
 # v. 20261005.110200 - merge-all asks once about the temp directory; clocks sit in brackets
 # v. 20261005.083400 - 70mai journeys follow filename time, not the sequence number alone
@@ -40,6 +41,7 @@
 # v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
 # v. 20260805.154826 - after merge: copy GPS/dates from first chapter; FS times via touch -r
 
+# 2026.10.05 - v. 0.15.61 - GPS logs are GPSData??????.txt in this directory and one or two levels above
 # 2026.10.05 - v. 0.15.60 - GPS logs are GPSData??????.txt in this directory and up to three levels above
 # 2026.10.05 - v. 0.15.59 - [m] asks once whether the remaining merges use the temp directory; status lines put the clock in brackets
 # 2026.10.05 - v. 0.15.58 - 70mai clips are ordered by filename time so a restarted sequence does not split a journey
@@ -210,7 +212,7 @@ Merge behaviour (no options):
     and last clip times plus the dashcam label (default 70mai-A510) and camera
     letter, for example 20260926-110627_20260926-130427_70mai-A510_FrontCam_concat.mp4.
     A GPS track with the same stem and a .gpx extension is written beside it,
-    from GPSData??????.txt in this directory and up to three directories above it.
+    from GPSData??????.txt in this directory and one or two directories above it.
   - Shows each multi-part group (with file sizes) and asks whether to merge
     (single-key Y/N/A/M/Q, no Enter — like rename.sh). Files in a group, and the
     groups themselves, are ordered oldest to newest (filename YYYYMMDD_HHMMSS when
@@ -3427,11 +3429,11 @@ dashcam_group_output_file() {
     "$start_date" "$start_time" "$end_date" "$end_time" "$label" "$place"
 }
 
-# Every GPSData??????.txt in this directory, then one, two, and three levels above.
+# Every GPSData??????.txt in this directory, then one and two levels above.
 # Stops early when a parent directory does not exist or the walk has reached the root.
 dashcam_gps_logs() {
   local rel f found=0 real seen=""
-  local -a dirs=(. .. ../.. ../../..)
+  local -a dirs=(. .. ../..)
   shopt -s nullglob
   for rel in "${dirs[@]}"; do
     [[ -d "$rel" ]] || break
@@ -3450,7 +3452,7 @@ dashcam_gps_logs() {
   return 0
 }
 
-# First GPSData??????.txt in this directory or up to three levels above, if any.
+# First GPSData??????.txt in this directory or one or two levels above, if any.
 dashcam_gps_log_hint() {
   dashcam_gps_logs | head -n 1
 }
@@ -3492,7 +3494,7 @@ print_dashcam_gpx_suggestion() {
   if log=$(dashcam_gps_log_hint 2>/dev/null) && [[ -n "$log" ]]; then
     printf '%sGPS log: %s\n' "$indent" "$log"
   else
-    printf '%sGPS log: no GPSData??????.txt in this directory or up to three levels above\n' "$indent"
+    printf '%sGPS log: no GPSData??????.txt in this directory or one or two levels above\n' "$indent"
   fi
 }
 
@@ -3517,7 +3519,7 @@ dashcam_write_gpx_for_group() {
   gpx=$(dashcam_gpx_beside_output "$output_mp4")
   mapfile -t logs < <(dashcam_gps_logs || true)
   if (( ${#logs[@]} == 0 )); then
-    echo "$(pgm_ts) GPS: no GPSData??????.txt in this directory or up to three levels above — did not write ${gpx##*/}"
+    echo "$(pgm_ts) GPS: no GPSData??????.txt in this directory or one or two levels above — did not write ${gpx##*/}"
     return 0
   fi
   dashcam_parse_basename "${files[0]##*/}" || return 1
