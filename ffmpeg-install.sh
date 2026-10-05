@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# v. 20261005.205900 - make uses a 64 MiB stack; unlimited stack makes gcc hang with no output
 # v. 20261005.200600 - ask to install libsnappy-dev, libtheora-dev, libsoxr-dev, and libtwolame-dev
 # v. 20261005.200000 - ask to install libopenmpt-dev when the nvidia/max configure probe fails
 # v. 20261005.195200 - libmp3lame probe links lame_set_VBR_quality; lame.h has no LAME_MAJOR_VERSION macro
@@ -8,6 +9,7 @@
 # v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
 # v. 20260716.231000 - equivalent CLI echo; --dry-run for interactive plan without build
 
+# 2026.10.05 - v. 2.1.30 - cap make stack at 64 MiB so gcc does not hang when the stack is unlimited
 # 2026.10.05 - v. 2.1.29 - before configure, ask to install libsnappy and the other header-checked libs
 # 2026.10.05 - v. 2.1.28 - before configure, ask to install libopenmpt-dev; skip it when declined
 # 2026.10.05 - v. 2.1.27 - libmp3lame check links the library; do not require LAME_MAJOR_VERSION in lame.h
@@ -3539,40 +3541,47 @@ ffmpeg_source_mem_available_mb() {
     awk '/^MemAvailable:/ { printf "%d", int($2 / 1024); exit }' /proc/meminfo 2>/dev/null
 }
 
-ffmpeg_source_raise_stack_limit() {
-    local soft="" hard="" target_kb=65536 raised=0
+# ulimit -s is KiB. 65536 KiB = 64 MiB: enough for FFmpeg's recursive make, and finite.
+# RLIM_INFINITY makes gcc (cc1) sit in mmap and the build prints nothing.
+ffmpeg_source_make_stack_kb() {
+    local hard="" target="${FFMPEG_MAKE_STACK_KB:-65536}"
 
+    hard="$(ulimit -Hs 2>/dev/null || echo unlimited)"
+    if [[ "${hard}" =~ ^[0-9]+$ ]] && (( target > hard )); then
+        target="${hard}"
+    fi
+    printf '%s\n' "${target}"
+}
+
+ffmpeg_source_raise_stack_limit() {
+    local soft="" hard="" target_kb="" raised=0
+    local stack_bytes="" hard_bytes=""
+
+    target_kb="$(ffmpeg_source_make_stack_kb)"
     soft="$(ulimit -s 2>/dev/null || echo 8192)"
     hard="$(ulimit -Hs 2>/dev/null || echo unlimited)"
 
     if [[ "${soft}" == "unlimited" ]]; then
+        ulimit -s "${target_kb}" 2>/dev/null && raised=1
+    elif [[ "${soft}" =~ ^[0-9]+$ ]] && (( soft >= target_kb )); then
         return 0
-    fi
-    if [[ "${soft}" =~ ^[0-9]+$ ]] && (( soft >= target_kb )); then
-        return 0
-    fi
-
-    if [[ "${hard}" == "unlimited" ]]; then
-        ulimit -s unlimited 2>/dev/null && raised=1
-        (( raised == 1 )) || ulimit -s "${target_kb}" 2>/dev/null && raised=1
-    elif [[ "${hard}" =~ ^[0-9]+$ ]]; then
-        if (( target_kb > hard )); then
-            target_kb="${hard}"
-        fi
+    else
         ulimit -s "${target_kb}" 2>/dev/null && raised=1
     fi
 
+    stack_bytes=$(( target_kb * 1024 ))
+    if [[ "${hard}" =~ ^[0-9]+$ ]]; then
+        hard_bytes=$(( hard * 1024 ))
+    else
+        hard_bytes="${stack_bytes}"
+    fi
     if command -v prlimit >/dev/null 2>&1; then
-        if [[ "${hard}" == "unlimited" ]]; then
-            prlimit --stack=unlimited:unlimited --pid="$$" >/dev/null 2>&1 && raised=1
-        else
-            prlimit --stack="${target_kb}:${hard}" --pid="$$" >/dev/null 2>&1 && raised=1
-        fi
+        prlimit --stack="${stack_bytes}:${hard_bytes}" --pid="$$" >/dev/null 2>&1 && raised=1
     fi
 
     soft="$(ulimit -s 2>/dev/null || echo unknown)"
     if (( raised == 1 )); then
-        echo "    Raised stack limit (ulimit -s=${soft}; FFmpeg make can overflow the default stack)." >&2
+        echo "    Stack limit ulimit -s=${soft} KiB (64 MiB). Unlimited stack makes gcc hang." >&2
     fi
 }
 
@@ -3627,10 +3636,15 @@ ffmpeg_source_count_open_fds() {
 ffmpeg_source_invoke_make() {
     local jobs="$1"
     local src_dir="$2"
-    local hard="" wrapper="" rc=0
+    local hard="" wrapper="" rc=0 stack_kb="" stack_bytes="" make_bin="make"
 
     shift 2
     hard="$(ulimit -Hn 2>/dev/null || echo 1048576)"
+    stack_kb="$(ffmpeg_source_make_stack_kb)"
+    stack_bytes=$(( stack_kb * 1024 ))
+    if command -v stdbuf >/dev/null 2>&1; then
+        make_bin="stdbuf -oL -eL make"
+    fi
     wrapper="$(mktemp "${TEMP_CATALOG}/ffmpeg-make-wrapper.XXXXXX.sh")"
     cat > "${wrapper}" <<EOF
 #!/usr/bin/env bash
@@ -3641,13 +3655,13 @@ for fd in \$(ls /proc/self/fd 2>/dev/null); do
     eval "exec \${fd}>&-" 2>/dev/null || true
 done
 ulimit -n ${hard} 2>/dev/null || true
-ulimit -s unlimited 2>/dev/null || true
+ulimit -s ${stack_kb} 2>/dev/null || true
 cd $(printf '%q' "${src_dir}")
-exec make -j${jobs}$(printf ' %q' "$@")
+exec ${make_bin} -j${jobs}$(printf ' %q' "$@")
 EOF
     chmod +x "${wrapper}"
     if command -v prlimit >/dev/null 2>&1 && [[ "${hard}" =~ ^[0-9]+$ ]]; then
-        prlimit --nofile="${hard}:${hard}" --stack=unlimited:unlimited -- "${wrapper}"
+        prlimit --nofile="${hard}:${hard}" --stack="${stack_bytes}:${stack_bytes}" -- "${wrapper}"
     else
         "${wrapper}"
     fi
@@ -3753,9 +3767,9 @@ ffmpeg_source_print_too_many_open_files_help() {
     echo "  Resume — use a fresh shell (do not reuse the script shell if FD count is high):" >&2
     echo "    cd ${src_dir}" >&2
     if [[ "${hard}" =~ ^[0-9]+$ ]]; then
-        echo "    ulimit -s unlimited && ulimit -n ${hard}" >&2
+        echo "    ulimit -s ${FFMPEG_MAKE_STACK_KB:-65536} && ulimit -n ${hard}" >&2
     else
-        echo "    ulimit -s unlimited && ulimit -n 65536" >&2
+        echo "    ulimit -s ${FFMPEG_MAKE_STACK_KB:-65536} && ulimit -n 65536" >&2
     fi
     echo "    make -j1 ffmpeg ffprobe && make -j1" >&2
     echo "    # or: ffmpeg-install.sh --source-profile jellyfin --source-only" >&2
@@ -3838,22 +3852,22 @@ ffmpeg_source_print_make_segfault_help() {
         fi
         echo >&2
     fi
-    echo "  This script raises ulimit -s before make. Manual fix: ulimit -s unlimited" >&2
+    echo "  This script sets ulimit -s to 64 MiB before make. Do not use unlimited: gcc hangs." >&2
     echo "  Jellyfin skips cuda-nvcc/cuda-llvm by default (NVENC via ffnvcodec). Set FFMPEG_SOURCE_WITH_CUDA_NVCC=1 for CUDA filters." >&2
     echo "  LTO is off by default; set FFMPEG_SOURCE_WITH_LTO=1 to pass --enable-lto=auto." >&2
     echo "  On segfault the script retries once with a clean reconfigure." >&2
     echo >&2
     echo "  Manual resume in the build tree:" >&2
     echo "    cd ${src_dir}" >&2
-    echo "    ulimit -s unlimited" >&2
+    echo "    ulimit -s ${FFMPEG_MAKE_STACK_KB:-65536}" >&2
     echo "    make -j1 ffmpeg ffprobe && make -j1" >&2
     echo "    # or re-run: ffmpeg-install.sh --source-profile jellyfin --source-only" >&2
     echo >&2
     echo "  Permanent stack fix — append to /etc/security/limits.conf:" >&2
-    echo "    * soft stack unlimited" >&2
-    echo "    * hard stack unlimited" >&2
-    echo "    root soft stack unlimited" >&2
-    echo "    root hard stack unlimited" >&2
+    echo "    * soft stack 65536" >&2
+    echo "    * hard stack 65536" >&2
+    echo "    root soft stack 65536" >&2
+    echo "    root hard stack 65536" >&2
     echo >&2
     echo "  If it still crashes:" >&2
     echo "    - Add swap (e.g. 8G): fallocate -l 8G /swapfile && chmod 600 /swapfile && mkswap /swapfile && swapon /swapfile" >&2
@@ -3897,6 +3911,7 @@ ffmpeg_source_run_make() {
 
     mapfile -t make_targets < <(ffmpeg_source_make_binary_targets "${src_dir}")
     log="$(mktemp "${TEMP_CATALOG}/ffmpeg-make.XXXXXX.log")"
+    echo "    Compiling with make -j${jobs}. The first compiler line can take a minute." >&2
     ffmpeg_source_invoke_make "${jobs}" "${src_dir}" "${make_targets[@]}" 2>&1 | tee "${log}"
     rc=${PIPESTATUS[0]}
     FFMPEG_SOURCE_LAST_MAKE_RC="${rc}"
