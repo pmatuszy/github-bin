@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# v. 20261005.210500 - do not set the stack with prlimit; that binary segfaults before make starts
 # v. 20261005.205900 - make uses a 64 MiB stack; unlimited stack makes gcc hang with no output
 # v. 20261005.200600 - ask to install libsnappy-dev, libtheora-dev, libsoxr-dev, and libtwolame-dev
 # v. 20261005.200000 - ask to install libopenmpt-dev when the nvidia/max configure probe fails
@@ -9,6 +10,7 @@
 # v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
 # v. 20260716.231000 - equivalent CLI echo; --dry-run for interactive plan without build
 
+# 2026.10.05 - v. 2.1.31 - prlimit must not set RLIMIT_STACK; it segfaults on Ubuntu 20.04 before exec
 # 2026.10.05 - v. 2.1.30 - cap make stack at 64 MiB so gcc does not hang when the stack is unlimited
 # 2026.10.05 - v. 2.1.29 - before configure, ask to install libsnappy and the other header-checked libs
 # 2026.10.05 - v. 2.1.28 - before configure, ask to install libopenmpt-dev; skip it when declined
@@ -3636,12 +3638,11 @@ ffmpeg_source_count_open_fds() {
 ffmpeg_source_invoke_make() {
     local jobs="$1"
     local src_dir="$2"
-    local hard="" wrapper="" rc=0 stack_kb="" stack_bytes="" make_bin="make"
+    local hard="" wrapper="" rc=0 stack_kb="" make_bin="make"
 
     shift 2
     hard="$(ulimit -Hn 2>/dev/null || echo 1048576)"
     stack_kb="$(ffmpeg_source_make_stack_kb)"
-    stack_bytes=$(( stack_kb * 1024 ))
     if command -v stdbuf >/dev/null 2>&1; then
         make_bin="stdbuf -oL -eL make"
     fi
@@ -3660,12 +3661,17 @@ cd $(printf '%q' "${src_dir}")
 exec ${make_bin} -j${jobs}$(printf ' %q' "$@")
 EOF
     chmod +x "${wrapper}"
+    # prlimit --stack applies RLIMIT_STACK to itself and segfaults before exec
+    # (util-linux on Ubuntu 20.04). The wrapper sets ulimit -s instead.
     if command -v prlimit >/dev/null 2>&1 && [[ "${hard}" =~ ^[0-9]+$ ]]; then
-        prlimit --nofile="${hard}:${hard}" --stack="${stack_bytes}:${stack_bytes}" -- "${wrapper}"
+        if ! prlimit --nofile="${hard}:${hard}" -- "${wrapper}"; then
+            rc=$?
+            echo "    prlimit failed (exit ${rc}); starting make with ulimit only." >&2
+            "${wrapper}" || rc=$?
+        fi
     else
-        "${wrapper}"
+        "${wrapper}" || rc=$?
     fi
-    rc=$?
     rm -f "${wrapper}"
     return "${rc}"
 }
