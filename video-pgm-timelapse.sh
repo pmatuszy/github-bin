@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261005.233600 - after an encoded file, ask for the next file or all remaining
 # v. 20261005.233200 - encode header and progress bar say which file this is
 # v. 20261005.215400 - speed prompt lists every key on the line that waits
 # v. 20261005.191000 - usual timelapse forces a keyframe on each second of the result
@@ -39,6 +40,7 @@
 # v. 20260930.221500 - file prompts: one key, no Enter
 # v. 20260930.220400 - faster viewing copy of a merged video (2, 5, 10, 20, …)
 
+# 2026.10.05 - v. 0.38 - after an encoded file, ask whether to stop, do the next file, or encode the rest
 # 2026.10.05 - v. 0.37 - the usual timelapse forces a keyframe on each second when the encoder accepts it
 # 2026.10.05 - v. 0.36 - the usual timelapse writes a keyframe every 1 second of the result
 # 2026.10.05 - v. 0.35 - the extra-choices question describes the usual timelapse and the later questions
@@ -972,6 +974,7 @@ tl_encode_one() {
   fi
   TL_ENCODE_OPEN=1
   TL_ENCODE_RECORDED=0
+  TL_JUST_ENCODED=0
   TL_ENCODE_SRC="$src"
   TL_ENCODE_IN_DUR=""
   TL_FILE_PROC=0
@@ -1038,6 +1041,7 @@ tl_encode_one() {
     echo "$(tl_ts) Output encoder: ${label}"
     if tl_run_ffmpeg "$src" "$dest" "$speed" "$out_dur"; then
       echo "$(tl_ts) Done: ${dest}"
+      TL_JUST_ENCODED=1
       tl_summary_add "$src" "$dur" "$dest" "$out_dur" "${TL_FILE_PROC:-0}" "$where"
       TL_ENCODE_RECORDED=1
       TL_ENCODE_OPEN=0
@@ -1409,10 +1413,64 @@ tl_prompt_existing_output() {
   esac
 }
 
+tl_prompt_continue_after_file() {
+  local n="$1" total="$2"
+  local next=$(( n + 1 )) choice="" span=""
+  if (( next > total )) || (( ${TL_ENCODE_REST:-0} )) || (( DO_YES )) || (( ! script_is_run_interactively )); then
+    REPLY=next
+    return 0
+  fi
+  if (( next == total )); then
+    span="file ${next} of ${total}"
+  else
+    span="file ${next} of ${total} through file ${total} of ${total}"
+  fi
+  echo
+  echo "Continue? [N/y/a/q]"
+  echo "  [N] Stop after this file (default)"
+  echo "  [y] Encode the next file, then ask again"
+  echo "  [a] Encode all remaining files (${span})"
+  echo "  [q] Quit"
+  tl_read_key "Continue [N/y/a/q]: " n
+  choice="$(tl_choice "$REPLY")"
+  case "$choice" in
+    ''|n)
+      echo "$(tl_ts) Stopping. Remaining files were left alone."
+      REPLY=stop
+      ;;
+    y)
+      TL_CONTINUE_ONE=1
+      REPLY=next
+      ;;
+    a)
+      ENCODE_ALL=1
+      TL_ENCODE_REST=1
+      echo "$(tl_ts) Encoding all remaining files."
+      REPLY=all
+      ;;
+    q)
+      REPLY=quit
+      ;;
+    *)
+      echo "$(tl_ts) Unknown choice: ${REPLY}. Stopping after this file."
+      REPLY=stop
+      ;;
+  esac
+}
+
 tl_prompt_file_action() {
   local n="$1" total="$2" dest="$3"
   local choice=""
   REPLY=encode
+  if (( ${TL_CONTINUE_ONE:-0} )); then
+    TL_CONTINUE_ONE=0
+    if [[ -e "$dest" && "$REDO" -eq 0 ]]; then
+      tl_prompt_existing_output "$dest"
+    else
+      REPLY=encode
+    fi
+    return 0
+  fi
   if (( DO_YES )) || (( ENCODE_ALL )); then
     if [[ -e "$dest" && "$REDO" -eq 0 ]]; then
       tl_prompt_existing_output "$dest"
@@ -2367,6 +2425,8 @@ TL_SCRIPT_START_NS="$(LC_ALL=C date +%s.%N)"
 DO_YES=0
 REDO=0
 ENCODE_ALL=0
+TL_ENCODE_REST=0
+TL_CONTINUE_ONE=0
 SKIP_ALL=0
 SPEED="${PGM_TIMELAPSE_SPEED:-}"
 ENCODER="${PGM_TIMELAPSE_ENCODER:-auto}"
@@ -2796,10 +2856,28 @@ for tl_src in "${TL_INPUTS[@]}"; do
     encode)
       [[ -n "${TL_DEST_OVERRIDE:-}" ]] || TL_DEST_OVERRIDE="$tl_dest"
       tl_encode_one "$tl_src" "$SPEED" "$REDO" "$ENCODER" || return_code=1
+      if (( ${TL_JUST_ENCODED:-0} )); then
+        tl_prompt_continue_after_file "$tl_i" "$tl_total"
+        if [[ "$REPLY" == quit ]]; then
+          echo "$(tl_ts) Quit."
+          TL_STOPPED=yes
+          break
+        fi
+        [[ "$REPLY" == stop ]] && break
+      fi
       ;;
     redo)
       [[ -n "${TL_DEST_OVERRIDE:-}" ]] || TL_DEST_OVERRIDE="$tl_dest"
       tl_encode_one "$tl_src" "$SPEED" 1 "$ENCODER" || return_code=1
+      if (( ${TL_JUST_ENCODED:-0} )); then
+        tl_prompt_continue_after_file "$tl_i" "$tl_total"
+        if [[ "$REPLY" == quit ]]; then
+          echo "$(tl_ts) Quit."
+          TL_STOPPED=yes
+          break
+        fi
+        [[ "$REPLY" == stop ]] && break
+      fi
       ;;
     skip)
       tl_summary_note_skip "$tl_src"
@@ -2816,6 +2894,7 @@ for tl_src in "${TL_INPUTS[@]}"; do
       ;;
     encode_all)
       ENCODE_ALL=1
+      TL_ENCODE_REST=1
       [[ -n "${TL_DEST_OVERRIDE:-}" ]] || TL_DEST_OVERRIDE="$tl_dest"
       tl_encode_one "$tl_src" "$SPEED" "$REDO" "$ENCODER" || return_code=1
       ;;
