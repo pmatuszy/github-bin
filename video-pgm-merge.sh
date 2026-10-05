@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261005.082600 - 70mai merged names are matched to the NO* chapters still in the folder
 # v. 20261005.081217 - every question starts with the date and time
 # v. 20261005.080400 - run summary sizes also show GB, GiB, and MiB
 # v. 20261005.074400 - run summary lists processed and deleted files and their sizes
@@ -36,6 +37,7 @@
 # v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
 # v. 20260805.154826 - after merge: copy GPS/dates from first chapter; FS times via touch -r
 
+# 2026.10.05 - v. 0.15.57 - 70mai concat names are not listed as missing chapters when the NO* files are still there
 # 2026.10.05 - v. 0.15.56 - every question starts with the date and time
 # 2026.10.05 - v. 0.15.55 - run summary sizes also show decimal GB and binary GiB and MiB
 # 2026.10.05 - v. 0.15.54 - run summary: processed groups, deleted files, input and output size
@@ -232,6 +234,8 @@ Merge behaviour (no options):
     e.g. …_GOPRO10_BLACK_concat_parts_01-06.mp4). Legacy …_parts_*-*_concat.mp4 still recognized.
   - Other single files are listed as standalone; probable size-split sets are merge candidates.
   - Lists merged *_concat files when matching input chapters are not in the folder.
+    A 70mai journey name is matched to NO* clips of that camera whose filename
+    times fall from the journey start through the journey end.
 
 mp4_merge lookup (merge mode):
   1. MP4_MERGE_BIN if set and executable
@@ -1730,6 +1734,9 @@ CONCAT_PARSE_STEM=""
 CONCAT_PARSE_PROXY=""
 CONCAT_PARSE_FIRST=0
 CONCAT_PARSE_LAST=0
+CONCAT_DASH_START=""
+CONCAT_DASH_END=""
+CONCAT_DASH_LETTER=""
 PGM_ORPHAN_CONCAT_COUNT=0
 
 # Parse <stem>_concat_parts_01-04[_Proxy], legacy <stem>_parts_01-04[_Proxy]_concat,
@@ -1764,6 +1771,61 @@ concat_parse_cam_part_range() {
     return 0
   fi
   return 1
+}
+
+# 20260926-110627_20260926-130427_70mai-A510_FrontCam_concat.mp4
+# Start and end are the first and last NO* filename times. Camera is FrontCam/BackCam.
+concat_parse_dashcam_output() {
+  local base="$1"
+  CONCAT_PARSE_CAM=""
+  CONCAT_PARSE_STEM=""
+  CONCAT_PARSE_PROXY=""
+  CONCAT_PARSE_FIRST=0
+  CONCAT_PARSE_LAST=0
+  CONCAT_DASH_START=""
+  CONCAT_DASH_END=""
+  CONCAT_DASH_LETTER=""
+  if [[ "$base" =~ ^([0-9]{8})-([0-9]{6})_([0-9]{8})-([0-9]{6})_(.+)_(FrontCam|BackCam|[A-Za-z])_concat\.[mM][pP]4$ ]]; then
+    CONCAT_DASH_START="${BASH_REMATCH[1]}${BASH_REMATCH[2]}"
+    CONCAT_DASH_END="${BASH_REMATCH[3]}${BASH_REMATCH[4]}"
+    CONCAT_PARSE_STEM="${BASH_REMATCH[5]}"
+    CONCAT_PARSE_CAM="${BASH_REMATCH[6]}"
+    case "$CONCAT_PARSE_CAM" in
+      FrontCam) CONCAT_DASH_LETTER=F ;;
+      BackCam)  CONCAT_DASH_LETTER=B ;;
+      *) CONCAT_DASH_LETTER=$(printf '%s' "$CONCAT_PARSE_CAM" | tr '[:lower:]' '[:upper:]') ;;
+    esac
+    return 0
+  fi
+  return 1
+}
+
+# YYYYMMDDHHMMSS from a 70mai filename clock → 2026-09-26 11:06:27
+dashcam_key_display() {
+  local k="$1"
+  printf '%s-%s-%s %s:%s:%s\n' \
+    "${k:0:4}" "${k:4:2}" "${k:6:2}" \
+    "${k:8:2}" "${k:10:2}" "${k:12:2}"
+}
+
+# How many NO* clips of this camera have a filename start from start_key through end_key.
+count_dashcam_chapters_in_window() {
+  local start_key="$1" end_key="$2" letter="$3"
+  shift 3
+  local -a all_mp4=("$@")
+  local f base key found=0
+  letter=$(printf '%s' "$letter" | tr '[:lower:]' '[:upper:]')
+  for f in "${all_mp4[@]}"; do
+    base="${f##*/}"
+    is_concat_output_basename "$base" && continue
+    dashcam_parse_basename "$base" || continue
+    [[ "$DASHCAM_CAM" == "$letter" ]] || continue
+    key="${DASHCAM_DATE}${DASHCAM_TIME}"
+    [[ "$key" < "$start_key" ]] && continue
+    [[ "$key" > "$end_key" ]] && continue
+    (( found++ )) || true
+  done
+  printf '%d\n' "$found"
 }
 
 chapter_input_matches_stem_part() {
@@ -1809,14 +1871,24 @@ count_chapter_inputs_for_concat_range() {
 print_orphan_concat_section() {
   local -a all_mp4=("$@")
   local f base cam stem proxy first last expected found note sep sz
+  local kind start_key end_key
   local -a orphans=()
   PGM_ORPHAN_CONCAT_COUNT=0
 
   for f in "${all_mp4[@]}"; do
     base="${f##*/}"
     is_concat_output_basename "$base" || continue
+    if concat_parse_dashcam_output "$base"; then
+      found=$(count_dashcam_chapters_in_window \
+        "$CONCAT_DASH_START" "$CONCAT_DASH_END" "$CONCAT_DASH_LETTER" "${all_mp4[@]}")
+      if (( found > 0 )); then
+        continue
+      fi
+      orphans+=( "${f}|no input chapters in this folder|${CONCAT_PARSE_STEM}|${CONCAT_PARSE_CAM}|0|0|0|0|dashcam|${CONCAT_DASH_START}|${CONCAT_DASH_END}" )
+      continue
+    fi
     if ! concat_parse_cam_part_range "$base"; then
-      orphans+=( "${f}|unparseable concat name|?||0|0|0|0" )
+      orphans+=( "${f}|unparseable concat name||||0|0|0|0|other|" )
       continue
     fi
     cam="$CONCAT_PARSE_CAM"
@@ -1834,7 +1906,7 @@ print_orphan_concat_section() {
     else
       note="only ${found} of ${expected} input chapter(s) present"
     fi
-    orphans+=( "${f}|${note}|${stem}|${cam}|${first}|${last}|${expected}|${found}" )
+    orphans+=( "${f}|${note}|${stem}|${cam}|${first}|${last}|${expected}|${found}|gopro|" )
   done
 
   PGM_ORPHAN_CONCAT_COUNT=${#orphans[@]}
@@ -1844,15 +1916,19 @@ print_orphan_concat_section() {
   echo "Merged outputs without input chapters in this folder:"
   printf '  %s\n' "$sep"
   for entry in "${orphans[@]}"; do
-    IFS='|' read -r f note stem cam first last expected found <<< "$entry"
+    IFS='|' read -r f note stem cam first last expected found kind start_key end_key <<< "$entry"
     base="${f##*/}"
     sz=$(file_size_bytes "$f")
     printf '  %s\n' "$base"
     printf '    %s\n' "$(format_bytes_human_aligned "$sz")"
-    if [[ -n "$stem" ]]; then
+    if [[ "$kind" == dashcam ]]; then
+      printf '    Journey: %s – %s\n' \
+        "$(dashcam_key_display "$start_key")" "$(dashcam_key_display "$end_key")"
+      printf '    Camera: %s\n' "$cam"
+    elif [[ -n "$stem" ]]; then
       printf '    Stem: %s  parts %02d-%02d\n' "$stem" "$first" "$last"
       [[ -n "$cam" ]] && printf '    Camera: %s\n' "$cam"
-    elif [[ -n "$cam" && "$cam" != '?' ]]; then
+    elif [[ -n "$cam" ]]; then
       printf '    Camera: %s  parts %02d-%02d\n' "$cam" "$first" "$last"
     fi
     printf '    Status: %s\n' "$note"
