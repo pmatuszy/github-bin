@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261005.165800 - run summary is totals, encoder, and input and output sizes
 # v. 20261002.134300 - end of run summary: files, durations, processing, and wait
 # v. 20261002.114100 - status times are in brackets; the keyframe file name is on its own line
 # v. 20261002.112900 - output name includes the date and time
@@ -29,6 +30,7 @@
 # v. 20260930.221500 - file prompts: one key, no Enter
 # v. 20260930.220400 - faster viewing copy of a merged video (2, 5, 10, 20, …)
 
+# 2026.10.05 - v. 0.30 - run summary lists encoded files, GPU or CPU, total durations, and sizes in MB, MiB, GB, and GiB
 # 2026.10.02 - v. 0.29 - end of run summary: files, durations, processing, and wait
 # 2026.10.02 - v. 0.28 - status times are in brackets; the keyframe file name is on its own line
 # 2026.10.02 - v. 0.27 - every output is stem_xN_YYYYMMDD-HHMMSS.mp4
@@ -178,6 +180,24 @@ tl_summary_add() {
   TL_SUM_OUT+=("$3")
   TL_SUM_OUT_DUR+=("$4")
   TL_SUM_PROC+=("$5")
+  TL_SUM_WHERE+=("${6:-}")
+}
+
+tl_file_bytes() {
+  local f="$1" n=0
+  if [[ -n "$f" && -f "$f" ]]; then
+    n=$(stat -c %s -- "$f" 2>/dev/null || stat -f %z -- "$f" 2>/dev/null || printf '0')
+  fi
+  [[ "$n" =~ ^[0-9]+$ ]] || n=0
+  printf '%s\n' "$n"
+}
+
+# Decimal MB and GB, binary MiB and GiB.
+tl_format_size_summary() {
+  awk -v b="${1:-0}" 'BEGIN {
+    if (b < 0) b = 0
+    printf "%.2f MB | %.2f MiB | %.2f GB | %.2f GiB", b/1000000, b/1048576, b/1000000000, b/1073741824
+  }'
 }
 
 tl_summary_note_skip() {
@@ -221,32 +241,57 @@ tl_summary_flush_open_encode() {
 
 tl_print_run_summary() {
   local i count end_ns total_sec wait_sec
+  local encoded=0 not_written=0 already=0 gpu=0 cpu=0
+  local in_dur=0 out_dur=0 in_bytes=0 out_bytes=0
+  local enc="" b
   echo
   echo "--- Run summary ---"
-  tl_summary_kv "Started" "$(tl_format_wall_clock "${TL_SCRIPT_START_NS:-}")"
-  tl_summary_kv "Finished" "$(date '+%Y.%m.%d %H:%M:%S')"
   count=${#TL_SUM_SRC[@]}
   for (( i = 0; i < count; i++ )); do
-    (( i > 0 )) && echo
-    echo "Input:"
-    echo "${TL_SUM_SRC[$i]##*/}"
-    if [[ -n "${TL_SUM_IN_DUR[$i]}" ]]; then
-      tl_summary_kv "Input duration" "$(tl_format_seconds "${TL_SUM_IN_DUR[$i]}")"
-    fi
-    if [[ -n "${TL_SUM_OUT[$i]}" ]]; then
-      echo "Output:"
-      echo "${TL_SUM_OUT[$i]##*/}"
-      if [[ -n "${TL_SUM_OUT_DUR[$i]}" ]]; then
-        tl_summary_kv "Output duration" "$(tl_format_seconds "${TL_SUM_OUT_DUR[$i]}")"
+    if [[ -n "${TL_SUM_WHERE[$i]:-}" ]]; then
+      (( encoded++ )) || true
+      case "${TL_SUM_WHERE[$i]}" in
+        "GPU hardware") gpu=1 ;;
+        "CPU only") cpu=1 ;;
+      esac
+      if [[ -n "${TL_SUM_IN_DUR[$i]:-}" ]]; then
+        in_dur=$(awk -v a="$in_dur" -v b="${TL_SUM_IN_DUR[$i]}" 'BEGIN{printf "%.3f", a+b}')
       fi
+      if [[ -n "${TL_SUM_OUT_DUR[$i]:-}" ]]; then
+        out_dur=$(awk -v a="$out_dur" -v b="${TL_SUM_OUT_DUR[$i]}" 'BEGIN{printf "%.3f", a+b}')
+      fi
+      b=$(tl_file_bytes "${TL_SUM_SRC[$i]}")
+      in_bytes=$(( in_bytes + b ))
+      b=$(tl_file_bytes "${TL_SUM_OUT[$i]}")
+      out_bytes=$(( out_bytes + b ))
+    elif [[ -n "${TL_SUM_OUT[$i]:-}" ]]; then
+      (( already++ )) || true
     else
-      tl_summary_kv "Output" "not written"
+      (( not_written++ )) || true
     fi
-    tl_summary_kv "Process this file" "$(tl_format_elapsed "${TL_SUM_PROC[$i]}")  (encode)"
   done
+  tl_summary_kv "Encoded" "${encoded} file(s)"
+  if (( gpu && cpu )); then
+    enc="GPU hardware, CPU only"
+  elif (( gpu )); then
+    enc="GPU hardware"
+  elif (( cpu )); then
+    enc="CPU only"
+  fi
+  [[ -n "$enc" ]] && tl_summary_kv "Encoder" "$enc"
+  (( not_written > 0 )) && tl_summary_kv "Not written" "${not_written} file(s)"
+  (( already > 0 )) && tl_summary_kv "Already present" "${already} file(s)"
+  tl_summary_kv "Input duration" "$(tl_format_seconds "$in_dur")"
+  tl_summary_kv "Output duration" "$(tl_format_seconds "$out_dur")"
+  tl_summary_kv "Input size" "$(tl_format_size_summary "$in_bytes")"
+  tl_summary_kv "Output size" "$(tl_format_size_summary "$out_bytes")"
+  echo
+  echo "--- Timing ---"
   end_ns="$(tl_time_now_ns)"
   total_sec="$(awk -v s0="${TL_SCRIPT_START_NS:-0}" -v s1="$end_ns" 'BEGIN { printf "%.6f", s1 - s0 }')"
   wait_sec="$(awk -v t="$total_sec" -v p="${TL_PROCESSING_SEC:-0}" 'BEGIN { w = t - p; if (w < 0) w = 0; printf "%.6f", w }')"
+  tl_summary_kv "Started" "$(tl_format_wall_clock "${TL_SCRIPT_START_NS:-}")"
+  tl_summary_kv "Finished" "$(date '+%Y.%m.%d %H:%M:%S')"
   tl_summary_kv "Total wall time" "$(tl_format_elapsed "$total_sec")"
   tl_summary_kv "Processing time" "$(tl_format_elapsed "${TL_PROCESSING_SEC:-0}")  (keyframes, picture scan, encode)"
   tl_summary_kv "Other/wait time" "$(tl_format_elapsed "$wait_sec")  (prompts, startup, overhead)"
@@ -940,7 +985,7 @@ tl_encode_one() {
     echo "$(tl_ts) Output encoder: ${label}"
     if tl_run_ffmpeg "$src" "$dest" "$speed" "$out_dur"; then
       echo "$(tl_ts) Done: ${dest}"
-      tl_summary_add "$src" "$dur" "$dest" "$out_dur" "${TL_FILE_PROC:-0}"
+      tl_summary_add "$src" "$dur" "$dest" "$out_dur" "${TL_FILE_PROC:-0}" "$where"
       TL_ENCODE_RECORDED=1
       TL_ENCODE_OPEN=0
       return 0
@@ -2297,6 +2342,7 @@ TL_SUM_IN_DUR=()
 TL_SUM_OUT=()
 TL_SUM_OUT_DUR=()
 TL_SUM_PROC=()
+TL_SUM_WHERE=()
 
 trap tl_on_exit EXIT
 trap tl_ctrl_c INT
