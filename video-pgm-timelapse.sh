@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261005.215400 - speed prompt lists every key on the line that waits
 # v. 20261005.191000 - usual timelapse forces a keyframe on each second of the result
 # v. 20261005.190700 - the usual timelapse writes a keyframe every 1 second
 # v. 20261005.190500 - the extra-choices question says what plain and the later questions do
@@ -1309,7 +1310,7 @@ tl_prompt_speed() {
   echo "  [c] Custom  type an integer from 2 to 240"
   echo "  [q] Quit"
   echo
-  tl_read_key "Speed [${def}/q]: " "$def"
+  tl_read_key "Speed [1/2/3/4/5/6/7/c/q]: " "$def"
   choice="$(tl_choice "$REPLY")"
   case "$choice" in
     1) SPEED=2 ;;
