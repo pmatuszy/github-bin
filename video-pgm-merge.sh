@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261005.110200 - merge-all asks once about the temp directory; clocks sit in brackets
 # v. 20261005.083400 - 70mai journeys follow filename time, not the sequence number alone
 # v. 20261005.082600 - 70mai merged names are matched to the NO* chapters still in the folder
 # v. 20261005.081217 - every question starts with the date and time
@@ -38,6 +39,7 @@
 # v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
 # v. 20260805.154826 - after merge: copy GPS/dates from first chapter; FS times via touch -r
 
+# 2026.10.05 - v. 0.15.59 - [m] asks once whether the remaining merges use the temp directory; status lines put the clock in brackets
 # 2026.10.05 - v. 0.15.58 - 70mai clips are ordered by filename time so a restarted sequence does not split a journey
 # 2026.10.05 - v. 0.15.57 - 70mai concat names are not listed as missing chapters when the NO* files are still there
 # 2026.10.05 - v. 0.15.56 - every question starts with the date and time
@@ -221,7 +223,11 @@ Merge behaviour (no options):
     in this run. [n] writes this file in this directory. [r] writes every later
     merge in this directory. Default is yes (this file only) when the source disk
     is not an SSD, or when that cannot be checked. Default is no when the source
-    disk is an SSD. -y and non-interactive runs write in this directory.
+    disk is an SSD. [m] Merge all remaining groups asks this once before the first
+    of those merges: yes uses that directory for every group still left and moves
+    each finished file back; no writes those outputs in this directory. -y and
+    non-interactive runs write in this directory. Status lines start with the
+    clock in brackets, [ YYYY.MM.DD HH:MM:SS ].
   - After a successful merge: copy GPS / create&modify dates / Make/Model from the first
     chapter (exiftool; filesystem mtime via touch -r), set title from the session label,
     then merge-boundary times, size summary, optional per-seam terminal preview (asked one
@@ -923,7 +929,7 @@ PGM_PROCESSING_SEC=0
 PGM_PROCESSING_SLICE_START=""
 
 pgm_ts() {
-  date '+%Y.%m.%d %H:%M:%S'
+  date '+[ %Y.%m.%d %H:%M:%S ]'
 }
 
 # Timestamp + fixed-width label + value (labels align in status blocks).
@@ -4368,8 +4374,107 @@ merge_open_temp_work() {
   return 0
 }
 
+# Asks once how every remaining group in this run is written. Returns 2 on quit.
+# MERGE_WRITE_PATH is already the final path. Yes also opens the temp work dir.
+prompt_merge_all_temp_dir() {
+  local sz="$1" final="$2" first="$3"
+  local tdir reason avail default_key prompt_key choice alt
+  tdir=$(merge_temp_dir_candidate)
+  if ! reason=$(merge_temp_unfit_reason "$sz" "$tdir"); then
+    echo "$(pgm_ts) Input files: $(merge_inputs_dir "$first")"
+    echo "$(pgm_ts) Not using ${tdir} for these merges: ${reason}."
+    echo "  [p] Type another temp directory"
+    echo "  [N] Write the outputs in this directory (default)"
+    echo "  [q] Quit"
+    pgm_read_key "Temp directory for the remaining groups? [p/N/q]: " n
+    case "${REPLY,,}" in
+      q)
+        echo "$(pgm_ts) Quit."
+        return 2
+        ;;
+      p) ;;
+      *)
+        MERGE_IN_PLACE_FOR_RUN=1
+        echo "$(pgm_ts) Writing in this directory for this merge and the rest of this run."
+        return 0
+        ;;
+    esac
+    flush_stdin
+    printf '%s %s' "$(pgm_ts)" "Temp directory: "
+    IFS= read -r alt || alt=""
+    alt="${alt%/}"
+    if [[ -z "$alt" ]]; then
+      MERGE_IN_PLACE_FOR_RUN=1
+      echo "$(pgm_ts) Writing in this directory for this merge and the rest of this run."
+      return 0
+    fi
+    if ! reason=$(merge_temp_unfit_reason "$sz" "$alt"); then
+      echo "$(pgm_ts) Not using ${alt}: ${reason}."
+      MERGE_IN_PLACE_FOR_RUN=1
+      echo "$(pgm_ts) Writing in this directory for this merge and the rest of this run."
+      return 0
+    fi
+    MERGE_TEMP_FOR_RUN="$alt"
+    echo "$(pgm_ts) Using ${alt} for this merge and the rest of this run."
+    if ! merge_open_temp_work "$alt" "$final"; then
+      echo "$(pgm_ts) Could not create a temp directory in ${alt}; writing here." >&2
+      MERGE_TEMP_FOR_RUN=""
+      MERGE_IN_PLACE_FOR_RUN=1
+    fi
+    return 0
+  fi
+  avail=$(fs_avail_bytes "$tdir") || {
+    MERGE_IN_PLACE_FOR_RUN=1
+    echo "$(pgm_ts) Writing in this directory for this merge and the rest of this run."
+    return 0
+  }
+  refresh_source_disk_kind
+  echo "$(pgm_ts) Input files: $(merge_inputs_dir "$first")"
+  echo "$(pgm_ts) ${SOURCE_DISK_KIND_WHY}"
+  echo "$(pgm_ts) ${tdir} is on another disk ($(format_bytes_human "$avail") free)."
+  echo "$(pgm_ts) This merge is about $(format_bytes_human "$sz"). Writing it there keeps reading and writing off the same disk."
+  echo "$(pgm_ts) The same choice is used for every remaining group in this run."
+  if [[ "$SOURCE_DISK_KIND" == ssd ]]; then
+    default_key=n
+    prompt_key="y/n/q"
+    echo "  [y] Yes — merge in ${tdir}, then move each finished file back here"
+    echo "  [n] No — write the outputs in this directory (default)"
+  else
+    default_key=y
+    prompt_key="Y/n/q"
+    echo "  [Y] Yes — merge in ${tdir}, then move each finished file back here (default)"
+    echo "  [n] No — write the outputs in this directory"
+  fi
+  echo "  [q] Quit"
+  while true; do
+    pgm_read_key "Merge via ${tdir} for the remaining groups? [${prompt_key}]: " "$default_key"
+    choice="${REPLY,,}"
+    case "$choice" in
+      q)
+        echo "$(pgm_ts) Quit."
+        return 2
+        ;;
+      y) break ;;
+      n|'')
+        MERGE_IN_PLACE_FOR_RUN=1
+        echo "$(pgm_ts) Writing in this directory for this merge and the rest of this run."
+        return 0
+        ;;
+      *) echo "$(pgm_ts) Unknown choice: ${REPLY}" ;;
+    esac
+  done
+  MERGE_TEMP_FOR_RUN="$tdir"
+  echo "$(pgm_ts) Using ${tdir} for this merge and the rest of this run."
+  if ! merge_open_temp_work "$tdir" "$final"; then
+    echo "$(pgm_ts) Could not create a temp directory in ${tdir}; writing here." >&2
+    MERGE_TEMP_FOR_RUN=""
+    MERGE_IN_PLACE_FOR_RUN=1
+  fi
+  return 0
+}
+
 # Sets MERGE_WRITE_PATH to the path mp4_merge should write.
-# Asks to use the temp dir only for an interactive single-group merge.
+# A single interactive merge asks per group. [m] asks once for the groups still left.
 choose_merge_output_path() {
   local final="$1"
   shift
@@ -4402,8 +4507,12 @@ choose_merge_output_path() {
     echo "$(pgm_ts) Merging in ${tdir} (chosen for the rest of this run)."
     return 0
   fi
-  if (( DO_YES )) || (( MERGE_ALL_REMAINING )) || (( ! script_is_run_interactively )); then
+  if (( DO_YES )) || (( ! script_is_run_interactively )); then
     return 0
+  fi
+  if (( MERGE_ALL_REMAINING )); then
+    prompt_merge_all_temp_dir "$sz" "$final" "${files[0]}"
+    return $?
   fi
   tdir=$(merge_temp_dir_candidate)
   if ! reason=$(merge_temp_unfit_reason "$sz" "$tdir"); then
