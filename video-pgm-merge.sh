@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261005.071200 - delete question can keep input files for the rest of the run
 # v. 20261004.152334 - Ctrl-C during the move back removes the temp merge file
 # v. 20261004.151844 - s turns seam preview off for the rest of the run
 # v. 20261004.144348 - ask to build a missing GPX instead of treating the merge as done
@@ -29,6 +30,7 @@
 # v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
 # v. 20260805.154826 - after merge: copy GPS/dates from first chapter; FS times via touch -r
 
+# 2026.10.05 - v. 0.15.50 - delete question: [k] never deletes input files for the rest of this run
 # 2026.10.04 - v. 0.15.49 - Ctrl-C while moving the merge back deletes the temp file and any partial copy
 # 2026.10.04 - v. 0.15.48 - seam preview: [s] never plays seams again in this run
 # 2026.10.04 - v. 0.15.47 - already-merged skip only when the 70mai GPX is present; otherwise ask to generate it
@@ -206,7 +208,8 @@ Merge behaviour (no options):
     chapter (exiftool; filesystem mtime via touch -r), set title from the session label,
     then merge-boundary times, size summary, optional per-seam terminal preview (asked one
     seam at a time; [a] skips the remaining seams in this file, [s] never plays seams
-    again in this run), and optional deletion of the source chapter files (single-key Y/N).
+    again in this run), and optional deletion of the source chapter files (single-key
+    Y/N/K/Q). [k] keeps input files for every later group in this run.
   - If the expected _concat output already exists: skip (default), redo merge [r],
     preview merge seams [p], or delete input chapters [d] (keeps merged output).
     A 70mai journey is finished only when a valid .gpx sits beside that file.
@@ -890,6 +893,8 @@ MERGE_TEMP_FOR_RUN=""
 MERGE_IN_PLACE_FOR_RUN=0
 # 1 when seam preview stays off for the rest of this run.
 SEAM_PREVIEW_SKIP_RUN=0
+# 1 when input chapter files stay for the rest of this run.
+KEEP_INPUTS_FOR_RUN=0
 PGM_READ_TIMEOUT_CLI=0
 PGM_SCRIPT_START_NS=""
 PGM_PROCESSING_SEC=0
@@ -3924,6 +3929,10 @@ prompt_delete_merged_inputs() {
   if (( DO_YES )) || (( ! script_is_run_interactively )); then
     return 0
   fi
+  if (( KEEP_INPUTS_FOR_RUN )); then
+    echo "$(pgm_ts) Input files kept (for the rest of this run)."
+    return 0
+  fi
   if [[ "$context" == already_merged ]]; then
     echo "Delete ${#files[@]} input chapter file(s)? (merged output will be kept)"
   else
@@ -3934,8 +3943,9 @@ prompt_delete_merged_inputs() {
   done
   echo "  [y] Yes — delete merged input chapter files"
   echo "  [N] No — keep input files (default)"
+  echo "  [k] Never delete input files for the rest of this run"
   echo "  [q] Quit"
-  pgm_read_key "Delete inputs? [y/N/q]: " n
+  pgm_read_key "Delete inputs? [y/N/k/q]: " n
   choice="${REPLY,,}"
   case "$choice" in
     y)
@@ -3946,6 +3956,11 @@ prompt_delete_merged_inputs() {
           echo "$(pgm_ts) Could not delete: $f" >&2
         fi
       done
+      return 0
+      ;;
+    k)
+      KEEP_INPUTS_FOR_RUN=1
+      echo "$(pgm_ts) Input files kept for the rest of this run."
       return 0
       ;;
     q)
@@ -4757,6 +4772,7 @@ do_merge() {
   MERGE_TEMP_FOR_RUN=""
   MERGE_IN_PLACE_FOR_RUN=0
   SEAM_PREVIEW_SKIP_RUN=0
+  KEEP_INPUTS_FOR_RUN=0
 
   print_group_plan "${sorted_mp4[@]}"
 
