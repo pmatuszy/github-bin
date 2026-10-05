@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261005.074400 - run summary lists processed and deleted files and their sizes
 # v. 20261005.073800 - already-merged groups can be skipped for the rest of the run; delete asks twice
 # v. 20261005.073000 - temp prompt names the directory of the input files
 # v. 20261005.071900 - say when a temp dir is in use for this merge
@@ -33,6 +34,7 @@
 # v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
 # v. 20260805.154826 - after merge: copy GPS/dates from first chapter; FS times via touch -r
 
+# 2026.10.05 - v. 0.15.54 - run summary: processed groups, deleted files, input and output size
 # 2026.10.05 - v. 0.15.53 - already-merged: don't ask again this run; delete confirms with default No
 # 2026.10.05 - v. 0.15.52 - temp prompt and merge lines name the directory of the input files
 # 2026.10.05 - v. 0.15.51 - the group summary and the merge line say whether a temp dir is in use
@@ -1089,6 +1091,11 @@ pgm_time_now_ns() {
 pgm_record_script_start() {
   PGM_SCRIPT_START_NS=$(pgm_time_now_ns)
   PGM_PROCESSING_SEC=0
+  PGM_RUN_GROUPS=0
+  PGM_RUN_INPUT_FILES=0
+  PGM_RUN_INPUT_BYTES=0
+  PGM_RUN_OUTPUT_BYTES=0
+  PGM_RUN_DELETED=0
 }
 
 pgm_processing_begin() {
@@ -1130,6 +1137,12 @@ print_pgm_timing_summary() {
   wait_sec=$(awk -v t="${total_sec}" -v p="${PGM_PROCESSING_SEC:-0}" \
     'BEGIN { w = t - p; if (w < 0) w = 0; printf "%.6f", w }')
   echo
+  echo "$(pgm_ts) --- Run summary ---"
+  pgm_log_kv "Processed" "${PGM_RUN_GROUPS:-0} group(s), ${PGM_RUN_INPUT_FILES:-0} input file(s)"
+  pgm_log_kv "Deleted" "${PGM_RUN_DELETED:-0} input file(s)"
+  pgm_log_kv "Input size" "$(format_bytes_human "${PGM_RUN_INPUT_BYTES:-0}")"
+  pgm_log_kv "Output size" "$(format_bytes_human "${PGM_RUN_OUTPUT_BYTES:-0}")"
+  echo
   echo "$(pgm_ts) --- Timing ---"
   pgm_log_kv "Started" "$(pgm_format_wall_clock "${PGM_SCRIPT_START_NS}")"
   pgm_log_kv "Finished" "$(date '+%Y.%m.%d %H:%M:%S')"
@@ -1137,6 +1150,23 @@ print_pgm_timing_summary() {
   pgm_log_kv "Processing time" "$(format_duration_sec "${PGM_PROCESSING_SEC:-0}")  (merges, downloads)"
   pgm_log_kv "Other/wait time" "$(format_duration_sec "${wait_sec}")  (prompts, startup delay, overhead)"
   echo
+}
+
+# One finished merge: chapter files that went into it, and the merged file written.
+pgm_note_processed_group() {
+  local output="$1"
+  shift
+  local f sz
+  PGM_RUN_GROUPS=$(( ${PGM_RUN_GROUPS:-0} + 1 ))
+  PGM_RUN_INPUT_FILES=$(( ${PGM_RUN_INPUT_FILES:-0} + $# ))
+  for f in "$@"; do
+    sz=$(file_size_bytes "$f")
+    PGM_RUN_INPUT_BYTES=$(( ${PGM_RUN_INPUT_BYTES:-0} + sz ))
+  done
+  if [[ -f "$output" ]]; then
+    sz=$(file_size_bytes "$output")
+    PGM_RUN_OUTPUT_BYTES=$(( ${PGM_RUN_OUTPUT_BYTES:-0} + sz ))
+  fi
 }
 
 flush_stdin() {
@@ -3966,6 +3996,7 @@ prompt_delete_merged_inputs() {
       esac
       for f in "${files[@]}"; do
         if rm -f -- "$f"; then
+          PGM_RUN_DELETED=$(( ${PGM_RUN_DELETED:-0} + 1 ))
           echo "$(pgm_ts) Deleted: ${f##*/}"
         else
           echo "$(pgm_ts) Could not delete: $f" >&2
@@ -4436,6 +4467,7 @@ run_merge_group() {
     trap ctrl_c INT
     VIDEO_MERGE_OUT_FILE=""
     echo "$(pgm_ts) Done: ${output_file}"
+    pgm_note_processed_group "$output_file" "${files[@]}"
     local meta_label=""
     meta_label=$(group_merge_description_label "${files[@]}" 2>/dev/null) || meta_label=""
     apply_merge_output_metadata "$output_file" "${files[0]}" "$meta_label" || true
