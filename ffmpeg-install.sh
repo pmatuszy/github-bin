@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
+# v. 20261005.194500 - source compile: ask to install nasm and libmp3lame-dev when the probe fails
 # v. 20261001.222400 - shared GPU builds install libav*.so into /usr/local/lib
 # v. 20261001.215000 - common build: offer NVENC or VAAPI when that GPU is present
 # v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
 # v. 20260716.231000 - equivalent CLI echo; --dry-run for interactive plan without build
 
+# 2026.10.05 - v. 2.1.26 - before configure, ask to install nasm and libmp3lame-dev if the compile probe fails
 # 2026.10.01 - v. 2.1.25 - gpu/nvidia/jellyfin: install shared libav libraries into /usr/local/lib and link with rpath
 # 2026.10.01 - v. 2.1.24 - common build asks to compile in NVENC when nvidia-smi works, or VAAPI when /dev/dri is present; -y stays on common
 # 2026.06.23 - v. 2.1.23 - jellyfin profile: Jellyfin-like shared build (VAAPI+NVENC+FDK-AAC); common stays default
@@ -4000,6 +4002,133 @@ ffmpeg_source_ensure_staged_bins() {
     return 1
 }
 
+ffmpeg_source_host_needs_nasm() {
+    case "$(uname -m)" in
+        i386|i686|x86_64|amd64) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+# FFmpeg configure enables x86asm only when nasm can assemble "movbe" (nasm >= 2.13).
+ffmpeg_source_nasm_usable() {
+    local ver_line="" major=0 minor=0 tmp="" fmt="elf64"
+
+    ffmpeg_source_host_needs_nasm || return 0
+    command -v nasm >/dev/null 2>&1 || return 1
+    ver_line="$(nasm -v 2>/dev/null || true)"
+    if [[ "${ver_line}" =~ version[[:space:]]+([0-9]+)\.([0-9]+) ]]; then
+        major="${BASH_REMATCH[1]}"
+        minor="${BASH_REMATCH[2]}"
+    else
+        return 1
+    fi
+    if (( major < 2 || (major == 2 && minor < 13) )); then
+        return 1
+    fi
+    case "$(uname -m)" in
+        i386|i686) fmt="elf32" ;;
+    esac
+    tmp="$(mktemp -d)"
+    printf 'movbe ecx, [5]\n' > "${tmp}/probe.asm"
+    if ! nasm -f "${fmt}" -o "${tmp}/probe.o" "${tmp}/probe.asm" >/dev/null 2>&1; then
+        rm -rf "${tmp}"
+        return 1
+    fi
+    rm -rf "${tmp}"
+    return 0
+}
+
+# Same link test FFmpeg configure uses: lame/lame.h + lame_set_VBR_quality, version >= 3.98.3.
+ffmpeg_source_libmp3lame_usable() {
+    local cc="${CC:-gcc}"
+    local out=""
+
+    command -v "${cc}" >/dev/null 2>&1 || return 1
+    out="$(mktemp)"
+    if printf '%s\n' \
+        '#include <lame/lame.h>' \
+        '#if !defined(LAME_MAJOR_VERSION) || LAME_MAJOR_VERSION < 3 || (LAME_MAJOR_VERSION == 3 && LAME_MINOR_VERSION < 98) || (LAME_MAJOR_VERSION == 3 && LAME_MINOR_VERSION == 98 && LAME_PATCH_VERSION < 3)' \
+        '#error libmp3lame >= 3.98.3 required' \
+        '#endif' \
+        'int main(void) { return (int)lame_set_VBR_quality; }' \
+        | "${cc}" -x c - -o "${out}" -lmp3lame -lm >/dev/null 2>&1; then
+        rm -f "${out}"
+        return 0
+    fi
+    rm -f "${out}"
+    return 1
+}
+
+ffmpeg_source_prompt_install_compile_package() {
+    local reason="$1"
+    local pkg="$2"
+    local reply=""
+
+    echo
+    echo "${reason}"
+    if (( ASSUME_YES == 1 )) || [[ ! -t 0 ]]; then
+        echo "Installing ${pkg}."
+    else
+        echo ">>> Waiting for your answer:"
+        echo -n "Install ${pkg}? [Y/n/q] "
+        read -r -n 1 reply || reply=""
+        echo
+        if prompt_reply_is_quit "${reply}"; then
+            echo "Quitting — no changes made."
+            quit_prompt_with_optional_old_cleanup
+        fi
+        if prompt_reply_is_no "${reply}"; then
+            echo "ERROR: ${pkg} is required to compile this ffmpeg." >&2
+            return 1
+        fi
+    fi
+    apt-get update
+    apt-get install -y "${pkg}"
+    hash -r
+    return 0
+}
+
+ffmpeg_source_ensure_nasm_and_libmp3lame() {
+    local nasm_ver=""
+
+    log_step "Checking nasm and libmp3lame before configure..."
+
+    if ffmpeg_source_host_needs_nasm && ! ffmpeg_source_nasm_usable; then
+        if command -v nasm >/dev/null 2>&1; then
+            nasm_ver="$(nasm -v 2>/dev/null | head -1 || true)"
+            ffmpeg_source_prompt_install_compile_package \
+                "nasm is too old${nasm_ver:+ (${nasm_ver})}. FFmpeg needs nasm >= 2.13." \
+                nasm || return 1
+        else
+            ffmpeg_source_prompt_install_compile_package \
+                "nasm is not installed. FFmpeg needs it to build x86 assembly." \
+                nasm || return 1
+        fi
+        if ! ffmpeg_source_nasm_usable; then
+            echo "ERROR: nasm is still missing or too old after install (need nasm >= 2.13)." >&2
+            return 1
+        fi
+    fi
+
+    if ! ffmpeg_source_libmp3lame_usable; then
+        ffmpeg_source_prompt_install_compile_package \
+            "libmp3lame >= 3.98.3 is not installed (FFmpeg looks for lame/lame.h and -lmp3lame)." \
+            libmp3lame-dev || return 1
+        if ! ffmpeg_source_libmp3lame_usable; then
+            echo "ERROR: libmp3lame >= 3.98.3 is still not usable after installing libmp3lame-dev." >&2
+            echo "  Need header lame/lame.h and a linkable libmp3lame." >&2
+            return 1
+        fi
+    fi
+
+    if ffmpeg_source_host_needs_nasm; then
+        log_note "Compile check: nasm $(nasm -v 2>/dev/null | awk '{print $3}' || echo ok), libmp3lame usable."
+    else
+        log_note "Compile check: libmp3lame usable (nasm not required on $(uname -m))."
+    fi
+    return 0
+}
+
 ffmpeg_source_report_staging_failure() {
     local staging="$1"
     local src_dir="$2"
@@ -4086,6 +4215,8 @@ perform_install_build_from_source() {
         FFMPEG_SOURCE_SKIP_VULKAN=1
         log_note "Vulkan unavailable — configure will omit vulkan."
     fi
+    ffmpeg_source_ensure_nasm_and_libmp3lame || return 1
+
     log_step "Running ffmpeg configure (profile ${SOURCE_PROFILE}, release ${version})..."
 
     if ! ffmpeg_source_run_configure "${staging}"; then
