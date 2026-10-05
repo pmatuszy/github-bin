@@ -1,10 +1,12 @@
 #!/usr/bin/env bash
+# v. 20261005.195200 - libmp3lame probe links lame_set_VBR_quality; lame.h has no LAME_MAJOR_VERSION macro
 # v. 20261005.194500 - source compile: ask to install nasm and libmp3lame-dev when the probe fails
 # v. 20261001.222400 - shared GPU builds install libav*.so into /usr/local/lib
 # v. 20261001.215000 - common build: offer NVENC or VAAPI when that GPU is present
 # v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
 # v. 20260716.231000 - equivalent CLI echo; --dry-run for interactive plan without build
 
+# 2026.10.05 - v. 2.1.27 - libmp3lame check links the library; do not require LAME_MAJOR_VERSION in lame.h
 # 2026.10.05 - v. 2.1.26 - before configure, ask to install nasm and libmp3lame-dev if the compile probe fails
 # 2026.10.01 - v. 2.1.25 - gpu/nvidia/jellyfin: install shared libav libraries into /usr/local/lib and link with rpath
 # 2026.10.01 - v. 2.1.24 - common build asks to compile in NVENC when nvidia-smi works, or VAAPI when /dev/dri is present; -y stays on common
@@ -4038,25 +4040,52 @@ ffmpeg_source_nasm_usable() {
     return 0
 }
 
-# Same link test FFmpeg configure uses: lame/lame.h + lame_set_VBR_quality, version >= 3.98.3.
+# FFmpeg's "libmp3lame >= 3.98.3" message is the require() label. lame.h has no
+# LAME_MAJOR_VERSION macro; the real check is lame/lame.h plus -lmp3lame.
 ffmpeg_source_libmp3lame_usable() {
     local cc="${CC:-gcc}"
-    local out=""
+    local src="" out="" log="" multiarch="" libdir=""
+    local -a cmd=()
 
+    FFMPEG_LAME_PROBE_LOG=""
     command -v "${cc}" >/dev/null 2>&1 || return 1
+    src="$(mktemp --suffix=.c)"
     out="$(mktemp)"
-    if printf '%s\n' \
-        '#include <lame/lame.h>' \
-        '#if !defined(LAME_MAJOR_VERSION) || LAME_MAJOR_VERSION < 3 || (LAME_MAJOR_VERSION == 3 && LAME_MINOR_VERSION < 98) || (LAME_MAJOR_VERSION == 3 && LAME_MINOR_VERSION == 98 && LAME_PATCH_VERSION < 3)' \
-        '#error libmp3lame >= 3.98.3 required' \
-        '#endif' \
-        'int main(void) { return (int)lame_set_VBR_quality; }' \
-        | "${cc}" -x c - -o "${out}" -lmp3lame -lm >/dev/null 2>&1; then
-        rm -f "${out}"
+    log="$(mktemp)"
+    cat > "${src}" <<'EOF'
+#include <lame/lame.h>
+int main(void) {
+    lame_global_flags *g = 0;
+    return lame_set_VBR_quality(g, 2.0f);
+}
+EOF
+    cmd=( "${cc}" "${src}" -o "${out}" )
+    if [[ -f /usr/include/lame/lame.h ]]; then
+        cmd+=( -I/usr/include )
+    fi
+    multiarch="$("${cc}" -print-multiarch 2>/dev/null || true)"
+    if [[ -n "${multiarch}" ]]; then
+        libdir="/usr/lib/${multiarch}"
+        if [[ -e "${libdir}/libmp3lame.so" || -e "${libdir}/libmp3lame.a" ]]; then
+            cmd+=( -L"${libdir}" )
+        fi
+    fi
+    cmd+=( -lmp3lame -lm )
+    if "${cmd[@]}" >"${log}" 2>&1; then
+        rm -f "${src}" "${out}" "${log}"
         return 0
     fi
-    rm -f "${out}"
+    FFMPEG_LAME_PROBE_LOG="${log}"
+    rm -f "${src}" "${out}"
     return 1
+}
+
+ffmpeg_source_show_lame_probe_log() {
+    [[ -n "${FFMPEG_LAME_PROBE_LOG:-}" && -f "${FFMPEG_LAME_PROBE_LOG}" ]] || return 0
+    echo "  Compiler probe:" >&2
+    sed 's/^/  /' "${FFMPEG_LAME_PROBE_LOG}" >&2
+    rm -f "${FFMPEG_LAME_PROBE_LOG}"
+    FFMPEG_LAME_PROBE_LOG=""
 }
 
 ffmpeg_source_prompt_install_compile_package() {
@@ -4115,8 +4144,9 @@ ffmpeg_source_ensure_nasm_and_libmp3lame() {
             "libmp3lame >= 3.98.3 is not installed (FFmpeg looks for lame/lame.h and -lmp3lame)." \
             libmp3lame-dev || return 1
         if ! ffmpeg_source_libmp3lame_usable; then
-            echo "ERROR: libmp3lame >= 3.98.3 is still not usable after installing libmp3lame-dev." >&2
+            echo "ERROR: libmp3lame is still not usable after installing libmp3lame-dev." >&2
             echo "  Need header lame/lame.h and a linkable libmp3lame." >&2
+            ffmpeg_source_show_lame_probe_log
             return 1
         fi
     fi
