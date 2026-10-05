@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261005.170100 - run summary sizes are rounded and marked with a tilde
 # v. 20261005.165800 - run summary is totals, encoder, and input and output sizes
 # v. 20261002.134300 - end of run summary: files, durations, processing, and wait
 # v. 20261002.114100 - status times are in brackets; the keyframe file name is on its own line
@@ -30,6 +31,7 @@
 # v. 20260930.221500 - file prompts: one key, no Enter
 # v. 20260930.220400 - faster viewing copy of a merged video (2, 5, 10, 20, …)
 
+# 2026.10.05 - v. 0.31 - run summary sizes are rounded to a short number and marked with ~
 # 2026.10.05 - v. 0.30 - run summary lists encoded files, GPU or CPU, total durations, and sizes in MB, MiB, GB, and GiB
 # 2026.10.02 - v. 0.29 - end of run summary: files, durations, processing, and wait
 # 2026.10.02 - v. 0.28 - status times are in brackets; the keyframe file name is on its own line
@@ -192,12 +194,21 @@ tl_file_bytes() {
   printf '%s\n' "$n"
 }
 
-# Decimal MB and GB, binary MiB and GiB.
+# Nearest short number, marked approximate. 100 and above are whole; smaller values keep one decimal.
 tl_format_size_summary() {
-  awk -v b="${1:-0}" 'BEGIN {
-    if (b < 0) b = 0
-    printf "%.2f MB | %.2f MiB | %.2f GB | %.2f GiB", b/1000000, b/1048576, b/1000000000, b/1073741824
-  }'
+  awk -v b="${1:-0}" '
+    function approx(x,    n) {
+      if (x < 0) x = 0
+      if (x >= 100) n = sprintf("%.0f", x)
+      else n = sprintf("%.1f", x)
+      sub(/\.0$/, "", n)
+      return "~" n
+    }
+    BEGIN {
+      if (b < 0) b = 0
+      printf "%s MB | %s MiB | %s GB | %s GiB", \
+        approx(b/1000000), approx(b/1048576), approx(b/1000000000), approx(b/1073741824)
+    }'
 }
 
 tl_summary_note_skip() {
