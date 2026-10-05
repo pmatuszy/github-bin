@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261005.083400 - 70mai journeys follow filename time, not the sequence number alone
 # v. 20261005.082600 - 70mai merged names are matched to the NO* chapters still in the folder
 # v. 20261005.081217 - every question starts with the date and time
 # v. 20261005.080400 - run summary sizes also show GB, GiB, and MiB
@@ -37,6 +38,7 @@
 # v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
 # v. 20260805.154826 - after merge: copy GPS/dates from first chapter; FS times via touch -r
 
+# 2026.10.05 - v. 0.15.58 - 70mai clips are ordered by filename time so a restarted sequence does not split a journey
 # 2026.10.05 - v. 0.15.57 - 70mai concat names are not listed as missing chapters when the NO* files are still there
 # 2026.10.05 - v. 0.15.56 - every question starts with the date and time
 # 2026.10.05 - v. 0.15.55 - run summary sizes also show decimal GB and binary GiB and MiB
@@ -196,8 +198,10 @@ Merge behaviour (no options):
     a trailing chapter letter on the time (…_200322a_…) or camera token (…_GOPRO10_BLACKa.MP4).
     Letter runs a,b,c… on the same timestamp merge like part_01 chapters (any file size).
   - Also groups 70mai-style clips NOYYYYMMDD-HHMMSS-NNNNNNX.MP4 (same camera letter)
-    into a continuous journey: sequence number increases by 1 and the filename start
-    times are about one minute apart (default gap 50–90s; PGM_DASHCAM_MAX_GAP_SEC).
+    into a continuous journey: ordered by filename time, sequence number increases
+    by 1, and the filename start times are about one minute apart (default gap
+    50–90s; PGM_DASHCAM_MAX_GAP_SEC). The sequence number restarts each day, so it
+    is not used as the sort key.
     A longer gap starts the next journey. The merged file is named from the first
     and last clip times plus the dashcam label (default 70mai-A510) and camera
     letter, for example 20260926-110627_20260926-130427_70mai-A510_FrontCam_concat.mp4.
@@ -3671,7 +3675,8 @@ dashcam_write_gpx_if_merged() {
 }
 
 # Group 70mai NO* singles into continuous journeys.
-# Same camera letter, sequence +1, filename start gap about one clip (default ≤90s).
+# Same camera letter, ordered by filename time (the sequence number restarts each day).
+# Sequence +1 and a start gap of about one clip (default 50–90s) stay in one journey.
 # A longer gap (parking / power-off) starts a new journey. Front and rear stay apart.
 build_dashcam_journey_groups() {
   local -a kept=() new_groups=() keys_seen=() files=() key_files=() run=()
@@ -3708,8 +3713,8 @@ build_dashcam_journey_groups() {
       while IFS= read -r f || [[ -n "$f" ]]; do
         [[ -z "$f" ]] && continue
         dashcam_parse_basename "${f##*/}" || continue
-        printf '%06d\t%s\n' "$DASHCAM_SEQ" "$f"
-      done <<< "${by_key[$key]}" | LC_ALL=C sort -t $'\t' -k1,1n | cut -f2-
+        printf '%s%s\t%06d\t%s\n' "$DASHCAM_DATE" "$DASHCAM_TIME" "$DASHCAM_SEQ" "$f"
+      done <<< "${by_key[$key]}" | LC_ALL=C sort -t $'\t' -k1,1 -k2,2n | cut -f3-
     )
     run=()
     prev_seq=""
