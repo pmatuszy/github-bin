@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261005.110800 - GPS logs are GPSData??????.txt here and up to three levels above
 # v. 20261005.110200 - merge-all asks once about the temp directory; clocks sit in brackets
 # v. 20261005.083400 - 70mai journeys follow filename time, not the sequence number alone
 # v. 20261005.082600 - 70mai merged names are matched to the NO* chapters still in the folder
@@ -39,6 +40,7 @@
 # v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
 # v. 20260805.154826 - after merge: copy GPS/dates from first chapter; FS times via touch -r
 
+# 2026.10.05 - v. 0.15.60 - GPS logs are GPSData??????.txt in this directory and up to three levels above
 # 2026.10.05 - v. 0.15.59 - [m] asks once whether the remaining merges use the temp directory; status lines put the clock in brackets
 # 2026.10.05 - v. 0.15.58 - 70mai clips are ordered by filename time so a restarted sequence does not split a journey
 # 2026.10.05 - v. 0.15.57 - 70mai concat names are not listed as missing chapters when the NO* files are still there
@@ -208,7 +210,7 @@ Merge behaviour (no options):
     and last clip times plus the dashcam label (default 70mai-A510) and camera
     letter, for example 20260926-110627_20260926-130427_70mai-A510_FrontCam_concat.mp4.
     A GPS track with the same stem and a .gpx extension is written beside it,
-    from GPSData*.txt in this directory or its parent.
+    from GPSData??????.txt in this directory and up to three directories above it.
   - Shows each multi-part group (with file sizes) and asks whether to merge
     (single-key Y/N/A/M/Q, no Enter — like rename.sh). Files in a group, and the
     groups themselves, are ordered oldest to newest (filename YYYYMMDD_HHMMSS when
@@ -237,7 +239,7 @@ Merge behaviour (no options):
   - If the expected _concat output already exists: skip (default), redo merge [r],
     preview merge seams [p], or delete input chapters [d] (keeps merged output).
     A 70mai journey is finished only when a valid .gpx sits beside that file.
-    If the GPX is missing and a GPSData*.txt log is available, the prompt asks
+    If the GPX is missing and a GPSData??????.txt log is available, the prompt asks
     to generate it.
   - Output file per group: <first_chapter_stem>_concat_parts_<first>-<last>.mp4
     (timestamp from the first part; size-split/letter groups use 01-<N> for chapter count,
@@ -3425,12 +3427,20 @@ dashcam_group_output_file() {
     "$start_date" "$start_time" "$end_date" "$end_time" "$label" "$place"
 }
 
-# Every GPSData*.txt in this directory or its parent.
+# Every GPSData??????.txt in this directory, then one, two, and three levels above.
+# Stops early when a parent directory does not exist or the walk has reached the root.
 dashcam_gps_logs() {
-  local d f found=0
+  local rel f found=0 real seen=""
+  local -a dirs=(. .. ../.. ../../..)
   shopt -s nullglob
-  for d in . ..; do
-    for f in "$d"/GPSData*.txt; do
+  for rel in "${dirs[@]}"; do
+    [[ -d "$rel" ]] || break
+    real=$(cd -- "$rel" && pwd -P) || break
+    if printf '%s\n' "$seen" | grep -Fxq -- "$real"; then
+      break
+    fi
+    seen+=$'\n'"$real"
+    for f in "$rel"/GPSData??????.txt; do
       printf '%s\n' "$f"
       found=1
     done
@@ -3440,7 +3450,7 @@ dashcam_gps_logs() {
   return 0
 }
 
-# First GPSData*.txt in this directory or its parent, if any.
+# First GPSData??????.txt in this directory or up to three levels above, if any.
 dashcam_gps_log_hint() {
   dashcam_gps_logs | head -n 1
 }
@@ -3482,7 +3492,7 @@ print_dashcam_gpx_suggestion() {
   if log=$(dashcam_gps_log_hint 2>/dev/null) && [[ -n "$log" ]]; then
     printf '%sGPS log: %s\n' "$indent" "$log"
   else
-    printf '%sGPS log: no GPSData*.txt in this directory or its parent\n' "$indent"
+    printf '%sGPS log: no GPSData??????.txt in this directory or up to three levels above\n' "$indent"
   fi
 }
 
@@ -3496,7 +3506,7 @@ dashcam_local_epoch_tz_corr() {
 }
 
 # Write one GPX for this journey next to the merged MP4.
-# Points come from GPSData*.txt. The log clock is aligned to the NO* filename
+# Points come from GPSData??????.txt. The log clock is aligned to the NO* filename
 # times (the camera clock), then stored in the GPX as UTC.
 dashcam_write_gpx_for_group() {
   local output_mp4="$1"
@@ -3507,7 +3517,7 @@ dashcam_write_gpx_for_group() {
   gpx=$(dashcam_gpx_beside_output "$output_mp4")
   mapfile -t logs < <(dashcam_gps_logs || true)
   if (( ${#logs[@]} == 0 )); then
-    echo "$(pgm_ts) GPS: no GPSData*.txt in . or .. — did not write ${gpx##*/}"
+    echo "$(pgm_ts) GPS: no GPSData??????.txt in this directory or up to three levels above — did not write ${gpx##*/}"
     return 0
   fi
   dashcam_parse_basename "${files[0]##*/}" || return 1
@@ -4813,7 +4823,7 @@ prompt_merge_group_action() {
       esac
     elif (( output_exists )); then
       if (( ! gpx_ok )); then
-        echo "$(pgm_ts) Merged file is here, but the GPX is missing and there is no GPSData*.txt to build it."
+        echo "$(pgm_ts) Merged file is here, but the GPX is missing and there is no GPSData??????.txt to build it."
       fi
       echo "  [N] Skip — keep output and input files (default)"
       echo "  [a] Already merged — don't ask again this run"
