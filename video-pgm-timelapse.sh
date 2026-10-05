@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261005.190200 - keyframe sample menu marks 2 minutes as the default
 # v. 20261005.180900 - decode length defaults to 2 minutes and says so
 # v. 20261005.180600 - run summary size pipes stay in the same column
 # v. 20261005.170100 - run summary sizes are rounded and marked with a tilde
@@ -33,6 +34,7 @@
 # v. 20260930.221500 - file prompts: one key, no Enter
 # v. 20260930.220400 - faster viewing copy of a merged video (2, 5, 10, 20, …)
 
+# 2026.10.05 - v. 0.34 - the keyframe sample question marks 2 minutes as the default
 # 2026.10.05 - v. 0.33 - the picture-scan length question defaults to 2 minutes and marks that choice
 # 2026.10.05 - v. 0.32 - run summary size pipes line up between the input and output lines
 # 2026.10.05 - v. 0.31 - run summary sizes are rounded to a short number and marked with ~
@@ -1783,6 +1785,7 @@ tl_keyframe_span_percent() {
 
 tl_prompt_keyframe_span() {
   local src="$1" choice="" answer="" def=2 min_def pct_def
+  local two_note="" min_note="" pct_note=""
   min_def="${TL_KF_MINUTES:-2}"
   pct_def="${TL_KF_PERCENT:-10}"
   if [[ "${TL_KF_UNIT:-minutes}" == percent ]]; then
@@ -1790,15 +1793,20 @@ tl_prompt_keyframe_span() {
   elif [[ "$min_def" != 2 ]]; then
     def=m
   fi
+  case "$def" in
+    m) min_note=" (default)" ;;
+    p) pct_note=" (default)" ;;
+    *) two_note=" (default)" ;;
+  esac
   echo
   echo "How much of the file should be read for keyframes? [2/m/p/q]"
-  echo "  [2] First 2 minutes"
+  echo "  [2] First 2 minutes${two_note}"
   echo "      From the start of the file. Packet headers only, so pictures"
   echo "      are not decoded."
-  echo "  [m] Minutes"
+  echo "  [m] Minutes${min_note}"
   echo "      Type how many minutes from the start. 5 or 10 crosses more"
   echo "      dashcam clips than 2 does."
-  echo "  [p] Percent"
+  echo "  [p] Percent${pct_note}"
   echo "      Type a percent of this file, again from the start."
   echo "      10 is the first tenth. 100 is the whole file."
   echo "  [q] Quit"
