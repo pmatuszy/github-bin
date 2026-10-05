@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261005.233200 - encode header and progress bar say which file this is
 # v. 20261005.215400 - speed prompt lists every key on the line that waits
 # v. 20261005.191000 - usual timelapse forces a keyframe on each second of the result
 # v. 20261005.190700 - the usual timelapse writes a keyframe every 1 second
@@ -605,7 +606,7 @@ tl_progress_reader() {
         elif [[ -n "$total_sec" ]] && awk -v t="$total_sec" 'BEGIN { exit !(t+0 > 0) }'; then
           frac="$(awk -v e="$out_s" -v t="$total_sec" 'BEGIN { f=e/t; if (f<0) f=0; if (f>1) f=1; printf "%.4f", f }')"
         fi
-        tl_draw_progress "$frac" "$out_s" "$total_sec" "$spd"
+        tl_draw_progress "$frac" "$out_s" "$total_sec" "$spd" "${TL_FILE_LABEL:-}"
         ;;
     esac
   done
@@ -2788,7 +2789,8 @@ for tl_src in "${TL_INPUTS[@]}"; do
   (( tl_i++ )) || true
   tl_dest="$(tl_output_path "$tl_src" "$SPEED")"
   echo
-  echo "=== $(basename -- "$tl_src") ==="
+  TL_FILE_LABEL="file ${tl_i} of ${tl_total}"
+  echo "=== ${TL_FILE_LABEL}  $(basename -- "$tl_src") ==="
   tl_prompt_file_action "$tl_i" "$tl_total" "$tl_dest"
   case "$REPLY" in
     encode)
