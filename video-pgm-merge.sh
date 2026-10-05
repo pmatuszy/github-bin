@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261005.081217 - every question starts with the date and time
 # v. 20261005.080400 - run summary sizes also show GB, GiB, and MiB
 # v. 20261005.074400 - run summary lists processed and deleted files and their sizes
 # v. 20261005.073800 - already-merged groups can be skipped for the rest of the run; delete asks twice
@@ -35,6 +36,7 @@
 # v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
 # v. 20260805.154826 - after merge: copy GPS/dates from first chapter; FS times via touch -r
 
+# 2026.10.05 - v. 0.15.56 - every question starts with the date and time
 # 2026.10.05 - v. 0.15.55 - run summary sizes also show decimal GB and binary GiB and MiB
 # 2026.10.05 - v. 0.15.54 - run summary: processed groups, deleted files, input and output size
 # 2026.10.05 - v. 0.15.53 - already-merged: don't ask again this run; delete confirms with default No
@@ -1198,7 +1200,7 @@ pgm_read_key() {
     REPLY="$default"
     return 0
   fi
-  printf '%s' "$prompt"
+  printf '%s %s' "$(pgm_ts)" "$prompt"
   flush_stdin
   if pgm_read_timeout_is_limited && [[ "$timeout" =~ ^[0-9]+$ ]] && (( timeout > 0 )); then
     read -t "$timeout" -n 1 answer || answer=
@@ -3983,9 +3985,9 @@ prompt_delete_merged_inputs() {
     return 0
   fi
   if [[ "$context" == already_merged ]]; then
-    echo "Delete ${#files[@]} input chapter file(s)? (merged output will be kept)"
+    echo "$(pgm_ts) Delete ${#files[@]} input chapter file(s)? (merged output will be kept)"
   else
-    echo "Delete the ${#files[@]} merged input chapter file(s)?"
+    echo "$(pgm_ts) Delete the ${#files[@]} merged input chapter file(s)?"
   fi
   for f in "${files[@]}"; do
     printf '    %s\n' "${f##*/}"
@@ -4036,7 +4038,7 @@ prompt_confirm_delete_inputs() {
   local -a files=("$@")
   local f choice
   echo
-  echo "Delete these ${#files[@]} input file(s)? The merged file stays. This cannot be undone."
+  echo "$(pgm_ts) Delete these ${#files[@]} input file(s)? The merged file stays. This cannot be undone."
   for f in "${files[@]}"; do
     printf '    %s\n' "${f##*/}"
   done
@@ -4348,7 +4350,7 @@ choose_merge_output_path() {
         ;;
     esac
     flush_stdin
-    printf '%s' "Temp directory: "
+    printf '%s %s' "$(pgm_ts)" "Temp directory: "
     IFS= read -r alt || alt=""
     alt="${alt%/}"
     if [[ -z "$alt" ]]; then
