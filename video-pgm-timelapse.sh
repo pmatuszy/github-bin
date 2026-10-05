@@ -1,4 +1,7 @@
 #!/bin/bash
+# v. 20261005.191000 - usual timelapse forces a keyframe on each second of the result
+# v. 20261005.190700 - the usual timelapse writes a keyframe every 1 second
+# v. 20261005.190500 - the extra-choices question says what plain and the later questions do
 # v. 20261005.190200 - keyframe sample menu marks 2 minutes as the default
 # v. 20261005.180900 - decode length defaults to 2 minutes and says so
 # v. 20261005.180600 - run summary size pipes stay in the same column
@@ -34,6 +37,9 @@
 # v. 20260930.221500 - file prompts: one key, no Enter
 # v. 20260930.220400 - faster viewing copy of a merged video (2, 5, 10, 20, …)
 
+# 2026.10.05 - v. 0.37 - the usual timelapse forces a keyframe on each second when the encoder accepts it
+# 2026.10.05 - v. 0.36 - the usual timelapse writes a keyframe every 1 second of the result
+# 2026.10.05 - v. 0.35 - the extra-choices question describes the usual timelapse and the later questions
 # 2026.10.05 - v. 0.34 - the keyframe sample question marks 2 minutes as the default
 # 2026.10.05 - v. 0.33 - the picture-scan length question defaults to 2 minutes and marks that choice
 # 2026.10.05 - v. 0.32 - run summary size pipes line up between the input and output lines
@@ -117,7 +123,9 @@ Options:
                        A missing or failed encoder falls through to the next.
                        nvenc, x264, and x265 force that one encoder.
   --gop SPEC           default, source, a number of seconds (2s), or frames (30f).
-                       The question defaults to source, the first 2 minutes.
+                       With no --gop, a keyframe is written every 1 second.
+                       Inside the extra choices, the question defaults to source,
+                       the first 2 minutes.
   --keyframe-minutes N Read this many minutes from the start when --gop source.
                        Default 2.
   --keyframe-percent N Read this percent from the start when --gop source.
@@ -670,12 +678,15 @@ tl_gop_fps() {
   fi
 }
 
-# Add a fixed keyframe interval when the menu asked for one.
+# Ask for a keyframe on a fixed interval.
+# Seconds also use -force_key_frames, which hevc_nvenc, h264_nvenc, libx265, and libx264 accept.
+# NVENC is told not to add its own scene-change keyframes, so the gap stays one interval.
 tl_append_gop_args() {
-  local kind="$1" fps="$2" n=""
+  local kind="$1" fps="$2" n="" seconds=""
   case "${TL_GOP_MODE:-default}" in
     seconds)
-      n="$(awk -v f="$fps" -v s="$TL_GOP_SECONDS" 'BEGIN {
+      seconds="${TL_GOP_SECONDS:-1}"
+      n="$(awk -v f="$fps" -v s="$seconds" 'BEGIN {
         n = int(f * s + 0.5)
         if (n < 1) n = 1
         printf "%d", n
@@ -690,7 +701,7 @@ tl_append_gop_args() {
   esac
   case "$kind" in
     nvenc|h264nv)
-      TL_ENC_ARGS+=(-g "$n" -forced-idr 1)
+      TL_ENC_ARGS+=(-g "$n" -forced-idr 1 -no-scenecut 1)
       ;;
     x265)
       TL_ENC_ARGS+=(-x265-params "keyint=${n}:min-keyint=${n}:scenecut=0")
@@ -698,7 +709,13 @@ tl_append_gop_args() {
     x264)
       TL_ENC_ARGS+=(-g "$n" -keyint_min "$n" -sc_threshold 0)
       ;;
+    *)
+      return 0
+      ;;
   esac
+  if [[ "${TL_GOP_MODE:-default}" == seconds && "$seconds" =~ ^[0-9]+$ ]]; then
+    TL_ENC_ARGS+=(-force_key_frames "expr:gte(t,n_forced*${seconds})")
+  fi
 }
 
 tl_encoder_available() {
@@ -1119,16 +1136,21 @@ tl_test_start_key() {
   esac
 }
 
+# Usual timelapse: one keyframe per second of the result, not the encoder interval.
+tl_use_usual_gop() {
+  TL_GOP_KIND=seconds
+  TL_GOP_MODE=seconds
+  TL_GOP_SECONDS=1
+  TL_GOP_EXPLICIT=0
+}
+
 tl_reset_advanced() {
   TL_ADV_ON=0
   TL_PICTURE=plain
   TL_BLEND_BEFORE=1
   TL_BLEND_AFTER=1
   TL_OUT_FPS=30
-  TL_GOP_MODE=default
-  TL_GOP_KIND=default
-  TL_GOP_EXPLICIT=0
-  TL_GOP_SECONDS=1
+  tl_use_usual_gop
   TL_GOP_FRAMES=30
   TL_DO_SCAN=0
   TL_SCAN_DONE=0
@@ -2206,21 +2228,35 @@ tl_prompt_test_clip() {
 
 # Enter on No returns to a plain whole-file encode. Yes keeps the current answers.
 tl_prompt_advanced() {
-  local choice="" akey=n
+  local choice="" akey=n n_note="" y_note=""
   if (( DO_YES )) || (( ! script_is_run_interactively )); then
+    if [[ "${TL_GOP_KIND:-default}" == default && ${TL_GOP_EXPLICIT:-0} -eq 0 ]]; then
+      tl_use_usual_gop
+    fi
     return 0
   fi
   if (( ${TL_ADV_ON:-0} )); then
     akey=y
   fi
+  if [[ "$akey" == y ]]; then
+    y_note=" (default)"
+  else
+    n_note=" (default)"
+  fi
   echo
-  echo "Advanced encoding? [N/y/q]"
-  echo "  [N] Plain"
-  echo "      Every Nth frame, played at 25 fps, for the whole file."
-  echo "  [y] Choose the picture, the keyframes, a source scan,"
-  echo "      and an optional test clip."
+  echo "More choices before encoding? [N/y/q]"
+  echo "  [N] Usual timelapse${n_note}"
+  echo "      Keep every Nth frame and play those frames at 25 fps,"
+  echo "      for the whole file. The encoder follows the source."
+  echo "      A keyframe is written every 1 second of the result."
+  echo "  [y] Choose the details${y_note}"
+  echo "      Picture: plain, a steady frame rate, or a soft average."
+  echo "      Then the encoder, how often a keyframe is written,"
+  echo "      a short decode to check that each frame lasts the same"
+  echo "      time, and whether to encode the whole file or try a"
+  echo "      short piece first."
   echo "  [q] Quit"
-  tl_read_key "Advanced encoding? [N/y/q]: " "$akey"
+  tl_read_key "More choices? [N/y/q]: " "$akey"
   choice="$(tl_choice "$REPLY")"
   if [[ "$choice" == q ]]; then
     tl_quit_script
@@ -2732,6 +2768,9 @@ else
   [[ -n "$SPEED" ]] || SPEED=5
   [[ -n "$TL_DISPLAY" ]] || TL_DISPLAY=normal
   tl_require_encoder
+  if [[ "${TL_GOP_KIND:-default}" == default && ${TL_GOP_EXPLICIT:-0} -eq 0 ]]; then
+    tl_use_usual_gop
+  fi
   if (( DO_YES )); then
     tl_prepare_unattended
   fi
