@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# v. 20261005.200600 - ask to install libsnappy-dev, libtheora-dev, libsoxr-dev, and libtwolame-dev
 # v. 20261005.200000 - ask to install libopenmpt-dev when the nvidia/max configure probe fails
 # v. 20261005.195200 - libmp3lame probe links lame_set_VBR_quality; lame.h has no LAME_MAJOR_VERSION macro
 # v. 20261005.194500 - source compile: ask to install nasm and libmp3lame-dev when the probe fails
@@ -7,6 +8,7 @@
 # v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
 # v. 20260716.231000 - equivalent CLI echo; --dry-run for interactive plan without build
 
+# 2026.10.05 - v. 2.1.29 - before configure, ask to install libsnappy and the other header-checked libs
 # 2026.10.05 - v. 2.1.28 - before configure, ask to install libopenmpt-dev; skip it when declined
 # 2026.10.05 - v. 2.1.27 - libmp3lame check links the library; do not require LAME_MAJOR_VERSION in lame.h
 # 2026.10.05 - v. 2.1.26 - before configure, ask to install nasm and libmp3lame-dev if the compile probe fails
@@ -2555,10 +2557,10 @@ ffmpeg_source_configure_log_first_pkg_failure() {
     local pkg=""
 
     [[ -f ffbuild/config.log ]] || return 1
-    # "libopenmpt >= 0.2.6557 not found using pkg-config" — keep the module name only.
+    # "libsnappy not found" and "libopenmpt >= 0.2.6557 not found using pkg-config".
     pkg="$(
-        grep -m1 -E 'ERROR: .+ not found using pkg-config' ffbuild/config.log 2>/dev/null \
-            | sed -E 's/^ERROR: (.+) not found using pkg-config.*$/\1/' || true
+        grep -m1 -E 'ERROR: .+ not found' ffbuild/config.log 2>/dev/null \
+            | sed -E 's/^ERROR: (.+) not found.*$/\1/' || true
     )"
     pkg="${pkg%% *}"
     [[ -n "${pkg}" ]] || return 1
@@ -2569,7 +2571,7 @@ ffmpeg_source_pkg_failure_is_skippable() {
     local pkg="$1"
 
     case "${pkg}" in
-        x264|libx264|openssl|libssl)
+        x264|libx264|openssl|libssl|libmp3lame|mp3lame)
             return 1
             ;;
         *)
@@ -3301,13 +3303,11 @@ ffmpeg_source_configure_args() {
             ;;
         common|max|gpu|nvidia|jellyfin)
             # lame/theora/twolame/soxr/snappy: ffmpeg configure uses header/link checks, not pkg-config
-            args+=(
-                --enable-libmp3lame
-                --enable-libtheora
-                --enable-libsoxr
-                --enable-libsnappy
-                --enable-libtwolame
-            )
+            args+=( --enable-libmp3lame )
+            ffmpeg_source_add_unless_skipped args libtheora --enable-libtheora
+            ffmpeg_source_add_unless_skipped args libsoxr --enable-libsoxr
+            ffmpeg_source_add_unless_skipped args libsnappy --enable-libsnappy
+            ffmpeg_source_add_unless_skipped args libtwolame --enable-libtwolame
             ffmpeg_source_try_enable_pkg args x264 --enable-libx264 libx264
             ffmpeg_source_try_enable_x265 args
             ffmpeg_source_try_enable_pkg args vpx --enable-libvpx vpx
@@ -4204,6 +4204,123 @@ ffmpeg_source_ensure_libopenmpt() {
     return 0
 }
 
+ffmpeg_source_add_unless_skipped() {
+    local args_var="$1"
+    local name="$2"
+    local flag="$3"
+    local -n _args="$args_var"
+
+    if ffmpeg_source_pkg_is_skipped "${name}"; then
+        return 0
+    fi
+    _args+=( "${flag}" )
+}
+
+# Compile stdin as a C program and link the remaining arguments (-lsnappy, ...).
+ffmpeg_source_c_program_links() {
+    local cc="${CC:-gcc}"
+    local src="" out="" log="" multiarch=""
+    local -a ldflags=("$@")
+
+    FFMPEG_LINK_PROBE_LOG=""
+    command -v "${cc}" >/dev/null 2>&1 || return 1
+    multiarch="$("${cc}" -print-multiarch 2>/dev/null || true)"
+    if [[ -n "${multiarch}" && -d "/usr/lib/${multiarch}" ]]; then
+        ldflags=( -L"/usr/lib/${multiarch}" "${ldflags[@]}" )
+    fi
+    src="$(mktemp --suffix=.c)"
+    out="$(mktemp)"
+    log="$(mktemp)"
+    cat > "${src}"
+    if "${cc}" "${src}" -o "${out}" "${ldflags[@]}" >"${log}" 2>&1; then
+        rm -f "${src}" "${out}" "${log}"
+        return 0
+    fi
+    FFMPEG_LINK_PROBE_LOG="${log}"
+    rm -f "${src}" "${out}"
+    return 1
+}
+
+ffmpeg_source_show_link_probe_log() {
+    [[ -n "${FFMPEG_LINK_PROBE_LOG:-}" && -f "${FFMPEG_LINK_PROBE_LOG}" ]] || return 0
+    echo "  Compiler probe:" >&2
+    sed 's/^/  /' "${FFMPEG_LINK_PROBE_LOG}" >&2
+    rm -f "${FFMPEG_LINK_PROBE_LOG}"
+    FFMPEG_LINK_PROBE_LOG=""
+}
+
+ffmpeg_source_libsnappy_usable() {
+    ffmpeg_source_c_program_links -lsnappy <<'EOF'
+#include <snappy-c.h>
+int main(void) { return snappy_compress == 0; }
+EOF
+}
+
+ffmpeg_source_libtheora_usable() {
+    ffmpeg_source_c_program_links -ltheoraenc -ltheoradec -logg <<'EOF'
+#include <theora/theoraenc.h>
+int main(void) { return th_info_init == 0; }
+EOF
+}
+
+ffmpeg_source_libsoxr_usable() {
+    ffmpeg_source_c_program_links -lsoxr -lm <<'EOF'
+#include <soxr.h>
+int main(void) { return soxr_create == 0; }
+EOF
+}
+
+ffmpeg_source_libtwolame_usable() {
+    ffmpeg_source_c_program_links -ltwolame <<'EOF'
+#include <twolame.h>
+int main(void) { return twolame_init == 0; }
+EOF
+}
+
+ffmpeg_source_profile_wants_header_link_libs() {
+    case "${SOURCE_PROFILE}" in
+        common|max|gpu|nvidia|jellyfin) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+ffmpeg_source_ensure_optional_link_lib() {
+    local label="$1"
+    local skip_name="$2"
+    local apt_pkg="$3"
+    local usable_fn="$4"
+
+    if ffmpeg_source_pkg_is_skipped "${skip_name}"; then
+        return 0
+    fi
+    if "${usable_fn}"; then
+        log_note "Compile check: ${label} usable."
+        return 0
+    fi
+    if ffmpeg_source_prompt_install_compile_package \
+        "${label} is not installed (FFmpeg looks for the header and links the library)." \
+        "${apt_pkg}" 0; then
+        if "${usable_fn}"; then
+            log_note "Compile check: ${label} usable."
+            return 0
+        fi
+        echo "WARNING: ${label} is still not usable after installing ${apt_pkg}. Continuing without it." >&2
+        ffmpeg_source_show_link_probe_log
+    else
+        log_note "${label} disabled — not installed."
+    fi
+    ffmpeg_source_skip_pkg "${skip_name}"
+    return 0
+}
+
+ffmpeg_source_ensure_header_link_libs() {
+    ffmpeg_source_profile_wants_header_link_libs || return 0
+    ffmpeg_source_ensure_optional_link_lib libsnappy libsnappy libsnappy-dev ffmpeg_source_libsnappy_usable
+    ffmpeg_source_ensure_optional_link_lib libtheora libtheora libtheora-dev ffmpeg_source_libtheora_usable
+    ffmpeg_source_ensure_optional_link_lib libsoxr libsoxr libsoxr-dev ffmpeg_source_libsoxr_usable
+    ffmpeg_source_ensure_optional_link_lib libtwolame libtwolame libtwolame-dev ffmpeg_source_libtwolame_usable
+}
+
 ffmpeg_source_ensure_nasm_and_libmp3lame() {
     local nasm_ver=""
 
@@ -4334,6 +4451,7 @@ perform_install_build_from_source() {
     fi
     ffmpeg_source_ensure_nasm_and_libmp3lame || return 1
     ffmpeg_source_ensure_libopenmpt || return 1
+    ffmpeg_source_ensure_header_link_libs || return 1
 
     log_step "Running ffmpeg configure (profile ${SOURCE_PROFILE}, release ${version})..."
 
