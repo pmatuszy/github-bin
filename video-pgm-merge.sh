@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261005.080400 - run summary sizes also show GB, GiB, and MiB
 # v. 20261005.074400 - run summary lists processed and deleted files and their sizes
 # v. 20261005.073800 - already-merged groups can be skipped for the rest of the run; delete asks twice
 # v. 20261005.073000 - temp prompt names the directory of the input files
@@ -34,6 +35,7 @@
 # v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
 # v. 20260805.154826 - after merge: copy GPS/dates from first chapter; FS times via touch -r
 
+# 2026.10.05 - v. 0.15.55 - run summary sizes also show decimal GB and binary GiB and MiB
 # 2026.10.05 - v. 0.15.54 - run summary: processed groups, deleted files, input and output size
 # 2026.10.05 - v. 0.15.53 - already-merged: don't ask again this run; delete confirms with default No
 # 2026.10.05 - v. 0.15.52 - temp prompt and merge lines name the directory of the input files
@@ -1140,8 +1142,8 @@ print_pgm_timing_summary() {
   echo "$(pgm_ts) --- Run summary ---"
   pgm_log_kv "Processed" "${PGM_RUN_GROUPS:-0} group(s), ${PGM_RUN_INPUT_FILES:-0} input file(s)"
   pgm_log_kv "Deleted" "${PGM_RUN_DELETED:-0} input file(s)"
-  pgm_log_kv "Input size" "$(format_bytes_human "${PGM_RUN_INPUT_BYTES:-0}")"
-  pgm_log_kv "Output size" "$(format_bytes_human "${PGM_RUN_OUTPUT_BYTES:-0}")"
+  pgm_log_kv "Input size" "$(format_bytes_run_summary "${PGM_RUN_INPUT_BYTES:-0}")"
+  pgm_log_kv "Output size" "$(format_bytes_run_summary "${PGM_RUN_OUTPUT_BYTES:-0}")"
   echo
   echo "$(pgm_ts) --- Timing ---"
   pgm_log_kv "Started" "$(pgm_format_wall_clock "${PGM_SCRIPT_START_NS}")"
@@ -1225,6 +1227,15 @@ format_bytes_human() {
   local bytes="$1"
   awk -v b="$bytes" 'BEGIN {
     printf "%d bytes | %.2f kB | %.2f MB", b, b/1024.0, b/1048576.0
+  }'
+}
+
+# Run summary: the usual line, plus decimal GB and binary GiB and MiB.
+format_bytes_run_summary() {
+  local bytes="$1"
+  awk -v b="$bytes" 'BEGIN {
+    printf "%d bytes | %.2f kB | %.2f MB | %.2f GB | %.2f GiB | %.2f MiB", \
+      b, b/1024.0, b/1048576.0, b/1e9, b/1073741824.0, b/1048576.0
   }'
 }
 
