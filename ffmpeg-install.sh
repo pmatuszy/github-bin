@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# v. 20261006.124800 - menus: only the default key is a capital letter ([s] skip, [q] quit)
+# v. 20261006.124500 - menus: only the default key is a capital letter ([s] skip, [q] quit)
 # v. 20261005.210500 - do not set the stack with prlimit; that binary segfaults before make starts
 # v. 20261005.205900 - make uses a 64 MiB stack; unlimited stack makes gcc hang with no output
 # v. 20261005.200600 - ask to install libsnappy-dev, libtheora-dev, libsoxr-dev, and libtwolame-dev

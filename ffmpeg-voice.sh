@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# v. 20261006.124800 - menus: only the default key is a capital letter, like the [Y/n/q] prompt lines
+# v. 20261006.124500 - menus: only the default key is a capital letter, like the [Y/n/q] prompt lines
 # v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
 # v. 20260716.163224 - versioning format v. YYYYMMDD.HH24MISS
 # 2026.10.06 - v. 3.55 - colors, mode, scope, transcription, batch, and server-down menus list the non-default keys in lower case ([n] No, [d] Dry-run, [c], [a], [f], [g], [q] Quit); help shows [f] and [g]

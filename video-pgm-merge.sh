@@ -1,5 +1,5 @@
 #!/bin/bash
-# v. 20261006.124800 - temp directory question on an SSD: the default No is the capital N
+# v. 20261006.124500 - temp directory question on an SSD: the default No is the capital N
 # v. 20261006.081500 - 70mai journey name is date_time-date_time_-_-_70mai-A510_camera_concat
 # v. 20261005.143200 - the temp line says not used, writing in this directory
 # v. 20261005.110900 - GPS logs are GPSData??????.txt here and one or two levels above

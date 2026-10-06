@@ -1,5 +1,5 @@
 #!/bin/bash
-# v. 20261006.125200 - menus: the capital key follows the current default, in the key list, on its line, and on the prompt
+# v. 20261006.124500 - menus: the capital key follows the current default, in the key list, on its line, and on the prompt
 # v. 20261005.233600 - after an encoded file, ask for the next file or all remaining
 # v. 20261005.233200 - encode header and progress bar say which file this is
 # v. 20261005.215400 - speed prompt lists every key on the line that waits
