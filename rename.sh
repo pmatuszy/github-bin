@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# v. 20261006.134200 - fix menu default keys: checksum-verify prompt [C] (was wrongly [c] via default_key S); GoPro MP4/WAV [M]
 # v. 20261006.121700 - rename prompt: always show [g] camera auto-approve; [g] enables session (rename this entry when OLD≠NEW)
 # v. 20261006.114200 - Canon DIGITAL IXUS 40 / IXY Digital 50: IMG_####.JPG → YYYYMMDD_HHMMSS_-_-_Canon_IXY_DIGITAL_50 (Date/Time Original)
 # v. 20261006.081000 - treat .gpx as media (common_media_ext_re + is_media_file; 70mai concat tracks get same YYYYMMDD-HHMMSS_… rules as MP4)
@@ -1989,7 +1990,7 @@ user_prompt_ts_prefix() {
     printf '(%s) ' "$(date '+%Y.%m.%d %H:%M:%S')"
 }
 
-# Print one menu key: uppercase letter only when it matches default_key.
+# Print one menu key: uppercase letter only when it matches default_key (the Enter/default choice for this menu).
 rename_menu_key_bracket() {
     local key="$1" default_key="${2:-}"
     key="${key:0:1}"
@@ -7595,10 +7596,10 @@ if [[ -z "$CHECKSUM_VERIFY" ]]; then
         while true; do
             echo
             verbose_question_timestamp "Which checksum-listed files should be hashed to verify them?"
-            echo "  $(rename_menu_key_bracket C S) Changed (default) — only files being renamed or recovered; other lines checked as text"
-            echo "  $(rename_menu_key_bracket N S) None — never hash to verify; rewritten manifest lines checked as text"
-            echo "  $(rename_menu_key_bracket A S) All — hash every listed file, also in lists that need no rename (slow on big lists)"
-            echo "  $(rename_menu_key_bracket Q S) Quit"
+            echo "  $(rename_menu_key_bracket C C) Changed (default) — only files being renamed or recovered; other lines checked as text"
+            echo "  $(rename_menu_key_bracket N C) None — never hash to verify; rewritten manifest lines checked as text"
+            echo "  $(rename_menu_key_bracket A C) All — hash every listed file, also in lists that need no rename (slow on big lists)"
+            echo "  $(rename_menu_key_bracket Q C) Quit"
             echo -n "$(user_prompt_ts_prefix)Choice [C/n/a/q]: "
 
             flush_stdin
@@ -12071,7 +12072,7 @@ gopro_wav_prompt_title_conflict() {
         echo "  WAV: $(basename -- "$wav")" >&2
         echo "       description: $title_wav" >&2
         verbose_question_timestamp "Which description should both files use?" 2
-        echo "  [m] Keep MP4 description (default)" >&2
+        echo "  $(rename_menu_key_bracket M M) Keep MP4 description (default)" >&2
         echo "  [w] Keep WAV description" >&2
         echo "  [n] Skip this pair (leave both names as-is for now)" >&2
         echo "  [q] Quit" >&2
@@ -16715,14 +16716,14 @@ prompt_plain_rename_hash_verify_decision() {
         emit_wrap_labeled_stdout "This file is referenced in hash file(s): " "${CYAN}This file is referenced in hash file(s):${RESET} " "$hash_list"
         echo "The path in those list(s) is always updated (the stored digest is not changed)."
         echo "Also check this file's content against the stored digest before the rename?"
-        echo "  [Y] Yes — verify this file's hash, then rename + update path(s) (default)"
-        echo "  [n] No — rename + update path(s) only; do not verify the digest"
-        echo "  [d] Like [Y] for all remaining files in this directory"
-        echo "  [e] Like [n] for all remaining files in this directory"
-        echo "  [a] Like [Y] for all remaining files this run"
-        echo "  [s] Like [n] for all remaining files this run"
-        echo "  [v] List directory where this path exists"
-        echo "  [q] Quit"
+        echo "  $(rename_menu_key_bracket Y Y) Yes — verify this file's hash, then rename + update path(s) (default)"
+        echo "  $(rename_menu_key_bracket N Y) No — rename + update path(s) only; do not verify the digest"
+        echo "  $(rename_menu_key_bracket D Y) Like [Y] for all remaining files in this directory"
+        echo "  $(rename_menu_key_bracket E Y) Like [n] for all remaining files in this directory"
+        echo "  $(rename_menu_key_bracket A Y) Like [Y] for all remaining files this run"
+        echo "  $(rename_menu_key_bracket S Y) Like [n] for all remaining files this run"
+        print_prompt_view_directory_menu_line
+        echo "  $(rename_menu_key_bracket Q Y) Quit"
         echo -n "$(user_prompt_ts_prefix)Choice [Y/n/d/e/a/s/v/q]: "
 
         flush_stdin
