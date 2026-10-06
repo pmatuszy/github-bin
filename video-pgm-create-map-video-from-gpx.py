@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
-# v. 20261006.123000 - GPS smoothing: drop jumps, average the line, calmer map path, curve between points
+# v. 20261006.122600 - default zoom 17
+# v. 20261006.122200 - GPS smoothing: drop jumps, average the line, calmer map path, curve between points
 # v. 20261006.121000 - speed left out by default; --show-speed draws it
 # v. 20261006.115200 - -v/--version prints the same box as the bash scripts; --history pages in a terminal like them
 # v. 20261006.114917 - -h/--help describes every option, -v/--version, --history
 # v. 20261006.113346 - moving OpenStreetMap map that follows a GPX track, same length as its video
 
+# 2026.10.06 - v. 0.6 - --zoom defaults to 17
 # 2026.10.06 - v. 0.5 - GPS smoothing (on unless --no-smooth): single points faster than --max-jump km/h both in and out are dropped; Gaussian-weighted local line fit (no pull towards denser points) over --smooth s for the line and --smooth-map s for the map centre and arrow direction, never across gaps over 60 s; Catmull-Rom curve with 4 steps per segment unless --no-curve; info prints dropped=
 # 2026.10.06 - v. 0.4 - the speed is drawn only with --show-speed; --no-speed is still accepted
 # 2026.10.06 - v. 0.3 - -v/--version: boxed name and "Version: YYYYMMDD.HHMMSS (YYYY.MM.DD HH:MM:SS)" from the newest # v. line, like print_version_banner; --history: one page at a time in a terminal with "More history? [Y/n/q]", whole list when piped
@@ -37,7 +39,7 @@ import urllib.request
 import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
 
-VERSION = "0.5"
+VERSION = "0.6"
 TILE = 256
 USER_AGENT = ("video-pgm-create-map-video-from-gpx/" + VERSION
               + " (+https://github.com/pmatuszy/github-bin)")
@@ -909,7 +911,7 @@ def main():
                     help="render only this many video seconds (default: to the end)")
     ap.add_argument("--width", type=int, default=1080, help="picture width (default 1080)")
     ap.add_argument("--height", type=int, default=1080, help="picture height (default 1080)")
-    ap.add_argument("--zoom", type=int, default=16, help="map zoom 12-18 (default 16)")
+    ap.add_argument("--zoom", type=int, default=17, help="map zoom 12-18 (default 17)")
     ap.add_argument("--fps", default="25", help="frame rate, a number or a fraction like 30000/1001 (default 25)")
     ap.add_argument("--cache", required=True, help="tile cache directory")
     ap.add_argument("--tile-url", default=DEFAULT_URL,

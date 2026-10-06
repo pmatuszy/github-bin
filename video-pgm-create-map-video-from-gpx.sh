@@ -1,10 +1,12 @@
 #!/bin/bash
-# v. 20261006.123000 - smooth the GPS track (asked at the start, default yes), with a tweak menu (default no)
+# v. 20261006.122600 - default zoom 17 (about 800 m across) instead of 16
+# v. 20261006.122200 - smooth the GPS track (asked at the start, default yes), with a tweak menu (default no)
 # v. 20261006.121000 - no speed on the map by default (the dashcam picture shows it); --show-speed adds it
 # v. 20261006.114923 - help says the drawing helper has its own -h, -v, and --history
 # v. 20261006.114500 - missing ffmpeg, python3, or Pillow: list them and ask whether to install them with apt-get
 # v. 20261006.113823 - moving OpenStreetMap map video from each video's GPX track, same length as the video
 
+# 2026.10.06 - v. 0.6 - default zoom 17: about 800 m across 1080 px instead of 1.6 km; about twice the tiles; --zoom 16 for the old view
 # 2026.10.06 - v. 0.5 - GPS smoothing, on by default: "Smooth the GPS track? [Y/n/q]" at the start, then "Tweak the smoothing? [y/N/q]" for line seconds, map seconds, jump limit, and curved movement; plan shows dropped jumps and a GPS track row; --no-smooth, --smooth, --smooth-map, --max-jump, --no-curve (any of them skips the questions)
 # 2026.10.06 - v. 0.4 - the speed is left off the map by default, as the dashcam picture shows it; --show-speed or [y] in the map choices adds it; --no-speed is still accepted
 # 2026.10.06 - v. 0.3 - help: the drawing helper video-pgm-create-map-video-from-gpx.py has its own -h, -v, and --history
@@ -51,7 +53,7 @@ How the map follows the video
     points shows "no GPS here".
   - The track is smoothed first (see GPS smoothing below): single wild points
     are dropped, the zigzag is averaged out, and the car moves on a curve.
-  - The map is north up and centred on the car. Zoom 16 shows about 1.5 km
+  - The map is north up and centred on the car. Zoom 17 shows about 800 m
     across a 1080 px picture in Poland.
 
 Map tiles
@@ -59,7 +61,8 @@ Map tiles
   tile is downloaded once for all videos and runs. The plan shows how many are
   needed and how many are already there. Two downloads at a time, as the
   OpenStreetMap tile policy asks. The picture says "© OpenStreetMap contributors".
-  A whole 130 km route at zoom 16 and 1080x1080 needs about 2,500 tiles.
+  A whole 130 km route at 1080x1080 needs about 5,000 tiles at zoom 17 and
+  about 2,500 at zoom 16.
 
 Output
   The video name with FrontCam replaced by Map, beside the video:
@@ -81,8 +84,8 @@ Options:
 
  Picture
   --size WxH|N         Picture size. Default 1080x1080. 720 means 720x720.
-  --zoom N             Map zoom, 12 to 18. Default 16. One step out shows twice
-                       as much: 15 for motorways, 17 for towns.
+  --zoom N             Map zoom, 12 to 18. Default 17. One step out shows twice
+                       as much: 16 or 15 for motorways at x5, 18 for towns.
   --fps N|same         Frames per second. Default: same as the video.
                        The length is the same either way.
   --show-speed         Also show the speed (km/h). Off by default: the dashcam
@@ -733,7 +736,7 @@ mv_equivalent_command() {
   (( REDO )) && cmd+=(--redo)
   (( REDO )) && [[ "$OLD_MODE" == delete ]] && cmd+=(--old delete)
   [[ "${MAP_W}x${MAP_H}" != 1080x1080 ]] && cmd+=(--size "${MAP_W}x${MAP_H}")
-  [[ "$ZOOM" != 16 ]] && cmd+=(--zoom "$ZOOM")
+  [[ "$ZOOM" != 17 ]] && cmd+=(--zoom "$ZOOM")
   [[ "$FPS" != same ]] && cmd+=(--fps "$FPS")
   (( SHOW_SPEED )) && cmd+=(--show-speed)
   (( SHOW_CLOCK )) || cmd+=(--no-clock)
@@ -924,8 +927,9 @@ mv_prompt_more() {
   echo
   echo "Map zoom: how close the map is"
   echo "  15   about 3 km across at 1080 px; motorways and long roads"
-  echo "  16   about 1.5 km across; most driving (default)"
-  echo "  17   about 750 m across; towns and side streets"
+  echo "  16   about 1.6 km across; calmer on motorways at x5"
+  echo "  17   about 800 m across; most driving, streets readable (default)"
+  echo "  18   about 400 m across; towns and side streets"
   echo "  Any whole number from 12 to 18. More zoom needs more tiles."
   mv_ask_line "Zoom" "$ZOOM"
   if mv_zoom_ok "$REPLY"; then
@@ -1385,7 +1389,7 @@ DRY_RUN=0
 REDO=0
 OLD_MODE=keep OLD_ASKED=0
 MAP_W=1080 MAP_H=1080
-ZOOM=16
+ZOOM=17
 FPS=same
 SHOW_SPEED=0 SHOW_CLOCK=1
 SMOOTH=1 SMOOTH_LINE=4 SMOOTH_MAP=8 MAX_JUMP=250 CURVE=1 SMOOTH_FROM_CLI=0
