@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261006.225133 - merged file and its .gpx get the first chapter's creation time and file time
 # v. 20261006.124500 - temp directory question on an SSD: the default No is the capital N
 # v. 20261006.081500 - 70mai journey name is date_time-date_time_-_-_70mai-A510_camera_concat
 # v. 20261005.143200 - the temp line says not used, writing in this directory
@@ -44,6 +45,7 @@
 # v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
 # v. 20260805.154826 - after merge: copy GPS/dates from first chapter; FS times via touch -r
 
+# 2026.10.06 - v. 0.15.65 - the merged file and the .gpx beside it get the first chapter's creation time and file time; on a Windows drive the creation time is copied as well as the file time
 # 2026.10.06 - v. 0.15.64 - "Merge via ... for the remaining groups?" on an SSD showed [y/n/q] and [n] No (default); now [y/N/q] and [N], so only the default key is a capital letter
 # 2026.10.06 - v. 0.15.63 - 70mai journey name: YYYYMMDD_HHMMSS-YYYYMMDD_HHMMSS_-_-_70mai-A510_FrontCam_concat.mp4 and the same stem .gpx
 # 2026.10.05 - v. 0.15.62 - temp line uses plain text: not used, writing in this directory
@@ -221,6 +223,7 @@ Merge behaviour (no options):
     An older name 20260926-110627_20260926-130427_70mai-A510_FrontCam_concat.mp4 is still recognized.
     A GPS track with the same stem and a .gpx extension is written beside it,
     from GPSData??????.txt in this directory and one or two directories above it.
+    The merged file and that .gpx get the first chapter's creation time and file time.
   - Shows each multi-part group (with file sizes) and asks whether to merge
     (single-key Y/N/A/M/Q, no Enter — like rename.sh). Files in a group, and the
     groups themselves, are ordered oldest to newest (filename YYYYMMDD_HHMMSS when
@@ -241,7 +244,8 @@ Merge behaviour (no options):
     non-interactive runs write in this directory. Status lines start with the
     clock in brackets, [ YYYY.MM.DD HH:MM:SS ].
   - After a successful merge: copy GPS / create&modify dates / Make/Model from the first
-    chapter (exiftool; filesystem mtime via touch -r), set title from the session label,
+    chapter (exiftool; filesystem mtime via touch -r; Windows creation time from that
+    chapter), set title from the session label,
     then merge-boundary times, size summary, optional per-seam terminal preview (asked one
     seam at a time; [a] skips the remaining seams in this file, [s] never plays seams
     again in this run), and optional deletion of the source chapter files (single-key
@@ -2707,7 +2711,7 @@ group_merge_description_label() {
 # output (selective — not -All:All, which would overwrite Duration etc.). Then set
 # optional title/description via exiftool (ffmpeg remux was stripping GPS). Finally
 # restore filesystem mtime/atime from the first chapter with touch -r.
-# Birth/creation time on Linux is often immutable; FileCreateDate is set when exiftool can.
+# On a Windows drive (/mnt/p and the like) the creation time is copied too.
 apply_merge_output_metadata() {
   local output_file="$1" source_file="$2" label="${3-}"
   local exifloc="" rc=0
@@ -2766,7 +2770,34 @@ apply_merge_output_metadata() {
     pgm_log_kv "Filesystem times" "touch -r failed"
     rc=1
   fi
+  pgm_copy_creation "$source_file" "$output_file" || true
   return "$rc"
+}
+
+# Windows creation time. touch -r copies the file time, not this one.
+pgm_copy_creation() {
+  local src="$1" dest="$2" src_w dest_w
+  [[ -f "$src" && -f "$dest" && "$src" != "$dest" ]] || return 0
+  [[ "$src" == /mnt/?/* && "$dest" == /mnt/?/* ]] || return 0
+  command -v powershell.exe >/dev/null 2>&1 || return 0
+  command -v wslpath >/dev/null 2>&1 || return 0
+  src_w=$(wslpath -w "$src") || return 0
+  dest_w=$(wslpath -w "$dest") || return 0
+  src_w=${src_w//\'/\'\'}
+  dest_w=${dest_w//\'/\'\'}
+  powershell.exe -NoProfile -Command "\$s = Get-Item -LiteralPath '${src_w}'; \$d = Get-Item -LiteralPath '${dest_w}'; \$d.CreationTime = \$s.CreationTime" >/dev/null 2>&1
+}
+
+# File time and Windows creation time of $2, taken from $1. No video tags.
+pgm_stamp_file_time() {
+  local src="$1" dest="$2"
+  [[ -f "$src" && -f "$dest" && "$src" != "$dest" ]] || return 0
+  if touch -r "$src" -- "$dest" 2>/dev/null; then
+    pgm_copy_creation "$src" "$dest" || true
+    pgm_log_kv "Filesystem times" "mtime/atime from ${src##*/}"
+  else
+    pgm_log_kv "Filesystem times" "touch -r failed for ${dest##*/}"
+  fi
 }
 
 group_is_size_split() {
@@ -3747,6 +3778,7 @@ dashcam_write_gpx_for_group() {
   fi
   if mv -f -- "$tmp" "$gpx"; then
     echo "$(pgm_ts) GPS: wrote ${nlog} points → ${gpx}"
+    pgm_stamp_file_time "${files[0]}" "$gpx"
   else
     rm -f -- "$tmp"
     echo "$(pgm_ts) GPS: could not write ${gpx}" >&2

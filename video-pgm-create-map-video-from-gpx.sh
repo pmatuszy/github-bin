@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261006.225133 - the map video gets the source video's creation time and file time
 # v. 20261006.155505 - default zoom back to 16 (about 1.6 km across); 17 was too close
 # v. 20261006.140012 - the tile folder beside the videos is _map-tiles (with a leading underscore)
 # v. 20261006.135236 - tiles are kept in map-tiles/<server> beside the videos; an old ~/.cache tile folder is only reported
@@ -11,6 +12,7 @@
 # v. 20261006.114500 - missing ffmpeg, python3, or Pillow: list them and ask whether to install them with apt-get
 # v. 20261006.113823 - moving OpenStreetMap map video from each video's GPX track, same length as the video
 
+# 2026.10.06 - v. 0.12 - the map video gets the source video's creation time and file time, including the dates stored in the video
 # 2026.10.06 - v. 0.11 - default zoom back to 16 (about 1.6 km across 1080 px); 17 was too close; --zoom 17 still works
 # 2026.10.06 - v. 0.10 - the tile folder beside the videos is renamed from map-tiles to _map-tiles
 # 2026.10.06 - v. 0.9 - default tile cache is map-tiles/<server> in each video's folder instead of ~/.cache/video-pgm-map-tiles; --cache still sets one folder for all; the plan's Tile cache row shows the folder; if ~/.cache/video-pgm-map-tiles from earlier versions exists, its path, tile count, size, and an rm -rf line are printed at the start, and nothing is deleted
@@ -83,6 +85,7 @@ Output
   -test-from-1m00s-len-2m00s. A video that already has its map is listed at the
   start; it is skipped, or rendered again with the old file renamed to
   ..._old-YYYYMMDD_HHMMSS.mp4 (the time it was made) or deleted.
+  The new map gets the source video's creation time and file time.
 
 Options:
   -h, --help           Show this help and exit.
@@ -1326,6 +1329,54 @@ mv_cleanup_partial() {
   PARTIAL=""
 }
 
+mv_find_exiftool() {
+  local cmd
+  if [[ -n "${MV_EXIFTOOL:-}" && -x "$MV_EXIFTOOL" ]]; then
+    printf '%s\n' "$MV_EXIFTOOL"
+    return 0
+  fi
+  if [[ -x /usr/local/bin/exiftool ]]; then
+    MV_EXIFTOOL=/usr/local/bin/exiftool
+  elif cmd=$(command -v exiftool 2>/dev/null); then
+    MV_EXIFTOOL=$cmd
+  else
+    return 1
+  fi
+  printf '%s\n' "$MV_EXIFTOOL"
+}
+
+# Windows creation time. touch -r copies the file time, not this one.
+mv_copy_creation() {
+  local src="$1" dest="$2" src_w dest_w
+  [[ "$src" == /mnt/?/* && "$dest" == /mnt/?/* ]] || return 0
+  command -v powershell.exe >/dev/null 2>&1 || return 0
+  command -v wslpath >/dev/null 2>&1 || return 0
+  src_w=$(wslpath -w "$src") || return 0
+  dest_w=$(wslpath -w "$dest") || return 0
+  src_w=${src_w//\'/\'\'}
+  dest_w=${dest_w//\'/\'\'}
+  powershell.exe -NoProfile -Command "\$s = Get-Item -LiteralPath '${src_w}'; \$d = Get-Item -LiteralPath '${dest_w}'; \$d.CreationTime = \$s.CreationTime" >/dev/null 2>&1
+}
+
+# Give $2 the creation time and the file time of $1, including the dates stored in a video.
+mv_stamp_from() {
+  local src="$1" dest="$2" exif=""
+  [[ -f "$src" && -f "$dest" && "$src" != "$dest" ]] || return 0
+  if exif=$(mv_find_exiftool); then
+    "$exif" -overwrite_original -P -api QuickTimeUTC=1 \
+      -TagsFromFile "$src" \
+      -time:all \
+      -FileModifyDate \
+      -- "$dest" >/dev/null 2>&1 || true
+  fi
+  if touch -r "$src" -- "$dest" 2>/dev/null; then
+    mv_copy_creation "$src" "$dest" || true
+    echo "$(mv_ts) File time: same as $(basename -- "$src")"
+  else
+    echo "$(mv_ts) Could not copy the file time from $(basename -- "$src")" >&2
+  fi
+}
+
 mv_render_job() {
   local n="$1" total="$2" i="$3" out label kind rc tries=0 t0 fps
   local -a kinds=()
@@ -1362,6 +1413,7 @@ mv_render_job() {
       PARTIAL=""
       mv_proc_end
       echo "$(mv_ts) ${C_G}Done${C_0} in $(mv_format_elapsed "$(mv_calc "$(mv_now_ns) - $t0")"): ${out}"
+      mv_stamp_from "${J_VID[$i]}" "$out"
       DONE_LIST+=("$out")
       DONE_SEC+=("$(mv_calc "$(mv_now_ns) - $t0")")
       DONE_VID+=("$(awk -v f="$FROM" -v l="${LENGTH:-0}" -v d="${J_DUR[$i]}" 'BEGIN { e = (l > 0) ? f + l : d; if (e > d) e = d; printf "%.3f", e - f }')")

@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261006.225133 - the picture-in-picture file and its .gpx get the front file's creation time and file time
 # v. 20261006.183857 - older maps sorted with /bin/ls -t, not the shell's ls function (that one adds --full-time and broke the path)
 # v. 20261006.183740 - map list: older maps sorted with stat instead of ls; each map shows length, size, file size, and date, or why it cannot be read
 # v. 20261006.180646 - map video from video-pgm-create-map-video-from-gpx.sh in the top right corner, 540 px wide; asked which map when there are several
@@ -14,6 +15,7 @@
 # v. 20261006.103000 - more choices: inset size, corner, four margins, mirror, crop, border, caption, swap, black gap box, output width
 # v. 20261006.091500 - pair FrontCam and BackCam by filename clock, print the plan, render picture-in-picture
 
+# 2026.10.06 - v. 0.14 - the picture-in-picture file and the .gpx copied beside it get the front file's creation time and file time; the video also gets the dates stored in the front file
 # 2026.10.06 - v. 0.13 - per-route map list: older maps are sorted with /bin/ls -t, not the shell's ls function (that one adds --full-time, so names were not valid paths and showed "0:00, ?x?, made ?"); each line shows length, picture size, file size, and date; a missing or unreadable map says so
 # 2026.10.06 - v. 0.12 - map video: found beside each front file by name (FrontCam -> Map), with older _old-... maps and -test-... tries; the plan shows each route's map or says it has none; when a route has more than one, asked once: newest (default), pick for each route, or no map; placed top right (the other top corner when the rear inset is there), 540 px wide, same margins and border as the inset; "More choices" asks map, size, and corner; --map auto|none|FILE, --no-map, --map-size, --map-corner
 # 2026.10.06 - v. 0.11 - only the default key is a capital letter, in the [..] key list, on its option line, and on the prompt line: yes/no questions ([Y] Yes when yes is the default), old file K/d, length A/1/2/5/c, from B/E/M
@@ -108,6 +110,8 @@ Output
   are skipped unless --redo is given; otherwise you choose: skip, render again,
   or ask for each. A replaced output is kept as ..._old-YYYYMMDD_HHMMSS.mp4
   (or deleted with --old delete).
+  The picture-in-picture file, and the .gpx copied beside it, get the front
+  file's creation time and file time.
 
 Options:
   -h, --help           Show this help and exit.
@@ -2430,6 +2434,58 @@ pip_prompt_plan() {
 
 # --- render -----------------------------------------------------------------
 
+pip_find_exiftool() {
+  local cmd
+  if [[ -n "${PIP_EXIFTOOL:-}" && -x "$PIP_EXIFTOOL" ]]; then
+    printf '%s\n' "$PIP_EXIFTOOL"
+    return 0
+  fi
+  if [[ -x /usr/local/bin/exiftool ]]; then
+    PIP_EXIFTOOL=/usr/local/bin/exiftool
+  elif cmd=$(command -v exiftool 2>/dev/null); then
+    PIP_EXIFTOOL=$cmd
+  else
+    return 1
+  fi
+  printf '%s\n' "$PIP_EXIFTOOL"
+}
+
+# Windows creation time. touch -r copies the file time, not this one.
+pip_copy_creation() {
+  local src="$1" dest="$2" src_w dest_w
+  [[ "$src" == /mnt/?/* && "$dest" == /mnt/?/* ]] || return 0
+  command -v powershell.exe >/dev/null 2>&1 || return 0
+  command -v wslpath >/dev/null 2>&1 || return 0
+  src_w=$(wslpath -w "$src") || return 0
+  dest_w=$(wslpath -w "$dest") || return 0
+  src_w=${src_w//\'/\'\'}
+  dest_w=${dest_w//\'/\'\'}
+  powershell.exe -NoProfile -Command "\$s = Get-Item -LiteralPath '${src_w}'; \$d = Get-Item -LiteralPath '${dest_w}'; \$d.CreationTime = \$s.CreationTime" >/dev/null 2>&1
+}
+
+# Give $2 the creation time and the file time of $1. A video also gets the source dates stored inside it.
+pip_stamp_from() {
+  local src="$1" dest="$2" exif=""
+  [[ -f "$src" && -f "$dest" && "$src" != "$dest" ]] || return 0
+  case "${dest##*.}" in
+    mp4|MP4|mov|MOV)
+      if exif=$(pip_find_exiftool); then
+        "$exif" -overwrite_original -P -api QuickTimeUTC=1 \
+          -TagsFromFile "$src" \
+          -time:all \
+          -FileModifyDate \
+          -- "$dest" >/dev/null 2>&1 || true
+      fi
+      ;;
+  esac
+  if touch -r "$src" -- "$dest" 2>/dev/null; then
+    pip_copy_creation "$src" "$dest" || true
+    echo "$(pip_ts) File time: same as $(basename -- "$src")"
+  else
+    echo "$(pip_ts) Could not copy the file time from $(basename -- "$src")" >&2
+  fi
+}
+
 pip_render_route() {
   local n="$1" total="$2" f="$3" out label kind rc tries=0 start_s end_s gpx_out total_out route_t0 in_b in_n b
   local -a kinds=()
@@ -2472,10 +2528,12 @@ pip_render_route() {
     if (( rc == 0 )) && [[ -s "$PARTIAL" ]] && mv -f -- "$PARTIAL" "$out"; then
       PARTIAL=""
       echo "$(pip_ts) ${C_G}Done${C_0} in $(pip_clock $(( end_s - start_s ))): ${out}"
+      pip_stamp_from "${F_PATH[$f]}" "$out"
       if [[ -n "${ROUTE_GPX[$f]}" ]]; then
         gpx_out="${out%.mp4}.gpx"
         if cp -f -- "${ROUTE_GPX[$f]}" "$gpx_out"; then
           echo "$(pip_ts) GPS track: ${gpx_out}"
+          pip_stamp_from "${F_PATH[$f]}" "$gpx_out"
         fi
       fi
       pip_proc_end

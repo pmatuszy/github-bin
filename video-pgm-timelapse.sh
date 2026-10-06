@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261006.225133 - the sped-up file gets the source video's creation time and file time
 # v. 20261006.124500 - menus: the capital key follows the current default, in the key list, on its line, and on the prompt
 # v. 20261005.233600 - after an encoded file, ask for the next file or all remaining
 # v. 20261005.233200 - encode header and progress bar say which file this is
@@ -42,6 +43,7 @@
 # v. 20260930.220400 - faster viewing copy of a merged video (2, 5, 10, 20, …)
 
 # 2026.10.06 - v. 0.39 - picture, encoder, keyframe sample and spacing, scan, decode length, short try, clip start, more choices, display, and the speed menu's custom key: only the current default is a capital letter and marked (default); keyframe spacing no longer always marks [S] as the default
+# 2026.10.06 - v. 0.39 - the sped-up file gets the source video's creation time and file time; the name still uses the time the encode starts
 # 2026.10.05 - v. 0.38 - after an encoded file, ask whether to stop, do the next file, or encode the rest
 # 2026.10.05 - v. 0.37 - the usual timelapse forces a keyframe on each second when the encoder accepts it
 # 2026.10.05 - v. 0.36 - the usual timelapse writes a keyframe every 1 second of the result
@@ -101,7 +103,8 @@ Usage: $(basename "$0") [-h|--help] [-v|--version] [--history]
 
 Write a faster copy beside each video. A 10× copy of a two-hour drive is about
 twelve minutes. The original file is not changed. The copy is named
-stem_xN_YYYYMMDD-HHMMSS.mp4, using the time the encode starts. A short try is
+stem_xN_YYYYMMDD-HHMMSS.mp4, using the time the encode starts. The file itself
+gets the source video's creation time and file time. A short try is
 stem_xN_test-1m-at20_YYYYMMDD-HHMMSS.mp4.
 
 With no FILE or DIR, use the current directory. If that directory contains
@@ -916,6 +919,54 @@ tl_cleanup_partial() {
 # Encode one file at SPEED into its _xN sibling. Uses TL_ENC_ARGS.
 # On failure removes the partial file and returns 1.
 # total_sec is the expected output length (input duration / speed).
+tl_find_exiftool() {
+  local cmd
+  if [[ -n "${TL_EXIFTOOL:-}" && -x "$TL_EXIFTOOL" ]]; then
+    printf '%s\n' "$TL_EXIFTOOL"
+    return 0
+  fi
+  if [[ -x /usr/local/bin/exiftool ]]; then
+    TL_EXIFTOOL=/usr/local/bin/exiftool
+  elif cmd=$(command -v exiftool 2>/dev/null); then
+    TL_EXIFTOOL=$cmd
+  else
+    return 1
+  fi
+  printf '%s\n' "$TL_EXIFTOOL"
+}
+
+# Windows creation time. touch -r copies the file time, not this one.
+tl_copy_creation() {
+  local src="$1" dest="$2" src_w dest_w
+  [[ "$src" == /mnt/?/* && "$dest" == /mnt/?/* ]] || return 0
+  command -v powershell.exe >/dev/null 2>&1 || return 0
+  command -v wslpath >/dev/null 2>&1 || return 0
+  src_w=$(wslpath -w "$src") || return 0
+  dest_w=$(wslpath -w "$dest") || return 0
+  src_w=${src_w//\'/\'\'}
+  dest_w=${dest_w//\'/\'\'}
+  powershell.exe -NoProfile -Command "\$s = Get-Item -LiteralPath '${src_w}'; \$d = Get-Item -LiteralPath '${dest_w}'; \$d.CreationTime = \$s.CreationTime" >/dev/null 2>&1
+}
+
+# Give $2 the creation time and the file time of $1, including the dates stored in the video.
+tl_stamp_from() {
+  local src="$1" dest="$2" exif=""
+  [[ -f "$src" && -f "$dest" && "$src" != "$dest" ]] || return 0
+  if exif=$(tl_find_exiftool); then
+    "$exif" -overwrite_original -P -api QuickTimeUTC=1 \
+      -TagsFromFile "$src" \
+      -time:all \
+      -FileModifyDate \
+      -- "$dest" >/dev/null 2>&1 || true
+  fi
+  if touch -r "$src" -- "$dest" 2>/dev/null; then
+    tl_copy_creation "$src" "$dest" || true
+    echo "$(tl_ts) File time: same as $(basename -- "$src")"
+  else
+    echo "$(tl_ts) Could not copy the file time from $(basename -- "$src")" >&2
+  fi
+}
+
 tl_run_ffmpeg() {
   local src="$1" dest="$2" speed="$3" total_sec="${4:-}"
   local vfilter partial rc
@@ -961,6 +1012,7 @@ tl_run_ffmpeg() {
     return 1
   fi
   TL_PARTIAL=""
+  tl_stamp_from "$src" "$dest"
   return 0
 }
 

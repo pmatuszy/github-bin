@@ -1,8 +1,10 @@
 #!/bin/bash
+# v. 20261006.225133 - the .gpx gets the video's creation time and file time
 # v. 20261006.221403 - the GPS is read from the gpmd stream, not from the video track named GoPro
 # v. 20261006.212111 - reading the videos shows a progress bar, time left and the arrival clock
 # v. 20261006.210617 - GoPro GPS metadata written as a .gpx file beside each video
 
+# 2026.10.06 - v. 0.4 - the new .gpx gets the video's creation time and file time
 # 2026.10.06 - v. 0.3 - a video track named GoPro was read instead of the metadata stream, so files with a GPS fix were reported as having none
 # 2026.10.06 - v. 0.2 - while the videos are read, a progress bar shows how many are done, the time left and the arrival clock
 # 2026.10.06 - v. 0.1 - initial release: find GoPro videos, read the GPS metadata stream (GPS5 and GPS9), write a .gpx with the same name beside the video; the video is not changed; an existing .gpx is skipped or written again, and the old file is kept as _old-YYYYMMDD_HHMMSS or deleted
@@ -26,7 +28,8 @@ Usage: $(basename "$0") [-h|--help] [-v|--version] [--history]
 
 Read the GPS track inside each GoPro video and write a .gpx file beside it:
   GX010123.mp4  ->  GX010123.gpx
-The video is not changed. With no FILE or DIR, the current directory is used.
+The video is not changed. The new .gpx gets that video's creation time and
+file time. With no FILE or DIR, the current directory is used.
 A directory's videos are the .mp4 and .mov files in that directory, not in
 folders inside it. Windows paths such as P:\\video\\trip are read as
 /mnt/p/video/trip.
@@ -605,6 +608,31 @@ gg_prompt_plan() {
   esac
 }
 
+# Windows creation time. touch -r copies the file time, not this one.
+gg_copy_creation() {
+  local src="$1" dest="$2" src_w dest_w
+  [[ "$src" == /mnt/?/* && "$dest" == /mnt/?/* ]] || return 0
+  command -v powershell.exe >/dev/null 2>&1 || return 0
+  command -v wslpath >/dev/null 2>&1 || return 0
+  src_w=$(wslpath -w "$src") || return 0
+  dest_w=$(wslpath -w "$dest") || return 0
+  src_w=${src_w//\'/\'\'}
+  dest_w=${dest_w//\'/\'\'}
+  powershell.exe -NoProfile -Command "\$s = Get-Item -LiteralPath '${src_w}'; \$d = Get-Item -LiteralPath '${dest_w}'; \$d.CreationTime = \$s.CreationTime" >/dev/null 2>&1
+}
+
+# Give $2 the creation time and the file time of $1.
+gg_stamp_from() {
+  local src="$1" dest="$2"
+  [[ -f "$src" && -f "$dest" && "$src" != "$dest" ]] || return 0
+  if touch -r "$src" -- "$dest" 2>/dev/null; then
+    gg_copy_creation "$src" "$dest" || true
+    echo "$(gg_ts) File time: same as $(basename -- "$src")"
+  else
+    echo "$(gg_ts) Could not copy the file time from $(basename -- "$src")" >&2
+  fi
+}
+
 gg_write_one() {
   local i="$1" out="${V_OUT[$1]}" partial line rc=0
   partial="${out}.partial.$$"
@@ -625,6 +653,7 @@ gg_write_one() {
   if mv -f -- "$partial" "$out"; then
     echo "$(gg_ts) ${C_G}Wrote${C_0} ${out}"
     echo "    ${line}"
+    gg_stamp_from "${V_PATH[$i]}" "$out"
     DONE_LIST+=("$out")
     return 0
   fi
