@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# v. 20261006.155505 - --zoom defaults to 16 again
+# v. 20261006.140012 - help example uses the _map-tiles folder name
 # v. 20261006.135236 - help example uses a map-tiles folder beside the videos
 # v. 20261006.123500 - --track-up: the map turns so the road ahead is up, with a small compass
 # v. 20261006.122600 - default zoom 17
@@ -936,7 +938,7 @@ everyday options.
 
 Example:
   %(prog)s info --gpx route.gpx --start-epoch 1790413587 --speed 5 \\
-      --duration 1460.6 --cache map-tiles/tile.openstreetmap.org
+      --duration 1460.6 --cache _map-tiles/tile.openstreetmap.org
 
 Exit codes: 0 ok, 2 track problem, 3 ffmpeg failed, 4 some tiles failed to
 download, 130 interrupted.
@@ -972,7 +974,7 @@ def main():
                     help="render only this many video seconds (default: to the end)")
     ap.add_argument("--width", type=int, default=1080, help="picture width (default 1080)")
     ap.add_argument("--height", type=int, default=1080, help="picture height (default 1080)")
-    ap.add_argument("--zoom", type=int, default=17, help="map zoom 12-18 (default 17)")
+    ap.add_argument("--zoom", type=int, default=16, help="map zoom 12-18 (default 16)")
     ap.add_argument("--fps", default="25", help="frame rate, a number or a fraction like 30000/1001 (default 25)")
     ap.add_argument("--cache", required=True, help="tile cache directory")
     ap.add_argument("--tile-url", default=DEFAULT_URL,
