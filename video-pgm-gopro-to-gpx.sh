@@ -1,7 +1,9 @@
 #!/bin/bash
+# v. 20261006.221403 - the GPS is read from the gpmd stream, not from the video track named GoPro
 # v. 20261006.212111 - reading the videos shows a progress bar, time left and the arrival clock
 # v. 20261006.210617 - GoPro GPS metadata written as a .gpx file beside each video
 
+# 2026.10.06 - v. 0.3 - a video track named GoPro was read instead of the metadata stream, so files with a GPS fix were reported as having none
 # 2026.10.06 - v. 0.2 - while the videos are read, a progress bar shows how many are done, the time left and the arrival clock
 # 2026.10.06 - v. 0.1 - initial release: find GoPro videos, read the GPS metadata stream (GPS5 and GPS9), write a .gpx with the same name beside the video; the video is not changed; an existing .gpx is skipped or written again, and the old file is kept as _old-YYYYMMDD_HHMMSS or deleted
 #

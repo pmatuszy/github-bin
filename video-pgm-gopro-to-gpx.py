@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
+# v. 20261006.221403 - read the gpmd metadata stream, not the video track whose name also says GoPro
 # v. 20261006.210617 - read the GoPro GPS stream (GPS5 and GPS9) and write a GPX track
 
+# 2026.10.06 - v. 0.2 - the GPS is in the stream tagged gpmd (handler GoPro MET). A video or audio track named GoPro was being read instead, so a file with a real fix looked like it had none
 # 2026.10.06 - v. 0.1 - initial release: info and write; GPS5 (older cameras, time from GPSU) and GPS9 (time in each sample, days since 2000); points without a fix are left out
 """GPX track from a GoPro video, for video-pgm-gopro-to-gpx.sh.
 
@@ -24,7 +26,7 @@ import subprocess
 import sys
 from datetime import datetime, timedelta, timezone
 
-VERSION = "0.1"
+VERSION = "0.2"
 VERSION_LINE = re.compile(r"^# v\. (\d{8})\.(\d{6}) - (.*)$")
 HISTORY_LINE = re.compile(r"^# (\d{4}\.\d{2}\.\d{2} - v\. \S+ - .*)$")
 
@@ -367,15 +369,18 @@ def gopro_stream_index(path):
         data = json.loads(probe.stdout.decode("utf-8", "replace") or "{}")
     except json.JSONDecodeError as exc:
         raise RuntimeError("ffprobe did not return stream info") from exc
-    found = None
+    met = None
     for stream in data.get("streams") or []:
         tag = (stream.get("codec_tag_string") or "").lower()
-        handler = ((stream.get("tags") or {}).get("handler_name") or "")
-        if tag == "gpmd" or "gopro" in handler.lower():
-            found = stream.get("index")
-            if "gopro" in handler.lower():
-                return found
-    return found
+        handler = ((stream.get("tags") or {}).get("handler_name") or "").lower()
+        index = stream.get("index")
+        # The picture and the sound are also named GoPro (GoPro H.265, GoPro AAC).
+        # The track is only the metadata stream, tagged gpmd, handler GoPro MET.
+        if tag == "gpmd":
+            return index
+        if met is None and "gopro" in handler and "met" in handler:
+            met = index
+    return met
 
 
 def read_gpmf(path):
