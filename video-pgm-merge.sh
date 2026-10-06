@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261006.124800 - temp directory question on an SSD: the default No is the capital N
 # v. 20261006.081500 - 70mai journey name is date_time-date_time_-_-_70mai-A510_camera_concat
 # v. 20261005.143200 - the temp line says not used, writing in this directory
 # v. 20261005.110900 - GPS logs are GPSData??????.txt here and one or two levels above
@@ -43,6 +44,7 @@
 # v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
 # v. 20260805.154826 - after merge: copy GPS/dates from first chapter; FS times via touch -r
 
+# 2026.10.06 - v. 0.15.64 - "Merge via ... for the remaining groups?" on an SSD showed [y/n/q] and [n] No (default); now [y/N/q] and [N], so only the default key is a capital letter
 # 2026.10.06 - v. 0.15.63 - 70mai journey name: YYYYMMDD_HHMMSS-YYYYMMDD_HHMMSS_-_-_70mai-A510_FrontCam_concat.mp4 and the same stem .gpx
 # 2026.10.05 - v. 0.15.62 - temp line uses plain text: not used, writing in this directory
 # 2026.10.05 - v. 0.15.61 - GPS logs are GPSData??????.txt in this directory and one or two levels above
@@ -4517,9 +4519,9 @@ prompt_merge_all_temp_dir() {
   echo "$(pgm_ts) The same choice is used for every remaining group in this run."
   if [[ "$SOURCE_DISK_KIND" == ssd ]]; then
     default_key=n
-    prompt_key="y/n/q"
+    prompt_key="y/N/q"
     echo "  [y] Yes — merge in ${tdir}, then move each finished file back here"
-    echo "  [n] No — write the outputs in this directory (default)"
+    echo "  [N] No — write the outputs in this directory (default)"
   else
     default_key=y
     prompt_key="Y/n/q"

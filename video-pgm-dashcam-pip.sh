@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261006.124200 - the default key is the capital one, in the key list and on each option line
 # v. 20261006.120000 - already rendered routes: listed at the start, skip or render again, old file kept with its date and time or deleted
 # v. 20261006.114500 - render only part of each route: any length, counted from the beginning, from the end, or the middle
 # v. 20261006.113900 - typed answers list [Enter] and [q] like the one-key questions, and every prompt line shows q
@@ -10,6 +11,7 @@
 # v. 20261006.103000 - more choices: inset size, corner, four margins, mirror, crop, border, caption, swap, black gap box, output width
 # v. 20261006.091500 - pair FrontCam and BackCam by filename clock, print the plan, render picture-in-picture
 
+# 2026.10.06 - v. 0.11 - only the default key is a capital letter, in the [..] key list, on its option line, and on the prompt line: yes/no questions ([Y] Yes when yes is the default), old file K/d, length A/1/2/5/c, from B/E/M
 # 2026.10.06 - v. 0.10 - routes with an output are listed at the start; after [Y] you choose skip, render again, or ask for each; route by route asks for each existing route; the old file is renamed _old-YYYYMMDD_HHMMSS (its own time) or deleted, only after the new render succeeds; --old keep|delete; [r] removed
 # 2026.10.06 - v. 0.9 - [t] renders a part of each route: all, 1, 2, 5 minutes or a custom length, from the beginning, back from the end, or the middle; --from-end and --middle; the plan shows each route's exact part
 # 2026.10.06 - v. 0.8 - every question offers q to quit, shown both in its key list and on the prompt line
@@ -784,14 +786,14 @@ pip_prompt_old() {
   OLD_ASKED=1
   [[ "$OLD_MODE" == delete ]] && key=d
   echo
-  echo "What should happen to the old file when the new one is done? [K/d/q]"
+  echo "What should happen to the old file when the new one is done? [$(pip_keys "$key" k d q)]"
   echo "  The new video is written to a .partial file first; the old file is"
   echo "  only touched after the new one has finished without errors."
-  echo "  [K] Keep it, renamed with the date and time it was made$(pip_cur_mark k "$key")"
+  echo "  [$(pip_k k "$key")] Keep it, renamed with the date and time it was made$(pip_cur_mark k "$key")"
   echo "      For example ..._old-20261005_221400.mp4 beside the new file."
-  echo "  [d] Delete it$(pip_cur_mark d "$key")"
+  echo "  [$(pip_k d "$key")] Delete it$(pip_cur_mark d "$key")"
   echo "  [q] Quit the script, render nothing more"
-  pip_read_key "Old file [K/d/q]: " "$key"
+  pip_read_key "Old file [$(pip_keys "$key" k d q)]: " "$key"
   case "$REPLY" in
     k) OLD_MODE=keep ;;
     d) OLD_MODE=delete ;;
@@ -1644,14 +1646,13 @@ pip_ask_line() {
 
 # Question, current 0/1, what yes means, what no means.
 pip_yes_no() {
-  local question="$1" cur="$2" yes_text="$3" no_text="$4" def=n keys="y/N/q" ydef="" ndef=" (current, default)"
-  if (( cur )); then
-    def=y keys="Y/n/q" ydef=" (current, default)" ndef=""
-  fi
+  local question="$1" cur="$2" yes_text="$3" no_text="$4" def=n keys
+  (( cur )) && def=y
+  keys="$(pip_keys "$def" y n q)"
   printf '%s [%s]\n' "$question" "$keys"
-  echo "  [y] Yes${ydef}"
+  echo "  [$(pip_k y "$def")] Yes$(pip_cur_mark y "$def")"
   echo "      ${yes_text}"
-  echo "  [n] No${ndef}"
+  echo "  [$(pip_k n "$def")] No$(pip_cur_mark n "$def")"
   echo "      ${no_text}"
   echo "  [q] Quit the script, render nothing more"
   pip_read_key "${question%\?} [${keys}]: " "$def"
@@ -1834,6 +1835,25 @@ pip_prompt_more_first() {
 }
 
 # " (current, default)" when the two keys match.
+# The key, capital when it is the default: pip_k y y -> Y, pip_k n y -> n.
+pip_k() {
+  if [[ "$1" == "$2" ]]; then
+    printf '%s' "${1^^}"
+  else
+    printf '%s' "$1"
+  fi
+}
+
+# Keys for a prompt line with the default in capitals: pip_keys n y n q -> y/N/q.
+pip_keys() {
+  local def="$1" k out=""
+  shift
+  for k in "$@"; do
+    out+="${out:+/}$(pip_k "$k" "$def")"
+  done
+  printf '%s' "$out"
+}
+
 pip_cur_mark() {
   [[ "$1" == "$2" ]] && printf ' (current, default)'
   return 0
@@ -1851,16 +1871,16 @@ pip_prompt_test() {
     esac
   fi
   echo
-  echo "How much of each route should be rendered? [A/1/2/5/c/q]"
+  echo "How much of each route should be rendered? [$(pip_keys "$key" a 1 2 5 c q)]"
   echo "  A part is saved under its own -test-… name, so a full render is kept."
-  echo "  [A] All of it, start to end$(pip_cur_mark a "$key")"
+  echo "  [$(pip_k a "$key")] All of it, start to end$(pip_cur_mark a "$key")"
   echo "  [1] 1 minute$(pip_cur_mark 1 "$key")"
   echo "  [2] 2 minutes$(pip_cur_mark 2 "$key")"
   echo "  [5] 5 minutes$(pip_cur_mark 5 "$key")"
-  echo "  [c] Custom length, typed next$(pip_cur_mark c "$key")"
+  echo "  [$(pip_k c "$key")] Custom length, typed next$(pip_cur_mark c "$key")"
   echo "      For example 0:30, 10:00, 1:02:00, or 90 for seconds."
   echo "  [q] Quit the script, render nothing more"
-  pip_read_key "Length [A/1/2/5/c/q]: " "$key"
+  pip_read_key "Length [$(pip_keys "$key" a 1 2 5 c q)]: " "$key"
   case "$REPLY" in
     a) LENGTH="" FROM=0 FROM_MODE=begin; pip_update_test; return 0 ;;
     1) LENGTH=60 ;;
@@ -1885,15 +1905,15 @@ pip_prompt_test() {
 
   case "$FROM_MODE" in end) key=e ;; middle) key=m ;; *) key=b ;; esac
   echo
-  echo "Where should that part be taken from? [B/E/M/q]"
-  echo "  [B] Counted from the beginning$(pip_cur_mark b "$key")"
+  echo "Where should that part be taken from? [$(pip_keys "$key" b e m q)]"
+  echo "  [$(pip_k b "$key")] Counted from the beginning$(pip_cur_mark b "$key")"
   echo "      0:00 starts at the very start."
-  echo "  [E] Counted back from the end$(pip_cur_mark e "$key")"
+  echo "  [$(pip_k e "$key")] Counted back from the end$(pip_cur_mark e "$key")"
   echo "      0:00 means the last $(pip_clock "$LENGTH") of each route."
-  echo "  [M] The middle of each route$(pip_cur_mark m "$key")"
+  echo "  [$(pip_k m "$key")] The middle of each route$(pip_cur_mark m "$key")"
   echo "      No offset is asked."
   echo "  [q] Quit the script, render nothing more"
-  pip_read_key "From [B/E/M/q]: " "$key"
+  pip_read_key "From [$(pip_keys "$key" b e m q)]: " "$key"
   case "$REPLY" in
     b) [[ "$FROM_MODE" != begin ]] && FROM=0; FROM_MODE=begin ;;
     e) [[ "$FROM_MODE" != end ]] && FROM=0; FROM_MODE=end ;;

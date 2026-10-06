@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# v. 20261006.124800 - menus: only the default key is a capital letter ([s] skip, [q] quit)
 # v. 20261005.210500 - do not set the stack with prlimit; that binary segfaults before make starts
 # v. 20261005.205900 - make uses a 64 MiB stack; unlimited stack makes gcc hang with no output
 # v. 20261005.200600 - ask to install libsnappy-dev, libtheora-dev, libsoxr-dev, and libtwolame-dev
@@ -10,6 +11,7 @@
 # v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
 # v. 20260716.231000 - equivalent CLI echo; --dry-run for interactive plan without build
 
+# 2026.10.06 - v. 2.1.32 - running-ffmpeg and profile menus list [s] and [q] in lower case like their [F/s/q], [K/s/q], and [1/../q] prompts; [K] is marked (default)
 # 2026.10.05 - v. 2.1.31 - prlimit must not set RLIMIT_STACK; it segfaults on Ubuntu 20.04 before exec
 # 2026.10.05 - v. 2.1.30 - cap make stack at 64 MiB so gcc does not hang when the stack is unlimited
 # 2026.10.05 - v. 2.1.29 - before configure, ask to install libsnappy and the other header-checked libs
@@ -1605,8 +1607,8 @@ prompt_force_kill_or_skip_running_ffmpeg() {
         echo "Some ffmpeg/ffprobe process(es) are still running after SIGTERM."
         print_ffmpeg_running_process_list
         echo "  [F] Force kill (SIGKILL) and wait"
-        echo "  [S] Skip — show versions, continue without stopping jobs"
-        echo "  [Q] Quit"
+        echo "  [s] Skip — show versions, continue without stopping jobs"
+        echo "  [q] Quit"
         echo ">>> Waiting for your answer:"
         echo -n "Choice [F/s/q]: "
         read -r -n 1 reply || reply=""
@@ -1653,9 +1655,9 @@ handle_running_ffmpeg_interactive() {
 
     while ffmpeg_is_running; do
         print_ffmpeg_running_process_list
-        echo "  [K] Kill gracefully (SIGTERM) and wait for processes to exit"
-        echo "  [S] Skip — show running vs installable versions, continue without stopping jobs"
-        echo "  [Q] Quit"
+        echo "  [K] Kill gracefully (SIGTERM) and wait for processes to exit (default)"
+        echo "  [s] Skip — show running vs installable versions, continue without stopping jobs"
+        echo "  [q] Quit"
         echo ">>> Waiting for your answer:"
         echo -n "Choice [K/s/q] (Enter=kill gracefully): "
         read -r -n 1 reply || reply=""
@@ -2392,7 +2394,7 @@ prompt_source_build_profile_menu() {
         echo "  [4] gpu      — common + VAAPI (Intel/AMD; shared libs)"
         echo "  [5] nvidia   — common + NVENC/CUDA (NVIDIA; shared libs)"
         echo "  [6] jellyfin — Jellyfin-like shared build (VAAPI+NVENC+FDK-AAC)"
-        echo "  [Q] Quit"
+        echo "  [q] Quit"
         echo ">>> Waiting for your answer:"
         echo -n "Choice [1/2/3/4/5/6/q] (Enter=common): "
         read -r -n 1 reply || reply=""

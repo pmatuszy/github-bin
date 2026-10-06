@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
+# v. 20261006.124800 - menus: only the default key is a capital letter, like the [Y/n/q] prompt lines
 # v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
 # v. 20260716.163224 - versioning format v. YYYYMMDD.HH24MISS
+# 2026.10.06 - v. 3.55 - colors, mode, scope, transcription, batch, and server-down menus list the non-default keys in lower case ([n] No, [d] Dry-run, [c], [a], [f], [g], [q] Quit); help shows [f] and [g]
 # 2026.06.11 - v. 3.54 - sha512 entries: relative paths without ./ prefix (rename.sh compatible)
 # 2026.06.11 - v. 3.53 - existing pairs: require sha512 on disk; auto-backfill when only hashes missing
 # 2026.06.09 - v. 3.52 - startup defaults: colors yes, mode real, scope subdirs (Enter accepts on each prompt)
@@ -101,8 +103,8 @@ Options:
   -- FILE              Explicit file operand (use when the name starts with -).
 
 Interactive batch prompts (real mode; file processing, transcript re-do, transcription):
-  [F] Finish batch now — process only items you already answered in this batch.
-  [G] Process selected; skip all further prompts of that kind (files / re-do / transcription).
+  [f] Finish batch now — process only items you already answered in this batch.
+  [g] Process selected; skip all further prompts of that kind (files / re-do / transcription).
 
 Transcription (when enabled):
   Each *_ORG.* and *_OUTPUT.flac gets two transcripts: *_VAD.txt (whisper with VAD)
@@ -735,8 +737,8 @@ trap voice_finish_run EXIT
 echo
 echo "$(voice_ts) Use colors?"
 echo "  [Y] Yes (default)"
-echo "  [N] No"
-echo "  [Q] Quit"
+echo "  [n] No"
+echo "  [q] Quit"
 echo -n "$(voice_ts) Choice [Y/n/q]: "
 
 use_colors=yes
@@ -771,8 +773,8 @@ fi
 echo
 print_question "Select mode:"
 print_suggestion "  [R] Real processing (default)"
-print_suggestion "  [D] Dry-run"
-print_suggestion "  [Q] Quit"
+print_suggestion "  [d] Dry-run"
+print_suggestion "  [q] Quit"
 print_choice_prompt "[R/d/q]: "
 
 mode="real"
@@ -798,8 +800,8 @@ else
     echo
     print_question "What should be processed?"
     print_suggestion "  [S] Also subdirectories (default)"
-    print_suggestion "  [C] Current directory only"
-    print_suggestion "  [Q] Quit"
+    print_suggestion "  [c] Current directory only"
+    print_suggestion "  [q] Quit"
     print_choice_prompt "[S/c/q]: "
 
     input=""
@@ -823,14 +825,14 @@ echo
 if [[ "$mode" == "real" ]]; then
     print_question "Enable transcription (ORG/OUTPUT x VAD/noVAD whisper servers)?"
     print_suggestion "  [Y] Yes (default)"
-    print_suggestion "  [N] No"
-    print_suggestion "  [Q] Quit"
+    print_suggestion "  [n] No"
+    print_suggestion "  [q] Quit"
     print_choice_prompt "[Y/n/q]: "
 else
     print_question "Include transcription step in dry-run (ORG/OUTPUT x VAD/noVAD)?"
     print_suggestion "  [Y] Yes (default)"
-    print_suggestion "  [N] No"
-    print_suggestion "  [Q] Quit"
+    print_suggestion "  [n] No"
+    print_suggestion "  [q] Quit"
     print_choice_prompt "[Y/n/q]: "
 fi
 
@@ -1053,11 +1055,11 @@ read_batch_choice() {
 
     print_question "$prompt_line"
     print_suggestion "  [Y] Yes (default)"
-    print_suggestion "  [N] No"
-    print_suggestion "  [A] Yes for all remaining in this batch"
-    print_suggestion "  [F] Finish batch now (process selected only; stop asking for rest of batch)"
-    print_suggestion "  [G] Process selected; skip all further prompts this run"
-    print_suggestion "  [Q] Quit"
+    print_suggestion "  [n] No"
+    print_suggestion "  [a] Yes for all remaining in this batch"
+    print_suggestion "  [f] Finish batch now (process selected only; stop asking for rest of batch)"
+    print_suggestion "  [g] Process selected; skip all further prompts this run"
+    print_suggestion "  [q] Quit"
     print_choice_prompt "[Y/n/a/f/g/q]: "
 
     read -r -t 300 -n 1 input || true
@@ -1351,8 +1353,8 @@ ensure_transcribe_endpoint_ready() {
         echo -e "${YELLOW}TRANSCRIPTION SERVER DOWN:${RESET} ${host}:${port} (${label})"
         print_transcribe_endpoint_down_reason "$host" "$port"
         print_suggestion "  [W] Wait until the server is back (default)"
-        print_suggestion "  [C] Continue without transcription (skip)"
-        print_suggestion "  [Q] Quit"
+        print_suggestion "  [c] Continue without transcription (skip)"
+        print_suggestion "  [q] Quit"
         print_choice_prompt "[W/c/q]: "
         read -r -t 300 -n 1 input || true
         printf '\n'

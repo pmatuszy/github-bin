@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261006.124200 - the default key is the capital one, in the key list and on each option line
 # v. 20261006.123500 - map choices: north up (default) or track up; --north-up, --track-up
 # v. 20261006.122600 - default zoom 17 (about 800 m across) instead of 16
 # v. 20261006.122200 - smooth the GPS track (asked at the start, default yes), with a tweak menu (default no)
@@ -7,6 +8,7 @@
 # v. 20261006.114500 - missing ffmpeg, python3, or Pillow: list them and ask whether to install them with apt-get
 # v. 20261006.113823 - moving OpenStreetMap map video from each video's GPX track, same length as the video
 
+# 2026.10.06 - v. 0.8 - only the default key is a capital letter, in the [..] key list, on its option line, and on the prompt line: yes/no questions ([Y] Yes when yes is the default), Tweak the smoothing [N] No, map direction N/T, length A/1/2/5/c, old file K/d
 # 2026.10.06 - v. 0.7 - "Map direction [N/t/q]" in the map choices: north up (default) or track up, where the map turns so the road ahead is up and a compass shows north; --north-up, --track-up; the plan's Map row says which
 # 2026.10.06 - v. 0.6 - default zoom 17: about 800 m across 1080 px instead of 1.6 km; about twice the tiles; --zoom 16 for the old view
 # 2026.10.06 - v. 0.5 - GPS smoothing, on by default: "Smooth the GPS track? [Y/n/q]" at the start, then "Tweak the smoothing? [y/N/q]" for line seconds, map seconds, jump limit, and curved movement; plan shows dropped jumps and a GPS track row; --no-smooth, --smooth, --smooth-map, --max-jump, --no-curve (any of them skips the questions)
@@ -902,20 +904,38 @@ mv_ask_line() {
   return 0
 }
 
+# The key, capital when it is the default: mv_k y y -> Y, mv_k n y -> n.
+mv_k() {
+  if [[ "$1" == "$2" ]]; then
+    printf '%s' "${1^^}"
+  else
+    printf '%s' "$1"
+  fi
+}
+
+# Keys for a prompt line with the default in capitals: mv_keys n y n q -> y/N/q.
+mv_keys() {
+  local def="$1" k out=""
+  shift
+  for k in "$@"; do
+    out+="${out:+/}$(mv_k "$k" "$def")"
+  done
+  printf '%s' "$out"
+}
+
 mv_cur_mark() {
   [[ "$1" == "$2" ]] && printf ' (current, default)'
   return 0
 }
 
 mv_yes_no() {
-  local question="$1" cur="$2" yes_text="$3" no_text="$4" def=n keys="y/N/q" ydef="" ndef=" (current, default)"
-  if (( cur )); then
-    def=y keys="Y/n/q" ydef=" (current, default)" ndef=""
-  fi
+  local question="$1" cur="$2" yes_text="$3" no_text="$4" def=n keys
+  (( cur )) && def=y
+  keys="$(mv_keys "$def" y n q)"
   printf '%s [%s]\n' "$question" "$keys"
-  echo "  [y] Yes${ydef}"
+  echo "  [$(mv_k y "$def")] Yes$(mv_cur_mark y "$def")"
   echo "      ${yes_text}"
-  echo "  [n] No${ndef}"
+  echo "  [$(mv_k n "$def")] No$(mv_cur_mark n "$def")"
   echo "      ${no_text}"
   echo "  [q] Quit the script, render nothing more"
   mv_read_key "${question%\?} [${keys}]: " "$def"
@@ -955,19 +975,18 @@ mv_prompt_more() {
   fi
 
   echo
-  local nkeys="N/t/q" ndef=" (current, default)" tdef=""
-  if (( TRACK_UP )); then
-    nkeys="n/T/q" ndef="" tdef=" (current, default)"
-  fi
+  local ddef=n nkeys
+  (( TRACK_UP )) && ddef=t
+  nkeys="$(mv_keys "$ddef" n t q)"
   printf 'Map direction [%s]\n' "$nkeys"
-  echo "  [n] North up${ndef}"
+  echo "  [$(mv_k n "$ddef")] North up$(mv_cur_mark n "$ddef")"
   echo "      North is always at the top, like a paper map; the arrow turns with the road."
-  echo "  [t] Track up${tdef}"
+  echo "  [$(mv_k t "$ddef")] Track up$(mv_cur_mark t "$ddef")"
   echo "      The map turns so the road ahead is always up and the arrow points up,"
   echo "      like a car navigation. A small compass in the top right shows north."
   echo "      Renders about 4 times slower (every frame is rotated): about real time."
   echo "  [q] Quit the script, render nothing more"
-  mv_read_key "Map direction [${nkeys}]: " "$( (( TRACK_UP )) && echo t || echo n )"
+  mv_read_key "Map direction [${nkeys}]: " "$ddef"
   case "$REPLY" in
     n) TRACK_UP=0 ;;
     t) TRACK_UP=1 ;;
@@ -1022,7 +1041,7 @@ mv_prompt_smooth() {
   printf 'Tweak the smoothing? [y/N/q]\n'
   echo "  [y] Yes"
   echo "      Set how strong the smoothing is, one value at a time."
-  echo "  [n] No (current, default)"
+  echo "  [N] No (current, default)"
   echo "      Keep: $(mv_smooth_label | sed 's/^smoothed: //')."
   echo "  [q] Quit the script, render nothing more"
   mv_read_key "Tweak the smoothing [y/N/q]: " n
@@ -1095,15 +1114,15 @@ mv_prompt_test() {
     esac
   fi
   echo
-  echo "How much of each video should get its map? [A/1/2/5/c/q]"
+  echo "How much of each video should get its map? [$(mv_keys "$key" a 1 2 5 c q)]"
   echo "  A part is saved under its own -test-… name, so a full map video is kept."
-  echo "  [A] All of it, start to end$(mv_cur_mark a "$key")"
+  echo "  [$(mv_k a "$key")] All of it, start to end$(mv_cur_mark a "$key")"
   echo "  [1] 1 minute$(mv_cur_mark 1 "$key")"
   echo "  [2] 2 minutes$(mv_cur_mark 2 "$key")"
   echo "  [5] 5 minutes$(mv_cur_mark 5 "$key")"
-  echo "  [c] Custom length, typed next$(mv_cur_mark c "$key")"
+  echo "  [$(mv_k c "$key")] Custom length, typed next$(mv_cur_mark c "$key")"
   echo "  [q] Quit the script, render nothing more"
-  mv_read_key "Length [A/1/2/5/c/q]: " "$key"
+  mv_read_key "Length [$(mv_keys "$key" a 1 2 5 c q)]: " "$key"
   case "$REPLY" in
     a) LENGTH="" FROM=0; mv_update_test; return 0 ;;
     1) LENGTH=60 ;;
@@ -1150,14 +1169,14 @@ mv_prompt_old() {
   OLD_ASKED=1
   [[ "$OLD_MODE" == delete ]] && key=d
   echo
-  echo "What should happen to the old map video when the new one is done? [K/d/q]"
+  echo "What should happen to the old map video when the new one is done? [$(mv_keys "$key" k d q)]"
   echo "  The new video is written to a .partial file first; the old file is"
   echo "  only touched after the new one has finished without errors."
-  echo "  [K] Keep it, renamed with the date and time it was made$(mv_cur_mark k "$key")"
+  echo "  [$(mv_k k "$key")] Keep it, renamed with the date and time it was made$(mv_cur_mark k "$key")"
   echo "      For example ..._old-20261005_221400.mp4 beside the new file."
-  echo "  [d] Delete it$(mv_cur_mark d "$key")"
+  echo "  [$(mv_k d "$key")] Delete it$(mv_cur_mark d "$key")"
   echo "  [q] Quit the script, render nothing more"
-  mv_read_key "Old file [K/d/q]: " "$key"
+  mv_read_key "Old file [$(mv_keys "$key" k d q)]: " "$key"
   case "$REPLY" in
     k) OLD_MODE=keep ;;
     d) OLD_MODE=delete ;;
