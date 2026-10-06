@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# v. 20261006.114200 - Canon DIGITAL IXUS 40 / IXY Digital 50: IMG_####.JPG → YYYYMMDD_HHMMSS_-_-_Canon_IXY_DIGITAL_50 (Date/Time Original)
 # v. 20261006.081000 - treat .gpx as media (common_media_ext_re + is_media_file; 70mai concat tracks get same YYYYMMDD-HHMMSS_… rules as MP4)
 # v. 20260930.213145 - Nikon Coolpix P900: DSCN#### stills/movies → YYYYMMDD_HHMMSS_-_-_Nikon_COOLPIX_P900 from DateTimeOriginal
 # v. 20260925.171847 - Quik dashboard: no ERR-trap noise when no source found; never re-time -dashboard exports (UTC CreateDate)
@@ -2494,6 +2495,68 @@ transform_nikon_coolpix_p900_basename() {
     [[ "$model_suffix" == "COOLPIX_P900" ]] || return 1
     ext="${base##*.}"
     gopro_format_camera_basename_output "$ts" "Nikon" "$model_suffix" "" "$ext"
+}
+
+# Canon Digital IXUS 40 (marketed as IXY Digital 50 / PowerShot SD300): IMG_####.JPG.
+# IMG_ is shared by many cameras; EXIF must match this body.
+canon_ixy_digital_50_raw_basename_matches() {
+    [[ "$1" =~ ^[Ii][Mm][Gg]_[0-9]{4}\.([jJ][pP][gG]|[jJ][pP][eE][gG])$ ]]
+}
+
+canon_ixy_digital_50_already_renamed_basename_matches() {
+    local lower="${1,,}"
+    [[ "$lower" =~ ^[0-9]{8}_[0-9]{6}(_[0-9]+)?_(-__-_|-_-_-)canon_ixy_digital_50\.(jpg|jpeg)$ ]]
+}
+
+canon_exif_is_ixy_digital_50() {
+    local exif="$1"
+    local make="" model="" model_id=""
+    local model_upper="" model_id_upper=""
+
+    make="$(nikon_exif_first_value "$exif" 'Make')"
+    [[ "${make,,}" == *canon* ]] || return 1
+    model="$(nikon_exif_first_value "$exif" 'Camera Model Name')"
+    model_id="$(nikon_exif_first_value "$exif" 'Canon Model ID')"
+    model_upper="${model^^}"
+    model_id_upper="${model_id^^}"
+    if [[ "$model_upper" == *"DIGITAL IXUS 40"* || "$model_upper" == *"IXUS 40"* ]]; then
+        return 0
+    fi
+    [[ "$model_id_upper" == *"IXY DIGITAL 50"* ]]
+}
+
+transform_canon_ixy_digital_50_basename() {
+    local file="$1"
+    local base="$2"
+    local exifloc exif ts ext
+    local _cn_err_trap="" _cn_save_e=0
+
+    _transform_canon_ixy_err_trap_restore() {
+        eval "${_cn_err_trap:-}"
+        if ((_cn_save_e)); then
+            set -e
+        else
+            set +e
+        fi
+    }
+
+    canon_ixy_digital_50_raw_basename_matches "$base" || return 1
+    canon_ixy_digital_50_already_renamed_basename_matches "$base" && return 1
+
+    _cn_save_e=0
+    [[ $- == *e* ]] && _cn_save_e=1
+    set +e
+    _cn_err_trap="$(trap -p ERR || true)"
+    trap - ERR
+    trap '_transform_canon_ixy_err_trap_restore' RETURN
+
+    exifloc="$(resolve_rename_exiftool)" || return 1
+    exif="$("$exifloc" -api largefilesupport=1 "$file" 2>/dev/null)" || return 1
+    [[ -n "$exif" ]] || return 1
+    canon_exif_is_ixy_digital_50 "$exif" || return 1
+    ts="$(nikon_capture_timestamp_yyyymmdd_hhmmss "$file")" || return 1
+    ext="${base##*.}"
+    gopro_format_camera_basename_output "$ts" "Canon" "IXY_DIGITAL_50" "" "$ext"
 }
 
 text_file_has_crlf() {
@@ -12709,7 +12772,23 @@ nikon_exif_camera_tag_append_matches() {
     if nikon_coolpix_p900_raw_basename_matches "$ob" && nikon_coolpix_p900_already_renamed_basename_matches "$nb"; then
         return 0
     fi
+    if canon_ixy_digital_50_raw_basename_matches "$ob" && canon_ixy_digital_50_already_renamed_basename_matches "$nb"; then
+        return 0
+    fi
     return 1
+}
+
+canon_exif_camera_tag_append_matches() {
+    local old="$1" new="$2"
+    local ob nb
+
+    [[ -n "$old" && -n "$new" ]] || return 1
+    ob="$(basename -- "$old")"
+    nb="$(basename -- "$new")"
+    [[ "$ob" != "$nb" ]] || return 1
+    canon_ixy_digital_50_raw_basename_matches "$ob" || return 1
+    canon_ixy_digital_50_already_renamed_basename_matches "$nb" || return 1
+    return 0
 }
 
 rename_is_exif_camera_tag_append() {
@@ -12717,6 +12796,7 @@ rename_is_exif_camera_tag_append() {
     xiaomi_exif_camera_tag_append_matches "$@" && return 0
     gopro_exif_camera_tag_append_matches "$@" && return 0
     nikon_exif_camera_tag_append_matches "$@" && return 0
+    canon_exif_camera_tag_append_matches "$@" && return 0
     panasonic_camcorder_exif_camera_tag_append_matches "$@" && return 0
     motorola_exif_camera_tag_append_matches "$@" && return 0
     return 1
@@ -14653,7 +14733,32 @@ transform_name() {
         fi
     fi
 
-    if [[ -f "$f" ]] && ((_tn_skip_exif == 0)) && (( _gopro_applied == 0 && _sony_applied == 0 && _olympus_applied == 0 && _nikon_applied == 0 )) && [[ "$stopped_by_user" != yes ]]; then
+    local _canon_applied=0 _canon_try="" _canon_rc=0
+    if [[ -f "$f" ]] && ((_tn_skip_exif == 0)) && (( _gopro_applied == 0 && _sony_applied == 0 && _olympus_applied == 0 && _nikon_applied == 0 )) \
+        && canon_ixy_digital_50_raw_basename_matches "$base"; then
+        local _tn_save_e_cn=0 _canon_err_trap=""
+        [[ $- == *e* ]] && _tn_save_e_cn=1
+        set +e
+        _canon_err_trap="$(trap -p ERR || true)"
+        trap - ERR
+        _canon_try="$(transform_canon_ixy_digital_50_basename "$f" "$base")"
+        _canon_rc=$?
+        eval "${_canon_err_trap:-}"
+        if ((_tn_save_e_cn)); then
+            set -e
+        else
+            set +e
+        fi
+        if (( _canon_rc == 0 )) && [[ -n "$_canon_try" ]]; then
+            newbase="$_canon_try"
+            _canon_applied=1
+            vlog "Canon IXY Digital 50 rename: $base -> $_canon_try"
+        else
+            vlog "Canon IXY Digital 50 rename: no usable IXUS 40 metadata for $base (rc=$_canon_rc); falling back to normal rename"
+        fi
+    fi
+
+    if [[ -f "$f" ]] && ((_tn_skip_exif == 0)) && (( _gopro_applied == 0 && _sony_applied == 0 && _olympus_applied == 0 && _nikon_applied == 0 && _canon_applied == 0 )) && [[ "$stopped_by_user" != yes ]]; then
         if (( RECHECK_RENAMES == 1 )); then
             _gopro_part_strip="$(gopro_newbase_omit_lone_part_if_sole_chapter "$f" "$base" "$base")"
             if [[ -n "$_gopro_part_strip" && "$_gopro_part_strip" != "$base" ]]; then
@@ -14686,7 +14791,7 @@ transform_name() {
     local _tn_save_e=0
     [[ $- == *e* ]] && _tn_save_e=1
     set +e
-    if (( _gopro_applied == 0 && _sony_applied == 0 && _olympus_applied == 0 && _nikon_applied == 0 )); then
+    if (( _gopro_applied == 0 && _sony_applied == 0 && _olympus_applied == 0 && _nikon_applied == 0 && _canon_applied == 0 )); then
         newbase="$(transform_basename "$base" "$f")"
         tb_rc=$?
     else
@@ -14726,7 +14831,7 @@ transform_name() {
             done
         fi
 
-        if (( _gopro_applied == 0 && _sony_applied == 0 && _olympus_applied == 0 && _nikon_applied == 0 )); then
+        if (( _gopro_applied == 0 && _sony_applied == 0 && _olympus_applied == 0 && _nikon_applied == 0 && _canon_applied == 0 )); then
         # YYYYMMDD + whitespace + HH-MM-SS[_tail].media -> YYYYMMDD_HH-MM-SS[_tail].media
         # (e.g. 20190202 14-28-08_0001.jpg; not covered by YYYY-MM-DD... rules above.)
         if [[ "$newbase" =~ ^([0-9]{8})[[:space:]]+([0-9]{2})-([0-9]{2})-([0-9]{2})(_[^.]*)?(\.${common_media_ext_re})$ ]]; then
@@ -14861,7 +14966,7 @@ transform_name() {
 
     local _samsung_applied=0 _samsung_try="" _samsung_rc=0
     # Raw-code → marketing-name upgrades need no EXIF (table lookup only).
-    if [[ -f "$f" ]] && (( _gopro_applied == 0 && _sony_applied == 0 && _olympus_applied == 0 && _nikon_applied == 0 )) \
+    if [[ -f "$f" ]] && (( _gopro_applied == 0 && _sony_applied == 0 && _olympus_applied == 0 && _nikon_applied == 0 && _canon_applied == 0 )) \
         && samsung_already_renamed_basename_matches "$newbase"; then
         _samsung_try="$(maybe_transform_samsung_raw_model_label "$newbase")"
         if [[ -n "$_samsung_try" && "$_samsung_try" != "$newbase" ]]; then
@@ -14870,7 +14975,7 @@ transform_name() {
             _samsung_applied=1
         fi
     fi
-    if [[ -f "$f" ]] && ((_tn_skip_exif == 0)) && (( _gopro_applied == 0 && _sony_applied == 0 && _olympus_applied == 0 && _nikon_applied == 0 && _samsung_applied == 0 )) \
+    if [[ -f "$f" ]] && ((_tn_skip_exif == 0)) && (( _gopro_applied == 0 && _sony_applied == 0 && _olympus_applied == 0 && _nikon_applied == 0 && _canon_applied == 0 && _samsung_applied == 0 )) \
         && samsung_media_basename_matches "$newbase"; then
         local _tn_save_e_sam=0 _sam_err_trap=""
         [[ $- == *e* ]] && _tn_save_e_sam=1
@@ -14895,7 +15000,7 @@ transform_name() {
     fi
 
     local _xiaomi_applied=0 _xiaomi_try="" _xiaomi_rc=0
-    if [[ -f "$f" ]] && ((_tn_skip_exif == 0)) && (( _gopro_applied == 0 && _sony_applied == 0 && _olympus_applied == 0 && _nikon_applied == 0 && _samsung_applied == 0 )) \
+    if [[ -f "$f" ]] && ((_tn_skip_exif == 0)) && (( _gopro_applied == 0 && _sony_applied == 0 && _olympus_applied == 0 && _nikon_applied == 0 && _canon_applied == 0 && _samsung_applied == 0 )) \
         && xiaomi_media_basename_matches "$newbase"; then
         local _tn_save_e_xiaomi=0 _xiaomi_err_trap=""
         [[ $- == *e* ]] && _tn_save_e_xiaomi=1
@@ -14919,7 +15024,7 @@ transform_name() {
         fi
     fi
 
-    if [[ -f "$f" ]] && ((_tn_skip_exif == 0)) && (( _gopro_applied == 0 && _sony_applied == 0 && _olympus_applied == 0 && _nikon_applied == 0 && _samsung_applied == 0 && _xiaomi_applied == 0 )) \
+    if [[ -f "$f" ]] && ((_tn_skip_exif == 0)) && (( _gopro_applied == 0 && _sony_applied == 0 && _olympus_applied == 0 && _nikon_applied == 0 && _canon_applied == 0 && _samsung_applied == 0 && _xiaomi_applied == 0 )) \
         && gopro_bare_timestamp_media_basename_matches "$newbase"; then
         local _tn_save_e_gpts=0 _gpts_err_trap="" _gopro_bare_try="" _gopro_bare_rc=0
         [[ $- == *e* ]] && _tn_save_e_gpts=1
@@ -18048,7 +18153,7 @@ print_rename_prompt_menu() {
         choice_hint+=/s
     fi
     if [[ -n "$path" && -n "$suggested_new" ]] && rename_is_camera_make_model_change "$path" "$suggested_new"; then
-        echo "  $(rename_menu_key_bracket G Y) Yes, and auto-approve future Samsung, GoPro, Nikon, Panasonic, and Motorola camera make/model renames for the rest of this run"
+        echo "  $(rename_menu_key_bracket G Y) Yes, and auto-approve future Samsung, GoPro, Nikon, Canon, Panasonic, and Motorola camera make/model renames for the rest of this run"
         choice_hint+=/g
     fi
     if [[ -n "$path" && -n "$suggested_new" ]] && rename_suggested_only_extension_case_change "$path" "$suggested_new" \
@@ -20632,11 +20737,11 @@ for f in "${ordered_paths[@]}"; do
             ;;
         g|G)
             if ! rename_is_camera_make_model_change "$f" "$new"; then
-                echo -e "${YELLOW}[G] applies only to recognized Samsung, GoPro, Nikon, Panasonic, or Motorola camera make/model renames.${RESET}"
+                echo -e "${YELLOW}[G] applies only to recognized Samsung, GoPro, Nikon, Canon, Panasonic, or Motorola camera make/model renames.${RESET}"
                 ((++files_skipped))
             else
                 AUTO_CAMERA_MAKE_MODEL_SESSION=yes
-                vlog "Session auto-yes enabled for Samsung/GoPro/Nikon camera make/model renames"
+                vlog "Session auto-yes enabled for Samsung/GoPro/Nikon/Canon camera make/model renames"
                 perform_plain_or_nef_xmp_pair "camera make/model auto-yes (session prompt)" || break
             fi
             ;;
