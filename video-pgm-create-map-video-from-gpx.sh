@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261006.123500 - map choices: north up (default) or track up; --north-up, --track-up
 # v. 20261006.122600 - default zoom 17 (about 800 m across) instead of 16
 # v. 20261006.122200 - smooth the GPS track (asked at the start, default yes), with a tweak menu (default no)
 # v. 20261006.121000 - no speed on the map by default (the dashcam picture shows it); --show-speed adds it
@@ -6,6 +7,7 @@
 # v. 20261006.114500 - missing ffmpeg, python3, or Pillow: list them and ask whether to install them with apt-get
 # v. 20261006.113823 - moving OpenStreetMap map video from each video's GPX track, same length as the video
 
+# 2026.10.06 - v. 0.7 - "Map direction [N/t/q]" in the map choices: north up (default) or track up, where the map turns so the road ahead is up and a compass shows north; --north-up, --track-up; the plan's Map row says which
 # 2026.10.06 - v. 0.6 - default zoom 17: about 800 m across 1080 px instead of 1.6 km; about twice the tiles; --zoom 16 for the old view
 # 2026.10.06 - v. 0.5 - GPS smoothing, on by default: "Smooth the GPS track? [Y/n/q]" at the start, then "Tweak the smoothing? [y/N/q]" for line seconds, map seconds, jump limit, and curved movement; plan shows dropped jumps and a GPS track row; --no-smooth, --smooth, --smooth-map, --max-jump, --no-curve (any of them skips the questions)
 # 2026.10.06 - v. 0.4 - the speed is left off the map by default, as the dashcam picture shows it; --show-speed or [y] in the map choices adds it; --no-speed is still accepted
@@ -16,7 +18,7 @@
 # video-pgm-create-map-video-from-gpx.sh
 #
 # Make a video of a moving map for each dashcam video that has a .gpx track.
-# The map follows the car (north up, zoomed in), shows the road already driven
+# The map follows the car (north up or track up, zoomed in), shows the road already driven
 # and the road ahead, and the clock (the speed only with --show-speed, as the
 # dashcam picture shows it already). It is exactly as long as the
 # video and has the same frame rate, so it can be played beside it or put into
@@ -28,7 +30,7 @@ show_help() {
   cat <<EOF
 Usage: $(basename "$0") [options] [DIR|VIDEO ...]
        [-y|--yes] [-n|--dry-run] [--redo] [--old keep|delete]
-       [--size WxH|N] [--zoom N] [--fps N|same] [--show-speed] [--no-clock]
+       [--size WxH|N] [--zoom N] [--north-up|--track-up] [--fps N|same] [--show-speed] [--no-clock]
        [--no-smooth] [--smooth S] [--smooth-map S] [--max-jump KMH] [--no-curve]
        [--gpx FILE] [--start 'YYYY-MM-DD HH:MM:SS'] [--speed N] [--tz-shift HOURS]
        [--tile-url URL] [--attribution TEXT] [--cache DIR]
@@ -53,8 +55,8 @@ How the map follows the video
     points shows "no GPS here".
   - The track is smoothed first (see GPS smoothing below): single wild points
     are dropped, the zigzag is averaged out, and the car moves on a curve.
-  - The map is north up and centred on the car. Zoom 17 shows about 800 m
-    across a 1080 px picture in Poland.
+  - The map is north up (or track up with --track-up) and centred on the car.
+    Zoom 17 shows about 800 m across a 1080 px picture in Poland.
 
 Map tiles
   Tiles come from tile.openstreetmap.org and are kept in the cache, so each
@@ -86,6 +88,10 @@ Options:
   --size WxH|N         Picture size. Default 1080x1080. 720 means 720x720.
   --zoom N             Map zoom, 12 to 18. Default 17. One step out shows twice
                        as much: 16 or 15 for motorways at x5, 18 for towns.
+  --north-up           North at the top (default).
+  --track-up           The map turns so the road ahead is up, like a car
+                       navigation; a small compass shows north. About 4
+                       times slower to render (roughly real time).
   --fps N|same         Frames per second. Default: same as the video.
                        The length is the same either way.
   --show-speed         Also show the speed (km/h). Off by default: the dashcam
@@ -479,6 +485,7 @@ mv_py_args() {
   [[ -n "$TZ_SHIFT" ]] && PY_ARGS+=(--tz-shift "$TZ_SHIFT")
   (( SHOW_SPEED )) && PY_ARGS+=(--show-speed)
   (( SHOW_CLOCK )) || PY_ARGS+=(--no-clock)
+  (( TRACK_UP )) && PY_ARGS+=(--track-up)
   if (( SMOOTH )); then
     PY_ARGS+=(--smooth "$SMOOTH_LINE" --smooth-map "$SMOOTH_MAP" --max-jump "$MAX_JUMP")
     (( CURVE )) || PY_ARGS+=(--no-curve)
@@ -737,6 +744,7 @@ mv_equivalent_command() {
   (( REDO )) && [[ "$OLD_MODE" == delete ]] && cmd+=(--old delete)
   [[ "${MAP_W}x${MAP_H}" != 1080x1080 ]] && cmd+=(--size "${MAP_W}x${MAP_H}")
   [[ "$ZOOM" != 17 ]] && cmd+=(--zoom "$ZOOM")
+  (( TRACK_UP )) && cmd+=(--track-up)
   [[ "$FPS" != same ]] && cmd+=(--fps "$FPS")
   (( SHOW_SPEED )) && cmd+=(--show-speed)
   (( SHOW_CLOCK )) || cmd+=(--no-clock)
@@ -789,7 +797,7 @@ mv_print_plan() {
     [[ -z "$lat" && -n "${J_LAT[$i]}" ]] && lat="${J_LAT[$i]}"
   done
   mv_heading "Settings"
-  printf '  %-14s %s\n' "Map" "${MAP_W}x${MAP_H}, zoom ${ZOOM} ($(mv_across_label "$lat")), north up, centred on the car"
+  printf '  %-14s %s\n' "Map" "${MAP_W}x${MAP_H}, zoom ${ZOOM} ($(mv_across_label "$lat")), $(mv_orient_label), centred on the car"
   printf '  %-14s %s\n' "Shown" "$(mv_overlay_label)"
   printf '  %-14s %s\n' "GPS track" "$(mv_smooth_label)"
   if [[ "$FPS" == same ]]; then
@@ -822,6 +830,14 @@ mv_print_plan() {
   (( BAD > 0 )) && printf ', %s%d cannot be rendered%s' "$C_R" "$BAD" "$C_0"
   (( DOWNLOAD > 0 )) && printf ', up to %d tiles to download' "$DOWNLOAD"
   echo
+}
+
+mv_orient_label() {
+  if (( TRACK_UP )); then
+    printf 'track up (the map turns, compass top right)'
+  else
+    printf 'north up'
+  fi
 }
 
 mv_smooth_label() {
@@ -937,6 +953,27 @@ mv_prompt_more() {
   else
     echo "$(mv_ts) ${C_Y}Not 12 to 18: ${REPLY}. Keeping ${ZOOM}.${C_0}"
   fi
+
+  echo
+  local nkeys="N/t/q" ndef=" (current, default)" tdef=""
+  if (( TRACK_UP )); then
+    nkeys="n/T/q" ndef="" tdef=" (current, default)"
+  fi
+  printf 'Map direction [%s]\n' "$nkeys"
+  echo "  [n] North up${ndef}"
+  echo "      North is always at the top, like a paper map; the arrow turns with the road."
+  echo "  [t] Track up${tdef}"
+  echo "      The map turns so the road ahead is always up and the arrow points up,"
+  echo "      like a car navigation. A small compass in the top right shows north."
+  echo "      Renders about 4 times slower (every frame is rotated): about real time."
+  echo "  [q] Quit the script, render nothing more"
+  mv_read_key "Map direction [${nkeys}]: " "$( (( TRACK_UP )) && echo t || echo n )"
+  case "$REPLY" in
+    n) TRACK_UP=0 ;;
+    t) TRACK_UP=1 ;;
+    q) mv_quit ;;
+    *) echo "$(mv_ts) Unknown choice. Keeping $(mv_orient_label)." ;;
+  esac
 
   echo
   mv_yes_no "Show the speed?" "$SHOW_SPEED" \
@@ -1170,7 +1207,7 @@ mv_prompt_plan() {
       echo "      One after another, without asking again."
     fi
     echo "  [m] Change the map"
-    echo "      Picture size, zoom, speed, clock, frame rate. The plan is printed again."
+    echo "      Picture size, zoom, north up or track up, speed, clock, frame rate. The plan is printed again."
     echo "  [t] Render only part of each video (for a test)"
     echo "      Pick how long and where it starts. Now: $(mv_window_label)."
     echo "  [q] Quit the script, render nothing"
@@ -1390,6 +1427,7 @@ REDO=0
 OLD_MODE=keep OLD_ASKED=0
 MAP_W=1080 MAP_H=1080
 ZOOM=17
+TRACK_UP=0
 FPS=same
 SHOW_SPEED=0 SHOW_CLOCK=1
 SMOOTH=1 SMOOTH_LINE=4 SMOOTH_MAP=8 MAX_JUMP=250 CURVE=1 SMOOTH_FROM_CLI=0
@@ -1539,6 +1577,8 @@ while [[ $# -gt 0 ]]; do
         echo "ERROR: --fps must be same or a number up to 120 (got $2)" >&2; exit 1
       fi
       shift 2 ;;
+    --track-up) TRACK_UP=1; shift ;;
+    --north-up) TRACK_UP=0; shift ;;
     --no-smooth) SMOOTH=0; SMOOTH_FROM_CLI=1; shift ;;
     --smooth|--smooth-map)
       mv_need_value "$@"

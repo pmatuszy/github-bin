@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# v. 20261006.123500 - --track-up: the map turns so the road ahead is up, with a small compass
 # v. 20261006.122600 - default zoom 17
 # v. 20261006.122200 - GPS smoothing: drop jumps, average the line, calmer map path, curve between points
 # v. 20261006.121000 - speed left out by default; --show-speed draws it
@@ -6,6 +7,7 @@
 # v. 20261006.114917 - -h/--help describes every option, -v/--version, --history
 # v. 20261006.113346 - moving OpenStreetMap map that follows a GPX track, same length as its video
 
+# 2026.10.06 - v. 0.7 - --track-up (default --north-up): a square crop of the view's diagonal is rotated by a heading smoothed over max(8, --smooth-map) s, then cut to size; the arrow, the line to it, and a compass in the top right are drawn on the turned map; tiles are worked out for the diagonal
 # 2026.10.06 - v. 0.6 - --zoom defaults to 17
 # 2026.10.06 - v. 0.5 - GPS smoothing (on unless --no-smooth): single points faster than --max-jump km/h both in and out are dropped; Gaussian-weighted local line fit (no pull towards denser points) over --smooth s for the line and --smooth-map s for the map centre and arrow direction, never across gaps over 60 s; Catmull-Rom curve with 4 steps per segment unless --no-curve; info prints dropped=
 # 2026.10.06 - v. 0.4 - the speed is drawn only with --show-speed; --no-speed is still accepted
@@ -39,7 +41,7 @@ import urllib.request
 import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
 
-VERSION = "0.6"
+VERSION = "0.7"
 TILE = 256
 USER_AGENT = ("video-pgm-create-map-video-from-gpx/" + VERSION
               + " (+https://github.com/pmatuszy/github-bin)")
@@ -295,6 +297,22 @@ class Track:
         state = "gap" if span > 60 else "ok"
         return x, y, i, state, v, self.h[i], vx, vy
 
+    def rotation_at(self, when, window=8.0):
+        """Calm heading for a track-up map: smoothed over window seconds, no jumps between points."""
+        if getattr(self, "_rs", None) is None:
+            self._rs = smooth_series(self.t, [math.sin(h) for h in self.h], window)
+            self._rc = smooth_series(self.t, [math.cos(h) for h in self.h], window)
+        t = self.t
+        if when <= t[0]:
+            return math.atan2(self._rs[0], self._rc[0])
+        if when >= t[-1]:
+            return math.atan2(self._rs[-1], self._rc[-1])
+        i = bisect.bisect_right(t, when) - 1
+        f = (when - t[i]) / (t[i + 1] - t[i])
+        s = self._rs[i] + f * (self._rs[i + 1] - self._rs[i])
+        c = self._rc[i] + f * (self._rc[i + 1] - self._rc[i])
+        return math.atan2(s, c)
+
 
 def video_window(args):
     start = args.from_s
@@ -405,7 +423,10 @@ def needed_tiles(track, args):
     t0 = args.start_epoch + v0 * args.speed
     t1 = args.start_epoch + (v0 + vlen) * args.speed
     pad = 64
-    hw, hh = args.width / 2.0 + pad, args.height / 2.0 + pad
+    if args.track_up:
+        hw = hh = math.hypot(args.width, args.height) / 2.0 + pad
+    else:
+        hw, hh = args.width / 2.0 + pad, args.height / 2.0 + pad
     found = set()
     times = []
     t = t0
@@ -529,6 +550,21 @@ def draw_marker(draw, cx, cy, heading, size, moving):
     right = (cx - fx * back + rx * side, cy - fy * back + ry * side)
     draw.polygon([tip, right, notch, left], fill=COL_ARROW, outline=(255, 255, 255),
                  width=max(2, size // 7))
+
+
+def draw_north(draw, cx, cy, rot, r):
+    """Small compass for a track-up map: the red half points to north."""
+    draw.ellipse((cx - r, cy - r, cx + r, cy + r), fill=(255, 255, 255), outline=(60, 60, 60),
+                 width=max(2, r // 10))
+    nx, ny = -math.sin(rot), -math.cos(rot)
+    px, py = -ny, nx
+    w = r * 0.32
+    tip_n = (cx + nx * r * 0.8, cy + ny * r * 0.8)
+    tip_s = (cx - nx * r * 0.8, cy - ny * r * 0.8)
+    l = (cx + px * w, cy + py * w)
+    rr = (cx - px * w, cy - py * w)
+    draw.polygon([tip_n, l, rr], fill=(220, 30, 30))
+    draw.polygon([tip_s, l, rr], fill=(150, 150, 150))
 
 
 def panel(frame, box, alpha, light=False):
@@ -714,7 +750,7 @@ def cmd_fetch(args):
 
 
 def cmd_render(args, enc):
-    from PIL import ImageDraw
+    from PIL import Image, ImageDraw
     track, _ = load_track(args)
     tiles = Tiles(args.cache, args.tile_url, args.zoom)
     fps = fractions.Fraction(args.fps).limit_denominator(1001)
@@ -728,9 +764,16 @@ def cmd_render(args, enc):
            "-r", "%d/%d" % (fps.numerator, fps.denominator), "-i", "-"]
     cmd += enc + ["-pix_fmt", "yuv420p", "-movflags", "+faststart", args.out]
     line = max(4, args.height // 160)
-    canvas = Canvas(tiles, track, args.width, args.height, line)
+    w, h = args.width, args.height
+    side = int(math.ceil(math.hypot(w, h))) + 4
+    if args.track_up:
+        canvas = Canvas(tiles, track, side, side, line)
+    else:
+        canvas = Canvas(tiles, track, w, h, line)
+    rot_window = 8.0 if args.no_smooth else max(8.0, args.smooth_map)
     overlay = Overlay(args)
     marker = max(16, args.height // 27)
+    compass = max(14, args.height // 30)
     proc = subprocess.Popen(cmd, stdin=subprocess.PIPE)
     t_start = time.time()
     last_draw = 0.0
@@ -747,7 +790,24 @@ def cmd_render(args, enc):
             if idx >= 0 and state in ("ok", "gap"):
                 d.line([(track.x[idx] - left, track.y[idx] - top), (cx, cy)],
                        fill=COL_DONE, width=line + 2)
-            draw_marker(d, cx, cy, heading, marker, state == "ok")
+            if args.track_up:
+                rot = track.rotation_at(when, rot_window)
+                dx, dy = cx - side / 2.0, cy - side / 2.0
+                cs, sn = math.cos(rot), math.sin(rot)
+                cx = w / 2.0 + dx * cs + dy * sn
+                cy = h / 2.0 - dx * sn + dy * cs
+                c0 = side / 2.0
+                frame = frame.transform(
+                    (w, h), Image.AFFINE,
+                    (cs, -sn, c0 - w / 2.0 * cs + h / 2.0 * sn,
+                     sn, cs, c0 - w / 2.0 * sn - h / 2.0 * cs),
+                    resample=Image.BILINEAR)
+                d = ImageDraw.Draw(frame)
+                draw_marker(d, cx, cy, heading - rot, marker, state == "ok")
+                pad = overlay.pad
+                draw_north(d, w - pad - compass, pad + compass, rot, compass)
+            else:
+                draw_marker(d, cx, cy, heading, marker, state == "ok")
             overlay.draw(frame, when, speed, state)
             proc.stdin.write(frame.tobytes())
             now = time.time()
@@ -931,6 +991,9 @@ def main():
                     help="leave out single points that mean driving faster than this, km/h; 0 = keep all (default 250)")
     ap.add_argument("--no-curve", action="store_true",
                     help="straight lines between points instead of a curve through them")
+    ap.add_argument("--track-up", action="store_true",
+                    help="turn the map so the road ahead is up, with a small compass (default: north up)")
+    ap.add_argument("--north-up", dest="track_up", action="store_false", help="north at the top (the default)")
     ap.add_argument("--show-speed", action="store_true", help="show the speed (off by default)")
     ap.add_argument("--no-speed", action="store_true", help="leave out the speed (the default)")
     ap.add_argument("--no-clock", action="store_true", help="leave out the clock")
