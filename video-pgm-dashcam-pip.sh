@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261006.180646 - map video from video-pgm-create-map-video-from-gpx.sh in the top right corner, 540 px wide; asked which map when there are several
 # v. 20261006.124200 - the default key is the capital one, in the key list and on each option line
 # v. 20261006.120000 - already rendered routes: listed at the start, skip or render again, old file kept with its date and time or deleted
 # v. 20261006.114500 - render only part of each route: any length, counted from the beginning, from the end, or the middle
@@ -11,6 +12,7 @@
 # v. 20261006.103000 - more choices: inset size, corner, four margins, mirror, crop, border, caption, swap, black gap box, output width
 # v. 20261006.091500 - pair FrontCam and BackCam by filename clock, print the plan, render picture-in-picture
 
+# 2026.10.06 - v. 0.12 - map video: found beside each front file by name (FrontCam -> Map), with older _old-... maps and -test-... tries; the plan shows each route's map or says it has none; when a route has more than one, asked once: newest (default), pick for each route, or no map; placed top right (the other top corner when the rear inset is there), 540 px wide, same margins and border as the inset; "More choices" asks map, size, and corner; --map auto|none|FILE, --no-map, --map-size, --map-corner
 # 2026.10.06 - v. 0.11 - only the default key is a capital letter, in the [..] key list, on its option line, and on the prompt line: yes/no questions ([Y] Yes when yes is the default), old file K/d, length A/1/2/5/c, from B/E/M
 # 2026.10.06 - v. 0.10 - routes with an output are listed at the start; after [Y] you choose skip, render again, or ask for each; route by route asks for each existing route; the old file is renamed _old-YYYYMMDD_HHMMSS (its own time) or deleted, only after the new render succeeds; --old keep|delete; [r] removed
 # 2026.10.06 - v. 0.9 - [t] renders a part of each route: all, 1, 2, 5 minutes or a custom length, from the beginning, back from the end, or the middle; --from-end and --middle; the plan shows each route's exact part
@@ -42,6 +44,7 @@ Usage: $(basename "$0") [-h|--help] [-v|--version] [--history]
        [--mirror] [--crop-top PX] [--crop-bottom PX]
        [--border PX] [--border-color COLOR] [--label TEXT]
        [--swap] [--gap-fill none|black] [--out-width PX]
+       [--map auto|none|FILE] [--no-map] [--map-size SIZE] [--map-corner tl|tr|ll|lr]
        [--encoder auto|nvenc|x265|x264] [--quality N]
        [--length TIME] [--from TIME | --from-end TIME | --middle] [--shift SECONDS]
        [--no-audio] [--no-gpx]
@@ -60,7 +63,23 @@ Windows paths such as P:\\video\\trip are read as /mnt/p/video/trip.
 
 An interactive run first asks "More choices?" (default no). Yes walks through
 the inset size, corner, margins, mirror, crop, border, caption, swap, the black
-gap box, and the output width. Enter keeps each current answer.
+gap box, the output width, and the map. Enter keeps each current answer.
+
+Map
+  A map video made by video-pgm-create-map-video-from-gpx.sh is found by its
+  name, FrontCam replaced by Map, beside the front file:
+    ...-70mai-A510-Map-concat-x5.mp4
+  It is as long as the front video and goes in the top right corner, 540 px
+  wide: about 21% of a 2592-wide frame, as high as the default rear inset.
+  If the rear inset is in that corner, the map takes the other corner on the
+  same edge. It uses the same margins and border as the rear inset.
+  Older maps (..._old-YYYYMMDD_HHMMSS.mp4) and short tries (-test-...) are
+  found too. When a route has more than one, you are asked once: the newest
+  map of each route (default), pick for each route, or no map. -y and -n use
+  the newest. A short try is never picked by itself, it is too short.
+  The plan shows each route's map, or says that it has none.
+  Rendering the maps at the size used here (map script --size 540) keeps
+  their street names sharper than shrinking a 1080 px map.
 
 How the files are lined up
   - A back file belongs to the front file whose time it overlaps most.
@@ -131,6 +150,15 @@ Options:
   --out-width PX       Scale the finished video to this width. Default: keep
                        the front camera's size (for example 2592x1944).
 
+ Map
+  --map MODE           auto (default): the newest map of each route.
+                       none: no map. FILE: this map video (one route only).
+  --no-map             Same as --map none.
+  --map-size SIZE      540 (default) or 540px: that many pixels wide.
+                       21%: that percent of the frame width. Height follows.
+  --map-corner C       tr top right (default), tl top left, ll lower left,
+                       lr lower right. bl and br also work.
+
  Encoding and timing
   --encoder KIND       auto (default): hevc_nvenc on the GPU, then libx265 on
                        the CPU if NVENC is missing or fails.
@@ -159,6 +187,7 @@ Examples:
       The last two minutes of every route.
   $(basename "$0") -y --pip-size 35% --corner tr --margin 24 --border 4 --label REAR
   $(basename "$0") -y --mirror --crop-bottom 60 --gap-fill black --out-width 1920
+  $(basename "$0") --map-size 25% --map-corner lr --border 4
   $(basename "$0") -n 'P:\\video\\20260926-Bonow-Deblin\\_samochod-jazda'
 EOF
 }
@@ -423,7 +452,7 @@ pip_set_corner() {
 }
 
 pip_corner_label() {
-  case "$CORNER" in
+  case "${1:-$CORNER}" in
     tr) printf 'top right' ;;
     ll) printf 'lower left' ;;
     lr) printf 'lower right' ;;
@@ -541,7 +570,9 @@ pip_add_file() {
     [[ "${F_PATH[$i]}" == "$f" ]] && return 0
   done
   if ! pip_parse_name "$f"; then
-    if (( explicit )); then
+    if (( explicit )) && [[ "${f##*/}" =~ [-_]Map([-_.]|$) ]]; then
+      echo "$(pip_ts) ${C_Y}A map video is found beside its front file; give the front file, or use --map FILE:${C_0} ${f}" >&2
+    elif (( explicit )); then
       echo "$(pip_ts) ${C_Y}Not a FrontCam/BackCam file with a start-end clock, ignored:${C_0} ${f}" >&2
     fi
     return 0
@@ -888,6 +919,186 @@ pip_find_gpx() {
   return 1
 }
 
+# --- map videos -------------------------------------------------------------
+
+# 540, 540px, 21% → MAP_KIND px|pct, MAP_A, MAP_SPEC.
+pip_set_map_size() {
+  local v="${1,,}" a
+  v="${v// /}"
+  if [[ "$v" =~ ^([0-9]+)%$ ]]; then
+    a=$(( 10#${BASH_REMATCH[1]} ))
+    (( a >= 5 && a <= 100 )) || return 1
+    MAP_KIND=pct MAP_A=$a MAP_SPEC="${a}%"
+  elif [[ "$v" =~ ^([0-9]+)(px)?$ ]]; then
+    a=$(( 10#${BASH_REMATCH[1]} ))
+    (( a >= 64 && a <= 8000 )) || return 1
+    MAP_KIND=px MAP_A=$a MAP_SPEC="${a}px"
+  else
+    return 1
+  fi
+}
+
+pip_map_size_label() {
+  if [[ "$MAP_KIND" == pct ]]; then
+    printf '%s%% of the frame width' "$MAP_A"
+  else
+    printf '%s px wide' "$MAP_A"
+  fi
+}
+
+# The map's corner. When the rear inset is in it, the other corner on the same edge.
+pip_map_corner() {
+  if [[ "$MAP_CORNER" != "$CORNER" ]]; then
+    printf '%s' "$MAP_CORNER"
+    return 0
+  fi
+  case "$MAP_CORNER" in
+    tl) printf 'tr' ;;
+    tr) printf 'tl' ;;
+    ll) printf 'lr' ;;
+    *)  printf 'll' ;;
+  esac
+}
+
+# Length and size of a map video, read once. Sets MP_DUR, MP_W, MP_H.
+pip_map_probe() {
+  local p="$1"
+  if [[ -z "${MAP_PROBED[$p]:-}" ]]; then
+    pip_probe "$p"
+    MAP_PROBED[$p]=1
+    MAP_DUR[$p]="$PR_DUR"
+    MAP_W[$p]="$PR_W"
+    MAP_H[$p]="$PR_H"
+  fi
+  MP_DUR="${MAP_DUR[$p]}" MP_W="${MAP_W[$p]}" MP_H="${MAP_H[$p]}"
+}
+
+# Map videos of a front file, one per line: the current one, then older
+# ones newest first, then short tries newest first.
+pip_map_candidates() {
+  local f="$1" dir stem cand
+  local -a all=() old=() tries=()
+  dir="$(dirname -- "${F_PATH[$f]}")"
+  stem="$(basename -- "${F_PATH[$f]}")"
+  stem="${stem%.*}"
+  [[ "$stem" == *FrontCam* ]] || return 0
+  stem="${stem/FrontCam/Map}"
+  if [[ -f "${dir}/${stem}.mp4" ]]; then
+    printf '%s\n' "${dir}/${stem}.mp4"
+  fi
+  shopt -s nullglob
+  all=( "${dir}/${stem}"?*.mp4 )
+  shopt -u nullglob
+  for cand in "${all[@]}"; do
+    case "${cand##*/}" in
+      *.partial.*) ;;
+      *-test-*) tries+=("$cand") ;;
+      *) old+=("$cand") ;;
+    esac
+  done
+  if (( ${#old[@]} > 0 )); then
+    ls -t -- "${old[@]}"
+  fi
+  if (( ${#tries[@]} > 0 )); then
+    ls -t -- "${tries[@]}"
+  fi
+  return 0
+}
+
+# Fills R_MAP_ALL, R_MAP_N, R_MAP_DEF for each route and the MAP_* counts.
+pip_find_maps() {
+  local f first p
+  local -a c=()
+  MAP_ROUTES=() MAP_ANY=0 MAP_MULTI=0
+  for f in "${FRONTS[@]}"; do
+    [[ -n "${R_BACKS[$f]}" ]] || continue
+    MAP_ROUTES+=("$f")
+    mapfile -t c < <(pip_map_candidates "$f")
+    R_MAP_ALL[$f]="$(printf '%s\n' "${c[@]}")"
+    R_MAP_N[$f]=${#c[@]}
+    first=""
+    for p in "${c[@]}"; do
+      [[ -n "$p" ]] || continue
+      if [[ "${p##*/}" != *-test-* ]]; then
+        first="$p"
+        break
+      fi
+    done
+    R_MAP_DEF[$f]="$first"
+    (( ${#c[@]} > 0 )) && (( MAP_ANY++ ))
+    (( ${#c[@]} > 1 )) && (( MAP_MULTI++ ))
+  done
+  if [[ "$MAP_MODE" == file ]] && (( ${#MAP_ROUTES[@]} != 1 )); then
+    echo "ERROR: --map FILE needs exactly one route, there are ${#MAP_ROUTES[@]}. Use --map auto, or give one front file." >&2
+    exit 1
+  fi
+  pip_apply_map_mode
+}
+
+# R_MAP for each route from MAP_MODE. pick asks for each route with more than one map.
+pip_apply_map_mode() {
+  local f ri=0
+  for f in "${MAP_ROUTES[@]}"; do
+    (( ri++ ))
+    case "$MAP_MODE" in
+      none) R_MAP[$f]="" ;;
+      file) R_MAP[$f]="$MAP_FILE" ;;
+      pick)
+        [[ -n "${R_MAP[$f]+x}" ]] || R_MAP[$f]="${R_MAP_DEF[$f]}"
+        if (( ${R_MAP_N[$f]} > 1 )); then
+          pip_prompt_map_pick "$f" "$ri" "${#MAP_ROUTES[@]}"
+        elif [[ -z "${R_MAP[$f]}" ]]; then
+          R_MAP[$f]="${R_MAP_DEF[$f]}"
+        fi
+        ;;
+      *) R_MAP[$f]="${R_MAP_DEF[$f]}" ;;
+    esac
+    if [[ -n "${R_MAP[$f]}" ]]; then
+      pip_map_probe "${R_MAP[$f]}"
+    fi
+  done
+}
+
+# " length 0:05, the video is 24:20" when the map's length is off by more than a second.
+pip_map_len_note() {
+  local f="$1" p="$2" fdur="${F_DUR[$1]}"
+  pip_map_probe "$p"
+  [[ -n "$MP_DUR" && -n "$fdur" ]] || return 0
+  if pip_gt "$(awk -v a="$MP_DUR" -v b="$fdur" 'BEGIN { d = a - b; printf "%.3f", (d < 0) ? -d : d }')" 1; then
+    printf 'it is %s long, the front video %s' "$(pip_clock "$MP_DUR")" "$(pip_clock "$fdur")"
+  fi
+  return 0
+}
+
+# Map size in a route's frame. Sets MAP_IW, MAP_IH (picture), MAP_BW, MAP_BH (with border).
+# Returns 1 with LAYOUT_ERR when it cannot be laid out.
+pip_map_box() {
+  local f="$1" fw="${F_W[$1]}" fh="${F_H[$1]}"
+  pip_map_probe "${R_MAP[$f]}"
+  if [[ -z "$MP_W" || -z "$MP_H" ]]; then
+    LAYOUT_ERR="ffprobe could not read the size of $(basename -- "${R_MAP[$f]}")"
+    return 1
+  fi
+  if [[ "$MAP_KIND" == pct ]]; then
+    MAP_IW="$(pip_even "$(pip_calc "$fw * $MAP_A / 100")")"
+  else
+    MAP_IW="$(pip_even "$MAP_A")"
+  fi
+  MAP_IH="$(pip_even "$(pip_calc "$MAP_IW * $MP_H / $MP_W")")"
+  MAP_BW=$(( MAP_IW + 2 * BORDER ))
+  MAP_BH=$(( MAP_IH + 2 * BORDER ))
+  if (( MAP_BW + M_LEFT + M_RIGHT > fw || MAP_BH + M_TOP + M_BOTTOM > fh )); then
+    LAYOUT_ERR="the ${MAP_BW}x${MAP_BH} map plus margins does not fit in the ${fw}x${fh} frame"
+    return 1
+  fi
+  return 0
+}
+
+# Whether two boxes (x y w h each) overlap.
+pip_boxes_overlap() {
+  (( $1 < $5 + $7 && $5 < $1 + $3 && $2 < $6 + $8 && $6 < $2 + $4 ))
+}
+
 # --- picture layout ---------------------------------------------------------
 
 # Inset size for a source picture w×h with crop_top/crop_bottom, in a frame frame_w wide.
@@ -937,7 +1148,7 @@ pip_layout_check() {
 }
 
 pip_overlay_xy() {
-  case "$CORNER" in
+  case "${1:-$CORNER}" in
     tr) printf 'W-w-%s:%s' "$M_RIGHT" "$M_TOP" ;;
     ll) printf '%s:H-h-%s' "$M_LEFT" "$M_BOTTOM" ;;
     lr) printf 'W-w-%s:H-h-%s' "$M_RIGHT" "$M_BOTTOM" ;;
@@ -948,7 +1159,7 @@ pip_overlay_xy() {
 # Top-left pixel of a box_w×box_h inset in a frame_w×frame_h frame. Sets BOX_X, BOX_Y.
 pip_box_xy() {
   local box_w="$1" box_h="$2" frame_w="$3" frame_h="$4"
-  case "$CORNER" in
+  case "${5:-$CORNER}" in
     tr) BOX_X=$(( frame_w - box_w - M_RIGHT )); BOX_Y=$M_TOP ;;
     ll) BOX_X=$M_LEFT; BOX_Y=$(( frame_h - box_h - M_BOTTOM )) ;;
     lr) BOX_X=$(( frame_w - box_w - M_RIGHT )); BOX_Y=$(( frame_h - box_h - M_BOTTOM )) ;;
@@ -1113,6 +1324,7 @@ pip_route_inputs() {
   USE_B=()
   USE_DELAY=()
   USE_SEEK=()
+  USE_MAP="${R_MAP[$f]:-}"
   pip_window "$f"
   for b in ${R_BACKS[$f]}; do
     d="$(pip_back_delay "$b" "$f")"
@@ -1137,7 +1349,7 @@ pip_route_inputs() {
 
 # ffmpeg arguments for one route, after pip_route_inputs. Output path last.
 pip_build_ffmpeg_args() {
-  local f="$1" out="$2" k n filter="" xy prev cur pre delay en b fw fh
+  local f="$1" out="$2" k n filter="" xy prev cur pre delay en b fw fh mlen
   fw="${F_W[$f]}" fh="${F_H[$f]}"
   xy="$(pip_overlay_xy)"
   pre="$(pip_rear_pre)"
@@ -1154,6 +1366,12 @@ pip_build_ffmpeg_args() {
     FF_ARGS+=(-i "${F_PATH[${USE_B[$k]}]}")
   done
   n=${#USE_B[@]}
+  if [[ -n "$USE_MAP" ]]; then
+    if pip_gt "$WIN_START" 0; then
+      FF_ARGS+=(-ss "$WIN_START")
+    fi
+    FF_ARGS+=(-i "$USE_MAP")
+  fi
 
   if (( SWAP && n == 0 )); then
     filter="[0:v]setpts=PTS-STARTPTS[base0]"
@@ -1199,6 +1417,19 @@ pip_build_ffmpeg_args() {
       prev="$cur"
     done
     cur="$prev"
+  fi
+  if [[ -n "$USE_MAP" ]] && pip_map_box "$f"; then
+    mlen=""
+    if (( TEST )) && [[ -n "$WIN_LEN" ]]; then
+      mlen="$WIN_LEN"
+    elif [[ -n "${F_DUR[$f]}" ]]; then
+      mlen="$(pip_calc "${F_DUR[$f]} - $WIN_START")"
+    fi
+    filter+=";[$(( n + 1 )):v]setpts=PTS-STARTPTS,${mlen:+trim=end=${mlen},}"
+    filter+="scale=${MAP_IW}:${MAP_IH},setsar=1"
+    (( BORDER > 0 )) && filter+=",pad=${MAP_BW}:${MAP_BH}:${BORDER}:${BORDER}:color=${BORDER_COLOR}"
+    filter+="[map];[${cur}][map]overlay=$(pip_overlay_xy "$(pip_map_corner)"):eof_action=pass[mapov]"
+    cur="mapov"
   fi
   filter+=";[${cur}]"
   if [[ -n "$OUT_WIDTH" ]]; then
@@ -1457,6 +1688,8 @@ pip_print_route() {
     if [[ -n "$OUT_WIDTH" ]]; then
       out_size="${OUT_WIDTH}x$(pip_even "$(pip_calc "$OUT_WIDTH * ${F_H[$f]} / ${F_W[$f]}")")"
     fi
+    pip_print_route_map "$f" "$BOX_X" "$BOX_Y" "$BOX_W" "$BOX_H"
+    [[ "${ROUTE_STATE[$f]}" == bad ]] && out_size="?"
   else
     printf '  %sCannot render%s  %s\n' "$C_R" "$C_0" "$LAYOUT_ERR"
     ROUTE_STATE[$f]=bad
@@ -1497,6 +1730,69 @@ pip_print_route() {
   fi
 }
 
+# The Map lines of a route. Arguments after the route: the rear inset's x y w h.
+pip_print_route_map() {
+  local f="$1" p="${R_MAP[$1]:-}" n="${R_MAP_N[$1]:-0}" mc note which
+  if [[ -z "$p" ]]; then
+    if [[ "$MAP_MODE" == none ]]; then
+      (( MAP_ANY > 0 )) && printf '  %sMap%s     none (you chose no map)\n' "$C_B" "$C_0"
+    elif (( n > 0 )); then
+      printf '  %sMap%s     %snone used: only short tries (-test-...) were found; [m] can pick one%s\n' \
+        "$C_B" "$C_0" "$C_Y" "$C_0"
+    elif (( MAP_ANY > 0 )); then
+      printf '  %sMap%s     %snone found for this route; video-pgm-create-map-video-from-gpx.sh makes one%s\n' \
+        "$C_B" "$C_0" "$C_Y" "$C_0"
+    fi
+    return 0
+  fi
+  if ! pip_map_box "$f"; then
+    printf '  %sCannot render%s  %s\n' "$C_R" "$C_0" "$LAYOUT_ERR"
+    ROUTE_STATE[$f]=bad
+    return 0
+  fi
+  mc="$(pip_map_corner)"
+  pip_box_xy "$MAP_BW" "$MAP_BH" "${F_W[$f]}" "${F_H[$f]}" "$mc"
+  printf '  %sMap%s     %sx%s at x %s, y %s (%s, %s)\n' "$C_B" "$C_0" "$MAP_BW" "$MAP_BH" "$BOX_X" "$BOX_Y" \
+    "$(pip_corner_label "$mc")" "$(pip_map_size_label)"
+  printf '          %s\n' "$(basename -- "$p")"
+  which=""
+  if (( n > 1 )); then
+    if [[ "$p" == "${R_MAP_DEF[$f]}" ]]; then
+      which=", the newest of ${n} maps"
+    else
+      which=", chosen from ${n} maps"
+    fi
+  fi
+  printf '          %s%sx%s, video length %s%s%s\n' "$C_DIM" "${MP_W:-?}" "${MP_H:-?}" \
+    "$(pip_clock "${MP_DUR:-0}")" "$which" "$C_0"
+  note="$(pip_map_len_note "$f" "$p")"
+  [[ -n "$note" ]] && printf '          %sNote: %s%s\n' "$C_Y" "$note" "$C_0"
+  [[ "$mc" != "$MAP_CORNER" ]] && printf '          %sin the %s, because the rear inset is in the %s%s\n' \
+    "$C_DIM" "$(pip_corner_label "$mc")" "$(pip_corner_label "$MAP_CORNER")" "$C_0"
+  if pip_boxes_overlap "$2" "$3" "$4" "$5" "$BOX_X" "$BOX_Y" "$MAP_BW" "$MAP_BH"; then
+    printf '          %sNote: the map covers part of the rear inset; the map is drawn on top%s\n' "$C_Y" "$C_0"
+  fi
+  return 0
+}
+
+# The Map line of the settings.
+pip_map_settings_label() {
+  local f used=0
+  for f in "${MAP_ROUTES[@]}"; do
+    [[ -n "${R_MAP[$f]:-}" ]] && (( used++ ))
+  done
+  if [[ "$MAP_MODE" == none ]]; then
+    printf 'none (no map chosen)'
+  elif (( MAP_ANY == 0 )); then
+    printf 'no map videos found; video-pgm-create-map-video-from-gpx.sh makes them'
+  else
+    printf '%d of %d route(s), %s, %s' "$used" "${#MAP_ROUTES[@]}" "$(pip_map_size_label)" \
+      "$(pip_corner_label "$(pip_map_corner)")"
+    [[ "$MAP_MODE" == pick ]] && printf ', chosen for each route'
+  fi
+  return 0
+}
+
 pip_print_orphans() {
   local k i
   (( ${#ORPHAN_IDX[@]} == 0 )) && return 0
@@ -1531,6 +1827,12 @@ pip_equivalent_command() {
   (( SWAP )) && cmd+=(--swap)
   [[ "$GAP_FILL" != none ]] && cmd+=(--gap-fill "$GAP_FILL")
   [[ -n "$OUT_WIDTH" ]] && cmd+=(--out-width "$OUT_WIDTH")
+  case "$MAP_MODE" in
+    none) cmd+=(--no-map) ;;
+    file) cmd+=(--map "$MAP_FILE") ;;
+  esac
+  [[ "$MAP_SPEC" != 540px ]] && cmd+=(--map-size "$MAP_SPEC")
+  [[ "$MAP_CORNER" != tr ]] && cmd+=(--map-corner "$MAP_CORNER")
   [[ "$ENCODER" != auto ]] && cmd+=(--encoder "$ENCODER")
   [[ -n "$QUALITY" ]] && cmd+=(--quality "$QUALITY")
   case "$FROM_MODE" in
@@ -1573,6 +1875,7 @@ pip_print_plan() {
   printf '  %-14s %s, %s\n' "Inset" "$(pip_size_label)" "$(pip_corner_label)"
   printf '  %-14s %s\n' "Margins" "$(pip_margins_label)"
   printf '  %-14s %s\n' "Extras" "$(pip_extras_label)"
+  printf '  %-14s %s\n' "Map" "$(pip_map_settings_label)"
   if [[ -n "$OUT_WIDTH" ]]; then
     printf '  %-14s %s\n' "Output size" "${OUT_WIDTH} px wide"
   else
@@ -1814,6 +2117,8 @@ pip_prompt_more() {
   else
     echo "$(pip_ts) ${C_Y}Not a number: ${REPLY}. Keeping ${OUT_WIDTH:-the front size}.${C_0}"
   fi
+
+  pip_prompt_more_map
 }
 
 pip_prompt_more_first() {
@@ -1821,16 +2126,140 @@ pip_prompt_more_first() {
   printf '%sMore choices? [N/y/q]%s\n' "$C_B" "$C_0"
   echo "  [N] Keep the current layout (default)"
   echo "      $(pip_size_label), $(pip_corner_label), margins $(pip_margins_label), extras: $(pip_extras_label)."
+  echo "      Map: $(pip_map_settings_label)."
   echo "      The plan is printed next, and nothing is rendered before you agree."
   echo "  [y] Change the layout first"
   echo "      Asks, one at a time: inset size, corner, margins, mirror, crop,"
-  echo "      border, caption, swap, black gap box, and output width."
+  echo "      border, caption, swap, black gap box, output width, and the map."
   echo "      Enter keeps each current answer."
   echo "  [q] Quit the script, render nothing"
   pip_read_key "More choices? [N/y/q]: " n
   case "$REPLY" in
     y) pip_prompt_more ;;
     q) pip_quit ;;
+  esac
+}
+
+# Which map each route gets, when some route has more than one.
+pip_prompt_map_choice() {
+  local key=n f example=""
+  MAP_ASKED=1
+  case "$MAP_MODE" in none) key=s ;; pick) key=p ;; esac
+  for f in "${MAP_ROUTES[@]}"; do
+    if [[ -n "${R_MAP_DEF[$f]}" ]]; then
+      example="$(basename -- "${R_MAP_DEF[$f]}")"
+      break
+    fi
+  done
+  echo
+  printf '%sMap video: %d of %d route(s) have more than one map. Which should be used? [%s]%s\n' \
+    "$C_B" "$MAP_MULTI" "${#MAP_ROUTES[@]}" "$(pip_keys "$key" n p s q)" "$C_0"
+  echo "  [$(pip_k n "$key")] The newest map of each route$(pip_cur_mark n "$key")"
+  echo "      The one without _old or -test in its name${example:+, for example}"
+  [[ -n "$example" ]] && echo "      ${example}"
+  echo "  [$(pip_k p "$key")] Pick for each route$(pip_cur_mark p "$key")"
+  echo "      Each route's maps are listed with their length and the time they were made."
+  echo "  [$(pip_k s "$key")] No map$(pip_cur_mark s "$key")"
+  echo "      Only the rear camera is put in the picture."
+  echo "  [q] Quit the script, render nothing"
+  pip_read_key "Map [$(pip_keys "$key" n p s q)]: " "$key"
+  case "$REPLY" in
+    n) MAP_MODE=auto ;;
+    p) MAP_MODE=pick ;;
+    s) MAP_MODE=none ;;
+    q) pip_quit ;;
+    *) echo "$(pip_ts) Unknown choice: ${REPLY}. Keeping the current one." ;;
+  esac
+  pip_apply_map_mode
+}
+
+# The maps of one route, numbered; 0 is no map.
+pip_prompt_map_pick() {
+  local f="$1" ri="$2" total="$3" k=0 def=0 p note
+  local -a c=()
+  mapfile -t c <<<"${R_MAP_ALL[$f]}"
+  echo
+  printf '%sMap for route %d of %d%s  %s\n' "$C_B" "$ri" "$total" "$C_0" "$(basename -- "${F_PATH[$f]}")"
+  [[ -n "${F_DUR[$f]}" ]] && echo "  The front video is $(pip_clock "${F_DUR[$f]}") long."
+  for p in "${c[@]}"; do
+    [[ -n "$p" ]] || continue
+    (( k++ ))
+    [[ "$p" == "${R_MAP[$f]:-}" ]] && def=$k
+  done
+  k=0
+  for p in "${c[@]}"; do
+    [[ -n "$p" ]] || continue
+    (( k++ ))
+    pip_map_probe "$p"
+    echo "  [${k}] $(basename -- "$p")$( (( k == def )) && printf ' (current, default)')"
+    note="$(pip_map_len_note "$f" "$p")"
+    printf '      %s, %s, made %s%s\n' "$(pip_clock "${MP_DUR:-0}")" "${MP_W:-?}x${MP_H:-?}" \
+      "$(date -r "$p" '+%Y.%m.%d %H:%M' 2>/dev/null || echo '?')" "${note:+; ${C_Y}${note}${C_0}}"
+  done
+  echo "  [0] No map for this route$( (( def == 0 )) && printf ' (current, default)')"
+  pip_ask_line "Map 0-${k}" "$def"
+  if [[ "$REPLY" =~ ^[0-9]+$ ]] && (( 10#$REPLY <= k )); then
+    if (( 10#$REPLY == 0 )); then
+      R_MAP[$f]=""
+    else
+      R_MAP[$f]="${c[$(( 10#$REPLY - 1 ))]}"
+    fi
+  else
+    echo "$(pip_ts) ${C_Y}Not 0 to ${k}: ${REPLY}. Keeping ${def}.${C_0}"
+  fi
+}
+
+# Map part of "More choices".
+pip_prompt_more_map() {
+  local key cur=0 f
+  echo
+  if (( MAP_ANY == 0 )); then
+    echo "Map: no map videos were found beside the front files."
+    echo "  video-pgm-create-map-video-from-gpx.sh makes them (FrontCam -> Map in the name)."
+    return 0
+  fi
+  if (( MAP_MULTI > 0 )); then
+    pip_prompt_map_choice
+  else
+    for f in "${MAP_ROUTES[@]}"; do
+      [[ -n "${R_MAP[$f]:-}" ]] && cur=1
+    done
+    pip_yes_no "Put the map video in the picture?" "$cur" \
+      "Each route's map goes in a corner, beside the rear inset." \
+      "Only the rear camera is put in the picture."
+    if (( REPLY )); then MAP_MODE=auto; else MAP_MODE=none; fi
+    MAP_ASKED=1
+    pip_apply_map_mode
+  fi
+  [[ "$MAP_MODE" == none ]] && return 0
+
+  echo
+  echo "Map size: how wide is the map?"
+  echo "  540 or 540px   that many pixels wide (540 is the default, about 21% of a"
+  echo "                 2592-wide frame and as high as the default rear inset)"
+  echo "  21%            that percent of the full frame's width"
+  echo "  The height follows the map's shape."
+  pip_ask_line "Map size" "$MAP_SPEC"
+  pip_set_map_size "$REPLY" || echo "$(pip_ts) ${C_Y}Not a size: ${REPLY}. Keeping ${MAP_SPEC}.${C_0}"
+
+  echo
+  case "$MAP_CORNER" in tl) key=1 ;; ll) key=3 ;; lr) key=4 ;; *) key=2 ;; esac
+  echo "Which corner should the map sit in? [1/2/3/4/q]"
+  echo "  If the rear inset is in that corner, the map takes the other corner on the same edge."
+  echo "  It uses the same margins and border as the rear inset."
+  echo "  [1] Top left$([[ $key == 1 ]] && printf ' (current, default)')"
+  echo "  [2] Top right$([[ $key == 2 ]] && printf ' (current, default)')"
+  echo "  [3] Lower left$([[ $key == 3 ]] && printf ' (current, default)')"
+  echo "  [4] Lower right$([[ $key == 4 ]] && printf ' (current, default)')"
+  echo "  [q] Quit the script, render nothing more"
+  pip_read_key "Map corner [1/2/3/4/q] (Enter = ${key}): " "$key"
+  case "$REPLY" in
+    1) MAP_CORNER=tl ;;
+    2) MAP_CORNER=tr ;;
+    3) MAP_CORNER=ll ;;
+    4) MAP_CORNER=lr ;;
+    q) pip_quit ;;
+    *) echo "$(pip_ts) Unknown choice: ${REPLY}. Keeping $(pip_corner_label "$MAP_CORNER")." ;;
   esac
 }
 
@@ -1962,7 +2391,7 @@ pip_prompt_plan() {
     (( EXISTING > 0 )) && echo "      Already rendered routes ask whether to skip or render them again."
     echo "  [m] Change the layout"
     echo "      Inset size, corner, margins, mirror, crop, border, caption, swap,"
-    echo "      black gap box, output width. The plan is printed again afterwards."
+    echo "      black gap box, output width, map. The plan is printed again afterwards."
     echo "  [t] Render only part of each route (for a test)"
     echo "      Pick how long, and where it starts: from the beginning, from the end,"
     echo "      or the middle. Now: $(pip_part_label)."
@@ -1989,7 +2418,7 @@ pip_prompt_plan() {
 # --- render -----------------------------------------------------------------
 
 pip_render_route() {
-  local n="$1" total="$2" f="$3" out label kind rc tries=0 start_s end_s gpx_out total_out route_t0 in_b b
+  local n="$1" total="$2" f="$3" out label kind rc tries=0 start_s end_s gpx_out total_out route_t0 in_b in_n b
   local -a kinds=()
   out="${ROUTE_OUT[$f]}"
   pip_route_inputs "$f"
@@ -2046,8 +2475,13 @@ pip_render_route() {
       for b in "${USE_B[@]}"; do
         in_b=$(( in_b + $(pip_file_bytes "${F_PATH[$b]}") ))
       done
+      in_n=$(( 1 + ${#USE_B[@]} ))
+      if [[ -n "$USE_MAP" ]]; then
+        in_b=$(( in_b + $(pip_file_bytes "$USE_MAP") ))
+        (( in_n++ ))
+      fi
       DONE_IN_B+=("$in_b")
-      DONE_IN_N+=("$(( 1 + ${#USE_B[@]} ))")
+      DONE_IN_N+=("$in_n")
       DONE_OUT_B+=("$(pip_file_bytes "$out")")
       return 0
     fi
@@ -2115,7 +2549,7 @@ pip_print_summary() {
     pip_summary_kv "Encode time" "$(pip_format_elapsed "$enc_sum")  ($(awk -v v="$vid_sum" -v s="$enc_sum" \
       'BEGIN { printf "%.2f", (s > 0 ? v / s : 0) }')x real time on average)"
     mapfile -t size_lines < <(pip_format_size_pair "$in_sum" "$out_sum")
-    pip_summary_kv "Input files" "${in_files} (front and rear files read)"
+    pip_summary_kv "Input files" "${in_files} (front, rear, and map files read)"
     pip_summary_kv "Input size" "${size_lines[0]}"
     pip_summary_kv "Output size" "${size_lines[1]}  ($(awk -v i="$in_sum" -v o="$out_sum" \
       'BEGIN { printf "%.0f", (i > 0 ? o * 100 / i : 0) }')% of input)"
@@ -2176,6 +2610,11 @@ LABEL=""
 SWAP=0
 GAP_FILL=none
 OUT_WIDTH=""
+MAP_MODE=auto MAP_FILE="" MAP_FROM_CLI=0 MAP_ASKED=0 MAP_CORNER=tr
+MAP_KIND=px MAP_A=540 MAP_SPEC=540px
+MAP_ROUTES=() MAP_ANY=0 MAP_MULTI=0 USE_MAP=""
+MAP_IW=0 MAP_IH=0 MAP_BW=0 MAP_BH=0 MP_DUR="" MP_W="" MP_H=""
+declare -A R_MAP=() R_MAP_ALL=() R_MAP_N=() R_MAP_DEF=() MAP_PROBED=() MAP_DUR=() MAP_W=() MAP_H=()
 ENCODER=auto
 QUALITY=""
 FROM=0
@@ -2285,6 +2724,32 @@ while [[ $# -gt 0 ]]; do
         || { echo "ERROR: --out-width must be 0 or 160 to 8000 pixels (got $2)" >&2; exit 1; }
       if (( 10#$2 == 0 )); then OUT_WIDTH=""; else OUT_WIDTH="$(pip_even "$2")"; fi
       MORE_FROM_CLI=1; shift 2 ;;
+    --map)
+      pip_need_value "$@"
+      case "${2,,}" in
+        auto) MAP_MODE=auto ;;
+        none) MAP_MODE=none ;;
+        *)
+          MAP_FILE="$(pip_unix_path "$2")"
+          [[ -f "$MAP_FILE" ]] || { echo "ERROR: --map must be auto, none, or a map video file (got $2)" >&2; exit 1; }
+          MAP_MODE=file ;;
+      esac
+      MAP_FROM_CLI=1; shift 2 ;;
+    --no-map) MAP_MODE=none; MAP_FROM_CLI=1; shift ;;
+    --map-size)
+      pip_need_value "$@"
+      pip_set_map_size "$2" || { echo "ERROR: --map-size must be like 540, 540px, or 21% (got $2)" >&2; exit 1; }
+      MORE_FROM_CLI=1; shift 2 ;;
+    --map-corner)
+      pip_need_value "$@"
+      case "${2,,}" in
+        tl|top-left) MAP_CORNER=tl ;;
+        tr|top-right) MAP_CORNER=tr ;;
+        ll|bl|lower-left|bottom-left) MAP_CORNER=ll ;;
+        lr|br|lower-right|bottom-right) MAP_CORNER=lr ;;
+        *) echo "ERROR: --map-corner must be tl, tr, ll, or lr (got $2)" >&2; exit 1 ;;
+      esac
+      MORE_FROM_CLI=1; shift 2 ;;
     --encoder)
       pip_need_value "$@"; ENCODER="${2,,}"
       case "$ENCODER" in auto|nvenc|x265|x264) ;; *) echo "ERROR: --encoder must be auto, nvenc, x265, or x264 (got $2)" >&2; exit 1 ;; esac
@@ -2374,6 +2839,9 @@ fi
 
 pip_read_durations
 pip_pair
+pip_proc_begin
+pip_find_maps
+pip_proc_end
 pip_print_existing
 
 _interactive=0
@@ -2382,6 +2850,9 @@ if (( ! DO_YES && ! DRY_RUN )) && (( script_is_run_interactively )); then
 fi
 if (( _interactive )) && (( ! MORE_FROM_CLI )); then
   pip_prompt_more_first
+fi
+if (( _interactive && ! MAP_ASKED && ! MAP_FROM_CLI && MAP_MULTI > 0 )); then
+  pip_prompt_map_choice
 fi
 
 pip_print_plan
