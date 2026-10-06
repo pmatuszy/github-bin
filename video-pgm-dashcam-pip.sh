@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261006.120000 - already rendered routes: listed at the start, skip or render again, old file kept with its date and time or deleted
 # v. 20261006.114500 - render only part of each route: any length, counted from the beginning, from the end, or the middle
 # v. 20261006.113900 - typed answers list [Enter] and [q] like the one-key questions, and every prompt line shows q
 # v. 20261006.113100 - summary: input and output sizes per route and in total, like the timelapse script
@@ -9,6 +10,7 @@
 # v. 20261006.103000 - more choices: inset size, corner, four margins, mirror, crop, border, caption, swap, black gap box, output width
 # v. 20261006.091500 - pair FrontCam and BackCam by filename clock, print the plan, render picture-in-picture
 
+# 2026.10.06 - v. 0.10 - routes with an output are listed at the start; after [Y] you choose skip, render again, or ask for each; route by route asks for each existing route; the old file is renamed _old-YYYYMMDD_HHMMSS (its own time) or deleted, only after the new render succeeds; --old keep|delete; [r] removed
 # 2026.10.06 - v. 0.9 - [t] renders a part of each route: all, 1, 2, 5 minutes or a custom length, from the beginning, back from the end, or the middle; --from-end and --middle; the plan shows each route's exact part
 # 2026.10.06 - v. 0.8 - every question offers q to quit, shown both in its key list and on the prompt line
 # 2026.10.06 - v. 0.7 - summary shows input and output size for each route, and totals in MB, MiB, GB, and GiB with output as a percent of input
@@ -31,7 +33,7 @@
 show_help() {
   cat <<EOF
 Usage: $(basename "$0") [-h|--help] [-v|--version] [--history]
-       [-y|--yes] [-n|--dry-run] [--redo]
+       [-y|--yes] [-n|--dry-run] [--redo] [--old keep|delete]
        [--pip-size SIZE] [--corner tl|tr|ll|lr]
        [--margin PX] [--margin-x PX] [--margin-y PX]
        [--margin-top PX] [--margin-bottom PX] [--margin-left PX] [--margin-right PX]
@@ -78,7 +80,10 @@ Output
     ...-70mai-A510-PiP-concat-x5.mp4
   A short try adds -test-from-1m00s-len-2m00s (--from), -test-end-0m00s-len-2m00s
   (--from-end), or -test-middle-len-2m00s (--middle), so a full render is kept.
-  An existing output is skipped unless --redo is given.
+  Routes that already have an output are listed at the start. With -y they
+  are skipped unless --redo is given; otherwise you choose: skip, render again,
+  or ask for each. A replaced output is kept as ..._old-YYYYMMDD_HHMMSS.mp4
+  (or deleted with --old delete).
 
 Options:
   -h, --help           Show this help and exit.
@@ -86,7 +91,12 @@ Options:
   --history            Print script changelog from the header and exit.
   -y, --yes            Do not ask. Render everything in the plan.
   -n, --dry-run        Print the plan and the ffmpeg commands, render nothing.
-  --redo               Replace outputs that already exist.
+  --redo               Render routes that already have an output again.
+                       Without it they are skipped (-y) or you are asked.
+  --old keep|delete    What happens to the old output when the new one is done.
+                       keep (default): renamed to ..._old-YYYYMMDD_HHMMSS.mp4,
+                       the date and time the old file was made. delete: removed.
+                       The old file is only touched after the new render succeeds.
 
  Inset (the small picture)
   --pip-size SIZE      1/2 (default) or 1/3: that part of its own width and height.
@@ -723,6 +733,145 @@ pip_output_path() {
   printf '%s/%s.mp4\n' "$dir" "$out"
 }
 
+# Name for a kept old output: _old- and the old file's own modification time.
+pip_old_name() {
+  local out="$1" stamp cand n=2
+  stamp="$(date -r "$out" '+%Y%m%d_%H%M%S' 2>/dev/null || date '+%Y%m%d_%H%M%S')"
+  cand="${out%.mp4}_old-${stamp}.mp4"
+  while [[ -e "$cand" ]]; do
+    cand="${out%.mp4}_old-${stamp}-${n}.mp4"
+    (( n++ ))
+  done
+  printf '%s\n' "$cand"
+}
+
+# "3.3 GiB, made 2026.10.05 22:14"
+pip_existing_info() {
+  printf '%s, made %s' "$(pip_human_size "$(pip_file_bytes "$1")")" \
+    "$(date -r "$1" '+%Y.%m.%d %H:%M' 2>/dev/null || echo '?')"
+}
+
+pip_print_existing() {
+  local f n=0 k=0 out
+  local -a found=()
+  for f in "${FRONTS[@]}"; do
+    [[ -n "${R_BACKS[$f]}" ]] || continue
+    (( n++ )) || true
+    out="$(pip_output_path "$f")"
+    [[ -e "$out" ]] && found+=("${n}|${out}")
+  done
+  (( ${#found[@]} == 0 )) && return 0
+  pip_heading "Already rendered"
+  printf '  %d of %d route(s) already have an output file:\n' "${#found[@]}" "$n"
+  for f in "${found[@]}"; do
+    k="${f%%|*}" out="${f#*|}"
+    printf '  Route %-2s %s\n' "$k" "$(basename -- "$out")"
+    printf '           %s\n' "$(pip_existing_info "$out")"
+  done
+  if (( REDO )); then
+    echo "  --redo: they are rendered again; the old files are $([[ "$OLD_MODE" == delete ]] && echo deleted || echo kept as ..._old-YYYYMMDD_HHMMSS.mp4)."
+  elif (( DO_YES || DRY_RUN )); then
+    echo "  The plan below marks them \"exists\". They are skipped; --redo renders them again."
+  else
+    echo "  The plan below marks them \"exists\". Before anything is rendered you"
+    echo "  choose whether to skip them or render them again."
+  fi
+}
+
+pip_prompt_old() {
+  local key=k
+  (( OLD_ASKED )) && return 0
+  OLD_ASKED=1
+  [[ "$OLD_MODE" == delete ]] && key=d
+  echo
+  echo "What should happen to the old file when the new one is done? [K/d/q]"
+  echo "  The new video is written to a .partial file first; the old file is"
+  echo "  only touched after the new one has finished without errors."
+  echo "  [K] Keep it, renamed with the date and time it was made$(pip_cur_mark k "$key")"
+  echo "      For example ..._old-20261005_221400.mp4 beside the new file."
+  echo "  [d] Delete it$(pip_cur_mark d "$key")"
+  echo "  [q] Quit the script, render nothing more"
+  pip_read_key "Old file [K/d/q]: " "$key"
+  case "$REPLY" in
+    k) OLD_MODE=keep ;;
+    d) OLD_MODE=delete ;;
+    q) pip_quit ;;
+    *) echo "$(pip_ts) Unknown choice: ${REPLY}. Keeping old files." ; OLD_MODE=keep ;;
+  esac
+}
+
+# After [Y]: what to do with routes that already have an output.
+pip_prompt_existing() {
+  local skip=0 f
+  for f in "${ROUTES[@]}"; do
+    [[ "${ROUTE_STATE[$f]}" == exists ]] && (( skip++ )) || true
+  done
+  (( skip == 0 )) && return 0
+  echo
+  printf '%s%d route(s) already rendered. What should happen to them? [S/r/c/q]%s\n' "$C_B" "$skip" "$C_0"
+  echo "  [S] Skip them, keep the old files as they are (default)"
+  if (( TO_RENDER > 0 )); then
+    echo "      Only the ${TO_RENDER} new route(s) are rendered."
+  else
+    echo "      Nothing is rendered."
+  fi
+  echo "  [r] Render them again too"
+  echo "      All $(( TO_RENDER + skip )) route(s) are rendered. What happens to each old file is asked next."
+  echo "  [c] Ask for each one"
+  echo "      New routes are rendered without asking; for each existing route its"
+  echo "      plan is printed and you choose."
+  echo "  [q] Quit the script, render nothing"
+  pip_read_key "Already rendered [S/r/c/q]: " s
+  case "$REPLY" in
+    s) ;;
+    r) REDO=1; pip_prompt_old ;;
+    c) EXIST_ASK=1 ;;
+    q) pip_quit ;;
+    *) echo "$(pip_ts) Unknown choice: ${REPLY}. Skipping them." ;;
+  esac
+}
+
+# One existing route, route by route. Returns 0 to render it, 1 to skip.
+pip_prompt_existing_route() {
+  local ri="$1" total="$2" f="$3" out="${ROUTE_OUT[$3]}"
+  echo
+  printf '%sRoute %d of %d is already rendered (%s). [S/r/a/q]%s\n' "$C_B" "$ri" "$total" "$(pip_existing_info "$out")" "$C_0"
+  echo "  [S] Skip it, keep the old file (default)"
+  echo "  [r] Render it again"
+  echo "      What happens to the old file is asked once, the first time."
+  echo "  [a] Render this and every remaining route, asking nothing more"
+  echo "      Remaining routes that already exist are rendered again too."
+  echo "  [q] Quit: stop here and render nothing more"
+  echo "      Routes already rendered in this run are kept."
+  pip_read_key "Route ${ri} of ${total} [S/r/a/q]: " s
+  case "$REPLY" in
+    r) pip_prompt_old; return 0 ;;
+    a) REDO=1 CHOOSE=0 EXIST_ASK=0; pip_prompt_old; return 0 ;;
+    q) STOPPED=yes; return 2 ;;
+    s) SKIPPED_LIST+=("${out} (already exists, you chose skip)"); return 1 ;;
+    *) SKIPPED_LIST+=("${out} (already exists, unknown answer ${REPLY})"); return 1 ;;
+  esac
+}
+
+# Before the new output takes its place: rename or delete the old one (and its .gpx).
+pip_retire_old() {
+  local out="$1" old sz gpx="${1%.mp4}.gpx"
+  [[ -e "$out" ]] || return 0
+  sz=$(pip_file_bytes "$out")
+  if [[ "$OLD_MODE" == delete ]]; then
+    rm -f -- "$out" || return 1
+    OLD_DELETED+=("${out}|${sz}")
+    echo "$(pip_ts) Old file deleted: ${out}"
+  else
+    old="$(pip_old_name "$out")"
+    mv -- "$out" "$old" || return 1
+    [[ -e "$gpx" ]] && mv -- "$gpx" "${old%.mp4}.gpx"
+    OLD_KEPT+=("${old}|${sz}")
+    echo "$(pip_ts) Old file kept as: ${old}"
+  fi
+  return 0
+}
+
 pip_find_gpx() {
   local mp4="$1" dir stem cand
   dir="$(dirname -- "$mp4")"
@@ -1239,7 +1388,7 @@ pip_join_gaps() {
 }
 
 pip_print_route() {
-  local n="$1" total="$2" f="$3" b d k fdur out out_note gpx real_after note out_size
+  local n="$1" total="$2" f="$3" b d k fdur out out_note old_note gpx real_after note out_size
   fdur="${F_DUR[$f]}"
   out="$(pip_output_path "$f")"
   ROUTE_OUT[$f]="$out"
@@ -1318,17 +1467,24 @@ pip_print_route() {
     [[ -n "$WIN_NOTE" ]] && printf '          %s%s%s\n' "$C_Y" "$WIN_NOTE" "$C_0"
   fi
   out_note="${C_G}new${C_0}"
+  old_note=""
   if [[ -e "$out" ]]; then
+    (( EXISTING++ )) || true
     if (( REDO )); then
-      out_note="${C_Y}exists, will be replaced${C_0}"
+      out_note="${C_Y}exists ($(pip_existing_info "$out")), will be rendered again${C_0}"
+      if [[ "$OLD_MODE" == delete ]]; then
+        old_note="the old file is deleted once the new one is done"
+      else
+        old_note="the old file is kept as $(basename -- "$(pip_old_name "$out")")"
+      fi
     else
-      out_note="${C_Y}exists ($(pip_human_size "$(stat -c %s -- "$out" 2>/dev/null || echo 0)")), skipped; --redo replaces it${C_0}"
+      out_note="${C_Y}exists ($(pip_existing_info "$out")), skipped unless you choose to render it again${C_0}"
       [[ "${ROUTE_STATE[$f]}" == render ]] && ROUTE_STATE[$f]=exists
-      (( EXISTING++ )) || true
     fi
   fi
   printf '  %sOutput%s  %s\n' "$C_B" "$C_0" "$(basename -- "$out")"
   printf '          %s, %s\n' "$out_size" "$out_note"
+  [[ -n "$old_note" ]] && printf '          %s%s%s\n' "$C_Y" "$old_note" "$C_0"
   ROUTE_GPX[$f]=""
   if (( GPX )) && (( ! TEST )); then
     if gpx="$(pip_find_gpx "${F_PATH[$f]}")"; then
@@ -1353,6 +1509,7 @@ pip_print_orphans() {
 pip_equivalent_command() {
   local -a cmd=("$(basename "$0")" -y)
   (( REDO )) && cmd+=(--redo)
+  (( REDO )) && [[ "$OLD_MODE" == delete ]] && cmd+=(--old delete)
   [[ "$SIZE_SPEC" != 1/2 ]] && cmd+=(--pip-size "$SIZE_SPEC")
   [[ "$CORNER" != tl ]] && cmd+=(--corner "$CORNER")
   if (( M_TOP == M_BOTTOM && M_TOP == M_LEFT && M_TOP == M_RIGHT )); then
@@ -1440,7 +1597,11 @@ pip_print_plan() {
   done
   echo
   printf '%s%d route(s), %d to render%s' "$C_B" "$total" "$TO_RENDER" "$C_0"
-  (( EXISTING > 0 )) && printf ', %d already rendered' "$EXISTING"
+  if (( EXISTING > 0 && REDO )); then
+    printf ', %d of them already rendered and done again' "$EXISTING"
+  elif (( EXISTING > 0 )); then
+    printf ', %d already rendered (skipped for now)' "$EXISTING"
+  fi
   (( BAD > 0 )) && printf ', %s%d cannot be rendered with these settings%s' "$C_R" "$BAD" "$C_0"
   echo
 }
@@ -1765,29 +1926,40 @@ pip_prompt_test() {
 pip_prompt_plan() {
   while true; do
     echo
-    printf '%sRender now? [Y/c/m/t/r/q]%s\n' "$C_B" "$C_0"
-    echo "  [Y] Render all ${TO_RENDER} route(s) listed above as new (default)"
-    echo "      One after another, without asking again."
+    printf '%sRender now? [Y/c/m/t/q]%s\n' "$C_B" "$C_0"
+    if (( TO_RENDER == 0 && EXISTING > 0 && ! REDO )); then
+      echo "  [Y] Go on (default): there are no new routes"
+    else
+      echo "  [Y] Render all ${TO_RENDER} route(s) marked to render above (default)"
+    fi
+    if (( EXISTING > 0 && ! REDO )); then
+      echo "      Then you are asked what to do with the ${EXISTING} already rendered."
+    else
+      echo "      One after another, without asking again."
+    fi
     echo "  [c] Choose route by route"
     echo "      Each route's plan is printed again, then you say yes or no to it."
+    (( EXISTING > 0 )) && echo "      Already rendered routes ask whether to skip or render them again."
     echo "  [m] Change the layout"
     echo "      Inset size, corner, margins, mirror, crop, border, caption, swap,"
     echo "      black gap box, output width. The plan is printed again afterwards."
     echo "  [t] Render only part of each route (for a test)"
     echo "      Pick how long, and where it starts: from the beginning, from the end,"
     echo "      or the middle. Now: $(pip_part_label)."
-    if (( EXISTING > 0 )); then
-      echo "  [r] Also replace the ${EXISTING} output(s) that already exist"
-      echo "      They are marked \"exists\" above. The plan is printed again."
-    fi
     echo "  [q] Quit the script, render nothing"
-    pip_read_key "Render now? [Y/c/m/t/r/q]: " y
+    pip_read_key "Render now? [Y/c/m/t/q]: " y
     case "$REPLY" in
-      y) CHOOSE=0; return 0 ;;
+      y)
+        CHOOSE=0
+        if (( REDO )); then
+          (( EXISTING > 0 )) && pip_prompt_old
+        else
+          pip_prompt_existing
+        fi
+        return 0 ;;
       c) CHOOSE=1; return 0 ;;
       m) pip_prompt_more; pip_print_plan ;;
       t) pip_prompt_test; pip_print_plan ;;
-      r) REDO=1; pip_print_plan ;;
       n|q) pip_quit ;;
       *) echo "$(pip_ts) Unknown choice: ${REPLY}." ;;
     esac
@@ -1828,6 +2000,13 @@ pip_render_route() {
       rc=$?
     fi
     end_s=$(date +%s)
+    if (( rc == 0 )) && [[ -s "$PARTIAL" ]] && ! pip_retire_old "$out"; then
+      echo "$(pip_ts) ${C_R}Could not move the old file aside. The new video is left as ${PARTIAL}${C_0}" >&2
+      FAILED_LIST+=("${out} (old file not moved; new video is ${PARTIAL})")
+      PARTIAL=""
+      pip_proc_end
+      return 1
+    fi
     if (( rc == 0 )) && [[ -s "$PARTIAL" ]] && mv -f -- "$PARTIAL" "$out"; then
       PARTIAL=""
       echo "$(pip_ts) ${C_G}Done${C_0} in $(pip_clock $(( end_s - start_s ))): ${out}"
@@ -1899,6 +2078,18 @@ pip_print_summary() {
       printf '    %s\n' "$item"
     done
   fi
+  if (( ${#OLD_KEPT[@]} > 0 )); then
+    pip_summary_kv "Old files kept" "${#OLD_KEPT[@]} (renamed with the date and time they were made)"
+    for item in "${OLD_KEPT[@]}"; do
+      printf '    %s  %s(%s)%s\n' "${item%|*}" "$C_DIM" "$(pip_human_size "${item##*|}")" "$C_0"
+    done
+  fi
+  if (( ${#OLD_DELETED[@]} > 0 )); then
+    pip_summary_kv "Old files deleted" "${#OLD_DELETED[@]}"
+    for item in "${OLD_DELETED[@]}"; do
+      printf '    %s  %s(%s)%s\n' "${item%|*}" "$C_DIM" "$(pip_human_size "${item##*|}")" "$C_0"
+    done
+  fi
   if (( ${#DONE_LIST[@]} > 0 )); then
     pip_summary_kv "Video written" "$(pip_clock "$vid_sum")"
     pip_summary_kv "Encode time" "$(pip_format_elapsed "$enc_sum")  ($(awk -v v="$vid_sum" -v s="$enc_sum" \
@@ -1947,12 +2138,14 @@ SCRIPT_START_NS=$(date +%s.%N)
 PROC_SEC=0
 PROC_SLICE_START=""
 DONE_SEC=() DONE_VID=() DONE_ENC=() DONE_IN_B=() DONE_IN_N=() DONE_OUT_B=()
+OLD_KEPT=() OLD_DELETED=()
 # shellcheck disable=SC1091
 . /root/bin/_script_header.sh
 
 DO_YES=0
 DRY_RUN=0
 REDO=0
+OLD_MODE=keep OLD_ASKED=0 EXIST_ASK=0
 SIZE_KIND=frac SIZE_A=1 SIZE_B=2 SIZE_SPEC=1/2
 CORNER=tl
 M_TOP=0 M_BOTTOM=0 M_LEFT=0 M_RIGHT=0
@@ -2014,6 +2207,13 @@ while [[ $# -gt 0 ]]; do
     -y|--yes) DO_YES=1; shift ;;
     -n|--dry-run) DRY_RUN=1; shift ;;
     --redo) REDO=1; shift ;;
+    --old)
+      pip_need_value "$@"
+      case "$2" in
+        keep|delete) OLD_MODE="$2"; OLD_ASKED=1 ;;
+        *) echo "ERROR: --old must be keep or delete, not: $2" >&2; exit 1 ;;
+      esac
+      shift 2 ;;
     --pip-size)
       pip_need_value "$@"
       pip_set_size "$2" || { echo "ERROR: --pip-size must be like 1/2, 40%, or 960px (got $2)" >&2; exit 1; }
@@ -2154,6 +2354,7 @@ fi
 
 pip_read_durations
 pip_pair
+pip_print_existing
 
 _interactive=0
 if (( ! DO_YES && ! DRY_RUN )) && (( script_is_run_interactively )); then
@@ -2199,13 +2400,35 @@ return_code=0
 _n=0
 _total=0
 for f in "${ROUTES[@]}"; do
-  [[ "${ROUTE_STATE[$f]}" == render ]] && (( _total++ )) || true
+  case "${ROUTE_STATE[$f]}" in
+    render) (( _total++ )) || true ;;
+    exists) (( REDO || EXIST_ASK || CHOOSE )) && (( _total++ )) || true ;;
+  esac
 done
 _ri=0
 for f in "${ROUTES[@]}"; do
   (( _ri++ )) || true
+  if [[ "${ROUTE_STATE[$f]}" == exists ]]; then
+    if (( REDO )); then
+      :
+    elif (( EXIST_ASK || CHOOSE )); then
+      pip_print_route "$_ri" "${#ROUTES[@]}" "$f"
+      _rc=0
+      pip_prompt_existing_route "$_ri" "${#ROUTES[@]}" "$f" || _rc=$?
+      (( _rc == 2 )) && break
+      if (( _rc == 1 )); then
+        (( _total-- )) || true
+        continue
+      fi
+    else
+      SKIPPED_LIST+=("${ROUTE_OUT[$f]} (already exists)")
+      continue
+    fi
+    (( _n++ )) || true
+    pip_render_route "$_n" "$_total" "$f" || return_code=1
+    continue
+  fi
   case "${ROUTE_STATE[$f]}" in
-    exists) SKIPPED_LIST+=("${ROUTE_OUT[$f]} (already exists)"); continue ;;
     bad) SKIPPED_LIST+=("${ROUTE_OUT[$f]} (cannot be laid out with these settings)"); continue ;;
   esac
   (( _n++ )) || true
@@ -2217,14 +2440,15 @@ for f in "${ROUTES[@]}"; do
     echo "      Then the next route is shown and asked about."
     echo "  [n] No, skip this route"
     echo "      Nothing is written for it. The next route is shown and asked about."
-    echo "  [a] All: render this route and every remaining one"
-    echo "      No more questions; each is rendered in turn."
+    echo "  [a] All: render this route and every remaining new one"
+    echo "      No more questions for new routes; each is rendered in turn."
+    echo "      A remaining route that already exists is still asked about."
     echo "  [q] Quit: stop here and render nothing more"
     echo "      Routes already rendered in this run are kept."
     pip_read_key "Render route ${_ri} of ${#ROUTES[@]}? [Y/n/a/q]: " y
     case "$REPLY" in
       y) ;;
-      a) CHOOSE=0 ;;
+      a) CHOOSE=0 EXIST_ASK=1 ;;
       n) SKIPPED_LIST+=("${ROUTE_OUT[$f]} (you chose no)"); continue ;;
       q) STOPPED=yes; break ;;
       *) SKIPPED_LIST+=("${ROUTE_OUT[$f]} (unknown answer ${REPLY})"); continue ;;
