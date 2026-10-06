@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261006.135236 - tiles are kept in map-tiles/<server> beside the videos; an old ~/.cache tile folder is only reported
 # v. 20261006.124200 - the default key is the capital one, in the key list and on each option line
 # v. 20261006.123500 - map choices: north up (default) or track up; --north-up, --track-up
 # v. 20261006.122600 - default zoom 17 (about 800 m across) instead of 16
@@ -8,6 +9,7 @@
 # v. 20261006.114500 - missing ffmpeg, python3, or Pillow: list them and ask whether to install them with apt-get
 # v. 20261006.113823 - moving OpenStreetMap map video from each video's GPX track, same length as the video
 
+# 2026.10.06 - v. 0.9 - default tile cache is map-tiles/<server> in each video's folder instead of ~/.cache/video-pgm-map-tiles; --cache still sets one folder for all; the plan's Tile cache row shows the folder; if ~/.cache/video-pgm-map-tiles from earlier versions exists, its path, tile count, size, and an rm -rf line are printed at the start, and nothing is deleted
 # 2026.10.06 - v. 0.8 - only the default key is a capital letter, in the [..] key list, on its option line, and on the prompt line: yes/no questions ([Y] Yes when yes is the default), Tweak the smoothing [N] No, map direction N/T, length A/1/2/5/c, old file K/d
 # 2026.10.06 - v. 0.7 - "Map direction [N/t/q]" in the map choices: north up (default) or track up, where the map turns so the road ahead is up and a compass shows north; --north-up, --track-up; the plan's Map row says which
 # 2026.10.06 - v. 0.6 - default zoom 17: about 800 m across 1080 px instead of 1.6 km; about twice the tiles; --zoom 16 for the old view
@@ -61,8 +63,10 @@ How the map follows the video
     Zoom 17 shows about 800 m across a 1080 px picture in Poland.
 
 Map tiles
-  Tiles come from tile.openstreetmap.org and are kept in the cache, so each
-  tile is downloaded once for all videos and runs. The plan shows how many are
+  Tiles come from tile.openstreetmap.org and are kept in map-tiles/<server>
+  beside the videos (for example _samochod-jazda/map-tiles/tile.openstreetmap.org),
+  so each tile is downloaded once for all videos and runs in that folder, and
+  nothing is written to your home directory. The plan shows how many are
   needed and how many are already there. Two downloads at a time, as the
   OpenStreetMap tile policy asks. The picture says "© OpenStreetMap contributors".
   A whole 130 km route at 1080x1080 needs about 5,000 tiles at zoom 17 and
@@ -124,7 +128,9 @@ Options:
   --tile-url URL       Tile address with {z} {x} {y} (and {s} for a, b, c).
                        Default https://tile.openstreetmap.org/{z}/{x}/{y}.png
   --attribution TEXT   Credit in the corner. Default "© OpenStreetMap contributors".
-  --cache DIR          Tile cache. Default ~/.cache/video-pgm-map-tiles/<server>.
+  --cache DIR          Tile cache for all videos. Default: map-tiles/<server> in
+                       each video's folder. Tiles left in ~/.cache/video-pgm-map-tiles
+                       by earlier versions are reported at the start, never deleted.
 
  Encoding and timing
   --encoder KIND       auto (default): hevc_nvenc on the GPU, then libx265.
@@ -481,7 +487,7 @@ mv_py_args() {
   local i="$1"
   PY_ARGS=(--gpx "${J_GPX[$i]}" --start-epoch "${J_START[$i]}" --speed "${J_SPEED[$i]}"
            --duration "${J_DUR[$i]}" --width "$MAP_W" --height "$MAP_H" --zoom "$ZOOM"
-           --cache "$CACHE_DIR" --tile-url "$TILE_URL" --attribution "$ATTRIBUTION")
+           --cache "${J_CACHE[$i]}" --tile-url "$TILE_URL" --attribution "$ATTRIBUTION")
   mv_gt "$FROM" 0 && PY_ARGS+=(--from "$FROM")
   [[ -n "$LENGTH" ]] && PY_ARGS+=(--length "$LENGTH")
   [[ -n "$TZ_SHIFT" ]] && PY_ARGS+=(--tz-shift "$TZ_SHIFT")
@@ -808,7 +814,7 @@ mv_print_plan() {
     printf '  %-14s %s\n' "Frame rate" "$(mv_fps_label "$FPS") fps"
   fi
   printf '  %-14s %s\n' "Tiles" "$TILE_URL"
-  printf '  %-14s %s\n' "Tile cache" "$CACHE_DIR"
+  printf '  %-14s %s\n' "Tile cache" "$(mv_cache_label)"
   printf '  %-14s %s\n' "Encoder" "$ENC_LABEL"
   printf '  %-14s %s\n' "Render" "$(mv_window_label)"
   printf '  %-14s %s\n' "Command" "$(mv_equivalent_command)"
@@ -832,6 +838,36 @@ mv_print_plan() {
   (( BAD > 0 )) && printf ', %s%d cannot be rendered%s' "$C_R" "$BAD" "$C_0"
   (( DOWNLOAD > 0 )) && printf ', up to %d tiles to download' "$DOWNLOAD"
   echo
+}
+
+mv_cache_label() {
+  local i
+  local -A seen=()
+  for i in "${!J_CACHE[@]}"; do
+    seen["${J_CACHE[$i]}"]=1
+  done
+  if (( ${#seen[@]} == 1 )); then
+    printf '%s' "${!seen[@]}"
+  else
+    printf '%s/%s beside each video (%d folders)' "$TILE_DIR_NAME" "$TILE_HOST" "${#seen[@]}"
+  fi
+}
+
+# Earlier versions kept the tiles in the home directory. Only reported, never deleted.
+mv_note_old_home_cache() {
+  local count size
+  [[ -d "$OLD_HOME_CACHE" ]] || return 0
+  if (( CACHE_FROM_CLI )); then
+    [[ "$(readlink -f -- "$CACHE_DIR")/" == "$(readlink -f -- "$OLD_HOME_CACHE")/"* ]] && return 0
+  fi
+  count="$(find "$OLD_HOME_CACHE" -type f -name '*.png' 2>/dev/null | wc -l)"
+  size="$(du -sh -- "$OLD_HOME_CACHE" 2>/dev/null | cut -f1)"
+  echo
+  echo "${C_Y}Note${C_0}  Map tiles from earlier runs are still in your home directory:"
+  echo "        ${OLD_HOME_CACHE}  (${count} tiles, ${size:-?})"
+  echo "        This script keeps its tiles beside the videos now and does not use that"
+  echo "        folder any more. Nothing is deleted; remove it yourself if you do not need it:"
+  echo "        rm -rf $(printf '%q' "$OLD_HOME_CACHE")"
 }
 
 mv_orient_label() {
@@ -1257,13 +1293,12 @@ mv_fetch_tiles() {
   done
   (( need == 0 )) && return 0
   mv_heading "Map tiles"
-  echo "$(mv_ts) Downloading into ${CACHE_DIR}"
   mv_proc_begin
   for i in "${!J_VID[@]}"; do
     [[ "${J_STATE[$i]}" == render ]] || continue
     (( J_TILES[$i] > J_CACHED[$i] )) || continue
     (( n++ )) || true
-    echo "$(mv_ts) $(basename -- "${J_GPX[$i]}")"
+    echo "$(mv_ts) $(basename -- "${J_GPX[$i]}") -> ${J_CACHE[$i]}"
     mv_py_args "$i"
     out="$(python3 "$PY_HELPER" fetch "${PY_ARGS[@]}")" || true
     while IFS='=' read -r k v; do
@@ -1453,7 +1488,8 @@ SMOOTH=1 SMOOTH_LINE=4 SMOOTH_MAP=8 MAX_JUMP=250 CURVE=1 SMOOTH_FROM_CLI=0
 GPX_OVERRIDE="" START_OVERRIDE="" START_TEXT="" SPEED_OVERRIDE="" TZ_SHIFT=""
 TILE_URL="$DEFAULT_TILE_URL"
 ATTRIBUTION="$DEFAULT_ATTRIBUTION"
-CACHE_DIR="" CACHE_FROM_CLI=0
+CACHE_DIR="" CACHE_FROM_CLI=0 TILE_HOST="" TILE_DIR_NAME=map-tiles J_CACHE=()
+OLD_HOME_CACHE="${XDG_CACHE_HOME:-$HOME/.cache}/video-pgm-map-tiles"
 ENCODER=auto
 QUALITY=""
 FROM=0
@@ -1666,10 +1702,8 @@ if [[ ! -r "$PY_HELPER" ]]; then
   exit 1
 fi
 mv_check_prereqs
-if [[ -z "$CACHE_DIR" ]]; then
-  _host="$(sed -E 's#^[a-z]+://##; s#/.*##; s#\{s\}\.##; s#[^A-Za-z0-9.-]#_#g' <<<"$TILE_URL")"
-  CACHE_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/video-pgm-map-tiles/${_host:-tiles}"
-fi
+TILE_HOST="$(sed -E 's#^[a-z]+://##; s#/.*##; s#\{s\}\.##; s#[^A-Za-z0-9.-]#_#g' <<<"$TILE_URL")"
+TILE_HOST="${TILE_HOST:-tiles}"
 
 if (( ${#INPUT_ARGS[@]} == 0 )); then
   mv_add_directory "."
@@ -1708,6 +1742,7 @@ echo
 mv_print_box_lines "$(ffmpeg -version 2>&1 | awk '/^ffmpeg version / { print $1, $2, $3; exit }')" \
   "GPU HEVC encoder: $(mv_encoder_available hevc_nvenc && echo hevc_nvenc || echo none)" \
   "Python: $(python3 -c 'import sys, PIL; print("%d.%d.%d, Pillow %s" % (sys.version_info[:3] + (PIL.__version__,)))')"
+mv_note_old_home_cache
 
 printf '%s Reading the length of %d video(s)...' "$(mv_ts)" "${#J_VID[@]}"
 for _i in "${!J_VID[@]}"; do
@@ -1717,6 +1752,11 @@ for _i in "${!J_VID[@]}"; do
   J_OUT[$_i]="" J_STATE[$_i]=bad J_POINTS[$_i]="" J_SHIFT[$_i]=0 J_FIRST[$_i]="" J_LAST[$_i]=""
   J_OVERLAP[$_i]=0 J_DIST[$_i]="" J_VMAX[$_i]="" J_TILES[$_i]=0 J_CACHED[$_i]=0 J_LAT[$_i]="" J_ERR[$_i]=""
   J_DROPPED[$_i]=0
+  if (( CACHE_FROM_CLI )); then
+    J_CACHE[$_i]="$CACHE_DIR"
+  else
+    J_CACHE[$_i]="$(cd -- "$(dirname -- "${J_VID[$_i]}")" && pwd)/${TILE_DIR_NAME}/${TILE_HOST}"
+  fi
   if [[ -n "$GPX_OVERRIDE" ]]; then
     J_GPX[$_i]="$GPX_OVERRIDE"
   else

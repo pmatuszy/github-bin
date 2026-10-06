@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# v. 20261006.135236 - help example uses a map-tiles folder beside the videos
 # v. 20261006.123500 - --track-up: the map turns so the road ahead is up, with a small compass
 # v. 20261006.122600 - default zoom 17
 # v. 20261006.122200 - GPS smoothing: drop jumps, average the line, calmer map path, curve between points
@@ -935,7 +936,7 @@ everyday options.
 
 Example:
   %(prog)s info --gpx route.gpx --start-epoch 1790413587 --speed 5 \\
-      --duration 1460.6 --cache ~/.cache/video-pgm-map-tiles/tile.openstreetmap.org
+      --duration 1460.6 --cache map-tiles/tile.openstreetmap.org
 
 Exit codes: 0 ok, 2 track problem, 3 ffmpeg failed, 4 some tiles failed to
 download, 130 interrupted.
