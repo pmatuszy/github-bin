@@ -1,8 +1,10 @@
 #!/bin/bash
+# v. 20261006.121000 - no speed on the map by default (the dashcam picture shows it); --show-speed adds it
 # v. 20261006.114923 - help says the drawing helper has its own -h, -v, and --history
 # v. 20261006.114500 - missing ffmpeg, python3, or Pillow: list them and ask whether to install them with apt-get
 # v. 20261006.113823 - moving OpenStreetMap map video from each video's GPX track, same length as the video
 
+# 2026.10.06 - v. 0.4 - the speed is left off the map by default, as the dashcam picture shows it; --show-speed or [y] in the map choices adds it; --no-speed is still accepted
 # 2026.10.06 - v. 0.3 - help: the drawing helper video-pgm-create-map-video-from-gpx.py has its own -h, -v, and --history
 # 2026.10.06 - v. 0.2 - missing prerequisites (ffmpeg/ffprobe, python3, Pillow) are listed with what each is for and the apt-get command; in a terminal the script asks [Y/n/q] and installs them (sudo when not root), refreshing the package lists if the first try fails; with -y or no terminal it only prints the command
 # 2026.10.06 - v. 0.1 - initial release: find each FrontCam video and its .gpx, print the plan (track, tiles, output), ask, download and cache the map tiles, render a north-up map centred on the car with the driven and remaining track, speed and clock; hevc_nvenc with libx265 fallback; existing outputs skipped, or rendered again with the old file kept as _old-YYYYMMDD_HHMMSS or deleted
@@ -11,7 +13,8 @@
 #
 # Make a video of a moving map for each dashcam video that has a .gpx track.
 # The map follows the car (north up, zoomed in), shows the road already driven
-# and the road ahead, the speed, and the clock. It is exactly as long as the
+# and the road ahead, and the clock (the speed only with --show-speed, as the
+# dashcam picture shows it already). It is exactly as long as the
 # video and has the same frame rate, so it can be played beside it or put into
 # a corner later. Map data: OpenStreetMap tiles, downloaded once and cached.
 # The drawing is done by video-pgm-create-map-video-from-gpx.py next to this file.
@@ -21,7 +24,7 @@ show_help() {
   cat <<EOF
 Usage: $(basename "$0") [options] [DIR|VIDEO ...]
        [-y|--yes] [-n|--dry-run] [--redo] [--old keep|delete]
-       [--size WxH|N] [--zoom N] [--fps N|same] [--no-speed] [--no-clock]
+       [--size WxH|N] [--zoom N] [--fps N|same] [--show-speed] [--no-clock]
        [--gpx FILE] [--start 'YYYY-MM-DD HH:MM:SS'] [--speed N] [--tz-shift HOURS]
        [--tile-url URL] [--attribution TEXT] [--cache DIR]
        [--encoder auto|nvenc|x265|x264] [--quality N] [--from TIME] [--length TIME]
@@ -77,7 +80,8 @@ Options:
                        as much: 15 for motorways, 17 for towns.
   --fps N|same         Frames per second. Default: same as the video.
                        The length is the same either way.
-  --no-speed           Leave out the speed (km/h).
+  --show-speed         Also show the speed (km/h). Off by default: the dashcam
+                       picture shows it already. --no-speed keeps it off.
   --no-clock           Leave out the clock.
 
  Track and time
@@ -454,7 +458,7 @@ mv_py_args() {
   mv_gt "$FROM" 0 && PY_ARGS+=(--from "$FROM")
   [[ -n "$LENGTH" ]] && PY_ARGS+=(--length "$LENGTH")
   [[ -n "$TZ_SHIFT" ]] && PY_ARGS+=(--tz-shift "$TZ_SHIFT")
-  (( SHOW_SPEED )) || PY_ARGS+=(--no-speed)
+  (( SHOW_SPEED )) && PY_ARGS+=(--show-speed)
   (( SHOW_CLOCK )) || PY_ARGS+=(--no-clock)
   return 0
 }
@@ -703,7 +707,7 @@ mv_equivalent_command() {
   [[ "${MAP_W}x${MAP_H}" != 1080x1080 ]] && cmd+=(--size "${MAP_W}x${MAP_H}")
   [[ "$ZOOM" != 16 ]] && cmd+=(--zoom "$ZOOM")
   [[ "$FPS" != same ]] && cmd+=(--fps "$FPS")
-  (( SHOW_SPEED )) || cmd+=(--no-speed)
+  (( SHOW_SPEED )) && cmd+=(--show-speed)
   (( SHOW_CLOCK )) || cmd+=(--no-clock)
   [[ -n "$GPX_OVERRIDE" ]] && cmd+=(--gpx "$GPX_OVERRIDE")
   [[ -n "$START_TEXT" ]] && cmd+=(--start "$START_TEXT")
@@ -876,12 +880,12 @@ mv_prompt_more() {
   echo
   mv_yes_no "Show the speed?" "$SHOW_SPEED" \
     "km/h in the top left corner, worked out from the GPS points." \
-    "No speed on the picture."
+    "No speed on the map; the dashcam picture shows it already (default)."
   SHOW_SPEED="$REPLY"
 
   echo
   mv_yes_no "Show the clock?" "$SHOW_CLOCK" \
-    "The local time of day under the speed, as it was when that moment was filmed." \
+    "The local time of day in the top left corner, as it was when that moment was filmed." \
     "No clock on the picture."
   SHOW_CLOCK="$REPLY"
 
@@ -1246,7 +1250,7 @@ OLD_MODE=keep OLD_ASKED=0
 MAP_W=1080 MAP_H=1080
 ZOOM=16
 FPS=same
-SHOW_SPEED=1 SHOW_CLOCK=1
+SHOW_SPEED=0 SHOW_CLOCK=1
 GPX_OVERRIDE="" START_OVERRIDE="" START_TEXT="" SPEED_OVERRIDE="" TZ_SHIFT=""
 TILE_URL="$DEFAULT_TILE_URL"
 ATTRIBUTION="$DEFAULT_ATTRIBUTION"
@@ -1393,6 +1397,7 @@ while [[ $# -gt 0 ]]; do
         echo "ERROR: --fps must be same or a number up to 120 (got $2)" >&2; exit 1
       fi
       shift 2 ;;
+    --show-speed) SHOW_SPEED=1; shift ;;
     --no-speed) SHOW_SPEED=0; shift ;;
     --no-clock) SHOW_CLOCK=0; shift ;;
     --gpx) mv_need_value "$@"; GPX_OVERRIDE="$(mv_unix_path "$2")"; shift 2 ;;

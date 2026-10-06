@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
+# v. 20261006.121000 - speed left out by default; --show-speed draws it
 # v. 20261006.115200 - -v/--version prints the same box as the bash scripts; --history pages in a terminal like them
 # v. 20261006.114917 - -h/--help describes every option, -v/--version, --history
 # v. 20261006.113346 - moving OpenStreetMap map that follows a GPX track, same length as its video
 
+# 2026.10.06 - v. 0.4 - the speed is drawn only with --show-speed; --no-speed is still accepted
 # 2026.10.06 - v. 0.3 - -v/--version: boxed name and "Version: YYYYMMDD.HHMMSS (YYYY.MM.DD HH:MM:SS)" from the newest # v. line, like print_version_banner; --history: one page at a time in a terminal with "More history? [Y/n/q]", whole list when piped
 # 2026.10.06 - v. 0.2 - help text for every option, examples and exit codes; -v/--version prints the header version; --history prints the changelog
 # 2026.10.06 - v. 0.1 - initial release: info, fetch, and render subcommands; north-up map centred on the car, driven and remaining track, speed and clock panel, tile cache
@@ -33,7 +35,7 @@ import urllib.request
 import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
 
-VERSION = "0.3"
+VERSION = "0.4"
 TILE = 256
 USER_AGENT = ("video-pgm-create-map-video-from-gpx/" + VERSION
               + " (+https://github.com/pmatuszy/github-bin)")
@@ -412,7 +414,7 @@ class Overlay:
         self.big = load_font(max(18, h // 16))
         self.small = load_font(max(12, h // 32))
         self.tiny = load_font(max(10, h // 64), bold=False)
-        self.show_speed = not args.no_speed
+        self.show_speed = args.show_speed and not args.no_speed
         self.show_clock = not args.no_clock
         self.attribution = args.attribution
         self.pad = max(8, h // 70)
@@ -782,7 +784,8 @@ def main():
                     help="credit drawn in the corner (default: %(default)s)")
     ap.add_argument("--tz-shift", type=float, default=None,
                     help="hours added to GPX times (default: guessed from the overlap)")
-    ap.add_argument("--no-speed", action="store_true", help="leave out the speed")
+    ap.add_argument("--show-speed", action="store_true", help="show the speed (off by default)")
+    ap.add_argument("--no-speed", action="store_true", help="leave out the speed (the default)")
     ap.add_argument("--no-clock", action="store_true", help="leave out the clock")
     ap.add_argument("--out", help="output video (render)")
     ap.add_argument("--label", default="", help="name shown on the progress line")
