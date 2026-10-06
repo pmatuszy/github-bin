@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261006.230553 - a sped-up file with no location gets the first point of the .gpx beside the source
 # v. 20261006.225133 - the sped-up file gets the source video's creation time and file time
 # v. 20261006.124500 - menus: the capital key follows the current default, in the key list, on its line, and on the prompt
 # v. 20261005.233600 - after an encoded file, ask for the next file or all remaining
@@ -43,6 +44,7 @@
 # v. 20260930.220400 - faster viewing copy of a merged video (2, 5, 10, 20, …)
 
 # 2026.10.06 - v. 0.39 - picture, encoder, keyframe sample and spacing, scan, decode length, short try, clip start, more choices, display, and the speed menu's custom key: only the current default is a capital letter and marked (default); keyframe spacing no longer always marks [S] as the default
+# 2026.10.06 - v. 0.40 - a sped-up file with no location gets the first point of the .gpx beside the source stored in the video
 # 2026.10.06 - v. 0.39 - the sped-up file gets the source video's creation time and file time; the name still uses the time the encode starts
 # 2026.10.05 - v. 0.38 - after an encoded file, ask whether to stop, do the next file, or encode the rest
 # 2026.10.05 - v. 0.37 - the usual timelapse forces a keyframe on each second when the encoder accepts it
@@ -104,7 +106,8 @@ Usage: $(basename "$0") [-h|--help] [-v|--version] [--history]
 Write a faster copy beside each video. A 10× copy of a two-hour drive is about
 twelve minutes. The original file is not changed. The copy is named
 stem_xN_YYYYMMDD-HHMMSS.mp4, using the time the encode starts. The file itself
-gets the source video's creation time and file time. A short try is
+gets the source video's creation time and file time. If the copy has no
+location, the first point of the .gpx beside the source is stored in it. A short try is
 stem_xN_test-1m-at20_YYYYMMDD-HHMMSS.mp4.
 
 With no FILE or DIR, use the current directory. If that directory contains
@@ -948,6 +951,95 @@ tl_copy_creation() {
   powershell.exe -NoProfile -Command "\$s = Get-Item -LiteralPath '${src_w}'; \$d = Get-Item -LiteralPath '${dest_w}'; \$d.CreationTime = \$s.CreationTime" >/dev/null 2>&1
 }
 
+# Same name, or the same name without a trailing speed such as _x5 or -x5.
+tl_find_gpx() {
+  local mp4="$1" dir stem cand
+  dir="$(dirname -- "$mp4")"
+  stem="$(basename -- "$mp4")"
+  stem="${stem%.*}"
+  for cand in "$stem" "$(sed -E 's/[-_][xX][0-9]+([-_][0-9]{8}-[0-9]{6})?$//' <<<"$stem")"; do
+    if [[ -f "${dir}/${cand}.gpx" ]]; then
+      printf '%s\n' "${dir}/${cand}.gpx"
+      return 0
+    fi
+  done
+  return 1
+}
+
+# "lat lon ele" of the first track point. ele may be empty.
+tl_gpx_first() {
+  awk '
+    function attr(line, key,    re, s, n) {
+      re = key "=\"[-+0-9.eE]+\""
+      if (match(line, re)) {
+        n = length(key) + 2
+        s = substr(line, RSTART + n, RLENGTH - n - 1)
+        return s
+      }
+      return ""
+    }
+    {
+      if (!inpt && index($0, "<trkpt") > 0) {
+        lat = attr($0, "lat")
+        lon = attr($0, "lon")
+        if (lat != "" && lon != "") inpt = 1
+      }
+      if (inpt) {
+        if (match($0, /<ele>[-+0-9.eE]+<\/ele>/)) {
+          ele = substr($0, RSTART + 5, RLENGTH - 11)
+        }
+        if (index($0, "</trkpt>") > 0 || index($0, "/>") > 0) {
+          print lat, lon, ele
+          printed = 1
+          exit
+        }
+      }
+    }
+    END {
+      if (!printed && inpt && lat != "") print lat, lon, ele
+    }
+  ' "$1"
+}
+
+tl_video_has_gps() {
+  local exif="$1" dest="$2" got
+  got=$("$exif" -s3 -m -GPSCoordinates -Keys:GPSCoordinates -UserData:GPSCoordinates -ItemList:GPSCoordinates -- "$dest" 2>/dev/null | tr -d '[:space:]')
+  [[ -n "$got" ]]
+}
+
+# Store the first point of $2 in $1 when $1 has no location. $3 is the file whose times are kept.
+tl_put_gps() {
+  local dest="$1" gpx="$2" src="$3" exif lat lon ele coord
+  [[ -f "$dest" && -f "$gpx" ]] || return 0
+  case "${dest##*.}" in
+    mp4|MP4|mov|MOV) ;;
+    *) return 0 ;;
+  esac
+  exif=$(tl_find_exiftool) || return 0
+  tl_video_has_gps "$exif" "$dest" && return 0
+  read -r lat lon ele < <(tl_gpx_first "$gpx") || return 0
+  [[ "$lat" =~ ^[-+0-9.eE]+$ && "$lon" =~ ^[-+0-9.eE]+$ ]] || return 0
+  awk -v lat="$lat" -v lon="$lon" 'BEGIN { if ((lat+0)^2 + (lon+0)^2 < 1e-12) exit 1 }' || return 0
+  if [[ "$ele" =~ ^[-+0-9.eE]+$ ]]; then
+    coord=$(awk -v a="$lat" -v b="$lon" -v c="$ele" 'BEGIN { printf "%.7f, %.7f, %.3f", a, b, c }')
+  else
+    coord=$(awk -v a="$lat" -v b="$lon" 'BEGIN { printf "%.7f, %.7f", a, b }')
+  fi
+  if "$exif" -overwrite_original -P \
+      -Keys:GPSCoordinates="$coord" \
+      -UserData:GPSCoordinates="$coord" \
+      -ItemList:GPSCoordinates="$coord" \
+      -- "$dest" >/dev/null 2>&1; then
+    echo "$(tl_ts) Location: ${lat}, ${lon} from $(basename -- "$gpx")"
+    if [[ -n "$src" && -f "$src" ]]; then
+      touch -r "$src" -- "$dest" 2>/dev/null || true
+      tl_copy_creation "$src" "$dest" || true
+    fi
+  else
+    echo "$(tl_ts) Could not store a location from $(basename -- "$gpx")" >&2
+  fi
+}
+
 # Give $2 the creation time and the file time of $1, including the dates stored in the video.
 tl_stamp_from() {
   local src="$1" dest="$2" exif=""
@@ -969,7 +1061,7 @@ tl_stamp_from() {
 
 tl_run_ffmpeg() {
   local src="$1" dest="$2" speed="$3" total_sec="${4:-}"
-  local vfilter partial rc
+  local vfilter partial rc gpx=""
   local -a enc_args=()
   vfilter="$(tl_video_filter "$speed")"
   partial="${dest}.partial.$$.mp4"
@@ -1013,6 +1105,8 @@ tl_run_ffmpeg() {
   fi
   TL_PARTIAL=""
   tl_stamp_from "$src" "$dest"
+  gpx="$(tl_find_gpx "$src" || true)"
+  [[ -n "$gpx" ]] && tl_put_gps "$dest" "$gpx" "$src"
   return 0
 }
 

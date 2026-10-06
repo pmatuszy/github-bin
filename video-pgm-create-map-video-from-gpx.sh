@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261006.230553 - a map with no location gets the first point of its .gpx
 # v. 20261006.225133 - the map video gets the source video's creation time and file time
 # v. 20261006.155505 - default zoom back to 16 (about 1.6 km across); 17 was too close
 # v. 20261006.140012 - the tile folder beside the videos is _map-tiles (with a leading underscore)
@@ -12,6 +13,7 @@
 # v. 20261006.114500 - missing ffmpeg, python3, or Pillow: list them and ask whether to install them with apt-get
 # v. 20261006.113823 - moving OpenStreetMap map video from each video's GPX track, same length as the video
 
+# 2026.10.06 - v. 0.13 - a map with no location of its own gets the first point of its .gpx stored in the video, so an image server can read the place
 # 2026.10.06 - v. 0.12 - the map video gets the source video's creation time and file time, including the dates stored in the video
 # 2026.10.06 - v. 0.11 - default zoom back to 16 (about 1.6 km across 1080 px); 17 was too close; --zoom 17 still works
 # 2026.10.06 - v. 0.10 - the tile folder beside the videos is renamed from map-tiles to _map-tiles
@@ -86,6 +88,7 @@ Output
   start; it is skipped, or rendered again with the old file renamed to
   ..._old-YYYYMMDD_HHMMSS.mp4 (the time it was made) or deleted.
   The new map gets the source video's creation time and file time.
+  If the map has no location of its own, the first point of its .gpx is stored in it.
 
 Options:
   -h, --help           Show this help and exit.
@@ -1358,6 +1361,80 @@ mv_copy_creation() {
   powershell.exe -NoProfile -Command "\$s = Get-Item -LiteralPath '${src_w}'; \$d = Get-Item -LiteralPath '${dest_w}'; \$d.CreationTime = \$s.CreationTime" >/dev/null 2>&1
 }
 
+# "lat lon ele" of the first track point. ele may be empty.
+mv_gpx_first() {
+  awk '
+    function attr(line, key,    re, s, n) {
+      re = key "=\"[-+0-9.eE]+\""
+      if (match(line, re)) {
+        n = length(key) + 2
+        s = substr(line, RSTART + n, RLENGTH - n - 1)
+        return s
+      }
+      return ""
+    }
+    {
+      if (!inpt && index($0, "<trkpt") > 0) {
+        lat = attr($0, "lat")
+        lon = attr($0, "lon")
+        if (lat != "" && lon != "") inpt = 1
+      }
+      if (inpt) {
+        if (match($0, /<ele>[-+0-9.eE]+<\/ele>/)) {
+          ele = substr($0, RSTART + 5, RLENGTH - 11)
+        }
+        if (index($0, "</trkpt>") > 0 || index($0, "/>") > 0) {
+          print lat, lon, ele
+          printed = 1
+          exit
+        }
+      }
+    }
+    END {
+      if (!printed && inpt && lat != "") print lat, lon, ele
+    }
+  ' "$1"
+}
+
+mv_video_has_gps() {
+  local exif="$1" dest="$2" got
+  got=$("$exif" -s3 -m -GPSCoordinates -Keys:GPSCoordinates -UserData:GPSCoordinates -ItemList:GPSCoordinates -- "$dest" 2>/dev/null | tr -d '[:space:]')
+  [[ -n "$got" ]]
+}
+
+# Store the first point of $2 in $1 when $1 has no location. $3 is the file whose times are kept.
+mv_put_gps() {
+  local dest="$1" gpx="$2" src="$3" exif lat lon ele coord
+  [[ -f "$dest" && -f "$gpx" ]] || return 0
+  case "${dest##*.}" in
+    mp4|MP4|mov|MOV) ;;
+    *) return 0 ;;
+  esac
+  exif=$(mv_find_exiftool) || return 0
+  mv_video_has_gps "$exif" "$dest" && return 0
+  read -r lat lon ele < <(mv_gpx_first "$gpx") || return 0
+  [[ "$lat" =~ ^[-+0-9.eE]+$ && "$lon" =~ ^[-+0-9.eE]+$ ]] || return 0
+  awk -v lat="$lat" -v lon="$lon" 'BEGIN { if ((lat+0)^2 + (lon+0)^2 < 1e-12) exit 1 }' || return 0
+  if [[ "$ele" =~ ^[-+0-9.eE]+$ ]]; then
+    coord=$(awk -v a="$lat" -v b="$lon" -v c="$ele" 'BEGIN { printf "%.7f, %.7f, %.3f", a, b, c }')
+  else
+    coord=$(awk -v a="$lat" -v b="$lon" 'BEGIN { printf "%.7f, %.7f", a, b }')
+  fi
+  if "$exif" -overwrite_original -P \
+      -Keys:GPSCoordinates="$coord" \
+      -UserData:GPSCoordinates="$coord" \
+      -ItemList:GPSCoordinates="$coord" \
+      -- "$dest" >/dev/null 2>&1; then
+    echo "$(mv_ts) Location: ${lat}, ${lon} from $(basename -- "$gpx")"
+    if [[ -n "$src" && -f "$src" ]]; then
+      touch -r "$src" -- "$dest" 2>/dev/null || true
+      mv_copy_creation "$src" "$dest" || true
+    fi
+  else
+    echo "$(mv_ts) Could not store a location from $(basename -- "$gpx")" >&2
+  fi
+}
+
 # Give $2 the creation time and the file time of $1, including the dates stored in a video.
 mv_stamp_from() {
   local src="$1" dest="$2" exif=""
@@ -1414,6 +1491,7 @@ mv_render_job() {
       mv_proc_end
       echo "$(mv_ts) ${C_G}Done${C_0} in $(mv_format_elapsed "$(mv_calc "$(mv_now_ns) - $t0")"): ${out}"
       mv_stamp_from "${J_VID[$i]}" "$out"
+      [[ -n "${J_GPX[$i]:-}" ]] && mv_put_gps "$out" "${J_GPX[$i]}" "${J_VID[$i]}"
       DONE_LIST+=("$out")
       DONE_SEC+=("$(mv_calc "$(mv_now_ns) - $t0")")
       DONE_VID+=("$(awk -v f="$FROM" -v l="${LENGTH:-0}" -v d="${J_DUR[$i]}" 'BEGIN { e = (l > 0) ? f + l : d; if (e > d) e = d; printf "%.3f", e - f }')")

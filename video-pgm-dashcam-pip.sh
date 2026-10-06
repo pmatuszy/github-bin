@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261006.230553 - a picture-in-picture file with no location gets the first point of the front .gpx
 # v. 20261006.225133 - the picture-in-picture file and its .gpx get the front file's creation time and file time
 # v. 20261006.183857 - older maps sorted with /bin/ls -t, not the shell's ls function (that one adds --full-time and broke the path)
 # v. 20261006.183740 - map list: older maps sorted with stat instead of ls; each map shows length, size, file size, and date, or why it cannot be read
@@ -15,6 +16,7 @@
 # v. 20261006.103000 - more choices: inset size, corner, four margins, mirror, crop, border, caption, swap, black gap box, output width
 # v. 20261006.091500 - pair FrontCam and BackCam by filename clock, print the plan, render picture-in-picture
 
+# 2026.10.06 - v. 0.15 - a picture-in-picture file with no location gets the first point of the front .gpx stored in the video
 # 2026.10.06 - v. 0.14 - the picture-in-picture file and the .gpx copied beside it get the front file's creation time and file time; the video also gets the dates stored in the front file
 # 2026.10.06 - v. 0.13 - per-route map list: older maps are sorted with /bin/ls -t, not the shell's ls function (that one adds --full-time, so names were not valid paths and showed "0:00, ?x?, made ?"); each line shows length, picture size, file size, and date; a missing or unreadable map says so
 # 2026.10.06 - v. 0.12 - map video: found beside each front file by name (FrontCam -> Map), with older _old-... maps and -test-... tries; the plan shows each route's map or says it has none; when a route has more than one, asked once: newest (default), pick for each route, or no map; placed top right (the other top corner when the rear inset is there), 540 px wide, same margins and border as the inset; "More choices" asks map, size, and corner; --map auto|none|FILE, --no-map, --map-size, --map-corner
@@ -112,6 +114,8 @@ Output
   (or deleted with --old delete).
   The picture-in-picture file, and the .gpx copied beside it, get the front
   file's creation time and file time.
+  If the picture-in-picture file has no location, the first point of the front
+  .gpx is stored in it.
 
 Options:
   -h, --help           Show this help and exit.
@@ -2463,6 +2467,80 @@ pip_copy_creation() {
   powershell.exe -NoProfile -Command "\$s = Get-Item -LiteralPath '${src_w}'; \$d = Get-Item -LiteralPath '${dest_w}'; \$d.CreationTime = \$s.CreationTime" >/dev/null 2>&1
 }
 
+# "lat lon ele" of the first track point. ele may be empty.
+pip_gpx_first() {
+  awk '
+    function attr(line, key,    re, s, n) {
+      re = key "=\"[-+0-9.eE]+\""
+      if (match(line, re)) {
+        n = length(key) + 2
+        s = substr(line, RSTART + n, RLENGTH - n - 1)
+        return s
+      }
+      return ""
+    }
+    {
+      if (!inpt && index($0, "<trkpt") > 0) {
+        lat = attr($0, "lat")
+        lon = attr($0, "lon")
+        if (lat != "" && lon != "") inpt = 1
+      }
+      if (inpt) {
+        if (match($0, /<ele>[-+0-9.eE]+<\/ele>/)) {
+          ele = substr($0, RSTART + 5, RLENGTH - 11)
+        }
+        if (index($0, "</trkpt>") > 0 || index($0, "/>") > 0) {
+          print lat, lon, ele
+          printed = 1
+          exit
+        }
+      }
+    }
+    END {
+      if (!printed && inpt && lat != "") print lat, lon, ele
+    }
+  ' "$1"
+}
+
+pip_video_has_gps() {
+  local exif="$1" dest="$2" got
+  got=$("$exif" -s3 -m -GPSCoordinates -Keys:GPSCoordinates -UserData:GPSCoordinates -ItemList:GPSCoordinates -- "$dest" 2>/dev/null | tr -d '[:space:]')
+  [[ -n "$got" ]]
+}
+
+# Store the first point of $2 in $1 when $1 has no location. $3 is the file whose times are kept.
+pip_put_gps() {
+  local dest="$1" gpx="$2" src="$3" exif lat lon ele coord
+  [[ -f "$dest" && -f "$gpx" ]] || return 0
+  case "${dest##*.}" in
+    mp4|MP4|mov|MOV) ;;
+    *) return 0 ;;
+  esac
+  exif=$(pip_find_exiftool) || return 0
+  pip_video_has_gps "$exif" "$dest" && return 0
+  read -r lat lon ele < <(pip_gpx_first "$gpx") || return 0
+  [[ "$lat" =~ ^[-+0-9.eE]+$ && "$lon" =~ ^[-+0-9.eE]+$ ]] || return 0
+  awk -v lat="$lat" -v lon="$lon" 'BEGIN { if ((lat+0)^2 + (lon+0)^2 < 1e-12) exit 1 }' || return 0
+  if [[ "$ele" =~ ^[-+0-9.eE]+$ ]]; then
+    coord=$(awk -v a="$lat" -v b="$lon" -v c="$ele" 'BEGIN { printf "%.7f, %.7f, %.3f", a, b, c }')
+  else
+    coord=$(awk -v a="$lat" -v b="$lon" 'BEGIN { printf "%.7f, %.7f", a, b }')
+  fi
+  if "$exif" -overwrite_original -P \
+      -Keys:GPSCoordinates="$coord" \
+      -UserData:GPSCoordinates="$coord" \
+      -ItemList:GPSCoordinates="$coord" \
+      -- "$dest" >/dev/null 2>&1; then
+    echo "$(pip_ts) Location: ${lat}, ${lon} from $(basename -- "$gpx")"
+    if [[ -n "$src" && -f "$src" ]]; then
+      touch -r "$src" -- "$dest" 2>/dev/null || true
+      pip_copy_creation "$src" "$dest" || true
+    fi
+  else
+    echo "$(pip_ts) Could not store a location from $(basename -- "$gpx")" >&2
+  fi
+}
+
 # Give $2 the creation time and the file time of $1. A video also gets the source dates stored inside it.
 pip_stamp_from() {
   local src="$1" dest="$2" exif=""
@@ -2529,6 +2607,7 @@ pip_render_route() {
       PARTIAL=""
       echo "$(pip_ts) ${C_G}Done${C_0} in $(pip_clock $(( end_s - start_s ))): ${out}"
       pip_stamp_from "${F_PATH[$f]}" "$out"
+      [[ -n "${ROUTE_GPX[$f]:-}" ]] && pip_put_gps "$out" "${ROUTE_GPX[$f]}" "${F_PATH[$f]}"
       if [[ -n "${ROUTE_GPX[$f]}" ]]; then
         gpx_out="${out%.mp4}.gpx"
         if cp -f -- "${ROUTE_GPX[$f]}" "$gpx_out"; then

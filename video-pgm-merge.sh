@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261006.230553 - a merged file with no location gets the first point of its .gpx
 # v. 20261006.225133 - merged file and its .gpx get the first chapter's creation time and file time
 # v. 20261006.124500 - temp directory question on an SSD: the default No is the capital N
 # v. 20261006.081500 - 70mai journey name is date_time-date_time_-_-_70mai-A510_camera_concat
@@ -45,6 +46,7 @@
 # v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
 # v. 20260805.154826 - after merge: copy GPS/dates from first chapter; FS times via touch -r
 
+# 2026.10.06 - v. 0.15.66 - a merged file with no location gets the first point of its .gpx stored in the video; a file that already has a fix is left as it is
 # 2026.10.06 - v. 0.15.65 - the merged file and the .gpx beside it get the first chapter's creation time and file time; on a Windows drive the creation time is copied as well as the file time
 # 2026.10.06 - v. 0.15.64 - "Merge via ... for the remaining groups?" on an SSD showed [y/n/q] and [n] No (default); now [y/N/q] and [N], so only the default key is a capital letter
 # 2026.10.06 - v. 0.15.63 - 70mai journey name: YYYYMMDD_HHMMSS-YYYYMMDD_HHMMSS_-_-_70mai-A510_FrontCam_concat.mp4 and the same stem .gpx
@@ -224,6 +226,7 @@ Merge behaviour (no options):
     A GPS track with the same stem and a .gpx extension is written beside it,
     from GPSData??????.txt in this directory and one or two directories above it.
     The merged file and that .gpx get the first chapter's creation time and file time.
+    If the merged file has no location, the first point of that .gpx is stored in it.
   - Shows each multi-part group (with file sizes) and asks whether to merge
     (single-key Y/N/A/M/Q, no Enter — like rename.sh). Files in a group, and the
     groups themselves, are ordered oldest to newest (filename YYYYMMDD_HHMMSS when
@@ -2788,6 +2791,102 @@ pgm_copy_creation() {
   powershell.exe -NoProfile -Command "\$s = Get-Item -LiteralPath '${src_w}'; \$d = Get-Item -LiteralPath '${dest_w}'; \$d.CreationTime = \$s.CreationTime" >/dev/null 2>&1
 }
 
+# Same name, or the same name without a trailing speed such as _x5 or -x5.
+pgm_find_gpx() {
+  local mp4="$1" dir stem cand
+  dir="$(dirname -- "$mp4")"
+  stem="$(basename -- "$mp4")"
+  stem="${stem%.*}"
+  for cand in "$stem" "$(sed -E 's/[-_][xX][0-9]+([-_][0-9]{8}-[0-9]{6})?$//' <<<"$stem")"; do
+    if [[ -f "${dir}/${cand}.gpx" ]]; then
+      printf '%s\n' "${dir}/${cand}.gpx"
+      return 0
+    fi
+  done
+  return 1
+}
+
+# "lat lon ele" of the first track point. ele may be empty.
+pgm_gpx_first() {
+  awk '
+    function attr(line, key,    re, s, n) {
+      re = key "=\"[-+0-9.eE]+\""
+      if (match(line, re)) {
+        n = length(key) + 2
+        s = substr(line, RSTART + n, RLENGTH - n - 1)
+        return s
+      }
+      return ""
+    }
+    {
+      if (!inpt && index($0, "<trkpt") > 0) {
+        lat = attr($0, "lat")
+        lon = attr($0, "lon")
+        if (lat != "" && lon != "") inpt = 1
+      }
+      if (inpt) {
+        if (match($0, /<ele>[-+0-9.eE]+<\/ele>/)) {
+          ele = substr($0, RSTART + 5, RLENGTH - 11)
+        }
+        if (index($0, "</trkpt>") > 0 || index($0, "/>") > 0) {
+          print lat, lon, ele
+          printed = 1
+          exit
+        }
+      }
+    }
+    END {
+      if (!printed && inpt && lat != "") print lat, lon, ele
+    }
+  ' "$1"
+}
+
+pgm_video_has_gps() {
+  local exif="$1" dest="$2" got
+  got=$("$exif" -s3 -m -GPSCoordinates -Keys:GPSCoordinates -UserData:GPSCoordinates -ItemList:GPSCoordinates -- "$dest" 2>/dev/null | tr -d '[:space:]')
+  [[ -n "$got" ]]
+}
+
+# Store the first point of a .gpx in $1 when $1 has no location.
+# The .gpx beside $1 is used, otherwise the one beside $2.
+pgm_put_gps() {
+  local dest="$1" src="$2" gpx="" exif lat lon ele coord
+  [[ -f "$dest" ]] || return 0
+  case "${dest##*.}" in
+    mp4|MP4|mov|MOV) ;;
+    *) return 0 ;;
+  esac
+  exif="$(resolve_pgm_exiftool 2>/dev/null)" || return 0
+  pgm_video_has_gps "$exif" "$dest" && return 0
+  gpx="$(dashcam_gpx_beside_output "$dest")"
+  [[ -f "$gpx" ]] || gpx=""
+  if [[ -z "$gpx" && -n "$src" ]]; then
+    gpx="$(pgm_find_gpx "$src" || true)"
+  fi
+  [[ -f "$gpx" ]] || return 0
+  read -r lat lon ele < <(pgm_gpx_first "$gpx") || return 0
+  [[ "$lat" =~ ^[-+0-9.eE]+$ && "$lon" =~ ^[-+0-9.eE]+$ ]] || return 0
+  awk -v lat="$lat" -v lon="$lon" 'BEGIN { if ((lat+0)^2 + (lon+0)^2 < 1e-12) exit 1 }' || return 0
+  if [[ "$ele" =~ ^[-+0-9.eE]+$ ]]; then
+    coord=$(awk -v a="$lat" -v b="$lon" -v c="$ele" 'BEGIN { printf "%.7f, %.7f, %.3f", a, b, c }')
+  else
+    coord=$(awk -v a="$lat" -v b="$lon" 'BEGIN { printf "%.7f, %.7f", a, b }')
+  fi
+  if "$exif" -overwrite_original -P \
+      -Keys:GPSCoordinates="$coord" \
+      -UserData:GPSCoordinates="$coord" \
+      -ItemList:GPSCoordinates="$coord" \
+      -- "$dest" >/dev/null 2>&1; then
+    pgm_log_kv "Location" "${lat}, ${lon} from ${gpx##*/}"
+    if [[ -n "$src" && -f "$src" ]]; then
+      touch -r "$src" -- "$dest" 2>/dev/null || true
+      pgm_copy_creation "$src" "$dest" || true
+    fi
+  else
+    pgm_log_kv "Location" "could not store a point from ${gpx##*/}"
+  fi
+}
+
 # File time and Windows creation time of $2, taken from $1. No video tags.
 pgm_stamp_file_time() {
   local src="$1" dest="$2"
@@ -4790,6 +4889,7 @@ run_merge_group() {
     meta_label=$(group_merge_description_label "${files[@]}" 2>/dev/null) || meta_label=""
     apply_merge_output_metadata "$output_file" "${files[0]}" "$meta_label" || true
     dashcam_write_gpx_if_merged "$output_file" "${files[@]}"
+    pgm_put_gps "$output_file" "${files[0]}"
     echo
     print_merge_size_summary "$output_file" "${files[@]}"
     print_merge_boundaries_report "$output_file" "${files[@]}"
