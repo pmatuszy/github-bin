@@ -1,6 +1,8 @@
 #!/bin/bash
+# v. 20261006.212111 - reading the videos shows a progress bar, time left and the arrival clock
 # v. 20261006.210617 - GoPro GPS metadata written as a .gpx file beside each video
 
+# 2026.10.06 - v. 0.2 - while the videos are read, a progress bar shows how many are done, the time left and the arrival clock
 # 2026.10.06 - v. 0.1 - initial release: find GoPro videos, read the GPS metadata stream (GPS5 and GPS9), write a .gpx with the same name beside the video; the video is not changed; an existing .gpx is skipped or written again, and the old file is kept as _old-YYYYMMDD_HHMMSS or deleted
 #
 # video-pgm-gopro-to-gpx.sh
@@ -331,11 +333,82 @@ gg_track_label() {
   printf '%s points, %s to %s UTC, %s' "$points" "$(gg_utc_label "$first")" "$(gg_utc_label "$last")" "$kind"
 }
 
+# Whole seconds still to wait. Under an hour: "6m 7s". From one hour: "1h 2m".
+gg_left_label() {
+  awk -v s="$1" 'BEGIN {
+    if (s < 0) s = 0
+    t = int(s + 0.5)
+    h = int(t / 3600)
+    m = int((t % 3600) / 60)
+    sec = t % 60
+    if (h > 0) printf "%dh %dm", h, m
+    else if (m > 0) printf "%dm %ds", m, sec
+    else printf "%ds", sec
+  }'
+}
+
+# Local arrival, rounded to the nearest minute. Date only when that minute is not today.
+gg_arrival_label() {
+  local now arrival
+  now="$(date +%s)"
+  arrival="$(awk -v n="$now" -v r="$1" 'BEGIN {
+    a = int(n + r + 0.5)
+    s = a % 60
+    if (s >= 30) a += 60 - s
+    else a -= s
+    printf "%d", a
+  }')"
+  if [[ "$(date -d "@${arrival}" '+%Y.%m.%d')" == "$(date '+%Y.%m.%d')" ]]; then
+    printf 'at %s' "$(date -d "@${arrival}" '+%H:%M')"
+  else
+    printf 'at %s' "$(date -d "@${arrival}" '+%Y.%m.%d %H:%M')"
+  fi
+}
+
+gg_fit_name() {
+  local name="$1" max=42
+  if (( ${#name} > max )); then
+    printf '%s…' "${name:0:max-1}"
+  else
+    printf '%s' "$name"
+  fi
+}
+
+# One line, redrawn in place. $1 done, $2 total, $3 file being read, $4 start epoch.
+gg_draw_probe() {
+  local done="$1" total="$2" name="$3" started="$4"
+  local width=40 filled=0 pct=0 bar now elapsed remain eta="" extra=""
+  (( total > 0 )) || return 0
+  filled=$(( done * width / total ))
+  pct=$(( done * 100 / total ))
+  bar="$(printf '%*s' "$filled" '' | tr ' ' '#')$(printf '%*s' $(( width - filled )) '' | tr ' ' '-')"
+  if (( done > 0 && done < total )); then
+    now=$(date +%s)
+    elapsed=$(( now - started ))
+    (( elapsed < 1 )) && elapsed=1
+    remain=$(( (total - done) * elapsed / done ))
+    eta="left $(gg_left_label "$remain")  $(gg_arrival_label "$remain")  "
+  elif (( done >= total )); then
+    eta="done"
+  fi
+  if [[ -n "$name" && done -lt total ]]; then
+    extra="$(gg_fit_name "$name")"
+  fi
+  printf '\r%s Reading [%s] %*d/%d %3d%%  %s%s\033[K' \
+    "$(gg_ts)" "$bar" "${#total}" "$done" "$total" "$pct" "$eta" "$extra"
+}
+
 gg_probe() {
-  local i n=${#V_PATH[@]} line status rest
+  local i n=${#V_PATH[@]} line status rest done=0 started name live=0
   (( n == 0 )) && return 0
-  printf '%s Reading %d video(s)...' "$(gg_ts)" "$n"
+  started=$(date +%s)
+  [[ -t 1 ]] && live=1
+  if (( ! live )); then
+    printf '%s Reading %d video(s)...' "$(gg_ts)" "$n"
+  fi
   for i in "${!V_PATH[@]}"; do
+    name="$(basename -- "${V_PATH[$i]}")"
+    (( live )) && gg_draw_probe "$done" "$n" "$name" "$started"
     V_OUT[$i]="$(gg_gpx_path "${V_PATH[$i]}")"
     line="$(python3 "$PY_HELPER" info -- "${V_PATH[$i]}" 2>/dev/null || true)"
     status="${line%% *}"
@@ -371,8 +444,14 @@ gg_probe() {
         [[ -n "${V_INFO[$i]}" ]] || V_INFO[$i]="could not read the video"
         ;;
     esac
+    (( done++ )) || true
   done
-  echo " done."
+  if (( live )); then
+    gg_draw_probe "$n" "$n" "" "$started"
+    echo
+  else
+    echo " done."
+  fi
 }
 
 gg_equivalent_command() {
