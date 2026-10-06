@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
+# v. 20261006.123000 - GPS smoothing: drop jumps, average the line, calmer map path, curve between points
 # v. 20261006.121000 - speed left out by default; --show-speed draws it
 # v. 20261006.115200 - -v/--version prints the same box as the bash scripts; --history pages in a terminal like them
 # v. 20261006.114917 - -h/--help describes every option, -v/--version, --history
 # v. 20261006.113346 - moving OpenStreetMap map that follows a GPX track, same length as its video
 
+# 2026.10.06 - v. 0.5 - GPS smoothing (on unless --no-smooth): single points faster than --max-jump km/h both in and out are dropped; Gaussian-weighted local line fit (no pull towards denser points) over --smooth s for the line and --smooth-map s for the map centre and arrow direction, never across gaps over 60 s; Catmull-Rom curve with 4 steps per segment unless --no-curve; info prints dropped=
 # 2026.10.06 - v. 0.4 - the speed is drawn only with --show-speed; --no-speed is still accepted
 # 2026.10.06 - v. 0.3 - -v/--version: boxed name and "Version: YYYYMMDD.HHMMSS (YYYY.MM.DD HH:MM:SS)" from the newest # v. line, like print_version_banner; --history: one page at a time in a terminal with "More history? [Y/n/q]", whole list when piped
 # 2026.10.06 - v. 0.2 - help text for every option, examples and exit codes; -v/--version prints the header version; --history prints the changelog
@@ -35,7 +37,7 @@ import urllib.request
 import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
 
-VERSION = "0.4"
+VERSION = "0.5"
 TILE = 256
 USER_AGENT = ("video-pgm-create-map-video-from-gpx/" + VERSION
               + " (+https://github.com/pmatuszy/github-bin)")
@@ -79,10 +81,118 @@ def haversine(lat1, lon1, lat2, lon2):
     return 2 * r * math.asin(min(1.0, math.sqrt(a)))
 
 
-class Track:
-    """GPX points with times in epoch seconds, world pixels, speed, and heading."""
+def drop_jumps(pts, max_kmh, gap=30.0):
+    """Leave out single points that both arrive and leave faster than max_kmh."""
+    if max_kmh <= 0 or len(pts) < 3:
+        return pts, 0
+    limit = max_kmh / 3.6
 
-    def __init__(self, path, zoom):
+    def fast(a, b):
+        dt = b[0] - a[0]
+        return dt < gap and haversine(a[1], a[2], b[1], b[2]) > limit * dt
+
+    kept = [pts[0]]
+    dropped = 0
+    for i in range(1, len(pts)):
+        p = pts[i]
+        nxt = pts[i + 1] if i + 1 < len(pts) else None
+        if fast(kept[-1], p) and (nxt is None or fast(p, nxt)):
+            dropped += 1
+            continue
+        kept.append(p)
+    return kept, dropped
+
+
+def segments(t, gap=60.0):
+    """(first, last) index pairs of runs without a gap longer than gap seconds."""
+    out = []
+    start = 0
+    for i in range(1, len(t)):
+        if t[i] - t[i - 1] > gap:
+            out.append((start, i - 1))
+            start = i
+    out.append((start, len(t) - 1))
+    return out
+
+
+def smooth_series(t, values, window):
+    """Gaussian-weighted local line fit over window seconds (sigma window/4), not across gaps.
+
+    A line fit instead of a plain average: GPS points come 1 to 4 s apart, and a
+    plain average pulls each point towards the side with more points.
+    """
+    if window <= 0 or len(t) < 3:
+        return list(values)
+    half = window / 2.0
+    sigma = window / 4.0
+    out = list(values)
+    for a, b in segments(t):
+        k = a
+        for i in range(a, b + 1):
+            while t[i] - t[k] > half:
+                k += 1
+            s0 = s1 = s2 = r0 = r1 = 0.0
+            base = values[i]
+            j = k
+            while j <= b and t[j] - t[i] <= half:
+                d = t[j] - t[i]
+                w = math.exp(-0.5 * (d / sigma) ** 2)
+                v = values[j] - base
+                s0 += w
+                s1 += w * d
+                s2 += w * d * d
+                r0 += w * v
+                r1 += w * d * v
+                j += 1
+            den = s0 * s2 - s1 * s1
+            if den > 1e-9 * s0 * s0:
+                out[i] = base + (s2 * r0 - s1 * r1) / den
+            else:
+                out[i] = base + r0 / s0
+    return out
+
+
+def catmull_rom(p0, p1, p2, p3, f):
+    f2 = f * f
+    f3 = f2 * f
+    return 0.5 * (2 * p1 + (p2 - p0) * f + (2 * p0 - 5 * p1 + 4 * p2 - p3) * f2
+                  + (3 * p1 - p0 - 3 * p2 + p3) * f3)
+
+
+def densify(t, series, steps=4, gap=60.0):
+    """Points on a curve through the given ones: steps per segment, gaps kept straight."""
+    n = len(t)
+    if n < 3 or steps < 2:
+        return t, series
+    nt = []
+    ns = [[] for _ in series]
+    for i in range(n - 1):
+        nt.append(t[i])
+        for s, o in zip(series, ns):
+            o.append(s[i])
+        if t[i + 1] - t[i] > gap:
+            continue
+        a = i - 1 if i > 0 and t[i] - t[i - 1] <= gap else i
+        d = i + 2 if i + 2 < n and t[i + 2] - t[i + 1] <= gap else i + 1
+        for k in range(1, steps):
+            f = k / float(steps)
+            nt.append(t[i] + f * (t[i + 1] - t[i]))
+            for s, o in zip(series, ns):
+                o.append(catmull_rom(s[a], s[i], s[i + 1], s[d], f))
+    nt.append(t[-1])
+    for s, o in zip(series, ns):
+        o.append(s[-1])
+    return nt, ns
+
+
+class Track:
+    """GPX points with times in epoch seconds, world pixels, speed, and heading.
+
+    x, y is the drawn line and the arrow position; vx, vy is the calmer path the
+    map centre follows, and the arrow points along it.
+    """
+
+    def __init__(self, path, zoom, smooth=0.0, smooth_map=0.0, max_jump=0.0, curve=False):
         pts = []
         root = ET.parse(path).getroot()
         for el in root.iter():
@@ -103,16 +213,32 @@ class Track:
             clean.append(p)
         if len(clean) < 2:
             raise ValueError("fewer than two timed track points")
-        self.t = [p[0] for p in clean]
-        self.lat = [p[1] for p in clean]
-        self.lon = [p[2] for p in clean]
-        self.x = []
-        self.y = []
-        for la, lo in zip(self.lat, self.lon):
-            x, y = world_xy(la, lo, zoom)
-            self.x.append(x)
-            self.y.append(y)
+        self.points = len(clean)
+        clean, self.dropped = drop_jumps(clean, max_jump)
+        t = [p[0] for p in clean]
+        lat = smooth_series(t, [p[1] for p in clean], smooth)
+        lon = smooth_series(t, [p[2] for p in clean], smooth)
+        map_s = max(smooth_map, smooth)
+        vlat = smooth_series(t, [p[1] for p in clean], map_s) if map_s > smooth else lat
+        vlon = smooth_series(t, [p[2] for p in clean], map_s) if map_s > smooth else lon
+        if curve:
+            t, (lat, lon, vlat, vlon) = densify(t, [lat, lon, vlat, vlon])
+        self.t, self.lat, self.lon = t, lat, lon
+        self.x, self.y = self._world(lat, lon, zoom)
+        if vlat is lat:
+            self.vx, self.vy = self.x, self.y
+        else:
+            self.vx, self.vy = self._world(vlat, vlon, zoom)
         self._speed_heading()
+
+    @staticmethod
+    def _world(lat, lon, zoom):
+        xs, ys = [], []
+        for la, lo in zip(lat, lon):
+            x, y = world_xy(la, lo, zoom)
+            xs.append(x)
+            ys.append(y)
+        return xs, ys
 
     def shift(self, seconds):
         if seconds:
@@ -134,7 +260,7 @@ class Track:
             if 0 < dt <= max_span:
                 d = haversine(self.lat[k], self.lon[k], self.lat[j], self.lon[j])
                 self.v[i] = d / dt
-                dx, dy = self.x[j] - self.x[k], self.y[j] - self.y[k]
+                dx, dy = self.vx[j] - self.vx[k], self.vy[j] - self.vy[k]
                 if self.v[i] * 3.6 >= min_kmh and (dx or dy):
                     self.h[i] = math.atan2(dx, -dy)
         last = None
@@ -147,22 +273,25 @@ class Track:
         self.h = [first if h is None else h for h in self.h]
 
     def at(self, when):
-        """(x, y, index of the last point passed, state, speed m/s or None, heading)."""
+        """(x, y, index of the last point passed, state, speed m/s or None, heading, vx, vy)."""
         t = self.t
         if when <= t[0]:
-            return self.x[0], self.y[0], -1, "before", None, self.h[0]
+            return self.x[0], self.y[0], -1, "before", None, self.h[0], self.vx[0], self.vy[0]
         if when >= t[-1]:
-            return self.x[-1], self.y[-1], len(t) - 1, "after", None, self.h[-1]
+            return (self.x[-1], self.y[-1], len(t) - 1, "after", None, self.h[-1],
+                    self.vx[-1], self.vy[-1])
         i = bisect.bisect_right(t, when) - 1
         span = t[i + 1] - t[i]
         f = (when - t[i]) / span
         x = self.x[i] + f * (self.x[i + 1] - self.x[i])
         y = self.y[i] + f * (self.y[i + 1] - self.y[i])
+        vx = self.vx[i] + f * (self.vx[i + 1] - self.vx[i])
+        vy = self.vy[i] + f * (self.vy[i + 1] - self.vy[i])
         v = None
         if self.v[i] is not None and self.v[i + 1] is not None:
             v = self.v[i] + f * (self.v[i + 1] - self.v[i])
         state = "gap" if span > 60 else "ok"
-        return x, y, i, state, v, self.h[i]
+        return x, y, i, state, v, self.h[i], vx, vy
 
 
 def video_window(args):
@@ -286,7 +415,7 @@ def needed_tiles(track, args):
     hi = bisect.bisect_right(track.t, t1)
     times.extend(track.t[lo:hi])
     for when in times:
-        x, y = track.at(when)[:2]
+        x, y = track.at(when)[6:8]
         for tx in range(int(math.floor((x - hw) / TILE)), int(math.floor((x + hw) / TILE)) + 1):
             for ty in range(int(math.floor((y - hh) / TILE)), int(math.floor((y + hh) / TILE)) + 1):
                 found.add((tx % (1 << args.zoom), ty))
@@ -502,7 +631,11 @@ def draw_progress(done_s, total_s, wall, label):
 # --- subcommands ------------------------------------------------------------
 
 def load_track(args):
-    track = Track(args.gpx, args.zoom)
+    if args.no_smooth:
+        track = Track(args.gpx, args.zoom)
+    else:
+        track = Track(args.gpx, args.zoom, smooth=args.smooth, smooth_map=args.smooth_map,
+                      max_jump=args.max_jump, curve=not args.no_curve)
     shift = auto_shift(track, args)
     track.shift(shift)
     return track, shift
@@ -526,7 +659,8 @@ def cmd_info(args):
     first_v = (track.t[0] - args.start_epoch) / args.speed
     last_v = (track.t[-1] - args.start_epoch) / args.speed
     out = {
-        "points": len(track.t),
+        "points": track.points,
+        "dropped": track.dropped,
         "tz_shift": shift,
         "first_fix": "%.3f" % first_v,
         "last_fix": "%.3f" % last_v,
@@ -603,9 +737,9 @@ def cmd_render(args, enc):
         for n in range(frames):
             v = v0 + n / float(fps)
             when = args.start_epoch + v * args.speed
-            x, y, idx, state, speed, heading = track.at(when)
-            canvas.ensure(x, y, idx)
-            frame, left, top = canvas.view(x, y)
+            x, y, idx, state, speed, heading, vx, vy = track.at(when)
+            canvas.ensure(vx, vy, idx)
+            frame, left, top = canvas.view(vx, vy)
             d = ImageDraw.Draw(frame)
             cx, cy = x - left, y - top
             if idx >= 0 and state in ("ok", "gap"):
@@ -784,6 +918,17 @@ def main():
                     help="credit drawn in the corner (default: %(default)s)")
     ap.add_argument("--tz-shift", type=float, default=None,
                     help="hours added to GPX times (default: guessed from the overlap)")
+    ap.add_argument("--no-smooth", action="store_true",
+                    help="use the GPS points as recorded: no jump filter, smoothing, or curve")
+    ap.add_argument("--smooth", type=float, default=4.0,
+                    help="seconds of driving each point of the line is averaged over; 0 = off (default 4)")
+    ap.add_argument("--smooth-map", type=float, default=8.0,
+                    help="seconds for the calmer path of the map centre and the arrow direction,"
+                         " at least --smooth (default 8)")
+    ap.add_argument("--max-jump", type=float, default=250.0,
+                    help="leave out single points that mean driving faster than this, km/h; 0 = keep all (default 250)")
+    ap.add_argument("--no-curve", action="store_true",
+                    help="straight lines between points instead of a curve through them")
     ap.add_argument("--show-speed", action="store_true", help="show the speed (off by default)")
     ap.add_argument("--no-speed", action="store_true", help="leave out the speed (the default)")
     ap.add_argument("--no-clock", action="store_true", help="leave out the clock")

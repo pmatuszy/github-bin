@@ -1,9 +1,11 @@
 #!/bin/bash
+# v. 20261006.123000 - smooth the GPS track (asked at the start, default yes), with a tweak menu (default no)
 # v. 20261006.121000 - no speed on the map by default (the dashcam picture shows it); --show-speed adds it
 # v. 20261006.114923 - help says the drawing helper has its own -h, -v, and --history
 # v. 20261006.114500 - missing ffmpeg, python3, or Pillow: list them and ask whether to install them with apt-get
 # v. 20261006.113823 - moving OpenStreetMap map video from each video's GPX track, same length as the video
 
+# 2026.10.06 - v. 0.5 - GPS smoothing, on by default: "Smooth the GPS track? [Y/n/q]" at the start, then "Tweak the smoothing? [y/N/q]" for line seconds, map seconds, jump limit, and curved movement; plan shows dropped jumps and a GPS track row; --no-smooth, --smooth, --smooth-map, --max-jump, --no-curve (any of them skips the questions)
 # 2026.10.06 - v. 0.4 - the speed is left off the map by default, as the dashcam picture shows it; --show-speed or [y] in the map choices adds it; --no-speed is still accepted
 # 2026.10.06 - v. 0.3 - help: the drawing helper video-pgm-create-map-video-from-gpx.py has its own -h, -v, and --history
 # 2026.10.06 - v. 0.2 - missing prerequisites (ffmpeg/ffprobe, python3, Pillow) are listed with what each is for and the apt-get command; in a terminal the script asks [Y/n/q] and installs them (sudo when not root), refreshing the package lists if the first try fails; with -y or no terminal it only prints the command
@@ -25,6 +27,7 @@ show_help() {
 Usage: $(basename "$0") [options] [DIR|VIDEO ...]
        [-y|--yes] [-n|--dry-run] [--redo] [--old keep|delete]
        [--size WxH|N] [--zoom N] [--fps N|same] [--show-speed] [--no-clock]
+       [--no-smooth] [--smooth S] [--smooth-map S] [--max-jump KMH] [--no-curve]
        [--gpx FILE] [--start 'YYYY-MM-DD HH:MM:SS'] [--speed N] [--tz-shift HOURS]
        [--tile-url URL] [--attribution TEXT] [--cache DIR]
        [--encoder auto|nvenc|x265|x264] [--quality N] [--from TIME] [--length TIME]
@@ -46,6 +49,8 @@ How the map follows the video
   - Before the first GPS point the car waits at the start ("waiting for GPS");
     after the last one it stays at the end. A gap of more than a minute between
     points shows "no GPS here".
+  - The track is smoothed first (see GPS smoothing below): single wild points
+    are dropped, the zigzag is averaged out, and the car moves on a curve.
   - The map is north up and centred on the car. Zoom 16 shows about 1.5 km
     across a 1080 px picture in Poland.
 
@@ -83,6 +88,17 @@ Options:
   --show-speed         Also show the speed (km/h). Off by default: the dashcam
                        picture shows it already. --no-speed keeps it off.
   --no-clock           Leave out the clock.
+
+ GPS smoothing (on by default; asked at the start unless one of these is given)
+  --no-smooth          Use the GPS points as recorded, joined by straight lines.
+  --smooth S           Seconds of driving each point of the line is averaged
+                       over. Default 4. 0 keeps the line on every point.
+  --smooth-map S       Seconds for the calmer path the map centre and the arrow
+                       direction follow. Default 8, never less than --smooth.
+  --max-jump KMH       Leave out single points that mean driving faster than
+                       this. Default 250. 0 keeps every point.
+  --no-curve           Straight lines between points instead of a curve.
+                       The .gpx file is never changed.
 
  Track and time
   --gpx FILE           Use this track (only with one video).
@@ -460,6 +476,12 @@ mv_py_args() {
   [[ -n "$TZ_SHIFT" ]] && PY_ARGS+=(--tz-shift "$TZ_SHIFT")
   (( SHOW_SPEED )) && PY_ARGS+=(--show-speed)
   (( SHOW_CLOCK )) || PY_ARGS+=(--no-clock)
+  if (( SMOOTH )); then
+    PY_ARGS+=(--smooth "$SMOOTH_LINE" --smooth-map "$SMOOTH_MAP" --max-jump "$MAX_JUMP")
+    (( CURVE )) || PY_ARGS+=(--no-curve)
+  else
+    PY_ARGS+=(--no-smooth)
+  fi
   return 0
 }
 
@@ -467,7 +489,7 @@ mv_py_args() {
 mv_job_info() {
   local i="$1" k v out
   J_POINTS[$i]="" J_SHIFT[$i]=0 J_FIRST[$i]="" J_LAST[$i]="" J_OVERLAP[$i]=0
-  J_DIST[$i]="" J_VMAX[$i]="" J_TILES[$i]=0 J_CACHED[$i]=0 J_LAT[$i]="" J_ERR[$i]=""
+  J_DIST[$i]="" J_VMAX[$i]="" J_TILES[$i]=0 J_CACHED[$i]=0 J_LAT[$i]="" J_ERR[$i]="" J_DROPPED[$i]=0
   mv_py_args "$i"
   if ! out="$(python3 "$PY_HELPER" info "${PY_ARGS[@]}" 2>&1)"; then
     J_ERR[$i]="$(tail -1 <<<"$out")"
@@ -476,6 +498,7 @@ mv_job_info() {
   while IFS='=' read -r k v; do
     case "$k" in
       points) J_POINTS[$i]="$v" ;;
+      dropped) J_DROPPED[$i]="$v" ;;
       tz_shift) J_SHIFT[$i]="$v" ;;
       first_fix) J_FIRST[$i]="$v" ;;
       last_fix) J_LAST[$i]="$v" ;;
@@ -657,7 +680,12 @@ mv_print_job() {
     J_STATE[$i]=bad
   else
     printf '  %sTrack%s   %s\n' "$C_B" "$C_0" "$(basename -- "${J_GPX[$i]}")"
-    printf '          %s points, %s km, top speed %s km/h\n' "${J_POINTS[$i]}" "${J_DIST[$i]}" "${J_VMAX[$i]}"
+    printf '          %s points, %s km, top speed %s km/h' "${J_POINTS[$i]}" "${J_DIST[$i]}" "${J_VMAX[$i]}"
+    if (( SMOOTH )); then
+      (( J_DROPPED[$i] > 0 )) && printf '; %d jump(s) dropped' "${J_DROPPED[$i]}"
+      printf ', smoothed'
+    fi
+    printf '\n'
     printf '          first fix at %s in the video, last at %s\n' "$(mv_clock "${J_FIRST[$i]}")" "$(mv_clock "${J_LAST[$i]}")"
     if [[ "${J_SHIFT[$i]}" != 0 ]]; then
       shift_h="$(awk -v s="${J_SHIFT[$i]}" 'BEGIN { printf "%+d", s / 3600 }')"
@@ -709,6 +737,14 @@ mv_equivalent_command() {
   [[ "$FPS" != same ]] && cmd+=(--fps "$FPS")
   (( SHOW_SPEED )) && cmd+=(--show-speed)
   (( SHOW_CLOCK )) || cmd+=(--no-clock)
+  if (( SMOOTH )); then
+    [[ "$SMOOTH_LINE" != 4 ]] && cmd+=(--smooth "$SMOOTH_LINE")
+    [[ "$SMOOTH_MAP" != 8 ]] && cmd+=(--smooth-map "$SMOOTH_MAP")
+    [[ "$MAX_JUMP" != 250 ]] && cmd+=(--max-jump "$MAX_JUMP")
+    (( CURVE )) || cmd+=(--no-curve)
+  else
+    cmd+=(--no-smooth)
+  fi
   [[ -n "$GPX_OVERRIDE" ]] && cmd+=(--gpx "$GPX_OVERRIDE")
   [[ -n "$START_TEXT" ]] && cmd+=(--start "$START_TEXT")
   [[ -n "$SPEED_OVERRIDE" ]] && cmd+=(--speed "$SPEED_OVERRIDE")
@@ -752,6 +788,7 @@ mv_print_plan() {
   mv_heading "Settings"
   printf '  %-14s %s\n' "Map" "${MAP_W}x${MAP_H}, zoom ${ZOOM} ($(mv_across_label "$lat")), north up, centred on the car"
   printf '  %-14s %s\n' "Shown" "$(mv_overlay_label)"
+  printf '  %-14s %s\n' "GPS track" "$(mv_smooth_label)"
   if [[ "$FPS" == same ]]; then
     printf '  %-14s %s\n' "Frame rate" "same as each video"
   else
@@ -782,6 +819,26 @@ mv_print_plan() {
   (( BAD > 0 )) && printf ', %s%d cannot be rendered%s' "$C_R" "$BAD" "$C_0"
   (( DOWNLOAD > 0 )) && printf ', up to %d tiles to download' "$DOWNLOAD"
   echo
+}
+
+mv_smooth_label() {
+  local out
+  if (( ! SMOOTH )); then
+    printf 'as recorded (no smoothing)'
+    return 0
+  fi
+  out="smoothed: line ${SMOOTH_LINE} s, map ${SMOOTH_MAP} s, "
+  if [[ "$MAX_JUMP" == 0 ]]; then
+    out+="no jump filter, "
+  else
+    out+="jumps over ${MAX_JUMP} km/h dropped, "
+  fi
+  if (( CURVE )); then
+    out+="curved"
+  else
+    out+="straight between points"
+  fi
+  printf '%s' "$out"
 }
 
 mv_overlay_label() {
@@ -903,6 +960,86 @@ mv_prompt_more() {
   else
     echo "$(mv_ts) ${C_Y}Not same or a number up to 120: ${REPLY}. Keeping ${FPS}.${C_0}"
   fi
+}
+
+mv_seconds_ok() {
+  [[ "$1" =~ ^[0-9]+([.][0-9]+)?$ ]] && ! mv_gt "$1" 60
+}
+
+mv_prompt_smooth() {
+  mv_heading "GPS track"
+  mv_yes_no "Smooth the GPS track?" "$SMOOTH" \
+    "Bad points that would mean an impossible jump are dropped, the small zigzags
+      of the GPS are averaged out over a few seconds of driving, and the arrow
+      moves along a curve between points instead of jerking from point to point.
+      The .gpx file is not changed; only the map video uses the smoothed track." \
+    "Use the GPS points exactly as recorded, joined by straight lines."
+  SMOOTH="$REPLY"
+  (( SMOOTH )) || return 0
+
+  echo
+  printf 'Tweak the smoothing? [y/N/q]\n'
+  echo "  [y] Yes"
+  echo "      Set how strong the smoothing is, one value at a time."
+  echo "  [n] No (current, default)"
+  echo "      Keep: $(mv_smooth_label | sed 's/^smoothed: //')."
+  echo "  [q] Quit the script, render nothing more"
+  mv_read_key "Tweak the smoothing [y/N/q]: " n
+  case "$REPLY" in
+    y) ;;
+    q) mv_quit ;;
+    n) return 0 ;;
+    *) echo "$(mv_ts) Unknown choice. Keeping the smoothing as it is."; return 0 ;;
+  esac
+
+  echo
+  echo "Track line smoothing: how many seconds of driving each point is averaged over"
+  echo "  0    off, the line goes through every GPS point"
+  echo "  2    light; removes only the small zigzag"
+  echo "  4    medium; straight roads look straight, corners stay on the road (default)"
+  echo "  8    strong; very calm line, but tight corners and roundabouts get cut"
+  mv_ask_line "Line smoothing" "$SMOOTH_LINE"
+  if mv_seconds_ok "$REPLY"; then
+    SMOOTH_LINE="$REPLY"
+  else
+    echo "$(mv_ts) ${C_Y}Not 0 to 60 seconds: ${REPLY}. Keeping ${SMOOTH_LINE}.${C_0}"
+  fi
+
+  echo
+  echo "Map movement smoothing: how calmly the map follows the car, in seconds"
+  echo "  The map centre and the arrow direction follow a calmer path than the line,"
+  echo "  so the picture does not shake. It is at least the line smoothing."
+  echo "  4    follows the car closely"
+  echo "  8    calm (default)"
+  echo "  15   very calm; the car moves a little away from the centre in turns"
+  mv_ask_line "Map smoothing" "$SMOOTH_MAP"
+  if mv_seconds_ok "$REPLY"; then
+    SMOOTH_MAP="$REPLY"
+  else
+    echo "$(mv_ts) ${C_Y}Not 0 to 60 seconds: ${REPLY}. Keeping ${SMOOTH_MAP}.${C_0}"
+  fi
+  if mv_gt "$SMOOTH_LINE" "$SMOOTH_MAP"; then
+    echo "$(mv_ts) The map smoothing is raised to the line smoothing: ${SMOOTH_LINE}."
+    SMOOTH_MAP="$SMOOTH_LINE"
+  fi
+
+  echo
+  echo "Drop jumps faster than: km/h"
+  echo "  A point that would mean driving faster than this from its neighbours is a"
+  echo "  GPS error and is left out. 0 keeps every point."
+  echo "  250  (default)"
+  mv_ask_line "Drop jumps over" "$MAX_JUMP"
+  if [[ "$REPLY" =~ ^[0-9]+$ ]] && (( 10#$REPLY == 0 || (10#$REPLY >= 50 && 10#$REPLY <= 2000) )); then
+    MAX_JUMP=$(( 10#$REPLY ))
+  else
+    echo "$(mv_ts) ${C_Y}Not 0 or 50 to 2000 km/h: ${REPLY}. Keeping ${MAX_JUMP}.${C_0}"
+  fi
+
+  echo
+  mv_yes_no "Curved movement between points?" "$CURVE" \
+    "The arrow and the map glide along a curve through the points." \
+    "Straight lines from point to point, as before."
+  CURVE="$REPLY"
 }
 
 mv_prompt_test() {
@@ -1251,6 +1388,7 @@ MAP_W=1080 MAP_H=1080
 ZOOM=16
 FPS=same
 SHOW_SPEED=0 SHOW_CLOCK=1
+SMOOTH=1 SMOOTH_LINE=4 SMOOTH_MAP=8 MAX_JUMP=250 CURVE=1 SMOOTH_FROM_CLI=0
 GPX_OVERRIDE="" START_OVERRIDE="" START_TEXT="" SPEED_OVERRIDE="" TZ_SHIFT=""
 TILE_URL="$DEFAULT_TILE_URL"
 ATTRIBUTION="$DEFAULT_ATTRIBUTION"
@@ -1263,7 +1401,7 @@ TEST=0
 INPUT_ARGS=()
 J_VID=() J_START=() J_NAME_END=() J_SPEED=() J_DAY=() J_CLOCK=() J_GPX=() J_DUR=() J_FPS=()
 J_OUT=() J_STATE=() J_POINTS=() J_SHIFT=() J_FIRST=() J_LAST=() J_OVERLAP=() J_DIST=() J_VMAX=()
-J_TILES=() J_CACHED=() J_LAT=() J_ERR=()
+J_TILES=() J_CACHED=() J_LAT=() J_ERR=() J_DROPPED=()
 PY_ARGS=() ENC_ARGS=()
 ENC_LABEL="" ENCODER_LIST="" PARTIAL="" EXISTING=0 TO_RENDER=0 BAD=0 DOWNLOAD=0
 TILES_DOWNLOADED=0 TILES_FAILED=0
@@ -1397,6 +1535,18 @@ while [[ $# -gt 0 ]]; do
         echo "ERROR: --fps must be same or a number up to 120 (got $2)" >&2; exit 1
       fi
       shift 2 ;;
+    --no-smooth) SMOOTH=0; SMOOTH_FROM_CLI=1; shift ;;
+    --smooth|--smooth-map)
+      mv_need_value "$@"
+      mv_seconds_ok "$2" || { echo "ERROR: $1 must be 0 to 60 seconds (got $2)" >&2; exit 1; }
+      if [[ "$1" == --smooth ]]; then SMOOTH_LINE="$2"; else SMOOTH_MAP="$2"; fi
+      SMOOTH_FROM_CLI=1; shift 2 ;;
+    --max-jump)
+      mv_need_value "$@"
+      [[ "$2" =~ ^[0-9]+$ ]] && (( 10#$2 == 0 || (10#$2 >= 50 && 10#$2 <= 2000) )) \
+        || { echo "ERROR: --max-jump must be 0 or 50 to 2000 km/h (got $2)" >&2; exit 1; }
+      MAX_JUMP=$(( 10#$2 )); SMOOTH_FROM_CLI=1; shift 2 ;;
+    --no-curve) CURVE=0; SMOOTH_FROM_CLI=1; shift ;;
     --show-speed) SHOW_SPEED=1; shift ;;
     --no-speed) SHOW_SPEED=0; shift ;;
     --no-clock) SHOW_CLOCK=0; shift ;;
@@ -1445,6 +1595,7 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 mv_update_test
+mv_gt "$SMOOTH_LINE" "$SMOOTH_MAP" && SMOOTH_MAP="$SMOOTH_LINE"
 
 if [[ ! -r "$PY_HELPER" ]]; then
   echo "ERROR: the drawing helper is missing: ${PY_HELPER}" >&2
@@ -1502,6 +1653,7 @@ for _i in "${!J_VID[@]}"; do
   J_FPS[$_i]="${PR_FPS:-25/1}"
   J_OUT[$_i]="" J_STATE[$_i]=bad J_POINTS[$_i]="" J_SHIFT[$_i]=0 J_FIRST[$_i]="" J_LAST[$_i]=""
   J_OVERLAP[$_i]=0 J_DIST[$_i]="" J_VMAX[$_i]="" J_TILES[$_i]=0 J_CACHED[$_i]=0 J_LAT[$_i]="" J_ERR[$_i]=""
+  J_DROPPED[$_i]=0
   if [[ -n "$GPX_OVERRIDE" ]]; then
     J_GPX[$_i]="$GPX_OVERRIDE"
   else
@@ -1509,6 +1661,9 @@ for _i in "${!J_VID[@]}"; do
   fi
 done
 echo " done."
+if (( ! DO_YES && ! DRY_RUN && ! SMOOTH_FROM_CLI )) && (( script_is_run_interactively )); then
+  mv_prompt_smooth
+fi
 mv_read_all_info
 mv_print_existing
 mv_print_plan
