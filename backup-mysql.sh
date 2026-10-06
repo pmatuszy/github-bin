@@ -1,7 +1,9 @@
 #!/bin/bash
+# v. 20261006.183857 - backup listing uses /bin/ls so a shell ls function cannot add --full-time
 # v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
 # v. 20260716.164840 - add -h/--help, -v/--version, --no_startup_delay
 
+# 2026.10.06 - v. 0.3 - backup listing uses /bin/ls so a shell ls function cannot add --full-time
 # 2026.06.15 - changed date format
 # 2026.05.26 - user-facing messages translated from Polish to English
 # 2023.03.12 - v. 0.2 - added chmod command to limit backup visibility
@@ -67,8 +69,8 @@ return_code=$?
 chmod 600 ${BACKUP_DESTINATION}
 
 WHAT_DATABASES_WE_HAVE=$(/usr/bin/mysqlshow -u "${MYSQL_USER}")
-OUTPUT_FILE=$(ls -ltr ${BACKUP_DESTINATION})
-LAST_BACKUP_FILES=$(ls -l $(dirname ${BACKUP_DESTINATION}) | tail -n $LIMIT_NUMBER_OF_LAST_BACKUPS_TO_LIST)
+OUTPUT_FILE=$(/bin/ls -ltr ${BACKUP_DESTINATION})
+LAST_BACKUP_FILES=$(/bin/ls -l $(dirname ${BACKUP_DESTINATION}) | tail -n $LIMIT_NUMBER_OF_LAST_BACKUPS_TO_LIST)
 wiadomosc=$(echo -e "$SCRIPT_VERSION\n\n$WHAT_DATABASES_WE_HAVE\n\n$m\n\n$OUTPUT_FILE\n\nLAST $LIMIT_NUMBER_OF_LAST_BACKUPS_TO_LIST BACKUP FILES:\n$LAST_BACKUP_FILES")
 
 /usr/bin/curl -fsS -m 100 --retry 10 --retry-delay 10 --data-raw "$wiadomosc" -o /dev/null "$HEALTHCHECK_URL"/${return_code} 2>/dev/null

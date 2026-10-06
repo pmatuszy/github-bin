@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
+# v. 20261006.183857 - symlink listing uses /bin/ls so a shell ls function cannot add --full-time
 # v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
 # v. 20260716.163224 - versioning format v. YYYYMMDD.HH24MISS
+# 2026.10.06 - v. 1.16 - symlink listing uses /bin/ls so a shell ls function cannot add --full-time
 # 2026.06.11 - v. 1.15 - Pi/JVM: hint --repair when automatic repair check passes
 # 2026.06.11 - v. 1.14 - Pi/JVM: repair prompt only when needed; default [y/N]
 # 2026.06.11 - v. 1.13 - Pi/JVM: quieter JNI jar patch; skip cp when JNI already in place
@@ -374,7 +376,7 @@ link_signal_cli_active_version() {
         ln -sfn "${CURRENT_LINK}" "${BIN_LINK}"
     fi
 
-    ls -l "${BIN_LINK}" "${CURRENT_LINK}"
+    /bin/ls -l "${BIN_LINK}" "${CURRENT_LINK}"
 }
 
 get_active_signal_cli_install_target() {

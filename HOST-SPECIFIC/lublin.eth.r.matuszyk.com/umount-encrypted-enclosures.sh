@@ -1,7 +1,9 @@
 #!/bin/bash
+# v. 20261006.183955 - disk listing uses /bin/df so a shell df function cannot hide the byte count
 # v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
 # v. 20260716.164840 - add -h/--help, -v/--version, --no_startup_delay
 
+# 2026.10.06 - v. 0.3 - disk listing uses /bin/df so a shell df function cannot hide the byte count
 # 2026.05.26 - user-facing messages translated from Polish to English
 # 2023.01.26 - v. 0.2 - added script version print
 # 2022.11.21 - v. 0.1 - initial release
@@ -51,7 +53,7 @@ if [ $(mountpoint -q $1 ; echo $?) -ne 0 ] ; then
    return 
 fi
 
-luks_device="$(df -h $1 | grep $1  | awk '{print $1}')"
+luks_device="$(/bin/df -h $1 | grep $1  | awk '{print $1}')"
 
 umount $1 
 

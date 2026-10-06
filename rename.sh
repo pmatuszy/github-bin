@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# v. 20261006.183857 - NEF listing uses /bin/ls so a shell ls function cannot add --full-time
 # v. 20261006.134200 - fix menu default keys: checksum-verify prompt [C] (was wrongly [c] via default_key S); GoPro MP4/WAV [M]
 # v. 20261006.121700 - rename prompt: always show [g] camera auto-approve; [g] enables session (rename this entry when OLD≠NEW)
 # v. 20261006.114200 - Canon DIGITAL IXUS 40 / IXY Digital 50: IMG_####.JPG → YYYYMMDD_HHMMSS_-_-_Canon_IXY_DIGITAL_50 (Date/Time Original)
@@ -90,6 +91,7 @@
 # v. 20260721.132007 - Samsung timestamp media: preserve optional numeric sorting prefix when appending make/model
 # v. 20260721.112812 - GoPro camera labels: GoPro_Hero4_Silver style (not GOPRO4_SILVER)
 
+# 2026.10.06 - v. 19.349.183857 - NEF listing uses /bin/ls so a shell ls function cannot add --full-time
 # 2026.09.30 - v. 19.348.213145 - Nikon Coolpix P900: DSCN####.JPG/.JPEG/.MOV/.MP4/.AVI with Make NIKON and Camera Model Name COOLPIX P900 → YYYYMMDD_HHMMSS_-_-_Nikon_COOLPIX_P900.ext from Date/Time Original (then Create Date); other DSCN cameras are left unchanged
 # 2026.09.25 - v. 19.347.171847 - GoPro Quik dashboard: suspend the ERR trap around transform_gopro_quik_dashboard_basename (no source match returned 1 and printed "ERROR: command failed … return 1" twice although nothing failed); Mission 1 Pro embedded-timezone audit skips *-dashboard / *-dashboard_N exports — their name comes from the source clip and Quik writes CreateDate in UTC without a zone tag, which was proposed as a -2h rename
 # 2026.09.25 - v. 19.346.115032 - Plain rename hash-list line replaces misleading "Also updated hash (old name referenced)": one line per list "  SHA512 list <list>: path updated (digest unchanged); content checked: OK" / "OK before and after rename" (--checksum-verify all) / "content NOT checked (you chose skip | skip for this folder | skip for this run | --checksum-verify none)" / "content MISMATCH — ignored at your request ([I]/[H])" / "digest REPLACED with current content ([U] after mismatch)"; N paths for directory renames; dry-run "would update path (digest unchanged); content not checked in dry-run"; summary line "Hash-list paths: N updated by renames; per list: … OK, … not checked, … mismatches ignored, … digests replaced"; verify prompt wording says the path is always updated and only the before-rename content check is optional
@@ -8398,7 +8400,7 @@ nef_xmp_print_proposed_raw_file_proof() {
         verify_kind=note
     fi
 
-    ls_line="$(ls -l -- "$nef_path" 2>/dev/null || true)"
+    ls_line="$(/bin/ls -l -- "$nef_path" 2>/dev/null || true)"
     [[ -z "$ls_line" ]] && ls_line="(ls -l unavailable)"
 
     sz="$(stat -c %s -- "$nef_path" 2>/dev/null || printf '%s' '?')"

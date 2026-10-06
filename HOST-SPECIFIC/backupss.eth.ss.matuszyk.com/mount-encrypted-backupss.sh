@@ -1,7 +1,9 @@
 #!/bin/bash
+# v. 20261006.183955 - disk listing uses /bin/df so a shell df function cannot hide the byte count
 # v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
 # v. 20260716.164840 - add -h/--help, -v/--version, --no_startup_delay
 
+# 2026.10.06 - disk listing uses /bin/df so a shell df function cannot hide the byte count
 # 2026.05.26 - user-facing messages translated from Polish to English
 # 2025.11.04 - v. 0.1 - changed -y to -p in fsck.ext4
 # 2023.03.27 - v. 0.1 - initial release
@@ -125,7 +127,7 @@ mount -o bind,noatime /mnt/luks-raid1-encA/backup/rclone-user/_restic      /rclo
 mount -o bind,noatime /mnt/luks-raid1-encB/backup/rclone-user/_restic      /rclone-jail/storage-master/backupB
 
 echo
-df -h /encrypted /mnt/luks-raid1-encA /mnt/luks-raid1-encB \
+/bin/df -h /encrypted /mnt/luks-raid1-encA /mnt/luks-raid1-encB \
       /rclone-jail/storage-master/replicationA /rclone-jail/storage-master/replicationB \
       /rclone-jail/storage-master/backupA /rclone-jail/storage-master/backupB
 

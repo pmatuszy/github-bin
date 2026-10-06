@@ -1,4 +1,6 @@
 #!/bin/bash
+# v. 20261006.183857 - older maps sorted with /bin/ls -t, not the shell's ls function (that one adds --full-time and broke the path)
+# v. 20261006.183740 - map list: older maps sorted with stat instead of ls; each map shows length, size, file size, and date, or why it cannot be read
 # v. 20261006.180646 - map video from video-pgm-create-map-video-from-gpx.sh in the top right corner, 540 px wide; asked which map when there are several
 # v. 20261006.124200 - the default key is the capital one, in the key list and on each option line
 # v. 20261006.120000 - already rendered routes: listed at the start, skip or render again, old file kept with its date and time or deleted
@@ -12,6 +14,7 @@
 # v. 20261006.103000 - more choices: inset size, corner, four margins, mirror, crop, border, caption, swap, black gap box, output width
 # v. 20261006.091500 - pair FrontCam and BackCam by filename clock, print the plan, render picture-in-picture
 
+# 2026.10.06 - v. 0.13 - per-route map list: older maps are sorted with /bin/ls -t, not the shell's ls function (that one adds --full-time, so names were not valid paths and showed "0:00, ?x?, made ?"); each line shows length, picture size, file size, and date; a missing or unreadable map says so
 # 2026.10.06 - v. 0.12 - map video: found beside each front file by name (FrontCam -> Map), with older _old-... maps and -test-... tries; the plan shows each route's map or says it has none; when a route has more than one, asked once: newest (default), pick for each route, or no map; placed top right (the other top corner when the rear inset is there), 540 px wide, same margins and border as the inset; "More choices" asks map, size, and corner; --map auto|none|FILE, --no-map, --map-size, --map-corner
 # 2026.10.06 - v. 0.11 - only the default key is a capital letter, in the [..] key list, on its option line, and on the prompt line: yes/no questions ([Y] Yes when yes is the default), old file K/d, length A/1/2/5/c, from B/E/M
 # 2026.10.06 - v. 0.10 - routes with an output are listed at the start; after [Y] you choose skip, render again, or ask for each; route by route asks for each existing route; the old file is renamed _old-YYYYMMDD_HHMMSS (its own time) or deleted, only after the new render succeeds; --old keep|delete; [r] removed
@@ -996,13 +999,15 @@ pip_map_candidates() {
       *) old+=("$cand") ;;
     esac
   done
-  if (( ${#old[@]} > 0 )); then
-    ls -t -- "${old[@]}"
-  fi
-  if (( ${#tries[@]} > 0 )); then
-    ls -t -- "${tries[@]}"
-  fi
+  pip_newest_first "${old[@]}"
+  pip_newest_first "${tries[@]}"
   return 0
+}
+
+# Paths one per line, newest modification time first. /bin/ls, not an ls alias or function.
+pip_newest_first() {
+  (( $# > 0 )) || return 0
+  /bin/ls -t -- "$@"
 }
 
 # Fills R_MAP_ALL, R_MAP_N, R_MAP_DEF for each route and the MAP_* counts.
@@ -2192,9 +2197,17 @@ pip_prompt_map_pick() {
     (( k++ ))
     pip_map_probe "$p"
     echo "  [${k}] $(basename -- "$p")$( (( k == def )) && printf ' (current, default)')"
-    note="$(pip_map_len_note "$f" "$p")"
-    printf '      %s, %s, made %s%s\n' "$(pip_clock "${MP_DUR:-0}")" "${MP_W:-?}x${MP_H:-?}" \
-      "$(date -r "$p" '+%Y.%m.%d %H:%M' 2>/dev/null || echo '?')" "${note:+; ${C_Y}${note}${C_0}}"
+    if [[ ! -f "$p" ]]; then
+      printf '      %snot found: %s%s\n' "$C_R" "$p" "$C_0"
+    elif [[ -z "$MP_W" || -z "$MP_DUR" ]]; then
+      printf '      %sffprobe cannot read it (broken or unfinished?), made %s%s\n' "$C_Y" \
+        "$(date -r "$p" '+%Y.%m.%d %H:%M')" "$C_0"
+    else
+      note="$(pip_map_len_note "$f" "$p")"
+      printf '      %s, %sx%s, %s, made %s%s\n' "$(pip_clock "$MP_DUR")" "$MP_W" "$MP_H" \
+        "$(pip_human_size "$(pip_file_bytes "$p")")" "$(date -r "$p" '+%Y.%m.%d %H:%M')" \
+        "${note:+; ${C_Y}${note}${C_0}}"
+    fi
   done
   echo "  [0] No map for this route$( (( def == 0 )) && printf ' (current, default)')"
   pip_ask_line "Map 0-${k}" "$def"

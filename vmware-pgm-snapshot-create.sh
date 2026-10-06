@@ -1,7 +1,9 @@
 #!/bin/bash
+# v. 20261006.183955 - disk listing uses /bin/df so a shell df function cannot hide the byte count
 # v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
 # v. 20260716.164840 - add -h/--help, -v/--version, --no_startup_delay
 
+# 2026.10.06 - v. 0.19 - disk listing uses /bin/df so a shell df function cannot hide the byte count
 # 2026.07.15 - v. 0.18 - listSnapshots parse: skip noise before Total (match delete script)
 # 2026.04.22 - v. 0.17 - encrypted vmrun: DISPLAY default :0 (script clears DISPLAY); no bogus nogui on snapshot/listSnapshots
 # 2026.04.22 - v. 0.16 - vmrun listSnapshots/snapshot: always trailing nogui (encrypted and plain)
@@ -16,7 +18,7 @@
 # 2026.04.22 - v. 0.7 - encrypted VM: interactive TPM_PASS with masked input (asterisks) if not already set
 # 2026.04.22 - v. 0.6 - VM menu: unique digit prefix accepts without Enter (e.g. 3); 1 vs 10–13 needs more keys or Enter
 # 2026.04.22 - v. 0.5 - before new snapshot name: list existing snapshots (listSnapshots)
-# 2026.04.22 - v. 0.4 - after VM choice: df -hT for filesystem holding the .vmx
+# 2026.04.22 - v. 0.4 - after VM choice: /bin/df -hT for filesystem holding the .vmx
 # 2026.04.22 - v. 0.3 - before vmrun: print command, [y/N] confirm (default N)
 # 2026.04.22 - v. 0.2 - EXIT banner: script start/stop wall times and elapsed
 # 2026.04.22 - v. 0.1 - interactive snapshot: running vs stopped VMs, readline snapshot name
@@ -453,9 +455,9 @@ _pgm_ed="$(_pgm_vmrun_enc_display)"
 _pgm_show_selected_vm_boxed "$choice" "$selected"
 
 echo "(PGM) Storage — filesystem containing this VM (same mount as the .vmx path):"
-if ! df -hT -- "$selected" 2>/dev/null; then
-  echo "(PGM) df -hT failed; trying df -h ..." >&2
-  df -h -- "$selected" || echo "(PGM) Could not show disk space for: $selected" >&2
+if ! /bin/df -hT -- "$selected" 2>/dev/null; then
+  echo "(PGM) /bin/df -hT failed; trying /bin/df -h ..." >&2
+  /bin/df -h -- "$selected" || echo "(PGM) Could not show disk space for: $selected" >&2
 fi
 echo
 

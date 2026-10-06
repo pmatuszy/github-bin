@@ -1,7 +1,9 @@
 #!/bin/bash
+# v. 20261006.183955 - disk listing uses /bin/df so a shell df function cannot hide the byte count
 # v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
 # v. 20260716.164840 - add -h/--help, -v/--version, --no_startup_delay
 
+# 2026.10.06 - v. 0.8 - disk listing uses /bin/df so a shell df function cannot hide the byte count
 # 2026.05.26 - user-facing messages translated from Polish to English
 # 2023.08.10 - v. 0.7 - bugfix: checking if ${DEST} exists and if not exiting
 # 2023.05.22 - v. 0.6 - std_options are different for interactive and non-interactive session
@@ -100,7 +102,7 @@ ssh "${SOURCE_HOST}" "cd ${SOURCE_DIR} ; /bin/ls -1tr | tail -n-1"
 echo ; echo -n "Skopiujemy "
 ssh "${SOURCE_HOST}" "cd ${SOURCE_DIR} ; /bin/ls -ltr | head -n-1 " | awk 'BEGIN {suma=0} {suma=suma+$5} END {print suma/1024/1024 " MB danych"}'
 
-echo ; df -h $DEST ; echo
+echo ; /bin/df -h $DEST ; echo
 echo "Poczatek kopiowania: $(date '+%Y.%m.%d %H:%M:%S')" ; echo 
 
 rsync $std_options -e "ssh -T -o Compression=no -x" --files-from=<(ssh $SOURCE_HOST "cd ${SOURCE_DIR} ; /bin/ls -1tr | head -n-1" ) "${SOURCE_HOST}:${SOURCE_DIR}" "${DEST}"

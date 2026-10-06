@@ -1,7 +1,9 @@
 #!/bin/bash
+# v. 20261006.183955 - disk listing uses /bin/df so a shell df function cannot hide the byte count
 # v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
 # v. 20260716.164840 - add -h/--help, -v/--version, --no_startup_delay
 
+# 2026.10.06 - disk listing uses /bin/df so a shell df function cannot hide the byte count
 # 2026.05.26 - user-facing messages translated from Polish to English
 # 2023.03.27 - v. 0.6 - bugfix with fsck (instead of hardcoded /dev/mapper/encrypted_luks_device_encrypted.luks2 will use $1)
 # 2023.03.21 - v. 0.5 - small cosmetic changes, like adding _script_footer.sh execution
@@ -162,6 +164,6 @@ sleep 1
 
 mount_fs_master /dev/vg_crypto_20221114_DyskD/lv_20221114_DyskD /mnt/luks-lv-icybox-A noatime,data=writeback,barrier=0,nobh,errors=remount-ro
 
-df -h /encrypted /mnt/luks-lv-icybox-A
+/bin/df -h /encrypted /mnt/luks-lv-icybox-A
 
 . /root/bin/_script_footer.sh

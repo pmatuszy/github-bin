@@ -1,6 +1,8 @@
 #!/bin/bash
+# v. 20261006.183955 - disk listing uses /bin/df so a shell df function cannot hide the byte count
 # v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
 # v. 20260716.164840 - add -h/--help, -v/--version, --no_startup_delay
+# 2026.10.06 - disk listing uses /bin/df so a shell df function cannot hide the byte count
 # 2022.12.31 - v. 0.3 - this script should mount nothing from now on
 # 2022.09.11 - v. 0.2 - zmiany kosmetyczne o KeePassie
 # 2022.07.30 - v. 0.1 - initial release
@@ -67,7 +69,7 @@ rem_dir_name="//laptopvm.eth.b.matuszyk.com/DivX-MASTER-SOURCE_read_only"
 
 umount "${loc_dir_name}" 2>/dev/null  # unmount first if already mounted, to avoid "mount error(16): Device or resource busy"
 mount.cifs -o user=p,password=$PASSWD "${rem_dir_name}" "${loc_dir_name}"
-#df -hP "${loc_dir_name}"
+#/bin/df -hP "${loc_dir_name}"
 
 
 loc_dir_name="/mnt/rsync-master-DVDs"
@@ -75,7 +77,7 @@ rem_dir_name="//laptopvm.eth.b.matuszyk.com/DVDs-MASTER-SOURCE_read_only"
 
 umount "${loc_dir_name}" 2>/dev/null  # unmount first if already mounted, to avoid "mount error(16): Device or resource busy"
 mount.cifs -o user=p,password=$PASSWD "${rem_dir_name}" "${loc_dir_name}"
-#df -hP "${loc_dir_name}"
+#/bin/df -hP "${loc_dir_name}"
 
 
 loc_dir_name="/mnt/rsync-master-ksiazki"
@@ -83,7 +85,7 @@ rem_dir_name="//laptopvm.eth.b.matuszyk.com/ksiazki-MASTER-SOURCE_read_only"
 
 umount "${loc_dir_name}" 2>/dev/null  # unmount first if already mounted, to avoid "mount error(16): Device or resource busy"
 mount.cifs -o user=p,password=$PASSWD "${rem_dir_name}" "${loc_dir_name}"
-#df -hP "${loc_dir_name}"
+#/bin/df -hP "${loc_dir_name}"
 
 
 loc_dir_name="/mnt/rsync-master-mp3"
@@ -91,7 +93,7 @@ rem_dir_name="//laptopvm.eth.b.matuszyk.com/mp3-MASTER-SOURCE_read_only"
 
 umount "${loc_dir_name}" 2>/dev/null  # unmount first if already mounted, to avoid "mount error(16): Device or resource busy"
 mount.cifs -o user=p,password=$PASSWD "${rem_dir_name}" "${loc_dir_name}"
-#df -hP "${loc_dir_name}"
+#/bin/df -hP "${loc_dir_name}"
 
 
 loc_dir_name="/mnt/rsync-master-_na_DVD"
@@ -99,7 +101,7 @@ rem_dir_name="//laptopvm.eth.b.matuszyk.com/_na_DVD-MASTER-SOURCE_read_only"
 
 umount "${loc_dir_name}" 2>/dev/null  # unmount first if already mounted, to avoid "mount error(16): Device or resource busy"
 mount.cifs -o user=p,password=$PASSWD "${rem_dir_name}" "${loc_dir_name}"
-#df -hP "${loc_dir_name}"
+#/bin/df -hP "${loc_dir_name}"
 
 
 loc_dir_name="/mnt/rsync-master-SkyPlus"
@@ -107,17 +109,17 @@ rem_dir_name="//laptopvm.eth.b.matuszyk.com/SkyPlus-MASTER-SOURCE_read_only"
 
 umount "${loc_dir_name}" 2>/dev/null  # unmount first if already mounted, to avoid "mount error(16): Device or resource busy"
 mount.cifs -o user=p,password=$PASSWD "${rem_dir_name}" "${loc_dir_name}"
-#df -hP "${loc_dir_name}"
+#/bin/df -hP "${loc_dir_name}"
 
 loc_dir_name="/mnt/rsync-master-BBC"
 rem_dir_name="//laptopvm.eth.b.matuszyk.com/BBC-MASTER-SOURCE_read_only"
 
 umount "${loc_dir_name}" 2>/dev/null  # unmount first if already mounted, to avoid "mount error(16): Device or resource busy"
 mount.cifs -o user=p,password=$PASSWD "${rem_dir_name}" "${loc_dir_name}"
-#df -hP "${loc_dir_name}"
+#/bin/df -hP "${loc_dir_name}"
 
 
-df -hP |egrep 'Filesystem|laptopvm.eth.b.matuszyk.com'
+/bin/df -hP |egrep 'Filesystem|laptopvm.eth.b.matuszyk.com'
 
 # set +x
 

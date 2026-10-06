@@ -1,8 +1,10 @@
 #!/bin/bash
+# v. 20261006.183857 - module listing uses /bin/ls so a shell ls function cannot add --full-time
 # v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
 # v. 20260731.211609 - prompt before apt install of build packages (default Y, no timeout)
 # v. 20260716.164840 - add -h/--help, -v/--version, --no_startup_delay
 
+# 2026.10.06 - v. 0.5 - module listing uses /bin/ls so a shell ls function cannot add --full-time
 # 2026.07.31 - v. 0.4 - prompt before apt install of kernel/build packages
 # 2026.07.15 - v. 0.3 - fix y/Y confirm (was always true); init p for nounset on read timeout
 # 2023.05.09 - v. 0.2 - added checking if the script is run on the physical machine
@@ -102,7 +104,7 @@ tar -cf vmnet_$(date '+%Y%m%d_%H%M%S').tar vmnet-only ; echo $?
 tar -cf vmmon_$(date '+%Y%m%d_%H%M%S').tar vmmon-only ; echo $?
 tar -cf vmnet.tar vmnet-only ; echo $?
 tar -cf vmmon.tar vmmon-only ; echo $?
-ls -l 
+/bin/ls -l 
 )
 
 (

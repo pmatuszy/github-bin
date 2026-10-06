@@ -1,7 +1,9 @@
 #!/bin/bash
+# v. 20261006.183955 - disk listing uses /bin/df so a shell df function cannot hide the byte count
 # v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
 # v. 20260716.164840 - add -h/--help, -v/--version, --no_startup_delay
 
+# 2026.10.06 - v. 0.4 - disk listing uses /bin/df so a shell df function cannot hide the byte count
 # 2026.05.26 - v. 0.3 - English password prompt and messages
 # 2026.05.26 - v. 0.2 - interactive password; fixed --pim=0 --keyfiles= --protect-hidden=no
 # 2026.05.26 - v. 0.1 - initial release: Linux VeraCrypt mount via CLI (volume + mount point)
@@ -98,7 +100,7 @@ if mountpoint -q "${VC_MOUNT}"; then
   echo
   echo "(PGM) ${VC_MOUNT} is already a mount point — skipping mount."
   echo
-  df -hP "${VC_MOUNT}"
+  /bin/df -hP "${VC_MOUNT}"
   echo
   return_code=0
   . /root/bin/_script_footer.sh
@@ -119,7 +121,7 @@ unset PASSWD
 
 if (( return_code == 0 )); then
   echo
-  df -hP "${VC_MOUNT}"
+  /bin/df -hP "${VC_MOUNT}"
   echo
 else
   echo

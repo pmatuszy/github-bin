@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# v. 20261006.183857 - directory listing uses /bin/ls so a shell ls function cannot add --full-time
 # v. 20260916.133341 - replace (PGM) speed/format lines with === Run settings === + Equivalent CLI
 # v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
 # v. 20260810.194016 - add -f/--format (flac|mp3|m4a|aac); warn when cover present but format cannot embed
@@ -27,6 +28,7 @@
 # v. 20260810.160147 - pre-scan volumedetect table; before/after dB; end-of-run summary
 # v. 20260810.152506 - rename to audio-pgm-speed-loudness.sh (drop CURRENT-DIRECTORY suffix)
 # v. 20260810.152137 - add English rewrite: cwd atempo+speechnorm, fix find grouping, safe file loop
+# 2026.10.06 - v. 0.9 - directory listing uses /bin/ls so a shell ls function cannot add --full-time
 # 2026.09.16 - v. 0.8 - startup: the two "(PGM) speed factor / output format" lines become a "=== Run settings ===" block that marks SPEED and -f/--format as given or default and adds an "Equivalent CLI:" line repeating the run
 # 2024.10.20 - v. 0.7 - with ffmpeg 7.0.2, -shortest shortened outputs incorrectly; removed it
 # 2024.08.13 - v. 0.6 - zero-pad _1_,_2_,_3_ to _01_,_02_,_03_ in names
@@ -1175,7 +1177,7 @@ SOURCE_DIR="."
 MONO_ARGS=( -ac 1 )
 FFMPEG_COMMON_ARGS=( -y -hide_banner -loglevel error )
 
-ls -l -- "$SOURCE_DIR"
+/bin/ls -l -- "$SOURCE_DIR"
 
 print_run_settings
 echo "ffmpeg: ${FFMPEG_RESOLVED}"

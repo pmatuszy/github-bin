@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
+# v. 20261006.183857 - listing after install uses /bin/ls, not a shell ls function
 # v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
 # v. 20260719.190417 - rename from pgm-update-yt-dlp.sh to video-pgm-update-yt-dlp.sh
 # v. 20260716.164840 - add -h/--help, -v/--version, --no_startup_delay
 
+# 2026.10.06 - v. 0.2 - listing after install uses /bin/ls so a shell ls function cannot add --full-time
 # 2026.02.04 - v. 0.1 - initial release
 #
 # video-pgm-update-yt-dlp.sh
@@ -235,9 +237,9 @@ run chmod 0755 "$NEW_NAME"
 run ln -s "$NEW_NAME" "$SYMLINK_NAME"
 
 if (( DRY_RUN )); then
-  log "[DRY-RUN] Would show: ls -l $SYMLINK_NAME $NEW_NAME"
+  log "[DRY-RUN] Would show: /bin/ls -l $SYMLINK_NAME $NEW_NAME"
 else
-  ls -l "$SYMLINK_NAME" "$NEW_NAME"
+  /bin/ls -l "$SYMLINK_NAME" "$NEW_NAME"
 fi
 
 . /root/bin/_script_footer.sh

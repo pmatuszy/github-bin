@@ -1,7 +1,9 @@
 #!/bin/bash
+# v. 20261006.183857 - lock listing uses /bin/ls so a shell ls function cannot add --full-time
 # v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
 # v. 20260716.164840 - add -h/--help, -v/--version, --no_startup_delay
 
+# 2026.10.06 - v. 1.1 - lock listing uses /bin/ls so a shell ls function cannot add --full-time
 # 2026.07.15 - v. 1.0 - visible masked Passphrase: prompt for encrypted VMs (vmrun often shows none)
 # 2026.07.15 - v. 0.9 - do not buffer start stderr (hides encrypted-VM password prompt); list still quiet
 # 2026.07.05 - v. 0.8 - vmrun list only: suppress AppLoader stderr; start keeps stderr (VM password prompt)
@@ -180,7 +182,7 @@ for p in $VM_LOCATIONS ; do
       continue
     fi
     echo $vm | boxes -s 40x5 -a c
-    ls -ld $vm `dirname $vm`/*lck 2>/dev/null
+    /bin/ls -ld $vm `dirname $vm`/*lck 2>/dev/null
 
     do_start=0
     if (( start_all == 1 )); then

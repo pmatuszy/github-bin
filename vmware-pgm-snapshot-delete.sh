@@ -1,7 +1,9 @@
 #!/bin/bash
+# v. 20261006.183955 - disk listing uses /bin/df so a shell df function cannot hide the byte count
 # v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
 # v. 20260716.164840 - add -h/--help, -v/--version, --no_startup_delay
 
+# 2026.10.06 - v. 0.17 - disk listing uses /bin/df so a shell df function cannot hide the byte count
 # 2026.04.22 - v. 0.16 - encrypted vmrun: DISPLAY default :0; no bogus nogui on listSnapshots/deleteSnapshot (-vp)
 # 2026.04.22 - v. 0.15 - vmrun listSnapshots/deleteSnapshot: always trailing nogui (encrypted and plain)
 # 2026.04.22 - v. 0.14 - encrypted VM: append nogui to deleteSnapshot with -vp (headless / empty DISPLAY)
@@ -491,9 +493,9 @@ _pgm_ed="$(_pgm_vmrun_enc_display)"
 _pgm_show_selected_vm_boxed "$choice" "$selected"
 
 echo "(PGM) Storage — filesystem containing this VM (same mount as the .vmx path):"
-if ! df -hT -- "$selected" 2>/dev/null; then
-  echo "(PGM) df -hT failed; trying df -h ..." >&2
-  df -h -- "$selected" || echo "(PGM) Could not show disk space for: $selected" >&2
+if ! /bin/df -hT -- "$selected" 2>/dev/null; then
+  echo "(PGM) /bin/df -hT failed; trying /bin/df -h ..." >&2
+  /bin/df -h -- "$selected" || echo "(PGM) Could not show disk space for: $selected" >&2
 fi
 echo
 

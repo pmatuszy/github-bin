@@ -1,7 +1,9 @@
 #!/bin/bash
+# v. 20261006.183955 - disk listing uses /bin/df so a shell df function cannot hide the byte count
 # v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
 # v. 20260716.164840 - add -h/--help, -v/--version, --no_startup_delay
 
+# 2026.10.06 - disk listing uses /bin/df so a shell df function cannot hide the byte count
 # 2022.10.19 - v. 0.3 - added sprawdzenie czy dziala server vpn
 # 2022.09.30 - v. 0.2 - added wsparcie dla healthcheckow
 # 2021.09.06 - v. 0.1 - initial release (date unknown)
@@ -47,7 +49,7 @@ luks_file_path=/encrypted.luks2
 cryptsetup luksOpen ${luks_file_path} encrypted_luks_file_in_root
 mount -o noatime /dev/mapper/encrypted_luks_file_in_root /encrypted
 
-df -h /encrypted
+/bin/df -h /encrypted
 
 echo startuje vpnserver
 

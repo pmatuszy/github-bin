@@ -1,6 +1,8 @@
 #!/bin/bash
+# v. 20261006.183955 - disk listing uses /bin/df so a shell df function cannot hide the byte count
 # v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
 # v. 20260716.164840 - add -h/--help, -v/--version, --no_startup_delay
+# 2026.10.06 - disk listing uses /bin/df so a shell df function cannot hide the byte count
 # 2022.02.20 - v. 0.3 - renamed host and added mkdir -p
 # 2021.04.09 - v. 0.2 - changed IP to machine DNS name 
 # 2020.0x.xx - v. 0.1 - initial release (date unknown)
@@ -67,7 +69,7 @@ rem_dir_name="//pgm-che.eth.che.matuszyk.com/DyskE"
 umount "${loc_dir_name}" 2>/dev/null  # unmount first if already mounted, to avoid "mount error(16): Device or resource busy"
 mount.cifs -o user=p,password=$PASSWD "${rem_dir_name}" "${loc_dir_name}"
 
-df -hP |egrep 'Filesystem|pgm-che.eth.che.matuszyk.com'
+/bin/df -hP |egrep 'Filesystem|pgm-che.eth.che.matuszyk.com'
 
 set +x
 

@@ -1,7 +1,9 @@
 #!/bin/bash
+# v. 20261006.183955 - disk listing uses /bin/df so a shell df function cannot hide the byte count
 # v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
 # v. 20260716.164840 - add -h/--help, -v/--version, --no_startup_delay
 
+# 2026.10.06 - disk listing uses /bin/df so a shell df function cannot hide the byte count
 # 2026.05.26 - user-facing messages translated from Polish to English
 # 2022.12.31 - v. 0.3 - added mount_via_nfs function
 # 2022.09.11 - v. 0.2 - zmiany kosmetyczne o KeePassie
@@ -76,6 +78,6 @@ mount_via_nfs "//lublin.eth.r.matuszyk.com/mp3-MASTER-SOURCE_read_only"       "/
 mount_via_nfs "//lublin.eth.r.matuszyk.com/_na_DVD-MASTER-SOURCE_read_only"   "/mnt/rsync-master-_na_DVD"
 mount_via_nfs "//lublin.eth.r.matuszyk.com/SkyPlus-MASTER-SOURCE_read_only"   "/mnt/rsync-master-SkyPlus"
 
-df -hP |egrep 'Filesystem|lublin.eth.r.matuszyk.com'
+/bin/df -hP |egrep 'Filesystem|lublin.eth.r.matuszyk.com'
 
 . /root/bin/_script_footer.sh

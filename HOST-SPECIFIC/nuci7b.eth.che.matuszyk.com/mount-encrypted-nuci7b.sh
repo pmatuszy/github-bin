@@ -1,7 +1,9 @@
 #!/bin/bash
+# v. 20261006.183955 - disk listing uses /bin/df so a shell df function cannot hide the byte count
 # v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
 # v. 20260716.164840 - add -h/--help, -v/--version, --no_startup_delay
 
+# 2026.10.06 - disk listing uses /bin/df so a shell df function cannot hide the byte count
 # 2026.05.26 - user-facing messages translated from Polish to English
 # 2023.03.27 - v. 0.1 - initial release
 
@@ -120,7 +122,7 @@ mount_fs_master /dev/vg_crypto_buffalo2/lv_do_luksa_buffalo2 /mnt/luks-buffalo2 
 # mount_fs_master /dev/vg_crypto_20240714_NO-MIRRROR/lv_crypto_20240714_NO-MIRRROR /mnt/luks-NO-MIRROR noatime,data=writeback,barrier=0,nobh,errors=remount-ro
 
 echo
-df -h /encrypted /mnt/luks-buffalo2 /mnt/luks-raidsonic
+/bin/df -h /encrypted /mnt/luks-buffalo2 /mnt/luks-raidsonic
 
 echo ; echo
 echo "restarting NFS server (service often fails at boot because exported filesystems are not mounted yet)"

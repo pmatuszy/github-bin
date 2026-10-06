@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# v. 20261006.183857 - call /bin/ls so a shell ls function (e.g. --full-time) cannot change the listing
 # v. 20261006.124500 - menus: only the default key is a capital letter ([s] skip, [q] quit)
 # v. 20261005.210500 - do not set the stack with prlimit; that binary segfaults before make starts
 # v. 20261005.205900 - make uses a 64 MiB stack; unlimited stack makes gcc hang with no output
@@ -11,6 +12,7 @@
 # v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
 # v. 20260716.231000 - equivalent CLI echo; --dry-run for interactive plan without build
 
+# 2026.10.06 - v. 2.1.33 - listings use /bin/ls so a shell ls function cannot add --full-time or colour
 # 2026.10.06 - v. 2.1.32 - running-ffmpeg and profile menus list [s] and [q] in lower case like their [F/s/q], [K/s/q], and [1/../q] prompts; [K] is marked (default)
 # 2026.10.05 - v. 2.1.31 - prlimit must not set RLIMIT_STACK; it segfaults on Ubuntu 20.04 before exec
 # 2026.10.05 - v. 2.1.30 - cap make stack at 64 MiB so gcc does not hang when the stack is unlimited
@@ -2070,7 +2072,7 @@ link_active_ffmpeg_tools() {
             ffmpeg_remove_stale_active_tool_symlink "${tool}"
         fi
     done
-    ((${#linked[@]} > 0)) && ls -l "${linked[@]}"
+    ((${#linked[@]} > 0)) && /bin/ls -l "${linked[@]}"
 }
 
 install_versioned_bins_to_local() {
@@ -3633,7 +3635,7 @@ ffmpeg_source_raise_nofile_limit() {
 ffmpeg_source_count_open_fds() {
     local -a fds=()
 
-    mapfile -t fds < <(ls -1 /proc/self/fd 2>/dev/null)
+    mapfile -t fds < <(/bin/ls -1 /proc/self/fd 2>/dev/null)
     echo "${#fds[@]}"
 }
 
@@ -3652,7 +3654,7 @@ ffmpeg_source_invoke_make() {
     cat > "${wrapper}" <<EOF
 #!/usr/bin/env bash
 set -e
-for fd in \$(ls /proc/self/fd 2>/dev/null); do
+for fd in \$(/bin/ls /proc/self/fd 2>/dev/null); do
     [[ "\${fd}" =~ ^[0-9]+\$ ]] || continue
     (( fd > 2 )) || continue
     eval "exec \${fd}>&-" 2>/dev/null || true
@@ -4393,13 +4395,13 @@ ffmpeg_source_report_staging_failure() {
     echo "ERROR: staged ffmpeg binary not found: ${staging}/bin/ffmpeg" >&2
     if [[ -d "${staging}/bin" ]]; then
         echo "  Contents of ${staging}/bin:" >&2
-        ls -la "${staging}/bin" 2>/dev/null >&2 || true
+        /bin/ls -la "${staging}/bin" 2>/dev/null >&2 || true
     else
         echo "  Directory missing: ${staging}/bin" >&2
     fi
     if [[ -e "${src_dir}/ffmpeg" ]]; then
         echo "  Build tree has: ${src_dir}/ffmpeg (not executable?)" >&2
-        ls -la "${src_dir}/ffmpeg" 2>/dev/null >&2 || true
+        /bin/ls -la "${src_dir}/ffmpeg" 2>/dev/null >&2 || true
     else
         echo "  Build tree binary missing: ${src_dir}/ffmpeg (link step may have failed — see ffbuild/config.log)." >&2
     fi
@@ -4634,7 +4636,7 @@ print_local_bin_ffmpeg_summary() {
     echo
     echo "Files matching ${BIN_DIR}/ff*:"
     if compgen -G "${BIN_DIR}/ff*" >/dev/null 2>&1; then
-        ls -l "${BIN_DIR}"/ff* 2>/dev/null || true
+        /bin/ls -l "${BIN_DIR}"/ff* 2>/dev/null || true
     else
         echo "  (none)"
     fi

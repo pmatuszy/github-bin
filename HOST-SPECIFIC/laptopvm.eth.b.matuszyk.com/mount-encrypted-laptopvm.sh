@@ -1,7 +1,9 @@
 #!/bin/bash
+# v. 20261006.183955 - disk listing uses /bin/df so a shell df function cannot hide the byte count
 # v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
 # v. 20260716.164840 - add -h/--help, -v/--version, --no_startup_delay
 
+# 2026.10.06 - disk listing uses /bin/df so a shell df function cannot hide the byte count
 # 2026.05.26 - user-facing messages translated from Polish to English
 # 2021.09.19 - v. 0.5 - fsck changes and added run_fsck helper
 # 2021.08.29 - v. 0.4 - exportfs after both large volumes mounted; added minidlna mount and service restart
@@ -74,4 +76,4 @@ run_fsck /dev/vg_crypto_buffalo3/lv_do_luksa_buffalo3
 
 mount -o noatime /dev/mapper/luks_buffalo3 /mnt/luks_buffalo3
 
-df -h /mnt/luks_buffalo3
+/bin/df -h /mnt/luks_buffalo3
