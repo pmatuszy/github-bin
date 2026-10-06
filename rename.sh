@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# v. 20261006.192000 - checksum-group rollback backup: cp without -p to mktemp (cp -p fails on /tmp/CIFS with "preserving permissions … Operation not supported")
 # v. 20261006.183857 - NEF listing uses /bin/ls so a shell ls function cannot add --full-time
 # v. 20261006.134200 - fix menu default keys: checksum-verify prompt [C] (was wrongly [c] via default_key S); GoPro MP4/WAV [M]
 # v. 20261006.121700 - rename prompt: always show [g] camera auto-approve; [g] enables session (rename this entry when OLD≠NEW)
@@ -7268,6 +7269,11 @@ print_progress_box() {
 ' "$border" >&2
 }
 
+# cp -p can exit 1 when mode/ownership cannot be set (tmpfs, CIFS, NFS); plain cp still restores bytes.
+cp_preserve_or_plain() {
+    cp -p -- "$1" "$2" 2>/dev/null || cp -- "$1" "$2"
+}
+
 rollback_current_operation() {
     local idx old new
 
@@ -7278,10 +7284,10 @@ rollback_current_operation() {
 
     if [[ -n "$CURRENT_OP_CONTENT_FILE" && -n "$CURRENT_OP_CONTENT_BACKUP" && -e "$CURRENT_OP_CONTENT_BACKUP" ]]; then
         if [[ -e "$CURRENT_OP_CONTENT_FILE" ]]; then
-            cp -p -- "$CURRENT_OP_CONTENT_BACKUP" "$CURRENT_OP_CONTENT_FILE"
+            cp_preserve_or_plain "$CURRENT_OP_CONTENT_BACKUP" "$CURRENT_OP_CONTENT_FILE"
             emit_wrap_labeled_stdout "ROLLBACK: restored content of: " "${CYAN}ROLLBACK:${RESET} restored content of: " "$CURRENT_OP_CONTENT_FILE"
         elif [[ "$CURRENT_OP_SUM_RENAMED" -eq 1 && -e "$CURRENT_OP_SUM_NEW" ]]; then
-            cp -p -- "$CURRENT_OP_CONTENT_BACKUP" "$CURRENT_OP_SUM_NEW"
+            cp_preserve_or_plain "$CURRENT_OP_CONTENT_BACKUP" "$CURRENT_OP_SUM_NEW"
             emit_wrap_labeled_stdout "ROLLBACK: restored content of: " "${CYAN}ROLLBACK:${RESET} restored content of: " "$CURRENT_OP_SUM_NEW"
         fi
     fi
@@ -7328,8 +7334,9 @@ begin_current_operation() {
     CURRENT_OP_SUM_NEW="$sum_new"
     CURRENT_OP_SUM_RENAMED=0
     CURRENT_OP_CONTENT_FILE="$sum_old"
-    CURRENT_OP_CONTENT_BACKUP="$(mktemp)"
-    cp -p -- "$sum_old" "$CURRENT_OP_CONTENT_BACKUP"
+    CURRENT_OP_CONTENT_BACKUP="$(mktemp "${TMPDIR:-/tmp}/rename.sh-rollback.XXXXXX")"
+    # Content-only backup in $TMPDIR: -p often fails (Operation not supported) even when the copy succeeds.
+    cp -- "$sum_old" "$CURRENT_OP_CONTENT_BACKUP"
     CURRENT_OP_FILE_OLDS=()
     CURRENT_OP_FILE_NEWS=()
 }
