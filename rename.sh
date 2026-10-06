@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# v. 20261006.081000 - treat .gpx as media (common_media_ext_re + is_media_file; 70mai concat tracks get same YYYYMMDD-HHMMSS_… rules as MP4)
 # v. 20260930.213145 - Nikon Coolpix P900: DSCN#### stills/movies → YYYYMMDD_HHMMSS_-_-_Nikon_COOLPIX_P900 from DateTimeOriginal
 # v. 20260925.171847 - Quik dashboard: no ERR-trap noise when no source found; never re-time -dashboard exports (UTC CreateDate)
 # v. 20260925.115032 - plain rename: per hash list say "path updated (digest unchanged)" + whether content was checked
@@ -8541,7 +8542,7 @@ perform_plain_or_nef_xmp_pair() {
 is_media_file() {
     local p="$1"
     local lower="${p,,}"
-    [[ "$lower" == *.mp3 || "$lower" == *.flac || "$lower" == *.wav || "$lower" == *.m4a || "$lower" == *.aac || "$lower" == *.ogg || "$lower" == *.wma || "$lower" == *.mp4 || "$lower" == *.mkv || "$lower" == *.avi || "$lower" == *.mov || "$lower" == *.wmv || "$lower" == *.mpeg || "$lower" == *.mpg || "$lower" == *.m4v || "$lower" == *.webm || "$lower" == *.ts || "$lower" == *.nef || "$lower" == *.xmp || "$lower" == *.psb || "$lower" == *.psd || "$lower" == *.psdt ]]
+    [[ "$lower" == *.mp3 || "$lower" == *.flac || "$lower" == *.wav || "$lower" == *.m4a || "$lower" == *.aac || "$lower" == *.ogg || "$lower" == *.wma || "$lower" == *.mp4 || "$lower" == *.mkv || "$lower" == *.avi || "$lower" == *.mov || "$lower" == *.wmv || "$lower" == *.mpeg || "$lower" == *.mpg || "$lower" == *.m4v || "$lower" == *.webm || "$lower" == *.ts || "$lower" == *.gpx || "$lower" == *.nef || "$lower" == *.xmp || "$lower" == *.psb || "$lower" == *.psd || "$lower" == *.psdt ]]
 }
 
 is_ms_office_file() {
@@ -14380,7 +14381,7 @@ transform_name() {
     dir="$(dirname -- "$f")"
     base="$(basename -- "$f")"
     audio_ext_re='(mp3|aac|m4a|flac|ogg|oga|opus|wav|wma|alac|aiff|ape|mka|mp2|mp1|ac3)'
-    common_media_ext_re='(mp3|aac|m4a|flac|ogg|oga|opus|wav|wma|alac|aiff|ape|mka|mp2|mp1|ac3|mp4|m4v|mov|mkv|webm|avi|jpg|jpeg|png|gif|webp|heic|heif|bmp|nef|psb|psd|psdt|tif|tiff|xmp)'
+    common_media_ext_re='(mp3|aac|m4a|flac|ogg|oga|opus|wav|wma|alac|aiff|ape|mka|mp2|mp1|ac3|mp4|m4v|mov|mkv|webm|avi|gpx|jpg|jpeg|png|gif|webp|heic|heif|bmp|nef|psb|psd|psdt|tif|tiff|xmp)'
 
     if [[ -f "$f" ]] && is_protected_checksum_name "$f"; then
         if [[ "$dir" == "." ]]; then
