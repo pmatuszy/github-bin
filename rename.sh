@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# v. 20261006.121700 - rename prompt: always show [g] camera auto-approve; [g] enables session (rename this entry when OLD≠NEW)
 # v. 20261006.114200 - Canon DIGITAL IXUS 40 / IXY Digital 50: IMG_####.JPG → YYYYMMDD_HHMMSS_-_-_Canon_IXY_DIGITAL_50 (Date/Time Original)
 # v. 20261006.081000 - treat .gpx as media (common_media_ext_re + is_media_file; 70mai concat tracks get same YYYYMMDD-HHMMSS_… rules as MP4)
 # v. 20260930.213145 - Nikon Coolpix P900: DSCN#### stills/movies → YYYYMMDD_HHMMSS_-_-_Nikon_COOLPIX_P900 from DateTimeOriginal
@@ -18152,9 +18153,12 @@ print_rename_prompt_menu() {
         echo "  $(rename_menu_key_bracket S Y) Yes for similar names in this directory (all extensions here; leading _ only if this filename starts with _)"
         choice_hint+=/s
     fi
-    if [[ -n "$path" && -n "$suggested_new" ]] && rename_is_camera_make_model_change "$path" "$suggested_new"; then
+    if [[ "$menu_variant" != thumbs-noop && "$menu_variant" != torrent-noop ]]; then
         echo "  $(rename_menu_key_bracket G Y) Yes, and auto-approve future Samsung, GoPro, Nikon, Canon, Panasonic, and Motorola camera make/model renames for the rest of this run"
         choice_hint+=/g
+        if [[ -z "$path" || -z "$suggested_new" ]] || ! rename_is_camera_make_model_change "$path" "$suggested_new"; then
+            echo -e "  ${YELLOW}(This OLD/NEW pair is not a camera make/model change; [g] still turns on camera auto-approve for later files.)${RESET}"
+        fi
     fi
     if [[ -n "$path" && -n "$suggested_new" ]] && rename_suggested_only_extension_case_change "$path" "$suggested_new" \
         && ! path_filesystem_skip_case_only_rename "$path"; then
@@ -20736,12 +20740,15 @@ for f in "${ordered_paths[@]}"; do
             fi
             ;;
         g|G)
-            if ! rename_is_camera_make_model_change "$f" "$new"; then
-                echo -e "${YELLOW}[G] applies only to recognized Samsung, GoPro, Nikon, Canon, Panasonic, or Motorola camera make/model renames.${RESET}"
+            AUTO_CAMERA_MAKE_MODEL_SESSION=yes
+            vlog "Session auto-yes enabled for Samsung/GoPro/Nikon/Canon camera make/model renames"
+            if [[ "$f" == "$new" ]]; then
+                echo -e "${CYAN}[G] Camera auto-approve enabled for the rest of this run; this entry has no rename to apply.${RESET}"
+                db_backfill_missing_hashes_for_existing_file "$f" || true
+                db_mark_checked "$f" "plain" "checked"
                 ((++files_skipped))
+                processed["$f"]=1
             else
-                AUTO_CAMERA_MAKE_MODEL_SESSION=yes
-                vlog "Session auto-yes enabled for Samsung/GoPro/Nikon/Canon camera make/model renames"
                 perform_plain_or_nef_xmp_pair "camera make/model auto-yes (session prompt)" || break
             fi
             ;;
