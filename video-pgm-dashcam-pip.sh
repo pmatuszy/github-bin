@@ -1,4 +1,6 @@
 #!/bin/bash
+# v. 20261006.114500 - render only part of each route: any length, counted from the beginning, from the end, or the middle
+# v. 20261006.113900 - typed answers list [Enter] and [q] like the one-key questions, and every prompt line shows q
 # v. 20261006.113100 - summary: input and output sizes per route and in total, like the timelapse script
 # v. 20261006.112900 - summary: per-route encode time and speed, and a timing block like the other video scripts
 # v. 20261006.110000 - every question lists each key with what it does
@@ -7,6 +9,8 @@
 # v. 20261006.103000 - more choices: inset size, corner, four margins, mirror, crop, border, caption, swap, black gap box, output width
 # v. 20261006.091500 - pair FrontCam and BackCam by filename clock, print the plan, render picture-in-picture
 
+# 2026.10.06 - v. 0.9 - [t] renders a part of each route: all, 1, 2, 5 minutes or a custom length, from the beginning, back from the end, or the middle; --from-end and --middle; the plan shows each route's exact part
+# 2026.10.06 - v. 0.8 - every question offers q to quit, shown both in its key list and on the prompt line
 # 2026.10.06 - v. 0.7 - summary shows input and output size for each route, and totals in MB, MiB, GB, and GiB with output as a percent of input
 # 2026.10.06 - v. 0.6 - summary lists each rendered route's video length, encode time, speed, and encoder; then Started, Finished, total wall, processing, and wait time
 # 2026.10.06 - v. 0.5 - every question explains each key or what to type, marks the current default, and says that Enter keeps and q quits
@@ -35,7 +39,7 @@ Usage: $(basename "$0") [-h|--help] [-v|--version] [--history]
        [--border PX] [--border-color COLOR] [--label TEXT]
        [--swap] [--gap-fill none|black] [--out-width PX]
        [--encoder auto|nvenc|x265|x264] [--quality N]
-       [--from TIME] [--length TIME] [--shift SECONDS]
+       [--length TIME] [--from TIME | --from-end TIME | --middle] [--shift SECONDS]
        [--no-audio] [--no-gpx]
        [FILE|DIR ...]
 
@@ -72,7 +76,8 @@ How the files are lined up
 Output
   The front name with FrontCam replaced by PiP, in the front file's folder:
     ...-70mai-A510-PiP-concat-x5.mp4
-  A short try (--from or --length) adds -test-from-1m00s-len-2m00s.
+  A short try adds -test-from-1m00s-len-2m00s (--from), -test-end-0m00s-len-2m00s
+  (--from-end), or -test-middle-len-2m00s (--middle), so a full render is kept.
   An existing output is skipped unless --redo is given.
 
 Options:
@@ -120,9 +125,14 @@ Options:
                        nvenc, x265, or x264 force that one encoder.
   --quality N          hevc_nvenc -cq, or libx265/libx264 -crf. Lower is sharper
                        and larger. Default 22 for HEVC, 20 for libx264.
-  --from TIME          Start the output this far into the front video.
+  By default each route is rendered whole, from its start to its end.
+  --length TIME        Render only this much of each route.
                        Seconds (90), M:SS (1:30), or H:MM:SS.
-  --length TIME        Render only this much output. Same formats.
+  --from TIME          The part starts this far into the front video.
+  --from-end TIME      The part ends this far before the end of each route.
+                       --from-end 0 --length 2:00 is the last two minutes.
+  --middle             The part is the middle of each route. Needs --length.
+                       A route shorter than --length is rendered whole.
   --shift SECONDS      Move every back file later (+) or earlier (-) by real
                        seconds, if the cameras' clocks were not the same.
   --no-audio           Do not copy the front camera's audio.
@@ -133,6 +143,8 @@ Examples:
       Read the current directory, print the plan, ask before rendering.
   $(basename "$0") --length 1:00 --from 1:00
       One minute of every route, starting one minute in.
+  $(basename "$0") --length 2:00 --from-end 0
+      The last two minutes of every route.
   $(basename "$0") -y --pip-size 35% --corner tr --margin 24 --border 4 --label REAR
   $(basename "$0") -y --mirror --crop-bottom 60 --gap-fill black --out-width 1920
   $(basename "$0") -n 'P:\\video\\20260926-Bonow-Deblin\\_samochod-jazda'
@@ -699,7 +711,11 @@ pip_output_path() {
   stem="${stem/FrontCam/PiP}"
   out="$stem"
   if (( TEST )); then
-    out+="${sep}test-from-$(pip_name_clock "$FROM")"
+    case "$FROM_MODE" in
+      end)    out+="${sep}test-end-$(pip_name_clock "$FROM")" ;;
+      middle) out+="${sep}test-middle" ;;
+      *)      out+="${sep}test-from-$(pip_name_clock "$FROM")" ;;
+    esac
     if [[ -n "$LENGTH" ]]; then
       out+="-len-$(pip_name_clock "$LENGTH")"
     fi
@@ -829,16 +845,113 @@ pip_enable_expr() {
 # --- render window ----------------------------------------------------------
 
 # Window of the output being rendered, in video seconds: WIN_START, WIN_END.
+# FROM_MODE begin: the part starts FROM in. end: it ends FROM before the end.
+# middle: it is centred. WIN_LEN is the -t value, WIN_NOTE says why it was shortened.
 pip_window() {
-  local f="$1" fdur="${F_DUR[$1]}"
-  WIN_START="$FROM"
-  if [[ -n "$LENGTH" ]]; then
-    WIN_END="$(pip_calc "$FROM + $LENGTH")"
-    if [[ -n "$fdur" ]] && pip_gt "$WIN_END" "$fdur"; then
+  local f="$1" fdur="${F_DUR[$1]}" mode="$FROM_MODE"
+  WIN_NOTE=""
+  if [[ -z "$fdur" && "$mode" != begin ]]; then
+    mode=begin
+    WIN_NOTE="video length unknown, counted from the beginning"
+  fi
+  if [[ "$mode" == begin && -n "$fdur" ]] && ! pip_gt "$fdur" "$FROM"; then
+    mode=end
+    WIN_NOTE="the offset is past the end of this route, so its end is used"
+  fi
+  case "$mode" in
+    end)
+      WIN_END="$(pip_calc "$fdur - $FROM")"
+      if [[ "$FROM_MODE" == end ]] && ! pip_gt "$WIN_END" 0; then
+        WIN_END="$fdur"
+        WIN_NOTE="the offset is longer than this route, so its end is used"
+      elif [[ "$FROM_MODE" != end ]]; then
+        WIN_END="$fdur"
+      fi
+      WIN_START=0
+      if [[ -n "$LENGTH" ]]; then
+        WIN_START="$(pip_calc "$WIN_END - $LENGTH")"
+        if ! pip_gt "$WIN_START" 0; then
+          WIN_START=0
+          if [[ -n "$WIN_NOTE" ]]; then
+            :
+          elif ! pip_gt "$fdur" "$WIN_END"; then
+            WIN_NOTE="whole route, $(pip_clock "$fdur") is shorter than $(pip_clock "$LENGTH")"
+          else
+            WIN_NOTE="starts at 0:00, there is less than $(pip_clock "$LENGTH") before that point"
+          fi
+        fi
+      fi
+      ;;
+    middle)
+      WIN_START=0
       WIN_END="$fdur"
-    fi
+      if [[ -n "$LENGTH" ]] && pip_gt "$fdur" "$LENGTH"; then
+        WIN_START="$(pip_calc "($fdur - $LENGTH) / 2")"
+        WIN_END="$(pip_calc "$WIN_START + $LENGTH")"
+      elif [[ -n "$LENGTH" ]]; then
+        WIN_NOTE="whole route, $(pip_clock "$fdur") is shorter than $(pip_clock "$LENGTH")"
+      fi
+      ;;
+    *)
+      WIN_START="$FROM"
+      if [[ -n "$LENGTH" ]]; then
+        WIN_END="$(pip_calc "$FROM + $LENGTH")"
+        if [[ -n "$fdur" ]] && pip_gt "$WIN_END" "$fdur"; then
+          WIN_END="$fdur"
+          [[ -z "$WIN_NOTE" ]] && WIN_NOTE="stops at the end of the route, less than $(pip_clock "$LENGTH") is left"
+          ! pip_gt "$FROM" 0 && WIN_NOTE="whole route, $(pip_clock "$fdur") is shorter than $(pip_clock "$LENGTH")"
+        fi
+      else
+        WIN_END="${fdur:-}"
+      fi
+      ;;
+  esac
+  if [[ -n "$WIN_END" ]]; then
+    WIN_LEN="$(pip_calc "$WIN_END - $WIN_START")"
   else
-    WIN_END="${fdur:-}"
+    WIN_LEN="$LENGTH"
+  fi
+}
+
+# How the part is chosen, in words, for the settings and the questions.
+pip_part_label() {
+  if (( ! TEST )); then
+    printf 'whole front files'
+    return 0
+  fi
+  case "$FROM_MODE" in
+    end)
+      if [[ -n "$LENGTH" ]]; then
+        if pip_gt "$FROM" 0; then
+          printf '%s, ending %s before the end of each route' "$(pip_clock "$LENGTH")" "$(pip_clock "$FROM")"
+        else
+          printf 'the last %s of each route' "$(pip_clock "$LENGTH")"
+        fi
+      else
+        printf 'from the start to %s before the end of each route' "$(pip_clock "$FROM")"
+      fi
+      ;;
+    middle)
+      printf 'the middle %s of each route' "$(pip_clock "${LENGTH:-0}")"
+      ;;
+    *)
+      if [[ -n "$LENGTH" ]]; then
+        if pip_gt "$FROM" 0; then
+          printf '%s, starting %s in' "$(pip_clock "$LENGTH")" "$(pip_clock "$FROM")"
+        else
+          printf 'the first %s of each route' "$(pip_clock "$LENGTH")"
+        fi
+      else
+        printf 'from %s to the end of each route' "$(pip_clock "$FROM")"
+      fi
+      ;;
+  esac
+}
+
+pip_update_test() {
+  TEST=0
+  if pip_gt "$FROM" 0 || [[ -n "$LENGTH" || "$FROM_MODE" != begin ]]; then
+    TEST=1
   fi
 }
 
@@ -879,8 +992,8 @@ pip_build_ffmpeg_args() {
   pre="$(pip_rear_pre)"
   pip_route_cover "$f"
   FF_ARGS=()
-  if pip_gt "$FROM" 0; then
-    FF_ARGS+=(-ss "$FROM")
+  if pip_gt "$WIN_START" 0; then
+    FF_ARGS+=(-ss "$WIN_START")
   fi
   FF_ARGS+=(-i "${F_PATH[$f]}")
   for k in "${!USE_B[@]}"; do
@@ -949,8 +1062,8 @@ pip_build_ffmpeg_args() {
     FF_ARGS+=(-an)
   fi
   FF_ARGS+=("${ENC_ARGS[@]}" -movflags +faststart)
-  if [[ -n "$LENGTH" ]]; then
-    FF_ARGS+=(-t "$LENGTH")
+  if (( TEST )) && [[ -n "$WIN_LEN" ]]; then
+    FF_ARGS+=(-t "$WIN_LEN")
   fi
   FF_ARGS+=("$out")
 }
@@ -1200,7 +1313,9 @@ pip_print_route() {
   fi
   if (( TEST )); then
     pip_window "$f"
-    printf '  %sRender%s  only %s - %s of the video\n' "$C_B" "$C_0" "$(pip_clock "$WIN_START")" "$(pip_clock "${WIN_END:-0}")"
+    printf '  %sRender%s  part: %s - %s of %s\n' "$C_B" "$C_0" "$(pip_clock "$WIN_START")" \
+      "$(pip_clock "${WIN_END:-0}")" "$(pip_clock "${F_DUR[$f]:-0}")"
+    [[ -n "$WIN_NOTE" ]] && printf '          %s%s%s\n' "$C_Y" "$WIN_NOTE" "$C_0"
   fi
   out_note="${C_G}new${C_0}"
   if [[ -e "$out" ]]; then
@@ -1259,7 +1374,11 @@ pip_equivalent_command() {
   [[ -n "$OUT_WIDTH" ]] && cmd+=(--out-width "$OUT_WIDTH")
   [[ "$ENCODER" != auto ]] && cmd+=(--encoder "$ENCODER")
   [[ -n "$QUALITY" ]] && cmd+=(--quality "$QUALITY")
-  pip_gt "$FROM" 0 && cmd+=(--from "$(pip_clock "$FROM")")
+  case "$FROM_MODE" in
+    end)    cmd+=(--from-end "$(pip_clock "$FROM")") ;;
+    middle) cmd+=(--middle) ;;
+    *)      pip_gt "$FROM" 0 && cmd+=(--from "$(pip_clock "$FROM")") ;;
+  esac
   [[ -n "$LENGTH" ]] && cmd+=(--length "$(pip_clock "$LENGTH")")
   [[ "$SHIFT" != 0 ]] && cmd+=(--shift "$SHIFT")
   (( AUDIO )) || cmd+=(--no-audio)
@@ -1306,11 +1425,7 @@ pip_print_plan() {
   else
     printf '  %-14s %s\n' "Audio" "none"
   fi
-  if (( TEST )); then
-    printf '  %-14s %s\n' "Render" "from $(pip_clock "$FROM")${LENGTH:+, $(pip_clock "$LENGTH") long}"
-  else
-    printf '  %-14s %s\n' "Render" "whole front files"
-  fi
+  printf '  %-14s %s\n' "Render" "$(pip_part_label)"
   if [[ "$SHIFT" != 0 ]]; then
     printf '  %-14s %s\n' "Clock shift" "back files moved ${SHIFT}s (real time)"
   fi
@@ -1356,6 +1471,16 @@ pip_quit() {
   exit 0
 }
 
+# Typed answer with Enter and q listed like the one-key questions. q quits.
+pip_ask_line() {
+  local name="$1" cur="$2"
+  echo "  [Enter] Keep the current answer: ${cur}"
+  echo "  [q]     Quit the script, render nothing more"
+  pip_read_line "${name} [${cur}] (q = quit): " "$cur"
+  [[ "${REPLY,,}" == q ]] && pip_quit
+  return 0
+}
+
 # Question, current 0/1, what yes means, what no means.
 pip_yes_no() {
   local question="$1" cur="$2" yes_text="$3" no_text="$4" def=n keys="y/N/q" ydef="" ndef=" (current, default)"
@@ -1399,9 +1524,7 @@ pip_prompt_more() {
   echo "  40%          that percent of the full frame's width"
   echo "  960px        that many pixels wide"
   echo "  The height always follows the picture's shape."
-  echo "  Enter keeps the current answer. q quits."
-  pip_read_line "Size [${SIZE_SPEC}]: " "$SIZE_SPEC"
-  [[ "${REPLY,,}" == q ]] && pip_quit
+  pip_ask_line "Size" "$SIZE_SPEC"
   pip_set_size "$REPLY" || echo "$(pip_ts) ${C_Y}Not a size: ${REPLY}. Keeping ${SIZE_SPEC}.${C_0}"
 
   echo
@@ -1413,7 +1536,7 @@ pip_prompt_more() {
   echo "  [3] Lower left$([[ $key == 3 ]] && printf ' (current, default)')"
   echo "  [4] Lower right$([[ $key == 4 ]] && printf ' (current, default)')"
   echo "  [q] Quit the script, render nothing more"
-  pip_read_key "Corner [${key}]: " "$key"
+  pip_read_key "Corner [1/2/3/4/q] (Enter = ${key}): " "$key"
   case "$REPLY" in
     1) CORNER=tl ;;
     2) CORNER=tr ;;
@@ -1429,9 +1552,7 @@ pip_prompt_more() {
   echo "  two numbers     top and bottom, then left and right"
   echo "  four numbers    top bottom left right"
   echo "  Only the two edges at the chosen corner matter."
-  echo "  Enter keeps the current answer. q quits."
-  pip_read_line "Margins [${M_TOP} ${M_BOTTOM} ${M_LEFT} ${M_RIGHT}]: " "${M_TOP} ${M_BOTTOM} ${M_LEFT} ${M_RIGHT}"
-  [[ "${REPLY,,}" == q ]] && pip_quit
+  pip_ask_line "Margins" "${M_TOP} ${M_BOTTOM} ${M_LEFT} ${M_RIGHT}"
   read -r -a w <<<"$REPLY"
   if (( ${#w[@]} == 1 )) && pip_is_px "${w[0]}"; then
     M_TOP=$(( 10#${w[0]} )) M_BOTTOM=$M_TOP M_LEFT=$M_TOP M_RIGHT=$M_TOP
@@ -1454,9 +1575,7 @@ pip_prompt_more() {
   echo "  Useful to remove the rear camera's own timestamp bar or the car's roof."
   echo "  Type two whole numbers: pixels from the top, then pixels from the bottom."
   echo "  0 0 cuts nothing.$(pip_first_back_size)"
-  echo "  Enter keeps the current answer. q quits."
-  pip_read_line "Top and bottom [${CROP_TOP} ${CROP_BOTTOM}]: " "${CROP_TOP} ${CROP_BOTTOM}"
-  [[ "${REPLY,,}" == q ]] && pip_quit
+  pip_ask_line "Top and bottom" "${CROP_TOP} ${CROP_BOTTOM}"
   read -r -a w <<<"$REPLY"
   if (( ${#w[@]} == 2 )) && pip_is_px "${w[0]}" && pip_is_px "${w[1]}"; then
     CROP_TOP=$(( 10#${w[0]} )) CROP_BOTTOM=$(( 10#${w[1]} ))
@@ -1468,9 +1587,7 @@ pip_prompt_more() {
   echo "Border around the inset"
   echo "  A frame drawn around the small picture so it stands out from the road."
   echo "  Type its width in pixels, 0 to 100. 0 means no border."
-  echo "  Enter keeps the current answer. q quits."
-  pip_read_line "Border width [${BORDER}]: " "$BORDER"
-  [[ "${REPLY,,}" == q ]] && pip_quit
+  pip_ask_line "Border width" "$BORDER"
   if [[ "$REPLY" =~ ^[0-9]+$ ]] && (( 10#$REPLY <= 100 )); then
     BORDER=$(( 10#$REPLY ))
   else
@@ -1480,9 +1597,7 @@ pip_prompt_more() {
     echo
     echo "Border color"
     echo "  A color name such as white, black, red, yellow, or a hex value like #ffcc00."
-    echo "  Enter keeps the current answer. q quits."
-    pip_read_line "Border color [${BORDER_COLOR}]: " "$BORDER_COLOR"
-    [[ "${REPLY,,}" == q ]] && pip_quit
+    pip_ask_line "Border color" "$BORDER_COLOR"
     pip_set_border_color "$REPLY" || echo "$(pip_ts) ${C_Y}Not a color: ${REPLY}. Keeping ${BORDER_COLOR}.${C_0}"
   fi
 
@@ -1494,9 +1609,7 @@ pip_prompt_more() {
   if (( ! HAVE_DRAWTEXT )); then
     echo "  ${C_Y}This ffmpeg has no drawtext filter, so a caption is skipped when rendering.${C_0}"
   fi
-  echo "  Enter keeps the current answer. q quits."
-  pip_read_line "Caption [${LABEL:--}]: " "${LABEL:--}"
-  [[ "$REPLY" == q || "$REPLY" == Q ]] && pip_quit
+  pip_ask_line "Caption" "${LABEL:--}"
   if [[ "$REPLY" == - ]]; then
     LABEL=""
   elif pip_label_ok "$REPLY"; then
@@ -1526,9 +1639,7 @@ pip_prompt_more() {
   echo "  Scale the finished video to this many pixels wide; the height follows."
   echo "  1920 makes a smaller file that plays on more devices."
   echo "  0 keeps the front camera's size (for example 2592x1944)."
-  echo "  Enter keeps the current answer. q quits."
-  pip_read_line "Output width [${OUT_WIDTH:-0}]: " "${OUT_WIDTH:-0}"
-  [[ "${REPLY,,}" == q ]] && pip_quit
+  pip_ask_line "Output width" "${OUT_WIDTH:-0}"
   if [[ "$REPLY" =~ ^[0-9]+$ ]]; then
     v=$(( 10#$REPLY ))
     if (( v == 0 )); then
@@ -1561,41 +1672,94 @@ pip_prompt_more_first() {
   esac
 }
 
+# " (current, default)" when the two keys match.
+pip_cur_mark() {
+  [[ "$1" == "$2" ]] && printf ' (current, default)'
+  return 0
+}
+
 pip_prompt_test() {
-  local v
+  local v key len_txt
+  if [[ -z "$LENGTH" ]] && (( ! TEST )); then
+    key=a
+  elif [[ -z "$LENGTH" ]]; then
+    key=c
+  else
+    case "$(pip_calc "$LENGTH")" in
+      60.000) key=1 ;; 120.000) key=2 ;; 300.000) key=5 ;; *) key=c ;;
+    esac
+  fi
   echo
-  echo "Short try: how much video per route? [1/2/5/w/q]"
-  echo "  A short try is saved under its own -test-from-…-len-… name, so a"
-  echo "  full render is not replaced. The start is asked next."
-  echo "  [1] 1 minute of video (default)"
-  echo "  [2] 2 minutes of video"
-  echo "  [5] 5 minutes of video"
-  echo "  [w] From the start point to the end of each front file"
-  echo "  [q] Quit the script, render nothing"
-  pip_read_key "Length [1/2/5/w/q]: " 1
+  echo "How much of each route should be rendered? [A/1/2/5/c/q]"
+  echo "  A part is saved under its own -test-… name, so a full render is kept."
+  echo "  [A] All of it, start to end$(pip_cur_mark a "$key")"
+  echo "  [1] 1 minute$(pip_cur_mark 1 "$key")"
+  echo "  [2] 2 minutes$(pip_cur_mark 2 "$key")"
+  echo "  [5] 5 minutes$(pip_cur_mark 5 "$key")"
+  echo "  [c] Custom length, typed next$(pip_cur_mark c "$key")"
+  echo "      For example 0:30, 10:00, 1:02:00, or 90 for seconds."
+  echo "  [q] Quit the script, render nothing more"
+  pip_read_key "Length [A/1/2/5/c/q]: " "$key"
   case "$REPLY" in
+    a) LENGTH="" FROM=0 FROM_MODE=begin; pip_update_test; return 0 ;;
     1) LENGTH=60 ;;
     2) LENGTH=120 ;;
     5) LENGTH=300 ;;
-    w) LENGTH="" ;;
+    c)
+      echo
+      echo "Custom length of each part"
+      echo "  Time in the sped-up video, as M:SS (4:40), H:MM:SS, or seconds (280)."
+      len_txt="$(pip_clock "${LENGTH:-60}")"
+      pip_ask_line "Length" "$len_txt"
+      if v="$(pip_parse_time "$REPLY")" && pip_gt "$v" 0; then
+        LENGTH="$v"
+      else
+        echo "$(pip_ts) ${C_Y}Not a time above 0: ${REPLY}. Using ${len_txt}.${C_0}"
+        LENGTH="$(pip_parse_time "$len_txt")"
+      fi
+      ;;
     q) pip_quit ;;
     *) echo "$(pip_ts) Unknown choice: ${REPLY}. Using 1 minute."; LENGTH=60 ;;
   esac
+
+  case "$FROM_MODE" in end) key=e ;; middle) key=m ;; *) key=b ;; esac
   echo
-  echo "Where should the short try start?"
-  echo "  Time in the sped-up video, as M:SS (4:40), H:MM:SS, or seconds (280)."
-  echo "  0:00 is the beginning. Enter keeps the current answer. q quits."
-  pip_read_line "Start at [$(pip_clock "$FROM")]: " "$(pip_clock "$FROM")"
-  [[ "${REPLY,,}" == q ]] && pip_quit
-  if v="$(pip_parse_time "$REPLY")"; then
-    FROM="$v"
-  else
-    echo "$(pip_ts) Not a time: ${REPLY}. Keeping $(pip_clock "$FROM")."
+  echo "Where should that part be taken from? [B/E/M/q]"
+  echo "  [B] Counted from the beginning$(pip_cur_mark b "$key")"
+  echo "      0:00 starts at the very start."
+  echo "  [E] Counted back from the end$(pip_cur_mark e "$key")"
+  echo "      0:00 means the last $(pip_clock "$LENGTH") of each route."
+  echo "  [M] The middle of each route$(pip_cur_mark m "$key")"
+  echo "      No offset is asked."
+  echo "  [q] Quit the script, render nothing more"
+  pip_read_key "From [B/E/M/q]: " "$key"
+  case "$REPLY" in
+    b) [[ "$FROM_MODE" != begin ]] && FROM=0; FROM_MODE=begin ;;
+    e) [[ "$FROM_MODE" != end ]] && FROM=0; FROM_MODE=end ;;
+    m) FROM=0 FROM_MODE=middle ;;
+    q) pip_quit ;;
+    *) echo "$(pip_ts) Unknown choice: ${REPLY}. Keeping the current one." ;;
+  esac
+
+  if [[ "$FROM_MODE" != middle ]]; then
+    echo
+    if [[ "$FROM_MODE" == end ]]; then
+      echo "Offset from the end"
+      echo "  How far before the end of each route the part stops."
+      echo "  0:00 is the last $(pip_clock "$LENGTH"); 1:00 stops one minute before the end."
+    else
+      echo "Offset from the beginning"
+      echo "  How far into each route the part starts. 0:00 is the very start."
+    fi
+    echo "  Time in the sped-up video, as M:SS (4:40), H:MM:SS, or seconds (280)."
+    pip_ask_line "Offset" "$(pip_clock "$FROM")"
+    if v="$(pip_parse_time "$REPLY")"; then
+      FROM="$v"
+    else
+      echo "$(pip_ts) ${C_Y}Not a time: ${REPLY}. Keeping $(pip_clock "$FROM").${C_0}"
+    fi
   fi
-  TEST=0
-  if pip_gt "$FROM" 0 || [[ -n "$LENGTH" ]]; then
-    TEST=1
-  fi
+  pip_update_test
 }
 
 pip_prompt_plan() {
@@ -1609,8 +1773,9 @@ pip_prompt_plan() {
     echo "  [m] Change the layout"
     echo "      Inset size, corner, margins, mirror, crop, border, caption, swap,"
     echo "      black gap box, output width. The plan is printed again afterwards."
-    echo "  [t] Render a short try instead of whole files"
-    echo "      Asks how long and where to start; saved under a -test- name."
+    echo "  [t] Render only part of each route (for a test)"
+    echo "      Pick how long, and where it starts: from the beginning, from the end,"
+    echo "      or the middle. Now: $(pip_part_label)."
     if (( EXISTING > 0 )); then
       echo "  [r] Also replace the ${EXISTING} output(s) that already exist"
       echo "      They are marked \"exists\" above. The plan is printed again."
@@ -1801,7 +1966,9 @@ OUT_WIDTH=""
 ENCODER=auto
 QUALITY=""
 FROM=0
+FROM_MODE=begin
 LENGTH=""
+WIN_LEN="" WIN_NOTE=""
 SHIFT=0
 AUDIO=1
 GPX=1
@@ -1909,7 +2076,13 @@ while [[ $# -gt 0 ]]; do
     --from)
       pip_need_value "$@"
       FROM="$(pip_parse_time "$2")" || { echo "ERROR: --from is not a time: $2" >&2; exit 1; }
-      shift 2 ;;
+      FROM_MODE=begin; shift 2 ;;
+    --from-end)
+      pip_need_value "$@"
+      FROM="$(pip_parse_time "$2")" || { echo "ERROR: --from-end is not a time: $2" >&2; exit 1; }
+      FROM_MODE=end; shift 2 ;;
+    --middle)
+      FROM=0 FROM_MODE=middle; shift ;;
     --length)
       pip_need_value "$@"
       LENGTH="$(pip_parse_time "$2")" || { echo "ERROR: --length is not a time: $2" >&2; exit 1; }
@@ -1927,9 +2100,11 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-if pip_gt "$FROM" 0 || [[ -n "$LENGTH" ]]; then
-  TEST=1
+if [[ "$FROM_MODE" == middle && -z "$LENGTH" ]]; then
+  echo "ERROR: --middle needs --length" >&2
+  exit 1
 fi
+pip_update_test
 
 if ! command -v ffmpeg >/dev/null 2>&1 || ! command -v ffprobe >/dev/null 2>&1; then
   echo "$(pip_ts) ffmpeg and ffprobe are required." >&2
