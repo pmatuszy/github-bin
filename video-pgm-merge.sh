@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261006.081500 - 70mai journey name is date_time-date_time_-_-_70mai-A510_camera_concat
 # v. 20261005.143200 - the temp line says not used, writing in this directory
 # v. 20261005.110900 - GPS logs are GPSData??????.txt here and one or two levels above
 # v. 20261005.110800 - GPS logs are GPSData??????.txt here and up to three levels above
@@ -42,6 +43,7 @@
 # v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
 # v. 20260805.154826 - after merge: copy GPS/dates from first chapter; FS times via touch -r
 
+# 2026.10.06 - v. 0.15.63 - 70mai journey name: YYYYMMDD_HHMMSS-YYYYMMDD_HHMMSS_-_-_70mai-A510_FrontCam_concat.mp4 and the same stem .gpx
 # 2026.10.05 - v. 0.15.62 - temp line uses plain text: not used, writing in this directory
 # 2026.10.05 - v. 0.15.61 - GPS logs are GPSData??????.txt in this directory and one or two levels above
 # 2026.10.05 - v. 0.15.60 - GPS logs are GPSData??????.txt in this directory and up to three levels above
@@ -212,7 +214,9 @@ Merge behaviour (no options):
     is not used as the sort key.
     A longer gap starts the next journey. The merged file is named from the first
     and last clip times plus the dashcam label (default 70mai-A510) and camera
-    letter, for example 20260926-110627_20260926-130427_70mai-A510_FrontCam_concat.mp4.
+    letter, for example 20260926_110627-20260926_130427_-_-_70mai-A510_FrontCam_concat.mp4.
+    Date and time are joined with _, the start and the end with -, then _-_-_ before the dashcam name.
+    An older name 20260926-110627_20260926-130427_70mai-A510_FrontCam_concat.mp4 is still recognized.
     A GPS track with the same stem and a .gpx extension is written beside it,
     from GPSData??????.txt in this directory and one or two directories above it.
   - Shows each multi-part group (with file sizes) and asks whether to merge
@@ -1789,7 +1793,8 @@ concat_parse_cam_part_range() {
   return 1
 }
 
-# 20260926-110627_20260926-130427_70mai-A510_FrontCam_concat.mp4
+# 20260926_110627-20260926_130427_-_-_70mai-A510_FrontCam_concat.mp4
+# Older files use 20260926-110627_20260926-130427_70mai-A510_FrontCam_concat.mp4.
 # Start and end are the first and last NO* filename times. Camera is FrontCam/BackCam.
 concat_parse_dashcam_output() {
   local base="$1"
@@ -1801,7 +1806,8 @@ concat_parse_dashcam_output() {
   CONCAT_DASH_START=""
   CONCAT_DASH_END=""
   CONCAT_DASH_LETTER=""
-  if [[ "$base" =~ ^([0-9]{8})-([0-9]{6})_([0-9]{8})-([0-9]{6})_(.+)_(FrontCam|BackCam|[A-Za-z])_concat\.[mM][pP]4$ ]]; then
+  if [[ "$base" =~ ^([0-9]{8})_([0-9]{6})-([0-9]{8})_([0-9]{6})_-_-_(.+)_(FrontCam|BackCam|[A-Za-z])_concat\.[mM][pP]4$ ]] \
+    || [[ "$base" =~ ^([0-9]{8})-([0-9]{6})_([0-9]{8})-([0-9]{6})_(.+)_(FrontCam|BackCam|[A-Za-z])_concat\.[mM][pP]4$ ]]; then
     CONCAT_DASH_START="${BASH_REMATCH[1]}${BASH_REMATCH[2]}"
     CONCAT_DASH_END="${BASH_REMATCH[3]}${BASH_REMATCH[4]}"
     CONCAT_PARSE_STEM="${BASH_REMATCH[5]}"
@@ -3413,8 +3419,26 @@ dashcam_camera_place() {
   esac
 }
 
-# 20260926-110627_20260926-130427_70mai-A510_FrontCam_concat.mp4
+# 20260926_110627-20260926_130427_-_-_70mai-A510_FrontCam_concat.mp4
 dashcam_group_output_file() {
+  local -a files=("$@")
+  local start_date start_time end_date end_time cam label place
+  group_is_dashcam "${files[@]}" || return 1
+  dashcam_parse_basename "${files[0]##*/}" || return 1
+  start_date="$DASHCAM_DATE"
+  start_time="$DASHCAM_TIME"
+  cam="$DASHCAM_CAM"
+  dashcam_parse_basename "${files[-1]##*/}" || return 1
+  end_date="$DASHCAM_DATE"
+  end_time="$DASHCAM_TIME"
+  label=$(dashcam_label)
+  place=$(dashcam_camera_place "$cam")
+  printf '%s_%s-%s_%s_-_-_%s_%s_concat.mp4\n' \
+    "$start_date" "$start_time" "$end_date" "$end_time" "$label" "$place"
+}
+
+# Same journey written by an older script: date-time_date-time_label_camera_concat.mp4.
+dashcam_group_output_file_legacy() {
   local -a files=("$@")
   local start_date start_time end_date end_time cam label place
   group_is_dashcam "${files[@]}" || return 1
@@ -3429,6 +3453,49 @@ dashcam_group_output_file() {
   place=$(dashcam_camera_place "$cam")
   printf '%s-%s_%s-%s_%s_%s_concat.mp4\n' \
     "$start_date" "$start_time" "$end_date" "$end_time" "$label" "$place"
+}
+
+# New name when nothing is saved yet. An existing new or older file for this journey is kept.
+dashcam_resolved_output_file() {
+  local new_name legacy f base saved=""
+  local start_key end_key letter nullglob_was=0
+  new_name=$(dashcam_group_output_file "$@") || return 1
+  if [[ -e "$new_name" ]]; then
+    printf '%s\n' "$new_name"
+    return 0
+  fi
+  legacy=$(dashcam_group_output_file_legacy "$@") || legacy=""
+  if [[ -n "$legacy" && -e "$legacy" ]]; then
+    printf '%s\n' "$legacy"
+    return 0
+  fi
+  concat_parse_dashcam_output "$new_name" || {
+    printf '%s\n' "$new_name"
+    return 0
+  }
+  start_key="$CONCAT_DASH_START"
+  end_key="$CONCAT_DASH_END"
+  letter="$CONCAT_DASH_LETTER"
+  shopt -q nullglob && nullglob_was=1
+  shopt -s nullglob
+  for f in ./*; do
+    base="${f##*/}"
+    [[ "$base" == "$new_name" ]] && continue
+    concat_parse_dashcam_output "$base" || continue
+    [[ "$CONCAT_DASH_START" == "$start_key" && "$CONCAT_DASH_END" == "$end_key" && "$CONCAT_DASH_LETTER" == "$letter" ]] || continue
+    saved="$base"
+    break
+  done
+  if (( nullglob_was )); then
+    shopt -s nullglob
+  else
+    shopt -u nullglob
+  fi
+  if [[ -n "$saved" ]]; then
+    printf '%s\n' "$saved"
+  else
+    printf '%s\n' "$new_name"
+  fi
 }
 
 # Every GPSData??????.txt in this directory, then one and two levels above.
@@ -4022,7 +4089,7 @@ group_output_file() {
   local -a files=("$@")
   local f base stem part min_part= max_part= got_part=0 suffix_proxy=
   if (( ${#files[@]} >= 2 )) && group_is_dashcam "${files[@]}"; then
-    dashcam_group_output_file "${files[@]}" && return 0
+    dashcam_resolved_output_file "${files[@]}" && return 0
   fi
   if (( ${#files[@]} >= 2 )) && group_is_size_split "${files[@]}"; then
     size_split_group_output_file "${files[@]}" && return 0
