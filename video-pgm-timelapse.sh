@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261007.205107 - encode everything is Y (default); a short try first is n
 # v. 20261007.200020 - ask which videos to encode; FrontCam, BackCam, and Map groups; dialog when installed, or --no-dialog
 # v. 20261007.143052 - summary times are whole seconds
 # v. 20261006.230553 - a sped-up file with no location gets the first point of the .gpx beside the source
@@ -45,6 +46,7 @@
 # v. 20260930.221500 - file prompts: one key, no Enter
 # v. 20260930.220400 - faster viewing copy of a merged video (2, 5, 10, 20, …)
 
+# 2026.10.07 - v. 0.43 - encode everything is Y (default); a short try first is n
 # 2026.10.07 - v. 0.42 - when the run is interactive and inputs come from a directory, ask which videos to encode: all, FrontCam, BackCam, Map, other, or pick files; use dialog when it is installed unless --no-dialog (or --dialog to prefer it)
 # 2026.10.07 - v. 0.41 - summary times are whole seconds (5m 04s), not hundredths
 # 2026.10.06 - v. 0.39 - picture, encoder, keyframe sample and spacing, scan, decode length, short try, clip start, more choices, display, and the speed menu's custom key: only the current default is a capital letter and marked (default); keyframe spacing no longer always marks [S] as the default
@@ -2634,11 +2636,11 @@ tl_prompt_scan() {
 }
 
 tl_prompt_test_clip() {
-  local choice="" tkey=n lkey=1 skey=b n_note=""
+  local choice="" tkey=y lkey=1 skey=b y_note=""
   if (( ${TL_TEST:-0} )); then
-    tkey=y
+    tkey=n
   else
-    n_note=" (default)"
+    y_note=" (default)"
   fi
   case "${TL_TEST_MINUTES:-1}" in
     2) lkey=2 ;;
@@ -2647,23 +2649,23 @@ tl_prompt_test_clip() {
   esac
   skey="$(tl_test_start_key "${TL_TEST_PERCENT:-0}")"
   echo
-  echo "Encode everything, or try a short piece first? [$(tl_keys "$tkey" n y q)]"
-  echo "  [$(tl_k n "$tkey")] Everything${n_note}"
+  echo "Encode everything, or try a short piece first? [$(tl_keys "$tkey" y n q)]"
+  echo "  [$(tl_k y "$tkey")] Everything${y_note}"
   echo "      The whole sped-up drive. A two-hour recording at 5×"
   echo "      becomes about 24 minutes, saved as the usual *_x5.mp4."
-  echo "  [$(tl_k y "$tkey")] A short try first$(tl_def_mark y "$tkey")"
+  echo "  [$(tl_k n "$tkey")] A short try first$(tl_def_mark n "$tkey")"
   echo "      Encode only 1, 2, or 5 minutes of the video you will watch,"
   echo "      from the beginning or from later in the drive. You can see"
   echo "      if the picture is right before waiting for the whole file."
   echo "      The short piece is saved under its own name, so a full"
   echo "      *_x5.mp4 is left alone."
   echo "  [q] Quit"
-  tl_read_key "Encode everything? [$(tl_keys "$tkey" n y q)]: " "$tkey"
+  tl_read_key "Encode everything? [$(tl_keys "$tkey" y n q)]: " "$tkey"
   choice="$(tl_choice "$REPLY")"
   if [[ "$choice" == q ]]; then
     tl_quit_script
   fi
-  if [[ "$choice" != y ]]; then
+  if [[ "$choice" != n ]]; then
     TL_TEST=0
     return 0
   fi
