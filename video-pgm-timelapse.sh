@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261007.200020 - ask which videos to encode; FrontCam, BackCam, and Map groups; dialog when installed, or --no-dialog
 # v. 20261007.143052 - summary times are whole seconds
 # v. 20261006.230553 - a sped-up file with no location gets the first point of the .gpx beside the source
 # v. 20261006.225133 - the sped-up file gets the source video's creation time and file time
@@ -44,6 +45,7 @@
 # v. 20260930.221500 - file prompts: one key, no Enter
 # v. 20260930.220400 - faster viewing copy of a merged video (2, 5, 10, 20, …)
 
+# 2026.10.07 - v. 0.42 - when the run is interactive and inputs come from a directory, ask which videos to encode: all, FrontCam, BackCam, Map, other, or pick files; use dialog when it is installed unless --no-dialog (or --dialog to prefer it)
 # 2026.10.07 - v. 0.41 - summary times are whole seconds (5m 04s), not hundredths
 # 2026.10.06 - v. 0.39 - picture, encoder, keyframe sample and spacing, scan, decode length, short try, clip start, more choices, display, and the speed menu's custom key: only the current default is a capital letter and marked (default); keyframe spacing no longer always marks [S] as the default
 # 2026.10.06 - v. 0.40 - a sped-up file with no location gets the first point of the .gpx beside the source stored in the video
@@ -96,7 +98,8 @@
 show_help() {
   cat <<EOF
 Usage: $(basename "$0") [-h|--help] [-v|--version] [--history]
-       [-y|--yes] [--redo] [--speedup N] [--display normal|verbose]
+       [-y|--yes] [--redo] [--dialog|--no-dialog]
+       [--speedup N] [--display normal|verbose]
        [--picture plain|steady|soft] [--blend-before N] [--blend-after N]
        [--fps 25|30|60] [--encoder auto|nvenc|x264|x265]
        [--gop default|source|Ns|Nf]
@@ -115,13 +118,20 @@ stem_xN_test-1m-at20_YYYYMMDD-HHMMSS.mp4.
 With no FILE or DIR, use the current directory. If that directory contains
 *_concat.mp4 files, only those are used. Otherwise every other .mp4 in the
 directory is used. Files already named *_xN.mp4 or *_xN_YYYYMMDD-HHMMSS.mp4
-are skipped.
+are skipped. An interactive run with inputs from a directory (or the current
+directory) asks which videos to encode when more than one is found: all,
+FrontCam, BackCam, Map, other, or a file-by-file pick. Named FILE arguments
+skip that question. -y encodes every candidate without asking.
 
 Options:
   -h, --help           Show this help and exit.
   -v, --version        Print script version and exit.
   --history            Print script changelog from the header and exit.
   -y, --yes            Do not ask. Encode with the options below.
+  --dialog             Prefer the dialog checklist for picking files when dialog
+                       is installed (default when a terminal and dialog are available).
+  --no-dialog          Never use dialog; use the plain key menu even if dialog
+                       is installed.
   --speedup N          Integer speed, 2 to 240. Default 5.
                        --speed is the same option. The printed command uses --speedup.
                        Audio is always omitted.
@@ -162,13 +172,17 @@ Environment:
   PGM_TIMELAPSE_SPEED     Same as --speedup.
   PGM_TIMELAPSE_ENCODER   Same as --encoder (auto, nvenc, x264, x265).
   PGM_TIMELAPSE_DISPLAY   normal (default) or verbose. verbose matches --verbose.
+  PGM_TIMELAPSE_DIALOG    1 or yes to prefer dialog; 0 or no for the plain menu
+                          (same as --dialog / --no-dialog). A command-line flag wins.
 
 Examples:
   $(basename "$0") --speedup 10 trip_concat.mp4
   $(basename "$0") -y --speedup 20 --picture steady --fps 30 trip_concat.mp4
   $(basename "$0") -y --speedup 5 --gop source --keyframe-minutes 2 trip_concat.mp4
+  $(basename "$0") --no-dialog
+      Ask which videos (plain keys), then the usual questions.
   $(basename "$0")
-      Ask the questions (speed defaults to 5×), then confirm before encoding.
+      Ask which videos (dialog when installed), then the questions (speed defaults to 5×).
 EOF
 }
 
@@ -1239,6 +1253,234 @@ tl_add_directory() {
   done
 }
 
+# FrontCam / BackCam / Map from the basename; everything else is other.
+tl_file_kind() {
+  local base="${1##*/}"
+  if [[ "$base" =~ [-_]FrontCam([-_.]|$) ]]; then
+    printf 'front\n'
+  elif [[ "$base" =~ [-_]BackCam([-_.]|$) ]]; then
+    printf 'back\n'
+  elif [[ "$base" =~ [-_]Map([-_.]|$) ]]; then
+    printf 'map\n'
+  else
+    printf 'other\n'
+  fi
+}
+
+# 1 = prefer dialog, 0 = never, 2 = auto (dialog when installed and a tty).
+tl_dialog_wanted() {
+  case "${TL_DIALOG_MODE:-2}" in
+    0) return 1 ;;
+    1)
+      command -v dialog >/dev/null 2>&1 || return 1
+      [[ -t 0 && -t 1 ]] || return 1
+      return 0
+      ;;
+    *)
+      command -v dialog >/dev/null 2>&1 || return 1
+      [[ -t 0 && -t 1 ]] || return 1
+      return 0
+      ;;
+  esac
+}
+
+tl_filter_inputs_by_kind() {
+  local want="$1" f kind
+  local -a keep=()
+  for f in "${TL_INPUTS[@]}"; do
+    kind="$(tl_file_kind "$f")"
+    [[ "$kind" == "$want" ]] && keep+=("$f")
+  done
+  TL_INPUTS=("${keep[@]}")
+}
+
+# Numbered toggle list. Marks start selected (1) or not (0).
+tl_pick_files_plain() {
+  local i n mark line answer
+  local -a marks=()
+  n=${#TL_INPUTS[@]}
+  for (( i = 0; i < n; i++ )); do
+    marks[i]=1
+  done
+  while true; do
+    echo
+    echo "$(tl_ts) Pick files (toggle a number, then D when done):"
+    for (( i = 0; i < n; i++ )); do
+      if (( marks[i] )); then mark='x'; else mark=' '; fi
+      printf '  %2d) [%s] %s\n' "$((i + 1))" "$mark" "${TL_INPUTS[i]##*/}"
+    done
+    tl_read_line "Pick [1-${n}/a/n/D/q], Enter keeps D: " d
+    answer="$(tl_choice "$REPLY")"
+    case "$answer" in
+      q) tl_quit_script ;;
+      a)
+        for (( i = 0; i < n; i++ )); do marks[i]=1; done
+        ;;
+      n)
+        for (( i = 0; i < n; i++ )); do marks[i]=0; done
+        ;;
+      d|'')
+        break
+        ;;
+      *)
+        if [[ "$answer" =~ ^[0-9]+$ ]] && (( answer >= 1 && answer <= n )); then
+          i=$((answer - 1))
+          if (( marks[i] )); then marks[i]=0; else marks[i]=1; fi
+        else
+          echo "$(tl_ts) Unknown choice: ${REPLY}."
+        fi
+        ;;
+    esac
+  done
+  local -a keep=()
+  for (( i = 0; i < n; i++ )); do
+    (( marks[i] )) && keep+=("${TL_INPUTS[i]}")
+  done
+  TL_INPUTS=("${keep[@]}")
+}
+
+tl_pick_files_dialog() {
+  local i n h w list_h rc out tag
+  local -a args=() keep=()
+  n=${#TL_INPUTS[@]}
+  (( n < 1 )) && return 0
+  list_h=$n
+  (( list_h > 16 )) && list_h=16
+  h=$((list_h + 8))
+  w=78
+  args=(--title "Timelapse videos" --ok-label "Encode" --cancel-label "Quit"
+        --checklist "Space toggles a file. Enter encodes the marked ones." "$h" "$w" "$list_h")
+  for (( i = 0; i < n; i++ )); do
+    args+=("$((i + 1))" "${TL_INPUTS[i]##*/}" "on")
+  done
+  out="$(dialog --ascii-lines --separate-output "${args[@]}" 3>&1 1>&2 2>&3)"
+  rc=$?
+  clear 2>/dev/null || true
+  if (( rc != 0 )); then
+    tl_quit_script
+  fi
+  while IFS= read -r tag; do
+    [[ -z "$tag" ]] && continue
+    if [[ "$tag" =~ ^[0-9]+$ ]] && (( tag >= 1 && tag <= n )); then
+      keep+=("${TL_INPUTS[tag - 1]}")
+    fi
+  done <<< "$out"
+  TL_INPUTS=("${keep[@]}")
+}
+
+tl_prompt_input_files() {
+  local n front=0 back=0 map=0 other=0 f kind choice def
+  n=${#TL_INPUTS[@]}
+  (( n <= 1 )) && return 0
+  for f in "${TL_INPUTS[@]}"; do
+    kind="$(tl_file_kind "$f")"
+    case "$kind" in
+      front) front=$((front + 1)) ;;
+      back) back=$((back + 1)) ;;
+      map) map=$((map + 1)) ;;
+      *) other=$((other + 1)) ;;
+    esac
+  done
+  echo
+  echo "$(tl_ts) Videos found: ${n}"
+  (( front > 0 )) && echo "  FrontCam: ${front}"
+  (( back > 0 )) && echo "  BackCam:  ${back}"
+  (( map > 0 )) && echo "  Map:      ${map}"
+  (( other > 0 )) && echo "  Other:    ${other}"
+
+  if tl_dialog_wanted; then
+    local -a items=()
+    local list_h h tag rc
+    items+=(a "All (${n})")
+    (( front > 0 )) && items+=(f "FrontCam only (${front})")
+    (( back > 0 )) && items+=(b "BackCam only (${back})")
+    (( map > 0 )) && items+=(m "Map only (${map})")
+    (( other > 0 )) && items+=(o "Other only (${other})")
+    items+=(p "Pick files...")
+    list_h=$((${#items[@]} / 2))
+    h=$((list_h + 7))
+    tag="$(dialog --ascii-lines --title "Timelapse videos" --ok-label "OK" --cancel-label "Quit" \
+      --default-item a --menu "Which videos to encode?" "$h" 72 "$list_h" "${items[@]}" \
+      3>&1 1>&2 2>&3)"
+    rc=$?
+    clear 2>/dev/null || true
+    if (( rc != 0 )); then
+      tl_quit_script
+    fi
+    case "$tag" in
+      a|'') ;;
+      f) tl_filter_inputs_by_kind front ;;
+      b) tl_filter_inputs_by_kind back ;;
+      m) tl_filter_inputs_by_kind map ;;
+      o) tl_filter_inputs_by_kind other ;;
+      p) tl_pick_files_dialog ;;
+      *)
+        echo "$(tl_ts) Unknown dialog choice: ${tag}."
+        ;;
+    esac
+  else
+    if (( ${TL_DIALOG_MODE:-2} == 1 )) && ! command -v dialog >/dev/null 2>&1; then
+      echo "$(tl_ts) dialog is not installed; using the plain menu."
+    fi
+    local -a key_list=(a)
+    def=a
+    echo "  [A] All (${n}) (default)"
+    if (( front > 0 )); then
+      key_list+=(f)
+      echo "  [f] FrontCam only (${front})"
+    fi
+    if (( back > 0 )); then
+      key_list+=(b)
+      echo "  [b] BackCam only (${back})"
+    fi
+    if (( map > 0 )); then
+      key_list+=(m)
+      echo "  [m] Map only (${map})"
+    fi
+    if (( other > 0 )); then
+      key_list+=(o)
+      echo "  [o] Other only (${other})"
+    fi
+    key_list+=(p q)
+    echo "  [p] Pick files..."
+    echo "  [q] Quit"
+    tl_read_key "Videos [$(tl_keys "$def" "${key_list[@]}")]: " "$def"
+    choice="$(tl_choice "$REPLY")"
+    case "$choice" in
+      a|'') ;;
+      f)
+        (( front > 0 )) || { echo "$(tl_ts) No FrontCam videos."; return 1; }
+        tl_filter_inputs_by_kind front
+        ;;
+      b)
+        (( back > 0 )) || { echo "$(tl_ts) No BackCam videos."; return 1; }
+        tl_filter_inputs_by_kind back
+        ;;
+      m)
+        (( map > 0 )) || { echo "$(tl_ts) No Map videos."; return 1; }
+        tl_filter_inputs_by_kind map
+        ;;
+      o)
+        (( other > 0 )) || { echo "$(tl_ts) No other videos."; return 1; }
+        tl_filter_inputs_by_kind other
+        ;;
+      p) tl_pick_files_plain ;;
+      q) tl_quit_script ;;
+      *)
+        echo "$(tl_ts) Unknown choice: ${REPLY}. Encoding all ${n}."
+        ;;
+    esac
+  fi
+
+  if (( ${#TL_INPUTS[@]} == 0 )); then
+    echo "$(tl_ts) No videos selected."
+    TL_STOPPED=yes
+    return_code=0
+    exit 0
+  fi
+  echo "$(tl_ts) Will encode ${#TL_INPUTS[@]} video(s)."
+}
+
 tl_flush_stdin() {
   local discard drained=0
   while (( drained < 256 )) && IFS= read -r -t 0.02 -n 1 discard; do
@@ -1351,6 +1593,12 @@ tl_equivalent_command() {
   fi
   if (( REDO )); then
     cmd+=(--redo)
+  fi
+  if (( ${TL_DIALOG_FROM_CLI:-0} )); then
+    case "${TL_DIALOG_MODE:-2}" in
+      0) cmd+=(--no-dialog) ;;
+      1) cmd+=(--dialog) ;;
+    esac
   fi
   cmd+=(--)
   for f in "${TL_INPUTS[@]}"; do
@@ -2613,7 +2861,19 @@ fi
 TL_DISPLAY="${PGM_TIMELAPSE_DISPLAY:-}"
 TL_DISPLAY_FROM_CLI=0
 SPEED_FROM_CLI=0
+# 0 = never dialog, 1 = prefer dialog, 2 = auto when dialog + tty.
+TL_DIALOG_MODE=2
+TL_DIALOG_FROM_CLI=0
+case "${PGM_TIMELAPSE_DIALOG:-}" in
+  0|no|NO|false|FALSE|off|OFF)
+    TL_DIALOG_MODE=0
+    ;;
+  1|yes|YES|true|TRUE|on|ON)
+    TL_DIALOG_MODE=1
+    ;;
+esac
 TL_INPUTS=()
+TL_ASK_WHICH_FILES=0
 TL_PARTIAL=""
 TL_ENC_ARGS=()
 TL_ENC_KIND=""
@@ -2686,6 +2946,16 @@ while [[ $# -gt 0 ]]; do
       ;;
     --redo)
       REDO=1
+      shift
+      ;;
+    --dialog)
+      TL_DIALOG_MODE=1
+      TL_DIALOG_FROM_CLI=1
+      shift
+      ;;
+    --no-dialog)
+      TL_DIALOG_MODE=0
+      TL_DIALOG_FROM_CLI=1
       shift
       ;;
     --speed|--speedup)
@@ -2925,10 +3195,12 @@ case "$TL_TEST_PERCENT" in
 esac
 
 if (( ${#POSITIONALS[@]} == 0 )); then
+  TL_ASK_WHICH_FILES=1
   tl_add_directory "."
 else
   for _tl_path in "${POSITIONALS[@]}"; do
     if [[ -d "$_tl_path" ]]; then
+      TL_ASK_WHICH_FILES=1
       tl_add_directory "$_tl_path"
     elif [[ -f "$_tl_path" ]]; then
       tl_add_mp4_file "$_tl_path"
@@ -2946,6 +3218,10 @@ if (( ${#TL_INPUTS[@]} == 0 )); then
   exit 0
 fi
 TL_SUMMARY=1
+
+if (( TL_ASK_WHICH_FILES )) && (( script_is_run_interactively )) && (( ! DO_YES )); then
+  tl_prompt_input_files
+fi
 
 tl_ask_speed() {
   tl_prompt_speed
