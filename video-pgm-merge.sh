@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261007.084310 - an EV clip with the next sequence number stays in the 70mai journey, front and back
 # v. 20261006.230553 - a merged file with no location gets the first point of its .gpx
 # v. 20261006.225133 - merged file and its .gpx get the first chapter's creation time and file time
 # v. 20261006.124500 - temp directory question on an SSD: the default No is the capital N
@@ -46,6 +47,7 @@
 # v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
 # v. 20260805.154826 - after merge: copy GPS/dates from first chapter; FS times via touch -r
 
+# 2026.10.07 - v. 0.15.67 - an EV clip (event) whose sequence number is the next one stays in the same 70mai journey as the NO clips, on the front camera and on the back camera, even when it starts closer than a minute to the clips around it
 # 2026.10.06 - v. 0.15.66 - a merged file with no location gets the first point of its .gpx stored in the video; a file that already has a fix is left as it is
 # 2026.10.06 - v. 0.15.65 - the merged file and the .gpx beside it get the first chapter's creation time and file time; on a Windows drive the creation time is copied as well as the file time
 # 2026.10.06 - v. 0.15.64 - "Merge via ... for the remaining groups?" on an SSD showed [y/n/q] and [n] No (default); now [y/N/q] and [N], so only the default key is a capital letter
@@ -213,11 +215,14 @@ Merge behaviour (no options):
     only in the leading timestamp and share the same middle label, or share one start time with
     a trailing chapter letter on the time (…_200322a_…) or camera token (…_GOPRO10_BLACKa.MP4).
     Letter runs a,b,c… on the same timestamp merge like part_01 chapters (any file size).
-  - Also groups 70mai-style clips NOYYYYMMDD-HHMMSS-NNNNNNX.MP4 (same camera letter)
-    into a continuous journey: ordered by filename time, sequence number increases
-    by 1, and the filename start times are about one minute apart (default gap
-    50–90s; PGM_DASHCAM_MAX_GAP_SEC). The sequence number restarts each day, so it
-    is not used as the sort key.
+  - Also groups 70mai-style clips NOYYYYMMDD-HHMMSS-NNNNNNX.MP4 and the same
+    name starting with EV (same camera letter) into a continuous journey: ordered
+    by filename time, sequence number increases by 1, and the filename start times
+    are about one minute apart (default gap 50–90s; PGM_DASHCAM_MAX_GAP_SEC).
+    An EV clip is an event in that same recording. When its sequence number is the
+    next one, it stays in the journey, on the front camera and on the back camera,
+    even though it starts closer than a minute to the clips around it.
+    The sequence number restarts each day, so it is not used as the sort key.
     A longer gap starts the next journey. The merged file is named from the first
     and last clip times plus the dashcam label (default 70mai-A510) and camera
     letter, for example 20260926_110627-20260926_130427_-_-_70mai-A510_FrontCam_concat.mp4.
@@ -263,8 +268,8 @@ Merge behaviour (no options):
     e.g. …_GOPRO10_BLACK_concat_parts_01-06.mp4). Legacy …_parts_*-*_concat.mp4 still recognized.
   - Other single files are listed as standalone; probable size-split sets are merge candidates.
   - Lists merged *_concat files when matching input chapters are not in the folder.
-    A 70mai journey name is matched to NO* clips of that camera whose filename
-    times fall from the journey start through the journey end.
+    A 70mai journey name is matched to NO* and EV* clips of that camera whose
+    filename times fall from the journey start through the journey end.
 
 mp4_merge lookup (merge mode):
   1. MP4_MERGE_BIN if set and executable
@@ -3494,24 +3499,27 @@ build_part_chapter_groups() {
   done
 }
 
-# 70mai dashcam: NO20260926-110627-000678F.MP4 → date, start time, sequence, camera letter.
+# 70mai dashcam: NO20260926-110627-000678F.MP4 or EV20260814-190447-006784B.MP4
+# → kind, date, start time, sequence, camera letter. EV is an event clip in the same run.
 dashcam_parse_basename() {
   local base="$1"
+  DASHCAM_KIND=""
   DASHCAM_DATE=""
   DASHCAM_TIME=""
   DASHCAM_SEQ=""
   DASHCAM_CAM=""
-  if [[ "$base" =~ ^NO([0-9]{8})-([0-9]{6})-([0-9]{6})([A-Za-z])\.[mM][pP]4$ ]]; then
-    DASHCAM_DATE="${BASH_REMATCH[1]}"
-    DASHCAM_TIME="${BASH_REMATCH[2]}"
-    DASHCAM_SEQ=$((10#${BASH_REMATCH[3]}))
-    DASHCAM_CAM=$(printf '%s' "${BASH_REMATCH[4]}" | tr '[:lower:]' '[:upper:]')
+  if [[ "$base" =~ ^(NO|EV)([0-9]{8})-([0-9]{6})-([0-9]{6})([A-Za-z])\.[mM][pP]4$ ]]; then
+    DASHCAM_KIND="${BASH_REMATCH[1]}"
+    DASHCAM_DATE="${BASH_REMATCH[2]}"
+    DASHCAM_TIME="${BASH_REMATCH[3]}"
+    DASHCAM_SEQ=$((10#${BASH_REMATCH[4]}))
+    DASHCAM_CAM=$(printf '%s' "${BASH_REMATCH[5]}" | tr '[:lower:]' '[:upper:]')
     return 0
   fi
   return 1
 }
 
-# True when every file is a 70mai NO* clip from the same camera letter.
+# True when every file is a 70mai NO* or EV* clip from the same camera letter.
 group_is_dashcam() {
   local -a files=("$@")
   local f cam=""
@@ -3796,7 +3804,7 @@ dashcam_write_gpx_for_group() {
       lon = f[4] + 0
       fn = ""
       for (i = 5; i <= n; i++) {
-        if (f[i] ~ /^NO[0-9]{8}-[0-9]{6}-[0-9]{6}[A-Za-z]\.[Mm][Pp]4$/) {
+        if (f[i] ~ /^(NO|EV)[0-9]{8}-[0-9]{6}-[0-9]{6}[A-Za-z]\.[Mm][Pp]4$/) {
           fn = f[i]
           break
         }
@@ -3894,14 +3902,15 @@ dashcam_write_gpx_if_merged() {
   dashcam_write_gpx_for_group "$output_file" "$@" || true
 }
 
-# Group 70mai NO* singles into continuous journeys.
+# Group 70mai NO* and EV* singles into continuous journeys.
 # Same camera letter, ordered by filename time (the sequence number restarts each day).
 # Sequence +1 and a start gap of about one clip (default 50–90s) stay in one journey.
-# A longer gap (parking / power-off) starts a new journey. Front and rear stay apart.
+# An EV clip with the next sequence number stays in that journey even when the gap
+# is shorter than a minute. A longer gap starts a new journey. Front and rear stay apart.
 build_dashcam_journey_groups() {
   local -a kept=() new_groups=() keys_seen=() files=() key_files=() run=()
   local -A by_key=()
-  local blob f base key prev_seq prev_epoch cur_seq cur_epoch gap max_gap
+  local blob f base key prev_seq prev_kind prev_epoch cur_seq cur_kind cur_epoch gap min_gap max_gap
 
   max_gap="${PGM_DASHCAM_MAX_GAP_SEC:-90}"
   [[ "$max_gap" =~ ^[0-9]+$ ]] || max_gap=90
@@ -3938,6 +3947,7 @@ build_dashcam_journey_groups() {
     )
     run=()
     prev_seq=""
+    prev_kind=""
     prev_epoch=""
     for f in "${key_files[@]}"; do
       [[ -z "$f" ]] && continue
@@ -3946,10 +3956,12 @@ build_dashcam_journey_groups() {
         continue
       }
       cur_seq=$DASHCAM_SEQ
+      cur_kind=$DASHCAM_KIND
       cur_epoch=$(gopro_datetime_to_epoch "$DASHCAM_DATE" "$DASHCAM_TIME" 2>/dev/null) || cur_epoch=""
       if (( ${#run[@]} == 0 )); then
         run=( "$f" )
         prev_seq=$cur_seq
+        prev_kind=$cur_kind
         prev_epoch=$cur_epoch
         continue
       fi
@@ -3957,9 +3969,14 @@ build_dashcam_journey_groups() {
       if [[ -n "$prev_epoch" && -n "$cur_epoch" ]]; then
         gap=$(( cur_epoch - prev_epoch ))
       fi
-      if [[ -n "$gap" ]] && (( cur_seq == prev_seq + 1 && gap >= 50 && gap <= max_gap )); then
+      min_gap=50
+      if [[ "$prev_kind" == EV || "$cur_kind" == EV ]]; then
+        min_gap=1
+      fi
+      if [[ -n "$gap" ]] && (( cur_seq == prev_seq + 1 && gap >= min_gap && gap <= max_gap )); then
         run+=( "$f" )
         prev_seq=$cur_seq
+        prev_kind=$cur_kind
         prev_epoch=$cur_epoch
       else
         if (( ${#run[@]} >= 2 )); then
@@ -3969,6 +3986,7 @@ build_dashcam_journey_groups() {
         fi
         run=( "$f" )
         prev_seq=$cur_seq
+        prev_kind=$cur_kind
         prev_epoch=$cur_epoch
       fi
     done
@@ -4004,7 +4022,7 @@ build_chapter_groups() {
   build_letter_chapter_groups
   # 5) ~4 GB / ~12 GB size-split chapters without letter / _part_XX names
   build_size_split_groups
-  # 6) 70mai NO* continuous journeys (sequence +1, ~1 min between starts)
+  # 6) 70mai NO* and EV* continuous journeys (sequence +1; EV may start sooner than a minute)
   build_dashcam_journey_groups
 }
 
@@ -4155,7 +4173,7 @@ print_group_plan() {
     done
   fi
   if (( dashcam_groups > 0 )); then
-    echo "Merge candidates (70mai NO* continuous journey; sequence +1 and ~1 min between starts; a longer gap starts a new journey):"
+    echo "Merge candidates (70mai NO* and EV* continuous journey; sequence +1, about a minute between normal starts, an event clip may start sooner; a longer gap starts a new journey):"
     gidx=0
     for blob in "${GROUP_BLOBS[@]}"; do
       group_files_to_array "$blob" files
