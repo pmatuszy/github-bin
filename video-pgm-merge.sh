@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261007.143052 - summary and file lengths are whole seconds
 # v. 20261007.084310 - an EV clip with the next sequence number stays in the 70mai journey, front and back
 # v. 20261006.230553 - a merged file with no location gets the first point of its .gpx
 # v. 20261006.225133 - merged file and its .gpx get the first chapter's creation time and file time
@@ -47,6 +48,7 @@
 # v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
 # v. 20260805.154826 - after merge: copy GPS/dates from first chapter; FS times via touch -r
 
+# 2026.10.07 - v. 0.15.68 - summary times are whole seconds (5m 04s), and a file length is whole seconds (409 s), not a fraction
 # 2026.10.07 - v. 0.15.67 - an EV clip (event) whose sequence number is the next one stays in the same 70mai journey as the NO clips, on the front camera and on the back camera, even when it starts closer than a minute to the clips around it
 # 2026.10.06 - v. 0.15.66 - a merged file with no location gets the first point of its .gpx stored in the video; a file that already has a fix is left as it is
 # 2026.10.06 - v. 0.15.65 - the merged file and the .gpx beside it get the first chapter's creation time and file time; on a Windows drive the creation time is copied as well as the file time
@@ -1162,12 +1164,14 @@ format_duration_sec() {
   local sec="$1"
   awk -v s="${sec}" 'BEGIN {
     if (s < 0) s = 0
-    h = int(s / 3600)
-    m = int((s - h * 3600) / 60)
-    x = s - h * 3600 - m * 60
-    if (h > 0) printf "%dh %02dm %05.2fs", h, m, x
-    else if (m > 0) printf "%dm %05.2fs", m, x
-    else printf "%.2f s", s
+    t = int(s + 0.5)
+    if (t < 1) { printf "0s"; exit }
+    h = int(t / 3600)
+    m = int((t % 3600) / 60)
+    x = t % 60
+    if (h > 0) printf "%dh %02dm %02ds", h, m, x
+    else if (m > 0) printf "%dm %02ds", m, x
+    else printf "%ds", x
   }'
 }
 
@@ -1287,23 +1291,29 @@ format_bytes_human_aligned() {
   }'
 }
 
-# Seconds from ffprobe as "409.3 s (6:49)" for display.
+# Seconds from ffprobe as "409 s (6:49)" for display.
 format_duration_display() {
   local dur="$1"
   [[ -n "$dur" ]] || return 1
   awk -v d="$dur" 'BEGIN {
-    m=int(d/60); s=int(d+0.5)%60;
-    if (s >= 60) { s -= 60; m += 1 }
-    printf "%.1f s (%d:%02d)", d+0, m, s
+    t = int(d + 0.5)
+    if (t < 0) t = 0
+    m = int(t / 60)
+    s = t % 60
+    printf "%d s (%d:%02d)", t, m, s
   }'
 }
 
-# Seconds as "5090.0 s (1h 24min 50s)" for the merge-prompt summary.
+# Seconds as "5090 s (1h 24min 50s)" for the merge-prompt summary.
 format_duration_hms_display() {
   local dur="$1" hms
   [[ -n "$dur" ]] || return 1
   hms=$(format_output_timeline_pos "$dur") || return 1
-  awk -v d="$dur" -v hms="$hms" 'BEGIN { printf "%.1f s (%s)", d+0, hms }'
+  awk -v d="$dur" -v hms="$hms" 'BEGIN {
+    t = int(d + 0.5)
+    if (t < 0) t = 0
+    printf "%d s (%s)", t, hms
+  }'
 }
 
 # Position in merged output as "8min 15s" / "1h 2min 3s".

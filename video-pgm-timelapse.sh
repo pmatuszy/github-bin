@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261007.143052 - summary times are whole seconds
 # v. 20261006.230553 - a sped-up file with no location gets the first point of the .gpx beside the source
 # v. 20261006.225133 - the sped-up file gets the source video's creation time and file time
 # v. 20261006.124500 - menus: the capital key follows the current default, in the key list, on its line, and on the prompt
@@ -43,6 +44,7 @@
 # v. 20260930.221500 - file prompts: one key, no Enter
 # v. 20260930.220400 - faster viewing copy of a merged video (2, 5, 10, 20, …)
 
+# 2026.10.07 - v. 0.41 - summary times are whole seconds (5m 04s), not hundredths
 # 2026.10.06 - v. 0.39 - picture, encoder, keyframe sample and spacing, scan, decode length, short try, clip start, more choices, display, and the speed menu's custom key: only the current default is a capital letter and marked (default); keyframe spacing no longer always marks [S] as the default
 # 2026.10.06 - v. 0.40 - a sped-up file with no location gets the first point of the .gpx beside the source stored in the video
 # 2026.10.06 - v. 0.39 - the sped-up file gets the source video's creation time and file time; the name still uses the time the encode starts
@@ -178,17 +180,18 @@ tl_time_now_ns() {
   date +%s.%N
 }
 
-# Wall-clock span for the summary. Hundredths of a second, or 0s.
+# Wall-clock span for the summary. Whole seconds, rounded.
 tl_format_elapsed() {
   awk -v s="${1:-0}" 'BEGIN {
     if (s < 0) s = 0
-    if (s < 0.005) { printf "0s"; exit }
-    h = int(s / 3600)
-    m = int((s - h * 3600) / 60)
-    x = s - h * 3600 - m * 60
-    if (h > 0) printf "%dh %02dm %05.2fs", h, m, x
-    else if (m > 0) printf "%dm %05.2fs", m, x
-    else printf "%.2fs", x
+    t = int(s + 0.5)
+    if (t < 1) { printf "0s"; exit }
+    h = int(t / 3600)
+    m = int((t % 3600) / 60)
+    x = t % 60
+    if (h > 0) printf "%dh %02dm %02ds", h, m, x
+    else if (m > 0) printf "%dm %02ds", m, x
+    else printf "%ds", x
   }'
 }
 

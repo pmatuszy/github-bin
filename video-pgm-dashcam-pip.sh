@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261007.143052 - summary times and video lengths are whole seconds
 # v. 20261006.230553 - a picture-in-picture file with no location gets the first point of the front .gpx
 # v. 20261006.225133 - the picture-in-picture file and its .gpx get the front file's creation time and file time
 # v. 20261006.183857 - older maps sorted with /bin/ls -t, not the shell's ls function (that one adds --full-time and broke the path)
@@ -16,6 +17,7 @@
 # v. 20261006.103000 - more choices: inset size, corner, four margins, mirror, crop, border, caption, swap, black gap box, output width
 # v. 20261006.091500 - pair FrontCam and BackCam by filename clock, print the plan, render picture-in-picture
 
+# 2026.10.07 - v. 0.16 - summary times are whole seconds (5m 04s), and a video length in the plan is a whole second
 # 2026.10.06 - v. 0.15 - a picture-in-picture file with no location gets the first point of the front .gpx stored in the video
 # 2026.10.06 - v. 0.14 - the picture-in-picture file and the .gpx copied beside it get the front file's creation time and file time; the video also gets the dates stored in the front file
 # 2026.10.06 - v. 0.13 - per-route map list: older maps are sorted with /bin/ls -t, not the shell's ls function (that one adds --full-time, so names were not valid paths and showed "0:00, ?x?, made ?"); each line shows length, picture size, file size, and date; a missing or unreadable map says so
@@ -248,19 +250,17 @@ pip_print_box_lines() {
   printf '└%s┘\n' "$(pip_rule '─' $(( width + 2 )))"
 }
 
-# Seconds → M:SS or H:MM:SS. A tenth is shown only when it is not zero.
+# Seconds → M:SS or H:MM:SS, rounded to a whole second.
 pip_clock() {
   awk -v s="${1:-0}" 'BEGIN {
     neg = ""
     if (s < 0) { neg = "-"; s = -s }
-    t = int(s * 10 + 0.5) / 10
+    t = int(s + 0.5)
     h = int(t / 3600)
-    m = int((t - h * 3600) / 60)
-    x = t - h * 3600 - m * 60
-    if (x - int(x) >= 0.05) xs = sprintf("%04.1f", x)
-    else xs = sprintf("%02d", int(x + 0.5))
-    if (h > 0) printf "%s%d:%02d:%s", neg, h, m, xs
-    else printf "%s%d:%s", neg, m, xs
+    m = int((t % 3600) / 60)
+    x = t % 60
+    if (h > 0) printf "%s%d:%02d:%02d", neg, h, m, x
+    else printf "%s%d:%02d", neg, m, x
   }'
 }
 
@@ -284,17 +284,18 @@ pip_now_ns() {
   date +%s.%N
 }
 
-# Wall-clock span for the summary. Hundredths of a second, or 0s.
+# Wall-clock span for the summary. Whole seconds, rounded.
 pip_format_elapsed() {
   awk -v s="${1:-0}" 'BEGIN {
     if (s < 0) s = 0
-    if (s < 0.005) { printf "0s"; exit }
-    h = int(s / 3600)
-    m = int((s - h * 3600) / 60)
-    x = s - h * 3600 - m * 60
-    if (h > 0) printf "%dh %02dm %05.2fs", h, m, x
-    else if (m > 0) printf "%dm %05.2fs", m, x
-    else printf "%.2fs", x
+    t = int(s + 0.5)
+    if (t < 1) { printf "0s"; exit }
+    h = int(t / 3600)
+    m = int((t % 3600) / 60)
+    x = t % 60
+    if (h > 0) printf "%dh %02dm %02ds", h, m, x
+    else if (m > 0) printf "%dm %02ds", m, x
+    else printf "%ds", x
   }'
 }
 

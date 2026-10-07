@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261007.143052 - video lengths in the plan are whole seconds
 # v. 20261007.142732 - done and summary times are whole seconds
 # v. 20261006.230553 - a map with no location gets the first point of its .gpx
 # v. 20261006.225133 - the map video gets the source video's creation time and file time
@@ -14,6 +15,7 @@
 # v. 20261006.114500 - missing ffmpeg, python3, or Pillow: list them and ask whether to install them with apt-get
 # v. 20261006.113823 - moving OpenStreetMap map video from each video's GPX track, same length as the video
 
+# 2026.10.07 - v. 0.15 - a video length in the plan is a whole second (18:35), not a tenth
 # 2026.10.07 - v. 0.14 - the done line and the summary times are whole seconds (5m 04s), not hundredths
 # 2026.10.06 - v. 0.13 - a map with no location of its own gets the first point of its .gpx stored in the video, so an image server can read the place
 # 2026.10.06 - v. 0.12 - the map video gets the source video's creation time and file time, including the dates stored in the video
@@ -211,19 +213,17 @@ mv_print_box_lines() {
   printf '└%s┘\n' "$(mv_rule '─' $(( width + 2 )))"
 }
 
-# Seconds → M:SS or H:MM:SS. A tenth is shown only when it is not zero.
+# Seconds → M:SS or H:MM:SS, rounded to a whole second.
 mv_clock() {
   awk -v s="${1:-0}" 'BEGIN {
     neg = ""
     if (s < 0) { neg = "-"; s = -s }
-    t = int(s * 10 + 0.5) / 10
+    t = int(s + 0.5)
     h = int(t / 3600)
-    m = int((t - h * 3600) / 60)
-    x = t - h * 3600 - m * 60
-    if (x - int(x) >= 0.05) xs = sprintf("%04.1f", x)
-    else xs = sprintf("%02d", int(x + 0.5))
-    if (h > 0) printf "%s%d:%02d:%s", neg, h, m, xs
-    else printf "%s%d:%s", neg, m, xs
+    m = int((t % 3600) / 60)
+    x = t % 60
+    if (h > 0) printf "%s%d:%02d:%02d", neg, h, m, x
+    else printf "%s%d:%02d", neg, m, x
   }'
 }
 
