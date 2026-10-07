@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261007.142732 - done and summary times are whole seconds
 # v. 20261006.230553 - a map with no location gets the first point of its .gpx
 # v. 20261006.225133 - the map video gets the source video's creation time and file time
 # v. 20261006.155505 - default zoom back to 16 (about 1.6 km across); 17 was too close
@@ -13,6 +14,7 @@
 # v. 20261006.114500 - missing ffmpeg, python3, or Pillow: list them and ask whether to install them with apt-get
 # v. 20261006.113823 - moving OpenStreetMap map video from each video's GPX track, same length as the video
 
+# 2026.10.07 - v. 0.14 - the done line and the summary times are whole seconds (5m 04s), not hundredths
 # 2026.10.06 - v. 0.13 - a map with no location of its own gets the first point of its .gpx stored in the video, so an image server can read the place
 # 2026.10.06 - v. 0.12 - the map video gets the source video's creation time and file time, including the dates stored in the video
 # 2026.10.06 - v. 0.11 - default zoom back to 16 (about 1.6 km across 1080 px); 17 was too close; --zoom 17 still works
@@ -249,16 +251,18 @@ mv_now_ns() {
   date +%s.%N
 }
 
+# Wall-clock span. Whole seconds, rounded.
 mv_format_elapsed() {
   awk -v s="${1:-0}" 'BEGIN {
     if (s < 0) s = 0
-    if (s < 0.005) { printf "0s"; exit }
-    h = int(s / 3600)
-    m = int((s - h * 3600) / 60)
-    x = s - h * 3600 - m * 60
-    if (h > 0) printf "%dh %02dm %05.2fs", h, m, x
-    else if (m > 0) printf "%dm %05.2fs", m, x
-    else printf "%.2fs", x
+    t = int(s + 0.5)
+    if (t < 1) { printf "0s"; exit }
+    h = int(t / 3600)
+    m = int((t % 3600) / 60)
+    x = t % 60
+    if (h > 0) printf "%dh %02dm %02ds", h, m, x
+    else if (m > 0) printf "%dm %02ds", m, x
+    else printf "%ds", x
   }'
 }
 
