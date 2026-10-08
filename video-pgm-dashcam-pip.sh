@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261008.220551 - a map matches the journey and speed, not the encode stamp; ask when real time and timelapse are both present
 # v. 20261007.143052 - summary times and video lengths are whole seconds
 # v. 20261006.230553 - a picture-in-picture file with no location gets the first point of the front .gpx
 # v. 20261006.225133 - the picture-in-picture file and its .gpx get the front file's creation time and file time
@@ -17,6 +18,7 @@
 # v. 20261006.103000 - more choices: inset size, corner, four margins, mirror, crop, border, caption, swap, black gap box, output width
 # v. 20261006.091500 - pair FrontCam and BackCam by filename clock, print the plan, render picture-in-picture
 
+# 2026.10.08 - v. 0.17 - a map belongs to a front file when the drive clocks and the speed match; the encode time at the end of the name is ignored. When real-time videos and sped-up copies are both present, an interactive run asks once: timelapse only (default), also the real-time videos, or real time only. -y and -n use every speed
 # 2026.10.07 - v. 0.16 - summary times are whole seconds (5m 04s), and a video length in the plan is a whole second
 # 2026.10.06 - v. 0.15 - a picture-in-picture file with no location gets the first point of the front .gpx stored in the video
 # 2026.10.06 - v. 0.14 - the picture-in-picture file and the .gpx copied beside it get the front file's creation time and file time; the video also gets the dates stored in the front file
@@ -78,6 +80,10 @@ Map
   A map video made by video-pgm-create-map-video-from-gpx.sh is found by its
   name, FrontCam replaced by Map, beside the front file:
     ...-70mai-A510-Map-concat-x5.mp4
+  The encode time at the end (_YYYYMMDD-HHMMSS) is not part of the match, so
+  a map rendered at 20:10 still belongs to a front timelapse rendered at 20:51
+  of the same drive and the same speed. A real-time front looks for a
+  real-time map, and an x5 front looks for an x5 map.
   It is as long as the front video and goes in the top right corner, 540 px
   wide: about 21% of a 2592-wide frame, as high as the default rear inset.
   If the rear inset is in that corner, the map takes the other corner on the
@@ -91,6 +97,11 @@ Map
   their street names sharper than shrinking a 1080 px map.
 
 How the files are lined up
+  - When a folder has both real-time videos and sped-up copies, an interactive
+    run asks once: timelapse only (default), also the real-time videos, or
+    real time only. Two sped-up speeds (x5 and x10) are listed as their own
+    choices too. Each speed is still paired only with itself. -y and -n use
+    every speed and do not ask.
   - A back file belongs to the front file whose time it overlaps most.
     Front and back must have the same speed (-x5, _x5, or none).
   - The back file is delayed by (back start - front start) / speed.
@@ -616,6 +627,189 @@ pip_add_directory() {
   done
 }
 
+# "N front, M back" for one speed, or for every speed in the list.
+pip_speed_count_label() {
+  local front=0 back=0 i s
+  for i in "${!F_PATH[@]}"; do
+    for s in "$@"; do
+      [[ "${F_SPEED[$i]}" == "$s" ]] || continue
+      case "${F_CAM[$i]}" in
+        front) front=$((front + 1)) ;;
+        back) back=$((back + 1)) ;;
+      esac
+    done
+  done
+  printf '%d front, %d back' "$front" "$back"
+}
+
+# Keep only files whose speed is in the argument list. Parallel F_* arrays stay aligned.
+pip_keep_speeds() {
+  local -a want=("$@")
+  local -a p=() c=() st=() en=() sp=() day=() cs=() ce=() du=() w=() h=()
+  local i ok x
+  for i in "${!F_PATH[@]}"; do
+    ok=0
+    for x in "${want[@]}"; do
+      if [[ "${F_SPEED[$i]}" == "$x" ]]; then
+        ok=1
+        break
+      fi
+    done
+    (( ok )) || continue
+    p+=("${F_PATH[$i]}")
+    c+=("${F_CAM[$i]}")
+    st+=("${F_START[$i]}")
+    en+=("${F_NAME_END[$i]}")
+    sp+=("${F_SPEED[$i]}")
+    day+=("${F_DAY[$i]}")
+    cs+=("${F_CLOCK_START[$i]}")
+    ce+=("${F_CLOCK_END[$i]}")
+    du+=("${F_DUR[$i]:-}")
+    w+=("${F_W[$i]:-}")
+    h+=("${F_H[$i]:-}")
+  done
+  if (( ${#p[@]} )); then
+    F_PATH=("${p[@]}")
+    F_CAM=("${c[@]}")
+    F_START=("${st[@]}")
+    F_NAME_END=("${en[@]}")
+    F_SPEED=("${sp[@]}")
+    F_DAY=("${day[@]}")
+    F_CLOCK_START=("${cs[@]}")
+    F_CLOCK_END=("${ce[@]}")
+    F_DUR=("${du[@]}")
+    F_W=("${w[@]}")
+    F_H=("${h[@]}")
+  else
+    F_PATH=() F_CAM=() F_START=() F_NAME_END=() F_SPEED=()
+    F_DAY=() F_CLOCK_START=() F_CLOCK_END=() F_DUR=() F_W=() F_H=()
+  fi
+}
+
+# One key for an individual speed. A single digit when it is free; otherwise a letter.
+pip_speed_menu_key() {
+  local speed="$1"
+  shift
+  local k letter
+  if [[ "$speed" =~ ^[2-9]$ ]]; then
+    for k in "$@"; do
+      [[ "$k" == "$speed" ]] && { speed=""; break; }
+    done
+    if [[ -n "$speed" ]]; then
+      printf '%s\n' "$speed"
+      return 0
+    fi
+  fi
+  for letter in b c d e f g h i j k l m n o p s u v w x y z; do
+    for k in "$@"; do
+      [[ "$k" == "$letter" ]] && continue 2
+    done
+    printf '%s\n' "$letter"
+    return 0
+  done
+  return 1
+}
+
+# When more than one speed is present, ask which ones to pair.
+# -y and -n keep every speed. One speed asks nothing.
+pip_prompt_speeds() {
+  local i s key choice
+  local -a speeds=() tl=() real=() used=(t a r q) keys=()
+  local -A key_speed=()
+  for i in "${!F_PATH[@]}"; do
+    s="${F_SPEED[$i]}"
+    [[ -n "${key_speed[_seen_$s]:-}" ]] && continue
+    key_speed[_seen_$s]=1
+    speeds+=("$s")
+  done
+  mapfile -t speeds < <(printf '%s\n' "${speeds[@]}" | sort -n)
+  (( ${#speeds[@]} > 1 )) || return 0
+  for s in "${speeds[@]}"; do
+    if (( s > 1 )); then
+      tl+=("$s")
+    else
+      real+=("$s")
+    fi
+  done
+  (( ${#tl[@]} > 0 )) || return 0
+
+  local tl_label="" s_label
+  for s in "${tl[@]}"; do
+    tl_label+="${tl_label:+, }x${s}"
+  done
+  echo
+  if (( ${#real[@]} > 0 )); then
+    echo "$(pip_ts) This folder has real-time videos and sped-up copies."
+  else
+    echo "$(pip_ts) This folder has more than one sped-up speed."
+  fi
+  if (( ${#tl[@]} == 1 )); then
+    echo "  [$(pip_k t t)] Timelapse only (${tl_label}) (default)"
+  else
+    echo "  [$(pip_k t t)] All timelapse (${tl_label}) (default)"
+  fi
+  echo "      $(pip_speed_count_label "${tl[@]}")"
+  keys=(t)
+  if (( ${#tl[@]} > 1 )); then
+    for s in "${tl[@]}"; do
+      key="$(pip_speed_menu_key "$s" "${used[@]}")" || continue
+      used+=("$key")
+      key_speed[$key]="$s"
+      keys+=("$key")
+      echo "  [$(pip_k "$key" t)] x${s} only"
+      echo "      $(pip_speed_count_label "$s")"
+    done
+  fi
+  if (( ${#real[@]} > 0 )); then
+    keys+=(a r)
+    echo "  [$(pip_k a t)] Also the real-time videos"
+    echo "      Timelapse and real time, each speed paired with itself. $(pip_speed_count_label "${speeds[@]}")"
+    echo "  [$(pip_k r t)] Real time only"
+    echo "      $(pip_speed_count_label "${real[@]}")"
+  fi
+  keys+=(q)
+  echo "  [q] Quit"
+  pip_read_key "Which videos? [$(pip_keys t "${keys[@]}")]: " t
+  choice="$REPLY"
+  case "$choice" in
+    t|'')
+      pip_keep_speeds "${tl[@]}"
+      s_label="timelapse (${tl_label})"
+      ;;
+    a)
+      if (( ${#real[@]} > 0 )); then
+        s_label="every speed"
+      else
+        echo "$(pip_ts) Unknown choice: ${REPLY}. Using timelapse only."
+        pip_keep_speeds "${tl[@]}"
+        s_label="timelapse (${tl_label})"
+      fi
+      ;;
+    r)
+      if (( ${#real[@]} > 0 )); then
+        pip_keep_speeds "${real[@]}"
+        s_label="real time"
+      else
+        echo "$(pip_ts) Unknown choice: ${REPLY}. Using timelapse only."
+        pip_keep_speeds "${tl[@]}"
+        s_label="timelapse (${tl_label})"
+      fi
+      ;;
+    q) pip_quit ;;
+    *)
+      if [[ -n "${key_speed[$choice]:-}" ]]; then
+        pip_keep_speeds "${key_speed[$choice]}"
+        s_label="x${key_speed[$choice]}"
+      else
+        echo "$(pip_ts) Unknown choice: ${REPLY}. Using timelapse only."
+        pip_keep_speeds "${tl[@]}"
+        s_label="timelapse (${tl_label})"
+      fi
+      ;;
+  esac
+  echo "$(pip_ts) Using ${s_label}."
+}
+
 pip_read_durations() {
   local i n=${#F_PATH[@]}
   (( n == 0 )) && return 0
@@ -985,23 +1179,45 @@ pip_map_probe() {
   MP_DUR="${MAP_DUR[$p]}" MP_W="${MAP_W[$p]}" MP_H="${MAP_H[$p]}"
 }
 
-# Map videos of a front file, one per line: the current one, then older
-# ones newest first, then short tries newest first.
+# Drop a timelapse encode stamp at the end: _YYYYMMDD-HHMMSS or _YYYYMMDD-HHMMSS_2.
+# The drive clocks in the name use YYYYMMDD_HHMMSS, so they are left alone.
+pip_strip_encode_stamp() {
+  local s="$1"
+  if [[ "$s" =~ ^(.+)_[0-9]{8}-[0-9]{6}(_[0-9]+)?$ ]]; then
+    printf '%s\n' "${BASH_REMATCH[1]}"
+  else
+    printf '%s\n' "$s"
+  fi
+}
+
+# Journey name of a map file: drop a short try, a kept _old- file, and the encode stamp.
+pip_map_journey_of() {
+  local s="$1"
+  s="${s%%-test-*}"
+  if [[ "$s" =~ ^(.+)_old-[0-9]{8}_[0-9]{6}(-[0-9]+)?$ ]]; then
+    s="${BASH_REMATCH[1]}"
+  fi
+  pip_strip_encode_stamp "$s"
+}
+
+# Map videos of a front file, newest first, then short tries newest first.
+# FrontCam -> Map, same speed, same drive clocks. The encode stamp may differ.
 pip_map_candidates() {
-  local f="$1" dir stem cand
+  local f="$1" dir stem journey cand base
   local -a all=() old=() tries=()
   dir="$(dirname -- "${F_PATH[$f]}")"
   stem="$(basename -- "${F_PATH[$f]}")"
   stem="${stem%.*}"
   [[ "$stem" == *FrontCam* ]] || return 0
   stem="${stem/FrontCam/Map}"
-  if [[ -f "${dir}/${stem}.mp4" ]]; then
-    printf '%s\n' "${dir}/${stem}.mp4"
-  fi
+  journey="$(pip_strip_encode_stamp "$stem")"
   shopt -s nullglob
-  all=( "${dir}/${stem}"?*.mp4 )
+  all=( "${dir}/${journey}"*.mp4 )
   shopt -u nullglob
   for cand in "${all[@]}"; do
+    base="${cand##*/}"
+    base="${base%.*}"
+    [[ "$(pip_map_journey_of "$base")" == "$journey" ]] || continue
     case "${cand##*/}" in
       *.partial.*) ;;
       *-test-*) tries+=("$cand") ;;
@@ -2986,6 +3202,15 @@ fi
 pip_set_encoder_args "${_kinds[0]}"
 if [[ "$ENCODER" == auto && "${_kinds[0]}" != nvenc ]]; then
   echo "$(pip_ts) ${C_Y}hevc_nvenc is not in this ffmpeg; using ${ENC_LABEL}.${C_0}"
+fi
+
+if (( ! DO_YES && ! DRY_RUN )) && (( script_is_run_interactively )); then
+  pip_prompt_speeds
+fi
+if (( ${#F_PATH[@]} == 0 )); then
+  echo "$(pip_ts) No videos selected."
+  return_code=0
+  exit 0
 fi
 
 pip_read_durations
