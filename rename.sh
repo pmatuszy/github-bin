@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# v. 20261009.171400 - fix bash 4.2: local -a arrays on their own line (maybe_gopro_backfill_chapter_part_suffix)
 # v. 20261009.165300 - GoPro chapters: keep _part_NN when another same-camera MP4 (or raw GX/GH) is in the folder; backfill missing _part_01/_part_02 on re-run
 # v. 20261006.192000 - checksum-group rollback backup: cp without -p to mktemp (cp -p fails on /tmp/CIFS with "preserving permissions … Operation not supported")
 # v. 20261006.183857 - NEF listing uses /bin/ls so a shell ls function cannot add --full-time
@@ -12687,7 +12688,8 @@ gopro_renamed_basename_insert_part_suffix() {
 maybe_gopro_backfill_chapter_part_suffix() {
     local f="$1"
     local base="$2"
-    local dir camera_id part_num="" raw_left=0 -a peers=() sorted=() peer bn i newbase
+    local dir camera_id part_num="" raw_left=0 peer bn i newbase
+    local -a peers=() sorted=()
 
     gopro_renamed_mp4_basename_matches "$base" || return 0
     gopro_renamed_basename_has_part_segment "$base" && return 0
