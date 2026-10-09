@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261009.174500 - 12 GB chapter band min 10000 MiB (Mission 1 ~10–11 GB splits below old 11000 MiB floor)
 # v. 20261007.143052 - summary and file lengths are whole seconds
 # v. 20261007.084310 - an EV clip with the next sequence number stays in the 70mai journey, front and back
 # v. 20261006.230553 - a merged file with no location gets the first point of its .gpx
@@ -2394,7 +2395,7 @@ gopro_camera_from_basename() {
 # GoPro fixed-size chapter splits: ~4 GB (classic FAT32 cap) and ~12 GB (exFAT / high-bitrate cap).
 PGM_SIZE_SPLIT_4G_MIN_BYTES=$(( 3500 * 1024 * 1024 ))
 PGM_SIZE_SPLIT_4G_MAX_BYTES=$(( 4500 * 1024 * 1024 ))
-PGM_SIZE_SPLIT_12G_MIN_BYTES=$(( 11000 * 1024 * 1024 ))
+PGM_SIZE_SPLIT_12G_MIN_BYTES=$(( 10000 * 1024 * 1024 ))
 PGM_SIZE_SPLIT_12G_MAX_BYTES=$(( 12500 * 1024 * 1024 ))
 # Legacy names used by near-miss hints (4 GB band).
 PGM_SIZE_SPLIT_MIN_BYTES=$PGM_SIZE_SPLIT_4G_MIN_BYTES

@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# v. 20261009.174500 - 12 GB chapter band min 10000 MiB (Mission 1 ~10–11 GB splits were below 11000 MiB floor)
 # v. 20261009.174200 - prompt to drop _part_XX when not in a validated size-split chain (fixes stuck part_01/part_02 on small clips)
 # v. 20261009.172000 - GoPro _part backfill only for size-split chains (~4/12 GB + time/duration), not every same-camera clip in a folder
 # v. 20261009.171400 - fix bash 4.2: local -a arrays on their own line (maybe_gopro_backfill_chapter_part_suffix)
@@ -12664,7 +12665,8 @@ gopro_renamed_same_camera_mp4_count_in_dir() {
 # GoPro fixed-size chapter bands (aligned with video-pgm-merge.sh).
 RENAME_GOPRO_SIZE_SPLIT_4G_MIN_BYTES=$(( 3500 * 1024 * 1024 ))
 RENAME_GOPRO_SIZE_SPLIT_4G_MAX_BYTES=$(( 4500 * 1024 * 1024 ))
-RENAME_GOPRO_SIZE_SPLIT_12G_MIN_BYTES=$(( 11000 * 1024 * 1024 ))
+# ~10 GB floor: Mission 1 Pro often splits ~10.0–11.0 GiB (below the old 11000 MiB cutoff).
+RENAME_GOPRO_SIZE_SPLIT_12G_MIN_BYTES=$(( 10000 * 1024 * 1024 ))
 RENAME_GOPRO_SIZE_SPLIT_12G_MAX_BYTES=$(( 12500 * 1024 * 1024 ))
 RENAME_GOPRO_SIZE_SPLIT_TIME_TOLERANCE_SEC="${RENAME_GOPRO_SIZE_SPLIT_TIME_TOLERANCE_SEC:-180}"
 RENAME_GOPRO_SIZE_SPLIT_TIME_MIN_GAP_SEC="${RENAME_GOPRO_SIZE_SPLIT_TIME_MIN_GAP_SEC:-300}"
