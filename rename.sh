@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# v. 20261009.174200 - prompt to drop _part_XX when not in a validated size-split chain (fixes stuck part_01/part_02 on small clips)
 # v. 20261009.172000 - GoPro _part backfill only for size-split chains (~4/12 GB + time/duration), not every same-camera clip in a folder
 # v. 20261009.171400 - fix bash 4.2: local -a arrays on their own line (maybe_gopro_backfill_chapter_part_suffix)
 # v. 20261009.165300 - GoPro chapters: keep _part_NN when another same-camera MP4 (or raw GX/GH) is in the folder; backfill missing _part_01/_part_02 on re-run
@@ -12901,6 +12902,13 @@ gopro_size_split_chapter_part_index_for_path() {
     return 1
 }
 
+# True when this renamed GoPro MP4 belongs to a validated ~4 GB / ~12 GB multi-chapter chain.
+gopro_renamed_in_size_split_chapter_chain() {
+    local f="$1"
+    [[ -f "$f" ]] || return 1
+    gopro_size_split_chapter_part_index_for_path "$f" >/dev/null 2>&1
+}
+
 # Drop _part_XX only when this is truly a single chapter (not in a size-split chain; no raw GX/GH left).
 gopro_renamed_lone_part_strip_allowed() {
     local dir="$1" camera_id="$2" f="$3"
@@ -12944,22 +12952,18 @@ maybe_gopro_backfill_chapter_part_suffix() {
     printf '%s' "$newbase"
 }
 
-# When only one _part_XX file exists for this session in the directory, drop _part_NN from newbase.
+# Drop _part_NN from newbase when this file is not in a validated size-split chain (lone or mis-tagged part).
 gopro_newbase_omit_lone_part_if_sole_chapter() {
     local f="$1"
     local count_base="$2"
     local newbase="$3"
-    local dir camera_id part_count stripped
+    local stripped
 
     gopro_renamed_basename_has_part_segment "$count_base" || { printf '%s' "$newbase"; return 0; }
-    dir="$(dirname -- "$f")"
-    camera_id="$(gopro_renamed_camera_identity_from_basename "$count_base")" || { printf '%s' "$newbase"; return 0; }
-    gopro_renamed_lone_part_strip_allowed "$dir" "$camera_id" "$f" || { printf '%s' "$newbase"; return 0; }
-    part_count="$(gopro_renamed_unique_part_count_in_dir "$dir" "$camera_id")"
-    [[ "$part_count" =~ ^[0-9]+$ ]] && (( part_count == 1 )) || { printf '%s' "$newbase"; return 0; }
+    gopro_renamed_in_size_split_chapter_chain "$f" && { printf '%s' "$newbase"; return 0; }
     stripped="$(gopro_renamed_basename_without_part_segment "$newbase")" || { printf '%s' "$newbase"; return 0; }
     [[ -n "$stripped" && "$stripped" != "$newbase" ]] || { printf '%s' "$newbase"; return 0; }
-    vlog "GoPro: omit lone _part_XX (single chapter for camera id '${camera_id}' in directory): $(basename -- "$newbase") -> $(basename -- "$stripped")"
+    vlog "GoPro: remove _part_XX (not a size-split chapter chain): $(basename -- "$newbase") -> $(basename -- "$stripped")"
     printf '%s' "$stripped"
 }
 
@@ -14062,7 +14066,7 @@ gopro_auto_strip_lone_part_matches() {
 gopro_lone_part_strip_rename_candidate() {
     local f="$1"
     local new="$2"
-    local old_base new_base dir camera_id part_count ts_prefix
+    local old_base new_base dir camera_id ts_prefix
 
     [[ -f "$f" ]] || return 1
     [[ "$f" != "$new" ]] || return 1
@@ -14076,10 +14080,7 @@ gopro_lone_part_strip_rename_candidate() {
     [[ "$dir" == "$(dirname -- "$new")" ]] || return 1
 
     camera_id="$(gopro_renamed_camera_identity_from_basename "$old_base")" || return 1
-    gopro_renamed_lone_part_strip_allowed "$dir" "$camera_id" "$f" || return 1
-    part_count="$(gopro_renamed_unique_part_count_in_dir "$dir" "$camera_id")"
-    [[ "$part_count" =~ ^[0-9]+$ ]] || return 1
-    (( part_count == 1 )) || return 1
+    gopro_renamed_in_size_split_chapter_chain "$f" && return 1
 
     # Allow further basename normalization on the model segment; same capture timestamp is enough.
     [[ "$old_base" =~ ^([0-9]{8}_[0-9]{6})_ ]] || return 1
@@ -14103,17 +14104,13 @@ gopro_auto_rename_lone_part_strip_matches() {
 maybe_prompt_gopro_remove_lone_part_basename() {
     local f="$1"
     local base="$2"
-    local dir camera_id part_count stripped answer confirm
+    local dir stripped answer confirm
 
     # Not applicable is success (return 0, no output) — return 1 aborts transform_name under set -E + ERR trap in $(...).
     [[ -f "$f" ]] || return 0
     gopro_renamed_basename_has_part_segment "$base" || return 0
+    gopro_renamed_in_size_split_chapter_chain "$f" && return 0
     dir="$(dirname -- "$f")"
-    camera_id="$(gopro_renamed_camera_identity_from_basename "$base")" || return 0
-    gopro_renamed_lone_part_strip_allowed "$dir" "$camera_id" "$f" || return 0
-    part_count="$(gopro_renamed_unique_part_count_in_dir "$dir" "$camera_id")"
-    [[ "$part_count" =~ ^[0-9]+$ ]] || return 0
-    (( part_count > 1 )) && return 0
 
     stripped="$(gopro_renamed_basename_without_part_segment "$base")" || return 0
     [[ "$stripped" != "$base" ]] || return 0
@@ -14129,7 +14126,7 @@ maybe_prompt_gopro_remove_lone_part_basename() {
     fi
 
     if [[ "$mode" == "dry-run" ]]; then
-        emit_wrap_labeled_stderr "GOPRO: " "${CYAN}GOPRO:${RESET} " "Single chapter in directory — would prompt to remove _part_XX from '$(basename -- "$base")' → '$(basename -- "$stripped")'."
+        emit_wrap_labeled_stderr "GOPRO: " "${CYAN}GOPRO:${RESET} " "Not a size-split chapter chain — would prompt to remove _part_XX from '$(basename -- "$base")' → '$(basename -- "$stripped")'."
         printf '%s' "$stripped"
         return 0
     fi
@@ -14137,7 +14134,7 @@ maybe_prompt_gopro_remove_lone_part_basename() {
     while true; do
         nonverbose_progress_dot_prepare_for_prompt
         echo >&2
-        echo -e "$(user_prompt_ts_prefix)${GREEN}This GoPro file looks like a single chapter in this folder (no same-camera sibling, no raw GX/GH clip) but its name still has _part_XX:${RESET}" >&2
+        echo -e "$(user_prompt_ts_prefix)${GREEN}This GoPro name has _part_XX but the file is not part of a validated size-split chapter chain (~4 GB / ~12 GB clips with matching times):${RESET}" >&2
         echo "  OLD: $(format_path_for_log "$f")" >&2
         echo "  NEW: $(format_path_for_log "$(dirname -- "$f")/$stripped")" >&2
         echo "  $(rename_menu_key_bracket Y Y) Remove _part_XX from this filename (default)" >&2
