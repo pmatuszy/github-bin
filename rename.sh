@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# v. 20261009.165300 - GoPro chapters: keep _part_NN when another same-camera MP4 (or raw GX/GH) is in the folder; backfill missing _part_01/_part_02 on re-run
 # v. 20261006.192000 - checksum-group rollback backup: cp without -p to mktemp (cp -p fails on /tmp/CIFS with "preserving permissions … Operation not supported")
 # v. 20261006.183857 - NEF listing uses /bin/ls so a shell ls function cannot add --full-time
 # v. 20261006.134200 - fix menu default keys: checksum-verify prompt [C] (was wrongly [c] via default_key S); GoPro MP4/WAV [M]
@@ -12606,6 +12607,136 @@ gopro_renamed_basename_without_part_segment() {
     printf '%s%s%s' "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}" "${BASH_REMATCH[3]}"
 }
 
+gopro_camera_identity_from_device_labels() {
+    local manuf="$1" model="$2" id="" modern=""
+
+    [[ -n "$manuf" && -n "$model" ]] || return 1
+    id="${manuf}_${model}"
+    modern="$(gopro_modernize_legacy_camera_tail "$id" 2>/dev/null)" || modern=""
+    [[ -n "$modern" ]] && id="$modern"
+    printf '%s' "$id"
+}
+
+gopro_raw_gopro_mp4_count_in_dir() {
+    local dir="$1"
+    local count=0 f bn
+    local saved_nullglob
+
+    [[ -n "$dir" ]] || { printf '0'; return 0; }
+
+    saved_nullglob="$(shopt -p nullglob || true)"
+    shopt -s nullglob
+    for f in "$dir"/*; do
+        [[ -f "$f" ]] || continue
+        bn="$(basename -- "$f")"
+        gopro_raw_mp4_basename_matches "$bn" && (( count++ )) || true
+    done
+    eval "$saved_nullglob"
+
+    printf '%s' "$count"
+}
+
+# Renamed GoPro MP4s with the same camera/model tail (e.g. GoPro_Mission1_Pro), any _part state.
+gopro_renamed_same_camera_mp4_count_in_dir() {
+    local dir="$1" camera_id="$2"
+    local count=0 f bn id
+    local saved_nullglob
+
+    [[ -n "$dir" && -n "$camera_id" ]] || { printf '0'; return 0; }
+
+    saved_nullglob="$(shopt -p nullglob || true)"
+    shopt -s nullglob
+    for f in "$dir"/*; do
+        [[ -f "$f" ]] || continue
+        bn="$(basename -- "$f")"
+        gopro_renamed_mp4_basename_matches "$bn" || continue
+        id="$(gopro_renamed_camera_identity_from_basename "$bn")" || continue
+        [[ "$id" == "$camera_id" ]] && (( count++ )) || true
+    done
+    eval "$saved_nullglob"
+
+    printf '%s' "$count"
+}
+
+# Drop _part_XX only when this is truly a single chapter (no same-camera sibling, no raw GX/GH left).
+gopro_renamed_lone_part_strip_allowed() {
+    local dir="$1" camera_id="$2"
+    local renamed_count raw_count part_count
+
+    [[ -n "$dir" && -n "$camera_id" ]] || return 1
+    renamed_count="$(gopro_renamed_same_camera_mp4_count_in_dir "$dir" "$camera_id")"
+    raw_count="$(gopro_raw_gopro_mp4_count_in_dir "$dir")"
+    part_count="$(gopro_renamed_unique_part_count_in_dir "$dir" "$camera_id")"
+    [[ "$renamed_count" =~ ^[0-9]+$ && "$raw_count" =~ ^[0-9]+$ && "$part_count" =~ ^[0-9]+$ ]] || return 1
+    (( renamed_count == 1 && raw_count == 0 && part_count == 1 ))
+}
+
+gopro_renamed_basename_insert_part_suffix() {
+    local bn="$1" part="$2"
+
+    [[ "$bn" == *"_part_"* ]] && return 1
+    [[ "$part" =~ ^[0-9]{2}$ ]] || return 1
+    if [[ "$bn" =~ ^(.+)(_Proxy)?(\.[mM][pP]4)$ ]]; then
+        printf '%s_part_%s%s%s' "${BASH_REMATCH[1]}" "$part" "${BASH_REMATCH[2]}" "${BASH_REMATCH[3]}"
+        return 0
+    fi
+    return 1
+}
+
+# When several renamed clips share a camera tail but lack _part_NN (or only one has it), assign by time order.
+maybe_gopro_backfill_chapter_part_suffix() {
+    local f="$1"
+    local base="$2"
+    local dir camera_id part_num="" raw_left=0 -a peers=() sorted=() peer bn i newbase
+
+    gopro_renamed_mp4_basename_matches "$base" || return 0
+    gopro_renamed_basename_has_part_segment "$base" && return 0
+    dir="$(dirname -- "$f")"
+    camera_id="$(gopro_renamed_camera_identity_from_basename "$base")" || return 0
+    raw_left="$(gopro_raw_gopro_mp4_count_in_dir "$dir")"
+
+    local saved_nullglob
+    saved_nullglob="$(shopt -p nullglob || true)"
+    shopt -s nullglob
+    for peer in "$dir"/*; do
+        [[ -f "$peer" ]] || continue
+        bn="$(basename -- "$peer")"
+        gopro_renamed_mp4_basename_matches "$bn" || continue
+        [[ "$(gopro_renamed_camera_identity_from_basename "$bn")" == "$camera_id" ]] || continue
+        peers+=( "$peer" )
+    done
+    eval "$saved_nullglob"
+
+    if (( ${#peers[@]} >= 2 )); then
+        :
+    elif (( ${#peers[@]} == 1 )) && [[ "$raw_left" =~ ^[0-9]+$ ]] && (( raw_left >= 1 )); then
+        part_num="01"
+    else
+        return 0
+    fi
+
+    if [[ -z "$part_num" ]]; then
+        mapfile -t sorted < <(
+            for peer in "${peers[@]}"; do
+                bn="$(basename -- "$peer")"
+                [[ "$bn" =~ ^([0-9]{8}_[0-9]{6})_ ]] || continue
+                printf '%s\t%s\n' "${BASH_REMATCH[1]}" "$peer"
+            done | LC_ALL=C sort -t $'\t' -k1,1 -k2,2 | cut -f2-
+        )
+        for i in "${!sorted[@]}"; do
+            [[ "${sorted[$i]}" == "$f" ]] || continue
+            part_num="$(printf '%02d' $((i + 1)))"
+            break
+        done
+        [[ -n "$part_num" ]] || return 0
+    fi
+
+    newbase="$(gopro_renamed_basename_insert_part_suffix "$base" "$part_num")" || return 0
+    [[ "$newbase" != "$base" ]] || return 0
+    vlog "GoPro: backfill chapter part suffix (multi-chapter same camera '${camera_id}'): $base -> $newbase"
+    printf '%s' "$newbase"
+}
+
 # When only one _part_XX file exists for this session in the directory, drop _part_NN from newbase.
 gopro_newbase_omit_lone_part_if_sole_chapter() {
     local f="$1"
@@ -12616,6 +12747,7 @@ gopro_newbase_omit_lone_part_if_sole_chapter() {
     gopro_renamed_basename_has_part_segment "$count_base" || { printf '%s' "$newbase"; return 0; }
     dir="$(dirname -- "$f")"
     camera_id="$(gopro_renamed_camera_identity_from_basename "$count_base")" || { printf '%s' "$newbase"; return 0; }
+    gopro_renamed_lone_part_strip_allowed "$dir" "$camera_id" || { printf '%s' "$newbase"; return 0; }
     part_count="$(gopro_renamed_unique_part_count_in_dir "$dir" "$camera_id")"
     [[ "$part_count" =~ ^[0-9]+$ ]] && (( part_count == 1 )) || { printf '%s' "$newbase"; return 0; }
     stripped="$(gopro_renamed_basename_without_part_segment "$newbase")" || { printf '%s' "$newbase"; return 0; }
@@ -13737,6 +13869,7 @@ gopro_lone_part_strip_rename_candidate() {
     [[ "$dir" == "$(dirname -- "$new")" ]] || return 1
 
     camera_id="$(gopro_renamed_camera_identity_from_basename "$old_base")" || return 1
+    gopro_renamed_lone_part_strip_allowed "$dir" "$camera_id" || return 1
     part_count="$(gopro_renamed_unique_part_count_in_dir "$dir" "$camera_id")"
     [[ "$part_count" =~ ^[0-9]+$ ]] || return 1
     (( part_count == 1 )) || return 1
@@ -13770,6 +13903,7 @@ maybe_prompt_gopro_remove_lone_part_basename() {
     gopro_renamed_basename_has_part_segment "$base" || return 0
     dir="$(dirname -- "$f")"
     camera_id="$(gopro_renamed_camera_identity_from_basename "$base")" || return 0
+    gopro_renamed_lone_part_strip_allowed "$dir" "$camera_id" || return 0
     part_count="$(gopro_renamed_unique_part_count_in_dir "$dir" "$camera_id")"
     [[ "$part_count" =~ ^[0-9]+$ ]] || return 0
     (( part_count > 1 )) && return 0
@@ -13796,7 +13930,7 @@ maybe_prompt_gopro_remove_lone_part_basename() {
     while true; do
         nonverbose_progress_dot_prepare_for_prompt
         echo >&2
-        echo -e "$(user_prompt_ts_prefix)${GREEN}This GoPro file is the only chapter here but its name still has _part_XX:${RESET}" >&2
+        echo -e "$(user_prompt_ts_prefix)${GREEN}This GoPro file looks like a single chapter in this folder (no same-camera sibling, no raw GX/GH clip) but its name still has _part_XX:${RESET}" >&2
         echo "  OLD: $(format_path_for_log "$f")" >&2
         echo "  NEW: $(format_path_for_log "$(dirname -- "$f")/$stripped")" >&2
         echo "  $(rename_menu_key_bracket Y Y) Remove _part_XX from this filename (default)" >&2
@@ -13963,15 +14097,21 @@ transform_gopro_camera_basename() {
     fi
 
     if [[ "$czy_gopro" == 1 && "$gopro4" == 0 && "$base" =~ ^[cCgG][hHxX][0-9][0-9][0-9][0-9][0-9][0-9] ]]; then
-        local session_key chapter_count chapter_id renamed_part_count
+        local session_key chapter_count chapter_id renamed_part_count renamed_camera_count expected_camera_id
         session_key="$(gopro_raw_basename_session_key "$base")" || session_key=""
         chapter_id="$(gopro_raw_basename_chapter_id "$base")"
         if [[ -n "$session_key" && -n "$chapter_id" ]]; then
             chapter_count="$(gopro_raw_session_chapter_count_in_dir "$(dirname -- "$file")" "$session_key")"
             renamed_part_count="$(gopro_renamed_part_segment_count_in_dir "$(dirname -- "$file")")"
+            renamed_camera_count=0
+            expected_camera_id="$(gopro_camera_identity_from_device_labels "$DeviceManufacturer" "$DeviceModelName" 2>/dev/null)" || expected_camera_id=""
+            if [[ -n "$expected_camera_id" ]]; then
+                renamed_camera_count="$(gopro_renamed_same_camera_mp4_count_in_dir "$(dirname -- "$file")" "$expected_camera_id")"
+            fi
             if [[ "$chapter_id" != "01" ]] \
                || { [[ "$chapter_count" =~ ^[0-9]+$ ]] && (( chapter_count > 1 )); } \
-               || { [[ "$renamed_part_count" =~ ^[0-9]+$ ]] && (( renamed_part_count > 0 )); }; then
+               || { [[ "$renamed_part_count" =~ ^[0-9]+$ ]] && (( renamed_part_count > 0 )); } \
+               || { [[ "$renamed_camera_count" =~ ^[0-9]+$ ]] && (( renamed_camera_count > 0 )); }; then
                 if [[ -n "$suffix_pliku" ]]; then
                     suffix_pliku="${suffix_pliku}_part_${chapter_id}"
                 else
@@ -14766,6 +14906,30 @@ transform_name() {
             vlog "Canon IXY Digital 50 rename: $base -> $_canon_try"
         else
             vlog "Canon IXY Digital 50 rename: no usable IXUS 40 metadata for $base (rc=$_canon_rc); falling back to normal rename"
+        fi
+    fi
+
+    if [[ -f "$f" ]] && ((_tn_skip_exif == 0)) && [[ "$stopped_by_user" != yes ]] \
+        && gopro_renamed_mp4_basename_matches "$base" \
+        && ! gopro_renamed_basename_has_part_segment "$base"; then
+        local _gopro_part_fill="" _gopro_part_fill_rc=0 _gopro_part_fill_trap=""
+        local _tn_save_e_gpf=0
+        [[ $- == *e* ]] && _tn_save_e_gpf=1
+        set +e
+        _gopro_part_fill_trap="$(trap -p ERR || true)"
+        trap - ERR
+        _gopro_part_fill="$(maybe_gopro_backfill_chapter_part_suffix "$f" "$base")"
+        _gopro_part_fill_rc=$?
+        eval "${_gopro_part_fill_trap:-}"
+        if ((_tn_save_e_gpf)); then
+            set -e
+        else
+            set +e
+        fi
+        if (( _gopro_part_fill_rc == 0 )) && [[ -n "$_gopro_part_fill" && "$_gopro_part_fill" != "$base" ]]; then
+            newbase="$_gopro_part_fill"
+            base="$_gopro_part_fill"
+            _gopro_applied=1
         fi
     fi
 
