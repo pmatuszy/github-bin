@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# v. 20261009.172000 - GoPro _part backfill only for size-split chains (~4/12 GB + time/duration), not every same-camera clip in a folder
 # v. 20261009.171400 - fix bash 4.2: local -a arrays on their own line (maybe_gopro_backfill_chapter_part_suffix)
 # v. 20261009.165300 - GoPro chapters: keep _part_NN when another same-camera MP4 (or raw GX/GH) is in the folder; backfill missing _part_01/_part_02 on re-run
 # v. 20261006.192000 - checksum-group rollback backup: cp without -p to mktemp (cp -p fails on /tmp/CIFS with "preserving permissions … Operation not supported")
@@ -12659,12 +12660,254 @@ gopro_renamed_same_camera_mp4_count_in_dir() {
     printf '%s' "$count"
 }
 
-# Drop _part_XX only when this is truly a single chapter (no same-camera sibling, no raw GX/GH left).
+# GoPro fixed-size chapter bands (aligned with video-pgm-merge.sh).
+RENAME_GOPRO_SIZE_SPLIT_4G_MIN_BYTES=$(( 3500 * 1024 * 1024 ))
+RENAME_GOPRO_SIZE_SPLIT_4G_MAX_BYTES=$(( 4500 * 1024 * 1024 ))
+RENAME_GOPRO_SIZE_SPLIT_12G_MIN_BYTES=$(( 11000 * 1024 * 1024 ))
+RENAME_GOPRO_SIZE_SPLIT_12G_MAX_BYTES=$(( 12500 * 1024 * 1024 ))
+RENAME_GOPRO_SIZE_SPLIT_TIME_TOLERANCE_SEC="${RENAME_GOPRO_SIZE_SPLIT_TIME_TOLERANCE_SEC:-180}"
+RENAME_GOPRO_SIZE_SPLIT_TIME_MIN_GAP_SEC="${RENAME_GOPRO_SIZE_SPLIT_TIME_MIN_GAP_SEC:-300}"
+RENAME_GOPRO_SIZE_SPLIT_TIME_MAX_GAP_SEC="${RENAME_GOPRO_SIZE_SPLIT_TIME_MAX_GAP_SEC:-720}"
+RENAME_GOPRO_SIZE_SPLIT_12G_TIME_MAX_GAP_SEC="${RENAME_GOPRO_SIZE_SPLIT_12G_TIME_MAX_GAP_SEC:-2400}"
+RENAME_GOPRO_SIZE_SPLIT_DURATION_REJECT_BELOW_SEC="${RENAME_GOPRO_SIZE_SPLIT_DURATION_REJECT_BELOW_SEC:-420}"
+RENAME_GOPRO_SIZE_SPLIT_12G_DURATION_REJECT_BELOW_SEC="${RENAME_GOPRO_SIZE_SPLIT_12G_DURATION_REJECT_BELOW_SEC:-1080}"
+
+gopro_renamed_basename_datetime_fields() {
+    local bn="$1"
+
+    [[ "$bn" =~ ^([0-9]{8})_([0-9]{6})_ ]] || return 1
+    GOPRO_RENAME_TS_DATE="${BASH_REMATCH[1]}"
+    GOPRO_RENAME_TS_TIME="${BASH_REMATCH[2]}"
+    return 0
+}
+
+gopro_rename_hhmmss_to_seconds() {
+    local t="$1"
+    awk -v t="$t" 'BEGIN {
+        h=int(substr(t,1,2)); m=int(substr(t,3,2)); s=int(substr(t,5,2));
+        printf "%d\n", h*3600+m*60+s
+    }'
+}
+
+gopro_rename_datetime_to_epoch() {
+    local d="$1" t="$2" iso
+    iso="${d:0:4}-${d:4:2}-${d:6:2} ${t:0:2}:${t:2:2}:${t:4:2}"
+    date -d "$iso" +%s 2>/dev/null
+}
+
+gopro_rename_ffprobe_duration_seconds() {
+    local f="$1" d
+    command -v ffprobe >/dev/null 2>&1 || return 1
+    d="$(ffprobe -v error -show_entries format=duration \
+        -of default=noprint_wrappers=1:nokey=1 -- "$f" 2>/dev/null)" || return 1
+    [[ -n "$d" ]] || return 1
+    awk -v d="$d" 'BEGIN { if (d+0 >= 0) printf "%.3f\n", d+0; else exit 1 }'
+}
+
+gopro_size_split_tier_for_bytes() {
+    local sz="$1"
+    (( sz >= RENAME_GOPRO_SIZE_SPLIT_12G_MIN_BYTES && sz <= RENAME_GOPRO_SIZE_SPLIT_12G_MAX_BYTES )) && { printf '12'; return 0; }
+    (( sz >= RENAME_GOPRO_SIZE_SPLIT_4G_MIN_BYTES && sz <= RENAME_GOPRO_SIZE_SPLIT_4G_MAX_BYTES )) && { printf '4'; return 0; }
+    return 1
+}
+
+gopro_size_split_tier_for_path() {
+    gopro_size_split_tier_for_bytes "$(get_file_size_bytes "$1")"
+}
+
+gopro_size_split_duration_too_short() {
+    local dur="$1" tier="${2:-4}" rej
+    rej="$RENAME_GOPRO_SIZE_SPLIT_DURATION_REJECT_BELOW_SEC"
+    [[ "$tier" == 12 ]] && rej="$RENAME_GOPRO_SIZE_SPLIT_12G_DURATION_REJECT_BELOW_SEC"
+    awk -v d="$dur" -v rej="$rej" 'BEGIN { exit !(d+0 > 0 && d+0 < rej) }'
+}
+
+gopro_size_split_is_full_segment_at_tier() {
+    local f="$1" tier="$2" sz dur
+    sz="$(get_file_size_bytes "$f")"
+    dur="$(gopro_rename_ffprobe_duration_seconds "$f" 2>/dev/null)" || dur=""
+    case "$tier" in
+        12)
+            (( sz >= RENAME_GOPRO_SIZE_SPLIT_12G_MIN_BYTES && sz <= RENAME_GOPRO_SIZE_SPLIT_12G_MAX_BYTES )) || return 1
+            [[ -n "$dur" ]] && gopro_size_split_duration_too_short "$dur" 12 && return 1
+            return 0
+            ;;
+        4)
+            (( sz >= RENAME_GOPRO_SIZE_SPLIT_4G_MIN_BYTES && sz <= RENAME_GOPRO_SIZE_SPLIT_4G_MAX_BYTES )) || return 1
+            [[ -n "$dur" ]] && gopro_size_split_duration_too_short "$dur" 4 && return 1
+            return 0
+            ;;
+    esac
+    return 1
+}
+
+gopro_size_split_is_full_segment() {
+    local f="$1" tier
+    tier="$(gopro_size_split_tier_for_path "$f")" || return 1
+    gopro_size_split_is_full_segment_at_tier "$f" "$tier"
+}
+
+gopro_size_split_is_partial_segment_at_tier() {
+    local f="$1" tier="$2" sz
+    sz="$(get_file_size_bytes "$f")"
+    case "$tier" in
+        12) (( sz < RENAME_GOPRO_SIZE_SPLIT_12G_MIN_BYTES )) && return 0 ;;
+        4)  (( sz < RENAME_GOPRO_SIZE_SPLIT_4G_MIN_BYTES )) && return 0 ;;
+    esac
+    return 1
+}
+
+gopro_rename_size_split_timestamps_follow() {
+    local prev_f="$1" next_f="$2"
+    local pb nb prev_date prev_time next_date next_time
+    local prev_epoch next_epoch dur expected delta tol min_gap max_gap gap tier
+
+    pb="$(basename -- "$prev_f")"
+    nb="$(basename -- "$next_f")"
+    gopro_renamed_basename_datetime_fields "$pb" || return 1
+    prev_date="$GOPRO_RENAME_TS_DATE" prev_time="$GOPRO_RENAME_TS_TIME"
+    gopro_renamed_basename_datetime_fields "$nb" || return 1
+    next_date="$GOPRO_RENAME_TS_DATE" next_time="$GOPRO_RENAME_TS_TIME"
+
+    if [[ "$prev_date" == "$next_date" && "$prev_time" == "$next_time" ]]; then
+        return 0
+    fi
+
+    tol="$RENAME_GOPRO_SIZE_SPLIT_TIME_TOLERANCE_SEC"
+    min_gap="$RENAME_GOPRO_SIZE_SPLIT_TIME_MIN_GAP_SEC"
+    max_gap="$RENAME_GOPRO_SIZE_SPLIT_TIME_MAX_GAP_SEC"
+    tier="$(gopro_size_split_tier_for_path "$prev_f" 2>/dev/null)" || tier=""
+    [[ "$tier" == 12 ]] && max_gap="$RENAME_GOPRO_SIZE_SPLIT_12G_TIME_MAX_GAP_SEC"
+
+    dur="$(gopro_rename_ffprobe_duration_seconds "$prev_f" 2>/dev/null)" || dur=""
+
+    if prev_epoch="$(gopro_rename_datetime_to_epoch "$prev_date" "$prev_time" 2>/dev/null)" \
+        && next_epoch="$(gopro_rename_datetime_to_epoch "$next_date" "$next_time" 2>/dev/null)"; then
+        if [[ -n "$dur" ]]; then
+            expected=$(awk -v p="$prev_epoch" -v d="$dur" 'BEGIN{printf "%d", p+d+0.5}')
+            delta=$(( next_epoch - expected ))
+            (( delta >= -tol && delta <= tol )) && return 0
+        fi
+        gap=$(( next_epoch - prev_epoch ))
+        if [[ -n "$dur" ]]; then
+            return 1
+        fi
+        (( gap >= min_gap && gap <= max_gap ))
+        return $?
+    fi
+
+    [[ "$prev_date" == "$next_date" ]] || return 1
+    prev_epoch="$(gopro_rename_hhmmss_to_seconds "$prev_time")"
+    next_epoch="$(gopro_rename_hhmmss_to_seconds "$next_time")"
+    (( next_epoch >= prev_epoch )) || return 1
+    if [[ -n "$dur" ]]; then
+        expected=$(awk -v p="$prev_epoch" -v d="$dur" 'BEGIN{printf "%d", p+d+0.5}')
+        delta=$(( next_epoch - expected ))
+        (( delta >= -tol && delta <= tol )) && return 0
+        return 1
+    fi
+    gap=$(( next_epoch - prev_epoch ))
+    (( gap >= min_gap && gap <= max_gap ))
+}
+
+gopro_size_split_run_valid() {
+    local -a run=("$@")
+    local i n=${#run[@]} f tier next_tier
+    (( n >= 2 )) || return 1
+    tier="$(gopro_size_split_tier_for_path "${run[0]}")" || return 1
+    for (( i = 0; i < n - 1; i++ )); do
+        next_tier="$(gopro_size_split_tier_for_path "${run[i]}")" || return 1
+        [[ "$next_tier" == "$tier" ]] || return 1
+        gopro_size_split_is_full_segment_at_tier "${run[i]}" "$tier" || return 1
+    done
+    f="${run[n - 1]}"
+    next_tier="$(gopro_size_split_tier_for_path "$f" 2>/dev/null)" || next_tier=""
+    if [[ -n "$next_tier" && "$next_tier" == "$tier" ]] \
+        && gopro_size_split_is_full_segment_at_tier "$f" "$tier"; then
+        return 0
+    fi
+    gopro_size_split_is_partial_segment_at_tier "$f" "$tier"
+}
+
+# stdout: 01..NN when $f is in a valid ~4 GB / ~12 GB split chain (>=2 files); else return 1.
+gopro_size_split_chapter_part_index_for_path() {
+    local f="$1"
+    local dir base camera_id
+    local -a peers=() sorted=() run=()
+    local saved_nullglob i n run_tier next_tier peer bn idx part_num
+
+    [[ -f "$f" ]] || return 1
+    base="$(basename -- "$f")"
+    gopro_renamed_mp4_basename_matches "$base" || return 1
+    camera_id="$(gopro_renamed_camera_identity_from_basename "$base")" || return 1
+    dir="$(dirname -- "$f")"
+
+    saved_nullglob="$(shopt -p nullglob || true)"
+    shopt -s nullglob
+    for peer in "$dir"/*; do
+        [[ -f "$peer" ]] || continue
+        bn="$(basename -- "$peer")"
+        gopro_renamed_mp4_basename_matches "$bn" || continue
+        [[ "$(gopro_renamed_camera_identity_from_basename "$bn")" == "$camera_id" ]] || continue
+        peers+=( "$peer" )
+    done
+    eval "$saved_nullglob"
+    (( ${#peers[@]} >= 2 )) || return 1
+
+    mapfile -t sorted < <(
+        for peer in "${peers[@]}"; do
+            bn="$(basename -- "$peer")"
+            gopro_renamed_basename_datetime_fields "$bn" || continue
+            printf '%s_%s\t%s\n' "$GOPRO_RENAME_TS_DATE" "$GOPRO_RENAME_TS_TIME" "$peer"
+        done | LC_ALL=C sort -t $'\t' -k1,1 -k2,2 | cut -f3-
+    )
+    n=${#sorted[@]}
+    i=0
+    while (( i < n )); do
+        run=()
+        if gopro_size_split_is_full_segment "${sorted[i]}"; then
+            run=( "${sorted[i]}" )
+            run_tier="$(gopro_size_split_tier_for_path "${sorted[i]}")"
+            (( i++ )) || true
+            while (( i < n )); do
+                if ! gopro_rename_size_split_timestamps_follow "${run[$((${#run[@]} - 1))]}" "${sorted[i]}"; then
+                    break
+                fi
+                if gopro_size_split_is_full_segment "${sorted[i]}"; then
+                    next_tier="$(gopro_size_split_tier_for_path "${sorted[i]}")" || break
+                    [[ "$next_tier" == "$run_tier" ]] || break
+                    run+=( "${sorted[i]}" )
+                    (( i++ )) || true
+                    continue
+                fi
+                if gopro_size_split_is_partial_segment_at_tier "${sorted[i]}" "$run_tier"; then
+                    run+=( "${sorted[i]}" )
+                    (( i++ )) || true
+                fi
+                break
+            done
+            if gopro_size_split_run_valid "${run[@]}"; then
+                for idx in "${!run[@]}"; do
+                    [[ "${run[idx]}" == "$f" ]] || continue
+                    part_num="$(printf '%02d' $((idx + 1)))"
+                    printf '%s' "$part_num"
+                    return 0
+                done
+            fi
+        else
+            (( i++ )) || true
+        fi
+    done
+    return 1
+}
+
+# Drop _part_XX only when this is truly a single chapter (not in a size-split chain; no raw GX/GH left).
 gopro_renamed_lone_part_strip_allowed() {
-    local dir="$1" camera_id="$2"
+    local dir="$1" camera_id="$2" f="$3"
     local renamed_count raw_count part_count
 
     [[ -n "$dir" && -n "$camera_id" ]] || return 1
+    [[ -n "$f" ]] && gopro_size_split_chapter_part_index_for_path "$f" >/dev/null 2>&1 && return 1
     renamed_count="$(gopro_renamed_same_camera_mp4_count_in_dir "$dir" "$camera_id")"
     raw_count="$(gopro_raw_gopro_mp4_count_in_dir "$dir")"
     part_count="$(gopro_renamed_unique_part_count_in_dir "$dir" "$camera_id")"
@@ -12684,58 +12927,20 @@ gopro_renamed_basename_insert_part_suffix() {
     return 1
 }
 
-# When several renamed clips share a camera tail but lack _part_NN (or only one has it), assign by time order.
+# Add _part_NN only when this file belongs to a validated GoPro size-split chain (same rules as video-pgm-merge.sh).
 maybe_gopro_backfill_chapter_part_suffix() {
     local f="$1"
     local base="$2"
-    local dir camera_id part_num="" raw_left=0 peer bn i newbase
-    local -a peers=() sorted=()
+    local part_num="" newbase
 
     gopro_renamed_mp4_basename_matches "$base" || return 0
     gopro_renamed_basename_has_part_segment "$base" && return 0
-    dir="$(dirname -- "$f")"
-    camera_id="$(gopro_renamed_camera_identity_from_basename "$base")" || return 0
-    raw_left="$(gopro_raw_gopro_mp4_count_in_dir "$dir")"
-
-    local saved_nullglob
-    saved_nullglob="$(shopt -p nullglob || true)"
-    shopt -s nullglob
-    for peer in "$dir"/*; do
-        [[ -f "$peer" ]] || continue
-        bn="$(basename -- "$peer")"
-        gopro_renamed_mp4_basename_matches "$bn" || continue
-        [[ "$(gopro_renamed_camera_identity_from_basename "$bn")" == "$camera_id" ]] || continue
-        peers+=( "$peer" )
-    done
-    eval "$saved_nullglob"
-
-    if (( ${#peers[@]} >= 2 )); then
-        :
-    elif (( ${#peers[@]} == 1 )) && [[ "$raw_left" =~ ^[0-9]+$ ]] && (( raw_left >= 1 )); then
-        part_num="01"
-    else
-        return 0
-    fi
-
-    if [[ -z "$part_num" ]]; then
-        mapfile -t sorted < <(
-            for peer in "${peers[@]}"; do
-                bn="$(basename -- "$peer")"
-                [[ "$bn" =~ ^([0-9]{8}_[0-9]{6})_ ]] || continue
-                printf '%s\t%s\n' "${BASH_REMATCH[1]}" "$peer"
-            done | LC_ALL=C sort -t $'\t' -k1,1 -k2,2 | cut -f2-
-        )
-        for i in "${!sorted[@]}"; do
-            [[ "${sorted[$i]}" == "$f" ]] || continue
-            part_num="$(printf '%02d' $((i + 1)))"
-            break
-        done
-        [[ -n "$part_num" ]] || return 0
-    fi
+    part_num="$(gopro_size_split_chapter_part_index_for_path "$f" 2>/dev/null)" || return 0
+    [[ "$part_num" =~ ^[0-9]{2}$ ]] || return 0
 
     newbase="$(gopro_renamed_basename_insert_part_suffix "$base" "$part_num")" || return 0
     [[ "$newbase" != "$base" ]] || return 0
-    vlog "GoPro: backfill chapter part suffix (multi-chapter same camera '${camera_id}'): $base -> $newbase"
+    vlog "GoPro: backfill _part_${part_num} (size-split chapter chain): $base -> $newbase"
     printf '%s' "$newbase"
 }
 
@@ -12749,7 +12954,7 @@ gopro_newbase_omit_lone_part_if_sole_chapter() {
     gopro_renamed_basename_has_part_segment "$count_base" || { printf '%s' "$newbase"; return 0; }
     dir="$(dirname -- "$f")"
     camera_id="$(gopro_renamed_camera_identity_from_basename "$count_base")" || { printf '%s' "$newbase"; return 0; }
-    gopro_renamed_lone_part_strip_allowed "$dir" "$camera_id" || { printf '%s' "$newbase"; return 0; }
+    gopro_renamed_lone_part_strip_allowed "$dir" "$camera_id" "$f" || { printf '%s' "$newbase"; return 0; }
     part_count="$(gopro_renamed_unique_part_count_in_dir "$dir" "$camera_id")"
     [[ "$part_count" =~ ^[0-9]+$ ]] && (( part_count == 1 )) || { printf '%s' "$newbase"; return 0; }
     stripped="$(gopro_renamed_basename_without_part_segment "$newbase")" || { printf '%s' "$newbase"; return 0; }
@@ -13871,7 +14076,7 @@ gopro_lone_part_strip_rename_candidate() {
     [[ "$dir" == "$(dirname -- "$new")" ]] || return 1
 
     camera_id="$(gopro_renamed_camera_identity_from_basename "$old_base")" || return 1
-    gopro_renamed_lone_part_strip_allowed "$dir" "$camera_id" || return 1
+    gopro_renamed_lone_part_strip_allowed "$dir" "$camera_id" "$f" || return 1
     part_count="$(gopro_renamed_unique_part_count_in_dir "$dir" "$camera_id")"
     [[ "$part_count" =~ ^[0-9]+$ ]] || return 1
     (( part_count == 1 )) || return 1
@@ -13905,7 +14110,7 @@ maybe_prompt_gopro_remove_lone_part_basename() {
     gopro_renamed_basename_has_part_segment "$base" || return 0
     dir="$(dirname -- "$f")"
     camera_id="$(gopro_renamed_camera_identity_from_basename "$base")" || return 0
-    gopro_renamed_lone_part_strip_allowed "$dir" "$camera_id" || return 0
+    gopro_renamed_lone_part_strip_allowed "$dir" "$camera_id" "$f" || return 0
     part_count="$(gopro_renamed_unique_part_count_in_dir "$dir" "$camera_id")"
     [[ "$part_count" =~ ^[0-9]+$ ]] || return 0
     (( part_count > 1 )) && return 0
@@ -14099,21 +14304,15 @@ transform_gopro_camera_basename() {
     fi
 
     if [[ "$czy_gopro" == 1 && "$gopro4" == 0 && "$base" =~ ^[cCgG][hHxX][0-9][0-9][0-9][0-9][0-9][0-9] ]]; then
-        local session_key chapter_count chapter_id renamed_part_count renamed_camera_count expected_camera_id
+        local session_key chapter_count chapter_id renamed_part_count
         session_key="$(gopro_raw_basename_session_key "$base")" || session_key=""
         chapter_id="$(gopro_raw_basename_chapter_id "$base")"
         if [[ -n "$session_key" && -n "$chapter_id" ]]; then
             chapter_count="$(gopro_raw_session_chapter_count_in_dir "$(dirname -- "$file")" "$session_key")"
             renamed_part_count="$(gopro_renamed_part_segment_count_in_dir "$(dirname -- "$file")")"
-            renamed_camera_count=0
-            expected_camera_id="$(gopro_camera_identity_from_device_labels "$DeviceManufacturer" "$DeviceModelName" 2>/dev/null)" || expected_camera_id=""
-            if [[ -n "$expected_camera_id" ]]; then
-                renamed_camera_count="$(gopro_renamed_same_camera_mp4_count_in_dir "$(dirname -- "$file")" "$expected_camera_id")"
-            fi
             if [[ "$chapter_id" != "01" ]] \
                || { [[ "$chapter_count" =~ ^[0-9]+$ ]] && (( chapter_count > 1 )); } \
-               || { [[ "$renamed_part_count" =~ ^[0-9]+$ ]] && (( renamed_part_count > 0 )); } \
-               || { [[ "$renamed_camera_count" =~ ^[0-9]+$ ]] && (( renamed_camera_count > 0 )); }; then
+               || { [[ "$renamed_part_count" =~ ^[0-9]+$ ]] && (( renamed_part_count > 0 )); }; then
                 if [[ -n "$suffix_pliku" ]]; then
                     suffix_pliku="${suffix_pliku}_part_${chapter_id}"
                 else
