@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# v. 20261009.180500 - GoPro size-split chapter link: wall-clock gap when duration end-time mismatch; titled MP4 stems in _part backfill
 # v. 20261009.174500 - 12 GB chapter band min 10000 MiB (Mission 1 ~10–11 GB splits were below 11000 MiB floor)
 # v. 20261009.174200 - prompt to drop _part_XX when not in a validated size-split chain (fixes stuck part_01/part_02 on small clips)
 # v. 20261009.172000 - GoPro _part backfill only for size-split chains (~4/12 GB + time/duration), not every same-camera clip in a folder
@@ -11573,6 +11574,13 @@ gopro_renamed_mp4_basename_matches() {
     [[ "$base" =~ ^[0-9]{8}_[0-9]{6}_(-__-_|-_-_)(GoPro_[A-Za-z0-9_]+|GOPRO[0-9]+_[A-Z0-9]+|GOPRO_[A-Z0-9]+).*\.[mM][pP]4$ ]]
 }
 
+# Plain or titled metadata-renamed GoPro MP4 (size-split _part_ backfill / chapter chain).
+gopro_size_split_chapter_mp4_basename_matches() {
+    local base="$1"
+    gopro_renamed_mp4_basename_matches "$base" && return 0
+    gopro_renamed_titled_mp4_basename_matches "$base"
+}
+
 # Already-renamed Mission 1 Pro media (MP4 and JPEG/JPG) eligible for embedded-timezone audit.
 gopro_mission1_renamed_mp4_basename_matches() {
     [[ "$1" =~ ^[0-9]{8}_[0-9]{6}_(-__-_|-_-_)GoPro_Mission1_Pro.*\.([mM][pP]4|[jJ][pP][eE]?[gG])$ ]]
@@ -12572,7 +12580,7 @@ gopro_raw_session_chapter_count_in_dir() {
 }
 
 gopro_renamed_basename_has_part_segment() {
-    [[ "$1" =~ ^[0-9]{8}_[0-9]{6}_(-__-_|-_-_).+_part_[0-9]{2}(_Proxy)?\.[mM][pP]4$ ]]
+    [[ "$1" =~ ^[0-9]{8}_[0-9]{6}_.+_part_[0-9]{2}(_Proxy)?\.[mM][pP]4$ ]]
 }
 
 gopro_renamed_session_prefix_from_basename() {
@@ -12585,17 +12593,23 @@ gopro_renamed_session_prefix_from_basename() {
 # detection must group by this id, not the full prefix including timestamp.
 gopro_renamed_camera_identity_from_basename() {
     local bn="$1"
-    local id modern=""
+    local id modern="" stem no_part=""
 
-    gopro_renamed_mp4_basename_matches "$bn" || return 1
-
-    if [[ "$bn" =~ ^[0-9]{8}_[0-9]{6}_(-__-_|-_-_)(.+)_part_[0-9]{2}(_Proxy)?\.[mM][pP]4$ ]]; then
-        id="${BASH_REMATCH[2]}"
-    elif [[ "$bn" =~ ^[0-9]{8}_[0-9]{6}_(-__-_|-_-_)(.+)\.[mM][pP]4$ ]]; then
-        id="${BASH_REMATCH[2]}"
-        id="${id%_Proxy}"
-        id="${id%_proxy}"
-        id="${id%_PROXY}"
+    if gopro_renamed_mp4_basename_matches "$bn"; then
+        if [[ "$bn" =~ ^[0-9]{8}_[0-9]{6}_(-__-_|-_-_)(.+)_part_[0-9]{2}(_Proxy)?\.[mM][pP]4$ ]]; then
+            id="${BASH_REMATCH[2]}"
+        elif [[ "$bn" =~ ^[0-9]{8}_[0-9]{6}_(-__-_|-_-_)(.+)\.[mM][pP]4$ ]]; then
+            id="${BASH_REMATCH[2]}"
+            id="${id%_Proxy}"
+            id="${id%_proxy}"
+            id="${id%_PROXY}"
+        else
+            return 1
+        fi
+    elif gopro_renamed_titled_mp4_basename_matches "$bn"; then
+        no_part="$(gopro_renamed_basename_without_part_segment "$bn" 2>/dev/null)" || no_part=""
+        stem="${no_part:-$bn}"
+        id="$(gopro_renamed_clip_camera_label_from_basename "$stem")" || return 1
     else
         return 1
     fi
@@ -12760,10 +12774,21 @@ gopro_size_split_is_partial_segment_at_tier() {
     return 1
 }
 
+gopro_rename_size_split_realtime_wall_clock_gap_ok() {
+    local prev_f="$1" gap="$2"
+    local min_gap max_gap
+
+    min_gap="$RENAME_GOPRO_SIZE_SPLIT_TIME_MIN_GAP_SEC"
+    max_gap="$RENAME_GOPRO_SIZE_SPLIT_TIME_MAX_GAP_SEC"
+    [[ "$(gopro_size_split_tier_for_path "$prev_f" 2>/dev/null)" == 12 ]] \
+        && max_gap="$RENAME_GOPRO_SIZE_SPLIT_12G_TIME_MAX_GAP_SEC"
+    (( gap >= min_gap && gap <= max_gap ))
+}
+
 gopro_rename_size_split_timestamps_follow() {
     local prev_f="$1" next_f="$2"
     local pb nb prev_date prev_time next_date next_time
-    local prev_epoch next_epoch dur expected delta tol min_gap max_gap gap tier
+    local prev_epoch next_epoch dur expected delta tol gap
 
     pb="$(basename -- "$prev_f")"
     nb="$(basename -- "$next_f")"
@@ -12777,11 +12802,6 @@ gopro_rename_size_split_timestamps_follow() {
     fi
 
     tol="$RENAME_GOPRO_SIZE_SPLIT_TIME_TOLERANCE_SEC"
-    min_gap="$RENAME_GOPRO_SIZE_SPLIT_TIME_MIN_GAP_SEC"
-    max_gap="$RENAME_GOPRO_SIZE_SPLIT_TIME_MAX_GAP_SEC"
-    tier="$(gopro_size_split_tier_for_path "$prev_f" 2>/dev/null)" || tier=""
-    [[ "$tier" == 12 ]] && max_gap="$RENAME_GOPRO_SIZE_SPLIT_12G_TIME_MAX_GAP_SEC"
-
     dur="$(gopro_rename_ffprobe_duration_seconds "$prev_f" 2>/dev/null)" || dur=""
 
     if prev_epoch="$(gopro_rename_datetime_to_epoch "$prev_date" "$prev_time" 2>/dev/null)" \
@@ -12792,10 +12812,7 @@ gopro_rename_size_split_timestamps_follow() {
             (( delta >= -tol && delta <= tol )) && return 0
         fi
         gap=$(( next_epoch - prev_epoch ))
-        if [[ -n "$dur" ]]; then
-            return 1
-        fi
-        (( gap >= min_gap && gap <= max_gap ))
+        gopro_rename_size_split_realtime_wall_clock_gap_ok "$prev_f" "$gap"
         return $?
     fi
 
@@ -12807,10 +12824,9 @@ gopro_rename_size_split_timestamps_follow() {
         expected=$(awk -v p="$prev_epoch" -v d="$dur" 'BEGIN{printf "%d", p+d+0.5}')
         delta=$(( next_epoch - expected ))
         (( delta >= -tol && delta <= tol )) && return 0
-        return 1
     fi
     gap=$(( next_epoch - prev_epoch ))
-    (( gap >= min_gap && gap <= max_gap ))
+    gopro_rename_size_split_realtime_wall_clock_gap_ok "$prev_f" "$gap"
 }
 
 gopro_size_split_run_valid() {
@@ -12841,7 +12857,7 @@ gopro_size_split_chapter_part_index_for_path() {
 
     [[ -f "$f" ]] || return 1
     base="$(basename -- "$f")"
-    gopro_renamed_mp4_basename_matches "$base" || return 1
+    gopro_size_split_chapter_mp4_basename_matches "$base" || return 1
     camera_id="$(gopro_renamed_camera_identity_from_basename "$base")" || return 1
     dir="$(dirname -- "$f")"
 
@@ -12850,7 +12866,7 @@ gopro_size_split_chapter_part_index_for_path() {
     for peer in "$dir"/*; do
         [[ -f "$peer" ]] || continue
         bn="$(basename -- "$peer")"
-        gopro_renamed_mp4_basename_matches "$bn" || continue
+        gopro_size_split_chapter_mp4_basename_matches "$bn" || continue
         [[ "$(gopro_renamed_camera_identity_from_basename "$bn")" == "$camera_id" ]] || continue
         peers+=( "$peer" )
     done
@@ -12943,7 +12959,7 @@ maybe_gopro_backfill_chapter_part_suffix() {
     local base="$2"
     local part_num="" newbase
 
-    gopro_renamed_mp4_basename_matches "$base" || return 0
+    gopro_size_split_chapter_mp4_basename_matches "$base" || return 0
     gopro_renamed_basename_has_part_segment "$base" && return 0
     part_num="$(gopro_size_split_chapter_part_index_for_path "$f" 2>/dev/null)" || return 0
     [[ "$part_num" =~ ^[0-9]{2}$ ]] || return 0
@@ -15110,7 +15126,7 @@ transform_name() {
     fi
 
     if [[ -f "$f" ]] && ((_tn_skip_exif == 0)) && [[ "$stopped_by_user" != yes ]] \
-        && gopro_renamed_mp4_basename_matches "$base" \
+        && gopro_size_split_chapter_mp4_basename_matches "$base" \
         && ! gopro_renamed_basename_has_part_segment "$base"; then
         local _gopro_part_fill="" _gopro_part_fill_rc=0 _gopro_part_fill_trap=""
         local _tn_save_e_gpf=0

@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261009.180500 - size-split chapter link: wall-clock gap when duration end-time mismatch (Mission 1 two-chapter pairs)
 # v. 20261009.174500 - 12 GB chapter band min 10000 MiB (Mission 1 ~10–11 GB splits below old 11000 MiB floor)
 # v. 20261007.143052 - summary and file lengths are whole seconds
 # v. 20261007.084310 - an EV clip with the next sequence number stays in the 70mai journey, front and back
@@ -2280,16 +2281,13 @@ size_split_chapter_timestamps_follow() {
     fi
     gap=$(( next_epoch - prev_epoch ))
     part_chapter_timelapse_wall_clock_ok "$prev_f" "$gap" "$dur" && return 0
+    part_chapter_realtime_wall_clock_gap_ok "$prev_f" "$gap" && return 0
     # Without duration: bare _Timelapse chapters often sit ~20–80 min apart (Hero7 ~4 GB).
     if [[ -z "$dur" ]] && gopro_basename_is_timelapse "$pb" \
       && (( gap >= 1200 && gap <= 4800 )); then
       return 0
     fi
-    if [[ -n "$dur" ]]; then
-      return 1
-    fi
-    (( gap >= min_gap && gap <= max_gap ))
-    return $?
+    return 1
   fi
 
   # Same calendar day only (filename times).
@@ -2306,14 +2304,12 @@ size_split_chapter_timestamps_follow() {
   fi
   gap=$(( next_epoch - prev_epoch ))
   part_chapter_timelapse_wall_clock_ok "$prev_f" "$gap" "$dur" && return 0
+  part_chapter_realtime_wall_clock_gap_ok "$prev_f" "$gap" && return 0
   if [[ -z "$dur" ]] && gopro_basename_is_timelapse "$pb" \
     && (( gap >= 1200 && gap <= 4800 )); then
     return 0
   fi
-  if [[ -n "$dur" ]]; then
-    return 1
-  fi
-  (( gap >= min_gap && gap <= max_gap ))
+  return 1
 }
 
 gopro_token_is_noise() {
