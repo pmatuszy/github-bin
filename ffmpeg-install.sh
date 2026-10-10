@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# v. 20261010.174933 - --install-build-deps installs gcc, make, and compile libraries
 # v. 20261006.183857 - call /bin/ls so a shell ls function (e.g. --full-time) cannot change the listing
 # v. 20261006.124500 - menus: only the default key is a capital letter ([s] skip, [q] quit)
 # v. 20261005.210500 - do not set the stack with prlimit; that binary segfaults before make starts
@@ -12,6 +13,7 @@
 # v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
 # v. 20260716.231000 - equivalent CLI echo; --dry-run for interactive plan without build
 
+# 2026.10.10 - v. 2.1.34 - --install-build-deps (or [d] on the source prompt): install gcc, make, and the development packages, then stop
 # 2026.10.06 - v. 2.1.33 - listings use /bin/ls so a shell ls function cannot add --full-time or colour
 # 2026.10.06 - v. 2.1.32 - running-ffmpeg and profile menus list [s] and [q] in lower case like their [F/s/q], [K/s/q], and [1/../q] prompts; [K] is marked (default)
 # 2026.10.05 - v. 2.1.31 - prlimit must not set RLIMIT_STACK; it segfaults on Ubuntu 20.04 before exec
@@ -64,6 +66,7 @@
 # Static builds:     https://johnvansickle.com/ffmpeg/ (minimal codecs — usually no libmp3lame)
 # Git (master) static builds are recommended for bug fixes; release static builds also exist.
 # Default install:   compile official ffmpeg.org release (common profile: libmp3lame, x264, …).
+# --install-build-deps: install gcc, make, and the libraries for that compile, then stop.
 # Jellyfin transcode: --source-profile jellyfin (shared, VAAPI+NVENC+FDK-AAC; long compile).
 # Dynamic fallback:  distro ffmpeg package via apt.
 # Static fallback:     prebuilt johnvansickle tarball when source build is declined or unavailable.
@@ -86,6 +89,7 @@ INSTALL_PLAN=""
 DYNAMIC_ONLY=0
 STATIC_ONLY=0
 SOURCE_ONLY=0
+INSTALL_BUILD_DEPS=0
 DRY_RUN=0
 ASSUME_YES=0
 VERBOSE=1
@@ -200,6 +204,9 @@ ffmpeg_install_equivalent_command_line() {
         dynamic)
             parts+=( --dynamic-only )
             ;;
+        build-deps)
+            parts+=( --install-build-deps --source-profile "${SOURCE_PROFILE:-common}" )
+            ;;
         *)
             return 1
             ;;
@@ -231,7 +238,7 @@ ffmpeg_install_print_equivalent_command() {
 show_help() {
     cat <<EOF
 Usage: $(basename "$0") [-h|--help] [-v|--version] [-y|--yes] [-q|--quiet] [--release]
-       [--dynamic-only] [--static-only] [--source-only]
+       [--dynamic-only] [--static-only] [--source-only] [--install-build-deps]
        [--source-profile min|common|max|gpu|nvidia|jellyfin] [--source-with-fdk-aac]
        [--dry-run] [--no_startup_delay]
 
@@ -264,12 +271,18 @@ Options:
                        profile) if ffmpeg.org version is known; else static or apt.
   -q, --quiet          Less progress output (errors still shown).
 
-Default install prompt uses [Y/n/q]: Enter/Y = source common, n = other options, q = quit.
+Default install prompt uses [Y/n/d/q]: Enter/Y = source common, n = other options,
+d = install gcc, make, and development packages only, q = quit.
 Other prompts use [y/N/q]: y = yes, Enter/N = no, q = quit.
   --release            Use release static builds instead of git (master) builds.
   --dynamic-only       Install distro ffmpeg via apt only.
   --static-only        Do not fall back to apt or source build.
   --source-only        Build from official ffmpeg.org source only (no static/apt prompts).
+  --install-build-deps Install gcc, g++, make (build-essential), pkg-config, yasm,
+                       nasm, and the development libraries for the source profile
+                       (common unless --source-profile is set), then exit.
+                       Does not download or compile ffmpeg.
+                       On the source prompt, [d] does the same thing.
   --source-profile P   Source build profile: min, common, max, gpu, nvidia, or jellyfin
                        (with --source-only, skips profile confirmation prompts).
                        An interactive common build asks to compile in NVENC when
@@ -1809,13 +1822,22 @@ prompt_install_source_build_default() {
     echo "Default: compile ffmpeg ${FFMPEG_ORG_VERSION} from official source (common profile)."
     echo "  Includes libmp3lame, x264, x265, opus, aom, openssl, and other common codecs."
     echo "  Prebuilt static builds (johnvansickle.com) usually lack external encoders such as MP3."
+    echo "  [d] Install gcc, make, and the development packages only (no compile)."
     echo ">>> Waiting for your answer:"
-    echo -n "Build from official source (common profile)? [Y/n/q] "
+    echo -n "Build from official source (common profile)? [Y/n/d/q] "
     read -r -n 1 reply || reply=""
     echo
     if prompt_reply_is_quit "${reply}"; then
         echo "Quitting — no changes made."
         quit_prompt_with_optional_old_cleanup
+    fi
+    if [[ "${reply}" == [dD] ]]; then
+        INSTALL_PLAN="build-deps"
+        if [[ -z "${SOURCE_PROFILE}" ]]; then
+            SOURCE_PROFILE="${CLI_SOURCE_PROFILE:-${FFMPEG_SOURCE_PROFILE:-common}}"
+        fi
+        echo "Installing gcc, make, and development packages only (profile: ${SOURCE_PROFILE})."
+        return 0
     fi
     if prompt_reply_is_no "${reply}"; then
         return 1
@@ -3121,11 +3143,14 @@ ffmpeg_source_load_static_deps_module() {
     return 1
 }
 
-install_source_build_dependencies() {
+install_source_apt_build_packages() {
     local -a pkgs=()
+
+    [[ -n "${SOURCE_PROFILE}" ]] || SOURCE_PROFILE=common
 
     echo
     echo "part 1 — build dependencies for official source compile (profile: ${SOURCE_PROFILE})"
+    echo "    Compiler: gcc, g++, make (build-essential), pkg-config, yasm, nasm."
     if ffmpeg_source_static_build 2>/dev/null; then
         echo "    Static profile: apt packages first, then source-built static libs when needed."
         echo "    Prefix for source-built libs: ${FFMPEG_STATIC_DEPS_PREFIX}"
@@ -3134,9 +3159,12 @@ install_source_build_dependencies() {
     need_cmd apt-get
     log_step "Running apt-get update..."
     apt-get update
+    log_step "Installing gcc, g++, make, pkg-config, yasm, nasm, cmake, and autotools..."
+    apt_install_packages \
+        build-essential pkg-config yasm nasm \
+        cmake git autoconf automake libtool
 
     pkgs=(
-        build-essential pkg-config yasm nasm
         libunistring-dev zlib1g-dev
     )
 
@@ -3221,8 +3249,13 @@ install_source_build_dependencies() {
         fi
     fi
 
-    log_step "Installing compiler and profile packages..."
+    log_step "Installing gcc, g++, make, and profile packages..."
     apt_install_packages "${pkgs[@]}"
+    log_note "Compiler and development packages installed."
+}
+
+install_source_build_dependencies() {
+    install_source_apt_build_packages
 
     ffmpeg_source_load_static_deps_module || true
     if [[ "${SOURCE_PROFILE}" == jellyfin ]]; then
@@ -4894,6 +4927,10 @@ run_install_plan() {
         source)
             perform_install_build_from_source
             ;;
+        build-deps)
+            install_source_apt_build_packages
+            echo "Development packages installed. ffmpeg was not compiled."
+            ;;
         *)
             echo "Quitting — no install method selected."
             quit_prompt_with_optional_old_cleanup
@@ -4903,6 +4940,22 @@ run_install_plan() {
 
 main() {
     local installed="" installed_date=""
+
+    if (( INSTALL_BUILD_DEPS == 1 )); then
+        as_root_check
+        if [[ -z "${SOURCE_PROFILE}" ]]; then
+            SOURCE_PROFILE="${CLI_SOURCE_PROFILE:-${FFMPEG_SOURCE_PROFILE:-common}}"
+        fi
+        INSTALL_PLAN="build-deps"
+        if (( DRY_RUN == 1 )); then
+            echo "Dry run — would install gcc, g++, make, and development libraries (profile: ${SOURCE_PROFILE})."
+            ffmpeg_install_print_equivalent_command "Dry run — equivalent command (no packages installed):"
+            exit 0
+        fi
+        install_source_apt_build_packages
+        echo "Development packages installed. ffmpeg was not compiled."
+        exit 0
+    fi
 
     FFMPEG_SESSION_START_EPOCH=$(date +%s)
     FFMPEG_SESSION_START_ISO=$(date '+%Y.%m.%d %H:%M:%S')
@@ -4958,6 +5011,9 @@ main() {
         echo "  profile: ${SOURCE_PROFILE:-common}"
         (( FFMPEG_SOURCE_WITH_FDK_AAC == 1 )) && echo "  extras:  libfdk-aac (non-free)"
         [[ "${SOURCE_PROFILE:-}" == jellyfin ]] && echo "  extras:  jellyfin core (VAAPI, NVENC, FDK-AAC); FFMPEG_SOURCE_JELLYFIN_FULL=1 for Vulkan/OpenCL"
+    elif [[ "${INSTALL_PLAN}" == "build-deps" ]]; then
+        echo "  package: gcc, g++, make, and development libraries"
+        echo "  profile: ${SOURCE_PROFILE:-common}"
     fi
     echo "  temp:    ${TEMP_CATALOG}"
     echo
@@ -5003,6 +5059,7 @@ while [[ $# -gt 0 ]]; do
         --dynamic-only) DYNAMIC_ONLY=1; shift ;;
         --static-only) STATIC_ONLY=1; shift ;;
         --source-only) SOURCE_ONLY=1; shift ;;
+        --install-build-deps) INSTALL_BUILD_DEPS=1; shift ;;
         --dry-run) DRY_RUN=1; shift ;;
         --source-profile)
             [[ $# -ge 2 ]] || { echo "Missing value for --source-profile" >&2; usage >&2; exit 1; }
