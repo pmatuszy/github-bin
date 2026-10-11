@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261009.181600 - 12G chapter: size decides a full split (Mission 1 ~10 GB can be <<18 min); 8–13 GiB band
 # v. 20261009.180500 - size-split chapter link: wall-clock gap when duration end-time mismatch (Mission 1 two-chapter pairs)
 # v. 20261009.174500 - 12 GB chapter band min 10000 MiB (Mission 1 ~10–11 GB splits below old 11000 MiB floor)
 # v. 20261007.143052 - summary and file lengths are whole seconds
@@ -2389,16 +2390,19 @@ gopro_camera_from_basename() {
 }
 
 # GoPro fixed-size chapter splits: ~4 GB (classic FAT32 cap) and ~12 GB (exFAT / high-bitrate cap).
-PGM_SIZE_SPLIT_4G_MIN_BYTES=$(( 3500 * 1024 * 1024 ))
-PGM_SIZE_SPLIT_4G_MAX_BYTES=$(( 4500 * 1024 * 1024 ))
-PGM_SIZE_SPLIT_12G_MIN_BYTES=$(( 10000 * 1024 * 1024 ))
-PGM_SIZE_SPLIT_12G_MAX_BYTES=$(( 12500 * 1024 * 1024 ))
+# Decimal literals: $(( 10000 * 1024 * 1024 )) overflows 32-bit bash arithmetic.
+PGM_SIZE_SPLIT_4G_MIN_BYTES=3670016000
+PGM_SIZE_SPLIT_4G_MAX_BYTES=4718592000
+# 8–13 GiB: Mission 1 Pro splits ~10–11 GiB; remainders (e.g. ~7.2 GiB) stay below this floor.
+PGM_SIZE_SPLIT_12G_MIN_BYTES=8589934592
+PGM_SIZE_SPLIT_12G_MAX_BYTES=13958643712
 # Legacy names used by near-miss hints (4 GB band).
 PGM_SIZE_SPLIT_MIN_BYTES=$PGM_SIZE_SPLIT_4G_MIN_BYTES
 PGM_SIZE_SPLIT_MAX_BYTES=$PGM_SIZE_SPLIT_4G_MAX_BYTES
 # With ffprobe: reject a full chapter only if duration is clearly too short for its size tier.
 PGM_SIZE_SPLIT_DURATION_REJECT_BELOW_SEC="${PGM_SIZE_SPLIT_DURATION_REJECT_BELOW_SEC:-420}"
-PGM_SIZE_SPLIT_12G_DURATION_REJECT_BELOW_SEC="${PGM_SIZE_SPLIT_12G_DURATION_REJECT_BELOW_SEC:-1080}"
+# High-bitrate Mission 1 ~10 GB chapters are often ~10–16 min; do not require Hero-like ~18 min.
+PGM_SIZE_SPLIT_12G_DURATION_REJECT_BELOW_SEC="${PGM_SIZE_SPLIT_12G_DURATION_REJECT_BELOW_SEC:-120}"
 PGM_SIZE_SPLIT_12G_TIME_MAX_GAP_SEC="${PGM_SIZE_SPLIT_12G_TIME_MAX_GAP_SEC:-2400}"
 # GoPro cameras (7, 10, …): ~4 GB chapters often ~6:49 (409s).
 PGM_GOPRO7_SIZE_MIN_BYTES=$PGM_SIZE_SPLIT_4G_MIN_BYTES
@@ -2406,11 +2410,21 @@ PGM_GOPRO7_SIZE_MAX_BYTES=$PGM_SIZE_SPLIT_4G_MAX_BYTES
 PGM_GOPRO7_DURATION_MIN_SEC="${PGM_GOPRO7_DURATION_MIN_SEC:-380}"
 PGM_GOPRO7_DURATION_MAX_SEC="${PGM_GOPRO7_DURATION_MAX_SEC:-450}"
 
+pgm_size_bytes_in_closed_range() {
+  awk -v sz="$1" -v lo="$2" -v hi="$3" 'BEGIN { exit !(sz+0 >= lo+0 && sz+0 <= hi+0) }'
+}
+
+pgm_size_bytes_lt() {
+  awk -v sz="$1" -v lim="$2" 'BEGIN { exit !(sz+0 < lim+0) }'
+}
+
 # stdout: 4 | 12 | empty
 size_split_tier_for_bytes() {
   local sz="$1"
-  (( sz >= PGM_SIZE_SPLIT_12G_MIN_BYTES && sz <= PGM_SIZE_SPLIT_12G_MAX_BYTES )) && { printf '12'; return 0; }
-  (( sz >= PGM_SIZE_SPLIT_4G_MIN_BYTES && sz <= PGM_SIZE_SPLIT_4G_MAX_BYTES )) && { printf '4'; return 0; }
+  pgm_size_bytes_in_closed_range "$sz" "$PGM_SIZE_SPLIT_12G_MIN_BYTES" "$PGM_SIZE_SPLIT_12G_MAX_BYTES" \
+    && { printf '12'; return 0; }
+  pgm_size_bytes_in_closed_range "$sz" "$PGM_SIZE_SPLIT_4G_MIN_BYTES" "$PGM_SIZE_SPLIT_4G_MAX_BYTES" \
+    && { printf '4'; return 0; }
   return 1
 }
 
@@ -2431,7 +2445,7 @@ gopro_camera_uses_4gb_chapter_duration() {
 
 gopro7_size_in_chapter_range() {
   local sz="$1"
-  (( sz >= PGM_GOPRO7_SIZE_MIN_BYTES && sz <= PGM_GOPRO7_SIZE_MAX_BYTES ))
+  pgm_size_bytes_in_closed_range "$sz" "$PGM_GOPRO7_SIZE_MIN_BYTES" "$PGM_GOPRO7_SIZE_MAX_BYTES"
 }
 
 duration_in_gopro7_chapter_range() {
@@ -2600,7 +2614,8 @@ is_full_size_split_segment_at_tier() {
 
   case "$tier" in
     12)
-      (( sz >= PGM_SIZE_SPLIT_12G_MIN_BYTES && sz <= PGM_SIZE_SPLIT_12G_MAX_BYTES )) || return 1
+      # Size is the split cap. Mission 1 5.3K fills ~10 GB in well under 18 min.
+      pgm_size_bytes_in_closed_range "$sz" "$PGM_SIZE_SPLIT_12G_MIN_BYTES" "$PGM_SIZE_SPLIT_12G_MAX_BYTES" || return 1
       if [[ -n "$dur" ]]; then
         duration_too_short_for_full_size_split "$dur" 12 && return 1
       fi
@@ -2618,11 +2633,11 @@ is_full_size_split_segment_at_tier() {
           return 0
         fi
         if [[ -n "$dur" ]] && duration_in_gopro7_chapter_range "$dur" \
-          && (( sz >= PGM_GOPRO7_SIZE_MIN_BYTES )); then
+          && ! pgm_size_bytes_lt "$sz" "$PGM_GOPRO7_SIZE_MIN_BYTES"; then
           return 0
         fi
       fi
-      (( sz >= PGM_SIZE_SPLIT_4G_MIN_BYTES && sz <= PGM_SIZE_SPLIT_4G_MAX_BYTES )) || return 1
+      pgm_size_bytes_in_closed_range "$sz" "$PGM_SIZE_SPLIT_4G_MIN_BYTES" "$PGM_SIZE_SPLIT_4G_MAX_BYTES" || return 1
       if [[ -n "$dur" ]]; then
         duration_too_short_for_full_size_split "$dur" 4 && return 1
       fi
@@ -2647,21 +2662,21 @@ is_partial_size_split_segment_at_tier() {
 
   case "$tier" in
     12)
-      (( sz < PGM_SIZE_SPLIT_12G_MIN_BYTES )) && return 0
+      pgm_size_bytes_lt "$sz" "$PGM_SIZE_SPLIT_12G_MIN_BYTES" && return 0
       return 1
       ;;
     4)
       cam=$(gopro_camera_from_basename "$base" 2>/dev/null) || cam=
       gopro_camera_uses_4gb_chapter_duration "$cam" && gopro_chap=1
       if (( gopro_chap )); then
-        (( sz < PGM_GOPRO7_SIZE_MIN_BYTES )) && return 0
+        pgm_size_bytes_lt "$sz" "$PGM_GOPRO7_SIZE_MIN_BYTES" && return 0
         if [[ -n "$dur" ]] && ! duration_in_gopro7_chapter_range "$dur" \
           && duration_too_short_for_full_size_split "$dur" 4; then
           return 0
         fi
         return 1
       fi
-      (( sz < PGM_SIZE_SPLIT_4G_MIN_BYTES )) && return 0
+      pgm_size_bytes_lt "$sz" "$PGM_SIZE_SPLIT_4G_MIN_BYTES" && return 0
       if [[ -n "$dur" ]]; then
         duration_too_short_for_full_size_split "$dur" 4 && return 0
       fi

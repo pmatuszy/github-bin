@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# v. 20261009.181600 - GoPro 12G chapters: sort/cut kept empty peers (no _part_); size not 18 min duration; 8–13 GiB band
 # v. 20261009.180500 - GoPro size-split chapter link: wall-clock gap when duration end-time mismatch; titled MP4 stems in _part backfill
 # v. 20261009.174500 - 12 GB chapter band min 10000 MiB (Mission 1 ~10–11 GB splits were below 11000 MiB floor)
 # v. 20261009.174200 - prompt to drop _part_XX when not in a validated size-split chain (fixes stuck part_01/part_02 on small clips)
@@ -12677,17 +12678,19 @@ gopro_renamed_same_camera_mp4_count_in_dir() {
 }
 
 # GoPro fixed-size chapter bands (aligned with video-pgm-merge.sh).
-RENAME_GOPRO_SIZE_SPLIT_4G_MIN_BYTES=$(( 3500 * 1024 * 1024 ))
-RENAME_GOPRO_SIZE_SPLIT_4G_MAX_BYTES=$(( 4500 * 1024 * 1024 ))
-# ~10 GB floor: Mission 1 Pro often splits ~10.0–11.0 GiB (below the old 11000 MiB cutoff).
-RENAME_GOPRO_SIZE_SPLIT_12G_MIN_BYTES=$(( 10000 * 1024 * 1024 ))
-RENAME_GOPRO_SIZE_SPLIT_12G_MAX_BYTES=$(( 12500 * 1024 * 1024 ))
+# Decimal literals: $(( 10000 * 1024 * 1024 )) overflows 32-bit bash arithmetic.
+RENAME_GOPRO_SIZE_SPLIT_4G_MIN_BYTES=3670016000
+RENAME_GOPRO_SIZE_SPLIT_4G_MAX_BYTES=4718592000
+# 8–13 GiB: Mission 1 Pro splits ~10–11 GiB; remainders (e.g. ~7.2 GiB) stay below this floor.
+RENAME_GOPRO_SIZE_SPLIT_12G_MIN_BYTES=8589934592
+RENAME_GOPRO_SIZE_SPLIT_12G_MAX_BYTES=13958643712
 RENAME_GOPRO_SIZE_SPLIT_TIME_TOLERANCE_SEC="${RENAME_GOPRO_SIZE_SPLIT_TIME_TOLERANCE_SEC:-180}"
 RENAME_GOPRO_SIZE_SPLIT_TIME_MIN_GAP_SEC="${RENAME_GOPRO_SIZE_SPLIT_TIME_MIN_GAP_SEC:-300}"
 RENAME_GOPRO_SIZE_SPLIT_TIME_MAX_GAP_SEC="${RENAME_GOPRO_SIZE_SPLIT_TIME_MAX_GAP_SEC:-720}"
 RENAME_GOPRO_SIZE_SPLIT_12G_TIME_MAX_GAP_SEC="${RENAME_GOPRO_SIZE_SPLIT_12G_TIME_MAX_GAP_SEC:-2400}"
 RENAME_GOPRO_SIZE_SPLIT_DURATION_REJECT_BELOW_SEC="${RENAME_GOPRO_SIZE_SPLIT_DURATION_REJECT_BELOW_SEC:-420}"
-RENAME_GOPRO_SIZE_SPLIT_12G_DURATION_REJECT_BELOW_SEC="${RENAME_GOPRO_SIZE_SPLIT_12G_DURATION_REJECT_BELOW_SEC:-1080}"
+# High-bitrate Mission 1 ~10 GB chapters are often ~10–16 min; do not require Hero-like ~18 min.
+RENAME_GOPRO_SIZE_SPLIT_12G_DURATION_REJECT_BELOW_SEC="${RENAME_GOPRO_SIZE_SPLIT_12G_DURATION_REJECT_BELOW_SEC:-120}"
 
 gopro_renamed_basename_datetime_fields() {
     local bn="$1"
@@ -12721,10 +12724,20 @@ gopro_rename_ffprobe_duration_seconds() {
     awk -v d="$d" 'BEGIN { if (d+0 >= 0) printf "%.3f\n", d+0; else exit 1 }'
 }
 
+gopro_size_bytes_in_closed_range() {
+    awk -v sz="$1" -v lo="$2" -v hi="$3" 'BEGIN { exit !(sz+0 >= lo+0 && sz+0 <= hi+0) }'
+}
+
+gopro_size_bytes_lt() {
+    awk -v sz="$1" -v lim="$2" 'BEGIN { exit !(sz+0 < lim+0) }'
+}
+
 gopro_size_split_tier_for_bytes() {
     local sz="$1"
-    (( sz >= RENAME_GOPRO_SIZE_SPLIT_12G_MIN_BYTES && sz <= RENAME_GOPRO_SIZE_SPLIT_12G_MAX_BYTES )) && { printf '12'; return 0; }
-    (( sz >= RENAME_GOPRO_SIZE_SPLIT_4G_MIN_BYTES && sz <= RENAME_GOPRO_SIZE_SPLIT_4G_MAX_BYTES )) && { printf '4'; return 0; }
+    gopro_size_bytes_in_closed_range "$sz" "$RENAME_GOPRO_SIZE_SPLIT_12G_MIN_BYTES" "$RENAME_GOPRO_SIZE_SPLIT_12G_MAX_BYTES" \
+        && { printf '12'; return 0; }
+    gopro_size_bytes_in_closed_range "$sz" "$RENAME_GOPRO_SIZE_SPLIT_4G_MIN_BYTES" "$RENAME_GOPRO_SIZE_SPLIT_4G_MAX_BYTES" \
+        && { printf '4'; return 0; }
     return 1
 }
 
@@ -12745,12 +12758,13 @@ gopro_size_split_is_full_segment_at_tier() {
     dur="$(gopro_rename_ffprobe_duration_seconds "$f" 2>/dev/null)" || dur=""
     case "$tier" in
         12)
-            (( sz >= RENAME_GOPRO_SIZE_SPLIT_12G_MIN_BYTES && sz <= RENAME_GOPRO_SIZE_SPLIT_12G_MAX_BYTES )) || return 1
+            # Size is the split cap. Do not require long duration: Mission 1 5.3K fills ~10 GB in well under 18 min.
+            gopro_size_bytes_in_closed_range "$sz" "$RENAME_GOPRO_SIZE_SPLIT_12G_MIN_BYTES" "$RENAME_GOPRO_SIZE_SPLIT_12G_MAX_BYTES" || return 1
             [[ -n "$dur" ]] && gopro_size_split_duration_too_short "$dur" 12 && return 1
             return 0
             ;;
         4)
-            (( sz >= RENAME_GOPRO_SIZE_SPLIT_4G_MIN_BYTES && sz <= RENAME_GOPRO_SIZE_SPLIT_4G_MAX_BYTES )) || return 1
+            gopro_size_bytes_in_closed_range "$sz" "$RENAME_GOPRO_SIZE_SPLIT_4G_MIN_BYTES" "$RENAME_GOPRO_SIZE_SPLIT_4G_MAX_BYTES" || return 1
             [[ -n "$dur" ]] && gopro_size_split_duration_too_short "$dur" 4 && return 1
             return 0
             ;;
@@ -12768,8 +12782,8 @@ gopro_size_split_is_partial_segment_at_tier() {
     local f="$1" tier="$2" sz
     sz="$(get_file_size_bytes "$f")"
     case "$tier" in
-        12) (( sz < RENAME_GOPRO_SIZE_SPLIT_12G_MIN_BYTES )) && return 0 ;;
-        4)  (( sz < RENAME_GOPRO_SIZE_SPLIT_4G_MIN_BYTES )) && return 0 ;;
+        12) gopro_size_bytes_lt "$sz" "$RENAME_GOPRO_SIZE_SPLIT_12G_MIN_BYTES" && return 0 ;;
+        4)  gopro_size_bytes_lt "$sz" "$RENAME_GOPRO_SIZE_SPLIT_4G_MIN_BYTES" && return 0 ;;
     esac
     return 1
 }
@@ -12830,7 +12844,8 @@ gopro_rename_size_split_timestamps_follow() {
 }
 
 gopro_size_split_run_valid() {
-    local -a run=("$@")
+    local -a run
+    run=("$@")
     local i n=${#run[@]} f tier next_tier
     (( n >= 2 )) || return 1
     tier="$(gopro_size_split_tier_for_path "${run[0]}")" || return 1
@@ -12852,8 +12867,13 @@ gopro_size_split_run_valid() {
 gopro_size_split_chapter_part_index_for_path() {
     local f="$1"
     local dir base camera_id
-    local -a peers=() sorted=() run=()
+    local -a peers
+    local -a sorted
+    local -a run
     local saved_nullglob i n run_tier next_tier peer bn idx part_num
+    peers=()
+    sorted=()
+    run=()
 
     [[ -f "$f" ]] || return 1
     base="$(basename -- "$f")"
@@ -12877,7 +12897,7 @@ gopro_size_split_chapter_part_index_for_path() {
         for peer in "${peers[@]}"; do
             bn="$(basename -- "$peer")"
             gopro_renamed_basename_datetime_fields "$bn" || continue
-            printf '%s_%s\t%s\n' "$GOPRO_RENAME_TS_DATE" "$GOPRO_RENAME_TS_TIME" "$peer"
+            printf '%s\t%s\t%s\n' "$GOPRO_RENAME_TS_DATE" "$GOPRO_RENAME_TS_TIME" "$peer"
         done | LC_ALL=C sort -t $'\t' -k1,1 -k2,2 | cut -f3-
     )
     n=${#sorted[@]}
@@ -15125,7 +15145,7 @@ transform_name() {
         fi
     fi
 
-    if [[ -f "$f" ]] && ((_tn_skip_exif == 0)) && [[ "$stopped_by_user" != yes ]] \
+    if [[ -f "$f" ]] && [[ "$stopped_by_user" != yes ]] \
         && gopro_size_split_chapter_mp4_basename_matches "$base" \
         && ! gopro_renamed_basename_has_part_segment "$base"; then
         local _gopro_part_fill="" _gopro_part_fill_rc=0 _gopro_part_fill_trap=""
