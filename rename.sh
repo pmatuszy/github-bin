@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# v. 20261011.213700 - collision [A]: overwrite identical-hash dest for the rest of this run
 # v. 20261009.181600 - GoPro 12G chapters: sort/cut kept empty peers (no _part_); size not 18 min duration; 8–13 GiB band
 # v. 20261009.180500 - GoPro size-split chapter link: wall-clock gap when duration end-time mismatch; titled MP4 stems in _part backfill
 # v. 20261009.174500 - 12 GB chapter band min 10000 MiB (Mission 1 ~10–11 GB splits were below 11000 MiB floor)
@@ -99,6 +100,7 @@
 # v. 20260721.132007 - Samsung timestamp media: preserve optional numeric sorting prefix when appending make/model
 # v. 20260721.112812 - GoPro camera labels: GoPro_Hero4_Silver style (not GOPRO4_SILVER)
 
+# 2026.10.11 - v. 19.350.213700 - Collision menu [A]: when source and destination MD5 match, overwrite the destination for all further identical-hash collisions this run (any directory); [C] still overwrites every collision in the current source directory
 # 2026.10.06 - v. 19.349.183857 - NEF listing uses /bin/ls so a shell ls function cannot add --full-time
 # 2026.09.30 - v. 19.348.213145 - Nikon Coolpix P900: DSCN####.JPG/.JPEG/.MOV/.MP4/.AVI with Make NIKON and Camera Model Name COOLPIX P900 → YYYYMMDD_HHMMSS_-_-_Nikon_COOLPIX_P900.ext from Date/Time Original (then Create Date); other DSCN cameras are left unchanged
 # 2026.09.25 - v. 19.347.171847 - GoPro Quik dashboard: suspend the ERR trap around transform_gopro_quik_dashboard_basename (no source match returned 1 and printed "ERROR: command failed … return 1" twice although nothing failed); Mission 1 Pro embedded-timezone audit skips *-dashboard / *-dashboard_N exports — their name comes from the source clip and Quik writes CreateDate in UTC without a zone tag, which was proposed as a -2h rename
@@ -16327,6 +16329,19 @@ collision_auto_overwrite_dir_matches_source() {
     similar_rename_dir_matches_scope "$(dirname -- "$old")" "$AUTO_COLLISION_OVERWRITE_DIR"
 }
 
+# True when both MD5s are present and equal (empty hashes are not treated as identical).
+collision_md5_pair_is_identical() {
+    local old_md5="$1" new_md5="$2"
+    [[ -n "$old_md5" && "$old_md5" == "$new_md5" ]]
+}
+
+# [A] session: overwrite destination only when this collision is an identical-hash pair.
+collision_auto_overwrite_identical_session_applies() {
+    local old_md5="$1" new_md5="$2"
+    [[ "$AUTO_COLLISION_OVERWRITE_IDENTICAL_SESSION" == yes ]] || return 1
+    collision_md5_pair_is_identical "$old_md5" "$new_md5"
+}
+
 # True when a planned rename would hit an existing path (excluding case-only same inode).
 checksum_rename_pair_has_target_collision() {
     local old="$1"
@@ -16517,7 +16532,7 @@ handle_existing_target_collision() {
         fi
         emit_wrap_labeled_stdout "COLLISION: " "${YELLOW}COLLISION:${RESET} " "Target file already exists."
         emit_wrap_old_arrow_new_stdout "[DRY-RUN] Would compare MD5, size, and timestamps of source/destination and ask what to do: " "${CYAN}[DRY-RUN] Would compare MD5, size, and timestamps of source/destination and ask what to do:${RESET} " "$old" "$new"
-        emit_wrap_labeled_stdout "[DRY-RUN] Choices would include: " "${CYAN}[DRY-RUN] Choices would include:${RESET} " "[o] remove destination then rename; [c] overwrite all in this directory; [r]/[d] _OTHER; [p] remove source only; [v] list directory; [S] skip; [q] quit."
+        emit_wrap_labeled_stdout "[DRY-RUN] Choices would include: " "${CYAN}[DRY-RUN] Choices would include:${RESET} " "[o] remove destination then rename; [c] overwrite all in this directory; [a] overwrite identical-hash collisions for the rest of this run; [r]/[d] _OTHER; [p] remove source only; [v] list directory; [S] skip; [q] quit."
         return 1
     fi
 
@@ -16576,7 +16591,7 @@ can_overwrite_collision_with_identical_md5() {
     emit_wrap_labeled_stdout "    modified:   " "    modified:   " "$(format_epoch_human "$new_mtime")"
     emit_wrap_labeled_stdout "    md5:        " "    md5:        " "$new_md5"
 
-    if [[ "$old_md5" == "$new_md5" ]]; then
+    if collision_md5_pair_is_identical "$old_md5" "$new_md5"; then
         echo "Files are identical."
     else
         echo "Files are different."
@@ -16593,6 +16608,12 @@ can_overwrite_collision_with_identical_md5() {
         return 0
     fi
 
+    if collision_auto_overwrite_identical_session_applies "$old_md5" "$new_md5"; then
+        emit_wrap_labeled_stdout "AUTO OVERWRITE (identical hashes, this run): " "${CYAN}AUTO OVERWRITE (identical hashes, this run):${RESET} " "session active — will delete destination and continue rename"
+        vlog "Collision overwrite auto (identical-hash session): '$old' -> '$new'"
+        return 0
+    fi
+
     if collision_auto_other_dir_matches_source "$old"; then
         COLLISION_OTHER_PATH="$old_other_path"
         emit_wrap_labeled_stdout "AUTO _OTHER (this directory): " "${CYAN}AUTO _OTHER (this directory):${RESET} " "session active — source -> '$(basename -- "$old_other_path")'"
@@ -16604,13 +16625,20 @@ can_overwrite_collision_with_identical_md5() {
         verbose_question_timestamp "What should be done?"
         echo "  $(rename_menu_key_bracket O S) Overwrite destination (delete destination file), then continue rename"
         echo "  $(rename_menu_key_bracket C S) For this source directory only: overwrite destination for all further collisions (like [O])"
+        if collision_md5_pair_is_identical "$old_md5" "$new_md5"; then
+            echo "  $(rename_menu_key_bracket A S) For the rest of this run: overwrite destination when files are identical (same hash)"
+        fi
         echo "  $(rename_menu_key_bracket R S) Rename source to alternate name (one _OTHER, or _OTHER_2, … if needed) -> $(basename -- "$old_other_path")"
         echo "  $(rename_menu_key_bracket D S) For this source directory only: use _OTHER for all further collisions (like [R])"
         echo "  $(rename_menu_key_bracket P S) Delete source file only (keep destination; skip this rename)"
         echo "  $(rename_menu_key_bracket S S) Skip (default)"
         echo "  $(rename_menu_key_bracket V S) List directory (parent; mark SOURCE/DESTINATION basenames)"
         echo "  $(rename_menu_key_bracket Q S) Quit"
-        echo -n "$(user_prompt_ts_prefix)Choice [o/c/r/d/p/S/v/q]: "
+        if collision_md5_pair_is_identical "$old_md5" "$new_md5"; then
+            echo -n "$(user_prompt_ts_prefix)Choice [o/c/a/r/d/p/S/v/q]: "
+        else
+            echo -n "$(user_prompt_ts_prefix)Choice [o/c/r/d/p/S/v/q]: "
+        fi
 
         flush_stdin
         read_single_key answer "$PROMPT_WAIT_SECONDS"
@@ -16632,6 +16660,15 @@ can_overwrite_collision_with_identical_md5() {
                 AUTO_COLLISION_OVERWRITE_DIR="$(cd -- "$(dirname -- "$old")" 2>/dev/null && pwd -P)" || AUTO_COLLISION_OVERWRITE_DIR="$(dirname -- "$old")"
                 vlog "Collision overwrite per-directory session enabled for '$AUTO_COLLISION_OVERWRITE_DIR'"
                 return 0
+                ;;
+            a|A)
+                if collision_md5_pair_is_identical "$old_md5" "$new_md5"; then
+                    AUTO_COLLISION_OVERWRITE_IDENTICAL_SESSION=yes
+                    vlog "Collision overwrite identical-hash session enabled for the rest of this run"
+                    return 0
+                fi
+                echo "  [A] applies only when source and destination hashes are identical."
+                continue
                 ;;
             r|R)
                 COLLISION_OTHER_PATH="$old_other_path"
@@ -18039,6 +18076,8 @@ AUTO_RENAME_SIMILAR_NEED_USCORE=no
 AUTO_COLLISION_OTHER_DIR=""
 # When set to realpath of a directory: collision prompts auto-overwrite destination (like [O]) for every source file in that directory until cleared.
 AUTO_COLLISION_OVERWRITE_DIR=""
+# When yes: collision prompts auto-overwrite destination (like [O]) for identical-hash pairs for the rest of this run.
+AUTO_COLLISION_OVERWRITE_IDENTICAL_SESSION=no
 # When set to realpath of a directory: RawFileName mismatch prompts auto-apply without asking for every paired XMP in that dir.
 NEF_XMP_RAWFIX_AUTO_DIR=""
 # When set to realpath of a directory: media.ext.xmp reference prompts auto-apply for remaining pairs in that dir.
