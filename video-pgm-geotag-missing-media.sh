@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261012.180710 - space accepts the default, the same as Enter
 # v. 20261012.165905 - a bar shows how far each file copy has got
 # v. 20261012.165212 - every track file is read, and a named day can leave one out of smart loading
 # v. 20261012.165052 - a track name can give its day with dashes, underscores, or dots
@@ -74,6 +75,7 @@
 # v. 20261009.160131 - also read .tcx tracks; a Trackpoint with a time and a position is used like a GPX point
 # v. 20261009.151425 - report which photos and videos have no location, and write one from the nearest GPX point
 
+# 2026.10.12 - v. 0.75 - space accepts the default, the same as Enter
 # 2026.10.12 - v. 0.74 - a bar shows how far each file copy has got
 # 2026.10.12 - v. 0.73 - every track file is read, and a named day can leave one out of smart loading
 # 2026.10.12 - v. 0.72 - a track name can give its day with dashes, underscores, or dots
@@ -216,7 +218,7 @@ skipped because it is a screenshot, judging by the name. --screenshots
 keeps those files.
 
 Each file is shown first. Nothing is written until those answers are done.
-Enter accepts that file. n skips it. a accepts that file and the rest.
+Enter or space accepts that file. n skips it. a accepts that file and the rest.
 b undoes the last answer and returns to the previous file.
 f stops the questions and keeps only the files already accepted. The file
 on screen is not included, and files with no close track point are not asked. q asks whether to quit without writing, or to
@@ -512,8 +514,11 @@ gm_take_place_number() {
   local num="$1" count="$2" next="" by_enter=0
   while [[ "$num" =~ ^[0-9]+$ ]] && (( 10#$num > 0 && 10#$num * 10 <= count )); do
     IFS= read -r -n 1 next || next=""
-    if [[ -z "$next" || "$next" == $'\n' ]]; then
+    if [[ -z "$next" || "$next" == $'\n' || "$next" == ' ' ]]; then
       by_enter=1
+      if [[ "$next" == ' ' ]]; then
+        echo
+      fi
       break
     fi
     if [[ "$next" == $'\e' ]]; then
@@ -561,7 +566,10 @@ gm_read_place_choice() {
     REPLY=q
     return 0
   fi
-  if [[ -z "$first" || "$first" == $'\n' ]]; then
+  if [[ -z "$first" || "$first" == $'\n' || "$first" == ' ' ]]; then
+    if [[ "$first" == ' ' ]]; then
+      echo
+    fi
     printf '  [S] Skip this file\n'
     REPLY=s
     return 0
@@ -838,6 +846,10 @@ gm_read_key() {
     break
   done
   answer="${answer,,}"
+  if [[ "$answer" == ' ' ]]; then
+    echo
+    answer=""
+  fi
   if [[ -z "$answer" && -n "$chosen" ]]; then
     printf '  [%s] %s\n' "${default_key^^}" "$chosen"
   else
@@ -858,7 +870,10 @@ gm_read_track_choice() {
       echo "That is not a choice."
       continue
     fi
-    if [[ -z "$first" || "$first" == $'\n' ]]; then
+    if [[ -z "$first" || "$first" == $'\n' || "$first" == ' ' ]]; then
+      if [[ "$first" == ' ' ]]; then
+        echo
+      fi
       printf '  [%s] %s\n' "${default_key^^}" "$chosen"
       REPLY="$default_key"
       return 0

@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# v. 20261012.180710 - space accepts the default, the same as Enter
 # v. 20261012.165905 - a bar shows how far each file copy has got
 # v. 20261012.165212 - every track file is read, and a named day can leave one out of smart loading
 # v. 20261012.165052 - a track name can give its day with dashes, underscores, or dots
@@ -74,6 +75,7 @@
 # v. 20261009.160131 - also read .tcx tracks; a Trackpoint with a time and a position joins the same search as GPX
 # v. 20261009.151425 - match a photo or video time to the nearest GPX point and write that location with exiftool
 
+# 2026.10.12 - v. 0.75 - space accepts the default, the same as Enter
 # 2026.10.12 - v. 0.74 - a bar shows how far each file copy has got
 # 2026.10.12 - v. 0.73 - every track file is read, and a named day can leave one out of smart loading
 # 2026.10.12 - v. 0.72 - a track name can give its day with dashes, underscores, or dots
