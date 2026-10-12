@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# v. 20261012.104010 - tracks are loaded in alphabetical order of the file name
 # v. 20261012.103728 - year-range accepts one year or a range, and refuses a first year newer than the second
 # v. 20261012.102745 - the missing-conf message includes profile_location_dir when that variable is set
 # v. 20261012.102638 - the missing-conf message names /etc, $HOME, $HOME/etc, and $HOME/conf
@@ -14,6 +15,7 @@
 # v. 20261009.160131 - also read .tcx tracks; a Trackpoint with a time and a position joins the same search as GPX
 # v. 20261009.151425 - match a photo or video time to the nearest GPX point and write that location with exiftool
 
+# 2026.10.12 - v. 0.15 - tracks are loaded in alphabetical order of the file name
 # 2026.10.12 - v. 0.14 - year-range reads 2026, 2026-2027, and 2026 2027, and refuses a reversed range
 # 2026.10.12 - v. 0.13 - the missing-conf message mentions profile_location_dir when that variable is set
 # 2026.10.12 - v. 0.12 - the missing-conf message names /etc, $HOME, $HOME/etc, and $HOME/conf
@@ -1433,6 +1435,7 @@ def cmd_scan(argv):
             print("No .gpx or .tcx files in %s or any subdirectory under it." % root)
         elif added:
             print("Reading %s .gpx/.tcx files from %s and every subdirectory under it." % (fmt_int(added), root))
+    gpx_paths.sort(key=lambda path: (os.path.basename(path).casefold(), os.path.normcase(path)))
     points = []
     gpx_info = []
     gpx_errors = []

@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261012.104010 - tracks are loaded in alphabetical order of the file name
 # v. 20261012.103728 - a typed track year may be a range, and the first year must not be newer than the second
 # v. 20261012.102745 - when profile_location_dir is set, also read that directory and its etc and conf
 # v. 20261012.102638 - .conf is read from /etc, $HOME, $HOME/etc, and $HOME/conf, and every copy is merged
@@ -14,6 +15,7 @@
 # v. 20261009.160131 - also read .tcx tracks; a Trackpoint with a time and a position is used like a GPX point
 # v. 20261009.151425 - report which photos and videos have no location, and write one from the nearest GPX point
 
+# 2026.10.12 - v. 0.15 - tracks are loaded in alphabetical order of the file name
 # 2026.10.12 - v. 0.14 - track years can be typed as 2026, 2026-2027, or 2026 2027; a reversed range is refused
 # 2026.10.12 - v. 0.13 - when profile_location_dir is set, also merge the .conf in that directory and in its etc and conf
 # 2026.10.12 - v. 0.12 - .conf files are read from /etc, $HOME, $HOME/etc, and $HOME/conf, and every copy is merged
