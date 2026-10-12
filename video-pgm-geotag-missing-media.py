@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# v. 20261012.103728 - year-range accepts one year or a range, and refuses a first year newer than the second
 # v. 20261012.102745 - the missing-conf message includes profile_location_dir when that variable is set
 # v. 20261012.102638 - the missing-conf message names /etc, $HOME, $HOME/etc, and $HOME/conf
 # v. 20261012.102243 - the missing-conf message includes $HOME/conf; every found .conf is merged
@@ -13,6 +14,7 @@
 # v. 20261009.160131 - also read .tcx tracks; a Trackpoint with a time and a position joins the same search as GPX
 # v. 20261009.151425 - match a photo or video time to the nearest GPX point and write that location with exiftool
 
+# 2026.10.12 - v. 0.14 - year-range reads 2026, 2026-2027, and 2026 2027, and refuses a reversed range
 # 2026.10.12 - v. 0.13 - the missing-conf message mentions profile_location_dir when that variable is set
 # 2026.10.12 - v. 0.12 - the missing-conf message names /etc, $HOME, $HOME/etc, and $HOME/conf
 # 2026.10.12 - v. 0.11 - the missing-conf message names $HOME/conf; every found .conf is merged
@@ -45,11 +47,12 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
 import xml.etree.ElementTree as ET
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 VERSION = "0.1"
 DISAGREE_METRES = 300
@@ -1201,6 +1204,44 @@ def parse_user_coord(text):
     return match.group(1), match.group(2)
 
 
+def parse_year_range(text):
+    """One year, or a range. Spaces and dashes are the same separator.
+
+    Returns ((start, end), None), or (None, "order") when the first year is newer,
+    or (None, "bad") when the text is not a year.
+    """
+    raw = text.strip().lower()
+    raw = raw.replace("–", " ").replace("—", " ").replace("−", " ").replace("-", " ")
+    raw = re.sub(r"\bto\b", " ", raw)
+    raw = re.sub(r"\s+", " ", raw).strip()
+    if not raw:
+        return None, "bad"
+    parts = raw.split(" ")
+    if not all(re.fullmatch(r"\d{4}", part) for part in parts):
+        return None, "bad"
+    if len(parts) == 1:
+        year = int(parts[0])
+        return (year, year), None
+    if len(parts) == 2:
+        start, end = int(parts[0]), int(parts[1])
+        if start > end:
+            return None, "order"
+        return (start, end), None
+    return None, "bad"
+
+
+def cmd_year_range(argv):
+    if len(argv) != 1:
+        return 1
+    span, err = parse_year_range(argv[0])
+    if err == "order":
+        return 2
+    if not span:
+        return 1
+    print("%s\t%s" % span)
+    return 0
+
+
 def cmd_check_coord(argv):
     if len(argv) != 1:
         return 1
@@ -1295,6 +1336,60 @@ def cmd_check_tz(argv):
     return 0
 
 
+def fmt_left(seconds):
+    t = int(seconds + 0.5)
+    if t < 1:
+        return "0s"
+    hours = t // 3600
+    minutes = (t % 3600) // 60
+    secs = t % 60
+    if hours:
+        return "%dh %dm" % (hours, minutes)
+    if minutes:
+        return "%dm %ds" % (minutes, secs)
+    return "%ds" % secs
+
+
+def fmt_arrival(remain):
+    when = datetime.now() + timedelta(seconds=remain)
+    if when.second >= 30:
+        when = when.replace(second=0, microsecond=0) + timedelta(minutes=1)
+    else:
+        when = when.replace(second=0, microsecond=0)
+    if when.date() == datetime.now().date():
+        return "at %s" % when.strftime("%H:%M")
+    return "at %s" % when.strftime("%Y.%m.%d %H:%M")
+
+
+def track_progress(done, total, started, points, span, final=False):
+    if total <= 0:
+        return
+    width = 40
+    pct = int(round(100.0 * done / total))
+    if pct > 100:
+        pct = 100
+    filled = int(round(width * done / float(total)))
+    if filled > width:
+        filled = width
+    bar = "#" * filled + "-" * (width - filled)
+    label = "Tracks" if not span or span == "all" else "Tracks %s" % span
+    elapsed = time.time() - started
+    if final:
+        tail = "%s  %s points" % (fmt_left(elapsed), fmt_int(points))
+    elif done > 0 and done < total:
+        remain = elapsed / done * (total - done)
+        tail = "left %s  %s" % (fmt_left(remain), fmt_arrival(remain))
+    else:
+        tail = "left --  at --"
+    text = "%s [%s] %3d%%  %s/%s files  %s" % (
+        label, bar, pct, fmt_int(done), fmt_int(total), tail,
+    )
+    sys.stderr.write("\r%s\033[K" % text)
+    if final:
+        sys.stderr.write("\n")
+    sys.stderr.flush()
+
+
 def cmd_scan(argv):
     parser = argparse.ArgumentParser(add_help=False)
     parser.add_argument("--tz", required=True)
@@ -1308,6 +1403,7 @@ def cmd_scan(argv):
     parser.add_argument("--conf-list", default="")
     parser.add_argument("--plan", required=True)
     parser.add_argument("--scope", required=True)
+    parser.add_argument("--track-span", default="")
     parser.add_argument("--redo", action="store_true")
     args = parser.parse_args(argv)
     if args.max_gap < 0:
@@ -1340,11 +1436,21 @@ def cmd_scan(argv):
     points = []
     gpx_info = []
     gpx_errors = []
+    track_total = len(gpx_paths)
+    track_done = 0
+    point_total = 0
+    track_started = time.time()
+    if track_total:
+        track_progress(0, track_total, track_started, 0, args.track_span)
     for path in gpx_paths:
         loaded, err = load_track(path)
+        track_done += 1
+        finished = track_done == track_total
         if err:
             gpx_errors.append((os.path.basename(path), err))
+            sys.stderr.write("\n")
             eprint("Could not read %s: %s" % (path, err))
+            track_progress(track_done, track_total, track_started, point_total, args.track_span, finished)
             continue
         file_points, skipped = loaded
         info = {
@@ -1358,13 +1464,8 @@ def cmd_scan(argv):
         }
         gpx_info.append(info)
         points.extend(file_points)
-        if file_points:
-            eprint("%s  %s points  %s to %s UTC  %s" % (
-                info["kind"], fmt_int(len(file_points)), fmt_utc(file_points[0][0]), fmt_utc(file_points[-1][0]),
-                os.path.basename(path),
-            ))
-        else:
-            eprint("%s  no points with a time and a position  %s" % (info["kind"], os.path.basename(path)))
+        point_total += len(file_points)
+        track_progress(track_done, track_total, track_started, point_total, args.track_span, finished)
     points.sort(key=lambda item: (item[0], item[4]))
     eprint("Reading times and locations from %s file%s..." % (fmt_int(len(media)), "" if len(media) == 1 else "s"))
     infos = run_exiftool_json(args.exiftool, media, args.quicktime)
@@ -1530,6 +1631,15 @@ def selftest():
     assert parse_user_coord("49.59078922757009, 19.966572075569914") == ("49.59078922757009", "19.966572075569914")
     assert parse_user_coord("0, 0") is None
     assert parse_user_coord("Ponice") is None
+    assert parse_year_range("2026") == ((2026, 2026), None)
+    assert parse_year_range("2026-2027") == ((2026, 2027), None)
+    assert parse_year_range("2026 - 2027") == ((2026, 2027), None)
+    assert parse_year_range("2026- 2027") == ((2026, 2027), None)
+    assert parse_year_range("2026  2027") == ((2026, 2027), None)
+    assert parse_year_range("2026 to 2027") == ((2026, 2027), None)
+    assert parse_year_range("2026–2027") == ((2026, 2027), None)
+    assert parse_year_range("2027-2026") == (None, "order")
+    assert parse_year_range("nope") == (None, "bad")
     assert place_line({
         "address": {"road": "Racławicka", "house_number": "146", "city": "Warszawa", "country": "Polska"},
     }) == "Racławicka 146, Warszawa, Polska"
@@ -1769,7 +1879,7 @@ def selftest():
 
 def main(argv):
     if len(argv) < 2 or argv[1] in ("-h", "--help"):
-        print("Usage: video-pgm-geotag-missing-media.py scan|write|write-place|plan-lines|check-tz|check-coord|reverse|track-roots|selftest")
+        print("Usage: video-pgm-geotag-missing-media.py scan|write|write-place|plan-lines|check-tz|check-coord|reverse|year-range|track-roots|selftest")
         print("The shell script video-pgm-geotag-missing-media.sh is the way to run this.")
         return 0
     cmd = argv[1]
@@ -1781,6 +1891,8 @@ def main(argv):
         return cmd_check_coord(argv[2:])
     if cmd == "reverse":
         return cmd_reverse(argv[2:])
+    if cmd == "year-range":
+        return cmd_year_range(argv[2:])
     if cmd == "track-roots":
         return cmd_track_roots(argv[2:])
     if cmd == "scan":

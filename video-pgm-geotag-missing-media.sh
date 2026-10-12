@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261012.103728 - a typed track year may be a range, and the first year must not be newer than the second
 # v. 20261012.102745 - when profile_location_dir is set, also read that directory and its etc and conf
 # v. 20261012.102638 - .conf is read from /etc, $HOME, $HOME/etc, and $HOME/conf, and every copy is merged
 # v. 20261012.102243 - read every .conf in the allowed places, including $HOME/conf; do not stop at the first
@@ -13,6 +14,7 @@
 # v. 20261009.160131 - also read .tcx tracks; a Trackpoint with a time and a position is used like a GPX point
 # v. 20261009.151425 - report which photos and videos have no location, and write one from the nearest GPX point
 
+# 2026.10.12 - v. 0.14 - track years can be typed as 2026, 2026-2027, or 2026 2027; a reversed range is refused
 # 2026.10.12 - v. 0.13 - when profile_location_dir is set, also merge the .conf in that directory and in its etc and conf
 # 2026.10.12 - v. 0.12 - .conf files are read from /etc, $HOME, $HOME/etc, and $HOME/conf, and every copy is merged
 # 2026.10.12 - v. 0.11 - every .conf in the allowed places is merged, including $HOME/conf; the search does not stop at the first file
@@ -101,7 +103,10 @@ Each place is a line in brackets and the latitude, longitude under it:
 A track directory is the same kind of heading, with a path under it. Every
 subdirectory is searched, not only the files sitting in that folder. The .gpx
 and .tcx files found there are read as well as the tracks next to the photos
-and videos. The count is printed before the report:
+and videos. The count is printed before the report. You are asked which years to
+load. The default is the year in the photo and video names. [t] asks for a
+year or a range, such as 2026-2027, 2026 - 2027, or 2026 2027. The first
+year must not be newer than the second.
 
   [tracks-location]
   /mnt/p/video/geotaging-kopie
@@ -348,7 +353,7 @@ gm_ask_internet() {
   echo
   echo "A typed latitude and longitude can be named from OpenStreetMap."
   echo "  [Y] Yes, use the internet (default)"
-  echo "  [N] No"
+  echo "  [n] No"
   echo "  [q] Quit"
   gm_read_key "Look up place names on the internet? [Y/n/q]: " y
   reply="$REPLY"
@@ -492,8 +497,10 @@ gm_add_media() {
 }
 
 gm_add_gpx() {
-  local rp="$1"
+  local rp="$1" base
   [[ -f "$rp" && -s "$rp" ]] || return 0
+  base="${rp##*/}"
+  gm_track_year_ok "$base" || return 0
   [[ -n "${SEEN_GPX[$rp]:-}" ]] && return 0
   SEEN_GPX[$rp]=1
   printf '%s\0' "$rp" >> "$WORK/gpx"
@@ -581,7 +588,7 @@ gm_ask_scope() {
     echo "Look in subdirectories too?"
   fi
   echo "  [T] This directory only (default)"
-  echo "  [A] All subdirectories"
+  echo "  [a] All subdirectories"
   echo "  [q] Quit"
   gm_read_key "This directory or all subdirectories? [T/a/q]: " t
   reply="$REPLY"
@@ -651,6 +658,166 @@ gm_ask_tz() {
   esac
 }
 
+gm_track_year_ok() {
+  local base="$1" y
+  (( TRACK_ALL )) && return 0
+  if [[ "$base" =~ ^((19|20)[0-9]{2}) ]]; then
+    y="${BASH_REMATCH[1]}"
+    [[ -n "${TRACK_YEAR[$y]:-}" ]] && return 0
+  fi
+  return 1
+}
+
+gm_year_phrase() {
+  local n="$#" first last span
+  if (( n <= 0 )); then
+    printf '%s\n' "all years"
+    return 0
+  fi
+  if (( n == 1 )); then
+    printf '%s\n' "$1"
+    return 0
+  fi
+  if (( n == 2 )); then
+    printf '%s and %s\n' "$1" "$2"
+    return 0
+  fi
+  first="$1"
+  last="${!#}"
+  span=$(( 10#$last - 10#$first + 1 ))
+  if (( span == n )); then
+    printf '%s-%s\n' "$first" "$last"
+    return 0
+  fi
+  local out="$1" y
+  shift
+  for y in "$@"; do
+    out="${out}, ${y}"
+  done
+  printf '%s\n' "$out"
+}
+
+gm_guess_media_years() {
+  local f base y
+  local -A seen=()
+  GUESS_YEARS=()
+  [[ -s "${WORK:-}/media" ]] || return 0
+  while IFS= read -r -d '' f; do
+    base="${f##*/}"
+    if [[ "$base" =~ ^((19|20)[0-9]{2}) ]]; then
+      y="${BASH_REMATCH[1]}"
+      seen[$y]=1
+    fi
+  done < "$WORK/media"
+  if (( ${#seen[@]} )); then
+    mapfile -t GUESS_YEARS < <(printf '%s\n' "${!seen[@]}" | sort)
+  fi
+}
+
+gm_set_all_years() {
+  TRACK_ALL=1
+  TRACK_YEAR=()
+  TRACK_SPAN="all"
+}
+
+gm_set_year_span() {
+  local a="$1" b="$2" y
+  TRACK_ALL=0
+  TRACK_YEAR=()
+  for (( y = 10#$a; y <= 10#$b; y++ )); do
+    TRACK_YEAR[$y]=1
+  done
+  if (( 10#$a == 10#$b )); then
+    TRACK_SPAN="$a"
+  else
+    TRACK_SPAN="${a}-${b}"
+  fi
+}
+
+gm_set_guess_years() {
+  local y
+  TRACK_ALL=0
+  TRACK_YEAR=()
+  for y in "$@"; do
+    TRACK_YEAR[$y]=1
+  done
+  TRACK_SPAN="$(gm_year_phrase "$@")"
+}
+
+gm_ask_typed_year() {
+  local typed out rc a b
+  while true; do
+    printf 'Year: '
+    IFS= read -r typed || gm_quit
+    typed="${typed#"${typed%%[![:space:]]*}"}"
+    typed="${typed%"${typed##*[![:space:]]}"}"
+    if [[ -z "$typed" ]]; then
+      echo "Type a year, or a range such as 2026-2027."
+      continue
+    fi
+    if [[ "${typed,,}" == q ]]; then
+      gm_quit
+    fi
+    if out=$(python3 "$PY_HELPER" year-range "$typed" 2>/dev/null); then
+      IFS=$'\t' read -r a b <<< "$out"
+      gm_set_year_span "$a" "$b"
+      return 0
+    fi
+    rc=$?
+    if (( rc == 2 )); then
+      echo "The first year is newer than the second."
+    else
+      echo "That is not a year or a range. Examples: 2026, 2026-2027, 2026 2027."
+    fi
+  done
+}
+
+gm_ask_track_years() {
+  local reply phrase
+  gm_guess_media_years
+  if (( DO_YES )) || (( ! script_is_run_interactively )); then
+    if (( ${#GUESS_YEARS[@]} )); then
+      gm_set_guess_years "${GUESS_YEARS[@]}"
+      echo "$(gm_ts) Tracks: ${TRACK_SPAN} only, from the file names."
+    else
+      gm_set_all_years
+      echo "$(gm_ts) Tracks: all years."
+    fi
+    return 0
+  fi
+  echo
+  if (( ${#GUESS_YEARS[@]} )); then
+    phrase="$(gm_year_phrase "${GUESS_YEARS[@]}")"
+    echo "The photos and videos here are from ${phrase}."
+    echo "  [Y] ${phrase} only (default)"
+    echo "  [t] Type a year"
+    echo "  [a] All years"
+    echo "  [q] Quit"
+    gm_read_key "Which tracks? [Y/t/a/q]: " y
+    reply="$REPLY"
+    case "$reply" in
+      y) gm_set_guess_years "${GUESS_YEARS[@]}" ;;
+      t) gm_ask_typed_year ;;
+      a) gm_set_all_years ;;
+      q) gm_quit ;;
+      *) echo "$(gm_ts) That is not a choice. Stopping."; return_code=1; exit 1 ;;
+    esac
+  else
+    echo "No year in these file names."
+    echo "  [A] All years (default)"
+    echo "  [t] Type a year"
+    echo "  [q] Quit"
+    gm_read_key "Which tracks? [A/t/q]: " a
+    reply="$REPLY"
+    case "$reply" in
+      a) gm_set_all_years ;;
+      t) gm_ask_typed_year ;;
+      q) gm_quit ;;
+      *) echo "$(gm_ts) That is not a choice. Stopping."; return_code=1; exit 1 ;;
+    esac
+  fi
+}
+
 gm_collect() {
   local path parent
   WORK=$(mktemp -d)
@@ -661,12 +828,19 @@ gm_collect() {
   GPX_N=0
   for path in "${DIR_INPUTS[@]}"; do
     gm_add_root "$path"
-    gm_walk "$path" "$RECURSE" both
+    gm_walk "$path" "$RECURSE" media
   done
   for path in "${FILE_INPUTS[@]}"; do
     parent="$(dirname -- "$path")"
     gm_add_root "$parent"
     gm_consider_file "$path" media
+  done
+  gm_ask_track_years
+  for path in "${DIR_INPUTS[@]}"; do
+    gm_walk "$path" "$RECURSE" gpx
+  done
+  for path in "${FILE_INPUTS[@]}"; do
+    parent="$(dirname -- "$path")"
     gm_walk "$parent" 0 gpx
   done
   for path in "${GPX_EXTRA[@]}"; do
@@ -818,9 +992,9 @@ gm_choose_places() {
       printf '  [%d] [%s]   %s, %s\n' "$(( n + 1 ))" "${PLACE_LABEL[$n]}" "${PLACE_LAT[$n]}" "${PLACE_LON[$n]}"
     done
     echo "  [g] Type a latitude, longitude for this file"
-    echo "  [s] Skip this file (default)"
+    echo "  [S] Skip this file (default)"
     echo "  [q] Quit now, without Enter"
-    gm_read_place_choice "Place for ${CHOOSE_SHOW[$i]}? [s]: "
+    gm_read_place_choice "Place for ${CHOOSE_SHOW[$i]}? [S]: "
     reply="$REPLY"
     if [[ "$reply" == s ]]; then
       continue
@@ -908,6 +1082,10 @@ GM_SUMMARY_DONE=0
 GM_START_NS=""
 GM_PROC_SEC=0
 GM_PROC_SLICE=""
+TRACK_ALL=0
+TRACK_SPAN=""
+GUESS_YEARS=()
+declare -A TRACK_YEAR=()
 gm_colors
 
 HEADER_EXTRA_ARGS=()
@@ -1043,6 +1221,7 @@ SCAN_ARGS=(
   --conf-list "$WORK/confs"
   --plan "$WORK/plan.json"
   --scope "$(gm_scope_label)"
+  --track-span "$TRACK_SPAN"
 )
 if (( TZ_ASSUMED )); then
   SCAN_ARGS+=(--tz-assumed)
