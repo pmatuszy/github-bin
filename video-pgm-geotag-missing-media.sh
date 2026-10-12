@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261012.122556 - the backup choice names the file it will be stored as
 # v. 20261012.122130 - the update question follows the backup answer with no blank line
 # v. 20261012.122058 - the run summary has no timestamp on each line
 # v. 20261012.121909 - confirm the update, and keep a dated backup only when asked
@@ -48,6 +49,7 @@
 # v. 20261009.160131 - also read .tcx tracks; a Trackpoint with a time and a position is used like a GPX point
 # v. 20261009.151425 - report which photos and videos have no location, and write one from the nearest GPX point
 
+# 2026.10.12 - v. 0.49 - the backup choice names the file it will be stored as
 # 2026.10.12 - v. 0.48 - the update question follows the backup answer with no blank line
 # 2026.10.12 - v. 0.47 - the run summary has no timestamp on each line
 # 2026.10.12 - v. 0.46 - confirm the update, and keep a dated backup only when asked
@@ -160,8 +162,8 @@ Each file is shown first. Nothing is written until those answers are done.
 Enter accepts that file. n skips it. The chosen files are updated after that.
 Each one is copied aside, which can take a while. The copy needs free space
 for the file plus 10%. After those answers, a backup of each old file can be
-kept. The default is no. A backup is named with the current date and time,
-such as clip_old-20261012_121700.mp4. --backup keeps one. --no-backup does
+kept. The default is no. A backup is stored as that file's name with
+_old- and the current date and time. --backup keeps one. --no-backup does
 not. Then you are asked whether to update the chosen files. The default is
 yes. --internet yes or no looks up place names without asking. The default
 is yes. Each file is numbered, such as [1/22], and shown as a
@@ -576,7 +578,7 @@ gm_ask_coord() {
 gm_write_chosen() {
   local lat="$1" lon="$2" place="$3" i="$4"
   local -a place_args
-  gm_ask_backup
+  gm_ask_backup "${CHOOSE_PATH[$i]}"
   gm_proc_begin
   place_args=(
     write-place
@@ -594,7 +596,7 @@ gm_write_chosen() {
     place_args+=(--colors)
   fi
   if (( BACKUP == 1 )); then
-    place_args+=(--backup)
+    place_args+=(--backup --backup-stamp "$BACKUP_STAMP")
   fi
   if python3 "$PY_HELPER" "${place_args[@]}"; then
     PLACE_WROTE=$(( PLACE_WROTE + 1 ))
@@ -1660,8 +1662,28 @@ gm_ready_to_write() {
   echo "Each file is copied aside while the location is written, so this can take a while."
 }
 
+gm_backup_stored_name() {
+  local path="$1" stamp="$2" dir base name ext candidate n=2
+  dir="$(dirname -- "$path")"
+  base="$(basename -- "$path")"
+  if [[ "$base" == *.* ]]; then
+    name="${base%.*}"
+    ext=".${base##*.}"
+  else
+    name="$base"
+    ext=""
+  fi
+  candidate="${name}_old-${stamp}${ext}"
+  while [[ -e "${dir}/${candidate}" ]]; do
+    candidate="${name}_old-${stamp}-${n}${ext}"
+    n=$(( n + 1 ))
+  done
+  printf '%s\n' "$candidate"
+}
+
 gm_ask_backup() {
-  local reply example
+  local reply stamp path stored
+  local -a paths=()
   if (( BACKUP >= 0 )); then
     return 0
   fi
@@ -1669,11 +1691,29 @@ gm_ask_backup() {
     BACKUP=0
     return 0
   fi
-  example="clip_old-$(date '+%Y%m%d_%H%M%S').mp4"
+  stamp="$(date '+%Y%m%d_%H%M%S')"
+  BACKUP_STAMP="$stamp"
+  if [[ -n "${1:-}" ]]; then
+    paths+=("$1")
+  elif [[ -s "${WORK}/write-only" ]]; then
+    while IFS= read -r -d '' path; do
+      paths+=("$path")
+    done < "$WORK/write-only"
+  fi
   echo
   echo "A backup keeps the old file under a new name, with the current date and time."
   echo "  [N] No backup (default)"
-  echo "  [b] Yes, for example ${example}"
+  if (( ${#paths[@]} == 1 )); then
+    stored="$(gm_backup_stored_name "${paths[0]}" "$stamp")"
+    echo "  [b] Yes, it will be stored as ${stored}"
+  elif (( ${#paths[@]} > 1 )); then
+    echo "  [b] Yes, it will be stored as:"
+    for path in "${paths[@]}"; do
+      echo "      $(gm_backup_stored_name "$path" "$stamp")"
+    done
+  else
+    echo "  [b] Yes, it will be stored as name_old-${stamp}"
+  fi
   echo "  [q] Quit"
   gm_read_key "Backup the old files? [N/b/q]: " n "No backup"
   reply="$REPLY"
@@ -1824,6 +1864,7 @@ USE_NET=-1
 INTERNET_SET=0
 BACKUP=-1
 BACKUP_SET=0
+BACKUP_STAMP=""
 GM_LOOKED=0
 GM_PLACE="typed"
 GM_LAST_LAT=""
@@ -2209,7 +2250,7 @@ if (( WRITE_N > 0 )); then
         write_args+=(--colors)
       fi
       if (( BACKUP == 1 )); then
-        write_args+=(--backup)
+        write_args+=(--backup --backup-stamp "$BACKUP_STAMP")
       fi
       python3 "$PY_HELPER" "${write_args[@]}" || return_code=$?
       gm_proc_end

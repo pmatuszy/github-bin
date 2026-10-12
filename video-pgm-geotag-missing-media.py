@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# v. 20261012.122556 - the backup choice names the file it will be stored as
 # v. 20261012.122130 - the update question follows the backup answer with no blank line
 # v. 20261012.122058 - the run summary has no timestamp on each line
 # v. 20261012.121909 - confirm the update, and keep a dated backup only when asked
@@ -48,6 +49,7 @@
 # v. 20261009.160131 - also read .tcx tracks; a Trackpoint with a time and a position joins the same search as GPX
 # v. 20261009.151425 - match a photo or video time to the nearest GPX point and write that location with exiftool
 
+# 2026.10.12 - v. 0.49 - the backup choice names the file it will be stored as
 # 2026.10.12 - v. 0.48 - the update question follows the backup answer with no blank line
 # 2026.10.12 - v. 0.47 - the run summary has no timestamp on each line
 # 2026.10.12 - v. 0.46 - confirm the update, and keep a dated backup only when asked
@@ -1426,11 +1428,13 @@ def room_for_copy(path):
 
 
 KEEP_BACKUP = False
+BACKUP_STAMP = ""
 
 
 def take_backup(args):
-    global KEEP_BACKUP
+    global KEEP_BACKUP, BACKUP_STAMP
     KEEP_BACKUP = bool(getattr(args, "backup", False))
+    BACKUP_STAMP = getattr(args, "backup_stamp", "") or ""
 
 
 def backup_filename(name, stamp):
@@ -1440,7 +1444,7 @@ def backup_filename(name, stamp):
 
 def unique_backup(path):
     folder, name = os.path.split(path)
-    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    stamp = BACKUP_STAMP or datetime.now().strftime("%Y%m%d_%H%M%S")
     candidate = os.path.join(folder, backup_filename(name, stamp))
     n = 2
     while os.path.exists(candidate):
@@ -1926,6 +1930,7 @@ def cmd_write(argv):
     parser.add_argument("--only-list", default="")
     parser.add_argument("--colors", action="store_true")
     parser.add_argument("--backup", action="store_true")
+    parser.add_argument("--backup-stamp", default="")
     args = parser.parse_args(argv)
     take_colors(args)
     take_backup(args)
@@ -2015,6 +2020,7 @@ def cmd_write_place(argv):
     parser.add_argument("--place", default="")
     parser.add_argument("--colors", action="store_true")
     parser.add_argument("--backup", action="store_true")
+    parser.add_argument("--backup-stamp", default="")
     args = parser.parse_args(argv)
     take_colors(args)
     take_backup(args)
