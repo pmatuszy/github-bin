@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261012.152350 - the verbose question is asked only when no options were given
 # v. 20261012.151810 - the internet question is asked before the equivalent command
 # v. 20261012.151324 - a track match can be written from a preconfigured location
 # v. 20261012.145108 - an arrow key or other unknown key asks the same file again
@@ -69,6 +70,7 @@
 # v. 20261009.160131 - also read .tcx tracks; a Trackpoint with a time and a position is used like a GPX point
 # v. 20261009.151425 - report which photos and videos have no location, and write one from the nearest GPX point
 
+# 2026.10.12 - v. 0.70 - the verbose question is asked only when no options were given
 # 2026.10.12 - v. 0.69 - the internet question is asked before the equivalent command
 # 2026.10.12 - v. 0.68 - a track match can be written from a preconfigured location
 # 2026.10.12 - v. 0.67 - an arrow key or other unknown key asks the same file again
@@ -176,8 +178,10 @@ read as /mnt/p/video/trip.
 
 The first question is whether to use colors. The default is yes. --colors no
 turns that off. The next question is whether to list every track and every
-photo or video. The default is no: the report then gives the counts.
---verbose lists each one. -y does not ask. It stays with the totals, and
+photo or video. That question is asked only when the script is started with
+no options. The default is no: the report then gives the counts.
+--verbose lists each one. Any other option, without --verbose, keeps the
+totals and does not ask. -y does not ask. It stays with the totals, and
 with colors on.
 
 Photos: .jpg .jpeg .heic .png
@@ -1093,7 +1097,7 @@ gm_ask_verbose() {
   if (( VERBOSE_SET )); then
     return 0
   fi
-  if (( DO_YES )) || (( ! script_is_run_interactively )); then
+  if (( CLI_OPTIONS )) || (( DO_YES )) || (( ! script_is_run_interactively )); then
     VERBOSE=0
     return 0
   fi
@@ -2497,6 +2501,7 @@ DRY_RUN=0
 REDO=0
 VERBOSE=0
 VERBOSE_SET=0
+CLI_OPTIONS=0
 USE_COLOR=0
 COLORS_SET=0
 RECURSE=0
@@ -2593,7 +2598,7 @@ gm_colors
 HEADER_EXTRA_ARGS=()
 while [[ $# -gt 0 ]]; do
   case $1 in
-    --no_startup_delay) HEADER_EXTRA_ARGS+=(NO_STARTUP_DELAY); shift ;;
+    --no_startup_delay) CLI_OPTIONS=1; HEADER_EXTRA_ARGS+=(NO_STARTUP_DELAY); shift ;;
     *) break ;;
   esac
 done
@@ -2618,6 +2623,10 @@ while [[ $# -gt 0 ]]; do
   val=""
   case "$opt" in
     --*=*) val="${opt#*=}"; opt="${opt%%=*}"; set -- "$opt" "$val" "${@:2}" ;;
+  esac
+  case "$1" in
+    --) ;;
+    -*) CLI_OPTIONS=1 ;;
   esac
   case "$1" in
     -h|--help) show_help; exit 0 ;;
