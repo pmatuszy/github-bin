@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261012.133132 - all subdirectories is the default directory search
 # v. 20261012.131113 - a chosen location is called a manual entry
 # v. 20261012.130927 - track files and chosen places are counted apart, with the address on its own line
 # v. 20261012.130730 - each file says when processing starts and when it is complete
@@ -58,6 +59,7 @@
 # v. 20261009.160131 - also read .tcx tracks; a Trackpoint with a time and a position is used like a GPX point
 # v. 20261009.151425 - report which photos and videos have no location, and write one from the nearest GPX point
 
+# 2026.10.12 - v. 0.59 - all subdirectories is the default directory search
 # 2026.10.12 - v. 0.58 - a chosen location is called a manual entry
 # 2026.10.12 - v. 0.57 - track files and chosen places are counted apart, with the address on its own line
 # 2026.10.12 - v. 0.56 - each file says when processing starts and when it is complete
@@ -148,8 +150,8 @@ Usage: $(basename "$0") [-h|--help] [-v|--version] [--history]
        [FILE|DIR ...]
 
 Report which photos and videos have a location, and which do not. With no
-FILE or DIR, the current directory is used. [C] keeps that directory only.
-[a] includes its subdirectories. Windows paths such as P:\\video\\trip are
+FILE or DIR, the current directory is used. [A] includes its subdirectories.
+[c] keeps that directory only. Windows paths such as P:\\video\\trip are
 read as /mnt/p/video/trip.
 
 The first question is whether to use colors. The default is yes. --colors no
@@ -253,7 +255,7 @@ Options:
   -h, --help           Show this help and exit.
   -v, --version        Print script version and exit.
   --history            Print script changelog from the header and exit.
-  -y, --yes            Do not ask. This directory only, unless --recursive.
+  -y, --yes            Do not ask. Subdirectories too, unless --here.
                        Camera offset +02:00 when --tz is omitted. Write every
                        match.
   -n, --dry-run        Print the report. Write nothing.
@@ -268,7 +270,7 @@ Options:
   --screenshots        Also geotag a file whose name contains screenshot.
                        By default that file is skipped.
   --here               This directory only. Do not ask.
-  --recursive          This directory and its subdirectories. Do not ask.
+  --recursive          This directory and its subdirectories. Default. Do not ask.
   --tz OFFSET|auto     Camera clock minus UTC. Examples: +02:00, -05:30, 0.
                        auto: learn it from files that already have a GPS time.
   --max-gap SECONDS    How close in time a track point must be. Default 30.
@@ -291,10 +293,10 @@ video-pgm-geotag-missing-media.py has its own selftest.
 
 Examples:
   $(basename "$0")
-      Current directory. Ask about subdirectories. Report, then ask before writing.
+      Current directory and its subdirectories. Report, then ask before writing.
   $(basename "$0") -n /mnt/p/video/trip
       Report that directory. Write nothing.
-  $(basename "$0") -y --tz +02:00 --recursive /mnt/p/video/trip
+  $(basename "$0") -y --tz +02:00 /mnt/p/video/trip
       Subdirectories too. Write every close match. Camera clock is +02:00.
   $(basename "$0") --gpx /mnt/p/tracks/day.gpx --here /mnt/p/video/trip
       Use that GPX as well as any .gpx or .tcx beside the videos.
@@ -894,27 +896,29 @@ gm_ask_scope() {
     return 0
   fi
   if (( DO_YES )) || (( ! script_is_run_interactively )); then
-    RECURSE=0
-    echo "$(gm_ts) Directories: current directory only. Pass --recursive to include subdirectories."
+    RECURSE=1
+    if (( ${#DIR_INPUTS[@]} > 1 )); then
+      echo "$(gm_ts) Directories: these directories and their subdirectories. Pass --here for these directories only."
+    else
+      echo "$(gm_ts) Directories: this directory and its subdirectories. Pass --here for this directory only."
+    fi
     return 0
   fi
   echo
   if (( ${#DIR_INPUTS[@]} > 1 )); then
     echo "Look in subdirectories of these directories too?"
+    echo "  [A] All subdirectories (default)"
+    echo "  [c] Current directories only"
   else
     echo "Look in subdirectories too?"
+    echo "  [A] All subdirectories (default)"
+    echo "  [c] Current directory only"
   fi
-  if (( ${#DIR_INPUTS[@]} > 1 )); then
-    echo "  [C] Current directories only (default)"
-  else
-    echo "  [C] Current directory only (default)"
-  fi
-  echo "  [a] All subdirectories"
   echo "  [q] Quit"
   if (( ${#DIR_INPUTS[@]} > 1 )); then
-    gm_read_key "Current directories or all subdirectories? [C/a/q]: " c "Current directories only"
+    gm_read_key "Current directories or all subdirectories? [A/c/q]: " a "All subdirectories"
   else
-    gm_read_key "Current directory or all subdirectories? [C/a/q]: " c "Current directory only"
+    gm_read_key "Current directory or all subdirectories? [A/c/q]: " a "All subdirectories"
   fi
   reply="$REPLY"
   case "$reply" in

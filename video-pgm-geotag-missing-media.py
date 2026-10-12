@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# v. 20261012.133132 - all subdirectories is the default directory search
 # v. 20261012.131113 - a chosen location is called a manual entry
 # v. 20261012.130927 - track files and chosen places are counted apart, with the address on its own line
 # v. 20261012.130730 - each file says when processing starts and when it is complete
@@ -58,6 +59,7 @@
 # v. 20261009.160131 - also read .tcx tracks; a Trackpoint with a time and a position joins the same search as GPX
 # v. 20261009.151425 - match a photo or video time to the nearest GPX point and write that location with exiftool
 
+# 2026.10.12 - v. 0.59 - all subdirectories is the default directory search
 # 2026.10.12 - v. 0.58 - a chosen location is called a manual entry
 # 2026.10.12 - v. 0.57 - track files and chosen places are counted apart, with the address on its own line
 # 2026.10.12 - v. 0.56 - each file says when processing starts and when it is complete
