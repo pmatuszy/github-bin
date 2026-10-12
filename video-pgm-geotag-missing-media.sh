@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261012.205121 - the default write names the closest track
 # v. 20261012.182840 - each matching track shows its time difference, coordinates, and map links
 # v. 20261012.182705 - a time close to two tracks asks which file to use
 # v. 20261012.180710 - space accepts the default, the same as Enter
@@ -77,6 +78,7 @@
 # v. 20261009.160131 - also read .tcx tracks; a Trackpoint with a time and a position is used like a GPX point
 # v. 20261009.151425 - report which photos and videos have no location, and write one from the nearest GPX point
 
+# 2026.10.12 - v. 0.78 - the default write names the closest track
 # 2026.10.12 - v. 0.77 - each matching track shows its time difference, coordinates, and map links
 # 2026.10.12 - v. 0.76 - a time close to two tracks asks which file to use
 # 2026.10.12 - v. 0.75 - space accepts the default, the same as Enter
@@ -214,10 +216,11 @@ run that already have both a camera time and a GPS time.
 A file with no location is a match when some track point is within --max-gap
 seconds (default 30). The closest point is the one used. When that time is
 close enough in more than one track file, each file is listed with its time
-difference, coordinates, and map links. t lets you choose which file. The
-closest stays the default. With a point every one or two seconds, a normal
-match is about a second away. The report shows the gap. A video is tagged at
-its start.
+difference, coordinates, and map links. [1] is the closest. Y, Enter, and
+space write that track. t lets you choose another file. a writes the closest
+track for this file and for each file after. With a point every one or two
+seconds, a normal match is about a second away. The report shows the gap. A
+video is tagged at its start.
 
 A file whose name contains screenshot is skipped. That covers names such as
 WhatsApp-screenshot and Signal-screenshot. The script says the file is
@@ -2221,6 +2224,7 @@ gm_finish_asking() {
 gm_ask_track_writes() {
   local i reply loc lat lon rest finish shown total desc status accepted path left
   local n picked prompt has_back track_n alt_n alt_i pick_i
+  local closest_name y_label a_label ask_prompt
   rest=0
   finish=0
   shown=0
@@ -2273,7 +2277,7 @@ gm_ask_track_writes() {
     gm_write_row "Description" "$desc"
     gm_write_row "GPSProcessingMethod" "${WRITE_METHOD[$i]}"
     if (( rest )); then
-      echo "Writing this one too."
+      echo "Writing the closest track for this one too."
       gm_note_write "${WRITE_PATH[$i]}" "$desc"
       i=$(( i + 1 ))
       continue
@@ -2286,13 +2290,20 @@ gm_ask_track_writes() {
       done
     fi
     alt_n=${WRITE_ALT_COUNT[$i]:-0}
+    y_label="Write this"
+    a_label="Write this and the rest"
+    ask_prompt="Write this location?"
     if (( alt_n > 1 )); then
       gm_print_track_alts "$i"
+      closest_name="${ALT_TRACK[${WRITE_ALT_START[$i]}]}"
+      y_label="Write [1] ${closest_name}, the closest track"
+      a_label="Write the closest track for this file and for each file after"
+      ask_prompt="Write [1] ${closest_name}, the closest track?"
     fi
     echo
-    echo "  [Y] Write this (default)"
+    echo "  [Y] ${y_label} (default)"
     echo "  [n] Skip this file"
-    echo "  [a] Write this and the rest"
+    echo "  [a] ${a_label}"
     if (( i > 0 )); then
       echo "  [b] Undo the last answer and back to the previous file"
     fi
@@ -2312,7 +2323,7 @@ gm_ask_track_writes() {
       prompt="$(gm_track_prompt "$has_back" no)"
     fi
     while true; do
-      gm_read_track_choice "Write this location? [${shown}/${total}] ${prompt}: " y "Write this"
+      gm_read_track_choice "${ask_prompt} [${shown}/${total}] ${prompt}: " y "$y_label"
       reply="$REPLY"
       if [[ "$reply" =~ ^[0-9]+$ ]]; then
         if (( ${#PLACE_LABEL[@]} > 0 && 10#$reply >= 1 && 10#$reply <= ${#PLACE_LABEL[@]} )); then

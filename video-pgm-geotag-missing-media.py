@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# v. 20261012.205121 - the default write names the closest track
 # v. 20261012.182840 - each matching track shows its time difference, coordinates, and map links
 # v. 20261012.182705 - a time close to two tracks asks which file to use
 # v. 20261012.180710 - space accepts the default, the same as Enter
@@ -77,6 +78,7 @@
 # v. 20261009.160131 - also read .tcx tracks; a Trackpoint with a time and a position joins the same search as GPX
 # v. 20261009.151425 - match a photo or video time to the nearest GPX point and write that location with exiftool
 
+# 2026.10.12 - v. 0.78 - the default write names the closest track
 # 2026.10.12 - v. 0.77 - each matching track shows its time difference, coordinates, and map links
 # 2026.10.12 - v. 0.76 - a time close to two tracks asks which file to use
 # 2026.10.12 - v. 0.75 - space accepts the default, the same as Enter
