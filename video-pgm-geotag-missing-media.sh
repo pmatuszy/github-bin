@@ -1,4 +1,8 @@
 #!/bin/bash
+# v. 20261012.131113 - a chosen location is called a manual entry
+# v. 20261012.130927 - track files and chosen places are counted apart, with the address on its own line
+# v. 20261012.130730 - each file says when processing starts and when it is complete
+# v. 20261012.130522 - backup names are listed only in verbose mode
 # v. 20261012.125257 - f stops the questions and keeps only the files already accepted
 # v. 20261012.123248 - place choices are written only after the update question
 # v. 20261012.123123 - the place question prints the option that was chosen
@@ -54,6 +58,10 @@
 # v. 20261009.160131 - also read .tcx tracks; a Trackpoint with a time and a position is used like a GPX point
 # v. 20261009.151425 - report which photos and videos have no location, and write one from the nearest GPX point
 
+# 2026.10.12 - v. 0.58 - a chosen location is called a manual entry
+# 2026.10.12 - v. 0.57 - track files and chosen places are counted apart, with the address on its own line
+# 2026.10.12 - v. 0.56 - each file says when processing starts and when it is complete
+# 2026.10.12 - v. 0.55 - backup names are listed only in verbose mode
 # 2026.10.12 - v. 0.54 - f stops the questions and keeps only the files already accepted
 # 2026.10.12 - v. 0.53 - place choices are written only after the update question
 # 2026.10.12 - v. 0.52 - the place question prints the option that was chosen
@@ -383,7 +391,7 @@ gm_print_summary() {
     labels+=("Files"); nums+=("$SUM_FILES")
     (( SUM_ALREADY > 0 )) && { labels+=("Already had a location"); nums+=("$SUM_ALREADY"); }
     (( SUM_WROTE > 0 )) && { labels+=("Tagged from a track"); nums+=("$SUM_WROTE"); }
-    (( PLACE_WROTE > 0 )) && { labels+=("Tagged from a place"); nums+=("$PLACE_WROTE"); }
+    (( PLACE_WROTE > 0 )) && { labels+=("Tagged by manual entry"); nums+=("$PLACE_WROTE"); }
     (( left > 0 )) && { labels+=("Left without a location"); nums+=("$left"); }
     (( SUM_UNREAD > 0 )) && { labels+=("Could not be read"); nums+=("$SUM_UNREAD"); }
     labels+=("Tracks"); nums+=("$SUM_TRACKS")
@@ -627,6 +635,9 @@ gm_flush_places() {
     lat="${PLACE_Q_LAT[$n]}"
     lon="${PLACE_Q_LON[$n]}"
     place="${PLACE_Q_NAME[$n]}"
+    if (( n > 0 )); then
+      echo
+    fi
     gm_proc_begin
     place_args=(
       write-place
@@ -639,9 +650,14 @@ gm_flush_places() {
       --gps-time "${CHOOSE_TIME[$i]}"
       --label "${CHOOSE_SHOW[$i]}"
       --place "$place"
+      --number "$(( n + 1 ))"
+      --total "${#PLACE_Q_I[@]}"
     )
     if (( USE_COLOR )); then
       place_args+=(--colors)
+    fi
+    if (( VERBOSE )); then
+      place_args+=(--verbose)
     fi
     if (( BACKUP == 1 )); then
       place_args+=(--backup --backup-stamp "$BACKUP_STAMP")
@@ -1791,7 +1807,7 @@ gm_backup_stored_name() {
 }
 
 gm_ask_backup() {
-  local reply stamp path stored qi
+  local reply stamp path qi
   local -a paths=()
   if (( BACKUP >= 0 )); then
     return 0
@@ -1817,18 +1833,13 @@ gm_ask_backup() {
     done
   fi
   echo
-  echo "A backup keeps the old file under a new name, with the current date and time."
+  echo "A backup keeps the old file under a new name."
   echo "  [N] No backup (default)"
-  if (( ${#paths[@]} == 1 )); then
-    stored="$(gm_backup_stored_name "${paths[0]}" "$stamp")"
-    echo "  [b] Yes, it will be stored as ${stored}"
-  elif (( ${#paths[@]} > 1 )); then
-    echo "  [b] Yes, it will be stored as:"
+  echo "  [b] Yes, files will be stored with the current date and time"
+  if (( VERBOSE && ${#paths[@]} )); then
     for path in "${paths[@]}"; do
       echo "      $(gm_backup_stored_name "$path" "$stamp")"
     done
-  else
-    echo "  [b] Yes, it will be stored as name_old-${stamp}"
   fi
   echo "  [q] Quit"
   gm_read_key "Backup the old files? [N/b/q]: " n "No backup"
@@ -2380,6 +2391,9 @@ if (( WRITE_TRACKS || ${#PLACE_Q_I[@]} )); then
     gm_ask_backup
     gm_print_equivalent
     if (( WRITE_TRACKS )); then
+      echo
+      echo "Track locations."
+      echo
       gm_proc_begin
       write_args=(write --exiftool "$EXIFTOOL_BIN" --plan "$WORK/plan.json")
       if [[ -s "${WORK}/write-only" ]]; then
@@ -2388,13 +2402,31 @@ if (( WRITE_TRACKS || ${#PLACE_Q_I[@]} )); then
       if (( USE_COLOR )); then
         write_args+=(--colors)
       fi
+      if (( VERBOSE )); then
+        write_args+=(--verbose)
+      fi
       if (( BACKUP == 1 )); then
         write_args+=(--backup --backup-stamp "$BACKUP_STAMP")
       fi
       python3 "$PY_HELPER" "${write_args[@]}" || return_code=$?
       gm_proc_end
     fi
+    if (( ${#PLACE_Q_I[@]} )); then
+      echo
+      echo "Manual entry."
+      echo
+    fi
     gm_flush_places
+    if (( ${#PLACE_Q_I[@]} )); then
+      echo
+      if (( PLACE_WROTE == 0 )); then
+        echo "No files updated by manual entry."
+      elif (( PLACE_WROTE == 1 )); then
+        echo "1 file updated by manual entry."
+      else
+        echo "$(gm_fmt_int "$PLACE_WROTE") files updated by manual entry."
+      fi
+    fi
   fi
 fi
 exit "$return_code"

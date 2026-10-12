@@ -1,4 +1,8 @@
 #!/usr/bin/env python3
+# v. 20261012.131113 - a chosen location is called a manual entry
+# v. 20261012.130927 - track files and chosen places are counted apart, with the address on its own line
+# v. 20261012.130730 - each file says when processing starts and when it is complete
+# v. 20261012.130522 - backup names are listed only in verbose mode
 # v. 20261012.125257 - f stops the questions and keeps only the files already accepted
 # v. 20261012.123248 - place choices are written only after the update question
 # v. 20261012.123123 - the place question prints the option that was chosen
@@ -54,6 +58,10 @@
 # v. 20261009.160131 - also read .tcx tracks; a Trackpoint with a time and a position joins the same search as GPX
 # v. 20261009.151425 - match a photo or video time to the nearest GPX point and write that location with exiftool
 
+# 2026.10.12 - v. 0.58 - a chosen location is called a manual entry
+# 2026.10.12 - v. 0.57 - track files and chosen places are counted apart, with the address on its own line
+# 2026.10.12 - v. 0.56 - each file says when processing starts and when it is complete
+# 2026.10.12 - v. 0.55 - backup names are listed only in verbose mode
 # 2026.10.12 - v. 0.54 - f stops the questions and keeps only the files already accepted
 # 2026.10.12 - v. 0.53 - place choices are written only after the update question
 # 2026.10.12 - v. 0.52 - the place question prints the option that was chosen
@@ -1941,6 +1949,7 @@ def cmd_write(argv):
     parser.add_argument("--colors", action="store_true")
     parser.add_argument("--backup", action="store_true")
     parser.add_argument("--backup-stamp", default="")
+    parser.add_argument("--verbose", action="store_true")
     args = parser.parse_args(argv)
     take_colors(args)
     take_backup(args)
@@ -1961,26 +1970,34 @@ def cmd_write(argv):
     total = len(writes)
     width = len(str(total))
     for number, item in enumerate(writes, 1):
-        ok, message = write_one(args.exiftool, item)
+        if number > 1:
+            print()
+        name = paint(item.get("label") or os.path.basename(item["path"]), "32")
         prefix = "[%*d/%d]" % (width, number, total)
+        print("%s %s - start processing" % (prefix, name), flush=True)
+        ok, message = write_one(args.exiftool, item)
         if ok:
             wrote += 1
-            print("%s %s  %s" % (
-                prefix,
-                paint(item.get("label") or os.path.basename(item["path"]), "32"),
-                paint(fmt_pos(item["lat"], item["lon"], item.get("ele")), "94"),
-            ))
-            if message:
-                print("    Old file kept as: %s" % message)
+            indent = " " * (len(prefix) + 1)
+            print("%s %s - processing is complete." % (prefix, name), flush=True)
+            print("%s%s" % (indent, paint(fmt_pos(item["lat"], item["lon"], item.get("ele")), "94")), flush=True)
+            if message and args.verbose:
+                print("    Old file kept as: %s" % message, flush=True)
         else:
             failed += 1
-            print("%s %s  could not write" % (prefix, paint(item.get("label") or item["path"], "32")))
+            print("%s %s - processing could not be completed." % (prefix, name), flush=True)
             if message:
-                print("    %s" % message.splitlines()[-1])
+                print("    %s" % message.splitlines()[-1], flush=True)
     plan["wrote_tracks"] = wrote
     with open(args.plan, "w", encoding="utf-8") as handle:
         json.dump(plan, handle)
-    print("Wrote %s file%s." % (fmt_int(wrote), "" if wrote == 1 else "s"))
+    print()
+    if wrote == 0:
+        print("No files updated from tracks.")
+    elif wrote == 1:
+        print("1 file updated from a track.")
+    else:
+        print("%s files updated from tracks." % fmt_int(wrote))
     if failed:
         print("%s file%s could not be written." % (fmt_int(failed), "" if failed == 1 else "s"))
         return 1
@@ -2031,6 +2048,9 @@ def cmd_write_place(argv):
     parser.add_argument("--colors", action="store_true")
     parser.add_argument("--backup", action="store_true")
     parser.add_argument("--backup-stamp", default="")
+    parser.add_argument("--verbose", action="store_true")
+    parser.add_argument("--number", type=int, default=1)
+    parser.add_argument("--total", type=int, default=1)
     args = parser.parse_args(argv)
     take_colors(args)
     take_backup(args)
@@ -2045,16 +2065,24 @@ def cmd_write_place(argv):
         "label": args.label or os.path.basename(args.path),
         "method": "MANUAL",
     }
+    shown = paint(args.label or os.path.basename(args.path), "32")
+    width = len(str(max(args.total, 1)))
+    prefix = "[%*d/%d]" % (width, args.number, max(args.total, 1))
+    indent = " " * (len(prefix) + 1)
+    print("%s %s - start processing" % (prefix, shown), flush=True)
     ok, message = write_one(args.exiftool, item)
-    shown = args.label or os.path.basename(args.path)
     if ok:
-        print("%s  [%s]  %s" % (paint(shown, "32"), args.place, paint(fmt_pos(args.lat, args.lon, None), "94")))
-        if message:
-            print("    Old file kept as: %s" % message)
+        print("%s %s - processing is complete." % (prefix, shown), flush=True)
+        print("%s%s" % (indent, paint(fmt_pos(args.lat, args.lon, None), "94")), flush=True)
+        address = (args.place or "").strip()
+        if address and address.lower() != "typed":
+            print("%s%s" % (indent, address), flush=True)
+        if message and args.verbose:
+            print("    Old file kept as: %s" % message, flush=True)
         return 0
-    print("%s  could not write [%s]" % (paint(shown, "32"), args.place))
+    print("%s %s - processing could not be completed." % (prefix, shown), flush=True)
     if message:
-        print("    %s" % message.splitlines()[-1])
+        print("    %s" % message.splitlines()[-1], flush=True)
     return 1
 
 
