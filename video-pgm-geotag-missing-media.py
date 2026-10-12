@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# v. 20261012.101840 - GPSProcessingMethod is TRACK for a GPX or TCX point and MANUAL for a chosen place
 # v. 20261012.100144 - the plan records file, location, track, and point counts for the closing summary
 # v. 20261012.095919 - reverse names a typed point from OpenStreetMap, or reports that it cannot be reached
 # v. 20261012.095355 - [tracks-location] is searched through every subdirectory, and that count is printed first
@@ -9,6 +10,7 @@
 # v. 20261009.160131 - also read .tcx tracks; a Trackpoint with a time and a position joins the same search as GPX
 # v. 20261009.151425 - match a photo or video time to the nearest GPX point and write that location with exiftool
 
+# 2026.10.12 - v. 0.10 - GPSProcessingMethod records TRACK or MANUAL with the coordinates
 # 2026.10.12 - v. 0.9 - scan stores how many files, locations, tracks, and track points the closing summary prints
 # 2026.10.12 - v. 0.8 - reverse asks OpenStreetMap for a street, city, and country, and returns a separate code when the network fails
 # 2026.10.12 - v. 0.7 - [tracks-location] reads .gpx and .tcx from that directory and every subdirectory, and the count is shown before the report
@@ -814,6 +816,7 @@ def match_files(media, infos, points, offset_seconds, max_gap, redo):
                 "gps_date": stamp.strftime("%Y:%m:%d"),
                 "gps_time": stamp.strftime("%H:%M:%S"),
                 "label": os.path.basename(path),
+                "method": "TRACK",
             }
         rows.append(row)
     return rows
@@ -1114,6 +1117,13 @@ def print_report(rows, gpx_info, gpx_errors, offset_seconds, tz_note, assumed, m
         print("--redo is set: a file that already has a location is written again when a point is close enough.")
 
 
+def method_of(item):
+    method = item.get("method") or "TRACK"
+    if method not in ("TRACK", "MANUAL"):
+        return "TRACK"
+    return method
+
+
 def photo_args(item):
     lat = item["lat"]
     lon = item["lon"]
@@ -1122,6 +1132,7 @@ def photo_args(item):
         "-GPSLatitudeRef=%s" % ("N" if lat >= 0 else "S"),
         "-GPSLongitude=%s" % abs(lon),
         "-GPSLongitudeRef=%s" % ("E" if lon >= 0 else "W"),
+        "-GPSProcessingMethod=%s" % method_of(item),
     ]
     if item.get("gps_date") and item.get("gps_time") and item.get("gps_date") != "-" and item.get("gps_time") != "-":
         args.append("-GPSDateStamp=%s" % item["gps_date"])
@@ -1141,10 +1152,12 @@ def video_coord(item):
 
 def video_args(item):
     coord = video_coord(item)
+    method = method_of(item)
     return [
         "-Keys:GPSCoordinates=%s" % coord,
         "-UserData:GPSCoordinates=%s" % coord,
         "-ItemList:GPSCoordinates=%s" % coord,
+        "-XMP-exif:GPSProcessingMethod=%s" % method,
     ]
 
 
@@ -1487,6 +1500,7 @@ def cmd_write_place(argv):
         "gps_date": args.gps_date,
         "gps_time": args.gps_time,
         "label": args.label or os.path.basename(args.path),
+        "method": "MANUAL",
     }
     ok, message = write_one(args.exiftool, item)
     shown = args.label or os.path.basename(args.path)
@@ -1616,6 +1630,9 @@ def selftest():
         by_name = {os.path.basename(row["path"]): row for row in rows}
         assert by_name["clip.mp4"]["status"] == "match"
         assert by_name["clip.mp4"]["write"]["lat"] == 50.0
+        assert by_name["clip.mp4"]["write"]["method"] == "TRACK"
+        assert "-GPSProcessingMethod=MANUAL" in photo_args({"lat": 50.0, "lon": 19.0, "method": "MANUAL"})
+        assert "-XMP-exif:GPSProcessingMethod=TRACK" in video_args({"lat": 50.0, "lon": 19.0, "ele": None, "method": "TRACK"})
         assert by_name["pic.jpg"]["status"] == "tagged"
         redone = match_files(
             [os.path.join(folder, "pic.jpg")],

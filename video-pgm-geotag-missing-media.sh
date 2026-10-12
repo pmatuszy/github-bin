@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261012.101840 - GPSProcessingMethod is TRACK for a GPX or TCX point and MANUAL for a chosen place
 # v. 20261012.100144 - the closing summary right-aligns file, location, and track counts in one column
 # v. 20261012.095919 - a typed latitude and longitude can be named from OpenStreetMap when the internet is allowed
 # v. 20261012.095355 - [tracks-location] is searched through every subdirectory, and that count is printed first
@@ -9,6 +10,7 @@
 # v. 20261009.160131 - also read .tcx tracks; a Trackpoint with a time and a position is used like a GPX point
 # v. 20261009.151425 - report which photos and videos have no location, and write one from the nearest GPX point
 
+# 2026.10.12 - v. 0.10 - a track point is marked TRACK and a place you pick or type is marked MANUAL, in GPSProcessingMethod
 # 2026.10.12 - v. 0.9 - the run summary at the end right-aligns how many files, locations, tracks, and track points
 # 2026.10.12 - v. 0.8 - a typed latitude and longitude is looked up on OpenStreetMap when you allow the internet; the default is yes
 # 2026.10.12 - v. 0.7 - [tracks-location] reads .gpx and .tcx from that directory and every subdirectory, and the count is shown before the report
@@ -98,8 +100,10 @@ For each file with no track point you are asked which name to write. q quits
 at once, without Enter. g asks for a latitude and longitude for that file
 only. Before that, you are asked once whether to look the point up on
 OpenStreetMap. The default is yes. If OpenStreetMap cannot be reached, the
-coordinates are still written and later points are not looked up. -y does
-not pick a place for you.
+coordinates are still written and later points are not looked up. A place you
+pick or type is marked MANUAL. A point from a GPX or TCX file is marked
+TRACK. Both are stored in GPSProcessingMethod. -y does not pick a place for
+you.
 
 Video CreateDate is read as UTC, which is right for a GoPro. If a phone
 stored local time in that field, use --quicktime local.
