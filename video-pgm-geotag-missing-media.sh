@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261012.125257 - f stops the questions and keeps only the files already accepted
 # v. 20261012.123248 - place choices are written only after the update question
 # v. 20261012.123123 - the place question prints the option that was chosen
 # v. 20261012.123004 - a file named like a screenshot is skipped, judging by the name
@@ -53,6 +54,7 @@
 # v. 20261009.160131 - also read .tcx tracks; a Trackpoint with a time and a position is used like a GPX point
 # v. 20261009.151425 - report which photos and videos have no location, and write one from the nearest GPX point
 
+# 2026.10.12 - v. 0.54 - f stops the questions and keeps only the files already accepted
 # 2026.10.12 - v. 0.53 - place choices are written only after the update question
 # 2026.10.12 - v. 0.52 - the place question prints the option that was chosen
 # 2026.10.12 - v. 0.51 - a file named like a screenshot is skipped, judging by the name
@@ -172,7 +174,9 @@ skipped because it is a screenshot, judging by the name. --screenshots
 keeps those files.
 
 Each file is shown first. Nothing is written until those answers are done.
-Enter accepts that file. n skips it. Then you are asked whether to update
+Enter accepts that file. n skips it. a accepts that file and the rest.
+f stops the questions and keeps only the files already accepted. The file
+on screen is not included. q writes nothing. Then you are asked whether to update
 the chosen files. The default is yes. Just before the files are changed, a
 backup of each old file can be kept. The default is no. A backup is stored
 as that file's name with _old- and the current date and time. --backup
@@ -493,6 +497,12 @@ gm_read_place_choice() {
     echo
     printf '  [g] Type a latitude, longitude for this file\n'
     REPLY=g
+    return 0
+  fi
+  if [[ "$first" == f ]]; then
+    echo
+    printf '  [f] Finish. Write only the files already accepted\n'
+    REPLY=f
     return 0
   fi
   if [[ "$first" =~ [0-9] ]]; then
@@ -1633,10 +1643,29 @@ gm_map_rows() {
   gm_write_row "Microsoft Maps" "https://www.bing.com/maps?cp=${lat}~${lon}&lvl=18"
 }
 
+gm_finish_asking() {
+  local accepted="$1" left="$2" noun="${3:-file}" anoun lverb
+  anoun="$noun"
+  (( accepted != 1 )) && anoun="${noun}s"
+  if (( left == 1 )); then
+    lverb="was"
+  else
+    lverb="were"
+  fi
+  echo
+  if (( accepted == 0 )); then
+    echo "Finished asking. No ${noun}s will be updated. ${left} ${lverb} not asked."
+  else
+    echo "Finished asking. ${accepted} ${anoun} will be updated. ${left} ${lverb} not asked."
+  fi
+}
+
 gm_ask_track_writes() {
-  local i reply loc lat lon rest shown total desc status
+  local i reply loc lat lon rest finish shown total desc status accepted path left
   rest=0
+  finish=0
   shown=0
+  accepted=0
   total=${#WRITE_PATH[@]}
   : > "$WORK/write-only"
   gm_ask_internet
@@ -1682,8 +1711,9 @@ gm_ask_track_writes() {
     echo "  [Y] Write this (default)"
     echo "  [n] Skip this file"
     echo "  [a] Write this and the rest"
-    echo "  [q] Quit"
-    gm_read_key "Write this location? [${shown}/${total}] [Y/n/a/q]: " y "Write this"
+    echo "  [f] Finish. Write only the files already accepted"
+    echo "  [q] Quit, and write nothing"
+    gm_read_key "Write this location? [${shown}/${total}] [Y/n/a/f/q]: " y "Write this"
     reply="$REPLY"
     case "$reply" in
       y) printf '%s\0' "${WRITE_PATH[$i]}" >> "$WORK/write-only" ;;
@@ -1691,10 +1721,29 @@ gm_ask_track_writes() {
         printf '%s\0' "${WRITE_PATH[$i]}" >> "$WORK/write-only"
         rest=1
         ;;
-      q) gm_quit ;;
+      f)
+        printf '  [f] Finish. Write only the files already accepted\n'
+        finish=1
+        break
+        ;;
+      q)
+        printf '  [q] Quit, and write nothing\n'
+        gm_quit
+        ;;
     esac
   done
-  if [[ -s "$WORK/write-only" ]]; then
+  if (( finish )); then
+    if [[ -s "$WORK/write-only" ]]; then
+      while IFS= read -r -d '' path; do
+        accepted=$(( accepted + 1 ))
+      done < "$WORK/write-only"
+    fi
+    left=$(( total - shown + 1 ))
+    gm_finish_asking "$accepted" "$left" file
+    if (( accepted > 0 )); then
+      WRITE_TRACKS=1
+    fi
+  elif [[ -s "$WORK/write-only" ]]; then
     WRITE_TRACKS=1
   else
     echo "$(gm_ts) Those track matches were not written."
@@ -1836,16 +1885,21 @@ gm_choose_places() {
     for n in "${!PLACE_LABEL[@]}"; do
       printf '  [%d] [%s]   %s\n' "$(( n + 1 ))" "${PLACE_LABEL[$n]}" "$(gm_blue "${PLACE_LAT[$n]}, ${PLACE_LON[$n]}")"
     done
-    place_prompt="[S]"
+    place_prompt="[f/S]"
     if [[ -n "$GM_LAST_LAT" && -n "$GM_LAST_LON" ]]; then
       echo "  [r] Reuse the previous latitude and longitude: $(gm_blue "${GM_LAST_LAT}, ${GM_LAST_LON}")"
-      place_prompt="[r/S]"
+      place_prompt="[r/f/S]"
     fi
     echo "  [g] Type a latitude, longitude for this file"
     echo "  [S] Skip this file (default)"
+    echo "  [f] Finish. Write only the files already accepted"
     echo "  [q] Quit now, without Enter"
     gm_read_place_choice "Place for $(gm_green "${CHOOSE_SHOW[$i]}")? ${place_prompt}: "
     reply="$REPLY"
+    if [[ "$reply" == f ]]; then
+      gm_finish_asking "${#PLACE_Q_I[@]}" "$(( total - shown + 1 ))" place
+      break
+    fi
     if [[ "$reply" == s ]]; then
       continue
     fi

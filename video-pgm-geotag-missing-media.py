@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# v. 20261012.125257 - f stops the questions and keeps only the files already accepted
 # v. 20261012.123248 - place choices are written only after the update question
 # v. 20261012.123123 - the place question prints the option that was chosen
 # v. 20261012.123004 - a file named like a screenshot is skipped, judging by the name
@@ -53,6 +54,7 @@
 # v. 20261009.160131 - also read .tcx tracks; a Trackpoint with a time and a position joins the same search as GPX
 # v. 20261009.151425 - match a photo or video time to the nearest GPX point and write that location with exiftool
 
+# 2026.10.12 - v. 0.54 - f stops the questions and keeps only the files already accepted
 # 2026.10.12 - v. 0.53 - place choices are written only after the update question
 # 2026.10.12 - v. 0.52 - the place question prints the option that was chosen
 # 2026.10.12 - v. 0.51 - a file named like a screenshot is skipped, judging by the name
