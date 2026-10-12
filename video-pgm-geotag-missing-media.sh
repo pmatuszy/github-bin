@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261012.141100 - finish stops the place questions as well as the track questions
 # v. 20261012.140006 - the nearest track point can be shown on a map, and place coordinates line up
 # v. 20261012.135005 - a write line starts with the time, and the place name follows the coordinates
 # v. 20261012.133815 - q asks whether to keep the files already accepted
@@ -63,6 +64,7 @@
 # v. 20261009.160131 - also read .tcx tracks; a Trackpoint with a time and a position is used like a GPX point
 # v. 20261009.151425 - report which photos and videos have no location, and write one from the nearest GPX point
 
+# 2026.10.12 - v. 0.64 - finish stops the place questions as well as the track questions
 # 2026.10.12 - v. 0.63 - the nearest track point can be shown on a map, and place coordinates line up
 # 2026.10.12 - v. 0.62 - a write line starts with the time, and the place name follows the coordinates
 # 2026.10.12 - v. 0.61 - q asks whether to keep the files already accepted
@@ -194,7 +196,7 @@ keeps those files.
 Each file is shown first. Nothing is written until those answers are done.
 Enter accepts that file. n skips it. a accepts that file and the rest.
 f stops the questions and keeps only the files already accepted. The file
-on screen is not included. q asks whether to quit without writing, or to
+on screen is not included, and files with no close track point are not asked. q asks whether to quit without writing, or to
 update the files already accepted. The default is to quit and write nothing. Then you are asked whether to update
 the chosen files. The default is yes. Just before the files are changed, a
 backup of each old file can be kept. The default is no. A backup is stored
@@ -1817,6 +1819,7 @@ gm_ask_track_writes() {
       f)
         printf '  [f] Finish. Write only the files already accepted\n'
         finish=1
+        GM_STOP_ASKING=1
         break
         ;;
       q)
@@ -1835,6 +1838,13 @@ gm_ask_track_writes() {
     fi
     left=$(( total - shown + 1 ))
     gm_finish_asking "$accepted" "$left" file
+    if (( GM_STOP_ASKING && ${#CHOOSE_SHOW[@]} )); then
+      if (( ${#CHOOSE_SHOW[@]} == 1 )); then
+        echo "1 file with no close track point was not asked."
+      else
+        echo "$(gm_fmt_int "${#CHOOSE_SHOW[@]}") files with no close track point were not asked."
+      fi
+    fi
     if (( accepted > 0 )); then
       WRITE_TRACKS=1
     fi

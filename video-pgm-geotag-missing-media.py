@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# v. 20261012.141100 - finish stops the place questions as well as the track questions
 # v. 20261012.140006 - the nearest track point can be shown on a map, and place coordinates line up
 # v. 20261012.135005 - a write line starts with the time, and the place name follows the coordinates
 # v. 20261012.133815 - q asks whether to keep the files already accepted
@@ -63,6 +64,7 @@
 # v. 20261009.160131 - also read .tcx tracks; a Trackpoint with a time and a position joins the same search as GPX
 # v. 20261009.151425 - match a photo or video time to the nearest GPX point and write that location with exiftool
 
+# 2026.10.12 - v. 0.64 - finish stops the place questions as well as the track questions
 # 2026.10.12 - v. 0.63 - the nearest track point can be shown on a map, and place coordinates line up
 # 2026.10.12 - v. 0.62 - a write line starts with the time, and the place name follows the coordinates
 # 2026.10.12 - v. 0.61 - q asks whether to keep the files already accepted
