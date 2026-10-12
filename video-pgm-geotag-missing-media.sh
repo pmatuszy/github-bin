@@ -1,4 +1,6 @@
 #!/bin/bash
+# v. 20261012.133815 - q asks whether to keep the files already accepted
+# v. 20261012.133701 - reuse offers the last selected place, or a point that was typed
 # v. 20261012.133132 - all subdirectories is the default directory search
 # v. 20261012.131113 - a chosen location is called a manual entry
 # v. 20261012.130927 - track files and chosen places are counted apart, with the address on its own line
@@ -59,6 +61,8 @@
 # v. 20261009.160131 - also read .tcx tracks; a Trackpoint with a time and a position is used like a GPX point
 # v. 20261009.151425 - report which photos and videos have no location, and write one from the nearest GPX point
 
+# 2026.10.12 - v. 0.61 - q asks whether to keep the files already accepted
+# 2026.10.12 - v. 0.60 - reuse offers the last selected place, or a point that was typed
 # 2026.10.12 - v. 0.59 - all subdirectories is the default directory search
 # 2026.10.12 - v. 0.58 - a chosen location is called a manual entry
 # 2026.10.12 - v. 0.57 - track files and chosen places are counted apart, with the address on its own line
@@ -186,7 +190,8 @@ keeps those files.
 Each file is shown first. Nothing is written until those answers are done.
 Enter accepts that file. n skips it. a accepts that file and the rest.
 f stops the questions and keeps only the files already accepted. The file
-on screen is not included. q writes nothing. Then you are asked whether to update
+on screen is not included. q asks whether to quit without writing, or to
+update the files already accepted. The default is to quit and write nothing. Then you are asked whether to update
 the chosen files. The default is yes. Just before the files are changed, a
 backup of each old file can be kept. The default is no. A backup is stored
 as that file's name with _old- and the current date and time. --backup
@@ -478,9 +483,8 @@ gm_read_place_choice() {
   if [[ "$first" == q ]]; then
     echo
     printf '  [q] Quit now, without Enter\n'
-    echo "$(gm_ts) Quit."
-    return_code=0
-    exit 0
+    REPLY=q
+    return 0
   fi
   if [[ -z "$first" || "$first" == $'\n' ]]; then
     printf '  [S] Skip this file\n'
@@ -496,7 +500,7 @@ gm_read_place_choice() {
   if [[ "$first" == r ]]; then
     echo
     if [[ -n "$GM_LAST_LAT" && -n "$GM_LAST_LON" ]]; then
-      printf '  [r] Reuse the previous latitude and longitude: %s\n' "$(gm_blue "${GM_LAST_LAT}, ${GM_LAST_LON}")"
+      printf '  [r] %s\n' "$(gm_reuse_text)"
     else
       printf '  [r] Reuse the previous latitude and longitude\n'
     fi
@@ -590,10 +594,15 @@ gm_describe_coord() {
 gm_remember_coord() {
   GM_LAST_LAT="$1"
   GM_LAST_LON="$2"
+  GM_LAST_WHAT="$3"
+}
+
+gm_reuse_text() {
+  printf 'Reuse the previous latitude and longitude: [%s] %s' "$GM_LAST_WHAT" "$(gm_blue "${GM_LAST_LAT}, ${GM_LAST_LON}")"
 }
 
 gm_use_typed() {
-  gm_remember_coord "$GM_LAT" "$GM_LON"
+  gm_remember_coord "$GM_LAT" "$GM_LON" "manually entered"
   gm_describe_coord "$GM_LAT" "$GM_LON"
   gm_write_chosen "$GM_LAT" "$GM_LON" "$GM_PLACE" "$1"
 }
@@ -691,6 +700,40 @@ gm_quit() {
   echo "$(gm_ts) Quit. Nothing was written."
   return_code=0
   exit 0
+}
+
+gm_accepted_count() {
+  local n=0 path
+  if [[ -n "${WORK:-}" && -s "${WORK}/write-only" ]]; then
+    while IFS= read -r -d '' path; do
+      n=$(( n + 1 ))
+    done < "${WORK}/write-only"
+  fi
+  n=$(( n + ${#PLACE_Q_I[@]} ))
+  printf '%s\n' "$n"
+}
+
+gm_ask_quit_or_keep() {
+  local n reply
+  n="$(gm_accepted_count)"
+  if (( n == 0 )); then
+    gm_quit
+  fi
+  echo
+  if (( n == 1 )); then
+    echo "1 file is already accepted."
+  else
+    echo "$(gm_fmt_int "$n") files are already accepted."
+  fi
+  echo "  [Q] Quit, and write nothing (default)"
+  echo "  [w] Update the files already accepted"
+  gm_read_key "Quit now? [Q/w]: " q "Quit, and write nothing"
+  reply="$REPLY"
+  case "$reply" in
+    q) gm_quit ;;
+    w) GM_STOP_ASKING=1; return 0 ;;
+    *) echo "$(gm_ts) That is not a choice. Stopping."; return_code=1; exit 1 ;;
+  esac
 }
 
 gm_skip_name() {
@@ -1748,7 +1791,9 @@ gm_ask_track_writes() {
         ;;
       q)
         printf '  [q] Quit, and write nothing\n'
-        gm_quit
+        gm_ask_quit_or_keep
+        finish=1
+        break
         ;;
     esac
   done
@@ -1881,6 +1926,9 @@ gm_ask_update() {
 
 gm_choose_places() {
   local i n reply picked
+  if (( GM_STOP_ASKING )); then
+    return 0
+  fi
   if (( ${#CHOOSE_SHOW[@]} == 0 )); then
     return 0
   fi
@@ -1902,7 +1950,7 @@ gm_choose_places() {
     done
     place_prompt="[f/S]"
     if [[ -n "$GM_LAST_LAT" && -n "$GM_LAST_LON" ]]; then
-      echo "  [r] Reuse the previous latitude and longitude: $(gm_blue "${GM_LAST_LAT}, ${GM_LAST_LON}")"
+      echo "  [r] $(gm_reuse_text)"
       place_prompt="[r/f/S]"
     fi
     echo "  [g] Type a latitude, longitude for this file"
@@ -1911,6 +1959,11 @@ gm_choose_places() {
     echo "  [q] Quit now, without Enter"
     gm_read_place_choice "Place for $(gm_green "${CHOOSE_SHOW[$i]}")? ${place_prompt}: "
     reply="$REPLY"
+    if [[ "$reply" == q ]]; then
+      gm_ask_quit_or_keep
+      gm_finish_asking "${#PLACE_Q_I[@]}" "$(( total - shown + 1 ))" place
+      break
+    fi
     if [[ "$reply" == f ]]; then
       gm_finish_asking "${#PLACE_Q_I[@]}" "$(( total - shown + 1 ))" place
       break
@@ -1922,7 +1975,15 @@ gm_choose_places() {
       if [[ -n "$GM_LAST_LAT" && -n "$GM_LAST_LON" ]]; then
         GM_LAT="$GM_LAST_LAT"
         GM_LON="$GM_LAST_LON"
-        gm_use_typed "$i"
+        if [[ "$GM_LAST_WHAT" == "manually entered" || -z "$GM_LAST_WHAT" ]]; then
+          gm_use_typed "$i"
+        else
+          echo
+          gm_write_row "Location" "$(gm_blue "${GM_LAST_LAT}, ${GM_LAST_LON}")"
+          gm_map_rows "$GM_LAST_LAT" "$GM_LAST_LON"
+          gm_write_row "Description" "$GM_LAST_WHAT"
+          gm_write_chosen "$GM_LAST_LAT" "$GM_LAST_LON" "$GM_LAST_WHAT" "$i"
+        fi
       else
         echo "There is no previous latitude and longitude. This file was skipped."
       fi
@@ -1943,6 +2004,7 @@ gm_choose_places() {
     if [[ "$reply" =~ ^[0-9]+$ ]] && (( 10#$reply >= 1 && 10#$reply <= ${#PLACE_LABEL[@]} )); then
       picked=$(( 10#$reply - 1 ))
       printf '  [%s] [%s]   %s\n' "$reply" "${PLACE_LABEL[$picked]}" "$(gm_blue "${PLACE_LAT[$picked]}, ${PLACE_LON[$picked]}")"
+      gm_remember_coord "${PLACE_LAT[$picked]}" "${PLACE_LON[$picked]}" "${PLACE_LABEL[$picked]}"
       gm_write_chosen "${PLACE_LAT[$picked]}" "${PLACE_LON[$picked]}" "${PLACE_LABEL[$picked]}" "$i"
     else
       echo "That is not one of the places. This file was skipped."
@@ -2010,6 +2072,8 @@ GM_LOOKED=0
 GM_PLACE="typed"
 GM_LAST_LAT=""
 GM_LAST_LON=""
+GM_LAST_WHAT=""
+GM_STOP_ASKING=0
 PLACE_WROTE=0
 PLACE_Q_LAT=()
 PLACE_Q_LON=()
