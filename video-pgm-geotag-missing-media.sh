@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261012.151324 - a track match can be written from a preconfigured location
 # v. 20261012.145108 - an arrow key or other unknown key asks the same file again
 # v. 20261012.144759 - b undoes the last answer and returns to the previous file
 # v. 20261012.143755 - a finished file says how long that file took
@@ -67,6 +68,7 @@
 # v. 20261009.160131 - also read .tcx tracks; a Trackpoint with a time and a position is used like a GPX point
 # v. 20261009.151425 - report which photos and videos have no location, and write one from the nearest GPX point
 
+# 2026.10.12 - v. 0.68 - a track match can be written from a preconfigured location
 # 2026.10.12 - v. 0.67 - an arrow key or other unknown key asks the same file again
 # 2026.10.12 - v. 0.66 - b undoes the last answer and returns to the previous file
 # 2026.10.12 - v. 0.65 - a finished file says how long that file took
@@ -212,7 +214,8 @@ keeps one. --no-backup does not. Each one is copied aside, which can take a
 while. The copy needs free space for the file plus 10%. --internet yes or no
 looks up place names without asking. The default is yes. Each file is numbered, such as [1/22], and shown as a
 short table: the file, the track, the gap, the location, map links, and the
-place name. -n prints the report and stops. -y writes the track matches
+place name. Preconfigured locations are listed under that point. A number
+writes that place instead of the track point. -n prints the report and stops. -y writes the track matches
 without asking. A file that already has a location is left as it is, unless
 --redo is given and a point is close enough. The write goes through
 ExifTool. The file time is kept.
@@ -718,6 +721,53 @@ gm_flush_places() {
   done
 }
 
+gm_flush_track_places() {
+  local n path label lat lon place kind
+  local -a place_args
+  for n in "${!TRACK_MANUAL_PATH[@]}"; do
+    path="${TRACK_MANUAL_PATH[$n]}"
+    label="${TRACK_MANUAL_LABEL[$n]}"
+    lat="${TRACK_MANUAL_LAT[$n]}"
+    lon="${TRACK_MANUAL_LON[$n]}"
+    place="${TRACK_MANUAL_NAME[$n]}"
+    case "${path,,}" in
+      *.mp4|*.mov) kind=video ;;
+      *) kind=photo ;;
+    esac
+    if (( n > 0 )); then
+      echo
+    fi
+    gm_proc_begin
+    place_args=(
+      write-place
+      --exiftool "$EXIFTOOL_BIN"
+      --path "$path"
+      --kind "$kind"
+      --lat "$lat"
+      --lon "$lon"
+      --label "$label"
+      --place "$place"
+      --number "$(( n + 1 ))"
+      --total "${#TRACK_MANUAL_PATH[@]}"
+    )
+    if (( USE_COLOR )); then
+      place_args+=(--colors)
+    fi
+    if (( VERBOSE )); then
+      place_args+=(--verbose)
+    fi
+    if (( BACKUP == 1 )); then
+      place_args+=(--backup --backup-stamp "$BACKUP_STAMP")
+    fi
+    if python3 "$PY_HELPER" "${place_args[@]}"; then
+      PLACE_WROTE=$(( PLACE_WROTE + 1 ))
+    else
+      return_code=$?
+    fi
+    gm_proc_end
+  done
+}
+
 gm_swallow_escape() {
   local next=""
   IFS= read -r -t 0.05 -n 1 next || return 0
@@ -753,6 +803,78 @@ gm_read_key() {
   REPLY="${answer:-$default_key}"
 }
 
+gm_read_track_choice() {
+  local prompt="$1" default_key="${2:-}" chosen="${3:-}" first="" rest="" discard
+  while true; do
+    printf '%s' "$prompt"
+    while IFS= read -r -t 0.02 -n 1 discard; do :; done
+    IFS= read -r -n 1 first || first=""
+    if [[ "$first" == $'\e' ]]; then
+      gm_swallow_escape
+      echo
+      echo "That is not a choice."
+      continue
+    fi
+    break
+  done
+  if [[ -z "$first" || "$first" == $'\n' ]]; then
+    printf '  [%s] %s\n' "${default_key^^}" "$chosen"
+    REPLY="$default_key"
+    return 0
+  fi
+  echo
+  if [[ "$first" =~ [0-9] ]]; then
+    IFS= read -r rest || rest=""
+    REPLY="${first}${rest}"
+    REPLY="${REPLY#"${REPLY%%[![:space:]]*}"}"
+    REPLY="${REPLY%"${REPLY##*[![:space:]]}"}"
+    return 0
+  fi
+  REPLY="${first,,}"
+}
+
+gm_track_prompt() {
+  local has_back="$1" n count
+  local -a keys=()
+  count=${#PLACE_LABEL[@]}
+  if (( count == 1 )); then
+    keys+=(1)
+  elif (( count > 1 && count <= 6 )); then
+    for (( n = 1; n <= count; n++ )); do
+      keys+=("$n")
+    done
+  elif (( count > 6 )); then
+    keys+=("1-${count}")
+  fi
+  keys+=(Y n a)
+  if [[ "$has_back" == yes ]]; then
+    keys+=(b)
+  fi
+  keys+=(f q)
+  local IFS=/
+  printf '[%s]' "${keys[*]}"
+}
+
+gm_note_track_place() {
+  TRACK_MANUAL_PATH+=("$1")
+  TRACK_MANUAL_LABEL+=("$2")
+  TRACK_MANUAL_LAT+=("$3")
+  TRACK_MANUAL_LON+=("$4")
+  TRACK_MANUAL_NAME+=("$5")
+}
+
+gm_undo_track_place() {
+  local path="$1" n
+  n=${#TRACK_MANUAL_PATH[@]}
+  (( n > 0 )) || return 0
+  [[ "${TRACK_MANUAL_PATH[$(( n - 1 ))]}" == "$path" ]] || return 0
+  unset "TRACK_MANUAL_PATH[$(( n - 1 ))]"
+  unset "TRACK_MANUAL_LABEL[$(( n - 1 ))]"
+  unset "TRACK_MANUAL_LAT[$(( n - 1 ))]"
+  unset "TRACK_MANUAL_LON[$(( n - 1 ))]"
+  unset "TRACK_MANUAL_NAME[$(( n - 1 ))]"
+}
+
 gm_quit() {
   echo "$(gm_ts) Quit. Nothing was written."
   return_code=0
@@ -766,7 +888,7 @@ gm_accepted_count() {
       n=$(( n + 1 ))
     done < "${WORK}/write-only"
   fi
-  n=$(( n + ${#PLACE_Q_I[@]} ))
+  n=$(( n + ${#PLACE_Q_I[@]} + ${#TRACK_MANUAL_PATH[@]} ))
   printf '%s\n' "$n"
 }
 
@@ -1853,13 +1975,22 @@ gm_finish_asking() {
 
 gm_ask_track_writes() {
   local i reply loc lat lon rest finish shown total desc status accepted path left
+  local n picked prompt has_back track_n
   rest=0
   finish=0
   shown=0
   accepted=0
   total=${#WRITE_PATH[@]}
+  TRACK_MANUAL_PATH=()
+  TRACK_MANUAL_LABEL=()
+  TRACK_MANUAL_LAT=()
+  TRACK_MANUAL_LON=()
+  TRACK_MANUAL_NAME=()
   : > "$WORK/write-only"
   : > "$WORK/write-address"
+  if (( ${#PLACE_LABEL[@]} )); then
+    gm_place_width
+  fi
   gm_ask_internet
   echo
   echo "Each file is shown below. Nothing is written until these answers are done."
@@ -1901,6 +2032,13 @@ gm_ask_track_writes() {
       i=$(( i + 1 ))
       continue
     fi
+    if (( ${#PLACE_LABEL[@]} )); then
+      echo
+      echo "  Preconfigured locations"
+      for n in "${!PLACE_LABEL[@]}"; do
+        gm_print_place_line "$(( n + 1 ))" "${PLACE_LABEL[$n]}" "$(gm_blue "${PLACE_LAT[$n]}, ${PLACE_LON[$n]}")"
+      done
+    fi
     echo
     echo "  [Y] Write this (default)"
     echo "  [n] Skip this file"
@@ -1910,18 +2048,41 @@ gm_ask_track_writes() {
     fi
     echo "  [f] Finish. Write only the files already accepted"
     echo "  [q] Quit, and write nothing"
+    if (( i > 0 )); then
+      has_back=yes
+    else
+      has_back=no
+    fi
+    prompt="$(gm_track_prompt "$has_back")"
     while true; do
-      if (( i > 0 )); then
-        gm_read_key "Write this location? [${shown}/${total}] [Y/n/a/b/f/q]: " y "Write this"
-      else
-        gm_read_key "Write this location? [${shown}/${total}] [Y/n/a/f/q]: " y "Write this"
-      fi
+      gm_read_track_choice "Write this location? [${shown}/${total}] ${prompt}: " y "Write this"
       reply="$REPLY"
+      if [[ "$reply" =~ ^[0-9]+$ ]]; then
+        if (( ${#PLACE_LABEL[@]} > 0 && 10#$reply >= 1 && 10#$reply <= ${#PLACE_LABEL[@]} )); then
+          break
+        fi
+        echo "That is not a choice."
+        continue
+      fi
       case "$reply" in
-        y|n|a|b|f|q) break ;;
+        y|n|a|f|q) break ;;
+        b)
+          if (( i > 0 )); then
+            break
+          fi
+          echo "That is not a choice."
+          ;;
         *) echo "That is not a choice." ;;
       esac
     done
+    if [[ "$reply" =~ ^[0-9]+$ ]]; then
+      picked=$(( 10#$reply - 1 ))
+      gm_print_place_line "$(( 10#$reply ))" "${PLACE_LABEL[$picked]}" "$(gm_blue "${PLACE_LAT[$picked]}, ${PLACE_LON[$picked]}")"
+      gm_remember_coord "${PLACE_LAT[$picked]}" "${PLACE_LON[$picked]}" "${PLACE_LABEL[$picked]}"
+      gm_note_track_place "${WRITE_PATH[$i]}" "${WRITE_LABEL[$i]}" "${PLACE_LAT[$picked]}" "${PLACE_LON[$picked]}" "${PLACE_LABEL[$picked]}"
+      i=$(( i + 1 ))
+      continue
+    fi
     case "$reply" in
       y) gm_note_write "${WRITE_PATH[$i]}" "$desc" ;;
       a)
@@ -1932,6 +2093,7 @@ gm_ask_track_writes() {
         if (( i > 0 )); then
           printf '  [b] Undo the last answer and back to the previous file\n'
           gm_undo_track_answer "${WRITE_PATH[$(( i - 1 ))]}"
+          gm_undo_track_place "${WRITE_PATH[$(( i - 1 ))]}"
           i=$(( i - 1 ))
         fi
         continue
@@ -1958,6 +2120,8 @@ gm_ask_track_writes() {
       done < "$WORK/write-only"
     fi
     left=$(( total - shown + 1 ))
+    track_n="$accepted"
+    accepted=$(( accepted + ${#TRACK_MANUAL_PATH[@]} ))
     gm_finish_asking "$accepted" "$left" file
     if (( GM_STOP_ASKING && ${#CHOOSE_SHOW[@]} )); then
       if (( ${#CHOOSE_SHOW[@]} == 1 )); then
@@ -1966,12 +2130,12 @@ gm_ask_track_writes() {
         echo "$(gm_fmt_int "${#CHOOSE_SHOW[@]}") files with no close track point were not asked."
       fi
     fi
-    if (( accepted > 0 )); then
+    if (( track_n > 0 )); then
       WRITE_TRACKS=1
     fi
   elif [[ -s "$WORK/write-only" ]]; then
     WRITE_TRACKS=1
-  else
+  elif (( ${#TRACK_MANUAL_PATH[@]} == 0 )); then
     echo "$(gm_ts) Those track matches were not written."
   fi
 }
@@ -1987,7 +2151,7 @@ gm_ready_to_write() {
       n="$WRITE_N"
     fi
   fi
-  n=$(( n + ${#PLACE_Q_I[@]} ))
+  n=$(( n + ${#PLACE_Q_I[@]} + ${#TRACK_MANUAL_PATH[@]} ))
   echo
   if (( n == 1 )); then
     echo "Ready to update 1 file."
@@ -2041,6 +2205,9 @@ gm_ask_backup() {
     for qi in "${PLACE_Q_I[@]}"; do
       paths+=("${CHOOSE_PATH[$qi]}")
     done
+  fi
+  if (( ${#TRACK_MANUAL_PATH[@]} )); then
+    paths+=("${TRACK_MANUAL_PATH[@]}")
   fi
   echo
   echo "A backup keeps the old file under a new name."
@@ -2380,6 +2547,11 @@ PLACE_Q_LAT=()
 PLACE_Q_LON=()
 PLACE_Q_NAME=()
 PLACE_Q_I=()
+TRACK_MANUAL_PATH=()
+TRACK_MANUAL_LABEL=()
+TRACK_MANUAL_LAT=()
+TRACK_MANUAL_LON=()
+TRACK_MANUAL_NAME=()
 SUM_READY=0
 SUM_FILES=0
 SUM_ALREADY=0
@@ -2754,7 +2926,7 @@ fi
 
 gm_choose_places
 
-if (( WRITE_TRACKS || ${#PLACE_Q_I[@]} )); then
+if (( WRITE_TRACKS || ${#PLACE_Q_I[@]} || ${#TRACK_MANUAL_PATH[@]} )); then
   gm_ready_to_write
   if gm_ask_update; then
     gm_ask_backup
@@ -2783,13 +2955,17 @@ if (( WRITE_TRACKS || ${#PLACE_Q_I[@]} )); then
       python3 "$PY_HELPER" "${write_args[@]}" || return_code=$?
       gm_proc_end
     fi
-    if (( ${#PLACE_Q_I[@]} )); then
+    if (( ${#PLACE_Q_I[@]} || ${#TRACK_MANUAL_PATH[@]} )); then
       echo
       echo "Manual entry."
       echo
     fi
     gm_flush_places
-    if (( ${#PLACE_Q_I[@]} )); then
+    if (( ${#PLACE_Q_I[@]} && ${#TRACK_MANUAL_PATH[@]} )); then
+      echo
+    fi
+    gm_flush_track_places
+    if (( ${#PLACE_Q_I[@]} || ${#TRACK_MANUAL_PATH[@]} )); then
       echo
       if (( PLACE_WROTE == 0 )); then
         echo "No files updated by manual entry."
