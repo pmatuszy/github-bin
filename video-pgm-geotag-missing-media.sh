@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261012.140006 - the nearest track point can be shown on a map, and place coordinates line up
 # v. 20261012.135005 - a write line starts with the time, and the place name follows the coordinates
 # v. 20261012.133815 - q asks whether to keep the files already accepted
 # v. 20261012.133701 - reuse offers the last selected place, or a point that was typed
@@ -62,6 +63,7 @@
 # v. 20261009.160131 - also read .tcx tracks; a Trackpoint with a time and a position is used like a GPX point
 # v. 20261009.151425 - report which photos and videos have no location, and write one from the nearest GPX point
 
+# 2026.10.12 - v. 0.63 - the nearest track point can be shown on a map, and place coordinates line up
 # 2026.10.12 - v. 0.62 - a write line starts with the time, and the place name follows the coordinates
 # 2026.10.12 - v. 0.61 - q asks whether to keep the files already accepted
 # 2026.10.12 - v. 0.60 - reuse offers the last selected place, or a point that was typed
@@ -244,7 +246,9 @@ need geotagging, and how many already have a location, before that read.
   [tracks-location]
   /mnt/p/video/geotaging-kopie
 
-For each file with no track point you are asked which name to write. q quits
+For each file with no track point you are asked which name to write. The
+nearest track point is shown when it is too far, and m prints map links for
+that point without writing it. The question lists every key it accepts. q quits
 at once, without Enter. g asks for a latitude and longitude for that file
 only, and shows the same map links as a track point. The next file can reuse
 that point with r. Before the first track point or typed place, you are asked
@@ -513,6 +517,12 @@ gm_read_place_choice() {
     echo
     printf '  [g] Type a latitude, longitude for this file\n'
     REPLY=g
+    return 0
+  fi
+  if [[ "$first" == m ]]; then
+    echo
+    printf '  [m] Show map links for the nearest track point\n'
+    REPLY=m
     return 0
   fi
   if [[ "$first" == f ]]; then
@@ -1650,7 +1660,7 @@ gm_plan_count() {
 }
 
 gm_load_plan() {
-  local kind a b c d e f g h
+  local kind a b c d e f g h i j k
   PLACE_LABEL=()
   PLACE_LAT=()
   PLACE_LON=()
@@ -1659,6 +1669,12 @@ gm_load_plan() {
   CHOOSE_SHOW=()
   CHOOSE_DATE=()
   CHOOSE_TIME=()
+  CHOOSE_STATUS=()
+  CHOOSE_NEAR_PHRASE=()
+  CHOOSE_NEAR_LAT=()
+  CHOOSE_NEAR_LON=()
+  CHOOSE_NEAR_ELE=()
+  CHOOSE_NEAR_TRACK=()
   WRITE_PATH=()
   WRITE_LABEL=()
   WRITE_PLACE=()
@@ -1667,7 +1683,7 @@ gm_load_plan() {
   WRITE_TRACK=()
   WRITE_METHOD=()
   WRITE_STATUS=()
-  while IFS=$'\t' read -r kind a b c d e f g h; do
+  while IFS=$'\t' read -r kind a b c d e f g h i j k; do
     [[ -n "$kind" ]] || continue
     case "$kind" in
       PLACE)
@@ -1691,6 +1707,12 @@ gm_load_plan() {
         CHOOSE_SHOW+=("$c")
         CHOOSE_DATE+=("$d")
         CHOOSE_TIME+=("$e")
+        CHOOSE_STATUS+=("$f")
+        CHOOSE_NEAR_PHRASE+=("$g")
+        CHOOSE_NEAR_LAT+=("$h")
+        CHOOSE_NEAR_LON+=("$i")
+        CHOOSE_NEAR_ELE+=("$j")
+        CHOOSE_NEAR_TRACK+=("$k")
         ;;
     esac
   done < <(python3 "$PY_HELPER" plan-lines --plan "$1")
@@ -1932,8 +1954,76 @@ gm_ask_update() {
   esac
 }
 
+gm_match_window() {
+  local gap="${MAX_GAP:-30}"
+  if (( gap < 60 )); then
+    printf '%ss' "$gap"
+  else
+    printf '%dm' "$(( (gap + 30) / 60 ))"
+  fi
+}
+
+gm_place_width() {
+  local n w
+  PLACE_NUM_W=1
+  PLACE_LABEL_W=0
+  if (( ${#PLACE_LABEL[@]} >= 10 )); then
+    PLACE_NUM_W=${#PLACE_LABEL[@]}
+    PLACE_NUM_W=${#PLACE_NUM_W}
+  fi
+  for n in "${!PLACE_LABEL[@]}"; do
+    w=${#PLACE_LABEL[$n]}
+    (( w > PLACE_LABEL_W )) && PLACE_LABEL_W=$w
+  done
+}
+
+gm_print_place_line() {
+  local num="$1" label="$2" coord="$3" pad
+  pad=$(( PLACE_LABEL_W - ${#label} + 2 ))
+  (( pad < 2 )) && pad=2
+  printf '  [%*d] [%s]%*s%s\n' "$PLACE_NUM_W" "$num" "$label" "$pad" "" "$coord"
+}
+
+gm_place_keys() {
+  local has_near="$1" n count
+  local -a keys=()
+  count=${#PLACE_LABEL[@]}
+  if (( count == 1 )); then
+    keys+=(1)
+  elif (( count > 1 && count <= 6 )); then
+    for (( n = 1; n <= count; n++ )); do
+      keys+=("$n")
+    done
+  elif (( count > 6 )); then
+    keys+=("1-${count}")
+  fi
+  if [[ -n "$GM_LAST_LAT" && -n "$GM_LAST_LON" ]]; then
+    keys+=(r)
+  fi
+  if [[ "$has_near" == yes ]]; then
+    keys+=(m)
+  fi
+  keys+=(g S f q)
+  local IFS=/
+  printf '[%s]' "${keys[*]}"
+}
+
+gm_show_nearest() {
+  local lat="$1" lon="$2" ele="$3" phrase="$4" track="$5" loc
+  loc="${lat}, ${lon}"
+  if [[ -n "$ele" && "$ele" != "-" ]]; then
+    loc="${loc}, ${ele}"
+  fi
+  echo
+  gm_write_row "Location" "$(gm_blue "$loc")"
+  gm_write_row "Gap" "$phrase"
+  gm_write_row "Track file" "$(gm_green "$track")"
+  gm_map_rows "$lat" "$lon"
+}
+
 gm_choose_places() {
-  local i n reply picked
+  local i n reply picked canon shown total place_prompt has_near any_other
+  local near_lat near_lon near_ele near_phrase near_track
   if (( GM_STOP_ASKING )); then
     return 0
   fi
@@ -1945,28 +2035,68 @@ gm_choose_places() {
     echo "$(gm_ts) ${#CHOOSE_SHOW[@]} file$( (( ${#CHOOSE_SHOW[@]} == 1 )) || printf 's' ) have no track point. A place is written only when you pick it."
     return 0
   fi
+  any_other=0
+  for i in "${!CHOOSE_SHOW[@]}"; do
+    if [[ "${CHOOSE_STATUS[$i]:-}" != "no track" ]]; then
+      any_other=1
+      break
+    fi
+  done
   echo
   echo "These files have no GPX or TCX point close enough."
+  if (( any_other )); then
+    echo "A match needs a point within $(gm_match_window)."
+  else
+    echo "No GPX or TCX file was loaded."
+  fi
   gm_ask_internet
-  local shown=0 total=${#CHOOSE_SHOW[@]} place_prompt
+  gm_place_width
+  shown=0
+  total=${#CHOOSE_SHOW[@]}
   for i in "${!CHOOSE_SHOW[@]}"; do
     shown=$(( shown + 1 ))
+    near_lat="${CHOOSE_NEAR_LAT[$i]:-}"
+    near_lon="${CHOOSE_NEAR_LON[$i]:-}"
+    near_ele="${CHOOSE_NEAR_ELE[$i]:-}"
+    near_phrase="${CHOOSE_NEAR_PHRASE[$i]:-}"
+    near_track="${CHOOSE_NEAR_TRACK[$i]:-}"
+    has_near=no
     echo
     echo "[${shown}/${total}] $(gm_green "${CHOOSE_SHOW[$i]}")"
+    if [[ -n "$near_lat" && "$near_lat" != "-" && -n "$near_lon" && "$near_lon" != "-" ]]; then
+      has_near=yes
+      echo "      The nearest point is ${near_phrase}, in $(gm_green "$near_track")."
+    elif [[ "${CHOOSE_STATUS[$i]:-}" == "no time" ]]; then
+      echo "      This file has no time, so there is no nearest point."
+    elif [[ "${CHOOSE_STATUS[$i]:-}" == "no track" ]]; then
+      echo "      No track was loaded, so there is no nearest point."
+    fi
     for n in "${!PLACE_LABEL[@]}"; do
-      printf '  [%d] [%s]   %s\n' "$(( n + 1 ))" "${PLACE_LABEL[$n]}" "$(gm_blue "${PLACE_LAT[$n]}, ${PLACE_LON[$n]}")"
+      gm_print_place_line "$(( n + 1 ))" "${PLACE_LABEL[$n]}" "$(gm_blue "${PLACE_LAT[$n]}, ${PLACE_LON[$n]}")"
     done
-    place_prompt="[f/S]"
     if [[ -n "$GM_LAST_LAT" && -n "$GM_LAST_LON" ]]; then
       echo "  [r] $(gm_reuse_text)"
-      place_prompt="[r/f/S]"
+    fi
+    if [[ "$has_near" == yes ]]; then
+      echo "  [m] Show map links for the nearest track point"
     fi
     echo "  [g] Type a latitude, longitude for this file"
     echo "  [S] Skip this file (default)"
     echo "  [f] Finish. Write only the files already accepted"
     echo "  [q] Quit now, without Enter"
-    gm_read_place_choice "Place for $(gm_green "${CHOOSE_SHOW[$i]}")? ${place_prompt}: "
-    reply="$REPLY"
+    place_prompt="$(gm_place_keys "$has_near")"
+    while true; do
+      gm_read_place_choice "Place for $(gm_green "${CHOOSE_SHOW[$i]}")? ${place_prompt}: "
+      reply="$REPLY"
+      if [[ "$reply" != m ]]; then
+        break
+      fi
+      if [[ "$has_near" == yes ]]; then
+        gm_show_nearest "$near_lat" "$near_lon" "$near_ele" "$near_phrase" "$near_track"
+      else
+        echo "There is no nearest track point."
+      fi
+    done
     if [[ "$reply" == q ]]; then
       gm_ask_quit_or_keep
       gm_finish_asking "${#PLACE_Q_I[@]}" "$(( total - shown + 1 ))" place
@@ -2011,7 +2141,7 @@ gm_choose_places() {
     fi
     if [[ "$reply" =~ ^[0-9]+$ ]] && (( 10#$reply >= 1 && 10#$reply <= ${#PLACE_LABEL[@]} )); then
       picked=$(( 10#$reply - 1 ))
-      printf '  [%s] [%s]   %s\n' "$reply" "${PLACE_LABEL[$picked]}" "$(gm_blue "${PLACE_LAT[$picked]}, ${PLACE_LON[$picked]}")"
+      gm_print_place_line "$(( 10#$reply ))" "${PLACE_LABEL[$picked]}" "$(gm_blue "${PLACE_LAT[$picked]}, ${PLACE_LON[$picked]}")"
       gm_remember_coord "${PLACE_LAT[$picked]}" "${PLACE_LON[$picked]}" "${PLACE_LABEL[$picked]}"
       gm_write_chosen "${PLACE_LAT[$picked]}" "${PLACE_LON[$picked]}" "${PLACE_LABEL[$picked]}" "$i"
     else
@@ -2070,6 +2200,12 @@ CHOOSE_KIND=()
 CHOOSE_SHOW=()
 CHOOSE_DATE=()
 CHOOSE_TIME=()
+CHOOSE_STATUS=()
+CHOOSE_NEAR_PHRASE=()
+CHOOSE_NEAR_LAT=()
+CHOOSE_NEAR_LON=()
+CHOOSE_NEAR_ELE=()
+CHOOSE_NEAR_TRACK=()
 USE_NET=-1
 INTERNET_SET=0
 BACKUP=-1

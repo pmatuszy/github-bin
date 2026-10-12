@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# v. 20261012.140006 - the nearest track point can be shown on a map, and place coordinates line up
 # v. 20261012.135005 - a write line starts with the time, and the place name follows the coordinates
 # v. 20261012.133815 - q asks whether to keep the files already accepted
 # v. 20261012.133701 - reuse offers the last selected place, or a point that was typed
@@ -62,6 +63,7 @@
 # v. 20261009.160131 - also read .tcx tracks; a Trackpoint with a time and a position joins the same search as GPX
 # v. 20261009.151425 - match a photo or video time to the nearest GPX point and write that location with exiftool
 
+# 2026.10.12 - v. 0.63 - the nearest track point can be shown on a map, and place coordinates line up
 # 2026.10.12 - v. 0.62 - a write line starts with the time, and the place name follows the coordinates
 # 2026.10.12 - v. 0.61 - q asks whether to keep the files already accepted
 # 2026.10.12 - v. 0.60 - reuse offers the last selected place, or a point that was typed
@@ -269,6 +271,43 @@ def fmt_offset(seconds):
     total = abs(int(round(seconds)))
     hour, minute = divmod(total // 60, 60)
     return "%s%02d:%02d" % (sign, hour, minute)
+
+
+def round_half_up(value):
+    return int(math.floor(float(value) + 0.5))
+
+
+def near_phrase(signed):
+    """How far the nearest track point is from the file, in plain time."""
+    size = abs(float(signed))
+    way = "ahead" if float(signed) >= 0 else "ago"
+    if size < 60:
+        count = round_half_up(size)
+        if count < 1:
+            count = 1
+        unit = "second" if count == 1 else "seconds"
+        return "%d %s %s" % (count, unit, way)
+    if size < 3600:
+        count = round_half_up(size / 60.0)
+        if count >= 60:
+            count = 1
+            unit = "hour"
+            return "about %d %s %s" % (count, unit, way)
+        if count < 1:
+            count = 1
+        unit = "minute" if count == 1 else "minutes"
+        return "about %d %s %s" % (count, unit, way)
+    count = round_half_up(size / 3600.0)
+    if count < 1:
+        count = 1
+    unit = "hour" if count == 1 else "hours"
+    return "about %d %s %s" % (count, unit, way)
+
+
+def one_line(value):
+    text = str("" if value is None else value)
+    text = text.replace("\t", " ").replace("\r", " ").replace("\n", " ").strip()
+    return text or "-"
 
 
 def fmt_gap(seconds):
@@ -942,6 +981,7 @@ def match_files(media, infos, points, offset_seconds, max_gap, redo):
         gap = None
         signed = None
         warn = None
+        point = None
         if when and points:
             index = nearest_index(points, when["epoch"])
             point = points[index]
@@ -999,7 +1039,16 @@ def match_files(media, infos, points, offset_seconds, max_gap, redo):
             "signed": signed,
             "kind": kind_of(path),
             "warn": warn,
+            "near": None,
         }
+        if status == "too far" and point is not None:
+            row["near"] = {
+                "phrase": near_phrase(signed),
+                "lat": "%.6f" % point[1],
+                "lon": "%.6f" % point[2],
+                "ele": fmt_height(point[3]),
+                "track": os.path.basename(point[4]),
+            }
         if status in ("match", "replace") and chosen:
             stamp = datetime.fromtimestamp(chosen[0], timezone.utc)
             row["write"] = {
@@ -1872,12 +1921,19 @@ def cmd_scan(argv):
             writes.append(item)
         if row["status"] in UNMATCHED:
             gps_date, gps_time = stamp_from_epoch(row["epoch"])
+            near = row.get("near") or {}
             choose.append({
                 "path": row["path"],
                 "kind": row["kind"],
                 "show": row["show"],
                 "gps_date": gps_date,
                 "gps_time": gps_time,
+                "status": row["status"],
+                "near_phrase": near.get("phrase") or "",
+                "near_lat": near.get("lat") or "",
+                "near_lon": near.get("lon") or "",
+                "near_ele": near.get("ele") or "",
+                "near_track": near.get("track") or "",
             })
     plan = {
         "write_count": len(writes),
@@ -2082,10 +2138,16 @@ def cmd_plan_lines(argv):
         ))
     for item in plan.get("choose") or []:
         show = str(item.get("show") or "").replace("\t", " ")
-        print("CHOOSE\t%s\t%s\t%s\t%s\t%s" % (
-            item["path"], item["kind"], show,
-            item.get("gps_date") or "-",
-            item.get("gps_time") or "-",
+        print("CHOOSE\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s" % (
+            one_line(item["path"]), one_line(item["kind"]), one_line(show),
+            one_line(item.get("gps_date")),
+            one_line(item.get("gps_time")),
+            one_line(item.get("status")),
+            one_line(item.get("near_phrase")),
+            one_line(item.get("near_lat")),
+            one_line(item.get("near_lon")),
+            one_line(item.get("near_ele")),
+            one_line(item.get("near_track")),
         ))
     return 0
 
@@ -2137,6 +2199,17 @@ def cmd_write_place(argv):
 
 
 def selftest():
+    assert near_phrase(45) == "45 seconds ahead"
+    assert near_phrase(-45) == "45 seconds ago"
+    assert near_phrase(1) == "1 second ahead"
+    assert near_phrase(60) == "about 1 minute ahead"
+    assert near_phrase(89) == "about 1 minute ahead"
+    assert near_phrase(90) == "about 2 minutes ahead"
+    assert near_phrase(120) == "about 2 minutes ahead"
+    assert near_phrase(-300) == "about 5 minutes ago"
+    assert near_phrase(3600) == "about 1 hour ahead"
+    assert near_phrase(-(3 * 3600)) == "about 3 hours ago"
+    assert near_phrase(150) == "about 3 minutes ahead"
     assert clock_stamp(datetime(2026, 10, 12, 13, 47, 18)) == "[ 2026.10.12 13:47:18 ]"
     assert place_suffix("Ponice, Polska") == " (Ponice, Polska)"
     assert place_suffix("typed") == ""
