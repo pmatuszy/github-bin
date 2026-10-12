@@ -1,4 +1,6 @@
 #!/bin/bash
+# v. 20261012.165212 - every track file is read, and a named day can leave one out of smart loading
+# v. 20261012.165052 - a track name can give its day with dashes, underscores, or dots
 # v. 20261012.152905 - a place number is taken as soon as the digit is pressed
 # v. 20261012.152350 - the verbose question is asked only when no options were given
 # v. 20261012.151810 - the internet question is asked before the equivalent command
@@ -71,6 +73,8 @@
 # v. 20261009.160131 - also read .tcx tracks; a Trackpoint with a time and a position is used like a GPX point
 # v. 20261009.151425 - report which photos and videos have no location, and write one from the nearest GPX point
 
+# 2026.10.12 - v. 0.73 - every track file is read, and a named day can leave one out of smart loading
+# 2026.10.12 - v. 0.72 - a track name can give its day with dashes, underscores, or dots
 # 2026.10.12 - v. 0.71 - a place number is taken as soon as the digit is pressed
 # 2026.10.12 - v. 0.70 - the verbose question is asked only when no options were given
 # 2026.10.12 - v. 0.69 - the internet question is asked before the equivalent command
@@ -258,9 +262,12 @@ year from the file names. [t] asks for a year or a range, such as 2026-2027,
 2026 - 2027, or 2026 2027. --all-years loads every year.
 The first year must not be newer than the second. You are then asked whether
 to look place names up on OpenStreetMap. The default is yes. After those
-answers, the script prints how to run the same thing from the command line. Only those tracks
-are read, from that directory and from the tracks next to the photos and
-videos. The count printed before the report is that set. Tracks are read
+answers, the script prints how to run the same thing from the command line. Every .gpx and
+.tcx file is considered. When a name gives the day, as 20260920, 2026-09-20,
+or 2026_09_20, smart loading uses that day and leaves out a file from another
+day. A name that starts with another year is left out too. A file with no day
+and no year in the name is still read. Dashes, underscores, and dots are the
+same. The count printed before the report is that set. Tracks are read
 only when a photo or video still has no location. The script says how many
 need geotagging, and how many already have a location, before that read.
 
@@ -1240,21 +1247,84 @@ gm_ask_tz() {
   esac
 }
 
-gm_track_year_ok() {
-  local base="$1" y day
-  (( TRACK_ALL )) && return 0
-  if (( TRACK_SMART )); then
-    if [[ "$base" =~ ^((19|20)[0-9]{6}) ]]; then
-      day="${BASH_REMATCH[1]}"
-      (( 10#$day >= 10#$TRACK_FROM && 10#$day <= 10#$TRACK_TO )) && return 0
+gm_ymd_real() {
+  local y="$1" m="$2" d="$3" dim
+  m=$((10#$m))
+  d=$((10#$d))
+  (( m >= 1 && m <= 12 && d >= 1 )) || return 1
+  case "$m" in
+    1|3|5|7|8|10|12) dim=31 ;;
+    4|6|9|11) dim=30 ;;
+    2)
+      if (( (y % 4 == 0 && y % 100 != 0) || y % 400 == 0 )); then
+        dim=29
+      else
+        dim=28
+      fi
+      ;;
+    *) return 1 ;;
+  esac
+  (( d <= dim ))
+}
+
+gm_track_ymd() {
+  local base="$1" y m d
+  if [[ "$base" =~ ^((19|20)[0-9]{2})([0-9]{2})([0-9]{2}) ]]; then
+    y="${BASH_REMATCH[1]}"
+    m="${BASH_REMATCH[3]}"
+    d="${BASH_REMATCH[4]}"
+    if gm_ymd_real "$y" "$m" "$d"; then
+      printf '%s%s%s\n' "$y" "$m" "$d"
+      return 0
     fi
+  fi
+  if [[ "$base" =~ (^|[^0-9])((19|20)[0-9]{2})[-_.](0?[1-9]|1[0-2])[-_.](0?[1-9]|[12][0-9]|3[01])([^0-9]|$) ]]; then
+    y="${BASH_REMATCH[2]}"
+    m="${BASH_REMATCH[4]}"
+    d="${BASH_REMATCH[5]}"
+    printf -v m '%02d' "$((10#$m))"
+    printf -v d '%02d' "$((10#$d))"
+    if gm_ymd_real "$y" "$m" "$d"; then
+      printf '%s%s%s\n' "$y" "$m" "$d"
+      return 0
+    fi
+  fi
+  if [[ "$base" =~ (^|[^0-9])((19|20)[0-9]{2})([0-9]{2})([0-9]{2})([^0-9]|$) ]]; then
+    y="${BASH_REMATCH[2]}"
+    m="${BASH_REMATCH[4]}"
+    d="${BASH_REMATCH[5]}"
+    if gm_ymd_real "$y" "$m" "$d"; then
+      printf '%s%s%s\n' "$y" "$m" "$d"
+      return 0
+    fi
+  fi
+  return 1
+}
+
+gm_track_year_ok() {
+  local base="$1" y day from_y to_y
+  (( TRACK_ALL )) && return 0
+  if day=$(gm_track_ymd "$base"); then
+    if (( TRACK_SMART )); then
+      (( 10#$day >= 10#$TRACK_FROM && 10#$day <= 10#$TRACK_TO )) && return 0
+      return 1
+    fi
+    y="${day:0:4}"
+    [[ -n "${TRACK_YEAR[$y]:-}" ]] && return 0
     return 1
   fi
   if [[ "$base" =~ ^((19|20)[0-9]{2}) ]]; then
     y="${BASH_REMATCH[1]}"
+    if (( TRACK_SMART )); then
+      from_y="${TRACK_FROM:0:4}"
+      to_y="${TRACK_TO:0:4}"
+      (( 10#$y >= 10#$from_y && 10#$y <= 10#$to_y )) && return 0
+      return 1
+    fi
     [[ -n "${TRACK_YEAR[$y]:-}" ]] && return 0
+    return 1
   fi
-  return 1
+  return 0
 }
 
 gm_year_phrase() {
@@ -1823,9 +1893,9 @@ gm_add_conf_tracks() {
       if (( TRACK_ALL )); then
         echo "$(gm_ts) ${path}: ${n_here} .gpx/.tcx files, including every subdirectory"
       elif (( TRACK_SMART )); then
-        echo "$(gm_ts) ${path}: ${n_here} .gpx/.tcx files from ${SMART_FROM} to ${SMART_TO}, including every subdirectory"
+        echo "$(gm_ts) ${path}: ${n_here} .gpx/.tcx files from ${SMART_FROM} to ${SMART_TO}, plus files with no day in the name, including every subdirectory"
       else
-        echo "$(gm_ts) ${path}: ${n_here} .gpx/.tcx files from ${TRACK_SPAN}, including every subdirectory"
+        echo "$(gm_ts) ${path}: ${n_here} .gpx/.tcx files from ${TRACK_SPAN}, plus files with no year in the name, including every subdirectory"
       fi
     elif [[ -f "$path" ]]; then
       path="$(readlink -f -- "$path" 2>/dev/null || printf '%s' "$path")"
