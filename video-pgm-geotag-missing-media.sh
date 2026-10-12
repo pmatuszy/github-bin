@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261012.112954 - Enter prints the option that was chosen
 # v. 20261012.112620 - [d] is smart loading with the days you choose
 # v. 20261012.112532 - each file you are asked to write is numbered, such as [1/22]
 # v. 20261012.112235 - after the questions, print the command that repeats those answers
@@ -33,6 +34,7 @@
 # v. 20261009.160131 - also read .tcx tracks; a Trackpoint with a time and a position is used like a GPX point
 # v. 20261009.151425 - report which photos and videos have no location, and write one from the nearest GPX point
 
+# 2026.10.12 - v. 0.34 - Enter prints the option that was chosen
 # 2026.10.12 - v. 0.33 - [d] is smart loading with the days you choose
 # 2026.10.12 - v. 0.32 - each file you are asked to write is numbered, such as [1/22]
 # 2026.10.12 - v. 0.31 - after the questions, print the command that repeats those answers
@@ -393,7 +395,13 @@ gm_read_place_choice() {
     return_code=0
     exit 0
   fi
-  if [[ -z "$first" || "$first" == $'\n' || "$first" == s ]]; then
+  if [[ -z "$first" || "$first" == $'\n' ]]; then
+    echo
+    echo "  [S] Skip this file"
+    REPLY=s
+    return 0
+  fi
+  if [[ "$first" == s ]]; then
     echo
     REPLY=s
     return 0
@@ -425,7 +433,7 @@ gm_ask_internet() {
   echo "  [Y] Yes, use the internet (default)"
   echo "  [n] No"
   echo "  [q] Quit"
-  gm_read_key "Look up place names on the internet? [Y/n/q]: " y
+  gm_read_key "Look up place names on the internet? [Y/n/q]: " y "Yes, use the internet"
   reply="$REPLY"
   case "$reply" in
     y) USE_NET=1 ;;
@@ -477,6 +485,7 @@ gm_ask_coord() {
     typed="${typed#"${typed%%[![:space:]]*}"}"
     typed="${typed%"${typed##*[![:space:]]}"}"
     if [[ -z "$typed" ]]; then
+      echo "  Skip this file"
       return 1
     fi
     if [[ "${typed,,}" == q ]]; then
@@ -513,12 +522,15 @@ gm_write_chosen() {
 }
 
 gm_read_key() {
-  local prompt="$1" default_key="${2:-}" answer="" discard
+  local prompt="$1" default_key="${2:-}" chosen="${3:-}" answer="" discard
   printf '%s' "$prompt"
   while IFS= read -r -t 0.02 -n 1 discard; do :; done
   read -r -n 1 answer || answer=""
   echo
   answer="${answer,,}"
+  if [[ -z "$answer" && -n "$chosen" ]]; then
+    echo "  [${default_key^^}] ${chosen}"
+  fi
   REPLY="${answer:-$default_key}"
 }
 
@@ -663,7 +675,7 @@ gm_ask_verbose() {
   echo "  [N] No, totals only (default)"
   echo "  [v] Yes, list each file"
   echo "  [q] Quit"
-  gm_read_key "Verbose output? [N/v/q]: " n
+  gm_read_key "Verbose output? [N/v/q]: " n "No, totals only"
   reply="$REPLY"
   case "$reply" in
     n) VERBOSE=0 ;;
@@ -701,9 +713,9 @@ gm_ask_scope() {
   echo "  [a] All subdirectories"
   echo "  [q] Quit"
   if (( ${#DIR_INPUTS[@]} > 1 )); then
-    gm_read_key "Current directories or all subdirectories? [C/a/q]: " c
+    gm_read_key "Current directories or all subdirectories? [C/a/q]: " c "Current directories only"
   else
-    gm_read_key "Current directory or all subdirectories? [C/a/q]: " c
+    gm_read_key "Current directory or all subdirectories? [C/a/q]: " c "Current directory only"
   fi
   reply="$REPLY"
   case "$reply" in
@@ -751,7 +763,7 @@ gm_ask_tz() {
   echo "  [0] camera clock is UTC"
   echo "  [a] type another offset"
   echo "  [q] Quit"
-  gm_read_key "Camera offset from UTC? [2/0/a/q]: " 2
+  gm_read_key "Camera offset from UTC? [2/0/a/q]: " 2 "+02:00"
   reply="$REPLY"
   case "$reply" in
     2) TZ_VALUE="+02:00" ;;
@@ -1064,7 +1076,7 @@ gm_ask_track_years() {
     echo "  [t] Type a year"
     echo "  [a] All years"
     echo "  [q] Quit"
-    gm_read_key "Which tracks? [${prompt}]: " s
+    gm_read_key "Which tracks? [${prompt}]: " s "Smart loading, ${SMART_FROM} through ${SMART_TO}"
     reply="$REPLY"
     case "$reply" in
       s) gm_set_smart_span ;;
@@ -1103,7 +1115,7 @@ gm_ask_track_years() {
     echo "  [t] Type a year"
     echo "  [a] All years"
     echo "  [q] Quit"
-    gm_read_key "Which tracks? [Y/t/a/q]: " y
+    gm_read_key "Which tracks? [Y/t/a/q]: " y "${phrase} only"
     reply="$REPLY"
     case "$reply" in
       y) gm_set_guess_years "${GUESS_YEARS[@]}" ;;
@@ -1117,7 +1129,7 @@ gm_ask_track_years() {
     echo "  [A] All years (default)"
     echo "  [t] Type a year"
     echo "  [q] Quit"
-    gm_read_key "Which tracks? [A/t/q]: " a
+    gm_read_key "Which tracks? [A/t/q]: " a "All years"
     reply="$REPLY"
     case "$reply" in
       a) gm_set_all_years ;;
@@ -1459,7 +1471,7 @@ gm_ask_track_writes() {
     echo "  [N] Skip this file (default)"
     echo "  [a] Write this and the rest"
     echo "  [q] Quit"
-    gm_read_key "Write this location? [${shown}/${total}] [y/N/a/q]: " n
+    gm_read_key "Write this location? [${shown}/${total}] [y/N/a/q]: " n "Skip this file"
     reply="$REPLY"
     case "$reply" in
       y) printf '%s\0' "${WRITE_PATH[$i]}" >> "$WORK/write-only" ;;
