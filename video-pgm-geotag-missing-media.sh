@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261012.114225 - the colors question is only yes, no, or quit
 # v. 20261012.114001 - Enter writes the track location; n skips that file
 # v. 20261012.113554 - ask about colors; file names are green, and a location is blue
 # v. 20261012.113057 - the place question does not repeat the file count
@@ -37,6 +38,7 @@
 # v. 20261009.160131 - also read .tcx tracks; a Trackpoint with a time and a position is used like a GPX point
 # v. 20261009.151425 - report which photos and videos have no location, and write one from the nearest GPX point
 
+# 2026.10.12 - v. 0.38 - the colors question is only yes, no, or quit
 # 2026.10.12 - v. 0.37 - Enter writes the track location; n skips that file
 # 2026.10.12 - v. 0.36 - ask about colors; file names are green, and a location is blue
 # 2026.10.12 - v. 0.35 - the place question does not repeat the file count
@@ -109,11 +111,11 @@ FILE or DIR, the current directory is used. [C] keeps that directory only.
 [a] includes its subdirectories. Windows paths such as P:\\video\\trip are
 read as /mnt/p/video/trip.
 
-The first question is colors. The default is yes: file names are green, and
-a latitude, longitude, and height are blue. --colors no turns that off.
-The next question is whether to list every track and every photo or video.
-The default is no: the report then gives the counts. --verbose lists each
-one. -y does not ask. It stays with the totals, and with colors on.
+The first question is whether to use colors. The default is yes. --colors no
+turns that off. The next question is whether to list every track and every
+photo or video. The default is no: the report then gives the counts.
+--verbose lists each one. -y does not ask. It stays with the totals, and
+with colors on.
 
 Photos: .jpg .jpeg .heic .png
 Videos: .mp4 .mov
@@ -689,7 +691,7 @@ gm_classify_inputs() {
 }
 
 gm_ask_colors() {
-  local reply g="" b="" z=""
+  local reply
   if [[ -n "${NO_COLOR:-}" ]]; then
     USE_COLOR=0
     COLORS_SET=1
@@ -703,19 +705,12 @@ gm_ask_colors() {
     gm_colors
     return 0
   fi
-  if [[ -t 1 ]]; then
-    g=$'\e[32m'
-    b=$'\e[94m'
-    z=$'\e[0m'
-  fi
   echo
-  echo "File names can be green, and a latitude, longitude, and height can be blue."
-  echo "  ${g}20260827_094316_-_-_GoPro_Mission1_Pro.jpg${z}"
-  echo "  ${b}49.591502, 19.967246, 515m${z}"
+  echo "Use colors?"
   echo "  [Y] Yes (default)"
   echo "  [n] No"
   echo "  [q] Quit"
-  gm_read_key "Use colors? [Y/n/q]: " y "Yes"
+  gm_read_key "Choice [Y/n/q]: " y "Yes"
   reply="$REPLY"
   case "$reply" in
     y) USE_COLOR=1 ;;
