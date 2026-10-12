@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261012.135005 - a write line starts with the time, and the place name follows the coordinates
 # v. 20261012.133815 - q asks whether to keep the files already accepted
 # v. 20261012.133701 - reuse offers the last selected place, or a point that was typed
 # v. 20261012.133132 - all subdirectories is the default directory search
@@ -61,6 +62,7 @@
 # v. 20261009.160131 - also read .tcx tracks; a Trackpoint with a time and a position is used like a GPX point
 # v. 20261009.151425 - report which photos and videos have no location, and write one from the nearest GPX point
 
+# 2026.10.12 - v. 0.62 - a write line starts with the time, and the place name follows the coordinates
 # 2026.10.12 - v. 0.61 - q asks whether to keep the files already accepted
 # 2026.10.12 - v. 0.60 - reuse offers the last selected place, or a point that was typed
 # 2026.10.12 - v. 0.59 - all subdirectories is the default directory search
@@ -1694,6 +1696,11 @@ gm_load_plan() {
   done < <(python3 "$PY_HELPER" plan-lines --plan "$1")
 }
 
+gm_note_write() {
+  printf '%s\0' "$1" >> "$WORK/write-only"
+  printf '%s\0%s\0' "$1" "$2" >> "$WORK/write-address"
+}
+
 gm_write_row() {
   printf '  %-22s %s\n' "$1" "$2"
 }
@@ -1731,6 +1738,7 @@ gm_ask_track_writes() {
   accepted=0
   total=${#WRITE_PATH[@]}
   : > "$WORK/write-only"
+  : > "$WORK/write-address"
   gm_ask_internet
   echo
   echo "Each file is shown below. Nothing is written until these answers are done."
@@ -1767,7 +1775,7 @@ gm_ask_track_writes() {
     gm_write_row "GPSProcessingMethod" "${WRITE_METHOD[$i]}"
     if (( rest )); then
       echo "Writing this one too."
-      printf '%s\0' "${WRITE_PATH[$i]}" >> "$WORK/write-only"
+      gm_note_write "${WRITE_PATH[$i]}" "$desc"
       continue
     fi
     echo
@@ -1779,9 +1787,9 @@ gm_ask_track_writes() {
     gm_read_key "Write this location? [${shown}/${total}] [Y/n/a/f/q]: " y "Write this"
     reply="$REPLY"
     case "$reply" in
-      y) printf '%s\0' "${WRITE_PATH[$i]}" >> "$WORK/write-only" ;;
+      y) gm_note_write "${WRITE_PATH[$i]}" "$desc" ;;
       a)
-        printf '%s\0' "${WRITE_PATH[$i]}" >> "$WORK/write-only"
+        gm_note_write "${WRITE_PATH[$i]}" "$desc"
         rest=1
         ;;
       f)
@@ -2466,6 +2474,9 @@ if (( WRITE_TRACKS || ${#PLACE_Q_I[@]} )); then
       write_args=(write --exiftool "$EXIFTOOL_BIN" --plan "$WORK/plan.json")
       if [[ -s "${WORK}/write-only" ]]; then
         write_args+=(--only-list "$WORK/write-only")
+      fi
+      if [[ -s "${WORK}/write-address" ]]; then
+        write_args+=(--address-list "$WORK/write-address")
       fi
       if (( USE_COLOR )); then
         write_args+=(--colors)

@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# v. 20261012.135005 - a write line starts with the time, and the place name follows the coordinates
 # v. 20261012.133815 - q asks whether to keep the files already accepted
 # v. 20261012.133701 - reuse offers the last selected place, or a point that was typed
 # v. 20261012.133132 - all subdirectories is the default directory search
@@ -61,6 +62,7 @@
 # v. 20261009.160131 - also read .tcx tracks; a Trackpoint with a time and a position joins the same search as GPX
 # v. 20261009.151425 - match a photo or video time to the nearest GPX point and write that location with exiftool
 
+# 2026.10.12 - v. 0.62 - a write line starts with the time, and the place name follows the coordinates
 # 2026.10.12 - v. 0.61 - q asks whether to keep the files already accepted
 # 2026.10.12 - v. 0.60 - reuse offers the last selected place, or a point that was typed
 # 2026.10.12 - v. 0.59 - all subdirectories is the default directory search
@@ -309,6 +311,52 @@ def fmt_pos(lat, lon, ele):
     if ele is None:
         return text
     return "%s, %.0fm" % (text, ele)
+
+
+def clock_stamp(moment=None):
+    when = moment or datetime.now()
+    return when.strftime("[ %Y.%m.%d %H:%M:%S ]")
+
+
+def progress_mark(number, total):
+    total = max(total, 1)
+    width = len(str(total))
+    return "[%*d/%d]" % (width, number, total)
+
+
+def place_suffix(address):
+    text = (address or "").strip()
+    if not text or text.lower() == "typed":
+        return ""
+    return " (%s)" % text
+
+
+def print_processing(number, total, name, action):
+    mark = progress_mark(number, total)
+    print("%s %s %s - %s" % (clock_stamp(), mark, name, action), flush=True)
+    return mark
+
+
+def print_written_place(mark, lat, lon, ele, address):
+    indent = " " * (len(clock_stamp()) + 1 + len(mark) + 1)
+    print(
+        "%s%s%s" % (indent, paint(fmt_pos(lat, lon, ele), "94"), place_suffix(address)),
+        flush=True,
+    )
+
+
+def read_address_pairs(path):
+    pairs = {}
+    with open(path, "rb") as handle:
+        parts = handle.read().split(b"\0")
+    index = 0
+    while index + 1 < len(parts):
+        key = os.fsdecode(parts[index])
+        value = os.fsdecode(parts[index + 1])
+        if key:
+            pairs[norm_key(key)] = value
+        index += 2
+    return pairs
 
 
 def fmt_height(ele):
@@ -1952,6 +2000,7 @@ def cmd_write(argv):
     parser.add_argument("--exiftool", required=True)
     parser.add_argument("--plan", required=True)
     parser.add_argument("--only-list", default="")
+    parser.add_argument("--address-list", default="")
     parser.add_argument("--colors", action="store_true")
     parser.add_argument("--backup", action="store_true")
     parser.add_argument("--backup-stamp", default="")
@@ -1974,24 +2023,25 @@ def cmd_write(argv):
     failed = 0
     wrote = 0
     total = len(writes)
-    width = len(str(total))
+    addresses = read_address_pairs(args.address_list) if args.address_list else {}
     for number, item in enumerate(writes, 1):
         if number > 1:
             print()
         name = paint(item.get("label") or os.path.basename(item["path"]), "32")
-        prefix = "[%*d/%d]" % (width, number, total)
-        print("%s %s - start processing" % (prefix, name), flush=True)
+        print_processing(number, total, name, "start processing")
         ok, message = write_one(args.exiftool, item)
         if ok:
             wrote += 1
-            indent = " " * (len(prefix) + 1)
-            print("%s %s - processing is complete." % (prefix, name), flush=True)
-            print("%s%s" % (indent, paint(fmt_pos(item["lat"], item["lon"], item.get("ele")), "94")), flush=True)
+            mark = print_processing(number, total, name, "processing is complete.")
+            print_written_place(
+                mark, item["lat"], item["lon"], item.get("ele"),
+                addresses.get(norm_key(item["path"]), ""),
+            )
             if message and args.verbose:
                 print("    Old file kept as: %s" % message, flush=True)
         else:
             failed += 1
-            print("%s %s - processing could not be completed." % (prefix, name), flush=True)
+            print_processing(number, total, name, "processing could not be completed.")
             if message:
                 print("    %s" % message.splitlines()[-1], flush=True)
     plan["wrote_tracks"] = wrote
@@ -2072,27 +2122,26 @@ def cmd_write_place(argv):
         "method": "MANUAL",
     }
     shown = paint(args.label or os.path.basename(args.path), "32")
-    width = len(str(max(args.total, 1)))
-    prefix = "[%*d/%d]" % (width, args.number, max(args.total, 1))
-    indent = " " * (len(prefix) + 1)
-    print("%s %s - start processing" % (prefix, shown), flush=True)
+    print_processing(args.number, args.total, shown, "start processing")
     ok, message = write_one(args.exiftool, item)
     if ok:
-        print("%s %s - processing is complete." % (prefix, shown), flush=True)
-        print("%s%s" % (indent, paint(fmt_pos(args.lat, args.lon, None), "94")), flush=True)
-        address = (args.place or "").strip()
-        if address and address.lower() != "typed":
-            print("%s%s" % (indent, address), flush=True)
+        mark = print_processing(args.number, args.total, shown, "processing is complete.")
+        print_written_place(mark, args.lat, args.lon, None, args.place)
         if message and args.verbose:
             print("    Old file kept as: %s" % message, flush=True)
         return 0
-    print("%s %s - processing could not be completed." % (prefix, shown), flush=True)
+    print_processing(args.number, args.total, shown, "processing could not be completed.")
     if message:
         print("    %s" % message.splitlines()[-1], flush=True)
     return 1
 
 
 def selftest():
+    assert clock_stamp(datetime(2026, 10, 12, 13, 47, 18)) == "[ 2026.10.12 13:47:18 ]"
+    assert place_suffix("Ponice, Polska") == " (Ponice, Polska)"
+    assert place_suffix("typed") == ""
+    assert place_suffix("  ") == ""
+    assert fmt_pos(49.590316, 19.966978, 515) + place_suffix("Ponice, Polska") == "49.590316, 19.966978, 515m (Ponice, Polska)"
     assert copy_space_needed(1000) == 1100
     assert copy_space_needed(0) == 0
     assert backup_filename("clip.mp4", "20261012_121700") == "clip_old-20261012_121700.mp4"
