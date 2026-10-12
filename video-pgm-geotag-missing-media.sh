@@ -1,4 +1,7 @@
 #!/bin/bash
+# v. 20261012.114548 - each track write is a short table of file, track, location, and place
+# v. 20261012.114450 - the repeated command is introduced as the command-line equivalent
+# v. 20261012.114402 - the chosen answer prints on the line under the question
 # v. 20261012.114225 - the colors question is only yes, no, or quit
 # v. 20261012.114001 - Enter writes the track location; n skips that file
 # v. 20261012.113554 - ask about colors; file names are green, and a location is blue
@@ -38,6 +41,9 @@
 # v. 20261009.160131 - also read .tcx tracks; a Trackpoint with a time and a position is used like a GPX point
 # v. 20261009.151425 - report which photos and videos have no location, and write one from the nearest GPX point
 
+# 2026.10.12 - v. 0.41 - each track write is a short table of file, track, location, and place
+# 2026.10.12 - v. 0.40 - the repeated command is introduced as the command-line equivalent
+# 2026.10.12 - v. 0.39 - the chosen answer prints on the line under the question
 # 2026.10.12 - v. 0.38 - the colors question is only yes, no, or quit
 # 2026.10.12 - v. 0.37 - Enter writes the track location; n skips that file
 # 2026.10.12 - v. 0.36 - ask about colors; file names are green, and a location is blue
@@ -136,9 +142,10 @@ one or two seconds, a normal match is about a second away. The report shows
 the gap. A video is tagged at its start.
 
 Nothing is written until you reach that file. Enter writes it. n skips it.
-Each file is numbered, such as [1/22], and named, with the track and how far
-that point is. -n prints the report and stops. -y writes the track matches
-without asking. A file that already has a location is left as it is, unless
+Each file is numbered, such as [1/22], and shown as a short table: the file,
+the track, the gap, the location, and the place name. -n prints the report
+and stops. -y writes the track matches without asking. A file that already
+has a location is left as it is, unless
 --redo is given and a point is close enough. The write goes through
 ExifTool. The file time is kept.
 
@@ -171,7 +178,7 @@ sides, such as 3. Two numbers are before, then after, such as 3 14.
 year from the file names. [t] asks for a year or a range, such as 2026-2027,
 2026 - 2027, or 2026 2027. --all-years loads every year.
 The first year must not be newer than the second. After those answers, the
-script prints the command that repeats them. Only those tracks
+script prints how to run the same thing from the command line. Only those tracks
 are read, from that directory and from the tracks next to the photos and
 videos. The count printed before the report is that set. Tracks are read
 only when a photo or video still has no location. The script says how many
@@ -418,8 +425,7 @@ gm_read_place_choice() {
     exit 0
   fi
   if [[ -z "$first" || "$first" == $'\n' ]]; then
-    echo
-    echo "  [S] Skip this file"
+    printf '  [S] Skip this file\n'
     REPLY=s
     return 0
   fi
@@ -479,7 +485,9 @@ gm_lookup_place() {
   GM_LOOKED=1
   if name=$(python3 "$PY_HELPER" reverse "$lat" "$lon" 2>/dev/null); then
     GM_PLACE_NAME="$name"
-    echo "This is near ${name}."
+    if [[ "${3:-}" != quiet ]]; then
+      echo "This is near ${name}."
+    fi
     return 0
   fi
   rc=$?
@@ -555,10 +563,11 @@ gm_read_key() {
   printf '%s' "$prompt"
   while IFS= read -r -t 0.02 -n 1 discard; do :; done
   read -r -n 1 answer || answer=""
-  echo
   answer="${answer,,}"
   if [[ -z "$answer" && -n "$chosen" ]]; then
-    echo "  [${default_key^^}] ${chosen}"
+    printf '  [%s] %s\n' "${default_key^^}" "$chosen"
+  else
+    echo
   fi
   REPLY="${answer:-$default_key}"
 }
@@ -1331,7 +1340,7 @@ gm_equivalent_command() {
 
 gm_print_equivalent() {
   echo
-  printf '  %-14s %s\n' "Command" "$(gm_equivalent_command)"
+  printf '%s \\\n%s\n' "Equivalent, you can run the same command with the command line only by using" "$(gm_equivalent_command)"
 }
 
 gm_collect_tracks() {
@@ -1497,8 +1506,12 @@ gm_load_plan() {
   done < <(python3 "$PY_HELPER" plan-lines --plan "$1")
 }
 
+gm_write_row() {
+  printf '  %-22s %s\n' "$1" "$2"
+}
+
 gm_ask_track_writes() {
-  local i reply loc lat lon rest shown total
+  local i reply loc lat lon rest shown total desc status
   rest=0
   shown=0
   total=${#WRITE_PATH[@]}
@@ -1514,18 +1527,24 @@ gm_ask_track_writes() {
     if [[ -n "${WRITE_HEIGHT[$i]}" ]]; then
       loc="${loc}, ${WRITE_HEIGHT[$i]}"
     fi
-    if [[ "${WRITE_STATUS[$i]}" == replace ]]; then
-      echo "[${shown}/${total}] $(gm_green "${WRITE_LABEL[$i]}") already has a location."
-      echo "A point in $(gm_green "${WRITE_TRACK[$i]}") is ${WRITE_GAP[$i]} away, so that location can probably replace it."
-    else
-      echo "[${shown}/${total}] $(gm_green "${WRITE_LABEL[$i]}") has no geotag."
-      echo "It can probably be geotagged from $(gm_green "${WRITE_TRACK[$i]}"), because the nearest point is ${WRITE_GAP[$i]} away and that point has a location."
-    fi
-    echo "  $(gm_blue "$loc")"
+    desc=""
     if [[ -n "$lat" && -n "$lon" ]]; then
-      gm_lookup_place "$lat" "$lon"
+      gm_lookup_place "$lat" "$lon" quiet
+      desc="$GM_PLACE_NAME"
     fi
-    echo "  GPSProcessingMethod ${WRITE_METHOD[$i]}"
+    if [[ "${WRITE_STATUS[$i]}" == replace ]]; then
+      status="Already has a location"
+    else
+      status="No geotag"
+    fi
+    echo "[${shown}/${total}]"
+    gm_write_row "Status" "$status"
+    gm_write_row "Source file" "$(gm_green "${WRITE_LABEL[$i]}")"
+    gm_write_row "Track file" "$(gm_green "${WRITE_TRACK[$i]}")"
+    gm_write_row "Gap" "${WRITE_GAP[$i]}"
+    gm_write_row "Location" "$(gm_blue "$loc")"
+    gm_write_row "Description" "$desc"
+    gm_write_row "GPSProcessingMethod" "${WRITE_METHOD[$i]}"
     if (( rest )); then
       echo "Writing this one too."
       printf '%s\0' "${WRITE_PATH[$i]}" >> "$WORK/write-only"
