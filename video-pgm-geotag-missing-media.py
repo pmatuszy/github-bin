@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# v. 20261012.212812 - the nearest track point is written with w
+# v. 20261012.212705 - a far track point can be written from the place question
 # v. 20261012.205121 - the default write names the closest track
 # v. 20261012.182840 - each matching track shows its time difference, coordinates, and map links
 # v. 20261012.182705 - a time close to two tracks asks which file to use
@@ -78,6 +80,8 @@
 # v. 20261009.160131 - also read .tcx tracks; a Trackpoint with a time and a position joins the same search as GPX
 # v. 20261009.151425 - match a photo or video time to the nearest GPX point and write that location with exiftool
 
+# 2026.10.12 - v. 0.80 - the nearest track point is written with w
+# 2026.10.12 - v. 0.79 - a far track point can be written from the place question
 # 2026.10.12 - v. 0.78 - the default write names the closest track
 # 2026.10.12 - v. 0.77 - each matching track shows its time difference, coordinates, and map links
 # 2026.10.12 - v. 0.76 - a time close to two tracks asks which file to use

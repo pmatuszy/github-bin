@@ -1,4 +1,6 @@
 #!/bin/bash
+# v. 20261012.212812 - the nearest track point is written with w
+# v. 20261012.212705 - a far track point can be written from the place question
 # v. 20261012.205121 - the default write names the closest track
 # v. 20261012.182840 - each matching track shows its time difference, coordinates, and map links
 # v. 20261012.182705 - a time close to two tracks asks which file to use
@@ -78,6 +80,8 @@
 # v. 20261009.160131 - also read .tcx tracks; a Trackpoint with a time and a position is used like a GPX point
 # v. 20261009.151425 - report which photos and videos have no location, and write one from the nearest GPX point
 
+# 2026.10.12 - v. 0.80 - the nearest track point is written with w
+# 2026.10.12 - v. 0.79 - a far track point can be written from the place question
 # 2026.10.12 - v. 0.78 - the default write names the closest track
 # 2026.10.12 - v. 0.77 - each matching track shows its time difference, coordinates, and map links
 # 2026.10.12 - v. 0.76 - a time close to two tracks asks which file to use
@@ -289,8 +293,8 @@ need geotagging, and how many already have a location, before that read.
   /mnt/p/video/geotaging-kopie
 
 For each file with no track point you are asked which name to write. The
-nearest track point is shown when it is too far, and m prints map links for
-that point without writing it. The question lists every key it accepts. q quits
+nearest track point is shown when it is too far. w writes that point. m prints
+map links for it without writing it. The question lists every key it accepts. q quits
 at once, without Enter. g asks for a latitude and longitude for that file
 only, and shows the same map links as a track point. The next file can reuse
 that point with r. If OpenStreetMap cannot be reached, the coordinates are
@@ -604,6 +608,12 @@ gm_read_place_choice() {
     echo
     printf '  [g] Type a latitude, longitude for this file\n'
     REPLY=g
+    return 0
+  fi
+  if [[ "$first" == w ]]; then
+    echo
+    printf '  [w] Use the nearest track point\n'
+    REPLY=w
     return 0
   fi
   if [[ "$first" == m ]]; then
@@ -2593,7 +2603,7 @@ gm_place_keys() {
     keys+=(b)
   fi
   if [[ "$has_near" == yes ]]; then
-    keys+=(m)
+    keys+=(w m)
   fi
   keys+=(g S f q)
   local IFS=/
@@ -2615,7 +2625,7 @@ gm_show_nearest() {
 
 gm_choose_places() {
   local i n reply picked canon shown total place_prompt has_near any_other
-  local near_lat near_lon near_ele near_phrase near_track
+  local near_lat near_lon near_ele near_phrase near_track near_name
   if (( GM_STOP_ASKING )); then
     return 0
   fi
@@ -2674,6 +2684,7 @@ gm_choose_places() {
       echo "  [b] Undo the last answer and back to the previous file"
     fi
     if [[ "$has_near" == yes ]]; then
+      echo "  [w] Use the nearest track point, ${near_phrase}"
       echo "  [m] Show map links for the nearest track point"
     fi
     echo "  [g] Type a latitude, longitude for this file"
@@ -2688,6 +2699,10 @@ gm_choose_places() {
     while true; do
       gm_read_place_choice "Place for $(gm_green "${CHOOSE_SHOW[$i]}")? ${place_prompt}: "
       reply="$REPLY"
+      if [[ "$reply" == w && "$has_near" != yes ]]; then
+        echo "That is not a choice."
+        continue
+      fi
       if [[ "$reply" != m ]]; then
         break
       fi
@@ -2714,6 +2729,19 @@ gm_choose_places() {
       break
     fi
     if [[ "$reply" == s ]]; then
+      i=$(( i + 1 ))
+      continue
+    fi
+    if [[ "$reply" == w ]]; then
+      gm_lookup_place "$near_lat" "$near_lon" quiet
+      near_name="$GM_PLACE_NAME"
+      if [[ -z "$near_name" ]]; then
+        near_name="$near_track"
+      fi
+      gm_show_nearest "$near_lat" "$near_lon" "$near_ele" "$near_phrase" "$near_track"
+      gm_write_row "Description" "$GM_PLACE_NAME"
+      gm_remember_coord "$near_lat" "$near_lon" "$near_name"
+      gm_write_chosen "$near_lat" "$near_lon" "$near_name" "$i"
       i=$(( i + 1 ))
       continue
     fi
