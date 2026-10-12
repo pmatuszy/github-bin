@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# v. 20261012.095355 - [tracks-location] is searched through every subdirectory, and that count is printed first
 # v. 20261012.094641 - [tracks-location] in the .conf is another directory of GPX and TCX tracks
 # v. 20261012.094407 - q on a place question quits at once, and a latitude and longitude can be typed for that file
 # v. 20261012.092540 - print .conf errors, and merge entries that are the same location
@@ -6,6 +7,7 @@
 # v. 20261009.160131 - also read .tcx tracks; a Trackpoint with a time and a position joins the same search as GPX
 # v. 20261009.151425 - match a photo or video time to the nearest GPX point and write that location with exiftool
 
+# 2026.10.12 - v. 0.7 - [tracks-location] reads .gpx and .tcx from that directory and every subdirectory, and the count is shown before the report
 # 2026.10.12 - v. 0.6 - [tracks-location] adds that directory, and the folders inside it, to the GPX and TCX search
 # 2026.10.12 - v. 0.5 - check-coord reads a typed latitude, longitude for one file
 # 2026.10.12 - v. 0.4 - .conf problems are printed; the same coordinates are one place, and one name with two different coordinates is an error
@@ -895,7 +897,7 @@ def skip_track_name(name):
 
 
 def tracks_under(root):
-    """GPX and TCX files in root. A directory includes the folders inside it."""
+    """GPX and TCX files in root and in every subdirectory under it."""
     if os.path.isfile(root):
         name = os.path.basename(root)
         if name.lower().endswith((".gpx", ".tcx")) and not skip_track_name(name):
@@ -993,9 +995,12 @@ def print_place_banner(paths, places, notes, errors, track_roots):
     else:
         print("  No places in those files.")
     if track_roots:
-        print("Tracks also from:")
+        print("Tracks also from (this directory and every subdirectory):")
         for root in track_roots:
+            found = tracks_under(root)
+            count = 0 if found is None else len(found)
             print("  %s" % root)
+            print("    %s .gpx/.tcx files" % fmt_int(count))
     for note in notes:
         print("  %s" % note)
     print("")
@@ -1176,6 +1181,16 @@ def cmd_check_coord(argv):
     return 0
 
 
+def cmd_track_roots(argv):
+    parser = argparse.ArgumentParser(add_help=False)
+    parser.add_argument("--conf-list", required=True)
+    args = parser.parse_args(argv)
+    _places, _notes, _errors, track_roots = merge_confs(read_paths(args.conf_list))
+    for root in track_roots:
+        print(root)
+    return 0
+
+
 def cmd_check_tz(argv):
     if len(argv) != 1:
         return 1
@@ -1225,10 +1240,10 @@ def cmd_scan(argv):
             seen_tracks.add(key)
             gpx_paths.append(path)
             added += 1
-        if added == 0:
-            eprint("No .gpx or .tcx files in %s" % root)
-        else:
-            eprint("Tracks from %s: %s file%s" % (root, fmt_int(added), "" if added == 1 else "s"))
+        if added == 0 and not found:
+            print("No .gpx or .tcx files in %s or any subdirectory under it." % root)
+        elif added:
+            print("Reading %s .gpx/.tcx files from %s and every subdirectory under it." % (fmt_int(added), root))
     points = []
     gpx_info = []
     gpx_errors = []
@@ -1636,7 +1651,7 @@ def selftest():
 
 def main(argv):
     if len(argv) < 2 or argv[1] in ("-h", "--help"):
-        print("Usage: video-pgm-geotag-missing-media.py scan|write|write-place|plan-lines|check-tz|check-coord|selftest")
+        print("Usage: video-pgm-geotag-missing-media.py scan|write|write-place|plan-lines|check-tz|check-coord|track-roots|selftest")
         print("The shell script video-pgm-geotag-missing-media.sh is the way to run this.")
         return 0
     cmd = argv[1]
@@ -1646,6 +1661,8 @@ def main(argv):
         return cmd_check_tz(argv[2:])
     if cmd == "check-coord":
         return cmd_check_coord(argv[2:])
+    if cmd == "track-roots":
+        return cmd_track_roots(argv[2:])
     if cmd == "scan":
         return cmd_scan(argv[2:])
     if cmd == "write":

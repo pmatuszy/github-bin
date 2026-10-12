@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261012.095355 - [tracks-location] is searched through every subdirectory, and that count is printed first
 # v. 20261012.094641 - [tracks-location] in the .conf is another directory of GPX and TCX tracks
 # v. 20261012.094407 - q on a place question quits at once, and a latitude and longitude can be typed for that file
 # v. 20261012.092540 - print .conf errors, and merge entries that are the same location
@@ -6,6 +7,7 @@
 # v. 20261009.160131 - also read .tcx tracks; a Trackpoint with a time and a position is used like a GPX point
 # v. 20261009.151425 - report which photos and videos have no location, and write one from the nearest GPX point
 
+# 2026.10.12 - v. 0.7 - [tracks-location] reads .gpx and .tcx from that directory and every subdirectory, and the count is shown before the report
 # 2026.10.12 - v. 0.6 - [tracks-location] adds that directory, and the folders inside it, to the GPX and TCX search
 # 2026.10.12 - v. 0.5 - on the place question, q quits without Enter; g asks for a latitude and longitude for that file
 # 2026.10.12 - v. 0.4 - .conf problems are printed; the same coordinates are one place, and one name with two different coordinates is an error
@@ -80,9 +82,10 @@ Each place is a line in brackets and the latitude, longitude under it:
   [Ponice 221]
   49.59078922757009, 19.966572075569914
 
-A track directory is the same kind of heading, with a path under it. The .gpx
-and .tcx files in that directory and in the folders inside it are read as
-well as the tracks next to the photos and videos:
+A track directory is the same kind of heading, with a path under it. Every
+subdirectory is searched, not only the files sitting in that folder. The .gpx
+and .tcx files found there are read as well as the tracks next to the photos
+and videos. The count is printed before the report:
 
   [tracks-location]
   /mnt/p/video/geotaging-kopie
@@ -501,6 +504,7 @@ gm_collect() {
     fi
   done
   gm_find_confs
+  gm_add_conf_tracks
 }
 
 gm_note_conf_dir() {
@@ -527,6 +531,40 @@ gm_find_confs() {
     gm_note_conf_dir "$HOME"
     gm_note_conf_dir "${HOME}/etc"
   fi
+}
+
+gm_add_conf_tracks() {
+  local path f base ext n_here
+  [[ -s "$WORK/confs" ]] || return 0
+  python3 "$PY_HELPER" track-roots --conf-list "$WORK/confs" > "$WORK/track-roots" || {
+    echo "ERROR: could not read [tracks-location] from the .conf files." >&2
+    return_code=1
+    exit 1
+  }
+  while IFS= read -r path || [[ -n "$path" ]]; do
+    [[ -n "$path" ]] || continue
+    if [[ -d "$path" ]]; then
+      path="$(readlink -f -- "$path" 2>/dev/null || printf '%s' "$path")"
+      gm_add_root "$path"
+      n_here=0
+      while IFS= read -r -d '' f; do
+        base="${f##*/}"
+        gm_skip_name "$base" && continue
+        ext="${base##*.}"
+        ext="${ext,,}"
+        if [[ "$ext" == gpx || "$ext" == tcx ]]; then
+          gm_add_gpx "$f"
+          n_here=$(( n_here + 1 ))
+        fi
+      done < <(find "$path" \( -type d -name '.*' -prune \) -o -type f -print0)
+      echo "$(gm_ts) ${path}: ${n_here} .gpx/.tcx files, including every subdirectory"
+    elif [[ -f "$path" ]]; then
+      path="$(readlink -f -- "$path" 2>/dev/null || printf '%s' "$path")"
+      gm_add_root "$(dirname -- "$path")"
+      gm_add_gpx "$path"
+      echo "$(gm_ts) Track file: ${path}"
+    fi
+  done < "$WORK/track-roots"
 }
 
 gm_scope_label() {
