@@ -1,4 +1,7 @@
 #!/bin/bash
+# v. 20261012.105141 - file-by-file report lines are shown only when verbose is on
+# v. 20261012.105042 - the track list is totals only unless verbose is asked or passed
+# v. 20261012.104935 - the year is stated from the file names, and [C] means the current directory
 # v. 20261012.104451 - places are printed in alphabetical order of the name
 # v. 20261012.104348 - a chosen year limits the tracks loaded from [tracks-location], and that count is the one printed
 # v. 20261012.104010 - tracks are loaded in alphabetical order of the file name
@@ -17,6 +20,9 @@
 # v. 20261009.160131 - also read .tcx tracks; a Trackpoint with a time and a position is used like a GPX point
 # v. 20261009.151425 - report which photos and videos have no location, and write one from the nearest GPX point
 
+# 2026.10.12 - v. 0.20 - file-by-file report lines are shown only when verbose is on
+# 2026.10.12 - v. 0.19 - the track list is totals only unless verbose is asked or passed
+# 2026.10.12 - v. 0.18 - the year is stated from the file names, and [C] means the current directory
 # 2026.10.12 - v. 0.17 - places are printed in alphabetical order of the name
 # 2026.10.12 - v. 0.16 - a chosen year limits the tracks loaded from [tracks-location], and that count is the one printed
 # 2026.10.12 - v. 0.15 - tracks are loaded in alphabetical order of the file name
@@ -56,16 +62,20 @@
 show_help() {
   cat <<EOF
 Usage: $(basename "$0") [-h|--help] [-v|--version] [--history]
-       [-y|--yes] [-n|--dry-run] [--redo]
+       [-y|--yes] [-n|--dry-run] [--redo] [--verbose]
        [--here | --recursive]
        [--tz OFFSET|auto] [--max-gap SECONDS] [--quicktime utc|local]
        [--gpx FILE|DIR ...]
        [FILE|DIR ...]
 
 Report which photos and videos have a location, and which do not. With no
-FILE or DIR, the current directory is used. You are asked whether that is
-only this directory or this directory and its subdirectories. Windows paths
-such as P:\\video\\trip are read as /mnt/p/video/trip.
+FILE or DIR, the current directory is used. [C] keeps that directory only.
+[a] includes its subdirectories. Windows paths such as P:\\video\\trip are
+read as /mnt/p/video/trip.
+
+The first question is whether to list every track and every photo or video.
+The default is no: the report then gives the counts. --verbose lists each
+one. -y does not ask and stays with the totals.
 
 Photos: .jpg .jpeg .heic .png
 Videos: .mp4 .mov
@@ -107,10 +117,11 @@ Each place is a line in brackets and the latitude, longitude under it:
   49.59078922757009, 19.966572075569914
 
 A track directory is the same kind of heading, with a path under it. Every
-subdirectory is searched, not only the files sitting in that folder. You are
-asked which years to load. The default is the year in the photo and video
-names. [t] asks for a year or a range, such as 2026-2027, 2026 - 2027, or
-2026 2027. The first year must not be newer than the second. Only those years
+subdirectory is searched, not only the files sitting in that folder. The
+script says which year the photos and videos are probably from, judging by
+the timestamps and file names. That year is the default. [t] asks for a year
+or a range, such as 2026-2027, 2026 - 2027, or 2026 2027. The first year
+must not be newer than the second. Only those years
 are read, from that directory and from the tracks next to the photos and
 videos. The count printed before the report is that set.
 
@@ -573,6 +584,30 @@ gm_classify_inputs() {
   done
 }
 
+gm_ask_verbose() {
+  local reply
+  if (( VERBOSE_SET )); then
+    return 0
+  fi
+  if (( DO_YES )) || (( ! script_is_run_interactively )); then
+    VERBOSE=0
+    return 0
+  fi
+  echo
+  echo "The report can list every track, and every photo or video."
+  echo "  [N] No, totals only (default)"
+  echo "  [v] Yes, list each file"
+  echo "  [q] Quit"
+  gm_read_key "Verbose output? [N/v/q]: " n
+  reply="$REPLY"
+  case "$reply" in
+    n) VERBOSE=0 ;;
+    v) VERBOSE=1 ;;
+    q) gm_quit ;;
+    *) echo "$(gm_ts) That is not a choice. Stopping."; return_code=1; exit 1 ;;
+  esac
+}
+
 gm_ask_scope() {
   local reply
   if (( ${#DIR_INPUTS[@]} == 0 )); then
@@ -584,7 +619,7 @@ gm_ask_scope() {
   fi
   if (( DO_YES )) || (( ! script_is_run_interactively )); then
     RECURSE=0
-    echo "$(gm_ts) Directories: this directory only. Pass --recursive to include subdirectories."
+    echo "$(gm_ts) Directories: current directory only. Pass --recursive to include subdirectories."
     return 0
   fi
   echo
@@ -593,13 +628,21 @@ gm_ask_scope() {
   else
     echo "Look in subdirectories too?"
   fi
-  echo "  [T] This directory only (default)"
+  if (( ${#DIR_INPUTS[@]} > 1 )); then
+    echo "  [C] Current directories only (default)"
+  else
+    echo "  [C] Current directory only (default)"
+  fi
   echo "  [a] All subdirectories"
   echo "  [q] Quit"
-  gm_read_key "This directory or all subdirectories? [T/a/q]: " t
+  if (( ${#DIR_INPUTS[@]} > 1 )); then
+    gm_read_key "Current directories or all subdirectories? [C/a/q]: " c
+  else
+    gm_read_key "Current directory or all subdirectories? [C/a/q]: " c
+  fi
   reply="$REPLY"
   case "$reply" in
-    t) RECURSE=0 ;;
+    c) RECURSE=0 ;;
     a) RECURSE=1 ;;
     q) gm_quit ;;
     *) echo "$(gm_ts) That is not a choice. Stopping."; return_code=1; exit 1 ;;
@@ -784,7 +827,7 @@ gm_ask_track_years() {
   if (( DO_YES )) || (( ! script_is_run_interactively )); then
     if (( ${#GUESS_YEARS[@]} )); then
       gm_set_guess_years "${GUESS_YEARS[@]}"
-      echo "$(gm_ts) Tracks: ${TRACK_SPAN} only, from the file names."
+      echo "$(gm_ts) The photos and videos look like they are probably from ${TRACK_SPAN}, judging by the timestamps and file names."
     else
       gm_set_all_years
       echo "$(gm_ts) Tracks: all years."
@@ -794,7 +837,7 @@ gm_ask_track_years() {
   echo
   if (( ${#GUESS_YEARS[@]} )); then
     phrase="$(gm_year_phrase "${GUESS_YEARS[@]}")"
-    echo "The photos and videos here are from ${phrase}."
+    echo "The photos and videos look like they are probably from ${phrase}, judging by the timestamps and file names."
     echo "  [Y] ${phrase} only (default)"
     echo "  [t] Type a year"
     echo "  [a] All years"
@@ -1046,6 +1089,8 @@ gm_ctrl_c() {
 DO_YES=0
 DRY_RUN=0
 REDO=0
+VERBOSE=0
+VERBOSE_SET=0
 RECURSE=0
 SCOPE_SET=0
 TZ_VALUE=""
@@ -1133,6 +1178,7 @@ while [[ $# -gt 0 ]]; do
     -y|--yes) DO_YES=1; shift ;;
     -n|--dry-run) DRY_RUN=1; shift ;;
     --redo) REDO=1; shift ;;
+    --verbose) VERBOSE=1; VERBOSE_SET=1; shift ;;
     --here)
       if (( SCOPE_SET && RECURSE )); then
         echo "ERROR: --here and --recursive cannot be used together" >&2
@@ -1194,6 +1240,7 @@ gm_check_prereqs
 GM_START_NS="$(gm_now)"
 GM_SUMMARY=1
 gm_classify_inputs
+gm_ask_verbose
 gm_ask_scope
 gm_ask_tz
 
@@ -1232,6 +1279,9 @@ SCAN_ARGS=(
   --scope "$(gm_scope_label)"
   --track-span "$TRACK_SPAN"
 )
+if (( VERBOSE )); then
+  SCAN_ARGS+=(--verbose)
+fi
 if (( TZ_ASSUMED )); then
   SCAN_ARGS+=(--tz-assumed)
 fi

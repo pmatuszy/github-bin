@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# v. 20261012.105141 - file-by-file report lines are shown only when verbose is on
+# v. 20261012.105042 - the track list is totals only unless verbose is asked or passed
+# v. 20261012.104935 - the year is stated from the file names, and [C] means the current directory
 # v. 20261012.104451 - places are printed in alphabetical order of the name
 # v. 20261012.104348 - a chosen year limits the tracks loaded from [tracks-location], and that count is the one printed
 # v. 20261012.104010 - tracks are loaded in alphabetical order of the file name
@@ -17,6 +20,9 @@
 # v. 20261009.160131 - also read .tcx tracks; a Trackpoint with a time and a position joins the same search as GPX
 # v. 20261009.151425 - match a photo or video time to the nearest GPX point and write that location with exiftool
 
+# 2026.10.12 - v. 0.20 - file-by-file report lines are shown only when verbose is on
+# 2026.10.12 - v. 0.19 - the track list is totals only unless verbose is asked or passed
+# 2026.10.12 - v. 0.18 - the year is stated from the file names, and [C] means the current directory
 # 2026.10.12 - v. 0.17 - places are printed in alphabetical order of the name
 # 2026.10.12 - v. 0.16 - a chosen year limits the tracks loaded from [tracks-location], and that count is the one printed
 # 2026.10.12 - v. 0.15 - tracks are loaded in alphabetical order of the file name
@@ -1062,7 +1068,7 @@ def stamp_from_epoch(epoch):
     return when.strftime("%Y:%m:%d"), when.strftime("%H:%M:%S")
 
 
-def print_report(rows, gpx_info, gpx_errors, offset_seconds, tz_note, assumed, max_gap, scope, quicktime, redo, places):
+def print_report(rows, gpx_info, gpx_errors, offset_seconds, tz_note, assumed, max_gap, scope, quicktime, redo, places, verbose):
     counts = {}
     for row in rows:
         counts[row["status"]] = counts.get(row["status"], 0) + 1
@@ -1103,15 +1109,16 @@ def print_report(rows, gpx_info, gpx_errors, offset_seconds, tz_note, assumed, m
         print("Tracks: %s file%s, %s points." % (
             fmt_int(len(gpx_info)), "" if len(gpx_info) == 1 else "s", fmt_int(total),
         ))
-        for item in gpx_info:
-            if item["points"]:
-                span = "%s to %s UTC" % (fmt_utc(item["start"]), fmt_utc(item["end"]))
-            else:
-                span = "no points with a time and a position"
-            extra = ""
-            if item["skipped"]:
-                extra = ", %s without a time or a position" % fmt_int(item["skipped"])
-            print("  %s  %s points, %s%s  %s" % (item["kind"], fmt_int(item["points"]), span, extra, item["label"]))
+        if verbose:
+            for item in gpx_info:
+                if item["points"]:
+                    span = "%s to %s UTC" % (fmt_utc(item["start"]), fmt_utc(item["end"]))
+                else:
+                    span = "no points with a time and a position"
+                extra = ""
+                if item["skipped"]:
+                    extra = ", %s without a time or a position" % fmt_int(item["skipped"])
+                print("  %s  %s points, %s%s  %s" % (item["kind"], fmt_int(item["points"]), span, extra, item["label"]))
     else:
         print("Tracks: none.")
     for err in gpx_errors:
@@ -1120,37 +1127,38 @@ def print_report(rows, gpx_info, gpx_errors, offset_seconds, tz_note, assumed, m
     hint = clock_hint(far_rows, count("match") + count("replace"), offset_seconds, quicktime, max_gap)
     if hint:
         print(paint(hint, "33"))
-    sections = (
-        ("match", "Can add a location"),
-        ("replace", "Will replace the location already in the file"),
-        ("too far", "No point within %s" % (fmt_gap(max_gap) if max_gap >= 10 else ("%gs" % max_gap))),
-        ("no time", "No time to compare"),
-        ("no track", "No track point to compare"),
-        ("unread", "Could not be read"),
-        ("tagged", "Already have a location"),
-    )
-    told_places = False
-    for status, title in sections:
-        chosen = [row for row in rows if row["status"] == status]
-        if not chosen:
-            continue
-        print("")
-        print(paint("%s (%s)" % (title, fmt_int(len(chosen))), "1"))
-        if places and status in UNMATCHED and not told_places:
-            print("  These files have no track point. The place names above are the choices.")
-            told_places = True
-        chosen.sort(key=lambda row: (row["epoch"] is None, row["epoch"] or 0, row["show"]))
-        for row in chosen:
-            label = "%-8s" % status
-            label = paint(label, STATUS_COLOR.get(status))
-            bits = [row["show"]]
-            if row["wall"]:
-                bits.append(row["wall"])
-            if row["source"]:
-                bits.append(row["source"])
-            if row["detail"]:
-                bits.append(row["detail"])
-            print("  %s  %s" % (label, "   ".join(bits)))
+    if verbose:
+        sections = (
+            ("match", "Can add a location"),
+            ("replace", "Will replace the location already in the file"),
+            ("too far", "No point within %s" % (fmt_gap(max_gap) if max_gap >= 10 else ("%gs" % max_gap))),
+            ("no time", "No time to compare"),
+            ("no track", "No track point to compare"),
+            ("unread", "Could not be read"),
+            ("tagged", "Already have a location"),
+        )
+        told_places = False
+        for status, title in sections:
+            chosen = [row for row in rows if row["status"] == status]
+            if not chosen:
+                continue
+            print("")
+            print(paint("%s (%s)" % (title, fmt_int(len(chosen))), "1"))
+            if places and status in UNMATCHED and not told_places:
+                print("  These files have no track point. The place names above are the choices.")
+                told_places = True
+            chosen.sort(key=lambda row: (row["epoch"] is None, row["epoch"] or 0, row["show"]))
+            for row in chosen:
+                label = "%-8s" % status
+                label = paint(label, STATUS_COLOR.get(status))
+                bits = [row["show"]]
+                if row["wall"]:
+                    bits.append(row["wall"])
+                if row["source"]:
+                    bits.append(row["source"])
+                if row["detail"]:
+                    bits.append(row["detail"])
+                print("  %s  %s" % (label, "   ".join(bits)))
     if redo:
         print("")
         print("--redo is set: a file that already has a location is written again when a point is close enough.")
@@ -1431,6 +1439,7 @@ def cmd_scan(argv):
     parser.add_argument("--scope", required=True)
     parser.add_argument("--track-span", default="")
     parser.add_argument("--redo", action="store_true")
+    parser.add_argument("--verbose", action="store_true")
     args = parser.parse_args(argv)
     if args.max_gap < 0:
         eprint("--max-gap must be zero or more.")
@@ -1510,7 +1519,7 @@ def cmd_scan(argv):
     gpx_info.sort(key=lambda item: (item["start"] is None, item["start"] or 0, item["label"]))
     print_report(
         rows, gpx_info, gpx_errors, offset_seconds, tz_note, assumed,
-        args.max_gap, args.scope, args.quicktime, args.redo, places,
+        args.max_gap, args.scope, args.quicktime, args.redo, places, args.verbose,
     )
     writes = []
     choose = []
