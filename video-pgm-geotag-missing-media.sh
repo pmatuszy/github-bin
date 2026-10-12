@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261012.115248 - each track point also lists Google, OpenStreetMap, Apple, and Microsoft map links
 # v. 20261012.114548 - each track write is a short table of file, track, location, and place
 # v. 20261012.114450 - the repeated command is introduced as the command-line equivalent
 # v. 20261012.114402 - the chosen answer prints on the line under the question
@@ -41,6 +42,7 @@
 # v. 20261009.160131 - also read .tcx tracks; a Trackpoint with a time and a position is used like a GPX point
 # v. 20261009.151425 - report which photos and videos have no location, and write one from the nearest GPX point
 
+# 2026.10.12 - v. 0.42 - each track point also lists Google, OpenStreetMap, Apple, and Microsoft map links
 # 2026.10.12 - v. 0.41 - each track write is a short table of file, track, location, and place
 # 2026.10.12 - v. 0.40 - the repeated command is introduced as the command-line equivalent
 # 2026.10.12 - v. 0.39 - the chosen answer prints on the line under the question
@@ -143,8 +145,8 @@ the gap. A video is tagged at its start.
 
 Nothing is written until you reach that file. Enter writes it. n skips it.
 Each file is numbered, such as [1/22], and shown as a short table: the file,
-the track, the gap, the location, and the place name. -n prints the report
-and stops. -y writes the track matches without asking. A file that already
+the track, the gap, the location, map links, and the place name. -n prints
+the report and stops. -y writes the track matches without asking. A file that already
 has a location is left as it is, unless
 --redo is given and a point is close enough. The write goes through
 ExifTool. The file time is kept.
@@ -1510,6 +1512,14 @@ gm_write_row() {
   printf '  %-22s %s\n' "$1" "$2"
 }
 
+gm_map_rows() {
+  local lat="$1" lon="$2"
+  gm_write_row "Google Maps" "https://www.google.com/maps/search/?api=1&query=${lat},${lon}"
+  gm_write_row "OpenStreetMap" "https://www.openstreetmap.org/?mlat=${lat}&mlon=${lon}#map=18/${lat}/${lon}"
+  gm_write_row "Apple Maps" "https://maps.apple.com/?q=${lat},${lon}"
+  gm_write_row "Microsoft Maps" "https://www.bing.com/maps?cp=${lat}~${lon}&lvl=18"
+}
+
 gm_ask_track_writes() {
   local i reply loc lat lon rest shown total desc status
   rest=0
@@ -1543,6 +1553,9 @@ gm_ask_track_writes() {
     gm_write_row "Track file" "$(gm_green "${WRITE_TRACK[$i]}")"
     gm_write_row "Gap" "${WRITE_GAP[$i]}"
     gm_write_row "Location" "$(gm_blue "$loc")"
+    if [[ -n "$lat" && -n "$lon" ]]; then
+      gm_map_rows "$lat" "$lon"
+    fi
     gm_write_row "Description" "$desc"
     gm_write_row "GPSProcessingMethod" "${WRITE_METHOD[$i]}"
     if (( rest )); then
