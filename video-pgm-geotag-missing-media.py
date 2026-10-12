@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# v. 20261012.144759 - b undoes the last answer and returns to the previous file
+# v. 20261012.143755 - a finished file says how long that file took
 # v. 20261012.141100 - finish stops the place questions as well as the track questions
 # v. 20261012.140006 - the nearest track point can be shown on a map, and place coordinates line up
 # v. 20261012.135005 - a write line starts with the time, and the place name follows the coordinates
@@ -64,6 +66,8 @@
 # v. 20261009.160131 - also read .tcx tracks; a Trackpoint with a time and a position joins the same search as GPX
 # v. 20261009.151425 - match a photo or video time to the nearest GPX point and write that location with exiftool
 
+# 2026.10.12 - v. 0.66 - b undoes the last answer and returns to the previous file
+# 2026.10.12 - v. 0.65 - a finished file says how long that file took
 # 2026.10.12 - v. 0.64 - finish stops the place questions as well as the track questions
 # 2026.10.12 - v. 0.63 - the nearest track point can be shown on a map, and place coordinates line up
 # 2026.10.12 - v. 0.62 - a write line starts with the time, and the place name follows the coordinates
@@ -372,8 +376,14 @@ def place_suffix(address):
     return " (%s)" % text
 
 
-def print_processing(number, total, name, action):
+def took_phrase(elapsed):
+    return "Took %s." % fmt_left(elapsed)
+
+
+def print_processing(number, total, name, action, elapsed=None):
     mark = progress_mark(number, total)
+    if elapsed is not None:
+        action = "%s %s" % (action, took_phrase(elapsed))
     print("%s %s %s - %s" % (clock_stamp(), mark, name, action), flush=True)
     return mark
 
@@ -2087,10 +2097,12 @@ def cmd_write(argv):
             print()
         name = paint(item.get("label") or os.path.basename(item["path"]), "32")
         print_processing(number, total, name, "start processing")
+        started = time.monotonic()
         ok, message = write_one(args.exiftool, item)
+        elapsed = time.monotonic() - started
         if ok:
             wrote += 1
-            mark = print_processing(number, total, name, "processing is complete.")
+            mark = print_processing(number, total, name, "processing is complete.", elapsed)
             print_written_place(
                 mark, item["lat"], item["lon"], item.get("ele"),
                 addresses.get(norm_key(item["path"]), ""),
@@ -2099,7 +2111,7 @@ def cmd_write(argv):
                 print("    Old file kept as: %s" % message, flush=True)
         else:
             failed += 1
-            print_processing(number, total, name, "processing could not be completed.")
+            print_processing(number, total, name, "processing could not be completed.", elapsed)
             if message:
                 print("    %s" % message.splitlines()[-1], flush=True)
     plan["wrote_tracks"] = wrote
@@ -2187,20 +2199,25 @@ def cmd_write_place(argv):
     }
     shown = paint(args.label or os.path.basename(args.path), "32")
     print_processing(args.number, args.total, shown, "start processing")
+    started = time.monotonic()
     ok, message = write_one(args.exiftool, item)
+    elapsed = time.monotonic() - started
     if ok:
-        mark = print_processing(args.number, args.total, shown, "processing is complete.")
+        mark = print_processing(args.number, args.total, shown, "processing is complete.", elapsed)
         print_written_place(mark, args.lat, args.lon, None, args.place)
         if message and args.verbose:
             print("    Old file kept as: %s" % message, flush=True)
         return 0
-    print_processing(args.number, args.total, shown, "processing could not be completed.")
+    print_processing(args.number, args.total, shown, "processing could not be completed.", elapsed)
     if message:
         print("    %s" % message.splitlines()[-1], flush=True)
     return 1
 
 
 def selftest():
+    assert took_phrase(4) == "Took 4s."
+    assert took_phrase(65) == "Took 1m 5s."
+    assert took_phrase(0.2) == "Took 0s."
     assert near_phrase(45) == "45 seconds ahead"
     assert near_phrase(-45) == "45 seconds ago"
     assert near_phrase(1) == "1 second ahead"

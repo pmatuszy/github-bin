@@ -1,4 +1,6 @@
 #!/bin/bash
+# v. 20261012.144759 - b undoes the last answer and returns to the previous file
+# v. 20261012.143755 - a finished file says how long that file took
 # v. 20261012.141100 - finish stops the place questions as well as the track questions
 # v. 20261012.140006 - the nearest track point can be shown on a map, and place coordinates line up
 # v. 20261012.135005 - a write line starts with the time, and the place name follows the coordinates
@@ -64,6 +66,8 @@
 # v. 20261009.160131 - also read .tcx tracks; a Trackpoint with a time and a position is used like a GPX point
 # v. 20261009.151425 - report which photos and videos have no location, and write one from the nearest GPX point
 
+# 2026.10.12 - v. 0.66 - b undoes the last answer and returns to the previous file
+# 2026.10.12 - v. 0.65 - a finished file says how long that file took
 # 2026.10.12 - v. 0.64 - finish stops the place questions as well as the track questions
 # 2026.10.12 - v. 0.63 - the nearest track point can be shown on a map, and place coordinates line up
 # 2026.10.12 - v. 0.62 - a write line starts with the time, and the place name follows the coordinates
@@ -195,6 +199,7 @@ keeps those files.
 
 Each file is shown first. Nothing is written until those answers are done.
 Enter accepts that file. n skips it. a accepts that file and the rest.
+b undoes the last answer and returns to the previous file.
 f stops the questions and keeps only the files already accepted. The file
 on screen is not included, and files with no close track point are not asked. q asks whether to quit without writing, or to
 update the files already accepted. The default is to quit and write nothing. Then you are asked whether to update
@@ -531,6 +536,12 @@ gm_read_place_choice() {
     echo
     printf '  [f] Finish. Write only the files already accepted\n'
     REPLY=f
+    return 0
+  fi
+  if [[ "$first" == b ]]; then
+    echo
+    printf '  [b] Undo the last answer and back to the previous file\n'
+    REPLY=b
     return 0
   fi
   if [[ "$first" =~ [0-9] ]]; then
@@ -1725,6 +1736,60 @@ gm_note_write() {
   printf '%s\0%s\0' "$1" "$2" >> "$WORK/write-address"
 }
 
+gm_undo_track_answer() {
+  local path="$1" item idx n
+  local -a paths=() parts=()
+  [[ -s "${WORK}/write-only" ]] || return 0
+  while IFS= read -r -d '' item; do
+    paths+=("$item")
+  done < "${WORK}/write-only"
+  (( ${#paths[@]} )) || return 0
+  [[ "${paths[$(( ${#paths[@]} - 1 ))]}" == "$path" ]] || return 0
+  unset "paths[$(( ${#paths[@]} - 1 ))]"
+  : > "${WORK}/write-only"
+  if (( ${#paths[@]} )); then
+    for item in "${paths[@]}"; do
+      printf '%s\0' "$item" >> "${WORK}/write-only"
+    done
+  fi
+  if [[ -s "${WORK}/write-address" ]]; then
+    while IFS= read -r -d '' item; do
+      parts+=("$item")
+    done < "${WORK}/write-address"
+  fi
+  n=${#parts[@]}
+  if (( n >= 2 )) && [[ "${parts[$(( n - 2 ))]}" == "$path" ]]; then
+    unset "parts[$(( n - 1 ))]"
+    unset "parts[$(( n - 2 ))]"
+  fi
+  : > "${WORK}/write-address"
+  for (( idx = 0; idx < n; idx++ )); do
+    [[ -v "parts[$idx]" ]] || continue
+    printf '%s\0' "${parts[$idx]}" >> "${WORK}/write-address"
+  done
+}
+
+gm_undo_place_answer() {
+  local prev="$1" n
+  n=${#PLACE_Q_I[@]}
+  (( n > 0 )) || return 0
+  [[ "${PLACE_Q_I[$(( n - 1 ))]}" == "$prev" ]] || return 0
+  unset "PLACE_Q_I[$(( n - 1 ))]"
+  unset "PLACE_Q_LAT[$(( n - 1 ))]"
+  unset "PLACE_Q_LON[$(( n - 1 ))]"
+  unset "PLACE_Q_NAME[$(( n - 1 ))]"
+  n=${#PLACE_Q_I[@]}
+  if (( n > 0 )); then
+    GM_LAST_LAT="${PLACE_Q_LAT[$(( n - 1 ))]}"
+    GM_LAST_LON="${PLACE_Q_LON[$(( n - 1 ))]}"
+    GM_LAST_WHAT="${PLACE_Q_NAME[$(( n - 1 ))]}"
+  else
+    GM_LAST_LAT=""
+    GM_LAST_LON=""
+    GM_LAST_WHAT=""
+  fi
+}
+
 gm_write_row() {
   printf '  %-22s %s\n' "$1" "$2"
 }
@@ -1766,8 +1831,9 @@ gm_ask_track_writes() {
   gm_ask_internet
   echo
   echo "Each file is shown below. Nothing is written until these answers are done."
-  for i in "${!WRITE_PATH[@]}"; do
-    shown=$(( shown + 1 ))
+  i=0
+  while (( i < total )); do
+    shown=$(( i + 1 ))
     echo
     lat="${WRITE_PLACE[$i]%%,*}"
     lon="${WRITE_PLACE[$i]#*,}"
@@ -1800,21 +1866,37 @@ gm_ask_track_writes() {
     if (( rest )); then
       echo "Writing this one too."
       gm_note_write "${WRITE_PATH[$i]}" "$desc"
+      i=$(( i + 1 ))
       continue
     fi
     echo
     echo "  [Y] Write this (default)"
     echo "  [n] Skip this file"
     echo "  [a] Write this and the rest"
+    if (( i > 0 )); then
+      echo "  [b] Undo the last answer and back to the previous file"
+    fi
     echo "  [f] Finish. Write only the files already accepted"
     echo "  [q] Quit, and write nothing"
-    gm_read_key "Write this location? [${shown}/${total}] [Y/n/a/f/q]: " y "Write this"
+    if (( i > 0 )); then
+      gm_read_key "Write this location? [${shown}/${total}] [Y/n/a/b/f/q]: " y "Write this"
+    else
+      gm_read_key "Write this location? [${shown}/${total}] [Y/n/a/f/q]: " y "Write this"
+    fi
     reply="$REPLY"
     case "$reply" in
       y) gm_note_write "${WRITE_PATH[$i]}" "$desc" ;;
       a)
         gm_note_write "${WRITE_PATH[$i]}" "$desc"
         rest=1
+        ;;
+      b)
+        if (( i > 0 )); then
+          printf '  [b] Undo the last answer and back to the previous file\n'
+          gm_undo_track_answer "${WRITE_PATH[$(( i - 1 ))]}"
+          i=$(( i - 1 ))
+        fi
+        continue
         ;;
       f)
         printf '  [f] Finish. Write only the files already accepted\n'
@@ -1829,6 +1911,7 @@ gm_ask_track_writes() {
         break
         ;;
     esac
+    i=$(( i + 1 ))
   done
   if (( finish )); then
     if [[ -s "$WORK/write-only" ]]; then
@@ -2010,6 +2093,9 @@ gm_place_keys() {
   if [[ -n "$GM_LAST_LAT" && -n "$GM_LAST_LON" ]]; then
     keys+=(r)
   fi
+  if [[ "$2" == yes ]]; then
+    keys+=(b)
+  fi
   if [[ "$has_near" == yes ]]; then
     keys+=(m)
   fi
@@ -2063,8 +2149,9 @@ gm_choose_places() {
   gm_place_width
   shown=0
   total=${#CHOOSE_SHOW[@]}
-  for i in "${!CHOOSE_SHOW[@]}"; do
-    shown=$(( shown + 1 ))
+  i=0
+  while (( i < total )); do
+    shown=$(( i + 1 ))
     near_lat="${CHOOSE_NEAR_LAT[$i]:-}"
     near_lon="${CHOOSE_NEAR_LON[$i]:-}"
     near_ele="${CHOOSE_NEAR_ELE[$i]:-}"
@@ -2087,6 +2174,9 @@ gm_choose_places() {
     if [[ -n "$GM_LAST_LAT" && -n "$GM_LAST_LON" ]]; then
       echo "  [r] $(gm_reuse_text)"
     fi
+    if (( i > 0 )); then
+      echo "  [b] Undo the last answer and back to the previous file"
+    fi
     if [[ "$has_near" == yes ]]; then
       echo "  [m] Show map links for the nearest track point"
     fi
@@ -2094,7 +2184,11 @@ gm_choose_places() {
     echo "  [S] Skip this file (default)"
     echo "  [f] Finish. Write only the files already accepted"
     echo "  [q] Quit now, without Enter"
-    place_prompt="$(gm_place_keys "$has_near")"
+    if (( i > 0 )); then
+      place_prompt="$(gm_place_keys "$has_near" yes)"
+    else
+      place_prompt="$(gm_place_keys "$has_near" no)"
+    fi
     while true; do
       gm_read_place_choice "Place for $(gm_green "${CHOOSE_SHOW[$i]}")? ${place_prompt}: "
       reply="$REPLY"
@@ -2107,6 +2201,13 @@ gm_choose_places() {
         echo "There is no nearest track point."
       fi
     done
+    if [[ "$reply" == b ]]; then
+      if (( i > 0 )); then
+        gm_undo_place_answer "$(( i - 1 ))"
+        i=$(( i - 1 ))
+      fi
+      continue
+    fi
     if [[ "$reply" == q ]]; then
       gm_ask_quit_or_keep
       gm_finish_asking "${#PLACE_Q_I[@]}" "$(( total - shown + 1 ))" place
@@ -2117,6 +2218,7 @@ gm_choose_places() {
       break
     fi
     if [[ "$reply" == s ]]; then
+      i=$(( i + 1 ))
       continue
     fi
     if [[ "$reply" == r ]]; then
@@ -2135,18 +2237,21 @@ gm_choose_places() {
       else
         echo "There is no previous latitude and longitude. This file was skipped."
       fi
+      i=$(( i + 1 ))
       continue
     fi
     if [[ "$reply" == g ]]; then
       if gm_ask_coord; then
         gm_use_typed "$i"
       fi
+      i=$(( i + 1 ))
       continue
     fi
     if canon=$(python3 "$PY_HELPER" check-coord "$reply" 2>/dev/null); then
       IFS=$'\t' read -r GM_LAT GM_LON <<< "$canon"
       printf '  Typed latitude, longitude: %s\n' "$(gm_blue "${GM_LAT}, ${GM_LON}")"
       gm_use_typed "$i"
+      i=$(( i + 1 ))
       continue
     fi
     if [[ "$reply" =~ ^[0-9]+$ ]] && (( 10#$reply >= 1 && 10#$reply <= ${#PLACE_LABEL[@]} )); then
@@ -2157,6 +2262,7 @@ gm_choose_places() {
     else
       echo "That is not one of the places. This file was skipped."
     fi
+    i=$(( i + 1 ))
   done
 }
 
