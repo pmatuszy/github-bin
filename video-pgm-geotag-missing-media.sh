@@ -1,4 +1,7 @@
 #!/bin/bash
+# v. 20261012.123248 - place choices are written only after the update question
+# v. 20261012.123123 - the place question prints the option that was chosen
+# v. 20261012.123004 - a file named like a screenshot is skipped, judging by the name
 # v. 20261012.122840 - the backup question is the last one, just before the files are changed
 # v. 20261012.122556 - the backup choice names the file it will be stored as
 # v. 20261012.122130 - the update question follows the backup answer with no blank line
@@ -50,6 +53,9 @@
 # v. 20261009.160131 - also read .tcx tracks; a Trackpoint with a time and a position is used like a GPX point
 # v. 20261009.151425 - report which photos and videos have no location, and write one from the nearest GPX point
 
+# 2026.10.12 - v. 0.53 - place choices are written only after the update question
+# 2026.10.12 - v. 0.52 - the place question prints the option that was chosen
+# 2026.10.12 - v. 0.51 - a file named like a screenshot is skipped, judging by the name
 # 2026.10.12 - v. 0.50 - the backup question is the last one, just before the files are changed
 # 2026.10.12 - v. 0.49 - the backup choice names the file it will be stored as
 # 2026.10.12 - v. 0.48 - the update question follows the backup answer with no blank line
@@ -128,7 +134,7 @@ Usage: $(basename "$0") [-h|--help] [-v|--version] [--history]
        [--tz OFFSET|auto] [--max-gap SECONDS] [--quicktime utc|local]
        [--gpx FILE|DIR ...]
        [--smart] [--days-before N] [--days-after N]
-       [--year YEAR|RANGE] [--all-years]
+       [--year YEAR|RANGE] [--all-years] [--screenshots]
        [FILE|DIR ...]
 
 Report which photos and videos have a location, and which do not. With no
@@ -159,6 +165,11 @@ A file with no location is a match when some track point is within --max-gap
 seconds (default 30). The closest point is the one used. With a point every
 one or two seconds, a normal match is about a second away. The report shows
 the gap. A video is tagged at its start.
+
+A file whose name contains screenshot is skipped. That covers names such as
+WhatsApp-screenshot and Signal-screenshot. The script says the file is
+skipped because it is a screenshot, judging by the name. --screenshots
+keeps those files.
 
 Each file is shown first. Nothing is written until those answers are done.
 Enter accepts that file. n skips it. Then you are asked whether to update
@@ -242,6 +253,8 @@ Options:
   --backup             Keep each old file as name_old-YYYYMMDD_HHMMSS.
                        Do not ask.
   --no-backup          Do not keep a backup. Default. Do not ask.
+  --screenshots        Also geotag a file whose name contains screenshot.
+                       By default that file is skipped.
   --here               This directory only. Do not ask.
   --recursive          This directory and its subdirectories. Do not ask.
   --tz OFFSET|auto     Camera clock minus UTC. Examples: +02:00, -05:30, 0.
@@ -450,6 +463,7 @@ gm_read_place_choice() {
   first="${first,,}"
   if [[ "$first" == q ]]; then
     echo
+    printf '  [q] Quit now, without Enter\n'
     echo "$(gm_ts) Quit."
     return_code=0
     exit 0
@@ -461,11 +475,23 @@ gm_read_place_choice() {
   fi
   if [[ "$first" == s ]]; then
     echo
+    printf '  [S] Skip this file\n'
     REPLY=s
+    return 0
+  fi
+  if [[ "$first" == r ]]; then
+    echo
+    if [[ -n "$GM_LAST_LAT" && -n "$GM_LAST_LON" ]]; then
+      printf '  [r] Reuse the previous latitude and longitude: %s\n' "$(gm_blue "${GM_LAST_LAT}, ${GM_LAST_LON}")"
+    else
+      printf '  [r] Reuse the previous latitude and longitude\n'
+    fi
+    REPLY=r
     return 0
   fi
   if [[ "$first" == g ]]; then
     echo
+    printf '  [g] Type a latitude, longitude for this file\n'
     REPLY=g
     return 0
   fi
@@ -644,6 +670,19 @@ gm_skip_name() {
   [[ "$base" == ._* || "$base" == *_old-* || "$base" == *.partial || "$base" == *.partial.* ]]
 }
 
+gm_screenshot_name() {
+  local base="${1,,}"
+  [[ "$base" == *screenshot* ]]
+}
+
+gm_note_screenshot() {
+  local path="$1" base
+  base="$(basename -- "$path")"
+  [[ -n "${SEEN_SCREENSHOT[$path]:-}" ]] && return 0
+  SEEN_SCREENSHOT[$path]=1
+  echo "$(gm_ts) $(gm_green "$base") is skipped because this is a screenshot, judging by the name."
+}
+
 gm_find_exiftool() {
   local cmd
   if [[ -n "${EXIFTOOL:-}" && -x "${EXIFTOOL}" ]]; then
@@ -716,7 +755,11 @@ gm_consider_file() {
   ext="${ext,,}"
   case "$ext" in
     jpg|jpeg|heic|png|mp4|mov)
-      [[ "$kind" == media || "$kind" == both ]] && gm_add_media "$path"
+      if [[ "$kind" == media || "$kind" == both ]] && gm_screenshot_name "$base" && (( ! INCLUDE_SCREENSHOTS )); then
+        gm_note_screenshot "$path"
+      elif [[ "$kind" == media || "$kind" == both ]]; then
+        gm_add_media "$path"
+      fi
       ;;
     gpx|tcx)
       [[ "$kind" == gpx || "$kind" == both ]] && gm_add_gpx "$path"
@@ -1367,6 +1410,7 @@ gm_equivalent_command() {
   elif (( BACKUP == 0 )); then
     cmd+=(--no-backup)
   fi
+  (( INCLUDE_SCREENSHOTS )) && cmd+=(--screenshots)
   if (( ${#DIR_INPUTS[@]} > 0 )); then
     if (( RECURSE )); then
       cmd+=(--recursive)
@@ -1659,13 +1703,16 @@ gm_ask_track_writes() {
 
 gm_ready_to_write() {
   local n=0 path
-  if [[ -s "${WORK}/write-only" ]]; then
-    while IFS= read -r -d '' path; do
-      n=$(( n + 1 ))
-    done < "$WORK/write-only"
-  else
-    n="$WRITE_N"
+  if (( WRITE_TRACKS )); then
+    if [[ -s "${WORK}/write-only" ]]; then
+      while IFS= read -r -d '' path; do
+        n=$(( n + 1 ))
+      done < "$WORK/write-only"
+    else
+      n="$WRITE_N"
+    fi
   fi
+  n=$(( n + ${#PLACE_Q_I[@]} ))
   echo
   if (( n == 1 )); then
     echo "Ready to update 1 file."
@@ -1750,6 +1797,7 @@ gm_ask_update() {
   if (( DO_YES )) || (( ! script_is_run_interactively )); then
     return 0
   fi
+  echo
   echo "  [Y] Yes (default)"
   echo "  [n] No"
   echo "  [q] Quit"
@@ -1819,11 +1867,13 @@ gm_choose_places() {
     fi
     if canon=$(python3 "$PY_HELPER" check-coord "$reply" 2>/dev/null); then
       IFS=$'\t' read -r GM_LAT GM_LON <<< "$canon"
+      printf '  Typed latitude, longitude: %s\n' "$(gm_blue "${GM_LAT}, ${GM_LON}")"
       gm_use_typed "$i"
       continue
     fi
     if [[ "$reply" =~ ^[0-9]+$ ]] && (( 10#$reply >= 1 && 10#$reply <= ${#PLACE_LABEL[@]} )); then
       picked=$(( 10#$reply - 1 ))
+      printf '  [%s] [%s]   %s\n' "$reply" "${PLACE_LABEL[$picked]}" "$(gm_blue "${PLACE_LAT[$picked]}, ${PLACE_LON[$picked]}")"
       gm_write_chosen "${PLACE_LAT[$picked]}" "${PLACE_LON[$picked]}" "${PLACE_LABEL[$picked]}" "$i"
     else
       echo "That is not one of the places. This file was skipped."
@@ -1867,6 +1917,7 @@ GPX_N=0
 EXIFTOOL_BIN=""
 return_code=0
 declare -A SEEN_MEDIA=()
+declare -A SEEN_SCREENSHOT=()
 declare -A SEEN_GPX=()
 declare -A SEEN_ROOT=()
 declare -A SEEN_CONF_DIR=()
@@ -1885,6 +1936,7 @@ INTERNET_SET=0
 BACKUP=-1
 BACKUP_SET=0
 BACKUP_STAMP=""
+INCLUDE_SCREENSHOTS=0
 GM_LOOKED=0
 GM_PLACE="typed"
 GM_LAST_LAT=""
@@ -2004,6 +2056,10 @@ while [[ $# -gt 0 ]]; do
       fi
       BACKUP=0
       BACKUP_SET=1
+      shift
+      ;;
+    --screenshots)
+      INCLUDE_SCREENSHOTS=1
       shift
       ;;
     --here)
@@ -2260,32 +2316,31 @@ if (( WRITE_N > 0 )); then
   else
     gm_ask_track_writes
   fi
-  if (( WRITE_TRACKS )); then
-    gm_ready_to_write
-    gm_ask_update
-  fi
 fi
 
 gm_choose_places
 
 if (( WRITE_TRACKS || ${#PLACE_Q_I[@]} )); then
-  gm_ask_backup
-  gm_print_equivalent
-  if (( WRITE_TRACKS )); then
-    gm_proc_begin
-    write_args=(write --exiftool "$EXIFTOOL_BIN" --plan "$WORK/plan.json")
-    if [[ -s "${WORK}/write-only" ]]; then
-      write_args+=(--only-list "$WORK/write-only")
+  gm_ready_to_write
+  if gm_ask_update; then
+    gm_ask_backup
+    gm_print_equivalent
+    if (( WRITE_TRACKS )); then
+      gm_proc_begin
+      write_args=(write --exiftool "$EXIFTOOL_BIN" --plan "$WORK/plan.json")
+      if [[ -s "${WORK}/write-only" ]]; then
+        write_args+=(--only-list "$WORK/write-only")
+      fi
+      if (( USE_COLOR )); then
+        write_args+=(--colors)
+      fi
+      if (( BACKUP == 1 )); then
+        write_args+=(--backup --backup-stamp "$BACKUP_STAMP")
+      fi
+      python3 "$PY_HELPER" "${write_args[@]}" || return_code=$?
+      gm_proc_end
     fi
-    if (( USE_COLOR )); then
-      write_args+=(--colors)
-    fi
-    if (( BACKUP == 1 )); then
-      write_args+=(--backup --backup-stamp "$BACKUP_STAMP")
-    fi
-    python3 "$PY_HELPER" "${write_args[@]}" || return_code=$?
-    gm_proc_end
+    gm_flush_places
   fi
-  gm_flush_places
 fi
 exit "$return_code"

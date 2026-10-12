@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# v. 20261012.123248 - place choices are written only after the update question
+# v. 20261012.123123 - the place question prints the option that was chosen
+# v. 20261012.123004 - a file named like a screenshot is skipped, judging by the name
 # v. 20261012.122840 - the backup question is the last one, just before the files are changed
 # v. 20261012.122556 - the backup choice names the file it will be stored as
 # v. 20261012.122130 - the update question follows the backup answer with no blank line
@@ -50,6 +53,9 @@
 # v. 20261009.160131 - also read .tcx tracks; a Trackpoint with a time and a position joins the same search as GPX
 # v. 20261009.151425 - match a photo or video time to the nearest GPX point and write that location with exiftool
 
+# 2026.10.12 - v. 0.53 - place choices are written only after the update question
+# 2026.10.12 - v. 0.52 - the place question prints the option that was chosen
+# 2026.10.12 - v. 0.51 - a file named like a screenshot is skipped, judging by the name
 # 2026.10.12 - v. 0.50 - the backup question is the last one, just before the files are changed
 # 2026.10.12 - v. 0.49 - the backup choice names the file it will be stored as
 # 2026.10.12 - v. 0.48 - the update question follows the backup answer with no blank line
