@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# v. 20261012.113057 - the place question does not repeat the file count
 # v. 20261012.112954 - Enter prints the option that was chosen
 # v. 20261012.112620 - [d] is smart loading with the days you choose
 # v. 20261012.112532 - each file you are asked to write is numbered, such as [1/22]
@@ -34,6 +35,7 @@
 # v. 20261009.160131 - also read .tcx tracks; a Trackpoint with a time and a position joins the same search as GPX
 # v. 20261009.151425 - match a photo or video time to the nearest GPX point and write that location with exiftool
 
+# 2026.10.12 - v. 0.35 - the place question does not repeat the file count
 # 2026.10.12 - v. 0.34 - Enter prints the option that was chosen
 # 2026.10.12 - v. 0.33 - [d] is smart loading with the days you choose
 # 2026.10.12 - v. 0.32 - each file you are asked to write is numbered, such as [1/22]
