@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261012.152905 - a place number is taken as soon as the digit is pressed
 # v. 20261012.152350 - the verbose question is asked only when no options were given
 # v. 20261012.151810 - the internet question is asked before the equivalent command
 # v. 20261012.151324 - a track match can be written from a preconfigured location
@@ -70,6 +71,7 @@
 # v. 20261009.160131 - also read .tcx tracks; a Trackpoint with a time and a position is used like a GPX point
 # v. 20261009.151425 - report which photos and videos have no location, and write one from the nearest GPX point
 
+# 2026.10.12 - v. 0.71 - a place number is taken as soon as the digit is pressed
 # 2026.10.12 - v. 0.70 - the verbose question is asked only when no options were given
 # 2026.10.12 - v. 0.69 - the internet question is asked before the equivalent command
 # 2026.10.12 - v. 0.68 - a track match can be written from a preconfigured location
@@ -220,8 +222,8 @@ keeps one. --no-backup does not. Each one is copied aside, which can take a
 while. The copy needs free space for the file plus 10%. --internet yes or no
 looks up place names without asking. The default is yes. Each file is numbered, such as [1/22], and shown as a
 short table: the file, the track, the gap, the location, map links, and the
-place name. Preconfigured locations are listed under that point. A number
-writes that place instead of the track point. -n prints the report and stops. -y writes the track matches
+place name. Preconfigured locations are listed under that point. Pressing
+that number writes the place instead of the track point. -n prints the report and stops. -y writes the track matches
 without asking. A file that already has a location is left as it is, unless
 --redo is given and a point is close enough. The write goes through
 ExifTool. The file time is kept.
@@ -497,8 +499,36 @@ gm_unix_path() {
   printf '%s\n' "$p"
 }
 
+gm_take_place_number() {
+  local num="$1" count="$2" next="" by_enter=0
+  while [[ "$num" =~ ^[0-9]+$ ]] && (( 10#$num > 0 && 10#$num * 10 <= count )); do
+    IFS= read -r -n 1 next || next=""
+    if [[ -z "$next" || "$next" == $'\n' ]]; then
+      by_enter=1
+      break
+    fi
+    if [[ "$next" == $'\e' ]]; then
+      gm_swallow_escape
+      echo
+      echo "That is not a choice."
+      return 1
+    fi
+    if [[ ! "$next" =~ [0-9] ]]; then
+      echo
+      echo "That is not a choice."
+      return 1
+    fi
+    num="${num}${next}"
+  done
+  if (( ! by_enter )); then
+    echo
+  fi
+  REPLY="$num"
+  return 0
+}
+
 gm_read_place_choice() {
-  local prompt="$1" first="" rest="" discard
+  local prompt="$1" first="" discard
   while true; do
   printf '%s' "$prompt"
   while IFS= read -r -t 0.02 -n 1 discard; do :; done
@@ -508,6 +538,10 @@ gm_read_place_choice() {
     echo
     echo "That is not a choice."
     continue
+  fi
+  if [[ "$first" =~ [0-9] ]]; then
+    gm_take_place_number "$first" "${#PLACE_LABEL[@]}" || continue
+    return 0
   fi
   break
   done
@@ -561,14 +595,6 @@ gm_read_place_choice() {
     echo
     printf '  [b] Undo the last answer and back to the previous file\n'
     REPLY=b
-    return 0
-  fi
-  if [[ "$first" =~ [0-9] ]]; then
-    IFS= read -r rest || rest=""
-    REPLY="${first}${rest}"
-    REPLY="${REPLY,,}"
-    REPLY="${REPLY#"${REPLY%%[![:space:]]*}"}"
-    REPLY="${REPLY%"${REPLY##*[![:space:]]}"}"
     return 0
   fi
   echo
@@ -812,7 +838,7 @@ gm_read_key() {
 }
 
 gm_read_track_choice() {
-  local prompt="$1" default_key="${2:-}" chosen="${3:-}" first="" rest="" discard
+  local prompt="$1" default_key="${2:-}" chosen="${3:-}" first="" discard
   while true; do
     printf '%s' "$prompt"
     while IFS= read -r -t 0.02 -n 1 discard; do :; done
@@ -823,22 +849,19 @@ gm_read_track_choice() {
       echo "That is not a choice."
       continue
     fi
-    break
+    if [[ -z "$first" || "$first" == $'\n' ]]; then
+      printf '  [%s] %s\n' "${default_key^^}" "$chosen"
+      REPLY="$default_key"
+      return 0
+    fi
+    if [[ "$first" =~ [0-9] ]]; then
+      gm_take_place_number "$first" "${#PLACE_LABEL[@]}" || continue
+      return 0
+    fi
+    echo
+    REPLY="${first,,}"
+    return 0
   done
-  if [[ -z "$first" || "$first" == $'\n' ]]; then
-    printf '  [%s] %s\n' "${default_key^^}" "$chosen"
-    REPLY="$default_key"
-    return 0
-  fi
-  echo
-  if [[ "$first" =~ [0-9] ]]; then
-    IFS= read -r rest || rest=""
-    REPLY="${first}${rest}"
-    REPLY="${REPLY#"${REPLY%%[![:space:]]*}"}"
-    REPLY="${REPLY%"${REPLY##*[![:space:]]}"}"
-    return 0
-  fi
-  REPLY="${first,,}"
 }
 
 gm_track_prompt() {
