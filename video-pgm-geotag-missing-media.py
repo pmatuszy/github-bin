@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# v. 20261012.145108 - an arrow key or other unknown key asks the same file again
 # v. 20261012.144759 - b undoes the last answer and returns to the previous file
 # v. 20261012.143755 - a finished file says how long that file took
 # v. 20261012.141100 - finish stops the place questions as well as the track questions
@@ -66,6 +67,7 @@
 # v. 20261009.160131 - also read .tcx tracks; a Trackpoint with a time and a position joins the same search as GPX
 # v. 20261009.151425 - match a photo or video time to the nearest GPX point and write that location with exiftool
 
+# 2026.10.12 - v. 0.67 - an arrow key or other unknown key asks the same file again
 # 2026.10.12 - v. 0.66 - b undoes the last answer and returns to the previous file
 # 2026.10.12 - v. 0.65 - a finished file says how long that file took
 # 2026.10.12 - v. 0.64 - finish stops the place questions as well as the track questions

@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261012.145108 - an arrow key or other unknown key asks the same file again
 # v. 20261012.144759 - b undoes the last answer and returns to the previous file
 # v. 20261012.143755 - a finished file says how long that file took
 # v. 20261012.141100 - finish stops the place questions as well as the track questions
@@ -66,6 +67,7 @@
 # v. 20261009.160131 - also read .tcx tracks; a Trackpoint with a time and a position is used like a GPX point
 # v. 20261009.151425 - report which photos and videos have no location, and write one from the nearest GPX point
 
+# 2026.10.12 - v. 0.67 - an arrow key or other unknown key asks the same file again
 # 2026.10.12 - v. 0.66 - b undoes the last answer and returns to the previous file
 # 2026.10.12 - v. 0.65 - a finished file says how long that file took
 # 2026.10.12 - v. 0.64 - finish stops the place questions as well as the track questions
@@ -489,9 +491,18 @@ gm_unix_path() {
 
 gm_read_place_choice() {
   local prompt="$1" first="" rest="" discard
+  while true; do
   printf '%s' "$prompt"
   while IFS= read -r -t 0.02 -n 1 discard; do :; done
   IFS= read -r -n 1 first || first=""
+  if [[ "$first" == $'\e' ]]; then
+    gm_swallow_escape
+    echo
+    echo "That is not a choice."
+    continue
+  fi
+  break
+  done
   first="${first,,}"
   if [[ "$first" == q ]]; then
     echo
@@ -707,11 +718,32 @@ gm_flush_places() {
   done
 }
 
+gm_swallow_escape() {
+  local next=""
+  IFS= read -r -t 0.05 -n 1 next || return 0
+  if [[ "$next" == "[" ]]; then
+    while IFS= read -r -t 0.05 -n 1 next; do
+      [[ "$next" =~ [A-Za-z~] ]] && return 0
+    done
+  elif [[ "$next" == "O" ]]; then
+    IFS= read -r -t 0.05 -n 1 next || true
+  fi
+}
+
 gm_read_key() {
   local prompt="$1" default_key="${2:-}" chosen="${3:-}" answer="" discard
-  printf '%s' "$prompt"
-  while IFS= read -r -t 0.02 -n 1 discard; do :; done
-  read -r -n 1 answer || answer=""
+  while true; do
+    printf '%s' "$prompt"
+    while IFS= read -r -t 0.02 -n 1 discard; do :; done
+    IFS= read -r -n 1 answer || answer=""
+    if [[ "$answer" == $'\e' ]]; then
+      gm_swallow_escape
+      echo
+      echo "That is not a choice."
+      continue
+    fi
+    break
+  done
   answer="${answer,,}"
   if [[ -z "$answer" && -n "$chosen" ]]; then
     printf '  [%s] %s\n' "${default_key^^}" "$chosen"
@@ -1878,12 +1910,18 @@ gm_ask_track_writes() {
     fi
     echo "  [f] Finish. Write only the files already accepted"
     echo "  [q] Quit, and write nothing"
-    if (( i > 0 )); then
-      gm_read_key "Write this location? [${shown}/${total}] [Y/n/a/b/f/q]: " y "Write this"
-    else
-      gm_read_key "Write this location? [${shown}/${total}] [Y/n/a/f/q]: " y "Write this"
-    fi
-    reply="$REPLY"
+    while true; do
+      if (( i > 0 )); then
+        gm_read_key "Write this location? [${shown}/${total}] [Y/n/a/b/f/q]: " y "Write this"
+      else
+        gm_read_key "Write this location? [${shown}/${total}] [Y/n/a/f/q]: " y "Write this"
+      fi
+      reply="$REPLY"
+      case "$reply" in
+        y|n|a|b|f|q) break ;;
+        *) echo "That is not a choice." ;;
+      esac
+    done
     case "$reply" in
       y) gm_note_write "${WRITE_PATH[$i]}" "$desc" ;;
       a)
@@ -2259,6 +2297,9 @@ gm_choose_places() {
       gm_print_place_line "$(( 10#$reply ))" "${PLACE_LABEL[$picked]}" "$(gm_blue "${PLACE_LAT[$picked]}, ${PLACE_LON[$picked]}")"
       gm_remember_coord "${PLACE_LAT[$picked]}" "${PLACE_LON[$picked]}" "${PLACE_LABEL[$picked]}"
       gm_write_chosen "${PLACE_LAT[$picked]}" "${PLACE_LON[$picked]}" "${PLACE_LABEL[$picked]}" "$i"
+    elif [[ ! "$reply" =~ ^[0-9]+$ ]]; then
+      echo "That is not a choice."
+      continue
     else
       echo "That is not one of the places. This file was skipped."
     fi
