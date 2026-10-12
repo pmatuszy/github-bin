@@ -1,9 +1,11 @@
 #!/bin/bash
+# v. 20261012.150601 - the reading line says Reading file and leaves the file name off
 # v. 20261006.225133 - the .gpx gets the video's creation time and file time
 # v. 20261006.221403 - the GPS is read from the gpmd stream, not from the video track named GoPro
 # v. 20261006.212111 - reading the videos shows a progress bar, time left and the arrival clock
 # v. 20261006.210617 - GoPro GPS metadata written as a .gpx file beside each video
 
+# 2026.10.12 - v. 0.5 - the reading line says Reading file and leaves the file name off
 # 2026.10.06 - v. 0.4 - the new .gpx gets the video's creation time and file time
 # 2026.10.06 - v. 0.3 - a video track named GoPro was read instead of the metadata stream, so files with a GPS fix were reported as having none
 # 2026.10.06 - v. 0.2 - while the videos are read, a progress bar shows how many are done, the time left and the arrival clock
@@ -370,19 +372,10 @@ gg_arrival_label() {
   fi
 }
 
-gg_fit_name() {
-  local name="$1" max=42
-  if (( ${#name} > max )); then
-    printf '%s…' "${name:0:max-1}"
-  else
-    printf '%s' "$name"
-  fi
-}
-
-# One line, redrawn in place. $1 done, $2 total, $3 file being read, $4 start epoch.
+# One line, redrawn in place. $1 done, $2 total, $3 start epoch.
 gg_draw_probe() {
-  local done="$1" total="$2" name="$3" started="$4"
-  local width=40 filled=0 pct=0 bar now elapsed remain eta="" extra=""
+  local done="$1" total="$2" started="$3"
+  local width=40 filled=0 pct=0 bar now elapsed remain eta=""
   (( total > 0 )) || return 0
   filled=$(( done * width / total ))
   pct=$(( done * 100 / total ))
@@ -392,19 +385,16 @@ gg_draw_probe() {
     elapsed=$(( now - started ))
     (( elapsed < 1 )) && elapsed=1
     remain=$(( (total - done) * elapsed / done ))
-    eta="left $(gg_left_label "$remain")  $(gg_arrival_label "$remain")  "
+    eta="left $(gg_left_label "$remain")  $(gg_arrival_label "$remain")"
   elif (( done >= total )); then
     eta="done"
   fi
-  if [[ -n "$name" && done -lt total ]]; then
-    extra="$(gg_fit_name "$name")"
-  fi
-  printf '\r%s Reading [%s] %*d/%d %3d%%  %s%s\033[K' \
-    "$(gg_ts)" "$bar" "${#total}" "$done" "$total" "$pct" "$eta" "$extra"
+  printf '\r%s Reading file [%s] %*d/%d %3d%%  %s\033[K' \
+    "$(gg_ts)" "$bar" "${#total}" "$done" "$total" "$pct" "$eta"
 }
 
 gg_probe() {
-  local i n=${#V_PATH[@]} line status rest done=0 started name live=0
+  local i n=${#V_PATH[@]} line status rest done=0 started live=0
   (( n == 0 )) && return 0
   started=$(date +%s)
   [[ -t 1 ]] && live=1
@@ -412,8 +402,7 @@ gg_probe() {
     printf '%s Reading %d video(s)...' "$(gg_ts)" "$n"
   fi
   for i in "${!V_PATH[@]}"; do
-    name="$(basename -- "${V_PATH[$i]}")"
-    (( live )) && gg_draw_probe "$done" "$n" "$name" "$started"
+    (( live )) && gg_draw_probe "$done" "$n" "$started"
     V_OUT[$i]="$(gg_gpx_path "${V_PATH[$i]}")"
     line="$(python3 "$PY_HELPER" info -- "${V_PATH[$i]}" 2>/dev/null || true)"
     status="${line%% *}"
@@ -452,7 +441,7 @@ gg_probe() {
     (( done++ )) || true
   done
   if (( live )); then
-    gg_draw_probe "$n" "$n" "" "$started"
+    gg_draw_probe "$n" "$n" "$started"
     echo
   else
     echo " done."
