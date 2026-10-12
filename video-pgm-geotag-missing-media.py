@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# v. 20261012.102745 - the missing-conf message includes profile_location_dir when that variable is set
+# v. 20261012.102638 - the missing-conf message names /etc, $HOME, $HOME/etc, and $HOME/conf
+# v. 20261012.102243 - the missing-conf message includes $HOME/conf; every found .conf is merged
 # v. 20261012.101840 - GPSProcessingMethod is TRACK for a GPX or TCX point and MANUAL for a chosen place
 # v. 20261012.100144 - the plan records file, location, track, and point counts for the closing summary
 # v. 20261012.095919 - reverse names a typed point from OpenStreetMap, or reports that it cannot be reached
@@ -10,6 +13,9 @@
 # v. 20261009.160131 - also read .tcx tracks; a Trackpoint with a time and a position joins the same search as GPX
 # v. 20261009.151425 - match a photo or video time to the nearest GPX point and write that location with exiftool
 
+# 2026.10.12 - v. 0.13 - the missing-conf message mentions profile_location_dir when that variable is set
+# 2026.10.12 - v. 0.12 - the missing-conf message names /etc, $HOME, $HOME/etc, and $HOME/conf
+# 2026.10.12 - v. 0.11 - the missing-conf message names $HOME/conf; every found .conf is merged
 # 2026.10.12 - v. 0.10 - GPSProcessingMethod records TRACK or MANUAL with the coordinates
 # 2026.10.12 - v. 0.9 - scan stores how many files, locations, tracks, and track points the closing summary prints
 # 2026.10.12 - v. 0.8 - reverse asks OpenStreetMap for a street, city, and country, and returns a separate code when the network fails
@@ -990,10 +996,14 @@ def merge_confs(paths):
 
 def print_place_banner(paths, places, notes, errors, track_roots):
     if not paths:
-        print("Places: no video-pgm-geotag-missing-media.conf in this directory, the directories above it, $HOME, or $HOME/etc.")
+        extra = ""
+        profile = os.environ.get("profile_location_dir")
+        if profile:
+            extra = " Also %s, %s/etc, and %s/conf." % (profile, profile, profile)
+        print("Places: no video-pgm-geotag-missing-media.conf in /etc, $HOME, $HOME/etc, or $HOME/conf.%s" % extra)
         print("")
         return
-    print("Places from:")
+    print("Places from %s config file%s:" % (len(paths), "" if len(paths) == 1 else "s"))
     for path in paths:
         print("  %s" % path)
     if errors:

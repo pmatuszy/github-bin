@@ -1,4 +1,7 @@
 #!/bin/bash
+# v. 20261012.102745 - when profile_location_dir is set, also read that directory and its etc and conf
+# v. 20261012.102638 - .conf is read from /etc, $HOME, $HOME/etc, and $HOME/conf, and every copy is merged
+# v. 20261012.102243 - read every .conf in the allowed places, including $HOME/conf; do not stop at the first
 # v. 20261012.101840 - GPSProcessingMethod is TRACK for a GPX or TCX point and MANUAL for a chosen place
 # v. 20261012.100144 - the closing summary right-aligns file, location, and track counts in one column
 # v. 20261012.095919 - a typed latitude and longitude can be named from OpenStreetMap when the internet is allowed
@@ -10,6 +13,9 @@
 # v. 20261009.160131 - also read .tcx tracks; a Trackpoint with a time and a position is used like a GPX point
 # v. 20261009.151425 - report which photos and videos have no location, and write one from the nearest GPX point
 
+# 2026.10.12 - v. 0.13 - when profile_location_dir is set, also merge the .conf in that directory and in its etc and conf
+# 2026.10.12 - v. 0.12 - .conf files are read from /etc, $HOME, $HOME/etc, and $HOME/conf, and every copy is merged
+# 2026.10.12 - v. 0.11 - every .conf in the allowed places is merged, including $HOME/conf; the search does not stop at the first file
 # 2026.10.12 - v. 0.10 - a track point is marked TRACK and a place you pick or type is marked MANUAL, in GPSProcessingMethod
 # 2026.10.12 - v. 0.9 - the run summary at the end right-aligns how many files, locations, tracks, and track points
 # 2026.10.12 - v. 0.8 - a typed latitude and longitude is looked up on OpenStreetMap when you allow the internet; the default is yes
@@ -34,8 +40,9 @@
 # no timezone is shifted by the offset you give (Polish summer time is +02:00).
 #
 # A file with no track point can take a named place from
-# video-pgm-geotag-missing-media.conf. Every copy found is merged: this
-# directory, each directory above it up to /, then $HOME and $HOME/etc.
+# video-pgm-geotag-missing-media.conf. Every copy found is merged, from
+# /etc, $HOME, $HOME/etc, and $HOME/conf. When profile_location_dir is set,
+# also that directory, profile_location_dir/etc, and profile_location_dir/conf.
 #
 
 show_help() {
@@ -77,12 +84,15 @@ write goes through ExifTool. The file time is kept.
 
 A file with no GPX or TCX point close enough can be tagged from a named
 place. The names come from video-pgm-geotag-missing-media.conf. The script
-reads every copy it finds, in this order: the current directory, each
-directory above it up to /, then $HOME, then $HOME/etc. The paths are
-printed at the start. A broken line, a name with no coordinates, or a name
+reads every copy it finds and does not stop at the first one. The directories
+are /etc, $HOME, $HOME/etc, and $HOME/conf. When profile_location_dir is
+set, also profile_location_dir/etc, profile_location_dir/conf, and
+profile_location_dir. Places and [tracks-location] entries from all of those files are used together. The paths are printed at
+the start. A broken line, a name with no coordinates, or a name
 that has two different locations is printed under Config errors. The same
 coordinates are one place: a repeated name is listed once, and two names
-for that point are joined. The closer file is the one that is kept.
+for that point are joined. When one name has two different coordinates, the
+earlier file is the one that is kept.
 Each place is a line in brackets and the latitude, longitude under it:
 
   [Ponice 221]
@@ -693,15 +703,13 @@ gm_note_conf_dir() {
 gm_find_confs() {
   local dir
   : > "$WORK/confs"
-  dir="$(pwd -P)"
-  while true; do
+  for dir in /etc "${HOME:-}" "${HOME:-}/etc" "${HOME:-}/conf"; do
     gm_note_conf_dir "$dir"
-    [[ "$dir" == "/" ]] && break
-    dir="$(dirname -- "$dir")"
   done
-  if [[ -n "${HOME:-}" ]]; then
-    gm_note_conf_dir "$HOME"
-    gm_note_conf_dir "${HOME}/etc"
+  if [[ -n "${profile_location_dir:-}" ]]; then
+    gm_note_conf_dir "${profile_location_dir}/etc"
+    gm_note_conf_dir "${profile_location_dir}/conf"
+    gm_note_conf_dir "${profile_location_dir}"
   fi
 }
 
