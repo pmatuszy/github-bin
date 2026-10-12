@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# v. 20261012.104451 - places are printed in alphabetical order of the name
+# v. 20261012.104348 - a chosen year limits the tracks loaded from [tracks-location], and that count is the one printed
 # v. 20261012.104010 - tracks are loaded in alphabetical order of the file name
 # v. 20261012.103728 - year-range accepts one year or a range, and refuses a first year newer than the second
 # v. 20261012.102745 - the missing-conf message includes profile_location_dir when that variable is set
@@ -15,6 +17,8 @@
 # v. 20261009.160131 - also read .tcx tracks; a Trackpoint with a time and a position joins the same search as GPX
 # v. 20261009.151425 - match a photo or video time to the nearest GPX point and write that location with exiftool
 
+# 2026.10.12 - v. 0.17 - places are printed in alphabetical order of the name
+# 2026.10.12 - v. 0.16 - a chosen year limits the tracks loaded from [tracks-location], and that count is the one printed
 # 2026.10.12 - v. 0.15 - tracks are loaded in alphabetical order of the file name
 # 2026.10.12 - v. 0.14 - year-range reads 2026, 2026-2027, and 2026 2027, and refuses a reversed range
 # 2026.10.12 - v. 0.13 - the missing-conf message mentions profile_location_dir when that variable is set
@@ -917,6 +921,20 @@ def skip_track_name(name):
     return name.startswith("._") or "_old-" in name or name.endswith(".partial") or ".partial." in name
 
 
+def chosen_under(root, paths):
+    """How many of the already chosen track files sit in root."""
+    root_key = norm_key(root)
+    if os.path.isfile(root):
+        return 1 if any(norm_key(path) == root_key for path in paths) else 0
+    prefix = root_key.rstrip("\\/") + os.sep
+    count = 0
+    for path in paths:
+        key = norm_key(path)
+        if key == root_key or key.startswith(prefix):
+            count += 1
+    return count
+
+
 def tracks_under(root):
     """GPX and TCX files in root and in every subdirectory under it."""
     if os.path.isfile(root):
@@ -999,7 +1017,11 @@ def merge_confs(paths):
     return places, notes, errors, track_roots
 
 
-def print_place_banner(paths, places, notes, errors, track_roots):
+def sort_places(places):
+    places.sort(key=lambda place: place["label"].casefold())
+
+
+def print_place_banner(paths, places, notes, errors, track_roots, gpx_paths, track_span):
     if not paths:
         extra = ""
         profile = os.environ.get("profile_location_dir")
@@ -1022,10 +1044,12 @@ def print_place_banner(paths, places, notes, errors, track_roots):
     if track_roots:
         print("Tracks also from (this directory and every subdirectory):")
         for root in track_roots:
-            found = tracks_under(root)
-            count = 0 if found is None else len(found)
+            count = chosen_under(root, gpx_paths)
             print("  %s" % root)
-            print("    %s .gpx/.tcx files" % fmt_int(count))
+            if track_span and track_span != "all":
+                print("    %s .gpx/.tcx files from %s" % (fmt_int(count), track_span))
+            else:
+                print("    %s .gpx/.tcx files" % fmt_int(count))
     for note in notes:
         print("  %s" % note)
     print("")
@@ -1413,28 +1437,16 @@ def cmd_scan(argv):
         return 1
     conf_paths = read_paths(args.conf_list) if args.conf_list else []
     places, notes, conf_errors, track_roots = merge_confs(conf_paths)
-    print_place_banner(conf_paths, places, notes, conf_errors, track_roots)
+    sort_places(places)
     media = read_paths(args.media_list)
     gpx_paths = read_paths(args.gpx_list)
     roots = read_paths(args.root_list)
-    seen_tracks = set(norm_key(path) for path in gpx_paths)
+    print_place_banner(conf_paths, places, notes, conf_errors, track_roots, gpx_paths, args.track_span)
     for root in track_roots:
-        found = tracks_under(root)
-        if found is None:
-            continue
-        roots.append(root if os.path.isdir(root) else os.path.dirname(root))
-        added = 0
-        for path in found:
-            key = norm_key(path)
-            if key in seen_tracks:
-                continue
-            seen_tracks.add(key)
-            gpx_paths.append(path)
-            added += 1
-        if added == 0 and not found:
-            print("No .gpx or .tcx files in %s or any subdirectory under it." % root)
-        elif added:
-            print("Reading %s .gpx/.tcx files from %s and every subdirectory under it." % (fmt_int(added), root))
+        if os.path.isdir(root):
+            roots.append(root)
+        elif os.path.isfile(root):
+            roots.append(os.path.dirname(root))
     gpx_paths.sort(key=lambda path: (os.path.basename(path).casefold(), os.path.normcase(path)))
     points = []
     gpx_info = []
@@ -1838,7 +1850,9 @@ def selftest():
         merged, notes, errors, track_roots = merge_confs([near, far_conf])
         labels = [place["label"] for place in merged]
         assert labels == ["Ponice 221", "Shared / Home", "Raclawicka 146"]
-        assert merged[1]["lat"] == 50.0
+        sort_places(merged)
+        assert [place["label"] for place in merged] == ["Ponice 221", "Raclawicka 146", "Shared / Home"]
+        assert next(place["lat"] for place in merged if place["label"] == "Shared / Home") == 50.0
         assert any("Shared" in note and "Home" in note for note in notes)
         assert any("Broken" in err for err in errors)
         assert any(err.startswith("[Shared] has two locations") for err in errors)
@@ -1848,6 +1862,8 @@ def selftest():
         found_tracks = tracks_under(track_dir)
         assert len(found_tracks) == 1
         assert found_tracks[0].endswith("day.gpx")
+        assert chosen_under(track_dir, found_tracks) == 1
+        assert chosen_under(track_dir, []) == 0
     finally:
         shutil.rmtree(folder, ignore_errors=True)
 

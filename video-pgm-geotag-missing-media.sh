@@ -1,4 +1,6 @@
 #!/bin/bash
+# v. 20261012.104451 - places are printed in alphabetical order of the name
+# v. 20261012.104348 - a chosen year limits the tracks loaded from [tracks-location], and that count is the one printed
 # v. 20261012.104010 - tracks are loaded in alphabetical order of the file name
 # v. 20261012.103728 - a typed track year may be a range, and the first year must not be newer than the second
 # v. 20261012.102745 - when profile_location_dir is set, also read that directory and its etc and conf
@@ -15,6 +17,8 @@
 # v. 20261009.160131 - also read .tcx tracks; a Trackpoint with a time and a position is used like a GPX point
 # v. 20261009.151425 - report which photos and videos have no location, and write one from the nearest GPX point
 
+# 2026.10.12 - v. 0.17 - places are printed in alphabetical order of the name
+# 2026.10.12 - v. 0.16 - a chosen year limits the tracks loaded from [tracks-location], and that count is the one printed
 # 2026.10.12 - v. 0.15 - tracks are loaded in alphabetical order of the file name
 # 2026.10.12 - v. 0.14 - track years can be typed as 2026, 2026-2027, or 2026 2027; a reversed range is refused
 # 2026.10.12 - v. 0.13 - when profile_location_dir is set, also merge the .conf in that directory and in its etc and conf
@@ -103,12 +107,12 @@ Each place is a line in brackets and the latitude, longitude under it:
   49.59078922757009, 19.966572075569914
 
 A track directory is the same kind of heading, with a path under it. Every
-subdirectory is searched, not only the files sitting in that folder. The .gpx
-and .tcx files found there are read as well as the tracks next to the photos
-and videos. The count is printed before the report. You are asked which years to
-load. The default is the year in the photo and video names. [t] asks for a
-year or a range, such as 2026-2027, 2026 - 2027, or 2026 2027. The first
-year must not be newer than the second.
+subdirectory is searched, not only the files sitting in that folder. You are
+asked which years to load. The default is the year in the photo and video
+names. [t] asks for a year or a range, such as 2026-2027, 2026 - 2027, or
+2026 2027. The first year must not be newer than the second. Only those years
+are read, from that directory and from the tracks next to the photos and
+videos. The count printed before the report is that set.
 
   [tracks-location]
   /mnt/p/video/geotaging-kopie
@@ -500,10 +504,10 @@ gm_add_media() {
 
 gm_add_gpx() {
   local rp="$1" base
-  [[ -f "$rp" && -s "$rp" ]] || return 0
+  [[ -f "$rp" && -s "$rp" ]] || return 1
   base="${rp##*/}"
-  gm_track_year_ok "$base" || return 0
-  [[ -n "${SEEN_GPX[$rp]:-}" ]] && return 0
+  gm_track_year_ok "$base" || return 1
+  [[ -n "${SEEN_GPX[$rp]:-}" ]] && return 1
   SEEN_GPX[$rp]=1
   printf '%s\0' "$rp" >> "$WORK/gpx"
   GPX_N=$(( GPX_N + 1 ))
@@ -909,11 +913,14 @@ gm_add_conf_tracks() {
         ext="${base##*.}"
         ext="${ext,,}"
         if [[ "$ext" == gpx || "$ext" == tcx ]]; then
-          gm_add_gpx "$f"
-          n_here=$(( n_here + 1 ))
+          gm_add_gpx "$f" && n_here=$(( n_here + 1 ))
         fi
       done < <(find "$path" \( -type d -name '.*' -prune \) -o -type f -print0)
-      echo "$(gm_ts) ${path}: ${n_here} .gpx/.tcx files, including every subdirectory"
+      if (( TRACK_ALL )); then
+        echo "$(gm_ts) ${path}: ${n_here} .gpx/.tcx files, including every subdirectory"
+      else
+        echo "$(gm_ts) ${path}: ${n_here} .gpx/.tcx files from ${TRACK_SPAN}, including every subdirectory"
+      fi
     elif [[ -f "$path" ]]; then
       path="$(readlink -f -- "$path" 2>/dev/null || printf '%s' "$path")"
       gm_add_root "$(dirname -- "$path")"
