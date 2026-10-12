@@ -1,4 +1,10 @@
 #!/bin/bash
+# v. 20261012.122130 - the update question follows the backup answer with no blank line
+# v. 20261012.122058 - the run summary has no timestamp on each line
+# v. 20261012.121909 - confirm the update, and keep a dated backup only when asked
+# v. 20261012.121627 - the next file can reuse a latitude and longitude that was typed earlier
+# v. 20261012.121328 - a typed latitude and longitude gets the same map links as a track point
+# v. 20261012.120912 - files are updated only after the answers, and each copy checks free space plus 10%
 # v. 20261012.115248 - each track point also lists Google, OpenStreetMap, Apple, and Microsoft map links
 # v. 20261012.114548 - each track write is a short table of file, track, location, and place
 # v. 20261012.114450 - the repeated command is introduced as the command-line equivalent
@@ -42,6 +48,12 @@
 # v. 20261009.160131 - also read .tcx tracks; a Trackpoint with a time and a position is used like a GPX point
 # v. 20261009.151425 - report which photos and videos have no location, and write one from the nearest GPX point
 
+# 2026.10.12 - v. 0.48 - the update question follows the backup answer with no blank line
+# 2026.10.12 - v. 0.47 - the run summary has no timestamp on each line
+# 2026.10.12 - v. 0.46 - confirm the update, and keep a dated backup only when asked
+# 2026.10.12 - v. 0.45 - the next file can reuse a latitude and longitude that was typed earlier
+# 2026.10.12 - v. 0.44 - a typed latitude and longitude gets the same map links as a track point
+# 2026.10.12 - v. 0.43 - files are updated only after the answers, and each copy checks free space plus 10%
 # 2026.10.12 - v. 0.42 - each track point also lists Google, OpenStreetMap, Apple, and Microsoft map links
 # 2026.10.12 - v. 0.41 - each track write is a short table of file, track, location, and place
 # 2026.10.12 - v. 0.40 - the repeated command is introduced as the command-line equivalent
@@ -107,6 +119,7 @@ show_help() {
   cat <<EOF
 Usage: $(basename "$0") [-h|--help] [-v|--version] [--history]
        [-y|--yes] [-n|--dry-run] [--redo] [--verbose] [--colors yes|no]
+       [--internet yes|no] [--backup | --no-backup]
        [--here | --recursive]
        [--tz OFFSET|auto] [--max-gap SECONDS] [--quicktime utc|local]
        [--gpx FILE|DIR ...]
@@ -143,11 +156,18 @@ seconds (default 30). The closest point is the one used. With a point every
 one or two seconds, a normal match is about a second away. The report shows
 the gap. A video is tagged at its start.
 
-Nothing is written until you reach that file. Enter writes it. n skips it.
-Each file is numbered, such as [1/22], and shown as a short table: the file,
-the track, the gap, the location, map links, and the place name. -n prints
-the report and stops. -y writes the track matches without asking. A file that already
-has a location is left as it is, unless
+Each file is shown first. Nothing is written until those answers are done.
+Enter accepts that file. n skips it. The chosen files are updated after that.
+Each one is copied aside, which can take a while. The copy needs free space
+for the file plus 10%. After those answers, a backup of each old file can be
+kept. The default is no. A backup is named with the current date and time,
+such as clip_old-20261012_121700.mp4. --backup keeps one. --no-backup does
+not. Then you are asked whether to update the chosen files. The default is
+yes. --internet yes or no looks up place names without asking. The default
+is yes. Each file is numbered, such as [1/22], and shown as a
+short table: the file, the track, the gap, the location, map links, and the
+place name. -n prints the report and stops. -y writes the track matches
+without asking. A file that already has a location is left as it is, unless
 --redo is given and a point is close enough. The write goes through
 ExifTool. The file time is kept.
 
@@ -191,10 +211,11 @@ need geotagging, and how many already have a location, before that read.
 
 For each file with no track point you are asked which name to write. q quits
 at once, without Enter. g asks for a latitude and longitude for that file
-only. Before the first track point or typed place, you are asked once whether
-to look the point up on OpenStreetMap. The default is yes. If OpenStreetMap
-cannot be reached, the coordinates are still written and later points are not
-looked up. A place you pick or type is marked MANUAL. A point from a GPX or
+only, and shows the same map links as a track point. The next file can reuse
+that point with r. Before the first track point or typed place, you are asked
+once whether to look the point up on OpenStreetMap. The default is yes. If
+OpenStreetMap cannot be reached, the coordinates are still written and later
+points are not looked up. A place you pick or type is marked MANUAL. A point from a GPX or
 TCX file is marked TRACK. Both are stored in GPSProcessingMethod. -y does not
 pick a place for
 you.
@@ -214,6 +235,10 @@ Options:
                        when a track point is close enough.
   --colors yes|no      File names in green. Latitude, longitude, and height
                        in blue. Default yes. Do not ask.
+  --internet yes|no    Look up a place name. Default yes. Do not ask.
+  --backup             Keep each old file as name_old-YYYYMMDD_HHMMSS.
+                       Do not ask.
+  --no-backup          Do not keep a backup. Default. Do not ask.
   --here               This directory only. Do not ask.
   --recursive          This directory and its subdirectories. Do not ask.
   --tz OFFSET|auto     Camera clock minus UTC. Examples: +02:00, -05:30, 0.
@@ -307,7 +332,7 @@ gm_format_wall() {
 }
 
 gm_summary_kv() {
-  printf '%s %-*s  %s\n' "$(gm_ts)" 28 "${1}:" "$2"
+  printf '  %-*s  %s\n' 28 "${1}:" "$2"
 }
 
 gm_load_counts() {
@@ -353,13 +378,13 @@ gm_print_summary() {
     (( ${#text} > width )) && width=${#text}
   done
   echo
-  echo "$(gm_ts) --- Run summary ---"
+  echo "--- Run summary ---"
   local i
   for i in "${!labels[@]}"; do
-    printf '%s %-*s  %*s\n' "$(gm_ts)" 28 "${labels[$i]}:" "$width" "$(gm_fmt_int "${nums[$i]}")"
+    printf '  %-*s  %*s\n' 28 "${labels[$i]}:" "$width" "$(gm_fmt_int "${nums[$i]}")"
   done
   echo
-  echo "$(gm_ts) --- Timing ---"
+  echo "--- Timing ---"
   end_ns="$(gm_now)"
   total_sec="$(awk -v s0="${GM_START_NS:-0}" -v s1="$end_ns" 'BEGIN { printf "%.6f", s1 - s0 }')"
   wait_sec="$(awk -v t="$total_sec" -v p="${GM_PROC_SEC:-0}" 'BEGIN { w = t - p; if (w < 0) w = 0; printf "%.6f", w }')"
@@ -503,10 +528,25 @@ gm_lookup_place() {
 
 gm_describe_coord() {
   GM_PLACE="typed"
-  gm_lookup_place "$1" "$2"
+  gm_lookup_place "$1" "$2" quiet
   if [[ -n "$GM_PLACE_NAME" ]]; then
     GM_PLACE="$GM_PLACE_NAME"
   fi
+  echo
+  gm_write_row "Location" "$(gm_blue "$1, $2")"
+  gm_map_rows "$1" "$2"
+  gm_write_row "Description" "$GM_PLACE_NAME"
+}
+
+gm_remember_coord() {
+  GM_LAST_LAT="$1"
+  GM_LAST_LON="$2"
+}
+
+gm_use_typed() {
+  gm_remember_coord "$GM_LAT" "$GM_LON"
+  gm_describe_coord "$GM_LAT" "$GM_LON"
+  gm_write_chosen "$GM_LAT" "$GM_LON" "$GM_PLACE" "$1"
 }
 
 gm_ask_coord() {
@@ -536,6 +576,7 @@ gm_ask_coord() {
 gm_write_chosen() {
   local lat="$1" lon="$2" place="$3" i="$4"
   local -a place_args
+  gm_ask_backup
   gm_proc_begin
   place_args=(
     write-place
@@ -551,6 +592,9 @@ gm_write_chosen() {
   )
   if (( USE_COLOR )); then
     place_args+=(--colors)
+  fi
+  if (( BACKUP == 1 )); then
+    place_args+=(--backup)
   fi
   if python3 "$PY_HELPER" "${place_args[@]}"; then
     PLACE_WROTE=$(( PLACE_WROTE + 1 ))
@@ -1298,6 +1342,16 @@ gm_equivalent_command() {
   else
     cmd+=(--colors no)
   fi
+  if (( USE_NET == 1 )); then
+    cmd+=(--internet yes)
+  elif (( USE_NET == 0 )); then
+    cmd+=(--internet no)
+  fi
+  if (( BACKUP == 1 )); then
+    cmd+=(--backup)
+  elif (( BACKUP == 0 )); then
+    cmd+=(--no-backup)
+  fi
   if (( ${#DIR_INPUTS[@]} > 0 )); then
     if (( RECURSE )); then
       cmd+=(--recursive)
@@ -1527,6 +1581,8 @@ gm_ask_track_writes() {
   total=${#WRITE_PATH[@]}
   : > "$WORK/write-only"
   gm_ask_internet
+  echo
+  echo "Each file is shown below. Nothing is written until these answers are done."
   for i in "${!WRITE_PATH[@]}"; do
     shown=$(( shown + 1 ))
     echo
@@ -1586,6 +1642,71 @@ gm_ask_track_writes() {
   fi
 }
 
+gm_ready_to_write() {
+  local n=0 path
+  if [[ -s "${WORK}/write-only" ]]; then
+    while IFS= read -r -d '' path; do
+      n=$(( n + 1 ))
+    done < "$WORK/write-only"
+  else
+    n="$WRITE_N"
+  fi
+  echo
+  if (( n == 1 )); then
+    echo "Ready to update 1 file."
+  else
+    echo "Ready to update ${n} files."
+  fi
+  echo "Each file is copied aside while the location is written, so this can take a while."
+}
+
+gm_ask_backup() {
+  local reply example
+  if (( BACKUP >= 0 )); then
+    return 0
+  fi
+  if (( DO_YES )) || (( ! script_is_run_interactively )); then
+    BACKUP=0
+    return 0
+  fi
+  example="clip_old-$(date '+%Y%m%d_%H%M%S').mp4"
+  echo
+  echo "A backup keeps the old file under a new name, with the current date and time."
+  echo "  [N] No backup (default)"
+  echo "  [b] Yes, for example ${example}"
+  echo "  [q] Quit"
+  gm_read_key "Backup the old files? [N/b/q]: " n "No backup"
+  reply="$REPLY"
+  case "$reply" in
+    n) BACKUP=0 ;;
+    b) BACKUP=1 ;;
+    q) gm_quit ;;
+    *) echo "$(gm_ts) That is not a choice. Stopping."; return_code=1; exit 1 ;;
+  esac
+}
+
+gm_ask_update() {
+  local reply
+  if (( DO_YES )) || (( ! script_is_run_interactively )); then
+    return 0
+  fi
+  echo "  [Y] Yes (default)"
+  echo "  [n] No"
+  echo "  [q] Quit"
+  gm_read_key "Update these files? [Y/n/q]: " y "Yes"
+  reply="$REPLY"
+  case "$reply" in
+    y) return 0 ;;
+    n)
+      echo "Those files were not updated."
+      WRITE_TRACKS=0
+      return 1
+      ;;
+    q) gm_quit ;;
+    *) echo "$(gm_ts) That is not a choice. Stopping."; return_code=1; exit 1 ;;
+  esac
+}
+
 gm_choose_places() {
   local i n reply picked
   if (( ${#CHOOSE_SHOW[@]} == 0 )); then
@@ -1599,7 +1720,7 @@ gm_choose_places() {
   echo
   echo "These files have no GPX or TCX point close enough."
   gm_ask_internet
-  local shown=0 total=${#CHOOSE_SHOW[@]}
+  local shown=0 total=${#CHOOSE_SHOW[@]} place_prompt
   for i in "${!CHOOSE_SHOW[@]}"; do
     shown=$(( shown + 1 ))
     echo
@@ -1607,25 +1728,38 @@ gm_choose_places() {
     for n in "${!PLACE_LABEL[@]}"; do
       printf '  [%d] [%s]   %s\n' "$(( n + 1 ))" "${PLACE_LABEL[$n]}" "$(gm_blue "${PLACE_LAT[$n]}, ${PLACE_LON[$n]}")"
     done
+    place_prompt="[S]"
+    if [[ -n "$GM_LAST_LAT" && -n "$GM_LAST_LON" ]]; then
+      echo "  [r] Reuse the previous latitude and longitude: $(gm_blue "${GM_LAST_LAT}, ${GM_LAST_LON}")"
+      place_prompt="[r/S]"
+    fi
     echo "  [g] Type a latitude, longitude for this file"
     echo "  [S] Skip this file (default)"
     echo "  [q] Quit now, without Enter"
-    gm_read_place_choice "Place for $(gm_green "${CHOOSE_SHOW[$i]}")? [S]: "
+    gm_read_place_choice "Place for $(gm_green "${CHOOSE_SHOW[$i]}")? ${place_prompt}: "
     reply="$REPLY"
     if [[ "$reply" == s ]]; then
       continue
     fi
+    if [[ "$reply" == r ]]; then
+      if [[ -n "$GM_LAST_LAT" && -n "$GM_LAST_LON" ]]; then
+        GM_LAT="$GM_LAST_LAT"
+        GM_LON="$GM_LAST_LON"
+        gm_use_typed "$i"
+      else
+        echo "There is no previous latitude and longitude. This file was skipped."
+      fi
+      continue
+    fi
     if [[ "$reply" == g ]]; then
       if gm_ask_coord; then
-        gm_describe_coord "$GM_LAT" "$GM_LON"
-        gm_write_chosen "$GM_LAT" "$GM_LON" "$GM_PLACE" "$i"
+        gm_use_typed "$i"
       fi
       continue
     fi
     if canon=$(python3 "$PY_HELPER" check-coord "$reply" 2>/dev/null); then
       IFS=$'\t' read -r GM_LAT GM_LON <<< "$canon"
-      gm_describe_coord "$GM_LAT" "$GM_LON"
-      gm_write_chosen "$GM_LAT" "$GM_LON" "$GM_PLACE" "$i"
+      gm_use_typed "$i"
       continue
     fi
     if [[ "$reply" =~ ^[0-9]+$ ]] && (( 10#$reply >= 1 && 10#$reply <= ${#PLACE_LABEL[@]} )); then
@@ -1687,8 +1821,13 @@ CHOOSE_SHOW=()
 CHOOSE_DATE=()
 CHOOSE_TIME=()
 USE_NET=-1
+INTERNET_SET=0
+BACKUP=-1
+BACKUP_SET=0
 GM_LOOKED=0
 GM_PLACE="typed"
+GM_LAST_LAT=""
+GM_LAST_LON=""
 PLACE_WROTE=0
 SUM_READY=0
 SUM_FILES=0
@@ -1769,6 +1908,38 @@ while [[ $# -gt 0 ]]; do
       esac
       COLORS_SET=1
       shift 2
+      ;;
+    --internet)
+      gm_need_value "$@"
+      if (( INTERNET_SET )); then
+        echo "ERROR: --internet was given twice" >&2
+        exit 1
+      fi
+      case "${2,,}" in
+        yes|y) USE_NET=1 ;;
+        no|n) USE_NET=0 ;;
+        *) echo "ERROR: --internet must be yes or no, not: $2" >&2; exit 1 ;;
+      esac
+      INTERNET_SET=1
+      shift 2
+      ;;
+    --backup)
+      if (( BACKUP_SET )); then
+        echo "ERROR: --backup and --no-backup cannot be used together" >&2
+        exit 1
+      fi
+      BACKUP=1
+      BACKUP_SET=1
+      shift
+      ;;
+    --no-backup)
+      if (( BACKUP_SET )); then
+        echo "ERROR: --backup and --no-backup cannot be used together" >&2
+        exit 1
+      fi
+      BACKUP=0
+      BACKUP_SET=1
+      shift
       ;;
     --here)
       if (( SCOPE_SET && RECURSE )); then
@@ -2025,17 +2196,24 @@ if (( WRITE_N > 0 )); then
     gm_ask_track_writes
   fi
   if (( WRITE_TRACKS )); then
-    echo
-    gm_proc_begin
-    write_args=(write --exiftool "$EXIFTOOL_BIN" --plan "$WORK/plan.json")
-    if [[ -s "${WORK}/write-only" ]]; then
-      write_args+=(--only-list "$WORK/write-only")
+    gm_ready_to_write
+    gm_ask_backup
+    if gm_ask_update; then
+      gm_print_equivalent
+      gm_proc_begin
+      write_args=(write --exiftool "$EXIFTOOL_BIN" --plan "$WORK/plan.json")
+      if [[ -s "${WORK}/write-only" ]]; then
+        write_args+=(--only-list "$WORK/write-only")
+      fi
+      if (( USE_COLOR )); then
+        write_args+=(--colors)
+      fi
+      if (( BACKUP == 1 )); then
+        write_args+=(--backup)
+      fi
+      python3 "$PY_HELPER" "${write_args[@]}" || return_code=$?
+      gm_proc_end
     fi
-    if (( USE_COLOR )); then
-      write_args+=(--colors)
-    fi
-    python3 "$PY_HELPER" "${write_args[@]}" || return_code=$?
-    gm_proc_end
   fi
 fi
 

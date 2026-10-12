@@ -1,4 +1,10 @@
 #!/usr/bin/env python3
+# v. 20261012.122130 - the update question follows the backup answer with no blank line
+# v. 20261012.122058 - the run summary has no timestamp on each line
+# v. 20261012.121909 - confirm the update, and keep a dated backup only when asked
+# v. 20261012.121627 - the next file can reuse a latitude and longitude that was typed earlier
+# v. 20261012.121328 - a typed latitude and longitude gets the same map links as a track point
+# v. 20261012.120912 - files are updated only after the answers, and each copy checks free space plus 10%
 # v. 20261012.115248 - each track point also lists Google, OpenStreetMap, Apple, and Microsoft map links
 # v. 20261012.114548 - each track write is a short table of file, track, location, and place
 # v. 20261012.114450 - the repeated command is introduced as the command-line equivalent
@@ -42,6 +48,12 @@
 # v. 20261009.160131 - also read .tcx tracks; a Trackpoint with a time and a position joins the same search as GPX
 # v. 20261009.151425 - match a photo or video time to the nearest GPX point and write that location with exiftool
 
+# 2026.10.12 - v. 0.48 - the update question follows the backup answer with no blank line
+# 2026.10.12 - v. 0.47 - the run summary has no timestamp on each line
+# 2026.10.12 - v. 0.46 - confirm the update, and keep a dated backup only when asked
+# 2026.10.12 - v. 0.45 - the next file can reuse a latitude and longitude that was typed earlier
+# 2026.10.12 - v. 0.44 - a typed latitude and longitude gets the same map links as a track point
+# 2026.10.12 - v. 0.43 - files are updated only after the answers, and each copy checks free space plus 10%
 # 2026.10.12 - v. 0.42 - each track point also lists Google, OpenStreetMap, Apple, and Microsoft map links
 # 2026.10.12 - v. 0.41 - each track write is a short table of file, track, location, and place
 # 2026.10.12 - v. 0.40 - the repeated command is introduced as the command-line equivalent
@@ -1378,15 +1390,86 @@ def video_args(item):
     ]
 
 
+def fmt_bytes(n):
+    if n >= 1024 ** 3:
+        return "%.1f GB" % (n / 1024 ** 3)
+    if n >= 1024 ** 2:
+        return "%.1f MB" % (n / 1024 ** 2)
+    if n >= 1024:
+        return "%.1f kB" % (n / 1024)
+    return "%d bytes" % n
+
+
+def copy_space_needed(size):
+    """A full copy of the file, plus 10%."""
+    return size + size // 10
+
+
+def room_for_copy(path):
+    try:
+        size = os.path.getsize(path)
+    except OSError as exc:
+        return False, "Cannot read the file size: %s" % exc
+    need = copy_space_needed(size)
+    folder = os.path.dirname(path) or "."
+    try:
+        free = shutil.disk_usage(folder).free
+    except OSError as exc:
+        return False, "Cannot read free space: %s" % exc
+    if free >= need:
+        return True, ""
+    return False, (
+        "Not enough free space to copy this file aside. "
+        "Need %s (the file plus 10%%). %s is free."
+        % (fmt_bytes(need), fmt_bytes(free))
+    )
+
+
+KEEP_BACKUP = False
+
+
+def take_backup(args):
+    global KEEP_BACKUP
+    KEEP_BACKUP = bool(getattr(args, "backup", False))
+
+
+def backup_filename(name, stamp):
+    base, ext = os.path.splitext(name)
+    return "%s_old-%s%s" % (base, stamp, ext)
+
+
+def unique_backup(path):
+    folder, name = os.path.split(path)
+    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    candidate = os.path.join(folder, backup_filename(name, stamp))
+    n = 2
+    while os.path.exists(candidate):
+        base, ext = os.path.splitext(name)
+        candidate = os.path.join(folder, "%s_old-%s-%d%s" % (base, stamp, n, ext))
+        n += 1
+    return candidate
+
+
+def keep_old_file(path):
+    sidecar = path + "_original"
+    if not os.path.isfile(sidecar):
+        return ""
+    dest = unique_backup(path)
+    os.replace(sidecar, dest)
+    return dest
+
+
 def write_one(exiftool, item):
+    ok, message = room_for_copy(item["path"])
+    if not ok:
+        return False, message
     if item["kind"] == "video":
         args = video_args(item)
     else:
         args = photo_args(item)
-    cmd = [
-        exiftool, "-overwrite_original", "-P", "-m",
-        "-api", "LargeFileSupport=1",
-    ]
+    cmd = [exiftool, "-P", "-m", "-api", "LargeFileSupport=1"]
+    if not KEEP_BACKUP:
+        cmd.append("-overwrite_original")
     cmd.extend(args)
     cmd.append(item["path"])
     proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
@@ -1394,6 +1477,8 @@ def write_one(exiftool, item):
     err = proc.stderr.decode("utf-8", "replace").strip()
     if proc.returncode != 0:
         return False, err or out or "exiftool failed"
+    if KEEP_BACKUP:
+        return True, keep_old_file(item["path"])
     return True, ""
 
 
@@ -1840,8 +1925,10 @@ def cmd_write(argv):
     parser.add_argument("--plan", required=True)
     parser.add_argument("--only-list", default="")
     parser.add_argument("--colors", action="store_true")
+    parser.add_argument("--backup", action="store_true")
     args = parser.parse_args(argv)
     take_colors(args)
+    take_backup(args)
     with open(args.plan, encoding="utf-8") as handle:
         plan = json.load(handle)
     writes = plan.get("writes") or []
@@ -1868,6 +1955,8 @@ def cmd_write(argv):
                 paint(item.get("label") or os.path.basename(item["path"]), "32"),
                 paint(fmt_pos(item["lat"], item["lon"], item.get("ele")), "94"),
             ))
+            if message:
+                print("    Old file kept as: %s" % message)
         else:
             failed += 1
             print("%s %s  could not write" % (prefix, paint(item.get("label") or item["path"], "32")))
@@ -1925,8 +2014,10 @@ def cmd_write_place(argv):
     parser.add_argument("--label", default="")
     parser.add_argument("--place", default="")
     parser.add_argument("--colors", action="store_true")
+    parser.add_argument("--backup", action="store_true")
     args = parser.parse_args(argv)
     take_colors(args)
+    take_backup(args)
     item = {
         "path": args.path,
         "kind": args.kind,
@@ -1942,6 +2033,8 @@ def cmd_write_place(argv):
     shown = args.label or os.path.basename(args.path)
     if ok:
         print("%s  [%s]  %s" % (paint(shown, "32"), args.place, paint(fmt_pos(args.lat, args.lon, None), "94")))
+        if message:
+            print("    Old file kept as: %s" % message)
         return 0
     print("%s  could not write [%s]" % (paint(shown, "32"), args.place))
     if message:
@@ -1950,6 +2043,9 @@ def cmd_write_place(argv):
 
 
 def selftest():
+    assert copy_space_needed(1000) == 1100
+    assert copy_space_needed(0) == 0
+    assert backup_filename("clip.mp4", "20261012_121700") == "clip_old-20261012_121700.mp4"
     assert parse_tz_seconds("+02:00") == 7200
     window = smart_window(
         ["20260824_a.mp4", "20260827_b.mp4"],
