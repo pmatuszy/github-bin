@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# v. 20261012.113554 - ask about colors; file names are green, and a location is blue
 # v. 20261012.113057 - the place question does not repeat the file count
 # v. 20261012.112954 - Enter prints the option that was chosen
 # v. 20261012.112620 - [d] is smart loading with the days you choose
@@ -35,6 +36,7 @@
 # v. 20261009.160131 - also read .tcx tracks; a Trackpoint with a time and a position joins the same search as GPX
 # v. 20261009.151425 - match a photo or video time to the nearest GPX point and write that location with exiftool
 
+# 2026.10.12 - v. 0.36 - ask about colors; file names are green, and a location is blue
 # 2026.10.12 - v. 0.35 - the place question does not repeat the file count
 # 2026.10.12 - v. 0.34 - Enter prints the option that was chosen
 # 2026.10.12 - v. 0.33 - [d] is smart loading with the days you choose
@@ -153,8 +155,16 @@ STATUS_COLOR = {
 }
 
 
+COLOR_ENABLED = False
+
+
 def use_color():
-    return sys.stdout.isatty() and not os.environ.get("NO_COLOR")
+    return COLOR_ENABLED and sys.stdout.isatty() and not os.environ.get("NO_COLOR")
+
+
+def take_colors(args):
+    global COLOR_ENABLED
+    COLOR_ENABLED = bool(getattr(args, "colors", False))
 
 
 def paint(text, code):
@@ -1139,6 +1149,52 @@ def stamp_from_epoch(epoch):
     return when.strftime("%Y:%m:%d"), when.strftime("%H:%M:%S")
 
 
+def cell(text, width, code=""):
+    text = text or ""
+    pad = " " * max(0, width - len(text))
+    if code and text:
+        return paint(text, code) + pad
+    return text + pad
+
+
+def print_file_rows(rows, status):
+    """Same columns as file_table, with the file in green and the location in blue."""
+    last = {
+        "match": "gap, track",
+        "replace": "gap, track",
+        "too far": "nearest point",
+        "unread": "problem",
+    }.get(status, "detail")
+    show_last = any(row.get("detail") for row in rows)
+    file_w = max([len("file")] + [len(row.get("show") or "") for row in rows])
+    time_w = max([len("time")] + [len(row.get("wall") or "") for row in rows])
+    from_w = max([len("from")] + [len(row.get("source") or "") for row in rows])
+    place_w = max([len("location")] + [len(row.get("place") or "") for row in rows])
+    height_w = max([len("height")] + [len(row.get("height") or "") for row in rows])
+    header = "  %-8s  %-*s   %-*s   %-*s   %-*s   %-*s" % (
+        "status", file_w, "file", time_w, "time", from_w, "from", place_w, "location", height_w, "height",
+    )
+    if show_last:
+        header += "   %s" % last
+    print(header)
+    status_code = STATUS_COLOR.get(status, "")
+    for row in rows:
+        status_cell = "%-8s" % status
+        if status_code:
+            status_cell = paint(status_cell, status_code)
+        line = "  %s  %s   %s   %s   %s   %s" % (
+            status_cell,
+            cell(row.get("show") or "", file_w, "32"),
+            cell(row.get("wall") or "", time_w),
+            cell(row.get("source") or "", from_w),
+            cell(row.get("place") or "", place_w, "94"),
+            cell(row.get("height") or "", height_w, "94"),
+        )
+        if show_last:
+            line += "   %s" % (row.get("detail") or "")
+        print(line)
+
+
 def file_table(rows, status):
     """One header and one aligned line per file."""
     last = {
@@ -1228,7 +1284,9 @@ def print_report(rows, gpx_info, gpx_errors, offset_seconds, tz_note, assumed, m
                 extra = ""
                 if item["skipped"]:
                     extra = ", %s without a time or a position" % fmt_int(item["skipped"])
-                print("  %s  %s points, %s%s  %s" % (item["kind"], fmt_int(item["points"]), span, extra, item["label"]))
+                print("  %s  %s points, %s%s  %s" % (
+                    item["kind"], fmt_int(item["points"]), span, extra, paint(item["label"], "32"),
+                ))
     else:
         print("Tracks: none.")
     for err in gpx_errors:
@@ -1258,11 +1316,7 @@ def print_report(rows, gpx_info, gpx_errors, offset_seconds, tz_note, assumed, m
                 print("  These files have no track point. The place names above are the choices.")
                 told_places = True
             chosen.sort(key=lambda row: (row["epoch"] is None, row["epoch"] or 0, row["show"]))
-            header, body = file_table(chosen, status)
-            print(header)
-            color = STATUS_COLOR.get(status)
-            for text in body:
-                print("  %s%s" % (paint(text[2:10], color), text[10:]))
+            print_file_rows(chosen, status)
     if redo:
         print("")
         print("--redo is set: a file that already has a location is written again when a point is close enough.")
@@ -1545,7 +1599,9 @@ def cmd_scan(argv):
     parser.add_argument("--exif-json", default="")
     parser.add_argument("--redo", action="store_true")
     parser.add_argument("--verbose", action="store_true")
+    parser.add_argument("--colors", action="store_true")
     args = parser.parse_args(argv)
+    take_colors(args)
     if args.max_gap < 0:
         eprint("--max-gap must be zero or more.")
         return 1
@@ -1771,7 +1827,9 @@ def cmd_write(argv):
     parser.add_argument("--exiftool", required=True)
     parser.add_argument("--plan", required=True)
     parser.add_argument("--only-list", default="")
+    parser.add_argument("--colors", action="store_true")
     args = parser.parse_args(argv)
+    take_colors(args)
     with open(args.plan, encoding="utf-8") as handle:
         plan = json.load(handle)
     writes = plan.get("writes") or []
@@ -1793,10 +1851,14 @@ def cmd_write(argv):
         prefix = "[%*d/%d]" % (width, number, total)
         if ok:
             wrote += 1
-            print("%s %s  %s" % (prefix, item.get("label") or os.path.basename(item["path"]), fmt_pos(item["lat"], item["lon"], item.get("ele"))))
+            print("%s %s  %s" % (
+                prefix,
+                paint(item.get("label") or os.path.basename(item["path"]), "32"),
+                paint(fmt_pos(item["lat"], item["lon"], item.get("ele")), "94"),
+            ))
         else:
             failed += 1
-            print("%s %s  could not write" % (prefix, item.get("label") or item["path"]))
+            print("%s %s  could not write" % (prefix, paint(item.get("label") or item["path"], "32")))
             if message:
                 print("    %s" % message.splitlines()[-1])
     plan["wrote_tracks"] = wrote
@@ -1850,7 +1912,9 @@ def cmd_write_place(argv):
     parser.add_argument("--gps-time", default="")
     parser.add_argument("--label", default="")
     parser.add_argument("--place", default="")
+    parser.add_argument("--colors", action="store_true")
     args = parser.parse_args(argv)
+    take_colors(args)
     item = {
         "path": args.path,
         "kind": args.kind,
@@ -1865,9 +1929,9 @@ def cmd_write_place(argv):
     ok, message = write_one(args.exiftool, item)
     shown = args.label or os.path.basename(args.path)
     if ok:
-        print("%s  [%s]  %s" % (shown, args.place, fmt_pos(args.lat, args.lon, None)))
+        print("%s  [%s]  %s" % (paint(shown, "32"), args.place, paint(fmt_pos(args.lat, args.lon, None), "94")))
         return 0
-    print("%s  could not write [%s]" % (shown, args.place))
+    print("%s  could not write [%s]" % (paint(shown, "32"), args.place))
     if message:
         print("    %s" % message.splitlines()[-1])
     return 1

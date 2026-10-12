@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261012.113554 - ask about colors; file names are green, and a location is blue
 # v. 20261012.113057 - the place question does not repeat the file count
 # v. 20261012.112954 - Enter prints the option that was chosen
 # v. 20261012.112620 - [d] is smart loading with the days you choose
@@ -35,6 +36,7 @@
 # v. 20261009.160131 - also read .tcx tracks; a Trackpoint with a time and a position is used like a GPX point
 # v. 20261009.151425 - report which photos and videos have no location, and write one from the nearest GPX point
 
+# 2026.10.12 - v. 0.36 - ask about colors; file names are green, and a location is blue
 # 2026.10.12 - v. 0.35 - the place question does not repeat the file count
 # 2026.10.12 - v. 0.34 - Enter prints the option that was chosen
 # 2026.10.12 - v. 0.33 - [d] is smart loading with the days you choose
@@ -92,7 +94,7 @@
 show_help() {
   cat <<EOF
 Usage: $(basename "$0") [-h|--help] [-v|--version] [--history]
-       [-y|--yes] [-n|--dry-run] [--redo] [--verbose]
+       [-y|--yes] [-n|--dry-run] [--redo] [--verbose] [--colors yes|no]
        [--here | --recursive]
        [--tz OFFSET|auto] [--max-gap SECONDS] [--quicktime utc|local]
        [--gpx FILE|DIR ...]
@@ -105,9 +107,11 @@ FILE or DIR, the current directory is used. [C] keeps that directory only.
 [a] includes its subdirectories. Windows paths such as P:\\video\\trip are
 read as /mnt/p/video/trip.
 
-The first question is whether to list every track and every photo or video.
+The first question is colors. The default is yes: file names are green, and
+a latitude, longitude, and height are blue. --colors no turns that off.
+The next question is whether to list every track and every photo or video.
 The default is no: the report then gives the counts. --verbose lists each
-one. -y does not ask and stays with the totals.
+one. -y does not ask. It stays with the totals, and with colors on.
 
 Photos: .jpg .jpeg .heic .png
 Videos: .mp4 .mov
@@ -194,6 +198,8 @@ Options:
   -n, --dry-run        Print the report. Write nothing.
   --redo               Write again over a location that is already there,
                        when a track point is close enough.
+  --colors yes|no      File names in green. Latitude, longitude, and height
+                       in blue. Default yes. Do not ask.
   --here               This directory only. Do not ask.
   --recursive          This directory and its subdirectories. Do not ask.
   --tz OFFSET|auto     Camera clock minus UTC. Examples: +02:00, -05:30, 0.
@@ -352,16 +358,25 @@ gm_print_summary() {
 }
 
 gm_colors() {
-  C_B="" C_DIM="" C_G="" C_Y="" C_R="" C_C="" C_0=""
-  if [[ -t 1 && -z "${NO_COLOR:-}" ]]; then
+  C_B="" C_DIM="" C_G="" C_Y="" C_R="" C_C="" C_BL="" C_0=""
+  if (( USE_COLOR )) && [[ -t 1 && -z "${NO_COLOR:-}" ]]; then
     C_B=$'\e[1m'
     C_DIM=$'\e[2m'
     C_G=$'\e[32m'
     C_Y=$'\e[33m'
     C_R=$'\e[31m'
     C_C=$'\e[36m'
+    C_BL=$'\e[94m'
     C_0=$'\e[0m'
   fi
+}
+
+gm_green() {
+  printf '%s%s%s' "$C_G" "$1" "$C_0"
+}
+
+gm_blue() {
+  printf '%s%s%s' "$C_BL" "$1" "$C_0"
 }
 
 gm_heading() {
@@ -505,17 +520,24 @@ gm_ask_coord() {
 
 gm_write_chosen() {
   local lat="$1" lon="$2" place="$3" i="$4"
+  local -a place_args
   gm_proc_begin
-  if python3 "$PY_HELPER" write-place \
-    --exiftool "$EXIFTOOL_BIN" \
-    --path "${CHOOSE_PATH[$i]}" \
-    --kind "${CHOOSE_KIND[$i]}" \
-    --lat "$lat" \
-    --lon "$lon" \
-    --gps-date "${CHOOSE_DATE[$i]}" \
-    --gps-time "${CHOOSE_TIME[$i]}" \
-    --label "${CHOOSE_SHOW[$i]}" \
-    --place "$place"; then
+  place_args=(
+    write-place
+    --exiftool "$EXIFTOOL_BIN"
+    --path "${CHOOSE_PATH[$i]}"
+    --kind "${CHOOSE_KIND[$i]}"
+    --lat "$lat"
+    --lon "$lon"
+    --gps-date "${CHOOSE_DATE[$i]}"
+    --gps-time "${CHOOSE_TIME[$i]}"
+    --label "${CHOOSE_SHOW[$i]}"
+    --place "$place"
+  )
+  if (( USE_COLOR )); then
+    place_args+=(--colors)
+  fi
+  if python3 "$PY_HELPER" "${place_args[@]}"; then
     PLACE_WROTE=$(( PLACE_WROTE + 1 ))
   else
     return_code=$?
@@ -661,6 +683,44 @@ gm_classify_inputs() {
       exit 1
     fi
   done
+}
+
+gm_ask_colors() {
+  local reply g="" b="" z=""
+  if [[ -n "${NO_COLOR:-}" ]]; then
+    USE_COLOR=0
+    COLORS_SET=1
+  fi
+  if (( COLORS_SET )); then
+    gm_colors
+    return 0
+  fi
+  if (( DO_YES )) || (( ! script_is_run_interactively )); then
+    USE_COLOR=1
+    gm_colors
+    return 0
+  fi
+  if [[ -t 1 ]]; then
+    g=$'\e[32m'
+    b=$'\e[94m'
+    z=$'\e[0m'
+  fi
+  echo
+  echo "File names can be green, and a latitude, longitude, and height can be blue."
+  echo "  ${g}20260827_094316_-_-_GoPro_Mission1_Pro.jpg${z}"
+  echo "  ${b}49.591502, 19.967246, 515m${z}"
+  echo "  [Y] Yes (default)"
+  echo "  [n] No"
+  echo "  [q] Quit"
+  gm_read_key "Use colors? [Y/n/q]: " y "Yes"
+  reply="$REPLY"
+  case "$reply" in
+    y) USE_COLOR=1 ;;
+    n) USE_COLOR=0 ;;
+    q) gm_quit ;;
+    *) echo "$(gm_ts) That is not a choice. Stopping."; return_code=1; exit 1 ;;
+  esac
+  gm_colors
 }
 
 gm_ask_verbose() {
@@ -1224,6 +1284,11 @@ gm_equivalent_command() {
   (( DRY_RUN )) && cmd+=(-n)
   (( REDO )) && cmd+=(--redo)
   (( VERBOSE )) && cmd+=(--verbose)
+  if (( USE_COLOR )); then
+    cmd+=(--colors yes)
+  else
+    cmd+=(--colors no)
+  fi
   if (( ${#DIR_INPUTS[@]} > 0 )); then
     if (( RECURSE )); then
       cmd+=(--recursive)
@@ -1452,13 +1517,13 @@ gm_ask_track_writes() {
       loc="${loc}, ${WRITE_HEIGHT[$i]}"
     fi
     if [[ "${WRITE_STATUS[$i]}" == replace ]]; then
-      echo "[${shown}/${total}] ${WRITE_LABEL[$i]} already has a location."
-      echo "A point in ${WRITE_TRACK[$i]} is ${WRITE_GAP[$i]} away, so that location can probably replace it."
+      echo "[${shown}/${total}] $(gm_green "${WRITE_LABEL[$i]}") already has a location."
+      echo "A point in $(gm_green "${WRITE_TRACK[$i]}") is ${WRITE_GAP[$i]} away, so that location can probably replace it."
     else
-      echo "[${shown}/${total}] ${WRITE_LABEL[$i]} has no geotag."
-      echo "It can probably be geotagged from ${WRITE_TRACK[$i]}, because the nearest point is ${WRITE_GAP[$i]} away and that point has a location."
+      echo "[${shown}/${total}] $(gm_green "${WRITE_LABEL[$i]}") has no geotag."
+      echo "It can probably be geotagged from $(gm_green "${WRITE_TRACK[$i]}"), because the nearest point is ${WRITE_GAP[$i]} away and that point has a location."
     fi
-    echo "  ${loc}"
+    echo "  $(gm_blue "$loc")"
     if [[ -n "$lat" && -n "$lon" ]]; then
       gm_lookup_place "$lat" "$lon"
     fi
@@ -1508,14 +1573,14 @@ gm_choose_places() {
   for i in "${!CHOOSE_SHOW[@]}"; do
     shown=$(( shown + 1 ))
     echo
-    echo "[${shown}/${total}] ${CHOOSE_SHOW[$i]}"
+    echo "[${shown}/${total}] $(gm_green "${CHOOSE_SHOW[$i]}")"
     for n in "${!PLACE_LABEL[@]}"; do
-      printf '  [%d] [%s]   %s, %s\n' "$(( n + 1 ))" "${PLACE_LABEL[$n]}" "${PLACE_LAT[$n]}" "${PLACE_LON[$n]}"
+      printf '  [%d] [%s]   %s\n' "$(( n + 1 ))" "${PLACE_LABEL[$n]}" "$(gm_blue "${PLACE_LAT[$n]}, ${PLACE_LON[$n]}")"
     done
     echo "  [g] Type a latitude, longitude for this file"
     echo "  [S] Skip this file (default)"
     echo "  [q] Quit now, without Enter"
-    gm_read_place_choice "Place for ${CHOOSE_SHOW[$i]}? [S]: "
+    gm_read_place_choice "Place for $(gm_green "${CHOOSE_SHOW[$i]}")? [S]: "
     reply="$REPLY"
     if [[ "$reply" == s ]]; then
       continue
@@ -1560,6 +1625,8 @@ DRY_RUN=0
 REDO=0
 VERBOSE=0
 VERBOSE_SET=0
+USE_COLOR=0
+COLORS_SET=0
 RECURSE=0
 SCOPE_SET=0
 TZ_VALUE=""
@@ -1663,6 +1730,16 @@ while [[ $# -gt 0 ]]; do
     -n|--dry-run) DRY_RUN=1; shift ;;
     --redo) REDO=1; shift ;;
     --verbose) VERBOSE=1; VERBOSE_SET=1; shift ;;
+    --colors)
+      gm_need_value "$@"
+      case "${2,,}" in
+        yes|y) USE_COLOR=1 ;;
+        no|n) USE_COLOR=0 ;;
+        *) echo "ERROR: --colors must be yes or no, not: $2" >&2; exit 1 ;;
+      esac
+      COLORS_SET=1
+      shift 2
+      ;;
     --here)
       if (( SCOPE_SET && RECURSE )); then
         echo "ERROR: --here and --recursive cannot be used together" >&2
@@ -1799,6 +1876,7 @@ gm_check_prereqs
 GM_START_NS="$(gm_now)"
 GM_SUMMARY=1
 gm_classify_inputs
+gm_ask_colors
 gm_ask_verbose
 gm_ask_scope
 gm_ask_tz
@@ -1872,6 +1950,9 @@ SCAN_ARGS=(
 if (( VERBOSE )); then
   SCAN_ARGS+=(--verbose)
 fi
+if (( USE_COLOR )); then
+  SCAN_ARGS+=(--colors)
+fi
 if (( TZ_ASSUMED )); then
   SCAN_ARGS+=(--tz-assumed)
 fi
@@ -1916,11 +1997,14 @@ if (( WRITE_N > 0 )); then
   if (( WRITE_TRACKS )); then
     echo
     gm_proc_begin
+    write_args=(write --exiftool "$EXIFTOOL_BIN" --plan "$WORK/plan.json")
     if [[ -s "${WORK}/write-only" ]]; then
-      python3 "$PY_HELPER" write --exiftool "$EXIFTOOL_BIN" --plan "$WORK/plan.json" --only-list "$WORK/write-only" || return_code=$?
-    else
-      python3 "$PY_HELPER" write --exiftool "$EXIFTOOL_BIN" --plan "$WORK/plan.json" || return_code=$?
+      write_args+=(--only-list "$WORK/write-only")
     fi
+    if (( USE_COLOR )); then
+      write_args+=(--colors)
+    fi
+    python3 "$PY_HELPER" "${write_args[@]}" || return_code=$?
     gm_proc_end
   fi
 fi
