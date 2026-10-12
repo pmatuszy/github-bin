@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261012.165905 - a bar shows how far each file copy has got
 # v. 20261012.165212 - every track file is read, and a named day can leave one out of smart loading
 # v. 20261012.165052 - a track name can give its day with dashes, underscores, or dots
 # v. 20261012.152905 - a place number is taken as soon as the digit is pressed
@@ -73,6 +74,7 @@
 # v. 20261009.160131 - also read .tcx tracks; a Trackpoint with a time and a position is used like a GPX point
 # v. 20261009.151425 - report which photos and videos have no location, and write one from the nearest GPX point
 
+# 2026.10.12 - v. 0.74 - a bar shows how far each file copy has got
 # 2026.10.12 - v. 0.73 - every track file is read, and a named day can leave one out of smart loading
 # 2026.10.12 - v. 0.72 - a track name can give its day with dashes, underscores, or dots
 # 2026.10.12 - v. 0.71 - a place number is taken as soon as the digit is pressed
@@ -223,7 +225,7 @@ the chosen files. The default is yes. Just before the files are changed, a
 backup of each old file can be kept. The default is no. A backup is stored
 as that file's name with _old- and the current date and time. --backup
 keeps one. --no-backup does not. Each one is copied aside, which can take a
-while. The copy needs free space for the file plus 10%. --internet yes or no
+while. A bar under the start line shows how far that copy has got. The copy needs free space for the file plus 10%. --internet yes or no
 looks up place names without asking. The default is yes. Each file is numbered, such as [1/22], and shown as a
 short table: the file, the track, the gap, the location, map links, and the
 place name. Preconfigured locations are listed under that point. Pressing

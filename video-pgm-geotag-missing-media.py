@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# v. 20261012.165905 - a bar shows how far each file copy has got
 # v. 20261012.165212 - every track file is read, and a named day can leave one out of smart loading
 # v. 20261012.165052 - a track name can give its day with dashes, underscores, or dots
 # v. 20261012.152905 - a place number is taken as soon as the digit is pressed
@@ -73,6 +74,7 @@
 # v. 20261009.160131 - also read .tcx tracks; a Trackpoint with a time and a position joins the same search as GPX
 # v. 20261009.151425 - match a photo or video time to the nearest GPX point and write that location with exiftool
 
+# 2026.10.12 - v. 0.74 - a bar shows how far each file copy has got
 # 2026.10.12 - v. 0.73 - every track file is read, and a named day can leave one out of smart loading
 # 2026.10.12 - v. 0.72 - a track name can give its day with dashes, underscores, or dots
 # 2026.10.12 - v. 0.71 - a place number is taken as soon as the digit is pressed
@@ -165,6 +167,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import urllib.error
 import urllib.parse
@@ -1610,6 +1613,59 @@ def keep_old_file(path):
     return dest
 
 
+def copy_bar(copied, total, elapsed):
+    phrase = fmt_left(elapsed)
+    if total > 0 and copied:
+        pct = min(99, int(copied * 100 / total))
+        width = 20
+        filled = pct * width // 100
+        bar = ("#" * filled) + ("-" * (width - filled))
+        return "  [%s] %3d%%  %s" % (bar, pct, phrase)
+    return "  %s" % phrase
+
+
+def copy_progress_text(path, started):
+    total = 0
+    copied = None
+    try:
+        total = os.path.getsize(path)
+    except OSError:
+        total = 0
+    try:
+        copied = os.path.getsize(path + "_exiftool_tmp")
+    except OSError:
+        copied = None
+    return copy_bar(copied, total, time.monotonic() - started)
+
+
+def run_tagged_write(cmd, path):
+    tty = sys.stdout.isatty()
+    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    started = time.monotonic()
+    stop = threading.Event()
+    drawn = {"on": False}
+
+    def tick():
+        while not stop.wait(0.3):
+            if not tty:
+                continue
+            sys.stdout.write("\r%s\033[K" % copy_progress_text(path, started))
+            sys.stdout.flush()
+            drawn["on"] = True
+
+    worker = threading.Thread(target=tick, daemon=True)
+    if tty:
+        worker.start()
+    out, err = proc.communicate()
+    stop.set()
+    if tty:
+        worker.join(timeout=1)
+    if drawn["on"]:
+        sys.stdout.write("\r\033[K")
+        sys.stdout.flush()
+    return proc.returncode, out, err
+
+
 def write_one(exiftool, item):
     ok, message = room_for_copy(item["path"])
     if not ok:
@@ -1623,10 +1679,10 @@ def write_one(exiftool, item):
         cmd.append("-overwrite_original")
     cmd.extend(args)
     cmd.append(item["path"])
-    proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-    out = proc.stdout.decode("utf-8", "replace").strip()
-    err = proc.stderr.decode("utf-8", "replace").strip()
-    if proc.returncode != 0:
+    returncode, out_b, err_b = run_tagged_write(cmd, item["path"])
+    out = out_b.decode("utf-8", "replace").strip()
+    err = err_b.decode("utf-8", "replace").strip()
+    if returncode != 0:
         return False, err or out or "exiftool failed"
     if KEEP_BACKUP:
         return True, keep_old_file(item["path"])
@@ -2232,6 +2288,9 @@ def selftest():
     assert took_phrase(4) == "Took 4s."
     assert took_phrase(65) == "Took 1m 5s."
     assert took_phrase(0.2) == "Took 0s."
+    assert copy_bar(None, 1000, 8) == "  8s"
+    assert copy_bar(0, 1000, 8) == "  8s"
+    assert copy_bar(480, 1000, 8) == "  [#########-----------]  48%  8s"
     assert near_phrase(45) == "45 seconds ahead"
     assert near_phrase(-45) == "45 seconds ago"
     assert near_phrase(1) == "1 second ahead"
