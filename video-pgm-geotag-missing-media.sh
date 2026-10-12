@@ -1,4 +1,6 @@
 #!/bin/bash
+# v. 20261012.100144 - the closing summary right-aligns file, location, and track counts in one column
+# v. 20261012.095919 - a typed latitude and longitude can be named from OpenStreetMap when the internet is allowed
 # v. 20261012.095355 - [tracks-location] is searched through every subdirectory, and that count is printed first
 # v. 20261012.094641 - [tracks-location] in the .conf is another directory of GPX and TCX tracks
 # v. 20261012.094407 - q on a place question quits at once, and a latitude and longitude can be typed for that file
@@ -7,6 +9,8 @@
 # v. 20261009.160131 - also read .tcx tracks; a Trackpoint with a time and a position is used like a GPX point
 # v. 20261009.151425 - report which photos and videos have no location, and write one from the nearest GPX point
 
+# 2026.10.12 - v. 0.9 - the run summary at the end right-aligns how many files, locations, tracks, and track points
+# 2026.10.12 - v. 0.8 - a typed latitude and longitude is looked up on OpenStreetMap when you allow the internet; the default is yes
 # 2026.10.12 - v. 0.7 - [tracks-location] reads .gpx and .tcx from that directory and every subdirectory, and the count is shown before the report
 # 2026.10.12 - v. 0.6 - [tracks-location] adds that directory, and the folders inside it, to the GPX and TCX search
 # 2026.10.12 - v. 0.5 - on the place question, q quits without Enter; g asks for a latitude and longitude for that file
@@ -92,7 +96,10 @@ and videos. The count is printed before the report:
 
 For each file with no track point you are asked which name to write. q quits
 at once, without Enter. g asks for a latitude and longitude for that file
-only. -y does not pick a place for you.
+only. Before that, you are asked once whether to look the point up on
+OpenStreetMap. The default is yes. If OpenStreetMap cannot be reached, the
+coordinates are still written and later points are not looked up. -y does
+not pick a place for you.
 
 Video CreateDate is read as UTC, which is right for a GoPro. If a phone
 stored local time in that field, use --quicktime local.
@@ -136,6 +143,119 @@ EOF
 
 gm_ts() {
   date '+[ %Y.%m.%d %H:%M:%S ]'
+}
+
+gm_now() {
+  date +%s.%N
+}
+
+gm_proc_begin() {
+  GM_PROC_SLICE="$(gm_now)"
+}
+
+gm_proc_end() {
+  [[ -n "${GM_PROC_SLICE:-}" ]] || return 0
+  GM_PROC_SEC="$(awk -v acc="${GM_PROC_SEC:-0}" -v t0="$GM_PROC_SLICE" -v t1="$(gm_now)" \
+    'BEGIN { printf "%.6f", acc + (t1 - t0) }')"
+  GM_PROC_SLICE=""
+}
+
+gm_fmt_int() {
+  awk -v n="${1:-0}" 'BEGIN {
+    s = sprintf("%d", n + 0)
+    if (s ~ /^-/) { sign = "-"; s = substr(s, 2) } else sign = ""
+    t = ""
+    while (length(s) > 3) {
+      t = "," substr(s, length(s) - 2, 3) t
+      s = substr(s, 1, length(s) - 3)
+    }
+    printf "%s%s%s", sign, s, t
+  }'
+}
+
+gm_format_elapsed() {
+  awk -v s="${1:-0}" 'BEGIN {
+    if (s < 0) s = 0
+    t = int(s + 0.5)
+    if (t < 1) { printf "0s"; exit }
+    h = int(t / 3600)
+    m = int((t % 3600) / 60)
+    x = t % 60
+    if (h > 0) printf "%dh %02dm %02ds", h, m, x
+    else if (m > 0) printf "%dm %02ds", m, x
+    else printf "%ds", x
+  }'
+}
+
+gm_format_wall() {
+  local ns="${1:-}"
+  date -d "@${ns%.*}" '+%Y.%m.%d %H:%M:%S' 2>/dev/null \
+    || date '+%Y.%m.%d %H:%M:%S'
+}
+
+gm_summary_kv() {
+  printf '%s %-*s  %s\n' "$(gm_ts)" 28 "${1}:" "$2"
+}
+
+gm_load_counts() {
+  [[ -n "${WORK:-}" && -f "${WORK}/plan.json" ]] || return 0
+  IFS=$'\t' read -r SUM_FILES SUM_ALREADY SUM_UNMATCHED SUM_UNREAD SUM_TRACKS SUM_POINTS SUM_WROTE < <(
+    python3 -c 'import json,sys
+p=json.load(open(sys.argv[1], encoding="utf-8"))
+c=p.get("counts") or {}
+keys=("files","already","unmatched","unread","tracks","points")
+vals=[str(int(c.get(k) or 0)) for k in keys]
+vals.append(str(int(p.get("wrote_tracks") or 0)))
+print("\t".join(vals))' "$WORK/plan.json"
+  ) || return 0
+  SUM_READY=1
+}
+
+gm_print_summary() {
+  local end_ns total_sec wait_sec left width text
+  local -a labels=() nums=()
+  (( GM_SUMMARY )) || return 0
+  (( GM_SUMMARY_DONE )) && return 0
+  GM_SUMMARY_DONE=1
+  gm_proc_end
+  gm_load_counts
+  if (( SUM_READY )); then
+    left=$(( SUM_UNMATCHED - PLACE_WROTE ))
+    (( left < 0 )) && left=0
+    labels+=("Files"); nums+=("$SUM_FILES")
+    (( SUM_ALREADY > 0 )) && { labels+=("Already had a location"); nums+=("$SUM_ALREADY"); }
+    (( SUM_WROTE > 0 )) && { labels+=("Tagged from a track"); nums+=("$SUM_WROTE"); }
+    (( PLACE_WROTE > 0 )) && { labels+=("Tagged from a place"); nums+=("$PLACE_WROTE"); }
+    (( left > 0 )) && { labels+=("Left without a location"); nums+=("$left"); }
+    (( SUM_UNREAD > 0 )) && { labels+=("Could not be read"); nums+=("$SUM_UNREAD"); }
+    labels+=("Tracks"); nums+=("$SUM_TRACKS")
+    labels+=("Track points"); nums+=("$SUM_POINTS")
+  else
+    labels+=("Files"); nums+=("${MEDIA_N:-0}")
+    labels+=("Tracks"); nums+=("${GPX_N:-0}")
+  fi
+  width=1
+  for text in "${nums[@]}"; do
+    text="$(gm_fmt_int "$text")"
+    (( ${#text} > width )) && width=${#text}
+  done
+  echo
+  echo "$(gm_ts) --- Run summary ---"
+  local i
+  for i in "${!labels[@]}"; do
+    printf '%s %-*s  %*s\n' "$(gm_ts)" 28 "${labels[$i]}:" "$width" "$(gm_fmt_int "${nums[$i]}")"
+  done
+  echo
+  echo "$(gm_ts) --- Timing ---"
+  end_ns="$(gm_now)"
+  total_sec="$(awk -v s0="${GM_START_NS:-0}" -v s1="$end_ns" 'BEGIN { printf "%.6f", s1 - s0 }')"
+  wait_sec="$(awk -v t="$total_sec" -v p="${GM_PROC_SEC:-0}" 'BEGIN { w = t - p; if (w < 0) w = 0; printf "%.6f", w }')"
+  gm_summary_kv "Started" "$(gm_format_wall "${GM_START_NS:-}")"
+  gm_summary_kv "Finished" "$(date '+%Y.%m.%d %H:%M:%S')"
+  gm_summary_kv "Total wall time" "$(gm_format_elapsed "$total_sec")"
+  gm_summary_kv "Processing time" "$(gm_format_elapsed "${GM_PROC_SEC:-0}")  (tracks, file times, writing)"
+  gm_summary_kv "Other/wait time" "$(gm_format_elapsed "$wait_sec")  (prompts, startup, overhead)"
+  echo
 }
 
 gm_colors() {
@@ -206,6 +326,48 @@ gm_read_place_choice() {
   REPLY="$first"
 }
 
+gm_ask_internet() {
+  local reply
+  if (( USE_NET >= 0 )); then
+    return 0
+  fi
+  echo
+  echo "A typed latitude and longitude can be named from OpenStreetMap."
+  echo "  [Y] Yes, use the internet (default)"
+  echo "  [N] No"
+  echo "  [q] Quit"
+  gm_read_key "Look up place names on the internet? [Y/n/q]: " y
+  reply="$REPLY"
+  case "$reply" in
+    y) USE_NET=1 ;;
+    n) USE_NET=0; echo "$(gm_ts) Place names will not be looked up." ;;
+    q)
+      echo "$(gm_ts) Quit."
+      return_code=0
+      exit 0
+      ;;
+    *) USE_NET=0; echo "$(gm_ts) Place names will not be looked up." ;;
+  esac
+}
+
+gm_describe_coord() {
+  local lat="$1" lon="$2" name rc
+  GM_PLACE="typed"
+  (( USE_NET == 1 )) || return 0
+  if name=$(python3 "$PY_HELPER" reverse "$lat" "$lon" 2>/dev/null); then
+    GM_PLACE="$name"
+    echo "That place is ${name}."
+    return 0
+  fi
+  rc=$?
+  if (( rc == 2 )); then
+    USE_NET=2
+    echo "$(gm_ts) Cannot reach OpenStreetMap. Place names will not be looked up."
+  else
+    echo "OpenStreetMap has no place name for that point."
+  fi
+}
+
 gm_ask_coord() {
   local typed canon
   while true; do
@@ -231,7 +393,8 @@ gm_ask_coord() {
 
 gm_write_chosen() {
   local lat="$1" lon="$2" place="$3" i="$4"
-  python3 "$PY_HELPER" write-place \
+  gm_proc_begin
+  if python3 "$PY_HELPER" write-place \
     --exiftool "$EXIFTOOL_BIN" \
     --path "${CHOOSE_PATH[$i]}" \
     --kind "${CHOOSE_KIND[$i]}" \
@@ -240,7 +403,12 @@ gm_write_chosen() {
     --gps-date "${CHOOSE_DATE[$i]}" \
     --gps-time "${CHOOSE_TIME[$i]}" \
     --label "${CHOOSE_SHOW[$i]}" \
-    --place "$place" || return_code=$?
+    --place "$place"; then
+    PLACE_WROTE=$(( PLACE_WROTE + 1 ))
+  else
+    return_code=$?
+  fi
+  gm_proc_end
 }
 
 gm_read_key() {
@@ -630,6 +798,7 @@ gm_choose_places() {
   fi
   echo
   echo "These files have no GPX or TCX point close enough."
+  gm_ask_internet
   for i in "${!CHOOSE_SHOW[@]}"; do
     echo
     echo "${CHOOSE_SHOW[$i]}"
@@ -646,13 +815,15 @@ gm_choose_places() {
     fi
     if [[ "$reply" == g ]]; then
       if gm_ask_coord; then
-        gm_write_chosen "$GM_LAT" "$GM_LON" "typed" "$i"
+        gm_describe_coord "$GM_LAT" "$GM_LON"
+        gm_write_chosen "$GM_LAT" "$GM_LON" "$GM_PLACE" "$i"
       fi
       continue
     fi
     if canon=$(python3 "$PY_HELPER" check-coord "$reply" 2>/dev/null); then
       IFS=$'\t' read -r GM_LAT GM_LON <<< "$canon"
-      gm_write_chosen "$GM_LAT" "$GM_LON" "typed" "$i"
+      gm_describe_coord "$GM_LAT" "$GM_LON"
+      gm_write_chosen "$GM_LAT" "$GM_LON" "$GM_PLACE" "$i"
       continue
     fi
     if [[ "$reply" =~ ^[0-9]+$ ]] && (( 10#$reply >= 1 && 10#$reply <= ${#PLACE_LABEL[@]} )); then
@@ -709,6 +880,22 @@ CHOOSE_KIND=()
 CHOOSE_SHOW=()
 CHOOSE_DATE=()
 CHOOSE_TIME=()
+USE_NET=-1
+GM_PLACE="typed"
+PLACE_WROTE=0
+SUM_READY=0
+SUM_FILES=0
+SUM_ALREADY=0
+SUM_UNMATCHED=0
+SUM_UNREAD=0
+SUM_TRACKS=0
+SUM_POINTS=0
+SUM_WROTE=0
+GM_SUMMARY=0
+GM_SUMMARY_DONE=0
+GM_START_NS=""
+GM_PROC_SEC=0
+GM_PROC_SLICE=""
 gm_colors
 
 HEADER_EXTRA_ARGS=()
@@ -722,8 +909,13 @@ done
 # shellcheck disable=SC1091
 . /root/bin/_script_header.sh "${HEADER_EXTRA_ARGS[@]}"
 
-trap gm_cleanup EXIT
+trap gm_on_exit EXIT
 trap gm_ctrl_c INT
+
+gm_on_exit() {
+  gm_print_summary
+  gm_cleanup
+}
 
 gm_need_value() {
   [[ $# -ge 2 && -n "$2" ]] || { echo "ERROR: missing value for $1" >&2; exit 1; }
@@ -800,11 +992,15 @@ if [[ ! -f "$PY_HELPER" ]]; then
 fi
 
 gm_check_prereqs
+GM_START_NS="$(gm_now)"
+GM_SUMMARY=1
 gm_classify_inputs
 gm_ask_scope
 gm_ask_tz
 
+gm_proc_begin
 gm_collect
+gm_proc_end
 
 if (( MEDIA_N == 0 )); then
   echo "$(gm_ts) No photos or videos."
@@ -843,10 +1039,12 @@ if (( REDO )); then
   SCAN_ARGS+=(--redo)
 fi
 
+gm_proc_begin
 python3 "$PY_HELPER" "${SCAN_ARGS[@]}" || {
   return_code=$?
   exit "$return_code"
 }
+gm_proc_end
 
 WRITE_N=$(gm_plan_count "$WORK/plan.json")
 gm_load_plan "$WORK/plan.json"
@@ -889,7 +1087,9 @@ if (( WRITE_N > 0 )); then
   fi
   if (( WRITE_TRACKS )); then
     echo
+    gm_proc_begin
     python3 "$PY_HELPER" write --exiftool "$EXIFTOOL_BIN" --plan "$WORK/plan.json" || return_code=$?
+    gm_proc_end
   fi
 fi
 

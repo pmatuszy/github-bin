@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# v. 20261012.100144 - the plan records file, location, track, and point counts for the closing summary
+# v. 20261012.095919 - reverse names a typed point from OpenStreetMap, or reports that it cannot be reached
 # v. 20261012.095355 - [tracks-location] is searched through every subdirectory, and that count is printed first
 # v. 20261012.094641 - [tracks-location] in the .conf is another directory of GPX and TCX tracks
 # v. 20261012.094407 - q on a place question quits at once, and a latitude and longitude can be typed for that file
@@ -7,6 +9,8 @@
 # v. 20261009.160131 - also read .tcx tracks; a Trackpoint with a time and a position joins the same search as GPX
 # v. 20261009.151425 - match a photo or video time to the nearest GPX point and write that location with exiftool
 
+# 2026.10.12 - v. 0.9 - scan stores how many files, locations, tracks, and track points the closing summary prints
+# 2026.10.12 - v. 0.8 - reverse asks OpenStreetMap for a street, city, and country, and returns a separate code when the network fails
 # 2026.10.12 - v. 0.7 - [tracks-location] reads .gpx and .tcx from that directory and every subdirectory, and the count is shown before the report
 # 2026.10.12 - v. 0.6 - [tracks-location] adds that directory, and the folders inside it, to the GPX and TCX search
 # 2026.10.12 - v. 0.5 - check-coord reads a typed latitude, longitude for one file
@@ -33,6 +37,9 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import urllib.error
+import urllib.parse
+import urllib.request
 import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
 
@@ -1181,6 +1188,69 @@ def cmd_check_coord(argv):
     return 0
 
 
+def place_line(payload):
+    address = payload.get("address") or {}
+    road = address.get("road") or address.get("pedestrian") or address.get("footway") or address.get("path")
+    number = address.get("house_number")
+    if road and number:
+        road = "%s %s" % (road, number)
+    locality = (
+        address.get("city") or address.get("town") or address.get("village")
+        or address.get("hamlet") or address.get("municipality")
+    )
+    country = address.get("country")
+    parts = [part for part in (road, locality, country) if part]
+    if parts:
+        return ", ".join(parts)
+    display = (payload.get("display_name") or "").strip()
+    bits = [part.strip() for part in display.split(",") if part.strip()]
+    return ", ".join(bits[:3])
+
+
+def reverse_place(lat, lon, timeout=12):
+    query = urllib.parse.urlencode({
+        "lat": lat,
+        "lon": lon,
+        "format": "jsonv2",
+        "addressdetails": "1",
+        "zoom": "18",
+    })
+    request = urllib.request.Request(
+        "https://nominatim.openstreetmap.org/reverse?%s" % query,
+        headers={
+            "User-Agent": "video-pgm-geotag-missing-media (local media geotag)",
+            "Accept-Language": "pl,en",
+        },
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as handle:
+            payload = json.loads(handle.read().decode("utf-8"))
+    except (urllib.error.URLError, TimeoutError, OSError, json.JSONDecodeError, ValueError):
+        return None
+    if not isinstance(payload, dict) or payload.get("error"):
+        return ""
+    return place_line(payload)
+
+
+def cmd_reverse(argv):
+    if len(argv) != 2:
+        return 1
+    try:
+        lat = float(argv[0])
+        lon = float(argv[1])
+    except ValueError:
+        return 1
+    if abs(lat) > 90 or abs(lon) > 180 or null_island(lat, lon):
+        return 1
+    line = reverse_place(argv[0], argv[1])
+    if line is None:
+        return 2
+    if not line:
+        return 1
+    print(line)
+    return 0
+
+
 def cmd_track_roots(argv):
     parser = argparse.ArgumentParser(add_help=False)
     parser.add_argument("--conf-list", required=True)
@@ -1324,6 +1394,14 @@ def cmd_scan(argv):
         "writes": writes,
         "places": [{"label": place["label"], "lat": place["lat"], "lon": place["lon"]} for place in places],
         "choose": choose,
+        "counts": {
+            "files": len(rows),
+            "already": sum(1 for row in rows if row["status"] == "tagged"),
+            "unmatched": sum(1 for row in rows if row["status"] in UNMATCHED),
+            "unread": sum(1 for row in rows if row["status"] == "unread"),
+            "tracks": len(gpx_info),
+            "points": sum(item["points"] for item in gpx_info),
+        },
     }
     with open(args.plan, "w", encoding="utf-8") as handle:
         json.dump(plan, handle)
@@ -1339,22 +1417,30 @@ def cmd_write(argv):
         plan = json.load(handle)
     writes = plan.get("writes") or []
     if not writes:
+        plan["wrote_tracks"] = 0
+        with open(args.plan, "w", encoding="utf-8") as handle:
+            json.dump(plan, handle)
         print("Nothing to write.")
         return 0
     failed = 0
+    wrote = 0
     total = len(writes)
     width = len(str(total))
     for number, item in enumerate(writes, 1):
         ok, message = write_one(args.exiftool, item)
         prefix = "[%*d/%d]" % (width, number, total)
         if ok:
+            wrote += 1
             print("%s %s  %s" % (prefix, item.get("label") or os.path.basename(item["path"]), fmt_pos(item["lat"], item["lon"], item.get("ele"))))
         else:
             failed += 1
             print("%s %s  could not write" % (prefix, item.get("label") or item["path"]))
             if message:
                 print("    %s" % message.splitlines()[-1])
-    print("Wrote %s file%s." % (fmt_int(total - failed), "" if total - failed == 1 else "s"))
+    plan["wrote_tracks"] = wrote
+    with open(args.plan, "w", encoding="utf-8") as handle:
+        json.dump(plan, handle)
+    print("Wrote %s file%s." % (fmt_int(wrote), "" if wrote == 1 else "s"))
     if failed:
         print("%s file%s could not be written." % (fmt_int(failed), "" if failed == 1 else "s"))
         return 1
@@ -1420,6 +1506,11 @@ def selftest():
     assert parse_user_coord("49.59078922757009, 19.966572075569914") == ("49.59078922757009", "19.966572075569914")
     assert parse_user_coord("0, 0") is None
     assert parse_user_coord("Ponice") is None
+    assert place_line({
+        "address": {"road": "Racławicka", "house_number": "146", "city": "Warszawa", "country": "Polska"},
+    }) == "Racławicka 146, Warszawa, Polska"
+    assert place_line({"display_name": "Racławicka, Ochota, Warszawa, Mazowieckie, Polska"}) == "Racławicka, Ochota, Warszawa"
+    assert place_line({}) == ""
     assert fmt_offset(7200) == "+02:00"
     assert fmt_offset(-(3600 + 1800)) == "-01:30"
     naive = parse_time_epoch("2026:08:01 16:00:00")
@@ -1651,7 +1742,7 @@ def selftest():
 
 def main(argv):
     if len(argv) < 2 or argv[1] in ("-h", "--help"):
-        print("Usage: video-pgm-geotag-missing-media.py scan|write|write-place|plan-lines|check-tz|check-coord|track-roots|selftest")
+        print("Usage: video-pgm-geotag-missing-media.py scan|write|write-place|plan-lines|check-tz|check-coord|reverse|track-roots|selftest")
         print("The shell script video-pgm-geotag-missing-media.sh is the way to run this.")
         return 0
     cmd = argv[1]
@@ -1661,6 +1752,8 @@ def main(argv):
         return cmd_check_tz(argv[2:])
     if cmd == "check-coord":
         return cmd_check_coord(argv[2:])
+    if cmd == "reverse":
+        return cmd_reverse(argv[2:])
     if cmd == "track-roots":
         return cmd_track_roots(argv[2:])
     if cmd == "scan":
