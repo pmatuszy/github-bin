@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261012.151810 - the internet question is asked before the equivalent command
 # v. 20261012.151324 - a track match can be written from a preconfigured location
 # v. 20261012.145108 - an arrow key or other unknown key asks the same file again
 # v. 20261012.144759 - b undoes the last answer and returns to the previous file
@@ -68,6 +69,7 @@
 # v. 20261009.160131 - also read .tcx tracks; a Trackpoint with a time and a position is used like a GPX point
 # v. 20261009.151425 - report which photos and videos have no location, and write one from the nearest GPX point
 
+# 2026.10.12 - v. 0.69 - the internet question is asked before the equivalent command
 # 2026.10.12 - v. 0.68 - a track match can be written from a preconfigured location
 # 2026.10.12 - v. 0.67 - an arrow key or other unknown key asks the same file again
 # 2026.10.12 - v. 0.66 - b undoes the last answer and returns to the previous file
@@ -248,8 +250,9 @@ sides, such as 3. Two numbers are before, then after, such as 3 14.
 --year 2026, or --year 2026-2027, loads only those years. [y] keeps the
 year from the file names. [t] asks for a year or a range, such as 2026-2027,
 2026 - 2027, or 2026 2027. --all-years loads every year.
-The first year must not be newer than the second. After those answers, the
-script prints how to run the same thing from the command line. Only those tracks
+The first year must not be newer than the second. You are then asked whether
+to look place names up on OpenStreetMap. The default is yes. After those
+answers, the script prints how to run the same thing from the command line. Only those tracks
 are read, from that directory and from the tracks next to the photos and
 videos. The count printed before the report is that set. Tracks are read
 only when a photo or video still has no location. The script says how many
@@ -263,10 +266,8 @@ nearest track point is shown when it is too far, and m prints map links for
 that point without writing it. The question lists every key it accepts. q quits
 at once, without Enter. g asks for a latitude and longitude for that file
 only, and shows the same map links as a track point. The next file can reuse
-that point with r. Before the first track point or typed place, you are asked
-once whether to look the point up on OpenStreetMap. The default is yes. If
-OpenStreetMap cannot be reached, the coordinates are still written and later
-points are not looked up. A place you pick or type is marked MANUAL. A point from a GPX or
+that point with r. If OpenStreetMap cannot be reached, the coordinates are
+still written and later points are not looked up. A place you pick or type is marked MANUAL. A point from a GPX or
 TCX file is marked TRACK. Both are stored in GPSProcessingMethod. -y does not
 pick a place for
 you.
@@ -573,6 +574,9 @@ gm_read_place_choice() {
 gm_ask_internet() {
   local reply
   if (( USE_NET >= 0 )); then
+    return 0
+  fi
+  if (( DO_YES )) || (( ! script_is_run_interactively )); then
     return 0
   fi
   echo
@@ -1713,6 +1717,7 @@ gm_print_equivalent() {
 gm_collect_tracks() {
   local path parent
   gm_ask_track_years
+  gm_ask_internet
   gm_print_equivalent
   for path in "${DIR_INPUTS[@]}"; do
     gm_walk "$path" "$RECURSE" gpx
