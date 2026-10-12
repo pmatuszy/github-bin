@@ -1,4 +1,10 @@
 #!/bin/bash
+# v. 20261012.112620 - [d] is smart loading with the days you choose
+# v. 20261012.112532 - each file you are asked to write is numbered, such as [1/22]
+# v. 20261012.112235 - after the questions, print the command that repeats those answers
+# v. 20261012.111650 - smart loading, days before and after, a year, and all years are command-line options
+# v. 20261012.111440 - smart loading can use a chosen number of days before and after
+# v. 20261012.111223 - smart loading reads tracks from a week before the first file to a week after the last
 # v. 20261012.110839 - a looked-up place is described as near that street and town
 # v. 20261012.110653 - a track point is named from OpenStreetMap, and the guess says how close that point is
 # v. 20261012.110358 - a track write names the file, the track, and how far the point is
@@ -27,6 +33,12 @@
 # v. 20261009.160131 - also read .tcx tracks; a Trackpoint with a time and a position is used like a GPX point
 # v. 20261009.151425 - report which photos and videos have no location, and write one from the nearest GPX point
 
+# 2026.10.12 - v. 0.33 - [d] is smart loading with the days you choose
+# 2026.10.12 - v. 0.32 - each file you are asked to write is numbered, such as [1/22]
+# 2026.10.12 - v. 0.31 - after the questions, print the command that repeats those answers
+# 2026.10.12 - v. 0.30 - smart loading, days before and after, a year, and all years are command-line options
+# 2026.10.12 - v. 0.29 - smart loading can use a chosen number of days before and after
+# 2026.10.12 - v. 0.28 - smart loading reads tracks from a week before the first file to a week after the last
 # 2026.10.12 - v. 0.27 - a looked-up place is described as near that street and town
 # 2026.10.12 - v. 0.26 - a track point is named from OpenStreetMap, and the guess says how close that point is
 # 2026.10.12 - v. 0.25 - a track write names the file, the track, and how far the point is
@@ -80,6 +92,8 @@ Usage: $(basename "$0") [-h|--help] [-v|--version] [--history]
        [--here | --recursive]
        [--tz OFFSET|auto] [--max-gap SECONDS] [--quicktime utc|local]
        [--gpx FILE|DIR ...]
+       [--smart] [--days-before N] [--days-after N]
+       [--year YEAR|RANGE] [--all-years]
        [FILE|DIR ...]
 
 Report which photos and videos have a location, and which do not. With no
@@ -109,11 +123,11 @@ seconds (default 30). The closest point is the one used. With a point every
 one or two seconds, a normal match is about a second away. The report shows
 the gap. A video is tagged at its start.
 
-Nothing is written until you say so. Each file is named, with the track and
-how far that point is. -n prints the report and stops. -y writes the track
-matches without asking. A file that already has a location is left as it is,
-unless --redo is given and a point is close enough. The write goes through
-ExifTool. The file time is kept.
+Nothing is written until you say so. Each file is numbered, such as [1/22],
+and named, with the track and how far that point is. -n prints the report
+and stops. -y writes the track matches without asking. A file that already
+has a location is left as it is, unless --redo is given and a point is close
+enough. The write goes through ExifTool. The file time is kept.
 
 A file with no GPX or TCX point close enough can be tagged from a named
 place. The names come from video-pgm-geotag-missing-media.conf. The script
@@ -134,9 +148,17 @@ Each place is a line in brackets and the latitude, longitude under it:
 A track directory is the same kind of heading, with a path under it. Every
 subdirectory is searched, not only the files sitting in that folder. The
 script says which year the photos and videos are probably from, judging by
-the timestamps and file names. That year is the default. [t] asks for a year
-or a range, such as 2026-2027, 2026 - 2027, or 2026 2027. The first year
-must not be newer than the second. Only those years
+the timestamps and file names. The default is smart loading: one week before
+the earliest file through one week after the latest. --smart does that
+without asking. --days-before and --days-after change those two sides. A
+side you leave out stays at 7. [d] is smart loading with the days you type.
+One number is both
+sides, such as 3. Two numbers are before, then after, such as 3 14.
+--year 2026, or --year 2026-2027, loads only those years. [y] keeps the
+year from the file names. [t] asks for a year or a range, such as 2026-2027,
+2026 - 2027, or 2026 2027. --all-years loads every year.
+The first year must not be newer than the second. After those answers, the
+script prints the command that repeats them. Only those tracks
 are read, from that directory and from the tracks next to the photos and
 videos. The count printed before the report is that set. Tracks are read
 only when a photo or video still has no location. The script says how many
@@ -177,6 +199,15 @@ Options:
                        How to read a video CreateDate. Default utc.
   --gpx FILE|DIR       More tracks, .gpx or .tcx. Repeat for more than one.
                        A directory is read with its subdirectories.
+  --smart              One week before the first file through one week
+                       after the last. Do not ask.
+  --days-before N      Days before the first file. The other side stays
+                       7 unless --days-after is also given. Do not ask.
+  --days-after N       Days after the last file. The other side stays
+                       7 unless --days-before is also given. Do not ask.
+  --year YEAR|RANGE    Only that year, or a range such as 2026-2027.
+                       A list with a gap: 2026,2028. Do not ask.
+  --all-years          Every year in the track directories. Do not ask.
 
 Needs: python3, and exiftool (video-pgm-install-exiftool.sh). The helper
 video-pgm-geotag-missing-media.py has its own selftest.
@@ -192,6 +223,10 @@ Examples:
       Use that GPX as well as any .gpx or .tcx beside the videos.
   $(basename "$0") --gpx /mnt/p/tracks/ride.tcx /mnt/p/video/trip
       Use that TCX file as the track.
+  $(basename "$0") --days-before 3 --days-after 14 /mnt/p/video/trip
+      Smart loading, 3 days before the first file and 14 days after the last.
+  $(basename "$0") --year 2026-2027 --here /mnt/p/video/trip
+      Only tracks whose names start in 2026 or 2027.
 EOF
 }
 
@@ -738,8 +773,15 @@ gm_ask_tz() {
 }
 
 gm_track_year_ok() {
-  local base="$1" y
+  local base="$1" y day
   (( TRACK_ALL )) && return 0
+  if (( TRACK_SMART )); then
+    if [[ "$base" =~ ^((19|20)[0-9]{6}) ]]; then
+      day="${BASH_REMATCH[1]}"
+      (( 10#$day >= 10#$TRACK_FROM && 10#$day <= 10#$TRACK_TO )) && return 0
+    fi
+    return 1
+  fi
   if [[ "$base" =~ ^((19|20)[0-9]{2}) ]]; then
     y="${BASH_REMATCH[1]}"
     [[ -n "${TRACK_YEAR[$y]:-}" ]] && return 0
@@ -795,6 +837,7 @@ gm_guess_media_years() {
 
 gm_set_all_years() {
   TRACK_ALL=1
+  TRACK_SMART=0
   TRACK_YEAR=()
   TRACK_SPAN="all"
 }
@@ -802,6 +845,7 @@ gm_set_all_years() {
 gm_set_year_span() {
   local a="$1" b="$2" y
   TRACK_ALL=0
+  TRACK_SMART=0
   TRACK_YEAR=()
   for (( y = 10#$a; y <= 10#$b; y++ )); do
     TRACK_YEAR[$y]=1
@@ -816,6 +860,7 @@ gm_set_year_span() {
 gm_set_guess_years() {
   local y
   TRACK_ALL=0
+  TRACK_SMART=0
   TRACK_YEAR=()
   for y in "$@"; do
     TRACK_YEAR[$y]=1
@@ -823,8 +868,18 @@ gm_set_guess_years() {
   TRACK_SPAN="$(gm_year_phrase "$@")"
 }
 
+gm_apply_year_text() {
+  local typed="$1" out a b
+  if out=$(python3 "$PY_HELPER" year-range "$typed" 2>/dev/null); then
+    IFS=$'\t' read -r a b <<< "$out"
+    gm_set_year_span "$a" "$b"
+    return 0
+  fi
+  return $?
+}
+
 gm_ask_typed_year() {
-  local typed out rc a b
+  local typed rc
   while true; do
     printf 'Year: '
     IFS= read -r typed || gm_quit
@@ -837,9 +892,7 @@ gm_ask_typed_year() {
     if [[ "${typed,,}" == q ]]; then
       gm_quit
     fi
-    if out=$(python3 "$PY_HELPER" year-range "$typed" 2>/dev/null); then
-      IFS=$'\t' read -r a b <<< "$out"
-      gm_set_year_span "$a" "$b"
+    if gm_apply_year_text "$typed"; then
       return 0
     fi
     rc=$?
@@ -851,11 +904,142 @@ gm_ask_typed_year() {
   done
 }
 
+gm_choose_track_mode() {
+  local want="$1" flag="$2" other
+  if [[ -n "$TRACK_MODE" && "$TRACK_MODE" != "$want" ]]; then
+    case "$TRACK_MODE" in
+      smart)
+        if (( CLI_DAYS_BEFORE_SET || CLI_DAYS_AFTER_SET )); then
+          other="--days-before or --days-after"
+        else
+          other="--smart"
+        fi
+        ;;
+      year) other="--year" ;;
+      all) other="--all-years" ;;
+      *) other="the other track choice" ;;
+    esac
+    echo "ERROR: ${flag} and ${other} cannot be used together" >&2
+    exit 1
+  fi
+  TRACK_MODE="$want"
+}
+
+gm_say_smart_choice() {
+  local before="$1" after="$2" line
+  line="The photos and videos run from ${SMART_FIRST} to ${SMART_LAST}. Tracks: ${SMART_FROM} through ${SMART_TO}"
+  if (( before == 7 && after == 7 )); then
+    echo "$(gm_ts) ${line}."
+  elif (( before == after )); then
+    echo "$(gm_ts) ${line}, $(gm_day_phrase "$before") before and after."
+  else
+    echo "$(gm_ts) ${line}, $(gm_day_phrase "$before") before and $(gm_day_phrase "$after") after."
+  fi
+}
+
+gm_load_smart_span() {
+  local out before="${1:-7}" after="${2:-7}"
+  SMART_FIRST=""
+  SMART_LAST=""
+  SMART_FROM=""
+  SMART_TO=""
+  [[ -s "${WORK:-}/exif.json" && -s "${WORK:-}/media" ]] || return 1
+  if out=$(python3 "$PY_HELPER" smart-span --tz "$TZ_VALUE" --exif-json "$WORK/exif.json" --media-list "$WORK/media" --before "$before" --after "$after" 2>/dev/null); then
+    IFS=$'\t' read -r SMART_FIRST SMART_LAST SMART_FROM SMART_TO <<< "$out"
+    return 0
+  fi
+  return 1
+}
+
+gm_day_phrase() {
+  if (( $1 == 1 )); then
+    printf '1 day'
+  else
+    printf '%s days' "$1"
+  fi
+}
+
+gm_ask_smart_days() {
+  local typed raw before after
+  local -a parts=()
+  while true; do
+    printf 'Smart loading, days before and after (for example 7, or 3 14): '
+    IFS= read -r typed || gm_quit
+    typed="${typed#"${typed%%[![:space:]]*}"}"
+    typed="${typed%"${typed##*[![:space:]]}"}"
+    if [[ -z "$typed" ]]; then
+      echo "Type a number of days, or two numbers: days before, then days after."
+      continue
+    fi
+    if [[ "${typed,,}" == q ]]; then
+      gm_quit
+    fi
+    raw="${typed,,}"
+    raw="${raw//–/ }"
+    raw="${raw//—/ }"
+    raw="${raw//−/ }"
+    raw="${raw//-/ }"
+    raw="$(printf '%s' "$raw" | tr -s '[:space:]' ' ')"
+    read -r -a parts <<< "$raw"
+    if (( ${#parts[@]} == 1 || ${#parts[@]} == 2 )) && [[ "${parts[0]}" =~ ^[0-9]+$ ]]; then
+      before="${parts[0]}"
+      after="$before"
+      if (( ${#parts[@]} == 2 )); then
+        [[ "${parts[1]}" =~ ^[0-9]+$ ]] || { echo "That is not a number of days. Examples: 7, 3, 3 14."; continue; }
+        after="${parts[1]}"
+      fi
+      SMART_BEFORE="$before"
+      SMART_AFTER="$after"
+      return 0
+    fi
+    echo "That is not a number of days. Examples: 7, 3, 3 14."
+  done
+}
+
+gm_set_smart_span() {
+  TRACK_ALL=0
+  TRACK_SMART=1
+  TRACK_YEAR=()
+  TRACK_FROM="${SMART_FROM//./}"
+  TRACK_TO="${SMART_TO//./}"
+  TRACK_SPAN="${SMART_FROM}-${SMART_TO}"
+}
+
 gm_ask_track_years() {
-  local reply phrase
+  local reply phrase prompt
   gm_guess_media_years
+  if [[ "$TRACK_MODE" == smart ]]; then
+    SMART_BEFORE="$CLI_DAYS_BEFORE"
+    SMART_AFTER="$CLI_DAYS_AFTER"
+    if ! gm_load_smart_span "$CLI_DAYS_BEFORE" "$CLI_DAYS_AFTER"; then
+      echo "ERROR: smart loading needs a date from the file times or names." >&2
+      return_code=1
+      exit 1
+    fi
+    gm_set_smart_span
+    gm_say_smart_choice "$CLI_DAYS_BEFORE" "$CLI_DAYS_AFTER"
+    return 0
+  fi
+  if [[ "$TRACK_MODE" == year ]]; then
+    if (( ${#CLI_YEAR_EXACT[@]} )); then
+      gm_set_guess_years "${CLI_YEAR_EXACT[@]}"
+    else
+      gm_set_year_span "$CLI_YEAR_A" "$CLI_YEAR_B"
+    fi
+    echo "$(gm_ts) Tracks: ${TRACK_SPAN}."
+    return 0
+  fi
+  if [[ "$TRACK_MODE" == all ]]; then
+    gm_set_all_years
+    echo "$(gm_ts) Tracks: all years."
+    return 0
+  fi
+  gm_load_smart_span
   if (( DO_YES )) || (( ! script_is_run_interactively )); then
-    if (( ${#GUESS_YEARS[@]} )); then
+    if [[ -n "$SMART_FROM" ]]; then
+      gm_set_smart_span
+      echo "$(gm_ts) The photos and videos run from ${SMART_FIRST} to ${SMART_LAST}. Tracks: ${SMART_FROM} through ${SMART_TO}."
+    elif (( ${#GUESS_YEARS[@]} )); then
       gm_set_guess_years "${GUESS_YEARS[@]}"
       echo "$(gm_ts) The photos and videos look like they are probably from ${TRACK_SPAN}, judging by the timestamps and file names."
     else
@@ -865,6 +1049,53 @@ gm_ask_track_years() {
     return 0
   fi
   echo
+  if [[ -n "$SMART_FROM" ]]; then
+    echo "The photos and videos run from ${SMART_FIRST} to ${SMART_LAST}."
+    echo "Smart loading reads tracks from one week before that to one week after:"
+    echo "${SMART_FROM} through ${SMART_TO}."
+    echo "  [S] Smart loading, ${SMART_FROM} through ${SMART_TO} (default)"
+    echo "  [d] Smart loading, choose the days before and after"
+    prompt="S/d/t/a/q"
+    if (( ${#GUESS_YEARS[@]} )); then
+      phrase="$(gm_year_phrase "${GUESS_YEARS[@]}")"
+      echo "  [y] ${phrase} only"
+      prompt="S/d/y/t/a/q"
+    fi
+    echo "  [t] Type a year"
+    echo "  [a] All years"
+    echo "  [q] Quit"
+    gm_read_key "Which tracks? [${prompt}]: " s
+    reply="$REPLY"
+    case "$reply" in
+      s) gm_set_smart_span ;;
+      d)
+        gm_ask_smart_days
+        if ! gm_load_smart_span "$SMART_BEFORE" "$SMART_AFTER"; then
+          echo "$(gm_ts) Those days could not be used."
+          return_code=1
+          exit 1
+        fi
+        gm_set_smart_span
+        if (( SMART_BEFORE == SMART_AFTER )); then
+          echo "Tracks: ${SMART_FROM} through ${SMART_TO}, $(gm_day_phrase "$SMART_BEFORE") before and after."
+        else
+          echo "Tracks: ${SMART_FROM} through ${SMART_TO}, $(gm_day_phrase "$SMART_BEFORE") before and $(gm_day_phrase "$SMART_AFTER") after."
+        fi
+        ;;
+      y)
+        if (( ${#GUESS_YEARS[@]} )); then
+          gm_set_guess_years "${GUESS_YEARS[@]}"
+        else
+          echo "$(gm_ts) That is not a choice. Stopping."; return_code=1; exit 1
+        fi
+        ;;
+      t) gm_ask_typed_year ;;
+      a) gm_set_all_years ;;
+      q) gm_quit ;;
+      *) echo "$(gm_ts) That is not a choice. Stopping."; return_code=1; exit 1 ;;
+    esac
+    return 0
+  fi
   if (( ${#GUESS_YEARS[@]} )); then
     phrase="$(gm_year_phrase "${GUESS_YEARS[@]}")"
     echo "The photos and videos look like they are probably from ${phrase}, judging by the timestamps and file names."
@@ -937,9 +1168,99 @@ gm_collect_media() {
   done
 }
 
+gm_quote_args() {
+  local part out="" sq="'" esc="'\\''"
+  for part in "$@"; do
+    if [[ ! "$part" =~ ^[A-Za-z0-9_./:=+,@%-]+$ ]]; then
+      part="${sq}${part//${sq}/${esc}}${sq}"
+    fi
+    out+="${out:+ }${part}"
+  done
+  printf '%s\n' "$out"
+}
+
+gm_track_year_arg() {
+  local -a years=()
+  local y first last span n
+  for y in "${!TRACK_YEAR[@]}"; do
+    years+=("$y")
+  done
+  (( ${#years[@]} )) || return 0
+  mapfile -t years < <(printf '%s\n' "${years[@]}" | sort)
+  n=${#years[@]}
+  if (( n == 1 )); then
+    printf '%s\n' "${years[0]}"
+    return 0
+  fi
+  first="${years[0]}"
+  last="${years[n - 1]}"
+  span=$(( 10#$last - 10#$first + 1 ))
+  if (( span == n )); then
+    printf '%s-%s\n' "$first" "$last"
+    return 0
+  fi
+  local IFS=','
+  printf '%s\n' "${years[*]}"
+}
+
+gm_equivalent_command() {
+  local -a cmd=("$(basename -- "$0")")
+  local g before after year_arg
+  (( DO_YES )) && cmd+=(-y)
+  (( DRY_RUN )) && cmd+=(-n)
+  (( REDO )) && cmd+=(--redo)
+  (( VERBOSE )) && cmd+=(--verbose)
+  if (( ${#DIR_INPUTS[@]} > 0 )); then
+    if (( RECURSE )); then
+      cmd+=(--recursive)
+    else
+      cmd+=(--here)
+    fi
+  fi
+  if [[ -n "$TZ_VALUE" ]]; then
+    cmd+=(--tz "$TZ_VALUE")
+  fi
+  if [[ "$MAX_GAP" != 30 ]]; then
+    cmd+=(--max-gap "$MAX_GAP")
+  fi
+  if [[ "$QUICKTIME" != utc ]]; then
+    cmd+=(--quicktime "$QUICKTIME")
+  fi
+  if (( TRACK_SMART )); then
+    before="${SMART_BEFORE:-7}"
+    after="${SMART_AFTER:-7}"
+    if (( before == 7 && after == 7 )); then
+      cmd+=(--smart)
+    else
+      cmd+=(--days-before "$before" --days-after "$after")
+    fi
+  elif (( TRACK_ALL )); then
+    cmd+=(--all-years)
+  elif (( ${#TRACK_YEAR[@]} )); then
+    year_arg="$(gm_track_year_arg)"
+    [[ -n "$year_arg" ]] && cmd+=(--year "$year_arg")
+  fi
+  for g in "${GPX_EXTRA[@]}"; do
+    cmd+=(--gpx "$g")
+  done
+  cmd+=(--)
+  if (( ${#INPUT_ARGS[@]} > 0 )); then
+    cmd+=("${INPUT_ARGS[@]}")
+  else
+    cmd+=("$(pwd -P)")
+  fi
+  gm_quote_args "${cmd[@]}"
+}
+
+gm_print_equivalent() {
+  echo
+  printf '  %-14s %s\n' "Command" "$(gm_equivalent_command)"
+}
+
 gm_collect_tracks() {
   local path parent
   gm_ask_track_years
+  gm_print_equivalent
   for path in "${DIR_INPUTS[@]}"; do
     gm_walk "$path" "$RECURSE" gpx
   done
@@ -1016,6 +1337,8 @@ gm_add_conf_tracks() {
       done < <(find "$path" \( -type d -name '.*' -prune \) -o -type f -print0)
       if (( TRACK_ALL )); then
         echo "$(gm_ts) ${path}: ${n_here} .gpx/.tcx files, including every subdirectory"
+      elif (( TRACK_SMART )); then
+        echo "$(gm_ts) ${path}: ${n_here} .gpx/.tcx files from ${SMART_FROM} to ${SMART_TO}, including every subdirectory"
       else
         echo "$(gm_ts) ${path}: ${n_here} .gpx/.tcx files from ${TRACK_SPAN}, including every subdirectory"
       fi
@@ -1098,11 +1421,14 @@ gm_load_plan() {
 }
 
 gm_ask_track_writes() {
-  local i reply loc lat lon rest
+  local i reply loc lat lon rest shown total
   rest=0
+  shown=0
+  total=${#WRITE_PATH[@]}
   : > "$WORK/write-only"
   gm_ask_internet
   for i in "${!WRITE_PATH[@]}"; do
+    shown=$(( shown + 1 ))
     echo
     lat="${WRITE_PLACE[$i]%%,*}"
     lon="${WRITE_PLACE[$i]#*,}"
@@ -1112,10 +1438,10 @@ gm_ask_track_writes() {
       loc="${loc}, ${WRITE_HEIGHT[$i]}"
     fi
     if [[ "${WRITE_STATUS[$i]}" == replace ]]; then
-      echo "${WRITE_LABEL[$i]} already has a location."
+      echo "[${shown}/${total}] ${WRITE_LABEL[$i]} already has a location."
       echo "A point in ${WRITE_TRACK[$i]} is ${WRITE_GAP[$i]} away, so that location can probably replace it."
     else
-      echo "${WRITE_LABEL[$i]} has no geotag."
+      echo "[${shown}/${total}] ${WRITE_LABEL[$i]} has no geotag."
       echo "It can probably be geotagged from ${WRITE_TRACK[$i]}, because the nearest point is ${WRITE_GAP[$i]} away and that point has a location."
     fi
     echo "  ${loc}"
@@ -1133,7 +1459,7 @@ gm_ask_track_writes() {
     echo "  [N] Skip this file (default)"
     echo "  [a] Write this and the rest"
     echo "  [q] Quit"
-    gm_read_key "Write this location? [y/N/a/q]: " n
+    gm_read_key "Write this location? [${shown}/${total}] [y/N/a/q]: " n
     reply="$REPLY"
     case "$reply" in
       y) printf '%s\0' "${WRITE_PATH[$i]}" >> "$WORK/write-only" ;;
@@ -1164,16 +1490,18 @@ gm_choose_places() {
   echo
   echo "These files have no GPX or TCX point close enough."
   gm_ask_internet
+  local shown=0 total=${#CHOOSE_SHOW[@]}
   for i in "${!CHOOSE_SHOW[@]}"; do
+    shown=$(( shown + 1 ))
     echo
-    echo "${CHOOSE_SHOW[$i]}"
+    echo "[${shown}/${total}] ${CHOOSE_SHOW[$i]}"
     for n in "${!PLACE_LABEL[@]}"; do
       printf '  [%d] [%s]   %s, %s\n' "$(( n + 1 ))" "${PLACE_LABEL[$n]}" "${PLACE_LAT[$n]}" "${PLACE_LON[$n]}"
     done
     echo "  [g] Type a latitude, longitude for this file"
     echo "  [S] Skip this file (default)"
     echo "  [q] Quit now, without Enter"
-    gm_read_place_choice "Place for ${CHOOSE_SHOW[$i]}? [S]: "
+    gm_read_place_choice "Place for ${CHOOSE_SHOW[$i]}? [${shown}/${total}] [S]: "
     reply="$REPLY"
     if [[ "$reply" == s ]]; then
       continue
@@ -1265,7 +1593,21 @@ GM_START_NS=""
 GM_PROC_SEC=0
 GM_PROC_SLICE=""
 TRACK_ALL=0
+TRACK_SMART=0
+TRACK_FROM=""
+TRACK_TO=""
 TRACK_SPAN=""
+TRACK_MODE=""
+CLI_DAYS_BEFORE=7
+CLI_DAYS_AFTER=7
+CLI_DAYS_BEFORE_SET=0
+CLI_DAYS_AFTER_SET=0
+CLI_YEAR=""
+CLI_YEAR_A=""
+CLI_YEAR_B=""
+CLI_YEAR_EXACT=()
+SMART_BEFORE=""
+SMART_AFTER=""
 GUESS_YEARS=()
 declare -A TRACK_YEAR=()
 gm_colors
@@ -1352,6 +1694,81 @@ while [[ $# -gt 0 ]]; do
       GPX_EXTRA+=("$2")
       shift 2
       ;;
+    --smart)
+      gm_choose_track_mode smart "--smart"
+      shift
+      ;;
+    --days-before)
+      gm_need_value "$@"
+      if [[ ! "$2" =~ ^[0-9]+$ ]]; then
+        echo "ERROR: --days-before must be a number of days, not: $2" >&2
+        exit 1
+      fi
+      gm_choose_track_mode smart "--days-before"
+      CLI_DAYS_BEFORE="$2"
+      CLI_DAYS_BEFORE_SET=1
+      shift 2
+      ;;
+    --days-after)
+      gm_need_value "$@"
+      if [[ ! "$2" =~ ^[0-9]+$ ]]; then
+        echo "ERROR: --days-after must be a number of days, not: $2" >&2
+        exit 1
+      fi
+      gm_choose_track_mode smart "--days-after"
+      CLI_DAYS_AFTER="$2"
+      CLI_DAYS_AFTER_SET=1
+      shift 2
+      ;;
+    --year)
+      gm_need_value "$@"
+      if [[ "$TRACK_MODE" == year ]]; then
+        echo "ERROR: --year given twice" >&2
+        exit 1
+      fi
+      if [[ "$2" == *,* ]]; then
+        CLI_YEAR_EXACT=()
+        IFS=',' read -ra year_parts <<< "$2"
+        if (( ${#year_parts[@]} < 2 )); then
+          echo "ERROR: --year must be a year or a range, not: $2" >&2
+          exit 1
+        fi
+        for year_part in "${year_parts[@]}"; do
+          year_part="${year_part// /}"
+          if [[ ! "$year_part" =~ ^(19|20)[0-9]{2}$ ]]; then
+            echo "ERROR: --year must be a year or a range, not: $2" >&2
+            exit 1
+          fi
+          CLI_YEAR_EXACT+=("$year_part")
+        done
+        gm_choose_track_mode year "--year"
+        CLI_YEAR="$2"
+      else
+      CLI_YEAR_EXACT=()
+      year_out=$(python3 "$PY_HELPER" year-range "$2" 2>/dev/null)
+      year_rc=$?
+      if (( year_rc != 0 )); then
+        if (( year_rc == 2 )); then
+          echo "ERROR: the first year is newer than the second: $2" >&2
+        else
+          echo "ERROR: --year must be a year or a range, not: $2" >&2
+        fi
+        exit 1
+      fi
+      gm_choose_track_mode year "--year"
+      CLI_YEAR="$2"
+      IFS=$'\t' read -r CLI_YEAR_A CLI_YEAR_B <<< "$year_out"
+      fi
+      shift 2
+      ;;
+    --all-years)
+      if [[ "$TRACK_MODE" == all ]]; then
+        echo "ERROR: --all-years given twice" >&2
+        exit 1
+      fi
+      gm_choose_track_mode all "--all-years"
+      shift
+      ;;
     --) shift; INPUT_ARGS+=("$@"); break ;;
     -*) echo "ERROR: unknown option: $1 (see --help)" >&2; exit 1 ;;
     *) INPUT_ARGS+=("$1"); shift ;;
@@ -1377,6 +1794,7 @@ gm_collect_media
 gm_proc_end
 
 if (( MEDIA_N == 0 )); then
+  gm_print_equivalent
   echo "$(gm_ts) No photos or videos."
   return_code=0
   exit 0
@@ -1397,6 +1815,7 @@ IFS=$'\t' read -r GEO_NEED GEO_ALREADY GEO_UNREAD <<< "$GEO_OUT"
 gm_say_geotag_need "$GEO_NEED" "$GEO_ALREADY" "$GEO_UNREAD"
 if (( GEO_NEED == 0 && ! REDO )); then
   echo "$(gm_ts) Tracks were not loaded."
+  gm_print_equivalent
 else
   if (( GEO_NEED == 0 )); then
     echo "$(gm_ts) --redo will compare the files that already have a location."

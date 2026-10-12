@@ -1,4 +1,10 @@
 #!/usr/bin/env python3
+# v. 20261012.112620 - [d] is smart loading with the days you choose
+# v. 20261012.112532 - each file you are asked to write is numbered, such as [1/22]
+# v. 20261012.112235 - after the questions, print the command that repeats those answers
+# v. 20261012.111650 - smart loading, days before and after, a year, and all years are command-line options
+# v. 20261012.111440 - smart loading can use a chosen number of days before and after
+# v. 20261012.111223 - smart loading reads tracks from a week before the first file to a week after the last
 # v. 20261012.110839 - a looked-up place is described as near that street and town
 # v. 20261012.110653 - a track point is named from OpenStreetMap, and the guess says how close that point is
 # v. 20261012.110358 - a track write names the file, the track, and how far the point is
@@ -27,6 +33,12 @@
 # v. 20261009.160131 - also read .tcx tracks; a Trackpoint with a time and a position joins the same search as GPX
 # v. 20261009.151425 - match a photo or video time to the nearest GPX point and write that location with exiftool
 
+# 2026.10.12 - v. 0.33 - [d] is smart loading with the days you choose
+# 2026.10.12 - v. 0.32 - each file you are asked to write is numbered, such as [1/22]
+# 2026.10.12 - v. 0.31 - after the questions, print the command that repeats those answers
+# 2026.10.12 - v. 0.30 - smart loading, days before and after, a year, and all years are command-line options
+# 2026.10.12 - v. 0.29 - smart loading can use a chosen number of days before and after
+# 2026.10.12 - v. 0.28 - smart loading reads tracks from a week before the first file to a week after the last
 # 2026.10.12 - v. 0.27 - a looked-up place is described as near that street and town
 # 2026.10.12 - v. 0.26 - a track point is named from OpenStreetMap, and the guess says how close that point is
 # 2026.10.12 - v. 0.25 - a track write names the file, the track, and how far the point is
@@ -78,7 +90,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import xml.etree.ElementTree as ET
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 
 VERSION = "0.1"
 DISAGREE_METRES = 300
@@ -1653,6 +1665,84 @@ def cmd_scan(argv):
     return 0
 
 
+def smart_window(media, infos, offset_seconds, before_days=7, after_days=7):
+    """Earliest and latest file time, then the chosen days before and after those dates."""
+    by_key = {}
+    for info in infos or []:
+        source = info.get("SourceFile")
+        if source:
+            by_key[norm_key(source)] = info
+    dated = []
+    for path in media:
+        info = by_key.get(norm_key(path))
+        when = None
+        if info and not info.get("Error"):
+            when = pick_time(info, offset_seconds)
+        if when:
+            match = re.match(r"^(\d{4})\.(\d{2})\.(\d{2})(?: (\d{2}:\d{2}))?", when.get("wall") or "")
+            if match:
+                try:
+                    day = date(int(match.group(1)), int(match.group(2)), int(match.group(3)))
+                except ValueError:
+                    day = None
+                if day is not None:
+                    shown = "%s.%s.%s" % match.group(1, 2, 3)
+                    if match.group(4):
+                        shown = "%s %s" % (shown, match.group(4))
+                    dated.append((day, shown))
+                    continue
+        name = re.match(r"^((?:19|20)\d{2})(\d{2})(\d{2})", os.path.basename(path))
+        if not name:
+            continue
+        try:
+            day = date(int(name.group(1)), int(name.group(2)), int(name.group(3)))
+        except ValueError:
+            continue
+        dated.append((day, "%04d.%02d.%02d" % (day.year, day.month, day.day)))
+    if not dated:
+        return None
+    dated.sort()
+    first_day, first_text = dated[0]
+    last_day, last_text = dated[-1]
+    return first_text, last_text, first_day - timedelta(days=before_days), last_day + timedelta(days=after_days)
+
+
+def cmd_smart_span(argv):
+    parser = argparse.ArgumentParser(add_help=False)
+    parser.add_argument("--tz", required=True)
+    parser.add_argument("--exif-json", required=True)
+    parser.add_argument("--media-list", required=True)
+    parser.add_argument("--before", type=int, default=7)
+    parser.add_argument("--after", type=int, default=7)
+    args = parser.parse_args(argv)
+    if args.before < 0 or args.after < 0:
+        return 1
+    if args.tz == "auto":
+        offset_seconds = 0
+    else:
+        try:
+            offset_seconds = parse_tz_seconds(args.tz)
+        except ValueError:
+            return 1
+    infos = []
+    if os.path.isfile(args.exif_json) and os.path.getsize(args.exif_json) > 0:
+        try:
+            with open(args.exif_json, encoding="utf-8") as handle:
+                infos = json.load(handle)
+        except (OSError, ValueError):
+            return 1
+    got = smart_window(read_paths(args.media_list), infos, offset_seconds, args.before, args.after)
+    if not got:
+        return 1
+    first, last, start, end = got
+
+    def show(day):
+        return "%04d.%02d.%02d" % (day.year, day.month, day.day)
+
+    print("%s\t%s\t%s\t%s" % (first, last, show(start), show(end)))
+    return 0
+
+
 def cmd_need_geotag(argv):
     parser = argparse.ArgumentParser(add_help=False)
     parser.add_argument("--exiftool", required=True)
@@ -1781,6 +1871,32 @@ def cmd_write_place(argv):
 
 def selftest():
     assert parse_tz_seconds("+02:00") == 7200
+    window = smart_window(
+        ["20260824_a.mp4", "20260827_b.mp4"],
+        [
+            {"SourceFile": "20260824_a.mp4", "EXIF:DateTimeOriginal": "2026:08:24 16:51:10"},
+            {"SourceFile": "20260827_b.mp4", "EXIF:DateTimeOriginal": "2026:08:27 19:30:00"},
+        ],
+        7200,
+    )
+    assert window[0] == "2026.08.24 16:51"
+    assert window[1] == "2026.08.27 19:30"
+    assert window[2] == date(2026, 8, 17)
+    assert window[3] == date(2026, 9, 3)
+    tight = smart_window(
+        ["20260824_a.mp4", "20260827_b.mp4"],
+        [
+            {"SourceFile": "20260824_a.mp4", "EXIF:DateTimeOriginal": "2026:08:24 16:51:10"},
+            {"SourceFile": "20260827_b.mp4", "EXIF:DateTimeOriginal": "2026:08:27 19:30:00"},
+        ],
+        7200, 3, 1,
+    )
+    assert tight[2] == date(2026, 8, 21)
+    assert tight[3] == date(2026, 8, 28)
+    named = smart_window(["20260824_only.mp4"], [], 0)
+    assert named[2] == date(2026, 8, 17)
+    assert named[3] == date(2026, 8, 31)
+    assert smart_window(["clip.mp4"], [], 0) is None
     header, body = file_table(
         [
             {"show": "short.jpg", "wall": "2026.08.24 16:51:10", "source": "DateTimeOriginal", "place": "49.609049, 19.965396", "height": "534m", "detail": ""},
@@ -2059,7 +2175,7 @@ def selftest():
 
 def main(argv):
     if len(argv) < 2 or argv[1] in ("-h", "--help"):
-        print("Usage: video-pgm-geotag-missing-media.py scan|write|write-place|plan-lines|check-tz|check-coord|reverse|year-range|track-roots|need-geotag|selftest")
+        print("Usage: video-pgm-geotag-missing-media.py scan|write|write-place|plan-lines|check-tz|check-coord|reverse|year-range|track-roots|need-geotag|smart-span|selftest")
         print("The shell script video-pgm-geotag-missing-media.sh is the way to run this.")
         return 0
     cmd = argv[1]
@@ -2077,6 +2193,8 @@ def main(argv):
         return cmd_track_roots(argv[2:])
     if cmd == "need-geotag":
         return cmd_need_geotag(argv[2:])
+    if cmd == "smart-span":
+        return cmd_smart_span(argv[2:])
     if cmd == "scan":
         return cmd_scan(argv[2:])
     if cmd == "write":
