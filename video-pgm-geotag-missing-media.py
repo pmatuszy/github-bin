@@ -1,9 +1,13 @@
 #!/usr/bin/env python3
+# v. 20261012.094641 - [tracks-location] in the .conf is another directory of GPX and TCX tracks
+# v. 20261012.094407 - q on a place question quits at once, and a latitude and longitude can be typed for that file
 # v. 20261012.092540 - print .conf errors, and merge entries that are the same location
 # v. 20261012.092157 - merge named places from every .conf and offer them when no track point matches
 # v. 20261009.160131 - also read .tcx tracks; a Trackpoint with a time and a position joins the same search as GPX
 # v. 20261009.151425 - match a photo or video time to the nearest GPX point and write that location with exiftool
 
+# 2026.10.12 - v. 0.6 - [tracks-location] adds that directory, and the folders inside it, to the GPX and TCX search
+# 2026.10.12 - v. 0.5 - check-coord reads a typed latitude, longitude for one file
 # 2026.10.12 - v. 0.4 - .conf problems are printed; the same coordinates are one place, and one name with two different coordinates is an error
 # 2026.10.12 - v. 0.3 - named places from video-pgm-geotag-missing-media.conf are merged and offered for a file with no track point
 # 2026.10.09 - v. 0.2 - .tcx files (Garmin Training Center) are read with .gpx; Trackpoints without a position are left out
@@ -808,27 +812,42 @@ def match_files(media, infos, points, offset_seconds, max_gap, redo):
 
 def parse_conf(path):
     places = []
+    track_dirs = []
     errors = []
     pending = None
     pending_line = 0
+    pending_got = False
     try:
         handle = open(path, encoding="utf-8")
     except OSError as exc:
-        return [], ["%s: %s" % (path, exc)]
+        return [], [], ["%s: %s" % (path, exc)]
     with handle:
         lines = handle.read().splitlines()
+
+    def close_pending():
+        if not pending or pending_got:
+            return
+        if pending.lower() == "tracks-location":
+            errors.append("%s:%d: [tracks-location] has no directory" % (path, pending_line))
+        else:
+            errors.append("%s:%d: [%s] has no coordinates" % (path, pending_line, pending))
+
     for number, line in enumerate(lines, 1):
         text = line.strip()
         if not text or text.startswith("#"):
             continue
         if text.startswith("[") and text.endswith("]"):
-            if pending:
-                errors.append("%s:%d: [%s] has no coordinates" % (path, pending_line, pending))
+            close_pending()
             pending = text[1:-1].strip()
             pending_line = number
+            pending_got = False
             if not pending:
                 errors.append("%s:%d: empty name" % (path, number))
                 pending = None
+            continue
+        if pending and pending.lower() == "tracks-location":
+            track_dirs.append({"path": text.strip().strip('"').strip("'"), "source": path, "line": number})
+            pending_got = True
             continue
         match = COORD_RE.match(text)
         if pending and match:
@@ -842,11 +861,11 @@ def parse_conf(path):
                     "source": path, "line": number,
                 })
             pending = None
+            pending_got = False
             continue
         errors.append("%s:%d: not a [name] or latitude, longitude" % (path, number))
-    if pending:
-        errors.append("%s:%d: [%s] has no coordinates" % (path, pending_line, pending))
-    return places, errors
+    close_pending()
+    return places, track_dirs, errors
 
 
 def coord_key(lat, lon):
@@ -856,6 +875,44 @@ def coord_key(lat, lon):
 
 def where_place(place):
     return "%s:%s" % (place["source"], place.get("line") or "?")
+
+
+def resolve_track_path(raw, conf_path):
+    text = raw.strip().strip('"').strip("'")
+    match = re.match(r"^([A-Za-z]):[\\/](.*)$", text)
+    if match:
+        drive = match.group(1).lower()
+        rest = match.group(2).replace("\\", "/")
+        if os.path.isdir("/mnt/%s" % drive):
+            text = "/mnt/%s/%s" % (drive, rest)
+    if not os.path.isabs(text):
+        text = os.path.join(os.path.dirname(os.path.abspath(conf_path)), text)
+    return os.path.normpath(text)
+
+
+def skip_track_name(name):
+    return name.startswith("._") or "_old-" in name or name.endswith(".partial") or ".partial." in name
+
+
+def tracks_under(root):
+    """GPX and TCX files in root. A directory includes the folders inside it."""
+    if os.path.isfile(root):
+        name = os.path.basename(root)
+        if name.lower().endswith((".gpx", ".tcx")) and not skip_track_name(name):
+            return [root]
+        return []
+    if not os.path.isdir(root):
+        return None
+    found = []
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = [item for item in dirnames if not item.startswith(".")]
+        for name in filenames:
+            if skip_track_name(name):
+                continue
+            if name.lower().endswith((".gpx", ".tcx")):
+                found.append(os.path.join(dirpath, name))
+    found.sort()
+    return found
 
 
 def merge_confs(paths):
@@ -868,9 +925,21 @@ def merge_confs(paths):
     by_coord = {}
     notes = []
     errors = []
+    track_roots = []
+    seen_roots = set()
     for path in paths:
-        found, problems = parse_conf(path)
+        found, tracks, problems = parse_conf(path)
         errors.extend(problems)
+        for item in tracks:
+            resolved = resolve_track_path(item["path"], path)
+            key = os.path.normcase(os.path.abspath(resolved))
+            if key in seen_roots:
+                continue
+            seen_roots.add(key)
+            if not os.path.exists(resolved):
+                errors.append("%s:%d: track directory is not there: %s" % (path, item["line"], item["path"]))
+                continue
+            track_roots.append(resolved)
         for place in found:
             key = coord_key(place["lat"], place["lon"])
             name = place["label"]
@@ -904,10 +973,10 @@ def merge_confs(paths):
             index = len(places) - 1
             by_name[name] = index
             by_coord[key] = index
-    return places, notes, errors
+    return places, notes, errors, track_roots
 
 
-def print_place_banner(paths, places, notes, errors):
+def print_place_banner(paths, places, notes, errors, track_roots):
     if not paths:
         print("Places: no video-pgm-geotag-missing-media.conf in this directory, the directories above it, $HOME, or $HOME/etc.")
         print("")
@@ -923,6 +992,10 @@ def print_place_banner(paths, places, notes, errors):
         print("  " + "  ".join("[%s]" % place["label"] for place in places))
     else:
         print("  No places in those files.")
+    if track_roots:
+        print("Tracks also from:")
+        for root in track_roots:
+            print("  %s" % root)
     for note in notes:
         print("  %s" % note)
     print("")
@@ -1082,6 +1155,27 @@ def write_one(exiftool, item):
     return True, ""
 
 
+def parse_user_coord(text):
+    match = COORD_RE.match(text.strip())
+    if not match:
+        return None
+    lat = float(match.group(1))
+    lon = float(match.group(2))
+    if abs(lat) > 90 or abs(lon) > 180 or null_island(lat, lon):
+        return None
+    return match.group(1), match.group(2)
+
+
+def cmd_check_coord(argv):
+    if len(argv) != 1:
+        return 1
+    parsed = parse_user_coord(argv[0])
+    if not parsed:
+        return 1
+    print("%s\t%s" % parsed)
+    return 0
+
+
 def cmd_check_tz(argv):
     if len(argv) != 1:
         return 1
@@ -1112,11 +1206,29 @@ def cmd_scan(argv):
         eprint("--max-gap must be zero or more.")
         return 1
     conf_paths = read_paths(args.conf_list) if args.conf_list else []
-    places, notes, conf_errors = merge_confs(conf_paths)
-    print_place_banner(conf_paths, places, notes, conf_errors)
+    places, notes, conf_errors, track_roots = merge_confs(conf_paths)
+    print_place_banner(conf_paths, places, notes, conf_errors, track_roots)
     media = read_paths(args.media_list)
     gpx_paths = read_paths(args.gpx_list)
     roots = read_paths(args.root_list)
+    seen_tracks = set(norm_key(path) for path in gpx_paths)
+    for root in track_roots:
+        found = tracks_under(root)
+        if found is None:
+            continue
+        roots.append(root if os.path.isdir(root) else os.path.dirname(root))
+        added = 0
+        for path in found:
+            key = norm_key(path)
+            if key in seen_tracks:
+                continue
+            seen_tracks.add(key)
+            gpx_paths.append(path)
+            added += 1
+        if added == 0:
+            eprint("No .gpx or .tcx files in %s" % root)
+        else:
+            eprint("Tracks from %s: %s file%s" % (root, fmt_int(added), "" if added == 1 else "s"))
     points = []
     gpx_info = []
     gpx_errors = []
@@ -1290,6 +1402,9 @@ def selftest():
     assert parse_tz_seconds("+02:00") == 7200
     assert parse_tz_seconds("-05:30") == -(5 * 3600 + 30 * 60)
     assert parse_tz_seconds("0") == 0
+    assert parse_user_coord("49.59078922757009, 19.966572075569914") == ("49.59078922757009", "19.966572075569914")
+    assert parse_user_coord("0, 0") is None
+    assert parse_user_coord("Ponice") is None
     assert fmt_offset(7200) == "+02:00"
     assert fmt_offset(-(3600 + 1800)) == "-01:30"
     naive = parse_time_epoch("2026:08:01 16:00:00")
@@ -1443,12 +1558,21 @@ def selftest():
 
         near = os.path.join(folder, "near.conf")
         far_conf = os.path.join(folder, "home.conf")
+        track_dir = os.path.join(folder, "tracks")
+        nested = os.path.join(track_dir, "day")
+        os.makedirs(nested)
+        with open(os.path.join(nested, "day.gpx"), "w", encoding="utf-8") as handle:
+            handle.write("<gpx></gpx>\n")
+        with open(os.path.join(track_dir, "skip.txt"), "w", encoding="utf-8") as handle:
+            handle.write("nope\n")
         with open(near, "w", encoding="utf-8") as handle:
             handle.write(
                 "[Ponice 221]\n"
                 "49.59078922757009, 19.966572075569914\n\n"
                 "[Shared]\n"
                 "50.0, 19.0\n"
+                "[tracks-location]\n"
+                "%s\n" % track_dir
             )
         with open(far_conf, "w", encoding="utf-8") as handle:
             handle.write(
@@ -1462,8 +1586,10 @@ def selftest():
                 "49.59078922757009, 19.966572075569914\n"
                 "[Broken]\n"
                 "not-coords\n"
+                "[tracks-location]\n"
+                "/no/such/tracks\n"
             )
-        merged, notes, errors = merge_confs([near, far_conf])
+        merged, notes, errors, track_roots = merge_confs([near, far_conf])
         labels = [place["label"] for place in merged]
         assert labels == ["Ponice 221", "Shared / Home", "Raclawicka 146"]
         assert merged[1]["lat"] == 50.0
@@ -1471,6 +1597,11 @@ def selftest():
         assert any("Broken" in err for err in errors)
         assert any(err.startswith("[Shared] has two locations") for err in errors)
         assert not any(err.startswith("[Ponice 221] has two locations") for err in errors)
+        assert track_roots == [os.path.normpath(track_dir)]
+        assert any("not there" in err for err in errors)
+        found_tracks = tracks_under(track_dir)
+        assert len(found_tracks) == 1
+        assert found_tracks[0].endswith("day.gpx")
     finally:
         shutil.rmtree(folder, ignore_errors=True)
 
@@ -1505,7 +1636,7 @@ def selftest():
 
 def main(argv):
     if len(argv) < 2 or argv[1] in ("-h", "--help"):
-        print("Usage: video-pgm-geotag-missing-media.py scan|write|write-place|plan-lines|check-tz|selftest")
+        print("Usage: video-pgm-geotag-missing-media.py scan|write|write-place|plan-lines|check-tz|check-coord|selftest")
         print("The shell script video-pgm-geotag-missing-media.sh is the way to run this.")
         return 0
     cmd = argv[1]
@@ -1513,6 +1644,8 @@ def main(argv):
         return selftest()
     if cmd == "check-tz":
         return cmd_check_tz(argv[2:])
+    if cmd == "check-coord":
+        return cmd_check_coord(argv[2:])
     if cmd == "scan":
         return cmd_scan(argv[2:])
     if cmd == "write":

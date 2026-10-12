@@ -1,9 +1,13 @@
 #!/bin/bash
+# v. 20261012.094641 - [tracks-location] in the .conf is another directory of GPX and TCX tracks
+# v. 20261012.094407 - q on a place question quits at once, and a latitude and longitude can be typed for that file
 # v. 20261012.092540 - print .conf errors, and merge entries that are the same location
 # v. 20261012.092157 - merge named places from every .conf found from here up to /, and in $HOME and $HOME/etc
 # v. 20261009.160131 - also read .tcx tracks; a Trackpoint with a time and a position is used like a GPX point
 # v. 20261009.151425 - report which photos and videos have no location, and write one from the nearest GPX point
 
+# 2026.10.12 - v. 0.6 - [tracks-location] adds that directory, and the folders inside it, to the GPX and TCX search
+# 2026.10.12 - v. 0.5 - on the place question, q quits without Enter; g asks for a latitude and longitude for that file
 # 2026.10.12 - v. 0.4 - .conf problems are printed; the same coordinates are one place, and one name with two different coordinates is an error
 # 2026.10.12 - v. 0.3 - a file with no track point can be tagged from [place] labels in video-pgm-geotag-missing-media.conf; every conf found is merged, and the paths are printed first
 # 2026.10.09 - v. 0.2 - .tcx files are read with .gpx, including from --gpx and from the directory search
@@ -76,8 +80,16 @@ Each place is a line in brackets and the latitude, longitude under it:
   [Ponice 221]
   49.59078922757009, 19.966572075569914
 
-For each file with no track point you are asked which name to write. -y does
-not pick a place for you.
+A track directory is the same kind of heading, with a path under it. The .gpx
+and .tcx files in that directory and in the folders inside it are read as
+well as the tracks next to the photos and videos:
+
+  [tracks-location]
+  /mnt/p/video/geotaging-kopie
+
+For each file with no track point you are asked which name to write. q quits
+at once, without Enter. g asks for a latitude and longitude for that file
+only. -y does not pick a place for you.
 
 Video CreateDate is read as UTC, which is right for a GoPro. If a phone
 stored local time in that field, use --quicktime local.
@@ -155,6 +167,77 @@ gm_unix_path() {
     fi
   fi
   printf '%s\n' "$p"
+}
+
+gm_read_place_choice() {
+  local prompt="$1" first="" rest="" discard
+  printf '%s' "$prompt"
+  while IFS= read -r -t 0.02 -n 1 discard; do :; done
+  IFS= read -r -n 1 first || first=""
+  first="${first,,}"
+  if [[ "$first" == q ]]; then
+    echo
+    echo "$(gm_ts) Quit."
+    return_code=0
+    exit 0
+  fi
+  if [[ -z "$first" || "$first" == $'\n' || "$first" == s ]]; then
+    echo
+    REPLY=s
+    return 0
+  fi
+  if [[ "$first" == g ]]; then
+    echo
+    REPLY=g
+    return 0
+  fi
+  if [[ "$first" =~ [0-9] ]]; then
+    IFS= read -r rest || rest=""
+    REPLY="${first}${rest}"
+    REPLY="${REPLY,,}"
+    REPLY="${REPLY#"${REPLY%%[![:space:]]*}"}"
+    REPLY="${REPLY%"${REPLY##*[![:space:]]}"}"
+    return 0
+  fi
+  echo
+  REPLY="$first"
+}
+
+gm_ask_coord() {
+  local typed canon
+  while true; do
+    printf 'Latitude, longitude (for example 49.590789, 19.966572), or Enter to skip: '
+    IFS= read -r typed || { echo "$(gm_ts) Quit."; return_code=0; exit 0; }
+    typed="${typed#"${typed%%[![:space:]]*}"}"
+    typed="${typed%"${typed##*[![:space:]]}"}"
+    if [[ -z "$typed" ]]; then
+      return 1
+    fi
+    if [[ "${typed,,}" == q ]]; then
+      echo "$(gm_ts) Quit."
+      return_code=0
+      exit 0
+    fi
+    if canon=$(python3 "$PY_HELPER" check-coord "$typed" 2>/dev/null); then
+      IFS=$'\t' read -r GM_LAT GM_LON <<< "$canon"
+      return 0
+    fi
+    echo "That is not a latitude, longitude."
+  done
+}
+
+gm_write_chosen() {
+  local lat="$1" lon="$2" place="$3" i="$4"
+  python3 "$PY_HELPER" write-place \
+    --exiftool "$EXIFTOOL_BIN" \
+    --path "${CHOOSE_PATH[$i]}" \
+    --kind "${CHOOSE_KIND[$i]}" \
+    --lat "$lat" \
+    --lon "$lon" \
+    --gps-date "${CHOOSE_DATE[$i]}" \
+    --gps-time "${CHOOSE_TIME[$i]}" \
+    --label "${CHOOSE_SHOW[$i]}" \
+    --place "$place" || return_code=$?
 }
 
 gm_read_key() {
@@ -499,47 +582,44 @@ gm_load_plan() {
 
 gm_choose_places() {
   local i n reply picked
-  if (( ${#PLACE_LABEL[@]} == 0 || ${#CHOOSE_SHOW[@]} == 0 )); then
+  if (( ${#CHOOSE_SHOW[@]} == 0 )); then
     return 0
   fi
   if (( DO_YES )) || (( ! script_is_run_interactively )); then
     echo
-    echo "$(gm_ts) ${#CHOOSE_SHOW[@]} file$( (( ${#CHOOSE_SHOW[@]} == 1 )) || printf 's' ) have no track point. A named place is written only when you pick it."
+    echo "$(gm_ts) ${#CHOOSE_SHOW[@]} file$( (( ${#CHOOSE_SHOW[@]} == 1 )) || printf 's' ) have no track point. A place is written only when you pick it."
     return 0
   fi
   echo
-  echo "These files have no GPX or TCX point close enough. Pick a place from the .conf files."
+  echo "These files have no GPX or TCX point close enough."
   for i in "${!CHOOSE_SHOW[@]}"; do
     echo
     echo "${CHOOSE_SHOW[$i]}"
     for n in "${!PLACE_LABEL[@]}"; do
       printf '  [%d] [%s]   %s, %s\n' "$(( n + 1 ))" "${PLACE_LABEL[$n]}" "${PLACE_LAT[$n]}" "${PLACE_LON[$n]}"
     done
+    echo "  [g] Type a latitude, longitude for this file"
     echo "  [s] Skip this file (default)"
-    echo "  [q] Quit"
-    printf 'Place for %s? [s]: ' "${CHOOSE_SHOW[$i]}"
-    IFS= read -r reply || gm_quit
-    reply="${reply,,}"
-    reply="${reply#"${reply%%[![:space:]]*}"}"
-    reply="${reply%"${reply##*[![:space:]]}"}"
-    if [[ -z "$reply" || "$reply" == s ]]; then
+    echo "  [q] Quit now, without Enter"
+    gm_read_place_choice "Place for ${CHOOSE_SHOW[$i]}? [s]: "
+    reply="$REPLY"
+    if [[ "$reply" == s ]]; then
       continue
     fi
-    if [[ "$reply" == q ]]; then
-      gm_quit
+    if [[ "$reply" == g ]]; then
+      if gm_ask_coord; then
+        gm_write_chosen "$GM_LAT" "$GM_LON" "typed" "$i"
+      fi
+      continue
+    fi
+    if canon=$(python3 "$PY_HELPER" check-coord "$reply" 2>/dev/null); then
+      IFS=$'\t' read -r GM_LAT GM_LON <<< "$canon"
+      gm_write_chosen "$GM_LAT" "$GM_LON" "typed" "$i"
+      continue
     fi
     if [[ "$reply" =~ ^[0-9]+$ ]] && (( 10#$reply >= 1 && 10#$reply <= ${#PLACE_LABEL[@]} )); then
       picked=$(( 10#$reply - 1 ))
-      python3 "$PY_HELPER" write-place \
-        --exiftool "$EXIFTOOL_BIN" \
-        --path "${CHOOSE_PATH[$i]}" \
-        --kind "${CHOOSE_KIND[$i]}" \
-        --lat "${PLACE_LAT[$picked]}" \
-        --lon "${PLACE_LON[$picked]}" \
-        --gps-date "${CHOOSE_DATE[$i]}" \
-        --gps-time "${CHOOSE_TIME[$i]}" \
-        --label "${CHOOSE_SHOW[$i]}" \
-        --place "${PLACE_LABEL[$picked]}" || return_code=$?
+      gm_write_chosen "${PLACE_LAT[$picked]}" "${PLACE_LON[$picked]}" "${PLACE_LABEL[$picked]}" "$i"
     else
       echo "That is not one of the places. This file was skipped."
     fi
@@ -741,7 +821,7 @@ if (( DRY_RUN )); then
   exit 0
 fi
 
-if (( WRITE_N == 0 && ( ${#CHOOSE_SHOW[@]} == 0 || ${#PLACE_LABEL[@]} == 0 ) )); then
+if (( WRITE_N == 0 && ${#CHOOSE_SHOW[@]} == 0 )); then
   echo
   echo "$(gm_ts) Nothing to write."
   return_code=0
