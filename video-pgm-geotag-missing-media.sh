@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261012.110839 - a looked-up place is described as near that street and town
 # v. 20261012.110653 - a track point is named from OpenStreetMap, and the guess says how close that point is
 # v. 20261012.110358 - a track write names the file, the track, and how far the point is
 # v. 20261012.110129 - the Geotag heading counts files with a location and files without one
@@ -26,6 +27,7 @@
 # v. 20261009.160131 - also read .tcx tracks; a Trackpoint with a time and a position is used like a GPX point
 # v. 20261009.151425 - report which photos and videos have no location, and write one from the nearest GPX point
 
+# 2026.10.12 - v. 0.27 - a looked-up place is described as near that street and town
 # 2026.10.12 - v. 0.26 - a track point is named from OpenStreetMap, and the guess says how close that point is
 # 2026.10.12 - v. 0.25 - a track write names the file, the track, and how far the point is
 # 2026.10.12 - v. 0.24 - the Geotag heading counts files with a location and files without one
@@ -412,7 +414,7 @@ gm_lookup_place() {
   GM_LOOKED=1
   if name=$(python3 "$PY_HELPER" reverse "$lat" "$lon" 2>/dev/null); then
     GM_PLACE_NAME="$name"
-    echo "That place is ${name}."
+    echo "This is near ${name}."
     return 0
   fi
   rc=$?
