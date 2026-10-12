@@ -1,7 +1,11 @@
 #!/usr/bin/env python3
+# v. 20261012.092540 - print .conf errors, and merge entries that are the same location
+# v. 20261012.092157 - merge named places from every .conf and offer them when no track point matches
 # v. 20261009.160131 - also read .tcx tracks; a Trackpoint with a time and a position joins the same search as GPX
 # v. 20261009.151425 - match a photo or video time to the nearest GPX point and write that location with exiftool
 
+# 2026.10.12 - v. 0.4 - .conf problems are printed; the same coordinates are one place, and one name with two different coordinates is an error
+# 2026.10.12 - v. 0.3 - named places from video-pgm-geotag-missing-media.conf are merged and offered for a file with no track point
 # 2026.10.09 - v. 0.2 - .tcx files (Garmin Training Center) are read with .gpx; Trackpoints without a position are left out
 # 2026.10.09 - v. 0.1 - initial release: read GPX, read file times with exiftool, report, write one location
 """Find a GPX or TCX point close in time to a photo or video, for video-pgm-geotag-missing-media.sh.
@@ -37,6 +41,8 @@ TZ_RE = re.compile(r"^([+-])(\d{1,2})(?::?(\d{2}))?$")
 ISO6709_RE = re.compile(
     r"^([+-]\d+(?:\.\d+)?)([+-]\d+(?:\.\d+)?)([+-]\d+(?:\.\d+)?)?$"
 )
+COORD_RE = re.compile(r"^([+-]?\d+(?:\.\d+)?)\s*,\s*([+-]?\d+(?:\.\d+)?)\s*$")
+UNMATCHED = ("too far", "no time", "no track")
 
 TIME_ORDER = (
     "SubSecDateTimeOriginal",
@@ -800,7 +806,136 @@ def match_files(media, infos, points, offset_seconds, max_gap, redo):
     return rows
 
 
-def print_report(rows, gpx_info, gpx_errors, offset_seconds, tz_note, assumed, max_gap, scope, quicktime, redo):
+def parse_conf(path):
+    places = []
+    errors = []
+    pending = None
+    pending_line = 0
+    try:
+        handle = open(path, encoding="utf-8")
+    except OSError as exc:
+        return [], ["%s: %s" % (path, exc)]
+    with handle:
+        lines = handle.read().splitlines()
+    for number, line in enumerate(lines, 1):
+        text = line.strip()
+        if not text or text.startswith("#"):
+            continue
+        if text.startswith("[") and text.endswith("]"):
+            if pending:
+                errors.append("%s:%d: [%s] has no coordinates" % (path, pending_line, pending))
+            pending = text[1:-1].strip()
+            pending_line = number
+            if not pending:
+                errors.append("%s:%d: empty name" % (path, number))
+                pending = None
+            continue
+        match = COORD_RE.match(text)
+        if pending and match:
+            lat = float(match.group(1))
+            lon = float(match.group(2))
+            if abs(lat) > 90 or abs(lon) > 180 or null_island(lat, lon):
+                errors.append("%s:%d: coordinates are out of range" % (path, number))
+            else:
+                places.append({
+                    "label": pending, "lat": lat, "lon": lon,
+                    "source": path, "line": number,
+                })
+            pending = None
+            continue
+        errors.append("%s:%d: not a [name] or latitude, longitude" % (path, number))
+    if pending:
+        errors.append("%s:%d: [%s] has no coordinates" % (path, pending_line, pending))
+    return places, errors
+
+
+def coord_key(lat, lon):
+    """About 0.1 m. Copies of one place written with a slightly different rounding still match."""
+    return (round(lat, 6), round(lon, 6))
+
+
+def where_place(place):
+    return "%s:%s" % (place["source"], place.get("line") or "?")
+
+
+def merge_confs(paths):
+    """Same coordinates are one place. The same name with two different coordinates is an error.
+
+    Files are listed closest directory first, so that copy is the one that is kept.
+    """
+    places = []
+    by_name = {}
+    by_coord = {}
+    notes = []
+    errors = []
+    for path in paths:
+        found, problems = parse_conf(path)
+        errors.extend(problems)
+        for place in found:
+            key = coord_key(place["lat"], place["lon"])
+            name = place["label"]
+            if name in by_name:
+                prev = places[by_name[name]]
+                if coord_key(prev["lat"], prev["lon"]) == key:
+                    continue
+                errors.append(
+                    "[%s] has two locations: %s (%s) and %s (%s). The one in %s is used."
+                    % (
+                        name,
+                        fmt_pos(prev["lat"], prev["lon"], None), where_place(prev),
+                        fmt_pos(place["lat"], place["lon"], None), "%s:%s" % (path, place.get("line") or "?"),
+                        where_place(prev),
+                    )
+                )
+                continue
+            if key in by_coord:
+                prev = places[by_coord[key]]
+                if name not in prev["names"]:
+                    prev["names"].append(name)
+                    prev["label"] = " / ".join(prev["names"])
+                    notes.append(
+                        "Same location, merged: %s at %s."
+                        % (", ".join("[%s]" % item for item in prev["names"]), fmt_pos(prev["lat"], prev["lon"], None))
+                    )
+                by_name[name] = by_coord[key]
+                continue
+            place["names"] = [name]
+            places.append(place)
+            index = len(places) - 1
+            by_name[name] = index
+            by_coord[key] = index
+    return places, notes, errors
+
+
+def print_place_banner(paths, places, notes, errors):
+    if not paths:
+        print("Places: no video-pgm-geotag-missing-media.conf in this directory, the directories above it, $HOME, or $HOME/etc.")
+        print("")
+        return
+    print("Places from:")
+    for path in paths:
+        print("  %s" % path)
+    if errors:
+        print(paint("Config errors:", "31"))
+        for err in errors:
+            print(paint("  %s" % err, "31"))
+    if places:
+        print("  " + "  ".join("[%s]" % place["label"] for place in places))
+    else:
+        print("  No places in those files.")
+    for note in notes:
+        print("  %s" % note)
+    print("")
+
+
+def stamp_from_epoch(epoch):
+    if epoch is None:
+        return "", ""
+    when = datetime.fromtimestamp(epoch, timezone.utc)
+    return when.strftime("%Y:%m:%d"), when.strftime("%H:%M:%S")
+
+
+def print_report(rows, gpx_info, gpx_errors, offset_seconds, tz_note, assumed, max_gap, scope, quicktime, redo, places):
     counts = {}
     for row in rows:
         counts[row["status"]] = counts.get(row["status"], 0) + 1
@@ -867,12 +1002,16 @@ def print_report(rows, gpx_info, gpx_errors, offset_seconds, tz_note, assumed, m
         ("unread", "Could not be read"),
         ("tagged", "Already have a location"),
     )
+    told_places = False
     for status, title in sections:
         chosen = [row for row in rows if row["status"] == status]
         if not chosen:
             continue
         print("")
         print(paint("%s (%s)" % (title, fmt_int(len(chosen))), "1"))
+        if places and status in UNMATCHED and not told_places:
+            print("  These files have no track point. The place names above are the choices.")
+            told_places = True
         chosen.sort(key=lambda row: (row["epoch"] is None, row["epoch"] or 0, row["show"]))
         for row in chosen:
             label = "%-8s" % status
@@ -898,9 +1037,10 @@ def photo_args(item):
         "-GPSLatitudeRef=%s" % ("N" if lat >= 0 else "S"),
         "-GPSLongitude=%s" % abs(lon),
         "-GPSLongitudeRef=%s" % ("E" if lon >= 0 else "W"),
-        "-GPSDateStamp=%s" % item["gps_date"],
-        "-GPSTimeStamp=%s" % item["gps_time"],
     ]
+    if item.get("gps_date") and item.get("gps_time") and item.get("gps_date") != "-" and item.get("gps_time") != "-":
+        args.append("-GPSDateStamp=%s" % item["gps_date"])
+        args.append("-GPSTimeStamp=%s" % item["gps_time"])
     ele = item.get("ele")
     if ele is not None:
         args.append("-GPSAltitude=%s" % abs(ele))
@@ -963,6 +1103,7 @@ def cmd_scan(argv):
     parser.add_argument("--media-list", required=True)
     parser.add_argument("--gpx-list", required=True)
     parser.add_argument("--root-list", required=True)
+    parser.add_argument("--conf-list", default="")
     parser.add_argument("--plan", required=True)
     parser.add_argument("--scope", required=True)
     parser.add_argument("--redo", action="store_true")
@@ -970,6 +1111,9 @@ def cmd_scan(argv):
     if args.max_gap < 0:
         eprint("--max-gap must be zero or more.")
         return 1
+    conf_paths = read_paths(args.conf_list) if args.conf_list else []
+    places, notes, conf_errors = merge_confs(conf_paths)
+    print_place_banner(conf_paths, places, notes, conf_errors)
     media = read_paths(args.media_list)
     gpx_paths = read_paths(args.gpx_list)
     roots = read_paths(args.root_list)
@@ -1030,15 +1174,30 @@ def cmd_scan(argv):
     gpx_info.sort(key=lambda item: (item["start"] is None, item["start"] or 0, item["label"]))
     print_report(
         rows, gpx_info, gpx_errors, offset_seconds, tz_note, assumed,
-        args.max_gap, args.scope, args.quicktime, args.redo,
+        args.max_gap, args.scope, args.quicktime, args.redo, places,
     )
     writes = []
+    choose = []
     for row in rows:
         if "write" in row:
             item = row["write"]
             item["label"] = row["show"]
             writes.append(item)
-    plan = {"write_count": len(writes), "writes": writes}
+        if row["status"] in UNMATCHED:
+            gps_date, gps_time = stamp_from_epoch(row["epoch"])
+            choose.append({
+                "path": row["path"],
+                "kind": row["kind"],
+                "show": row["show"],
+                "gps_date": gps_date,
+                "gps_time": gps_time,
+            })
+    plan = {
+        "write_count": len(writes),
+        "writes": writes,
+        "places": [{"label": place["label"], "lat": place["lat"], "lon": place["lon"]} for place in places],
+        "choose": choose,
+    }
     with open(args.plan, "w", encoding="utf-8") as handle:
         json.dump(plan, handle)
     return 0
@@ -1073,6 +1232,58 @@ def cmd_write(argv):
         print("%s file%s could not be written." % (fmt_int(failed), "" if failed == 1 else "s"))
         return 1
     return 0
+
+
+def cmd_plan_lines(argv):
+    parser = argparse.ArgumentParser(add_help=False)
+    parser.add_argument("--plan", required=True)
+    args = parser.parse_args(argv)
+    with open(args.plan, encoding="utf-8") as handle:
+        plan = json.load(handle)
+    for place in plan.get("places") or []:
+        label = str(place["label"]).replace("\t", " ")
+        print("PLACE\t%s\t%s\t%s" % (label, place["lat"], place["lon"]))
+    for item in plan.get("choose") or []:
+        show = str(item.get("show") or "").replace("\t", " ")
+        print("CHOOSE\t%s\t%s\t%s\t%s\t%s" % (
+            item["path"], item["kind"], show,
+            item.get("gps_date") or "-",
+            item.get("gps_time") or "-",
+        ))
+    return 0
+
+
+def cmd_write_place(argv):
+    parser = argparse.ArgumentParser(add_help=False)
+    parser.add_argument("--exiftool", required=True)
+    parser.add_argument("--path", required=True)
+    parser.add_argument("--kind", required=True)
+    parser.add_argument("--lat", type=float, required=True)
+    parser.add_argument("--lon", type=float, required=True)
+    parser.add_argument("--gps-date", default="")
+    parser.add_argument("--gps-time", default="")
+    parser.add_argument("--label", default="")
+    parser.add_argument("--place", default="")
+    args = parser.parse_args(argv)
+    item = {
+        "path": args.path,
+        "kind": args.kind,
+        "lat": args.lat,
+        "lon": args.lon,
+        "ele": None,
+        "gps_date": args.gps_date,
+        "gps_time": args.gps_time,
+        "label": args.label or os.path.basename(args.path),
+    }
+    ok, message = write_one(args.exiftool, item)
+    shown = args.label or os.path.basename(args.path)
+    if ok:
+        print("%s  [%s]  %s" % (shown, args.place, fmt_pos(args.lat, args.lon, None)))
+        return 0
+    print("%s  could not write [%s]" % (shown, args.place))
+    if message:
+        print("    %s" % message.splitlines()[-1])
+    return 1
 
 
 def selftest():
@@ -1229,6 +1440,37 @@ def selftest():
         assert tcx_rows[0]["status"] == "match"
         assert tcx_rows[0]["write"]["lat"] == 50.0
         assert tcx_rows[0]["write"]["ele"] == 200.0
+
+        near = os.path.join(folder, "near.conf")
+        far_conf = os.path.join(folder, "home.conf")
+        with open(near, "w", encoding="utf-8") as handle:
+            handle.write(
+                "[Ponice 221]\n"
+                "49.59078922757009, 19.966572075569914\n\n"
+                "[Shared]\n"
+                "50.0, 19.0\n"
+            )
+        with open(far_conf, "w", encoding="utf-8") as handle:
+            handle.write(
+                "[Raclawicka 146]\n"
+                "52.19856710851843, 20.980003905723805\n"
+                "[Shared]\n"
+                "51.0, 20.0\n"
+                "[Home]\n"
+                "50.0, 19.0\n"
+                "[Ponice 221]\n"
+                "49.59078922757009, 19.966572075569914\n"
+                "[Broken]\n"
+                "not-coords\n"
+            )
+        merged, notes, errors = merge_confs([near, far_conf])
+        labels = [place["label"] for place in merged]
+        assert labels == ["Ponice 221", "Shared / Home", "Raclawicka 146"]
+        assert merged[1]["lat"] == 50.0
+        assert any("Shared" in note and "Home" in note for note in notes)
+        assert any("Broken" in err for err in errors)
+        assert any(err.startswith("[Shared] has two locations") for err in errors)
+        assert not any(err.startswith("[Ponice 221] has two locations") for err in errors)
     finally:
         shutil.rmtree(folder, ignore_errors=True)
 
@@ -1263,7 +1505,7 @@ def selftest():
 
 def main(argv):
     if len(argv) < 2 or argv[1] in ("-h", "--help"):
-        print("Usage: video-pgm-geotag-missing-media.py scan|write|check-tz|selftest")
+        print("Usage: video-pgm-geotag-missing-media.py scan|write|write-place|plan-lines|check-tz|selftest")
         print("The shell script video-pgm-geotag-missing-media.sh is the way to run this.")
         return 0
     cmd = argv[1]
@@ -1275,6 +1517,10 @@ def main(argv):
         return cmd_scan(argv[2:])
     if cmd == "write":
         return cmd_write(argv[2:])
+    if cmd == "write-place":
+        return cmd_write_place(argv[2:])
+    if cmd == "plan-lines":
+        return cmd_plan_lines(argv[2:])
     eprint("Unknown command: %s" % cmd)
     return 1
 

@@ -1,7 +1,11 @@
 #!/bin/bash
+# v. 20261012.092540 - print .conf errors, and merge entries that are the same location
+# v. 20261012.092157 - merge named places from every .conf found from here up to /, and in $HOME and $HOME/etc
 # v. 20261009.160131 - also read .tcx tracks; a Trackpoint with a time and a position is used like a GPX point
 # v. 20261009.151425 - report which photos and videos have no location, and write one from the nearest GPX point
 
+# 2026.10.12 - v. 0.4 - .conf problems are printed; the same coordinates are one place, and one name with two different coordinates is an error
+# 2026.10.12 - v. 0.3 - a file with no track point can be tagged from [place] labels in video-pgm-geotag-missing-media.conf; every conf found is merged, and the paths are printed first
 # 2026.10.09 - v. 0.2 - .tcx files are read with .gpx, including from --gpx and from the directory search
 # 2026.10.09 - v. 0.1 - initial release: ask this directory or all subdirectories, summarize who has a location, write a missing one from a GPX point close in time
 #
@@ -16,6 +20,10 @@
 #
 # A video gets the point at its start. Track times are UTC. A camera clock with
 # no timezone is shifted by the offset you give (Polish summer time is +02:00).
+#
+# A file with no track point can take a named place from
+# video-pgm-geotag-missing-media.conf. Every copy found is merged: this
+# directory, each directory above it up to /, then $HOME and $HOME/etc.
 #
 
 show_help() {
@@ -51,9 +59,25 @@ one or two seconds, a normal match is about a second away. The report shows
 the gap. A video is tagged at its start.
 
 Nothing is written until you say so. -n prints the report and stops. -y
-writes without asking. A file that already has a location is left as it is,
-unless --redo is given and a point is close enough. The write goes through
-ExifTool. The file time is kept.
+writes the track matches without asking. A file that already has a location
+is left as it is, unless --redo is given and a point is close enough. The
+write goes through ExifTool. The file time is kept.
+
+A file with no GPX or TCX point close enough can be tagged from a named
+place. The names come from video-pgm-geotag-missing-media.conf. The script
+reads every copy it finds, in this order: the current directory, each
+directory above it up to /, then $HOME, then $HOME/etc. The paths are
+printed at the start. A broken line, a name with no coordinates, or a name
+that has two different locations is printed under Config errors. The same
+coordinates are one place: a repeated name is listed once, and two names
+for that point are joined. The closer file is the one that is kept.
+Each place is a line in brackets and the latitude, longitude under it:
+
+  [Ponice 221]
+  49.59078922757009, 19.966572075569914
+
+For each file with no track point you are asked which name to write. -y does
+not pick a place for you.
 
 Video CreateDate is read as UTC, which is right for a GoPro. If a phone
 stored local time in that field, use --quicktime local.
@@ -393,6 +417,33 @@ gm_collect() {
       exit 1
     fi
   done
+  gm_find_confs
+}
+
+gm_note_conf_dir() {
+  local dir="$1" rp f
+  [[ -n "$dir" && -d "$dir" ]] || return 0
+  rp="$(readlink -f -- "$dir" 2>/dev/null || printf '%s' "$dir")"
+  [[ -n "${SEEN_CONF_DIR[$rp]:-}" ]] && return 0
+  SEEN_CONF_DIR[$rp]=1
+  f="${rp}/${CONF_NAME}"
+  [[ -f "$f" ]] || return 0
+  printf '%s\0' "$f" >> "$WORK/confs"
+}
+
+gm_find_confs() {
+  local dir
+  : > "$WORK/confs"
+  dir="$(pwd -P)"
+  while true; do
+    gm_note_conf_dir "$dir"
+    [[ "$dir" == "/" ]] && break
+    dir="$(dirname -- "$dir")"
+  done
+  if [[ -n "${HOME:-}" ]]; then
+    gm_note_conf_dir "$HOME"
+    gm_note_conf_dir "${HOME}/etc"
+  fi
 }
 
 gm_scope_label() {
@@ -415,6 +466,84 @@ gm_scope_label() {
 
 gm_plan_count() {
   python3 -c 'import json,sys; print(json.load(open(sys.argv[1], encoding="utf-8")).get("write_count", 0))' "$1"
+}
+
+gm_load_plan() {
+  local kind a b c d e
+  PLACE_LABEL=()
+  PLACE_LAT=()
+  PLACE_LON=()
+  CHOOSE_PATH=()
+  CHOOSE_KIND=()
+  CHOOSE_SHOW=()
+  CHOOSE_DATE=()
+  CHOOSE_TIME=()
+  while IFS=$'\t' read -r kind a b c d e; do
+    [[ -n "$kind" ]] || continue
+    case "$kind" in
+      PLACE)
+        PLACE_LABEL+=("$a")
+        PLACE_LAT+=("$b")
+        PLACE_LON+=("$c")
+        ;;
+      CHOOSE)
+        CHOOSE_PATH+=("$a")
+        CHOOSE_KIND+=("$b")
+        CHOOSE_SHOW+=("$c")
+        CHOOSE_DATE+=("$d")
+        CHOOSE_TIME+=("$e")
+        ;;
+    esac
+  done < <(python3 "$PY_HELPER" plan-lines --plan "$1")
+}
+
+gm_choose_places() {
+  local i n reply picked
+  if (( ${#PLACE_LABEL[@]} == 0 || ${#CHOOSE_SHOW[@]} == 0 )); then
+    return 0
+  fi
+  if (( DO_YES )) || (( ! script_is_run_interactively )); then
+    echo
+    echo "$(gm_ts) ${#CHOOSE_SHOW[@]} file$( (( ${#CHOOSE_SHOW[@]} == 1 )) || printf 's' ) have no track point. A named place is written only when you pick it."
+    return 0
+  fi
+  echo
+  echo "These files have no GPX or TCX point close enough. Pick a place from the .conf files."
+  for i in "${!CHOOSE_SHOW[@]}"; do
+    echo
+    echo "${CHOOSE_SHOW[$i]}"
+    for n in "${!PLACE_LABEL[@]}"; do
+      printf '  [%d] [%s]   %s, %s\n' "$(( n + 1 ))" "${PLACE_LABEL[$n]}" "${PLACE_LAT[$n]}" "${PLACE_LON[$n]}"
+    done
+    echo "  [s] Skip this file (default)"
+    echo "  [q] Quit"
+    printf 'Place for %s? [s]: ' "${CHOOSE_SHOW[$i]}"
+    IFS= read -r reply || gm_quit
+    reply="${reply,,}"
+    reply="${reply#"${reply%%[![:space:]]*}"}"
+    reply="${reply%"${reply##*[![:space:]]}"}"
+    if [[ -z "$reply" || "$reply" == s ]]; then
+      continue
+    fi
+    if [[ "$reply" == q ]]; then
+      gm_quit
+    fi
+    if [[ "$reply" =~ ^[0-9]+$ ]] && (( 10#$reply >= 1 && 10#$reply <= ${#PLACE_LABEL[@]} )); then
+      picked=$(( 10#$reply - 1 ))
+      python3 "$PY_HELPER" write-place \
+        --exiftool "$EXIFTOOL_BIN" \
+        --path "${CHOOSE_PATH[$i]}" \
+        --kind "${CHOOSE_KIND[$i]}" \
+        --lat "${PLACE_LAT[$picked]}" \
+        --lon "${PLACE_LON[$picked]}" \
+        --gps-date "${CHOOSE_DATE[$i]}" \
+        --gps-time "${CHOOSE_TIME[$i]}" \
+        --label "${CHOOSE_SHOW[$i]}" \
+        --place "${PLACE_LABEL[$picked]}" || return_code=$?
+    else
+      echo "That is not one of the places. This file was skipped."
+    fi
+  done
 }
 
 gm_cleanup() {
@@ -451,7 +580,17 @@ return_code=0
 declare -A SEEN_MEDIA=()
 declare -A SEEN_GPX=()
 declare -A SEEN_ROOT=()
+declare -A SEEN_CONF_DIR=()
 PY_HELPER="$(dirname -- "$(readlink -f -- "${BASH_SOURCE[0]}")")/video-pgm-geotag-missing-media.py"
+CONF_NAME="$(basename -- "${BASH_SOURCE[0]}" .sh).conf"
+PLACE_LABEL=()
+PLACE_LAT=()
+PLACE_LON=()
+CHOOSE_PATH=()
+CHOOSE_KIND=()
+CHOOSE_SHOW=()
+CHOOSE_DATE=()
+CHOOSE_TIME=()
 gm_colors
 
 HEADER_EXTRA_ARGS=()
@@ -575,6 +714,7 @@ SCAN_ARGS=(
   --media-list "$WORK/media"
   --gpx-list "$WORK/gpx"
   --root-list "$WORK/roots"
+  --conf-list "$WORK/confs"
   --plan "$WORK/plan.json"
   --scope "$(gm_scope_label)"
 )
@@ -591,6 +731,8 @@ python3 "$PY_HELPER" "${SCAN_ARGS[@]}" || {
 }
 
 WRITE_N=$(gm_plan_count "$WORK/plan.json")
+gm_load_plan "$WORK/plan.json"
+WRITE_TRACKS=0
 
 if (( DRY_RUN )); then
   echo
@@ -599,35 +741,39 @@ if (( DRY_RUN )); then
   exit 0
 fi
 
-if (( WRITE_N == 0 )); then
+if (( WRITE_N == 0 && ( ${#CHOOSE_SHOW[@]} == 0 || ${#PLACE_LABEL[@]} == 0 ) )); then
   echo
   echo "$(gm_ts) Nothing to write."
   return_code=0
   exit 0
 fi
 
-if (( ! DO_YES )); then
-  if (( ! script_is_run_interactively )); then
+if (( WRITE_N > 0 )); then
+  if (( DO_YES )); then
+    WRITE_TRACKS=1
+  elif (( ! script_is_run_interactively )); then
     echo
-    echo "$(gm_ts) Not a terminal: nothing written. Add -y to write without asking."
-    return_code=0
-    exit 0
+    echo "$(gm_ts) Not a terminal: nothing written. Add -y to write track matches without asking."
+  else
+    echo
+    echo "Write a track location into ${WRITE_N} file$( (( WRITE_N == 1 )) || printf 's' )?"
+    echo "  ExifTool rewrites each file in place. The file time is kept."
+    echo "  A file that already has a location is not in this count, unless --redo."
+    echo "  [y] Yes, write"
+    echo "  [N] No, skip these (default)"
+    echo "  [q] Quit"
+    gm_read_key "Write into ${WRITE_N} file$( (( WRITE_N == 1 )) || printf 's' )? [y/N/q]: " n
+    case "$REPLY" in
+      y) WRITE_TRACKS=1 ;;
+      q) gm_quit ;;
+      *) echo "$(gm_ts) Those track matches were not written." ;;
+    esac
   fi
-  echo
-  echo "Write a location into ${WRITE_N} file$( (( WRITE_N == 1 )) || printf 's' )?"
-  echo "  ExifTool rewrites each file in place. The file time is kept."
-  echo "  A file that already has a location is not in this count, unless --redo."
-  echo "  [y] Yes, write"
-  echo "  [N] No, stop here (default)"
-  echo "  [q] Quit"
-  gm_read_key "Write into ${WRITE_N} file$( (( WRITE_N == 1 )) || printf 's' )? [y/N/q]: " n
-  case "$REPLY" in
-    y) ;;
-    q) gm_quit ;;
-    *) echo "$(gm_ts) Nothing written."; return_code=0; exit 0 ;;
-  esac
+  if (( WRITE_TRACKS )); then
+    echo
+    python3 "$PY_HELPER" write --exiftool "$EXIFTOOL_BIN" --plan "$WORK/plan.json" || return_code=$?
+  fi
 fi
 
-echo
-python3 "$PY_HELPER" write --exiftool "$EXIFTOOL_BIN" --plan "$WORK/plan.json" || return_code=$?
+gm_choose_places
 exit "$return_code"
