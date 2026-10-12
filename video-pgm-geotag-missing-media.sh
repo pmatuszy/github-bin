@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261012.122840 - the backup question is the last one, just before the files are changed
 # v. 20261012.122556 - the backup choice names the file it will be stored as
 # v. 20261012.122130 - the update question follows the backup answer with no blank line
 # v. 20261012.122058 - the run summary has no timestamp on each line
@@ -49,6 +50,7 @@
 # v. 20261009.160131 - also read .tcx tracks; a Trackpoint with a time and a position is used like a GPX point
 # v. 20261009.151425 - report which photos and videos have no location, and write one from the nearest GPX point
 
+# 2026.10.12 - v. 0.50 - the backup question is the last one, just before the files are changed
 # 2026.10.12 - v. 0.49 - the backup choice names the file it will be stored as
 # 2026.10.12 - v. 0.48 - the update question follows the backup answer with no blank line
 # 2026.10.12 - v. 0.47 - the run summary has no timestamp on each line
@@ -159,14 +161,13 @@ one or two seconds, a normal match is about a second away. The report shows
 the gap. A video is tagged at its start.
 
 Each file is shown first. Nothing is written until those answers are done.
-Enter accepts that file. n skips it. The chosen files are updated after that.
-Each one is copied aside, which can take a while. The copy needs free space
-for the file plus 10%. After those answers, a backup of each old file can be
-kept. The default is no. A backup is stored as that file's name with
-_old- and the current date and time. --backup keeps one. --no-backup does
-not. Then you are asked whether to update the chosen files. The default is
-yes. --internet yes or no looks up place names without asking. The default
-is yes. Each file is numbered, such as [1/22], and shown as a
+Enter accepts that file. n skips it. Then you are asked whether to update
+the chosen files. The default is yes. Just before the files are changed, a
+backup of each old file can be kept. The default is no. A backup is stored
+as that file's name with _old- and the current date and time. --backup
+keeps one. --no-backup does not. Each one is copied aside, which can take a
+while. The copy needs free space for the file plus 10%. --internet yes or no
+looks up place names without asking. The default is yes. Each file is numbered, such as [1/22], and shown as a
 short table: the file, the track, the gap, the location, map links, and the
 place name. -n prints the report and stops. -y writes the track matches
 without asking. A file that already has a location is left as it is, unless
@@ -576,34 +577,46 @@ gm_ask_coord() {
 }
 
 gm_write_chosen() {
-  local lat="$1" lon="$2" place="$3" i="$4"
+  PLACE_Q_LAT+=("$1")
+  PLACE_Q_LON+=("$2")
+  PLACE_Q_NAME+=("$3")
+  PLACE_Q_I+=("$4")
+}
+
+gm_flush_places() {
+  local n i lat lon place
   local -a place_args
-  gm_ask_backup "${CHOOSE_PATH[$i]}"
-  gm_proc_begin
-  place_args=(
-    write-place
-    --exiftool "$EXIFTOOL_BIN"
-    --path "${CHOOSE_PATH[$i]}"
-    --kind "${CHOOSE_KIND[$i]}"
-    --lat "$lat"
-    --lon "$lon"
-    --gps-date "${CHOOSE_DATE[$i]}"
-    --gps-time "${CHOOSE_TIME[$i]}"
-    --label "${CHOOSE_SHOW[$i]}"
-    --place "$place"
-  )
-  if (( USE_COLOR )); then
-    place_args+=(--colors)
-  fi
-  if (( BACKUP == 1 )); then
-    place_args+=(--backup --backup-stamp "$BACKUP_STAMP")
-  fi
-  if python3 "$PY_HELPER" "${place_args[@]}"; then
-    PLACE_WROTE=$(( PLACE_WROTE + 1 ))
-  else
-    return_code=$?
-  fi
-  gm_proc_end
+  for n in "${!PLACE_Q_I[@]}"; do
+    i="${PLACE_Q_I[$n]}"
+    lat="${PLACE_Q_LAT[$n]}"
+    lon="${PLACE_Q_LON[$n]}"
+    place="${PLACE_Q_NAME[$n]}"
+    gm_proc_begin
+    place_args=(
+      write-place
+      --exiftool "$EXIFTOOL_BIN"
+      --path "${CHOOSE_PATH[$i]}"
+      --kind "${CHOOSE_KIND[$i]}"
+      --lat "$lat"
+      --lon "$lon"
+      --gps-date "${CHOOSE_DATE[$i]}"
+      --gps-time "${CHOOSE_TIME[$i]}"
+      --label "${CHOOSE_SHOW[$i]}"
+      --place "$place"
+    )
+    if (( USE_COLOR )); then
+      place_args+=(--colors)
+    fi
+    if (( BACKUP == 1 )); then
+      place_args+=(--backup --backup-stamp "$BACKUP_STAMP")
+    fi
+    if python3 "$PY_HELPER" "${place_args[@]}"; then
+      PLACE_WROTE=$(( PLACE_WROTE + 1 ))
+    else
+      return_code=$?
+    fi
+    gm_proc_end
+  done
 }
 
 gm_read_key() {
@@ -1682,7 +1695,7 @@ gm_backup_stored_name() {
 }
 
 gm_ask_backup() {
-  local reply stamp path stored
+  local reply stamp path stored qi
   local -a paths=()
   if (( BACKUP >= 0 )); then
     return 0
@@ -1693,12 +1706,19 @@ gm_ask_backup() {
   fi
   stamp="$(date '+%Y%m%d_%H%M%S')"
   BACKUP_STAMP="$stamp"
-  if [[ -n "${1:-}" ]]; then
-    paths+=("$1")
-  elif [[ -s "${WORK}/write-only" ]]; then
-    while IFS= read -r -d '' path; do
-      paths+=("$path")
-    done < "$WORK/write-only"
+  if (( WRITE_TRACKS )); then
+    if [[ -s "${WORK}/write-only" ]]; then
+      while IFS= read -r -d '' path; do
+        paths+=("$path")
+      done < "$WORK/write-only"
+    else
+      paths+=("${WRITE_PATH[@]}")
+    fi
+  fi
+  if (( ${#PLACE_Q_I[@]} )); then
+    for qi in "${PLACE_Q_I[@]}"; do
+      paths+=("${CHOOSE_PATH[$qi]}")
+    done
   fi
   echo
   echo "A backup keeps the old file under a new name, with the current date and time."
@@ -1870,6 +1890,10 @@ GM_PLACE="typed"
 GM_LAST_LAT=""
 GM_LAST_LON=""
 PLACE_WROTE=0
+PLACE_Q_LAT=()
+PLACE_Q_LON=()
+PLACE_Q_NAME=()
+PLACE_Q_I=()
 SUM_READY=0
 SUM_FILES=0
 SUM_ALREADY=0
@@ -2238,25 +2262,30 @@ if (( WRITE_N > 0 )); then
   fi
   if (( WRITE_TRACKS )); then
     gm_ready_to_write
-    gm_ask_backup
-    if gm_ask_update; then
-      gm_print_equivalent
-      gm_proc_begin
-      write_args=(write --exiftool "$EXIFTOOL_BIN" --plan "$WORK/plan.json")
-      if [[ -s "${WORK}/write-only" ]]; then
-        write_args+=(--only-list "$WORK/write-only")
-      fi
-      if (( USE_COLOR )); then
-        write_args+=(--colors)
-      fi
-      if (( BACKUP == 1 )); then
-        write_args+=(--backup --backup-stamp "$BACKUP_STAMP")
-      fi
-      python3 "$PY_HELPER" "${write_args[@]}" || return_code=$?
-      gm_proc_end
-    fi
+    gm_ask_update
   fi
 fi
 
 gm_choose_places
+
+if (( WRITE_TRACKS || ${#PLACE_Q_I[@]} )); then
+  gm_ask_backup
+  gm_print_equivalent
+  if (( WRITE_TRACKS )); then
+    gm_proc_begin
+    write_args=(write --exiftool "$EXIFTOOL_BIN" --plan "$WORK/plan.json")
+    if [[ -s "${WORK}/write-only" ]]; then
+      write_args+=(--only-list "$WORK/write-only")
+    fi
+    if (( USE_COLOR )); then
+      write_args+=(--colors)
+    fi
+    if (( BACKUP == 1 )); then
+      write_args+=(--backup --backup-stamp "$BACKUP_STAMP")
+    fi
+    python3 "$PY_HELPER" "${write_args[@]}" || return_code=$?
+    gm_proc_end
+  fi
+  gm_flush_places
+fi
 exit "$return_code"
