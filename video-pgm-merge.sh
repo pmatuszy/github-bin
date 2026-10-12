@@ -1,4 +1,6 @@
 #!/bin/bash
+# v. 20261012.082500 - size-split chapters: next clip must start at prev time + duration (±2s)
+# v. 20261012.081800 - 12G chapter: full split ≥ ~9.8 GiB; wall-clock link only for a large remainder
 # v. 20261009.181600 - 12G chapter: size decides a full split (Mission 1 ~10 GB can be <<18 min); 8–13 GiB band
 # v. 20261009.180500 - size-split chapter link: wall-clock gap when duration end-time mismatch (Mission 1 two-chapter pairs)
 # v. 20261009.174500 - 12 GB chapter band min 10000 MiB (Mission 1 ~10–11 GB splits below old 11000 MiB floor)
@@ -2249,7 +2251,7 @@ gopro_datetime_to_epoch() {
 size_split_chapter_timestamps_follow() {
   local prev_f="$1" next_f="$2"
   local pb nb prev_date prev_time next_date next_time
-  local prev_epoch next_epoch dur expected delta tol min_gap max_gap gap
+  local prev_epoch next_epoch dur expected delta tol gap
   pb="${prev_f##*/}"
   nb="${next_f##*/}"
   gopro_timestamp_cam_from_basename "$pb" || return 1
@@ -2262,12 +2264,8 @@ size_split_chapter_timestamps_follow() {
     return 0
   fi
 
-  tol="${PGM_SIZE_SPLIT_TIME_TOLERANCE_SEC:-180}"
-  min_gap="${PGM_SIZE_SPLIT_TIME_MIN_GAP_SEC:-300}"
-  max_gap="${PGM_SIZE_SPLIT_TIME_MAX_GAP_SEC:-720}"
-  if size_split_tier_for_file "$prev_f" | grep -qx 12; then
-    max_gap="${PGM_SIZE_SPLIT_12G_TIME_MAX_GAP_SEC:-2400}"
-  fi
+  # Next realtime chapter must start at prev start + duration. GoPro: ±2s.
+  tol="${PGM_SIZE_SPLIT_TIME_TOLERANCE_SEC:-2}"
 
   dur=$(ffprobe_duration_seconds "$prev_f" 2>/dev/null) || dur=""
 
@@ -2282,7 +2280,6 @@ size_split_chapter_timestamps_follow() {
     fi
     gap=$(( next_epoch - prev_epoch ))
     part_chapter_timelapse_wall_clock_ok "$prev_f" "$gap" "$dur" && return 0
-    part_chapter_realtime_wall_clock_gap_ok "$prev_f" "$gap" && return 0
     # Without duration: bare _Timelapse chapters often sit ~20–80 min apart (Hero7 ~4 GB).
     if [[ -z "$dur" ]] && gopro_basename_is_timelapse "$pb" \
       && (( gap >= 1200 && gap <= 4800 )); then
@@ -2305,7 +2302,6 @@ size_split_chapter_timestamps_follow() {
   fi
   gap=$(( next_epoch - prev_epoch ))
   part_chapter_timelapse_wall_clock_ok "$prev_f" "$gap" "$dur" && return 0
-  part_chapter_realtime_wall_clock_gap_ok "$prev_f" "$gap" && return 0
   if [[ -z "$dur" ]] && gopro_basename_is_timelapse "$pb" \
     && (( gap >= 1200 && gap <= 4800 )); then
     return 0
@@ -2393,8 +2389,8 @@ gopro_camera_from_basename() {
 # Decimal literals: $(( 10000 * 1024 * 1024 )) overflows 32-bit bash arithmetic.
 PGM_SIZE_SPLIT_4G_MIN_BYTES=3670016000
 PGM_SIZE_SPLIT_4G_MAX_BYTES=4718592000
-# 8–13 GiB: Mission 1 Pro splits ~10–11 GiB; remainders (e.g. ~7.2 GiB) stay below this floor.
-PGM_SIZE_SPLIT_12G_MIN_BYTES=8589934592
+# ~9.77–13 GiB: Mission 1 Pro size-cap splits ~10–11 GiB. An 8.1 GiB complete clip is not a full split.
+PGM_SIZE_SPLIT_12G_MIN_BYTES=10485760000
 PGM_SIZE_SPLIT_12G_MAX_BYTES=13958643712
 # Legacy names used by near-miss hints (4 GB band).
 PGM_SIZE_SPLIT_MIN_BYTES=$PGM_SIZE_SPLIT_4G_MIN_BYTES

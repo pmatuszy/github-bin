@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# v. 20261012.082500 - GoPro size-split _part_: next clip must start at prev creation + duration (±2s); no wall-clock-only pairing
+# v. 20261012.081800 - GoPro 12G chapter: full split ≥ ~9.8 GiB; wall-clock link only for a large remainder (not a short independent clip)
 # v. 20261011.213700 - collision [A]: overwrite identical-hash dest for the rest of this run
 # v. 20261009.181600 - GoPro 12G chapters: sort/cut kept empty peers (no _part_); size not 18 min duration; 8–13 GiB band
 # v. 20261009.180500 - GoPro size-split chapter link: wall-clock gap when duration end-time mismatch; titled MP4 stems in _part backfill
@@ -100,6 +102,8 @@
 # v. 20260721.132007 - Samsung timestamp media: preserve optional numeric sorting prefix when appending make/model
 # v. 20260721.112812 - GoPro camera labels: GoPro_Hero4_Silver style (not GOPRO4_SILVER)
 
+# 2026.10.12 - v. 19.352.082500 - GoPro size-split _part_: a suspected next chapter must start within 2s of (previous basename time + ffprobe duration). GoPro chapter end/start times match; a 6 min gap (18:18:44 vs 18:24:39) is a new recording. Wall-clock-only pairing is removed.
+# 2026.10.12 - v. 19.351.081800 - GoPro size-split _part_: full 12G chapter starts at 10000 MiB (~9.77 GiB), not 8 GiB (an 8.1 GiB Mission 1 clip is a complete recording)
 # 2026.10.11 - v. 19.350.213700 - Collision menu [A]: when source and destination MD5 match, overwrite the destination for all further identical-hash collisions this run (any directory); [C] still overwrites every collision in the current source directory
 # 2026.10.06 - v. 19.349.183857 - NEF listing uses /bin/ls so a shell ls function cannot add --full-time
 # 2026.09.30 - v. 19.348.213145 - Nikon Coolpix P900: DSCN####.JPG/.JPEG/.MOV/.MP4/.AVI with Make NIKON and Camera Model Name COOLPIX P900 → YYYYMMDD_HHMMSS_-_-_Nikon_COOLPIX_P900.ext from Date/Time Original (then Create Date); other DSCN cameras are left unchanged
@@ -12683,13 +12687,11 @@ gopro_renamed_same_camera_mp4_count_in_dir() {
 # Decimal literals: $(( 10000 * 1024 * 1024 )) overflows 32-bit bash arithmetic.
 RENAME_GOPRO_SIZE_SPLIT_4G_MIN_BYTES=3670016000
 RENAME_GOPRO_SIZE_SPLIT_4G_MAX_BYTES=4718592000
-# 8–13 GiB: Mission 1 Pro splits ~10–11 GiB; remainders (e.g. ~7.2 GiB) stay below this floor.
-RENAME_GOPRO_SIZE_SPLIT_12G_MIN_BYTES=8589934592
+# ~9.77–13 GiB: Mission 1 Pro size-cap splits ~10–11 GiB. An 8.1 GiB complete clip is not a full split.
+RENAME_GOPRO_SIZE_SPLIT_12G_MIN_BYTES=10485760000
 RENAME_GOPRO_SIZE_SPLIT_12G_MAX_BYTES=13958643712
-RENAME_GOPRO_SIZE_SPLIT_TIME_TOLERANCE_SEC="${RENAME_GOPRO_SIZE_SPLIT_TIME_TOLERANCE_SEC:-180}"
-RENAME_GOPRO_SIZE_SPLIT_TIME_MIN_GAP_SEC="${RENAME_GOPRO_SIZE_SPLIT_TIME_MIN_GAP_SEC:-300}"
-RENAME_GOPRO_SIZE_SPLIT_TIME_MAX_GAP_SEC="${RENAME_GOPRO_SIZE_SPLIT_TIME_MAX_GAP_SEC:-720}"
-RENAME_GOPRO_SIZE_SPLIT_12G_TIME_MAX_GAP_SEC="${RENAME_GOPRO_SIZE_SPLIT_12G_TIME_MAX_GAP_SEC:-2400}"
+# Next chapter start must match previous start + duration (GoPro end/start are sequential).
+RENAME_GOPRO_SIZE_SPLIT_TIME_TOLERANCE_SEC="${RENAME_GOPRO_SIZE_SPLIT_TIME_TOLERANCE_SEC:-2}"
 RENAME_GOPRO_SIZE_SPLIT_DURATION_REJECT_BELOW_SEC="${RENAME_GOPRO_SIZE_SPLIT_DURATION_REJECT_BELOW_SEC:-420}"
 # High-bitrate Mission 1 ~10 GB chapters are often ~10–16 min; do not require Hero-like ~18 min.
 RENAME_GOPRO_SIZE_SPLIT_12G_DURATION_REJECT_BELOW_SEC="${RENAME_GOPRO_SIZE_SPLIT_12G_DURATION_REJECT_BELOW_SEC:-120}"
@@ -12790,21 +12792,21 @@ gopro_size_split_is_partial_segment_at_tier() {
     return 1
 }
 
-gopro_rename_size_split_realtime_wall_clock_gap_ok() {
-    local prev_f="$1" gap="$2"
-    local min_gap max_gap
+# True when next clip's basename time is previous start + previous duration (± tol seconds).
+gopro_rename_size_split_end_matches_next_start() {
+    local prev_epoch="$1" next_epoch="$2" dur="$3" tol="$4"
+    local expected delta
 
-    min_gap="$RENAME_GOPRO_SIZE_SPLIT_TIME_MIN_GAP_SEC"
-    max_gap="$RENAME_GOPRO_SIZE_SPLIT_TIME_MAX_GAP_SEC"
-    [[ "$(gopro_size_split_tier_for_path "$prev_f" 2>/dev/null)" == 12 ]] \
-        && max_gap="$RENAME_GOPRO_SIZE_SPLIT_12G_TIME_MAX_GAP_SEC"
-    (( gap >= min_gap && gap <= max_gap ))
+    [[ -n "$dur" && -n "$prev_epoch" && -n "$next_epoch" ]] || return 1
+    expected=$(awk -v p="$prev_epoch" -v d="$dur" 'BEGIN{printf "%d", p+d+0.5}')
+    delta=$(( next_epoch - expected ))
+    (( delta >= -tol && delta <= tol ))
 }
 
 gopro_rename_size_split_timestamps_follow() {
     local prev_f="$1" next_f="$2"
     local pb nb prev_date prev_time next_date next_time
-    local prev_epoch next_epoch dur expected delta tol gap
+    local prev_epoch next_epoch dur tol
 
     pb="$(basename -- "$prev_f")"
     nb="$(basename -- "$next_f")"
@@ -12813,36 +12815,24 @@ gopro_rename_size_split_timestamps_follow() {
     gopro_renamed_basename_datetime_fields "$nb" || return 1
     next_date="$GOPRO_RENAME_TS_DATE" next_time="$GOPRO_RENAME_TS_TIME"
 
+    # Same capture timestamp in both names (GX01/GX02 chapters of one recording).
     if [[ "$prev_date" == "$next_date" && "$prev_time" == "$next_time" ]]; then
         return 0
     fi
 
+    dur="$(gopro_rename_ffprobe_duration_seconds "$prev_f" 2>/dev/null)" || return 1
     tol="$RENAME_GOPRO_SIZE_SPLIT_TIME_TOLERANCE_SEC"
-    dur="$(gopro_rename_ffprobe_duration_seconds "$prev_f" 2>/dev/null)" || dur=""
 
     if prev_epoch="$(gopro_rename_datetime_to_epoch "$prev_date" "$prev_time" 2>/dev/null)" \
         && next_epoch="$(gopro_rename_datetime_to_epoch "$next_date" "$next_time" 2>/dev/null)"; then
-        if [[ -n "$dur" ]]; then
-            expected=$(awk -v p="$prev_epoch" -v d="$dur" 'BEGIN{printf "%d", p+d+0.5}')
-            delta=$(( next_epoch - expected ))
-            (( delta >= -tol && delta <= tol )) && return 0
-        fi
-        gap=$(( next_epoch - prev_epoch ))
-        gopro_rename_size_split_realtime_wall_clock_gap_ok "$prev_f" "$gap"
+        gopro_rename_size_split_end_matches_next_start "$prev_epoch" "$next_epoch" "$dur" "$tol"
         return $?
     fi
 
     [[ "$prev_date" == "$next_date" ]] || return 1
     prev_epoch="$(gopro_rename_hhmmss_to_seconds "$prev_time")"
     next_epoch="$(gopro_rename_hhmmss_to_seconds "$next_time")"
-    (( next_epoch >= prev_epoch )) || return 1
-    if [[ -n "$dur" ]]; then
-        expected=$(awk -v p="$prev_epoch" -v d="$dur" 'BEGIN{printf "%d", p+d+0.5}')
-        delta=$(( next_epoch - expected ))
-        (( delta >= -tol && delta <= tol )) && return 0
-    fi
-    gap=$(( next_epoch - prev_epoch ))
-    gopro_rename_size_split_realtime_wall_clock_gap_ok "$prev_f" "$gap"
+    gopro_rename_size_split_end_matches_next_start "$prev_epoch" "$next_epoch" "$dur" "$tol"
 }
 
 gopro_size_split_run_valid() {
