@@ -1,4 +1,6 @@
 #!/bin/bash
+# v. 20261012.182840 - each matching track shows its time difference, coordinates, and map links
+# v. 20261012.182705 - a time close to two tracks asks which file to use
 # v. 20261012.180710 - space accepts the default, the same as Enter
 # v. 20261012.165905 - a bar shows how far each file copy has got
 # v. 20261012.165212 - every track file is read, and a named day can leave one out of smart loading
@@ -75,6 +77,8 @@
 # v. 20261009.160131 - also read .tcx tracks; a Trackpoint with a time and a position is used like a GPX point
 # v. 20261009.151425 - report which photos and videos have no location, and write one from the nearest GPX point
 
+# 2026.10.12 - v. 0.77 - each matching track shows its time difference, coordinates, and map links
+# 2026.10.12 - v. 0.76 - a time close to two tracks asks which file to use
 # 2026.10.12 - v. 0.75 - space accepts the default, the same as Enter
 # 2026.10.12 - v. 0.74 - a bar shows how far each file copy has got
 # 2026.10.12 - v. 0.73 - every track file is read, and a named day can leave one out of smart loading
@@ -208,9 +212,12 @@ two hours ahead of UTC. --tz auto learns that shift from files in the same
 run that already have both a camera time and a GPS time.
 
 A file with no location is a match when some track point is within --max-gap
-seconds (default 30). The closest point is the one used. With a point every
-one or two seconds, a normal match is about a second away. The report shows
-the gap. A video is tagged at its start.
+seconds (default 30). The closest point is the one used. When that time is
+close enough in more than one track file, each file is listed with its time
+difference, coordinates, and map links. t lets you choose which file. The
+closest stays the default. With a point every one or two seconds, a normal
+match is about a second away. The report shows the gap. A video is tagged at
+its start.
 
 A file whose name contains screenshot is skipped. That covers names such as
 WhatsApp-screenshot and Signal-screenshot. The script says the file is
@@ -904,6 +911,9 @@ gm_track_prompt() {
   keys+=(Y n a)
   if [[ "$has_back" == yes ]]; then
     keys+=(b)
+  fi
+  if [[ "$2" == yes ]]; then
+    keys+=(t)
   fi
   keys+=(f q)
   local IFS=/
@@ -1946,7 +1956,7 @@ gm_plan_count() {
 }
 
 gm_load_plan() {
-  local kind a b c d e f g h i j k
+  local kind a b c d e f g h i j k last
   PLACE_LABEL=()
   PLACE_LAT=()
   PLACE_LON=()
@@ -1969,6 +1979,16 @@ gm_load_plan() {
   WRITE_TRACK=()
   WRITE_METHOD=()
   WRITE_STATUS=()
+  WRITE_ALT_START=()
+  WRITE_ALT_COUNT=()
+  ALT_TRACK=()
+  ALT_GAP=()
+  ALT_LAT=()
+  ALT_LON=()
+  ALT_ELE=()
+  ALT_DATE=()
+  ALT_TIME=()
+  ALT_HEIGHT=()
   while IFS=$'\t' read -r kind a b c d e f g h i j k; do
     [[ -n "$kind" ]] || continue
     case "$kind" in
@@ -1986,6 +2006,22 @@ gm_load_plan() {
         WRITE_TRACK+=("$f")
         WRITE_METHOD+=("$g")
         WRITE_STATUS+=("$h")
+        WRITE_ALT_START+=("${#ALT_TRACK[@]}")
+        WRITE_ALT_COUNT+=(0)
+        ;;
+      ALT)
+        ALT_TRACK+=("$b")
+        ALT_GAP+=("$c")
+        ALT_LAT+=("$d")
+        ALT_LON+=("$e")
+        ALT_ELE+=("$f")
+        ALT_DATE+=("$g")
+        ALT_TIME+=("$h")
+        ALT_HEIGHT+=("$i")
+        if (( ${#WRITE_ALT_COUNT[@]} )); then
+          last=$(( ${#WRITE_ALT_COUNT[@]} - 1 ))
+          WRITE_ALT_COUNT[$last]=$(( ${WRITE_ALT_COUNT[$last]} + 1 ))
+        fi
         ;;
       CHOOSE)
         CHOOSE_PATH+=("$a")
@@ -2007,6 +2043,96 @@ gm_load_plan() {
 gm_note_write() {
   printf '%s\0' "$1" >> "$WORK/write-only"
   printf '%s\0%s\0' "$1" "$2" >> "$WORK/write-address"
+}
+
+gm_note_track_pick() {
+  printf '%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0' \
+    "$1" "$2" "$3" "$4" "$5" "$6" "$7" "$8" >> "$WORK/track-pick"
+}
+
+gm_undo_track_pick() {
+  local path="$1" item idx n
+  local -a parts=()
+  [[ -s "${WORK}/track-pick" ]] || return 0
+  while IFS= read -r -d '' item; do
+    parts+=("$item")
+  done < "${WORK}/track-pick"
+  n=${#parts[@]}
+  (( n >= 8 )) || return 0
+  [[ "${parts[$(( n - 8 ))]}" == "$path" ]] || return 0
+  : > "${WORK}/track-pick"
+  for (( idx = 0; idx < n - 8; idx++ )); do
+    printf '%s\0' "${parts[$idx]}" >> "${WORK}/track-pick"
+  done
+}
+
+gm_print_track_alts() {
+  local i="$1" n start count idx loc note
+  start=${WRITE_ALT_START[$i]}
+  count=${WRITE_ALT_COUNT[$i]}
+  (( count > 1 )) || return 0
+  echo
+  echo "  This time is close enough in more than one track."
+  for (( n = 0; n < count; n++ )); do
+    idx=$(( start + n ))
+    echo
+    note=""
+    if (( n == 0 )); then
+      note=" (closest)"
+    fi
+    printf '  [%d] %s%s\n' "$(( n + 1 ))" "$(gm_green "${ALT_TRACK[$idx]}")" "$note"
+    printf '      %-22s %s\n' "Time difference" "${ALT_GAP[$idx]}"
+    loc="${ALT_LAT[$idx]}, ${ALT_LON[$idx]}"
+    if [[ -n "${ALT_HEIGHT[$idx]}" && "${ALT_HEIGHT[$idx]}" != "-" ]]; then
+      loc="${loc}, ${ALT_HEIGHT[$idx]}"
+    fi
+    printf '      %-22s %s\n' "Location" "$(gm_blue "$loc")"
+    gm_map_rows "${ALT_LAT[$idx]}" "${ALT_LON[$idx]}" "      "
+  done
+}
+
+gm_ask_which_track() {
+  local count="$1" first reply prompt n discard
+  local -a keys=()
+  if (( count <= 6 )); then
+    for (( n = 1; n <= count; n++ )); do
+      keys+=("$n")
+    done
+  else
+    keys+=("1-${count}")
+  fi
+  prompt="$(IFS=/; printf '%s' "${keys[*]}")"
+  while true; do
+    printf 'Which track? [%s]: ' "$prompt"
+    while IFS= read -r -t 0.02 -n 1 discard; do :; done
+    IFS= read -r -n 1 first || first=""
+    if [[ "$first" == $'\e' ]]; then
+      gm_swallow_escape
+      echo
+      echo "That is not a choice."
+      continue
+    fi
+    if [[ -z "$first" || "$first" == $'\n' || "$first" == ' ' ]]; then
+      if [[ "$first" == ' ' ]]; then
+        echo
+      fi
+      printf '  [1] the closest\n'
+      REPLY=0
+      return 0
+    fi
+    if [[ "$first" =~ [0-9] ]]; then
+      gm_take_place_number "$first" "$count" || continue
+      reply="$REPLY"
+      if [[ "$reply" =~ ^[0-9]+$ ]] && (( 10#$reply >= 1 && 10#$reply <= count )); then
+        REPLY=$(( 10#$reply - 1 ))
+        return 0
+      fi
+      echo "That is not a choice."
+      continue
+    fi
+    echo
+    echo "That is not a choice."
+  done
 }
 
 gm_undo_track_answer() {
@@ -2068,11 +2194,11 @@ gm_write_row() {
 }
 
 gm_map_rows() {
-  local lat="$1" lon="$2"
-  gm_write_row "Google Maps" "https://www.google.com/maps/search/?api=1&query=${lat},${lon}"
-  gm_write_row "OpenStreetMap" "https://www.openstreetmap.org/?mlat=${lat}&mlon=${lon}#map=18/${lat}/${lon}"
-  gm_write_row "Apple Maps" "https://maps.apple.com/?q=${lat},${lon}"
-  gm_write_row "Microsoft Maps" "https://www.bing.com/maps?cp=${lat}~${lon}&lvl=18"
+  local lat="$1" lon="$2" prefix="${3:-  }"
+  printf '%s%-22s %s\n' "$prefix" "Google Maps" "https://www.google.com/maps/search/?api=1&query=${lat},${lon}"
+  printf '%s%-22s %s\n' "$prefix" "OpenStreetMap" "https://www.openstreetmap.org/?mlat=${lat}&mlon=${lon}#map=18/${lat}/${lon}"
+  printf '%s%-22s %s\n' "$prefix" "Apple Maps" "https://maps.apple.com/?q=${lat},${lon}"
+  printf '%s%-22s %s\n' "$prefix" "Microsoft Maps" "https://www.bing.com/maps?cp=${lat}~${lon}&lvl=18"
 }
 
 gm_finish_asking() {
@@ -2094,7 +2220,7 @@ gm_finish_asking() {
 
 gm_ask_track_writes() {
   local i reply loc lat lon rest finish shown total desc status accepted path left
-  local n picked prompt has_back track_n
+  local n picked prompt has_back track_n alt_n alt_i pick_i
   rest=0
   finish=0
   shown=0
@@ -2107,6 +2233,7 @@ gm_ask_track_writes() {
   TRACK_MANUAL_NAME=()
   : > "$WORK/write-only"
   : > "$WORK/write-address"
+  : > "$WORK/track-pick"
   if (( ${#PLACE_LABEL[@]} )); then
     gm_place_width
   fi
@@ -2158,12 +2285,19 @@ gm_ask_track_writes() {
         gm_print_place_line "$(( n + 1 ))" "${PLACE_LABEL[$n]}" "$(gm_blue "${PLACE_LAT[$n]}, ${PLACE_LON[$n]}")"
       done
     fi
+    alt_n=${WRITE_ALT_COUNT[$i]:-0}
+    if (( alt_n > 1 )); then
+      gm_print_track_alts "$i"
+    fi
     echo
     echo "  [Y] Write this (default)"
     echo "  [n] Skip this file"
     echo "  [a] Write this and the rest"
     if (( i > 0 )); then
       echo "  [b] Undo the last answer and back to the previous file"
+    fi
+    if (( alt_n > 1 )); then
+      echo "  [t] Choose which track file"
     fi
     echo "  [f] Finish. Write only the files already accepted"
     echo "  [q] Quit, and write nothing"
@@ -2172,7 +2306,11 @@ gm_ask_track_writes() {
     else
       has_back=no
     fi
-    prompt="$(gm_track_prompt "$has_back")"
+    if (( alt_n > 1 )); then
+      prompt="$(gm_track_prompt "$has_back" yes)"
+    else
+      prompt="$(gm_track_prompt "$has_back" no)"
+    fi
     while true; do
       gm_read_track_choice "Write this location? [${shown}/${total}] ${prompt}: " y "Write this"
       reply="$REPLY"
@@ -2185,6 +2323,12 @@ gm_ask_track_writes() {
       fi
       case "$reply" in
         y|n|a|f|q) break ;;
+        t)
+          if (( alt_n > 1 )); then
+            break
+          fi
+          echo "That is not a choice."
+          ;;
         b)
           if (( i > 0 )); then
             break
@@ -2204,6 +2348,22 @@ gm_ask_track_writes() {
     fi
     case "$reply" in
       y) gm_note_write "${WRITE_PATH[$i]}" "$desc" ;;
+      t)
+        printf '  [t] Choose which track file\n'
+        gm_ask_which_track "$alt_n"
+        pick_i="$REPLY"
+        alt_i=$(( ${WRITE_ALT_START[$i]} + pick_i ))
+        printf '  [%d] %s  time difference %s  %s\n' "$(( pick_i + 1 ))" "$(gm_green "${ALT_TRACK[$alt_i]}")" "${ALT_GAP[$alt_i]}" "$(gm_blue "${ALT_LAT[$alt_i]}, ${ALT_LON[$alt_i]}")"
+        gm_lookup_place "${ALT_LAT[$alt_i]}" "${ALT_LON[$alt_i]}" quiet
+        desc="$GM_PLACE_NAME"
+        gm_note_write "${WRITE_PATH[$i]}" "$desc"
+        if (( pick_i > 0 )); then
+          gm_note_track_pick "${WRITE_PATH[$i]}" "${ALT_LAT[$alt_i]}" "${ALT_LON[$alt_i]}" "${ALT_ELE[$alt_i]}" \
+            "${ALT_DATE[$alt_i]}" "${ALT_TIME[$alt_i]}" "${ALT_TRACK[$alt_i]}" "${ALT_GAP[$alt_i]}"
+        fi
+        i=$(( i + 1 ))
+        continue
+        ;;
       a)
         gm_note_write "${WRITE_PATH[$i]}" "$desc"
         rest=1
@@ -2213,6 +2373,7 @@ gm_ask_track_writes() {
           printf '  [b] Undo the last answer and back to the previous file\n'
           gm_undo_track_answer "${WRITE_PATH[$(( i - 1 ))]}"
           gm_undo_track_place "${WRITE_PATH[$(( i - 1 ))]}"
+          gm_undo_track_pick "${WRITE_PATH[$(( i - 1 ))]}"
           i=$(( i - 1 ))
         fi
         continue
@@ -3066,6 +3227,9 @@ if (( WRITE_TRACKS || ${#PLACE_Q_I[@]} || ${#TRACK_MANUAL_PATH[@]} )); then
       fi
       if [[ -s "${WORK}/write-address" ]]; then
         write_args+=(--address-list "$WORK/write-address")
+      fi
+      if [[ -s "${WORK}/track-pick" ]]; then
+        write_args+=(--track-pick "$WORK/track-pick")
       fi
       if (( USE_COLOR )); then
         write_args+=(--colors)

@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# v. 20261012.182840 - each matching track shows its time difference, coordinates, and map links
+# v. 20261012.182705 - a time close to two tracks asks which file to use
 # v. 20261012.180710 - space accepts the default, the same as Enter
 # v. 20261012.165905 - a bar shows how far each file copy has got
 # v. 20261012.165212 - every track file is read, and a named day can leave one out of smart loading
@@ -75,6 +77,8 @@
 # v. 20261009.160131 - also read .tcx tracks; a Trackpoint with a time and a position joins the same search as GPX
 # v. 20261009.151425 - match a photo or video time to the nearest GPX point and write that location with exiftool
 
+# 2026.10.12 - v. 0.77 - each matching track shows its time difference, coordinates, and map links
+# 2026.10.12 - v. 0.76 - a time close to two tracks asks which file to use
 # 2026.10.12 - v. 0.75 - space accepts the default, the same as Enter
 # 2026.10.12 - v. 0.74 - a bar shows how far each file copy has got
 # 2026.10.12 - v. 0.73 - every track file is read, and a named day can leave one out of smart loading
@@ -840,6 +844,57 @@ def haversine_m(lat1, lon1, lat2, lon2):
     return 2 * radius * math.asin(min(1.0, math.sqrt(aa)))
 
 
+def close_tracks(points, epoch, max_gap):
+    """Closest point in each track file that falls inside the time window."""
+    if not points:
+        return []
+    index = nearest_index(points, epoch)
+    best = {}
+    seen = []
+
+    def consider(at):
+        point = points[at]
+        gap = abs(point[0] - epoch)
+        if gap > max_gap:
+            return False
+        path = point[4]
+        prev = best.get(path)
+        if prev is None:
+            seen.append(path)
+            best[path] = (gap, point)
+        elif gap < prev[0]:
+            best[path] = (gap, point)
+        return True
+
+    consider(index)
+    for step in (-1, 1):
+        at = index + step
+        while 0 <= at < len(points) and consider(at):
+            at += step
+    found = [best[path] for path in seen]
+    preferred = points[index][4]
+    found.sort(key=lambda item: (
+        0 if item[1][4] == preferred else 1,
+        item[0],
+        os.path.basename(item[1][4]).casefold(),
+    ))
+    return found
+
+
+def alt_record(point, gap):
+    stamp = datetime.fromtimestamp(point[0], timezone.utc)
+    return {
+        "track": os.path.basename(point[4]),
+        "gap": fmt_gap(gap),
+        "lat": point[1],
+        "lon": point[2],
+        "ele": point[3],
+        "gps_date": stamp.strftime("%Y:%m:%d"),
+        "gps_time": stamp.strftime("%H:%M:%S"),
+        "height": fmt_height(point[3]),
+    }
+
+
 def other_track(points, chosen_i, epoch, max_gap):
     chosen = points[chosen_i]
     best = None
@@ -1098,6 +1153,9 @@ def match_files(media, infos, points, offset_seconds, max_gap, redo):
                 "height": height,
                 "status": status,
             }
+            found = close_tracks(points, when["epoch"], max_gap)
+            if len(found) > 1:
+                row["write"]["alts"] = [alt_record(point, gap_s) for gap_s, point in found]
         rows.append(row)
     return rows
 
@@ -2135,12 +2193,53 @@ def cmd_need_geotag(argv):
     return 0
 
 
+def read_track_picks(path):
+    picks = {}
+    if not path or not os.path.isfile(path) or os.path.getsize(path) == 0:
+        return picks
+    with open(path, "rb") as handle:
+        parts = handle.read().split(b"\0")
+    index = 0
+    while index + 7 < len(parts):
+        key = os.fsdecode(parts[index])
+        if key:
+            ele = os.fsdecode(parts[index + 3]).strip()
+            picks[norm_key(key)] = {
+                "lat": float(os.fsdecode(parts[index + 1])),
+                "lon": float(os.fsdecode(parts[index + 2])),
+                "ele": float(ele) if ele else None,
+                "gps_date": os.fsdecode(parts[index + 4]),
+                "gps_time": os.fsdecode(parts[index + 5]),
+                "track": os.fsdecode(parts[index + 6]),
+                "gap": os.fsdecode(parts[index + 7]),
+            }
+        index += 8
+    return picks
+
+
+def apply_track_picks(writes, picks):
+    for item in writes:
+        pick = picks.get(norm_key(item["path"]))
+        if not pick:
+            continue
+        item["lat"] = pick["lat"]
+        item["lon"] = pick["lon"]
+        item["ele"] = pick["ele"]
+        item["gps_date"] = pick["gps_date"]
+        item["gps_time"] = pick["gps_time"]
+        item["track"] = pick["track"]
+        item["gap"] = pick["gap"]
+        item["place"] = fmt_pos(pick["lat"], pick["lon"], None)
+        item["height"] = fmt_height(pick["ele"])
+
+
 def cmd_write(argv):
     parser = argparse.ArgumentParser(add_help=False)
     parser.add_argument("--exiftool", required=True)
     parser.add_argument("--plan", required=True)
     parser.add_argument("--only-list", default="")
     parser.add_argument("--address-list", default="")
+    parser.add_argument("--track-pick", default="")
     parser.add_argument("--colors", action="store_true")
     parser.add_argument("--backup", action="store_true")
     parser.add_argument("--backup-stamp", default="")
@@ -2160,6 +2259,7 @@ def cmd_write(argv):
             json.dump(plan, handle)
         print("Nothing to write.")
         return 0
+    apply_track_picks(writes, read_track_picks(args.track_pick))
     failed = 0
     wrote = 0
     total = len(writes)
@@ -2222,6 +2322,20 @@ def cmd_plan_lines(argv):
             str(item.get("method") or "TRACK").replace("\t", " "),
             str(item.get("status") or "match").replace("\t", " "),
         ))
+        for alt in item.get("alts") or []:
+            ele = alt.get("ele")
+            ele_s = "" if ele is None else str(ele)
+            print("ALT\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s" % (
+                one_line(item["path"]),
+                one_line(alt.get("track")),
+                one_line(alt.get("gap")),
+                alt.get("lat"),
+                alt.get("lon"),
+                ele_s,
+                one_line(alt.get("gps_date")),
+                one_line(alt.get("gps_time")),
+                one_line(alt.get("height")) if alt.get("height") else "",
+            ))
     for item in plan.get("choose") or []:
         show = str(item.get("show") or "").replace("\t", " ")
         print("CHOOSE\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s" % (
@@ -2408,6 +2522,13 @@ def selftest():
     warn = other_track(points_two, chosen, t0, 30)
     assert warn is not None
     assert warn[1] > 1000
+    both = close_tracks(points_two, t0, 30)
+    assert len(both) == 2
+    assert both[0][1][4] == "day.gpx"
+    assert both[1][1][4] == "other.gpx"
+    alone = close_tracks(points, t0, 30)
+    assert len(alone) == 1
+    assert alone[0][1][4] == "day.gpx"
 
     picked = pick_time({
         "EXIF:DateTimeOriginal": "2026:08:01 16:00:00",
