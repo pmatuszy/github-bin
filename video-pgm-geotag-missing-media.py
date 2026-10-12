@@ -1,4 +1,10 @@
 #!/usr/bin/env python3
+# v. 20261012.110653 - a track point is named from OpenStreetMap, and the guess says how close that point is
+# v. 20261012.110358 - a track write names the file, the track, and how far the point is
+# v. 20261012.110129 - the Geotag heading counts files with a location and files without one
+# v. 20261012.110006 - verbose file lines give altitude its own height column
+# v. 20261012.105829 - verbose file lines name each column and keep those columns aligned
+# v. 20261012.105648 - tracks are loaded only after a file is found that still needs a location
 # v. 20261012.105141 - file-by-file report lines are shown only when verbose is on
 # v. 20261012.105042 - the track list is totals only unless verbose is asked or passed
 # v. 20261012.104935 - the year is stated from the file names, and [C] means the current directory
@@ -20,6 +26,12 @@
 # v. 20261009.160131 - also read .tcx tracks; a Trackpoint with a time and a position joins the same search as GPX
 # v. 20261009.151425 - match a photo or video time to the nearest GPX point and write that location with exiftool
 
+# 2026.10.12 - v. 0.26 - a track point is named from OpenStreetMap, and the guess says how close that point is
+# 2026.10.12 - v. 0.25 - a track write names the file, the track, and how far the point is
+# 2026.10.12 - v. 0.24 - the Geotag heading counts files with a location and files without one
+# 2026.10.12 - v. 0.23 - verbose file lines give altitude its own height column
+# 2026.10.12 - v. 0.22 - verbose file lines name each column and keep those columns aligned
+# 2026.10.12 - v. 0.21 - tracks are loaded only after a file is found that still needs a location
 # 2026.10.12 - v. 0.20 - file-by-file report lines are shown only when verbose is on
 # 2026.10.12 - v. 0.19 - the track list is totals only unless verbose is asked or passed
 # 2026.10.12 - v. 0.18 - the year is stated from the file names, and [C] means the current directory
@@ -219,6 +231,12 @@ def fmt_pos(lat, lon, ele):
     if ele is None:
         return text
     return "%s, %.0fm" % (text, ele)
+
+
+def fmt_height(ele):
+    if ele is None:
+        return ""
+    return "%.0fm" % ele
 
 
 def null_island(lat, lon):
@@ -748,6 +766,28 @@ def run_exiftool_json(exiftool, paths, quicktime):
         return None
 
 
+def count_geotag_need(media, infos):
+    """Files with no location need a geotag. A location already stored does not."""
+    by_key = {}
+    for info in infos:
+        source = info.get("SourceFile")
+        if source:
+            by_key[norm_key(source)] = info
+    need = 0
+    already = 0
+    unread = 0
+    for path in media:
+        info = by_key.get(norm_key(path))
+        if info is None or info.get("Error"):
+            unread += 1
+            continue
+        if position_from_tags(info) is None:
+            need += 1
+        else:
+            already += 1
+    return need, already, unread
+
+
 def match_files(media, infos, points, offset_seconds, max_gap, redo):
     by_key = {}
     for info in infos:
@@ -800,10 +840,16 @@ def match_files(media, infos, points, offset_seconds, max_gap, redo):
             status = "match"
         else:
             status = "too far"
+        place = ""
+        height = ""
         if status == "tagged" and pos:
-            detail = fmt_pos(pos[0], pos[1], pos[2])
+            place = fmt_pos(pos[0], pos[1], None)
+            height = fmt_height(pos[2])
+            detail = ""
         elif status in ("match", "replace") and chosen:
-            detail = "gap %s, %s, %s" % (fmt_gap(gap), fmt_pos(chosen[1], chosen[2], chosen[3]), os.path.basename(chosen[4]))
+            place = fmt_pos(chosen[1], chosen[2], None)
+            height = fmt_height(chosen[3])
+            detail = "gap %s, %s" % (fmt_gap(gap), os.path.basename(chosen[4]))
             if warn:
                 detail += " (%s)" % warn
         elif status == "too far":
@@ -819,6 +865,8 @@ def match_files(media, infos, points, offset_seconds, max_gap, redo):
             "status": status,
             "wall": when["wall"] if when else "",
             "source": when["source"] if when else "",
+            "place": place,
+            "height": height,
             "detail": detail,
             "epoch": when["epoch"] if when else None,
             "basis": when["basis"] if when else "",
@@ -838,6 +886,11 @@ def match_files(media, infos, points, offset_seconds, max_gap, redo):
                 "gps_time": stamp.strftime("%H:%M:%S"),
                 "label": os.path.basename(path),
                 "method": "TRACK",
+                "gap": fmt_gap(gap) if gap is not None else "",
+                "track": os.path.basename(chosen[4]),
+                "place": place,
+                "height": height,
+                "status": status,
             }
         rows.append(row)
     return rows
@@ -1068,6 +1121,45 @@ def stamp_from_epoch(epoch):
     return when.strftime("%Y:%m:%d"), when.strftime("%H:%M:%S")
 
 
+def file_table(rows, status):
+    """One header and one aligned line per file."""
+    last = {
+        "match": "gap, track",
+        "replace": "gap, track",
+        "too far": "nearest point",
+        "unread": "problem",
+    }.get(status, "detail")
+    show_last = any(row.get("detail") for row in rows)
+    file_w = max([len("file")] + [len(row.get("show") or "") for row in rows])
+    time_w = max([len("time")] + [len(row.get("wall") or "") for row in rows])
+    from_w = max([len("from")] + [len(row.get("source") or "") for row in rows])
+    place_w = max([len("location")] + [len(row.get("place") or "") for row in rows])
+    height_w = max([len("height")] + [len(row.get("height") or "") for row in rows])
+
+    def line(status_text, show, wall, source, place, height, detail):
+        text = "  %-8s  %-*s   %-*s   %-*s   %-*s   %-*s" % (
+            status_text, file_w, show, time_w, wall, from_w, source, place_w, place, height_w, height,
+        )
+        if show_last:
+            text += "   %s" % detail
+        return text
+
+    header = line("status", "file", "time", "from", "location", "height", last if show_last else "")
+    body = [
+        line(
+            status,
+            row.get("show") or "",
+            row.get("wall") or "",
+            row.get("source") or "",
+            row.get("place") or "",
+            row.get("height") or "",
+            row.get("detail") or "",
+        )
+        for row in rows
+    ]
+    return header, body
+
+
 def print_report(rows, gpx_info, gpx_errors, offset_seconds, tz_note, assumed, max_gap, scope, quicktime, redo, places, verbose):
     counts = {}
     for row in rows:
@@ -1148,17 +1240,11 @@ def print_report(rows, gpx_info, gpx_errors, offset_seconds, tz_note, assumed, m
                 print("  These files have no track point. The place names above are the choices.")
                 told_places = True
             chosen.sort(key=lambda row: (row["epoch"] is None, row["epoch"] or 0, row["show"]))
-            for row in chosen:
-                label = "%-8s" % status
-                label = paint(label, STATUS_COLOR.get(status))
-                bits = [row["show"]]
-                if row["wall"]:
-                    bits.append(row["wall"])
-                if row["source"]:
-                    bits.append(row["source"])
-                if row["detail"]:
-                    bits.append(row["detail"])
-                print("  %s  %s" % (label, "   ".join(bits)))
+            header, body = file_table(chosen, status)
+            print(header)
+            color = STATUS_COLOR.get(status)
+            for text in body:
+                print("  %s%s" % (paint(text[2:10], color), text[10:]))
     if redo:
         print("")
         print("--redo is set: a file that already has a location is written again when a point is close enough.")
@@ -1438,6 +1524,7 @@ def cmd_scan(argv):
     parser.add_argument("--plan", required=True)
     parser.add_argument("--scope", required=True)
     parser.add_argument("--track-span", default="")
+    parser.add_argument("--exif-json", default="")
     parser.add_argument("--redo", action="store_true")
     parser.add_argument("--verbose", action="store_true")
     args = parser.parse_args(argv)
@@ -1491,8 +1578,16 @@ def cmd_scan(argv):
         point_total += len(file_points)
         track_progress(track_done, track_total, track_started, point_total, args.track_span, finished)
     points.sort(key=lambda item: (item[0], item[4]))
-    eprint("Reading times and locations from %s file%s..." % (fmt_int(len(media)), "" if len(media) == 1 else "s"))
-    infos = run_exiftool_json(args.exiftool, media, args.quicktime)
+    infos = None
+    if args.exif_json and os.path.isfile(args.exif_json) and os.path.getsize(args.exif_json) > 0:
+        try:
+            with open(args.exif_json, encoding="utf-8") as handle:
+                infos = json.load(handle)
+        except (OSError, ValueError):
+            infos = None
+    if infos is None:
+        eprint("Reading times and locations from %s file%s..." % (fmt_int(len(media)), "" if len(media) == 1 else "s"))
+        infos = run_exiftool_json(args.exiftool, media, args.quicktime)
     if infos is None:
         return 1
     assumed = args.tz_assumed
@@ -1556,14 +1651,37 @@ def cmd_scan(argv):
     return 0
 
 
+def cmd_need_geotag(argv):
+    parser = argparse.ArgumentParser(add_help=False)
+    parser.add_argument("--exiftool", required=True)
+    parser.add_argument("--quicktime", choices=("utc", "local"), required=True)
+    parser.add_argument("--media-list", required=True)
+    parser.add_argument("--exif-json", required=True)
+    args = parser.parse_args(argv)
+    media = read_paths(args.media_list)
+    eprint("Reading times and locations from %s file%s..." % (fmt_int(len(media)), "" if len(media) == 1 else "s"))
+    infos = run_exiftool_json(args.exiftool, media, args.quicktime)
+    if infos is None:
+        return 1
+    with open(args.exif_json, "w", encoding="utf-8") as handle:
+        json.dump(infos, handle)
+    need, already, unread = count_geotag_need(media, infos)
+    print("%d\t%d\t%d" % (need, already, unread))
+    return 0
+
+
 def cmd_write(argv):
     parser = argparse.ArgumentParser(add_help=False)
     parser.add_argument("--exiftool", required=True)
     parser.add_argument("--plan", required=True)
+    parser.add_argument("--only-list", default="")
     args = parser.parse_args(argv)
     with open(args.plan, encoding="utf-8") as handle:
         plan = json.load(handle)
     writes = plan.get("writes") or []
+    if args.only_list:
+        keep = set(norm_key(path) for path in read_paths(args.only_list))
+        writes = [item for item in writes if norm_key(item["path"]) in keep]
     if not writes:
         plan["wrote_tracks"] = 0
         with open(args.plan, "w", encoding="utf-8") as handle:
@@ -1604,6 +1722,17 @@ def cmd_plan_lines(argv):
     for place in plan.get("places") or []:
         label = str(place["label"]).replace("\t", " ")
         print("PLACE\t%s\t%s\t%s" % (label, place["lat"], place["lon"]))
+    for item in plan.get("writes") or []:
+        print("WRITE\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s" % (
+            item["path"],
+            str(item.get("label") or "").replace("\t", " "),
+            str(item.get("place") or "").replace("\t", " "),
+            str(item.get("height") or "").replace("\t", " "),
+            str(item.get("gap") or "").replace("\t", " "),
+            str(item.get("track") or "").replace("\t", " "),
+            str(item.get("method") or "TRACK").replace("\t", " "),
+            str(item.get("status") or "match").replace("\t", " "),
+        ))
     for item in plan.get("choose") or []:
         show = str(item.get("show") or "").replace("\t", " ")
         print("CHOOSE\t%s\t%s\t%s\t%s\t%s" % (
@@ -1650,6 +1779,27 @@ def cmd_write_place(argv):
 
 def selftest():
     assert parse_tz_seconds("+02:00") == 7200
+    header, body = file_table(
+        [
+            {"show": "short.jpg", "wall": "2026.08.24 16:51:10", "source": "DateTimeOriginal", "place": "49.609049, 19.965396", "height": "534m", "detail": ""},
+            {"show": "a-longer-name.jpg", "wall": "2026.08.24 17:20:29", "source": "CreateDate", "place": "49.608870, 19.968328", "height": "", "detail": ""},
+        ],
+        "tagged",
+    )
+    assert header.index("file") == body[0].index("short.jpg") == body[1].index("a-longer-name.jpg")
+    assert header.index("time") == body[0].index("2026.08.24 16:51:10") == body[1].index("2026.08.24 17:20:29")
+    assert header.index("from") == body[0].index("DateTimeOriginal") == body[1].index("CreateDate")
+    assert header.index("location") == body[0].index("49.609049, 19.965396") == body[1].index("49.608870, 19.968328")
+    height_at = header.index("height")
+    assert body[0][height_at:height_at + 4] == "534m"
+    assert body[1][height_at] == " "
+    assert count_geotag_need(
+        ["a.jpg", "b.jpg", "c.jpg"],
+        [
+            {"SourceFile": "a.jpg", "EXIF:GPSLatitude": 50.0, "EXIF:GPSLongitude": 19.0},
+            {"SourceFile": "b.jpg"},
+        ],
+    ) == (1, 1, 1)
     assert parse_tz_seconds("-05:30") == -(5 * 3600 + 30 * 60)
     assert parse_tz_seconds("0") == 0
     assert parse_user_coord("49.59078922757009, 19.966572075569914") == ("49.59078922757009", "19.966572075569914")
@@ -1907,7 +2057,7 @@ def selftest():
 
 def main(argv):
     if len(argv) < 2 or argv[1] in ("-h", "--help"):
-        print("Usage: video-pgm-geotag-missing-media.py scan|write|write-place|plan-lines|check-tz|check-coord|reverse|year-range|track-roots|selftest")
+        print("Usage: video-pgm-geotag-missing-media.py scan|write|write-place|plan-lines|check-tz|check-coord|reverse|year-range|track-roots|need-geotag|selftest")
         print("The shell script video-pgm-geotag-missing-media.sh is the way to run this.")
         return 0
     cmd = argv[1]
@@ -1923,6 +2073,8 @@ def main(argv):
         return cmd_year_range(argv[2:])
     if cmd == "track-roots":
         return cmd_track_roots(argv[2:])
+    if cmd == "need-geotag":
+        return cmd_need_geotag(argv[2:])
     if cmd == "scan":
         return cmd_scan(argv[2:])
     if cmd == "write":

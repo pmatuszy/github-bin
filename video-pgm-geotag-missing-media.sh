@@ -1,4 +1,10 @@
 #!/bin/bash
+# v. 20261012.110653 - a track point is named from OpenStreetMap, and the guess says how close that point is
+# v. 20261012.110358 - a track write names the file, the track, and how far the point is
+# v. 20261012.110129 - the Geotag heading counts files with a location and files without one
+# v. 20261012.110006 - verbose file lines give altitude its own height column
+# v. 20261012.105829 - verbose file lines name each column and keep those columns aligned
+# v. 20261012.105648 - tracks are loaded only after a file is found that still needs a location
 # v. 20261012.105141 - file-by-file report lines are shown only when verbose is on
 # v. 20261012.105042 - the track list is totals only unless verbose is asked or passed
 # v. 20261012.104935 - the year is stated from the file names, and [C] means the current directory
@@ -20,6 +26,12 @@
 # v. 20261009.160131 - also read .tcx tracks; a Trackpoint with a time and a position is used like a GPX point
 # v. 20261009.151425 - report which photos and videos have no location, and write one from the nearest GPX point
 
+# 2026.10.12 - v. 0.26 - a track point is named from OpenStreetMap, and the guess says how close that point is
+# 2026.10.12 - v. 0.25 - a track write names the file, the track, and how far the point is
+# 2026.10.12 - v. 0.24 - the Geotag heading counts files with a location and files without one
+# 2026.10.12 - v. 0.23 - verbose file lines give altitude its own height column
+# 2026.10.12 - v. 0.22 - verbose file lines name each column and keep those columns aligned
+# 2026.10.12 - v. 0.21 - tracks are loaded only after a file is found that still needs a location
 # 2026.10.12 - v. 0.20 - file-by-file report lines are shown only when verbose is on
 # 2026.10.12 - v. 0.19 - the track list is totals only unless verbose is asked or passed
 # 2026.10.12 - v. 0.18 - the year is stated from the file names, and [C] means the current directory
@@ -95,10 +107,11 @@ seconds (default 30). The closest point is the one used. With a point every
 one or two seconds, a normal match is about a second away. The report shows
 the gap. A video is tagged at its start.
 
-Nothing is written until you say so. -n prints the report and stops. -y
-writes the track matches without asking. A file that already has a location
-is left as it is, unless --redo is given and a point is close enough. The
-write goes through ExifTool. The file time is kept.
+Nothing is written until you say so. Each file is named, with the track and
+how far that point is. -n prints the report and stops. -y writes the track
+matches without asking. A file that already has a location is left as it is,
+unless --redo is given and a point is close enough. The write goes through
+ExifTool. The file time is kept.
 
 A file with no GPX or TCX point close enough can be tagged from a named
 place. The names come from video-pgm-geotag-missing-media.conf. The script
@@ -123,18 +136,21 @@ the timestamps and file names. That year is the default. [t] asks for a year
 or a range, such as 2026-2027, 2026 - 2027, or 2026 2027. The first year
 must not be newer than the second. Only those years
 are read, from that directory and from the tracks next to the photos and
-videos. The count printed before the report is that set.
+videos. The count printed before the report is that set. Tracks are read
+only when a photo or video still has no location. The script says how many
+need geotagging, and how many already have a location, before that read.
 
   [tracks-location]
   /mnt/p/video/geotaging-kopie
 
 For each file with no track point you are asked which name to write. q quits
 at once, without Enter. g asks for a latitude and longitude for that file
-only. Before that, you are asked once whether to look the point up on
-OpenStreetMap. The default is yes. If OpenStreetMap cannot be reached, the
-coordinates are still written and later points are not looked up. A place you
-pick or type is marked MANUAL. A point from a GPX or TCX file is marked
-TRACK. Both are stored in GPSProcessingMethod. -y does not pick a place for
+only. Before the first track point or typed place, you are asked once whether
+to look the point up on OpenStreetMap. The default is yes. If OpenStreetMap
+cannot be reached, the coordinates are still written and later points are not
+looked up. A place you pick or type is marked MANUAL. A point from a GPX or
+TCX file is marked TRACK. Both are stored in GPSProcessingMethod. -y does not
+pick a place for
 you.
 
 Video CreateDate is read as UTC, which is right for a GoPro. If a phone
@@ -368,7 +384,7 @@ gm_ask_internet() {
     return 0
   fi
   echo
-  echo "A typed latitude and longitude can be named from OpenStreetMap."
+  echo "A track point or a typed latitude and longitude can be named from OpenStreetMap."
   echo "  [Y] Yes, use the internet (default)"
   echo "  [n] No"
   echo "  [q] Quit"
@@ -386,12 +402,16 @@ gm_ask_internet() {
   esac
 }
 
-gm_describe_coord() {
+gm_lookup_place() {
   local lat="$1" lon="$2" name rc
-  GM_PLACE="typed"
+  GM_PLACE_NAME=""
   (( USE_NET == 1 )) || return 0
+  if (( GM_LOOKED )); then
+    sleep 1
+  fi
+  GM_LOOKED=1
   if name=$(python3 "$PY_HELPER" reverse "$lat" "$lon" 2>/dev/null); then
-    GM_PLACE="$name"
+    GM_PLACE_NAME="$name"
     echo "That place is ${name}."
     return 0
   fi
@@ -401,6 +421,14 @@ gm_describe_coord() {
     echo "$(gm_ts) Cannot reach OpenStreetMap. Place names will not be looked up."
   else
     echo "OpenStreetMap has no place name for that point."
+  fi
+}
+
+gm_describe_coord() {
+  GM_PLACE="typed"
+  gm_lookup_place "$1" "$2"
+  if [[ -n "$GM_PLACE_NAME" ]]; then
+    GM_PLACE="$GM_PLACE_NAME"
   fi
 }
 
@@ -867,12 +895,33 @@ gm_ask_track_years() {
   fi
 }
 
-gm_collect() {
+gm_say_geotag_need() {
+  local need="$1" already="$2" unread="$3" line
+  if (( need == 1 )); then
+    line="1 file needs geotagging."
+  else
+    line="${need} files need geotagging."
+  fi
+  if (( already == 1 )); then
+    line="${line} 1 already has a location."
+  else
+    line="${line} ${already} already have a location."
+  fi
+  echo "$(gm_ts) ${line}"
+  if (( unread == 1 )); then
+    echo "$(gm_ts) 1 file could not be read."
+  elif (( unread > 0 )); then
+    echo "$(gm_ts) ${unread} files could not be read."
+  fi
+}
+
+gm_collect_media() {
   local path parent
   WORK=$(mktemp -d)
   : > "$WORK/media"
   : > "$WORK/gpx"
   : > "$WORK/roots"
+  : > "$WORK/confs"
   MEDIA_N=0
   GPX_N=0
   for path in "${DIR_INPUTS[@]}"; do
@@ -884,6 +933,10 @@ gm_collect() {
     gm_add_root "$parent"
     gm_consider_file "$path" media
   done
+}
+
+gm_collect_tracks() {
+  local path parent
   gm_ask_track_years
   for path in "${DIR_INPUTS[@]}"; do
     gm_walk "$path" "$RECURSE" gpx
@@ -996,7 +1049,7 @@ gm_plan_count() {
 }
 
 gm_load_plan() {
-  local kind a b c d e
+  local kind a b c d e f g h
   PLACE_LABEL=()
   PLACE_LAT=()
   PLACE_LON=()
@@ -1005,13 +1058,31 @@ gm_load_plan() {
   CHOOSE_SHOW=()
   CHOOSE_DATE=()
   CHOOSE_TIME=()
-  while IFS=$'\t' read -r kind a b c d e; do
+  WRITE_PATH=()
+  WRITE_LABEL=()
+  WRITE_PLACE=()
+  WRITE_HEIGHT=()
+  WRITE_GAP=()
+  WRITE_TRACK=()
+  WRITE_METHOD=()
+  WRITE_STATUS=()
+  while IFS=$'\t' read -r kind a b c d e f g h; do
     [[ -n "$kind" ]] || continue
     case "$kind" in
       PLACE)
         PLACE_LABEL+=("$a")
         PLACE_LAT+=("$b")
         PLACE_LON+=("$c")
+        ;;
+      WRITE)
+        WRITE_PATH+=("$a")
+        WRITE_LABEL+=("$b")
+        WRITE_PLACE+=("$c")
+        WRITE_HEIGHT+=("$d")
+        WRITE_GAP+=("$e")
+        WRITE_TRACK+=("$f")
+        WRITE_METHOD+=("$g")
+        WRITE_STATUS+=("$h")
         ;;
       CHOOSE)
         CHOOSE_PATH+=("$a")
@@ -1022,6 +1093,60 @@ gm_load_plan() {
         ;;
     esac
   done < <(python3 "$PY_HELPER" plan-lines --plan "$1")
+}
+
+gm_ask_track_writes() {
+  local i reply loc lat lon rest
+  rest=0
+  : > "$WORK/write-only"
+  gm_ask_internet
+  for i in "${!WRITE_PATH[@]}"; do
+    echo
+    lat="${WRITE_PLACE[$i]%%,*}"
+    lon="${WRITE_PLACE[$i]#*,}"
+    lon="${lon#"${lon%%[![:space:]]*}"}"
+    loc="${WRITE_PLACE[$i]}"
+    if [[ -n "${WRITE_HEIGHT[$i]}" ]]; then
+      loc="${loc}, ${WRITE_HEIGHT[$i]}"
+    fi
+    if [[ "${WRITE_STATUS[$i]}" == replace ]]; then
+      echo "${WRITE_LABEL[$i]} already has a location."
+      echo "A point in ${WRITE_TRACK[$i]} is ${WRITE_GAP[$i]} away, so that location can probably replace it."
+    else
+      echo "${WRITE_LABEL[$i]} has no geotag."
+      echo "It can probably be geotagged from ${WRITE_TRACK[$i]}, because the nearest point is ${WRITE_GAP[$i]} away and that point has a location."
+    fi
+    echo "  ${loc}"
+    if [[ -n "$lat" && -n "$lon" ]]; then
+      gm_lookup_place "$lat" "$lon"
+    fi
+    echo "  GPSProcessingMethod ${WRITE_METHOD[$i]}"
+    if (( rest )); then
+      echo "Writing this one too."
+      printf '%s\0' "${WRITE_PATH[$i]}" >> "$WORK/write-only"
+      continue
+    fi
+    echo
+    echo "  [y] Write this"
+    echo "  [N] Skip this file (default)"
+    echo "  [a] Write this and the rest"
+    echo "  [q] Quit"
+    gm_read_key "Write this location? [y/N/a/q]: " n
+    reply="$REPLY"
+    case "$reply" in
+      y) printf '%s\0' "${WRITE_PATH[$i]}" >> "$WORK/write-only" ;;
+      a)
+        printf '%s\0' "${WRITE_PATH[$i]}" >> "$WORK/write-only"
+        rest=1
+        ;;
+      q) gm_quit ;;
+    esac
+  done
+  if [[ -s "$WORK/write-only" ]]; then
+    WRITE_TRACKS=1
+  else
+    echo "$(gm_ts) Those track matches were not written."
+  fi
 }
 
 gm_choose_places() {
@@ -1121,6 +1246,7 @@ CHOOSE_SHOW=()
 CHOOSE_DATE=()
 CHOOSE_TIME=()
 USE_NET=-1
+GM_LOOKED=0
 GM_PLACE="typed"
 PLACE_WROTE=0
 SUM_READY=0
@@ -1245,7 +1371,7 @@ gm_ask_scope
 gm_ask_tz
 
 gm_proc_begin
-gm_collect
+gm_collect_media
 gm_proc_end
 
 if (( MEDIA_N == 0 )); then
@@ -1254,8 +1380,36 @@ if (( MEDIA_N == 0 )); then
   exit 0
 fi
 
+gm_proc_begin
+GEO_OUT=$(python3 "$PY_HELPER" need-geotag \
+  --exiftool "$EXIFTOOL_BIN" \
+  --quicktime "$QUICKTIME" \
+  --media-list "$WORK/media" \
+  --exif-json "$WORK/exif.json") || {
+  return_code=$?
+  gm_proc_end
+  exit "$return_code"
+}
+gm_proc_end
+IFS=$'\t' read -r GEO_NEED GEO_ALREADY GEO_UNREAD <<< "$GEO_OUT"
+gm_say_geotag_need "$GEO_NEED" "$GEO_ALREADY" "$GEO_UNREAD"
+if (( GEO_NEED == 0 && ! REDO )); then
+  echo "$(gm_ts) Tracks were not loaded."
+else
+  if (( GEO_NEED == 0 )); then
+    echo "$(gm_ts) --redo will compare the files that already have a location."
+  fi
+  gm_proc_begin
+  gm_collect_tracks
+  gm_proc_end
+fi
+
 gm_heading "Geotag"
 echo "  Files: ${MEDIA_N}    Tracks: ${GPX_N}"
+echo "  Geotagged: ${GEO_ALREADY}    No location: ${GEO_NEED}"
+if (( GEO_UNREAD > 0 )); then
+  echo "  Could not read: ${GEO_UNREAD}"
+fi
 echo "  Scope: $(gm_scope_label)"
 if [[ "$TZ_VALUE" == auto ]]; then
   echo "  Camera offset: learned from files that already have a GPS time"
@@ -1278,6 +1432,7 @@ SCAN_ARGS=(
   --plan "$WORK/plan.json"
   --scope "$(gm_scope_label)"
   --track-span "$TRACK_SPAN"
+  --exif-json "$WORK/exif.json"
 )
 if (( VERBOSE )); then
   SCAN_ARGS+=(--verbose)
@@ -1321,24 +1476,16 @@ if (( WRITE_N > 0 )); then
     echo
     echo "$(gm_ts) Not a terminal: nothing written. Add -y to write track matches without asking."
   else
-    echo
-    echo "Write a track location into ${WRITE_N} file$( (( WRITE_N == 1 )) || printf 's' )?"
-    echo "  ExifTool rewrites each file in place. The file time is kept."
-    echo "  A file that already has a location is not in this count, unless --redo."
-    echo "  [y] Yes, write"
-    echo "  [N] No, skip these (default)"
-    echo "  [q] Quit"
-    gm_read_key "Write into ${WRITE_N} file$( (( WRITE_N == 1 )) || printf 's' )? [y/N/q]: " n
-    case "$REPLY" in
-      y) WRITE_TRACKS=1 ;;
-      q) gm_quit ;;
-      *) echo "$(gm_ts) Those track matches were not written." ;;
-    esac
+    gm_ask_track_writes
   fi
   if (( WRITE_TRACKS )); then
     echo
     gm_proc_begin
-    python3 "$PY_HELPER" write --exiftool "$EXIFTOOL_BIN" --plan "$WORK/plan.json" || return_code=$?
+    if [[ -s "${WORK}/write-only" ]]; then
+      python3 "$PY_HELPER" write --exiftool "$EXIFTOOL_BIN" --plan "$WORK/plan.json" --only-list "$WORK/write-only" || return_code=$?
+    else
+      python3 "$PY_HELPER" write --exiftool "$EXIFTOOL_BIN" --plan "$WORK/plan.json" || return_code=$?
+    fi
     gm_proc_end
   fi
 fi
