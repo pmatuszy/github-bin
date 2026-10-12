@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261012.114001 - Enter writes the track location; n skips that file
 # v. 20261012.113554 - ask about colors; file names are green, and a location is blue
 # v. 20261012.113057 - the place question does not repeat the file count
 # v. 20261012.112954 - Enter prints the option that was chosen
@@ -36,6 +37,7 @@
 # v. 20261009.160131 - also read .tcx tracks; a Trackpoint with a time and a position is used like a GPX point
 # v. 20261009.151425 - report which photos and videos have no location, and write one from the nearest GPX point
 
+# 2026.10.12 - v. 0.37 - Enter writes the track location; n skips that file
 # 2026.10.12 - v. 0.36 - ask about colors; file names are green, and a location is blue
 # 2026.10.12 - v. 0.35 - the place question does not repeat the file count
 # 2026.10.12 - v. 0.34 - Enter prints the option that was chosen
@@ -131,11 +133,12 @@ seconds (default 30). The closest point is the one used. With a point every
 one or two seconds, a normal match is about a second away. The report shows
 the gap. A video is tagged at its start.
 
-Nothing is written until you say so. Each file is numbered, such as [1/22],
-and named, with the track and how far that point is. -n prints the report
-and stops. -y writes the track matches without asking. A file that already
-has a location is left as it is, unless --redo is given and a point is close
-enough. The write goes through ExifTool. The file time is kept.
+Nothing is written until you reach that file. Enter writes it. n skips it.
+Each file is numbered, such as [1/22], and named, with the track and how far
+that point is. -n prints the report and stops. -y writes the track matches
+without asking. A file that already has a location is left as it is, unless
+--redo is given and a point is close enough. The write goes through
+ExifTool. The file time is kept.
 
 A file with no GPX or TCX point close enough can be tagged from a named
 place. The names come from video-pgm-geotag-missing-media.conf. The script
@@ -1534,11 +1537,11 @@ gm_ask_track_writes() {
       continue
     fi
     echo
-    echo "  [y] Write this"
-    echo "  [N] Skip this file (default)"
+    echo "  [Y] Write this (default)"
+    echo "  [n] Skip this file"
     echo "  [a] Write this and the rest"
     echo "  [q] Quit"
-    gm_read_key "Write this location? [${shown}/${total}] [y/N/a/q]: " n "Skip this file"
+    gm_read_key "Write this location? [${shown}/${total}] [Y/n/a/q]: " y "Write this"
     reply="$REPLY"
     case "$reply" in
       y) printf '%s\0' "${WRITE_PATH[$i]}" >> "$WORK/write-only" ;;

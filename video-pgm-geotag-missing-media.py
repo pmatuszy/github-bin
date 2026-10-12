@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# v. 20261012.114001 - Enter writes the track location; n skips that file
 # v. 20261012.113554 - ask about colors; file names are green, and a location is blue
 # v. 20261012.113057 - the place question does not repeat the file count
 # v. 20261012.112954 - Enter prints the option that was chosen
@@ -36,6 +37,7 @@
 # v. 20261009.160131 - also read .tcx tracks; a Trackpoint with a time and a position joins the same search as GPX
 # v. 20261009.151425 - match a photo or video time to the nearest GPX point and write that location with exiftool
 
+# 2026.10.12 - v. 0.37 - Enter writes the track location; n skips that file
 # 2026.10.12 - v. 0.36 - ask about colors; file names are green, and a location is blue
 # 2026.10.12 - v. 0.35 - the place question does not repeat the file count
 # 2026.10.12 - v. 0.34 - Enter prints the option that was chosen
