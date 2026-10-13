@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# v. 20261013.083127 - a GPSData time follows the clip name in the line
 # v. 20261013.081858 - a GPSData clock is shifted to UTC with the camera offset
 # v. 20261013.081348 - GPSData*.txt logs are read as tracks
 # v. 20261012.212812 - the nearest track point is written with w
@@ -82,6 +83,7 @@
 # v. 20261009.160131 - also read .tcx tracks; a Trackpoint with a time and a position joins the same search as GPX
 # v. 20261009.151425 - match a photo or video time to the nearest GPX point and write that location with exiftool
 
+# 2026.10.13 - v. 0.83 - a GPSData time follows the clip name in the line
 # 2026.10.13 - v. 0.82 - a GPSData clock is shifted to UTC with the camera offset
 # 2026.10.13 - v. 0.81 - GPSData*.txt logs are read as tracks
 # 2026.10.12 - v. 0.80 - the nearest track point is written with w
@@ -824,9 +826,43 @@ def load_tcx(path):
     return (points, skipped), None
 
 
+CLIP_CLOCK = re.compile(
+    r"(?:NO|EV)(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})(\d{2})-\d{6}[A-Za-z]\.[Mm][Pp]4"
+)
+
+
+def clip_clock_epoch(line):
+    """Camera time written into a GPSData line, such as NO20260905-111253-000005B.MP4."""
+    match = CLIP_CLOCK.search(line)
+    if not match:
+        return None
+    parts = [int(item) for item in match.groups()]
+    try:
+        return calendar.timegm(datetime(*parts).timetuple())
+    except ValueError:
+        return None
+
+
+def gpsdata_bias(deltas):
+    """How far the log number sits from the clip name. Samples fall inside a one-minute clip."""
+    if not deltas:
+        return 0
+    ordered = sorted(deltas)
+    median = ordered[int((len(ordered) + 1) / 2) - 1]
+    near = sorted(item for item in deltas if abs(item - median) <= 180)
+    if not near:
+        return median
+    return near[int(len(near) * 0.05)]
+
+
 def load_gpsdata(path):
-    """One point per line: unix time, A, latitude, longitude. Other lines are left out."""
-    points = []
+    """A line is a log number, A, latitude, longitude, and usually a clip name.
+
+    The log number is not UTC. The clip name is the camera clock, and the number
+    only says how far into that clip the sample is.
+    """
+    rows = []
+    deltas = []
     seen = set()
     try:
         handle = open(path, "r", encoding="utf-8", errors="replace")
@@ -835,7 +871,7 @@ def load_gpsdata(path):
     try:
         for raw in handle:
             line = raw.strip().lstrip("\ufeff")
-            if not line or line.startswith("#"):
+            if not line or line.startswith("#") or line.startswith("$"):
                 continue
             parts = line.split(",")
             if len(parts) < 4 or parts[1].strip() != "A":
@@ -851,17 +887,22 @@ def load_gpsdata(path):
             if null_island(lat, lon) or abs(lat) > 90 or abs(lon) > 180:
                 continue
             seen.add(epoch)
-            points.append((epoch, lat, lon, None, path))
+            clip = clip_clock_epoch(line)
+            rows.append((epoch, lat, lon, clip))
+            if clip is not None:
+                deltas.append(epoch - clip)
     finally:
         handle.close()
-    if not points:
+    if not rows:
         return None, "no GPS points in this file"
+    bias = gpsdata_bias(deltas)
+    points = [(epoch - bias, lat, lon, None, path) for epoch, lat, lon, _clip in rows]
     points.sort(key=lambda item: item[0])
     return (points, 0), None
 
 
 def apply_gpsdata_offset(points, gpx_info, offset_seconds):
-    """A GPSData clock is already on the camera offset. Shift it to UTC. GPX and TCX stay as they are."""
+    """A GPSData time has been put on the camera clock. Shift that clock to UTC. GPX and TCX stay as they are."""
     if not offset_seconds:
         return points
     out = []
@@ -2799,6 +2840,17 @@ def selftest():
         assert len(loaded[0]) == 1
         assert loaded[0][0][0] == stamp
         assert loaded[0][0][1] == 55.563988
+        clip = calendar.timegm(datetime(2026, 9, 5, 11, 12, 53).timetuple())
+        skewed = clip - 35950
+        clip_path = os.path.join(track_dir, "GPSData000002_20260905.txt")
+        with open(clip_path, "w", encoding="utf-8") as handle:
+            handle.write("$V02\n")
+            handle.write("%d,A,52.199362,20.978697,11700,138,-3,78,50,NO20260905-111253-000005B.MP4,0,0,0\n" % skewed)
+            handle.write("%d,A,52.199350,20.978732,11600,222,-1,78,48,NO20260905-111253-000005B.MP4,0,0,0\n" % (skewed + 20))
+        loaded, err = load_track(clip_path)
+        assert err is None
+        assert loaded[0][0][0] == clip
+        assert loaded[0][1][0] == clip + 20
         assert track_label(gps_path) == "GPS"
         moved = apply_gpsdata_offset(
             [(stamp, 55.563988, 12.275320, None, gps_path), (stamp, 50.0, 19.0, 200.0, "day.gpx")],
@@ -2813,7 +2865,7 @@ def selftest():
         with open(os.path.join(track_dir, "notes.txt"), "w", encoding="utf-8") as handle:
             handle.write("leave this out\n")
         names = sorted(os.path.basename(path) for path in tracks_under(track_dir))
-        assert names == ["GPSData000001_20260904.txt", "day.gpx"]
+        assert names == ["GPSData000001_20260904.txt", "GPSData000002_20260905.txt", "day.gpx"]
         assert chosen_under(track_dir, found_tracks) == 1
         assert chosen_under(track_dir, []) == 0
     finally:
