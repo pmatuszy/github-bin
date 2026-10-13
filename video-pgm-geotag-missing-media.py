@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# v. 20261013.081348 - GPSData*.txt logs are read as tracks
 # v. 20261012.212812 - the nearest track point is written with w
 # v. 20261012.212705 - a far track point can be written from the place question
 # v. 20261012.205121 - the default write names the closest track
@@ -80,6 +81,7 @@
 # v. 20261009.160131 - also read .tcx tracks; a Trackpoint with a time and a position joins the same search as GPX
 # v. 20261009.151425 - match a photo or video time to the nearest GPX point and write that location with exiftool
 
+# 2026.10.13 - v. 0.81 - GPSData*.txt logs are read as tracks
 # 2026.10.12 - v. 0.80 - the nearest track point is written with w
 # 2026.10.12 - v. 0.79 - a far track point can be written from the place question
 # 2026.10.12 - v. 0.78 - the default write names the closest track
@@ -160,7 +162,7 @@
 # 2026.10.12 - v. 0.3 - named places from video-pgm-geotag-missing-media.conf are merged and offered for a file with no track point
 # 2026.10.09 - v. 0.2 - .tcx files (Garmin Training Center) are read with .gpx; Trackpoints without a position are left out
 # 2026.10.09 - v. 0.1 - initial release: read GPX, read file times with exiftool, report, write one location
-"""Find a GPX or TCX point close in time to a photo or video, for video-pgm-geotag-missing-media.sh.
+"""Find a GPX, TCX, or GPSData*.txt point close in time to a photo or video, for video-pgm-geotag-missing-media.sh.
 
 Subcommands:
   scan        Read the lists, print the report, write a plan file.
@@ -709,6 +711,17 @@ def open_xml(path):
     return handle, None
 
 
+def is_gpsdata_name(name):
+    """GPSData*.txt, for example GPSData000001_20260904.txt."""
+    base = os.path.basename(name).lower()
+    return base.startswith("gpsdata") and base.endswith(".txt")
+
+
+def is_track_name(name):
+    base = os.path.basename(name).lower()
+    return base.endswith((".gpx", ".tcx")) or is_gpsdata_name(base)
+
+
 def finish_point(points, lat_raw, lon_raw, when, ele, path):
     """Add one point. Return 'ok', 'skip' (place without time, or time without place), or 'drop'."""
     if lat_raw is None or lon_raw is None or not when:
@@ -809,13 +822,53 @@ def load_tcx(path):
     return (points, skipped), None
 
 
+def load_gpsdata(path):
+    """One point per line: unix time, A, latitude, longitude. Other lines are left out."""
+    points = []
+    seen = set()
+    try:
+        handle = open(path, "r", encoding="utf-8", errors="replace")
+    except OSError as exc:
+        return None, str(exc)
+    try:
+        for raw in handle:
+            line = raw.strip().lstrip("\ufeff")
+            if not line or line.startswith("#"):
+                continue
+            parts = line.split(",")
+            if len(parts) < 4 or parts[1].strip() != "A":
+                continue
+            try:
+                epoch = int(parts[0].strip())
+                lat = float(parts[2].strip())
+                lon = float(parts[3].strip())
+            except ValueError:
+                continue
+            if epoch < 946684800 or epoch in seen:
+                continue
+            if null_island(lat, lon) or abs(lat) > 90 or abs(lon) > 180:
+                continue
+            seen.add(epoch)
+            points.append((epoch, lat, lon, None, path))
+    finally:
+        handle.close()
+    if not points:
+        return None, "no GPS points in this file"
+    points.sort(key=lambda item: item[0])
+    return (points, 0), None
+
+
 def load_track(path):
+    if is_gpsdata_name(path):
+        return load_gpsdata(path)
     if path.lower().endswith(".tcx"):
         return load_tcx(path)
     return load_gpx(path)
 
 
 def track_label(path):
+    if is_gpsdata_name(path):
+        return "GPS"
     if path.lower().endswith(".tcx"):
         return "TCX"
     return "GPX"
@@ -1265,10 +1318,10 @@ def chosen_under(root, paths):
 
 
 def tracks_under(root):
-    """GPX and TCX files in root and in every subdirectory under it."""
+    """GPX, TCX, and GPSData*.txt files in root and in every subdirectory under it."""
     if os.path.isfile(root):
         name = os.path.basename(root)
-        if name.lower().endswith((".gpx", ".tcx")) and not skip_track_name(name):
+        if is_track_name(name) and not skip_track_name(name):
             return [root]
         return []
     if not os.path.isdir(root):
@@ -1279,7 +1332,7 @@ def tracks_under(root):
         for name in filenames:
             if skip_track_name(name):
                 continue
-            if name.lower().endswith((".gpx", ".tcx")):
+            if is_track_name(name):
                 found.append(os.path.join(dirpath, name))
     found.sort()
     return found
@@ -1376,9 +1429,9 @@ def print_place_banner(paths, places, notes, errors, track_roots, gpx_paths, tra
             count = chosen_under(root, gpx_paths)
             print("  %s" % root)
             if track_span and track_span != "all":
-                print("    %s .gpx/.tcx files from %s" % (fmt_int(count), track_span))
+                print("    %s .gpx/.tcx/GPSData*.txt files from %s" % (fmt_int(count), track_span))
             else:
-                print("    %s .gpx/.tcx files" % fmt_int(count))
+                print("    %s .gpx/.tcx/GPSData*.txt files" % fmt_int(count))
     for note in notes:
         print("  %s" % note)
     print("")
@@ -2708,6 +2761,24 @@ def selftest():
         found_tracks = tracks_under(track_dir)
         assert len(found_tracks) == 1
         assert found_tracks[0].endswith("day.gpx")
+        gps_path = os.path.join(track_dir, "GPSData000001_20260904.txt")
+        with open(gps_path, "w", encoding="utf-8") as handle:
+            stamp = calendar.timegm(datetime(2026, 9, 4, 12, 0, 0).timetuple())
+            handle.write("%d,A,55.563988,12.275320,0,0\n" % stamp)
+            handle.write("not a point\n")
+            handle.write("%d,V,55.0,12.0\n" % (stamp + 1))
+            handle.write("%d,A,0,0\n" % (stamp + 2))
+            handle.write("%d,A,55.564000,12.275400\n" % stamp)
+        loaded, err = load_track(gps_path)
+        assert err is None
+        assert len(loaded[0]) == 1
+        assert loaded[0][0][0] == stamp
+        assert loaded[0][0][1] == 55.563988
+        assert track_label(gps_path) == "GPS"
+        with open(os.path.join(track_dir, "notes.txt"), "w", encoding="utf-8") as handle:
+            handle.write("leave this out\n")
+        names = sorted(os.path.basename(path) for path in tracks_under(track_dir))
+        assert names == ["GPSData000001_20260904.txt", "day.gpx"]
         assert chosen_under(track_dir, found_tracks) == 1
         assert chosen_under(track_dir, []) == 0
     finally:

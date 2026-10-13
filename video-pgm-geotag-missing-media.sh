@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261013.081348 - GPSData*.txt logs are read as tracks
 # v. 20261012.212812 - the nearest track point is written with w
 # v. 20261012.212705 - a far track point can be written from the place question
 # v. 20261012.205121 - the default write names the closest track
@@ -80,6 +81,7 @@
 # v. 20261009.160131 - also read .tcx tracks; a Trackpoint with a time and a position is used like a GPX point
 # v. 20261009.151425 - report which photos and videos have no location, and write one from the nearest GPX point
 
+# 2026.10.13 - v. 0.81 - GPSData*.txt logs are read as tracks
 # 2026.10.12 - v. 0.80 - the nearest track point is written with w
 # 2026.10.12 - v. 0.79 - a far track point can be written from the place question
 # 2026.10.12 - v. 0.78 - the default write names the closest track
@@ -206,9 +208,11 @@ with colors on.
 
 Photos: .jpg .jpeg .heic .png
 Videos: .mp4 .mov
-Tracks: .gpx and .tcx in that same search, plus any --gpx you add. A .tcx
-file is a Garmin Training Center track. A directory given with --gpx is read
-with its subdirectories, and both kinds of track are taken from it.
+Tracks: .gpx, .tcx, and GPSData*.txt in that same search, plus any --gpx you add. A .tcx
+file is a Garmin Training Center track. A GPSData*.txt file is a GPS log, such as
+GPSData000001_20260904.txt. Each line is a time, the letter A, a latitude, and a
+longitude. A directory given with --gpx is read with its subdirectories, and those
+tracks are taken from it.
 
 The time in the file is the capture time (DateTimeOriginal, then video
 CreateDate). If those are missing, the file time is used. The report names
@@ -280,8 +284,8 @@ year from the file names. [t] asks for a year or a range, such as 2026-2027,
 2026 - 2027, or 2026 2027. --all-years loads every year.
 The first year must not be newer than the second. You are then asked whether
 to look place names up on OpenStreetMap. The default is yes. After those
-answers, the script prints how to run the same thing from the command line. Every .gpx and
-.tcx file is considered. When a name gives the day, as 20260920, 2026-09-20,
+answers, the script prints how to run the same thing from the command line. Every .gpx,
+.tcx, and GPSData*.txt file is considered. When a name gives the day, as 20260920, 2026-09-20,
 or 2026_09_20, smart loading uses that day and leaves out a file from another
 day. A name that starts with another year is left out too. A file with no day
 and no year in the name is still read. Dashes, underscores, and dots are the
@@ -298,8 +302,8 @@ map links for it without writing it. The question lists every key it accepts. q 
 at once, without Enter. g asks for a latitude and longitude for that file
 only, and shows the same map links as a track point. The next file can reuse
 that point with r. If OpenStreetMap cannot be reached, the coordinates are
-still written and later points are not looked up. A place you pick or type is marked MANUAL. A point from a GPX or
-TCX file is marked TRACK. Both are stored in GPSProcessingMethod. -y does not
+still written and later points are not looked up. A place you pick or type is marked MANUAL. A point from a GPX,
+TCX, or GPSData file is marked TRACK. Both are stored in GPSProcessingMethod. -y does not
 pick a place for
 you.
 
@@ -331,7 +335,7 @@ Options:
   --max-gap SECONDS    How close in time a track point must be. Default 30.
   --quicktime utc|local
                        How to read a video CreateDate. Default utc.
-  --gpx FILE|DIR       More tracks, .gpx or .tcx. Repeat for more than one.
+  --gpx FILE|DIR       More tracks: .gpx, .tcx, or GPSData*.txt. Repeat for more than one.
                        A directory is read with its subdirectories.
   --smart              One week before the first file through one week
                        after the last. Do not ask.
@@ -354,7 +358,7 @@ Examples:
   $(basename "$0") -y --tz +02:00 /mnt/p/video/trip
       Subdirectories too. Write every close match. Camera clock is +02:00.
   $(basename "$0") --gpx /mnt/p/tracks/day.gpx --here /mnt/p/video/trip
-      Use that GPX as well as any .gpx or .tcx beside the videos.
+      Use that GPX as well as any .gpx, .tcx, or GPSData*.txt beside the videos.
   $(basename "$0") --gpx /mnt/p/tracks/ride.tcx /mnt/p/video/trip
       Use that TCX file as the track.
   $(basename "$0") --days-before 3 --days-after 14 /mnt/p/video/trip
@@ -1091,6 +1095,12 @@ gm_consider_file() {
       ;;
     gpx|tcx)
       [[ "$kind" == gpx || "$kind" == both ]] && gm_add_gpx "$path"
+      ;;
+    txt)
+      base="${base,,}"
+      if [[ ( "$kind" == gpx || "$kind" == both ) && "$base" == gpsdata*.txt ]]; then
+        gm_add_gpx "$path"
+      fi
       ;;
   esac
 }
@@ -1931,11 +1941,11 @@ gm_add_conf_tracks() {
         fi
       done < <(find "$path" \( -type d -name '.*' -prune \) -o -type f -print0)
       if (( TRACK_ALL )); then
-        echo "$(gm_ts) ${path}: ${n_here} .gpx/.tcx files, including every subdirectory"
+        echo "$(gm_ts) ${path}: ${n_here} .gpx/.tcx/GPSData*.txt files, including every subdirectory"
       elif (( TRACK_SMART )); then
-        echo "$(gm_ts) ${path}: ${n_here} .gpx/.tcx files from ${SMART_FROM} to ${SMART_TO}, plus files with no day in the name, including every subdirectory"
+        echo "$(gm_ts) ${path}: ${n_here} .gpx/.tcx/GPSData*.txt files from ${SMART_FROM} to ${SMART_TO}, plus files with no day in the name, including every subdirectory"
       else
-        echo "$(gm_ts) ${path}: ${n_here} .gpx/.tcx files from ${TRACK_SPAN}, plus files with no year in the name, including every subdirectory"
+        echo "$(gm_ts) ${path}: ${n_here} .gpx/.tcx/GPSData*.txt files from ${TRACK_SPAN}, plus files with no year in the name, including every subdirectory"
       fi
     elif [[ -f "$path" ]]; then
       path="$(readlink -f -- "$path" 2>/dev/null || printf '%s' "$path")"
@@ -2645,11 +2655,11 @@ gm_choose_places() {
     fi
   done
   echo
-  echo "These files have no GPX or TCX point close enough."
+  echo "These files have no track point close enough."
   if (( any_other )); then
     echo "A match needs a point within $(gm_match_window)."
   else
-    echo "No GPX or TCX file was loaded."
+    echo "No track file was loaded."
   fi
   gm_ask_internet
   gm_place_width
