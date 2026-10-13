@@ -1,4 +1,6 @@
 #!/bin/bash
+# v. 20261013.102747 - every GPSData*.txt is read; the date in the name does not choose the log
+# v. 20261013.102039 - a merged file with no clips left can still get a GPX from the GPS log
 # v. 20261013.101339 - merged files with no GPX can be given only the GPX
 # v. 20261013.095703 - the script is video-pgm-merge-and-make-gpx.sh
 # v. 20261013.095124 - a GPS directory can be named, and no GPS log quits before the merge
@@ -56,6 +58,8 @@
 # v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
 # v. 20260805.154826 - after merge: copy GPS/dates from first chapter; FS times via touch -r
 
+# 2026.10.13 - v. 0.15.73 - every GPSData*.txt is read; the date in the name does not choose the log
+# 2026.10.13 - v. 0.15.72 - a merged 70mai file whose clips are gone can still get a GPX from GPSData*.txt beside it
 # 2026.10.13 - v. 0.15.71 - when merged files have no GPX, one question can create only those GPX files
 # 2026.10.13 - v. 0.15.70 - renamed to video-pgm-merge-and-make-gpx.sh
 # 2026.10.13 - v. 0.15.69 - GPSData*.txt is also read from --gps-dir, or from [tracks-location] in the geotag conf; that directory and everything inside it are searched; when no log is found the script quits unless you continue
@@ -289,6 +293,8 @@ Merge behaviour (no options):
     to generate it. When more than one merged file has no GPX, one question
     offers to create only those GPX files. [G] is the default. [e] asks about
     each file. [n] skips them. [q] quits. The merged videos are not replaced.
+    A merged file is included when its clips are no longer in the folder, as
+    long as a GPSData*.txt log is in the places searched.
   - Output file per group: <first_chapter_stem>_concat_parts_<first>-<last>.mp4
     (timestamp from the first part; size-split/letter groups use 01-<N> for chapter count,
     e.g. …_GOPRO10_BLACK_concat_parts_01-06.mp4). Legacy …_parts_*-*_concat.mp4 still recognized.
@@ -3775,24 +3781,12 @@ dashcam_gps_place_rows() {
   done
 }
 
-# A named day in the file, such as _20260905, must be this journey's day.
-# A file with no day is still used.
-dashcam_log_matches_day() {
-  local base="$1" day="$2" found=""
-  [[ -n "$day" ]] || return 0
-  if [[ "$base" =~ _((19|20)[0-9]{6})([^0-9]|$) ]]; then
-    found="${BASH_REMATCH[1]}"
-    [[ "$found" == "$day" ]]
-    return
-  fi
-  return 0
-}
-
 # Every GPSData*.txt in this directory, one and two levels above, and in each
-# GPS directory (that directory and everything inside it). $1, when set, is the
-# journey day YYYYMMDD.
+# GPS directory (that directory and everything inside it). The date in the
+# file name does not decide which log is used. Points inside the journey
+# window are kept when the GPX is written.
 dashcam_gps_logs() {
-  local want_day="${1:-}" path label kind f found=0
+  local path label kind f found=0
   local -a depth=()
   declare -A seen_dir=()
   while IFS=$'\t' read -r path label kind; do
@@ -3804,7 +3798,6 @@ dashcam_gps_logs() {
       depth=(-maxdepth 1)
     fi
     while IFS= read -r -d '' f; do
-      dashcam_log_matches_day "${f##*/}" "$want_day" || continue
       printf '%s\n' "$f"
       found=1
     done < <(find "$path" "${depth[@]}" \( -type d -name '.*' -prune \) -o -type f -iname 'GPSData*.txt' -print0)
@@ -3907,22 +3900,20 @@ dashcam_local_epoch_tz_corr() {
 # Write one GPX for this journey next to the merged MP4.
 # Points come from GPSData*.txt. The log clock is aligned to the NO* filename
 # times (the camera clock), then stored in the GPX as UTC.
-dashcam_write_gpx_for_group() {
-  local output_mp4="$1"
-  shift
-  local -a files=("$@")
+# Write a GPX for one journey. first/last are YYYYMMDD and HHMMSS from the clips
+# or from the merged file name. stamp_src supplies the file time.
+dashcam_write_gpx_span() {
+  local output_mp4="$1" first_date="$2" first_time="$3" last_date="$4" last_time="$5" stamp_src="$6"
   local gpx tmp first_epoch last_epoch tz_corr nlog
   local -a logs=()
   gpx=$(dashcam_gpx_beside_output "$output_mp4")
-  dashcam_parse_basename "${files[0]##*/}" || return 1
-  mapfile -t logs < <(dashcam_gps_logs "$DASHCAM_DATE" || true)
+  mapfile -t logs < <(dashcam_gps_logs || true)
   if (( ${#logs[@]} == 0 )); then
-    echo "$(pgm_ts) GPS: no GPSData*.txt for ${DASHCAM_DATE} in the places searched — did not write ${gpx##*/}"
+    echo "$(pgm_ts) GPS: no GPSData*.txt in the places searched — did not write ${gpx##*/}"
     return 0
   fi
-  first_epoch=$(gopro_datetime_to_epoch "$DASHCAM_DATE" "$DASHCAM_TIME") || return 1
-  dashcam_parse_basename "${files[-1]##*/}" || return 1
-  last_epoch=$(gopro_datetime_to_epoch "$DASHCAM_DATE" "$DASHCAM_TIME") || return 1
+  first_epoch=$(gopro_datetime_to_epoch "$first_date" "$first_time") || return 1
+  last_epoch=$(gopro_datetime_to_epoch "$last_date" "$last_time") || return 1
   tz_corr=$(dashcam_local_epoch_tz_corr) || return 1
   tmp="${gpx}.tmp.$$"
   if ! nlog=$(awk -v first_epoch="$first_epoch" -v last_epoch="$last_epoch" -v tz_corr="$tz_corr" \
@@ -4073,12 +4064,37 @@ dashcam_write_gpx_for_group() {
   fi
   if mv -f -- "$tmp" "$gpx"; then
     echo "$(pgm_ts) GPS: wrote ${nlog} points → ${gpx}"
-    pgm_stamp_file_time "${files[0]}" "$gpx"
+    pgm_stamp_file_time "$stamp_src" "$gpx"
   else
     rm -f -- "$tmp"
     echo "$(pgm_ts) GPS: could not write ${gpx}" >&2
     return 1
   fi
+}
+
+# Clips still in the folder: the window is the first clip through the last.
+dashcam_write_gpx_for_group() {
+  local output_mp4="$1"
+  shift
+  local -a files=("$@")
+  local fd ft ld lt
+  dashcam_parse_basename "${files[0]##*/}" || return 1
+  fd=$DASHCAM_DATE
+  ft=$DASHCAM_TIME
+  dashcam_parse_basename "${files[-1]##*/}" || return 1
+  ld=$DASHCAM_DATE
+  lt=$DASHCAM_TIME
+  dashcam_write_gpx_span "$output_mp4" "$fd" "$ft" "$ld" "$lt" "${files[0]}"
+}
+
+# Merged file only: the window is the start and end written in its name.
+dashcam_write_gpx_from_concat() {
+  local output_mp4="$1"
+  concat_parse_dashcam_output "${output_mp4##*/}" || return 1
+  dashcam_write_gpx_span "$output_mp4" \
+    "${CONCAT_DASH_START:0:8}" "${CONCAT_DASH_START:8:6}" \
+    "${CONCAT_DASH_END:0:8}" "${CONCAT_DASH_END:8:6}" \
+    "$output_mp4"
 }
 
 # Write the journey GPX once the merged MP4 is on disk.
@@ -5472,26 +5488,46 @@ show_merge_group_detail() {
 }
 
 # When merged 70mai files have no GPX, offer to write only those GPX files.
+# $1 is the skip map. The rest are the MP4s in this directory.
+# A merged file is included even when its clips are no longer here.
 # Returns 1 when the user quits.
 dashcam_offer_gpx_only() {
-  local -n _blobs=$1
-  local -n _skip=$2
-  local blob output_file gpx n i choice
-  local -a files=() gpx_blobs=() gpx_outs=()
-  for blob in "${_blobs[@]}"; do
-    group_files_to_array "$blob" files
-    group_is_dashcam "${files[@]}" || continue
-    output_file=$(group_output_file "${files[@]}")
-    [[ -e "$output_file" ]] || continue
-    gpx=$(dashcam_gpx_beside_output "$output_file")
+  local -n _skip=$1
+  shift
+  local -a all=("$@")
+  local f base gpx found n i choice have_logs any_clips
+  local -a gpx_outs=() has_clips=() uncovered=()
+  DASHCAM_OFFER_SAID=0
+  have_logs=0
+  dashcam_gps_logs >/dev/null && have_logs=1
+  for f in "${all[@]}"; do
+    base="${f##*/}"
+    is_concat_output_basename "$base" || continue
+    concat_parse_dashcam_output "$base" || continue
+    gpx=$(dashcam_gpx_beside_output "$f")
     dashcam_gpx_is_valid "$gpx" && continue
-    dashcam_parse_basename "${files[0]##*/}" || continue
-    dashcam_gps_logs "$DASHCAM_DATE" >/dev/null || continue
-    gpx_blobs+=("$blob")
-    gpx_outs+=("$output_file")
+    if (( ! have_logs )); then
+      uncovered+=("$f")
+      continue
+    fi
+    gpx_outs+=("$f")
+    found=$(count_dashcam_chapters_in_window \
+      "$CONCAT_DASH_START" "$CONCAT_DASH_END" "$CONCAT_DASH_LETTER" "${all[@]}")
+    if (( found > 0 )); then
+      has_clips+=(1)
+    else
+      has_clips+=(0)
+    fi
   done
   n=${#gpx_outs[@]}
-  (( n )) || return 0
+  if (( n == 0 )); then
+    if (( ${#uncovered[@]} )); then
+      DASHCAM_OFFER_SAID=1
+      dashcam_warn_no_gps || return 1
+    fi
+    return 0
+  fi
+  DASHCAM_OFFER_SAID=1
   echo
   if (( n == 1 )); then
     echo "1 merged file has no GPX. The video will not be merged again."
@@ -5524,19 +5560,52 @@ dashcam_offer_gpx_only() {
   fi
   case "$choice" in
     g)
-      for i in "${!gpx_blobs[@]}"; do
-        group_files_to_array "${gpx_blobs[$i]}" files
-        dashcam_write_gpx_if_merged "${gpx_outs[$i]}" "${files[@]}"
-        _skip["${gpx_outs[$i]}"]=1
+      for i in "${!gpx_outs[@]}"; do
+        dashcam_write_gpx_from_concat "${gpx_outs[$i]}"
+        _skip["${gpx_outs[$i]##*/}"]=1
       done
       echo "$(pgm_ts) Created only the GPX files. The merged videos were kept."
       ;;
     e)
-      echo "$(pgm_ts) Each file will be asked about."
+      any_clips=0
+      for i in "${!gpx_outs[@]}"; do
+        if (( has_clips[i] )); then
+          any_clips=1
+          continue
+        fi
+        echo
+        printf '  %s\n' "${gpx_outs[$i]##*/}"
+        echo "  [Y] Create this GPX (default)"
+        echo "  [n] Skip this file"
+        echo "  [q] Quit"
+        while true; do
+          pgm_read_key "Create this GPX? [Y/n/q]: " y
+          case "${REPLY,,}" in
+            y)
+              dashcam_write_gpx_from_concat "${gpx_outs[$i]}"
+              _skip["${gpx_outs[$i]##*/}"]=1
+              break
+              ;;
+            n)
+              _skip["${gpx_outs[$i]##*/}"]=1
+              echo "$(pgm_ts) Skipped ${gpx_outs[$i]##*/}."
+              break
+              ;;
+            q)
+              echo "$(pgm_ts) Quit."
+              return 1
+              ;;
+            *) echo "That is not a choice." ;;
+          esac
+        done
+      done
+      if (( any_clips )); then
+        echo "$(pgm_ts) Each file that still has its clips will be asked about."
+      fi
       ;;
     n)
-      for output_file in "${gpx_outs[@]}"; do
-        _skip["$output_file"]=1
+      for f in "${gpx_outs[@]}"; do
+        _skip["${f##*/}"]=1
       done
       echo "$(pgm_ts) Skipped these files. No GPX was written."
       ;;
@@ -5595,8 +5664,13 @@ do_merge() {
 
   print_group_plan "${sorted_mp4[@]}"
 
+  local -A GPX_BATCH_SKIP=()
+  dashcam_offer_gpx_only GPX_BATCH_SKIP "${sorted_mp4[@]}" || return 1
+
   if (( ${#GROUP_BLOBS[@]} == 0 )); then
-    echo "$(pgm_ts) No chapter input MP4s in $(pwd)."
+    if (( ! DASHCAM_OFFER_SAID )); then
+      echo "$(pgm_ts) No chapter input MP4s in $(pwd)."
+    fi
     return 0
   fi
 
@@ -5609,8 +5683,10 @@ do_merge() {
   mergeable_total=${#mergeable_blobs[@]}
 
   if (( mergeable_total == 0 )); then
-    echo "$(pgm_ts) No multi-part chapter groups to merge."
-    echo "$(pgm_ts) Tip: sequential GoPro clips (_part_01… with chaining timestamps, bare _Timelapse chapters without _part_XX, YYYYMMDD_HHMMSS_… ~4 GB / ~12 GB, a/b/c letter suffixes, or 70mai NOYYYYMMDD-HHMMSS-NNNNNNX journeys) may be mergeable chapters."
+    if (( ! DASHCAM_OFFER_SAID )); then
+      echo "$(pgm_ts) No multi-part chapter groups to merge."
+      echo "$(pgm_ts) Tip: sequential GoPro clips (_part_01… with chaining timestamps, bare _Timelapse chapters without _part_XX, YYYYMMDD_HHMMSS_… ~4 GB / ~12 GB, a/b/c letter suffixes, or 70mai NOYYYYMMDD-HHMMSS-NNNNNNX journeys) may be mergeable chapters."
+    fi
     return 0
   fi
 
@@ -5627,9 +5703,6 @@ do_merge() {
   if (( need_gps )) && ! dashcam_gps_logs >/dev/null; then
     dashcam_warn_no_gps || return 1
   fi
-
-  local -A GPX_BATCH_SKIP=()
-  dashcam_offer_gpx_only mergeable_blobs GPX_BATCH_SKIP || return 1
 
   mergeable_total=0
   for blob in "${mergeable_blobs[@]}"; do
