@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# v. 20261013.090107 - a GPSData point is the clip start plus the seconds from the log number
+# v. 20261013.084500 - a 70mai file is timed from its name, and its GPS log is the track used
 # v. 20261013.083127 - a GPSData time follows the clip name in the line
 # v. 20261013.081858 - a GPSData clock is shifted to UTC with the camera offset
 # v. 20261013.081348 - GPSData*.txt logs are read as tracks
@@ -83,6 +85,8 @@
 # v. 20261009.160131 - also read .tcx tracks; a Trackpoint with a time and a position joins the same search as GPX
 # v. 20261009.151425 - match a photo or video time to the nearest GPX point and write that location with exiftool
 
+# 2026.10.13 - v. 0.85 - a GPSData point is the clip start plus the seconds from the log number
+# 2026.10.13 - v. 0.84 - a 70mai file is timed from its name, and its GPS log is the track used
 # 2026.10.13 - v. 0.83 - a GPSData time follows the clip name in the line
 # 2026.10.13 - v. 0.82 - a GPSData clock is shifted to UTC with the camera offset
 # 2026.10.13 - v. 0.81 - GPSData*.txt logs are read as tracks
@@ -844,7 +848,11 @@ def clip_clock_epoch(line):
 
 
 def gpsdata_bias(deltas):
-    """How far the log number sits from the clip name. Samples fall inside a one-minute clip."""
+    """The constant gap between the log number and the clip name.
+
+    A sample can sit anywhere in its one-minute clip, so the gap wanders by
+    about a minute. The low end of that cluster is the clock itself.
+    """
     if not deltas:
         return 0
     ordered = sorted(deltas)
@@ -858,8 +866,10 @@ def gpsdata_bias(deltas):
 def load_gpsdata(path):
     """A line is a log number, A, latitude, longitude, and usually a clip name.
 
-    The log number is not UTC. The clip name is the camera clock, and the number
-    only says how far into that clip the sample is.
+    The name, such as NO20260905-111253, is the start of that recording. The
+    log number is about ten hours behind that name. One gap from the whole file
+    puts each sample that many seconds into its clip. The camera offset is
+    applied later, so this result is still the camera clock.
     """
     rows = []
     deltas = []
@@ -968,7 +978,7 @@ def haversine_m(lat1, lon1, lat2, lon2):
     return 2 * radius * math.asin(min(1.0, math.sqrt(aa)))
 
 
-def close_tracks(points, epoch, max_gap):
+def close_tracks(points, epoch, max_gap, preferred_path=None):
     """Closest point in each track file that falls inside the time window."""
     if not points:
         return []
@@ -996,13 +1006,62 @@ def close_tracks(points, epoch, max_gap):
         while 0 <= at < len(points) and consider(at):
             at += step
     found = [best[path] for path in seen]
-    preferred = points[index][4]
+    if preferred_path is None:
+        preferred_path = points[index][4]
     found.sort(key=lambda item: (
-        0 if item[1][4] == preferred else 1,
+        0 if item[1][4] == preferred_path else 1,
         item[0],
         os.path.basename(item[1][4]).casefold(),
     ))
     return found
+
+
+DASHCAM_NAME = re.compile(r"^(\d{4})(\d{2})(\d{2})_(\d{2})(\d{2})(\d{2})")
+
+
+def is_dashcam_name(path):
+    base = os.path.basename(path).lower()
+    return "70mai" in base or "frontcam" in base or "backcam" in base
+
+
+def dashcam_name_epoch(path, offset_seconds):
+    """Start time written in a 70mai file name. That clock matches a GPSData clip name."""
+    if not is_dashcam_name(path):
+        return None
+    match = DASHCAM_NAME.match(os.path.basename(path))
+    if not match:
+        return None
+    parts = [int(item) for item in match.groups()]
+    try:
+        naive = calendar.timegm(datetime(*parts).timetuple())
+    except ValueError:
+        return None
+    return naive - offset_seconds
+
+
+def closest_named(points, epoch, max_gap, pred):
+    """Closest point inside the window whose track file pred accepts."""
+    if not points:
+        return None
+    index = nearest_index(points, epoch)
+    best = None
+
+    def consider(at):
+        nonlocal best
+        point = points[at]
+        gap = abs(point[0] - epoch)
+        if gap > max_gap:
+            return False
+        if pred(point[4]) and (best is None or gap < best[0]):
+            best = (gap, point)
+        return True
+
+    consider(index)
+    for step in (-1, 1):
+        at = index + step
+        while 0 <= at < len(points) and consider(at):
+            at += step
+    return best
 
 
 def alt_record(point, gap):
@@ -1186,6 +1245,20 @@ def match_files(media, infos, points, offset_seconds, max_gap, redo):
             })
             continue
         when = pick_time(info, offset_seconds)
+        named = dashcam_name_epoch(path, offset_seconds)
+        if named is not None:
+            base = os.path.basename(path)
+            match = DASHCAM_NAME.match(base)
+            wall = "%s.%s.%s %s:%s:%s" % (
+                match.group(1), match.group(2), match.group(3),
+                match.group(4), match.group(5), match.group(6),
+            )
+            when = {
+                "epoch": named,
+                "source": "file name",
+                "wall": wall,
+                "basis": "name",
+            }
         pos = position_from_tags(info)
         chosen = None
         gap = None
@@ -1202,6 +1275,13 @@ def match_files(media, infos, points, offset_seconds, max_gap, redo):
                 extra = other_track(points, index, when["epoch"], max_gap)
                 if extra:
                     warn = "%s is %s away" % (os.path.basename(extra[2]), fmt_metres(extra[1]))
+            if named is not None:
+                gps_hit = closest_named(points, when["epoch"], max_gap, is_gpsdata_name)
+                if gps_hit is not None:
+                    gap, chosen = gps_hit
+                    point = chosen
+                    signed = chosen[0] - when["epoch"]
+                    warn = None
         has_gps = pos is not None
         close = chosen is not None
         if has_gps and redo and close:
@@ -1277,7 +1357,7 @@ def match_files(media, infos, points, offset_seconds, max_gap, redo):
                 "height": height,
                 "status": status,
             }
-            found = close_tracks(points, when["epoch"], max_gap)
+            found = close_tracks(points, when["epoch"], max_gap, chosen[4])
             if len(found) > 1:
                 row["write"]["alts"] = [alt_record(point, gap_s) for gap_s, point in found]
         rows.append(row)
@@ -2654,6 +2734,21 @@ def selftest():
     alone = close_tracks(points, t0, 30)
     assert len(alone) == 1
     assert alone[0][1][4] == "day.gpx"
+    video = "20260905_125938-20260905_130737_-_-_70mai-A510_BackCam_concat.mp4"
+    start = calendar.timegm(datetime(2026, 9, 5, 12, 59, 38).timetuple())
+    assert dashcam_name_epoch(video, 7200) == start - 7200
+    assert dashcam_name_epoch("day.gpx", 7200) is None
+    epoch = start - 7200
+    dash = [
+        (epoch, 52.38, 22.36, 172.0, "garmin.tcx"),
+        (epoch + 28, 52.387, 22.365, None, "GPSData000002_20260905.txt"),
+    ]
+    dash.sort(key=lambda item: (item[0], item[4]))
+    hit = closest_named(dash, epoch, 30, is_gpsdata_name)
+    assert hit[0] == 28
+    assert hit[1][4].endswith(".txt")
+    listed = close_tracks(dash, epoch, 30, hit[1][4])
+    assert listed[0][1][4].endswith(".txt")
 
     picked = pick_time({
         "EXIF:DateTimeOriginal": "2026:08:01 16:00:00",
@@ -2866,6 +2961,24 @@ def selftest():
             handle.write("leave this out\n")
         names = sorted(os.path.basename(path) for path in tracks_under(track_dir))
         assert names == ["GPSData000001_20260904.txt", "GPSData000002_20260905.txt", "day.gpx"]
+        clip1 = calendar.timegm(datetime(2026, 9, 5, 11, 12, 53).timetuple())
+        clip2 = calendar.timegm(datetime(2026, 9, 5, 11, 13, 53).timetuple())
+        gap = 35994
+        inside = os.path.join(track_dir, "GPSData000003_20260905.txt")
+        with open(inside, "w", encoding="utf-8") as handle:
+            handle.write("$V02\n")
+            handle.write("1788570823,A,52.199362,20.978697,11700,138,-3,78,50,NO20260905-111253-000005B.MP4,0,0,0\n")
+            handle.write("1788570825,A,52.199350,20.978732,11600,222,-1,78,48,NO20260905-111253-000005B.MP4,0,0,0\n")
+            for step in range(17):
+                handle.write(
+                    "%d,A,52.198000,20.978000,0,0,0,0,0,NO20260905-111353-000006B.MP4,0,0,0\n" % (clip2 + step - gap)
+                )
+        loaded, err = load_track(inside)
+        assert err is None
+        assert loaded[0][0][0] == clip1 + 44
+        assert loaded[0][0][1] == 52.199362
+        assert loaded[0][1][0] == clip1 + 46
+        assert loaded[0][2][0] == clip2
         assert chosen_under(track_dir, found_tracks) == 1
         assert chosen_under(track_dir, []) == 0
     finally:
