@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# v. 20261013.081858 - a GPSData clock is shifted to UTC with the camera offset
 # v. 20261013.081348 - GPSData*.txt logs are read as tracks
 # v. 20261012.212812 - the nearest track point is written with w
 # v. 20261012.212705 - a far track point can be written from the place question
@@ -81,6 +82,7 @@
 # v. 20261009.160131 - also read .tcx tracks; a Trackpoint with a time and a position joins the same search as GPX
 # v. 20261009.151425 - match a photo or video time to the nearest GPX point and write that location with exiftool
 
+# 2026.10.13 - v. 0.82 - a GPSData clock is shifted to UTC with the camera offset
 # 2026.10.13 - v. 0.81 - GPSData*.txt logs are read as tracks
 # 2026.10.12 - v. 0.80 - the nearest track point is written with w
 # 2026.10.12 - v. 0.79 - a far track point can be written from the place question
@@ -856,6 +858,28 @@ def load_gpsdata(path):
         return None, "no GPS points in this file"
     points.sort(key=lambda item: item[0])
     return (points, 0), None
+
+
+def apply_gpsdata_offset(points, gpx_info, offset_seconds):
+    """A GPSData clock is already on the camera offset. Shift it to UTC. GPX and TCX stay as they are."""
+    if not offset_seconds:
+        return points
+    out = []
+    changed = False
+    for point in points:
+        if is_gpsdata_name(point[4]):
+            point = (point[0] - offset_seconds,) + point[1:]
+            changed = True
+        out.append(point)
+    if not changed:
+        return points
+    out.sort(key=lambda item: (item[0], item[4]))
+    for info in gpx_info:
+        if info.get("start") is None or not is_gpsdata_name(info["path"]):
+            continue
+        info["start"] -= offset_seconds
+        info["end"] -= offset_seconds
+    return out
 
 
 def load_track(path):
@@ -2105,6 +2129,7 @@ def cmd_scan(argv):
             eprint("Camera offset is not one I can use: %s" % args.tz)
             eprint("Examples: +02:00, -05:30, 0, auto.")
             return 1
+    points = apply_gpsdata_offset(points, gpx_info, offset_seconds)
     rows = match_files(media, infos, points, offset_seconds, args.max_gap, args.redo)
     for row in rows:
         row["show"] = display_path(row["path"], roots) if roots else row["path"]
@@ -2775,6 +2800,16 @@ def selftest():
         assert loaded[0][0][0] == stamp
         assert loaded[0][0][1] == 55.563988
         assert track_label(gps_path) == "GPS"
+        moved = apply_gpsdata_offset(
+            [(stamp, 55.563988, 12.275320, None, gps_path), (stamp, 50.0, 19.0, 200.0, "day.gpx")],
+            [{"path": gps_path, "start": stamp, "end": stamp}, {"path": "day.gpx", "start": stamp, "end": stamp}],
+            7200,
+        )
+        by_path = dict((item[4], item[0]) for item in moved)
+        assert by_path[gps_path] == stamp - 7200
+        assert by_path["day.gpx"] == stamp
+        same = apply_gpsdata_offset([(stamp, 55.0, 12.0, None, gps_path)], [{"path": gps_path, "start": stamp, "end": stamp}], 0)
+        assert same[0][0] == stamp
         with open(os.path.join(track_dir, "notes.txt"), "w", encoding="utf-8") as handle:
             handle.write("leave this out\n")
         names = sorted(os.path.basename(path) for path in tracks_under(track_dir))

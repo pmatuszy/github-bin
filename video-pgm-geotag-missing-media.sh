@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261013.081858 - a GPSData clock is shifted to UTC with the camera offset
 # v. 20261013.081348 - GPSData*.txt logs are read as tracks
 # v. 20261012.212812 - the nearest track point is written with w
 # v. 20261012.212705 - a far track point can be written from the place question
@@ -81,6 +82,7 @@
 # v. 20261009.160131 - also read .tcx tracks; a Trackpoint with a time and a position is used like a GPX point
 # v. 20261009.151425 - report which photos and videos have no location, and write one from the nearest GPX point
 
+# 2026.10.13 - v. 0.82 - a GPSData clock is shifted to UTC with the camera offset
 # 2026.10.13 - v. 0.81 - GPSData*.txt logs are read as tracks
 # 2026.10.12 - v. 0.80 - the nearest track point is written with w
 # 2026.10.12 - v. 0.79 - a far track point can be written from the place question
@@ -172,8 +174,10 @@
 # change it). ExifTool reads the times and writes the location. The file time
 # is kept.
 #
-# A video gets the point at its start. Track times are UTC. A camera clock with
-# no timezone is shifted by the offset you give (Polish summer time is +02:00).
+# A video gets the point at its start. GPX and TCX times are UTC. A GPSData*.txt
+# clock is already on the camera offset, so it is shifted the same way as a
+# camera time. A camera clock with no timezone is shifted by the offset you
+# give (Polish summer time is +02:00).
 #
 # A file with no track point can take a named place from
 # video-pgm-geotag-missing-media.conf. Every copy found is merged, from
@@ -211,13 +215,16 @@ Videos: .mp4 .mov
 Tracks: .gpx, .tcx, and GPSData*.txt in that same search, plus any --gpx you add. A .tcx
 file is a Garmin Training Center track. A GPSData*.txt file is a GPS log, such as
 GPSData000001_20260904.txt. Each line is a time, the letter A, a latitude, and a
-longitude. A directory given with --gpx is read with its subdirectories, and those
-tracks are taken from it.
+longitude. That clock is already on the camera offset, so it is shifted to UTC
+with the same offset as a camera time. A GPX or TCX time stays UTC. A directory
+given with --gpx is read with its subdirectories, and those tracks are taken
+from it.
 
 The time in the file is the capture time (DateTimeOriginal, then video
 CreateDate). If those are missing, the file time is used. The report names
-which clock was used. Track times are UTC. A camera time that has no timezone
-is shifted by --tz before it is compared. +02:00 means the camera clock is
+which clock was used. GPX and TCX times are UTC. A GPSData*.txt time is already
+on the camera offset, and it is shifted to UTC with that same offset. A camera
+time that has no timezone is shifted by --tz before it is compared. +02:00 means the camera clock is
 two hours ahead of UTC. --tz auto learns that shift from files in the same
 run that already have both a camera time and a GPS time.
 
@@ -1270,7 +1277,8 @@ gm_ask_tz() {
     return 0
   fi
   echo
-  echo "Track times are UTC. A camera time with no timezone is shifted by this offset."
+  echo "GPX and TCX times are UTC. A GPSData*.txt time is already on this offset."
+  echo "A camera time with no timezone, and a GPSData time, are shifted by it."
   echo "Polish summer time is +02:00. Use 0 when the camera clock is already UTC."
   echo "  [2] +02:00 (default)"
   echo "  [0] camera clock is UTC"
