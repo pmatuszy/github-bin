@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261013.095703 - the script is video-pgm-merge-and-make-gpx.sh
 # v. 20261013.095124 - a GPS directory can be named, and no GPS log quits before the merge
 # v. 20261012.082500 - size-split chapters: next clip must start at prev time + duration (±2s)
 # v. 20261012.081800 - 12G chapter: full split ≥ ~9.8 GiB; wall-clock link only for a large remainder
@@ -54,6 +55,7 @@
 # v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
 # v. 20260805.154826 - after merge: copy GPS/dates from first chapter; FS times via touch -r
 
+# 2026.10.13 - v. 0.15.70 - renamed to video-pgm-merge-and-make-gpx.sh
 # 2026.10.13 - v. 0.15.69 - GPSData*.txt is also read from --gps-dir, or from [tracks-location] in the geotag conf; that directory and everything inside it are searched; when no log is found the script quits unless you continue
 # 2026.10.07 - v. 0.15.68 - summary times are whole seconds (5m 04s), and a file length is whole seconds (409 s), not a fraction
 # 2026.10.07 - v. 0.15.67 - an EV clip (event) whose sequence number is the next one stays in the same 70mai journey as the NO clips, on the front camera and on the back camera, even when it starts closer than a minute to the clips around it
@@ -174,7 +176,7 @@
 # 2026.05.26 - v. 0.2 - renamed from gopro-mp4-merge.sh
 # 2026.05.26 - v. 0.1 - merge GoPro chapter MP4s (Windows merge-gopro batch port)
 #
-# video-pgm-merge.sh
+# video-pgm-merge-and-make-gpx.sh
 #
 # Merge GoPro chapter MP4s in the current directory via mp4_merge (gyroflow/mp4-merge).
 #
@@ -992,7 +994,7 @@ pgm_print_run_settings_equivalent_cli() {
   local -a parts=()
 
   cmd="$(basename -- "${BASH_SOURCE[0]:-$0}")"
-  [[ -n "$cmd" ]] || cmd="video-pgm-merge.sh"
+  [[ -n "$cmd" ]] || cmd="video-pgm-merge-and-make-gpx.sh"
 
   (( DO_UPDATE )) && parts+=("--update")
   (( DO_YES )) && parts+=("--yes")
@@ -4041,7 +4043,7 @@ dashcam_write_gpx_for_group() {
       }
       sort_n(rows, m, 0)
       print "<?xml version=\"1.0\" encoding=\"UTF-8\"?>" > out
-      print "<gpx version=\"1.1\" creator=\"video-pgm-merge.sh\" xmlns=\"http://www.topografix.com/GPX/1/1\">" > out
+      print "<gpx version=\"1.1\" creator=\"video-pgm-merge-and-make-gpx.sh\" xmlns=\"http://www.topografix.com/GPX/1/1\">" > out
       print "  <trk>" > out
       print "    <name>" track_name "</name>" > out
       print "    <trkseg>" > out

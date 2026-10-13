@@ -93,7 +93,7 @@
 #
 # video-pgm-timelapse.sh
 #
-# Make a faster viewing copy of a video (typically a video-pgm-merge.sh result).
+# Make a faster viewing copy of a video (typically a video-pgm-merge-and-make-gpx.sh result).
 # The source file and any .gpx beside it are left unchanged.
 #
 

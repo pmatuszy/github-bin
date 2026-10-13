@@ -12683,7 +12683,7 @@ gopro_renamed_same_camera_mp4_count_in_dir() {
     printf '%s' "$count"
 }
 
-# GoPro fixed-size chapter bands (aligned with video-pgm-merge.sh).
+# GoPro fixed-size chapter bands (aligned with video-pgm-merge-and-make-gpx.sh).
 # Decimal literals: $(( 10000 * 1024 * 1024 )) overflows 32-bit bash arithmetic.
 RENAME_GOPRO_SIZE_SPLIT_4G_MIN_BYTES=3670016000
 RENAME_GOPRO_SIZE_SPLIT_4G_MAX_BYTES=4718592000
@@ -12965,7 +12965,7 @@ gopro_renamed_basename_insert_part_suffix() {
     return 1
 }
 
-# Add _part_NN only when this file belongs to a validated GoPro size-split chain (same rules as video-pgm-merge.sh).
+# Add _part_NN only when this file belongs to a validated GoPro size-split chain (same rules as video-pgm-merge-and-make-gpx.sh).
 maybe_gopro_backfill_chapter_part_suffix() {
     local f="$1"
     local base="$2"
