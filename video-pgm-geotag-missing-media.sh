@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261013.092056 - a tracks folder from the conf also reads GPSData*.txt
 # v. 20261013.090107 - a GPSData point is the clip start plus the seconds from the log number
 # v. 20261013.084500 - a 70mai file is timed from its name, and its GPS log is the track used
 # v. 20261013.083127 - a GPSData time follows the clip name in the line
@@ -85,6 +86,7 @@
 # v. 20261009.160131 - also read .tcx tracks; a Trackpoint with a time and a position is used like a GPX point
 # v. 20261009.151425 - report which photos and videos have no location, and write one from the nearest GPX point
 
+# 2026.10.13 - v. 0.86 - a tracks folder from the conf also reads GPSData*.txt
 # 2026.10.13 - v. 0.85 - a GPSData point is the clip start plus the seconds from the log number
 # 2026.10.13 - v. 0.84 - a 70mai file is timed from its name, and its GPS log is the track used
 # 2026.10.13 - v. 0.83 - a GPSData time follows the clip name in the line
@@ -1956,6 +1958,8 @@ gm_add_conf_tracks() {
         ext="${base##*.}"
         ext="${ext,,}"
         if [[ "$ext" == gpx || "$ext" == tcx ]]; then
+          gm_add_gpx "$f" && n_here=$(( n_here + 1 ))
+        elif [[ "$ext" == txt && "${base,,}" == gpsdata*.txt ]]; then
           gm_add_gpx "$f" && n_here=$(( n_here + 1 ))
         fi
       done < <(find "$path" \( -type d -name '.*' -prune \) -o -type f -print0)

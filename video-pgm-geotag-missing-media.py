@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# v. 20261013.092056 - a tracks folder from the conf also reads GPSData*.txt
 # v. 20261013.090107 - a GPSData point is the clip start plus the seconds from the log number
 # v. 20261013.084500 - a 70mai file is timed from its name, and its GPS log is the track used
 # v. 20261013.083127 - a GPSData time follows the clip name in the line
@@ -85,6 +86,7 @@
 # v. 20261009.160131 - also read .tcx tracks; a Trackpoint with a time and a position joins the same search as GPX
 # v. 20261009.151425 - match a photo or video time to the nearest GPX point and write that location with exiftool
 
+# 2026.10.13 - v. 0.86 - a tracks folder from the conf also reads GPSData*.txt
 # 2026.10.13 - v. 0.85 - a GPSData point is the clip start plus the seconds from the log number
 # 2026.10.13 - v. 0.84 - a 70mai file is timed from its name, and its GPS log is the track used
 # 2026.10.13 - v. 0.83 - a GPSData time follows the clip name in the line
