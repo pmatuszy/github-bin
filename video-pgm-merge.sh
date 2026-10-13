@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261013.095124 - a GPS directory can be named, and no GPS log quits before the merge
 # v. 20261012.082500 - size-split chapters: next clip must start at prev time + duration (±2s)
 # v. 20261012.081800 - 12G chapter: full split ≥ ~9.8 GiB; wall-clock link only for a large remainder
 # v. 20261009.181600 - 12G chapter: size decides a full split (Mission 1 ~10 GB can be <<18 min); 8–13 GiB band
@@ -53,6 +54,7 @@
 # v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
 # v. 20260805.154826 - after merge: copy GPS/dates from first chapter; FS times via touch -r
 
+# 2026.10.13 - v. 0.15.69 - GPSData*.txt is also read from --gps-dir, or from [tracks-location] in the geotag conf; that directory and everything inside it are searched; when no log is found the script quits unless you continue
 # 2026.10.07 - v. 0.15.68 - summary times are whole seconds (5m 04s), and a file length is whole seconds (409 s), not a fraction
 # 2026.10.07 - v. 0.15.67 - an EV clip (event) whose sequence number is the next one stays in the same 70mai journey as the NO clips, on the front camera and on the back camera, even when it starts closer than a minute to the clips around it
 # 2026.10.06 - v. 0.15.66 - a merged file with no location gets the first point of its .gpx stored in the video; a file that already has a fix is left as it is
@@ -183,6 +185,7 @@ show_help() {
   cat <<EOF
 Usage: $(basename "$0") [-h|--help] [-u|--update] [-v|--version] [-y|--yes]
        [--read-timeout SEC] [--seam-before SEC] [--seam-after SEC] [--temp-dir DIR]
+       [--gps-dir DIR]
 
 Merge chapter MP4 files in the current directory (e.g. GoPro splits) into one
 file using mp4_merge from https://github.com/gyroflow/mp4-merge
@@ -200,6 +203,12 @@ Options:
                        Env: PGM_SEAM_PREVIEW_BEFORE.
   --seam-after SEC     Terminal seam preview: seconds after each join (default 1).
                        Env: PGM_SEAM_PREVIEW_AFTER.
+  --gps-dir DIR        Also search DIR, and every directory inside it, for GPSData*.txt.
+                       Repeat for more than one. A Windows path such as
+                       P:\\video\\gps is read as /mnt/p/video/gps. Without this,
+                       [tracks-location] in video-pgm-geotag-missing-media.conf
+                       is used, from /etc, \$HOME, \$HOME/etc, \$HOME/conf, and
+                       profile_location_dir when that is set.
   --temp-dir DIR       Write the temporary merge file in DIR when that directory
                        is on another disk, you can create files there, and it has
                        room for the output plus spare space. Then move the finished
@@ -236,7 +245,11 @@ Merge behaviour (no options):
     Date and time are joined with _, the start and the end with -, then _-_-_ before the dashcam name.
     An older name 20260926-110627_20260926-130427_70mai-A510_FrontCam_concat.mp4 is still recognized.
     A GPS track with the same stem and a .gpx extension is written beside it,
-    from GPSData??????.txt in this directory and one or two directories above it.
+    from GPSData*.txt in this directory and one or two directories above it.
+    --gps-dir DIR also searches that directory and everything inside it.
+    Without --gps-dir, [tracks-location] in video-pgm-geotag-missing-media.conf
+    is used the same way. When no GPSData*.txt is found, the script quits
+    unless you choose to merge anyway, and then no GPX is written.
     The merged file and that .gpx get the first chapter's creation time and file time.
     If the merged file has no location, the first point of that .gpx is stored in it.
   - Shows each multi-part group (with file sizes) and asks whether to merge
@@ -268,7 +281,7 @@ Merge behaviour (no options):
   - If the expected _concat output already exists: skip (default), redo merge [r],
     preview merge seams [p], or delete input chapters [d] (keeps merged output).
     A 70mai journey is finished only when a valid .gpx sits beside that file.
-    If the GPX is missing and a GPSData??????.txt log is available, the prompt asks
+    If the GPX is missing and a GPSData*.txt log is available, the prompt asks
     to generate it.
   - Output file per group: <first_chapter_stem>_concat_parts_<first>-<last>.mp4
     (timestamp from the first part; size-split/letter groups use 01-<N> for chapter count,
@@ -325,6 +338,9 @@ Examples:
 
   $(basename "$0") --temp-dir /mnt/scratch
       Offer /mnt/scratch as the temporary merge disk when it has room.
+
+  $(basename "$0") --gps-dir /mnt/p/video/gps
+      Also read GPSData*.txt from that directory and everything inside it.
 
   $(basename "$0") -y
       Merge all chapter groups without prompts.
@@ -986,6 +1002,9 @@ pgm_print_run_settings_equivalent_cli() {
   if [[ -n "${PGM_MERGE_TEMP:-}" ]]; then
     parts+=("--temp-dir" "$PGM_MERGE_TEMP")
   fi
+  for p in "${GPS_DIRS[@]}"; do
+    parts+=("--gps-dir" "$p")
+  done
 
   out="$(printf '%q' "$cmd")"
   for p in "${parts[@]}"; do
@@ -3656,12 +3675,25 @@ dashcam_resolved_output_file() {
   fi
 }
 
-# Every GPSData??????.txt in this directory, then one and two levels above.
-# Stops early when a parent directory does not exist or the walk has reached the root.
-dashcam_gps_logs() {
-  local rel f found=0 real seen=""
+# A Windows path P:\video\gps is /mnt/p/video/gps when that drive is mounted.
+pgm_unix_path() {
+  local p="$1" re='^([A-Za-z]):[\\/](.*)$' drive rest
+  if [[ "$p" =~ $re ]]; then
+    drive="${BASH_REMATCH[1],,}"
+    rest="${BASH_REMATCH[2]//\\//}"
+    if [[ -d "/mnt/${drive}" ]]; then
+      printf '/mnt/%s/%s\n' "$drive" "$rest"
+      return 0
+    fi
+  fi
+  printf '%s\n' "$p"
+}
+
+# path, label, kind. kind is nearby, given, or conf.
+dashcam_gps_place_rows() {
+  local rel real seen="" i=0 raw text conf name line in_section
   local -a dirs=(. .. ../..)
-  shopt -s nullglob
+  local -a labels=("" "one up" "two up")
   for rel in "${dirs[@]}"; do
     [[ -d "$rel" ]] || break
     real=$(cd -- "$rel" && pwd -P) || break
@@ -3669,19 +3701,151 @@ dashcam_gps_logs() {
       break
     fi
     seen+=$'\n'"$real"
-    for f in "$rel"/GPSData??????.txt; do
+    printf '%s\t%s\tnearby\n' "$real" "${labels[$i]}"
+    i=$(( i + 1 ))
+  done
+  if (( ${#GPS_DIRS[@]} )); then
+    for raw in "${GPS_DIRS[@]}"; do
+      text=$(pgm_unix_path "$raw")
+      if [[ -d "$text" ]]; then
+        real=$(cd -- "$text" && pwd -P) || real="$text"
+      else
+        real="$text"
+      fi
+      if printf '%s\n' "$seen" | grep -Fxq -- "$real"; then
+        continue
+      fi
+      seen+=$'\n'"$real"
+      printf '%s\tgiven with --gps-dir, and the folders inside it\tgiven\n' "$real"
+    done
+    return 0
+  fi
+  local -a confs=()
+  for rel in /etc "${HOME:-}" "${HOME:-}/etc" "${HOME:-}/conf" \
+      "${profile_location_dir:-}/etc" "${profile_location_dir:-}/conf" "${profile_location_dir:-}"; do
+    [[ -n "$rel" && -f "${rel}/video-pgm-geotag-missing-media.conf" ]] || continue
+    confs+=("${rel}/video-pgm-geotag-missing-media.conf")
+  done
+  for conf in "${confs[@]}"; do
+    in_section=0
+    while IFS= read -r line || [[ -n "$line" ]]; do
+      line="${line%%$'\r'}"
+      line="${line#"${line%%[![:space:]]*}"}"
+      line="${line%"${line##*[![:space:]]}"}"
+      [[ -z "$line" || "$line" == \#* ]] && continue
+      if [[ "$line" == \[*\] ]]; then
+        name="${line#\[}"
+        name="${name%\]}"
+        name="${name,,}"
+        name="${name#"${name%%[![:space:]]*}"}"
+        name="${name%"${name##*[![:space:]]}"}"
+        if [[ "$name" == "tracks-location" ]]; then
+          in_section=1
+        else
+          in_section=0
+        fi
+        continue
+      fi
+      (( in_section )) || continue
+      text="${line#\"}"
+      text="${text%\"}"
+      text="${text#\'}"
+      text="${text%\'}"
+      text=$(pgm_unix_path "$text")
+      if [[ "$text" != /* ]]; then
+        text="$(cd -- "$(dirname -- "$conf")" && pwd)/${text}"
+      fi
+      if [[ -d "$text" ]]; then
+        real=$(cd -- "$text" && pwd -P) || real="$text"
+      else
+        real="$text"
+      fi
+      if printf '%s\n' "$seen" | grep -Fxq -- "$real"; then
+        continue
+      fi
+      seen+=$'\n'"$real"
+      printf '%s\ttracks folder from video-pgm-geotag-missing-media.conf, and the folders inside it\tconf\n' "$real"
+    done < "$conf"
+  done
+}
+
+# A named day in the file, such as _20260905, must be this journey's day.
+# A file with no day is still used.
+dashcam_log_matches_day() {
+  local base="$1" day="$2" found=""
+  [[ -n "$day" ]] || return 0
+  if [[ "$base" =~ _((19|20)[0-9]{6})([^0-9]|$) ]]; then
+    found="${BASH_REMATCH[1]}"
+    [[ "$found" == "$day" ]]
+    return
+  fi
+  return 0
+}
+
+# Every GPSData*.txt in this directory, one and two levels above, and in each
+# GPS directory (that directory and everything inside it). $1, when set, is the
+# journey day YYYYMMDD.
+dashcam_gps_logs() {
+  local want_day="${1:-}" path label kind f found=0
+  local -a depth=()
+  declare -A seen_dir=()
+  while IFS=$'\t' read -r path label kind; do
+    [[ -n "$path" && -d "$path" ]] || continue
+    [[ -n "${seen_dir[$path]:-}" ]] && continue
+    seen_dir[$path]=1
+    depth=()
+    if [[ "$kind" == nearby ]]; then
+      depth=(-maxdepth 1)
+    fi
+    while IFS= read -r -d '' f; do
+      dashcam_log_matches_day "${f##*/}" "$want_day" || continue
       printf '%s\n' "$f"
       found=1
-    done
-  done
-  shopt -u nullglob
+    done < <(find "$path" "${depth[@]}" \( -type d -name '.*' -prune \) -o -type f -iname 'GPSData*.txt' -print0)
+  done < <(dashcam_gps_place_rows)
   (( found )) || return 1
   return 0
 }
 
-# First GPSData??????.txt in this directory or one or two levels above, if any.
+# First GPSData*.txt in the places searched, if any.
 dashcam_gps_log_hint() {
   dashcam_gps_logs | head -n 1
+}
+
+# No GPS log. Quit unless the user continues, and then no GPX is written.
+dashcam_warn_no_gps() {
+  local path label kind
+  echo
+  echo "No GPSData*.txt was found. GPX files will not be created."
+  echo
+  echo "Looked in:"
+  while IFS=$'\t' read -r path label kind; do
+    [[ -n "$path" ]] || continue
+    if [[ -n "$label" ]]; then
+      printf '  %s  (%s)\n' "$path" "$label"
+    else
+      printf '  %s\n' "$path"
+    fi
+  done < <(dashcam_gps_place_rows)
+  echo
+  echo "You can name the directory that holds the GPS logs. That directory and everything inside it will be searched."
+  echo
+  printf '  %s --gps-dir /mnt/p/video/gps\n' "$(basename -- "${BASH_SOURCE[0]}")"
+  echo
+  echo "  [Q] Quit (default)"
+  if (( DO_YES )) || (( ! script_is_run_interactively )); then
+    echo "$(pgm_ts) Quit."
+    return 1
+  fi
+  echo "  [c] Continue anyway. Merge the videos, and do not write a GPX"
+  while true; do
+    pgm_read_key "Quit? [Q/c]: " q
+    case "${REPLY,,}" in
+      q) echo "$(pgm_ts) Quit."; return 1 ;;
+      c) echo "$(pgm_ts) Continue anyway. GPX files will not be created."; return 0 ;;
+      *) echo "That is not a choice." ;;
+    esac
+  done
 }
 
 # 0 when $1 is a non-empty GPX track (at least one point).
@@ -3721,7 +3885,7 @@ print_dashcam_gpx_suggestion() {
   if log=$(dashcam_gps_log_hint 2>/dev/null) && [[ -n "$log" ]]; then
     printf '%sGPS log: %s\n' "$indent" "$log"
   else
-    printf '%sGPS log: no GPSData??????.txt in this directory or one or two levels above\n' "$indent"
+    printf '%sGPS log: no GPSData*.txt in the places searched\n' "$indent"
   fi
 }
 
@@ -3735,7 +3899,7 @@ dashcam_local_epoch_tz_corr() {
 }
 
 # Write one GPX for this journey next to the merged MP4.
-# Points come from GPSData??????.txt. The log clock is aligned to the NO* filename
+# Points come from GPSData*.txt. The log clock is aligned to the NO* filename
 # times (the camera clock), then stored in the GPX as UTC.
 dashcam_write_gpx_for_group() {
   local output_mp4="$1"
@@ -3744,12 +3908,12 @@ dashcam_write_gpx_for_group() {
   local gpx tmp first_epoch last_epoch tz_corr nlog
   local -a logs=()
   gpx=$(dashcam_gpx_beside_output "$output_mp4")
-  mapfile -t logs < <(dashcam_gps_logs || true)
+  dashcam_parse_basename "${files[0]##*/}" || return 1
+  mapfile -t logs < <(dashcam_gps_logs "$DASHCAM_DATE" || true)
   if (( ${#logs[@]} == 0 )); then
-    echo "$(pgm_ts) GPS: no GPSData??????.txt in this directory or one or two levels above — did not write ${gpx##*/}"
+    echo "$(pgm_ts) GPS: no GPSData*.txt for ${DASHCAM_DATE} in the places searched — did not write ${gpx##*/}"
     return 0
   fi
-  dashcam_parse_basename "${files[0]##*/}" || return 1
   first_epoch=$(gopro_datetime_to_epoch "$DASHCAM_DATE" "$DASHCAM_TIME") || return 1
   dashcam_parse_basename "${files[-1]##*/}" || return 1
   last_epoch=$(gopro_datetime_to_epoch "$DASHCAM_DATE" "$DASHCAM_TIME") || return 1
@@ -5064,7 +5228,7 @@ prompt_merge_group_action() {
       esac
     elif (( output_exists )); then
       if (( ! gpx_ok )); then
-        echo "$(pgm_ts) Merged file is here, but the GPX is missing and there is no GPSData??????.txt to build it."
+        echo "$(pgm_ts) Merged file is here, but the GPX is missing and there is no GPSData*.txt to build it."
       fi
       echo "  [N] Skip — keep output and input files (default)"
       echo "  [a] Already merged — don't ask again this run"
@@ -5367,6 +5531,20 @@ do_merge() {
     return 0
   fi
 
+  local need_gps=0
+  for blob in "${mergeable_blobs[@]}"; do
+    group_files_to_array "$blob" files
+    group_is_dashcam "${files[@]}" || continue
+    output_file=$(group_output_file "${files[@]}")
+    if ! dashcam_gpx_is_valid "$(dashcam_gpx_beside_output "$output_file")"; then
+      need_gps=1
+      break
+    fi
+  done
+  if (( need_gps )) && ! dashcam_gps_logs >/dev/null; then
+    dashcam_warn_no_gps || return 1
+  fi
+
   for blob in "${mergeable_blobs[@]}"; do
     group_files_to_array "$blob" files
     (( group_num++ )) || true
@@ -5471,6 +5649,7 @@ PGM_SEAM_AFTER_CLI=0
 PGM_MERGE_TEMP_FROM_ENV=0
 PGM_MERGE_TEMP_CLI=0
 [[ -n "${PGM_MERGE_TEMP:-}" ]] && PGM_MERGE_TEMP_FROM_ENV=1
+GPS_DIRS=()
 
 PGM_SEAM_PREVIEW_BEFORE="${PGM_SEAM_PREVIEW_BEFORE:-1}"
 PGM_SEAM_PREVIEW_AFTER="${PGM_SEAM_PREVIEW_AFTER:-1}"
@@ -5542,6 +5721,22 @@ while [[ $# -gt 0 ]]; do
       pgm_valid_seam_seconds "$PGM_SEAM_PREVIEW_AFTER" \
         || pgm_invalid_seam_seconds "seam-after" "$PGM_SEAM_PREVIEW_AFTER"
       PGM_SEAM_AFTER_CLI=1
+      shift
+      ;;
+    --gps-dir)
+      if [[ -z "${2:-}" ]]; then
+        echo "$(pgm_ts) --gps-dir requires a directory path." >&2
+        exit 1
+      fi
+      GPS_DIRS+=("$2")
+      shift 2
+      ;;
+    --gps-dir=*)
+      if [[ -z "${1#*=}" ]]; then
+        echo "$(pgm_ts) --gps-dir requires a directory path." >&2
+        exit 1
+      fi
+      GPS_DIRS+=("${1#*=}")
       shift
       ;;
     --temp-dir)
