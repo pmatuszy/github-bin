@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261013.101339 - merged files with no GPX can be given only the GPX
 # v. 20261013.095703 - the script is video-pgm-merge-and-make-gpx.sh
 # v. 20261013.095124 - a GPS directory can be named, and no GPS log quits before the merge
 # v. 20261012.082500 - size-split chapters: next clip must start at prev time + duration (±2s)
@@ -55,6 +56,7 @@
 # v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
 # v. 20260805.154826 - after merge: copy GPS/dates from first chapter; FS times via touch -r
 
+# 2026.10.13 - v. 0.15.71 - when merged files have no GPX, one question can create only those GPX files
 # 2026.10.13 - v. 0.15.70 - renamed to video-pgm-merge-and-make-gpx.sh
 # 2026.10.13 - v. 0.15.69 - GPSData*.txt is also read from --gps-dir, or from [tracks-location] in the geotag conf; that directory and everything inside it are searched; when no log is found the script quits unless you continue
 # 2026.10.07 - v. 0.15.68 - summary times are whole seconds (5m 04s), and a file length is whole seconds (409 s), not a fraction
@@ -284,7 +286,9 @@ Merge behaviour (no options):
     preview merge seams [p], or delete input chapters [d] (keeps merged output).
     A 70mai journey is finished only when a valid .gpx sits beside that file.
     If the GPX is missing and a GPSData*.txt log is available, the prompt asks
-    to generate it.
+    to generate it. When more than one merged file has no GPX, one question
+    offers to create only those GPX files. [G] is the default. [e] asks about
+    each file. [n] skips them. [q] quits. The merged videos are not replaced.
   - Output file per group: <first_chapter_stem>_concat_parts_<first>-<last>.mp4
     (timestamp from the first part; size-split/letter groups use 01-<N> for chapter count,
     e.g. …_GOPRO10_BLACK_concat_parts_01-06.mp4). Legacy …_parts_*-*_concat.mp4 still recognized.
@@ -5467,6 +5471,83 @@ show_merge_group_detail() {
   echo
 }
 
+# When merged 70mai files have no GPX, offer to write only those GPX files.
+# Returns 1 when the user quits.
+dashcam_offer_gpx_only() {
+  local -n _blobs=$1
+  local -n _skip=$2
+  local blob output_file gpx n i choice
+  local -a files=() gpx_blobs=() gpx_outs=()
+  for blob in "${_blobs[@]}"; do
+    group_files_to_array "$blob" files
+    group_is_dashcam "${files[@]}" || continue
+    output_file=$(group_output_file "${files[@]}")
+    [[ -e "$output_file" ]] || continue
+    gpx=$(dashcam_gpx_beside_output "$output_file")
+    dashcam_gpx_is_valid "$gpx" && continue
+    dashcam_parse_basename "${files[0]##*/}" || continue
+    dashcam_gps_logs "$DASHCAM_DATE" >/dev/null || continue
+    gpx_blobs+=("$blob")
+    gpx_outs+=("$output_file")
+  done
+  n=${#gpx_outs[@]}
+  (( n )) || return 0
+  echo
+  if (( n == 1 )); then
+    echo "1 merged file has no GPX. The video will not be merged again."
+  else
+    echo "${n} merged files have no GPX. The videos will not be merged again."
+  fi
+  echo
+  for i in "${!gpx_outs[@]}"; do
+    gpx=$(dashcam_gpx_beside_output "${gpx_outs[$i]}")
+    printf '  %s\n' "${gpx_outs[$i]##*/}"
+    printf '      %s\n' "${gpx##*/}"
+  done
+  echo
+  echo "  [G] Create only these GPX files (default)"
+  echo "  [e] Ask about each file"
+  echo "  [n] Skip these files"
+  echo "  [q] Quit"
+  if (( DO_YES )) || (( ! script_is_run_interactively )); then
+    choice=g
+    echo "$(pgm_ts) Create only these GPX files."
+  else
+    while true; do
+      pgm_read_key "Create only these GPX files? [G/e/n/q]: " g
+      choice="${REPLY,,}"
+      case "$choice" in
+        g|e|n|q) break ;;
+        *) echo "That is not a choice." ;;
+      esac
+    done
+  fi
+  case "$choice" in
+    g)
+      for i in "${!gpx_blobs[@]}"; do
+        group_files_to_array "${gpx_blobs[$i]}" files
+        dashcam_write_gpx_if_merged "${gpx_outs[$i]}" "${files[@]}"
+        _skip["${gpx_outs[$i]}"]=1
+      done
+      echo "$(pgm_ts) Created only the GPX files. The merged videos were kept."
+      ;;
+    e)
+      echo "$(pgm_ts) Each file will be asked about."
+      ;;
+    n)
+      for output_file in "${gpx_outs[@]}"; do
+        _skip["$output_file"]=1
+      done
+      echo "$(pgm_ts) Skipped these files. No GPX was written."
+      ;;
+    q)
+      echo "$(pgm_ts) Quit."
+      return 1
+      ;;
+  esac
+  return 0
+}
+
 do_merge() {
   local merger rc=0 group_num=0 mergeable_total=0
   local blob action
@@ -5547,10 +5628,27 @@ do_merge() {
     dashcam_warn_no_gps || return 1
   fi
 
+  local -A GPX_BATCH_SKIP=()
+  dashcam_offer_gpx_only mergeable_blobs GPX_BATCH_SKIP || return 1
+
+  mergeable_total=0
   for blob in "${mergeable_blobs[@]}"; do
     group_files_to_array "$blob" files
-    (( group_num++ )) || true
     output_file=$(group_output_file "${files[@]}")
+    [[ -n "${GPX_BATCH_SKIP[$output_file]:-}" ]] && continue
+    (( mergeable_total++ )) || true
+  done
+  if (( mergeable_total == 0 )); then
+    return 0
+  fi
+
+  for blob in "${mergeable_blobs[@]}"; do
+    group_files_to_array "$blob" files
+    output_file=$(group_output_file "${files[@]}")
+    if [[ -n "${GPX_BATCH_SKIP[$output_file]:-}" ]]; then
+      continue
+    fi
+    (( group_num++ )) || true
     show_merge_group_detail "$group_num" "$mergeable_total" "${files[@]}"
     prompt_merge_group_action "$group_num" "$mergeable_total" "$output_file" "${files[@]}"
     action=$REPLY
