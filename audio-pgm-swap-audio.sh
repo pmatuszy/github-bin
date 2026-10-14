@@ -1,9 +1,11 @@
 #!/bin/bash
+# v. 20261014.221754 - check ffmpeg/ffprobe first; ask colors, keep-copy, and one-by-one before reading files; print search and probe progress
 # v. 20261014.221053 - ask one-by-one or together; the first file gets a full stream report
 # v. 20261014.220750 - the kept copy is named stem-backup.ext
 # v. 20261014.220133 - ask to keep the original (default yes); print a facts table before and after each swap
 # v. 20261014.213909 - swap audio tracks in a video; every other stream stays, in the same order
 #
+# 2026.10.14 - v. 0.5 - ffmpeg and ffprobe are required (exit if missing); colors, keep a copy, and one-by-one/together are asked before any file is opened; then search and "file k of N" while streams are read
 # 2026.10.14 - v. 0.4 - after the list: one by one (default) or together; the first file prints every stream, GPS, throughput, and present/not present
 # 2026.10.14 - v. 0.3 - the kept copy is clip-backup.mp4 (not clip_audio-swap.mp4)
 # 2026.10.14 - v. 0.2 - keep a copy of the original is the default; each file gets a table of duration, streams, GPS and times before the swap, and the same table again with input and output side by side
@@ -45,13 +47,15 @@ the swapped file is clip-backup.mp4 beside it. No: the original is
 replaced. Video is copied, not re-encoded. If clip-backup.mp4 is already
 there you can keep it, replace it, or write a name with the clock.
 
-After the file list: ask about each file one by one (default), or swap them
-all the same way. The first file prints a long report: duration, throughput,
-GPS, present/not present for video, audio, GPS, telemetry, timecode,
-subtitles, chapters and other data, then every stream (including ones
-ffmpeg cannot decode). Later files keep the shorter table. After the remux
-the same facts are printed side by side for input and output. A value that
-changed is marked with * on the output side.
+The first three questions (colors, keep a copy, one by one or together)
+are asked before any file is opened. One by one is the default. Then the
+script searches for videos and prints "Getting information about file k of N"
+while it reads streams. The first file prints a long report: duration,
+throughput, GPS, present/not present for video, audio, GPS, telemetry,
+timecode, subtitles, chapters and other data, then every stream (including
+ones ffmpeg cannot decode). Later files keep the shorter table. After the
+remux the same facts are printed side by side for input and output. A value
+that changed is marked with * on the output side.
 
 Default order: the first two audio tracks swap (2,1), and any further audio
 tracks stay after them in their old order. --order 2,1 is that same rule.
@@ -77,9 +81,8 @@ Options:
 
 A run summary is always printed at the end, and on Ctrl-C.
 
-Needs: ffmpeg and ffprobe. When something is missing the script lists it and
-asks whether to install it with apt-get (with sudo when not root). With -y
-or without a terminal it only prints the install command.
+Needs: ffmpeg and ffprobe in PATH. If either is missing the script prints
+which one is missing and exits. -h, -v and --history do not need them.
 
 Examples:
   $(basename "$0")
@@ -1132,64 +1135,25 @@ sa_add_directory() {
   done < <(find "$dir" -maxdepth 1 -type f -print0 | sort -z)
 }
 
-sa_missing_prereqs() {
-  if ! command -v ffmpeg >/dev/null 2>&1 || ! command -v ffprobe >/dev/null 2>&1; then
-    echo "ffmpeg|ffmpeg and ffprobe: copy the streams and list the audio tracks"
+sa_require_ffmpeg() {
+  local have_ff=0 have_fp=0
+  command -v ffmpeg >/dev/null 2>&1 && have_ff=1
+  command -v ffprobe >/dev/null 2>&1 && have_fp=1
+  (( have_ff && have_fp )) && return 0
+  echo "ERROR: this script needs ffmpeg and ffprobe in PATH." >&2
+  if (( have_ff )); then
+    echo "  ffmpeg:  found" >&2
+  else
+    echo "  ffmpeg:  not found" >&2
   fi
-  return 0
-}
-
-sa_check_prereqs() {
-  local line rc=0
-  local -a missing=() pkgs=() cmd=()
-  mapfile -t missing < <(sa_missing_prereqs)
-  (( ${#missing[@]} == 0 )) && return 0
-  for line in "${missing[@]}"; do
-    pkgs+=("${line%%|*}")
-  done
-  cmd=(apt-get install -y "${pkgs[@]}")
-  (( EUID != 0 )) && cmd=(sudo "${cmd[@]}")
-  echo
-  echo "  This script needs these, and they are not installed:"
-  for line in "${missing[@]}"; do
-    printf '  %-12s %s\n' "${line%%|*}" "${line#*|}"
-  done
-  echo "  Install command: $(sa_quote_args "${cmd[@]}")"
-  if ! command -v apt-get >/dev/null 2>&1; then
-    echo "$(sa_ts) apt-get is not available here; install them with this system's package manager." >&2
-    exit 1
+  if (( have_fp )); then
+    echo "  ffprobe: found" >&2
+  else
+    echo "  ffprobe: not found" >&2
   fi
-  if (( DO_YES )) || (( ! script_is_run_interactively )); then
-    echo "$(sa_ts) Nothing is installed without asking. Run the install command, or start this script in a terminal without -y." >&2
-    exit 1
-  fi
-  echo
-  sa_print_question "Install them now?"
-  echo "  [Y] Yes, install with the command above, then continue (default)"
-  echo "  [n] No, stop here"
-  echo "  [q] Quit"
-  sa_read_key "Install them now? [Y/n/q]: " y "Yes, install then continue"
-  case "$REPLY" in
-    y) ;;
-    *) echo "$(sa_ts) Nothing installed."; exit 1 ;;
-  esac
-  "${cmd[@]}" || rc=$?
-  if (( rc != 0 )); then
-    echo "$(sa_ts) Install failed; refreshing the package lists and trying again."
-    if (( EUID != 0 )); then
-      sudo apt-get update || true
-    else
-      apt-get update || true
-    fi
-    rc=0
-    "${cmd[@]}" || rc=$?
-  fi
-  mapfile -t missing < <(sa_missing_prereqs)
-  if (( rc != 0 || ${#missing[@]} > 0 )); then
-    echo "$(sa_ts) Still missing after the install." >&2
-    exit 1
-  fi
-  echo "$(sa_ts) Installed. Continuing."
+  echo "Install the ffmpeg package (it includes both) and run again." >&2
+  return_code=1
+  exit 1
 }
 
 sa_ask_colors() {
@@ -1263,7 +1227,6 @@ sa_ask_together() {
     sa_apply_together
     return 0
   fi
-  (( SWAP_TOTAL >= 2 )) || return 0
   if (( ! script_is_run_interactively )); then
     return 0
   fi
@@ -1380,9 +1343,11 @@ sa_print_run_settings() {
 }
 
 sa_probe_plan() {
-  local i src n why dest expanded
+  local i src n why dest expanded total
+  total=${#FILES[@]}
   for i in "${!FILES[@]}"; do
     src="${FILES[$i]}"
+    echo "$(sa_ts) Getting information about file $((i + 1)) of ${total}: ${src##*/}"
     FILE_STATE[$i]=skip
     FILE_WHY[$i]=""
     FILE_AUDIO_N[$i]=0
@@ -1722,13 +1687,27 @@ while [[ $# -gt 0 ]]; do
 done
 
 SCRIPT_START_NS="$(sa_now_ns)"
+sa_require_ffmpeg
 sa_ask_colors
 sa_ask_keep_copy
-sa_check_prereqs
+sa_ask_together
 
 if (( ${#INPUT_ARGS[@]} == 0 )); then
+  echo
+  echo "$(sa_ts) Searching for videos in ."
   sa_add_directory "."
 else
+  echo
+  if (( ${#INPUT_ARGS[@]} == 1 )); then
+    _path="$(sa_unix_path "${INPUT_ARGS[0]}")"
+    if [[ -d "$_path" ]]; then
+      echo "$(sa_ts) Searching for videos in ${_path}"
+    else
+      echo "$(sa_ts) Looking at ${_path}"
+    fi
+  else
+    echo "$(sa_ts) Searching for videos in the ${#INPUT_ARGS[@]} paths given."
+  fi
   for _arg in "${INPUT_ARGS[@]}"; do
     _path="$(sa_unix_path "$_arg")"
     if [[ -d "$_path" ]]; then
@@ -1745,24 +1724,37 @@ else
   done
 fi
 
-if (( ${#FILES[@]} == 0 )); then
+if (( ${#FILES[@]} == 1 )); then
+  echo "$(sa_ts) Found 1 video."
+elif (( ${#FILES[@]} == 0 )); then
+  echo "$(sa_ts) Found 0 videos."
   echo "$(sa_ts) No video files."
   exit 0
+else
+  echo "$(sa_ts) Found ${#FILES[@]} videos."
 fi
 
+echo
 sa_probe_plan
-sa_print_plan
 
 SWAP_TOTAL=0
 for i in "${!FILES[@]}"; do
   [[ "${FILE_STATE[$i]}" == swap ]] && (( SWAP_TOTAL++ )) || true
 done
+_skip=$(( ${#FILES[@]} - SWAP_TOTAL ))
+if (( ${#FILES[@]} == 1 )); then
+  echo "$(sa_ts) Read 1 video (${SWAP_TOTAL} to swap, ${_skip} to skip)."
+else
+  echo "$(sa_ts) Read ${#FILES[@]} videos (${SWAP_TOTAL} to swap, ${_skip} to skip)."
+fi
+
+sa_print_plan
+
 if (( SWAP_TOTAL == 0 )); then
   echo "$(sa_ts) No file with two or more audio tracks to swap."
   exit 0
 fi
 
-sa_ask_together
 sa_print_run_settings
 
 if (( DRY_RUN )); then
