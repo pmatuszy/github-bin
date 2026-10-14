@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# v. 20261014.093800 - a merged file's clock follows each clip, so a short clip does not insert no-GPS time
 # v. 20261006.155505 - --zoom defaults to 16 again
 # v. 20261006.140012 - help example uses the _map-tiles folder name
 # v. 20261006.135236 - help example uses a map-tiles folder beside the videos
@@ -10,6 +11,7 @@
 # v. 20261006.114917 - -h/--help describes every option, -v/--version, --history
 # v. 20261006.113346 - moving OpenStreetMap map that follows a GPX track, same length as its video
 
+# 2026.10.14 - v. 0.8 - a merged 70mai file maps each playback second to that clip's own start; the unrecorded gap is not drawn, and a gap over 60 s holds the car at the last fix ("no GPS here")
 # 2026.10.06 - v. 0.7 - --track-up (default --north-up): a square crop of the view's diagonal is rotated by a heading smoothed over max(8, --smooth-map) s, then cut to size; the arrow, the line to it, and a compass in the top right are drawn on the turned map; tiles are worked out for the diagonal
 # 2026.10.06 - v. 0.6 - --zoom defaults to 17
 # 2026.10.06 - v. 0.5 - GPS smoothing (on unless --no-smooth): single points faster than --max-jump km/h both in and out are dropped; Gaussian-weighted local line fit (no pull towards denser points) over --smooth s for the line and --smooth-map s for the map centre and arrow direction, never across gaps over 60 s; Catmull-Rom curve with 4 steps per segment unless --no-curve; info prints dropped=
@@ -25,6 +27,9 @@ Subcommands:
   render  Draw every frame and pipe it into ffmpeg. Encoder options follow "--".
 
 Video time v maps to real time  start + v * speed  (x5 files: speed 5).
+With --clips, v * speed is a second inside the merged file, and the clock is
+that clip's start plus how far into the clip it is. A short clip does not
+insert the unrecorded gap.
 """
 
 import argparse
@@ -289,6 +294,9 @@ class Track:
                     self.vx[-1], self.vy[-1])
         i = bisect.bisect_right(t, when) - 1
         span = t[i + 1] - t[i]
+        if span > 60:
+            return (self.x[i], self.y[i], i, "gap", None, self.h[i],
+                    self.vx[i], self.vy[i])
         f = (when - t[i]) / span
         x = self.x[i] + f * (self.x[i + 1] - self.x[i])
         y = self.y[i] + f * (self.y[i + 1] - self.y[i])
@@ -297,8 +305,7 @@ class Track:
         v = None
         if self.v[i] is not None and self.v[i + 1] is not None:
             v = self.v[i] + f * (self.v[i + 1] - self.v[i])
-        state = "gap" if span > 60 else "ok"
-        return x, y, i, state, v, self.h[i], vx, vy
+        return x, y, i, "ok", v, self.h[i], vx, vy
 
     def rotation_at(self, when, window=8.0):
         """Calm heading for a track-up map: smoothed over window seconds, no jumps between points."""
@@ -317,6 +324,59 @@ class Track:
         return math.atan2(s, c)
 
 
+class PlaybackClock:
+    """Video seconds to the camera clock. Without clips, start + video * speed."""
+
+    def __init__(self, start, speed, path):
+        self.start = float(start)
+        self.speed = float(speed) if speed else 1.0
+        self.spans = []
+        if path:
+            cum = 0.0
+            with open(path, encoding="utf-8") as fh:
+                for line in fh:
+                    parts = line.split()
+                    if len(parts) < 2:
+                        continue
+                    st, dur = float(parts[0]), float(parts[1])
+                    if dur <= 0:
+                        continue
+                    cum += dur
+                    self.spans.append((st, dur, cum))
+        self.used = len(self.spans) >= 2
+
+    def when(self, video_t):
+        src = video_t * self.speed
+        if not self.used:
+            return self.start + src
+        last_cum = self.spans[-1][2]
+        for st, dur, cum in self.spans:
+            # The shared instant belongs to the next clip, so a short clip's
+            # end jumps to the following clip's start.
+            if src < cum or (cum == last_cum and src <= cum):
+                into = src - (cum - dur)
+                if into < 0:
+                    into = 0.0
+                if into > dur:
+                    into = dur
+                return st + into
+        st, dur, _cum = self.spans[-1]
+        return st + dur
+
+    def video_time(self, when):
+        if not self.used:
+            return (when - self.start) / self.speed
+        for st, dur, cum in self.spans:
+            if when <= st + dur:
+                into = when - st
+                if into < 0:
+                    into = 0.0
+                if into > dur:
+                    into = dur
+                return (cum - dur + into) / self.speed
+        return self.spans[-1][2] / self.speed
+
+
 def video_window(args):
     start = args.from_s
     length = args.length if args.length is not None else max(0.0, args.duration - start)
@@ -326,9 +386,9 @@ def video_window(args):
 def auto_shift(track, args):
     if args.tz_shift is not None:
         return int(round(args.tz_shift * 3600))
-    real_end = args.start_epoch + args.duration * args.speed
-    overlaps = track.t[0] < real_end and track.t[-1] > args.start_epoch
-    d = track.t[0] - args.start_epoch
+    real_end = args.clock.when(args.duration)
+    overlaps = track.t[0] < real_end and track.t[-1] > args.clock.when(0)
+    d = track.t[0] - args.clock.when(0)
     if overlaps and abs(d) < 2700:
         return 0
     hours = int(round(d / 3600.0))
@@ -423,8 +483,8 @@ class Tiles:
 
 def needed_tiles(track, args):
     v0, vlen = video_window(args)
-    t0 = args.start_epoch + v0 * args.speed
-    t1 = args.start_epoch + (v0 + vlen) * args.speed
+    t0 = args.clock.when(v0)
+    t1 = args.clock.when(v0 + vlen)
     pad = 64
     if args.track_up:
         hw = hh = math.hypot(args.width, args.height) / 2.0 + pad
@@ -432,11 +492,13 @@ def needed_tiles(track, args):
         hw, hh = args.width / 2.0 + pad, args.height / 2.0 + pad
     found = set()
     times = []
-    t = t0
-    while t <= t1:
-        times.append(t)
-        t += 2.0
-    times.append(t1)
+    step = 2.0 / args.clock.speed
+    v = v0
+    end = v0 + vlen
+    while v <= end + 1e-6:
+        times.append(args.clock.when(v))
+        v += step
+    times.append(args.clock.when(end))
     lo = bisect.bisect_left(track.t, t0)
     hi = bisect.bisect_right(track.t, t1)
     times.extend(track.t[lo:hi])
@@ -498,13 +560,19 @@ class Canvas:
         x0, y0 = self.ox - pad, self.oy - pad
         x1, y1 = self.ox + self.cw + pad, self.oy + self.ch + pad
         run = []
+        prev = None
         for i in range(0, last + 1):
+            if prev is not None and tr.t[i] - tr.t[prev] > 60:
+                if len(run) > 1:
+                    yield run
+                run = []
             if x0 <= tr.x[i] <= x1 and y0 <= tr.y[i] <= y1:
                 run.append(self._xy(i))
             else:
                 if len(run) > 1:
                     yield run
                 run = []
+            prev = i
         if len(run) > 1:
             yield run
 
@@ -526,9 +594,15 @@ class Canvas:
 
     def extend(self, idx):
         start = max(self.done, 0)
-        if idx > start:
-            pts = [self._xy(i) for i in range(start, idx + 1)]
-            self.draw.line(pts, fill=COL_DONE, width=self.line + 2, joint="curve")
+        i = start
+        while i < idx:
+            j = i + 1
+            while j <= idx and self.track.t[j] - self.track.t[j - 1] <= 60:
+                j += 1
+            if j - 1 > i:
+                pts = [self._xy(k) for k in range(i, j)]
+                self.draw.line(pts, fill=COL_DONE, width=self.line + 2, joint="curve")
+            i = j
         self.done = idx
 
     def view(self, cx, cy):
@@ -685,20 +759,20 @@ def load_track(args):
 def cmd_info(args):
     track, shift = load_track(args)
     v0, vlen = video_window(args)
-    t0 = args.start_epoch + v0 * args.speed
-    t1 = args.start_epoch + (v0 + vlen) * args.speed
+    t0 = args.clock.when(v0)
+    t1 = args.clock.when(v0 + vlen)
     dist = 0.0
     vmax = 0.0
     for i in range(1, len(track.t)):
-        if t0 <= track.t[i] <= t1:
+        if t0 <= track.t[i] <= t1 and track.t[i] - track.t[i - 1] <= 60:
             dist += haversine(track.lat[i - 1], track.lon[i - 1], track.lat[i], track.lon[i])
             if track.v[i] is not None:
                 vmax = max(vmax, track.v[i])
     tiles = Tiles(args.cache, args.tile_url, args.zoom)
     need = needed_tiles(track, args)
     cached = sum(1 for tx, ty in need if tiles.cached(tx, ty))
-    first_v = (track.t[0] - args.start_epoch) / args.speed
-    last_v = (track.t[-1] - args.start_epoch) / args.speed
+    first_v = args.clock.video_time(track.t[0])
+    last_v = args.clock.video_time(track.t[-1])
     out = {
         "points": track.points,
         "dropped": track.dropped,
@@ -784,7 +858,7 @@ def cmd_render(args, enc):
     try:
         for n in range(frames):
             v = v0 + n / float(fps)
-            when = args.start_epoch + v * args.speed
+            when = args.clock.when(v)
             x, y, idx, state, speed, heading, vx, vy = track.at(when)
             canvas.ensure(vx, vy, idx)
             frame, left, top = canvas.view(vx, vy)
@@ -967,6 +1041,8 @@ def main():
                     help="real time at video 0:00, seconds since 1970 (UTC)")
     ap.add_argument("--speed", type=float, default=1.0,
                     help="real seconds per video second (default 1; x5 files: 5)")
+    ap.add_argument("--clips", default="",
+                    help="lines of 'start_epoch duration' for each source clip, in order")
     ap.add_argument("--duration", type=float, required=True, help="video length in seconds")
     ap.add_argument("--from", dest="from_s", type=float, default=0.0,
                     help="start this many video seconds in (default 0)")
@@ -1006,6 +1082,7 @@ def main():
     args = ap.parse_args(argv)
     if args.speed <= 0:
         args.speed = 1.0
+    args.clock = PlaybackClock(args.start_epoch, args.speed, args.clips)
     try:
         if args.command == "info":
             return cmd_info(args)

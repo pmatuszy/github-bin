@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261014.093800 - a merged file's map clock follows each source clip
 # v. 20261007.143052 - video lengths in the plan are whole seconds
 # v. 20261007.142732 - done and summary times are whole seconds
 # v. 20261006.230553 - a map with no location gets the first point of its .gpx
@@ -15,6 +16,7 @@
 # v. 20261006.114500 - missing ffmpeg, python3, or Pillow: list them and ask whether to install them with apt-get
 # v. 20261006.113823 - moving OpenStreetMap map video from each video's GPX track, same length as the video
 
+# 2026.10.14 - v. 0.16 - a merged 70mai file maps each playback second to that clip's own start, so a short clip does not insert no-GPS time
 # 2026.10.07 - v. 0.15 - a video length in the plan is a whole second (18:35), not a tenth
 # 2026.10.07 - v. 0.14 - the done line and the summary times are whole seconds (5m 04s), not hundredths
 # 2026.10.06 - v. 0.13 - a map with no location of its own gets the first point of its .gpx stored in the video, so an image server can read the place
@@ -63,12 +65,17 @@ How the map follows the video
   - The start clock and the speed come from the video name
     (20260926_110627-20260926-130427-...-x5.mp4: starts 11:06:27, 5 times faster).
     Video time t is real time  start + t x speed.
+    A merged 70mai file is different when its source clips are still in the
+    folder: each second of the video belongs to one clip, and the clock is
+    that clip's start plus how far into the clip it is. A short clip does not
+    insert the unrecorded gap as "no GPS here".
   - GPX times are UTC; the name clock is local time. Both are turned into the
     same clock. If the track is whole hours off (a camera set to the wrong time
     zone), it is moved by those hours and the plan says so. --tz-shift sets it.
   - Before the first GPS point the car waits at the start ("waiting for GPS");
     after the last one it stays at the end. A gap of more than a minute between
-    points shows "no GPS here".
+    points, inside a clip that was filmed, shows "no GPS here" and the car
+    waits at the last fix.
   - The track is smoothed first (see GPS smoothing below): single wild points
     are dropped, the zigzag is averaged out, and the car moves on a curve.
   - The map is north up (or track up with --track-up) and centred on the car.
@@ -487,6 +494,61 @@ mv_fps_label() {
   }'
 }
 
+# Source clips of a merged 70mai file, one "start_epoch duration" line each.
+# Empty when the clips are not in the same folder, or their lengths do not add
+# up to this video (times the speed).
+mv_write_clip_clock() {
+  local vid="$1" dest="$2" speed="$3" vdur="$4"
+  local dir base letter d1 t1 d2 t2 start_key end_key f bn key epoch dur sum expect
+  local -a lines=()
+  : > "$dest"
+  [[ -n "$vdur" && "$speed" =~ ^[0-9]+([.][0-9]+)?$ ]] || return 1
+  dir="$(dirname -- "$vid")"
+  base="${vid##*/}"
+  [[ "$base" =~ ^([0-9]{8})[-_]([0-9]{6})[-_]([0-9]{8})[-_]([0-9]{6}) ]] || return 1
+  d1="${BASH_REMATCH[1]}" t1="${BASH_REMATCH[2]}"
+  d2="${BASH_REMATCH[3]}" t2="${BASH_REMATCH[4]}"
+  start_key="${d1}${t1}"
+  end_key="${d2}${t2}"
+  if [[ "$base" =~ FrontCam ]]; then
+    letter=F
+  elif [[ "$base" =~ BackCam ]]; then
+    letter=B
+  else
+    return 1
+  fi
+  while IFS= read -r -d '' f; do
+    bn="${f##*/}"
+    [[ "$bn" =~ ^(NO|EV)([0-9]{8})-([0-9]{6})-([0-9]{6})([A-Za-z])\.[mM][pP]4$ ]] || continue
+    [[ "${BASH_REMATCH[5]^^}" == "$letter" ]] || continue
+    key="${BASH_REMATCH[2]}${BASH_REMATCH[3]}"
+    [[ "$key" < "$start_key" ]] && continue
+    [[ "$key" > "$end_key" ]] && continue
+    epoch="$(mv_epoch "${BASH_REMATCH[2]}" "${BASH_REMATCH[3]}")" || continue
+    dur="$(ffprobe -v error -show_entries format=duration -of default=nw=1:nk=1 -- "$f" 2>/dev/null || true)"
+    [[ "$dur" =~ ^[0-9]+([.][0-9]+)?$ ]] || continue
+    lines+=("${key} ${epoch} ${dur}")
+  done < <(find "$dir" -maxdepth 1 -type f \( -iname 'NO*.mp4' -o -iname 'EV*.mp4' \) -print0)
+  (( ${#lines[@]} >= 2 )) || return 1
+  mapfile -t lines < <(printf '%s\n' "${lines[@]}" | LC_ALL=C sort -k1,1 -u)
+  sum=0
+  : > "$dest"
+  for bn in "${lines[@]}"; do
+    key="${bn%% *}"
+    epoch="${bn#* }"
+    printf '%s\n' "$epoch" >> "$dest"
+    dur="${epoch##* }"
+    sum="$(awk -v a="$sum" -v b="$dur" 'BEGIN { printf "%.3f", a + b }')"
+  done
+  expect="$(awk -v d="$vdur" -v s="$speed" 'BEGIN { printf "%.3f", d * s }')"
+  awk -v a="$sum" -v b="$expect" 'BEGIN { d = a - b; if (d < 0) d = -d; tol = b * 0.02; if (tol < 5) tol = 5; exit !(d <= tol) }' || {
+    : > "$dest"
+    return 1
+  }
+  J_CLIP_N="${#lines[@]}"
+  return 0
+}
+
 mv_job_fps() {
   if [[ "$FPS" == same ]]; then
     printf '%s\n' "${J_FPS[$1]:-25/1}"
@@ -505,6 +567,7 @@ mv_py_args() {
   mv_gt "$FROM" 0 && PY_ARGS+=(--from "$FROM")
   [[ -n "$LENGTH" ]] && PY_ARGS+=(--length "$LENGTH")
   [[ -n "$TZ_SHIFT" ]] && PY_ARGS+=(--tz-shift "$TZ_SHIFT")
+  [[ -s "${J_CLIPS[$i]:-}" ]] && PY_ARGS+=(--clips "${J_CLIPS[$i]}")
   (( SHOW_SPEED )) && PY_ARGS+=(--show-speed)
   (( SHOW_CLOCK )) || PY_ARGS+=(--no-clock)
   (( TRACK_UP )) && PY_ARGS+=(--track-up)
@@ -702,6 +765,10 @@ mv_print_job() {
       printf '  %sNote%s  the name clock says %s of video, the file is %s; the map may drift\n' \
         "$C_Y" "$C_0" "$(mv_clock "$len")" "$(mv_clock "${J_DUR[$i]}")"
     fi
+  fi
+  if [[ -s "${J_CLIPS[$i]:-}" ]]; then
+    printf '  %sClock%s   follows %s source clips; a short clip does not add no-GPS time\n' \
+      "$C_B" "$C_0" "${J_CLIP_COUNT[$i]}"
   fi
   if [[ -z "${J_GPX[$i]}" ]]; then
     printf '  %sTrack%s   %sno .gpx with the same name%s\n' "$C_B" "$C_0" "$C_R" "$C_0"
@@ -1582,6 +1649,7 @@ mv_print_summary() {
 }
 
 mv_on_exit() {
+  [[ -n "${CLIP_DIR:-}" && -d "$CLIP_DIR" ]] && rm -rf -- "$CLIP_DIR"
   mv_cleanup_partial
   if (( SUMMARY )) && (( ! SUMMARY_DONE )); then
     SUMMARY_DONE=1
@@ -1635,6 +1703,8 @@ LENGTH=""
 TEST=0
 INPUT_ARGS=()
 J_VID=() J_START=() J_NAME_END=() J_SPEED=() J_DAY=() J_CLOCK=() J_GPX=() J_DUR=() J_FPS=()
+J_CLIPS=() J_CLIP_COUNT=()
+CLIP_DIR=""
 J_OUT=() J_STATE=() J_POINTS=() J_SHIFT=() J_FIRST=() J_LAST=() J_OVERLAP=() J_DIST=() J_VMAX=()
 J_TILES=() J_CACHED=() J_LAT=() J_ERR=() J_DROPPED=()
 PY_ARGS=() ENC_ARGS=()
@@ -1890,6 +1960,13 @@ for _i in "${!J_VID[@]}"; do
   J_OUT[$_i]="" J_STATE[$_i]=bad J_POINTS[$_i]="" J_SHIFT[$_i]=0 J_FIRST[$_i]="" J_LAST[$_i]=""
   J_OVERLAP[$_i]=0 J_DIST[$_i]="" J_VMAX[$_i]="" J_TILES[$_i]=0 J_CACHED[$_i]=0 J_LAT[$_i]="" J_ERR[$_i]=""
   J_DROPPED[$_i]=0
+  J_CLIPS[$_i]=""
+  J_CLIP_COUNT[$_i]=0
+  [[ -n "$CLIP_DIR" ]] || CLIP_DIR="$(mktemp -d)"
+  if mv_write_clip_clock "${J_VID[$_i]}" "$CLIP_DIR/clips-${_i}" "${J_SPEED[$_i]}" "${J_DUR[$_i]}"; then
+    J_CLIPS[$_i]="$CLIP_DIR/clips-${_i}"
+    J_CLIP_COUNT[$_i]="$J_CLIP_N"
+  fi
   if (( CACHE_FROM_CLI )); then
     J_CACHE[$_i]="$CACHE_DIR"
   else
