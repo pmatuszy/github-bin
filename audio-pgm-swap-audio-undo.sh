@@ -1,15 +1,17 @@
 #!/bin/bash
+# v. 20261014.225419 - put clip-backup.mp4 back as clip.mp4 (the backup is the original)
 # v. 20261014.225225 - roll back audio-pgm-swap-audio.sh: delete each *-backup copy one by one (original stays)
 #
+# 2026.10.14 - v. 0.2 - restore the original from stem-backup.ext over stem.ext, one file at a time
 # 2026.10.14 - v. 0.1 - initial release: find stem-backup.ext next to stem.ext, confirm, remove the
 #   swapped copy; if the original name is missing, rename the backup back to that name
 #
 # audio-pgm-swap-audio-undo.sh
 #
-# Undo a run of audio-pgm-swap-audio.sh that kept the original and wrote
-# clip-backup.mp4 (the swapped file). Each pair is confirmed one by one.
-# The original name stays; the swapped *-backup copy is removed. If the
-# original name is gone, the backup is renamed to that name.
+# Undo a run of audio-pgm-swap-audio.sh that moved the original to
+# clip-backup.mp4 and wrote the swapped file as clip.mp4. Each pair is
+# confirmed one by one. The backup (original) is moved back to clip.mp4.
+# If clip.mp4 is already gone, the backup is renamed to that name.
 #
 
 show_help() {
@@ -18,16 +20,16 @@ Usage: $(basename "$0") [-h|--help] [-v|--version] [--history]
        [-y|--yes] [-n|--dry-run] [--colors yes|no]
        [FILE|DIR ...]
 
-Undo swapped copies written by audio-pgm-swap-audio.sh as stem-backup.ext
-beside the original stem.ext.
+Put originals back after audio-pgm-swap-audio.sh. That script saves the
+original as stem-backup.ext and writes the swapped file as stem.ext.
 
 With no FILE or DIR, the current directory is used. A directory's backups
 are the files in that directory, not in folders inside it. Windows paths
 such as P:\\video\\trip are read as /mnt/p/video/trip.
 
 Each pair is asked one by one (default Yes):
-  keep    clip.mp4           (original)
-  remove  clip-backup.mp4    (swapped copy)
+  restore  clip.mp4           (currently the swapped file)
+  from     clip-backup.mp4    (the original)
 
 If clip.mp4 is missing, the backup is renamed to clip.mp4.
 
@@ -43,7 +45,7 @@ A run summary is always printed at the end, and on Ctrl-C.
 
 Examples:
   $(basename "$0")
-      Read the current directory, ask before removing each *-backup file.
+      Read the current directory, ask before restoring each *-backup file.
   $(basename "$0") -y /mnt/p/video
 EOF
 }
@@ -283,21 +285,21 @@ un_process_one() {
   echo
   echo "$(un_ts) ${bak##*/}   (${UN_SHOWN} of ${UN_TOTAL})"
   if [[ "$mode" == rename ]]; then
-    echo "  Original is missing: ${orig##*/}"
-    echo "  Backup:              ${bak##*/}  ($(un_human_size "$(un_file_bytes "$bak")"), $(un_mtime_label "$bak"))"
+    echo "  Swapped file is missing: ${orig##*/}"
+    echo "  Backup (original):       ${bak##*/}  ($(un_human_size "$(un_file_bytes "$bak")"), $(un_mtime_label "$bak"))"
     echo "  Roll back: rename the backup to ${orig##*/}"
   else
-    echo "  keep    ${orig##*/}  ($(un_human_size "$(un_file_bytes "$orig")"), $(un_mtime_label "$orig"))"
-    echo "  remove  ${bak##*/}  ($(un_human_size "$(un_file_bytes "$bak")"), $(un_mtime_label "$bak"))"
+    echo "  restore  ${orig##*/}  ($(un_human_size "$(un_file_bytes "$orig")"), $(un_mtime_label "$orig"))  swapped"
+    echo "  from     ${bak##*/}  ($(un_human_size "$(un_file_bytes "$bak")"), $(un_mtime_label "$bak"))  original"
   fi
   if (( ! DO_YES )) && (( ! APPLY_REST )) && (( script_is_run_interactively )); then
     echo
     un_print_question "Roll back this file?"
-    echo "  [Y] Yes (default) — original stays; swapped copy is removed"
+    echo "  [Y] Yes (default) — put the original back as ${orig##*/}"
     echo "  [s] Skip this file"
     echo "  [A] Yes, and the same for every remaining file"
     echo "  [q] Quit"
-    un_read_key "Roll back? [Y/s/A/q]: " y "Yes — roll back this file"
+    un_read_key "Roll back? [Y/s/A/q]: " y "Yes — restore the original"
     case "$REPLY" in
       y) un_print_selected "yes (roll back)" ;;
       s)
@@ -318,33 +320,17 @@ un_process_one() {
     esac
   fi
   if (( DRY_RUN )); then
-    if [[ "$mode" == rename ]]; then
-      echo "$(un_ts) Would rename ${bak} -> ${orig}"
-    else
-      echo "$(un_ts) Would remove ${bak}  (original stays)"
-    fi
-    DONE_LIST+=("${bak} (dry run)")
+    echo "$(un_ts) Would restore ${bak} -> ${orig}"
+    DONE_LIST+=("${orig} (dry run)")
     return 0
   fi
-  if [[ "$mode" == rename ]]; then
-    echo "$(un_ts) Renaming ${bak##*/} -> ${orig##*/}"
-    if mv -f -- "$bak" "$orig"; then
-      echo "$(un_ts) Rolled back ${orig##*/}"
-      DONE_LIST+=("$orig")
-      return 0
-    fi
-    echo "$(un_ts) Could not rename ${bak}." >&2
-    FAILED_LIST+=("$bak")
-    return_code=1
-    return 1
-  fi
-  echo "$(un_ts) Removing swapped copy ${bak##*/}  (original stays)"
-  if rm -f -- "$bak"; then
+  echo "$(un_ts) Restoring ${bak##*/} -> ${orig##*/}"
+  if mv -f -- "$bak" "$orig"; then
     echo "$(un_ts) Rolled back ${orig##*/}"
     DONE_LIST+=("$orig")
     return 0
   fi
-  echo "$(un_ts) Could not remove ${bak}." >&2
+  echo "$(un_ts) Could not restore ${orig} from ${bak}." >&2
   FAILED_LIST+=("$bak")
   return_code=1
   return 1

@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261014.225419 - original is moved to stem-backup.ext; the swapped file keeps the original name
 # v. 20261014.224924 - first-file report is compact: facts, present, streams and plan in a few short lines
 # v. 20261014.224804 - Videos list is tight and multi-line: name, backup, then a short facts line
 # v. 20261014.224553 - Getting file info (1/8) also prints the file name; the Videos: dump is gone
@@ -11,6 +12,7 @@
 # v. 20261014.220133 - ask to keep the original (default yes); print a facts table before and after each swap
 # v. 20261014.213909 - swap audio tracks in a video; every other stream stays, in the same order
 #
+# 2026.10.14 - v. 0.12 - keep-original moves the original to clip-backup.mp4, then writes the swapped file under the original name
 # 2026.10.14 - v. 0.11 - first-file listing is compact (size/duration/times on one line, present on one line, plan on two lines)
 # 2026.10.14 - v. 0.10 - Videos list is three short lines per file (name, backup, facts), not one long line
 # 2026.10.14 - v. 0.9 - probe line is "Getting file info (1/8) name"; do not print the Videos: source/backup list
@@ -68,11 +70,12 @@ only those three (default Yes). [c] lets you type the numbers to drop
 (more than one is allowed). [k] keeps every language. A stream with no
 language tag is kept. The last remaining audio track is never dropped.
 
-Keep a copy of each original? [Y/n/q] (default Yes): the original stays, and
-the swapped file is clip-backup.mp4 beside it. No: the original is
-replaced. Video is copied, not re-encoded. If clip-backup.mp4 is already
-there you can keep it, replace it, or write a name with the clock.
-Roll back with audio-pgm-swap-audio-undo.sh (confirms one file at a time).
+Keep a copy of each original? [Y/n/q] (default Yes): the original is moved
+to clip-backup.mp4, and the swapped file keeps the original name. No: the
+original is replaced. Video is copied, not re-encoded. If clip-backup.mp4
+is already there you can keep it, replace it, or write a name with the clock.
+Roll back with audio-pgm-swap-audio-undo.sh (puts clip-backup.mp4 back as
+clip.mp4, one file at a time).
 
 The first four questions (colors, keep a copy, one by one or together,
 matching subtitles) are asked before any file is opened. One by one is
@@ -98,7 +101,8 @@ Options:
   --colors yes|no      Use terminal colors (skip the colors question).
   --keep-original yes|no
                        Keep the original file (skip that question).
-                       yes (default): write clip-backup.mp4 beside it.
+                       yes (default): move it to clip-backup.mp4, then write
+                       the swapped file as clip.mp4.
                        no: replace the original.
   --one-by-one         Ask about each file (default; skip that question).
   --together           Same audio order for every file (skip that question).
@@ -123,7 +127,7 @@ Examples:
   $(basename "$0") -y --order 2,1 /mnt/p/video
   $(basename "$0") --colors yes clip.mp4
   audio-pgm-swap-audio-undo.sh
-      Roll back each clip-backup.mp4 one by one; the original stays.
+      Put each clip-backup.mp4 back as clip.mp4, one file at a time.
 EOF
 }
 
@@ -166,6 +170,8 @@ STOPPED=no
 SUMMARY_DONE=0
 return_code=0
 TMP_FILE=""
+ASIDE_ORIG=""
+ASIDE_BACKUP=""
 APPLY_REST=0
 REST_ORDER=""
 
@@ -177,6 +183,7 @@ FILE_AUDIO_FAMS=()
 FILE_SUB_FAMS=()
 FILE_SUB_NOTE=()
 FILE_DEST=()
+FILE_BACKUP=()
 DONE_LIST=()
 SKIPPED_LIST=()
 FAILED_LIST=()
@@ -1312,12 +1319,8 @@ sa_slots_are_identity() {
   return 0
 }
 
-sa_dest_path() {
+sa_backup_path() {
   local src="$1" dir base stem ext
-  if (( ! KEEP_ORIGINAL )); then
-    printf '%s\n' "$src"
-    return 0
-  fi
   dir="$(dirname -- "$src")"
   base="${src##*/}"
   if [[ "$base" == *.* ]]; then
@@ -1335,6 +1338,16 @@ sa_dest_path() {
       printf '%s/%s-backup\n' "$dir" "$base"
     fi
   fi
+}
+
+sa_aside_restore() {
+  [[ -n "${ASIDE_BACKUP:-}" && -n "${ASIDE_ORIG:-}" ]] || return 0
+  if [[ -f "$ASIDE_BACKUP" && ! -e "$ASIDE_ORIG" ]]; then
+    echo "$(sa_ts) Restoring original: ${ASIDE_BACKUP##*/} -> ${ASIDE_ORIG##*/}"
+    mv -f -- "$ASIDE_BACKUP" "$ASIDE_ORIG" 2>/dev/null || true
+  fi
+  ASIDE_BACKUP=""
+  ASIDE_ORIG=""
 }
 
 sa_next_take_name() {
@@ -1602,14 +1615,14 @@ sa_ask_keep_copy() {
   fi
   echo
   sa_print_question "Keep a copy of each original file?"
-  echo "  [Y] Yes (default) — original stays; swapped file is clip-backup.mp4"
+  echo "  [Y] Yes (default) — original becomes clip-backup.mp4; swapped file keeps the original name"
   echo "  [n] No — replace the original with the swapped file"
   echo "  [q] Quit"
-  sa_read_key "Keep a copy of the original? [Y/n/q]: " y "Yes — original stays"
+  sa_read_key "Keep a copy of the original? [Y/n/q]: " y "Yes — save original as clip-backup.mp4"
   case "$REPLY" in
     y)
       KEEP_ORIGINAL=1
-      sa_print_selected "yes (original stays; write clip-backup.mp4)"
+      sa_print_selected "yes (original -> clip-backup.mp4; swapped file keeps the original name)"
       ;;
     n)
       KEEP_ORIGINAL=0
@@ -1928,13 +1941,13 @@ sa_print_run_settings() {
   fi
   if (( KEEP_SET )); then
     if (( KEEP_ORIGINAL )); then
-      printf '  %-21s%s\n' "--keep-original:" "given (yes — write clip-backup.mp4)"
+      printf '  %-21s%s\n' "--keep-original:" "given (yes — original -> clip-backup.mp4)"
     else
       printf '  %-21s%s\n' "--keep-original:" "given (no — replace the original)"
     fi
   else
     if (( KEEP_ORIGINAL )); then
-      printf '  %-21s%s\n' "--keep-original:" "yes (asked — original stays)"
+      printf '  %-21s%s\n' "--keep-original:" "yes (asked — original -> clip-backup.mp4)"
     else
       printf '  %-21s%s\n' "--keep-original:" "no (asked — replace the original)"
     fi
@@ -1995,13 +2008,16 @@ sa_probe_plan() {
     FILE_SUB_FAMS[$i]=""
     FILE_SUB_NOTE[$i]=""
     FILE_DEST[$i]=""
+    FILE_BACKUP[$i]=""
     sa_load_streams "$src"
     n=${#AUDIO_ST[@]}
     FILE_AUDIO_N[$i]="$n"
     FILE_AUDIO_FAMS[$i]="$(sa_csv_fams "${AUDIO_ST[@]+"${AUDIO_ST[@]}"}")"
     FILE_SUB_FAMS[$i]="$(sa_csv_fams "${SUBTITLE_ST[@]+"${SUBTITLE_ST[@]}"}")"
-    dest="$(sa_dest_path "$src")"
-    FILE_DEST[$i]="$dest"
+    FILE_DEST[$i]="$src"
+    if (( KEEP_ORIGINAL )); then
+      FILE_BACKUP[$i]="$(sa_backup_path "$src")"
+    fi
     if (( n == 0 )); then
       FILE_WHY[$i]="no audio track"
       continue
@@ -2045,7 +2061,12 @@ sa_print_plan() {
       if (( SWAP_SUBS )) && [[ -n "${FILE_SUB_NOTE[$i]}" ]]; then
         extra+=", subs ${FILE_SUB_NOTE[$i]}"
       fi
-      printf '    -> %s\n' "${dest##*/}"
+      if (( KEEP_ORIGINAL )) && [[ -n "${FILE_BACKUP[$i]}" ]]; then
+        printf '    original -> %s\n' "${FILE_BACKUP[$i]##*/}"
+        printf '    write %s\n' "${src##*/}"
+      else
+        printf '    replace %s\n' "${src##*/}"
+      fi
       printf '    %s\n' "$extra"
     else
       printf '    skip: %s\n' "$why"
@@ -2101,7 +2122,7 @@ sa_ask_existing() {
 }
 
 sa_process_one() {
-  local i="$1" src dest n order why rc=0 extra subp=""
+  local i="$1" src dest backup n order why rc=0 extra subp=""
   src="${FILES[$i]}"
   dest="${FILE_DEST[$i]}"
   n="${FILE_AUDIO_N[$i]}"
@@ -2213,28 +2234,61 @@ sa_process_one() {
       extra+="; subtitles left as they are"
     fi
   fi
+  backup="${FILE_BACKUP[$i]}"
+  dest="$src"
   if (( DRY_RUN )); then
-    echo "$(sa_ts) Would write ${dest}  (${extra})"
+    if (( KEEP_ORIGINAL )); then
+      echo "$(sa_ts) Would move ${src##*/} -> ${backup##*/}, then write ${src##*/}  (${extra})"
+    else
+      echo "$(sa_ts) Would replace ${src##*/}  (${extra})"
+    fi
     DONE_LIST+=("${dest} (dry run, ${order})")
     return 0
   fi
   NEW_DEST=""
-  if (( KEEP_ORIGINAL )) && [[ -e "$dest" && "$dest" != "$src" ]]; then
-    sa_ask_existing "$dest"
+  if (( KEEP_ORIGINAL )) && [[ -n "$backup" && -e "$backup" ]]; then
+    sa_ask_existing "$backup"
     rc=$?
     if (( rc == 1 )); then
-      SKIPPED_LIST+=("${dest} (already there)")
+      SKIPPED_LIST+=("${backup} (already there)")
       return 0
     fi
     if (( rc == 2 )); then
-      dest="$NEW_DEST"
+      backup="$NEW_DEST"
+      FILE_BACKUP[$i]="$backup"
     fi
   fi
   if (( KEEP_ORIGINAL )); then
-    echo "$(sa_ts) Writing ${dest}  (${extra}, copy; original kept)"
-  else
-    echo "$(sa_ts) Replacing ${src}  (${extra}, copy)"
+    echo "$(sa_ts) Moving original to ${backup##*/}, writing ${src##*/}  (${extra}, copy)"
+    if ! mv -f -- "$src" "$backup"; then
+      echo "$(sa_ts) Could not move ${src} aside." >&2
+      FAILED_LIST+=("$src")
+      return_code=1
+      return 1
+    fi
+    ASIDE_ORIG="$src"
+    ASIDE_BACKUP="$backup"
+    sa_proc_begin
+    if sa_remux "$backup" "$dest" "$order"; then
+      sa_proc_end
+      ASIDE_ORIG=""
+      ASIDE_BACKUP=""
+      echo "$(sa_ts) Wrote ${dest}  ($(sa_human_size "$(sa_file_bytes "$dest")"))"
+      DONE_LIST+=("$dest")
+      sa_load_info "$dest"
+      sa_store_info_as OUT
+      sa_copy_stream_snapshot OUT
+      sa_print_compare IN_IDX IN_TYPE IN_CODEC IN_DET OUT_IDX OUT_TYPE OUT_CODEC OUT_DET
+      return 0
+    fi
+    sa_proc_end
+    sa_aside_restore
+    echo "$(sa_ts) Could not write ${dest}." >&2
+    FAILED_LIST+=("$src")
+    return_code=1
+    return 1
   fi
+  echo "$(sa_ts) Replacing ${src}  (${extra}, copy)"
   sa_proc_begin
   if sa_remux "$src" "$dest" "$order"; then
     sa_proc_end
@@ -2290,7 +2344,7 @@ sa_print_summary() {
     in_sum=$(( in_sum + $(sa_file_bytes "$src") ))
   done
   if (( KEEP_ORIGINAL )); then
-    sa_summary_kv "Originals" "kept (swapped file is clip-backup.mp4)"
+    sa_summary_kv "Originals" "kept as clip-backup.mp4; swapped file keeps the original name"
   else
     sa_summary_kv "Originals" "replaced"
   fi
@@ -2309,6 +2363,7 @@ sa_print_summary() {
 
 sa_on_exit() {
   [[ -n "${TMP_FILE:-}" && -f "$TMP_FILE" ]] && rm -f -- "$TMP_FILE"
+  sa_aside_restore
   sa_print_summary
   if [[ -r /root/bin/_script_footer.sh ]]; then
     # shellcheck disable=SC1091
