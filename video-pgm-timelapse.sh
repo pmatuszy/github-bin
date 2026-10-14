@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261014.084030 - ask whether to encode every file before the first one starts
 # v. 20261007.205107 - encode everything is Y (default); a short try first is n
 # v. 20261007.200020 - ask which videos to encode; FrontCam, BackCam, and Map groups; dialog when installed, or --no-dialog
 # v. 20261007.143052 - summary times are whole seconds
@@ -46,6 +47,7 @@
 # v. 20260930.221500 - file prompts: one key, no Enter
 # v. 20260930.220400 - faster viewing copy of a merged video (2, 5, 10, 20, …)
 
+# 2026.10.14 - v. 0.44 - before the first file, ask whether to encode every file, or the first file and then ask again
 # 2026.10.07 - v. 0.43 - encode everything is Y (default); a short try first is n
 # 2026.10.07 - v. 0.42 - when the run is interactive and inputs come from a directory, ask which videos to encode: all, FrontCam, BackCam, Map, other, or pick files; use dialog when it is installed unless --no-dialog (or --dialog to prefer it)
 # 2026.10.07 - v. 0.41 - summary times are whole seconds (5m 04s), not hundredths
@@ -123,7 +125,9 @@ directory is used. Files already named *_xN.mp4 or *_xN_YYYYMMDD-HHMMSS.mp4
 are skipped. An interactive run with inputs from a directory (or the current
 directory) asks which videos to encode when more than one is found: all,
 FrontCam, BackCam, Map, other, or a file-by-file pick. Named FILE arguments
-skip that question. -y encodes every candidate without asking.
+skip that question. When more than one file will be encoded, the script asks
+once before the first file: encode all of them, or encode the first and ask
+again. -y encodes every candidate without asking.
 
 Options:
   -h, --help           Show this help and exit.
@@ -1814,6 +1818,51 @@ tl_prompt_existing_output() {
   esac
 }
 
+# Asked once, before any file is encoded, when more than one file is selected.
+# [A] encodes every file. [y] encodes the first, then tl_prompt_continue_after_file.
+tl_prompt_before_files() {
+  local total="$1" choice=""
+  REPLY=all
+  if (( total < 2 )) || (( DO_YES )) || (( ! script_is_run_interactively )); then
+    TL_ENCODE_REST=1
+    return 0
+  fi
+  echo
+  echo "Encode these files? [A/y/n/q]"
+  echo "  [A] Encode all ${total} files (default)"
+  echo "  [y] Encode the first file, then ask again"
+  echo "  [n] Don't encode"
+  echo "  [q] Quit"
+  tl_read_key "Encode these files? [A/y/n/q]: " a
+  choice="$(tl_choice "$REPLY")"
+  case "$choice" in
+    ''|a)
+      ENCODE_ALL=1
+      TL_ENCODE_REST=1
+      echo "$(tl_ts) Encoding all ${total} files."
+      REPLY=all
+      ;;
+    y)
+      echo "$(tl_ts) Encoding the first file, then asking again."
+      REPLY=next
+      ;;
+    n)
+      echo "$(tl_ts) Not encoding."
+      REPLY=stop
+      ;;
+    q)
+      echo "$(tl_ts) Quit."
+      REPLY=quit
+      ;;
+    *)
+      echo "$(tl_ts) Unknown choice: ${REPLY}. Encoding all ${total} files."
+      ENCODE_ALL=1
+      TL_ENCODE_REST=1
+      REPLY=all
+      ;;
+  esac
+}
+
 tl_prompt_continue_after_file() {
   local n="$1" total="$2"
   local next=$(( n + 1 )) choice="" span=""
@@ -3299,6 +3348,14 @@ echo "$(tl_ts) Audio is omitted. The .gpx beside the source still uses real time
 return_code=0
 tl_i=0
 tl_total=${#TL_INPUTS[@]}
+tl_prompt_before_files "$tl_total"
+case "$REPLY" in
+  stop|quit)
+    TL_STOPPED=yes
+    return_code=0
+    exit 0
+    ;;
+esac
 for tl_src in "${TL_INPUTS[@]}"; do
   (( tl_i++ )) || true
   tl_dest="$(tl_output_path "$tl_src" "$SPEED")"
