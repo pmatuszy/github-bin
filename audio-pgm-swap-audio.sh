@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261014.224924 - first-file report is compact: facts, present, streams and plan in a few short lines
 # v. 20261014.224804 - Videos list is tight and multi-line: name, backup, then a short facts line
 # v. 20261014.224553 - Getting file info (1/8) also prints the file name; the Videos: dump is gone
 # v. 20261014.224006 - after the file list: keep English, Polish, German (default yes); drop other audio/subtitle languages, or choose which to drop
@@ -10,6 +11,7 @@
 # v. 20261014.220133 - ask to keep the original (default yes); print a facts table before and after each swap
 # v. 20261014.213909 - swap audio tracks in a video; every other stream stays, in the same order
 #
+# 2026.10.14 - v. 0.11 - first-file listing is compact (size/duration/times on one line, present on one line, plan on two lines)
 # 2026.10.14 - v. 0.10 - Videos list is three short lines per file (name, backup, facts), not one long line
 # 2026.10.14 - v. 0.9 - probe line is "Getting file info (1/8) name"; do not print the Videos: source/backup list
 # 2026.10.14 - v. 0.8 - after the file list, if there are languages other than English, Polish and German, ask to drop them (default yes) or choose which to drop; the last remaining audio track is never dropped
@@ -74,10 +76,9 @@ there you can keep it, replace it, or write a name with the clock.
 The first four questions (colors, keep a copy, one by one or together,
 matching subtitles) are asked before any file is opened. One by one is
 the default. Matching subtitles is Yes. Then the script searches for
-videos and prints "Getting file info (1/8) name" while it reads streams. The first file prints a long report: duration,
-throughput, GPS, present/not present for video, audio, GPS, telemetry,
-timecode, subtitles, chapters and other data, then every stream (including
-ones ffmpeg cannot decode). Later files keep the shorter table. After the
+videos and prints "Getting file info (1/8) name" while it reads streams. The first file prints a compact report: size, duration, times, what is
+present, each audio/video/subtitle line, and the swap plan. Later files
+keep the shorter table. After the
 remux the same facts are printed side by side for input and output. A value
 that changed is marked with * on the output side.
 
@@ -624,16 +625,12 @@ sa_stream_detail() {
 }
 
 sa_print_facts() {
+  printf '  %s' "$(sa_dash "$INFO_SIZE")"
+  [[ -n "$INFO_DUR" ]] && printf '  %s' "$INFO_DUR"
+  [[ -n "$INFO_THRU" ]] && printf '  %s' "$INFO_THRU"
+  [[ -n "$INFO_CREATED" ]] && printf '  created %s' "$INFO_CREATED"
+  [[ -n "$INFO_MTIME" ]] && printf '  mtime %s' "$INFO_MTIME"
   echo
-  printf '  %-20s  %s\n' "File" "$(sa_dash "$INFO_FILE")"
-  printf '  %-20s  %s\n' "Size" "$(sa_dash "$INFO_SIZE")"
-  printf '  %-20s  %s\n' "Duration" "$(sa_dash "$INFO_DUR")"
-  printf '  %-20s  %s\n' "Throughput" "$(sa_dash "$INFO_THRU")"
-  printf '  %-20s  %s\n' "Created" "$(sa_dash "$INFO_CREATED")"
-  printf '  %-20s  %s\n' "File time" "$(sa_dash "$INFO_MTIME")"
-  printf '  %-20s  %s\n' "GPS" "$(sa_dash "$INFO_GPS")"
-  printf '  %-20s  %s\n' "Chapters" "$(sa_dash "$INFO_CHAPTERS")"
-  printf '  %-20s  %s\n' "GoPro telemetry" "$(sa_dash "$INFO_GOPRO")"
 }
 
 sa_count_type() {
@@ -679,26 +676,24 @@ sa_stream_fate() {
 
 sa_audio_verbose_line() {
   local i="$1" a_n="$2" bits
-  bits="stream #${ST_IDX[$i]}  ${ST_CODEC[$i]:-?}"
+  bits="#${ST_IDX[$i]}  ${ST_CODEC[$i]:-?}"
   [[ -n "${ST_CH[$i]}" ]] && bits+="  ${ST_CH[$i]}ch"
   [[ -n "${ST_RATE[$i]}" ]] && bits+="  ${ST_RATE[$i]} Hz"
   [[ -n "${ST_BR[$i]}" ]] && bits+="  ${ST_BR[$i]}"
-  [[ -n "${ST_LANG[$i]}" ]] && bits+="  lang=${ST_LANG[$i]}"
-  [[ -n "${ST_TITLE[$i]}" ]] && bits+="  title=${ST_TITLE[$i]}"
-  [[ -n "${ST_HANDLER[$i]}" ]] && bits+="  ${ST_HANDLER[$i]}"
+  [[ -n "${ST_LANG[$i]}" ]] && bits+="  ${ST_LANG[$i]}"
+  [[ -n "${ST_TITLE[$i]}" ]] && bits+="  ${ST_TITLE[$i]}"
   [[ "${ST_DEF[$i]}" == 1 ]] && bits+="  default"
-  printf '    %s  %s\n' "$a_n" "$bits"
+  printf '  A%s  %s\n' "$a_n" "$bits"
 }
 
 sa_print_verbose() {
-  local i type a_n=0 o_n=0 def_n="—" gps_line tel_line tmcd_line
+  local i type a_n=0 def_n="—" gps_bit tel_bit tmcd_bit vid_bit sub_bits=""
   local audio_n video_n sub_n data_n ch_n
   audio_n="$(sa_count_type audio)"
   video_n="$(sa_count_type video)"
   sub_n="$(sa_count_type subtitle)"
   data_n="$(sa_other_data_n)"
   ch_n="${INFO_CHAPTERS:-0}"
-  a_n=0
   for i in "${!ST_IDX[@]}"; do
     [[ "${ST_TYPE[$i],,}" == audio ]] || continue
     (( a_n++ )) || true
@@ -706,110 +701,71 @@ sa_print_verbose() {
   done
   a_n=0
   if [[ -n "$INFO_GPS" ]]; then
-    gps_line="yes   ${INFO_GPS}"
+    gps_bit="yes"
   else
-    gps_line="no"
+    gps_bit="no"
   fi
   if [[ "${INFO_GOPRO}" == no || -z "$INFO_GOPRO" ]]; then
-    tel_line="no"
+    tel_bit="no"
   else
-    tel_line="${INFO_GOPRO}"
+    tel_bit="${INFO_GOPRO}"
   fi
   if sa_has_tmcd; then
-    tmcd_line="yes   tmcd (cannot copy into MP4)"
+    tmcd_bit="yes"
   else
-    tmcd_line="no"
+    tmcd_bit="no"
   fi
-  echo
-  printf '  %-20s  %s\n' "File" "$(sa_dash "$INFO_FILE")"
-  printf '  %-20s  %s\n' "Size" "$(sa_dash "$INFO_SIZE")"
-  printf '  %-20s  %s\n' "Duration" "$(sa_dash "$INFO_DUR")"
-  printf '  %-20s  %s\n' "Throughput" "$(sa_dash "$INFO_THRU")"
-  printf '  %-20s  %s\n' "Created" "$(sa_dash "$INFO_CREATED")"
-  printf '  %-20s  %s\n' "File time" "$(sa_dash "$INFO_MTIME")"
-  echo
-  echo "  Present"
-  if (( video_n > 0 )); then
-    printf '    %-18s  yes\n' "Video"
-  else
-    printf '    %-18s  no\n' "Video"
-  fi
-  if (( audio_n > 0 )); then
-    printf '    %-18s  yes, %s track(s)\n' "Audio" "$audio_n"
-  else
-    printf '    %-18s  no\n' "Audio"
-  fi
-  printf '    %-18s  %s\n' "GPS in metadata" "$gps_line"
-  printf '    %-18s  %s\n' "GoPro telemetry" "$tel_line"
-  printf '    %-18s  %s\n' "Timecode" "$tmcd_line"
-  if (( sub_n > 0 )); then
-    printf '    %-18s  yes, %s\n' "Subtitles" "$sub_n"
-  else
-    printf '    %-18s  no\n' "Subtitles"
-  fi
-  if (( ch_n > 0 )); then
-    printf '    %-18s  yes, %s\n' "Chapters" "$ch_n"
-  else
-    printf '    %-18s  no\n' "Chapters"
-  fi
-  if (( data_n > 0 )); then
-    printf '    %-18s  yes, %s stream(s)\n' "Other data" "$data_n"
-  else
-    printf '    %-18s  no\n' "Other data"
-  fi
+  if (( video_n > 0 )); then vid_bit=yes; else vid_bit=no; fi
+  sa_print_facts
+  printf '  video %s  audio %s  subs %s  chapters %s  GPS %s  GoPro %s  tmcd %s' \
+    "$vid_bit" "$audio_n" "$sub_n" "$ch_n" "$gps_bit" "$tel_bit" "$tmcd_bit"
+  (( data_n > 0 )) && printf '  other %s' "$data_n"
   echo
   if (( audio_n == 0 )); then
-    echo "  Audio  (none)"
+    echo "  A   none"
   else
-    printf '  Audio  (%s track(s); default is %s)\n' "$audio_n" "$def_n"
     for i in "${!ST_IDX[@]}"; do
       [[ "${ST_TYPE[$i],,}" == audio ]] || continue
       (( a_n++ )) || true
       sa_audio_verbose_line "$i" "$a_n"
     done
   fi
-  echo
   if (( video_n == 0 )); then
-    echo "  Video  (none)"
+    echo "  V   none"
   else
-    echo "  Video"
     for i in "${!ST_IDX[@]}"; do
       [[ "${ST_TYPE[$i],,}" == video ]] || continue
-      printf '    stream #%s  %s' "${ST_IDX[$i]}" "${ST_CODEC[$i]:-?}"
+      printf '  V   #%s  %s' "${ST_IDX[$i]}" "${ST_CODEC[$i]:-?}"
       [[ -n "${ST_WH[$i]}" ]] && printf '  %s' "${ST_WH[$i]}"
       [[ -n "${ST_FPS[$i]}" ]] && printf '  %s' "${ST_FPS[$i]}"
       [[ -n "${ST_BR[$i]}" ]] && printf '  %s' "${ST_BR[$i]}"
-      [[ -n "${ST_HANDLER[$i]}" ]] && printf '  %s' "${ST_HANDLER[$i]}"
       echo
     done
   fi
-  echo
-  echo "  Other streams"
-  o_n=0
   for i in "${!ST_IDX[@]}"; do
     type="${ST_TYPE[$i],,}"
     case "$type" in
+      subtitle)
+        sub_bits+="  #${ST_IDX[$i]} ${ST_CODEC[$i]:-sub} ${ST_LANG[$i]:-?}"
+        [[ "${ST_DEF[$i]}" == 1 ]] && sub_bits+=" default"
+        ;;
       video|audio) continue ;;
+      *)
+        printf '  D   #%s  %s  %s' "${ST_IDX[$i]}" "${ST_TYPE[$i]:-data}" "${ST_CODEC[$i]:-${ST_TAG[$i]:-?}}"
+        [[ -n "${ST_LANG[$i]}" ]] && printf '  %s' "${ST_LANG[$i]}"
+        printf '  (%s)\n' "$(sa_stream_fate "$i")"
+        ;;
     esac
-    (( o_n++ )) || true
-    printf '    stream #%s  %s  %s' "${ST_IDX[$i]}" "${ST_TYPE[$i]:-data}" "${ST_CODEC[$i]:-${ST_TAG[$i]:-?}}"
-    [[ -n "${ST_TAG[$i]}" && "${ST_TAG[$i]}" != "${ST_CODEC[$i]}" ]] && printf '  tag=%s' "${ST_TAG[$i]}"
-    [[ -n "${ST_HANDLER[$i]}" ]] && printf '  %s' "${ST_HANDLER[$i]}"
-    [[ -n "${ST_LANG[$i]}" ]] && printf '  lang=%s' "${ST_LANG[$i]}"
-    [[ "${ST_DEF[$i]}" == 1 ]] && printf '  default'
-    printf '  (%s)\n' "$(sa_stream_fate "$i")"
   done
-  if (( o_n == 0 )); then
-    echo "    (none)"
+  if (( sub_n > 0 )); then
+    printf '  S  %s\n' "${sub_bits#  }"
   fi
 }
 
 sa_print_stream_table() {
   local i n type codec detail a_n=0
   n=${#ST_IDX[@]}
-  echo
   printf '  %-3s %-9s %-8s %s\n' "#" "Type" "Codec" "Detail"
-  printf '  %-3s %-9s %-8s %s\n' "--" "---------" "--------" "---------------------------------------------"
   if (( n == 0 )); then
     echo "  (no streams)"
     return 0
@@ -828,29 +784,26 @@ sa_print_stream_table() {
 sa_print_audio_plan() {
   local now after spec="${1:-}" sub_now sub_after
   now="$(sa_audio_order_text)"
-  echo
-  printf '  Audio order now: %s\n' "$now"
+  printf '  audio %s' "$now"
   if [[ -n "$spec" ]]; then
     after="$(sa_audio_order_after "$spec")"
-    printf '  After swap %s:  %s\n' "$spec" "$after"
-    printf '  Default after swap:  audio track 1\n'
+    printf '  ->  %s' "$after"
   fi
   if (( ${#DROP_FAMS[@]} > 0 )); then
-    printf '  Drop languages:    %s\n' "$(sa_join_labels "${DROP_FAMS[@]}")"
+    printf '  drop %s' "$(sa_join_labels "${DROP_FAMS[@]}")"
   fi
+  echo
   if (( SWAP_SUBS )); then
     sa_fill_kept_streams
     if (( ${#KEPT_SUBTITLE_ST[@]} == 0 && ${#SUBTITLE_ST[@]} == 0 )); then
-      printf '  Subtitles:         none\n'
+      printf '  subs  none\n'
     elif (( ${#KEPT_SUBTITLE_ST[@]} == 0 )); then
-      printf '  Subtitles:         all dropped\n'
+      printf '  subs  all dropped\n'
     elif [[ -n "$spec" ]] && sub_after="$(sa_subtitle_perm "$spec")"; then
       sub_now="$(sa_subtitle_order_text)"
-      printf '  Subtitles now:     %s\n' "$sub_now"
-      printf '  After swap %s:  %s\n' "$sub_after" "$(sa_subtitle_order_after "$sub_after")"
-      printf '  Default after swap:  subtitle track 1\n'
+      printf '  subs  %s  ->  %s\n' "$sub_now" "$(sa_subtitle_order_after "$sub_after")"
     else
-      printf '  Subtitles:         left as they are (no matching language with audio)\n'
+      printf '  subs  as they are\n'
     fi
   fi
 }
@@ -2167,7 +2120,7 @@ sa_process_one() {
   sa_copy_stream_snapshot IN
   (( SWAP_SHOWN++ )) || true
   echo
-  echo "$(sa_ts) ${src}   (${SWAP_SHOWN} of ${SWAP_TOTAL})"
+  echo "$(sa_ts) ${src##*/}   (${SWAP_SHOWN} of ${SWAP_TOTAL})"
   if (( SWAP_SHOWN == 1 )); then
     sa_print_verbose
   else
