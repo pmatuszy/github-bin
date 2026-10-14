@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261014.224804 - Videos list is tight and multi-line: name, backup, then a short facts line
 # v. 20261014.224553 - Getting file info (1/8) also prints the file name; the Videos: dump is gone
 # v. 20261014.224006 - after the file list: keep English, Polish, German (default yes); drop other audio/subtitle languages, or choose which to drop
 # v. 20261014.223151 - after a swap, audio track 1 is default; matching subtitles follow the audio order (asked, default yes) and subtitle 1 is default
@@ -9,6 +10,7 @@
 # v. 20261014.220133 - ask to keep the original (default yes); print a facts table before and after each swap
 # v. 20261014.213909 - swap audio tracks in a video; every other stream stays, in the same order
 #
+# 2026.10.14 - v. 0.10 - Videos list is three short lines per file (name, backup, facts), not one long line
 # 2026.10.14 - v. 0.9 - probe line is "Getting file info (1/8) name"; do not print the Videos: source/backup list
 # 2026.10.14 - v. 0.8 - after the file list, if there are languages other than English, Polish and German, ask to drop them (default yes) or choose which to drop; the last remaining audio track is never dropped
 # 2026.10.14 - v. 0.7 - after a swap, the new first audio track is default; ask to reorder subtitles to the same languages as audio (default yes) and then make the first subtitle default
@@ -2068,6 +2070,34 @@ sa_probe_plan() {
   done
 }
 
+sa_print_plan() {
+  local i src dest n state why extra
+  echo
+  echo "Videos:"
+  if (( ${#DROP_FAMS[@]} > 0 )); then
+    printf '  drop %s\n' "$(sa_join_labels "${DROP_FAMS[@]}")"
+  fi
+  for i in "${!FILES[@]}"; do
+    src="${FILES[$i]}"
+    dest="${FILE_DEST[$i]}"
+    n="${FILE_AUDIO_N[$i]}"
+    state="${FILE_STATE[$i]}"
+    why="${FILE_WHY[$i]}"
+    printf '  %s\n' "${src##*/}"
+    if [[ "$state" == swap ]]; then
+      extra="${n} audio, order ${why}"
+      if (( SWAP_SUBS )) && [[ -n "${FILE_SUB_NOTE[$i]}" ]]; then
+        extra+=", subs ${FILE_SUB_NOTE[$i]}"
+      fi
+      printf '    -> %s\n' "${dest##*/}"
+      printf '    %s\n' "$extra"
+    else
+      printf '    skip: %s\n' "$why"
+    fi
+  done
+  echo
+}
+
 sa_ask_custom_order() {
   local n="$1" default="$2" typed="" expanded
   echo "  Audio-track numbers, comma-separated. 1 is the first audio track."
@@ -2468,10 +2498,7 @@ fi
 
 sa_ask_languages
 sa_finalize_plan
-
-if (( ${#DROP_FAMS[@]} > 0 )); then
-  echo "$(sa_ts) Drop $(sa_join_labels "${DROP_FAMS[@]}")."
-fi
+sa_print_plan
 
 _skip=$(( ${#FILES[@]} - SWAP_TOTAL ))
 echo "$(sa_ts) ${SWAP_TOTAL} to process, ${_skip} to skip."
