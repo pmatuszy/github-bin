@@ -1,10 +1,12 @@
 #!/bin/bash
+# v. 20261014.222646 - probe progress is "Getting file info (1/8)", with no file name
 # v. 20261014.221754 - check ffmpeg/ffprobe first; ask colors, keep-copy, and one-by-one before reading files; print search and probe progress
 # v. 20261014.221053 - ask one-by-one or together; the first file gets a full stream report
 # v. 20261014.220750 - the kept copy is named stem-backup.ext
 # v. 20261014.220133 - ask to keep the original (default yes); print a facts table before and after each swap
 # v. 20261014.213909 - swap audio tracks in a video; every other stream stays, in the same order
 #
+# 2026.10.14 - v. 0.6 - while streams are read, print "Getting file info (1/8)" (no file name)
 # 2026.10.14 - v. 0.5 - ffmpeg and ffprobe are required (exit if missing); colors, keep a copy, and one-by-one/together are asked before any file is opened; then search and "file k of N" while streams are read
 # 2026.10.14 - v. 0.4 - after the list: one by one (default) or together; the first file prints every stream, GPS, throughput, and present/not present
 # 2026.10.14 - v. 0.3 - the kept copy is clip-backup.mp4 (not clip_audio-swap.mp4)
@@ -49,8 +51,8 @@ there you can keep it, replace it, or write a name with the clock.
 
 The first three questions (colors, keep a copy, one by one or together)
 are asked before any file is opened. One by one is the default. Then the
-script searches for videos and prints "Getting information about file k of N"
-while it reads streams. The first file prints a long report: duration,
+script searches for videos and prints "Getting file info (1/8)" while it
+reads streams. The first file prints a long report: duration,
 throughput, GPS, present/not present for video, audio, GPS, telemetry,
 timecode, subtitles, chapters and other data, then every stream (including
 ones ffmpeg cannot decode). Later files keep the shorter table. After the
@@ -1347,7 +1349,7 @@ sa_probe_plan() {
   total=${#FILES[@]}
   for i in "${!FILES[@]}"; do
     src="${FILES[$i]}"
-    echo "$(sa_ts) Getting information about file $((i + 1)) of ${total}: ${src##*/}"
+    echo "$(sa_ts) Getting file info ($((i + 1))/${total})"
     FILE_STATE[$i]=skip
     FILE_WHY[$i]=""
     FILE_AUDIO_N[$i]=0
