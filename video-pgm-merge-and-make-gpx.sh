@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261014.193952 - the run summary has no clock on each line, and a short clip is marked at its end
 # v. 20261014.164220 - the GPS log line names a GPSData file when several logs are in the folder
 # v. 20261014.075855 - a short clip keeps only its real length in the GPX, and the merge asks before continuing
 # v. 20261013.102747 - every GPSData*.txt is read; the date in the name does not choose the log
@@ -60,6 +61,7 @@
 # v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
 # v. 20260805.154826 - after merge: copy GPS/dates from first chapter; FS times via touch -r
 
+# 2026.10.14 - v. 0.15.76 - the run summary is plain lines, like the other scripts; a short clip's "look around" time is the end of that clip (start plus its length), where the picture jumps
 # 2026.10.14 - v. 0.15.75 - the group line names a GPSData file when several logs are in the folder; closing the pipe after the first name is not "no log"
 # 2026.10.14 - v. 0.15.74 - a clip shorter than the gap to the next file keeps only that length in the GPX; the merge warns and the run summary lists those clips
 # 2026.10.13 - v. 0.15.73 - every GPSData*.txt is read; the date in the name does not choose the log
@@ -1012,6 +1014,13 @@ pgm_log_kv() {
   printf '%s %-*s  %s\n' "$(pgm_ts)" 26 "${label}:" "$*"
 }
 
+# Fixed-width label + value for the run summary. No clock on these lines.
+pgm_summary_kv() {
+  local label="$1"
+  shift
+  printf '  %-*s  %s\n' 18 "${label}:" "$*"
+}
+
 # Command line that reproduces this run (flags given plus resolved seam-preview values).
 pgm_print_run_settings_equivalent_cli() {
   local cmd="" out="" p q_dir
@@ -1234,19 +1243,19 @@ print_pgm_timing_summary() {
   wait_sec=$(awk -v t="${total_sec}" -v p="${PGM_PROCESSING_SEC:-0}" \
     'BEGIN { w = t - p; if (w < 0) w = 0; printf "%.6f", w }')
   echo
-  echo "$(pgm_ts) --- Run summary ---"
-  pgm_log_kv "Processed" "${PGM_RUN_GROUPS:-0} group(s), ${PGM_RUN_INPUT_FILES:-0} input file(s)"
-  pgm_log_kv "Deleted" "${PGM_RUN_DELETED:-0} input file(s)"
-  pgm_log_kv "Input size" "$(format_bytes_run_summary "${PGM_RUN_INPUT_BYTES:-0}")"
-  pgm_log_kv "Output size" "$(format_bytes_run_summary "${PGM_RUN_OUTPUT_BYTES:-0}")"
+  echo "--- Run summary ---"
+  pgm_summary_kv "Processed" "${PGM_RUN_GROUPS:-0} group(s), ${PGM_RUN_INPUT_FILES:-0} input file(s)"
+  pgm_summary_kv "Deleted" "${PGM_RUN_DELETED:-0} input file(s)"
+  pgm_summary_kv "Input size" "$(format_bytes_run_summary "${PGM_RUN_INPUT_BYTES:-0}")"
+  pgm_summary_kv "Output size" "$(format_bytes_run_summary "${PGM_RUN_OUTPUT_BYTES:-0}")"
   echo
   dashcam_print_short_clip_run_summary
-  echo "$(pgm_ts) --- Timing ---"
-  pgm_log_kv "Started" "$(pgm_format_wall_clock "${PGM_SCRIPT_START_NS}")"
-  pgm_log_kv "Finished" "$(date '+%Y.%m.%d %H:%M:%S')"
-  pgm_log_kv "Total wall time" "$(format_duration_sec "${total_sec}")"
-  pgm_log_kv "Processing time" "$(format_duration_sec "${PGM_PROCESSING_SEC:-0}")  (merges, downloads)"
-  pgm_log_kv "Other/wait time" "$(format_duration_sec "${wait_sec}")  (prompts, startup delay, overhead)"
+  echo "--- Timing ---"
+  pgm_summary_kv "Started" "$(pgm_format_wall_clock "${PGM_SCRIPT_START_NS}")"
+  pgm_summary_kv "Finished" "$(date '+%Y.%m.%d %H:%M:%S')"
+  pgm_summary_kv "Total wall time" "$(format_duration_sec "${total_sec}")"
+  pgm_summary_kv "Processing time" "$(format_duration_sec "${PGM_PROCESSING_SEC:-0}")  (merges, downloads)"
+  pgm_summary_kv "Other/wait time" "$(format_duration_sec "${wait_sec}")  (prompts, startup delay, overhead)"
   echo
 }
 
@@ -3929,6 +3938,18 @@ dashcam_hhmmss_display() {
   printf '%s:%s:%s' "${t:0:2}" "${t:2:2}" "${t:4:2}"
 }
 
+# HH:MM:SS plus whole seconds. This is where a short clip ends and the picture jumps.
+dashcam_clock_plus() {
+  awk -v t="$1" -v a="$2" 'BEGIN {
+    n = split(t, p, ":")
+    if (n != 3) { printf "%s", t; exit }
+    s = p[1] * 3600 + p[2] * 60 + p[3] + a
+    s = int(s) % 86400
+    if (s < 0) s += 86400
+    printf "%02d:%02d:%02d", int(s / 3600), int((s % 3600) / 60), s % 60
+  }'
+}
+
 # One line per clip whose video is clearly shorter than the gap to the next file:
 # path, basename, start HH:MM:SS, duration seconds, next HH:MM:SS, gap seconds, hole seconds.
 dashcam_short_clip_rows() {
@@ -3961,7 +3982,7 @@ dashcam_short_clip_rows() {
 
 dashcam_print_short_clip_notice() {
   local -a files=("$@")
-  local n row f base start_disp dur_s next_disp gap hole
+  local n row f base start_disp dur_s next_disp gap hole end_disp
   local -a rows=()
   mapfile -t rows < <(dashcam_short_clip_rows "${files[@]}" || true)
   n=${#rows[@]}
@@ -3975,26 +3996,29 @@ dashcam_print_short_clip_notice() {
   echo
   for row in "${rows[@]}"; do
     IFS=$'\t' read -r f base start_disp dur_s next_disp gap hole <<< "$row"
+    end_disp=$(dashcam_clock_plus "$start_disp" "$dur_s")
     printf '    %s\n' "$base"
-    printf '    %s s of video. Next file starts %s s later (%s). About %s s was not recorded.\n' \
-      "$dur_s" "$gap" "$next_disp" "$hole"
+    printf '    %s s of video, ending about %s. Next file starts %s s later (%s). About %s s was not recorded.\n' \
+      "$dur_s" "$end_disp" "$gap" "$next_disp" "$hole"
     echo
   done
   IFS=$'\t' read -r f base start_disp dur_s next_disp gap hole <<< "${rows[0]}"
+  end_disp=$(dashcam_clock_plus "$start_disp" "$dur_s")
   echo "  The clips will still be merged in this order. The GPX will keep only those seconds"
   echo "  for each short file, then a gap, then the next clip. The map will not draw the"
-  printf '  missing stretch. Worth a look at %s in the merged file.\n' "$start_disp"
+  printf '  missing stretch. Worth a look at %s in the merged file, where that clip ends.\n' "$end_disp"
 }
 
 dashcam_print_short_clip_after_gpx() {
   local -a files=("$@")
-  local row f base start_disp dur_s next_disp gap hole
+  local row f base start_disp dur_s next_disp gap hole end_disp
   local -a rows=()
   mapfile -t rows < <(dashcam_short_clip_rows "${files[@]}" || true)
   (( ${#rows[@]} )) || return 0
   for row in "${rows[@]}"; do
     IFS=$'\t' read -r f base start_disp dur_s next_disp gap hole <<< "$row"
-    echo "$(pgm_ts) Short clip: ${base}  (${start_disp}, ${dur_s} s). Check that stretch in the video and on the map."
+    end_disp=$(dashcam_clock_plus "$start_disp" "$dur_s")
+    echo "$(pgm_ts) Short clip: ${base}  (ends about ${end_disp}, ${dur_s} s). Check that stretch in the video and on the map."
   done
 }
 
@@ -4013,7 +4037,7 @@ dashcam_note_short_clips_for_run() {
 }
 
 dashcam_print_short_clip_run_summary() {
-  local n i row out base start_disp dur_s next_disp gap hole
+  local n i row out base start_disp dur_s next_disp gap hole end_disp
   local -a notes=("${PGM_SHORT_CLIP_NOTES[@]+"${PGM_SHORT_CLIP_NOTES[@]}"}")
   n=${#notes[@]}
   (( n )) || return 0
@@ -4025,9 +4049,10 @@ dashcam_print_short_clip_run_summary() {
   for (( i = 0; i < n; i++ )); do
     row="${notes[$i]}"
     IFS=$'\t' read -r out base start_disp dur_s next_disp gap hole <<< "$row"
+    end_disp=$(dashcam_clock_plus "$start_disp" "$dur_s")
     printf '    %s  %s s, next at %s\n' "$base" "$dur_s" "$next_disp"
     printf '              %s\n' "${out##*/}"
-    printf '              Look around %s. The GPX has a gap there on purpose.\n' "$start_disp"
+    printf '              Look around %s, where this clip ends. The GPX has a gap there on purpose.\n' "$end_disp"
   done
   echo
 }
