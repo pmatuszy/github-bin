@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261014.225831 - if clip-backup already exists, save another original copy as clip-backup_YYYYMMDD-HHMMSS.ext
 # v. 20261014.225419 - original is moved to stem-backup.ext; the swapped file keeps the original name
 # v. 20261014.224924 - first-file report is compact: facts, present, streams and plan in a few short lines
 # v. 20261014.224804 - Videos list is tight and multi-line: name, backup, then a short facts line
@@ -12,6 +13,7 @@
 # v. 20261014.220133 - ask to keep the original (default yes); print a facts table before and after each swap
 # v. 20261014.213909 - swap audio tracks in a video; every other stream stays, in the same order
 #
+# 2026.10.14 - v. 0.13 - if clip-backup.mp4 is already there, copy the original to clip-backup_YYYYMMDD-HHMMSS.mp4 instead of overwriting
 # 2026.10.14 - v. 0.12 - keep-original moves the original to clip-backup.mp4, then writes the swapped file under the original name
 # 2026.10.14 - v. 0.11 - first-file listing is compact (size/duration/times on one line, present on one line, plan on two lines)
 # 2026.10.14 - v. 0.10 - Videos list is three short lines per file (name, backup, facts), not one long line
@@ -73,8 +75,9 @@ language tag is kept. The last remaining audio track is never dropped.
 Keep a copy of each original? [Y/n/q] (default Yes): the original is moved
 to clip-backup.mp4, and the swapped file keeps the original name. No: the
 original is replaced. Video is copied, not re-encoded. If clip-backup.mp4
-is already there you can keep it, replace it, or write a name with the clock.
-Roll back with audio-pgm-swap-audio-undo.sh (puts clip-backup.mp4 back as
+is already there, the original is copied to
+clip-backup_YYYYMMDD-HHMMSS.mp4 so that copy is never overwritten.
+Roll back with audio-pgm-swap-audio-undo.sh (puts a backup back as
 clip.mp4, one file at a time).
 
 The first four questions (colors, keep a copy, one by one or together,
@@ -96,13 +99,15 @@ Options:
   -v, --version        Print script version and exit.
   --history            Print script changelog from the header and exit.
   -y, --yes            Do not ask. Swap every file that has two or more
-                       audio tracks. An existing output is skipped.
+                       audio tracks. An existing clip-backup.mp4 is left;
+                       a dated copy is written beside it.
   -n, --dry-run        Print the plan; write nothing.
   --colors yes|no      Use terminal colors (skip the colors question).
   --keep-original yes|no
                        Keep the original file (skip that question).
                        yes (default): move it to clip-backup.mp4, then write
-                       the swapped file as clip.mp4.
+                       the swapped file as clip.mp4. If that backup is
+                       already there, copy to clip-backup_YYYYMMDD-HHMMSS.mp4.
                        no: replace the original.
   --one-by-one         Ask about each file (default; skip that question).
   --together           Same audio order for every file (skip that question).
@@ -1616,6 +1621,7 @@ sa_ask_keep_copy() {
   echo
   sa_print_question "Keep a copy of each original file?"
   echo "  [Y] Yes (default) — original becomes clip-backup.mp4; swapped file keeps the original name"
+  echo "      If clip-backup.mp4 is already there, a dated copy is added and that file is left as it is"
   echo "  [n] No — replace the original with the swapped file"
   echo "  [q] Quit"
   sa_read_key "Keep a copy of the original? [Y/n/q]: " y "Yes — save original as clip-backup.mp4"
@@ -1925,7 +1931,7 @@ sa_print_run_settings() {
   echo
   echo "=== Run settings ==="
   if (( DO_YES )); then
-    echo "  -y/--yes:            given (swap without asking; skip an existing output)"
+    echo "  -y/--yes:            given (swap without asking; an existing backup is kept, a dated copy is added)"
   else
     echo "  -y/--yes:            not given (prompt per file)"
   fi
@@ -2043,7 +2049,7 @@ sa_probe_plan() {
 }
 
 sa_print_plan() {
-  local i src dest n state why extra
+  local i src dest n state why extra dated
   echo
   echo "Videos:"
   if (( ${#DROP_FAMS[@]} > 0 )); then
@@ -2062,7 +2068,13 @@ sa_print_plan() {
         extra+=", subs ${FILE_SUB_NOTE[$i]}"
       fi
       if (( KEEP_ORIGINAL )) && [[ -n "${FILE_BACKUP[$i]}" ]]; then
-        printf '    original -> %s\n' "${FILE_BACKUP[$i]##*/}"
+        if [[ -e "${FILE_BACKUP[$i]}" ]]; then
+          dated="$(sa_next_take_name "${FILE_BACKUP[$i]}")"
+          printf '    %s is there\n' "${FILE_BACKUP[$i]##*/}"
+          printf '    original copy -> %s\n' "${dated##*/}"
+        else
+          printf '    original -> %s\n' "${FILE_BACKUP[$i]##*/}"
+        fi
         printf '    write %s\n' "${src##*/}"
       else
         printf '    replace %s\n' "${src##*/}"
@@ -2095,34 +2107,8 @@ sa_ask_custom_order() {
   return 1
 }
 
-sa_ask_existing() {
-  local dest="$1"
-  if (( DO_YES )) || (( ! script_is_run_interactively )); then
-    echo "$(sa_ts) Already there, skipping: ${dest}"
-    return 1
-  fi
-  echo
-  echo "  ${dest} is already there."
-  echo "  [K] Keep it, skip this file (default)"
-  echo "  [r] Replace it"
-  echo "  [n] Write a new name with the clock"
-  echo "  [q] Quit"
-  sa_read_key "Existing file [K/r/n/q]: " k "Keep it, skip this file"
-  case "$REPLY" in
-    k) echo "$(sa_ts) Keeping ${dest}."; return 1 ;;
-    r) return 0 ;;
-    n)
-      NEW_DEST="$(sa_next_take_name "$dest")"
-      echo "$(sa_ts) New name: ${NEW_DEST}"
-      return 2
-      ;;
-    q) sa_quit ;;
-    *) echo "$(sa_ts) That is not a choice. Skipping."; return 1 ;;
-  esac
-}
-
 sa_process_one() {
-  local i="$1" src dest backup n order why rc=0 extra subp=""
+  local i="$1" src dest backup n order why rc=0 extra subp="" copy_aside=0
   src="${FILES[$i]}"
   dest="${FILE_DEST[$i]}"
   n="${FILE_AUDIO_N[$i]}"
@@ -2236,27 +2222,50 @@ sa_process_one() {
   fi
   backup="${FILE_BACKUP[$i]}"
   dest="$src"
+  copy_aside=0
+  if (( KEEP_ORIGINAL )) && [[ -n "$backup" && -e "$backup" ]]; then
+    backup="$(sa_next_take_name "$backup")"
+    FILE_BACKUP[$i]="$backup"
+    copy_aside=1
+  fi
   if (( DRY_RUN )); then
     if (( KEEP_ORIGINAL )); then
-      echo "$(sa_ts) Would move ${src##*/} -> ${backup##*/}, then write ${src##*/}  (${extra})"
+      if (( copy_aside )); then
+        echo "$(sa_ts) Would copy ${src##*/} -> ${backup##*/}, then write ${src##*/}  (${extra})"
+      else
+        echo "$(sa_ts) Would move ${src##*/} -> ${backup##*/}, then write ${src##*/}  (${extra})"
+      fi
     else
       echo "$(sa_ts) Would replace ${src##*/}  (${extra})"
     fi
     DONE_LIST+=("${dest} (dry run, ${order})")
     return 0
   fi
-  NEW_DEST=""
-  if (( KEEP_ORIGINAL )) && [[ -n "$backup" && -e "$backup" ]]; then
-    sa_ask_existing "$backup"
-    rc=$?
-    if (( rc == 1 )); then
-      SKIPPED_LIST+=("${backup} (already there)")
+  if (( KEEP_ORIGINAL )) && (( copy_aside )); then
+    echo "$(sa_ts) Existing backup kept; copying original to ${backup##*/}, writing ${src##*/}  (${extra}, copy)"
+    if ! cp -f -- "$src" "$backup"; then
+      echo "$(sa_ts) Could not copy ${src} to ${backup}." >&2
+      FAILED_LIST+=("$src")
+      return_code=1
+      return 1
+    fi
+    sa_restore_times "$backup" "$src"
+    sa_proc_begin
+    if sa_remux "$src" "$dest" "$order"; then
+      sa_proc_end
+      echo "$(sa_ts) Wrote ${dest}  ($(sa_human_size "$(sa_file_bytes "$dest")"))"
+      DONE_LIST+=("$dest")
+      sa_load_info "$dest"
+      sa_store_info_as OUT
+      sa_copy_stream_snapshot OUT
+      sa_print_compare IN_IDX IN_TYPE IN_CODEC IN_DET OUT_IDX OUT_TYPE OUT_CODEC OUT_DET
       return 0
     fi
-    if (( rc == 2 )); then
-      backup="$NEW_DEST"
-      FILE_BACKUP[$i]="$backup"
-    fi
+    sa_proc_end
+    echo "$(sa_ts) Could not write ${dest}." >&2
+    FAILED_LIST+=("$src")
+    return_code=1
+    return 1
   fi
   if (( KEEP_ORIGINAL )); then
     echo "$(sa_ts) Moving original to ${backup##*/}, writing ${src##*/}  (${extra}, copy)"
@@ -2344,7 +2353,7 @@ sa_print_summary() {
     in_sum=$(( in_sum + $(sa_file_bytes "$src") ))
   done
   if (( KEEP_ORIGINAL )); then
-    sa_summary_kv "Originals" "kept as clip-backup.mp4; swapped file keeps the original name"
+    sa_summary_kv "Originals" "kept as clip-backup.mp4; an existing backup gets a dated copy"
   else
     sa_summary_kv "Originals" "replaced"
   fi

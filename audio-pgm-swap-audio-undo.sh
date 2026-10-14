@@ -1,7 +1,9 @@
 #!/bin/bash
+# v. 20261014.225831 - also restore clip-backup_YYYYMMDD-HHMMSS.ext copies
 # v. 20261014.225419 - put clip-backup.mp4 back as clip.mp4 (the backup is the original)
 # v. 20261014.225225 - roll back audio-pgm-swap-audio.sh: delete each *-backup copy one by one (original stays)
 #
+# 2026.10.14 - v. 0.3 - dated copies clip-backup_YYYYMMDD-HHMMSS.ext are restored the same way
 # 2026.10.14 - v. 0.2 - restore the original from stem-backup.ext over stem.ext, one file at a time
 # 2026.10.14 - v. 0.1 - initial release: find stem-backup.ext next to stem.ext, confirm, remove the
 #   swapped copy; if the original name is missing, rename the backup back to that name
@@ -32,6 +34,9 @@ Each pair is asked one by one (default Yes):
   from     clip-backup.mp4    (the original)
 
 If clip.mp4 is missing, the backup is renamed to clip.mp4.
+
+A later swap leaves clip-backup.mp4 in place and also writes
+clip-backup_YYYYMMDD-HHMMSS.mp4. Those dated copies are listed too.
 
 Options:
   -h, --help           Show this help and exit.
@@ -204,8 +209,13 @@ un_original_of_backup() {
     ext=""
     stem="$base"
   fi
-  [[ "$stem" == *-backup ]] || return 1
-  stem="${stem%-backup}"
+  if [[ "$stem" == *-backup ]]; then
+    stem="${stem%-backup}"
+  elif [[ "$stem" =~ ^(.+)-backup_[0-9]{8}-[0-9]{6}(_[0-9]+)?$ ]]; then
+    stem="${BASH_REMATCH[1]}"
+  else
+    return 1
+  fi
   [[ -n "$stem" ]] || return 1
   if [[ -n "$ext" ]]; then
     if [[ "$dir" == . ]]; then
@@ -244,7 +254,7 @@ un_add_directory() {
   [[ -d "$dir" ]] || return 1
   while IFS= read -r -d '' f; do
     un_add_backup "$f" || true
-  done < <(find "$dir" -maxdepth 1 -type f -name '*-backup.*' -print0 | sort -z)
+  done < <(find "$dir" -maxdepth 1 -type f \( -name '*-backup.*' -o -name '*-backup_*' \) -print0 | sort -z)
 }
 
 un_ask_colors() {
