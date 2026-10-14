@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261014.164220 - the GPS log line names a GPSData file when several logs are in the folder
 # v. 20261014.075855 - a short clip keeps only its real length in the GPX, and the merge asks before continuing
 # v. 20261013.102747 - every GPSData*.txt is read; the date in the name does not choose the log
 # v. 20261013.102039 - a merged file with no clips left can still get a GPX from the GPS log
@@ -59,6 +60,7 @@
 # v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
 # v. 20260805.154826 - after merge: copy GPS/dates from first chapter; FS times via touch -r
 
+# 2026.10.14 - v. 0.15.75 - the group line names a GPSData file when several logs are in the folder; closing the pipe after the first name is not "no log"
 # 2026.10.14 - v. 0.15.74 - a clip shorter than the gap to the next file keeps only that length in the GPX; the merge warns and the run summary lists those clips
 # 2026.10.13 - v. 0.15.73 - every GPSData*.txt is read; the date in the name does not choose the log
 # 2026.10.13 - v. 0.15.72 - a merged 70mai file whose clips are gone can still get a GPX from GPSData*.txt beside it
@@ -3821,8 +3823,13 @@ dashcam_gps_logs() {
 }
 
 # First GPSData*.txt in the places searched, if any.
+# head stops after one name. With pipefail that closed pipe is exit 141, which
+# used to print "no GPSData*.txt" whenever more than one log was found.
 dashcam_gps_log_hint() {
-  dashcam_gps_logs | head -n 1
+  local log=""
+  log=$(dashcam_gps_logs | head -n 1 || true)
+  [[ -n "$log" ]] || return 1
+  printf '%s\n' "$log"
 }
 
 # No GPS log. Quit unless the user continues, and then no GPX is written.
