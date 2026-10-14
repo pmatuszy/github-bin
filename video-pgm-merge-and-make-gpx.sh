@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261014.075855 - a short clip keeps only its real length in the GPX, and the merge asks before continuing
 # v. 20261013.102747 - every GPSData*.txt is read; the date in the name does not choose the log
 # v. 20261013.102039 - a merged file with no clips left can still get a GPX from the GPS log
 # v. 20261013.101339 - merged files with no GPX can be given only the GPX
@@ -58,6 +59,7 @@
 # v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
 # v. 20260805.154826 - after merge: copy GPS/dates from first chapter; FS times via touch -r
 
+# 2026.10.14 - v. 0.15.74 - a clip shorter than the gap to the next file keeps only that length in the GPX; the merge warns and the run summary lists those clips
 # 2026.10.13 - v. 0.15.73 - every GPSData*.txt is read; the date in the name does not choose the log
 # 2026.10.13 - v. 0.15.72 - a merged 70mai file whose clips are gone can still get a GPX from GPSData*.txt beside it
 # 2026.10.13 - v. 0.15.71 - when merged files have no GPX, one question can create only those GPX files
@@ -254,6 +256,9 @@ Merge behaviour (no options):
     An older name 20260926-110627_20260926-130427_70mai-A510_FrontCam_concat.mp4 is still recognized.
     A GPS track with the same stem and a .gpx extension is written beside it,
     from GPSData*.txt in this directory and one or two directories above it.
+    Each clip keeps only as many seconds of GPS as the video lasts. A clip that
+    is clearly shorter than the gap to the next file is named before the merge,
+    the GPX has a gap there, and the run summary lists that stretch to check.
     --gps-dir DIR also searches that directory and everything inside it.
     Without --gps-dir, [tracks-location] in video-pgm-geotag-missing-media.conf
     is used the same way. When no GPSData*.txt is found, the script quits
@@ -331,6 +336,13 @@ Environment:
                           Slack around interval×fps expected ratio (default: 0.35).
   PGM_DASHCAM_MAX_GAP_SEC Max seconds between 70mai clip start times to stay in one
                           journey (default: 90). Gaps above this start a new group.
+  PGM_DASHCAM_SHORT_HOLE_SEC
+                          A clip is short when the next filename starts this many
+                          seconds after the video ends (default: 8). The last clip
+                          of a journey is not treated as short.
+  PGM_DASHCAM_GPX_SEG_GAP_SEC
+                          GPS points this far apart become a new GPX segment
+                          (default: 8), so a hole in the video is a gap on the map.
   PGM_DASHCAM_LABEL       Make and model in 70mai journey filenames (default: 70mai-A510).
                           Spaces become hyphens.
   PGM_MERGE_TEMP          Temp directory for an off-disk merge (same as --temp-dir).
@@ -1176,6 +1188,7 @@ pgm_record_script_start() {
   PGM_RUN_INPUT_BYTES=0
   PGM_RUN_OUTPUT_BYTES=0
   PGM_RUN_DELETED=0
+  PGM_SHORT_CLIP_NOTES=()
 }
 
 pgm_processing_begin() {
@@ -1225,6 +1238,7 @@ print_pgm_timing_summary() {
   pgm_log_kv "Input size" "$(format_bytes_run_summary "${PGM_RUN_INPUT_BYTES:-0}")"
   pgm_log_kv "Output size" "$(format_bytes_run_summary "${PGM_RUN_OUTPUT_BYTES:-0}")"
   echo
+  dashcam_print_short_clip_run_summary
   echo "$(pgm_ts) --- Timing ---"
   pgm_log_kv "Started" "$(pgm_format_wall_clock "${PGM_SCRIPT_START_NS}")"
   pgm_log_kv "Finished" "$(date '+%Y.%m.%d %H:%M:%S')"
@@ -3897,13 +3911,146 @@ dashcam_local_epoch_tz_corr() {
   printf '%s\n' "$(( local_noon - utc_noon ))"
 }
 
+# A hole of this many seconds between a clip's real length and the next filename
+# is a short clip. A last file that is simply shorter than a minute is not.
+PGM_DASHCAM_SHORT_HOLE_SEC="${PGM_DASHCAM_SHORT_HOLE_SEC:-8}"
+# GPS points this far apart (UTC) start a new <trkseg> so a hole is a gap, not a line.
+PGM_DASHCAM_GPX_SEG_GAP_SEC="${PGM_DASHCAM_GPX_SEG_GAP_SEC:-8}"
+
+dashcam_hhmmss_display() {
+  local t="$1"
+  printf '%s:%s:%s' "${t:0:2}" "${t:2:2}" "${t:4:2}"
+}
+
+# One line per clip whose video is clearly shorter than the gap to the next file:
+# path, basename, start HH:MM:SS, duration seconds, next HH:MM:SS, gap seconds, hole seconds.
+dashcam_short_clip_rows() {
+  local -a files=("$@")
+  local i f next_f dur gap hole this_epoch next_epoch this_time next_time hole_min this_date
+  hole_min="${PGM_DASHCAM_SHORT_HOLE_SEC:-8}"
+  [[ "$hole_min" =~ ^[0-9]+$ ]] || hole_min=8
+  (( ${#files[@]} >= 2 )) || return 0
+  for (( i = 0; i < ${#files[@]} - 1; i++ )); do
+    f="${files[$i]}"
+    next_f="${files[$((i + 1))]}"
+    dashcam_parse_basename "${f##*/}" || continue
+    this_date=$DASHCAM_DATE
+    this_time=$DASHCAM_TIME
+    this_epoch=$(gopro_datetime_to_epoch "$this_date" "$this_time" 2>/dev/null) || continue
+    dashcam_parse_basename "${next_f##*/}" || continue
+    next_time=$DASHCAM_TIME
+    next_epoch=$(gopro_datetime_to_epoch "$DASHCAM_DATE" "$DASHCAM_TIME" 2>/dev/null) || continue
+    gap=$(( next_epoch - this_epoch ))
+    (( gap > 0 )) || continue
+    dur=$(ffprobe_duration_seconds "$f" 2>/dev/null) || continue
+    hole=$(awk -v g="$gap" -v d="$dur" 'BEGIN { printf "%d", int(g - d + 0.5) }')
+    (( hole >= hole_min )) || continue
+    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+      "$f" "${f##*/}" "$(dashcam_hhmmss_display "$this_time")" \
+      "$(awk -v d="$dur" 'BEGIN { printf "%d", int(d + 0.5) }')" \
+      "$(dashcam_hhmmss_display "$next_time")" "$gap" "$hole"
+  done
+}
+
+dashcam_print_short_clip_notice() {
+  local -a files=("$@")
+  local n row f base start_disp dur_s next_disp gap hole
+  local -a rows=()
+  mapfile -t rows < <(dashcam_short_clip_rows "${files[@]}" || true)
+  n=${#rows[@]}
+  (( n )) || return 0
+  echo
+  if (( n == 1 )); then
+    echo "  Short clip in this group. The camera recorded less than the gap to the next file."
+  else
+    echo "  Short clips in this group. The camera recorded less than the gap to the next file."
+  fi
+  echo
+  for row in "${rows[@]}"; do
+    IFS=$'\t' read -r f base start_disp dur_s next_disp gap hole <<< "$row"
+    printf '    %s\n' "$base"
+    printf '    %s s of video. Next file starts %s s later (%s). About %s s was not recorded.\n' \
+      "$dur_s" "$gap" "$next_disp" "$hole"
+    echo
+  done
+  IFS=$'\t' read -r f base start_disp dur_s next_disp gap hole <<< "${rows[0]}"
+  echo "  The clips will still be merged in this order. The GPX will keep only those seconds"
+  echo "  for each short file, then a gap, then the next clip. The map will not draw the"
+  printf '  missing stretch. Worth a look at %s in the merged file.\n' "$start_disp"
+}
+
+dashcam_print_short_clip_after_gpx() {
+  local -a files=("$@")
+  local row f base start_disp dur_s next_disp gap hole
+  local -a rows=()
+  mapfile -t rows < <(dashcam_short_clip_rows "${files[@]}" || true)
+  (( ${#rows[@]} )) || return 0
+  for row in "${rows[@]}"; do
+    IFS=$'\t' read -r f base start_disp dur_s next_disp gap hole <<< "$row"
+    echo "$(pgm_ts) Short clip: ${base}  (${start_disp}, ${dur_s} s). Check that stretch in the video and on the map."
+  done
+}
+
+dashcam_note_short_clips_for_run() {
+  local output_file="$1"
+  shift
+  local -a files=("$@")
+  local row f base start_disp dur_s next_disp gap hole
+  local -a rows=()
+  mapfile -t rows < <(dashcam_short_clip_rows "${files[@]}" || true)
+  (( ${#rows[@]} )) || return 0
+  for row in "${rows[@]}"; do
+    IFS=$'\t' read -r f base start_disp dur_s next_disp gap hole <<< "$row"
+    PGM_SHORT_CLIP_NOTES+=("${output_file}"$'\t'"${base}"$'\t'"${start_disp}"$'\t'"${dur_s}"$'\t'"${next_disp}"$'\t'"${gap}"$'\t'"${hole}")
+  done
+}
+
+dashcam_print_short_clip_run_summary() {
+  local n i row out base start_disp dur_s next_disp gap hole
+  local -a notes=("${PGM_SHORT_CLIP_NOTES[@]+"${PGM_SHORT_CLIP_NOTES[@]}"}")
+  n=${#notes[@]}
+  (( n )) || return 0
+  if (( n == 1 )); then
+    echo "  Short clips this run (video shorter than the gap to the next file):"
+  else
+    echo "  Short clips this run (video shorter than the gap to the next file):"
+  fi
+  for (( i = 0; i < n; i++ )); do
+    row="${notes[$i]}"
+    IFS=$'\t' read -r out base start_disp dur_s next_disp gap hole <<< "$row"
+    printf '    %s  %s s, next at %s\n' "$base" "$dur_s" "$next_disp"
+    printf '              %s\n' "${out##*/}"
+    printf '              Look around %s. The GPX has a gap there on purpose.\n' "$start_disp"
+  done
+  echo
+}
+
+# Windows file for awk: one "start_epoch duration" line per clip. Duration 0 means
+# the last-clip fallback (start through start+75 s).
+dashcam_write_clip_windows_file() {
+  local dest="$1"
+  shift
+  local -a files=("$@")
+  local f epoch dur
+  : > "$dest"
+  for f in "${files[@]}"; do
+    dashcam_parse_basename "${f##*/}" || continue
+    epoch=$(gopro_datetime_to_epoch "$DASHCAM_DATE" "$DASHCAM_TIME" 2>/dev/null) || continue
+    dur=$(ffprobe_duration_seconds "$f" 2>/dev/null) || dur="0"
+    printf '%s %s\n' "$epoch" "$dur" >> "$dest"
+  done
+  [[ -s "$dest" ]]
+}
+
 # Write one GPX for this journey next to the merged MP4.
 # Points come from GPSData*.txt. The log clock is aligned to the NO* filename
 # times (the camera clock), then stored in the GPX as UTC.
 # Write a GPX for one journey. first/last are YYYYMMDD and HHMMSS from the clips
 # or from the merged file name. stamp_src supplies the file time.
+# $7, when set, is a windows file: start_epoch duration per clip.
 dashcam_write_gpx_span() {
   local output_mp4="$1" first_date="$2" first_time="$3" last_date="$4" last_time="$5" stamp_src="$6"
+  local windows_file="${7:-}"
   local gpx tmp first_epoch last_epoch tz_corr nlog
   local -a logs=()
   gpx=$(dashcam_gpx_beside_output "$output_mp4")
@@ -3917,7 +4064,9 @@ dashcam_write_gpx_span() {
   tz_corr=$(dashcam_local_epoch_tz_corr) || return 1
   tmp="${gpx}.tmp.$$"
   if ! nlog=$(awk -v first_epoch="$first_epoch" -v last_epoch="$last_epoch" -v tz_corr="$tz_corr" \
-      -v track_name="${gpx##*/}" -v out="$tmp" '
+      -v track_name="${gpx##*/}" -v out="$tmp" \
+      -v windows_file="$windows_file" \
+      -v seg_gap="${PGM_DASHCAM_GPX_SEG_GAP_SEC:-8}" '
     function civil_as_utc(y, mo, d, H, M, S,    a, yy, mm, jd) {
       a = int((14 - mo) / 12)
       yy = y + 4800 - a
@@ -4022,11 +4171,33 @@ dashcam_write_gpx_span() {
       sort_n(near, nb, 1)
       # Low end of the in-clip spread ≈ the constant log-clock bias.
       bias = near[int(nb * 0.05) + 1]
-      lo = first_epoch + bias - 3
-      hi = last_epoch + bias + 75
+      nw = 0
+      if (windows_file != "") {
+        while ((getline wline < windows_file) > 0) {
+          nwf = split(wline, wf, " ")
+          if (nwf < 2) continue
+          nw++
+          wstart[nw] = wf[1] + 0
+          wdur[nw] = wf[2] + 0
+        }
+        close(windows_file)
+      }
       m = 0
       for (ts in pts) {
-        if (ts + 0 < lo || ts + 0 > hi) continue
+        keep = 0
+        if (nw > 0) {
+          for (w = 1; w <= nw; w++) {
+            lo = wstart[w] + bias - 3
+            if (wdur[w] > 0) hi = wstart[w] + wdur[w] + bias + 2
+            else hi = wstart[w] + bias + 75
+            if (ts + 0 >= lo && ts + 0 <= hi) { keep = 1; break }
+          }
+        } else {
+          lo = first_epoch + bias - 3
+          hi = last_epoch + bias + 75
+          if (ts + 0 >= lo && ts + 0 <= hi) keep = 1
+        }
+        if (!keep) continue
         split(pts[ts], ll, SUBSEP)
         utc = ts - bias
         m++
@@ -4037,14 +4208,22 @@ dashcam_write_gpx_span() {
         exit 0
       }
       sort_n(rows, m, 0)
+      if (seg_gap + 0 <= 0) seg_gap = 8
       print "<?xml version=\"1.0\" encoding=\"UTF-8\"?>" > out
       print "<gpx version=\"1.1\" creator=\"video-pgm-merge-and-make-gpx.sh\" xmlns=\"http://www.topografix.com/GPX/1/1\">" > out
       print "  <trk>" > out
       print "    <name>" track_name "</name>" > out
       print "    <trkseg>" > out
+      prev_utc = -1
       for (i = 1; i <= m; i++) {
         split(rows[i], c, "\t")
+        utc = c[1] + 0
+        if (prev_utc >= 0 && utc - prev_utc > seg_gap) {
+          print "    </trkseg>" > out
+          print "    <trkseg>" > out
+        }
         printf "      <trkpt lat=\"%s\" lon=\"%s\"><time>%s</time></trkpt>\n", c[2], c[3], c[4] > out
+        prev_utc = utc
       }
       print "    </trkseg>" > out
       print "  </trk>" > out
@@ -4072,19 +4251,28 @@ dashcam_write_gpx_span() {
   fi
 }
 
-# Clips still in the folder: the window is the first clip through the last.
+# Clips still in the folder: each clip keeps only its measured length.
 dashcam_write_gpx_for_group() {
   local output_mp4="$1"
   shift
   local -a files=("$@")
-  local fd ft ld lt
+  local fd ft ld lt win rc=0
   dashcam_parse_basename "${files[0]##*/}" || return 1
   fd=$DASHCAM_DATE
   ft=$DASHCAM_TIME
   dashcam_parse_basename "${files[-1]##*/}" || return 1
   ld=$DASHCAM_DATE
   lt=$DASHCAM_TIME
-  dashcam_write_gpx_span "$output_mp4" "$fd" "$ft" "$ld" "$lt" "${files[0]}"
+  win="${output_mp4}.gpx.windows.$$"
+  if dashcam_write_clip_windows_file "$win" "${files[@]}"; then
+    dashcam_write_gpx_span "$output_mp4" "$fd" "$ft" "$ld" "$lt" "${files[0]}" "$win" || rc=$?
+  else
+    dashcam_write_gpx_span "$output_mp4" "$fd" "$ft" "$ld" "$lt" "${files[0]}" || rc=$?
+  fi
+  rm -f -- "$win"
+  dashcam_print_short_clip_after_gpx "${files[@]}"
+  dashcam_note_short_clips_for_run "$output_mp4" "${files[@]}"
+  return "$rc"
 }
 
 # Merged file only: the window is the start and end written in its name.
@@ -5142,8 +5330,13 @@ prompt_merge_group_action() {
   local group_num="$1" group_total="$2" output_file="${3:-}"
   shift 3
   local -a files=("$@")
-  local output_exists=0 gpx_ok=1 can_gpx=0 complete=0 choice gps_log=""
+  local output_exists=0 gpx_ok=1 can_gpx=0 complete=0 choice gps_log="" short_n=0
+  local -a short_rows=()
   REPLY=skip
+  if group_is_dashcam "${files[@]}"; then
+    mapfile -t short_rows < <(dashcam_short_clip_rows "${files[@]}" || true)
+    short_n=${#short_rows[@]}
+  fi
   if [[ -n "$output_file" && -e "$output_file" ]]; then
     output_exists=1
   fi
@@ -5164,11 +5357,13 @@ prompt_merge_group_action() {
       echo "$(pgm_ts) Output already exists, skipping: ${output_file}"
       REPLY=skip
     elif (( output_exists && can_gpx )); then
+      (( short_n )) && echo "$(pgm_ts) Short clip in this group. Creating the GPX with a gap there."
       REPLY=write_gpx
     elif (( output_exists )); then
       echo "$(pgm_ts) Output already exists, skipping: ${output_file}"
       REPLY=skip
     else
+      (( short_n )) && echo "$(pgm_ts) Short clip in this group. Merging anyway."
       REPLY=merge
     fi
     return 0
@@ -5177,10 +5372,12 @@ prompt_merge_group_action() {
     if (( complete )); then
       REPLY=skip
     elif (( output_exists && can_gpx )); then
+      (( short_n )) && echo "$(pgm_ts) Short clip in this group. Creating the GPX with a gap there."
       REPLY=write_gpx
     elif (( output_exists )); then
       REPLY=skip
     else
+      (( short_n )) && echo "$(pgm_ts) Short clip in this group. Merging anyway."
       REPLY=merge
     fi
     return 0
@@ -5236,7 +5433,11 @@ prompt_merge_group_action() {
       echo "  [d] Delete input chapter files — keep merged output; you confirm before delete"
       echo "  [a] Skip all remaining groups"
       echo "  [q] Quit"
-      pgm_read_key "No GPX beside the merged file — group ${group_num}/${group_total} [Y/n/r/p/d/a/q]: " y
+      if (( short_n )); then
+        pgm_read_key "Short clip in this group. Generate the GPX anyway? [Y/n/r/p/d/a/q]: " y
+      else
+        pgm_read_key "No GPX beside the merged file — group ${group_num}/${group_total} [Y/n/r/p/d/a/q]: " y
+      fi
       choice="${REPLY,,}"
       case "$choice" in
         ''|y)  REPLY=write_gpx; return 0 ;;
@@ -5281,7 +5482,11 @@ prompt_merge_group_action() {
       echo "  [a] Skip all remaining groups"
       echo "  [m] Merge all remaining groups"
       echo "  [q] Quit"
-      pgm_read_key "Choice for group ${group_num}/${group_total} [Y/n/a/m/q]: " y
+      if (( short_n )); then
+        pgm_read_key "Short clip in this group. Merge anyway? [Y/n/a/m/q]: " y
+      else
+        pgm_read_key "Choice for group ${group_num}/${group_total} [Y/n/a/m/q]: " y
+      fi
       choice="${REPLY,,}"
       case "$choice" in
         ''|y)  REPLY=merge; return 0 ;;
@@ -5484,6 +5689,9 @@ show_merge_group_detail() {
   fi
   echo
   print_merge_group_sequence_summary "$group_num" "$group_total" "${files[@]}"
+  if group_is_dashcam "${files[@]}"; then
+    dashcam_print_short_clip_notice "${files[@]}"
+  fi
   echo
 }
 
