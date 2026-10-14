@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261014.084438 - the output name is stem_xN.mp4; the clock is added only when that name is taken
 # v. 20261014.084030 - ask whether to encode every file before the first one starts
 # v. 20261007.205107 - encode everything is Y (default); a short try first is n
 # v. 20261007.200020 - ask which videos to encode; FrontCam, BackCam, and Map groups; dialog when installed, or --no-dialog
@@ -47,6 +48,7 @@
 # v. 20260930.221500 - file prompts: one key, no Enter
 # v. 20260930.220400 - faster viewing copy of a merged video (2, 5, 10, 20, …)
 
+# 2026.10.14 - v. 0.45 - the output name is stem_xN.mp4; a later encode that would use the same name gets the start time in the name
 # 2026.10.14 - v. 0.44 - before the first file, ask whether to encode every file, or the first file and then ask again
 # 2026.10.07 - v. 0.43 - encode everything is Y (default); a short try first is n
 # 2026.10.07 - v. 0.42 - when the run is interactive and inputs come from a directory, ask which videos to encode: all, FrontCam, BackCam, Map, other, or pick files; use dialog when it is installed unless --no-dialog (or --dialog to prefer it)
@@ -114,10 +116,11 @@ Usage: $(basename "$0") [-h|--help] [-v|--version] [--history]
 
 Write a faster copy beside each video. A 10× copy of a two-hour drive is about
 twelve minutes. The original file is not changed. The copy is named
-stem_xN_YYYYMMDD-HHMMSS.mp4, using the time the encode starts. The file itself
+stem_xN.mp4. When that name is already taken, the new file is
+stem_xN_YYYYMMDD-HHMMSS.mp4, using the time this encode starts. The file itself
 gets the source video's creation time and file time. If the copy has no
 location, the first point of the .gpx beside the source is stored in it. A short try is
-stem_xN_test-1m-at20_YYYYMMDD-HHMMSS.mp4.
+stem_xN_test-1m-at20.mp4, and the same clock is added only when that name is taken.
 
 With no FILE or DIR, use the current directory. If that directory contains
 *_concat.mp4 files, only those are used. Otherwise every other .mp4 in the
@@ -445,16 +448,18 @@ tl_aside_name() {
   printf '%s\n' "$candidate"
 }
 
-# Next free take: stem_x5_2.mp4, then _3, and so on.
+# A later encode of the same speed: stem_x5_YYYYMMDD-HHMMSS.mp4.
+# If that name is taken in the same second, _2, then _3, and so on.
 tl_next_take_name() {
-  local dest="$1" dir stem n=2 candidate
+  local dest="$1" dir stem stamp candidate n=1
   dir="$(dirname -- "$dest")"
   stem="$(basename -- "$dest")"
   stem="${stem%.*}"
-  while true; do
-    candidate="${dir}/${stem}_${n}.mp4"
-    [[ -e "$candidate" ]] || break
+  stamp="$(date '+%Y%m%d-%H%M%S')"
+  candidate="${dir}/${stem}_${stamp}.mp4"
+  while [[ -e "$candidate" ]]; do
     n=$((n + 1))
+    candidate="${dir}/${stem}_${stamp}_${n}.mp4"
   done
   printf '%s\n' "$candidate"
 }
@@ -464,26 +469,20 @@ tl_is_concat_output() {
   [[ "$base" =~ _concat\.[mM][pP]4$ ]]
 }
 
-# Output path: <stem>_xN_YYYYMMDD-HHMMSS.mp4 next to the source.
-# A test clip is <stem>_xN_test-1m-at20_YYYYMMDD-HHMMSS.mp4.
-# If that exact name exists, _2, _3, … is added.
+# Output path: <stem>_xN.mp4 next to the source.
+# A test clip is <stem>_xN_test-1m-at20.mp4.
+# The clock is added only when this name is already taken (tl_next_take_name).
 tl_output_path() {
-  local src="$1" speed="$2" dir stem stamp base candidate n=0
+  local src="$1" speed="$2" dir stem base
   dir="$(dirname -- "$src")"
   stem="$(basename -- "$src")"
   stem="${stem%.*}"
-  stamp="$(date '+%Y%m%d-%H%M%S')"
   if (( ${TL_TEST:-0} )); then
-    base="${stem}_x${speed}_test-${TL_TEST_MINUTES}m-at${TL_TEST_PERCENT}_${stamp}"
+    base="${stem}_x${speed}_test-${TL_TEST_MINUTES}m-at${TL_TEST_PERCENT}"
   else
-    base="${stem}_x${speed}_${stamp}"
+    base="${stem}_x${speed}"
   fi
-  candidate="${dir}/${base}.mp4"
-  while [[ -e "$candidate" ]]; do
-    n=$((n + 1))
-    candidate="${dir}/${base}_${n}.mp4"
-  done
-  printf '%s\n' "$candidate"
+  printf '%s\n' "${dir}/${base}.mp4"
 }
 
 tl_ffprobe_duration() {
