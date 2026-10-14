@@ -1,7 +1,9 @@
 #!/bin/bash
+# v. 20261014.220750 - the kept copy is named stem-backup.ext
 # v. 20261014.220133 - ask to keep the original (default yes); print a facts table before and after each swap
 # v. 20261014.213909 - swap audio tracks in a video; every other stream stays, in the same order
 #
+# 2026.10.14 - v. 0.3 - the kept copy is clip-backup.mp4 (not clip_audio-swap.mp4)
 # 2026.10.14 - v. 0.2 - keep a copy of the original is the default; each file gets a table of duration, streams, GPS and times before the swap, and the same table again with input and output side by side
 # 2026.10.14 - v. 0.1 - initial release: list each file's streams (language when the file has one),
 #   swap the audio tracks (default: the first two), and write stem_audio-swap.ext beside the source
@@ -34,11 +36,11 @@ the files in that directory, not in folders inside it. Windows paths such as
 P:\\video\\trip are read as /mnt/p/video/trip.
 
 A file with fewer than two audio tracks is listed and skipped. A file whose
-name already has _audio-swap is skipped.
+name already has -backup or _audio-swap is skipped.
 
 Keep a copy of each original? [Y/n/q] (default Yes): the original stays, and
-the swapped file is clip_audio-swap.mp4 beside it. No: the original is
-replaced. Video is copied, not re-encoded. If clip_audio-swap.mp4 is already
+the swapped file is clip-backup.mp4 beside it. No: the original is
+replaced. Video is copied, not re-encoded. If clip-backup.mp4 is already
 there you can keep it, replace it, or write a name with the clock.
 
 Before each file, a table shows duration, size, created time, file time, GPS
@@ -61,7 +63,7 @@ Options:
   --colors yes|no      Use terminal colors (skip the colors question).
   --keep-original yes|no
                        Keep the original file (skip that question).
-                       yes (default): write clip_audio-swap.mp4 beside it.
+                       yes (default): write clip-backup.mp4 beside it.
                        no: replace the original.
   --order LIST         Audio-track numbers, comma-separated, as printed
                        (1 is the first audio track). Default: 2,1.
@@ -341,7 +343,7 @@ sa_is_video_name() {
 sa_skip_name() {
   local base="$1"
   [[ "$base" == ._* || "$base" == *_old-* || "$base" == *.partial || "$base" == *.partial.* ]] && return 0
-  [[ "$base" == *_audio-swap.* || "$base" == *_audio-swap_* ]] && return 0
+  [[ "$base" == *-backup.* || "$base" == *-backup_* || "$base" == *_audio-swap.* || "$base" == *_audio-swap_* ]] && return 0
   return 1
 }
 
@@ -761,15 +763,15 @@ sa_dest_path() {
     ext="${base##*.}"
     stem="${base%.*}"
     if [[ "$dir" == . ]]; then
-      printf '%s_audio-swap.%s\n' "$stem" "$ext"
+      printf '%s-backup.%s\n' "$stem" "$ext"
     else
-      printf '%s/%s_audio-swap.%s\n' "$dir" "$stem" "$ext"
+      printf '%s/%s-backup.%s\n' "$dir" "$stem" "$ext"
     fi
   else
     if [[ "$dir" == . ]]; then
-      printf '%s_audio-swap\n' "$base"
+      printf '%s-backup\n' "$base"
     else
-      printf '%s/%s_audio-swap\n' "$dir" "$base"
+      printf '%s/%s-backup\n' "$dir" "$base"
     fi
   fi
 }
@@ -1038,14 +1040,14 @@ sa_ask_keep_copy() {
   fi
   echo
   sa_print_question "Keep a copy of each original file?"
-  echo "  [Y] Yes (default) — original stays; swapped file is clip_audio-swap.mp4"
+  echo "  [Y] Yes (default) — original stays; swapped file is clip-backup.mp4"
   echo "  [n] No — replace the original with the swapped file"
   echo "  [q] Quit"
   sa_read_key "Keep a copy of the original? [Y/n/q]: " y "Yes — original stays"
   case "$REPLY" in
     y)
       KEEP_ORIGINAL=1
-      sa_print_selected "yes (original stays; write clip_audio-swap.mp4)"
+      sa_print_selected "yes (original stays; write clip-backup.mp4)"
       ;;
     n)
       KEEP_ORIGINAL=0
@@ -1109,7 +1111,7 @@ sa_print_run_settings() {
   fi
   if (( KEEP_SET )); then
     if (( KEEP_ORIGINAL )); then
-      printf '  %-21s%s\n' "--keep-original:" "given (yes — write clip_audio-swap.mp4)"
+      printf '  %-21s%s\n' "--keep-original:" "given (yes — write clip-backup.mp4)"
     else
       printf '  %-21s%s\n' "--keep-original:" "given (no — replace the original)"
     fi
@@ -1384,7 +1386,7 @@ sa_print_summary() {
     in_sum=$(( in_sum + $(sa_file_bytes "$src") ))
   done
   if (( KEEP_ORIGINAL )); then
-    sa_summary_kv "Originals" "kept (swapped file is clip_audio-swap.mp4)"
+    sa_summary_kv "Originals" "kept (swapped file is clip-backup.mp4)"
   else
     sa_summary_kv "Originals" "replaced"
   fi
