@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261014.224553 - Getting file info (1/8) also prints the file name; the Videos: dump is gone
 # v. 20261014.224006 - after the file list: keep English, Polish, German (default yes); drop other audio/subtitle languages, or choose which to drop
 # v. 20261014.223151 - after a swap, audio track 1 is default; matching subtitles follow the audio order (asked, default yes) and subtitle 1 is default
 # v. 20261014.222646 - probe progress is "Getting file info (1/8)", with no file name
@@ -8,6 +9,7 @@
 # v. 20261014.220133 - ask to keep the original (default yes); print a facts table before and after each swap
 # v. 20261014.213909 - swap audio tracks in a video; every other stream stays, in the same order
 #
+# 2026.10.14 - v. 0.9 - probe line is "Getting file info (1/8) name"; do not print the Videos: source/backup list
 # 2026.10.14 - v. 0.8 - after the file list, if there are languages other than English, Polish and German, ask to drop them (default yes) or choose which to drop; the last remaining audio track is never dropped
 # 2026.10.14 - v. 0.7 - after a swap, the new first audio track is default; ask to reorder subtitles to the same languages as audio (default yes) and then make the first subtitle default
 # 2026.10.14 - v. 0.6 - while streams are read, print "Getting file info (1/8)" (no file name)
@@ -56,7 +58,7 @@ A file with fewer than two audio tracks is listed and skipped, unless extra
 languages are being dropped (then a file with one remaining audio is still
 written). A file whose name already has -backup or _audio-swap is skipped.
 
-After the video list, if any audio or subtitle language is not English
+After the files are read, if any audio or subtitle language is not English
 (American counts as English), Polish or German, the script asks to leave
 only those three (default Yes). [c] lets you type the numbers to drop
 (more than one is allowed). [k] keeps every language. A stream with no
@@ -70,7 +72,7 @@ there you can keep it, replace it, or write a name with the clock.
 The first four questions (colors, keep a copy, one by one or together,
 matching subtitles) are asked before any file is opened. One by one is
 the default. Matching subtitles is Yes. Then the script searches for
-videos and prints "Getting file info (1/8)" while it reads streams. The first file prints a long report: duration,
+videos and prints "Getting file info (1/8) name" while it reads streams. The first file prints a long report: duration,
 throughput, GPS, present/not present for video, audio, GPS, telemetry,
 timecode, subtitles, chapters and other data, then every stream (including
 ones ffmpeg cannot decode). Later files keep the shorter table. After the
@@ -98,7 +100,7 @@ Options:
   --together           Same audio order for every file (skip that question).
   --subtitles yes|no   Reorder subtitle tracks to the same languages as
                        the audio (skip that question). yes is the default.
-  --languages keep|all After the file list: keep English, Polish, German
+  --languages keep|all After the files are read: keep English, Polish, German
                        and drop the rest (keep, default), or keep every
                        language (all). Skips that question.
   --drop LIST          Language codes or names to drop, comma-separated
@@ -2027,7 +2029,7 @@ sa_probe_plan() {
   total=${#FILES[@]}
   for i in "${!FILES[@]}"; do
     src="${FILES[$i]}"
-    echo "$(sa_ts) Getting file info ($((i + 1))/${total})"
+    echo "$(sa_ts) Getting file info ($((i + 1))/${total}) ${src##*/}"
     FILE_STATE[$i]=skip
     FILE_WHY[$i]=""
     FILE_AUDIO_N[$i]=0
@@ -2064,37 +2066,6 @@ sa_probe_plan() {
       FILE_SUB_NOTE[$i]="$sub_csv"
     fi
   done
-}
-
-sa_print_plan() {
-  local i src n state why dest extra
-  echo
-  echo "Videos:"
-  for i in "${!FILES[@]}"; do
-    src="${FILES[$i]}"
-    n="${FILE_AUDIO_N[$i]}"
-    state="${FILE_STATE[$i]}"
-    why="${FILE_WHY[$i]}"
-    dest="${FILE_DEST[$i]}"
-    printf '  %s  (%s audio)\n' "$src" "$n"
-    if [[ "$state" == swap ]]; then
-      extra="audio order ${why}; first audio default"
-      if (( ${#DROP_FAMS[@]} > 0 )); then
-        extra+="; drop $(sa_join_labels "${DROP_FAMS[@]}")"
-      fi
-      if (( SWAP_SUBS )); then
-        if [[ -n "${FILE_SUB_NOTE[$i]}" ]]; then
-          extra+="; subtitles ${FILE_SUB_NOTE[$i]}; first subtitle default"
-        else
-          extra+="; subtitles left as they are"
-        fi
-      fi
-      printf '    -> %s  (%s)\n' "$dest" "$extra"
-    else
-      printf '    skip: %s\n' "$why"
-    fi
-  done
-  echo
 }
 
 sa_ask_custom_order() {
@@ -2495,14 +2466,11 @@ else
   echo "$(sa_ts) Read ${#FILES[@]} videos."
 fi
 
-sa_print_plan
 sa_ask_languages
 sa_finalize_plan
 
 if (( ${#DROP_FAMS[@]} > 0 )); then
-  echo
-  echo "After dropping $(sa_join_labels "${DROP_FAMS[@]}"):"
-  sa_print_plan
+  echo "$(sa_ts) Drop $(sa_join_labels "${DROP_FAMS[@]}")."
 fi
 
 _skip=$(( ${#FILES[@]} - SWAP_TOTAL ))
