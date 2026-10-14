@@ -1,6 +1,8 @@
 #!/bin/bash
+# v. 20261014.220133 - ask to keep the original (default yes); print a facts table before and after each swap
 # v. 20261014.213909 - swap audio tracks in a video; every other stream stays, in the same order
 #
+# 2026.10.14 - v. 0.2 - keep a copy of the original is the default; each file gets a table of duration, streams, GPS and times before the swap, and the same table again with input and output side by side
 # 2026.10.14 - v. 0.1 - initial release: list each file's streams (language when the file has one),
 #   swap the audio tracks (default: the first two), and write stem_audio-swap.ext beside the source
 #   with -c copy; video, subtitles, chapters, metadata, file times, and GoPro telemetry stay;
@@ -18,7 +20,8 @@
 show_help() {
   cat <<EOF
 Usage: $(basename "$0") [-h|--help] [-v|--version] [--history]
-       [-y|--yes] [-n|--dry-run] [--colors yes|no] [--order 2,1]
+       [-y|--yes] [-n|--dry-run] [--colors yes|no]
+       [--keep-original yes|no] [--order 2,1]
        [FILE|DIR ...]
 
 Swap the audio tracks inside each video. The picture, subtitles, chapters,
@@ -33,10 +36,15 @@ P:\\video\\trip are read as /mnt/p/video/trip.
 A file with fewer than two audio tracks is listed and skipped. A file whose
 name already has _audio-swap is skipped.
 
-The new file is written beside the source:
-  clip.mp4  ->  clip_audio-swap.mp4
-Video is copied, not re-encoded. If that name is already there you can keep
-it, replace it, or write a name with the clock.
+Keep a copy of each original? [Y/n/q] (default Yes): the original stays, and
+the swapped file is clip_audio-swap.mp4 beside it. No: the original is
+replaced. Video is copied, not re-encoded. If clip_audio-swap.mp4 is already
+there you can keep it, replace it, or write a name with the clock.
+
+Before each file, a table shows duration, size, created time, file time, GPS
+when the file has it, chapters, GoPro telemetry, and every stream. After the
+remux the same facts are printed side by side for input and output. A value
+that changed is marked with * on the output side.
 
 Default order: the first two audio tracks swap (2,1), and any further audio
 tracks stay after them in their old order. --order 2,1 is that same rule.
@@ -51,6 +59,10 @@ Options:
                        audio tracks. An existing output is skipped.
   -n, --dry-run        Print the plan; write nothing.
   --colors yes|no      Use terminal colors (skip the colors question).
+  --keep-original yes|no
+                       Keep the original file (skip that question).
+                       yes (default): write clip_audio-swap.mp4 beside it.
+                       no: replace the original.
   --order LIST         Audio-track numbers, comma-separated, as printed
                        (1 is the first audio track). Default: 2,1.
 
@@ -81,6 +93,8 @@ COLORS_SET=0
 USE_COLORS=""
 ORDER_SET=0
 ORDER_SPEC="2,1"
+KEEP_SET=0
+KEEP_ORIGINAL=1
 INPUT_ARGS=()
 C_B="" C_DIM="" C_G="" C_Y="" C_R="" C_C="" C_0=""
 SCRIPT_START_NS=""
@@ -105,8 +119,14 @@ OLD_KEPT=()
 OLD_DELETED=()
 
 ST_IDX=() ST_TYPE=() ST_CODEC=() ST_TAG=() ST_LANG=() ST_TITLE=()
-ST_HANDLER=() ST_CH=() ST_RATE=() ST_WH=() ST_DEF=()
+ST_HANDLER=() ST_CH=() ST_RATE=() ST_WH=() ST_DEF=() ST_FPS=()
 AUDIO_ST=()
+INFO_FILE="" INFO_SIZE="" INFO_DUR="" INFO_CREATED="" INFO_MTIME=""
+INFO_GPS="" INFO_CHAPTERS="" INFO_GOPRO="" INFO_AUDIO=""
+IN_FILE="" IN_SIZE="" IN_DUR="" IN_CREATED="" IN_MTIME="" IN_GPS="" IN_CHAPTERS="" IN_GOPRO="" IN_AUDIO=""
+OUT_FILE="" OUT_SIZE="" OUT_DUR="" OUT_CREATED="" OUT_MTIME="" OUT_GPS="" OUT_CHAPTERS="" OUT_GOPRO="" OUT_AUDIO=""
+IN_IDX=() IN_TYPE=() IN_CODEC=() IN_DET=()
+OUT_IDX=() OUT_TYPE=() OUT_CODEC=() OUT_DET=()
 
 sa_ts() {
   date '+[ %Y.%m.%d %H:%M:%S ]'
@@ -164,6 +184,67 @@ sa_human_size() {
     if (i == 1) printf "%d %s", b, u[i]
     else printf "%.1f %s", b, u[i]
   }'
+}
+
+sa_dash() {
+  if [[ -n "${1:-}" ]]; then
+    printf '%s' "$1"
+  else
+    printf '—'
+  fi
+}
+
+sa_trunc() {
+  local text="$1" width="$2"
+  if (( ${#text} <= width )); then
+    printf '%s' "$text"
+    return 0
+  fi
+  if (( width < 4 )); then
+    printf '%s' "${text:0:width}"
+    return 0
+  fi
+  printf '%s…' "${text:0:$((width - 1))}"
+}
+
+sa_clock_from_sec() {
+  awk -v s="${1:-0}" 'BEGIN {
+    if (s == "" || s + 0 != s) { printf "—"; exit }
+    t = int(s + 0.5)
+    if (t < 0) t = 0
+    h = int(t / 3600)
+    m = int((t % 3600) / 60)
+    x = t % 60
+    if (h > 0) printf "%d:%02d:%02d", h, m, x
+    else printf "%d:%02d", m, x
+  }'
+}
+
+sa_fps_label() {
+  awk -v r="${1:-}" 'BEGIN {
+    if (r == "" || r == "0/0") { print ""; exit }
+    n = split(r, a, "/")
+    if (n == 2 && a[2] + 0 > 0) v = a[1] / a[2]
+    else v = r + 0
+    if (v <= 0) { print ""; exit }
+    if (v == int(v)) printf "%d fps", v
+    else printf "%.3g fps", v
+  }'
+}
+
+sa_created_label() {
+  local raw="$1" out
+  [[ -n "$raw" ]] || return 0
+  out="$(date -d "$raw" '+%Y.%m.%d %H:%M:%S' 2>/dev/null || true)"
+  if [[ -n "$out" ]]; then
+    printf '%s' "$out"
+    return 0
+  fi
+  printf '%s' "$raw"
+}
+
+sa_mtime_label() {
+  date -r "$1" '+%Y.%m.%d %H:%M:%S' 2>/dev/null || true
 }
 
 sa_colors() {
@@ -302,11 +383,52 @@ sa_stream_unmappable_mp4() {
   return 1
 }
 
+sa_format_tag() {
+  local file="$1" tag="$2"
+  ffprobe -v error -show_entries "format_tags=${tag}" -of default=nw=1:nk=1 -- "$file" 2>/dev/null | sa_ffprobe_one || true
+}
+
+sa_gps_of() {
+  local file="$1" loc iso lat lon line
+  loc="$(sa_format_tag "$file" location)"
+  [[ -z "$loc" ]] && loc="$(sa_format_tag "$file" location-eng)"
+  iso="$(sa_format_tag "$file" com.apple.quicktime.location.ISO6709)"
+  if [[ -z "$loc" && -n "$iso" ]]; then
+    loc="$iso"
+  fi
+  if [[ "$loc" =~ ([+-][0-9.]+)([+-][0-9.]+) ]]; then
+    printf '%s, %s' "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}"
+    return 0
+  fi
+  if [[ -n "$loc" ]]; then
+    printf '%s' "$loc"
+    return 0
+  fi
+  if command -v exiftool >/dev/null 2>&1; then
+    lat="$(exiftool -n -s3 -GPSLatitude -- "$file" 2>/dev/null || true)"
+    lon="$(exiftool -n -s3 -GPSLongitude -- "$file" 2>/dev/null || true)"
+    lat="${lat//$'\r'/}"
+    lon="${lon//$'\r'/}"
+    if [[ -n "$lat" && -n "$lon" ]]; then
+      printf '%s, %s' "$lat" "$lon"
+      return 0
+    fi
+  fi
+  return 0
+}
+
+sa_chapter_count() {
+  local n
+  n="$(ffprobe -v error -show_entries chapter=id -of csv=p=0 -- "$1" 2>/dev/null | grep -c . || true)"
+  [[ "$n" =~ ^[0-9]+$ ]] || n=0
+  printf '%s' "$n"
+}
+
 sa_load_streams() {
-  local file="$1" idx ctype
+  local file="$1" idx ctype w h fps
   local -A seen=()
   ST_IDX=() ST_TYPE=() ST_CODEC=() ST_TAG=() ST_LANG=() ST_TITLE=()
-  ST_HANDLER=() ST_CH=() ST_RATE=() ST_WH=() ST_DEF=()
+  ST_HANDLER=() ST_CH=() ST_RATE=() ST_WH=() ST_DEF=() ST_FPS=()
   AUDIO_ST=()
 
   while IFS= read -r idx; do
@@ -315,6 +437,9 @@ sa_load_streams() {
     [[ -n "${seen[$idx]+x}" ]] && continue
     seen[$idx]=1
     ctype="$(sa_probe_field "$file" "$idx" stream=codec_type)"
+    w="$(sa_probe_field "$file" "$idx" stream=width)"
+    h="$(sa_probe_field "$file" "$idx" stream=height)"
+    fps="$(sa_probe_field "$file" "$idx" stream=r_frame_rate)"
     ST_IDX+=("$idx")
     ST_TYPE+=("$ctype")
     ST_CODEC+=("$(sa_probe_field "$file" "$idx" stream=codec_name)")
@@ -324,7 +449,12 @@ sa_load_streams() {
     ST_HANDLER+=("$(sa_probe_field "$file" "$idx" stream_tags=handler_name)")
     ST_CH+=("$(sa_probe_field "$file" "$idx" stream=channels)")
     ST_RATE+=("$(sa_probe_field "$file" "$idx" stream=sample_rate)")
-    ST_WH+=("$(sa_probe_field "$file" "$idx" stream=width)x$(sa_probe_field "$file" "$idx" stream=height)")
+    if [[ "$w" =~ ^[0-9]+$ && "$h" =~ ^[0-9]+$ && "$w" -gt 0 && "$h" -gt 0 ]]; then
+      ST_WH+=("${w}x${h}")
+    else
+      ST_WH+=("")
+    fi
+    ST_FPS+=("$(sa_fps_label "$fps")")
     ST_DEF+=("$(sa_probe_field "$file" "$idx" stream_disposition=default)")
     if [[ "${ctype,,}" == audio ]]; then
       AUDIO_ST+=("$idx")
@@ -332,53 +462,245 @@ sa_load_streams() {
   done < <(ffprobe -v error -show_entries stream=index -of csv=p=0 -- "$file" 2>/dev/null || true)
 }
 
-sa_audio_label() {
-  local i="$1" bits="" lang title ch rate def
-  lang="${ST_LANG[$i]}"
-  title="${ST_TITLE[$i]}"
-  ch="${ST_CH[$i]}"
-  rate="${ST_RATE[$i]}"
-  def="${ST_DEF[$i]}"
-  bits="${ST_CODEC[$i]:-?}"
-  [[ -n "$ch" ]] && bits+=" ${ch}ch"
-  [[ -n "$rate" ]] && bits+=" ${rate} Hz"
-  [[ -n "$lang" ]] && bits+="  lang=${lang}"
-  [[ -n "$title" ]] && bits+="  ${title}"
-  [[ "$def" == 1 ]] && bits+="  default"
-  printf '%s' "$bits"
+sa_gopro_label() {
+  local i tag handler
+  for i in "${!ST_IDX[@]}"; do
+    tag="${ST_TAG[$i],,}"
+    handler="${ST_HANDLER[$i]}"
+    if [[ "$tag" == gpmd || "$tag" == fdsc || "$handler" == *MET* || "$handler" == GoPro* ]]; then
+      printf 'yes (%s)' "${ST_TAG[$i]:-${ST_CODEC[$i]:-gpmd}}"
+      return 0
+    fi
+  done
+  printf 'no'
 }
 
-sa_print_streams() {
-  local i n type extra a_n=0
-  n=${#ST_IDX[@]}
-  (( n )) || { echo "    (no streams)"; return 0; }
-  echo "  Streams:"
-  for (( i = 0; i < n; i++ )); do
-    type="${ST_TYPE[$i],,}"
-    extra=""
-    case "$type" in
-      audio)
-        (( a_n++ )) || true
-        extra="  audio ${a_n}: $(sa_audio_label "$i")"
-        ;;
-      video)
-        extra="  ${ST_CODEC[$i]:-?}  ${ST_WH[$i]}"
-        extra="${extra/x0/}"
-        extra="${extra/0x/}"
-        [[ -n "${ST_HANDLER[$i]}" ]] && extra+="  ${ST_HANDLER[$i]}"
-        ;;
-      subtitle)
-        extra="  ${ST_CODEC[$i]:-?}"
-        [[ -n "${ST_LANG[$i]}" ]] && extra+="  lang=${ST_LANG[$i]}"
-        ;;
-      *)
-        extra="  ${ST_CODEC[$i]:-${ST_TAG[$i]:-?}}"
-        [[ -n "${ST_TAG[$i]}" && "${ST_TAG[$i]}" != "${ST_CODEC[$i]}" ]] && extra+="  tag=${ST_TAG[$i]}"
-        [[ -n "${ST_HANDLER[$i]}" ]] && extra+="  ${ST_HANDLER[$i]}"
-        ;;
-    esac
-    printf '    #%s  %-8s%s\n' "${ST_IDX[$i]}" "${ST_TYPE[$i]:-?}" "$extra"
+sa_audio_order_text() {
+  local i idx lang a_n=0 nums="" langs=""
+  for i in "${!ST_IDX[@]}"; do
+    [[ "${ST_TYPE[$i],,}" == audio ]] || continue
+    (( a_n++ )) || true
+    idx="${ST_IDX[$i]}"
+    lang="${ST_LANG[$i]:-?}"
+    [[ "${ST_DEF[$i]}" == 1 ]] && lang+=" default"
+    if [[ -n "$nums" ]]; then
+      nums+=", ${a_n}"
+      langs+=", ${lang}"
+    else
+      nums="${a_n}"
+      langs="${lang}"
+    fi
   done
+  if (( a_n == 0 )); then
+    printf '—'
+    return 0
+  fi
+  printf '%s  (%s)' "$nums" "$langs"
+}
+
+sa_load_info() {
+  local file="$1" dur
+  sa_load_streams "$file"
+  INFO_FILE="${file##*/}"
+  INFO_SIZE="$(sa_human_size "$(sa_file_bytes "$file")")"
+  dur="$(ffprobe -v error -show_entries format=duration -of default=nw=1:nk=1 -- "$file" 2>/dev/null | sa_ffprobe_one || true)"
+  INFO_DUR="$(sa_clock_from_sec "$dur")"
+  INFO_CREATED="$(sa_created_label "$(sa_format_tag "$file" creation_time)")"
+  INFO_MTIME="$(sa_mtime_label "$file")"
+  INFO_GPS="$(sa_gps_of "$file")"
+  INFO_CHAPTERS="$(sa_chapter_count "$file")"
+  INFO_GOPRO="$(sa_gopro_label)"
+  INFO_AUDIO="$(sa_audio_order_text)"
+}
+
+sa_stream_detail() {
+  local i="$1" type extra="" a_n="$2"
+  type="${ST_TYPE[$i],,}"
+  case "$type" in
+    audio)
+      extra="audio ${a_n}"
+      [[ -n "${ST_CH[$i]}" ]] && extra+="  ${ST_CH[$i]}ch"
+      [[ -n "${ST_RATE[$i]}" ]] && extra+="  ${ST_RATE[$i]} Hz"
+      [[ -n "${ST_LANG[$i]}" ]] && extra+="  lang=${ST_LANG[$i]}"
+      [[ -n "${ST_TITLE[$i]}" ]] && extra+="  ${ST_TITLE[$i]}"
+      [[ "${ST_DEF[$i]}" == 1 ]] && extra+="  default"
+      ;;
+    video)
+      extra="${ST_WH[$i]}"
+      [[ -n "${ST_FPS[$i]}" ]] && extra+="${extra:+  }${ST_FPS[$i]}"
+      [[ -n "${ST_HANDLER[$i]}" ]] && extra+="${extra:+  }${ST_HANDLER[$i]}"
+      ;;
+    subtitle)
+      extra=""
+      [[ -n "${ST_LANG[$i]}" ]] && extra="lang=${ST_LANG[$i]}"
+      [[ -n "${ST_TITLE[$i]}" ]] && extra+="${extra:+  }${ST_TITLE[$i]}"
+      ;;
+    *)
+      extra="${ST_TAG[$i]}"
+      [[ -n "${ST_HANDLER[$i]}" ]] && extra+="${extra:+  }${ST_HANDLER[$i]}"
+      ;;
+  esac
+  extra="${extra#"${extra%%[![:space:]]*}"}"
+  extra="${extra%"${extra##*[![:space:]]}"}"
+  printf '%s' "$extra"
+}
+
+sa_print_facts() {
+  echo
+  printf '  %-20s  %s\n' "File" "$(sa_dash "$INFO_FILE")"
+  printf '  %-20s  %s\n' "Size" "$(sa_dash "$INFO_SIZE")"
+  printf '  %-20s  %s\n' "Duration" "$(sa_dash "$INFO_DUR")"
+  printf '  %-20s  %s\n' "Created" "$(sa_dash "$INFO_CREATED")"
+  printf '  %-20s  %s\n' "File time" "$(sa_dash "$INFO_MTIME")"
+  printf '  %-20s  %s\n' "GPS" "$(sa_dash "$INFO_GPS")"
+  printf '  %-20s  %s\n' "Chapters" "$(sa_dash "$INFO_CHAPTERS")"
+  printf '  %-20s  %s\n' "GoPro telemetry" "$(sa_dash "$INFO_GOPRO")"
+}
+
+sa_print_stream_table() {
+  local i n type codec detail a_n=0
+  n=${#ST_IDX[@]}
+  echo
+  printf '  %-3s %-9s %-8s %s\n' "#" "Type" "Codec" "Detail"
+  printf '  %-3s %-9s %-8s %s\n' "--" "---------" "--------" "---------------------------------------------"
+  if (( n == 0 )); then
+    echo "  (no streams)"
+    return 0
+  fi
+  for (( i = 0; i < n; i++ )); do
+    type="${ST_TYPE[$i]:-?}"
+    codec="${ST_CODEC[$i]:-${ST_TAG[$i]:-?}}"
+    if [[ "${type,,}" == audio ]]; then
+      (( a_n++ )) || true
+    fi
+    detail="$(sa_stream_detail "$i" "$a_n")"
+    printf '  %-3s %-9s %-8s %s\n' "${ST_IDX[$i]}" "$type" "$codec" "$detail"
+  done
+}
+
+sa_print_audio_plan() {
+  local now after spec="${1:-}"
+  now="$(sa_audio_order_text)"
+  echo
+  printf '  Audio order now: %s\n' "$now"
+  if [[ -n "$spec" ]]; then
+    after="$(sa_audio_order_after "$spec")"
+    printf '  After swap %s:  %s\n' "$spec" "$after"
+  fi
+}
+
+sa_audio_order_after() {
+  local spec="$1" expanded i slot idx lang a_n=0 nums="" langs=""
+  local -a slots=()
+  (( ${#AUDIO_ST[@]} )) || { printf '—'; return 0; }
+  expanded=$(sa_expand_slots "${#AUDIO_ST[@]}" "$spec") || { printf '—'; return 0; }
+  IFS=',' read -r -a slots <<< "$expanded"
+  for slot in "${slots[@]}"; do
+    idx="${AUDIO_ST[$((10#$slot - 1))]}"
+    (( a_n++ )) || true
+    lang="?"
+    for i in "${!ST_IDX[@]}"; do
+      [[ "${ST_IDX[$i]}" == "$idx" ]] || continue
+      lang="${ST_LANG[$i]:-?}"
+      [[ "${ST_DEF[$i]}" == 1 ]] && lang+=" default"
+      break
+    done
+    if [[ -n "$nums" ]]; then
+      nums+=", ${a_n}"
+      langs+=", ${lang}"
+    else
+      nums="${a_n}"
+      langs="${lang}"
+    fi
+  done
+  printf '%s  (%s)' "$nums" "$langs"
+}
+
+sa_mark_cell() {
+  local left="$1" right="$2" width="$3"
+  if [[ "$left" == "$right" ]]; then
+    printf '%-*s' "$width" "$(sa_trunc "$right" "$width")"
+  else
+    printf '%-*s' "$width" "$(sa_trunc "* ${right}" "$width")"
+  fi
+}
+
+sa_print_compare() {
+  local -n L_IDX=$1 L_TYPE=$2 L_CODEC=$3 L_DET=$4
+  local -n R_IDX=$5 R_TYPE=$6 R_CODEC=$7 R_DET=$8
+  local lw=42 i n ln rn idx type left right
+  echo
+  printf '                    %-42s  %s\n' "INPUT" "OUTPUT"
+  printf '  %-18s  %-42s  %s\n' "File" "$(sa_trunc "$(sa_dash "$IN_FILE")" "$lw")" "$(sa_mark_cell "$IN_FILE" "$OUT_FILE" "$lw")"
+  printf '  %-18s  %-42s  %s\n' "Size" "$(sa_trunc "$(sa_dash "$IN_SIZE")" "$lw")" "$(sa_mark_cell "$IN_SIZE" "$OUT_SIZE" "$lw")"
+  printf '  %-18s  %-42s  %s\n' "Duration" "$(sa_trunc "$(sa_dash "$IN_DUR")" "$lw")" "$(sa_mark_cell "$IN_DUR" "$OUT_DUR" "$lw")"
+  printf '  %-18s  %-42s  %s\n' "Created" "$(sa_trunc "$(sa_dash "$IN_CREATED")" "$lw")" "$(sa_mark_cell "$IN_CREATED" "$OUT_CREATED" "$lw")"
+  printf '  %-18s  %-42s  %s\n' "File time" "$(sa_trunc "$(sa_dash "$IN_MTIME")" "$lw")" "$(sa_mark_cell "$IN_MTIME" "$OUT_MTIME" "$lw")"
+  printf '  %-18s  %-42s  %s\n' "GPS" "$(sa_trunc "$(sa_dash "$IN_GPS")" "$lw")" "$(sa_mark_cell "$IN_GPS" "$OUT_GPS" "$lw")"
+  printf '  %-18s  %-42s  %s\n' "Chapters" "$(sa_trunc "$(sa_dash "$IN_CHAPTERS")" "$lw")" "$(sa_mark_cell "$IN_CHAPTERS" "$OUT_CHAPTERS" "$lw")"
+  printf '  %-18s  %-42s  %s\n' "GoPro telemetry" "$(sa_trunc "$(sa_dash "$IN_GOPRO")" "$lw")" "$(sa_mark_cell "$IN_GOPRO" "$OUT_GOPRO" "$lw")"
+  echo
+  printf '  %-3s %-6s %-42s  %s\n' "#" "Type" "INPUT" "OUTPUT"
+  printf '  %-3s %-6s %-42s  %s\n' "--" "------" "------------------------------------------" "------------------------------------------"
+  ln=${#L_IDX[@]}
+  rn=${#R_IDX[@]}
+  n=$ln
+  (( rn > n )) && n=$rn
+  for (( i = 0; i < n; i++ )); do
+    if (( i < ln )); then
+      idx="${L_IDX[$i]}"
+      type="${L_TYPE[$i]}"
+      left="${L_CODEC[$i]}  ${L_DET[$i]}"
+    else
+      idx=""
+      type=""
+      left="—"
+    fi
+    if (( i < rn )); then
+      [[ -z "$idx" ]] && idx="${R_IDX[$i]}"
+      [[ -z "$type" ]] && type="${R_TYPE[$i]}"
+      right="${R_CODEC[$i]}  ${R_DET[$i]}"
+    else
+      right="—"
+    fi
+    left="${left%"${left##*[![:space:]]}"}"
+    right="${right%"${right##*[![:space:]]}"}"
+    printf '  %-3s %-6s %-42s  %s\n' "$idx" "$type" "$(sa_trunc "$left" "$lw")" "$(sa_mark_cell "$left" "$right" "$lw")"
+  done
+  echo
+  printf '  %-18s  %-42s  %s\n' "Audio order" "$(sa_trunc "$(sa_dash "$IN_AUDIO")" "$lw")" "$(sa_mark_cell "$IN_AUDIO" "$OUT_AUDIO" "$lw")"
+}
+
+sa_copy_stream_snapshot() {
+  local prefix="$1" i n a_n=0 detail
+  n=${#ST_IDX[@]}
+  eval "${prefix}_IDX=()"
+  eval "${prefix}_TYPE=()"
+  eval "${prefix}_CODEC=()"
+  eval "${prefix}_DET=()"
+  for (( i = 0; i < n; i++ )); do
+    if [[ "${ST_TYPE[$i],,}" == audio ]]; then
+      (( a_n++ )) || true
+    fi
+    detail="$(sa_stream_detail "$i" "$a_n")"
+    eval "${prefix}_IDX+=(\"\${ST_IDX[$i]}\")"
+    eval "${prefix}_TYPE+=(\"\${ST_TYPE[$i]}\")"
+    eval "${prefix}_CODEC+=(\"\${ST_CODEC[$i]:-\${ST_TAG[$i]:-?}}\")"
+    eval "${prefix}_DET+=(\"\$detail\")"
+  done
+}
+
+sa_store_info_as() {
+  local prefix="$1"
+  eval "${prefix}_FILE=\"\$INFO_FILE\""
+  eval "${prefix}_SIZE=\"\$INFO_SIZE\""
+  eval "${prefix}_DUR=\"\$INFO_DUR\""
+  eval "${prefix}_CREATED=\"\$INFO_CREATED\""
+  eval "${prefix}_MTIME=\"\$INFO_MTIME\""
+  eval "${prefix}_GPS=\"\$INFO_GPS\""
+  eval "${prefix}_CHAPTERS=\"\$INFO_CHAPTERS\""
+  eval "${prefix}_GOPRO=\"\$INFO_GOPRO\""
+  eval "${prefix}_AUDIO=\"\$INFO_AUDIO\""
 }
 
 # Expand a slot list such as 2,1 for N audio tracks to a full permutation.
@@ -429,6 +751,10 @@ sa_slots_are_identity() {
 
 sa_dest_path() {
   local src="$1" dir base stem ext
+  if (( ! KEEP_ORIGINAL )); then
+    printf '%s\n' "$src"
+    return 0
+  fi
   dir="$(dirname -- "$src")"
   base="${src##*/}"
   if [[ "$base" == *.* ]]; then
@@ -702,6 +1028,34 @@ sa_ask_colors() {
   sa_colors
 }
 
+sa_ask_keep_copy() {
+  if (( KEEP_SET )); then
+    return 0
+  fi
+  if (( DO_YES )) || (( ! script_is_run_interactively )); then
+    KEEP_ORIGINAL=1
+    return 0
+  fi
+  echo
+  sa_print_question "Keep a copy of each original file?"
+  echo "  [Y] Yes (default) — original stays; swapped file is clip_audio-swap.mp4"
+  echo "  [n] No — replace the original with the swapped file"
+  echo "  [q] Quit"
+  sa_read_key "Keep a copy of the original? [Y/n/q]: " y "Yes — original stays"
+  case "$REPLY" in
+    y)
+      KEEP_ORIGINAL=1
+      sa_print_selected "yes (original stays; write clip_audio-swap.mp4)"
+      ;;
+    n)
+      KEEP_ORIGINAL=0
+      sa_print_selected "no (replace the original)"
+      ;;
+    q) sa_quit ;;
+    *) echo "$(sa_ts) That is not a choice. Stopping."; return_code=1; exit 1 ;;
+  esac
+}
+
 sa_equivalent_cli() {
   local cmd out q_dir p
   local -a parts=()
@@ -710,6 +1064,11 @@ sa_equivalent_cli() {
   (( DRY_RUN )) && parts+=("--dry-run")
   if [[ -n "$USE_COLORS" ]]; then
     parts+=("--colors" "$USE_COLORS")
+  fi
+  if (( KEEP_ORIGINAL )); then
+    parts+=("--keep-original" "yes")
+  else
+    parts+=("--keep-original" "no")
   fi
   if (( ORDER_SET )) || [[ -n "$REST_ORDER" ]]; then
     parts+=("--order" "${REST_ORDER:-$ORDER_SPEC}")
@@ -747,6 +1106,19 @@ sa_print_run_settings() {
     printf '  %-21s%s\n' "--colors:" "given (${USE_COLORS})"
   else
     printf '  %-21s%s\n' "--colors:" "${USE_COLORS:-yes} (asked)"
+  fi
+  if (( KEEP_SET )); then
+    if (( KEEP_ORIGINAL )); then
+      printf '  %-21s%s\n' "--keep-original:" "given (yes — write clip_audio-swap.mp4)"
+    else
+      printf '  %-21s%s\n' "--keep-original:" "given (no — replace the original)"
+    fi
+  else
+    if (( KEEP_ORIGINAL )); then
+      printf '  %-21s%s\n' "--keep-original:" "yes (asked — original stays)"
+    else
+      printf '  %-21s%s\n' "--keep-original:" "no (asked — replace the original)"
+    fi
   fi
   if (( ORDER_SET )); then
     printf '  %-21s%s\n' "--order:" "given (${ORDER_SPEC})"
@@ -793,7 +1165,7 @@ sa_probe_plan() {
 }
 
 sa_print_plan() {
-  local i src n state why dest a
+  local i src n state why dest
   echo
   echo "Videos:"
   for i in "${!FILES[@]}"; do
@@ -802,16 +1174,14 @@ sa_print_plan() {
     state="${FILE_STATE[$i]}"
     why="${FILE_WHY[$i]}"
     dest="${FILE_DEST[$i]}"
-    printf '  %s\n' "$src"
-    sa_load_streams "$src"
-    sa_print_streams
+    printf '  %s  (%s audio)\n' "$src" "$n"
     if [[ "$state" == swap ]]; then
       printf '    -> %s  (audio order %s)\n' "$dest" "$why"
     else
       printf '    skip: %s\n' "$why"
     fi
-    echo
   done
+  echo
 }
 
 sa_ask_custom_order() {
@@ -870,10 +1240,14 @@ sa_process_one() {
     SKIPPED_LIST+=("${src} (${why})")
     return 0
   fi
-  sa_load_streams "$src"
+  sa_load_info "$src"
+  sa_store_info_as IN
+  sa_copy_stream_snapshot IN
   echo
   echo "$(sa_ts) ${src}"
-  sa_print_streams
+  sa_print_facts
+  sa_print_stream_table
+  sa_print_audio_plan "$why"
   order="$why"
   if (( APPLY_REST )) && [[ -n "$REST_ORDER" ]]; then
     if ! order=$(sa_expand_slots "$n" "$REST_ORDER"); then
@@ -939,7 +1313,7 @@ sa_process_one() {
     return 0
   fi
   NEW_DEST=""
-  if [[ -e "$dest" ]]; then
+  if (( KEEP_ORIGINAL )) && [[ -e "$dest" && "$dest" != "$src" ]]; then
     sa_ask_existing "$dest"
     rc=$?
     if (( rc == 1 )); then
@@ -950,12 +1324,20 @@ sa_process_one() {
       dest="$NEW_DEST"
     fi
   fi
-  echo "$(sa_ts) Writing ${dest}  (audio order ${order}, copy)"
+  if (( KEEP_ORIGINAL )); then
+    echo "$(sa_ts) Writing ${dest}  (audio order ${order}, copy; original kept)"
+  else
+    echo "$(sa_ts) Replacing ${src}  (audio order ${order}, copy)"
+  fi
   sa_proc_begin
   if sa_remux "$src" "$dest" "$order"; then
     sa_proc_end
     echo "$(sa_ts) Wrote ${dest}  ($(sa_human_size "$(sa_file_bytes "$dest")"))"
     DONE_LIST+=("$dest")
+    sa_load_info "$dest"
+    sa_store_info_as OUT
+    sa_copy_stream_snapshot OUT
+    sa_print_compare IN_IDX IN_TYPE IN_CODEC IN_DET OUT_IDX OUT_TYPE OUT_CODEC OUT_DET
     return 0
   fi
   sa_proc_end
@@ -1001,6 +1383,11 @@ sa_print_summary() {
     src="${FILES[$i]}"
     in_sum=$(( in_sum + $(sa_file_bytes "$src") ))
   done
+  if (( KEEP_ORIGINAL )); then
+    sa_summary_kv "Originals" "kept (swapped file is clip_audio-swap.mp4)"
+  else
+    sa_summary_kv "Originals" "replaced"
+  fi
   sa_summary_kv "Input size" "$(sa_human_size "$in_sum")"
   sa_summary_kv "Output size" "$(sa_human_size "$out_sum")"
   echo
@@ -1058,6 +1445,14 @@ while [[ $# -gt 0 ]]; do
         *) echo "ERROR: --colors must be yes or no, not: $2" >&2; exit 1 ;;
       esac
       shift 2 ;;
+    --keep-original)
+      sa_need_value "$@"
+      case "$2" in
+        yes) KEEP_ORIGINAL=1; KEEP_SET=1 ;;
+        no) KEEP_ORIGINAL=0; KEEP_SET=1 ;;
+        *) echo "ERROR: --keep-original must be yes or no, not: $2" >&2; exit 1 ;;
+      esac
+      shift 2 ;;
     --order)
       sa_need_value "$@"
       ORDER_SPEC="${2// /}"
@@ -1071,6 +1466,7 @@ done
 
 SCRIPT_START_NS="$(sa_now_ns)"
 sa_ask_colors
+sa_ask_keep_copy
 sa_check_prereqs
 
 if (( ${#INPUT_ARGS[@]} == 0 )); then
