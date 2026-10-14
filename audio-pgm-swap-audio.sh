@@ -72,6 +72,7 @@ Keep a copy of each original? [Y/n/q] (default Yes): the original stays, and
 the swapped file is clip-backup.mp4 beside it. No: the original is
 replaced. Video is copied, not re-encoded. If clip-backup.mp4 is already
 there you can keep it, replace it, or write a name with the clock.
+Roll back with audio-pgm-swap-audio-undo.sh (confirms one file at a time).
 
 The first four questions (colors, keep a copy, one by one or together,
 matching subtitles) are asked before any file is opened. One by one is
@@ -121,6 +122,8 @@ Examples:
       Read the current directory, print the streams, ask before writing.
   $(basename "$0") -y --order 2,1 /mnt/p/video
   $(basename "$0") --colors yes clip.mp4
+  audio-pgm-swap-audio-undo.sh
+      Roll back each clip-backup.mp4 one by one; the original stays.
 EOF
 }
 
