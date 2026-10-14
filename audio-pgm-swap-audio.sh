@@ -1,4 +1,6 @@
 #!/bin/bash
+# v. 20261014.224006 - after the file list: keep English, Polish, German (default yes); drop other audio/subtitle languages, or choose which to drop
+# v. 20261014.223151 - after a swap, audio track 1 is default; matching subtitles follow the audio order (asked, default yes) and subtitle 1 is default
 # v. 20261014.222646 - probe progress is "Getting file info (1/8)", with no file name
 # v. 20261014.221754 - check ffmpeg/ffprobe first; ask colors, keep-copy, and one-by-one before reading files; print search and probe progress
 # v. 20261014.221053 - ask one-by-one or together; the first file gets a full stream report
@@ -6,6 +8,8 @@
 # v. 20261014.220133 - ask to keep the original (default yes); print a facts table before and after each swap
 # v. 20261014.213909 - swap audio tracks in a video; every other stream stays, in the same order
 #
+# 2026.10.14 - v. 0.8 - after the file list, if there are languages other than English, Polish and German, ask to drop them (default yes) or choose which to drop; the last remaining audio track is never dropped
+# 2026.10.14 - v. 0.7 - after a swap, the new first audio track is default; ask to reorder subtitles to the same languages as audio (default yes) and then make the first subtitle default
 # 2026.10.14 - v. 0.6 - while streams are read, print "Getting file info (1/8)" (no file name)
 # 2026.10.14 - v. 0.5 - ffmpeg and ffprobe are required (exit if missing); colors, keep a copy, and one-by-one/together are asked before any file is opened; then search and "file k of N" while streams are read
 # 2026.10.14 - v. 0.4 - after the list: one by one (default) or together; the first file prints every stream, GPS, throughput, and present/not present
@@ -18,10 +22,12 @@
 #
 # audio-pgm-swap-audio.sh
 #
-# Change the order of the audio tracks inside a video. The picture, subtitles,
-# chapters, metadata, file times, and data streams (GoPro MET/gpmd, and so on)
-# stay. Those other streams keep the order they had. Only the audio tracks
-# move. A stream that ffmpeg cannot copy into MP4 (tmcd, mp4s) is skipped and
+# Change the order of the audio tracks inside a video. The picture, chapters,
+# metadata, file times, and data streams (GoPro MET/gpmd, and so on) stay.
+# Subtitle tracks can follow the same language order as the audio, when the
+# user says yes (the default). After a swap, audio track 1 is the default
+# track; if subtitles were reordered, subtitle track 1 is the default too.
+# A stream that ffmpeg cannot copy into MP4 (tmcd, mp4s) is skipped and
 # named in the log; telemetry (gpmd) is kept.
 #
 
@@ -29,30 +35,42 @@ show_help() {
   cat <<EOF
 Usage: $(basename "$0") [-h|--help] [-v|--version] [--history]
        [-y|--yes] [-n|--dry-run] [--colors yes|no]
-       [--keep-original yes|no] [--one-by-one|--together] [--order 2,1]
+       [--keep-original yes|no] [--one-by-one|--together]
+       [--subtitles yes|no] [--languages keep|all] [--drop LIST]
+       [--order 2,1]
        [FILE|DIR ...]
 
-Swap the audio tracks inside each video. The picture, subtitles, chapters,
-metadata, file times, and other streams stay, in the same order they had.
-Only the audio tracks change places. Language tags and the "default" flag
-travel with that audio track.
+Swap the audio tracks inside each video. The picture, chapters, metadata,
+file times, and other non-subtitle streams stay, in the same order they had.
+After a swap, audio track 1 is marked default (other audio is not).
+Subtitle tracks with the same languages as the audio can be reordered the
+same way (asked up front, default Yes). If they are, subtitle track 1 is
+marked default too. A subtitle with no language, or a language that is not
+on an audio track, stays after the matched ones in its old relative order.
 
 With no FILE or DIR, the current directory is used. A directory's videos are
 the files in that directory, not in folders inside it. Windows paths such as
 P:\\video\\trip are read as /mnt/p/video/trip.
 
-A file with fewer than two audio tracks is listed and skipped. A file whose
-name already has -backup or _audio-swap is skipped.
+A file with fewer than two audio tracks is listed and skipped, unless extra
+languages are being dropped (then a file with one remaining audio is still
+written). A file whose name already has -backup or _audio-swap is skipped.
+
+After the video list, if any audio or subtitle language is not English
+(American counts as English), Polish or German, the script asks to leave
+only those three (default Yes). [c] lets you type the numbers to drop
+(more than one is allowed). [k] keeps every language. A stream with no
+language tag is kept. The last remaining audio track is never dropped.
 
 Keep a copy of each original? [Y/n/q] (default Yes): the original stays, and
 the swapped file is clip-backup.mp4 beside it. No: the original is
 replaced. Video is copied, not re-encoded. If clip-backup.mp4 is already
 there you can keep it, replace it, or write a name with the clock.
 
-The first three questions (colors, keep a copy, one by one or together)
-are asked before any file is opened. One by one is the default. Then the
-script searches for videos and prints "Getting file info (1/8)" while it
-reads streams. The first file prints a long report: duration,
+The first four questions (colors, keep a copy, one by one or together,
+matching subtitles) are asked before any file is opened. One by one is
+the default. Matching subtitles is Yes. Then the script searches for
+videos and prints "Getting file info (1/8)" while it reads streams. The first file prints a long report: duration,
 throughput, GPS, present/not present for video, audio, GPS, telemetry,
 timecode, subtitles, chapters and other data, then every stream (including
 ones ffmpeg cannot decode). Later files keep the shorter table. After the
@@ -78,8 +96,15 @@ Options:
                        no: replace the original.
   --one-by-one         Ask about each file (default; skip that question).
   --together           Same audio order for every file (skip that question).
+  --subtitles yes|no   Reorder subtitle tracks to the same languages as
+                       the audio (skip that question). yes is the default.
+  --languages keep|all After the file list: keep English, Polish, German
+                       and drop the rest (keep, default), or keep every
+                       language (all). Skips that question.
+  --drop LIST          Language codes or names to drop, comma-separated
+                       (rus,ukr,spa). Skips the languages question.
   --order LIST         Audio-track numbers, comma-separated, as printed
-                       (1 is the first audio track). Default: 2,1.
+                       (1 is the first remaining audio track). Default: 2,1.
 
 A run summary is always printed at the end, and on Ctrl-C.
 
@@ -111,6 +136,17 @@ KEEP_SET=0
 KEEP_ORIGINAL=1
 TOGETHER_SET=0
 TOGETHER=0
+SUBS_SET=0
+SWAP_SUBS=1
+LANGS_SET=0
+LANGS_MODE=""
+DROP_SPEC=""
+DROP_FAMS=()
+EXTRA_FAMS=()
+KEPT_AUDIO_ST=()
+KEPT_SUBTITLE_ST=()
+ALL_FAMS=()
+LANG_MENU_FAM=()
 SWAP_SHOWN=0
 SWAP_TOTAL=0
 INPUT_ARGS=()
@@ -129,6 +165,9 @@ FILES=()
 FILE_STATE=()   # swap | skip | fail
 FILE_WHY=()
 FILE_AUDIO_N=()
+FILE_AUDIO_FAMS=()
+FILE_SUB_FAMS=()
+FILE_SUB_NOTE=()
 FILE_DEST=()
 DONE_LIST=()
 SKIPPED_LIST=()
@@ -139,6 +178,7 @@ OLD_DELETED=()
 ST_IDX=() ST_TYPE=() ST_CODEC=() ST_TAG=() ST_LANG=() ST_TITLE=()
 ST_HANDLER=() ST_CH=() ST_RATE=() ST_WH=() ST_DEF=() ST_FPS=() ST_BR=()
 AUDIO_ST=()
+SUBTITLE_ST=()
 INFO_FILE="" INFO_SIZE="" INFO_DUR="" INFO_THRU="" INFO_CREATED="" INFO_MTIME=""
 INFO_GPS="" INFO_CHAPTERS="" INFO_GOPRO="" INFO_AUDIO=""
 IN_FILE="" IN_SIZE="" IN_DUR="" IN_CREATED="" IN_MTIME="" IN_GPS="" IN_CHAPTERS="" IN_GOPRO="" IN_AUDIO=""
@@ -457,6 +497,7 @@ sa_load_streams() {
   ST_IDX=() ST_TYPE=() ST_CODEC=() ST_TAG=() ST_LANG=() ST_TITLE=()
   ST_HANDLER=() ST_CH=() ST_RATE=() ST_WH=() ST_DEF=() ST_FPS=() ST_BR=()
   AUDIO_ST=()
+  SUBTITLE_ST=()
 
   while IFS= read -r idx; do
     idx="${idx//$'\r'/}"
@@ -486,6 +527,8 @@ sa_load_streams() {
     ST_DEF+=("$(sa_probe_field "$file" "$idx" stream_disposition=default)")
     if [[ "${ctype,,}" == audio ]]; then
       AUDIO_ST+=("$idx")
+    elif [[ "${ctype,,}" == subtitle ]]; then
+      SUBTITLE_ST+=("$idx")
     fi
   done < <(ffprobe -v error -show_entries stream=index -of csv=p=0 -- "$file" 2>/dev/null || true)
 }
@@ -564,6 +607,7 @@ sa_stream_detail() {
       extra=""
       [[ -n "${ST_LANG[$i]}" ]] && extra="lang=${ST_LANG[$i]}"
       [[ -n "${ST_TITLE[$i]}" ]] && extra+="${extra:+  }${ST_TITLE[$i]}"
+      [[ "${ST_DEF[$i]}" == 1 ]] && extra+="${extra:+  }default"
       ;;
     *)
       extra="${ST_TAG[$i]}"
@@ -748,6 +792,7 @@ sa_print_verbose() {
     [[ -n "${ST_TAG[$i]}" && "${ST_TAG[$i]}" != "${ST_CODEC[$i]}" ]] && printf '  tag=%s' "${ST_TAG[$i]}"
     [[ -n "${ST_HANDLER[$i]}" ]] && printf '  %s' "${ST_HANDLER[$i]}"
     [[ -n "${ST_LANG[$i]}" ]] && printf '  lang=%s' "${ST_LANG[$i]}"
+    [[ "${ST_DEF[$i]}" == 1 ]] && printf '  default'
     printf '  (%s)\n' "$(sa_stream_fate "$i")"
   done
   if (( o_n == 0 )); then
@@ -777,30 +822,390 @@ sa_print_stream_table() {
 }
 
 sa_print_audio_plan() {
-  local now after spec="${1:-}"
+  local now after spec="${1:-}" sub_now sub_after
   now="$(sa_audio_order_text)"
   echo
   printf '  Audio order now: %s\n' "$now"
   if [[ -n "$spec" ]]; then
     after="$(sa_audio_order_after "$spec")"
     printf '  After swap %s:  %s\n' "$spec" "$after"
+    printf '  Default after swap:  audio track 1\n'
+  fi
+  if (( ${#DROP_FAMS[@]} > 0 )); then
+    printf '  Drop languages:    %s\n' "$(sa_join_labels "${DROP_FAMS[@]}")"
+  fi
+  if (( SWAP_SUBS )); then
+    sa_fill_kept_streams
+    if (( ${#KEPT_SUBTITLE_ST[@]} == 0 && ${#SUBTITLE_ST[@]} == 0 )); then
+      printf '  Subtitles:         none\n'
+    elif (( ${#KEPT_SUBTITLE_ST[@]} == 0 )); then
+      printf '  Subtitles:         all dropped\n'
+    elif [[ -n "$spec" ]] && sub_after="$(sa_subtitle_perm "$spec")"; then
+      sub_now="$(sa_subtitle_order_text)"
+      printf '  Subtitles now:     %s\n' "$sub_now"
+      printf '  After swap %s:  %s\n' "$sub_after" "$(sa_subtitle_order_after "$sub_after")"
+      printf '  Default after swap:  subtitle track 1\n'
+    else
+      printf '  Subtitles:         left as they are (no matching language with audio)\n'
+    fi
   fi
 }
 
 sa_audio_order_after() {
   local spec="$1" expanded i slot idx lang a_n=0 nums="" langs=""
-  local -a slots=()
-  (( ${#AUDIO_ST[@]} )) || { printf '—'; return 0; }
-  expanded=$(sa_expand_slots "${#AUDIO_ST[@]}" "$spec") || { printf '—'; return 0; }
+  local -a slots=() audio_ref=()
+  sa_fill_kept_streams
+  audio_ref=("${KEPT_AUDIO_ST[@]+"${KEPT_AUDIO_ST[@]}"}")
+  (( ${#audio_ref[@]} )) || { printf '—'; return 0; }
+  expanded=$(sa_expand_slots "${#audio_ref[@]}" "$spec") || { printf '—'; return 0; }
   IFS=',' read -r -a slots <<< "$expanded"
   for slot in "${slots[@]}"; do
-    idx="${AUDIO_ST[$((10#$slot - 1))]}"
+    idx="${audio_ref[$((10#$slot - 1))]}"
     (( a_n++ )) || true
     lang="?"
     for i in "${!ST_IDX[@]}"; do
       [[ "${ST_IDX[$i]}" == "$idx" ]] || continue
       lang="${ST_LANG[$i]:-?}"
-      [[ "${ST_DEF[$i]}" == 1 ]] && lang+=" default"
+      (( a_n == 1 )) && lang+=" default"
+      break
+    done
+    if [[ -n "$nums" ]]; then
+      nums+=", ${a_n}"
+      langs+=", ${lang}"
+    else
+      nums="${a_n}"
+      langs="${lang}"
+    fi
+  done
+  printf '%s  (%s)' "$nums" "$langs"
+}
+
+sa_lang_key() {
+  local s="${1,,}"
+  s="${s//$'\r'/}"
+  s="${s#"${s%%[![:space:]]*}"}"
+  s="${s%"${s##*[![:space:]]}"}"
+  case "$s" in
+    ""|und|unk|none) printf '' ;;
+    *) printf '%s' "$s" ;;
+  esac
+}
+
+sa_lang_family() {
+  local k
+  k="$(sa_lang_key "$1")"
+  [[ -n "$k" ]] || { printf ''; return 0; }
+  case "$k" in
+    eng|en|en-us|en-gb|en-au|english|american) printf 'eng' ;;
+    pol|pl|pl-pl|polish) printf 'pol' ;;
+    ger|deu|de|de-de|de-at|german) printf 'deu' ;;
+    rus|ru|ru-ru|russian) printf 'rus' ;;
+    ukr|uk|uk-ua|ukrainian) printf 'ukr' ;;
+    spa|es|es-es|es-mx|spanish) printf 'spa' ;;
+    fra|fre|fr|fr-fr|french) printf 'fra' ;;
+    ita|it|it-it|italian) printf 'ita' ;;
+    por|pt|pt-pt|pt-br|portuguese) printf 'por' ;;
+    nld|dut|nl|dutch) printf 'nld' ;;
+    ces|cze|cs|czech) printf 'ces' ;;
+    slk|slo|sk|slovak) printf 'slk' ;;
+    hun|hu|hungarian) printf 'hun' ;;
+    ron|rum|ro|romanian) printf 'ron' ;;
+    bul|bg|bulgarian) printf 'bul' ;;
+    hrv|hr|croatian) printf 'hrv' ;;
+    srp|sr|serbian) printf 'srp' ;;
+    slv|sl|slovenian) printf 'slv' ;;
+    ell|gre|el|greek) printf 'ell' ;;
+    tur|tr|turkish) printf 'tur' ;;
+    swe|sv|swedish) printf 'swe' ;;
+    nor|nob|nno|no|norwegian) printf 'nor' ;;
+    dan|da|danish) printf 'dan' ;;
+    fin|fi|finnish) printf 'fin' ;;
+    est|et|estonian) printf 'est' ;;
+    lav|lv|latvian) printf 'lav' ;;
+    lit|lt|lithuanian) printf 'lit' ;;
+    jpn|ja|japanese) printf 'jpn' ;;
+    kor|ko|korean) printf 'kor' ;;
+    zho|chi|zh|zh-cn|zh-tw|chinese) printf 'zho' ;;
+    ara|ar|arabic) printf 'ara' ;;
+    heb|he|iw|hebrew) printf 'heb' ;;
+    hin|hi|hindi) printf 'hin' ;;
+    tha|th|thai) printf 'tha' ;;
+    vie|vi|vietnamese) printf 'vie' ;;
+    cat|ca|catalan) printf 'cat' ;;
+    *) printf '%s' "$k" ;;
+  esac
+}
+
+sa_lang_label() {
+  case "$1" in
+    eng) printf 'English' ;;
+    pol) printf 'Polish' ;;
+    deu) printf 'German' ;;
+    rus) printf 'Russian' ;;
+    ukr) printf 'Ukrainian' ;;
+    spa) printf 'Spanish' ;;
+    fra) printf 'French' ;;
+    ita) printf 'Italian' ;;
+    por) printf 'Portuguese' ;;
+    nld) printf 'Dutch' ;;
+    ces) printf 'Czech' ;;
+    slk) printf 'Slovak' ;;
+    hun) printf 'Hungarian' ;;
+    ron) printf 'Romanian' ;;
+    bul) printf 'Bulgarian' ;;
+    hrv) printf 'Croatian' ;;
+    srp) printf 'Serbian' ;;
+    slv) printf 'Slovenian' ;;
+    ell) printf 'Greek' ;;
+    tur) printf 'Turkish' ;;
+    swe) printf 'Swedish' ;;
+    nor) printf 'Norwegian' ;;
+    dan) printf 'Danish' ;;
+    fin) printf 'Finnish' ;;
+    est) printf 'Estonian' ;;
+    lav) printf 'Latvian' ;;
+    lit) printf 'Lithuanian' ;;
+    jpn) printf 'Japanese' ;;
+    kor) printf 'Korean' ;;
+    zho) printf 'Chinese' ;;
+    ara) printf 'Arabic' ;;
+    heb) printf 'Hebrew' ;;
+    hin) printf 'Hindi' ;;
+    tha) printf 'Thai' ;;
+    vie) printf 'Vietnamese' ;;
+    cat) printf 'Catalan' ;;
+    ""|-) printf 'unknown' ;;
+    *) printf '%s' "$1" ;;
+  esac
+}
+
+sa_lang_is_keep() {
+  case "$1" in eng|pol|deu) return 0 ;; *) return 1 ;; esac
+}
+
+sa_lang_is_dropped() {
+  local fam="$1" d
+  [[ -n "$fam" && "$fam" != "-" ]] || return 1
+  for d in "${DROP_FAMS[@]+"${DROP_FAMS[@]}"}"; do
+    [[ "$d" == "$fam" ]] && return 0
+  done
+  return 1
+}
+
+sa_join_labels() {
+  local out="" fam lab
+  for fam in "$@"; do
+    [[ -n "$fam" ]] || continue
+    lab="$(sa_lang_label "$fam")"
+    if [[ -z "$out" ]]; then
+      out="$lab"
+    else
+      out+=", $lab"
+    fi
+  done
+  printf '%s' "$out"
+}
+
+sa_stream_family_of_idx() {
+  local want="$1" i
+  for i in "${!ST_IDX[@]}"; do
+    [[ "${ST_IDX[$i]}" == "$want" ]] || continue
+    sa_lang_family "${ST_LANG[$i]}"
+    return 0
+  done
+  printf ''
+}
+
+sa_idx_in_list() {
+  local want="$1" x
+  shift
+  for x in "$@"; do
+    [[ "$x" == "$want" ]] && return 0
+  done
+  return 1
+}
+
+sa_csv_fams() {
+  local idx fam out=""
+  for idx in "$@"; do
+    fam="$(sa_stream_family_of_idx "$idx")"
+    [[ -n "$fam" ]] || fam="-"
+    if [[ -z "$out" ]]; then
+      out="$fam"
+    else
+      out+=",$fam"
+    fi
+  done
+  printf '%s' "$out"
+}
+
+sa_kept_count_csv() {
+  local csv="$1" fam n=0
+  local -a parts=()
+  [[ -n "$csv" ]] || { printf '0'; return 0; }
+  IFS=',' read -r -a parts <<< "$csv"
+  for fam in "${parts[@]}"; do
+    sa_lang_is_dropped "$fam" && continue
+    (( n++ )) || true
+  done
+  printf '%s' "$n"
+}
+
+sa_drop_count_csv() {
+  local csv="$1" fam n=0
+  local -a parts=()
+  [[ -n "$csv" ]] || { printf '0'; return 0; }
+  IFS=',' read -r -a parts <<< "$csv"
+  for fam in "${parts[@]}"; do
+    sa_lang_is_dropped "$fam" || continue
+    (( n++ )) || true
+  done
+  printf '%s' "$n"
+}
+
+sa_fill_kept_streams() {
+  local idx fam
+  KEPT_AUDIO_ST=()
+  KEPT_SUBTITLE_ST=()
+  for idx in "${AUDIO_ST[@]+"${AUDIO_ST[@]}"}"; do
+    fam="$(sa_stream_family_of_idx "$idx")"
+    sa_lang_is_dropped "$fam" && continue
+    KEPT_AUDIO_ST+=("$idx")
+  done
+  if (( ${#KEPT_AUDIO_ST[@]} == 0 && ${#AUDIO_ST[@]} > 0 )); then
+    KEPT_AUDIO_ST=("${AUDIO_ST[@]}")
+  fi
+  for idx in "${SUBTITLE_ST[@]+"${SUBTITLE_ST[@]}"}"; do
+    fam="$(sa_stream_family_of_idx "$idx")"
+    sa_lang_is_dropped "$fam" && continue
+    KEPT_SUBTITLE_ST+=("$idx")
+  done
+}
+
+sa_collect_all_fams() {
+  local i csv fam
+  local -A seen=()
+  ALL_FAMS=()
+  for i in "${!FILES[@]}"; do
+    csv="${FILE_AUDIO_FAMS[$i]},${FILE_SUB_FAMS[$i]}"
+    csv="${csv#,}"
+    csv="${csv%,}"
+    [[ "$csv" == "," ]] && csv=""
+    local -a parts=()
+    IFS=',' read -r -a parts <<< "$csv"
+    for fam in "${parts[@]}"; do
+      [[ -n "$fam" && "$fam" != "-" ]] || continue
+      [[ -n "${seen[$fam]+x}" ]] && continue
+      seen[$fam]=1
+      ALL_FAMS+=("$fam")
+    done
+  done
+}
+
+sa_extra_fams() {
+  local fam
+  EXTRA_FAMS=()
+  for fam in "${ALL_FAMS[@]+"${ALL_FAMS[@]}"}"; do
+    sa_lang_is_keep "$fam" && continue
+    EXTRA_FAMS+=("$fam")
+  done
+}
+
+sa_parse_lang_token() {
+  sa_lang_family "$1"
+}
+
+sa_stream_lang_of_idx() {
+  local want="$1" i
+  for i in "${!ST_IDX[@]}"; do
+    [[ "${ST_IDX[$i]}" == "$want" ]] || continue
+    sa_lang_key "${ST_LANG[$i]}"
+    return 0
+  done
+  printf ''
+}
+
+# 1-based subtitle permutation that follows the audio-slot list by language.
+# Unmatched subtitle tracks keep their old relative order at the end.
+sa_subtitle_perm() {
+  local audio_csv="$1"
+  local -a a_slots=() used=() out=() audio_ref=() sub_ref=()
+  local n_sub s slot lang sub_lang matched=0 i
+  sa_fill_kept_streams
+  audio_ref=("${KEPT_AUDIO_ST[@]+"${KEPT_AUDIO_ST[@]}"}")
+  sub_ref=("${KEPT_SUBTITLE_ST[@]+"${KEPT_SUBTITLE_ST[@]}"}")
+  n_sub=${#sub_ref[@]}
+  (( SWAP_SUBS )) || return 1
+  (( n_sub >= 1 )) || return 1
+  IFS=',' read -r -a a_slots <<< "$audio_csv"
+  for (( s = 1; s <= n_sub; s++ )); do
+    used[$s]=0
+  done
+  for slot in "${a_slots[@]}"; do
+    [[ "$slot" =~ ^[0-9]+$ ]] || return 1
+    lang="$(sa_stream_family_of_idx "${audio_ref[$((10#$slot - 1))]:-}")"
+    [[ -n "$lang" ]] || continue
+    for (( s = 1; s <= n_sub; s++ )); do
+      (( used[s] )) && continue
+      sub_lang="$(sa_stream_family_of_idx "${sub_ref[$((s - 1))]}")"
+      [[ "$sub_lang" == "$lang" ]] || continue
+      used[$s]=1
+      out+=("$s")
+      (( matched++ )) || true
+      break
+    done
+  done
+  (( matched >= 1 )) || return 1
+  for (( s = 1; s <= n_sub; s++ )); do
+    (( used[s] )) && continue
+    out+=("$s")
+  done
+  (( ${#out[@]} == n_sub )) || return 1
+  printf '%s' "${out[0]}"
+  for (( i = 1; i < n_sub; i++ )); do
+    printf ',%s' "${out[$i]}"
+  done
+  printf '\n'
+}
+
+sa_subtitle_order_text() {
+  local i idx lang a_n=0 nums="" langs=""
+  for i in "${!ST_IDX[@]}"; do
+    [[ "${ST_TYPE[$i],,}" == subtitle ]] || continue
+    (( a_n++ )) || true
+    idx="${ST_IDX[$i]}"
+    lang="${ST_LANG[$i]:-?}"
+    [[ "${ST_DEF[$i]}" == 1 ]] && lang+=" default"
+    if [[ -n "$nums" ]]; then
+      nums+=", ${a_n}"
+      langs+=", ${lang}"
+    else
+      nums="${a_n}"
+      langs="${lang}"
+    fi
+  done
+  if (( a_n == 0 )); then
+    printf '—'
+    return 0
+  fi
+  printf '%s  (%s)' "$nums" "$langs"
+}
+
+sa_subtitle_order_after() {
+  local spec="$1" i slot idx lang a_n=0 nums="" langs=""
+  local -a slots=() sub_ref=()
+  sa_fill_kept_streams
+  sub_ref=("${KEPT_SUBTITLE_ST[@]+"${KEPT_SUBTITLE_ST[@]}"}")
+  (( ${#sub_ref[@]} )) || { printf '—'; return 0; }
+  IFS=',' read -r -a slots <<< "$spec"
+  for slot in "${slots[@]}"; do
+    idx="${sub_ref[$((10#$slot - 1))]}"
+    (( a_n++ )) || true
+    lang="?"
+    for i in "${!ST_IDX[@]}"; do
+      [[ "${ST_IDX[$i]}" == "$idx" ]] || continue
+      lang="${ST_LANG[$i]:-?}"
+      (( a_n == 1 )) && lang+=" default"
       break
     done
     if [[ -n "$nums" ]]; then
@@ -1021,24 +1426,39 @@ sa_temp_path() {
   fi
 }
 
-# Map every original stream slot in order; audio slots take the permuted sources.
+# Map remaining streams in original slot order; audio (and matching subtitles) take the permuted sources.
 sa_build_map_args() {
   local src="$1" dest="$2" slot_csv="$3"
   local -n out_map=$4
   local -n out_note=$5
-  local i type idx slot src_idx mp4=0 skipped=""
-  local -a slots=() audio_src=()
+  local -n out_disp=$6
+  local i type idx slot src_idx mp4=0 skipped="" sub_csv="" do_sub=0 a_out=0 s_out=0
+  local -a slots=() audio_src=() sub_slots=() sub_src=() audio_ref=() sub_ref=()
   out_map=()
   out_note=""
+  out_disp=()
+  sa_fill_kept_streams
+  audio_ref=("${KEPT_AUDIO_ST[@]+"${KEPT_AUDIO_ST[@]}"}")
+  sub_ref=("${KEPT_SUBTITLE_ST[@]+"${KEPT_SUBTITLE_ST[@]}"}")
   sa_is_mp4_family "$dest" && mp4=1
   (( mp4 == 0 )) && sa_is_mp4_family "$src" && mp4=1
+  (( ${#audio_ref[@]} >= 1 )) || return 1
   IFS=',' read -r -a slots <<< "$slot_csv"
-  (( ${#slots[@]} == ${#AUDIO_ST[@]} )) || return 1
+  (( ${#slots[@]} == ${#audio_ref[@]} )) || return 1
   for slot in "${slots[@]}"; do
-    audio_src+=("${AUDIO_ST[$((10#$slot - 1))]}")
+    audio_src+=("${audio_ref[$((10#$slot - 1))]}")
   done
+  if sub_csv=$(sa_subtitle_perm "$slot_csv"); then
+    do_sub=1
+    IFS=',' read -r -a sub_slots <<< "$sub_csv"
+    (( ${#sub_slots[@]} == ${#sub_ref[@]} )) || return 1
+    for slot in "${sub_slots[@]}"; do
+      sub_src+=("${sub_ref[$((10#$slot - 1))]}")
+    done
+  fi
   (( mp4 )) && out_map+=(-copy_unknown)
   slot=0
+  local sub_i=0
   for (( i = 0; i < ${#ST_IDX[@]}; i++ )); do
     idx="${ST_IDX[$i]}"
     type="${ST_TYPE[$i],,}"
@@ -1051,13 +1471,37 @@ sa_build_map_args() {
       continue
     fi
     if [[ "$type" == audio ]]; then
+      sa_idx_in_list "$idx" "${audio_ref[@]+"${audio_ref[@]}"}" || continue
       src_idx="${audio_src[$slot]}"
       (( slot++ )) || true
       out_map+=(-map "0:${src_idx}")
+      (( a_out++ )) || true
+    elif [[ "$type" == subtitle ]]; then
+      sa_idx_in_list "$idx" "${sub_ref[@]+"${sub_ref[@]}"}" || continue
+      if (( do_sub )); then
+        src_idx="${sub_src[$sub_i]}"
+        (( sub_i++ )) || true
+        out_map+=(-map "0:${src_idx}")
+      else
+        out_map+=(-map "0:${idx}")
+      fi
+      (( s_out++ )) || true
     else
       out_map+=(-map "0:${idx}")
     fi
   done
+  if (( a_out > 0 )); then
+    out_disp+=(-disposition:a:0 default)
+    for (( i = 1; i < a_out; i++ )); do
+      out_disp+=(-disposition:a:"$i" 0)
+    done
+  fi
+  if (( do_sub && s_out > 0 )); then
+    out_disp+=(-disposition:s:0 default)
+    for (( i = 1; i < s_out; i++ )); do
+      out_disp+=(-disposition:s:"$i" 0)
+    done
+  fi
   [[ -n "$skipped" ]] && out_note="MP4 cannot copy ${skipped} (telemetry is kept)"
   return 0
 }
@@ -1081,13 +1525,13 @@ sa_restore_times() {
 sa_remux() {
   local src="$1" dest="$2" slot_csv="$3"
   local tmp ref log rc=0 note=""
-  local -a map_args=()
+  local -a map_args=() disp_args=()
   tmp="$(sa_temp_path "$dest")"
   ref="$(mktemp)"
   log="$(mktemp)"
   touch -r "$src" -- "$ref" 2>/dev/null || true
   TMP_FILE="$tmp"
-  sa_build_map_args "$src" "$dest" "$slot_csv" map_args note || {
+  sa_build_map_args "$src" "$dest" "$slot_csv" map_args note disp_args || {
     rm -f -- "$ref" "$log"
     TMP_FILE=""
     return 1
@@ -1098,6 +1542,7 @@ sa_remux() {
     -map_metadata 0 \
     -map_chapters 0 \
     -c copy \
+    "${disp_args[@]}" \
     -max_muxing_queue_size 9999 \
     -- "$tmp" 2>"$log" || rc=$?
   if (( rc != 0 )) || [[ ! -s "$tmp" ]]; then
@@ -1252,8 +1697,208 @@ sa_ask_together() {
   esac
 }
 
+sa_ask_subtitles() {
+  if (( SUBS_SET )); then
+    return 0
+  fi
+  if (( DO_YES )) || (( ! script_is_run_interactively )); then
+    SWAP_SUBS=1
+    return 0
+  fi
+  echo
+  sa_print_question "Also swap subtitle tracks to the same languages as the audio?"
+  echo "  [Y] Yes (default) — Italian audio with Italian subtitles, and so on"
+  echo "  [n] No — leave subtitle order as it is"
+  echo "  [q] Quit"
+  sa_read_key "Swap matching subtitles? [Y/n/q]: " y "Yes — same language order as audio"
+  case "$REPLY" in
+    y)
+      SWAP_SUBS=1
+      sa_print_selected "yes (subtitles follow the audio languages; first subtitle becomes default)"
+      ;;
+    n)
+      SWAP_SUBS=0
+      sa_print_selected "no (leave subtitle order as it is)"
+      ;;
+    q) sa_quit ;;
+    *) echo "$(sa_ts) That is not a choice. Stopping."; return_code=1; exit 1 ;;
+  esac
+}
+
+sa_set_drop_from_extras() {
+  sa_collect_all_fams
+  sa_extra_fams
+  DROP_FAMS=("${EXTRA_FAMS[@]+"${EXTRA_FAMS[@]}"}")
+}
+
+sa_set_drop_from_spec() {
+  local tok fam
+  local -a parts=()
+  DROP_FAMS=()
+  IFS=',' read -r -a parts <<< "$1"
+  for tok in "${parts[@]}"; do
+    tok="${tok// /}"
+    [[ -n "$tok" ]] || continue
+    fam="$(sa_parse_lang_token "$tok")"
+    [[ -n "$fam" ]] || continue
+    sa_idx_in_list "$fam" "${DROP_FAMS[@]+"${DROP_FAMS[@]}"}" && continue
+    DROP_FAMS+=("$fam")
+  done
+}
+
+sa_build_lang_menu() {
+  local fam
+  LANG_MENU_FAM=()
+  sa_collect_all_fams
+  for fam in eng pol deu; do
+    sa_idx_in_list "$fam" "${ALL_FAMS[@]+"${ALL_FAMS[@]}"}" || continue
+    LANG_MENU_FAM+=("$fam")
+  done
+  for fam in "${ALL_FAMS[@]+"${ALL_FAMS[@]}"}"; do
+    sa_lang_is_keep "$fam" && continue
+    LANG_MENU_FAM+=("$fam")
+  done
+}
+
+sa_choose_drop_langs() {
+  local i fam typed="" def="" tok k
+  local -a parts=() chosen=()
+  sa_build_lang_menu
+  (( ${#LANG_MENU_FAM[@]} )) || return 1
+  echo
+  echo "  Languages in these files:"
+  for i in "${!LANG_MENU_FAM[@]}"; do
+    fam="${LANG_MENU_FAM[$i]}"
+    if sa_lang_is_keep "$fam"; then
+      printf '    %s  %-12s  keep\n' "$((i + 1))" "$(sa_lang_label "$fam")"
+    else
+      printf '    %s  %s\n' "$((i + 1))" "$(sa_lang_label "$fam")"
+      if [[ -n "$def" ]]; then
+        def+=",$((i + 1))"
+      else
+        def="$((i + 1))"
+      fi
+    fi
+  done
+  [[ -n "$def" ]] || def=""
+  echo
+  printf '  Numbers to drop, comma-separated [%s]: ' "$def"
+  sa_flush_stdin
+  IFS= read -r typed || sa_quit
+  typed="${typed// /}"
+  [[ -z "$typed" ]] && typed="$def"
+  if [[ -z "$typed" ]]; then
+    DROP_FAMS=()
+    return 0
+  fi
+  IFS=',' read -r -a parts <<< "$typed"
+  DROP_FAMS=()
+  for tok in "${parts[@]}"; do
+    [[ "$tok" =~ ^[0-9]+$ ]] || return 1
+    k=$((10#$tok))
+    (( k >= 1 && k <= ${#LANG_MENU_FAM[@]} )) || return 1
+    fam="${LANG_MENU_FAM[$((k - 1))]}"
+    sa_idx_in_list "$fam" "${DROP_FAMS[@]+"${DROP_FAMS[@]}"}" && continue
+    DROP_FAMS+=("$fam")
+  done
+  return 0
+}
+
+sa_ask_languages() {
+  local extra_txt
+  sa_collect_all_fams
+  sa_extra_fams
+  if (( LANGS_SET )); then
+    case "$LANGS_MODE" in
+      all) DROP_FAMS=() ;;
+      drop) sa_set_drop_from_spec "$DROP_SPEC" ;;
+      *) sa_set_drop_from_extras ;;
+    esac
+    return 0
+  fi
+  if (( ${#EXTRA_FAMS[@]} == 0 )); then
+    DROP_FAMS=()
+    return 0
+  fi
+  if (( DO_YES )) || (( ! script_is_run_interactively )); then
+    sa_set_drop_from_extras
+    return 0
+  fi
+  extra_txt="$(sa_join_labels "${EXTRA_FAMS[@]}")"
+  echo
+  echo "These videos also have ${extra_txt}"
+  echo "  (audio and/or subtitles)."
+  echo
+  sa_print_question "Leave only English, Polish and German?"
+  echo "  [Y] Yes (default) — drop ${extra_txt}"
+  echo "  [c] Choose which languages to drop (you can pick more than one)"
+  echo "  [k] Keep every language"
+  echo "  [q] Quit"
+  sa_read_key "Leave English, Polish, German? [Y/c/k/q]: " y "Yes — drop ${extra_txt}"
+  case "$REPLY" in
+    y)
+      sa_set_drop_from_extras
+      sa_print_selected "yes (keep English, Polish, German; drop ${extra_txt})"
+      ;;
+    c)
+      if sa_choose_drop_langs; then
+        if (( ${#DROP_FAMS[@]} == 0 )); then
+          sa_print_selected "keep every language"
+        else
+          sa_print_selected "drop $(sa_join_labels "${DROP_FAMS[@]}")"
+        fi
+      else
+        echo "$(sa_ts) That is not a list of these languages. Keeping English, Polish, German."
+        sa_set_drop_from_extras
+      fi
+      ;;
+    k)
+      DROP_FAMS=()
+      sa_print_selected "keep every language"
+      ;;
+    q) sa_quit ;;
+    *) echo "$(sa_ts) That is not a choice. Stopping."; return_code=1; exit 1 ;;
+  esac
+}
+
+sa_finalize_plan() {
+  local i n kept drops_a drops_s expanded sub_csv
+  SWAP_TOTAL=0
+  for i in "${!FILES[@]}"; do
+    n="${FILE_AUDIO_N[$i]}"
+    FILE_SUB_NOTE[$i]=""
+    if (( n == 0 )); then
+      FILE_STATE[$i]=skip
+      FILE_WHY[$i]="no audio track"
+      continue
+    fi
+    kept="$(sa_kept_count_csv "${FILE_AUDIO_FAMS[$i]}")"
+    drops_a="$(sa_drop_count_csv "${FILE_AUDIO_FAMS[$i]}")"
+    drops_s="$(sa_drop_count_csv "${FILE_SUB_FAMS[$i]}")"
+    if (( kept == 0 && n > 0 )); then
+      kept="$n"
+      drops_a=0
+    fi
+    if (( kept == 1 )); then
+      expanded="1"
+    elif ! expanded=$(sa_expand_slots "$kept" "$ORDER_SPEC"); then
+      FILE_STATE[$i]=skip
+      FILE_WHY[$i]="order ${ORDER_SPEC} does not fit ${kept} remaining audio tracks"
+      continue
+    fi
+    if sa_slots_are_identity "$expanded" "$kept" && (( drops_a + drops_s == 0 )); then
+      FILE_STATE[$i]=skip
+      FILE_WHY[$i]="that order leaves the audio as it is"
+      continue
+    fi
+    FILE_STATE[$i]=swap
+    FILE_WHY[$i]="$expanded"
+    (( SWAP_TOTAL++ )) || true
+  done
+}
+
 sa_equivalent_cli() {
-  local cmd out q_dir p
+  local cmd out q_dir p drop_cli=""
   local -a parts=()
   cmd="$(basename -- "${BASH_SOURCE[0]:-$0}")"
   (( DO_YES )) && parts+=("--yes")
@@ -1270,6 +1915,19 @@ sa_equivalent_cli() {
     parts+=("--together")
   else
     parts+=("--one-by-one")
+  fi
+  if (( SWAP_SUBS )); then
+    parts+=("--subtitles" "yes")
+  else
+    parts+=("--subtitles" "no")
+  fi
+  if (( ${#DROP_FAMS[@]} > 0 )); then
+    drop_cli="$(IFS=','; printf '%s' "${DROP_FAMS[*]}")"
+    parts+=("--drop" "$drop_cli")
+  elif [[ "$LANGS_MODE" == all ]]; then
+    parts+=("--languages" "all")
+  else
+    parts+=("--languages" "keep")
   fi
   if (( ORDER_SET )) || [[ -n "$REST_ORDER" ]]; then
     parts+=("--order" "${REST_ORDER:-$ORDER_SPEC}")
@@ -1334,6 +1992,26 @@ sa_print_run_settings() {
       printf '  %-21s%s\n' "Files:" "one by one (default)"
     fi
   fi
+  if (( SUBS_SET )); then
+    if (( SWAP_SUBS )); then
+      printf '  %-21s%s\n' "--subtitles:" "given (yes — same languages as audio)"
+    else
+      printf '  %-21s%s\n' "--subtitles:" "given (no — leave subtitle order)"
+    fi
+  else
+    if (( SWAP_SUBS )); then
+      printf '  %-21s%s\n' "--subtitles:" "yes (asked — same languages as audio)"
+    else
+      printf '  %-21s%s\n' "--subtitles:" "no (asked — leave subtitle order)"
+    fi
+  fi
+  if (( ${#DROP_FAMS[@]} > 0 )); then
+    printf '  %-21s%s\n' "Languages:" "drop $(sa_join_labels "${DROP_FAMS[@]}")"
+  elif [[ "$LANGS_MODE" == all ]]; then
+    printf '  %-21s%s\n' "Languages:" "keep every language"
+  else
+    printf '  %-21s%s\n' "Languages:" "keep English, Polish, German"
+  fi
   if (( ORDER_SET )); then
     printf '  %-21s%s\n' "--order:" "given (${ORDER_SPEC})"
   else
@@ -1345,7 +2023,7 @@ sa_print_run_settings() {
 }
 
 sa_probe_plan() {
-  local i src n why dest expanded total
+  local i src n why dest expanded total sub_csv
   total=${#FILES[@]}
   for i in "${!FILES[@]}"; do
     src="${FILES[$i]}"
@@ -1353,10 +2031,15 @@ sa_probe_plan() {
     FILE_STATE[$i]=skip
     FILE_WHY[$i]=""
     FILE_AUDIO_N[$i]=0
+    FILE_AUDIO_FAMS[$i]=""
+    FILE_SUB_FAMS[$i]=""
+    FILE_SUB_NOTE[$i]=""
     FILE_DEST[$i]=""
     sa_load_streams "$src"
     n=${#AUDIO_ST[@]}
     FILE_AUDIO_N[$i]="$n"
+    FILE_AUDIO_FAMS[$i]="$(sa_csv_fams "${AUDIO_ST[@]+"${AUDIO_ST[@]}"}")"
+    FILE_SUB_FAMS[$i]="$(sa_csv_fams "${SUBTITLE_ST[@]+"${SUBTITLE_ST[@]}"}")"
     dest="$(sa_dest_path "$src")"
     FILE_DEST[$i]="$dest"
     if (( n == 0 )); then
@@ -1377,11 +2060,14 @@ sa_probe_plan() {
     fi
     FILE_STATE[$i]=swap
     FILE_WHY[$i]="$expanded"
+    if sub_csv=$(sa_subtitle_perm "$expanded"); then
+      FILE_SUB_NOTE[$i]="$sub_csv"
+    fi
   done
 }
 
 sa_print_plan() {
-  local i src n state why dest
+  local i src n state why dest extra
   echo
   echo "Videos:"
   for i in "${!FILES[@]}"; do
@@ -1392,7 +2078,18 @@ sa_print_plan() {
     dest="${FILE_DEST[$i]}"
     printf '  %s  (%s audio)\n' "$src" "$n"
     if [[ "$state" == swap ]]; then
-      printf '    -> %s  (audio order %s)\n' "$dest" "$why"
+      extra="audio order ${why}; first audio default"
+      if (( ${#DROP_FAMS[@]} > 0 )); then
+        extra+="; drop $(sa_join_labels "${DROP_FAMS[@]}")"
+      fi
+      if (( SWAP_SUBS )); then
+        if [[ -n "${FILE_SUB_NOTE[$i]}" ]]; then
+          extra+="; subtitles ${FILE_SUB_NOTE[$i]}; first subtitle default"
+        else
+          extra+="; subtitles left as they are"
+        fi
+      fi
+      printf '    -> %s  (%s)\n' "$dest" "$extra"
     else
       printf '    skip: %s\n' "$why"
     fi
@@ -1447,7 +2144,7 @@ sa_ask_existing() {
 }
 
 sa_process_one() {
-  local i="$1" src dest n order why rc=0
+  local i="$1" src dest n order why rc=0 extra subp=""
   src="${FILES[$i]}"
   dest="${FILE_DEST[$i]}"
   n="${FILE_AUDIO_N[$i]}"
@@ -1457,6 +2154,14 @@ sa_process_one() {
     return 0
   fi
   sa_load_info "$src"
+  sa_fill_kept_streams
+  n=${#KEPT_AUDIO_ST[@]}
+  if (( n == 0 )); then
+    echo "$(sa_ts) No audio track left in this file. Skipping."
+    SKIPPED_LIST+=("${src} (no audio track)")
+    FILE_STATE[$i]=skip
+    return 0
+  fi
   sa_store_info_as IN
   sa_copy_stream_snapshot IN
   (( SWAP_SHOWN++ )) || true
@@ -1468,10 +2173,17 @@ sa_process_one() {
     sa_print_facts
     sa_print_stream_table
   fi
+  if (( n == 1 )); then
+    why="1"
+  elif ! why=$(sa_expand_slots "$n" "$ORDER_SPEC"); then
+    why="${FILE_WHY[$i]}"
+  fi
   sa_print_audio_plan "$why"
   order="$why"
   if (( APPLY_REST || (TOGETHER && SWAP_SHOWN > 1) )) && [[ -n "${REST_ORDER:-$ORDER_SPEC}" ]]; then
-    if ! order=$(sa_expand_slots "$n" "${REST_ORDER:-$ORDER_SPEC}"); then
+    if (( n == 1 )); then
+      order="1"
+    elif ! order=$(sa_expand_slots "$n" "${REST_ORDER:-$ORDER_SPEC}"); then
       echo "$(sa_ts) Order ${REST_ORDER:-$ORDER_SPEC} does not fit this file. Skipping."
       SKIPPED_LIST+=("${src} (order does not fit)")
       FILE_STATE[$i]=skip
@@ -1489,7 +2201,10 @@ sa_process_one() {
     case "$REPLY" in
       y) sa_print_selected "yes (${order})" ;;
       o)
-        if sa_ask_custom_order "$n" "$ORDER_SPEC"; then
+        if (( n < 2 )); then
+          echo "$(sa_ts) Only one remaining audio track. Skipping the custom order."
+          order="1"
+        elif sa_ask_custom_order "$n" "$ORDER_SPEC"; then
           ORDER_SPEC="$REPLY"
           ORDER_SET=1
           order="$REPLY"
@@ -1524,13 +2239,25 @@ sa_process_one() {
         ;;
     esac
   fi
-  if sa_slots_are_identity "$order" "$n"; then
+  sa_fill_kept_streams
+  if sa_slots_are_identity "$order" "$n" && (( ${#KEPT_AUDIO_ST[@]} == ${#AUDIO_ST[@]} && ${#KEPT_SUBTITLE_ST[@]} == ${#SUBTITLE_ST[@]} )); then
     echo "$(sa_ts) That order leaves the audio as it is. Skipping."
     SKIPPED_LIST+=("${src} (left as it is)")
     return 0
   fi
+  extra="audio order ${order}; first audio default"
+  if (( ${#DROP_FAMS[@]} > 0 )); then
+    extra+="; drop $(sa_join_labels "${DROP_FAMS[@]}")"
+  fi
+  if (( SWAP_SUBS )); then
+    if subp=$(sa_subtitle_perm "$order"); then
+      extra+="; subtitles ${subp}; first subtitle default"
+    else
+      extra+="; subtitles left as they are"
+    fi
+  fi
   if (( DRY_RUN )); then
-    echo "$(sa_ts) Would write ${dest}  (audio order ${order})"
+    echo "$(sa_ts) Would write ${dest}  (${extra})"
     DONE_LIST+=("${dest} (dry run, ${order})")
     return 0
   fi
@@ -1547,9 +2274,9 @@ sa_process_one() {
     fi
   fi
   if (( KEEP_ORIGINAL )); then
-    echo "$(sa_ts) Writing ${dest}  (audio order ${order}, copy; original kept)"
+    echo "$(sa_ts) Writing ${dest}  (${extra}, copy; original kept)"
   else
-    echo "$(sa_ts) Replacing ${src}  (audio order ${order}, copy)"
+    echo "$(sa_ts) Replacing ${src}  (${extra}, copy)"
   fi
   sa_proc_begin
   if sa_remux "$src" "$dest" "$order"; then
@@ -1677,6 +2404,28 @@ while [[ $# -gt 0 ]]; do
       shift 2 ;;
     --together) TOGETHER=1; TOGETHER_SET=1; shift ;;
     --one-by-one) TOGETHER=0; TOGETHER_SET=1; shift ;;
+    --subtitles)
+      sa_need_value "$@"
+      case "$2" in
+        yes) SWAP_SUBS=1; SUBS_SET=1 ;;
+        no) SWAP_SUBS=0; SUBS_SET=1 ;;
+        *) echo "ERROR: --subtitles must be yes or no, not: $2" >&2; exit 1 ;;
+      esac
+      shift 2 ;;
+    --languages)
+      sa_need_value "$@"
+      case "$2" in
+        keep) LANGS_MODE=keep; LANGS_SET=1 ;;
+        all) LANGS_MODE=all; LANGS_SET=1 ;;
+        *) echo "ERROR: --languages must be keep or all, not: $2" >&2; exit 1 ;;
+      esac
+      shift 2 ;;
+    --drop)
+      sa_need_value "$@"
+      DROP_SPEC="${2// /}"
+      LANGS_MODE=drop
+      LANGS_SET=1
+      shift 2 ;;
     --order)
       sa_need_value "$@"
       ORDER_SPEC="${2// /}"
@@ -1693,6 +2442,7 @@ sa_require_ffmpeg
 sa_ask_colors
 sa_ask_keep_copy
 sa_ask_together
+sa_ask_subtitles
 
 if (( ${#INPUT_ARGS[@]} == 0 )); then
   echo
@@ -1739,21 +2489,27 @@ fi
 echo
 sa_probe_plan
 
-SWAP_TOTAL=0
-for i in "${!FILES[@]}"; do
-  [[ "${FILE_STATE[$i]}" == swap ]] && (( SWAP_TOTAL++ )) || true
-done
-_skip=$(( ${#FILES[@]} - SWAP_TOTAL ))
 if (( ${#FILES[@]} == 1 )); then
-  echo "$(sa_ts) Read 1 video (${SWAP_TOTAL} to swap, ${_skip} to skip)."
+  echo "$(sa_ts) Read 1 video."
 else
-  echo "$(sa_ts) Read ${#FILES[@]} videos (${SWAP_TOTAL} to swap, ${_skip} to skip)."
+  echo "$(sa_ts) Read ${#FILES[@]} videos."
 fi
 
 sa_print_plan
+sa_ask_languages
+sa_finalize_plan
+
+if (( ${#DROP_FAMS[@]} > 0 )); then
+  echo
+  echo "After dropping $(sa_join_labels "${DROP_FAMS[@]}"):"
+  sa_print_plan
+fi
+
+_skip=$(( ${#FILES[@]} - SWAP_TOTAL ))
+echo "$(sa_ts) ${SWAP_TOTAL} to process, ${_skip} to skip."
 
 if (( SWAP_TOTAL == 0 )); then
-  echo "$(sa_ts) No file with two or more audio tracks to swap."
+  echo "$(sa_ts) No file to swap or drop."
   exit 0
 fi
 
