@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261015.191843 - the move/write line is a short block: backup, write, audio, drop, subtitles, streams
 # v. 20261015.184100 - audio and subtitle plan arrows start in the same column
 # v. 20261015.183700 - each file is boxed with a start and end rule; compare columns are wider; only the default key is a capital
 # v. 20261014.225831 - if clip-backup already exists, save another original copy as clip-backup_YYYYMMDD-HHMMSS.ext
@@ -15,6 +16,7 @@
 # v. 20261014.220133 - ask to keep the original (default yes); print a facts table before and after each swap
 # v. 20261014.213909 - swap audio tracks in a video; every other stream stays, in the same order
 #
+# 2026.10.15 - v. 0.16 - the move/write status is several short lines, not one long line
 # 2026.10.15 - v. 0.15 - the -> on the audio line and the subtitle line start in the same column
 # 2026.10.15 - v. 0.14 - a rule opens and closes each file; the input/output columns are 70 characters so a long name fits; only Y is capital in the swap question
 # 2026.10.14 - v. 0.13 - if clip-backup.mp4 is already there, copy the original to clip-backup_YYYYMMDD-HHMMSS.mp4 instead of overwriting
@@ -2183,6 +2185,31 @@ sa_ask_custom_order() {
   return 1
 }
 
+sa_comma_spaces() {
+  printf '%s' "${1//,/, }"
+}
+
+sa_print_write_plan() {
+  local headline="$1" backup_name="$2" write_name="$3" order="$4" subp="${5:-}"
+  echo "$(sa_ts) ${headline}"
+  if [[ -n "$backup_name" ]]; then
+    printf '  %-12s%s\n' "backup" "$backup_name"
+  fi
+  printf '  %-12s%s\n' "write" "$write_name"
+  printf '  %-12s%s\n' "audio" "$(sa_comma_spaces "$order"), first track default"
+  if (( ${#DROP_FAMS[@]} > 0 )); then
+    printf '  %-12s%s\n' "drop" "$(sa_join_labels "${DROP_FAMS[@]}")"
+  fi
+  if (( SWAP_SUBS )); then
+    if [[ -n "$subp" ]]; then
+      printf '  %-12s%s\n' "subtitles" "$(sa_comma_spaces "$subp"), first subtitle default"
+    else
+      printf '  %-12s%s\n' "subtitles" "left as they are"
+    fi
+  fi
+  printf '  %-12s%s\n' "streams" "copied, not re-encoded"
+}
+
 sa_process_one() {
   local rc=0
   SA_FILE_OPEN=0
@@ -2192,7 +2219,7 @@ sa_process_one() {
 }
 
 sa_process_one_work() {
-  local i="$1" src dest backup n order why rc=0 extra subp="" copy_aside=0
+  local i="$1" src dest backup n order why rc=0 subp="" copy_aside=0
   src="${FILES[$i]}"
   dest="${FILE_DEST[$i]}"
   n="${FILE_AUDIO_N[$i]}"
@@ -2292,15 +2319,10 @@ sa_process_one_work() {
     SKIPPED_LIST+=("${src} (left as it is)")
     return 0
   fi
-  extra="audio order ${order}; first audio default"
-  if (( ${#DROP_FAMS[@]} > 0 )); then
-    extra+="; drop $(sa_join_labels "${DROP_FAMS[@]}")"
-  fi
+  subp=""
   if (( SWAP_SUBS )); then
-    if subp=$(sa_subtitle_perm "$order"); then
-      extra+="; subtitles ${subp}; first subtitle default"
-    else
-      extra+="; subtitles left as they are"
+    if ! subp=$(sa_subtitle_perm "$order"); then
+      subp=""
     fi
   fi
   backup="${FILE_BACKUP[$i]}"
@@ -2314,18 +2336,18 @@ sa_process_one_work() {
   if (( DRY_RUN )); then
     if (( KEEP_ORIGINAL )); then
       if (( copy_aside )); then
-        echo "$(sa_ts) Would copy ${src##*/} -> ${backup##*/}, then write ${src##*/}  (${extra})"
+        sa_print_write_plan "Would copy the original to a dated name, then write the swapped file" "${backup##*/}" "${src##*/}" "$order" "$subp"
       else
-        echo "$(sa_ts) Would move ${src##*/} -> ${backup##*/}, then write ${src##*/}  (${extra})"
+        sa_print_write_plan "Would move the original, then write the swapped file" "${backup##*/}" "${src##*/}" "$order" "$subp"
       fi
     else
-      echo "$(sa_ts) Would replace ${src##*/}  (${extra})"
+      sa_print_write_plan "Would replace the original with the swapped file" "" "${src##*/}" "$order" "$subp"
     fi
     DONE_LIST+=("${dest} (dry run, ${order})")
     return 0
   fi
   if (( KEEP_ORIGINAL )) && (( copy_aside )); then
-    echo "$(sa_ts) Existing backup kept; copying original to ${backup##*/}, writing ${src##*/}  (${extra}, copy)"
+    sa_print_write_plan "Copying the original to a dated name, then writing the swapped file" "${backup##*/}" "${src##*/}" "$order" "$subp"
     if ! cp -f -- "$src" "$backup"; then
       echo "$(sa_ts) Could not copy ${src} to ${backup}." >&2
       FAILED_LIST+=("$src")
@@ -2351,7 +2373,7 @@ sa_process_one_work() {
     return 1
   fi
   if (( KEEP_ORIGINAL )); then
-    echo "$(sa_ts) Moving original to ${backup##*/}, writing ${src##*/}  (${extra}, copy)"
+    sa_print_write_plan "Moving the original, then writing the swapped file" "${backup##*/}" "${src##*/}" "$order" "$subp"
     if ! mv -f -- "$src" "$backup"; then
       echo "$(sa_ts) Could not move ${src} aside." >&2
       FAILED_LIST+=("$src")
@@ -2380,7 +2402,7 @@ sa_process_one_work() {
     return_code=1
     return 1
   fi
-  echo "$(sa_ts) Replacing ${src}  (${extra}, copy)"
+  sa_print_write_plan "Replacing the original with the swapped file" "" "${src##*/}" "$order" "$subp"
   sa_proc_begin
   if sa_remux "$src" "$dest" "$order"; then
     sa_proc_end
