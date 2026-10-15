@@ -15,10 +15,10 @@
 # 2026.06.11 - v. 1.4 - print ffmpeg path/version at start; FFMPEG_BIN; mkdir output dir; -nostdin; quote vars
 # 2026.05.26 - user-facing messages translated from Polish to English
 # 2023.07.08 - v. 1.3 - bugfix: force day-of-month as base-10 in arithmetic (08 is invalid octal)
-# 2023.05.22 - v. 1.2 - added NO_STARTUP_DELAY parameters to /root/bin/_script_header.sh
+# 2023.05.22 - v. 1.2 - added NO_STARTUP_DELAY parameters to "${profile_location_dir:-$HOME}/bin/_script_header.sh"
 # 2023.05.16 - v. 1.1 - bugfix: functional change of the script
 # 2023.05.15 - v. 1.0 - bugfix: functional change of the script
-# 2023.04.11 - v. 0.9 - bugfix: removed second invocation of /root/bin/_script_header.sh
+# 2023.04.11 - v. 0.9 - bugfix: removed second invocation of "${profile_location_dir:-$HOME}/bin/_script_header.sh"
 # 2023.02.14 - v. 0.8 - removed sending of healthchecks status
 # 2022.05.23 - v. 0.7 - append 2>/dev/null to curl so cron does not email on timeout
 # 2022.05.16 - v. 0.6 - remove curl to avoid starting "$url/start" twice; check ffmpeg exit code via exit $?
@@ -50,7 +50,7 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-. /root/bin/_script_header.sh "${HEADER_EXTRA_ARGS[@]}"
+. "${profile_location_dir:-$HOME}/bin/_script_header.sh" "${HEADER_EXTRA_ARGS[@]}"
 
 while [[ $# -gt 0 ]]; do
   case $1 in
@@ -61,7 +61,7 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-. /root/bin/_script_header.sh --no_startup_delay
+. "${profile_location_dir:-$HOME}/bin/_script_header.sh" --no_startup_delay
 
 STREAM_URL="${STREAM_URL:-http://poznan5-4.radio.pionier.net.pl:8000/tuba10-1.mp3}"
 STREAM_URL_FALLBACK="${STREAM_URL_FALLBACK:-http://gdansk1-1.radio.pionier.net.pl:8000/pl/tuba10-1.mp3}"

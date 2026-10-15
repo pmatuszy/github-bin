@@ -1,4 +1,4 @@
-. /root/bin/_script_header.sh
+. "${profile_location_dir:-$HOME}/bin/_script_header.sh"
 
 while : ; do 
   echo `date` `/root/bin/obniz-io-prio.sh`

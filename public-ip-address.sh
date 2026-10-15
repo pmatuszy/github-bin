@@ -22,9 +22,9 @@ while [[ $# -gt 0 ]]; do
       shift
       ;;
     --history)
-      if [[ -f /root/bin/_script_header.sh ]]; then
+      if [[ -f "${profile_location_dir:-$HOME}/bin/_script_header.sh" ]]; then
         # shellcheck source=/dev/null
-        . /root/bin/_script_header.sh NO_STARTUP_DELAY
+        . "${profile_location_dir:-$HOME}/bin/_script_header.sh" NO_STARTUP_DELAY
         print_script_history
       else
         echo "${0##*/}: _script_header.sh not found; cannot print history." >&2
@@ -125,7 +125,7 @@ if ((_raw)); then
   exit 0
 fi
 
-. /root/bin/_script_header.sh "${HEADER_EXTRA_ARGS[@]}"
+. "${profile_location_dir:-$HOME}/bin/_script_header.sh" "${HEADER_EXTRA_ARGS[@]}"
 
 return_code=1
 

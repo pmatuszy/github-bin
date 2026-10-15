@@ -6049,7 +6049,7 @@ DO_YES=0
 MERGE_ALL_REMAINING=0
 SKIP_ALL_REMAINING=0
 GROUP_BLOBS=()
-. /root/bin/_script_header.sh
+. "${profile_location_dir:-$HOME}/bin/_script_header.sh"
 
 # Remember where the seam-preview values came from, so "=== Run settings ===" can tell
 # env/default apart from an explicit flag (set below in the --seam-* branches).

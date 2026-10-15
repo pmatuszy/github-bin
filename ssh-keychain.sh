@@ -39,7 +39,7 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-. /root/bin/_script_header.sh "${HEADER_EXTRA_ARGS[@]}"
+. "${profile_location_dir:-$HOME}/bin/_script_header.sh" "${HEADER_EXTRA_ARGS[@]}"
 
 while [[ $# -gt 0 ]]; do
   case $1 in
@@ -55,9 +55,9 @@ batch_mode=0
 if (( $# != 0 )) && [ "${1-nonbatch}" == "batch" ]; then
   echo ; echo "(PGM) enabling batch mode (no questions asked)"
   batch_mode=1
-  . /root/bin/_script_header.sh --no_startup_delay
+  . "${profile_location_dir:-$HOME}/bin/_script_header.sh" --no_startup_delay
 else
-  . /root/bin/_script_header.sh
+  . "${profile_location_dir:-$HOME}/bin/_script_header.sh"
 fi
 
 if [ -f "$HEALTHCHECKS_FILE" ];then

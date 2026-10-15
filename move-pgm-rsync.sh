@@ -559,7 +559,7 @@ done
 set -- "${CLI_ARGS[@]}"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
-if [[ -r /root/bin/_script_header.sh ]]; then
+if [[ -r "${profile_location_dir:-$HOME}/bin/_script_header.sh" ]]; then
   SCRIPT_SUPPORT_DIR=/root/bin
 else
   SCRIPT_SUPPORT_DIR="$SCRIPT_DIR"

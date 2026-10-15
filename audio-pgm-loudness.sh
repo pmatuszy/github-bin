@@ -411,7 +411,7 @@ HEADER_EXTRA_ARGS=()
 for _apl_a in "$@"; do
   [[ "$_apl_a" == --no_startup_delay ]] && HEADER_EXTRA_ARGS+=(NO_STARTUP_DELAY)
 done
-. /root/bin/_script_header.sh "${HEADER_EXTRA_ARGS[@]}"
+. "${profile_location_dir:-$HOME}/bin/_script_header.sh" "${HEADER_EXTRA_ARGS[@]}"
 
 while [[ $# -gt 0 ]]; do
   case $1 in

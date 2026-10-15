@@ -111,7 +111,7 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-. /root/bin/_script_header.sh "${HEADER_EXTRA_ARGS[@]}"
+. "${profile_location_dir:-$HOME}/bin/_script_header.sh" "${HEADER_EXTRA_ARGS[@]}"
 
 VERBOSE=0
 DRY_RUN=0

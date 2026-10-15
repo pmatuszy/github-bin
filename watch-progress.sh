@@ -67,12 +67,12 @@ while [[ $# -gt 0 ]]; do
       exit 0
       ;;
     -v|--version)
-      . /root/bin/_script_header.sh NO_STARTUP_DELAY
+      . "${profile_location_dir:-$HOME}/bin/_script_header.sh" NO_STARTUP_DELAY
       print_version_banner
       exit 0
       ;;
     --history)
-      . /root/bin/_script_header.sh NO_STARTUP_DELAY
+      . "${profile_location_dir:-$HOME}/bin/_script_header.sh" NO_STARTUP_DELAY
       print_script_history
       exit 0
       ;;
@@ -82,7 +82,7 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-. /root/bin/_script_header.sh "${HEADER_EXTRA_ARGS[@]}"
+. "${profile_location_dir:-$HOME}/bin/_script_header.sh" "${HEADER_EXTRA_ARGS[@]}"
 
 check_if_installed progress
 

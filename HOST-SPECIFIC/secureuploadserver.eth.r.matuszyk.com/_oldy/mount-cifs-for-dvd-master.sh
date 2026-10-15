@@ -2,7 +2,7 @@
 # 2021.04.20 - v. 0.1 - single password prompt only
 # 2020.xx.xx - v. 0.1 - initial release
 
-. /root/bin/_script_header.sh
+. "${profile_location_dir:-$HOME}/bin/_script_header.sh"
 
 loc_dir_name="/mnt/rsync-master-_na_DVD"
 rem_dir_name="//laptopvm.eth.b.matuszyk.com/_na_DVD-MASTER-SOURCE"

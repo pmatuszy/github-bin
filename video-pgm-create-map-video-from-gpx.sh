@@ -1677,7 +1677,7 @@ PROC_SLICE_START=""
 DONE_SEC=() DONE_VID=() DONE_ENC=() DONE_OUT_B=()
 OLD_KEPT=() OLD_DELETED=()
 # shellcheck disable=SC1091
-. /root/bin/_script_header.sh
+. "${profile_location_dir:-$HOME}/bin/_script_header.sh"
 
 DEFAULT_TILE_URL="https://tile.openstreetmap.org/{z}/{x}/{y}.png"
 DEFAULT_ATTRIBUTION="© OpenStreetMap contributors"

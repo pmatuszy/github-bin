@@ -3,10 +3,10 @@
 # v. 20260716.164840 - add -h/--help, -v/--version, --no_startup_delay
 
 # 2026.05.26 - user-facing messages translated from Polish to English
-# 2023.05.22 - v. 1.2 - added NO_STARTUP_DELAY parameters to /root/bin/_script_header.sh
+# 2023.05.22 - v. 1.2 - added NO_STARTUP_DELAY parameters to "${profile_location_dir:-$HOME}/bin/_script_header.sh"
 # 2023.05.16 - v. 1.1 - bugfix: functional change of the script
 # 2023.05.15 - v. 1.0 - bugfix: functional change of the script
-# 2023.04.11 - v. 0.9 - bugfix: removed second invocation of /root/bin/_script_header.sh
+# 2023.04.11 - v. 0.9 - bugfix: removed second invocation of "${profile_location_dir:-$HOME}/bin/_script_header.sh"
 # 2023.02.14 - v. 0.8 - removed sending of healthchecks status
 # 2022.05.23 - v. 0.7 - added 2>/dev/null after curl so cron does not mail about timeout
 # 2022.05.16 - v. 0.6 - removed curl so we do not start "$url/start" 2x, check ffmpeg exit code correctly via exit $?
@@ -44,7 +44,7 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-. /root/bin/_script_header.sh "${HEADER_EXTRA_ARGS[@]}"
+. "${profile_location_dir:-$HOME}/bin/_script_header.sh" "${HEADER_EXTRA_ARGS[@]}"
 
 while [[ $# -gt 0 ]]; do
   case $1 in
@@ -55,7 +55,7 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-. /root/bin/_script_header.sh --no_startup_delay
+. "${profile_location_dir:-$HOME}/bin/_script_header.sh" --no_startup_delay
 
 SOURCE="http://stream.live.vc.bbcmedia.co.uk/bbc_radio_fourfm"
 DEST_PREFIX="/worek-samba/nagrania/BBC4/BBC4"

@@ -71,9 +71,9 @@ EOF
       exit 0
       ;;
     --history)
-      if [[ -f /root/bin/_script_header.sh ]]; then
+      if [[ -f "${profile_location_dir:-$HOME}/bin/_script_header.sh" ]]; then
         # shellcheck source=/dev/null
-        . /root/bin/_script_header.sh NO_STARTUP_DELAY
+        . "${profile_location_dir:-$HOME}/bin/_script_header.sh" NO_STARTUP_DELAY
         print_script_history
       else
         echo "${0##*/}: _script_header.sh not found; cannot print history." >&2
@@ -97,7 +97,7 @@ EOF
   esac
 done
 
-. /root/bin/_script_header.sh "${HEADER_EXTRA_ARGS[@]}"
+. "${profile_location_dir:-$HOME}/bin/_script_header.sh" "${HEADER_EXTRA_ARGS[@]}"
 
 interval="${DATE_SHOW_INTERVAL:-1}"
 if ! [[ "$interval" =~ ^[0-9]+([.][0-9]+)?$ ]]; then

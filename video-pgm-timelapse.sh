@@ -2894,7 +2894,7 @@ tl_require_encoder() {
 # Started before the header so the startup delay counts as wait time.
 TL_SCRIPT_START_NS="$(LC_ALL=C date +%s.%N)"
 # shellcheck disable=SC1091
-. /root/bin/_script_header.sh
+. "${profile_location_dir:-$HOME}/bin/_script_header.sh"
 
 DO_YES=0
 REDO=0

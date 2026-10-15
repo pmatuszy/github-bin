@@ -62,7 +62,7 @@ Options:
 EOF
 }
 
-. /root/bin/_script_header.sh NO_STARTUP_DELAY
+. "${profile_location_dir:-$HOME}/bin/_script_header.sh" NO_STARTUP_DELAY
 
 while [[ $# -gt 0 ]]; do
   case $1 in

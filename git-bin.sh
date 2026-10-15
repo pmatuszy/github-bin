@@ -469,7 +469,7 @@ for _git_bin_arg in "$@"; do
   fi
 done
 
-. /root/bin/_script_header.sh "${HEADER_EXTRA_ARGS[@]}"
+. "${profile_location_dir:-$HOME}/bin/_script_header.sh" "${HEADER_EXTRA_ARGS[@]}"
 
 batch_mode=0
 no_deploy=0

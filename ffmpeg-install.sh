@@ -5038,9 +5038,9 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-if [[ -f /root/bin/_script_header.sh ]]; then
+if [[ -f "${profile_location_dir:-$HOME}/bin/_script_header.sh" ]]; then
     # shellcheck disable=SC1091
-    . /root/bin/_script_header.sh "${HEADER_EXTRA_ARGS[@]}"
+    . "${profile_location_dir:-$HOME}/bin/_script_header.sh" "${HEADER_EXTRA_ARGS[@]}"
 fi
 if ! declare -F print_version_banner >/dev/null 2>&1; then
     print_version_banner() {

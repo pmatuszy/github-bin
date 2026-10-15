@@ -2961,7 +2961,7 @@ PROC_SLICE_START=""
 DONE_SEC=() DONE_VID=() DONE_ENC=() DONE_IN_B=() DONE_IN_N=() DONE_OUT_B=()
 OLD_KEPT=() OLD_DELETED=()
 # shellcheck disable=SC1091
-. /root/bin/_script_header.sh
+. "${profile_location_dir:-$HOME}/bin/_script_header.sh"
 
 DO_YES=0
 DRY_RUN=0

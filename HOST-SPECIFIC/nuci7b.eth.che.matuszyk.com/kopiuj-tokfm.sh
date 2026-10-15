@@ -35,7 +35,7 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-. /root/bin/_script_header.sh "${HEADER_EXTRA_ARGS[@]}"
+. "${profile_location_dir:-$HOME}/bin/_script_header.sh" "${HEADER_EXTRA_ARGS[@]}"
 
 while [[ $# -gt 0 ]]; do
   case $1 in
@@ -109,4 +109,4 @@ rsync $std_options -e "ssh -T -o Compression=no -x" --files-from=<(ssh $SOURCE_H
 
 echo "koniec: $(date '+%Y.%m.%d %H:%M:%S')" ; echo
 
-. /root/bin/_script_header.sh
+. "${profile_location_dir:-$HOME}/bin/_script_header.sh"

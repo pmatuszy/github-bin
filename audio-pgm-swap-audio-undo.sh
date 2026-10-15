@@ -60,7 +60,7 @@ for _un_a in "$@"; do
   [[ "$_un_a" == --no_startup_delay ]] && HEADER_EXTRA_ARGS+=(NO_STARTUP_DELAY)
 done
 # shellcheck disable=SC1091
-. /root/bin/_script_header.sh "${HEADER_EXTRA_ARGS[@]}"
+. "${profile_location_dir:-$HOME}/bin/_script_header.sh" "${HEADER_EXTRA_ARGS[@]}"
 
 DO_YES=0
 DRY_RUN=0

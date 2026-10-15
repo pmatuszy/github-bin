@@ -49,7 +49,7 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-. /root/bin/_script_header.sh "${HEADER_EXTRA_ARGS[@]}"
+. "${profile_location_dir:-$HOME}/bin/_script_header.sh" "${HEADER_EXTRA_ARGS[@]}"
 
 if [ -f "$HEALTHCHECKS_FILE" ]; then
   HEALTHCHECK_URL=$(cat "$HEALTHCHECKS_FILE" | grep "^$(basename "$0")" | awk '{print $2}')

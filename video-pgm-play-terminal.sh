@@ -411,7 +411,7 @@ video_pgm_print_command_line() {
 }
 
 # --- parse options (header sourced first so -v can call print_version_banner) ---
-. /root/bin/_script_header.sh
+. "${profile_location_dir:-$HOME}/bin/_script_header.sh"
 
 MEDIA_FILE=""
 PLAY_SILENT="${VIDEO_PGM_PLAY_SILENT:-1}"

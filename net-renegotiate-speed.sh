@@ -91,7 +91,7 @@ declare -a WORKER_IFACES=()
 for _nrs_a in "$@"; do
   [[ "$_nrs_a" == --no_startup_delay ]] && HEADER_EXTRA_ARGS+=(NO_STARTUP_DELAY)
 done
-. /root/bin/_script_header.sh "${HEADER_EXTRA_ARGS[@]}"
+. "${profile_location_dir:-$HOME}/bin/_script_header.sh" "${HEADER_EXTRA_ARGS[@]}"
 
 # --- parse options ---
 while [[ $# -gt 0 ]]; do

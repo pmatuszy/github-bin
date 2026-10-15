@@ -728,7 +728,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 # shellcheck disable=SC1091
-. /root/bin/_script_header.sh "${HEADER_EXTRA_ARGS[@]}"
+. "${profile_location_dir:-$HOME}/bin/_script_header.sh" "${HEADER_EXTRA_ARGS[@]}"
 
 trap gg_on_exit EXIT
 trap gg_ctrl_c INT
