@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261015.223000 - one SSH login: multiplex preflight, transfer, and cleanup
 # v. 20260922.174213 - result Avg rate: also show Mbps (megabits/s)
 # v. 20260916.133341 - print === Run settings === before the transfer, with Equivalent CLI
 # v. 20260916.130951 - boxed output: draw rules with sed; tr truncated ─ to one invalid byte
@@ -9,6 +10,7 @@
 # v. 20260724.203756 - avoid startup delay when displaying help or version information
 # v. 20260724.203704 - initial network move with uncompressed SSH, source removal, and dry-run support
 
+# 2026.10.15 - v. 0.3.5 - one SSH login per remote host (ControlMaster); password/TOTP is not asked again for the size scan, transfer, or cleanup
 # 2026.09.22 - v. 0.3.4 - result box Avg rate: append decimal Mbps (bytes/s * 8 / 1e6) after MiB/s and MB/s
 # 2026.09.16 - v. 0.3.3 - before the transfer: print "=== Run settings ===" with -n/--dry-run and --bwlimit as given or not given, SOURCE/DESTINATION, and an "Equivalent CLI:" line that repeats the run
 # 2026.09.16 - v. 0.3.2 - boxed result summary: horizontal rules via sed 's/ /─/g'; tr is byte-wise and cut the 3-byte ─ (U+2500) down to a lone 0xE2, printing invalid UTF-8
@@ -28,6 +30,10 @@ if type -fP boxes &>/dev/null; then
 fi
 
 MOVE_PGM_SSH_OPTS=(-o Compression=no -x -o LogLevel=error)
+MOVE_PGM_RSYNC_RSH="ssh -o Compression=no -x -o LogLevel=error"
+MOVE_PGM_SSH_CONTROL_DIR=
+MOVE_PGM_SSH_CONTROL_PATH=
+MOVE_PGM_SSH_TARGETS=()
 MOVE_PGM_RSYNC_STATS_FILE=
 MOVE_PGM_PLAN_FILES=
 MOVE_PGM_PLAN_BYTES=
@@ -176,7 +182,7 @@ move_pgm_run_transfer_preflight() {
     --dry-run
     --stats
     --no-inc-recursive
-    -e "ssh -o Compression=no -x"
+    -e "$MOVE_PGM_RSYNC_RSH"
   )
   local preflight_out="" lap_start=$SECONDS
 
@@ -278,6 +284,88 @@ move_pgm_print_transfer_plan() {
 move_pgm_cleanup_temp_files() {
   [[ -n "$MOVE_PGM_RSYNC_STATS_FILE" && -f "$MOVE_PGM_RSYNC_STATS_FILE" ]] \
     && rm -f "$MOVE_PGM_RSYNC_STATS_FILE"
+}
+
+# Remember each distinct [user@]host from SOURCE and DESTINATION.
+move_pgm_ssh_targets_add() {
+  local spec="$1" target seen
+
+  move_pgm_parse_rsync_spec "$spec"
+  [[ "$MOVE_PGM_SPEC_KIND" == remote ]] || return 0
+  target="$MOVE_PGM_SPEC_SSH_TARGET"
+  [[ -n "$target" ]] || return 0
+
+  for seen in ${MOVE_PGM_SSH_TARGETS[@]+"${MOVE_PGM_SSH_TARGETS[@]}"}; do
+    [[ "$seen" == "$target" ]] && return 0
+  done
+  MOVE_PGM_SSH_TARGETS+=("$target")
+}
+
+# One background SSH per remote host. Later rsync/ssh calls attach to it
+# with ControlMaster=no, so a password or authenticator code is asked once.
+move_pgm_ssh_prepare() {
+  MOVE_PGM_SSH_TARGETS=()
+  move_pgm_ssh_targets_add "$SOURCE"
+  move_pgm_ssh_targets_add "$DESTINATION"
+  (( ${#MOVE_PGM_SSH_TARGETS[@]} == 0 )) && return 0
+
+  MOVE_PGM_SSH_CONTROL_DIR="$(mktemp -d "${TMPDIR:-/tmp}/mpgm.XXXXXX")" || return 1
+  chmod 700 "$MOVE_PGM_SSH_CONTROL_DIR" || return 1
+  # %C is expanded by ssh (short hash of user/host/port). Keeps the socket
+  # path under the Unix limit and separates two different remote hosts.
+  MOVE_PGM_SSH_CONTROL_PATH="${MOVE_PGM_SSH_CONTROL_DIR}/%C"
+  MOVE_PGM_SSH_OPTS=(
+    -o Compression=no
+    -x
+    -o LogLevel=error
+    -o ControlMaster=no
+    -o "ControlPath=${MOVE_PGM_SSH_CONTROL_PATH}"
+  )
+  MOVE_PGM_RSYNC_RSH="ssh -o Compression=no -x -o LogLevel=error -o ControlMaster=no -o ControlPath=$(printf '%q' "$MOVE_PGM_SSH_CONTROL_PATH")"
+  return 0
+}
+
+move_pgm_ssh_start_masters() {
+  local target
+
+  (( ${#MOVE_PGM_SSH_TARGETS[@]} == 0 )) && return 0
+
+  for target in "${MOVE_PGM_SSH_TARGETS[@]}"; do
+    echo "Opening SSH connection to ${target} (reused for the rest of this run)..."
+    if ! ssh -fN \
+      -o Compression=no \
+      -x \
+      -o LogLevel=error \
+      -o ControlMaster=yes \
+      -o "ControlPath=${MOVE_PGM_SSH_CONTROL_PATH}" \
+      "$target"
+    then
+      echo "ERROR: SSH connection to ${target} failed." >&2
+      return 1
+    fi
+  done
+  return 0
+}
+
+move_pgm_ssh_stop_masters() {
+  local target
+
+  [[ -n "$MOVE_PGM_SSH_CONTROL_DIR" ]] || return 0
+  if [[ -d "$MOVE_PGM_SSH_CONTROL_DIR" ]]; then
+    for target in ${MOVE_PGM_SSH_TARGETS[@]+"${MOVE_PGM_SSH_TARGETS[@]}"}; do
+      ssh -o LogLevel=error \
+        -o ControlMaster=no \
+        -o "ControlPath=${MOVE_PGM_SSH_CONTROL_PATH}" \
+        -O exit "$target" >/dev/null 2>&1 || true
+    done
+    rm -rf -- "$MOVE_PGM_SSH_CONTROL_DIR"
+  fi
+  MOVE_PGM_SSH_CONTROL_DIR=
+}
+
+move_pgm_on_exit() {
+  move_pgm_ssh_stop_masters
+  move_pgm_cleanup_temp_files
 }
 
 move_pgm_emit_unicode_box() {
@@ -520,6 +608,9 @@ Transfer behaviour:
     and progress output.
   - Disables both rsync compression and SSH compression.
   - Disables SSH X11 forwarding.
+  - Opens one SSH connection per remote host and reuses it for the size scan,
+    the transfer, and source cleanup. A password or authenticator code is
+    entered once per host, not once per step.
   - Removes each source file only after rsync transfers it successfully.
   - After a successful move, verifies the source directory tree has no files left
     and removes empty source directories.
@@ -632,6 +723,11 @@ DESTINATION="${POSITIONAL[1]}"
 check_if_installed rsync
 check_if_installed ssh openssh-client
 
+if ! move_pgm_ssh_prepare; then
+  echo "ERROR: could not prepare the SSH connection." >&2
+  exit 1
+fi
+
 RSYNC_ARGS=(
   -a
   -v
@@ -643,7 +739,7 @@ RSYNC_ARGS=(
   --partial
   --remove-source-files
   --no-inc-recursive
-  -e "ssh -o Compression=no -x"
+  -e "$MOVE_PGM_RSYNC_RSH"
 )
 
 if [[ -n "$BWLIMIT" ]]; then
@@ -660,7 +756,11 @@ move_pgm_print_run_settings
 MOVE_PGM_START_STR="$(move_pgm_wall_clock_now)"
 MOVE_PGM_RUN_START=$SECONDS
 MOVE_PGM_RSYNC_STATS_FILE="$(mktemp)"
-trap 'move_pgm_cleanup_temp_files' EXIT
+trap move_pgm_on_exit EXIT
+
+if ! move_pgm_ssh_start_masters; then
+  exit 1
+fi
 
 if (( DRY_RUN == 0 )); then
   if move_pgm_run_transfer_preflight; then
