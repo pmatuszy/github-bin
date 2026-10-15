@@ -69,7 +69,7 @@ lighttpd_refresh_template_md5_if_needed() {
 }
 
 lighttpd_watch_cleanup() {
-  . /root/bin/_script_footer.sh
+  . "${profile_location_dir:-$HOME}/bin/_script_footer.sh"
 }
 trap lighttpd_watch_cleanup EXIT
 

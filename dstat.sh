@@ -65,4 +65,4 @@ else
   dstat -tcdnmg -D mmcblk0,nvme0n1,/dev/sda -N ens33,eth0,eno1 -C total "${_mi_dstat_imp_extras[@]}" -C total --bw --nocolor --noupdate -f "$1"
 fi
 
-. /root/bin/_script_footer.sh
+. "${profile_location_dir:-$HOME}/bin/_script_footer.sh"

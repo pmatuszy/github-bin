@@ -545,5 +545,5 @@ else
   echo "(PGM) vmrun snapshot failed (exit $rc)." >&2
 fi
 
-. /root/bin/_script_footer.sh
+. "${profile_location_dir:-$HOME}/bin/_script_footer.sh"
 exit "$rc"

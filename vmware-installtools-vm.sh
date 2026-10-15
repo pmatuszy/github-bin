@@ -79,4 +79,4 @@ else
   ./vmware-install.pl --default --force-install # install even if open-vm-tools packages are available for this distribution.
 fi
 
-. /root/bin/_script_footer.sh
+. "${profile_location_dir:-$HOME}/bin/_script_footer.sh"

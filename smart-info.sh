@@ -60,7 +60,7 @@ if [ $# -eq 0 ]; then
         echo "No whole-disk block devices found (same discovery as jd.sh: fdisk -l)."
         echo "Try: smart-info.sh /dev/sda   or run jd.sh to list devices."
         echo
-        . /root/bin/_script_footer.sh
+        . "${profile_location_dir:-$HOME}/bin/_script_footer.sh"
         exit 1
     fi
 else
@@ -136,4 +136,4 @@ for p in "${disk_array[@]}"; do
 
 done
 
-. /root/bin/_script_footer.sh
+. "${profile_location_dir:-$HOME}/bin/_script_footer.sh"

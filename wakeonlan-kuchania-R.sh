@@ -82,5 +82,5 @@ fi
 
 logger "WOL script: sent packet to $MAC at $BROADCAST"
 
-. /root/bin/_script_footer.sh
+. "${profile_location_dir:-$HOME}/bin/_script_footer.sh"
 

@@ -53,4 +53,4 @@ while : ; do
   sleep 15    # do not restart too often
 done
 
-. /root/bin/_script_footer.sh
+. "${profile_location_dir:-$HOME}/bin/_script_footer.sh"

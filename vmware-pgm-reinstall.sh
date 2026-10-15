@@ -107,4 +107,4 @@ boxes <<< "${installer_full_path} --list-components --console"
 "${installer_full_path}" --list-components --console ; echo
 
 
-. /root/bin/_script_footer.sh
+. "${profile_location_dir:-$HOME}/bin/_script_footer.sh"

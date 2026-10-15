@@ -128,7 +128,7 @@ if [[ "$(id -u)" -ne 0 ]]; then
   echo "(PGM) Run as root for fdisk/hdparm/nvme listing."
   echo
   return_code=1
-  . /root/bin/_script_footer.sh
+  . "${profile_location_dir:-$HOME}/bin/_script_footer.sh"
   exit "${return_code}"
 fi
 
@@ -137,7 +137,7 @@ if [[ ! -f /etc/os-release && ! -f /etc/redhat-release ]]; then
   echo "(PGM) I don't know what OS is that - I am exiting..."
   echo
   return_code=1
-  . /root/bin/_script_footer.sh
+  . "${profile_location_dir:-$HOME}/bin/_script_footer.sh"
   exit "${return_code}"
 fi
 
@@ -324,6 +324,6 @@ fi
 
 echo
 
-. /root/bin/_script_footer.sh
+. "${profile_location_dir:-$HOME}/bin/_script_footer.sh"
 
 exit "${return_code}"

@@ -50,7 +50,7 @@ check_if_installed aha
 /usr/sbin/logwatch --detail "${details_level}" --range="${range}"
 } | strings | aha | mailx -a 'Content-Type: text/html' -s "${mail_subject}" "${mail_recipient}"
 
-. /root/bin/_script_footer.sh
+. "${profile_location_dir:-$HOME}/bin/_script_footer.sh"
 
 exit $?
 #####

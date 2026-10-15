@@ -378,9 +378,9 @@ un_print_summary() {
 
 un_on_exit() {
   un_print_summary
-  if [[ -r /root/bin/_script_footer.sh ]]; then
+  if [[ -r "${profile_location_dir:-$HOME}/bin/_script_footer.sh" ]]; then
     # shellcheck disable=SC1091
-    . /root/bin/_script_footer.sh
+    . "${profile_location_dir:-$HOME}/bin/_script_footer.sh"
   fi
 }
 

@@ -133,7 +133,7 @@ if ! type -fP curl &>/dev/null; then
   echo
   echo "(PGM) curl not found; install curl to use this script."
   echo
-  . /root/bin/_script_footer.sh
+  . "${profile_location_dir:-$HOME}/bin/_script_footer.sh"
   exit "${return_code}"
 fi
 
@@ -141,7 +141,7 @@ if ! _ip_fetch; then
   echo
   echo "(PGM) Could not get public IP (all endpoints failed or timed out)."
   echo
-  . /root/bin/_script_footer.sh
+  . "${profile_location_dir:-$HOME}/bin/_script_footer.sh"
   exit "${return_code}"
 fi
 
@@ -154,6 +154,6 @@ else
 fi
 echo
 
-. /root/bin/_script_footer.sh
+. "${profile_location_dir:-$HOME}/bin/_script_footer.sh"
 
 exit "${return_code}"

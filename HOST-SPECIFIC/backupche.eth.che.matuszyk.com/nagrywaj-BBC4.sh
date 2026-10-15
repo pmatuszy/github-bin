@@ -97,4 +97,4 @@ while (( $secs_to_midnight > $seconds_before_midnight_stop )) && (( $invocation_
 done
 
 echo "`date '+%Y.%m.%d__%H:%M:%S'` koniec wykonywania $0" | tee -a $log_file
-. /root/bin/_script_footer.sh
+. "${profile_location_dir:-$HOME}/bin/_script_footer.sh"

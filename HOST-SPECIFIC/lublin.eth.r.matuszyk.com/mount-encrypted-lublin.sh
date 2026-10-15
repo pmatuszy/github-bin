@@ -6,7 +6,7 @@
 # 2026.10.06 - disk listing uses /bin/df so a shell df function cannot hide the byte count
 # 2026.05.26 - user-facing messages translated from Polish to English
 # 2023.04.04 - v. 1.0 - bugfix with fsck (instead of hardcoded /dev/mapper/encrypted_luks_device_encrypted.luks2 will use $1)
-# 2023.01.26 - v  0.9 - added . /root/bin/_script_footer.sh as it was not there..., fixed script version print
+# 2023.01.26 - v  0.9 - added . "${profile_location_dir:-$HOME}/bin/_script_footer.sh" as it was not there..., fixed script version print
 # 2023.01.13 - v  0.8 - a nicer display of the mount command status
 # 2022.12.02 - v  0.7 - bugfix with fsck return code
 # 2022.11.24 - v  0.6 - added restart of postgress and keepalived
@@ -144,4 +144,4 @@ echo
 
 /root/bin/healthchecks-encrypted-is-mounted.sh
 
-. /root/bin/_script_footer.sh
+. "${profile_location_dir:-$HOME}/bin/_script_footer.sh"

@@ -57,4 +57,4 @@ require_gnu_watch
 sleep 2
 watch -w -t -n0.1 "date '+%H:%M:%S' | figlet -w 140 -f big"
 
-. /root/bin/_script_footer.sh
+. "${profile_location_dir:-$HOME}/bin/_script_footer.sh"

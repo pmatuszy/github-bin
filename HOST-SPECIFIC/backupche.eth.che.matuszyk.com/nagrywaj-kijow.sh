@@ -58,4 +58,4 @@ while : ; do
   sleep ${delay_between_runs}
 done
 
-. /root/bin/_script_footer.sh
+. "${profile_location_dir:-$HOME}/bin/_script_footer.sh"

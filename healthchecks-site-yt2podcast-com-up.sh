@@ -81,7 +81,7 @@ if (( $blad != 0 ));then
    /usr/bin/timeout --foreground --preserve-status --kill-after=$kill_after $timeout /usr/bin/curl -fsS -m 100 --retry $how_many_retries  --retry-delay $retry_delay -o /dev/null "$HEALTHCHECK_URL"/fail 2>/dev/null
 fi
 
-. /root/bin/_script_footer.sh
+. "${profile_location_dir:-$HOME}/bin/_script_footer.sh"
 
 exit $?
 

@@ -5078,7 +5078,7 @@ done
 
 main "$@"
 
-if [[ -f /root/bin/_script_footer.sh ]]; then
+if [[ -f "${profile_location_dir:-$HOME}/bin/_script_footer.sh" ]]; then
     # shellcheck disable=SC1091
-    . /root/bin/_script_footer.sh
+    . "${profile_location_dir:-$HOME}/bin/_script_footer.sh"
 fi

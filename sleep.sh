@@ -55,6 +55,6 @@ else
   return_code=1
 fi
 
-. /root/bin/_script_footer.sh
+. "${profile_location_dir:-$HOME}/bin/_script_footer.sh"
 
 exit ${return_code}

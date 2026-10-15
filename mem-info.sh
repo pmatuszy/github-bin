@@ -198,7 +198,7 @@ _mi_pause_if_needed() {
     echo
     if [[ "${_mi_in:-}" == [qQ] ]]; then
       echo '(PGM) Quitting early.'
-      . /root/bin/_script_footer.sh
+      . "${profile_location_dir:-$HOME}/bin/_script_footer.sh"
       exit 0
     fi
   fi
@@ -503,6 +503,6 @@ for (( _mi_i = 0; _mi_i < _mi_total; )); do
   ((_mi_i < _mi_total)) && _mi_pause_if_needed
 done
 
-. /root/bin/_script_footer.sh
+. "${profile_location_dir:-$HOME}/bin/_script_footer.sh"
 
 exit "${return_code}"

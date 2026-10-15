@@ -995,4 +995,4 @@ while true; do
   # After the report + key pause, return to the main statistics menu
 done
 
-. /root/bin/_script_footer.sh
+. "${profile_location_dir:-$HOME}/bin/_script_footer.sh"

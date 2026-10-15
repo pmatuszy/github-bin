@@ -113,6 +113,6 @@ wait_delay="${WATCH_PROGRESS_WAIT_DELAY:-0.5}"
 progress --monitor-continuously "${WP_PROGRESS_ARGS[@]}" --wait --wait-delay "$wait_delay"
 return_code=$?
 
-. /root/bin/_script_footer.sh
+. "${profile_location_dir:-$HOME}/bin/_script_footer.sh"
 
 exit "${return_code}"

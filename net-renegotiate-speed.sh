@@ -148,7 +148,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 net_reneg_cleanup() {
-  . /root/bin/_script_footer.sh
+  . "${profile_location_dir:-$HOME}/bin/_script_footer.sh"
 }
 trap net_reneg_cleanup EXIT
 

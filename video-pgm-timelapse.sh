@@ -397,7 +397,7 @@ tl_on_exit() {
   if (( ${TL_SUMMARY:-0} )) && (( ! ${TL_FOOTER_DONE:-0} )); then
     TL_FOOTER_DONE=1
     # shellcheck disable=SC1091
-    . /root/bin/_script_footer.sh
+    . "${profile_location_dir:-$HOME}/bin/_script_footer.sh"
   fi
 }
 

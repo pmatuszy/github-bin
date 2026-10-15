@@ -46,7 +46,7 @@ if [[ "$(uname -s)" != Linux ]]; then
   echo "(PGM) This script supports Linux only (uname -s=$(uname -s))."
   echo
   return_code=1
-  . /root/bin/_script_footer.sh
+  . "${profile_location_dir:-$HOME}/bin/_script_footer.sh"
   exit "${return_code}"
 fi
 
@@ -55,7 +55,7 @@ if [ "$(id -u)" -ne 0 ]; then
   echo "(PGM) VeraCrypt mount requires root."
   echo
   return_code=1
-  . /root/bin/_script_footer.sh
+  . "${profile_location_dir:-$HOME}/bin/_script_footer.sh"
   exit "${return_code}"
 fi
 
@@ -67,7 +67,7 @@ if [ -z "${VERACRYPT_BIN}" ]; then
   echo "(PGM) I can't find veracrypt utility... exiting ..."
   echo
   return_code=1
-  . /root/bin/_script_footer.sh
+  . "${profile_location_dir:-$HOME}/bin/_script_footer.sh"
   exit "${return_code}"
 fi
 
@@ -77,7 +77,7 @@ if (( $# != 2 )); then
   echo "$0 volume_path mount_directory"
   echo
   return_code=1
-  . /root/bin/_script_footer.sh
+  . "${profile_location_dir:-$HOME}/bin/_script_footer.sh"
   exit "${return_code}"
 fi
 
@@ -90,7 +90,7 @@ if [[ ! -e "${VC_VOLUME}" ]]; then
   echo "$0 volume_path mount_directory"
   echo
   return_code=2
-  . /root/bin/_script_footer.sh
+  . "${profile_location_dir:-$HOME}/bin/_script_footer.sh"
   exit "${return_code}"
 fi
 
@@ -103,7 +103,7 @@ if mountpoint -q "${VC_MOUNT}"; then
   /bin/df -hP "${VC_MOUNT}"
   echo
   return_code=0
-  . /root/bin/_script_footer.sh
+  . "${profile_location_dir:-$HOME}/bin/_script_footer.sh"
   exit "${return_code}"
 fi
 
@@ -129,6 +129,6 @@ else
   echo
 fi
 
-. /root/bin/_script_footer.sh
+. "${profile_location_dir:-$HOME}/bin/_script_footer.sh"
 
 exit "${return_code}"

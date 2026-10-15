@@ -69,7 +69,7 @@ if ping -c 2 -W 2 -q "$WOL_HOST" >/dev/null; then
   echo "(PGM) Host $WOL_HOST is already up. No need to start it again..."
   echo
   logger "WOL script: host=$WOL_HOST result=already_up (no WOL packets sent)"
-  . /root/bin/_script_footer.sh
+  . "${profile_location_dir:-$HOME}/bin/_script_footer.sh"
   exit 0
 fi
 
@@ -104,6 +104,6 @@ else
   logger "WOL script: host=$WOL_HOST mac=$WOL_MAC bcast=$WOL_BROADCAST wol_packets_sent=$wol_packets_sent result=fail"
 fi
 
-. /root/bin/_script_footer.sh
+. "${profile_location_dir:-$HOME}/bin/_script_footer.sh"
 
 exit "$wol_rc"

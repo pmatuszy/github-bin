@@ -2939,9 +2939,9 @@ pip_on_exit() {
     SUMMARY_DONE=1
     pip_print_summary
   fi
-  if [[ -r /root/bin/_script_footer.sh ]]; then
+  if [[ -r "${profile_location_dir:-$HOME}/bin/_script_footer.sh" ]]; then
     # shellcheck disable=SC1091
-    . /root/bin/_script_footer.sh
+    . "${profile_location_dir:-$HOME}/bin/_script_footer.sh"
   fi
 }
 

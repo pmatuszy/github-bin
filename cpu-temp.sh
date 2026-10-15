@@ -199,7 +199,7 @@ if ! detect_cpu_core_temp_paths; then
 fi
 
 cpu_temp_cleanup() {
-  . /root/bin/_script_footer.sh
+  . "${profile_location_dir:-$HOME}/bin/_script_footer.sh"
 }
 trap cpu_temp_cleanup EXIT
 

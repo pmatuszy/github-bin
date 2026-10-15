@@ -72,7 +72,7 @@ done
 
 
 net_iface_speed_cleanup() {
-  . /root/bin/_script_footer.sh
+  . "${profile_location_dir:-$HOME}/bin/_script_footer.sh"
 }
 trap net_iface_speed_cleanup EXIT
 

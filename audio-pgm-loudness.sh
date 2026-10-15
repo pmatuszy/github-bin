@@ -655,7 +655,7 @@ audio_pgm_loudness_cleanup() {
   [[ -n "${LOUDNESS_TMP_FILE:-}" && -f "${LOUDNESS_TMP_FILE}" ]] && rm -f -- "${LOUDNESS_TMP_FILE}"
   loudness_print_run_summary_once
   loudness_window_title_restore
-  . /root/bin/_script_footer.sh
+  . "${profile_location_dir:-$HOME}/bin/_script_footer.sh"
 }
 trap audio_pgm_loudness_cleanup EXIT
 

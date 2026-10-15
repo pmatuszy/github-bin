@@ -614,5 +614,5 @@ _pgm_print_remaining_snapshots_for_vmx "$selected" || true
 echo
 echo "(PGM) vmrun deleteSnapshot wall time: ${_delete_el}s (${_delete_human})"
 
-. /root/bin/_script_footer.sh
+. "${profile_location_dir:-$HOME}/bin/_script_footer.sh"
 exit "$rc"

@@ -242,5 +242,5 @@ else
   /bin/ls -l "$SYMLINK_NAME" "$NEW_NAME"
 fi
 
-. /root/bin/_script_footer.sh
+. "${profile_location_dir:-$HOME}/bin/_script_footer.sh"
 

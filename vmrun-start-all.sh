@@ -241,4 +241,4 @@ echo
 _pgm_vmrun_list
 echo 
 
-. /root/bin/_script_footer.sh
+. "${profile_location_dir:-$HOME}/bin/_script_footer.sh"

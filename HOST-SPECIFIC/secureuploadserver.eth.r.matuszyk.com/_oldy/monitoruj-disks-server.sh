@@ -10,4 +10,4 @@ while : ; do
   sleep 14.98
 done
 
-. /root/bin/_script_footer.sh
+. "${profile_location_dir:-$HOME}/bin/_script_footer.sh"

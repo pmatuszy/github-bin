@@ -136,4 +136,4 @@ echo ; echo startuje vpnserver ; echo
 /root/bin/healthchecks-vpn-server-is-running.sh
 /root/bin/healthchecks-smartd.sh
 
-. /root/bin/_script_footer.sh
+. "${profile_location_dir:-$HOME}/bin/_script_footer.sh"

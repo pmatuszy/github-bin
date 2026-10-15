@@ -720,7 +720,7 @@ voice_finish_run() {
     print_voice_statistics_summary
     print_voice_timing_summary
     # shellcheck disable=SC1091
-    . /root/bin/_script_footer.sh
+    . "${profile_location_dir:-$HOME}/bin/_script_footer.sh"
 }
 
 voice_quit() {

@@ -70,7 +70,7 @@ if ! type -fP getconf &>/dev/null; then
   echo "(PGM) getconf not found (install libc-bin or similar)."
   echo
   return_code=1
-  . /root/bin/_script_footer.sh
+  . "${profile_location_dir:-$HOME}/bin/_script_footer.sh"
   exit "${return_code}"
 fi
 
@@ -80,7 +80,7 @@ if [[ -z "$_bits" ]] || ! [[ "$_bits" =~ ^[0-9]+$ ]]; then
   echo "(PGM) getconf LONG_BIT failed or returned an unexpected value."
   echo
   return_code=1
-  . /root/bin/_script_footer.sh
+  . "${profile_location_dir:-$HOME}/bin/_script_footer.sh"
   exit "${return_code}"
 fi
 
@@ -93,6 +93,6 @@ if type -fP dpkg &>/dev/null; then
 fi
 echo
 
-. /root/bin/_script_footer.sh
+. "${profile_location_dir:-$HOME}/bin/_script_footer.sh"
 
 exit "${return_code}"

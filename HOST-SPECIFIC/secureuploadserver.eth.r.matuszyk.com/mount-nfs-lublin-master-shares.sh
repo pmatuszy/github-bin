@@ -80,4 +80,4 @@ mount_via_nfs "//lublin.eth.r.matuszyk.com/SkyPlus-MASTER-SOURCE_read_only"   "/
 
 /bin/df -hP |egrep 'Filesystem|lublin.eth.r.matuszyk.com'
 
-. /root/bin/_script_footer.sh
+. "${profile_location_dir:-$HOME}/bin/_script_footer.sh"

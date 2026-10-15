@@ -734,7 +734,7 @@ print_run_settings
 # Real reboot needs root; dry-run may run as a normal user to inspect gates.
 if (( EUID != 0 )) && (( ! DRY_RUN )); then
   log "ERROR: must run as root to reboot (or pass --dry-run to only check)."
-  . /root/bin/_script_footer.sh
+  . "${profile_location_dir:-$HOME}/bin/_script_footer.sh"
   exit 2
 fi
 
@@ -747,7 +747,7 @@ if [[ ! -f /var/run/reboot-required ]]; then
     "/var/run/reboot-required absent — nothing to do." \
     "Exiting."
   hc_ping "" "$(printf '%s\n' "${SCRIPT_VERSION}" "reboot not required")"
-  . /root/bin/_script_footer.sh
+  . "${profile_location_dir:-$HOME}/bin/_script_footer.sh"
   exit 0
 fi
 
@@ -777,12 +777,12 @@ while true; do
       else
         hc_ping "" "$(printf '%s\n' "${SCRIPT_VERSION}" "reboot initiated (attempt ${ATTEMPT}, delay ${SHUTDOWN_DELAY}m)")"
       fi
-      . /root/bin/_script_footer.sh
+      . "${profile_location_dir:-$HOME}/bin/_script_footer.sh"
       exit "$return_code"
     else
       log "ERROR: failed to initiate reboot."
       hc_ping "/fail" "$(printf '%s\n' "${SCRIPT_VERSION}" "failed to run shutdown")"
-      . /root/bin/_script_footer.sh
+      . "${profile_location_dir:-$HOME}/bin/_script_footer.sh"
       exit 1
     fi
   fi
@@ -791,7 +791,7 @@ while true; do
   if [[ "$LAST_FAIL_REASON" == "reboot not required" ]] || [[ ! -f /var/run/reboot-required ]]; then
     log "Reboot no longer required. Stopping retry loop."
     hc_ping "" "$(printf '%s\n' "${SCRIPT_VERSION}" "reboot no longer required after attempt ${ATTEMPT}")"
-    . /root/bin/_script_footer.sh
+    . "${profile_location_dir:-$HOME}/bin/_script_footer.sh"
     exit 0
   fi
 
@@ -803,7 +803,7 @@ while true; do
     hc_ping "/fail" "$(printf '%s\n' "${SCRIPT_VERSION}" \
       "gave up after ${ATTEMPT} attempt(s) / ${RETRY_WINDOW}s" \
       "last failure: ${LAST_FAIL_REASON:-unknown}")"
-    . /root/bin/_script_footer.sh
+    . "${profile_location_dir:-$HOME}/bin/_script_footer.sh"
     exit 1
   fi
 

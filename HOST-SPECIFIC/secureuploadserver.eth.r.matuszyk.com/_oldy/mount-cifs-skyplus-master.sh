@@ -27,4 +27,4 @@ df -hP "${loc_dir_name}"
 
 # set +x
 
-. /root/bin/_script_footer.sh
+. "${profile_location_dir:-$HOME}/bin/_script_footer.sh"

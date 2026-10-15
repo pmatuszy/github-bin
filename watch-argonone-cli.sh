@@ -48,7 +48,7 @@ done
 check_if_installed argonone-cli
 
 watch_temp_cleanup() {
-  . /root/bin/_script_footer.sh
+  . "${profile_location_dir:-$HOME}/bin/_script_footer.sh"
 }
 trap watch_temp_cleanup EXIT
 

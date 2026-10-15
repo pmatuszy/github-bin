@@ -1510,7 +1510,7 @@ die() {
     echo "Error: $*" >&2
     return_code=1
     pgm_print_run_finished 1
-    . /root/bin/_script_footer.sh
+    . "${profile_location_dir:-$HOME}/bin/_script_footer.sh"
     exit 1
 }
 
@@ -1527,7 +1527,7 @@ finish() {
         PGM_REMOVING_OLD_PAR2=0
     fi
     pgm_print_run_finished "$rc"
-    . /root/bin/_script_footer.sh
+    . "${profile_location_dir:-$HOME}/bin/_script_footer.sh"
     exit "$rc"
 }
 
@@ -4314,12 +4314,12 @@ while [[ $# -gt 0 ]]; do
     case $1 in
         -h|--help)
             show_help
-            . /root/bin/_script_footer.sh
+            . "${profile_location_dir:-$HOME}/bin/_script_footer.sh"
             exit 0
             ;;
         -v|--version)
             print_version_banner
-            . /root/bin/_script_footer.sh
+            . "${profile_location_dir:-$HOME}/bin/_script_footer.sh"
             exit 0
             ;;
         --history)

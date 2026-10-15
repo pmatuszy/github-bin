@@ -127,7 +127,7 @@ if [ "$(id -u)" -ne 0 ]; then
   echo "(PGM) This script must run as root (writes /proc/sys/vm/drop_caches)."
   echo
   return_code=1
-  . /root/bin/_script_footer.sh
+  . "${profile_location_dir:-$HOME}/bin/_script_footer.sh"
   exit "${return_code}"
 fi
 
@@ -160,6 +160,6 @@ echo "(PGM) Memory after:"
 free -h
 echo
 
-. /root/bin/_script_footer.sh
+. "${profile_location_dir:-$HOME}/bin/_script_footer.sh"
 
 exit "${return_code}"

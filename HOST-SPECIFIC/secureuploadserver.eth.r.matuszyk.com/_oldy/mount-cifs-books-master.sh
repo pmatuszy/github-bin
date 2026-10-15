@@ -21,4 +21,4 @@ umount "${loc_dir_name}" 2>/dev/null  # unmount first if already mounted, to avo
 mount.cifs -o user=p,password=$PASSWD "${rem_dir_name}" "${loc_dir_name}" 
 df -hP "${loc_dir_name}"
 
-. /root/bin/_script_footer.sh
+. "${profile_location_dir:-$HOME}/bin/_script_footer.sh"

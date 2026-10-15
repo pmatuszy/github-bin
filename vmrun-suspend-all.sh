@@ -276,4 +276,4 @@ _pgm_show_running_vms_block "RUNNING VMs STILL RUNNING" _still_running_vms
 echo "(PGM) Run summary: ${_initial_running_count} running at start, ${_suspend_ok} suspended successfully, ${_suspend_fail} suspend failed, ${_still_running_count} still running."
 echo
 
-. /root/bin/_script_footer.sh
+. "${profile_location_dir:-$HOME}/bin/_script_footer.sh"

@@ -52,7 +52,7 @@ if grep -q "Raspberry Pi" /proc/device-tree/model 2>/dev/null; then
     echo "Running on Raspberry Pi hardware"
 else
     echo "Not a Raspberry Pi";echo
-    . /root/bin/_script_footer.sh
+    . "${profile_location_dir:-$HOME}/bin/_script_footer.sh"
     exit 1
 fi
 
@@ -61,5 +61,5 @@ echo "$(tr -d '\0' </proc/device-tree/model),   $(awk '/MemTotal/ {printf "Total
 #echo `cat /proc/device-tree/model|tr -d '\0'` ",   " `cat /proc/meminfo |grep MemTotal|awk '{printf ("Total RAM: %.0f GB", $2/1024/1024)}'`
 echo
 
-. /root/bin/_script_footer.sh
+. "${profile_location_dir:-$HOME}/bin/_script_footer.sh"
 

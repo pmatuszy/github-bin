@@ -661,5 +661,5 @@ return_code=$?
 
 video_pgm_restore_terminal
 
-. /root/bin/_script_footer.sh
+. "${profile_location_dir:-$HOME}/bin/_script_footer.sh"
 exit "$return_code"

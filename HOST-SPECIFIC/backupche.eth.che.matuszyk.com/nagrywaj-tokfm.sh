@@ -441,5 +441,5 @@ fi
 log_line "$(date '+%Y.%m.%d__%H:%M:%S') finished running $0"
 print_summary
 maybe_ping_healthcheck
-. /root/bin/_script_footer.sh
+. "${profile_location_dir:-$HOME}/bin/_script_footer.sh"
 exit "${exit_code}"

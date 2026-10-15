@@ -78,7 +78,7 @@ export DISPLAY=
 WATCH_INTERVAL="${WATCH_TEMP_INTERVAL:-1}"
 
 watch_temp_cleanup() {
-  . /root/bin/_script_footer.sh
+  . "${profile_location_dir:-$HOME}/bin/_script_footer.sh"
 }
 trap watch_temp_cleanup EXIT
 

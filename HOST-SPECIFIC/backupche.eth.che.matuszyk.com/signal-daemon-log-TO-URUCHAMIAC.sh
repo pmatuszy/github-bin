@@ -63,4 +63,4 @@ while : ; do
   secs_to_midnight=$((($(date -d "tomorrow 00:00" +%s)-$(date +%s))))
 done
 
-. /root/bin/_script_footer.sh
+. "${profile_location_dir:-$HOME}/bin/_script_footer.sh"

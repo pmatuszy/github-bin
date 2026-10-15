@@ -57,7 +57,7 @@ else
     /usr/bin/mailx -r root@`hostname` -a 'Content-Type: text/html' -s "(`/bin/hostname`) /usr/sbin/update-smart-drivedb" matuszyk+`/bin/hostname`@matuszyk.com
 fi 
 
-. /root/bin/_script_footer.sh
+. "${profile_location_dir:-$HOME}/bin/_script_footer.sh"
 
 exit $?
 

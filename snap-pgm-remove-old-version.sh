@@ -71,7 +71,7 @@ return_code=${PIPESTATUS[2]}   # index 0=snap, 1=strings, 2=grep
 
 if (( $return_code != 0 )); then
   echo NONE; echo
-  . /root/bin/_script_footer.sh
+  . "${profile_location_dir:-$HOME}/bin/_script_footer.sh"
   exit 0
 fi
 
@@ -87,7 +87,7 @@ echo
 p="${p//$'\r'/}"
 if [[ "${p}" == [qQ] ]]; then
   echo "(PGM) Quit — no packages removed."
-  . /root/bin/_script_footer.sh
+  . "${profile_location_dir:-$HOME}/bin/_script_footer.sh"
   exit 0
 fi
 if [[ "${p}" != [yY] ]]; then
@@ -100,4 +100,4 @@ while read pkg revision; do
   sudo snap remove "$pkg" --revision="$revision"
 done
 
-. /root/bin/_script_footer.sh
+. "${profile_location_dir:-$HOME}/bin/_script_footer.sh"

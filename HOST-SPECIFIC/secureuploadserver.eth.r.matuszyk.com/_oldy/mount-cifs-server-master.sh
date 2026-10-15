@@ -25,4 +25,4 @@ mount.cifs -o user=administrator,password=$PASSWD //server.int.matuszyk.com/Dysk
 
 # set +x
 
-. /root/bin/_script_footer.sh
+. "${profile_location_dir:-$HOME}/bin/_script_footer.sh"

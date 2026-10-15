@@ -6206,7 +6206,7 @@ if (( DO_UPDATE )); then
   update_mp4_merge
   return_code=$?
   print_pgm_timing_summary
-  . /root/bin/_script_footer.sh
+  . "${profile_location_dir:-$HOME}/bin/_script_footer.sh"
   exit "${return_code}"
 fi
 
@@ -6215,6 +6215,6 @@ return_code=$?
 
 print_pgm_timing_summary
 
-. /root/bin/_script_footer.sh
+. "${profile_location_dir:-$HOME}/bin/_script_footer.sh"
 
 exit "${return_code}"

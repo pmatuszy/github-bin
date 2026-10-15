@@ -177,4 +177,4 @@ sleep 2
 
 /root/bin/healthchecks-encrypted-is-mounted.sh
 
-. /root/bin/_script_footer.sh
+. "${profile_location_dir:-$HOME}/bin/_script_footer.sh"
