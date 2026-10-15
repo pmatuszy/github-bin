@@ -1,8 +1,10 @@
 #!/bin/bash
+# v. 20261015.184100 - only the default key is a capital in the roll-back question
 # v. 20261014.225831 - also restore clip-backup_YYYYMMDD-HHMMSS.ext copies
 # v. 20261014.225419 - put clip-backup.mp4 back as clip.mp4 (the backup is the original)
 # v. 20261014.225225 - roll back audio-pgm-swap-audio.sh: delete each *-backup copy one by one (original stays)
 #
+# 2026.10.15 - v. 0.4 - only Y is capital in the roll-back question
 # 2026.10.14 - v. 0.3 - dated copies clip-backup_YYYYMMDD-HHMMSS.ext are restored the same way
 # 2026.10.14 - v. 0.2 - restore the original from stem-backup.ext over stem.ext, one file at a time
 # 2026.10.14 - v. 0.1 - initial release: find stem-backup.ext next to stem.ext, confirm, remove the
@@ -307,9 +309,9 @@ un_process_one() {
     un_print_question "Roll back this file?"
     echo "  [Y] Yes (default) — put the original back as ${orig##*/}"
     echo "  [s] Skip this file"
-    echo "  [A] Yes, and the same for every remaining file"
+    echo "  [a] Yes, and the same for every remaining file"
     echo "  [q] Quit"
-    un_read_key "Roll back? [Y/s/A/q]: " y "Yes — restore the original"
+    un_read_key "Roll back? [Y/s/a/q]: " y "Yes — restore the original"
     case "$REPLY" in
       y) un_print_selected "yes (roll back)" ;;
       s)

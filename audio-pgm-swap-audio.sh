@@ -1,4 +1,6 @@
 #!/bin/bash
+# v. 20261015.184100 - audio and subtitle plan arrows start in the same column
+# v. 20261015.183700 - each file is boxed with a start and end rule; compare columns are wider; only the default key is a capital
 # v. 20261014.225831 - if clip-backup already exists, save another original copy as clip-backup_YYYYMMDD-HHMMSS.ext
 # v. 20261014.225419 - original is moved to stem-backup.ext; the swapped file keeps the original name
 # v. 20261014.224924 - first-file report is compact: facts, present, streams and plan in a few short lines
@@ -13,6 +15,8 @@
 # v. 20261014.220133 - ask to keep the original (default yes); print a facts table before and after each swap
 # v. 20261014.213909 - swap audio tracks in a video; every other stream stays, in the same order
 #
+# 2026.10.15 - v. 0.15 - the -> on the audio line and the subtitle line start in the same column
+# 2026.10.15 - v. 0.14 - a rule opens and closes each file; the input/output columns are 70 characters so a long name fits; only Y is capital in the swap question
 # 2026.10.14 - v. 0.13 - if clip-backup.mp4 is already there, copy the original to clip-backup_YYYYMMDD-HHMMSS.mp4 instead of overwriting
 # 2026.10.14 - v. 0.12 - keep-original moves the original to clip-backup.mp4, then writes the swapped file under the original name
 # 2026.10.14 - v. 0.11 - first-file listing is compact (size/duration/times on one line, present on one line, plan on two lines)
@@ -179,6 +183,10 @@ ASIDE_ORIG=""
 ASIDE_BACKUP=""
 APPLY_REST=0
 REST_ORDER=""
+SA_FILE_OPEN=0
+SA_FILE_NAME=""
+SA_FILE_N=0
+SA_FILE_TOTAL=0
 
 FILES=()
 FILE_STATE=()   # swap | skip | fail
@@ -390,6 +398,7 @@ sa_read_key() {
 }
 
 sa_quit() {
+  sa_close_file
   echo "$(sa_ts) Quit."
   STOPPED=yes
   return_code=0
@@ -797,28 +806,50 @@ sa_print_stream_table() {
 }
 
 sa_print_audio_plan() {
-  local now after spec="${1:-}" sub_now sub_after
+  local now after spec="${1:-}" sub_after sub_mode="" left_w=0
+  local audio_left audio_right="" sub_left="" sub_right="" drop_txt=""
   now="$(sa_audio_order_text)"
-  printf '  audio %s' "$now"
+  audio_left="$now"
   if [[ -n "$spec" ]]; then
     after="$(sa_audio_order_after "$spec")"
-    printf '  ->  %s' "$after"
+    audio_right="$after"
   fi
   if (( ${#DROP_FAMS[@]} > 0 )); then
-    printf '  drop %s' "$(sa_join_labels "${DROP_FAMS[@]}")"
+    drop_txt="$(sa_join_labels "${DROP_FAMS[@]}")"
   fi
-  echo
   if (( SWAP_SUBS )); then
     sa_fill_kept_streams
     if (( ${#KEPT_SUBTITLE_ST[@]} == 0 && ${#SUBTITLE_ST[@]} == 0 )); then
-      printf '  subs  none\n'
+      sub_mode=none
+      sub_left="none"
     elif (( ${#KEPT_SUBTITLE_ST[@]} == 0 )); then
-      printf '  subs  all dropped\n'
+      sub_mode=dropped
+      sub_left="all dropped"
     elif [[ -n "$spec" ]] && sub_after="$(sa_subtitle_perm "$spec")"; then
-      sub_now="$(sa_subtitle_order_text)"
-      printf '  subs  %s  ->  %s\n' "$sub_now" "$(sa_subtitle_order_after "$sub_after")"
+      sub_mode=arrow
+      sub_left="$(sa_subtitle_order_text)"
+      sub_right="$(sa_subtitle_order_after "$sub_after")"
     else
-      printf '  subs  as they are\n'
+      sub_mode=asis
+      sub_left="as they are"
+    fi
+  fi
+  left_w=${#audio_left}
+  if [[ "$sub_mode" == arrow && ${#sub_left} -gt left_w ]]; then
+    left_w=${#sub_left}
+  fi
+  if [[ -n "$audio_right" ]]; then
+    printf '  %-5s %-*s  ->  %s' "audio" "$left_w" "$audio_left" "$audio_right"
+  else
+    printf '  %-5s %s' "audio" "$audio_left"
+  fi
+  [[ -n "$drop_txt" ]] && printf '  drop %s' "$drop_txt"
+  echo
+  if (( SWAP_SUBS )); then
+    if [[ "$sub_mode" == arrow ]]; then
+      printf '  %-5s %-*s  ->  %s\n' "subs" "$left_w" "$sub_left" "$sub_right"
+    else
+      printf '  %-5s %s\n' "subs" "$sub_left"
     fi
   fi
 }
@@ -1191,6 +1222,49 @@ sa_subtitle_order_after() {
   printf '%s  (%s)' "$nums" "$langs"
 }
 
+sa_repeat() {
+  local ch="$1" n="$2" i line=""
+  (( n > 0 )) || return 0
+  for (( i = 0; i < n; i++ )); do
+    line+="$ch"
+  done
+  printf '%s' "$line"
+}
+
+sa_rule() {
+  local ch="${1:--}" cols=88
+  if [[ -t 1 ]]; then
+    cols="$(tput cols 2>/dev/null || printf '88')"
+  fi
+  [[ "$cols" =~ ^[0-9]+$ ]] || cols=88
+  (( cols > 160 )) && cols=160
+  (( cols < 48 )) && cols=48
+  printf '%s\n' "$(sa_repeat "$ch" "$cols")"
+}
+
+sa_open_file() {
+  SA_FILE_OPEN=1
+  SA_FILE_NAME="$1"
+  SA_FILE_N="$2"
+  SA_FILE_TOTAL="$3"
+  echo
+  sa_rule '='
+  echo "$(sa_ts) File ${SA_FILE_N} of ${SA_FILE_TOTAL}"
+  echo "  ${SA_FILE_NAME}"
+  sa_rule '-'
+}
+
+sa_close_file() {
+  (( SA_FILE_OPEN )) || return 0
+  SA_FILE_OPEN=0
+  echo
+  sa_rule '-'
+  echo "$(sa_ts) End of file ${SA_FILE_N} of ${SA_FILE_TOTAL}"
+  echo "  ${SA_FILE_NAME}"
+  sa_rule '='
+  echo
+}
+
 sa_mark_cell() {
   local left="$1" right="$2" width="$3"
   if [[ "$left" == "$right" ]]; then
@@ -1203,20 +1277,22 @@ sa_mark_cell() {
 sa_print_compare() {
   local -n L_IDX=$1 L_TYPE=$2 L_CODEC=$3 L_DET=$4
   local -n R_IDX=$5 R_TYPE=$6 R_CODEC=$7 R_DET=$8
-  local lw=42 i n ln rn idx type left right
+  local lw=70 i n ln rn idx type left right dashes type_dashes
+  dashes="$(sa_repeat '-' "$lw")"
+  type_dashes="$(sa_repeat '-' 9)"
   echo
-  printf '                    %-42s  %s\n' "INPUT" "OUTPUT"
-  printf '  %-18s  %-42s  %s\n' "File" "$(sa_trunc "$(sa_dash "$IN_FILE")" "$lw")" "$(sa_mark_cell "$IN_FILE" "$OUT_FILE" "$lw")"
-  printf '  %-18s  %-42s  %s\n' "Size" "$(sa_trunc "$(sa_dash "$IN_SIZE")" "$lw")" "$(sa_mark_cell "$IN_SIZE" "$OUT_SIZE" "$lw")"
-  printf '  %-18s  %-42s  %s\n' "Duration" "$(sa_trunc "$(sa_dash "$IN_DUR")" "$lw")" "$(sa_mark_cell "$IN_DUR" "$OUT_DUR" "$lw")"
-  printf '  %-18s  %-42s  %s\n' "Created" "$(sa_trunc "$(sa_dash "$IN_CREATED")" "$lw")" "$(sa_mark_cell "$IN_CREATED" "$OUT_CREATED" "$lw")"
-  printf '  %-18s  %-42s  %s\n' "File time" "$(sa_trunc "$(sa_dash "$IN_MTIME")" "$lw")" "$(sa_mark_cell "$IN_MTIME" "$OUT_MTIME" "$lw")"
-  printf '  %-18s  %-42s  %s\n' "GPS" "$(sa_trunc "$(sa_dash "$IN_GPS")" "$lw")" "$(sa_mark_cell "$IN_GPS" "$OUT_GPS" "$lw")"
-  printf '  %-18s  %-42s  %s\n' "Chapters" "$(sa_trunc "$(sa_dash "$IN_CHAPTERS")" "$lw")" "$(sa_mark_cell "$IN_CHAPTERS" "$OUT_CHAPTERS" "$lw")"
-  printf '  %-18s  %-42s  %s\n' "GoPro telemetry" "$(sa_trunc "$(sa_dash "$IN_GOPRO")" "$lw")" "$(sa_mark_cell "$IN_GOPRO" "$OUT_GOPRO" "$lw")"
+  printf '  %-18s  %-*s  %s\n' "" "$lw" "INPUT" "OUTPUT"
+  printf '  %-18s  %-*s  %s\n' "File" "$lw" "$(sa_trunc "$(sa_dash "$IN_FILE")" "$lw")" "$(sa_mark_cell "$IN_FILE" "$OUT_FILE" "$lw")"
+  printf '  %-18s  %-*s  %s\n' "Size" "$lw" "$(sa_trunc "$(sa_dash "$IN_SIZE")" "$lw")" "$(sa_mark_cell "$IN_SIZE" "$OUT_SIZE" "$lw")"
+  printf '  %-18s  %-*s  %s\n' "Duration" "$lw" "$(sa_trunc "$(sa_dash "$IN_DUR")" "$lw")" "$(sa_mark_cell "$IN_DUR" "$OUT_DUR" "$lw")"
+  printf '  %-18s  %-*s  %s\n' "Created" "$lw" "$(sa_trunc "$(sa_dash "$IN_CREATED")" "$lw")" "$(sa_mark_cell "$IN_CREATED" "$OUT_CREATED" "$lw")"
+  printf '  %-18s  %-*s  %s\n' "File time" "$lw" "$(sa_trunc "$(sa_dash "$IN_MTIME")" "$lw")" "$(sa_mark_cell "$IN_MTIME" "$OUT_MTIME" "$lw")"
+  printf '  %-18s  %-*s  %s\n' "GPS" "$lw" "$(sa_trunc "$(sa_dash "$IN_GPS")" "$lw")" "$(sa_mark_cell "$IN_GPS" "$OUT_GPS" "$lw")"
+  printf '  %-18s  %-*s  %s\n' "Chapters" "$lw" "$(sa_trunc "$(sa_dash "$IN_CHAPTERS")" "$lw")" "$(sa_mark_cell "$IN_CHAPTERS" "$OUT_CHAPTERS" "$lw")"
+  printf '  %-18s  %-*s  %s\n' "GoPro telemetry" "$lw" "$(sa_trunc "$(sa_dash "$IN_GOPRO")" "$lw")" "$(sa_mark_cell "$IN_GOPRO" "$OUT_GOPRO" "$lw")"
   echo
-  printf '  %-3s %-6s %-42s  %s\n' "#" "Type" "INPUT" "OUTPUT"
-  printf '  %-3s %-6s %-42s  %s\n' "--" "------" "------------------------------------------" "------------------------------------------"
+  printf '  %-3s %-9s %-*s  %s\n' "#" "Type" "$lw" "INPUT" "OUTPUT"
+  printf '  %-3s %-9s %s  %s\n' "--" "$type_dashes" "$dashes" "$dashes"
   ln=${#L_IDX[@]}
   rn=${#R_IDX[@]}
   n=$ln
@@ -1240,10 +1316,10 @@ sa_print_compare() {
     fi
     left="${left%"${left##*[![:space:]]}"}"
     right="${right%"${right##*[![:space:]]}"}"
-    printf '  %-3s %-6s %-42s  %s\n' "$idx" "$type" "$(sa_trunc "$left" "$lw")" "$(sa_mark_cell "$left" "$right" "$lw")"
+    printf '  %-3s %-9s %-*s  %s\n' "$idx" "$type" "$lw" "$(sa_trunc "$left" "$lw")" "$(sa_mark_cell "$left" "$right" "$lw")"
   done
   echo
-  printf '  %-18s  %-42s  %s\n' "Audio order" "$(sa_trunc "$(sa_dash "$IN_AUDIO")" "$lw")" "$(sa_mark_cell "$IN_AUDIO" "$OUT_AUDIO" "$lw")"
+  printf '  %-18s  %-*s  %s\n' "Audio order" "$lw" "$(sa_trunc "$(sa_dash "$IN_AUDIO")" "$lw")" "$(sa_mark_cell "$IN_AUDIO" "$OUT_AUDIO" "$lw")"
 }
 
 sa_copy_stream_snapshot() {
@@ -2108,6 +2184,14 @@ sa_ask_custom_order() {
 }
 
 sa_process_one() {
+  local rc=0
+  SA_FILE_OPEN=0
+  sa_process_one_work "$1" || rc=$?
+  sa_close_file
+  return "$rc"
+}
+
+sa_process_one_work() {
   local i="$1" src dest backup n order why rc=0 extra subp="" copy_aside=0
   src="${FILES[$i]}"
   dest="${FILE_DEST[$i]}"
@@ -2129,8 +2213,7 @@ sa_process_one() {
   sa_store_info_as IN
   sa_copy_stream_snapshot IN
   (( SWAP_SHOWN++ )) || true
-  echo
-  echo "$(sa_ts) ${src##*/}   (${SWAP_SHOWN} of ${SWAP_TOTAL})"
+  sa_open_file "${src##*/}" "$SWAP_SHOWN" "$SWAP_TOTAL"
   if (( SWAP_SHOWN == 1 )); then
     sa_print_verbose
   else
@@ -2159,9 +2242,9 @@ sa_process_one() {
     echo "  [Y] Yes, order ${order} (default)"
     echo "  [o] Type a new audio order"
     echo "  [s] Skip this file"
-    echo "  [A] Yes, and the same order for every remaining file"
+    echo "  [a] Yes, and the same order for every remaining file"
     echo "  [q] Quit"
-    sa_read_key "Swap audio? [Y/o/s/A/q]: " y "Yes, order ${order}"
+    sa_read_key "Swap audio? [Y/o/s/a/q]: " y "Yes, order ${order}"
     case "$REPLY" in
       y) sa_print_selected "yes (${order})" ;;
       o)
