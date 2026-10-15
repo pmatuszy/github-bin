@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# v. 20261015.211800 - Hero4 GOPR####.mp4 / GP######.mp4: rename using file mtime minus duration (camera Create Date is the unset clock)
 # v. 20261012.082500 - GoPro size-split _part_: next clip must start at prev creation + duration (±2s); no wall-clock-only pairing
 # v. 20261012.081800 - GoPro 12G chapter: full split ≥ ~9.8 GiB; wall-clock link only for a large remainder (not a short independent clip)
 # v. 20261011.213700 - collision [A]: overwrite identical-hash dest for the rest of this run
@@ -102,6 +103,7 @@
 # v. 20260721.132007 - Samsung timestamp media: preserve optional numeric sorting prefix when appending make/model
 # v. 20260721.112812 - GoPro camera labels: GoPro_Hero4_Silver style (not GOPRO4_SILVER)
 
+# 2026.10.15 - v. 19.353.211800 - Hero 3/4 video names GOPR####.mp4 and chapter files GP######.mp4 now take the GoPro exiftool rename. The filename time is the file modification time minus the movie Duration (local start). Embedded Create Date on these clips is the camera clock and was hours off (no Time Zone tag), so it is not used.
 # 2026.10.12 - v. 19.352.082500 - GoPro size-split _part_: a suspected next chapter must start within 2s of (previous basename time + ffprobe duration). GoPro chapter end/start times match; a 6 min gap (18:18:44 vs 18:24:39) is a new recording. Wall-clock-only pairing is removed.
 # 2026.10.12 - v. 19.351.081800 - GoPro size-split _part_: full 12G chapter starts at 10000 MiB (~9.77 GiB), not 8 GiB (an 8.1 GiB Mission 1 clip is a complete recording)
 # 2026.10.11 - v. 19.350.213700 - Collision menu [A]: when source and destination MD5 match, overwrite the destination for all further identical-hash collisions this run (any directory); [C] still overwrites every collision in the current source directory
@@ -11793,10 +11795,55 @@ gopro_mark_capture_mode_db_from_basename() {
     db_mark_gopro_capture_mode_checked "$path" "$cm"
 }
 
+# Hero 3/4 video: GOPR####.mp4 is chapter 1; GP######.mp4 (GPnn####) is a later chapter.
+gopro_legacy_hero4_mp4_basename_matches() {
+    local base="$1"
+    [[ "$base" =~ ^[gG][oO][pP][rR][0-9]{4}(_Proxy)?\.[mM][pP]4$ ]] && return 0
+    [[ "$base" =~ ^[gG][pP][0-9]{6}(_Proxy)?\.[mM][pP]4$ ]] && return 0
+    return 1
+}
+
+# Movie Duration from an exiftool dump, in seconds (22.21 s or 0:11:30).
+gopro_exif_movie_duration_seconds() {
+    local exif="$1" line val
+
+    line="$(printf '%s\n' "$exif" | grep -m1 -E '^Duration[[:space:]]+:' || true)"
+    val="$(gopro_exif_value_after_colon "$line")"
+    val="${val% s}"
+    val="${val%s}"
+    [[ -n "$val" ]] || return 1
+    awk -v t="$val" 'BEGIN {
+        if (t ~ /^[0-9]+:[0-9][0-9]:[0-9][0-9]([.][0-9]+)?$/) {
+            n = split(t, a, ":")
+            printf "%.3f\n", a[1]*3600 + a[2]*60 + a[3]
+            exit 0
+        }
+        if (t+0 > 0) { printf "%.3f\n", t+0; exit 0 }
+        exit 1
+    }'
+}
+
+# Local start of a Hero 3/4 GOPR/GP clip: file mtime is the end, minus movie duration.
+gopro_legacy_hero4_local_start_from_mtime() {
+    local file="$1" exif="$2"
+    local mtime dur start
+
+    mtime="$(get_file_mtime_epoch "$file")"
+    [[ "$mtime" =~ ^[0-9]+$ ]] && (( mtime > 0 )) || return 1
+    dur="$(gopro_exif_movie_duration_seconds "$exif" 2>/dev/null)" || dur=""
+    if [[ -n "$dur" ]]; then
+        start="$(awk -v m="$mtime" -v d="$dur" 'BEGIN{printf "%d", m-d+0.5}')"
+    else
+        start="$mtime"
+    fi
+    date -d "@$start" +%Y%m%d_%H%M%S 2>/dev/null
+}
+
 # GoPro-style raw names before exiftool rename (zmien-nazwe-CURRENT_DIRECTORY.sh patterns).
 gopro_camera_raw_basename_matches() {
     local base="$1"
     [[ "$base" =~ ^[cCgG][hHxX][0-9][0-9][0-9][0-9][0-9][0-9](_Proxy)?\.[mM][pP]4$ ]] && return 0
+    gopro_legacy_hero4_mp4_basename_matches "$base" && return 0
     gopro_camera_raw_jpg_basename_matches "$base"
 }
 
@@ -14292,6 +14339,14 @@ transform_gopro_camera_basename() {
             if [[ -n "$mission1_local_ts" ]]; then
                 vlog "GoPro Mission 1 Pro: UTC timestamp $TrackCreateDate adjusted by embedded Time Zone to $mission1_local_ts"
                 data_stworzenia_pliku_w_czasie_lokalnym="$mission1_local_ts"
+            fi
+        fi
+        if gopro_legacy_hero4_mp4_basename_matches "$base"; then
+            local hero4_ts=""
+            hero4_ts="$(gopro_legacy_hero4_local_start_from_mtime "$file" "$exif")" || hero4_ts=""
+            if [[ "$hero4_ts" =~ ^[0-9]{8}_[0-9]{6}$ ]]; then
+                vlog "GoPro Hero4 GOPR/GP: local start $hero4_ts from file mtime minus duration (Create Date ${TrackCreateDate:-?} is the camera clock)"
+                data_stworzenia_pliku_w_czasie_lokalnym="$hero4_ts"
             fi
         fi
     fi
