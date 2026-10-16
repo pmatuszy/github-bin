@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261016.080400 - measure every audio track; warn when a track is present but empty
 # v. 20260928.180359 - originals move to name.ext.original-backup.ext and are skipped
 # v. 20260928.144348 - rollback script: one key, no Enter (Y restore, N skip, Q stop)
 # v. 20260928.143252 - FFmpeg 9 ffprobe: one value per stream so GoPro pass 2 does not map 0:aac
@@ -32,6 +33,7 @@
 # v. 20260801.144550 - normalize: map streams individually; skip MP4-unmappable timecode (tmcd) only
 # v. 20260716.163224 - versioning format v. YYYYMMDD.HH24MISS
 
+# 2026.10.16 - v. 0.5.56 - each audio track is measured; a track at or below -70 dB peak and average is EMPTY (present but silent) and is not loudnorm-filtered. The file row stays the default track, or the loudest track that is not empty
 # 2026.09.28 - v. 0.5.55 - original is moved to name.ext.original-backup.ext (still opens on double-click); those files are left out of scan and normalize
 # 2026.09.28 - v. 0.5.54 - rollback script waits for one key and does not need Enter: Y restores, N skips, Q stops; any other key is no
 # 2026.09.28 - v. 0.5.53 - FFmpeg 9 ffprobe also prints timecode track-reference streams; keep one value per field so GoPro pass 2 maps numeric indexes only (not 0:aac)
@@ -136,6 +138,11 @@ Scan for audio and video files and measure loudness with ffmpeg volumedetect
   NO_PROCESS (mean below --mean-skip-db, default -60 dB)
                        Very low average level — not normalized unless you
                        answer Yes per file, or pass --force (with -y on CLI).
+  EMPTY (per track)  Peak and average both at or below -70 dB. The track
+                       exists but has no usable signal. Listed under the file
+                       when there is more than one audio track, and not
+                       loudnorm-filtered. The file row uses the default track,
+                       or the loudest track that is not empty.
 
 Optionally normalize selected classification groups in place (original
 modification time kept). By default NORMAL and TOO QUIET are candidates;
@@ -2262,6 +2269,94 @@ parse_volumedetect_db() {
   ' <<<"$blob"
 }
 
+# Peak and average both at or below this (dB) means the track is present but empty.
+LOUDNESS_EMPTY_TRACK_DB=-70
+LOUDNESS_EMPTY_WARN_COUNT=0
+declare -A LOUDNESS_EMPTY_TRACKS=()
+
+# True when both levels are numbers at or below the empty-track floor.
+loudness_track_is_empty() {
+  local max_db="$1" mean_db="$2"
+  [[ "$max_db" =~ ^-?[0-9]+(\.[0-9]+)?$ ]] || return 1
+  [[ "$mean_db" =~ ^-?[0-9]+(\.[0-9]+)?$ ]] || return 1
+  awk -v max="$max_db" -v mean="$mean_db" -v floor="$LOUDNESS_EMPTY_TRACK_DB" 'BEGIN {
+    exit !((max + 0 <= floor + 0) && (mean + 0 <= floor + 0))
+  }'
+}
+
+loudness_mark_track_empty() {
+  local file="$1" ord="$2"
+  local cur="${LOUDNESS_EMPTY_TRACKS[$file]:-}"
+  LOUDNESS_EMPTY_TRACKS["$file"]="${cur} ${ord}"
+  LOUDNESS_EMPTY_WARN_COUNT=$(( LOUDNESS_EMPTY_WARN_COUNT + 1 ))
+}
+
+loudness_track_marked_empty() {
+  local file="$1" ord="$2"
+  local cur="${LOUDNESS_EMPTY_TRACKS[$file]:-}"
+  [[ " ${cur} " == *" ${ord} "* ]]
+}
+
+# One line per audio stream: ordinal|codec|channels|layout|language|default
+loudness_list_audio_tracks() {
+  local file="$1"
+  local -a fp_args=(-v error)
+
+  loudness_ffprobe_input_opts_for_file "$file" fp_args
+  fp_args+=(
+    -select_streams a
+    -show_entries stream=codec_name,channels,channel_layout:stream_tags=language:stream_disposition=default
+    -of compact=p=0:nk=0
+    -- "$file"
+  )
+  ffprobe "${fp_args[@]}" 2>/dev/null | awk '
+    /codec_name=/ || /channels=/ {
+      codec = ""; channels = ""; layout = ""; lang = ""; def = "0"
+      nfields = split($0, f, "|")
+      for (i = 1; i <= nfields; i++) {
+        split(f[i], kv, "=")
+        key = kv[1]
+        val = substr(f[i], length(key) + 2)
+        if (key == "codec_name") codec = val
+        else if (key == "channels") channels = val
+        else if (key == "channel_layout") layout = val
+        else if (key == "tag:language" || key == "language") lang = val
+        else if (key == "disposition:default") def = val
+      }
+      printf "%d|%s|%s|%s|%s|%s\n", n, codec, channels, layout, lang, def
+      n++
+    }
+  '
+}
+
+loudness_track_label() {
+  local ord="$1" codec="$2" channels="$3" layout="$4" lang="$5" def="$6"
+  local layout_s="$layout"
+
+  [[ -n "$codec" ]] || codec="audio"
+  if [[ -z "$layout_s" || "$layout_s" == unknown || "$layout_s" == N/A || "$layout_s" == *"channels" ]]; then
+    if [[ -n "$channels" && "$channels" != N/A ]]; then
+      layout_s="${channels}ch"
+    else
+      layout_s="?"
+    fi
+  fi
+  printf '  a:%s %s %s' "$ord" "$codec" "$layout_s"
+  if [[ -n "$lang" && "$lang" != und && "$lang" != N/A ]]; then
+    printf ' %s' "$lang"
+  fi
+  if [[ "$def" == 1 ]]; then
+    printf ' default'
+  fi
+}
+
+loudness_warn_empty_track() {
+  local file="$1" label="$2"
+  label="${label#"${label%%[![:space:]]*}"}"
+  printf '%bWARNING:%b %s — %s is present but empty.\n' \
+    "$YELLOW" "$RESET" "$(basename -- "$file")" "$label"
+}
+
 # Run ffmpeg volumedetect; sets LOUDNESS_VD_RC / LOUDNESS_VD_MAX / LOUDNESS_VD_MEAN. Returns 0 if max_volume parsed.
 loudness_volumedetect_run() {
   local rc=0
@@ -2283,8 +2378,8 @@ loudness_measure_volumedetect_needs_fallback() {
 }
 
 measure_loudness() {
-  local file="$1" mode="${2:-}"
-  local -a ff_args=(-hide_banner -nostats)
+  local file="$1" mode="${2:-}" map_audio="${3:-}"
+  local -a ff_args=(-hide_banner -nostats) plain=() ts_args=()
   local window start_sec scan_sec used_fallback=0
 
   if [[ "$mode" != full ]] && window="$(loudness_scan_window_for_file "$file")"; then
@@ -2292,18 +2387,33 @@ measure_loudness() {
     ff_args+=(-ss "$start_sec" -t "$scan_sec")
   fi
 
-  ff_args+=(-i "$file" -vn -af volumedetect -f null /dev/null)
+  ff_args+=(-i "$file")
+  if [[ -n "$map_audio" ]]; then
+    ff_args+=(-map "0:a:${map_audio}")
+  fi
+  ff_args+=(-vn -af volumedetect -f null /dev/null)
   if loudness_volumedetect_run "${ff_args[@]}"; then
     printf '%s %s\n' "$LOUDNESS_VD_MAX" "${LOUDNESS_VD_MEAN:-—}"
     return 0
   fi
 
   if loudness_measure_volumedetect_needs_fallback; then
-    if loudness_volumedetect_run -hide_banner -nostats -i "$file" -vn -af volumedetect -f null /dev/null; then
+    plain=(-hide_banner -nostats -i "$file")
+    if [[ -n "$map_audio" ]]; then
+      plain+=(-map "0:a:${map_audio}")
+    fi
+    plain+=(-vn -af volumedetect -f null /dev/null)
+    if loudness_volumedetect_run "${plain[@]}"; then
       used_fallback=1
-    elif loudness_file_is_mpegts "$file" \
-      && loudness_volumedetect_run -hide_banner -nostats -f mpegts -i "$file" -vn -af volumedetect -f null /dev/null; then
-      used_fallback=1
+    elif loudness_file_is_mpegts "$file"; then
+      ts_args=(-hide_banner -nostats -f mpegts -i "$file")
+      if [[ -n "$map_audio" ]]; then
+        ts_args+=(-map "0:a:${map_audio}")
+      fi
+      ts_args+=(-vn -af volumedetect -f null /dev/null)
+      if loudness_volumedetect_run "${ts_args[@]}"; then
+        used_fallback=1
+      fi
     fi
     if (( used_fallback )); then
       loudness_warn_ffmpeg_measure_fallback_once
@@ -2931,7 +3041,10 @@ normalize_audio_filter_args() {
 
   while IFS=',' read -r channels layout; do
     [[ "$channels" =~ ^[0-9]+$ ]] || continue
-    if [[ -z "$layout" || "$layout" == unknown || "$layout" == *"channels" ]]; then
+    if loudness_track_marked_empty "$file" "$n"; then
+      # Silence stays silence. loudnorm would raise the floor into hiss.
+      args+=(-filter:a:"$n" anull)
+    elif [[ -z "$layout" || "$layout" == unknown || "$layout" == *"channels" ]]; then
       args+=(-filter:a:"$n" "${filter},aformat=channel_layouts=${channels}c")
     else
       args+=(-filter:a:"$n" "$filter")
@@ -4171,6 +4284,7 @@ print_loudness_class_legend() {
   if [[ -n "$LOUDNESS_MEAN_SKIP_DB" ]]; then
     printf '  %-*s  %-*s  — %s\n' "$label_w" 'NO_PROCESS' "$range_w" "mean < ${LOUDNESS_MEAN_SKIP_DB} dB" 'do not normalize (--force)'
   fi
+  printf '  %-*s  %-*s  — %s\n' "$label_w" 'EMPTY' "$range_w" '<= -70 dB' 'track present but silent'
 }
 
 declare -a ROW_FILE=() ROW_MAX=() ROW_MEAN=() ROW_STATUS=()
@@ -4194,11 +4308,16 @@ init_report_column_widths() {
   if (( REPORT_FILE_W > REPORT_FILE_MAX_W )); then
     REPORT_FILE_W=$REPORT_FILE_MAX_W
   fi
+  # Room for an indented per-track label under a short file name.
+  if (( REPORT_FILE_W < 42 )); then
+    REPORT_FILE_W=42
+  fi
   REPORT_MAX_W=$(_table_disp_col_width "$REPORT_MAX_W" 'MAX_VOLUME')
   REPORT_MEAN_W=$(_table_disp_col_width "$REPORT_MEAN_W" 'MEAN_VOLUME')
   REPORT_STATUS_W=$(_table_disp_col_width "$REPORT_STATUS_W" 'TOO_QUIET')
   REPORT_STATUS_W=$(_table_disp_col_width "$REPORT_STATUS_W" 'NO_PROCESS')
   REPORT_STATUS_W=$(_table_disp_col_width "$REPORT_STATUS_W" 'NO AUDIO')
+  REPORT_STATUS_W=$(_table_disp_col_width "$REPORT_STATUS_W" 'EMPTY')
 }
 
 # Left-align filename within the FILE column (truncate with … by display width).
@@ -4266,14 +4385,16 @@ print_report_table_row() {
   max_cell="$(format_scan_db_cell "$max_val" "$REPORT_MAX_W")"
   mean_cell="$(format_scan_db_cell "$mean_val" "$REPORT_MEAN_W")"
 
-  if [[ "$status" == PERFECT ]] && loudness_colors_enabled; then
+  if [[ "$status" == EMPTY || "$status" == PERFECT ]] && loudness_colors_enabled; then
+    local status_color="$GREEN"
+    [[ "$status" == EMPTY ]] && status_color="$YELLOW"
     local status_cell
     status_cell="$(printf '%-*s' "$REPORT_STATUS_W" "$status")"
     printf '%s%s%s%s%s%s%s%s%s%s%s\n' \
-      "$GREEN" "$file_cell" "$RESET" "$REPORT_COL_GAP" \
+      "$status_color" "$file_cell" "$RESET" "$REPORT_COL_GAP" \
       "$max_cell" "$REPORT_COL_GAP" \
       "$mean_cell" "$REPORT_COL_GAP" \
-      "$GREEN" "$status_cell" "$RESET"
+      "$status_color" "$status_cell" "$RESET"
     return 0
   fi
 
@@ -4409,6 +4530,12 @@ print_scan_summary() {
     echo "NOTE: NO_PROCESS files have mean volume below ${LOUDNESS_MEAN_SKIP_DB} dB and are not normalization candidates (use --force to include)."
   fi
 
+  if (( LOUDNESS_EMPTY_WARN_COUNT == 1 )); then
+    echo "NOTE: 1 audio track is present but empty (peak and average at or below ${LOUDNESS_EMPTY_TRACK_DB} dB) and is not loudnorm-filtered."
+  elif (( LOUDNESS_EMPTY_WARN_COUNT > 1 )); then
+    echo "NOTE: ${LOUDNESS_EMPTY_WARN_COUNT} audio tracks are present but empty (peak and average at or below ${LOUDNESS_EMPTY_TRACK_DB} dB) and are not loudnorm-filtered."
+  fi
+
   if (( count_no_audio > 0 )); then
     echo 'NOTE: NO AUDIO files are listed above but are not candidates for normalization.'
   fi
@@ -4425,9 +4552,69 @@ print_scan_summary() {
   return 0
 }
 
+# Record one failed measurement as NO AUDIO or ERROR. Echoes the status.
+loudness_failed_measure_status() {
+  local measure_rc="$1" probe_status="$2" file="$3"
+
+  if (( measure_rc == 2 )); then
+    printf 'NO AUDIO'
+    return 0
+  fi
+  if (( measure_rc == 5 )); then
+    loudness_warn_ffmpeg_crashed_once
+    printf 'ERROR'
+    return 0
+  fi
+  if [[ "$probe_status" == 2 ]]; then
+    echo "ERROR: could not measure $(basename -- "$file") after ffprobe probe failed — try updating ffmpeg/ffprobe." >&2
+  fi
+  printf 'ERROR'
+}
+
+loudness_publish_file_row() {
+  local file="$1" max_db="$2" mean_db="$3" status="$4"
+
+  if [[ "$status" == EMPTY ]]; then
+    status="$(classify_loudness_status "$max_db" "$mean_db")"
+  fi
+  if [[ "$status" == ERROR || "$status" == 'NO AUDIO' ]]; then
+    append_scan_row "$file" '—' '—' "$status"
+    print_report_table_row "$file" '—' '—' "$status"
+    return 0
+  fi
+  append_scan_row "$file" "$max_db" "$mean_db" "$status" "$max_db"
+  print_report_table_row "$file" "$max_db" "$mean_db" "$status"
+}
+
+# File row from one measurement. Warn when that only track is empty.
+loudness_scan_single_measurement() {
+  local file="$1" probe_status="$2" map_audio="${3:-}" label="${4:-}"
+  local measure_rc=0 measure_line="" max_db="" mean_db="" status=""
+
+  measure_line="$(measure_loudness "$file" "" "$map_audio")" || measure_rc=$?
+  if (( measure_rc != 0 )); then
+    status="$(loudness_failed_measure_status "$measure_rc" "$probe_status" "$file")"
+    loudness_publish_file_row "$file" '—' '—' "$status"
+    return 0
+  fi
+
+  read -r max_db mean_db <<<"$measure_line"
+  status="$(classify_loudness_status "$max_db" "$mean_db")"
+  loudness_publish_file_row "$file" "$max_db" "$mean_db" "$status"
+  if loudness_track_is_empty "$max_db" "$mean_db"; then
+    [[ -n "$label" ]] || label="  a:${map_audio:-0}"
+    loudness_mark_track_empty "$file" "${map_audio:-0}"
+    loudness_warn_empty_track "$file" "$label"
+  fi
+}
+
 scan_one_media_file() {
   local file="$1"
   local max_db mean_db status measure_rc measure_line probe_status
+  local -a tracks=()
+  local rec ord codec channels layout lang def label
+  local -a t_label=() t_max=() t_mean=() t_status=() t_empty=() t_default=()
+  local i chosen=-1 best_max="" ntracks
 
   probe_status="$(file_audio_probe_status "$file")"
 
@@ -4441,30 +4628,76 @@ scan_one_media_file() {
     loudness_warn_ffprobe_probe_failed_once "$file" "$LOUDNESS_LAST_PROBE_RC"
   fi
 
-  measure_rc=0
-  measure_line="$(measure_loudness "$file")" || measure_rc=$?
-  if (( measure_rc != 0 )); then
-    if (( measure_rc == 2 )); then
-      status='NO AUDIO'
-    elif (( measure_rc == 5 )); then
-      status='ERROR'
-      loudness_warn_ffmpeg_crashed_once
-    elif [[ "$probe_status" == 2 ]]; then
-      status='ERROR'
-      echo "ERROR: could not measure $(basename -- "$file") after ffprobe probe failed — try updating ffmpeg/ffprobe." >&2
+  mapfile -t tracks < <(loudness_list_audio_tracks "$file")
+  ntracks=${#tracks[@]}
+
+  if (( ntracks <= 1 )); then
+    if (( ntracks == 1 )); then
+      IFS='|' read -r ord codec channels layout lang def <<<"${tracks[0]}"
+      label="$(loudness_track_label "$ord" "$codec" "$channels" "$layout" "$lang" "$def")"
+      loudness_scan_single_measurement "$file" "$probe_status" "$ord" "$label"
     else
-      status='ERROR'
+      loudness_scan_single_measurement "$file" "$probe_status"
     fi
-    append_scan_row "$file" '—' '—' "$status"
-    print_report_table_row "$file" '—' '—' "$status"
     return 0
   fi
 
-  read -r max_db mean_db <<<"$measure_line"
-  status="$(classify_loudness_status "$max_db" "$mean_db")"
+  for rec in "${tracks[@]}"; do
+    IFS='|' read -r ord codec channels layout lang def <<<"$rec"
+    label="$(loudness_track_label "$ord" "$codec" "$channels" "$layout" "$lang" "$def")"
+    measure_rc=0
+    measure_line="$(measure_loudness "$file" "" "$ord")" || measure_rc=$?
+    if (( measure_rc != 0 )); then
+      if (( measure_rc == 5 )); then
+        loudness_warn_ffmpeg_crashed_once
+      fi
+      t_label+=( "$label" )
+      t_max+=( '—' )
+      t_mean+=( '—' )
+      t_status+=( 'ERROR' )
+      t_empty+=( 0 )
+      t_default+=( "$def" )
+      continue
+    fi
+    read -r max_db mean_db <<<"$measure_line"
+    if loudness_track_is_empty "$max_db" "$mean_db"; then
+      status='EMPTY'
+      t_empty+=( 1 )
+      loudness_mark_track_empty "$file" "$ord"
+    else
+      status="$(classify_loudness_status "$max_db" "$mean_db")"
+      t_empty+=( 0 )
+    fi
+    t_label+=( "$label" )
+    t_max+=( "$max_db" )
+    t_mean+=( "$mean_db" )
+    t_status+=( "$status" )
+    t_default+=( "$def" )
+  done
 
-  append_scan_row "$file" "$max_db" "$mean_db" "$status" "$max_db"
-  print_report_table_row "$file" "$max_db" "$mean_db" "$status"
+  for i in "${!t_status[@]}"; do
+    [[ "${t_default[$i]}" == 1 && "${t_empty[$i]}" == 0 && "${t_status[$i]}" != ERROR ]] || continue
+    chosen=$i
+    break
+  done
+  if (( chosen < 0 )); then
+    for i in "${!t_status[@]}"; do
+      [[ "${t_empty[$i]}" == 0 && "${t_status[$i]}" != ERROR ]] || continue
+      if [[ -z "$best_max" ]] || awk -v a="${t_max[$i]}" -v b="$best_max" 'BEGIN { exit !((a + 0) > (b + 0)) }'; then
+        best_max="${t_max[$i]}"
+        chosen=$i
+      fi
+    done
+  fi
+  (( chosen < 0 )) && chosen=0
+
+  loudness_publish_file_row "$file" "${t_max[$chosen]}" "${t_mean[$chosen]}" "${t_status[$chosen]}"
+  for i in "${!t_label[@]}"; do
+    print_report_table_row "${t_label[$i]}" "${t_max[$i]}" "${t_mean[$i]}" "${t_status[$i]}"
+    if [[ "${t_empty[$i]}" == 1 ]]; then
+      loudness_warn_empty_track "$file" "${t_label[$i]}"
+    fi
+  done
   return 0
 }
 
@@ -4475,6 +4708,13 @@ scan_media_files_with_report() {
   ROW_MAX=()
   ROW_MEAN=()
   ROW_STATUS=()
+  LOUDNESS_EMPTY_WARN_COUNT=0
+  if (( ${#LOUDNESS_EMPTY_TRACKS[@]} > 0 )); then
+    local empty_key
+    for empty_key in "${!LOUDNESS_EMPTY_TRACKS[@]}"; do
+      unset 'LOUDNESS_EMPTY_TRACKS[$empty_key]'
+    done
+  fi
   NORMALIZE_FILES=()
   NORMALIZE_MAX=()
   NORMALIZE_MEAN=()
@@ -5005,7 +5245,13 @@ normalize_one_selected_file() {
     norm_elapsed=$(( SECONDS - norm_start ))
     printf '%bOK%b (%s)\n' "$GREEN" "$RESET" "$(loudness_format_elapsed "$norm_elapsed")"
     if (( audio_n > 1 )); then
-      echo "    (${audio_n} audio tracks normalized; other streams copied)"
+      if [[ -n "${LOUDNESS_EMPTY_TRACKS[$file]:-}" ]]; then
+        echo "    (${audio_n} audio tracks; empty ones left at silence, others loudnorm-filtered)"
+      else
+        echo "    (${audio_n} audio tracks normalized; other streams copied)"
+      fi
+    elif [[ -n "${LOUDNESS_EMPTY_TRACKS[$file]:-}" ]]; then
+      echo "    (empty audio track left at silence, not loudnorm-filtered)"
     fi
     measure_rc=0
     measure_line="$(measure_loudness "$file" full)" || measure_rc=$?
@@ -5404,7 +5650,7 @@ else
 fi
 echo "Classification (max_volume peak):"
 print_loudness_class_legend
-echo "Tool: ffmpeg volumedetect (-vn for video files)"
+echo "Tool: ffmpeg volumedetect (-vn for video files; each audio track when a file has more than one)"
 if (( ! PRINT_CLI_ONLY )); then
   print_loudness_scan_sample_info
 fi
