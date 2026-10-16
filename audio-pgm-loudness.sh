@@ -2511,7 +2511,7 @@ loudness_note_nondefault_norm_tracks() {
   local -n st_status=$3
   local -n st_max=$4
   local -n st_mean=$5
-  local i ords="" rep_i=-1 rank=0 rep_rank=0 label=""
+  local i ords="" rep_i=-1 rank=0 rep_rank=0
 
   case "$chosen_status" in
     NORMAL|TOO_QUIET) return 0 ;;
@@ -2534,14 +2534,6 @@ loudness_note_nondefault_norm_tracks() {
   LOUDNESS_TRACK_NORM_MEAN[$file]="${st_mean[$rep_i]}"
   LOUDNESS_TRACK_NORM_STATUS[$file]="${st_status[$rep_i]}"
   LOUDNESS_TRACK_NORM_ORD[$file]="$rep_i"
-  label=""
-  for i in ${ords# }; do
-    [[ -n "$label" ]] && label+=", "
-    label+="a:${i} is ${st_status[$i]} (${st_max[$i]} dB)"
-  done
-  printf '%bSUGGEST:%b %s — %s, and that track is not the default.\n' \
-    "$YELLOW" "$RESET" "$(basename -- "$file")" "$label"
-  printf '         It is included for loudnorm. The default track stays as it is.\n'
 }
 
 # Run ffmpeg volumedetect; sets LOUDNESS_VD_RC / LOUDNESS_VD_MAX / LOUDNESS_VD_MEAN. Returns 0 if max_volume parsed.
@@ -5029,16 +5021,17 @@ prompt_offer_normalize_after_scan() {
   n_normal="$(count_scan_status NORMAL)"
   n_too_quiet="$(count_scan_status TOO_QUIET)"
   n_perfect="$(count_scan_perfect_files)"
-  local n_extra=0
-  if (( ${#LOUDNESS_TRACK_NORM[@]} > 0 )); then
-    n_extra=${#LOUDNESS_TRACK_NORM[@]}
-  fi
+  local extra_file extra_status
+  for extra_file in "${!LOUDNESS_TRACK_NORM[@]}"; do
+    extra_status="${LOUDNESS_TRACK_NORM_STATUS[$extra_file]}"
+    case "$extra_status" in
+      TOO_QUIET) (( ++n_too_quiet )) || true ;;
+      NORMAL) (( ++n_normal )) || true ;;
+    esac
+  done
 
   echo
-  if (( n_extra > 0 )); then
-    echo "NOTE: ${n_extra} file(s) are PERFECT on the default track, but another track is NORMAL or TOO QUIET. That track is included for loudnorm. The default track is left as it is."
-  fi
-  if (( n_normal + n_too_quiet + n_extra > 0 )); then
+  if (( n_normal + n_too_quiet > 0 )); then
     if (( PRINT_CLI_ONLY )); then
       if (( n_too_quiet > 0 && n_normal > 0 )); then
         loudness_read_yn_key 'If scan finds NORMAL or TOO QUIET files, include loudnorm in the built command? [Y/n/q]: ' Y
@@ -5211,9 +5204,6 @@ loudness_read_normalize_batch_choice() {
 
   if [[ "$status" == NO_PROCESS ]]; then
     echo "  NO_PROCESS (mean ${mean_disp} below ${LOUDNESS_MEAN_SKIP_DB} dB) — default [N] (CLI: --force with -y to include)."
-  fi
-  if [[ -n "${LOUDNESS_TRACK_NORM[$file]:-}" ]]; then
-    status="a:${LOUDNESS_TRACK_NORM_ORD[$file]} ${status}, default track left as it is"
   fi
 
   if [[ "$default" == 'Y' ]]; then
