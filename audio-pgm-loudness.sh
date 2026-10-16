@@ -1,4 +1,8 @@
 #!/bin/bash
+# v. 20261016.084500 - when the default audio track is very quiet, suggest --default on a normal or loud track
+# v. 20261016.084200 - GoPro timecode group is not a second copy of the audio tracks
+# v. 20261016.083500 - a listed track with no loudness reading is NO DATA, not ERROR
+# v. 20261016.081400 - suggest audio-pgm-swap-audio.sh when track 1 is very quiet and track 2 is not
 # v. 20261016.080400 - measure every audio track; warn when a track is present but empty
 # v. 20260928.180359 - originals move to name.ext.original-backup.ext and are skipped
 # v. 20260928.144348 - rollback script: one key, no Enter (Y restore, N skip, Q stop)
@@ -33,6 +37,10 @@
 # v. 20260801.144550 - normalize: map streams individually; skip MP4-unmappable timecode (tmcd) only
 # v. 20260716.163224 - versioning format v. YYYYMMDD.HH24MISS
 
+# 2026.10.16 - v. 0.5.60 - when the default audio track is empty or very quiet and another track is normal or loud, suggest audio-pgm-swap-audio.sh --default N (order unchanged, other streams stay)
+# 2026.10.16 - v. 0.5.59 - ffprobe prints GoPro audio twice (timecode track group, then the streams). Count each stream index once, so a two-track file is not shown as four tracks
+# 2026.10.16 - v. 0.5.58 - a track ffprobe lists, but ffmpeg returns no peak for, is NO DATA (in the file, nothing decoded), not ERROR. ERROR stays for an ffmpeg crash
+# 2026.10.16 - v. 0.5.57 - when audio track 1 is empty or very quiet and audio track 2 is normal or loud, suggest audio-pgm-swap-audio.sh --order 2,1 --subtitles no (other streams, including GoPro telemetry, stay in order)
 # 2026.10.16 - v. 0.5.56 - each audio track is measured; a track at or below -70 dB peak and average is EMPTY (present but silent) and is not loudnorm-filtered. The file row stays the default track, or the loudest track that is not empty
 # 2026.09.28 - v. 0.5.55 - original is moved to name.ext.original-backup.ext (still opens on double-click); those files are left out of scan and normalize
 # 2026.09.28 - v. 0.5.54 - rollback script waits for one key and does not need Enter: Y restores, N skips, Q stops; any other key is no
@@ -2272,6 +2280,7 @@ parse_volumedetect_db() {
 # Peak and average both at or below this (dB) means the track is present but empty.
 LOUDNESS_EMPTY_TRACK_DB=-70
 LOUDNESS_EMPTY_WARN_COUNT=0
+LOUDNESS_NODATA_WARN_COUNT=0
 declare -A LOUDNESS_EMPTY_TRACKS=()
 
 # True when both levels are numbers at or below the empty-track floor.
@@ -2305,26 +2314,56 @@ loudness_list_audio_tracks() {
   loudness_ffprobe_input_opts_for_file "$file" fp_args
   fp_args+=(
     -select_streams a
-    -show_entries stream=codec_name,channels,channel_layout:stream_tags=language:stream_disposition=default
+    -show_entries stream=index,codec_name,channels,channel_layout:stream_tags=language:stream_disposition=default
     -of compact=p=0:nk=0
     -- "$file"
   )
+  # FFmpeg 9 prints a timecode track group first, then the same streams again.
+  # Keep one row per stream index, and keep the copy that carries disposition.
   ffprobe "${fp_args[@]}" 2>/dev/null | awk '
+    BEGIN { n = 0 }
     /codec_name=/ || /channels=/ {
-      codec = ""; channels = ""; layout = ""; lang = ""; def = "0"
+      codec = ""; channels = ""; layout = ""; lang = ""; def = ""; idx = ""
+      rich = index($0, "disposition:default=") > 0
       nfields = split($0, f, "|")
       for (i = 1; i <= nfields; i++) {
         split(f[i], kv, "=")
         key = kv[1]
         val = substr(f[i], length(key) + 2)
-        if (key == "codec_name") codec = val
+        if (key == "index") idx = val
+        else if (key == "codec_name") codec = val
         else if (key == "channels") channels = val
         else if (key == "channel_layout") layout = val
         else if (key == "tag:language" || key == "language") lang = val
         else if (key == "disposition:default") def = val
       }
-      printf "%d|%s|%s|%s|%s|%s\n", n, codec, channels, layout, lang, def
-      n++
+      if (idx == "") {
+        if (def == "") def = "0"
+        printf "%d|%s|%s|%s|%s|%s\n", n, codec, channels, layout, lang, def
+        n++
+        next
+      }
+      if (!(idx in ord_of)) {
+        ord_of[idx] = n
+        seq[n] = idx
+        n++
+      } else if (rich_of[idx] && !rich) {
+        next
+      }
+      codec_of[idx] = codec
+      channels_of[idx] = channels
+      layout_of[idx] = layout
+      lang_of[idx] = lang
+      def_of[idx] = def
+      if (rich) rich_of[idx] = 1
+    }
+    END {
+      for (i = 0; i < n; i++) {
+        idx = seq[i]
+        def = def_of[idx]
+        if (def == "") def = "0"
+        printf "%d|%s|%s|%s|%s|%s\n", i, codec_of[idx], channels_of[idx], layout_of[idx], lang_of[idx], def
+      }
     }
   '
 }
@@ -2355,6 +2394,107 @@ loudness_warn_empty_track() {
   label="${label#"${label%%[![:space:]]*}"}"
   printf '%bWARNING:%b %s — %s is present but empty.\n' \
     "$YELLOW" "$RESET" "$(basename -- "$file")" "$label"
+}
+
+# Why a listed track produced no peak. LOUDNESS_VD_STDERR is the last ffmpeg run.
+loudness_nodata_reason() {
+  local blob="${LOUDNESS_VD_STDERR:-}"
+  if grep -qiE 'does not contain any stream|Stream map .* matches no streams' <<<"$blob"; then
+    printf 'no packets in that stream'
+    return 0
+  fi
+  if grep -qiE 'nothing was encoded|Output file is empty' <<<"$blob"; then
+    printf 'no audio samples'
+    return 0
+  fi
+  if grep -qiE 'Invalid data|Error while decoding|channel element|exceeds limit' <<<"$blob"; then
+    printf 'ffmpeg could not decode the packets'
+    return 0
+  fi
+  printf 'ffmpeg returned no peak'
+}
+
+loudness_warn_nodata_track() {
+  local file="$1" label="$2" reason="$3"
+  label="${label#"${label%%[![:space:]]*}"}"
+  printf '%bNOTE:%b %s — %s is in the file, but %s.\n' \
+    "$YELLOW" "$RESET" "$(basename -- "$file")" "$label" "$reason"
+  LOUDNESS_NODATA_WARN_COUNT=$(( LOUDNESS_NODATA_WARN_COUNT + 1 ))
+}
+
+# Track 1 dead (mic not connected) and track 2 usable: point at the swap script.
+loudness_suggest_swap_quiet_first_track() {
+  local file="$1" first="${2:-}" second="${3:-}"
+  local quiet_label="" usable_label=""
+
+  case "$first" in
+    EMPTY) quiet_label="empty" ;;
+    NO_PROCESS|TOO_QUIET) quiet_label="very quiet" ;;
+    *) return 0 ;;
+  esac
+  case "$second" in
+    NORMAL) usable_label="normal" ;;
+    PERFECT) usable_label="loud" ;;
+    *) return 0 ;;
+  esac
+
+  printf '%bSUGGEST:%b %s — audio track 1 is %s and audio track 2 is %s.\n' \
+    "$YELLOW" "$RESET" "$(basename -- "$file")" "$quiet_label" "$usable_label"
+  printf '         Swap them with audio-pgm-swap-audio.sh. Every other stream stays in the same order, including GoPro telemetry:\n'
+  printf '         audio-pgm-swap-audio.sh --order 2,1 --subtitles no -- %q\n' "$file"
+}
+
+# Default track is empty or very quiet, and another track is normal or loud.
+loudness_suggest_better_default() {
+  local file="$1"
+  local -n st_status=$2
+  local -n st_def=$3
+  local -n st_max=$4
+  local i def_i=-1 best_i=-1 quiet_label="" usable_label="" rank best_rank=0 take=0
+
+  for i in "${!st_status[@]}"; do
+    [[ "${st_def[$i]}" == 1 ]] || continue
+    case "${st_status[$i]}" in
+      EMPTY) quiet_label="empty" ;;
+      NO_PROCESS|TOO_QUIET) quiet_label="very quiet" ;;
+      *) continue ;;
+    esac
+    def_i=$i
+    break
+  done
+  (( def_i >= 0 )) || return 0
+
+  for i in "${!st_status[@]}"; do
+    (( i == def_i )) && continue
+    case "${st_status[$i]}" in
+      NORMAL) rank=1 ;;
+      PERFECT) rank=2 ;;
+      *) continue ;;
+    esac
+    take=0
+    if (( best_i < 0 || rank > best_rank )); then
+      take=1
+    elif (( rank == best_rank )) && awk -v a="${st_max[$i]}" -v b="${st_max[$best_i]}" 'BEGIN { exit !((a + 0) > (b + 0)) }'; then
+      take=1
+    fi
+    if (( take )); then
+      best_i=$i
+      best_rank=$rank
+      if (( rank == 2 )); then
+        usable_label="loud"
+      else
+        usable_label="normal"
+      fi
+    fi
+  done
+  (( best_i >= 0 )) || return 0
+
+  printf '%bSUGGEST:%b %s — the default audio track a:%s is %s, and a:%s is %s.\n' \
+    "$YELLOW" "$RESET" "$(basename -- "$file")" "$def_i" "$quiet_label" "$best_i" "$usable_label"
+  printf '         Make a:%s the default. The track order stays the same, and every other stream stays too, including GoPro telemetry:\n' \
+    "$best_i"
+  printf '         audio-pgm-swap-audio.sh --default %s --subtitles no --languages all -- %q\n' \
+    "$((best_i + 1))" "$file"
 }
 
 # Run ffmpeg volumedetect; sets LOUDNESS_VD_RC / LOUDNESS_VD_MAX / LOUDNESS_VD_MEAN. Returns 0 if max_volume parsed.
@@ -4285,6 +4425,7 @@ print_loudness_class_legend() {
     printf '  %-*s  %-*s  — %s\n' "$label_w" 'NO_PROCESS' "$range_w" "mean < ${LOUDNESS_MEAN_SKIP_DB} dB" 'do not normalize (--force)'
   fi
   printf '  %-*s  %-*s  — %s\n' "$label_w" 'EMPTY' "$range_w" '<= -70 dB' 'track present but silent'
+  printf '  %-*s  %-*s  — %s\n' "$label_w" 'NO DATA' "$range_w" '—' 'track is in the file, ffmpeg returned no peak'
 }
 
 declare -a ROW_FILE=() ROW_MAX=() ROW_MEAN=() ROW_STATUS=()
@@ -4385,9 +4526,9 @@ print_report_table_row() {
   max_cell="$(format_scan_db_cell "$max_val" "$REPORT_MAX_W")"
   mean_cell="$(format_scan_db_cell "$mean_val" "$REPORT_MEAN_W")"
 
-  if [[ "$status" == EMPTY || "$status" == PERFECT ]] && loudness_colors_enabled; then
+  if [[ "$status" == EMPTY || "$status" == 'NO DATA' || "$status" == PERFECT ]] && loudness_colors_enabled; then
     local status_color="$GREEN"
-    [[ "$status" == EMPTY ]] && status_color="$YELLOW"
+    [[ "$status" == EMPTY || "$status" == 'NO DATA' ]] && status_color="$YELLOW"
     local status_cell
     status_cell="$(printf '%-*s' "$REPORT_STATUS_W" "$status")"
     printf '%s%s%s%s%s%s%s%s%s%s%s\n' \
@@ -4540,6 +4681,12 @@ print_scan_summary() {
     echo 'NOTE: NO AUDIO files are listed above but are not candidates for normalization.'
   fi
 
+  if (( LOUDNESS_NODATA_WARN_COUNT == 1 )); then
+    echo 'NOTE: 1 audio track is in the file, but ffmpeg returned no loudness for it.'
+  elif (( LOUDNESS_NODATA_WARN_COUNT > 1 )); then
+    echo "NOTE: ${LOUDNESS_NODATA_WARN_COUNT} audio tracks are in the file, but ffmpeg returned no loudness for them."
+  fi
+
   if (( count_error > 0 )); then
     return 1
   fi
@@ -4613,7 +4760,7 @@ scan_one_media_file() {
   local max_db mean_db status measure_rc measure_line probe_status
   local -a tracks=()
   local rec ord codec channels layout lang def label
-  local -a t_label=() t_max=() t_mean=() t_status=() t_empty=() t_default=()
+  local -a t_label=() t_max=() t_mean=() t_status=() t_empty=() t_default=() t_note=()
   local i chosen=-1 best_max="" ntracks
 
   probe_status="$(file_audio_probe_status "$file")"
@@ -4648,15 +4795,20 @@ scan_one_media_file() {
     measure_rc=0
     measure_line="$(measure_loudness "$file" "" "$ord")" || measure_rc=$?
     if (( measure_rc != 0 )); then
-      if (( measure_rc == 5 )); then
-        loudness_warn_ffmpeg_crashed_once
-      fi
       t_label+=( "$label" )
       t_max+=( '—' )
       t_mean+=( '—' )
-      t_status+=( 'ERROR' )
       t_empty+=( 0 )
       t_default+=( "$def" )
+      if (( measure_rc == 5 )); then
+        loudness_warn_ffmpeg_crashed_once
+        t_status+=( 'ERROR' )
+        t_note+=( '' )
+      else
+        # The stream is listed. ffmpeg just returned no peak (no samples, or it could not decode them).
+        t_status+=( 'NO DATA' )
+        t_note+=( "$(loudness_nodata_reason)" )
+      fi
       continue
     fi
     read -r max_db mean_db <<<"$measure_line"
@@ -4673,16 +4825,17 @@ scan_one_media_file() {
     t_mean+=( "$mean_db" )
     t_status+=( "$status" )
     t_default+=( "$def" )
+    t_note+=( '' )
   done
 
   for i in "${!t_status[@]}"; do
-    [[ "${t_default[$i]}" == 1 && "${t_empty[$i]}" == 0 && "${t_status[$i]}" != ERROR ]] || continue
+    [[ "${t_default[$i]}" == 1 && "${t_empty[$i]}" == 0 && "${t_status[$i]}" != ERROR && "${t_status[$i]}" != 'NO DATA' ]] || continue
     chosen=$i
     break
   done
   if (( chosen < 0 )); then
     for i in "${!t_status[@]}"; do
-      [[ "${t_empty[$i]}" == 0 && "${t_status[$i]}" != ERROR ]] || continue
+      [[ "${t_empty[$i]}" == 0 && "${t_status[$i]}" != ERROR && "${t_status[$i]}" != 'NO DATA' ]] || continue
       if [[ -z "$best_max" ]] || awk -v a="${t_max[$i]}" -v b="$best_max" 'BEGIN { exit !((a + 0) > (b + 0)) }'; then
         best_max="${t_max[$i]}"
         chosen=$i
@@ -4696,8 +4849,14 @@ scan_one_media_file() {
     print_report_table_row "${t_label[$i]}" "${t_max[$i]}" "${t_mean[$i]}" "${t_status[$i]}"
     if [[ "${t_empty[$i]}" == 1 ]]; then
       loudness_warn_empty_track "$file" "${t_label[$i]}"
+    elif [[ "${t_status[$i]}" == 'NO DATA' ]]; then
+      loudness_warn_nodata_track "$file" "${t_label[$i]}" "${t_note[$i]:-ffmpeg returned no peak}"
     fi
   done
+  if (( ${#t_status[@]} >= 2 )); then
+    loudness_suggest_swap_quiet_first_track "$file" "${t_status[0]}" "${t_status[1]}"
+    loudness_suggest_better_default "$file" t_status t_default t_max
+  fi
   return 0
 }
 
@@ -4709,6 +4868,7 @@ scan_media_files_with_report() {
   ROW_MEAN=()
   ROW_STATUS=()
   LOUDNESS_EMPTY_WARN_COUNT=0
+  LOUDNESS_NODATA_WARN_COUNT=0
   if (( ${#LOUDNESS_EMPTY_TRACKS[@]} > 0 )); then
     local empty_key
     for empty_key in "${!LOUDNESS_EMPTY_TRACKS[@]}"; do

@@ -1,4 +1,6 @@
 #!/bin/bash
+# v. 20261016.084500 - --default N marks that audio track as the one players use, without reordering
+# v. 20261016.081400 - after a swap, GoPro telemetry and timecode stay in their original order
 # v. 20261015.191843 - the move/write line is a short block: backup, write, audio, drop, subtitles, streams
 # v. 20261015.184100 - audio and subtitle plan arrows start in the same column
 # v. 20261015.183700 - each file is boxed with a start and end rule; compare columns are wider; only the default key is a capital
@@ -16,6 +18,8 @@
 # v. 20261014.220133 - ask to keep the original (default yes); print a facts table before and after each swap
 # v. 20261014.213909 - swap audio tracks in a video; every other stream stays, in the same order
 #
+# 2026.10.16 - v. 0.18 - --default N keeps the audio order and marks audio track N as the default. Picture, telemetry and the other streams stay in their original order
+# 2026.10.16 - v. 0.17 - GoPro gpmd/MET is copied in place; tmcd cannot be stream-copied, so it is rebuilt and moved back beside telemetry in the original order
 # 2026.10.15 - v. 0.16 - the move/write status is several short lines, not one long line
 # 2026.10.15 - v. 0.15 - the -> on the audio line and the subtitle line start in the same column
 # 2026.10.15 - v. 0.14 - a rule opens and closes each file; the input/output columns are 70 characters so a long name fits; only Y is capital in the swap question
@@ -43,8 +47,9 @@
 # Subtitle tracks can follow the same language order as the audio, when the
 # user says yes (the default). After a swap, audio track 1 is the default
 # track; if subtitles were reordered, subtitle track 1 is the default too.
-# A stream that ffmpeg cannot copy into MP4 (tmcd, mp4s) is skipped and
-# named in the log; telemetry (gpmd) is kept.
+# A tmcd trak cannot be stream-copied. It is rebuilt and put back in its
+# original place next to GoPro telemetry (gpmd/MET), which is copied.
+# MPEG-4 Systems (mp4s) cannot be stored in the new MP4 and is named in the log.
 #
 
 show_help() {
@@ -53,12 +58,16 @@ Usage: $(basename "$0") [-h|--help] [-v|--version] [--history]
        [-y|--yes] [-n|--dry-run] [--colors yes|no]
        [--keep-original yes|no] [--one-by-one|--together]
        [--subtitles yes|no] [--languages keep|all] [--drop LIST]
-       [--order 2,1]
+       [--order 2,1] [--default N]
        [FILE|DIR ...]
 
 Swap the audio tracks inside each video. The picture, chapters, metadata,
 file times, and other non-subtitle streams stay, in the same order they had.
+GoPro telemetry (gpmd/MET) is copied. Timecode (tmcd) cannot be stream-copied;
+it is rebuilt and put back in its original place next to that telemetry.
 After a swap, audio track 1 is marked default (other audio is not).
+--default N leaves the audio order as it is and marks audio track N as the
+default instead. The picture, telemetry and every other stream stay put.
 Subtitle tracks with the same languages as the audio can be reordered the
 same way (asked up front, default Yes). If they are, subtitle track 1 is
 marked default too. A subtitle with no language, or a language that is not
@@ -126,6 +135,9 @@ Options:
                        (rus,ukr,spa). Skips the languages question.
   --order LIST         Audio-track numbers, comma-separated, as printed
                        (1 is the first remaining audio track). Default: 2,1.
+  --default N          Do not reorder. Mark audio track N as the default
+                       (1 is the first audio track). Other audio loses the
+                       default flag. Other streams stay in their original order.
 
 A run summary is always printed at the end, and on Ctrl-C.
 
@@ -136,6 +148,7 @@ Examples:
   $(basename "$0")
       Read the current directory, print the streams, ask before writing.
   $(basename "$0") -y --order 2,1 /mnt/p/video
+  $(basename "$0") -y --default 2 --subtitles no --languages all clip.mp4
   $(basename "$0") --colors yes clip.mp4
   audio-pgm-swap-audio-undo.sh
       Put each clip-backup.mp4 back as clip.mp4, one file at a time.
@@ -155,6 +168,8 @@ COLORS_SET=0
 USE_COLORS=""
 ORDER_SET=0
 ORDER_SPEC="2,1"
+DEFAULT_AUDIO=0
+DEFAULT_SET=0
 KEEP_SET=0
 KEEP_ORIGINAL=1
 TOGETHER_SET=0
@@ -194,6 +209,7 @@ FILES=()
 FILE_STATE=()   # swap | skip | fail
 FILE_WHY=()
 FILE_AUDIO_N=()
+FILE_AUDIO_DEF=()
 FILE_AUDIO_FAMS=()
 FILE_SUB_FAMS=()
 FILE_SUB_NOTE=()
@@ -561,7 +577,7 @@ sa_load_streams() {
     elif [[ "${ctype,,}" == subtitle ]]; then
       SUBTITLE_ST+=("$idx")
     fi
-  done < <(ffprobe -v error -show_entries stream=index -of csv=p=0 -- "$file" 2>/dev/null || true)
+  done < <(ffprobe -v error -show_entries stream=index -of csv=p=0 -- "$file" 2>/dev/null | grep -E '^[0-9]+$' | sort -n | awk '!seen[$0]++' || true)
 }
 
 sa_gopro_label() {
@@ -698,6 +714,20 @@ sa_stream_fate() {
     return 0
   fi
   printf 'present, copied'
+}
+
+# 1-based audio track that is marked default, or 0 when none is.
+sa_loaded_default_audio() {
+  local i a_n=0
+  for i in "${!ST_IDX[@]}"; do
+    [[ "${ST_TYPE[$i],,}" == audio ]] || continue
+    (( a_n++ )) || true
+    if [[ "${ST_DEF[$i]}" == 1 ]]; then
+      printf '%s' "$a_n"
+      return 0
+    fi
+  done
+  printf '0'
 }
 
 sa_audio_verbose_line() {
@@ -1547,9 +1577,30 @@ sa_build_map_args() {
     fi
   done
   if (( a_out > 0 )); then
-    out_disp+=(-disposition:a:0 default)
-    for (( i = 1; i < a_out; i++ )); do
-      out_disp+=(-disposition:a:"$i" 0)
+    local def_out=0 want_idx=""
+    if (( DEFAULT_AUDIO > 0 )); then
+      if (( DEFAULT_AUDIO > ${#audio_ref[@]} )); then
+        out_note="audio track ${DEFAULT_AUDIO} is not in this file"
+        return 1
+      fi
+      want_idx="${audio_ref[$((DEFAULT_AUDIO - 1))]}"
+      def_out=-1
+      for (( i = 0; i < a_out; i++ )); do
+        [[ "${audio_src[$i]}" == "$want_idx" ]] || continue
+        def_out=$i
+        break
+      done
+      if (( def_out < 0 )); then
+        out_note="audio track ${DEFAULT_AUDIO} was not kept"
+        return 1
+      fi
+    fi
+    for (( i = 0; i < a_out; i++ )); do
+      if (( i == def_out )); then
+        out_disp+=(-disposition:a:"$i" default)
+      else
+        out_disp+=(-disposition:a:"$i" 0)
+      fi
     done
   fi
   if (( do_sub && s_out > 0 )); then
@@ -1558,7 +1609,7 @@ sa_build_map_args() {
       out_disp+=(-disposition:s:"$i" 0)
     done
   fi
-  [[ -n "$skipped" ]] && out_note="MP4 cannot copy ${skipped} (telemetry is kept)"
+  [[ -n "$skipped" ]] && out_note="MP4 cannot stream-copy ${skipped}; timecode is rebuilt into its original place, telemetry is copied"
   return 0
 }
 
@@ -1578,27 +1629,240 @@ sa_restore_times() {
   fi
 }
 
+sa_stream_data_kind() {
+  local tag="${1,,}" handler="$2"
+  if [[ "$tag" == tmcd || "$handler" == *TCD* ]]; then
+    printf 'tmcd'
+  elif [[ "$tag" == gpmd || "$tag" == fdsc || "$handler" == *MET* ]]; then
+    printf 'gpmd'
+  elif [[ "$tag" == mp4s ]]; then
+    printf 'mp4s'
+  else
+    printf 'data:%s' "${tag:-unknown}"
+  fi
+}
+
+# Data streams in container order. mp4s cannot be copied into MP4, so it is not required.
+sa_loaded_data_kinds() {
+  local i kind
+  for i in "${!ST_IDX[@]}"; do
+    [[ "${ST_TYPE[$i],,}" == data || "${ST_TYPE[$i],,}" == unknown ]] || continue
+    kind="$(sa_stream_data_kind "${ST_TAG[$i]}" "${ST_HANDLER[$i]}")"
+    [[ "$kind" == mp4s ]] && continue
+    printf '%s\n' "$kind"
+  done
+}
+
+sa_file_data_kinds() {
+  local file="$1" idx ctype tag handler kind
+  local -A seen=()
+  while IFS= read -r idx; do
+    idx="${idx//$'\r'/}"
+    [[ "$idx" =~ ^[0-9]+$ ]] || continue
+    [[ -n "${seen[$idx]+x}" ]] && continue
+    seen[$idx]=1
+    ctype="$(sa_probe_field "$file" "$idx" stream=codec_type)"
+    [[ "${ctype,,}" == data || "${ctype,,}" == unknown ]] || continue
+    tag="$(sa_probe_field "$file" "$idx" stream=codec_tag_string)"
+    handler="$(sa_probe_field "$file" "$idx" stream_tags=handler_name)"
+    kind="$(sa_stream_data_kind "$tag" "$handler")"
+    [[ "$kind" == mp4s ]] && continue
+    printf '%s\n' "$kind"
+  done < <(ffprobe -v error -show_entries stream=index -of csv=p=0 -- "$file" 2>/dev/null | grep -E '^[0-9]+$' | sort -n | awk '!seen[$0]++' || true)
+}
+
+sa_source_has_data_kind() {
+  local want="$1" kind
+  while IFS= read -r kind; do
+    [[ "$kind" == "$want" ]] && return 0
+  done < <(sa_loaded_data_kinds)
+  return 1
+}
+
+# ffmpeg appends a rebuilt tmcd trak at the end. Move every non-audio trak back to
+# the source slot. Audio traks stay in the swapped order. Box sizes do not change,
+# so sample offsets in mdat stay valid.
+sa_reorder_non_audio_traks() {
+  local src="$1" dest="$2"
+  command -v python3 >/dev/null 2>&1 || return 1
+  python3 - "$src" "$dest" <<'PY'
+import struct
+import sys
+from collections import deque
+
+src_path, dest_path = sys.argv[1], sys.argv[2]
+with open(src_path, "rb") as fh:
+    src = fh.read()
+with open(dest_path, "rb") as fh:
+    data = fh.read()
+
+def boxes(blob, start, end):
+    found, pos = [], start
+    while pos + 8 <= end:
+        size = struct.unpack(">I", blob[pos:pos + 4])[0]
+        kind = blob[pos + 4:pos + 8]
+        head = 8
+        if size == 1:
+            if pos + 16 > end:
+                return []
+            size = struct.unpack(">Q", blob[pos + 8:pos + 16])[0]
+            head = 16
+        elif size == 0:
+            size = end - pos
+        if size < head or pos + size > end:
+            return []
+        found.append((kind, pos, size, head))
+        pos += size
+    return found if pos == end else []
+
+def child(blob, box, kind):
+    for candidate in boxes(blob, box[1] + box[3], box[1] + box[2]):
+        if candidate[0] == kind:
+            return candidate
+    return None
+
+def sample_format(blob, trak):
+    node = trak
+    for kind in (b"mdia", b"minf", b"stbl", b"stsd"):
+        node = child(blob, node, kind)
+        if node is None:
+            return None
+    entry = node[1] + node[3] + 8
+    if entry + 8 > node[1] + node[2]:
+        return None
+    return blob[entry + 4:entry + 8]
+
+def handler_type(blob, trak):
+    mdia = child(blob, trak, b"mdia")
+    if mdia is None:
+        return None
+    hdlr = child(blob, mdia, b"hdlr")
+    if hdlr is None:
+        return None
+    off = hdlr[1] + hdlr[3] + 8
+    if off + 4 > hdlr[1] + hdlr[2]:
+        return None
+    return blob[off:off + 4]
+
+def role(blob, trak):
+    fmt = sample_format(blob, trak)
+    handler = handler_type(blob, trak)
+    if fmt == b"mp4s":
+        return None
+    if fmt in (b"tmcd", b"gpmd", b"fdsc") or handler == b"tmcd":
+        return ("data", fmt or handler or b"?")
+    if handler == b"soun":
+        return ("audio",)
+    return ("keep", fmt or handler or b"?")
+
+def trak_list(blob):
+    top = boxes(blob, 0, len(blob))
+    moov = next((box for box in top if box[0] == b"moov"), None)
+    if moov is None:
+        return None, None, None
+    payload = moov[1] + moov[3]
+    kids = boxes(blob, payload, moov[1] + moov[2])
+    traks = [box for box in kids if box[0] == b"trak"]
+    return moov, kids, traks
+
+src_moov, _, src_traks = trak_list(src)
+dest_moov, dest_kids, dest_traks = trak_list(data)
+if src_traks is None or dest_traks is None:
+    sys.exit(1)
+src_roles = [role(src, trak) for trak in src_traks]
+src_roles = [item for item in src_roles if item is not None]
+dest_roles = [role(data, trak) for trak in dest_traks]
+if any(item is None for item in dest_roles):
+    sys.exit(1)
+dest_audio = [trak for trak, item in zip(dest_traks, dest_roles) if item[0] == "audio"]
+queues = {}
+for trak, item in zip(dest_traks, dest_roles):
+    if item[0] != "audio":
+        queues.setdefault(item, deque()).append(trak)
+ordered = []
+audio_i = 0
+try:
+    for item in src_roles:
+        if item[0] == "audio":
+            ordered.append(dest_audio[audio_i])
+            audio_i += 1
+        else:
+            ordered.append(queues[item].popleft())
+except (IndexError, KeyError):
+    sys.exit(1)
+if audio_i != len(dest_audio) or any(queues.values()):
+    sys.exit(1)
+if [trak[1] for trak in ordered] == [trak[1] for trak in dest_traks]:
+    sys.exit(0)
+parts = []
+slot = 0
+for kid in dest_kids:
+    if kid[0] == b"trak":
+        source = ordered[slot]
+        slot += 1
+    else:
+        source = kid
+    parts.append(data[source[1]:source[1] + source[2]])
+rebuilt = b"".join(parts)
+payload = dest_moov[1] + dest_moov[3]
+if len(rebuilt) != (dest_moov[1] + dest_moov[2] - payload):
+    sys.exit(1)
+with open(dest_path, "r+b") as fh:
+    fh.seek(payload)
+    fh.write(rebuilt)
+PY
+}
+
+# Non-audio streams (GoPro MET/gpmd, timecode, picture) must come out in the source order.
+sa_restore_data_stream_order() {
+  local src="$1" dest="$2"
+  local src_kinds dest_kinds
+
+  src_kinds="$(sa_loaded_data_kinds | paste -sd' ' -)"
+  dest_kinds="$(sa_file_data_kinds "$dest" | paste -sd' ' -)"
+  if [[ "$src_kinds" == "$dest_kinds" ]]; then
+    return 0
+  fi
+  if sa_reorder_non_audio_traks "$src" "$dest"; then
+    dest_kinds="$(sa_file_data_kinds "$dest" | paste -sd' ' -)"
+    if [[ "$src_kinds" == "$dest_kinds" ]]; then
+      echo "$(sa_ts) Timecode and telemetry put back in the original order."
+      return 0
+    fi
+  fi
+  echo "ERROR: $(basename -- "$src"): data streams are not in the original order." >&2
+  echo "  source: ${src_kinds:-<none>}" >&2
+  echo "  output: ${dest_kinds:-<none>}" >&2
+  return 1
+}
+
 sa_remux() {
   local src="$1" dest="$2" slot_csv="$3"
   local tmp ref log rc=0 note=""
-  local -a map_args=() disp_args=()
+  local -a map_args=() disp_args=() tmcd_args=(-write_tmcd 0)
   tmp="$(sa_temp_path "$dest")"
   ref="$(mktemp)"
   log="$(mktemp)"
   touch -r "$src" -- "$ref" 2>/dev/null || true
   TMP_FILE="$tmp"
   sa_build_map_args "$src" "$dest" "$slot_csv" map_args note disp_args || {
+    [[ -n "$note" ]] && echo "ERROR: $(basename -- "$src"): ${note}" >&2
     rm -f -- "$ref" "$log"
     TMP_FILE=""
     return 1
   }
   [[ -n "$note" ]] && echo "$(sa_ts) ${note}"
+  if sa_source_has_data_kind tmcd; then
+    # The tmcd trak itself cannot be stream-copied. Rebuild it; order is fixed afterwards.
+    tmcd_args=(-write_tmcd 1)
+  fi
   ffmpeg -hide_banner -nostats -y -i "$src" \
     "${map_args[@]}" \
     -map_metadata 0 \
     -map_chapters 0 \
     -c copy \
     "${disp_args[@]}" \
+    "${tmcd_args[@]}" \
     -max_muxing_queue_size 9999 \
     -- "$tmp" 2>"$log" || rc=$?
   if (( rc != 0 )) || [[ ! -s "$tmp" ]]; then
@@ -1608,6 +1872,11 @@ sa_remux() {
     return 1
   fi
   rm -f -- "$log"
+  if ! sa_restore_data_stream_order "$src" "$tmp"; then
+    rm -f -- "$tmp" "$ref"
+    TMP_FILE=""
+    return 1
+  fi
   if ! mv -f -- "$tmp" "$dest"; then
     rm -f -- "$tmp" "$ref"
     TMP_FILE=""
@@ -1944,9 +2213,21 @@ sa_finalize_plan() {
       continue
     fi
     if sa_slots_are_identity "$expanded" "$kept" && (( drops_a + drops_s == 0 )); then
-      FILE_STATE[$i]=skip
-      FILE_WHY[$i]="that order leaves the audio as it is"
-      continue
+      if (( DEFAULT_AUDIO > 0 )) && [[ "${FILE_AUDIO_DEF[$i]:-0}" != "$DEFAULT_AUDIO" ]]; then
+        if (( DEFAULT_AUDIO > kept )); then
+          FILE_STATE[$i]=skip
+          FILE_WHY[$i]="no audio track ${DEFAULT_AUDIO}"
+          continue
+        fi
+      else
+        FILE_STATE[$i]=skip
+        if (( DEFAULT_AUDIO > 0 )); then
+          FILE_WHY[$i]="audio track ${DEFAULT_AUDIO} is already the default"
+        else
+          FILE_WHY[$i]="that order leaves the audio as it is"
+        fi
+        continue
+      fi
     fi
     FILE_STATE[$i]=swap
     FILE_WHY[$i]="$expanded"
@@ -1986,9 +2267,12 @@ sa_equivalent_cli() {
   else
     parts+=("--languages" "keep")
   fi
+  if (( DEFAULT_SET )); then
+    parts+=("--default" "$DEFAULT_AUDIO")
+  fi
   if (( ORDER_SET )) || [[ -n "$REST_ORDER" ]]; then
     parts+=("--order" "${REST_ORDER:-$ORDER_SPEC}")
-  else
+  elif (( ! DEFAULT_SET )); then
     parts+=("--order" "$ORDER_SPEC")
   fi
   out="$(printf '%q' "$cmd")"
@@ -2069,9 +2353,12 @@ sa_print_run_settings() {
   else
     printf '  %-21s%s\n' "Languages:" "keep English, Polish, German"
   fi
+  if (( DEFAULT_SET )); then
+    printf '  %-21s%s\n' "--default:" "audio track ${DEFAULT_AUDIO}"
+  fi
   if (( ORDER_SET )); then
     printf '  %-21s%s\n' "--order:" "given (${ORDER_SPEC})"
-  else
+  elif (( ! DEFAULT_SET )); then
     printf '  %-21s%s\n' "--order:" "${ORDER_SPEC} (default: first two audio tracks swap)"
   fi
   printf '  %-21s%s\n' "Work dir:" "$PWD"
@@ -2096,6 +2383,7 @@ sa_probe_plan() {
     sa_load_streams "$src"
     n=${#AUDIO_ST[@]}
     FILE_AUDIO_N[$i]="$n"
+    FILE_AUDIO_DEF[$i]="$(sa_loaded_default_audio)"
     FILE_AUDIO_FAMS[$i]="$(sa_csv_fams "${AUDIO_ST[@]+"${AUDIO_ST[@]}"}")"
     FILE_SUB_FAMS[$i]="$(sa_csv_fams "${SUBTITLE_ST[@]+"${SUBTITLE_ST[@]}"}")"
     FILE_DEST[$i]="$src"
@@ -2115,7 +2403,19 @@ sa_probe_plan() {
       continue
     fi
     if sa_slots_are_identity "$expanded" "$n"; then
-      FILE_WHY[$i]="that order leaves the audio as it is"
+      if (( DEFAULT_AUDIO > 0 )) && [[ "${FILE_AUDIO_DEF[$i]:-0}" != "$DEFAULT_AUDIO" ]] && (( DEFAULT_AUDIO <= n )); then
+        FILE_STATE[$i]=swap
+        FILE_WHY[$i]="$expanded"
+        if sub_csv=$(sa_subtitle_perm "$expanded"); then
+          FILE_SUB_NOTE[$i]="$sub_csv"
+        fi
+      elif (( DEFAULT_AUDIO > 0 )) && [[ "${FILE_AUDIO_DEF[$i]:-0}" == "$DEFAULT_AUDIO" ]]; then
+        FILE_WHY[$i]="audio track ${DEFAULT_AUDIO} is already the default"
+      elif (( DEFAULT_AUDIO > n )); then
+        FILE_WHY[$i]="no audio track ${DEFAULT_AUDIO}"
+      else
+        FILE_WHY[$i]="that order leaves the audio as it is"
+      fi
       continue
     fi
     FILE_STATE[$i]=swap
@@ -2265,8 +2565,13 @@ sa_process_one_work() {
     fi
   elif (( ! DO_YES )) && (( script_is_run_interactively )); then
     echo
-    sa_print_question "Swap the audio in this file?"
-    echo "  [Y] Yes, order ${order} (default)"
+    if (( DEFAULT_SET )) && sa_slots_are_identity "$order" "$n"; then
+      sa_print_question "Make audio track ${DEFAULT_AUDIO} the default?"
+      echo "  [Y] Yes, leave the track order (default)"
+    else
+      sa_print_question "Swap the audio in this file?"
+      echo "  [Y] Yes, order ${order} (default)"
+    fi
     echo "  [o] Type a new audio order"
     echo "  [s] Skip this file"
     echo "  [a] Yes, and the same order for every remaining file"
@@ -2315,9 +2620,16 @@ sa_process_one_work() {
   fi
   sa_fill_kept_streams
   if sa_slots_are_identity "$order" "$n" && (( ${#KEPT_AUDIO_ST[@]} == ${#AUDIO_ST[@]} && ${#KEPT_SUBTITLE_ST[@]} == ${#SUBTITLE_ST[@]} )); then
-    echo "$(sa_ts) That order leaves the audio as it is. Skipping."
-    SKIPPED_LIST+=("${src} (left as it is)")
-    return 0
+    if (( ! DEFAULT_SET )) || [[ "$(sa_loaded_default_audio)" == "$DEFAULT_AUDIO" ]]; then
+      if (( DEFAULT_SET )); then
+        echo "$(sa_ts) Audio track ${DEFAULT_AUDIO} is already the default. Skipping."
+        SKIPPED_LIST+=("${src} (already the default)")
+      else
+        echo "$(sa_ts) That order leaves the audio as it is. Skipping."
+        SKIPPED_LIST+=("${src} (left as it is)")
+      fi
+      return 0
+    fi
   fi
   subp=""
   if (( SWAP_SUBS )); then
@@ -2557,11 +2869,24 @@ while [[ $# -gt 0 ]]; do
       ORDER_SPEC="${2// /}"
       ORDER_SET=1
       shift 2 ;;
+    --default)
+      sa_need_value "$@"
+      if [[ ! "$2" =~ ^[0-9]+$ ]] || (( 10#$2 < 1 )); then
+        echo "ERROR: --default must be an audio track number, 1 or higher, not: $2" >&2
+        exit 1
+      fi
+      DEFAULT_AUDIO=$((10#$2))
+      DEFAULT_SET=1
+      shift 2 ;;
     --) shift; INPUT_ARGS+=("$@"); break ;;
     -*) echo "ERROR: unknown option: $1 (see --help)" >&2; exit 1 ;;
     *) INPUT_ARGS+=("$1"); shift ;;
   esac
 done
+
+if (( DEFAULT_SET && ! ORDER_SET )); then
+  ORDER_SPEC="1"
+fi
 
 SCRIPT_START_NS="$(sa_now_ns)"
 sa_require_ffmpeg
