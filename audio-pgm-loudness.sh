@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261016.090000 - a non-default NORMAL or TOO QUIET track is offered for loudnorm; the perfect default stays
 # v. 20261016.084500 - when the default audio track is very quiet, suggest --default on a normal or loud track
 # v. 20261016.084200 - GoPro timecode group is not a second copy of the audio tracks
 # v. 20261016.083500 - a listed track with no loudness reading is NO DATA, not ERROR
@@ -37,6 +38,7 @@
 # v. 20260801.144550 - normalize: map streams individually; skip MP4-unmappable timecode (tmcd) only
 # v. 20260716.163224 - versioning format v. YYYYMMDD.HH24MISS
 
+# 2026.10.16 - v. 0.5.61 - the file row follows the default track, so a PERFECT default hid a NORMAL second track from loudnorm. That second track is now offered on its own, and the default track is not filtered. Answering no to every file no longer aborts with an unbound variable
 # 2026.10.16 - v. 0.5.60 - when the default audio track is empty or very quiet and another track is normal or loud, suggest audio-pgm-swap-audio.sh --default N (order unchanged, other streams stay)
 # 2026.10.16 - v. 0.5.59 - ffprobe prints GoPro audio twice (timecode track group, then the streams). Count each stream index once, so a two-track file is not shown as four tracks
 # 2026.10.16 - v. 0.5.58 - a track ffprobe lists, but ffmpeg returns no peak for, is NO DATA (in the file, nothing decoded), not ERROR. ERROR stays for an ffmpeg crash
@@ -2281,6 +2283,12 @@ parse_volumedetect_db() {
 LOUDNESS_EMPTY_TRACK_DB=-70
 LOUDNESS_EMPTY_WARN_COUNT=0
 LOUDNESS_NODATA_WARN_COUNT=0
+# file -> audio ordinals that need loudnorm while the default track stays as it is
+declare -A LOUDNESS_TRACK_NORM=()
+declare -A LOUDNESS_TRACK_NORM_MAX=()
+declare -A LOUDNESS_TRACK_NORM_MEAN=()
+declare -A LOUDNESS_TRACK_NORM_STATUS=()
+declare -A LOUDNESS_TRACK_NORM_ORD=()
 declare -A LOUDNESS_EMPTY_TRACKS=()
 
 # True when both levels are numbers at or below the empty-track floor.
@@ -2495,6 +2503,45 @@ loudness_suggest_better_default() {
     "$best_i"
   printf '         audio-pgm-swap-audio.sh --default %s --subtitles no --languages all -- %q\n' \
     "$((best_i + 1))" "$file"
+}
+
+# File row is not NORMAL/TOO QUIET, but another track is. Offer that track only.
+loudness_note_nondefault_norm_tracks() {
+  local file="$1" chosen_status="$2"
+  local -n st_status=$3
+  local -n st_max=$4
+  local -n st_mean=$5
+  local i ords="" rep_i=-1 rank=0 rep_rank=0 label=""
+
+  case "$chosen_status" in
+    NORMAL|TOO_QUIET) return 0 ;;
+  esac
+  for i in "${!st_status[@]}"; do
+    case "${st_status[$i]}" in
+      TOO_QUIET) rank=2 ;;
+      NORMAL) rank=1 ;;
+      *) continue ;;
+    esac
+    ords+=" $i"
+    if (( rep_i < 0 || rank > rep_rank )); then
+      rep_i=$i
+      rep_rank=$rank
+    fi
+  done
+  [[ -n "${ords# }" ]] || return 0
+  LOUDNESS_TRACK_NORM[$file]="${ords# }"
+  LOUDNESS_TRACK_NORM_MAX[$file]="${st_max[$rep_i]}"
+  LOUDNESS_TRACK_NORM_MEAN[$file]="${st_mean[$rep_i]}"
+  LOUDNESS_TRACK_NORM_STATUS[$file]="${st_status[$rep_i]}"
+  LOUDNESS_TRACK_NORM_ORD[$file]="$rep_i"
+  label=""
+  for i in ${ords# }; do
+    [[ -n "$label" ]] && label+=", "
+    label+="a:${i} is ${st_status[$i]} (${st_max[$i]} dB)"
+  done
+  printf '%bSUGGEST:%b %s — %s, and that track is not the default.\n' \
+    "$YELLOW" "$RESET" "$(basename -- "$file")" "$label"
+  printf '         It is included for loudnorm. The default track stays as it is.\n'
 }
 
 # Run ffmpeg volumedetect; sets LOUDNESS_VD_RC / LOUDNESS_VD_MAX / LOUDNESS_VD_MEAN. Returns 0 if max_volume parsed.
@@ -3084,6 +3131,21 @@ loudness_rebuild_normalize_queue_from_scan() {
     NORMALIZE_MEAN+=( "$mean_db" )
     NORMALIZE_STATUS+=( "$status" )
   done
+
+  local file status queued
+  for file in "${!LOUDNESS_TRACK_NORM[@]}"; do
+    queued=0
+    for i in "${!NORMALIZE_FILES[@]}"; do
+      [[ "${NORMALIZE_FILES[$i]}" == "$file" ]] && queued=1
+    done
+    (( queued )) && continue
+    status="${LOUDNESS_TRACK_NORM_STATUS[$file]}"
+    loudness_class_status_enabled "$status" || continue
+    NORMALIZE_FILES+=( "$file" )
+    NORMALIZE_MAX+=( "${LOUDNESS_TRACK_NORM_MAX[$file]}" )
+    NORMALIZE_MEAN+=( "${LOUDNESS_TRACK_NORM_MEAN[$file]}" )
+    NORMALIZE_STATUS+=( "$status" )
+  done
 }
 
 loudness_filter_queue_for_standard_mode() {
@@ -3179,10 +3241,13 @@ normalize_audio_filter_args() {
   local channels layout n=0
   local -a args=()
 
-  while IFS=',' read -r channels layout; do
+  while IFS='|' read -r channels layout; do
     [[ "$channels" =~ ^[0-9]+$ ]] || continue
     if loudness_track_marked_empty "$file" "$n"; then
       # Silence stays silence. loudnorm would raise the floor into hiss.
+      args+=(-filter:a:"$n" anull)
+    elif [[ -n "${LOUDNESS_TRACK_NORM[$file]:-}" ]] && [[ " ${LOUDNESS_TRACK_NORM[$file]} " != *" $n "* ]]; then
+      # This track is already fine. Only the non-default NORMAL/TOO QUIET track is filtered.
       args+=(-filter:a:"$n" anull)
     elif [[ -z "$layout" || "$layout" == unknown || "$layout" == *"channels" ]]; then
       args+=(-filter:a:"$n" "${filter},aformat=channel_layouts=${channels}c")
@@ -3191,7 +3256,32 @@ normalize_audio_filter_args() {
     fi
     (( n++ )) || true
   done < <(ffprobe -v error -select_streams a \
-    -show_entries stream=channels,channel_layout -of csv=p=0 -- "$file" 2>/dev/null || true)
+    -show_entries stream=index,channels,channel_layout -of compact=p=0:nk=0 -- "$file" 2>/dev/null \
+    | awk '
+      BEGIN { n = 0 }
+      /channels=/ {
+        idx = ""; channels = ""; layout = ""
+        nf = split($0, f, "|")
+        for (i = 1; i <= nf; i++) {
+          split(f[i], kv, "=")
+          key = kv[1]
+          val = substr(f[i], length(key) + 2)
+          if (key == "index") idx = val
+          else if (key == "channels") channels = val
+          else if (key == "channel_layout") layout = val
+        }
+        if (idx == "") next
+        if (idx in seen) next
+        seen[idx] = 1
+        seq[n] = idx
+        ch[idx] = channels
+        lay[idx] = layout
+        n++
+      }
+      END {
+        for (i = 0; i < n; i++) printf "%s|%s\n", ch[seq[i]], lay[seq[i]]
+      }
+    ')
 
   if (( n == 0 )); then
     args=(-filter:a "$filter")
@@ -4856,6 +4946,7 @@ scan_one_media_file() {
   if (( ${#t_status[@]} >= 2 )); then
     loudness_suggest_swap_quiet_first_track "$file" "${t_status[0]}" "${t_status[1]}"
     loudness_suggest_better_default "$file" t_status t_default t_max
+    loudness_note_nondefault_norm_tracks "$file" "${t_status[$chosen]}" t_status t_max t_mean
   fi
   return 0
 }
@@ -4869,6 +4960,16 @@ scan_media_files_with_report() {
   ROW_STATUS=()
   LOUDNESS_EMPTY_WARN_COUNT=0
   LOUDNESS_NODATA_WARN_COUNT=0
+  if (( ${#LOUDNESS_TRACK_NORM[@]} > 0 )); then
+    local norm_key
+    for norm_key in "${!LOUDNESS_TRACK_NORM[@]}"; do
+      unset 'LOUDNESS_TRACK_NORM[$norm_key]'
+      unset 'LOUDNESS_TRACK_NORM_MAX[$norm_key]'
+      unset 'LOUDNESS_TRACK_NORM_MEAN[$norm_key]'
+      unset 'LOUDNESS_TRACK_NORM_STATUS[$norm_key]'
+      unset 'LOUDNESS_TRACK_NORM_ORD[$norm_key]'
+    done
+  fi
   if (( ${#LOUDNESS_EMPTY_TRACKS[@]} > 0 )); then
     local empty_key
     for empty_key in "${!LOUDNESS_EMPTY_TRACKS[@]}"; do
@@ -4928,9 +5029,16 @@ prompt_offer_normalize_after_scan() {
   n_normal="$(count_scan_status NORMAL)"
   n_too_quiet="$(count_scan_status TOO_QUIET)"
   n_perfect="$(count_scan_perfect_files)"
+  local n_extra=0
+  if (( ${#LOUDNESS_TRACK_NORM[@]} > 0 )); then
+    n_extra=${#LOUDNESS_TRACK_NORM[@]}
+  fi
 
   echo
-  if (( n_normal + n_too_quiet > 0 )); then
+  if (( n_extra > 0 )); then
+    echo "NOTE: ${n_extra} file(s) are PERFECT on the default track, but another track is NORMAL or TOO QUIET. That track is included for loudnorm. The default track is left as it is."
+  fi
+  if (( n_normal + n_too_quiet + n_extra > 0 )); then
     if (( PRINT_CLI_ONLY )); then
       if (( n_too_quiet > 0 && n_normal > 0 )); then
         loudness_read_yn_key 'If scan finds NORMAL or TOO QUIET files, include loudnorm in the built command? [Y/n/q]: ' Y
@@ -5103,6 +5211,9 @@ loudness_read_normalize_batch_choice() {
 
   if [[ "$status" == NO_PROCESS ]]; then
     echo "  NO_PROCESS (mean ${mean_disp} below ${LOUDNESS_MEAN_SKIP_DB} dB) — default [N] (CLI: --force with -y to include)."
+  fi
+  if [[ -n "${LOUDNESS_TRACK_NORM[$file]:-}" ]]; then
+    status="a:${LOUDNESS_TRACK_NORM_ORD[$file]} ${status}, default track left as it is"
   fi
 
   if [[ "$default" == 'Y' ]]; then
@@ -5612,7 +5723,7 @@ normalize_run_batch_prompt_loop() {
             esac
           done
         fi
-      elif (( finish_batch_now )); then
+      elif [[ "$finish_batch_now" == yes ]]; then
         echo 'No files selected for normalization in this batch.'
       fi
     fi
