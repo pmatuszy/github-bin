@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# v. 20261019.092200 - IMG_/VID_YYYYMMDD_HHMMSS_N keeps the copy number: YYYYMMDD_HHMMSS_IMG_N / _VID_N
 # v. 20261019.085200 - IMG_/VID_YYYYMMDD_HHMMSS with no camera make/model → YYYYMMDD_HHMMSS_IMG / _VID
 # v. 20261019.083900 - IMG_YYYYMMDD_HHMMSS: drop the IMG_ prefix (date and time only); append make/model when EXIF has both
 # v. 20261019.080900 - Samsung Galaxy S23 Ultra: Camera Model Name / Software S918B → Samsung_S23_Ultra
@@ -106,6 +107,7 @@
 # v. 20260721.132007 - Samsung timestamp media: preserve optional numeric sorting prefix when appending make/model
 # v. 20260721.112812 - GoPro camera labels: GoPro_Hero4_Silver style (not GOPRO4_SILVER)
 
+# 2026.10.19 - v. 19.357.092200 - IMG_/VID_YYYYMMDD_HHMMSS_N.ext (duplicate index before the extension) is renamed too. With no camera: YYYYMMDD_HHMMSS_IMG_N.ext / YYYYMMDD_HHMMSS_VID_N.ext. With a camera make and model the index stays at the end (YYYYMMDD_HHMMSS_-_-_Make_Model_N.ext).
 # 2026.10.19 - v. 19.356.085200 - IMG_/VID_YYYYMMDD_HHMMSS gallery names that never receive a camera make/model (WhatsApp and other stripped exports) become YYYYMMDD_HHMMSS_IMG.ext / YYYYMMDD_HHMMSS_VID.ext. A real camera label still wins when EXIF has one.
 # 2026.10.19 - v. 19.355.083900 - IMG_YYYYMMDD_HHMMSS.ext no longer becomes YYYYMMDD_HHMMSS-IMG_YYYYMMDD_HHMMSS.ext. The new name is the date and time only. When EXIF has both a camera make and model and no earlier camera rule tagged the file, that label is appended (YYYYMMDD_HHMMSS_-_-_Make_Model.ext).
 # 2026.10.19 - v. 19.354.080900 - Samsung timestamp photos: Make samsung plus Camera Model Name "Galaxy S23 Ultra", or Software starting S918B (S918BXXS9EZCI), rename YYYYMMDD_HHMMSS.jpg → YYYYMMDD_HHMMSS_-_-_Samsung_S23_Ultra.jpg (same label as SM-S918*)
@@ -13672,11 +13674,12 @@ maybe_append_bare_timestamp_camera_label() {
     gopro_format_camera_basename_output "$ts" "$make_tok" "$model_tok" "$copy_suffix" "$ext"
 }
 
-# IMG_/VID_YYYYMMDD_HHMMSS with no camera label → YYYYMMDD_HHMMSS_IMG / _VID.
-# Empty stdout = no change. A _-_-_ make/model tag already on the name is left alone.
+# IMG_/VID_YYYYMMDD_HHMMSS[_N] with no camera label → YYYYMMDD_HHMMSS_IMG[_N] / _VID[_N].
+# _N is a duplicate index and stays at the end. Empty stdout = no change.
+# A _-_-_ make/model tag already on the name is left alone.
 maybe_suffix_gallery_img_vid_without_camera() {
     local orig="$1" current="$2"
-    local kind="" ext="" stem="" ts="" tail="" mode=""
+    local kind="" ext="" stem="" ts="" tail="" copy="" mode=""
 
     if [[ "$orig" =~ ^[Ii][Mm][Gg]_[0-9]{8}_[0-9]{6} ]]; then
         kind=IMG
@@ -13692,16 +13695,19 @@ maybe_suffix_gallery_img_vid_without_camera() {
     stem="${current%.*}"
     [[ "$stem" =~ ^[0-9]{8}_[0-9]{6}_${kind}($|_) ]] && return 0
 
-    if [[ "$stem" =~ ^([0-9]{8}_[0-9]{6})(_[A-Za-z][A-Za-z0-9_]*)?$ ]]; then
+    # Bare timestamp, optional letter mode (_HDR), optional duplicate index (_1).
+    if [[ "$stem" =~ ^([0-9]{8}_[0-9]{6})(_[A-Za-z][A-Za-z0-9_]*)?(_[0-9]+)?$ ]]; then
         ts="${BASH_REMATCH[1]}"
         tail="${BASH_REMATCH[2]-}"
-        printf '%s_%s%s.%s' "$ts" "$kind" "$tail" "$ext"
+        copy="${BASH_REMATCH[3]-}"
+        printf '%s_%s%s%s.%s' "$ts" "$kind" "$tail" "$copy" "$ext"
         return 0
     fi
 
-    if [[ "$current" == "$orig" && "$orig" =~ ^([Ii][Mm][Gg]|[Vv][Ii][Dd])_([0-9]{8})_([0-9]{6})[0-9]*((_[A-Za-z][A-Za-z0-9]*)*)\.([^.]+)$ ]]; then
-        mode="${BASH_REMATCH[4]-}"
-        printf '%s_%s_%s%s.%s' "${BASH_REMATCH[2]}" "${BASH_REMATCH[3]}" "$kind" "$mode" "${BASH_REMATCH[6]}"
+    if [[ "$current" == "$orig" && "$orig" =~ ^([Ii][Mm][Gg]|[Vv][Ii][Dd])_([0-9]{8})_([0-9]{6})[0-9]*(_[0-9]+)?((_[A-Za-z][A-Za-z0-9]*)*)\.([^.]+)$ ]]; then
+        copy="${BASH_REMATCH[4]-}"
+        mode="${BASH_REMATCH[5]-}"
+        printf '%s_%s_%s%s%s.%s' "${BASH_REMATCH[2]}" "${BASH_REMATCH[3]}" "$kind" "$mode" "$copy" "${BASH_REMATCH[7]}"
         return 0
     fi
     return 0
@@ -15440,10 +15446,10 @@ transform_name() {
             newbase="${ts}_-_${newbase}"
         fi
 
-        if [[ "$newbase" =~ ^IMG_([0-9]{8})_([0-9]{6})(\..+)$ ]]; then
-            newbase="${BASH_REMATCH[1]}_${BASH_REMATCH[2]}${BASH_REMATCH[3]}"
-        elif [[ "$newbase" =~ ^VID_([0-9]{8})_([0-9]{6})(\..+)$ ]]; then
-            newbase="${BASH_REMATCH[1]}_${BASH_REMATCH[2]}${BASH_REMATCH[3]}"
+        if [[ "$newbase" =~ ^IMG_([0-9]{8})_([0-9]{6})(_[0-9]+)?(\..+)$ ]]; then
+            newbase="${BASH_REMATCH[1]}_${BASH_REMATCH[2]}${BASH_REMATCH[3]}${BASH_REMATCH[4]}"
+        elif [[ "$newbase" =~ ^VID_([0-9]{8})_([0-9]{6})(_[0-9]+)?(\..+)$ ]]; then
+            newbase="${BASH_REMATCH[1]}_${BASH_REMATCH[2]}${BASH_REMATCH[3]}${BASH_REMATCH[4]}"
         elif [[ "$newbase" =~ ^PXL_([0-9]{8})_([0-9]{6})([0-9]*)(\..+)$ ]]; then
             newbase="${BASH_REMATCH[1]}_${BASH_REMATCH[2]}-PXL_${BASH_REMATCH[1]}_${BASH_REMATCH[2]}${BASH_REMATCH[3]}${BASH_REMATCH[4]}"
         elif [[ "$newbase" =~ ^received_[0-9]+(\..+)$ ]]; then
