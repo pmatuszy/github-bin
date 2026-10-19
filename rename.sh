@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# v. 20261019.080900 - Samsung Galaxy S23 Ultra: Camera Model Name / Software S918B → Samsung_S23_Ultra
 # v. 20261015.211800 - Hero4 GOPR####.mp4 / GP######.mp4: rename using file mtime minus duration (camera Create Date is the unset clock)
 # v. 20261012.082500 - GoPro size-split _part_: next clip must start at prev creation + duration (±2s); no wall-clock-only pairing
 # v. 20261012.081800 - GoPro 12G chapter: full split ≥ ~9.8 GiB; wall-clock link only for a large remainder (not a short independent clip)
@@ -103,6 +104,7 @@
 # v. 20260721.132007 - Samsung timestamp media: preserve optional numeric sorting prefix when appending make/model
 # v. 20260721.112812 - GoPro camera labels: GoPro_Hero4_Silver style (not GOPRO4_SILVER)
 
+# 2026.10.19 - v. 19.354.080900 - Samsung timestamp photos: Make samsung plus Camera Model Name "Galaxy S23 Ultra", or Software starting S918B (S918BXXS9EZCI), rename YYYYMMDD_HHMMSS.jpg → YYYYMMDD_HHMMSS_-_-_Samsung_S23_Ultra.jpg (same label as SM-S918*)
 # 2026.10.15 - v. 19.353.211800 - Hero 3/4 video names GOPR####.mp4 and chapter files GP######.mp4 now take the GoPro exiftool rename. The filename time is the file modification time minus the movie Duration (local start). Embedded Create Date on these clips is the camera clock and was hours off (no Time Zone tag), so it is not used.
 # 2026.10.12 - v. 19.352.082500 - GoPro size-split _part_: a suspected next chapter must start within 2s of (previous basename time + ffprobe duration). GoPro chapter end/start times match; a 6 min gap (18:18:44 vs 18:24:39) is a new recording. Wall-clock-only pairing is removed.
 # 2026.10.12 - v. 19.351.081800 - GoPro size-split _part_: full 12G chapter starts at 10000 MiB (~9.77 GiB), not 8 GiB (an 8.1 GiB Mission 1 clip is a complete recording)
@@ -13311,6 +13313,20 @@ samsung_model_code_from_exif() {
         raw="${raw^^}"
         if [[ "$raw" =~ (SM-[A-Z0-9]+) ]]; then
             printf '%s' "${BASH_REMATCH[1]}"
+            return 0
+        fi
+        raw="$(samsung_exif_first_value "$exif" 'Camera Model Name')"
+        raw="$(printf '%s' "$raw" | tr '[:lower:]' '[:upper:]' | sed -E 's/[^A-Z0-9]+/_/g; s/^_+//; s/_+$//')"
+        case "$raw" in
+            GALAXY_S23_ULTRA)
+                printf '%s' 'SM-S918B'
+                return 0
+                ;;
+        esac
+        raw="$(samsung_exif_first_value "$exif" 'Software')"
+        raw="${raw^^}"
+        if [[ "$raw" =~ ^S918B ]]; then
+            printf '%s' 'SM-S918B'
             return 0
         fi
     fi
