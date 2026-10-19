@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# v. 20261019.083900 - IMG_YYYYMMDD_HHMMSS: drop the IMG_ prefix (date and time only); append make/model when EXIF has both
 # v. 20261019.080900 - Samsung Galaxy S23 Ultra: Camera Model Name / Software S918B → Samsung_S23_Ultra
 # v. 20261015.211800 - Hero4 GOPR####.mp4 / GP######.mp4: rename using file mtime minus duration (camera Create Date is the unset clock)
 # v. 20261012.082500 - GoPro size-split _part_: next clip must start at prev creation + duration (±2s); no wall-clock-only pairing
@@ -104,6 +105,7 @@
 # v. 20260721.132007 - Samsung timestamp media: preserve optional numeric sorting prefix when appending make/model
 # v. 20260721.112812 - GoPro camera labels: GoPro_Hero4_Silver style (not GOPRO4_SILVER)
 
+# 2026.10.19 - v. 19.355.083900 - IMG_YYYYMMDD_HHMMSS.ext no longer becomes YYYYMMDD_HHMMSS-IMG_YYYYMMDD_HHMMSS.ext. The new name is the date and time only. When EXIF has both a camera make and model and no earlier camera rule tagged the file, that label is appended (YYYYMMDD_HHMMSS_-_-_Make_Model.ext).
 # 2026.10.19 - v. 19.354.080900 - Samsung timestamp photos: Make samsung plus Camera Model Name "Galaxy S23 Ultra", or Software starting S918B (S918BXXS9EZCI), rename YYYYMMDD_HHMMSS.jpg → YYYYMMDD_HHMMSS_-_-_Samsung_S23_Ultra.jpg (same label as SM-S918*)
 # 2026.10.15 - v. 19.353.211800 - Hero 3/4 video names GOPR####.mp4 and chapter files GP######.mp4 now take the GoPro exiftool rename. The filename time is the file modification time minus the movie Duration (local start). Embedded Create Date on these clips is the camera clock and was hours off (no Time Zone tag), so it is not used.
 # 2026.10.12 - v. 19.352.082500 - GoPro size-split _part_: a suspected next chapter must start within 2s of (previous basename time + ffprobe duration). GoPro chapter end/start times match; a 6 min gap (18:18:44 vs 18:24:39) is a new recording. Wall-clock-only pairing is removed.
@@ -13614,6 +13616,60 @@ android_exif_has_camera_identity() {
     return 1
 }
 
+# "Galaxy S23 Ultra" → Galaxy_S23_Ultra. Empty / return 1 when nothing usable remains.
+exif_label_token() {
+    local raw="$1" word out="" w first rest
+
+    [[ -n "$raw" ]] || return 1
+    for word in ${raw//[^[:alnum:]]/ }; do
+        w="${word,,}"
+        [[ "$w" =~ [a-z0-9] ]] || continue
+        first="${w:0:1}"
+        rest="${w:1}"
+        first="${first^^}"
+        out+="${out:+_}${first}${rest}"
+    done
+    [[ -n "$out" ]] || return 1
+    printf '%s' "$out"
+}
+
+# Bare YYYYMMDD_HHMMSS name plus Make and Model from EXIF. Empty stdout = no change.
+maybe_append_bare_timestamp_camera_label() {
+    local file="$1" base="$2"
+    local exifloc exif make="" model="" make_tok="" model_tok=""
+    local ext stem ts copy_suffix=""
+
+    samsung_media_basename_matches "$base" || return 0
+    samsung_already_renamed_basename_matches "$base" && return 0
+    xiaomi_already_renamed_basename_matches "$base" && return 0
+    gopro_exif_renamed_basename_matches "$base" && return 0
+
+    exifloc="$(resolve_rename_exiftool)" || return 0
+    exif="$("$exifloc" -api largefilesupport=1 "$file" 2>/dev/null)" || return 0
+    [[ -n "$exif" ]] || return 0
+
+    make="$(samsung_exif_first_value "$exif" 'Android Make')"
+    [[ -n "$make" ]] || make="$(samsung_exif_first_value "$exif" 'Make')"
+    model="$(samsung_exif_first_value "$exif" 'Android Model')"
+    [[ -n "$model" ]] || model="$(samsung_exif_first_value "$exif" 'Camera Model Name')"
+    [[ -n "$model" ]] || model="$(samsung_exif_first_value "$exif" 'Model')"
+    [[ -n "$make" && -n "$model" ]] || return 0
+    [[ "${make,,}" != unknown* && "${model,,}" != unknown* ]] || return 0
+
+    make_tok="$(exif_label_token "$make")" || return 0
+    model_tok="$(exif_label_token "$model")" || return 0
+    [[ "${model_tok,,}" != "${make_tok,,}" ]] || return 0
+    [[ "${model_tok,,}" != "${make_tok,,}_"* ]] || model_tok="${model_tok#${make_tok}_}"
+
+    ext="${base##*.}"
+    stem="${base%.*}"
+    [[ "$stem" =~ ^(([0-9]+_)?[0-9]{8}_[0-9]{6})(\(([0-9]+)\)|_([0-9]+))?$ ]] || return 0
+    ts="${BASH_REMATCH[1]}"
+    copy_suffix="${BASH_REMATCH[4]:-${BASH_REMATCH[5]}}"
+
+    gopro_format_camera_basename_output "$ts" "$make_tok" "$model_tok" "$copy_suffix" "$ext"
+}
+
 motorola_parse_exif_datetime_to_ts() {
     local raw="$1"
     if [[ "$raw" =~ ([0-9]{4}):([0-9]{2}):([0-9]{2})[[:space:]]+([0-9]{2}):([0-9]{2}):([0-9]{2}) ]]; then
@@ -15347,7 +15403,7 @@ transform_name() {
         fi
 
         if [[ "$newbase" =~ ^IMG_([0-9]{8})_([0-9]{6})(\..+)$ ]]; then
-            newbase="${BASH_REMATCH[1]}_${BASH_REMATCH[2]}-IMG_${BASH_REMATCH[1]}_${BASH_REMATCH[2]}${BASH_REMATCH[3]}"
+            newbase="${BASH_REMATCH[1]}_${BASH_REMATCH[2]}${BASH_REMATCH[3]}"
         elif [[ "$newbase" =~ ^PXL_([0-9]{8})_([0-9]{6})([0-9]*)(\..+)$ ]]; then
             newbase="${BASH_REMATCH[1]}_${BASH_REMATCH[2]}-PXL_${BASH_REMATCH[1]}_${BASH_REMATCH[2]}${BASH_REMATCH[3]}${BASH_REMATCH[4]}"
         elif [[ "$newbase" =~ ^received_[0-9]+(\..+)$ ]]; then
@@ -15520,6 +15576,27 @@ transform_name() {
             gopro_mark_capture_mode_db_from_basename "$f" "$newbase"
         else
             vlog "GoPro bare timestamp rename: no usable GoPro metadata for $newbase (rc=$_gopro_bare_rc)"
+        fi
+    fi
+
+    if [[ -f "$f" ]] && ((_tn_skip_exif == 0)) && (( _gopro_applied == 0 && _sony_applied == 0 && _olympus_applied == 0 && _nikon_applied == 0 && _canon_applied == 0 && _samsung_applied == 0 && _xiaomi_applied == 0 )) \
+        && samsung_media_basename_matches "$newbase"; then
+        local _cam_label_try="" _cam_label_rc=0 _tn_save_e_cam=0 _cam_err_trap=""
+        [[ $- == *e* ]] && _tn_save_e_cam=1
+        set +e
+        _cam_err_trap="$(trap -p ERR || true)"
+        trap - ERR
+        _cam_label_try="$(maybe_append_bare_timestamp_camera_label "$f" "$newbase")"
+        _cam_label_rc=$?
+        eval "${_cam_err_trap:-}"
+        if ((_tn_save_e_cam)); then
+            set -e
+        else
+            set +e
+        fi
+        if (( _cam_label_rc == 0 )) && [[ -n "$_cam_label_try" && "$_cam_label_try" != "$newbase" ]]; then
+            vlog "Camera make/model on timestamp name: $newbase -> $_cam_label_try"
+            newbase="$_cam_label_try"
         fi
     fi
 
