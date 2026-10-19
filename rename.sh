@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# v. 20261019.085200 - IMG_/VID_YYYYMMDD_HHMMSS with no camera make/model → YYYYMMDD_HHMMSS_IMG / _VID
 # v. 20261019.083900 - IMG_YYYYMMDD_HHMMSS: drop the IMG_ prefix (date and time only); append make/model when EXIF has both
 # v. 20261019.080900 - Samsung Galaxy S23 Ultra: Camera Model Name / Software S918B → Samsung_S23_Ultra
 # v. 20261015.211800 - Hero4 GOPR####.mp4 / GP######.mp4: rename using file mtime minus duration (camera Create Date is the unset clock)
@@ -105,6 +106,7 @@
 # v. 20260721.132007 - Samsung timestamp media: preserve optional numeric sorting prefix when appending make/model
 # v. 20260721.112812 - GoPro camera labels: GoPro_Hero4_Silver style (not GOPRO4_SILVER)
 
+# 2026.10.19 - v. 19.356.085200 - IMG_/VID_YYYYMMDD_HHMMSS gallery names that never receive a camera make/model (WhatsApp and other stripped exports) become YYYYMMDD_HHMMSS_IMG.ext / YYYYMMDD_HHMMSS_VID.ext. A real camera label still wins when EXIF has one.
 # 2026.10.19 - v. 19.355.083900 - IMG_YYYYMMDD_HHMMSS.ext no longer becomes YYYYMMDD_HHMMSS-IMG_YYYYMMDD_HHMMSS.ext. The new name is the date and time only. When EXIF has both a camera make and model and no earlier camera rule tagged the file, that label is appended (YYYYMMDD_HHMMSS_-_-_Make_Model.ext).
 # 2026.10.19 - v. 19.354.080900 - Samsung timestamp photos: Make samsung plus Camera Model Name "Galaxy S23 Ultra", or Software starting S918B (S918BXXS9EZCI), rename YYYYMMDD_HHMMSS.jpg → YYYYMMDD_HHMMSS_-_-_Samsung_S23_Ultra.jpg (same label as SM-S918*)
 # 2026.10.15 - v. 19.353.211800 - Hero 3/4 video names GOPR####.mp4 and chapter files GP######.mp4 now take the GoPro exiftool rename. The filename time is the file modification time minus the movie Duration (local start). Embedded Create Date on these clips is the camera clock and was hours off (no Time Zone tag), so it is not used.
@@ -13670,6 +13672,41 @@ maybe_append_bare_timestamp_camera_label() {
     gopro_format_camera_basename_output "$ts" "$make_tok" "$model_tok" "$copy_suffix" "$ext"
 }
 
+# IMG_/VID_YYYYMMDD_HHMMSS with no camera label → YYYYMMDD_HHMMSS_IMG / _VID.
+# Empty stdout = no change. A _-_-_ make/model tag already on the name is left alone.
+maybe_suffix_gallery_img_vid_without_camera() {
+    local orig="$1" current="$2"
+    local kind="" ext="" stem="" ts="" tail="" mode=""
+
+    if [[ "$orig" =~ ^[Ii][Mm][Gg]_[0-9]{8}_[0-9]{6} ]]; then
+        kind=IMG
+    elif [[ "$orig" =~ ^[Vv][Ii][Dd]_[0-9]{8}_[0-9]{6} ]]; then
+        kind=VID
+    else
+        return 0
+    fi
+
+    [[ "$current" == *"_-_-_"* || "$current" == *"_-__-_"* ]] && return 0
+
+    ext="${current##*.}"
+    stem="${current%.*}"
+    [[ "$stem" =~ ^[0-9]{8}_[0-9]{6}_${kind}($|_) ]] && return 0
+
+    if [[ "$stem" =~ ^([0-9]{8}_[0-9]{6})(_[A-Za-z][A-Za-z0-9_]*)?$ ]]; then
+        ts="${BASH_REMATCH[1]}"
+        tail="${BASH_REMATCH[2]-}"
+        printf '%s_%s%s.%s' "$ts" "$kind" "$tail" "$ext"
+        return 0
+    fi
+
+    if [[ "$current" == "$orig" && "$orig" =~ ^([Ii][Mm][Gg]|[Vv][Ii][Dd])_([0-9]{8})_([0-9]{6})[0-9]*((_[A-Za-z][A-Za-z0-9]*)*)\.([^.]+)$ ]]; then
+        mode="${BASH_REMATCH[4]-}"
+        printf '%s_%s_%s%s.%s' "${BASH_REMATCH[2]}" "${BASH_REMATCH[3]}" "$kind" "$mode" "${BASH_REMATCH[6]}"
+        return 0
+    fi
+    return 0
+}
+
 motorola_parse_exif_datetime_to_ts() {
     local raw="$1"
     if [[ "$raw" =~ ([0-9]{4}):([0-9]{2}):([0-9]{2})[[:space:]]+([0-9]{2}):([0-9]{2}):([0-9]{2}) ]]; then
@@ -13682,7 +13719,8 @@ motorola_parse_exif_datetime_to_ts() {
 }
 
 # Phone IMG_/VID_ files whose EXIF carries no camera identity at all (panorama stitcher output, edited exports):
-# keep the capture time, drop the IMG_/VID_ prefix and the millisecond tail, add no camera label.
+# keep the capture time and drop the IMG_/VID_ prefix and the millisecond tail.
+# A later step adds _IMG or _VID when no camera make/model was appended.
 android_media_plain_timestamp_basename() {
     local base="$1"
     local exif="$2"
@@ -15404,6 +15442,8 @@ transform_name() {
 
         if [[ "$newbase" =~ ^IMG_([0-9]{8})_([0-9]{6})(\..+)$ ]]; then
             newbase="${BASH_REMATCH[1]}_${BASH_REMATCH[2]}${BASH_REMATCH[3]}"
+        elif [[ "$newbase" =~ ^VID_([0-9]{8})_([0-9]{6})(\..+)$ ]]; then
+            newbase="${BASH_REMATCH[1]}_${BASH_REMATCH[2]}${BASH_REMATCH[3]}"
         elif [[ "$newbase" =~ ^PXL_([0-9]{8})_([0-9]{6})([0-9]*)(\..+)$ ]]; then
             newbase="${BASH_REMATCH[1]}_${BASH_REMATCH[2]}-PXL_${BASH_REMATCH[1]}_${BASH_REMATCH[2]}${BASH_REMATCH[3]}${BASH_REMATCH[4]}"
         elif [[ "$newbase" =~ ^received_[0-9]+(\..+)$ ]]; then
@@ -15597,6 +15637,15 @@ transform_name() {
         if (( _cam_label_rc == 0 )) && [[ -n "$_cam_label_try" && "$_cam_label_try" != "$newbase" ]]; then
             vlog "Camera make/model on timestamp name: $newbase -> $_cam_label_try"
             newbase="$_cam_label_try"
+        fi
+    fi
+
+    if [[ -f "$f" ]]; then
+        local _gallery_kind_try=""
+        _gallery_kind_try="$(maybe_suffix_gallery_img_vid_without_camera "$base" "$newbase")"
+        if [[ -n "$_gallery_kind_try" && "$_gallery_kind_try" != "$newbase" ]]; then
+            vlog "Gallery IMG/VID without camera: $newbase -> $_gallery_kind_try"
+            newbase="$_gallery_kind_try"
         fi
     fi
 
