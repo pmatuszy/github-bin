@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261020.101700 - refuse mp4_merge when video/audio tracks do not match (ffprobe table)
 # v. 20261020.095800 - FILE +N force-merges that file and the next N alphabetically in its folder
 # v. 20261020.093200 - seam prompts and the end summary show the join time as H:MM:SS
 # v. 20261020.091800 - files named on the command line are merged in that order (forced merge)
@@ -64,6 +65,7 @@
 # v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
 # v. 20260805.154826 - after merge: copy GPS/dates from first chapter; FS times via touch -r
 
+# 2026.10.20 - v. 0.15.80 - before mp4_merge, ffprobe checks video/audio fingerprints; mismatched tracks are refused with a short table (forced/+N exits; scan mode skips that group). No automatic re-encode
 # 2026.10.20 - v. 0.15.79 - FILE +N force-merges that file and the next N MP4 names in alphabetical order in the same folder (e.g. clip.mp4 +2). The plan lists every filename. Explicit FILE FILE … still works
 # 2026.10.20 - v. 0.15.78 - when asking to play a seam, and in a short summary after the seams, show the join time as H:MM:SS so it is easy to seek to in another player
 # 2026.10.20 - v. 0.15.77 - name two or more MP4 files on the command line to force a merge in that order (skip chapter detection). The usual merge prompts stay. Output is next to the first file as …_concat_parts_01-NN.mp4
@@ -252,6 +254,10 @@ Options:
 Merge behaviour:
   - With two or more FILE arguments: merge those files in that order (forced).
   - With FILE +N: merge that file and the next N alphabetically in its folder.
+  - Before merging, ffprobe compares video/audio tracks to the first file
+    (codec, size, fps, pixel format, time base, audio rate/channels). A mismatch
+    is refused with a table: forced/+N exits; directory scan skips that group.
+    mp4_merge is not run on mixed families (e.g. HandBrake/mp3 with NVenc/aac).
   - With no FILE arguments: collects *.mp4 in the current working directory
     (case-insensitive), except existing *_concat.mp4 outputs.
   - Detects GoPro-style chapter sequences (_part_01, _part_02, …). Consecutive part
@@ -2606,6 +2612,95 @@ ffprobe_duration_seconds() {
     -of default=noprint_wrappers=1:nokey=1 -- "$f" 2>/dev/null) || return 1
   [[ -n "$d" ]] || return 1
   awk -v d="$d" 'BEGIN { if (d+0 >= 0) printf "%.3f\n", d+0; else exit 1 }'
+}
+
+# Compact track fingerprint for mp4_merge compatibility (video|audio CSV fields).
+# Video: codec,profile,width,height,pix_fmt,avg_frame_rate,time_base
+# Audio: codec,profile,sample_rate,channels  (or "none")
+ffprobe_merge_fingerprint() {
+  local f="$1" v a
+  command -v ffprobe >/dev/null 2>&1 || return 1
+  v=$(ffprobe -v error -select_streams v:0 \
+    -show_entries stream=codec_name,profile,width,height,pix_fmt,avg_frame_rate,time_base \
+    -of csv=p=0 -- "$f" 2>/dev/null) || return 1
+  [[ -n "$v" ]] || return 1
+  a=$(ffprobe -v error -select_streams a:0 \
+    -show_entries stream=codec_name,profile,sample_rate,channels \
+    -of csv=p=0 -- "$f" 2>/dev/null) || a=""
+  [[ -n "$a" ]] || a="none"
+  printf '%s|%s\n' "$v" "$a"
+}
+
+# Human one-liner from a fingerprint (for the refusal table).
+merge_fingerprint_label() {
+  local fp="$1" v a
+  local vc vp vw vh pix fps tb ac ap ar ach
+  v="${fp%%|*}"
+  a="${fp#*|}"
+  IFS=',' read -r vc vp vw vh pix fps tb <<<"$v"
+  if [[ "$a" == "none" ]]; then
+    printf 'V %s %s %sx%s %s %s tb=%s | A (none)' \
+      "${vc:-?}" "${vp:-?}" "${vw:-?}" "${vh:-?}" "${pix:-?}" "${fps:-?}" "${tb:-?}"
+    return 0
+  fi
+  IFS=',' read -r ac ap ar ach <<<"$a"
+  printf 'V %s %s %sx%s %s %s tb=%s | A %s %s %sHz %sch' \
+    "${vc:-?}" "${vp:-?}" "${vw:-?}" "${vh:-?}" "${pix:-?}" "${fps:-?}" "${tb:-?}" \
+    "${ac:-?}" "${ap:-?}" "${ar:-?}" "${ach:-?}"
+}
+
+# 0 = all files match the first; 1 = mismatch or probe failure (prints a table).
+# Used before mp4_merge: refuse mixed families (e.g. mp3 vs aac, different time bases).
+merge_group_assert_codecs() {
+  local -a files=("$@")
+  local f fp0 fp i
+  local -a fps=()
+  local mismatch=0 probe_fail=0
+  local -a diff_notes=()
+
+  (( ${#files[@]} >= 2 )) || return 0
+  if ! command -v ffprobe >/dev/null 2>&1; then
+    echo "$(pgm_ts) ffprobe not found — cannot verify that tracks match before mp4_merge." >&2
+    return 0
+  fi
+
+  for f in "${files[@]}"; do
+    if ! fp=$(ffprobe_merge_fingerprint "$f"); then
+      echo "$(pgm_ts) Cannot read tracks with ffprobe: ${f##*/}" >&2
+      probe_fail=1
+      fps+=("")
+      continue
+    fi
+    fps+=("$fp")
+  done
+  if (( probe_fail )); then
+    echo "$(pgm_ts) Refusing merge: ffprobe could not read every input." >&2
+    return 1
+  fi
+
+  fp0="${fps[0]}"
+  for i in "${!files[@]}"; do
+    [[ "${fps[i]}" == "$fp0" ]] && continue
+    mismatch=1
+    break
+  done
+  (( mismatch )) || return 0
+
+  echo "$(pgm_ts) Refusing merge: video/audio tracks do not match (mp4_merge needs the same codecs and layout)." >&2
+  echo >&2
+  printf '  %-52s %s\n' "file" "tracks" >&2
+  for i in "${!files[@]}"; do
+    f="${files[i]}"
+    fp="${fps[i]}"
+    if [[ "$fp" == "$fp0" ]]; then
+      printf '  %-52s %s\n' "${f##*/}" "$(merge_fingerprint_label "$fp")" >&2
+    else
+      printf '  %-52s %s  ← differs\n' "${f##*/}" "$(merge_fingerprint_label "$fp")" >&2
+    fi
+  done
+  echo >&2
+  echo "$(pgm_ts) Merge only matching families (e.g. all *_NVenc_* or all HandBrake). Mixed pairs need ffmpeg, not mp4_merge." >&2
+  return 1
 }
 
 PGM_EXIFTOOL_DEFAULT="${PGM_EXIFTOOL_DEFAULT:-/mnt/luks-buffalo2/worek/_video-JEDYNE_KOPIE/_katalog_roboczy/scripts/Image-ExifTool-12.41/exiftool}"
@@ -5577,6 +5672,7 @@ run_merge_group() {
   shift 2
   local -a files=("$@")
   local output_file rc
+  merge_group_assert_codecs "${files[@]}" || return 1
   output_file=$(group_output_file "${files[@]}")
   if [[ -e "$output_file" ]]; then
     if (( ! redo )); then
@@ -6187,6 +6283,7 @@ do_merge() {
   }
 
   local sorted_mp4=()
+  local codec_skip=0
   if (( FORCE_MERGE )); then
     GROUP_BLOBS=( "$(printf '%s\n' "${FORCE_MERGE_FILES[@]}")" )
     sorted_mp4=( "${FORCE_MERGE_FILES[@]}" )
@@ -6231,12 +6328,25 @@ do_merge() {
   for blob in "${GROUP_BLOBS[@]}"; do
     group_files_to_array "$blob" files
     if (( ${#files[@]} >= 2 )); then
-      mergeable_blobs+=("$blob")
+      if merge_group_assert_codecs "${files[@]}"; then
+        mergeable_blobs+=("$blob")
+      else
+        (( codec_skip++ )) || true
+        if (( FORCE_MERGE )); then
+          return 1
+        fi
+        echo "$(pgm_ts) Skipping this group (incompatible tracks)."
+        echo
+      fi
     fi
   done
   mergeable_total=${#mergeable_blobs[@]}
 
   if (( mergeable_total == 0 )); then
+    if (( codec_skip > 0 )); then
+      echo "$(pgm_ts) No mergeable groups left after the track-compatibility check (${codec_skip} skipped)."
+      return 1
+    fi
     if (( ! DASHCAM_OFFER_SAID )); then
       echo "$(pgm_ts) No multi-part chapter groups to merge."
       echo "$(pgm_ts) Tip: sequential GoPro clips (_part_01… with chaining timestamps, bare _Timelapse chapters without _part_XX, YYYYMMDD_HHMMSS_… ~4 GB / ~12 GB, a/b/c letter suffixes, or 70mai NOYYYYMMDD-HHMMSS-NNNNNNX journeys) may be mergeable chapters."
