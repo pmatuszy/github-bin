@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261020.205600 - seal files named .deleteme.*; seal failure falls back to live script
 # v. 20261020.205000 - seal caller to temp before banner so in-place cp cannot splice bash source
 # v. 20261020.202500 - self-update: watch live bin/ path (copy overwrite), not git checkout alone
 # v. 20261020.202200 - source _script_self_update.sh: detect on-disk script replace while running
@@ -9,6 +10,7 @@
 # v. 20260716.173600 - print_version_banner uses CALLER_SCRIPT version fields
 # v. 20260716.163300 - versioning v. YYYYMMDD.HH24MISS; parse first # v. YYYYMMDD.HHMMSS line
 
+# 2026.10.20 - v. 1.64.205600 - seal copies use .deleteme.<script>.seal.XXXXXX; if the seal cannot be created (read-only dir), continue on the live script without failing startup
 # 2026.10.20 - v. 1.63.205000 - seal CALLER_SCRIPT to a temp copy before banners/delay (in-place cp into bin/ must not feed bash mixed old/new source); still watch the live path for [R]/[C]/[Q]
 # 2026.10.20 - v. 1.62.202500 - self-update watches the running script path (destination after copy into bin/); git pull in a checkout does not count until that live file is overwritten
 # 2026.10.20 - v. 1.61.202200 - source sibling _script_self_update.sh for CALLER_SCRIPT: notice git pull / file replace mid-run (DEBUG trap, [R]/[C]/[Q])

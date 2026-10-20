@@ -1,8 +1,12 @@
 #!/usr/bin/env bash
+# v. 20261020.205600 - seal name .deleteme.<script>.seal.XXXX; if seal copy fails, run live script
 # v. 20261020.205000 - seal running script to a temp copy so in-place cp cannot break bash parse
 # v. 20261020.202500 - detect live-script overwrite (git pull then copy into bin/) mid-run
 # v. 20261020.202200 - detect on-disk script replacement while a run is in progress
 #
+# 2026.10.20 - v. 1.3.205600 - Seal files are named .deleteme.<basename>.seal.XXXXXX beside the live
+#   script (or under TMPDIR if bin/ is not writable). If mktemp/cp fails, skip sealing and keep
+#   running the original script — never abort startup for a read-only directory.
 # 2026.10.20 - v. 1.2.205000 - Copy the live script to a temp file and re-exec from that copy at
 #   startup (seal). Bash keeps reading the open inode; an in-place cp into ~/bin overwrites that
 #   inode and causes bogus mid-file syntax errors (e.g. near unexpected token `else`). Sealed runs
@@ -50,7 +54,7 @@ script_self_update_resolve_path() {
       p="${BASH_SOURCE[i]}"
       case "$(basename -- "$p")" in
         _script_self_update.sh|_script_header.sh|_script_footer.sh) continue ;;
-        .*.seal.*|*.seal.*) continue ;;
+        .deleteme.*.seal.*|*.deleteme.*.seal.*|.*.seal.*|*.seal.*) continue ;;
       esac
       [[ -n "$p" ]] && break
     done
@@ -164,15 +168,18 @@ script_self_update_seal_and_reexec() {
   live_dir="$(cd "$(dirname -- "$live")" && pwd -P)" || return 0
   base="$(basename -- "$live")"
   tmp=""
-  # Same directory as the live script (keeps $0 dirname == bin/).
-  tmp="$(mktemp "${live_dir}/.${base}.seal.XXXXXX" 2>/dev/null || true)"
+  # Same directory as the live script (keeps $0 dirname == bin/). Name marks leftovers as disposable.
+  tmp="$(mktemp "${live_dir}/.deleteme.${base}.seal.XXXXXX" 2>/dev/null || true)"
   if [[ -z "$tmp" ]]; then
-    # Fall back when bin/ is not writable.
-    tmp="$(mktemp "${TMPDIR:-/tmp}/${base}.seal.XXXXXX" 2>/dev/null || true)"
+    # Fall back when bin/ is not writable (e.g. read-only mount).
+    tmp="$(mktemp "${TMPDIR:-/tmp}/.deleteme.${base}.seal.XXXXXX" 2>/dev/null || true)"
   fi
-  [[ -n "$tmp" ]] || return 0
-  if ! cp -f -- "$live" "$tmp"; then
-    rm -f -- "$tmp"
+  if [[ -z "$tmp" ]]; then
+    # Cannot seal — run the original live script; do not abort.
+    return 0
+  fi
+  if ! cp -f -- "$live" "$tmp" 2>/dev/null; then
+    rm -f -- "$tmp" 2>/dev/null || true
     return 0
   fi
   chmod u+rwx -- "$tmp" 2>/dev/null || chmod u+rw -- "$tmp" 2>/dev/null || true

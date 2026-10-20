@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# v. 20261020.205600 - seal .deleteme.rename.sh.seal.*; if seal fails, keep running live script
 # v. 20261020.205000 - seal rename.sh to temp so in-place bin/ cp cannot splice bash source
 # v. 20261020.202500 - self-update: live bin/ overwrite after copy (not git checkout alone)
 # v. 20261020.202200 - detect on-disk rename.sh replace mid-run (_script_self_update.sh)
@@ -111,6 +112,7 @@
 # v. 20260721.132007 - Samsung timestamp media: preserve optional numeric sorting prefix when appending make/model
 # v. 20260721.112812 - GoPro camera labels: GoPro_Hero4_Silver style (not GOPRO4_SILVER)
 
+# 2026.10.20 - v. 19.362.205600 - Seal file name is .deleteme.rename.sh.seal.XXXXXX. If the seal copy cannot be created (e.g. read-only directory), startup continues on the live script instead of failing.
 # 2026.10.20 - v. 19.361.205000 - Seal rename.sh to a private temp copy at startup. An in-place cp into bin/ overwrites the inode bash is still reading and caused bogus mid-file syntax errors (e.g. near unexpected token `else`); the sealed snapshot keeps this run stable. The live path is still watched for [R]/[C]/[Q].
 # 2026.10.20 - v. 19.360.202500 - Self-update watches the running rename.sh path (e.g. after git pull then copy into bin/). Overwriting that live file triggers [R]/[C]/[Q]; updating only the git checkout does not.
 # 2026.10.20 - v. 19.359.202200 - While rename.sh is running, detect when the on-disk script is replaced (git pull / copy). Prompt [R]estart with the new file / [C]ontinue this run / [Q]uit (shared _script_self_update.sh; also used by audio*/media*/video* via _script_header.sh).
