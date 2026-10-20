@@ -1,9 +1,11 @@
 #!/bin/bash
+# v. 20261020.155800 - Fix dates prompt: capitalise the default key (e.g. S when Skip is default)
 # v. 20261020.155300 - when name and mtime already match and only CreateDate is missing, default is Skip
 # v. 20261020.150700 - date menu always lists File name, Filesystem, and Media tags (n/a when unusable)
 # v. 20261020.150400 - date menu: ASCII n/a so parenthetical notes share one column
 # v. 20261020.145500 - fix file / media dates when the name, filesystem, and tags disagree
 #
+# 2026.10.20 - v. 0.1.4 - Fix dates prompt shows the default key in capitals (e.g. 1/2/3/4/a/S/q), like the other scripts
 # 2026.10.20 - v. 0.1.3 - if file name and filesystem already agree and only media CreateDate is missing, the default key is Skip (s), not the oldest stamp
 # 2026.10.20 - v. 0.1.2 - always show File name, Filesystem, and Media tags rows (n/a when missing or before 1990)
 # 2026.10.20 - v. 0.1.1 - date menu uses ASCII n/a (UTF-8 dash broke the column of the notes in parentheses)
@@ -96,6 +98,26 @@ mfd_choice() {
   c="${c//$'\r'/}"
   c="${c//$'\n'/}"
   printf '%s\n' "$c"
+}
+
+# Key for a prompt: capital when it is the default (mfd_k s s -> S, mfd_k a s -> a).
+mfd_k() {
+  local key="$1" def="$2"
+  if [[ "${key,,}" == "${def,,}" ]]; then
+    printf '%s' "${key^^}"
+  else
+    printf '%s' "$key"
+  fi
+}
+
+# Keys for a prompt line with the default in capitals: mfd_keys s 1 2 3 4 a s q -> 1/2/3/4/a/S/q
+mfd_keys() {
+  local def="$1" k out=""
+  shift
+  for k in "$@"; do
+    out+="${out:+/}$(mfd_k "$k" "$def")"
+  done
+  printf '%s\n' "$out"
 }
 
 mfd_find_exiftool() {
@@ -383,7 +405,8 @@ mfd_prepare_file() {
 
 mfd_process_file() {
   local f="$1"
-  local i n keys="" choice disp note
+  local i n choice disp note prompt_keys
+  local -a key_list=()
 
   if ! mfd_prepare_file "$f"; then
     return 0
@@ -410,7 +433,7 @@ mfd_process_file() {
     echo "  Sources (oldest usable is the default; dates before 1990 are ignored):"
   fi
   echo
-  keys=""
+  key_list=()
   for (( i = 0; i < n; i++ )); do
     note="${MFD_NOTES[i]}"
     if [[ -n "${MFD_EPOCHS[i]}" ]]; then
@@ -428,20 +451,20 @@ mfd_process_file() {
     # ASCII-only date column so %-19s matches terminal columns (UTF-8 "—" broke alignment).
     printf '  [%d] %-18s %-19s  %s\n' \
       "$((i + 1))" "${MFD_LABELS[i]}" "$disp" "$note"
-    keys+="$((i + 1))"
-    (( i + 1 < n )) && keys+="/"
+    key_list+=("$((i + 1))")
   done
-  echo "  [a] Always oldest for the rest of this run"
+  echo "  [$(mfd_k a "$MFD_DEFAULT_KEY")] Always oldest for the rest of this run"
   if [[ "${MFD_DEFAULT_KEY}" == s ]]; then
-    echo "  [S] Skip this file (default)"
+    echo "  [$(mfd_k s "$MFD_DEFAULT_KEY")] Skip this file (default)"
   else
-    echo "  [s] Skip this file"
+    echo "  [$(mfd_k s "$MFD_DEFAULT_KEY")] Skip this file"
   fi
-  echo "  [q] Quit"
-  keys+="/a/s/q"
+  echo "  [$(mfd_k q "$MFD_DEFAULT_KEY")] Quit"
+  key_list+=(a s q)
+  prompt_keys="$(mfd_keys "$MFD_DEFAULT_KEY" "${key_list[@]}")"
 
   while true; do
-    mfd_read_key "Fix dates [${keys}] (default ${MFD_DEFAULT_KEY}): " "$MFD_DEFAULT_KEY"
+    mfd_read_key "Fix dates [${prompt_keys}]: " "$MFD_DEFAULT_KEY"
     choice="$(mfd_choice "$REPLY")"
     case "$choice" in
       q)
