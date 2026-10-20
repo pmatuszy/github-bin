@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261020.163300 - Processing header and before/after result block stand out (rules + mark changed rows)
 # v. 20261020.163100 - parse exiftool CreateDate with hyphens so GNU date can read it back after a write
 # v. 20261020.162800 - Processing header; before/after date table; numeric default spelled out on the prompt
 # v. 20261020.162300 - when name and mtime match and CreateDate is missing, default is apply that date (not Skip)
@@ -7,6 +8,7 @@
 # v. 20261020.150400 - date menu: ASCII n/a so parenthetical notes share one column
 # v. 20261020.145500 - fix file / media dates when the name, filesystem, and tags disagree
 #
+# 2026.10.20 - v. 0.1.8 - Processing and the before/after result are framed with === lines; rows that changed get a leading * and (changed)
 # 2026.10.20 - v. 0.1.7 - reading CreateDate used exiftool's YYYY:MM:DD form, which GNU date rejects, so Media tags always looked like n/a after a successful write; parse as YYYY-MM-DD instead
 # 2026.10.20 - v. 0.1.6 - per-file Processing header; after a change show File name / Filesystem / Media tags before and after side by side; when the default is a number, the prompt says e.g. (default 1 = File name)
 # 2026.10.20 - v. 0.1.5 - when name and mtime already match and only CreateDate is missing, default is to apply that date (filesystem + media tags), not Skip
@@ -182,15 +184,41 @@ mfd_snapshot_dates() {
   MFD_SNAP_MEDIA="$(mfd_media_createdate_epoch "$f" 2>/dev/null || true)"
 }
 
-# Side-by-side before/after for the three date sources.
+mfd_rule() {
+  printf '%s\n' "========================================================================"
+}
+
+# Prominent start-of-file banner.
+mfd_print_processing() {
+  local f="$1"
+  echo
+  mfd_rule
+  echo "$(mfd_ts) Processing: ${f}"
+  mfd_rule
+}
+
+# One result row; mark with * when before and after differ.
+mfd_print_ba_row() {
+  local label="$1" before="$2" after="$3" mark=" " note=""
+  if [[ "$before" != "$after" ]]; then
+    mark="*"
+    note="  (changed)"
+  fi
+  printf '%s %-18s %-21s %s%s\n' \
+    "$mark" "$label" "$(mfd_disp_or_na "$before")" "$(mfd_disp_or_na "$after")" "$note"
+}
+
+# Side-by-side before/after for the three date sources (framed; * = changed).
 mfd_print_before_after() {
   local b_name="$1" b_fs="$2" b_media="$3"
   local a_name="$4" a_fs="$5" a_media="$6"
   echo
+  echo "  === Result (before -> after) =========================================="
   printf '  %-18s %-21s %s\n' "" "Before" "After"
-  printf '  %-18s %-21s %s\n' "File name" "$(mfd_disp_or_na "$b_name")" "$(mfd_disp_or_na "$a_name")"
-  printf '  %-18s %-21s %s\n' "Filesystem" "$(mfd_disp_or_na "$b_fs")" "$(mfd_disp_or_na "$a_fs")"
-  printf '  %-18s %-21s %s\n' "Media tags" "$(mfd_disp_or_na "$b_media")" "$(mfd_disp_or_na "$a_media")"
+  mfd_print_ba_row "File name" "$b_name" "$a_name"
+  mfd_print_ba_row "Filesystem" "$b_fs" "$a_fs"
+  mfd_print_ba_row "Media tags" "$b_media" "$a_media"
+  echo "  ======================================================================"
 }
 
 mfd_abs_diff() {
@@ -487,8 +515,7 @@ mfd_process_file() {
   before_media="${MFD_EPOCHS[2]}"
 
   if (( DO_YES )) || (( ALWAYS_OLDEST )) || (( ! script_is_run_interactively )); then
-    echo
-    echo "$(mfd_ts) Processing: ${f}"
+    mfd_print_processing "$f"
     if [[ -n "$MFD_OLDEST_E" ]]; then
       mfd_apply_epoch "$f" "$MFD_OLDEST_E"
       FIXED=$((FIXED + 1))
@@ -498,8 +525,7 @@ mfd_process_file() {
     return 0
   fi
 
-  echo
-  echo "$(mfd_ts) Processing: ${f}"
+  mfd_print_processing "$f"
   echo
   echo "  Sources (oldest usable is the default; applying it sets media CreateDate and filesystem times):"
   echo
