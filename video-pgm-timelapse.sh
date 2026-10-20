@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261020.145000 - after encode, ask which date to use when name/FS/media disagree (oldest usable; ignore before 1990)
 # v. 20261020.121200 - file picker: All and None in dialog; plain menu names A and N clearly
 # v. 20261014.084438 - the output name is stem_xN.mp4; the clock is added only when that name is taken
 # v. 20261014.084030 - ask whether to encode every file before the first one starts
@@ -49,6 +50,7 @@
 # v. 20260930.221500 - file prompts: one key, no Enter
 # v. 20260930.220400 - faster viewing copy of a merged video (2, 5, 10, 20, …)
 
+# 2026.10.20 - v. 0.47 - after encode, if the source file name, filesystem time, and media CreateDate disagree, ask which to use (1/2/3…); default is the oldest usable date; stamps before 1990 are ignored; -y applies the oldest without asking
 # 2026.10.20 - v. 0.46 - Pick files: dialog has All and None buttons that reset every mark; the plain menu says A=all and N=none (those keys were already there)
 # 2026.10.14 - v. 0.45 - the output name is stem_xN.mp4; a later encode that would use the same name gets the start time in the name
 # 2026.10.14 - v. 0.44 - before the first file, ask whether to encode every file, or the first file and then ask again
@@ -120,7 +122,10 @@ Write a faster copy beside each video. A 10× copy of a two-hour drive is about
 twelve minutes. The original file is not changed. The copy is named
 stem_xN.mp4. When that name is already taken, the new file is
 stem_xN_YYYYMMDD-HHMMSS.mp4, using the time this encode starts. The file itself
-gets the source video's creation time and file time. If the copy has no
+gets the source video's creation time and file time. If the source file name,
+filesystem time, and media CreateDate disagree by more than two minutes, the
+script asks which date to use (1/2/3…); the default is the oldest usable stamp
+(before 1990 ignored). -y applies the oldest without asking. If the copy has no
 location, the first point of the .gpx beside the source is stored in it. A short try is
 stem_xN_test-1m-at20.mp4, and the same clock is added only when that name is taken.
 
@@ -1083,6 +1088,221 @@ tl_stamp_from() {
   fi
 }
 
+TL_TIME_MIN_EPOCH=""
+tl_time_min_epoch() {
+  if [[ -z "$TL_TIME_MIN_EPOCH" ]]; then
+    TL_TIME_MIN_EPOCH="$(date -d '1990-01-01 00:00:00' +%s 2>/dev/null || printf '631152000')"
+  fi
+  printf '%s\n' "$TL_TIME_MIN_EPOCH"
+}
+
+tl_epoch_usable() {
+  local e="${1:-}"
+  [[ "$e" =~ ^[0-9]+$ ]] || return 1
+  (( e >= $(tl_time_min_epoch) )) || return 1
+  return 0
+}
+
+tl_format_epoch_display() {
+  local e="$1"
+  date -d "@${e}" '+%Y.%m.%d %H:%M:%S' 2>/dev/null \
+    || date -r "$e" '+%Y.%m.%d %H:%M:%S' 2>/dev/null \
+    || printf '%s\n' "$e"
+}
+
+tl_filename_epoch_from_basename() {
+  local base="$1" d t iso e
+  base="${base##*/}"
+  if [[ "$base" =~ ^([0-9]{8})[_-]([0-9]{6}) ]]; then
+    d="${BASH_REMATCH[1]}"
+    t="${BASH_REMATCH[2]}"
+  elif [[ "$base" =~ ^[Nn][Oo]([0-9]{8})-([0-9]{6}) ]]; then
+    d="${BASH_REMATCH[1]}"
+    t="${BASH_REMATCH[2]}"
+  elif [[ "$base" =~ ^[Ee][Vv]([0-9]{8})-([0-9]{6}) ]]; then
+    d="${BASH_REMATCH[1]}"
+    t="${BASH_REMATCH[2]}"
+  else
+    return 1
+  fi
+  iso="${d:0:4}-${d:4:2}-${d:6:2} ${t:0:2}:${t:2:2}:${t:4:2}"
+  e="$(date -d "$iso" +%s 2>/dev/null)" || return 1
+  tl_epoch_usable "$e" || return 1
+  printf '%s\n' "$e"
+}
+
+tl_fs_mtime_epoch() {
+  local f="$1" e
+  e="$(stat -c %Y -- "$f" 2>/dev/null || stat -f %m -- "$f" 2>/dev/null)" || return 1
+  tl_epoch_usable "$e" || return 1
+  printf '%s\n' "$e"
+}
+
+tl_media_createdate_epoch() {
+  local f="$1" exif raw e
+  exif="$(tl_find_exiftool 2>/dev/null)" || return 1
+  raw="$("$exif" -api largefilesupport=1 -s3 -CreateDate -d '%Y:%m:%d %H:%M:%S' -- "$f" 2>/dev/null | head -n1 | tr -d '\r')"
+  [[ -n "$raw" && "$raw" != "0000:00:00 00:00:00" ]] || return 1
+  e="$(date -d "$raw" +%s 2>/dev/null)" || return 1
+  tl_epoch_usable "$e" || return 1
+  printf '%s\n' "$e"
+}
+
+tl_set_fs_times_epoch() {
+  local dest="$1" epoch="$2" touch_fmt dest_w
+  [[ -f "$dest" && "$epoch" =~ ^[0-9]+$ ]] || return 1
+  touch_fmt="$(date -d "@${epoch}" +%Y%m%d%H%M.%S 2>/dev/null)" || return 1
+  touch -t "$touch_fmt" -- "$dest" 2>/dev/null || return 1
+  if [[ "$dest" == /mnt/?/* ]] \
+    && command -v powershell.exe >/dev/null 2>&1 \
+    && command -v wslpath >/dev/null 2>&1; then
+    dest_w=$(wslpath -w "$dest") || return 0
+    dest_w=${dest_w//\'/\'\'}
+    powershell.exe -NoProfile -Command \
+      "\$d = Get-Item -LiteralPath '${dest_w}'; \$t = [DateTimeOffset]::FromUnixTimeSeconds(${epoch}).LocalDateTime; \$d.CreationTime = \$t; \$d.LastWriteTime = \$t" \
+      >/dev/null 2>&1 || true
+  fi
+  return 0
+}
+
+tl_set_media_dates_epoch() {
+  local dest="$1" epoch="$2" exif iso
+  [[ -f "$dest" && "$epoch" =~ ^[0-9]+$ ]] || return 1
+  exif="$(tl_find_exiftool 2>/dev/null)" || return 1
+  iso="$(date -d "@${epoch}" '+%Y:%m:%d %H:%M:%S' 2>/dev/null)" || return 1
+  "$exif" -overwrite_original -P -api QuickTimeUTC=1 \
+    -CreateDate="$iso" -ModifyDate="$iso" \
+    -TrackCreateDate="$iso" -TrackModifyDate="$iso" \
+    -MediaCreateDate="$iso" -MediaModifyDate="$iso" \
+    -FileCreateDate="$iso" -FileModifyDate="$iso" \
+    -- "$dest" >/dev/null 2>&1
+}
+
+tl_apply_epoch_to_output() {
+  local dest="$1" epoch="$2"
+  tl_set_media_dates_epoch "$dest" "$epoch" || true
+  tl_set_fs_times_epoch "$dest" "$epoch" || true
+  echo "$(tl_ts) Output times: $(tl_format_epoch_display "$epoch")"
+}
+
+# After stamping from the source: if name / FS / media disagree, ask which date to use.
+# Name is taken from the source basename. Default = oldest usable. Return 2 on quit.
+tl_prompt_reconcile_output_times() {
+  local dest="$1" source_file="$2"
+  local name_e="" src_e="" media_e="" dest_fs_e=""
+  local -a labels=() epochs=() notes=()
+  local i n def=1 oldest_i=0 oldest_e="" choice keys="" disp
+  local abs_diff need_ask=0
+
+  [[ -f "$dest" && -f "$source_file" ]] || return 0
+
+  name_e="$(tl_filename_epoch_from_basename "${source_file##*/}" 2>/dev/null || true)"
+  [[ -z "$name_e" ]] && name_e="$(tl_filename_epoch_from_basename "${dest##*/}" 2>/dev/null || true)"
+  src_e="$(tl_fs_mtime_epoch "$source_file" 2>/dev/null || true)"
+  dest_fs_e="$(tl_fs_mtime_epoch "$dest" 2>/dev/null || true)"
+  media_e="$(tl_media_createdate_epoch "$dest" 2>/dev/null || true)"
+  [[ -z "$media_e" ]] && media_e="$(tl_media_createdate_epoch "$source_file" 2>/dev/null || true)"
+
+  [[ -n "$name_e" ]] || return 0
+
+  if [[ -n "$src_e" ]]; then
+    if (( name_e > src_e )); then abs_diff=$((name_e - src_e)); else abs_diff=$((src_e - name_e)); fi
+    (( abs_diff > 120 )) && need_ask=1
+  elif [[ -n "$dest_fs_e" ]]; then
+    if (( name_e > dest_fs_e )); then abs_diff=$((name_e - dest_fs_e)); else abs_diff=$((dest_fs_e - name_e)); fi
+    (( abs_diff > 120 )) && need_ask=1
+  else
+    need_ask=1
+  fi
+  if [[ -n "$media_e" ]]; then
+    if (( name_e > media_e )); then abs_diff=$((name_e - media_e)); else abs_diff=$((media_e - name_e)); fi
+    (( abs_diff > 120 )) && need_ask=1
+  fi
+  (( need_ask )) || return 0
+
+  labels+=("File name")
+  epochs+=("$name_e")
+  notes+=("(from source name)")
+  if [[ -n "$src_e" ]]; then
+    labels+=("Source file")
+    epochs+=("$src_e")
+    notes+=("(filesystem)")
+  fi
+  if [[ -n "$media_e" ]]; then
+    labels+=("Media tags")
+    epochs+=("$media_e")
+    notes+=("(CreateDate in the video)")
+  fi
+  labels+=("Keep as written")
+  epochs+=("")
+  notes+=("(leave the new file as it is now)")
+
+  n=${#labels[@]}
+  oldest_e=""
+  oldest_i=0
+  for (( i = 0; i < n; i++ )); do
+    [[ -n "${epochs[i]}" ]] || continue
+    if [[ -z "$oldest_e" ]] || (( epochs[i] < oldest_e )); then
+      oldest_e="${epochs[i]}"
+      oldest_i=$i
+    fi
+  done
+  def=$((oldest_i + 1))
+
+  if (( DO_YES )) || (( ! script_is_run_interactively )); then
+    if [[ -n "$oldest_e" ]]; then
+      tl_apply_epoch_to_output "$dest" "$oldest_e"
+      echo "$(tl_ts) Output times: $(tl_format_epoch_display "$oldest_e") (oldest usable; no prompt)."
+    fi
+    return 0
+  fi
+
+  echo
+  echo "$(tl_ts) Output times do not match the file name."
+  echo
+  printf '  File:  %s\n' "${dest##*/}"
+  printf '  Source name stamp from:  %s\n' "${source_file##*/}"
+  echo
+  echo "  Sources (oldest usable is the default; dates before 1990 are ignored):"
+  echo
+  keys=""
+  for (( i = 0; i < n; i++ )); do
+    if [[ -n "${epochs[i]}" ]]; then
+      disp="$(tl_format_epoch_display "${epochs[i]}")"
+    else
+      disp="—"
+    fi
+    if (( i + 1 == def )); then
+      printf '  [%d] %-18s %-19s  %s (oldest — default)\n' \
+        "$((i + 1))" "${labels[i]}" "$disp" "${notes[i]}"
+    else
+      printf '  [%d] %-18s %-19s  %s\n' \
+        "$((i + 1))" "${labels[i]}" "$disp" "${notes[i]}"
+    fi
+    keys+="$((i + 1))"
+    (( i + 1 < n )) && keys+="/"
+  done
+  echo "  [q] Quit"
+  keys+="/q"
+  tl_read_key "Output times [${keys}] (default ${def}): " "$def"
+  choice="$(tl_choice "$REPLY")"
+  case "$choice" in
+    q) return 2 ;;
+  esac
+  if [[ "$choice" =~ ^[0-9]+$ ]] && (( choice >= 1 && choice <= n )); then
+    i=$((choice - 1))
+    if [[ -n "${epochs[i]}" ]]; then
+      tl_apply_epoch_to_output "$dest" "${epochs[i]}"
+      echo "$(tl_ts) Output times set from ${labels[i]}: $(tl_format_epoch_display "${epochs[i]}")"
+    else
+      echo "$(tl_ts) Output times kept as written."
+    fi
+    return 0
+  fi
+  echo "$(tl_ts) Unknown choice: ${REPLY}. Keeping times as written."
+  return 0
+}
+
 tl_run_ffmpeg() {
   local src="$1" dest="$2" speed="$3" total_sec="${4:-}"
   local vfilter partial rc gpx=""
@@ -1131,6 +1351,11 @@ tl_run_ffmpeg() {
   tl_stamp_from "$src" "$dest"
   gpx="$(tl_find_gpx "$src" || true)"
   [[ -n "$gpx" ]] && tl_put_gps "$dest" "$gpx" "$src"
+  tl_prompt_reconcile_output_times "$dest" "$src"
+  rc=$?
+  if (( rc == 2 )); then
+    tl_quit_script
+  fi
   return 0
 }
 

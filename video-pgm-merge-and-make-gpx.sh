@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261020.145000 - after merge, ask which date to use when name/FS/media disagree (oldest usable; ignore before 1990)
 # v. 20261020.102500 - print every seam time in the output again before asking to delete inputs
 # v. 20261020.101700 - refuse mp4_merge when video/audio tracks do not match (ffprobe table)
 # v. 20261020.095800 - FILE +N force-merges that file and the next N alphabetically in its folder
@@ -66,6 +67,7 @@
 # v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
 # v. 20260805.154826 - after merge: copy GPS/dates from first chapter; FS times via touch -r
 
+# 2026.10.20 - v. 0.15.82 - after a merge, if the file name, filesystem time, and media CreateDate disagree, ask which to use (1/2/3…); default is the oldest usable date; stamps before 1990 are ignored; -y applies the oldest without asking
 # 2026.10.20 - v. 0.15.81 - before asking to delete input chapters, print every seam time in the merged file as H:MM:SS (also when deleting inputs for an already-merged group)
 # 2026.10.20 - v. 0.15.80 - before mp4_merge, ffprobe checks video/audio fingerprints; mismatched tracks are refused with a short table (forced/+N exits; scan mode skips that group). No automatic re-encode
 # 2026.10.20 - v. 0.15.79 - FILE +N force-merges that file and the next N MP4 names in alphabetical order in the same folder (e.g. clip.mp4 +2). The plan lists every filename. Explicit FILE FILE … still works
@@ -320,12 +322,14 @@ Merge behaviour:
     clock in brackets, [ YYYY.MM.DD HH:MM:SS ].
   - After a successful merge: copy GPS / create&modify dates / Make/Model from the first
     chapter (exiftool; filesystem mtime via touch -r; Windows creation time from that
-    chapter), set title from the session label,
-    then merge-boundary times, size summary, optional per-seam terminal preview (asked one
-    seam at a time; [a] skips the remaining seams in this file, [s] never plays seams
-    again in this run), then every seam time in the output as H:MM:SS again, and
-    optional deletion of the source chapter files (single-key Y/N/K/Q). [k] keeps
-    input files for every later group in this run.
+    chapter), set title from the session label. If the file name, filesystem time, and
+    media CreateDate disagree by more than two minutes, ask which date to use (1/2/3…);
+    the default is the oldest usable stamp (before 1990 ignored). -y applies the oldest
+    without asking. Then merge-boundary times, size summary, optional per-seam terminal
+    preview (asked one seam at a time; [a] skips the remaining seams in this file, [s]
+    never plays seams again in this run), then every seam time in the output as H:MM:SS
+    again, and optional deletion of the source chapter files (single-key Y/N/K/Q). [k]
+    keeps input files for every later group in this run.
   - If the expected _concat output already exists: skip (default), redo merge [r],
     preview merge seams [p], or delete input chapters [d] (keeps merged output).
     A 70mai journey is finished only when a valid .gpx sits beside that file.
@@ -3169,6 +3173,237 @@ pgm_stamp_file_time() {
   fi
 }
 
+# Epoch seconds for 1990-01-01 local (dates before this are treated as unusable).
+PGM_TIME_MIN_EPOCH=""
+pgm_time_min_epoch() {
+  if [[ -z "$PGM_TIME_MIN_EPOCH" ]]; then
+    PGM_TIME_MIN_EPOCH="$(date -d '1990-01-01 00:00:00' +%s 2>/dev/null || printf '631152000')"
+  fi
+  printf '%s\n' "$PGM_TIME_MIN_EPOCH"
+}
+
+pgm_epoch_usable() {
+  local e="${1:-}"
+  [[ "$e" =~ ^[0-9]+$ ]] || return 1
+  (( e >= $(pgm_time_min_epoch) )) || return 1
+  return 0
+}
+
+pgm_format_epoch_display() {
+  local e="$1"
+  date -d "@${e}" '+%Y.%m.%d %H:%M:%S' 2>/dev/null \
+    || date -r "$e" '+%Y.%m.%d %H:%M:%S' 2>/dev/null \
+    || printf '%s\n' "$e"
+}
+
+# Leading YYYYMMDD_HHMMSS or YYYYMMDD-HHMMSS in a basename → Unix epoch (local).
+pgm_filename_epoch_from_basename() {
+  local base="$1" d t iso e
+  base="${base##*/}"
+  if [[ "$base" =~ ^([0-9]{8})[_-]([0-9]{6}) ]]; then
+    d="${BASH_REMATCH[1]}"
+    t="${BASH_REMATCH[2]}"
+  elif [[ "$base" =~ ^[Nn][Oo]([0-9]{8})-([0-9]{6}) ]]; then
+    d="${BASH_REMATCH[1]}"
+    t="${BASH_REMATCH[2]}"
+  elif [[ "$base" =~ ^[Ee][Vv]([0-9]{8})-([0-9]{6}) ]]; then
+    d="${BASH_REMATCH[1]}"
+    t="${BASH_REMATCH[2]}"
+  else
+    return 1
+  fi
+  iso="${d:0:4}-${d:4:2}-${d:6:2} ${t:0:2}:${t:2:2}:${t:4:2}"
+  e="$(date -d "$iso" +%s 2>/dev/null)" || return 1
+  pgm_epoch_usable "$e" || return 1
+  printf '%s\n' "$e"
+}
+
+pgm_fs_mtime_epoch() {
+  local f="$1" e
+  e="$(stat -c %Y -- "$f" 2>/dev/null || stat -f %m -- "$f" 2>/dev/null)" || return 1
+  pgm_epoch_usable "$e" || return 1
+  printf '%s\n' "$e"
+}
+
+pgm_media_createdate_epoch() {
+  local f="$1" exif raw e
+  exif="$(resolve_pgm_exiftool 2>/dev/null)" || return 1
+  raw="$("$exif" -api largefilesupport=1 -s3 -CreateDate -d '%Y:%m:%d %H:%M:%S' -- "$f" 2>/dev/null | head -n1 | tr -d '\r')"
+  [[ -n "$raw" && "$raw" != "0000:00:00 00:00:00" ]] || return 1
+  e="$(date -d "$raw" +%s 2>/dev/null)" || return 1
+  pgm_epoch_usable "$e" || return 1
+  printf '%s\n' "$e"
+}
+
+# Set filesystem mtime/atime (and Windows creation on /mnt/?/) from a Unix epoch.
+pgm_set_fs_times_epoch() {
+  local dest="$1" epoch="$2" touch_fmt dest_w
+  [[ -f "$dest" && "$epoch" =~ ^[0-9]+$ ]] || return 1
+  touch_fmt="$(date -d "@${epoch}" +%Y%m%d%H%M.%S 2>/dev/null)" || return 1
+  touch -t "$touch_fmt" -- "$dest" 2>/dev/null || return 1
+  if [[ "$dest" == /mnt/?/* ]] \
+    && command -v powershell.exe >/dev/null 2>&1 \
+    && command -v wslpath >/dev/null 2>&1; then
+    dest_w=$(wslpath -w "$dest") || return 0
+    dest_w=${dest_w//\'/\'\'}
+    powershell.exe -NoProfile -Command \
+      "\$d = Get-Item -LiteralPath '${dest_w}'; \$t = [DateTimeOffset]::FromUnixTimeSeconds(${epoch}).LocalDateTime; \$d.CreationTime = \$t; \$d.LastWriteTime = \$t" \
+      >/dev/null 2>&1 || true
+  fi
+  return 0
+}
+
+# Write CreateDate / ModifyDate (and QuickTime peers) from a Unix epoch.
+pgm_set_media_dates_epoch() {
+  local dest="$1" epoch="$2" exif iso
+  [[ -f "$dest" && "$epoch" =~ ^[0-9]+$ ]] || return 1
+  exif="$(resolve_pgm_exiftool 2>/dev/null)" || return 1
+  iso="$(date -d "@${epoch}" '+%Y:%m:%d %H:%M:%S' 2>/dev/null)" || return 1
+  "$exif" -overwrite_original -P -api QuickTimeUTC=1 \
+    -CreateDate="$iso" -ModifyDate="$iso" \
+    -TrackCreateDate="$iso" -TrackModifyDate="$iso" \
+    -MediaCreateDate="$iso" -MediaModifyDate="$iso" \
+    -FileCreateDate="$iso" -FileModifyDate="$iso" \
+    -- "$dest" >/dev/null 2>&1
+}
+
+pgm_apply_epoch_to_output() {
+  local dest="$1" epoch="$2" gpx=""
+  pgm_set_media_dates_epoch "$dest" "$epoch" || true
+  pgm_set_fs_times_epoch "$dest" "$epoch" || true
+  gpx="$(dashcam_gpx_beside_output "$dest" 2>/dev/null || true)"
+  if [[ -n "$gpx" && -f "$gpx" ]]; then
+    pgm_set_fs_times_epoch "$gpx" "$epoch" || true
+  fi
+  pgm_log_kv "Output times" "$(pgm_format_epoch_display "$epoch")"
+}
+
+# After metadata copy: if name / FS / media disagree, ask which date to use.
+# Default = oldest usable (before 1990 ignored). Return 2 on quit.
+pgm_prompt_reconcile_output_times() {
+  local dest="$1" source_file="${2:-}"
+  local name_e="" src_e="" media_e="" dest_fs_e=""
+  local -a labels=() epochs=() notes=()
+  local i n def=1 oldest_i=0 oldest_e="" choice keys="" disp
+  local abs_diff need_ask=0
+
+  [[ -f "$dest" ]] || return 0
+
+  name_e="$(pgm_filename_epoch_from_basename "${dest##*/}" 2>/dev/null || true)"
+  if [[ -z "$name_e" && -n "$source_file" ]]; then
+    name_e="$(pgm_filename_epoch_from_basename "${source_file##*/}" 2>/dev/null || true)"
+  fi
+  [[ -n "$source_file" && -f "$source_file" ]] \
+    && src_e="$(pgm_fs_mtime_epoch "$source_file" 2>/dev/null || true)"
+  dest_fs_e="$(pgm_fs_mtime_epoch "$dest" 2>/dev/null || true)"
+  media_e="$(pgm_media_createdate_epoch "$dest" 2>/dev/null || true)"
+  [[ -z "$media_e" && -n "$source_file" && -f "$source_file" ]] \
+    && media_e="$(pgm_media_createdate_epoch "$source_file" 2>/dev/null || true)"
+
+  # Need a usable file-name stamp to bother comparing.
+  [[ -n "$name_e" ]] || return 0
+
+  if [[ -n "$src_e" ]]; then
+    if (( name_e > src_e )); then abs_diff=$((name_e - src_e)); else abs_diff=$((src_e - name_e)); fi
+    (( abs_diff > 120 )) && need_ask=1
+  elif [[ -n "$dest_fs_e" ]]; then
+    if (( name_e > dest_fs_e )); then abs_diff=$((name_e - dest_fs_e)); else abs_diff=$((dest_fs_e - name_e)); fi
+    (( abs_diff > 120 )) && need_ask=1
+  else
+    need_ask=1
+  fi
+  if [[ -n "$media_e" ]]; then
+    if (( name_e > media_e )); then abs_diff=$((name_e - media_e)); else abs_diff=$((media_e - name_e)); fi
+    (( abs_diff > 120 )) && need_ask=1
+  fi
+  (( need_ask )) || return 0
+
+  labels+=("File name")
+  epochs+=("$name_e")
+  notes+=("")
+  if [[ -n "$src_e" ]]; then
+    labels+=("Source file")
+    epochs+=("$src_e")
+    notes+=("(filesystem / first chapter)")
+  elif [[ -n "$dest_fs_e" ]]; then
+    labels+=("Filesystem")
+    epochs+=("$dest_fs_e")
+    notes+=("(current output mtime)")
+  fi
+  if [[ -n "$media_e" ]]; then
+    labels+=("Media tags")
+    epochs+=("$media_e")
+    notes+=("(CreateDate in the video)")
+  fi
+  labels+=("Keep as written")
+  epochs+=("")
+  notes+=("(leave the new file as it is now)")
+
+  n=${#labels[@]}
+  oldest_e=""
+  oldest_i=0
+  for (( i = 0; i < n; i++ )); do
+    [[ -n "${epochs[i]}" ]] || continue
+    if [[ -z "$oldest_e" ]] || (( epochs[i] < oldest_e )); then
+      oldest_e="${epochs[i]}"
+      oldest_i=$i
+    fi
+  done
+  def=$((oldest_i + 1))
+
+  if (( DO_YES )) || (( ! script_is_run_interactively )); then
+    if [[ -n "$oldest_e" ]]; then
+      pgm_apply_epoch_to_output "$dest" "$oldest_e"
+      echo "$(pgm_ts) Output times: $(pgm_format_epoch_display "$oldest_e") (oldest usable; no prompt)."
+    fi
+    return 0
+  fi
+
+  echo
+  echo "$(pgm_ts) Output times do not match the file name."
+  echo
+  printf '  File:  %s\n' "${dest##*/}"
+  echo
+  echo "  Sources (oldest usable is the default; dates before 1990 are ignored):"
+  echo
+  keys=""
+  for (( i = 0; i < n; i++ )); do
+    if [[ -n "${epochs[i]}" ]]; then
+      disp="$(pgm_format_epoch_display "${epochs[i]}")"
+    else
+      disp="—"
+    fi
+    if (( i + 1 == def )); then
+      printf '  [%d] %-18s %-19s  %s (oldest — default)\n' \
+        "$((i + 1))" "${labels[i]}" "$disp" "${notes[i]}"
+    else
+      printf '  [%d] %-18s %-19s  %s\n' \
+        "$((i + 1))" "${labels[i]}" "$disp" "${notes[i]}"
+    fi
+    keys+="$((i + 1))"
+    (( i + 1 < n )) && keys+="/"
+  done
+  echo "  [q] Quit"
+  keys+="/q"
+  pgm_read_key "Output times [${keys}] (default ${def}): " "$def"
+  choice="${REPLY,,}"
+  case "$choice" in
+    q) return 2 ;;
+  esac
+  if [[ "$choice" =~ ^[0-9]+$ ]] && (( choice >= 1 && choice <= n )); then
+    i=$((choice - 1))
+    if [[ -n "${epochs[i]}" ]]; then
+      pgm_apply_epoch_to_output "$dest" "${epochs[i]}"
+      echo "$(pgm_ts) Output times set from ${labels[i]}: $(pgm_format_epoch_display "${epochs[i]}")"
+    else
+      echo "$(pgm_ts) Output times kept as written."
+    fi
+    return 0
+  fi
+  echo "$(pgm_ts) Unknown choice: ${REPLY}. Keeping times as written."
+  return 0
+}
+
 group_is_size_split() {
   local -a files=("$@")
   local f base
@@ -5743,6 +5978,11 @@ run_merge_group() {
     apply_merge_output_metadata "$output_file" "${files[0]}" "$meta_label" || true
     dashcam_write_gpx_if_merged "$output_file" "${files[@]}"
     pgm_put_gps "$output_file" "${files[0]}"
+    pgm_prompt_reconcile_output_times "$output_file" "${files[0]}"
+    rc=$?
+    if (( rc == 2 )); then
+      return 2
+    fi
     echo
     print_merge_size_summary "$output_file" "${files[@]}"
     print_merge_boundaries_report "$output_file" "${files[@]}"
