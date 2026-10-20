@@ -153,7 +153,7 @@ mfd_filename_epoch_from_basename() {
     d="${BASH_REMATCH[1]}"
     t="${BASH_REMATCH[2]}"
   # YYYY-MM-DD_HH-MM-SS or YYYY-MM-DD HH.MM.SS
-  elif [[ "$base" =~ ([0-9]{4})-([0-9]{2})-([0-9]{2})[ _-]([0-9]{2})[._-]([0-9]{2})[._-]([0-9]{2}) ]]; then
+  elif [[ "$base" =~ ([0-9]{4})-([0-9]{2})-([0-9]{2})[[:space:]_-]([0-9]{2})[._-]([0-9]{2})[._-]([0-9]{2}) ]]; then
     d="${BASH_REMATCH[1]}${BASH_REMATCH[2]}${BASH_REMATCH[3]}"
     t="${BASH_REMATCH[4]}${BASH_REMATCH[5]}${BASH_REMATCH[6]}"
   else
