@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261020.202500 - self-update: watch live bin/ path (copy overwrite), not git checkout alone
 # v. 20261020.202200 - source _script_self_update.sh: detect on-disk script replace while running
 # v. 20260916.130951 - print_version_banner: draw box rules with sed; tr truncated ─ to one invalid byte
 # v. 20260811.095711 - print_script_history: paged --history from caller changelog header
@@ -7,6 +8,7 @@
 # v. 20260716.173600 - print_version_banner uses CALLER_SCRIPT version fields
 # v. 20260716.163300 - versioning v. YYYYMMDD.HH24MISS; parse first # v. YYYYMMDD.HHMMSS line
 
+# 2026.10.20 - v. 1.62.202500 - self-update watches the running script path (destination after copy into bin/); git pull in a checkout does not count until that live file is overwritten
 # 2026.10.20 - v. 1.61.202200 - source sibling _script_self_update.sh for CALLER_SCRIPT: notice git pull / file replace mid-run (DEBUG trap, [R]/[C]/[Q])
 # 2026.09.16 - v. 1.60.130951 - print_version_banner: horizontal rules via sed 's/ /─/g'; tr is byte-wise and reduced the 3-byte ─ (U+2500) to a lone 0xE2, so banners printed invalid UTF-8
 # 2026.07.31 - v. 1.59.211609 - check_if_installed: prompt before apt (default Y; no timeout; no auto-install)

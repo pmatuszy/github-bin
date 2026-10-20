@@ -1,8 +1,12 @@
 #!/usr/bin/env bash
+# v. 20261020.202500 - detect live-script overwrite (git pull then copy into bin/) mid-run
 # v. 20261020.202200 - detect on-disk script replacement while a run is in progress
 #
+# 2026.10.20 - v. 1.1.202500 - Fingerprint is the running script path (e.g. ~/bin/rename.sh), not the
+#   git checkout. git pull alone does nothing; copying/overwriting that live file (cp/rsync/mv) is what
+#   trips the check — in-place overwrite or new inode both work (size/mtime and/or inode change).
 # 2026.10.20 - v. 1.0.202200 - Snapshot inode/size/mtime (+ first # v. line). Throttled DEBUG trap
-#   notices when the path is replaced (e.g. git pull). Interactive: [R]estart / [C]ontinue / [Q]uit.
+#   notices when the path is replaced. Interactive: [R]estart / [C]ontinue / [Q]uit.
 #   Non-interactive: warn once and keep the already-running code. Sourced by _script_header.sh and rename.sh.
 #
 # Contract: source this file; call script_self_update_init [path] then script_self_update_install_trap.
@@ -161,8 +165,9 @@ script_self_update_handle_change() {
   ts="$(date '+%Y.%m.%d %H:%M:%S')"
 
   echo >&2
-  echo "[${ts}] WARNING: on-disk script was replaced while this run is still using the old code." >&2
+  echo "[${ts}] WARNING: the live script file was overwritten while this run is still using the old code." >&2
   echo "  path: ${SCRIPT_SELF_UPDATE_PATH}" >&2
+  echo "  (Watches this path only — e.g. after git pull + copy into bin/. The git checkout alone is ignored.)" >&2
   if [[ -n "$old_ver" || -n "$new_ver" ]]; then
     echo "  was:  ${old_ver:-unknown}" >&2
     echo "  now:  ${new_ver:-unknown}" >&2
