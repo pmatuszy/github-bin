@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# v. 20261020.202200 - detect on-disk rename.sh replace mid-run (_script_self_update.sh)
 # v. 20261020.201800 - SQLite warmup: one-transaction snapshot; surplus rows continue; shortfall asks [C]/[Q]
 # v. 20261019.092200 - IMG_/VID_YYYYMMDD_HHMMSS_N keeps the copy number: YYYYMMDD_HHMMSS_IMG_N / _VID_N
 # v. 20261019.085200 - IMG_/VID_YYYYMMDD_HHMMSS with no camera make/model → YYYYMMDD_HHMMSS_IMG / _VID
@@ -108,6 +109,7 @@
 # v. 20260721.132007 - Samsung timestamp media: preserve optional numeric sorting prefix when appending make/model
 # v. 20260721.112812 - GoPro camera labels: GoPro_Hero4_Silver style (not GOPRO4_SILVER)
 
+# 2026.10.20 - v. 19.359.202200 - While rename.sh is running, detect when the on-disk script is replaced (git pull / copy). Prompt [R]estart with the new file / [C]ontinue this run / [Q]uit (shared _script_self_update.sh; also used by audio*/media*/video* via _script_header.sh).
 # 2026.10.20 - v. 19.358.201800 - SQLite warmup no longer hard-fails when the in-memory load count disagrees with a prior COUNT(*). COUNT and the row dump share one read transaction (same WAL snapshot). If more rows load than COUNT (concurrent writer between old separate queries), continue with a warning. If fewer rows load (unreadable stored paths), ask [C]ontinue with what loaded / [Q]uit; non-interactive continues after a warning.
 # 2026.10.19 - v. 19.357.092200 - IMG_/VID_YYYYMMDD_HHMMSS_N.ext (duplicate index before the extension) is renamed too. With no camera: YYYYMMDD_HHMMSS_IMG_N.ext / YYYYMMDD_HHMMSS_VID_N.ext. With a camera make and model the index stays at the end (YYYYMMDD_HHMMSS_-_-_Make_Model_N.ext).
 # 2026.10.19 - v. 19.356.085200 - IMG_/VID_YYYYMMDD_HHMMSS gallery names that never receive a camera make/model (WhatsApp and other stripped exports) become YYYYMMDD_HHMMSS_IMG.ext / YYYYMMDD_HHMMSS_VID.ext. A real camera label still wins when EXIF has one.
@@ -716,6 +718,17 @@ SCRIPT_VERSION="$(
         | sed -E -n 's/^# v\. ([0-9]{8}\.[0-9]{6}) - .*/\1/p'
 )"
 [[ "$SCRIPT_VERSION" =~ ^[0-9]{8}\.[0-9]{6}$ ]] || SCRIPT_VERSION="00000000.000000"
+
+# Detect git pull / file replace of this script while a long run is still on the old inode.
+_RENAME_SELF_UPDATE_HELPER="$(cd "$(dirname -- "${BASH_SOURCE[0]:-$0}")" && pwd -P)/_script_self_update.sh"
+if [[ -f "${_RENAME_SELF_UPDATE_HELPER}" ]]; then
+    # shellcheck source=/dev/null
+    . "${_RENAME_SELF_UPDATE_HELPER}"
+    script_self_update_init "$(readlink -f -- "${BASH_SOURCE[0]:-$0}" 2>/dev/null || printf '%s' "${BASH_SOURCE[0]:-$0}")"
+    script_self_update_install_trap
+fi
+unset _RENAME_SELF_UPDATE_HELPER
+
 # If a checksum list has more than this many lines, ask before checking it; default answer is No ([y/N/q]).
 LARGE_HASHFILE_LINE_PROMPT_THRESHOLD="${LARGE_HASHFILE_LINE_PROMPT_THRESHOLD:-20}"
 # With a “large” line count, still skip that prompt when the sum of sizes of existing regular-file targets is below this many bytes (default 30 GiB). Set to 0 to always prompt when over the line threshold.

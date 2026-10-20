@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261020.202200 - source _script_self_update.sh: detect on-disk script replace while running
 # v. 20260916.130951 - print_version_banner: draw box rules with sed; tr truncated ─ to one invalid byte
 # v. 20260811.095711 - print_script_history: paged --history from caller changelog header
 # v. 20260731.211609 - ask before apt install (default Y, no timeout); no silent auto-install
@@ -6,6 +7,7 @@
 # v. 20260716.173600 - print_version_banner uses CALLER_SCRIPT version fields
 # v. 20260716.163300 - versioning v. YYYYMMDD.HH24MISS; parse first # v. YYYYMMDD.HHMMSS line
 
+# 2026.10.20 - v. 1.61.202200 - source sibling _script_self_update.sh for CALLER_SCRIPT: notice git pull / file replace mid-run (DEBUG trap, [R]/[C]/[Q])
 # 2026.09.16 - v. 1.60.130951 - print_version_banner: horizontal rules via sed 's/ /─/g'; tr is byte-wise and reduced the 3-byte ─ (U+2500) to a lone 0xE2, so banners printed invalid UTF-8
 # 2026.07.31 - v. 1.59.211609 - check_if_installed: prompt before apt (default Y; no timeout; no auto-install)
 # 2026.07.22 - v. 1.58.084451 - boxes/figlet checks are errexit-safe and fall back to plain startup text
@@ -446,3 +448,13 @@ else
   script_is_run_interactively=1
   echo "${SCRIPT_VERSION}" ; echo
 fi
+
+# Detect when the caller script file on disk is replaced while this process still runs the old code.
+_SCRIPT_SELF_UPDATE_HELPER="$(cd "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)/_script_self_update.sh"
+if [[ -f "${_SCRIPT_SELF_UPDATE_HELPER}" ]]; then
+  # shellcheck source=/dev/null
+  . "${_SCRIPT_SELF_UPDATE_HELPER}"
+  script_self_update_init "${CALLER_SCRIPT}"
+  script_self_update_install_trap
+fi
+unset _SCRIPT_SELF_UPDATE_HELPER
