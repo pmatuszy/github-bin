@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261020.194000 - gpmd remux: map the real gpmd stream index (not 1:d:0); fix mktemp; show ffmpeg error
 # v. 20261020.193500 - end-of-run summary block (scope, looks good, copied, skipped, failed, times)
 # v. 20261020.193300 - after scan, list files that already have metadata (looks good — not processing)
 # v. 20261020.193200 - progress bar while scanning metadata on every video (avoids looking hung)
@@ -6,6 +7,7 @@
 # v. 20261020.192700 - Proposed copy / progress lines spell out exiftool tags vs GoPro gpmd stream
 # v. 20261020.191200 - initial release: extract / copy GoPro GPS+camera metadata; fuzzy-match counterparts by name
 #
+# 2026.10.20 - v. 0.1.6 - gpmd remux failed often because ffmpeg mapped 1:d:0 and used a bad mktemp template; now find the gpmd/GoPro MET stream index (same rules as gopro-to-gpx), map 1:INDEX, print ffmpeg's error, and treat gpmd failure as a warning when tags already wrote
 # 2026.10.20 - v. 0.1.5 - end-of-run summary lists videos in scope, looks-good, copied, extracted, skipped, failed, and wall times
 # 2026.10.20 - v. 0.1.4 - after the metadata scan, print a line for each file that already looks good (has metadata) and will not be processed
 # 2026.10.20 - v. 0.1.3 - while classifying each video (exiftool + ffprobe), show a progress bar with time left
@@ -441,25 +443,78 @@ cgm_extract_sidecar() {
   return 1
 }
 
+# Absolute ffprobe stream index of GoPro gpmd / GoPro MET (same rules as gopro-to-gpx.py).
+# Prints the index; return 1 if none.
+cgm_gpmd_stream_index() {
+  local f="$1" idx
+  command -v ffprobe >/dev/null 2>&1 || return 1
+  command -v python3 >/dev/null 2>&1 || return 1
+  idx="$(ffprobe -v error -show_streams -of json -- "$f" 2>/dev/null | python3 -c '
+import json, sys
+data = json.load(sys.stdin)
+met = None
+for s in data.get("streams") or []:
+    tag = (s.get("codec_tag_string") or "").lower()
+    handler = ((s.get("tags") or {}).get("handler_name") or "").lower()
+    index = s.get("index")
+    if index is None:
+        continue
+    if tag == "gpmd":
+        print(index)
+        raise SystemExit(0)
+    if met is None and "gopro" in handler and "met" in handler:
+        met = index
+if met is not None:
+    print(met)
+')" || true
+  [[ "$idx" =~ ^[0-9]+$ ]] || return 1
+  printf '%s\n' "$idx"
+}
+
 # Probe whether src has a GoPro timed gpmd/MET data stream. Sets CGM_HAS_GPMD.
 cgm_probe_gpmd() {
   local f="$1"
   CGM_HAS_GPMD=0
   cgm_is_sidecar "$f" && return 1
-  command -v ffprobe >/dev/null 2>&1 || return 1
-  if ffprobe -v error -select_streams d \
-    -show_entries stream=codec_tag_string:stream_tags=handler_name \
-    -of csv=p=0 -- "$f" 2>/dev/null \
-    | grep -Eiq 'gpmd|GoPro[[:space:]]*MET|GoPro MET'; then
+  if cgm_gpmd_stream_index "$f" >/dev/null; then
     CGM_HAS_GPMD=1
     return 0
   fi
   return 1
 }
 
+# Remux gpmd from src into dest (rewrites dest via a temp file). Return 0 on success.
+cgm_remux_gpmd() {
+  local src="$1" dest="$2" idx tmp errfile
+  idx="$(cgm_gpmd_stream_index "$src")" || return 1
+  tmp="$(mktemp "${TMPDIR:-/tmp}/cgm-gpmd.XXXXXX")" || return 1
+  errfile="$(mktemp "${TMPDIR:-/tmp}/cgm-gpmd-err.XXXXXX")" || { rm -f -- "$tmp"; return 1; }
+  tmp="${tmp}.mp4"
+  # Map every stream from the (already tag-updated) dest, plus the gpmd stream by
+  # absolute index from src. Do not use 1:d:0 — gpmd is often not "data stream 0".
+  if ffmpeg -y -hide_banner -loglevel error \
+    -i "$dest" -i "$src" \
+    -map 0 -map "1:${idx}" \
+    -c copy -copy_unknown \
+    "$tmp" 2>"$errfile" \
+    && [[ -s "$tmp" ]]; then
+    if mv -f -- "$tmp" "$dest"; then
+      rm -f -- "$errfile"
+      return 0
+    fi
+  fi
+  rm -f -- "$tmp"
+  if [[ -s "$errfile" ]]; then
+    echo "$(cgm_ts)   - ffmpeg said:" >&2
+    sed 's/^/           /' "$errfile" >&2
+  fi
+  rm -f -- "$errfile"
+  return 1
+}
+
 # Copy: (1) exiftool tags incl. GoPro:/GPS/dates/camera, (2) optional gpmd remux.
 cgm_copy_metadata() {
-  local src="$1" dest="$2" exif tmp rc=0
+  local src="$1" dest="$2" exif rc=0 idx=""
   local src_gpmd=0 dest_gpmd=0
   exif="$(cgm_find_exiftool)" || return 1
   [[ -f "$src" && -f "$dest" ]] || return 1
@@ -524,25 +579,13 @@ cgm_copy_metadata() {
     && command -v ffprobe >/dev/null 2>&1; then
     if (( src_gpmd )); then
       if (( ! dest_gpmd )); then
-        echo "$(cgm_ts)   - GoPro gpmd timed stream: remuxing into destination (ffmpeg) …"
-        tmp="$(mktemp "${TMPDIR:-/tmp}/cgm-gpmd.XXXXXX.mp4")"
-        if ffmpeg -y -hide_banner -loglevel error \
-          -i "$dest" -i "$src" \
-          -map 0 -map 1:d:0? \
-          -c copy -copy_unknown -tag:d:0 gpmd \
-          "$tmp" 2>/dev/null \
-          && [[ -s "$tmp" ]]; then
-          if mv -f -- "$tmp" "$dest"; then
-            echo "$(cgm_ts)   - OK — gpmd stream copied (full GoPro telemetry track)"
-          else
-            rm -f -- "$tmp"
-            echo "$(cgm_ts)   - FAILED — remux OK but could not replace destination" >&2
-            rc=1
-          fi
+        idx="$(cgm_gpmd_stream_index "$src" 2>/dev/null || true)"
+        echo "$(cgm_ts)   - GoPro gpmd timed stream: remuxing into destination (ffmpeg, src stream ${idx:-?}) …"
+        if cgm_remux_gpmd "$src" "$dest"; then
+          echo "$(cgm_ts)   - OK — gpmd stream copied (full GoPro telemetry track)"
         else
-          rm -f -- "$tmp"
-          echo "$(cgm_ts)   - FAILED — gpmd remux did not succeed (exiftool tags above still apply)" >&2
-          rc=1
+          # Tags already applied; gpmd is best-effort — warn, do not fail the whole copy.
+          echo "$(cgm_ts)   - WARNING — gpmd remux did not succeed (exiftool tags above still apply)" >&2
         fi
       else
         echo "$(cgm_ts)   - GoPro gpmd timed stream: skipped (destination already has a data stream)"
