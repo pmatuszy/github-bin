@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261020.163100 - parse exiftool CreateDate with hyphens so GNU date can read it back after a write
 # v. 20261020.162800 - Processing header; before/after date table; numeric default spelled out on the prompt
 # v. 20261020.162300 - when name and mtime match and CreateDate is missing, default is apply that date (not Skip)
 # v. 20261020.155800 - Fix dates prompt: capitalise the default key (e.g. S when Skip is default)
@@ -6,6 +7,7 @@
 # v. 20261020.150400 - date menu: ASCII n/a so parenthetical notes share one column
 # v. 20261020.145500 - fix file / media dates when the name, filesystem, and tags disagree
 #
+# 2026.10.20 - v. 0.1.7 - reading CreateDate used exiftool's YYYY:MM:DD form, which GNU date rejects, so Media tags always looked like n/a after a successful write; parse as YYYY-MM-DD instead
 # 2026.10.20 - v. 0.1.6 - per-file Processing header; after a change show File name / Filesystem / Media tags before and after side by side; when the default is a number, the prompt says e.g. (default 1 = File name)
 # 2026.10.20 - v. 0.1.5 - when name and mtime already match and only CreateDate is missing, default is to apply that date (filesystem + media tags), not Skip
 # 2026.10.20 - v. 0.1.4 - Fix dates prompt shows the default key in capitals (e.g. 1/2/3/4/a/S/q), like the other scripts
@@ -237,20 +239,32 @@ mfd_fs_mtime_epoch() {
   printf '%s\n' "$e"
 }
 
+# exiftool -d '%Y:%m:%d …' → GNU date needs hyphens in the date part.
+mfd_exif_datetime_to_epoch() {
+  local raw="$1" iso e
+  raw="$(printf '%s' "$raw" | tr -d '\r')"
+  [[ -n "$raw" && "$raw" != "0000:00:00 00:00:00" && "$raw" != "0000-00-00 00:00:00" ]] || return 1
+  iso="$raw"
+  # YYYY:MM:DD HH:MM:SS → YYYY-MM-DD HH:MM:SS (only the date separators).
+  if [[ "$iso" =~ ^([0-9]{4}):([0-9]{2}):([0-9]{2})(.*)$ ]]; then
+    iso="${BASH_REMATCH[1]}-${BASH_REMATCH[2]}-${BASH_REMATCH[3]}${BASH_REMATCH[4]}"
+  fi
+  e="$(date -d "$iso" +%s 2>/dev/null)" || return 1
+  mfd_epoch_usable "$e" || return 1
+  printf '%s\n' "$e"
+}
+
 mfd_media_createdate_epoch() {
   local f="$1" exif raw line e
   exif="$(mfd_find_exiftool 2>/dev/null)" || return 1
   while IFS= read -r line; do
     raw="$(printf '%s' "$line" | tr -d '\r')"
-    [[ -n "$raw" && "$raw" != "0000:00:00 00:00:00" ]] || continue
-    e="$(date -d "$raw" +%s 2>/dev/null)" || continue
-    if mfd_epoch_usable "$e"; then
-      printf '%s\n' "$e"
-      return 0
-    fi
-  done < <("$exif" -api largefilesupport=1 -s3 \
+    e="$(mfd_exif_datetime_to_epoch "$raw" 2>/dev/null)" || continue
+    printf '%s\n' "$e"
+    return 0
+  done < <("$exif" -api largefilesupport=1 -api QuickTimeUTC=1 -s3 \
     -CreateDate -DateTimeOriginal -MediaCreateDate -TrackCreateDate \
-    -d '%Y:%m:%d %H:%M:%S' -- "$f" 2>/dev/null)
+    -d '%Y-%m-%d %H:%M:%S' -- "$f" 2>/dev/null)
   return 1
 }
 

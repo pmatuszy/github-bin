@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261020.163100 - parse exiftool CreateDate with hyphens so GNU date can read media tags
 # v. 20261020.162300 - when name and mtime match and CreateDate is missing, default is apply that date (not Keep)
 # v. 20261020.150700 - date menu always lists File name, Filesystem, and Media tags (n/a when unusable)
 # v. 20261020.145200 - chosen output date is also written as media CreateDate (and related tags)
@@ -70,6 +71,7 @@
 # v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
 # v. 20260805.154826 - after merge: copy GPS/dates from first chapter; FS times via touch -r
 
+# 2026.10.20 - v. 0.15.87 - reading CreateDate used exiftool's YYYY:MM:DD form, which GNU date rejects, so media tags looked missing even when present; parse as YYYY-MM-DD instead
 # 2026.10.20 - v. 0.15.86 - when name and mtime already match and only CreateDate is missing, default is to apply that date (media + filesystem), not Keep
 # 2026.10.20 - v. 0.15.84 - the output-date menu always lists File name, Filesystem, and Media tags (n/a when missing or before 1990)
 # 2026.10.20 - v. 0.15.83 - the date chosen for the output (or the oldest usable under -y) is written into the media CreateDate / ModifyDate tags as well as the filesystem times
@@ -3232,11 +3234,17 @@ pgm_fs_mtime_epoch() {
 }
 
 pgm_media_createdate_epoch() {
-  local f="$1" exif raw e
+  local f="$1" exif raw iso e
   exif="$(resolve_pgm_exiftool 2>/dev/null)" || return 1
-  raw="$("$exif" -api largefilesupport=1 -s3 -CreateDate -d '%Y:%m:%d %H:%M:%S' -- "$f" 2>/dev/null | head -n1 | tr -d '\r')"
-  [[ -n "$raw" && "$raw" != "0000:00:00 00:00:00" ]] || return 1
-  e="$(date -d "$raw" +%s 2>/dev/null)" || return 1
+  # Hyphens: GNU date rejects exiftool's default YYYY:MM:DD form.
+  raw="$("$exif" -api largefilesupport=1 -api QuickTimeUTC=1 -s3 -CreateDate \
+    -d '%Y-%m-%d %H:%M:%S' -- "$f" 2>/dev/null | head -n1 | tr -d '\r')"
+  [[ -n "$raw" && "$raw" != "0000:00:00 00:00:00" && "$raw" != "0000-00-00 00:00:00" ]] || return 1
+  iso="$raw"
+  if [[ "$iso" =~ ^([0-9]{4}):([0-9]{2}):([0-9]{2})(.*)$ ]]; then
+    iso="${BASH_REMATCH[1]}-${BASH_REMATCH[2]}-${BASH_REMATCH[3]}${BASH_REMATCH[4]}"
+  fi
+  e="$(date -d "$iso" +%s 2>/dev/null)" || return 1
   pgm_epoch_usable "$e" || return 1
   printf '%s\n' "$e"
 }
