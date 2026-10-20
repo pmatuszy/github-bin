@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261020.102500 - print every seam time in the output again before asking to delete inputs
 # v. 20261020.101700 - refuse mp4_merge when video/audio tracks do not match (ffprobe table)
 # v. 20261020.095800 - FILE +N force-merges that file and the next N alphabetically in its folder
 # v. 20261020.093200 - seam prompts and the end summary show the join time as H:MM:SS
@@ -65,6 +66,7 @@
 # v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
 # v. 20260805.154826 - after merge: copy GPS/dates from first chapter; FS times via touch -r
 
+# 2026.10.20 - v. 0.15.81 - before asking to delete input chapters, print every seam time in the merged file as H:MM:SS (also when deleting inputs for an already-merged group)
 # 2026.10.20 - v. 0.15.80 - before mp4_merge, ffprobe checks video/audio fingerprints; mismatched tracks are refused with a short table (forced/+N exits; scan mode skips that group). No automatic re-encode
 # 2026.10.20 - v. 0.15.79 - FILE +N force-merges that file and the next N MP4 names in alphabetical order in the same folder (e.g. clip.mp4 +2). The plan lists every filename. Explicit FILE FILE … still works
 # 2026.10.20 - v. 0.15.78 - when asking to play a seam, and in a short summary after the seams, show the join time as H:MM:SS so it is easy to seek to in another player
@@ -321,8 +323,9 @@ Merge behaviour:
     chapter), set title from the session label,
     then merge-boundary times, size summary, optional per-seam terminal preview (asked one
     seam at a time; [a] skips the remaining seams in this file, [s] never plays seams
-    again in this run), and optional deletion of the source chapter files (single-key
-    Y/N/K/Q). [k] keeps input files for every later group in this run.
+    again in this run), then every seam time in the output as H:MM:SS again, and
+    optional deletion of the source chapter files (single-key Y/N/K/Q). [k] keeps
+    input files for every later group in this run.
   - If the expected _concat output already exists: skip (default), redo merge [r],
     preview merge seams [p], or delete input chapters [d] (keeps merged output).
     A 70mai journey is finished only when a valid .gpx sits beside that file.
@@ -5117,9 +5120,11 @@ print_merge_size_summary() {
   echo
 }
 
+# $1 = after_merge|already_merged, $2 = merged output path, remaining = input chapters.
 prompt_delete_merged_inputs() {
   local context="${1:-after_merge}"
-  shift
+  local output_file="${2:-}"
+  shift 2
   local -a files=("$@")
   local f choice
   if (( DO_YES )) || (( ! script_is_run_interactively )); then
@@ -5128,6 +5133,9 @@ prompt_delete_merged_inputs() {
   if (( KEEP_INPUTS_FOR_RUN )); then
     echo "$(pgm_ts) Input files kept (for the rest of this run)."
     return 0
+  fi
+  if [[ -n "$output_file" && -e "$output_file" ]]; then
+    print_merge_seam_times_summary "$output_file" "${files[@]}" || true
   fi
   if [[ "$context" == already_merged ]]; then
     echo "$(pgm_ts) Delete ${#files[@]} input chapter file(s)? (merged output will be kept)"
@@ -5743,7 +5751,7 @@ run_merge_group() {
     if (( rc == 2 )); then
       return 2
     fi
-    prompt_delete_merged_inputs after_merge "${files[@]}"
+    prompt_delete_merged_inputs after_merge "$output_file" "${files[@]}"
     rc=$?
     if (( rc == 2 )); then
       return 2
@@ -6408,7 +6416,7 @@ do_merge() {
       delete_inputs)
         if [[ -e "$output_file" ]]; then
           dashcam_write_gpx_if_merged "$output_file" "${files[@]}"
-          prompt_delete_merged_inputs already_merged "${files[@]}" || rc=$?
+          prompt_delete_merged_inputs already_merged "$output_file" "${files[@]}" || rc=$?
           if (( rc == 2 )); then
             echo "$(pgm_ts) Quit at group ${group_num}."
             return "${rc}"
