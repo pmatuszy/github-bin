@@ -1,10 +1,12 @@
 #!/bin/bash
+# v. 20261020.200000 - when nothing new to write, skip "Write 0 tracks?" and ask only about existing .gpx
 # v. 20261012.150601 - the reading line says Reading file and leaves the file name off
 # v. 20261006.225133 - the .gpx gets the video's creation time and file time
 # v. 20261006.221403 - the GPS is read from the gpmd stream, not from the video track named GoPro
 # v. 20261006.212111 - reading the videos shows a progress bar, time left and the arrival clock
 # v. 20261006.210617 - GoPro GPS metadata written as a .gpx file beside each video
 
+# 2026.10.20 - v. 0.6 - if every track already has a .gpx (0 new to write), do not ask "Write the 0 track(s)?"; explain that nothing is new and go straight to the already-written question (skip / write again)
 # 2026.10.12 - v. 0.5 - the reading line says Reading file and leaves the file name off
 # 2026.10.06 - v. 0.4 - the new .gpx gets the video's creation time and file time
 # 2026.10.06 - v. 0.3 - a video track named GoPro was read instead of the metadata stream, so files with a GPS fix were reported as having none
@@ -578,13 +580,29 @@ gg_prompt_existing() {
 }
 
 gg_prompt_plan() {
+  # Nothing new: "Write 0 tracks?" is the same as "write nothing" — skip it.
+  if (( TO_WRITE == 0 )); then
+    echo
+    if (( EXISTING > 0 && ! REDO )); then
+      echo "$(gg_ts) Nothing new to write — all ${EXISTING} track(s) already have a .gpx."
+      gg_prompt_existing
+    elif (( EXISTING > 0 && REDO )); then
+      echo "$(gg_ts) Nothing new; --redo will rewrite the existing .gpx file(s)."
+      gg_prompt_old
+    else
+      echo "$(gg_ts) Nothing to write."
+      gg_quit
+    fi
+    return 0
+  fi
+
   echo
-  printf '%sWrite the tracks now? [Y/n/q]%s\n' "$C_B" "$C_0"
-  echo "  [Y] Write the ${TO_WRITE} track(s) marked above (default)"
-  (( EXISTING > 0 && ! REDO )) && echo "      Then you are asked about the ${EXISTING} .gpx file(s) that are already there."
-  echo "  [n] No, write nothing"
+  printf '%sWrite the new tracks now? [Y/n/q]%s\n' "$C_B" "$C_0"
+  echo "  [Y] Write the ${TO_WRITE} new track(s) listed above (default)"
+  (( EXISTING > 0 && ! REDO )) && echo "      After that you are asked about the ${EXISTING} .gpx file(s) that are already there."
+  echo "  [n] No, write nothing (also leave existing .gpx files alone)"
   echo "  [q] Quit the script"
-  gg_read_key "Write the tracks now? [Y/n/q]: " y
+  gg_read_key "Write the new tracks now? [Y/n/q]: " y
   case "$REPLY" in
     y)
       if (( REDO )); then
@@ -593,7 +611,8 @@ gg_prompt_plan() {
         gg_prompt_existing
       fi
       ;;
-    *) gg_quit ;;
+    n|q) gg_quit ;;
+    *) echo "$(gg_ts) Unknown choice: ${REPLY}."; gg_quit ;;
   esac
 }
 
