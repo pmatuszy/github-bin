@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261020.093200 - seam prompts and the end summary show the join time as H:MM:SS
 # v. 20261020.091800 - files named on the command line are merged in that order (forced merge)
 # v. 20261014.193952 - the run summary has no clock on each line, and a short clip is marked at its end
 # v. 20261014.164220 - the GPS log line names a GPSData file when several logs are in the folder
@@ -62,6 +63,7 @@
 # v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
 # v. 20260805.154826 - after merge: copy GPS/dates from first chapter; FS times via touch -r
 
+# 2026.10.20 - v. 0.15.78 - when asking to play a seam, and in a short summary after the seams, show the join time as H:MM:SS so it is easy to seek to in another player
 # 2026.10.20 - v. 0.15.77 - name two or more MP4 files on the command line to force a merge in that order (skip chapter detection). The usual merge prompts stay. Output is next to the first file as …_concat_parts_01-NN.mp4
 # 2026.10.14 - v. 0.15.76 - the run summary is plain lines, like the other scripts; a short clip's "look around" time is the end of that clip (start plus its length), where the picture jumps
 # 2026.10.14 - v. 0.15.75 - the group line names a GPSData file when several logs are in the folder; closing the pipe after the first name is not "no log"
@@ -1418,6 +1420,19 @@ format_output_timeline_pos() {
   }'
 }
 
+# Same position as H:MM:SS for seeking in a player (e.g. 0:55:17 or 1:02:03).
+format_output_timeline_clock() {
+  local sec="$1"
+  awk -v s="$sec" 'BEGIN {
+    if (s < 0) s = 0
+    t = int(s + 0.5)
+    h = int(t / 3600)
+    m = int((t % 3600) / 60)
+    x = t % 60
+    printf "%d:%02d:%02d", h, m, x
+  }'
+}
+
 pgm_valid_seam_seconds() {
   [[ "${1:-}" =~ ^[0-9]+([.][0-9]+)?$ ]]
 }
@@ -1497,7 +1512,7 @@ print_merge_boundaries_report() {
   shift
   local -a files=("$@")
   local -a boundary_times=() boundary_left=() boundary_right=()
-  local i boundary pos preview start length preview_from preview_to
+  local i boundary pos clock start length preview_from preview_to
 
   if ! merge_compute_boundaries boundary_times boundary_left boundary_right "${files[@]}"; then
     echo "=== Merge boundaries ==="
@@ -1510,12 +1525,13 @@ print_merge_boundaries_report() {
   for (( i = 0; i < ${#boundary_times[@]}; i++ )); do
     boundary="${boundary_times[$i]}"
     pos="$(format_output_timeline_pos "$boundary")"
+    clock="$(format_output_timeline_clock "$boundary")"
     read -r start length < <(merge_seam_preview_start_length "$boundary" \
       "$PGM_SEAM_PREVIEW_BEFORE" "$PGM_SEAM_PREVIEW_AFTER")
-    preview_from="$(format_output_timeline_pos "$start")"
-    preview_to="$(format_output_timeline_pos "$(awk -v s="$start" -v l="$length" 'BEGIN { printf "%.6f", s + l }')")"
-    printf '  %s | %s  at  %s  (preview %s – %s)\n' \
-      "${boundary_left[$i]}" "${boundary_right[$i]}" "$pos" "$preview_from" "$preview_to"
+    preview_from="$(format_output_timeline_clock "$start")"
+    preview_to="$(format_output_timeline_clock "$(awk -v s="$start" -v l="$length" 'BEGIN { printf "%.6f", s + l }')")"
+    printf '  %s | %s  at  %s  (%s)  (preview %s – %s)\n' \
+      "${boundary_left[$i]}" "${boundary_right[$i]}" "$clock" "$pos" "$preview_from" "$preview_to"
   done
   echo
   return 0
@@ -1544,12 +1560,13 @@ find_video_pgm_play_terminal() {
 play_merge_seam_preview_once() {
   local player="$1" output_file="$2" boundary="$3" left="$4" right="$5"
   local seam_num="$6" total_seams="$7" ord="$8"
-  local start length pos clip_total preview_w preview_h
+  local start length pos clock clip_total preview_w preview_h
   local -a player_args=()
 
   read -r start length < <(merge_seam_preview_start_length "$boundary" \
     "$PGM_SEAM_PREVIEW_BEFORE" "$PGM_SEAM_PREVIEW_AFTER")
   pos="$(format_output_timeline_pos "$boundary")"
+  clock="$(format_output_timeline_clock "$boundary")"
   clip_total="$(merge_seam_clip_total_seconds "$PGM_SEAM_PREVIEW_BEFORE" "$PGM_SEAM_PREVIEW_AFTER")"
   [[ -n "$ord" ]] || ord="$(pgm_ordinal_seam_label "$seam_num")"
   preview_w="${PGM_SEAM_PREVIEW_WIDTH-100}"
@@ -1562,12 +1579,38 @@ play_merge_seam_preview_once() {
 
   echo
   echo "Playing output file at ${ord} seam (${seam_num} of ${total_seams}): ${output_file##*/}"
-  echo "  Join: ${left} | ${right}  at  ${pos}"
+  echo "  Join: ${left} | ${right}  at  ${clock}  (${pos})"
   echo "  Starts ${PGM_SEAM_PREVIEW_BEFORE}s before the seam; clip length ${clip_total}s (${PGM_SEAM_PREVIEW_BEFORE}s before + ${PGM_SEAM_PREVIEW_AFTER}s after)."
   if [[ -n "$preview_w" && -n "$preview_h" ]]; then
     echo "  Preview size: ${preview_w} x ${preview_h} terminal cells."
   fi
   "${player}" "${player_args[@]}" "$output_file"
+}
+
+# List every join time as H:MM:SS (for seeking in another player).
+print_merge_seam_times_summary() {
+  local output_file="$1"
+  shift
+  local -a files=("$@")
+  local -a boundary_times=() boundary_left=() boundary_right=()
+  local i seam_num ord clock pos
+
+  if ! merge_compute_boundaries boundary_times boundary_left boundary_right "${files[@]}"; then
+    return 1
+  fi
+  (( ${#boundary_times[@]} > 0 )) || return 0
+
+  echo "=== Seam times in output (${output_file##*/}) ==="
+  for (( i = 0; i < ${#boundary_times[@]}; i++ )); do
+    seam_num=$(( i + 1 ))
+    ord="$(pgm_ordinal_seam_label "$seam_num")"
+    clock="$(format_output_timeline_clock "${boundary_times[$i]}")"
+    pos="$(format_output_timeline_pos "${boundary_times[$i]}")"
+    printf '  %s seam:  %s  (%s)  %s | %s\n' \
+      "$ord" "$clock" "$pos" "${boundary_left[$i]}" "${boundary_right[$i]}"
+  done
+  echo
+  return 0
 }
 
 # Return 2 if user quits from a prompt.
@@ -1582,7 +1625,7 @@ prompt_seam_terminal_previews() {
   shift
   local -a files=("$@")
   local -a boundary_times=() boundary_left=() boundary_right=()
-  local player i choice seam_num total_seams ord pos clip_total skip_rest=0
+  local player i choice seam_num total_seams ord pos clock clip_total skip_rest=0
 
   if (( SEAM_PREVIEW_SKIP_RUN && ! force )); then
     return 0
@@ -1599,6 +1642,7 @@ prompt_seam_terminal_previews() {
   if ! player=$(find_video_pgm_play_terminal); then
     echo "$(pgm_ts) video-pgm-play-terminal.sh not found — seam preview skipped."
     echo "$(pgm_ts) Install it to /root/bin or set VIDEO_PGM_PLAY_TERMINAL_BIN."
+    print_merge_seam_times_summary "$output_file" "${files[@]}" || true
     return 0
   fi
 
@@ -1613,15 +1657,16 @@ prompt_seam_terminal_previews() {
     seam_num=$(( i + 1 ))
     ord="$(pgm_ordinal_seam_label "$seam_num")"
     pos="$(format_output_timeline_pos "${boundary_times[$i]}")"
+    clock="$(format_output_timeline_clock "${boundary_times[$i]}")"
 
     echo "--- ${ord} seam (${seam_num} of ${total_seams}) ---"
-    echo "  ${boundary_left[$i]} | ${boundary_right[$i]}  at  ${pos}"
+    echo "  ${boundary_left[$i]} | ${boundary_right[$i]}  at  ${clock}  (${pos})"
     echo "  [Y] Play output at this seam (${PGM_SEAM_PREVIEW_BEFORE}s before join, ${clip_total}s clip) (default)"
     echo "  [n] Skip this seam"
     echo "  [a] Skip all remaining seams"
     echo "  [s] Never play seams for the rest of this run"
     echo "  [q] Quit"
-    pgm_read_key "Play ${ord} seam in terminal? [Y/n/a/s/q]: " y
+    pgm_read_key "Play ${ord} seam in terminal (at ${clock})? [Y/n/a/s/q]: " y
     choice="${REPLY,,}"
     case "$choice" in
       y)
@@ -1629,12 +1674,12 @@ prompt_seam_terminal_previews() {
           play_merge_seam_preview_once "$player" "$output_file" \
             "${boundary_times[$i]}" "${boundary_left[$i]}" "${boundary_right[$i]}" \
             "$seam_num" "$total_seams" "$ord"
-          echo "  [y] Repeat ${ord} seam preview"
+          echo "  [y] Repeat ${ord} seam preview (at ${clock})"
           echo "  [N] Continue (default)"
           echo "  [a] Skip all remaining seams"
           echo "  [s] Never play seams for the rest of this run"
           echo "  [q] Quit"
-          pgm_read_key "Repeat ${ord} seam preview? [y/N/a/s/q]: " n
+          pgm_read_key "Repeat ${ord} seam preview (at ${clock})? [y/N/a/s/q]: " n
           choice="${REPLY,,}"
           case "$choice" in
             y) continue ;;
@@ -1672,6 +1717,7 @@ prompt_seam_terminal_previews() {
     (( skip_rest )) && break
   done
   echo
+  print_merge_seam_times_summary "$output_file" "${files[@]}" || true
   return 0
 }
 
