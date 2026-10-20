@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261020.194400 - Proposed copy: Source then Destination checklist (present / missing)
 # v. 20261020.194000 - gpmd remux: map the real gpmd stream index (not 1:d:0); fix mktemp; show ffmpeg error
 # v. 20261020.193500 - end-of-run summary block (scope, looks good, copied, skipped, failed, times)
 # v. 20261020.193300 - after scan, list files that already have metadata (looks good — not processing)
@@ -7,6 +8,7 @@
 # v. 20261020.192700 - Proposed copy / progress lines spell out exiftool tags vs GoPro gpmd stream
 # v. 20261020.191200 - initial release: extract / copy GoPro GPS+camera metadata; fuzzy-match counterparts by name
 #
+# 2026.10.20 - v. 0.1.7 - before copy, print Source then Destination checklists (GPS, Make/Model, GoPro tags, gpmd, media dates: present/missing + short detail)
 # 2026.10.20 - v. 0.1.6 - gpmd remux failed often because ffmpeg mapped 1:d:0 and used a bad mktemp template; now find the gpmd/GoPro MET stream index (same rules as gopro-to-gpx), map 1:INDEX, print ffmpeg's error, and treat gpmd failure as a warning when tags already wrote
 # 2026.10.20 - v. 0.1.5 - end-of-run summary lists videos in scope, looks-good, copied, extracted, skipped, failed, and wall times
 # 2026.10.20 - v. 0.1.4 - after the metadata scan, print a line for each file that already looks good (has metadata) and will not be processed
@@ -624,6 +626,80 @@ cgm_pick_direction() {
   (( VERBOSE )) && echo "$(cgm_ts) Direction: richness ${ra} vs ${rb} -> src=${SRC##*/} dest=${DEST##*/}"
 }
 
+# One checklist row: label + present/missing (+ optional detail).
+cgm_checklist_row() {
+  local label="$1" state="$2" detail="${3:-}"
+  if [[ -n "$detail" ]]; then
+    printf '    - %-28s %-10s %s\n' "$label" "$state" "$detail"
+  else
+    printf '    - %-28s %s\n' "$label" "$state"
+  fi
+}
+
+# Print present/missing for GPS, Make/Model, GoPro tags, gpmd, media dates.
+cgm_print_meta_checklist() {
+  local f="$1" title="$2"
+  local exif gps_lat gps_lon gps_keys make model gopro_any created idx detail
+  echo "  ${title}:"
+  if cgm_is_sidecar "$f"; then
+    cgm_checklist_row "Sidecar (.mie)" "present" "(tags only; no gpmd stream)"
+    cgm_checklist_row "GPS tags" "present" "(from sidecar, if stored)"
+    cgm_checklist_row "Make / Model" "present" "(from sidecar, if stored)"
+    cgm_checklist_row "GoPro: tags" "present" "(from sidecar, if stored)"
+    cgm_checklist_row "gpmd timed stream" "n/a" "(sidecar)"
+    cgm_checklist_row "Media dates" "present" "(from sidecar, if stored)"
+    return 0
+  fi
+  exif="$(cgm_find_exiftool 2>/dev/null)" || {
+    cgm_checklist_row "(exiftool missing)" "n/a"
+    return 1
+  }
+  gps_lat="$("$exif" -api largefilesupport=1 -s3 -GPSLatitude -- "$f" 2>/dev/null | head -n1 | tr -d '\r')"
+  gps_lon="$("$exif" -api largefilesupport=1 -s3 -GPSLongitude -- "$f" 2>/dev/null | head -n1 | tr -d '\r')"
+  gps_keys="$("$exif" -api largefilesupport=1 -s3 -Keys:GPSCoordinates -QuickTime:GPSCoordinates -- "$f" 2>/dev/null | head -n1 | tr -d '\r')"
+  if [[ -n "$gps_lat" && "$gps_lat" != "-" ]] || [[ -n "$gps_lon" && "$gps_lon" != "-" ]] \
+    || [[ -n "$gps_keys" && "$gps_keys" != "-" ]]; then
+    detail="${gps_keys:-${gps_lat}}"
+    (( ${#detail} > 40 )) && detail="${detail:0:37}…"
+    cgm_checklist_row "GPS tags" "present" "$detail"
+  else
+    cgm_checklist_row "GPS tags" "missing"
+  fi
+  make="$("$exif" -api largefilesupport=1 -s3 -Make -- "$f" 2>/dev/null | head -n1 | tr -d '\r')"
+  model="$("$exif" -api largefilesupport=1 -s3 -Model -- "$f" 2>/dev/null | head -n1 | tr -d '\r')"
+  if [[ -n "$make" && "$make" != "-" ]] || [[ -n "$model" && "$model" != "-" ]]; then
+    detail="${make:-?} / ${model:-?}"
+    cgm_checklist_row "Make / Model" "present" "$detail"
+  else
+    cgm_checklist_row "Make / Model" "missing"
+  fi
+  gopro_any="$("$exif" -api largefilesupport=1 -s3 -GoPro:CameraSerialNumber -GoPro:Model -- "$f" 2>/dev/null | tr -d '\r' | grep -v '^$' | head -n1 || true)"
+  if [[ -n "$gopro_any" && "$gopro_any" != "-" ]]; then
+    cgm_checklist_row "GoPro: tags" "present"
+  else
+    # Any GoPro: group tag counts.
+    if "$exif" -api largefilesupport=1 -GoPro:all -s3 -- "$f" 2>/dev/null | grep -q '[^[:space:]]'; then
+      cgm_checklist_row "GoPro: tags" "present"
+    else
+      cgm_checklist_row "GoPro: tags" "missing"
+    fi
+  fi
+  idx="$(cgm_gpmd_stream_index "$f" 2>/dev/null || true)"
+  if [[ "$idx" =~ ^[0-9]+$ ]]; then
+    cgm_checklist_row "gpmd timed stream" "present" "(stream ${idx})"
+  else
+    cgm_checklist_row "gpmd timed stream" "missing"
+  fi
+  created="$("$exif" -api largefilesupport=1 -s3 -CreateDate -api QuickTimeUTC=1 \
+    -d '%Y.%m.%d %H:%M:%S' -- "$f" 2>/dev/null | head -n1 | tr -d '\r')"
+  if [[ -n "$created" && "$created" != "-" && "$created" != "0000:00:00 00:00:00" \
+    && "$created" != "0000.00.00 00:00:00" ]]; then
+    cgm_checklist_row "Media dates" "present" "$created"
+  else
+    cgm_checklist_row "Media dates" "missing"
+  fi
+}
+
 cgm_confirm_pair() {
   local src="$1" dest="$2" score="${3:-}" keys src_gpmd=0 dest_gpmd=0
   echo
@@ -633,6 +709,11 @@ cgm_confirm_pair() {
   if [[ -n "$score" ]]; then
     awk -v s="$score" 'BEGIN { printf "  Match score:           %.0f%%\n", s * 100 }'
   fi
+  echo
+  cgm_print_meta_checklist "$src" "Source"
+  echo
+  cgm_print_meta_checklist "$dest" "Destination"
+  echo
   echo "  Will copy:"
   echo "    - exiftool tags — GPS, dates, Make/Model, GoPro:all, Keys/ItemList peers"
   cgm_probe_gpmd "$src" && src_gpmd=1
