@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261020.155300 - when name and mtime already match and only CreateDate is missing, default is Keep
 # v. 20261020.150700 - date menu always lists File name, Filesystem, and Media tags (n/a when unusable)
 # v. 20261020.145200 - chosen output date is also written as media CreateDate (and related tags)
 # v. 20261020.145000 - after encode, ask which date to use when name/FS/media disagree (oldest usable; ignore before 1990)
@@ -52,6 +53,7 @@
 # v. 20260930.221500 - file prompts: one key, no Enter
 # v. 20260930.220400 - faster viewing copy of a merged video (2, 5, 10, 20, …)
 
+# 2026.10.20 - v. 0.50 - if file name and filesystem already agree and only media CreateDate is missing, the default is Keep as written
 # 2026.10.20 - v. 0.49 - the output-date menu always lists File name, Filesystem, and Media tags (n/a when missing or before 1990)
 # 2026.10.20 - v. 0.48 - the date chosen for the output (or the oldest usable under -y) is written into the media CreateDate / ModifyDate tags as well as the filesystem times
 # 2026.10.20 - v. 0.47 - after encode, if the source file name, filesystem time, and media CreateDate disagree, ask which to use (1/2/3…); default is the oldest usable date; stamps before 1990 are ignored; -y applies the oldest without asking
@@ -1217,7 +1219,7 @@ tl_prompt_reconcile_output_times() {
   local name_e="" src_e="" media_e="" dest_fs_e=""
   local -a labels=() epochs=() notes=()
   local i n def=1 oldest_i=0 oldest_e="" choice keys="" disp note fs_show
-  local abs_diff need_ask=0
+  local abs_diff need_ask=0 name_fs_agree=0 def_is_keep=0
 
   [[ -f "$dest" && -f "$source_file" ]] || return 0
 
@@ -1230,12 +1232,14 @@ tl_prompt_reconcile_output_times() {
 
   [[ -n "$name_e" ]] || return 0
 
-  if [[ -n "$src_e" ]]; then
-    if (( name_e > src_e )); then abs_diff=$((name_e - src_e)); else abs_diff=$((src_e - name_e)); fi
-    (( abs_diff > 120 )) && need_ask=1
-  elif [[ -n "$dest_fs_e" ]]; then
-    if (( name_e > dest_fs_e )); then abs_diff=$((name_e - dest_fs_e)); else abs_diff=$((dest_fs_e - name_e)); fi
-    (( abs_diff > 120 )) && need_ask=1
+  fs_show="${src_e:-$dest_fs_e}"
+  if [[ -n "$fs_show" ]]; then
+    if (( name_e > fs_show )); then abs_diff=$((name_e - fs_show)); else abs_diff=$((fs_show - name_e)); fi
+    if (( abs_diff > 120 )); then
+      need_ask=1
+    else
+      name_fs_agree=1
+    fi
   else
     need_ask=1
   fi
@@ -1250,7 +1254,6 @@ tl_prompt_reconcile_output_times() {
   labels+=("File name")
   epochs+=("$name_e")
   notes+=("(from source name)")
-  fs_show="${src_e:-$dest_fs_e}"
   labels+=("Filesystem")
   epochs+=("$fs_show")
   if [[ -n "$fs_show" ]]; then
@@ -1280,8 +1283,16 @@ tl_prompt_reconcile_output_times() {
     fi
   done
   def=$((oldest_i + 1))
+  if (( name_fs_agree )) && [[ -z "$media_e" ]]; then
+    def=$n
+    def_is_keep=1
+  fi
 
   if (( DO_YES )) || (( ! script_is_run_interactively )); then
+    if (( def_is_keep )); then
+      echo "$(tl_ts) Output times kept (name and mtime already match)."
+      return 0
+    fi
     if [[ -n "$oldest_e" ]]; then
       tl_apply_epoch_to_output "$dest" "$oldest_e"
       echo "$(tl_ts) Output times: $(tl_format_epoch_display "$oldest_e") (oldest usable; no prompt)."
@@ -1295,7 +1306,11 @@ tl_prompt_reconcile_output_times() {
   printf '  File:  %s\n' "${dest##*/}"
   printf '  Source name stamp from:  %s\n' "${source_file##*/}"
   echo
-  echo "  Sources (oldest usable is the default; dates before 1990 are ignored):"
+  if (( def_is_keep )); then
+    echo "  Sources (name and mtime already match; CreateDate missing — default is Keep):"
+  else
+    echo "  Sources (oldest usable is the default; dates before 1990 are ignored):"
+  fi
   echo
   keys=""
   for (( i = 0; i < n; i++ )); do
@@ -1306,7 +1321,9 @@ tl_prompt_reconcile_output_times() {
       disp="n/a"
     fi
     if (( i + 1 == def )); then
-      if [[ -n "$note" ]]; then
+      if (( def_is_keep )); then
+        note="${note} (default)"
+      elif [[ -n "$note" ]]; then
         note="${note} (oldest - default)"
       else
         note="(oldest - default)"
