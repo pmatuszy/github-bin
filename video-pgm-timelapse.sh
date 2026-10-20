@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261020.150700 - date menu always lists File name, Filesystem, and Media tags (n/a when unusable)
 # v. 20261020.145200 - chosen output date is also written as media CreateDate (and related tags)
 # v. 20261020.145000 - after encode, ask which date to use when name/FS/media disagree (oldest usable; ignore before 1990)
 # v. 20261020.121200 - file picker: All and None in dialog; plain menu names A and N clearly
@@ -51,6 +52,7 @@
 # v. 20260930.221500 - file prompts: one key, no Enter
 # v. 20260930.220400 - faster viewing copy of a merged video (2, 5, 10, 20, …)
 
+# 2026.10.20 - v. 0.49 - the output-date menu always lists File name, Filesystem, and Media tags (n/a when missing or before 1990)
 # 2026.10.20 - v. 0.48 - the date chosen for the output (or the oldest usable under -y) is written into the media CreateDate / ModifyDate tags as well as the filesystem times
 # 2026.10.20 - v. 0.47 - after encode, if the source file name, filesystem time, and media CreateDate disagree, ask which to use (1/2/3…); default is the oldest usable date; stamps before 1990 are ignored; -y applies the oldest without asking
 # 2026.10.20 - v. 0.46 - Pick files: dialog has All and None buttons that reset every mark; the plain menu says A=all and N=none (those keys were already there)
@@ -1214,7 +1216,7 @@ tl_prompt_reconcile_output_times() {
   local dest="$1" source_file="$2"
   local name_e="" src_e="" media_e="" dest_fs_e=""
   local -a labels=() epochs=() notes=()
-  local i n def=1 oldest_i=0 oldest_e="" choice keys="" disp note
+  local i n def=1 oldest_i=0 oldest_e="" choice keys="" disp note fs_show
   local abs_diff need_ask=0
 
   [[ -f "$dest" && -f "$source_file" ]] || return 0
@@ -1240,21 +1242,28 @@ tl_prompt_reconcile_output_times() {
   if [[ -n "$media_e" ]]; then
     if (( name_e > media_e )); then abs_diff=$((name_e - media_e)); else abs_diff=$((media_e - name_e)); fi
     (( abs_diff > 120 )) && need_ask=1
+  else
+    need_ask=1
   fi
   (( need_ask )) || return 0
 
   labels+=("File name")
   epochs+=("$name_e")
   notes+=("(from source name)")
-  if [[ -n "$src_e" ]]; then
-    labels+=("Source file")
-    epochs+=("$src_e")
-    notes+=("(filesystem)")
+  fs_show="${src_e:-$dest_fs_e}"
+  labels+=("Filesystem")
+  epochs+=("$fs_show")
+  if [[ -n "$fs_show" ]]; then
+    notes+=("(mtime)")
+  else
+    notes+=("(mtime missing or before 1990)")
   fi
+  labels+=("Media tags")
+  epochs+=("$media_e")
   if [[ -n "$media_e" ]]; then
-    labels+=("Media tags")
-    epochs+=("$media_e")
     notes+=("(CreateDate in the video)")
+  else
+    notes+=("(CreateDate missing or before 1990)")
   fi
   labels+=("Keep as written")
   epochs+=("")
@@ -1311,23 +1320,28 @@ tl_prompt_reconcile_output_times() {
   done
   echo "  [q] Quit"
   keys+="/q"
-  tl_read_key "Output times [${keys}] (default ${def}): " "$def"
-  choice="$(tl_choice "$REPLY")"
-  case "$choice" in
-    q) return 2 ;;
-  esac
-  if [[ "$choice" =~ ^[0-9]+$ ]] && (( choice >= 1 && choice <= n )); then
-    i=$((choice - 1))
-    if [[ -n "${epochs[i]}" ]]; then
+  while true; do
+    tl_read_key "Output times [${keys}] (default ${def}): " "$def"
+    choice="$(tl_choice "$REPLY")"
+    case "$choice" in
+      q) return 2 ;;
+    esac
+    if [[ "$choice" =~ ^[0-9]+$ ]] && (( choice >= 1 && choice <= n )); then
+      i=$((choice - 1))
+      if (( i == n - 1 )); then
+        echo "$(tl_ts) Output times kept as written."
+        return 0
+      fi
+      if [[ -z "${epochs[i]}" ]]; then
+        echo "$(tl_ts) ${labels[i]} is n/a (not usable). Pick another."
+        continue
+      fi
       tl_apply_epoch_to_output "$dest" "${epochs[i]}"
       echo "$(tl_ts) Output times set from ${labels[i]}: $(tl_format_epoch_display "${epochs[i]}")"
-    else
-      echo "$(tl_ts) Output times kept as written."
+      return 0
     fi
-    return 0
-  fi
-  echo "$(tl_ts) Unknown choice: ${REPLY}. Keeping times as written."
-  return 0
+    echo "$(tl_ts) Unknown choice: ${REPLY}."
+  done
 }
 
 tl_run_ffmpeg() {

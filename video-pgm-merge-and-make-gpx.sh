@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261020.150700 - date menu always lists File name, Filesystem, and Media tags (n/a when unusable)
 # v. 20261020.145200 - chosen output date is also written as media CreateDate (and related tags)
 # v. 20261020.145000 - after merge, ask which date to use when name/FS/media disagree (oldest usable; ignore before 1990)
 # v. 20261020.102500 - print every seam time in the output again before asking to delete inputs
@@ -68,6 +69,7 @@
 # v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
 # v. 20260805.154826 - after merge: copy GPS/dates from first chapter; FS times via touch -r
 
+# 2026.10.20 - v. 0.15.84 - the output-date menu always lists File name, Filesystem, and Media tags (n/a when missing or before 1990)
 # 2026.10.20 - v. 0.15.83 - the date chosen for the output (or the oldest usable under -y) is written into the media CreateDate / ModifyDate tags as well as the filesystem times
 # 2026.10.20 - v. 0.15.82 - after a merge, if the file name, filesystem time, and media CreateDate disagree, ask which to use (1/2/3…); default is the oldest usable date; stamps before 1990 are ignored; -y applies the oldest without asking
 # 2026.10.20 - v. 0.15.81 - before asking to delete input chapters, print every seam time in the merged file as H:MM:SS (also when deleting inputs for an already-merged group)
@@ -3308,7 +3310,7 @@ pgm_prompt_reconcile_output_times() {
   local dest="$1" source_file="${2:-}"
   local name_e="" src_e="" media_e="" dest_fs_e=""
   local -a labels=() epochs=() notes=()
-  local i n def=1 oldest_i=0 oldest_e="" choice keys="" disp note
+  local i n def=1 oldest_i=0 oldest_e="" choice keys="" disp note fs_show
   local abs_diff need_ask=0
 
   [[ -f "$dest" ]] || return 0
@@ -3339,25 +3341,33 @@ pgm_prompt_reconcile_output_times() {
   if [[ -n "$media_e" ]]; then
     if (( name_e > media_e )); then abs_diff=$((name_e - media_e)); else abs_diff=$((media_e - name_e)); fi
     (( abs_diff > 120 )) && need_ask=1
+  else
+    # Missing CreateDate is worth fixing when a name stamp exists.
+    need_ask=1
   fi
   (( need_ask )) || return 0
 
   labels+=("File name")
   epochs+=("$name_e")
   notes+=("")
-  if [[ -n "$src_e" ]]; then
-    labels+=("Source file")
-    epochs+=("$src_e")
-    notes+=("(filesystem / first chapter)")
-  elif [[ -n "$dest_fs_e" ]]; then
-    labels+=("Filesystem")
-    epochs+=("$dest_fs_e")
-    notes+=("(current output mtime)")
+  fs_show="${src_e:-$dest_fs_e}"
+  labels+=("Filesystem")
+  epochs+=("$fs_show")
+  if [[ -n "$fs_show" ]]; then
+    if [[ -n "$src_e" ]]; then
+      notes+=("(mtime / first chapter)")
+    else
+      notes+=("(current output mtime)")
+    fi
+  else
+    notes+=("(mtime missing or before 1990)")
   fi
+  labels+=("Media tags")
+  epochs+=("$media_e")
   if [[ -n "$media_e" ]]; then
-    labels+=("Media tags")
-    epochs+=("$media_e")
     notes+=("(CreateDate in the video)")
+  else
+    notes+=("(CreateDate missing or before 1990)")
   fi
   labels+=("Keep as written")
   epochs+=("")
@@ -3413,23 +3423,28 @@ pgm_prompt_reconcile_output_times() {
   done
   echo "  [q] Quit"
   keys+="/q"
-  pgm_read_key "Output times [${keys}] (default ${def}): " "$def"
-  choice="${REPLY,,}"
-  case "$choice" in
-    q) return 2 ;;
-  esac
-  if [[ "$choice" =~ ^[0-9]+$ ]] && (( choice >= 1 && choice <= n )); then
-    i=$((choice - 1))
-    if [[ -n "${epochs[i]}" ]]; then
+  while true; do
+    pgm_read_key "Output times [${keys}] (default ${def}): " "$def"
+    choice="${REPLY,,}"
+    case "$choice" in
+      q) return 2 ;;
+    esac
+    if [[ "$choice" =~ ^[0-9]+$ ]] && (( choice >= 1 && choice <= n )); then
+      i=$((choice - 1))
+      if (( i == n - 1 )); then
+        echo "$(pgm_ts) Output times kept as written."
+        return 0
+      fi
+      if [[ -z "${epochs[i]}" ]]; then
+        echo "$(pgm_ts) ${labels[i]} is n/a (not usable). Pick another."
+        continue
+      fi
       pgm_apply_epoch_to_output "$dest" "${epochs[i]}"
       echo "$(pgm_ts) Output times set from ${labels[i]}: $(pgm_format_epoch_display "${epochs[i]}")"
-    else
-      echo "$(pgm_ts) Output times kept as written."
+      return 0
     fi
-    return 0
-  fi
-  echo "$(pgm_ts) Unknown choice: ${REPLY}. Keeping times as written."
-  return 0
+    echo "$(pgm_ts) Unknown choice: ${REPLY}."
+  done
 }
 
 group_is_size_split() {

@@ -1,7 +1,9 @@
 #!/bin/bash
+# v. 20261020.150700 - date menu always lists File name, Filesystem, and Media tags (n/a when unusable)
 # v. 20261020.150400 - date menu: ASCII n/a so parenthetical notes share one column
 # v. 20261020.145500 - fix file / media dates when the name, filesystem, and tags disagree
 #
+# 2026.10.20 - v. 0.1.2 - always show File name, Filesystem, and Media tags rows (n/a when missing or before 1990)
 # 2026.10.20 - v. 0.1.1 - date menu uses ASCII n/a (UTF-8 dash broke the column of the notes in parentheses)
 # 2026.10.20 - v. 0.1 - initial release: for video, audio, and pictures, compare the
 #   file-name stamp, filesystem mtime, and media CreateDate (or DateTimeOriginal);
@@ -322,22 +324,33 @@ mfd_prepare_file() {
   if [[ -n "$name_e" && -z "$fs_e" && -z "$media_e" ]]; then
     need=1
   fi
+  # Media CreateDate missing/unusable while another stamp exists → offer to set it.
+  if [[ -z "$media_e" && ( -n "$name_e" || -n "$fs_e" ) ]]; then
+    need=1
+  fi
   (( need )) || return 1
 
+  # Always list all three sources so a missing CreateDate is visible.
+  MFD_LABELS+=("File name")
+  MFD_EPOCHS+=("${name_e}")
   if [[ -n "$name_e" ]]; then
-    MFD_LABELS+=("File name")
-    MFD_EPOCHS+=("$name_e")
     MFD_NOTES+=("")
+  else
+    MFD_NOTES+=("(no stamp in name, or before 1990)")
   fi
+  MFD_LABELS+=("Filesystem")
+  MFD_EPOCHS+=("${fs_e}")
   if [[ -n "$fs_e" ]]; then
-    MFD_LABELS+=("Filesystem")
-    MFD_EPOCHS+=("$fs_e")
     MFD_NOTES+=("(mtime)")
+  else
+    MFD_NOTES+=("(mtime missing or before 1990)")
   fi
+  MFD_LABELS+=("Media tags")
+  MFD_EPOCHS+=("${media_e}")
   if [[ -n "$media_e" ]]; then
-    MFD_LABELS+=("Media tags")
-    MFD_EPOCHS+=("$media_e")
     MFD_NOTES+=("(CreateDate / DateTimeOriginal)")
+  else
+    MFD_NOTES+=("(CreateDate missing or before 1990)")
   fi
   MFD_LABELS+=("Keep as written")
   MFD_EPOCHS+=("")
@@ -407,43 +420,48 @@ mfd_process_file() {
   echo "  [q] Quit"
   keys+="/a/s/q"
 
-  mfd_read_key "Fix dates [${keys}] (default ${MFD_DEF}): " "$MFD_DEF"
-  choice="$(mfd_choice "$REPLY")"
-  case "$choice" in
-    q)
-      echo "$(mfd_ts) Quit."
-      return 2
-      ;;
-    s)
-      echo "$(mfd_ts) Skipped: ${f##*/}"
-      SKIPPED=$((SKIPPED + 1))
-      return 0
-      ;;
-    a)
-      ALWAYS_OLDEST=1
-      if [[ -n "$MFD_OLDEST_E" ]]; then
-        mfd_apply_epoch "$f" "$MFD_OLDEST_E"
-        FIXED=$((FIXED + 1))
+  while true; do
+    mfd_read_key "Fix dates [${keys}] (default ${MFD_DEF}): " "$MFD_DEF"
+    choice="$(mfd_choice "$REPLY")"
+    case "$choice" in
+      q)
+        echo "$(mfd_ts) Quit."
+        return 2
+        ;;
+      s)
+        echo "$(mfd_ts) Skipped: ${f##*/}"
+        SKIPPED=$((SKIPPED + 1))
+        return 0
+        ;;
+      a)
+        ALWAYS_OLDEST=1
+        if [[ -n "$MFD_OLDEST_E" ]]; then
+          mfd_apply_epoch "$f" "$MFD_OLDEST_E"
+          FIXED=$((FIXED + 1))
+        fi
+        echo "$(mfd_ts) Will use the oldest usable date for every later file."
+        return 0
+        ;;
+    esac
+    if [[ "$choice" =~ ^[0-9]+$ ]] && (( choice >= 1 && choice <= n )); then
+      i=$((choice - 1))
+      # Keep is the last row and has an empty epoch on purpose.
+      if (( i == n - 1 )); then
+        echo "$(mfd_ts) Kept as written: ${f##*/}"
+        SKIPPED=$((SKIPPED + 1))
+        return 0
       fi
-      echo "$(mfd_ts) Will use the oldest usable date for every later file."
-      return 0
-      ;;
-  esac
-  if [[ "$choice" =~ ^[0-9]+$ ]] && (( choice >= 1 && choice <= n )); then
-    i=$((choice - 1))
-    if [[ -n "${MFD_EPOCHS[i]}" ]]; then
+      if [[ -z "${MFD_EPOCHS[i]}" ]]; then
+        echo "$(mfd_ts) ${MFD_LABELS[i]} is n/a (not usable). Pick another."
+        continue
+      fi
       mfd_apply_epoch "$f" "${MFD_EPOCHS[i]}"
       FIXED=$((FIXED + 1))
       echo "$(mfd_ts) Set from ${MFD_LABELS[i]}: $(mfd_format_epoch_display "${MFD_EPOCHS[i]}")"
-    else
-      echo "$(mfd_ts) Kept as written: ${f##*/}"
-      SKIPPED=$((SKIPPED + 1))
+      return 0
     fi
-    return 0
-  fi
-  echo "$(mfd_ts) Unknown choice: ${REPLY}. Skipped."
-  SKIPPED=$((SKIPPED + 1))
-  return 0
+    echo "$(mfd_ts) Unknown choice: ${REPLY}."
+  done
 }
 
 # --- options ---
