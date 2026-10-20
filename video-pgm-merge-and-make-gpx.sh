@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261020.095800 - FILE +N force-merges that file and the next N alphabetically in its folder
 # v. 20261020.093200 - seam prompts and the end summary show the join time as H:MM:SS
 # v. 20261020.091800 - files named on the command line are merged in that order (forced merge)
 # v. 20261014.193952 - the run summary has no clock on each line, and a short clip is marked at its end
@@ -63,6 +64,7 @@
 # v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
 # v. 20260805.154826 - after merge: copy GPS/dates from first chapter; FS times via touch -r
 
+# 2026.10.20 - v. 0.15.79 - FILE +N force-merges that file and the next N MP4 names in alphabetical order in the same folder (e.g. clip.mp4 +2). The plan lists every filename. Explicit FILE FILE … still works
 # 2026.10.20 - v. 0.15.78 - when asking to play a seam, and in a short summary after the seams, show the join time as H:MM:SS so it is easy to seek to in another player
 # 2026.10.20 - v. 0.15.77 - name two or more MP4 files on the command line to force a merge in that order (skip chapter detection). The usual merge prompts stay. Output is next to the first file as …_concat_parts_01-NN.mp4
 # 2026.10.14 - v. 0.15.76 - the run summary is plain lines, like the other scripts; a short clip's "look around" time is the end of that clip (start plus its length), where the picture jumps
@@ -205,17 +207,22 @@ Usage: $(basename "$0") [-h|--help] [-u|--update] [-v|--version] [-y|--yes]
        [--read-timeout SEC] [--seam-before SEC] [--seam-after SEC] [--temp-dir DIR]
        [--gps-dir DIR]
        [FILE FILE ...]
+       [FILE +N]
        [-- FILE FILE ...]
+       [-- FILE +N]
 
 Merge chapter MP4 files in the current directory (e.g. GoPro splits) into one
 file using mp4_merge from https://github.com/gyroflow/mp4-merge
 
 With two or more FILE arguments, those files are merged in the order given
-(forced merge). Chapter detection is skipped. The usual prompts still ask
-about the merge, temp directory, seam preview, and deleting inputs. A Windows
-path such as P:\\video\\clip.mp4 is read as /mnt/p/video/clip.mp4. All named
-files must be MP4s in the same directory. The output is written next to the
-first file as <first_stem>_concat_parts_01-<N>.mp4.
+(forced merge). Or pass FILE +N (for example clip.mp4 +2): that file and the
+next N MP4 names in alphabetical order in the same folder are merged. Concat
+outputs (*_concat*.mp4) are skipped when counting the next names. Chapter
+detection is skipped. The plan prints every filename that will be joined.
+The usual prompts still ask about the merge, temp directory, seam preview,
+and deleting inputs. A Windows path such as P:\\video\\clip.mp4 is read as
+/mnt/p/video/clip.mp4. All files must be MP4s in the same directory. The
+output is written next to the first file as <first_stem>_concat_parts_01-<N>.mp4.
 
 Options:
   -h, --help           Show this help and exit.
@@ -244,6 +251,7 @@ Options:
 
 Merge behaviour:
   - With two or more FILE arguments: merge those files in that order (forced).
+  - With FILE +N: merge that file and the next N alphabetically in its folder.
   - With no FILE arguments: collects *.mp4 in the current working directory
     (case-insensitive), except existing *_concat.mp4 outputs.
   - Detects GoPro-style chapter sequences (_part_01, _part_02, …). Consecutive part
@@ -380,6 +388,9 @@ Examples:
 
   $(basename "$0") -- a.mp4 b.mp4
       Force-merge a.mp4 then b.mp4 in that order (skip chapter detection).
+
+  $(basename "$0") -- a.mp4 +2
+      Force-merge a.mp4 and the next 2 MP4 names alphabetically in that folder.
 
   $(basename "$0") --temp-dir /mnt/scratch
       Offer /mnt/scratch as the temporary merge disk when it has room.
@@ -1059,9 +1070,13 @@ pgm_print_run_settings_equivalent_cli() {
   done
   if (( FORCE_MERGE )) && (( ${#FORCE_MERGE_FILES[@]} > 0 )); then
     parts+=("--")
-    for p in "${FORCE_MERGE_FILES[@]}"; do
-      parts+=("$p")
-    done
+    if (( FORCE_MERGE_PLUS_N > 0 )); then
+      parts+=("${FORCE_MERGE_FILES[0]}" "+${FORCE_MERGE_PLUS_N}")
+    else
+      for p in "${FORCE_MERGE_FILES[@]}"; do
+        parts+=("$p")
+      done
+    fi
   fi
 
   out="$(printf '%q' "$cmd")"
@@ -1091,7 +1106,12 @@ pgm_print_run_settings() {
   fi
 
   if (( FORCE_MERGE )); then
-    printf '  %-21s%s\n' "Files:" "given (${#FORCE_MERGE_FILES[@]} — forced merge in this order)"
+    if (( FORCE_MERGE_PLUS_N > 0 )); then
+      printf '  %-21s%s\n' "Files:" \
+        "given (${FORCE_MERGE_FILES[0]##*/} +${FORCE_MERGE_PLUS_N} → ${#FORCE_MERGE_FILES[@]} files, alphabetical next)"
+    else
+      printf '  %-21s%s\n' "Files:" "given (${#FORCE_MERGE_FILES[@]} — forced merge in this order)"
+    fi
   else
     printf '  %-21s%s\n' "Files:" "not given (scan *.mp4 in this directory)"
   fi
@@ -3809,6 +3829,112 @@ pgm_abs_path() {
   printf '%s/%s\n' "$d" "$b"
 }
 
+# Non-concat *.mp4 basenames in dir, sorted with LC_ALL=C (case-insensitive glob).
+pgm_list_mp4_basenames_sorted() {
+  local dir="$1"
+  local f base
+  (
+    cd -- "$dir" || exit 1
+    shopt -s nullglob nocaseglob
+    for f in *.mp4; do
+      base="${f##*/}"
+      is_concat_output_basename "$base" && continue
+      printf '%s\n' "$base"
+    done
+  ) | LC_ALL=C sort -u
+}
+
+# Resolve FILE +N: start file plus the next N MP4 names alphabetically in its folder.
+pgm_resolve_force_merge_plus_n() {
+  local start_arg="$1" plus_arg="$2"
+  local n path abs dir start_base need available i idx=-1 ext
+  local -a names=() chosen=() out=()
+
+  if [[ ! "$plus_arg" =~ ^\+([1-9][0-9]*)$ ]]; then
+    echo "$(pgm_ts) Second argument must be +N with N ≥ 1 (e.g. +1, +2, +7), got: ${plus_arg}" >&2
+    return 1
+  fi
+  n="${BASH_REMATCH[1]}"
+
+  path="$(pgm_unix_path "$start_arg")"
+  if [[ ! -e "$path" ]]; then
+    echo "$(pgm_ts) Not found: ${start_arg}" >&2
+    return 1
+  fi
+  if [[ ! -f "$path" ]]; then
+    echo "$(pgm_ts) Not a regular file: ${start_arg}" >&2
+    return 1
+  fi
+  ext="${path##*.}"
+  if [[ "${ext,,}" != mp4 ]]; then
+    echo "$(pgm_ts) Not an MP4 file: ${start_arg}" >&2
+    return 1
+  fi
+  abs="$(pgm_abs_path "$path")" || {
+    echo "$(pgm_ts) Cannot resolve path: ${start_arg}" >&2
+    return 1
+  }
+  if is_concat_output_basename "${abs##*/}"; then
+    echo "$(pgm_ts) Already a concat output (cannot use as a forced-merge input): ${abs##*/}" >&2
+    return 1
+  fi
+
+  dir="$(dirname -- "$abs")"
+  start_base="${abs##*/}"
+  mapfile -t names < <(pgm_list_mp4_basenames_sorted "$dir")
+  if (( ${#names[@]} == 0 )); then
+    echo "$(pgm_ts) No MP4 files found in ${dir}" >&2
+    return 1
+  fi
+
+  for i in "${!names[@]}"; do
+    if [[ "${names[i]}" == "$start_base" ]]; then
+      idx=$i
+      break
+    fi
+  done
+  if (( idx < 0 )); then
+    for i in "${!names[@]}"; do
+      if [[ "${names[i],,}" == "${start_base,,}" ]]; then
+        idx=$i
+        start_base="${names[i]}"
+        break
+      fi
+    done
+  fi
+  if (( idx < 0 )); then
+    echo "$(pgm_ts) Starting file not in the alphabetical MP4 list: ${start_base}" >&2
+    return 1
+  fi
+
+  need=$((n + 1))
+  available=$((${#names[@]} - idx))
+  if (( available < need )); then
+    echo "$(pgm_ts) Not enough MP4 files after ${start_base}: need +${n} (join ${need} total), only ${available} from that name onward." >&2
+    echo "$(pgm_ts) Alphabetical MP4s from ${start_base}:" >&2
+    for ((i = idx; i < ${#names[@]}; i++)); do
+      printf '  %s\n' "${names[i]}" >&2
+    done
+    return 1
+  fi
+
+  for ((i = idx; i < idx + need; i++)); do
+    chosen+=("${names[i]}")
+    out+=("${dir}/${names[i]}")
+  done
+
+  echo "$(pgm_ts) Forced merge +${n}: join these ${#chosen[@]} files (start at ${start_base}, next ${n} alphabetically):"
+  for i in "${!chosen[@]}"; do
+    printf '  %2d. %s\n' "$((i + 1))" "${chosen[i]}"
+  done
+  echo
+
+  FORCE_MERGE_FILES=( "${out[@]}" )
+  FORCE_MERGE=1
+  FORCE_MERGE_PLUS_N=$n
+  return 0
+}
+
 # Resolve CLI force-merge operands: existing MP4s, same directory, keep order.
 pgm_resolve_force_merge_files() {
   local arg path abs dir0="" ext
@@ -3852,6 +3978,7 @@ pgm_resolve_force_merge_files() {
   done
   FORCE_MERGE_FILES=( "${out[@]}" )
   FORCE_MERGE=1
+  FORCE_MERGE_PLUS_N=0
   return 0
 }
 
@@ -4604,7 +4731,16 @@ print_group_plan() {
   local f base part cam blob out_name is_ss
   local group_bytes=0 sz
   if (( FORCE_MERGE )); then
-    echo "$(pgm_ts) Forced merge from the command line (this order):"
+    if (( FORCE_MERGE_PLUS_N > 0 )); then
+      echo "$(pgm_ts) Forced merge from the command line (alphabetical +${FORCE_MERGE_PLUS_N} from first file):"
+    else
+      echo "$(pgm_ts) Forced merge from the command line (this order):"
+    fi
+    echo
+    echo "Join these files:"
+    for f in "${all_mp4[@]}"; do
+      printf '  %s\n' "${f##*/}"
+    done
     echo
     for blob in "${GROUP_BLOBS[@]}"; do
       group_files_to_array "$blob" files
@@ -6227,6 +6363,7 @@ DO_UPDATE=0
 DO_YES=0
 FORCE_MERGE=0
 FORCE_MERGE_FILES=()
+FORCE_MERGE_PLUS_N=0
 MERGE_ALL_REMAINING=0
 SKIP_ALL_REMAINING=0
 GROUP_BLOBS=()
@@ -6374,11 +6511,14 @@ if (( ${#FORCE_MERGE_ARGS[@]} > 0 )); then
     echo "$(pgm_ts) Do not pass video files with -u/--update." >&2
     exit 1
   fi
-  if (( ${#FORCE_MERGE_ARGS[@]} == 1 )); then
-    echo "$(pgm_ts) Forced merge needs at least two MP4 files (got one)." >&2
+  if (( ${#FORCE_MERGE_ARGS[@]} == 2 )) && [[ "${FORCE_MERGE_ARGS[1]}" =~ ^\+[1-9][0-9]*$ ]]; then
+    pgm_resolve_force_merge_plus_n "${FORCE_MERGE_ARGS[0]}" "${FORCE_MERGE_ARGS[1]}" || exit 1
+  elif (( ${#FORCE_MERGE_ARGS[@]} == 1 )); then
+    echo "$(pgm_ts) Forced merge needs two or more MP4 files, or FILE +N (e.g. clip.mp4 +2)." >&2
     exit 1
+  else
+    pgm_resolve_force_merge_files "${FORCE_MERGE_ARGS[@]}" || exit 1
   fi
-  pgm_resolve_force_merge_files "${FORCE_MERGE_ARGS[@]}" || exit 1
 fi
 
 pgm_init_read_timeout
