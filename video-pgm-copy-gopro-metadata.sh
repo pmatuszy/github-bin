@@ -1,8 +1,10 @@
 #!/bin/bash
+# v. 20261020.193200 - progress bar while scanning metadata on every video (avoids looking hung)
 # v. 20261020.192900 - Will-copy / progress bullets use '-' not (1)/(2) (those look like menu choices)
 # v. 20261020.192700 - Proposed copy / progress lines spell out exiftool tags vs GoPro gpmd stream
 # v. 20261020.191200 - initial release: extract / copy GoPro GPS+camera metadata; fuzzy-match counterparts by name
 #
+# 2026.10.20 - v. 0.1.3 - while classifying each video (exiftool + ffprobe), show a progress bar with time left
 # 2026.10.20 - v. 0.1.2 - Will-copy / progress bullets use '-' instead of (1)/(2) so they are not mistaken for menu keys
 # 2026.10.20 - v. 0.1.1 - Proposed copy and progress text say clearly: exiftool tags including
 #   GoPro:/GPS/dates/camera, and best-effort ffmpeg remux of the timed gpmd stream when present
@@ -207,6 +209,64 @@ cgm_has_useful_metadata() {
   local r
   r="$(cgm_metadata_richness "$1")"
   (( r >= 10 ))
+}
+
+cgm_left_label() {
+  local sec="${1:-0}" h m s
+  (( sec < 0 )) && sec=0
+  h=$((sec / 3600))
+  m=$(((sec % 3600) / 60))
+  s=$((sec % 60))
+  if (( h > 0 )); then
+    printf '%dh %02dm' "$h" "$m"
+  elif (( m > 0 )); then
+    printf '%dm %02ds' "$m" "$s"
+  else
+    printf '%ds' "$s"
+  fi
+}
+
+cgm_arrival_label() {
+  local remain="${1:-0}" now arrival
+  now="$(date +%s)"
+  arrival=$(( now + remain ))
+  if [[ "$(date -d "@${arrival}" '+%Y.%m.%d' 2>/dev/null)" == "$(date '+%Y.%m.%d')" ]]; then
+    printf 'at %s' "$(date -d "@${arrival}" '+%H:%M' 2>/dev/null || echo '?')"
+  else
+    printf 'at %s' "$(date -d "@${arrival}" '+%Y.%m.%d %H:%M' 2>/dev/null || echo '?')"
+  fi
+}
+
+# One line, redrawn in place. $1 done $2 total $3 start epoch $4 label $5 optional short name
+cgm_draw_progress() {
+  local done="$1" total="$2" started="$3" label="${4:-Working}" name="${5:-}"
+  local width=40 filled=0 pct=0 bar now elapsed remain eta="" short=""
+  (( total > 0 )) || return 0
+  filled=$(( done * width / total ))
+  (( filled > width )) && filled=$width
+  pct=$(( done * 100 / total ))
+  bar="$(printf '%*s' "$filled" '' | tr ' ' '#')$(printf '%*s' $(( width - filled )) '' | tr ' ' '-')"
+  if (( done > 0 && done < total )); then
+    now=$(date +%s)
+    elapsed=$(( now - started ))
+    (( elapsed < 1 )) && elapsed=1
+    remain=$(( (total - done) * elapsed / done ))
+    eta="left $(cgm_left_label "$remain")  $(cgm_arrival_label "$remain")"
+  elif (( done >= total )); then
+    eta="done"
+  fi
+  if [[ -n "$name" ]]; then
+    short="${name##*/}"
+    (( ${#short} > 36 )) && short="…${short: -35}"
+    short="  ${short}"
+  fi
+  printf '\r%s %s [%s] %*d/%d %3d%%  %s%s\033[K' \
+    "$(cgm_ts)" "$label" "$bar" "${#total}" "$done" "$total" "$pct" "$eta" "$short"
+}
+
+cgm_progress_end() {
+  # Finish the in-place progress line.
+  echo
 }
 
 # Python fuzzy matcher: print "path<TAB>score" lines, best first.
@@ -636,16 +696,31 @@ cgm_pair_already_done() {
 
 cgm_process_directory_pairs() {
   # Pair each video that lacks useful metadata with the best richer match.
-  local f key ra
+  local f key ra n i started live=0
   local -a poor=() rich=()
+  n=${#ALL_VIDEOS[@]}
+  (( n == 0 )) && return 0
+  started=$(date +%s)
+  [[ -t 1 ]] && live=1
+  echo "$(cgm_ts) Scanning metadata on ${n} video(s) (exiftool + ffprobe)…"
+  i=0
   for f in "${ALL_VIDEOS[@]}"; do
+    if (( live )); then
+      cgm_draw_progress "$i" "$n" "$started" "Scanning" "$f"
+    elif (( i == 0 )) || (( i % 5 == 0 )); then
+      echo "$(cgm_ts) Scanning ${i}/${n}…"
+    fi
     ra="$(cgm_metadata_richness "$f")"
     if (( ra >= 10 )); then
       rich+=("$f")
     else
       poor+=("$f")
     fi
+    i=$((i + 1))
+    (( live )) && cgm_draw_progress "$i" "$n" "$started" "Scanning" "$f"
   done
+  (( live )) && cgm_progress_end
+  echo "$(cgm_ts) Scan done: ${#rich[@]} with metadata, ${#poor[@]} without."
   (( VERBOSE )) && echo "$(cgm_ts) Directory: ${#rich[@]} with metadata, ${#poor[@]} without"
 
   if (( ${#poor[@]} == 0 )); then
