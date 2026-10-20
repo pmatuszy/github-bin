@@ -1,9 +1,11 @@
 #!/bin/bash
+# v. 20261020.193300 - after scan, list files that already have metadata (looks good — not processing)
 # v. 20261020.193200 - progress bar while scanning metadata on every video (avoids looking hung)
 # v. 20261020.192900 - Will-copy / progress bullets use '-' not (1)/(2) (those look like menu choices)
 # v. 20261020.192700 - Proposed copy / progress lines spell out exiftool tags vs GoPro gpmd stream
 # v. 20261020.191200 - initial release: extract / copy GoPro GPS+camera metadata; fuzzy-match counterparts by name
 #
+# 2026.10.20 - v. 0.1.4 - after the metadata scan, print a line for each file that already looks good (has metadata) and will not be processed
 # 2026.10.20 - v. 0.1.3 - while classifying each video (exiftool + ffprobe), show a progress bar with time left
 # 2026.10.20 - v. 0.1.2 - Will-copy / progress bullets use '-' instead of (1)/(2) so they are not mistaken for menu keys
 # 2026.10.20 - v. 0.1.1 - Proposed copy and progress text say clearly: exiftool tags including
@@ -721,7 +723,9 @@ cgm_process_directory_pairs() {
   done
   (( live )) && cgm_progress_end
   echo "$(cgm_ts) Scan done: ${#rich[@]} with metadata, ${#poor[@]} without."
-  (( VERBOSE )) && echo "$(cgm_ts) Directory: ${#rich[@]} with metadata, ${#poor[@]} without"
+  for f in "${rich[@]}"; do
+    echo "$(cgm_ts) Looks good (has metadata): ${f} — not processing"
+  done
 
   if (( ${#poor[@]} == 0 )); then
     echo "$(cgm_ts) Every video already looks tagged; nothing to restore."
