@@ -1,6 +1,8 @@
 #!/bin/bash
+# v. 20261020.150400 - date menu: ASCII n/a so parenthetical notes share one column
 # v. 20261020.145500 - fix file / media dates when the name, filesystem, and tags disagree
 #
+# 2026.10.20 - v. 0.1.1 - date menu uses ASCII n/a (UTF-8 dash broke the column of the notes in parentheses)
 # 2026.10.20 - v. 0.1 - initial release: for video, audio, and pictures, compare the
 #   file-name stamp, filesystem mtime, and media CreateDate (or DateTimeOriginal);
 #   ask which to use (1/2/3…); default is the oldest usable date; stamps before 1990
@@ -385,15 +387,16 @@ mfd_process_file() {
     if [[ -n "${MFD_EPOCHS[i]}" ]]; then
       disp="$(mfd_format_epoch_display "${MFD_EPOCHS[i]}")"
     else
-      disp="—"
+      disp="n/a"
     fi
     if (( i + 1 == MFD_DEF )); then
       if [[ -n "$note" ]]; then
-        note="${note} (oldest — default)"
+        note="${note} (oldest - default)"
       else
-        note="(oldest — default)"
+        note="(oldest - default)"
       fi
     fi
+    # ASCII-only date column so %-19s matches terminal columns (UTF-8 "—" broke alignment).
     printf '  [%d] %-18s %-19s  %s\n' \
       "$((i + 1))" "${MFD_LABELS[i]}" "$disp" "$note"
     keys+="$((i + 1))"

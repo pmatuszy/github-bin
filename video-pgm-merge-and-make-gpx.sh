@@ -3396,15 +3396,16 @@ pgm_prompt_reconcile_output_times() {
     if [[ -n "${epochs[i]}" ]]; then
       disp="$(pgm_format_epoch_display "${epochs[i]}")"
     else
-      disp="—"
+      disp="n/a"
     fi
     if (( i + 1 == def )); then
       if [[ -n "$note" ]]; then
-        note="${note} (oldest — default)"
+        note="${note} (oldest - default)"
       else
-        note="(oldest — default)"
+        note="(oldest - default)"
       fi
     fi
+    # ASCII-only date column so %-19s matches terminal columns (UTF-8 "—" broke alignment).
     printf '  [%d] %-18s %-19s  %s\n' \
       "$((i + 1))" "${labels[i]}" "$disp" "$note"
     keys+="$((i + 1))"
