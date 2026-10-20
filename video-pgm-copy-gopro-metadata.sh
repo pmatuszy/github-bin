@@ -1,10 +1,12 @@
 #!/bin/bash
+# v. 20261020.193500 - end-of-run summary block (scope, looks good, copied, skipped, failed, times)
 # v. 20261020.193300 - after scan, list files that already have metadata (looks good — not processing)
 # v. 20261020.193200 - progress bar while scanning metadata on every video (avoids looking hung)
 # v. 20261020.192900 - Will-copy / progress bullets use '-' not (1)/(2) (those look like menu choices)
 # v. 20261020.192700 - Proposed copy / progress lines spell out exiftool tags vs GoPro gpmd stream
 # v. 20261020.191200 - initial release: extract / copy GoPro GPS+camera metadata; fuzzy-match counterparts by name
 #
+# 2026.10.20 - v. 0.1.5 - end-of-run summary lists videos in scope, looks-good, copied, extracted, skipped, failed, and wall times
 # 2026.10.20 - v. 0.1.4 - after the metadata scan, print a line for each file that already looks good (has metadata) and will not be processed
 # 2026.10.20 - v. 0.1.3 - while classifying each video (exiftool + ffprobe), show a progress bar with time left
 # 2026.10.20 - v. 0.1.2 - Will-copy / progress bullets use '-' instead of (1)/(2) so they are not mistaken for menu keys
@@ -271,6 +273,56 @@ cgm_progress_end() {
   echo
 }
 
+cgm_format_elapsed() {
+  local sec="${1:-0}"
+  (( sec < 0 )) && sec=0
+  if (( sec >= 3600 )); then
+    printf '%dh %02dm %02ds' $((sec / 3600)) $(((sec % 3600) / 60)) $((sec % 60))
+  elif (( sec >= 60 )); then
+    printf '%dm %02ds' $((sec / 60)) $((sec % 60))
+  else
+    printf '%ds' "$sec"
+  fi
+}
+
+cgm_summary_kv() {
+  printf '  %-18s  %s\n' "${1}:" "$2"
+}
+
+cgm_print_summary() {
+  local item elapsed=0 finished
+  finished="$(date '+%Y.%m.%d %H:%M:%S')"
+  if [[ -n "${CGM_SCRIPT_START:-}" ]]; then
+    elapsed=$(( $(date +%s) - CGM_SCRIPT_START ))
+  fi
+  echo
+  echo "--- Run summary ---"
+  cgm_summary_kv "Videos in scope" "${#ALL_VIDEOS[@]}"
+  (( LOOKS_GOOD > 0 )) && cgm_summary_kv "Looks good" "${LOOKS_GOOD} (already had metadata)"
+  (( NEEDED_RESTORE > 0 )) && cgm_summary_kv "Needed restore" "${NEEDED_RESTORE}"
+  cgm_summary_kv "Copied" "${COPIED}"
+  for item in "${COPIED_LIST[@]}"; do
+    printf '    %s\n' "$item"
+  done
+  (( EXTRACTED > 0 )) && cgm_summary_kv "Extracted" "${EXTRACTED}"
+  for item in "${EXTRACTED_LIST[@]}"; do
+    printf '    %s\n' "$item"
+  done
+  (( SKIPPED > 0 )) && cgm_summary_kv "Skipped" "${SKIPPED}"
+  (( FAILED > 0 )) && cgm_summary_kv "Failed" "${FAILED}"
+  for item in "${FAILED_LIST[@]}"; do
+    printf '    %s\n' "$item"
+  done
+  (( DRY_RUN )) && cgm_summary_kv "Dry run" "yes (nothing written)"
+  (( STOPPED )) && cgm_summary_kv "Stopped by user" "yes"
+  if [[ -n "${CGM_SCRIPT_START_DISP:-}" ]]; then
+    cgm_summary_kv "Started" "$CGM_SCRIPT_START_DISP"
+  fi
+  cgm_summary_kv "Finished" "$finished"
+  cgm_summary_kv "Total wall time" "$(cgm_format_elapsed "$elapsed")"
+  echo
+}
+
 # Python fuzzy matcher: print "path<TAB>score" lines, best first.
 # Args: query_path, candidate_path...
 cgm_rank_matches() {
@@ -371,6 +423,7 @@ cgm_extract_sidecar() {
   exif="$(cgm_find_exiftool)" || return 1
   if (( DRY_RUN )); then
     echo "$(cgm_ts) DRY-RUN would extract: ${side}"
+    EXTRACTED_LIST+=("DRY-RUN ${side}")
     return 0
   fi
   if [[ -e "$side" ]]; then
@@ -379,9 +432,12 @@ cgm_extract_sidecar() {
   fi
   if "$exif" -api largefilesupport=1 -o "$side" -- "$src" >/dev/null 2>&1; then
     echo "$(cgm_ts) Extracted: ${side}"
+    EXTRACTED_LIST+=("${side}")
     return 0
   fi
   echo "$(cgm_ts) Extract failed: ${src}" >&2
+  FAILED=$((FAILED + 1))
+  FAILED_LIST+=("extract ${src##*/}")
   return 1
 }
 
@@ -581,13 +637,25 @@ cgm_confirm_pair() {
   esac
 }
 
+cgm_record_copy() {
+  local src="$1" dest="$2"
+  if cgm_copy_metadata "$src" "$dest"; then
+    COPIED=$((COPIED + 1))
+    COPIED_LIST+=("${src##*/} -> ${dest##*/}")
+    return 0
+  fi
+  FAILED=$((FAILED + 1))
+  FAILED_LIST+=("${src##*/} -> ${dest##*/}")
+  return 1
+}
+
 cgm_process_explicit_pair() {
   local a="$1" b="$2" score=""
   cgm_pick_direction "$a" "$b"
   cgm_confirm_pair "$SRC" "$DEST" "$score"
   case $? in
-    0) cgm_copy_metadata "$SRC" "$DEST"; COPIED=$((COPIED + 1)) ;;
-    2) return 2 ;;
+    0) cgm_record_copy "$SRC" "$DEST" ;;
+    2) STOPPED=1; return 2 ;;
     *) SKIPPED=$((SKIPPED + 1)) ;;
   esac
   return 0
@@ -668,12 +736,11 @@ cgm_process_one_video() {
   cgm_confirm_pair "$SRC" "$DEST" "$BEST_SCORE"
   case $? in
     0)
-      cgm_copy_metadata "$SRC" "$DEST"
-      COPIED=$((COPIED + 1))
+      cgm_record_copy "$SRC" "$DEST"
       # Remember pair so directory scan does not do A→B and B→A.
       DONE_KEYS+=("$(cgm_pair_key "$SRC" "$DEST")")
       ;;
-    2) return 2 ;;
+    2) STOPPED=1; return 2 ;;
     *) SKIPPED=$((SKIPPED + 1)) ;;
   esac
   return 0
@@ -723,6 +790,8 @@ cgm_process_directory_pairs() {
   done
   (( live )) && cgm_progress_end
   echo "$(cgm_ts) Scan done: ${#rich[@]} with metadata, ${#poor[@]} without."
+  LOOKS_GOOD=${#rich[@]}
+  NEEDED_RESTORE=${#poor[@]}
   for f in "${rich[@]}"; do
     echo "$(cgm_ts) Looks good (has metadata): ${f} — not processing"
   done
@@ -735,12 +804,14 @@ cgm_process_directory_pairs() {
 
   for f in "${poor[@]}"; do
     if ! cgm_best_match_for "$f"; then
-      (( VERBOSE )) && echo "$(cgm_ts) No match for ${f##*/}"
+      echo "$(cgm_ts) No match >= ${MIN_SCORE} for ${f##*/} — skipped"
+      SKIPPED=$((SKIPPED + 1))
       continue
     fi
     # Prefer a rich source when the best name match is also poor.
     if ! cgm_has_useful_metadata "$BEST_PATH" && ! cgm_is_sidecar "$BEST_PATH"; then
-      (( VERBOSE )) && echo "$(cgm_ts) Best name match for ${f##*/} also lacks metadata: ${BEST_PATH##*/}"
+      echo "$(cgm_ts) Best name match for ${f##*/} also lacks metadata (${BEST_PATH##*/}) — skipped"
+      SKIPPED=$((SKIPPED + 1))
       continue
     fi
     SRC="$BEST_PATH"
@@ -752,11 +823,10 @@ cgm_process_directory_pairs() {
     cgm_confirm_pair "$SRC" "$DEST" "$BEST_SCORE"
     case $? in
       0)
-        cgm_copy_metadata "$SRC" "$DEST"
-        COPIED=$((COPIED + 1))
+        cgm_record_copy "$SRC" "$DEST"
         DONE_KEYS+=("$key")
         ;;
-      2) return 2 ;;
+      2) STOPPED=1; return 2 ;;
       *) SKIPPED=$((SKIPPED + 1)) ;;
     esac
   done
@@ -776,14 +846,23 @@ MIN_SCORE=0.72
 COPIED=0
 EXTRACTED=0
 SKIPPED=0
+FAILED=0
+LOOKS_GOOD=0
+NEEDED_RESTORE=0
+STOPPED=0
 ALL_VIDEOS=()
 POSITIONALS=()
 DONE_KEYS=()
+COPIED_LIST=()
+EXTRACTED_LIST=()
+FAILED_LIST=()
 SRC=""
 DEST=""
 BEST_PATH=""
 BEST_SCORE=""
 CGM_HAS_GPMD=0
+CGM_SCRIPT_START=""
+CGM_SCRIPT_START_DISP=""
 
 . "${profile_location_dir:-$HOME}/bin/_script_header.sh"
 
@@ -873,6 +952,9 @@ if (( ${#ALL_VIDEOS[@]} )); then
   mapfile -t ALL_VIDEOS < <(printf '%s\n' "${ALL_VIDEOS[@]}" | LC_ALL=C sort -u)
 fi
 
+CGM_SCRIPT_START="$(date +%s)"
+CGM_SCRIPT_START_DISP="$(date '+%Y.%m.%d %H:%M:%S')"
+
 echo
 echo "$(cgm_ts) Videos in scope: ${#ALL_VIDEOS[@]}"
 (( DRY_RUN )) && echo "$(cgm_ts) Dry run — nothing will be written."
@@ -898,8 +980,8 @@ if (( ${#EXPLICIT_FILES[@]} == 2 && DIR_MODE == 0 && ! MODE_EXTRACT && ! MODE_MA
   fi
   if (( conf_rc >= 0 )); then
     case "$conf_rc" in
-      0) cgm_copy_metadata "$SRC" "$DEST"; COPIED=$((COPIED + 1)) ;;
-      2) rc=2 ;;
+      0) cgm_record_copy "$SRC" "$DEST" ;;
+      2) STOPPED=1; rc=2 ;;
       *) SKIPPED=$((SKIPPED + 1)) ;;
     esac
   fi
@@ -907,7 +989,7 @@ elif (( ${#EXPLICIT_FILES[@]} > 0 && DIR_MODE == 0 )); then
   for f in "${EXPLICIT_FILES[@]}"; do
     cgm_process_one_video "$f"
     r=$?
-    if (( r == 2 )); then rc=2; break; fi
+    if (( r == 2 )); then STOPPED=1; rc=2; break; fi
   done
 elif (( MODE_EXTRACT )); then
   for f in "${ALL_VIDEOS[@]}"; do
@@ -923,11 +1005,13 @@ else
   # Directory auto: restore onto files that lack metadata.
   cgm_process_directory_pairs
   rc=$?
+  (( rc == 2 )) && STOPPED=1
 fi
 
-echo
-echo "$(cgm_ts) Done. Copied ${COPIED}; extracted ${EXTRACTED}; skipped ${SKIPPED}."
-if (( COPIED == 0 && EXTRACTED == 0 && ! MODE_MATCH_ONLY && ! VERBOSE )); then
+cgm_print_summary
+if (( COPIED == 0 && EXTRACTED == 0 && LOOKS_GOOD == ${#ALL_VIDEOS[@]} && ${#ALL_VIDEOS[@]} > 0 && ! MODE_MATCH_ONLY )); then
+  :
+elif (( COPIED == 0 && EXTRACTED == 0 && ! MODE_MATCH_ONLY && ! VERBOSE && SKIPPED > 0 )); then
   echo "$(cgm_ts) Tip: --match-only or --verbose shows how names were scored."
 fi
 exit 0
