@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261020.163800 - when nothing needed fixing, hint to re-run with --verbose
 # v. 20261020.163600 - --verbose prints every file check (stamps + verdict) even when dates already agree
 # v. 20261020.163300 - Processing header and before/after result block stand out (rules + mark changed rows)
 # v. 20261020.163100 - parse exiftool CreateDate with hyphens so GNU date can read it back after a write
@@ -9,6 +10,7 @@
 # v. 20261020.150400 - date menu: ASCII n/a so parenthetical notes share one column
 # v. 20261020.145500 - fix file / media dates when the name, filesystem, and tags disagree
 #
+# 2026.10.20 - v. 0.1.10 - when the run finds no disagreements, suggest re-running with --verbose to see each file check
 # 2026.10.20 - v. 0.1.9 - --verbose: for every scanned file print File name / Filesystem / Media tags and a verdict (agree / disagree / skip); -v remains --version
 # 2026.10.20 - v. 0.1.8 - Processing and the before/after result are framed with === lines; rows that changed get a leading * and (changed)
 # 2026.10.20 - v. 0.1.7 - reading CreateDate used exiftool's YYYY:MM:DD form, which GNU date rejects, so Media tags always looked like n/a after a successful write; parse as YYYY-MM-DD instead
@@ -798,4 +800,7 @@ done
 
 echo
 echo "$(mfd_ts) Done. Scanned ${SCANNED}; disagreed ${MISMATCH}; fixed ${FIXED}; skipped/kept ${SKIPPED}."
+if (( SCANNED > 0 && MISMATCH == 0 && FIXED == 0 && ! VERBOSE )); then
+  echo "$(mfd_ts) Nothing to change. Re-run with --verbose to see each file check and why."
+fi
 exit 0
