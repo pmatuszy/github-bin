@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261020.145200 - chosen output date is also written as media CreateDate (and related tags)
 # v. 20261020.145000 - after merge, ask which date to use when name/FS/media disagree (oldest usable; ignore before 1990)
 # v. 20261020.102500 - print every seam time in the output again before asking to delete inputs
 # v. 20261020.101700 - refuse mp4_merge when video/audio tracks do not match (ffprobe table)
@@ -67,6 +68,7 @@
 # v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
 # v. 20260805.154826 - after merge: copy GPS/dates from first chapter; FS times via touch -r
 
+# 2026.10.20 - v. 0.15.83 - the date chosen for the output (or the oldest usable under -y) is written into the media CreateDate / ModifyDate tags as well as the filesystem times
 # 2026.10.20 - v. 0.15.82 - after a merge, if the file name, filesystem time, and media CreateDate disagree, ask which to use (1/2/3…); default is the oldest usable date; stamps before 1990 are ignored; -y applies the oldest without asking
 # 2026.10.20 - v. 0.15.81 - before asking to delete input chapters, print every seam time in the merged file as H:MM:SS (also when deleting inputs for an already-merged group)
 # 2026.10.20 - v. 0.15.80 - before mp4_merge, ffprobe checks video/audio fingerprints; mismatched tracks are refused with a short table (forced/+N exits; scan mode skips that group). No automatic re-encode
@@ -3253,29 +3255,51 @@ pgm_set_fs_times_epoch() {
   return 0
 }
 
-# Write CreateDate / ModifyDate (and QuickTime peers) from a Unix epoch.
+# Write media CreateDate / ModifyDate (and QuickTime track/media peers) from a Unix epoch.
+# FileCreateDate/FileModifyDate are best-effort afterward so a FS-tag failure cannot
+# block the dates stored inside the video.
 pgm_set_media_dates_epoch() {
-  local dest="$1" epoch="$2" exif iso
+  local dest="$1" epoch="$2" exif iso ok=0
   [[ -f "$dest" && "$epoch" =~ ^[0-9]+$ ]] || return 1
   exif="$(resolve_pgm_exiftool 2>/dev/null)" || return 1
   iso="$(date -d "@${epoch}" '+%Y:%m:%d %H:%M:%S' 2>/dev/null)" || return 1
-  "$exif" -overwrite_original -P -api QuickTimeUTC=1 \
+  if "$exif" -overwrite_original -P -api QuickTimeUTC=1 \
+    -AllDates="$iso" \
     -CreateDate="$iso" -ModifyDate="$iso" \
     -TrackCreateDate="$iso" -TrackModifyDate="$iso" \
     -MediaCreateDate="$iso" -MediaModifyDate="$iso" \
+    -- "$dest" >/dev/null 2>&1; then
+    ok=1
+  elif "$exif" -overwrite_original -P -api QuickTimeUTC=1 \
+    -CreateDate="$iso" -ModifyDate="$iso" \
+    -TrackCreateDate="$iso" -TrackModifyDate="$iso" \
+    -MediaCreateDate="$iso" -MediaModifyDate="$iso" \
+    -- "$dest" >/dev/null 2>&1; then
+    ok=1
+  fi
+  "$exif" -overwrite_original -P -api QuickTimeUTC=1 \
     -FileCreateDate="$iso" -FileModifyDate="$iso" \
-    -- "$dest" >/dev/null 2>&1
+    -- "$dest" >/dev/null 2>&1 || true
+  (( ok ))
 }
 
 pgm_apply_epoch_to_output() {
-  local dest="$1" epoch="$2" gpx=""
-  pgm_set_media_dates_epoch "$dest" "$epoch" || true
-  pgm_set_fs_times_epoch "$dest" "$epoch" || true
+  local dest="$1" epoch="$2" gpx="" disp
+  disp="$(pgm_format_epoch_display "$epoch")"
+  if pgm_set_media_dates_epoch "$dest" "$epoch"; then
+    pgm_log_kv "Media CreateDate" "$disp"
+  else
+    pgm_log_kv "Media CreateDate" "could not write ${disp}"
+  fi
+  if pgm_set_fs_times_epoch "$dest" "$epoch"; then
+    pgm_log_kv "Filesystem times" "$disp"
+  else
+    pgm_log_kv "Filesystem times" "could not set ${disp}"
+  fi
   gpx="$(dashcam_gpx_beside_output "$dest" 2>/dev/null || true)"
   if [[ -n "$gpx" && -f "$gpx" ]]; then
     pgm_set_fs_times_epoch "$gpx" "$epoch" || true
   fi
-  pgm_log_kv "Output times" "$(pgm_format_epoch_display "$epoch")"
 }
 
 # After metadata copy: if name / FS / media disagree, ask which date to use.

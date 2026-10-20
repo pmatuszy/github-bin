@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261020.145200 - chosen output date is also written as media CreateDate (and related tags)
 # v. 20261020.145000 - after encode, ask which date to use when name/FS/media disagree (oldest usable; ignore before 1990)
 # v. 20261020.121200 - file picker: All and None in dialog; plain menu names A and N clearly
 # v. 20261014.084438 - the output name is stem_xN.mp4; the clock is added only when that name is taken
@@ -50,6 +51,7 @@
 # v. 20260930.221500 - file prompts: one key, no Enter
 # v. 20260930.220400 - faster viewing copy of a merged video (2, 5, 10, 20, …)
 
+# 2026.10.20 - v. 0.48 - the date chosen for the output (or the oldest usable under -y) is written into the media CreateDate / ModifyDate tags as well as the filesystem times
 # 2026.10.20 - v. 0.47 - after encode, if the source file name, filesystem time, and media CreateDate disagree, ask which to use (1/2/3…); default is the oldest usable date; stamps before 1990 are ignored; -y applies the oldest without asking
 # 2026.10.20 - v. 0.46 - Pick files: dialog has All and None buttons that reset every mark; the plain menu says A=all and N=none (those keys were already there)
 # 2026.10.14 - v. 0.45 - the output name is stem_xN.mp4; a later encode that would use the same name gets the start time in the name
@@ -1165,24 +1167,45 @@ tl_set_fs_times_epoch() {
   return 0
 }
 
+# Write media CreateDate / ModifyDate inside the video; File* dates are best-effort after.
 tl_set_media_dates_epoch() {
-  local dest="$1" epoch="$2" exif iso
+  local dest="$1" epoch="$2" exif iso ok=0
   [[ -f "$dest" && "$epoch" =~ ^[0-9]+$ ]] || return 1
   exif="$(tl_find_exiftool 2>/dev/null)" || return 1
   iso="$(date -d "@${epoch}" '+%Y:%m:%d %H:%M:%S' 2>/dev/null)" || return 1
-  "$exif" -overwrite_original -P -api QuickTimeUTC=1 \
+  if "$exif" -overwrite_original -P -api QuickTimeUTC=1 \
+    -AllDates="$iso" \
     -CreateDate="$iso" -ModifyDate="$iso" \
     -TrackCreateDate="$iso" -TrackModifyDate="$iso" \
     -MediaCreateDate="$iso" -MediaModifyDate="$iso" \
+    -- "$dest" >/dev/null 2>&1; then
+    ok=1
+  elif "$exif" -overwrite_original -P -api QuickTimeUTC=1 \
+    -CreateDate="$iso" -ModifyDate="$iso" \
+    -TrackCreateDate="$iso" -TrackModifyDate="$iso" \
+    -MediaCreateDate="$iso" -MediaModifyDate="$iso" \
+    -- "$dest" >/dev/null 2>&1; then
+    ok=1
+  fi
+  "$exif" -overwrite_original -P -api QuickTimeUTC=1 \
     -FileCreateDate="$iso" -FileModifyDate="$iso" \
-    -- "$dest" >/dev/null 2>&1
+    -- "$dest" >/dev/null 2>&1 || true
+  (( ok ))
 }
 
 tl_apply_epoch_to_output() {
-  local dest="$1" epoch="$2"
-  tl_set_media_dates_epoch "$dest" "$epoch" || true
-  tl_set_fs_times_epoch "$dest" "$epoch" || true
-  echo "$(tl_ts) Output times: $(tl_format_epoch_display "$epoch")"
+  local dest="$1" epoch="$2" disp
+  disp="$(tl_format_epoch_display "$epoch")"
+  if tl_set_media_dates_epoch "$dest" "$epoch"; then
+    echo "$(tl_ts) Media CreateDate: ${disp}"
+  else
+    echo "$(tl_ts) Media CreateDate: could not write ${disp}" >&2
+  fi
+  if tl_set_fs_times_epoch "$dest" "$epoch"; then
+    echo "$(tl_ts) Filesystem times: ${disp}"
+  else
+    echo "$(tl_ts) Filesystem times: could not set ${disp}" >&2
+  fi
 }
 
 # After stamping from the source: if name / FS / media disagree, ask which date to use.
