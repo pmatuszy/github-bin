@@ -1,10 +1,12 @@
 #!/bin/bash
+# v. 20261020.162800 - Processing header; before/after date table; numeric default spelled out on the prompt
 # v. 20261020.162300 - when name and mtime match and CreateDate is missing, default is apply that date (not Skip)
 # v. 20261020.155800 - Fix dates prompt: capitalise the default key (e.g. S when Skip is default)
 # v. 20261020.150700 - date menu always lists File name, Filesystem, and Media tags (n/a when unusable)
 # v. 20261020.150400 - date menu: ASCII n/a so parenthetical notes share one column
 # v. 20261020.145500 - fix file / media dates when the name, filesystem, and tags disagree
 #
+# 2026.10.20 - v. 0.1.6 - per-file Processing header; after a change show File name / Filesystem / Media tags before and after side by side; when the default is a number, the prompt says e.g. (default 1 = File name)
 # 2026.10.20 - v. 0.1.5 - when name and mtime already match and only CreateDate is missing, default is to apply that date (filesystem + media tags), not Skip
 # 2026.10.20 - v. 0.1.4 - Fix dates prompt shows the default key in capitals (e.g. 1/2/3/4/a/S/q), like the other scripts
 # 2026.10.20 - v. 0.1.2 - always show File name, Filesystem, and Media tags rows (n/a when missing or before 1990)
@@ -46,10 +48,15 @@ Options:
 
 Interactive keys (per file):
   1/2/3…               Pick a listed source (default = oldest usable).
+                       When the default is a number, the prompt also says
+                       e.g. (default 1 = File name).
   a                    Apply the oldest usable date for this file and every
                        later file in this run (no more prompts).
   s                    Skip this file.
   q                    Quit.
+
+After a change, the script prints File name / Filesystem / Media tags
+before and after side by side.
 
 Examples:
   $(basename "$0")
@@ -152,6 +159,36 @@ mfd_format_epoch_display() {
   date -d "@${e}" '+%Y.%m.%d %H:%M:%S' 2>/dev/null \
     || date -r "$e" '+%Y.%m.%d %H:%M:%S' 2>/dev/null \
     || printf '%s\n' "$e"
+}
+
+# Epoch → display string, or n/a when empty/unusable.
+mfd_disp_or_na() {
+  local e="${1:-}"
+  if [[ -n "$e" ]]; then
+    mfd_format_epoch_display "$e"
+  else
+    printf '%s\n' "n/a"
+  fi
+}
+
+# Snapshot name / filesystem / media epochs for a file (empty string when n/a).
+# Sets MFD_SNAP_NAME MFD_SNAP_FS MFD_SNAP_MEDIA.
+mfd_snapshot_dates() {
+  local f="$1"
+  MFD_SNAP_NAME="$(mfd_filename_epoch_from_basename "${f##*/}" 2>/dev/null || true)"
+  MFD_SNAP_FS="$(mfd_fs_mtime_epoch "$f" 2>/dev/null || true)"
+  MFD_SNAP_MEDIA="$(mfd_media_createdate_epoch "$f" 2>/dev/null || true)"
+}
+
+# Side-by-side before/after for the three date sources.
+mfd_print_before_after() {
+  local b_name="$1" b_fs="$2" b_media="$3"
+  local a_name="$4" a_fs="$5" a_media="$6"
+  echo
+  printf '  %-18s %-21s %s\n' "" "Before" "After"
+  printf '  %-18s %-21s %s\n' "File name" "$(mfd_disp_or_na "$b_name")" "$(mfd_disp_or_na "$a_name")"
+  printf '  %-18s %-21s %s\n' "Filesystem" "$(mfd_disp_or_na "$b_fs")" "$(mfd_disp_or_na "$a_fs")"
+  printf '  %-18s %-21s %s\n' "Media tags" "$(mfd_disp_or_na "$b_media")" "$(mfd_disp_or_na "$a_media")"
 }
 
 mfd_abs_diff() {
@@ -258,23 +295,47 @@ mfd_set_media_dates_epoch() {
   (( ok ))
 }
 
+# Apply epoch to media + filesystem. Prints a short status; caller shows before/after.
+# Returns 0 on success (or dry-run). On dry-run sets MFD_DRY_AFTER_EPOCH for the table.
 mfd_apply_epoch() {
-  local dest="$1" epoch="$2" disp
+  local dest="$1" epoch="$2" disp media_ok=0 fs_ok=0
   disp="$(mfd_format_epoch_display "$epoch")"
+  MFD_DRY_AFTER_EPOCH=""
   if (( DRY_RUN )); then
-    echo "$(mfd_ts) DRY-RUN would set media + filesystem times to ${disp} for ${dest##*/}"
+    MFD_DRY_AFTER_EPOCH="$epoch"
+    echo "$(mfd_ts) DRY-RUN would set media + filesystem times to ${disp}"
     return 0
   fi
   if mfd_set_media_dates_epoch "$dest" "$epoch"; then
-    echo "$(mfd_ts) Media CreateDate: ${disp}"
+    media_ok=1
   else
     echo "$(mfd_ts) Media CreateDate: could not write ${disp}" >&2
   fi
   if mfd_set_fs_times_epoch "$dest" "$epoch"; then
-    echo "$(mfd_ts) Filesystem times: ${disp}"
+    fs_ok=1
   else
     echo "$(mfd_ts) Filesystem times: could not set ${disp}" >&2
   fi
+  (( media_ok || fs_ok ))
+}
+
+# After apply (or dry-run): print before/after using snapshots taken before the write.
+mfd_show_result_table() {
+  local f="$1" before_name="$2" before_fs="$3" before_media="$4"
+  local after_name after_fs after_media
+  if (( DRY_RUN )) && [[ -n "${MFD_DRY_AFTER_EPOCH:-}" ]]; then
+    after_name="$before_name"
+    after_fs="$MFD_DRY_AFTER_EPOCH"
+    after_media="$MFD_DRY_AFTER_EPOCH"
+  else
+    mfd_snapshot_dates "$f"
+    after_name="$MFD_SNAP_NAME"
+    after_fs="$MFD_SNAP_FS"
+    after_media="$MFD_SNAP_MEDIA"
+  fi
+  mfd_print_before_after \
+    "$before_name" "$before_fs" "$before_media" \
+    "$after_name" "$after_fs" "$after_media"
 }
 
 mfd_is_media_file() {
@@ -397,7 +458,8 @@ mfd_prepare_file() {
 
 mfd_process_file() {
   local f="$1"
-  local i n choice disp note prompt_keys
+  local i n choice disp note prompt_keys prompt_extra=""
+  local before_name before_fs before_media
   local -a key_list=()
 
   if ! mfd_prepare_file "$f"; then
@@ -405,19 +467,25 @@ mfd_process_file() {
   fi
   MISMATCH=$((MISMATCH + 1))
   n=${#MFD_LABELS[@]}
+  # prepare_file always lists File name, Filesystem, Media tags first.
+  before_name="${MFD_EPOCHS[0]}"
+  before_fs="${MFD_EPOCHS[1]}"
+  before_media="${MFD_EPOCHS[2]}"
 
   if (( DO_YES )) || (( ALWAYS_OLDEST )) || (( ! script_is_run_interactively )); then
     echo
-    echo "$(mfd_ts) Dates disagree: ${f}"
+    echo "$(mfd_ts) Processing: ${f}"
     if [[ -n "$MFD_OLDEST_E" ]]; then
       mfd_apply_epoch "$f" "$MFD_OLDEST_E"
       FIXED=$((FIXED + 1))
+      echo "$(mfd_ts) Set from oldest usable: $(mfd_format_epoch_display "$MFD_OLDEST_E")"
+      mfd_show_result_table "$f" "$before_name" "$before_fs" "$before_media"
     fi
     return 0
   fi
 
   echo
-  echo "$(mfd_ts) Dates disagree: ${f}"
+  echo "$(mfd_ts) Processing: ${f}"
   echo
   echo "  Sources (oldest usable is the default; applying it sets media CreateDate and filesystem times):"
   echo
@@ -446,9 +514,14 @@ mfd_process_file() {
   echo "  [$(mfd_k q "$MFD_DEFAULT_KEY")] Quit"
   key_list+=(a s q)
   prompt_keys="$(mfd_keys "$MFD_DEFAULT_KEY" "${key_list[@]}")"
+  # Numbers cannot be capitalised; spell out the default when it is a digit.
+  if [[ "$MFD_DEFAULT_KEY" =~ ^[0-9]+$ ]]; then
+    i=$((MFD_DEFAULT_KEY - 1))
+    prompt_extra=" (default ${MFD_DEFAULT_KEY} = ${MFD_LABELS[i]})"
+  fi
 
   while true; do
-    mfd_read_key "Fix dates [${prompt_keys}]: " "$MFD_DEFAULT_KEY"
+    mfd_read_key "Fix dates [${prompt_keys}]${prompt_extra}: " "$MFD_DEFAULT_KEY"
     choice="$(mfd_choice "$REPLY")"
     case "$choice" in
       q)
@@ -465,6 +538,8 @@ mfd_process_file() {
         if [[ -n "$MFD_OLDEST_E" ]]; then
           mfd_apply_epoch "$f" "$MFD_OLDEST_E"
           FIXED=$((FIXED + 1))
+          echo "$(mfd_ts) Set from oldest usable: $(mfd_format_epoch_display "$MFD_OLDEST_E")"
+          mfd_show_result_table "$f" "$before_name" "$before_fs" "$before_media"
         fi
         echo "$(mfd_ts) Will use the oldest usable date for every later file."
         return 0
@@ -485,6 +560,7 @@ mfd_process_file() {
       mfd_apply_epoch "$f" "${MFD_EPOCHS[i]}"
       FIXED=$((FIXED + 1))
       echo "$(mfd_ts) Set from ${MFD_LABELS[i]}: $(mfd_format_epoch_display "${MFD_EPOCHS[i]}")"
+      mfd_show_result_table "$f" "$before_name" "$before_fs" "$before_media"
       return 0
     fi
     echo "$(mfd_ts) Unknown choice: ${REPLY}."
