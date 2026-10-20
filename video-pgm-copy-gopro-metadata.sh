@@ -1,6 +1,9 @@
 #!/bin/bash
+# v. 20261020.192700 - Proposed copy / progress lines spell out exiftool tags vs GoPro gpmd stream
 # v. 20261020.191200 - initial release: extract / copy GoPro GPS+camera metadata; fuzzy-match counterparts by name
 #
+# 2026.10.20 - v. 0.1.1 - Proposed copy and progress text say clearly: (1) exiftool tags including
+#   GoPro:/GPS/dates/camera, and (2) best-effort ffmpeg remux of the timed gpmd stream when present
 # 2026.10.20 - v. 0.1 - initial release: copy GoPro-related metadata (GPS, dates, Make/Model,
 #   Keys/ItemList peers) from a source MP4/MOV (or a .gopro-meta.mie sidecar) onto a processed
 #   file that lost those tags. Fuzzy name matching (Python) picks the best counterpart when
@@ -318,21 +321,55 @@ cgm_extract_sidecar() {
   return 1
 }
 
-# Copy static tags (and optional gpmd) from src (video or .mie) onto dest video.
+# Probe whether src has a GoPro timed gpmd/MET data stream. Sets CGM_HAS_GPMD.
+cgm_probe_gpmd() {
+  local f="$1"
+  CGM_HAS_GPMD=0
+  cgm_is_sidecar "$f" && return 1
+  command -v ffprobe >/dev/null 2>&1 || return 1
+  if ffprobe -v error -select_streams d \
+    -show_entries stream=codec_tag_string:stream_tags=handler_name \
+    -of csv=p=0 -- "$f" 2>/dev/null \
+    | grep -Eiq 'gpmd|GoPro[[:space:]]*MET|GoPro MET'; then
+    CGM_HAS_GPMD=1
+    return 0
+  fi
+  return 1
+}
+
+# Copy: (1) exiftool tags incl. GoPro:/GPS/dates/camera, (2) optional gpmd remux.
 cgm_copy_metadata() {
-  local src="$1" dest="$2" exif tmp out rc=0
+  local src="$1" dest="$2" exif tmp rc=0
+  local src_gpmd=0 dest_gpmd=0
   exif="$(cgm_find_exiftool)" || return 1
   [[ -f "$src" && -f "$dest" ]] || return 1
 
+  cgm_probe_gpmd "$src" && src_gpmd=1
+  cgm_probe_gpmd "$dest" && dest_gpmd=1
+
   if (( DRY_RUN )); then
-    echo "$(cgm_ts) DRY-RUN would copy metadata:"
+    echo "$(cgm_ts) DRY-RUN would copy:"
     echo "           from: ${src}"
     echo "           to:   ${dest}"
-    (( COPY_GPMD )) && echo "           gpmd remux: attempted if present"
+    echo "           (1) exiftool tags: GPS, dates, Make/Model, GoPro:all, Keys/ItemList peers"
+    if (( COPY_GPMD )) && (( src_gpmd )) && (( ! dest_gpmd )) && ! cgm_is_sidecar "$src"; then
+      echo "           (2) GoPro gpmd timed stream: remux via ffmpeg (source has gpmd)"
+    elif (( ! COPY_GPMD )); then
+      echo "           (2) GoPro gpmd timed stream: off (--no-gpmd)"
+    elif cgm_is_sidecar "$src"; then
+      echo "           (2) GoPro gpmd timed stream: n/a (source is a sidecar, not a video)"
+    elif (( ! src_gpmd )); then
+      echo "           (2) GoPro gpmd timed stream: source has no gpmd stream"
+    elif (( dest_gpmd )); then
+      echo "           (2) GoPro gpmd timed stream: dest already has a data stream"
+    else
+      echo "           (2) GoPro gpmd timed stream: not attempted"
+    fi
     return 0
   fi
 
-  echo "$(cgm_ts) Copying tags: ${src##*/} -> ${dest##*/}"
+  echo "$(cgm_ts) Copying GoPro metadata: ${src##*/} -> ${dest##*/}"
+  echo "$(cgm_ts)   (1/2) exiftool tags: GPS, dates, Make/Model, GoPro:all, Keys/ItemList …"
   if "$exif" -overwrite_original -P -api QuickTimeUTC=1 -api largefilesupport=1 \
     -TagsFromFile "$src" \
     -time:all -gps:all \
@@ -343,7 +380,7 @@ cgm_copy_metadata() {
     -GoPro:all \
     -FileCreateDate -FileModifyDate \
     -- "$dest" >/dev/null 2>&1; then
-    echo "$(cgm_ts) Tags: OK (GPS/dates/camera via exiftool)"
+    echo "$(cgm_ts)   (1/2) OK — tags written (including GoPro: group when present in source)"
   else
     # Retry without GoPro:all (older exiftool / non-GoPro source).
     if "$exif" -overwrite_original -P -api QuickTimeUTC=1 -api largefilesupport=1 \
@@ -355,9 +392,9 @@ cgm_copy_metadata() {
       -QuickTime:GPSCoordinates \
       -FileCreateDate -FileModifyDate \
       -- "$dest" >/dev/null 2>&1; then
-      echo "$(cgm_ts) Tags: OK (GPS/dates/camera; GoPro group skipped)"
+      echo "$(cgm_ts)   (1/2) OK — GPS/dates/camera tags written (GoPro: group not available / skipped)"
     else
-      echo "$(cgm_ts) Tags: exiftool copy failed" >&2
+      echo "$(cgm_ts)   (1/2) FAILED — exiftool could not write tags" >&2
       rc=1
     fi
   fi
@@ -365,10 +402,9 @@ cgm_copy_metadata() {
   if (( COPY_GPMD )) && ! cgm_is_sidecar "$src" \
     && command -v ffmpeg >/dev/null 2>&1 \
     && command -v ffprobe >/dev/null 2>&1; then
-    cgm_metadata_richness "$src" >/dev/null
-    if (( CGM_HAS_GPMD )); then
-      cgm_metadata_richness "$dest" >/dev/null
-      if (( ! CGM_HAS_GPMD )); then
+    if (( src_gpmd )); then
+      if (( ! dest_gpmd )); then
+        echo "$(cgm_ts)   (2/2) GoPro gpmd timed stream: remuxing into destination (ffmpeg) …"
         tmp="$(mktemp "${TMPDIR:-/tmp}/cgm-gpmd.XXXXXX.mp4")"
         if ffmpeg -y -hide_banner -loglevel error \
           -i "$dest" -i "$src" \
@@ -377,20 +413,29 @@ cgm_copy_metadata() {
           "$tmp" 2>/dev/null \
           && [[ -s "$tmp" ]]; then
           if mv -f -- "$tmp" "$dest"; then
-            echo "$(cgm_ts) gpmd: remuxed timed metadata stream into destination"
+            echo "$(cgm_ts)   (2/2) OK — gpmd stream copied (full GoPro telemetry track)"
           else
             rm -f -- "$tmp"
-            echo "$(cgm_ts) gpmd: remux OK but could not replace destination" >&2
+            echo "$(cgm_ts)   (2/2) FAILED — remux OK but could not replace destination" >&2
             rc=1
           fi
         else
           rm -f -- "$tmp"
-          (( VERBOSE )) && echo "$(cgm_ts) gpmd: remux skipped/failed (tags still copied)"
+          echo "$(cgm_ts)   (2/2) FAILED — gpmd remux did not succeed (exiftool tags above still apply)" >&2
+          rc=1
         fi
       else
-        (( VERBOSE )) && echo "$(cgm_ts) gpmd: destination already has a data stream"
+        echo "$(cgm_ts)   (2/2) GoPro gpmd timed stream: skipped (destination already has a data stream)"
       fi
+    else
+      echo "$(cgm_ts)   (2/2) GoPro gpmd timed stream: skipped (source has no gpmd / GoPro MET stream)"
     fi
+  elif (( ! COPY_GPMD )); then
+    echo "$(cgm_ts)   (2/2) GoPro gpmd timed stream: skipped (--no-gpmd)"
+  elif cgm_is_sidecar "$src"; then
+    echo "$(cgm_ts)   (2/2) GoPro gpmd timed stream: skipped (source is a .mie sidecar — tags only)"
+  else
+    echo "$(cgm_ts)   (2/2) GoPro gpmd timed stream: skipped (ffmpeg/ffprobe not available)"
   fi
   return "$rc"
 }
@@ -417,13 +462,30 @@ cgm_pick_direction() {
 }
 
 cgm_confirm_pair() {
-  local src="$1" dest="$2" score="${3:-}" def=y keys
+  local src="$1" dest="$2" score="${3:-}" keys src_gpmd=0 dest_gpmd=0
   echo
   echo "$(cgm_ts) Proposed copy"
   echo "  Source (has metadata): ${src}"
-  echo "  Dest   (receive tags): ${dest}"
+  echo "  Dest   (receive it):   ${dest}"
   if [[ -n "$score" ]]; then
     awk -v s="$score" 'BEGIN { printf "  Match score:           %.0f%%\n", s * 100 }'
+  fi
+  echo "  Will copy:"
+  echo "    (1) exiftool tags — GPS, dates, Make/Model, GoPro:all, Keys/ItemList peers"
+  cgm_probe_gpmd "$src" && src_gpmd=1
+  cgm_probe_gpmd "$dest" && dest_gpmd=1
+  if (( COPY_GPMD )) && (( src_gpmd )) && (( ! dest_gpmd )) && ! cgm_is_sidecar "$src"; then
+    echo "    (2) GoPro gpmd timed stream — full telemetry track via ffmpeg remux"
+  elif (( ! COPY_GPMD )); then
+    echo "    (2) GoPro gpmd timed stream — off (--no-gpmd); tags only"
+  elif cgm_is_sidecar "$src"; then
+    echo "    (2) GoPro gpmd timed stream — n/a (source is a sidecar; tags only)"
+  elif (( ! src_gpmd )); then
+    echo "    (2) GoPro gpmd timed stream — source has none (tags only)"
+  elif (( dest_gpmd )); then
+    echo "    (2) GoPro gpmd timed stream — dest already has one (tags only)"
+  else
+    echo "    (2) GoPro gpmd timed stream — not attempted"
   fi
   if (( DO_YES )); then
     cgm_print_selected "y = Copy (-y)"
@@ -434,10 +496,10 @@ cgm_confirm_pair() {
     return 1
   fi
   keys="$(cgm_keys y y n q)"
-  cgm_read_key "Copy metadata [${keys}]? " y
+  cgm_read_key "Copy GoPro metadata [${keys}]? " y
   case "$(cgm_choice "$REPLY")" in
     y)
-      cgm_print_selected "y = Copy"
+      cgm_print_selected "y = Copy (tags + gpmd when available)"
       return 0
       ;;
     n)
