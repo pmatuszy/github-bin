@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261020.121200 - file picker: All and None in dialog; plain menu names A and N clearly
 # v. 20261014.084438 - the output name is stem_xN.mp4; the clock is added only when that name is taken
 # v. 20261014.084030 - ask whether to encode every file before the first one starts
 # v. 20261007.205107 - encode everything is Y (default); a short try first is n
@@ -48,6 +49,7 @@
 # v. 20260930.221500 - file prompts: one key, no Enter
 # v. 20260930.220400 - faster viewing copy of a merged video (2, 5, 10, 20, …)
 
+# 2026.10.20 - v. 0.46 - Pick files: dialog has All and None buttons that reset every mark; the plain menu says A=all and N=none (those keys were already there)
 # 2026.10.14 - v. 0.45 - the output name is stem_xN.mp4; a later encode that would use the same name gets the start time in the name
 # 2026.10.14 - v. 0.44 - before the first file, ask whether to encode every file, or the first file and then ask again
 # 2026.10.07 - v. 0.43 - encode everything is Y (default); a short try first is n
@@ -1309,12 +1311,12 @@ tl_pick_files_plain() {
   done
   while true; do
     echo
-    echo "$(tl_ts) Pick files (toggle a number, then D when done):"
+    echo "$(tl_ts) Pick files (number toggles one; A=all, N=none, D=done):"
     for (( i = 0; i < n; i++ )); do
       if (( marks[i] )); then mark='x'; else mark=' '; fi
       printf '  %2d) [%s] %s\n' "$((i + 1))" "$mark" "${TL_INPUTS[i]##*/}"
     done
-    tl_read_line "Pick [1-${n}/a/n/D/q], Enter keeps D: " d
+    tl_read_line "Pick [1-${n}/A/N/D/q], Enter keeps D: " d
     answer="$(tl_choice "$REPLY")"
     case "$answer" in
       q) tl_quit_script ;;
@@ -1344,33 +1346,58 @@ tl_pick_files_plain() {
   TL_INPUTS=("${keep[@]}")
 }
 
+# Checklist with All / None buttons (help / extra) that redraw with every mark on or off.
 tl_pick_files_dialog() {
-  local i n h w list_h rc out tag
-  local -a args=() keep=()
+  local i n h w list_h rc out tag state
+  local -a args=() keep=() marks=()
   n=${#TL_INPUTS[@]}
   (( n < 1 )) && return 0
+  for (( i = 0; i < n; i++ )); do
+    marks[i]=1
+  done
   list_h=$n
   (( list_h > 16 )) && list_h=16
-  h=$((list_h + 8))
+  h=$((list_h + 9))
   w=78
-  args=(--title "Timelapse videos" --ok-label "Encode" --cancel-label "Quit"
-        --checklist "Space toggles a file. Enter encodes the marked ones." "$h" "$w" "$list_h")
-  for (( i = 0; i < n; i++ )); do
-    args+=("$((i + 1))" "${TL_INPUTS[i]##*/}" "on")
+  while true; do
+    args=(--title "Timelapse videos"
+          --ok-label "Encode" --cancel-label "Quit"
+          --help-button --help-label "All"
+          --extra-button --extra-label "None"
+          --checklist "Space toggles a file. All / None reset every mark. Enter encodes the marked ones." \
+            "$h" "$w" "$list_h")
+    for (( i = 0; i < n; i++ )); do
+      if (( marks[i] )); then state=on; else state=off; fi
+      args+=("$((i + 1))" "${TL_INPUTS[i]##*/}" "$state")
+    done
+    out="$(dialog --ascii-lines --separate-output "${args[@]}" 3>&1 1>&2 2>&3)"
+    rc=$?
+    clear 2>/dev/null || true
+    case "$rc" in
+      0)
+        keep=()
+        while IFS= read -r tag; do
+          [[ -z "$tag" ]] && continue
+          if [[ "$tag" =~ ^[0-9]+$ ]] && (( tag >= 1 && tag <= n )); then
+            keep+=("${TL_INPUTS[tag - 1]}")
+          fi
+        done <<< "$out"
+        TL_INPUTS=("${keep[@]}")
+        return 0
+        ;;
+      2)
+        # Help → All
+        for (( i = 0; i < n; i++ )); do marks[i]=1; done
+        ;;
+      3)
+        # Extra → None
+        for (( i = 0; i < n; i++ )); do marks[i]=0; done
+        ;;
+      *)
+        tl_quit_script
+        ;;
+    esac
   done
-  out="$(dialog --ascii-lines --separate-output "${args[@]}" 3>&1 1>&2 2>&3)"
-  rc=$?
-  clear 2>/dev/null || true
-  if (( rc != 0 )); then
-    tl_quit_script
-  fi
-  while IFS= read -r tag; do
-    [[ -z "$tag" ]] && continue
-    if [[ "$tag" =~ ^[0-9]+$ ]] && (( tag >= 1 && tag <= n )); then
-      keep+=("${TL_INPUTS[tag - 1]}")
-    fi
-  done <<< "$out"
-  TL_INPUTS=("${keep[@]}")
 }
 
 tl_prompt_input_files() {
