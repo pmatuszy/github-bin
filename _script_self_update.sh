@@ -1,7 +1,12 @@
 #!/usr/bin/env bash
+# v. 20261020.205000 - seal running script to a temp copy so in-place cp cannot break bash parse
 # v. 20261020.202500 - detect live-script overwrite (git pull then copy into bin/) mid-run
 # v. 20261020.202200 - detect on-disk script replacement while a run is in progress
 #
+# 2026.10.20 - v. 1.2.205000 - Copy the live script to a temp file and re-exec from that copy at
+#   startup (seal). Bash keeps reading the open inode; an in-place cp into ~/bin overwrites that
+#   inode and causes bogus mid-file syntax errors (e.g. near unexpected token `else`). Sealed runs
+#   keep executing the snapshot; the live path is still watched for [R]/[C]/[Q].
 # 2026.10.20 - v. 1.1.202500 - Fingerprint is the running script path (e.g. ~/bin/rename.sh), not the
 #   git checkout. git pull alone does nothing; copying/overwriting that live file (cp/rsync/mv) is what
 #   trips the check — in-place overwrite or new inode both work (size/mtime and/or inode change).
@@ -9,7 +14,7 @@
 #   notices when the path is replaced. Interactive: [R]estart / [C]ontinue / [Q]uit.
 #   Non-interactive: warn once and keep the already-running code. Sourced by _script_header.sh and rename.sh.
 #
-# Contract: source this file; call script_self_update_init [path] then script_self_update_install_trap.
+# Contract: source this file; call script_self_update_setup [live-path].
 # Do not execute this file standalone.
 
 if [[ "${BASH_SOURCE[0]-}" == "$0" ]]; then
@@ -25,11 +30,18 @@ SCRIPT_SELF_UPDATE_LAST_CHECK_EPOCH="${SCRIPT_SELF_UPDATE_LAST_CHECK_EPOCH:-0}"
 SCRIPT_SELF_UPDATE_INTERVAL_SEC="${SCRIPT_SELF_UPDATE_INTERVAL_SEC:-30}"
 SCRIPT_SELF_UPDATE_DEBUG_TRAP_INSTALLED="${SCRIPT_SELF_UPDATE_DEBUG_TRAP_INSTALLED:-0}"
 SCRIPT_SELF_UPDATE_IN_CHECK="${SCRIPT_SELF_UPDATE_IN_CHECK:-0}"
+SCRIPT_SELF_SEALED="${SCRIPT_SELF_SEALED:-}"
+SCRIPT_SELF_SEAL_TMP="${SCRIPT_SELF_SEAL_TMP:-}"
+SCRIPT_SELF_LIVE_PATH="${SCRIPT_SELF_LIVE_PATH:-}"
+SCRIPT_SELF_SEAL_CLEANUP_REGISTERED="${SCRIPT_SELF_SEAL_CLEANUP_REGISTERED:-0}"
 
 script_self_update_resolve_path() {
   local p="" dir base found i
 
   p="${1:-}"
+  if [[ -z "$p" ]]; then
+    p="${SCRIPT_SELF_LIVE_PATH:-}"
+  fi
   if [[ -z "$p" ]]; then
     p="${CALLER_SCRIPT:-}"
   fi
@@ -38,6 +50,7 @@ script_self_update_resolve_path() {
       p="${BASH_SOURCE[i]}"
       case "$(basename -- "$p")" in
         _script_self_update.sh|_script_header.sh|_script_footer.sh) continue ;;
+        .*.seal.*|*.seal.*) continue ;;
       esac
       [[ -n "$p" ]] && break
     done
@@ -77,6 +90,36 @@ script_self_update_fingerprint() {
   printf '%s\t%s' "$st" "$ver"
 }
 
+script_self_update_cleanup_seal() {
+  if [[ -n "${SCRIPT_SELF_SEAL_TMP:-}" && -e "${SCRIPT_SELF_SEAL_TMP}" ]]; then
+    rm -f -- "${SCRIPT_SELF_SEAL_TMP}" 2>/dev/null || true
+  fi
+  SCRIPT_SELF_SEAL_TMP=""
+}
+
+# Chain onto EXIT without dropping an existing EXIT trap (best-effort).
+script_self_update_register_seal_cleanup() {
+  local prev body
+
+  [[ -n "${SCRIPT_SELF_SEAL_TMP:-}" ]] || return 0
+  (( SCRIPT_SELF_SEAL_CLEANUP_REGISTERED == 1 )) && return 0
+  SCRIPT_SELF_SEAL_CLEANUP_REGISTERED=1
+
+  prev="$(trap -p EXIT 2>/dev/null || true)"
+  if [[ -z "$prev" ]]; then
+    trap 'script_self_update_cleanup_seal' EXIT
+    return 0
+  fi
+  # prev looks like: trap -- 'commands' EXIT
+  if [[ "$prev" =~ ^trap\ --\ \'(.*)\'\ EXIT$ ]]; then
+    body="${BASH_REMATCH[1]}"
+    # shellcheck disable=SC2064
+    trap "script_self_update_cleanup_seal; ${body}" EXIT
+  else
+    trap 'script_self_update_cleanup_seal' EXIT
+  fi
+}
+
 script_self_update_init() {
   local path fp
 
@@ -97,18 +140,85 @@ script_self_update_init() {
   fi
 
   SCRIPT_SELF_UPDATE_PATH="$path"
+  SCRIPT_SELF_LIVE_PATH="$path"
+  export SCRIPT_SELF_LIVE_PATH
   SCRIPT_SELF_UPDATE_FP="$fp"
   SCRIPT_SELF_UPDATE_STATE=watch
   SCRIPT_SELF_UPDATE_LAST_CHECK_EPOCH=0
 }
 
-script_self_update_reexec() {
+# Copy live script to a private temp file and re-exec from it so later in-place cp of the
+# live path cannot feed bash a spliced mix of old and new source (classic mid-run syntax errors).
+# Prefer a seal file beside the live script so dirname/$0 stays the real bin/ directory
+# (many callers cd to "$(dirname "$0")" or source sibling helpers from that dir).
+# Does not return on success (exec). Safe no-op if already sealed or copy fails.
+script_self_update_seal_and_reexec() {
+  local live tmp arg a0 last_i live_dir base
   local -a args
-  local last_i a0 arg
+
+  [[ -z "${SCRIPT_SELF_SEALED:-}" ]] || return 0
+
+  live="${SCRIPT_SELF_LIVE_PATH:-${SCRIPT_SELF_UPDATE_PATH:-}}"
+  [[ -n "$live" && -f "$live" && -r "$live" ]] || return 0
+
+  live_dir="$(cd "$(dirname -- "$live")" && pwd -P)" || return 0
+  base="$(basename -- "$live")"
+  tmp=""
+  # Same directory as the live script (keeps $0 dirname == bin/).
+  tmp="$(mktemp "${live_dir}/.${base}.seal.XXXXXX" 2>/dev/null || true)"
+  if [[ -z "$tmp" ]]; then
+    # Fall back when bin/ is not writable.
+    tmp="$(mktemp "${TMPDIR:-/tmp}/${base}.seal.XXXXXX" 2>/dev/null || true)"
+  fi
+  [[ -n "$tmp" ]] || return 0
+  if ! cp -f -- "$live" "$tmp"; then
+    rm -f -- "$tmp"
+    return 0
+  fi
+  chmod u+rwx -- "$tmp" 2>/dev/null || chmod u+rw -- "$tmp" 2>/dev/null || true
 
   args=()
   if [[ -r /proc/$$/cmdline ]]; then
-    # bash 4.2: read -d '' (mapfile -d needs 4.4+)
+    while IFS= read -r -d '' arg || [[ -n "$arg" ]]; do
+      args+=( "$arg" )
+    done < /proc/$$/cmdline
+  fi
+  if (( ${#args[@]} > 0 )); then
+    last_i=$(( ${#args[@]} - 1 ))
+    if [[ -z "${args[last_i]-}" ]]; then
+      unset "args[last_i]"
+    fi
+  fi
+  if (( ${#args[@]} == 0 )); then
+    args=( bash "$tmp" )
+  else
+    a0="${args[0]-}"
+    if [[ "$a0" == bash || "$a0" == */bash || "$a0" == sh || "$a0" == */sh ]]; then
+      if (( ${#args[@]} >= 2 )); then
+        args[1]="$tmp"
+      else
+        args+=( "$tmp" )
+      fi
+    else
+      # Direct shebang exec: argv0 was the live script path.
+      args[0]="$tmp"
+    fi
+  fi
+
+  export SCRIPT_SELF_SEALED=1
+  export SCRIPT_SELF_LIVE_PATH="$live"
+  export SCRIPT_SELF_SEAL_TMP="$tmp"
+  # Child cleans its own seal file; parent would remove it before child runs if we cleaned here.
+  exec "${args[@]}"
+}
+
+script_self_update_reexec() {
+  local -a args
+  local last_i a0 arg live
+
+  live="${SCRIPT_SELF_LIVE_PATH:-${SCRIPT_SELF_UPDATE_PATH:-}}"
+  args=()
+  if [[ -r /proc/$$/cmdline ]]; then
     while IFS= read -r -d '' arg || [[ -n "$arg" ]]; do
       args+=( "$arg" )
     done < /proc/$$/cmdline
@@ -122,33 +232,35 @@ script_self_update_reexec() {
   fi
 
   if (( ${#args[@]} == 0 )); then
-    if [[ -n "${SCRIPT_SELF_UPDATE_PATH:-}" && -x "${SCRIPT_SELF_UPDATE_PATH}" ]]; then
-      args=( "${SCRIPT_SELF_UPDATE_PATH}" )
-    elif [[ -n "${SCRIPT_SELF_UPDATE_PATH:-}" ]]; then
-      args=( bash "${SCRIPT_SELF_UPDATE_PATH}" )
+    if [[ -n "$live" && -x "$live" ]]; then
+      args=( "$live" )
+    elif [[ -n "$live" ]]; then
+      args=( bash "$live" )
     else
       echo "ERROR: cannot re-exec; original command line is unavailable." >&2
       return 1
     fi
   fi
 
-  # Prefer the current on-disk path when argv pointed at this script.
-  if [[ -n "${SCRIPT_SELF_UPDATE_PATH:-}" && -e "${SCRIPT_SELF_UPDATE_PATH}" ]]; then
+  # Always restart from the live path (new content after copy), not the sealed temp.
+  if [[ -n "$live" && -e "$live" ]]; then
     a0="${args[0]-}"
     if [[ "$a0" == bash || "$a0" == */bash || "$a0" == sh || "$a0" == */sh ]]; then
       if (( ${#args[@]} >= 2 )); then
-        args[1]="${SCRIPT_SELF_UPDATE_PATH}"
+        args[1]="$live"
       fi
     else
-      args[0]="${SCRIPT_SELF_UPDATE_PATH}"
+      args[0]="$live"
     fi
   fi
 
   trap - DEBUG
   SCRIPT_SELF_UPDATE_DEBUG_TRAP_INSTALLED=0
   SCRIPT_SELF_UPDATE_STATE=off
+  script_self_update_cleanup_seal
+  unset SCRIPT_SELF_SEALED
 
-  echo "Restarting with updated on-disk script: ${SCRIPT_SELF_UPDATE_PATH}" >&2
+  echo "Restarting with updated on-disk script: ${live}" >&2
   echo "Command: ${args[*]}" >&2
   exec "${args[@]}"
 }
@@ -168,6 +280,11 @@ script_self_update_handle_change() {
   echo "[${ts}] WARNING: the live script file was overwritten while this run is still using the old code." >&2
   echo "  path: ${SCRIPT_SELF_UPDATE_PATH}" >&2
   echo "  (Watches this path only — e.g. after git pull + copy into bin/. The git checkout alone is ignored.)" >&2
+  if [[ -n "${SCRIPT_SELF_SEALED:-}" ]]; then
+    echo "  This process is sealed (running from a private snapshot), so Continue will not hit in-place cp parse corruption." >&2
+  else
+    echo "  WARNING: this process is NOT sealed — Continue after an in-place cp can cause random mid-script syntax errors." >&2
+  fi
   if [[ -n "$old_ver" || -n "$new_ver" ]]; then
     echo "  was:  ${old_ver:-unknown}" >&2
     echo "  now:  ${new_ver:-unknown}" >&2
@@ -183,6 +300,7 @@ script_self_update_handle_change() {
     quit|QUIT|q|Q)
       echo "[${ts}] SCRIPT_SELF_UPDATE_ACTION=quit — exiting." >&2
       trap - DEBUG
+      script_self_update_cleanup_seal
       exit 75
       ;;
     reexec|restart|REEXEC|R)
@@ -220,6 +338,7 @@ script_self_update_handle_change() {
     q|Q)
       echo "[${ts}] Selected: quit" >&2
       trap - DEBUG
+      script_self_update_cleanup_seal
       exit 75
       ;;
     *)
@@ -276,4 +395,23 @@ script_self_update_install_trap() {
 
   trap 'script_self_update_check_throttled' DEBUG
   SCRIPT_SELF_UPDATE_DEBUG_TRAP_INSTALLED=1
+}
+
+# init live path → seal (exec, no return) → after re-entry: init + watch trap + seal cleanup.
+script_self_update_setup() {
+  local live="${1:-}"
+
+  if [[ -n "${SCRIPT_SELF_SEALED:-}" ]]; then
+    # Already running from a sealed temp copy — watch the live destination path.
+    live="${SCRIPT_SELF_LIVE_PATH:-$live}"
+    script_self_update_init "$live"
+    script_self_update_register_seal_cleanup
+    script_self_update_install_trap
+    return 0
+  fi
+
+  script_self_update_init "$live"
+  # Prefer sealing; if exec fails we still install the watch trap.
+  script_self_update_seal_and_reexec || true
+  script_self_update_install_trap
 }

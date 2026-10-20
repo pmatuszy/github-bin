@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# v. 20261020.205000 - seal rename.sh to temp so in-place bin/ cp cannot splice bash source
 # v. 20261020.202500 - self-update: live bin/ overwrite after copy (not git checkout alone)
 # v. 20261020.202200 - detect on-disk rename.sh replace mid-run (_script_self_update.sh)
 # v. 20261020.201800 - SQLite warmup: one-transaction snapshot; surplus rows continue; shortfall asks [C]/[Q]
@@ -110,6 +111,7 @@
 # v. 20260721.132007 - Samsung timestamp media: preserve optional numeric sorting prefix when appending make/model
 # v. 20260721.112812 - GoPro camera labels: GoPro_Hero4_Silver style (not GOPRO4_SILVER)
 
+# 2026.10.20 - v. 19.361.205000 - Seal rename.sh to a private temp copy at startup. An in-place cp into bin/ overwrites the inode bash is still reading and caused bogus mid-file syntax errors (e.g. near unexpected token `else`); the sealed snapshot keeps this run stable. The live path is still watched for [R]/[C]/[Q].
 # 2026.10.20 - v. 19.360.202500 - Self-update watches the running rename.sh path (e.g. after git pull then copy into bin/). Overwriting that live file triggers [R]/[C]/[Q]; updating only the git checkout does not.
 # 2026.10.20 - v. 19.359.202200 - While rename.sh is running, detect when the on-disk script is replaced (git pull / copy). Prompt [R]estart with the new file / [C]ontinue this run / [Q]uit (shared _script_self_update.sh; also used by audio*/media*/video* via _script_header.sh).
 # 2026.10.20 - v. 19.358.201800 - SQLite warmup no longer hard-fails when the in-memory load count disagrees with a prior COUNT(*). COUNT and the row dump share one read transaction (same WAL snapshot). If more rows load than COUNT (concurrent writer between old separate queries), continue with a warning. If fewer rows load (unreadable stored paths), ask [C]ontinue with what loaded / [Q]uit; non-interactive continues after a warning.
@@ -721,15 +723,21 @@ SCRIPT_VERSION="$(
 )"
 [[ "$SCRIPT_VERSION" =~ ^[0-9]{8}\.[0-9]{6}$ ]] || SCRIPT_VERSION="00000000.000000"
 
-# Detect git pull / file replace of this script while a long run is still on the old inode.
-_RENAME_SELF_UPDATE_HELPER="$(cd "$(dirname -- "${BASH_SOURCE[0]:-$0}")" && pwd -P)/_script_self_update.sh"
+# Seal to a temp copy, then watch the live bin/ path for overwrite (git pull + cp).
+# After seal, BASH_SOURCE may be .rename.sh.seal.XXXX — resolve helpers from the live path.
+if [[ -n "${SCRIPT_SELF_LIVE_PATH:-}" ]]; then
+    _RENAME_SELF_UPDATE_HELPER="$(cd "$(dirname -- "${SCRIPT_SELF_LIVE_PATH}")" && pwd -P)/_script_self_update.sh"
+    _rename_live="${SCRIPT_SELF_LIVE_PATH}"
+else
+    _rename_live="$(readlink -f -- "${BASH_SOURCE[0]:-$0}" 2>/dev/null || printf '%s' "${BASH_SOURCE[0]:-$0}")"
+    _RENAME_SELF_UPDATE_HELPER="$(cd "$(dirname -- "${_rename_live}")" && pwd -P)/_script_self_update.sh"
+fi
 if [[ -f "${_RENAME_SELF_UPDATE_HELPER}" ]]; then
     # shellcheck source=/dev/null
     . "${_RENAME_SELF_UPDATE_HELPER}"
-    script_self_update_init "$(readlink -f -- "${BASH_SOURCE[0]:-$0}" 2>/dev/null || printf '%s' "${BASH_SOURCE[0]:-$0}")"
-    script_self_update_install_trap
+    script_self_update_setup "${SCRIPT_SELF_LIVE_PATH:-$_rename_live}"
 fi
-unset _RENAME_SELF_UPDATE_HELPER
+unset _RENAME_SELF_UPDATE_HELPER _rename_live
 
 # If a checksum list has more than this many lines, ask before checking it; default answer is No ([y/N/q]).
 LARGE_HASHFILE_LINE_PROMPT_THRESHOLD="${LARGE_HASHFILE_LINE_PROMPT_THRESHOLD:-20}"
@@ -3900,6 +3908,9 @@ cleanup_on_exit() {
     fi
     [[ -n "${RENAME_SH_GOPRO_STATE_FILE:-}" && -f "$RENAME_SH_GOPRO_STATE_FILE" ]] && rm -f -- "$RENAME_SH_GOPRO_STATE_FILE"
     [[ -n "${CHECKSUM_MEM_SPOOL:-}" && -f "$CHECKSUM_MEM_SPOOL" ]] && rm -f -- "$CHECKSUM_MEM_SPOOL"
+    if declare -F script_self_update_cleanup_seal >/dev/null 2>&1; then
+        script_self_update_cleanup_seal || true
+    fi
     exit $rc
 }
 trap cleanup_on_exit EXIT

@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261020.205000 - seal caller to temp before banner so in-place cp cannot splice bash source
 # v. 20261020.202500 - self-update: watch live bin/ path (copy overwrite), not git checkout alone
 # v. 20261020.202200 - source _script_self_update.sh: detect on-disk script replace while running
 # v. 20260916.130951 - print_version_banner: draw box rules with sed; tr truncated ─ to one invalid byte
@@ -8,6 +9,7 @@
 # v. 20260716.173600 - print_version_banner uses CALLER_SCRIPT version fields
 # v. 20260716.163300 - versioning v. YYYYMMDD.HH24MISS; parse first # v. YYYYMMDD.HHMMSS line
 
+# 2026.10.20 - v. 1.63.205000 - seal CALLER_SCRIPT to a temp copy before banners/delay (in-place cp into bin/ must not feed bash mixed old/new source); still watch the live path for [R]/[C]/[Q]
 # 2026.10.20 - v. 1.62.202500 - self-update watches the running script path (destination after copy into bin/); git pull in a checkout does not count until that live file is overwritten
 # 2026.10.20 - v. 1.61.202200 - source sibling _script_self_update.sh for CALLER_SCRIPT: notice git pull / file replace mid-run (DEBUG trap, [R]/[C]/[Q])
 # 2026.09.16 - v. 1.60.130951 - print_version_banner: horizontal rules via sed 's/ /─/g'; tr is byte-wise and reduced the 3-byte ─ (U+2500) to a lone 0xE2, so banners printed invalid UTF-8
@@ -111,6 +113,16 @@ CALLER_SCRIPT="$(_script_header_resolve_caller_script)"
 export CALLER_SCRIPT
 CALLER_SCRIPT_BASENAME="$(basename "$CALLER_SCRIPT")"
 export CALLER_SCRIPT_BASENAME
+
+# Seal early (before banners / random delay) so an in-place overwrite of the live
+# caller cannot splice bash's remaining source reads. Re-execs once from a temp copy.
+_SCRIPT_SELF_UPDATE_HELPER="$(cd "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)/_script_self_update.sh"
+if [[ -f "${_SCRIPT_SELF_UPDATE_HELPER}" ]]; then
+  # shellcheck source=/dev/null
+  . "${_SCRIPT_SELF_UPDATE_HELPER}"
+  script_self_update_setup "${SCRIPT_SELF_LIVE_PATH:-$CALLER_SCRIPT}"
+fi
+unset _SCRIPT_SELF_UPDATE_HELPER
 
 SCRIPT_VERSION_NUMBER="$(
   LC_ALL=C grep -m1 -E '^# v\. [0-9]{8}\.[0-9]{6} - ' "$CALLER_SCRIPT" 2>/dev/null \
@@ -450,13 +462,3 @@ else
   script_is_run_interactively=1
   echo "${SCRIPT_VERSION}" ; echo
 fi
-
-# Detect when the caller script file on disk is replaced while this process still runs the old code.
-_SCRIPT_SELF_UPDATE_HELPER="$(cd "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)/_script_self_update.sh"
-if [[ -f "${_SCRIPT_SELF_UPDATE_HELPER}" ]]; then
-  # shellcheck source=/dev/null
-  . "${_SCRIPT_SELF_UPDATE_HELPER}"
-  script_self_update_init "${CALLER_SCRIPT}"
-  script_self_update_install_trap
-fi
-unset _SCRIPT_SELF_UPDATE_HELPER
