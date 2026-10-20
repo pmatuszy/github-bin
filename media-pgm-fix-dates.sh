@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261020.165500 - after each Fix dates key, print Selected: with the accepted answer
 # v. 20261020.163800 - when nothing needed fixing, hint to re-run with --verbose
 # v. 20261020.163600 - --verbose prints every file check (stamps + verdict) even when dates already agree
 # v. 20261020.163300 - Processing header and before/after result block stand out (rules + mark changed rows)
@@ -10,6 +11,7 @@
 # v. 20261020.150400 - date menu: ASCII n/a so parenthetical notes share one column
 # v. 20261020.145500 - fix file / media dates when the name, filesystem, and tags disagree
 #
+# 2026.10.20 - v. 0.1.11 - after each Fix dates answer, print Selected: with the key and meaning that the script accepted (same idea as loudness / swap-audio)
 # 2026.10.20 - v. 0.1.10 - when the run finds no disagreements, suggest re-running with --verbose to see each file check
 # 2026.10.20 - v. 0.1.9 - --verbose: for every scanned file print File name / Filesystem / Media tags and a verdict (agree / disagree / skip); -v remains --version
 # 2026.10.20 - v. 0.1.8 - Processing and the before/after result are framed with === lines; rows that changed get a leading * and (changed)
@@ -118,6 +120,11 @@ mfd_choice() {
   c="${c//$'\r'/}"
   c="${c//$'\n'/}"
   printf '%s\n' "$c"
+}
+
+# Echo what the script accepted (Enter uses the default key).
+mfd_print_selected() {
+  echo "$(mfd_ts) Selected: $*"
 }
 
 # Key for a prompt: capital when it is the default (mfd_k s s -> S, mfd_k a s -> a).
@@ -642,15 +649,18 @@ mfd_process_file() {
     choice="$(mfd_choice "$REPLY")"
     case "$choice" in
       q)
+        mfd_print_selected "q = Quit"
         echo "$(mfd_ts) Quit."
         return 2
         ;;
       s)
+        mfd_print_selected "s = Skip this file"
         echo "$(mfd_ts) Skipped: ${f##*/}"
         SKIPPED=$((SKIPPED + 1))
         return 0
         ;;
       a)
+        mfd_print_selected "a = Always oldest for the rest of this run"
         ALWAYS_OLDEST=1
         if [[ -n "$MFD_OLDEST_E" ]]; then
           mfd_apply_epoch "$f" "$MFD_OLDEST_E"
@@ -664,6 +674,7 @@ mfd_process_file() {
     esac
     if [[ "$choice" =~ ^[0-9]+$ ]] && (( choice >= 1 && choice <= n )); then
       i=$((choice - 1))
+      mfd_print_selected "${choice} = ${MFD_LABELS[i]}"
       # Keep is the last row and has an empty epoch on purpose.
       if (( i == n - 1 )); then
         echo "$(mfd_ts) Kept as written: ${f##*/}"
