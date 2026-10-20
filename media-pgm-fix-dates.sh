@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261020.163600 - --verbose prints every file check (stamps + verdict) even when dates already agree
 # v. 20261020.163300 - Processing header and before/after result block stand out (rules + mark changed rows)
 # v. 20261020.163100 - parse exiftool CreateDate with hyphens so GNU date can read it back after a write
 # v. 20261020.162800 - Processing header; before/after date table; numeric default spelled out on the prompt
@@ -8,6 +9,7 @@
 # v. 20261020.150400 - date menu: ASCII n/a so parenthetical notes share one column
 # v. 20261020.145500 - fix file / media dates when the name, filesystem, and tags disagree
 #
+# 2026.10.20 - v. 0.1.9 - --verbose: for every scanned file print File name / Filesystem / Media tags and a verdict (agree / disagree / skip); -v remains --version
 # 2026.10.20 - v. 0.1.8 - Processing and the before/after result are framed with === lines; rows that changed get a leading * and (changed)
 # 2026.10.20 - v. 0.1.7 - reading CreateDate used exiftool's YYYY:MM:DD form, which GNU date rejects, so Media tags always looked like n/a after a successful write; parse as YYYY-MM-DD instead
 # 2026.10.20 - v. 0.1.6 - per-file Processing header; after a change show File name / Filesystem / Media tags before and after side by side; when the default is a number, the prompt says e.g. (default 1 = File name)
@@ -31,7 +33,7 @@
 show_help() {
   cat <<EOF
 Usage: $(basename "$0") [-h|--help] [-v|--version] [--history]
-       [-y|--yes] [-r|--recursive] [--dry-run]
+       [-y|--yes] [-r|--recursive] [--dry-run] [--verbose]
        [FILE|DIR ...]
 
 Compare the date in the file name, the filesystem time, and the media
@@ -49,6 +51,8 @@ Options:
   -y, --yes            Apply the oldest usable date without asking.
   -r, --recursive      Also scan subdirectories.
   --dry-run            Show what would change; do not write.
+  --verbose            Print every file check (stamps + verdict), including
+                       files that already agree.
 
 Interactive keys (per file):
   1/2/3…               Pick a listed source (default = oldest usable).
@@ -71,6 +75,9 @@ Examples:
 
   $(basename "$0") --dry-run clip.mp4 photo.jpg
       Show the choice for those files only.
+
+  $(basename "$0") --verbose .
+      Print the check for every media file in this directory.
 
 Environment:
   MFD_EXIFTOOL / EXIFLOC / PGM_EXIFTOOL
@@ -414,8 +421,58 @@ mfd_collect_from_dir() {
   fi
 }
 
-# Return 0 if this file needs a decision; sets globals for the prompt.
-# MFD_LABELS / MFD_EPOCHS / MFD_NOTES / MFD_DEF / MFD_DEFAULT_KEY / MFD_OLDEST_E
+# Compare epoch to name stamp for verbose notes: "ok vs name (Ns)" / "differ vs name (Ns)".
+mfd_vs_name_note() {
+  local name_e="$1" other_e="$2" abs_diff
+  if [[ -z "$name_e" || -z "$other_e" ]]; then
+    printf '%s\n' ""
+    return 0
+  fi
+  abs_diff="$(mfd_abs_diff "$name_e" "$other_e")"
+  if (( abs_diff > 120 )); then
+    printf 'differ vs name (%ss)\n' "$abs_diff"
+  else
+    printf 'ok vs name (%ss)\n' "$abs_diff"
+  fi
+}
+
+# Print one verbose Check block. verdict: agree | disagree | skip
+mfd_verbose_print_check() {
+  local f="$1" verdict="$2" name_e="$3" fs_e="$4" media_e="$5"
+  local fs_note media_note vs
+  echo
+  echo "$(mfd_ts) Check: ${f}"
+  printf '  %-18s %s\n' "File name" "$(mfd_disp_or_na "$name_e")"
+  fs_note="(mtime)"
+  [[ -n "$fs_e" ]] || fs_note="(mtime missing or before 1990)"
+  vs="$(mfd_vs_name_note "$name_e" "$fs_e")"
+  if [[ -n "$vs" ]]; then
+    printf '  %-18s %-21s %s  %s\n' "Filesystem" "$(mfd_disp_or_na "$fs_e")" "$fs_note" "$vs"
+  else
+    printf '  %-18s %-21s %s\n' "Filesystem" "$(mfd_disp_or_na "$fs_e")" "$fs_note"
+  fi
+  if [[ -n "$media_e" ]]; then
+    media_note="(CreateDate)"
+  else
+    media_note="(CreateDate missing or before 1990)"
+  fi
+  vs="$(mfd_vs_name_note "$name_e" "$media_e")"
+  if [[ -n "$vs" ]]; then
+    printf '  %-18s %-21s %s  %s\n' "Media tags" "$(mfd_disp_or_na "$media_e")" "$media_note" "$vs"
+  else
+    printf '  %-18s %-21s %s\n' "Media tags" "$(mfd_disp_or_na "$media_e")" "$media_note"
+  fi
+  case "$verdict" in
+    agree)    echo "  Verdict: agree — no change" ;;
+    disagree) echo "  Verdict: disagree — ask / fix" ;;
+    skip)     echo "  Verdict: skip — no usable stamps to compare" ;;
+    *)        echo "  Verdict: ${verdict}" ;;
+  esac
+}
+
+# Inspect stamps. Sets MFD_NAME_E / MFD_FS_E / MFD_MEDIA_E / MFD_VERDICT
+# (agree|disagree|skip). Return 0 if disagree (needs a decision), 1 otherwise.
+# On disagree also fills MFD_LABELS / MFD_EPOCHS / … for the prompt.
 mfd_prepare_file() {
   local f="$1"
   local name_e="" fs_e="" media_e=""
@@ -426,13 +483,21 @@ mfd_prepare_file() {
   MFD_DEF=1
   MFD_DEFAULT_KEY=1
   MFD_OLDEST_E=""
+  MFD_NAME_E=""
+  MFD_FS_E=""
+  MFD_MEDIA_E=""
+  MFD_VERDICT="skip"
 
   name_e="$(mfd_filename_epoch_from_basename "${f##*/}" 2>/dev/null || true)"
   fs_e="$(mfd_fs_mtime_epoch "$f" 2>/dev/null || true)"
   media_e="$(mfd_media_createdate_epoch "$f" 2>/dev/null || true)"
+  MFD_NAME_E="$name_e"
+  MFD_FS_E="$fs_e"
+  MFD_MEDIA_E="$media_e"
 
   # Need at least one usable stamp that can be compared.
   if [[ -z "$name_e" && -z "$fs_e" && -z "$media_e" ]]; then
+    MFD_VERDICT="skip"
     return 1
   fi
 
@@ -456,7 +521,12 @@ mfd_prepare_file() {
   if [[ -z "$media_e" && ( -n "$name_e" || -n "$fs_e" ) ]]; then
     need=1
   fi
-  (( need )) || return 1
+
+  if (( ! need )); then
+    MFD_VERDICT="agree"
+    return 1
+  fi
+  MFD_VERDICT="disagree"
 
   # Always list all three sources so a missing CreateDate is visible.
   MFD_LABELS+=("File name")
@@ -501,12 +571,17 @@ mfd_prepare_file() {
 mfd_process_file() {
   local f="$1"
   local i n choice disp note prompt_keys prompt_extra=""
-  local before_name before_fs before_media
+  local before_name before_fs before_media need_fix=0
   local -a key_list=()
 
-  if ! mfd_prepare_file "$f"; then
-    return 0
+  if mfd_prepare_file "$f"; then
+    need_fix=1
   fi
+  if (( VERBOSE )); then
+    mfd_verbose_print_check "$f" "$MFD_VERDICT" "$MFD_NAME_E" "$MFD_FS_E" "$MFD_MEDIA_E"
+  fi
+  (( need_fix )) || return 0
+
   MISMATCH=$((MISMATCH + 1))
   n=${#MFD_LABELS[@]}
   # prepare_file always lists File name, Filesystem, Media tags first.
@@ -611,6 +686,7 @@ mfd_process_file() {
 DO_YES=0
 RECURSIVE=0
 DRY_RUN=0
+VERBOSE=0
 ALWAYS_OLDEST=0
 FIXED=0
 SKIPPED=0
@@ -645,6 +721,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --dry-run)
       DRY_RUN=1
+      shift
+      ;;
+    --verbose)
+      VERBOSE=1
       shift
       ;;
     --)
@@ -705,6 +785,7 @@ echo
 echo "$(mfd_ts) Checking ${SCANNED} media file(s)."
 (( DRY_RUN )) && echo "$(mfd_ts) Dry run — nothing will be written."
 (( DO_YES )) && echo "$(mfd_ts) -y: apply oldest usable date without asking."
+(( VERBOSE )) && echo "$(mfd_ts) Verbose: print every file check."
 echo
 
 for f in "${FILES[@]}"; do
