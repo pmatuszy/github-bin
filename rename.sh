@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# v. 20261020.201800 - SQLite warmup: one-transaction snapshot; surplus rows continue; shortfall asks [C]/[Q]
 # v. 20261019.092200 - IMG_/VID_YYYYMMDD_HHMMSS_N keeps the copy number: YYYYMMDD_HHMMSS_IMG_N / _VID_N
 # v. 20261019.085200 - IMG_/VID_YYYYMMDD_HHMMSS with no camera make/model → YYYYMMDD_HHMMSS_IMG / _VID
 # v. 20261019.083900 - IMG_YYYYMMDD_HHMMSS: drop the IMG_ prefix (date and time only); append make/model when EXIF has both
@@ -107,6 +108,7 @@
 # v. 20260721.132007 - Samsung timestamp media: preserve optional numeric sorting prefix when appending make/model
 # v. 20260721.112812 - GoPro camera labels: GoPro_Hero4_Silver style (not GOPRO4_SILVER)
 
+# 2026.10.20 - v. 19.358.201800 - SQLite warmup no longer hard-fails when the in-memory load count disagrees with a prior COUNT(*). COUNT and the row dump share one read transaction (same WAL snapshot). If more rows load than COUNT (concurrent writer between old separate queries), continue with a warning. If fewer rows load (unreadable stored paths), ask [C]ontinue with what loaded / [Q]uit; non-interactive continues after a warning.
 # 2026.10.19 - v. 19.357.092200 - IMG_/VID_YYYYMMDD_HHMMSS_N.ext (duplicate index before the extension) is renamed too. With no camera: YYYYMMDD_HHMMSS_IMG_N.ext / YYYYMMDD_HHMMSS_VID_N.ext. With a camera make and model the index stays at the end (YYYYMMDD_HHMMSS_-_-_Make_Model_N.ext).
 # 2026.10.19 - v. 19.356.085200 - IMG_/VID_YYYYMMDD_HHMMSS gallery names that never receive a camera make/model (WhatsApp and other stripped exports) become YYYYMMDD_HHMMSS_IMG.ext / YYYYMMDD_HHMMSS_VID.ext. A real camera label still wins when EXIF has one.
 # 2026.10.19 - v. 19.355.083900 - IMG_YYYYMMDD_HHMMSS.ext no longer becomes YYYYMMDD_HHMMSS-IMG_YYYYMMDD_HHMMSS.ext. The new name is the date and time only. When EXIF has both a camera make and model and no earlier camera rule tagged the file, that label is appended (YYYYMMDD_HHMMSS_-_-_Make_Model.ext).
@@ -5652,11 +5654,67 @@ print_db_maintenance_missing_verbose() {
     fi
 }
 
+# Dump COUNT(*) plus all checked_paths rows in one read transaction (same WAL snapshot).
+# First output line: __RENAME_WARMUP_COUNT__|<n>|||||||
+# Remaining lines: path|size|mtime|status|signature|md5|sha512|hash_kind|hash
+# Writes the dump to $1; stderr from sqlite goes to $2. Returns sqlite exit status.
+db_export_checked_paths_warmup_snapshot() {
+    local out_file="$1"
+    local err_file="$2"
+    local busy_ms="${DB_SQLITE_BUSY_TIMEOUT_MS:-30000}"
+
+    [[ "$busy_ms" =~ ^[1-9][0-9]*$ ]] || busy_ms=30000
+    {
+        printf 'PRAGMA busy_timeout=%s;\n' "$busy_ms"
+        printf 'BEGIN;\n'
+        printf "SELECT '__RENAME_WARMUP_COUNT__', COUNT(*), '', '', '', '', '', '', '' FROM checked_paths;\n"
+        printf "SELECT path, size, mtime, COALESCE(status, ''), COALESCE(signature, ''), COALESCE(file_md5, ''), COALESCE(file_sha512, ''), COALESCE(file_hash_kind, ''), COALESCE(file_hash, '') FROM checked_paths;\n"
+        printf 'COMMIT;\n'
+    } | rename_sqlite3_db_run -separator '|' >"$out_file" 2>"$err_file"
+}
+
+# warmed_rows < expected: interactive [C]ontinue (default) / [Q]uit; non-interactive continues.
+# Returns 0 to continue, exits on quit.
+db_prompt_warmup_shortfall() {
+    local warmed="$1"
+    local expected="$2"
+    local skipped_paths="$3"
+    local answer=""
+
+    echo "WARNING: SQLite warmup loaded $warmed of $expected snapshot rows into memory ($skipped_paths row(s) had an unreadable stored path)." >&2
+    echo "Those skipped rows will not be used for DB skip/hash lookups this run; the on-disk cache file was not modified." >&2
+
+    if [[ ! -t 0 && ! -r /dev/tty ]]; then
+        echo "Non-interactive session: continuing with the $warmed rows that loaded." >&2
+        return 0
+    fi
+
+    echo -n "$(user_prompt_ts_prefix)SQLite warmup shortfall — [C]ontinue with loaded rows / [Q]uit: "
+    flush_stdin
+    if [[ -r /dev/tty ]]; then
+        read_single_key answer "$PROMPT_WAIT_SECONDS" </dev/tty || true
+    else
+        read_single_key answer "$PROMPT_WAIT_SECONDS" || true
+    fi
+    echo
+    case "$answer" in
+        q|Q)
+            echo "Stopped: SQLite warmup shortfall (loaded $warmed of $expected rows)." >&2
+            exit 1
+            ;;
+        *)
+            echo "Continuing with $warmed loaded cache rows." >&2
+            return 0
+            ;;
+    esac
+}
+
 db_init() {
     local warmed_rows=0
     local stored_path path md5_hash sha512_hash file_hash_kind file_hash
     local total_cached_rows=0 progress_pct=0 next_progress_pct=10
     local cache_rows_file="" sqlite_err_file="" first_error=""
+    local snapshot_rows=0 skipped_warmup_paths=0
 
     (( USE_DB == 1 )) || return 0
     db_migrate_legacy_file
@@ -5717,11 +5775,42 @@ SQL
     cache_rows_file="$(mktemp)"
     sqlite_err_file="$(mktemp)"
 
-    if ! total_cached_rows="$(rename_sqlite3_db_run "SELECT COUNT(*) FROM checked_paths;" 2>"$sqlite_err_file")" ||
-       ! [[ "$total_cached_rows" =~ ^[0-9]+$ ]]; then
-        startup_progress "SQLite cache count was locked/unreadable; retrying after automatic journal recovery..."
+    if ! db_export_checked_paths_warmup_snapshot "$cache_rows_file" "$sqlite_err_file"; then
+        startup_progress "SQLite cache warmup read was locked; retrying after automatic journal recovery..."
         db_configure_sqlite_runtime_mode recover >/dev/null 2>&1 || true
-        total_cached_rows="$(rename_sqlite3_db_run "SELECT COUNT(*) FROM checked_paths;" 2>"$sqlite_err_file")" || total_cached_rows=""
+        if ! db_export_checked_paths_warmup_snapshot "$cache_rows_file" "$sqlite_err_file"; then
+            echo "ERROR: SQLite cache warmup failed; no processing was started." >&2
+            IFS= read -r first_error < "$sqlite_err_file" || true
+            [[ -n "$first_error" ]] && echo "$first_error" >&2
+            rm -f -- "$cache_rows_file" "$sqlite_err_file"
+            exit 1
+        fi
+    fi
+
+    # First line from the snapshot is the COUNT marker; fall back to recounting data lines if missing.
+    if IFS='|' read -r stored_path size _rest < "$cache_rows_file"; then
+        if [[ "$stored_path" == "__RENAME_WARMUP_COUNT__" && "$size" =~ ^[0-9]+$ ]]; then
+            total_cached_rows="$size"
+            # Drop the marker line so the load loop only sees data rows.
+            if command -v tail >/dev/null 2>&1; then
+                tail -n +2 "$cache_rows_file" >"${cache_rows_file}.body" && mv -f -- "${cache_rows_file}.body" "$cache_rows_file"
+            else
+                : >"${cache_rows_file}.body"
+                {
+                    IFS= read -r _marker_line || true
+                    cat
+                } <"$cache_rows_file" >"${cache_rows_file}.body"
+                mv -f -- "${cache_rows_file}.body" "$cache_rows_file"
+            fi
+        else
+            # Unexpected format: treat whole file as data; derive expected count from non-empty lines.
+            total_cached_rows=0
+            while IFS= read -r stored_path || [[ -n "$stored_path" ]]; do
+                [[ -n "$stored_path" ]] && ((++total_cached_rows))
+            done < "$cache_rows_file"
+        fi
+    else
+        total_cached_rows=0
     fi
     if ! [[ "$total_cached_rows" =~ ^[0-9]+$ ]]; then
         echo "ERROR: SQLite cache row count failed; refusing to treat an unreadable cache as empty." >&2
@@ -5729,18 +5818,6 @@ SQL
         [[ -n "$first_error" ]] && echo "$first_error" >&2
         rm -f -- "$cache_rows_file" "$sqlite_err_file"
         exit 1
-    fi
-
-    if ! rename_sqlite3_db_run -separator '|' "SELECT path, size, mtime, COALESCE(status, ''), COALESCE(signature, ''), COALESCE(file_md5, ''), COALESCE(file_sha512, ''), COALESCE(file_hash_kind, ''), COALESCE(file_hash, '') FROM checked_paths;" >"$cache_rows_file" 2>"$sqlite_err_file"; then
-        startup_progress "SQLite cache warmup read was locked; retrying after automatic journal recovery..."
-        db_configure_sqlite_runtime_mode recover >/dev/null 2>&1 || true
-        if ! rename_sqlite3_db_run -separator '|' "SELECT path, size, mtime, COALESCE(status, ''), COALESCE(signature, ''), COALESCE(file_md5, ''), COALESCE(file_sha512, ''), COALESCE(file_hash_kind, ''), COALESCE(file_hash, '') FROM checked_paths;" >"$cache_rows_file" 2>"$sqlite_err_file"; then
-            echo "ERROR: SQLite cache warmup failed; no processing was started." >&2
-            IFS= read -r first_error < "$sqlite_err_file" || true
-            [[ -n "$first_error" ]] && echo "$first_error" >&2
-            rm -f -- "$cache_rows_file" "$sqlite_err_file"
-            exit 1
-        fi
     fi
     rm -f -- "$sqlite_err_file"
 
@@ -5752,8 +5829,15 @@ SQL
 
     while IFS='|' read -r stored_path size mtime status signature md5_hash sha512_hash file_hash_kind file_hash; do
         [[ -n "$stored_path" ]] || continue
+        if [[ "$stored_path" == "__RENAME_WARMUP_COUNT__" ]]; then
+            continue
+        fi
+        ((++snapshot_rows))
         path="$(db_path_from_storage "$stored_path" 2>/dev/null || true)"
-        [[ -n "$path" ]] || continue
+        if [[ -z "$path" ]]; then
+            ((++skipped_warmup_paths))
+            continue
+        fi
         DB_CACHE_META["$path"]="$size|$mtime"
         DB_CACHE_STATUS["$path"]="$status"
         DB_CACHE_ROW_EXISTS["$path"]=1
@@ -5779,6 +5863,7 @@ SQL
         ((++warmed_rows))
         if (( total_cached_rows > 0 )); then
             progress_pct=$(( warmed_rows * 100 / total_cached_rows ))
+            (( progress_pct > 100 )) && progress_pct=100
             while (( next_progress_pct <= 100 && progress_pct >= next_progress_pct )); do
                 startup_progress "SQLite warmup progress: ${next_progress_pct}% ($warmed_rows / $total_cached_rows rows loaded)..."
                 (( next_progress_pct += 10 ))
@@ -5789,10 +5874,13 @@ SQL
     done < "$cache_rows_file"
     rm -f -- "$cache_rows_file"
 
-    if (( total_cached_rows > 0 )); then
-        if (( warmed_rows != total_cached_rows )); then
-            echo "ERROR: SQLite warmup loaded $warmed_rows of $total_cached_rows rows; refusing to continue with a partial cache." >&2
-            exit 1
+    if (( total_cached_rows > 0 || warmed_rows > 0 || snapshot_rows > 0 )); then
+        if (( warmed_rows > total_cached_rows )); then
+            # Should be rare with a transactional snapshot; treat dump as authoritative.
+            echo "WARNING: SQLite warmup loaded $warmed_rows rows but snapshot COUNT was $total_cached_rows; continuing with the loaded rows." >&2
+            total_cached_rows=$warmed_rows
+        elif (( warmed_rows < total_cached_rows )); then
+            db_prompt_warmup_shortfall "$warmed_rows" "$total_cached_rows" "$skipped_warmup_paths"
         fi
         startup_progress "SQLite cache warmup done: 100% ($warmed_rows / $total_cached_rows rows loaded)"
     else
