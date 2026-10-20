@@ -356,7 +356,7 @@ mfd_prepare_file() {
 
 mfd_process_file() {
   local f="$1"
-  local i n keys="" choice disp
+  local i n keys="" choice disp note
 
   if ! mfd_prepare_file "$f"; then
     return 0
@@ -381,18 +381,21 @@ mfd_process_file() {
   echo
   keys=""
   for (( i = 0; i < n; i++ )); do
+    note="${MFD_NOTES[i]}"
     if [[ -n "${MFD_EPOCHS[i]}" ]]; then
       disp="$(mfd_format_epoch_display "${MFD_EPOCHS[i]}")"
     else
       disp="—"
     fi
     if (( i + 1 == MFD_DEF )); then
-      printf '  [%d] %-18s %-19s  %s (oldest — default)\n' \
-        "$((i + 1))" "${MFD_LABELS[i]}" "$disp" "${MFD_NOTES[i]}"
-    else
-      printf '  [%d] %-18s %-19s  %s\n' \
-        "$((i + 1))" "${MFD_LABELS[i]}" "$disp" "${MFD_NOTES[i]}"
+      if [[ -n "$note" ]]; then
+        note="${note} (oldest — default)"
+      else
+        note="(oldest — default)"
+      fi
     fi
+    printf '  [%d] %-18s %-19s  %s\n' \
+      "$((i + 1))" "${MFD_LABELS[i]}" "$disp" "$note"
     keys+="$((i + 1))"
     (( i + 1 < n )) && keys+="/"
   done

@@ -1214,7 +1214,7 @@ tl_prompt_reconcile_output_times() {
   local dest="$1" source_file="$2"
   local name_e="" src_e="" media_e="" dest_fs_e=""
   local -a labels=() epochs=() notes=()
-  local i n def=1 oldest_i=0 oldest_e="" choice keys="" disp
+  local i n def=1 oldest_i=0 oldest_e="" choice keys="" disp note
   local abs_diff need_ask=0
 
   [[ -f "$dest" && -f "$source_file" ]] || return 0
@@ -1290,18 +1290,21 @@ tl_prompt_reconcile_output_times() {
   echo
   keys=""
   for (( i = 0; i < n; i++ )); do
+    note="${notes[i]}"
     if [[ -n "${epochs[i]}" ]]; then
       disp="$(tl_format_epoch_display "${epochs[i]}")"
     else
       disp="—"
     fi
     if (( i + 1 == def )); then
-      printf '  [%d] %-18s %-19s  %s (oldest — default)\n' \
-        "$((i + 1))" "${labels[i]}" "$disp" "${notes[i]}"
-    else
-      printf '  [%d] %-18s %-19s  %s\n' \
-        "$((i + 1))" "${labels[i]}" "$disp" "${notes[i]}"
+      if [[ -n "$note" ]]; then
+        note="${note} (oldest — default)"
+      else
+        note="(oldest — default)"
+      fi
     fi
+    printf '  [%d] %-18s %-19s  %s\n' \
+      "$((i + 1))" "${labels[i]}" "$disp" "$note"
     keys+="$((i + 1))"
     (( i + 1 < n )) && keys+="/"
   done
