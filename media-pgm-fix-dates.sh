@@ -1,12 +1,12 @@
 #!/bin/bash
+# v. 20261020.162300 - when name and mtime match and CreateDate is missing, default is apply that date (not Skip)
 # v. 20261020.155800 - Fix dates prompt: capitalise the default key (e.g. S when Skip is default)
-# v. 20261020.155300 - when name and mtime already match and only CreateDate is missing, default is Skip
 # v. 20261020.150700 - date menu always lists File name, Filesystem, and Media tags (n/a when unusable)
 # v. 20261020.150400 - date menu: ASCII n/a so parenthetical notes share one column
 # v. 20261020.145500 - fix file / media dates when the name, filesystem, and tags disagree
 #
+# 2026.10.20 - v. 0.1.5 - when name and mtime already match and only CreateDate is missing, default is to apply that date (filesystem + media tags), not Skip
 # 2026.10.20 - v. 0.1.4 - Fix dates prompt shows the default key in capitals (e.g. 1/2/3/4/a/S/q), like the other scripts
-# 2026.10.20 - v. 0.1.3 - if file name and filesystem already agree and only media CreateDate is missing, the default key is Skip (s), not the oldest stamp
 # 2026.10.20 - v. 0.1.2 - always show File name, Filesystem, and Media tags rows (n/a when missing or before 1990)
 # 2026.10.20 - v. 0.1.1 - date menu uses ASCII n/a (UTF-8 dash broke the column of the notes in parentheses)
 # 2026.10.20 - v. 0.1 - initial release: for video, audio, and pictures, compare the
@@ -316,7 +316,7 @@ mfd_collect_from_dir() {
 mfd_prepare_file() {
   local f="$1"
   local name_e="" fs_e="" media_e=""
-  local i n oldest_e="" oldest_i=0 need=0 abs_diff name_fs_agree=0
+  local i n oldest_e="" oldest_i=0 need=0 abs_diff
   MFD_LABELS=()
   MFD_EPOCHS=()
   MFD_NOTES=()
@@ -335,11 +335,7 @@ mfd_prepare_file() {
 
   if [[ -n "$name_e" && -n "$fs_e" ]]; then
     abs_diff="$(mfd_abs_diff "$name_e" "$fs_e")"
-    if (( abs_diff > 120 )); then
-      need=1
-    else
-      name_fs_agree=1
-    fi
+    (( abs_diff > 120 )) && need=1
   fi
   if [[ -n "$name_e" && -n "$media_e" ]]; then
     abs_diff="$(mfd_abs_diff "$name_e" "$media_e")"
@@ -396,10 +392,6 @@ mfd_prepare_file() {
   MFD_OLDEST_E="$oldest_e"
   MFD_DEF=$((oldest_i + 1))
   MFD_DEFAULT_KEY="$MFD_DEF"
-  # Name and mtime already agree; only CreateDate is missing → default Skip.
-  if (( name_fs_agree )) && [[ -z "$media_e" ]]; then
-    MFD_DEFAULT_KEY=s
-  fi
   return 0
 }
 
@@ -427,11 +419,7 @@ mfd_process_file() {
   echo
   echo "$(mfd_ts) Dates disagree: ${f}"
   echo
-  if [[ "${MFD_DEFAULT_KEY}" == s ]]; then
-    echo "  Sources (name and mtime already match; CreateDate missing — default is Skip):"
-  else
-    echo "  Sources (oldest usable is the default; dates before 1990 are ignored):"
-  fi
+  echo "  Sources (oldest usable is the default; applying it sets media CreateDate and filesystem times):"
   echo
   key_list=()
   for (( i = 0; i < n; i++ )); do
@@ -441,7 +429,7 @@ mfd_process_file() {
     else
       disp="n/a"
     fi
-    if [[ "${MFD_DEFAULT_KEY}" != s ]] && (( i + 1 == MFD_DEF )); then
+    if (( i + 1 == MFD_DEF )); then
       if [[ -n "$note" ]]; then
         note="${note} (oldest - default)"
       else
@@ -454,11 +442,7 @@ mfd_process_file() {
     key_list+=("$((i + 1))")
   done
   echo "  [$(mfd_k a "$MFD_DEFAULT_KEY")] Always oldest for the rest of this run"
-  if [[ "${MFD_DEFAULT_KEY}" == s ]]; then
-    echo "  [$(mfd_k s "$MFD_DEFAULT_KEY")] Skip this file (default)"
-  else
-    echo "  [$(mfd_k s "$MFD_DEFAULT_KEY")] Skip this file"
-  fi
+  echo "  [$(mfd_k s "$MFD_DEFAULT_KEY")] Skip this file"
   echo "  [$(mfd_k q "$MFD_DEFAULT_KEY")] Quit"
   key_list+=(a s q)
   prompt_keys="$(mfd_keys "$MFD_DEFAULT_KEY" "${key_list[@]}")"
