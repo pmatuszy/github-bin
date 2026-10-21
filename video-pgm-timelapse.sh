@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261021.120123 - output dates: [k] keep as written for the rest of this run
 # v. 20261021.083000 - output-date UX like media-pgm-fix-dates: framed header, Selected:, before/after, [a] always oldest, summary
 # v. 20261020.163100 - parse exiftool CreateDate with hyphens so GNU date can read media tags
 # v. 20261020.162300 - when name and mtime match and CreateDate is missing, default is apply that date (not Keep)
@@ -55,6 +56,7 @@
 # v. 20260930.221500 - file prompts: one key, no Enter
 # v. 20260930.220400 - faster viewing copy of a merged video (2, 5, 10, 20, …)
 
+# 2026.10.21 - v. 0.54 - output-date menu: [k] keeps times as written for this file and every later file in the run (same idea as [a] for oldest)
 # 2026.10.21 - v. 0.53 - output-date step matches media-pgm-fix-dates readability: === header, (default N = Label), Selected:, before/after result with * (changed), [a] always oldest for the rest of this run, date counts in the run summary
 # 2026.10.20 - v. 0.52 - reading CreateDate used exiftool's YYYY:MM:DD form, which GNU date rejects, so media tags looked missing even when present; parse as YYYY-MM-DD instead
 # 2026.10.20 - v. 0.51 - when name and mtime already match and only CreateDate is missing, default is to apply that date (media + filesystem), not Keep
@@ -1373,6 +1375,12 @@ tl_prompt_reconcile_output_times() {
   done
   def=$((oldest_i + 1))
 
+  if (( TL_ALWAYS_KEEP )); then
+    echo "$(tl_ts) Output times kept as written (for the rest of this run)."
+    TL_DATES_KEPT=$((TL_DATES_KEPT + 1))
+    return 0
+  fi
+
   if (( DO_YES )) || (( TL_ALWAYS_OLDEST )) || (( ! script_is_run_interactively )); then
     tl_print_output_dates_header "$dest"
     printf '  Source name stamp from:  %s\n' "${source_file##*/}"
@@ -1411,8 +1419,9 @@ tl_prompt_reconcile_output_times() {
     key_list+=("$((i + 1))")
   done
   echo "  [$(tl_k a "$def")] Always oldest for the rest of this run"
+  echo "  [$(tl_k k "$def")] Keep as written for the rest of this run"
   echo "  [$(tl_k q "$def")] Quit"
-  key_list+=(a q)
+  key_list+=(a k q)
   keys="$(tl_keys "$def" "${key_list[@]}")"
   if [[ "$def" =~ ^[0-9]+$ ]]; then
     i=$((def - 1))
@@ -1430,6 +1439,7 @@ tl_prompt_reconcile_output_times() {
       a)
         tl_print_selected "a = Always oldest for the rest of this run"
         TL_ALWAYS_OLDEST=1
+        TL_ALWAYS_KEEP=0
         if [[ -n "$oldest_e" ]]; then
           tl_apply_epoch_to_output "$dest" "$oldest_e"
           echo "$(tl_ts) Set from oldest usable: $(tl_format_epoch_display "$oldest_e")"
@@ -1437,6 +1447,15 @@ tl_prompt_reconcile_output_times() {
           TL_DATES_APPLIED=$((TL_DATES_APPLIED + 1))
         fi
         echo "$(tl_ts) Will use the oldest usable date for every later file."
+        return 0
+        ;;
+      k)
+        tl_print_selected "k = Keep as written for the rest of this run"
+        TL_ALWAYS_KEEP=1
+        TL_ALWAYS_OLDEST=0
+        echo "$(tl_ts) Output times kept as written."
+        TL_DATES_KEPT=$((TL_DATES_KEPT + 1))
+        echo "$(tl_ts) Will keep times as written for every later file."
         return 0
         ;;
     esac
@@ -3314,6 +3333,7 @@ TL_ENCODE_REST=0
 TL_CONTINUE_ONE=0
 SKIP_ALL=0
 TL_ALWAYS_OLDEST=0
+TL_ALWAYS_KEEP=0
 TL_DATES_APPLIED=0
 TL_DATES_KEPT=0
 TL_DATES_OK=0

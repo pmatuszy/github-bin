@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261021.120123 - [k] keep as written for the rest of this run
 # v. 20261020.165500 - after each Fix dates key, print Selected: with the accepted answer
 # v. 20261020.163800 - when nothing needed fixing, hint to re-run with --verbose
 # v. 20261020.163600 - --verbose prints every file check (stamps + verdict) even when dates already agree
@@ -11,6 +12,7 @@
 # v. 20261020.150400 - date menu: ASCII n/a so parenthetical notes share one column
 # v. 20261020.145500 - fix file / media dates when the name, filesystem, and tags disagree
 #
+# 2026.10.21 - v. 0.1.12 - [k] keeps dates as written for this file and every later file in the run (parallel to [a] for oldest)
 # 2026.10.20 - v. 0.1.11 - after each Fix dates answer, print Selected: with the key and meaning that the script accepted (same idea as loudness / swap-audio)
 # 2026.10.20 - v. 0.1.10 - when the run finds no disagreements, suggest re-running with --verbose to see each file check
 # 2026.10.20 - v. 0.1.9 - --verbose: for every scanned file print File name / Filesystem / Media tags and a verdict (agree / disagree / skip); -v remains --version
@@ -26,7 +28,7 @@
 #   ask which to use (1/2/3…); default is the oldest usable date; stamps before 1990
 #   are ignored; write media CreateDate/ModifyDate and filesystem times (Windows
 #   creation on /mnt/?/…). -y applies the oldest without asking. [a] uses oldest for
-#   every later file in this run.
+#   every later file in this run; [k] keeps as written for every later file.
 #
 # media-pgm-fix-dates.sh
 #
@@ -64,6 +66,8 @@ Interactive keys (per file):
                        e.g. (default 1 = File name).
   a                    Apply the oldest usable date for this file and every
                        later file in this run (no more prompts).
+  k                    Keep dates as written for this file and every later
+                       file in this run (no more prompts).
   s                    Skip this file.
   q                    Quit.
 
@@ -598,6 +602,12 @@ mfd_process_file() {
   before_fs="${MFD_EPOCHS[1]}"
   before_media="${MFD_EPOCHS[2]}"
 
+  if (( ALWAYS_KEEP )); then
+    echo "$(mfd_ts) Kept as written (for the rest of this run): ${f##*/}"
+    SKIPPED=$((SKIPPED + 1))
+    return 0
+  fi
+
   if (( DO_YES )) || (( ALWAYS_OLDEST )) || (( ! script_is_run_interactively )); then
     mfd_print_processing "$f"
     if [[ -n "$MFD_OLDEST_E" ]]; then
@@ -634,9 +644,10 @@ mfd_process_file() {
     key_list+=("$((i + 1))")
   done
   echo "  [$(mfd_k a "$MFD_DEFAULT_KEY")] Always oldest for the rest of this run"
+  echo "  [$(mfd_k k "$MFD_DEFAULT_KEY")] Keep as written for the rest of this run"
   echo "  [$(mfd_k s "$MFD_DEFAULT_KEY")] Skip this file"
   echo "  [$(mfd_k q "$MFD_DEFAULT_KEY")] Quit"
-  key_list+=(a s q)
+  key_list+=(a k s q)
   prompt_keys="$(mfd_keys "$MFD_DEFAULT_KEY" "${key_list[@]}")"
   # Numbers cannot be capitalised; spell out the default when it is a digit.
   if [[ "$MFD_DEFAULT_KEY" =~ ^[0-9]+$ ]]; then
@@ -662,6 +673,7 @@ mfd_process_file() {
       a)
         mfd_print_selected "a = Always oldest for the rest of this run"
         ALWAYS_OLDEST=1
+        ALWAYS_KEEP=0
         if [[ -n "$MFD_OLDEST_E" ]]; then
           mfd_apply_epoch "$f" "$MFD_OLDEST_E"
           FIXED=$((FIXED + 1))
@@ -669,6 +681,15 @@ mfd_process_file() {
           mfd_show_result_table "$f" "$before_name" "$before_fs" "$before_media"
         fi
         echo "$(mfd_ts) Will use the oldest usable date for every later file."
+        return 0
+        ;;
+      k)
+        mfd_print_selected "k = Keep as written for the rest of this run"
+        ALWAYS_KEEP=1
+        ALWAYS_OLDEST=0
+        echo "$(mfd_ts) Kept as written: ${f##*/}"
+        SKIPPED=$((SKIPPED + 1))
+        echo "$(mfd_ts) Will keep dates as written for every later file."
         return 0
         ;;
     esac
@@ -701,6 +722,7 @@ RECURSIVE=0
 DRY_RUN=0
 VERBOSE=0
 ALWAYS_OLDEST=0
+ALWAYS_KEEP=0
 FIXED=0
 SKIPPED=0
 SCANNED=0
