@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261021.103947 - Equivalent / Usage show the live script name, not .deleteme.*.seal.*
 # v. 20261021.103731 - conf name from the live script path, not the .deleteme.*.seal.* copy; dedupe conf lookup dirs
 # v. 20261021.102204 - when no named places are loaded, say HOME and which conf directories were looked in
 # v. 20261013.092056 - a tracks folder from the conf also reads GPSData*.txt
@@ -88,6 +89,7 @@
 # v. 20261009.160131 - also read .tcx tracks; a Trackpoint with a time and a position is used like a GPX point
 # v. 20261009.151425 - report which photos and videos have no location, and write one from the nearest GPX point
 
+# 2026.10.21 - v. 0.89 - the Equivalent line and --help Usage examples use the live script basename, not .deleteme.*.seal.*
 # 2026.10.21 - v. 0.88 - derive CONF_NAME and the .py helper from SCRIPT_SELF_LIVE_PATH (or strip .deleteme.*.seal.*), not from BASH_SOURCE of the seal copy — otherwise the script looked for .deleteme.…seal….conf and never opened $HOME/conf/video-pgm-geotag-missing-media.conf; conf lookup dirs are unique when HOME and profile_location_dir are the same
 # 2026.10.21 - v. 0.87 - when the place question has no [1]/[2]… entries, print HOME and the directories searched for video-pgm-geotag-missing-media.conf (and whether a conf was found but had no places); skip $HOME/… when HOME is empty so /conf is not probed by mistake
 # 2026.10.13 - v. 0.86 - a tracks folder from the conf also reads GPSData*.txt
@@ -199,8 +201,10 @@
 #
 
 show_help() {
+  local script_name
+  script_name="$(basename -- "$(gm_live_script_path)")"
   cat <<EOF
-Usage: $(basename "$0") [-h|--help] [-v|--version] [--history]
+Usage: ${script_name} [-h|--help] [-v|--version] [--history]
        [-y|--yes] [-n|--dry-run] [--redo] [--verbose] [--colors yes|no]
        [--internet yes|no] [--backup | --no-backup]
        [--here | --recursive]
@@ -375,19 +379,19 @@ Needs: python3, and exiftool (video-pgm-install-exiftool.sh). The helper
 video-pgm-geotag-missing-media.py has its own selftest.
 
 Examples:
-  $(basename "$0")
+  ${script_name}
       Current directory and its subdirectories. Report, then ask before writing.
-  $(basename "$0") -n /mnt/p/video/trip
+  ${script_name} -n /mnt/p/video/trip
       Report that directory. Write nothing.
-  $(basename "$0") -y --tz +02:00 /mnt/p/video/trip
+  ${script_name} -y --tz +02:00 /mnt/p/video/trip
       Subdirectories too. Write every close match. Camera clock is +02:00.
-  $(basename "$0") --gpx /mnt/p/tracks/day.gpx --here /mnt/p/video/trip
+  ${script_name} --gpx /mnt/p/tracks/day.gpx --here /mnt/p/video/trip
       Use that GPX as well as any .gpx, .tcx, or GPSData*.txt beside the videos.
-  $(basename "$0") --gpx /mnt/p/tracks/ride.tcx /mnt/p/video/trip
+  ${script_name} --gpx /mnt/p/tracks/ride.tcx /mnt/p/video/trip
       Use that TCX file as the track.
-  $(basename "$0") --days-before 3 --days-after 14 /mnt/p/video/trip
+  ${script_name} --days-before 3 --days-after 14 /mnt/p/video/trip
       Smart loading, 3 days before the first file and 14 days after the last.
-  $(basename "$0") --year 2026-2027 --here /mnt/p/video/trip
+  ${script_name} --year 2026-2027 --here /mnt/p/video/trip
       Only tracks whose names start in 2026 or 2027.
 EOF
 }
@@ -1817,7 +1821,7 @@ gm_track_year_arg() {
 }
 
 gm_equivalent_command() {
-  local -a cmd=("$(basename -- "$0")")
+  local -a cmd=("$(basename -- "$(gm_live_script_path)")")
   local g before after year_arg
   (( DO_YES )) && cmd+=(-y)
   (( DRY_RUN )) && cmd+=(-n)
