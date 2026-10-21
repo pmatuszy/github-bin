@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261021.083000 - output-date UX like media-pgm-fix-dates: framed header, Selected:, before/after, [a] always oldest, summary
 # v. 20261020.163100 - parse exiftool CreateDate with hyphens so GNU date can read media tags
 # v. 20261020.162300 - when name and mtime match and CreateDate is missing, default is apply that date (not Keep)
 # v. 20261020.150700 - date menu always lists File name, Filesystem, and Media tags (n/a when unusable)
@@ -54,6 +55,7 @@
 # v. 20260930.221500 - file prompts: one key, no Enter
 # v. 20260930.220400 - faster viewing copy of a merged video (2, 5, 10, 20, …)
 
+# 2026.10.21 - v. 0.53 - output-date step matches media-pgm-fix-dates readability: === header, (default N = Label), Selected:, before/after result with * (changed), [a] always oldest for the rest of this run, date counts in the run summary
 # 2026.10.20 - v. 0.52 - reading CreateDate used exiftool's YYYY:MM:DD form, which GNU date rejects, so media tags looked missing even when present; parse as YYYY-MM-DD instead
 # 2026.10.20 - v. 0.51 - when name and mtime already match and only CreateDate is missing, default is to apply that date (media + filesystem), not Keep
 # 2026.10.20 - v. 0.49 - the output-date menu always lists File name, Filesystem, and Media tags (n/a when missing or before 1990)
@@ -133,9 +135,12 @@ stem_xN_YYYYMMDD-HHMMSS.mp4, using the time this encode starts. The file itself
 gets the source video's creation time and file time. If the source file name,
 filesystem time, and media CreateDate disagree by more than two minutes, the
 script asks which date to use (1/2/3…); the default is the oldest usable stamp
-(before 1990 ignored). -y applies the oldest without asking. If the copy has no
-location, the first point of the .gpx beside the source is stored in it. A short try is
-stem_xN_test-1m-at20.mp4, and the same clock is added only when that name is taken.
+(before 1990 ignored). The prompt spells out a numeric default, echoes Selected:,
+shows a before/after result, and [a] uses the oldest for every later file in this
+run. -y applies the oldest without asking. Date actions are listed in the run
+summary. If the copy has no location, the first point of the .gpx beside the
+source is stored in it. A short try is stem_xN_test-1m-at20.mp4, and the same
+clock is added only when that name is taken.
 
 With no FILE or DIR, use the current directory. If that directory contains
 *_concat.mp4 files, only those are used. Otherwise every other .mp4 in the
@@ -392,6 +397,14 @@ tl_print_run_summary() {
   tl_summary_kv "Other/wait time" "$(tl_format_elapsed "$wait_sec")  (prompts, startup, overhead)"
   if [[ "${TL_STOPPED:-no}" == yes ]]; then
     tl_summary_kv "Stopped by user" "yes"
+  fi
+  if (( ${TL_DATES_APPLIED:-0} + ${TL_DATES_KEPT:-0} + ${TL_DATES_OK:-0} + ${TL_DATES_NO_NAME:-0} > 0 )); then
+    echo
+    echo "--- Output dates ---"
+    (( ${TL_DATES_APPLIED:-0} > 0 )) && tl_summary_kv "Dates applied" "${TL_DATES_APPLIED} file(s)"
+    (( ${TL_DATES_KEPT:-0} > 0 )) && tl_summary_kv "Dates kept" "${TL_DATES_KEPT} file(s) (as written)"
+    (( ${TL_DATES_OK:-0} > 0 )) && tl_summary_kv "Dates already OK" "${TL_DATES_OK} file(s) (no prompt)"
+    (( ${TL_DATES_NO_NAME:-0} > 0 )) && tl_summary_kv "No name stamp" "${TL_DATES_NO_NAME} file(s) (date step skipped)"
   fi
   echo
 }
@@ -1118,6 +1131,65 @@ tl_format_epoch_display() {
     || printf '%s\n' "$e"
 }
 
+tl_disp_or_na() {
+  local e="${1:-}"
+  if [[ -n "$e" ]]; then
+    tl_format_epoch_display "$e"
+  else
+    printf '%s\n' "n/a"
+  fi
+}
+
+tl_print_selected() {
+  echo "$(tl_ts) Selected: $*"
+}
+
+tl_rule() {
+  printf '%s\n' "========================================================================"
+}
+
+tl_print_output_dates_header() {
+  local f="$1"
+  echo
+  tl_rule
+  echo "$(tl_ts) Output dates: ${f}"
+  tl_rule
+}
+
+tl_print_ba_row() {
+  local label="$1" before="$2" after="$3" mark=" " note=""
+  if [[ "$before" != "$after" ]]; then
+    mark="*"
+    note="  (changed)"
+  fi
+  printf '%s %-18s %-21s %s%s\n' \
+    "$mark" "$label" "$(tl_disp_or_na "$before")" "$(tl_disp_or_na "$after")" "$note"
+}
+
+tl_print_before_after() {
+  local b_name="$1" b_fs="$2" b_media="$3"
+  local a_name="$4" a_fs="$5" a_media="$6"
+  echo
+  echo "  === Result (before -> after) =========================================="
+  printf '  %-18s %-21s %s\n' "" "Before" "After"
+  tl_print_ba_row "File name" "$b_name" "$a_name"
+  tl_print_ba_row "Filesystem" "$b_fs" "$a_fs"
+  tl_print_ba_row "Media tags" "$b_media" "$a_media"
+  echo "  ======================================================================"
+}
+
+tl_show_result_table() {
+  local dest="$1" before_name="$2" before_fs="$3" before_media="$4"
+  local after_name after_fs after_media
+  after_name="$(tl_filename_epoch_from_basename "${dest##*/}" 2>/dev/null || true)"
+  [[ -z "$after_name" ]] && after_name="$before_name"
+  after_fs="$(tl_fs_mtime_epoch "$dest" 2>/dev/null || true)"
+  after_media="$(tl_media_createdate_epoch "$dest" 2>/dev/null || true)"
+  tl_print_before_after \
+    "$before_name" "$before_fs" "$before_media" \
+    "$after_name" "$after_fs" "$after_media"
+}
+
 tl_filename_epoch_from_basename() {
   local base="$1" d t iso e
   base="${base##*/}"
@@ -1205,19 +1277,21 @@ tl_set_media_dates_epoch() {
   (( ok ))
 }
 
+# Apply epoch; caller shows the before/after table.
 tl_apply_epoch_to_output() {
-  local dest="$1" epoch="$2" disp
+  local dest="$1" epoch="$2" disp media_ok=0 fs_ok=0
   disp="$(tl_format_epoch_display "$epoch")"
   if tl_set_media_dates_epoch "$dest" "$epoch"; then
-    echo "$(tl_ts) Media CreateDate: ${disp}"
+    media_ok=1
   else
     echo "$(tl_ts) Media CreateDate: could not write ${disp}" >&2
   fi
   if tl_set_fs_times_epoch "$dest" "$epoch"; then
-    echo "$(tl_ts) Filesystem times: ${disp}"
+    fs_ok=1
   else
     echo "$(tl_ts) Filesystem times: could not set ${disp}" >&2
   fi
+  (( media_ok || fs_ok ))
 }
 
 # After stamping from the source: if name / FS / media disagree, ask which date to use.
@@ -1227,7 +1301,8 @@ tl_prompt_reconcile_output_times() {
   local name_e="" src_e="" media_e="" dest_fs_e=""
   local -a labels=() epochs=() notes=()
   local i n def=1 oldest_i=0 oldest_e="" choice keys="" disp note fs_show
-  local abs_diff need_ask=0
+  local abs_diff need_ask=0 prompt_extra="" before_name before_fs before_media
+  local -a key_list=()
 
   [[ -f "$dest" && -f "$source_file" ]] || return 0
 
@@ -1238,7 +1313,14 @@ tl_prompt_reconcile_output_times() {
   media_e="$(tl_media_createdate_epoch "$dest" 2>/dev/null || true)"
   [[ -z "$media_e" ]] && media_e="$(tl_media_createdate_epoch "$source_file" 2>/dev/null || true)"
 
-  [[ -n "$name_e" ]] || return 0
+  if [[ -z "$name_e" ]]; then
+    TL_DATES_NO_NAME=$((TL_DATES_NO_NAME + 1))
+    return 0
+  fi
+
+  before_name="$name_e"
+  before_fs="${src_e:-$dest_fs_e}"
+  before_media="$media_e"
 
   fs_show="${src_e:-$dest_fs_e}"
   if [[ -n "$fs_show" ]]; then
@@ -1253,7 +1335,10 @@ tl_prompt_reconcile_output_times() {
   else
     need_ask=1
   fi
-  (( need_ask )) || return 0
+  if (( ! need_ask )); then
+    TL_DATES_OK=$((TL_DATES_OK + 1))
+    return 0
+  fi
 
   labels+=("File name")
   epochs+=("$name_e")
@@ -1288,23 +1373,24 @@ tl_prompt_reconcile_output_times() {
   done
   def=$((oldest_i + 1))
 
-  if (( DO_YES )) || (( ! script_is_run_interactively )); then
+  if (( DO_YES )) || (( TL_ALWAYS_OLDEST )) || (( ! script_is_run_interactively )); then
+    tl_print_output_dates_header "$dest"
+    printf '  Source name stamp from:  %s\n' "${source_file##*/}"
     if [[ -n "$oldest_e" ]]; then
       tl_apply_epoch_to_output "$dest" "$oldest_e"
-      echo "$(tl_ts) Output times: $(tl_format_epoch_display "$oldest_e") (oldest usable; no prompt)."
+      echo "$(tl_ts) Set from oldest usable: $(tl_format_epoch_display "$oldest_e")"
+      tl_show_result_table "$dest" "$before_name" "$before_fs" "$before_media"
+      TL_DATES_APPLIED=$((TL_DATES_APPLIED + 1))
     fi
     return 0
   fi
 
-  echo
-  echo "$(tl_ts) Output times do not match the file name."
-  echo
-  printf '  File:  %s\n' "${dest##*/}"
+  tl_print_output_dates_header "$dest"
   printf '  Source name stamp from:  %s\n' "${source_file##*/}"
   echo
   echo "  Sources (oldest usable is the default; applying it sets media CreateDate and filesystem times):"
   echo
-  keys=""
+  key_list=()
   for (( i = 0; i < n; i++ )); do
     note="${notes[i]}"
     if [[ -n "${epochs[i]}" ]]; then
@@ -1322,21 +1408,44 @@ tl_prompt_reconcile_output_times() {
     # ASCII-only date column so %-19s matches terminal columns (UTF-8 "—" broke alignment).
     printf '  [%d] %-18s %-19s  %s\n' \
       "$((i + 1))" "${labels[i]}" "$disp" "$note"
-    keys+="$((i + 1))"
-    (( i + 1 < n )) && keys+="/"
+    key_list+=("$((i + 1))")
   done
-  echo "  [q] Quit"
-  keys+="/q"
+  echo "  [$(tl_k a "$def")] Always oldest for the rest of this run"
+  echo "  [$(tl_k q "$def")] Quit"
+  key_list+=(a q)
+  keys="$(tl_keys "$def" "${key_list[@]}")"
+  if [[ "$def" =~ ^[0-9]+$ ]]; then
+    i=$((def - 1))
+    prompt_extra=" (default ${def} = ${labels[i]})"
+  fi
+
   while true; do
-    tl_read_key "Output times [${keys}] (default ${def}): " "$def"
+    tl_read_key "Output times [${keys}]${prompt_extra}: " "$def"
     choice="$(tl_choice "$REPLY")"
     case "$choice" in
-      q) return 2 ;;
+      q)
+        tl_print_selected "q = Quit"
+        return 2
+        ;;
+      a)
+        tl_print_selected "a = Always oldest for the rest of this run"
+        TL_ALWAYS_OLDEST=1
+        if [[ -n "$oldest_e" ]]; then
+          tl_apply_epoch_to_output "$dest" "$oldest_e"
+          echo "$(tl_ts) Set from oldest usable: $(tl_format_epoch_display "$oldest_e")"
+          tl_show_result_table "$dest" "$before_name" "$before_fs" "$before_media"
+          TL_DATES_APPLIED=$((TL_DATES_APPLIED + 1))
+        fi
+        echo "$(tl_ts) Will use the oldest usable date for every later file."
+        return 0
+        ;;
     esac
     if [[ "$choice" =~ ^[0-9]+$ ]] && (( choice >= 1 && choice <= n )); then
       i=$((choice - 1))
+      tl_print_selected "${choice} = ${labels[i]}"
       if (( i == n - 1 )); then
         echo "$(tl_ts) Output times kept as written."
+        TL_DATES_KEPT=$((TL_DATES_KEPT + 1))
         return 0
       fi
       if [[ -z "${epochs[i]}" ]]; then
@@ -1344,7 +1453,9 @@ tl_prompt_reconcile_output_times() {
         continue
       fi
       tl_apply_epoch_to_output "$dest" "${epochs[i]}"
-      echo "$(tl_ts) Output times set from ${labels[i]}: $(tl_format_epoch_display "${epochs[i]}")"
+      echo "$(tl_ts) Set from ${labels[i]}: $(tl_format_epoch_display "${epochs[i]}")"
+      tl_show_result_table "$dest" "$before_name" "$before_fs" "$before_media"
+      TL_DATES_APPLIED=$((TL_DATES_APPLIED + 1))
       return 0
     fi
     echo "$(tl_ts) Unknown choice: ${REPLY}."
@@ -3202,6 +3313,11 @@ ENCODE_ALL=0
 TL_ENCODE_REST=0
 TL_CONTINUE_ONE=0
 SKIP_ALL=0
+TL_ALWAYS_OLDEST=0
+TL_DATES_APPLIED=0
+TL_DATES_KEPT=0
+TL_DATES_OK=0
+TL_DATES_NO_NAME=0
 SPEED="${PGM_TIMELAPSE_SPEED:-}"
 ENCODER="${PGM_TIMELAPSE_ENCODER:-auto}"
 ENCODER_FROM_CLI=0
