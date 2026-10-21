@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261021.144500 - Ctrl-C removes .partial.*.mp4 (stop ffmpeg first; retry rm on busy mounts)
 # v. 20261021.143500 - Command line shows live script name, not .deleteme.*.seal.*
 # v. 20261021.120123 - output dates: [k] keep as written for the rest of this run
 # v. 20261021.083000 - output-date UX like media-pgm-fix-dates: framed header, Selected:, before/after, [a] always oldest, summary
@@ -57,6 +58,7 @@
 # v. 20260930.221500 - file prompts: one key, no Enter
 # v. 20260930.220400 - faster viewing copy of a merged video (2, 5, 10, 20, …)
 
+# 2026.10.21 - v. 0.56 - Ctrl-C / EXIT: stop ffmpeg before deleting the .partial.*.mp4, retry rm (NTFS/CIFS often keeps the file busy), and sweep orphans for this PID — previously cleanup said it ran but left …_x5.mp4.partial.<pid>.mp4
 # 2026.10.21 - v. 0.55 - printed Command uses video-pgm-timelapse.sh (live path), not .deleteme.video-pgm-timelapse.sh.seal.*
 # 2026.10.21 - v. 0.54 - output-date menu: [k] keeps times as written for this file and every later file in the run (same idea as [a] for oldest)
 # 2026.10.21 - v. 0.53 - output-date step matches media-pgm-fix-dates readability: === header, (default N = Label), Selected:, before/after result with * (changed), [a] always oldest for the rest of this run, date counts in the run summary
@@ -414,13 +416,18 @@ tl_print_run_summary() {
 }
 
 tl_ctrl_c() {
+  # Ignore further INT while we stop ffmpeg and remove the partial (double Ctrl-C).
+  trap '' INT
   TL_STOPPED=yes
+  tl_stop_ffmpeg
+  tl_cleanup_partial
   ctrl_c
 }
 
 tl_on_exit() {
   tl_processing_end
   tl_summary_flush_open_encode
+  tl_stop_ffmpeg
   tl_cleanup_partial
   if (( ${TL_SUMMARY:-0} )) && (( ! ${TL_SUMMARY_DONE:-0} )); then
     TL_SUMMARY_DONE=1
@@ -678,16 +685,21 @@ tl_progress_reader() {
 }
 
 # ffmpeg args follow total_sec. Progress is on stdout; the video path is the last arg.
+# ffmpeg runs in the background so Ctrl-C can TERM/KILL it and then delete the partial.
 tl_ffmpeg_progress() {
   local total_sec="$1"
   shift
   local rc=0
   if command -v stdbuf >/dev/null 2>&1; then
-    stdbuf -oL ffmpeg "$@" | tl_progress_reader "$total_sec"
+    stdbuf -oL ffmpeg "$@" > >(tl_progress_reader "$total_sec") &
   else
-    ffmpeg "$@" | tl_progress_reader "$total_sec"
+    ffmpeg "$@" > >(tl_progress_reader "$total_sec") &
   fi
-  rc=${PIPESTATUS[0]}
+  TL_FFMPEG_PID=$!
+  wait "$TL_FFMPEG_PID"
+  rc=$?
+  TL_FFMPEG_PID=""
+  wait 2>/dev/null || true
   return "$rc"
 }
 
@@ -965,10 +977,67 @@ tl_encoder_candidates() {
   (( printed )) || return 1
 }
 
+# Stop the encoder so the partial file is released (needed on /mnt/* NTFS/CIFS).
+tl_stop_ffmpeg() {
+  local pid tries=0
+  pid="${TL_FFMPEG_PID:-}"
+  if [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then
+    kill -TERM "$pid" 2>/dev/null || true
+    while kill -0 "$pid" 2>/dev/null && (( tries < 20 )); do
+      sleep 0.1
+      (( ++tries )) || true
+    done
+    if kill -0 "$pid" 2>/dev/null; then
+      kill -KILL "$pid" 2>/dev/null || true
+    fi
+    wait "$pid" 2>/dev/null || true
+  fi
+  TL_FFMPEG_PID=""
+  # Pipeline / other children still encoding under this shell.
+  pkill -TERM -P $$ -x ffmpeg 2>/dev/null || true
+  pkill -TERM -P $$ -f '[f]fmpeg ' 2>/dev/null || true
+  sleep 0.15
+  pkill -KILL -P $$ -x ffmpeg 2>/dev/null || true
+  pkill -KILL -P $$ -f '[f]fmpeg ' 2>/dev/null || true
+}
+
+# Remove the in-progress output. Retries: a busy mount often fails the first rm.
 tl_cleanup_partial() {
-  if [[ -n "${TL_PARTIAL:-}" && -e "$TL_PARTIAL" ]]; then
-    rm -f -- "$TL_PARTIAL"
-    echo "$(tl_ts) Removed incomplete output: ${TL_PARTIAL}"
+  local f tries=0 dir
+  f="${TL_PARTIAL:-}"
+  if [[ -n "$f" ]]; then
+    while [[ -e "$f" ]] && (( tries < 25 )); do
+      rm -f -- "$f" 2>/dev/null || true
+      [[ -e "$f" ]] || break
+      sleep 0.12
+      (( ++tries )) || true
+    done
+    if [[ -e "$f" ]]; then
+      echo "$(tl_ts) ${C_R}Could not remove incomplete output:${C_0} ${f}" >&2
+    else
+      echo "$(tl_ts) Removed incomplete output: ${f}"
+    fi
+  fi
+  # Orphans for this shell (TL_PARTIAL cleared too early, or path mismatch).
+  dir="${TL_PARTIAL_DIR:-}"
+  if [[ -n "$dir" && -d "$dir" ]]; then
+    shopt -s nullglob
+    for f in "$dir"/*.partial.$$.mp4; do
+      [[ -e "$f" ]] || continue
+      tries=0
+      while [[ -e "$f" ]] && (( tries < 15 )); do
+        rm -f -- "$f" 2>/dev/null || true
+        [[ -e "$f" ]] || break
+        sleep 0.12
+        (( ++tries )) || true
+      done
+      if [[ -e "$f" ]]; then
+        echo "$(tl_ts) ${C_R}Could not remove incomplete output:${C_0} ${f}" >&2
+      else
+        echo "$(tl_ts) Removed incomplete output: ${f}"
+      fi
+    done
+    shopt -u nullglob
   fi
   TL_PARTIAL=""
 }
@@ -1490,6 +1559,7 @@ tl_run_ffmpeg() {
   vfilter="$(tl_video_filter "$speed")"
   partial="${dest}.partial.$$.mp4"
   TL_PARTIAL="$partial"
+  TL_PARTIAL_DIR="$(dirname -- "$dest")"
   enc_args=()
   if [[ -n "${TL_SS:-}" ]]; then
     enc_args+=(-ss "$TL_SS")
@@ -1506,28 +1576,34 @@ tl_run_ffmpeg() {
   fi
   tl_encode_slice_begin
   if [[ "$TL_DISPLAY" == verbose ]]; then
-    ffmpeg -y -hide_banner -loglevel error -stats "${enc_args[@]}" "$partial"
+    ffmpeg -y -hide_banner -loglevel error -stats "${enc_args[@]}" "$partial" &
+    TL_FFMPEG_PID=$!
+    wait "$TL_FFMPEG_PID"
     rc=$?
+    TL_FFMPEG_PID=""
   elif [[ -t 1 ]]; then
     tl_ffmpeg_progress "$total_sec" -y -hide_banner -loglevel error -nostats \
       -progress pipe:1 "${enc_args[@]}" "$partial"
     rc=$?
   else
-    ffmpeg -y -hide_banner -loglevel error -nostats "${enc_args[@]}" "$partial"
+    ffmpeg -y -hide_banner -loglevel error -nostats "${enc_args[@]}" "$partial" &
+    TL_FFMPEG_PID=$!
+    wait "$TL_FFMPEG_PID"
     rc=$?
+    TL_FFMPEG_PID=""
   fi
   tl_processing_end
   if (( rc != 0 )) || [[ ! -s "$partial" ]]; then
-    rm -f -- "$partial"
-    TL_PARTIAL=""
+    tl_stop_ffmpeg
+    tl_cleanup_partial
     return 1
   fi
   if ! mv -f -- "$partial" "$dest"; then
-    rm -f -- "$partial"
-    TL_PARTIAL=""
+    tl_cleanup_partial
     return 1
   fi
   TL_PARTIAL=""
+  TL_PARTIAL_DIR=""
   tl_stamp_from "$src" "$dest"
   gpx="$(tl_find_gpx "$src" || true)"
   [[ -n "$gpx" ]] && tl_put_gps "$dest" "$gpx" "$src"
@@ -3363,6 +3439,8 @@ esac
 TL_INPUTS=()
 TL_ASK_WHICH_FILES=0
 TL_PARTIAL=""
+TL_PARTIAL_DIR=""
+TL_FFMPEG_PID=""
 TL_ENC_ARGS=()
 TL_ENC_KIND=""
 TL_ENCODER_LIST=""
