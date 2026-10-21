@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261021.102204 - when no named places are loaded, say HOME and which conf directories were looked in
 # v. 20261013.092056 - a tracks folder from the conf also reads GPSData*.txt
 # v. 20261013.090107 - a GPSData point is the clip start plus the seconds from the log number
 # v. 20261013.084500 - a 70mai file is timed from its name, and its GPS log is the track used
@@ -86,6 +87,7 @@
 # v. 20261009.160131 - also read .tcx tracks; a Trackpoint with a time and a position is used like a GPX point
 # v. 20261009.151425 - report which photos and videos have no location, and write one from the nearest GPX point
 
+# 2026.10.21 - v. 0.87 - when the place question has no [1]/[2]… entries, print HOME and the directories searched for video-pgm-geotag-missing-media.conf (and whether a conf was found but had no places); skip $HOME/… when HOME is empty so /conf is not probed by mistake
 # 2026.10.13 - v. 0.86 - a tracks folder from the conf also reads GPSData*.txt
 # 2026.10.13 - v. 0.85 - a GPSData point is the clip start plus the seconds from the log number
 # 2026.10.13 - v. 0.84 - a 70mai file is timed from its name, and its GPS log is the track used
@@ -1925,16 +1927,59 @@ gm_note_conf_dir() {
   printf '%s\0' "$f" >> "$WORK/confs"
 }
 
+# Directories where video-pgm-geotag-missing-media.conf is sought (one path per line).
+gm_conf_lookup_dirs() {
+  printf '%s\n' /etc
+  if [[ -n "${HOME:-}" ]]; then
+    printf '%s\n' "${HOME}" "${HOME}/etc" "${HOME}/conf"
+  fi
+  if [[ -n "${profile_location_dir:-}" ]]; then
+    printf '%s\n' "${profile_location_dir}/etc" "${profile_location_dir}/conf" "${profile_location_dir}"
+  fi
+}
+
 gm_find_confs() {
   local dir
   : > "$WORK/confs"
-  for dir in /etc "${HOME:-}" "${HOME:-}/etc" "${HOME:-}/conf"; do
+  while IFS= read -r dir; do
+    [[ -n "$dir" ]] || continue
     gm_note_conf_dir "$dir"
-  done
-  if [[ -n "${profile_location_dir:-}" ]]; then
-    gm_note_conf_dir "${profile_location_dir}/etc"
-    gm_note_conf_dir "${profile_location_dir}/conf"
-    gm_note_conf_dir "${profile_location_dir}"
+  done < <(gm_conf_lookup_dirs)
+}
+
+# Explain why the place question has no [1]/[2]… numbered names.
+gm_say_no_named_places() {
+  local dir f home_disp conf_n=0 on_disk=0
+  if [[ -n "${HOME:-}" ]]; then
+    home_disp="$HOME"
+  else
+    home_disp="(unset — \$HOME/etc and \$HOME/conf were not searched)"
+  fi
+  echo "No named places loaded (HOME=${home_disp})."
+  echo "Looked for ${CONF_NAME} in:"
+  while IFS= read -r dir; do
+    [[ -n "$dir" ]] || continue
+    if [[ -f "${dir}/${CONF_NAME}" ]]; then
+      on_disk=1
+      echo "  ${dir}  (found ${dir}/${CONF_NAME})"
+    else
+      echo "  ${dir}"
+    fi
+  done < <(gm_conf_lookup_dirs)
+  if [[ -n "${WORK:-}" && -s "${WORK}/confs" ]]; then
+    echo "Config file(s) were read this run, but they listed no [place] coordinates:"
+    while IFS= read -r -d '' f; do
+      [[ -n "$f" ]] || continue
+      conf_n=$(( conf_n + 1 ))
+      echo "  ${f}"
+    done < "${WORK}/confs"
+    if (( conf_n == 0 )); then
+      echo "  (none listed)"
+    fi
+  elif (( on_disk )); then
+    echo "A ${CONF_NAME} is on disk above, but it was not loaded into this run (check that tracks were collected and that HOME matches the shell that owns that conf)."
+  else
+    echo "No ${CONF_NAME} was found in those directories."
   fi
 }
 
@@ -2684,6 +2729,9 @@ gm_choose_places() {
   else
     echo "No track file was loaded."
   fi
+  if (( ${#PLACE_LABEL[@]} == 0 )); then
+    gm_say_no_named_places
+  fi
   gm_ask_internet
   gm_place_width
   shown=0
@@ -2706,6 +2754,9 @@ gm_choose_places() {
       echo "      This file has no time, so there is no nearest point."
     elif [[ "${CHOOSE_STATUS[$i]:-}" == "no track" ]]; then
       echo "      No track was loaded, so there is no nearest point."
+    fi
+    if (( ${#PLACE_LABEL[@]} == 0 )); then
+      echo "      No numbered places from the config (see above)."
     fi
     for n in "${!PLACE_LABEL[@]}"; do
       gm_print_place_line "$(( n + 1 ))" "${PLACE_LABEL[$n]}" "$(gm_blue "${PLACE_LAT[$n]}, ${PLACE_LON[$n]}")"
