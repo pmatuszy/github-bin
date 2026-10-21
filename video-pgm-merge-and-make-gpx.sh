@@ -1077,7 +1077,13 @@ pgm_print_run_settings_equivalent_cli() {
   local cmd="" out="" p q_dir
   local -a parts=()
 
-  cmd="$(basename -- "${BASH_SOURCE[0]:-$0}")"
+  if declare -F script_live_basename >/dev/null 2>&1; then
+    cmd="$(script_live_basename)"
+  elif [[ -n "${SCRIPT_SELF_LIVE_PATH:-}" ]]; then
+    cmd="$(basename -- "${SCRIPT_SELF_LIVE_PATH}")"
+  else
+    cmd="$(basename -- "${BASH_SOURCE[0]:-$0}")"
+  fi
   [[ -n "$cmd" ]] || cmd="video-pgm-merge-and-make-gpx.sh"
 
   (( DO_UPDATE )) && parts+=("--update")

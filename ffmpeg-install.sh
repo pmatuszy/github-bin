@@ -177,7 +177,23 @@ ffmpeg_install_equivalent_command_line() {
     local script="" env_prefix="" arg="" quoted=""
     local -a parts=()
 
-    script="${CALLER_SCRIPT:-${BASH_SOURCE[0]:-ffmpeg-install.sh}}"
+    if [[ -n "${SCRIPT_SELF_LIVE_PATH:-}" && -f "${SCRIPT_SELF_LIVE_PATH}" ]]; then
+        script="${SCRIPT_SELF_LIVE_PATH}"
+    elif [[ -n "${CALLER_SCRIPT:-}" && "$(basename -- "${CALLER_SCRIPT}")" != .deleteme.*.seal.* ]]; then
+        script="${CALLER_SCRIPT}"
+    else
+        script="${BASH_SOURCE[0]:-ffmpeg-install.sh}"
+    fi
+    # Prefer the live basename in the printed command (full path is fine when not a seal copy).
+    case "$(basename -- "$script")" in
+        .deleteme.*.seal.*)
+            if declare -F script_live_basename >/dev/null 2>&1; then
+                script="$(script_live_basename)"
+            elif [[ -n "${SCRIPT_SELF_LIVE_PATH:-}" ]]; then
+                script="$(basename -- "${SCRIPT_SELF_LIVE_PATH}")"
+            fi
+            ;;
+    esac
     env_prefix="$(ffmpeg_install_equivalent_env_prefix)"
 
     parts=( "${script}" )

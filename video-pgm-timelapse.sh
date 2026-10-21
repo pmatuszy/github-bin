@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261021.143500 - Command line shows live script name, not .deleteme.*.seal.*
 # v. 20261021.120123 - output dates: [k] keep as written for the rest of this run
 # v. 20261021.083000 - output-date UX like media-pgm-fix-dates: framed header, Selected:, before/after, [a] always oldest, summary
 # v. 20261020.163100 - parse exiftool CreateDate with hyphens so GNU date can read media tags
@@ -56,6 +57,7 @@
 # v. 20260930.221500 - file prompts: one key, no Enter
 # v. 20260930.220400 - faster viewing copy of a merged video (2, 5, 10, 20, …)
 
+# 2026.10.21 - v. 0.55 - printed Command uses video-pgm-timelapse.sh (live path), not .deleteme.video-pgm-timelapse.sh.seal.*
 # 2026.10.21 - v. 0.54 - output-date menu: [k] keeps times as written for this file and every later file in the run (same idea as [a] for oldest)
 # 2026.10.21 - v. 0.53 - output-date step matches media-pgm-fix-dates readability: === header, (default N = Label), Selected:, before/after result with * (changed), [a] always oldest for the rest of this run, date counts in the run summary
 # 2026.10.20 - v. 0.52 - reading CreateDate used exiftool's YYYY:MM:DD form, which GNU date rejects, so media tags looked missing even when present; parse as YYYY-MM-DD instead
@@ -1998,7 +2000,7 @@ tl_reset_advanced() {
 tl_equivalent_command() {
   local -a cmd=()
   local f part out=""
-  cmd+=("$(basename "$0")" -y --speedup "${SPEED:-5}" --display "${TL_DISPLAY:-normal}")
+  cmd+=("$(script_live_basename 2>/dev/null || basename -- "${SCRIPT_SELF_LIVE_PATH:-$0}")" -y --speedup "${SPEED:-5}" --display "${TL_DISPLAY:-normal}")
   cmd+=(--picture "${TL_PICTURE:-plain}")
   if [[ "${TL_PICTURE:-plain}" == soft ]]; then
     cmd+=(--blend-before "${TL_BLEND_BEFORE:-1}" --blend-after "${TL_BLEND_AFTER:-1}")

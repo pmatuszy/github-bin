@@ -828,7 +828,7 @@ mv_print_job() {
 }
 
 mv_equivalent_command() {
-  local -a cmd=("$(basename "$0")" -y)
+  local -a cmd=("$(script_live_basename 2>/dev/null || basename -- "${SCRIPT_SELF_LIVE_PATH:-$0}")" -y)
   (( REDO )) && cmd+=(--redo)
   (( REDO )) && [[ "$OLD_MODE" == delete ]] && cmd+=(--old delete)
   [[ "${MAP_W}x${MAP_H}" != 1080x1080 ]] && cmd+=(--size "${MAP_W}x${MAP_H}")

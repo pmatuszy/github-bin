@@ -1,9 +1,13 @@
 #!/usr/bin/env bash
+# v. 20261021.143500 - after seal, restore $0 / CALLER_* to the live script name (not .deleteme.*.seal.*)
 # v. 20261020.205600 - seal name .deleteme.<script>.seal.XXXX; if seal copy fails, run live script
 # v. 20261020.205000 - seal running script to a temp copy so in-place cp cannot break bash parse
 # v. 20261020.202500 - detect live-script overwrite (git pull then copy into bin/) mid-run
 # v. 20261020.202200 - detect on-disk script replacement while a run is in progress
 #
+# 2026.10.21 - v. 1.4.143500 - After a sealed re-exec, set BASH_ARGV0 and CALLER_SCRIPT* back to
+#   SCRIPT_SELF_LIVE_PATH so Equivalent/Command lines and banners show video-pgm-….sh, not
+#   .deleteme.video-pgm-….sh.seal.XXXXXX
 # 2026.10.20 - v. 1.3.205600 - Seal files are named .deleteme.<basename>.seal.XXXXXX beside the live
 #   script (or under TMPDIR if bin/ is not writable). If mktemp/cp fails, skip sealing and keep
 #   running the original script — never abort startup for a read-only directory.
@@ -404,6 +408,25 @@ script_self_update_install_trap() {
   SCRIPT_SELF_UPDATE_DEBUG_TRAP_INSTALLED=1
 }
 
+# After seal re-exec, $0 is .deleteme.<script>.seal.XXXXXX. Point identity back at the live file
+# so Command / Equivalent CLI / banners / --help examples show the real script name.
+script_self_update_apply_live_identity() {
+  local live base
+
+  live="${SCRIPT_SELF_LIVE_PATH:-}"
+  [[ -n "$live" && -f "$live" ]] || return 0
+
+  # Bash 5+: assigning BASH_ARGV0 updates $0 for basename "$0" and similar.
+  if [[ -n "${BASH_VERSINFO:-}" ]] && (( BASH_VERSINFO[0] >= 5 )); then
+    BASH_ARGV0="$live"
+  fi
+
+  base="$(basename -- "$live")"
+  CALLER_SCRIPT="$live"
+  CALLER_SCRIPT_BASENAME="$base"
+  export CALLER_SCRIPT CALLER_SCRIPT_BASENAME SCRIPT_SELF_LIVE_PATH
+}
+
 # init live path → seal (exec, no return) → after re-entry: init + watch trap + seal cleanup.
 script_self_update_setup() {
   local live="${1:-}"
@@ -412,6 +435,7 @@ script_self_update_setup() {
     # Already running from a sealed temp copy — watch the live destination path.
     live="${SCRIPT_SELF_LIVE_PATH:-$live}"
     script_self_update_init "$live"
+    script_self_update_apply_live_identity
     script_self_update_register_seal_cleanup
     script_self_update_install_trap
     return 0
@@ -420,5 +444,6 @@ script_self_update_setup() {
   script_self_update_init "$live"
   # Prefer sealing; if exec fails we still install the watch trap.
   script_self_update_seal_and_reexec || true
+  script_self_update_apply_live_identity
   script_self_update_install_trap
 }
