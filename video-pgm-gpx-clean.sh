@@ -1,9 +1,13 @@
 #!/bin/bash
+# v. 20261021.142200 - companion helper 0.5: detours + segment splits on huge gaps
+# v. 20261021.141800 - companion helper 0.4: jump filter no longer skips long time gaps
 # v. 20261021.141500 - rename to video-pgm-gpx-clean; match video-pgm plan/summary/old-file flow
 # v. 20261021.141200 - interactive: pick .gpx files, ask cleaning parameters, handle existing outputs
 # v. 20261021.140100 - note: python helper drops whole teleport clusters
 # v. 20261021.135400 - clean noisy GPX tracks via helper (spikes + stationary jitter)
 
+# 2026.10.21 - v. 0.6 - helper 0.5 drops geometric detours and splits trkseg on huge steps/gaps
+# 2026.10.21 - v. 0.5 - helper 0.4 always applies max-jump across time gaps (fixes leftover multi-km spikes)
 # 2026.10.21 - v. 0.4 - renamed to video-pgm-gpx-clean.sh/.py like the other video-pgm tools; plan,
 #                        equivalent command, write-to-.partial then retire old, summary on EXIT
 # 2026.10.21 - v. 0.3 - interactive run: scan dirs for .gpx, pick files, ask max-jump / stop / smooth,
@@ -408,7 +412,7 @@ gc_prompt_params() {
   echo "Drop jumps faster than: km/h"
   echo "  A point that would mean moving faster than this from the last good fix"
   echo "  is treated as a GPS error and left out. 0 keeps every point."
-  echo "  200  car / GoPro (default)   80  bike   25  walk   250  motorway"
+  echo "  200  car / GoPro (default)   80  bike   25  walk   160  calmer filter"
   gc_ask_line "Drop jumps over" "$MAX_JUMP"
   if [[ "$REPLY" =~ ^[0-9]+$ ]] && (( 10#$REPLY == 0 || (10#$REPLY >= 10 && 10#$REPLY <= 2000) )); then
     MAX_JUMP=$(( 10#$REPLY ))
