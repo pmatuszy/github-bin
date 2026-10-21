@@ -17,7 +17,7 @@
 
 show_help() {
   cat <<EOF
-Usage: $(basename "$0") [-h|--help] [-v|--version] [--no_startup_delay]
+Usage: $(script_live_basename) [-h|--help] [-v|--version] [--no_startup_delay]
 
 Local-time prefix for interactive prompts, e.g. "(2026.07.05 17:16:00) "
 

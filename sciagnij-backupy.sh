@@ -15,7 +15,7 @@
 
 print_usage() {
   echo
-  echo "Usage: $(basename "$0") [-h|--help] [-v|--version] [--no_startup_delay] <[user@]host:/remote/path> <local_dest_dir> [--remove-source-files|--move]"
+  echo "Usage: $(script_live_basename) [-h|--help] [-v|--version] [--no_startup_delay] <[user@]host:/remote/path> <local_dest_dir> [--remove-source-files|--move]"
   echo
   echo "  Pings the remote host first; if it does not respond, nothing is copied."
   echo "  Downloads each remote file via scp, verifies it with ${HASH_CMD:-sha512sum}, and (only with"
@@ -44,7 +44,7 @@ while [[ $# -gt 0 ]]; do
     -v|--version) print_version_banner; exit 0 ;;
     --history) print_script_history; exit 0 ;;
     --no_startup_delay) HEADER_EXTRA_ARGS+=(NO_STARTUP_DELAY); shift ;;
-    -*) echo "Unknown option: $1" >&2; echo "Try: $(basename "$0") --help" >&2; exit 1 ;;
+    -*) echo "Unknown option: $1" >&2; echo "Try: $(script_live_basename) --help" >&2; exit 1 ;;
     *) break ;;
   esac
 done
@@ -52,7 +52,7 @@ done
 . "${profile_location_dir:-$HOME}/bin/_script_header.sh" "${HEADER_EXTRA_ARGS[@]}"
 
 if [ -f "$HEALTHCHECKS_FILE" ]; then
-  HEALTHCHECK_URL=$(cat "$HEALTHCHECKS_FILE" | grep "^$(basename "$0")" | awk '{print $2}')
+  HEALTHCHECK_URL=$(cat "$HEALTHCHECKS_FILE" | grep "^$(script_live_basename)" | awk '{print $2}')
 fi
 
 if [ ! -z "${HEALTHCHECKS_FORCE_ID:-}" ]; then

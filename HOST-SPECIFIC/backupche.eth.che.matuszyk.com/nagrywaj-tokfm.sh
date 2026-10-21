@@ -30,7 +30,7 @@
 
 show_help() {
   cat <<EOF
-Usage: $(basename "$0") [-h|--help] [-v|--version] [--no_startup_delay]
+Usage: $(script_live_basename) [-h|--help] [-v|--version] [--no_startup_delay]
 
 Do not pipe this function: a pipeline runs in a subshell, so FFMPEG_BIN would not
 
@@ -81,7 +81,7 @@ LOG_RETENTION_DAYS="${LOG_RETENTION_DAYS:-14}"
 STREAM_PROBE_TIMEOUT="${STREAM_PROBE_TIMEOUT:-15}"
 HTTP_TIMEOUT_US="${HTTP_TIMEOUT_US:-15000000}"
 
-LOG_FILE="/tmp/$(basename "$0")_$(date '+%Y.%m.%d__%H%M%S').log"
+LOG_FILE="/tmp/$(script_live_basename)_$(date '+%Y.%m.%d__%H%M%S').log"
 FFMPEG_BIN="${FFMPEG_BIN:-}"
 SCRIPT_START_TIME="$(date '+%Y-%m-%d %H:%M:%S')"
 
@@ -118,7 +118,7 @@ cleanup_on_signal() {
 trap cleanup_on_signal INT TERM
 
 prune_old_logs() {
-    find /tmp -maxdepth 1 -name "$(basename "$0")_*.log" -mtime +"${LOG_RETENTION_DAYS}" -delete 2>/dev/null || true
+    find /tmp -maxdepth 1 -name "$(script_live_basename)_*.log" -mtime +"${LOG_RETENTION_DAYS}" -delete 2>/dev/null || true
 }
 
 acquire_lock() {
@@ -328,7 +328,7 @@ maybe_ping_healthcheck() {
     local hc_url="" hc_message=""
 
     [[ -f "${HEALTHCHECKS_FILE:-}" ]] || return 0
-    hc_url="$(grep -m1 "^$(basename "$0")" "${HEALTHCHECKS_FILE}" | awk '{print $2}')"
+    hc_url="$(grep -m1 "^$(script_live_basename)" "${HEALTHCHECKS_FILE}" | awk '{print $2}')"
     [[ -n "${hc_url}" ]] || return 0
 
     hc_message=$(

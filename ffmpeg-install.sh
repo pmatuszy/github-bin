@@ -253,7 +253,7 @@ ffmpeg_install_print_equivalent_command() {
 
 show_help() {
     cat <<EOF
-Usage: $(basename "$0") [-h|--help] [-v|--version] [-y|--yes] [-q|--quiet] [--release]
+Usage: $(script_live_basename) [-h|--help] [-v|--version] [-y|--yes] [-q|--quiet] [--release]
        [--dynamic-only] [--static-only] [--source-only] [--install-build-deps]
        [--source-profile min|common|max|gpu|nvidia|jellyfin] [--source-with-fdk-aac]
        [--dry-run] [--no_startup_delay]
@@ -5087,7 +5087,7 @@ while [[ $# -gt 0 ]]; do
             shift 2
             ;;
         --source-with-fdk-aac) CLI_SOURCE_WITH_FDK=1; shift ;;
-        *) echo "Unknown argument: $1" >&2; echo "Try: $(basename "$0") --help" >&2; exit 1 ;;
+        *) echo "Unknown argument: $1" >&2; echo "Try: $(script_live_basename) --help" >&2; exit 1 ;;
     esac
 done
 

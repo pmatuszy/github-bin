@@ -60,7 +60,7 @@ trap cleanup_tmp_work_dir EXIT
 
 show_help() {
     cat <<EOF
-Usage: $(basename "$0") [-h|--help] [-v|--version] [-y|--yes] [-q|--quiet] [--no_startup_delay]
+Usage: $(script_live_basename) [-h|--help] [-v|--version] [-y|--yes] [-q|--quiet] [--no_startup_delay]
 
 Check the installed signal-cli version (if any), compare with the latest GitHub
 release, and optionally install or update. On x86_64 Linux uses the prebuilt
@@ -924,7 +924,7 @@ pi_install_needs_repair() {
 print_pi_force_repair_hint() {
     echo "Java and JNI setup look OK (no repair needed)."
     echo "To force repair anyway (Java + re-patch JNI jar, no rebuild):"
-    echo "  sudo $(basename "$0") --repair"
+    echo "  sudo $(script_live_basename) --repair"
 }
 
 prompt_pi_reinstall_or_quit() {
@@ -1423,7 +1423,7 @@ while [[ $# -gt 0 ]]; do
         -q|--quiet) VERBOSE=0; shift ;;
         --repair) REPAIR_PI_ONLY=1; shift ;;
         --no_startup_delay) HEADER_EXTRA_ARGS+=(NO_STARTUP_DELAY); shift ;;
-        *) echo "Unknown argument: $1" >&2; echo "Try: $(basename "$0") --help" >&2; exit 1 ;;
+        *) echo "Unknown argument: $1" >&2; echo "Try: $(script_live_basename) --help" >&2; exit 1 ;;
     esac
 done
 

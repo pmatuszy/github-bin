@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261021.210400 - Usage/help use script_live_basename from _script_self_update.sh
 # v. 20261021.143500 - after seal, keep CALLER_SCRIPT* / $0 as the live script (not .deleteme.*.seal.*)
 # v. 20261020.205600 - seal files named .deleteme.*; seal failure falls back to live script
 # v. 20261020.205000 - seal caller to temp before banner so in-place cp cannot splice bash source
@@ -11,6 +12,8 @@
 # v. 20260716.173600 - print_version_banner uses CALLER_SCRIPT version fields
 # v. 20260716.163300 - versioning v. YYYYMMDD.HH24MISS; parse first # v. YYYYMMDD.HHMMSS line
 
+# 2026.10.21 - v. 1.66.210400 - script_live_basename lives in _script_self_update.sh; help/Usage should call it
+#                        instead of basename "$0" so .deleteme.*.seal.* never appears
 # 2026.10.21 - v. 1.65.143500 - after seal re-exec, CALLER_SCRIPT / CALLER_SCRIPT_BASENAME / $0 (bash 5+)
 #                        stay on the live script path so Command/Equivalent lines never print .deleteme.*.seal.*
 # 2026.10.20 - v. 1.64.205600 - seal copies use .deleteme.<script>.seal.XXXXXX; if the seal cannot be created (read-only dir), continue on the live script without failing startup
@@ -133,26 +136,25 @@ if [[ -f "${_SCRIPT_SELF_UPDATE_HELPER}" ]]; then
 fi
 unset _SCRIPT_SELF_UPDATE_HELPER
 
-# Basename of the live script (never a .deleteme.*.seal.* snapshot). Prefer this over basename "$0".
-script_live_basename() {
-  if [[ -n "${CALLER_SCRIPT_BASENAME:-}" ]]; then
-    printf '%s\n' "$CALLER_SCRIPT_BASENAME"
-    return 0
-  fi
-  if [[ -n "${SCRIPT_SELF_LIVE_PATH:-}" ]]; then
-    basename -- "$SCRIPT_SELF_LIVE_PATH"
-    return 0
-  fi
-  local base
-  base="$(basename -- "${0:-}")"
-  case "$base" in
-    .deleteme.*.seal.*)
-      base="${base#.deleteme.}"
-      base="${base%.seal.*}"
-      ;;
-  esac
-  printf '%s\n' "$base"
-}
+# script_live_basename is defined in _script_self_update.sh (sourced above when present).
+# Fallback if that helper file is missing (unusual).
+if ! declare -F script_live_basename >/dev/null 2>&1; then
+  script_live_basename() {
+    local base
+    if [[ -n "${SCRIPT_SELF_LIVE_PATH:-}" ]]; then
+      base="$(basename -- "${SCRIPT_SELF_LIVE_PATH}")"
+    else
+      base="$(basename -- "${CALLER_SCRIPT_BASENAME:-${0:-}}")"
+    fi
+    case "$base" in
+      .deleteme.*.seal.*)
+        base="${base#.deleteme.}"
+        base="${base%.seal.*}"
+        ;;
+    esac
+    printf '%s\n' "$base"
+  }
+fi
 
 SCRIPT_VERSION_NUMBER="$(
   LC_ALL=C grep -m1 -E '^# v\. [0-9]{8}\.[0-9]{6} - ' "$CALLER_SCRIPT" 2>/dev/null \
@@ -181,7 +183,7 @@ print_version_banner() {
   local ver=unknown date= title verline width=60
   ver="${SCRIPT_VERSION_NUMBER:-unknown}"
   date="${SCRIPT_VERSION_DATE:-}"
-  title="${CALLER_SCRIPT_BASENAME:-$(basename "$0")}"
+  title="$(script_live_basename)"
   if [[ -n "$date" && "$ver" != unknown ]]; then
     verline="Version: ${ver} (${date})"
   else

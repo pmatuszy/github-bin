@@ -9,7 +9,7 @@
 
 show_help() {
   cat <<EOF
-Usage: $(basename "$0") [-h|--help] [-v|--version] [--no_startup_delay]
+Usage: $(script_live_basename) [-h|--help] [-v|--version] [--no_startup_delay]
        [ -i IFACE ] [ -t SECONDS ] [ -p HOST ] [ -s MBPS ] [ --run IFACE ... ]
 
 Try to renegotiate physical ethernet link(s) to a higher speed (default 1000 Mb/s),
@@ -141,7 +141,7 @@ while [[ $# -gt 0 ]]; do
       ;;
     *)
       echo "Unknown argument: $1" >&2
-      echo "Try: $(basename "$0") --help" >&2
+      echo "Try: $(script_live_basename) --help" >&2
       exit 1
       ;;
   esac

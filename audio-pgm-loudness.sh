@@ -132,7 +132,7 @@
 
 show_help() {
   cat <<EOF
-Usage: $(basename "$0") [-h|--help] [-v|--version] [--history] [--no_startup_delay]
+Usage: $(script_live_basename) [-h|--help] [-v|--version] [--history] [--no_startup_delay]
        [-n standard|youtube|none] [-y] [--colors yes|no] [--scope current|subdirs]
        [--exclude MASK] [--batch-size N] [--classes SPEC] [--timeout SEC]
        [--scan-only] [--scan-percent N] [--scan-percent-min-mb N]
@@ -344,18 +344,18 @@ Exit status:
      except with --scan-only (always 0 after a successful scan).
 
 Examples:
-  cd /path/to/clips && $(basename "$0")
-  cd /path/to/clips && $(basename "$0") --scan-only
-  cd /path/to/tree && $(basename "$0") --scan-only --scope subdirs --scan-percent 50
-  $(basename "$0") -n youtube -y --save-original --colors yes
-  $(basename "$0") --print-cli-only
-  $(basename "$0") -n standard -- quiet_interview.mkv
-  $(basename "$0") clip1.mp4 clip2.mkv
-  $(basename "$0") --scope subdirs '*GoPro*' --scan-only
-  $(basename "$0") wywiady/ --exclude '*Proxy*'
-  $(basename "$0") --scope subdirs --exclude '*_old*' --exclude 'backup/*'
+  cd /path/to/clips && $(script_live_basename)
+  cd /path/to/clips && $(script_live_basename) --scan-only
+  cd /path/to/tree && $(script_live_basename) --scan-only --scope subdirs --scan-percent 50
+  $(script_live_basename) -n youtube -y --save-original --colors yes
+  $(script_live_basename) --print-cli-only
+  $(script_live_basename) -n standard -- quiet_interview.mkv
+  $(script_live_basename) clip1.mp4 clip2.mkv
+  $(script_live_basename) --scope subdirs '*GoPro*' --scan-only
+  $(script_live_basename) wywiady/ --exclude '*Proxy*'
+  $(script_live_basename) --scope subdirs --exclude '*_old*' --exclude 'backup/*'
   bash audio-pgm-loudness-rollback-20260928.135912.sh
-  $(basename "$0") --history --no_startup_delay
+  $(script_live_basename) --history --no_startup_delay
 EOF
 }
 
@@ -593,7 +593,7 @@ while [[ $# -gt 0 ]]; do
       ;;
     -*)
       echo "Unknown argument: $1" >&2
-      echo "Try: $(basename "$0") --help" >&2
+      echo "Try: $(script_live_basename) --help" >&2
       exit 1
       ;;
     *)

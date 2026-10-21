@@ -26,7 +26,7 @@
 
 show_help() {
   cat <<EOF
-Usage: $(basename "$0") [-h|--help] [-v|--version] [--no_startup_delay]
+Usage: $(script_live_basename) [-h|--help] [-v|--version] [--no_startup_delay]
 
 zpool export zfs_encrypted_file 2>/dev/null
 

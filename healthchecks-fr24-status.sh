@@ -19,7 +19,7 @@
 
 show_help() {
   cat <<EOF
-Usage: $(basename "$0") [-h|--help] [-v|--version] [--no_startup_delay]
+Usage: $(script_live_basename) [-h|--help] [-v|--version] [--no_startup_delay]
 
 Check fr24feed health from /usr/bin/fr24feed-status and systemd; ping Healthchecks
 with exit code. Lookup URL in healthchecks-ids.txt by script basename.
@@ -55,14 +55,14 @@ while [[ $# -gt 0 ]]; do
     -h|--help) show_help; exit 0 ;;
     -v|--version) print_version_banner; exit 0 ;;
     --history) print_script_history; exit 0 ;;
-    *) echo "Unknown argument: $1" >&2; echo "Try: $(basename "$0") --help" >&2; exit 1 ;;
+    *) echo "Unknown argument: $1" >&2; echo "Try: $(script_live_basename) --help" >&2; exit 1 ;;
   esac
 done
 
 # --- read Healthchecks URL for this script name ---
 HEALTHCHECK_URL=""
 if [ -f "$HEALTHCHECKS_FILE" ]; then
-  HEALTHCHECK_URL=$(grep "^$(basename "$0")" "$HEALTHCHECKS_FILE" | awk '{print $2}')
+  HEALTHCHECK_URL=$(grep "^$(script_live_basename)" "$HEALTHCHECKS_FILE" | awk '{print $2}')
 fi
 
 m=$(

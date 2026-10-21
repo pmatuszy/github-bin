@@ -32,7 +32,7 @@
 
 show_help() {
   cat <<EOF
-Usage: $(basename "$0") [-h|--help] [-v|--version] [--history]
+Usage: $(script_live_basename) [-h|--help] [-v|--version] [--history]
        [-y|--yes] [--dry-run] [--verbose] [--extract] [--copy] [--match-only]
        [--no-gpmd] [--min-score N]
        [FILE|DIR ...]
@@ -77,16 +77,16 @@ Sidecar:
 Needs: exiftool, python3. ffmpeg/ffprobe optional (gpmd remux).
 
 Examples:
-  $(basename "$0") ./20240327_122904_-_…_part_01.mp4
+  $(script_live_basename) ./20240327_122904_-_…_part_01.mp4
       Guess the processed counterpart and offer to copy metadata onto it.
 
-  $(basename "$0") ./…_part_01_rotate_180.mp4
+  $(script_live_basename) ./…_part_01_rotate_180.mp4
       Guess the original with GPS and offer to copy from it.
 
-  $(basename "$0") --extract ./…_part_01.mp4
+  $(script_live_basename) --extract ./…_part_01.mp4
       Write ./…_part_01.gopro-meta.mie
 
-  $(basename "$0") -y --dry-run .
+  $(script_live_basename) -y --dry-run .
       Plan copies for every high-confidence pair in this directory.
 
 Environment:
@@ -1054,7 +1054,7 @@ while [[ $# -gt 0 ]]; do
       ;;
     -*)
       echo "$(cgm_ts) Unknown argument: $1" >&2
-      echo "Try: $(basename "$0") --help" >&2
+      echo "Try: $(script_live_basename) --help" >&2
       exit 1
       ;;
     *)

@@ -138,7 +138,7 @@
 
 show_help() {
   cat <<EOF
-Usage: $(basename "$0") [-h|--help] [-v|--version] [--no_startup_delay] [path] [directory] [options]
+Usage: $(script_live_basename) [-h|--help] [-v|--version] [--no_startup_delay] [path] [directory] [options]
 
   [path] ...      One or more PAR2 index/volume paths (shell globs OK when unquoted)
   [directory]     Start directory (default: directory of [path] or cwd).
@@ -197,15 +197,15 @@ nested PAR2-set folders) to find content matches when paths on disk differ from
 names stored inside the PAR2 set (including renamed subdirectories and files).
 
 Examples:
-  $(basename "$0")
-  $(basename "$0") "_2015.07.19_-_kosciol,_Santa_Monica.par2"
-  $(basename "$0") "archive.vol0+1.par2"
-  $(basename "$0") "archive.sha512"
-  $(basename "$0") "archive.par2" /path/to/files --yes
-  $(basename "$0") /path/to/dir --all
-  $(basename "$0") /path/to/dir --scope subdirs --all
-  $(basename "$0") G_#05 -f
-  $(basename "$0") set1.par2 set2.par2 '202606*.par2'
+  $(script_live_basename)
+  $(script_live_basename) "_2015.07.19_-_kosciol,_Santa_Monica.par2"
+  $(script_live_basename) "archive.vol0+1.par2"
+  $(script_live_basename) "archive.sha512"
+  $(script_live_basename) "archive.par2" /path/to/files --yes
+  $(script_live_basename) /path/to/dir --all
+  $(script_live_basename) /path/to/dir --scope subdirs --all
+  $(script_live_basename) G_#05 -f
+  $(script_live_basename) set1.par2 set2.par2 '202606*.par2'
 EOF
 }
 

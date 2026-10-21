@@ -37,7 +37,7 @@
 
 show_help() {
   cat <<EOF
-Usage: $(basename "$0") [-h|--help] [-v|--version] [--no_startup_delay]
+Usage: $(script_live_basename) [-h|--help] [-v|--version] [--no_startup_delay]
 
 Environment:
 
@@ -90,7 +90,7 @@ _print_run_timing_banner() {
 
   echo
   echo "=========================================="
-  echo "  $(basename "$0") — run timing"
+  echo "  $(script_live_basename) — run timing"
   echo "  Started: ${_SCRIPT_START_FMT}"
   echo "  Stopped: ${end_fmt}"
   echo "  Elapsed: ${elapsed}s (${human})"

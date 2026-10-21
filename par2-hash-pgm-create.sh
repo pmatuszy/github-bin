@@ -37,7 +37,7 @@
 
 show_help() {
   cat <<EOF
-Usage: $(basename "$0") [-h|--help] [-v|--version] [--no_startup_delay] [options]
+Usage: $(script_live_basename) [-h|--help] [-v|--version] [--no_startup_delay] [options]
 
 Create a volume-only PAR2 set and a hash manifest for the current directory
 (whole subtree).
@@ -87,11 +87,11 @@ Environment:
   PROMPT_TIMEOUT       Seconds to wait for interactive prompts (unset = no timeout)
 
 Examples:
-  cd /path/to/MyAlbum && $(basename "$0")
-  $(basename "$0") --hash sha256 --recovery 10
-  $(basename "$0") --md5 --yes
-  $(basename "$0") --include-rename-helpers
-  $(basename "$0") -n
+  cd /path/to/MyAlbum && $(script_live_basename)
+  $(script_live_basename) --hash sha256 --recovery 10
+  $(script_live_basename) --md5 --yes
+  $(script_live_basename) --include-rename-helpers
+  $(script_live_basename) -n
 EOF
 }
 

@@ -54,7 +54,7 @@
 
 show_help() {
   cat <<EOF
-Usage: $(basename "$0") [-h|--help] [-v|--version] [--history]
+Usage: $(script_live_basename) [-h|--help] [-v|--version] [--history]
        [-y|--yes] [-n|--dry-run] [--colors yes|no]
        [--keep-original yes|no] [--one-by-one|--together]
        [--subtitles yes|no] [--languages keep|all] [--drop LIST]
@@ -145,11 +145,11 @@ Needs: ffmpeg and ffprobe in PATH. If either is missing the script prints
 which one is missing and exits. -h, -v and --history do not need them.
 
 Examples:
-  $(basename "$0")
+  $(script_live_basename)
       Read the current directory, print the streams, ask before writing.
-  $(basename "$0") -y --order 2,1 /mnt/p/video
-  $(basename "$0") -y --default 2 --subtitles no --languages all clip.mp4
-  $(basename "$0") --colors yes clip.mp4
+  $(script_live_basename) -y --order 2,1 /mnt/p/video
+  $(script_live_basename) -y --default 2 --subtitles no --languages all clip.mp4
+  $(script_live_basename) --colors yes clip.mp4
   audio-pgm-swap-audio-undo.sh
       Put each clip-backup.mp4 back as clip.mp4, one file at a time.
 EOF

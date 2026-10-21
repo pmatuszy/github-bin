@@ -67,9 +67,9 @@ EOF
         fi
       done < "$0"
       if [[ -n "$_dc_date" ]]; then
-        printf '%s version %s (%s)\n' "$(basename "$0")" "$_dc_ver" "$_dc_date"
+        printf '%s version %s (%s)\n' "$(script_live_basename)" "$_dc_ver" "$_dc_date"
       else
-        printf '%s version %s\n' "$(basename "$0")" "$_dc_ver"
+        printf '%s version %s\n' "$(script_live_basename)" "$_dc_ver"
       fi
       exit 0
       ;;
@@ -103,7 +103,7 @@ EOF
       ;;
     *)
       echo "(PGM) Unknown argument: $1" >&2
-      echo "Try: $(basename "$0") --help" >&2
+      echo "Try: $(script_live_basename) --help" >&2
       exit 1
       ;;
   esac

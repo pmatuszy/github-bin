@@ -20,7 +20,7 @@
 
 show_help() {
   cat <<EOF
-Usage: $(basename "$0") [-h|--help] [-v|--version] [--history]
+Usage: $(script_live_basename) [-h|--help] [-v|--version] [--history]
        [-y|--yes] [-n|--dry-run] [--colors yes|no]
        [FILE|DIR ...]
 
@@ -51,9 +51,9 @@ Options:
 A run summary is always printed at the end, and on Ctrl-C.
 
 Examples:
-  $(basename "$0")
+  $(script_live_basename)
       Read the current directory, ask before restoring each *-backup file.
-  $(basename "$0") -y /mnt/p/video
+  $(script_live_basename) -y /mnt/p/video
 EOF
 }
 

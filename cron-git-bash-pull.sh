@@ -10,7 +10,7 @@
 
 show_help() {
   cat <<EOF
-Usage: $(basename "$0") [-h|--help] [-v|--version] [--no_startup_delay]
+Usage: $(script_live_basename) [-h|--help] [-v|--version] [--no_startup_delay]
 
 Cron wrapper: run ${profile_location_dir:-$HOME}/github/github-bash_profile/git-pull.sh batch,
 optionally report exit code to Healthchecks (see healthchecks-ids.txt).
@@ -38,12 +38,12 @@ while [[ $# -gt 0 ]]; do
     -h|--help) show_help; exit 0 ;;
     -v|--version) print_version_banner; exit 0 ;;
     --history) print_script_history; exit 0 ;;
-    *) echo "Unknown argument: $1" >&2; echo "Try: $(basename "$0") --help" >&2; exit 1 ;;
+    *) echo "Unknown argument: $1" >&2; echo "Try: $(script_live_basename) --help" >&2; exit 1 ;;
   esac
 done
 HEALTHCHECK_URL=""
 if [[ -f "$HEALTHCHECKS_FILE" ]]; then
-  HEALTHCHECK_URL=$(grep "^$(basename "$0")" "$HEALTHCHECKS_FILE" | awk '{print $2}')
+  HEALTHCHECK_URL=$(grep "^$(script_live_basename)" "$HEALTHCHECKS_FILE" | awk '{print $2}')
 fi
 
 HC_message=$("${profile_location_dir:-$HOME}/github/github-bash_profile/git-pull.sh" batch 2>&1 ; exit $?)

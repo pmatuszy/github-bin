@@ -26,7 +26,7 @@
 
 show_help() {
   cat <<EOF
-Usage: $(basename "$0") [-h|--help] [-v|--version] [--history]
+Usage: $(script_live_basename) [-h|--help] [-v|--version] [--history]
        [-y|--yes] [-n|--dry-run] [-o FILE] [--redo] [--old keep|delete]
        [--max-jump KMH] [--stop-kmh KMH] [--stop-radius M] [--smooth S]
        [FILE.gpx|DIR ...]
@@ -70,10 +70,10 @@ terminal it only prints the install command.
 The helper video-pgm-gpx-clean.py has its own -h, -v, and --history.
 
 Examples:
-  $(basename "$0")
+  $(script_live_basename)
       Read the current directory, print the plan, ask before writing.
-  $(basename "$0") -n /mnt/o/video/trip
-  $(basename "$0") -y --max-jump 180 track.gpx
+  $(script_live_basename) -n /mnt/o/video/trip
+  $(script_live_basename) -y --max-jump 180 track.gpx
 EOF
 }
 

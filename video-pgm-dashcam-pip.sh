@@ -47,7 +47,7 @@
 
 show_help() {
   cat <<EOF
-Usage: $(basename "$0") [-h|--help] [-v|--version] [--history]
+Usage: $(script_live_basename) [-h|--help] [-v|--version] [--history]
        [-y|--yes] [-n|--dry-run] [--redo] [--old keep|delete]
        [--pip-size SIZE] [--corner tl|tr|ll|lr]
        [--margin PX] [--margin-x PX] [--margin-y PX]
@@ -203,16 +203,16 @@ Options:
   --no-gpx             Do not copy the front .gpx beside the output.
 
 Examples:
-  $(basename "$0")
+  $(script_live_basename)
       Read the current directory, print the plan, ask before rendering.
-  $(basename "$0") --length 1:00 --from 1:00
+  $(script_live_basename) --length 1:00 --from 1:00
       One minute of every route, starting one minute in.
-  $(basename "$0") --length 2:00 --from-end 0
+  $(script_live_basename) --length 2:00 --from-end 0
       The last two minutes of every route.
-  $(basename "$0") -y --pip-size 35% --corner tr --margin 24 --border 4 --label REAR
-  $(basename "$0") -y --mirror --crop-bottom 60 --gap-fill black --out-width 1920
-  $(basename "$0") --map-size 25% --map-corner lr --border 4
-  $(basename "$0") -n 'P:\\video\\20260926-Bonow-Deblin\\_samochod-jazda'
+  $(script_live_basename) -y --pip-size 35% --corner tr --margin 24 --border 4 --label REAR
+  $(script_live_basename) -y --mirror --crop-bottom 60 --gap-fill black --out-width 1920
+  $(script_live_basename) --map-size 25% --map-corner lr --border 4
+  $(script_live_basename) -n 'P:\\video\\20260926-Bonow-Deblin\\_samochod-jazda'
 EOF
 }
 

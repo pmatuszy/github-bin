@@ -41,7 +41,7 @@ DEFAULT_MAIL_TO="matuszyk+$(hostname)@matuszyk.com"
 
 show_help() {
   cat <<EOF
-Usage: $(basename "$0") [options]
+Usage: $(script_live_basename) [options]
 
 Reboot when /var/run/reboot-required is present and the machine looks idle
 (no apt/dpkg activity, load below threshold, minimum uptime). Logged-in users
@@ -240,12 +240,12 @@ while [[ $# -gt 0 ]]; do
       ;;
     -*)
       echo "Unknown option: $1" >&2
-      echo "Try: $(basename "$0") --help" >&2
+      echo "Try: $(script_live_basename) --help" >&2
       exit 2
       ;;
     *)
       echo "Unexpected argument: $1" >&2
-      echo "Try: $(basename "$0") --help" >&2
+      echo "Try: $(script_live_basename) --help" >&2
       exit 2
       ;;
   esac
@@ -366,7 +366,7 @@ setup_mail_logging
 
 HEALTHCHECK_URL=""
 if [[ -f "${HEALTHCHECKS_FILE:-}" ]]; then
-  HEALTHCHECK_URL="$(grep "^$(basename "$0")" "$HEALTHCHECKS_FILE" | awk '{print $2}')"
+  HEALTHCHECK_URL="$(grep "^$(script_live_basename)" "$HEALTHCHECKS_FILE" | awk '{print $2}')"
 fi
 
 hc_ping() {

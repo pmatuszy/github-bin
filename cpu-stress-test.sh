@@ -9,7 +9,7 @@
 
 show_help() {
   cat <<EOF
-Usage: $(basename "$0") [-h|--help] [-v|--version] [--no_startup_delay] [DURATION_SEC]
+Usage: $(script_live_basename) [-h|--help] [-v|--version] [--no_startup_delay] [DURATION_SEC]
 
 Run stress-ng on all CPU cores until Ctrl-C or for DURATION_SEC seconds.
 

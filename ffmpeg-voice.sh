@@ -80,7 +80,7 @@ process_scope="subdirs"
 
 show_help() {
     cat <<EOF
-Usage: $(basename "$0") [-h|--help] [--scope current|subdirs] [FILE]
+Usage: $(script_live_basename) [-h|--help] [--scope current|subdirs] [FILE]
 
 Process voice/audio files: rename to *_ORG.*, create *_OUTPUT.flac, sha512
 sidecars, and optional transcription.
@@ -141,9 +141,9 @@ script_version() {
         fi
     done < "$0"
     if [[ -n "$date" ]]; then
-        printf '%s version %s (%s)\n' "$(basename "$0")" "$ver" "$date"
+        printf '%s version %s (%s)\n' "$(script_live_basename)" "$ver" "$date"
     else
-        printf '%s version %s\n' "$(basename "$0")" "$ver"
+        printf '%s version %s\n' "$(script_live_basename)" "$ver"
     fi
 }
 

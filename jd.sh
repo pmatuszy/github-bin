@@ -26,7 +26,7 @@
 
 show_help() {
   cat <<EOF
-Usage: $(basename "$0") [-h|--help] [-v|--version] [--no_startup_delay]
+Usage: $(script_live_basename) [-h|--help] [-v|--version] [--no_startup_delay]
 
 Sets _jd_bytes, _jd_ss, _jd_pbs, _jd_sectors for device \$1; returns 0 on success.
 
@@ -99,9 +99,9 @@ if [[ "${1:-}" == -v || "${1:-}" == --version ]]; then
     fi
   done < "$0"
   if [[ -n "$_jd_date" ]]; then
-    printf '%s version %s (%s)\n' "$(basename "$0")" "$_jd_ver" "$_jd_date"
+    printf '%s version %s (%s)\n' "$(script_live_basename)" "$_jd_ver" "$_jd_date"
   else
-    printf '%s version %s\n' "$(basename "$0")" "$_jd_ver"
+    printf '%s version %s\n' "$(script_live_basename)" "$_jd_ver"
   fi
   exit 0
 fi
@@ -115,7 +115,7 @@ while [[ $# -gt 0 ]]; do
       ;;
     *)
       echo "(PGM) Unknown argument: $1" >&2
-      echo "Try: $(basename "$0") --help" >&2
+      echo "Try: $(script_live_basename) --help" >&2
       exit 1
       ;;
   esac

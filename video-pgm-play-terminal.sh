@@ -25,7 +25,7 @@
 
 show_help() {
   cat <<EOF
-Usage: $(basename "$0") [-h|--help] [-v|--version] [--silent] [--no-silent]
+Usage: $(script_live_basename) [-h|--help] [-v|--version] [--silent] [--no-silent]
        [--autodetect] [--no-autodetect] [--countdown SEC] [--no-countdown]
        [--start SEC] [--length SEC]
        [-w|--width COLS] [--height|-H ROWS] FILE
@@ -85,14 +85,14 @@ Environment:
                        means no (default [N]).
 
 Examples:
-  $(basename "$0") clip.mp4
-  $(basename "$0") --start 495 --length 9 clip.mp4
-  $(basename "$0") --countdown 5 clip.mp4
-  $(basename "$0") -w 80 clip.mp4
-  $(basename "$0") --height 24 clip.mp4
-  $(basename "$0") -w 120 -H 30 clip.mp4
-  $(basename "$0") --no-autodetect clip.mp4
-  $(basename "$0") -- -odd-name.mkv
+  $(script_live_basename) clip.mp4
+  $(script_live_basename) --start 495 --length 9 clip.mp4
+  $(script_live_basename) --countdown 5 clip.mp4
+  $(script_live_basename) -w 80 clip.mp4
+  $(script_live_basename) --height 24 clip.mp4
+  $(script_live_basename) -w 120 -H 30 clip.mp4
+  $(script_live_basename) --no-autodetect clip.mp4
+  $(script_live_basename) -- -odd-name.mkv
 EOF
 }
 
@@ -540,13 +540,13 @@ while [[ $# -gt 0 ]]; do
       ;;
     -*)
       echo "Unknown argument: $1" >&2
-      echo "Try: $(basename "$0") --help" >&2
+      echo "Try: $(script_live_basename) --help" >&2
       exit 1
       ;;
     *)
       if [[ -n "$MEDIA_FILE" ]]; then
         echo "ERROR: expected exactly one FILE (got extra argument: $1)" >&2
-        echo "Try: $(basename "$0") --help" >&2
+        echo "Try: $(script_live_basename) --help" >&2
         exit 1
       fi
       MEDIA_FILE="$1"
@@ -557,13 +557,13 @@ done
 
 if [[ -z "$MEDIA_FILE" ]]; then
   echo "ERROR: missing FILE argument." >&2
-  echo "Try: $(basename "$0") --help" >&2
+  echo "Try: $(script_live_basename) --help" >&2
   exit 1
 fi
 
 if [[ $# -gt 0 ]]; then
   echo "ERROR: unexpected extra argument(s): $*" >&2
-  echo "Try: $(basename "$0") --help" >&2
+  echo "Try: $(script_live_basename) --help" >&2
   exit 1
 fi
 

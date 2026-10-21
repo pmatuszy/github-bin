@@ -594,7 +594,7 @@ move_pgm_print_result() {
 
 show_help() {
   cat <<EOF
-Usage: $(basename "$0") [OPTIONS] <SOURCE> <DESTINATION>
+Usage: $(script_live_basename) [OPTIONS] <SOURCE> <DESTINATION>
 
 Move files between local and remote systems with rsync over SSH. SOURCE and
 DESTINATION use normal rsync syntax; one is normally [user@]host:/path.
@@ -627,13 +627,13 @@ Transfer behaviour:
     and timing (start, end, elapsed, transfer, cleanup, average rate).
 
 Examples:
-  $(basename "$0") 20260724-Basel_Tattoo \\
+  $(script_live_basename) 20260724-Basel_Tattoo \\
     root@lublin.eth.r.matuszyk.com:/root/linki/archiwum/_filmy/2026
 
-  $(basename "$0") --dry-run 20260724-Basel_Tattoo \\
+  $(script_live_basename) --dry-run 20260724-Basel_Tattoo \\
     root@lublin.eth.r.matuszyk.com:/root/linki/archiwum/_filmy/2026
 
-  $(basename "$0") --bwlimit 10m /data/video/ \\
+  $(script_live_basename) --bwlimit 10m /data/video/ \\
     root@example.com:/archive/video/
 
 Note: rsync trailing-slash rules apply. SOURCE_DIR copies the directory itself;
@@ -719,7 +719,7 @@ done
 
 if (( ${#POSITIONAL[@]} != 2 )); then
   echo "Exactly one SOURCE and one DESTINATION are required." >&2
-  echo "Try: $(basename "$0") --help" >&2
+  echo "Try: $(script_live_basename) --help" >&2
   exit 1
 fi
 

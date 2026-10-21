@@ -17,9 +17,9 @@ print_version_line() {
     fi
   done < "$0"
   if [[ -n "$date" ]]; then
-    printf '%s version %s (%s)\n' "$(basename "$0")" "$ver" "$date"
+    printf '%s version %s (%s)\n' "$(script_live_basename)" "$ver" "$date"
   else
-    printf '%s version %s\n' "$(basename "$0")" "$ver"
+    printf '%s version %s\n' "$(script_live_basename)" "$ver"
   fi
 }
 
@@ -57,7 +57,7 @@ while [[ $# -gt 0 ]]; do
       exit 0
       ;;
     --no_startup_delay) HEADER_EXTRA_ARGS+=(NO_STARTUP_DELAY); shift ;;
-    *) echo "(PGM) Unknown argument: $1" >&2; echo "Try: $(basename "$0") --help" >&2; exit 1 ;;
+    *) echo "(PGM) Unknown argument: $1" >&2; echo "Try: $(script_live_basename) --help" >&2; exit 1 ;;
   esac
 done
 

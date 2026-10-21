@@ -1,10 +1,13 @@
 #!/usr/bin/env bash
+# v. 20261021.210400 - script_live_basename here; prefer SCRIPT_SELF_LIVE_PATH over stale CALLER_*
 # v. 20261021.143500 - after seal, restore $0 / CALLER_* to the live script name (not .deleteme.*.seal.*)
 # v. 20261020.205600 - seal name .deleteme.<script>.seal.XXXX; if seal copy fails, run live script
 # v. 20261020.205000 - seal running script to a temp copy so in-place cp cannot break bash parse
 # v. 20261020.202500 - detect live-script overwrite (git pull then copy into bin/) mid-run
 # v. 20261020.202200 - detect on-disk script replacement while a run is in progress
 #
+# 2026.10.21 - v. 1.5.210400 - define script_live_basename here (header and rename both use it); never
+#   return a .deleteme.*.seal.* name; prefer SCRIPT_SELF_LIVE_PATH over CALLER_SCRIPT_BASENAME
 # 2026.10.21 - v. 1.4.143500 - After a sealed re-exec, set BASH_ARGV0 and CALLER_SCRIPT* back to
 #   SCRIPT_SELF_LIVE_PATH so Equivalent/Command lines and banners show video-pgm-….sh, not
 #   .deleteme.video-pgm-….sh.seal.XXXXXX
@@ -406,6 +409,29 @@ script_self_update_install_trap() {
 
   trap 'script_self_update_check_throttled' DEBUG
   SCRIPT_SELF_UPDATE_DEBUG_TRAP_INSTALLED=1
+}
+
+# Basename of the live script — never a .deleteme.*.seal.* snapshot.
+# Prefer this in Usage / Examples / Equivalent CLI / Command lines.
+script_live_basename() {
+  local base=""
+
+  if [[ -n "${SCRIPT_SELF_LIVE_PATH:-}" ]]; then
+    base="$(basename -- "${SCRIPT_SELF_LIVE_PATH}")"
+  elif [[ -n "${CALLER_SCRIPT:-}" ]]; then
+    base="$(basename -- "${CALLER_SCRIPT}")"
+  elif [[ -n "${CALLER_SCRIPT_BASENAME:-}" ]]; then
+    base="${CALLER_SCRIPT_BASENAME}"
+  else
+    base="$(basename -- "${0:-}")"
+  fi
+  case "$base" in
+    .deleteme.*.seal.*)
+      base="${base#.deleteme.}"
+      base="${base%.seal.*}"
+      ;;
+  esac
+  printf '%s\n' "$base"
 }
 
 # After seal re-exec, $0 is .deleteme.<script>.seal.XXXXXX. Point identity back at the live file

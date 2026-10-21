@@ -123,7 +123,7 @@
 
 show_help() {
   cat <<EOF
-Usage: $(basename "$0") [-h|--help] [-v|--version] [--history]
+Usage: $(script_live_basename) [-h|--help] [-v|--version] [--history]
        [-y|--yes] [--redo] [--dialog|--no-dialog]
        [--speedup N] [--display normal|verbose]
        [--picture plain|steady|soft] [--blend-before N] [--blend-after N]
@@ -211,12 +211,12 @@ Environment:
                           (same as --dialog / --no-dialog). A command-line flag wins.
 
 Examples:
-  $(basename "$0") --speedup 10 trip_concat.mp4
-  $(basename "$0") -y --speedup 20 --picture steady --fps 30 trip_concat.mp4
-  $(basename "$0") -y --speedup 5 --gop source --keyframe-minutes 2 trip_concat.mp4
-  $(basename "$0") --no-dialog
+  $(script_live_basename) --speedup 10 trip_concat.mp4
+  $(script_live_basename) -y --speedup 20 --picture steady --fps 30 trip_concat.mp4
+  $(script_live_basename) -y --speedup 5 --gop source --keyframe-minutes 2 trip_concat.mp4
+  $(script_live_basename) --no-dialog
       Ask which videos (plain keys), then the usual questions.
-  $(basename "$0")
+  $(script_live_basename)
       Ask which videos (dialog when installed), then the questions (speed defaults to 5×).
 EOF
 }

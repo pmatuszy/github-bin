@@ -18,7 +18,7 @@
 
 show_help() {
   cat <<EOF
-Usage: $(basename "$0") [-h|--help] [-v|--version] [--no_startup_delay]
+Usage: $(script_live_basename) [-h|--help] [-v|--version] [--no_startup_delay]
 
 in case of some SSD there is Power on Hours in form of 'Power On Hours:' or 'Power_On_Hours'
 

@@ -26,7 +26,7 @@
 
 show_help() {
   cat <<EOF
-Usage: $(basename "$0") [-h|--help] [-v|--version] [--history]
+Usage: $(script_live_basename) [-h|--help] [-v|--version] [--history]
        [-y|--yes] [-n|--dry-run] [--redo] [--old keep|delete]
        [FILE|DIR ...]
 
@@ -65,10 +65,10 @@ root). With -y or without a terminal it only prints the install command.
 The helper video-pgm-gopro-to-gpx.py has its own -h, -v, and --history.
 
 Examples:
-  $(basename "$0")
+  $(script_live_basename)
       Read the current directory, print the plan, ask before writing.
-  $(basename "$0") -n /mnt/p/video/gopro
-  $(basename "$0") -y --redo --old keep GX010123.mp4
+  $(script_live_basename) -n /mnt/p/video/gopro
+  $(script_live_basename) -y --redo --old keep GX010123.mp4
 EOF
 }
 

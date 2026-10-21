@@ -50,7 +50,7 @@ while [[ $# -gt 0 ]]; do
       ;;
     *)
       echo "(PGM) Unknown argument: $1" >&2
-      echo "Try: $(basename "$0") --help" >&2
+      echo "Try: $(script_live_basename) --help" >&2
       exit 1
       ;;
   esac
@@ -88,9 +88,9 @@ if ((_show_ver)); then
     fi
   done < "$0"
   if [[ -n "$_ip_date" ]]; then
-    printf '%s version %s (%s)\n' "$(basename "$0")" "$_ip_ver" "$_ip_date"
+    printf '%s version %s (%s)\n' "$(script_live_basename)" "$_ip_ver" "$_ip_date"
   else
-    printf '%s version %s\n' "$(basename "$0")" "$_ip_ver"
+    printf '%s version %s\n' "$(script_live_basename)" "$_ip_ver"
   fi
   exit 0
 fi

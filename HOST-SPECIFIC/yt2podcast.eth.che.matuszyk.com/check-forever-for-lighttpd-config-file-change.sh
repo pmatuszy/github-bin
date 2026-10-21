@@ -13,7 +13,7 @@
 
 show_help() {
   cat <<EOF
-Usage: $(basename "$0") [-h|--help] [-v|--version] [--no_startup_delay]
+Usage: $(script_live_basename) [-h|--help] [-v|--version] [--no_startup_delay]
 
 bylo 120s ale chyba to za malo bo 2x skrypt wyslal maila w dniu 20.01.2021
 

@@ -219,7 +219,7 @@ MP4_MERGE_REPO="${MP4_MERGE_REPO:-gyroflow/mp4-merge}"
 
 show_help() {
   cat <<EOF
-Usage: $(basename "$0") [-h|--help] [-u|--update] [-v|--version] [-y|--yes]
+Usage: $(script_live_basename) [-h|--help] [-u|--update] [-v|--version] [-y|--yes]
        [--read-timeout SEC] [--seam-before SEC] [--seam-after SEC] [--temp-dir DIR]
        [--gps-dir DIR]
        [FILE FILE ...]
@@ -403,25 +403,25 @@ Environment:
                           real limit is the smaller of this and the terminal width.
 
 Examples:
-  $(basename "$0") -u
+  $(script_live_basename) -u
       Download mp4_merge into /usr/local/bin (recommended system location).
 
-  cd /path/to/chapters && $(basename "$0")
+  cd /path/to/chapters && $(script_live_basename)
       Merge all chapter MP4s in that folder.
 
-  $(basename "$0") -- a.mp4 b.mp4
+  $(script_live_basename) -- a.mp4 b.mp4
       Force-merge a.mp4 then b.mp4 in that order (skip chapter detection).
 
-  $(basename "$0") -- a.mp4 +2
+  $(script_live_basename) -- a.mp4 +2
       Force-merge a.mp4 and the next 2 MP4 names alphabetically in that folder.
 
-  $(basename "$0") --temp-dir /mnt/scratch
+  $(script_live_basename) --temp-dir /mnt/scratch
       Offer /mnt/scratch as the temporary merge disk when it has room.
 
-  $(basename "$0") --gps-dir /mnt/p/video/gps
+  $(script_live_basename) --gps-dir /mnt/p/video/gps
       Also read GPSData*.txt from that directory and everything inside it.
 
-  $(basename "$0") -y
+  $(script_live_basename) -y
       Merge all chapter groups without prompts.
 
 Upstream: https://github.com/gyroflow/mp4-merge
@@ -438,9 +438,9 @@ script_version() {
     fi
   done < "$0"
   if [[ -n "$date" ]]; then
-    printf '%s version %s (%s)\n' "$(basename "$0")" "$ver" "$date"
+    printf '%s version %s (%s)\n' "$(script_live_basename)" "$ver" "$date"
   else
-    printf '%s version %s\n' "$(basename "$0")" "$ver"
+    printf '%s version %s\n' "$(script_live_basename)" "$ver"
   fi
 }
 
@@ -733,7 +733,7 @@ mp4_merge_install_local_binary() {
   dest="${MP4_MERGE_INSTALL_DIR}/${base}"
   dir="${MP4_MERGE_INSTALL_DIR}"
   if ! mp4_merge_install_dir_writable "$dir"; then
-    echo "$(pgm_ts) Cannot write to ${dir} (try: sudo $(basename "$0") -u)." >&2
+    echo "$(pgm_ts) Cannot write to ${dir} (try: sudo $(script_live_basename) -u)." >&2
     return 1
   fi
   if ! mv -f -- "$src" "$dest" 2>/dev/null; then
@@ -755,7 +755,7 @@ mp4_merge_install_local_binary() {
 mp4_merge_print_not_found_help() {
   echo "$(pgm_ts) mp4_merge not found." >&2
   echo "$(pgm_ts) Install to ${MP4_MERGE_INSTALL_DIR} (recommended):" >&2
-  echo "$(pgm_ts)   $(basename "$0") -u" >&2
+  echo "$(pgm_ts)   $(script_live_basename) -u" >&2
   if ! mp4_merge_install_dir_writable "${MP4_MERGE_INSTALL_DIR}" 2>/dev/null; then
     echo "$(pgm_ts)   (directory not writable — use sudo for -u)" >&2
   fi
@@ -812,7 +812,7 @@ resolve_merger_path_for_merge() {
   mp4_merge_collect_extras ""
   mp4_merge_print_extra_locations
   if ! mp4_merge_install_dir_writable "${MP4_MERGE_INSTALL_DIR}"; then
-    echo "  (${MP4_MERGE_INSTALL_DIR} is not writable — use sudo $(basename "$0") -u)"
+    echo "  (${MP4_MERGE_INSTALL_DIR} is not writable — use sudo $(script_live_basename) -u)"
   fi
   while true; do
     echo "  [Y] Install to ${MP4_MERGE_INSTALL_DIR} and remove other copies (default)"
@@ -4506,7 +4506,7 @@ dashcam_warn_no_gps() {
   echo
   echo "You can name the directory that holds the GPS logs. That directory and everything inside it will be searched."
   echo
-  printf '  %s --gps-dir /mnt/p/video/gps\n' "$(basename -- "${BASH_SOURCE[0]}")"
+  printf '  %s --gps-dir /mnt/p/video/gps\n' "$(script_live_basename)"
   echo
   echo "  [Q] Quit (default)"
   if (( DO_YES )) || (( ! script_is_run_interactively )); then
@@ -6921,7 +6921,7 @@ while [[ $# -gt 0 ]]; do
       ;;
     -*)
       echo "$(pgm_ts) Unknown argument: $1" >&2
-      echo "Try: $(basename "$0") --help" >&2
+      echo "Try: $(script_live_basename) --help" >&2
       exit 1
       ;;
     *)

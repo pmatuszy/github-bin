@@ -38,7 +38,7 @@
 
 show_help() {
   cat <<EOF
-Usage: $(basename "$0") [-h|--help] [-v|--version] [--history]
+Usage: $(script_live_basename) [-h|--help] [-v|--version] [--history]
        [-y|--yes] [-r|--recursive] [--dry-run] [--verbose]
        [FILE|DIR ...]
 
@@ -75,16 +75,16 @@ After a change, the script prints File name / Filesystem / Media tags
 before and after side by side.
 
 Examples:
-  $(basename "$0")
+  $(script_live_basename)
       Scan *.mp4 / *.jpg / … in this directory; ask when dates disagree.
 
-  $(basename "$0") -y -r /mnt/p/video/trip
+  $(script_live_basename) -y -r /mnt/p/video/trip
       Recursively apply the oldest usable date to every mismatch.
 
-  $(basename "$0") --dry-run clip.mp4 photo.jpg
+  $(script_live_basename) --dry-run clip.mp4 photo.jpg
       Show the choice for those files only.
 
-  $(basename "$0") --verbose .
+  $(script_live_basename) --verbose .
       Print the check for every media file in this directory.
 
 Environment:
@@ -769,7 +769,7 @@ while [[ $# -gt 0 ]]; do
       ;;
     -*)
       echo "$(mfd_ts) Unknown argument: $1" >&2
-      echo "Try: $(basename "$0") --help" >&2
+      echo "Try: $(script_live_basename) --help" >&2
       exit 1
       ;;
     *)

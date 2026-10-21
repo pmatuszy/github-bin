@@ -46,7 +46,7 @@
 
 show_help() {
   cat <<EOF
-Usage: $(basename "$0") [options] [DIR|VIDEO ...]
+Usage: $(script_live_basename) [options] [DIR|VIDEO ...]
        [-y|--yes] [-n|--dry-run] [--redo] [--old keep|delete]
        [--size WxH|N] [--zoom N] [--north-up|--track-up] [--fps N|same] [--show-speed] [--no-clock]
        [--no-smooth] [--smooth S] [--smooth-map S] [--max-jump KMH] [--no-curve]
@@ -168,12 +168,12 @@ The drawing helper video-pgm-create-map-video-from-gpx.py has its own -h, -v,
 and --history.
 
 Examples:
-  $(basename "$0")
+  $(script_live_basename)
       Read the current directory, print the plan, ask before rendering.
-  $(basename "$0") --length 1:00 --from 10:00
+  $(script_live_basename) --length 1:00 --from 10:00
       One minute of every map, ten minutes in, to check how it looks.
-  $(basename "$0") -y --zoom 15 --size 1280x720
-  $(basename "$0") -n 'P:\\video\\20260926-Bonow-Deblin\\_samochod-jazda'
+  $(script_live_basename) -y --zoom 15 --size 1280x720
+  $(script_live_basename) -n 'P:\\video\\20260926-Bonow-Deblin\\_samochod-jazda'
 EOF
 }
 

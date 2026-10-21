@@ -17,7 +17,7 @@
 
 show_help() {
   cat <<EOF
-Usage: $(basename "$0") [-h|--help] [-v|--version] [--no_startup_delay] COMMAND [OPTIONS]
+Usage: $(script_live_basename) [-h|--help] [-v|--version] [--no_startup_delay] COMMAND [OPTIONS]
 
 Manage github-bin: ${profile_location_dir:-\$HOME}/github/github-bin → ${profile_location_dir:-\$HOME}/bin
 
@@ -41,9 +41,9 @@ Arguments:
   batch                     Non-interactive mode: auto-answer yes to prompts.
 
 Examples:
-  $(basename "$0") pull batch --no_startup_delay
-  $(basename "$0") reset batch --no_startup_delay
-  $(basename "$0") push batch
+  $(script_live_basename) pull batch --no_startup_delay
+  $(script_live_basename) reset batch --no_startup_delay
+  $(script_live_basename) push batch
 EOF
 }
 
@@ -495,7 +495,7 @@ while [[ $# -gt 0 ]]; do
       ;;
     *)
       echo "Unknown argument: $1" >&2
-      echo "Try: $(basename "$0") --help" >&2
+      echo "Try: $(script_live_basename) --help" >&2
       exit 1
       ;;
   esac
@@ -503,7 +503,7 @@ done
 
 if [[ -z "${command}" ]]; then
   echo "Missing COMMAND (pull|push|fetch|reset)" >&2
-  echo "Try: $(basename "$0") --help" >&2
+  echo "Try: $(script_live_basename) --help" >&2
   exit 1
 fi
 

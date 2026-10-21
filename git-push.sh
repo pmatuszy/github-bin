@@ -6,7 +6,7 @@ _GIT_BIN_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 case "${1:-}" in
   -h|--help)
     cat <<EOF
-Usage: $(basename "$0") [-h|--help] [-v|--version] [OPTIONS...]
+Usage: $(basename -- "$0") [-h|--help] [-v|--version] [OPTIONS...]
 
 Compatibility wrapper for git-bin.sh push.
 All other arguments are passed through (e.g. batch, --no_startup_delay).

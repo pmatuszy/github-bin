@@ -51,7 +51,7 @@ set -euo pipefail
 
 show_help() {
   cat <<EOF
-Usage: $(basename "$0") [-h|--help] [-v|--version] [--no_startup_delay]
+Usage: $(script_live_basename) [-h|--help] [-v|--version] [--no_startup_delay]
                     [-f|--format FORMAT] [SPEED]
 
 Process *.mp3, *.m4a, and *.aac in the current directory only (not subdirs).
@@ -104,11 +104,11 @@ Options:
   SPEED                 atempo factor (default: 1.6), e.g. 1.5 or 2.0
 
 Examples:
-  cd /path/to/files && $(basename "$0")
-  cd /path/to/files && $(basename "$0") 1.8
-  cd /path/to/files && $(basename "$0") -f flac 1.6
-  cd /path/to/files && $(basename "$0") --format mp3
-  FFMPEG_BIN=/opt/ffmpeg/bin/ffmpeg $(basename "$0") --no_startup_delay
+  cd /path/to/files && $(script_live_basename)
+  cd /path/to/files && $(script_live_basename) 1.8
+  cd /path/to/files && $(script_live_basename) -f flac 1.6
+  cd /path/to/files && $(script_live_basename) --format mp3
+  FFMPEG_BIN=/opt/ffmpeg/bin/ffmpeg $(script_live_basename) --no_startup_delay
 EOF
 }
 
@@ -166,13 +166,13 @@ while [[ $# -gt 0 ]]; do
       ;;
     -*)
       echo "Unknown option: $1" >&2
-      echo "Try: $(basename "$0") --help" >&2
+      echo "Try: $(script_live_basename) --help" >&2
       exit 1
       ;;
     *)
       if (( SPEED_SET )); then
         echo "Unexpected argument: $1" >&2
-        echo "Try: $(basename "$0") --help" >&2
+        echo "Try: $(script_live_basename) --help" >&2
         exit 1
       fi
       SPEED_FACTOR=$1
