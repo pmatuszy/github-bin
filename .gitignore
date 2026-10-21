@@ -1,0 +1,7 @@
+# Runtime seal copies of scripts (must not be committed)
+.deleteme.*.seal.*
+*.deleteme.*.seal.*
+
+# Python
+__pycache__/
+*.py[cod]
