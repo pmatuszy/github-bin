@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261021.103731 - conf name from the live script path, not the .deleteme.*.seal.* copy; dedupe conf lookup dirs
 # v. 20261021.102204 - when no named places are loaded, say HOME and which conf directories were looked in
 # v. 20261013.092056 - a tracks folder from the conf also reads GPSData*.txt
 # v. 20261013.090107 - a GPSData point is the clip start plus the seconds from the log number
@@ -87,6 +88,7 @@
 # v. 20261009.160131 - also read .tcx tracks; a Trackpoint with a time and a position is used like a GPX point
 # v. 20261009.151425 - report which photos and videos have no location, and write one from the nearest GPX point
 
+# 2026.10.21 - v. 0.88 - derive CONF_NAME and the .py helper from SCRIPT_SELF_LIVE_PATH (or strip .deleteme.*.seal.*), not from BASH_SOURCE of the seal copy — otherwise the script looked for .deleteme.…seal….conf and never opened $HOME/conf/video-pgm-geotag-missing-media.conf; conf lookup dirs are unique when HOME and profile_location_dir are the same
 # 2026.10.21 - v. 0.87 - when the place question has no [1]/[2]… entries, print HOME and the directories searched for video-pgm-geotag-missing-media.conf (and whether a conf was found but had no places); skip $HOME/… when HOME is empty so /conf is not probed by mistake
 # 2026.10.13 - v. 0.86 - a tracks folder from the conf also reads GPSData*.txt
 # 2026.10.13 - v. 0.85 - a GPSData point is the clip start plus the seconds from the log number
@@ -1927,15 +1929,52 @@ gm_note_conf_dir() {
   printf '%s\0' "$f" >> "$WORK/confs"
 }
 
-# Directories where video-pgm-geotag-missing-media.conf is sought (one path per line).
+# Live script path (not a .deleteme.*.seal.* snapshot). Used for CONF_NAME and the .py helper.
+gm_live_script_path() {
+  local p base dir
+  if [[ -n "${SCRIPT_SELF_LIVE_PATH:-}" && -f "${SCRIPT_SELF_LIVE_PATH}" ]]; then
+    readlink -f -- "${SCRIPT_SELF_LIVE_PATH}" 2>/dev/null || printf '%s\n' "${SCRIPT_SELF_LIVE_PATH}"
+    return 0
+  fi
+  p="$(readlink -f -- "${BASH_SOURCE[0]}" 2>/dev/null || printf '%s' "${BASH_SOURCE[0]}")"
+  base="${p##*/}"
+  case "$base" in
+    .deleteme.*.seal.*)
+      # .deleteme.<live-basename>.seal.XXXXXX beside the live script (or under TMPDIR).
+      base="${base#.deleteme.}"
+      base="${base%.seal.*}"
+      dir="$(dirname -- "$p")"
+      if [[ -n "$base" && -f "${dir}/${base}" ]]; then
+        readlink -f -- "${dir}/${base}" 2>/dev/null || printf '%s\n' "${dir}/${base}"
+        return 0
+      fi
+      if [[ -n "${SCRIPT_SELF_UPDATE_PATH:-}" && -f "${SCRIPT_SELF_UPDATE_PATH}" ]]; then
+        readlink -f -- "${SCRIPT_SELF_UPDATE_PATH}" 2>/dev/null || printf '%s\n' "${SCRIPT_SELF_UPDATE_PATH}"
+        return 0
+      fi
+      ;;
+  esac
+  printf '%s\n' "$p"
+}
+
+# Directories where video-pgm-geotag-missing-media.conf is sought (one path per line, unique).
 gm_conf_lookup_dirs() {
-  printf '%s\n' /etc
+  local dir rp
+  local -A seen=()
+  local -a candidates=(/etc)
   if [[ -n "${HOME:-}" ]]; then
-    printf '%s\n' "${HOME}" "${HOME}/etc" "${HOME}/conf"
+    candidates+=("${HOME}" "${HOME}/etc" "${HOME}/conf")
   fi
   if [[ -n "${profile_location_dir:-}" ]]; then
-    printf '%s\n' "${profile_location_dir}/etc" "${profile_location_dir}/conf" "${profile_location_dir}"
+    candidates+=("${profile_location_dir}/etc" "${profile_location_dir}/conf" "${profile_location_dir}")
   fi
+  for dir in "${candidates[@]}"; do
+    [[ -n "$dir" ]] || continue
+    rp="$(readlink -f -- "$dir" 2>/dev/null || printf '%s' "$dir")"
+    [[ -n "${seen[$rp]:-}" ]] && continue
+    seen[$rp]=1
+    printf '%s\n' "$rp"
+  done
 }
 
 gm_find_confs() {
@@ -2918,8 +2957,11 @@ declare -A SEEN_SCREENSHOT=()
 declare -A SEEN_GPX=()
 declare -A SEEN_ROOT=()
 declare -A SEEN_CONF_DIR=()
-PY_HELPER="$(dirname -- "$(readlink -f -- "${BASH_SOURCE[0]}")")/video-pgm-geotag-missing-media.py"
-CONF_NAME="$(basename -- "${BASH_SOURCE[0]}" .sh).conf"
+# Prefer the live script (seal re-exec sets SCRIPT_SELF_LIVE_PATH). Never name the .conf
+# after .deleteme.*.seal.* — that hid $HOME/conf/video-pgm-geotag-missing-media.conf.
+GM_LIVE_SCRIPT="$(gm_live_script_path)"
+PY_HELPER="$(dirname -- "$GM_LIVE_SCRIPT")/video-pgm-geotag-missing-media.py"
+CONF_NAME="$(basename -- "$GM_LIVE_SCRIPT" .sh).conf"
 PLACE_LABEL=()
 PLACE_LAT=()
 PLACE_LON=()
