@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261021.085230 - after mp4_merge, say metadata/GPX/dates are still running; "Group finished" only at the end
 # v. 20261020.163100 - parse exiftool CreateDate with hyphens so GNU date can read media tags
 # v. 20261020.162300 - when name and mtime match and CreateDate is missing, default is apply that date (not Keep)
 # v. 20261020.150700 - date menu always lists File name, Filesystem, and Media tags (n/a when unusable)
@@ -71,6 +72,7 @@
 # v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
 # v. 20260805.154826 - after merge: copy GPS/dates from first chapter; FS times via touch -r
 
+# 2026.10.21 - v. 0.15.88 - after mp4_merge, log that post-merge work is still running (exiftool metadata, GPX, GPS embed, dates); say "Group finished" only when the group is fully done — not while *_exiftool_tmp is growing
 # 2026.10.20 - v. 0.15.87 - reading CreateDate used exiftool's YYYY:MM:DD form, which GNU date rejects, so media tags looked missing even when present; parse as YYYY-MM-DD instead
 # 2026.10.20 - v. 0.15.86 - when name and mtime already match and only CreateDate is missing, default is to apply that date (media + filesystem), not Keep
 # 2026.10.20 - v. 0.15.84 - the output-date menu always lists File name, Filesystem, and Media tags (n/a when missing or before 1990)
@@ -6021,13 +6023,21 @@ run_merge_group() {
     fi
     trap ctrl_c INT
     VIDEO_MERGE_OUT_FILE=""
-    echo "$(pgm_ts) Done: ${output_file}"
+    echo "$(pgm_ts) mp4_merge finished: ${output_file}"
+    echo "$(pgm_ts) Post-merge still running (metadata / GPX / dates) — not finished yet."
     pgm_note_processed_group "$output_file" "${files[@]}"
     local meta_label=""
     meta_label=$(group_merge_description_label "${files[@]}" 2>/dev/null) || meta_label=""
+    echo "$(pgm_ts) Copying GPS, dates, and camera tags from first chapter (exiftool) …"
+    echo "$(pgm_ts)   (large files can take several minutes; *_exiftool_tmp means this step is in progress)"
     apply_merge_output_metadata "$output_file" "${files[0]}" "$meta_label" || true
+    if group_is_dashcam "${files[@]}"; then
+      echo "$(pgm_ts) Writing GPX beside the merge (if needed) …"
+    fi
     dashcam_write_gpx_if_merged "$output_file" "${files[@]}"
+    echo "$(pgm_ts) Embedding a GPS point in the video if missing …"
     pgm_put_gps "$output_file" "${files[0]}"
+    echo "$(pgm_ts) Checking output dates (name / filesystem / media tags) …"
     pgm_prompt_reconcile_output_times "$output_file" "${files[0]}"
     rc=$?
     if (( rc == 2 )); then
@@ -6046,6 +6056,7 @@ run_merge_group() {
     if (( rc == 2 )); then
       return 2
     fi
+    echo "$(pgm_ts) Group finished: ${output_file}"
     rc=0
   else
     merge_clear_temp_work
