@@ -1,13 +1,15 @@
 #!/usr/bin/env python3
+# v. 20261021.141500 - renamed to video-pgm-gpx-clean.py (same logic)
 # v. 20261021.140100 - jump filter skips whole teleport clusters, not only single spikes
 # v. 20261021.135400 - clean GPX tracks: drop speed spikes, collapse stationary jitter, optional smooth
 
+# 2026.10.21 - v. 0.3 - renamed to video-pgm-gpx-clean.py beside video-pgm-gpx-clean.sh
 # 2026.10.21 - v. 0.2 - drop any point too fast from the last kept fix so a multi-point GPS teleport is removed, not only a one-point spike
 # 2026.10.21 - v. 0.1 - initial release: read a .gpx, drop impossible jumps by speed, collapse near-zero
 #                        movement clusters, optional short-window coordinate smooth; write a new .gpx
 """Clean noisy GPX tracks (spikes and stationary jitter).
 
-Used by gpx_clean.sh. Needs only Python 3 (stdlib).
+Used by video-pgm-gpx-clean.sh. Needs only Python 3 (stdlib).
 """
 
 from __future__ import annotations
@@ -21,7 +23,7 @@ import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
 from typing import List, Optional, Sequence, Tuple
 
-VERSION = "0.2"
+VERSION = "0.3"
 VERSION_LINE = re.compile(r"^# v\. (\d{8})\.(\d{6}) - (.*)$")
 HISTORY_LINE = re.compile(r"^# (\d{4}\.\d{2}\.\d{2} - v\. \S+ - .*)$")
 
@@ -281,7 +283,7 @@ def smooth_coords(pts: Sequence[Point], window_s: float) -> List[Point]:
 def write_gpx(path: str, pts: Sequence[Point], ns: Optional[str], name: str) -> None:
     if ns:
         ET.register_namespace("", ns)
-        root = ET.Element("{%s}gpx" % ns, attrib={"version": "1.1", "creator": "gpx_clean.py"})
+        root = ET.Element("{%s}gpx" % ns, attrib={"version": "1.1", "creator": "video-pgm-gpx-clean.py"})
         trk = ET.SubElement(root, "{%s}trk" % ns)
         ET.SubElement(trk, "{%s}name" % ns).text = name
         seg = ET.SubElement(trk, "{%s}trkseg" % ns)
@@ -292,7 +294,7 @@ def write_gpx(path: str, pts: Sequence[Point], ns: Optional[str], name: str) -> 
             if when is not None:
                 ET.SubElement(trkpt, "{%s}time" % ns).text = format_time(when)
     else:
-        root = ET.Element("gpx", attrib={"version": "1.1", "creator": "gpx_clean.py"})
+        root = ET.Element("gpx", attrib={"version": "1.1", "creator": "video-pgm-gpx-clean.py"})
         trk = ET.SubElement(root, "trk")
         ET.SubElement(trk, "name").text = name
         seg = ET.SubElement(trk, "trkseg")
