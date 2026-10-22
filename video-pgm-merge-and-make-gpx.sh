@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261022.205958 - _part_XX groups include the calendar day so multi-day folders do not interleave part numbers
 # v. 20261022.205426 - Ctrl-C during post-merge metadata/GPX still removes the incomplete merge output
 # v. 20261021.085230 - after mp4_merge, say metadata/GPX/dates are still running; "Group finished" only at the end
 # v. 20261020.163100 - parse exiftool CreateDate with hyphens so GNU date can read media tags
@@ -73,6 +74,7 @@
 # v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
 # v. 20260805.154826 - after merge: copy GPS/dates from first chapter; FS times via touch -r
 
+# 2026.10.22 - v. 0.15.90 - _part_XX group key includes YYYYMMDD: a folder with 20210226 and 20210228 clips used to share one camera bucket, sort by part number only, and pair day-B part_01 with day-A part_02 (so a same-day part_01…24 run looked like “only 2 chapters”)
 # 2026.10.22 - v. 0.15.89 - Ctrl-C during post-merge (exiftool metadata, GPX, GPS embed) still deletes the merge output and any *_exiftool_tmp / .meta.tmp beside it; the incomplete-output trap stays until those steps finish, then clears before the interactive date/seam/delete prompts; run-summary bookkeeping runs only when the group finishes
 # 2026.10.21 - v. 0.15.88 - after mp4_merge, log that post-merge work is still running (exiftool metadata, GPX, GPS embed, dates); say "Group finished" only when the group is fully done — not while *_exiftool_tmp is growing
 # 2026.10.20 - v. 0.15.87 - reading CreateDate used exiftool's YYYY:MM:DD form, which GNU date rejects, so media tags looked missing even when present; parse as YYYY-MM-DD instead
@@ -277,9 +279,9 @@ Merge behaviour:
   - With no FILE arguments: collects *.mp4 in the current working directory
     (case-insensitive), except existing *_concat.mp4 outputs.
   - Detects GoPro-style chapter sequences (_part_01, _part_02, …). Consecutive part
-    numbers only. Same camera + session label groups together; runs starting at part_01
-    merge as-is (each part may have its own leading timestamp). Orphan tails (part_02+
-    without part_01 in the folder) need filename times to chain, or timelapse detection
+    numbers only. Same calendar day + camera + session label groups together; runs
+    starting at part_01 merge as-is (each part may have its own leading HHMMSS). Orphan
+    tails (part_02+ without part_01 in the folder) need filename times to chain, or timelapse detection
     (exiftool Rate like 1_5SEC / _Timelapse_ in the name) with wall-clock gap several
     times playback length. Orphan tails also need full ~4 GB / ~12 GB chapters.
   - Also groups clips without _part_XX names when they look like fixed-size splits:
@@ -3833,22 +3835,27 @@ part_chapter_gopro_parse_base() {
   printf '%s.%s\n' "$(gopro_stem_without_capture_mode "$PART_STEM")" "$PART_EXT"
 }
 
-# Group key: same camera + middle + capture mode + proxy; leading timestamp may differ per part.
+# Group key: same calendar day + camera + middle + capture mode + proxy.
+# Leading HHMMSS may differ per part (rename.sh chapters). The day must be in the
+# key: a multi-day folder (e.g. 20210226 + 20210228) otherwise put every
+# GoPro_Hero7_Black_part_XX in one bucket, sort by part number only, and pair
+# day-B part_01 with day-A part_02 — splitting a real same-day 01…24 run.
 part_chapter_group_key_from_basename() {
-  local base="$1" parse_base cam mid capture_mode=""
+  local base="$1" parse_base cam mid capture_mode="" day=""
   part_chapter_parse "$base" || return 1
   capture_mode="$(gopro_capture_mode_token_from_stem "$PART_STEM" 2>/dev/null)" || capture_mode=""
   parse_base="$(gopro_stem_without_capture_mode "$PART_STEM").${PART_EXT}"
   if gopro_timestamp_cam_from_basename "$parse_base"; then
+    day="$GOPRO_TS_DATE"
     mid=$(gopro_middle_from_basename "$parse_base" 2>/dev/null) || mid=""
-    printf '%s|%s|%s%s\n' "$GOPRO_TS_CAM" "$mid" "$capture_mode" "${PART_PROXY}"
+    printf '%s|%s|%s|%s%s\n' "$day" "$GOPRO_TS_CAM" "$mid" "$capture_mode" "${PART_PROXY}"
     return 0
   fi
   if cam=$(chapter_camera_from_basename "$base" 2>/dev/null); then
-    printf '%s|%s|%s%s\n' "$cam" "" "$capture_mode" "${PART_PROXY}"
+    printf '%s|%s|%s|%s%s\n' "" "$cam" "" "$capture_mode" "${PART_PROXY}"
     return 0
   fi
-  printf '%s|%s%s\n' "$(gopro_stem_without_capture_mode "$PART_STEM")" "$capture_mode" "${PART_PROXY}"
+  printf '%s|%s|%s%s\n' "" "$(gopro_stem_without_capture_mode "$PART_STEM")" "$capture_mode" "${PART_PROXY}"
 }
 
 # True when _part_XX filename times chain: same start time; real-time previous start +
@@ -3935,7 +3942,7 @@ part_chapter_run_valid() {
   size_split_run_valid "${files[@]}"
 }
 
-# Sort _part_XX paths by numeric part (not lexicographic — part_10 before part_09).
+# Sort _part_XX paths by numeric part, then by basename (stable same-part order).
 part_chapter_sorted_files() {
   local -n _out=$1
   shift
@@ -3944,8 +3951,8 @@ part_chapter_sorted_files() {
   mapfile -t _out < <(
     for f in "${files[@]}"; do
       p=$(chapter_part_from_basename "${f##*/}") || continue
-      printf '%d\t%s\n' "$p" "$f"
-    done | LC_ALL=C sort -t $'\t' -k1,1n | cut -f2-
+      printf '%d\t%s\t%s\n' "$p" "${f##*/}" "$f"
+    done | LC_ALL=C sort -t $'\t' -k1,1n -k2,2 | cut -f3-
   )
 }
 
@@ -4015,11 +4022,12 @@ part_chapter_split_key_into_runs() {
 }
 
 # Pull _part_NN chapter files out of the list into key-based groups. The key is
-# camera + middle label + proxy variant (or full stem when not GoPro-shaped), so
-# originals (_part_NN) and proxies (_part_NN_Proxy) go into separate groups and
-# are NEVER mixed. Within each key, consecutive part numbers are kept together; runs
-# from part_01 merge without a timestamp check (rename.sh chapter split). Orphan tails
-# (first part > 01) need filename times to chain and ~4 GB / ~12 GB full segments.
+# calendar day + camera + middle label + proxy variant (or full stem when not
+# GoPro-shaped), so originals (_part_NN) and proxies (_part_NN_Proxy) go into
+# separate groups and are NEVER mixed, and two days in one folder do not share a
+# part-number sequence. Within each key, consecutive part numbers are kept together;
+# runs from part_01 merge without a timestamp check (rename.sh chapter split). Orphan
+# tails (first part > 01) need filename times to chain and ~4 GB / ~12 GB full segments.
 # return via the array named in $1 (e.g. rest2 from build_chapter_groups).
 build_part_chapter_groups() {
   local _rest_name=$1
