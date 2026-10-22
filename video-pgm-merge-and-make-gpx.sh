@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261022.211235 - within a day, sort _part_XX by start time (not only part number) so two sessions do not interleave
 # v. 20261022.210520 - every _part_XX link (also from part_01) must chain by filename time + ffprobe duration; wider stop gap
 # v. 20261022.205958 - _part_XX groups include the calendar day so multi-day folders do not interleave part numbers
 # v. 20261022.205426 - Ctrl-C during post-merge metadata/GPX still removes the incomplete merge output
@@ -75,6 +76,7 @@
 # v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
 # v. 20260805.154826 - after merge: copy GPS/dates from first chapter; FS times via touch -r
 
+# 2026.10.22 - v. 0.15.92 - within one day+camera key, order _part_XX by filename start time then part number (not part number alone). Two recordings the same day (morning part_01… and evening part_01…) were interleaved and became standalones; size-split session key also includes the day; groups that are all _part_XX are labeled as part chapters, not size-split
 # 2026.10.22 - v. 0.15.91 - every consecutive _part_XX link (including runs that start at part_01) must pass filename start + ffprobe duration (±180s), or timelapse / wall-clock gap; default max stop gap for that wall-clock fallback is 1 hour (PGM_PART_CHAPTER_TIME_MAX_GAP_SEC) so a long pause does not always split the day
 # 2026.10.22 - v. 0.15.90 - _part_XX group key includes YYYYMMDD: a folder with 20210226 and 20210228 clips used to share one camera bucket, sort by part number only, and pair day-B part_01 with day-A part_02 (so a same-day part_01…24 run looked like “only 2 chapters”)
 # 2026.10.22 - v. 0.15.89 - Ctrl-C during post-merge (exiftool metadata, GPX, GPS embed) still deletes the merge output and any *_exiftool_tmp / .meta.tmp beside it; the incomplete-output trap stays until those steps finish, then clears before the interactive date/seam/delete prompts; run-summary bookkeeping runs only when the group finishes
@@ -280,13 +282,13 @@ Merge behaviour:
     mp4_merge is not run on mixed families (e.g. HandBrake/mp3 with NVenc/aac).
   - With no FILE arguments: collects *.mp4 in the current working directory
     (case-insensitive), except existing *_concat.mp4 outputs.
-  - Detects GoPro-style chapter sequences (_part_01, _part_02, …). Consecutive part
-    numbers only. Same calendar day + camera + session label groups together. Each
-    link (also from part_01) needs filename times to chain: next start ≈ previous
-    start + ffprobe duration (±180s), or timelapse detection (exiftool Rate like
-    1_5SEC / _Timelapse_ in the name) with wall-clock gap several times playback
-    length, or a plain wall-clock gap (default 5 min–1 h; PGM_PART_CHAPTER_TIME_*).
-    Orphan tails (first part > 01) also need full ~4 GB / ~12 GB chapters.
+  - Detects GoPro-style chapter sequences (_part_01, _part_02, …). Same calendar
+    day + camera + session label groups together; within that, files are ordered by
+    filename start time then part number (so two recordings the same day do not
+    interleave). Consecutive part numbers must chain: next start ≈ previous start
+    + ffprobe duration (±180s), or timelapse / wall-clock gap (default 5 min–1 h;
+    PGM_PART_CHAPTER_TIME_*). Orphan tails (first part > 01) also need full ~4 GB /
+    ~12 GB chapters.
   - Also groups clips without _part_XX names when they look like fixed-size splits:
     same session label, ~4 GB or ~12 GB chapters (~6:49 or longer per chapter); filename times
     that chain, or the same YYYYMMDD_HHMMSS with GX chapter suffixes
@@ -2364,12 +2366,12 @@ gopro_recording_group_key_from_basename() {
   printf '%s_%s|%s|%s\n' "$GOPRO_TS_DATE" "$GOPRO_TS_TIME" "$GOPRO_TS_CAM" "$mid"
 }
 
-# Size-split session key: same camera + middle label; leading timestamp may differ per chapter.
+# Size-split session key: same calendar day + camera + middle; leading HHMMSS may differ.
 gopro_size_split_session_key_from_basename() {
   local base="$1" mid
   gopro_timestamp_cam_from_basename "$base" || return 1
   mid=$(gopro_middle_from_basename "$base" 2>/dev/null) || mid=""
-  printf '%s|%s\n' "$GOPRO_TS_CAM" "$mid"
+  printf '%s|%s|%s\n' "$GOPRO_TS_DATE" "$GOPRO_TS_CAM" "$mid"
 }
 
 # Next lowercase letter after $1 (a→b); empty if not a–y.
@@ -3485,14 +3487,16 @@ pgm_prompt_reconcile_output_times() {
 
 group_is_size_split() {
   local -a files=("$@")
-  local f base
+  local f base all_part=1
   (( ${#files[@]} >= 2 )) || return 1
   for f in "${files[@]}"; do
     base="${f##*/}"
+    chapter_part_from_basename "$base" >/dev/null 2>&1 || all_part=0
     gopro_timestamp_cam_from_basename "$base" || return 1
   done
+  # Named _part_XX runs are part-chapter groups (even when they also look ~4 GB).
+  (( all_part )) && return 1
   # Letter a,b,c… on one start time is enough (any size); else require ~4 GB / ~12 GB chapters.
-  # Orphan _part_XX singles may join a size-split/timelapse chain (no letter run).
   gopro_letter_chapter_run_ok "${files[@]}" && return 0
   size_split_run_valid "${files[@]}"
 }
@@ -3957,17 +3961,27 @@ part_chapter_run_valid() {
   size_split_run_valid "${files[@]}"
 }
 
-# Sort _part_XX paths by numeric part, then by basename (stable same-part order).
+# Sort _part_XX by filename start time, then part number.
+# Part-number-only order interleaved two sessions on one day (morning part_01…24
+# and evening part_01…09) into standalones.
 part_chapter_sorted_files() {
   local -n _out=$1
   shift
   local -a files=("$@")
-  local f p
+  local f p base parse_base day="00000000" tim="000000"
   mapfile -t _out < <(
     for f in "${files[@]}"; do
-      p=$(chapter_part_from_basename "${f##*/}") || continue
-      printf '%d\t%s\t%s\n' "$p" "${f##*/}" "$f"
-    done | LC_ALL=C sort -t $'\t' -k1,1n -k2,2 | cut -f3-
+      base="${f##*/}"
+      p=$(chapter_part_from_basename "$base") || continue
+      day="00000000"
+      tim="000000"
+      if parse_base=$(part_chapter_gopro_parse_base "$base" 2>/dev/null) \
+        && gopro_timestamp_cam_from_basename "$parse_base"; then
+        day="$GOPRO_TS_DATE"
+        tim="$GOPRO_TS_TIME"
+      fi
+      printf '%s\t%s\t%02d\t%s\n' "$day" "$tim" "$p" "$f"
+    done | LC_ALL=C sort -t $'\t' -k1,1 -k2,2n -k3,3n | cut -f4-
   )
 }
 
