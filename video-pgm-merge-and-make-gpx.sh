@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261022.205426 - Ctrl-C during post-merge metadata/GPX still removes the incomplete merge output
 # v. 20261021.085230 - after mp4_merge, say metadata/GPX/dates are still running; "Group finished" only at the end
 # v. 20261020.163100 - parse exiftool CreateDate with hyphens so GNU date can read media tags
 # v. 20261020.162300 - when name and mtime match and CreateDate is missing, default is apply that date (not Keep)
@@ -72,6 +73,7 @@
 # v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
 # v. 20260805.154826 - after merge: copy GPS/dates from first chapter; FS times via touch -r
 
+# 2026.10.22 - v. 0.15.89 - Ctrl-C during post-merge (exiftool metadata, GPX, GPS embed) still deletes the merge output and any *_exiftool_tmp / .meta.tmp beside it; the incomplete-output trap stays until those steps finish, then clears before the interactive date/seam/delete prompts; run-summary bookkeeping runs only when the group finishes
 # 2026.10.21 - v. 0.15.88 - after mp4_merge, log that post-merge work is still running (exiftool metadata, GPX, GPS embed, dates); say "Group finished" only when the group is fully done — not while *_exiftool_tmp is growing
 # 2026.10.20 - v. 0.15.87 - reading CreateDate used exiftool's YYYY:MM:DD form, which GNU date rejects, so media tags looked missing even when present; parse as YYYY-MM-DD instead
 # 2026.10.20 - v. 0.15.86 - when name and mtime already match and only CreateDate is missing, default is to apply that date (media + filesystem), not Keep
@@ -1934,9 +1936,12 @@ format_size_comparison_line() {
 }
 
 video_merge_ctrl_c() {
-  if [[ -n "${VIDEO_MERGE_OUT_FILE}" && -e "${VIDEO_MERGE_OUT_FILE}" ]]; then
-    rm -f "${VIDEO_MERGE_OUT_FILE}"
-    echo "$(pgm_ts) Removed incomplete output: ${VIDEO_MERGE_OUT_FILE}"
+  local out="${VIDEO_MERGE_OUT_FILE:-}"
+  if [[ -n "$out" ]]; then
+    # Merge and post-merge (exiftool) may leave a partial final name or sidecar temps.
+    rm -f -- "$out" "${out}_exiftool_tmp" "${out}.meta.tmp."* 2>/dev/null || true
+    echo "$(pgm_ts) Removed incomplete output: ${out}"
+    VIDEO_MERGE_OUT_FILE=""
   fi
   if [[ -n "${MERGE_TMP_DIR}" && -d "${MERGE_TMP_DIR}" ]]; then
     rm -rf -- "${MERGE_TMP_DIR}"
@@ -6027,11 +6032,13 @@ run_merge_group() {
       MERGE_TMP_DIR=""
       echo "$(pgm_ts) Moved merged file to ${output_file}"
     fi
-    trap ctrl_c INT
-    VIDEO_MERGE_OUT_FILE=""
+    # Keep incomplete-output cleanup through automated post-merge. Clear before
+    # interactive prompts so Ctrl-C on a date/seam question does not wipe a finished merge.
+    VIDEO_MERGE_OUT_FILE="$output_file"
+    trap video_merge_ctrl_c INT
     echo "$(pgm_ts) mp4_merge finished: ${output_file}"
     echo "$(pgm_ts) Post-merge still running (metadata / GPX / dates) — not finished yet."
-    pgm_note_processed_group "$output_file" "${files[@]}"
+    echo "$(pgm_ts) Ctrl-C now removes this merge output (group not finished)."
     local meta_label=""
     meta_label=$(group_merge_description_label "${files[@]}" 2>/dev/null) || meta_label=""
     echo "$(pgm_ts) Copying GPS, dates, and camera tags from first chapter (exiftool) …"
@@ -6043,6 +6050,8 @@ run_merge_group() {
     dashcam_write_gpx_if_merged "$output_file" "${files[@]}"
     echo "$(pgm_ts) Embedding a GPS point in the video if missing …"
     pgm_put_gps "$output_file" "${files[0]}"
+    trap ctrl_c INT
+    VIDEO_MERGE_OUT_FILE=""
     echo "$(pgm_ts) Checking output dates (name / filesystem / media tags) …"
     pgm_prompt_reconcile_output_times "$output_file" "${files[0]}"
     rc=$?
@@ -6062,6 +6071,7 @@ run_merge_group() {
     if (( rc == 2 )); then
       return 2
     fi
+    pgm_note_processed_group "$output_file" "${files[@]}"
     echo "$(pgm_ts) Group finished: ${output_file}"
     rc=0
   else
