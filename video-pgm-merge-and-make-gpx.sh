@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261022.212200 - chapter start time: filename by default; media CreateDate when it disagrees by >2 min (hybrid; size-split too)
 # v. 20261022.211235 - within a day, sort _part_XX by start time (not only part number) so two sessions do not interleave
 # v. 20261022.210520 - every _part_XX link (also from part_01) must chain by filename time + ffprobe duration; wider stop gap
 # v. 20261022.205958 - _part_XX groups include the calendar day so multi-day folders do not interleave part numbers
@@ -76,6 +77,7 @@
 # v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
 # v. 20260805.154826 - after merge: copy GPS/dates from first chapter; FS times via touch -r
 
+# 2026.10.22 - v. 0.15.93 - hybrid clip start for sort and chain: filename YYYYMMDD_HHMMSS by default; if media CreateDate (exiftool) disagrees by more than PGM_PART_CHAPTER_MEDIA_TIME_DISAGREE_SEC (default 120), use CreateDate; length stays ffprobe duration; results cached per file for the chapter plan
 # 2026.10.22 - v. 0.15.92 - within one day+camera key, order _part_XX by filename start time then part number (not part number alone). Two recordings the same day (morning part_01… and evening part_01…) were interleaved and became standalones; size-split session key also includes the day; groups that are all _part_XX are labeled as part chapters, not size-split
 # 2026.10.22 - v. 0.15.91 - every consecutive _part_XX link (including runs that start at part_01) must pass filename start + ffprobe duration (±180s), or timelapse / wall-clock gap; default max stop gap for that wall-clock fallback is 1 hour (PGM_PART_CHAPTER_TIME_MAX_GAP_SEC) so a long pause does not always split the day
 # 2026.10.22 - v. 0.15.90 - _part_XX group key includes YYYYMMDD: a folder with 20210226 and 20210228 clips used to share one camera bucket, sort by part number only, and pair day-B part_01 with day-A part_02 (so a same-day part_01…24 run looked like “only 2 chapters”)
@@ -284,11 +286,11 @@ Merge behaviour:
     (case-insensitive), except existing *_concat.mp4 outputs.
   - Detects GoPro-style chapter sequences (_part_01, _part_02, …). Same calendar
     day + camera + session label groups together; within that, files are ordered by
-    filename start time then part number (so two recordings the same day do not
-    interleave). Consecutive part numbers must chain: next start ≈ previous start
-    + ffprobe duration (±180s), or timelapse / wall-clock gap (default 5 min–1 h;
-    PGM_PART_CHAPTER_TIME_*). Orphan tails (first part > 01) also need full ~4 GB /
-    ~12 GB chapters.
+    hybrid start time then part number. Start time is the filename stamp by default;
+    if media CreateDate disagrees by more than 2 minutes (PGM_PART_CHAPTER_MEDIA_TIME_DISAGREE_SEC),
+    CreateDate is used. Consecutive parts must chain: next start ≈ previous start
+    + ffprobe duration (±180s), or timelapse / wall-clock gap (default 5 min–1 h).
+    Orphan tails (first part > 01) also need full ~4 GB / ~12 GB chapters.
   - Also groups clips without _part_XX names when they look like fixed-size splits:
     same session label, ~4 GB or ~12 GB chapters (~6:49 or longer per chapter); filename times
     that chain, or the same YYYYMMDD_HHMMSS with GX chapter suffixes
@@ -394,12 +396,17 @@ Environment:
                           Slack around interval×fps expected ratio (default: 0.35).
   PGM_PART_CHAPTER_TIME_MIN_GAP_SEC / PGM_PART_CHAPTER_TIME_MAX_GAP_SEC
                           When prev start + duration does not match next start, allow
-                          a plain wall-clock gap between _part_XX filename times
+                          a plain wall-clock gap between chapter start times
                           (default 300–3600s). PGM_PART_CHAPTER_12G_TIME_MAX_GAP_SEC
                           for ~12 GB chapters (default: same 3600, or size-split 12G max).
-  PGM_SIZE_SPLIT_TIME_TOLERANCE_SEC
+  PGM_PART_CHAPTER_MEDIA_TIME_DISAGREE_SEC
+                          If media CreateDate and the filename start disagree by more
+                          than this many seconds, sort/chain use CreateDate (default: 120).
+  PGM_PART_CHAPTER_TIME_TOLERANCE_SEC
                           For _part_XX chains: slack when matching next start to
                           prev start + ffprobe duration (default: 180).
+  PGM_SIZE_SPLIT_TIME_TOLERANCE_SEC
+                          For size-split (no _part_XX) chains: same check (default: 2).
   PGM_DASHCAM_MAX_GAP_SEC Max seconds between 70mai clip start times to stay in one
                           journey (default: 90). Gaps above this start a new group.
   PGM_DASHCAM_SHORT_HOLE_SEC
@@ -1066,6 +1073,10 @@ SEAM_PREVIEW_SKIP_RUN=0
 KEEP_INPUTS_FOR_RUN=0
 # 1 when groups that are already merged are not asked about again this run.
 SKIP_MERGED_PROMPTS=0
+# Hybrid start-time cache: path → epoch; path → name|media (which source won).
+declare -A PGM_HYBRID_START_EPOCH=()
+declare -A PGM_HYBRID_START_SRC=()
+PGM_HYBRID_START_MEDIA_N=0
 PGM_READ_TIMEOUT_CLI=0
 PGM_SCRIPT_START_NS=""
 PGM_PROCESSING_SEC=0
@@ -2445,52 +2456,28 @@ gopro_datetime_to_epoch() {
   return 1
 }
 
-# 0 = next file's basename time matches previous file end time (± tolerance).
+# 0 = next clip follows previous by hybrid start + duration (± tolerance).
 size_split_chapter_timestamps_follow() {
   local prev_f="$1" next_f="$2"
-  local pb nb prev_date prev_time next_date next_time
-  local prev_epoch next_epoch dur expected delta tol gap
+  local pb prev_epoch next_epoch dur expected delta tol gap
   pb="${prev_f##*/}"
-  nb="${next_f##*/}"
-  gopro_timestamp_cam_from_basename "$pb" || return 1
-  prev_date="$GOPRO_TS_DATE" prev_time="$GOPRO_TS_TIME"
-  gopro_timestamp_cam_from_basename "$nb" || return 1
-  next_date="$GOPRO_TS_DATE" next_time="$GOPRO_TS_TIME"
+  prev_epoch="$(pgm_hybrid_start_epoch "$prev_f" 2>/dev/null)" || return 1
+  next_epoch="$(pgm_hybrid_start_epoch "$next_f" 2>/dev/null)" || return 1
 
-  # Same start time in filename (GX013496, GX023496, … on one recording).
-  if [[ "$prev_date" == "$next_date" && "$prev_time" == "$next_time" ]]; then
+  if (( prev_epoch == next_epoch )); then
     return 0
   fi
+  delta=$(( next_epoch - prev_epoch ))
+  if (( delta >= -2 && delta <= 2 )); then
+    return 0
+  fi
+  (( next_epoch >= prev_epoch )) || return 1
 
   # Next realtime chapter must start at prev start + duration. GoPro: ±2s.
   tol="${PGM_SIZE_SPLIT_TIME_TOLERANCE_SEC:-2}"
-
+  [[ "$tol" =~ ^[0-9]+$ ]] || tol=2
   dur=$(ffprobe_duration_seconds "$prev_f" 2>/dev/null) || dur=""
 
-  if prev_epoch=$(gopro_datetime_to_epoch "$prev_date" "$prev_time" 2>/dev/null) \
-    && next_epoch=$(gopro_datetime_to_epoch "$next_date" "$next_time" 2>/dev/null); then
-    if [[ -n "$dur" ]]; then
-      expected=$(awk -v p="$prev_epoch" -v d="$dur" 'BEGIN{printf "%d", p+d+0.5}')
-      delta=$(( next_epoch - expected ))
-      if (( delta >= -tol && delta <= tol )); then
-        return 0
-      fi
-    fi
-    gap=$(( next_epoch - prev_epoch ))
-    part_chapter_timelapse_wall_clock_ok "$prev_f" "$gap" "$dur" && return 0
-    # Without duration: bare _Timelapse chapters often sit ~20–80 min apart (Hero7 ~4 GB).
-    if [[ -z "$dur" ]] && gopro_basename_is_timelapse "$pb" \
-      && (( gap >= 1200 && gap <= 4800 )); then
-      return 0
-    fi
-    return 1
-  fi
-
-  # Same calendar day only (filename times).
-  [[ "$prev_date" == "$next_date" ]] || return 1
-  prev_epoch=$(gopro_hhmmss_to_seconds "$prev_time")
-  next_epoch=$(gopro_hhmmss_to_seconds "$next_time")
-  (( next_epoch >= prev_epoch )) || return 1
   if [[ -n "$dur" ]]; then
     expected=$(awk -v p="$prev_epoch" -v d="$dur" 'BEGIN{printf "%d", p+d+0.5}')
     delta=$(( next_epoch - expected ))
@@ -2500,6 +2487,7 @@ size_split_chapter_timestamps_follow() {
   fi
   gap=$(( next_epoch - prev_epoch ))
   part_chapter_timelapse_wall_clock_ok "$prev_f" "$gap" "$dur" && return 0
+  # Without duration: bare _Timelapse chapters often sit ~20–80 min apart (Hero7 ~4 GB).
   if [[ -z "$dur" ]] && gopro_basename_is_timelapse "$pb" \
     && (( gap >= 1200 && gap <= 4800 )); then
     return 0
@@ -3280,6 +3268,61 @@ pgm_media_createdate_epoch() {
   printf '%s\n' "$e"
 }
 
+pgm_hybrid_start_cache_clear() {
+  PGM_HYBRID_START_EPOCH=()
+  PGM_HYBRID_START_SRC=()
+  PGM_HYBRID_START_MEDIA_N=0
+}
+
+# Clip start for chapter sort/chain: filename time by default; media CreateDate when
+# it disagrees with the name by more than PGM_PART_CHAPTER_MEDIA_TIME_DISAGREE_SEC.
+# Cached per real path for the chapter-plan pass.
+pgm_hybrid_start_epoch() {
+  local f="$1" key name_e="" media_e="" chosen="" diff thresh
+  [[ -n "$f" && -f "$f" ]] || return 1
+  key="$(readlink -f -- "$f" 2>/dev/null || printf '%s' "$f")"
+  if [[ -n "${PGM_HYBRID_START_EPOCH[$key]+x}" ]]; then
+    printf '%s\n' "${PGM_HYBRID_START_EPOCH[$key]}"
+    return 0
+  fi
+  name_e="$(pgm_filename_epoch_from_basename "${f##*/}" 2>/dev/null)" || name_e=""
+  media_e="$(pgm_media_createdate_epoch "$f" 2>/dev/null)" || media_e=""
+  thresh="${PGM_PART_CHAPTER_MEDIA_TIME_DISAGREE_SEC:-120}"
+  [[ "$thresh" =~ ^[0-9]+$ ]] || thresh=120
+  if [[ -n "$name_e" && -n "$media_e" ]]; then
+    if (( name_e > media_e )); then
+      diff=$(( name_e - media_e ))
+    else
+      diff=$(( media_e - name_e ))
+    fi
+    if (( diff > thresh )); then
+      chosen="$media_e"
+      PGM_HYBRID_START_SRC[$key]=media
+      PGM_HYBRID_START_MEDIA_N=$(( PGM_HYBRID_START_MEDIA_N + 1 ))
+    else
+      chosen="$name_e"
+      PGM_HYBRID_START_SRC[$key]=name
+    fi
+  elif [[ -n "$name_e" ]]; then
+    chosen="$name_e"
+    PGM_HYBRID_START_SRC[$key]=name
+  elif [[ -n "$media_e" ]]; then
+    chosen="$media_e"
+    PGM_HYBRID_START_SRC[$key]=media
+    PGM_HYBRID_START_MEDIA_N=$(( PGM_HYBRID_START_MEDIA_N + 1 ))
+  else
+    return 1
+  fi
+  PGM_HYBRID_START_EPOCH[$key]="$chosen"
+  printf '%s\n' "$chosen"
+}
+
+pgm_hybrid_start_media_note() {
+  local thresh="${PGM_PART_CHAPTER_MEDIA_TIME_DISAGREE_SEC:-120}"
+  (( PGM_HYBRID_START_MEDIA_N > 0 )) || return 0
+  echo "$(pgm_ts) Chapter times: used media CreateDate for ${PGM_HYBRID_START_MEDIA_N} file(s) (disagreed with the filename by more than ${thresh}s)."
+}
+
 # Set filesystem mtime/atime (and Windows creation on /mnt/?/) from a Unix epoch.
 pgm_set_fs_times_epoch() {
   local dest="$1" epoch="$2" touch_fmt dest_w
@@ -3610,6 +3653,8 @@ build_size_split_groups() {
   local warned_ffprobe=0
   local run_tier="" next_tier=""
 
+  pgm_hybrid_start_cache_clear
+
   for blob in "${GROUP_BLOBS[@]}"; do
     group_files_to_array "$blob" files
     if (( ${#files[@]} >= 2 )); then
@@ -3638,8 +3683,9 @@ build_size_split_groups() {
 
   mapfile -t singles < <(
     for f in "${singles[@]}"; do
-      printf '%s\t%s\n' "$(gopro_size_split_sort_key "$f")" "$f"
-    done | LC_ALL=C sort -t $'\t' -k1,1 | cut -f2-
+      e="$(pgm_hybrid_start_epoch "$f" 2>/dev/null)" || e=0
+      printf '%020d\t%s\t%s\n' "$e" "$(gopro_size_split_sort_key "$f")" "$f"
+    done | LC_ALL=C sort -t $'\t' -k1,1n -k2,2 | cut -f3-
   )
   n=${#singles[@]}
   i=0
@@ -3694,6 +3740,7 @@ build_size_split_groups() {
   GROUP_BLOBS=( "${kept[@]}" "${new_groups[@]}" )
   (( warned_ffprobe )) || true
   print_size_split_near_miss_hint
+  pgm_hybrid_start_media_note
 }
 
 # Explain when same-camera ~4GB/~12GB singles were not grouped (after a failed strict check).
@@ -3876,62 +3923,41 @@ part_chapter_group_key_from_basename() {
   printf '%s|%s|%s%s\n' "" "$(gopro_stem_without_capture_mode "$PART_STEM")" "$capture_mode" "${PART_PROXY}"
 }
 
-# True when _part_XX filename times chain: same start time; real-time previous start +
-# playback duration ≈ next start; or timelapse with wall-clock gap several × playback.
+# True when next clip follows prev: hybrid start times (name / CreateDate) plus
+# ffprobe duration, or timelapse / wall-clock gap.
 part_chapter_timestamps_follow() {
   local prev_f="$1" next_f="$2"
-  local pb nb prev_base next_base
-  local prev_date prev_time next_date next_time
-  local prev_epoch next_epoch dur expected delta tol gap
-  pb="${prev_f##*/}"
-  nb="${next_f##*/}"
-  prev_base=$(part_chapter_gopro_parse_base "$pb") || return 1
-  next_base=$(part_chapter_gopro_parse_base "$nb") || return 1
-  gopro_timestamp_cam_from_basename "$prev_base" || return 1
-  prev_date="$GOPRO_TS_DATE" prev_time="$GOPRO_TS_TIME"
-  gopro_timestamp_cam_from_basename "$next_base" || return 1
-  next_date="$GOPRO_TS_DATE" next_time="$GOPRO_TS_TIME"
+  local prev_epoch next_epoch dur expected delta tol gap same_tol
+  prev_epoch="$(pgm_hybrid_start_epoch "$prev_f" 2>/dev/null)" || return 1
+  next_epoch="$(pgm_hybrid_start_epoch "$next_f" 2>/dev/null)" || return 1
 
-  if [[ "$prev_date" == "$next_date" && "$prev_time" == "$next_time" ]]; then
+  same_tol=2
+  if (( prev_epoch == next_epoch )); then
     return 0
   fi
+  delta=$(( next_epoch - prev_epoch ))
+  if (( delta >= -same_tol && delta <= same_tol )); then
+    return 0
+  fi
+  (( next_epoch >= prev_epoch )) || return 1
 
-  tol="${PGM_SIZE_SPLIT_TIME_TOLERANCE_SEC:-180}"
+  tol="${PGM_PART_CHAPTER_TIME_TOLERANCE_SEC:-180}"
+  [[ "$tol" =~ ^[0-9]+$ ]] || tol=180
   dur=$(ffprobe_duration_seconds "$prev_f" 2>/dev/null) || dur=""
 
-  if prev_epoch=$(gopro_datetime_to_epoch "$prev_date" "$prev_time" 2>/dev/null) \
-    && next_epoch=$(gopro_datetime_to_epoch "$next_date" "$next_time" 2>/dev/null); then
-    if [[ -n "$dur" ]]; then
-      expected=$(awk -v p="$prev_epoch" -v d="$dur" 'BEGIN{printf "%d", p+d+0.5}')
-      delta=$(( next_epoch - expected ))
-      if (( delta >= -tol && delta <= tol )); then
-        return 0
-      fi
-    fi
-    gap=$(( next_epoch - prev_epoch ))
-    part_chapter_timelapse_wall_clock_ok "$prev_f" "$gap" "$dur" && return 0
-    part_chapter_realtime_wall_clock_gap_ok "$prev_f" "$gap"
-    return $?
-  fi
-
-  [[ "$prev_date" == "$next_date" ]] || return 1
-  prev_epoch=$(gopro_hhmmss_to_seconds "$prev_time")
-  next_epoch=$(gopro_hhmmss_to_seconds "$next_time")
   if [[ -n "$dur" ]]; then
     expected=$(awk -v p="$prev_epoch" -v d="$dur" 'BEGIN{printf "%d", p+d+0.5}')
     delta=$(( next_epoch - expected ))
-    if (( next_epoch >= prev_epoch && delta >= -tol && delta <= tol )); then
+    if (( delta >= -tol && delta <= tol )); then
       return 0
     fi
   fi
   gap=$(( next_epoch - prev_epoch ))
-  (( next_epoch >= prev_epoch )) || return 1
   part_chapter_timelapse_wall_clock_ok "$prev_f" "$gap" "$dur" && return 0
   part_chapter_realtime_wall_clock_gap_ok "$prev_f" "$gap"
 }
 
-# True when cur_part follows prev_part in a run. Always checks filename start times
-# plus ffprobe duration (or timelapse / wall-clock gap) — including runs from part_01.
+# True when cur_part follows prev_part in a run (hybrid start + duration / gap).
 part_chapter_consecutive_link_ok() {
   local prev_f="$1" next_f="$2"
   # $3 was run_first_part (unused; kept so callers can still pass it).
@@ -3961,27 +3987,19 @@ part_chapter_run_valid() {
   size_split_run_valid "${files[@]}"
 }
 
-# Sort _part_XX by filename start time, then part number.
-# Part-number-only order interleaved two sessions on one day (morning part_01…24
-# and evening part_01…09) into standalones.
+# Sort _part_XX by hybrid start epoch, then part number.
 part_chapter_sorted_files() {
   local -n _out=$1
   shift
   local -a files=("$@")
-  local f p base parse_base day="00000000" tim="000000"
+  local f p base e
   mapfile -t _out < <(
     for f in "${files[@]}"; do
       base="${f##*/}"
       p=$(chapter_part_from_basename "$base") || continue
-      day="00000000"
-      tim="000000"
-      if parse_base=$(part_chapter_gopro_parse_base "$base" 2>/dev/null) \
-        && gopro_timestamp_cam_from_basename "$parse_base"; then
-        day="$GOPRO_TS_DATE"
-        tim="$GOPRO_TS_TIME"
-      fi
-      printf '%s\t%s\t%02d\t%s\n' "$day" "$tim" "$p" "$f"
-    done | LC_ALL=C sort -t $'\t' -k1,1 -k2,2n -k3,3n | cut -f4-
+      e="$(pgm_hybrid_start_epoch "$f" 2>/dev/null)" || e=0
+      printf '%020d\t%02d\t%s\n' "$e" "$p" "$f"
+    done | LC_ALL=C sort -t $'\t' -k1,1n -k2,2n | cut -f3-
   )
 }
 
@@ -4067,6 +4085,7 @@ build_part_chapter_groups() {
   local -a keys_seen=() key_files=()
   local -A group_map=()
   rest_arr=()
+  pgm_hybrid_start_cache_clear
   for f in "${sorted[@]}"; do
     base="${f##*/}"
     if is_concat_output_basename "$base"; then
@@ -4097,6 +4116,7 @@ build_part_chapter_groups() {
     fi
     part_chapter_split_key_into_runs "$_rest_name" "${key_files[@]}"
   done
+  pgm_hybrid_start_media_note
 }
 
 # 70mai dashcam: NO20260926-110627-000678F.MP4 or EV20260814-190447-006784B.MP4
