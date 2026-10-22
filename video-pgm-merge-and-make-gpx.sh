@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261022.212800 - chapter plan shows progress (CreateDate / link checks) so a large folder does not look hung
 # v. 20261022.212200 - chapter start time: filename by default; media CreateDate when it disagrees by >2 min (hybrid; size-split too)
 # v. 20261022.211235 - within a day, sort _part_XX by start time (not only part number) so two sessions do not interleave
 # v. 20261022.210520 - every _part_XX link (also from part_01) must chain by filename time + ffprobe duration; wider stop gap
@@ -77,6 +78,7 @@
 # v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
 # v. 20260805.154826 - after merge: copy GPS/dates from first chapter; FS times via touch -r
 
+# 2026.10.22 - v. 0.15.94 - chapter plan progress on one rewriting status line while reading CreateDate and checking chapter links (large folders on /mnt/* used to sit silent after Prompt timeout); batch CreateDate via exiftool; cache ffprobe durations; keep hybrid cache across part + size-split passes
 # 2026.10.22 - v. 0.15.93 - hybrid clip start for sort and chain: filename YYYYMMDD_HHMMSS by default; if media CreateDate (exiftool) disagrees by more than PGM_PART_CHAPTER_MEDIA_TIME_DISAGREE_SEC (default 120), use CreateDate; length stays ffprobe duration; results cached per file for the chapter plan
 # 2026.10.22 - v. 0.15.92 - within one day+camera key, order _part_XX by filename start time then part number (not part number alone). Two recordings the same day (morning part_01… and evening part_01…) were interleaved and became standalones; size-split session key also includes the day; groups that are all _part_XX are labeled as part chapters, not size-split
 # 2026.10.22 - v. 0.15.91 - every consecutive _part_XX link (including runs that start at part_01) must pass filename start + ffprobe duration (±180s), or timelapse / wall-clock gap; default max stop gap for that wall-clock fallback is 1 hour (PGM_PART_CHAPTER_TIME_MAX_GAP_SEC) so a long pause does not always split the day
@@ -1077,6 +1079,11 @@ SKIP_MERGED_PROMPTS=0
 declare -A PGM_HYBRID_START_EPOCH=()
 declare -A PGM_HYBRID_START_SRC=()
 PGM_HYBRID_START_MEDIA_N=0
+# CreateDate / ffprobe caches for the chapter-plan pass (path → value; empty = known miss).
+declare -A PGM_MEDIA_CREATEDATE_EPOCH=()
+declare -A PGM_FFPROBE_DUR_CACHE=()
+# 1 while a \r progress line is active on stdout (tty).
+PGM_PROGRESS_ACTIVE=0
 PGM_READ_TIMEOUT_CLI=0
 PGM_SCRIPT_START_NS=""
 PGM_PROCESSING_SEC=0
@@ -1090,7 +1097,56 @@ pgm_ts() {
 pgm_log_kv() {
   local label="$1"
   shift
+  pgm_progress_end
   printf '%s %-*s  %s\n' "$(pgm_ts)" 26 "${label}:" "$*"
+}
+
+# Finish a rewriting progress line (newline) if one is open.
+pgm_progress_end() {
+  if (( PGM_PROGRESS_ACTIVE )); then
+    PGM_PROGRESS_ACTIVE=0
+    printf '\n'
+  fi
+}
+
+# One-line progress that rewrites on a tty: "phase  i/n  basename".
+# Non-tty: a new line about every 8 steps (or on the last).
+pgm_progress_update() {
+  local phase="$1" i="$2" n="$3" name="${4:-}"
+  local width line msg room base
+  [[ "$i" =~ ^[0-9]+$ && "$n" =~ ^[0-9]+$ ]] || return 0
+  (( n > 0 )) || return 0
+  base="${name##*/}"
+  if [[ -t 1 ]]; then
+    width="$(pgm_effective_line_width)"
+    printf -v msg '%s %s  %s/%s' "$(pgm_ts)" "$phase" "$i" "$n"
+    if [[ -n "$base" ]]; then
+      room=$(( width - ${#msg} - 2 ))
+      if (( room < 12 )); then
+        room=12
+      fi
+      if (( ${#base} > room )); then
+        base="…${base: -$(( room - 1 ))}"
+      fi
+      msg+="  ${base}"
+    fi
+    if (( ${#msg} > width )); then
+      msg="${msg:0:width}"
+    fi
+    printf '\r%s\033[K' "$msg"
+    PGM_PROGRESS_ACTIVE=1
+    if (( i >= n )); then
+      pgm_progress_end
+    fi
+  else
+    if (( i == 1 || i == n || i % 8 == 0 )); then
+      if [[ -n "$base" ]]; then
+        printf '%s %s  %s/%s  %s\n' "$(pgm_ts)" "$phase" "$i" "$n" "$base"
+      else
+        printf '%s %s  %s/%s\n' "$(pgm_ts)" "$phase" "$i" "$n"
+      fi
+    fi
+  fi
 }
 
 # Fixed-width label + value for the run summary. No clock on these lines.
@@ -2637,12 +2693,31 @@ duration_in_gopro7_chapter_range() {
 }
 
 ffprobe_duration_seconds() {
-  local f="$1" d
+  local f="$1" key d
   command -v ffprobe >/dev/null 2>&1 || return 1
+  [[ -n "$f" && -f "$f" ]] || return 1
+  key="$(readlink -f -- "$f" 2>/dev/null || printf '%s' "$f")"
+  if [[ -n "${PGM_FFPROBE_DUR_CACHE[$key]+x}" ]]; then
+    d="${PGM_FFPROBE_DUR_CACHE[$key]}"
+    [[ -n "$d" ]] || return 1
+    printf '%s\n' "$d"
+    return 0
+  fi
   d=$(ffprobe -v error -show_entries format=duration \
-    -of default=noprint_wrappers=1:nokey=1 -- "$f" 2>/dev/null) || return 1
-  [[ -n "$d" ]] || return 1
-  awk -v d="$d" 'BEGIN { if (d+0 >= 0) printf "%.3f\n", d+0; else exit 1 }'
+    -of default=noprint_wrappers=1:nokey=1 -- "$f" 2>/dev/null) || {
+    PGM_FFPROBE_DUR_CACHE[$key]=""
+    return 1
+  }
+  [[ -n "$d" ]] || {
+    PGM_FFPROBE_DUR_CACHE[$key]=""
+    return 1
+  }
+  d=$(awk -v d="$d" 'BEGIN { if (d+0 >= 0) printf "%.3f\n", d+0; else exit 1 }') || {
+    PGM_FFPROBE_DUR_CACHE[$key]=""
+    return 1
+  }
+  PGM_FFPROBE_DUR_CACHE[$key]="$d"
+  printf '%s\n' "$d"
 }
 
 # Compact track fingerprint for mp4_merge compatibility (video|audio CSV fields).
@@ -3252,13 +3327,14 @@ pgm_fs_mtime_epoch() {
   printf '%s\n' "$e"
 }
 
-pgm_media_createdate_epoch() {
-  local f="$1" exif raw iso e
-  exif="$(resolve_pgm_exiftool 2>/dev/null)" || return 1
-  # Hyphens: GNU date rejects exiftool's default YYYY:MM:DD form.
-  raw="$("$exif" -api largefilesupport=1 -api QuickTimeUTC=1 -s3 -CreateDate \
-    -d '%Y-%m-%d %H:%M:%S' -- "$f" 2>/dev/null | head -n1 | tr -d '\r')"
-  [[ -n "$raw" && "$raw" != "0000:00:00 00:00:00" && "$raw" != "0000-00-00 00:00:00" ]] || return 1
+# Parse an exiftool CreateDate string into a usable Unix epoch (stdout), or fail.
+pgm_createdate_raw_to_epoch() {
+  local raw="$1" iso e
+  raw="${raw//$'\r'/}"
+  raw="${raw#"${raw%%[![:space:]]*}"}"
+  raw="${raw%"${raw##*[![:space:]]}"}"
+  [[ -n "$raw" && "$raw" != "-" && "$raw" != "0000:00:00 00:00:00" \
+    && "$raw" != "0000-00-00 00:00:00" ]] || return 1
   iso="$raw"
   if [[ "$iso" =~ ^([0-9]{4}):([0-9]{2}):([0-9]{2})(.*)$ ]]; then
     iso="${BASH_REMATCH[1]}-${BASH_REMATCH[2]}-${BASH_REMATCH[3]}${BASH_REMATCH[4]}"
@@ -3268,10 +3344,107 @@ pgm_media_createdate_epoch() {
   printf '%s\n' "$e"
 }
 
+pgm_media_createdate_epoch() {
+  local f="$1" key exif raw e
+  [[ -n "$f" && -f "$f" ]] || return 1
+  key="$(readlink -f -- "$f" 2>/dev/null || printf '%s' "$f")"
+  if [[ -n "${PGM_MEDIA_CREATEDATE_EPOCH[$key]+x}" ]]; then
+    e="${PGM_MEDIA_CREATEDATE_EPOCH[$key]}"
+    [[ -n "$e" ]] || return 1
+    printf '%s\n' "$e"
+    return 0
+  fi
+  exif="$(resolve_pgm_exiftool 2>/dev/null)" || return 1
+  # Hyphens: GNU date rejects exiftool's default YYYY:MM:DD form.
+  raw="$("$exif" -api largefilesupport=1 -api QuickTimeUTC=1 -s3 -CreateDate \
+    -d '%Y-%m-%d %H:%M:%S' -- "$f" 2>/dev/null | head -n1 | tr -d '\r')"
+  if e="$(pgm_createdate_raw_to_epoch "$raw" 2>/dev/null)"; then
+    PGM_MEDIA_CREATEDATE_EPOCH[$key]="$e"
+    printf '%s\n' "$e"
+    return 0
+  fi
+  PGM_MEDIA_CREATEDATE_EPOCH[$key]=""
+  return 1
+}
+
+# Batch-fill PGM_MEDIA_CREATEDATE_EPOCH for many files (chunked exiftool + progress).
+pgm_media_createdate_batch_fill() {
+  local -a files=("$@")
+  local exif n i chunk_end f key path raw e line
+  local chunk_size=12
+  local -a chunk=()
+  n=${#files[@]}
+  (( n > 0 )) || return 0
+  exif="$(resolve_pgm_exiftool 2>/dev/null)" || return 1
+  i=0
+  while (( i < n )); do
+    chunk=()
+    chunk_end=$(( i + chunk_size ))
+    (( chunk_end > n )) && chunk_end=$n
+    while (( i < chunk_end )); do
+      f="${files[i]}"
+      (( i++ )) || true
+      [[ -f "$f" ]] || continue
+      key="$(readlink -f -- "$f" 2>/dev/null || printf '%s' "$f")"
+      if [[ -n "${PGM_MEDIA_CREATEDATE_EPOCH[$key]+x}" ]]; then
+        continue
+      fi
+      chunk+=( "$f" )
+    done
+    (( ${#chunk[@]} )) || {
+      pgm_progress_update "CreateDate" "$chunk_end" "$n" ""
+      continue
+    }
+    pgm_progress_update "CreateDate" "$chunk_end" "$n" "${chunk[-1]}"
+    while IFS= read -r line; do
+      line="${line//$'\r'/}"
+      [[ "$line" == *$'\t'* ]] || continue
+      path="${line%%$'\t'*}"
+      raw="${line#*$'\t'}"
+      [[ -n "$path" ]] || continue
+      key="$(readlink -f -- "$path" 2>/dev/null || printf '%s' "$path")"
+      if e="$(pgm_createdate_raw_to_epoch "$raw" 2>/dev/null)"; then
+        PGM_MEDIA_CREATEDATE_EPOCH[$key]="$e"
+      else
+        PGM_MEDIA_CREATEDATE_EPOCH[$key]=""
+      fi
+    done < <(
+      "$exif" -api largefilesupport=1 -api QuickTimeUTC=1 -q -q -f \
+        -d '%Y-%m-%d %H:%M:%S' -p '$FilePath${tab}$CreateDate' -- "${chunk[@]}" 2>/dev/null
+    )
+    # Mark any chunk files exiftool omitted as known misses.
+    for f in "${chunk[@]}"; do
+      key="$(readlink -f -- "$f" 2>/dev/null || printf '%s' "$f")"
+      if [[ -z "${PGM_MEDIA_CREATEDATE_EPOCH[$key]+x}" ]]; then
+        PGM_MEDIA_CREATEDATE_EPOCH[$key]=""
+      fi
+    done
+  done
+  pgm_progress_end
+}
+
 pgm_hybrid_start_cache_clear() {
   PGM_HYBRID_START_EPOCH=()
   PGM_HYBRID_START_SRC=()
   PGM_HYBRID_START_MEDIA_N=0
+  PGM_MEDIA_CREATEDATE_EPOCH=()
+}
+
+# Warm hybrid starts for chapter planning (batch CreateDate, then per-file resolve).
+pgm_hybrid_preload_files() {
+  local -a files=("$@")
+  local n i f
+  n=${#files[@]}
+  (( n > 0 )) || return 0
+  echo "$(pgm_ts) Reading clip start times (${n} file(s); filename + CreateDate when needed)…"
+  pgm_media_createdate_batch_fill "${files[@]}" || true
+  i=0
+  for f in "${files[@]}"; do
+    (( i++ )) || true
+    pgm_progress_update "Hybrid start" "$i" "$n" "$f"
+    pgm_hybrid_start_epoch "$f" >/dev/null 2>&1 || true
+  done
+  pgm_progress_end
 }
 
 # Clip start for chapter sort/chain: filename time by default; media CreateDate when
@@ -3653,8 +3826,6 @@ build_size_split_groups() {
   local warned_ffprobe=0
   local run_tier="" next_tier=""
 
-  pgm_hybrid_start_cache_clear
-
   for blob in "${GROUP_BLOBS[@]}"; do
     group_files_to_array "$blob" files
     if (( ${#files[@]} >= 2 )); then
@@ -3690,6 +3861,7 @@ build_size_split_groups() {
   n=${#singles[@]}
   i=0
   while (( i < n )); do
+    pgm_progress_update "Size-split links" "$((i + 1))" "$n" "${singles[i]}"
     if is_full_size_split_segment "${singles[i]}"; then
       run=("${singles[i]}")
       run_tier=$(size_split_tier_for_file "${singles[i]}")
@@ -3705,6 +3877,7 @@ build_size_split_groups() {
     while (( i < n )); do
       f="${singles[i]}"
       base="${f##*/}"
+      pgm_progress_update "Size-split links" "$((i + 1))" "$n" "$f"
       if [[ "$(gopro_camera_from_basename "$base")" != "$run_cam" ]]; then
         break
       fi
@@ -3736,11 +3909,11 @@ build_size_split_groups() {
       done
     fi
   done
+  pgm_progress_end
 
   GROUP_BLOBS=( "${kept[@]}" "${new_groups[@]}" )
   (( warned_ffprobe )) || true
   print_size_split_near_miss_hint
-  pgm_hybrid_start_media_note
 }
 
 # Explain when same-camera ~4GB/~12GB singles were not grouped (after a failed strict check).
@@ -4025,6 +4198,7 @@ part_chapter_append_run_to_groups_or_rest() {
   else
     skip_reason="not full ~4 GB / ~12 GB chapters"
   fi
+  pgm_progress_end
   echo "$(pgm_ts) Skipping _part_XX merge (${#run[@]} consecutive parts):"
   echo "$(pgm_ts)   Reason: ${skip_reason}"
   for f in "${run[@]}"; do
@@ -4033,20 +4207,27 @@ part_chapter_append_run_to_groups_or_rest() {
   rest_arr+=( "${run[@]}" )
 }
 
+# Optional globals for cross-key progress: PGM_PART_LINK_PROG_I / PGM_PART_LINK_PROG_N
 part_chapter_split_key_into_runs() {
   local _rest_name=$1
   shift
   local -a key_files=("$@")
   local -a sorted=() run=()
   local f cur_part prev_part run_first_part
+  local prog_n="${PGM_PART_LINK_PROG_N:-0}"
 
   part_chapter_sorted_files sorted "${key_files[@]}"
   (( ${#sorted[@]} > 0 )) || return 0
+  if (( prog_n < 1 )); then
+    prog_n=${#sorted[@]}
+  fi
 
   run=()
   prev_part=""
   run_first_part=""
   for f in "${sorted[@]}"; do
+    PGM_PART_LINK_PROG_I=$(( ${PGM_PART_LINK_PROG_I:-0} + 1 ))
+    pgm_progress_update "Part links" "$PGM_PART_LINK_PROG_I" "$prog_n" "$f"
     cur_part=$(chapter_part_from_basename "${f##*/}") || continue
     if (( ${#run[@]} == 0 )); then
       run=( "$f" )
@@ -4084,8 +4265,8 @@ build_part_chapter_groups() {
   local f base key
   local -a keys_seen=() key_files=()
   local -A group_map=()
+  local k part_total=0
   rest_arr=()
-  pgm_hybrid_start_cache_clear
   for f in "${sorted[@]}"; do
     base="${f##*/}"
     if is_concat_output_basename "$base"; then
@@ -4107,7 +4288,16 @@ build_part_chapter_groups() {
       rest_arr+=( "$f" )
     fi
   done
-  local k
+  for k in "${keys_seen[@]}"; do
+    key_files=()
+    mapfile -t key_files <<< "${group_map[$k]}"
+    if ((${#key_files[@]})) && [[ -z "${key_files[-1]}" ]]; then
+      unset 'key_files[-1]'
+    fi
+    part_total=$(( part_total + ${#key_files[@]} ))
+  done
+  PGM_PART_LINK_PROG_I=0
+  PGM_PART_LINK_PROG_N=$part_total
   for k in "${keys_seen[@]}"; do
     key_files=()
     mapfile -t key_files <<< "${group_map[$k]}"
@@ -4116,7 +4306,8 @@ build_part_chapter_groups() {
     fi
     part_chapter_split_key_into_runs "$_rest_name" "${key_files[@]}"
   done
-  pgm_hybrid_start_media_note
+  pgm_progress_end
+  unset PGM_PART_LINK_PROG_I PGM_PART_LINK_PROG_N
 }
 
 # 70mai dashcam: NO20260926-110627-000678F.MP4 or EV20260814-190447-006784B.MP4
@@ -5138,7 +5329,19 @@ build_chapter_groups() {
   local -a sorted=("$@")
   GROUP_BLOBS=()
   local f base
-  local -a rest1=() rest2=()
+  local -a rest1=() rest2=() preload=()
+  local n=${#sorted[@]}
+
+  echo "$(pgm_ts) Building chapter plan (${n} file(s))…"
+  pgm_hybrid_start_cache_clear
+  PGM_FFPROBE_DUR_CACHE=()
+  for f in "${sorted[@]}"; do
+    base="${f##*/}"
+    is_concat_output_basename "$base" && continue
+    preload+=( "$f" )
+  done
+  pgm_hybrid_preload_files "${preload[@]}"
+
   # 1) raw GoPro chapter files (GXccnnnn[_Proxy].MP4) -> key-based groups
   build_raw_gopro_groups rest1 "${sorted[@]}"
   # 2) already-renamed _part_NN chapters -> key-based groups (originals vs proxies kept apart)
@@ -5157,6 +5360,9 @@ build_chapter_groups() {
   build_size_split_groups
   # 6) 70mai NO* and EV* continuous journeys (sequence +1; EV may start sooner than a minute)
   build_dashcam_journey_groups
+  pgm_progress_end
+  pgm_hybrid_start_media_note
+  echo "$(pgm_ts) Chapter plan ready."
 }
 
 group_files_to_array() {
