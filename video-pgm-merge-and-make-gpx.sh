@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261022.210520 - every _part_XX link (also from part_01) must chain by filename time + ffprobe duration; wider stop gap
 # v. 20261022.205958 - _part_XX groups include the calendar day so multi-day folders do not interleave part numbers
 # v. 20261022.205426 - Ctrl-C during post-merge metadata/GPX still removes the incomplete merge output
 # v. 20261021.085230 - after mp4_merge, say metadata/GPX/dates are still running; "Group finished" only at the end
@@ -74,6 +75,7 @@
 # v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
 # v. 20260805.154826 - after merge: copy GPS/dates from first chapter; FS times via touch -r
 
+# 2026.10.22 - v. 0.15.91 - every consecutive _part_XX link (including runs that start at part_01) must pass filename start + ffprobe duration (±180s), or timelapse / wall-clock gap; default max stop gap for that wall-clock fallback is 1 hour (PGM_PART_CHAPTER_TIME_MAX_GAP_SEC) so a long pause does not always split the day
 # 2026.10.22 - v. 0.15.90 - _part_XX group key includes YYYYMMDD: a folder with 20210226 and 20210228 clips used to share one camera bucket, sort by part number only, and pair day-B part_01 with day-A part_02 (so a same-day part_01…24 run looked like “only 2 chapters”)
 # 2026.10.22 - v. 0.15.89 - Ctrl-C during post-merge (exiftool metadata, GPX, GPS embed) still deletes the merge output and any *_exiftool_tmp / .meta.tmp beside it; the incomplete-output trap stays until those steps finish, then clears before the interactive date/seam/delete prompts; run-summary bookkeeping runs only when the group finishes
 # 2026.10.21 - v. 0.15.88 - after mp4_merge, log that post-merge work is still running (exiftool metadata, GPX, GPS embed, dates); say "Group finished" only when the group is fully done — not while *_exiftool_tmp is growing
@@ -279,11 +281,12 @@ Merge behaviour:
   - With no FILE arguments: collects *.mp4 in the current working directory
     (case-insensitive), except existing *_concat.mp4 outputs.
   - Detects GoPro-style chapter sequences (_part_01, _part_02, …). Consecutive part
-    numbers only. Same calendar day + camera + session label groups together; runs
-    starting at part_01 merge as-is (each part may have its own leading HHMMSS). Orphan
-    tails (part_02+ without part_01 in the folder) need filename times to chain, or timelapse detection
-    (exiftool Rate like 1_5SEC / _Timelapse_ in the name) with wall-clock gap several
-    times playback length. Orphan tails also need full ~4 GB / ~12 GB chapters.
+    numbers only. Same calendar day + camera + session label groups together. Each
+    link (also from part_01) needs filename times to chain: next start ≈ previous
+    start + ffprobe duration (±180s), or timelapse detection (exiftool Rate like
+    1_5SEC / _Timelapse_ in the name) with wall-clock gap several times playback
+    length, or a plain wall-clock gap (default 5 min–1 h; PGM_PART_CHAPTER_TIME_*).
+    Orphan tails (first part > 01) also need full ~4 GB / ~12 GB chapters.
   - Also groups clips without _part_XX names when they look like fixed-size splits:
     same session label, ~4 GB or ~12 GB chapters (~6:49 or longer per chapter); filename times
     that chain, or the same YYYYMMDD_HHMMSS with GX chapter suffixes
@@ -387,6 +390,14 @@ Environment:
   PGM_GOPRO_TIMELAPSE_FPS   Assumed output fps for Rate-interval ratio (default: 30).
   PGM_PART_TIMELAPSE_GAP_RATIO_TOLERANCE
                           Slack around interval×fps expected ratio (default: 0.35).
+  PGM_PART_CHAPTER_TIME_MIN_GAP_SEC / PGM_PART_CHAPTER_TIME_MAX_GAP_SEC
+                          When prev start + duration does not match next start, allow
+                          a plain wall-clock gap between _part_XX filename times
+                          (default 300–3600s). PGM_PART_CHAPTER_12G_TIME_MAX_GAP_SEC
+                          for ~12 GB chapters (default: same 3600, or size-split 12G max).
+  PGM_SIZE_SPLIT_TIME_TOLERANCE_SEC
+                          For _part_XX chains: slack when matching next start to
+                          prev start + ffprobe duration (default: 180).
   PGM_DASHCAM_MAX_GAP_SEC Max seconds between 70mai clip start times to stay in one
                           journey (default: 90). Gaps above this start a new group.
   PGM_DASHCAM_SHORT_HOLE_SEC
@@ -2856,13 +2867,16 @@ part_chapter_timelapse_wall_clock_ok() {
     }'
 }
 
+# Wall-clock fallback when prev start + duration does not match next start
+# (pause / stop between chapters). Wider than size-split defaults so a lunch
+# stop does not always break a part_01…NN day.
 part_chapter_realtime_wall_clock_gap_ok() {
   local prev_f="$1" gap="$2"
   local min_gap max_gap
-  min_gap="${PGM_SIZE_SPLIT_TIME_MIN_GAP_SEC:-300}"
-  max_gap="${PGM_SIZE_SPLIT_TIME_MAX_GAP_SEC:-720}"
+  min_gap="${PGM_PART_CHAPTER_TIME_MIN_GAP_SEC:-${PGM_SIZE_SPLIT_TIME_MIN_GAP_SEC:-300}}"
+  max_gap="${PGM_PART_CHAPTER_TIME_MAX_GAP_SEC:-3600}"
   if size_split_tier_for_file "$prev_f" | grep -qx 12; then
-    max_gap="${PGM_SIZE_SPLIT_12G_TIME_MAX_GAP_SEC:-2400}"
+    max_gap="${PGM_PART_CHAPTER_12G_TIME_MAX_GAP_SEC:-${PGM_SIZE_SPLIT_12G_TIME_MAX_GAP_SEC:-3600}}"
   fi
   (( gap >= min_gap && gap <= max_gap ))
 }
@@ -3912,10 +3926,11 @@ part_chapter_timestamps_follow() {
   part_chapter_realtime_wall_clock_gap_ok "$prev_f" "$gap"
 }
 
-# True when cur_part follows prev_part in a run. Runs from part_01 skip timestamp checks.
+# True when cur_part follows prev_part in a run. Always checks filename start times
+# plus ffprobe duration (or timelapse / wall-clock gap) — including runs from part_01.
 part_chapter_consecutive_link_ok() {
-  local prev_f="$1" next_f="$2" run_first_part="$3"
-  (( run_first_part == 1 )) && return 0
+  local prev_f="$1" next_f="$2"
+  # $3 was run_first_part (unused; kept so callers can still pass it).
   part_chapter_timestamps_follow "$prev_f" "$next_f"
 }
 
@@ -4025,9 +4040,9 @@ part_chapter_split_key_into_runs() {
 # calendar day + camera + middle label + proxy variant (or full stem when not
 # GoPro-shaped), so originals (_part_NN) and proxies (_part_NN_Proxy) go into
 # separate groups and are NEVER mixed, and two days in one folder do not share a
-# part-number sequence. Within each key, consecutive part numbers are kept together;
-# runs from part_01 merge without a timestamp check (rename.sh chapter split). Orphan
-# tails (first part > 01) need filename times to chain and ~4 GB / ~12 GB full segments.
+# part-number sequence. Within each key, consecutive part numbers are kept together
+# only when filename times chain (start + duration, or wall-clock / timelapse gap).
+# Orphan tails (first part > 01) also need ~4 GB / ~12 GB full segments.
 # return via the array named in $1 (e.g. rest2 from build_chapter_groups).
 build_part_chapter_groups() {
   local _rest_name=$1
