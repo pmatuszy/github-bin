@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261023.121500 - [m] merge-all: ask output date/time for every remaining group before the first merge starts
 # v. 20261023.100500 - invalid prompt keys (e.g. #) are rejected; ask again on seam/delete/media prompts
 # v. 20261023.093500 - size-split session key ignores middle-label word order (S29_Migros vs Migros_S29)
 # v. 20261023.073200 - missing GoPro GPX helper / python3: boxed warning and wait for Enter
@@ -84,6 +85,7 @@
 # v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
 # v. 20260805.154826 - after merge: copy GPS/dates from first chapter; FS times via touch -r
 
+# 2026.10.23 - v. 0.15.101 - [m] Merge all remaining: ask output date/time for each remaining group up front (before any mp4_merge), then reuse those answers when each group runs — was only asking for the first group before the long merge
 # 2026.10.23 - v. 0.15.100 - seam preview / delete-inputs / temp-dir and other single-key media prompts reject keys outside the listed options (e.g. #) and ask again instead of treating them as the default
 # 2026.10.23 - v. 0.15.99 - size-split grouping uses order-independent session tokens (migros-odbior-paczki), not the raw middle string, so S29_-_Migros_… and Migros_-_S29_… chapters that chain by start+duration are merged
 # 2026.10.23 - v. 0.15.98 - if video-pgm-gopro-to-gpx.py or python3 is missing after a GoPro merge, show a boxed warning and wait for Enter (skipped with -y / non-interactive); merge continues without a .gpx
@@ -358,7 +360,8 @@ Merge behaviour:
   - Before each merge: if the planned output name, first-chapter filesystem time, and
     first-chapter media CreateDate disagree by more than two minutes, ask which date to
     use after the merge (1/2/3…); default is the oldest usable stamp (before 1990 ignored).
-    -y picks the oldest without asking. After a successful merge: copy GPS / dates /
+    [m] Merge all remaining asks that question for every remaining group first, then starts
+    merging. -y picks the oldest without asking. After a successful merge: copy GPS / dates /
     Make/Model and title from the first chapter in one exiftool rewrite (progress from
     *_exiftool_tmp on large files), applying the date chosen earlier in that same rewrite
     when needed. For GoPro-style groups (not 70mai), also write a .gpx beside the merge
@@ -3885,12 +3888,73 @@ PGM_PENDING_OUTPUT_TIMES_LABEL=""
 PGM_PENDING_OUTPUT_TIMES_MEDIA_DONE=0
 PGM_PENDING_OUTPUT_TIMES_FS_DONE=0
 
+# Pre-asked choices for [m] merge-all (keyed by planned output path).
+declare -A PGM_PREASK_OUTPUT_TIMES_MODE=()
+declare -A PGM_PREASK_OUTPUT_TIMES_EPOCH=()
+declare -A PGM_PREASK_OUTPUT_TIMES_LABEL=()
+
 pgm_clear_pending_output_times() {
   PGM_PENDING_OUTPUT_TIMES_MODE=""
   PGM_PENDING_OUTPUT_TIMES_EPOCH=""
   PGM_PENDING_OUTPUT_TIMES_LABEL=""
   PGM_PENDING_OUTPUT_TIMES_MEDIA_DONE=0
   PGM_PENDING_OUTPUT_TIMES_FS_DONE=0
+}
+
+pgm_preask_output_times_save() {
+  local key="$1"
+  PGM_PREASK_OUTPUT_TIMES_MODE["$key"]="${PGM_PENDING_OUTPUT_TIMES_MODE}"
+  PGM_PREASK_OUTPUT_TIMES_EPOCH["$key"]="${PGM_PENDING_OUTPUT_TIMES_EPOCH}"
+  PGM_PREASK_OUTPUT_TIMES_LABEL["$key"]="${PGM_PENDING_OUTPUT_TIMES_LABEL}"
+}
+
+# Load a pre-asked choice into the pending slots (consumed once). Return 0 if loaded.
+pgm_preask_output_times_load() {
+  local key="$1"
+  [[ -n "${PGM_PREASK_OUTPUT_TIMES_MODE[$key]+x}" ]] || return 1
+  PGM_PENDING_OUTPUT_TIMES_MODE="${PGM_PREASK_OUTPUT_TIMES_MODE[$key]}"
+  PGM_PENDING_OUTPUT_TIMES_EPOCH="${PGM_PREASK_OUTPUT_TIMES_EPOCH[$key]}"
+  PGM_PENDING_OUTPUT_TIMES_LABEL="${PGM_PREASK_OUTPUT_TIMES_LABEL[$key]}"
+  PGM_PENDING_OUTPUT_TIMES_MEDIA_DONE=0
+  PGM_PENDING_OUTPUT_TIMES_FS_DONE=0
+  unset "PGM_PREASK_OUTPUT_TIMES_MODE[$key]"
+  unset "PGM_PREASK_OUTPUT_TIMES_EPOCH[$key]"
+  unset "PGM_PREASK_OUTPUT_TIMES_LABEL[$key]"
+  return 0
+}
+
+# Ask output date/time for each group that [m] will merge, before any mp4_merge.
+# Args: chapter-group blobs (current group first, then the rest that still need a merge).
+# Return 2 on quit.
+pgm_preask_output_times_for_groups() {
+  local -a blobs=("$@")
+  local -a files=()
+  local blob output_file i total
+
+  total=${#blobs[@]}
+  # One group: run_merge_group asks as usual. Several: ask all now, before any merge.
+  (( total > 1 )) || return 0
+  if (( DO_YES )) || (( ! script_is_run_interactively )); then
+    return 0
+  fi
+
+  echo
+  echo "$(pgm_ts) Output times for ${total} remaining merges — choose each now, before any merge starts."
+
+  for (( i = 0; i < total; i++ )); do
+    blob="${blobs[i]}"
+    group_files_to_array "$blob" files
+    output_file=$(group_output_file "${files[@]}")
+    echo
+    echo "=== Output times — merge $((i + 1)) of ${total} ==="
+    pgm_decide_output_times "$output_file" "${files[0]}" || return $?
+    pgm_preask_output_times_save "$output_file"
+    pgm_clear_pending_output_times
+  done
+
+  echo
+  echo "$(pgm_ts) Output times noted for ${total} merges. Starting merges…"
+  return 0
 }
 
 # Before merge: if planned name / first-chapter FS / first-chapter media disagree,
@@ -3903,6 +3967,19 @@ pgm_decide_output_times() {
   local abs_diff need_ask=0
 
   pgm_clear_pending_output_times
+
+  # Reuse a choice collected up front for [m] merge-all.
+  if pgm_preask_output_times_load "$planned_output"; then
+    case "${PGM_PENDING_OUTPUT_TIMES_MODE}" in
+      epoch)
+        echo "$(pgm_ts) Will set output times from ${PGM_PENDING_OUTPUT_TIMES_LABEL} after merge: $(pgm_format_epoch_display "${PGM_PENDING_OUTPUT_TIMES_EPOCH}") (chosen earlier)"
+        ;;
+      keep)
+        echo "$(pgm_ts) Will leave output times as written after merge (chosen earlier)."
+        ;;
+    esac
+    return 0
+  fi
 
   name_e="$(pgm_filename_epoch_from_basename "${planned_output##*/}" 2>/dev/null || true)"
   if [[ -z "$name_e" && -n "$source_file" ]]; then
@@ -7055,7 +7132,7 @@ prompt_merge_group_action() {
     echo "  [Y] Merge this group (default)"
     echo "  [n] Skip this group"
     echo "  [a] Skip all remaining groups"
-    echo "  [m] Merge all remaining groups"
+    echo "  [m] Merge all remaining groups (asks output date/time for each first)"
     echo "  [q] Quit"
     if (( short_n )); then
       pgm_read_key_choice "Short clip in this group. Merge anyway? [Y/n/a/m/q]: " y "ynamq"
@@ -7570,6 +7647,34 @@ do_merge() {
         ;;
       merge_all)
         MERGE_ALL_REMAINING=1
+        # Ask date/time for every remaining merge before the first long mp4_merge.
+        local -a preask_blobs=()
+        local seen_preask=0 b_pre out_pre
+        local -a f_pre=()
+        for b_pre in "${mergeable_blobs[@]}"; do
+          if (( ! seen_preask )); then
+            [[ "$b_pre" == "$blob" ]] || continue
+            seen_preask=1
+          fi
+          group_files_to_array "$b_pre" f_pre
+          out_pre=$(group_output_file "${f_pre[@]}")
+          [[ -n "${GPX_BATCH_SKIP[$out_pre]:-}" ]] && continue
+          if group_output_is_complete "$out_pre" "${f_pre[@]}"; then
+            continue
+          fi
+          # Existing output → write_gpx or skip under merge-all; not a new merge.
+          [[ -e "$out_pre" ]] && continue
+          preask_blobs+=("$b_pre")
+        done
+        rc=0
+        pgm_preask_output_times_for_groups "${preask_blobs[@]}" || rc=$?
+        if (( rc == 2 )); then
+          echo "$(pgm_ts) Quit at group ${group_num}."
+          return "${rc}"
+        fi
+        if (( rc != 0 )); then
+          return "${rc}"
+        fi
         if [[ -e "$output_file" ]]; then
           dashcam_write_gpx_if_merged "$output_file" "${files[@]}"
           echo "$(pgm_ts) Keeping existing output for group ${group_num}."
