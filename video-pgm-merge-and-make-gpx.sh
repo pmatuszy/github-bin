@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261023.070920 - post-merge exiftool: one rewrite for tags+title; progress from *_exiftool_tmp size
 # v. 20261022.212800 - chapter plan shows progress (CreateDate / link checks) so a large folder does not look hung
 # v. 20261022.212200 - chapter start time: filename by default; media CreateDate when it disagrees by >2 min (hybrid; size-split too)
 # v. 20261022.211235 - within a day, sort _part_XX by start time (not only part number) so two sessions do not interleave
@@ -78,6 +79,7 @@
 # v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
 # v. 20260805.154826 - after merge: copy GPS/dates from first chapter; FS times via touch -r
 
+# 2026.10.23 - v. 0.15.95 - post-merge: copy GPS/dates/camera and title in one exiftool rewrite (was two full rewrites of the concat); show a % bar from the growing *_exiftool_tmp vs output size; same progress wrapper for GPS embed and CreateDate writes on large outputs
 # 2026.10.22 - v. 0.15.94 - chapter plan progress on one rewriting status line while reading CreateDate and checking chapter links (large folders on /mnt/* used to sit silent after Prompt timeout); batch CreateDate via exiftool; cache ffprobe durations; keep hybrid cache across part + size-split passes
 # 2026.10.22 - v. 0.15.93 - hybrid clip start for sort and chain: filename YYYYMMDD_HHMMSS by default; if media CreateDate (exiftool) disagrees by more than PGM_PART_CHAPTER_MEDIA_TIME_DISAGREE_SEC (default 120), use CreateDate; length stays ffprobe duration; results cached per file for the chapter plan
 # 2026.10.22 - v. 0.15.92 - within one day+camera key, order _part_XX by filename start time then part number (not part number alone). Two recordings the same day (morning part_01… and evening part_01…) were interleaved and became standalones; size-split session key also includes the day; groups that are all _part_XX are labeled as part chapters, not size-split
@@ -343,9 +345,10 @@ Merge behaviour:
     each finished file back; no writes those outputs in this directory. -y and
     non-interactive runs write in this directory. Status lines start with the
     clock in brackets, [ YYYY.MM.DD HH:MM:SS ].
-  - After a successful merge: copy GPS / create&modify dates / Make/Model from the first
-    chapter (exiftool; filesystem mtime via touch -r; Windows creation time from that
-    chapter), set title from the session label. If the file name, filesystem time, and
+  - After a successful merge: copy GPS / create&modify dates / Make/Model and title from
+    the first chapter in one exiftool rewrite (progress bar from *_exiftool_tmp on large
+    files; filesystem mtime via touch -r; Windows creation time from that chapter).
+    If the file name, filesystem time, and
     media CreateDate disagree by more than two minutes, ask which date to use (1/2/3…);
     the default is the oldest usable stamp (before 1990 ignored). -y applies the oldest
     without asking. Then merge-boundary times, size summary, optional per-seam terminal
@@ -427,6 +430,9 @@ Environment:
                           are unset.
   MAX_LINE_LENGTH         Longest status line kept on one row (default: 200). The
                           real limit is the smaller of this and the terminal width.
+  PGM_EXIFTOOL_PROGRESS_MIN_BYTES
+                          Minimum output size before post-merge exiftool shows a
+                          *_exiftool_tmp progress bar (default: 52428800 = 50 MiB).
 
 Examples:
   $(script_live_basename) -u
@@ -2017,8 +2023,139 @@ format_size_comparison_line() {
   fi
 }
 
+# Background exiftool PID while rewriting a merge output (for Ctrl-C / progress).
+PGM_EXIFTOOL_REWRITE_PID=""
+# Show *_exiftool_tmp progress when the target is at least this large (default 50 MiB).
+PGM_EXIFTOOL_PROGRESS_MIN_BYTES="${PGM_EXIFTOOL_PROGRESS_MIN_BYTES:-52428800}"
+
+pgm_exiftool_rewrite_kill_child() {
+  local pid="${PGM_EXIFTOOL_REWRITE_PID:-}"
+  [[ -n "$pid" ]] || return 0
+  kill "$pid" 2>/dev/null || true
+  wait "$pid" 2>/dev/null || true
+  PGM_EXIFTOOL_REWRITE_PID=""
+}
+
+# INT while an exiftool rewrite is running: stop the child, then the usual cleanup.
+_pgm_exiftool_rewrite_on_int() {
+  pgm_exiftool_rewrite_kill_child
+  if [[ -n "${VIDEO_MERGE_OUT_FILE:-}" ]]; then
+    video_merge_ctrl_c
+  else
+    ctrl_c
+  fi
+}
+
+pgm_exiftool_rewrite_restore_int_trap() {
+  if [[ -n "${VIDEO_MERGE_OUT_FILE:-}" ]]; then
+    trap video_merge_ctrl_c INT
+  else
+    trap ctrl_c INT
+  fi
+}
+
+format_bytes_short() {
+  local bytes="${1:-0}"
+  [[ "$bytes" =~ ^[0-9]+$ ]] || bytes=0
+  awk -v b="$bytes" 'BEGIN {
+    if (b >= 1073741824) printf "%.2f GiB", b / 1073741824.0
+    else if (b >= 1048576) printf "%.1f MiB", b / 1048576.0
+    else if (b >= 1024) printf "%.1f KiB", b / 1024.0
+    else printf "%d B", b
+  }'
+}
+
+# Rewrite one file with exiftool; for large targets, show % from growing *_exiftool_tmp.
+# Usage: pgm_run_exiftool_rewrite_with_progress DEST PHASE exiftool [args…]
+pgm_run_exiftool_rewrite_with_progress() {
+  local dest="$1" phase="$2"
+  shift 2
+  local expected=0 cur=0 pct=0 pid rc=0 tmp min_b
+  local width bar_w=20 filled empty msg room base
+  local bar="" i
+
+  [[ -f "$dest" ]] || return 1
+  (( $# >= 1 )) || return 1
+  expected="$(file_size_bytes "$dest")"
+  [[ "$expected" =~ ^[0-9]+$ ]] || expected=0
+  tmp="${dest}_exiftool_tmp"
+  min_b="${PGM_EXIFTOOL_PROGRESS_MIN_BYTES:-52428800}"
+  [[ "$min_b" =~ ^[0-9]+$ ]] || min_b=52428800
+
+  trap _pgm_exiftool_rewrite_on_int INT
+  "$@" >/dev/null 2>&1 &
+  pid=$!
+  PGM_EXIFTOOL_REWRITE_PID=$pid
+
+  if (( expected < min_b )) || [[ ! -t 1 ]]; then
+    wait "$pid"
+    rc=$?
+    PGM_EXIFTOOL_REWRITE_PID=""
+    pgm_exiftool_rewrite_restore_int_trap
+    return "$rc"
+  fi
+
+  while kill -0 "$pid" 2>/dev/null; do
+    cur=0
+    if [[ -f "$tmp" ]]; then
+      cur="$(file_size_bytes "$tmp")"
+      [[ "$cur" =~ ^[0-9]+$ ]] || cur=0
+    fi
+    if (( expected > 0 )); then
+      pct=$(( cur * 100 / expected ))
+      (( pct > 99 )) && pct=99
+    else
+      pct=0
+    fi
+    filled=$(( pct * bar_w / 100 ))
+    empty=$(( bar_w - filled ))
+    bar=""
+    for (( i = 0; i < filled; i++ )); do bar+="#"; done
+    for (( i = 0; i < empty; i++ )); do bar+="-"; done
+    base="${dest##*/}"
+    printf -v msg '%s %s  %3d%% [%s]  %s / %s' \
+      "$(pgm_ts)" "$phase" "$pct" "$bar" \
+      "$(format_bytes_short "$cur")" "$(format_bytes_short "$expected")"
+    width="$(pgm_effective_line_width)"
+    room=$(( width - ${#msg} - 2 ))
+    if (( room >= 8 )) && [[ -n "$base" ]]; then
+      if (( ${#base} > room )); then
+        base="…${base: -$(( room - 1 ))}"
+      fi
+      msg+="  ${base}"
+    fi
+    if (( ${#msg} > width )); then
+      msg="${msg:0:width}"
+    fi
+    printf '\r%s\033[K' "$msg"
+    PGM_PROGRESS_ACTIVE=1
+    sleep 0.5
+  done
+
+  wait "$pid"
+  rc=$?
+  PGM_EXIFTOOL_REWRITE_PID=""
+  pgm_exiftool_rewrite_restore_int_trap
+  if (( rc == 0 && expected > 0 )); then
+    bar=""
+    for (( i = 0; i < bar_w; i++ )); do bar+="#"; done
+    printf -v msg '%s %s  %3d%% [%s]  %s / %s  %s' \
+      "$(pgm_ts)" "$phase" 100 "$bar" \
+      "$(format_bytes_short "$expected")" "$(format_bytes_short "$expected")" "${dest##*/}"
+    width="$(pgm_effective_line_width)"
+    if (( ${#msg} > width )); then
+      msg="${msg:0:width}"
+    fi
+    printf '\r%s\033[K' "$msg"
+    PGM_PROGRESS_ACTIVE=1
+  fi
+  pgm_progress_end
+  return "$rc"
+}
+
 video_merge_ctrl_c() {
   local out="${VIDEO_MERGE_OUT_FILE:-}"
+  pgm_exiftool_rewrite_kill_child
   if [[ -n "$out" ]]; then
     # Merge and post-merge (exiftool) may leave a partial final name or sidecar temps.
     rm -f -- "$out" "${out}_exiftool_tmp" "${out}.meta.tmp."* 2>/dev/null || true
@@ -3087,43 +3224,51 @@ group_merge_description_label() {
 }
 
 # Copy GPS / create&modify dates / camera tags from the first chapter onto the merge
-# output (selective — not -All:All, which would overwrite Duration etc.). Then set
-# optional title/description via exiftool (ffmpeg remux was stripping GPS). Finally
-# restore filesystem mtime/atime from the first chapter with touch -r.
+# output (selective — not -All:All, which would overwrite Duration etc.), and set
+# optional title/description in the same exiftool rewrite. Finally restore filesystem
+# mtime/atime from the first chapter with touch -r.
 # On a Windows drive (/mnt/p and the like) the creation time is copied too.
 apply_merge_output_metadata() {
   local output_file="$1" source_file="$2" label="${3-}"
   local exifloc="" rc=0
+  local -a et_cmd=()
 
   [[ -f "$output_file" && -f "$source_file" ]] || return 0
 
   if exifloc="$(resolve_pgm_exiftool 2>/dev/null)"; then
     # -P: do not bump FS mtime during tag write; we re-apply touch -r afterward.
-    if "$exifloc" -overwrite_original -P -api QuickTimeUTC=1 \
-      -TagsFromFile "$source_file" \
-      -time:all -gps:all \
-      -Make -Model -Software -Artist -Copyright \
-      -Keys:Make -Keys:Model -Keys:GPSCoordinates \
-      -ItemList:Make -ItemList:Model \
-      -QuickTime:GPSCoordinates \
-      -FileCreateDate -FileModifyDate \
-      -- "$output_file" >/dev/null 2>&1; then
+    # Title tags are in the same pass so a large concat is not rewritten twice.
+    et_cmd=(
+      "$exifloc" -overwrite_original -P
+      -api largefilesupport=1 -api QuickTimeUTC=1
+      -TagsFromFile "$source_file"
+      -time:all -gps:all
+      -Make -Model -Software -Artist -Copyright
+      -Keys:Make -Keys:Model -Keys:GPSCoordinates
+      -ItemList:Make -ItemList:Model
+      -QuickTime:GPSCoordinates
+      -FileCreateDate -FileModifyDate
+    )
+    if [[ -n "$label" ]]; then
+      et_cmd+=(
+        -QuickTime:Title="$label"
+        -QuickTime:Description="$label"
+        -QuickTime:Comment="$label"
+        -ItemList:Title="$label"
+      )
+    fi
+    et_cmd+=( -- "$output_file" )
+    if pgm_run_exiftool_rewrite_with_progress "$output_file" "exiftool metadata" \
+      "${et_cmd[@]}"; then
       pgm_log_kv "Metadata" "copied GPS/dates/camera from ${source_file##*/}"
+      if [[ -n "$label" ]]; then
+        pgm_log_kv "Metadata title" "$label"
+      fi
     else
       pgm_log_kv "Metadata" "exiftool TagsFromFile failed (GPS/dates may be incomplete)"
       rc=1
-    fi
-    if [[ -n "$label" ]]; then
-      if "$exifloc" -overwrite_original -P \
-        -QuickTime:Title="$label" \
-        -QuickTime:Description="$label" \
-        -QuickTime:Comment="$label" \
-        -ItemList:Title="$label" \
-        -- "$output_file" >/dev/null 2>&1; then
-        pgm_log_kv "Metadata title" "$label"
-      else
+      if [[ -n "$label" ]]; then
         pgm_log_kv "Metadata title" "could not write via exiftool"
-        rc=1
       fi
     fi
   else
@@ -3248,11 +3393,12 @@ pgm_put_gps() {
   else
     coord=$(awk -v a="$lat" -v b="$lon" 'BEGIN { printf "%.7f, %.7f", a, b }')
   fi
-  if "$exif" -overwrite_original -P \
+  if pgm_run_exiftool_rewrite_with_progress "$dest" "exiftool GPS" \
+    "$exif" -overwrite_original -P -api largefilesupport=1 \
       -Keys:GPSCoordinates="$coord" \
       -UserData:GPSCoordinates="$coord" \
       -ItemList:GPSCoordinates="$coord" \
-      -- "$dest" >/dev/null 2>&1; then
+      -- "$dest"; then
     pgm_log_kv "Location" "${lat}, ${lon} from ${gpx##*/}"
     if [[ -n "$src" && -f "$src" ]]; then
       touch -r "$src" -- "$dest" 2>/dev/null || true
@@ -3515,30 +3661,44 @@ pgm_set_fs_times_epoch() {
 }
 
 # Write media CreateDate / ModifyDate (and QuickTime track/media peers) from a Unix epoch.
-# FileCreateDate/FileModifyDate are best-effort afterward so a FS-tag failure cannot
-# block the dates stored inside the video.
+# FileCreateDate/FileModifyDate go in the same rewrite when possible so a large concat
+# is not rewritten three times; FS tags alone are a best-effort fallback.
 pgm_set_media_dates_epoch() {
   local dest="$1" epoch="$2" exif iso ok=0
   [[ -f "$dest" && "$epoch" =~ ^[0-9]+$ ]] || return 1
   exif="$(resolve_pgm_exiftool 2>/dev/null)" || return 1
   iso="$(date -d "@${epoch}" '+%Y:%m:%d %H:%M:%S' 2>/dev/null)" || return 1
-  if "$exif" -overwrite_original -P -api QuickTimeUTC=1 \
+  if pgm_run_exiftool_rewrite_with_progress "$dest" "exiftool dates" \
+    "$exif" -overwrite_original -P -api largefilesupport=1 -api QuickTimeUTC=1 \
     -AllDates="$iso" \
     -CreateDate="$iso" -ModifyDate="$iso" \
     -TrackCreateDate="$iso" -TrackModifyDate="$iso" \
     -MediaCreateDate="$iso" -MediaModifyDate="$iso" \
-    -- "$dest" >/dev/null 2>&1; then
-    ok=1
-  elif "$exif" -overwrite_original -P -api QuickTimeUTC=1 \
+    -FileCreateDate="$iso" -FileModifyDate="$iso" \
+    -- "$dest"; then
+    return 0
+  fi
+  if pgm_run_exiftool_rewrite_with_progress "$dest" "exiftool dates" \
+    "$exif" -overwrite_original -P -api largefilesupport=1 -api QuickTimeUTC=1 \
     -CreateDate="$iso" -ModifyDate="$iso" \
     -TrackCreateDate="$iso" -TrackModifyDate="$iso" \
     -MediaCreateDate="$iso" -MediaModifyDate="$iso" \
-    -- "$dest" >/dev/null 2>&1; then
+    -FileCreateDate="$iso" -FileModifyDate="$iso" \
+    -- "$dest"; then
+    return 0
+  fi
+  if pgm_run_exiftool_rewrite_with_progress "$dest" "exiftool dates" \
+    "$exif" -overwrite_original -P -api largefilesupport=1 -api QuickTimeUTC=1 \
+    -CreateDate="$iso" -ModifyDate="$iso" \
+    -TrackCreateDate="$iso" -TrackModifyDate="$iso" \
+    -MediaCreateDate="$iso" -MediaModifyDate="$iso" \
+    -- "$dest"; then
     ok=1
   fi
-  "$exif" -overwrite_original -P -api QuickTimeUTC=1 \
+  pgm_run_exiftool_rewrite_with_progress "$dest" "exiftool FS dates" \
+    "$exif" -overwrite_original -P -api largefilesupport=1 -api QuickTimeUTC=1 \
     -FileCreateDate="$iso" -FileModifyDate="$iso" \
-    -- "$dest" >/dev/null 2>&1 || true
+    -- "$dest" || true
   (( ok ))
 }
 
@@ -6304,8 +6464,8 @@ run_merge_group() {
     echo "$(pgm_ts) Ctrl-C now removes this merge output (group not finished)."
     local meta_label=""
     meta_label=$(group_merge_description_label "${files[@]}" 2>/dev/null) || meta_label=""
-    echo "$(pgm_ts) Copying GPS, dates, and camera tags from first chapter (exiftool) …"
-    echo "$(pgm_ts)   (large files can take several minutes; *_exiftool_tmp means this step is in progress)"
+    echo "$(pgm_ts) Copying GPS, dates, camera tags, and title from first chapter (one exiftool rewrite) …"
+    echo "$(pgm_ts)   Large files: progress tracks the growing *_exiftool_tmp beside the merge output."
     apply_merge_output_metadata "$output_file" "${files[0]}" "$meta_label" || true
     if group_is_dashcam "${files[@]}"; then
       echo "$(pgm_ts) Writing GPX beside the merge (if needed) …"
