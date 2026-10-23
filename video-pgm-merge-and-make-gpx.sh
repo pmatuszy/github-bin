@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261023.093500 - size-split session key ignores middle-label word order (S29_Migros vs Migros_S29)
 # v. 20261023.073200 - missing GoPro GPX helper / python3: boxed warning and wait for Enter
 # v. 20261023.072730 - after GoPro merge, write .gpx via video-pgm-gopro-to-gpx.py (merged file, else chapters)
 # v. 20261023.071420 - ask output date/time before the merge; apply after (same metadata rewrite when possible)
@@ -82,6 +83,7 @@
 # v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
 # v. 20260805.154826 - after merge: copy GPS/dates from first chapter; FS times via touch -r
 
+# 2026.10.23 - v. 0.15.99 - size-split grouping uses order-independent session tokens (migros-odbior-paczki), not the raw middle string, so S29_-_Migros_… and Migros_-_S29_… chapters that chain by start+duration are merged
 # 2026.10.23 - v. 0.15.98 - if video-pgm-gopro-to-gpx.py or python3 is missing after a GoPro merge, show a boxed warning and wait for Enter (skipped with -y / non-interactive); merge continues without a .gpx
 # 2026.10.23 - v. 0.15.97 - after a non-70mai (GoPro) merge, write a .gpx beside the concat using video-pgm-gopro-to-gpx.py (same helper as video-pgm-gopro-to-gpx.sh): try the merged file first; if mp4_merge dropped the gpmd stream, build from the chapter files; say clearly when there is no GoPro telemetry or no GPS fix
 # 2026.10.23 - v. 0.15.96 - ask which output date/time to use (name / filesystem / media / keep) before mp4_merge starts, using the planned output name and the first chapter; apply that choice after merge (folded into the metadata exiftool rewrite when a date is chosen) so the long merge does not sit in front of the question
@@ -2636,10 +2638,16 @@ gopro_recording_group_key_from_basename() {
   printf '%s_%s|%s|%s\n' "$GOPRO_TS_DATE" "$GOPRO_TS_TIME" "$GOPRO_TS_CAM" "$mid"
 }
 
-# Size-split session key: same calendar day + camera + middle; leading HHMMSS may differ.
+# Size-split session key: same calendar day + camera + session tokens.
+# Leading HHMMSS may differ. Middle label word order is ignored (Migros_S29 vs S29_Migros)
+# via gopro_session_key_from_basename; raw middle is only a fallback.
 gopro_size_split_session_key_from_basename() {
-  local base="$1" mid
+  local base="$1" mid sess
   gopro_timestamp_cam_from_basename "$base" || return 1
+  if sess=$(gopro_session_key_from_basename "$base" 2>/dev/null) && [[ -n "$sess" ]]; then
+    printf '%s|%s|%s\n' "$GOPRO_TS_DATE" "$GOPRO_TS_CAM" "$sess"
+    return 0
+  fi
   mid=$(gopro_middle_from_basename "$base" 2>/dev/null) || mid=""
   printf '%s|%s|%s\n' "$GOPRO_TS_DATE" "$GOPRO_TS_CAM" "$mid"
 }
@@ -2765,13 +2773,18 @@ gopro_token_is_noise() {
 
 # Human session label for grouping (dermatolog-s29 vs farma-s29, order-independent).
 gopro_session_key_from_basename() {
-  local base="$1" mid
-  local -a tokens=()
+  local base="$1" mid t
+  local -a tokens=() raw=()
   mid=$(gopro_middle_from_basename "$base") || return 1
-  mapfile -t tokens < <(
-    printf '%s\n' "$mid" | tr '_-( )' '\n' | tr '[:upper:]' '[:lower:]' |
-      grep -E '^[a-z0-9]{2,}$' | grep -Ev '^(niecaly|film|proxy|black|gopro)$' | LC_ALL=C sort -u
+  mapfile -t raw < <(
+    # Hyphen last in the set so tr does not treat _-( as a reverse range.
+    printf '%s\n' "$mid" | tr '_() -' '\n' | tr '[:upper:]' '[:lower:]' |
+      grep -E '^[a-z0-9]{2,}$' | LC_ALL=C sort -u
   )
+  for t in "${raw[@]}"; do
+    gopro_token_is_noise "$t" && continue
+    tokens+=( "$t" )
+  done
   ((${#tokens[@]} > 0)) || return 1
   local IFS='-'
   printf '%s\n' "${tokens[*]}"
@@ -2781,7 +2794,7 @@ gopro_session_key_from_basename() {
 gopro_description_from_basename() {
   local base="$1" mid
   mid=$(gopro_middle_from_basename "$base") || return 1
-  printf '%s\n' "$mid" | tr '_-( )' '\n' | tr '[:upper:]' '[:lower:]' |
+  printf '%s\n' "$mid" | tr '_() -' '\n' | tr '[:upper:]' '[:lower:]' |
     grep -E '^[a-z]{4,}$' | grep -Ev '^(s[0-9]+|niecaly|film|proxy|black|gopro)$' | head -1
 }
 
@@ -4280,6 +4293,7 @@ print_size_split_near_miss_hint() {
     (( ${#files[@]} >= 2 )) && group_is_size_split "${files[@]}" && return 0
   done
   echo "$(pgm_ts) Note: ${#cand[@]} same-camera clips look like size-splits but were not grouped."
+  echo "$(pgm_ts)       (Need same day + camera + session label tokens, and next start ≈ prev start + duration.)"
   if [[ -n "$first_fail" ]]; then
     if [[ "$first_cam" == *GOPRO* ]]; then
       echo "$(pgm_ts)       Example: ${first_fail} duration ${first_dur}s (GoPro ~4 GB: ~6:49, ${PGM_GOPRO7_DURATION_MIN_SEC}-${PGM_GOPRO7_DURATION_MAX_SEC}s)."
