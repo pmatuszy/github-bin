@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261023.071420 - ask output date/time before the merge; apply after (same metadata rewrite when possible)
 # v. 20261023.070920 - post-merge exiftool: one rewrite for tags+title; progress from *_exiftool_tmp size
 # v. 20261022.212800 - chapter plan shows progress (CreateDate / link checks) so a large folder does not look hung
 # v. 20261022.212200 - chapter start time: filename by default; media CreateDate when it disagrees by >2 min (hybrid; size-split too)
@@ -79,6 +80,7 @@
 # v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
 # v. 20260805.154826 - after merge: copy GPS/dates from first chapter; FS times via touch -r
 
+# 2026.10.23 - v. 0.15.96 - ask which output date/time to use (name / filesystem / media / keep) before mp4_merge starts, using the planned output name and the first chapter; apply that choice after merge (folded into the metadata exiftool rewrite when a date is chosen) so the long merge does not sit in front of the question
 # 2026.10.23 - v. 0.15.95 - post-merge: copy GPS/dates/camera and title in one exiftool rewrite (was two full rewrites of the concat); show a % bar from the growing *_exiftool_tmp vs output size; same progress wrapper for GPS embed and CreateDate writes on large outputs
 # 2026.10.22 - v. 0.15.94 - chapter plan progress on one rewriting status line while reading CreateDate and checking chapter links (large folders on /mnt/* used to sit silent after Prompt timeout); batch CreateDate via exiftool; cache ffprobe durations; keep hybrid cache across part + size-split passes
 # 2026.10.22 - v. 0.15.93 - hybrid clip start for sort and chain: filename YYYYMMDD_HHMMSS by default; if media CreateDate (exiftool) disagrees by more than PGM_PART_CHAPTER_MEDIA_TIME_DISAGREE_SEC (default 120), use CreateDate; length stays ffprobe duration; results cached per file for the chapter plan
@@ -345,13 +347,13 @@ Merge behaviour:
     each finished file back; no writes those outputs in this directory. -y and
     non-interactive runs write in this directory. Status lines start with the
     clock in brackets, [ YYYY.MM.DD HH:MM:SS ].
-  - After a successful merge: copy GPS / create&modify dates / Make/Model and title from
-    the first chapter in one exiftool rewrite (progress bar from *_exiftool_tmp on large
-    files; filesystem mtime via touch -r; Windows creation time from that chapter).
-    If the file name, filesystem time, and
-    media CreateDate disagree by more than two minutes, ask which date to use (1/2/3…);
-    the default is the oldest usable stamp (before 1990 ignored). -y applies the oldest
-    without asking. Then merge-boundary times, size summary, optional per-seam terminal
+  - Before each merge: if the planned output name, first-chapter filesystem time, and
+    first-chapter media CreateDate disagree by more than two minutes, ask which date to
+    use after the merge (1/2/3…); default is the oldest usable stamp (before 1990 ignored).
+    -y picks the oldest without asking. After a successful merge: copy GPS / dates /
+    Make/Model and title from the first chapter in one exiftool rewrite (progress from
+    *_exiftool_tmp on large files), applying the date chosen earlier in that same rewrite
+    when needed. Then merge-boundary times, size summary, optional per-seam terminal
     preview (asked one seam at a time; [a] skips the remaining seams in this file, [s]
     never plays seams again in this run), then every seam time in the output as H:MM:SS
     again, and optional deletion of the source chapter files (single-key Y/N/K/Q). [k]
@@ -3225,19 +3227,30 @@ group_merge_description_label() {
 
 # Copy GPS / create&modify dates / camera tags from the first chapter onto the merge
 # output (selective — not -All:All, which would overwrite Duration etc.), and set
-# optional title/description in the same exiftool rewrite. Finally restore filesystem
-# mtime/atime from the first chapter with touch -r.
+# optional title/description in the same exiftool rewrite. If the user already chose
+# an output epoch (pgm_decide_output_times), override media dates in that same pass.
+# Finally set filesystem times (chosen epoch, or touch -r from the first chapter).
 # On a Windows drive (/mnt/p and the like) the creation time is copied too.
 apply_merge_output_metadata() {
   local output_file="$1" source_file="$2" label="${3-}"
-  local exifloc="" rc=0
+  local exifloc="" rc=0 iso=""
   local -a et_cmd=()
+  local use_pending=0
 
   [[ -f "$output_file" && -f "$source_file" ]] || return 0
 
+  if [[ "${PGM_PENDING_OUTPUT_TIMES_MODE:-}" == epoch \
+    && "${PGM_PENDING_OUTPUT_TIMES_EPOCH:-}" =~ ^[0-9]+$ ]]; then
+    use_pending=1
+    iso="$(date -d "@${PGM_PENDING_OUTPUT_TIMES_EPOCH}" '+%Y:%m:%d %H:%M:%S' 2>/dev/null)" || {
+      use_pending=0
+      iso=""
+    }
+  fi
+
   if exifloc="$(resolve_pgm_exiftool 2>/dev/null)"; then
-    # -P: do not bump FS mtime during tag write; we re-apply touch -r afterward.
-    # Title tags are in the same pass so a large concat is not rewritten twice.
+    # -P: do not bump FS mtime during tag write; we re-apply times afterward.
+    # Title (+ optional date override) in the same pass so a large concat is not rewritten twice.
     et_cmd=(
       "$exifloc" -overwrite_original -P
       -api largefilesupport=1 -api QuickTimeUTC=1
@@ -3257,12 +3270,26 @@ apply_merge_output_metadata() {
         -ItemList:Title="$label"
       )
     fi
+    if (( use_pending )) && [[ -n "$iso" ]]; then
+      # After TagsFromFile so these win over the chapter's CreateDate.
+      et_cmd+=(
+        -AllDates="$iso"
+        -CreateDate="$iso" -ModifyDate="$iso"
+        -TrackCreateDate="$iso" -TrackModifyDate="$iso"
+        -MediaCreateDate="$iso" -MediaModifyDate="$iso"
+        -FileCreateDate="$iso" -FileModifyDate="$iso"
+      )
+    fi
     et_cmd+=( -- "$output_file" )
     if pgm_run_exiftool_rewrite_with_progress "$output_file" "exiftool metadata" \
       "${et_cmd[@]}"; then
       pgm_log_kv "Metadata" "copied GPS/dates/camera from ${source_file##*/}"
       if [[ -n "$label" ]]; then
         pgm_log_kv "Metadata title" "$label"
+      fi
+      if (( use_pending )); then
+        pgm_log_kv "Output times" "media tags from ${PGM_PENDING_OUTPUT_TIMES_LABEL} (chosen before merge)"
+        PGM_PENDING_OUTPUT_TIMES_MEDIA_DONE=1
       fi
     else
       pgm_log_kv "Metadata" "exiftool TagsFromFile failed (GPS/dates may be incomplete)"
@@ -3288,13 +3315,28 @@ apply_merge_output_metadata() {
     fi
   fi
 
-  if touch -r "$source_file" -- "$output_file" 2>/dev/null; then
-    pgm_log_kv "Filesystem times" "mtime/atime from ${source_file##*/}"
+  if (( use_pending )); then
+    if pgm_set_fs_times_epoch "$output_file" "$PGM_PENDING_OUTPUT_TIMES_EPOCH"; then
+      pgm_log_kv "Filesystem times" "$(pgm_format_epoch_display "$PGM_PENDING_OUTPUT_TIMES_EPOCH") (${PGM_PENDING_OUTPUT_TIMES_LABEL})"
+      PGM_PENDING_OUTPUT_TIMES_FS_DONE=1
+    else
+      pgm_log_kv "Filesystem times" "could not set chosen time"
+      rc=1
+    fi
+    local gpx_side=""
+    gpx_side="$(dashcam_gpx_beside_output "$output_file" 2>/dev/null || true)"
+    if [[ -n "$gpx_side" && -f "$gpx_side" ]]; then
+      pgm_set_fs_times_epoch "$gpx_side" "$PGM_PENDING_OUTPUT_TIMES_EPOCH" || true
+    fi
   else
-    pgm_log_kv "Filesystem times" "touch -r failed"
-    rc=1
+    if touch -r "$source_file" -- "$output_file" 2>/dev/null; then
+      pgm_log_kv "Filesystem times" "mtime/atime from ${source_file##*/}"
+    else
+      pgm_log_kv "Filesystem times" "touch -r failed"
+      rc=1
+    fi
+    pgm_copy_creation "$source_file" "$output_file" || true
   fi
-  pgm_copy_creation "$source_file" "$output_file" || true
   return "$rc"
 }
 
@@ -3400,7 +3442,11 @@ pgm_put_gps() {
       -ItemList:GPSCoordinates="$coord" \
       -- "$dest"; then
     pgm_log_kv "Location" "${lat}, ${lon} from ${gpx##*/}"
-    if [[ -n "$src" && -f "$src" ]]; then
+    # Prefer the date chosen before merge; otherwise match the first chapter.
+    if [[ "${PGM_PENDING_OUTPUT_TIMES_MODE:-}" == epoch \
+      && "${PGM_PENDING_OUTPUT_TIMES_EPOCH:-}" =~ ^[0-9]+$ ]]; then
+      pgm_set_fs_times_epoch "$dest" "$PGM_PENDING_OUTPUT_TIMES_EPOCH" || true
+    elif [[ -n "$src" && -f "$src" ]]; then
       touch -r "$src" -- "$dest" 2>/dev/null || true
       pgm_copy_creation "$src" "$dest" || true
     fi
@@ -3721,34 +3767,50 @@ pgm_apply_epoch_to_output() {
   fi
 }
 
-# After metadata copy: if name / FS / media disagree, ask which date to use.
-# Default = oldest usable (before 1990 ignored). Return 2 on quit.
-pgm_prompt_reconcile_output_times() {
-  local dest="$1" source_file="${2:-}"
-  local name_e="" src_e="" media_e="" dest_fs_e=""
+# Pending output-time choice for the next merge (set by pgm_decide_output_times).
+# MODE: none | keep | epoch
+PGM_PENDING_OUTPUT_TIMES_MODE=""
+PGM_PENDING_OUTPUT_TIMES_EPOCH=""
+PGM_PENDING_OUTPUT_TIMES_LABEL=""
+PGM_PENDING_OUTPUT_TIMES_MEDIA_DONE=0
+PGM_PENDING_OUTPUT_TIMES_FS_DONE=0
+
+pgm_clear_pending_output_times() {
+  PGM_PENDING_OUTPUT_TIMES_MODE=""
+  PGM_PENDING_OUTPUT_TIMES_EPOCH=""
+  PGM_PENDING_OUTPUT_TIMES_LABEL=""
+  PGM_PENDING_OUTPUT_TIMES_MEDIA_DONE=0
+  PGM_PENDING_OUTPUT_TIMES_FS_DONE=0
+}
+
+# Before merge: if planned name / first-chapter FS / first-chapter media disagree,
+# ask which date to apply after the merge. Return 2 on quit.
+pgm_decide_output_times() {
+  local planned_output="$1" source_file="${2:-}"
+  local name_e="" src_e="" media_e=""
   local -a labels=() epochs=() notes=()
-  local i n def=1 oldest_i=0 oldest_e="" choice keys="" disp note fs_show
+  local i n def=1 oldest_i=0 oldest_e="" choice keys="" disp note
   local abs_diff need_ask=0
 
-  [[ -f "$dest" ]] || return 0
+  pgm_clear_pending_output_times
 
-  name_e="$(pgm_filename_epoch_from_basename "${dest##*/}" 2>/dev/null || true)"
+  name_e="$(pgm_filename_epoch_from_basename "${planned_output##*/}" 2>/dev/null || true)"
   if [[ -z "$name_e" && -n "$source_file" ]]; then
     name_e="$(pgm_filename_epoch_from_basename "${source_file##*/}" 2>/dev/null || true)"
   fi
   [[ -n "$source_file" && -f "$source_file" ]] \
     && src_e="$(pgm_fs_mtime_epoch "$source_file" 2>/dev/null || true)"
-  dest_fs_e="$(pgm_fs_mtime_epoch "$dest" 2>/dev/null || true)"
-  media_e="$(pgm_media_createdate_epoch "$dest" 2>/dev/null || true)"
-  [[ -z "$media_e" && -n "$source_file" && -f "$source_file" ]] \
+  [[ -n "$source_file" && -f "$source_file" ]] \
     && media_e="$(pgm_media_createdate_epoch "$source_file" 2>/dev/null || true)"
 
   # Need a usable file-name stamp to bother comparing.
-  [[ -n "$name_e" ]] || return 0
+  if [[ -z "$name_e" ]]; then
+    PGM_PENDING_OUTPUT_TIMES_MODE=none
+    return 0
+  fi
 
-  fs_show="${src_e:-$dest_fs_e}"
-  if [[ -n "$fs_show" ]]; then
-    if (( name_e > fs_show )); then abs_diff=$((name_e - fs_show)); else abs_diff=$((fs_show - name_e)); fi
+  if [[ -n "$src_e" ]]; then
+    if (( name_e > src_e )); then abs_diff=$((name_e - src_e)); else abs_diff=$((src_e - name_e)); fi
     (( abs_diff > 120 )) && need_ask=1
   else
     need_ask=1
@@ -3760,32 +3822,31 @@ pgm_prompt_reconcile_output_times() {
     # Missing CreateDate is worth fixing when a name stamp exists.
     need_ask=1
   fi
-  (( need_ask )) || return 0
+  if (( ! need_ask )); then
+    PGM_PENDING_OUTPUT_TIMES_MODE=none
+    return 0
+  fi
 
   labels+=("File name")
   epochs+=("$name_e")
-  notes+=("")
+  notes+=("(planned output name)")
   labels+=("Filesystem")
-  epochs+=("$fs_show")
-  if [[ -n "$fs_show" ]]; then
-    if [[ -n "$src_e" ]]; then
-      notes+=("(mtime / first chapter)")
-    else
-      notes+=("(current output mtime)")
-    fi
+  epochs+=("$src_e")
+  if [[ -n "$src_e" ]]; then
+    notes+=("(mtime / first chapter)")
   else
     notes+=("(mtime missing or before 1990)")
   fi
   labels+=("Media tags")
   epochs+=("$media_e")
   if [[ -n "$media_e" ]]; then
-    notes+=("(CreateDate in the video)")
+    notes+=("(CreateDate in first chapter)")
   else
     notes+=("(CreateDate missing or before 1990)")
   fi
   labels+=("Keep as written")
   epochs+=("")
-  notes+=("(leave the new file as it is now)")
+  notes+=("(leave merge/metadata result; do not force a date)")
 
   n=${#labels[@]}
   oldest_e=""
@@ -3801,16 +3862,21 @@ pgm_prompt_reconcile_output_times() {
 
   if (( DO_YES )) || (( ! script_is_run_interactively )); then
     if [[ -n "$oldest_e" ]]; then
-      pgm_apply_epoch_to_output "$dest" "$oldest_e"
-      echo "$(pgm_ts) Output times: $(pgm_format_epoch_display "$oldest_e") (oldest usable; no prompt)."
+      PGM_PENDING_OUTPUT_TIMES_MODE=epoch
+      PGM_PENDING_OUTPUT_TIMES_EPOCH="$oldest_e"
+      PGM_PENDING_OUTPUT_TIMES_LABEL="oldest usable"
+      echo "$(pgm_ts) Output times after merge: $(pgm_format_epoch_display "$oldest_e") (oldest usable; no prompt)."
+    else
+      PGM_PENDING_OUTPUT_TIMES_MODE=none
     fi
     return 0
   fi
 
   echo
-  echo "$(pgm_ts) Output times do not match the file name."
+  echo "$(pgm_ts) Output times do not match the planned file name."
+  echo "$(pgm_ts) Choose now — this is applied after the merge (no second question)."
   echo
-  printf '  File:  %s\n' "${dest##*/}"
+  printf '  Planned:  %s\n' "${planned_output##*/}"
   echo
   echo "  Sources (oldest usable is the default; applying it sets media CreateDate and filesystem times):"
   echo
@@ -3841,24 +3907,67 @@ pgm_prompt_reconcile_output_times() {
     pgm_read_key "Output times [${keys}] (default ${def}): " "$def"
     choice="${REPLY,,}"
     case "$choice" in
-      q) return 2 ;;
+      q) pgm_clear_pending_output_times; return 2 ;;
     esac
     if [[ "$choice" =~ ^[0-9]+$ ]] && (( choice >= 1 && choice <= n )); then
       i=$((choice - 1))
       if (( i == n - 1 )); then
-        echo "$(pgm_ts) Output times kept as written."
+        PGM_PENDING_OUTPUT_TIMES_MODE=keep
+        PGM_PENDING_OUTPUT_TIMES_LABEL="keep as written"
+        echo "$(pgm_ts) Will leave output times as written after merge."
         return 0
       fi
       if [[ -z "${epochs[i]}" ]]; then
         echo "$(pgm_ts) ${labels[i]} is n/a (not usable). Pick another."
         continue
       fi
-      pgm_apply_epoch_to_output "$dest" "${epochs[i]}"
-      echo "$(pgm_ts) Output times set from ${labels[i]}: $(pgm_format_epoch_display "${epochs[i]}")"
+      PGM_PENDING_OUTPUT_TIMES_MODE=epoch
+      PGM_PENDING_OUTPUT_TIMES_EPOCH="${epochs[i]}"
+      PGM_PENDING_OUTPUT_TIMES_LABEL="${labels[i]}"
+      echo "$(pgm_ts) Will set output times from ${labels[i]} after merge: $(pgm_format_epoch_display "${epochs[i]}")"
       return 0
     fi
     echo "$(pgm_ts) Unknown choice: ${REPLY}."
   done
+}
+
+# After post-merge metadata: finish any pending date choice not already applied.
+pgm_finish_pending_output_times() {
+  local dest="$1"
+  local mode="${PGM_PENDING_OUTPUT_TIMES_MODE:-}"
+
+  [[ -f "$dest" ]] || {
+    pgm_clear_pending_output_times
+    return 0
+  }
+
+  case "$mode" in
+    none|'')
+      pgm_clear_pending_output_times
+      return 0
+      ;;
+    keep)
+      echo "$(pgm_ts) Output times kept as written (chosen before merge)."
+      pgm_clear_pending_output_times
+      return 0
+      ;;
+    epoch)
+      if (( ${PGM_PENDING_OUTPUT_TIMES_MEDIA_DONE:-0} )) \
+        && (( ${PGM_PENDING_OUTPUT_TIMES_FS_DONE:-0} )); then
+        echo "$(pgm_ts) Output times applied: $(pgm_format_epoch_display "$PGM_PENDING_OUTPUT_TIMES_EPOCH") (${PGM_PENDING_OUTPUT_TIMES_LABEL})."
+        pgm_clear_pending_output_times
+        return 0
+      fi
+      # Metadata pass missed media and/or FS — finish with a dedicated apply.
+      echo "$(pgm_ts) Applying output times chosen before merge …"
+      pgm_apply_epoch_to_output "$dest" "$PGM_PENDING_OUTPUT_TIMES_EPOCH"
+      echo "$(pgm_ts) Output times set from ${PGM_PENDING_OUTPUT_TIMES_LABEL}: $(pgm_format_epoch_display "$PGM_PENDING_OUTPUT_TIMES_EPOCH")"
+      pgm_clear_pending_output_times
+      return 0
+      ;;
+  esac
+  pgm_clear_pending_output_times
+  return 0
 }
 
 group_is_size_split() {
@@ -6414,10 +6523,13 @@ run_merge_group() {
     fi
     echo "$(pgm_ts) Removed existing output for redo merge."
   fi
+  # Ask date/time before the long merge + exiftool work; apply after.
+  pgm_decide_output_times "$output_file" "${files[0]}" || return $?
   local write_path choose_rc
   choose_merge_output_path "$output_file" "${files[@]}"
   choose_rc=$?
   if (( choose_rc != 0 )); then
+    pgm_clear_pending_output_times
     return "$choose_rc"
   fi
   write_path="$MERGE_WRITE_PATH"
@@ -6475,12 +6587,7 @@ run_merge_group() {
     pgm_put_gps "$output_file" "${files[0]}"
     trap ctrl_c INT
     VIDEO_MERGE_OUT_FILE=""
-    echo "$(pgm_ts) Checking output dates (name / filesystem / media tags) …"
-    pgm_prompt_reconcile_output_times "$output_file" "${files[0]}"
-    rc=$?
-    if (( rc == 2 )); then
-      return 2
-    fi
+    pgm_finish_pending_output_times "$output_file"
     echo
     print_merge_size_summary "$output_file" "${files[@]}"
     print_merge_boundaries_report "$output_file" "${files[@]}"
@@ -6501,6 +6608,7 @@ run_merge_group() {
     merge_clear_temp_work
     trap ctrl_c INT
     VIDEO_MERGE_OUT_FILE=""
+    pgm_clear_pending_output_times
     echo "$(pgm_ts) Merge failed (exit ${rc})." >&2
   fi
   return "${rc}"
