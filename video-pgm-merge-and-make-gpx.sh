@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261023.072730 - after GoPro merge, write .gpx via video-pgm-gopro-to-gpx.py (merged file, else chapters)
 # v. 20261023.071420 - ask output date/time before the merge; apply after (same metadata rewrite when possible)
 # v. 20261023.070920 - post-merge exiftool: one rewrite for tags+title; progress from *_exiftool_tmp size
 # v. 20261022.212800 - chapter plan shows progress (CreateDate / link checks) so a large folder does not look hung
@@ -80,6 +81,7 @@
 # v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
 # v. 20260805.154826 - after merge: copy GPS/dates from first chapter; FS times via touch -r
 
+# 2026.10.23 - v. 0.15.97 - after a non-70mai (GoPro) merge, write a .gpx beside the concat using video-pgm-gopro-to-gpx.py (same helper as video-pgm-gopro-to-gpx.sh): try the merged file first; if mp4_merge dropped the gpmd stream, build from the chapter files; say clearly when there is no GoPro telemetry or no GPS fix
 # 2026.10.23 - v. 0.15.96 - ask which output date/time to use (name / filesystem / media / keep) before mp4_merge starts, using the planned output name and the first chapter; apply that choice after merge (folded into the metadata exiftool rewrite when a date is chosen) so the long merge does not sit in front of the question
 # 2026.10.23 - v. 0.15.95 - post-merge: copy GPS/dates/camera and title in one exiftool rewrite (was two full rewrites of the concat); show a % bar from the growing *_exiftool_tmp vs output size; same progress wrapper for GPS embed and CreateDate writes on large outputs
 # 2026.10.22 - v. 0.15.94 - chapter plan progress on one rewriting status line while reading CreateDate and checking chapter links (large folders on /mnt/* used to sit silent after Prompt timeout); batch CreateDate via exiftool; cache ffprobe durations; keep hybrid cache across part + size-split passes
@@ -353,11 +355,14 @@ Merge behaviour:
     -y picks the oldest without asking. After a successful merge: copy GPS / dates /
     Make/Model and title from the first chapter in one exiftool rewrite (progress from
     *_exiftool_tmp on large files), applying the date chosen earlier in that same rewrite
-    when needed. Then merge-boundary times, size summary, optional per-seam terminal
-    preview (asked one seam at a time; [a] skips the remaining seams in this file, [s]
-    never plays seams again in this run), then every seam time in the output as H:MM:SS
-    again, and optional deletion of the source chapter files (single-key Y/N/K/Q). [k]
-    keeps input files for every later group in this run.
+    when needed. For GoPro-style groups (not 70mai), also write a .gpx beside the merge
+    via video-pgm-gopro-to-gpx.py (merged telemetry, or chapter telemetry if the merge
+    has no gpmd stream); say when there is no telemetry / no GPS fix. Then merge-boundary
+    times, size summary, optional per-seam terminal preview (asked one seam at a time;
+    [a] skips the remaining seams in this file, [s] never plays seams again in this run),
+    then every seam time in the output as H:MM:SS again, and optional deletion of the
+    source chapter files (single-key Y/N/K/Q). [k] keeps input files for every later
+    group in this run.
   - If the expected _concat output already exists: skip (default), redo merge [r],
     preview merge seams [p], or delete input chapters [d] (keeps merged output).
     A 70mai journey is finished only when a valid .gpx sits beside that file.
@@ -435,6 +440,9 @@ Environment:
   PGM_EXIFTOOL_PROGRESS_MIN_BYTES
                           Minimum output size before post-merge exiftool shows a
                           *_exiftool_tmp progress bar (default: 52428800 = 50 MiB).
+  VIDEO_PGM_GOPRO_TO_GPX_PY
+                          Path to video-pgm-gopro-to-gpx.py (default: next to this
+                          script, or beside video-pgm-gopro-to-gpx.sh on PATH).
 
 Examples:
   $(script_live_basename) -u
@@ -5495,6 +5503,192 @@ dashcam_write_gpx_if_merged() {
   dashcam_write_gpx_for_group "$output_file" "$@" || true
 }
 
+# Resolve video-pgm-gopro-to-gpx.py (same helper video-pgm-gopro-to-gpx.sh uses).
+find_video_pgm_gopro_to_gpx_py() {
+  local candidate dir
+  if [[ -n "${VIDEO_PGM_GOPRO_TO_GPX_PY:-}" && -f "${VIDEO_PGM_GOPRO_TO_GPX_PY}" ]]; then
+    printf '%s\n' "${VIDEO_PGM_GOPRO_TO_GPX_PY}"
+    return 0
+  fi
+  if candidate=$(command -v video-pgm-gopro-to-gpx.sh 2>/dev/null); then
+    dir="$(cd "$(dirname -- "$candidate")" && pwd)"
+    if [[ -f "${dir}/video-pgm-gopro-to-gpx.py" ]]; then
+      printf '%s\n' "${dir}/video-pgm-gopro-to-gpx.py"
+      return 0
+    fi
+  fi
+  for candidate in \
+    "${SCRIPT_DIR:-}/video-pgm-gopro-to-gpx.py" \
+    "$(cd "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/video-pgm-gopro-to-gpx.py" \
+    "/root/bin/video-pgm-gopro-to-gpx.py" \
+    "${profile_location_dir:-$HOME}/bin/video-pgm-gopro-to-gpx.py"; do
+    [[ -n "$candidate" && -f "$candidate" ]] || continue
+    printf '%s\n' "$candidate"
+    return 0
+  done
+  return 1
+}
+
+# Stamp a new .gpx like video-pgm-gopro-to-gpx.sh (video times, or pre-merge choice).
+pgm_stamp_gpx_beside_video() {
+  local video="$1" gpx="$2"
+  [[ -f "$video" && -f "$gpx" ]] || return 0
+  if [[ "${PGM_PENDING_OUTPUT_TIMES_MODE:-}" == epoch \
+    && "${PGM_PENDING_OUTPUT_TIMES_EPOCH:-}" =~ ^[0-9]+$ ]]; then
+    pgm_set_fs_times_epoch "$gpx" "$PGM_PENDING_OUTPUT_TIMES_EPOCH" || true
+    return 0
+  fi
+  if touch -r "$video" -- "$gpx" 2>/dev/null; then
+    pgm_copy_creation "$video" "$gpx" || true
+  fi
+}
+
+# Write GPX for one video via the external helper. Prints describe line on stdout when ok.
+# Return 0 = wrote, 1 = no telemetry / no fix / error (message on stderr via caller).
+pgm_gopro_gpx_write_video() {
+  local py="$1" video="$2" out="$3"
+  local partial line rc=0
+  partial="${out}.partial.$$"
+  rm -f -- "$partial"
+  line="$(python3 "$py" write -- "$video" "$partial" 2>/dev/null)" || rc=$?
+  if (( rc != 0 )) || [[ ! -f "$partial" ]]; then
+    rm -f -- "$partial"
+    return 1
+  fi
+  if ! mv -f -- "$partial" "$out"; then
+    rm -f -- "$partial"
+    return 1
+  fi
+  printf '%s\n' "$line"
+  return 0
+}
+
+# Combine chapter .gpx files (from the helper) into one track beside the merge.
+pgm_gopro_gpx_concat_chapter_files() {
+  local out="$1" name="$2"
+  shift 2
+  local f tmp
+  (( $# >= 1 )) || return 1
+  tmp="${out}.partial.$$"
+  {
+    printf '%s\n' '<?xml version="1.0" encoding="UTF-8"?>'
+    printf '%s\n' '<gpx version="1.1" creator="video-pgm-merge-and-make-gpx.sh" xmlns="http://www.topografix.com/GPX/1/1">'
+    printf '%s\n' '  <trk>'
+    printf '    <name>%s</name>\n' "$name"
+    printf '%s\n' '    <trkseg>'
+    for f in "$@"; do
+      [[ -f "$f" ]] || continue
+      # Helper writes one trkpt per line.
+      grep -E '^[[:space:]]*<trkpt ' "$f" || true
+    done
+    printf '%s\n' '    </trkseg>'
+    printf '%s\n' '  </trk>'
+    printf '%s\n' '</gpx>'
+  } >"$tmp"
+  if ! grep -q '<trkpt ' "$tmp"; then
+    rm -f -- "$tmp"
+    return 1
+  fi
+  mv -f -- "$tmp" "$out"
+}
+
+# After a GoPro-style merge: write output.gpx using video-pgm-gopro-to-gpx.py.
+# Tries the merged file first; if it has no gpmd stream, builds from the chapters.
+pgm_write_gopro_gpx_if_merged() {
+  local output_file="$1"
+  shift
+  local -a files=("$@")
+  local py gpx info status line f tmpdir
+  local -a chapter_gpx=()
+  local n_ok=0 n_none=0 n_nogopro=0 n_err=0
+
+  group_is_dashcam "${files[@]}" && return 0
+  [[ -f "$output_file" ]] || return 0
+
+  gpx="$(dashcam_gpx_beside_output "$output_file" 2>/dev/null || true)"
+  [[ -n "$gpx" ]] || gpx="${output_file%.*}.gpx"
+  if dashcam_gpx_is_valid "$gpx" 2>/dev/null; then
+    echo "$(pgm_ts) GPX already present: ${gpx##*/}"
+    return 0
+  fi
+
+  if ! py="$(find_video_pgm_gopro_to_gpx_py)"; then
+    echo "$(pgm_ts) GPX: video-pgm-gopro-to-gpx.py not found — skipped GoPro track extract."
+    return 0
+  fi
+  if ! command -v python3 >/dev/null 2>&1; then
+    echo "$(pgm_ts) GPX: python3 not found — skipped GoPro track extract."
+    return 0
+  fi
+
+  echo "$(pgm_ts) Writing GoPro GPX from video telemetry (video-pgm-gopro-to-gpx.py) …"
+  info="$(python3 "$py" info -- "$output_file" 2>/dev/null || true)"
+  status="${info%% *}"
+  case "$status" in
+    ok)
+      if line="$(pgm_gopro_gpx_write_video "$py" "$output_file" "$gpx")"; then
+        pgm_stamp_gpx_beside_video "$output_file" "$gpx"
+        pgm_log_kv "GPX" "wrote ${gpx##*/} from merged video"
+        [[ -n "$line" ]] && echo "$(pgm_ts)   ${line}"
+        return 0
+      fi
+      echo "$(pgm_ts) GPX: could not write track from the merged video."
+      return 0
+      ;;
+    none)
+      echo "$(pgm_ts) GPX: merged video has GoPro telemetry, but no GPS fix — no .gpx written."
+      return 0
+      ;;
+    nogopro)
+      echo "$(pgm_ts) GPX: merged video has no GoPro GPS stream (gpmd) — trying chapter files …"
+      ;;
+    *)
+      echo "$(pgm_ts) GPX: could not read merged video telemetry (${info:-unknown}) — trying chapter files …"
+      ;;
+  esac
+
+  tmpdir="$(mktemp -d "${TMPDIR:-/tmp}/pgm-gopro-gpx.XXXXXX")" || {
+    echo "$(pgm_ts) GPX: could not create a temp directory for chapter tracks."
+    return 0
+  }
+  for f in "${files[@]}"; do
+    [[ -f "$f" ]] || continue
+    info="$(python3 "$py" info -- "$f" 2>/dev/null || true)"
+    status="${info%% *}"
+    case "$status" in
+      ok)
+        if pgm_gopro_gpx_write_video "$py" "$f" "${tmpdir}/${f##*/}.gpx" >/dev/null; then
+          chapter_gpx+=( "${tmpdir}/${f##*/}.gpx" )
+          (( n_ok++ )) || true
+        else
+          (( n_err++ )) || true
+        fi
+        ;;
+      none) (( n_none++ )) || true ;;
+      nogopro) (( n_nogopro++ )) || true ;;
+      *) (( n_err++ )) || true ;;
+    esac
+  done
+
+  if (( ${#chapter_gpx[@]} >= 1 )) \
+    && pgm_gopro_gpx_concat_chapter_files "$gpx" "${output_file##*/}" "${chapter_gpx[@]}"; then
+    pgm_stamp_gpx_beside_video "$output_file" "$gpx"
+    pgm_log_kv "GPX" "wrote ${gpx##*/} from ${#chapter_gpx[@]} chapter(s) (merged file had no gpmd)"
+    rm -rf -- "$tmpdir"
+    return 0
+  fi
+  rm -rf -- "$tmpdir"
+
+  if (( n_none > 0 && n_ok == 0 && n_nogopro == 0 )); then
+    echo "$(pgm_ts) GPX: chapter files have GoPro telemetry, but no GPS fix — no .gpx written."
+  elif (( n_nogopro > 0 && n_ok == 0 && n_none == 0 )); then
+    echo "$(pgm_ts) GPX: no GoPro GPS telemetry in the merged file or its chapters — no .gpx written."
+  else
+    echo "$(pgm_ts) GPX: no usable GoPro track (ok=${n_ok} none=${n_none} nogopro=${n_nogopro} err=${n_err}) — no .gpx written."
+  fi
+  return 0
+}
+
 # Group 70mai NO* and EV* singles into continuous journeys.
 # Same camera letter, ordered by filename time (the sequence number restarts each day).
 # Sequence +1 and a start gap of about one clip (default 50–90s) stay in one journey.
@@ -6581,8 +6775,11 @@ run_merge_group() {
     apply_merge_output_metadata "$output_file" "${files[0]}" "$meta_label" || true
     if group_is_dashcam "${files[@]}"; then
       echo "$(pgm_ts) Writing GPX beside the merge (if needed) …"
+    else
+      echo "$(pgm_ts) Writing GoPro GPX beside the merge (if telemetry exists) …"
     fi
     dashcam_write_gpx_if_merged "$output_file" "${files[@]}"
+    pgm_write_gopro_gpx_if_merged "$output_file" "${files[@]}"
     echo "$(pgm_ts) Embedding a GPS point in the video if missing …"
     pgm_put_gps "$output_file" "${files[0]}"
     trap ctrl_c INT
