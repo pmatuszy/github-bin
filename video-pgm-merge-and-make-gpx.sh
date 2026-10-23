@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261023.073200 - missing GoPro GPX helper / python3: boxed warning and wait for Enter
 # v. 20261023.072730 - after GoPro merge, write .gpx via video-pgm-gopro-to-gpx.py (merged file, else chapters)
 # v. 20261023.071420 - ask output date/time before the merge; apply after (same metadata rewrite when possible)
 # v. 20261023.070920 - post-merge exiftool: one rewrite for tags+title; progress from *_exiftool_tmp size
@@ -81,6 +82,7 @@
 # v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
 # v. 20260805.154826 - after merge: copy GPS/dates from first chapter; FS times via touch -r
 
+# 2026.10.23 - v. 0.15.98 - if video-pgm-gopro-to-gpx.py or python3 is missing after a GoPro merge, show a boxed warning and wait for Enter (skipped with -y / non-interactive); merge continues without a .gpx
 # 2026.10.23 - v. 0.15.97 - after a non-70mai (GoPro) merge, write a .gpx beside the concat using video-pgm-gopro-to-gpx.py (same helper as video-pgm-gopro-to-gpx.sh): try the merged file first; if mp4_merge dropped the gpmd stream, build from the chapter files; say clearly when there is no GoPro telemetry or no GPS fix
 # 2026.10.23 - v. 0.15.96 - ask which output date/time to use (name / filesystem / media / keep) before mp4_merge starts, using the planned output name and the first chapter; apply that choice after merge (folded into the metadata exiftool rewrite when a date is chosen) so the long merge does not sit in front of the question
 # 2026.10.23 - v. 0.15.95 - post-merge: copy GPS/dates/camera and title in one exiftool rewrite (was two full rewrites of the concat); show a % bar from the growing *_exiftool_tmp vs output size; same progress wrapper for GPS embed and CreateDate writes on large outputs
@@ -1311,6 +1313,60 @@ pgm_print_box_lines() {
     printf '| %-*s |\n' "$width" "$line"
   done
   echo "+${bar}+"
+}
+
+# Wait for Enter (full line). No wait with -y or when not interactive.
+pgm_pause_enter() {
+  local prompt="${1:-Press Enter to continue… }"
+  if (( DO_YES )) || (( ! script_is_run_interactively )); then
+    return 0
+  fi
+  pgm_progress_end
+  printf '%s %s' "$(pgm_ts)" "$prompt"
+  flush_stdin
+  if pgm_read_timeout_is_limited && [[ "$PGM_READ_TIMEOUT" =~ ^[0-9]+$ ]] && (( PGM_READ_TIMEOUT > 0 )); then
+    read -t "$PGM_READ_TIMEOUT" -r _ || true
+  else
+    read -r _ || true
+  fi
+  echo
+}
+
+# Boxed notice that GoPro GPX extract was skipped; pause so it is not missed.
+pgm_notice_gopro_gpx_helper_missing() {
+  local kind="$1"  # py | python3
+  local -a lines=()
+  pgm_progress_end
+  echo
+  case "$kind" in
+    py)
+      lines=(
+        "GoPro GPX helper missing"
+        ""
+        "video-pgm-gopro-to-gpx.py was not found."
+        "Install it next to this script (or beside video-pgm-gopro-to-gpx.sh)."
+        "Merge continues; no .gpx will be written for this group."
+      )
+      ;;
+    python3)
+      lines=(
+        "python3 not found"
+        ""
+        "Cannot run video-pgm-gopro-to-gpx.py without python3."
+        "Merge continues; no .gpx will be written for this group."
+      )
+      ;;
+    *)
+      lines=("GoPro GPX skipped" "" "$kind")
+      ;;
+  esac
+  pgm_print_box_lines "${lines[@]}"
+  echo
+  if (( DO_YES )) || (( ! script_is_run_interactively )); then
+    echo "$(pgm_ts) Continuing without a GoPro GPX (-y / non-interactive)."
+    return 0
+  fi
+  pgm_pause_enter "Press Enter to continue without a GoPro GPX… "
 }
 
 # Encoders this ffmpeg binary can run on a GPU. Empty means the build has none.
@@ -5613,11 +5669,11 @@ pgm_write_gopro_gpx_if_merged() {
   fi
 
   if ! py="$(find_video_pgm_gopro_to_gpx_py)"; then
-    echo "$(pgm_ts) GPX: video-pgm-gopro-to-gpx.py not found — skipped GoPro track extract."
+    pgm_notice_gopro_gpx_helper_missing py
     return 0
   fi
   if ! command -v python3 >/dev/null 2>&1; then
-    echo "$(pgm_ts) GPX: python3 not found — skipped GoPro track extract."
+    pgm_notice_gopro_gpx_helper_missing python3
     return 0
   fi
 
@@ -6775,8 +6831,6 @@ run_merge_group() {
     apply_merge_output_metadata "$output_file" "${files[0]}" "$meta_label" || true
     if group_is_dashcam "${files[@]}"; then
       echo "$(pgm_ts) Writing GPX beside the merge (if needed) …"
-    else
-      echo "$(pgm_ts) Writing GoPro GPX beside the merge (if telemetry exists) …"
     fi
     dashcam_write_gpx_if_merged "$output_file" "${files[@]}"
     pgm_write_gopro_gpx_if_merged "$output_file" "${files[@]}"
