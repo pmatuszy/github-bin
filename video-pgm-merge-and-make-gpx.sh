@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261023.223912 - rename-style GoPro_Hero*_GX chapters parse; GX recording number in session key
 # v. 20261023.121500 - [m] merge-all: ask output date/time for every remaining group before the first merge starts
 # v. 20261023.100500 - invalid prompt keys (e.g. #) are rejected; ask again on seam/delete/media prompts
 # v. 20261023.093500 - size-split session key ignores middle-label word order (S29_Migros vs Migros_S29)
@@ -85,6 +86,7 @@
 # v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
 # v. 20260805.154826 - after merge: copy GPS/dates from first chapter; FS times via touch -r
 
+# 2026.10.23 - v. 0.15.102 - …_GoPro_Hero10_Black_GX013404.mp4: parse camera and GX chapter; size-split groups by GX recording number
 # 2026.10.23 - v. 0.15.101 - [m] Merge all remaining: ask output date/time for each remaining group up front (before any mp4_merge), then reuse those answers when each group runs — was only asking for the first group before the long merge
 # 2026.10.23 - v. 0.15.100 - seam preview / delete-inputs / temp-dir and other single-key media prompts reject keys outside the listed options (e.g. #) and ask again instead of treating them as the default
 # 2026.10.23 - v. 0.15.99 - size-split grouping uses order-independent session tokens (migros-odbior-paczki), not the raw middle string, so S29_-_Migros_… and Migros_-_S29_… chapters that chain by start+duration are merged
@@ -310,10 +312,11 @@ Merge behaviour:
   - Also groups clips without _part_XX names when they look like fixed-size splits:
     same session label, ~4 GB or ~12 GB chapters (~6:49 or longer per chapter); filename times
     that chain, or the same YYYYMMDD_HHMMSS with GX chapter suffixes
-    (e.g. …_GOPRO10_BLACK_GX013496.MP4). After rename.sh, consecutive chapters may differ
-    only in the leading timestamp and share the same middle label, or share one start time with
-    a trailing chapter letter on the time (…_200322a_…) or camera token (…_GOPRO10_BLACKa.MP4).
-    Letter runs a,b,c… on the same timestamp merge like part_01 chapters (any file size).
+    (e.g. …_GOPRO10_BLACK_GX013496.MP4 or …_GoPro_Hero10_Black_GX013496.mp4). After rename.sh,
+    consecutive chapters may differ only in the leading timestamp and share the same middle
+    label, or share one start time with a trailing chapter letter on the time (…_200322a_…)
+    or camera token (…_GOPRO10_BLACKa.MP4). Letter runs a,b,c… on the same timestamp merge
+    like part_01 chapters (any file size).
   - Also groups 70mai-style clips NOYYYYMMDD-HHMMSS-NNNNNNX.MP4 and the same
     name starting with EV (same camera letter) into a continuous journey: ordered
     by filename time, sequence number increases by 1, and the filename start times
@@ -2557,6 +2560,15 @@ gopro_camera_suffix_from_basename() {
     printf '%s\n' "$GOPRO_PARSED_CAM"
     return 0
   fi
+  # rename.sh camera + GX chapter: …_GoPro_Hero10_Black_GX013404.mp4
+  # Must run before the plain GoPro_* match, which would swallow GX into the camera name.
+  if [[ "$base" =~ _(GoPro_[A-Za-z0-9_]+)_([A-Z]{2}[0-9]{4,6})\.[mM][pP]4$ ]]; then
+    GOPRO_PARSED_CAM="${BASH_REMATCH[1]}"
+    if [[ ! "$GOPRO_PARSED_CAM" =~ _(Timewarp|Timelapse)$ ]]; then
+      printf '%s\n' "$GOPRO_PARSED_CAM"
+      return 0
+    fi
+  fi
   # Trailing letter after UPPERCASE model: GOPRO10_BLACKa.MP4 → cam BLACK, letter a
   if [[ "$base" =~ (GOPRO[0-9]+_[A-Z0-9]+)([a-zA-Z])?\.[mM][pP]4$ ]]; then
     GOPRO_PARSED_CAM="${BASH_REMATCH[1]}"
@@ -2626,6 +2638,17 @@ gopro_timestamp_cam_from_basename() {
     GOPRO_TS_CHAPTER="${BASH_REMATCH[7]}"
     return 0
   fi
+  # rename.sh camera + GX: …_GoPro_Hero10_Black_GX013404.mp4
+  if [[ "$base" =~ ^([0-9]{8})_([0-9]{6})([a-zA-Z])?_(.*)_((GoPro_[A-Za-z0-9_]+))_([A-Z]{2}[0-9]{4,6})\.[mM][pP]4$ ]]; then
+    GOPRO_TS_DATE="${BASH_REMATCH[1]}"
+    GOPRO_TS_TIME="${BASH_REMATCH[2]}"
+    GOPRO_TS_LETTER="${BASH_REMATCH[3]}"
+    GOPRO_TS_CAM="${BASH_REMATCH[5]}"
+    GOPRO_TS_CHAPTER="${BASH_REMATCH[7]}"
+    if [[ ! "$GOPRO_TS_CAM" =~ _(Timewarp|Timelapse)$ ]]; then
+      return 0
+    fi
+  fi
   # date_time[letter]_… — call camera parser without $() so GOPRO_CAM_LETTER is not lost in a subshell
   if [[ "$base" =~ ^([0-9]{8})_([0-9]{6})([a-zA-Z])?_ ]]; then
     GOPRO_TS_DATE="${BASH_REMATCH[1]}"
@@ -2642,7 +2665,10 @@ gopro_timestamp_cam_from_basename() {
   if [[ -z "${GOPRO_TS_LETTER}" && -n "${GOPRO_CAM_LETTER:-}" ]]; then
     GOPRO_TS_LETTER="$GOPRO_CAM_LETTER"
   fi
-  GOPRO_TS_CHAPTER=""
+  # If the camera path matched GoPro_*_GXnnnn, recover the chapter token.
+  if [[ -z "${GOPRO_TS_CHAPTER}" ]] && [[ "$base" =~ _([A-Z]{2}[0-9]{4,6})\.[mM][pP]4$ ]]; then
+    GOPRO_TS_CHAPTER="${BASH_REMATCH[1]}"
+  fi
   return 0
 }
 
@@ -2651,6 +2677,8 @@ gopro_middle_from_basename() {
   local base="$1" mid
   gopro_timestamp_cam_from_basename "$base" || return 1
   if [[ "$base" =~ ^[0-9]{8}_[0-9]{6}[a-zA-Z]?_(.*)_((GOPRO[0-9]+_[A-Z0-9]+))_([A-Z]{2}[0-9]{4,6})\.[mM][pP]4$ ]]; then
+    mid="${BASH_REMATCH[1]}"
+  elif [[ "$base" =~ ^[0-9]{8}_[0-9]{6}[a-zA-Z]?_(.*)_((GoPro_[A-Za-z0-9_]+))_([A-Z]{2}[0-9]{4,6})\.[mM][pP]4$ ]]; then
     mid="${BASH_REMATCH[1]}"
   elif [[ "$base" =~ ^[0-9]{8}_[0-9]{6}[a-zA-Z]?_(.*)_(GOPRO[0-9]+_[A-Z0-9]+)_(Timewarp|Timelapse)(_[^./]+)?(_part_[0-9]{2})?(_Proxy)?\.[mM][pP]4$ ]]; then
     mid="${BASH_REMATCH[1]}"
@@ -2677,15 +2705,20 @@ gopro_recording_group_key_from_basename() {
 # Size-split session key: same calendar day + camera + session tokens.
 # Leading HHMMSS may differ. Middle label word order is ignored (Migros_S29 vs S29_Migros)
 # via gopro_session_key_from_basename; raw middle is only a fallback.
+# When a GX/GH chapter token is present, also require the same recording number (last 4 digits)
+# so GX013404…GX033404 stay together and GX013405 does not join them.
 gopro_size_split_session_key_from_basename() {
-  local base="$1" mid sess
+  local base="$1" mid sess rec=""
   gopro_timestamp_cam_from_basename "$base" || return 1
+  if [[ -n "${GOPRO_TS_CHAPTER:-}" && "$GOPRO_TS_CHAPTER" =~ ^[A-Z]{2}([0-9]{2})([0-9]{4})$ ]]; then
+    rec="${BASH_REMATCH[2]}"
+  fi
   if sess=$(gopro_session_key_from_basename "$base" 2>/dev/null) && [[ -n "$sess" ]]; then
-    printf '%s|%s|%s\n' "$GOPRO_TS_DATE" "$GOPRO_TS_CAM" "$sess"
+    printf '%s|%s|%s|%s\n' "$GOPRO_TS_DATE" "$GOPRO_TS_CAM" "$sess" "$rec"
     return 0
   fi
   mid=$(gopro_middle_from_basename "$base" 2>/dev/null) || mid=""
-  printf '%s|%s|%s\n' "$GOPRO_TS_DATE" "$GOPRO_TS_CAM" "$mid"
+  printf '%s|%s|%s|%s\n' "$GOPRO_TS_DATE" "$GOPRO_TS_CAM" "$mid" "$rec"
 }
 
 # Next lowercase letter after $1 (a→b); empty if not a–y.
