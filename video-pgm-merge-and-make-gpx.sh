@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261023.100500 - invalid prompt keys (e.g. #) are rejected; ask again on seam/delete/media prompts
 # v. 20261023.093500 - size-split session key ignores middle-label word order (S29_Migros vs Migros_S29)
 # v. 20261023.073200 - missing GoPro GPX helper / python3: boxed warning and wait for Enter
 # v. 20261023.072730 - after GoPro merge, write .gpx via video-pgm-gopro-to-gpx.py (merged file, else chapters)
@@ -83,6 +84,7 @@
 # v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
 # v. 20260805.154826 - after merge: copy GPS/dates from first chapter; FS times via touch -r
 
+# 2026.10.23 - v. 0.15.100 - seam preview / delete-inputs / temp-dir and other single-key media prompts reject keys outside the listed options (e.g. #) and ask again instead of treating them as the default
 # 2026.10.23 - v. 0.15.99 - size-split grouping uses order-independent session tokens (migros-odbior-paczki), not the raw middle string, so S29_-_Migros_… and Migros_-_S29_… chapters that chain by start+duration are merged
 # 2026.10.23 - v. 0.15.98 - if video-pgm-gopro-to-gpx.py or python3 is missing after a GoPro merge, show a boxed warning and wait for Enter (skipped with -y / non-interactive); merge continues without a .gpx
 # 2026.10.23 - v. 0.15.97 - after a non-70mai (GoPro) merge, write a .gpx beside the concat using video-pgm-gopro-to-gpx.py (same helper as video-pgm-gopro-to-gpx.sh): try the merged file first; if mp4_merge dropped the gpmd stream, build from the chapter files; say clearly when there is no GoPro telemetry or no GPS fix
@@ -818,12 +820,11 @@ prompt_install_mp4_merge_now() {
     echo "  [Y] Yes — download and install mp4_merge to ${MP4_MERGE_INSTALL_DIR} (default)"
     echo "  [n] No — do not install"
     echo "  [q] Quit"
-    pgm_read_key "Install mp4_merge now? [Y/n/q]: " y
-    case "${REPLY,,}" in
-      ''|y) ;;
+    pgm_read_key_choice "Install mp4_merge now? [Y/n/q]: " y "ynq"
+    case "$REPLY" in
+      y) ;;
       n) echo "$(pgm_ts) Not installing mp4_merge."; return 1 ;;
       q) echo "$(pgm_ts) Quit."; return 1 ;;
-      *) echo "$(pgm_ts) Not installing mp4_merge."; return 1 ;;
     esac
   fi
 
@@ -860,35 +861,30 @@ resolve_merger_path_for_merge() {
   if ! mp4_merge_install_dir_writable "${MP4_MERGE_INSTALL_DIR}"; then
     echo "  (${MP4_MERGE_INSTALL_DIR} is not writable — use sudo $(script_live_basename) -u)"
   fi
-  while true; do
-    echo "  [Y] Install to ${MP4_MERGE_INSTALL_DIR} and remove other copies (default)"
-    echo "  [n] Keep using: ${merger}"
-    echo "  [q] Quit"
-    pgm_read_key "Install mp4_merge to ${MP4_MERGE_INSTALL_DIR}? [Y/n/q]: " y
-    choice="${REPLY,,}"
-    case "$choice" in
-      ''|y)
-        dest=$(mp4_merge_install_local_binary "$merger") || return 1
-        dest_abs=$(mp4_merge_abs_path "$dest" 2>/dev/null || printf '%s' "$dest")
-        mp4_merge_collect_extras "$dest_abs"
-        mp4_merge_remove_extras "$dest_abs"
-        echo "$(pgm_ts) mp4_merge is now at ${dest}"
-        printf '%s\n' "$dest"
-        return 0
-        ;;
-      n)
-        printf '%s\n' "$merger"
-        return 0
-        ;;
-      q)
-        echo "$(pgm_ts) Quit."
-        return 2
-        ;;
-      *)
-        echo "$(pgm_ts) Unknown choice: ${REPLY}"
-        ;;
-    esac
-  done
+  echo "  [Y] Install to ${MP4_MERGE_INSTALL_DIR} and remove other copies (default)"
+  echo "  [n] Keep using: ${merger}"
+  echo "  [q] Quit"
+  pgm_read_key_choice "Install mp4_merge to ${MP4_MERGE_INSTALL_DIR}? [Y/n/q]: " y "ynq"
+  choice="$REPLY"
+  case "$choice" in
+    y)
+      dest=$(mp4_merge_install_local_binary "$merger") || return 1
+      dest_abs=$(mp4_merge_abs_path "$dest" 2>/dev/null || printf '%s' "$dest")
+      mp4_merge_collect_extras "$dest_abs"
+      mp4_merge_remove_extras "$dest_abs"
+      echo "$(pgm_ts) mp4_merge is now at ${dest}"
+      printf '%s\n' "$dest"
+      return 0
+      ;;
+    n)
+      printf '%s\n' "$merger"
+      return 0
+      ;;
+    q)
+      echo "$(pgm_ts) Quit."
+      return 2
+      ;;
+  esac
 }
 
 # Sets REPLY to: install | keep | quit
@@ -913,47 +909,49 @@ prompt_mp4_merge_update_action() {
     return 0
   fi
   local choice
-  while true; do
-    case "$state" in
-      missing)
-        echo "  [Y] Download and install to ${MP4_MERGE_INSTALL_DIR} (default)"
-        echo "  [n] Cancel"
-        echo "  [q] Quit"
-        pgm_read_key "mp4_merge not installed — [Y/n/q]: " y
-        ;;
-      latest)
-        echo "  [N] Keep current install (default)"
-        echo "  [y] Re-download and replace anyway"
-        echo "  [q] Quit"
-        pgm_read_key "Already on latest release — [N/y/q]: " n
-        ;;
-      outdated)
-        echo "  [Y] Replace with latest release (default)"
-        echo "  [n] Keep current install"
-        echo "  [q] Quit"
-        pgm_read_key "Update available — [Y/n/q]: " y
-        ;;
-      unknown)
-        echo "  [Y] Replace with latest release from GitHub (default)"
-        echo "  [n] Keep current file"
-        echo "  [q] Quit"
-        pgm_read_key "Installed hash unknown on GitHub — [Y/n/q]: " y
-        ;;
-    esac
-    choice="${REPLY,,}"
-    case "$state:$choice" in
-      missing:''|missing:y) REPLY=install; return 0 ;;
-      missing:n)           REPLY=keep; echo "$(pgm_ts) Install cancelled."; return 0 ;;
-      latest:''|latest:n)  REPLY=keep; return 0 ;;
-      latest:y)            REPLY=install; return 0 ;;
-      outdated:''|outdated:y) REPLY=install; return 0 ;;
-      outdated:n)          REPLY=keep; echo "$(pgm_ts) Keeping current install."; return 0 ;;
-      unknown:''|unknown:y) REPLY=install; return 0 ;;
-      unknown:n)           REPLY=keep; echo "$(pgm_ts) Keeping current file."; return 0 ;;
-      *:q)                 REPLY=quit; return 0 ;;
-      *)                   echo "$(pgm_ts) Unknown choice: ${REPLY}" ;;
-    esac
-  done
+  case "$state" in
+    missing)
+      echo "  [Y] Download and install to ${MP4_MERGE_INSTALL_DIR} (default)"
+      echo "  [n] Cancel"
+      echo "  [q] Quit"
+      pgm_read_key_choice "mp4_merge not installed — [Y/n/q]: " y "ynq"
+      ;;
+    latest)
+      echo "  [N] Keep current install (default)"
+      echo "  [y] Re-download and replace anyway"
+      echo "  [q] Quit"
+      pgm_read_key_choice "Already on latest release — [N/y/q]: " n "ynq"
+      ;;
+    outdated)
+      echo "  [Y] Replace with latest release (default)"
+      echo "  [n] Keep current install"
+      echo "  [q] Quit"
+      pgm_read_key_choice "Update available — [Y/n/q]: " y "ynq"
+      ;;
+    unknown)
+      echo "  [Y] Replace with latest release from GitHub (default)"
+      echo "  [n] Keep current file"
+      echo "  [q] Quit"
+      pgm_read_key_choice "Installed hash unknown on GitHub — [Y/n/q]: " y "ynq"
+      ;;
+    *)
+      REPLY=keep
+      return 0
+      ;;
+  esac
+  choice="$REPLY"
+  case "$state:$choice" in
+    missing:y)  REPLY=install; return 0 ;;
+    missing:n)  REPLY=keep; echo "$(pgm_ts) Install cancelled."; return 0 ;;
+    latest:n)   REPLY=keep; return 0 ;;
+    latest:y)   REPLY=install; return 0 ;;
+    outdated:y) REPLY=install; return 0 ;;
+    outdated:n) REPLY=keep; echo "$(pgm_ts) Keeping current install."; return 0 ;;
+    unknown:y)  REPLY=install; return 0 ;;
+    unknown:n)  REPLY=keep; echo "$(pgm_ts) Keeping current file."; return 0 ;;
+    *:q)        REPLY=quit; return 0 ;;
+    *)          REPLY=keep; return 0 ;;
+  esac
 }
 
 update_mp4_merge() {
@@ -1554,6 +1552,42 @@ pgm_read_key() {
   fi
 }
 
+# Like pgm_read_key, but only accept keys listed in $3 (e.g. "ynasq"). Retries on anything else.
+# Enter uses the default when that default is in the allowed set. Sets REPLY to lowercase.
+pgm_read_key_choice() {
+  local prompt="$1" default="${2:-}" allowed="${3:-}"
+  local answer def_lc allowed_disp
+  allowed="${allowed,,}"
+  def_lc="${default,,}"
+  if [[ -n "$allowed" ]]; then
+    allowed_disp="$(printf '%s' "$allowed" | sed 's/./&,/g; s/,$//')"
+  else
+    allowed_disp="?"
+  fi
+  while true; do
+    pgm_read_key "$prompt" "$default"
+    answer="${REPLY,,}"
+    if (( ! script_is_run_interactively )) || (( DO_YES )); then
+      REPLY="$answer"
+      return 0
+    fi
+    if [[ -z "$allowed" ]]; then
+      REPLY="$answer"
+      return 0
+    fi
+    # Character-class match so keys like * ? [ # cannot slip through as globs.
+    if [[ ${#answer} -eq 1 ]]; then
+      case "$answer" in
+        [$allowed])
+          REPLY="$answer"
+          return 0
+          ;;
+      esac
+    fi
+    echo "$(pgm_ts) I do not understand \"${REPLY}\". Press one of: ${allowed_disp} (or Enter for the default)."
+  done
+}
+
 file_size_bytes() {
   local f="$1"
   if [[ ! -f "$f" ]]; then
@@ -1873,8 +1907,8 @@ prompt_seam_terminal_previews() {
     echo "  [a] Skip all remaining seams"
     echo "  [s] Never play seams for the rest of this run"
     echo "  [q] Quit"
-    pgm_read_key "Play ${ord} seam in terminal (at ${clock})? [Y/n/a/s/q]: " y
-    choice="${REPLY,,}"
+    pgm_read_key_choice "Play ${ord} seam in terminal (at ${clock})? [Y/n/a/s/q]: " y "ynasq"
+    choice="$REPLY"
     case "$choice" in
       y)
         while true; do
@@ -1886,10 +1920,11 @@ prompt_seam_terminal_previews() {
           echo "  [a] Skip all remaining seams"
           echo "  [s] Never play seams for the rest of this run"
           echo "  [q] Quit"
-          pgm_read_key "Repeat ${ord} seam preview (at ${clock})? [y/N/a/s/q]: " n
-          choice="${REPLY,,}"
+          pgm_read_key_choice "Repeat ${ord} seam preview (at ${clock})? [y/N/a/s/q]: " n "ynasq"
+          choice="$REPLY"
           case "$choice" in
             y) continue ;;
+            n) break ;;
             a)
               echo "$(pgm_ts) Skipping remaining seams."
               skip_rest=1
@@ -1902,10 +1937,10 @@ prompt_seam_terminal_previews() {
               break
               ;;
             q) return 2 ;;
-            *) break ;;
           esac
         done
         ;;
+      n) ;;
       a)
         echo "$(pgm_ts) Skipping remaining seams."
         skip_rest=1
@@ -1917,8 +1952,6 @@ prompt_seam_terminal_previews() {
         ;;
       q)
         return 2
-        ;;
-      *)
         ;;
     esac
     (( skip_rest )) && break
@@ -3980,9 +4013,10 @@ pgm_decide_output_times() {
   done
   echo "  [q] Quit"
   keys+="/q"
+  local allowed_keys="${keys//\/}"
   while true; do
-    pgm_read_key "Output times [${keys}] (default ${def}): " "$def"
-    choice="${REPLY,,}"
+    pgm_read_key_choice "Output times [${keys}] (default ${def}): " "$def" "$allowed_keys"
+    choice="$REPLY"
     case "$choice" in
       q) pgm_clear_pending_output_times; return 2 ;;
     esac
@@ -4004,7 +4038,6 @@ pgm_decide_output_times() {
       echo "$(pgm_ts) Will set output times from ${labels[i]} after merge: $(pgm_format_epoch_display "${epochs[i]}")"
       return 0
     fi
-    echo "$(pgm_ts) Unknown choice: ${REPLY}."
   done
 }
 
@@ -5114,14 +5147,11 @@ dashcam_warn_no_gps() {
     return 1
   fi
   echo "  [c] Continue anyway. Merge the videos, and do not write a GPX"
-  while true; do
-    pgm_read_key "Quit? [Q/c]: " q
-    case "${REPLY,,}" in
-      q) echo "$(pgm_ts) Quit."; return 1 ;;
-      c) echo "$(pgm_ts) Continue anyway. GPX files will not be created."; return 0 ;;
-      *) echo "That is not a choice." ;;
-    esac
-  done
+  pgm_read_key_choice "Quit? [Q/c]: " q "qc"
+  case "$REPLY" in
+    q) echo "$(pgm_ts) Quit."; return 1 ;;
+    c) echo "$(pgm_ts) Continue anyway. GPX files will not be created."; return 0 ;;
+  esac
 }
 
 # 0 when $1 is a non-empty GPX track (at least one point).
@@ -6244,8 +6274,8 @@ prompt_delete_merged_inputs() {
   echo "  [N] No — keep input files (default)"
   echo "  [k] Never delete input files for the rest of this run"
   echo "  [q] Quit"
-  pgm_read_key "Delete inputs? [y/N/k/q]: " n
-  choice="${REPLY,,}"
+  pgm_read_key_choice "Delete inputs? [y/N/k/q]: " n "ynkq"
+  choice="$REPLY"
   case "$choice" in
     y)
       prompt_confirm_delete_inputs "${files[@]}"
@@ -6264,6 +6294,10 @@ prompt_delete_merged_inputs() {
       done
       return 0
       ;;
+    n)
+      echo "$(pgm_ts) Input files kept."
+      return 0
+      ;;
     k)
       KEEP_INPUTS_FOR_RUN=1
       echo "$(pgm_ts) Input files kept for the rest of this run."
@@ -6272,10 +6306,6 @@ prompt_delete_merged_inputs() {
     q)
       echo "$(pgm_ts) Quit."
       return 2
-      ;;
-    *)
-      echo "$(pgm_ts) Input files kept."
-      return 0
       ;;
   esac
 }
@@ -6292,17 +6322,17 @@ prompt_confirm_delete_inputs() {
   echo "  [y] Yes — delete these input files"
   echo "  [N] No — keep input files (default)"
   echo "  [q] Quit"
-  pgm_read_key "Delete these input files? [y/N/q]: " n
-  choice="${REPLY,,}"
+  pgm_read_key_choice "Delete these input files? [y/N/q]: " n "ynq"
+  choice="$REPLY"
   case "$choice" in
     y) return 0 ;;
+    n)
+      echo "$(pgm_ts) Input files kept."
+      return 1
+      ;;
     q)
       echo "$(pgm_ts) Quit."
       return 2
-      ;;
-    *)
-      echo "$(pgm_ts) Input files kept."
-      return 1
       ;;
   esac
 }
@@ -6546,14 +6576,14 @@ prompt_merge_all_temp_dir() {
     echo "  [p] Type another temp directory"
     echo "  [N] Write the outputs in this directory (default)"
     echo "  [q] Quit"
-    pgm_read_key "Temp directory for the remaining groups? [p/N/q]: " n
-    case "${REPLY,,}" in
+    pgm_read_key_choice "Temp directory for the remaining groups? [p/N/q]: " n "pnq"
+    case "$REPLY" in
       q)
         echo "$(pgm_ts) Quit."
         return 2
         ;;
       p) ;;
-      *)
+      n)
         MERGE_IN_PLACE_FOR_RUN=1
         echo "$(pgm_ts) Writing in this directory for this merge and the rest of this run."
         return 0
@@ -6606,23 +6636,20 @@ prompt_merge_all_temp_dir() {
     echo "  [n] No — write the outputs in this directory"
   fi
   echo "  [q] Quit"
-  while true; do
-    pgm_read_key "Merge via ${tdir} for the remaining groups? [${prompt_key}]: " "$default_key"
-    choice="${REPLY,,}"
-    case "$choice" in
-      q)
-        echo "$(pgm_ts) Quit."
-        return 2
-        ;;
-      y) break ;;
-      n|'')
-        MERGE_IN_PLACE_FOR_RUN=1
-        echo "$(pgm_ts) Writing in this directory for this merge and the rest of this run."
-        return 0
-        ;;
-      *) echo "$(pgm_ts) Unknown choice: ${REPLY}" ;;
-    esac
-  done
+  pgm_read_key_choice "Merge via ${tdir} for the remaining groups? [${prompt_key}]: " "$default_key" "ynq"
+  choice="$REPLY"
+  case "$choice" in
+    q)
+      echo "$(pgm_ts) Quit."
+      return 2
+      ;;
+    y) ;;
+    n)
+      MERGE_IN_PLACE_FOR_RUN=1
+      echo "$(pgm_ts) Writing in this directory for this merge and the rest of this run."
+      return 0
+      ;;
+  esac
   MERGE_TEMP_FOR_RUN="$tdir"
   echo "$(pgm_ts) Using ${tdir} for this merge and the rest of this run."
   if ! merge_open_temp_work "$tdir" "$final"; then
@@ -6682,8 +6709,8 @@ choose_merge_output_path() {
     echo "  [N] Write the output in this directory (default)"
     echo "  [r] Write in this directory for the rest of this run"
     echo "  [q] Quit"
-    pgm_read_key "Temp directory? [p/N/r/q]: " n
-    case "${REPLY,,}" in
+    pgm_read_key_choice "Temp directory? [p/N/r/q]: " n "pnrq"
+    case "$REPLY" in
       q)
         echo "$(pgm_ts) Quit."
         return 2
@@ -6694,7 +6721,7 @@ choose_merge_output_path() {
         return 0
         ;;
       p) ;;
-      *)
+      n)
         echo "$(pgm_ts) Writing the output in this directory."
         return 0
         ;;
@@ -6740,29 +6767,25 @@ choose_merge_output_path() {
     echo "  [r] No — write in this directory for the rest of this run as well"
   fi
   echo "  [q] Quit"
-  while true; do
-    pgm_read_key "Merge via ${tdir}? [${prompt_key}]: " "$default_key"
-    choice="${REPLY,,}"
-    case "$choice" in
-      q)
-        echo "$(pgm_ts) Quit."
-        return 2
-        ;;
-      d)
-        MERGE_TEMP_FOR_RUN="$tdir"
-        echo "$(pgm_ts) Using ${tdir} for this merge and the rest of this run."
-        break
-        ;;
-      r)
-        MERGE_IN_PLACE_FOR_RUN=1
-        echo "$(pgm_ts) Writing in this directory for this merge and the rest of this run."
-        return 0
-        ;;
-      y) break ;;
-      n|'') return 0 ;;
-      *) echo "$(pgm_ts) Unknown choice: ${REPLY}" ;;
-    esac
-  done
+  pgm_read_key_choice "Merge via ${tdir}? [${prompt_key}]: " "$default_key" "ydnrq"
+  choice="$REPLY"
+  case "$choice" in
+    q)
+      echo "$(pgm_ts) Quit."
+      return 2
+      ;;
+    d)
+      MERGE_TEMP_FOR_RUN="$tdir"
+      echo "$(pgm_ts) Using ${tdir} for this merge and the rest of this run."
+      ;;
+    r)
+      MERGE_IN_PLACE_FOR_RUN=1
+      echo "$(pgm_ts) Writing in this directory for this merge and the rest of this run."
+      return 0
+      ;;
+    y) ;;
+    n) return 0 ;;
+  esac
   if ! merge_open_temp_work "$tdir" "$final"; then
     echo "$(pgm_ts) Could not create a temp directory in ${tdir}; writing here." >&2
     return 0
@@ -6956,104 +6979,98 @@ prompt_merge_group_action() {
     REPLY=skip
     return 0
   fi
-  while true; do
-    if (( complete )); then
-      echo "  [N] Skip — keep output and input files (default)"
-      echo "  [a] Already merged — don't ask again this run"
-      echo "  [r] Redo merge — replace output file"
-      echo "  [p] Preview merge seams in terminal"
-      echo "  [d] Delete input chapter files — keep merged output; you confirm before delete"
-      echo "  [q] Quit"
-      pgm_read_key "Already merged — group ${group_num}/${group_total} [N/a/r/p/d/q]: " n
-      choice="${REPLY,,}"
-      case "$choice" in
-        ''|n)  REPLY=skip; pgm_log_kv "Action" "Keeping existing output and inputs."; return 0 ;;
-        a)
-          SKIP_MERGED_PROMPTS=1
-          echo "$(pgm_ts) Already-merged groups will not be asked about again this run."
-          REPLY=skip
-          pgm_log_kv "Action" "Keeping existing output and inputs."
-          return 0
-          ;;
-        r)     REPLY=redo; return 0 ;;
-        p)     REPLY=preview_seams; return 0 ;;
-        d)     REPLY=delete_inputs; return 0 ;;
-        q)     REPLY=quit; return 0 ;;
-        *)     echo "$(pgm_ts) Unknown choice: ${REPLY}" ;;
-      esac
-    elif (( output_exists && can_gpx )); then
-      echo "  [Y] Generate the GPX beside the merged file (default)"
-      echo "  [n] Skip — leave the merged file without a GPX"
-      echo "  [r] Redo merge — replace output file"
-      echo "  [p] Preview merge seams in terminal"
-      echo "  [d] Delete input chapter files — keep merged output; you confirm before delete"
-      echo "  [a] Skip all remaining groups"
-      echo "  [q] Quit"
-      if (( short_n )); then
-        pgm_read_key "Short clip in this group. Generate the GPX anyway? [Y/n/r/p/d/a/q]: " y
-      else
-        pgm_read_key "No GPX beside the merged file — group ${group_num}/${group_total} [Y/n/r/p/d/a/q]: " y
-      fi
-      choice="${REPLY,,}"
-      case "$choice" in
-        ''|y)  REPLY=write_gpx; return 0 ;;
-        n)     REPLY=skip; pgm_log_kv "Action" "Leaving the merged file without a GPX."; return 0 ;;
-        r)     REPLY=redo; return 0 ;;
-        p)     REPLY=preview_seams; return 0 ;;
-        d)     REPLY=delete_inputs; return 0 ;;
-        a)     REPLY=skip_all; return 0 ;;
-        q)     REPLY=quit; return 0 ;;
-        *)     echo "$(pgm_ts) Unknown choice: ${REPLY}" ;;
-      esac
-    elif (( output_exists )); then
-      if (( ! gpx_ok )); then
-        echo "$(pgm_ts) Merged file is here, but the GPX is missing and there is no GPSData*.txt to build it."
-      fi
-      echo "  [N] Skip — keep output and input files (default)"
-      echo "  [a] Already merged — don't ask again this run"
-      echo "  [r] Redo merge — replace output file"
-      echo "  [p] Preview merge seams in terminal"
-      echo "  [d] Delete input chapter files — keep merged output; you confirm before delete"
-      echo "  [q] Quit"
-      pgm_read_key "Already merged — group ${group_num}/${group_total} [N/a/r/p/d/q]: " n
-      choice="${REPLY,,}"
-      case "$choice" in
-        ''|n)  REPLY=skip; pgm_log_kv "Action" "Keeping existing output and inputs."; return 0 ;;
-        a)
-          SKIP_MERGED_PROMPTS=1
-          echo "$(pgm_ts) Already-merged groups will not be asked about again this run."
-          REPLY=skip
-          pgm_log_kv "Action" "Keeping existing output and inputs."
-          return 0
-          ;;
-        r)     REPLY=redo; return 0 ;;
-        p)     REPLY=preview_seams; return 0 ;;
-        d)     REPLY=delete_inputs; return 0 ;;
-        q)     REPLY=quit; return 0 ;;
-        *)     echo "$(pgm_ts) Unknown choice: ${REPLY}" ;;
-      esac
+  if (( complete )); then
+    echo "  [N] Skip — keep output and input files (default)"
+    echo "  [a] Already merged — don't ask again this run"
+    echo "  [r] Redo merge — replace output file"
+    echo "  [p] Preview merge seams in terminal"
+    echo "  [d] Delete input chapter files — keep merged output; you confirm before delete"
+    echo "  [q] Quit"
+    pgm_read_key_choice "Already merged — group ${group_num}/${group_total} [N/a/r/p/d/q]: " n "narpdq"
+    choice="$REPLY"
+    case "$choice" in
+      n)  REPLY=skip; pgm_log_kv "Action" "Keeping existing output and inputs."; return 0 ;;
+      a)
+        SKIP_MERGED_PROMPTS=1
+        echo "$(pgm_ts) Already-merged groups will not be asked about again this run."
+        REPLY=skip
+        pgm_log_kv "Action" "Keeping existing output and inputs."
+        return 0
+        ;;
+      r)  REPLY=redo; return 0 ;;
+      p)  REPLY=preview_seams; return 0 ;;
+      d)  REPLY=delete_inputs; return 0 ;;
+      q)  REPLY=quit; return 0 ;;
+    esac
+  elif (( output_exists && can_gpx )); then
+    echo "  [Y] Generate the GPX beside the merged file (default)"
+    echo "  [n] Skip — leave the merged file without a GPX"
+    echo "  [r] Redo merge — replace output file"
+    echo "  [p] Preview merge seams in terminal"
+    echo "  [d] Delete input chapter files — keep merged output; you confirm before delete"
+    echo "  [a] Skip all remaining groups"
+    echo "  [q] Quit"
+    if (( short_n )); then
+      pgm_read_key_choice "Short clip in this group. Generate the GPX anyway? [Y/n/r/p/d/a/q]: " y "ynrpdaq"
     else
-      echo "  [Y] Merge this group (default)"
-      echo "  [n] Skip this group"
-      echo "  [a] Skip all remaining groups"
-      echo "  [m] Merge all remaining groups"
-      echo "  [q] Quit"
-      if (( short_n )); then
-        pgm_read_key "Short clip in this group. Merge anyway? [Y/n/a/m/q]: " y
-      else
-        pgm_read_key "Choice for group ${group_num}/${group_total} [Y/n/a/m/q]: " y
-      fi
-      choice="${REPLY,,}"
-      case "$choice" in
-        ''|y)  REPLY=merge; return 0 ;;
-        n)     REPLY=skip; return 0 ;;
-        a)     REPLY=skip_all; return 0 ;;
-        m)     REPLY=merge_all; return 0 ;;
-        q)     REPLY=quit; return 0 ;;
-        *)     echo "$(pgm_ts) Unknown choice: ${REPLY}" ;;
-      esac
+      pgm_read_key_choice "No GPX beside the merged file — group ${group_num}/${group_total} [Y/n/r/p/d/a/q]: " y "ynrpdaq"
     fi
-  done
+    choice="$REPLY"
+    case "$choice" in
+      y)  REPLY=write_gpx; return 0 ;;
+      n)  REPLY=skip; pgm_log_kv "Action" "Leaving the merged file without a GPX."; return 0 ;;
+      r)  REPLY=redo; return 0 ;;
+      p)  REPLY=preview_seams; return 0 ;;
+      d)  REPLY=delete_inputs; return 0 ;;
+      a)  REPLY=skip_all; return 0 ;;
+      q)  REPLY=quit; return 0 ;;
+    esac
+  elif (( output_exists )); then
+    if (( ! gpx_ok )); then
+      echo "$(pgm_ts) Merged file is here, but the GPX is missing and there is no GPSData*.txt to build it."
+    fi
+    echo "  [N] Skip — keep output and input files (default)"
+    echo "  [a] Already merged — don't ask again this run"
+    echo "  [r] Redo merge — replace output file"
+    echo "  [p] Preview merge seams in terminal"
+    echo "  [d] Delete input chapter files — keep merged output; you confirm before delete"
+    echo "  [q] Quit"
+    pgm_read_key_choice "Already merged — group ${group_num}/${group_total} [N/a/r/p/d/q]: " n "narpdq"
+    choice="$REPLY"
+    case "$choice" in
+      n)  REPLY=skip; pgm_log_kv "Action" "Keeping existing output and inputs."; return 0 ;;
+      a)
+        SKIP_MERGED_PROMPTS=1
+        echo "$(pgm_ts) Already-merged groups will not be asked about again this run."
+        REPLY=skip
+        pgm_log_kv "Action" "Keeping existing output and inputs."
+        return 0
+        ;;
+      r)  REPLY=redo; return 0 ;;
+      p)  REPLY=preview_seams; return 0 ;;
+      d)  REPLY=delete_inputs; return 0 ;;
+      q)  REPLY=quit; return 0 ;;
+    esac
+  else
+    echo "  [Y] Merge this group (default)"
+    echo "  [n] Skip this group"
+    echo "  [a] Skip all remaining groups"
+    echo "  [m] Merge all remaining groups"
+    echo "  [q] Quit"
+    if (( short_n )); then
+      pgm_read_key_choice "Short clip in this group. Merge anyway? [Y/n/a/m/q]: " y "ynamq"
+    else
+      pgm_read_key_choice "Choice for group ${group_num}/${group_total} [Y/n/a/m/q]: " y "ynamq"
+    fi
+    choice="$REPLY"
+    case "$choice" in
+      y)  REPLY=merge; return 0 ;;
+      n)  REPLY=skip; return 0 ;;
+      a)  REPLY=skip_all; return 0 ;;
+      m)  REPLY=merge_all; return 0 ;;
+      q)  REPLY=quit; return 0 ;;
+    esac
+  fi
 }
 
 # Recording-time sort key: filename YYYYMMDD_HHMMSS when present, else filesystem mtime.
@@ -7313,14 +7330,8 @@ dashcam_offer_gpx_only() {
     choice=g
     echo "$(pgm_ts) Create only these GPX files."
   else
-    while true; do
-      pgm_read_key "Create only these GPX files? [G/e/n/q]: " g
-      choice="${REPLY,,}"
-      case "$choice" in
-        g|e|n|q) break ;;
-        *) echo "That is not a choice." ;;
-      esac
-    done
+    pgm_read_key_choice "Create only these GPX files? [G/e/n/q]: " g "genq"
+    choice="$REPLY"
   fi
   case "$choice" in
     g)
@@ -7342,26 +7353,21 @@ dashcam_offer_gpx_only() {
         echo "  [Y] Create this GPX (default)"
         echo "  [n] Skip this file"
         echo "  [q] Quit"
-        while true; do
-          pgm_read_key "Create this GPX? [Y/n/q]: " y
-          case "${REPLY,,}" in
-            y)
-              dashcam_write_gpx_from_concat "${gpx_outs[$i]}"
-              _skip["${gpx_outs[$i]##*/}"]=1
-              break
-              ;;
-            n)
-              _skip["${gpx_outs[$i]##*/}"]=1
-              echo "$(pgm_ts) Skipped ${gpx_outs[$i]##*/}."
-              break
-              ;;
-            q)
-              echo "$(pgm_ts) Quit."
-              return 1
-              ;;
-            *) echo "That is not a choice." ;;
-          esac
-        done
+        pgm_read_key_choice "Create this GPX? [Y/n/q]: " y "ynq"
+        case "$REPLY" in
+          y)
+            dashcam_write_gpx_from_concat "${gpx_outs[$i]}"
+            _skip["${gpx_outs[$i]##*/}"]=1
+            ;;
+          n)
+            _skip["${gpx_outs[$i]##*/}"]=1
+            echo "$(pgm_ts) Skipped ${gpx_outs[$i]##*/}."
+            ;;
+          q)
+            echo "$(pgm_ts) Quit."
+            return 1
+            ;;
+        esac
       done
       if (( any_clips )); then
         echo "$(pgm_ts) Each file that still has its clips will be asked about."
