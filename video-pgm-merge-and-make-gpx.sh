@@ -1,4 +1,6 @@
 #!/bin/bash
+# v. 20261024.173852 - size-split: same GoPro Media UID (exiftool) groups chapters (bare + GX02…)
+# v. 20261024.173511 - no-GX GoPro_Hero*_Black.mp4 joins size-split when GX01 is missing (same day/cam/session)
 # v. 20261023.223912 - rename-style GoPro_Hero*_GX chapters parse; GX recording number in session key
 # v. 20261023.121500 - [m] merge-all: ask output date/time for every remaining group before the first merge starts
 # v. 20261023.100500 - invalid prompt keys (e.g. #) are rejected; ask again on seam/delete/media prompts
@@ -86,6 +88,8 @@
 # v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
 # v. 20260805.154826 - after merge: copy GPS/dates from first chapter; FS times via touch -r
 
+# 2026.10.24 - v. 0.15.104 - size-split grouping also uses GoPro Media UID from exiftool (same UID across chapters of one recording, including bare …_GoPro_Hero10_Black.mp4 vs …_GX02…); batch-loaded with CreateDate; different UIDs refuse to merge even if filenames look related
+# 2026.10.24 - v. 0.15.103 - bare …_GoPro_Hero10_Black.mp4 (no GX) joins a size-split run of …_GX02nnnn… when GX01 is missing: empty recording-id in the session key is compatible with a GX recording id, then the run locks to that id so a later GX session that day does not glue on
 # 2026.10.23 - v. 0.15.102 - …_GoPro_Hero10_Black_GX013404.mp4: parse camera and GX chapter; size-split groups by GX recording number
 # 2026.10.23 - v. 0.15.101 - [m] Merge all remaining: ask output date/time for each remaining group up front (before any mp4_merge), then reuse those answers when each group runs — was only asking for the first group before the long merge
 # 2026.10.23 - v. 0.15.100 - seam preview / delete-inputs / temp-dir and other single-key media prompts reject keys outside the listed options (e.g. #) and ask again instead of treating them as the default
@@ -312,7 +316,10 @@ Merge behaviour:
   - Also groups clips without _part_XX names when they look like fixed-size splits:
     same session label, ~4 GB or ~12 GB chapters (~6:49 or longer per chapter); filename times
     that chain, or the same YYYYMMDD_HHMMSS with GX chapter suffixes
-    (e.g. …_GOPRO10_BLACK_GX013496.MP4 or …_GoPro_Hero10_Black_GX013496.mp4). After rename.sh,
+    (e.g. …_GOPRO10_BLACK_GX013496.MP4 or …_GoPro_Hero10_Black_GX013496.mp4).
+    A bare …_GoPro_Hero10_Black.mp4 (no GX) is treated as chapter 01 when GX01 is
+    missing and the rest of the run is GX02… of the same recording (same GoPro
+    Media UID from exiftool when present, else filename session key). After rename.sh,
     consecutive chapters may differ only in the leading timestamp and share the same middle
     label, or share one start time with a trailing chapter letter on the time (…_200322a_…)
     or camera token (…_GOPRO10_BLACKa.MP4). Letter runs a,b,c… on the same timestamp merge
@@ -1103,8 +1110,9 @@ SKIP_MERGED_PROMPTS=0
 declare -A PGM_HYBRID_START_EPOCH=()
 declare -A PGM_HYBRID_START_SRC=()
 PGM_HYBRID_START_MEDIA_N=0
-# CreateDate / ffprobe caches for the chapter-plan pass (path → value; empty = known miss).
+# CreateDate / Media UID / ffprobe caches for the chapter-plan pass (path → value; empty = known miss).
 declare -A PGM_MEDIA_CREATEDATE_EPOCH=()
+declare -A PGM_GOPRO_MEDIA_UID=()
 declare -A PGM_FFPROBE_DUR_CACHE=()
 # 1 while a \r progress line is active on stdout (tty).
 PGM_PROGRESS_ACTIVE=0
@@ -2707,6 +2715,8 @@ gopro_recording_group_key_from_basename() {
 # via gopro_session_key_from_basename; raw middle is only a fallback.
 # When a GX/GH chapter token is present, also require the same recording number (last 4 digits)
 # so GX013404…GX033404 stay together and GX013405 does not join them.
+# Bare …_GoPro_Hero10_Black.mp4 (no GX) gets an empty recording field; see
+# gopro_size_split_session_keys_compatible.
 gopro_size_split_session_key_from_basename() {
   local base="$1" mid sess rec=""
   gopro_timestamp_cam_from_basename "$base" || return 1
@@ -2719,6 +2729,32 @@ gopro_size_split_session_key_from_basename() {
   fi
   mid=$(gopro_middle_from_basename "$base" 2>/dev/null) || mid=""
   printf '%s|%s|%s|%s\n' "$GOPRO_TS_DATE" "$GOPRO_TS_CAM" "$mid" "$rec"
+}
+
+# True when two size-split session keys refer to the same day/camera/session.
+# An empty recording id (no GX/GH token) is compatible with any recording id; once both
+# sides have a recording id they must match. Callers should lock the run key to the first
+# non-empty recording id so a later GX session that day does not keep matching.
+gopro_size_split_session_keys_compatible() {
+  local a="$1" b="$2"
+  local a_date a_cam a_sess a_rec b_date b_cam b_sess b_rec
+  [[ -n "$a" && -n "$b" ]] || return 1
+  [[ "$a" == "$b" ]] && return 0
+  IFS='|' read -r a_date a_cam a_sess a_rec <<<"$a"
+  IFS='|' read -r b_date b_cam b_sess b_rec <<<"$b"
+  [[ "$a_date" == "$b_date" && "$a_cam" == "$b_cam" && "$a_sess" == "$b_sess" ]] || return 1
+  [[ -z "$a_rec" || -z "$b_rec" || "$a_rec" == "$b_rec" ]]
+}
+
+# GoPro chapter number from GX/GH token (GX023379 → 2), or 0 if none.
+gopro_gx_chapter_number_from_basename() {
+  local base="$1" ch
+  ch=$(gopro_chapter_suffix_from_basename "$base" 2>/dev/null) || { printf '0\n'; return 0; }
+  if [[ "$ch" =~ ^[A-Z]{2}([0-9]{2})[0-9]{4}$ ]]; then
+    printf '%d\n' "$((10#${BASH_REMATCH[1]}))"
+    return 0
+  fi
+  printf '0\n'
 }
 
 # Next lowercase letter after $1 (a→b); empty if not a–y.
@@ -3705,12 +3741,47 @@ pgm_media_createdate_epoch() {
   return 1
 }
 
-# Batch-fill PGM_MEDIA_CREATEDATE_EPOCH for many files (chunked exiftool + progress).
+# Normalize a GoPro Media UID string (lowercase hex); empty if unusable.
+pgm_normalize_gopro_media_uid() {
+  local raw="$1"
+  raw="${raw//$'\r'/}"
+  raw="${raw#"${raw%%[![:space:]]*}"}"
+  raw="${raw%"${raw##*[![:space:]]}"}"
+  [[ -n "$raw" && "$raw" != "-" && "$raw" != "0" ]] || return 1
+  # All zeros / placeholder
+  [[ "$raw" =~ ^0+$ ]] && return 1
+  printf '%s\n' "${raw,,}"
+}
+
+# GoPro Media UID for a file (cached). Same value across size-split chapters of one recording.
+pgm_gopro_media_uid() {
+  local f="$1" key exif raw
+  [[ -n "$f" && -f "$f" ]] || return 1
+  key="$(readlink -f -- "$f" 2>/dev/null || printf '%s' "$f")"
+  if [[ -n "${PGM_GOPRO_MEDIA_UID[$key]+x}" ]]; then
+    raw="${PGM_GOPRO_MEDIA_UID[$key]}"
+    [[ -n "$raw" ]] || return 1
+    printf '%s\n' "$raw"
+    return 0
+  fi
+  exif="$(resolve_pgm_exiftool 2>/dev/null)" || return 1
+  raw="$("$exif" -api largefilesupport=1 -s3 -MediaUID -- "$f" 2>/dev/null | head -n1 | tr -d '\r')"
+  if raw="$(pgm_normalize_gopro_media_uid "$raw" 2>/dev/null)"; then
+    PGM_GOPRO_MEDIA_UID[$key]="$raw"
+    printf '%s\n' "$raw"
+    return 0
+  fi
+  PGM_GOPRO_MEDIA_UID[$key]=""
+  return 1
+}
+
+# Batch-fill CreateDate + GoPro Media UID (chunked exiftool + progress).
 pgm_media_createdate_batch_fill() {
   local -a files=("$@")
-  local exif n i chunk_end f key path raw e line
+  local exif n i chunk_end f key path raw e line rest uid
   local chunk_size=12
   local -a chunk=()
+  local need_cd=0 need_uid=0
   n=${#files[@]}
   (( n > 0 )) || return 0
   exif="$(resolve_pgm_exiftool 2>/dev/null)" || return 1
@@ -3724,37 +3795,58 @@ pgm_media_createdate_batch_fill() {
       (( i++ )) || true
       [[ -f "$f" ]] || continue
       key="$(readlink -f -- "$f" 2>/dev/null || printf '%s' "$f")"
-      if [[ -n "${PGM_MEDIA_CREATEDATE_EPOCH[$key]+x}" ]]; then
-        continue
-      fi
+      need_cd=0
+      need_uid=0
+      [[ -z "${PGM_MEDIA_CREATEDATE_EPOCH[$key]+x}" ]] && need_cd=1
+      [[ -z "${PGM_GOPRO_MEDIA_UID[$key]+x}" ]] && need_uid=1
+      (( need_cd || need_uid )) || continue
       chunk+=( "$f" )
     done
     (( ${#chunk[@]} )) || {
-      pgm_progress_update "CreateDate" "$chunk_end" "$n" ""
+      pgm_progress_update "Media tags" "$chunk_end" "$n" ""
       continue
     }
-    pgm_progress_update "CreateDate" "$chunk_end" "$n" "${chunk[-1]}"
+    pgm_progress_update "Media tags" "$chunk_end" "$n" "${chunk[-1]}"
     while IFS= read -r line; do
       line="${line//$'\r'/}"
       [[ "$line" == *$'\t'* ]] || continue
       path="${line%%$'\t'*}"
-      raw="${line#*$'\t'}"
+      rest="${line#*$'\t'}"
       [[ -n "$path" ]] || continue
       key="$(readlink -f -- "$path" 2>/dev/null || printf '%s' "$path")"
-      if e="$(pgm_createdate_raw_to_epoch "$raw" 2>/dev/null)"; then
-        PGM_MEDIA_CREATEDATE_EPOCH[$key]="$e"
+      if [[ "$rest" == *$'\t'* ]]; then
+        raw="${rest%%$'\t'*}"
+        uid="${rest#*$'\t'}"
       else
-        PGM_MEDIA_CREATEDATE_EPOCH[$key]=""
+        raw="$rest"
+        uid=""
+      fi
+      if [[ -z "${PGM_MEDIA_CREATEDATE_EPOCH[$key]+x}" ]]; then
+        if e="$(pgm_createdate_raw_to_epoch "$raw" 2>/dev/null)"; then
+          PGM_MEDIA_CREATEDATE_EPOCH[$key]="$e"
+        else
+          PGM_MEDIA_CREATEDATE_EPOCH[$key]=""
+        fi
+      fi
+      if [[ -z "${PGM_GOPRO_MEDIA_UID[$key]+x}" ]]; then
+        if uid="$(pgm_normalize_gopro_media_uid "$uid" 2>/dev/null)"; then
+          PGM_GOPRO_MEDIA_UID[$key]="$uid"
+        else
+          PGM_GOPRO_MEDIA_UID[$key]=""
+        fi
       fi
     done < <(
       "$exif" -api largefilesupport=1 -api QuickTimeUTC=1 -q -q -f \
-        -d '%Y-%m-%d %H:%M:%S' -p '$FilePath${tab}$CreateDate' -- "${chunk[@]}" 2>/dev/null
+        -d '%Y-%m-%d %H:%M:%S' -p '$FilePath${tab}$CreateDate${tab}$MediaUID' -- "${chunk[@]}" 2>/dev/null
     )
     # Mark any chunk files exiftool omitted as known misses.
     for f in "${chunk[@]}"; do
       key="$(readlink -f -- "$f" 2>/dev/null || printf '%s' "$f")"
       if [[ -z "${PGM_MEDIA_CREATEDATE_EPOCH[$key]+x}" ]]; then
         PGM_MEDIA_CREATEDATE_EPOCH[$key]=""
+      fi
+      if [[ -z "${PGM_GOPRO_MEDIA_UID[$key]+x}" ]]; then
+        PGM_GOPRO_MEDIA_UID[$key]=""
       fi
     done
   done
@@ -3766,15 +3858,16 @@ pgm_hybrid_start_cache_clear() {
   PGM_HYBRID_START_SRC=()
   PGM_HYBRID_START_MEDIA_N=0
   PGM_MEDIA_CREATEDATE_EPOCH=()
+  PGM_GOPRO_MEDIA_UID=()
 }
 
-# Warm hybrid starts for chapter planning (batch CreateDate, then per-file resolve).
+# Warm hybrid starts for chapter planning (batch CreateDate + Media UID, then per-file resolve).
 pgm_hybrid_preload_files() {
   local -a files=("$@")
   local n i f
   n=${#files[@]}
   (( n > 0 )) || return 0
-  echo "$(pgm_ts) Reading clip start times (${n} file(s); filename + CreateDate when needed)…"
+  echo "$(pgm_ts) Reading clip start times (${n} file(s); filename + CreateDate + Media UID when needed)…"
   pgm_media_createdate_batch_fill "${files[@]}" || true
   i=0
   for f in "${files[@]}"; do
@@ -4359,9 +4452,16 @@ build_size_split_groups() {
       (( i++ )) || true
       continue
     fi
-    local run_cam run_group_key
+    local run_cam run_group_key next_key next_ch run_has_gx01=0
+    local run_uid="" next_uid=""
+    local rf rb
+    local -a without_bare=()
     run_cam=$(gopro_camera_from_basename "${singles[i]##*/}")
     run_group_key=$(gopro_size_split_session_key_from_basename "${singles[i]##*/}" 2>/dev/null) || run_group_key=""
+    run_uid=$(pgm_gopro_media_uid "${singles[i]}" 2>/dev/null) || run_uid=""
+    if (( $(gopro_gx_chapter_number_from_basename "${singles[i]##*/}") == 1 )); then
+      run_has_gx01=1
+    fi
     (( i++ )) || true
     while (( i < n )); do
       f="${singles[i]}"
@@ -4370,21 +4470,69 @@ build_size_split_groups() {
       if [[ "$(gopro_camera_from_basename "$base")" != "$run_cam" ]]; then
         break
       fi
-      if [[ -n "$run_group_key" ]]; then
-        [[ "$(gopro_size_split_session_key_from_basename "$base" 2>/dev/null)" == "$run_group_key" ]] || break
+      next_uid=$(pgm_gopro_media_uid "$f" 2>/dev/null) || next_uid=""
+      # Same GoPro Media UID ⇒ same recording (authoritative over filename GX id).
+      # Different UIDs ⇒ refuse even if names look related.
+      if [[ -n "$run_uid" && -n "$next_uid" ]]; then
+        [[ "$run_uid" == "$next_uid" ]] || break
+      elif [[ -n "$run_group_key" ]]; then
+        next_key=$(gopro_size_split_session_key_from_basename "$base" 2>/dev/null) || next_key=""
+        gopro_size_split_session_keys_compatible "$run_group_key" "$next_key" || break
+        # Lock empty (no-GX) run key to the first GX recording id so a later
+        # session that day cannot keep matching via the empty-rec wildcard.
+        if [[ "$run_group_key" =~ \|$ ]] && [[ "$next_key" =~ \|[0-9]+$ ]]; then
+          run_group_key="$next_key"
+        fi
+      fi
+      # Prefer a known Media UID for the rest of the run once one chapter has it.
+      if [[ -z "$run_uid" && -n "$next_uid" ]]; then
+        run_uid="$next_uid"
       fi
       if ! size_split_chapter_timestamps_follow "${run[-1]}" "$f"; then
         break
+      fi
+      next_ch=$(gopro_gx_chapter_number_from_basename "$base")
+      # Bare …_GoPro_Hero*_Black.mp4 stands in for missing GX01. If a real GX01
+      # arrives, drop bare stand-ins from the run (leave them standalone).
+      if (( next_ch == 0 )) && (( run_has_gx01 )); then
+        break
+      fi
+      if (( next_ch == 1 )); then
+        without_bare=()
+        for rf in "${run[@]}"; do
+          rb="${rf##*/}"
+          if (( $(gopro_gx_chapter_number_from_basename "$rb") == 0 )); then
+            kept+=("$rf")
+          else
+            without_bare+=("$rf")
+          fi
+        done
+        run=("${without_bare[@]}")
+        run_has_gx01=1
+        # If only bare files were in the run, continue with GX01 as the new start.
+        if (( ${#run[@]} == 0 )); then
+          if is_full_size_split_segment "$f"; then
+            run=("$f")
+            run_tier=$(size_split_tier_for_file "$f")
+            run_group_key=$(gopro_size_split_session_key_from_basename "$base" 2>/dev/null) || run_group_key=""
+            run_uid=$(pgm_gopro_media_uid "$f" 2>/dev/null) || run_uid=""
+            (( i++ )) || true
+            continue
+          fi
+          break
+        fi
       fi
       if is_full_size_split_segment "$f"; then
         next_tier=$(size_split_tier_for_file "$f") || break
         [[ "$next_tier" == "$run_tier" ]] || break
         run+=("$f")
+        (( next_ch == 1 )) && run_has_gx01=1
         (( i++ )) || true
         continue
       fi
       if is_partial_size_split_segment_at_tier "$f" "$run_tier"; then
         run+=("$f")
+        (( next_ch == 1 )) && run_has_gx01=1
         (( i++ )) || true
       fi
       break
