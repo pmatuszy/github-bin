@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# v. 20261024.165427 - SVT-AV1: use installable libsvtav1enc-dev or libsvtav1-dev; retry the other on apt failure
+# v. 20261024.165046 - install libsvtav1enc-dev when libsvtav1-dev has no candidate
 # v. 20261010.174933 - --install-build-deps installs gcc, make, and compile libraries
 # v. 20261006.183857 - call /bin/ls so a shell ls function (e.g. --full-time) cannot change the listing
 # v. 20261006.124500 - menus: only the default key is a capital letter ([s] skip, [q] quit)
@@ -13,6 +15,7 @@
 # v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
 # v. 20260716.231000 - equivalent CLI echo; --dry-run for interactive plan without build
 
+# 2026.10.24 - v. 2.1.35 - SVT-AV1: install whichever of libsvtav1enc-dev / libsvtav1-dev apt can install (newer Ubuntu renamed the package); if one apt install fails, try the other
 # 2026.10.10 - v. 2.1.34 - --install-build-deps (or [d] on the source prompt): install gcc, make, and the development packages, then stop
 # 2026.10.06 - v. 2.1.33 - listings use /bin/ls so a shell ls function cannot add --full-time or colour
 # 2026.10.06 - v. 2.1.32 - running-ffmpeg and profile menus list [s] and [q] in lower case like their [F/s/q], [K/s/q], and [1/../q] prompts; [K] is marked (default)
@@ -2217,16 +2220,72 @@ apt_cache_has_package() {
     apt-cache show "$1" >/dev/null 2>&1
 }
 
+# 0 when apt has an installable candidate for $1 (not only a "referred to" stub).
+apt_package_has_install_candidate() {
+    local pkg="$1" cand=""
+    cand="$(apt-cache policy "${pkg}" 2>/dev/null | awk '/Candidate:/ { print $2; exit }')"
+    [[ -n "$cand" && "$cand" != "(none)" ]]
+}
+
 # Ubuntu 24.04+ uses libopenjp2-7-dev; older releases used libopenjpeg-dev.
 apt_resolve_openjpeg_dev_package() {
     local pkg=""
     for pkg in libopenjpeg-dev libopenjp2-7-dev; do
-        if apt_cache_has_package "${pkg}"; then
+        if apt_package_has_install_candidate "${pkg}"; then
             printf '%s' "${pkg}"
             return 0
         fi
     done
     return 1
+}
+
+# Newer Ubuntu (e.g. 24.04/26.04): libsvtav1enc-dev. Older releases: libsvtav1-dev.
+# Prefer the name that has an installable Candidate; either may exist as a stub.
+apt_resolve_svtav1_dev_package() {
+    local pkg=""
+    for pkg in libsvtav1enc-dev libsvtav1-dev; do
+        if apt_package_has_install_candidate "${pkg}"; then
+            printf '%s' "${pkg}"
+            return 0
+        fi
+    done
+    return 1
+}
+
+# Install SVT-AV1 headers for FFmpeg. Picks the installable package name first;
+# if that apt install fails, tries the other name (Ubuntu rename).
+apt_install_svtav1_dev_if_available() {
+    local preferred="" other="" pkg=""
+    local -a try_order=()
+
+    preferred="$(apt_resolve_svtav1_dev_package 2>/dev/null || true)"
+    if [[ "${preferred}" == libsvtav1enc-dev ]]; then
+        other=libsvtav1-dev
+    elif [[ "${preferred}" == libsvtav1-dev ]]; then
+        other=libsvtav1enc-dev
+    else
+        # No Candidate for either — still try both in case policy was incomplete.
+        try_order=( libsvtav1-dev libsvtav1enc-dev )
+        preferred=""
+    fi
+    if [[ -n "${preferred}" ]]; then
+        try_order=( "${preferred}" )
+        [[ -n "${other}" ]] && try_order+=( "${other}" )
+    fi
+
+    for pkg in "${try_order[@]}"; do
+        if ! apt_package_has_install_candidate "${pkg}" && [[ -n "${preferred}" && "${pkg}" != "${preferred}" ]]; then
+            continue
+        fi
+        log_step "Installing SVT-AV1 development package: ${pkg}..."
+        if apt-get install -y "${pkg}"; then
+            log_note "Installed ${pkg} for libsvtav1."
+            return 0
+        fi
+        log_note "apt could not install ${pkg}; trying the other SVT-AV1 package name if available."
+    done
+    log_note "libsvtav1enc-dev / libsvtav1-dev not installable from apt; SVT-AV1 encoder will be skipped."
+    return 0
 }
 
 apt_install_openjpeg_dev_if_available() {
@@ -2993,6 +3052,8 @@ ffmpeg_source_try_enable_openssl() {
 }
 
 probe_source_optional_codecs() {
+    local svt_pkg=""
+
     FFMPEG_SOURCE_HAS_DAV1D=0
     if ffmpeg_pkg_config_satisfied 'dav1d >= 1.0.0'; then
         FFMPEG_SOURCE_HAS_DAV1D=1
@@ -3013,10 +3074,13 @@ probe_source_optional_codecs() {
                 log_note "SvtAv1Enc >= 0.9.0 is installed but not available for static linking; libsvtav1 disabled."
             elif pkg-config --exists SvtAv1Enc 2>/dev/null; then
                 log_note "SvtAv1Enc $(pkg-config --modversion SvtAv1Enc 2>/dev/null) is below 0.9.0 (FFmpeg 8.x needs SvtAv1Enc >= 0.9.0); libsvtav1 disabled."
-            elif apt_cache_has_package libsvtav1-dev; then
-                log_note "libsvtav1-dev is installed but SvtAv1Enc >= 0.9.0 is not visible to pkg-config; libsvtav1 disabled."
             else
-                log_note "SvtAv1Enc not available; libsvtav1 disabled."
+                svt_pkg="$(apt_resolve_svtav1_dev_package 2>/dev/null || true)"
+                if [[ -n "${svt_pkg}" ]]; then
+                    log_note "${svt_pkg} is present in apt but SvtAv1Enc >= 0.9.0 is not visible to pkg-config; libsvtav1 disabled."
+                else
+                    log_note "SvtAv1Enc not available; libsvtav1 disabled."
+                fi
             fi
             ;;
     esac
@@ -3219,16 +3283,6 @@ install_source_apt_build_packages() {
             ;;
     esac
 
-    case "${SOURCE_PROFILE}" in
-        max|common|gpu|nvidia|jellyfin)
-            if apt_cache_has_package libsvtav1-dev; then
-                pkgs+=( libsvtav1-dev )
-            else
-                log_note "libsvtav1-dev not in apt; SVT-AV1 encoder will be skipped."
-            fi
-            ;;
-    esac
-
     if [[ "${SOURCE_PROFILE}" == jellyfin ]]; then
         if apt_cache_has_package libfdk-aac-dev; then
             pkgs+=( libfdk-aac-dev )
@@ -3268,6 +3322,12 @@ install_source_apt_build_packages() {
     log_step "Installing gcc, g++, make, and profile packages..."
     apt_install_packages "${pkgs[@]}"
     log_note "Compiler and development packages installed."
+
+    case "${SOURCE_PROFILE}" in
+        max|common|gpu|nvidia|jellyfin)
+            apt_install_svtav1_dev_if_available
+            ;;
+    esac
 }
 
 install_source_build_dependencies() {
