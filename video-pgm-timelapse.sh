@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261027.181106 - ask output dates for all files before encoding; apply after each encode
 # v. 20261021.144500 - Ctrl-C removes .partial.*.mp4 (stop ffmpeg first; retry rm on busy mounts)
 # v. 20261021.143500 - Command line shows live script name, not .deleteme.*.seal.*
 # v. 20261021.120123 - output dates: [k] keep as written for the rest of this run
@@ -58,6 +59,7 @@
 # v. 20260930.221500 - file prompts: one key, no Enter
 # v. 20260930.220400 - faster viewing copy of a merged video (2, 5, 10, 20, …)
 
+# 2026.10.27 - v. 0.57 - before any encode, ask how to set output dates for every file (one choice for all, or per file); after each encode only apply that choice and show the before/after table — no more date menu between files
 # 2026.10.21 - v. 0.56 - Ctrl-C / EXIT: stop ffmpeg before deleting the .partial.*.mp4, retry rm (NTFS/CIFS often keeps the file busy), and sweep orphans for this PID — previously cleanup said it ran but left …_x5.mp4.partial.<pid>.mp4
 # 2026.10.21 - v. 0.55 - printed Command uses video-pgm-timelapse.sh (live path), not .deleteme.video-pgm-timelapse.sh.seal.*
 # 2026.10.21 - v. 0.54 - output-date menu: [k] keeps times as written for this file and every later file in the run (same idea as [a] for oldest)
@@ -1367,113 +1369,166 @@ tl_apply_epoch_to_output() {
   (( media_ok || fs_ok ))
 }
 
-# After stamping from the source: if name / FS / media disagree, ask which date to use.
-# Name is taken from the source basename. Default = oldest usable. Return 2 on quit.
-tl_prompt_reconcile_output_times() {
-  local dest="$1" source_file="$2"
-  local name_e="" src_e="" media_e="" dest_fs_e=""
-  local -a labels=() epochs=() notes=()
-  local i n def=1 oldest_i=0 oldest_e="" choice keys="" disp note fs_show
-  local abs_diff need_ask=0 prompt_extra="" before_name before_fs before_media
-  local -a key_list=()
+# Fill TL_DF_* from the source (and optional dest after encode for media/FS refresh).
+# Sets TL_DF_NEED_ASK, TL_DF_NAME/FS/MEDIA, TL_DF_OLDEST_*, TL_DF_LABELS/EPOCHS/NOTES, TL_DF_DEF.
+# Return 1 when there is no usable name stamp.
+tl_compute_output_date_fields() {
+  local dest="${1:-}" source_file="$2"
+  local name_e="" src_e="" media_e="" dest_fs_e="" fs_show abs_diff i n
+  TL_DF_NEED_ASK=0
+  TL_DF_NAME=""
+  TL_DF_FS=""
+  TL_DF_MEDIA=""
+  TL_DF_OLDEST_E=""
+  TL_DF_OLDEST_I=0
+  TL_DF_DEF=1
+  TL_DF_LABELS=()
+  TL_DF_EPOCHS=()
+  TL_DF_NOTES=()
 
-  [[ -f "$dest" && -f "$source_file" ]] || return 0
-
+  [[ -f "$source_file" ]] || return 1
   name_e="$(tl_filename_epoch_from_basename "${source_file##*/}" 2>/dev/null || true)"
-  [[ -z "$name_e" ]] && name_e="$(tl_filename_epoch_from_basename "${dest##*/}" 2>/dev/null || true)"
+  if [[ -z "$name_e" && -n "$dest" && -f "$dest" ]]; then
+    name_e="$(tl_filename_epoch_from_basename "${dest##*/}" 2>/dev/null || true)"
+  fi
+  [[ -n "$name_e" ]] || return 1
+
   src_e="$(tl_fs_mtime_epoch "$source_file" 2>/dev/null || true)"
-  dest_fs_e="$(tl_fs_mtime_epoch "$dest" 2>/dev/null || true)"
-  media_e="$(tl_media_createdate_epoch "$dest" 2>/dev/null || true)"
+  if [[ -n "$dest" && -f "$dest" ]]; then
+    dest_fs_e="$(tl_fs_mtime_epoch "$dest" 2>/dev/null || true)"
+    media_e="$(tl_media_createdate_epoch "$dest" 2>/dev/null || true)"
+  fi
   [[ -z "$media_e" ]] && media_e="$(tl_media_createdate_epoch "$source_file" 2>/dev/null || true)"
 
-  if [[ -z "$name_e" ]]; then
-    TL_DATES_NO_NAME=$((TL_DATES_NO_NAME + 1))
-    return 0
-  fi
-
-  before_name="$name_e"
-  before_fs="${src_e:-$dest_fs_e}"
-  before_media="$media_e"
-
   fs_show="${src_e:-$dest_fs_e}"
+  TL_DF_NAME="$name_e"
+  TL_DF_FS="$fs_show"
+  TL_DF_MEDIA="$media_e"
+
   if [[ -n "$fs_show" ]]; then
     if (( name_e > fs_show )); then abs_diff=$((name_e - fs_show)); else abs_diff=$((fs_show - name_e)); fi
-    (( abs_diff > 120 )) && need_ask=1
+    (( abs_diff > 120 )) && TL_DF_NEED_ASK=1
   else
-    need_ask=1
+    TL_DF_NEED_ASK=1
   fi
   if [[ -n "$media_e" ]]; then
     if (( name_e > media_e )); then abs_diff=$((name_e - media_e)); else abs_diff=$((media_e - name_e)); fi
-    (( abs_diff > 120 )) && need_ask=1
+    (( abs_diff > 120 )) && TL_DF_NEED_ASK=1
   else
-    need_ask=1
-  fi
-  if (( ! need_ask )); then
-    TL_DATES_OK=$((TL_DATES_OK + 1))
-    return 0
+    TL_DF_NEED_ASK=1
   fi
 
-  labels+=("File name")
-  epochs+=("$name_e")
-  notes+=("(from source name)")
-  labels+=("Filesystem")
-  epochs+=("$fs_show")
+  TL_DF_LABELS=("File name" "Filesystem" "Media tags" "Keep as written")
+  TL_DF_EPOCHS=("$name_e" "$fs_show" "$media_e" "")
+  TL_DF_NOTES=("(from source name)")
   if [[ -n "$fs_show" ]]; then
-    notes+=("(mtime)")
+    TL_DF_NOTES+=("(mtime)")
   else
-    notes+=("(mtime missing or before 1990)")
+    TL_DF_NOTES+=("(mtime missing or before 1990)")
   fi
-  labels+=("Media tags")
-  epochs+=("$media_e")
   if [[ -n "$media_e" ]]; then
-    notes+=("(CreateDate in the video)")
+    TL_DF_NOTES+=("(CreateDate in the video)")
   else
-    notes+=("(CreateDate missing or before 1990)")
+    TL_DF_NOTES+=("(CreateDate missing or before 1990)")
   fi
-  labels+=("Keep as written")
-  epochs+=("")
-  notes+=("(leave the new file as it is now)")
+  TL_DF_NOTES+=("(leave the new file as it is now)")
 
-  n=${#labels[@]}
-  oldest_e=""
-  oldest_i=0
+  n=${#TL_DF_LABELS[@]}
+  TL_DF_OLDEST_E=""
+  TL_DF_OLDEST_I=0
   for (( i = 0; i < n; i++ )); do
-    [[ -n "${epochs[i]}" ]] || continue
-    if [[ -z "$oldest_e" ]] || (( epochs[i] < oldest_e )); then
-      oldest_e="${epochs[i]}"
-      oldest_i=$i
+    [[ -n "${TL_DF_EPOCHS[i]}" ]] || continue
+    if [[ -z "$TL_DF_OLDEST_E" ]] || (( TL_DF_EPOCHS[i] < TL_DF_OLDEST_E )); then
+      TL_DF_OLDEST_E="${TL_DF_EPOCHS[i]}"
+      TL_DF_OLDEST_I=$i
     fi
   done
-  def=$((oldest_i + 1))
+  TL_DF_DEF=$((TL_DF_OLDEST_I + 1))
+  return 0
+}
 
-  if (( TL_ALWAYS_KEEP )); then
-    echo "$(tl_ts) Output times kept as written (for the rest of this run)."
+# Apply a stored/upfront choice: name|fs|media|keep|oldest|1|2|3|4|a|k
+# Uses TL_DF_* already filled. dest must exist. Return 2 on quit (unused here).
+tl_apply_resolved_date_choice() {
+  local dest="$1" source_file="$2" choice="$3"
+  local before_name before_fs before_media i n label epoch
+  before_name="$TL_DF_NAME"
+  before_fs="$TL_DF_FS"
+  before_media="$TL_DF_MEDIA"
+  n=${#TL_DF_LABELS[@]}
+
+  case "$choice" in
+    keep|k|4)
+      echo "$(tl_ts) Output times kept as written."
+      TL_DATES_KEPT=$((TL_DATES_KEPT + 1))
+      return 0
+      ;;
+    oldest|a)
+      if [[ -n "$TL_DF_OLDEST_E" ]]; then
+        tl_apply_epoch_to_output "$dest" "$TL_DF_OLDEST_E"
+        echo "$(tl_ts) Set from oldest usable: $(tl_format_epoch_display "$TL_DF_OLDEST_E")"
+        tl_show_result_table "$dest" "$before_name" "$before_fs" "$before_media"
+        TL_DATES_APPLIED=$((TL_DATES_APPLIED + 1))
+      fi
+      return 0
+      ;;
+    name|1) i=0 ;;
+    fs|2) i=1 ;;
+    media|3) i=2 ;;
+    *)
+      if [[ "$choice" =~ ^[0-9]+$ ]] && (( choice >= 1 && choice <= n )); then
+        i=$((choice - 1))
+      else
+        echo "$(tl_ts) Unknown date choice '${choice}'; keeping times as written." >&2
+        TL_DATES_KEPT=$((TL_DATES_KEPT + 1))
+        return 0
+      fi
+      ;;
+  esac
+
+  label="${TL_DF_LABELS[i]}"
+  epoch="${TL_DF_EPOCHS[i]}"
+  if (( i == n - 1 )); then
+    echo "$(tl_ts) Output times kept as written."
     TL_DATES_KEPT=$((TL_DATES_KEPT + 1))
     return 0
   fi
-
-  if (( DO_YES )) || (( TL_ALWAYS_OLDEST )) || (( ! script_is_run_interactively )); then
-    tl_print_output_dates_header "$dest"
-    printf '  Source name stamp from:  %s\n' "${source_file##*/}"
-    if [[ -n "$oldest_e" ]]; then
-      tl_apply_epoch_to_output "$dest" "$oldest_e"
-      echo "$(tl_ts) Set from oldest usable: $(tl_format_epoch_display "$oldest_e")"
-      tl_show_result_table "$dest" "$before_name" "$before_fs" "$before_media"
-      TL_DATES_APPLIED=$((TL_DATES_APPLIED + 1))
-    fi
+  if [[ -z "$epoch" ]]; then
+    echo "$(tl_ts) ${label} is n/a for ${source_file##*/}; keeping times as written."
+    TL_DATES_KEPT=$((TL_DATES_KEPT + 1))
     return 0
   fi
+  tl_apply_epoch_to_output "$dest" "$epoch"
+  echo "$(tl_ts) Set from ${label}: $(tl_format_epoch_display "$epoch")"
+  tl_show_result_table "$dest" "$before_name" "$before_fs" "$before_media"
+  TL_DATES_APPLIED=$((TL_DATES_APPLIED + 1))
+  return 0
+}
 
-  tl_print_output_dates_header "$dest"
+# Interactive menu for one source (TL_DF_* already filled). Prints to stdout nothing;
+# sets TL_DATE_MENU_CHOICE to name|fs|media|keep|oldest. Return 2 on quit.
+tl_read_one_file_date_menu() {
+  local source_file="$1" title="${2:-}"
+  local i n def keys="" disp note prompt_extra="" choice
+  local -a key_list=()
+  n=${#TL_DF_LABELS[@]}
+  def=$TL_DF_DEF
+
+  if [[ -n "$title" ]]; then
+    echo
+    tl_rule
+    echo "$(tl_ts) ${title}"
+    tl_rule
+  fi
   printf '  Source name stamp from:  %s\n' "${source_file##*/}"
   echo
   echo "  Sources (oldest usable is the default; applying it sets media CreateDate and filesystem times):"
   echo
   key_list=()
   for (( i = 0; i < n; i++ )); do
-    note="${notes[i]}"
-    if [[ -n "${epochs[i]}" ]]; then
-      disp="$(tl_format_epoch_display "${epochs[i]}")"
+    note="${TL_DF_NOTES[i]}"
+    if [[ -n "${TL_DF_EPOCHS[i]}" ]]; then
+      disp="$(tl_format_epoch_display "${TL_DF_EPOCHS[i]}")"
     else
       disp="n/a"
     fi
@@ -1484,19 +1539,18 @@ tl_prompt_reconcile_output_times() {
         note="(oldest - default)"
       fi
     fi
-    # ASCII-only date column so %-19s matches terminal columns (UTF-8 "—" broke alignment).
     printf '  [%d] %-18s %-19s  %s\n' \
-      "$((i + 1))" "${labels[i]}" "$disp" "$note"
+      "$((i + 1))" "${TL_DF_LABELS[i]}" "$disp" "$note"
     key_list+=("$((i + 1))")
   done
-  echo "  [$(tl_k a "$def")] Always oldest for the rest of this run"
-  echo "  [$(tl_k k "$def")] Keep as written for the rest of this run"
+  echo "  [$(tl_k a "$def")] Oldest usable"
+  echo "  [$(tl_k k "$def")] Keep as written"
   echo "  [$(tl_k q "$def")] Quit"
   key_list+=(a k q)
   keys="$(tl_keys "$def" "${key_list[@]}")"
   if [[ "$def" =~ ^[0-9]+$ ]]; then
     i=$((def - 1))
-    prompt_extra=" (default ${def} = ${labels[i]})"
+    prompt_extra=" (default ${def} = ${TL_DF_LABELS[i]})"
   fi
 
   while true; do
@@ -1508,48 +1562,197 @@ tl_prompt_reconcile_output_times() {
         return 2
         ;;
       a)
-        tl_print_selected "a = Always oldest for the rest of this run"
-        TL_ALWAYS_OLDEST=1
-        TL_ALWAYS_KEEP=0
-        if [[ -n "$oldest_e" ]]; then
-          tl_apply_epoch_to_output "$dest" "$oldest_e"
-          echo "$(tl_ts) Set from oldest usable: $(tl_format_epoch_display "$oldest_e")"
-          tl_show_result_table "$dest" "$before_name" "$before_fs" "$before_media"
-          TL_DATES_APPLIED=$((TL_DATES_APPLIED + 1))
-        fi
-        echo "$(tl_ts) Will use the oldest usable date for every later file."
+        tl_print_selected "a = Oldest usable"
+        TL_DATE_MENU_CHOICE=oldest
         return 0
         ;;
       k)
-        tl_print_selected "k = Keep as written for the rest of this run"
-        TL_ALWAYS_KEEP=1
-        TL_ALWAYS_OLDEST=0
-        echo "$(tl_ts) Output times kept as written."
-        TL_DATES_KEPT=$((TL_DATES_KEPT + 1))
-        echo "$(tl_ts) Will keep times as written for every later file."
+        tl_print_selected "k = Keep as written"
+        TL_DATE_MENU_CHOICE=keep
         return 0
         ;;
     esac
     if [[ "$choice" =~ ^[0-9]+$ ]] && (( choice >= 1 && choice <= n )); then
       i=$((choice - 1))
-      tl_print_selected "${choice} = ${labels[i]}"
-      if (( i == n - 1 )); then
-        echo "$(tl_ts) Output times kept as written."
-        TL_DATES_KEPT=$((TL_DATES_KEPT + 1))
-        return 0
-      fi
-      if [[ -z "${epochs[i]}" ]]; then
-        echo "$(tl_ts) ${labels[i]} is n/a (not usable). Pick another."
+      if (( i < n - 1 )) && [[ -z "${TL_DF_EPOCHS[i]}" ]]; then
+        echo "$(tl_ts) ${TL_DF_LABELS[i]} is n/a (not usable). Pick another."
         continue
       fi
-      tl_apply_epoch_to_output "$dest" "${epochs[i]}"
-      echo "$(tl_ts) Set from ${labels[i]}: $(tl_format_epoch_display "${epochs[i]}")"
-      tl_show_result_table "$dest" "$before_name" "$before_fs" "$before_media"
-      TL_DATES_APPLIED=$((TL_DATES_APPLIED + 1))
+      tl_print_selected "${choice} = ${TL_DF_LABELS[i]}"
+      case "$choice" in
+        1) TL_DATE_MENU_CHOICE=name ;;
+        2) TL_DATE_MENU_CHOICE=fs ;;
+        3) TL_DATE_MENU_CHOICE=media ;;
+        4) TL_DATE_MENU_CHOICE=keep ;;
+        *) TL_DATE_MENU_CHOICE="$choice" ;;
+      esac
       return 0
     fi
     echo "$(tl_ts) Unknown choice: ${REPLY}."
   done
+}
+
+# Ask how to set output dates for every file before encoding starts.
+# Return 2 on quit.
+tl_ask_output_dates_upfront() {
+  local total=${#TL_INPUTS[@]}
+  local f i need_n=0 choice keys def=a prompt_extra=""
+  local -a need_files=()
+  local -a key_list=()
+
+  (( total > 0 )) || return 0
+  if (( DO_YES )) || (( ! script_is_run_interactively )); then
+    return 0
+  fi
+  if (( TL_ALWAYS_OLDEST || TL_ALWAYS_KEEP )) || [[ -n "${TL_DATE_POLICY:-}" ]]; then
+    return 0
+  fi
+
+  for f in "${TL_INPUTS[@]}"; do
+    if ! tl_compute_output_date_fields "" "$f"; then
+      continue
+    fi
+    if (( TL_DF_NEED_ASK )); then
+      need_files+=("$f")
+      (( need_n++ )) || true
+    fi
+  done
+
+  if (( need_n == 0 )); then
+    echo
+    echo "$(tl_ts) Output dates: name / filesystem / media already agree for every file — no date question."
+    return 0
+  fi
+
+  echo
+  tl_rule
+  echo "$(tl_ts) Output dates — choose before encoding (${need_n} of ${total} file(s) need a choice)"
+  tl_rule
+  echo "  Sources come from each source video (file name, mtime, CreateDate)."
+  echo "  After each encode the choice is applied; you will not be asked again between files."
+  echo
+  echo "  [$(tl_k 1 "$def")] File name for every file"
+  echo "  [$(tl_k 2 "$def")] Filesystem for every file"
+  echo "  [$(tl_k 3 "$def")] Media tags for every file"
+  echo "  [$(tl_k 4 "$def")] Keep as written for every file"
+  echo "  [$(tl_k a "$def")] Oldest usable per file (default)"
+  echo "  [$(tl_k p "$def")] Pick per file now"
+  echo "  [$(tl_k q "$def")] Quit"
+  key_list=(1 2 3 4 a p q)
+  keys="$(tl_keys "$def" "${key_list[@]}")"
+  prompt_extra=" (default a = Oldest usable per file)"
+
+  while true; do
+    tl_read_key "Output times for all files [${keys}]${prompt_extra}: " a
+    choice="$(tl_choice "$REPLY")"
+    case "$choice" in
+      q)
+        tl_print_selected "q = Quit"
+        return 2
+        ;;
+      ''|a)
+        tl_print_selected "a = Oldest usable per file"
+        TL_DATE_POLICY=oldest
+        TL_ALWAYS_OLDEST=1
+        TL_ALWAYS_KEEP=0
+        echo "$(tl_ts) Will use the oldest usable date for every file after encode."
+        return 0
+        ;;
+      1)
+        tl_print_selected "1 = File name for every file"
+        TL_DATE_POLICY=name
+        echo "$(tl_ts) Will set output times from the file name for every file."
+        return 0
+        ;;
+      2)
+        tl_print_selected "2 = Filesystem for every file"
+        TL_DATE_POLICY=fs
+        echo "$(tl_ts) Will set output times from the filesystem mtime for every file."
+        return 0
+        ;;
+      3)
+        tl_print_selected "3 = Media tags for every file"
+        TL_DATE_POLICY=media
+        echo "$(tl_ts) Will set output times from media CreateDate for every file."
+        return 0
+        ;;
+      4|k)
+        tl_print_selected "4 = Keep as written for every file"
+        TL_DATE_POLICY=keep
+        TL_ALWAYS_KEEP=1
+        TL_ALWAYS_OLDEST=0
+        echo "$(tl_ts) Will keep output times as written for every file."
+        return 0
+        ;;
+      p)
+        tl_print_selected "p = Pick per file now"
+        i=0
+        for f in "${need_files[@]}"; do
+          (( i++ )) || true
+          tl_compute_output_date_fields "" "$f" || continue
+          if ! tl_read_one_file_date_menu "$f" \
+            "Output dates ${i}/${need_n}: ${f##*/}"; then
+            return 2
+          fi
+          TL_DATE_CHOICE["$f"]="$TL_DATE_MENU_CHOICE"
+          echo "$(tl_ts) Stored for ${f##*/}: ${TL_DATE_MENU_CHOICE}"
+        done
+        echo "$(tl_ts) Date choices stored for ${need_n} file(s). Encoding starts next."
+        return 0
+        ;;
+      *)
+        echo "$(tl_ts) Unknown choice: ${REPLY}."
+        ;;
+    esac
+  done
+}
+
+# After stamping from the source: apply a pre-chosen date policy, or ask (fallback).
+# Name is taken from the source basename. Return 2 on quit.
+tl_prompt_reconcile_output_times() {
+  local dest="$1" source_file="$2"
+  local choice=""
+
+  [[ -f "$dest" && -f "$source_file" ]] || return 0
+
+  if ! tl_compute_output_date_fields "$dest" "$source_file"; then
+    TL_DATES_NO_NAME=$((TL_DATES_NO_NAME + 1))
+    return 0
+  fi
+
+  if (( ! TL_DF_NEED_ASK )); then
+    TL_DATES_OK=$((TL_DATES_OK + 1))
+    return 0
+  fi
+
+  if (( TL_ALWAYS_KEEP )); then
+    tl_print_output_dates_header "$dest"
+    printf '  Source name stamp from:  %s\n' "${source_file##*/}"
+    tl_apply_resolved_date_choice "$dest" "$source_file" keep
+    return 0
+  fi
+
+  if [[ -n "${TL_DATE_CHOICE[$source_file]+x}" ]]; then
+    choice="${TL_DATE_CHOICE[$source_file]}"
+  elif [[ -n "${TL_DATE_POLICY:-}" ]]; then
+    choice="$TL_DATE_POLICY"
+  elif (( DO_YES )) || (( TL_ALWAYS_OLDEST )) || (( ! script_is_run_interactively )); then
+    choice=oldest
+  fi
+
+  if [[ -n "$choice" ]]; then
+    tl_print_output_dates_header "$dest"
+    printf '  Source name stamp from:  %s\n' "${source_file##*/}"
+    tl_apply_resolved_date_choice "$dest" "$source_file" "$choice"
+    return 0
+  fi
+
+  # Fallback: ask now (e.g. single-file path if upfront was skipped).
+  if ! tl_read_one_file_date_menu "$source_file" "Output dates: ${dest}"; then
+    return 2
+  fi
+  tl_apply_resolved_date_choice "$dest" "$source_file" "$TL_DATE_MENU_CHOICE"
+  return 0
 }
 
 tl_run_ffmpeg() {
@@ -3412,6 +3615,21 @@ TL_CONTINUE_ONE=0
 SKIP_ALL=0
 TL_ALWAYS_OLDEST=0
 TL_ALWAYS_KEEP=0
+# name|fs|media|keep|oldest — one policy for every file (set before encode).
+TL_DATE_POLICY=""
+# Per-source override from "pick per file now" (path → name|fs|media|keep|oldest).
+declare -A TL_DATE_CHOICE=()
+TL_DATE_MENU_CHOICE=""
+TL_DF_NEED_ASK=0
+TL_DF_NAME=""
+TL_DF_FS=""
+TL_DF_MEDIA=""
+TL_DF_OLDEST_E=""
+TL_DF_OLDEST_I=0
+TL_DF_DEF=1
+TL_DF_LABELS=()
+TL_DF_EPOCHS=()
+TL_DF_NOTES=()
 TL_DATES_APPLIED=0
 TL_DATES_KEPT=0
 TL_DATES_OK=0
@@ -3871,6 +4089,12 @@ case "$REPLY" in
     exit 0
     ;;
 esac
+if ! tl_ask_output_dates_upfront; then
+  echo "$(tl_ts) Quit."
+  TL_STOPPED=yes
+  return_code=0
+  exit 0
+fi
 for tl_src in "${TL_INPUTS[@]}"; do
   (( tl_i++ )) || true
   tl_dest="$(tl_output_path "$tl_src" "$SPEED")"
