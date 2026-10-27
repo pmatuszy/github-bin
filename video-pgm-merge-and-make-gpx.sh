@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261027.205537 - group prompt: [Y] merge all remaining (default), [m] this group; temp default N unless HDD
 # v. 20261027.073717 - forced merge: allow prior *_concat_parts_* inputs; combine part ranges in output name
 # v. 20261024.173852 - size-split: same GoPro Media UID (exiftool) groups chapters (bare + GX02…)
 # v. 20261024.173511 - no-GX GoPro_Hero*_Black.mp4 joins size-split when GX01 is missing (same day/cam/session)
@@ -89,6 +90,7 @@
 # v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
 # v. 20260805.154826 - after merge: copy GPS/dates from first chapter; FS times via touch -r
 
+# 2026.10.27 - v. 0.15.106 - group merge prompt: [Y] Merge all remaining groups is the default (asks output date/time for each first); [m] merges only this group. Off-disk temp merge defaults to No (write here) for SSD and unknown disks; Yes (/tmp) only when the source is a confirmed spinning HDD — unknown mounts like /mnt/f no longer default to Yes
 # 2026.10.27 - v. 0.15.105 - forced merge (FILE FILE …) accepts prior *_concat_parts_* / *_concat outputs so two half-merges can be joined; output name uses the first file's stem with the combined chapter range when every input parses (e.g. …_01-05 + …_06-09 → …_concat_parts_01-09.mp4), else strips an existing concat suffix before appending _concat_parts_01-N. FILE +N still skips other concat names when picking alphabetical neighbours
 # 2026.10.24 - v. 0.15.104 - size-split grouping also uses GoPro Media UID from exiftool (same UID across chapters of one recording, including bare …_GoPro_Hero10_Black.mp4 vs …_GX02…); batch-loaded with CreateDate; different UIDs refuse to merge even if filenames look related
 # 2026.10.24 - v. 0.15.103 - bare …_GoPro_Hero10_Black.mp4 (no GX) joins a size-split run of …_GX02nnnn… when GX01 is missing: empty recording-id in the session key is compatible with a GX recording id, then the run locks to that id so a later GX session that day does not glue on
@@ -353,28 +355,30 @@ Merge behaviour:
     The merged file and that .gpx get the first chapter's creation time and file time.
     If the merged file has no location, the first point of that .gpx is stored in it.
   - Shows each multi-part group (with file sizes) and asks whether to merge
-    (single-key Y/N/A/M/Q, no Enter — like rename.sh). Files in a group, and the
-    groups themselves, are ordered oldest to newest (filename YYYYMMDD_HHMMSS when
-    present, otherwise filesystem mtime) before that prompt. After the input and
-    output lists, a boxed summary shows how many files are in that group, the first
-    and last file, and the start time, finish time, and total length.
+    (single-key Y/N/A/M/Q, no Enter — like rename.sh). [Y] merges all remaining
+    groups (asks output date/time for each first); [m] merges only this group.
+    Files in a group, and the groups themselves, are ordered oldest to newest
+    (filename YYYYMMDD_HHMMSS when present, otherwise filesystem mtime) before that
+    prompt. After the input and output lists, a boxed summary shows how many files
+    are in that group, the first and last file, and the start time, finish time,
+    and total length.
   - After you choose to merge: if the temp directory (--temp-dir, else
     PGM_MERGE_TEMP, else TMPDIR, else /tmp) is on another disk, you can create
     files there, and it has room for the output plus spare space, asks whether to
     write the merge there and move the finished file back here (progress bar).
     [Y] uses that directory for this file only. [d] keeps it for every later merge
     in this run. [n] writes this file in this directory. [r] writes every later
-    merge in this directory. Default is yes (this file only) when the source disk
-    is not an SSD, or when that cannot be checked. Default is no when the source
-    disk is an SSD. [m] Merge all remaining groups asks this once before the first
-    of those merges: yes uses that directory for every group still left and moves
-    each finished file back; no writes those outputs in this directory. -y and
-    non-interactive runs write in this directory. Status lines start with the
-    clock in brackets, [ YYYY.MM.DD HH:MM:SS ].
+    merge in this directory. Default is yes (this file only) only when the source
+    disk is a confirmed spinning HDD. Default is no when the source is an SSD or
+    when that cannot be checked (e.g. /mnt/*). [Y] Merge all remaining groups asks
+    this once before the first of those merges: yes uses that directory for every
+    group still left and moves each finished file back; no writes those outputs in
+    this directory. -y and non-interactive runs write in this directory. Status lines
+    start with the clock in brackets, [ YYYY.MM.DD HH:MM:SS ].
   - Before each merge: if the planned output name, first-chapter filesystem time, and
     first-chapter media CreateDate disagree by more than two minutes, ask which date to
     use after the merge (1/2/3…); default is the oldest usable stamp (before 1990 ignored).
-    [m] Merge all remaining asks that question for every remaining group first, then starts
+    [Y] Merge all remaining asks that question for every remaining group first, then starts
     merging. -y picks the oldest without asking. After a successful merge: copy GPS / dates /
     Make/Model and title from the first chapter in one exiftool rewrite (progress from
     *_exiftool_tmp on large files), applying the date chosen earlier in that same rewrite
@@ -6946,16 +6950,17 @@ prompt_merge_all_temp_dir() {
   echo "$(pgm_ts) ${tdir} is on another disk ($(format_bytes_human "$avail") free)."
   echo "$(pgm_ts) This merge is about $(format_bytes_human "$sz"). Writing it there keeps reading and writing off the same disk."
   echo "$(pgm_ts) The same choice is used for every remaining group in this run."
-  if [[ "$SOURCE_DISK_KIND" == ssd ]]; then
-    default_key=n
-    prompt_key="y/N/q"
-    echo "  [y] Yes — merge in ${tdir}, then move each finished file back here"
-    echo "  [N] No — write the outputs in this directory (default)"
-  else
+  # Default Yes only for a confirmed spinning HDD; SSD and unknown → write here.
+  if [[ "$SOURCE_DISK_KIND" == hdd ]]; then
     default_key=y
     prompt_key="Y/n/q"
     echo "  [Y] Yes — merge in ${tdir}, then move each finished file back here (default)"
     echo "  [n] No — write the outputs in this directory"
+  else
+    default_key=n
+    prompt_key="y/N/q"
+    echo "  [y] Yes — merge in ${tdir}, then move each finished file back here"
+    echo "  [N] No — write the outputs in this directory (default)"
   fi
   echo "  [q] Quit"
   pgm_read_key_choice "Merge via ${tdir} for the remaining groups? [${prompt_key}]: " "$default_key" "ynq"
@@ -7073,19 +7078,20 @@ choose_merge_output_path() {
   echo "$(pgm_ts) ${SOURCE_DISK_KIND_WHY}"
   echo "$(pgm_ts) ${tdir} is on another disk ($(format_bytes_human "$avail") free)."
   echo "$(pgm_ts) This merge is about $(format_bytes_human "$sz"). Writing it there keeps reading and writing off the same disk."
-  if [[ "$SOURCE_DISK_KIND" == ssd ]]; then
-    default_key=n
-    prompt_key="y/d/N/r/q"
-    echo "  [y] Yes — merge this file in ${tdir}, then move it back here"
-    echo "  [d] Yes — use ${tdir} for the rest of this run as well"
-    echo "  [N] No — write the output in this directory (default)"
-    echo "  [r] No — write in this directory for the rest of this run as well"
-  else
+  # Default Yes only for a confirmed spinning HDD; SSD and unknown → write here.
+  if [[ "$SOURCE_DISK_KIND" == hdd ]]; then
     default_key=y
     prompt_key="Y/d/n/r/q"
     echo "  [Y] Yes — merge this file in ${tdir}, then move it back here (default)"
     echo "  [d] Yes — use ${tdir} for the rest of this run as well"
     echo "  [n] No — write the output in this directory"
+    echo "  [r] No — write in this directory for the rest of this run as well"
+  else
+    default_key=n
+    prompt_key="y/d/N/r/q"
+    echo "  [y] Yes — merge this file in ${tdir}, then move it back here"
+    echo "  [d] Yes — use ${tdir} for the rest of this run as well"
+    echo "  [N] No — write the output in this directory (default)"
     echo "  [r] No — write in this directory for the rest of this run as well"
   fi
   echo "  [q] Quit"
@@ -7374,10 +7380,10 @@ prompt_merge_group_action() {
       q)  REPLY=quit; return 0 ;;
     esac
   else
-    echo "  [Y] Merge this group (default)"
+    echo "  [Y] Merge all remaining groups (asks output date/time for each first) (default)"
     echo "  [n] Skip this group"
     echo "  [a] Skip all remaining groups"
-    echo "  [m] Merge all remaining groups (asks output date/time for each first)"
+    echo "  [m] Merge this group"
     echo "  [q] Quit"
     if (( short_n )); then
       pgm_read_key_choice "Short clip in this group. Merge anyway? [Y/n/a/m/q]: " y "ynamq"
@@ -7386,10 +7392,10 @@ prompt_merge_group_action() {
     fi
     choice="$REPLY"
     case "$choice" in
-      y)  REPLY=merge; return 0 ;;
+      y)  REPLY=merge_all; return 0 ;;
       n)  REPLY=skip; return 0 ;;
       a)  REPLY=skip_all; return 0 ;;
-      m)  REPLY=merge_all; return 0 ;;
+      m)  REPLY=merge; return 0 ;;
       q)  REPLY=quit; return 0 ;;
     esac
   fi
