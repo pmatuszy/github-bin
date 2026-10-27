@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261027.181751 - output-dates upfront: [P] pick per file is first and the default
 # v. 20261027.181106 - ask output dates for all files before encoding; apply after each encode
 # v. 20261021.144500 - Ctrl-C removes .partial.*.mp4 (stop ffmpeg first; retry rm on busy mounts)
 # v. 20261021.143500 - Command line shows live script name, not .deleteme.*.seal.*
@@ -59,6 +60,7 @@
 # v. 20260930.221500 - file prompts: one key, no Enter
 # v. 20260930.220400 - faster viewing copy of a merged video (2, 5, 10, 20, …)
 
+# 2026.10.27 - v. 0.58 - output-dates upfront menu: [P] Pick per file now is listed first and is the default (Enter)
 # 2026.10.27 - v. 0.57 - before any encode, ask how to set output dates for every file (one choice for all, or per file); after each encode only apply that choice and show the before/after table — no more date menu between files
 # 2026.10.21 - v. 0.56 - Ctrl-C / EXIT: stop ffmpeg before deleting the .partial.*.mp4, retry rm (NTFS/CIFS often keeps the file busy), and sweep orphans for this PID — previously cleanup said it ran but left …_x5.mp4.partial.<pid>.mp4
 # 2026.10.21 - v. 0.55 - printed Command uses video-pgm-timelapse.sh (live path), not .deleteme.video-pgm-timelapse.sh.seal.*
@@ -1596,7 +1598,7 @@ tl_read_one_file_date_menu() {
 # Return 2 on quit.
 tl_ask_output_dates_upfront() {
   local total=${#TL_INPUTS[@]}
-  local f i need_n=0 choice keys def=a prompt_extra=""
+  local f i need_n=0 choice keys def=p prompt_extra=""
   local -a need_files=()
   local -a key_list=()
 
@@ -1631,26 +1633,42 @@ tl_ask_output_dates_upfront() {
   echo "  Sources come from each source video (file name, mtime, CreateDate)."
   echo "  After each encode the choice is applied; you will not be asked again between files."
   echo
+  echo "  [$(tl_k p "$def")] Pick per file now (default)"
   echo "  [$(tl_k 1 "$def")] File name for every file"
   echo "  [$(tl_k 2 "$def")] Filesystem for every file"
   echo "  [$(tl_k 3 "$def")] Media tags for every file"
   echo "  [$(tl_k 4 "$def")] Keep as written for every file"
-  echo "  [$(tl_k a "$def")] Oldest usable per file (default)"
-  echo "  [$(tl_k p "$def")] Pick per file now"
+  echo "  [$(tl_k a "$def")] Oldest usable per file"
   echo "  [$(tl_k q "$def")] Quit"
-  key_list=(1 2 3 4 a p q)
+  key_list=(p 1 2 3 4 a q)
   keys="$(tl_keys "$def" "${key_list[@]}")"
-  prompt_extra=" (default a = Oldest usable per file)"
+  prompt_extra=" (default P = Pick per file now)"
 
   while true; do
-    tl_read_key "Output times for all files [${keys}]${prompt_extra}: " a
+    tl_read_key "Output times for all files [${keys}]${prompt_extra}: " p
     choice="$(tl_choice "$REPLY")"
     case "$choice" in
       q)
         tl_print_selected "q = Quit"
         return 2
         ;;
-      ''|a)
+      ''|p)
+        tl_print_selected "p = Pick per file now"
+        i=0
+        for f in "${need_files[@]}"; do
+          (( i++ )) || true
+          tl_compute_output_date_fields "" "$f" || continue
+          if ! tl_read_one_file_date_menu "$f" \
+            "Output dates ${i}/${need_n}: ${f##*/}"; then
+            return 2
+          fi
+          TL_DATE_CHOICE["$f"]="$TL_DATE_MENU_CHOICE"
+          echo "$(tl_ts) Stored for ${f##*/}: ${TL_DATE_MENU_CHOICE}"
+        done
+        echo "$(tl_ts) Date choices stored for ${need_n} file(s). Encoding starts next."
+        return 0
+        ;;
+      a)
         tl_print_selected "a = Oldest usable per file"
         TL_DATE_POLICY=oldest
         TL_ALWAYS_OLDEST=1
@@ -1682,22 +1700,6 @@ tl_ask_output_dates_upfront() {
         TL_ALWAYS_KEEP=1
         TL_ALWAYS_OLDEST=0
         echo "$(tl_ts) Will keep output times as written for every file."
-        return 0
-        ;;
-      p)
-        tl_print_selected "p = Pick per file now"
-        i=0
-        for f in "${need_files[@]}"; do
-          (( i++ )) || true
-          tl_compute_output_date_fields "" "$f" || continue
-          if ! tl_read_one_file_date_menu "$f" \
-            "Output dates ${i}/${need_n}: ${f##*/}"; then
-            return 2
-          fi
-          TL_DATE_CHOICE["$f"]="$TL_DATE_MENU_CHOICE"
-          echo "$(tl_ts) Stored for ${f##*/}: ${TL_DATE_MENU_CHOICE}"
-        done
-        echo "$(tl_ts) Date choices stored for ${need_n} file(s). Encoding starts next."
         return 0
         ;;
       *)
