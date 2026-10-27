@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261027.073717 - forced merge: allow prior *_concat_parts_* inputs; combine part ranges in output name
 # v. 20261024.173852 - size-split: same GoPro Media UID (exiftool) groups chapters (bare + GX02…)
 # v. 20261024.173511 - no-GX GoPro_Hero*_Black.mp4 joins size-split when GX01 is missing (same day/cam/session)
 # v. 20261023.223912 - rename-style GoPro_Hero*_GX chapters parse; GX recording number in session key
@@ -88,6 +89,7 @@
 # v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
 # v. 20260805.154826 - after merge: copy GPS/dates from first chapter; FS times via touch -r
 
+# 2026.10.27 - v. 0.15.105 - forced merge (FILE FILE …) accepts prior *_concat_parts_* / *_concat outputs so two half-merges can be joined; output name uses the first file's stem with the combined chapter range when every input parses (e.g. …_01-05 + …_06-09 → …_concat_parts_01-09.mp4), else strips an existing concat suffix before appending _concat_parts_01-N. FILE +N still skips other concat names when picking alphabetical neighbours
 # 2026.10.24 - v. 0.15.104 - size-split grouping also uses GoPro Media UID from exiftool (same UID across chapters of one recording, including bare …_GoPro_Hero10_Black.mp4 vs …_GX02…); batch-loaded with CreateDate; different UIDs refuse to merge even if filenames look related
 # 2026.10.24 - v. 0.15.103 - bare …_GoPro_Hero10_Black.mp4 (no GX) joins a size-split run of …_GX02nnnn… when GX01 is missing: empty recording-id in the session key is compatible with a GX recording id, then the run locks to that id so a later GX session that day does not glue on
 # 2026.10.23 - v. 0.15.102 - …_GoPro_Hero10_Black_GX013404.mp4: parse camera and GX chapter; size-split groups by GX recording number
@@ -263,14 +265,16 @@ Merge chapter MP4 files in the current directory (e.g. GoPro splits) into one
 file using mp4_merge from https://github.com/gyroflow/mp4-merge
 
 With two or more FILE arguments, those files are merged in the order given
-(forced merge). Or pass FILE +N (for example clip.mp4 +2): that file and the
-next N MP4 names in alphabetical order in the same folder are merged. Concat
-outputs (*_concat*.mp4) are skipped when counting the next names. Chapter
-detection is skipped. The plan prints every filename that will be joined.
+(forced merge). Prior merge outputs (*_concat_parts_* / *_concat) are allowed
+here so two half-merges can be joined. Or pass FILE +N (for example clip.mp4 +2):
+that file and the next N MP4 names in alphabetical order in the same folder are
+merged; other concat outputs are skipped when counting those next names.
+Chapter detection is skipped. The plan prints every filename that will be joined.
 The usual prompts still ask about the merge, temp directory, seam preview,
 and deleting inputs. A Windows path such as P:\\video\\clip.mp4 is read as
 /mnt/p/video/clip.mp4. All files must be MP4s in the same directory. The
-output is written next to the first file as <first_stem>_concat_parts_01-<N>.mp4.
+output is written next to the first file as <first_stem>_concat_parts_01-<N>.mp4
+(or a combined chapter range when every input is already a …_concat_parts_A-B).
 
 Options:
   -h, --help           Show this help and exit.
@@ -5156,14 +5160,20 @@ pgm_resolve_force_merge_plus_n() {
     echo "$(pgm_ts) Cannot resolve path: ${start_arg}" >&2
     return 1
   }
-  if is_concat_output_basename "${abs##*/}"; then
-    echo "$(pgm_ts) Already a concat output (cannot use as a forced-merge input): ${abs##*/}" >&2
-    return 1
-  fi
-
   dir="$(dirname -- "$abs")"
   start_base="${abs##*/}"
+  # +N neighbours skip other concat outputs; the start file itself may be a concat.
   mapfile -t names < <(pgm_list_mp4_basenames_sorted "$dir")
+  if is_concat_output_basename "$start_base"; then
+    # Start is a concat: inject it at the alphabetical position among non-concat
+    # neighbours so +N still means "next N chapter files after this name".
+    mapfile -t names < <(
+      {
+        printf '%s\n' "$start_base"
+        printf '%s\n' "${names[@]}"
+      } | LC_ALL=C sort -u
+    )
+  fi
   if (( ${#names[@]} == 0 )); then
     echo "$(pgm_ts) No MP4 files found in ${dir}" >&2
     return 1
@@ -5252,10 +5262,7 @@ pgm_resolve_force_merge_files() {
       echo "$(pgm_ts)   $(dirname -- "$abs")" >&2
       return 1
     fi
-    if is_concat_output_basename "${abs##*/}"; then
-      echo "$(pgm_ts) Already a concat output (cannot use as a forced-merge input): ${abs##*/}" >&2
-      return 1
-    fi
+    # Prior *_concat_parts_* / *_concat outputs are allowed: the user named them.
     out+=("$abs")
   done
   FORCE_MERGE_FILES=( "${out[@]}" )
@@ -6428,19 +6435,76 @@ print_group_plan() {
   echo
 }
 
+# Strip a trailing merge-output suffix from a basename stem (no directory, no .mp4).
+force_merge_strip_concat_stem() {
+  local stem="$1"
+  if [[ "$stem" =~ ^(.+)_concat_parts_[0-9]{2}-[0-9]{2}(_Proxy)?$ ]]; then
+    printf '%s\n' "${BASH_REMATCH[1]}"
+    return 0
+  fi
+  if [[ "$stem" =~ ^(.+)_parts_[0-9]{2}-[0-9]{2}(_Proxy)?_concat$ ]]; then
+    printf '%s\n' "${BASH_REMATCH[1]}"
+    return 0
+  fi
+  if [[ "$stem" == *_concat ]]; then
+    printf '%s\n' "${stem%_concat}"
+    return 0
+  fi
+  printf '%s\n' "$stem"
+}
+
 # Forced CLI merge: keep command-line order; write next to the first file.
+# When every input is a …_concat_parts_A-B (or legacy parts_A-B_concat), name the
+# output with the first file's camera stem and the combined chapter range
+# (01-05 + 06-09 → …_concat_parts_01-09). Otherwise strip any concat suffix from
+# the first stem and use 01-<N> for the number of input files.
 force_merge_group_output_file() {
   local -a files=("$@")
-  local base stem dir n
+  local base stem dir n f first=0 last=0 min_p="" max_p="" proxy="" all_concat=1 out
   (( ${#files[@]} >= 2 )) || return 1
   base="${files[0]##*/}"
-  stem="${base%.*}"
   dir="$(dirname -- "${files[0]}")"
   n=${#files[@]}
-  if [[ "$dir" == . ]]; then
-    printf '%s_concat_parts_01-%02d.mp4\n' "$stem" "$n"
+
+  for f in "${files[@]}"; do
+    if concat_parse_cam_part_range "${f##*/}"; then
+      first=$CONCAT_PARSE_FIRST
+      last=$CONCAT_PARSE_LAST
+      if [[ -z "$min_p" ]] || (( first < min_p )); then
+        min_p=$first
+      fi
+      if [[ -z "$max_p" ]] || (( last > max_p )); then
+        max_p=$last
+      fi
+      if [[ -z "$proxy" && -n "${CONCAT_PARSE_PROXY:-}" ]]; then
+        proxy="$CONCAT_PARSE_PROXY"
+      fi
+    else
+      all_concat=0
+      break
+    fi
+  done
+
+  if (( all_concat )) && [[ -n "$min_p" && -n "$max_p" ]]; then
+    concat_parse_cam_part_range "$base" || true
+    stem="${CONCAT_PARSE_STEM:-}"
+    [[ -n "$stem" ]] || stem="$(force_merge_strip_concat_stem "${base%.*}")"
+    [[ -n "$proxy" ]] || proxy="${CONCAT_PARSE_PROXY:-}"
+    out=$(printf '%s_concat_parts_%02d-%02d%s.mp4' "$stem" "$min_p" "$max_p" "$proxy")
   else
-    printf '%s/%s_concat_parts_01-%02d.mp4\n' "$dir" "$stem" "$n"
+    proxy=""
+    if concat_parse_cam_part_range "$base"; then
+      stem="$CONCAT_PARSE_STEM"
+      proxy="${CONCAT_PARSE_PROXY:-}"
+    else
+      stem="$(force_merge_strip_concat_stem "${base%.*}")"
+    fi
+    out=$(printf '%s_concat_parts_01-%02d%s.mp4' "$stem" "$n" "$proxy")
+  fi
+  if [[ "$dir" == . ]]; then
+    printf '%s\n' "$out"
+  else
+    printf '%s/%s\n' "$dir" "$out"
   fi
 }
 
