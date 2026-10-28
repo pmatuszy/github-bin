@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# v. 20261028.172211 - checksum ref rewrite: use Python instead of sed (fix unterminated s on paths with '.')
 # v. 20261020.205600 - seal .deleteme.rename.sh.seal.*; if seal fails, keep running live script
 # v. 20261020.205000 - seal rename.sh to temp so in-place bin/ cp cannot splice bash source
 # v. 20261020.202500 - self-update: live bin/ overwrite after copy (not git checkout alone)
@@ -111,6 +112,7 @@
 # v. 20260721.142331 - add explicit hash-only DB backfill with inventory, filesystem reconciliation, progress, and resumable batches
 # v. 20260721.132007 - Samsung timestamp media: preserve optional numeric sorting prefix when appending make/model
 # v. 20260721.112812 - GoPro camera labels: GoPro_Hero4_Silver style (not GOPRO4_SILVER)
+# 2026.10.28 - v. 19.363.172211 - checksum ref path rewrite after rename: use Python exact match instead of sed (fixes unterminated s on paths like kosciol_sw._Konrada)
 
 # 2026.10.20 - v. 19.362.205600 - Seal file name is .deleteme.rename.sh.seal.XXXXXX. If the seal copy cannot be created (e.g. read-only directory), startup continues on the live script instead of failing.
 # 2026.10.20 - v. 19.361.205000 - Seal rename.sh to a private temp copy at startup. An in-place cp into bin/ overwrites the inode bash is still reading and caused bogus mid-file syntax errors (e.g. near unexpected token `else`); the sealed snapshot keeps this run stable. The live path is still watched for [R]/[C]/[Q].
@@ -17077,22 +17079,53 @@ update_checksum_content_refs() {
     local old_name="$2"
     local new_name="$3"
 
-    local old_re1 new_re1 old_re2 new_re2
-    old_re1="$(sed_escape_regex "$old_name")"
-    new_re1="$(sed_escape_repl "$new_name")"
-
-    old_re2="$(sed_escape_regex "$(strip_leading_dot_slash "$old_name")")"
-    new_re2="$(sed_escape_repl "$(strip_leading_dot_slash "$new_name")")"
-
     if (( VERBOSE == 1 )); then
         print_checksum_update_verbose "$sum_file" "$old_name" "$new_name"
     fi
 
-    preserve_timestamps_inplace "$sum_file" \
-        sed -i -E \
-            -e "s|([[:space:]]\*?)${old_re1}\$|\1${new_re1}|g" \
-            -e "s|([[:space:]]\*?)${old_re2}\$|\1${new_re2}|g" \
-            -- "$sum_file"
+    # Exact path-column rewrite in Python. The previous sed -e "s|old|new|" form aborted with
+    # "unterminated s command" on real paths (e.g. kosciol_sw._Konrada with '.' / long paths).
+    preserve_timestamps_exists "$sum_file" \
+        python3 - "$sum_file" "$old_name" "$new_name" <<'PYREF'
+import re
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+old_name = sys.argv[2]
+new_name = sys.argv[3]
+
+def strip_dot_slash(p):
+    return p[2:] if p.startswith("./") else p
+
+old_plain = strip_dot_slash(old_name)
+new_plain = strip_dot_slash(new_name)
+old_forms = {old_name, old_plain, "./" + old_plain}
+
+lines = path.read_text(encoding="utf-8", errors="surrogateescape").splitlines(True)
+out = []
+changed = False
+pat = re.compile(r"^([0-9A-Fa-f]+)(\s+)(\*?)(.*?)(\r?\n?)$")
+for line in lines:
+    m = pat.match(line)
+    if not m:
+        out.append(line)
+        continue
+    ref = m.group(4)
+    if ref not in old_forms and strip_dot_slash(ref) not in old_forms:
+        out.append(line)
+        continue
+    if ref.startswith("./"):
+        repl = new_name if new_name.startswith("./") else "./" + new_plain
+    else:
+        repl = new_plain
+    out.append(m.group(1) + m.group(2) + m.group(3) + repl + m.group(5))
+    changed = True
+
+if changed:
+    path.write_text("".join(out), encoding="utf-8", errors="surrogateescape")
+PYREF
+
 }
 
 remove_checksum_ref_entry() {
