@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# v. 20261028.174241 - fix typo preserve_timestamps_exists -> inplace in checksum ref rewrite
 # v. 20261028.172211 - checksum ref rewrite: use Python instead of sed (fix unterminated s on paths with '.')
 # v. 20261020.205600 - seal .deleteme.rename.sh.seal.*; if seal fails, keep running live script
 # v. 20261020.205000 - seal rename.sh to temp so in-place bin/ cp cannot splice bash source
@@ -112,6 +113,7 @@
 # v. 20260721.142331 - add explicit hash-only DB backfill with inventory, filesystem reconciliation, progress, and resumable batches
 # v. 20260721.132007 - Samsung timestamp media: preserve optional numeric sorting prefix when appending make/model
 # v. 20260721.112812 - GoPro camera labels: GoPro_Hero4_Silver style (not GOPRO4_SILVER)
+# 2026.10.28 - v. 19.364.174241 - fix typo in update_checksum_content_refs: preserve_timestamps_exists was undefined (exit 127); call preserve_timestamps_inplace
 # 2026.10.28 - v. 19.363.172211 - checksum ref path rewrite after rename: use Python exact match instead of sed (fixes unterminated s on paths like kosciol_sw._Konrada)
 
 # 2026.10.20 - v. 19.362.205600 - Seal file name is .deleteme.rename.sh.seal.XXXXXX. If the seal copy cannot be created (e.g. read-only directory), startup continues on the live script instead of failing.
@@ -17085,7 +17087,7 @@ update_checksum_content_refs() {
 
     # Exact path-column rewrite in Python. The previous sed -e "s|old|new|" form aborted with
     # "unterminated s command" on real paths (e.g. kosciol_sw._Konrada with '.' / long paths).
-    preserve_timestamps_exists "$sum_file" \
+    preserve_timestamps_inplace "$sum_file" \
         python3 - "$sum_file" "$old_name" "$new_name" <<'PYREF'
 import re
 import sys
