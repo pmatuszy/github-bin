@@ -1,7 +1,9 @@
 #!/bin/bash
+# v. 20261028.083600 - exit with a clear error when neither /ramdisk/syslog nor /var/log/syslog exists
 # v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
 # v. 20260716.164840 - add -h/--help, -v/--version, --no_startup_delay
 
+# 2026.10.28 - v. 0.2 - if /ramdisk/syslog is missing and /var/log/syslog does not exist, print an error and exit (do not call tail)
 # 2023.02.06 - v. 0.1 - initial release
 
 show_help() {
@@ -42,9 +44,12 @@ echo ; cat  $0|grep -e '# *20[123][0-9]'|head -n 1 | awk '{print "script version
 figlet -w 120 "syslog tail -F"
 sleep 1.5s
 
-if [ -f /ramdisk/syslog ];then
+if [ -f /ramdisk/syslog ]; then
   tail -F -n 2000 /ramdisk/syslog
-else
+elif [ -f /var/log/syslog ]; then
   tail -F -n 2000 /var/log/syslog
+else
+  echo "ERROR: /var/log/syslog does not exist (and /ramdisk/syslog is missing too)." >&2
+  exit 1
 fi
 
