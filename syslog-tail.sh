@@ -1,8 +1,10 @@
 #!/bin/bash
+# v. 20261028.084800 - plain title when figlet is missing (e.g. not root to install)
 # v. 20261028.083600 - exit with a clear error when neither /ramdisk/syslog nor /var/log/syslog exists
 # v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
 # v. 20260716.164840 - add -h/--help, -v/--version, --no_startup_delay
 
+# 2026.10.28 - v. 0.3 - if figlet is unavailable, print a plain "syslog tail -F" title instead of failing
 # 2026.10.28 - v. 0.2 - if /ramdisk/syslog is missing and /var/log/syslog does not exist, print an error and exit (do not call tail)
 # 2023.02.06 - v. 0.1 - initial release
 
@@ -41,7 +43,11 @@ done
 
 echo ; cat  $0|grep -e '# *20[123][0-9]'|head -n 1 | awk '{print "script version: " $5 " (dated "$2")"}' ; echo ; echo
 
-figlet -w 120 "syslog tail -F"
+if type -fP figlet &>/dev/null; then
+  figlet -w 120 "syslog tail -F"
+else
+  echo "==== syslog tail -F ===="
+fi
 sleep 1.5s
 
 if [ -f /ramdisk/syslog ]; then
