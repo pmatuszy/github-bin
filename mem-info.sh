@@ -1,7 +1,9 @@
 #!/bin/bash
+# v. 20261028.083800 - plain section frames when boxes is missing (e.g. not root to install)
 # v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
 # v. 20260716.163224 - versioning format v. YYYYMMDD.HH24MISS
 
+# 2026.10.28 - v. 0.29 - if boxes is unavailable, print plain titles/sections instead of failing pipes; one notice to stderr
 # 2026.06.02 - v. 0.28 - add --no_startup_delay option (parsed before header)
 # 2026.04.22 - v. 0.27 - free -m: boxed title only; table plain (expand + compact, no boxes)
 # 2026.04.22 - v. 0.26 - free -m: no boxes (revert v0.25); expand + compact only
@@ -192,6 +194,38 @@ fi
 
 return_code=0
 
+_mi_have_boxes=0
+if type -fP boxes &>/dev/null; then
+  _mi_have_boxes=1
+else
+  echo "(PGM) boxes is not installed; printing plain sections (install boxes as root for framed output)." >&2
+fi
+
+# Centered section title — boxes when available, plain underline otherwise.
+_mi_box_title() {
+  if (( _mi_have_boxes )); then
+    printf '%s\n' "$1" | boxes -a c -d stone
+  else
+    echo
+    echo "==== $1 ===="
+    echo
+  fi
+}
+
+# Left-aligned body from stdin — boxes when available, plain rules otherwise.
+_mi_box_body() {
+  if (( _mi_have_boxes )); then
+    boxes -a l -d stone
+  else
+    local line
+    echo "----------------------------------------"
+    while IFS= read -r line || [[ -n "$line" ]]; do
+      printf '  %s\n' "$line"
+    done
+    echo "----------------------------------------"
+  fi
+}
+
 _mi_pause_if_needed() {
   if (( _mi_page )) && [[ -t 1 ]] && [[ -r /dev/tty ]]; then
     IFS= read -r -n 1 -s -p "(PGM) Press one key for next section (q to quit)... " _mi_in < /dev/tty || true
@@ -373,7 +407,7 @@ _mi_print_meminfo_line() {
 }
 
 echo
-echo "(PGM) Memory (RAM) report - $(hostname) - $(date '+%Y-%m-%d %H:%M:%S %Z')" | boxes -a c -d stone
+_mi_box_title "(PGM) Memory (RAM) report - $(hostname) - $(date '+%Y-%m-%d %H:%M:%S %Z')"
 echo
 
 mt=$(_mi_kb MemTotal) || mt=0
@@ -435,9 +469,9 @@ _mi_sl_pad_to_note() {
     _mi_sl_pad_to_note "$_mi_p"
     echo 'none configured (SwapTotal 0)'
   fi
-} | boxes -a l -d stone
+} | _mi_box_body
 
-echo "(PGM) free -m" | boxes -a c -d stone
+_mi_box_title "(PGM) free -m"
 # Table only: expand + compact — not piped through boxes.
 LC_ALL=C free -m | _mi_expand_tabs | _mi_free_compact_columns
 echo
@@ -490,14 +524,14 @@ for (( _mi_i = 0; _mi_i < _mi_total; )); do
       _mi_title="(PGM) /proc/meminfo - selected $((_mi_i + 1))-${_mi_end} of ${_mi_total} (kB + human)"
     fi
   fi
-  echo "$_mi_title" | boxes -a c -d stone
+  _mi_box_title "$_mi_title"
   {
     read -r _mi_fw _mi_vw _mi_huw < <(_mi_meminfo_table_widths "${_mi_nonempty[@]:_mi_i:$((_mi_end - _mi_i))}")
     _mi_print_meminfo_header "$_mi_fw" "$_mi_vw" "$_mi_huw"
     for ((_mi_j = _mi_i; _mi_j < _mi_end; _mi_j++)); do
       _mi_print_meminfo_line "$_mi_fw" "$_mi_vw" "$_mi_huw" "${_mi_nonempty[_mi_j]}"
     done
-  } | boxes -a l -d stone
+  } | _mi_box_body
   echo
   _mi_i=$_mi_end
   ((_mi_i < _mi_total)) && _mi_pause_if_needed
