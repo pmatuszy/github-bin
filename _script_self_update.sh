@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# v. 20261102.155130 - DEBUG trap must not clear BASH_REMATCH
 # v. 20261021.210400 - script_live_basename here; prefer SCRIPT_SELF_LIVE_PATH over stale CALLER_*
 # v. 20261021.143500 - after seal, restore $0 / CALLER_* to the live script name (not .deleteme.*.seal.*)
 # v. 20261020.205600 - seal name .deleteme.<script>.seal.XXXX; if seal copy fails, run live script
@@ -6,6 +7,9 @@
 # v. 20261020.202500 - detect live-script overwrite (git pull then copy into bin/) mid-run
 # v. 20261020.202200 - detect on-disk script replacement while a run is in progress
 #
+# 2026.11.02 - v. 1.6.155130 - DEBUG trap: validate the epoch with case, not =~, and save/restore
+#   BASH_REMATCH around the check. =~ here cleared the caller's captures, so the next
+#   line died under nounset (BASH_REMATCH[1]: unbound variable) and arithmetic saw 0.
 # 2026.10.21 - v. 1.5.210400 - define script_live_basename here (header and rename both use it); never
 #   return a .deleteme.*.seal.* name; prefer SCRIPT_SELF_LIVE_PATH over CALLER_SCRIPT_BASENAME
 # 2026.10.21 - v. 1.4.143500 - After a sealed re-exec, set BASH_ARGV0 and CALLER_SCRIPT* back to
@@ -373,7 +377,11 @@ script_self_update_check_throttled() {
   [[ -n "${SCRIPT_SELF_UPDATE_PATH}" && -n "${SCRIPT_SELF_UPDATE_FP}" ]] || return 0
 
   now="$(date +%s 2>/dev/null || printf '%s' 0)"
-  [[ "$now" =~ ^[0-9]+$ ]] || return 0
+  # case, not =~. This function runs from the DEBUG trap, before every simple command.
+  # =~ replaces BASH_REMATCH and drops capture groups the caller still needs.
+  case "$now" in
+    ''|*[!0-9]*) return 0 ;;
+  esac
   if (( SCRIPT_SELF_UPDATE_LAST_CHECK_EPOCH > 0 )) && \
      (( now - SCRIPT_SELF_UPDATE_LAST_CHECK_EPOCH < SCRIPT_SELF_UPDATE_INTERVAL_SEC )); then
     return 0
@@ -398,6 +406,24 @@ script_self_update_check_throttled() {
   return 0
 }
 
+# DEBUG runs before the next simple command. Put the caller's captures back
+# even if the check (or something it calls) uses =~.
+script_self_update_debug_trap() {
+  local saved_decl="" rc=0
+
+  if ! saved_decl="$(declare -p BASH_REMATCH 2>/dev/null)"; then
+    saved_decl=""
+  fi
+  script_self_update_check_throttled || rc=$?
+  if [[ -n "$saved_decl" ]]; then
+    # declare inside a function is local unless -g. declare -p does not emit -g.
+    eval "${saved_decl/declare/declare -g}"
+  else
+    unset BASH_REMATCH
+  fi
+  return "$rc"
+}
+
 script_self_update_install_trap() {
   [[ "${SCRIPT_SELF_UPDATE_STATE}" == watch ]] || return 0
   (( SCRIPT_SELF_UPDATE_DEBUG_TRAP_INSTALLED == 1 )) && return 0
@@ -407,7 +433,7 @@ script_self_update_install_trap() {
     return 0
   fi
 
-  trap 'script_self_update_check_throttled' DEBUG
+  trap 'script_self_update_debug_trap' DEBUG
   SCRIPT_SELF_UPDATE_DEBUG_TRAP_INSTALLED=1
 }
 
