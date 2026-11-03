@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# v. 20261103.073500 - GoPro DB mark: ON CONFLICT upsert (fix UNIQUE checked_paths.path); keep stdout clean inside $(transform_name) so NEW paths do not embed a newline
 # v. 20261028.174241 - fix typo preserve_timestamps_exists -> inplace in checksum ref rewrite
 # v. 20261028.172211 - checksum ref rewrite: use Python instead of sed (fix unterminated s on paths with '.')
 # v. 20261020.205600 - seal .deleteme.rename.sh.seal.*; if seal fails, keep running live script
@@ -116,6 +117,7 @@
 # 2026.10.28 - v. 19.364.174241 - fix typo in update_checksum_content_refs: preserve_timestamps_exists was undefined (exit 127); call preserve_timestamps_inplace
 # 2026.10.28 - v. 19.363.172211 - checksum ref path rewrite after rename: use Python exact match instead of sed (fixes unterminated s on paths like kosciol_sw._Konrada)
 
+# 2026.11.03 - v. 19.363.073500 - GoPro capture-mode DB write uses INSERT…ON CONFLICT upsert (plain INSERT hit UNIQUE checked_paths.path when the in-memory cache missed an existing row). Progress/confirm helpers no longer write bare newlines to stdout (that leaked into $(transform_name) and showed NEW with the basename on the next line, unindented). emit_wrap and transform_name strip embedded CR/LF from paths.
 # 2026.10.20 - v. 19.362.205600 - Seal file name is .deleteme.rename.sh.seal.XXXXXX. If the seal copy cannot be created (e.g. read-only directory), startup continues on the live script instead of failing.
 # 2026.10.20 - v. 19.361.205000 - Seal rename.sh to a private temp copy at startup. An in-place cp into bin/ overwrites the inode bash is still reading and caused bogus mid-file syntax errors (e.g. near unexpected token `else`); the sealed snapshot keeps this run stable. The live path is still watched for [R]/[C]/[Q].
 # 2026.10.20 - v. 19.360.202500 - Self-update watches the running rename.sh path (e.g. after git pull then copy into bin/). Overwriting that live file triggers [R]/[C]/[Q]; updating only the git checkout does not.
@@ -1023,9 +1025,12 @@ emit_wrap_labeled_line() {
     local ansi_label="$3"
     local body="$4"
     local full_line_color="${5-}"
-    local plain="${plain_prefix}${body}"
-    local line_color=""
-    local eff_width
+    local plain line_color="" eff_width
+    # Always strip CR/LF so a polluted NEW path cannot print as an unindented second line
+    # when the combined length still "fits" the wrap budget (newline counts as one char).
+    body="${body//$'\r'/}"
+    body="${body//$'\n'/}"
+    plain="${plain_prefix}${body}"
     eff_width="$(rename_effective_wrap_width)"
     if (( fd == 1 )); then
         nonverbose_progress_dot_endline_if_needed
@@ -1682,11 +1687,13 @@ flush_stdin() {
 }
 
 # Non-verbose progress stream: prefer controlling TTY so dots/M-S-H show immediately (stdout may be fully buffered when not a TTY).
+# Fallback is stderr (never stdout): progress helpers run inside $(transform_name …)
+# captures (e.g. GoPro lone-_part_ prompts). A newline on stdout would embed in NEW paths.
 nonverbose_progress_tty_put() {
     if [[ -w /dev/tty ]] 2>/dev/null; then
         printf '%s' "$1" >/dev/tty
     else
-        printf '%s' "$1"
+        printf '%s' "$1" >&2
     fi
 }
 
@@ -1694,7 +1701,7 @@ nonverbose_progress_tty_nl() {
     if [[ -w /dev/tty ]] 2>/dev/null; then
         printf '\n' >/dev/tty
     else
-        printf '\n'
+        printf '\n' >&2
     fi
 }
 
@@ -1962,7 +1969,7 @@ nonverbose_progress_dot_retract_lone_if_needed() {
     if [[ -w /dev/tty ]] 2>/dev/null; then
         printf '\b \b' >/dev/tty
     else
-        printf '\b \b'
+        printf '\b \b' >&2
     fi
     NONVERBOSE_PROGRESS_DOT_LINE_OPEN=no
     NONVERBOSE_PROGRESS_DOT_COL_COUNT=0
@@ -1997,13 +2004,14 @@ read_single_key() {
 }
 
 # Yes/no confirm with quit. Echoes newline after the key. Returns 0=yes, 1=no, 2=quit.
+# Newline goes to stderr so callers inside $(…) do not capture it into a basename/path.
 read_yes_no_quit_confirm() {
     local __timeout="$1"
     local answer=""
 
     flush_stdin
     read_single_key answer "$__timeout"
-    echo
+    echo >&2
     case "$answer" in
         q|Q) return 2 ;;
         y|Y) return 0 ;;
@@ -6197,6 +6205,8 @@ db_mark_checked() {
 }
 
 # Persist GoPro Rate check in checked_paths.signature (gopro_cm:v1:<none|Timewarp_5x|…>).
+# Always upsert: in-memory cache can miss a row that already exists in SQLite (path-key skew
+# after rewrite, partial warmup, etc.). A plain INSERT then fails UNIQUE(checked_paths.path).
 db_mark_gopro_capture_mode_checked() {
     local path="$1"
     local result="$2"
@@ -6215,22 +6225,22 @@ db_mark_gopro_capture_mode_checked() {
     sig="gopro_cm:v1:${result}"
     sig_sql="'$(sql_escape "$sig")'"
 
-    DB_CACHE_GOPRO_CAPTURE["$abs"]="$result"
-    DB_CACHE_META["$abs"]="$size|$mtime"
-
-    if [[ -n "${DB_CACHE_ROW_EXISTS[$abs]-}" || -n "${DB_CACHE_STATUS[$abs]-}" ]]; then
+    if [[ -n "${DB_CACHE_ROW_EXISTS[$abs]-}" || -n "${DB_CACHE_META[$abs]-}" || -n "${DB_CACHE_STATUS[$abs]-}" ]]; then
         existing_row=1
     fi
 
+    DB_CACHE_GOPRO_CAPTURE["$abs"]="$result"
+    DB_CACHE_META["$abs"]="$size|$mtime"
+    DB_CACHE_STATUS["$abs"]="checked"
+    DB_CACHE_ROW_EXISTS["$abs"]=1
+
     if (( existing_row == 1 )); then
         ((++DB_ROWS_UPDATED))
-        sql="UPDATE checked_paths SET signature=${sig_sql}, size=${size}, mtime=${mtime}, last_checked=CURRENT_TIMESTAMP WHERE path='$(sql_escape "$stored")';"
     else
         ((++DB_ROWS_NEW))
-        DB_CACHE_STATUS["$abs"]="checked"
-        DB_CACHE_ROW_EXISTS["$abs"]=1
-        sql="INSERT INTO checked_paths(path, kind, size, mtime, status, last_checked, signature) VALUES ('$(sql_escape "$stored")', 'plain', ${size}, ${mtime}, 'checked', CURRENT_TIMESTAMP, ${sig_sql});"
     fi
+
+    sql="INSERT INTO checked_paths(path, kind, size, mtime, status, last_checked, signature) VALUES ('$(sql_escape "$stored")', 'plain', ${size}, ${mtime}, 'checked', CURRENT_TIMESTAMP, ${sig_sql}) ON CONFLICT(path) DO UPDATE SET signature=excluded.signature, size=excluded.size, mtime=excluded.mtime, last_checked=CURRENT_TIMESTAMP;"
 
     printf '%s\n' "$sql" >> "$DB_PENDING_SQL_FILE"
     (( ++DB_PENDING_COUNT ))
@@ -15473,6 +15483,9 @@ transform_name() {
             trap - ERR
             _gopro_part_strip="$(maybe_prompt_gopro_remove_lone_part_basename "$f" "$base")"
             _gopro_part_rc=$?
+            # Drop any CR/LF that leaked onto stdout from progress/confirm helpers inside $(…).
+            _gopro_part_strip="${_gopro_part_strip//$'\r'/}"
+            _gopro_part_strip="${_gopro_part_strip//$'\n'/}"
             eval "${_gopro_part_err_trap:-}"
             if ((_tn_save_e_part)); then
                 set -e
@@ -15800,6 +15813,9 @@ transform_name() {
         fi
     fi
 
+    # Never emit CR/LF in a suggested path (would show as an unindented second NEW line).
+    newbase="${newbase//$'\r'/}"
+    newbase="${newbase//$'\n'/}"
     if [[ "$dir" == "." ]]; then
         if [[ "$f" == ./* ]]; then
             printf './%s' "$newbase"
