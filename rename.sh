@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# v. 20261111.094500 - Collision prompt: [E] use _OTHER for all further collisions for the rest of this run (session twin of [R]/[D])
 # v. 20261103.073500 - GoPro DB mark: ON CONFLICT upsert (fix UNIQUE checked_paths.path); keep stdout clean inside $(transform_name) so NEW paths do not embed a newline
 # v. 20261028.174241 - fix typo preserve_timestamps_exists -> inplace in checksum ref rewrite
 # v. 20261028.172211 - checksum ref rewrite: use Python instead of sed (fix unterminated s on paths with '.')
@@ -117,6 +118,7 @@
 # 2026.10.28 - v. 19.364.174241 - fix typo in update_checksum_content_refs: preserve_timestamps_exists was undefined (exit 127); call preserve_timestamps_inplace
 # 2026.10.28 - v. 19.363.172211 - checksum ref path rewrite after rename: use Python exact match instead of sed (fixes unterminated s on paths like kosciol_sw._Konrada)
 
+# 2026.11.11 - v. 19.365.094500 - Collision prompt: [E] auto-applies _OTHER (like [R]) for every further collision for the rest of this run; [D] remains directory-scoped only
 # 2026.11.03 - v. 19.363.073500 - GoPro capture-mode DB write uses INSERT…ON CONFLICT upsert (plain INSERT hit UNIQUE checked_paths.path when the in-memory cache missed an existing row). Progress/confirm helpers no longer write bare newlines to stdout (that leaked into $(transform_name) and showed NEW with the basename on the next line, unindented). emit_wrap and transform_name strip embedded CR/LF from paths.
 # 2026.10.20 - v. 19.362.205600 - Seal file name is .deleteme.rename.sh.seal.XXXXXX. If the seal copy cannot be created (e.g. read-only directory), startup continues on the live script instead of failing.
 # 2026.10.20 - v. 19.361.205000 - Seal rename.sh to a private temp copy at startup. An in-place cp into bin/ overwrites the inode bash is still reading and caused bogus mid-file syntax errors (e.g. near unexpected token `else`); the sealed snapshot keeps this run stable. The live path is still watched for [R]/[C]/[Q].
@@ -16650,11 +16652,16 @@ try_resolve_collision_with_same_second_index() {
     return 0
 }
 
-# When set: collision prompts skip [o/r/d/c/p/v/S/q] and apply _OTHER (like [R]) if the source file's directory matches this path (see similar_rename_dir_matches_scope).
+# When set: collision prompts skip [o/r/d/e/c/p/v/S/q] and apply _OTHER (like [R]) if the source file's directory matches this path (see similar_rename_dir_matches_scope).
 collision_auto_other_dir_matches_source() {
     local old="$1"
     [[ -n "$AUTO_COLLISION_OTHER_DIR" ]] || return 1
     similar_rename_dir_matches_scope "$(dirname -- "$old")" "$AUTO_COLLISION_OTHER_DIR"
+}
+
+# [E] session: apply _OTHER (like [R]) for every further collision for the rest of this run.
+collision_auto_other_session_applies() {
+    [[ "$AUTO_COLLISION_OTHER_SESSION" == yes ]]
 }
 
 # When set: collision prompts skip [o/r/d/c/p/v/S/q] and overwrite destination (like [O]) for sources in this directory.
@@ -16867,7 +16874,7 @@ handle_existing_target_collision() {
         fi
         emit_wrap_labeled_stdout "COLLISION: " "${YELLOW}COLLISION:${RESET} " "Target file already exists."
         emit_wrap_old_arrow_new_stdout "[DRY-RUN] Would compare MD5, size, and timestamps of source/destination and ask what to do: " "${CYAN}[DRY-RUN] Would compare MD5, size, and timestamps of source/destination and ask what to do:${RESET} " "$old" "$new"
-        emit_wrap_labeled_stdout "[DRY-RUN] Choices would include: " "${CYAN}[DRY-RUN] Choices would include:${RESET} " "[o] remove destination then rename; [c] overwrite all in this directory; [a] overwrite identical-hash collisions for the rest of this run; [r]/[d] _OTHER; [p] remove source only; [v] list directory; [S] skip; [q] quit."
+        emit_wrap_labeled_stdout "[DRY-RUN] Choices would include: " "${CYAN}[DRY-RUN] Choices would include:${RESET} " "[o] remove destination then rename; [c] overwrite all in this directory; [a] overwrite identical-hash collisions for the rest of this run; [r]/[d]/[e] _OTHER (once / this directory / rest of run); [p] remove source only; [v] list directory; [S] skip; [q] quit."
         return 1
     fi
 
@@ -16949,6 +16956,13 @@ can_overwrite_collision_with_identical_md5() {
         return 0
     fi
 
+    if collision_auto_other_session_applies; then
+        COLLISION_OTHER_PATH="$old_other_path"
+        emit_wrap_labeled_stdout "AUTO _OTHER (this run): " "${CYAN}AUTO _OTHER (this run):${RESET} " "session active — source -> '$(basename -- "$old_other_path")'"
+        vlog "Collision _OTHER auto (run session): '$old' -> '$old_other_path'"
+        return 3
+    fi
+
     if collision_auto_other_dir_matches_source "$old"; then
         COLLISION_OTHER_PATH="$old_other_path"
         emit_wrap_labeled_stdout "AUTO _OTHER (this directory): " "${CYAN}AUTO _OTHER (this directory):${RESET} " "session active — source -> '$(basename -- "$old_other_path")'"
@@ -16965,14 +16979,15 @@ can_overwrite_collision_with_identical_md5() {
         fi
         echo "  $(rename_menu_key_bracket R S) Rename source to alternate name (one _OTHER, or _OTHER_2, … if needed) -> $(basename -- "$old_other_path")"
         echo "  $(rename_menu_key_bracket D S) For this source directory only: use _OTHER for all further collisions (like [R])"
+        echo "  $(rename_menu_key_bracket E S) For the rest of this run: use _OTHER for all further collisions (like [R])"
         echo "  $(rename_menu_key_bracket P S) Delete source file only (keep destination; skip this rename)"
         echo "  $(rename_menu_key_bracket S S) Skip (default)"
         echo "  $(rename_menu_key_bracket V S) List directory (parent; mark SOURCE/DESTINATION basenames)"
         echo "  $(rename_menu_key_bracket Q S) Quit"
         if collision_md5_pair_is_identical "$old_md5" "$new_md5"; then
-            echo -n "$(user_prompt_ts_prefix)Choice [o/c/a/r/d/p/S/v/q]: "
+            echo -n "$(user_prompt_ts_prefix)Choice [o/c/a/r/d/e/p/S/v/q]: "
         else
-            echo -n "$(user_prompt_ts_prefix)Choice [o/c/r/d/p/S/v/q]: "
+            echo -n "$(user_prompt_ts_prefix)Choice [o/c/r/d/e/p/S/v/q]: "
         fi
 
         flush_stdin
@@ -17013,6 +17028,12 @@ can_overwrite_collision_with_identical_md5() {
                 AUTO_COLLISION_OTHER_DIR="$(cd -- "$(dirname -- "$old")" 2>/dev/null && pwd -P)" || AUTO_COLLISION_OTHER_DIR="$(dirname -- "$old")"
                 COLLISION_OTHER_PATH="$old_other_path"
                 vlog "Collision _OTHER per-directory session enabled for '$AUTO_COLLISION_OTHER_DIR'"
+                return 3
+                ;;
+            e|E)
+                AUTO_COLLISION_OTHER_SESSION=yes
+                COLLISION_OTHER_PATH="$old_other_path"
+                vlog "Collision _OTHER session enabled for the rest of this run"
                 return 3
                 ;;
             p|P)
@@ -18440,6 +18461,8 @@ AUTO_RENAME_SIMILAR_DIR=""
 AUTO_RENAME_SIMILAR_NEED_USCORE=no
 # When set to realpath of a directory: collision prompts auto-apply _OTHER (like [R]) for every source file in that directory until cleared.
 AUTO_COLLISION_OTHER_DIR=""
+# When yes: collision prompts auto-apply _OTHER (like [R]/[E]) for every further collision for the rest of this run.
+AUTO_COLLISION_OTHER_SESSION=no
 # When set to realpath of a directory: collision prompts auto-overwrite destination (like [O]) for every source file in that directory until cleared.
 AUTO_COLLISION_OVERWRITE_DIR=""
 # When yes: collision prompts auto-overwrite destination (like [O]) for identical-hash pairs for the rest of this run.
@@ -21471,6 +21494,7 @@ for f in "${ordered_paths[@]}"; do
                 similar_rename_clear
                 AUTO_RENAME_DIR=""
                 AUTO_COLLISION_OTHER_DIR=""
+                AUTO_COLLISION_OTHER_SESSION=no
                 AUTO_COLLISION_OVERWRITE_DIR=""
                 vlog "rename_all enabled by user"
                 if [[ -z "$torrent_url_noop" && -z "$thumbs_db_noop" ]]; then
@@ -21509,6 +21533,7 @@ for f in "${ordered_paths[@]}"; do
             else
                 AUTO_RENAME_DIR=""
                 AUTO_COLLISION_OTHER_DIR=""
+                AUTO_COLLISION_OTHER_SESSION=no
                 AUTO_COLLISION_OVERWRITE_DIR=""
                 similar_rename_set_anchor_from_prompt_path "$f"
                 vlog "Per-directory similar-name auto-yes: directory '$AUTO_RENAME_SIMILAR_DIR', all extensions, require leading underscore: ${AUTO_RENAME_SIMILAR_NEED_USCORE}"
