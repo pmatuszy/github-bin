@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261111.210000 - normalize: live progress bar (ffmpeg -progress) like video-pgm-timelapse
 # v. 20261016.090000 - a non-default NORMAL or TOO QUIET track is offered for loudnorm; the perfect default stays
 # v. 20261016.084500 - when the default audio track is very quiet, suggest --default on a normal or loud track
 # v. 20261016.084200 - GoPro timecode group is not a second copy of the audio tracks
@@ -38,6 +39,7 @@
 # v. 20260801.144550 - normalize: map streams individually; skip MP4-unmappable timecode (tmcd) only
 # v. 20260716.163224 - versioning format v. YYYYMMDD.HH24MISS
 
+# 2026.11.11 - v. 0.5.62 - While loudnorm runs, show a live progress bar on a TTY (percent, elapsed/total, speed, ETA) via ffmpeg -progress, same idea as video-pgm-timelapse; GoPro two-pass labels pass 1/2 and 2/2; non-TTY stays quiet
 # 2026.10.16 - v. 0.5.61 - the file row follows the default track, so a PERFECT default hid a NORMAL second track from loudnorm. That second track is now offered on its own, and the default track is not filtered. Answering no to every file no longer aborts with an unbound variable
 # 2026.10.16 - v. 0.5.60 - when the default audio track is empty or very quiet and another track is normal or loud, suggest audio-pgm-swap-audio.sh --default N (order unchanged, other streams stay)
 # 2026.10.16 - v. 0.5.59 - ffprobe prints GoPro audio twice (timecode track group, then the streams). Count each stream index once, so a two-track file is not shown as four tracks
@@ -298,6 +300,8 @@ Options:
 Interactive normalization prompts (per file, in batches like ffmpeg-voice.sh):
   Ask about up to N files (batch size, default 50), then normalize only the
   files you selected in that batch before the next batch of prompts.
+  On a TTY, each loudnorm ffmpeg run shows a live progress bar (percent,
+  elapsed/total, speed, ETA); GoPro two-pass files label pass 1/2 and 2/2.
   Per-file line: (STATUS, max … dB, mean … dB) Normalize: path? — status and
   levels come before the filename. After each answer a "Selected:" line with
   timestamp records the choice. Default Y for NORMAL/TOO QUIET, N for PERFECT
@@ -865,6 +869,11 @@ loudness_on_interrupt() {
   echo
   echo '** Trapped CTRL-C — cleaning up....'
   LOUDNESS_INTERRUPTED=yes
+  if [[ -n "${LOUDNESS_FFMPEG_PID:-}" ]]; then
+    kill "$LOUDNESS_FFMPEG_PID" 2>/dev/null || true
+    wait "$LOUDNESS_FFMPEG_PID" 2>/dev/null || true
+    LOUDNESS_FFMPEG_PID=""
+  fi
   loudness_interrupt_restore_in_progress_file
   if [[ -n "${STY:-}" ]]; then
     echo -ne "${tcScrTitleStart}${0}${tcScrTitleEnd}"
@@ -3309,6 +3318,168 @@ print_ffmpeg_error_tail() {
   tail -n "$n" "$log" | sed 's/^/      /'
 }
 
+# --- Normalize progress bar (ffmpeg -progress), same idea as video-pgm-timelapse ---
+
+loudness_progress_format_clock() {
+  awk -v s="${1:-0}" 'BEGIN {
+    if (s == "" || s < 0) s = 0
+    t = int(s + 0.5)
+    h = int(t / 3600)
+    m = int((t % 3600) / 60)
+    sec = t % 60
+    printf "%02d:%02d:%02d", h, m, sec
+  }'
+}
+
+loudness_progress_out_time_seconds() {
+  awk -v t="$1" 'BEGIN {
+    if (t == "" || t ~ /^-/) { print 0; exit }
+    n = split(t, a, ":")
+    if (n != 3) { print 0; exit }
+    printf "%.3f\n", (a[1] * 3600) + (a[2] * 60) + a[3]
+  }'
+}
+
+loudness_progress_eta_left() {
+  awk -v s="$1" 'BEGIN {
+    if (s < 0) s = 0
+    t = int(s + 0.5)
+    h = int(t / 3600)
+    m = int((t % 3600) / 60)
+    sec = t % 60
+    if (h > 0) printf "%dh %dm", h, m
+    else if (m > 0) printf "%dm %ds", m, sec
+    else printf "%ds", sec
+  }'
+}
+
+loudness_progress_eta_arrival() {
+  local remain="$1"
+  local now arrival today day clock
+  now="$(date +%s)"
+  arrival="$(awk -v n="$now" -v r="$remain" 'BEGIN {
+    a = int(n + r + 0.5)
+    s = a % 60
+    if (s >= 30) a += 60 - s
+    else a -= s
+    printf "%d", a
+  }')"
+  today="$(date '+%Y.%m.%d')"
+  day="$(date -d "@${arrival}" '+%Y.%m.%d' 2>/dev/null || date -r "$arrival" '+%Y.%m.%d' 2>/dev/null)"
+  clock="$(date -d "@${arrival}" '+%H:%M' 2>/dev/null || date -r "$arrival" '+%H:%M' 2>/dev/null)"
+  [[ -n "$day" && -n "$clock" ]] || { printf 'at --'; return 0; }
+  if [[ "$day" == "$today" ]]; then
+    printf 'at %s' "$clock"
+  else
+    printf 'at %s %s' "$day" "$clock"
+  fi
+}
+
+loudness_progress_eta_phrase() {
+  local elapsed="$1" total="$2" speedx="$3"
+  local spd="${speedx%x}" remain=""
+  spd="${spd%X}"
+  if [[ -z "$total" ]] || [[ ! "$spd" =~ ^[0-9]+([.][0-9]+)?$ ]] \
+      || ! awk -v s="$spd" 'BEGIN { exit !(s+0 > 0) }'; then
+    printf 'left --  at --'
+    return 0
+  fi
+  remain="$(awk -v e="$elapsed" -v t="$total" -v s="$spd" 'BEGIN {
+    r = (t - e) / s
+    if (r < 0) r = 0
+    printf "%.3f", r
+  }')"
+  printf 'left %s  %s' "$(loudness_progress_eta_left "$remain")" "$(loudness_progress_eta_arrival "$remain")"
+}
+
+# One updating line. frac is 0..1, or empty when length is unknown.
+loudness_draw_progress() {
+  local frac="$1" elapsed="$2" total="$3" speedx="$4" label="${5:-}"
+  local width=48 filled=0 empty bar pct el_clock tot_clock eta
+  if [[ -n "$frac" ]]; then
+    pct="$(awk -v f="$frac" 'BEGIN { p=int(f*100+0.5); if (p>100) p=100; if (p<0) p=0; printf "%3d", p }')"
+    filled="$(awk -v f="$frac" -v w="$width" 'BEGIN { n=int(f*w+0.5); if (n>w) n=w; if (n<0) n=0; printf "%d", n }')"
+  else
+    pct=" --"
+  fi
+  empty=$((width - filled))
+  bar="$(printf '%*s' "$filled" '' | tr ' ' '#')"
+  bar+="$(printf '%*s' "$empty" '' | tr ' ' '-')"
+  el_clock="$(loudness_progress_format_clock "$elapsed")"
+  if [[ -n "$total" ]]; then
+    tot_clock="$(loudness_progress_format_clock "$total")"
+  else
+    tot_clock="--:--:--"
+  fi
+  eta="$(loudness_progress_eta_phrase "$elapsed" "$total" "$speedx")"
+  if [[ -n "$label" ]]; then
+    printf '\r%s [%s] %s%%  %s / %s  %s  %s\033[K' \
+      "$label" "$bar" "$pct" "$el_clock" "$tot_clock" "$speedx" "$eta"
+  else
+    printf '\r[%s] %s%%  %s / %s  %s  %s\033[K' \
+      "$bar" "$pct" "$el_clock" "$tot_clock" "$speedx" "$eta"
+  fi
+}
+
+loudness_progress_reader() {
+  local total_sec="$1" label="${2:-}"
+  local line key val out_s=0 spd="--" frac=""
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    [[ "$line" == *=* ]] || continue
+    key="${line%%=*}"
+    val="${line#*=}"
+    case "$key" in
+      out_time) out_s="$(loudness_progress_out_time_seconds "$val")" ;;
+      speed)
+        spd="$val"
+        [[ "$spd" == "N/A" ]] && spd="--"
+        ;;
+      progress)
+        frac=""
+        if [[ "$val" == end && -n "$total_sec" ]]; then
+          frac=1
+        elif [[ -n "$total_sec" ]] && awk -v t="$total_sec" 'BEGIN { exit !(t+0 > 0) }'; then
+          frac="$(awk -v e="$out_s" -v t="$total_sec" 'BEGIN {
+            f=e/t; if (f<0) f=0; if (f>1) f=1; printf "%.4f", f
+          }')"
+        fi
+        loudness_draw_progress "$frac" "$out_s" "$total_sec" "$spd" "$label"
+        ;;
+    esac
+  done
+  printf '\n'
+}
+
+# Run ffmpeg with optional live progress on a TTY.
+# Args: total_sec (may be empty), label (may be empty), stderr_log, then ffmpeg args
+# (do not pass -progress; this adds it when showing the bar).
+loudness_ffmpeg_with_progress() {
+  local total_sec="$1" label="$2" stderr_log="$3"
+  shift 3
+  local rc=0 use_bar=0
+
+  if [[ -t 1 ]] && [[ -n "${TERM:-}" && "$TERM" != "dumb" ]]; then
+    use_bar=1
+  fi
+
+  if (( use_bar )); then
+    if command -v stdbuf >/dev/null 2>&1; then
+      stdbuf -oL ffmpeg -progress pipe:1 "$@" > >(loudness_progress_reader "$total_sec" "$label") 2>"$stderr_log" &
+    else
+      ffmpeg -progress pipe:1 "$@" > >(loudness_progress_reader "$total_sec" "$label") 2>"$stderr_log" &
+    fi
+    LOUDNESS_FFMPEG_PID=$!
+    wait "$LOUDNESS_FFMPEG_PID"
+    rc=$?
+    LOUDNESS_FFMPEG_PID=""
+    wait 2>/dev/null || true
+    return "$rc"
+  fi
+
+  ffmpeg "$@" 2>"$stderr_log" || rc=$?
+  return "$rc"
+}
+
 print_ffmpeg_tool_info() {
   local ffmpeg_bin resolved version_line
   ffmpeg_bin="$(command -v ffmpeg 2>/dev/null || true)"
@@ -4154,7 +4325,7 @@ PY
 normalize_file_inplace_gopro_two_pass() {
   local src="$1" dest="$2" filter="$3"
   local tmp tmp_wrong tmp_norm ref ffmpeg_rc=0
-  local stderr_log1 stderr_log2
+  local stderr_log1 stderr_log2 total_sec=""
   local -a encoder_args=() map_args=() tag_args=() filter_args=()
 
   tmp="$(normalize_temp_output_path "$dest" "$$")"
@@ -4167,17 +4338,19 @@ normalize_file_inplace_gopro_two_pass() {
   LOUDNESS_TMP_FILE="$tmp"
   NORMALIZE_GOPRO_TWO_PASS=1
   NORMALIZE_GOPRO_MUX=1
+  total_sec="$(media_duration_seconds "$src" 2>/dev/null || true)"
 
   mapfile -t encoder_args < <(normalize_audio_encoder_args "$dest")
 
   # Pass 1: loudnorm video/audio only.
   mapfile -t filter_args < <(normalize_audio_filter_args "$src" "$filter")
-  ffmpeg -hide_banner -nostats -y -i "$src" \
+  loudness_ffmpeg_with_progress "$total_sec" "pass 1/2" "$stderr_log1" \
+    -hide_banner -nostats -y -i "$src" \
     -map 0:v -map 0:a \
     "${filter_args[@]}" \
     -c:v copy \
     "${encoder_args[@]}" \
-    -- "$tmp_norm" 2>"$stderr_log1" || ffmpeg_rc=$?
+    -- "$tmp_norm" || ffmpeg_rc=$?
 
   if (( ffmpeg_rc != 0 )) || [[ ! -s "$tmp_norm" ]]; then
     print_ffmpeg_error_tail "$stderr_log1"
@@ -4192,14 +4365,15 @@ normalize_file_inplace_gopro_two_pass() {
   normalize_build_gopro_pass2_met_only_args map_args tag_args
   normalize_print_mux_note
   ffmpeg_rc=0
-  ffmpeg -hide_banner -nostats -y -i "$src" -i "$tmp_norm" \
+  loudness_ffmpeg_with_progress "$total_sec" "pass 2/2" "$stderr_log2" \
+    -hide_banner -nostats -y -i "$src" -i "$tmp_norm" \
     "${map_args[@]}" \
     "${tag_args[@]}" \
     -movflags use_metadata_tags \
     -map_metadata 0 \
     -c copy \
     -max_muxing_queue_size 9999 \
-    -- "$tmp_wrong" 2>"$stderr_log2" || ffmpeg_rc=$?
+    -- "$tmp_wrong" || ffmpeg_rc=$?
 
   rm -f -- "$tmp_norm"
 
@@ -4308,7 +4482,7 @@ normalize_temp_output_path() {
 
 normalize_file_inplace() {
   local src="$1" dest="$2" filter="$3"
-  local tmp ref ffmpeg_rc=0 ts_ref stderr_log
+  local tmp ref ffmpeg_rc=0 ts_ref stderr_log total_sec=""
   local -a encoder_args=() map_args=() tag_args=() movflags_args=() filter_args=()
 
   if normalize_file_should_gopro_two_pass "$src" "$dest"; then
@@ -4321,6 +4495,7 @@ normalize_file_inplace() {
   stderr_log="$(mktemp)"
   touch -r "$src" "$ts_ref"
   LOUDNESS_TMP_FILE="$tmp"
+  total_sec="$(media_duration_seconds "$src" 2>/dev/null || true)"
 
   mapfile -t encoder_args < <(normalize_audio_encoder_args "$dest")
   mapfile -t filter_args < <(normalize_audio_filter_args "$src" "$filter")
@@ -4330,7 +4505,8 @@ normalize_file_inplace() {
     movflags_args=(-movflags use_metadata_tags)
   fi
 
-  ffmpeg -hide_banner -nostats -y -i "$src" \
+  loudness_ffmpeg_with_progress "$total_sec" "" "$stderr_log" \
+    -hide_banner -nostats -y -i "$src" \
     "${map_args[@]}" \
     "${tag_args[@]}" \
     "${movflags_args[@]}" \
@@ -4340,7 +4516,7 @@ normalize_file_inplace() {
     -c copy \
     "${encoder_args[@]}" \
     -max_muxing_queue_size 9999 \
-    -- "$tmp" 2>"$stderr_log" || ffmpeg_rc=$?
+    -- "$tmp" || ffmpeg_rc=$?
 
   if (( ffmpeg_rc != 0 )) || [[ ! -s "$tmp" ]]; then
     print_ffmpeg_error_tail "$stderr_log"
