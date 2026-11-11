@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# v. 20261111.163800 - hash verify-data: check all manifest entries; optional path rewrite by digest
 # v. 20260921.182207 - hash list-data-paths: non-.par2 data entries for coverage report
 # v. 20260809.165517 - recognize sha384/sha224/sha1/b2 hash manifests
 # v. 20260806.222350 - hash tidy: Linux normalize CRLF, ';'→'#', backslash paths→'/'
@@ -14,6 +15,7 @@
 # v. 20260721.154223 - list-names subcommand; --pairs-file for large rename batches
 # v. 20260719.093400 - hash inventory subcommand for startup scope summary
 
+# 2026.11.11 - v. 1.2.12.0 - hash verify-data: verify every manifest entry under a directory; on missing/mismatch find a unique same-digest file and optionally rewrite the path (--fix); progress while indexing candidates
 # 2026.09.21 - v. 1.2.11.0 - hash list-data-paths: list non-.par2 / non-hash-manifest paths from manifests (for par2-pgm-check coverage)
 # 2026.08.09 - v. 1.2.10.0 - Hash manifests: sha384/sha224/sha1/b2 (blake2b) as well as sha512/sha256/md5
 # 2026.08.06 - v. 1.2.9.0 - hash tidy: CRLF→LF, ';'→'#', Windows backslash paths→'/'
@@ -37,7 +39,7 @@ import struct
 import sys
 import tempfile
 
-VERSION = "1.2.11.0"
+VERSION = "1.2.12.0"
 MAX_RENAMES = 16
 INVALID_CHARS = '\\:*?"<>|'
 READ_CHUNK = 2097152
@@ -1049,6 +1051,293 @@ def _write_hash_file_preserving_times(hash_file, new_text):
         os.utime(hash_file, times)
 
 
+def hash_entry_relpath(path_field):
+    """Relative path for on-disk lookup: strip md5sum '*', normalize separators."""
+    path = path_field.strip()
+    if path.startswith("*"):
+        path = path[1:]
+    path = path.replace("\\", "/")
+    while path.startswith("./"):
+        path = path[2:]
+    return path
+
+
+def is_hash_manifest_basename(name):
+    ext = os.path.splitext(name)[1].lower()
+    return ext in HASH_EXTENSIONS
+
+
+def list_hash_verify_candidates(folder_path):
+    """Files under folder_path that may appear in hash manifests (not manifests)."""
+    folder_ap = os.path.abspath(folder_path)
+    candidates = []
+    for root, _dirs, files in os.walk(folder_ap):
+        for name in files:
+            if is_hash_manifest_basename(name):
+                continue
+            full = os.path.join(root, name)
+            rel = os.path.relpath(full, folder_ap).replace("\\", "/")
+            candidates.append(rel)
+    candidates.sort(key=lambda p: p.lower())
+    return candidates
+
+
+def build_digest_to_paths(folder_path, algo, candidates, progress_every=25):
+    """Map lowercase digest -> list of relative paths (may have duplicates)."""
+    index = {}
+    total = len(candidates)
+    for i, rel in enumerate(candidates, start=1):
+        full = os.path.join(folder_path, rel)
+        try:
+            digest = compute_file_hash(full, algo)
+        except OSError:
+            continue
+        index.setdefault(digest, []).append(rel)
+        if progress_every and total >= progress_every and i % progress_every == 0:
+            print(
+                f"  ... hashed {i}/{total} on-disk file(s) for path recovery ({algo})",
+                flush=True,
+            )
+    return index
+
+
+def pick_unique_digest_match(expected_digest, listed_rel, digest_index):
+    """Unique candidate with expected digest; prefer same extension. None if ambiguous."""
+    listed_norm = listed_rel.replace("\\", "/")
+    cands = [
+        path
+        for path in digest_index.get(expected_digest.lower(), [])
+        if path.replace("\\", "/") != listed_norm
+    ]
+    if not cands:
+        return None
+    listed_ext = os.path.splitext(listed_norm)[1].lower()
+    same_ext = [
+        path
+        for path in cands
+        if os.path.splitext(path)[1].lower() == listed_ext
+    ]
+    pool = same_ext if same_ext else cands
+    if len(pool) == 1:
+        return pool[0]
+    return None
+
+
+def _apply_hash_data_path_fixes(folder_path, fixes_by_hash_file):
+    """Rewrite path fields for recoverable entries. fixes: hash_file -> [(line, new_rel)]."""
+    fixed = 0
+    messages = []
+    for hash_file, fixes in fixes_by_hash_file.items():
+        if not fixes:
+            continue
+        by_line = {line_no: new_rel for line_no, new_rel in fixes}
+        with open(hash_file, "r", encoding="utf-8", errors="replace") as handle:
+            original_text = handle.read()
+        records = parse_hash_file(hash_file)
+        output_lines = []
+        changed = 0
+        for record in records:
+            if record["type"] != "entry" or record["line"] not in by_line:
+                output_lines.append(record["raw"])
+                continue
+            new_rel = by_line[record["line"]]
+            new_line = format_md5sum_binary_line(record["hash"], new_rel)
+            output_lines.append(new_line)
+            changed += 1
+            print(
+                f"FIXED\t{os.path.basename(hash_file)}\t"
+                f"{hash_entry_relpath(record['path'])}\t{new_rel}",
+                flush=True,
+            )
+        if changed == 0:
+            continue
+        new_text = "\n".join(output_lines)
+        if original_text.endswith("\n") or new_text:
+            new_text += "\n"
+        _write_hash_file_preserving_times(hash_file, new_text)
+        fixed += changed
+        messages.append(f"{os.path.basename(hash_file)} ({changed} path(s))")
+    return fixed, messages
+
+
+def _classify_hash_data_entries(folder_path, hash_files):
+    """Return (ok_count, problems, total_entries).
+
+    problems: list of (hash_file, record, rel, status) with status missing|mismatch.
+    """
+    ok_count = 0
+    problems = []
+    total_entries = 0
+
+    print(f"Found {len(hash_files)} hash file(s); verifying all checksum entries...")
+    for hash_file in hash_files:
+        algo = hash_algo_from_path(hash_file)
+        entries = [r for r in parse_hash_file(hash_file) if r["type"] == "entry"]
+        if not entries:
+            print(f"  {os.path.basename(hash_file)}: 0 entries")
+            continue
+        print(
+            f"  {os.path.basename(hash_file)}: {len(entries)} entr"
+            f"{'y' if len(entries) == 1 else 'ies'} ({algo})..."
+        )
+        for i, record in enumerate(entries, start=1):
+            total_entries += 1
+            rel = hash_entry_relpath(record["path"])
+            full = os.path.join(folder_path, rel)
+            if not os.path.isfile(full):
+                problems.append((hash_file, record, rel, "missing"))
+                continue
+            try:
+                actual = compute_file_hash(full, algo)
+            except OSError:
+                problems.append((hash_file, record, rel, "missing"))
+                continue
+            if actual != record["hash"].lower():
+                problems.append((hash_file, record, rel, "mismatch"))
+                continue
+            ok_count += 1
+            if len(entries) >= 50 and i % 50 == 0:
+                print(
+                    f"    ... checked {i}/{len(entries)} in "
+                    f"{os.path.basename(hash_file)}",
+                    flush=True,
+                )
+    return ok_count, problems, total_entries
+
+
+def _find_hash_data_recoveries(folder_path, problems):
+    """For each problem, find a unique digest match under folder_path."""
+    if not problems:
+        return []
+
+    missing_n = sum(1 for p in problems if p[3] == "missing")
+    mismatch_n = sum(1 for p in problems if p[3] == "mismatch")
+    print(
+        f"Checking for renamed files by digest "
+        f"({missing_n} missing, {mismatch_n} mismatch)..."
+    )
+    candidates = list_hash_verify_candidates(folder_path)
+    print(f"  On-disk candidates (excluding hash manifests): {len(candidates)}")
+
+    algos_needed = {hash_algo_from_path(hf) for hf, _r, _rel, _s in problems}
+    digest_indexes = {
+        algo: build_digest_to_paths(folder_path, algo, candidates)
+        for algo in sorted(algos_needed)
+    }
+
+    recoverable = []
+    for hash_file, record, rel, status in problems:
+        algo = hash_algo_from_path(hash_file)
+        new_rel = pick_unique_digest_match(
+            record["hash"], rel, digest_indexes.get(algo, {})
+        )
+        if not new_rel:
+            continue
+        recoverable.append((hash_file, record, rel, new_rel, status))
+        print(
+            f"RECOVERABLE\t{os.path.basename(hash_file)}\t"
+            f"{rel}\t{new_rel}\t{status}",
+            flush=True,
+        )
+    return recoverable
+
+
+def verify_hash_data_entries(folder_path, do_fix=False):
+    """Verify every entry in every hash manifest under folder_path.
+
+    On MISSING/MISMATCH, look for a unique on-disk file with the expected digest
+    (prefer same extension). With do_fix=True, rewrite those paths in the
+    manifests (digest unchanged). Always prints a human summary plus a
+    HASH_DATA_STATUS line for the shell.
+
+    Returns True when nothing remains wrong (no missing/mismatch left, and no
+    unfixed recoverable rows when do_fix is False).
+    """
+    hash_files = list_hash_files(folder_path)
+    if not hash_files:
+        print("No hash files in directory; data checksum step not run.")
+        print(
+            "HASH_DATA_STATUS ok=0 missing=0 mismatch=0 "
+            "recoverable=0 fixed=0 skipped=1"
+        )
+        return True
+
+    ok_count, problems, total_entries = _classify_hash_data_entries(
+        folder_path, hash_files
+    )
+    recoverable = _find_hash_data_recoveries(folder_path, problems)
+    recoverable_keys = {
+        (hf, rec["line"]) for hf, rec, _o, _n, _s in recoverable
+    }
+
+    fixed_count = 0
+    if do_fix and recoverable:
+        fixes_by_file = {}
+        for hash_file, record, _old, new_rel, _status in recoverable:
+            fixes_by_file.setdefault(hash_file, []).append(
+                (record["line"], new_rel)
+            )
+        fixed_count, fix_msgs = _apply_hash_data_path_fixes(
+            folder_path, fixes_by_file
+        )
+        if fix_msgs:
+            print("Updated hash path(s) in " + "; ".join(fix_msgs) + ".")
+        # Re-check after rewrite so counts match disk.
+        ok_count, problems, total_entries = _classify_hash_data_entries(
+            folder_path, hash_files
+        )
+        recoverable = []
+        recoverable_keys = set()
+
+    missing_count = sum(1 for p in problems if p[3] == "missing")
+    mismatch_count = sum(1 for p in problems if p[3] == "mismatch")
+    remaining_recoverable = len(recoverable)
+
+    print()
+    if not problems:
+        print(
+            f"Hash data checksums OK: {ok_count} entr"
+            f"{'y' if ok_count == 1 else 'ies'} across {len(hash_files)} hash file(s)."
+        )
+        if fixed_count:
+            print(f"  (rewrote {fixed_count} path(s) to match files on disk)")
+    else:
+        print(
+            f"Hash data checksum issues: {ok_count} OK, "
+            f"{missing_count} missing, {mismatch_count} mismatch"
+            + (
+                f", {remaining_recoverable} recoverable by path rewrite"
+                if remaining_recoverable
+                else ""
+            )
+            + "."
+        )
+        shown = 0
+        for hash_file, record, rel, status in problems:
+            if shown >= 20:
+                break
+            extra = ""
+            if (hash_file, record["line"]) in recoverable_keys:
+                for hf, rec, old, new, _st in recoverable:
+                    if hf == hash_file and rec["line"] == record["line"]:
+                        extra = f" -> {new}"
+                        break
+            print(
+                f"  - {status.upper()}: {os.path.basename(hash_file)}: {rel}{extra}"
+            )
+            shown += 1
+        if len(problems) > shown:
+            print(f"  ... and {len(problems) - shown} more")
+
+    print(
+        f"HASH_DATA_STATUS ok={ok_count} missing={missing_count} "
+        f"mismatch={mismatch_count} recoverable={remaining_recoverable} "
+        f"fixed={fixed_count} skipped=0"
+    )
+    # Any remaining missing/mismatch (including unfixed recoverable) is not clean.
+    return not problems
+
+
 def list_par2_refs_in_hash_files(folder_path):
     """Fast parse-only scan: which hash files list any .par2 basenames."""
     rows = []
@@ -1432,6 +1721,11 @@ def main(argv):
                 ok, _, message = verify_par2_hashes(folder_path, par_file_path)
                 print(message)
                 return 0 if ok else 1
+            if argv[2] == "verify-data":
+                # hash verify-data <directory> [--fix]
+                do_fix = "--fix" in argv[4:]
+                ok = verify_hash_data_entries(folder_path, do_fix=do_fix)
+                return 0 if ok else 1
             if argv[2] == "update":
                 ok, message = update_par2_hashes(
                     folder_path, par_file_path=par_file_path
@@ -1502,10 +1796,11 @@ def main(argv):
                 return 0 if ok else 1
             print(
                 "Usage: par2-pgm-rename.py hash "
-                "verify|update|inventory|lint|"
+                "verify|verify-data|update|inventory|lint|"
                 "list-par2-refs|list-data-paths|list-active-par2|"
                 "verify-par2-refs|fix-par2-refs "
                 "<directory> [par2-index]\n"
+                "       par2-pgm-rename.py hash verify-data <directory> [--fix]\n"
                 "       par2-pgm-rename.py hash tidy <hash-file>\n"
                 "       par2-pgm-rename.py hash sync-regen <directory> "
                 "--remove old.par2... --add new.par2...",

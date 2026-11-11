@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261111.163800 - Step 1b: verify all hash-manifest entries; rewrite wrong paths by digest
 # v. 20260921.200018 - fix coverage: init DATA_FILES (set -u unbound on early OK path)
 # v. 20260921.182207 - end of set: report data files not covered by PAR2 and/or hash manifests
 # v. 20260916.133341 - Run settings: add Equivalent CLI line and PROMPT_TIMEOUT value
@@ -59,6 +60,7 @@
 # v. 20260719.103506 - fix no-arg run: empty POSITIONAL[@]:- became one "" element
 # v. 20260719.102800 - multi-set selection: A/a, ranges 1-4, --all, multiple paths
 
+# 2026.11.11 - v. 0.1.74 - Step 1b: always verify every entry in .sha*/.md5/.b2 manifests in the set directory (not only .par2 lines); on missing/mismatch WARN and continue, but first offer to rewrite the listed path when a unique same-digest file exists under DATA_DIR; --no-hash-data-check skips the step
 # 2026.09.21 - v. 0.1.73 - Fix Protection coverage under set -u: initialize DATA_FILES before length check (early OK path never ran Step 3)
 # 2026.09.21 - v. 0.1.72 - End of each PAR2 set: report on-disk data files not listed in this PAR2 set and/or not listed in any .sha*/.md5/.b2 hash manifest (counts + sample names); also note files covered by only one of the two
 # 2026.09.16 - v. 0.1.71 - === Run settings ===: add an "Equivalent CLI:" line that repeats this run non-interactively (flags given plus the prompted --scope) and show the effective PROMPT_TIMEOUT; explicit PAR2 set arguments get a note instead of a --scope flag
@@ -163,6 +165,7 @@ Options:
   --no-regenerate      Never offer to regenerate the PAR2 set
   --hash-par2-check    Auto-yes: verify .par2 lines in hash manifests when any exist
   --no-hash-par2-check Never offer to verify .par2 lines in hash manifests
+  --no-hash-data-check Skip Step 1b (full hash-manifest data verification)
   -f, --fix            After Step 3 rename scan (and optional repair): auto-regenerate
                        PAR2 from disk, sync + tidy hash manifests, auto-rename metadata.
                        Prefer this when you want broken sets fixed end-to-end.
@@ -186,9 +189,12 @@ Environment:
   PROMPT_TIMEOUT       Seconds to wait for interactive prompts (unset = no timeout)
 
 If a .sha512 / .sha384 / .sha256 / .sha224 / .sha1 / .md5 / .b2 file exists in the
-directory, Step 1 scans all hash manifests, reports how many list in-scope PAR2
-archives for this set, and verifies checksums only in those file(s). Other hash
-entries are ignored.
+directory, Step 1 verifies in-scope PAR2 archive digests listed in those
+manifests. Step 1b then verifies every checksum entry in the manifests against
+files on disk; missing/mismatch paths that uniquely match another file by digest
+can be rewritten in the hash file (prompt; default yes for a single set, or with
+--yes). Remaining hash issues WARN and the run continues to PAR2 Steps 2–3.
+Use --no-hash-data-check to skip Step 1b on very large trees.
 At the end of each set, a coverage report compares on-disk data files with this
 PAR2 set and hash manifests (files in neither, or only in one of the two).
 
@@ -490,6 +496,12 @@ pgm_prompt_read_hash_par2_fix_path_choice() {
         "Rewrite those .par2 hash lines to md5sum-safe form (HASH *file)?"
 }
 
+pgm_prompt_read_hash_data_fix_choice() {
+    # Default yes for a single set (wrong name is the common case); batch defaults no.
+    pgm_prompt_read_yes_no_quit "$1" "$2" \
+        "Update hash file path(s) to match those on-disk file(s)?"
+}
+
 # Answer on one key (Enter = default); q quits the script. Sets 0=yes, 1=no, 2=quit.
 pgm_prompt_read_yes_no_quit() {
     local default_yes="$1"
@@ -722,6 +734,7 @@ pgm_print_run_settings_equivalent_cli() {
     (( NO_REGENERATE )) && parts+=("--no-regenerate")
     (( AUTO_HASH_PAR2_CHECK )) && parts+=("--hash-par2-check")
     (( NO_HASH_PAR2_CHECK )) && parts+=("--no-hash-par2-check")
+    (( NO_HASH_DATA_CHECK )) && parts+=("--no-hash-data-check")
     # --scope only matters while discovering sets; explicit set arguments bypass it.
     ((${#PAR2_SET_QUEUE[@]} == 0)) && parts+=("--scope" "$CHECK_SCOPE")
 
@@ -792,6 +805,12 @@ pgm_print_run_settings() {
         echo "  --hash-par2-check: given (verify .par2 hash lines without asking)"
     elif (( NO_HASH_PAR2_CHECK )); then
         echo "  --no-hash-par2-check: given (never offer .par2 hash-line check)"
+    fi
+
+    if (( NO_HASH_DATA_CHECK )); then
+        echo "  --no-hash-data-check: given (skip Step 1b full hash-manifest verify)"
+    else
+        echo "  --no-hash-data-check: not given (Step 1b verifies all hash-manifest entries)"
     fi
 
     if (( NO_RENAME )); then
@@ -1462,6 +1481,7 @@ AUTO_REGENERATE=0
 NO_REGENERATE=0
 AUTO_HASH_PAR2_CHECK=0
 NO_HASH_PAR2_CHECK=0
+NO_HASH_DATA_CHECK=0
 FIX_MODE=0
 REPAIR_NOT_POSSIBLE=0
 PGM_HASH_SYNCED_THIS_SET=0
@@ -2154,8 +2174,13 @@ pgm_print_timing_summary() {
     total=$(( SECONDS - PGM_RUN_START ))
     wall_time="$(pgm_format_elapsed "$total")"
 
-    labels+=("Hash checksum check:")
+    labels+=("Hash PAR2 digests (Step 1):")
     values+=("${PGM_TIMING_HASH_SEC:-0}")
+
+    if (( ${PGM_TIMING_HASH_DATA_SEC:-0} > 0 )) || (( NO_HASH_DATA_CHECK == 0 )); then
+        labels+=("Hash data entries (Step 1b):")
+        values+=("${PGM_TIMING_HASH_DATA_SEC:-0}")
+    fi
 
     if (( ${PGM_TIMING_PAR2_SCAN_SEC:-0} > 0 )); then
         labels+=("PAR2 verify (names only):")
@@ -2573,6 +2598,121 @@ verify_par2_hashes() {
     PGM_HASH_VERIFY_MSG="$msg"
     echo "$msg"
     return "$rc"
+}
+
+# Parse HASH_DATA_STATUS ok=… missing=… mismatch=… recoverable=… fixed=… skipped=…
+pgm_parse_hash_data_status() {
+    local msg="$1"
+    local line=""
+
+    PGM_HASH_DATA_OK=0
+    PGM_HASH_DATA_MISSING=0
+    PGM_HASH_DATA_MISMATCH=0
+    PGM_HASH_DATA_RECOVERABLE=0
+    PGM_HASH_DATA_FIXED=0
+    PGM_HASH_DATA_SKIPPED=0
+
+    line=$(grep -E '^HASH_DATA_STATUS ' <<< "$msg" | tail -n 1 || true)
+    [[ -n "$line" ]] || return 1
+    [[ "$line" =~ ok=([0-9]+) ]] && PGM_HASH_DATA_OK="${BASH_REMATCH[1]}"
+    [[ "$line" =~ missing=([0-9]+) ]] && PGM_HASH_DATA_MISSING="${BASH_REMATCH[1]}"
+    [[ "$line" =~ mismatch=([0-9]+) ]] && PGM_HASH_DATA_MISMATCH="${BASH_REMATCH[1]}"
+    [[ "$line" =~ recoverable=([0-9]+) ]] && PGM_HASH_DATA_RECOVERABLE="${BASH_REMATCH[1]}"
+    [[ "$line" =~ fixed=([0-9]+) ]] && PGM_HASH_DATA_FIXED="${BASH_REMATCH[1]}"
+    [[ "$line" =~ skipped=([0-9]+) ]] && PGM_HASH_DATA_SKIPPED="${BASH_REMATCH[1]}"
+    return 0
+}
+
+# Step 1b: verify every hash-manifest entry. WARN+continue on leftover issues;
+# offer to rewrite unique digest matches (wrong filename) first.
+pgm_verify_hash_data_entries() {
+    local msg="" rc=0 fix_choice=0 default_yes=1
+    local missing=0 mismatch=0 recoverable=0
+
+    if (( NO_HASH_DATA_CHECK == 1 )); then
+        pgm_print_step_verdict 1b SKIP "Hash data verification skipped (--no-hash-data-check)."
+        return 0
+    fi
+
+    pgm_print_step_header "Step 1b: verify hash manifest data files"
+    set +e
+    msg=$(run_rename_py hash verify-data "$DATA_DIR" 2>&1)
+    rc=$?
+    set -e
+    echo "$msg"
+    pgm_parse_hash_data_status "$msg" || true
+
+    if (( PGM_HASH_DATA_SKIPPED == 1 )); then
+        pgm_print_step_verdict 1b SKIP "No hash files in directory; data checksum step not run."
+        return 0
+    fi
+
+    missing=${PGM_HASH_DATA_MISSING:-0}
+    mismatch=${PGM_HASH_DATA_MISMATCH:-0}
+    recoverable=${PGM_HASH_DATA_RECOVERABLE:-0}
+
+    if (( rc == 0 && missing == 0 && mismatch == 0 )); then
+        if (( PGM_HASH_DATA_OK == 1 )); then
+            pgm_print_step_verdict 1b OK "All hash-manifest entries match files on disk (1 entry)."
+        else
+            pgm_print_step_verdict 1b OK \
+                "All hash-manifest entries match files on disk (${PGM_HASH_DATA_OK:-0} entries)."
+        fi
+        return 0
+    fi
+
+    if (( recoverable > 0 )); then
+        echo
+        echo "=== Update hash paths for renamed file(s)? ==="
+        if (( recoverable == 1 )); then
+            echo "Found 1 hash entry whose digest matches a different on-disk path (likely renamed)."
+        else
+            echo "Found ${recoverable} hash entries whose digests match different on-disk paths (likely renamed)."
+        fi
+        echo "Updating rewrites the path in the hash file; the digest stays the same."
+        echo
+
+        if (( AUTO_RENAME == 1 )); then
+            echo "Updating hash path(s) automatically (--yes)."
+            fix_choice=0
+        else
+            # Single set: default yes; multi-set batch: default no.
+            default_yes=1
+            (( MULTI_SET_MODE )) && default_yes=0
+            pgm_prompt_read_hash_data_fix_choice "$default_yes" fix_choice
+            if (( fix_choice == 2 )); then
+                die "Cancelled by user."
+            fi
+        fi
+
+        if (( fix_choice == 0 )); then
+            set +e
+            msg=$(run_rename_py hash verify-data "$DATA_DIR" --fix 2>&1)
+            rc=$?
+            set -e
+            echo "$msg"
+            pgm_parse_hash_data_status "$msg" || true
+            missing=${PGM_HASH_DATA_MISSING:-0}
+            mismatch=${PGM_HASH_DATA_MISMATCH:-0}
+            recoverable=${PGM_HASH_DATA_RECOVERABLE:-0}
+            if (( rc == 0 && missing == 0 && mismatch == 0 )); then
+                pgm_print_step_verdict 1b OK \
+                    "Hash paths updated; all manifest entries now match on disk."
+                return 0
+            fi
+        else
+            echo "Left hash path(s) unchanged."
+        fi
+    fi
+
+    # Remaining issues: WARN and continue (do not abort the set).
+    pgm_print_step_verdict 1b WARN \
+        "Hash-manifest issues remain (${missing} missing, ${mismatch} mismatch); continuing to PAR2 verify."
+    pgm_print_outcome warn \
+        "Some hash-manifest entries do not match files on disk." \
+        "PAR2 Steps 2–3 still run; repair/regenerate may help if data is damaged." \
+        "Re-run after fixing names, or update digests if content changed on purpose."
+    return 0
 }
 
 update_par2_hashes() {
@@ -4160,6 +4300,7 @@ pgm_run_one_par2_set() {
     PGM_HASH_VERIFY_MSG=""
     PGM_HASH_SYNCED_THIS_SET=0
     PGM_TIMING_HASH_SEC=0
+    PGM_TIMING_HASH_DATA_SEC=0
     PGM_TIMING_PAR2_NAMES_SEC=0
     PGM_TIMING_PAR2_SCAN_SEC=0
     PGM_RUN_START=$SECONDS
@@ -4179,6 +4320,9 @@ pgm_run_one_par2_set() {
     pgm_review_hash_manifests
     pgm_print_step1_verdict_from_msg "${PGM_HASH_VERIFY_MSG:-}"
     pgm_timing_lap_to PGM_TIMING_HASH_SEC
+
+    pgm_verify_hash_data_entries
+    pgm_timing_lap_to PGM_TIMING_HASH_DATA_SEC
 
     pgm_print_step_header "Step 2: verify (PAR2 names only)"
     OUT1_FILE=$(mktemp "${TMPDIR:-/tmp}/par2-pgm-check.XXXXXX")
@@ -4366,6 +4510,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --no-hash-par2-check)
             NO_HASH_PAR2_CHECK=1
+            shift
+            ;;
+        --no-hash-data-check)
+            NO_HASH_DATA_CHECK=1
             shift
             ;;
         --yes|-y)
