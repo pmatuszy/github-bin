@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261111.215000 - accept multiple SOURCE paths; last operand is DESTINATION
 # v. 20261015.223000 - one SSH login: multiplex preflight, transfer, and cleanup
 # v. 20260922.174213 - result Avg rate: also show Mbps (megabits/s)
 # v. 20260916.133341 - print === Run settings === before the transfer, with Equivalent CLI
@@ -10,6 +11,7 @@
 # v. 20260724.203756 - avoid startup delay when displaying help or version information
 # v. 20260724.203704 - initial network move with uncompressed SSH, source removal, and dry-run support
 
+# 2026.11.11 - v. 0.3.6 - Accept one or more SOURCE paths (files/dirs); the last operand is DESTINATION. One rsync call moves them all; remote sources must share the same [user@]host. Preflight, cleanup, Run settings, and the result box cover every source
 # 2026.10.15 - v. 0.3.5 - one SSH login per remote host (ControlMaster); password/TOTP is not asked again for the size scan, transfer, or cleanup
 # 2026.09.22 - v. 0.3.4 - result box Avg rate: append decimal Mbps (bytes/s * 8 / 1e6) after MiB/s and MB/s
 # 2026.09.16 - v. 0.3.3 - before the transfer: print "=== Run settings ===" with -n/--dry-run and --bwlimit as given or not given, SOURCE/DESTINATION, and an "Equivalent CLI:" line that repeats the run
@@ -166,8 +168,65 @@ move_pgm_parse_rsync_stats_file() {
   move_pgm_parse_rsync_stats_text "$text" "$var_prefix"
 }
 
+# Append SOURCE lines for Run settings / plan / result boxes.
+move_pgm_append_source_lines() {
+  local -n _lines=$1
+  local prefix="${2:-SOURCE}"
+  local s
+
+  if (( ${#SOURCES[@]} == 1 )); then
+    _lines+=("${prefix}: ${SOURCES[0]}")
+    return 0
+  fi
+  _lines+=("${prefix}S (${#SOURCES[@]}):")
+  for s in "${SOURCES[@]}"; do
+    _lines+=("  ${s}")
+  done
+}
+
+move_pgm_print_sources_kv() {
+  local label_one="${1:-SOURCE:}"
+  local label_many="${2:-SOURCES:}"
+  local s
+
+  if (( ${#SOURCES[@]} == 1 )); then
+    printf '  %-17s%s\n' "$label_one" "${SOURCES[0]}"
+    return 0
+  fi
+  printf '  %-17s%s\n' "$label_many" "${#SOURCES[@]} path(s)"
+  for s in "${SOURCES[@]}"; do
+    printf '  %-17s%s\n' "" "$s"
+  done
+}
+
+# Remote sources must share one [user@]host (rsync cannot mix remotes in one call).
+move_pgm_validate_sources() {
+  local s remote_target="" this_target
+  local -a remotes=()
+
+  (( ${#SOURCES[@]} >= 1 )) || return 1
+  for s in "${SOURCES[@]}"; do
+    move_pgm_parse_rsync_spec "$s"
+    if [[ "$MOVE_PGM_SPEC_KIND" == remote ]]; then
+      this_target="$MOVE_PGM_SPEC_SSH_TARGET"
+      if [[ -z "$remote_target" ]]; then
+        remote_target="$this_target"
+      elif [[ "$this_target" != "$remote_target" ]]; then
+        echo "ERROR: all remote SOURCE paths must use the same [user@]host." >&2
+        echo "  first remote: ${remote_target}" >&2
+        echo "  also saw:     ${this_target} (from ${s})" >&2
+        return 1
+      fi
+      remotes+=("$s")
+    fi
+  done
+  return 0
+}
+
 move_pgm_measure_local_file_source() {
-  move_pgm_parse_rsync_spec "$SOURCE"
+  # Fast path only when there is exactly one local file source.
+  (( ${#SOURCES[@]} == 1 )) || return 1
+  move_pgm_parse_rsync_spec "${SOURCES[0]}"
   if [[ "$MOVE_PGM_SPEC_KIND" != local || ! -f "$MOVE_PGM_SPEC_PATH" ]]; then
     return 1
   fi
@@ -195,7 +254,7 @@ move_pgm_run_transfer_preflight() {
     preflight_args+=(--bwlimit="$BWLIMIT")
   fi
 
-  preflight_out="$(rsync "${preflight_args[@]}" "$SOURCE" "$DESTINATION" 2>&1)" || return 1
+  preflight_out="$(rsync "${preflight_args[@]}" "${SOURCES[@]}" "$DESTINATION" 2>&1)" || return 1
   move_pgm_parse_rsync_stats_text "$preflight_out" MOVE_PGM_PLAN
   MOVE_PGM_PLAN_FILES="${MOVE_PGM_PLAN_FILES:-}"
   MOVE_PGM_PLAN_BYTES="${MOVE_PGM_PLAN_TOTAL_BYTES:-0}"
@@ -221,7 +280,9 @@ move_pgm_print_run_settings_equivalent_cli() {
 
   (( DRY_RUN == 1 )) && parts+=("--dry-run")
   [[ -n "$BWLIMIT" ]] && parts+=("--bwlimit" "$BWLIMIT")
-  parts+=("--" "$SOURCE" "$DESTINATION")
+  parts+=("--")
+  parts+=("${SOURCES[@]}")
+  parts+=("$DESTINATION")
 
   out="$(printf '%q' "$cmd")"
   for p in "${parts[@]}"; do
@@ -244,7 +305,7 @@ move_pgm_print_run_settings() {
   else
     printf '  %-17s%s\n' "--bwlimit:" "not given (no rate limit)"
   fi
-  printf '  %-17s%s\n' "SOURCE:" "$SOURCE"
+  move_pgm_print_sources_kv "SOURCE:" "SOURCES:"
   printf '  %-17s%s\n' "DESTINATION:" "$DESTINATION"
   move_pgm_print_run_settings_equivalent_cli
   echo
@@ -256,7 +317,9 @@ move_pgm_print_transfer_plan() {
 
   lines=(
     "*** TRANSFER PLAN ***"
-    "SOURCE: ${SOURCE}"
+  )
+  move_pgm_append_source_lines lines "SOURCE"
+  lines+=(
     "DESTINATION: ${DESTINATION}"
     "Started: ${MOVE_PGM_START_STR}"
   )
@@ -292,7 +355,7 @@ move_pgm_cleanup_temp_files() {
     && rm -f "$MOVE_PGM_RSYNC_STATS_FILE"
 }
 
-# Remember each distinct [user@]host from SOURCE and DESTINATION.
+# Remember each distinct [user@]host from SOURCES and DESTINATION.
 move_pgm_ssh_targets_add() {
   local spec="$1" target seen
 
@@ -310,8 +373,11 @@ move_pgm_ssh_targets_add() {
 # One background SSH per remote host. Later rsync/ssh calls attach to it
 # with ControlMaster=no, so a password or authenticator code is asked once.
 move_pgm_ssh_prepare() {
+  local s
   MOVE_PGM_SSH_TARGETS=()
-  move_pgm_ssh_targets_add "$SOURCE"
+  for s in "${SOURCES[@]}"; do
+    move_pgm_ssh_targets_add "$s"
+  done
   move_pgm_ssh_targets_add "$DESTINATION"
   (( ${#MOVE_PGM_SSH_TARGETS[@]} == 0 )) && return 0
 
@@ -463,20 +529,20 @@ move_pgm_remove_empty_source_dirs() {
   esac
 }
 
-# After a successful rsync move, confirm the source tree has no files and remove empty dirs.
+# After a successful rsync move, confirm each source tree has no files and remove empty dirs.
 # Sets MOVE_PGM_CLEANUP_SUMMARY for the final result box.
-move_pgm_cleanup_source_directories() {
+move_pgm_cleanup_one_source() {
+  local src="$1"
   local remaining="" removed=""
 
-  MOVE_PGM_CLEANUP_SUMMARY="Source cleanup: not applicable (source is not a directory)."
-
-  move_pgm_parse_rsync_spec "$SOURCE"
+  move_pgm_parse_rsync_spec "$src"
   if ! move_pgm_source_is_directory; then
+    printf 'not a directory (%s)' "$src"
     return 0
   fi
 
   if (( DRY_RUN == 1 )); then
-    MOVE_PGM_CLEANUP_SUMMARY="Source cleanup: would verify ${SOURCE} has no files and remove empty directories after transfer (dry-run)."
+    printf 'would verify %s (dry-run)' "$src"
     return 0
   fi
 
@@ -484,19 +550,53 @@ move_pgm_cleanup_source_directories() {
   [[ "$remaining" =~ ^[0-9]+$ ]] || remaining=-1
 
   if (( remaining < 0 )); then
-    MOVE_PGM_CLEANUP_SUMMARY="Source cleanup: could not verify files under ${SOURCE}."
+    printf 'could not verify %s' "$src"
     return 1
   fi
 
   if (( remaining > 0 )); then
-    MOVE_PGM_CLEANUP_SUMMARY="Source cleanup: ${remaining} file(s) still under ${SOURCE} — directories kept."
+    printf '%s: %s file(s) still present — dirs kept' "$src" "$remaining"
     return 1
   fi
 
   removed="$(move_pgm_remove_empty_source_dirs)"
   [[ "$removed" =~ ^[0-9]+$ ]] || removed=0
-  MOVE_PGM_CLEANUP_SUMMARY="Source cleanup: no files left; removed ${removed} empty dir(s) under ${SOURCE}."
+  printf '%s: removed %s empty dir(s)' "$src" "$removed"
   return 0
+}
+
+move_pgm_cleanup_source_directories() {
+  local src note="" rc=0 i joined=""
+  local -a notes=()
+
+  for src in "${SOURCES[@]}"; do
+    move_pgm_parse_rsync_spec "$src"
+    move_pgm_source_is_directory || continue
+    note=""
+    if note="$(move_pgm_cleanup_one_source "$src")"; then
+      notes+=("$note")
+    else
+      notes+=("${note:-cleanup failed for ${src}}")
+      rc=1
+    fi
+  done
+
+  if (( ${#notes[@]} == 0 )); then
+    MOVE_PGM_CLEANUP_SUMMARY="Source cleanup: not applicable (no source is a directory)."
+    return 0
+  fi
+
+  if (( ${#notes[@]} == 1 )); then
+    MOVE_PGM_CLEANUP_SUMMARY="Source cleanup: ${notes[0]}."
+    return "$rc"
+  fi
+
+  joined="${notes[0]}"
+  for (( i = 1; i < ${#notes[@]}; i++ )); do
+    joined+="; ${notes[$i]}"
+  done
+  MOVE_PGM_CLEANUP_SUMMARY="Source cleanup (${#notes[@]} dirs): ${joined}."
+  return "$rc"
 }
 
 move_pgm_print_result() {
@@ -582,7 +682,7 @@ move_pgm_print_result() {
     lines+=("  Avg rate: ${rate_line}")
   fi
 
-  lines+=("SOURCE: ${SOURCE}")
+  move_pgm_append_source_lines lines "SOURCE"
   lines+=("DESTINATION: ${DESTINATION}")
   if [[ -n "${MOVE_PGM_CLEANUP_SUMMARY:-}" ]]; then
     lines+=("${MOVE_PGM_CLEANUP_SUMMARY}")
@@ -594,10 +694,11 @@ move_pgm_print_result() {
 
 show_help() {
   cat <<EOF
-Usage: $(script_live_basename) [OPTIONS] <SOURCE> <DESTINATION>
+Usage: $(script_live_basename) [OPTIONS] <SOURCE...> <DESTINATION>
 
-Move files between local and remote systems with rsync over SSH. SOURCE and
-DESTINATION use normal rsync syntax; one is normally [user@]host:/path.
+Move files between local and remote systems with rsync over SSH. One or more
+SOURCE paths (files or directories) are allowed; the last operand is DESTINATION.
+Paths use normal rsync syntax; DESTINATION is normally [user@]host:/path.
 
 Options:
   -h, --help             Show this help and exit.
@@ -618,19 +719,24 @@ Transfer behaviour:
     the transfer, and source cleanup. A password or authenticator code is
     entered once per host, not once per step.
   - Removes each source file only after rsync transfers it successfully.
-  - After a successful move, verifies the source directory tree has no files left
+  - After a successful move, verifies each source directory tree has no files left
     and removes empty source directories.
   - Before transfer (except --dry-run), prints a boxed transfer plan with file
     count, size (bytes plus MiB/MB, GiB/GB, TiB/TB), and optional ETA when
     --bwlimit is set.
   - Prints a boxed SUCCESS or FAILURE summary with return code, transferred size,
     and timing (start, end, elapsed, transfer, cleanup, average rate).
+  - All remote SOURCE paths must share the same [user@]host (rsync cannot mix
+    different remote hosts in one transfer).
 
 Examples:
   $(script_live_basename) 20260724-Basel_Tattoo \\
     root@lublin.eth.r.matuszyk.com:/root/linki/archiwum/_filmy/2026
 
-  $(script_live_basename) --dry-run 20260724-Basel_Tattoo \\
+  $(script_live_basename) dirA dirB file.mkv \\
+    root@lublin.eth.r.matuszyk.com:/root/linki/archiwum/_filmy/2026
+
+  $(script_live_basename) --dry-run 20260724-Basel_Tattoo 20260725-Other \\
     root@lublin.eth.r.matuszyk.com:/root/linki/archiwum/_filmy/2026
 
   $(script_live_basename) --bwlimit 10m /data/video/ \\
@@ -717,14 +823,19 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-if (( ${#POSITIONAL[@]} != 2 )); then
-  echo "Exactly one SOURCE and one DESTINATION are required." >&2
+if (( ${#POSITIONAL[@]} < 2 )); then
+  echo "At least one SOURCE and one DESTINATION are required." >&2
   echo "Try: $(script_live_basename) --help" >&2
   exit 1
 fi
 
-SOURCE="${POSITIONAL[0]}"
-DESTINATION="${POSITIONAL[1]}"
+SOURCES=( "${POSITIONAL[@]:0:$((${#POSITIONAL[@]} - 1))}" )
+DESTINATION="${POSITIONAL[$((${#POSITIONAL[@]} - 1))]}"
+
+if ! move_pgm_validate_sources; then
+  echo "Try: $(script_live_basename) --help" >&2
+  exit 1
+fi
 
 check_if_installed rsync
 check_if_installed ssh openssh-client
@@ -778,11 +889,11 @@ if (( DRY_RUN == 0 )); then
 fi
 
 printf 'Running: rsync'
-printf ' %q' "${RSYNC_ARGS[@]}" "$SOURCE" "$DESTINATION"
+printf ' %q' "${RSYNC_ARGS[@]}" "${SOURCES[@]}" "$DESTINATION"
 printf '\n\n'
 
 transfer_start=$SECONDS
-rsync "${RSYNC_ARGS[@]}" "$SOURCE" "$DESTINATION" 2> >(tee "$MOVE_PGM_RSYNC_STATS_FILE" >&2)
+rsync "${RSYNC_ARGS[@]}" "${SOURCES[@]}" "$DESTINATION" 2> >(tee "$MOVE_PGM_RSYNC_STATS_FILE" >&2)
 return_code=$?
 MOVE_PGM_TRANSFER_SEC=$(( SECONDS - transfer_start ))
 
