@@ -1,4 +1,6 @@
 #!/bin/bash
+# v. 20261113.134300 - regenerate par2 create: default -t/-T is nproc-1 when CPUs >= 2
+# v. 20261113.134000 - regenerate par2 create: pass -t/-T (default nproc) for multi-core
 # v. 20261113.120500 - coverage: case-insensitive match; sibling PAR2 sets; multi-set set -e harden
 # v. 20261111.163800 - Step 1b: verify all hash-manifest entries; rewrite wrong paths by digest
 # v. 20260921.200018 - fix coverage: init DATA_FILES (set -u unbound on early OK path)
@@ -61,6 +63,8 @@
 # v. 20260719.103506 - fix no-arg run: empty POSITIONAL[@]:- became one "" element
 # v. 20260719.102800 - multi-set selection: A/a, ranges 1-4, --all, multiple paths
 
+# 2026.11.13 - v. 0.1.77 - Regenerated PAR2 create default -t/-T is nproc-1 when CPUs >= 2 (else 1)
+# 2026.11.13 - v. 0.1.76 - Regenerated PAR2 create passes -t/-T (default nproc; override PAR2_THREADS / PAR2_FILE_THREADS) so OpenMP uses all cores
 # 2026.11.13 - v. 0.1.75 - Protection coverage: match PAR2/hash names case-insensitively (CIFS/Windows mounts); files covered by another PAR2 set in the same directory are reported separately (not as untracked); is_par2_index_file uses is_par2_volume_file; multi-set loop clears set -e between sets so an OK set cannot abort the remaining queue
 # 2026.11.11 - v. 0.1.74 - Step 1b: always verify every entry in .sha*/.md5/.b2 manifests in the set directory (not only .par2 lines); on missing/mismatch WARN and continue, but first offer to rewrite the listed path when a unique same-digest file exists under DATA_DIR; --no-hash-data-check skips the step
 # 2026.09.21 - v. 0.1.73 - Fix Protection coverage under set -u: initialize DATA_FILES before length check (early OK path never ran Step 3)
@@ -1475,6 +1479,9 @@ done
 . "${profile_location_dir:-$HOME}/bin/_script_header.sh" "${HEADER_EXTRA_ARGS[@]}"
 
 PAR2_CMD="${PAR2_CMD:-par2}"
+# Optional overrides for par2 create -t / -T (default: nproc-1 if CPUs >= 2, else 1).
+PAR2_THREADS="${PAR2_THREADS:-}"
+PAR2_FILE_THREADS="${PAR2_FILE_THREADS:-}"
 PYTHON_CMD="${PYTHON_CMD:-python3}"
 REPAIR=0
 NO_REPAIR=0
@@ -3642,17 +3649,35 @@ pgm_par2_create_volume_only() {
     approx_block=$(( (total_bytes + block_count - 1) / block_count ))
     approx_recovery=$(( total_bytes * percent / 100 ))
 
+    local cpus default_threads t_threads f_threads
+    cpus="$(nproc 2>/dev/null || getconf _NPROCESSORS_ONLN 2>/dev/null || echo 1)"
+    [[ "$cpus" =~ ^[1-9][0-9]*$ ]] || cpus=1
+    if (( cpus >= 2 )); then
+        default_threads=$((cpus - 1))
+    else
+        default_threads=1
+    fi
+    t_threads="${PAR2_THREADS:-$default_threads}"
+    f_threads="${PAR2_FILE_THREADS:-$default_threads}"
+    [[ "$t_threads" =~ ^[1-9][0-9]*$ ]] || t_threads=$default_threads
+    [[ "$f_threads" =~ ^[1-9][0-9]*$ ]] || f_threads=$default_threads
+    if (( f_threads > ${#nonempty[@]} )); then
+        f_threads=${#nonempty[@]}
+    fi
+    (( f_threads >= 1 )) || f_threads=1
+
     if (( skipped_empty > 0 )); then
         echo "Excluding ${skipped_empty} empty (0-byte) file(s) from the new set."
     fi
-    echo "par2 create: ${#nonempty[@]} file(s), -b${block_count} (blocks >= files; ~1MiB target), -r${percent}%, -n1"
+    echo "par2 create: ${#nonempty[@]} file(s), -b${block_count} (blocks >= files; ~1MiB target), -r${percent}%, -n1, -t${t_threads}, -T${f_threads}"
     echo "  source data:    $(pgm_format_bytes_approx "$total_bytes")"
     echo "  ~block size:    $(pgm_format_bytes_approx "$approx_block")"
     echo "  ~recovery size: $(pgm_format_bytes_approx "$approx_recovery") (about ${percent}% of source)"
+    echo "  threads:        -t${t_threads} (compute), -T${f_threads} (file hashing)"
 
     (
         cd "$DATA_DIR" || exit 1
-        run_par2 create -n1 -b"$block_count" -r"$percent" -- "${stem}.par2" "${nonempty[@]}"
+        run_par2 create -t"$t_threads" -T"$f_threads" -n1 -b"$block_count" -r"$percent" -- "${stem}.par2" "${nonempty[@]}"
     ) 2>&1 | pgm_filter_par2_verify_stream
     create_rc=${PIPESTATUS[0]}
     (( create_rc == 0 )) || return "$create_rc"

@@ -1,4 +1,6 @@
 #!/bin/bash
+# v. 20261113.134300 - par2 create: default -t/-T is nproc-1 when CPUs >= 2
+# v. 20261113.134000 - par2 create: pass -t/-T (default nproc) for multi-core OpenMP
 # v. 20260922.082714 - recovery percent prompt: q/Q quits instead of falling back to the default
 # v. 20260922.082433 - hash menu: drop manual echo of first key; tty already echoes it (showed "11")
 # v. 20260916.133341 - Run settings: mark hash/recovery/helpers given vs prompted; add Equivalent CLI
@@ -15,6 +17,8 @@
 # v. 20260809.155541 - prompt to exclude rename.sh helpers from PAR2 (default yes)
 # v. 20260806.224414 - initial: create volume-only PAR2 + SHA-512/MD5 hash for cwd subtree
 
+# 2026.11.13 - v. 0.1.15 - Default par2 -t/-T is nproc-1 when CPUs >= 2 (leave one core free); still 1 on single-CPU hosts
+# 2026.11.13 - v. 0.1.14 - par2 create uses all CPUs by default: -t (Reed-Solomon) and -T (parallel file hashing) from nproc; override with --threads / --file-threads or PAR2_THREADS / PAR2_FILE_THREADS
 # 2026.09.22 - v. 0.1.13 - Recovery percent prompt accepts q/Q to quit (advertised in the prompt); previously q was just an invalid percent and the run continued with the default
 # 2026.09.22 - v. 0.1.12 - Hash menu echoed the typed digit twice ("11" for 1): read -n 1 leaves terminal ECHO on (only read -s turns it off), so the extra printf of the first key was redundant
 # 2026.09.16 - v. 0.1.11 - === Run settings ===: report --hash / --recovery / rename-helper choices as given, --yes default, or prompted (with the selected value), show the effective PROMPT_TIMEOUT, and add an "Equivalent CLI:" line that repeats the run non-interactively
@@ -71,6 +75,10 @@ Options:
   --yes, -y            Accept prompt defaults (hash algo, recovery, exclude
                        rename helpers = yes) without asking.
   -n, --dry-run        Show what would be done; create nothing.
+  --threads N          par2 -t N (Reed-Solomon / main processing threads).
+                       Default: nproc-1 when CPUs >= 2, else 1.
+  --file-threads N     par2 -T N (files hashed in parallel during create).
+                       Default: same as --threads; capped at source file count.
 
 Interactive prompts (unless --yes / flag already set):
   Hash algorithm: numbered list of *sum tools found on PATH; Enter = default;
@@ -84,12 +92,15 @@ Interactive prompts (unless --yes / flag already set):
 
 Environment:
   PAR2_CMD             par2 executable (default: par2)
+  PAR2_THREADS         Same as --threads (default: nproc-1 if CPUs >= 2, else 1)
+  PAR2_FILE_THREADS    Same as --file-threads (same default)
   PROMPT_TIMEOUT       Seconds to wait for interactive prompts (unset = no timeout)
 
 Examples:
   cd /path/to/MyAlbum && $(script_live_basename)
   $(script_live_basename) --hash sha256 --recovery 10
   $(script_live_basename) --md5 --yes
+  $(script_live_basename) --threads 8 --file-threads 4
   $(script_live_basename) --include-rename-helpers
   $(script_live_basename) -n
 EOF
@@ -116,6 +127,11 @@ HASH_EXTS=()
 RECOVERY_CLI=""
 AUTO_YES=0
 DRY_RUN=0
+# Empty = resolve later to nproc-1 (if CPUs >= 2); CLI sets these when flags given.
+THREADS_CLI=""
+FILE_THREADS_CLI=""
+PAR2_THREADS="${PAR2_THREADS:-}"
+PAR2_FILE_THREADS="${PAR2_FILE_THREADS:-}"
 # -1 = ask (default yes); 1 = exclude; 0 = include
 EXCLUDE_RENAME_HELPERS_CLI=-1
 EXCLUDE_RENAME_HELPERS=1
@@ -951,6 +967,54 @@ choose_par2_block_count() {
   printf '%s\n' "$blocks"
 }
 
+detect_cpu_count() {
+  local n
+  n="$(nproc 2>/dev/null || true)"
+  [[ "$n" =~ ^[1-9][0-9]*$ ]] || n="$(getconf _NPROCESSORS_ONLN 2>/dev/null || true)"
+  [[ "$n" =~ ^[1-9][0-9]*$ ]] || n=1
+  printf '%s' "$n"
+}
+
+# Default thread count: leave one core free when the host has at least 2 CPUs.
+default_par2_thread_count() {
+  local cpus
+  cpus="$(detect_cpu_count)"
+  if (( cpus >= 2 )); then
+    printf '%s' "$((cpus - 1))"
+  else
+    printf '1'
+  fi
+}
+
+# Resolve PAR2_THREADS / PAR2_FILE_THREADS (CLI > env > nproc-1 if CPUs >= 2).
+# Sets PAR2_THREADS_SOURCE / PAR2_FILE_THREADS_SOURCE to cli|env|default.
+resolve_par2_thread_counts() {
+  local default_threads
+  default_threads="$(default_par2_thread_count)"
+  if [[ -n "$THREADS_CLI" ]]; then
+    PAR2_THREADS="$THREADS_CLI"
+    PAR2_THREADS_SOURCE=cli
+  elif [[ -n "${PAR2_THREADS}" ]]; then
+    PAR2_THREADS_SOURCE=env
+  else
+    PAR2_THREADS="$default_threads"
+    PAR2_THREADS_SOURCE=default
+  fi
+  if [[ -n "$FILE_THREADS_CLI" ]]; then
+    PAR2_FILE_THREADS="$FILE_THREADS_CLI"
+    PAR2_FILE_THREADS_SOURCE=cli
+  elif [[ -n "${PAR2_FILE_THREADS}" ]]; then
+    PAR2_FILE_THREADS_SOURCE=env
+  else
+    PAR2_FILE_THREADS="$default_threads"
+    PAR2_FILE_THREADS_SOURCE=default
+  fi
+  [[ "$PAR2_THREADS" =~ ^[1-9][0-9]*$ ]] \
+    || die "Invalid PAR2_THREADS / --threads '$PAR2_THREADS' (use a positive integer)."
+  [[ "$PAR2_FILE_THREADS" =~ ^[1-9][0-9]*$ ]] \
+    || die "Invalid PAR2_FILE_THREADS / --file-threads '$PAR2_FILE_THREADS' (use a positive integer)."
+}
+
 sum_source_bytes() {
   local root="$1"
   shift
@@ -991,6 +1055,7 @@ create_par2_volume_only() {
   shift 2
   local -a sources=("$@")
   local block_count create_rc=0 index_path total_bytes=0 approx_block=0 approx_recovery=0
+  local file_threads=1
   local -a vols=()
 
   ((${#sources[@]} > 0)) || die "No non-empty data files to protect."
@@ -998,6 +1063,13 @@ create_par2_volume_only() {
   if ((${#sources[@]} > MAX_PAR2_BLOCKS)); then
     die "${#sources[@]} non-empty files exceeds PAR2 max block count (${MAX_PAR2_BLOCKS}). Split the tree first."
   fi
+
+  # Thread counts resolved once at startup (CLI > env > nproc).
+  file_threads=$PAR2_FILE_THREADS
+  if (( file_threads > ${#sources[@]} )); then
+    file_threads=${#sources[@]}
+  fi
+  (( file_threads >= 1 )) || file_threads=1
 
   total_bytes="$(sum_source_bytes "$WORK_DIR" "${sources[@]}")"
   block_count="$(choose_par2_block_count "${#sources[@]}" "$total_bytes")"
@@ -1010,14 +1082,15 @@ create_par2_volume_only() {
   approx_block=$(( (total_bytes + block_count - 1) / block_count ))
   approx_recovery=$(( total_bytes * percent / 100 ))
 
-  echo "par2 create: ${#sources[@]} file(s), -b${block_count}, -r${percent}%, -n1"
+  echo "par2 create: ${#sources[@]} file(s), -b${block_count}, -r${percent}%, -n1, -t${PAR2_THREADS}, -T${file_threads}"
   echo "  source data:   $(format_bytes_approx "$total_bytes") (${total_bytes} bytes)"
   echo "  ~block size:   $(format_bytes_approx "$approx_block")"
   echo "  ~recovery size:$(format_bytes_approx "$approx_recovery") (about ${percent}% of source)"
+  echo "  threads:       -t${PAR2_THREADS} (compute), -T${file_threads} (file hashing)"
   echo "  stem: ${stem}.par2 (volume-only; index removed after create)"
 
   if (( DRY_RUN == 1 )); then
-    echo "  [dry-run] ${PAR2_CMD} create -n1 -b${block_count} -r${percent} -- ${stem}.par2 <${#sources[@]} files>"
+    echo "  [dry-run] ${PAR2_CMD} create -t${PAR2_THREADS} -T${file_threads} -n1 -b${block_count} -r${percent} -- ${stem}.par2 <${#sources[@]} files>"
     CREATED_PAR2_VOLS=( "${stem}.vol*.par2 (dry-run)" )
     return 0
   fi
@@ -1025,7 +1098,7 @@ create_par2_volume_only() {
   PAR2_CREATE_IN_PROGRESS=1
   (
     cd "$WORK_DIR" || exit 1
-    "$PAR2_CMD" create -n1 -b"$block_count" -r"$percent" -- "${stem}.par2" "${sources[@]}"
+    "$PAR2_CMD" create -t"$PAR2_THREADS" -T"$file_threads" -n1 -b"$block_count" -r"$percent" -- "${stem}.par2" "${sources[@]}"
   )
   create_rc=$?
   if (( create_rc != 0 )); then
@@ -1135,6 +1208,8 @@ print_run_settings_equivalent_cli() {
 
   parts+=("--hash" "$HASH_ALGO")
   parts+=("--recovery" "$RECOVERY_PCT")
+  parts+=("--threads" "$PAR2_THREADS")
+  parts+=("--file-threads" "$PAR2_FILE_THREADS")
   if (( EXCLUDE_RENAME_HELPERS == 1 )); then
     parts+=("--exclude-rename-helpers")
   else
@@ -1186,6 +1261,16 @@ print_run_settings() {
     echo "  Rename helpers: not given (prompted; selected: included in PAR2)"
   fi
   echo "  PAR2_CMD:      $PAR2_CMD"
+  case "${PAR2_THREADS_SOURCE:-default}" in
+    cli) echo "  --threads:     given (${PAR2_THREADS})" ;;
+    env) echo "  --threads:     from PAR2_THREADS (${PAR2_THREADS})" ;;
+    *)   echo "  --threads:     default nproc-1 if CPUs>=2 (${PAR2_THREADS})" ;;
+  esac
+  case "${PAR2_FILE_THREADS_SOURCE:-default}" in
+    cli) echo "  --file-threads: given (${PAR2_FILE_THREADS})" ;;
+    env) echo "  --file-threads: from PAR2_FILE_THREADS (${PAR2_FILE_THREADS})" ;;
+    *)   echo "  --file-threads: default nproc-1 if CPUs>=2 (${PAR2_FILE_THREADS})" ;;
+  esac
   if (( DRY_RUN == 1 )); then
     echo "  Mode:          dry-run (no changes)"
   elif (( AUTO_YES == 1 )); then
@@ -1269,6 +1354,18 @@ while [[ $# -gt 0 ]]; do
       DRY_RUN=1
       shift
       ;;
+    --threads)
+      [[ $# -ge 2 ]] || die "Missing value for --threads (positive integer)."
+      THREADS_CLI="$2"
+      [[ "$THREADS_CLI" =~ ^[1-9][0-9]*$ ]] || die "Invalid --threads '$THREADS_CLI' (use a positive integer)."
+      shift 2
+      ;;
+    --file-threads)
+      [[ $# -ge 2 ]] || die "Missing value for --file-threads (positive integer)."
+      FILE_THREADS_CLI="$2"
+      [[ "$FILE_THREADS_CLI" =~ ^[1-9][0-9]*$ ]] || die "Invalid --file-threads '$FILE_THREADS_CLI' (use a positive integer)."
+      shift 2
+      ;;
     --)
       shift
       break
@@ -1283,6 +1380,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 command -v "$PAR2_CMD" >/dev/null 2>&1 || die "'$PAR2_CMD' not found. Install par2cmdline or set PAR2_CMD."
+resolve_par2_thread_counts
 
 WORK_DIR="$(pwd -P)"
 DIR_NAME="$(basename -- "$WORK_DIR")"
