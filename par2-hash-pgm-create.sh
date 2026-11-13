@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261113.221500 - verify-fail: ask consolidate anyway; *.old collision: ask replace/skip/quit
 # v. 20261113.210800 - after create: offer delete leftover other PAR2/hash sets and *.old backups
 # v. 20261113.184200 - skip/verify Choice: only default key capitalized ([ S/v/a/e/q ])
 # v. 20261113.182200 - skip/verify: any single PAR2 set + single hash (not only _<dir> names)
@@ -29,6 +30,7 @@
 # v. 20260809.155541 - prompt to exclude rename.sh helpers from PAR2 (default yes)
 # v. 20260806.224414 - initial: create volume-only PAR2 + SHA-512/MD5 hash for cwd subtree
 
+# 2026.11.13 - v. 0.1.28 - If verify fails before consolidate: ask Consolidate anyway / continue / quit (default C). If renaming to *.old but that backup already exists: ask Replace / skip / quit (default R) instead of dying
 # 2026.11.13 - v. 0.1.27 - After a successful create/hash: offer to delete superseded leftovers — other active PAR2 sets/hashes (e.g. media-basename) and any *.par2.old / hash *.old (not only after consolidate)
 # 2026.11.13 - v. 0.1.26 - Skip/verify menu: only default key capitalized ([ S ] skip); rest-of-run uses [ a ]/[ e ] (not S/V) so Choice is [ S/v/a/e/q ]
 # 2026.11.13 - v. 0.1.25 - Skip/verify also when exactly one PAR2 set and one hash exist under any names (e.g. media-basename _file / __file.sha512), not only _<dir> / __<dir>.ext
@@ -1003,16 +1005,82 @@ verify_dir_par2_and_hashes() {
   return "$rc"
 }
 
+# When path.old already exists before a backup rename.
+# Returns: 0=dst cleared (caller may mv), 1=skip this src, 2=quit.
+offer_resolve_old_backup_collision() {
+  local dst="$1"
+  local ans="" base_old
+
+  base_old="$(basename -- "$dst")"
+  echo
+  log_msg "Backup already exists: ${base_old}"
+  if (( AUTO_YES == 1 )); then
+    log_msg "Replacing existing *.old (--yes)."
+    if (( DRY_RUN == 1 )); then
+      log_msg "[dry-run] rm -- ${base_old}"
+      return 0
+    fi
+    rm -f -- "$dst" || die "Failed to remove existing backup: ${base_old}"
+    return 0
+  fi
+
+  echo "  [ R ] Replace — delete existing *.old, then rename current file to *.old (default)"
+  echo "  [ s ] Skip — leave the current file as-is (do not back it up)"
+  echo "  [ q ] Quit"
+  printf '%sChoice [ R/s/q ] (%s): ' \
+    "$(user_prompt_ts_prefix)" "$(prompt_timeout_label)"
+  while true; do
+    if prompt_has_timeout; then
+      IFS= read -r -t "$PROMPT_TIMEOUT" -n 1 ans || ans=R
+    else
+      IFS= read -r -n 1 ans || ans=R
+    fi
+    case "$ans" in
+      ""|$'\n'|r|R)
+        echo
+        if (( DRY_RUN == 1 )); then
+          log_msg "[dry-run] rm -- ${base_old}"
+          return 0
+        fi
+        rm -f -- "$dst" || die "Failed to remove existing backup: ${base_old}"
+        log_msg "deleted old backup: ${base_old}"
+        return 0
+        ;;
+      s|S)
+        echo
+        log_msg "Skipped backup for this file (left in place)."
+        return 1
+        ;;
+      q|Q)
+        echo
+        return 2
+        ;;
+      *)
+        echo
+        printf '%sInvalid key "%s". Press R, s, q, or Enter for default (R): ' \
+          "$(user_prompt_ts_prefix)" "$ans"
+        ;;
+    esac
+  done
+}
+
+# Returns: 0=ok, 2=quit.
 backup_paths_to_old() {
   local -a paths=("$@")
   local src dst base
+  local coll_rc=0
 
   for src in "${paths[@]}"; do
     [[ -e "$src" ]] || continue
     base="$(basename -- "$src")"
     dst="${src}.old"
     if [[ -e "$dst" ]]; then
-      die "Backup already exists: $(basename -- "$dst") (remove/rename it first)."
+      coll_rc=0
+      offer_resolve_old_backup_collision "$dst" || coll_rc=$?
+      case "$coll_rc" in
+        1) continue ;;
+        2) return 2 ;;
+      esac
     fi
     if (( DRY_RUN == 1 )); then
       log_msg "[dry-run] mv -- ${base} -> $(basename -- "$dst")"
@@ -1024,6 +1092,7 @@ backup_paths_to_old() {
     CLEANUP_RESTORE_OLDPATHS+=("$dst")
     JOB_BACKED_UP_COUNT=$((JOB_BACKED_UP_COUNT + 1))
   done
+  return 0
 }
 
 # After create/hash: offer to delete superseded protection — other PAR2 sets/hashes
@@ -1125,7 +1194,7 @@ offer_delete_consolidate_old_backups() {
 # Returns 0=continue job, 2=quit run, 3=skip directory.
 maybe_offer_verify_and_consolidate() {
   local -a stems=() hashes=() all_par2=() members=()
-  local stem f ans="" verify_ok=0
+  local stem f ans="" verify_ok=0 offer_rc=0
 
   CONSOLIDATE_DONE=0
   list_par2_set_stems_in_dir "$WORK_DIR" stems
@@ -1182,8 +1251,42 @@ maybe_offer_verify_and_consolidate() {
         verify_ok=1
         echo "Verification passed."
       else
-        echo "Verification reported problems — consolidate is not offered until this is fixed." >&2
-        return 0
+        echo
+        log_msg "Verification reported problems (often missing refs to already-removed files)."
+        echo "  [ C ] Consolidate anyway into one PAR2 + one hash (default)"
+        echo "  [ n ] Do not consolidate — continue with normal recreate prompts"
+        echo "  [ q ] Quit"
+        printf '%sChoice [ C/n/q ] (%s): ' \
+          "$(user_prompt_ts_prefix)" "$(prompt_timeout_label)"
+        while true; do
+          if prompt_has_timeout; then
+            IFS= read -r -t "$PROMPT_TIMEOUT" -n 1 ans || ans=C
+          else
+            IFS= read -r -n 1 ans || ans=C
+          fi
+          case "$ans" in
+            ""|$'\n'|c|C)
+              echo
+              verify_ok=1
+              break
+              ;;
+            n|N)
+              echo
+              log_msg "Leaving multiple protection files as-is (no consolidate)."
+              return 0
+              ;;
+            q|Q)
+              echo
+              echo "Quit."
+              return 2
+              ;;
+            *)
+              echo
+              printf '%sInvalid key "%s". Press C, n, q, or Enter for default (C): ' \
+                "$(user_prompt_ts_prefix)" "$ans"
+              ;;
+          esac
+        done
       fi
       ;;
     *)
@@ -1224,8 +1327,18 @@ maybe_offer_verify_and_consolidate() {
     list_existing_stem_par2 "$WORK_DIR" "$stem" members
     all_par2+=("${members[@]}")
   done
-  backup_paths_to_old "${all_par2[@]}"
-  backup_paths_to_old "${hashes[@]}"
+  offer_rc=0
+  backup_paths_to_old "${all_par2[@]}" || offer_rc=$?
+  if (( offer_rc == 2 )); then
+    echo "Quit."
+    return 2
+  fi
+  offer_rc=0
+  backup_paths_to_old "${hashes[@]}" || offer_rc=$?
+  if (( offer_rc == 2 )); then
+    echo "Quit."
+    return 2
+  fi
   # New create owns these; do not auto-restore mid-create on success path.
   PAR2_CREATE_IN_PROGRESS=0
   CONSOLIDATE_DONE=1
@@ -1714,16 +1827,23 @@ sum_source_bytes() {
   printf '%s\n' "$total"
 }
 
+# Returns: 0=ok, 2=quit.
 backup_existing_stem_par2() {
   local -a members=("$@")
   local src dst base
   local -a backed=()
+  local coll_rc=0
 
   for src in "${members[@]}"; do
     base="$(basename -- "$src")"
     dst="${src}.old"
     if [[ -e "$dst" ]]; then
-      die "Backup already exists: $(basename -- "$dst") (remove/rename it first)."
+      coll_rc=0
+      offer_resolve_old_backup_collision "$dst" || coll_rc=$?
+      case "$coll_rc" in
+        1) continue ;;
+        2) return 2 ;;
+      esac
     fi
     if (( DRY_RUN == 1 )); then
       log_msg "[dry-run] mv -- ${base} -> $(basename -- "$dst")"
@@ -1736,6 +1856,7 @@ backup_existing_stem_par2() {
     CLEANUP_RESTORE_OLDPATHS+=("$dst")
     JOB_BACKED_UP_COUNT=$((JOB_BACKED_UP_COUNT + 1))
   done
+  return 0
 }
 
 create_par2_volume_only() {
@@ -2319,7 +2440,14 @@ run_create_job() {
       esac
       case "$ans" in
         y)
-          backup_existing_stem_par2 "${existing_par2[@]}"
+          offer_rc=0
+          backup_existing_stem_par2 "${existing_par2[@]}" || offer_rc=$?
+          if (( offer_rc == 2 )); then
+            log_msg "Quit."
+            JOB_OUTCOME=quit
+            print_folder_done_summary
+            return 2
+          fi
           CREATE_PAR2=1
           ;;
         n)
