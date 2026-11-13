@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261113.173600 - Verify PAR2 vs hash prompt defaults to Y
 # v. 20261113.134300 - regenerate par2 create: default -t/-T is nproc-1 when CPUs >= 2
 # v. 20261113.134000 - regenerate par2 create: pass -t/-T (default nproc) for multi-core
 # v. 20261113.120500 - coverage: case-insensitive match; sibling PAR2 sets; multi-set set -e harden
@@ -63,6 +64,7 @@
 # v. 20260719.103506 - fix no-arg run: empty POSITIONAL[@]:- became one "" element
 # v. 20260719.102800 - multi-set selection: A/a, ranges 1-4, --all, multiple paths
 
+# 2026.11.13 - v. 0.1.78 - "Verify PAR2 archive(s) vs hash file?" prompt defaults to yes (Enter = verify)
 # 2026.11.13 - v. 0.1.77 - Regenerated PAR2 create default -t/-T is nproc-1 when CPUs >= 2 (else 1)
 # 2026.11.13 - v. 0.1.76 - Regenerated PAR2 create passes -t/-T (default nproc; override PAR2_THREADS / PAR2_FILE_THREADS) so OpenMP uses all cores
 # 2026.11.13 - v. 0.1.75 - Protection coverage: match PAR2/hash names case-insensitively (CIFS/Windows mounts); files covered by another PAR2 set in the same directory are reported separately (not as untracked); is_par2_index_file uses is_par2_volume_file; multi-set loop clears set -e between sets so an OK set cannot abort the remaining queue
@@ -179,7 +181,8 @@ Options:
 Rename prompts take one key: y, n, or q (q cancels the whole run).
 Multi-set batch: rename defaults to no unless --yes is given.
 Single set: rename defaults to yes.
-Repair, regenerate, and hash .par2-ref prompts always default to no (Enter skips).
+Repair, regenerate, and most hash .par2-ref prompts default to no (Enter skips).
+"Verify PAR2 archive(s) vs hash file?" defaults to yes (Enter verifies).
 Regenerate builds one volume-only archive, excludes hash manifests from the set,
 renames old .par2 to *.par2.old by default, then syncs hash manifests with the
 new PAR2 checksums.
@@ -483,7 +486,8 @@ pgm_prompt_read_remove_old_par2_hash_refs_choice() {
 }
 
 pgm_prompt_read_hash_par2_check_choice() {
-    pgm_prompt_read_yes_no_quit 0 "$1" \
+    # Default yes — verifying digests is the usual next step when .par2 lines exist.
+    pgm_prompt_read_yes_no_quit 1 "$1" \
         "Verify PAR2 archive(s) vs hash file?"
 }
 
@@ -2896,7 +2900,7 @@ pgm_review_hash_manifests() {
 # Fast parse of hash manifests for .par2 lines (stat only, no hashing). Missing
 # names are treated as likely old PAR2 archives after recreate. Also detect
 # 'HASH  *file' (two spaces) which breaks GNU md5sum -c. Optionally verify
-# digests and rewrite manifests (all prompts default to no).
+# digests and rewrite manifests (verify prompt defaults to yes; fix/remove default no).
 pgm_review_par2_hash_refs() {
     local -a refs=() active=() stale_names=() bad_names=()
     local -A stale_seen=() bad_seen=()
