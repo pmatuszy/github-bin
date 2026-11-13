@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261113.181600 - convention skip/verify menu: one option per line + Choice line
 # v. 20261113.181500 - convention PAR2+hash present: skip / verify / skip-rest / verify-rest
 # v. 20261113.180800 - [timestamp] logs; per-folder Removed/Created/Elapsed; multi-folder end recap
 # v. 20261113.175000 - exclude *.par2.old / *.sha*.old / *.md5.old from PAR2 sources and new hash
@@ -22,6 +23,7 @@
 # v. 20260809.155541 - prompt to exclude rename.sh helpers from PAR2 (default yes)
 # v. 20260806.224414 - initial: create volume-only PAR2 + SHA-512/MD5 hash for cwd subtree
 
+# 2026.11.13 - v. 0.1.21 - Convention skip/verify prompt lists options on separate lines (like rename.sh) then a Choice [ s/v/S/V/q ] line
 # 2026.11.13 - v. 0.1.20 - If a work dir already has exactly one convention PAR2 set (_<dir>) and one convention hash (__<dir>.ext): ask skip / verify / skip-for-rest / verify-for-rest (default skip); verify OK ends the folder without recreate; --yes skips without verify
 # 2026.11.13 - v. 0.1.19 - Status/prompt timestamps use [ YYYY.MM.DD HH:MM:SS ]; after each folder print Removed/Created/Elapsed; if more than one folder, repeat a folders recap at the end
 # 2026.11.13 - v. 0.1.18 - Do not treat consolidate backups (*.par2.old, *.sha512.old, *.md5.old, …) as data: exclude them from PAR2 create sources and from the new hash manifest
@@ -107,9 +109,10 @@ Interactive prompts (unless --yes / flag already set):
   Recovery %:     Enter accepts 20% (or --recovery value).
   Rename helpers: Exclude from PAR2? [Y/n/q] — single key, no Enter (default yes).
   Convention set: If exactly one _<dir> PAR2 set and one __<dir>.<ext> hash
-                  already exist: [ s ]kip / [ v ]erify / [ S ]kip rest / [ V ]erify rest
-                  / [ q ] (default s). Verify OK ends that folder; fail continues
-                  to recreate prompts. --yes skips without verifying.
+                  already exist: menu with [ s ] skip / [ v ] verify /
+                  [ S ] skip rest / [ V ] verify rest / [ q ] quit (default s).
+                  Verify OK ends that folder; fail continues to recreate prompts.
+                  --yes skips without verifying.
   Existing PAR2:  Rename to *.par2.old and recreate? [y/N/q] — single key
                   (default N = keep PAR2). If kept and no hash file exists,
                   offers to create one [y/N/q] (default N).
@@ -1240,7 +1243,12 @@ maybe_offer_skip_or_verify_existing() {
     log_msg "Using remembered choice for this run: ${action}."
   else
     echo "This directory already has one matching PAR2 set and one matching hash."
-    printf '%s[ s ]kip / [ v ]erify / [ S ]kip rest of run / [ V ]erify rest of run / [ q ]uit? (default: s, %s): ' \
+    echo "  [ s ] Skip this folder — leave PAR2 + hash unchanged (default)"
+    echo "  [ v ] Verify this folder — if OK, leave unchanged"
+    echo "  [ S ] Skip for the rest of the run (same as [ s ] for later matching folders)"
+    echo "  [ V ] Verify for the rest of the run (same as [ v ] for later matching folders)"
+    echo "  [ q ] Quit"
+    printf '%sChoice [ s/v/S/V/q ] (default: s, %s): ' \
       "$(user_prompt_ts_prefix)" "$(prompt_timeout_label)"
     read_skip_verify_key_with_timeout ans skip
     case $? in
