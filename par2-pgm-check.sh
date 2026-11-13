@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261113.120500 - coverage: case-insensitive match; sibling PAR2 sets; multi-set set -e harden
 # v. 20261111.163800 - Step 1b: verify all hash-manifest entries; rewrite wrong paths by digest
 # v. 20260921.200018 - fix coverage: init DATA_FILES (set -u unbound on early OK path)
 # v. 20260921.182207 - end of set: report data files not covered by PAR2 and/or hash manifests
@@ -60,6 +61,7 @@
 # v. 20260719.103506 - fix no-arg run: empty POSITIONAL[@]:- became one "" element
 # v. 20260719.102800 - multi-set selection: A/a, ranges 1-4, --all, multiple paths
 
+# 2026.11.13 - v. 0.1.75 - Protection coverage: match PAR2/hash names case-insensitively (CIFS/Windows mounts); files covered by another PAR2 set in the same directory are reported separately (not as untracked); is_par2_index_file uses is_par2_volume_file; multi-set loop clears set -e between sets so an OK set cannot abort the remaining queue
 # 2026.11.11 - v. 0.1.74 - Step 1b: always verify every entry in .sha*/.md5/.b2 manifests in the set directory (not only .par2 lines); on missing/mismatch WARN and continue, but first offer to rewrite the listed path when a unique same-digest file exists under DATA_DIR; --no-hash-data-check skips the step
 # 2026.09.21 - v. 0.1.73 - Fix Protection coverage under set -u: initialize DATA_FILES before length check (early OK path never ran Step 3)
 # 2026.09.21 - v. 0.1.72 - End of each PAR2 set: report on-disk data files not listed in this PAR2 set and/or not listed in any .sha*/.md5/.b2 hash manifest (counts + sample names); also note files covered by only one of the two
@@ -684,7 +686,10 @@ pgm_record_multi_set_result() {
         3) MULTI_SET_FAIL=$((MULTI_SET_FAIL + 1)); MULTI_SET_FAILED_NAMES+=("$name") ;;
         *) MULTI_SET_WARN=$((MULTI_SET_WARN + 1)); MULTI_SET_FAILED_NAMES+=("$name") ;;
     esac
-    (( rc > MULTI_SET_WORST_RC )) && MULTI_SET_WORST_RC=$rc
+    # Do not use ((…)) && under set -e: false arithmetic can abort the multi-set loop.
+    if (( rc > MULTI_SET_WORST_RC )); then
+        MULTI_SET_WORST_RC=$rc
+    fi
 }
 
 pgm_print_multi_set_summary() {
@@ -1342,7 +1347,7 @@ is_par2_index_file() {
     local base="$1"
     [[ "$base" == *.par2 || "$base" == *.PAR2 ]] || return 1
     is_par2_backup_file "$base" && return 1
-    [[ "$base" =~ \.vol[0-9]*[-+_][0-9]+\.par2$ ]] && return 1
+    is_par2_volume_file "$base" && return 1
     return 0
 }
 
@@ -1782,11 +1787,15 @@ pgm_print_final_run_summary() {
 
 # Compare on-disk data files vs this PAR2 set and hash manifests; report gaps.
 # Informational only (does not change exit status). Skips nested PAR2 roots like Step 3.
+# Name matching is case-insensitive (needed on CIFS/Windows mounts where disk case
+# may differ from names stored inside PAR2 / hash manifests).
 pgm_report_protection_coverage() {
-    local -A in_par2_path=() in_par2_base=() in_hash_path=() in_hash_base=()
-    local -a untracked=() only_par2=() only_hash=()
-    local name base rel in_p in_h max_show=25 i
+    local -A in_par2_path_l=() in_par2_base_l=() in_hash_path_l=() in_hash_base_l=()
+    local -A in_sibling_path_l=() in_sibling_base_l=() sibling_queued=()
+    local -a untracked=() only_par2=() only_hash=() sibling_covered=() sibling_reps=()
+    local name base rel in_p in_h in_sib max_show=25 i
     local disk_n=0 par2_n=0 hash_n=0
+    local cur_key="" other_key="" f
 
     [[ -n "${PAR2_FILE:-}" && -n "${DATA_DIR:-}" && -d "$DATA_DIR" ]] || return 0
 
@@ -1806,21 +1815,59 @@ pgm_report_protection_coverage() {
         [[ -n "$name" ]] || continue
         name="${name//\\//}"
         name="${name#./}"
-        in_par2_path["$name"]=1
+        in_par2_path_l["${name,,}"]=1
         base="$(basename -- "$name")"
-        in_par2_base["$base"]=1
+        in_par2_base_l["${base,,}"]=1
     done < <(run_rename_py "$(basename -- "$PAR2_FILE")" list-names 2>/dev/null || true)
-    par2_n=${#in_par2_path[@]}
+    par2_n=${#in_par2_path_l[@]}
 
     while IFS= read -r name || [[ -n "$name" ]]; do
         [[ -n "$name" ]] || continue
         name="${name//\\//}"
         name="${name#./}"
-        in_hash_path["$name"]=1
+        in_hash_path_l["${name,,}"]=1
         base="$(basename -- "$name")"
-        in_hash_base["$base"]=1
+        in_hash_base_l["${base,,}"]=1
     done < <(run_rename_py hash list-data-paths "$DATA_DIR" 2>/dev/null || true)
-    hash_n=${#in_hash_path[@]}
+    hash_n=${#in_hash_path_l[@]}
+
+    # Other PAR2 sets in the same directory: their protected files are not "untracked".
+    cur_key="$(pgm_par2_set_key "$PAR2_FILE")"
+    shopt -s nullglob
+    for f in "$DATA_DIR"/*.par2 "$DATA_DIR"/*.PAR2; do
+        [[ -f "$f" ]] || continue
+        base="$(basename -- "$f")"
+        is_par2_backup_file "$base" && continue
+        is_par2_index_file "$base" || continue
+        other_key="$(pgm_par2_set_key "$f")"
+        [[ "$other_key" == "$cur_key" ]] && continue
+        [[ -n "${sibling_queued[$other_key]:-}" ]] && continue
+        sibling_queued["$other_key"]=1
+        sibling_reps+=("$f")
+    done
+    for f in "$DATA_DIR"/*.par2 "$DATA_DIR"/*.PAR2; do
+        [[ -f "$f" ]] || continue
+        base="$(basename -- "$f")"
+        is_par2_backup_file "$base" && continue
+        is_par2_volume_file "$base" || continue
+        other_key="$(pgm_par2_set_key "$f")"
+        [[ "$other_key" == "$cur_key" ]] && continue
+        [[ -n "${sibling_queued[$other_key]:-}" ]] && continue
+        sibling_queued["$other_key"]=1
+        sibling_reps+=("$f")
+    done
+    shopt -u nullglob
+
+    for f in "${sibling_reps[@]}"; do
+        while IFS= read -r name || [[ -n "$name" ]]; do
+            [[ -n "$name" ]] || continue
+            name="${name//\\//}"
+            name="${name#./}"
+            in_sibling_path_l["${name,,}"]=1
+            base="$(basename -- "$name")"
+            in_sibling_base_l["${base,,}"]=1
+        done < <(run_rename_py "$(basename -- "$f")" list-names 2>/dev/null || true)
+    done
 
     for rel in "${DATA_FILES[@]}"; do
         rel="${rel//\\//}"
@@ -1828,17 +1875,25 @@ pgm_report_protection_coverage() {
         base="$(basename -- "$rel")"
         in_p=0
         in_h=0
-        # PAR2: prefer exact relative path; basename-only entries match flat disk names.
-        if [[ -n "${in_par2_path[$rel]:-}" ]]; then
+        in_sib=0
+        # PAR2: prefer relative path; basename-only entries match flat disk names.
+        # Keys are lowercased so .mp4 on disk matches .MP4 inside the PAR2 set.
+        if [[ -n "${in_par2_path_l[${rel,,}]:-}" ]]; then
             in_p=1
-        elif [[ "$rel" == "$base" && -n "${in_par2_base[$base]:-}" ]]; then
+        elif [[ "${rel,,}" == "${base,,}" && -n "${in_par2_base_l[${base,,}]:-}" ]]; then
             in_p=1
         fi
-        # Hash manifests usually store basename (*file); accept path or basename.
-        if [[ -n "${in_hash_path[$rel]:-}" || -n "${in_hash_base[$base]:-}" ]]; then
+        if [[ -n "${in_hash_path_l[${rel,,}]:-}" || -n "${in_hash_base_l[${base,,}]:-}" ]]; then
             in_h=1
         fi
-        if (( in_p == 0 && in_h == 0 )); then
+        if [[ -n "${in_sibling_path_l[${rel,,}]:-}" ]]; then
+            in_sib=1
+        elif [[ "${rel,,}" == "${base,,}" && -n "${in_sibling_base_l[${base,,}]:-}" ]]; then
+            in_sib=1
+        fi
+        if (( in_p == 0 && in_h == 0 && in_sib == 1 )); then
+            sibling_covered+=("$rel")
+        elif (( in_p == 0 && in_h == 0 )); then
             untracked+=("$rel")
         elif (( in_p == 1 && in_h == 0 )); then
             only_par2+=("$rel")
@@ -1851,19 +1906,40 @@ pgm_report_protection_coverage() {
     echo "  Listed in this PAR2 set:           $par2_n"
     echo "  Listed in hash manifest(s):        $hash_n"
     echo "  On disk, not in PAR2 and not hash: ${#untracked[@]}"
+    if (( ${#sibling_covered[@]} > 0 )); then
+        echo "  On disk, other PAR2 set here:      ${#sibling_covered[@]}"
+    fi
     echo "  On disk, PAR2 only (not in hash):  ${#only_par2[@]}"
     echo "  On disk, hash only (not in PAR2):  ${#only_hash[@]}"
+
+    if (( ${#sibling_covered[@]} > 0 )); then
+        echo
+        echo "  Covered by another PAR2 set in this directory — sample:"
+        for i in "${!sibling_covered[@]}"; do
+            if (( i >= max_show )); then
+                echo "    ... and $(( ${#sibling_covered[@]} - max_show )) more"
+                break
+            fi
+            printf '    %s\n' "${sibling_covered[$i]}"
+        done
+        echo "  (Checked when that set is verified in this multi-set run.)"
+    fi
 
     if (( ${#untracked[@]} > 0 )); then
         echo
         echo "  Untracked on disk (neither PAR2 nor hash) — sample:"
         for i in "${!untracked[@]}"; do
-            (( i < max_show )) || { echo "    ... and $(( ${#untracked[@]} - max_show )) more"; break; }
+            if (( i >= max_show )); then
+                echo "    ... and $(( ${#untracked[@]} - max_show )) more"
+                break
+            fi
             printf '    %s\n' "${untracked[$i]}"
         done
         echo "  Tip: regenerate PAR2 / refresh hash manifests if these should be protected."
-    elif (( disk_n > 0 )); then
+    elif (( disk_n > 0 && ${#sibling_covered[@]} == 0 )); then
         echo "  All on-disk data files are listed in PAR2 and/or a hash manifest."
+    elif (( disk_n > 0 )); then
+        echo "  All on-disk data files are listed in this or another PAR2 set and/or a hash manifest."
     fi
 
     if (( ${#only_par2[@]} > 0 && ${#only_par2[@]} <= max_show )); then
@@ -1889,6 +1965,8 @@ pgm_report_protection_coverage() {
 pgm_run_one_par2_set_end() {
     local rc="$1"
 
+    # Coverage/summary are informational; never abort multi-set under set -e.
+    set +e
     pgm_report_protection_coverage || true
     pgm_print_final_run_summary "$rc"
     return "$rc"
@@ -4615,11 +4693,16 @@ PGM_MULTI_RUN_START=$SECONDS
 set_idx=0
 set_rc=0
 for set_idx in "${!PAR2_SET_QUEUE[@]}"; do
+    # Step 2 leaves set -e on; clear it between sets so a later prepare/banner
+    # cannot abort the remaining queue after an OK set.
+    set +e
     pgm_prepare_par2_set "${PAR2_SET_QUEUE[$set_idx]}"
     pgm_print_multi_set_banner "$((set_idx + 1))" "${#PAR2_SET_QUEUE[@]}" \
         "$(pgm_path_display_relative "$PAR2_FILE" "$START_DIR")" "$(dirname "$PAR2_FILE")"
     set_rc=0
-    pgm_run_one_par2_set || set_rc=$?
+    pgm_run_one_par2_set
+    set_rc=$?
+    set +e
     pgm_record_multi_set_result "$set_rc" "$(pgm_path_display_relative "$PAR2_FILE" "$START_DIR")"
 done
 
