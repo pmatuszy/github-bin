@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261113.175000 - exclude *.par2.old / *.sha*.old / *.md5.old from PAR2 sources and new hash
 # v. 20261113.174500 - multi PAR2/hash: verify then offer consolidate; cleanup *.old default Y
 # v. 20261113.173500 - scope: whole tree or one PAR2+hash per immediate subdirectory
 # v. 20261113.134300 - par2 create: default -t/-T is nproc-1 when CPUs >= 2
@@ -19,6 +20,7 @@
 # v. 20260809.155541 - prompt to exclude rename.sh helpers from PAR2 (default yes)
 # v. 20260806.224414 - initial: create volume-only PAR2 + SHA-512/MD5 hash for cwd subtree
 
+# 2026.11.13 - v. 0.1.18 - Do not treat consolidate backups (*.par2.old, *.sha512.old, *.md5.old, …) as data: exclude them from PAR2 create sources and from the new hash manifest
 # 2026.11.13 - v. 0.1.17 - If a work dir has 2+ distinct PAR2 sets and/or 2+ hash manifests: list them, offer verify (default Y); if OK offer consolidate into one volume-only PAR2 + one hash (default Y); then ask to delete the renamed *.old leftovers (default Y). --yes skips this offer (keeps existing multi sets)
 # 2026.11.13 - v. 0.1.16 - If cwd has immediate subdirectories: ask whole-tree (one PAR2+hash here) vs per-subdir (one PAR2+hash in each direct child for that child's full subtree; loose files in cwd ignored). --scope whole|per-subdir; --yes defaults to whole
 # 2026.11.13 - v. 0.1.15 - Default par2 -t/-T is nproc-1 when CPUs >= 2 (leave one core free); still 1 on single-CPU hosts
@@ -560,6 +562,16 @@ is_par2_backup_basename() {
   return 1
 }
 
+# Hash/PAR2 sidecars renamed aside (e.g. during consolidate) — not data to protect.
+is_protection_backup_basename() {
+  local base="$1"
+  is_par2_backup_basename "$base" && return 0
+  case "${base,,}" in
+    *.sha512.old|*.sha384.old|*.sha256.old|*.sha224.old|*.sha1.old|*.md5.old|*.b2.old) return 0 ;;
+  esac
+  return 1
+}
+
 is_par2_basename() {
   local base="$1"
   [[ "$base" == *.par2 || "$base" == *.PAR2 ]] || return 1
@@ -595,7 +607,7 @@ is_rename_helper_basename() {
   return 1
 }
 
-# Files protected by the new PAR2 set (excludes PAR2 archives and hash manifests).
+# Files protected by the new PAR2 set (excludes PAR2 archives, hash manifests, *.old backups).
 is_par2_source_basename() {
   local base="$1"
   case "$base" in
@@ -603,6 +615,7 @@ is_par2_source_basename() {
     *_old.par2|*_old.PAR2) return 1 ;;
     *.par2.old|*.PAR2.old|*.par2.OLD|*.PAR2.OLD) return 1 ;;
   esac
+  is_protection_backup_basename "$base" && return 1
   is_hash_manifest_basename "$base" && return 1
   if (( EXCLUDE_RENAME_HELPERS == 1 )) && is_rename_helper_basename "$base"; then
     return 1
@@ -645,6 +658,8 @@ collect_sorted_relpaths() {
         [[ -s "$f" ]] || continue
         ;;
       hash-all)
+        # Do not list consolidate/recreate backups in the new manifest.
+        is_protection_backup_basename "$base" && continue
         ;;
       *)
         die "Internal error: unknown collect mode: $mode"
