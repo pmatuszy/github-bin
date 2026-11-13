@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261113.182000 - folder banner: PAR2 stem and hash on separate lines
 # v. 20261113.181800 - scope + hash choice: single-key, no Enter
 # v. 20261113.181700 - scope prompt default P (per-subdir); only default key capitalized
 # v. 20261113.181600 - convention skip/verify menu: one option per line + Choice line
@@ -25,6 +26,7 @@
 # v. 20260809.155541 - prompt to exclude rename.sh helpers from PAR2 (default yes)
 # v. 20260806.224414 - initial: create volume-only PAR2 + SHA-512/MD5 hash for cwd subtree
 
+# 2026.11.13 - v. 0.1.24 - Per-folder banner prints PAR2 stem and hash file on separate lines (not one long | line)
 # 2026.11.13 - v. 0.1.23 - Scope and hash-menu prompts accept a single key without Enter (like Y/n); recovery % still needs Enter for multi-digit values
 # 2026.11.13 - v. 0.1.22 - Scope prompt defaults to per-subdir [ P ]; only the default key is capitalized ([ w ] / [ P ] / [ q ]); --yes and Enter/timeout/invalid also use per-subdir when subdirs exist
 # 2026.11.13 - v. 0.1.21 - Convention skip/verify prompt lists options on separate lines (like rename.sh) then a Choice [ s/v/S/V/q ] line
@@ -2232,7 +2234,8 @@ run_create_job() {
   echo
   log_msg "================================================================"
   log_msg "Directory: $WORK_DIR"
-  log_msg "PAR2 stem: ${PAR2_STEM}.par2 (volume-only)  |  Hash: __${DIR_NAME}.${HASH_EXT}"
+  log_msg "PAR2 stem: ${PAR2_STEM}.par2 (volume-only)"
+  log_msg "Hash file: __${DIR_NAME}.${HASH_EXT}"
   log_msg "================================================================"
 
   offer_rc=0
