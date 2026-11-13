@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261113.174500 - multi PAR2/hash: verify then offer consolidate; cleanup *.old default Y
 # v. 20261113.173500 - scope: whole tree or one PAR2+hash per immediate subdirectory
 # v. 20261113.134300 - par2 create: default -t/-T is nproc-1 when CPUs >= 2
 # v. 20261113.134000 - par2 create: pass -t/-T (default nproc) for multi-core OpenMP
@@ -18,6 +19,7 @@
 # v. 20260809.155541 - prompt to exclude rename.sh helpers from PAR2 (default yes)
 # v. 20260806.224414 - initial: create volume-only PAR2 + SHA-512/MD5 hash for cwd subtree
 
+# 2026.11.13 - v. 0.1.17 - If a work dir has 2+ distinct PAR2 sets and/or 2+ hash manifests: list them, offer verify (default Y); if OK offer consolidate into one volume-only PAR2 + one hash (default Y); then ask to delete the renamed *.old leftovers (default Y). --yes skips this offer (keeps existing multi sets)
 # 2026.11.13 - v. 0.1.16 - If cwd has immediate subdirectories: ask whole-tree (one PAR2+hash here) vs per-subdir (one PAR2+hash in each direct child for that child's full subtree; loose files in cwd ignored). --scope whole|per-subdir; --yes defaults to whole
 # 2026.11.13 - v. 0.1.15 - Default par2 -t/-T is nproc-1 when CPUs >= 2 (leave one core free); still 1 on single-CPU hosts
 # 2026.11.13 - v. 0.1.14 - par2 create uses all CPUs by default: -t (Reed-Solomon) and -T (parallel file hashing) from nproc; override with --threads / --file-threads or PAR2_THREADS / PAR2_FILE_THREADS
@@ -156,6 +158,7 @@ MULTI_JOB_TOTAL=0
 MULTI_JOB_OK=0
 MULTI_JOB_SKIP=0
 MULTI_JOB_FAIL=0
+CONSOLIDATE_DONE=0
 # -1 = ask (default yes); 1 = exclude; 0 = include
 EXCLUDE_RENAME_HELPERS_CLI=-1
 EXCLUDE_RENAME_HELPERS=1
@@ -673,6 +676,339 @@ list_existing_stem_par2() {
     _out+=("$f")
   done
   shopt -u nullglob
+}
+
+# Stem used to group index + volume files into one PAR2 set.
+par2_stem_from_basename() {
+  local base="$1"
+
+  is_par2_basename "$base" || return 1
+  base="${base%.par2}"
+  base="${base%.PAR2}"
+  if [[ "$base" =~ ^(.*)\.vol[0-9]*[-+_][0-9]+$ ]]; then
+    base="${BASH_REMATCH[1]}"
+  fi
+  printf '%s' "$base"
+}
+
+# Unique PAR2 set stems in root (non-recursive). Fills name-ref with stem strings.
+list_par2_set_stems_in_dir() {
+  local root="$1"
+  local -n _out=$2
+  local f base stem
+  local -A seen=()
+
+  _out=()
+  shopt -s nullglob
+  for f in "$root"/*.par2 "$root"/*.PAR2; do
+    [[ -f "$f" ]] || continue
+    base="$(basename -- "$f")"
+    is_par2_basename "$base" || continue
+    stem="$(par2_stem_from_basename "$base")" || continue
+    [[ -n "$stem" ]] || continue
+    [[ -n "${seen[${stem,,}]:-}" ]] && continue
+    seen["${stem,,}"]=1
+    _out+=("$stem")
+  done
+  shopt -u nullglob
+  if ((${#_out[@]} > 1)); then
+    IFS=$'\n' _out=($(printf '%s\n' "${_out[@]}" | LC_ALL=C sort -f))
+    unset IFS
+  fi
+}
+
+# Hash manifests in root (non-recursive).
+list_hash_manifests_in_dir() {
+  local root="$1"
+  local -n _out=$2
+  local f base
+
+  _out=()
+  shopt -s nullglob
+  for f in "$root"/*; do
+    [[ -f "$f" ]] || continue
+    base="$(basename -- "$f")"
+    is_hash_manifest_basename "$base" || continue
+    case "$base" in
+      *.old|*.OLD|*_old.*) continue ;;
+    esac
+    _out+=("$f")
+  done
+  shopt -u nullglob
+  if ((${#_out[@]} > 1)); then
+    IFS=$'\n' _out=($(printf '%s\n' "${_out[@]}" | LC_ALL=C sort -f))
+    unset IFS
+  fi
+}
+
+hash_verify_cmd_for_file() {
+  local base="$1"
+  case "${base,,}" in
+    *.sha512) printf 'sha512sum' ;;
+    *.sha384) printf 'sha384sum' ;;
+    *.sha256) printf 'sha256sum' ;;
+    *.sha224) printf 'sha224sum' ;;
+    *.sha1)   printf 'sha1sum' ;;
+    *.md5)    printf 'md5sum' ;;
+    *.b2)     printf 'b2sum' ;;
+    *)        return 1 ;;
+  esac
+}
+
+# Verify every PAR2 set and every hash manifest in WORK_DIR. Returns 0 if all OK.
+verify_dir_par2_and_hashes() {
+  local -a stems=() hashes=() members=()
+  local stem f base cmd rc=0 any=0 verify_rc=0
+
+  list_par2_set_stems_in_dir "$WORK_DIR" stems
+  list_hash_manifests_in_dir "$WORK_DIR" hashes
+
+  echo "=== Verify existing PAR2 set(s) and hash manifest(s) ==="
+  for stem in "${stems[@]}"; do
+    members=()
+    list_existing_stem_par2 "$WORK_DIR" "$stem" members
+    ((${#members[@]} > 0)) || continue
+    any=1
+    f="${members[0]}"
+    # Prefer an index if present; else first volume.
+    for base in "${members[@]}"; do
+      if [[ "$(basename -- "$base")" == "${stem}.par2" || "$(basename -- "$base")" == "${stem}.PAR2" ]]; then
+        f="$base"
+        break
+      fi
+    done
+    echo "PAR2 verify: $(basename -- "$f") (set ${stem})"
+    (
+      cd "$WORK_DIR" || exit 1
+      "$PAR2_CMD" verify "$(basename -- "$f")"
+    )
+    verify_rc=$?
+    if (( verify_rc != 0 )); then
+      echo "PAR2 verify FAILED for set ${stem} (exit ${verify_rc})." >&2
+      rc=1
+    else
+      echo "PAR2 verify OK: ${stem}"
+    fi
+  done
+
+  for f in "${hashes[@]}"; do
+    base="$(basename -- "$f")"
+    cmd="$(hash_verify_cmd_for_file "$base")" || {
+      echo "Skipping hash verify (unknown type): $base" >&2
+      continue
+    }
+    command -v "$cmd" >/dev/null 2>&1 || {
+      echo "Skipping hash verify ('$cmd' not found): $base" >&2
+      continue
+    }
+    any=1
+    echo "Hash verify: $base ($cmd -c)"
+    (
+      cd "$WORK_DIR" || exit 1
+      "$cmd" -c -- "$base"
+    )
+    verify_rc=$?
+    if (( verify_rc != 0 )); then
+      echo "Hash verify FAILED for $base (exit ${verify_rc})." >&2
+      rc=1
+    else
+      echo "Hash verify OK: $base"
+    fi
+  done
+
+  if (( any == 0 )); then
+    echo "Nothing to verify."
+    return 0
+  fi
+  return "$rc"
+}
+
+backup_paths_to_old() {
+  local -a paths=("$@")
+  local src dst base
+
+  for src in "${paths[@]}"; do
+    [[ -e "$src" ]] || continue
+    base="$(basename -- "$src")"
+    dst="${src}.old"
+    if [[ -e "$dst" ]]; then
+      die "Backup already exists: $(basename -- "$dst") (remove/rename it first)."
+    fi
+    if (( DRY_RUN == 1 )); then
+      printf '  [dry-run] mv -- %q %q\n' "$src" "$dst"
+      continue
+    fi
+    mv -- "$src" "$dst" || die "Failed to rename $base to $(basename -- "$dst")."
+    printf '  %s -> %s\n' "$base" "$(basename -- "$dst")"
+    CLEANUP_RESTORE_OLDPATHS+=("$dst")
+  done
+}
+
+# After consolidate: offer to delete *.par2.old / hash *.old left in WORK_DIR (default yes).
+offer_delete_consolidate_old_backups() {
+  local -a olds=()
+  local f base ans=""
+
+  shopt -s nullglob
+  for f in "$WORK_DIR"/*.par2.old "$WORK_DIR"/*.PAR2.old \
+           "$WORK_DIR"/*.sha512.old "$WORK_DIR"/*.sha384.old \
+           "$WORK_DIR"/*.sha256.old "$WORK_DIR"/*.sha224.old \
+           "$WORK_DIR"/*.sha1.old "$WORK_DIR"/*.md5.old "$WORK_DIR"/*.b2.old \
+           "$WORK_DIR"/*.SHA512.old "$WORK_DIR"/*.MD5.old; do
+    [[ -f "$f" ]] || continue
+    olds+=("$f")
+  done
+  shopt -u nullglob
+  ((${#olds[@]} > 0)) || return 0
+
+  echo
+  echo "Old backup file(s) from consolidate (${#olds[@]}):"
+  for f in "${olds[@]}"; do
+    printf '  %s\n' "$(basename -- "$f")"
+  done
+  if (( AUTO_YES == 1 )); then
+    echo "Deleting old backups (--yes)."
+    ans=y
+  else
+    printf '%sDelete those old backup file(s) now? [Y/n/q] (%s): ' \
+      "$(user_prompt_ts_prefix)" "$(prompt_timeout_label)"
+    read_yn_key_with_timeout ans y
+    case $? in
+      2) echo "Quit."; return 2 ;;
+    esac
+  fi
+  case "$ans" in
+    y)
+      for f in "${olds[@]}"; do
+        if (( DRY_RUN == 1 )); then
+          printf '  [dry-run] rm -- %q\n' "$f"
+        else
+          rm -f -- "$f" && printf '  deleted: %s\n' "$(basename -- "$f")"
+        fi
+      done
+      # Successful consolidate: do not restore these on later Ctrl-C.
+      CLEANUP_RESTORE_OLDPATHS=()
+      ;;
+    *)
+      echo "Keeping old backup file(s)."
+      CLEANUP_RESTORE_OLDPATHS=()
+      ;;
+  esac
+  return 0
+}
+
+# If 2+ PAR2 sets and/or 2+ hashes: verify (default Y), then consolidate (default Y).
+# Sets CONSOLIDATE_DONE=1 when create should proceed as a fresh unified set.
+# Returns 0=continue job, 2=quit run, 3=skip directory.
+maybe_offer_verify_and_consolidate() {
+  local -a stems=() hashes=() all_par2=() members=()
+  local stem f ans="" verify_ok=0
+
+  CONSOLIDATE_DONE=0
+  list_par2_set_stems_in_dir "$WORK_DIR" stems
+  list_hash_manifests_in_dir "$WORK_DIR" hashes
+
+  if (( ${#stems[@]} < 2 && ${#hashes[@]} < 2 )); then
+    return 0
+  fi
+
+  echo
+  echo "Multiple protection files in this directory:"
+  if ((${#stems[@]} >= 2)); then
+    echo "  PAR2 sets (${#stems[@]}):"
+    for stem in "${stems[@]}"; do
+      members=()
+      list_existing_stem_par2 "$WORK_DIR" "$stem" members
+      printf '    - %s (%d file(s)' "$stem" "${#members[@]}"
+      printf ')\n'
+      for f in "${members[@]}"; do
+        printf '        %s\n' "$(basename -- "$f")"
+      done
+    done
+  elif ((${#stems[@]} == 1)); then
+    echo "  PAR2 sets: 1 (${stems[0]})"
+  else
+    echo "  PAR2 sets: none"
+  fi
+  if ((${#hashes[@]} >= 2)); then
+    echo "  Hash manifests (${#hashes[@]}):"
+    for f in "${hashes[@]}"; do
+      printf '    - %s\n' "$(basename -- "$f")"
+    done
+  elif ((${#hashes[@]} == 1)); then
+    echo "  Hash manifests: 1 ($(basename -- "${hashes[0]}"))"
+  else
+    echo "  Hash manifests: none"
+  fi
+  echo "Suggestion: verify everything first; if OK, consolidate into one PAR2 + one hash."
+
+  if (( AUTO_YES == 1 )); then
+    echo "Skipping verify/consolidate offer (--yes keeps existing multi sets)."
+    return 0
+  fi
+
+  printf '%sVerify existing PAR2 set(s) and hash file(s) first? [Y/n/q] (%s): ' \
+    "$(user_prompt_ts_prefix)" "$(prompt_timeout_label)"
+  read_yn_key_with_timeout ans y
+  case $? in
+    2) echo "Quit."; return 2 ;;
+  esac
+  case "$ans" in
+    y)
+      if verify_dir_par2_and_hashes; then
+        verify_ok=1
+        echo "Verification passed."
+      else
+        echo "Verification reported problems — consolidate is not offered until this is fixed." >&2
+        return 0
+      fi
+      ;;
+    *)
+      echo "Skipping verify."
+      verify_ok=0
+      printf '%sConsolidate anyway into one PAR2 + one hash (without verify)? [y/N/q] (%s): ' \
+        "$(user_prompt_ts_prefix)" "$(prompt_timeout_label)"
+      read_yn_key_with_timeout ans n
+      case $? in
+        2) echo "Quit."; return 2 ;;
+      esac
+      case "$ans" in
+        y) verify_ok=1 ;;
+        *) echo "Leaving multiple protection files as-is."; return 0 ;;
+      esac
+      ;;
+  esac
+
+  if (( verify_ok != 1 )); then
+    return 0
+  fi
+
+  printf '%sConsolidate into one PAR2 + one hash for this directory? [Y/n/q] (%s): ' \
+    "$(user_prompt_ts_prefix)" "$(prompt_timeout_label)"
+  read_yn_key_with_timeout ans y
+  case $? in
+    2) echo "Quit."; return 2 ;;
+  esac
+  case "$ans" in
+    y) ;;
+    *) echo "Leaving multiple protection files as-is."; return 0 ;;
+  esac
+
+  echo "Backing up existing PAR2 set(s) and hash manifest(s) to *.old ..."
+  all_par2=()
+  for stem in "${stems[@]}"; do
+    members=()
+    list_existing_stem_par2 "$WORK_DIR" "$stem" members
+    all_par2+=("${members[@]}")
+  done
+  backup_paths_to_old "${all_par2[@]}"
+  backup_paths_to_old "${hashes[@]}"
+  # New create owns these; do not auto-restore mid-create on success path.
+  PAR2_CREATE_IN_PROGRESS=0
+  CONSOLIDATE_DONE=1
+  CREATE_PAR2=1
+  echo "Will create a single volume-only PAR2 (${PAR2_STEM}) and hash (__${DIR_NAME}.${HASH_EXT})."
+  return 0
 }
 
 prompt_hash_algo() {
@@ -1592,7 +1928,9 @@ print_run_settings
 run_create_job() {
   local -a existing_par2=() par2_sources=() hash_targets=()
   local ans="" f rel hash_rel
-  local job_rc=0
+  local job_rc=0 offer_rc=0
+
+  CONSOLIDATE_DONE=0
 
   echo
   echo "================================================================"
@@ -1600,10 +1938,20 @@ run_create_job() {
   echo "PAR2 stem: ${PAR2_STEM}.par2 (volume-only)  |  Hash: __${DIR_NAME}.${HASH_EXT}"
   echo "================================================================"
 
+  offer_rc=0
+  maybe_offer_verify_and_consolidate || offer_rc=$?
+  case "$offer_rc" in
+    2) return 2 ;;
+    3) return 3 ;;
+  esac
+
   existing_par2=()
   list_existing_stem_par2 "$WORK_DIR" "$PAR2_STEM" existing_par2
   CREATE_PAR2=1
-  if ((${#existing_par2[@]} > 0)); then
+  if (( CONSOLIDATE_DONE == 1 )); then
+    # Old PAR2/hash already moved to *.old; create fresh unified set.
+    CREATE_PAR2=1
+  elif ((${#existing_par2[@]} > 0)); then
     echo "Existing PAR2 file(s) for stem ${PAR2_STEM}:"
     for f in "${existing_par2[@]}"; do
       printf '  %s\n' "$(basename -- "$f")"
@@ -1671,7 +2019,9 @@ run_create_job() {
     echo
   fi
 
-  if [[ -e "$HASH_FILE" ]]; then
+  if (( CONSOLIDATE_DONE == 1 )); then
+    : # target hash path is free (old manifests renamed to *.old)
+  elif [[ -e "$HASH_FILE" ]]; then
     echo "Hash file already exists: $(basename -- "$HASH_FILE")"
     if (( AUTO_YES == 1 )); then
       echo "Will overwrite (--yes)."
@@ -1732,6 +2082,14 @@ run_create_job() {
   hash_rel="$(basename -- "$HASH_FILE")"
   collect_sorted_relpaths "$WORK_DIR" hash-all hash_targets "$hash_rel"
   write_hash_manifest "$HASH_FILE" "$HASH_CMD" "${hash_targets[@]}"
+
+  if (( CONSOLIDATE_DONE == 1 )); then
+    offer_rc=0
+    offer_delete_consolidate_old_backups || offer_rc=$?
+    if (( offer_rc == 2 )); then
+      return 2
+    fi
+  fi
 
   print_run_summary
   return 0
