@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261113.173500 - scope: whole tree or one PAR2+hash per immediate subdirectory
 # v. 20261113.134300 - par2 create: default -t/-T is nproc-1 when CPUs >= 2
 # v. 20261113.134000 - par2 create: pass -t/-T (default nproc) for multi-core OpenMP
 # v. 20260922.082714 - recovery percent prompt: q/Q quits instead of falling back to the default
@@ -17,6 +18,7 @@
 # v. 20260809.155541 - prompt to exclude rename.sh helpers from PAR2 (default yes)
 # v. 20260806.224414 - initial: create volume-only PAR2 + SHA-512/MD5 hash for cwd subtree
 
+# 2026.11.13 - v. 0.1.16 - If cwd has immediate subdirectories: ask whole-tree (one PAR2+hash here) vs per-subdir (one PAR2+hash in each direct child for that child's full subtree; loose files in cwd ignored). --scope whole|per-subdir; --yes defaults to whole
 # 2026.11.13 - v. 0.1.15 - Default par2 -t/-T is nproc-1 when CPUs >= 2 (leave one core free); still 1 on single-CPU hosts
 # 2026.11.13 - v. 0.1.14 - par2 create uses all CPUs by default: -t (Reed-Solomon) and -T (parallel file hashing) from nproc; override with --threads / --file-threads or PAR2_THREADS / PAR2_FILE_THREADS
 # 2026.09.22 - v. 0.1.13 - Recovery percent prompt accepts q/Q to quit (advertised in the prompt); previously q was just an invalid percent and the run continued with the default
@@ -43,14 +45,19 @@ show_help() {
   cat <<EOF
 Usage: $(script_live_basename) [-h|--help] [-v|--version] [--no_startup_delay] [options]
 
-Create a volume-only PAR2 set and a hash manifest for the current directory
-(whole subtree).
+Create a volume-only PAR2 set and a hash manifest.
 
-Naming (from the parent directory basename, e.g. cwd .../MyAlbum):
+Naming (from the work directory basename, e.g. .../MyAlbum):
   PAR2 stem:  _MyAlbum.par2  (volume-only: _MyAlbum.vol….par2; index removed)
   Hash file:  __MyAlbum.<ext>  (ext from chosen hash, e.g. .sha512 / .md5 / .b2)
 
-Order:
+Scope (when the current directory has immediate subdirectories):
+  Whole tree (default): one PAR2 + hash in cwd covering cwd and all depths.
+  Per subdirectory: for each direct child only, one PAR2 + hash inside that
+  child covering that child's full subtree. Files that sit only in cwd are
+  ignored in this mode.
+
+Order (per work directory):
   1) Create PAR2 for all non-empty data files under the tree
      (excludes *.par2 / backups and hash manifests).
      Optionally excludes rename.sh helper files (prompt; default yes).
@@ -79,8 +86,14 @@ Options:
                        Default: nproc-1 when CPUs >= 2, else 1.
   --file-threads N     par2 -T N (files hashed in parallel during create).
                        Default: same as --threads; capped at source file count.
+  --scope whole|per-subdir
+                       Creation scope when cwd has immediate subdirectories.
+                       whole = one PAR2+hash in cwd (default with --yes).
+                       per-subdir = one PAR2+hash in each direct child.
 
 Interactive prompts (unless --yes / flag already set):
+  Scope:          If cwd has subdirs: [W] whole tree / [P] per subdirectory / [Q]
+                  (default W). Skipped when there are no immediate subdirs.
   Hash algorithm: numbered list of *sum tools found on PATH; Enter = default;
                   q/Q = quit immediately (no Enter); invalid input asks again.
   Recovery %:     Enter accepts 20% (or --recovery value).
@@ -101,6 +114,7 @@ Examples:
   $(script_live_basename) --hash sha256 --recovery 10
   $(script_live_basename) --md5 --yes
   $(script_live_basename) --threads 8 --file-threads 4
+  $(script_live_basename) --scope per-subdir --hash md5 --yes
   $(script_live_basename) --include-rename-helpers
   $(script_live_basename) -n
 EOF
@@ -132,6 +146,16 @@ THREADS_CLI=""
 FILE_THREADS_CLI=""
 PAR2_THREADS="${PAR2_THREADS:-}"
 PAR2_FILE_THREADS="${PAR2_FILE_THREADS:-}"
+SCOPE_CLI=""
+# whole | per-subdir (set after resolve_create_scope)
+CREATE_SCOPE=""
+CREATE_SCOPE_SOURCE=""
+START_DIR=""
+MULTI_JOB_MODE=0
+MULTI_JOB_TOTAL=0
+MULTI_JOB_OK=0
+MULTI_JOB_SKIP=0
+MULTI_JOB_FAIL=0
 # -1 = ask (default yes); 1 = exclude; 0 = include
 EXCLUDE_RENAME_HELPERS_CLI=-1
 EXCLUDE_RENAME_HELPERS=1
@@ -1192,6 +1216,122 @@ write_hash_manifest() {
   echo "Wrote ${line_count} checksum line(s): $(basename -- "$out_file")"
 }
 
+list_immediate_subdirs() {
+  local root="$1"
+  local -n _out=$2
+  local d
+
+  _out=()
+  while IFS= read -r -d '' d; do
+    [[ -d "$d" ]] || continue
+    _out+=("$d")
+  done < <(find "$root" -mindepth 1 -maxdepth 1 -type d -print0 2>/dev/null | LC_ALL=C sort -z)
+}
+
+set_work_directory() {
+  local dir="$1"
+
+  WORK_DIR="$(cd -- "$dir" && pwd -P)" || die "Cannot enter directory: $dir"
+  DIR_NAME="$(basename -- "$WORK_DIR")"
+  [[ -n "$DIR_NAME" && "$DIR_NAME" != "/" && "$DIR_NAME" != "." ]] \
+    || die "Cannot derive a usable directory name from: $WORK_DIR"
+  PAR2_STEM="_${DIR_NAME}"
+  if [[ -n "${HASH_ALGO:-}" ]]; then
+    apply_hash_algo
+  else
+    HASH_FILE=""
+  fi
+  RENAME_HELPERS_FOUND=()
+  CREATED_PAR2_VOLS=()
+  PAR2_SOURCE_COUNT=0
+  PAR2_SOURCE_BYTES=0
+  HASH_ENTRY_COUNT=0
+  SUMMARY_PRINTED=0
+  CREATE_PAR2=1
+  PAR2_CREATE_IN_PROGRESS=0
+  HASH_TEMP=""
+  CLEANUP_RESTORE_OLDPATHS=()
+}
+
+# Resolve CREATE_SCOPE: whole | per-subdir. Returns 2 if user quits.
+resolve_create_scope() {
+  local -a subdirs=()
+  local ans="" first="" rest=""
+
+  list_immediate_subdirs "$START_DIR" subdirs
+
+  if ((${#subdirs[@]} == 0)); then
+    CREATE_SCOPE=whole
+    CREATE_SCOPE_SOURCE=nosubdirs
+    return 0
+  fi
+
+  if [[ -n "$SCOPE_CLI" ]]; then
+    CREATE_SCOPE="$SCOPE_CLI"
+    CREATE_SCOPE_SOURCE=cli
+    return 0
+  fi
+
+  if (( AUTO_YES == 1 )); then
+    CREATE_SCOPE=whole
+    CREATE_SCOPE_SOURCE=yes
+    return 0
+  fi
+
+  echo "This directory has ${#subdirs[@]} immediate subdirectory(ies)."
+  echo "What should be created?"
+  echo "  [W] Whole tree — one PAR2 + hash in this directory (all files here and below)  [default]"
+  echo "  [P] Per subdirectory — one PAR2 + hash in each immediate child (full subtree each;"
+  echo "      files that sit only in this directory are ignored)"
+  echo "  [Q] Quit"
+  printf '%sChoice [W/p/q] (%s): ' "$(user_prompt_ts_prefix)" "$(prompt_timeout_label)"
+
+  if prompt_has_timeout; then
+    if ! IFS= read -r -t "$PROMPT_TIMEOUT" -n 1 first; then
+      echo
+      echo "Timed out — using whole tree."
+      CREATE_SCOPE=whole
+      CREATE_SCOPE_SOURCE=default
+      return 0
+    fi
+  else
+    IFS= read -r -n 1 first || first=""
+  fi
+  if [[ -n "$first" && "$first" != $'\n' ]]; then
+    if prompt_has_timeout; then
+      IFS= read -r -t "$PROMPT_TIMEOUT" rest || rest=""
+    else
+      IFS= read -r rest || rest=""
+    fi
+  else
+    rest=""
+  fi
+  ans="${first}${rest}"
+  ans="${ans#"${ans%%[![:space:]]*}"}"
+  ans="${ans%"${ans##*[![:space:]]}"}"
+  echo
+
+  case "${ans,,}" in
+    ""|w|whole)
+      CREATE_SCOPE=whole
+      CREATE_SCOPE_SOURCE=prompt
+      ;;
+    p|per|per-subdir|subdir|subdirs)
+      CREATE_SCOPE=per-subdir
+      CREATE_SCOPE_SOURCE=prompt
+      ;;
+    q|quit)
+      return 2
+      ;;
+    *)
+      echo "Invalid choice '$ans' — using whole tree."
+      CREATE_SCOPE=whole
+      CREATE_SCOPE_SOURCE=default
+      ;;
+  esac
+  return 0
+}
+
 # Command line that reproduces this run: the resolved hash/recovery/helper answers as flags.
 print_run_settings_equivalent_cli() {
   local cmd="" out="" p q_dir
@@ -1210,6 +1350,7 @@ print_run_settings_equivalent_cli() {
   parts+=("--recovery" "$RECOVERY_PCT")
   parts+=("--threads" "$PAR2_THREADS")
   parts+=("--file-threads" "$PAR2_FILE_THREADS")
+  parts+=("--scope" "$CREATE_SCOPE")
   if (( EXCLUDE_RENAME_HELPERS == 1 )); then
     parts+=("--exclude-rename-helpers")
   else
@@ -1223,7 +1364,7 @@ print_run_settings_equivalent_cli() {
     out+=" $(printf '%q' "$p")"
   done
 
-  q_dir="$(printf '%q' "$WORK_DIR")"
+  q_dir="$(printf '%q' "${START_DIR:-$WORK_DIR}")"
   if prompt_has_timeout; then
     printf '  %-16s%s\n' "Equivalent CLI:" "PROMPT_TIMEOUT=${PROMPT_TIMEOUT} cd $q_dir && $out"
   else
@@ -1233,10 +1374,23 @@ print_run_settings_equivalent_cli() {
 
 print_run_settings() {
   echo "=== Run settings ==="
-  echo "  Directory:     $WORK_DIR"
-  echo "  Parent name:   $DIR_NAME"
-  echo "  PAR2 stem:     ${PAR2_STEM}.par2 (volume-only)"
-  echo "  Hash file:     __${DIR_NAME}.${HASH_EXT}"
+  echo "  Start dir:     ${START_DIR:-$WORK_DIR}"
+  case "${CREATE_SCOPE_SOURCE:-}" in
+    cli) echo "  --scope:       given (${CREATE_SCOPE})" ;;
+    yes) echo "  --scope:       not given (--yes default: whole)" ;;
+    nosubdirs) echo "  --scope:       whole (no immediate subdirectories)" ;;
+    prompt) echo "  --scope:       not given (prompted; selected: ${CREATE_SCOPE})" ;;
+    default) echo "  --scope:       whole (fallback)" ;;
+    *) echo "  --scope:       ${CREATE_SCOPE:-whole}" ;;
+  esac
+  if [[ "$CREATE_SCOPE" == per-subdir ]]; then
+    echo "  Scope note:    one PAR2+hash per immediate child; loose files in start dir ignored"
+  else
+    echo "  Work dir:      $WORK_DIR"
+    echo "  Parent name:   $DIR_NAME"
+    echo "  PAR2 stem:     ${PAR2_STEM}.par2 (volume-only)"
+    echo "  Hash file:     __${DIR_NAME}.${HASH_EXT}"
+  fi
   if [[ -n "$HASH_PREF" ]]; then
     echo "  --hash:        given (${HASH_LABEL} / ${HASH_CMD})"
   elif (( AUTO_YES == 1 )); then
@@ -1280,6 +1434,20 @@ print_run_settings() {
   fi
   echo "  PROMPT_TIMEOUT: $(prompt_timeout_label)"
   print_run_settings_equivalent_cli
+  echo
+}
+
+print_multi_job_summary() {
+  echo
+  echo "=== Multi-directory summary ==="
+  printf '  Directories: %d\n' "$MULTI_JOB_TOTAL"
+  printf '  OK:          %d\n' "$MULTI_JOB_OK"
+  if (( MULTI_JOB_SKIP > 0 )); then
+    printf '  Skipped:     %d\n' "$MULTI_JOB_SKIP"
+  fi
+  if (( MULTI_JOB_FAIL > 0 )); then
+    printf '  Failed:      %d\n' "$MULTI_JOB_FAIL"
+  fi
   echo
 }
 
@@ -1366,6 +1534,15 @@ while [[ $# -gt 0 ]]; do
       [[ "$FILE_THREADS_CLI" =~ ^[1-9][0-9]*$ ]] || die "Invalid --file-threads '$FILE_THREADS_CLI' (use a positive integer)."
       shift 2
       ;;
+    --scope)
+      [[ $# -ge 2 ]] || die "Missing value for --scope (whole|per-subdir)."
+      case "${2,,}" in
+        whole|tree|all) SCOPE_CLI=whole ;;
+        per-subdir|per_subdir|subdir|subdirs|per) SCOPE_CLI=per-subdir ;;
+        *) die "Invalid --scope '$2' (use whole or per-subdir)." ;;
+      esac
+      shift 2
+      ;;
     --)
       shift
       break
@@ -1382,14 +1559,12 @@ done
 command -v "$PAR2_CMD" >/dev/null 2>&1 || die "'$PAR2_CMD' not found. Install par2cmdline or set PAR2_CMD."
 resolve_par2_thread_counts
 
-WORK_DIR="$(pwd -P)"
-DIR_NAME="$(basename -- "$WORK_DIR")"
-[[ -n "$DIR_NAME" && "$DIR_NAME" != "/" && "$DIR_NAME" != "." ]] \
-  || die "Cannot derive a usable parent directory name from: $WORK_DIR"
-
-PAR2_STEM="_${DIR_NAME}"
+START_DIR="$(pwd -P)"
 SCRIPT_START_EPOCH=$(date +%s)
 SCRIPT_START_STR="$(date '+%Y.%m.%d %H:%M:%S')"
+
+# Hash algo needs a provisional work dir so HASH_* / HASH_FILE resolve for settings.
+set_work_directory "$START_DIR"
 
 prompt_hash_algo "${HASH_PREF:-}"
 
@@ -1401,154 +1576,229 @@ fi
 
 prompt_exclude_rename_helpers
 
+if ! resolve_create_scope; then
+  echo "Quit."
+  return_code=0
+  RUN_OUTCOME=quit
+  finish
+fi
+
+# Re-apply after scope (HASH_FILE may be refreshed); start dir still provisional for whole.
+set_work_directory "$START_DIR"
 print_run_settings
 
-# Existing PAR2 for this stem?
-existing_par2=()
-list_existing_stem_par2 "$WORK_DIR" "$PAR2_STEM" existing_par2
-CREATE_PAR2=1
-if ((${#existing_par2[@]} > 0)); then
-  echo "Existing PAR2 file(s) for stem ${PAR2_STEM}:"
-  for f in "${existing_par2[@]}"; do
-    printf '  %s\n' "$(basename -- "$f")"
+# Run create+hash for the current WORK_DIR.
+# Returns: 0=ok, 2=quit entire run, 3=skip this directory.
+run_create_job() {
+  local -a existing_par2=() par2_sources=() hash_targets=()
+  local ans="" f rel hash_rel
+  local job_rc=0
+
+  echo
+  echo "================================================================"
+  echo "Directory: $WORK_DIR"
+  echo "PAR2 stem: ${PAR2_STEM}.par2 (volume-only)  |  Hash: __${DIR_NAME}.${HASH_EXT}"
+  echo "================================================================"
+
+  existing_par2=()
+  list_existing_stem_par2 "$WORK_DIR" "$PAR2_STEM" existing_par2
+  CREATE_PAR2=1
+  if ((${#existing_par2[@]} > 0)); then
+    echo "Existing PAR2 file(s) for stem ${PAR2_STEM}:"
+    for f in "${existing_par2[@]}"; do
+      printf '  %s\n' "$(basename -- "$f")"
+    done
+    if (( AUTO_YES == 1 )); then
+      echo "Keeping existing PAR2 unchanged (--yes; recreate defaults to no)."
+      CREATE_PAR2=0
+      if [[ ! -e "$HASH_FILE" ]]; then
+        echo "No hash file present; skipping this directory (--yes; hash-create prompt defaults to no)."
+        return 3
+      fi
+    else
+      ans=""
+      printf '%sRename existing PAR2 to *.par2.old and recreate? [y/N/q] (%s): ' \
+        "$(user_prompt_ts_prefix)" "$(prompt_timeout_label)"
+      read_yn_key_with_timeout ans n
+      case $? in
+        2)
+          echo "Quit."
+          return 2
+          ;;
+      esac
+      case "$ans" in
+        y)
+          backup_existing_stem_par2 "${existing_par2[@]}"
+          CREATE_PAR2=1
+          ;;
+        n)
+          echo "Keeping existing PAR2 unchanged."
+          CREATE_PAR2=0
+          if [[ ! -e "$HASH_FILE" ]]; then
+            echo
+            echo "Situation: PAR2 archive(s) exist for this directory, but there is no"
+            echo "  hash manifest yet (expected: $(basename -- "$HASH_FILE"))."
+            echo "Suggestion: create a hash file covering all files in this tree,"
+            echo "  including the existing PAR2 file(s). PAR2 will not be modified."
+            printf '%sCreate hash file now? [y/N/q] (%s): ' \
+              "$(user_prompt_ts_prefix)" "$(prompt_timeout_label)"
+            read_yn_key_with_timeout ans n
+            case $? in
+              2)
+                echo "Quit."
+                return 2
+                ;;
+            esac
+            case "$ans" in
+              y)
+                echo "Will create hash file only."
+                ;;
+              *)
+                echo "Skipped (no PAR2 recreate, no hash file)."
+                return 3
+                ;;
+            esac
+          else
+            echo "Hash file already present: $(basename -- "$HASH_FILE") (overwrite prompt follows if needed)."
+          fi
+          ;;
+        *)
+          echo "Quit."
+          return 2
+          ;;
+      esac
+    fi
+    echo
+  fi
+
+  if [[ -e "$HASH_FILE" ]]; then
+    echo "Hash file already exists: $(basename -- "$HASH_FILE")"
+    if (( AUTO_YES == 1 )); then
+      echo "Will overwrite (--yes)."
+    else
+      ans=""
+      printf '%sOverwrite existing hash file? [Y/n/q] (%s): ' \
+        "$(user_prompt_ts_prefix)" "$(prompt_timeout_label)"
+      read_yn_key_with_timeout ans y
+      case $? in
+        2)
+          echo "Quit."
+          return 2
+          ;;
+      esac
+      case "$ans" in
+        y)
+          ;;
+        *)
+          echo "Skipped (hash file left unchanged)."
+          return 3
+          ;;
+      esac
+    fi
+    echo
+  fi
+
+  if (( CREATE_PAR2 == 1 )); then
+    echo "=== Step 1: collect PAR2 source files (subtree; exclude PAR2 + hash manifests) ==="
+    par2_sources=()
+    collect_sorted_relpaths "$WORK_DIR" par2-sources par2_sources
+    if (( EXCLUDE_RENAME_HELPERS == 1 )); then
+      if ((${#RENAME_HELPERS_FOUND[@]} == 0)); then
+        find_rename_helpers "$WORK_DIR" RENAME_HELPERS_FOUND
+      fi
+      if ((${#RENAME_HELPERS_FOUND[@]} > 0)); then
+        echo "Excluding ${#RENAME_HELPERS_FOUND[@]} rename.sh helper file(s) from PAR2:"
+        for rel in "${RENAME_HELPERS_FOUND[@]}"; do
+          printf '  %s\n' "$rel"
+        done
+      fi
+    fi
+    echo "Found ${#par2_sources[@]} non-empty data file(s) to protect."
+    if ((${#par2_sources[@]} == 0)); then
+      echo "No data files to protect under: $WORK_DIR — skipping."
+      return 3
+    fi
+
+    echo
+    echo "=== Step 2: create PAR2 (volume-only) ==="
+    create_par2_volume_only "$PAR2_STEM" "$RECOVERY_PCT" "${par2_sources[@]}"
+  else
+    echo "=== Step 1-2: skipped (keeping existing PAR2; hash-only mode) ==="
+  fi
+
+  echo
+  echo "=== Step 3: write hash manifest (all files including PAR2; exclude hash file itself) ==="
+  hash_targets=()
+  hash_rel="$(basename -- "$HASH_FILE")"
+  collect_sorted_relpaths "$WORK_DIR" hash-all hash_targets "$hash_rel"
+  write_hash_manifest "$HASH_FILE" "$HASH_CMD" "${hash_targets[@]}"
+
+  print_run_summary
+  return 0
+}
+
+if [[ "$CREATE_SCOPE" == per-subdir ]]; then
+  MULTI_JOB_MODE=1
+  job_dirs=()
+  list_immediate_subdirs "$START_DIR" job_dirs
+  ((${#job_dirs[@]} > 0)) || die "Internal error: per-subdir scope but no immediate subdirectories."
+
+  echo "Per-subdirectory mode: ${#job_dirs[@]} job(s). Loose files in $START_DIR are ignored."
+  for job_dir in "${job_dirs[@]}"; do
+    set_work_directory "$job_dir"
+    MULTI_JOB_TOTAL=$((MULTI_JOB_TOTAL + 1))
+    job_rc=0
+    run_create_job || job_rc=$?
+    case "$job_rc" in
+      0) MULTI_JOB_OK=$((MULTI_JOB_OK + 1)) ;;
+      2)
+        return_code=0
+        RUN_OUTCOME=quit
+        print_multi_job_summary
+        finish
+        ;;
+      3) MULTI_JOB_SKIP=$((MULTI_JOB_SKIP + 1)) ;;
+      *)
+        MULTI_JOB_FAIL=$((MULTI_JOB_FAIL + 1))
+        echo "Error: job failed for $job_dir (rc=$job_rc)" >&2
+        ;;
+    esac
   done
-  if (( AUTO_YES == 1 )); then
-    echo "Keeping existing PAR2 unchanged (--yes; recreate defaults to no)."
-    CREATE_PAR2=0
-    if [[ ! -e "$HASH_FILE" ]]; then
-      echo "No hash file present; skipping hash create (--yes; that prompt defaults to no)."
-      return_code=0
-      RUN_OUTCOME=quit
-      finish
-    fi
+
+  print_multi_job_summary
+  if (( MULTI_JOB_FAIL > 0 )); then
+    return_code=1
+    RUN_OUTCOME=error
+  elif (( MULTI_JOB_OK == 0 && MULTI_JOB_SKIP > 0 )); then
+    return_code=0
+    RUN_OUTCOME=quit
   else
-    ans=""
-    printf '%sRename existing PAR2 to *.par2.old and recreate? [y/N/q] (%s): ' \
-      "$(user_prompt_ts_prefix)" "$(prompt_timeout_label)"
-    read_yn_key_with_timeout ans n
-    case $? in
-      2)
-        echo "Quit."
-        return_code=0
-        RUN_OUTCOME=quit
-        finish
-        ;;
-    esac
-    case "$ans" in
-      y)
-        backup_existing_stem_par2 "${existing_par2[@]}"
-        CREATE_PAR2=1
-        ;;
-      n)
-        echo "Keeping existing PAR2 unchanged."
-        CREATE_PAR2=0
-        if [[ ! -e "$HASH_FILE" ]]; then
-          echo
-          echo "Situation: PAR2 archive(s) exist for this directory, but there is no"
-          echo "  hash manifest yet (expected: $(basename -- "$HASH_FILE"))."
-          echo "Suggestion: create a hash file covering all files in this tree,"
-          echo "  including the existing PAR2 file(s). PAR2 will not be modified."
-          printf '%sCreate hash file now? [y/N/q] (%s): ' \
-            "$(user_prompt_ts_prefix)" "$(prompt_timeout_label)"
-          read_yn_key_with_timeout ans n
-          case $? in
-            2)
-              echo "Quit."
-              return_code=0
-              RUN_OUTCOME=quit
-              finish
-              ;;
-          esac
-          case "$ans" in
-            y)
-              echo "Will create hash file only."
-              ;;
-            *)
-              echo "Aborted (no PAR2 recreate, no hash file)."
-              return_code=0
-              RUN_OUTCOME=quit
-              finish
-              ;;
-          esac
-        else
-          echo "Hash file already present: $(basename -- "$HASH_FILE") (overwrite prompt follows if needed)."
-        fi
-        ;;
-      *)
-        echo "Quit."
-        return_code=0
-        RUN_OUTCOME=quit
-        finish
-        ;;
-    esac
+    return_code=0
+    RUN_OUTCOME=ok
   fi
-  echo
+  # Summaries already printed per job.
+  SUMMARY_PRINTED=1
+  finish
 fi
 
-# Existing hash file?
-if [[ -e "$HASH_FILE" ]]; then
-  echo "Hash file already exists: $(basename -- "$HASH_FILE")"
-  if (( AUTO_YES == 1 )); then
-    echo "Will overwrite (--yes)."
-  else
-    ans=""
-    printf '%sOverwrite existing hash file? [Y/n/q] (%s): ' \
-      "$(user_prompt_ts_prefix)" "$(prompt_timeout_label)"
-    read_yn_key_with_timeout ans y
-    case $? in
-      2)
-        echo "Quit."
-        return_code=0
-        RUN_OUTCOME=quit
-        finish
-        ;;
-    esac
-    case "$ans" in
-      y)
-        ;;
-      *)
-        echo "Aborted (hash file left unchanged)."
-        return_code=0
-        RUN_OUTCOME=quit
-        finish
-        ;;
-    esac
-  fi
-  echo
-fi
-
-if (( CREATE_PAR2 == 1 )); then
-  echo "=== Step 1: collect PAR2 source files (subtree; exclude PAR2 + hash manifests) ==="
-  par2_sources=()
-  collect_sorted_relpaths "$WORK_DIR" par2-sources par2_sources
-  if (( EXCLUDE_RENAME_HELPERS == 1 )); then
-    if ((${#RENAME_HELPERS_FOUND[@]} == 0)); then
-      find_rename_helpers "$WORK_DIR" RENAME_HELPERS_FOUND
-    fi
-    if ((${#RENAME_HELPERS_FOUND[@]} > 0)); then
-      echo "Excluding ${#RENAME_HELPERS_FOUND[@]} rename.sh helper file(s) from PAR2:"
-      for rel in "${RENAME_HELPERS_FOUND[@]}"; do
-        printf '  %s\n' "$rel"
-      done
-    fi
-  fi
-  echo "Found ${#par2_sources[@]} non-empty data file(s) to protect."
-  ((${#par2_sources[@]} > 0)) || die "No data files to protect under: $WORK_DIR"
-
-  echo
-  echo "=== Step 2: create PAR2 (volume-only) ==="
-  create_par2_volume_only "$PAR2_STEM" "$RECOVERY_PCT" "${par2_sources[@]}"
-else
-  echo "=== Step 1-2: skipped (keeping existing PAR2; hash-only mode) ==="
-fi
-
-echo
-echo "=== Step 3: write hash manifest (all files including PAR2; exclude hash file itself) ==="
-hash_targets=()
-hash_rel="$(basename -- "$HASH_FILE")"
-collect_sorted_relpaths "$WORK_DIR" hash-all hash_targets "$hash_rel"
-write_hash_manifest "$HASH_FILE" "$HASH_CMD" "${hash_targets[@]}"
-
-RUN_OUTCOME=ok
-return_code=0
-finish
+# Whole-tree mode (default).
+set_work_directory "$START_DIR"
+job_rc=0
+run_create_job || job_rc=$?
+case "$job_rc" in
+  0)
+    return_code=0
+    RUN_OUTCOME=ok
+    finish
+    ;;
+  2|3)
+    return_code=0
+    RUN_OUTCOME=quit
+    finish
+    ;;
+  *)
+    return_code=1
+    RUN_OUTCOME=error
+    finish
+    ;;
+esac
