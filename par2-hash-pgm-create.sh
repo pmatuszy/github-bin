@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261113.180800 - [timestamp] logs; per-folder Removed/Created/Elapsed; multi-folder end recap
 # v. 20261113.175000 - exclude *.par2.old / *.sha*.old / *.md5.old from PAR2 sources and new hash
 # v. 20261113.174500 - multi PAR2/hash: verify then offer consolidate; cleanup *.old default Y
 # v. 20261113.173500 - scope: whole tree or one PAR2+hash per immediate subdirectory
@@ -20,6 +21,7 @@
 # v. 20260809.155541 - prompt to exclude rename.sh helpers from PAR2 (default yes)
 # v. 20260806.224414 - initial: create volume-only PAR2 + SHA-512/MD5 hash for cwd subtree
 
+# 2026.11.13 - v. 0.1.19 - Status/prompt timestamps use [YYYY.MM.DD HH:MM:SS]; after each folder print Removed/Created/Elapsed; if more than one folder, repeat a folders recap at the end
 # 2026.11.13 - v. 0.1.18 - Do not treat consolidate backups (*.par2.old, *.sha512.old, *.md5.old, …) as data: exclude them from PAR2 create sources and from the new hash manifest
 # 2026.11.13 - v. 0.1.17 - If a work dir has 2+ distinct PAR2 sets and/or 2+ hash manifests: list them, offer verify (default Y); if OK offer consolidate into one volume-only PAR2 + one hash (default Y); then ask to delete the renamed *.old leftovers (default Y). --yes skips this offer (keeps existing multi sets)
 # 2026.11.13 - v. 0.1.16 - If cwd has immediate subdirectories: ask whole-tree (one PAR2+hash here) vs per-subdir (one PAR2+hash in each direct child for that child's full subtree; loose files in cwd ignored). --scope whole|per-subdir; --yes defaults to whole
@@ -160,7 +162,13 @@ MULTI_JOB_TOTAL=0
 MULTI_JOB_OK=0
 MULTI_JOB_SKIP=0
 MULTI_JOB_FAIL=0
+MULTI_FOLDER_RECAPS=()
 CONSOLIDATE_DONE=0
+JOB_START_EPOCH=0
+JOB_BACKED_UP_COUNT=0
+JOB_DELETED_COUNT=0
+JOB_CREATED_COUNT=0
+JOB_OUTCOME=""
 # -1 = ask (default yes); 1 = exclude; 0 = include
 EXCLUDE_RENAME_HELPERS_CLI=-1
 EXCLUDE_RENAME_HELPERS=1
@@ -435,8 +443,67 @@ print_run_finished_banner() {
   echo
 }
 
+wall_clock_now() {
+  date '+%Y.%m.%d %H:%M:%S'
+}
+
 user_prompt_ts_prefix() {
-  printf '(%s) ' "$(date '+%Y.%m.%d %H:%M:%S')"
+  printf '[%s] ' "$(wall_clock_now)"
+}
+
+# Timestamped status line (prompts use user_prompt_ts_prefix; raw par2 output is left alone).
+log_msg() {
+  printf '[%s] %s\n' "$(wall_clock_now)" "$*"
+}
+
+reset_job_counters() {
+  JOB_START_EPOCH=$(date +%s)
+  JOB_BACKED_UP_COUNT=0
+  JOB_DELETED_COUNT=0
+  JOB_CREATED_COUNT=0
+  JOB_OUTCOME=""
+}
+
+print_folder_done_summary() {
+  local elapsed outcome_note="" removed_n=0 removed_note="" created_note=""
+  local recap=""
+
+  elapsed="$(format_elapsed "$(( $(date +%s) - JOB_START_EPOCH ))")"
+  outcome_note="${JOB_OUTCOME:-done}"
+
+  if (( JOB_DELETED_COUNT > 0 )); then
+    removed_n=$JOB_DELETED_COUNT
+    removed_note="old backup(s) deleted"
+  elif (( JOB_BACKED_UP_COUNT > 0 )); then
+    removed_n=$JOB_BACKED_UP_COUNT
+    removed_note="renamed to *.old (kept on disk)"
+  else
+    removed_n=0
+    removed_note="none"
+  fi
+
+  if (( JOB_CREATED_COUNT > 0 )); then
+    created_note="${JOB_CREATED_COUNT} file(s)"
+    if (( CREATE_PAR2 == 1 && ${#CREATED_PAR2_VOLS[@]} > 0 )); then
+      created_note+=" (PAR2: ${CREATED_PAR2_VOLS[*]}"
+      if [[ -n "${HASH_FILE:-}" && -e "${HASH_FILE:-}" ]]; then
+        created_note+="; hash: $(basename -- "$HASH_FILE")"
+      fi
+      created_note+=")"
+    elif [[ -n "${HASH_FILE:-}" && $HASH_ENTRY_COUNT -gt 0 ]]; then
+      created_note+=" (hash: $(basename -- "$HASH_FILE"), ${HASH_ENTRY_COUNT} line(s))"
+    fi
+  else
+    created_note="0 file(s)"
+  fi
+
+  log_msg "=== Folder done: ${DIR_NAME} (${outcome_note}) ==="
+  log_msg "Removed: ${removed_n} file(s) (${removed_note})"
+  log_msg "Created: ${created_note}"
+  log_msg "Elapsed (this folder): ${elapsed}"
+
+  recap="${DIR_NAME}: removed ${removed_n}, created ${JOB_CREATED_COUNT}, elapsed ${elapsed} [${outcome_note}]"
+  MULTI_FOLDER_RECAPS+=("$recap")
 }
 
 prompt_has_timeout() {
@@ -850,12 +917,14 @@ backup_paths_to_old() {
       die "Backup already exists: $(basename -- "$dst") (remove/rename it first)."
     fi
     if (( DRY_RUN == 1 )); then
-      printf '  [dry-run] mv -- %q %q\n' "$src" "$dst"
+      log_msg "[dry-run] mv -- ${base} -> $(basename -- "$dst")"
+      JOB_BACKED_UP_COUNT=$((JOB_BACKED_UP_COUNT + 1))
       continue
     fi
     mv -- "$src" "$dst" || die "Failed to rename $base to $(basename -- "$dst")."
-    printf '  %s -> %s\n' "$base" "$(basename -- "$dst")"
+    log_msg "${base} -> $(basename -- "$dst")"
     CLEANUP_RESTORE_OLDPATHS+=("$dst")
+    JOB_BACKED_UP_COUNT=$((JOB_BACKED_UP_COUNT + 1))
   done
 }
 
@@ -896,16 +965,20 @@ offer_delete_consolidate_old_backups() {
     y)
       for f in "${olds[@]}"; do
         if (( DRY_RUN == 1 )); then
-          printf '  [dry-run] rm -- %q\n' "$f"
+          log_msg "[dry-run] rm -- $(basename -- "$f")"
+          JOB_DELETED_COUNT=$((JOB_DELETED_COUNT + 1))
         else
-          rm -f -- "$f" && printf '  deleted: %s\n' "$(basename -- "$f")"
+          if rm -f -- "$f"; then
+            log_msg "deleted: $(basename -- "$f")"
+            JOB_DELETED_COUNT=$((JOB_DELETED_COUNT + 1))
+          fi
         fi
       done
       # Successful consolidate: do not restore these on later Ctrl-C.
       CLEANUP_RESTORE_OLDPATHS=()
       ;;
     *)
-      echo "Keeping old backup file(s)."
+      log_msg "Keeping old backup file(s)."
       CLEANUP_RESTORE_OLDPATHS=()
       ;;
   esac
@@ -1414,13 +1487,15 @@ backup_existing_stem_par2() {
       die "Backup already exists: $(basename -- "$dst") (remove/rename it first)."
     fi
     if (( DRY_RUN == 1 )); then
-      printf '  [dry-run] mv -- %q %q\n' "$src" "$dst"
+      log_msg "[dry-run] mv -- ${base} -> $(basename -- "$dst")"
+      JOB_BACKED_UP_COUNT=$((JOB_BACKED_UP_COUNT + 1))
       continue
     fi
     mv -- "$src" "$dst" || die "Failed to rename $base to $(basename -- "$dst")."
-    printf '  %s -> %s\n' "$base" "$(basename -- "$dst")"
+    log_msg "${base} -> $(basename -- "$dst")"
     backed+=("$dst")
     CLEANUP_RESTORE_OLDPATHS+=("$dst")
+    JOB_BACKED_UP_COUNT=$((JOB_BACKED_UP_COUNT + 1))
   done
 }
 
@@ -1465,8 +1540,9 @@ create_par2_volume_only() {
   echo "  stem: ${stem}.par2 (volume-only; index removed after create)"
 
   if (( DRY_RUN == 1 )); then
-    echo "  [dry-run] ${PAR2_CMD} create -t${PAR2_THREADS} -T${file_threads} -n1 -b${block_count} -r${percent} -- ${stem}.par2 <${#sources[@]} files>"
+    log_msg "[dry-run] ${PAR2_CMD} create -t${PAR2_THREADS} -T${file_threads} -n1 -b${block_count} -r${percent} -- ${stem}.par2 <${#sources[@]} files>"
     CREATED_PAR2_VOLS=( "${stem}.vol*.par2 (dry-run)" )
+    JOB_CREATED_COUNT=$((JOB_CREATED_COUNT + 1))
     return 0
   fi
 
@@ -1509,10 +1585,11 @@ create_par2_volume_only() {
   PAR2_CREATE_IN_PROGRESS=0
   CLEANUP_RESTORE_OLDPATHS=()
 
-  echo "New PAR2 volume(s):"
+  log_msg "New PAR2 volume(s):"
   for f in "${vols[@]}"; do
-    printf '  %s\n' "$(basename -- "$f")"
+    log_msg "  $(basename -- "$f")"
     CREATED_PAR2_VOLS+=( "$(basename -- "$f")" )
+    JOB_CREATED_COUNT=$((JOB_CREATED_COUNT + 1))
   done
 }
 
@@ -1528,8 +1605,9 @@ write_hash_manifest() {
   echo "Hashing ${#rels[@]} file(s) with ${algo_cmd} -> $(basename -- "$out_file")"
 
   if (( DRY_RUN == 1 )); then
-    echo "  [dry-run] would write ${#rels[@]} lines to $(basename -- "$out_file")"
+    log_msg "[dry-run] would write ${#rels[@]} lines to $(basename -- "$out_file")"
     HASH_ENTRY_COUNT=${#rels[@]}
+    JOB_CREATED_COUNT=$((JOB_CREATED_COUNT + 1))
     return 0
   fi
 
@@ -1553,7 +1631,7 @@ write_hash_manifest() {
     printf '%s *%s\n' "$digest" "$rel" >>"$HASH_TEMP"
     ((++line_count))
     if (( line_count % 100 == 0 )); then
-      printf '  ... hashed %d / %d\n' "$line_count" "${#rels[@]}"
+      log_msg "... hashed ${line_count} / ${#rels[@]}"
     fi
   done
 
@@ -1564,7 +1642,8 @@ write_hash_manifest() {
   fi
   HASH_TEMP=""
   HASH_ENTRY_COUNT=$line_count
-  echo "Wrote ${line_count} checksum line(s): $(basename -- "$out_file")"
+  JOB_CREATED_COUNT=$((JOB_CREATED_COUNT + 1))
+  log_msg "Wrote ${line_count} checksum line(s): $(basename -- "$out_file")"
 }
 
 list_immediate_subdirs() {
@@ -1789,15 +1868,18 @@ print_run_settings() {
 }
 
 print_multi_job_summary() {
+  local line total_elapsed
+
+  total_elapsed="$(format_elapsed "$(( $(date +%s) - SCRIPT_START_EPOCH ))")"
   echo
-  echo "=== Multi-directory summary ==="
-  printf '  Directories: %d\n' "$MULTI_JOB_TOTAL"
-  printf '  OK:          %d\n' "$MULTI_JOB_OK"
-  if (( MULTI_JOB_SKIP > 0 )); then
-    printf '  Skipped:     %d\n' "$MULTI_JOB_SKIP"
-  fi
-  if (( MULTI_JOB_FAIL > 0 )); then
-    printf '  Failed:      %d\n' "$MULTI_JOB_FAIL"
+  log_msg "=== Multi-directory summary ==="
+  log_msg "Directories: ${MULTI_JOB_TOTAL}  |  OK: ${MULTI_JOB_OK}  |  Skipped: ${MULTI_JOB_SKIP}  |  Failed: ${MULTI_JOB_FAIL}"
+  log_msg "Total elapsed: ${total_elapsed}"
+  if (( MULTI_JOB_TOTAL > 1 && ${#MULTI_FOLDER_RECAPS[@]} > 0 )); then
+    log_msg "Per-folder recap:"
+    for line in "${MULTI_FOLDER_RECAPS[@]}"; do
+      log_msg "  ${line}"
+    done
   fi
   echo
 }
@@ -1946,18 +2028,19 @@ run_create_job() {
   local job_rc=0 offer_rc=0
 
   CONSOLIDATE_DONE=0
+  reset_job_counters
 
   echo
-  echo "================================================================"
-  echo "Directory: $WORK_DIR"
-  echo "PAR2 stem: ${PAR2_STEM}.par2 (volume-only)  |  Hash: __${DIR_NAME}.${HASH_EXT}"
-  echo "================================================================"
+  log_msg "================================================================"
+  log_msg "Directory: $WORK_DIR"
+  log_msg "PAR2 stem: ${PAR2_STEM}.par2 (volume-only)  |  Hash: __${DIR_NAME}.${HASH_EXT}"
+  log_msg "================================================================"
 
   offer_rc=0
   maybe_offer_verify_and_consolidate || offer_rc=$?
   case "$offer_rc" in
-    2) return 2 ;;
-    3) return 3 ;;
+    2) JOB_OUTCOME=quit; print_folder_done_summary; return 2 ;;
+    3) JOB_OUTCOME=skipped; print_folder_done_summary; return 3 ;;
   esac
 
   existing_par2=()
@@ -1967,15 +2050,17 @@ run_create_job() {
     # Old PAR2/hash already moved to *.old; create fresh unified set.
     CREATE_PAR2=1
   elif ((${#existing_par2[@]} > 0)); then
-    echo "Existing PAR2 file(s) for stem ${PAR2_STEM}:"
+    log_msg "Existing PAR2 file(s) for stem ${PAR2_STEM}:"
     for f in "${existing_par2[@]}"; do
-      printf '  %s\n' "$(basename -- "$f")"
+      log_msg "  $(basename -- "$f")"
     done
     if (( AUTO_YES == 1 )); then
-      echo "Keeping existing PAR2 unchanged (--yes; recreate defaults to no)."
+      log_msg "Keeping existing PAR2 unchanged (--yes; recreate defaults to no)."
       CREATE_PAR2=0
       if [[ ! -e "$HASH_FILE" ]]; then
-        echo "No hash file present; skipping this directory (--yes; hash-create prompt defaults to no)."
+        log_msg "No hash file present; skipping this directory (--yes)."
+        JOB_OUTCOME=skipped
+        print_folder_done_summary
         return 3
       fi
     else
@@ -1985,7 +2070,9 @@ run_create_job() {
       read_yn_key_with_timeout ans n
       case $? in
         2)
-          echo "Quit."
+          log_msg "Quit."
+          JOB_OUTCOME=quit
+          print_folder_done_summary
           return 2
           ;;
       esac
@@ -1995,38 +2082,44 @@ run_create_job() {
           CREATE_PAR2=1
           ;;
         n)
-          echo "Keeping existing PAR2 unchanged."
+          log_msg "Keeping existing PAR2 unchanged."
           CREATE_PAR2=0
           if [[ ! -e "$HASH_FILE" ]]; then
             echo
-            echo "Situation: PAR2 archive(s) exist for this directory, but there is no"
-            echo "  hash manifest yet (expected: $(basename -- "$HASH_FILE"))."
-            echo "Suggestion: create a hash file covering all files in this tree,"
-            echo "  including the existing PAR2 file(s). PAR2 will not be modified."
+            log_msg "Situation: PAR2 archive(s) exist for this directory, but there is no"
+            log_msg "  hash manifest yet (expected: $(basename -- "$HASH_FILE"))."
+            log_msg "Suggestion: create a hash file covering all files in this tree,"
+            log_msg "  including the existing PAR2 file(s). PAR2 will not be modified."
             printf '%sCreate hash file now? [y/N/q] (%s): ' \
               "$(user_prompt_ts_prefix)" "$(prompt_timeout_label)"
             read_yn_key_with_timeout ans n
             case $? in
               2)
-                echo "Quit."
+                log_msg "Quit."
+                JOB_OUTCOME=quit
+                print_folder_done_summary
                 return 2
                 ;;
             esac
             case "$ans" in
               y)
-                echo "Will create hash file only."
+                log_msg "Will create hash file only."
                 ;;
               *)
-                echo "Skipped (no PAR2 recreate, no hash file)."
+                log_msg "Skipped (no PAR2 recreate, no hash file)."
+                JOB_OUTCOME=skipped
+                print_folder_done_summary
                 return 3
                 ;;
             esac
           else
-            echo "Hash file already present: $(basename -- "$HASH_FILE") (overwrite prompt follows if needed)."
+            log_msg "Hash file already present: $(basename -- "$HASH_FILE") (overwrite prompt follows if needed)."
           fi
           ;;
         *)
-          echo "Quit."
+          log_msg "Quit."
+          JOB_OUTCOME=quit
+          print_folder_done_summary
           return 2
           ;;
       esac
@@ -2037,9 +2130,9 @@ run_create_job() {
   if (( CONSOLIDATE_DONE == 1 )); then
     : # target hash path is free (old manifests renamed to *.old)
   elif [[ -e "$HASH_FILE" ]]; then
-    echo "Hash file already exists: $(basename -- "$HASH_FILE")"
+    log_msg "Hash file already exists: $(basename -- "$HASH_FILE")"
     if (( AUTO_YES == 1 )); then
-      echo "Will overwrite (--yes)."
+      log_msg "Will overwrite (--yes)."
     else
       ans=""
       printf '%sOverwrite existing hash file? [Y/n/q] (%s): ' \
@@ -2047,7 +2140,9 @@ run_create_job() {
       read_yn_key_with_timeout ans y
       case $? in
         2)
-          echo "Quit."
+          log_msg "Quit."
+          JOB_OUTCOME=quit
+          print_folder_done_summary
           return 2
           ;;
       esac
@@ -2055,7 +2150,9 @@ run_create_job() {
         y)
           ;;
         *)
-          echo "Skipped (hash file left unchanged)."
+          log_msg "Skipped (hash file left unchanged)."
+          JOB_OUTCOME=skipped
+          print_folder_done_summary
           return 3
           ;;
       esac
@@ -2064,7 +2161,7 @@ run_create_job() {
   fi
 
   if (( CREATE_PAR2 == 1 )); then
-    echo "=== Step 1: collect PAR2 source files (subtree; exclude PAR2 + hash manifests) ==="
+    log_msg "=== Step 1: collect PAR2 source files (subtree; exclude PAR2 + hash manifests) ==="
     par2_sources=()
     collect_sorted_relpaths "$WORK_DIR" par2-sources par2_sources
     if (( EXCLUDE_RENAME_HELPERS == 1 )); then
@@ -2072,27 +2169,29 @@ run_create_job() {
         find_rename_helpers "$WORK_DIR" RENAME_HELPERS_FOUND
       fi
       if ((${#RENAME_HELPERS_FOUND[@]} > 0)); then
-        echo "Excluding ${#RENAME_HELPERS_FOUND[@]} rename.sh helper file(s) from PAR2:"
+        log_msg "Excluding ${#RENAME_HELPERS_FOUND[@]} rename.sh helper file(s) from PAR2:"
         for rel in "${RENAME_HELPERS_FOUND[@]}"; do
-          printf '  %s\n' "$rel"
+          log_msg "  ${rel}"
         done
       fi
     fi
-    echo "Found ${#par2_sources[@]} non-empty data file(s) to protect."
+    log_msg "Found ${#par2_sources[@]} non-empty data file(s) to protect."
     if ((${#par2_sources[@]} == 0)); then
-      echo "No data files to protect under: $WORK_DIR — skipping."
+      log_msg "No data files to protect under: $WORK_DIR — skipping."
+      JOB_OUTCOME=skipped
+      print_folder_done_summary
       return 3
     fi
 
     echo
-    echo "=== Step 2: create PAR2 (volume-only) ==="
+    log_msg "=== Step 2: create PAR2 (volume-only) ==="
     create_par2_volume_only "$PAR2_STEM" "$RECOVERY_PCT" "${par2_sources[@]}"
   else
-    echo "=== Step 1-2: skipped (keeping existing PAR2; hash-only mode) ==="
+    log_msg "=== Step 1-2: skipped (keeping existing PAR2; hash-only mode) ==="
   fi
 
   echo
-  echo "=== Step 3: write hash manifest (all files including PAR2; exclude hash file itself) ==="
+  log_msg "=== Step 3: write hash manifest (all files including PAR2; exclude hash file itself) ==="
   hash_targets=()
   hash_rel="$(basename -- "$HASH_FILE")"
   collect_sorted_relpaths "$WORK_DIR" hash-all hash_targets "$hash_rel"
@@ -2102,10 +2201,14 @@ run_create_job() {
     offer_rc=0
     offer_delete_consolidate_old_backups || offer_rc=$?
     if (( offer_rc == 2 )); then
+      JOB_OUTCOME=quit
+      print_folder_done_summary
       return 2
     fi
   fi
 
+  JOB_OUTCOME=ok
+  print_folder_done_summary
   print_run_summary
   return 0
 }
