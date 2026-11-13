@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261113.210800 - after create: offer delete leftover other PAR2/hash sets and *.old backups
 # v. 20261113.184200 - skip/verify Choice: only default key capitalized ([ S/v/a/e/q ])
 # v. 20261113.182200 - skip/verify: any single PAR2 set + single hash (not only _<dir> names)
 # v. 20261113.182000 - folder banner: PAR2 stem and hash on separate lines
@@ -28,6 +29,7 @@
 # v. 20260809.155541 - prompt to exclude rename.sh helpers from PAR2 (default yes)
 # v. 20260806.224414 - initial: create volume-only PAR2 + SHA-512/MD5 hash for cwd subtree
 
+# 2026.11.13 - v. 0.1.27 - After a successful create/hash: offer to delete superseded leftovers — other active PAR2 sets/hashes (e.g. media-basename) and any *.par2.old / hash *.old (not only after consolidate)
 # 2026.11.13 - v. 0.1.26 - Skip/verify menu: only default key capitalized ([ S ] skip); rest-of-run uses [ a ]/[ e ] (not S/V) so Choice is [ S/v/a/e/q ]
 # 2026.11.13 - v. 0.1.25 - Skip/verify also when exactly one PAR2 set and one hash exist under any names (e.g. media-basename _file / __file.sha512), not only _<dir> / __<dir>.ext
 # 2026.11.13 - v. 0.1.24 - Per-folder banner prints PAR2 stem and hash file on separate lines (not one long | line)
@@ -1024,10 +1026,29 @@ backup_paths_to_old() {
   done
 }
 
-# After consolidate: offer to delete *.par2.old / hash *.old left in WORK_DIR (default yes).
-offer_delete_consolidate_old_backups() {
-  local -a olds=()
-  local f base ans=""
+# After create/hash: offer to delete superseded protection — other PAR2 sets/hashes
+# still active (not the new _<dir> / __<dir>.ext) plus any *.par2.old / hash *.old.
+# Returns: 0=ok, 2=quit.
+offer_delete_superseded_protection() {
+  local -a victims=() stems=() hashes=() members=()
+  local f stem ans="" want_hash="" base
+
+  want_hash="$(basename -- "$HASH_FILE")"
+
+  list_par2_set_stems_in_dir "$WORK_DIR" stems
+  for stem in "${stems[@]}"; do
+    [[ "${stem,,}" == "${PAR2_STEM,,}" ]] && continue
+    members=()
+    list_existing_stem_par2 "$WORK_DIR" "$stem" members
+    victims+=("${members[@]}")
+  done
+
+  list_hash_manifests_in_dir "$WORK_DIR" hashes
+  for f in "${hashes[@]}"; do
+    base="$(basename -- "$f")"
+    [[ "${base,,}" == "${want_hash,,}" ]] && continue
+    victims+=("$f")
+  done
 
   shopt -s nullglob
   for f in "$WORK_DIR"/*.par2.old "$WORK_DIR"/*.PAR2.old \
@@ -1036,21 +1057,35 @@ offer_delete_consolidate_old_backups() {
            "$WORK_DIR"/*.sha1.old "$WORK_DIR"/*.md5.old "$WORK_DIR"/*.b2.old \
            "$WORK_DIR"/*.SHA512.old "$WORK_DIR"/*.MD5.old; do
     [[ -f "$f" ]] || continue
-    olds+=("$f")
+    victims+=("$f")
   done
   shopt -u nullglob
-  ((${#olds[@]} > 0)) || return 0
+
+  ((${#victims[@]} > 0)) || return 0
+
+  # Dedupe paths (same file listed twice).
+  if ((${#victims[@]} > 1)); then
+    local -A seen=()
+    local -a uniq=()
+    for f in "${victims[@]}"; do
+      [[ -n "${seen[$f]:-}" ]] && continue
+      seen[$f]=1
+      uniq+=("$f")
+    done
+    victims=("${uniq[@]}")
+  fi
 
   echo
-  echo "Old backup file(s) from consolidate (${#olds[@]}):"
-  for f in "${olds[@]}"; do
+  echo "Superseded / leftover protection file(s) (${#victims[@]}):"
+  for f in "${victims[@]}"; do
     printf '  %s\n' "$(basename -- "$f")"
   done
+  echo "These are other PAR2/hash sets or *.old backups; keeping the new ${PAR2_STEM}* / ${want_hash}."
   if (( AUTO_YES == 1 )); then
-    echo "Deleting old backups (--yes)."
+    echo "Deleting leftover protection (--yes)."
     ans=y
   else
-    printf '%sDelete those old backup file(s) now? [Y/n/q] (%s): ' \
+    printf '%sDelete those leftover protection file(s) now? [Y/n/q] (%s): ' \
       "$(user_prompt_ts_prefix)" "$(prompt_timeout_label)"
     read_yn_key_with_timeout ans y
     case $? in
@@ -1059,7 +1094,7 @@ offer_delete_consolidate_old_backups() {
   fi
   case "$ans" in
     y)
-      for f in "${olds[@]}"; do
+      for f in "${victims[@]}"; do
         if (( DRY_RUN == 1 )); then
           log_msg "[dry-run] rm -- $(basename -- "$f")"
           JOB_DELETED_COUNT=$((JOB_DELETED_COUNT + 1))
@@ -1070,15 +1105,19 @@ offer_delete_consolidate_old_backups() {
           fi
         fi
       done
-      # Successful consolidate: do not restore these on later Ctrl-C.
       CLEANUP_RESTORE_OLDPATHS=()
       ;;
     *)
-      log_msg "Keeping old backup file(s)."
+      log_msg "Keeping leftover protection file(s)."
       CLEANUP_RESTORE_OLDPATHS=()
       ;;
   esac
   return 0
+}
+
+# Compat alias (older call sites / history wording).
+offer_delete_consolidate_old_backups() {
+  offer_delete_superseded_protection
 }
 
 # If 2+ PAR2 sets and/or 2+ hashes: verify (default Y), then consolidate (default Y).
@@ -2392,22 +2431,21 @@ run_create_job() {
     log_msg "=== Step 1-2: skipped (keeping existing PAR2; hash-only mode) ==="
   fi
 
+  # Remove superseded sets / *.old before hashing so the new manifest stays clean.
+  offer_rc=0
+  offer_delete_superseded_protection || offer_rc=$?
+  if (( offer_rc == 2 )); then
+    JOB_OUTCOME=quit
+    print_folder_done_summary
+    return 2
+  fi
+
   echo
   log_msg "=== Step 3: write hash manifest (all files including PAR2; exclude hash file itself) ==="
   hash_targets=()
   hash_rel="$(basename -- "$HASH_FILE")"
   collect_sorted_relpaths "$WORK_DIR" hash-all hash_targets "$hash_rel"
   write_hash_manifest "$HASH_FILE" "$HASH_CMD" "${hash_targets[@]}"
-
-  if (( CONSOLIDATE_DONE == 1 )); then
-    offer_rc=0
-    offer_delete_consolidate_old_backups || offer_rc=$?
-    if (( offer_rc == 2 )); then
-      JOB_OUTCOME=quit
-      print_folder_done_summary
-      return 2
-    fi
-  fi
 
   JOB_OUTCOME=ok
   print_folder_done_summary
