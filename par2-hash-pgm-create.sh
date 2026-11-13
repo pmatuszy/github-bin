@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261113.181800 - scope + hash choice: single-key, no Enter
 # v. 20261113.181700 - scope prompt default P (per-subdir); only default key capitalized
 # v. 20261113.181600 - convention skip/verify menu: one option per line + Choice line
 # v. 20261113.181500 - convention PAR2+hash present: skip / verify / skip-rest / verify-rest
@@ -24,6 +25,7 @@
 # v. 20260809.155541 - prompt to exclude rename.sh helpers from PAR2 (default yes)
 # v. 20260806.224414 - initial: create volume-only PAR2 + SHA-512/MD5 hash for cwd subtree
 
+# 2026.11.13 - v. 0.1.23 - Scope and hash-menu prompts accept a single key without Enter (like Y/n); recovery % still needs Enter for multi-digit values
 # 2026.11.13 - v. 0.1.22 - Scope prompt defaults to per-subdir [ P ]; only the default key is capitalized ([ w ] / [ P ] / [ q ]); --yes and Enter/timeout/invalid also use per-subdir when subdirs exist
 # 2026.11.13 - v. 0.1.21 - Convention skip/verify prompt lists options on separate lines (like rename.sh) then a Choice [ s/v/S/V/q ] line
 # 2026.11.13 - v. 0.1.20 - If a work dir already has exactly one convention PAR2 set (_<dir>) and one convention hash (__<dir>.ext): ask skip / verify / skip-for-rest / verify-for-rest (default skip); verify OK ends the folder without recreate; --yes skips without verify
@@ -105,12 +107,12 @@ Options:
                        whole = one PAR2+hash in cwd.
 
 Interactive prompts (unless --yes / flag already set):
-  Scope:          If cwd has subdirs: [ w ] whole tree / [ P ] per subdirectory /
-                  [ q ] quit (default P). Skipped when there are no immediate
-                  subdirs.
-  Hash algorithm: numbered list of *sum tools found on PATH; Enter = default;
-                  q/Q = quit immediately (no Enter); invalid input asks again.
-  Recovery %:     Enter accepts 20% (or --recovery value).
+  Scope:          If cwd has subdirs: [ w ] / [ P ] / [ q ] — single key, no Enter
+                  (default P). Skipped when there are no immediate subdirs.
+  Hash algorithm: numbered list of *sum tools on PATH; digit 1-N or Enter =
+                  default; q = quit — single key, no Enter; invalid asks again.
+  Recovery %:     Type 1-100 then Enter (Enter alone = 20% or --recovery value);
+                  q + Enter quits. Multi-digit needs Enter.
   Rename helpers: Exclude from PAR2? [Y/n/q] — single key, no Enter (default yes).
   Convention set: If exactly one _<dir> PAR2 set and one __<dir>.<ext> hash
                   already exist: menu with [ s ] skip / [ v ] verify /
@@ -542,44 +544,49 @@ read_line_with_timeout() {
   fi
 }
 
-# First key with -n1 so q/Q can quit without Enter; then read the rest of the line
-# for numbers/names. Empty first key (Enter) = default. Sets REPLY-style via nameref.
-# Returns: 0 ok, 1 timeout/EOF (treat as default), 2 quit requested.
+# Single-key hash menu choice (no Enter). Enter = default (empty).
+# Sets __var to "" (default), 1-9, or q. Returns: 0 ok, 1 timeout→default, 2 quit.
 read_hash_choice_with_timeout() {
   local __var="$1"
-  local first="" rest=""
+  local first=""
 
-  if prompt_has_timeout; then
-    IFS= read -r -t "$PROMPT_TIMEOUT" -n 1 first || {
-      printf -v "$__var" '%s' ""
-      return 1
-    }
-  else
-    IFS= read -r -n 1 first || {
-      printf -v "$__var" '%s' ""
-      return 1
-    }
-  fi
+  while true; do
+    if prompt_has_timeout; then
+      IFS= read -r -t "$PROMPT_TIMEOUT" -n 1 first || {
+        echo
+        printf -v "$__var" '%s' ""
+        return 1
+      }
+    else
+      IFS= read -r -n 1 first || {
+        echo
+        printf -v "$__var" '%s' ""
+        return 1
+      }
+    fi
 
-  case "$first" in
-    q|Q)
-      echo
-      printf -v "$__var" '%s' "$first"
-      return 2
-      ;;
-    ""|$'\n')
-      printf -v "$__var" '%s' ""
-      return 0
-      ;;
-  esac
-
-  if prompt_has_timeout; then
-    IFS= read -r -t "$PROMPT_TIMEOUT" rest || rest=""
-  else
-    IFS= read -r rest || rest=""
-  fi
-  printf -v "$__var" '%s' "${first}${rest}"
-  return 0
+    case "$first" in
+      ""|$'\n')
+        printf -v "$__var" '%s' ""
+        return 0
+        ;;
+      q|Q)
+        echo
+        printf -v "$__var" '%s' q
+        return 2
+        ;;
+      [1-9])
+        echo
+        printf -v "$__var" '%s' "$first"
+        return 0
+        ;;
+      *)
+        echo
+        printf '%sInvalid key "%s". Press 1-9, q, or Enter for default: ' \
+          "$(user_prompt_ts_prefix)" "$first"
+        ;;
+    esac
+  done
 }
 
 # Single-key Y/n/q (no Enter). Enter uses default (y or n).
@@ -1385,7 +1392,7 @@ prompt_hash_algo() {
       apply_hash_algo
       return 0
     fi
-    echo "Invalid choice '$ans'. Enter a number 1-${n}, a hash name, Enter for default, or q to quit."
+    echo "Invalid choice '$ans'. Press a number 1-${n}, Enter for default, or q to quit."
   done
 }
 
@@ -1885,7 +1892,7 @@ set_work_directory() {
 # Resolve CREATE_SCOPE: whole | per-subdir. Returns 2 if user quits.
 resolve_create_scope() {
   local -a subdirs=()
-  local ans="" first="" rest=""
+  local first=""
 
   list_immediate_subdirs "$START_DIR" subdirs
 
@@ -1915,50 +1922,43 @@ resolve_create_scope() {
   echo "  [ q ] Quit"
   printf '%sChoice [ w/P/q ] (%s): ' "$(user_prompt_ts_prefix)" "$(prompt_timeout_label)"
 
-  if prompt_has_timeout; then
-    if ! IFS= read -r -t "$PROMPT_TIMEOUT" -n 1 first; then
-      echo
-      echo "Timed out — using per subdirectory."
-      CREATE_SCOPE=per-subdir
-      CREATE_SCOPE_SOURCE=default
-      return 0
-    fi
-  else
-    IFS= read -r -n 1 first || first=""
-  fi
-  if [[ -n "$first" && "$first" != $'\n' ]]; then
+  while true; do
     if prompt_has_timeout; then
-      IFS= read -r -t "$PROMPT_TIMEOUT" rest || rest=""
+      if ! IFS= read -r -t "$PROMPT_TIMEOUT" -n 1 first; then
+        echo
+        echo "Timed out — using per subdirectory."
+        CREATE_SCOPE=per-subdir
+        CREATE_SCOPE_SOURCE=default
+        return 0
+      fi
     else
-      IFS= read -r rest || rest=""
+      IFS= read -r -n 1 first || first=""
     fi
-  else
-    rest=""
-  fi
-  ans="${first}${rest}"
-  ans="${ans#"${ans%%[![:space:]]*}"}"
-  ans="${ans%"${ans##*[![:space:]]}"}"
-  echo
 
-  case "${ans,,}" in
-    ""|p|per|per-subdir|subdir|subdirs)
-      CREATE_SCOPE=per-subdir
-      CREATE_SCOPE_SOURCE=prompt
-      ;;
-    w|whole)
-      CREATE_SCOPE=whole
-      CREATE_SCOPE_SOURCE=prompt
-      ;;
-    q|quit)
-      return 2
-      ;;
-    *)
-      echo "Invalid choice '$ans' — using per subdirectory."
-      CREATE_SCOPE=per-subdir
-      CREATE_SCOPE_SOURCE=default
-      ;;
-  esac
-  return 0
+    case "$first" in
+      ""|$'\n'|p|P)
+        echo
+        CREATE_SCOPE=per-subdir
+        CREATE_SCOPE_SOURCE=prompt
+        return 0
+        ;;
+      w|W)
+        echo
+        CREATE_SCOPE=whole
+        CREATE_SCOPE_SOURCE=prompt
+        return 0
+        ;;
+      q|Q)
+        echo
+        return 2
+        ;;
+      *)
+        echo
+        printf '%sInvalid key "%s". Press w, P, q, or Enter for default (P): ' \
+          "$(user_prompt_ts_prefix)" "$first"
+        ;;
+    esac
+  done
 }
 
 # Command line that reproduces this run: the resolved hash/recovery/helper answers as flags.
