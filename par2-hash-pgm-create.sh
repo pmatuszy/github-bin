@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261113.184200 - skip/verify Choice: only default key capitalized ([ S/v/a/e/q ])
 # v. 20261113.182200 - skip/verify: any single PAR2 set + single hash (not only _<dir> names)
 # v. 20261113.182000 - folder banner: PAR2 stem and hash on separate lines
 # v. 20261113.181800 - scope + hash choice: single-key, no Enter
@@ -27,11 +28,12 @@
 # v. 20260809.155541 - prompt to exclude rename.sh helpers from PAR2 (default yes)
 # v. 20260806.224414 - initial: create volume-only PAR2 + SHA-512/MD5 hash for cwd subtree
 
+# 2026.11.13 - v. 0.1.26 - Skip/verify menu: only default key capitalized ([ S ] skip); rest-of-run uses [ a ]/[ e ] (not S/V) so Choice is [ S/v/a/e/q ]
 # 2026.11.13 - v. 0.1.25 - Skip/verify also when exactly one PAR2 set and one hash exist under any names (e.g. media-basename _file / __file.sha512), not only _<dir> / __<dir>.ext
 # 2026.11.13 - v. 0.1.24 - Per-folder banner prints PAR2 stem and hash file on separate lines (not one long | line)
 # 2026.11.13 - v. 0.1.23 - Scope and hash-menu prompts accept a single key without Enter (like Y/n); recovery % still needs Enter for multi-digit values
 # 2026.11.13 - v. 0.1.22 - Scope prompt defaults to per-subdir [ P ]; only the default key is capitalized ([ w ] / [ P ] / [ q ]); --yes and Enter/timeout/invalid also use per-subdir when subdirs exist
-# 2026.11.13 - v. 0.1.21 - Convention skip/verify prompt lists options on separate lines (like rename.sh) then a Choice [ s/v/S/V/q ] line
+# 2026.11.13 - v. 0.1.21 - Convention skip/verify prompt lists options on separate lines (like rename.sh) then a Choice line
 # 2026.11.13 - v. 0.1.20 - If a work dir already has exactly one convention PAR2 set (_<dir>) and one convention hash (__<dir>.ext): ask skip / verify / skip-for-rest / verify-for-rest (default skip); verify OK ends the folder without recreate; --yes skips without verify
 # 2026.11.13 - v. 0.1.19 - Status/prompt timestamps use [ YYYY.MM.DD HH:MM:SS ]; after each folder print Removed/Created/Elapsed; if more than one folder, repeat a folders recap at the end
 # 2026.11.13 - v. 0.1.18 - Do not treat consolidate backups (*.par2.old, *.sha512.old, *.md5.old, …) as data: exclude them from PAR2 create sources and from the new hash manifest
@@ -120,8 +122,8 @@ Interactive prompts (unless --yes / flag already set):
   Rename helpers: Exclude from PAR2? [Y/n/q] — single key, no Enter (default yes).
   Existing set:   If exactly one PAR2 set and one hash already exist (any names,
                   including media-basename _file / __file.ext): menu with
-                  [ s ] skip / [ v ] verify / [ S ] skip rest / [ V ] verify rest /
-                  [ q ] quit (default s). Verify OK ends that folder; fail
+                  [ S ] skip / [ v ] verify / [ a ] skip rest / [ e ] verify rest /
+                  [ q ] quit (default S). Verify OK ends that folder; fail
                   continues to recreate prompts. --yes skips without verifying.
   Existing PAR2:  Rename to *.par2.old and recreate? [y/N/q] — single key
                   (default N = keep PAR2). If kept and no hash file exists,
@@ -646,7 +648,7 @@ read_yn_key_with_timeout() {
   done
 }
 
-# Single-key s/v/S/V/q for existing convention protection.
+# Single-key S/v/a/e/q for existing protection (only default key shown uppercase).
 # Sets __var to skip|verify|skip_rest|verify_rest|q.
 # Returns: 0=answer, 1=timeout→default, 2=quit.
 # default: skip|verify (Enter).
@@ -680,22 +682,22 @@ read_skip_verify_key_with_timeout() {
         printf -v "$__var" '%s' "$default"
         return 0
         ;;
-      s)
+      s|S)
         echo
         printf -v "$__var" '%s' skip
         return 0
         ;;
-      v)
+      v|V)
         echo
         printf -v "$__var" '%s' verify
         return 0
         ;;
-      S)
+      a|A)
         echo
         printf -v "$__var" '%s' skip_rest
         return 0
         ;;
-      V)
+      e|E)
         echo
         printf -v "$__var" '%s' verify_rest
         return 0
@@ -707,7 +709,7 @@ read_skip_verify_key_with_timeout() {
         ;;
       *)
         echo
-        printf '%sInvalid key "%s". Press s, v, S, V, q, or Enter for default (%s): ' \
+        printf '%sInvalid key "%s". Press S, v, a, e, q, or Enter for default (%s): ' \
           "$(user_prompt_ts_prefix)" "$first" "$default"
         ;;
     esac
@@ -1246,12 +1248,12 @@ maybe_offer_skip_or_verify_existing() {
     log_msg "Using remembered choice for this run: ${action}."
   else
     echo "This directory already has one PAR2 set and one hash."
-    echo "  [ s ] Skip this folder — leave PAR2 + hash unchanged (default)"
+    echo "  [ S ] Skip this folder — leave PAR2 + hash unchanged (default)"
     echo "  [ v ] Verify this folder — if OK, leave unchanged"
-    echo "  [ S ] Skip for the rest of the run (same as [ s ] for later matching folders)"
-    echo "  [ V ] Verify for the rest of the run (same as [ v ] for later matching folders)"
+    echo "  [ a ] Skip for the rest of the run (same as [ S ] for later matching folders)"
+    echo "  [ e ] Verify for the rest of the run (same as [ v ] for later matching folders)"
     echo "  [ q ] Quit"
-    printf '%sChoice [ s/v/S/V/q ] (default: s, %s): ' \
+    printf '%sChoice [ S/v/a/e/q ] (default: S, %s): ' \
       "$(user_prompt_ts_prefix)" "$(prompt_timeout_label)"
     read_skip_verify_key_with_timeout ans skip
     case $? in
