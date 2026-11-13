@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261113.182200 - skip/verify: any single PAR2 set + single hash (not only _<dir> names)
 # v. 20261113.182000 - folder banner: PAR2 stem and hash on separate lines
 # v. 20261113.181800 - scope + hash choice: single-key, no Enter
 # v. 20261113.181700 - scope prompt default P (per-subdir); only default key capitalized
@@ -26,6 +27,7 @@
 # v. 20260809.155541 - prompt to exclude rename.sh helpers from PAR2 (default yes)
 # v. 20260806.224414 - initial: create volume-only PAR2 + SHA-512/MD5 hash for cwd subtree
 
+# 2026.11.13 - v. 0.1.25 - Skip/verify also when exactly one PAR2 set and one hash exist under any names (e.g. media-basename _file / __file.sha512), not only _<dir> / __<dir>.ext
 # 2026.11.13 - v. 0.1.24 - Per-folder banner prints PAR2 stem and hash file on separate lines (not one long | line)
 # 2026.11.13 - v. 0.1.23 - Scope and hash-menu prompts accept a single key without Enter (like Y/n); recovery % still needs Enter for multi-digit values
 # 2026.11.13 - v. 0.1.22 - Scope prompt defaults to per-subdir [ P ]; only the default key is capitalized ([ w ] / [ P ] / [ q ]); --yes and Enter/timeout/invalid also use per-subdir when subdirs exist
@@ -116,11 +118,11 @@ Interactive prompts (unless --yes / flag already set):
   Recovery %:     Type 1-100 then Enter (Enter alone = 20% or --recovery value);
                   q + Enter quits. Multi-digit needs Enter.
   Rename helpers: Exclude from PAR2? [Y/n/q] — single key, no Enter (default yes).
-  Convention set: If exactly one _<dir> PAR2 set and one __<dir>.<ext> hash
-                  already exist: menu with [ s ] skip / [ v ] verify /
-                  [ S ] skip rest / [ V ] verify rest / [ q ] quit (default s).
-                  Verify OK ends that folder; fail continues to recreate prompts.
-                  --yes skips without verifying.
+  Existing set:   If exactly one PAR2 set and one hash already exist (any names,
+                  including media-basename _file / __file.ext): menu with
+                  [ s ] skip / [ v ] verify / [ S ] skip rest / [ V ] verify rest /
+                  [ q ] quit (default s). Verify OK ends that folder; fail
+                  continues to recreate prompts. --yes skips without verifying.
   Existing PAR2:  Rename to *.par2.old and recreate? [y/N/q] — single key
                   (default N = keep PAR2). If kept and no hash file exists,
                   offers to create one [y/N/q] (default N).
@@ -1191,60 +1193,48 @@ maybe_offer_verify_and_consolidate() {
   return 0
 }
 
-# True when basename is __<DIR_NAME>.<known-hash-ext> (this script's hash naming).
-is_convention_hash_basename() {
-  local base="$1"
-  local want_prefix="__${DIR_NAME}."
-  local lower="${base,,}"
-  local prefix_lower="${want_prefix,,}"
-
-  [[ "$lower" == "${prefix_lower}"* ]] || return 1
-  case "$lower" in
-    *.sha512|*.sha384|*.sha256|*.sha224|*.sha1|*.md5|*.b2) return 0 ;;
-  esac
-  return 1
-}
-
-# Exactly one PAR2 set named _<DIR_NAME> and exactly one hash __<DIR_NAME>.<ext>.
-dir_has_convention_protection() {
+# Exactly one PAR2 set and exactly one hash manifest (any names).
+dir_has_single_par2_and_hash() {
   local -a stems=() hashes=() members=()
-  local stem f
 
   list_par2_set_stems_in_dir "$WORK_DIR" stems
   list_hash_manifests_in_dir "$WORK_DIR" hashes
 
   ((${#stems[@]} == 1 && ${#hashes[@]} == 1)) || return 1
-  [[ "${stems[0],,}" == "${PAR2_STEM,,}" ]] || return 1
-  is_convention_hash_basename "$(basename -- "${hashes[0]}")" || return 1
-
   members=()
-  list_existing_stem_par2 "$WORK_DIR" "$PAR2_STEM" members
+  list_existing_stem_par2 "$WORK_DIR" "${stems[0]}" members
   ((${#members[@]} > 0)) || return 1
   return 0
 }
 
-# When convention PAR2 + hash already exist: skip or verify (optionally for rest of run).
+# When one PAR2 set + one hash already exist: skip or verify (optionally for rest of run).
+# Names need not match _<dir> / __<dir>.ext (e.g. media-basename protection is OK).
 # Returns: 0=continue create flow, 2=quit, 3=skip folder (done without create),
 #          4=verified OK (done without create).
 maybe_offer_skip_or_verify_existing() {
   local -a stems=() hashes=() members=()
-  local ans="" action="" f
+  local ans="" action="" f stem=""
 
   (( CONSOLIDATE_DONE == 1 )) && return 0
-  dir_has_convention_protection || return 0
+  dir_has_single_par2_and_hash || return 0
 
   list_par2_set_stems_in_dir "$WORK_DIR" stems
   list_hash_manifests_in_dir "$WORK_DIR" hashes
+  stem="${stems[0]}"
   members=()
-  list_existing_stem_par2 "$WORK_DIR" "$PAR2_STEM" members
+  list_existing_stem_par2 "$WORK_DIR" "$stem" members
 
   echo
-  log_msg "Existing convention protection found:"
-  log_msg "  PAR2 set: ${PAR2_STEM} (${#members[@]} file(s))"
+  log_msg "Existing protection found (1 PAR2 set + 1 hash):"
+  log_msg "  PAR2 set: ${stem} (${#members[@]} file(s))"
   for f in "${members[@]}"; do
     log_msg "    $(basename -- "$f")"
   done
   log_msg "  Hash:     $(basename -- "${hashes[0]}")"
+  if [[ "${stem,,}" != "${PAR2_STEM,,}" ]] || \
+     [[ "$(basename -- "${hashes[0]}")" != "__${DIR_NAME}.${HASH_EXT}" ]]; then
+    log_msg "  Note: names differ from this script's defaults (_${DIR_NAME} / __${DIR_NAME}.${HASH_EXT})."
+  fi
 
   if (( AUTO_YES == 1 )); then
     log_msg "Skipping this directory (--yes; leave existing PAR2 + hash unchanged)."
@@ -1255,7 +1245,7 @@ maybe_offer_skip_or_verify_existing() {
     action="$EXISTING_PROTECTION_POLICY"
     log_msg "Using remembered choice for this run: ${action}."
   else
-    echo "This directory already has one matching PAR2 set and one matching hash."
+    echo "This directory already has one PAR2 set and one hash."
     echo "  [ s ] Skip this folder — leave PAR2 + hash unchanged (default)"
     echo "  [ v ] Verify this folder — if OK, leave unchanged"
     echo "  [ S ] Skip for the rest of the run (same as [ s ] for later matching folders)"
@@ -1277,12 +1267,12 @@ maybe_offer_skip_or_verify_existing() {
       skip_rest)
         EXISTING_PROTECTION_POLICY=skip
         action=skip
-        log_msg "Will skip remaining folders that already have convention PAR2 + hash."
+        log_msg "Will skip remaining folders that already have one PAR2 + one hash."
         ;;
       verify_rest)
         EXISTING_PROTECTION_POLICY=verify
         action=verify
-        log_msg "Will verify remaining folders that already have convention PAR2 + hash."
+        log_msg "Will verify remaining folders that already have one PAR2 + one hash."
         ;;
       *)
         action=skip
