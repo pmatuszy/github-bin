@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261113.181700 - scope prompt default P (per-subdir); only default key capitalized
 # v. 20261113.181600 - convention skip/verify menu: one option per line + Choice line
 # v. 20261113.181500 - convention PAR2+hash present: skip / verify / skip-rest / verify-rest
 # v. 20261113.180800 - [timestamp] logs; per-folder Removed/Created/Elapsed; multi-folder end recap
@@ -23,12 +24,13 @@
 # v. 20260809.155541 - prompt to exclude rename.sh helpers from PAR2 (default yes)
 # v. 20260806.224414 - initial: create volume-only PAR2 + SHA-512/MD5 hash for cwd subtree
 
+# 2026.11.13 - v. 0.1.22 - Scope prompt defaults to per-subdir [ P ]; only the default key is capitalized ([ w ] / [ P ] / [ q ]); --yes and Enter/timeout/invalid also use per-subdir when subdirs exist
 # 2026.11.13 - v. 0.1.21 - Convention skip/verify prompt lists options on separate lines (like rename.sh) then a Choice [ s/v/S/V/q ] line
 # 2026.11.13 - v. 0.1.20 - If a work dir already has exactly one convention PAR2 set (_<dir>) and one convention hash (__<dir>.ext): ask skip / verify / skip-for-rest / verify-for-rest (default skip); verify OK ends the folder without recreate; --yes skips without verify
 # 2026.11.13 - v. 0.1.19 - Status/prompt timestamps use [ YYYY.MM.DD HH:MM:SS ]; after each folder print Removed/Created/Elapsed; if more than one folder, repeat a folders recap at the end
 # 2026.11.13 - v. 0.1.18 - Do not treat consolidate backups (*.par2.old, *.sha512.old, *.md5.old, …) as data: exclude them from PAR2 create sources and from the new hash manifest
 # 2026.11.13 - v. 0.1.17 - If a work dir has 2+ distinct PAR2 sets and/or 2+ hash manifests: list them, offer verify (default Y); if OK offer consolidate into one volume-only PAR2 + one hash (default Y); then ask to delete the renamed *.old leftovers (default Y). --yes skips this offer (keeps existing multi sets)
-# 2026.11.13 - v. 0.1.16 - If cwd has immediate subdirectories: ask whole-tree (one PAR2+hash here) vs per-subdir (one PAR2+hash in each direct child for that child's full subtree; loose files in cwd ignored). --scope whole|per-subdir; --yes defaults to whole
+# 2026.11.13 - v. 0.1.16 - If cwd has immediate subdirectories: ask whole-tree (one PAR2+hash here) vs per-subdir (one PAR2+hash in each direct child for that child's full subtree; loose files in cwd ignored). --scope whole|per-subdir; --yes defaults to per-subdir when subdirs exist
 # 2026.11.13 - v. 0.1.15 - Default par2 -t/-T is nproc-1 when CPUs >= 2 (leave one core free); still 1 on single-CPU hosts
 # 2026.11.13 - v. 0.1.14 - par2 create uses all CPUs by default: -t (Reed-Solomon) and -T (parallel file hashing) from nproc; override with --threads / --file-threads or PAR2_THREADS / PAR2_FILE_THREADS
 # 2026.09.22 - v. 0.1.13 - Recovery percent prompt accepts q/Q to quit (advertised in the prompt); previously q was just an invalid percent and the run continued with the default
@@ -98,12 +100,14 @@ Options:
                        Default: same as --threads; capped at source file count.
   --scope whole|per-subdir
                        Creation scope when cwd has immediate subdirectories.
-                       whole = one PAR2+hash in cwd (default with --yes).
-                       per-subdir = one PAR2+hash in each direct child.
+                       per-subdir = one PAR2+hash in each direct child
+                       (default with --yes when subdirs exist).
+                       whole = one PAR2+hash in cwd.
 
 Interactive prompts (unless --yes / flag already set):
-  Scope:          If cwd has subdirs: [W] whole tree / [P] per subdirectory / [Q]
-                  (default W). Skipped when there are no immediate subdirs.
+  Scope:          If cwd has subdirs: [ w ] whole tree / [ P ] per subdirectory /
+                  [ q ] quit (default P). Skipped when there are no immediate
+                  subdirs.
   Hash algorithm: numbered list of *sum tools found on PATH; Enter = default;
                   q/Q = quit immediately (no Enter); invalid input asks again.
   Recovery %:     Enter accepts 20% (or --recovery value).
@@ -1898,24 +1902,24 @@ resolve_create_scope() {
   fi
 
   if (( AUTO_YES == 1 )); then
-    CREATE_SCOPE=whole
+    CREATE_SCOPE=per-subdir
     CREATE_SCOPE_SOURCE=yes
     return 0
   fi
 
   echo "This directory has ${#subdirs[@]} immediate subdirectory(ies)."
   echo "What should be created?"
-  echo "  [W] Whole tree — one PAR2 + hash in this directory (all files here and below)  [default]"
-  echo "  [P] Per subdirectory — one PAR2 + hash in each immediate child (full subtree each;"
-  echo "      files that sit only in this directory are ignored)"
-  echo "  [Q] Quit"
-  printf '%sChoice [W/p/q] (%s): ' "$(user_prompt_ts_prefix)" "$(prompt_timeout_label)"
+  echo "  [ w ] Whole tree — one PAR2 + hash in this directory (all files here and below)"
+  echo "  [ P ] Per subdirectory — one PAR2 + hash in each immediate child (full subtree each;"
+  echo "        files that sit only in this directory are ignored)  [default]"
+  echo "  [ q ] Quit"
+  printf '%sChoice [ w/P/q ] (%s): ' "$(user_prompt_ts_prefix)" "$(prompt_timeout_label)"
 
   if prompt_has_timeout; then
     if ! IFS= read -r -t "$PROMPT_TIMEOUT" -n 1 first; then
       echo
-      echo "Timed out — using whole tree."
-      CREATE_SCOPE=whole
+      echo "Timed out — using per subdirectory."
+      CREATE_SCOPE=per-subdir
       CREATE_SCOPE_SOURCE=default
       return 0
     fi
@@ -1937,20 +1941,20 @@ resolve_create_scope() {
   echo
 
   case "${ans,,}" in
-    ""|w|whole)
-      CREATE_SCOPE=whole
+    ""|p|per|per-subdir|subdir|subdirs)
+      CREATE_SCOPE=per-subdir
       CREATE_SCOPE_SOURCE=prompt
       ;;
-    p|per|per-subdir|subdir|subdirs)
-      CREATE_SCOPE=per-subdir
+    w|whole)
+      CREATE_SCOPE=whole
       CREATE_SCOPE_SOURCE=prompt
       ;;
     q|quit)
       return 2
       ;;
     *)
-      echo "Invalid choice '$ans' — using whole tree."
-      CREATE_SCOPE=whole
+      echo "Invalid choice '$ans' — using per subdirectory."
+      CREATE_SCOPE=per-subdir
       CREATE_SCOPE_SOURCE=default
       ;;
   esac
@@ -2002,11 +2006,11 @@ print_run_settings() {
   echo "  Start dir:     ${START_DIR:-$WORK_DIR}"
   case "${CREATE_SCOPE_SOURCE:-}" in
     cli) echo "  --scope:       given (${CREATE_SCOPE})" ;;
-    yes) echo "  --scope:       not given (--yes default: whole)" ;;
+    yes) echo "  --scope:       not given (--yes default: per-subdir)" ;;
     nosubdirs) echo "  --scope:       whole (no immediate subdirectories)" ;;
     prompt) echo "  --scope:       not given (prompted; selected: ${CREATE_SCOPE})" ;;
-    default) echo "  --scope:       whole (fallback)" ;;
-    *) echo "  --scope:       ${CREATE_SCOPE:-whole}" ;;
+    default) echo "  --scope:       per-subdir (fallback)" ;;
+    *) echo "  --scope:       ${CREATE_SCOPE:-per-subdir}" ;;
   esac
   if [[ "$CREATE_SCOPE" == per-subdir ]]; then
     echo "  Scope note:    one PAR2+hash per immediate child; loose files in start dir ignored"
