@@ -23,7 +23,7 @@
 # v. 20260806.224414 - initial: create volume-only PAR2 + SHA-512/MD5 hash for cwd subtree
 
 # 2026.11.13 - v. 0.1.20 - If a work dir already has exactly one convention PAR2 set (_<dir>) and one convention hash (__<dir>.ext): ask skip / verify / skip-for-rest / verify-for-rest (default skip); verify OK ends the folder without recreate; --yes skips without verify
-# 2026.11.13 - v. 0.1.19 - Status/prompt timestamps use [YYYY.MM.DD HH:MM:SS]; after each folder print Removed/Created/Elapsed; if more than one folder, repeat a folders recap at the end
+# 2026.11.13 - v. 0.1.19 - Status/prompt timestamps use [ YYYY.MM.DD HH:MM:SS ]; after each folder print Removed/Created/Elapsed; if more than one folder, repeat a folders recap at the end
 # 2026.11.13 - v. 0.1.18 - Do not treat consolidate backups (*.par2.old, *.sha512.old, *.md5.old, …) as data: exclude them from PAR2 create sources and from the new hash manifest
 # 2026.11.13 - v. 0.1.17 - If a work dir has 2+ distinct PAR2 sets and/or 2+ hash manifests: list them, offer verify (default Y); if OK offer consolidate into one volume-only PAR2 + one hash (default Y); then ask to delete the renamed *.old leftovers (default Y). --yes skips this offer (keeps existing multi sets)
 # 2026.11.13 - v. 0.1.16 - If cwd has immediate subdirectories: ask whole-tree (one PAR2+hash here) vs per-subdir (one PAR2+hash in each direct child for that child's full subtree; loose files in cwd ignored). --scope whole|per-subdir; --yes defaults to whole
@@ -107,8 +107,8 @@ Interactive prompts (unless --yes / flag already set):
   Recovery %:     Enter accepts 20% (or --recovery value).
   Rename helpers: Exclude from PAR2? [Y/n/q] — single key, no Enter (default yes).
   Convention set: If exactly one _<dir> PAR2 set and one __<dir>.<ext> hash
-                  already exist: [s]kip / [v]erify / [S]kip rest / [V]erify rest
-                  / [q] (default s). Verify OK ends that folder; fail continues
+                  already exist: [ s ]kip / [ v ]erify / [ S ]kip rest / [ V ]erify rest
+                  / [ q ] (default s). Verify OK ends that folder; fail continues
                   to recreate prompts. --yes skips without verifying.
   Existing PAR2:  Rename to *.par2.old and recreate? [y/N/q] — single key
                   (default N = keep PAR2). If kept and no hash file exists,
@@ -456,12 +456,12 @@ wall_clock_now() {
 }
 
 user_prompt_ts_prefix() {
-  printf '[%s] ' "$(wall_clock_now)"
+  printf '[ %s ] ' "$(wall_clock_now)"
 }
 
 # Timestamped status line (prompts use user_prompt_ts_prefix; raw par2 output is left alone).
 log_msg() {
-  printf '[%s] %s\n' "$(wall_clock_now)" "$*"
+  printf '[ %s ] %s\n' "$(wall_clock_now)" "$*"
 }
 
 reset_job_counters() {
@@ -510,7 +510,7 @@ print_folder_done_summary() {
   log_msg "Created: ${created_note}"
   log_msg "Elapsed (this folder): ${elapsed}"
 
-  recap="${DIR_NAME}: removed ${removed_n}, created ${JOB_CREATED_COUNT}, elapsed ${elapsed} [${outcome_note}]"
+  recap="${DIR_NAME}: removed ${removed_n}, created ${JOB_CREATED_COUNT}, elapsed ${elapsed} [ ${outcome_note} ]"
   MULTI_FOLDER_RECAPS+=("$recap")
 }
 
@@ -1240,7 +1240,7 @@ maybe_offer_skip_or_verify_existing() {
     log_msg "Using remembered choice for this run: ${action}."
   else
     echo "This directory already has one matching PAR2 set and one matching hash."
-    printf '%s[s]kip / [v]erify / [S]kip rest of run / [V]erify rest of run / [q]uit? (default: s, %s): ' \
+    printf '%s[ s ]kip / [ v ]erify / [ S ]kip rest of run / [ V ]erify rest of run / [ q ]uit? (default: s, %s): ' \
       "$(user_prompt_ts_prefix)" "$(prompt_timeout_label)"
     read_skip_verify_key_with_timeout ans skip
     case $? in
