@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261113.181500 - convention PAR2+hash present: skip / verify / skip-rest / verify-rest
 # v. 20261113.180800 - [timestamp] logs; per-folder Removed/Created/Elapsed; multi-folder end recap
 # v. 20261113.175000 - exclude *.par2.old / *.sha*.old / *.md5.old from PAR2 sources and new hash
 # v. 20261113.174500 - multi PAR2/hash: verify then offer consolidate; cleanup *.old default Y
@@ -21,6 +22,7 @@
 # v. 20260809.155541 - prompt to exclude rename.sh helpers from PAR2 (default yes)
 # v. 20260806.224414 - initial: create volume-only PAR2 + SHA-512/MD5 hash for cwd subtree
 
+# 2026.11.13 - v. 0.1.20 - If a work dir already has exactly one convention PAR2 set (_<dir>) and one convention hash (__<dir>.ext): ask skip / verify / skip-for-rest / verify-for-rest (default skip); verify OK ends the folder without recreate; --yes skips without verify
 # 2026.11.13 - v. 0.1.19 - Status/prompt timestamps use [YYYY.MM.DD HH:MM:SS]; after each folder print Removed/Created/Elapsed; if more than one folder, repeat a folders recap at the end
 # 2026.11.13 - v. 0.1.18 - Do not treat consolidate backups (*.par2.old, *.sha512.old, *.md5.old, …) as data: exclude them from PAR2 create sources and from the new hash manifest
 # 2026.11.13 - v. 0.1.17 - If a work dir has 2+ distinct PAR2 sets and/or 2+ hash manifests: list them, offer verify (default Y); if OK offer consolidate into one volume-only PAR2 + one hash (default Y); then ask to delete the renamed *.old leftovers (default Y). --yes skips this offer (keeps existing multi sets)
@@ -104,6 +106,10 @@ Interactive prompts (unless --yes / flag already set):
                   q/Q = quit immediately (no Enter); invalid input asks again.
   Recovery %:     Enter accepts 20% (or --recovery value).
   Rename helpers: Exclude from PAR2? [Y/n/q] — single key, no Enter (default yes).
+  Convention set: If exactly one _<dir> PAR2 set and one __<dir>.<ext> hash
+                  already exist: [s]kip / [v]erify / [S]kip rest / [V]erify rest
+                  / [q] (default s). Verify OK ends that folder; fail continues
+                  to recreate prompts. --yes skips without verifying.
   Existing PAR2:  Rename to *.par2.old and recreate? [y/N/q] — single key
                   (default N = keep PAR2). If kept and no hash file exists,
                   offers to create one [y/N/q] (default N).
@@ -164,6 +170,8 @@ MULTI_JOB_SKIP=0
 MULTI_JOB_FAIL=0
 MULTI_FOLDER_RECAPS=()
 CONSOLIDATE_DONE=0
+# empty | skip | verify — remember choice for later convention-protected folders
+EXISTING_PROTECTION_POLICY=""
 JOB_START_EPOCH=0
 JOB_BACKED_UP_COUNT=0
 JOB_DELETED_COUNT=0
@@ -615,6 +623,74 @@ read_yn_key_with_timeout() {
         echo
         printf '%sInvalid key "%s". Press Y, N, Q, or Enter for default (%s): ' \
           "$(user_prompt_ts_prefix)" "$first" "${default^^}"
+        ;;
+    esac
+  done
+}
+
+# Single-key s/v/S/V/q for existing convention protection.
+# Sets __var to skip|verify|skip_rest|verify_rest|q.
+# Returns: 0=answer, 1=timeout→default, 2=quit.
+# default: skip|verify (Enter).
+read_skip_verify_key_with_timeout() {
+  local __var="$1"
+  local default="${2:-skip}"
+  local first=""
+
+  case "$default" in
+    skip|verify) ;;
+    *) default=skip ;;
+  esac
+
+  while true; do
+    if prompt_has_timeout; then
+      IFS= read -r -t "$PROMPT_TIMEOUT" -n 1 first || {
+        echo
+        printf -v "$__var" '%s' "$default"
+        return 1
+      }
+    else
+      IFS= read -r -n 1 first || {
+        echo
+        printf -v "$__var" '%s' "$default"
+        return 1
+      }
+    fi
+
+    case "$first" in
+      ""|$'\n')
+        printf -v "$__var" '%s' "$default"
+        return 0
+        ;;
+      s)
+        echo
+        printf -v "$__var" '%s' skip
+        return 0
+        ;;
+      v)
+        echo
+        printf -v "$__var" '%s' verify
+        return 0
+        ;;
+      S)
+        echo
+        printf -v "$__var" '%s' skip_rest
+        return 0
+        ;;
+      V)
+        echo
+        printf -v "$__var" '%s' verify_rest
+        return 0
+        ;;
+      q|Q)
+        echo
+        printf -v "$__var" '%s' q
+        return 2
+        ;;
+      *)
+        echo
+        printf '%sInvalid key "%s". Press s, v, S, V, q, or Enter for default (%s): ' \
+          "$(user_prompt_ts_prefix)" "$first" "$default"
         ;;
     esac
   done
@@ -1096,6 +1172,117 @@ maybe_offer_verify_and_consolidate() {
   CONSOLIDATE_DONE=1
   CREATE_PAR2=1
   echo "Will create a single volume-only PAR2 (${PAR2_STEM}) and hash (__${DIR_NAME}.${HASH_EXT})."
+  return 0
+}
+
+# True when basename is __<DIR_NAME>.<known-hash-ext> (this script's hash naming).
+is_convention_hash_basename() {
+  local base="$1"
+  local want_prefix="__${DIR_NAME}."
+  local lower="${base,,}"
+  local prefix_lower="${want_prefix,,}"
+
+  [[ "$lower" == "${prefix_lower}"* ]] || return 1
+  case "$lower" in
+    *.sha512|*.sha384|*.sha256|*.sha224|*.sha1|*.md5|*.b2) return 0 ;;
+  esac
+  return 1
+}
+
+# Exactly one PAR2 set named _<DIR_NAME> and exactly one hash __<DIR_NAME>.<ext>.
+dir_has_convention_protection() {
+  local -a stems=() hashes=() members=()
+  local stem f
+
+  list_par2_set_stems_in_dir "$WORK_DIR" stems
+  list_hash_manifests_in_dir "$WORK_DIR" hashes
+
+  ((${#stems[@]} == 1 && ${#hashes[@]} == 1)) || return 1
+  [[ "${stems[0],,}" == "${PAR2_STEM,,}" ]] || return 1
+  is_convention_hash_basename "$(basename -- "${hashes[0]}")" || return 1
+
+  members=()
+  list_existing_stem_par2 "$WORK_DIR" "$PAR2_STEM" members
+  ((${#members[@]} > 0)) || return 1
+  return 0
+}
+
+# When convention PAR2 + hash already exist: skip or verify (optionally for rest of run).
+# Returns: 0=continue create flow, 2=quit, 3=skip folder (done without create),
+#          4=verified OK (done without create).
+maybe_offer_skip_or_verify_existing() {
+  local -a stems=() hashes=() members=()
+  local ans="" action="" f
+
+  (( CONSOLIDATE_DONE == 1 )) && return 0
+  dir_has_convention_protection || return 0
+
+  list_par2_set_stems_in_dir "$WORK_DIR" stems
+  list_hash_manifests_in_dir "$WORK_DIR" hashes
+  members=()
+  list_existing_stem_par2 "$WORK_DIR" "$PAR2_STEM" members
+
+  echo
+  log_msg "Existing convention protection found:"
+  log_msg "  PAR2 set: ${PAR2_STEM} (${#members[@]} file(s))"
+  for f in "${members[@]}"; do
+    log_msg "    $(basename -- "$f")"
+  done
+  log_msg "  Hash:     $(basename -- "${hashes[0]}")"
+
+  if (( AUTO_YES == 1 )); then
+    log_msg "Skipping this directory (--yes; leave existing PAR2 + hash unchanged)."
+    return 3
+  fi
+
+  if [[ -n "$EXISTING_PROTECTION_POLICY" ]]; then
+    action="$EXISTING_PROTECTION_POLICY"
+    log_msg "Using remembered choice for this run: ${action}."
+  else
+    echo "This directory already has one matching PAR2 set and one matching hash."
+    printf '%s[s]kip / [v]erify / [S]kip rest of run / [V]erify rest of run / [q]uit? (default: s, %s): ' \
+      "$(user_prompt_ts_prefix)" "$(prompt_timeout_label)"
+    read_skip_verify_key_with_timeout ans skip
+    case $? in
+      2) log_msg "Quit."; return 2 ;;
+    esac
+    case "$ans" in
+      skip)
+        action=skip
+        ;;
+      verify)
+        action=verify
+        ;;
+      skip_rest)
+        EXISTING_PROTECTION_POLICY=skip
+        action=skip
+        log_msg "Will skip remaining folders that already have convention PAR2 + hash."
+        ;;
+      verify_rest)
+        EXISTING_PROTECTION_POLICY=verify
+        action=verify
+        log_msg "Will verify remaining folders that already have convention PAR2 + hash."
+        ;;
+      *)
+        action=skip
+        ;;
+    esac
+  fi
+
+  case "$action" in
+    skip)
+      log_msg "Skipped (existing PAR2 + hash left unchanged)."
+      return 3
+      ;;
+    verify)
+      if verify_dir_par2_and_hashes; then
+        log_msg "Verification passed — leaving existing protection unchanged."
+        return 4
+      fi
+      log_msg "Verification FAILED — continuing so you can recreate if you want." >&2
+      return 0
+      ;;
+  esac
   return 0
 }
 
@@ -2041,6 +2228,14 @@ run_create_job() {
   case "$offer_rc" in
     2) JOB_OUTCOME=quit; print_folder_done_summary; return 2 ;;
     3) JOB_OUTCOME=skipped; print_folder_done_summary; return 3 ;;
+  esac
+
+  offer_rc=0
+  maybe_offer_skip_or_verify_existing || offer_rc=$?
+  case "$offer_rc" in
+    2) JOB_OUTCOME=quit; print_folder_done_summary; return 2 ;;
+    3) JOB_OUTCOME=skipped; print_folder_done_summary; return 3 ;;
+    4) JOB_OUTCOME=ok; print_folder_done_summary; return 0 ;;
   esac
 
   existing_par2=()
