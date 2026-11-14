@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261114.154500 - rest-of-run for verify/consolidate/anyway/delete-leftover prompts
 # v. 20261113.221500 - verify-fail: ask consolidate anyway; *.old collision: ask replace/skip/quit
 # v. 20261113.210800 - after create: offer delete leftover other PAR2/hash sets and *.old backups
 # v. 20261113.184200 - skip/verify Choice: only default key capitalized ([ S/v/a/e/q ])
@@ -30,6 +31,7 @@
 # v. 20260809.155541 - prompt to exclude rename.sh helpers from PAR2 (default yes)
 # v. 20260806.224414 - initial: create volume-only PAR2 + SHA-512/MD5 hash for cwd subtree
 
+# 2026.11.14 - v. 0.1.29 - Rest-of-run ([ a ]/[ e ]) on: multi-set verify-first, consolidate, consolidate-anyway (verify-fail and skip-verify), and delete-leftover protection
 # 2026.11.13 - v. 0.1.28 - If verify fails before consolidate: ask Consolidate anyway / continue / quit (default C). If renaming to *.old but that backup already exists: ask Replace / skip / quit (default R) instead of dying
 # 2026.11.13 - v. 0.1.27 - After a successful create/hash: offer to delete superseded leftovers — other active PAR2 sets/hashes (e.g. media-basename) and any *.par2.old / hash *.old (not only after consolidate)
 # 2026.11.13 - v. 0.1.26 - Skip/verify menu: only default key capitalized ([ S ] skip); rest-of-run uses [ a ]/[ e ] (not S/V) so Choice is [ S/v/a/e/q ]
@@ -129,6 +131,12 @@ Interactive prompts (unless --yes / flag already set):
                   [ S ] skip / [ v ] verify / [ a ] skip rest / [ e ] verify rest /
                   [ q ] quit (default S). Verify OK ends that folder; fail
                   continues to recreate prompts. --yes skips without verifying.
+  Multi-set:      If 2+ PAR2 sets and/or 2+ hashes: verify-first / consolidate /
+                  consolidate-anyway menus include [ a ]/[ e ] rest-of-run
+                  (defaults: verify Y, consolidate Y, anyway after fail C,
+                  anyway without verify N).
+  Leftovers:      After create, delete other PAR2/hash / *.old? [ Y/n/a/e/q ]
+                  (default Y; [ a ]/[ e ] rest-of-run).
   Existing PAR2:  Rename to *.par2.old and recreate? [y/N/q] — single key
                   (default N = keep PAR2). If kept and no hash file exists,
                   offers to create one [y/N/q] (default N).
@@ -191,6 +199,11 @@ MULTI_FOLDER_RECAPS=()
 CONSOLIDATE_DONE=0
 # empty | skip | verify — remember choice for later convention-protected folders
 EXISTING_PROTECTION_POLICY=""
+# empty | yes | no — rest-of-run policies for multi-set / cleanup prompts
+VERIFY_MULTI_POLICY=""
+CONSOLIDATE_POLICY=""
+CONSOLIDATE_ANYWAY_POLICY=""
+DELETE_LEFTOVER_POLICY=""
 JOB_START_EPOCH=0
 JOB_BACKED_UP_COUNT=0
 JOB_DELETED_COUNT=0
@@ -720,6 +733,111 @@ read_skip_verify_key_with_timeout() {
   done
 }
 
+# Single-key yes/no with optional rest-of-run (a=yes rest, e=no rest).
+# Caller prints the menu lines. yes_key is the letter for "yes" (y or c).
+# default_ans: yes|no. Sets __var to yes|no. Returns 0=ok, 1=timeout→default, 2=quit.
+# If policy_var_name is non-empty and user picks a/e, that global is set to yes|no.
+read_yes_no_rest_key_with_timeout() {
+  local __var="$1"
+  local default_ans="${2:-yes}"
+  local yes_key="${3:-y}"
+  local policy_var_name="${4:-}"
+  local first="" yes_l no_disp choice_hint def_disp
+
+  case "$default_ans" in
+    yes|no) ;;
+    *) default_ans=yes ;;
+  esac
+  yes_key="${yes_key:0:1}"
+  yes_l="${yes_key,,}"
+  if [[ "$default_ans" == yes ]]; then
+    def_disp="${yes_l^^}"
+    no_disp=n
+    choice_hint="[ ${def_disp}/n/a/e/q ]"
+  else
+    def_disp=N
+    no_disp=n
+    choice_hint="[ ${yes_l}/${def_disp}/a/e/q ]"
+  fi
+
+  while true; do
+    if prompt_has_timeout; then
+      IFS= read -r -t "$PROMPT_TIMEOUT" -n 1 first || {
+        echo
+        printf -v "$__var" '%s' "$default_ans"
+        return 1
+      }
+    else
+      IFS= read -r -n 1 first || {
+        echo
+        printf -v "$__var" '%s' "$default_ans"
+        return 1
+      }
+    fi
+
+    case "$first" in
+      ""|$'\n')
+        printf -v "$__var" '%s' "$default_ans"
+        return 0
+        ;;
+      q|Q)
+        echo
+        printf -v "$__var" '%s' quit
+        return 2
+        ;;
+      a|A)
+        echo
+        printf -v "$__var" '%s' yes
+        if [[ -n "$policy_var_name" ]]; then
+          printf -v "$policy_var_name" '%s' yes
+          log_msg "Will use yes for this prompt for the rest of the run."
+        fi
+        return 0
+        ;;
+      e|E)
+        echo
+        printf -v "$__var" '%s' no
+        if [[ -n "$policy_var_name" ]]; then
+          printf -v "$policy_var_name" '%s' no
+          log_msg "Will use no for this prompt for the rest of the run."
+        fi
+        return 0
+        ;;
+      n|N)
+        echo
+        printf -v "$__var" '%s' no
+        return 0
+        ;;
+      *)
+        if [[ "${first,,}" == "$yes_l" ]]; then
+          echo
+          printf -v "$__var" '%s' yes
+          return 0
+        fi
+        echo
+        printf '%sInvalid key "%s". Press keys from %s or Enter for default (%s): ' \
+          "$(user_prompt_ts_prefix)" "$first" "$choice_hint" "$def_disp"
+        ;;
+    esac
+  done
+}
+
+# Apply remembered yes|no policy. Sets __var; returns 0 if policy set, 1 if empty.
+apply_yes_no_policy() {
+  local __var="$1"
+  local policy="$2"
+  local label="${3:-this prompt}"
+
+  case "$policy" in
+    yes|no)
+      printf -v "$__var" '%s' "$policy"
+      log_msg "Using remembered choice for ${label}: ${policy}."
+      return 0
+      ;;
+  esac
+  return 1
+}
+
 is_par2_backup_basename() {
   local base="$1"
   case "$base" in
@@ -1152,17 +1270,24 @@ offer_delete_superseded_protection() {
   echo "These are other PAR2/hash sets or *.old backups; keeping the new ${PAR2_STEM}* / ${want_hash}."
   if (( AUTO_YES == 1 )); then
     echo "Deleting leftover protection (--yes)."
-    ans=y
+    ans=yes
+  elif apply_yes_no_policy ans "$DELETE_LEFTOVER_POLICY" "delete leftover protection"; then
+    :
   else
-    printf '%sDelete those leftover protection file(s) now? [Y/n/q] (%s): ' \
+    echo "  [ Y ] Delete those leftover protection file(s) now (default)"
+    echo "  [ n ] Keep them"
+    echo "  [ a ] Delete leftovers for the rest of the run (same as [ Y ])"
+    echo "  [ e ] Keep leftovers for the rest of the run (same as [ n ])"
+    echo "  [ q ] Quit"
+    printf '%sChoice [ Y/n/a/e/q ] (%s): ' \
       "$(user_prompt_ts_prefix)" "$(prompt_timeout_label)"
-    read_yn_key_with_timeout ans y
+    read_yes_no_rest_key_with_timeout ans yes y DELETE_LEFTOVER_POLICY
     case $? in
       2) echo "Quit."; return 2 ;;
     esac
   fi
   case "$ans" in
-    y)
+    yes)
       for f in "${victims[@]}"; do
         if (( DRY_RUN == 1 )); then
           log_msg "[dry-run] rm -- $(basename -- "$f")"
@@ -1239,67 +1364,73 @@ maybe_offer_verify_and_consolidate() {
     return 0
   fi
 
-  printf '%sVerify existing PAR2 set(s) and hash file(s) first? [Y/n/q] (%s): ' \
-    "$(user_prompt_ts_prefix)" "$(prompt_timeout_label)"
-  read_yn_key_with_timeout ans y
-  case $? in
-    2) echo "Quit."; return 2 ;;
-  esac
+  if apply_yes_no_policy ans "$VERIFY_MULTI_POLICY" "verify multi-set first"; then
+    :
+  else
+    echo "  [ Y ] Verify existing PAR2 set(s) and hash file(s) first (default)"
+    echo "  [ n ] Skip verify"
+    echo "  [ a ] Verify first for the rest of the run (same as [ Y ])"
+    echo "  [ e ] Skip verify for the rest of the run (same as [ n ])"
+    echo "  [ q ] Quit"
+    printf '%sChoice [ Y/n/a/e/q ] (%s): ' \
+      "$(user_prompt_ts_prefix)" "$(prompt_timeout_label)"
+    read_yes_no_rest_key_with_timeout ans yes y VERIFY_MULTI_POLICY
+    case $? in
+      2) echo "Quit."; return 2 ;;
+    esac
+  fi
   case "$ans" in
-    y)
+    yes)
       if verify_dir_par2_and_hashes; then
         verify_ok=1
         echo "Verification passed."
       else
         echo
         log_msg "Verification reported problems (often missing refs to already-removed files)."
-        echo "  [ C ] Consolidate anyway into one PAR2 + one hash (default)"
-        echo "  [ n ] Do not consolidate — continue with normal recreate prompts"
-        echo "  [ q ] Quit"
-        printf '%sChoice [ C/n/q ] (%s): ' \
-          "$(user_prompt_ts_prefix)" "$(prompt_timeout_label)"
-        while true; do
-          if prompt_has_timeout; then
-            IFS= read -r -t "$PROMPT_TIMEOUT" -n 1 ans || ans=C
-          else
-            IFS= read -r -n 1 ans || ans=C
-          fi
-          case "$ans" in
-            ""|$'\n'|c|C)
-              echo
-              verify_ok=1
-              break
-              ;;
-            n|N)
-              echo
-              log_msg "Leaving multiple protection files as-is (no consolidate)."
-              return 0
-              ;;
-            q|Q)
-              echo
-              echo "Quit."
-              return 2
-              ;;
-            *)
-              echo
-              printf '%sInvalid key "%s". Press C, n, q, or Enter for default (C): ' \
-                "$(user_prompt_ts_prefix)" "$ans"
-              ;;
+        if apply_yes_no_policy ans "$CONSOLIDATE_ANYWAY_POLICY" "consolidate anyway after verify-fail"; then
+          :
+        else
+          echo "  [ C ] Consolidate anyway into one PAR2 + one hash (default)"
+          echo "  [ n ] Do not consolidate — continue with normal recreate prompts"
+          echo "  [ a ] Consolidate anyway for the rest of the run (same as [ C ])"
+          echo "  [ e ] Do not consolidate for the rest of the run (same as [ n ])"
+          echo "  [ q ] Quit"
+          printf '%sChoice [ C/n/a/e/q ] (%s): ' \
+            "$(user_prompt_ts_prefix)" "$(prompt_timeout_label)"
+          read_yes_no_rest_key_with_timeout ans yes c CONSOLIDATE_ANYWAY_POLICY
+          case $? in
+            2) echo "Quit."; return 2 ;;
           esac
-        done
+        fi
+        case "$ans" in
+          yes) verify_ok=1 ;;
+          *)
+            log_msg "Leaving multiple protection files as-is (no consolidate)."
+            return 0
+            ;;
+        esac
       fi
       ;;
     *)
       echo "Skipping verify."
       verify_ok=0
-      printf '%sConsolidate anyway into one PAR2 + one hash (without verify)? [y/N/q] (%s): ' \
-        "$(user_prompt_ts_prefix)" "$(prompt_timeout_label)"
-      read_yn_key_with_timeout ans n
-      case $? in
-        2) echo "Quit."; return 2 ;;
-      esac
+      if apply_yes_no_policy ans "$CONSOLIDATE_ANYWAY_POLICY" "consolidate anyway without verify"; then
+        :
+      else
+        echo "  [ y ] Consolidate anyway into one PAR2 + one hash (without verify)"
+        echo "  [ N ] Do not consolidate (default)"
+        echo "  [ a ] Consolidate anyway for the rest of the run (same as [ y ])"
+        echo "  [ e ] Do not consolidate for the rest of the run (same as [ N ])"
+        echo "  [ q ] Quit"
+        printf '%sChoice [ y/N/a/e/q ] (%s): ' \
+          "$(user_prompt_ts_prefix)" "$(prompt_timeout_label)"
+        read_yes_no_rest_key_with_timeout ans no y CONSOLIDATE_ANYWAY_POLICY
+        case $? in
+          2) echo "Quit."; return 2 ;;
+        esac
+      fi
       case "$ans" in
-        y) verify_ok=1 ;;
+        yes) verify_ok=1 ;;
         *) echo "Leaving multiple protection files as-is."; return 0 ;;
       esac
       ;;
@@ -1309,14 +1440,23 @@ maybe_offer_verify_and_consolidate() {
     return 0
   fi
 
-  printf '%sConsolidate into one PAR2 + one hash for this directory? [Y/n/q] (%s): ' \
-    "$(user_prompt_ts_prefix)" "$(prompt_timeout_label)"
-  read_yn_key_with_timeout ans y
-  case $? in
-    2) echo "Quit."; return 2 ;;
-  esac
+  if apply_yes_no_policy ans "$CONSOLIDATE_POLICY" "consolidate into one set"; then
+    :
+  else
+    echo "  [ Y ] Consolidate into one PAR2 + one hash for this directory (default)"
+    echo "  [ n ] Leave multiple protection files as-is"
+    echo "  [ a ] Consolidate for the rest of the run (same as [ Y ])"
+    echo "  [ e ] Do not consolidate for the rest of the run (same as [ n ])"
+    echo "  [ q ] Quit"
+    printf '%sChoice [ Y/n/a/e/q ] (%s): ' \
+      "$(user_prompt_ts_prefix)" "$(prompt_timeout_label)"
+    read_yes_no_rest_key_with_timeout ans yes y CONSOLIDATE_POLICY
+    case $? in
+      2) echo "Quit."; return 2 ;;
+    esac
+  fi
   case "$ans" in
-    y) ;;
+    yes) ;;
     *) echo "Leaving multiple protection files as-is."; return 0 ;;
   esac
 
