@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261114.193500 - alphabetical order: dirs/files/stems/leftovers via LC_ALL=C sort -f
 # v. 20261114.175500 - rest-of-run menu lines: "Like [ X ] here, and for the rest of the run"
 # v. 20261114.164500 - startup: ask per-folder policies (existing set / multi-set / leftovers)
 # v. 20261114.163000 - large boxed banner when starting each work directory
@@ -34,6 +35,7 @@
 # v. 20260809.155541 - prompt to exclude rename.sh helpers from PAR2 (default yes)
 # v. 20260806.224414 - initial: create volume-only PAR2 + SHA-512/MD5 hash for cwd subtree
 
+# 2026.11.14 - v. 0.1.32 - Process subdirs, source/hash file lists, PAR2 stems, hash manifests, stem members, and leftover cleanup lists in alphabetical order (LC_ALL=C sort -f)
 # 2026.11.14 - v. 0.1.31 - At run start (interactive): ask per-folder policies — existing one PAR2+hash (skip/verify/ask), multi-set verify/consolidate-anyway/consolidate (always/never/ask), delete leftovers (always/never/ask); --yes skips these and keeps prior defaults
 # 2026.11.14 - v. 0.1.30 - Starting each work directory prints a large boxed NEXT DIRECTORY banner (job N of M in per-subdir mode) so catalog changes stand out
 # 2026.11.14 - v. 0.1.29 - Rest-of-run ([ a ]/[ e ]) on: multi-set verify-first, consolidate, consolidate-anyway (verify-fail and skip-verify), and delete-leftover protection
@@ -980,6 +982,10 @@ list_existing_stem_par2() {
     _out+=("$f")
   done
   shopt -u nullglob
+  if ((${#_out[@]} > 1)); then
+    IFS=$'\n' _out=($(printf '%s\n' "${_out[@]}" | LC_ALL=C sort -f))
+    unset IFS
+  fi
 }
 
 # Stem used to group index + volume files into one PAR2 set.
@@ -1254,7 +1260,7 @@ offer_delete_superseded_protection() {
 
   ((${#victims[@]} > 0)) || return 0
 
-  # Dedupe paths (same file listed twice).
+  # Dedupe paths (same file listed twice), then alphabetical.
   if ((${#victims[@]} > 1)); then
     local -A seen=()
     local -a uniq=()
@@ -1263,7 +1269,8 @@ offer_delete_superseded_protection() {
       seen[$f]=1
       uniq+=("$f")
     done
-    victims=("${uniq[@]}")
+    IFS=$'\n' victims=($(printf '%s\n' "${uniq[@]}" | LC_ALL=C sort -f))
+    unset IFS
   fi
 
   echo
@@ -2354,10 +2361,11 @@ list_immediate_subdirs() {
   local d
 
   _out=()
+  # Alphabetical (case-insensitive), same collation as file lists.
   while IFS= read -r -d '' d; do
     [[ -d "$d" ]] || continue
     _out+=("$d")
-  done < <(find "$root" -mindepth 1 -maxdepth 1 -type d -print0 2>/dev/null | LC_ALL=C sort -z)
+  done < <(find "$root" -mindepth 1 -maxdepth 1 -type d -print0 2>/dev/null | LC_ALL=C sort -z -f)
 }
 
 set_work_directory() {
