@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261114.175500 - rest-of-run menu lines: "Like [ X ] here, and for the rest of the run"
 # v. 20261114.164500 - startup: ask per-folder policies (existing set / multi-set / leftovers)
 # v. 20261114.163000 - large boxed banner when starting each work directory
 # v. 20261114.154500 - rest-of-run for verify/consolidate/anyway/delete-leftover prompts
@@ -1279,8 +1280,8 @@ offer_delete_superseded_protection() {
   else
     echo "  [ Y ] Delete those leftover protection file(s) now (default)"
     echo "  [ n ] Keep them"
-    echo "  [ a ] Delete leftovers for the rest of the run (same as [ Y ])"
-    echo "  [ e ] Keep leftovers for the rest of the run (same as [ n ])"
+    echo "  [ a ] Like [ Y ] here, and for the rest of the run"
+    echo "  [ e ] Like [ n ] here, and for the rest of the run"
     echo "  [ q ] Quit"
     printf '%sChoice [ Y/n/a/e/q ] (%s): ' \
       "$(user_prompt_ts_prefix)" "$(prompt_timeout_label)"
@@ -1372,8 +1373,8 @@ maybe_offer_verify_and_consolidate() {
   else
     echo "  [ Y ] Verify existing PAR2 set(s) and hash file(s) first (default)"
     echo "  [ n ] Skip verify"
-    echo "  [ a ] Verify first for the rest of the run (same as [ Y ])"
-    echo "  [ e ] Skip verify for the rest of the run (same as [ n ])"
+    echo "  [ a ] Like [ Y ] here, and for the rest of the run"
+    echo "  [ e ] Like [ n ] here, and for the rest of the run"
     echo "  [ q ] Quit"
     printf '%sChoice [ Y/n/a/e/q ] (%s): ' \
       "$(user_prompt_ts_prefix)" "$(prompt_timeout_label)"
@@ -1395,8 +1396,8 @@ maybe_offer_verify_and_consolidate() {
         else
           echo "  [ C ] Consolidate anyway into one PAR2 + one hash (default)"
           echo "  [ n ] Do not consolidate — continue with normal recreate prompts"
-          echo "  [ a ] Consolidate anyway for the rest of the run (same as [ C ])"
-          echo "  [ e ] Do not consolidate for the rest of the run (same as [ n ])"
+          echo "  [ a ] Like [ C ] here, and for the rest of the run"
+          echo "  [ e ] Like [ n ] here, and for the rest of the run"
           echo "  [ q ] Quit"
           printf '%sChoice [ C/n/a/e/q ] (%s): ' \
             "$(user_prompt_ts_prefix)" "$(prompt_timeout_label)"
@@ -1422,8 +1423,8 @@ maybe_offer_verify_and_consolidate() {
       else
         echo "  [ y ] Consolidate anyway into one PAR2 + one hash (without verify)"
         echo "  [ N ] Do not consolidate (default)"
-        echo "  [ a ] Consolidate anyway for the rest of the run (same as [ y ])"
-        echo "  [ e ] Do not consolidate for the rest of the run (same as [ N ])"
+        echo "  [ a ] Like [ y ] here, and for the rest of the run"
+        echo "  [ e ] Like [ N ] here, and for the rest of the run"
         echo "  [ q ] Quit"
         printf '%sChoice [ y/N/a/e/q ] (%s): ' \
           "$(user_prompt_ts_prefix)" "$(prompt_timeout_label)"
@@ -1448,8 +1449,8 @@ maybe_offer_verify_and_consolidate() {
   else
     echo "  [ Y ] Consolidate into one PAR2 + one hash for this directory (default)"
     echo "  [ n ] Leave multiple protection files as-is"
-    echo "  [ a ] Consolidate for the rest of the run (same as [ Y ])"
-    echo "  [ e ] Do not consolidate for the rest of the run (same as [ n ])"
+    echo "  [ a ] Like [ Y ] here, and for the rest of the run"
+    echo "  [ e ] Like [ n ] here, and for the rest of the run"
     echo "  [ q ] Quit"
     printf '%sChoice [ Y/n/a/e/q ] (%s): ' \
       "$(user_prompt_ts_prefix)" "$(prompt_timeout_label)"
@@ -1545,8 +1546,8 @@ maybe_offer_skip_or_verify_existing() {
     echo "This directory already has one PAR2 set and one hash."
     echo "  [ S ] Skip this folder — leave PAR2 + hash unchanged (default)"
     echo "  [ v ] Verify this folder — if OK, leave unchanged"
-    echo "  [ a ] Skip for the rest of the run (same as [ S ] for later matching folders)"
-    echo "  [ e ] Verify for the rest of the run (same as [ v ] for later matching folders)"
+    echo "  [ a ] Like [ S ] here, and for the rest of the run"
+    echo "  [ e ] Like [ v ] here, and for the rest of the run"
     echo "  [ q ] Quit"
     printf '%sChoice [ S/v/a/e/q ] (default: S, %s): ' \
       "$(user_prompt_ts_prefix)" "$(prompt_timeout_label)"
