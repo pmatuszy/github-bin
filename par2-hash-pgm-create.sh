@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261114.163000 - large boxed banner when starting each work directory
 # v. 20261114.154500 - rest-of-run for verify/consolidate/anyway/delete-leftover prompts
 # v. 20261113.221500 - verify-fail: ask consolidate anyway; *.old collision: ask replace/skip/quit
 # v. 20261113.210800 - after create: offer delete leftover other PAR2/hash sets and *.old backups
@@ -31,6 +32,7 @@
 # v. 20260809.155541 - prompt to exclude rename.sh helpers from PAR2 (default yes)
 # v. 20260806.224414 - initial: create volume-only PAR2 + SHA-512/MD5 hash for cwd subtree
 
+# 2026.11.14 - v. 0.1.30 - Starting each work directory prints a large boxed NEXT DIRECTORY banner (job N of M in per-subdir mode) so catalog changes stand out
 # 2026.11.14 - v. 0.1.29 - Rest-of-run ([ a ]/[ e ]) on: multi-set verify-first, consolidate, consolidate-anyway (verify-fail and skip-verify), and delete-leftover protection
 # 2026.11.13 - v. 0.1.28 - If verify fails before consolidate: ask Consolidate anyway / continue / quit (default C). If renaming to *.old but that backup already exists: ask Replace / skip / quit (default R) instead of dying
 # 2026.11.13 - v. 0.1.27 - After a successful create/hash: offer to delete superseded leftovers — other active PAR2 sets/hashes (e.g. media-basename) and any *.par2.old / hash *.old (not only after consolidate)
@@ -2513,6 +2515,32 @@ fi
 set_work_directory "$START_DIR"
 print_run_settings
 
+print_next_directory_banner() {
+  local -a lines=()
+  local job_note=""
+
+  if (( MULTI_JOB_MODE == 1 && MULTI_JOB_TOTAL > 0 )); then
+    job_note=" (job ${MULTI_JOB_TOTAL}"
+    if ((${#job_dirs[@]} > 0)); then
+      job_note+=" of ${#job_dirs[@]}"
+    fi
+    job_note+=")"
+  fi
+
+  lines+=( "*** NEXT DIRECTORY${job_note} ***" )
+  lines+=( "" )
+  lines+=( "Directory: $WORK_DIR" )
+  lines+=( "Basename:  $DIR_NAME" )
+  lines+=( "PAR2 stem: ${PAR2_STEM}.par2 (volume-only)" )
+  lines+=( "Hash file: __${DIR_NAME}.${HASH_EXT}" )
+  lines+=( "" )
+  lines+=( "Started:   $(wall_clock_now)" )
+
+  echo
+  emit_boxed_block stone "${lines[@]}"
+  echo
+}
+
 # Run create+hash for the current WORK_DIR.
 # Returns: 0=ok, 2=quit entire run, 3=skip this directory.
 run_create_job() {
@@ -2523,12 +2551,7 @@ run_create_job() {
   CONSOLIDATE_DONE=0
   reset_job_counters
 
-  echo
-  log_msg "================================================================"
-  log_msg "Directory: $WORK_DIR"
-  log_msg "PAR2 stem: ${PAR2_STEM}.par2 (volume-only)"
-  log_msg "Hash file: __${DIR_NAME}.${HASH_EXT}"
-  log_msg "================================================================"
+  print_next_directory_banner
 
   offer_rc=0
   maybe_offer_verify_and_consolidate || offer_rc=$?
