@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261114.164500 - startup: ask per-folder policies (existing set / multi-set / leftovers)
 # v. 20261114.163000 - large boxed banner when starting each work directory
 # v. 20261114.154500 - rest-of-run for verify/consolidate/anyway/delete-leftover prompts
 # v. 20261113.221500 - verify-fail: ask consolidate anyway; *.old collision: ask replace/skip/quit
@@ -32,6 +33,7 @@
 # v. 20260809.155541 - prompt to exclude rename.sh helpers from PAR2 (default yes)
 # v. 20260806.224414 - initial: create volume-only PAR2 + SHA-512/MD5 hash for cwd subtree
 
+# 2026.11.14 - v. 0.1.31 - At run start (interactive): ask per-folder policies — existing one PAR2+hash (skip/verify/ask), multi-set verify/consolidate-anyway/consolidate (always/never/ask), delete leftovers (always/never/ask); --yes skips these and keeps prior defaults
 # 2026.11.14 - v. 0.1.30 - Starting each work directory prints a large boxed NEXT DIRECTORY banner (job N of M in per-subdir mode) so catalog changes stand out
 # 2026.11.14 - v. 0.1.29 - Rest-of-run ([ a ]/[ e ]) on: multi-set verify-first, consolidate, consolidate-anyway (verify-fail and skip-verify), and delete-leftover protection
 # 2026.11.13 - v. 0.1.28 - If verify fails before consolidate: ask Consolidate anyway / continue / quit (default C). If renaming to *.old but that backup already exists: ask Replace / skip / quit (default R) instead of dying
@@ -128,17 +130,16 @@ Interactive prompts (unless --yes / flag already set):
   Recovery %:     Type 1-100 then Enter (Enter alone = 20% or --recovery value);
                   q + Enter quits. Multi-digit needs Enter.
   Rename helpers: Exclude from PAR2? [Y/n/q] — single key, no Enter (default yes).
-  Existing set:   If exactly one PAR2 set and one hash already exist (any names,
-                  including media-basename _file / __file.ext): menu with
-                  [ S ] skip / [ v ] verify / [ a ] skip rest / [ e ] verify rest /
-                  [ q ] quit (default S). Verify OK ends that folder; fail
-                  continues to recreate prompts. --yes skips without verifying.
-  Multi-set:      If 2+ PAR2 sets and/or 2+ hashes: verify-first / consolidate /
-                  consolidate-anyway menus include [ a ]/[ e ] rest-of-run
-                  (defaults: verify Y, consolidate Y, anyway after fail C,
-                  anyway without verify N).
-  Leftovers:      After create, delete other PAR2/hash / *.old? [ Y/n/a/e/q ]
-                  (default Y; [ a ]/[ e ] rest-of-run).
+  Run policies:   After scope (interactive): set per-folder defaults for this run —
+                  existing one PAR2+hash [ S ]kip / [ v ]erify / [ A ]sk (default A);
+                  multi-set verify / consolidate-anyway / consolidate each
+                  [ Y ] always / [ n ] never / [ A ]sk (default A);
+                  delete leftovers [ Y ]/[ n ]/[ A ] (default A). --yes skips.
+  Existing set:   If not preset: one PAR2 + one hash → [ S ]/[ v ]/[ a ]/[ e ]/[ q ]
+                  (default S; rest-of-run a/e). --yes skips without verifying.
+  Multi-set:      If not preset: verify-first / consolidate / consolidate-anyway
+                  menus include [ a ]/[ e ] rest-of-run.
+  Leftovers:      If not preset: delete other PAR2/hash / *.old? [ Y/n/a/e/q ].
   Existing PAR2:  Rename to *.par2.old and recreate? [y/N/q] — single key
                   (default N = keep PAR2). If kept and no hash file exists,
                   offers to create one [y/N/q] (default N).
@@ -1841,6 +1842,204 @@ prompt_exclude_rename_helpers() {
   esac
 }
 
+# Always / never / ask (default ask). Sets __var to always|never|ask.
+# Returns: 0=ok, 2=quit. yes_key is the "always" letter (usually y).
+read_always_never_ask_key_with_timeout() {
+  local __var="$1"
+  local yes_key="${2:-y}"
+  local first="" yes_l
+
+  yes_key="${yes_key:0:1}"
+  yes_l="${yes_key,,}"
+
+  while true; do
+    if prompt_has_timeout; then
+      IFS= read -r -t "$PROMPT_TIMEOUT" -n 1 first || {
+        echo
+        printf -v "$__var" '%s' ask
+        return 1
+      }
+    else
+      IFS= read -r -n 1 first || {
+        echo
+        printf -v "$__var" '%s' ask
+        return 1
+      }
+    fi
+
+    case "$first" in
+      ""|$'\n'|a|A)
+        echo
+        printf -v "$__var" '%s' ask
+        return 0
+        ;;
+      n|N)
+        echo
+        printf -v "$__var" '%s' never
+        return 0
+        ;;
+      q|Q)
+        echo
+        printf -v "$__var" '%s' quit
+        return 2
+        ;;
+      *)
+        if [[ "${first,,}" == "$yes_l" ]]; then
+          echo
+          printf -v "$__var" '%s' always
+          return 0
+        fi
+        echo
+        printf '%sInvalid key "%s". Press %s, n, A, q, or Enter for default (A): ' \
+          "$(user_prompt_ts_prefix)" "$first" "${yes_l^^}"
+        ;;
+    esac
+  done
+}
+
+policy_label_existing() {
+  case "${EXISTING_PROTECTION_POLICY:-}" in
+    skip) printf 'always skip' ;;
+    verify) printf 'always verify' ;;
+    *) printf 'ask each time' ;;
+  esac
+}
+
+policy_label_yes_no_ask() {
+  case "${1:-}" in
+    yes) printf 'always' ;;
+    no) printf 'never' ;;
+    *) printf 'ask each time' ;;
+  esac
+}
+
+# Apply always|never|ask → yes|no|empty policy var.
+set_yes_no_policy_from_choice() {
+  local choice="$1"
+  local policy_var_name="$2"
+
+  case "$choice" in
+    always) printf -v "$policy_var_name" '%s' yes ;;
+    never)  printf -v "$policy_var_name" '%s' no ;;
+    *)      printf -v "$policy_var_name" '%s' "" ;;
+  esac
+}
+
+# Interactive run-start policies (1–3). Returns 2 if user quits.
+prompt_run_folder_policies() {
+  local ans=""
+
+  if (( AUTO_YES == 1 )); then
+    return 0
+  fi
+
+  echo
+  echo "=== Per-folder policies for this run ==="
+  echo "Choose defaults now; you can still quit later. Enter / [ A ] = ask each time."
+  echo
+
+  echo "1) Folder already has exactly one PAR2 set and one hash:"
+  echo "  [ S ] Always skip (leave unchanged)"
+  echo "  [ v ] Always verify (leave unchanged if OK)"
+  echo "  [ A ] Ask each time (default)"
+  echo "  [ q ] Quit"
+  printf '%sChoice [ S/v/A/q ] (%s): ' \
+    "$(user_prompt_ts_prefix)" "$(prompt_timeout_label)"
+  while true; do
+    if prompt_has_timeout; then
+      IFS= read -r -t "$PROMPT_TIMEOUT" -n 1 ans || ans=A
+    else
+      IFS= read -r -n 1 ans || ans=A
+    fi
+    case "$ans" in
+      ""|$'\n'|a|A)
+        echo
+        EXISTING_PROTECTION_POLICY=""
+        break
+        ;;
+      s|S)
+        echo
+        EXISTING_PROTECTION_POLICY=skip
+        break
+        ;;
+      v|V)
+        echo
+        EXISTING_PROTECTION_POLICY=verify
+        break
+        ;;
+      q|Q)
+        echo
+        return 2
+        ;;
+      *)
+        echo
+        printf '%sInvalid key "%s". Press S, v, A, q, or Enter for default (A): ' \
+          "$(user_prompt_ts_prefix)" "$ans"
+        ;;
+    esac
+  done
+
+  echo
+  echo "2a) Folder has multiple PAR2 sets and/or hashes — verify first?"
+  echo "  [ Y ] Always verify first"
+  echo "  [ n ] Never verify first"
+  echo "  [ A ] Ask each time (default)"
+  echo "  [ q ] Quit"
+  printf '%sChoice [ Y/n/A/q ] (%s): ' \
+    "$(user_prompt_ts_prefix)" "$(prompt_timeout_label)"
+  read_always_never_ask_key_with_timeout ans y
+  case $? in
+    2) return 2 ;;
+  esac
+  set_yes_no_policy_from_choice "$ans" VERIFY_MULTI_POLICY
+
+  echo
+  echo "2b) If verify fails or is skipped — consolidate anyway into one set?"
+  echo "  [ Y ] Always consolidate anyway"
+  echo "  [ n ] Never consolidate anyway"
+  echo "  [ A ] Ask each time (default)"
+  echo "  [ q ] Quit"
+  printf '%sChoice [ Y/n/A/q ] (%s): ' \
+    "$(user_prompt_ts_prefix)" "$(prompt_timeout_label)"
+  read_always_never_ask_key_with_timeout ans y
+  case $? in
+    2) return 2 ;;
+  esac
+  set_yes_no_policy_from_choice "$ans" CONSOLIDATE_ANYWAY_POLICY
+
+  echo
+  echo "2c) When consolidate is offered — consolidate into one PAR2 + one hash?"
+  echo "  [ Y ] Always consolidate"
+  echo "  [ n ] Never consolidate"
+  echo "  [ A ] Ask each time (default)"
+  echo "  [ q ] Quit"
+  printf '%sChoice [ Y/n/A/q ] (%s): ' \
+    "$(user_prompt_ts_prefix)" "$(prompt_timeout_label)"
+  read_always_never_ask_key_with_timeout ans y
+  case $? in
+    2) return 2 ;;
+  esac
+  set_yes_no_policy_from_choice "$ans" CONSOLIDATE_POLICY
+
+  echo
+  echo "3) After create — delete leftover other PAR2/hash sets and *.old backups?"
+  echo "  [ Y ] Always delete leftovers"
+  echo "  [ n ] Never delete leftovers"
+  echo "  [ A ] Ask each time (default)"
+  echo "  [ q ] Quit"
+  printf '%sChoice [ Y/n/A/q ] (%s): ' \
+    "$(user_prompt_ts_prefix)" "$(prompt_timeout_label)"
+  read_always_never_ask_key_with_timeout ans y
+  case $? in
+    2) return 2 ;;
+  esac
+  set_yes_no_policy_from_choice "$ans" DELETE_LEFTOVER_POLICY
+
+  echo
+  log_msg "Policies: existing=$(policy_label_existing); verify-multi=$(policy_label_yes_no_ask "$VERIFY_MULTI_POLICY"); consolidate-anyway=$(policy_label_yes_no_ask "$CONSOLIDATE_ANYWAY_POLICY"); consolidate=$(policy_label_yes_no_ask "$CONSOLIDATE_POLICY"); leftovers=$(policy_label_yes_no_ask "$DELETE_LEFTOVER_POLICY")"
+  return 0
+}
+
 apply_hash_algo() {
   local i idx=0
   [[ -n "$HASH_ALGO" ]] || die "Internal error: HASH_ALGO empty."
@@ -2339,6 +2538,15 @@ print_run_settings() {
   else
     echo "  Rename helpers: not given (prompted; selected: included in PAR2)"
   fi
+  if (( AUTO_YES == 1 )); then
+    echo "  Folder policies: --yes (existing: skip; multi-set offer skipped; leftovers: delete)"
+  else
+    echo "  Existing 1+1:  $(policy_label_existing)"
+    echo "  Verify multi:  $(policy_label_yes_no_ask "$VERIFY_MULTI_POLICY")"
+    echo "  Consol. anyway:$(policy_label_yes_no_ask "$CONSOLIDATE_ANYWAY_POLICY")"
+    echo "  Consolidate:   $(policy_label_yes_no_ask "$CONSOLIDATE_POLICY")"
+    echo "  Leftovers:     $(policy_label_yes_no_ask "$DELETE_LEFTOVER_POLICY")"
+  fi
   echo "  PAR2_CMD:      $PAR2_CMD"
   case "${PAR2_THREADS_SOURCE:-default}" in
     cli) echo "  --threads:     given (${PAR2_THREADS})" ;;
@@ -2505,6 +2713,13 @@ fi
 prompt_exclude_rename_helpers
 
 if ! resolve_create_scope; then
+  echo "Quit."
+  return_code=0
+  RUN_OUTCOME=quit
+  finish
+fi
+
+if ! prompt_run_folder_policies; then
   echo "Quit."
   return_code=0
   RUN_OUTCOME=quit
