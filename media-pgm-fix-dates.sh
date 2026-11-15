@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261115.101000 - apply-phase progress bars (files + exiftool % from tmp)
 # v. 20261115.100500 - batch decide: [b] apply answers so far, resume remaining files
 # v. 20261115.100000 - batch decide: show question X of Y (file A of B overall)
 # v. 20261115.095000 - batch decide-then-apply; Ctrl-C cleans in-flight exiftool write
@@ -19,6 +20,7 @@
 # v. 20261020.150400 - date menu: ASCII n/a so parenthetical notes share one column
 # v. 20261020.145500 - fix file / media dates when the name, filesystem, and tags disagree
 #
+# 2026.11.15 - v. 0.1.20 - apply phase: files bar + exiftool % from *_exiftool_tmp
 # 2026.11.15 - v. 0.1.19 - [b] during batch decide: apply queued answers now; current+later files
 #   in the batch are asked in the next decide round
 # 2026.11.15 - v. 0.1.18 - during batch decide, show Question X of Y in this batch (file A of B overall)
@@ -140,6 +142,8 @@ Environment:
   MFD_EXIFTOOL / EXIFLOC / PGM_EXIFTOOL
                        Path to exiftool (else exiftool on PATH).
   MFD_BATCH_SIZE       Default batch size (same as --batch-size).
+  MFD_EXIFTOOL_PROGRESS_MIN_BYTES
+                       Min file size for exiftool % bar (default 5242880).
 EOF
 }
 
@@ -218,8 +222,45 @@ mfd_kill_exiftool_child() {
   wait "$pid" 2>/dev/null || true
 }
 
+mfd_file_size_bytes() {
+  local f="$1" s
+  s="$(stat -c %s -- "$f" 2>/dev/null || stat -f %z -- "$f" 2>/dev/null)" || return 1
+  [[ "$s" =~ ^[0-9]+$ ]] || return 1
+  printf '%s\n' "$s"
+}
+
+mfd_format_bytes_short() {
+  local bytes="${1:-0}"
+  [[ "$bytes" =~ ^[0-9]+$ ]] || bytes=0
+  awk -v b="$bytes" 'BEGIN {
+    if (b >= 1073741824) printf "%.2f GiB", b / 1073741824.0
+    else if (b >= 1048576) printf "%.1f MiB", b / 1048576.0
+    else if (b >= 1024) printf "%.1f KiB", b / 1024.0
+    else printf "%d B", b
+  }'
+}
+
+mfd_make_bar() {
+  local pct="${1:-0}" bar_w="${2:-20}" filled empty i bar=""
+  (( pct < 0 )) && pct=0
+  (( pct > 100 )) && pct=100
+  filled=$(( pct * bar_w / 100 ))
+  empty=$(( bar_w - filled ))
+  for (( i = 0; i < filled; i++ )); do bar+="#"; done
+  for (( i = 0; i < empty; i++ )); do bar+="-"; done
+  printf '%s\n' "$bar"
+}
+
+mfd_progress_end() {
+  if (( MFD_PROGRESS_ACTIVE )); then
+    echo
+    MFD_PROGRESS_ACTIVE=0
+  fi
+}
+
 mfd_ctrl_c() {
   echo
+  mfd_progress_end
   echo "$(mfd_ts) Interrupted (Ctrl-C)."
   mfd_kill_exiftool_child
   if [[ -n "${MFD_CURRENT_WRITE_FILE:-}" ]]; then
@@ -231,14 +272,87 @@ mfd_ctrl_c() {
   exit 130
 }
 
-# Run exiftool args in background so Ctrl-C can stop the child.
+# Run exiftool in background; show % from *_exiftool_tmp when MFD_CURRENT_WRITE_FILE is set.
 mfd_run_exiftool() {
-  local rc
+  local dest="${MFD_CURRENT_WRITE_FILE:-}" phase="exiftool"
+  local expected=0 cur=0 pct=0 pid rc=0 tmp min_b bar width msg base room
+  local bar_w=20
+
   "$@" >/dev/null 2>&1 &
-  MFD_EXIFTOOL_PID=$!
-  wait "$MFD_EXIFTOOL_PID"
+  pid=$!
+  MFD_EXIFTOOL_PID=$pid
+
+  if [[ -z "$dest" || ! -f "$dest" || ! -t 1 ]]; then
+    wait "$pid"
+    rc=$?
+    MFD_EXIFTOOL_PID=""
+    return "$rc"
+  fi
+
+  expected="$(mfd_file_size_bytes "$dest" 2>/dev/null || echo 0)"
+  [[ "$expected" =~ ^[0-9]+$ ]] || expected=0
+  tmp="${dest}_exiftool_tmp"
+  min_b="${MFD_EXIFTOOL_PROGRESS_MIN_BYTES:-5242880}"
+  [[ "$min_b" =~ ^[0-9]+$ ]] || min_b=5242880
+
+  if (( expected < min_b )); then
+    wait "$pid"
+    rc=$?
+    MFD_EXIFTOOL_PID=""
+    return "$rc"
+  fi
+
+  while kill -0 "$pid" 2>/dev/null; do
+    cur=0
+    if [[ -f "$tmp" ]]; then
+      cur="$(mfd_file_size_bytes "$tmp" 2>/dev/null || echo 0)"
+      [[ "$cur" =~ ^[0-9]+$ ]] || cur=0
+    fi
+    if (( expected > 0 )); then
+      pct=$(( cur * 100 / expected ))
+      (( pct > 99 )) && pct=99
+    else
+      pct=0
+    fi
+    bar="$(mfd_make_bar "$pct" "$bar_w")"
+    base="${dest##*/}"
+    printf -v msg '%s %s  %3d%% [%s]  %s / %s' \
+      "$(mfd_ts)" "$phase" "$pct" "$bar" \
+      "$(mfd_format_bytes_short "$cur")" "$(mfd_format_bytes_short "$expected")"
+    width="${COLUMNS:-80}"
+    [[ "$width" =~ ^[0-9]+$ ]] || width=80
+    room=$(( width - ${#msg} - 2 ))
+    if (( room >= 8 )) && [[ -n "$base" ]]; then
+      if (( ${#base} > room )); then
+        base="…${base: -$(( room - 1 ))}"
+      fi
+      msg+="  ${base}"
+    fi
+    if (( ${#msg} > width )); then
+      msg="${msg:0:width}"
+    fi
+    printf '\r%s\033[K' "$msg"
+    MFD_PROGRESS_ACTIVE=1
+    sleep 0.4
+  done
+
+  wait "$pid"
   rc=$?
   MFD_EXIFTOOL_PID=""
+  if (( rc == 0 && expected > 0 )); then
+    bar="$(mfd_make_bar 100 "$bar_w")"
+    printf -v msg '%s %s  %3d%% [%s]  %s / %s  %s' \
+      "$(mfd_ts)" "$phase" 100 "$bar" \
+      "$(mfd_format_bytes_short "$expected")" "$(mfd_format_bytes_short "$expected")" "${dest##*/}"
+    width="${COLUMNS:-80}"
+    [[ "$width" =~ ^[0-9]+$ ]] || width=80
+    if (( ${#msg} > width )); then
+      msg="${msg:0:width}"
+    fi
+    printf '\r%s\033[K' "$msg"
+    MFD_PROGRESS_ACTIVE=1
+  fi
+  mfd_progress_end
   return "$rc"
 }
 
@@ -1063,7 +1177,7 @@ mfd_apply_plans() {
   for (( i = 0; i < n; i++ )); do
     kind="${PLAN_KIND[i]}"
     path="${PLAN_PATH[i]}"
-    echo "$(mfd_ts) Fix $((i + 1))/${n}: ${path##*/} (${PLAN_LABEL[i]})"
+    echo "$(mfd_ts) Files  [$(mfd_make_bar "$(( (i + 1) * 100 / n ))")]  $((i + 1))/${n}  ${path##*/} (${PLAN_LABEL[i]})"
     mfd_print_processing "$path"
     if [[ "$kind" == "contour" ]]; then
       if mfd_apply_contour_normalize "$path" "${PLAN_EPOCH[i]}" "${PLAN_END_E[i]}"; then
@@ -1374,6 +1488,7 @@ MFD_SCRIPT_START_EPOCH=0
 MFD_SCRIPT_START_STR=""
 MFD_CURRENT_WRITE_FILE=""
 MFD_EXIFTOOL_PID=""
+MFD_PROGRESS_ACTIVE=0
 PLAN_KIND=()
 PLAN_PATH=()
 PLAN_EPOCH=()

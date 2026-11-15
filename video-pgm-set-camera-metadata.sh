@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261115.101000 - apply-phase progress bars; preserve K vs k in key lists
 # v. 20261115.100500 - batch decide: [b] apply answers so far, resume remaining files
 # v. 20261115.100000 - batch decide: show question X of Y (file A of B overall)
 # v. 20261115.095500 - camera profile menu: no default (Enter asks again)
@@ -7,6 +8,8 @@
 # v. 20261115.091000 - Contour profile is Contour+2 only (drop ROAM/GPS generics)
 # v. 20261115.090000 - initial: set Make/Model/Comment camera profiles (Contour, GoPro, 70mai, custom)
 #
+# 2026.11.15 - v. 0.1.7 - apply phase: files bar + exiftool % from *_exiftool_tmp; key lists keep
+#   distinct K vs k (rest-of-run Keep)
 # 2026.11.15 - v. 0.1.6 - [b] during batch decide: apply queued answers now; current+later files
 #   in the batch are asked in the next decide round
 # 2026.11.15 - v. 0.1.5 - during batch decide, show Question X of Y in this batch (file A of B overall)
@@ -108,6 +111,8 @@ Environment:
   SCM_EXIFTOOL / EXIFLOC / PGM_EXIFTOOL
                        Path to exiftool (else exiftool on PATH).
   SCM_BATCH_SIZE       Default batch size (same as --batch-size).
+  SCM_EXIFTOOL_PROGRESS_MIN_BYTES
+                       Min file size for exiftool % bar (default 5242880).
 EOF
 }
 
@@ -146,12 +151,13 @@ scm_choice() {
 }
 
 # Capitalise the default key in a [Y/n/a/q]-style list.
+# Non-default keys keep the caller's case so K (rest-of-run) stays distinct from k.
 scm_k() {
   local key="$1" default="$2"
   if [[ "${key,,}" == "${default,,}" ]]; then
     printf '%s\n' "${key^^}"
   else
-    printf '%s\n' "${key,,}"
+    printf '%s\n' "$key"
   fi
 }
 
@@ -325,8 +331,125 @@ scm_kill_exiftool_child() {
   wait "$pid" 2>/dev/null || true
 }
 
+scm_file_size_bytes() {
+  local f="$1" s
+  s="$(stat -c %s -- "$f" 2>/dev/null || stat -f %z -- "$f" 2>/dev/null)" || return 1
+  [[ "$s" =~ ^[0-9]+$ ]] || return 1
+  printf '%s\n' "$s"
+}
+
+scm_format_bytes_short() {
+  local bytes="${1:-0}"
+  [[ "$bytes" =~ ^[0-9]+$ ]] || bytes=0
+  awk -v b="$bytes" 'BEGIN {
+    if (b >= 1073741824) printf "%.2f GiB", b / 1073741824.0
+    else if (b >= 1048576) printf "%.1f MiB", b / 1048576.0
+    else if (b >= 1024) printf "%.1f KiB", b / 1024.0
+    else printf "%d B", b
+  }'
+}
+
+scm_make_bar() {
+  local pct="${1:-0}" bar_w="${2:-20}" filled empty i bar=""
+  (( pct < 0 )) && pct=0
+  (( pct > 100 )) && pct=100
+  filled=$(( pct * bar_w / 100 ))
+  empty=$(( bar_w - filled ))
+  for (( i = 0; i < filled; i++ )); do bar+="#"; done
+  for (( i = 0; i < empty; i++ )); do bar+="-"; done
+  printf '%s\n' "$bar"
+}
+
+scm_progress_end() {
+  if (( SCM_PROGRESS_ACTIVE )); then
+    echo
+    SCM_PROGRESS_ACTIVE=0
+  fi
+}
+
+# Run exiftool with a rewriting % bar from growing *_exiftool_tmp (when tty + large enough).
+scm_run_exiftool_progress() {
+  local dest="$1" phase="$2"
+  shift 2
+  local expected=0 cur=0 pct=0 pid rc=0 tmp min_b bar width msg base room
+  local bar_w=20
+
+  [[ -f "$dest" ]] || return 1
+  (( $# >= 1 )) || return 1
+  expected="$(scm_file_size_bytes "$dest" 2>/dev/null || echo 0)"
+  [[ "$expected" =~ ^[0-9]+$ ]] || expected=0
+  tmp="${dest}_exiftool_tmp"
+  min_b="${SCM_EXIFTOOL_PROGRESS_MIN_BYTES:-5242880}"
+  [[ "$min_b" =~ ^[0-9]+$ ]] || min_b=5242880
+
+  "$@" >/dev/null 2>&1 &
+  pid=$!
+  SCM_EXIFTOOL_PID=$pid
+
+  if (( expected < min_b )) || [[ ! -t 1 ]]; then
+    wait "$pid"
+    rc=$?
+    SCM_EXIFTOOL_PID=""
+    return "$rc"
+  fi
+
+  while kill -0 "$pid" 2>/dev/null; do
+    cur=0
+    if [[ -f "$tmp" ]]; then
+      cur="$(scm_file_size_bytes "$tmp" 2>/dev/null || echo 0)"
+      [[ "$cur" =~ ^[0-9]+$ ]] || cur=0
+    fi
+    if (( expected > 0 )); then
+      pct=$(( cur * 100 / expected ))
+      (( pct > 99 )) && pct=99
+    else
+      pct=0
+    fi
+    bar="$(scm_make_bar "$pct" "$bar_w")"
+    base="${dest##*/}"
+    printf -v msg '%s %s  %3d%% [%s]  %s / %s' \
+      "$(scm_ts)" "$phase" "$pct" "$bar" \
+      "$(scm_format_bytes_short "$cur")" "$(scm_format_bytes_short "$expected")"
+    width="${COLUMNS:-80}"
+    [[ "$width" =~ ^[0-9]+$ ]] || width=80
+    room=$(( width - ${#msg} - 2 ))
+    if (( room >= 8 )) && [[ -n "$base" ]]; then
+      if (( ${#base} > room )); then
+        base="…${base: -$(( room - 1 ))}"
+      fi
+      msg+="  ${base}"
+    fi
+    if (( ${#msg} > width )); then
+      msg="${msg:0:width}"
+    fi
+    printf '\r%s\033[K' "$msg"
+    SCM_PROGRESS_ACTIVE=1
+    sleep 0.4
+  done
+
+  wait "$pid"
+  rc=$?
+  SCM_EXIFTOOL_PID=""
+  if (( rc == 0 && expected > 0 )); then
+    bar="$(scm_make_bar 100 "$bar_w")"
+    printf -v msg '%s %s  %3d%% [%s]  %s / %s  %s' \
+      "$(scm_ts)" "$phase" 100 "$bar" \
+      "$(scm_format_bytes_short "$expected")" "$(scm_format_bytes_short "$expected")" "${dest##*/}"
+    width="${COLUMNS:-80}"
+    [[ "$width" =~ ^[0-9]+$ ]] || width=80
+    if (( ${#msg} > width )); then
+      msg="${msg:0:width}"
+    fi
+    printf '\r%s\033[K' "$msg"
+    SCM_PROGRESS_ACTIVE=1
+  fi
+  scm_progress_end
+  return "$rc"
+}
+
 scm_ctrl_c() {
   echo
+  scm_progress_end
   echo "$(scm_ts) Interrupted (Ctrl-C)."
   scm_kill_exiftool_child
   if [[ -n "${SCM_CURRENT_WRITE_FILE:-}" ]]; then
@@ -351,24 +474,23 @@ scm_apply_camera_tags() {
   exif="$(scm_find_exiftool 2>/dev/null)" || return 1
   SCM_CURRENT_WRITE_FILE="$dest"
   # -P: do not bump filesystem mtime while writing tags.
-  "$exif" -overwrite_original -P -api largefilesupport=1 \
+  if scm_run_exiftool_progress "$dest" "exiftool" \
+    "$exif" -overwrite_original -P -api largefilesupport=1 \
     -Make="$want_make" -Model="$want_model" -Comment="$want_comment" \
     -QuickTime:Make="$want_make" -QuickTime:Model="$want_model" \
     -QuickTime:Comment="$want_comment" \
-    -- "$dest" >/dev/null 2>&1 &
-  SCM_EXIFTOOL_PID=$!
-  wait "$SCM_EXIFTOOL_PID"
-  rc=$?
-  SCM_EXIFTOOL_PID=""
-  if (( rc != 0 )); then
+    -- "$dest"; then
+    rc=0
+  else
     # Fallback without QuickTime: peers.
-    "$exif" -overwrite_original -P -api largefilesupport=1 \
+    if scm_run_exiftool_progress "$dest" "exiftool" \
+      "$exif" -overwrite_original -P -api largefilesupport=1 \
       -Make="$want_make" -Model="$want_model" -Comment="$want_comment" \
-      -- "$dest" >/dev/null 2>&1 &
-    SCM_EXIFTOOL_PID=$!
-    wait "$SCM_EXIFTOOL_PID"
-    rc=$?
-    SCM_EXIFTOOL_PID=""
+      -- "$dest"; then
+      rc=0
+    else
+      rc=1
+    fi
   fi
   SCM_CURRENT_WRITE_FILE=""
   (( rc == 0 ))
@@ -423,7 +545,7 @@ scm_apply_plans() {
   SCM_Q_OVERALL_POS=""
   SCM_Q_OVERALL_TOTAL=""
   for (( i = 0; i < n; i++ )); do
-    echo "$(scm_ts) Write $((i + 1))/${n}: ${PLAN_PATHS[i]##*/}"
+    echo "$(scm_ts) Files  [$(scm_make_bar "$(( (i + 1) * 100 / n ))")]  $((i + 1))/${n}  ${PLAN_PATHS[i]##*/}"
     scm_do_tag_write \
       "${PLAN_PATHS[i]}" "${PLAN_MAKE[i]}" "${PLAN_MODEL[i]}" "${PLAN_COMMENT[i]}" "${PLAN_HOW[i]}"
   done
@@ -861,6 +983,7 @@ SCM_WANT_COMMENT=""
 SCM_CAMERA_LABEL=""
 SCM_CURRENT_WRITE_FILE=""
 SCM_EXIFTOOL_PID=""
+SCM_PROGRESS_ACTIVE=0
 SCANNED=0
 ALREADY=0
 NEED=0
