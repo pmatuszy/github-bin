@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261115.101500 - SUMMARY Timing: start/finish/wall/processing/prompt-wait
 # v. 20261115.101000 - apply-phase progress bars; preserve K vs k in key lists
 # v. 20261115.100500 - batch decide: [b] apply answers so far, resume remaining files
 # v. 20261115.100000 - batch decide: show question X of Y (file A of B overall)
@@ -8,6 +9,7 @@
 # v. 20261115.091000 - Contour profile is Contour+2 only (drop ROAM/GPS generics)
 # v. 20261115.090000 - initial: set Make/Model/Comment camera profiles (Contour, GoPro, 70mai, custom)
 #
+# 2026.11.15 - v. 0.1.8 - SUMMARY Timing: Started / Finished / wall / processing / prompt-wait
 # 2026.11.15 - v. 0.1.7 - apply phase: files bar + exiftool % from *_exiftool_tmp; key lists keep
 #   distinct K vs k (rest-of-run Keep)
 # 2026.11.15 - v. 0.1.6 - [b] during batch decide: apply queued answers now; current+later files
@@ -121,6 +123,48 @@ scm_ts() {
   date '+[ %Y.%m.%d %H:%M:%S ]'
 }
 
+scm_wall_clock_now() {
+  date '+%Y.%m.%d %H:%M:%S'
+}
+
+scm_format_elapsed() {
+  local s="${1:-0}" h m
+  (( s < 0 )) && s=0
+  h=$(( s / 3600 )); s=$(( s % 3600 ))
+  m=$(( s / 60 )); s=$(( s % 60 ))
+  if (( h > 0 )); then
+    printf '%dh %dm %ds' "$h" "$m" "$s"
+  elif (( m > 0 )); then
+    printf '%dm %ds' "$m" "$s"
+  else
+    printf '%ds' "$s"
+  fi
+}
+
+scm_prompt_wait_begin() {
+  SCM_PROMPT_WAIT_MARK=$(date +%s)
+}
+
+scm_prompt_wait_end() {
+  local now
+  [[ -n "${SCM_PROMPT_WAIT_MARK:-}" && "$SCM_PROMPT_WAIT_MARK" -gt 0 ]] || return 0
+  now=$(date +%s)
+  SCM_PROMPT_WAIT_SEC=$(( SCM_PROMPT_WAIT_SEC + now - SCM_PROMPT_WAIT_MARK ))
+  SCM_PROMPT_WAIT_MARK=0
+}
+
+scm_proc_begin() {
+  SCM_PROC_MARK=$(date +%s)
+}
+
+scm_proc_end() {
+  local now
+  [[ -n "${SCM_PROC_MARK:-}" && "$SCM_PROC_MARK" -gt 0 ]] || return 0
+  now=$(date +%s)
+  SCM_PROC_SEC=$(( SCM_PROC_SEC + now - SCM_PROC_MARK ))
+  SCM_PROC_MARK=0
+}
+
 scm_print_selected() {
   echo "$(scm_ts) Selected: $*"
 }
@@ -133,7 +177,9 @@ scm_read_key() {
   fi
   printf '%s %s' "$(scm_ts)" "$prompt"
   if [[ -t 0 ]]; then
+    scm_prompt_wait_begin
     read -n 1 answer || answer=
+    scm_prompt_wait_end
   else
     REPLY="$default"
     return 0
@@ -544,11 +590,13 @@ scm_apply_plans() {
   SCM_Q_BATCH_TOTAL=""
   SCM_Q_OVERALL_POS=""
   SCM_Q_OVERALL_TOTAL=""
+  scm_proc_begin
   for (( i = 0; i < n; i++ )); do
     echo "$(scm_ts) Files  [$(scm_make_bar "$(( (i + 1) * 100 / n ))")]  $((i + 1))/${n}  ${PLAN_PATHS[i]##*/}"
     scm_do_tag_write \
       "${PLAN_PATHS[i]}" "${PLAN_MAKE[i]}" "${PLAN_MODEL[i]}" "${PLAN_COMMENT[i]}" "${PLAN_HOW[i]}"
   done
+  scm_proc_end
   trap - INT
   scm_clear_plans
 }
@@ -614,9 +662,13 @@ scm_ask_custom_make_model() {
     return 1
   fi
   printf '%s Make: ' "$(scm_ts)"
-  read -r make || return 1
+  scm_prompt_wait_begin
+  read -r make || { scm_prompt_wait_end; return 1; }
+  scm_prompt_wait_end
   printf '%s Model: ' "$(scm_ts)"
-  read -r model || return 1
+  scm_prompt_wait_begin
+  read -r model || { scm_prompt_wait_end; return 1; }
+  scm_prompt_wait_end
   make="${make#"${make%%[![:space:]]*}"}"
   make="${make%"${make##*[![:space:]]}"}"
   model="${model#"${model%%[![:space:]]*}"}"
@@ -928,7 +980,9 @@ scm_ask_batch_size() {
   echo "  Enter how many files to decide before applying writes."
   while true; do
     printf '%s Batch size [%s]: ' "$(scm_ts)" "$def"
+    scm_prompt_wait_begin
     read -r input || input=""
+    scm_prompt_wait_end
     input="${input%"${input##*[![:space:]]}"}"
     input="${input#"${input%%[![:space:]]*}"}"
     if [[ -z "$input" ]]; then
@@ -945,6 +999,14 @@ scm_ask_batch_size() {
 }
 
 scm_print_summary() {
+  local end_str wall_sec wall_time other_sec
+  end_str="$(scm_wall_clock_now)"
+  wall_sec=$(( $(date +%s) - ${SCM_SCRIPT_START_EPOCH:-$(date +%s)} ))
+  (( wall_sec < 0 )) && wall_sec=0
+  other_sec=$(( wall_sec - SCM_PROC_SEC - SCM_PROMPT_WAIT_SEC ))
+  (( other_sec < 0 )) && other_sec=0
+  wall_time="$(scm_format_elapsed "$wall_sec")"
+
   echo
   scm_rule
   echo "$(scm_ts) SUMMARY"
@@ -962,6 +1024,14 @@ scm_print_summary() {
   if (( DRY_RUN )); then
     printf '  %-22s %s\n' "Mode:" "dry-run (nothing written)"
   fi
+  echo
+  echo "--- Timing ---"
+  printf '  %-22s %s\n' "Started:" "${SCM_SCRIPT_START_STR:-?}"
+  printf '  %-22s %s\n' "Finished:" "$end_str"
+  printf '  %-22s %s\n' "Total wall time:" "$wall_time"
+  printf '  %-22s %s\n' "Processing time:" "$(scm_format_elapsed "${SCM_PROC_SEC:-0}")  (exiftool writes)"
+  printf '  %-22s %s\n' "Prompt/wait time:" "$(scm_format_elapsed "${SCM_PROMPT_WAIT_SEC:-0}")  (interactive prompts)"
+  printf '  %-22s %s\n' "Other overhead:" "$(scm_format_elapsed "$other_sec")"
   scm_rule
 }
 
@@ -984,6 +1054,12 @@ SCM_CAMERA_LABEL=""
 SCM_CURRENT_WRITE_FILE=""
 SCM_EXIFTOOL_PID=""
 SCM_PROGRESS_ACTIVE=0
+SCM_SCRIPT_START_EPOCH=0
+SCM_SCRIPT_START_STR=""
+SCM_PROC_SEC=0
+SCM_PROC_MARK=0
+SCM_PROMPT_WAIT_SEC=0
+SCM_PROMPT_WAIT_MARK=0
 SCANNED=0
 ALREADY=0
 NEED=0
@@ -1108,6 +1184,9 @@ if [[ -f "${BASH_SOURCE[0]}" ]]; then
 fi
 
 print_version_banner
+
+SCM_SCRIPT_START_EPOCH=$(date +%s)
+SCM_SCRIPT_START_STR="$(scm_wall_clock_now)"
 
 if ! scm_find_exiftool >/dev/null; then
   echo "$(scm_ts) exiftool not found (set SCM_EXIFTOOL or install exiftool)." >&2

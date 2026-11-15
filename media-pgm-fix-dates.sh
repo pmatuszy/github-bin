@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261115.101500 - SUMMARY Timing: processing + prompt-wait (with start/finish/wall)
 # v. 20261115.101000 - apply-phase progress bars (files + exiftool % from tmp)
 # v. 20261115.100500 - batch decide: [b] apply answers so far, resume remaining files
 # v. 20261115.100000 - batch decide: show question X of Y (file A of B overall)
@@ -20,6 +21,7 @@
 # v. 20261020.150400 - date menu: ASCII n/a so parenthetical notes share one column
 # v. 20261020.145500 - fix file / media dates when the name, filesystem, and tags disagree
 #
+# 2026.11.15 - v. 0.1.21 - SUMMARY Timing adds Processing and Prompt/wait (plus Other overhead)
 # 2026.11.15 - v. 0.1.20 - apply phase: files bar + exiftool % from *_exiftool_tmp
 # 2026.11.15 - v. 0.1.19 - [b] during batch decide: apply queued answers now; current+later files
 #   in the batch are asked in the next decide round
@@ -174,10 +176,37 @@ mfd_summary_kv() {
   printf '  %-22s %s\n' "$1" "$2"
 }
 
+mfd_prompt_wait_begin() {
+  MFD_PROMPT_WAIT_MARK=$(date +%s)
+}
+
+mfd_prompt_wait_end() {
+  local now
+  [[ -n "${MFD_PROMPT_WAIT_MARK:-}" && "$MFD_PROMPT_WAIT_MARK" -gt 0 ]] || return 0
+  now=$(date +%s)
+  MFD_PROMPT_WAIT_SEC=$(( MFD_PROMPT_WAIT_SEC + now - MFD_PROMPT_WAIT_MARK ))
+  MFD_PROMPT_WAIT_MARK=0
+}
+
+mfd_proc_begin() {
+  MFD_PROC_MARK=$(date +%s)
+}
+
+mfd_proc_end() {
+  local now
+  [[ -n "${MFD_PROC_MARK:-}" && "$MFD_PROC_MARK" -gt 0 ]] || return 0
+  now=$(date +%s)
+  MFD_PROC_SEC=$(( MFD_PROC_SEC + now - MFD_PROC_MARK ))
+  MFD_PROC_MARK=0
+}
+
 mfd_print_summary() {
-  local end_str wall_sec wall_time
+  local end_str wall_sec wall_time other_sec
   end_str="$(mfd_wall_clock_now)"
   wall_sec=$(( $(date +%s) - ${MFD_SCRIPT_START_EPOCH:-$(date +%s)} ))
+  (( wall_sec < 0 )) && wall_sec=0
+  other_sec=$(( wall_sec - MFD_PROC_SEC - MFD_PROMPT_WAIT_SEC ))
+  (( other_sec < 0 )) && other_sec=0
   wall_time="$(mfd_format_elapsed "$wall_sec")"
 
   echo
@@ -197,6 +226,9 @@ mfd_print_summary() {
   mfd_summary_kv "Started:" "${MFD_SCRIPT_START_STR:-?}"
   mfd_summary_kv "Finished:" "$end_str"
   mfd_summary_kv "Total wall time:" "$wall_time"
+  mfd_summary_kv "Processing time:" "$(mfd_format_elapsed "${MFD_PROC_SEC:-0}")  (exiftool / FS writes)"
+  mfd_summary_kv "Prompt/wait time:" "$(mfd_format_elapsed "${MFD_PROMPT_WAIT_SEC:-0}")  (interactive prompts)"
+  mfd_summary_kv "Other overhead:" "$(mfd_format_elapsed "$other_sec")"
   mfd_rule
 }
 
@@ -364,7 +396,9 @@ mfd_read_key() {
   fi
   printf '%s %s' "$(mfd_ts)" "$prompt"
   if [[ -t 0 ]]; then
+    mfd_prompt_wait_begin
     read -n 1 answer || answer=
+    mfd_prompt_wait_end
   else
     REPLY="$default"
     return 0
@@ -1174,6 +1208,7 @@ mfd_apply_plans() {
   MFD_Q_BATCH_TOTAL=""
   MFD_Q_OVERALL_POS=""
   MFD_Q_OVERALL_TOTAL=""
+  mfd_proc_begin
   for (( i = 0; i < n; i++ )); do
     kind="${PLAN_KIND[i]}"
     path="${PLAN_PATH[i]}"
@@ -1198,6 +1233,7 @@ mfd_apply_plans() {
       fi
     fi
   done
+  mfd_proc_end
   trap - INT
   mfd_clear_plans
 }
@@ -1453,7 +1489,9 @@ mfd_ask_batch_size() {
   echo "  Enter how many files to decide before applying fixes."
   while true; do
     printf '%s Batch size [%s]: ' "$(mfd_ts)" "$def"
+    mfd_prompt_wait_begin
     read -r input || input=""
+    mfd_prompt_wait_end
     input="${input%"${input##*[![:space:]]}"}"
     input="${input#"${input%%[![:space:]]*}"}"
     if [[ -z "$input" ]]; then
@@ -1489,6 +1527,10 @@ MFD_SCRIPT_START_STR=""
 MFD_CURRENT_WRITE_FILE=""
 MFD_EXIFTOOL_PID=""
 MFD_PROGRESS_ACTIVE=0
+MFD_PROC_SEC=0
+MFD_PROC_MARK=0
+MFD_PROMPT_WAIT_SEC=0
+MFD_PROMPT_WAIT_MARK=0
 PLAN_KIND=()
 PLAN_PATH=()
 PLAN_EPOCH=()
