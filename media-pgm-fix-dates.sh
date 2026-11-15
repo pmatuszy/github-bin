@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261115.103000 - pre-scan: batch only files that still need a decision
 # v. 20261115.102500 - drop Files bar; show i/n on the live exiftool line
 # v. 20261115.101500 - SUMMARY Timing: processing + prompt-wait (with start/finish/wall)
 # v. 20261115.101000 - apply-phase progress bars (files + exiftool % from tmp)
@@ -22,6 +23,8 @@
 # v. 20261020.150400 - date menu: ASCII n/a so parenthetical notes share one column
 # v. 20261020.145500 - fix file / media dates when the name, filesystem, and tags disagree
 #
+# 2026.11.15 - v. 0.1.23 - pre-scan before batching; batch size / Question X of Y cover only files
+#   that disagree (agree/skip counted once, not as batch slots)
 # 2026.11.15 - v. 0.1.22 - apply progress: Write/Fix i/n line + (i/n) on exiftool bar; remove Files bar
 # 2026.11.15 - v. 0.1.21 - SUMMARY Timing adds Processing and Prompt/wait (plus Other overhead)
 # 2026.11.15 - v. 0.1.20 - apply phase: files bar + exiftool % from *_exiftool_tmp
@@ -216,6 +219,7 @@ mfd_print_summary() {
   echo "$(mfd_ts) SUMMARY"
   mfd_rule
   mfd_summary_kv "Scanned:" "$SCANNED"
+  mfd_summary_kv "No decision needed:" "${ALREADY_OK:-0}"
   mfd_summary_kv "Batch size:" "${BATCH_SIZE:-n/a}"
   mfd_summary_kv "Disagreed:" "$MISMATCH"
   mfd_summary_kv "Fixed:" "$FIXED"
@@ -1466,15 +1470,45 @@ mfd_decide_file() {
 
 mfd_default_batch_size_for_count() {
   local n="$1"
-  if (( n <= 50 )); then
+  if (( n <= 0 )); then
+    printf '%s\n' "1"
+  elif (( n <= 50 )); then
     printf '%s\n' "$n"
   else
     printf '%s\n' "50"
   fi
 }
 
+# Classify each file once: agree/skip out of the work list; disagree stays actionable.
+# Sets ACTIONABLE / ACTIONABLE_COUNT / ALREADY_OK. Verbose prints each skip during pre-scan.
+mfd_prescan_actionable() {
+  local f i n=${#FILES[@]}
+  ACTIONABLE=()
+  ALREADY_OK=0
+  echo
+  echo "$(mfd_ts) Pre-scan: checking ${n} media file(s)…"
+  for (( i = 0; i < n; i++ )); do
+    f="${FILES[i]}"
+    if mfd_prepare_file "$f"; then
+      ACTIONABLE+=("$f")
+      continue
+    fi
+    ALREADY_OK=$((ALREADY_OK + 1))
+    if (( VERBOSE )); then
+      mfd_verbose_print_check "$f" "$MFD_VERDICT" "$MFD_NAME_E" "$MFD_FS_E" "$MFD_MEDIA_E"
+    fi
+  done
+  ACTIONABLE_COUNT=${#ACTIONABLE[@]}
+  echo "$(mfd_ts) Pre-scan done: ${ALREADY_OK} no decision needed, ${ACTIONABLE_COUNT} disagree (of ${SCANNED} scanned)."
+}
+
 mfd_ask_batch_size() {
-  local n="$SCANNED" def input
+  local n="$ACTIONABLE_COUNT" def input
+  if (( n <= 0 )); then
+    BATCH_SIZE=0
+    echo "$(mfd_ts) Batch size: n/a (nothing needs a decision)."
+    return 0
+  fi
   def="$(mfd_default_batch_size_for_count "$n")"
   if [[ -n "${BATCH_SIZE_CLI:-}" ]]; then
     BATCH_SIZE="$BATCH_SIZE_CLI"
@@ -1495,9 +1529,11 @@ mfd_ask_batch_size() {
     return 0
   fi
   echo
-  echo "$(mfd_ts) Total media files in this run: ${n}"
+  echo "$(mfd_ts) Total media files in this run: ${SCANNED}"
+  echo "  No decision needed: ${ALREADY_OK}"
+  echo "  Need a decision: ${n}"
   if (( n <= 50 )); then
-    echo "  Suggested batch size: ${def} (all files in one go; ≤ 50)."
+    echo "  Suggested batch size: ${def} (all remaining in one go; ≤ 50)."
   else
     echo "  Suggested batch size: ${def} (of ${n}). Decide first, then write, then next batch."
   fi
@@ -1537,6 +1573,9 @@ FIXED=0
 SKIPPED=0
 SCANNED=0
 MISMATCH=0
+ALREADY_OK=0
+ACTIONABLE=()
+ACTIONABLE_COUNT=0
 MFD_SCRIPT_START_EPOCH=0
 MFD_SCRIPT_START_STR=""
 MFD_CURRENT_WRITE_FILE=""
@@ -1664,39 +1703,50 @@ fi
 mapfile -t FILES < <(printf '%s\n' "${FILES[@]}" | LC_ALL=C sort -u)
 SCANNED=${#FILES[@]}
 
+mfd_prescan_actionable
 mfd_ask_batch_size
 
+if (( ACTIONABLE_COUNT <= 0 )); then
+  echo
+  echo "$(mfd_ts) Nothing needs a decision (${ALREADY_OK} already OK of ${SCANNED} scanned)."
+  mfd_print_summary
+  if (( SCANNED > 0 && ! VERBOSE )); then
+    echo "$(mfd_ts) Re-run with --verbose to see each file check and why."
+  fi
+  exit 0
+fi
+
 echo
-echo "$(mfd_ts) Checking ${SCANNED} media file(s); batch size ${BATCH_SIZE}."
+echo "$(mfd_ts) Deciding ${ACTIONABLE_COUNT} of ${SCANNED} media file(s); batch size ${BATCH_SIZE}."
 echo "$(mfd_ts) Each batch: decide all prompts first, then write."
 (( DRY_RUN )) && echo "$(mfd_ts) Dry run — nothing will be written."
 (( DO_YES )) && echo "$(mfd_ts) -y: apply without asking (Contour normalize when Contour; else oldest)."
-(( VERBOSE )) && echo "$(mfd_ts) Verbose: print every file check."
+(( VERBOSE )) && echo "$(mfd_ts) Verbose: agree/skip listed during pre-scan."
 echo
 
 batch_i=0
 file_i=0
 quit_run=0
-while (( file_i < SCANNED )); do
+while (( file_i < ACTIONABLE_COUNT )); do
   batch_i=$((batch_i + 1))
   batch_end=$((file_i + BATCH_SIZE))
-  (( batch_end > SCANNED )) && batch_end=$SCANNED
+  (( batch_end > ACTIONABLE_COUNT )) && batch_end=$ACTIONABLE_COUNT
   batch_count=$((batch_end - file_i))
   mfd_clear_plans
   echo
   mfd_rule
-  echo "$(mfd_ts) Batch ${batch_i}: files $((file_i + 1))–${batch_end} of ${SCANNED} — decide (${batch_count} file(s))"
+  echo "$(mfd_ts) Batch ${batch_i}: files $((file_i + 1))–${batch_end} of ${ACTIONABLE_COUNT} needing a decision — decide (${batch_count} file(s))"
   echo "$(mfd_ts) Tip: press [b] during a prompt to apply answers so far and ask the rest later."
   mfd_rule
   MFD_Q_BATCH_NUM=$batch_i
   MFD_Q_BATCH_TOTAL=$batch_count
-  MFD_Q_OVERALL_TOTAL=$SCANNED
+  MFD_Q_OVERALL_TOTAL=$ACTIONABLE_COUNT
   early_apply=0
   next_file_i=$batch_end
   for (( j = file_i; j < batch_end; j++ )); do
     MFD_Q_BATCH_POS=$((j - file_i + 1))
     MFD_Q_OVERALL_POS=$((j + 1))
-    mfd_decide_file "${FILES[j]}"
+    mfd_decide_file "${ACTIONABLE[j]}"
     rc=$?
     if (( rc == 2 )); then
       quit_run=1
@@ -1715,7 +1765,7 @@ while (( file_i < SCANNED )); do
   mfd_apply_plans
   file_i=$next_file_i
   if (( early_apply )); then
-    echo "$(mfd_ts) Resuming decide at file $((file_i + 1)) of ${SCANNED}."
+    echo "$(mfd_ts) Resuming decide at file $((file_i + 1)) of ${ACTIONABLE_COUNT}."
   fi
 done
 

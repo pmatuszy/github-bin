@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261115.103000 - pre-scan: batch only files that still need a decision
 # v. 20261115.102500 - drop Files bar; show i/n on the live exiftool line
 # v. 20261115.101500 - SUMMARY Timing: start/finish/wall/processing/prompt-wait
 # v. 20261115.101000 - apply-phase progress bars; preserve K vs k in key lists
@@ -10,6 +11,8 @@
 # v. 20261115.091000 - Contour profile is Contour+2 only (drop ROAM/GPS generics)
 # v. 20261115.090000 - initial: set Make/Model/Comment camera profiles (Contour, GoPro, 70mai, custom)
 #
+# 2026.11.15 - v. 0.1.10 - pre-scan after profile choice; batch size / Question X of Y cover
+#   only files that still need a decision (already-tagged counted once, not as batch slots)
 # 2026.11.15 - v. 0.1.9 - apply progress: Write i/n line + (i/n) on exiftool bar; remove Files bar
 # 2026.11.15 - v. 0.1.8 - SUMMARY Timing: Started / Finished / wall / processing / prompt-wait
 # 2026.11.15 - v. 0.1.7 - apply phase: files bar + exiftool % from *_exiftool_tmp; key lists keep
@@ -957,15 +960,52 @@ scm_decide_file() {
 
 scm_default_batch_size_for_count() {
   local n="$1"
-  if (( n <= 50 )); then
+  if (( n <= 0 )); then
+    printf '%s\n' "1"
+  elif (( n <= 50 )); then
     printf '%s\n' "$n"
   else
     printf '%s\n' "50"
   fi
 }
 
+# After profile is known: count already-tagged; keep only files that still need a decision.
+# Unreadable tags stay actionable so decide can report FAILED. Sets ACTIONABLE / ACTIONABLE_COUNT.
+scm_prescan_actionable() {
+  local f i n=${#FILES[@]}
+  ACTIONABLE=()
+  ALREADY=0
+  echo
+  echo "$(scm_ts) Pre-scan: checking ${n} video file(s) against ${SCM_CAMERA_LABEL}…"
+  for (( i = 0; i < n; i++ )); do
+    f="${FILES[i]}"
+    if ! scm_read_camera_tags "$f"; then
+      ACTIONABLE+=("$f")
+      continue
+    fi
+    if scm_tags_match_wanted "$SCM_WANT_MAKE" "$SCM_WANT_MODEL" "$SCM_WANT_COMMENT"; then
+      ALREADY=$((ALREADY + 1))
+      if (( VERBOSE )); then
+        echo "$(scm_ts) Already tagged (${SCM_CAMERA_LABEL}): ${f##*/}"
+        printf '  %-10s %s\n' "Make" "$(scm_disp_tag "$SCM_CUR_MAKE")"
+        printf '  %-10s %s\n' "Model" "$(scm_disp_tag "$SCM_CUR_MODEL")"
+        printf '  %-10s %s\n' "Comment" "$(scm_disp_tag "$SCM_CUR_COMMENT")"
+      fi
+      continue
+    fi
+    ACTIONABLE+=("$f")
+  done
+  ACTIONABLE_COUNT=${#ACTIONABLE[@]}
+  echo "$(scm_ts) Pre-scan done: ${ALREADY} already tagged, ${ACTIONABLE_COUNT} need a decision (of ${SCANNED} scanned)."
+}
+
 scm_ask_batch_size() {
-  local n="$SCANNED" def input
+  local n="$ACTIONABLE_COUNT" def input
+  if (( n <= 0 )); then
+    BATCH_SIZE=0
+    echo "$(scm_ts) Batch size: n/a (nothing needs a decision)."
+    return 0
+  fi
   def="$(scm_default_batch_size_for_count "$n")"
   if [[ -n "${BATCH_SIZE_CLI:-}" ]]; then
     BATCH_SIZE="$BATCH_SIZE_CLI"
@@ -986,9 +1026,11 @@ scm_ask_batch_size() {
     return 0
   fi
   echo
-  echo "$(scm_ts) Total video files in this run: ${n}"
+  echo "$(scm_ts) Total video files in this run: ${SCANNED}"
+  echo "  Already tagged: ${ALREADY}"
+  echo "  Need a decision: ${n}"
   if (( n <= 50 )); then
-    echo "  Suggested batch size: ${def} (all files in one go; ≤ 50)."
+    echo "  Suggested batch size: ${def} (all remaining in one go; ≤ 50)."
   else
     echo "  Suggested batch size: ${def} (of ${n}). Decide first, then write, then next batch."
   fi
@@ -1077,6 +1119,8 @@ SCM_PROMPT_WAIT_SEC=0
 SCM_PROMPT_WAIT_MARK=0
 SCANNED=0
 ALREADY=0
+ACTIONABLE=()
+ACTIONABLE_COUNT=0
 NEED=0
 TAGGED=0
 KEPT=0
@@ -1244,40 +1288,52 @@ if (( rc != 0 )); then
   exit 1
 fi
 
-scm_ask_batch_size
-
 echo
 echo "$(scm_ts) Camera: ${SCM_CAMERA_LABEL}  (Make=${SCM_WANT_MAKE} Model=${SCM_WANT_MODEL})"
-echo "$(scm_ts) Checking ${SCANNED} video file(s); batch size ${BATCH_SIZE}."
+scm_prescan_actionable
+scm_ask_batch_size
+
+if (( ACTIONABLE_COUNT <= 0 )); then
+  echo
+  echo "$(scm_ts) Nothing needs a decision (${ALREADY} already tagged of ${SCANNED} scanned)."
+  scm_print_summary
+  if (( SCANNED > 0 && ! VERBOSE )); then
+    echo "$(scm_ts) Re-run with --verbose to list already-tagged files."
+  fi
+  exit 0
+fi
+
+echo
+echo "$(scm_ts) Deciding ${ACTIONABLE_COUNT} of ${SCANNED} video file(s); batch size ${BATCH_SIZE}."
 echo "$(scm_ts) Each batch: decide all prompts first, then write."
 (( DRY_RUN )) && echo "$(scm_ts) Dry run — nothing will be written."
 (( DO_YES )) && echo "$(scm_ts) -y: apply without asking (safe: empty tags only; keep differing existing)."
-(( VERBOSE )) && echo "$(scm_ts) Verbose: show files that already match."
+(( VERBOSE )) && echo "$(scm_ts) Verbose: already-tagged listed during pre-scan."
 echo
 
 batch_i=0
 file_i=0
 quit_run=0
-while (( file_i < SCANNED )); do
+while (( file_i < ACTIONABLE_COUNT )); do
   batch_i=$((batch_i + 1))
   batch_end=$((file_i + BATCH_SIZE))
-  (( batch_end > SCANNED )) && batch_end=$SCANNED
+  (( batch_end > ACTIONABLE_COUNT )) && batch_end=$ACTIONABLE_COUNT
   batch_count=$((batch_end - file_i))
   scm_clear_plans
   echo
   scm_rule
-  echo "$(scm_ts) Batch ${batch_i}: files $((file_i + 1))–${batch_end} of ${SCANNED} — decide (${batch_count} file(s))"
+  echo "$(scm_ts) Batch ${batch_i}: files $((file_i + 1))–${batch_end} of ${ACTIONABLE_COUNT} needing a decision — decide (${batch_count} file(s))"
   echo "$(scm_ts) Tip: press [b] during a prompt to apply answers so far and ask the rest later."
   scm_rule
   SCM_Q_BATCH_NUM=$batch_i
   SCM_Q_BATCH_TOTAL=$batch_count
-  SCM_Q_OVERALL_TOTAL=$SCANNED
+  SCM_Q_OVERALL_TOTAL=$ACTIONABLE_COUNT
   early_apply=0
   next_file_i=$batch_end
   for (( j = file_i; j < batch_end; j++ )); do
     SCM_Q_BATCH_POS=$((j - file_i + 1))
     SCM_Q_OVERALL_POS=$((j + 1))
-    scm_decide_file "${FILES[j]}"
+    scm_decide_file "${ACTIONABLE[j]}"
     rc=$?
     if (( rc == 2 )); then
       quit_run=1
@@ -1297,7 +1353,7 @@ while (( file_i < SCANNED )); do
   scm_apply_plans
   file_i=$next_file_i
   if (( early_apply )); then
-    echo "$(scm_ts) Resuming decide at file $((file_i + 1)) of ${SCANNED}."
+    echo "$(scm_ts) Resuming decide at file $((file_i + 1)) of ${ACTIONABLE_COUNT}."
   fi
 done
 
