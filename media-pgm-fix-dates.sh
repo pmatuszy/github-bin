@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261115.093500 - end SUMMARY includes Started / Finished / Total wall time
 # v. 20261115.093000 - Contour normalize: name=start, FS=end, media=start; idempotent via name↔FS↔duration
 # v. 20261115.090500 - [c] Always Contour start for later Contour files in this run
 # v. 20261115.085000 - Contour: offer Contour start (name − duration); agree if FS/media already at that start
@@ -15,6 +16,7 @@
 # v. 20261020.150400 - date menu: ASCII n/a so parenthetical notes share one column
 # v. 20261020.145500 - fix file / media dates when the name, filesystem, and tags disagree
 #
+# 2026.11.15 - v. 0.1.16 - end-of-run SUMMARY prints Started / Finished / Total wall time (like other pgm scripts)
 # 2026.11.15 - v. 0.1.15 - Contour normalize: rename stamp to clip start, filesystem mtime = end, media
 #   CreateDate = start. If name is already earlier than FS by ~duration (name=start, FS=end), treat as
 #   agree and do not subtract duration again. [c] / Contour menu / -y on Contour files apply normalize.
@@ -122,6 +124,53 @@ EOF
 # --- after header is sourced ---
 mfd_ts() {
   date '+[ %Y.%m.%d %H:%M:%S ]'
+}
+
+mfd_wall_clock_now() {
+  date '+%Y.%m.%d %H:%M:%S'
+}
+
+mfd_format_elapsed() {
+  local s="${1:-0}" h m
+  (( s < 0 )) && s=0
+  h=$(( s / 3600 )); s=$(( s % 3600 ))
+  m=$(( s / 60 )); s=$(( s % 60 ))
+  if (( h > 0 )); then
+    printf '%dh %dm %ds' "$h" "$m" "$s"
+  elif (( m > 0 )); then
+    printf '%dm %ds' "$m" "$s"
+  else
+    printf '%ds' "$s"
+  fi
+}
+
+mfd_summary_kv() {
+  printf '  %-22s %s\n' "$1" "$2"
+}
+
+mfd_print_summary() {
+  local end_str wall_sec wall_time
+  end_str="$(mfd_wall_clock_now)"
+  wall_sec=$(( $(date +%s) - ${MFD_SCRIPT_START_EPOCH:-$(date +%s)} ))
+  wall_time="$(mfd_format_elapsed "$wall_sec")"
+
+  echo
+  mfd_rule
+  echo "$(mfd_ts) SUMMARY"
+  mfd_rule
+  mfd_summary_kv "Scanned:" "$SCANNED"
+  mfd_summary_kv "Disagreed:" "$MISMATCH"
+  mfd_summary_kv "Fixed:" "$FIXED"
+  mfd_summary_kv "Skipped/kept:" "$SKIPPED"
+  if (( DRY_RUN )); then
+    mfd_summary_kv "Mode:" "dry-run (nothing written)"
+  fi
+  echo
+  echo "--- Timing ---"
+  mfd_summary_kv "Started:" "${MFD_SCRIPT_START_STR:-?}"
+  mfd_summary_kv "Finished:" "$end_str"
+  mfd_summary_kv "Total wall time:" "$wall_time"
+  mfd_rule
 }
 
 mfd_read_key() {
@@ -1081,6 +1130,8 @@ FIXED=0
 SKIPPED=0
 SCANNED=0
 MISMATCH=0
+MFD_SCRIPT_START_EPOCH=0
+MFD_SCRIPT_START_STR=""
 FILES=()
 POSITIONALS=()
 
@@ -1139,6 +1190,9 @@ fi
 
 print_version_banner
 
+MFD_SCRIPT_START_EPOCH=$(date +%s)
+MFD_SCRIPT_START_STR="$(mfd_wall_clock_now)"
+
 if ! mfd_find_exiftool >/dev/null; then
   echo "$(mfd_ts) exiftool not found (set MFD_EXIFTOOL or install exiftool)." >&2
   exit 1
@@ -1164,6 +1218,7 @@ fi
 
 if (( ${#FILES[@]} == 0 )); then
   echo "$(mfd_ts) No media files to check."
+  mfd_print_summary
   exit 0
 fi
 
@@ -1173,7 +1228,7 @@ SCANNED=${#FILES[@]}
 echo
 echo "$(mfd_ts) Checking ${SCANNED} media file(s)."
 (( DRY_RUN )) && echo "$(mfd_ts) Dry run — nothing will be written."
-(( DO_YES )) && echo "$(mfd_ts) -y: apply oldest usable date without asking."
+(( DO_YES )) && echo "$(mfd_ts) -y: apply without asking (Contour normalize when Contour; else oldest)."
 (( VERBOSE )) && echo "$(mfd_ts) Verbose: print every file check."
 echo
 
@@ -1185,8 +1240,7 @@ for f in "${FILES[@]}"; do
   fi
 done
 
-echo
-echo "$(mfd_ts) Done. Scanned ${SCANNED}; disagreed ${MISMATCH}; fixed ${FIXED}; skipped/kept ${SKIPPED}."
+mfd_print_summary
 if (( SCANNED > 0 && MISMATCH == 0 && FIXED == 0 && ! VERBOSE )); then
   echo "$(mfd_ts) Nothing to change. Re-run with --verbose to see each file check and why."
 fi
