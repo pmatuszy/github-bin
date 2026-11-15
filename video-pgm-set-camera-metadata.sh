@@ -1,13 +1,15 @@
 #!/bin/bash
+# v. 20261115.091200 - ask when Make/Model/Comment already set; safe -y (fill empty only)
 # v. 20261115.091000 - Contour profile is Contour+2 only (drop ROAM/GPS generics)
 # v. 20261115.090000 - initial: set Make/Model/Comment camera profiles (Contour, GoPro, 70mai, custom)
 #
+# 2026.11.15 - v. 0.1.2 - if Make/Model/Comment already filled but do not match the profile, ask: overwrite [Y], merge empty fields only [m], keep [k], overwrite rest-of-run [a], keep-existing rest-of-run [K]; -y only tags fully empty files (keeps differing existing tags)
 # 2026.11.15 - v. 0.1.1 - Contour preset is Contour+2 Camera only (Make=Contour Model=Contour+2); removed Contour / ROAM / GPS generics
 # 2026.11.15 - v. 0.1 - initial release: tag video files with camera identity (Make, Model,
 #   Comment) so Contour / GoPro / 70mai detection does not rely on filename alone. Profiles
 #   Contour+2, GoPro, 70mai-A510, or custom Make/Model. Idempotent: files that already match
 #   are skipped. -y / --camera apply without a profile menu; --dry-run; -r; --verbose;
-#   per-file [Y]/[a]/[n]/[q]; end-of-run summary.
+#   per-file prompts; end-of-run summary.
 #
 # video-pgm-set-camera-metadata.sh
 #
@@ -23,7 +25,8 @@ Usage: $(script_live_basename) [-h|--help] [-v|--version] [--history]
 
 Write camera identity into video metadata (Make, Model, Comment) so other
 scripts can detect Contour+2 / GoPro / 70mai without guessing from the file
-name alone. Files that already match the chosen profile are skipped.
+name alone. Exact matches are skipped. If tags are already filled but differ
+from the profile, you are asked what to do (overwrite / merge empties / keep).
 
 With no FILE or DIR, scan the current directory (not subdirectories unless -r).
 
@@ -39,7 +42,9 @@ Options:
   -v, --version        Print script version and exit.
   --history            Print script changelog from the header and exit.
   -y, --yes            Apply without asking (needs --camera, or custom via
-                       --make / --model).
+                       --make / --model). Safe: only tags files where Make,
+                       Model, and Comment are all empty; keeps differing
+                       existing tags.
   -r, --recursive      Also scan subdirectories.
   --dry-run            Show what would change; do not write.
   --verbose            Print current tags even when already matching.
@@ -49,8 +54,18 @@ Options:
   --model TEXT         Custom Model.
 
 Interactive keys (per file, when not -y):
+  Empty tags:
   [Y] Apply this file (default)
-  [a] Apply this file and every later file (same camera)
+  [a] Overwrite/apply this and every later file
+  [n] Skip this file
+  [q] Quit
+
+  Tags already filled (but not matching the profile):
+  [Y] Overwrite with the profile (default)
+  [m] Merge — fill only empty fields; keep non-empty Make/Model/Comment
+  [k] Keep current tags on this file
+  [a] Overwrite this and every later file that differs
+  [K] Keep existing tags for the rest of this run (only tag fully empty files)
   [n] Skip this file
   [q] Quit
 
@@ -205,6 +220,28 @@ scm_tags_match_wanted() {
   return 0
 }
 
+scm_tags_all_empty() {
+  [[ -z "${SCM_CUR_MAKE}" && -z "${SCM_CUR_MODEL}" && -z "${SCM_CUR_COMMENT}" ]]
+}
+
+scm_tags_any_filled() {
+  [[ -n "${SCM_CUR_MAKE}" || -n "${SCM_CUR_MODEL}" || -n "${SCM_CUR_COMMENT}" ]]
+}
+
+# Merge: keep non-empty current fields; fill empties from wanted. Sets SCM_MERGED_*.
+scm_compute_merged_tags() {
+  local want_make="$1" want_model="$2" want_comment="$3"
+  if [[ -n "$SCM_CUR_MAKE" ]]; then SCM_MERGED_MAKE="$SCM_CUR_MAKE"; else SCM_MERGED_MAKE="$want_make"; fi
+  if [[ -n "$SCM_CUR_MODEL" ]]; then SCM_MERGED_MODEL="$SCM_CUR_MODEL"; else SCM_MERGED_MODEL="$want_model"; fi
+  if [[ -n "$SCM_CUR_COMMENT" ]]; then SCM_MERGED_COMMENT="$SCM_CUR_COMMENT"; else SCM_MERGED_COMMENT="$want_comment"; fi
+}
+
+scm_merged_changes_anything() {
+  [[ "$SCM_MERGED_MAKE" != "$SCM_CUR_MAKE" \
+    || "$SCM_MERGED_MODEL" != "$SCM_CUR_MODEL" \
+    || "$SCM_MERGED_COMMENT" != "$SCM_CUR_COMMENT" ]]
+}
+
 scm_disp_tag() {
   local v="$1"
   if [[ -z "$v" ]]; then
@@ -236,6 +273,18 @@ scm_apply_camera_tags() {
   "$exif" -overwrite_original -P -api largefilesupport=1 \
     -Make="$want_make" -Model="$want_model" -Comment="$want_comment" \
     -- "$dest" >/dev/null 2>&1
+}
+
+scm_do_tag_write() {
+  local f="$1" make="$2" model="$3" comment="$4" how="$5"
+  if scm_apply_camera_tags "$f" "$make" "$model" "$comment"; then
+    TAGGED=$((TAGGED + 1))
+    echo "$(scm_ts) Tagged as ${SCM_CAMERA_LABEL} (${how}): ${f##*/}"
+    return 0
+  fi
+  FAILED=$((FAILED + 1))
+  echo "$(scm_ts) Failed to write tags: ${f}" >&2
+  return 1
 }
 
 scm_normalize_camera_id() {
@@ -382,9 +431,20 @@ scm_choose_camera_profile() {
   done
 }
 
+scm_print_tag_plan() {
+  local f="$1"
+  scm_print_processing "$f"
+  echo "  Camera profile: ${SCM_CAMERA_LABEL}"
+  echo
+  printf '  %-10s %-24s %s\n' "" "Current" "Proposed"
+  printf '  %-10s %-24s %s\n' "Make" "$(scm_disp_tag "$SCM_CUR_MAKE")" "$SCM_WANT_MAKE"
+  printf '  %-10s %-24s %s\n' "Model" "$(scm_disp_tag "$SCM_CUR_MODEL")" "$SCM_WANT_MODEL"
+  printf '  %-10s %-24s %s\n' "Comment" "$(scm_disp_tag "$SCM_CUR_COMMENT")" "$SCM_WANT_COMMENT"
+}
+
 scm_process_file() {
   local f="$1"
-  local def=y keys
+  local def=y keys has_existing=0
 
   scm_read_camera_tags "$f" || {
     echo "$(scm_ts) Could not read tags: ${f}" >&2
@@ -404,60 +464,116 @@ scm_process_file() {
   fi
 
   NEED=$((NEED + 1))
+  scm_tags_any_filled && has_existing=1
 
-  if (( ALWAYS_APPLY )) || (( DO_YES )) || (( ! script_is_run_interactively )); then
-    scm_print_processing "$f"
-    printf '  %-10s %s → %s\n' "Make" "$(scm_disp_tag "$SCM_CUR_MAKE")" "$SCM_WANT_MAKE"
-    printf '  %-10s %s → %s\n' "Model" "$(scm_disp_tag "$SCM_CUR_MODEL")" "$SCM_WANT_MODEL"
-    printf '  %-10s %s → %s\n' "Comment" "$(scm_disp_tag "$SCM_CUR_COMMENT")" "$SCM_WANT_COMMENT"
-    if scm_apply_camera_tags "$f" "$SCM_WANT_MAKE" "$SCM_WANT_MODEL" "$SCM_WANT_COMMENT"; then
-      TAGGED=$((TAGGED + 1))
-      echo "$(scm_ts) Tagged as ${SCM_CAMERA_LABEL}: ${f##*/}"
-    else
-      FAILED=$((FAILED + 1))
-      echo "$(scm_ts) Failed to write tags: ${f}" >&2
+  # Rest-of-run: keep existing non-matching tags; only auto-tag fully empty files.
+  if (( ALWAYS_KEEP_EXISTING )); then
+    if (( has_existing )); then
+      KEPT=$((KEPT + 1))
+      echo "$(scm_ts) Kept existing tags (for the rest of this run): ${f##*/}"
+      return 0
     fi
+    scm_print_tag_plan "$f"
+    scm_do_tag_write "$f" "$SCM_WANT_MAKE" "$SCM_WANT_MODEL" "$SCM_WANT_COMMENT" "empty file"
     return 0
   fi
 
-  scm_print_processing "$f"
-  echo "  Camera profile: ${SCM_CAMERA_LABEL}"
+  # Rest-of-run: overwrite every mismatch.
+  if (( ALWAYS_APPLY )); then
+    scm_print_tag_plan "$f"
+    scm_do_tag_write "$f" "$SCM_WANT_MAKE" "$SCM_WANT_MODEL" "$SCM_WANT_COMMENT" "overwrite"
+    return 0
+  fi
+
+  # -y / non-interactive: safe — only tag fully empty; keep differing existing tags.
+  if (( DO_YES )) || (( ! script_is_run_interactively )); then
+    scm_print_tag_plan "$f"
+    if (( has_existing )); then
+      KEPT=$((KEPT + 1))
+      echo "$(scm_ts) Kept existing tags (-y does not overwrite): ${f##*/}"
+      return 0
+    fi
+    scm_do_tag_write "$f" "$SCM_WANT_MAKE" "$SCM_WANT_MODEL" "$SCM_WANT_COMMENT" "empty file"
+    return 0
+  fi
+
+  scm_print_tag_plan "$f"
   echo
-  printf '  %-10s %-24s %s\n' "" "Current" "Proposed"
-  printf '  %-10s %-24s %s\n' "Make" "$(scm_disp_tag "$SCM_CUR_MAKE")" "$SCM_WANT_MAKE"
-  printf '  %-10s %-24s %s\n' "Model" "$(scm_disp_tag "$SCM_CUR_MODEL")" "$SCM_WANT_MODEL"
-  printf '  %-10s %-24s %s\n' "Comment" "$(scm_disp_tag "$SCM_CUR_COMMENT")" "$SCM_WANT_COMMENT"
-  echo
-  echo "  [$(scm_k y "$def")] Apply this file (default)"
-  echo "  [$(scm_k a "$def")] Apply this file and every later file"
-  echo "  [$(scm_k n "$def")] Skip this file"
-  echo "  [$(scm_k q "$def")] Quit"
-  keys="$(scm_keys "$def" y a n q)"
+  if (( has_existing )); then
+    echo "  Tags are already filled but do not match ${SCM_CAMERA_LABEL}."
+    echo "  [$(scm_k y "$def")] Overwrite with ${SCM_CAMERA_LABEL} (default)"
+    echo "  [$(scm_k m "$def")] Merge — fill only empty fields; keep non-empty Make/Model/Comment"
+    echo "  [$(scm_k k "$def")] Keep current tags on this file"
+    echo "  [$(scm_k a "$def")] Overwrite this and every later file that differs"
+    echo "  [$(scm_k K "$def")] Keep existing tags for the rest of this run (only tag fully empty files)"
+    echo "  [$(scm_k n "$def")] Skip this file"
+    echo "  [$(scm_k q "$def")] Quit"
+    keys="$(scm_keys "$def" y m k a K n q)"
+  else
+    echo "  [$(scm_k y "$def")] Apply this file (default)"
+    echo "  [$(scm_k a "$def")] Apply this file and every later file"
+    echo "  [$(scm_k n "$def")] Skip this file"
+    echo "  [$(scm_k q "$def")] Quit"
+    keys="$(scm_keys "$def" y a n q)"
+  fi
+
   while true; do
     scm_read_key "Set camera metadata [${keys}]: " "$def"
     case "$(scm_choice "$REPLY")" in
       y)
-        scm_print_selected "y = Apply this file"
-        if scm_apply_camera_tags "$f" "$SCM_WANT_MAKE" "$SCM_WANT_MODEL" "$SCM_WANT_COMMENT"; then
-          TAGGED=$((TAGGED + 1))
-          echo "$(scm_ts) Tagged as ${SCM_CAMERA_LABEL}: ${f##*/}"
+        if (( has_existing )); then
+          scm_print_selected "y = Overwrite with ${SCM_CAMERA_LABEL}"
+          scm_do_tag_write "$f" "$SCM_WANT_MAKE" "$SCM_WANT_MODEL" "$SCM_WANT_COMMENT" "overwrite"
         else
-          FAILED=$((FAILED + 1))
-          echo "$(scm_ts) Failed to write tags: ${f}" >&2
+          scm_print_selected "y = Apply this file"
+          scm_do_tag_write "$f" "$SCM_WANT_MAKE" "$SCM_WANT_MODEL" "$SCM_WANT_COMMENT" "apply"
         fi
         return 0
         ;;
-      a)
-        scm_print_selected "a = Apply this file and every later file"
-        ALWAYS_APPLY=1
-        if scm_apply_camera_tags "$f" "$SCM_WANT_MAKE" "$SCM_WANT_MODEL" "$SCM_WANT_COMMENT"; then
-          TAGGED=$((TAGGED + 1))
-          echo "$(scm_ts) Tagged as ${SCM_CAMERA_LABEL}: ${f##*/}"
-        else
-          FAILED=$((FAILED + 1))
-          echo "$(scm_ts) Failed to write tags: ${f}" >&2
+      m)
+        if (( ! has_existing )); then
+          echo "$(scm_ts) Merge is only for files that already have some tags."
+          continue
         fi
-        echo "$(scm_ts) Will apply ${SCM_CAMERA_LABEL} to every later file."
+        scm_print_selected "m = Merge — fill only empty fields"
+        scm_compute_merged_tags "$SCM_WANT_MAKE" "$SCM_WANT_MODEL" "$SCM_WANT_COMMENT"
+        if ! scm_merged_changes_anything; then
+          KEPT=$((KEPT + 1))
+          echo "$(scm_ts) Nothing empty to fill; kept current tags: ${f##*/}"
+          return 0
+        fi
+        printf '  %-10s %-24s %s\n' "Make" "$(scm_disp_tag "$SCM_CUR_MAKE")" "$SCM_MERGED_MAKE"
+        printf '  %-10s %-24s %s\n' "Model" "$(scm_disp_tag "$SCM_CUR_MODEL")" "$SCM_MERGED_MODEL"
+        printf '  %-10s %-24s %s\n' "Comment" "$(scm_disp_tag "$SCM_CUR_COMMENT")" "$SCM_MERGED_COMMENT"
+        scm_do_tag_write "$f" "$SCM_MERGED_MAKE" "$SCM_MERGED_MODEL" "$SCM_MERGED_COMMENT" "merge empties"
+        return 0
+        ;;
+      k)
+        if (( ! has_existing )); then
+          echo "$(scm_ts) No existing tags to keep; use Skip or Apply."
+          continue
+        fi
+        # Capital K is rest-of-run; bare k is this file. scm_choice lowercases — distinguish via REPLY.
+        if [[ "$REPLY" == "K" ]]; then
+          scm_print_selected "K = Keep existing tags for the rest of this run"
+          ALWAYS_KEEP_EXISTING=1
+          ALWAYS_APPLY=0
+          KEPT=$((KEPT + 1))
+          echo "$(scm_ts) Kept existing tags: ${f##*/}"
+          echo "$(scm_ts) Will keep existing tags for later files; only fully empty files get ${SCM_CAMERA_LABEL}."
+          return 0
+        fi
+        scm_print_selected "k = Keep current tags on this file"
+        KEPT=$((KEPT + 1))
+        echo "$(scm_ts) Kept existing tags: ${f##*/}"
+        return 0
+        ;;
+      a)
+        scm_print_selected "a = Overwrite this and every later file that differs"
+        ALWAYS_APPLY=1
+        ALWAYS_KEEP_EXISTING=0
+        scm_do_tag_write "$f" "$SCM_WANT_MAKE" "$SCM_WANT_MODEL" "$SCM_WANT_COMMENT" "overwrite"
+        echo "$(scm_ts) Will overwrite differing tags with ${SCM_CAMERA_LABEL} on every later file."
         return 0
         ;;
       n)
@@ -489,6 +605,7 @@ scm_print_summary() {
   printf '  %-22s %s\n' "Already matching:" "$ALREADY"
   printf '  %-22s %s\n' "Needed a change:" "$NEED"
   printf '  %-22s %s\n' "Tagged:" "$TAGGED"
+  printf '  %-22s %s\n' "Kept existing tags:" "$KEPT"
   printf '  %-22s %s\n' "Skipped:" "$SKIPPED"
   printf '  %-22s %s\n' "Failed:" "$FAILED"
   if (( DRY_RUN )); then
@@ -503,6 +620,7 @@ RECURSIVE=0
 DRY_RUN=0
 VERBOSE=0
 ALWAYS_APPLY=0
+ALWAYS_KEEP_EXISTING=0
 CAMERA_CLI=""
 SCM_CUSTOM_MAKE=""
 SCM_CUSTOM_MODEL=""
@@ -514,6 +632,7 @@ SCANNED=0
 ALREADY=0
 NEED=0
 TAGGED=0
+KEPT=0
 SKIPPED=0
 FAILED=0
 FILES=()
@@ -657,7 +776,7 @@ echo
 echo "$(scm_ts) Camera: ${SCM_CAMERA_LABEL}  (Make=${SCM_WANT_MAKE} Model=${SCM_WANT_MODEL})"
 echo "$(scm_ts) Checking ${SCANNED} video file(s)."
 (( DRY_RUN )) && echo "$(scm_ts) Dry run — nothing will be written."
-(( DO_YES )) && echo "$(scm_ts) -y: apply without asking."
+(( DO_YES )) && echo "$(scm_ts) -y: apply without asking (safe: empty tags only; keep differing existing)."
 (( VERBOSE )) && echo "$(scm_ts) Verbose: show files that already match."
 echo
 
