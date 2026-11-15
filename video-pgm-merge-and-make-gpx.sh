@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261115.081500 - Contour merges use ffmpeg concat -c copy (mp4_merge breaks HandBrake HEVC+MP3)
 # v. 20261115.080700 - Contour suspect window 46–100s: review candidates (default skip); confident ≤45s unchanged
 # v. 20261115.080100 - Contour stop slack tightened (default +45s); battery-change pauses stay separate
 # v. 20261115.075000 - Contour ~2 GB size-split chapters (YYYYMMDD_HHMMSS / _NVenc_*); wider stop gap than GoPro
@@ -93,6 +94,7 @@
 # v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
 # v. 20260805.154826 - after merge: copy GPS/dates from first chapter; FS times via touch -r
 
+# 2026.11.15 - v. 0.15.110 - Contour merges use ffmpeg concat demuxer (-c copy), not mp4_merge: HandBrake HEVC+MP3 Contour chapters produce unplayable output with mp4_merge (wrong duration/start, broken audio at the seam); ffmpeg concat keeps a correct timeline
 # 2026.11.15 - v. 0.15.109 - Contour suspect window: gaps 46–100s after prev start+duration are listed as review merge candidates (plan + prompt, default Skip; -y / merge-all do not auto-merge them); confident Contour stays ≤45s
 # 2026.11.15 - v. 0.15.108 - Contour stop slack tightened: next start may be 30s early … 45s after prev start+duration (was +180s); short split pauses (~28s) still merge, battery-change gaps (~54s+) stay separate groups
 # 2026.11.15 - v. 0.15.107 - Contour size-split: YYYYMMDD_HHMMSS[.mp4|_NVenc_…]; ~2 GB chapters (not GoPro 4/12 GB); next start ≈ prev start + duration with Contour stop slack; plan label Contour ~2 GB; GoPro size-split rules unchanged
@@ -344,8 +346,10 @@ Merge behaviour:
     Gaps of 46–100s (PGM_CONTOUR_TIME_SUSPECT_MAX_STOP_SEC) are Contour *suspect*
     review candidates: shown in the plan with the gap, offered to merge with
     default Skip (-y and merge-all do not take them). Longer gaps stay standalone.
-    The last chapter may be a smaller partial. Output:
-    YYYYMMDD_HHMMSS_Contour_concat_parts_01-NN.mp4. GoPro 4/12 GB rules are unchanged.
+    The last chapter may be a smaller partial. Contour groups are merged with
+    ffmpeg concat (-c copy), not mp4_merge — HandBrake HEVC+MP3 Contour chapters
+    are not GoPro-style files and mp4_merge makes unplayable output.
+    Output: YYYYMMDD_HHMMSS_Contour_concat_parts_01-NN.mp4. GoPro 4/12 GB rules are unchanged.
   - Also groups 70mai-style clips NOYYYYMMDD-HHMMSS-NNNNNNX.MP4 and the same
     name starting with EV (same camera letter) into a continuous journey: ordered
     by filename time, sequence number increases by 1, and the filename start times
@@ -4845,6 +4849,57 @@ contour_group_output_file() {
   printf '%s_%s_Contour_concat_parts_01-%02d.mp4\n' "$date1" "$t1" "$n"
 }
 
+# Contour (HandBrake HEVC+MP3 / NVenc) must not use gyroflow mp4_merge — it corrupts
+# timestamps and audio. Use ffmpeg concat demuxer with stream copy instead.
+# Any all-Contour basename set (including forced merges) prefers ffmpeg.
+group_prefers_ffmpeg_concat() {
+  local -a files=("$@")
+  local f
+  (( ${#files[@]} >= 2 )) || return 1
+  for f in "${files[@]}"; do
+    contour_basename_parse "${f##*/}" || return 1
+  done
+  return 0
+}
+
+# Escape a path for an ffmpeg concat demuxer "file '…'" line.
+pgm_ffmpeg_concat_escape_path() {
+  local p="$1"
+  p="${p//\'/\'\\\'\'}"
+  printf '%s\n' "$p"
+}
+
+# Concatenate MP4s with ffmpeg -f concat -c copy into $1. Remaining args are inputs.
+pgm_ffmpeg_concat_copy_files() {
+  local out="$1"
+  shift
+  local -a files=("$@")
+  local list f abs rc=0
+  (( ${#files[@]} >= 2 )) || return 1
+  [[ -n "$out" ]] || return 1
+  if ! command -v ffmpeg >/dev/null 2>&1; then
+    echo "$(pgm_ts) ffmpeg not found — Contour chapters need ffmpeg concat (mp4_merge cannot merge them safely)." >&2
+    return 1
+  fi
+  list=$(mktemp "${TMPDIR:-/tmp}/pgm_ffmpeg_concat.XXXXXX.txt") || return 1
+  : >"$list"
+  for f in "${files[@]}"; do
+    abs=$(pgm_abs_path "$f" 2>/dev/null) || abs="$f"
+    abs=$(pgm_ffmpeg_concat_escape_path "$abs")
+    printf "file '%s'\n" "$abs" >>"$list"
+  done
+  echo "$(pgm_ts) Using ffmpeg concat copy for Contour (mp4_merge breaks HandBrake HEVC+MP3)…"
+  if ! ffmpeg -y -hide_banner -loglevel error -stats \
+    -f concat -safe 0 -i "$list" -c copy -movflags +faststart "$out"; then
+    rc=$?
+    echo "$(pgm_ts) ffmpeg concat failed (exit ${rc})." >&2
+  else
+    rc=0
+  fi
+  rm -f -- "$list"
+  return "$rc"
+}
+
 # Group remaining Contour ~2 GB singles that chain by start+duration (Contour stop slack).
 build_contour_size_split_groups() {
   local -a kept=() singles=() run=() new_groups=()
@@ -7629,8 +7684,18 @@ run_merge_group() {
   fi
   trap video_merge_ctrl_c INT
   pgm_processing_begin
-  "${merger}" "${files[@]}" --out "${write_path}"
-  rc=$?
+  if group_prefers_ffmpeg_concat "${files[@]}"; then
+    pgm_ffmpeg_concat_copy_files "$write_path" "${files[@]}"
+    rc=$?
+  else
+    if [[ "$merger" == "__ffmpeg_concat_only__" ]]; then
+      echo "$(pgm_ts) This group needs mp4_merge, but only ffmpeg Contour-merge mode is available." >&2
+      rc=1
+    else
+      "${merger}" "${files[@]}" --out "${write_path}"
+      rc=$?
+    fi
+  fi
   pgm_processing_end
   if (( rc == 0 )); then
     if [[ -n "$MERGE_TMP_DIR" ]]; then
@@ -7654,7 +7719,7 @@ run_merge_group() {
     # interactive prompts so Ctrl-C on a date/seam question does not wipe a finished merge.
     VIDEO_MERGE_OUT_FILE="$output_file"
     trap video_merge_ctrl_c INT
-    echo "$(pgm_ts) mp4_merge finished: ${output_file}"
+    echo "$(pgm_ts) Merge finished: ${output_file}"
     echo "$(pgm_ts) Post-merge still running (metadata / GPX / dates) — not finished yet."
     echo "$(pgm_ts) Ctrl-C now removes this merge output (group not finished)."
     local meta_label=""
@@ -8229,22 +8294,30 @@ do_merge() {
   local blob action si
   local -a files=() mergeable_blobs=() mergeable_suspect_notes=()
   merger=$(find_merger) || {
-    mp4_merge_print_not_found_help
-    if ! prompt_install_mp4_merge_now; then
-      return 1
+    # Contour-only folders can merge with ffmpeg; GoPro still needs mp4_merge.
+    if command -v ffmpeg >/dev/null 2>&1; then
+      echo "$(pgm_ts) mp4_merge not found — Contour groups can still merge via ffmpeg concat."
+      merger="__ffmpeg_concat_only__"
+    else
+      mp4_merge_print_not_found_help
+      if ! prompt_install_mp4_merge_now; then
+        return 1
+      fi
+      merger=$(find_merger) || {
+        echo "$(pgm_ts) mp4_merge is still not available after the install attempt — cannot merge." >&2
+        return 1
+      }
     fi
-    merger=$(find_merger) || {
-      echo "$(pgm_ts) mp4_merge is still not available after the install attempt — cannot merge." >&2
+  }
+  if [[ "$merger" != "__ffmpeg_concat_only__" ]]; then
+    merger=$(resolve_merger_path_for_merge "$merger") || {
+      local resolve_rc=$?
+      if (( resolve_rc == 2 )); then
+        return 0
+      fi
       return 1
     }
-  }
-  merger=$(resolve_merger_path_for_merge "$merger") || {
-    local resolve_rc=$?
-    if (( resolve_rc == 2 )); then
-      return 0
-    fi
-    return 1
-  }
+  fi
 
   local sorted_mp4=()
   local codec_skip=0
@@ -8292,6 +8365,11 @@ do_merge() {
   for blob in "${GROUP_BLOBS[@]}"; do
     group_files_to_array "$blob" files
     if (( ${#files[@]} >= 2 )); then
+      if [[ "$merger" == "__ffmpeg_concat_only__" ]] && ! group_prefers_ffmpeg_concat "${files[@]}"; then
+        echo "$(pgm_ts) Skipping non-Contour group (mp4_merge not installed; Contour uses ffmpeg only)."
+        echo
+        continue
+      fi
       if merge_group_assert_codecs "${files[@]}"; then
         mergeable_blobs+=("$blob")
         mergeable_suspect_notes+=("")
@@ -8315,6 +8393,11 @@ do_merge() {
       [[ -f "$f" ]] || { all_here=0; break; }
     done
     (( all_here )) || continue
+    if ! command -v ffmpeg >/dev/null 2>&1; then
+      echo "$(pgm_ts) Skipping Contour suspect group (ffmpeg required)."
+      echo
+      continue
+    fi
     if merge_group_assert_codecs "${files[@]}"; then
       mergeable_blobs+=("$blob")
       mergeable_suspect_notes+=("${CONTOUR_SUSPECT_NOTES[$si]:-suspect gap}")
