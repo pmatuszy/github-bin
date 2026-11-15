@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261115.100000 - batch decide: show question X of Y (file A of B overall)
 # v. 20261115.095000 - batch decide-then-apply; Ctrl-C cleans in-flight exiftool write
 # v. 20261115.093500 - end SUMMARY includes Started / Finished / Total wall time
 # v. 20261115.093000 - Contour normalize: name=start, FS=end, media=start; idempotent via name↔FS↔duration
@@ -17,6 +18,7 @@
 # v. 20261020.150400 - date menu: ASCII n/a so parenthetical notes share one column
 # v. 20261020.145500 - fix file / media dates when the name, filesystem, and tags disagree
 #
+# 2026.11.15 - v. 0.1.18 - during batch decide, show Question X of Y in this batch (file A of B overall)
 # 2026.11.15 - v. 0.1.17 - process in batches: ask all decisions for a batch first, then write; batch size
 #   default = all when ≤50 files, else 50 (--batch-size / MFD_BATCH_SIZE); Ctrl-C during a write stops
 #   exiftool and removes that file's *_exiftool_tmp
@@ -345,13 +347,38 @@ mfd_rule() {
   printf '%s\n' "========================================================================"
 }
 
+mfd_question_progress_text() {
+  if [[ -n "${MFD_Q_BATCH_POS:-}" && -n "${MFD_Q_BATCH_TOTAL:-}" ]]; then
+    printf 'Question %s of %s in this batch  (file %s of %s overall)' \
+      "$MFD_Q_BATCH_POS" "$MFD_Q_BATCH_TOTAL" \
+      "${MFD_Q_OVERALL_POS:-?}" "${MFD_Q_OVERALL_TOTAL:-?}"
+  else
+    printf ''
+  fi
+}
+
 # Prominent start-of-file banner.
 mfd_print_processing() {
-  local f="$1"
+  local f="$1" prog
   echo
   mfd_rule
+  prog="$(mfd_question_progress_text)"
+  if [[ -n "$prog" ]]; then
+    echo "$(mfd_ts) ${prog}"
+  fi
   echo "$(mfd_ts) Processing: ${f}"
   mfd_rule
+}
+
+mfd_print_decide_slot() {
+  local note="${1:-}" prog
+  prog="$(mfd_question_progress_text)"
+  [[ -n "$prog" ]] || return 0
+  if [[ -n "$note" ]]; then
+    echo "$(mfd_ts) ${prog} — ${note}"
+  else
+    echo "$(mfd_ts) ${prog}"
+  fi
 }
 
 # One result row; mark with * when before and after differ.
@@ -1016,9 +1043,18 @@ mfd_apply_plans() {
   }
   echo
   mfd_rule
-  echo "$(mfd_ts) Applying ${n} planned fix(es)…"
+  if [[ -n "${MFD_Q_BATCH_NUM:-}" ]]; then
+    echo "$(mfd_ts) Batch ${MFD_Q_BATCH_NUM}: applying ${n} planned fix(es)…"
+  else
+    echo "$(mfd_ts) Applying ${n} planned fix(es)…"
+  fi
   mfd_rule
   trap mfd_ctrl_c INT
+  # Apply phase: clear decide question counters so Processing banners stay clean.
+  MFD_Q_BATCH_POS=""
+  MFD_Q_BATCH_TOTAL=""
+  MFD_Q_OVERALL_POS=""
+  MFD_Q_OVERALL_TOTAL=""
   for (( i = 0; i < n; i++ )); do
     kind="${PLAN_KIND[i]}"
     path="${PLAN_PATH[i]}"
@@ -1060,7 +1096,10 @@ mfd_decide_file() {
   if (( VERBOSE )); then
     mfd_verbose_print_check "$f" "$MFD_VERDICT" "$MFD_NAME_E" "$MFD_FS_E" "$MFD_MEDIA_E"
   fi
-  (( need_fix )) || return 0
+  if (( ! need_fix )); then
+    mfd_print_decide_slot "agree (no prompt): ${f##*/}"
+    return 0
+  fi
 
   MISMATCH=$((MISMATCH + 1))
   n=${#MFD_LABELS[@]}
@@ -1069,6 +1108,7 @@ mfd_decide_file() {
   before_media="${MFD_EPOCHS[2]}"
 
   if (( ALWAYS_KEEP )); then
+    mfd_print_decide_slot "kept as written (no prompt): ${f##*/}"
     echo "$(mfd_ts) Kept as written (for the rest of this run): ${f##*/}"
     SKIPPED=$((SKIPPED + 1))
     return 0
@@ -1163,7 +1203,7 @@ mfd_decide_file() {
   fi
 
   while true; do
-    mfd_read_key "Fix dates [${prompt_keys}]${prompt_extra}: " "$MFD_DEFAULT_KEY"
+    mfd_read_key "Fix dates [${prompt_keys}]${prompt_extra} (question ${MFD_Q_BATCH_POS}/${MFD_Q_BATCH_TOTAL}): " "$MFD_DEFAULT_KEY"
     choice="$(mfd_choice "$REPLY")"
     case "$choice" in
       q)
@@ -1460,7 +1500,12 @@ while (( file_i < SCANNED )); do
   mfd_rule
   echo "$(mfd_ts) Batch ${batch_i}: files $((file_i + 1))–${batch_end} of ${SCANNED} — decide (${batch_count} file(s))"
   mfd_rule
+  MFD_Q_BATCH_NUM=$batch_i
+  MFD_Q_BATCH_TOTAL=$batch_count
+  MFD_Q_OVERALL_TOTAL=$SCANNED
   for (( j = file_i; j < batch_end; j++ )); do
+    MFD_Q_BATCH_POS=$((j - file_i + 1))
+    MFD_Q_OVERALL_POS=$((j + 1))
     mfd_decide_file "${FILES[j]}"
     rc=$?
     if (( rc == 2 )); then
@@ -1471,6 +1516,7 @@ while (( file_i < SCANNED )); do
   if (( quit_run )); then
     break
   fi
+  echo "$(mfd_ts) Batch ${batch_i}: apply phase"
   mfd_apply_plans
   file_i=$batch_end
 done

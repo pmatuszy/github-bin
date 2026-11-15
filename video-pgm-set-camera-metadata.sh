@@ -1,10 +1,12 @@
 #!/bin/bash
+# v. 20261115.100000 - batch decide: show question X of Y (file A of B overall)
 # v. 20261115.095500 - camera profile menu: no default (Enter asks again)
 # v. 20261115.094500 - batch decide-then-apply; Ctrl-C cleans in-flight exiftool write
 # v. 20261115.091200 - ask when Make/Model/Comment already set; safe -y (fill empty only)
 # v. 20261115.091000 - Contour profile is Contour+2 only (drop ROAM/GPS generics)
 # v. 20261115.090000 - initial: set Make/Model/Comment camera profiles (Contour, GoPro, 70mai, custom)
 #
+# 2026.11.15 - v. 0.1.5 - during batch decide, show Question X of Y in this batch (file A of B overall)
 # 2026.11.15 - v. 0.1.4 - camera profile menu has no default; Enter asks again (was silently Contour+2)
 # 2026.11.15 - v. 0.1.3 - process in batches: ask all decisions for a batch first, then write;
 #   prompt for batch size (default = all when ≤50 files, else 50); Ctrl-C during a write stops
@@ -201,12 +203,39 @@ scm_rule() {
   printf '%s\n' "========================================================================"
 }
 
+scm_question_progress_text() {
+  if [[ -n "${SCM_Q_BATCH_POS:-}" && -n "${SCM_Q_BATCH_TOTAL:-}" ]]; then
+    printf 'Question %s of %s in this batch  (file %s of %s overall)' \
+      "$SCM_Q_BATCH_POS" "$SCM_Q_BATCH_TOTAL" \
+      "${SCM_Q_OVERALL_POS:-?}" "${SCM_Q_OVERALL_TOTAL:-?}"
+  else
+    printf ''
+  fi
+}
+
 scm_print_processing() {
-  local f="$1"
+  local f="$1" prog
   echo
   scm_rule
+  prog="$(scm_question_progress_text)"
+  if [[ -n "$prog" ]]; then
+    echo "$(scm_ts) ${prog}"
+  fi
   echo "$(scm_ts) Processing: ${f}"
   scm_rule
+}
+
+scm_print_decide_slot() {
+  # One-liner when there is no full Processing banner (already OK / quiet keep).
+  local note="${1:-}"
+  local prog
+  prog="$(scm_question_progress_text)"
+  [[ -n "$prog" ]] || return 0
+  if [[ -n "$note" ]]; then
+    echo "$(scm_ts) ${prog} — ${note}"
+  else
+    echo "$(scm_ts) ${prog}"
+  fi
 }
 
 # Sets SCM_CUR_MAKE / SCM_CUR_MODEL / SCM_CUR_COMMENT (may be empty).
@@ -376,9 +405,18 @@ scm_apply_plans() {
   }
   echo
   scm_rule
-  echo "$(scm_ts) Applying ${n} planned write(s)…"
+  if [[ -n "${SCM_Q_BATCH_NUM:-}" ]]; then
+    echo "$(scm_ts) Batch ${SCM_Q_BATCH_NUM}: applying ${n} planned write(s)…"
+  else
+    echo "$(scm_ts) Applying ${n} planned write(s)…"
+  fi
   scm_rule
   trap scm_ctrl_c INT
+  # Apply phase: clear decide question counters so banners stay clean.
+  SCM_Q_BATCH_POS=""
+  SCM_Q_BATCH_TOTAL=""
+  SCM_Q_OVERALL_POS=""
+  SCM_Q_OVERALL_TOTAL=""
   for (( i = 0; i < n; i++ )); do
     echo "$(scm_ts) Write $((i + 1))/${n}: ${PLAN_PATHS[i]##*/}"
     scm_do_tag_write \
@@ -554,6 +592,7 @@ scm_decide_file() {
   local def=y keys has_existing=0
 
   scm_read_camera_tags "$f" || {
+    scm_print_decide_slot "could not read tags: ${f##*/}"
     echo "$(scm_ts) Could not read tags: ${f}" >&2
     FAILED=$((FAILED + 1))
     return 0
@@ -561,6 +600,7 @@ scm_decide_file() {
 
   if scm_tags_match_wanted "$SCM_WANT_MAKE" "$SCM_WANT_MODEL" "$SCM_WANT_COMMENT"; then
     ALREADY=$((ALREADY + 1))
+    scm_print_decide_slot "already tagged (no prompt): ${f##*/}"
     if (( VERBOSE )); then
       echo "$(scm_ts) Already tagged (${SCM_CAMERA_LABEL}): ${f##*/}"
       printf '  %-10s %s\n' "Make" "$(scm_disp_tag "$SCM_CUR_MAKE")"
@@ -577,6 +617,7 @@ scm_decide_file() {
   if (( ALWAYS_KEEP_EXISTING )); then
     if (( has_existing )); then
       KEPT=$((KEPT + 1))
+      scm_print_decide_slot "kept existing (no prompt): ${f##*/}"
       echo "$(scm_ts) Kept existing tags (for the rest of this run): ${f##*/}"
       return 0
     fi
@@ -628,7 +669,7 @@ scm_decide_file() {
   fi
 
   while true; do
-    scm_read_key "Set camera metadata [${keys}]: " "$def"
+    scm_read_key "Set camera metadata [${keys}] (question ${SCM_Q_BATCH_POS}/${SCM_Q_BATCH_TOTAL}): " "$def"
     case "$(scm_choice "$REPLY")" in
       y)
         if (( has_existing )); then
@@ -994,7 +1035,12 @@ while (( file_i < SCANNED )); do
   scm_rule
   echo "$(scm_ts) Batch ${batch_i}: files $((file_i + 1))–${batch_end} of ${SCANNED} — decide (${batch_count} file(s))"
   scm_rule
+  SCM_Q_BATCH_NUM=$batch_i
+  SCM_Q_BATCH_TOTAL=$batch_count
+  SCM_Q_OVERALL_TOTAL=$SCANNED
   for (( j = file_i; j < batch_end; j++ )); do
+    SCM_Q_BATCH_POS=$((j - file_i + 1))
+    SCM_Q_OVERALL_POS=$((j + 1))
     scm_decide_file "${FILES[j]}"
     rc=$?
     if (( rc == 2 )); then
@@ -1005,6 +1051,7 @@ while (( file_i < SCANNED )); do
   if (( quit_run )); then
     break
   fi
+  echo "$(scm_ts) Batch ${batch_i}: apply phase"
   scm_apply_plans
   file_i=$batch_end
 done
