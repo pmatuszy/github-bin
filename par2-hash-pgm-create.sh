@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261115.215500 - skip per-folder run policies when only one work directory
 # v. 20261115.200000 - end Timing SUMMARY: Script + Version at top (Family-A)
 # v. 20261115.073500 - folder summary left-aligned + job timing; end-of-run wall-clock timing block
 # v. 20261114.193500 - alphabetical order: dirs/files/stems/leftovers via LC_ALL=C sort -f
@@ -37,6 +38,8 @@
 # v. 20260809.155541 - prompt to exclude rename.sh helpers from PAR2 (default yes)
 # v. 20260806.224414 - initial: create volume-only PAR2 + SHA-512/MD5 hash for cwd subtree
 
+# 2026.11.15 - v. 0.1.34 - Skip startup per-folder policies when there is only one work directory
+#                        (whole scope, or per-subdir with fewer than 2 children); ask mid-job if needed
 # 2026.11.15 - v. 0.1.33 - Per-folder summary is left-aligned and uses this-folder start/elapsed (not script-so-far); end-of-run prints Timing (wall clock) + multi-dir recap + RUN FINISHED; remove centered per-folder RUN SUMMARY box
 # 2026.11.14 - v. 0.1.32 - Process subdirs, source/hash file lists, PAR2 stems, hash manifests, stem members, and leftover cleanup lists in alphabetical order (LC_ALL=C sort -f)
 # 2026.11.14 - v. 0.1.31 - At run start (interactive): ask per-folder policies — existing one PAR2+hash (skip/verify/ask), multi-set verify/consolidate-anyway/consolidate (always/never/ask), delete leftovers (always/never/ask); --yes skips these and keeps prior defaults
@@ -136,11 +139,12 @@ Interactive prompts (unless --yes / flag already set):
   Recovery %:     Type 1-100 then Enter (Enter alone = 20% or --recovery value);
                   q + Enter quits. Multi-digit needs Enter.
   Rename helpers: Exclude from PAR2? [Y/n/q] — single key, no Enter (default yes).
-  Run policies:   After scope (interactive): set per-folder defaults for this run —
-                  existing one PAR2+hash [ S ]kip / [ v ]erify / [ A ]sk (default A);
-                  multi-set verify / consolidate-anyway / consolidate each
-                  [ Y ] always / [ n ] never / [ A ]sk (default A);
-                  delete leftovers [ Y ]/[ n ]/[ A ] (default A). --yes skips.
+  Run policies:   After scope (interactive), only when 2+ work directories:
+                  set per-folder defaults for this run — existing one PAR2+hash
+                  [ S ]kip / [ v ]erify / [ A ]sk (default A); multi-set verify /
+                  consolidate-anyway / consolidate each [ Y ]/[ n ]/[ A ];
+                  delete leftovers [ Y ]/[ n ]/[ A ]. Skipped for a single directory
+                  (ask mid-job if needed). --yes skips.
   Existing set:   If not preset: one PAR2 + one hash → [ S ]/[ v ]/[ a ]/[ e ]/[ q ]
                   (default S; rest-of-run a/e). --yes skips without verifying.
   Multi-set:      If not preset: verify-first / consolidate / consolidate-anyway
@@ -213,6 +217,8 @@ VERIFY_MULTI_POLICY=""
 CONSOLIDATE_POLICY=""
 CONSOLIDATE_ANYWAY_POLICY=""
 DELETE_LEFTOVER_POLICY=""
+# prompted | skipped_single | yes — how folder policies were resolved this run
+FOLDER_POLICIES_SOURCE=""
 JOB_START_EPOCH=0
 JOB_START_STR=""
 JOB_BACKED_UP_COUNT=0
@@ -2004,13 +2010,37 @@ set_yes_no_policy_from_choice() {
   esac
 }
 
+# How many work directories this run will process (after CREATE_SCOPE is set).
+count_create_jobs() {
+  local -a subdirs=()
+
+  if [[ "${CREATE_SCOPE:-}" == per-subdir ]]; then
+    list_immediate_subdirs "$START_DIR" subdirs
+    printf '%s' "${#subdirs[@]}"
+  else
+    printf '%s' 1
+  fi
+}
+
 # Interactive run-start policies (1–3). Returns 2 if user quits.
+# Skipped when AUTO_YES or only one work directory (ask mid-job if needed).
 prompt_run_folder_policies() {
   local ans=""
+  local job_count=1
 
   if (( AUTO_YES == 1 )); then
+    FOLDER_POLICIES_SOURCE=yes
     return 0
   fi
+
+  job_count="$(count_create_jobs)"
+  if (( job_count < 2 )); then
+    FOLDER_POLICIES_SOURCE=skipped_single
+    log_msg "Single work directory — skipping per-folder run policies (will ask only if that situation appears)."
+    return 0
+  fi
+
+  FOLDER_POLICIES_SOURCE=prompted
 
   echo
   echo "=== Per-folder policies for this run ==="
@@ -2620,8 +2650,10 @@ print_run_settings() {
   else
     echo "  Rename helpers: not given (prompted; selected: included in PAR2)"
   fi
-  if (( AUTO_YES == 1 )); then
+  if (( AUTO_YES == 1 )) || [[ "${FOLDER_POLICIES_SOURCE:-}" == yes ]]; then
     echo "  Folder policies: --yes (existing: skip; multi-set offer skipped; leftovers: delete)"
+  elif [[ "${FOLDER_POLICIES_SOURCE:-}" == skipped_single ]]; then
+    echo "  Folder policies: skipped (single directory; ask when needed)"
   else
     echo "  Existing 1+1:  $(policy_label_existing)"
     echo "  Verify multi:  $(policy_label_yes_no_ask "$VERIFY_MULTI_POLICY")"
@@ -2789,6 +2821,7 @@ if ! resolve_create_scope; then
   finish
 fi
 
+# Policies are rest-of-run defaults — only useful when 2+ work directories.
 if ! prompt_run_folder_policies; then
   echo "Quit."
   return_code=0
