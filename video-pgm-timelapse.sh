@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261115.200000 - SUMMARY: Family-A chrome + Script/Version at top
 # v. 20261027.181751 - output-dates upfront: [P] pick per file is first and the default
 # v. 20261027.181106 - ask output dates for all files before encoding; apply after each encode
 # v. 20261021.144500 - Ctrl-C removes .partial.*.mp4 (stop ffmpeg first; retry rm on busy mounts)
@@ -255,7 +256,7 @@ tl_format_wall_clock() {
 }
 
 tl_summary_kv() {
-  printf '%-*s  %s\n' 22 "${1}:" "$2"
+  printf '  %-*s %s\n' 22 "${1}:" "$2"
 }
 
 tl_summary_add() {
@@ -353,8 +354,14 @@ tl_print_run_summary() {
   local in_dur=0 out_dur=0 in_bytes=0 out_bytes=0
   local enc="" b
   local -a size_lines=()
-  echo
-  echo "--- Run summary ---"
+  if declare -F script_summary_begin >/dev/null 2>&1; then
+    script_summary_begin 22
+  else
+    echo
+    echo "--- Run summary ---"
+    tl_summary_kv "Script" "$(script_live_basename 2>/dev/null || basename -- "$0")"
+    tl_summary_kv "Version" "${SCRIPT_VERSION_NUMBER:-unknown}"
+  fi
   count=${#TL_SUM_SRC[@]}
   for (( i = 0; i < count; i++ )); do
     if [[ -n "${TL_SUM_WHERE[$i]:-}" ]]; then
@@ -416,7 +423,11 @@ tl_print_run_summary() {
     (( ${TL_DATES_OK:-0} > 0 )) && tl_summary_kv "Dates already OK" "${TL_DATES_OK} file(s) (no prompt)"
     (( ${TL_DATES_NO_NAME:-0} > 0 )) && tl_summary_kv "No name stamp" "${TL_DATES_NO_NAME} file(s) (date step skipped)"
   fi
-  echo
+  if declare -F script_summary_end >/dev/null 2>&1; then
+    script_summary_end
+  else
+    echo
+  fi
 }
 
 tl_ctrl_c() {

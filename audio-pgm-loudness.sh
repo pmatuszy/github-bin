@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261115.200000 - SUMMARY: Family-A chrome + Script/Version at top
 # v. 20261111.210000 - normalize: live progress bar (ffmpeg -progress) like video-pgm-timelapse
 # v. 20261016.090000 - a non-default NORMAL or TOO QUIET track is offered for loudnorm; the perfect default stays
 # v. 20261016.084500 - when the default audio track is very quiet, suggest --default on a normal or loud track
@@ -2736,7 +2737,7 @@ loudness_log_kv() {
 loudness_summary_kv() {
   local label="$1"
   shift
-  printf '%-*s  %s\n' 26 "${label}:" "$*"
+  printf '  %-*s %s\n' 26 "${label}:" "$*"
 }
 
 loudness_record_session_start() {
@@ -2824,8 +2825,14 @@ loudness_print_run_summary_once() {
     esac
   done
 
-  echo
-  echo '--- Run summary ---'
+  if declare -F script_summary_begin >/dev/null 2>&1; then
+    script_summary_begin 26
+  else
+    echo
+    echo '--- Run summary ---'
+    loudness_summary_kv "Script" "$(script_live_basename 2>/dev/null || basename -- "$0")"
+    loudness_summary_kv "Version" "${SCRIPT_VERSION_NUMBER:-unknown}"
+  fi
   loudness_summary_kv "Working directory" "$(pwd)"
   if (( ${#CLI_FILES[@]} > 0 )); then
     loudness_summary_kv "Input" "${#MEDIA_FILES[@]} file(s) from the command line"
@@ -2887,7 +2894,11 @@ loudness_print_run_summary_once() {
   loudness_summary_kv "Other overhead" "$(loudness_format_elapsed "$other_sec")"
   exit_label="$(loudness_run_exit_label)"
   loudness_summary_kv "Exit" "$exit_label"
-  echo
+  if declare -F script_summary_end >/dev/null 2>&1; then
+    script_summary_end
+  else
+    echo
+  fi
 }
 
 # PERFECT | NORMAL | TOO_QUIET based on max_volume peak (dB).

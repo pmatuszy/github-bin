@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261115.200000 - end Timing SUMMARY: Script + Version at top (Family-A)
 # v. 20261115.140500 - RUN SUMMARY: hash + PAR2 status (coverage and digests/verify)
 # v. 20261115.120000 - hash-verify UI: single blank lines between sections (no doubles)
 # v. 20261113.173600 - Verify PAR2 vs hash prompt defaults to Y
@@ -2359,7 +2360,14 @@ pgm_print_timing_summary() {
         total=$(( SECONDS - PGM_MULTI_RUN_START ))
         wall_time="$(pgm_format_elapsed "$total")"
 
-        echo
+        if declare -F script_summary_begin >/dev/null 2>&1; then
+            script_summary_begin 28
+        else
+            echo
+            echo "--- Timing (all sets) ---"
+            printf '  %-28s %s\n' "Script:" "$(script_live_basename 2>/dev/null || basename -- "$0")"
+            printf '  %-28s %s\n' "Version:" "${SCRIPT_VERSION_NUMBER:-unknown}"
+        fi
         echo "--- Timing (all sets) ---"
         [[ -n "${PGM_SCRIPT_START_STR:-}" ]] && \
             printf '  %-28s %s\n' "Start time:" "$PGM_SCRIPT_START_STR"
@@ -2367,7 +2375,11 @@ pgm_print_timing_summary() {
         printf '  %-28s %s\n' "Total wall time:" "$wall_time"
         echo
         printf '  %-28s %d\n' "Sets checked:" "$MULTI_SET_TOTAL"
-        echo
+        if declare -F script_summary_end >/dev/null 2>&1; then
+            script_summary_end
+        else
+            echo
+        fi
         return 0
     fi
 
@@ -2399,7 +2411,14 @@ pgm_print_timing_summary() {
         (( w > max_w )) && max_w=$w
     done
 
-    echo
+    if declare -F script_summary_begin >/dev/null 2>&1; then
+        script_summary_begin 28
+    else
+        echo
+        echo "--- Timing ---"
+        printf '  %-28s %s\n' "Script:" "$(script_live_basename 2>/dev/null || basename -- "$0")"
+        printf '  %-28s %s\n' "Version:" "${SCRIPT_VERSION_NUMBER:-unknown}"
+    fi
     echo "--- Timing ---"
     [[ -n "${PGM_SCRIPT_START_STR:-}" ]] && \
         printf '  %-28s %s\n' "Start time:" "$PGM_SCRIPT_START_STR"
@@ -2410,7 +2429,11 @@ pgm_print_timing_summary() {
     for i in "${!labels[@]}"; do
         printf '  %-28s %*s\n' "${labels[$i]}" "$max_w" "${formatted[$i]}"
     done
-    echo
+    if declare -F script_summary_end >/dev/null 2>&1; then
+        script_summary_end
+    else
+        echo
+    fi
 }
 
 pgm_describe_path_kind() {

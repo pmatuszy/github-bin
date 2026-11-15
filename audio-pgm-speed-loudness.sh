@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# v. 20261115.200000 - SUMMARY: Family-A chrome + Script/Version at top
 # v. 20261006.183857 - directory listing uses /bin/ls so a shell ls function cannot add --full-time
 # v. 20260916.133341 - replace (PGM) speed/format lines with === Run settings === + Equivalent CLI
 # v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
@@ -614,8 +615,14 @@ print_run_summary() {
     other_sec=0
   fi
 
-  echo
-  echo '--- Run summary ---'
+  if declare -F script_summary_begin >/dev/null 2>&1; then
+    script_summary_begin 22
+  else
+    echo
+    echo '--- Run summary ---'
+    summary_kv "Script" "$(script_live_basename 2>/dev/null || basename -- "$0")"
+    summary_kv "Version" "${SCRIPT_VERSION_NUMBER:-unknown}"
+  fi
   summary_kv "Working directory" "${WORK_DIR:-$(pwd -P 2>/dev/null || pwd)}"
   summary_kv "Speed factor" "atempo=${SPEED_FACTOR}"
   if [[ -n "$OUTPUT_FORMAT" ]]; then
@@ -743,8 +750,11 @@ print_run_summary() {
       summary_kv "Exit" "ok, code ${RUN_EXIT_CODE}"
       ;;
   esac
-  echo
-  echo "---- Script end   $0 ($finished_str)"
+  if declare -F script_summary_end >/dev/null 2>&1; then
+    script_summary_end
+  else
+    echo
+  fi
 }
 
 on_interrupt() {

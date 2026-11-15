@@ -6,6 +6,7 @@
 # v. 20261115.104500 - pre-scan progress bar (i/n + %)
 # v. 20261115.103000 - pre-scan: batch only files that still need a decision
 # v. 20261115.102500 - drop Files bar; show i/n on the live exiftool line
+# v. 20261115.200000 - SUMMARY top: Script + Version (shared Family-A identity)
 # v. 20261115.101500 - SUMMARY Timing: processing + prompt-wait (with start/finish/wall)
 # v. 20261115.101000 - apply-phase progress bars (files + exiftool % from tmp)
 # v. 20261115.100500 - batch decide: [b] apply answers so far, resume remaining files
@@ -28,6 +29,7 @@
 # v. 20261020.150400 - date menu: ASCII n/a so parenthetical notes share one column
 # v. 20261020.145500 - fix file / media dates when the name, filesystem, and tags disagree
 #
+# 2026.11.15 - v. 0.1.29 - SUMMARY prints Script + Version at the top (shared identity helper)
 # 2026.11.15 - v. 0.1.28 - Contour Make/Model metadata skips the duration>120s gate (short clips
 #   still Contour); --force-contour / MFD_FORCE_CONTOUR forces Contour-style names the same way
 # 2026.11.15 - v. 0.1.27 - drop separate Fix i/n line; file index lives only on the exiftool bar
@@ -243,6 +245,12 @@ mfd_print_summary() {
   mfd_rule
   echo "$(mfd_ts) SUMMARY"
   mfd_rule
+  if declare -F script_summary_print_identity >/dev/null 2>&1; then
+    script_summary_print_identity 22
+  else
+    mfd_summary_kv "Script:" "$(script_live_basename 2>/dev/null || basename -- "$0")"
+    mfd_summary_kv "Version:" "${SCRIPT_VERSION_NUMBER:-unknown}"
+  fi
   mfd_summary_kv "Scanned:" "$SCANNED"
   mfd_summary_kv "No decision needed:" "${ALREADY_OK:-0}"
   mfd_summary_kv "Batch size:" "${BATCH_SIZE:-n/a}"

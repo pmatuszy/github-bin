@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261115.200000 - end Timing SUMMARY: Script + Version at top (Family-A)
 # v. 20261115.073500 - folder summary left-aligned + job timing; end-of-run wall-clock timing block
 # v. 20261114.193500 - alphabetical order: dirs/files/stems/leftovers via LC_ALL=C sort -f
 # v. 20261114.175500 - rest-of-run menu lines: "Like [ X ] here, and for the rest of the run"
@@ -537,7 +538,14 @@ print_run_timing_summary() {
   end_time="$(wall_clock_now)"
   wall_time="$(format_elapsed "$(( $(date +%s) - SCRIPT_START_EPOCH ))")"
 
-  echo
+  if declare -F script_summary_begin >/dev/null 2>&1; then
+    script_summary_begin 22
+  else
+    echo
+    echo "--- Timing ---"
+    summary_kv "Script:" "$(script_live_basename 2>/dev/null || basename -- "$0")"
+    summary_kv "Version:" "${SCRIPT_VERSION_NUMBER:-unknown}"
+  fi
   if (( MULTI_JOB_MODE == 1 )); then
     echo "--- Timing (all directories) ---"
   else
@@ -560,7 +568,11 @@ print_run_timing_summary() {
       done
     fi
   fi
-  echo
+  if declare -F script_summary_end >/dev/null 2>&1; then
+    script_summary_end
+  else
+    echo
+  fi
 }
 
 print_run_finished_banner() {

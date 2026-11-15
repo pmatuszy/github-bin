@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261115.200000 - SUMMARY: Family-A chrome + Script/Version at top
 # v. 20261015.184100 - only the default key is a capital in the roll-back question
 # v. 20261014.225831 - also restore clip-backup_YYYYMMDD-HHMMSS.ext copies
 # v. 20261014.225419 - put clip-backup.mp4 back as clip.mp4 (the backup is the original)
@@ -352,8 +353,14 @@ un_print_summary() {
   local item
   (( SUMMARY_DONE )) && return 0
   SUMMARY_DONE=1
-  echo
-  echo "--- Run summary ---"
+  if declare -F script_summary_begin >/dev/null 2>&1; then
+    script_summary_begin 22
+  else
+    echo
+    echo "--- Run summary ---"
+    un_summary_kv "Script" "$(script_live_basename 2>/dev/null || basename -- "$0")"
+    un_summary_kv "Version" "${SCRIPT_VERSION_NUMBER:-unknown}"
+  fi
   un_summary_kv "Working directory" "$(pwd -P 2>/dev/null || pwd)"
   un_summary_kv "Backups found" "${#BACKUPS[@]}"
   un_summary_kv "Rolled back" "${#DONE_LIST[@]} file(s)"
@@ -375,7 +382,11 @@ un_print_summary() {
     done
   fi
   [[ "$STOPPED" == yes ]] && un_summary_kv "Stopped by user" "yes"
-  echo
+  if declare -F script_summary_end >/dev/null 2>&1; then
+    script_summary_end
+  else
+    echo
+  fi
 }
 
 un_on_exit() {

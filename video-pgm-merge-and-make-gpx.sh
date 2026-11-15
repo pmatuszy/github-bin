@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261115.200000 - SUMMARY: Family-A chrome + Script/Version at top
 # v. 20261115.161500 - group prompt: [Y] merge this group (default); [m] merge all remaining
 # v. 20261115.081500 - Contour merges use ffmpeg concat -c copy (mp4_merge breaks HandBrake HEVC+MP3)
 # v. 20261115.080700 - Contour suspect window 46–100s: review candidates (default skip); confident ≤45s unchanged
@@ -1533,8 +1534,14 @@ print_pgm_timing_summary() {
   total_sec=$(awk -v s0="${PGM_SCRIPT_START_NS}" -v s1="${end_ns}" 'BEGIN { printf "%.6f", s1 - s0 }')
   wait_sec=$(awk -v t="${total_sec}" -v p="${PGM_PROCESSING_SEC:-0}" \
     'BEGIN { w = t - p; if (w < 0) w = 0; printf "%.6f", w }')
-  echo
-  echo "--- Run summary ---"
+  if declare -F script_summary_begin >/dev/null 2>&1; then
+    script_summary_begin 22
+  else
+    echo
+    echo "--- Run summary ---"
+    pgm_summary_kv "Script" "$(script_live_basename 2>/dev/null || basename -- "$0")"
+    pgm_summary_kv "Version" "${SCRIPT_VERSION_NUMBER:-unknown}"
+  fi
   pgm_summary_kv "Processed" "${PGM_RUN_GROUPS:-0} group(s), ${PGM_RUN_INPUT_FILES:-0} input file(s)"
   pgm_summary_kv "Deleted" "${PGM_RUN_DELETED:-0} input file(s)"
   pgm_summary_kv "Input size" "$(format_bytes_run_summary "${PGM_RUN_INPUT_BYTES:-0}")"
@@ -1547,7 +1554,11 @@ print_pgm_timing_summary() {
   pgm_summary_kv "Total wall time" "$(format_duration_sec "${total_sec}")"
   pgm_summary_kv "Processing time" "$(format_duration_sec "${PGM_PROCESSING_SEC:-0}")  (merges, downloads)"
   pgm_summary_kv "Other/wait time" "$(format_duration_sec "${wait_sec}")  (prompts, startup delay, overhead)"
-  echo
+  if declare -F script_summary_end >/dev/null 2>&1; then
+    script_summary_end
+  else
+    echo
+  fi
 }
 
 # One finished merge: chapter files that went into it, and the merged file written.

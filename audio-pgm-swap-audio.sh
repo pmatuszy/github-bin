@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261115.200000 - SUMMARY: Family-A chrome + Script/Version at top
 # v. 20261016.084500 - --default N marks that audio track as the one players use, without reordering
 # v. 20261016.081400 - after a swap, GoPro telemetry and timecode stay in their original order
 # v. 20261015.191843 - the move/write line is a short block: backup, write, audio, drop, subtitles, streams
@@ -2747,8 +2748,14 @@ sa_print_summary() {
   end_ns="$(sa_now_ns)"
   total_sec="$(awk -v s0="${SCRIPT_START_NS:-0}" -v s1="$end_ns" 'BEGIN { printf "%.6f", s1 - s0 }')"
   wait_sec="$(awk -v t="$total_sec" -v p="${PROC_SEC:-0}" 'BEGIN { w = t - p; if (w < 0) w = 0; printf "%.6f", w }')"
-  echo
-  echo "--- Run summary ---"
+  if declare -F script_summary_begin >/dev/null 2>&1; then
+    script_summary_begin 22
+  else
+    echo
+    echo "--- Run summary ---"
+    sa_summary_kv "Script" "$(script_live_basename 2>/dev/null || basename -- "$0")"
+    sa_summary_kv "Version" "${SCRIPT_VERSION_NUMBER:-unknown}"
+  fi
   sa_summary_kv "Working directory" "$(pwd -P 2>/dev/null || pwd)"
   sa_summary_kv "Files found" "${#FILES[@]}"
   sa_summary_kv "Swapped" "${#DONE_LIST[@]} file(s)"
@@ -2790,7 +2797,11 @@ sa_print_summary() {
   sa_summary_kv "Processing time" "$(sa_format_elapsed "${PROC_SEC:-0}")  (remux)"
   sa_summary_kv "Other/wait time" "$(sa_format_elapsed "$wait_sec")  (prompts, startup, overhead)"
   [[ "$STOPPED" == yes ]] && sa_summary_kv "Stopped by user" "yes"
-  echo
+  if declare -F script_summary_end >/dev/null 2>&1; then
+    script_summary_end
+  else
+    echo
+  fi
 }
 
 sa_on_exit() {

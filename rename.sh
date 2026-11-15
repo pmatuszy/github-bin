@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# v. 20261115.200000 - SUMMARY: Family-A chrome + Script/Version at top
 # v. 20261115.112000 - Contour Make/Model → YYYYMMDD_HHMMSS_-_-_Contour+2 (metadata first; upgrade Contour_2)
 # v. 20261111.094500 - Collision prompt: [E] use _OTHER for all further collisions for the rest of this run (session twin of [R]/[D])
 # v. 20261103.073500 - GoPro DB mark: ON CONFLICT upsert (fix UNIQUE checked_paths.path); keep stdout clean inside $(transform_name) so NEW paths do not embed a newline
@@ -19860,7 +19861,13 @@ print_summary() {
         echo
     fi
 
-    echo "========= SUMMARY ========="
+    if declare -F script_summary_begin >/dev/null 2>&1; then
+        script_summary_begin 22
+    else
+        echo "========= SUMMARY ========="
+        echo "Script:                $(script_live_basename 2>/dev/null || basename -- "$0")"
+        echo "Version:               ${SCRIPT_VERSION_NUMBER:-unknown}"
+    fi
     echo "Script start time:     $SCRIPT_START_TIME"
     echo "Script finish time:    $SCRIPT_FINISH_TIME"
     echo "Mode:                  $mode"
@@ -19916,7 +19923,11 @@ print_summary() {
     else
         echo "DB used:               no"
     fi
-    echo "==========================="
+    if declare -F script_summary_end >/dev/null 2>&1; then
+        script_summary_end
+    else
+        echo "==========================="
+    fi
 }
 
 # Single INT handler: rollback, save resume state, then summary. Ignore further SIGINT during cleanup so a second Ctrl-C cannot exit before print_summary.

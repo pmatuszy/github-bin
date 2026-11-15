@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261115.200000 - SUMMARY helpers: Script + Version identity; Family-A begin/end chrome
 # v. 20261021.210400 - Usage/help use script_live_basename from _script_self_update.sh
 # v. 20261021.143500 - after seal, keep CALLER_SCRIPT* / $0 as the live script (not .deleteme.*.seal.*)
 # v. 20261020.205600 - seal files named .deleteme.*; seal failure falls back to live script
@@ -12,6 +13,8 @@
 # v. 20260716.173600 - print_version_banner uses CALLER_SCRIPT version fields
 # v. 20260716.163300 - versioning v. YYYYMMDD.HH24MISS; parse first # v. YYYYMMDD.HHMMSS line
 
+# 2026.11.15 - v. 1.67.200000 - script_summary_begin/end + script_summary_print_identity for shared
+#                        end-of-run SUMMARY chrome (Script + Version at top)
 # 2026.10.21 - v. 1.66.210400 - script_live_basename lives in _script_self_update.sh; help/Usage should call it
 #                        instead of basename "$0" so .deleteme.*.seal.* never appears
 # 2026.10.21 - v. 1.65.143500 - after seal re-exec, CALLER_SCRIPT / CALLER_SCRIPT_BASENAME / $0 (bash 5+)
@@ -193,6 +196,45 @@ print_version_banner() {
   printf '│ %-*.*s │\n' $((width - 2)) $((width - 2)) "$title"
   printf '│ %-*.*s │\n' $((width - 2)) $((width - 2)) "$verline"
   printf '└%*s┘\n' "$width" '' | sed 's/ /─/g'
+}
+
+# --- End-of-run SUMMARY chrome (shared across media / audio / video tools) ---
+
+script_summary_rule() {
+  printf '%s\n' '========================================================================'
+}
+
+# Print Script + Version as the first two summary fields (Family A).
+# Optional $1 = label column width (default 22).
+script_summary_print_identity() {
+  local width="${1:-22}"
+  local name ver
+
+  if declare -F script_live_basename >/dev/null 2>&1; then
+    name="$(script_live_basename)"
+  else
+    name="$(basename -- "${CALLER_SCRIPT_BASENAME:-${0:-script}}")"
+  fi
+  ver="${SCRIPT_VERSION_NUMBER:-unknown}"
+  if [[ -n "${SCRIPT_VERSION_DATE:-}" && "$ver" != unknown ]]; then
+    ver="${ver} (${SCRIPT_VERSION_DATE})"
+  fi
+  printf '  %-*s %s\n' "$width" "Script:" "$name"
+  printf '  %-*s %s\n' "$width" "Version:" "$ver"
+}
+
+# Open a SUMMARY block (rules + timestamped title) and print Script/Version.
+script_summary_begin() {
+  local width="${1:-22}"
+  echo
+  script_summary_rule
+  printf '[ %s ] SUMMARY\n' "$(date '+%Y.%m.%d %H:%M:%S')"
+  script_summary_rule
+  script_summary_print_identity "$width"
+}
+
+script_summary_end() {
+  script_summary_rule
 }
 
 # Changelog lines from the caller script header (new # v. YYYYMMDD… and old # YYYY.MM.DD - v. …).

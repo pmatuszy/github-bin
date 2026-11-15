@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# v. 20261115.200000 - SUMMARY: Family-A chrome + Script/Version at top
 # v. 20261006.124500 - menus: only the default key is a capital letter, like the [Y/n/q] prompt lines
 # v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
 # v. 20260716.163224 - versioning format v. YYYYMMDD.HH24MISS
@@ -608,12 +609,15 @@ print_voice_timing_summary() {
         'BEGIN { w = t - p; if (w < 0) w = 0; printf "%.6f", w }')
 
     echo
-    echo "$(voice_ts) --- Timing ---"
+    echo "--- Timing ---"
     voice_log_kv "Started" "$(voice_format_wall_clock "${VOICE_SCRIPT_START_NS}")"
     voice_log_kv "Finished" "$(date '+%Y.%m.%d %H:%M:%S')"
     voice_log_kv "Total wall time" "$(format_duration_sec "${total_sec}")"
     voice_log_kv "Processing time" "$(format_duration_sec "${VOICE_PROCESSING_SEC:-0}")  (ffmpeg, sha512, transcription, re-do)"
     voice_log_kv "Other/wait time" "$(format_duration_sec "${wait_sec}")  (prompts, startup delay, overhead)"
+    if declare -F script_summary_end >/dev/null 2>&1; then
+        script_summary_end
+    fi
     echo
 }
 
@@ -637,7 +641,13 @@ print_voice_statistics_summary() {
         scope_line="current directory only"
     fi
 
-    echo "$(voice_ts) --- Run summary ---"
+    if declare -F script_summary_begin >/dev/null 2>&1; then
+        script_summary_begin 26
+    else
+        echo "$(voice_ts) --- Run summary ---"
+        voice_log_kv "Script" "$(script_live_basename 2>/dev/null || basename -- "$0")"
+        voice_log_kv "Version" "${SCRIPT_VERSION_NUMBER:-unknown}"
+    fi
     voice_log_kv "Mode" "${mode:-not selected}"
     voice_log_kv "Scope" "$scope_line"
     if [[ "${mode:-}" == "real" ]]; then

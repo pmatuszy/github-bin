@@ -3,6 +3,7 @@
 # v. 20261115.104500 - pre-scan progress bar (i/n + %)
 # v. 20261115.103000 - pre-scan: batch only files that still need a decision
 # v. 20261115.102500 - drop Files bar; show i/n on the live exiftool line
+# v. 20261115.200000 - SUMMARY top: Script + Version (shared Family-A identity)
 # v. 20261115.101500 - SUMMARY Timing: start/finish/wall/processing/prompt-wait
 # v. 20261115.101000 - apply-phase progress bars; preserve K vs k in key lists
 # v. 20261115.100500 - batch decide: [b] apply answers so far, resume remaining files
@@ -14,6 +15,7 @@
 # v. 20261115.090000 - initial: set Make/Model/Comment camera profiles (Contour, GoPro, 70mai, custom)
 #
 # 2026.11.15 - v. 0.1.12 - drop separate Write i/n line; file index lives only on the exiftool bar
+# 2026.11.15 - v. 0.1.12 - SUMMARY prints Script + Version at the top (shared identity helper)
 # 2026.11.15 - v. 0.1.11 - pre-scan shows a live progress bar (pct + i/n + filename)
 # 2026.11.15 - v. 0.1.10 - pre-scan after profile choice; batch size / Question X of Y cover
 #   only files that still need a decision (already-tagged counted once, not as batch slots)
@@ -1105,6 +1107,12 @@ scm_print_summary() {
   scm_rule
   echo "$(scm_ts) SUMMARY"
   scm_rule
+  if declare -F script_summary_print_identity >/dev/null 2>&1; then
+    script_summary_print_identity 22
+  else
+    printf '  %-22s %s\n' "Script:" "$(script_live_basename 2>/dev/null || basename -- "$0")"
+    printf '  %-22s %s\n' "Version:" "${SCRIPT_VERSION_NUMBER:-unknown}"
+  fi
   printf '  %-22s %s\n' "Camera profile:" "${SCM_CAMERA_LABEL:-n/a}"
   printf '  %-22s %s\n' "Make / Model:" "${SCM_WANT_MAKE:-?} / ${SCM_WANT_MODEL:-?}"
   printf '  %-22s %s\n' "Videos scanned:" "$SCANNED"
