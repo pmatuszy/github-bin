@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261115.111500 - Contour: Make/Model metadata wins; filename is fallback
 # v. 20261115.104500 - pre-scan progress bar (i/n + %)
 # v. 20261115.103000 - pre-scan: batch only files that still need a decision
 # v. 20261115.102500 - drop Files bar; show i/n on the live exiftool line
@@ -24,6 +25,8 @@
 # v. 20261020.150400 - date menu: ASCII n/a so parenthetical notes share one column
 # v. 20261020.145500 - fix file / media dates when the name, filesystem, and tags disagree
 #
+# 2026.11.15 - v. 0.1.25 - Contour detect: Make/Model metadata first (Make=Contour); filename
+#   pattern only if tags absent; print when metadata identifies Contour
 # 2026.11.15 - v. 0.1.24 - pre-scan shows a live progress bar (pct + i/n + filename)
 # 2026.11.15 - v. 0.1.23 - pre-scan before batching; batch size / Question X of Y cover only files
 #   that disagree (agree/skip counted once, not as batch slots)
@@ -83,8 +86,12 @@ Work is batched: for each batch the script asks every decision first, then
 writes (so you are not waiting on exiftool between prompts). Default batch
 size is all files when there are 50 or fewer; otherwise 50 (overridable).
 
-Contour-style video names (YYYYMMDD_HHMMSS.mp4 or …_NVenc_….mp4): Contour
-cameras stamp the end of the clip in the name. This script can normalize:
+Contour detection (priority order):
+  1) Camera metadata: Make=Contour (as set by video-pgm-set-camera-metadata.sh,
+     typically Model=Contour+2). When present, the file is treated as Contour.
+  2) Otherwise guess from Contour-style names (YYYYMMDD_HHMMSS.mp4 or …_NVenc_….mp4).
+
+Contour cameras stamp the end of the clip in the name. This script can normalize:
   File name stamp  = start of clip (rename)
   Filesystem mtime = end of clip
   Media CreateDate = start of clip
@@ -616,6 +623,7 @@ mfd_filename_epoch_from_basename() {
 
 # Contour-style basename: YYYYMMDD_HHMMSS.mp4 or YYYYMMDD_HHMMSS_NVenc_….mp4
 # (not GoPro camera token, not _part_XX, not 70mai NO*/EV*).
+# Used only when Contour Make/Model metadata is absent.
 mfd_is_contour_basename() {
   local base="$1"
   base="${base##*/}"
@@ -631,6 +639,41 @@ mfd_is_contour_basename() {
     return 0
   fi
   return 1
+}
+
+# Sets MFD_CAM_MAKE / MFD_CAM_MODEL / MFD_CAM_COMMENT (may be empty). Return 0 if exiftool ok.
+mfd_read_camera_tags() {
+  local f="$1" exif
+  MFD_CAM_MAKE=""
+  MFD_CAM_MODEL=""
+  MFD_CAM_COMMENT=""
+  exif="$(mfd_find_exiftool 2>/dev/null)" || return 1
+  MFD_CAM_MAKE="$("$exif" -api largefilesupport=1 -s3 -Make -- "$f" 2>/dev/null | head -n1 | tr -d '\r')"
+  MFD_CAM_MODEL="$("$exif" -api largefilesupport=1 -s3 -Model -- "$f" 2>/dev/null | head -n1 | tr -d '\r')"
+  MFD_CAM_COMMENT="$("$exif" -api largefilesupport=1 -s3 -Comment -- "$f" 2>/dev/null | head -n1 | tr -d '\r')"
+  if [[ -z "$MFD_CAM_MAKE" ]]; then
+    MFD_CAM_MAKE="$("$exif" -api largefilesupport=1 -s3 -QuickTime:Make -- "$f" 2>/dev/null | head -n1 | tr -d '\r')"
+  fi
+  if [[ -z "$MFD_CAM_MODEL" ]]; then
+    MFD_CAM_MODEL="$("$exif" -api largefilesupport=1 -s3 -QuickTime:Model -- "$f" 2>/dev/null | head -n1 | tr -d '\r')"
+  fi
+  return 0
+}
+
+# True when camera tags identify Contour (Make=Contour; Model Contour* if present).
+mfd_is_contour_metadata() {
+  local make="${MFD_CAM_MAKE:-}" model="${MFD_CAM_MODEL:-}"
+  [[ -n "$make" ]] || return 1
+  [[ "${make,,}" == "contour" ]] || return 1
+  if [[ -n "$model" && "${model,,}" != contour* ]]; then
+    return 1
+  fi
+  return 0
+}
+
+mfd_print_contour_detect_note() {
+  [[ "${MFD_CONTOUR_DETECT:-}" == "metadata" ]] || return 0
+  echo "$(mfd_ts) Contour metadata present (Make=${MFD_CAM_MAKE:-?} Model=${MFD_CAM_MODEL:-?}) — treating as Contour."
 }
 
 mfd_ffprobe_duration_seconds() {
@@ -649,15 +692,24 @@ mfd_epoch_near() {
 }
 
 # Contour analyze: sets MFD_CONTOUR_START_E / MFD_CONTOUR_END_E / MFD_CONTOUR_DUR /
-# MFD_CONTOUR_LAYOUT (normalized|end_in_name). Return 0 when Contour normalize applies.
+# MFD_CONTOUR_LAYOUT (normalized|end_in_name) / MFD_CONTOUR_DETECT (metadata|basename).
+# Contour identity: Make/Model metadata first; Contour-style basename only as fallback.
+# Return 0 when Contour normalize applies.
 mfd_contour_analyze() {
   local f="$1" name_e="${2:-}" fs_e="${3:-}" media_e="${4:-}"
-  local dur start_from_end end_from_start
+  local dur start_from_end end_from_start detect=""
   MFD_CONTOUR_START_E=""
   MFD_CONTOUR_END_E=""
   MFD_CONTOUR_DUR=""
   MFD_CONTOUR_LAYOUT=""
-  mfd_is_contour_basename "${f##*/}" || return 1
+  MFD_CONTOUR_DETECT=""
+  if mfd_is_contour_metadata; then
+    detect="metadata"
+  elif mfd_is_contour_basename "${f##*/}"; then
+    detect="basename"
+  else
+    return 1
+  fi
   [[ -n "$name_e" ]] || name_e="$(mfd_filename_epoch_from_basename "${f##*/}" 2>/dev/null)" || return 1
   dur="$(mfd_ffprobe_duration_seconds "$f" 2>/dev/null)" || return 1
   (( dur >= 1 )) || return 1
@@ -668,6 +720,7 @@ mfd_contour_analyze() {
   mfd_epoch_usable "$start_from_end" || return 1
   mfd_epoch_usable "$end_from_start" || return 1
   MFD_CONTOUR_DUR="$dur"
+  MFD_CONTOUR_DETECT="$detect"
 
   # Already normalized: name earlier than FS by ~duration (name=start, FS=end).
   # Do not subtract duration again.
@@ -1015,6 +1068,11 @@ mfd_verbose_print_check() {
   if [[ -n "$layout" ]]; then
     echo "  Contour layout: ${layout}"
   fi
+  if [[ "${MFD_CONTOUR_DETECT:-}" == "metadata" ]]; then
+    echo "  Contour detect: metadata (Make=${MFD_CAM_MAKE:-?} Model=${MFD_CAM_MODEL:-?})"
+  elif [[ "${MFD_CONTOUR_DETECT:-}" == "basename" ]]; then
+    echo "  Contour detect: filename pattern (no Contour Make/Model tags)"
+  fi
   case "$verdict" in
     agree)    echo "  Verdict: agree — no change" ;;
     disagree) echo "  Verdict: disagree — ask / fix" ;;
@@ -1044,8 +1102,12 @@ mfd_prepare_file() {
   MFD_CONTOUR_END_E=""
   MFD_CONTOUR_DUR=""
   MFD_CONTOUR_LAYOUT=""
+  MFD_CONTOUR_DETECT=""
   MFD_CONTOUR_MENU_IDX=-1
   MFD_VERDICT="skip"
+  MFD_CAM_MAKE=""
+  MFD_CAM_MODEL=""
+  MFD_CAM_COMMENT=""
 
   name_e="$(mfd_filename_epoch_from_basename "${f##*/}" 2>/dev/null || true)"
   fs_e="$(mfd_fs_mtime_epoch "$f" 2>/dev/null || true)"
@@ -1053,6 +1115,7 @@ mfd_prepare_file() {
   MFD_NAME_E="$name_e"
   MFD_FS_E="$fs_e"
   MFD_MEDIA_E="$media_e"
+  mfd_read_camera_tags "$f" || true
   mfd_contour_analyze "$f" "$name_e" "$fs_e" "$media_e" || true
 
   # Need at least one usable stamp that can be compared.
@@ -1293,6 +1356,7 @@ mfd_decide_file() {
   # [c] rest-of-run: Contour normalize when Contour start/end are known.
   if (( ALWAYS_CONTOUR_START )) && [[ -n "${MFD_CONTOUR_START_E:-}" && -n "${MFD_CONTOUR_END_E:-}" ]]; then
     mfd_print_processing "$f"
+    mfd_print_contour_detect_note
     echo "$(mfd_ts) Queued (Contour normalize): ${f##*/}"
     mfd_queue_contour "$f" "$MFD_CONTOUR_START_E" "$MFD_CONTOUR_END_E" \
       "$before_name" "$before_fs" "$before_media"
@@ -1301,6 +1365,7 @@ mfd_decide_file() {
 
   if (( DO_YES )) || (( ALWAYS_OLDEST )) || (( ! script_is_run_interactively )); then
     mfd_print_processing "$f"
+    mfd_print_contour_detect_note
     if (( ALWAYS_OLDEST )); then
       if [[ -n "$MFD_OLDEST_E" ]]; then
         echo "$(mfd_ts) Queued (oldest usable): ${f##*/}"
@@ -1324,6 +1389,7 @@ mfd_decide_file() {
   fi
 
   mfd_print_processing "$f"
+  mfd_print_contour_detect_note
   echo
   if [[ -n "${MFD_CONTOUR_START_E:-}" ]]; then
     echo "  Sources (Contour normalize is the default: name→start, FS→end, media→start)."
