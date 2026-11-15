@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261115.104500 - pre-scan progress bar (i/n + %)
 # v. 20261115.103000 - pre-scan: batch only files that still need a decision
 # v. 20261115.102500 - drop Files bar; show i/n on the live exiftool line
 # v. 20261115.101500 - SUMMARY Timing: processing + prompt-wait (with start/finish/wall)
@@ -23,6 +24,7 @@
 # v. 20261020.150400 - date menu: ASCII n/a so parenthetical notes share one column
 # v. 20261020.145500 - fix file / media dates when the name, filesystem, and tags disagree
 #
+# 2026.11.15 - v. 0.1.24 - pre-scan shows a live progress bar (pct + i/n + filename)
 # 2026.11.15 - v. 0.1.23 - pre-scan before batching; batch size / Question X of Y cover only files
 #   that disagree (agree/skip counted once, not as batch slots)
 # 2026.11.15 - v. 0.1.22 - apply progress: Write/Fix i/n line + (i/n) on exiftool bar; remove Files bar
@@ -1479,16 +1481,49 @@ mfd_default_batch_size_for_count() {
   fi
 }
 
+mfd_prescan_progress_line() {
+  local done="$1" total="$2" name="$3"
+  local pct=0 bar msg width room bar_w=20 base
+  if (( total > 0 )); then
+    pct=$(( done * 100 / total ))
+  fi
+  (( pct > 100 )) && pct=100
+  bar="$(mfd_make_bar "$pct" "$bar_w")"
+  base="${name##*/}"
+  printf -v msg '%s Pre-scan  %3d%% [%s]  %s/%s' \
+    "$(mfd_ts)" "$pct" "$bar" "$done" "$total"
+  width="${COLUMNS:-80}"
+  [[ "$width" =~ ^[0-9]+$ ]] || width=80
+  room=$(( width - ${#msg} - 2 ))
+  if (( room >= 8 )) && [[ -n "$base" ]]; then
+    if (( ${#base} > room )); then
+      base="…${base: -$(( room - 1 ))}"
+    fi
+    msg+="  ${base}"
+  fi
+  if (( ${#msg} > width )); then
+    msg="${msg:0:width}"
+  fi
+  printf '\r%s\033[K' "$msg"
+  MFD_PROGRESS_ACTIVE=1
+}
+
 # Classify each file once: agree/skip out of the work list; disagree stays actionable.
 # Sets ACTIONABLE / ACTIONABLE_COUNT / ALREADY_OK. Verbose prints each skip during pre-scan.
 mfd_prescan_actionable() {
-  local f i n=${#FILES[@]}
+  local f i n=${#FILES[@]} done
   ACTIONABLE=()
   ALREADY_OK=0
   echo
   echo "$(mfd_ts) Pre-scan: checking ${n} media file(s)…"
   for (( i = 0; i < n; i++ )); do
     f="${FILES[i]}"
+    done=$((i + 1))
+    if (( VERBOSE )); then
+      mfd_progress_end
+    else
+      mfd_prescan_progress_line "$done" "$n" "$f"
+    fi
     if mfd_prepare_file "$f"; then
       ACTIONABLE+=("$f")
       continue
@@ -1498,6 +1533,7 @@ mfd_prescan_actionable() {
       mfd_verbose_print_check "$f" "$MFD_VERDICT" "$MFD_NAME_E" "$MFD_FS_E" "$MFD_MEDIA_E"
     fi
   done
+  mfd_progress_end
   ACTIONABLE_COUNT=${#ACTIONABLE[@]}
   echo "$(mfd_ts) Pre-scan done: ${ALREADY_OK} no decision needed, ${ACTIONABLE_COUNT} disagree (of ${SCANNED} scanned)."
 }

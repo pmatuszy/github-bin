@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261115.104500 - pre-scan progress bar (i/n + %)
 # v. 20261115.103000 - pre-scan: batch only files that still need a decision
 # v. 20261115.102500 - drop Files bar; show i/n on the live exiftool line
 # v. 20261115.101500 - SUMMARY Timing: start/finish/wall/processing/prompt-wait
@@ -11,6 +12,7 @@
 # v. 20261115.091000 - Contour profile is Contour+2 only (drop ROAM/GPS generics)
 # v. 20261115.090000 - initial: set Make/Model/Comment camera profiles (Contour, GoPro, 70mai, custom)
 #
+# 2026.11.15 - v. 0.1.11 - pre-scan shows a live progress bar (pct + i/n + filename)
 # 2026.11.15 - v. 0.1.10 - pre-scan after profile choice; batch size / Question X of Y cover
 #   only files that still need a decision (already-tagged counted once, not as batch slots)
 # 2026.11.15 - v. 0.1.9 - apply progress: Write i/n line + (i/n) on exiftool bar; remove Files bar
@@ -969,16 +971,49 @@ scm_default_batch_size_for_count() {
   fi
 }
 
+scm_prescan_progress_line() {
+  local done="$1" total="$2" name="$3"
+  local pct=0 bar msg width room bar_w=20 base
+  if (( total > 0 )); then
+    pct=$(( done * 100 / total ))
+  fi
+  (( pct > 100 )) && pct=100
+  bar="$(scm_make_bar "$pct" "$bar_w")"
+  base="${name##*/}"
+  printf -v msg '%s Pre-scan  %3d%% [%s]  %s/%s' \
+    "$(scm_ts)" "$pct" "$bar" "$done" "$total"
+  width="${COLUMNS:-80}"
+  [[ "$width" =~ ^[0-9]+$ ]] || width=80
+  room=$(( width - ${#msg} - 2 ))
+  if (( room >= 8 )) && [[ -n "$base" ]]; then
+    if (( ${#base} > room )); then
+      base="…${base: -$(( room - 1 ))}"
+    fi
+    msg+="  ${base}"
+  fi
+  if (( ${#msg} > width )); then
+    msg="${msg:0:width}"
+  fi
+  printf '\r%s\033[K' "$msg"
+  SCM_PROGRESS_ACTIVE=1
+}
+
 # After profile is known: count already-tagged; keep only files that still need a decision.
 # Unreadable tags stay actionable so decide can report FAILED. Sets ACTIONABLE / ACTIONABLE_COUNT.
 scm_prescan_actionable() {
-  local f i n=${#FILES[@]}
+  local f i n=${#FILES[@]} done
   ACTIONABLE=()
   ALREADY=0
   echo
   echo "$(scm_ts) Pre-scan: checking ${n} video file(s) against ${SCM_CAMERA_LABEL}…"
   for (( i = 0; i < n; i++ )); do
     f="${FILES[i]}"
+    done=$((i + 1))
+    if (( VERBOSE )); then
+      scm_progress_end
+    else
+      scm_prescan_progress_line "$done" "$n" "$f"
+    fi
     if ! scm_read_camera_tags "$f"; then
       ACTIONABLE+=("$f")
       continue
@@ -995,6 +1030,7 @@ scm_prescan_actionable() {
     fi
     ACTIONABLE+=("$f")
   done
+  scm_progress_end
   ACTIONABLE_COUNT=${#ACTIONABLE[@]}
   echo "$(scm_ts) Pre-scan done: ${ALREADY} already tagged, ${ACTIONABLE_COUNT} need a decision (of ${SCANNED} scanned)."
 }
