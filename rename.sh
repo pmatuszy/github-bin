@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# v. 20261115.112000 - Contour Make/Model → YYYYMMDD_HHMMSS_-_-_Contour+2 (metadata first; upgrade Contour_2)
 # v. 20261111.094500 - Collision prompt: [E] use _OTHER for all further collisions for the rest of this run (session twin of [R]/[D])
 # v. 20261103.073500 - GoPro DB mark: ON CONFLICT upsert (fix UNIQUE checked_paths.path); keep stdout clean inside $(transform_name) so NEW paths do not embed a newline
 # v. 20261028.174241 - fix typo preserve_timestamps_exists -> inplace in checksum ref rewrite
@@ -118,6 +119,9 @@
 # 2026.10.28 - v. 19.364.174241 - fix typo in update_checksum_content_refs: preserve_timestamps_exists was undefined (exit 127); call preserve_timestamps_inplace
 # 2026.10.28 - v. 19.363.172211 - checksum ref path rewrite after rename: use Python exact match instead of sed (fixes unterminated s on paths like kosciol_sw._Konrada)
 
+# 2026.11.15 - v. 19.366.112000 - Contour: when Make=Contour (Model Contour*), rename bare /
+#   Contour-style timestamps to YYYYMMDD_HHMMSS_-_-_Contour+2.ext (label Contour+2 only); upgrade
+#   legacy _-_-_Contour_2; Ambarella raw path uses Contour+2 the same way; print Contour-metadata note
 # 2026.11.11 - v. 19.365.094500 - Collision prompt: [E] auto-applies _OTHER (like [R]) for every further collision for the rest of this run; [D] remains directory-scoped only
 # 2026.11.03 - v. 19.363.073500 - GoPro capture-mode DB write uses INSERT…ON CONFLICT upsert (plain INSERT hit UNIQUE checked_paths.path when the in-memory cache missed an existing row). Progress/confirm helpers no longer write bare newlines to stdout (that leaked into $(transform_name) and showed NEW with the basename on the next line, unindented). emit_wrap and transform_name strip embedded CR/LF from paths.
 # 2026.10.20 - v. 19.362.205600 - Seal file name is .deleteme.rename.sh.seal.XXXXXX. If the seal copy cannot be created (e.g. read-only directory), startup continues on the live script instead of failing.
@@ -13243,6 +13247,15 @@ gopro_format_camera_basename_output() {
     local suffix="$4"
     local ext="$5"
 
+    # Empty model → single label (e.g. Contour+2 only).
+    if [[ -z "$model" ]]; then
+        if [[ -n "$suffix" ]]; then
+            printf '%s_-_-_%s_%s.%s' "$ts" "$manuf" "$suffix" "$ext"
+        else
+            printf '%s_-_-_%s.%s' "$ts" "$manuf" "$ext"
+        fi
+        return 0
+    fi
     if [[ -n "$suffix" ]]; then
         printf '%s_-_-_%s_%s_%s.%s' "$ts" "$manuf" "$model" "$suffix" "$ext"
     else
@@ -13775,6 +13788,75 @@ exif_label_token() {
     printf '%s' "$out"
 }
 
+# Contour camera label is always Contour+2 (not Contour_Contour+2 / Contour_2).
+contour_camera_label='Contour+2'
+
+contour_already_labeled_basename_matches() {
+    local bn="$1" lower="${1,,}"
+    # Canonical Contour+2 or legacy Contour_2 / Contour_Contour2 from generic append.
+    [[ "$lower" =~ ^[0-9]{8}_[0-9]{6}_(-__-_|-_-_)contour(\+2|_2|_contour2|_contour\+2)([_.].*)?\.(3gp|heic|heif|jpeg|jpg|m4v|mkv|mov|mp4|png|webm)$ ]]
+}
+
+contour_exif_is_contour() {
+    local exif="$1" make="" model=""
+    make="$(samsung_exif_first_value "$exif" 'Make')"
+    [[ -z "$make" ]] && make="$(samsung_exif_first_value "$exif" 'Android Make')"
+    [[ "${make,,}" == "contour" ]] || return 1
+    model="$(samsung_exif_first_value "$exif" 'Model')"
+    [[ -z "$model" ]] && model="$(samsung_exif_first_value "$exif" 'Camera Model Name')"
+    [[ -z "$model" ]] && model="$(samsung_exif_first_value "$exif" 'Android Model')"
+    if [[ -n "$model" && "${model,,}" != contour* ]]; then
+        return 1
+    fi
+    return 0
+}
+
+# Bare / Contour-style stamp → YYYYMMDD_HHMMSS_-_-_Contour+2.ext
+# Also upgrades legacy _-_-_Contour_2. Empty stdout = no change.
+transform_contour_media_basename() {
+    local file="$1" base="$2"
+    local exifloc exif ext stem ts copy_suffix="" rest=""
+    local lower="${base,,}"
+
+    # Already canonical Contour+2 — leave alone.
+    if [[ "$lower" =~ ^[0-9]{8}_[0-9]{6}_(-__-_|-_-_)contour\+2(\.[^.]+)$ ]]; then
+        return 0
+    fi
+    # Legacy Contour_2 / Contour_Contour2 → Contour+2 (metadata optional).
+    if [[ "$base" =~ ^([0-9]{8}_[0-9]{6})_-_-_Contour(_2|_Contour2|_Contour\+2)(\.[^.]+)$ ]]; then
+        printf '%s_-_-_%s%s' "${BASH_REMATCH[1]}" "$contour_camera_label" "${BASH_REMATCH[3]}"
+        return 0
+    fi
+    if [[ "$base" =~ ^([0-9]{8}_[0-9]{6})_-__-_Contour(_2|_Contour2|_Contour\+2)(\.[^.]+)$ ]]; then
+        printf '%s_-_-_%s%s' "${BASH_REMATCH[1]}" "$contour_camera_label" "${BASH_REMATCH[3]}"
+        return 0
+    fi
+
+    exifloc="$(resolve_rename_exiftool)" || return 1
+    exif="$("$exifloc" -api largefilesupport=1 "$file" 2>/dev/null)" || return 1
+    [[ -n "$exif" ]] || return 1
+    contour_exif_is_contour "$exif" || return 1
+
+    ext="${base##*.}"
+    stem="${base%.*}"
+    # Bare YYYYMMDD_HHMMSS[(N)|_N]
+    if [[ "$stem" =~ ^(([0-9]+_)?[0-9]{8}_[0-9]{6})(\(([0-9]+)\)|_([0-9]+))?$ ]]; then
+        ts="${BASH_REMATCH[1]}"
+        copy_suffix="${BASH_REMATCH[4]:-${BASH_REMATCH[5]}}"
+        vlog "Contour metadata present (Make/Model Contour) — labeling as ${contour_camera_label}"
+        gopro_format_camera_basename_output "$ts" "$contour_camera_label" "" "$copy_suffix" "$ext"
+        return 0
+    fi
+    # Contour-style: YYYYMMDD_HHMMSS_NVenc_… → keep timestamp, drop NVenc middle, add Contour+2
+    if [[ "$stem" =~ ^([0-9]{8}_[0-9]{6})_NVenc(_.+)?$ ]]; then
+        ts="${BASH_REMATCH[1]}"
+        vlog "Contour metadata present (Make/Model Contour) — labeling as ${contour_camera_label} (drop _NVenc_)"
+        gopro_format_camera_basename_output "$ts" "$contour_camera_label" "" "" "$ext"
+        return 0
+    fi
+    return 1
+}
+
 # Bare YYYYMMDD_HHMMSS name plus Make and Model from EXIF. Empty stdout = no change.
 maybe_append_bare_timestamp_camera_label() {
     local file="$1" base="$2"
@@ -13785,6 +13867,7 @@ maybe_append_bare_timestamp_camera_label() {
     samsung_already_renamed_basename_matches "$base" && return 0
     xiaomi_already_renamed_basename_matches "$base" && return 0
     gopro_exif_renamed_basename_matches "$base" && return 0
+    contour_already_labeled_basename_matches "$base" && return 0
 
     exifloc="$(resolve_rename_exiftool)" || return 0
     exif="$("$exifloc" -api largefilesupport=1 "$file" 2>/dev/null)" || return 0
@@ -13797,6 +13880,8 @@ maybe_append_bare_timestamp_camera_label() {
     [[ -n "$model" ]] || model="$(samsung_exif_first_value "$exif" 'Model')"
     [[ -n "$make" && -n "$model" ]] || return 0
     [[ "${make,,}" != unknown* && "${model,,}" != unknown* ]] || return 0
+    # Contour has its own transform (Contour+2 only).
+    [[ "${make,,}" == "contour" ]] && return 0
 
     make_tok="$(exif_label_token "$make")" || return 0
     model_tok="$(exif_label_token "$model")" || return 0
@@ -14607,8 +14692,9 @@ transform_gopro_camera_basename() {
 
     if printf '%s\n' "$exif" | grep "Compressor Name" | grep -q "Ambarella AVC encoder"; then
         czy_contour=1
-        DeviceManufacturer=Contour
-        DeviceModelName=2
+        # Single camera label Contour+2 (same as tagged Contour+2 Camera metadata).
+        DeviceManufacturer='Contour+2'
+        DeviceModelName=""
         TrackCreateDate="$("$exifloc" -api largefilesupport=1 -d '%Y%m%d_%H%M%S' "$file" | grep 'Track Create Date' | head -n 1 | tr 'a-z' 'A-Z' | sed 's/TRACK CREATE DATE               : //' | tr -d ':' | tr ' ' '_' | tr -d $'\r')"
         data_stworzenia_pliku_w_czasie_lokalnym="$TrackCreateDate"
     fi
@@ -14667,7 +14753,11 @@ transform_gopro_camera_basename() {
     fi
 
     [[ -n "$data_stworzenia_pliku_w_czasie_lokalnym" ]] || return 1
-    [[ "$DeviceManufacturer" != xxx && "$DeviceModelName" != xxx ]] || return 1
+    [[ "$DeviceManufacturer" != xxx ]] || return 1
+    # Contour+2 uses empty model; other cameras still require a model token.
+    if (( czy_contour == 0 )); then
+        [[ "$DeviceModelName" != xxx && -n "$DeviceModelName" ]] || return 1
+    fi
 
     gopro_format_camera_basename_output \
         "$data_stworzenia_pliku_w_czasie_lokalnym" \
@@ -15766,7 +15856,34 @@ transform_name() {
         fi
     fi
 
-    if [[ -f "$f" ]] && ((_tn_skip_exif == 0)) && (( _gopro_applied == 0 && _sony_applied == 0 && _olympus_applied == 0 && _nikon_applied == 0 && _canon_applied == 0 && _samsung_applied == 0 && _xiaomi_applied == 0 )) \
+    local _contour_applied=0
+    if [[ -f "$f" ]] && ((_tn_skip_exif == 0)) && (( _gopro_applied == 0 && _sony_applied == 0 && _olympus_applied == 0 && _nikon_applied == 0 && _canon_applied == 0 && _samsung_applied == 0 && _xiaomi_applied == 0 )); then
+        local _contour_try="" _contour_rc=0 _tn_save_e_contour=0 _contour_err_trap=""
+        local _contour_stem="${newbase%.*}"
+        if samsung_media_basename_matches "$newbase" \
+            || contour_already_labeled_basename_matches "$newbase" \
+            || [[ "$_contour_stem" =~ ^[0-9]{8}_[0-9]{6}_NVenc ]]; then
+            [[ $- == *e* ]] && _tn_save_e_contour=1
+            set +e
+            _contour_err_trap="$(trap -p ERR || true)"
+            trap - ERR
+            _contour_try="$(transform_contour_media_basename "$f" "$newbase")"
+            _contour_rc=$?
+            eval "${_contour_err_trap:-}"
+            if ((_tn_save_e_contour)); then
+                set -e
+            else
+                set +e
+            fi
+            if (( _contour_rc == 0 )) && [[ -n "$_contour_try" && "$_contour_try" != "$newbase" ]]; then
+                vlog "Contour media rename: $newbase -> $_contour_try"
+                newbase="$_contour_try"
+                _contour_applied=1
+            fi
+        fi
+    fi
+
+    if [[ -f "$f" ]] && ((_tn_skip_exif == 0)) && (( _gopro_applied == 0 && _sony_applied == 0 && _olympus_applied == 0 && _nikon_applied == 0 && _canon_applied == 0 && _samsung_applied == 0 && _xiaomi_applied == 0 && _contour_applied == 0 )) \
         && samsung_media_basename_matches "$newbase"; then
         local _cam_label_try="" _cam_label_rc=0 _tn_save_e_cam=0 _cam_err_trap=""
         [[ $- == *e* ]] && _tn_save_e_cam=1

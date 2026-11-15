@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261115.112000 - one exiftool progress finish line (fold File* dates into main write)
 # v. 20261115.111500 - Contour: Make/Model metadata wins; filename is fallback
 # v. 20261115.104500 - pre-scan progress bar (i/n + %)
 # v. 20261115.103000 - pre-scan: batch only files that still need a decision
@@ -25,6 +26,8 @@
 # v. 20261020.150400 - date menu: ASCII n/a so parenthetical notes share one column
 # v. 20261020.145500 - fix file / media dates when the name, filesystem, and tags disagree
 #
+# 2026.11.15 - v. 0.1.26 - exiftool apply: include FileCreate/ModifyDate in the main write so the
+#   100% progress line is not printed twice
 # 2026.11.15 - v. 0.1.25 - Contour detect: Make/Model metadata first (Make=Contour); filename
 #   pattern only if tags absent; print when metadata identifies Contour
 # 2026.11.15 - v. 0.1.24 - pre-scan shows a live progress bar (pct + i/n + filename)
@@ -884,27 +887,25 @@ mfd_set_fs_times_epoch() {
 }
 
 mfd_set_media_dates_epoch() {
-  local dest="$1" epoch="$2" exif iso ok=0
+  local dest="$1" epoch="$2" exif iso
   [[ -f "$dest" && "$epoch" =~ ^[0-9]+$ ]] || return 1
   exif="$(mfd_find_exiftool 2>/dev/null)" || return 1
   iso="$(date -d "@${epoch}" '+%Y:%m:%d %H:%M:%S' 2>/dev/null)" || return 1
+  # One exiftool pass (media + File* dates) so the progress bar finishes once, not twice.
   if mfd_run_exiftool "$exif" -overwrite_original -P -api QuickTimeUTC=1 \
     -AllDates="$iso" \
     -CreateDate="$iso" -ModifyDate="$iso" -DateTimeOriginal="$iso" \
     -TrackCreateDate="$iso" -TrackModifyDate="$iso" \
     -MediaCreateDate="$iso" -MediaModifyDate="$iso" \
+    -FileCreateDate="$iso" -FileModifyDate="$iso" \
     -- "$dest"; then
-    ok=1
-  elif mfd_run_exiftool "$exif" -overwrite_original -P \
+    return 0
+  fi
+  mfd_run_exiftool "$exif" -overwrite_original -P \
     -AllDates="$iso" \
     -CreateDate="$iso" -ModifyDate="$iso" -DateTimeOriginal="$iso" \
-    -- "$dest"; then
-    ok=1
-  fi
-  mfd_run_exiftool "$exif" -overwrite_original -P -api QuickTimeUTC=1 \
     -FileCreateDate="$iso" -FileModifyDate="$iso" \
-    -- "$dest" || true
-  (( ok ))
+    -- "$dest"
 }
 
 # Apply epoch to media + filesystem. Prints a short status; caller shows before/after.
