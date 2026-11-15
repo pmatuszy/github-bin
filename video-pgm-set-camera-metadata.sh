@@ -1,9 +1,11 @@
 #!/bin/bash
+# v. 20261115.095500 - camera profile menu: no default (Enter asks again)
 # v. 20261115.094500 - batch decide-then-apply; Ctrl-C cleans in-flight exiftool write
 # v. 20261115.091200 - ask when Make/Model/Comment already set; safe -y (fill empty only)
 # v. 20261115.091000 - Contour profile is Contour+2 only (drop ROAM/GPS generics)
 # v. 20261115.090000 - initial: set Make/Model/Comment camera profiles (Contour, GoPro, 70mai, custom)
 #
+# 2026.11.15 - v. 0.1.4 - camera profile menu has no default; Enter asks again (was silently Contour+2)
 # 2026.11.15 - v. 0.1.3 - process in batches: ask all decisions for a batch first, then write;
 #   prompt for batch size (default = all when ≤50 files, else 50); Ctrl-C during a write stops
 #   exiftool and removes that file's *_exiftool_tmp leftover
@@ -493,9 +495,14 @@ scm_choose_camera_profile() {
   echo "  [3] 70mai-A510"
   echo "  [4] Custom Make / Model"
   echo "  [q] Quit"
+  echo "  (no default — choose explicitly)"
   echo
   while true; do
-    scm_read_key "Camera [1/2/3/4/q]: " "1"
+    scm_read_key "Camera [1/2/3/4/q] (no default): " ""
+    if [[ -z "${REPLY:-}" ]]; then
+      echo "$(scm_ts) Choose 1, 2, 3, 4, or q."
+      continue
+    fi
     choice="$(scm_choice "$REPLY")"
     case "$choice" in
       1)
@@ -524,7 +531,7 @@ scm_choose_camera_profile() {
         return 2
         ;;
       *)
-        echo "$(scm_ts) Unknown choice: ${REPLY}."
+        echo "$(scm_ts) Unknown choice: ${REPLY}. Choose 1, 2, 3, 4, or q."
         ;;
     esac
   done
