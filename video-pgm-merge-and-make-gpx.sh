@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261115.080100 - Contour stop slack tightened (default +45s); battery-change pauses stay separate
 # v. 20261115.075000 - Contour ~2 GB size-split chapters (YYYYMMDD_HHMMSS / _NVenc_*); wider stop gap than GoPro
 # v. 20261027.205537 - group prompt: [Y] merge all remaining (default), [m] this group; temp default N unless HDD
 # v. 20261027.073717 - forced merge: allow prior *_concat_parts_* inputs; combine part ranges in output name
@@ -91,7 +92,8 @@
 # v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
 # v. 20260805.154826 - after merge: copy GPS/dates from first chapter; FS times via touch -r
 
-# 2026.11.15 - v. 0.15.107 - Contour size-split: YYYYMMDD_HHMMSS[.mp4|_NVenc_…]; ~2 GB chapters (not GoPro 4/12 GB); next start ≈ prev start + duration with Contour stop slack (default −30…+180 s) so a ~1 min pause between chapters still merges; plan label Contour ~2 GB; GoPro size-split rules unchanged
+# 2026.11.15 - v. 0.15.108 - Contour stop slack tightened: next start may be 30s early … 45s after prev start+duration (was +180s); short split pauses (~28s) still merge, battery-change gaps (~54s+) stay separate groups
+# 2026.11.15 - v. 0.15.107 - Contour size-split: YYYYMMDD_HHMMSS[.mp4|_NVenc_…]; ~2 GB chapters (not GoPro 4/12 GB); next start ≈ prev start + duration with Contour stop slack; plan label Contour ~2 GB; GoPro size-split rules unchanged
 # 2026.10.27 - v. 0.15.106 - group merge prompt: [Y] Merge all remaining groups is the default (asks output date/time for each first); [m] merges only this group. Off-disk temp merge defaults to No (write here) for SSD and unknown disks; Yes (/tmp) only when the source is a confirmed spinning HDD — unknown mounts like /mnt/f no longer default to Yes
 # 2026.10.27 - v. 0.15.105 - forced merge (FILE FILE …) accepts prior *_concat_parts_* / *_concat outputs so two half-merges can be joined; output name uses the first file's stem with the combined chapter range when every input parses (e.g. …_01-05 + …_06-09 → …_concat_parts_01-09.mp4), else strips an existing concat suffix before appending _concat_parts_01-N. FILE +N still skips other concat names when picking alphabetical neighbours
 # 2026.10.24 - v. 0.15.104 - size-split grouping also uses GoPro Media UID from exiftool (same UID across chapters of one recording, including bare …_GoPro_Hero10_Black.mp4 vs …_GX02…); batch-loaded with CreateDate; different UIDs refuse to merge even if filenames look related
@@ -336,7 +338,8 @@ Merge behaviour:
     YYYYMMDD_HHMMSS_NVenc_….mp4 on the same calendar day when chapters are ~2 GB
     (Contour FAT-style splits; not the GoPro ~4 GB / ~12 GB bands) and filename
     start + duration chains with Contour stop slack (default next start from 30s
-    early to 180s after the previous chapter ends — enough for a ~1 min pause).
+    early to 45s after the previous chapter ends — short split pauses merge;
+    longer gaps such as a battery change stay separate).
     The last chapter may be a smaller partial. Output:
     YYYYMMDD_HHMMSS_Contour_concat_parts_01-NN.mp4. Non-chaining Contour clips stay
     standalone. GoPro 4/12 GB rules are unchanged.
@@ -463,7 +466,7 @@ Environment:
                           Reject a Contour full chapter shorter than this (default: 300).
   PGM_CONTOUR_TIME_TOLERANCE_SEC / PGM_CONTOUR_TIME_MAX_STOP_SEC
                           Contour chain: next start vs prev start + duration may be this
-                          many seconds early (default 30) or late/stop (default 180).
+                          many seconds early (default 30) or late/stop (default 45).
   PGM_DASHCAM_MAX_GAP_SEC Max seconds between 70mai clip start times to stay in one
                           journey (default: 90). Gaps above this start a new group.
   PGM_DASHCAM_SHORT_HOLE_SEC
@@ -2993,9 +2996,10 @@ PGM_SIZE_SPLIT_12G_TIME_MAX_GAP_SEC="${PGM_SIZE_SPLIT_12G_TIME_MAX_GAP_SEC:-2400
 PGM_CONTOUR_2G_MIN_BYTES="${PGM_CONTOUR_2G_MIN_BYTES:-1850000000}"
 PGM_CONTOUR_2G_MAX_BYTES="${PGM_CONTOUR_2G_MAX_BYTES:-2350000000}"
 PGM_CONTOUR_DURATION_REJECT_BELOW_SEC="${PGM_CONTOUR_DURATION_REJECT_BELOW_SEC:-300}"
-# Next start ≈ prev + duration: allow early by TOLERANCE, late/stop by MAX_STOP (~1–3 min).
+# Next start ≈ prev + duration: allow early by TOLERANCE, late/stop by MAX_STOP
+# (short Contour split pause ~28s OK; battery-change ~54s+ stays separate).
 PGM_CONTOUR_TIME_TOLERANCE_SEC="${PGM_CONTOUR_TIME_TOLERANCE_SEC:-30}"
-PGM_CONTOUR_TIME_MAX_STOP_SEC="${PGM_CONTOUR_TIME_MAX_STOP_SEC:-180}"
+PGM_CONTOUR_TIME_MAX_STOP_SEC="${PGM_CONTOUR_TIME_MAX_STOP_SEC:-45}"
 # GoPro cameras (7, 10, …): ~4 GB chapters often ~6:49 (409s).
 PGM_GOPRO7_SIZE_MIN_BYTES=$PGM_SIZE_SPLIT_4G_MIN_BYTES
 PGM_GOPRO7_SIZE_MAX_BYTES=$PGM_SIZE_SPLIT_4G_MAX_BYTES
@@ -4685,7 +4689,8 @@ is_partial_contour_size_split_segment() {
 }
 
 # Next Contour chapter follows prev by hybrid start + duration, with stop slack.
-# Default: next may start 30s early … 180s after expected end (covers ~72s pause).
+# Default: next may start 30s early … 45s after expected end (short split pause;
+# longer battery-change gaps do not chain).
 contour_chapter_timestamps_follow() {
   local prev_f="$1" next_f="$2"
   local prev_epoch next_epoch dur expected delta tol max_stop
@@ -4703,9 +4708,9 @@ contour_chapter_timestamps_follow() {
   (( next_epoch >= prev_epoch )) || return 1
 
   tol="${PGM_CONTOUR_TIME_TOLERANCE_SEC:-30}"
-  max_stop="${PGM_CONTOUR_TIME_MAX_STOP_SEC:-180}"
+  max_stop="${PGM_CONTOUR_TIME_MAX_STOP_SEC:-45}"
   [[ "$tol" =~ ^[0-9]+$ ]] || tol=30
-  [[ "$max_stop" =~ ^[0-9]+$ ]] || max_stop=180
+  [[ "$max_stop" =~ ^[0-9]+$ ]] || max_stop=45
 
   dur=$(ffprobe_duration_seconds "$prev_f" 2>/dev/null) || dur=""
   [[ -n "$dur" ]] || return 1
