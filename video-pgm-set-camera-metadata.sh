@@ -1,11 +1,13 @@
 #!/bin/bash
+# v. 20261115.091000 - Contour profile is Contour+2 only (drop ROAM/GPS generics)
 # v. 20261115.090000 - initial: set Make/Model/Comment camera profiles (Contour, GoPro, 70mai, custom)
 #
+# 2026.11.15 - v. 0.1.1 - Contour preset is Contour+2 Camera only (Make=Contour Model=Contour+2); removed Contour / ROAM / GPS generics
 # 2026.11.15 - v. 0.1 - initial release: tag video files with camera identity (Make, Model,
 #   Comment) so Contour / GoPro / 70mai detection does not rely on filename alone. Profiles
-#   Contour, Contour ROAM, Contour GPS, GoPro, 70mai-A510, or custom Make/Model. Idempotent:
-#   files that already match are skipped. -y / --camera apply without a profile menu;
-#   --dry-run; -r; --verbose; per-file [Y]/[a]/[n]/[q]; end-of-run summary.
+#   Contour+2, GoPro, 70mai-A510, or custom Make/Model. Idempotent: files that already match
+#   are skipped. -y / --camera apply without a profile menu; --dry-run; -r; --verbose;
+#   per-file [Y]/[a]/[n]/[q]; end-of-run summary.
 #
 # video-pgm-set-camera-metadata.sh
 #
@@ -20,17 +22,16 @@ Usage: $(script_live_basename) [-h|--help] [-v|--version] [--history]
        [FILE|DIR ...]
 
 Write camera identity into video metadata (Make, Model, Comment) so other
-scripts can detect Contour / GoPro / 70mai without guessing from the file
+scripts can detect Contour+2 / GoPro / 70mai without guessing from the file
 name alone. Files that already match the chosen profile are skipped.
 
 With no FILE or DIR, scan the current directory (not subdirectories unless -r).
 
 Camera profiles (--camera or interactive menu):
-  contour         Make=Contour  Model=Contour  Comment=Contour
-  contour-roam    Make=Contour  Model=ROAM     Comment=Contour ROAM
-  contour-gps     Make=Contour  Model=GPS      Comment=Contour GPS
-  gopro           Make=GoPro    Model=GoPro    Comment=GoPro
-  70mai           Make=70mai    Model=A510     Comment=70mai-A510
+  contour-plus-2  Make=Contour  Model=Contour+2  Comment=Contour+2 Camera
+                  (aliases: contour+2, contour2, contour)
+  gopro           Make=GoPro    Model=GoPro      Comment=GoPro
+  70mai           Make=70mai    Model=A510       Comment=70mai-A510
   custom          Ask for Make and Model (Comment = Make Model)
 
 Options:
@@ -42,8 +43,8 @@ Options:
   -r, --recursive      Also scan subdirectories.
   --dry-run            Show what would change; do not write.
   --verbose            Print current tags even when already matching.
-  --camera PROFILE     One of: contour, contour-roam, contour-gps, gopro,
-                       70mai, custom (see above).
+  --camera PROFILE     One of: contour-plus-2 (aliases contour+2, contour2,
+                       contour), gopro, 70mai, custom (see above).
   --make TEXT          Custom Make (implies --camera custom when set with --model).
   --model TEXT         Custom Model.
 
@@ -56,13 +57,13 @@ Interactive keys (per file, when not -y):
 Needs: exiftool.
 
 Examples:
-  $(script_live_basename) --camera contour .
-      Tag Contour on every video in this directory (asks per file).
+  $(script_live_basename) --camera contour-plus-2 .
+      Tag Contour+2 on every video in this directory (asks per file).
 
-  $(script_live_basename) -y --camera contour --dry-run .
-      Plan Contour tags; write nothing.
+  $(script_live_basename) -y --camera contour+2 --dry-run .
+      Plan Contour+2 tags; write nothing.
 
-  $(script_live_basename) -y --make Contour --model ROAM ./clip.mp4
+  $(script_live_basename) -y --make Contour --model Contour+2 ./clip.mp4
       Set custom Make/Model without asking.
 
 Environment:
@@ -241,6 +242,13 @@ scm_normalize_camera_id() {
   local id="${1,,}"
   id="${id//_/-}"
   id="${id// /-}"
+  # Contour+2 aliases → one id (plus sign or "plus").
+  case "$id" in
+    contour|contour2|contour+2|contour-plus-2|contour-plus2|contourplus2)
+      printf '%s\n' "contour-plus-2"
+      return 0
+      ;;
+  esac
   printf '%s\n' "$id"
 }
 
@@ -250,23 +258,11 @@ scm_set_profile_from_id() {
   local id
   id="$(scm_normalize_camera_id "$1")"
   case "$id" in
-    contour)
+    contour-plus-2)
       SCM_WANT_MAKE="Contour"
-      SCM_WANT_MODEL="Contour"
-      SCM_WANT_COMMENT="Contour"
-      SCM_CAMERA_LABEL="Contour"
-      ;;
-    contour-roam|roam)
-      SCM_WANT_MAKE="Contour"
-      SCM_WANT_MODEL="ROAM"
-      SCM_WANT_COMMENT="Contour ROAM"
-      SCM_CAMERA_LABEL="Contour ROAM"
-      ;;
-    contour-gps|gps)
-      SCM_WANT_MAKE="Contour"
-      SCM_WANT_MODEL="GPS"
-      SCM_WANT_COMMENT="Contour GPS"
-      SCM_CAMERA_LABEL="Contour GPS"
+      SCM_WANT_MODEL="Contour+2"
+      SCM_WANT_COMMENT="Contour+2 Camera"
+      SCM_CAMERA_LABEL="Contour+2 Camera"
       ;;
     gopro)
       SCM_WANT_MAKE="GoPro"
@@ -344,45 +340,33 @@ scm_choose_camera_profile() {
   echo
   echo "  Camera profile (written as Make / Model / Comment):"
   echo
-  echo "  [1] Contour"
-  echo "  [2] Contour ROAM"
-  echo "  [3] Contour GPS"
-  echo "  [4] GoPro"
-  echo "  [5] 70mai-A510"
-  echo "  [6] Custom Make / Model"
+  echo "  [1] Contour+2 Camera"
+  echo "  [2] GoPro"
+  echo "  [3] 70mai-A510"
+  echo "  [4] Custom Make / Model"
   echo "  [q] Quit"
   echo
   while true; do
-    scm_read_key "Camera [1/2/3/4/5/6/q]: " "1"
+    scm_read_key "Camera [1/2/3/4/q]: " "1"
     choice="$(scm_choice "$REPLY")"
     case "$choice" in
       1)
-        scm_print_selected "1 = Contour"
-        scm_set_profile_from_id contour
+        scm_print_selected "1 = Contour+2 Camera"
+        scm_set_profile_from_id contour-plus-2
         return 0
         ;;
       2)
-        scm_print_selected "2 = Contour ROAM"
-        scm_set_profile_from_id contour-roam
-        return 0
-        ;;
-      3)
-        scm_print_selected "3 = Contour GPS"
-        scm_set_profile_from_id contour-gps
-        return 0
-        ;;
-      4)
-        scm_print_selected "4 = GoPro"
+        scm_print_selected "2 = GoPro"
         scm_set_profile_from_id gopro
         return 0
         ;;
-      5)
-        scm_print_selected "5 = 70mai-A510"
+      3)
+        scm_print_selected "3 = 70mai-A510"
         scm_set_profile_from_id 70mai
         return 0
         ;;
-      6)
-        scm_print_selected "6 = Custom Make / Model"
+      4)
+        scm_print_selected "4 = Custom Make / Model"
         scm_ask_custom_make_model || continue
         scm_set_profile_from_id custom || continue
         return 0
