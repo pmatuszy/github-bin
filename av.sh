@@ -1,9 +1,15 @@
 #!/usr/bin/env bash
+# v. 20261115.184800 - keys 10+: letter suffix (v9 then va, vb…); always two chars
+# v. 20261115.184700 - column gap: pad left to content width + two spaces before |
+# v. 20261115.184500 - key echo: read -s so terminal does not double each letter
 # v. 20261115.184300 - column gutter ' | ' between left and right
 # v. 20261115.184200 - keys a1..aN / v1..vN / m1.. / t1..; two-column; no default
 # v. 20261115.184000 - two-column menu (Audio/Video | rest); no default selection
 # v. 20261115.183600 - AV menu: list audio/media/video scripts; single-key pick, no Enter
 #
+# 2026.11.15 - v. 0.3.4 - after 9 use a,b,c… (skip q); drop two-digit keys / digit timeout
+# 2026.11.15 - v. 0.3.3 - only two spaces before | (drop wide fixed AV_COL_WIDTH padding)
+# 2026.11.15 - v. 0.3.2 - silent read + one printf per key (was printing vv for one v)
 # 2026.11.15 - v. 0.3.1 - print ' | ' between left and right columns
 # 2026.11.15 - v. 0.3.0 - audio a1..aN, video v1..vN, media m1.., tools t1..; typed keys, no Enter
 # 2026.11.15 - v. 0.2.0 - two columns: left Audio+Video, right Media/PAR2/rename + Tools; no default
@@ -12,18 +18,16 @@
 # av.sh
 #
 # Short launcher: show audio / media / video tools beside this script and run one.
-# Keys: a1.. / v1.. / m1.. / t1.. — no Enter, no default. [q] quits. Extra args are forwarded.
+# Keys: a1..a9/aa.. / v1..v9/va.. / m1.. / t1.. — no Enter, no default. [q] quits.
 #
 
 set -o nounset
 set -o pipefail
 
-SCRIPT_VERSION="0.3.1"
+SCRIPT_VERSION="0.3.4"
 
-# Left column width (chars): "  [a1] name" padded to this before the right column.
-AV_COL_WIDTH=50
-# After first digit, wait this long for an optional second digit (v10 vs v1).
-AV_DIGIT2_TIMEOUT=0.45
+# 1..9 → digit; 10+ → a,b,c… (q skipped so it never looks like quit).
+AV_LETTER_SUFFIXES="abcdefghijklmnoprstuvwxyz"
 
 av_script_dir() {
   local src="${BASH_SOURCE[0]}"
@@ -109,30 +113,45 @@ av_flush_stdin() {
   done
 }
 
-# True if some registered key is PREFIX followed by more characters (e.g. v1 vs v10).
-av_has_longer_key() {
-  local prefix="$1"
-  local k
-  for k in "${!key_to_script[@]}"; do
-    [[ "$k" == "$prefix"?* ]] && return 0
-  done
+# 1-based index → one-char suffix: 1..9 or a,b,c… (sets av_suffix_out).
+av_index_suffix() {
+  local n="$1"
+  local li
+
+  av_suffix_out=""
+  if (( n >= 1 && n <= 9 )); then
+    av_suffix_out="$n"
+    return 0
+  fi
+  if (( n >= 10 )); then
+    li=$(( n - 10 ))
+    if (( li < ${#AV_LETTER_SUFFIXES} )); then
+      av_suffix_out="${AV_LETTER_SUFFIXES:li:1}"
+      return 0
+    fi
+  fi
   return 1
 }
 
-# Register ITEM under PREFIX+N (1-based). Sets av_cell_out. Uses key_to_script.
+# Register ITEM under PREFIX + suffix for 1-based N. Sets av_cell_out. Uses key_to_script.
 av_item_cell() {
   local prefix="$1"
   local n="$2"
   local name="$3"
-  local key="${prefix}${n}"
+  local key
 
+  if ! av_index_suffix "$n"; then
+    av_cell_out="  (!) skip $name"
+    return 1
+  fi
+  key="${prefix}${av_suffix_out}"
   key_to_script[$key]="$name"
   av_cell_out="  [${key}] ${name}"
 }
 
 # Build left/right rows and print two columns.
 # Left: Audio (a1..) then Video (v1..). Right: Media (m1..) then Tools (t1..).
-# Uses globals: key_to_script, AV_COL_WIDTH, av_cell_out
+# Uses globals: key_to_script, av_cell_out
 av_print_two_columns() {
   local -n _la=$1
   local -n _lv=$2
@@ -140,7 +159,7 @@ av_print_two_columns() {
   local -n _rt=$4
 
   local -a left_cells=() right_cells=()
-  local name i n max_rows left_cell right_cell pad
+  local name i n max_rows left_cell right_cell pad left_width=0
 
   if ((${#_la[@]})); then
     left_cells+=("  Audio")
@@ -182,6 +201,10 @@ av_print_two_columns() {
     done
   fi
 
+  for left_cell in "${left_cells[@]+"${left_cells[@]}"}"; do
+    (( ${#left_cell} > left_width )) && left_width=${#left_cell}
+  done
+
   max_rows=${#left_cells[@]}
   (( ${#right_cells[@]} > max_rows )) && max_rows=${#right_cells[@]}
 
@@ -191,23 +214,30 @@ av_print_two_columns() {
     (( i < ${#left_cells[@]} )) && left_cell="${left_cells[i]}"
     (( i < ${#right_cells[@]} )) && right_cell="${right_cells[i]}"
 
-    pad=$(( AV_COL_WIDTH - ${#left_cell} ))
+    pad=$(( left_width - ${#left_cell} ))
     (( pad < 0 )) && pad=0
     if [[ -n "$right_cell" || -n "$left_cell" ]]; then
-      printf '%s%*s | %s\n' "$left_cell" "$pad" '' "$right_cell"
+      # Two spaces before |, none forced after (right cell already has leading spaces).
+      printf '%s%*s  |%s\n' "$left_cell" "$pad" '' "$right_cell"
     else
       printf '\n'
     fi
   done
 }
 
+# Read one key silently, then echo it once (avoids "vv" from tty echo + printf).
+av_read_char() {
+  local __var="$1"
+  IFS= read -r -s -n 1 "$__var"
+}
+
 # Read a menu choice with no Enter and no default.
-# Sets av_choice_key (e.g. a1, v10, q) or returns 1 if incomplete/invalid start.
+# Sets av_choice_key (e.g. a1, va, q) or returns 1 if incomplete/invalid start.
 av_read_choice() {
-  local c d1 d2
+  local c d1
   av_choice_key=""
 
-  IFS= read -r -n 1 c || c=
+  av_read_char c || c=
   [[ -z "$c" || "$c" == $'\n' || "$c" == $'\r' ]] && return 1
   c="${c,,}"
   printf '%s' "$c"
@@ -218,26 +248,18 @@ av_read_choice() {
       return 0
       ;;
     a|v|m|t)
-      IFS= read -r -n 1 d1 || d1=
+      av_read_char d1 || d1=
       if [[ -z "$d1" || "$d1" == $'\n' || "$d1" == $'\r' ]]; then
         return 1
       fi
-      if [[ ! "$d1" =~ ^[0-9]$ ]]; then
+      d1="${d1,,}"
+      # 1..9 or letter suffix (a..z except bare quit is only single q).
+      if [[ ! "$d1" =~ ^[1-9a-z]$ ]]; then
         printf '%s' "$d1"
         return 1
       fi
       printf '%s' "$d1"
       av_choice_key="${c}${d1}"
-
-      # Optional 2nd digit when both v1 and v10 (etc.) exist — short wait, still no Enter.
-      if av_has_longer_key "$av_choice_key"; then
-        if IFS= read -r -t "$AV_DIGIT2_TIMEOUT" -n 1 d2; then
-          if [[ "$d2" =~ ^[0-9]$ ]]; then
-            printf '%s' "$d2"
-            av_choice_key+="$d2"
-          fi
-        fi
-      fi
       return 0
       ;;
     *)
@@ -251,12 +273,12 @@ show_help() {
 Usage: $(basename "$0") [-h|--help] [-v|--version] [--] [ARGS...]
 
 List audio / media / video scripts next to this file and run one.
-Keys (no Enter, no default):
-  a1..aN   audio
-  v1..vN   video
-  m1..mN   media / rename / PAR2
-  t1..tN   tools / install
-  q        quit
+Keys (no Enter, no default) — always two chars after the section letter:
+  a1..a9, aa..   audio
+  v1..v9, va..   video
+  m1..m9, ma..   media / rename / PAR2
+  t1..t9, ta..   tools / install
+  q              quit
 
 Any ARGS after the menu options are forwarded to the chosen script.
 EOF
@@ -306,7 +328,7 @@ main() {
 
   printf '=== AV menu ============================================================\n'
   av_print_two_columns audio_scripts video_scripts media_scripts tool_scripts
-  printf '\n  [q] quit   (no default — type a1 / v3 / m1 / t2 / q)\n'
+  printf '\n  [q] quit   (no default — type a1 / v3 / va / m1 / t2 / q)\n'
   printf '======================================================================\n'
 
   while true; do
@@ -314,7 +336,7 @@ main() {
     printf '(%s) key (no default): ' "$(date '+%Y.%m.%d %H:%M:%S')"
     if ! av_read_choice; then
       printf '\n'
-      printf 'Need a key like a1, v2, m1, t1, or q — no default.\n'
+      printf 'Need a key like a1, v2, va, m1, t1, or q — no default.\n'
       continue
     fi
     printf '\n'
