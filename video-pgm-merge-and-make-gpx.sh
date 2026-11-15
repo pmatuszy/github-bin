@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261115.161500 - group prompt: [Y] merge this group (default); [m] merge all remaining
 # v. 20261115.081500 - Contour merges use ffmpeg concat -c copy (mp4_merge breaks HandBrake HEVC+MP3)
 # v. 20261115.080700 - Contour suspect window 46–100s: review candidates (default skip); confident ≤45s unchanged
 # v. 20261115.080100 - Contour stop slack tightened (default +45s); battery-change pauses stay separate
@@ -94,6 +95,8 @@
 # v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
 # v. 20260805.154826 - after merge: copy GPS/dates from first chapter; FS times via touch -r
 
+# 2026.11.15 - v. 0.15.111 - group merge prompt: [Y] Merge this group (default); [m] Merge all
+#   remaining groups (asks output date/time for each first)
 # 2026.11.15 - v. 0.15.110 - Contour merges use ffmpeg concat demuxer (-c copy), not mp4_merge: HandBrake HEVC+MP3 Contour chapters produce unplayable output with mp4_merge (wrong duration/start, broken audio at the seam); ffmpeg concat keeps a correct timeline
 # 2026.11.15 - v. 0.15.109 - Contour suspect window: gaps 46–100s after prev start+duration are listed as review merge candidates (plan + prompt, default Skip; -y / merge-all do not auto-merge them); confident Contour stays ≤45s
 # 2026.11.15 - v. 0.15.108 - Contour stop slack tightened: next start may be 30s early … 45s after prev start+duration (was +180s); short split pauses (~28s) still merge, battery-change gaps (~54s+) stay separate groups
@@ -375,8 +378,8 @@ Merge behaviour:
     The merged file and that .gpx get the first chapter's creation time and file time.
     If the merged file has no location, the first point of that .gpx is stored in it.
   - Shows each multi-part group (with file sizes) and asks whether to merge
-    (single-key Y/N/A/M/Q, no Enter — like rename.sh). [Y] merges all remaining
-    groups (asks output date/time for each first); [m] merges only this group.
+    (single-key Y/N/A/M/Q, no Enter — like rename.sh). [Y] merges this group
+    (default); [m] merges all remaining groups (asks output date/time for each first).
     Files in a group, and the groups themselves, are ordered oldest to newest
     (filename YYYYMMDD_HHMMSS when present, otherwise filesystem mtime) before that
     prompt. After the input and output lists, a boxed summary shows how many files
@@ -390,7 +393,7 @@ Merge behaviour:
     in this run. [n] writes this file in this directory. [r] writes every later
     merge in this directory. Default is yes (this file only) only when the source
     disk is a confirmed spinning HDD. Default is no when the source is an SSD or
-    when that cannot be checked (e.g. /mnt/*). [Y] Merge all remaining groups asks
+    when that cannot be checked (e.g. /mnt/*). [m] Merge all remaining groups asks
     this once before the first of those merges: yes uses that directory for every
     group still left and moves each finished file back; no writes those outputs in
     this directory. -y and non-interactive runs write in this directory. Status lines
@@ -398,7 +401,7 @@ Merge behaviour:
   - Before each merge: if the planned output name, first-chapter filesystem time, and
     first-chapter media CreateDate disagree by more than two minutes, ask which date to
     use after the merge (1/2/3…); default is the oldest usable stamp (before 1990 ignored).
-    [Y] Merge all remaining asks that question for every remaining group first, then starts
+    [m] Merge all remaining asks that question for every remaining group first, then starts
     merging. -y picks the oldest without asking. After a successful merge: copy GPS / dates /
     Make/Model and title from the first chapter in one exiftool rewrite (progress from
     *_exiftool_tmp on large files), applying the date chosen earlier in that same rewrite
@@ -7946,10 +7949,10 @@ prompt_merge_group_action() {
         q)  REPLY=quit; return 0 ;;
       esac
     fi
-    echo "  [Y] Merge all remaining groups (asks output date/time for each first) (default)"
+    echo "  [Y] Merge this group (default)"
     echo "  [n] Skip this group"
     echo "  [a] Skip all remaining groups"
-    echo "  [m] Merge this group"
+    echo "  [m] Merge all remaining groups (asks output date/time for each first)"
     echo "  [q] Quit"
     if (( short_n )); then
       pgm_read_key_choice "Short clip in this group. Merge anyway? [Y/n/a/m/q]: " y "ynamq"
@@ -7958,10 +7961,10 @@ prompt_merge_group_action() {
     fi
     choice="$REPLY"
     case "$choice" in
-      y)  REPLY=merge_all; return 0 ;;
+      y)  REPLY=merge; return 0 ;;
       n)  REPLY=skip; return 0 ;;
       a)  REPLY=skip_all; return 0 ;;
-      m)  REPLY=merge; return 0 ;;
+      m)  REPLY=merge_all; return 0 ;;
       q)  REPLY=quit; return 0 ;;
     esac
   fi
