@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261115.115000 - drop Write i/n line; (i/n) already on exiftool bar
 # v. 20261115.104500 - pre-scan progress bar (i/n + %)
 # v. 20261115.103000 - pre-scan: batch only files that still need a decision
 # v. 20261115.102500 - drop Files bar; show i/n on the live exiftool line
@@ -12,6 +13,7 @@
 # v. 20261115.091000 - Contour profile is Contour+2 only (drop ROAM/GPS generics)
 # v. 20261115.090000 - initial: set Make/Model/Comment camera profiles (Contour, GoPro, 70mai, custom)
 #
+# 2026.11.15 - v. 0.1.12 - drop separate Write i/n line; file index lives only on the exiftool bar
 # 2026.11.15 - v. 0.1.11 - pre-scan shows a live progress bar (pct + i/n + filename)
 # 2026.11.15 - v. 0.1.10 - pre-scan after profile choice; batch size / Question X of Y cover
 #   only files that still need a decision (already-tagged counted once, not as batch slots)
@@ -610,7 +612,6 @@ scm_apply_plans() {
   SCM_APPLY_TOTAL=$n
   for (( i = 0; i < n; i++ )); do
     SCM_APPLY_INDEX=$((i + 1))
-    echo "$(scm_ts) Write ${SCM_APPLY_INDEX}/${n}: ${PLAN_PATHS[i]##*/}"
     scm_do_tag_write \
       "${PLAN_PATHS[i]}" "${PLAN_MAKE[i]}" "${PLAN_MODEL[i]}" "${PLAN_COMMENT[i]}" "${PLAN_HOW[i]}"
   done

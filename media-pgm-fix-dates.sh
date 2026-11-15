@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261115.115000 - drop Fix i/n line; (i/n) already on exiftool bar
 # v. 20261115.112000 - one exiftool progress finish line (fold File* dates into main write)
 # v. 20261115.111500 - Contour: Make/Model metadata wins; filename is fallback
 # v. 20261115.104500 - pre-scan progress bar (i/n + %)
@@ -26,6 +27,7 @@
 # v. 20261020.150400 - date menu: ASCII n/a so parenthetical notes share one column
 # v. 20261020.145500 - fix file / media dates when the name, filesystem, and tags disagree
 #
+# 2026.11.15 - v. 0.1.27 - drop separate Fix i/n line; file index lives only on the exiftool bar
 # 2026.11.15 - v. 0.1.26 - exiftool apply: include FileCreate/ModifyDate in the main write so the
 #   100% progress line is not printed twice
 # 2026.11.15 - v. 0.1.25 - Contour detect: Make/Model metadata first (Make=Contour); filename
@@ -1295,7 +1297,6 @@ mfd_apply_plans() {
     kind="${PLAN_KIND[i]}"
     path="${PLAN_PATH[i]}"
     MFD_APPLY_INDEX=$((i + 1))
-    echo "$(mfd_ts) Fix ${MFD_APPLY_INDEX}/${n}: ${path##*/} (${PLAN_LABEL[i]})"
     mfd_print_processing "$path"
     if [[ "$kind" == "contour" ]]; then
       if mfd_apply_contour_normalize "$path" "${PLAN_EPOCH[i]}" "${PLAN_END_E[i]}"; then
