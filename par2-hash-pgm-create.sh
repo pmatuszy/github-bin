@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261115.073500 - folder summary left-aligned + job timing; end-of-run wall-clock timing block
 # v. 20261114.193500 - alphabetical order: dirs/files/stems/leftovers via LC_ALL=C sort -f
 # v. 20261114.175500 - rest-of-run menu lines: "Like [ X ] here, and for the rest of the run"
 # v. 20261114.164500 - startup: ask per-folder policies (existing set / multi-set / leftovers)
@@ -35,6 +36,7 @@
 # v. 20260809.155541 - prompt to exclude rename.sh helpers from PAR2 (default yes)
 # v. 20260806.224414 - initial: create volume-only PAR2 + SHA-512/MD5 hash for cwd subtree
 
+# 2026.11.15 - v. 0.1.33 - Per-folder summary is left-aligned and uses this-folder start/elapsed (not script-so-far); end-of-run prints Timing (wall clock) + multi-dir recap + RUN FINISHED; remove centered per-folder RUN SUMMARY box
 # 2026.11.14 - v. 0.1.32 - Process subdirs, source/hash file lists, PAR2 stems, hash manifests, stem members, and leftover cleanup lists in alphabetical order (LC_ALL=C sort -f)
 # 2026.11.14 - v. 0.1.31 - At run start (interactive): ask per-folder policies — existing one PAR2+hash (skip/verify/ask), multi-set verify/consolidate-anyway/consolidate (always/never/ask), delete leftovers (always/never/ask); --yes skips these and keeps prior defaults
 # 2026.11.14 - v. 0.1.30 - Starting each work directory prints a large boxed NEXT DIRECTORY banner (job N of M in per-subdir mode) so catalog changes stand out
@@ -211,10 +213,14 @@ CONSOLIDATE_POLICY=""
 CONSOLIDATE_ANYWAY_POLICY=""
 DELETE_LEFTOVER_POLICY=""
 JOB_START_EPOCH=0
+JOB_START_STR=""
 JOB_BACKED_UP_COUNT=0
 JOB_DELETED_COUNT=0
 JOB_CREATED_COUNT=0
+JOB_BACKED_UP_NAMES=()
+JOB_DELETED_NAMES=()
 JOB_OUTCOME=""
+TIMING_SUMMARY_PRINTED=0
 # -1 = ask (default yes); 1 = exclude; 0 = include
 EXCLUDE_RENAME_HELPERS_CLI=-1
 EXCLUDE_RENAME_HELPERS=1
@@ -406,51 +412,154 @@ emit_boxed_block() {
   fi
 }
 
-print_run_summary() {
-  local finished_str elapsed_human vol="" hash_entries_word="entries"
-  local -a lines=()
+wall_clock_now() {
+  date '+%Y.%m.%d %H:%M:%S'
+}
 
-  (( SUMMARY_PRINTED == 0 )) || return 0
-  SUMMARY_PRINTED=1
+user_prompt_ts_prefix() {
+  printf '[ %s ] ' "$(wall_clock_now)"
+}
 
-  finished_str="$(date '+%Y.%m.%d %H:%M:%S')"
-  elapsed_human="$(format_elapsed "$(( $(date +%s) - SCRIPT_START_EPOCH ))")"
+# Timestamped status line (prompts use user_prompt_ts_prefix; raw par2 output is left alone).
+log_msg() {
+  printf '[ %s ] %s\n' "$(wall_clock_now)" "$*"
+}
+
+# Left-aligned label/value line (folder + end summaries — not centered boxes).
+summary_kv() {
+  printf '  %-22s %s\n' "$1" "$2"
+}
+
+reset_job_counters() {
+  JOB_START_EPOCH=$(date +%s)
+  JOB_START_STR="$(wall_clock_now)"
+  JOB_BACKED_UP_COUNT=0
+  JOB_DELETED_COUNT=0
+  JOB_CREATED_COUNT=0
+  JOB_BACKED_UP_NAMES=()
+  JOB_DELETED_NAMES=()
+  JOB_OUTCOME=""
+}
+
+# Left-aligned per-folder summary (this folder's wall clock only — not script-so-far).
+print_folder_done_summary() {
+  local finished_str elapsed outcome_note="" hash_entries_word="entries"
+  local name vol recap=""
+  local -a created_names=()
+
+  finished_str="$(wall_clock_now)"
+  elapsed="$(format_elapsed "$(( $(date +%s) - JOB_START_EPOCH ))")"
+  outcome_note="${JOB_OUTCOME:-done}"
   (( HASH_ENTRY_COUNT == 1 )) && hash_entries_word="entry"
 
-  lines+=( "*** RUN SUMMARY ***" )
-  if (( DRY_RUN == 1 )); then
-    lines+=( "Mode: dry-run (nothing written)" )
-  elif (( CREATE_PAR2 == 0 )); then
-    lines+=( "Mode: hash-only (existing PAR2 left unchanged)" )
-  else
-    lines+=( "Mode: created PAR2 + hash manifest" )
+  if (( CREATE_PAR2 == 1 && ${#CREATED_PAR2_VOLS[@]} > 0 )); then
+    for vol in "${CREATED_PAR2_VOLS[@]}"; do
+      created_names+=("$vol")
+    done
   fi
-  lines+=( "Directory: $WORK_DIR" )
-  if (( CREATE_PAR2 == 1 )); then
-    lines+=( "PAR2 stem: ${PAR2_STEM}.par2 (volume-only, -r${RECOVERY_PCT}%)" )
-    if ((${#CREATED_PAR2_VOLS[@]} > 0)); then
-      for vol in "${CREATED_PAR2_VOLS[@]}"; do
-        lines+=( "PAR2 file: $vol" )
-      done
-    else
-      lines+=( "PAR2 file: ${PAR2_STEM}.vol*.par2" )
-    fi
-    lines+=( "Protected: ${PAR2_SOURCE_COUNT} file(s), $(format_bytes_approx "$PAR2_SOURCE_BYTES")" )
-  else
-    lines+=( "PAR2: left existing set unchanged (${PAR2_STEM}*)" )
+  if [[ -n "${HASH_FILE:-}" && $HASH_ENTRY_COUNT -gt 0 ]]; then
+    created_names+=("$(basename -- "$HASH_FILE")")
+  elif [[ -n "${HASH_FILE:-}" && -e "${HASH_FILE:-}" && $JOB_CREATED_COUNT -gt 0 ]]; then
+    created_names+=("$(basename -- "$HASH_FILE")")
   fi
-  if [[ -n "${HASH_FILE:-}" ]]; then
-    lines+=( "Hash file: $(basename -- "$HASH_FILE") (${HASH_LABEL:-$HASH_ALGO}, ${HASH_ENTRY_COUNT} ${hash_entries_word})" )
-  fi
-  if (( EXCLUDE_RENAME_HELPERS == 1 && ${#RENAME_HELPERS_FOUND[@]} > 0 )); then
-    lines+=( "Rename helpers excluded from PAR2: ${#RENAME_HELPERS_FOUND[@]}" )
-  fi
-  lines+=( "Started:  $SCRIPT_START_STR" )
-  lines+=( "Finished: $finished_str" )
-  lines+=( "Elapsed:  $elapsed_human" )
 
   echo
-  emit_boxed_block ada-box "${lines[@]}"
+  echo "--- Folder summary: ${DIR_NAME} ---"
+  summary_kv "Outcome:" "${outcome_note}"
+  summary_kv "Directory:" "$WORK_DIR"
+  if (( DRY_RUN == 1 )); then
+    summary_kv "Mode:" "dry-run (nothing written)"
+  elif (( CREATE_PAR2 == 0 )); then
+    summary_kv "Mode:" "hash-only / skipped create"
+  else
+    summary_kv "Mode:" "created PAR2 + hash"
+  fi
+  if (( CREATE_PAR2 == 1 )); then
+    summary_kv "PAR2 stem:" "${PAR2_STEM}.par2 (volume-only, -r${RECOVERY_PCT}%)"
+    if ((${#CREATED_PAR2_VOLS[@]} > 0)); then
+      for vol in "${CREATED_PAR2_VOLS[@]}"; do
+        summary_kv "PAR2 created:" "$vol"
+      done
+    fi
+    if (( PAR2_SOURCE_COUNT > 0 )); then
+      summary_kv "Protected:" "${PAR2_SOURCE_COUNT} file(s), $(format_bytes_approx "$PAR2_SOURCE_BYTES")"
+    fi
+  else
+    summary_kv "PAR2:" "left existing set unchanged (${PAR2_STEM}*)"
+  fi
+  if [[ -n "${HASH_FILE:-}" ]]; then
+    if (( HASH_ENTRY_COUNT > 0 )); then
+      summary_kv "Hash file:" "$(basename -- "$HASH_FILE") (${HASH_LABEL:-$HASH_ALGO}, ${HASH_ENTRY_COUNT} ${hash_entries_word})"
+    else
+      summary_kv "Hash file:" "$(basename -- "$HASH_FILE")"
+    fi
+  fi
+  if ((${#JOB_BACKED_UP_NAMES[@]} > 0)); then
+    summary_kv "Backed up to *.old:" "${#JOB_BACKED_UP_NAMES[@]} file(s)"
+    for name in "${JOB_BACKED_UP_NAMES[@]}"; do
+      summary_kv "" "  $name"
+    done
+  else
+    summary_kv "Backed up to *.old:" "0"
+  fi
+  if ((${#JOB_DELETED_NAMES[@]} > 0)); then
+    summary_kv "Deleted:" "${#JOB_DELETED_NAMES[@]} file(s)"
+    for name in "${JOB_DELETED_NAMES[@]}"; do
+      summary_kv "" "  $name"
+    done
+  else
+    summary_kv "Deleted:" "0"
+  fi
+  if ((${#created_names[@]} > 0)); then
+    summary_kv "Created:" "${#created_names[@]} file(s)"
+    for name in "${created_names[@]}"; do
+      summary_kv "" "  $name"
+    done
+  else
+    summary_kv "Created:" "0 file(s)"
+  fi
+  summary_kv "Started:" "${JOB_START_STR:-?}"
+  summary_kv "Finished:" "$finished_str"
+  summary_kv "Elapsed (folder):" "$elapsed"
+  echo
+
+  recap="${DIR_NAME}: removed ${JOB_DELETED_COUNT}, backed-up ${JOB_BACKED_UP_COUNT}, created ${JOB_CREATED_COUNT}, elapsed ${elapsed} [ ${outcome_note} ]"
+  MULTI_FOLDER_RECAPS+=("$recap")
+}
+
+# Whole-run timing + optional multi-folder recap (left-aligned, like par2-pgm-check).
+print_run_timing_summary() {
+  local end_time wall_time line
+
+  (( TIMING_SUMMARY_PRINTED == 0 )) || return 0
+  TIMING_SUMMARY_PRINTED=1
+
+  end_time="$(wall_clock_now)"
+  wall_time="$(format_elapsed "$(( $(date +%s) - SCRIPT_START_EPOCH ))")"
+
+  echo
+  if (( MULTI_JOB_MODE == 1 )); then
+    echo "--- Timing (all directories) ---"
+  else
+    echo "--- Timing ---"
+  fi
+  summary_kv "Start time:" "${SCRIPT_START_STR:-?}"
+  summary_kv "End time:" "$end_time"
+  summary_kv "Total wall time:" "$wall_time"
+  if (( MULTI_JOB_MODE == 1 )); then
+    echo
+    summary_kv "Directories:" "${MULTI_JOB_TOTAL}"
+    summary_kv "OK:" "${MULTI_JOB_OK}"
+    summary_kv "Skipped:" "${MULTI_JOB_SKIP}"
+    summary_kv "Failed:" "${MULTI_JOB_FAIL}"
+    if ((${#MULTI_FOLDER_RECAPS[@]} > 0)); then
+      echo
+      echo "--- Per-folder recap ---"
+      for line in "${MULTI_FOLDER_RECAPS[@]}"; do
+        printf '  %s\n' "$line"
+      done
+    fi
+  fi
   echo
 }
 
@@ -458,16 +567,19 @@ print_run_finished_banner() {
   local rc="${return_code:-0}"
   local -a lines=()
 
+  print_run_timing_summary
+
   case "${RUN_OUTCOME:-}" in
     quit)
       lines+=( "*** RUN FINISHED: QUIT (exit $rc) ***" )
       lines+=( "Stopped at user request (q)." )
       ;;
     ok)
-      print_run_summary
       lines+=( "*** RUN FINISHED: OK (exit $rc) ***" )
       if (( DRY_RUN == 1 )); then
         lines+=( "Dry-run completed; no files were written." )
+      elif (( MULTI_JOB_MODE == 1 )); then
+        lines+=( "Per-subdirectory PAR2 + hash run completed." )
       elif (( CREATE_PAR2 == 0 )); then
         lines+=( "Hash file created; existing PAR2 left unchanged." )
       else
@@ -487,69 +599,6 @@ print_run_finished_banner() {
     *)  emit_boxed_block stone "${lines[@]}" ;;
   esac
   echo
-}
-
-wall_clock_now() {
-  date '+%Y.%m.%d %H:%M:%S'
-}
-
-user_prompt_ts_prefix() {
-  printf '[ %s ] ' "$(wall_clock_now)"
-}
-
-# Timestamped status line (prompts use user_prompt_ts_prefix; raw par2 output is left alone).
-log_msg() {
-  printf '[ %s ] %s\n' "$(wall_clock_now)" "$*"
-}
-
-reset_job_counters() {
-  JOB_START_EPOCH=$(date +%s)
-  JOB_BACKED_UP_COUNT=0
-  JOB_DELETED_COUNT=0
-  JOB_CREATED_COUNT=0
-  JOB_OUTCOME=""
-}
-
-print_folder_done_summary() {
-  local elapsed outcome_note="" removed_n=0 removed_note="" created_note=""
-  local recap=""
-
-  elapsed="$(format_elapsed "$(( $(date +%s) - JOB_START_EPOCH ))")"
-  outcome_note="${JOB_OUTCOME:-done}"
-
-  if (( JOB_DELETED_COUNT > 0 )); then
-    removed_n=$JOB_DELETED_COUNT
-    removed_note="old backup(s) deleted"
-  elif (( JOB_BACKED_UP_COUNT > 0 )); then
-    removed_n=$JOB_BACKED_UP_COUNT
-    removed_note="renamed to *.old (kept on disk)"
-  else
-    removed_n=0
-    removed_note="none"
-  fi
-
-  if (( JOB_CREATED_COUNT > 0 )); then
-    created_note="${JOB_CREATED_COUNT} file(s)"
-    if (( CREATE_PAR2 == 1 && ${#CREATED_PAR2_VOLS[@]} > 0 )); then
-      created_note+=" (PAR2: ${CREATED_PAR2_VOLS[*]}"
-      if [[ -n "${HASH_FILE:-}" && -e "${HASH_FILE:-}" ]]; then
-        created_note+="; hash: $(basename -- "$HASH_FILE")"
-      fi
-      created_note+=")"
-    elif [[ -n "${HASH_FILE:-}" && $HASH_ENTRY_COUNT -gt 0 ]]; then
-      created_note+=" (hash: $(basename -- "$HASH_FILE"), ${HASH_ENTRY_COUNT} line(s))"
-    fi
-  else
-    created_note="0 file(s)"
-  fi
-
-  log_msg "=== Folder done: ${DIR_NAME} (${outcome_note}) ==="
-  log_msg "Removed: ${removed_n} file(s) (${removed_note})"
-  log_msg "Created: ${created_note}"
-  log_msg "Elapsed (this folder): ${elapsed}"
-
-  recap="${DIR_NAME}: removed ${removed_n}, created ${JOB_CREATED_COUNT}, elapsed ${elapsed} [ ${outcome_note} ]"
-  MULTI_FOLDER_RECAPS+=("$recap")
 }
 
 prompt_has_timeout() {
@@ -1146,9 +1195,13 @@ offer_resolve_old_backup_collision() {
     log_msg "Replacing existing *.old (--yes)."
     if (( DRY_RUN == 1 )); then
       log_msg "[dry-run] rm -- ${base_old}"
+      JOB_DELETED_COUNT=$((JOB_DELETED_COUNT + 1))
+      JOB_DELETED_NAMES+=("$base_old")
       return 0
     fi
     rm -f -- "$dst" || die "Failed to remove existing backup: ${base_old}"
+    JOB_DELETED_COUNT=$((JOB_DELETED_COUNT + 1))
+    JOB_DELETED_NAMES+=("$base_old")
     return 0
   fi
 
@@ -1172,6 +1225,8 @@ offer_resolve_old_backup_collision() {
         fi
         rm -f -- "$dst" || die "Failed to remove existing backup: ${base_old}"
         log_msg "deleted old backup: ${base_old}"
+        JOB_DELETED_COUNT=$((JOB_DELETED_COUNT + 1))
+        JOB_DELETED_NAMES+=("$base_old")
         return 0
         ;;
       s|S)
@@ -1213,12 +1268,14 @@ backup_paths_to_old() {
     if (( DRY_RUN == 1 )); then
       log_msg "[dry-run] mv -- ${base} -> $(basename -- "$dst")"
       JOB_BACKED_UP_COUNT=$((JOB_BACKED_UP_COUNT + 1))
+      JOB_BACKED_UP_NAMES+=("$(basename -- "$dst")")
       continue
     fi
     mv -- "$src" "$dst" || die "Failed to rename $base to $(basename -- "$dst")."
     log_msg "${base} -> $(basename -- "$dst")"
     CLEANUP_RESTORE_OLDPATHS+=("$dst")
     JOB_BACKED_UP_COUNT=$((JOB_BACKED_UP_COUNT + 1))
+    JOB_BACKED_UP_NAMES+=("$(basename -- "$dst")")
   done
   return 0
 }
@@ -1303,10 +1360,12 @@ offer_delete_superseded_protection() {
         if (( DRY_RUN == 1 )); then
           log_msg "[dry-run] rm -- $(basename -- "$f")"
           JOB_DELETED_COUNT=$((JOB_DELETED_COUNT + 1))
+          JOB_DELETED_NAMES+=("$(basename -- "$f")")
         else
           if rm -f -- "$f"; then
             log_msg "deleted: $(basename -- "$f")"
             JOB_DELETED_COUNT=$((JOB_DELETED_COUNT + 1))
+            JOB_DELETED_NAMES+=("$(basename -- "$f")")
           fi
         fi
       done
@@ -2197,6 +2256,7 @@ backup_existing_stem_par2() {
     if (( DRY_RUN == 1 )); then
       log_msg "[dry-run] mv -- ${base} -> $(basename -- "$dst")"
       JOB_BACKED_UP_COUNT=$((JOB_BACKED_UP_COUNT + 1))
+      JOB_BACKED_UP_NAMES+=("$(basename -- "$dst")")
       continue
     fi
     mv -- "$src" "$dst" || die "Failed to rename $base to $(basename -- "$dst")."
@@ -2204,6 +2264,7 @@ backup_existing_stem_par2() {
     backed+=("$dst")
     CLEANUP_RESTORE_OLDPATHS+=("$dst")
     JOB_BACKED_UP_COUNT=$((JOB_BACKED_UP_COUNT + 1))
+    JOB_BACKED_UP_NAMES+=("$(basename -- "$dst")")
   done
   return 0
 }
@@ -2580,20 +2641,8 @@ print_run_settings() {
 }
 
 print_multi_job_summary() {
-  local line total_elapsed
-
-  total_elapsed="$(format_elapsed "$(( $(date +%s) - SCRIPT_START_EPOCH ))")"
-  echo
-  log_msg "=== Multi-directory summary ==="
-  log_msg "Directories: ${MULTI_JOB_TOTAL}  |  OK: ${MULTI_JOB_OK}  |  Skipped: ${MULTI_JOB_SKIP}  |  Failed: ${MULTI_JOB_FAIL}"
-  log_msg "Total elapsed: ${total_elapsed}"
-  if (( MULTI_JOB_TOTAL > 1 && ${#MULTI_FOLDER_RECAPS[@]} > 0 )); then
-    log_msg "Per-folder recap:"
-    for line in "${MULTI_FOLDER_RECAPS[@]}"; do
-      log_msg "  ${line}"
-    done
-  fi
-  echo
+  # Timing + recap are printed once from print_run_finished_banner / finish.
+  print_run_timing_summary
 }
 
 while [[ $# -gt 0 ]]; do
@@ -2964,7 +3013,6 @@ run_create_job() {
 
   JOB_OUTCOME=ok
   print_folder_done_summary
-  print_run_summary
   return 0
 }
 
@@ -2985,7 +3033,6 @@ if [[ "$CREATE_SCOPE" == per-subdir ]]; then
       2)
         return_code=0
         RUN_OUTCOME=quit
-        print_multi_job_summary
         finish
         ;;
       3) MULTI_JOB_SKIP=$((MULTI_JOB_SKIP + 1)) ;;
@@ -2996,7 +3043,6 @@ if [[ "$CREATE_SCOPE" == per-subdir ]]; then
     esac
   done
 
-  print_multi_job_summary
   if (( MULTI_JOB_FAIL > 0 )); then
     return_code=1
     RUN_OUTCOME=error
@@ -3007,8 +3053,7 @@ if [[ "$CREATE_SCOPE" == per-subdir ]]; then
     return_code=0
     RUN_OUTCOME=ok
   fi
-  # Summaries already printed per job.
-  SUMMARY_PRINTED=1
+  # Per-folder summaries already printed; finish emits timing + RUN FINISHED.
   finish
 fi
 
