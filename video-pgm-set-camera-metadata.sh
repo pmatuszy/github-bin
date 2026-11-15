@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261115.102500 - drop Files bar; show i/n on the live exiftool line
 # v. 20261115.101500 - SUMMARY Timing: start/finish/wall/processing/prompt-wait
 # v. 20261115.101000 - apply-phase progress bars; preserve K vs k in key lists
 # v. 20261115.100500 - batch decide: [b] apply answers so far, resume remaining files
@@ -9,6 +10,7 @@
 # v. 20261115.091000 - Contour profile is Contour+2 only (drop ROAM/GPS generics)
 # v. 20261115.090000 - initial: set Make/Model/Comment camera profiles (Contour, GoPro, 70mai, custom)
 #
+# 2026.11.15 - v. 0.1.9 - apply progress: Write i/n line + (i/n) on exiftool bar; remove Files bar
 # 2026.11.15 - v. 0.1.8 - SUMMARY Timing: Started / Finished / wall / processing / prompt-wait
 # 2026.11.15 - v. 0.1.7 - apply phase: files bar + exiftool % from *_exiftool_tmp; key lists keep
 #   distinct K vs k (rest-of-run Keep)
@@ -453,9 +455,13 @@ scm_run_exiftool_progress() {
     fi
     bar="$(scm_make_bar "$pct" "$bar_w")"
     base="${dest##*/}"
-    printf -v msg '%s %s  %3d%% [%s]  %s / %s' \
+    idx=""
+    if [[ -n "${SCM_APPLY_INDEX:-}" && -n "${SCM_APPLY_TOTAL:-}" ]]; then
+      idx=" (${SCM_APPLY_INDEX}/${SCM_APPLY_TOTAL})"
+    fi
+    printf -v msg '%s %s  %3d%% [%s]  %s / %s%s' \
       "$(scm_ts)" "$phase" "$pct" "$bar" \
-      "$(scm_format_bytes_short "$cur")" "$(scm_format_bytes_short "$expected")"
+      "$(scm_format_bytes_short "$cur")" "$(scm_format_bytes_short "$expected")" "$idx"
     width="${COLUMNS:-80}"
     [[ "$width" =~ ^[0-9]+$ ]] || width=80
     room=$(( width - ${#msg} - 2 ))
@@ -478,9 +484,14 @@ scm_run_exiftool_progress() {
   SCM_EXIFTOOL_PID=""
   if (( rc == 0 && expected > 0 )); then
     bar="$(scm_make_bar 100 "$bar_w")"
-    printf -v msg '%s %s  %3d%% [%s]  %s / %s  %s' \
+    idx=""
+    if [[ -n "${SCM_APPLY_INDEX:-}" && -n "${SCM_APPLY_TOTAL:-}" ]]; then
+      idx=" (${SCM_APPLY_INDEX}/${SCM_APPLY_TOTAL})"
+    fi
+    printf -v msg '%s %s  %3d%% [%s]  %s / %s%s  %s' \
       "$(scm_ts)" "$phase" 100 "$bar" \
-      "$(scm_format_bytes_short "$expected")" "$(scm_format_bytes_short "$expected")" "${dest##*/}"
+      "$(scm_format_bytes_short "$expected")" "$(scm_format_bytes_short "$expected")" \
+      "$idx" "${dest##*/}"
     width="${COLUMNS:-80}"
     [[ "$width" =~ ^[0-9]+$ ]] || width=80
     if (( ${#msg} > width )); then
@@ -591,11 +602,15 @@ scm_apply_plans() {
   SCM_Q_OVERALL_POS=""
   SCM_Q_OVERALL_TOTAL=""
   scm_proc_begin
+  SCM_APPLY_TOTAL=$n
   for (( i = 0; i < n; i++ )); do
-    echo "$(scm_ts) Files  [$(scm_make_bar "$(( (i + 1) * 100 / n ))")]  $((i + 1))/${n}  ${PLAN_PATHS[i]##*/}"
+    SCM_APPLY_INDEX=$((i + 1))
+    echo "$(scm_ts) Write ${SCM_APPLY_INDEX}/${n}: ${PLAN_PATHS[i]##*/}"
     scm_do_tag_write \
       "${PLAN_PATHS[i]}" "${PLAN_MAKE[i]}" "${PLAN_MODEL[i]}" "${PLAN_COMMENT[i]}" "${PLAN_HOW[i]}"
   done
+  SCM_APPLY_INDEX=""
+  SCM_APPLY_TOTAL=""
   scm_proc_end
   trap - INT
   scm_clear_plans

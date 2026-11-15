@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261115.102500 - drop Files bar; show i/n on the live exiftool line
 # v. 20261115.101500 - SUMMARY Timing: processing + prompt-wait (with start/finish/wall)
 # v. 20261115.101000 - apply-phase progress bars (files + exiftool % from tmp)
 # v. 20261115.100500 - batch decide: [b] apply answers so far, resume remaining files
@@ -21,6 +22,7 @@
 # v. 20261020.150400 - date menu: ASCII n/a so parenthetical notes share one column
 # v. 20261020.145500 - fix file / media dates when the name, filesystem, and tags disagree
 #
+# 2026.11.15 - v. 0.1.22 - apply progress: Write/Fix i/n line + (i/n) on exiftool bar; remove Files bar
 # 2026.11.15 - v. 0.1.21 - SUMMARY Timing adds Processing and Prompt/wait (plus Other overhead)
 # 2026.11.15 - v. 0.1.20 - apply phase: files bar + exiftool % from *_exiftool_tmp
 # 2026.11.15 - v. 0.1.19 - [b] during batch decide: apply queued answers now; current+later files
@@ -348,9 +350,13 @@ mfd_run_exiftool() {
     fi
     bar="$(mfd_make_bar "$pct" "$bar_w")"
     base="${dest##*/}"
-    printf -v msg '%s %s  %3d%% [%s]  %s / %s' \
+    idx=""
+    if [[ -n "${MFD_APPLY_INDEX:-}" && -n "${MFD_APPLY_TOTAL:-}" ]]; then
+      idx=" (${MFD_APPLY_INDEX}/${MFD_APPLY_TOTAL})"
+    fi
+    printf -v msg '%s %s  %3d%% [%s]  %s / %s%s' \
       "$(mfd_ts)" "$phase" "$pct" "$bar" \
-      "$(mfd_format_bytes_short "$cur")" "$(mfd_format_bytes_short "$expected")"
+      "$(mfd_format_bytes_short "$cur")" "$(mfd_format_bytes_short "$expected")" "$idx"
     width="${COLUMNS:-80}"
     [[ "$width" =~ ^[0-9]+$ ]] || width=80
     room=$(( width - ${#msg} - 2 ))
@@ -373,9 +379,14 @@ mfd_run_exiftool() {
   MFD_EXIFTOOL_PID=""
   if (( rc == 0 && expected > 0 )); then
     bar="$(mfd_make_bar 100 "$bar_w")"
-    printf -v msg '%s %s  %3d%% [%s]  %s / %s  %s' \
+    idx=""
+    if [[ -n "${MFD_APPLY_INDEX:-}" && -n "${MFD_APPLY_TOTAL:-}" ]]; then
+      idx=" (${MFD_APPLY_INDEX}/${MFD_APPLY_TOTAL})"
+    fi
+    printf -v msg '%s %s  %3d%% [%s]  %s / %s%s  %s' \
       "$(mfd_ts)" "$phase" 100 "$bar" \
-      "$(mfd_format_bytes_short "$expected")" "$(mfd_format_bytes_short "$expected")" "${dest##*/}"
+      "$(mfd_format_bytes_short "$expected")" "$(mfd_format_bytes_short "$expected")" \
+      "$idx" "${dest##*/}"
     width="${COLUMNS:-80}"
     [[ "$width" =~ ^[0-9]+$ ]] || width=80
     if (( ${#msg} > width )); then
@@ -1209,10 +1220,12 @@ mfd_apply_plans() {
   MFD_Q_OVERALL_POS=""
   MFD_Q_OVERALL_TOTAL=""
   mfd_proc_begin
+  MFD_APPLY_TOTAL=$n
   for (( i = 0; i < n; i++ )); do
     kind="${PLAN_KIND[i]}"
     path="${PLAN_PATH[i]}"
-    echo "$(mfd_ts) Files  [$(mfd_make_bar "$(( (i + 1) * 100 / n ))")]  $((i + 1))/${n}  ${path##*/} (${PLAN_LABEL[i]})"
+    MFD_APPLY_INDEX=$((i + 1))
+    echo "$(mfd_ts) Fix ${MFD_APPLY_INDEX}/${n}: ${path##*/} (${PLAN_LABEL[i]})"
     mfd_print_processing "$path"
     if [[ "$kind" == "contour" ]]; then
       if mfd_apply_contour_normalize "$path" "${PLAN_EPOCH[i]}" "${PLAN_END_E[i]}"; then
@@ -1233,6 +1246,8 @@ mfd_apply_plans() {
       fi
     fi
   done
+  MFD_APPLY_INDEX=""
+  MFD_APPLY_TOTAL=""
   mfd_proc_end
   trap - INT
   mfd_clear_plans
