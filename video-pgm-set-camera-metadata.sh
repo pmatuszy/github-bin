@@ -1,8 +1,12 @@
 #!/bin/bash
+# v. 20261115.094500 - batch decide-then-apply; Ctrl-C cleans in-flight exiftool write
 # v. 20261115.091200 - ask when Make/Model/Comment already set; safe -y (fill empty only)
 # v. 20261115.091000 - Contour profile is Contour+2 only (drop ROAM/GPS generics)
 # v. 20261115.090000 - initial: set Make/Model/Comment camera profiles (Contour, GoPro, 70mai, custom)
 #
+# 2026.11.15 - v. 0.1.3 - process in batches: ask all decisions for a batch first, then write;
+#   prompt for batch size (default = all when ≤50 files, else 50); Ctrl-C during a write stops
+#   exiftool and removes that file's *_exiftool_tmp leftover
 # 2026.11.15 - v. 0.1.2 - if Make/Model/Comment already filled but do not match the profile, ask: overwrite [Y], merge empty fields only [m], keep [k], overwrite rest-of-run [a], keep-existing rest-of-run [K]; -y only tags fully empty files (keeps differing existing tags)
 # 2026.11.15 - v. 0.1.1 - Contour preset is Contour+2 Camera only (Make=Contour Model=Contour+2); removed Contour / ROAM / GPS generics
 # 2026.11.15 - v. 0.1 - initial release: tag video files with camera identity (Make, Model,
@@ -20,13 +24,18 @@ show_help() {
   cat <<EOF
 Usage: $(script_live_basename) [-h|--help] [-v|--version] [--history]
        [-y|--yes] [-r|--recursive] [--dry-run] [--verbose]
-       [--camera PROFILE]
+       [--batch-size N] [--camera PROFILE]
        [FILE|DIR ...]
 
 Write camera identity into video metadata (Make, Model, Comment) so other
 scripts can detect Contour+2 / GoPro / 70mai without guessing from the file
 name alone. Exact matches are skipped. If tags are already filled but differ
 from the profile, you are asked what to do (overwrite / merge empties / keep).
+
+Work is batched: for each batch the script asks every decision first, then
+writes tags for that batch (so you are not waiting on exiftool between
+prompts). Default batch size is all files when there are 50 or fewer;
+otherwise 50 (overridable).
 
 With no FILE or DIR, scan the current directory (not subdirectories unless -r).
 
@@ -48,17 +57,20 @@ Options:
   -r, --recursive      Also scan subdirectories.
   --dry-run            Show what would change; do not write.
   --verbose            Print current tags even when already matching.
+  --batch-size N       Decide/apply this many files per batch (default: all
+                       if ≤50 files, else 50).
   --camera PROFILE     One of: contour-plus-2 (aliases contour+2, contour2,
                        contour), gopro, 70mai, custom (see above).
   --make TEXT          Custom Make (implies --camera custom when set with --model).
   --model TEXT         Custom Model.
 
-Interactive keys (per file, when not -y):
+Interactive keys (per file, when not -y) — decisions only; writes run after
+the batch's questions:
   Empty tags:
   [Y] Apply this file (default)
   [a] Overwrite/apply this and every later file
   [n] Skip this file
-  [q] Quit
+  [q] Quit (abandons unapplied plans for the current batch)
 
   Tags already filled (but not matching the profile):
   [Y] Overwrite with the profile (default)
@@ -67,13 +79,15 @@ Interactive keys (per file, when not -y):
   [a] Overwrite this and every later file that differs
   [K] Keep existing tags for the rest of this run (only tag fully empty files)
   [n] Skip this file
-  [q] Quit
+  [q] Quit (abandons unapplied plans for the current batch)
+
+Ctrl-C during a write stops exiftool and removes that file's *_exiftool_tmp.
 
 Needs: exiftool.
 
 Examples:
   $(script_live_basename) --camera contour-plus-2 .
-      Tag Contour+2 on every video in this directory (asks per file).
+      Tag Contour+2 on every video in this directory (asks per batch).
 
   $(script_live_basename) -y --camera contour+2 --dry-run .
       Plan Contour+2 tags; write nothing.
@@ -84,6 +98,7 @@ Examples:
 Environment:
   SCM_EXIFTOOL / EXIFLOC / PGM_EXIFTOOL
                        Path to exiftool (else exiftool on PATH).
+  SCM_BATCH_SIZE       Default batch size (same as --batch-size).
 EOF
 }
 
@@ -251,28 +266,92 @@ scm_disp_tag() {
   fi
 }
 
+# Remove exiftool temp beside a file interrupted mid-write.
+scm_cleanup_write_temps() {
+  local f="$1" dir base t
+  [[ -n "$f" ]] || return 0
+  dir="$(dirname -- "$f")"
+  base="${f##*/}"
+  rm -f -- "${f}_exiftool_tmp" "${dir}/${base}_exiftool_tmp" 2>/dev/null || true
+  shopt -s nullglob
+  for t in "${dir}/${base}"*_exiftool_tmp "${dir}/.${base}"*exiftool*; do
+    [[ -e "$t" ]] || continue
+    rm -f -- "$t" 2>/dev/null || true
+  done
+  shopt -u nullglob
+}
+
+scm_kill_exiftool_child() {
+  local pid="${SCM_EXIFTOOL_PID:-}"
+  SCM_EXIFTOOL_PID=""
+  [[ -n "$pid" ]] || return 0
+  kill "$pid" 2>/dev/null || true
+  wait "$pid" 2>/dev/null || true
+}
+
+scm_ctrl_c() {
+  echo
+  echo "$(scm_ts) Interrupted (Ctrl-C)."
+  scm_kill_exiftool_child
+  if [[ -n "${SCM_CURRENT_WRITE_FILE:-}" ]]; then
+    scm_cleanup_write_temps "$SCM_CURRENT_WRITE_FILE"
+    echo "$(scm_ts) Cleaned up in-progress write: ${SCM_CURRENT_WRITE_FILE##*/}"
+    SCM_CURRENT_WRITE_FILE=""
+  fi
+  scm_print_summary
+  exit 130
+}
+
 # Apply Make/Model/Comment. Returns 0 on success or dry-run.
+# Tracks SCM_CURRENT_WRITE_FILE / SCM_EXIFTOOL_PID for Ctrl-C cleanup.
 scm_apply_camera_tags() {
   local dest="$1" want_make="$2" want_model="$3" want_comment="$4"
-  local exif
+  local exif rc=1
   [[ -f "$dest" ]] || return 1
   if (( DRY_RUN )); then
     echo "$(scm_ts) DRY-RUN would set Make=${want_make} Model=${want_model} Comment=${want_comment}"
     return 0
   fi
   exif="$(scm_find_exiftool 2>/dev/null)" || return 1
+  SCM_CURRENT_WRITE_FILE="$dest"
   # -P: do not bump filesystem mtime while writing tags.
-  if "$exif" -overwrite_original -P -api largefilesupport=1 \
+  "$exif" -overwrite_original -P -api largefilesupport=1 \
     -Make="$want_make" -Model="$want_model" -Comment="$want_comment" \
     -QuickTime:Make="$want_make" -QuickTime:Model="$want_model" \
     -QuickTime:Comment="$want_comment" \
-    -- "$dest" >/dev/null 2>&1; then
-    return 0
+    -- "$dest" >/dev/null 2>&1 &
+  SCM_EXIFTOOL_PID=$!
+  wait "$SCM_EXIFTOOL_PID"
+  rc=$?
+  SCM_EXIFTOOL_PID=""
+  if (( rc != 0 )); then
+    # Fallback without QuickTime: peers.
+    "$exif" -overwrite_original -P -api largefilesupport=1 \
+      -Make="$want_make" -Model="$want_model" -Comment="$want_comment" \
+      -- "$dest" >/dev/null 2>&1 &
+    SCM_EXIFTOOL_PID=$!
+    wait "$SCM_EXIFTOOL_PID"
+    rc=$?
+    SCM_EXIFTOOL_PID=""
   fi
-  # Fallback without QuickTime: peers.
-  "$exif" -overwrite_original -P -api largefilesupport=1 \
-    -Make="$want_make" -Model="$want_model" -Comment="$want_comment" \
-    -- "$dest" >/dev/null 2>&1
+  SCM_CURRENT_WRITE_FILE=""
+  (( rc == 0 ))
+}
+
+scm_queue_write() {
+  PLAN_PATHS+=("$1")
+  PLAN_MAKE+=("$2")
+  PLAN_MODEL+=("$3")
+  PLAN_COMMENT+=("$4")
+  PLAN_HOW+=("$5")
+}
+
+scm_clear_plans() {
+  PLAN_PATHS=()
+  PLAN_MAKE=()
+  PLAN_MODEL=()
+  PLAN_COMMENT=()
+  PLAN_HOW=()
 }
 
 scm_do_tag_write() {
@@ -285,6 +364,26 @@ scm_do_tag_write() {
   FAILED=$((FAILED + 1))
   echo "$(scm_ts) Failed to write tags: ${f}" >&2
   return 1
+}
+
+scm_apply_plans() {
+  local i n=${#PLAN_PATHS[@]}
+  (( n > 0 )) || {
+    echo "$(scm_ts) Nothing to write in this batch."
+    return 0
+  }
+  echo
+  scm_rule
+  echo "$(scm_ts) Applying ${n} planned write(s)…"
+  scm_rule
+  trap scm_ctrl_c INT
+  for (( i = 0; i < n; i++ )); do
+    echo "$(scm_ts) Write $((i + 1))/${n}: ${PLAN_PATHS[i]##*/}"
+    scm_do_tag_write \
+      "${PLAN_PATHS[i]}" "${PLAN_MAKE[i]}" "${PLAN_MODEL[i]}" "${PLAN_COMMENT[i]}" "${PLAN_HOW[i]}"
+  done
+  trap - INT
+  scm_clear_plans
 }
 
 scm_normalize_camera_id() {
@@ -442,7 +541,8 @@ scm_print_tag_plan() {
   printf '  %-10s %-24s %s\n' "Comment" "$(scm_disp_tag "$SCM_CUR_COMMENT")" "$SCM_WANT_COMMENT"
 }
 
-scm_process_file() {
+# Decide only (queue writes). Return 2 = quit (abandon current batch plans).
+scm_decide_file() {
   local f="$1"
   local def=y keys has_existing=0
 
@@ -474,14 +574,16 @@ scm_process_file() {
       return 0
     fi
     scm_print_tag_plan "$f"
-    scm_do_tag_write "$f" "$SCM_WANT_MAKE" "$SCM_WANT_MODEL" "$SCM_WANT_COMMENT" "empty file"
+    echo "$(scm_ts) Queued (empty file): ${f##*/}"
+    scm_queue_write "$f" "$SCM_WANT_MAKE" "$SCM_WANT_MODEL" "$SCM_WANT_COMMENT" "empty file"
     return 0
   fi
 
   # Rest-of-run: overwrite every mismatch.
   if (( ALWAYS_APPLY )); then
     scm_print_tag_plan "$f"
-    scm_do_tag_write "$f" "$SCM_WANT_MAKE" "$SCM_WANT_MODEL" "$SCM_WANT_COMMENT" "overwrite"
+    echo "$(scm_ts) Queued (overwrite): ${f##*/}"
+    scm_queue_write "$f" "$SCM_WANT_MAKE" "$SCM_WANT_MODEL" "$SCM_WANT_COMMENT" "overwrite"
     return 0
   fi
 
@@ -493,7 +595,8 @@ scm_process_file() {
       echo "$(scm_ts) Kept existing tags (-y does not overwrite): ${f##*/}"
       return 0
     fi
-    scm_do_tag_write "$f" "$SCM_WANT_MAKE" "$SCM_WANT_MODEL" "$SCM_WANT_COMMENT" "empty file"
+    echo "$(scm_ts) Queued (empty file): ${f##*/}"
+    scm_queue_write "$f" "$SCM_WANT_MAKE" "$SCM_WANT_MODEL" "$SCM_WANT_COMMENT" "empty file"
     return 0
   fi
 
@@ -507,13 +610,13 @@ scm_process_file() {
     echo "  [$(scm_k a "$def")] Overwrite this and every later file that differs"
     echo "  [$(scm_k K "$def")] Keep existing tags for the rest of this run (only tag fully empty files)"
     echo "  [$(scm_k n "$def")] Skip this file"
-    echo "  [$(scm_k q "$def")] Quit"
+    echo "  [$(scm_k q "$def")] Quit (abandon this batch's pending writes)"
     keys="$(scm_keys "$def" y m k a K n q)"
   else
     echo "  [$(scm_k y "$def")] Apply this file (default)"
     echo "  [$(scm_k a "$def")] Apply this file and every later file"
     echo "  [$(scm_k n "$def")] Skip this file"
-    echo "  [$(scm_k q "$def")] Quit"
+    echo "  [$(scm_k q "$def")] Quit (abandon this batch's pending writes)"
     keys="$(scm_keys "$def" y a n q)"
   fi
 
@@ -523,10 +626,12 @@ scm_process_file() {
       y)
         if (( has_existing )); then
           scm_print_selected "y = Overwrite with ${SCM_CAMERA_LABEL}"
-          scm_do_tag_write "$f" "$SCM_WANT_MAKE" "$SCM_WANT_MODEL" "$SCM_WANT_COMMENT" "overwrite"
+          echo "$(scm_ts) Queued (overwrite): ${f##*/}"
+          scm_queue_write "$f" "$SCM_WANT_MAKE" "$SCM_WANT_MODEL" "$SCM_WANT_COMMENT" "overwrite"
         else
           scm_print_selected "y = Apply this file"
-          scm_do_tag_write "$f" "$SCM_WANT_MAKE" "$SCM_WANT_MODEL" "$SCM_WANT_COMMENT" "apply"
+          echo "$(scm_ts) Queued (apply): ${f##*/}"
+          scm_queue_write "$f" "$SCM_WANT_MAKE" "$SCM_WANT_MODEL" "$SCM_WANT_COMMENT" "apply"
         fi
         return 0
         ;;
@@ -545,7 +650,8 @@ scm_process_file() {
         printf '  %-10s %-24s %s\n' "Make" "$(scm_disp_tag "$SCM_CUR_MAKE")" "$SCM_MERGED_MAKE"
         printf '  %-10s %-24s %s\n' "Model" "$(scm_disp_tag "$SCM_CUR_MODEL")" "$SCM_MERGED_MODEL"
         printf '  %-10s %-24s %s\n' "Comment" "$(scm_disp_tag "$SCM_CUR_COMMENT")" "$SCM_MERGED_COMMENT"
-        scm_do_tag_write "$f" "$SCM_MERGED_MAKE" "$SCM_MERGED_MODEL" "$SCM_MERGED_COMMENT" "merge empties"
+        echo "$(scm_ts) Queued (merge empties): ${f##*/}"
+        scm_queue_write "$f" "$SCM_MERGED_MAKE" "$SCM_MERGED_MODEL" "$SCM_MERGED_COMMENT" "merge empties"
         return 0
         ;;
       k)
@@ -572,7 +678,8 @@ scm_process_file() {
         scm_print_selected "a = Overwrite this and every later file that differs"
         ALWAYS_APPLY=1
         ALWAYS_KEEP_EXISTING=0
-        scm_do_tag_write "$f" "$SCM_WANT_MAKE" "$SCM_WANT_MODEL" "$SCM_WANT_COMMENT" "overwrite"
+        echo "$(scm_ts) Queued (overwrite): ${f##*/}"
+        scm_queue_write "$f" "$SCM_WANT_MAKE" "$SCM_WANT_MODEL" "$SCM_WANT_COMMENT" "overwrite"
         echo "$(scm_ts) Will overwrite differing tags with ${SCM_CAMERA_LABEL} on every later file."
         return 0
         ;;
@@ -584,7 +691,8 @@ scm_process_file() {
         ;;
       q)
         scm_print_selected "q = Quit"
-        echo "$(scm_ts) Quit."
+        echo "$(scm_ts) Quit — abandoning ${#PLAN_PATHS[@]} pending write(s) in this batch."
+        scm_clear_plans
         return 2
         ;;
       *)
@@ -592,6 +700,62 @@ scm_process_file() {
         ;;
     esac
   done
+}
+
+scm_default_batch_size_for_count() {
+  local n="$1"
+  if (( n <= 50 )); then
+    printf '%s\n' "$n"
+  else
+    printf '%s\n' "50"
+  fi
+}
+
+scm_ask_batch_size() {
+  local n="$SCANNED" def input
+  def="$(scm_default_batch_size_for_count "$n")"
+  if [[ -n "${BATCH_SIZE_CLI:-}" ]]; then
+    BATCH_SIZE="$BATCH_SIZE_CLI"
+    echo "$(scm_ts) Batch size: ${BATCH_SIZE} (--batch-size)."
+    return 0
+  fi
+  if [[ -n "${SCM_BATCH_SIZE:-}" ]]; then
+    if [[ "${SCM_BATCH_SIZE}" =~ ^[1-9][0-9]*$ ]]; then
+      BATCH_SIZE="$SCM_BATCH_SIZE"
+      echo "$(scm_ts) Batch size: ${BATCH_SIZE} (SCM_BATCH_SIZE)."
+      return 0
+    fi
+    echo "$(scm_ts) Invalid SCM_BATCH_SIZE=${SCM_BATCH_SIZE}; asking interactively." >&2
+  fi
+  if (( DO_YES )) || (( ! script_is_run_interactively )); then
+    BATCH_SIZE="$def"
+    echo "$(scm_ts) Batch size: ${BATCH_SIZE} (non-interactive default)."
+    return 0
+  fi
+  echo
+  echo "$(scm_ts) Total video files in this run: ${n}"
+  if (( n <= 50 )); then
+    echo "  Suggested batch size: ${def} (all files in one go; ≤ 50)."
+  else
+    echo "  Suggested batch size: ${def} (of ${n}). Decide first, then write, then next batch."
+  fi
+  echo "  Enter how many files to decide before applying writes."
+  while true; do
+    printf '%s Batch size [%s]: ' "$(scm_ts)" "$def"
+    read -r input || input=""
+    input="${input%"${input##*[![:space:]]}"}"
+    input="${input#"${input%%[![:space:]]*}"}"
+    if [[ -z "$input" ]]; then
+      BATCH_SIZE="$def"
+      break
+    fi
+    if [[ "$input" =~ ^[1-9][0-9]*$ ]]; then
+      BATCH_SIZE="$input"
+      break
+    fi
+    echo "$(scm_ts) Enter a positive integer (or press Enter for ${def})."
+  done
+  scm_print_selected "batch size ${BATCH_SIZE}"
 }
 
 scm_print_summary() {
@@ -602,6 +766,7 @@ scm_print_summary() {
   printf '  %-22s %s\n' "Camera profile:" "${SCM_CAMERA_LABEL:-n/a}"
   printf '  %-22s %s\n' "Make / Model:" "${SCM_WANT_MAKE:-?} / ${SCM_WANT_MODEL:-?}"
   printf '  %-22s %s\n' "Videos scanned:" "$SCANNED"
+  printf '  %-22s %s\n' "Batch size:" "${BATCH_SIZE:-n/a}"
   printf '  %-22s %s\n' "Already matching:" "$ALREADY"
   printf '  %-22s %s\n' "Needed a change:" "$NEED"
   printf '  %-22s %s\n' "Tagged:" "$TAGGED"
@@ -621,6 +786,8 @@ DRY_RUN=0
 VERBOSE=0
 ALWAYS_APPLY=0
 ALWAYS_KEEP_EXISTING=0
+BATCH_SIZE=0
+BATCH_SIZE_CLI=""
 CAMERA_CLI=""
 SCM_CUSTOM_MAKE=""
 SCM_CUSTOM_MODEL=""
@@ -628,6 +795,8 @@ SCM_WANT_MAKE=""
 SCM_WANT_MODEL=""
 SCM_WANT_COMMENT=""
 SCM_CAMERA_LABEL=""
+SCM_CURRENT_WRITE_FILE=""
+SCM_EXIFTOOL_PID=""
 SCANNED=0
 ALREADY=0
 NEED=0
@@ -635,6 +804,11 @@ TAGGED=0
 KEPT=0
 SKIPPED=0
 FAILED=0
+PLAN_PATHS=()
+PLAN_MAKE=()
+PLAN_MODEL=()
+PLAN_COMMENT=()
+PLAN_HOW=()
 FILES=()
 POSITIONALS=()
 
@@ -668,6 +842,16 @@ while [[ $# -gt 0 ]]; do
       ;;
     --verbose)
       VERBOSE=1
+      shift
+      ;;
+    --batch-size)
+      shift
+      [[ $# -gt 0 ]] || { echo "$(scm_ts) --batch-size needs a positive integer." >&2; exit 1; }
+      BATCH_SIZE_CLI="$1"
+      shift
+      ;;
+    --batch-size=*)
+      BATCH_SIZE_CLI="${1#--batch-size=}"
       shift
       ;;
     --camera)
@@ -725,6 +909,13 @@ if [[ -n "$SCM_CUSTOM_MAKE" || -n "$SCM_CUSTOM_MODEL" ]]; then
   [[ -n "$CAMERA_CLI" ]] || CAMERA_CLI="custom"
 fi
 
+if [[ -n "$BATCH_SIZE_CLI" ]]; then
+  if [[ ! "$BATCH_SIZE_CLI" =~ ^[1-9][0-9]*$ ]]; then
+    echo "$(scm_ts) --batch-size needs a positive integer (got: ${BATCH_SIZE_CLI})." >&2
+    exit 1
+  fi
+fi
+
 if [[ -f "${BASH_SOURCE[0]}" ]]; then
   chmod 700 "${BASH_SOURCE[0]}" 2>/dev/null || true
 fi
@@ -772,20 +963,43 @@ if (( rc != 0 )); then
   exit 1
 fi
 
+scm_ask_batch_size
+
 echo
 echo "$(scm_ts) Camera: ${SCM_CAMERA_LABEL}  (Make=${SCM_WANT_MAKE} Model=${SCM_WANT_MODEL})"
-echo "$(scm_ts) Checking ${SCANNED} video file(s)."
+echo "$(scm_ts) Checking ${SCANNED} video file(s); batch size ${BATCH_SIZE}."
+echo "$(scm_ts) Each batch: decide all prompts first, then write."
 (( DRY_RUN )) && echo "$(scm_ts) Dry run — nothing will be written."
 (( DO_YES )) && echo "$(scm_ts) -y: apply without asking (safe: empty tags only; keep differing existing)."
 (( VERBOSE )) && echo "$(scm_ts) Verbose: show files that already match."
 echo
 
-for f in "${FILES[@]}"; do
-  scm_process_file "$f"
-  rc=$?
-  if (( rc == 2 )); then
+batch_i=0
+file_i=0
+quit_run=0
+while (( file_i < SCANNED )); do
+  batch_i=$((batch_i + 1))
+  batch_end=$((file_i + BATCH_SIZE))
+  (( batch_end > SCANNED )) && batch_end=$SCANNED
+  batch_count=$((batch_end - file_i))
+  scm_clear_plans
+  echo
+  scm_rule
+  echo "$(scm_ts) Batch ${batch_i}: files $((file_i + 1))–${batch_end} of ${SCANNED} — decide (${batch_count} file(s))"
+  scm_rule
+  for (( j = file_i; j < batch_end; j++ )); do
+    scm_decide_file "${FILES[j]}"
+    rc=$?
+    if (( rc == 2 )); then
+      quit_run=1
+      break
+    fi
+  done
+  if (( quit_run )); then
     break
   fi
+  scm_apply_plans
+  file_i=$batch_end
 done
 
 scm_print_summary
