@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261115.075000 - Contour ~2 GB size-split chapters (YYYYMMDD_HHMMSS / _NVenc_*); wider stop gap than GoPro
 # v. 20261027.205537 - group prompt: [Y] merge all remaining (default), [m] this group; temp default N unless HDD
 # v. 20261027.073717 - forced merge: allow prior *_concat_parts_* inputs; combine part ranges in output name
 # v. 20261024.173852 - size-split: same GoPro Media UID (exiftool) groups chapters (bare + GX02…)
@@ -90,6 +91,7 @@
 # v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
 # v. 20260805.154826 - after merge: copy GPS/dates from first chapter; FS times via touch -r
 
+# 2026.11.15 - v. 0.15.107 - Contour size-split: YYYYMMDD_HHMMSS[.mp4|_NVenc_…]; ~2 GB chapters (not GoPro 4/12 GB); next start ≈ prev start + duration with Contour stop slack (default −30…+180 s) so a ~1 min pause between chapters still merges; plan label Contour ~2 GB; GoPro size-split rules unchanged
 # 2026.10.27 - v. 0.15.106 - group merge prompt: [Y] Merge all remaining groups is the default (asks output date/time for each first); [m] merges only this group. Off-disk temp merge defaults to No (write here) for SSD and unknown disks; Yes (/tmp) only when the source is a confirmed spinning HDD — unknown mounts like /mnt/f no longer default to Yes
 # 2026.10.27 - v. 0.15.105 - forced merge (FILE FILE …) accepts prior *_concat_parts_* / *_concat outputs so two half-merges can be joined; output name uses the first file's stem with the combined chapter range when every input parses (e.g. …_01-05 + …_06-09 → …_concat_parts_01-09.mp4), else strips an existing concat suffix before appending _concat_parts_01-N. FILE +N still skips other concat names when picking alphabetical neighbours
 # 2026.10.24 - v. 0.15.104 - size-split grouping also uses GoPro Media UID from exiftool (same UID across chapters of one recording, including bare …_GoPro_Hero10_Black.mp4 vs …_GX02…); batch-loaded with CreateDate; different UIDs refuse to merge even if filenames look related
@@ -330,6 +332,14 @@ Merge behaviour:
     label, or share one start time with a trailing chapter letter on the time (…_200322a_…)
     or camera token (…_GOPRO10_BLACKa.MP4). Letter runs a,b,c… on the same timestamp merge
     like part_01 chapters (any file size).
+  - Also groups Contour-style clips without a GoPro token: YYYYMMDD_HHMMSS.mp4 or
+    YYYYMMDD_HHMMSS_NVenc_….mp4 on the same calendar day when chapters are ~2 GB
+    (Contour FAT-style splits; not the GoPro ~4 GB / ~12 GB bands) and filename
+    start + duration chains with Contour stop slack (default next start from 30s
+    early to 180s after the previous chapter ends — enough for a ~1 min pause).
+    The last chapter may be a smaller partial. Output:
+    YYYYMMDD_HHMMSS_Contour_concat_parts_01-NN.mp4. Non-chaining Contour clips stay
+    standalone. GoPro 4/12 GB rules are unchanged.
   - Also groups 70mai-style clips NOYYYYMMDD-HHMMSS-NNNNNNX.MP4 and the same
     name starting with EV (same camera letter) into a continuous journey: ordered
     by filename time, sequence number increases by 1, and the filename start times
@@ -401,7 +411,8 @@ Merge behaviour:
     long as a GPSData*.txt log is in the places searched.
   - Output file per group: <first_chapter_stem>_concat_parts_<first>-<last>.mp4
     (timestamp from the first part; size-split/letter groups use 01-<N> for chapter count,
-    e.g. …_GOPRO10_BLACK_concat_parts_01-06.mp4). Legacy …_parts_*-*_concat.mp4 still recognized.
+    e.g. …_GOPRO10_BLACK_concat_parts_01-06.mp4; Contour: …_Contour_concat_parts_01-NN.mp4).
+    Legacy …_parts_*-*_concat.mp4 still recognized.
   - Other single files are listed as standalone; probable size-split sets are merge candidates.
   - Lists merged *_concat files when matching input chapters are not in the folder.
     A 70mai journey name is matched to NO* and EV* clips of that camera whose
@@ -446,6 +457,13 @@ Environment:
                           prev start + ffprobe duration (default: 180).
   PGM_SIZE_SPLIT_TIME_TOLERANCE_SEC
                           For size-split (no _part_XX) chains: same check (default: 2).
+  PGM_CONTOUR_2G_MIN_BYTES / PGM_CONTOUR_2G_MAX_BYTES
+                          Contour ~2 GB full-chapter size band (defaults ~1.85e9–2.35e9).
+  PGM_CONTOUR_DURATION_REJECT_BELOW_SEC
+                          Reject a Contour full chapter shorter than this (default: 300).
+  PGM_CONTOUR_TIME_TOLERANCE_SEC / PGM_CONTOUR_TIME_MAX_STOP_SEC
+                          Contour chain: next start vs prev start + duration may be this
+                          many seconds early (default 30) or late/stop (default 180).
   PGM_DASHCAM_MAX_GAP_SEC Max seconds between 70mai clip start times to stay in one
                           journey (default: 90). Gaps above this start a new group.
   PGM_DASHCAM_SHORT_HOLE_SEC
@@ -2971,6 +2989,13 @@ PGM_SIZE_SPLIT_DURATION_REJECT_BELOW_SEC="${PGM_SIZE_SPLIT_DURATION_REJECT_BELOW
 # High-bitrate Mission 1 ~10 GB chapters are often ~10–16 min; do not require Hero-like ~18 min.
 PGM_SIZE_SPLIT_12G_DURATION_REJECT_BELOW_SEC="${PGM_SIZE_SPLIT_12G_DURATION_REJECT_BELOW_SEC:-120}"
 PGM_SIZE_SPLIT_12G_TIME_MAX_GAP_SEC="${PGM_SIZE_SPLIT_12G_TIME_MAX_GAP_SEC:-2400}"
+# Contour FAT-style ~2 GB splits (calibrated from ~2.0–2.2 GB Contour / NVenc chapters).
+PGM_CONTOUR_2G_MIN_BYTES="${PGM_CONTOUR_2G_MIN_BYTES:-1850000000}"
+PGM_CONTOUR_2G_MAX_BYTES="${PGM_CONTOUR_2G_MAX_BYTES:-2350000000}"
+PGM_CONTOUR_DURATION_REJECT_BELOW_SEC="${PGM_CONTOUR_DURATION_REJECT_BELOW_SEC:-300}"
+# Next start ≈ prev + duration: allow early by TOLERANCE, late/stop by MAX_STOP (~1–3 min).
+PGM_CONTOUR_TIME_TOLERANCE_SEC="${PGM_CONTOUR_TIME_TOLERANCE_SEC:-30}"
+PGM_CONTOUR_TIME_MAX_STOP_SEC="${PGM_CONTOUR_TIME_MAX_STOP_SEC:-180}"
 # GoPro cameras (7, 10, …): ~4 GB chapters often ~6:49 (409s).
 PGM_GOPRO7_SIZE_MIN_BYTES=$PGM_SIZE_SPLIT_4G_MIN_BYTES
 PGM_GOPRO7_SIZE_MAX_BYTES=$PGM_SIZE_SPLIT_4G_MAX_BYTES
@@ -3407,6 +3432,10 @@ group_merge_description_label() {
   local -a files=("$@")
   local fb middle
   fb="${files[0]##*/}"
+  if (( ${#files[@]} >= 2 )) && group_is_contour_size_split "${files[@]}"; then
+    printf 'Contour\n'
+    return 0
+  fi
   middle=$(gopro_middle_from_basename "$fb") || return 1
   middle="${middle#_}"
   middle="${middle%_}"
@@ -4600,6 +4629,196 @@ print_size_split_near_miss_hint() {
       echo "$(pgm_ts)       Example: ${first_fail} duration ${first_dur}s (full ~4 GB chapter: duration not below ${PGM_SIZE_SPLIT_DURATION_REJECT_BELOW_SEC}s; ~12 GB: not below ${PGM_SIZE_SPLIT_12G_DURATION_REJECT_BELOW_SEC}s)."
     fi
   fi
+}
+
+# Contour-style basename: YYYYMMDD_HHMMSS.mp4 or YYYYMMDD_HHMMSS_NVenc_….mp4
+# (no GoPro camera token, no _part_XX, not 70mai NO*/EV*). Sets CONTOUR_TS_DATE / CONTOUR_TS_TIME.
+contour_basename_parse() {
+  local base="$1"
+  CONTOUR_TS_DATE=""
+  CONTOUR_TS_TIME=""
+  [[ -n "$base" ]] || return 1
+  is_concat_output_basename "$base" && return 1
+  chapter_part_from_basename "$base" >/dev/null 2>&1 && return 1
+  if [[ "$base" =~ ^(NO|EV)[0-9]{8}-[0-9]{6}-[0-9]+[A-Za-z]\.[mM][pP]4$ ]]; then
+    return 1
+  fi
+  # Already has a GoPro camera token — size-split / part path owns it.
+  if gopro_timestamp_cam_from_basename "$base" 2>/dev/null; then
+    return 1
+  fi
+  if [[ "$base" =~ ^([0-9]{8})_([0-9]{6})\.[mM][pP]4$ ]]; then
+    CONTOUR_TS_DATE="${BASH_REMATCH[1]}"
+    CONTOUR_TS_TIME="${BASH_REMATCH[2]}"
+    return 0
+  fi
+  if [[ "$base" =~ ^([0-9]{8})_([0-9]{6})_NVenc_.*\.[mM][pP]4$ ]]; then
+    CONTOUR_TS_DATE="${BASH_REMATCH[1]}"
+    CONTOUR_TS_TIME="${BASH_REMATCH[2]}"
+    return 0
+  fi
+  return 1
+}
+
+is_full_contour_size_split_segment() {
+  local f="$1" sz dur
+  contour_basename_parse "${f##*/}" || return 1
+  sz=$(file_size_bytes "$f")
+  pgm_size_bytes_in_closed_range "$sz" "$PGM_CONTOUR_2G_MIN_BYTES" "$PGM_CONTOUR_2G_MAX_BYTES" || return 1
+  dur=$(ffprobe_duration_seconds "$f" 2>/dev/null) || dur=""
+  if [[ -n "$dur" ]]; then
+    awk -v d="$dur" -v rej="$PGM_CONTOUR_DURATION_REJECT_BELOW_SEC" \
+      'BEGIN { exit !(d+0 > 0 && d+0 < rej) }' && return 1
+  fi
+  return 0
+}
+
+# Trailing Contour chapter after a full ~2 GB run (smaller than the 2 GB band).
+is_partial_contour_size_split_segment() {
+  local f="$1" sz
+  contour_basename_parse "${f##*/}" || return 1
+  sz=$(file_size_bytes "$f")
+  pgm_size_bytes_lt "$sz" "$PGM_CONTOUR_2G_MIN_BYTES" || return 1
+  # Ignore tiny leftovers / non-video scraps.
+  pgm_size_bytes_lt "$sz" 10485760 && return 1
+  return 0
+}
+
+# Next Contour chapter follows prev by hybrid start + duration, with stop slack.
+# Default: next may start 30s early … 180s after expected end (covers ~72s pause).
+contour_chapter_timestamps_follow() {
+  local prev_f="$1" next_f="$2"
+  local prev_epoch next_epoch dur expected delta tol max_stop
+  local prev_base next_base
+
+  prev_base="${prev_f##*/}"
+  next_base="${next_f##*/}"
+  contour_basename_parse "$prev_base" || return 1
+  local prev_day="$CONTOUR_TS_DATE"
+  contour_basename_parse "$next_base" || return 1
+  [[ "$CONTOUR_TS_DATE" == "$prev_day" ]] || return 1
+
+  prev_epoch="$(pgm_hybrid_start_epoch "$prev_f" 2>/dev/null)" || return 1
+  next_epoch="$(pgm_hybrid_start_epoch "$next_f" 2>/dev/null)" || return 1
+  (( next_epoch >= prev_epoch )) || return 1
+
+  tol="${PGM_CONTOUR_TIME_TOLERANCE_SEC:-30}"
+  max_stop="${PGM_CONTOUR_TIME_MAX_STOP_SEC:-180}"
+  [[ "$tol" =~ ^[0-9]+$ ]] || tol=30
+  [[ "$max_stop" =~ ^[0-9]+$ ]] || max_stop=180
+
+  dur=$(ffprobe_duration_seconds "$prev_f" 2>/dev/null) || dur=""
+  [[ -n "$dur" ]] || return 1
+  expected=$(awk -v p="$prev_epoch" -v d="$dur" 'BEGIN{printf "%d", p+d+0.5}')
+  delta=$(( next_epoch - expected ))
+  (( delta >= -tol && delta <= max_stop ))
+}
+
+contour_run_valid() {
+  local -a run=("$@")
+  local i n=${#run[@]} f
+  (( n >= 2 )) || return 1
+  for (( i = 0; i < n - 1; i++ )); do
+    is_full_contour_size_split_segment "${run[i]}" || return 1
+    contour_chapter_timestamps_follow "${run[i]}" "${run[i + 1]}" || return 1
+  done
+  f="${run[n - 1]}"
+  if is_full_contour_size_split_segment "$f"; then
+    return 0
+  fi
+  is_partial_contour_size_split_segment "$f"
+}
+
+group_is_contour_size_split() {
+  local -a files=("$@")
+  (( ${#files[@]} >= 2 )) || return 1
+  contour_run_valid "${files[@]}"
+}
+
+contour_group_output_file() {
+  local -a files=("$@")
+  local fb date1 t1 n
+  fb="${files[0]##*/}"
+  contour_basename_parse "$fb" || return 1
+  date1="$CONTOUR_TS_DATE" t1="$CONTOUR_TS_TIME"
+  n=${#files[@]}
+  (( n >= 1 )) || return 1
+  printf '%s_%s_Contour_concat_parts_01-%02d.mp4\n' "$date1" "$t1" "$n"
+}
+
+# Group remaining Contour ~2 GB singles that chain by start+duration (Contour stop slack).
+build_contour_size_split_groups() {
+  local -a kept=() singles=() run=() new_groups=()
+  local blob files f base i n
+
+  for blob in "${GROUP_BLOBS[@]}"; do
+    group_files_to_array "$blob" files
+    if (( ${#files[@]} >= 2 )); then
+      kept+=("$blob")
+      continue
+    fi
+    base="${files[0]##*/}"
+    if ! contour_basename_parse "$base"; then
+      kept+=("$blob")
+      continue
+    fi
+    singles+=("${files[0]}")
+  done
+
+  (( ${#singles[@]} >= 2 )) || {
+    GROUP_BLOBS=( "${kept[@]}" )
+    return 0
+  }
+
+  mapfile -t singles < <(
+    for f in "${singles[@]}"; do
+      e="$(pgm_hybrid_start_epoch "$f" 2>/dev/null)" || e=0
+      printf '%020d\t%s\n' "$e" "$f"
+    done | LC_ALL=C sort -t $'\t' -k1,1n -k2,2 | cut -f2-
+  )
+  n=${#singles[@]}
+  i=0
+  while (( i < n )); do
+    pgm_progress_update "Contour size-split" "$((i + 1))" "$n" "${singles[i]}"
+    if is_full_contour_size_split_segment "${singles[i]}"; then
+      run=("${singles[i]}")
+    else
+      kept+=("${singles[i]}")
+      (( i++ )) || true
+      continue
+    fi
+    (( i++ )) || true
+    while (( i < n )); do
+      f="${singles[i]}"
+      base="${f##*/}"
+      pgm_progress_update "Contour size-split" "$((i + 1))" "$n" "$f"
+      contour_basename_parse "$base" || break
+      if ! contour_chapter_timestamps_follow "${run[-1]}" "$f"; then
+        break
+      fi
+      if is_full_contour_size_split_segment "$f"; then
+        run+=("$f")
+        (( i++ )) || true
+        continue
+      fi
+      if is_partial_contour_size_split_segment "$f"; then
+        run+=("$f")
+        (( i++ )) || true
+      fi
+      break
+    done
+    if contour_run_valid "${run[@]}"; then
+      new_groups+=("$(printf '%s\n' "${run[@]}")")
+    else
+      local part_path
+      for part_path in "${run[@]}"; do
+        kept+=("$part_path")
+      done
+    fi
+  done
+  pgm_progress_end
+
+  GROUP_BLOBS=( "${kept[@]}" "${new_groups[@]}" )
 }
 
 # Raw GoPro camera chapter name (HERO6+ / MAX): G[HX] + 2-digit chapter + 4-digit
@@ -6190,7 +6409,9 @@ build_chapter_groups() {
   build_letter_chapter_groups
   # 5) ~4 GB / ~12 GB size-split chapters without letter / _part_XX names
   build_size_split_groups
-  # 6) 70mai NO* and EV* continuous journeys (sequence +1; EV may start sooner than a minute)
+  # 6) Contour ~2 GB size-split (YYYYMMDD_HHMMSS / _NVenc_*; wider stop gap than GoPro)
+  build_contour_size_split_groups
+  # 7) 70mai NO* and EV* continuous journeys (sequence +1; EV may start sooner than a minute)
   build_dashcam_journey_groups
   pgm_progress_end
   pgm_hybrid_start_media_note
@@ -6217,7 +6438,7 @@ print_size_split_group_hint() {
 
 print_group_plan() {
   local -a all_mp4=("$@")
-  local gidx=0 mergeable=0 size_split_groups=0 part_groups=0 raw_gopro_groups=0 dashcam_groups=0 standalone=0
+  local gidx=0 mergeable=0 size_split_groups=0 contour_groups=0 part_groups=0 raw_gopro_groups=0 dashcam_groups=0 standalone=0
   local -a files=()
   local f base part cam blob out_name is_ss
   local group_bytes=0 sz
@@ -6263,6 +6484,8 @@ print_group_plan() {
       (( raw_gopro_groups++ )) || true
     elif group_is_dashcam "${files[@]}"; then
       (( dashcam_groups++ )) || true
+    elif group_is_contour_size_split "${files[@]}"; then
+      (( contour_groups++ )) || true
     elif group_is_size_split "${files[@]}"; then
       (( size_split_groups++ )) || true
     else
@@ -6277,6 +6500,7 @@ print_group_plan() {
       (( ${#files[@]} < 2 )) && continue
       group_is_raw_gopro "${files[@]}" && continue
       group_is_dashcam "${files[@]}" && continue
+      group_is_contour_size_split "${files[@]}" && continue
       group_is_size_split "${files[@]}" && continue
       (( gidx++ )) || true
       out_name=$(group_output_file "${files[@]}")
@@ -6338,6 +6562,32 @@ print_group_plan() {
           printf '  [group %d/%d] %d clips → %s\n' \
             "$gidx" "$size_split_groups" "${#files[@]}" "$out_name"
         fi
+      fi
+      group_bytes=0
+      for f in "${files[@]}"; do
+        print_chapter_file_line '      ' "$f"
+        sz=$(file_size_bytes "$f")
+        (( group_bytes += sz ))
+      done
+      printf '      input total (%d files): %s\n' "${#files[@]}" "$(format_bytes_human "$group_bytes")"
+      echo
+    done
+  fi
+  if (( contour_groups > 0 )); then
+    echo "Merge candidates (Contour ~2 GB size-split; YYYYMMDD_HHMMSS / _NVenc_*; start+duration chain with Contour stop slack):"
+    gidx=0
+    for blob in "${GROUP_BLOBS[@]}"; do
+      group_files_to_array "$blob" files
+      (( ${#files[@]} < 2 )) && continue
+      group_is_contour_size_split "${files[@]}" || continue
+      (( gidx++ )) || true
+      out_name=$(group_output_file "${files[@]}")
+      if [[ -e "$out_name" ]]; then
+        printf '  [group %d/%d] %d clips (Contour) → %s  (already merged)\n' \
+          "$gidx" "$contour_groups" "${#files[@]}" "$out_name"
+      else
+        printf '  [group %d/%d] %d clips (Contour) → %s\n' \
+          "$gidx" "$contour_groups" "${#files[@]}" "$out_name"
       fi
       group_bytes=0
       for f in "${files[@]}"; do
@@ -6430,6 +6680,7 @@ print_group_plan() {
   (( part_groups > 0 )) && breakdown+="${breakdown:+, }${part_groups} _part_XX"
   (( raw_gopro_groups > 0 )) && breakdown+="${breakdown:+, }${raw_gopro_groups} GoPro chapter"
   (( size_split_groups > 0 )) && breakdown+="${breakdown:+, }${size_split_groups} size-split"
+  (( contour_groups > 0 )) && breakdown+="${breakdown:+, }${contour_groups} Contour ~2 GB"
   (( dashcam_groups > 0 )) && breakdown+="${breakdown:+, }${dashcam_groups} 70mai journey"
   if [[ -n "$breakdown" ]]; then
     echo "$(pgm_ts) Summary: ${mergeable} merge group(s) (${breakdown}), ${standalone} standalone file(s), ${PGM_ORPHAN_CONCAT_COUNT} merged output(s) without input chapters."
@@ -6520,6 +6771,9 @@ group_output_file() {
   fi
   if (( ${#files[@]} >= 2 )) && group_is_dashcam "${files[@]}"; then
     dashcam_resolved_output_file "${files[@]}" && return 0
+  fi
+  if (( ${#files[@]} >= 2 )) && group_is_contour_size_split "${files[@]}"; then
+    contour_group_output_file "${files[@]}" && return 0
   fi
   if (( ${#files[@]} >= 2 )) && group_is_size_split "${files[@]}"; then
     size_split_group_output_file "${files[@]}" && return 0
