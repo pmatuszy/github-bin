@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261115.140500 - RUN SUMMARY: hash + PAR2 status (coverage and digests/verify)
 # v. 20261115.120000 - hash-verify UI: single blank lines between sections (no doubles)
 # v. 20261113.173600 - Verify PAR2 vs hash prompt defaults to Y
 # v. 20261113.134300 - regenerate par2 create: default -t/-T is nproc-1 when CPUs >= 2
@@ -65,6 +66,8 @@
 # v. 20260719.103506 - fix no-arg run: empty POSITIONAL[@]:- became one "" element
 # v. 20260719.102800 - multi-set selection: A/a, ranges 1-4, --all, multiple paths
 
+# 2026.11.15 - v. 0.1.80 - RUN SUMMARY lists hash-file status (directory coverage + digests
+#   OK/missing/mismatch/skipped) and PAR2 status (verified OK / issues with counts)
 # 2026.11.15 - v. 0.1.79 - Hash-verify spacing: one blank line between RESULT / hash list /
 #   optional PAR2-vs-hash box / Step H (drop stacked empty lines after boxes and Enter)
 # 2026.11.13 - v. 0.1.78 - "Verify PAR2 archive(s) vs hash file?" prompt defaults to yes (Enter = verify)
@@ -1537,6 +1540,21 @@ MULTI_SET_FAILED_NAMES=()
 PAR2_SET_MEMBERS=()
 RESOLVE_PAR2_ERROR=""
 PGM_HASH_VERIFY_MSG=""
+PGM_HASH_DATA_OK=0
+PGM_HASH_DATA_MISSING=0
+PGM_HASH_DATA_MISMATCH=0
+PGM_HASH_DATA_RECOVERABLE=0
+PGM_HASH_DATA_FIXED=0
+PGM_HASH_DATA_SKIPPED=0
+PGM_HASH_DATA_VERDICT=""
+PGM_PAR2_VERDICT=""
+PGM_COV_DISK_N=0
+PGM_COV_PAR2_N=0
+PGM_COV_HASH_N=0
+PGM_COV_UNTRACKED=0
+PGM_COV_ONLY_PAR2=0
+PGM_COV_ONLY_HASH=0
+PGM_COV_SIBLING=0
 DATA_FILES=()
 PROMPT_TIMEOUT="${PROMPT_TIMEOUT-}"
 PGM_PAR2_ARG_BATCH="${PGM_PAR2_ARG_BATCH:-2000}"
@@ -1766,6 +1784,95 @@ pgm_final_next_step_hint() {
     printf '%s' "$joined"
 }
 
+# One-line hash status for RUN SUMMARY (coverage + digests).
+pgm_summary_hash_line() {
+    local disk="${PGM_COV_DISK_N:-0}"
+    local listed_on_disk=0
+    local digests="" cover=""
+
+    listed_on_disk=$(( disk - ${PGM_COV_UNTRACKED:-0} - ${PGM_COV_ONLY_PAR2:-0} - ${PGM_COV_SIBLING:-0} ))
+    (( listed_on_disk < 0 )) && listed_on_disk=0
+
+    if (( NO_HASH_DATA_CHECK == 1 )); then
+        digests="digests skipped (--no-hash-data-check)"
+    elif [[ "${PGM_HASH_DATA_VERDICT:-}" == "skip" || "${PGM_HASH_DATA_SKIPPED:-0}" == "1" ]]; then
+        digests="no hash file in directory (digest check skipped)"
+    else
+        digests="digests OK=${PGM_HASH_DATA_OK:-0}"
+        (( ${PGM_HASH_DATA_MISSING:-0} > 0 )) && digests+=", missing=${PGM_HASH_DATA_MISSING}"
+        (( ${PGM_HASH_DATA_MISMATCH:-0} > 0 )) && digests+=", mismatch=${PGM_HASH_DATA_MISMATCH}"
+        (( ${PGM_HASH_DATA_FIXED:-0} > 0 )) && digests+=", paths fixed=${PGM_HASH_DATA_FIXED}"
+        if (( ${PGM_HASH_DATA_MISSING:-0} == 0 && ${PGM_HASH_DATA_MISMATCH:-0} == 0 \
+            && ${PGM_HASH_DATA_OK:-0} > 0 )); then
+            digests="all listed digests correct (${PGM_HASH_DATA_OK} entries)"
+        elif (( ${PGM_HASH_DATA_OK:-0} == 0 && ${PGM_HASH_DATA_MISSING:-0} == 0 \
+            && ${PGM_HASH_DATA_MISMATCH:-0} == 0 )); then
+            digests="no data entries verified"
+        fi
+    fi
+
+    if (( disk <= 0 )); then
+        cover="(no data files scanned for coverage)"
+    elif (( ${PGM_COV_UNTRACKED:-0} == 0 && ${PGM_COV_ONLY_PAR2:-0} == 0 )); then
+        cover="lists every on-disk data file (${listed_on_disk}/${disk})"
+    else
+        cover="lists ${listed_on_disk}/${disk} on-disk data files"
+        (( ${PGM_COV_ONLY_PAR2:-0} > 0 )) && cover+=", ${PGM_COV_ONLY_PAR2} PAR2-only"
+        (( ${PGM_COV_UNTRACKED:-0} > 0 )) && cover+=", ${PGM_COV_UNTRACKED} in neither"
+    fi
+
+    printf 'Hash file(s): %s; %s' "$cover" "$digests"
+}
+
+# One-line PAR2 status for RUN SUMMARY (verify result + coverage).
+pgm_summary_par2_line() {
+    local disk="${PGM_COV_DISK_N:-0}"
+    local in_par2=0
+    local verify="" cover="" issues=""
+
+    in_par2=$(( disk - ${PGM_COV_UNTRACKED:-0} - ${PGM_COV_ONLY_HASH:-0} - ${PGM_COV_SIBLING:-0} ))
+    (( in_par2 < 0 )) && in_par2=0
+
+    case "${PGM_PAR2_VERDICT:-}" in
+        ok)
+            verify="verified OK under stored names (all files correct)"
+            ;;
+        warn)
+            verify="checked with issues"
+            ;;
+        fail)
+            verify="verification failed"
+            ;;
+        *)
+            if (( ${1:-0} == 0 )); then
+                verify="verified OK under stored names (all files correct)"
+            else
+                verify="finished with open issues"
+            fi
+            ;;
+    esac
+
+    if (( ${#MISSING_PAR2_TARGETS[@]} > 0 || ${#MISNAMED_DISK[@]} > 0 \
+        || ${#DAMAGED_PAR2_TARGETS[@]} > 0 || ${#NO_DATA_FOUND_TARGETS[@]} > 0 \
+        || ${#EMPTY_PAR2_TARGETS[@]} > 0 )); then
+        issues="missing=${#MISSING_PAR2_TARGETS[@]}, misnamed=${#MISNAMED_DISK[@]}, damaged=${#DAMAGED_PAR2_TARGETS[@]}, no-data=${#NO_DATA_FOUND_TARGETS[@]}, empty=${#EMPTY_PAR2_TARGETS[@]}"
+        verify="${verify} (${issues})"
+    fi
+
+    if (( disk <= 0 )); then
+        cover="(no data files scanned for coverage)"
+    elif (( ${PGM_COV_UNTRACKED:-0} == 0 && ${PGM_COV_ONLY_HASH:-0} == 0 )); then
+        cover="protects every on-disk data file (${in_par2}/${disk})"
+    else
+        cover="protects ${in_par2}/${disk} on-disk data files"
+        (( ${PGM_COV_ONLY_HASH:-0} > 0 )) && cover+=", ${PGM_COV_ONLY_HASH} hash-only"
+        (( ${PGM_COV_UNTRACKED:-0} > 0 )) && cover+=", ${PGM_COV_UNTRACKED} in neither"
+        (( ${PGM_COV_SIBLING:-0} > 0 )) && cover+=", ${PGM_COV_SIBLING} in other PAR2 set(s)"
+    fi
+
+    printf 'PAR2 check: %s; %s' "$verify" "$cover"
+}
+
 pgm_print_final_run_summary() {
     local rc="${1:-0}"
     local -a lines=()
@@ -1780,14 +1887,8 @@ pgm_print_final_run_summary() {
         lines+=( "PAR2 set: $(basename -- "$PAR2_FILE")" )
     fi
     lines+=( "Verdict: $verdict" )
-
-    if (( ${#MISSING_PAR2_TARGETS[@]} > 0 || ${#MISNAMED_DISK[@]} > 0 \
-        || ${#DAMAGED_PAR2_TARGETS[@]} > 0 || ${#NO_DATA_FOUND_TARGETS[@]} > 0 \
-        || ${#EMPTY_PAR2_TARGETS[@]} > 0 )); then
-        lines+=(
-            "Counts: missing=${#MISSING_PAR2_TARGETS[@]}, misnamed=${#MISNAMED_DISK[@]}, damaged=${#DAMAGED_PAR2_TARGETS[@]}, no-data-found=${#NO_DATA_FOUND_TARGETS[@]}, empty=${#EMPTY_PAR2_TARGETS[@]}"
-        )
-    fi
+    lines+=( "$(pgm_summary_hash_line)" )
+    lines+=( "$(pgm_summary_par2_line "$rc")" )
 
     [[ -n "$next" ]] && lines+=( "Suggested next: $next" )
 
@@ -1915,6 +2016,14 @@ pgm_report_protection_coverage() {
             only_hash+=("$rel")
         fi
     done
+
+    PGM_COV_DISK_N=$disk_n
+    PGM_COV_PAR2_N=$par2_n
+    PGM_COV_HASH_N=$hash_n
+    PGM_COV_UNTRACKED=${#untracked[@]}
+    PGM_COV_ONLY_PAR2=${#only_par2[@]}
+    PGM_COV_ONLY_HASH=${#only_hash[@]}
+    PGM_COV_SIBLING=${#sibling_covered[@]}
 
     echo "  On disk (data files):              $disk_n"
     echo "  Listed in this PAR2 set:           $par2_n"
@@ -2722,6 +2831,7 @@ pgm_verify_hash_data_entries() {
     local missing=0 mismatch=0 recoverable=0
 
     if (( NO_HASH_DATA_CHECK == 1 )); then
+        PGM_HASH_DATA_VERDICT="skip"
         pgm_print_step_verdict 1b SKIP "Hash data verification skipped (--no-hash-data-check)."
         return 0
     fi
@@ -2735,6 +2845,7 @@ pgm_verify_hash_data_entries() {
     pgm_parse_hash_data_status "$msg" || true
 
     if (( PGM_HASH_DATA_SKIPPED == 1 )); then
+        PGM_HASH_DATA_VERDICT="skip"
         pgm_print_step_verdict 1b SKIP "No hash files in directory; data checksum step not run."
         return 0
     fi
@@ -2744,6 +2855,7 @@ pgm_verify_hash_data_entries() {
     recoverable=${PGM_HASH_DATA_RECOVERABLE:-0}
 
     if (( rc == 0 && missing == 0 && mismatch == 0 )); then
+        PGM_HASH_DATA_VERDICT="ok"
         if (( PGM_HASH_DATA_OK == 1 )); then
             pgm_print_step_verdict 1b OK "All hash-manifest entries match files on disk (1 entry)."
         else
@@ -2788,6 +2900,7 @@ pgm_verify_hash_data_entries() {
             mismatch=${PGM_HASH_DATA_MISMATCH:-0}
             recoverable=${PGM_HASH_DATA_RECOVERABLE:-0}
             if (( rc == 0 && missing == 0 && mismatch == 0 )); then
+                PGM_HASH_DATA_VERDICT="ok"
                 pgm_print_step_verdict 1b OK \
                     "Hash paths updated; all manifest entries now match on disk."
                 return 0
@@ -2798,6 +2911,7 @@ pgm_verify_hash_data_entries() {
     fi
 
     # Remaining issues: WARN and continue (do not abort the set).
+    PGM_HASH_DATA_VERDICT="warn"
     pgm_print_step_verdict 1b WARN \
         "Hash-manifest issues remain (${missing} missing, ${mismatch} mismatch); continuing to PAR2 verify."
     pgm_print_outcome warn \
@@ -4409,6 +4523,21 @@ pgm_run_one_par2_set() {
     OUT2_FILE=""
     PGM_HASH_VERIFY_MSG=""
     PGM_HASH_SYNCED_THIS_SET=0
+    PGM_HASH_DATA_OK=0
+    PGM_HASH_DATA_MISSING=0
+    PGM_HASH_DATA_MISMATCH=0
+    PGM_HASH_DATA_RECOVERABLE=0
+    PGM_HASH_DATA_FIXED=0
+    PGM_HASH_DATA_SKIPPED=0
+    PGM_HASH_DATA_VERDICT=""
+    PGM_PAR2_VERDICT=""
+    PGM_COV_DISK_N=0
+    PGM_COV_PAR2_N=0
+    PGM_COV_HASH_N=0
+    PGM_COV_UNTRACKED=0
+    PGM_COV_ONLY_PAR2=0
+    PGM_COV_ONLY_HASH=0
+    PGM_COV_SIBLING=0
     PGM_TIMING_HASH_SEC=0
     PGM_TIMING_HASH_DATA_SEC=0
     PGM_TIMING_PAR2_NAMES_SEC=0
@@ -4420,6 +4549,7 @@ pgm_run_one_par2_set() {
 
     pgm_print_step_header "Step 1: verify PAR2 archive checksums"
     if ! verify_par2_hashes; then
+        PGM_PAR2_VERDICT="fail"
         pgm_print_step_verdict 1 FAIL "PAR2 archive checksum verification failed."
         if (( MULTI_SET_MODE )); then
             pgm_run_one_par2_set_end 3
@@ -4447,6 +4577,7 @@ pgm_run_one_par2_set() {
         par2_ok_line="$(pgm_extract_par2_ok_line "$OUT1_FILE")"
         rm -f "$OUT1_FILE"
         OUT1_FILE=""
+        PGM_PAR2_VERDICT="ok"
         pgm_print_step_verdict 2 OK "All files match under PAR2 names."
         pgm_print_outcome ok \
             "All files OK under PAR2 names." \
@@ -4456,6 +4587,7 @@ pgm_run_one_par2_set() {
         return 0
     fi
 
+    PGM_PAR2_VERDICT="warn"
     pgm_print_step_verdict 2 WARN "Not all files OK under PAR2 names; running directory scan."
 
     pgm_print_step_transition "Continuing - Step 3 next (rename check)" \
@@ -4566,6 +4698,13 @@ pgm_run_one_par2_set() {
 
     pgm_review_par2_hash_refs
 
+    if (( SUMMARY_RC == 0 )); then
+        PGM_PAR2_VERDICT="ok"
+    elif (( SUMMARY_RC == 3 )); then
+        PGM_PAR2_VERDICT="fail"
+    else
+        PGM_PAR2_VERDICT="warn"
+    fi
     pgm_run_one_par2_set_end "$SUMMARY_RC"
     return "$SUMMARY_RC"
 }
