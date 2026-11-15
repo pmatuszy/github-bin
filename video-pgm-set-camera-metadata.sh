@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261115.100500 - batch decide: [b] apply answers so far, resume remaining files
 # v. 20261115.100000 - batch decide: show question X of Y (file A of B overall)
 # v. 20261115.095500 - camera profile menu: no default (Enter asks again)
 # v. 20261115.094500 - batch decide-then-apply; Ctrl-C cleans in-flight exiftool write
@@ -6,6 +7,8 @@
 # v. 20261115.091000 - Contour profile is Contour+2 only (drop ROAM/GPS generics)
 # v. 20261115.090000 - initial: set Make/Model/Comment camera profiles (Contour, GoPro, 70mai, custom)
 #
+# 2026.11.15 - v. 0.1.6 - [b] during batch decide: apply queued answers now; current+later files
+#   in the batch are asked in the next decide round
 # 2026.11.15 - v. 0.1.5 - during batch decide, show Question X of Y in this batch (file A of B overall)
 # 2026.11.15 - v. 0.1.4 - camera profile menu has no default; Enter asks again (was silently Contour+2)
 # 2026.11.15 - v. 0.1.3 - process in batches: ask all decisions for a batch first, then write;
@@ -73,6 +76,7 @@ the batch's questions:
   Empty tags:
   [Y] Apply this file (default)
   [a] Overwrite/apply this and every later file
+  [b] Begin apply now — write answers so far; ask the rest later
   [n] Skip this file
   [q] Quit (abandons unapplied plans for the current batch)
 
@@ -82,6 +86,7 @@ the batch's questions:
   [k] Keep current tags on this file
   [a] Overwrite this and every later file that differs
   [K] Keep existing tags for the rest of this run (only tag fully empty files)
+  [b] Begin apply now — write answers so far; ask the rest later
   [n] Skip this file
   [q] Quit (abandons unapplied plans for the current batch)
 
@@ -657,20 +662,31 @@ scm_decide_file() {
     echo "  [$(scm_k k "$def")] Keep current tags on this file"
     echo "  [$(scm_k a "$def")] Overwrite this and every later file that differs"
     echo "  [$(scm_k K "$def")] Keep existing tags for the rest of this run (only tag fully empty files)"
+    echo "  [$(scm_k b "$def")] Begin apply now — write answers so far; ask remaining files later"
     echo "  [$(scm_k n "$def")] Skip this file"
     echo "  [$(scm_k q "$def")] Quit (abandon this batch's pending writes)"
-    keys="$(scm_keys "$def" y m k a K n q)"
+    keys="$(scm_keys "$def" y m k a K b n q)"
   else
     echo "  [$(scm_k y "$def")] Apply this file (default)"
     echo "  [$(scm_k a "$def")] Apply this file and every later file"
+    echo "  [$(scm_k b "$def")] Begin apply now — write answers so far; ask remaining files later"
     echo "  [$(scm_k n "$def")] Skip this file"
     echo "  [$(scm_k q "$def")] Quit (abandon this batch's pending writes)"
-    keys="$(scm_keys "$def" y a n q)"
+    keys="$(scm_keys "$def" y a b n q)"
   fi
 
   while true; do
     scm_read_key "Set camera metadata [${keys}] (question ${SCM_Q_BATCH_POS}/${SCM_Q_BATCH_TOTAL}): " "$def"
     case "$(scm_choice "$REPLY")" in
+      b)
+        if (( ${#PLAN_PATHS[@]} == 0 )); then
+          echo "$(scm_ts) Nothing queued yet — answer at least one file (or Skip), then [b]."
+          continue
+        fi
+        scm_print_selected "b = Begin apply now (answers so far)"
+        echo "$(scm_ts) Stopping decide early — will apply ${#PLAN_PATHS[@]} queued write(s); this file and later ones stay for the next decide round."
+        return 3
+        ;;
       y)
         if (( has_existing )); then
           scm_print_selected "y = Overwrite with ${SCM_CAMERA_LABEL}"
@@ -1034,10 +1050,13 @@ while (( file_i < SCANNED )); do
   echo
   scm_rule
   echo "$(scm_ts) Batch ${batch_i}: files $((file_i + 1))–${batch_end} of ${SCANNED} — decide (${batch_count} file(s))"
+  echo "$(scm_ts) Tip: press [b] during a prompt to apply answers so far and ask the rest later."
   scm_rule
   SCM_Q_BATCH_NUM=$batch_i
   SCM_Q_BATCH_TOTAL=$batch_count
   SCM_Q_OVERALL_TOTAL=$SCANNED
+  early_apply=0
+  next_file_i=$batch_end
   for (( j = file_i; j < batch_end; j++ )); do
     SCM_Q_BATCH_POS=$((j - file_i + 1))
     SCM_Q_OVERALL_POS=$((j + 1))
@@ -1047,13 +1066,22 @@ while (( file_i < SCANNED )); do
       quit_run=1
       break
     fi
+    if (( rc == 3 )); then
+      # Apply queued answers; resume decide at this file (not yet answered).
+      early_apply=1
+      next_file_i=$j
+      break
+    fi
   done
   if (( quit_run )); then
     break
   fi
   echo "$(scm_ts) Batch ${batch_i}: apply phase"
   scm_apply_plans
-  file_i=$batch_end
+  file_i=$next_file_i
+  if (( early_apply )); then
+    echo "$(scm_ts) Resuming decide at file $((file_i + 1)) of ${SCANNED}."
+  fi
 done
 
 scm_print_summary

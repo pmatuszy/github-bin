@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261115.100500 - batch decide: [b] apply answers so far, resume remaining files
 # v. 20261115.100000 - batch decide: show question X of Y (file A of B overall)
 # v. 20261115.095000 - batch decide-then-apply; Ctrl-C cleans in-flight exiftool write
 # v. 20261115.093500 - end SUMMARY includes Started / Finished / Total wall time
@@ -18,6 +19,8 @@
 # v. 20261020.150400 - date menu: ASCII n/a so parenthetical notes share one column
 # v. 20261020.145500 - fix file / media dates when the name, filesystem, and tags disagree
 #
+# 2026.11.15 - v. 0.1.19 - [b] during batch decide: apply queued answers now; current+later files
+#   in the batch are asked in the next decide round
 # 2026.11.15 - v. 0.1.18 - during batch decide, show Question X of Y in this batch (file A of B overall)
 # 2026.11.15 - v. 0.1.17 - process in batches: ask all decisions for a batch first, then write; batch size
 #   default = all when ≤50 files, else 50 (--batch-size / MFD_BATCH_SIZE); Ctrl-C during a write stops
@@ -110,6 +113,8 @@ questions:
                        Contour normalize is available for this file.
   k                    Keep dates as written for this file and every later
                        file in this run (no more prompts).
+  b                    Begin apply now — write answers so far; ask the rest
+                       of this batch later.
   s                    Skip this file.
   q                    Quit (abandons unapplied plans for the current batch).
 
@@ -1189,12 +1194,13 @@ mfd_decide_file() {
     echo "      Already normalized Contour files (name=start, FS=end, media=start) stay skipped."
   fi
   echo "  [$(mfd_k k "$MFD_DEFAULT_KEY")] Keep as written for the rest of this run"
+  echo "  [$(mfd_k b "$MFD_DEFAULT_KEY")] Begin apply now — write answers so far; ask remaining files later"
   echo "  [$(mfd_k s "$MFD_DEFAULT_KEY")] Skip this file"
   echo "  [$(mfd_k q "$MFD_DEFAULT_KEY")] Quit (abandon this batch's pending writes)"
   if [[ -n "${MFD_CONTOUR_START_E:-}" && -n "${MFD_CONTOUR_END_E:-}" ]]; then
-    key_list+=(a c k s q)
+    key_list+=(a c k b s q)
   else
-    key_list+=(a k s q)
+    key_list+=(a k b s q)
   fi
   prompt_keys="$(mfd_keys "$MFD_DEFAULT_KEY" "${key_list[@]}")"
   if [[ "$MFD_DEFAULT_KEY" =~ ^[0-9]+$ ]]; then
@@ -1211,6 +1217,15 @@ mfd_decide_file() {
         echo "$(mfd_ts) Quit — abandoning ${#PLAN_PATH[@]} pending fix(es) in this batch."
         mfd_clear_plans
         return 2
+        ;;
+      b)
+        if (( ${#PLAN_PATH[@]} == 0 )); then
+          echo "$(mfd_ts) Nothing queued yet — answer at least one file (or Skip), then [b]."
+          continue
+        fi
+        mfd_print_selected "b = Begin apply now (answers so far)"
+        echo "$(mfd_ts) Stopping decide early — will apply ${#PLAN_PATH[@]} queued fix(es); this file and later ones stay for the next decide round."
+        return 3
         ;;
       s)
         mfd_print_selected "s = Skip this file"
@@ -1499,10 +1514,13 @@ while (( file_i < SCANNED )); do
   echo
   mfd_rule
   echo "$(mfd_ts) Batch ${batch_i}: files $((file_i + 1))–${batch_end} of ${SCANNED} — decide (${batch_count} file(s))"
+  echo "$(mfd_ts) Tip: press [b] during a prompt to apply answers so far and ask the rest later."
   mfd_rule
   MFD_Q_BATCH_NUM=$batch_i
   MFD_Q_BATCH_TOTAL=$batch_count
   MFD_Q_OVERALL_TOTAL=$SCANNED
+  early_apply=0
+  next_file_i=$batch_end
   for (( j = file_i; j < batch_end; j++ )); do
     MFD_Q_BATCH_POS=$((j - file_i + 1))
     MFD_Q_OVERALL_POS=$((j + 1))
@@ -1512,13 +1530,21 @@ while (( file_i < SCANNED )); do
       quit_run=1
       break
     fi
+    if (( rc == 3 )); then
+      early_apply=1
+      next_file_i=$j
+      break
+    fi
   done
   if (( quit_run )); then
     break
   fi
   echo "$(mfd_ts) Batch ${batch_i}: apply phase"
   mfd_apply_plans
-  file_i=$batch_end
+  file_i=$next_file_i
+  if (( early_apply )); then
+    echo "$(mfd_ts) Resuming decide at file $((file_i + 1)) of ${SCANNED}."
+  fi
 done
 
 mfd_print_summary
