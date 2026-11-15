@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261115.095000 - batch decide-then-apply; Ctrl-C cleans in-flight exiftool write
 # v. 20261115.093500 - end SUMMARY includes Started / Finished / Total wall time
 # v. 20261115.093000 - Contour normalize: name=start, FS=end, media=start; idempotent via name↔FS↔duration
 # v. 20261115.090500 - [c] Always Contour start for later Contour files in this run
@@ -16,6 +17,9 @@
 # v. 20261020.150400 - date menu: ASCII n/a so parenthetical notes share one column
 # v. 20261020.145500 - fix file / media dates when the name, filesystem, and tags disagree
 #
+# 2026.11.15 - v. 0.1.17 - process in batches: ask all decisions for a batch first, then write; batch size
+#   default = all when ≤50 files, else 50 (--batch-size / MFD_BATCH_SIZE); Ctrl-C during a write stops
+#   exiftool and removes that file's *_exiftool_tmp
 # 2026.11.15 - v. 0.1.16 - end-of-run SUMMARY prints Started / Finished / Total wall time (like other pgm scripts)
 # 2026.11.15 - v. 0.1.15 - Contour normalize: rename stamp to clip start, filesystem mtime = end, media
 #   CreateDate = start. If name is already earlier than FS by ~duration (name=start, FS=end), treat as
@@ -51,12 +55,17 @@ show_help() {
   cat <<EOF
 Usage: $(script_live_basename) [-h|--help] [-v|--version] [--history]
        [-y|--yes] [-r|--recursive] [--dry-run] [--verbose]
+       [--batch-size N]
        [FILE|DIR ...]
 
 Compare the date in the file name, the filesystem time, and the media
 CreateDate (DateTimeOriginal for many photos). When they disagree by more
 than two minutes, ask which date to use. The default is the oldest usable
 stamp. Dates before 1990-01-01 are ignored.
+
+Work is batched: for each batch the script asks every decision first, then
+writes (so you are not waiting on exiftool between prompts). Default batch
+size is all files when there are 50 or fewer; otherwise 50 (overridable).
 
 Contour-style video names (YYYYMMDD_HHMMSS.mp4 or …_NVenc_….mp4): Contour
 cameras stamp the end of the clip in the name. This script can normalize:
@@ -81,8 +90,11 @@ Options:
   --dry-run            Show what would change; do not write.
   --verbose            Print every file check (stamps + verdict), including
                        files that already agree.
+  --batch-size N       Decide/apply this many files per batch (default: all
+                       if ≤50 files, else 50).
 
-Interactive keys (per file):
+Interactive keys (per file) — decisions only; writes run after the batch's
+questions:
   1/2/3…               Pick a listed source (default = oldest usable, or
                        Contour normalize when that row is the default).
                        When the default is a number, the prompt also says
@@ -97,7 +109,9 @@ Interactive keys (per file):
   k                    Keep dates as written for this file and every later
                        file in this run (no more prompts).
   s                    Skip this file.
-  q                    Quit.
+  q                    Quit (abandons unapplied plans for the current batch).
+
+Ctrl-C during a write stops exiftool and removes that file's *_exiftool_tmp.
 
 After a change, the script prints File name / Filesystem / Media tags
 before and after side by side.
@@ -118,6 +132,7 @@ Examples:
 Environment:
   MFD_EXIFTOOL / EXIFLOC / PGM_EXIFTOOL
                        Path to exiftool (else exiftool on PATH).
+  MFD_BATCH_SIZE       Default batch size (same as --batch-size).
 EOF
 }
 
@@ -159,6 +174,7 @@ mfd_print_summary() {
   echo "$(mfd_ts) SUMMARY"
   mfd_rule
   mfd_summary_kv "Scanned:" "$SCANNED"
+  mfd_summary_kv "Batch size:" "${BATCH_SIZE:-n/a}"
   mfd_summary_kv "Disagreed:" "$MISMATCH"
   mfd_summary_kv "Fixed:" "$FIXED"
   mfd_summary_kv "Skipped/kept:" "$SKIPPED"
@@ -171,6 +187,52 @@ mfd_print_summary() {
   mfd_summary_kv "Finished:" "$end_str"
   mfd_summary_kv "Total wall time:" "$wall_time"
   mfd_rule
+}
+
+mfd_cleanup_write_temps() {
+  local f="$1" dir base t
+  [[ -n "$f" ]] || return 0
+  dir="$(dirname -- "$f")"
+  base="${f##*/}"
+  rm -f -- "${f}_exiftool_tmp" "${dir}/${base}_exiftool_tmp" 2>/dev/null || true
+  shopt -s nullglob
+  for t in "${dir}/${base}"*_exiftool_tmp "${dir}/.${base}"*exiftool*; do
+    [[ -e "$t" ]] || continue
+    rm -f -- "$t" 2>/dev/null || true
+  done
+  shopt -u nullglob
+}
+
+mfd_kill_exiftool_child() {
+  local pid="${MFD_EXIFTOOL_PID:-}"
+  MFD_EXIFTOOL_PID=""
+  [[ -n "$pid" ]] || return 0
+  kill "$pid" 2>/dev/null || true
+  wait "$pid" 2>/dev/null || true
+}
+
+mfd_ctrl_c() {
+  echo
+  echo "$(mfd_ts) Interrupted (Ctrl-C)."
+  mfd_kill_exiftool_child
+  if [[ -n "${MFD_CURRENT_WRITE_FILE:-}" ]]; then
+    mfd_cleanup_write_temps "$MFD_CURRENT_WRITE_FILE"
+    echo "$(mfd_ts) Cleaned up in-progress write: ${MFD_CURRENT_WRITE_FILE##*/}"
+    MFD_CURRENT_WRITE_FILE=""
+  fi
+  mfd_print_summary
+  exit 130
+}
+
+# Run exiftool args in background so Ctrl-C can stop the child.
+mfd_run_exiftool() {
+  local rc
+  "$@" >/dev/null 2>&1 &
+  MFD_EXIFTOOL_PID=$!
+  wait "$MFD_EXIFTOOL_PID"
+  rc=$?
+  MFD_EXIFTOOL_PID=""
+  return "$rc"
 }
 
 mfd_read_key() {
@@ -494,8 +556,13 @@ mfd_apply_contour_normalize() {
     return 0
   fi
 
-  mfd_contour_rename_to_start "$f" "$start_e" || return 1
+  MFD_CURRENT_WRITE_FILE="$f"
+  mfd_contour_rename_to_start "$f" "$start_e" || {
+    MFD_CURRENT_WRITE_FILE=""
+    return 1
+  }
   path="$MFD_APPLIED_PATH"
+  MFD_CURRENT_WRITE_FILE="$path"
 
   if mfd_set_media_dates_epoch "$path" "$start_e"; then
     media_ok=1
@@ -508,6 +575,7 @@ mfd_apply_contour_normalize() {
   else
     echo "$(mfd_ts) Filesystem times: could not set end $(mfd_format_epoch_display "$end_e")" >&2
   fi
+  MFD_CURRENT_WRITE_FILE=""
   echo "$(mfd_ts) Contour normalize: name/media=start $(mfd_format_epoch_display "$start_e"); FS=end $(mfd_format_epoch_display "$end_e")"
   (( media_ok || fs_ok ))
 }
@@ -570,22 +638,22 @@ mfd_set_media_dates_epoch() {
   [[ -f "$dest" && "$epoch" =~ ^[0-9]+$ ]] || return 1
   exif="$(mfd_find_exiftool 2>/dev/null)" || return 1
   iso="$(date -d "@${epoch}" '+%Y:%m:%d %H:%M:%S' 2>/dev/null)" || return 1
-  if "$exif" -overwrite_original -P -api QuickTimeUTC=1 \
+  if mfd_run_exiftool "$exif" -overwrite_original -P -api QuickTimeUTC=1 \
     -AllDates="$iso" \
     -CreateDate="$iso" -ModifyDate="$iso" -DateTimeOriginal="$iso" \
     -TrackCreateDate="$iso" -TrackModifyDate="$iso" \
     -MediaCreateDate="$iso" -MediaModifyDate="$iso" \
-    -- "$dest" >/dev/null 2>&1; then
+    -- "$dest"; then
     ok=1
-  elif "$exif" -overwrite_original -P \
+  elif mfd_run_exiftool "$exif" -overwrite_original -P \
     -AllDates="$iso" \
     -CreateDate="$iso" -ModifyDate="$iso" -DateTimeOriginal="$iso" \
-    -- "$dest" >/dev/null 2>&1; then
+    -- "$dest"; then
     ok=1
   fi
-  "$exif" -overwrite_original -P -api QuickTimeUTC=1 \
+  mfd_run_exiftool "$exif" -overwrite_original -P -api QuickTimeUTC=1 \
     -FileCreateDate="$iso" -FileModifyDate="$iso" \
-    -- "$dest" >/dev/null 2>&1 || true
+    -- "$dest" || true
   (( ok ))
 }
 
@@ -604,6 +672,7 @@ mfd_apply_epoch() {
     echo "$(mfd_ts) DRY-RUN would set media + filesystem times to ${disp}"
     return 0
   fi
+  MFD_CURRENT_WRITE_FILE="$dest"
   if mfd_set_media_dates_epoch "$dest" "$epoch"; then
     media_ok=1
   else
@@ -614,6 +683,7 @@ mfd_apply_epoch() {
   else
     echo "$(mfd_ts) Filesystem times: could not set ${disp}" >&2
   fi
+  MFD_CURRENT_WRITE_FILE=""
   (( media_ok || fs_ok ))
 }
 
@@ -903,7 +973,82 @@ mfd_prepare_file() {
   return 0
 }
 
-mfd_process_file() {
+mfd_clear_plans() {
+  PLAN_KIND=()
+  PLAN_PATH=()
+  PLAN_EPOCH=()
+  PLAN_END_E=()
+  PLAN_LABEL=()
+  PLAN_BEFORE_NAME=()
+  PLAN_BEFORE_FS=()
+  PLAN_BEFORE_MEDIA=()
+}
+
+mfd_queue_epoch() {
+  # $1 path $2 epoch $3 label $4 before_name $5 before_fs $6 before_media
+  PLAN_KIND+=("epoch")
+  PLAN_PATH+=("$1")
+  PLAN_EPOCH+=("$2")
+  PLAN_END_E+=("")
+  PLAN_LABEL+=("$3")
+  PLAN_BEFORE_NAME+=("$4")
+  PLAN_BEFORE_FS+=("$5")
+  PLAN_BEFORE_MEDIA+=("$6")
+}
+
+mfd_queue_contour() {
+  # $1 path $2 start $3 end $4 before_name $5 before_fs $6 before_media
+  PLAN_KIND+=("contour")
+  PLAN_PATH+=("$1")
+  PLAN_EPOCH+=("$2")
+  PLAN_END_E+=("$3")
+  PLAN_LABEL+=("Contour normalize")
+  PLAN_BEFORE_NAME+=("$4")
+  PLAN_BEFORE_FS+=("$5")
+  PLAN_BEFORE_MEDIA+=("$6")
+}
+
+mfd_apply_plans() {
+  local i n=${#PLAN_PATH[@]} kind path
+  (( n > 0 )) || {
+    echo "$(mfd_ts) Nothing to write in this batch."
+    return 0
+  }
+  echo
+  mfd_rule
+  echo "$(mfd_ts) Applying ${n} planned fix(es)…"
+  mfd_rule
+  trap mfd_ctrl_c INT
+  for (( i = 0; i < n; i++ )); do
+    kind="${PLAN_KIND[i]}"
+    path="${PLAN_PATH[i]}"
+    echo "$(mfd_ts) Fix $((i + 1))/${n}: ${path##*/} (${PLAN_LABEL[i]})"
+    mfd_print_processing "$path"
+    if [[ "$kind" == "contour" ]]; then
+      if mfd_apply_contour_normalize "$path" "${PLAN_EPOCH[i]}" "${PLAN_END_E[i]}"; then
+        FIXED=$((FIXED + 1))
+        mfd_show_result_table "${MFD_APPLIED_PATH:-$path}" \
+          "${PLAN_BEFORE_NAME[i]}" "${PLAN_BEFORE_FS[i]}" "${PLAN_BEFORE_MEDIA[i]}"
+      else
+        echo "$(mfd_ts) Contour normalize failed: ${path##*/}" >&2
+      fi
+    else
+      if mfd_apply_epoch "$path" "${PLAN_EPOCH[i]}"; then
+        FIXED=$((FIXED + 1))
+        echo "$(mfd_ts) Set from ${PLAN_LABEL[i]}: $(mfd_format_epoch_display "${PLAN_EPOCH[i]}")"
+        mfd_show_result_table "$path" \
+          "${PLAN_BEFORE_NAME[i]}" "${PLAN_BEFORE_FS[i]}" "${PLAN_BEFORE_MEDIA[i]}"
+      else
+        echo "$(mfd_ts) Failed to set dates: ${path##*/}" >&2
+      fi
+    fi
+  done
+  trap - INT
+  mfd_clear_plans
+}
+
+# Decide only (queue writes). Return 2 = quit (abandon current batch plans).
+mfd_decide_file() {
   local f="$1"
   local i n choice disp note prompt_keys prompt_extra="" def_note
   local before_name before_fs before_media need_fix=0
@@ -919,7 +1064,6 @@ mfd_process_file() {
 
   MISMATCH=$((MISMATCH + 1))
   n=${#MFD_LABELS[@]}
-  # prepare_file always lists File name, Filesystem, Media tags first.
   before_name="${MFD_EPOCHS[0]}"
   before_fs="${MFD_EPOCHS[1]}"
   before_media="${MFD_EPOCHS[2]}"
@@ -933,41 +1077,32 @@ mfd_process_file() {
   # [c] rest-of-run: Contour normalize when Contour start/end are known.
   if (( ALWAYS_CONTOUR_START )) && [[ -n "${MFD_CONTOUR_START_E:-}" && -n "${MFD_CONTOUR_END_E:-}" ]]; then
     mfd_print_processing "$f"
-    if mfd_apply_contour_normalize "$f" "$MFD_CONTOUR_START_E" "$MFD_CONTOUR_END_E"; then
-      FIXED=$((FIXED + 1))
-      mfd_show_result_table "${MFD_APPLIED_PATH:-$f}" "$before_name" "$before_fs" "$before_media"
-    else
-      echo "$(mfd_ts) Contour normalize failed: ${f##*/}" >&2
-    fi
+    echo "$(mfd_ts) Queued (Contour normalize): ${f##*/}"
+    mfd_queue_contour "$f" "$MFD_CONTOUR_START_E" "$MFD_CONTOUR_END_E" \
+      "$before_name" "$before_fs" "$before_media"
     return 0
   fi
 
   if (( DO_YES )) || (( ALWAYS_OLDEST )) || (( ! script_is_run_interactively )); then
     mfd_print_processing "$f"
-    # [a] Always oldest: flatten to one stamp. Else Contour → normalize; else oldest.
     if (( ALWAYS_OLDEST )); then
       if [[ -n "$MFD_OLDEST_E" ]]; then
-        mfd_apply_epoch "$f" "$MFD_OLDEST_E"
-        FIXED=$((FIXED + 1))
-        echo "$(mfd_ts) Set from oldest usable: $(mfd_format_epoch_display "$MFD_OLDEST_E")"
-        mfd_show_result_table "$f" "$before_name" "$before_fs" "$before_media"
+        echo "$(mfd_ts) Queued (oldest usable): ${f##*/}"
+        mfd_queue_epoch "$f" "$MFD_OLDEST_E" "oldest usable" \
+          "$before_name" "$before_fs" "$before_media"
       fi
       return 0
     fi
     if [[ -n "${MFD_CONTOUR_START_E:-}" && -n "${MFD_CONTOUR_END_E:-}" ]]; then
-      if mfd_apply_contour_normalize "$f" "$MFD_CONTOUR_START_E" "$MFD_CONTOUR_END_E"; then
-        FIXED=$((FIXED + 1))
-        mfd_show_result_table "${MFD_APPLIED_PATH:-$f}" "$before_name" "$before_fs" "$before_media"
-      else
-        echo "$(mfd_ts) Contour normalize failed: ${f##*/}" >&2
-      fi
+      echo "$(mfd_ts) Queued (Contour normalize): ${f##*/}"
+      mfd_queue_contour "$f" "$MFD_CONTOUR_START_E" "$MFD_CONTOUR_END_E" \
+        "$before_name" "$before_fs" "$before_media"
       return 0
     fi
     if [[ -n "$MFD_OLDEST_E" ]]; then
-      mfd_apply_epoch "$f" "$MFD_OLDEST_E"
-      FIXED=$((FIXED + 1))
-      echo "$(mfd_ts) Set from oldest usable: $(mfd_format_epoch_display "$MFD_OLDEST_E")"
-      mfd_show_result_table "$f" "$before_name" "$before_fs" "$before_media"
+      echo "$(mfd_ts) Queued (oldest usable): ${f##*/}"
+      mfd_queue_epoch "$f" "$MFD_OLDEST_E" "oldest usable" \
+        "$before_name" "$before_fs" "$before_media"
     fi
     return 0
   fi
@@ -975,9 +1110,11 @@ mfd_process_file() {
   mfd_print_processing "$f"
   echo
   if [[ -n "${MFD_CONTOUR_START_E:-}" ]]; then
-    echo "  Sources (Contour normalize is the default: name→start, FS→end, media→start):"
+    echo "  Sources (Contour normalize is the default: name→start, FS→end, media→start)."
+    echo "  Decisions are queued; writes run after this batch's questions."
   else
-    echo "  Sources (oldest usable is the default; applying it sets media CreateDate and filesystem times):"
+    echo "  Sources (oldest usable is the default)."
+    echo "  Decisions are queued; writes run after this batch's questions."
   fi
   echo
   key_list=()
@@ -1000,7 +1137,6 @@ mfd_process_file() {
         note="(${def_note})"
       fi
     fi
-    # ASCII-only date column so %-19s matches terminal columns (UTF-8 "—" broke alignment).
     printf '  [%d] %-18s %-19s  %s\n' \
       "$((i + 1))" "${MFD_LABELS[i]}" "$disp" "$note"
     key_list+=("$((i + 1))")
@@ -1014,14 +1150,13 @@ mfd_process_file() {
   fi
   echo "  [$(mfd_k k "$MFD_DEFAULT_KEY")] Keep as written for the rest of this run"
   echo "  [$(mfd_k s "$MFD_DEFAULT_KEY")] Skip this file"
-  echo "  [$(mfd_k q "$MFD_DEFAULT_KEY")] Quit"
+  echo "  [$(mfd_k q "$MFD_DEFAULT_KEY")] Quit (abandon this batch's pending writes)"
   if [[ -n "${MFD_CONTOUR_START_E:-}" && -n "${MFD_CONTOUR_END_E:-}" ]]; then
     key_list+=(a c k s q)
   else
     key_list+=(a k s q)
   fi
   prompt_keys="$(mfd_keys "$MFD_DEFAULT_KEY" "${key_list[@]}")"
-  # Numbers cannot be capitalised; spell out the default when it is a digit.
   if [[ "$MFD_DEFAULT_KEY" =~ ^[0-9]+$ ]]; then
     i=$((MFD_DEFAULT_KEY - 1))
     prompt_extra=" (default ${MFD_DEFAULT_KEY} = ${MFD_LABELS[i]})"
@@ -1033,7 +1168,8 @@ mfd_process_file() {
     case "$choice" in
       q)
         mfd_print_selected "q = Quit"
-        echo "$(mfd_ts) Quit."
+        echo "$(mfd_ts) Quit — abandoning ${#PLAN_PATH[@]} pending fix(es) in this batch."
+        mfd_clear_plans
         return 2
         ;;
       s)
@@ -1048,10 +1184,9 @@ mfd_process_file() {
         ALWAYS_KEEP=0
         ALWAYS_CONTOUR_START=0
         if [[ -n "$MFD_OLDEST_E" ]]; then
-          mfd_apply_epoch "$f" "$MFD_OLDEST_E"
-          FIXED=$((FIXED + 1))
-          echo "$(mfd_ts) Set from oldest usable: $(mfd_format_epoch_display "$MFD_OLDEST_E")"
-          mfd_show_result_table "$f" "$before_name" "$before_fs" "$before_media"
+          echo "$(mfd_ts) Queued (oldest usable): ${f##*/}"
+          mfd_queue_epoch "$f" "$MFD_OLDEST_E" "oldest usable" \
+            "$before_name" "$before_fs" "$before_media"
         fi
         echo "$(mfd_ts) Will use the oldest usable date for every later file."
         return 0
@@ -1065,12 +1200,9 @@ mfd_process_file() {
         ALWAYS_CONTOUR_START=1
         ALWAYS_OLDEST=0
         ALWAYS_KEEP=0
-        if mfd_apply_contour_normalize "$f" "$MFD_CONTOUR_START_E" "$MFD_CONTOUR_END_E"; then
-          FIXED=$((FIXED + 1))
-          mfd_show_result_table "${MFD_APPLIED_PATH:-$f}" "$before_name" "$before_fs" "$before_media"
-        else
-          echo "$(mfd_ts) Contour normalize failed: ${f##*/}" >&2
-        fi
+        echo "$(mfd_ts) Queued (Contour normalize): ${f##*/}"
+        mfd_queue_contour "$f" "$MFD_CONTOUR_START_E" "$MFD_CONTOUR_END_E" \
+          "$before_name" "$before_fs" "$before_media"
         echo "$(mfd_ts) Will Contour-normalize every later Contour file; other files still use oldest usable / prompts."
         return 0
         ;;
@@ -1088,7 +1220,6 @@ mfd_process_file() {
     if [[ "$choice" =~ ^[0-9]+$ ]] && (( choice >= 1 && choice <= n )); then
       i=$((choice - 1))
       mfd_print_selected "${choice} = ${MFD_LABELS[i]}"
-      # Keep is the last row and has an empty epoch on purpose.
       if (( i == n - 1 )); then
         echo "$(mfd_ts) Kept as written: ${f##*/}"
         SKIPPED=$((SKIPPED + 1))
@@ -1099,22 +1230,74 @@ mfd_process_file() {
         continue
       fi
       if (( i == MFD_CONTOUR_MENU_IDX )); then
-        if mfd_apply_contour_normalize "$f" "$MFD_CONTOUR_START_E" "$MFD_CONTOUR_END_E"; then
-          FIXED=$((FIXED + 1))
-          mfd_show_result_table "${MFD_APPLIED_PATH:-$f}" "$before_name" "$before_fs" "$before_media"
-        else
-          echo "$(mfd_ts) Contour normalize failed: ${f##*/}" >&2
-        fi
+        echo "$(mfd_ts) Queued (Contour normalize): ${f##*/}"
+        mfd_queue_contour "$f" "$MFD_CONTOUR_START_E" "$MFD_CONTOUR_END_E" \
+          "$before_name" "$before_fs" "$before_media"
         return 0
       fi
-      mfd_apply_epoch "$f" "${MFD_EPOCHS[i]}"
-      FIXED=$((FIXED + 1))
-      echo "$(mfd_ts) Set from ${MFD_LABELS[i]}: $(mfd_format_epoch_display "${MFD_EPOCHS[i]}")"
-      mfd_show_result_table "$f" "$before_name" "$before_fs" "$before_media"
+      echo "$(mfd_ts) Queued (${MFD_LABELS[i]}): ${f##*/}"
+      mfd_queue_epoch "$f" "${MFD_EPOCHS[i]}" "${MFD_LABELS[i]}" \
+        "$before_name" "$before_fs" "$before_media"
       return 0
     fi
     echo "$(mfd_ts) Unknown choice: ${REPLY}."
   done
+}
+
+mfd_default_batch_size_for_count() {
+  local n="$1"
+  if (( n <= 50 )); then
+    printf '%s\n' "$n"
+  else
+    printf '%s\n' "50"
+  fi
+}
+
+mfd_ask_batch_size() {
+  local n="$SCANNED" def input
+  def="$(mfd_default_batch_size_for_count "$n")"
+  if [[ -n "${BATCH_SIZE_CLI:-}" ]]; then
+    BATCH_SIZE="$BATCH_SIZE_CLI"
+    echo "$(mfd_ts) Batch size: ${BATCH_SIZE} (--batch-size)."
+    return 0
+  fi
+  if [[ -n "${MFD_BATCH_SIZE:-}" ]]; then
+    if [[ "${MFD_BATCH_SIZE}" =~ ^[1-9][0-9]*$ ]]; then
+      BATCH_SIZE="$MFD_BATCH_SIZE"
+      echo "$(mfd_ts) Batch size: ${BATCH_SIZE} (MFD_BATCH_SIZE)."
+      return 0
+    fi
+    echo "$(mfd_ts) Invalid MFD_BATCH_SIZE=${MFD_BATCH_SIZE}; asking interactively." >&2
+  fi
+  if (( DO_YES )) || (( ! script_is_run_interactively )); then
+    BATCH_SIZE="$def"
+    echo "$(mfd_ts) Batch size: ${BATCH_SIZE} (non-interactive default)."
+    return 0
+  fi
+  echo
+  echo "$(mfd_ts) Total media files in this run: ${n}"
+  if (( n <= 50 )); then
+    echo "  Suggested batch size: ${def} (all files in one go; ≤ 50)."
+  else
+    echo "  Suggested batch size: ${def} (of ${n}). Decide first, then write, then next batch."
+  fi
+  echo "  Enter how many files to decide before applying fixes."
+  while true; do
+    printf '%s Batch size [%s]: ' "$(mfd_ts)" "$def"
+    read -r input || input=""
+    input="${input%"${input##*[![:space:]]}"}"
+    input="${input#"${input%%[![:space:]]*}"}"
+    if [[ -z "$input" ]]; then
+      BATCH_SIZE="$def"
+      break
+    fi
+    if [[ "$input" =~ ^[1-9][0-9]*$ ]]; then
+      BATCH_SIZE="$input"
+      break
+    fi
+    echo "$(mfd_ts) Enter a positive integer (or press Enter for ${def})."
+  done
+  mfd_print_selected "batch size ${BATCH_SIZE}"
 }
 
 # --- options ---
@@ -1126,12 +1309,24 @@ ALWAYS_OLDEST=0
 ALWAYS_KEEP=0
 ALWAYS_CONTOUR_START=0
 MFD_CONTOUR_MENU_IDX=-1
+BATCH_SIZE=0
+BATCH_SIZE_CLI=""
 FIXED=0
 SKIPPED=0
 SCANNED=0
 MISMATCH=0
 MFD_SCRIPT_START_EPOCH=0
 MFD_SCRIPT_START_STR=""
+MFD_CURRENT_WRITE_FILE=""
+MFD_EXIFTOOL_PID=""
+PLAN_KIND=()
+PLAN_PATH=()
+PLAN_EPOCH=()
+PLAN_END_E=()
+PLAN_LABEL=()
+PLAN_BEFORE_NAME=()
+PLAN_BEFORE_FS=()
+PLAN_BEFORE_MEDIA=()
 FILES=()
 POSITIONALS=()
 
@@ -1167,6 +1362,16 @@ while [[ $# -gt 0 ]]; do
       VERBOSE=1
       shift
       ;;
+    --batch-size)
+      shift
+      [[ $# -gt 0 ]] || { echo "$(mfd_ts) --batch-size needs a positive integer." >&2; exit 1; }
+      BATCH_SIZE_CLI="$1"
+      shift
+      ;;
+    --batch-size=*)
+      BATCH_SIZE_CLI="${1#--batch-size=}"
+      shift
+      ;;
     --)
       shift
       POSITIONALS+=("$@")
@@ -1183,6 +1388,13 @@ while [[ $# -gt 0 ]]; do
       ;;
   esac
 done
+
+if [[ -n "$BATCH_SIZE_CLI" ]]; then
+  if [[ ! "$BATCH_SIZE_CLI" =~ ^[1-9][0-9]*$ ]]; then
+    echo "$(mfd_ts) --batch-size needs a positive integer (got: ${BATCH_SIZE_CLI})." >&2
+    exit 1
+  fi
+fi
 
 if [[ -f "${BASH_SOURCE[0]}" ]]; then
   chmod 700 "${BASH_SOURCE[0]}" 2>/dev/null || true
@@ -1225,19 +1437,42 @@ fi
 mapfile -t FILES < <(printf '%s\n' "${FILES[@]}" | LC_ALL=C sort -u)
 SCANNED=${#FILES[@]}
 
+mfd_ask_batch_size
+
 echo
-echo "$(mfd_ts) Checking ${SCANNED} media file(s)."
+echo "$(mfd_ts) Checking ${SCANNED} media file(s); batch size ${BATCH_SIZE}."
+echo "$(mfd_ts) Each batch: decide all prompts first, then write."
 (( DRY_RUN )) && echo "$(mfd_ts) Dry run — nothing will be written."
 (( DO_YES )) && echo "$(mfd_ts) -y: apply without asking (Contour normalize when Contour; else oldest)."
 (( VERBOSE )) && echo "$(mfd_ts) Verbose: print every file check."
 echo
 
-for f in "${FILES[@]}"; do
-  mfd_process_file "$f"
-  rc=$?
-  if (( rc == 2 )); then
+batch_i=0
+file_i=0
+quit_run=0
+while (( file_i < SCANNED )); do
+  batch_i=$((batch_i + 1))
+  batch_end=$((file_i + BATCH_SIZE))
+  (( batch_end > SCANNED )) && batch_end=$SCANNED
+  batch_count=$((batch_end - file_i))
+  mfd_clear_plans
+  echo
+  mfd_rule
+  echo "$(mfd_ts) Batch ${batch_i}: files $((file_i + 1))–${batch_end} of ${SCANNED} — decide (${batch_count} file(s))"
+  mfd_rule
+  for (( j = file_i; j < batch_end; j++ )); do
+    mfd_decide_file "${FILES[j]}"
+    rc=$?
+    if (( rc == 2 )); then
+      quit_run=1
+      break
+    fi
+  done
+  if (( quit_run )); then
     break
   fi
+  mfd_apply_plans
+  file_i=$batch_end
 done
 
 mfd_print_summary
