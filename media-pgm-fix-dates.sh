@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261115.090500 - [c] Always Contour start for later Contour files in this run
 # v. 20261115.085000 - Contour: offer Contour start (name − duration); agree if FS/media already at that start
 # v. 20261021.120123 - [k] keep as written for the rest of this run
 # v. 20261020.165500 - after each Fix dates key, print Selected: with the accepted answer
@@ -13,6 +14,7 @@
 # v. 20261020.150400 - date menu: ASCII n/a so parenthetical notes share one column
 # v. 20261020.145500 - fix file / media dates when the name, filesystem, and tags disagree
 #
+# 2026.11.15 - v. 0.1.14 - Contour disagree menu: [c] Always Contour start for the rest of this run (name − duration; Contour files only; non-Contour still prompted / oldest as usual); short explanation under the keys
 # 2026.11.15 - v. 0.1.13 - Contour-style names (YYYYMMDD_HHMMSS[.mp4|_NVenc_…]): treat the name stamp as a possible end of clip; offer absolute Contour start = name − ffprobe duration as a date source (not a relative FS shift). If filesystem or media already match that start (±2 min), count as agree vs the Contour name so re-runs do not subtract duration again
 # 2026.10.21 - v. 0.1.12 - [k] keeps dates as written for this file and every later file in the run (parallel to [a] for oldest)
 # 2026.10.20 - v. 0.1.11 - after each Fix dates answer, print Selected: with the key and meaning that the script accepted (same idea as loudness / swap-audio)
@@ -76,6 +78,11 @@ Interactive keys (per file):
                        e.g. (default 1 = File name).
   a                    Apply the oldest usable date for this file and every
                        later file in this run (no more prompts).
+  c                    Contour only: apply Contour start (filename stamp minus
+                       duration — treats the name as end of clip) for this file
+                       and every later Contour file in this run. Non-Contour
+                       files are unchanged by [c] (still asked / oldest as usual).
+                       Shown only when Contour start is available for this file.
   k                    Keep dates as written for this file and every later
                        file in this run (no more prompts).
   s                    Skip this file.
@@ -715,6 +722,16 @@ mfd_process_file() {
     return 0
   fi
 
+  # [c] rest-of-run: Contour start only when this file has a Contour start stamp.
+  if (( ALWAYS_CONTOUR_START )) && [[ -n "${MFD_CONTOUR_START_E:-}" ]]; then
+    mfd_print_processing "$f"
+    mfd_apply_epoch "$f" "$MFD_CONTOUR_START_E"
+    FIXED=$((FIXED + 1))
+    echo "$(mfd_ts) Set from Contour start: $(mfd_format_epoch_display "$MFD_CONTOUR_START_E")"
+    mfd_show_result_table "$f" "$before_name" "$before_fs" "$before_media"
+    return 0
+  fi
+
   if (( DO_YES )) || (( ALWAYS_OLDEST )) || (( ! script_is_run_interactively )); then
     mfd_print_processing "$f"
     if [[ -n "$MFD_OLDEST_E" ]]; then
@@ -751,10 +768,20 @@ mfd_process_file() {
     key_list+=("$((i + 1))")
   done
   echo "  [$(mfd_k a "$MFD_DEFAULT_KEY")] Always oldest for the rest of this run"
+  if [[ -n "${MFD_CONTOUR_START_E:-}" ]]; then
+    echo "  [$(mfd_k c "$MFD_DEFAULT_KEY")] Always Contour start for the rest of this run"
+    echo "      Contour start = filename stamp minus duration (name treated as end of clip)."
+    echo "      Applies to this file and later Contour files only; non-Contour still use oldest / prompts."
+    echo "      Already-adjusted Contour files (FS/media at Contour start) stay skipped."
+  fi
   echo "  [$(mfd_k k "$MFD_DEFAULT_KEY")] Keep as written for the rest of this run"
   echo "  [$(mfd_k s "$MFD_DEFAULT_KEY")] Skip this file"
   echo "  [$(mfd_k q "$MFD_DEFAULT_KEY")] Quit"
-  key_list+=(a k s q)
+  if [[ -n "${MFD_CONTOUR_START_E:-}" ]]; then
+    key_list+=(a c k s q)
+  else
+    key_list+=(a k s q)
+  fi
   prompt_keys="$(mfd_keys "$MFD_DEFAULT_KEY" "${key_list[@]}")"
   # Numbers cannot be capitalised; spell out the default when it is a digit.
   if [[ "$MFD_DEFAULT_KEY" =~ ^[0-9]+$ ]]; then
@@ -781,6 +808,7 @@ mfd_process_file() {
         mfd_print_selected "a = Always oldest for the rest of this run"
         ALWAYS_OLDEST=1
         ALWAYS_KEEP=0
+        ALWAYS_CONTOUR_START=0
         if [[ -n "$MFD_OLDEST_E" ]]; then
           mfd_apply_epoch "$f" "$MFD_OLDEST_E"
           FIXED=$((FIXED + 1))
@@ -790,10 +818,27 @@ mfd_process_file() {
         echo "$(mfd_ts) Will use the oldest usable date for every later file."
         return 0
         ;;
+      c)
+        if [[ -z "${MFD_CONTOUR_START_E:-}" ]]; then
+          echo "$(mfd_ts) Contour start is not available for this file."
+          continue
+        fi
+        mfd_print_selected "c = Always Contour start for the rest of this run"
+        ALWAYS_CONTOUR_START=1
+        ALWAYS_OLDEST=0
+        ALWAYS_KEEP=0
+        mfd_apply_epoch "$f" "$MFD_CONTOUR_START_E"
+        FIXED=$((FIXED + 1))
+        echo "$(mfd_ts) Set from Contour start: $(mfd_format_epoch_display "$MFD_CONTOUR_START_E")"
+        mfd_show_result_table "$f" "$before_name" "$before_fs" "$before_media"
+        echo "$(mfd_ts) Will use Contour start (name − duration) for every later Contour file; other files still use oldest usable / prompts."
+        return 0
+        ;;
       k)
         mfd_print_selected "k = Keep as written for the rest of this run"
         ALWAYS_KEEP=1
         ALWAYS_OLDEST=0
+        ALWAYS_CONTOUR_START=0
         echo "$(mfd_ts) Kept as written: ${f##*/}"
         SKIPPED=$((SKIPPED + 1))
         echo "$(mfd_ts) Will keep dates as written for every later file."
@@ -830,6 +875,7 @@ DRY_RUN=0
 VERBOSE=0
 ALWAYS_OLDEST=0
 ALWAYS_KEEP=0
+ALWAYS_CONTOUR_START=0
 FIXED=0
 SKIPPED=0
 SCANNED=0
