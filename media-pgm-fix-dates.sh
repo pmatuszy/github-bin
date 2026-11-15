@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261115.093000 - Contour normalize: name=start, FS=end, media=start; idempotent via name↔FS↔duration
 # v. 20261115.090500 - [c] Always Contour start for later Contour files in this run
 # v. 20261115.085000 - Contour: offer Contour start (name − duration); agree if FS/media already at that start
 # v. 20261021.120123 - [k] keep as written for the rest of this run
@@ -14,6 +15,9 @@
 # v. 20261020.150400 - date menu: ASCII n/a so parenthetical notes share one column
 # v. 20261020.145500 - fix file / media dates when the name, filesystem, and tags disagree
 #
+# 2026.11.15 - v. 0.1.15 - Contour normalize: rename stamp to clip start, filesystem mtime = end, media
+#   CreateDate = start. If name is already earlier than FS by ~duration (name=start, FS=end), treat as
+#   agree and do not subtract duration again. [c] / Contour menu / -y on Contour files apply normalize.
 # 2026.11.15 - v. 0.1.14 - Contour disagree menu: [c] Always Contour start for the rest of this run (name − duration; Contour files only; non-Contour still prompted / oldest as usual); short explanation under the keys
 # 2026.11.15 - v. 0.1.13 - Contour-style names (YYYYMMDD_HHMMSS[.mp4|_NVenc_…]): treat the name stamp as a possible end of clip; offer absolute Contour start = name − ffprobe duration as a date source (not a relative FS shift). If filesystem or media already match that start (±2 min), count as agree vs the Contour name so re-runs do not subtract duration again
 # 2026.10.21 - v. 0.1.12 - [k] keeps dates as written for this file and every later file in the run (parallel to [a] for oldest)
@@ -37,8 +41,8 @@
 # media-pgm-fix-dates.sh
 #
 # Align filesystem times and media CreateDate when they disagree with each other
-# or with a date stamp in the file name. Contour-style names may use an end-of-clip
-# stamp; Contour start (name − duration) is an absolute extra source when useful.
+# or with a date stamp in the file name. Contour-style clips normalize to
+# name=start, filesystem=end, media=start (see Contour notes in --help).
 #
 
 show_help() {
@@ -52,12 +56,15 @@ CreateDate (DateTimeOriginal for many photos). When they disagree by more
 than two minutes, ask which date to use. The default is the oldest usable
 stamp. Dates before 1990-01-01 are ignored.
 
-Contour-style video names (YYYYMMDD_HHMMSS.mp4 or …_NVenc_….mp4): the
-name stamp may be the end of the clip. When ffprobe duration is available,
-an extra source Contour start (name − duration) is offered — an absolute
-time, not a shift of the current filesystem date. If filesystem or media
-already match that start (±2 min), the Contour name is treated as agreeing
-so running the script again does not move the date earlier repeatedly.
+Contour-style video names (YYYYMMDD_HHMMSS.mp4 or …_NVenc_….mp4): Contour
+cameras stamp the end of the clip in the name. This script can normalize:
+  File name stamp  = start of clip (rename)
+  Filesystem mtime = end of clip
+  Media CreateDate = start of clip
+Start = end-stamp − duration when the name still looks like an end; if the
+name is already earlier than the filesystem by about the duration (name=start,
+FS=end), the file agrees and duration is not subtracted again. Missing or
+wrong media tags are filled with the start time.
 
 Applies to video, audio, and picture files. With no FILE or DIR, scan the
 current directory (not subdirectories unless -r).
@@ -66,23 +73,25 @@ Options:
   -h, --help           Show this help and exit.
   -v, --version        Print script version and exit.
   --history            Print script changelog from the header and exit.
-  -y, --yes            Apply the oldest usable date without asking.
+  -y, --yes            Apply without asking: Contour normalize when Contour
+                       applies; otherwise the oldest usable date.
   -r, --recursive      Also scan subdirectories.
   --dry-run            Show what would change; do not write.
   --verbose            Print every file check (stamps + verdict), including
                        files that already agree.
 
 Interactive keys (per file):
-  1/2/3…               Pick a listed source (default = oldest usable).
+  1/2/3…               Pick a listed source (default = oldest usable, or
+                       Contour normalize when that row is the default).
                        When the default is a number, the prompt also says
                        e.g. (default 1 = File name).
   a                    Apply the oldest usable date for this file and every
                        later file in this run (no more prompts).
-  c                    Contour only: apply Contour start (filename stamp minus
-                       duration — treats the name as end of clip) for this file
-                       and every later Contour file in this run. Non-Contour
-                       files are unchanged by [c] (still asked / oldest as usual).
-                       Shown only when Contour start is available for this file.
+  c                    Contour only: Contour normalize (name→start, FS→end,
+                       media→start) for this file and every later Contour
+                       file in this run. Non-Contour files are unchanged by
+                       [c] (still asked / oldest as usual). Shown only when
+                       Contour normalize is available for this file.
   k                    Keep dates as written for this file and every later
                        file in this run (no more prompts).
   s                    Skip this file.
@@ -325,32 +334,133 @@ mfd_ffprobe_duration_seconds() {
   awk -v x="$d" 'BEGIN { if (x+0 > 0) { printf "%.0f\n", x+0.5; exit 0 } exit 1 }'
 }
 
-# Absolute Contour start = filename stamp (treated as end) − duration. Idempotent target.
-mfd_contour_start_epoch() {
-  local f="$1" name_e dur start
-  mfd_is_contour_basename "${f##*/}" || return 1
-  name_e="$(mfd_filename_epoch_from_basename "${f##*/}" 2>/dev/null)" || return 1
-  dur="$(mfd_ffprobe_duration_seconds "$f" 2>/dev/null)" || return 1
-  (( dur >= 1 )) || return 1
-  start=$(( name_e - dur ))
-  mfd_epoch_usable "$start" || return 1
-  # Only meaningful when duration moves the stamp by more than the disagree window.
-  (( $(mfd_abs_diff "$name_e" "$start") > 120 )) || return 1
-  printf '%s\n' "$start"
-}
-
 mfd_epoch_near() {
   local a="$1" b="$2"
   [[ -n "$a" && -n "$b" ]] || return 1
   (( $(mfd_abs_diff "$a" "$b") <= 120 ))
 }
 
-# Contour: other stamp matches name (end) or Contour start (name − duration).
-mfd_contour_compatible_with_name() {
-  local name_e="$1" other_e="$2" start_e="${3:-}"
-  mfd_epoch_near "$name_e" "$other_e" && return 0
-  [[ -n "$start_e" ]] && mfd_epoch_near "$start_e" "$other_e" && return 0
+# Contour analyze: sets MFD_CONTOUR_START_E / MFD_CONTOUR_END_E / MFD_CONTOUR_DUR /
+# MFD_CONTOUR_LAYOUT (normalized|end_in_name). Return 0 when Contour normalize applies.
+mfd_contour_analyze() {
+  local f="$1" name_e="${2:-}" fs_e="${3:-}" media_e="${4:-}"
+  local dur start_from_end end_from_start
+  MFD_CONTOUR_START_E=""
+  MFD_CONTOUR_END_E=""
+  MFD_CONTOUR_DUR=""
+  MFD_CONTOUR_LAYOUT=""
+  mfd_is_contour_basename "${f##*/}" || return 1
+  [[ -n "$name_e" ]] || name_e="$(mfd_filename_epoch_from_basename "${f##*/}" 2>/dev/null)" || return 1
+  dur="$(mfd_ffprobe_duration_seconds "$f" 2>/dev/null)" || return 1
+  (( dur >= 1 )) || return 1
+  # Only meaningful when duration is wider than the disagree window.
+  (( dur > 120 )) || return 1
+  start_from_end=$(( name_e - dur ))
+  end_from_start=$(( name_e + dur ))
+  mfd_epoch_usable "$start_from_end" || return 1
+  mfd_epoch_usable "$end_from_start" || return 1
+  MFD_CONTOUR_DUR="$dur"
+
+  # Already normalized: name earlier than FS by ~duration (name=start, FS=end).
+  # Do not subtract duration again.
+  if [[ -n "$fs_e" ]] && mfd_epoch_near "$fs_e" "$end_from_start"; then
+    MFD_CONTOUR_LAYOUT="normalized"
+    MFD_CONTOUR_START_E="$name_e"
+    MFD_CONTOUR_END_E="$end_from_start"
+    return 0
+  fi
+  if [[ -n "$media_e" ]] && mfd_epoch_near "$media_e" "$name_e" \
+    && [[ -n "$fs_e" ]] && mfd_epoch_near "$fs_e" "$end_from_start"; then
+    MFD_CONTOUR_LAYOUT="normalized"
+    MFD_CONTOUR_START_E="$name_e"
+    MFD_CONTOUR_END_E="$end_from_start"
+    return 0
+  fi
+
+  # Name looks like Contour end-stamp (camera native, or FS/media already at start).
+  MFD_CONTOUR_LAYOUT="end_in_name"
+  MFD_CONTOUR_START_E="$start_from_end"
+  MFD_CONTOUR_END_E="$name_e"
+  return 0
+}
+
+# Replace YYYYMMDD_HHMMSS prefix with stamp for epoch. Prints new basename.
+mfd_contour_basename_for_start() {
+  local base="$1" start_e="$2" stamp
+  base="${base##*/}"
+  stamp="$(date -d "@${start_e}" +%Y%m%d_%H%M%S 2>/dev/null)" || return 1
+  if [[ "$base" =~ ^[0-9]{8}_[0-9]{6}(.*)$ ]]; then
+    printf '%s%s\n' "$stamp" "${BASH_REMATCH[1]}"
+    return 0
+  fi
   return 1
+}
+
+# Rename Contour file so the name stamp is start. Sets MFD_APPLIED_PATH.
+# Dry-run: only sets MFD_APPLIED_PATH to the would-be path (no mv).
+mfd_contour_rename_to_start() {
+  local f="$1" start_e="$2"
+  local dir base new_base dest
+  MFD_APPLIED_PATH="$f"
+  dir="$(dirname -- "$f")"
+  base="${f##*/}"
+  new_base="$(mfd_contour_basename_for_start "$base" "$start_e")" || return 1
+  if [[ "$new_base" == "$base" ]]; then
+    return 0
+  fi
+  dest="${dir}/${new_base}"
+  if [[ -e "$dest" ]]; then
+    echo "$(mfd_ts) Rename blocked (target exists): ${new_base}" >&2
+    return 1
+  fi
+  if (( DRY_RUN )); then
+    echo "$(mfd_ts) DRY-RUN would rename → ${new_base}"
+    MFD_APPLIED_PATH="$dest"
+    return 0
+  fi
+  mv -n -- "$f" "$dest" || return 1
+  MFD_APPLIED_PATH="$dest"
+  echo "$(mfd_ts) Renamed → ${new_base}"
+  return 0
+}
+
+# Contour normalize: name→start, media→start, FS→end.
+# Sets MFD_APPLIED_PATH; dry-run sets MFD_DRY_AFTER_NAME/FS/MEDIA.
+mfd_apply_contour_normalize() {
+  local f="$1" start_e="$2" end_e="$3"
+  local path media_ok=0 fs_ok=0
+  MFD_APPLIED_PATH="$f"
+  MFD_DRY_AFTER_EPOCH=""
+  MFD_DRY_AFTER_NAME=""
+  MFD_DRY_AFTER_FS=""
+  MFD_DRY_AFTER_MEDIA=""
+  [[ -n "$start_e" && -n "$end_e" ]] || return 1
+
+  if (( DRY_RUN )); then
+    MFD_DRY_AFTER_NAME="$start_e"
+    MFD_DRY_AFTER_MEDIA="$start_e"
+    MFD_DRY_AFTER_FS="$end_e"
+    mfd_contour_rename_to_start "$f" "$start_e" || true
+    echo "$(mfd_ts) DRY-RUN would set media→start $(mfd_format_epoch_display "$start_e"), FS→end $(mfd_format_epoch_display "$end_e")"
+    return 0
+  fi
+
+  mfd_contour_rename_to_start "$f" "$start_e" || return 1
+  path="$MFD_APPLIED_PATH"
+
+  if mfd_set_media_dates_epoch "$path" "$start_e"; then
+    media_ok=1
+  else
+    echo "$(mfd_ts) Media CreateDate: could not write start $(mfd_format_epoch_display "$start_e")" >&2
+  fi
+  # FS last so end wins over any exiftool FileModifyDate side effect.
+  if mfd_set_fs_times_epoch "$path" "$end_e"; then
+    fs_ok=1
+  else
+    echo "$(mfd_ts) Filesystem times: could not set end $(mfd_format_epoch_display "$end_e")" >&2
+  fi
+  echo "$(mfd_ts) Contour normalize: name/media=start $(mfd_format_epoch_display "$start_e"); FS=end $(mfd_format_epoch_display "$end_e")"
+  (( media_ok || fs_ok ))
 }
 
 mfd_fs_mtime_epoch() {
@@ -436,6 +546,10 @@ mfd_apply_epoch() {
   local dest="$1" epoch="$2" disp media_ok=0 fs_ok=0
   disp="$(mfd_format_epoch_display "$epoch")"
   MFD_DRY_AFTER_EPOCH=""
+  MFD_DRY_AFTER_NAME=""
+  MFD_DRY_AFTER_FS=""
+  MFD_DRY_AFTER_MEDIA=""
+  MFD_APPLIED_PATH="$dest"
   if (( DRY_RUN )); then
     MFD_DRY_AFTER_EPOCH="$epoch"
     echo "$(mfd_ts) DRY-RUN would set media + filesystem times to ${disp}"
@@ -455,10 +569,15 @@ mfd_apply_epoch() {
 }
 
 # After apply (or dry-run): print before/after using snapshots taken before the write.
+# $1 may be the path after a Contour rename (MFD_APPLIED_PATH).
 mfd_show_result_table() {
   local f="$1" before_name="$2" before_fs="$3" before_media="$4"
   local after_name after_fs after_media
-  if (( DRY_RUN )) && [[ -n "${MFD_DRY_AFTER_EPOCH:-}" ]]; then
+  if (( DRY_RUN )) && [[ -n "${MFD_DRY_AFTER_NAME:-}" || -n "${MFD_DRY_AFTER_FS:-}" || -n "${MFD_DRY_AFTER_MEDIA:-}" ]]; then
+    after_name="${MFD_DRY_AFTER_NAME:-$before_name}"
+    after_fs="${MFD_DRY_AFTER_FS:-$before_fs}"
+    after_media="${MFD_DRY_AFTER_MEDIA:-$before_media}"
+  elif (( DRY_RUN )) && [[ -n "${MFD_DRY_AFTER_EPOCH:-}" ]]; then
     after_name="$before_name"
     after_fs="$MFD_DRY_AFTER_EPOCH"
     after_media="$MFD_DRY_AFTER_EPOCH"
@@ -523,15 +642,21 @@ mfd_vs_name_note() {
 }
 
 # Print one verbose Check block. verdict: agree | disagree | skip
-# Optional $6 = Contour start epoch when Contour end-stamp applies.
+# Optional Contour fields via globals MFD_CONTOUR_* when set.
 mfd_verbose_print_check() {
-  local f="$1" verdict="$2" name_e="$3" fs_e="$4" media_e="$5" contour_start_e="${6:-}"
+  local f="$1" verdict="$2" name_e="$3" fs_e="$4" media_e="$5"
+  local contour_start_e="${MFD_CONTOUR_START_E:-}" contour_end_e="${MFD_CONTOUR_END_E:-}"
+  local layout="${MFD_CONTOUR_LAYOUT:-}"
   local fs_note media_note vs name_note
   echo
   echo "$(mfd_ts) Check: ${f}"
   name_note=""
-  if [[ -n "$contour_start_e" ]]; then
-    name_note="(Contour: stamp may be end of clip)"
+  if [[ "$layout" == "normalized" ]]; then
+    name_note="(Contour: name = start)"
+  elif [[ "$layout" == "end_in_name" ]]; then
+    name_note="(Contour: name = end of clip)"
+  elif [[ -n "$contour_start_e" ]]; then
+    name_note="(Contour)"
   fi
   if [[ -n "$name_note" ]]; then
     printf '  %-18s %-21s %s\n' "File name" "$(mfd_disp_or_na "$name_e")" "$name_note"
@@ -539,13 +664,18 @@ mfd_verbose_print_check() {
     printf '  %-18s %s\n' "File name" "$(mfd_disp_or_na "$name_e")"
   fi
   if [[ -n "$contour_start_e" ]]; then
-    printf '  %-18s %-21s %s\n' "Contour start" "$(mfd_disp_or_na "$contour_start_e")" "(name − duration)"
+    printf '  %-18s %-21s %s\n' "Contour start" "$(mfd_disp_or_na "$contour_start_e")" "(target for name + media)"
+  fi
+  if [[ -n "$contour_end_e" ]]; then
+    printf '  %-18s %-21s %s\n' "Contour end" "$(mfd_disp_or_na "$contour_end_e")" "(target for filesystem)"
   fi
   fs_note="(mtime)"
   [[ -n "$fs_e" ]] || fs_note="(mtime missing or before 1990)"
   vs="$(mfd_vs_name_note "$name_e" "$fs_e")"
-  if [[ -n "$contour_start_e" && -n "$fs_e" ]] && mfd_epoch_near "$contour_start_e" "$fs_e"; then
-    vs="ok vs Contour start"
+  if [[ -n "$contour_end_e" && -n "$fs_e" ]] && mfd_epoch_near "$contour_end_e" "$fs_e"; then
+    vs="ok vs Contour end"
+  elif [[ -n "$contour_start_e" && -n "$fs_e" ]] && mfd_epoch_near "$contour_start_e" "$fs_e"; then
+    vs="ok vs Contour start (not yet FS=end)"
   fi
   if [[ -n "$vs" ]]; then
     printf '  %-18s %-21s %s  %s\n' "Filesystem" "$(mfd_disp_or_na "$fs_e")" "$fs_note" "$vs"
@@ -566,6 +696,9 @@ mfd_verbose_print_check() {
   else
     printf '  %-18s %-21s %s\n' "Media tags" "$(mfd_disp_or_na "$media_e")" "$media_note"
   fi
+  if [[ -n "$layout" ]]; then
+    echo "  Contour layout: ${layout}"
+  fi
   case "$verdict" in
     agree)    echo "  Verdict: agree — no change" ;;
     disagree) echo "  Verdict: disagree — ask / fix" ;;
@@ -574,14 +707,14 @@ mfd_verbose_print_check() {
   esac
 }
 
-# Inspect stamps. Sets MFD_NAME_E / MFD_FS_E / MFD_MEDIA_E / MFD_CONTOUR_START_E / MFD_VERDICT
+# Inspect stamps. Sets MFD_NAME_E / MFD_FS_E / MFD_MEDIA_E / MFD_CONTOUR_* / MFD_VERDICT
 # (agree|disagree|skip). Return 0 if disagree (needs a decision), 1 otherwise.
 # On disagree also fills MFD_LABELS / MFD_EPOCHS / … for the prompt.
 # First three menu rows stay File name / Filesystem / Media tags (before/after table).
 mfd_prepare_file() {
   local f="$1"
-  local name_e="" fs_e="" media_e="" contour_start_e=""
-  local i n oldest_e="" oldest_i=0 need=0 abs_diff
+  local name_e="" fs_e="" media_e=""
+  local i n oldest_e="" oldest_i=0 need=0 abs_diff contour_idx=-1
   MFD_LABELS=()
   MFD_EPOCHS=()
   MFD_NOTES=()
@@ -592,16 +725,19 @@ mfd_prepare_file() {
   MFD_FS_E=""
   MFD_MEDIA_E=""
   MFD_CONTOUR_START_E=""
+  MFD_CONTOUR_END_E=""
+  MFD_CONTOUR_DUR=""
+  MFD_CONTOUR_LAYOUT=""
+  MFD_CONTOUR_MENU_IDX=-1
   MFD_VERDICT="skip"
 
   name_e="$(mfd_filename_epoch_from_basename "${f##*/}" 2>/dev/null || true)"
   fs_e="$(mfd_fs_mtime_epoch "$f" 2>/dev/null || true)"
   media_e="$(mfd_media_createdate_epoch "$f" 2>/dev/null || true)"
-  contour_start_e="$(mfd_contour_start_epoch "$f" 2>/dev/null || true)"
   MFD_NAME_E="$name_e"
   MFD_FS_E="$fs_e"
   MFD_MEDIA_E="$media_e"
-  MFD_CONTOUR_START_E="$contour_start_e"
+  mfd_contour_analyze "$f" "$name_e" "$fs_e" "$media_e" || true
 
   # Need at least one usable stamp that can be compared.
   if [[ -z "$name_e" && -z "$fs_e" && -z "$media_e" ]]; then
@@ -609,33 +745,40 @@ mfd_prepare_file() {
     return 1
   fi
 
-  if [[ -n "$name_e" && -n "$fs_e" ]]; then
-    if [[ -n "$contour_start_e" ]]; then
-      mfd_contour_compatible_with_name "$name_e" "$fs_e" "$contour_start_e" || need=1
+  if [[ -n "${MFD_CONTOUR_START_E:-}" && -n "${MFD_CONTOUR_END_E:-}" ]]; then
+    # Contour target: name=start, FS=end, media=start (FS≠media by design).
+    mfd_epoch_near "$name_e" "$MFD_CONTOUR_START_E" || need=1
+    if [[ -n "$fs_e" ]]; then
+      mfd_epoch_near "$fs_e" "$MFD_CONTOUR_END_E" || need=1
     else
+      need=1
+    fi
+    if [[ -n "$media_e" ]]; then
+      mfd_epoch_near "$media_e" "$MFD_CONTOUR_START_E" || need=1
+    else
+      need=1
+    fi
+  else
+    if [[ -n "$name_e" && -n "$fs_e" ]]; then
       abs_diff="$(mfd_abs_diff "$name_e" "$fs_e")"
       (( abs_diff > 120 )) && need=1
     fi
-  fi
-  if [[ -n "$name_e" && -n "$media_e" ]]; then
-    if [[ -n "$contour_start_e" ]]; then
-      mfd_contour_compatible_with_name "$name_e" "$media_e" "$contour_start_e" || need=1
-    else
+    if [[ -n "$name_e" && -n "$media_e" ]]; then
       abs_diff="$(mfd_abs_diff "$name_e" "$media_e")"
       (( abs_diff > 120 )) && need=1
     fi
-  fi
-  if [[ -n "$fs_e" && -n "$media_e" ]]; then
-    abs_diff="$(mfd_abs_diff "$fs_e" "$media_e")"
-    (( abs_diff > 120 )) && need=1
-  fi
-  # Name present but no other usable stamp that matches → still offer to apply name.
-  if [[ -n "$name_e" && -z "$fs_e" && -z "$media_e" ]]; then
-    need=1
-  fi
-  # Media CreateDate missing/unusable while another stamp exists → offer to set it.
-  if [[ -z "$media_e" && ( -n "$name_e" || -n "$fs_e" || -n "$contour_start_e" ) ]]; then
-    need=1
+    if [[ -n "$fs_e" && -n "$media_e" ]]; then
+      abs_diff="$(mfd_abs_diff "$fs_e" "$media_e")"
+      (( abs_diff > 120 )) && need=1
+    fi
+    # Name present but no other usable stamp that matches → still offer to apply name.
+    if [[ -n "$name_e" && -z "$fs_e" && -z "$media_e" ]]; then
+      need=1
+    fi
+    # Media CreateDate missing/unusable while another stamp exists → offer to set it.
+    if [[ -z "$media_e" && ( -n "$name_e" || -n "$fs_e" ) ]]; then
+      need=1
+    fi
   fi
 
   if (( ! need )); then
@@ -648,8 +791,10 @@ mfd_prepare_file() {
   MFD_LABELS+=("File name")
   MFD_EPOCHS+=("${name_e}")
   if [[ -n "$name_e" ]]; then
-    if [[ -n "$contour_start_e" ]]; then
-      MFD_NOTES+=("(Contour: stamp may be end of clip)")
+    if [[ "${MFD_CONTOUR_LAYOUT:-}" == "normalized" ]]; then
+      MFD_NOTES+=("(Contour: name = start)")
+    elif [[ "${MFD_CONTOUR_LAYOUT:-}" == "end_in_name" ]]; then
+      MFD_NOTES+=("(Contour: name = end of clip)")
     else
       MFD_NOTES+=("")
     fi
@@ -659,22 +804,32 @@ mfd_prepare_file() {
   MFD_LABELS+=("Filesystem")
   MFD_EPOCHS+=("${fs_e}")
   if [[ -n "$fs_e" ]]; then
-    MFD_NOTES+=("(mtime)")
+    if [[ -n "${MFD_CONTOUR_END_E:-}" ]]; then
+      MFD_NOTES+=("(mtime; Contour target = end)")
+    else
+      MFD_NOTES+=("(mtime)")
+    fi
   else
     MFD_NOTES+=("(mtime missing or before 1990)")
   fi
   MFD_LABELS+=("Media tags")
   MFD_EPOCHS+=("${media_e}")
   if [[ -n "$media_e" ]]; then
-    MFD_NOTES+=("(CreateDate / DateTimeOriginal)")
+    if [[ -n "${MFD_CONTOUR_START_E:-}" ]]; then
+      MFD_NOTES+=("(CreateDate; Contour target = start)")
+    else
+      MFD_NOTES+=("(CreateDate / DateTimeOriginal)")
+    fi
   else
     MFD_NOTES+=("(CreateDate missing or before 1990)")
   fi
-  # Absolute Contour start (name − duration) — never "FS − duration".
-  if [[ -n "$contour_start_e" ]]; then
-    MFD_LABELS+=("Contour start")
-    MFD_EPOCHS+=("${contour_start_e}")
-    MFD_NOTES+=("(name − duration; Contour end-stamp)")
+  # Contour normalize row (sentinel epoch = start; apply path uses start+end).
+  if [[ -n "${MFD_CONTOUR_START_E:-}" && -n "${MFD_CONTOUR_END_E:-}" ]]; then
+    contour_idx=${#MFD_LABELS[@]}
+    MFD_CONTOUR_MENU_IDX=$contour_idx
+    MFD_LABELS+=("Contour normalize")
+    MFD_EPOCHS+=("${MFD_CONTOUR_START_E}")
+    MFD_NOTES+=("(name→start, FS→end, media→start)")
   fi
   MFD_LABELS+=("Keep as written")
   MFD_EPOCHS+=("")
@@ -689,14 +844,19 @@ mfd_prepare_file() {
     fi
   done
   MFD_OLDEST_E="$oldest_e"
-  MFD_DEF=$((oldest_i + 1))
+  # Contour: default to Contour normalize, not plain oldest (which would set FS=start).
+  if (( contour_idx >= 0 )); then
+    MFD_DEF=$((contour_idx + 1))
+  else
+    MFD_DEF=$((oldest_i + 1))
+  fi
   MFD_DEFAULT_KEY="$MFD_DEF"
   return 0
 }
 
 mfd_process_file() {
   local f="$1"
-  local i n choice disp note prompt_keys prompt_extra=""
+  local i n choice disp note prompt_keys prompt_extra="" def_note
   local before_name before_fs before_media need_fix=0
   local -a key_list=()
 
@@ -704,8 +864,7 @@ mfd_process_file() {
     need_fix=1
   fi
   if (( VERBOSE )); then
-    mfd_verbose_print_check "$f" "$MFD_VERDICT" "$MFD_NAME_E" "$MFD_FS_E" "$MFD_MEDIA_E" \
-      "${MFD_CONTOUR_START_E:-}"
+    mfd_verbose_print_check "$f" "$MFD_VERDICT" "$MFD_NAME_E" "$MFD_FS_E" "$MFD_MEDIA_E"
   fi
   (( need_fix )) || return 0
 
@@ -722,18 +881,39 @@ mfd_process_file() {
     return 0
   fi
 
-  # [c] rest-of-run: Contour start only when this file has a Contour start stamp.
-  if (( ALWAYS_CONTOUR_START )) && [[ -n "${MFD_CONTOUR_START_E:-}" ]]; then
+  # [c] rest-of-run: Contour normalize when Contour start/end are known.
+  if (( ALWAYS_CONTOUR_START )) && [[ -n "${MFD_CONTOUR_START_E:-}" && -n "${MFD_CONTOUR_END_E:-}" ]]; then
     mfd_print_processing "$f"
-    mfd_apply_epoch "$f" "$MFD_CONTOUR_START_E"
-    FIXED=$((FIXED + 1))
-    echo "$(mfd_ts) Set from Contour start: $(mfd_format_epoch_display "$MFD_CONTOUR_START_E")"
-    mfd_show_result_table "$f" "$before_name" "$before_fs" "$before_media"
+    if mfd_apply_contour_normalize "$f" "$MFD_CONTOUR_START_E" "$MFD_CONTOUR_END_E"; then
+      FIXED=$((FIXED + 1))
+      mfd_show_result_table "${MFD_APPLIED_PATH:-$f}" "$before_name" "$before_fs" "$before_media"
+    else
+      echo "$(mfd_ts) Contour normalize failed: ${f##*/}" >&2
+    fi
     return 0
   fi
 
   if (( DO_YES )) || (( ALWAYS_OLDEST )) || (( ! script_is_run_interactively )); then
     mfd_print_processing "$f"
+    # [a] Always oldest: flatten to one stamp. Else Contour → normalize; else oldest.
+    if (( ALWAYS_OLDEST )); then
+      if [[ -n "$MFD_OLDEST_E" ]]; then
+        mfd_apply_epoch "$f" "$MFD_OLDEST_E"
+        FIXED=$((FIXED + 1))
+        echo "$(mfd_ts) Set from oldest usable: $(mfd_format_epoch_display "$MFD_OLDEST_E")"
+        mfd_show_result_table "$f" "$before_name" "$before_fs" "$before_media"
+      fi
+      return 0
+    fi
+    if [[ -n "${MFD_CONTOUR_START_E:-}" && -n "${MFD_CONTOUR_END_E:-}" ]]; then
+      if mfd_apply_contour_normalize "$f" "$MFD_CONTOUR_START_E" "$MFD_CONTOUR_END_E"; then
+        FIXED=$((FIXED + 1))
+        mfd_show_result_table "${MFD_APPLIED_PATH:-$f}" "$before_name" "$before_fs" "$before_media"
+      else
+        echo "$(mfd_ts) Contour normalize failed: ${f##*/}" >&2
+      fi
+      return 0
+    fi
     if [[ -n "$MFD_OLDEST_E" ]]; then
       mfd_apply_epoch "$f" "$MFD_OLDEST_E"
       FIXED=$((FIXED + 1))
@@ -745,7 +925,11 @@ mfd_process_file() {
 
   mfd_print_processing "$f"
   echo
-  echo "  Sources (oldest usable is the default; applying it sets media CreateDate and filesystem times):"
+  if [[ -n "${MFD_CONTOUR_START_E:-}" ]]; then
+    echo "  Sources (Contour normalize is the default: name→start, FS→end, media→start):"
+  else
+    echo "  Sources (oldest usable is the default; applying it sets media CreateDate and filesystem times):"
+  fi
   echo
   key_list=()
   for (( i = 0; i < n; i++ )); do
@@ -756,10 +940,15 @@ mfd_process_file() {
       disp="n/a"
     fi
     if (( i + 1 == MFD_DEF )); then
-      if [[ -n "$note" ]]; then
-        note="${note} (oldest - default)"
+      if (( i == MFD_CONTOUR_MENU_IDX )); then
+        def_note="default"
       else
-        note="(oldest - default)"
+        def_note="oldest - default"
+      fi
+      if [[ -n "$note" ]]; then
+        note="${note} (${def_note})"
+      else
+        note="(${def_note})"
       fi
     fi
     # ASCII-only date column so %-19s matches terminal columns (UTF-8 "—" broke alignment).
@@ -768,16 +957,16 @@ mfd_process_file() {
     key_list+=("$((i + 1))")
   done
   echo "  [$(mfd_k a "$MFD_DEFAULT_KEY")] Always oldest for the rest of this run"
-  if [[ -n "${MFD_CONTOUR_START_E:-}" ]]; then
-    echo "  [$(mfd_k c "$MFD_DEFAULT_KEY")] Always Contour start for the rest of this run"
-    echo "      Contour start = filename stamp minus duration (name treated as end of clip)."
+  if [[ -n "${MFD_CONTOUR_START_E:-}" && -n "${MFD_CONTOUR_END_E:-}" ]]; then
+    echo "  [$(mfd_k c "$MFD_DEFAULT_KEY")] Always Contour normalize for the rest of this run"
+    echo "      name→start (rename), filesystem→end, media→start."
     echo "      Applies to this file and later Contour files only; non-Contour still use oldest / prompts."
-    echo "      Already-adjusted Contour files (FS/media at Contour start) stay skipped."
+    echo "      Already normalized Contour files (name=start, FS=end, media=start) stay skipped."
   fi
   echo "  [$(mfd_k k "$MFD_DEFAULT_KEY")] Keep as written for the rest of this run"
   echo "  [$(mfd_k s "$MFD_DEFAULT_KEY")] Skip this file"
   echo "  [$(mfd_k q "$MFD_DEFAULT_KEY")] Quit"
-  if [[ -n "${MFD_CONTOUR_START_E:-}" ]]; then
+  if [[ -n "${MFD_CONTOUR_START_E:-}" && -n "${MFD_CONTOUR_END_E:-}" ]]; then
     key_list+=(a c k s q)
   else
     key_list+=(a k s q)
@@ -819,19 +1008,21 @@ mfd_process_file() {
         return 0
         ;;
       c)
-        if [[ -z "${MFD_CONTOUR_START_E:-}" ]]; then
-          echo "$(mfd_ts) Contour start is not available for this file."
+        if [[ -z "${MFD_CONTOUR_START_E:-}" || -z "${MFD_CONTOUR_END_E:-}" ]]; then
+          echo "$(mfd_ts) Contour normalize is not available for this file."
           continue
         fi
-        mfd_print_selected "c = Always Contour start for the rest of this run"
+        mfd_print_selected "c = Always Contour normalize for the rest of this run"
         ALWAYS_CONTOUR_START=1
         ALWAYS_OLDEST=0
         ALWAYS_KEEP=0
-        mfd_apply_epoch "$f" "$MFD_CONTOUR_START_E"
-        FIXED=$((FIXED + 1))
-        echo "$(mfd_ts) Set from Contour start: $(mfd_format_epoch_display "$MFD_CONTOUR_START_E")"
-        mfd_show_result_table "$f" "$before_name" "$before_fs" "$before_media"
-        echo "$(mfd_ts) Will use Contour start (name − duration) for every later Contour file; other files still use oldest usable / prompts."
+        if mfd_apply_contour_normalize "$f" "$MFD_CONTOUR_START_E" "$MFD_CONTOUR_END_E"; then
+          FIXED=$((FIXED + 1))
+          mfd_show_result_table "${MFD_APPLIED_PATH:-$f}" "$before_name" "$before_fs" "$before_media"
+        else
+          echo "$(mfd_ts) Contour normalize failed: ${f##*/}" >&2
+        fi
+        echo "$(mfd_ts) Will Contour-normalize every later Contour file; other files still use oldest usable / prompts."
         return 0
         ;;
       k)
@@ -858,6 +1049,15 @@ mfd_process_file() {
         echo "$(mfd_ts) ${MFD_LABELS[i]} is n/a (not usable). Pick another."
         continue
       fi
+      if (( i == MFD_CONTOUR_MENU_IDX )); then
+        if mfd_apply_contour_normalize "$f" "$MFD_CONTOUR_START_E" "$MFD_CONTOUR_END_E"; then
+          FIXED=$((FIXED + 1))
+          mfd_show_result_table "${MFD_APPLIED_PATH:-$f}" "$before_name" "$before_fs" "$before_media"
+        else
+          echo "$(mfd_ts) Contour normalize failed: ${f##*/}" >&2
+        fi
+        return 0
+      fi
       mfd_apply_epoch "$f" "${MFD_EPOCHS[i]}"
       FIXED=$((FIXED + 1))
       echo "$(mfd_ts) Set from ${MFD_LABELS[i]}: $(mfd_format_epoch_display "${MFD_EPOCHS[i]}")"
@@ -876,6 +1076,7 @@ VERBOSE=0
 ALWAYS_OLDEST=0
 ALWAYS_KEEP=0
 ALWAYS_CONTOUR_START=0
+MFD_CONTOUR_MENU_IDX=-1
 FIXED=0
 SKIPPED=0
 SCANNED=0
