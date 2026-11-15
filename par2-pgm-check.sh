@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261115.120000 - hash-verify UI: single blank lines between sections (no doubles)
 # v. 20261113.173600 - Verify PAR2 vs hash prompt defaults to Y
 # v. 20261113.134300 - regenerate par2 create: default -t/-T is nproc-1 when CPUs >= 2
 # v. 20261113.134000 - regenerate par2 create: pass -t/-T (default nproc) for multi-core
@@ -64,6 +65,8 @@
 # v. 20260719.103506 - fix no-arg run: empty POSITIONAL[@]:- became one "" element
 # v. 20260719.102800 - multi-set selection: A/a, ranges 1-4, --all, multiple paths
 
+# 2026.11.15 - v. 0.1.79 - Hash-verify spacing: one blank line between RESULT / hash list /
+#   optional PAR2-vs-hash box / Step H (drop stacked empty lines after boxes and Enter)
 # 2026.11.13 - v. 0.1.78 - "Verify PAR2 archive(s) vs hash file?" prompt defaults to yes (Enter = verify)
 # 2026.11.13 - v. 0.1.77 - Regenerated PAR2 create default -t/-T is nproc-1 when CPUs >= 2 (else 1)
 # 2026.11.13 - v. 0.1.76 - Regenerated PAR2 create passes -t/-T (default nproc; override PAR2_THREADS / PAR2_FILE_THREADS) so OpenMP uses all cores
@@ -536,8 +539,8 @@ pgm_prompt_read_yes_no_quit() {
 
     case "$key" in
         ''|$'\n')
+            # Enter already ended the prompt line; do not echo again (avoids a double blank).
             _out=$(( default_yes ? 0 : 1 ))
-            echo
             return 0
             ;;
         q|Q)
@@ -1609,6 +1612,7 @@ pgm_emit_boxed_block() {
 
 pgm_print_step_header() {
     local title="$1"
+    # One blank before the header box (callers should not also print a blank).
     echo
     pgm_emit_boxed_block stone "$title"
 }
@@ -1636,9 +1640,9 @@ pgm_print_outcome() {
         ok) design=ada-box ;;
     esac
 
+    # One blank before the box; no trailing blank (next section adds its own gap).
     echo
     pgm_emit_boxed_block "$design" "${lines[@]}"
-    echo
 }
 
 pgm_exit_kind_from_rc() {
@@ -1705,7 +1709,6 @@ pgm_print_step_transition() {
 
     echo
     pgm_emit_boxed_block stone "$title" "$@"
-    echo
 }
 
 pgm_final_verdict_label() {
