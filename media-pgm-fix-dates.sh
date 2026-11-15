@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261115.085000 - Contour: offer Contour start (name − duration); agree if FS/media already at that start
 # v. 20261021.120123 - [k] keep as written for the rest of this run
 # v. 20261020.165500 - after each Fix dates key, print Selected: with the accepted answer
 # v. 20261020.163800 - when nothing needed fixing, hint to re-run with --verbose
@@ -12,6 +13,7 @@
 # v. 20261020.150400 - date menu: ASCII n/a so parenthetical notes share one column
 # v. 20261020.145500 - fix file / media dates when the name, filesystem, and tags disagree
 #
+# 2026.11.15 - v. 0.1.13 - Contour-style names (YYYYMMDD_HHMMSS[.mp4|_NVenc_…]): treat the name stamp as a possible end of clip; offer absolute Contour start = name − ffprobe duration as a date source (not a relative FS shift). If filesystem or media already match that start (±2 min), count as agree vs the Contour name so re-runs do not subtract duration again
 # 2026.10.21 - v. 0.1.12 - [k] keeps dates as written for this file and every later file in the run (parallel to [a] for oldest)
 # 2026.10.20 - v. 0.1.11 - after each Fix dates answer, print Selected: with the key and meaning that the script accepted (same idea as loudness / swap-audio)
 # 2026.10.20 - v. 0.1.10 - when the run finds no disagreements, suggest re-running with --verbose to see each file check
@@ -33,7 +35,8 @@
 # media-pgm-fix-dates.sh
 #
 # Align filesystem times and media CreateDate when they disagree with each other
-# or with a date stamp in the file name.
+# or with a date stamp in the file name. Contour-style names may use an end-of-clip
+# stamp; Contour start (name − duration) is an absolute extra source when useful.
 #
 
 show_help() {
@@ -46,6 +49,13 @@ Compare the date in the file name, the filesystem time, and the media
 CreateDate (DateTimeOriginal for many photos). When they disagree by more
 than two minutes, ask which date to use. The default is the oldest usable
 stamp. Dates before 1990-01-01 are ignored.
+
+Contour-style video names (YYYYMMDD_HHMMSS.mp4 or …_NVenc_….mp4): the
+name stamp may be the end of the clip. When ffprobe duration is available,
+an extra source Contour start (name − duration) is offered — an absolute
+time, not a shift of the current filesystem date. If filesystem or media
+already match that start (±2 min), the Contour name is treated as agreeing
+so running the script again does not move the date earlier repeatedly.
 
 Applies to video, audio, and picture files. With no FILE or DIR, scan the
 current directory (not subdirectories unless -r).
@@ -280,6 +290,62 @@ mfd_filename_epoch_from_basename() {
   printf '%s\n' "$e"
 }
 
+# Contour-style basename: YYYYMMDD_HHMMSS.mp4 or YYYYMMDD_HHMMSS_NVenc_….mp4
+# (not GoPro camera token, not _part_XX, not 70mai NO*/EV*).
+mfd_is_contour_basename() {
+  local base="$1"
+  base="${base##*/}"
+  [[ "$base" =~ _part_[0-9]{2} ]] && return 1
+  [[ "$base" =~ (GOPRO|GoPro_) ]] && return 1
+  if [[ "$base" =~ ^(NO|EV)[0-9]{8}-[0-9]{6}-[0-9]+[A-Za-z]\.[mM][pP]4$ ]]; then
+    return 1
+  fi
+  if [[ "$base" =~ ^[0-9]{8}_[0-9]{6}\.[mM][pP]4$ ]]; then
+    return 0
+  fi
+  if [[ "$base" =~ ^[0-9]{8}_[0-9]{6}_NVenc_.*\.[mM][pP]4$ ]]; then
+    return 0
+  fi
+  return 1
+}
+
+mfd_ffprobe_duration_seconds() {
+  local f="$1" d
+  command -v ffprobe >/dev/null 2>&1 || return 1
+  d=$(ffprobe -v error -show_entries format=duration -of default=nw=1:nk=1 -- "$f" 2>/dev/null) || return 1
+  d="${d//$'\r'/}"
+  [[ -n "$d" && "$d" != "N/A" ]] || return 1
+  awk -v x="$d" 'BEGIN { if (x+0 > 0) { printf "%.0f\n", x+0.5; exit 0 } exit 1 }'
+}
+
+# Absolute Contour start = filename stamp (treated as end) − duration. Idempotent target.
+mfd_contour_start_epoch() {
+  local f="$1" name_e dur start
+  mfd_is_contour_basename "${f##*/}" || return 1
+  name_e="$(mfd_filename_epoch_from_basename "${f##*/}" 2>/dev/null)" || return 1
+  dur="$(mfd_ffprobe_duration_seconds "$f" 2>/dev/null)" || return 1
+  (( dur >= 1 )) || return 1
+  start=$(( name_e - dur ))
+  mfd_epoch_usable "$start" || return 1
+  # Only meaningful when duration moves the stamp by more than the disagree window.
+  (( $(mfd_abs_diff "$name_e" "$start") > 120 )) || return 1
+  printf '%s\n' "$start"
+}
+
+mfd_epoch_near() {
+  local a="$1" b="$2"
+  [[ -n "$a" && -n "$b" ]] || return 1
+  (( $(mfd_abs_diff "$a" "$b") <= 120 ))
+}
+
+# Contour: other stamp matches name (end) or Contour start (name − duration).
+mfd_contour_compatible_with_name() {
+  local name_e="$1" other_e="$2" start_e="${3:-}"
+  mfd_epoch_near "$name_e" "$other_e" && return 0
+  [[ -n "$start_e" ]] && mfd_epoch_near "$start_e" "$other_e" && return 0
+  return 1
+}
+
 mfd_fs_mtime_epoch() {
   local f="$1" e
   e="$(stat -c %Y -- "$f" 2>/dev/null || stat -f %m -- "$f" 2>/dev/null)" || return 1
@@ -450,15 +516,30 @@ mfd_vs_name_note() {
 }
 
 # Print one verbose Check block. verdict: agree | disagree | skip
+# Optional $6 = Contour start epoch when Contour end-stamp applies.
 mfd_verbose_print_check() {
-  local f="$1" verdict="$2" name_e="$3" fs_e="$4" media_e="$5"
-  local fs_note media_note vs
+  local f="$1" verdict="$2" name_e="$3" fs_e="$4" media_e="$5" contour_start_e="${6:-}"
+  local fs_note media_note vs name_note
   echo
   echo "$(mfd_ts) Check: ${f}"
-  printf '  %-18s %s\n' "File name" "$(mfd_disp_or_na "$name_e")"
+  name_note=""
+  if [[ -n "$contour_start_e" ]]; then
+    name_note="(Contour: stamp may be end of clip)"
+  fi
+  if [[ -n "$name_note" ]]; then
+    printf '  %-18s %-21s %s\n' "File name" "$(mfd_disp_or_na "$name_e")" "$name_note"
+  else
+    printf '  %-18s %s\n' "File name" "$(mfd_disp_or_na "$name_e")"
+  fi
+  if [[ -n "$contour_start_e" ]]; then
+    printf '  %-18s %-21s %s\n' "Contour start" "$(mfd_disp_or_na "$contour_start_e")" "(name − duration)"
+  fi
   fs_note="(mtime)"
   [[ -n "$fs_e" ]] || fs_note="(mtime missing or before 1990)"
   vs="$(mfd_vs_name_note "$name_e" "$fs_e")"
+  if [[ -n "$contour_start_e" && -n "$fs_e" ]] && mfd_epoch_near "$contour_start_e" "$fs_e"; then
+    vs="ok vs Contour start"
+  fi
   if [[ -n "$vs" ]]; then
     printf '  %-18s %-21s %s  %s\n' "Filesystem" "$(mfd_disp_or_na "$fs_e")" "$fs_note" "$vs"
   else
@@ -470,6 +551,9 @@ mfd_verbose_print_check() {
     media_note="(CreateDate missing or before 1990)"
   fi
   vs="$(mfd_vs_name_note "$name_e" "$media_e")"
+  if [[ -n "$contour_start_e" && -n "$media_e" ]] && mfd_epoch_near "$contour_start_e" "$media_e"; then
+    vs="ok vs Contour start"
+  fi
   if [[ -n "$vs" ]]; then
     printf '  %-18s %-21s %s  %s\n' "Media tags" "$(mfd_disp_or_na "$media_e")" "$media_note" "$vs"
   else
@@ -483,12 +567,13 @@ mfd_verbose_print_check() {
   esac
 }
 
-# Inspect stamps. Sets MFD_NAME_E / MFD_FS_E / MFD_MEDIA_E / MFD_VERDICT
+# Inspect stamps. Sets MFD_NAME_E / MFD_FS_E / MFD_MEDIA_E / MFD_CONTOUR_START_E / MFD_VERDICT
 # (agree|disagree|skip). Return 0 if disagree (needs a decision), 1 otherwise.
 # On disagree also fills MFD_LABELS / MFD_EPOCHS / … for the prompt.
+# First three menu rows stay File name / Filesystem / Media tags (before/after table).
 mfd_prepare_file() {
   local f="$1"
-  local name_e="" fs_e="" media_e=""
+  local name_e="" fs_e="" media_e="" contour_start_e=""
   local i n oldest_e="" oldest_i=0 need=0 abs_diff
   MFD_LABELS=()
   MFD_EPOCHS=()
@@ -499,14 +584,17 @@ mfd_prepare_file() {
   MFD_NAME_E=""
   MFD_FS_E=""
   MFD_MEDIA_E=""
+  MFD_CONTOUR_START_E=""
   MFD_VERDICT="skip"
 
   name_e="$(mfd_filename_epoch_from_basename "${f##*/}" 2>/dev/null || true)"
   fs_e="$(mfd_fs_mtime_epoch "$f" 2>/dev/null || true)"
   media_e="$(mfd_media_createdate_epoch "$f" 2>/dev/null || true)"
+  contour_start_e="$(mfd_contour_start_epoch "$f" 2>/dev/null || true)"
   MFD_NAME_E="$name_e"
   MFD_FS_E="$fs_e"
   MFD_MEDIA_E="$media_e"
+  MFD_CONTOUR_START_E="$contour_start_e"
 
   # Need at least one usable stamp that can be compared.
   if [[ -z "$name_e" && -z "$fs_e" && -z "$media_e" ]]; then
@@ -515,12 +603,20 @@ mfd_prepare_file() {
   fi
 
   if [[ -n "$name_e" && -n "$fs_e" ]]; then
-    abs_diff="$(mfd_abs_diff "$name_e" "$fs_e")"
-    (( abs_diff > 120 )) && need=1
+    if [[ -n "$contour_start_e" ]]; then
+      mfd_contour_compatible_with_name "$name_e" "$fs_e" "$contour_start_e" || need=1
+    else
+      abs_diff="$(mfd_abs_diff "$name_e" "$fs_e")"
+      (( abs_diff > 120 )) && need=1
+    fi
   fi
   if [[ -n "$name_e" && -n "$media_e" ]]; then
-    abs_diff="$(mfd_abs_diff "$name_e" "$media_e")"
-    (( abs_diff > 120 )) && need=1
+    if [[ -n "$contour_start_e" ]]; then
+      mfd_contour_compatible_with_name "$name_e" "$media_e" "$contour_start_e" || need=1
+    else
+      abs_diff="$(mfd_abs_diff "$name_e" "$media_e")"
+      (( abs_diff > 120 )) && need=1
+    fi
   fi
   if [[ -n "$fs_e" && -n "$media_e" ]]; then
     abs_diff="$(mfd_abs_diff "$fs_e" "$media_e")"
@@ -531,7 +627,7 @@ mfd_prepare_file() {
     need=1
   fi
   # Media CreateDate missing/unusable while another stamp exists → offer to set it.
-  if [[ -z "$media_e" && ( -n "$name_e" || -n "$fs_e" ) ]]; then
+  if [[ -z "$media_e" && ( -n "$name_e" || -n "$fs_e" || -n "$contour_start_e" ) ]]; then
     need=1
   fi
 
@@ -541,11 +637,15 @@ mfd_prepare_file() {
   fi
   MFD_VERDICT="disagree"
 
-  # Always list all three sources so a missing CreateDate is visible.
+  # Always list File name / Filesystem / Media tags first (before/after uses indices 0–2).
   MFD_LABELS+=("File name")
   MFD_EPOCHS+=("${name_e}")
   if [[ -n "$name_e" ]]; then
-    MFD_NOTES+=("")
+    if [[ -n "$contour_start_e" ]]; then
+      MFD_NOTES+=("(Contour: stamp may be end of clip)")
+    else
+      MFD_NOTES+=("")
+    fi
   else
     MFD_NOTES+=("(no stamp in name, or before 1990)")
   fi
@@ -562,6 +662,12 @@ mfd_prepare_file() {
     MFD_NOTES+=("(CreateDate / DateTimeOriginal)")
   else
     MFD_NOTES+=("(CreateDate missing or before 1990)")
+  fi
+  # Absolute Contour start (name − duration) — never "FS − duration".
+  if [[ -n "$contour_start_e" ]]; then
+    MFD_LABELS+=("Contour start")
+    MFD_EPOCHS+=("${contour_start_e}")
+    MFD_NOTES+=("(name − duration; Contour end-stamp)")
   fi
   MFD_LABELS+=("Keep as written")
   MFD_EPOCHS+=("")
@@ -591,7 +697,8 @@ mfd_process_file() {
     need_fix=1
   fi
   if (( VERBOSE )); then
-    mfd_verbose_print_check "$f" "$MFD_VERDICT" "$MFD_NAME_E" "$MFD_FS_E" "$MFD_MEDIA_E"
+    mfd_verbose_print_check "$f" "$MFD_VERDICT" "$MFD_NAME_E" "$MFD_FS_E" "$MFD_MEDIA_E" \
+      "${MFD_CONTOUR_START_E:-}"
   fi
   (( need_fix )) || return 0
 
