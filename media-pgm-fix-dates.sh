@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261115.142500 - Contour metadata: allow short clips; --force-contour bypasses duration gate
 # v. 20261115.115000 - drop Fix i/n line; (i/n) already on exiftool bar
 # v. 20261115.112000 - one exiftool progress finish line (fold File* dates into main write)
 # v. 20261115.111500 - Contour: Make/Model metadata wins; filename is fallback
@@ -27,6 +28,8 @@
 # v. 20261020.150400 - date menu: ASCII n/a so parenthetical notes share one column
 # v. 20261020.145500 - fix file / media dates when the name, filesystem, and tags disagree
 #
+# 2026.11.15 - v. 0.1.28 - Contour Make/Model metadata skips the duration>120s gate (short clips
+#   still Contour); --force-contour / MFD_FORCE_CONTOUR forces Contour-style names the same way
 # 2026.11.15 - v. 0.1.27 - drop separate Fix i/n line; file index lives only on the exiftool bar
 # 2026.11.15 - v. 0.1.26 - exiftool apply: include FileCreate/ModifyDate in the main write so the
 #   100% progress line is not printed twice
@@ -79,7 +82,7 @@ show_help() {
   cat <<EOF
 Usage: $(script_live_basename) [-h|--help] [-v|--version] [--history]
        [-y|--yes] [-r|--recursive] [--dry-run] [--verbose]
-       [--batch-size N]
+       [--force-contour] [--batch-size N]
        [FILE|DIR ...]
 
 Compare the date in the file name, the filesystem time, and the media
@@ -93,8 +96,12 @@ size is all files when there are 50 or fewer; otherwise 50 (overridable).
 
 Contour detection (priority order):
   1) Camera metadata: Make=Contour (as set by video-pgm-set-camera-metadata.sh,
-     typically Model=Contour+2). When present, the file is treated as Contour.
+     typically Model=Contour+2). When present, the file is Contour even if the
+     clip is shorter than two minutes.
   2) Otherwise guess from Contour-style names (YYYYMMDD_HHMMSS.mp4 or …_NVenc_….mp4).
+     Basename-only guesses still require duration > 120s (unless --force-contour).
+  3) --force-contour: treat Contour-style names as Contour and skip the duration
+     gate (use after tagging with video-pgm-set-camera-metadata, or for short clips).
 
 Contour cameras stamp the end of the clip in the name. This script can normalize:
   File name stamp  = start of clip (rename)
@@ -118,6 +125,9 @@ Options:
   --dry-run            Show what would change; do not write.
   --verbose            Print every file check (stamps + verdict), including
                        files that already agree.
+  --force-contour      Force Contour normalize for Contour-style names even when
+                       duration ≤ 120s or Contour Make/Model tags are missing.
+                       (MFD_FORCE_CONTOUR=1 does the same.)
   --batch-size N       Decide/apply this many files per batch (default: all
                        if ≤50 files, else 50).
 
@@ -163,6 +173,7 @@ Environment:
   MFD_EXIFTOOL / EXIFLOC / PGM_EXIFTOOL
                        Path to exiftool (else exiftool on PATH).
   MFD_BATCH_SIZE       Default batch size (same as --batch-size).
+  MFD_FORCE_CONTOUR    Set to 1 for the same effect as --force-contour.
   MFD_EXIFTOOL_PROGRESS_MIN_BYTES
                        Min file size for exiftool % bar (default 5242880).
 EOF
@@ -677,8 +688,17 @@ mfd_is_contour_metadata() {
 }
 
 mfd_print_contour_detect_note() {
-  [[ "${MFD_CONTOUR_DETECT:-}" == "metadata" ]] || return 0
-  echo "$(mfd_ts) Contour metadata present (Make=${MFD_CAM_MAKE:-?} Model=${MFD_CAM_MODEL:-?}) — treating as Contour."
+  case "${MFD_CONTOUR_DETECT:-}" in
+    metadata)
+      echo "$(mfd_ts) Contour metadata present (Make=${MFD_CAM_MAKE:-?} Model=${MFD_CAM_MODEL:-?}) — treating as Contour."
+      ;;
+    forced)
+      echo "$(mfd_ts) Contour forced (--force-contour) for ${MFD_NAME_E:+name stamp} — treating as Contour."
+      ;;
+    *)
+      return 0
+      ;;
+  esac
 }
 
 mfd_ffprobe_duration_seconds() {
@@ -697,12 +717,14 @@ mfd_epoch_near() {
 }
 
 # Contour analyze: sets MFD_CONTOUR_START_E / MFD_CONTOUR_END_E / MFD_CONTOUR_DUR /
-# MFD_CONTOUR_LAYOUT (normalized|end_in_name) / MFD_CONTOUR_DETECT (metadata|basename).
+# MFD_CONTOUR_LAYOUT (normalized|end_in_name) / MFD_CONTOUR_DETECT (metadata|basename|forced).
 # Contour identity: Make/Model metadata first; Contour-style basename only as fallback.
+# Metadata Contour (or --force-contour) skips the duration>120 gate so short clips still
+# get Contour normalize. Basename-only guesses still need duration > 120 unless forced.
 # Return 0 when Contour normalize applies.
 mfd_contour_analyze() {
   local f="$1" name_e="${2:-}" fs_e="${3:-}" media_e="${4:-}"
-  local dur start_from_end end_from_start detect=""
+  local dur start_from_end end_from_start detect="" allow_short=0
   MFD_CONTOUR_START_E=""
   MFD_CONTOUR_END_E=""
   MFD_CONTOUR_DUR=""
@@ -710,16 +732,33 @@ mfd_contour_analyze() {
   MFD_CONTOUR_DETECT=""
   if mfd_is_contour_metadata; then
     detect="metadata"
+    allow_short=1
   elif mfd_is_contour_basename "${f##*/}"; then
-    detect="basename"
+    if (( FORCE_CONTOUR )); then
+      detect="forced"
+      allow_short=1
+    else
+      detect="basename"
+    fi
+  elif (( FORCE_CONTOUR )); then
+    # Force only Contour-shaped names, not arbitrary media.
+    return 1
   else
     return 1
   fi
   [[ -n "$name_e" ]] || name_e="$(mfd_filename_epoch_from_basename "${f##*/}" 2>/dev/null)" || return 1
-  dur="$(mfd_ffprobe_duration_seconds "$f" 2>/dev/null)" || return 1
+  dur="$(mfd_ffprobe_duration_seconds "$f" 2>/dev/null)" || {
+    if [[ "$detect" == "metadata" ]] || (( FORCE_CONTOUR )); then
+      echo "$(mfd_ts) Contour (${detect}): ffprobe duration unavailable for ${f##*/} — cannot Contour-normalize." >&2
+    fi
+    return 1
+  }
   (( dur >= 1 )) || return 1
-  # Only meaningful when duration is wider than the disagree window.
-  (( dur > 120 )) || return 1
+  # Basename-only guesses need duration wider than the ±2 min disagree window;
+  # Contour metadata / --force-contour keep short clips as Contour.
+  if (( ! allow_short )) && (( dur <= 120 )); then
+    return 1
+  fi
   start_from_end=$(( name_e - dur ))
   end_from_start=$(( name_e + dur ))
   mfd_epoch_usable "$start_from_end" || return 1
@@ -1073,6 +1112,8 @@ mfd_verbose_print_check() {
   fi
   if [[ "${MFD_CONTOUR_DETECT:-}" == "metadata" ]]; then
     echo "  Contour detect: metadata (Make=${MFD_CAM_MAKE:-?} Model=${MFD_CAM_MODEL:-?})"
+  elif [[ "${MFD_CONTOUR_DETECT:-}" == "forced" ]]; then
+    echo "  Contour detect: forced (--force-contour) via filename pattern"
   elif [[ "${MFD_CONTOUR_DETECT:-}" == "basename" ]]; then
     echo "  Contour detect: filename pattern (no Contour Make/Model tags)"
   fi
@@ -1667,6 +1708,7 @@ DO_YES=0
 RECURSIVE=0
 DRY_RUN=0
 VERBOSE=0
+FORCE_CONTOUR=0
 ALWAYS_OLDEST=0
 ALWAYS_KEEP=0
 ALWAYS_CONTOUR_START=0
@@ -1732,6 +1774,10 @@ while [[ $# -gt 0 ]]; do
       VERBOSE=1
       shift
       ;;
+    --force-contour)
+      FORCE_CONTOUR=1
+      shift
+      ;;
     --batch-size)
       shift
       [[ $# -gt 0 ]] || { echo "$(mfd_ts) --batch-size needs a positive integer." >&2; exit 1; }
@@ -1765,6 +1811,10 @@ if [[ -n "$BATCH_SIZE_CLI" ]]; then
     exit 1
   fi
 fi
+
+case "${MFD_FORCE_CONTOUR:-}" in
+  1|yes|YES|true|TRUE|on|ON) FORCE_CONTOUR=1 ;;
+esac
 
 if [[ -f "${BASH_SOURCE[0]}" ]]; then
   chmod 700 "${BASH_SOURCE[0]}" 2>/dev/null || true
@@ -1825,6 +1875,7 @@ echo "$(mfd_ts) Deciding ${ACTIONABLE_COUNT} of ${SCANNED} media file(s); batch 
 echo "$(mfd_ts) Each batch: decide all prompts first, then write."
 (( DRY_RUN )) && echo "$(mfd_ts) Dry run — nothing will be written."
 (( DO_YES )) && echo "$(mfd_ts) -y: apply without asking (Contour normalize when Contour; else oldest)."
+(( FORCE_CONTOUR )) && echo "$(mfd_ts) --force-contour: Contour-style names are Contour even when short / untagged."
 (( VERBOSE )) && echo "$(mfd_ts) Verbose: agree/skip listed during pre-scan."
 echo
 
