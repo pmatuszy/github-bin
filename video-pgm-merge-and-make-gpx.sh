@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261115.080700 - Contour suspect window 46–100s: review candidates (default skip); confident ≤45s unchanged
 # v. 20261115.080100 - Contour stop slack tightened (default +45s); battery-change pauses stay separate
 # v. 20261115.075000 - Contour ~2 GB size-split chapters (YYYYMMDD_HHMMSS / _NVenc_*); wider stop gap than GoPro
 # v. 20261027.205537 - group prompt: [Y] merge all remaining (default), [m] this group; temp default N unless HDD
@@ -92,6 +93,7 @@
 # v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
 # v. 20260805.154826 - after merge: copy GPS/dates from first chapter; FS times via touch -r
 
+# 2026.11.15 - v. 0.15.109 - Contour suspect window: gaps 46–100s after prev start+duration are listed as review merge candidates (plan + prompt, default Skip; -y / merge-all do not auto-merge them); confident Contour stays ≤45s
 # 2026.11.15 - v. 0.15.108 - Contour stop slack tightened: next start may be 30s early … 45s after prev start+duration (was +180s); short split pauses (~28s) still merge, battery-change gaps (~54s+) stay separate groups
 # 2026.11.15 - v. 0.15.107 - Contour size-split: YYYYMMDD_HHMMSS[.mp4|_NVenc_…]; ~2 GB chapters (not GoPro 4/12 GB); next start ≈ prev start + duration with Contour stop slack; plan label Contour ~2 GB; GoPro size-split rules unchanged
 # 2026.10.27 - v. 0.15.106 - group merge prompt: [Y] Merge all remaining groups is the default (asks output date/time for each first); [m] merges only this group. Off-disk temp merge defaults to No (write here) for SSD and unknown disks; Yes (/tmp) only when the source is a confirmed spinning HDD — unknown mounts like /mnt/f no longer default to Yes
@@ -338,11 +340,12 @@ Merge behaviour:
     YYYYMMDD_HHMMSS_NVenc_….mp4 on the same calendar day when chapters are ~2 GB
     (Contour FAT-style splits; not the GoPro ~4 GB / ~12 GB bands) and filename
     start + duration chains with Contour stop slack (default next start from 30s
-    early to 45s after the previous chapter ends — short split pauses merge;
-    longer gaps such as a battery change stay separate).
+    early to 45s after the previous chapter ends — short split pauses merge).
+    Gaps of 46–100s (PGM_CONTOUR_TIME_SUSPECT_MAX_STOP_SEC) are Contour *suspect*
+    review candidates: shown in the plan with the gap, offered to merge with
+    default Skip (-y and merge-all do not take them). Longer gaps stay standalone.
     The last chapter may be a smaller partial. Output:
-    YYYYMMDD_HHMMSS_Contour_concat_parts_01-NN.mp4. Non-chaining Contour clips stay
-    standalone. GoPro 4/12 GB rules are unchanged.
+    YYYYMMDD_HHMMSS_Contour_concat_parts_01-NN.mp4. GoPro 4/12 GB rules are unchanged.
   - Also groups 70mai-style clips NOYYYYMMDD-HHMMSS-NNNNNNX.MP4 and the same
     name starting with EV (same camera letter) into a continuous journey: ordered
     by filename time, sequence number increases by 1, and the filename start times
@@ -465,8 +468,12 @@ Environment:
   PGM_CONTOUR_DURATION_REJECT_BELOW_SEC
                           Reject a Contour full chapter shorter than this (default: 300).
   PGM_CONTOUR_TIME_TOLERANCE_SEC / PGM_CONTOUR_TIME_MAX_STOP_SEC
-                          Contour chain: next start vs prev start + duration may be this
-                          many seconds early (default 30) or late/stop (default 45).
+                          Contour confident chain: next start vs prev start + duration
+                          may be this many seconds early (default 30) or late (default 45).
+  PGM_CONTOUR_TIME_SUSPECT_MAX_STOP_SEC
+                          Contour suspect review window upper bound in seconds after
+                          expected chapter end (default 100). Gaps from
+                          MAX_STOP+1 … this value are listed for manual check.
   PGM_DASHCAM_MAX_GAP_SEC Max seconds between 70mai clip start times to stay in one
                           journey (default: 90). Gaps above this start a new group.
   PGM_DASHCAM_SHORT_HOLE_SEC
@@ -2996,10 +3003,14 @@ PGM_SIZE_SPLIT_12G_TIME_MAX_GAP_SEC="${PGM_SIZE_SPLIT_12G_TIME_MAX_GAP_SEC:-2400
 PGM_CONTOUR_2G_MIN_BYTES="${PGM_CONTOUR_2G_MIN_BYTES:-1850000000}"
 PGM_CONTOUR_2G_MAX_BYTES="${PGM_CONTOUR_2G_MAX_BYTES:-2350000000}"
 PGM_CONTOUR_DURATION_REJECT_BELOW_SEC="${PGM_CONTOUR_DURATION_REJECT_BELOW_SEC:-300}"
-# Next start ≈ prev + duration: allow early by TOLERANCE, late/stop by MAX_STOP
-# (short Contour split pause ~28s OK; battery-change ~54s+ stays separate).
+# Next start ≈ prev + duration: early by TOLERANCE, late confident by MAX_STOP;
+# MAX_STOP+1 … SUSPECT_MAX_STOP = review candidates (default 46–100s).
 PGM_CONTOUR_TIME_TOLERANCE_SEC="${PGM_CONTOUR_TIME_TOLERANCE_SEC:-30}"
 PGM_CONTOUR_TIME_MAX_STOP_SEC="${PGM_CONTOUR_TIME_MAX_STOP_SEC:-45}"
+PGM_CONTOUR_TIME_SUSPECT_MAX_STOP_SEC="${PGM_CONTOUR_TIME_SUSPECT_MAX_STOP_SEC:-100}"
+# Suspect Contour review blobs (parallel notes); filled by build_contour_suspect_groups.
+CONTOUR_SUSPECT_BLOBS=()
+CONTOUR_SUSPECT_NOTES=()
 # GoPro cameras (7, 10, …): ~4 GB chapters often ~6:49 (409s).
 PGM_GOPRO7_SIZE_MIN_BYTES=$PGM_SIZE_SPLIT_4G_MIN_BYTES
 PGM_GOPRO7_SIZE_MAX_BYTES=$PGM_SIZE_SPLIT_4G_MAX_BYTES
@@ -3436,7 +3447,8 @@ group_merge_description_label() {
   local -a files=("$@")
   local fb middle
   fb="${files[0]##*/}"
-  if (( ${#files[@]} >= 2 )) && group_is_contour_size_split "${files[@]}"; then
+  if (( ${#files[@]} >= 2 )) && { group_is_contour_size_split "${files[@]}" \
+    || group_is_contour_suspect "${files[@]}"; }; then
     printf 'Contour\n'
     return 0
   fi
@@ -4688,18 +4700,17 @@ is_partial_contour_size_split_segment() {
   return 0
 }
 
-# Next Contour chapter follows prev by hybrid start + duration, with stop slack.
-# Default: next may start 30s early … 45s after expected end (short split pause;
-# longer battery-change gaps do not chain).
-contour_chapter_timestamps_follow() {
+# Sets CONTOUR_LINK_DELTA = next_start − (prev_start + duration). Same calendar day.
+contour_chapter_time_delta() {
   local prev_f="$1" next_f="$2"
-  local prev_epoch next_epoch dur expected delta tol max_stop
-  local prev_base next_base
+  local prev_epoch next_epoch dur expected
+  local prev_base next_base prev_day
 
+  CONTOUR_LINK_DELTA=""
   prev_base="${prev_f##*/}"
   next_base="${next_f##*/}"
   contour_basename_parse "$prev_base" || return 1
-  local prev_day="$CONTOUR_TS_DATE"
+  prev_day="$CONTOUR_TS_DATE"
   contour_basename_parse "$next_base" || return 1
   [[ "$CONTOUR_TS_DATE" == "$prev_day" ]] || return 1
 
@@ -4707,16 +4718,50 @@ contour_chapter_timestamps_follow() {
   next_epoch="$(pgm_hybrid_start_epoch "$next_f" 2>/dev/null)" || return 1
   (( next_epoch >= prev_epoch )) || return 1
 
+  dur=$(ffprobe_duration_seconds "$prev_f" 2>/dev/null) || dur=""
+  [[ -n "$dur" ]] || return 1
+  expected=$(awk -v p="$prev_epoch" -v d="$dur" 'BEGIN{printf "%d", p+d+0.5}')
+  CONTOUR_LINK_DELTA=$(( next_epoch - expected ))
+  printf '%s\n' "$CONTOUR_LINK_DELTA"
+}
+
+# Confident Contour link: next may start TOLERANCE early … MAX_STOP after expected end.
+contour_chapter_timestamps_follow() {
+  local prev_f="$1" next_f="$2"
+  local delta tol max_stop
+  delta=$(contour_chapter_time_delta "$prev_f" "$next_f" 2>/dev/null) || return 1
   tol="${PGM_CONTOUR_TIME_TOLERANCE_SEC:-30}"
   max_stop="${PGM_CONTOUR_TIME_MAX_STOP_SEC:-45}"
   [[ "$tol" =~ ^[0-9]+$ ]] || tol=30
   [[ "$max_stop" =~ ^[0-9]+$ ]] || max_stop=45
-
-  dur=$(ffprobe_duration_seconds "$prev_f" 2>/dev/null) || dur=""
-  [[ -n "$dur" ]] || return 1
-  expected=$(awk -v p="$prev_epoch" -v d="$dur" 'BEGIN{printf "%d", p+d+0.5}')
-  delta=$(( next_epoch - expected ))
   (( delta >= -tol && delta <= max_stop ))
+}
+
+# Suspect Contour link: after confident MAX_STOP, through SUSPECT_MAX_STOP (default 46–100).
+contour_chapter_timestamps_suspect_link() {
+  local prev_f="$1" next_f="$2"
+  local delta tol max_stop suspect_max
+  delta=$(contour_chapter_time_delta "$prev_f" "$next_f" 2>/dev/null) || return 1
+  tol="${PGM_CONTOUR_TIME_TOLERANCE_SEC:-30}"
+  max_stop="${PGM_CONTOUR_TIME_MAX_STOP_SEC:-45}"
+  suspect_max="${PGM_CONTOUR_TIME_SUSPECT_MAX_STOP_SEC:-100}"
+  [[ "$tol" =~ ^[0-9]+$ ]] || tol=30
+  [[ "$max_stop" =~ ^[0-9]+$ ]] || max_stop=45
+  [[ "$suspect_max" =~ ^[0-9]+$ ]] || suspect_max=100
+  (( suspect_max > max_stop )) || return 1
+  (( delta > max_stop && delta <= suspect_max ))
+}
+
+# Any link still inside the suspect ceiling (confident or suspect band).
+contour_chapter_timestamps_within_suspect_ceiling() {
+  local prev_f="$1" next_f="$2"
+  local delta tol suspect_max
+  delta=$(contour_chapter_time_delta "$prev_f" "$next_f" 2>/dev/null) || return 1
+  tol="${PGM_CONTOUR_TIME_TOLERANCE_SEC:-30}"
+  suspect_max="${PGM_CONTOUR_TIME_SUSPECT_MAX_STOP_SEC:-100}"
+  [[ "$tol" =~ ^[0-9]+$ ]] || tol=30
+  [[ "$suspect_max" =~ ^[0-9]+$ ]] || suspect_max=100
+  (( delta >= -tol && delta <= suspect_max ))
 }
 
 contour_run_valid() {
@@ -4734,10 +4779,59 @@ contour_run_valid() {
   is_partial_contour_size_split_segment "$f"
 }
 
+# Suspect run: all links ≤ suspect ceiling; at least one link in the suspect band; not a confident run.
+contour_suspect_run_valid() {
+  local -a run=("$@")
+  local i n=${#run[@]} f has_suspect=0
+  (( n >= 2 )) || return 1
+  contour_run_valid "${run[@]}" && return 1
+  for (( i = 0; i < n - 1; i++ )); do
+    is_full_contour_size_split_segment "${run[i]}" || return 1
+    contour_chapter_timestamps_within_suspect_ceiling "${run[i]}" "${run[i + 1]}" || return 1
+    if contour_chapter_timestamps_suspect_link "${run[i]}" "${run[i + 1]}"; then
+      has_suspect=1
+    fi
+  done
+  (( has_suspect )) || return 1
+  f="${run[n - 1]}"
+  if is_full_contour_size_split_segment "$f"; then
+    return 0
+  fi
+  is_partial_contour_size_split_segment "$f"
+}
+
 group_is_contour_size_split() {
   local -a files=("$@")
   (( ${#files[@]} >= 2 )) || return 1
   contour_run_valid "${files[@]}"
+}
+
+group_is_contour_suspect() {
+  local -a files=("$@")
+  (( ${#files[@]} >= 2 )) || return 1
+  contour_suspect_run_valid "${files[@]}"
+}
+
+# Human note of suspect-band gaps inside a Contour run (e.g. "+54s after 20130809_083622.mp4").
+contour_suspect_gap_note() {
+  local -a run=("$@")
+  local i n=${#run[@]} delta parts=() pb
+  n=${#run[@]}
+  (( n >= 2 )) || return 1
+  for (( i = 0; i < n - 1; i++ )); do
+    delta=$(contour_chapter_time_delta "${run[i]}" "${run[i + 1]}" 2>/dev/null) || continue
+    if contour_chapter_timestamps_suspect_link "${run[i]}" "${run[i + 1]}"; then
+      pb="${run[i]##*/}"
+      if (( delta >= 0 )); then
+        parts+=("+${delta}s after ${pb}")
+      else
+        parts+=("${delta}s after ${pb}")
+      fi
+    fi
+  done
+  (( ${#parts[@]} > 0 )) || return 1
+  local IFS='; '
+  printf '%s\n' "${parts[*]}"
 }
 
 contour_group_output_file() {
@@ -4824,6 +4918,84 @@ build_contour_size_split_groups() {
   pgm_progress_end
 
   GROUP_BLOBS=( "${kept[@]}" "${new_groups[@]}" )
+}
+
+# After confident Contour groups: find runs with at least one 46–100s gap (suspect review).
+# Uses Contour files from remaining singles and from confident Contour groups so a
+# confident [1,2] plus +54s file 3 becomes a suspect [1,2,3] for manual review.
+build_contour_suspect_groups() {
+  local -a pool=() run=() files=()
+  local blob f base i n note
+  CONTOUR_SUSPECT_BLOBS=()
+  CONTOUR_SUSPECT_NOTES=()
+
+  for blob in "${GROUP_BLOBS[@]}"; do
+    group_files_to_array "$blob" files
+    if (( ${#files[@]} >= 2 )); then
+      if group_is_contour_size_split "${files[@]}"; then
+        pool+=("${files[@]}")
+      fi
+      continue
+    fi
+    base="${files[0]##*/}"
+    contour_basename_parse "$base" || continue
+    pool+=("${files[0]}")
+  done
+
+  (( ${#pool[@]} >= 2 )) || return 0
+
+  mapfile -t pool < <(
+    for f in "${pool[@]}"; do
+      e="$(pgm_hybrid_start_epoch "$f" 2>/dev/null)" || e=0
+      printf '%020d\t%s\n' "$e" "$f"
+    done | LC_ALL=C sort -t $'\t' -k1,1n -k2,2 | cut -f2-
+  )
+  # Dedupe paths (a file can appear only once).
+  local -a uniq=()
+  local prev=""
+  for f in "${pool[@]}"; do
+    [[ "$f" == "$prev" ]] && continue
+    uniq+=("$f")
+    prev="$f"
+  done
+  pool=("${uniq[@]}")
+  n=${#pool[@]}
+  i=0
+  while (( i < n )); do
+    pgm_progress_update "Contour suspect" "$((i + 1))" "$n" "${pool[i]}"
+    if is_full_contour_size_split_segment "${pool[i]}"; then
+      run=("${pool[i]}")
+    else
+      (( i++ )) || true
+      continue
+    fi
+    (( i++ )) || true
+    while (( i < n )); do
+      f="${pool[i]}"
+      base="${f##*/}"
+      pgm_progress_update "Contour suspect" "$((i + 1))" "$n" "$f"
+      contour_basename_parse "$base" || break
+      if ! contour_chapter_timestamps_within_suspect_ceiling "${run[-1]}" "$f"; then
+        break
+      fi
+      if is_full_contour_size_split_segment "$f"; then
+        run+=("$f")
+        (( i++ )) || true
+        continue
+      fi
+      if is_partial_contour_size_split_segment "$f"; then
+        run+=("$f")
+        (( i++ )) || true
+      fi
+      break
+    done
+    if contour_suspect_run_valid "${run[@]}"; then
+      note=$(contour_suspect_gap_note "${run[@]}" 2>/dev/null) || note="suspect gap"
+      CONTOUR_SUSPECT_BLOBS+=("$(printf '%s\n' "${run[@]}")")
+      CONTOUR_SUSPECT_NOTES+=("$note")
+    fi
+  done
+  pgm_progress_end
 }
 
 # Raw GoPro camera chapter name (HERO6+ / MAX): G[HX] + 2-digit chapter + 4-digit
@@ -6391,6 +6563,8 @@ build_chapter_groups() {
   echo "$(pgm_ts) Building chapter plan (${n} file(s))…"
   pgm_hybrid_start_cache_clear
   PGM_FFPROBE_DUR_CACHE=()
+  CONTOUR_SUSPECT_BLOBS=()
+  CONTOUR_SUSPECT_NOTES=()
   for f in "${sorted[@]}"; do
     base="${f##*/}"
     is_concat_output_basename "$base" && continue
@@ -6414,8 +6588,10 @@ build_chapter_groups() {
   build_letter_chapter_groups
   # 5) ~4 GB / ~12 GB size-split chapters without letter / _part_XX names
   build_size_split_groups
-  # 6) Contour ~2 GB size-split (YYYYMMDD_HHMMSS / _NVenc_*; wider stop gap than GoPro)
+  # 6) Contour ~2 GB size-split (YYYYMMDD_HHMMSS / _NVenc_*; confident ≤45s)
   build_contour_size_split_groups
+  # 6b) Contour suspect review runs (46–100s gaps; not auto-merged)
+  build_contour_suspect_groups
   # 7) 70mai NO* and EV* continuous journeys (sequence +1; EV may start sooner than a minute)
   build_dashcam_journey_groups
   pgm_progress_end
@@ -6443,9 +6619,9 @@ print_size_split_group_hint() {
 
 print_group_plan() {
   local -a all_mp4=("$@")
-  local gidx=0 mergeable=0 size_split_groups=0 contour_groups=0 part_groups=0 raw_gopro_groups=0 dashcam_groups=0 standalone=0
+  local gidx=0 mergeable=0 size_split_groups=0 contour_groups=0 contour_suspect_groups=0 part_groups=0 raw_gopro_groups=0 dashcam_groups=0 standalone=0
   local -a files=()
-  local f base part cam blob out_name is_ss
+  local f base part cam blob out_name is_ss note i
   local group_bytes=0 sz
   if (( FORCE_MERGE )); then
     if (( FORCE_MERGE_PLUS_N > 0 )); then
@@ -6579,7 +6755,7 @@ print_group_plan() {
     done
   fi
   if (( contour_groups > 0 )); then
-    echo "Merge candidates (Contour ~2 GB size-split; YYYYMMDD_HHMMSS / _NVenc_*; start+duration chain with Contour stop slack):"
+    echo "Merge candidates (Contour ~2 GB size-split; YYYYMMDD_HHMMSS / _NVenc_*; start+duration chain ≤${PGM_CONTOUR_TIME_MAX_STOP_SEC:-45}s after chapter end):"
     gidx=0
     for blob in "${GROUP_BLOBS[@]}"; do
       group_files_to_array "$blob" files
@@ -6593,6 +6769,34 @@ print_group_plan() {
       else
         printf '  [group %d/%d] %d clips (Contour) → %s\n' \
           "$gidx" "$contour_groups" "${#files[@]}" "$out_name"
+      fi
+      group_bytes=0
+      for f in "${files[@]}"; do
+        print_chapter_file_line '      ' "$f"
+        sz=$(file_size_bytes "$f")
+        (( group_bytes += sz ))
+      done
+      printf '      input total (%d files): %s\n' "${#files[@]}" "$(format_bytes_human "$group_bytes")"
+      echo
+    done
+  fi
+  contour_suspect_groups=${#CONTOUR_SUSPECT_BLOBS[@]}
+  if (( contour_suspect_groups > 0 )); then
+    echo "Possible Contour merges (review — gap $(( ${PGM_CONTOUR_TIME_MAX_STOP_SEC:-45} + 1 ))–${PGM_CONTOUR_TIME_SUSPECT_MAX_STOP_SEC:-100}s after chapter end; default Skip, not auto-merged):"
+    gidx=0
+    for i in "${!CONTOUR_SUSPECT_BLOBS[@]}"; do
+      blob="${CONTOUR_SUSPECT_BLOBS[$i]}"
+      note="${CONTOUR_SUSPECT_NOTES[$i]:-suspect gap}"
+      group_files_to_array "$blob" files
+      (( ${#files[@]} < 2 )) && continue
+      (( gidx++ )) || true
+      out_name=$(group_output_file "${files[@]}")
+      if [[ -e "$out_name" ]]; then
+        printf '  [suspect %d/%d] %d clips (Contour review: %s) → %s  (already merged)\n' \
+          "$gidx" "$contour_suspect_groups" "${#files[@]}" "$note" "$out_name"
+      else
+        printf '  [suspect %d/%d] %d clips (Contour review: %s) → %s\n' \
+          "$gidx" "$contour_suspect_groups" "${#files[@]}" "$note" "$out_name"
       fi
       group_bytes=0
       for f in "${files[@]}"; do
@@ -6686,11 +6890,15 @@ print_group_plan() {
   (( raw_gopro_groups > 0 )) && breakdown+="${breakdown:+, }${raw_gopro_groups} GoPro chapter"
   (( size_split_groups > 0 )) && breakdown+="${breakdown:+, }${size_split_groups} size-split"
   (( contour_groups > 0 )) && breakdown+="${breakdown:+, }${contour_groups} Contour ~2 GB"
+  (( contour_suspect_groups > 0 )) && breakdown+="${breakdown:+, }${contour_suspect_groups} Contour suspect"
   (( dashcam_groups > 0 )) && breakdown+="${breakdown:+, }${dashcam_groups} 70mai journey"
   if [[ -n "$breakdown" ]]; then
     echo "$(pgm_ts) Summary: ${mergeable} merge group(s) (${breakdown}), ${standalone} standalone file(s), ${PGM_ORPHAN_CONCAT_COUNT} merged output(s) without input chapters."
   else
     echo "$(pgm_ts) Summary: ${mergeable} merge group(s), ${standalone} standalone file(s), ${PGM_ORPHAN_CONCAT_COUNT} merged output(s) without input chapters."
+  fi
+  if (( contour_suspect_groups > 0 )); then
+    echo "$(pgm_ts) Contour suspect groups are listed for review (not counted in mergeable above until you choose Merge)."
   fi
   echo
 }
@@ -6777,7 +6985,8 @@ group_output_file() {
   if (( ${#files[@]} >= 2 )) && group_is_dashcam "${files[@]}"; then
     dashcam_resolved_output_file "${files[@]}" && return 0
   fi
-  if (( ${#files[@]} >= 2 )) && group_is_contour_size_split "${files[@]}"; then
+  if (( ${#files[@]} >= 2 )) && { group_is_contour_size_split "${files[@]}" \
+    || group_is_contour_suspect "${files[@]}"; }; then
     contour_group_output_file "${files[@]}" && return 0
   fi
   if (( ${#files[@]} >= 2 )) && group_is_size_split "${files[@]}"; then
@@ -7497,8 +7706,16 @@ prompt_merge_group_action() {
   shift 3
   local -a files=("$@")
   local output_exists=0 gpx_ok=1 can_gpx=0 complete=0 choice gps_log="" short_n=0
+  local contour_suspect=0 suspect_note=""
   local -a short_rows=()
   REPLY=skip
+  if [[ "${PGM_MERGE_GROUP_IS_CONTOUR_SUSPECT:-0}" == 1 ]]; then
+    contour_suspect=1
+    suspect_note="${PGM_MERGE_GROUP_CONTOUR_SUSPECT_NOTE:-suspect gap}"
+  elif group_is_contour_suspect "${files[@]}" 2>/dev/null; then
+    contour_suspect=1
+    suspect_note=$(contour_suspect_gap_note "${files[@]}" 2>/dev/null) || suspect_note="suspect gap"
+  fi
   if group_is_dashcam "${files[@]}"; then
     mapfile -t short_rows < <(dashcam_short_clip_rows "${files[@]}" || true)
     short_n=${#short_rows[@]}
@@ -7519,6 +7736,11 @@ prompt_merge_group_action() {
     complete=1
   fi
   if (( DO_YES )); then
+    if (( contour_suspect )) && (( ! complete )) && (( ! output_exists )); then
+      echo "$(pgm_ts) Contour suspect group — skipping under -y (review manually): ${suspect_note}"
+      REPLY=skip
+      return 0
+    fi
     if (( complete )); then
       echo "$(pgm_ts) Output already exists, skipping: ${output_file}"
       REPLY=skip
@@ -7535,6 +7757,11 @@ prompt_merge_group_action() {
     return 0
   fi
   if (( MERGE_ALL_REMAINING )); then
+    if (( contour_suspect )) && (( ! complete )) && (( ! output_exists )); then
+      echo "$(pgm_ts) Contour suspect group — not included in merge-all (review): ${suspect_note}"
+      REPLY=skip
+      return 0
+    fi
     if (( complete )); then
       REPLY=skip
     elif (( output_exists && can_gpx )); then
@@ -7639,6 +7866,21 @@ prompt_merge_group_action() {
       q)  REPLY=quit; return 0 ;;
     esac
   else
+    if (( contour_suspect )); then
+      echo "$(pgm_ts) Contour suspect review (${suspect_note}). Not a confident chapter chain."
+      echo "  [N] Skip — leave separate (default)"
+      echo "  [m] Merge this suspected Contour group"
+      echo "  [a] Skip all remaining groups"
+      echo "  [q] Quit"
+      pgm_read_key_choice "Contour suspect — group ${group_num}/${group_total} [N/m/a/q]: " n "nmaq"
+      choice="$REPLY"
+      case "$choice" in
+        n)  REPLY=skip; return 0 ;;
+        m)  REPLY=merge; return 0 ;;
+        a)  REPLY=skip_all; return 0 ;;
+        q)  REPLY=quit; return 0 ;;
+      esac
+    fi
     echo "  [Y] Merge all remaining groups (asks output date/time for each first) (default)"
     echo "  [n] Skip this group"
     echo "  [a] Skip all remaining groups"
@@ -7757,6 +7999,9 @@ file_recording_timestamp_display() {
   elif dashcam_parse_basename "$base"; then
     date="$DASHCAM_DATE"
     time="$DASHCAM_TIME"
+  elif contour_basename_parse "$base"; then
+    date="$CONTOUR_TS_DATE"
+    time="$CONTOUR_TS_TIME"
   fi
   if [[ ${#date} -eq 8 && ${#time} -eq 6 ]]; then
     printf '%s-%s-%s %s:%s:%s\n' \
@@ -7839,10 +8084,15 @@ show_merge_group_detail() {
   local group_num="$1" group_total="$2"
   shift 2
   local -a files=("$@")
-  local output_file
+  local output_file suspect_note=""
   output_file=$(group_output_file "${files[@]}")
   echo
-  echo "=== Merge group ${group_num} of ${group_total} (${#files[@]} parts) ==="
+  if [[ "${PGM_MERGE_GROUP_IS_CONTOUR_SUSPECT:-0}" == 1 ]]; then
+    suspect_note="${PGM_MERGE_GROUP_CONTOUR_SUSPECT_NOTE:-suspect gap}"
+    echo "=== Merge group ${group_num} of ${group_total} (${#files[@]} parts) — Contour SUSPECT (${suspect_note}) ==="
+  else
+    echo "=== Merge group ${group_num} of ${group_total} (${#files[@]} parts) ==="
+  fi
   print_merge_group_io_block "$output_file" "${files[@]}"
   if group_is_dashcam "${files[@]}"; then
     print_dashcam_gpx_suggestion "$output_file" '  '
@@ -7976,8 +8226,8 @@ dashcam_offer_gpx_only() {
 
 do_merge() {
   local merger rc=0 group_num=0 mergeable_total=0
-  local blob action
-  local -a files=() mergeable_blobs=()
+  local blob action si
+  local -a files=() mergeable_blobs=() mergeable_suspect_notes=()
   merger=$(find_merger) || {
     mp4_merge_print_not_found_help
     if ! prompt_install_mp4_merge_now; then
@@ -8044,6 +8294,7 @@ do_merge() {
     if (( ${#files[@]} >= 2 )); then
       if merge_group_assert_codecs "${files[@]}"; then
         mergeable_blobs+=("$blob")
+        mergeable_suspect_notes+=("")
       else
         (( codec_skip++ )) || true
         if (( FORCE_MERGE )); then
@@ -8052,6 +8303,25 @@ do_merge() {
         echo "$(pgm_ts) Skipping this group (incompatible tracks)."
         echo
       fi
+    fi
+  done
+  # Contour suspect review groups (46–100s gaps): offered after confident groups.
+  for si in "${!CONTOUR_SUSPECT_BLOBS[@]}"; do
+    blob="${CONTOUR_SUSPECT_BLOBS[$si]}"
+    group_files_to_array "$blob" files
+    (( ${#files[@]} >= 2 )) || continue
+    local all_here=1
+    for f in "${files[@]}"; do
+      [[ -f "$f" ]] || { all_here=0; break; }
+    done
+    (( all_here )) || continue
+    if merge_group_assert_codecs "${files[@]}"; then
+      mergeable_blobs+=("$blob")
+      mergeable_suspect_notes+=("${CONTOUR_SUSPECT_NOTES[$si]:-suspect gap}")
+    else
+      (( codec_skip++ )) || true
+      echo "$(pgm_ts) Skipping Contour suspect group (incompatible tracks)."
+      echo
     fi
   done
   mergeable_total=${#mergeable_blobs[@]}
@@ -8063,7 +8333,7 @@ do_merge() {
     fi
     if (( ! DASHCAM_OFFER_SAID )); then
       echo "$(pgm_ts) No multi-part chapter groups to merge."
-      echo "$(pgm_ts) Tip: sequential GoPro clips (_part_01… with chaining timestamps, bare _Timelapse chapters without _part_XX, YYYYMMDD_HHMMSS_… ~4 GB / ~12 GB, a/b/c letter suffixes, or 70mai NOYYYYMMDD-HHMMSS-NNNNNNX journeys) may be mergeable chapters."
+      echo "$(pgm_ts) Tip: sequential GoPro clips (_part_01… with chaining timestamps, bare _Timelapse chapters without _part_XX, YYYYMMDD_HHMMSS_… ~4 GB / ~12 GB / Contour ~2 GB, a/b/c letter suffixes, or 70mai NOYYYYMMDD-HHMMSS-NNNNNNX journeys) may be mergeable chapters."
       echo "$(pgm_ts) Or name the files on the command line to force a merge in that order."
     fi
     return 0
@@ -8094,16 +8364,36 @@ do_merge() {
     return 0
   fi
 
-  for blob in "${mergeable_blobs[@]}"; do
+  local mi=0
+  for mi in "${!mergeable_blobs[@]}"; do
+    blob="${mergeable_blobs[$mi]}"
     group_files_to_array "$blob" files
     output_file=$(group_output_file "${files[@]}")
     if [[ -n "${GPX_BATCH_SKIP[$output_file]:-}" ]]; then
       continue
     fi
+    # Inputs may have been deleted after a confident Contour merge that overlaps a suspect.
+    local inputs_ok=1
+    for f in "${files[@]}"; do
+      [[ -f "$f" ]] || { inputs_ok=0; break; }
+    done
+    if (( ! inputs_ok )); then
+      echo "$(pgm_ts) Skipping group — input chapter(s) no longer present (often after a prior Contour merge)."
+      echo
+      continue
+    fi
     (( group_num++ )) || true
+    PGM_MERGE_GROUP_IS_CONTOUR_SUSPECT=0
+    PGM_MERGE_GROUP_CONTOUR_SUSPECT_NOTE=""
+    if [[ -n "${mergeable_suspect_notes[$mi]:-}" ]]; then
+      PGM_MERGE_GROUP_IS_CONTOUR_SUSPECT=1
+      PGM_MERGE_GROUP_CONTOUR_SUSPECT_NOTE="${mergeable_suspect_notes[$mi]}"
+    fi
     show_merge_group_detail "$group_num" "$mergeable_total" "${files[@]}"
     prompt_merge_group_action "$group_num" "$mergeable_total" "$output_file" "${files[@]}"
     action=$REPLY
+    PGM_MERGE_GROUP_IS_CONTOUR_SUSPECT=0
+    PGM_MERGE_GROUP_CONTOUR_SUSPECT_NOTE=""
     case "$action" in
       merge)
         run_merge_group "$merger" 0 "${files[@]}" || rc=$?
@@ -8158,14 +8448,17 @@ do_merge() {
       merge_all)
         MERGE_ALL_REMAINING=1
         # Ask date/time for every remaining merge before the first long mp4_merge.
+        # Contour suspect groups are excluded (merge-all does not auto-take them).
         local -a preask_blobs=()
-        local seen_preask=0 b_pre out_pre
+        local seen_preask=0 b_pre out_pre pi
         local -a f_pre=()
-        for b_pre in "${mergeable_blobs[@]}"; do
+        for pi in "${!mergeable_blobs[@]}"; do
+          b_pre="${mergeable_blobs[$pi]}"
           if (( ! seen_preask )); then
             [[ "$b_pre" == "$blob" ]] || continue
             seen_preask=1
           fi
+          [[ -n "${mergeable_suspect_notes[$pi]:-}" ]] && continue
           group_files_to_array "$b_pre" f_pre
           out_pre=$(group_output_file "${f_pre[@]}")
           [[ -n "${GPX_BATCH_SKIP[$out_pre]:-}" ]] && continue
