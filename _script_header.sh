@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261116.181000 - script_arrow_menu: Space selects like Enter
 # v. 20261116.154800 - script_arrow_menu: fewer blank lines (no gap before hint / after select)
 # v. 20261116.151500 - shared script_arrow_menu (Up/Down + Enter) for interactive prompts
 # v. 20261116.143700 - shared terminal colors: ask Use colors?, green questions, highlight (default)
@@ -16,6 +17,7 @@
 # v. 20260716.173600 - print_version_banner uses CALLER_SCRIPT version fields
 # v. 20260716.163300 - versioning v. YYYYMMDD.HH24MISS; parse first # v. YYYYMMDD.HHMMSS line
 
+# 2026.11.16 - v. 1.69.181000 - script_arrow_menu: Space accepts the highlighted row (same as Enter).
 # 2026.11.16 - v. 1.69.154800 - script_arrow_menu: drop blank line before the hint and after select.
 # 2026.11.16 - v. 1.69.151500 - Shared script_arrow_menu: Up/Down highlight, Enter select;
 #                        letter keys still work; used by AV interactive prompts.
@@ -615,7 +617,7 @@ script_printf_prompt() {
 #######################################################################################
 # Shared Up/Down arrow menu for interactive audio / media / video scripts.
 # Usage: script_arrow_menu DEFAULT_KEY "key|label" "key|label" ...
-# Sets REPLY to the chosen key (lowercase). Up/Down move; Enter accepts;
+# Sets REPLY to the chosen key (lowercase). Up/Down move; Enter or Space accepts;
 # pressing a listed key accepts immediately. Digits 1/2 map to y/n when those
 # keys are options and 1/2 are not. Non-TTY: static list + one-key read.
 #######################################################################################
@@ -770,10 +772,10 @@ script_arrow_menu() {
       fi
     done
     if (( SCRIPT_USE_COLORS )); then
-      printf '  %sUp/Down move · Enter select · or press a listed key%s\n' \
+      printf '  %sUp/Down move · Enter/Space select · or press a listed key%s\n' \
         "$SCRIPT_C_G" "$SCRIPT_C_0"
     else
-      echo "  Up/Down move · Enter select · or press a listed key"
+      echo "  Up/Down move · Enter/Space select · or press a listed key"
     fi
   }
 
@@ -815,7 +817,8 @@ script_arrow_menu() {
       continue
     fi
 
-    if [[ -z "$byte" || "$byte" == $'\n' || "$byte" == $'\r' ]]; then
+    # Enter, Space, or empty (timeout) accept the highlighted row.
+    if [[ -z "$byte" || "$byte" == $'\n' || "$byte" == $'\r' || "$byte" == ' ' ]]; then
       REPLY="$(script_arrow_choice "${keys[idx]}")"
       accepted=1
       break
