@@ -8424,7 +8424,7 @@ do_merge() {
     fi
     if (( ! DASHCAM_OFFER_SAID )); then
       echo "$(pgm_ts) No multi-part chapter groups to merge."
-      echo "$(pgm_ts) Tip: sequential GoPro clips (_part_01… with chaining timestamps, bare _Timelapse chapters without _part_XX, YYYYMMDD_HHMMSS_… ~4 GB / ~12 GB / Contour ~2 GB, a/b/c letter suffixes, or 70mai NOYYYYMMDD-HHMMSS-NNNNNNX journeys) may be mergeable chapters."
+      echo "$(pgm_ts) Tip: sequential GoPro clips (_part_01… with chaining timestamps, bare _Timelapse chapters without _part_XX, YYYYMMDD_HHMMSS_… ~4 GB / ~12 GB, Contour bare/_NVenc_/Contour+2 by start+duration, a/b/c letter suffixes, or 70mai NOYYYYMMDD-HHMMSS-NNNNNNX journeys) may be mergeable chapters."
       echo "$(pgm_ts) Or name the files on the command line to force a merge in that order."
     fi
     return 0
