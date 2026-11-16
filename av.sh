@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# v. 20261116.161500 - Up/Down arrow menu (shared script_arrow_menu); drop dialog
 # v. 20261116.112100 - dialog --menu when dialog is installed (arrows + tags); key menu fallback
 # v. 20261115.184800 - keys 10+: letter suffix (v9 then va, vb…); always two chars
 # v. 20261115.184700 - column gap: pad left to content width + two spaces before |
@@ -8,6 +9,8 @@
 # v. 20261115.184000 - two-column menu (Audio/Video | rest); no default selection
 # v. 20261115.183600 - AV menu: list audio/media/video scripts; single-key pick, no Enter
 #
+# 2026.11.16 - v. 0.5.0 - Prefer shared script_arrow_menu (Up/Down + Enter; tags a1/v2/…).
+#   No dialog(1). Typed two-column key menu remains the non-TTY / missing-helper fallback.
 # 2026.11.16 - v. 0.4.0 - when dialog(1) is installed and stdin/stdout are a TTY, use dialog
 #   --menu (arrows + Enter; tags a1/v2/…); Esc/Cancel quits. Otherwise keep the typed-key menu.
 # 2026.11.15 - v. 0.3.4 - after 9 use a,b,c… (skip q); drop two-digit keys / digit timeout
@@ -21,13 +24,14 @@
 # av.sh
 #
 # Short launcher: show audio / media / video tools beside this script and run one.
-# With dialog: arrows + Enter (tags a1/v2/…). Without: typed keys, no Enter. [q]/Esc quits.
+# TTY + shared arrow menu: Up/Down + Enter (tags a1/v2/…; letter keys work). Otherwise
+# typed two-char keys, no Enter. [q] quits.
 #
 
 set -o nounset
 set -o pipefail
 
-SCRIPT_VERSION="0.4.0"
+SCRIPT_VERSION="0.5.0"
 
 # 1..9 → digit; 10+ → a,b,c… (q skipped so it never looks like quit).
 AV_LETTER_SUFFIXES="abcdefghijklmnoprstuvwxyz"
@@ -38,6 +42,25 @@ av_script_dir() {
 
   dir="$(cd "$(dirname "$src")" && pwd -P)"
   printf '%s' "$dir"
+}
+
+# Load only the shared colors/arrow-menu block from _script_header.sh (not the full header:
+# banners, LC_ALL=C, INT trap, apt prompts). Same approach as rename.sh.
+av_load_script_arrow_menu() {
+  local live_dir="${1-}" hdr="" dir="" block=""
+
+  declare -F script_arrow_menu >/dev/null 2>&1 && return 0
+  for dir in "$live_dir" "${profile_location_dir:-$HOME}/bin" "$HOME/bin" "/root/bin"; do
+    [[ -n "$dir" && -f "$dir/_script_header.sh" ]] || continue
+    hdr="$dir/_script_header.sh"
+    break
+  done
+  [[ -n "$hdr" ]] || return 1
+  block="$(sed -n '/^# Shared terminal colors for interactive/,/^# Ask once\./p' "$hdr" 2>/dev/null || true)"
+  [[ "$block" == *'script_arrow_menu()'* ]] || return 1
+  # shellcheck disable=SC1090
+  eval "$block"
+  declare -F script_arrow_menu >/dev/null 2>&1
 }
 
 # Append basename to nameref array if file exists and is not already listed.
@@ -136,14 +159,14 @@ av_index_suffix() {
   return 1
 }
 
-# True when dialog can drive an interactive menu on this TTY.
-av_have_dialog() {
-  [[ -t 0 && -t 1 && -t 2 ]] || return 1
-  command -v dialog >/dev/null 2>&1
+# True when the shared Up/Down menu can run on this TTY.
+av_have_arrow_menu() {
+  [[ -t 0 && -t 1 ]] || return 1
+  declare -F script_arrow_menu >/dev/null 2>&1
 }
 
 # Register ITEM under PREFIX + suffix for 1-based N. Sets av_cell_out.
-# Fills key_to_script and appends tag/item to av_dialog_items.
+# Fills key_to_script and appends key|label to av_arrow_opts.
 av_item_cell() {
   local prefix="$1"
   local n="$2"
@@ -163,13 +186,13 @@ av_item_cell() {
     t) label="Tools  ${name}" ;;
     *) label="$name" ;;
   esac
-  av_dialog_items+=("$key" "$label")
+  av_arrow_opts+=("${key}|${label}")
   av_cell_out="  [${key}] ${name}"
 }
 
-# Build left/right rows and print two columns.
+# Build left/right rows and print two columns (typed-key fallback).
 # Left: Audio (a1..) then Video (v1..). Right: Media (m1..) then Tools (t1..).
-# Uses globals: key_to_script, av_cell_out
+# Uses globals: key_to_script, av_cell_out, av_arrow_opts
 av_print_two_columns() {
   local -n _la=$1
   local -n _lv=$2
@@ -243,6 +266,44 @@ av_print_two_columns() {
   done
 }
 
+# Register all scripts into key_to_script + av_arrow_opts (no column print).
+av_register_all() {
+  local -n _la=$1
+  local -n _lv=$2
+  local -n _rm=$3
+  local -n _rt=$4
+  local name n
+
+  if ((${#_la[@]})); then
+    n=1
+    for name in "${_la[@]}"; do
+      av_item_cell a "$n" "$name" || true
+      ((++n))
+    done
+  fi
+  if ((${#_lv[@]})); then
+    n=1
+    for name in "${_lv[@]}"; do
+      av_item_cell v "$n" "$name" || true
+      ((++n))
+    done
+  fi
+  if ((${#_rm[@]})); then
+    n=1
+    for name in "${_rm[@]}"; do
+      av_item_cell m "$n" "$name" || true
+      ((++n))
+    done
+  fi
+  if ((${#_rt[@]})); then
+    n=1
+    for name in "${_rt[@]}"; do
+      av_item_cell t "$n" "$name" || true
+      ((++n))
+    done
+  fi
+}
+
 # Read one key silently, then echo it once (avoids "vv" from tty echo + printf).
 av_read_char() {
   local __var="$1"
@@ -286,33 +347,14 @@ av_read_choice() {
   esac
 }
 
-# dialog --menu using av_dialog_items (tag label …). Sets av_choice_key.
-# Returns 0 with a script tag, or 0 with av_choice_key=q on cancel/Esc.
-av_dialog_choice() {
-  local tmp rc n_items menu_h
+# Shared Up/Down menu. Sets av_choice_key. Empty default = no preferred row mark;
+# Enter still accepts the highlighted row.
+av_arrow_choice() {
   av_choice_key=""
-  ((${#av_dialog_items[@]} >= 2)) || return 1
-
-  n_items=$(( ${#av_dialog_items[@]} / 2 ))
-  menu_h=$n_items
-  (( menu_h > 18 )) && menu_h=18
-  (( menu_h < 8 )) && menu_h=8
-
-  tmp="$(mktemp "${TMPDIR:-/tmp}/av_dialog.XXXXXX")" || return 1
-  if dialog --clear --title "AV menu" \
-      --ok-label "Run" --cancel-label "Quit" \
-      --menu "Arrows + Enter. Tags a1/v2/m1/t1…. Esc = quit." \
-      0 78 "$menu_h" "${av_dialog_items[@]}" 2>"$tmp"; then
-    av_choice_key="$(tr -d '\r\n' <"$tmp")"
-    rm -f -- "$tmp"
-    [[ -n "$av_choice_key" ]] || return 1
-    return 0
-  fi
-  rc=$?
-  rm -f -- "$tmp"
-  # Cancel / Esc / error → quit.
-  av_choice_key=q
-  (( rc == 1 || rc == 255 )) && return 0
+  ((${#av_arrow_opts[@]} >= 1)) || return 1
+  script_arrow_menu "" "${av_arrow_opts[@]}" "q|Quit"
+  av_choice_key="${REPLY:-}"
+  [[ -n "$av_choice_key" ]] || return 1
   return 0
 }
 
@@ -322,8 +364,8 @@ Usage: $(basename "$0") [-h|--help] [-v|--version] [--] [ARGS...]
 
 List audio / media / video scripts next to this file and run one.
 
-When dialog(1) is installed and this is a TTY:
-  arrows + Enter to run; tags a1/v2/…; Esc or Quit to leave.
+On a TTY with the shared arrow menu (_script_header.sh):
+  Up/Down + Enter to run; tags a1/v2/…; [q] Quit.
 
 Otherwise typed keys (no Enter, no default) — two chars after the section letter:
   a1..a9, aa..   audio
@@ -337,12 +379,12 @@ EOF
 }
 
 main() {
-  local dir chosen use_dialog=0
+  local dir chosen use_arrows=0
   local -a audio_scripts media_scripts video_scripts tool_scripts
   local -a forward=()
 
   declare -gA key_to_script=()
-  declare -ga av_dialog_items=()
+  declare -ga av_arrow_opts=()
 
   while (($#)); do
     case "$1" in
@@ -372,6 +414,12 @@ main() {
   done
 
   dir="$(av_script_dir)"
+  av_load_script_arrow_menu "$dir" || true
+  if [[ -t 1 ]] && declare -F script_colors_init >/dev/null 2>&1; then
+    SCRIPT_USE_COLORS=1
+    script_colors_init
+  fi
+
   av_collect "$dir" audio_scripts media_scripts video_scripts tool_scripts
 
   if ((${#audio_scripts[@]} + ${#media_scripts[@]} + ${#video_scripts[@]} + ${#tool_scripts[@]} == 0)); then
@@ -379,13 +427,13 @@ main() {
     exit 1
   fi
 
-  av_have_dialog && use_dialog=1
+  av_have_arrow_menu && use_arrows=1
 
   av_build_menu_maps() {
     key_to_script=()
-    av_dialog_items=()
-    if (( use_dialog )); then
-      av_print_two_columns audio_scripts video_scripts media_scripts tool_scripts >/dev/null
+    av_arrow_opts=()
+    if (( use_arrows )); then
+      av_register_all audio_scripts video_scripts media_scripts tool_scripts
     else
       printf '=== AV menu ============================================================\n'
       av_print_two_columns audio_scripts video_scripts media_scripts tool_scripts
@@ -397,10 +445,11 @@ main() {
   av_build_menu_maps
 
   while true; do
-    if (( use_dialog )); then
-      if ! av_dialog_choice; then
-        printf 'dialog menu failed — falling back to keys.\n' >&2
-        use_dialog=0
+    if (( use_arrows )); then
+      printf 'AV menu — Up/Down move · Enter run · [q] Quit\n'
+      if ! av_arrow_choice; then
+        printf 'Arrow menu failed — falling back to typed keys.\n' >&2
+        use_arrows=0
         av_build_menu_maps
         continue
       fi
