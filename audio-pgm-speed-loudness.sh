@@ -135,7 +135,7 @@ while [[ $# -gt 0 ]]; do
       if [[ -f "${profile_location_dir:-$HOME}/bin/_script_header.sh" ]]; then
         # shellcheck source=/dev/null
         . "${profile_location_dir:-$HOME}/bin/_script_header.sh" NO_STARTUP_DELAY
-        print_version_banne
+        print_version_banner
       else
         head -n1 "$0"
       fi

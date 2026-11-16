@@ -445,7 +445,7 @@ while [[ $# -gt 0 ]]; do
       exit 0
       ;;
     -v|--version)
-      print_version_banne
+      print_version_banner
       exit 0
       ;;
     --history)

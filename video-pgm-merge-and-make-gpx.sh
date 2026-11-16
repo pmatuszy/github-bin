@@ -1,14 +1,16 @@
 #!/bin/bash
+# v. 20261116.145000 - keep video_merge_ctrl_c after post-merge so Ctrl-C still prints SUMMARY
+# v. 20261116.144500 - Ctrl-C prints run SUMMARY (timing) before exit
 # v. 20261116.142200 - with colors on, highlight (default) on menu option lines
 # v. 20261116.142000 - after [p] seam preview on an already-merged group, return to that group's menu
 # v. 20261116.141500 - join preview: remove leftover .pgm_join_preview_*_DELETE_ME.mp4 on start / Ctrl-C / exit
 # v. 20261116.135500 - ask Use colors? (default Y); green questions / white timestamps; 1=yes 2=no on yn prompts
 # v. 20261116.124700 - remux Contour: preview joins first (default [1]); then remux+merge
 # v. 20261116.124500 - seam/join preview: call play-terminal with --silent
-# v. 20261116.123900 - Contour: remux video-copy + AAC + unify time_base when tracks diffe
+# v. 20261116.123900 - Contour: remux video-copy + AAC + unify time_base when tracks differ
 # v. 20261116.123600 - run summary: note groups skipped for incompatible tracks
 # v. 20261116.111200 - [1] join preview plays immediately (no second Y/n menu)
-# v. 20261116.084800 - [1] join preview: stitch ±2s into one …_DELETE_ME.mp4 then play; delete afte
+# v. 20261116.084800 - [1] join preview: stitch ±2s into one …_DELETE_ME.mp4 then play; delete after
 # v. 20261116.083600 - group prompt: [1] preview joins (last 2s + first 2s of next) before merge
 # v. 20261116.083200 - Contour: confident ≤12s; suspect 13–45s; short must not lead long; gap on INPUT line
 # v. 20261116.073500 - group prompt: [e] edit inputs (subset / drop last) before merge
@@ -111,6 +113,8 @@
 # v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
 # v. 20260805.154826 - after merge: copy GPS/dates from first chapter; FS times via touch -
 
+# 2026.11.16 - v. (Ctrl-C) - post-merge prompts keep video_merge_ctrl_c so SUMMARY still prints.
+# 2026.11.16 - v. 0.15.127 - Ctrl-C prints the run SUMMARY (timing / counts) before exit.
 # 2026.11.16 - v. 0.15.126 - When colors are on, menu lines highlight the "(default)" marker in
 #   green so the Enter choice stands out.
 # 2026.11.16 - v. 0.15.125 - After [p] Preview merge seams on an already-merged group, return to
@@ -1680,9 +1684,13 @@ format_duration_sec() {
   }'
 }
 
+PGM_SUMMARY_DONE=0
+
 print_pgm_timing_summary() {
   local end_ns total_sec wait_sec
+  (( PGM_SUMMARY_DONE )) && return 0
   [[ -n "${PGM_SCRIPT_START_NS}" ]] || return 0
+  PGM_SUMMARY_DONE=1
   end_ns=$(pgm_time_now_ns)
   total_sec=$(awk -v s0="${PGM_SCRIPT_START_NS}" -v s1="${end_ns}" 'BEGIN { printf "%.6f", s1 - s0 }')
   wait_sec=$(awk -v t="${total_sec}" -v p="${PGM_PROCESSING_SEC:-0}" \
@@ -2732,11 +2740,8 @@ _pgm_exiftool_rewrite_on_int() {
 }
 
 pgm_exiftool_rewrite_restore_int_trap() {
-  if [[ -n "${VIDEO_MERGE_OUT_FILE:-}" ]]; then
-    trap video_merge_ctrl_c INT
-  else
-    trap ctrl_c INT
-  fi
+  # Always keep summary-on-INT (header ctrl_c alone skips print_pgm_timing_summary).
+  trap video_merge_ctrl_c INT
 }
 
 format_bytes_short() {
@@ -2854,6 +2859,9 @@ video_merge_ctrl_c() {
     echo "$(pgm_ts) Removed temp merge directory: ${MERGE_TMP_DIR}"
     MERGE_TMP_DIR=""
   fi
+  echo
+  echo "$(pgm_ts) Interrupted (Ctrl-C)."
+  print_pgm_timing_summary
   ctrl_c
 }
 
@@ -8450,7 +8458,7 @@ run_merge_group() {
       [[ -n "${PGM_NORMALIZE_WORK_DIR:-}" ]] && rm -rf -- "${PGM_NORMALIZE_WORK_DIR}"
       PGM_NORMALIZE_WORK_DIR=""
       merge_clear_temp_work
-      trap ctrl_c INT
+      trap video_merge_ctrl_c INT
       VIDEO_MERGE_OUT_FILE=""
       pgm_clear_pending_output_times
       echo "$(pgm_ts) Remux failed — merge aborted." >&2
@@ -8482,7 +8490,7 @@ run_merge_group() {
       VIDEO_MERGE_OUT_FILE="$output_file"
       if ! merge_copy_back_with_progress "$write_path" "$output_file"; then
         rm -f -- "$output_file"
-        trap ctrl_c INT
+        trap video_merge_ctrl_c INT
         VIDEO_MERGE_OUT_FILE=""
         echo "$(pgm_ts) Merge finished, but could not copy ${write_path} to ${output_file}" >&2
         echo "$(pgm_ts) Merged file left at ${write_path}" >&2
@@ -8512,7 +8520,7 @@ run_merge_group() {
     pgm_write_gopro_gpx_if_merged "$output_file" "${files[@]}"
     echo "$(pgm_ts) Embedding a GPS point in the video if missing …"
     pgm_put_gps "$output_file" "${files[0]}"
-    trap ctrl_c INT
+    trap video_merge_ctrl_c INT
     VIDEO_MERGE_OUT_FILE=""
     pgm_finish_pending_output_times "$output_file"
     echo
@@ -8533,7 +8541,7 @@ run_merge_group() {
     rc=0
   else
     merge_clear_temp_work
-    trap ctrl_c INT
+    trap video_merge_ctrl_c INT
     VIDEO_MERGE_OUT_FILE=""
     pgm_clear_pending_output_times
     echo "$(pgm_ts) Merge failed (exit ${rc})." >&2
@@ -9678,7 +9686,7 @@ while [[ $# -gt 0 ]]; do
       exit 0
       ;;
     -v|--version)
-      print_version_banne
+      print_version_banner
       exit 0
       ;;
     --history)
@@ -9817,9 +9825,12 @@ fi
 
 pgm_record_script_start
 
-print_version_banne
+print_version_banner
 
 pgm_ask_colors
+
+# Ctrl-C during prompts/merges: cleanup + run SUMMARY.
+trap video_merge_ctrl_c INT
 
 pgm_print_run_settings
 

@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261116.145000 - Ctrl-C prints Timing / RUN FINISHED summary before exit
 # v. 20261115.215500 - skip per-folder run policies when only one work directory
 # v. 20261115.200000 - end Timing SUMMARY: Script + Version at top (Family-A)
 # v. 20261115.073500 - folder summary left-aligned + job timing; end-of-run wall-clock timing block
@@ -38,6 +39,7 @@
 # v. 20260809.155541 - prompt to exclude rename.sh helpers from PAR2 (default yes)
 # v. 20260806.224414 - initial: create volume-only PAR2 + SHA-512/MD5 hash for cwd subtree
 
+# 2026.11.16 - Ctrl-C cleanup also prints run Timing + RUN FINISHED summary.
 # 2026.11.15 - v. 0.1.34 - Skip startup per-folder policies when there is only one work directory
 #                        (whole scope, or per-subdir with fewer than 2 children); ask mid-job if needed
 # 2026.11.15 - v. 0.1.33 - Per-folder summary is left-aligned and uses this-folder start/elapsed (not script-so-far); end-of-run prints Timing (wall clock) + multi-dir recap + RUN FINISHED; remove centered per-folder RUN SUMMARY box
@@ -360,8 +362,15 @@ ctrl_c() {
   echo "** Trapped CTRL-C - cleaning up...."
   cleanup_on_interrupt
   echo
+  return_code=130
+  RUN_OUTCOME="${RUN_OUTCOME:-quit}"
+  print_run_finished_banner
   if [ -n "${STY:-}" ]; then
     echo -ne "${tcScrTitleStart}${CALLER_SCRIPT_BASENAME}${tcScrTitleEnd}"
+  fi
+  if [[ -r "${profile_location_dir:-$HOME}/bin/_script_footer.sh" ]]; then
+    # shellcheck disable=SC1091
+    . "${profile_location_dir:-$HOME}/bin/_script_footer.sh"
   fi
   exit 130
 }

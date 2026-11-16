@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261116.144500 - Ctrl-C during decide/prompts also prints SUMMARY (not only during apply)
 # v. 20261116.143700 - ask Use colors?; green questions / prompts; highlight (default)
 # v. 20261115.142500 - Contour metadata: allow short clips; --force-contour bypasses duration gate
 # v. 20261115.115000 - drop Fix i/n line; (i/n) already on exiftool ba
@@ -18,7 +19,7 @@
 # v. 20261115.090500 - [c] Always Contour start for later Contour files in this run
 # v. 20261115.085000 - Contour: offer Contour start (name − duration); agree if FS/media already at that start
 # v. 20261021.120123 - [k] keep as written for the rest of this run
-# v. 20261020.165500 - after each Fix dates key, print Selected: with the accepted answe
+# v. 20261020.165500 - after each Fix dates key, print Selected: with the accepted answer
 # v. 20261020.163800 - when nothing needed fixing, hint to re-run with --verbose
 # v. 20261020.163600 - --verbose prints every file check (stamps + verdict) even when dates already agree
 # v. 20261020.163300 - Processing header and before/after result block stand out (rules + mark changed rows)
@@ -33,7 +34,7 @@
 # 2026.11.15 - v. 0.1.29 - SUMMARY prints Script + Version at the top (shared identity helper)
 # 2026.11.15 - v. 0.1.28 - Contour Make/Model metadata skips the duration>120s gate (short clips
 #   still Contour); --force-contour / MFD_FORCE_CONTOUR forces Contour-style names the same way
-# 2026.11.15 - v. 0.1.27 - drop separate Fix i/n line; file index lives only on the exiftool ba
+# 2026.11.15 - v. 0.1.27 - drop separate Fix i/n line; file index lives only on the exiftool bar
 # 2026.11.15 - v. 0.1.26 - exiftool apply: include FileCreate/ModifyDate in the main write so the
 #   100% progress line is not printed twice
 # 2026.11.15 - v. 0.1.25 - Contour detect: Make/Model metadata first (Make=Contour); filename
@@ -50,6 +51,7 @@
 # 2026.11.15 - v. 0.1.17 - process in batches: ask all decisions for a batch first, then write; batch size
 #   default = all when ≤50 files, else 50 (--batch-size / MFD_BATCH_SIZE); Ctrl-C during a write stops
 #   exiftool and removes that file's *_exiftool_tmp
+# 2026.11.16 - v. 0.1.18 - Ctrl-C during decide/prompts prints SUMMARY (trap was only set while applying).
 # 2026.11.16 - v. 0.1.17 - Ask Use colors? at startup (default Yes); green question/prompt text;
 #   highlight "(default)" on menu lines (shared _script_header helpers).
 # 2026.11.15 - v. 0.1.16 - end-of-run SUMMARY prints Started / Finished / Total wall time (like other pgm scripts)
@@ -237,6 +239,8 @@ mfd_proc_end() {
 
 mfd_print_summary() {
   local end_str wall_sec wall_time other_sec
+  (( MFD_SUMMARY_DONE )) && return 0
+  MFD_SUMMARY_DONE=1
   end_str="$(mfd_wall_clock_now)"
   wall_sec=$(( $(date +%s) - ${MFD_SCRIPT_START_EPOCH:-$(date +%s)} ))
   (( wall_sec < 0 )) && wall_sec=0
@@ -331,6 +335,8 @@ mfd_progress_end() {
     MFD_PROGRESS_ACTIVE=0
   fi
 }
+
+MFD_SUMMARY_DONE=0
 
 mfd_ctrl_c() {
   echo
@@ -1376,7 +1382,7 @@ mfd_apply_plans() {
   MFD_APPLY_INDEX=""
   MFD_APPLY_TOTAL=""
   mfd_proc_end
-  trap - INT
+  trap mfd_ctrl_c INT
   mfd_clear_plans
 }
 
@@ -1779,7 +1785,7 @@ while [[ $# -gt 0 ]]; do
       exit 0
       ;;
     -v|--version)
-      print_version_banne
+      print_version_banner
       exit 0
       ;;
     --history)
@@ -1848,7 +1854,7 @@ if [[ -f "${BASH_SOURCE[0]}" ]]; then
   chmod 700 "${BASH_SOURCE[0]}" 2>/dev/null || true
 fi
 
-print_version_banne
+print_version_banner
 
 SCRIPT_TS_FN=mfd_ts
 if declare -F script_ask_colors >/dev/null 2>&1; then
@@ -1857,6 +1863,7 @@ fi
 
 MFD_SCRIPT_START_EPOCH=$(date +%s)
 MFD_SCRIPT_START_STR="$(mfd_wall_clock_now)"
+trap mfd_ctrl_c INT
 
 if ! mfd_find_exiftool >/dev/null; then
   echo "$(mfd_ts) exiftool not found (set MFD_EXIFTOOL or install exiftool)." >&2

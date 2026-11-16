@@ -1,6 +1,7 @@
 #!/bin/bash
+# v. 20261116.144500 - Ctrl-C during decide/prompts also prints SUMMARY (not only during apply)
 # v. 20261116.143700 - ask Use colors?; green questions / prompts; highlight (default)
-# v. 20261115.115000 - drop Write i/n line; (i/n) already on exiftool ba
+# v. 20261115.115000 - drop Write i/n line; (i/n) already on exiftool bar
 # v. 20261115.104500 - pre-scan progress bar (i/n + %)
 # v. 20261115.103000 - pre-scan: batch only files that still need a decision
 # v. 20261115.102500 - drop Files bar; show i/n on the live exiftool line
@@ -15,14 +16,15 @@
 # v. 20261115.091000 - Contour profile is Contour+2 only (drop ROAM/GPS generics)
 # v. 20261115.090000 - initial: set Make/Model/Comment camera profiles (Contour, GoPro, 70mai, custom)
 #
+# 2026.11.16 - v. 0.1.14 - Ctrl-C during decide/prompts prints SUMMARY (trap was only set while applying).
 # 2026.11.16 - v. 0.1.13 - Ask Use colors? at startup (default Yes); green question/prompt text;
 #   highlight "(default)" on menu lines (shared _script_header helpers).
-# 2026.11.15 - v. 0.1.12 - drop separate Write i/n line; file index lives only on the exiftool ba
+# 2026.11.15 - v. 0.1.12 - drop separate Write i/n line; file index lives only on the exiftool bar
 # 2026.11.15 - v. 0.1.12 - SUMMARY prints Script + Version at the top (shared identity helper)
 # 2026.11.15 - v. 0.1.11 - pre-scan shows a live progress bar (pct + i/n + filename)
-# 2026.11.15 - v. 0.1.10 - pre-scan after profile choice; batch size / Question X of Y cove
+# 2026.11.15 - v. 0.1.10 - pre-scan after profile choice; batch size / Question X of Y cover
 #   only files that still need a decision (already-tagged counted once, not as batch slots)
-# 2026.11.15 - v. 0.1.9 - apply progress: Write i/n line + (i/n) on exiftool bar; remove Files ba
+# 2026.11.15 - v. 0.1.9 - apply progress: Write i/n line + (i/n) on exiftool bar; remove Files bar
 # 2026.11.15 - v. 0.1.8 - SUMMARY Timing: Started / Finished / wall / processing / prompt-wait
 # 2026.11.15 - v. 0.1.7 - apply phase: files bar + exiftool % from *_exiftool_tmp; key lists keep
 #   distinct K vs k (rest-of-run Keep)
@@ -520,6 +522,8 @@ scm_run_exiftool_progress() {
   return "$rc"
 }
 
+SCM_SUMMARY_DONE=0
+
 scm_ctrl_c() {
   echo
   scm_progress_end
@@ -627,7 +631,7 @@ scm_apply_plans() {
   SCM_APPLY_INDEX=""
   SCM_APPLY_TOTAL=""
   scm_proc_end
-  trap - INT
+  trap scm_ctrl_c INT
   scm_clear_plans
 }
 
@@ -1111,6 +1115,8 @@ scm_ask_batch_size() {
 
 scm_print_summary() {
   local end_str wall_sec wall_time other_sec
+  (( SCM_SUMMARY_DONE )) && return 0
+  SCM_SUMMARY_DONE=1
   end_str="$(scm_wall_clock_now)"
   wall_sec=$(( $(date +%s) - ${SCM_SCRIPT_START_EPOCH:-$(date +%s)} ))
   (( wall_sec < 0 )) && wall_sec=0
@@ -1203,7 +1209,7 @@ while [[ $# -gt 0 ]]; do
       exit 0
       ;;
     -v|--version)
-      print_version_banne
+      print_version_banner
       exit 0
       ;;
     --history)
@@ -1302,7 +1308,7 @@ if [[ -f "${BASH_SOURCE[0]}" ]]; then
   chmod 700 "${BASH_SOURCE[0]}" 2>/dev/null || true
 fi
 
-print_version_banne
+print_version_banner
 
 SCRIPT_TS_FN=scm_ts
 if declare -F script_ask_colors >/dev/null 2>&1; then
@@ -1311,6 +1317,7 @@ fi
 
 SCM_SCRIPT_START_EPOCH=$(date +%s)
 SCM_SCRIPT_START_STR="$(scm_wall_clock_now)"
+trap scm_ctrl_c INT
 
 if ! scm_find_exiftool >/dev/null; then
   echo "$(scm_ts) exiftool not found (set SCM_EXIFTOOL or install exiftool)." >&2
