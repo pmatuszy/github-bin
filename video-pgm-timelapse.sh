@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261116.181500 - date menu: always name/fs/media/oldest/keep for the rest of this run
 # v. 20261116.163200 - video pick menus: drop dialog; always use Up/Down arrow menus
 # v. 20261116.154800 - tighter arrow-menu spacing (fewer blank lines around prompts)
 # v. 20261116.154200 - Pick files uses Up/Down; fix progress ETA awk (missing printf arg)
@@ -1537,12 +1538,28 @@ tl_apply_resolved_date_choice() {
   return 0
 }
 
-# Interactive menu for one source (TL_DF_* already filled). Prints to stdout nothing;
-# sets TL_DATE_MENU_CHOICE to name|fs|media|keep|oldest. Return 2 on quit.
+# Set a run-wide date policy and the choice for the current file.
+# $1 = name|fs|media|keep|oldest
+tl_date_set_policy_for_rest() {
+  local pol="$1"
+  TL_DATE_MENU_CHOICE="$pol"
+  TL_DATE_POLICY="$pol"
+  TL_ALWAYS_OLDEST=0
+  TL_ALWAYS_KEEP=0
+  case "$pol" in
+    oldest) TL_ALWAYS_OLDEST=1 ;;
+    keep) TL_ALWAYS_KEEP=1 ;;
+  esac
+}
+
+# Interactive menu for one source (TL_DF_* already filled).
+# Sets TL_DATE_MENU_CHOICE to name|fs|media|keep|oldest.
+# Always-* keys also set TL_DATE_POLICY for later files. Return 2 on quit.
 tl_read_one_file_date_menu() {
   local source_file="$1" title="${2:-}"
-  local i n def keys="" disp note prompt_extra="" choice
-  local -a key_list=()
+  local i n def disp note choice
+  local -a arrow_opts=()
+  local label
   n=${#TL_DF_LABELS[@]}
   def=$TL_DF_DEF
 
@@ -1555,9 +1572,8 @@ tl_read_one_file_date_menu() {
   printf '  Source name stamp from:  %s\n' "${source_file##*/}"
   echo
   echo "  Sources (oldest usable is the default; applying it sets media CreateDate and filesystem times):"
+  echo "  1–4 = this file only. Letter keys = this file and every later file that still needs a choice."
   echo
-  local -a arrow_opts=()
-  local label
   for (( i = 0; i < n; i++ )); do
     note="${TL_DF_NOTES[i]}"
     if [[ -n "${TL_DF_EPOCHS[i]}" ]]; then
@@ -1575,7 +1591,14 @@ tl_read_one_file_date_menu() {
     label="$(printf '%-18s %-19s  %s' "${TL_DF_LABELS[i]}" "$disp" "$note")"
     arrow_opts+=("$((i + 1))|${label}")
   done
-  arrow_opts+=("a|Oldest usable" "k|Keep as written" "q|Quit")
+  arrow_opts+=(
+    "a|Always oldest usable for the rest of this run"
+    "n|Always file name for the rest of this run"
+    "f|Always filesystem for the rest of this run"
+    "m|Always media tags for the rest of this run"
+    "k|Always keep as written for the rest of this run"
+    "q|Quit"
+  )
 
   while true; do
     tl_arrow_menu "$def" "${arrow_opts[@]}"
@@ -1586,13 +1609,45 @@ tl_read_one_file_date_menu() {
         return 2
         ;;
       a)
-        tl_print_selected "a = Oldest usable"
-        TL_DATE_MENU_CHOICE=oldest
+        tl_print_selected "a = Always oldest usable for the rest of this run"
+        tl_date_set_policy_for_rest oldest
+        echo "$(tl_ts) Will use the oldest usable date for this file and every later one."
+        return 0
+        ;;
+      n)
+        if [[ -z "${TL_DF_EPOCHS[0]:-}" ]]; then
+          echo "$(tl_ts) File name is n/a (not usable). Pick another."
+          continue
+        fi
+        tl_print_selected "n = Always file name for the rest of this run"
+        tl_date_set_policy_for_rest name
+        echo "$(tl_ts) Will use the file name stamp for this file and every later one."
+        return 0
+        ;;
+      f)
+        if [[ -z "${TL_DF_EPOCHS[1]:-}" ]]; then
+          echo "$(tl_ts) Filesystem is n/a (not usable). Pick another."
+          continue
+        fi
+        tl_print_selected "f = Always filesystem for the rest of this run"
+        tl_date_set_policy_for_rest fs
+        echo "$(tl_ts) Will use the filesystem mtime for this file and every later one."
+        return 0
+        ;;
+      m)
+        if [[ -z "${TL_DF_EPOCHS[2]:-}" ]]; then
+          echo "$(tl_ts) Media tags are n/a (not usable). Pick another."
+          continue
+        fi
+        tl_print_selected "m = Always media tags for the rest of this run"
+        tl_date_set_policy_for_rest media
+        echo "$(tl_ts) Will use media CreateDate for this file and every later one."
         return 0
         ;;
       k)
-        tl_print_selected "k = Keep as written"
-        TL_DATE_MENU_CHOICE=keep
+        tl_print_selected "k = Always keep as written for the rest of this run"
+        tl_date_set_policy_for_rest keep
+        echo "$(tl_ts) Will keep times as written for this file and every later one."
         return 0
         ;;
     esac
@@ -1682,41 +1737,42 @@ tl_ask_output_dates_upfront() {
           fi
           TL_DATE_CHOICE["$f"]="$TL_DATE_MENU_CHOICE"
           echo "$(tl_ts) Stored for ${f##*/}: ${TL_DATE_MENU_CHOICE}"
+          # Letter key set a run-wide policy — stop asking; later files use TL_DATE_POLICY.
+          if [[ -n "${TL_DATE_POLICY:-}" ]]; then
+            echo "$(tl_ts) Remaining files that need dates will use: ${TL_DATE_POLICY}."
+            return 0
+          fi
         done
         echo "$(tl_ts) Date choices stored for ${need_n} file(s). Encoding starts next."
         return 0
         ;;
       a)
-        tl_print_selected "a = Oldest usable per file"
-        TL_DATE_POLICY=oldest
-        TL_ALWAYS_OLDEST=1
-        TL_ALWAYS_KEEP=0
+        tl_print_selected "a = Oldest usable for every file"
+        tl_date_set_policy_for_rest oldest
         echo "$(tl_ts) Will use the oldest usable date for every file after encode."
         return 0
         ;;
       1)
         tl_print_selected "1 = File name for every file"
-        TL_DATE_POLICY=name
+        tl_date_set_policy_for_rest name
         echo "$(tl_ts) Will set output times from the file name for every file."
         return 0
         ;;
       2)
         tl_print_selected "2 = Filesystem for every file"
-        TL_DATE_POLICY=fs
+        tl_date_set_policy_for_rest fs
         echo "$(tl_ts) Will set output times from the filesystem mtime for every file."
         return 0
         ;;
       3)
         tl_print_selected "3 = Media tags for every file"
-        TL_DATE_POLICY=media
+        tl_date_set_policy_for_rest media
         echo "$(tl_ts) Will set output times from media CreateDate for every file."
         return 0
         ;;
       4|k)
         tl_print_selected "4 = Keep as written for every file"
-        TL_DATE_POLICY=keep
-        TL_ALWAYS_KEEP=1
-        TL_ALWAYS_OLDEST=0
+        tl_date_set_policy_for_rest keep
         echo "$(tl_ts) Will keep output times as written for every file."
         return 0
         ;;
