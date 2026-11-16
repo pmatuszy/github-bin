@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261116.124500 - seam/join preview: call play-terminal with --silent
 # v. 20261116.123900 - Contour: remux video-copy + AAC + unify time_base when tracks differ
 # v. 20261116.123600 - run summary: note groups skipped for incompatible tracks
 # v. 20261116.111200 - [1] join preview plays immediately (no second Y/n menu)
@@ -105,6 +106,8 @@
 # v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
 # v. 20260805.154826 - after merge: copy GPS/dates from first chapter; FS times via touch -r
 
+# 2026.11.16 - v. 0.15.121 - seam and [1] join previews call video-pgm-play-terminal.sh with --silent
+#   (quieter mpv; no run-settings dump from the player during short previews).
 # 2026.11.16 - v. 0.15.120 - Contour groups whose picture matches (codec/size/fps) but audio and/or
 #   time_base differ: offer remux (video stream copy + AAC audio + unified video_track_timescale)
 #   then ffmpeg concat, instead of skipping as incompatible. -y / merge-all auto-accept remux.
@@ -1937,7 +1940,7 @@ play_merge_seam_preview_once() {
   [[ -n "$ord" ]] || ord="$(pgm_ordinal_seam_label "$seam_num")"
   preview_w="${PGM_SEAM_PREVIEW_WIDTH-100}"
   preview_h="${PGM_SEAM_PREVIEW_HEIGHT-40}"
-  player_args=( --no-countdown )
+  player_args=( --silent --no-countdown )
   if [[ -n "$preview_w" && -n "$preview_h" ]]; then
     player_args+=( --no-autodetect -w "$preview_w" -H "$preview_h" )
   fi
@@ -2251,7 +2254,7 @@ play_pre_merge_join_preview_once() {
   fi
   echo "  Built: ${preview}"
 
-  player_args=( --no-countdown )
+  player_args=( --silent --no-countdown )
   if [[ -n "$preview_w" && -n "$preview_h" ]]; then
     player_args+=( --no-autodetect -w "$preview_w" -H "$preview_h" )
     echo "  Preview size: ${preview_w} x ${preview_h} terminal cells."

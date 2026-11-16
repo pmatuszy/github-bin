@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261116.124500 - --silent skips run-settings / command dump (quieter merge previews)
 # v. 20260930.221200 - drop --no_startup_delay; this script is interactive
 # v. 20260916.133341 - print === Run settings === before playback; Equivalent CLI pins detected size
 # v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
@@ -6,6 +7,8 @@
 # v. 20260725.151453 - ask before apt-installing missing packages; default N, 300s timeout
 # v. 20260718.180600 - restore terminal cursor/screen after mpv tct playback
 
+# 2026.11.16 - v. 0.6.7 - --silent also skips === Run settings === and the mpv command dump so
+#   short merge/join previews stay quiet (mpv --no-terminal already suppressed status lines)
 # 2026.09.30 - v. 0.6.6 - drop --no_startup_delay; this script is interactive
 # 2026.09.16 - v. 0.6.5 - before playback: print "=== Run settings ===" with each option as given, env, or default (autodetected width/height shown as the effective cell size) and an "Equivalent CLI:" line that replays the file at the same geometry
 # 2026.07.31 - v. 0.6.4 - missing packages: shared prompt [Y/n], default Y, wait indefinitely
@@ -626,7 +629,9 @@ MEDIA_FILE="$(realpath "$MEDIA_FILE" 2>/dev/null || echo "$MEDIA_FILE")"
 
 if (( TCT_AUTODETECT )); then
   video_pgm_detect_terminal_dimensions
-  video_pgm_print_autodetect_info
+  if (( ! PLAY_SILENT )); then
+    video_pgm_print_autodetect_info
+  fi
 else
   video_pgm_resolve_tct_dimensions
 fi
@@ -652,8 +657,10 @@ if [[ -n "$PLAY_LENGTH" ]]; then
   MPV_ARGS+=( --length="$PLAY_LENGTH" )
 fi
 
-video_pgm_print_run_settings
-video_pgm_print_command_line
+if (( ! PLAY_SILENT )); then
+  video_pgm_print_run_settings
+  video_pgm_print_command_line
+fi
 
 if (( TCT_AUTODETECT )); then
   video_pgm_playback_countdown "$PLAY_COUNTDOWN"
