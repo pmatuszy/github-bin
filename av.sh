@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# v. 20261116.112100 - dialog --menu when dialog is installed (arrows + tags); key menu fallback
 # v. 20261115.184800 - keys 10+: letter suffix (v9 then va, vb…); always two chars
 # v. 20261115.184700 - column gap: pad left to content width + two spaces before |
 # v. 20261115.184500 - key echo: read -s so terminal does not double each letter
@@ -7,6 +8,8 @@
 # v. 20261115.184000 - two-column menu (Audio/Video | rest); no default selection
 # v. 20261115.183600 - AV menu: list audio/media/video scripts; single-key pick, no Enter
 #
+# 2026.11.16 - v. 0.4.0 - when dialog(1) is installed and stdin/stdout are a TTY, use dialog
+#   --menu (arrows + Enter; tags a1/v2/…); Esc/Cancel quits. Otherwise keep the typed-key menu.
 # 2026.11.15 - v. 0.3.4 - after 9 use a,b,c… (skip q); drop two-digit keys / digit timeout
 # 2026.11.15 - v. 0.3.3 - only two spaces before | (drop wide fixed AV_COL_WIDTH padding)
 # 2026.11.15 - v. 0.3.2 - silent read + one printf per key (was printing vv for one v)
@@ -18,13 +21,13 @@
 # av.sh
 #
 # Short launcher: show audio / media / video tools beside this script and run one.
-# Keys: a1..a9/aa.. / v1..v9/va.. / m1.. / t1.. — no Enter, no default. [q] quits.
+# With dialog: arrows + Enter (tags a1/v2/…). Without: typed keys, no Enter. [q]/Esc quits.
 #
 
 set -o nounset
 set -o pipefail
 
-SCRIPT_VERSION="0.3.4"
+SCRIPT_VERSION="0.4.0"
 
 # 1..9 → digit; 10+ → a,b,c… (q skipped so it never looks like quit).
 AV_LETTER_SUFFIXES="abcdefghijklmnoprstuvwxyz"
@@ -133,12 +136,19 @@ av_index_suffix() {
   return 1
 }
 
-# Register ITEM under PREFIX + suffix for 1-based N. Sets av_cell_out. Uses key_to_script.
+# True when dialog can drive an interactive menu on this TTY.
+av_have_dialog() {
+  [[ -t 0 && -t 1 && -t 2 ]] || return 1
+  command -v dialog >/dev/null 2>&1
+}
+
+# Register ITEM under PREFIX + suffix for 1-based N. Sets av_cell_out.
+# Fills key_to_script and appends tag/item to av_dialog_items.
 av_item_cell() {
   local prefix="$1"
   local n="$2"
   local name="$3"
-  local key
+  local key label
 
   if ! av_index_suffix "$n"; then
     av_cell_out="  (!) skip $name"
@@ -146,6 +156,14 @@ av_item_cell() {
   fi
   key="${prefix}${av_suffix_out}"
   key_to_script[$key]="$name"
+  case "$prefix" in
+    a) label="Audio  ${name}" ;;
+    v) label="Video  ${name}" ;;
+    m) label="Media  ${name}" ;;
+    t) label="Tools  ${name}" ;;
+    *) label="$name" ;;
+  esac
+  av_dialog_items+=("$key" "$label")
   av_cell_out="  [${key}] ${name}"
 }
 
@@ -268,12 +286,46 @@ av_read_choice() {
   esac
 }
 
+# dialog --menu using av_dialog_items (tag label …). Sets av_choice_key.
+# Returns 0 with a script tag, or 0 with av_choice_key=q on cancel/Esc.
+av_dialog_choice() {
+  local tmp rc n_items menu_h
+  av_choice_key=""
+  ((${#av_dialog_items[@]} >= 2)) || return 1
+
+  n_items=$(( ${#av_dialog_items[@]} / 2 ))
+  menu_h=$n_items
+  (( menu_h > 18 )) && menu_h=18
+  (( menu_h < 8 )) && menu_h=8
+
+  tmp="$(mktemp "${TMPDIR:-/tmp}/av_dialog.XXXXXX")" || return 1
+  if dialog --clear --title "AV menu" \
+      --ok-label "Run" --cancel-label "Quit" \
+      --menu "Arrows + Enter. Tags a1/v2/m1/t1…. Esc = quit." \
+      0 78 "$menu_h" "${av_dialog_items[@]}" 2>"$tmp"; then
+    av_choice_key="$(tr -d '\r\n' <"$tmp")"
+    rm -f -- "$tmp"
+    [[ -n "$av_choice_key" ]] || return 1
+    return 0
+  fi
+  rc=$?
+  rm -f -- "$tmp"
+  # Cancel / Esc / error → quit.
+  av_choice_key=q
+  (( rc == 1 || rc == 255 )) && return 0
+  return 0
+}
+
 show_help() {
   cat <<EOF
 Usage: $(basename "$0") [-h|--help] [-v|--version] [--] [ARGS...]
 
 List audio / media / video scripts next to this file and run one.
-Keys (no Enter, no default) — always two chars after the section letter:
+
+When dialog(1) is installed and this is a TTY:
+  arrows + Enter to run; tags a1/v2/…; Esc or Quit to leave.
+
+Otherwise typed keys (no Enter, no default) — two chars after the section letter:
   a1..a9, aa..   audio
   v1..v9, va..   video
   m1..m9, ma..   media / rename / PAR2
@@ -285,11 +337,12 @@ EOF
 }
 
 main() {
-  local dir chosen
+  local dir chosen use_dialog=0
   local -a audio_scripts media_scripts video_scripts tool_scripts
   local -a forward=()
 
   declare -gA key_to_script=()
+  declare -ga av_dialog_items=()
 
   while (($#)); do
     case "$1" in
@@ -326,20 +379,41 @@ main() {
     exit 1
   fi
 
-  printf '=== AV menu ============================================================\n'
-  av_print_two_columns audio_scripts video_scripts media_scripts tool_scripts
-  printf '\n  [q] quit   (no default — type a1 / v3 / va / m1 / t2 / q)\n'
-  printf '======================================================================\n'
+  av_have_dialog && use_dialog=1
+
+  av_build_menu_maps() {
+    key_to_script=()
+    av_dialog_items=()
+    if (( use_dialog )); then
+      av_print_two_columns audio_scripts video_scripts media_scripts tool_scripts >/dev/null
+    else
+      printf '=== AV menu ============================================================\n'
+      av_print_two_columns audio_scripts video_scripts media_scripts tool_scripts
+      printf '\n  [q] quit   (no default — type a1 / v3 / va / m1 / t2 / q)\n'
+      printf '======================================================================\n'
+    fi
+  }
+
+  av_build_menu_maps
 
   while true; do
-    av_flush_stdin
-    printf '(%s) key (no default): ' "$(date '+%Y.%m.%d %H:%M:%S')"
-    if ! av_read_choice; then
+    if (( use_dialog )); then
+      if ! av_dialog_choice; then
+        printf 'dialog menu failed — falling back to keys.\n' >&2
+        use_dialog=0
+        av_build_menu_maps
+        continue
+      fi
+    else
+      av_flush_stdin
+      printf '(%s) key (no default): ' "$(date '+%Y.%m.%d %H:%M:%S')"
+      if ! av_read_choice; then
+        printf '\n'
+        printf 'Need a key like a1, v2, va, m1, t1, or q — no default.\n'
+        continue
+      fi
       printf '\n'
-      printf 'Need a key like a1, v2, va, m1, t1, or q — no default.\n'
-      continue
     fi
-    printf '\n'
 
     if [[ "$av_choice_key" == q ]]; then
       exit 0
