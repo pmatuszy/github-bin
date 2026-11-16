@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261116.225400 - Processing / apply boxes show absolute Directory + file name
 # v. 20261116.160500 - camera profile + decide menus use shared script_arrow_menu
 # v. 20261116.144500 - Ctrl-C during decide/prompts also prints SUMMARY (not only during apply)
 # v. 20261116.143700 - ask Use colors?; green questions / prompts; highlight (default)
@@ -17,6 +18,8 @@
 # v. 20261115.091000 - Contour profile is Contour+2 only (drop ROAM/GPS generics)
 # v. 20261115.090000 - initial: set Make/Model/Comment camera profiles (Contour, GoPro, 70mai, custom)
 #
+# 2026.11.16 - v. 0.1.16 - Processing and apply banners show absolute Directory, then the file
+#   name (easier to see which folder the batch is working in).
 # 2026.11.16 - v. 0.1.15 - Camera profile and per-file decide menus use shared script_arrow_menu;
 #   profile menu still has no default; read_key fallback if header is old.
 # 2026.11.16 - v. 0.1.14 - Ctrl-C during decide/prompts prints SUMMARY (trap was only set while applying).
@@ -300,6 +303,23 @@ scm_rule() {
   printf '%s\n' "========================================================================"
 }
 
+# Absolute directory for a path (file or dir). Falls back to dirname / pwd.
+scm_abs_dir() {
+  local f="$1" d
+  if [[ -d "$f" ]]; then
+    d="$f"
+  else
+    d="$(dirname -- "$f")"
+  fi
+  if command -v realpath >/dev/null 2>&1; then
+    realpath -m -- "$d" 2>/dev/null && return 0
+  fi
+  if [[ -d "$d" ]]; then
+    (cd -- "$d" && pwd -P) 2>/dev/null && return 0
+  fi
+  printf '%s\n' "$d"
+}
+
 scm_question_progress_text() {
   if [[ -n "${SCM_Q_BATCH_POS:-}" && -n "${SCM_Q_BATCH_TOTAL:-}" ]]; then
     printf 'Question %s of %s in this batch  (file %s of %s overall)' \
@@ -311,14 +331,16 @@ scm_question_progress_text() {
 }
 
 scm_print_processing() {
-  local f="$1" prog
+  local f="$1" prog dir
   echo
   scm_rule
   prog="$(scm_question_progress_text)"
   if [[ -n "$prog" ]]; then
     echo "$(scm_ts) ${prog}"
   fi
-  echo "$(scm_ts) Processing: ${f}"
+  dir="$(scm_abs_dir "$f")"
+  echo "$(scm_ts) Directory:  ${dir}"
+  echo "$(scm_ts) Processing: ${f##*/}"
   scm_rule
 }
 
@@ -639,6 +661,7 @@ scm_apply_plans() {
   else
     echo "$(scm_ts) Applying ${n} planned write(s)…"
   fi
+  echo "$(scm_ts) Directory:  $(scm_abs_dir "${PLAN_PATHS[0]}")"
   scm_rule
   trap scm_ctrl_c INT
   # Apply phase: clear decide question counters so banners stay clean.

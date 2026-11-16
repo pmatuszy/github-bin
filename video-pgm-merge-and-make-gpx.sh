@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261116.225500 - Contour suspect defaults to Preview joins; delete confirm defaults Yes
 # v. 20261116.224800 - no blank line between question/prompt and arrow menu
 # v. 20261116.224500 - tighter blanks: one after merge box; none after question / Planned / Sources
 # v. 20261116.222100 - join preview Repeat menu: add Quit
@@ -121,6 +122,8 @@
 # v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
 # v. 20260805.154826 - after merge: copy GPS/dates from first chapter; FS times via touch -
 
+# 2026.11.16 - v. 0.15.130 - Contour suspect default is [1] Preview joins (then [m] after a
+#   preview). Delete-input prompts default Yes once the user already chose delete.
 # 2026.11.16 - v. 0.15.129 - Contour suspect choice is closed (no fall-through into the normal
 #   merge menu). Self-update [C]ontinue drains leftover Enter so the next group is not
 #   auto-skipped with the default.
@@ -423,7 +426,7 @@ Merge behaviour:
     (only a 10 MiB floor) — Contour chapters often differ a lot after re-encode.
     Contour stop slack: next start from 30s early to 12s after the previous end
     (confident). Gaps of 13–45s are Contour *suspect* review candidates (default
-    Skip). A shorter clip does not chain into one at least twice as long (short
+    Preview joins). A shorter clip does not chain into one at least twice as long (short
     must not lead a much longer chapter). Merge INPUT lines show the gap to the
     next file on the same line. Contour groups merge with ffmpeg concat (-c copy),
     not mp4_merge. If picture matches but audio/time_base differ, offer remux
@@ -463,7 +466,7 @@ Merge behaviour:
     [e]
     (groups with 3+ files) edits the suggestion: keep a subset by numbe
     (e.g. 1-2) or drop the last file, then asks again for the trimmed group.
-    Contour suspect review offers [1] and [e] (default remains Skip).
+    Contour suspect review offers [1] Preview joins first (default until previewed), then merge.
     Files in a group, and the groups themselves, are ordered oldest to newest
     (filename YYYYMMDD_HHMMSS when present, otherwise filesystem mtime) before that
     prompt. After the input and output lists, a boxed summary shows how many files
@@ -7692,7 +7695,7 @@ print_group_plan() {
   fi
   contour_suspect_groups=${#CONTOUR_SUSPECT_BLOBS[@]}
   if (( contour_suspect_groups > 0 )); then
-    echo "Possible Contour merges (review — gap $(( ${PGM_CONTOUR_TIME_MAX_STOP_SEC:-12} + 1 ))–${PGM_CONTOUR_TIME_SUSPECT_MAX_STOP_SEC:-45}s after chapter end; default Skip, not auto-merged):"
+    echo "Possible Contour merges (review — gap $(( ${PGM_CONTOUR_TIME_MAX_STOP_SEC:-12} + 1 ))–${PGM_CONTOUR_TIME_SUSPECT_MAX_STOP_SEC:-45}s after chapter end; default Preview joins, not auto-merged):"
     gidx=0
     for i in "${!CONTOUR_SUSPECT_BLOBS[@]}"; do
       blob="${CONTOUR_SUSPECT_BLOBS[$i]}"
@@ -7976,7 +7979,7 @@ prompt_delete_merged_inputs() {
   echo "  Choosing yes asks once more before anything is deleted."
   echo
   pgm_print_question "Delete merged input chapter file(s)?"
-  pgm_arrow_menu n \
+  pgm_arrow_menu y \
     "y|Yes — go on to the confirmation" \
     "n|No — keep input files" \
     "k|Never delete input files for the rest of this run" \
@@ -8016,7 +8019,8 @@ prompt_delete_merged_inputs() {
   esac
 }
 
-# Second question before input files are removed. Default is keep. Return 2 to quit.
+# Second question before input files are removed. Default is Yes (caller already chose delete).
+# Return 2 to quit.
 prompt_confirm_delete_inputs() {
   local -a files=("$@")
   local f choice
@@ -8025,7 +8029,7 @@ prompt_confirm_delete_inputs() {
   for f in "${files[@]}"; do
     printf '    %s\n' "${f##*/}"
   done
-  pgm_arrow_menu n \
+  pgm_arrow_menu y \
     "y|Yes — delete these input files" \
     "n|No — keep input files" \
     "q|Quit"
@@ -8989,8 +8993,8 @@ prompt_merge_group_action() {
       if [[ "${PGM_MERGE_GROUP_NEEDS_NORMALIZE:-0}" == 1 ]]; then
         echo "$(pgm_ts) Also: audio/time_base differ — preview joins before remuxing."
       fi
+      # Preview joins first (default until previewed); after a preview, default to merge/remux.
       suspect_menu=(
-        "n|Skip — leave separate"
         "1|Preview joins first (recommended) — last ${PGM_JOIN_PREVIEW_BEFORE:-2}s + first ${PGM_JOIN_PREVIEW_AFTER:-2}s"
       )
       if [[ "${PGM_MERGE_GROUP_NEEDS_NORMALIZE:-0}" == 1 ]]; then
@@ -8998,14 +9002,20 @@ prompt_merge_group_action() {
       else
         suspect_menu+=( "m|Merge this suspected Contour group" )
       fi
+      suspect_menu+=( "n|Skip — leave separate" )
       if (( ${#files[@]} >= 3 )); then
         suspect_menu+=( "e|Edit inputs — choose which files to merge (e.g. 1-2)" )
       fi
       suspect_menu+=( "a|Skip all remaining groups" "q|Quit" )
+      local suspect_def=1
       while true; do
+        suspect_def=1
+        if [[ "${PGM_MERGE_GROUP_JOIN_PREVIEWED:-0}" == 1 ]]; then
+          suspect_def=m
+        fi
         echo
         pgm_print_question "Contour suspect — group ${group_num}/${group_total}"
-        pgm_arrow_menu n "${suspect_menu[@]}"
+        pgm_arrow_menu "$suspect_def" "${suspect_menu[@]}"
         choice="${REPLY,,}"
         case "$choice" in
           n)  REPLY=skip; return 0 ;;

@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261116.225400 - Processing / apply boxes show absolute Directory + file name
 # v. 20261116.215000 - Fix dates menu: align label and date columns
 # v. 20261116.160500 - Fix dates menu uses shared script_arrow_menu (Up/Down + Enter)
 # v. 20261116.144500 - Ctrl-C during decide/prompts also prints SUMMARY (not only during apply)
@@ -53,6 +54,7 @@
 # 2026.11.15 - v. 0.1.17 - process in batches: ask all decisions for a batch first, then write; batch size
 #   default = all when ≤50 files, else 50 (--batch-size / MFD_BATCH_SIZE); Ctrl-C during a write stops
 #   exiftool and removes that file's *_exiftool_tmp
+# 2026.11.16 - v. 0.1.21 - Processing and apply banners show absolute Directory, then the file name.
 # 2026.11.16 - v. 0.1.20 - Fix dates menu: pad source label + date so timestamps share one column.
 # 2026.11.16 - v. 0.1.19 - Fix dates per-file menu uses shared script_arrow_menu (Up/Down + Enter);
 #   Contour multi-line help stays above the menu; read_key fallback if header is old.
@@ -588,6 +590,23 @@ mfd_rule() {
   printf '%s\n' "========================================================================"
 }
 
+# Absolute directory for a path (file or dir). Falls back to dirname / pwd.
+mfd_abs_dir() {
+  local f="$1" d
+  if [[ -d "$f" ]]; then
+    d="$f"
+  else
+    d="$(dirname -- "$f")"
+  fi
+  if command -v realpath >/dev/null 2>&1; then
+    realpath -m -- "$d" 2>/dev/null && return 0
+  fi
+  if [[ -d "$d" ]]; then
+    (cd -- "$d" && pwd -P) 2>/dev/null && return 0
+  fi
+  printf '%s\n' "$d"
+}
+
 mfd_question_progress_text() {
   if [[ -n "${MFD_Q_BATCH_POS:-}" && -n "${MFD_Q_BATCH_TOTAL:-}" ]]; then
     printf 'Question %s of %s in this batch  (file %s of %s overall)' \
@@ -600,14 +619,16 @@ mfd_question_progress_text() {
 
 # Prominent start-of-file banner.
 mfd_print_processing() {
-  local f="$1" prog
+  local f="$1" prog dir
   echo
   mfd_rule
   prog="$(mfd_question_progress_text)"
   if [[ -n "$prog" ]]; then
     echo "$(mfd_ts) ${prog}"
   fi
-  echo "$(mfd_ts) Processing: ${f}"
+  dir="$(mfd_abs_dir "$f")"
+  echo "$(mfd_ts) Directory:  ${dir}"
+  echo "$(mfd_ts) Processing: ${f##*/}"
   mfd_rule
 }
 
@@ -1373,6 +1394,7 @@ mfd_apply_plans() {
   else
     echo "$(mfd_ts) Applying ${n} planned fix(es)…"
   fi
+  echo "$(mfd_ts) Directory:  $(mfd_abs_dir "${PLAN_PATH[0]}")"
   mfd_rule
   trap mfd_ctrl_c INT
   # Apply phase: clear decide question counters so Processing banners stay clean.
