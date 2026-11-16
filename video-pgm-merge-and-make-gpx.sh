@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261116.155200 - fix hybrid cache clear typo; Contour progress once per file; align i/n columns
 # v. 20261116.152500 - Contour suspect closed menu; self-update Continue drains leftover Enter
 # v. 20261116.151500 - shared script_arrow_menu for multi-choice prompts
 # v. 20261116.145000 - keep video_merge_ctrl_c after post-merge so Ctrl-C still prints SUMMARY
@@ -1396,16 +1397,18 @@ pgm_progress_end() {
 }
 
 # One-line progress that rewrites on a tty: "phase  i/n  basename".
+# Phase label and i/n are column-aligned (phase width 16; i and n padded to ${#n}).
 # Non-tty: a new line about every 8 steps (or on the last).
 pgm_progress_update() {
   local phase="$1" i="$2" n="$3" name="${4:-}"
-  local width line msg room base
+  local width msg room base nw=${#3} pw=16
   [[ "$i" =~ ^[0-9]+$ && "$n" =~ ^[0-9]+$ ]] || return 0
   (( n > 0 )) || return 0
+  (( nw < 1 )) && nw=1
   base="${name##*/}"
   if [[ -t 1 ]]; then
     width="$(pgm_effective_line_width)"
-    printf -v msg '%s %s  %s/%s' "$(pgm_ts)" "$phase" "$i" "$n"
+    printf -v msg '%s %-*s  %*d/%*d' "$(pgm_ts)" "$pw" "$phase" "$nw" "$i" "$nw" "$n"
     if [[ -n "$base" ]]; then
       room=$(( width - ${#msg} - 2 ))
       if (( room < 12 )); then
@@ -1427,9 +1430,9 @@ pgm_progress_update() {
   else
     if (( i == 1 || i == n || i % 8 == 0 )); then
       if [[ -n "$base" ]]; then
-        printf '%s %s  %s/%s  %s\n' "$(pgm_ts)" "$phase" "$i" "$n" "$base"
+        printf '%s %-*s  %*d/%*d  %s\n' "$(pgm_ts)" "$pw" "$phase" "$nw" "$i" "$nw" "$n" "$base"
       else
-        printf '%s %s  %s/%s\n' "$(pgm_ts)" "$phase" "$i" "$n"
+        printf '%s %-*s  %*d/%*d\n' "$(pgm_ts)" "$pw" "$phase" "$nw" "$i" "$nw" "$n"
       fi
     fi
   fi
@@ -5766,8 +5769,13 @@ build_contour_size_split_groups() {
   )
   n=${#singles[@]}
   i=0
+  # Same index can be tried as chain tail then again as a new run start — print once per file.
+  local last_prog=-1
   while (( i < n )); do
-    pgm_progress_update "Contour chain" "$((i + 1))" "$n" "${singles[i]}"
+    if (( i != last_prog )); then
+      pgm_progress_update "Contour chain" "$((i + 1))" "$n" "${singles[i]}"
+      last_prog=$i
+    fi
     if is_contour_chainable_segment "${singles[i]}"; then
       run=("${singles[i]}")
     else
@@ -5779,7 +5787,10 @@ build_contour_size_split_groups() {
     while (( i < n )); do
       f="${singles[i]}"
       base="${f##*/}"
-      pgm_progress_update "Contour chain" "$((i + 1))" "$n" "$f"
+      if (( i != last_prog )); then
+        pgm_progress_update "Contour chain" "$((i + 1))" "$n" "$f"
+        last_prog=$i
+      fi
       contour_basename_parse "$base" || break
       if ! contour_chapter_timestamps_follow "${run[-1]}" "$f"; then
         break
@@ -5846,8 +5857,13 @@ build_contour_suspect_groups() {
   pool=("${uniq[@]}")
   n=${#pool[@]}
   i=0
+  # Same index can be tried as chain tail then again as a new run start — print once per file.
+  local last_prog=-1
   while (( i < n )); do
-    pgm_progress_update "Contour suspect" "$((i + 1))" "$n" "${pool[i]}"
+    if (( i != last_prog )); then
+      pgm_progress_update "Contour suspect" "$((i + 1))" "$n" "${pool[i]}"
+      last_prog=$i
+    fi
     if is_contour_chainable_segment "${pool[i]}"; then
       run=("${pool[i]}")
     else
@@ -5858,7 +5874,10 @@ build_contour_suspect_groups() {
     while (( i < n )); do
       f="${pool[i]}"
       base="${f##*/}"
-      pgm_progress_update "Contour suspect" "$((i + 1))" "$n" "$f"
+      if (( i != last_prog )); then
+        pgm_progress_update "Contour suspect" "$((i + 1))" "$n" "$f"
+        last_prog=$i
+      fi
       contour_basename_parse "$base" || break
       if ! contour_chapter_timestamps_within_suspect_ceiling "${run[-1]}" "$f"; then
         break
@@ -7445,7 +7464,7 @@ build_chapter_groups() {
   local n=${#sorted[@]}
 
   echo "$(pgm_ts) Building chapter plan (${n} file(s))…"
-  pgm_hybrid_start_cache_clea
+  pgm_hybrid_start_cache_clear
   PGM_FFPROBE_DUR_CACHE=()
   CONTOUR_SUSPECT_BLOBS=()
   CONTOUR_SUSPECT_NOTES=()
