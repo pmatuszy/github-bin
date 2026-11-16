@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261116.163000 - interactive multi-choice prompts use Up/Down arrow menus
 # v. 20261116.145000 - Ctrl-C prints Timing / RUN FINISHED summary before exit
 # v. 20261115.215500 - skip per-folder run policies when only one work directory
 # v. 20261115.200000 - end Timing SUMMARY: Script + Version at top (Family-A)
@@ -39,6 +40,7 @@
 # v. 20260809.155541 - prompt to exclude rename.sh helpers from PAR2 (default yes)
 # v. 20260806.224414 - initial: create volume-only PAR2 + SHA-512/MD5 hash for cwd subtree
 
+# 2026.11.16 - v. 0.1.35 - Multi-choice prompts (hash algorithm, scope, Y/n/q, skip/verify, rest-of-run, always/never/ask, *.old collision) use the shared Up/Down arrow menu (script_arrow_menu; letter/digit keys still work); recovery % stays typed
 # 2026.11.16 - Ctrl-C cleanup also prints run Timing + RUN FINISHED summary.
 # 2026.11.15 - v. 0.1.34 - Skip startup per-folder policies when there is only one work directory
 #                        (whole scope, or per-subdir with fewer than 2 children); ask mid-job if needed
@@ -134,10 +136,12 @@ Options:
                        whole = one PAR2+hash in cwd.
 
 Interactive prompts (unless --yes / flag already set):
-  Scope:          If cwd has subdirs: [ w ] / [ P ] / [ q ] — single key, no Enter
+  Multi-choice prompts are Up/Down arrow menus (Enter selects the highlighted row;
+  the letter/digit shown in [ ] still works as a single key). Recovery % is typed.
+  Scope:          If cwd has subdirs: [ w ] / [ P ] / [ q ]
                   (default P). Skipped when there are no immediate subdirs.
-  Hash algorithm: numbered list of *sum tools on PATH; digit 1-N or Enter =
-                  default; q = quit — single key, no Enter; invalid asks again.
+  Hash algorithm: menu of *sum tools on PATH (keys 1-N, q = quit; Enter =
+                  highlighted default).
   Recovery %:     Type 1-100 then Enter (Enter alone = 20% or --recovery value);
                   q + Enter quits. Multi-digit needs Enter.
   Rename helpers: Exclude from PAR2? [Y/n/q] — single key, no Enter (default yes).
@@ -186,6 +190,118 @@ done
 
 PAR2_CMD="${PAR2_CMD:-par2}"
 PROMPT_TIMEOUT="${PROMPT_TIMEOUT-}"
+
+# Shared Up/Down arrow menu (script_arrow_menu from a sibling _script_header.sh; same UX as rename.sh / av.sh).
+# Already defined when the sourced header is new enough; otherwise only the shared colors/menu block is
+# extracted and eval'ed (not the whole header: LC_ALL=C, INT trap, banners, apt prompts).
+par2create_ts_fn() {
+  printf '[ %s ]' "$(date '+%Y.%m.%d %H:%M:%S')"
+}
+
+par2create_load_script_arrow_menu() {
+  local live_dir="${1-}" hdr="" dir="" block=""
+
+  declare -F script_arrow_menu >/dev/null 2>&1 && return 0
+  for dir in "$live_dir" "${profile_location_dir:-$HOME}/bin" "$HOME/bin" "/root/bin"; do
+    [[ -n "$dir" && -f "$dir/_script_header.sh" ]] || continue
+    hdr="$dir/_script_header.sh"
+    break
+  done
+  [[ -n "$hdr" ]] || return 1
+  block="$(sed -n '/^# Shared terminal colors for interactive/,/^# Ask once\./p' "$hdr" 2>/dev/null || true)"
+  [[ "$block" == *'script_arrow_menu()'* ]] || return 1
+  # shellcheck disable=SC1090
+  eval "$block"
+  declare -F script_arrow_menu >/dev/null 2>&1
+}
+
+_par2create_live_dir=""
+if [[ -n "${SCRIPT_SELF_LIVE_PATH:-}" ]]; then
+  _par2create_live_dir="$(cd "$(dirname -- "${SCRIPT_SELF_LIVE_PATH}")" 2>/dev/null && pwd -P || true)"
+else
+  _par2create_live_dir="$(cd "$(dirname -- "${BASH_SOURCE[0]:-$0}")" 2>/dev/null && pwd -P || true)"
+fi
+par2create_load_script_arrow_menu "$_par2create_live_dir" || true
+SCRIPT_TS_FN=par2create_ts_fn
+unset _par2create_live_dir
+
+# Lowercase one-key answer without CR/LF (same as script_arrow_choice).
+par2create_choice() {
+  local c="${1,,}"
+  c="${c//$'\r'/}"
+  c="${c//$'\n'/}"
+  printf '%s' "$c"
+}
+
+# Restore cursor/stty if a menu is interrupted (Ctrl-C trap, EXIT).
+par2create_arrow_menu_restore_tty() {
+  [[ -t 1 || -n "${SCRIPT_ARROW_STTY:-}" ]] || return 0
+  if declare -F script_arrow_menu_restore_tty >/dev/null 2>&1; then
+    script_arrow_menu_restore_tty
+  else
+    printf '\033[?25h' 2>/dev/null || true
+  fi
+  return 0
+}
+
+# Typed fallback (script_arrow_menu unavailable): static list + one key. Sets REPLY.
+par2create_arrow_menu_static() {
+  local def="${1-}" item key label ch first="" def_l="" shown
+  shift
+  def_l="$(par2create_choice "$def")"
+  for item in "$@"; do
+    key="${item%%|*}"
+    label="${item#*|}"
+    shown="$key"
+    [[ -n "$def_l" && "$(par2create_choice "$key")" == "$def_l" ]] && shown="${key^^}"
+    printf '  [%s] %s\n' "$shown" "$label"
+  done
+  while true; do
+    printf '%sChoice: ' "$(user_prompt_ts_prefix)"
+    if prompt_has_timeout; then
+      IFS= read -r -t "$PROMPT_TIMEOUT" -n 1 first || first=""
+    else
+      IFS= read -r -n 1 first || first=""
+    fi
+    echo
+    ch="$(par2create_choice "$first")"
+    if [[ -z "$ch" ]]; then
+      REPLY="$def_l"
+      return 0
+    fi
+    for item in "$@"; do
+      if [[ "$(par2create_choice "${item%%|*}")" == "$ch" ]]; then
+        REPLY="$ch"
+        return 0
+      fi
+    done
+    echo "Invalid key '$first'."
+  done
+}
+
+# par2create_arrow_menu DEFAULT_KEY "key|label" ...  -> sets REPLY (lowercase key).
+# Up/Down + Enter via script_arrow_menu; typed keys still work. PROMPT_TIMEOUT (when set) becomes TMOUT for the
+# menu reads: an idle prompt accepts the highlighted (default) row.
+par2create_arrow_menu() {
+  local def="${1-}"
+  shift
+  if declare -F script_arrow_menu >/dev/null 2>&1; then
+    if prompt_has_timeout; then
+      TMOUT="$PROMPT_TIMEOUT" script_arrow_menu "$def" "$@"
+    else
+      script_arrow_menu "$def" "$@"
+    fi
+    return 0
+  fi
+  par2create_arrow_menu_static "$def" "$@"
+  return 0
+}
+
+# Timestamped question line printed right above a menu.
+par2create_question() {
+  printf '%s%s\n' "$(user_prompt_ts_prefix)" "$*"
+}
+
 HASH_PREF=""
 # Parallel arrays filled by discover_hash_tools (id, label, cmd, ext).
 HASH_IDS=()
@@ -358,6 +474,7 @@ cleanup_on_interrupt() {
 
 # Override header's ctrl_c so INT actually removes incomplete outputs.
 ctrl_c() {
+  par2create_arrow_menu_restore_tty || true
   echo
   echo "** Trapped CTRL-C - cleaning up...."
   cleanup_on_interrupt
@@ -375,6 +492,7 @@ ctrl_c() {
   exit 130
 }
 trap ctrl_c INT
+trap par2create_arrow_menu_restore_tty EXIT
 
 die() {
   echo "Error: $*" >&2
@@ -649,182 +767,66 @@ read_line_with_timeout() {
   fi
 }
 
-# Single-key hash menu choice (no Enter). Enter = default (empty).
-# Sets __var to "" (default), 1-9, or q. Returns: 0 ok, 1 timeout→default, 2 quit.
-read_hash_choice_with_timeout() {
-  local __var="$1"
-  local first=""
-
-  while true; do
-    if prompt_has_timeout; then
-      IFS= read -r -t "$PROMPT_TIMEOUT" -n 1 first || {
-        echo
-        printf -v "$__var" '%s' ""
-        return 1
-      }
-    else
-      IFS= read -r -n 1 first || {
-        echo
-        printf -v "$__var" '%s' ""
-        return 1
-      }
-    fi
-
-    case "$first" in
-      ""|$'\n')
-        printf -v "$__var" '%s' ""
-        return 0
-        ;;
-      q|Q)
-        echo
-        printf -v "$__var" '%s' q
-        return 2
-        ;;
-      [1-9])
-        echo
-        printf -v "$__var" '%s' "$first"
-        return 0
-        ;;
-      *)
-        echo
-        printf '%sInvalid key "%s". Press 1-9, q, or Enter for default: ' \
-          "$(user_prompt_ts_prefix)" "$first"
-        ;;
-    esac
-  done
-}
-
-# Single-key Y/n/q (no Enter). Enter uses default (y or n).
-# Sets __var to y|n|q. Returns 0=answer, 1=timeout→default, 2=quit.
+# Y/n/q via Up/Down arrow menu. Caller prints the question first (par2create_question).
+# Sets __var to y|n|q. Returns 0=answer (Enter/timeout = highlighted default), 2=quit.
 read_yn_key_with_timeout() {
   local __var="$1"
   local default="${2:-y}"
-  local first=""
 
   [[ "$default" == y || "$default" == n ]] || default=y
 
-  while true; do
-    if prompt_has_timeout; then
-      IFS= read -r -t "$PROMPT_TIMEOUT" -n 1 first || {
-        echo
-        printf -v "$__var" '%s' "$default"
-        return 1
-      }
-    else
-      IFS= read -r -n 1 first || {
-        echo
-        printf -v "$__var" '%s' "$default"
-        return 1
-      }
-    fi
-
-    case "$first" in
-      ""|$'\n')
-        printf -v "$__var" '%s' "$default"
-        return 0
-        ;;
-      y|Y)
-        echo
-        printf -v "$__var" '%s' y
-        return 0
-        ;;
-      n|N)
-        echo
-        printf -v "$__var" '%s' n
-        return 0
-        ;;
-      q|Q)
-        echo
-        printf -v "$__var" '%s' q
-        return 2
-        ;;
-      *)
-        echo
-        printf '%sInvalid key "%s". Press Y, N, Q, or Enter for default (%s): ' \
-          "$(user_prompt_ts_prefix)" "$first" "${default^^}"
-        ;;
-    esac
-  done
+  par2create_arrow_menu "$default" "y|Yes" "n|No" "q|Quit"
+  case "$(par2create_choice "$REPLY")" in
+    y) printf -v "$__var" '%s' y; return 0 ;;
+    n) printf -v "$__var" '%s' n; return 0 ;;
+    q) printf -v "$__var" '%s' q; return 2 ;;
+    *) printf -v "$__var" '%s' "$default"; return 0 ;;
+  esac
 }
 
-# Single-key S/v/a/e/q for existing protection (only default key shown uppercase).
-# Sets __var to skip|verify|skip_rest|verify_rest|q.
-# Returns: 0=answer, 1=timeout→default, 2=quit.
-# default: skip|verify (Enter).
+# Skip / verify / rest-of-run / quit arrow menu for existing protection.
+# Caller prints the question first. Sets __var to skip|verify|skip_rest|verify_rest|q.
+# Returns: 0=answer, 2=quit. default: skip|verify (Enter / timeout).
 read_skip_verify_key_with_timeout() {
   local __var="$1"
   local default="${2:-skip}"
-  local first=""
+  local def_key=s
 
   case "$default" in
-    skip|verify) ;;
+    skip) def_key=s ;;
+    verify) def_key=v ;;
     *) default=skip ;;
   esac
 
-  while true; do
-    if prompt_has_timeout; then
-      IFS= read -r -t "$PROMPT_TIMEOUT" -n 1 first || {
-        echo
-        printf -v "$__var" '%s' "$default"
-        return 1
-      }
-    else
-      IFS= read -r -n 1 first || {
-        echo
-        printf -v "$__var" '%s' "$default"
-        return 1
-      }
-    fi
-
-    case "$first" in
-      ""|$'\n')
-        printf -v "$__var" '%s' "$default"
-        return 0
-        ;;
-      s|S)
-        echo
-        printf -v "$__var" '%s' skip
-        return 0
-        ;;
-      v|V)
-        echo
-        printf -v "$__var" '%s' verify
-        return 0
-        ;;
-      a|A)
-        echo
-        printf -v "$__var" '%s' skip_rest
-        return 0
-        ;;
-      e|E)
-        echo
-        printf -v "$__var" '%s' verify_rest
-        return 0
-        ;;
-      q|Q)
-        echo
-        printf -v "$__var" '%s' q
-        return 2
-        ;;
-      *)
-        echo
-        printf '%sInvalid key "%s". Press S, v, a, e, q, or Enter for default (%s): ' \
-          "$(user_prompt_ts_prefix)" "$first" "$default"
-        ;;
-    esac
-  done
+  par2create_arrow_menu "$def_key" \
+    "s|Skip this folder — leave PAR2 + hash unchanged" \
+    "v|Verify this folder — if OK, leave unchanged" \
+    "a|Like [s] here, and for the rest of the run" \
+    "e|Like [v] here, and for the rest of the run" \
+    "q|Quit"
+  case "$(par2create_choice "$REPLY")" in
+    s) printf -v "$__var" '%s' skip; return 0 ;;
+    v) printf -v "$__var" '%s' verify; return 0 ;;
+    a) printf -v "$__var" '%s' skip_rest; return 0 ;;
+    e) printf -v "$__var" '%s' verify_rest; return 0 ;;
+    q) printf -v "$__var" '%s' q; return 2 ;;
+    *) printf -v "$__var" '%s' "$default"; return 0 ;;
+  esac
 }
 
-# Single-key yes/no with optional rest-of-run (a=yes rest, e=no rest).
-# Caller prints the menu lines. yes_key is the letter for "yes" (y or c).
-# default_ans: yes|no. Sets __var to yes|no. Returns 0=ok, 1=timeout→default, 2=quit.
+# Yes/no arrow menu with optional rest-of-run (a=yes rest, e=no rest).
+# Caller prints the question first. yes_key is the letter for "yes" (y or c).
+# default_ans: yes|no. Sets __var to yes|no. Returns 0=ok, 2=quit.
 # If policy_var_name is non-empty and user picks a/e, that global is set to yes|no.
+# yes_label / no_label: menu text for the yes / no rows.
 read_yes_no_rest_key_with_timeout() {
   local __var="$1"
   local default_ans="${2:-yes}"
   local yes_key="${3:-y}"
   local policy_var_name="${4:-}"
-  local first="" yes_l no_disp choice_hint def_disp
+  local yes_label="${5:-Yes}"
+  local no_label="${6:-No}"
+  local yes_l def_key
 
   case "$default_ans" in
     yes|no) ;;
@@ -833,75 +835,51 @@ read_yes_no_rest_key_with_timeout() {
   yes_key="${yes_key:0:1}"
   yes_l="${yes_key,,}"
   if [[ "$default_ans" == yes ]]; then
-    def_disp="${yes_l^^}"
-    no_disp=n
-    choice_hint="[ ${def_disp}/n/a/e/q ]"
+    def_key="$yes_l"
   else
-    def_disp=N
-    no_disp=n
-    choice_hint="[ ${yes_l}/${def_disp}/a/e/q ]"
+    def_key=n
   fi
 
-  while true; do
-    if prompt_has_timeout; then
-      IFS= read -r -t "$PROMPT_TIMEOUT" -n 1 first || {
-        echo
-        printf -v "$__var" '%s' "$default_ans"
-        return 1
-      }
-    else
-      IFS= read -r -n 1 first || {
-        echo
-        printf -v "$__var" '%s' "$default_ans"
-        return 1
-      }
-    fi
-
-    case "$first" in
-      ""|$'\n')
-        printf -v "$__var" '%s' "$default_ans"
-        return 0
-        ;;
-      q|Q)
-        echo
-        printf -v "$__var" '%s' quit
-        return 2
-        ;;
-      a|A)
-        echo
-        printf -v "$__var" '%s' yes
-        if [[ -n "$policy_var_name" ]]; then
-          printf -v "$policy_var_name" '%s' yes
-          log_msg "Will use yes for this prompt for the rest of the run."
-        fi
-        return 0
-        ;;
-      e|E)
-        echo
-        printf -v "$__var" '%s' no
-        if [[ -n "$policy_var_name" ]]; then
-          printf -v "$policy_var_name" '%s' no
-          log_msg "Will use no for this prompt for the rest of the run."
-        fi
-        return 0
-        ;;
-      n|N)
-        echo
-        printf -v "$__var" '%s' no
-        return 0
-        ;;
-      *)
-        if [[ "${first,,}" == "$yes_l" ]]; then
-          echo
-          printf -v "$__var" '%s' yes
-          return 0
-        fi
-        echo
-        printf '%sInvalid key "%s". Press keys from %s or Enter for default (%s): ' \
-          "$(user_prompt_ts_prefix)" "$first" "$choice_hint" "$def_disp"
-        ;;
-    esac
-  done
+  par2create_arrow_menu "$def_key" \
+    "${yes_l}|${yes_label}" \
+    "n|${no_label}" \
+    "a|Like [${yes_l}] here, and for the rest of the run" \
+    "e|Like [n] here, and for the rest of the run" \
+    "q|Quit"
+  case "$(par2create_choice "$REPLY")" in
+    "$yes_l")
+      printf -v "$__var" '%s' yes
+      return 0
+      ;;
+    n)
+      printf -v "$__var" '%s' no
+      return 0
+      ;;
+    a)
+      printf -v "$__var" '%s' yes
+      if [[ -n "$policy_var_name" ]]; then
+        printf -v "$policy_var_name" '%s' yes
+        log_msg "Will use yes for this prompt for the rest of the run."
+      fi
+      return 0
+      ;;
+    e)
+      printf -v "$__var" '%s' no
+      if [[ -n "$policy_var_name" ]]; then
+        printf -v "$policy_var_name" '%s' no
+        log_msg "Will use no for this prompt for the rest of the run."
+      fi
+      return 0
+      ;;
+    q)
+      printf -v "$__var" '%s' quit
+      return 2
+      ;;
+    *)
+      printf -v "$__var" '%s' "$default_ans"
+      return 0
+      ;;
+  esac
 }
 
 # Apply remembered yes|no policy. Sets __var; returns 0 if policy set, 1 if empty.
@@ -1232,46 +1210,31 @@ offer_resolve_old_backup_collision() {
     return 0
   fi
 
-  echo "  [ R ] Replace — delete existing *.old, then rename current file to *.old (default)"
-  echo "  [ s ] Skip — leave the current file as-is (do not back it up)"
-  echo "  [ q ] Quit"
-  printf '%sChoice [ R/s/q ] (%s): ' \
-    "$(user_prompt_ts_prefix)" "$(prompt_timeout_label)"
-  while true; do
-    if prompt_has_timeout; then
-      IFS= read -r -t "$PROMPT_TIMEOUT" -n 1 ans || ans=R
-    else
-      IFS= read -r -n 1 ans || ans=R
-    fi
-    case "$ans" in
-      ""|$'\n'|r|R)
-        echo
-        if (( DRY_RUN == 1 )); then
-          log_msg "[dry-run] rm -- ${base_old}"
-          return 0
-        fi
-        rm -f -- "$dst" || die "Failed to remove existing backup: ${base_old}"
-        log_msg "deleted old backup: ${base_old}"
-        JOB_DELETED_COUNT=$((JOB_DELETED_COUNT + 1))
-        JOB_DELETED_NAMES+=("$base_old")
+  par2create_question "What should happen with the existing ${base_old}?"
+  par2create_arrow_menu r \
+    "r|Replace — delete existing *.old, then back up current file" \
+    "s|Skip — leave the current file as-is (do not back it up)" \
+    "q|Quit"
+  case "$(par2create_choice "$REPLY")" in
+    s)
+      log_msg "Skipped backup for this file (left in place)."
+      return 1
+      ;;
+    q)
+      return 2
+      ;;
+    *)
+      if (( DRY_RUN == 1 )); then
+        log_msg "[dry-run] rm -- ${base_old}"
         return 0
-        ;;
-      s|S)
-        echo
-        log_msg "Skipped backup for this file (left in place)."
-        return 1
-        ;;
-      q|Q)
-        echo
-        return 2
-        ;;
-      *)
-        echo
-        printf '%sInvalid key "%s". Press R, s, q, or Enter for default (R): ' \
-          "$(user_prompt_ts_prefix)" "$ans"
-        ;;
-    esac
-  done
+      fi
+      rm -f -- "$dst" || die "Failed to remove existing backup: ${base_old}"
+      log_msg "deleted old backup: ${base_old}"
+      JOB_DELETED_COUNT=$((JOB_DELETED_COUNT + 1))
+      JOB_DELETED_NAMES+=("$base_old")
+      return 0
+      ;;
+  esac
 }
 
 # Returns: 0=ok, 2=quit.
@@ -1369,14 +1332,9 @@ offer_delete_superseded_protection() {
   elif apply_yes_no_policy ans "$DELETE_LEFTOVER_POLICY" "delete leftover protection"; then
     :
   else
-    echo "  [ Y ] Delete those leftover protection file(s) now (default)"
-    echo "  [ n ] Keep them"
-    echo "  [ a ] Like [ Y ] here, and for the rest of the run"
-    echo "  [ e ] Like [ n ] here, and for the rest of the run"
-    echo "  [ q ] Quit"
-    printf '%sChoice [ Y/n/a/e/q ] (%s): ' \
-      "$(user_prompt_ts_prefix)" "$(prompt_timeout_label)"
-    read_yes_no_rest_key_with_timeout ans yes y DELETE_LEFTOVER_POLICY
+    par2create_question "Delete those leftover protection file(s) now?"
+    read_yes_no_rest_key_with_timeout ans yes y DELETE_LEFTOVER_POLICY \
+      "Delete those leftover protection file(s) now" "Keep them"
     case $? in
       2) echo "Quit."; return 2 ;;
     esac
@@ -1464,14 +1422,9 @@ maybe_offer_verify_and_consolidate() {
   if apply_yes_no_policy ans "$VERIFY_MULTI_POLICY" "verify multi-set first"; then
     :
   else
-    echo "  [ Y ] Verify existing PAR2 set(s) and hash file(s) first (default)"
-    echo "  [ n ] Skip verify"
-    echo "  [ a ] Like [ Y ] here, and for the rest of the run"
-    echo "  [ e ] Like [ n ] here, and for the rest of the run"
-    echo "  [ q ] Quit"
-    printf '%sChoice [ Y/n/a/e/q ] (%s): ' \
-      "$(user_prompt_ts_prefix)" "$(prompt_timeout_label)"
-    read_yes_no_rest_key_with_timeout ans yes y VERIFY_MULTI_POLICY
+    par2create_question "Verify existing PAR2 set(s) and hash file(s) first?"
+    read_yes_no_rest_key_with_timeout ans yes y VERIFY_MULTI_POLICY \
+      "Verify existing PAR2 set(s) and hash file(s) first" "Skip verify"
     case $? in
       2) echo "Quit."; return 2 ;;
     esac
@@ -1487,14 +1440,10 @@ maybe_offer_verify_and_consolidate() {
         if apply_yes_no_policy ans "$CONSOLIDATE_ANYWAY_POLICY" "consolidate anyway after verify-fail"; then
           :
         else
-          echo "  [ C ] Consolidate anyway into one PAR2 + one hash (default)"
-          echo "  [ n ] Do not consolidate — continue with normal recreate prompts"
-          echo "  [ a ] Like [ C ] here, and for the rest of the run"
-          echo "  [ e ] Like [ n ] here, and for the rest of the run"
-          echo "  [ q ] Quit"
-          printf '%sChoice [ C/n/a/e/q ] (%s): ' \
-            "$(user_prompt_ts_prefix)" "$(prompt_timeout_label)"
-          read_yes_no_rest_key_with_timeout ans yes c CONSOLIDATE_ANYWAY_POLICY
+          par2create_question "Consolidate anyway into one PAR2 + one hash?"
+          read_yes_no_rest_key_with_timeout ans yes c CONSOLIDATE_ANYWAY_POLICY \
+            "Consolidate anyway into one PAR2 + one hash" \
+            "Do not consolidate — continue with normal recreate prompts"
           case $? in
             2) echo "Quit."; return 2 ;;
           esac
@@ -1514,14 +1463,10 @@ maybe_offer_verify_and_consolidate() {
       if apply_yes_no_policy ans "$CONSOLIDATE_ANYWAY_POLICY" "consolidate anyway without verify"; then
         :
       else
-        echo "  [ y ] Consolidate anyway into one PAR2 + one hash (without verify)"
-        echo "  [ N ] Do not consolidate (default)"
-        echo "  [ a ] Like [ y ] here, and for the rest of the run"
-        echo "  [ e ] Like [ N ] here, and for the rest of the run"
-        echo "  [ q ] Quit"
-        printf '%sChoice [ y/N/a/e/q ] (%s): ' \
-          "$(user_prompt_ts_prefix)" "$(prompt_timeout_label)"
-        read_yes_no_rest_key_with_timeout ans no y CONSOLIDATE_ANYWAY_POLICY
+        par2create_question "Consolidate anyway into one PAR2 + one hash (without verify)?"
+        read_yes_no_rest_key_with_timeout ans no y CONSOLIDATE_ANYWAY_POLICY \
+          "Consolidate anyway into one PAR2 + one hash (without verify)" \
+          "Do not consolidate"
         case $? in
           2) echo "Quit."; return 2 ;;
         esac
@@ -1540,14 +1485,10 @@ maybe_offer_verify_and_consolidate() {
   if apply_yes_no_policy ans "$CONSOLIDATE_POLICY" "consolidate into one set"; then
     :
   else
-    echo "  [ Y ] Consolidate into one PAR2 + one hash for this directory (default)"
-    echo "  [ n ] Leave multiple protection files as-is"
-    echo "  [ a ] Like [ Y ] here, and for the rest of the run"
-    echo "  [ e ] Like [ n ] here, and for the rest of the run"
-    echo "  [ q ] Quit"
-    printf '%sChoice [ Y/n/a/e/q ] (%s): ' \
-      "$(user_prompt_ts_prefix)" "$(prompt_timeout_label)"
-    read_yes_no_rest_key_with_timeout ans yes y CONSOLIDATE_POLICY
+    par2create_question "Consolidate into one PAR2 + one hash for this directory?"
+    read_yes_no_rest_key_with_timeout ans yes y CONSOLIDATE_POLICY \
+      "Consolidate into one PAR2 + one hash for this directory" \
+      "Leave multiple protection files as-is"
     case $? in
       2) echo "Quit."; return 2 ;;
     esac
@@ -1636,14 +1577,7 @@ maybe_offer_skip_or_verify_existing() {
     action="$EXISTING_PROTECTION_POLICY"
     log_msg "Using remembered choice for this run: ${action}."
   else
-    echo "This directory already has one PAR2 set and one hash."
-    echo "  [ S ] Skip this folder — leave PAR2 + hash unchanged (default)"
-    echo "  [ v ] Verify this folder — if OK, leave unchanged"
-    echo "  [ a ] Like [ S ] here, and for the rest of the run"
-    echo "  [ e ] Like [ v ] here, and for the rest of the run"
-    echo "  [ q ] Quit"
-    printf '%sChoice [ S/v/a/e/q ] (default: S, %s): ' \
-      "$(user_prompt_ts_prefix)" "$(prompt_timeout_label)"
+    par2create_question "This directory already has one PAR2 set and one hash — what now?"
     read_skip_verify_key_with_timeout ans skip
     case $? in
       2) log_msg "Quit."; return 2 ;;
@@ -1718,65 +1652,36 @@ prompt_hash_algo() {
   fi
 
   n=${#HASH_IDS[@]}
-  echo "Hash algorithms available on this system:"
+  local -a hash_items=()
   for (( i = 0; i < n; i++ )); do
-    id="${HASH_IDS[$i]}"
     label="${HASH_LABELS[$i]}"
     cmd="${HASH_CMDS[$i]}"
-    if (( i + 1 == def_idx )); then
-      printf '  %d) %-8s (%s)  [default]\n' "$((i + 1))" "$label" "$cmd"
-    else
-      printf '  %d) %-8s (%s)\n' "$((i + 1))" "$label" "$cmd"
-    fi
+    hash_items+=("$((i + 1))|$(printf '%-8s (%s)' "$label" "$cmd")")
   done
-  echo
+  hash_items+=("q|Quit")
 
-  while true; do
-    printf '%sChoose hash [1-%d] (default: %d = %s; q=quit, %s): ' \
-      "$(user_prompt_ts_prefix)" "$n" "$def_idx" "${HASH_LABELS[def_idx - 1]}" \
-      "$(prompt_timeout_label)"
-    read_hash_choice_with_timeout ans
-    case $? in
-      1)
-        ans=""
-        echo
-        ;;
-      2)
-        echo "Quit."
-        return_code=0
-        RUN_OUTCOME=quit
-        finish
-        ;;
-    esac
-    ans="${ans//[[:space:]]/}"
-    case "$ans" in
-      "")
-        HASH_ALGO="${HASH_IDS[def_idx - 1]}"
-        apply_hash_algo
-        return 0
-        ;;
-      q|Q)
-        echo "Quit."
-        return_code=0
-        RUN_OUTCOME=quit
-        finish
-        ;;
-    esac
-    ans="${ans,,}"
-    if [[ "$ans" =~ ^[1-9][0-9]*$ ]] && (( ans >= 1 && ans <= n )); then
-      HASH_ALGO="${HASH_IDS[ans - 1]}"
-      apply_hash_algo
-      return 0
-    fi
-    id="$(normalize_hash_id "$ans")"
-    i="$(hash_index_for_id "$id")"
-    if (( i > 0 )); then
-      HASH_ALGO="${HASH_IDS[i - 1]}"
-      apply_hash_algo
-      return 0
-    fi
-    echo "Invalid choice '$ans'. Press a number 1-${n}, Enter for default, or q to quit."
-  done
+  par2create_question "Choose hash algorithm:"
+  par2create_arrow_menu "$def_idx" "${hash_items[@]}"
+  ans="$(par2create_choice "$REPLY")"
+  ans="${ans//[[:space:]]/}"
+  case "$ans" in
+    q)
+      echo "Quit."
+      return_code=0
+      RUN_OUTCOME=quit
+      finish
+      ;;
+    "")
+      ans="$def_idx"
+      ;;
+  esac
+  if [[ "$ans" =~ ^[1-9][0-9]*$ ]] && (( ans >= 1 && ans <= n )); then
+    HASH_ALGO="${HASH_IDS[ans - 1]}"
+  else
+    HASH_ALGO="${HASH_IDS[def_idx - 1]}"
+  fi
+  apply_hash_algo
+  return 0
 }
 
 normalize_hash_id() {
@@ -1917,9 +1822,7 @@ prompt_exclude_rename_helpers() {
     printf '  %s\n' "$rel"
   done
   echo "These are typically regenerated by rename.sh and do not need PAR2 recovery."
-
-  printf '%sExclude rename.sh helper files from the PAR2 set? [Y/n/q] (%s): ' \
-    "$(user_prompt_ts_prefix)" "$(prompt_timeout_label)"
+  par2create_question "Exclude rename.sh helper files from the PAR2 set?"
   read_yn_key_with_timeout ans y
   case $? in
     2)
@@ -1936,59 +1839,29 @@ prompt_exclude_rename_helpers() {
   esac
 }
 
-# Always / never / ask (default ask). Sets __var to always|never|ask.
-# Returns: 0=ok, 2=quit. yes_key is the "always" letter (usually y).
+# Always / never / ask arrow menu (default ask). Caller prints the question first.
+# Sets __var to always|never|ask. Returns: 0=ok, 2=quit. yes_key is the "always" letter (usually y).
 read_always_never_ask_key_with_timeout() {
   local __var="$1"
   local yes_key="${2:-y}"
-  local first="" yes_l
+  local always_label="${3:-Always}"
+  local never_label="${4:-Never}"
+  local yes_l
 
   yes_key="${yes_key:0:1}"
   yes_l="${yes_key,,}"
 
-  while true; do
-    if prompt_has_timeout; then
-      IFS= read -r -t "$PROMPT_TIMEOUT" -n 1 first || {
-        echo
-        printf -v "$__var" '%s' ask
-        return 1
-      }
-    else
-      IFS= read -r -n 1 first || {
-        echo
-        printf -v "$__var" '%s' ask
-        return 1
-      }
-    fi
-
-    case "$first" in
-      ""|$'\n'|a|A)
-        echo
-        printf -v "$__var" '%s' ask
-        return 0
-        ;;
-      n|N)
-        echo
-        printf -v "$__var" '%s' never
-        return 0
-        ;;
-      q|Q)
-        echo
-        printf -v "$__var" '%s' quit
-        return 2
-        ;;
-      *)
-        if [[ "${first,,}" == "$yes_l" ]]; then
-          echo
-          printf -v "$__var" '%s' always
-          return 0
-        fi
-        echo
-        printf '%sInvalid key "%s". Press %s, n, A, q, or Enter for default (A): ' \
-          "$(user_prompt_ts_prefix)" "$first" "${yes_l^^}"
-        ;;
-    esac
-  done
+  par2create_arrow_menu a \
+    "${yes_l}|${always_label}" \
+    "n|${never_label}" \
+    "a|Ask each time" \
+    "q|Quit"
+  case "$(par2create_choice "$REPLY")" in
+    "$yes_l") printf -v "$__var" '%s' always; return 0 ;;
+    n) printf -v "$__var" '%s' never; return 0 ;;
+    q) printf -v "$__var" '%s' quit; return 2 ;;
+    *) printf -v "$__var" '%s' ask; return 0 ;;
+  esac
 }
 
 policy_label_existing() {
@@ -2053,101 +1926,48 @@ prompt_run_folder_policies() {
 
   echo
   echo "=== Per-folder policies for this run ==="
-  echo "Choose defaults now; you can still quit later. Enter / [ A ] = ask each time."
-  echo
+  echo "Choose defaults now; you can still quit later. Default row = ask each time."
 
-  echo "1) Folder already has exactly one PAR2 set and one hash:"
-  echo "  [ S ] Always skip (leave unchanged)"
-  echo "  [ v ] Always verify (leave unchanged if OK)"
-  echo "  [ A ] Ask each time (default)"
-  echo "  [ q ] Quit"
-  printf '%sChoice [ S/v/A/q ] (%s): ' \
-    "$(user_prompt_ts_prefix)" "$(prompt_timeout_label)"
-  while true; do
-    if prompt_has_timeout; then
-      IFS= read -r -t "$PROMPT_TIMEOUT" -n 1 ans || ans=A
-    else
-      IFS= read -r -n 1 ans || ans=A
-    fi
-    case "$ans" in
-      ""|$'\n'|a|A)
-        echo
-        EXISTING_PROTECTION_POLICY=""
-        break
-        ;;
-      s|S)
-        echo
-        EXISTING_PROTECTION_POLICY=skip
-        break
-        ;;
-      v|V)
-        echo
-        EXISTING_PROTECTION_POLICY=verify
-        break
-        ;;
-      q|Q)
-        echo
-        return 2
-        ;;
-      *)
-        echo
-        printf '%sInvalid key "%s". Press S, v, A, q, or Enter for default (A): ' \
-          "$(user_prompt_ts_prefix)" "$ans"
-        ;;
-    esac
-  done
+  par2create_question "1) Folder already has exactly one PAR2 set and one hash:"
+  par2create_arrow_menu a \
+    "s|Always skip (leave unchanged)" \
+    "v|Always verify (leave unchanged if OK)" \
+    "a|Ask each time" \
+    "q|Quit"
+  case "$(par2create_choice "$REPLY")" in
+    s) EXISTING_PROTECTION_POLICY=skip ;;
+    v) EXISTING_PROTECTION_POLICY=verify ;;
+    q) return 2 ;;
+    *) EXISTING_PROTECTION_POLICY="" ;;
+  esac
 
   echo
-  echo "2a) Folder has multiple PAR2 sets and/or hashes — verify first?"
-  echo "  [ Y ] Always verify first"
-  echo "  [ n ] Never verify first"
-  echo "  [ A ] Ask each time (default)"
-  echo "  [ q ] Quit"
-  printf '%sChoice [ Y/n/A/q ] (%s): ' \
-    "$(user_prompt_ts_prefix)" "$(prompt_timeout_label)"
-  read_always_never_ask_key_with_timeout ans y
+  par2create_question "2a) Folder has multiple PAR2 sets and/or hashes — verify first?"
+  read_always_never_ask_key_with_timeout ans y "Always verify first" "Never verify first"
   case $? in
     2) return 2 ;;
   esac
   set_yes_no_policy_from_choice "$ans" VERIFY_MULTI_POLICY
 
   echo
-  echo "2b) If verify fails or is skipped — consolidate anyway into one set?"
-  echo "  [ Y ] Always consolidate anyway"
-  echo "  [ n ] Never consolidate anyway"
-  echo "  [ A ] Ask each time (default)"
-  echo "  [ q ] Quit"
-  printf '%sChoice [ Y/n/A/q ] (%s): ' \
-    "$(user_prompt_ts_prefix)" "$(prompt_timeout_label)"
-  read_always_never_ask_key_with_timeout ans y
+  par2create_question "2b) If verify fails or is skipped — consolidate anyway into one set?"
+  read_always_never_ask_key_with_timeout ans y "Always consolidate anyway" "Never consolidate anyway"
   case $? in
     2) return 2 ;;
   esac
   set_yes_no_policy_from_choice "$ans" CONSOLIDATE_ANYWAY_POLICY
 
   echo
-  echo "2c) When consolidate is offered — consolidate into one PAR2 + one hash?"
-  echo "  [ Y ] Always consolidate"
-  echo "  [ n ] Never consolidate"
-  echo "  [ A ] Ask each time (default)"
-  echo "  [ q ] Quit"
-  printf '%sChoice [ Y/n/A/q ] (%s): ' \
-    "$(user_prompt_ts_prefix)" "$(prompt_timeout_label)"
-  read_always_never_ask_key_with_timeout ans y
+  par2create_question "2c) When consolidate is offered — consolidate into one PAR2 + one hash?"
+  read_always_never_ask_key_with_timeout ans y "Always consolidate" "Never consolidate"
   case $? in
     2) return 2 ;;
   esac
   set_yes_no_policy_from_choice "$ans" CONSOLIDATE_POLICY
 
   echo
-  echo "3) After create — delete leftover other PAR2/hash sets and *.old backups?"
-  echo "  [ Y ] Always delete leftovers"
-  echo "  [ n ] Never delete leftovers"
-  echo "  [ A ] Ask each time (default)"
-  echo "  [ q ] Quit"
-  printf '%sChoice [ Y/n/A/q ] (%s): ' \
-    "$(user_prompt_ts_prefix)" "$(prompt_timeout_label)"
-  read_always_never_ask_key_with_timeout ans y
+  par2create_question "3) After create — delete leftover other PAR2/hash sets and *.old backups?"
+  read_always_never_ask_key_with_timeout ans y "Always delete leftovers" "Never delete leftovers"
   case $? in
     2) return 2 ;;
   esac
@@ -2531,50 +2351,28 @@ resolve_create_scope() {
   fi
 
   echo "This directory has ${#subdirs[@]} immediate subdirectory(ies)."
-  echo "What should be created?"
-  echo "  [ w ] Whole tree — one PAR2 + hash in this directory (all files here and below)"
-  echo "  [ P ] Per subdirectory — one PAR2 + hash in each immediate child (full subtree each;"
-  echo "        files that sit only in this directory are ignored)  [default]"
-  echo "  [ q ] Quit"
-  printf '%sChoice [ w/P/q ] (%s): ' "$(user_prompt_ts_prefix)" "$(prompt_timeout_label)"
-
-  while true; do
-    if prompt_has_timeout; then
-      if ! IFS= read -r -t "$PROMPT_TIMEOUT" -n 1 first; then
-        echo
-        echo "Timed out — using per subdirectory."
-        CREATE_SCOPE=per-subdir
-        CREATE_SCOPE_SOURCE=default
-        return 0
-      fi
-    else
-      IFS= read -r -n 1 first || first=""
-    fi
-
-    case "$first" in
-      ""|$'\n'|p|P)
-        echo
-        CREATE_SCOPE=per-subdir
-        CREATE_SCOPE_SOURCE=prompt
-        return 0
-        ;;
-      w|W)
-        echo
-        CREATE_SCOPE=whole
-        CREATE_SCOPE_SOURCE=prompt
-        return 0
-        ;;
-      q|Q)
-        echo
-        return 2
-        ;;
-      *)
-        echo
-        printf '%sInvalid key "%s". Press w, P, q, or Enter for default (P): ' \
-          "$(user_prompt_ts_prefix)" "$first"
-        ;;
-    esac
-  done
+  echo "(Per subdirectory ignores files that sit only in this directory.)"
+  par2create_question "What should be created?"
+  par2create_arrow_menu p \
+    "w|Whole tree — one PAR2 + hash here (all files below too)" \
+    "p|Per subdirectory — one PAR2 + hash per immediate child" \
+    "q|Quit"
+  first="$(par2create_choice "$REPLY")"
+  case "$first" in
+    w)
+      CREATE_SCOPE=whole
+      CREATE_SCOPE_SOURCE=prompt
+      return 0
+      ;;
+    q)
+      return 2
+      ;;
+    *)
+      CREATE_SCOPE=per-subdir
+      CREATE_SCOPE_SOURCE=prompt
+      return 0
+      ;;
+  esac
 }
 
 # Command line that reproduces this run: the resolved hash/recovery/helper answers as flags.
@@ -2917,8 +2715,7 @@ run_create_job() {
       fi
     else
       ans=""
-      printf '%sRename existing PAR2 to *.par2.old and recreate? [y/N/q] (%s): ' \
-        "$(user_prompt_ts_prefix)" "$(prompt_timeout_label)"
+      par2create_question "Rename existing PAR2 to *.par2.old and recreate?"
       read_yn_key_with_timeout ans n
       case $? in
         2)
@@ -2949,8 +2746,7 @@ run_create_job() {
             log_msg "  hash manifest yet (expected: $(basename -- "$HASH_FILE"))."
             log_msg "Suggestion: create a hash file covering all files in this tree,"
             log_msg "  including the existing PAR2 file(s). PAR2 will not be modified."
-            printf '%sCreate hash file now? [y/N/q] (%s): ' \
-              "$(user_prompt_ts_prefix)" "$(prompt_timeout_label)"
+            par2create_question "Create hash file now?"
             read_yn_key_with_timeout ans n
             case $? in
               2)
@@ -2994,8 +2790,7 @@ run_create_job() {
       log_msg "Will overwrite (--yes)."
     else
       ans=""
-      printf '%sOverwrite existing hash file? [Y/n/q] (%s): ' \
-        "$(user_prompt_ts_prefix)" "$(prompt_timeout_label)"
+      par2create_question "Overwrite existing hash file?"
       read_yn_key_with_timeout ans y
       case $? in
         2)

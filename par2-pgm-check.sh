@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261116.163000 - interactive multi-choice prompts use Up/Down arrow menus
 # v. 20261115.200000 - end Timing SUMMARY: Script + Version at top (Family-A)
 # v. 20261115.140500 - RUN SUMMARY: hash + PAR2 status (coverage and digests/verify)
 # v. 20261115.120000 - hash-verify UI: single blank lines between sections (no doubles)
@@ -67,6 +68,7 @@
 # v. 20260719.103506 - fix no-arg run: empty POSITIONAL[@]:- became one "" element
 # v. 20260719.102800 - multi-set selection: A/a, ranges 1-4, --all, multiple paths
 
+# 2026.11.16 - v. 0.1.81 - Multi-choice prompts (scope, every Y/n/q question) use the shared Up/Down arrow menu (script_arrow_menu; y/n/q/s/c keys still work); set selection (A / numbers / ranges) stays typed
 # 2026.11.15 - v. 0.1.80 - RUN SUMMARY lists hash-file status (directory coverage + digests
 #   OK/missing/mismatch/skipped) and PAR2 status (verified OK / issues with counts)
 # 2026.11.15 - v. 0.1.79 - Hash-verify spacing: one blank line between RESULT / hash list /
@@ -519,62 +521,24 @@ pgm_prompt_read_hash_data_fix_choice() {
         "Update hash file path(s) to match those on-disk file(s)?"
 }
 
-# Answer on one key (Enter = default); q quits the script. Sets 0=yes, 1=no, 2=quit.
+# Yes / No / Quit via Up/Down arrow menu (Enter = highlighted default; y/n/q keys still work).
+# Sets 0=yes, 1=no, 2=quit; q quits the script (callers handle 2).
 pgm_prompt_read_yes_no_quit() {
     local default_yes="$1"
     local -n _out=$2
     local question="$3"
-    local key="" rest=""
+    local def=n
 
-    if (( default_yes )); then
-        printf '%s%s [Y/n/q] (%s): ' \
-            "$(pgm_user_prompt_ts_prefix)" "$question" "$(pgm_prompt_timeout_label)"
-    else
-        printf '%s%s [y/N/q] (%s): ' \
-            "$(pgm_user_prompt_ts_prefix)" "$question" "$(pgm_prompt_timeout_label)"
-    fi
-    pgm_flush_stdin
-
-    if ! pgm_read_key_with_timeout key; then
-        _out=$(( default_yes ? 0 : 1 ))
-        echo
-        return 0
-    fi
-
-    case "$key" in
-        ''|$'\n')
-            # Enter already ended the prompt line; do not echo again (avoids a double blank).
-            _out=$(( default_yes ? 0 : 1 ))
-            return 0
-            ;;
-        q|Q)
-            _out=2
-            echo
-            return 0
-            ;;
-        y|Y)
-            _out=0
-            echo
-            return 0
-            ;;
-        n|N)
-            _out=1
-            echo
-            return 0
-            ;;
+    (( default_yes )) && def=y
+    pgm_question "$question"
+    pgm_arrow_menu "$def" "y|Yes" "n|No" "q|Quit"
+    case "$(pgm_choice "$REPLY")" in
+        y) _out=0 ;;
+        n) _out=1 ;;
+        q) _out=2 ;;
+        *) _out=$(( default_yes ? 0 : 1 )) ;;
     esac
-
-    if pgm_read_line_with_timeout rest; then
-        case "${key}${rest}" in
-            y|Y|yes|YES) _out=0 ;;
-            n|N|no|NO) _out=1 ;;
-            q|Q) _out=2 ;;
-            *) _out=$(( default_yes ? 0 : 1 )) ;;
-        esac
-    else
-        _out=$(( default_yes ? 0 : 1 ))
-    fi
-    echo
+    return 0
 }
 
 pgm_parse_set_selection() {
@@ -1012,19 +976,15 @@ pgm_resolve_check_scope() {
     fi
 
     echo
-    echo "What should be searched for PAR2 sets?"
-    echo "  [S] Also subdirectories (default)"
-    echo "  [C] Current directory only"
-    echo "  [Q] Quit"
-    printf '%sChoice [S/c/q]: ' "$(pgm_user_prompt_ts_prefix)"
-    pgm_flush_stdin
-    if ! pgm_read_key_with_timeout input; then
-        input=S
-    fi
-    echo
+    pgm_question "What should be searched for PAR2 sets?"
+    pgm_arrow_menu s \
+        "s|Also subdirectories" \
+        "c|Current directory only" \
+        "q|Quit"
+    input="$(pgm_choice "$REPLY")"
     case "$input" in
-        c|C) CHECK_SCOPE=current ;;
-        q|Q) echo "Cancelled."; return_code=0; finish ;;
+        c) CHECK_SCOPE=current ;;
+        q) echo "Cancelled."; return_code=0; finish ;;
         *) CHECK_SCOPE=subdirs ;;
     esac
     echo "Scope selected: $CHECK_SCOPE"
@@ -1558,6 +1518,115 @@ PGM_COV_ONLY_HASH=0
 PGM_COV_SIBLING=0
 DATA_FILES=()
 PROMPT_TIMEOUT="${PROMPT_TIMEOUT-}"
+
+# Shared Up/Down arrow menu (script_arrow_menu from a sibling _script_header.sh; same UX as rename.sh / av.sh).
+# Already defined when the sourced header is new enough; otherwise only the shared colors/menu block is
+# extracted and eval'ed (not the whole header: LC_ALL=C, INT trap, banners, apt prompts).
+pgm_ts_fn() {
+    printf '(%s)' "$(date '+%Y.%m.%d %H:%M:%S')"
+}
+
+pgm_load_script_arrow_menu() {
+    local live_dir="${1-}" hdr="" dir="" block=""
+
+    declare -F script_arrow_menu >/dev/null 2>&1 && return 0
+    for dir in "$live_dir" "${profile_location_dir:-$HOME}/bin" "$HOME/bin" "/root/bin"; do
+        [[ -n "$dir" && -f "$dir/_script_header.sh" ]] || continue
+        hdr="$dir/_script_header.sh"
+        break
+    done
+    [[ -n "$hdr" ]] || return 1
+    block="$(sed -n '/^# Shared terminal colors for interactive/,/^# Ask once\./p' "$hdr" 2>/dev/null || true)"
+    [[ "$block" == *'script_arrow_menu()'* ]] || return 1
+    # shellcheck disable=SC1090
+    eval "$block"
+    declare -F script_arrow_menu >/dev/null 2>&1
+}
+
+_pgm_live_dir=""
+if [[ -n "${SCRIPT_SELF_LIVE_PATH:-}" ]]; then
+    _pgm_live_dir="$(cd "$(dirname -- "${SCRIPT_SELF_LIVE_PATH}")" 2>/dev/null && pwd -P || true)"
+else
+    _pgm_live_dir="$(cd "$(dirname -- "${BASH_SOURCE[0]:-$0}")" 2>/dev/null && pwd -P || true)"
+fi
+pgm_load_script_arrow_menu "$_pgm_live_dir" || true
+SCRIPT_TS_FN=pgm_ts_fn
+unset _pgm_live_dir
+
+# Lowercase one-key answer without CR/LF (same as script_arrow_choice).
+pgm_choice() {
+    local c="${1,,}"
+    c="${c//$'\r'/}"
+    c="${c//$'\n'/}"
+    printf '%s' "$c"
+}
+
+# Restore cursor/stty if a menu is interrupted (Ctrl-C trap, EXIT cleanup).
+pgm_arrow_menu_restore_tty() {
+    [[ -t 1 || -n "${SCRIPT_ARROW_STTY:-}" ]] || return 0
+    if declare -F script_arrow_menu_restore_tty >/dev/null 2>&1; then
+        script_arrow_menu_restore_tty
+    else
+        printf '\033[?25h' 2>/dev/null || true
+    fi
+    return 0
+}
+
+# Typed fallback (script_arrow_menu unavailable): static list + one key. Sets REPLY.
+pgm_arrow_menu_static() {
+    local def="${1-}" item key label ch first="" def_l="" shown
+    shift
+    def_l="$(pgm_choice "$def")"
+    for item in "$@"; do
+        key="${item%%|*}"
+        label="${item#*|}"
+        shown="$key"
+        [[ -n "$def_l" && "$(pgm_choice "$key")" == "$def_l" ]] && shown="${key^^}"
+        printf '  [%s] %s\n' "$shown" "$label"
+    done
+    while true; do
+        printf '%sChoice: ' "$(pgm_user_prompt_ts_prefix)"
+        pgm_flush_stdin
+        pgm_read_key_with_timeout first || first=""
+        echo
+        ch="$(pgm_choice "$first")"
+        if [[ -z "$ch" ]]; then
+            REPLY="$def_l"
+            return 0
+        fi
+        for item in "$@"; do
+            if [[ "$(pgm_choice "${item%%|*}")" == "$ch" ]]; then
+                REPLY="$ch"
+                return 0
+            fi
+        done
+        echo "Invalid key '$first'."
+    done
+}
+
+# pgm_arrow_menu DEFAULT_KEY "key|label" ...  -> sets REPLY (lowercase key).
+# Up/Down + Enter via script_arrow_menu; typed keys still work. PROMPT_TIMEOUT (when set) becomes TMOUT for the
+# menu reads: an idle prompt accepts the highlighted (default) row.
+pgm_arrow_menu() {
+    local def="${1-}"
+    shift
+    if declare -F script_arrow_menu >/dev/null 2>&1; then
+        if pgm_prompt_has_timeout; then
+            TMOUT="$PROMPT_TIMEOUT" script_arrow_menu "$def" "$@"
+        else
+            script_arrow_menu "$def" "$@"
+        fi
+        return 0
+    fi
+    pgm_arrow_menu_static "$def" "$@"
+    return 0
+}
+
+# Timestamped question line printed right above a menu.
+pgm_question() {
+    printf '%s%s\n' "$(pgm_user_prompt_ts_prefix)" "$*"
+}
+
 PGM_PAR2_ARG_BATCH="${PGM_PAR2_ARG_BATCH:-2000}"
 PGM_RENAME_BATCH="${PGM_RENAME_BATCH:-16}"
 PGM_SCRIPT_START_STR=""
@@ -1566,6 +1635,7 @@ CLI_SCOPE=""
 CHECK_SCOPE=subdirs
 
 cleanup() {
+    pgm_arrow_menu_restore_tty || true
     [[ -n "$OUT2_FILE" && -f "$OUT2_FILE" ]] && rm -f "$OUT2_FILE"
 }
 trap cleanup EXIT
