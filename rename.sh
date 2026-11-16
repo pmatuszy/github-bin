@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# v. 20261116.160000 - interactive multi-choice prompts use Up/Down arrow menus
 # v. 20261115.200000 - SUMMARY: Family-A chrome + Script/Version at top
 # v. 20261115.112000 - Contour Make/Model → YYYYMMDD_HHMMSS_-_-_Contour+2 (metadata first; upgrade Contour_2)
 # v. 20261111.094500 - Collision prompt: [E] use _OTHER for all further collisions for the rest of this run (session twin of [R]/[D])
@@ -120,6 +121,7 @@
 # 2026.10.28 - v. 19.364.174241 - fix typo in update_checksum_content_refs: preserve_timestamps_exists was undefined (exit 127); call preserve_timestamps_inplace
 # 2026.10.28 - v. 19.363.172211 - checksum ref path rewrite after rename: use Python exact match instead of sed (fixes unterminated s on paths like kosciol_sw._Konrada)
 
+# 2026.11.16 - v. 19.367.160000 - Interactive multi-choice prompts use shared script_arrow_menu (Up/Down + Enter, letter keys still work); question then menu with fewer blank lines; free-text prompts unchanged
 # 2026.11.15 - v. 19.366.112000 - Contour: when Make=Contour (Model Contour*), rename bare /
 #   Contour-style timestamps to YYYYMMDD_HHMMSS_-_-_Contour+2.ext (label Contour+2 only); upgrade
 #   legacy _-_-_Contour_2; Ambarella raw path uses Contour+2 the same way; print Contour-metadata note
@@ -752,7 +754,40 @@ if [[ -f "${_RENAME_SELF_UPDATE_HELPER}" ]]; then
     . "${_RENAME_SELF_UPDATE_HELPER}"
     script_self_update_setup "${SCRIPT_SELF_LIVE_PATH:-$_rename_live}"
 fi
-unset _RENAME_SELF_UPDATE_HELPER _rename_live
+
+# Shared Up/Down arrow menu (script_arrow_menu from sibling _script_header.sh; same UX as video-pgm-timelapse).
+# Only the shared colors/menu helper block is loaded (not the whole header): the full header exports LC_ALL=C,
+# installs its own INT trap, prints banners and may prompt for apt installs — none of that belongs in rename.sh.
+# rename.sh keeps its own "Use colors?" prompt (script_ask_colors is not called).
+rename_ts_fn() {
+    printf '(%s)' "$(date '+%Y.%m.%d %H:%M:%S')"
+}
+
+rename_load_script_arrow_menu() {
+    local live_dir="${1-}" hdr="" dir="" block=""
+
+    declare -F script_arrow_menu >/dev/null 2>&1 && return 0
+    for dir in "$live_dir" "${profile_location_dir:-$HOME}/bin" "$HOME/bin" "/root/bin"; do
+        [[ -n "$dir" && -f "$dir/_script_header.sh" ]] || continue
+        hdr="$dir/_script_header.sh"
+        break
+    done
+    [[ -n "$hdr" ]] || return 1
+    block="$(sed -n '/^# Shared terminal colors for interactive/,/^# Ask once\./p' "$hdr" 2>/dev/null || true)"
+    [[ "$block" == *'script_arrow_menu()'* ]] || return 1
+    eval "$block"
+    declare -F script_arrow_menu >/dev/null 2>&1
+}
+
+_rename_live_dir=""
+if [[ -n "${SCRIPT_SELF_LIVE_PATH:-}" ]]; then
+    _rename_live_dir="$(cd "$(dirname -- "${SCRIPT_SELF_LIVE_PATH}")" 2>/dev/null && pwd -P || true)"
+elif [[ -n "${_rename_live:-}" ]]; then
+    _rename_live_dir="$(cd "$(dirname -- "${_rename_live}")" 2>/dev/null && pwd -P || true)"
+fi
+rename_load_script_arrow_menu "$_rename_live_dir" || true
+SCRIPT_TS_FN=rename_ts_fn
+unset _RENAME_SELF_UPDATE_HELPER _rename_live _rename_live_dir
 
 # If a checksum list has more than this many lines, ask before checking it; default answer is No ([y/N/q]).
 LARGE_HASHFILE_LINE_PROMPT_THRESHOLD="${LARGE_HASHFILE_LINE_PROMPT_THRESHOLD:-20}"
@@ -2016,12 +2051,15 @@ read_yes_no_quit_confirm() {
     local __timeout="$1"
     local answer=""
 
-    flush_stdin
-    read_single_key answer "$__timeout"
-    echo >&2
+    # Caller prints the question line; Up/Down menu goes to stderr (callers may run inside $(…)).
+    RENAME_MENU_TIMEOUT="$__timeout" rename_arrow_menu_err n \
+        "y|Yes" \
+        "n|No" \
+        "q|Quit"
+    answer="$(rename_choice "$REPLY")"
     case "$answer" in
-        q|Q) return 2 ;;
-        y|Y) return 0 ;;
+        q) return 2 ;;
+        y) return 0 ;;
         *) return 1 ;;
     esac
 }
@@ -2031,12 +2069,14 @@ prompt_show_usage_environment_tunables() {
     local answer=""
 
     echo
-    echo -n "$(user_prompt_ts_prefix)Show all environment variables? [y/N]: "
-    flush_stdin
-    read_single_key answer 5
-    echo
+    echo "$(user_prompt_ts_prefix)Show all environment variables?"
+    # 5 second idle timeout (as before) accepts the default No.
+    RENAME_MENU_TIMEOUT=5 rename_arrow_menu n \
+        "y|Yes — list all environment variables" \
+        "n|No"
+    answer="$(rename_choice "$REPLY")"
     case "$answer" in
-        y|Y)
+        y)
             usage_environment_tunables
             ;;
     esac
@@ -2072,6 +2112,101 @@ rename_menu_key_bracket() {
         printf '[%s]' "${key,,}"
     fi
 }
+
+# --- Up/Down arrow menus (shared script_arrow_menu; see rename_load_script_arrow_menu near the top) ---
+# Restore cursor/stty if a menu is interrupted (Ctrl-C trap, cleanup_on_exit).
+rename_arrow_menu_restore_tty() {
+    # No escape sequences on non-TTY output unless a menu actually changed the tty settings.
+    [[ -t 1 || -n "${SCRIPT_ARROW_STTY:-}" ]] || return 0
+    if declare -F script_arrow_menu_restore_tty >/dev/null 2>&1; then
+        script_arrow_menu_restore_tty
+    else
+        printf '\033[?25h' 2>/dev/null || true
+    fi
+    return 0
+}
+
+# Lowercase one-key answer without CR/LF (same as script_arrow_choice).
+rename_choice() {
+    local c="${1,,}"
+    c="${c//$'\r'/}"
+    c="${c//$'\n'/}"
+    printf '%s' "$c"
+}
+
+# Typed fallback: static list + one key (used when script_arrow_menu is unavailable or a prompt timeout is in force).
+# Sets REPLY. Enter / timeout -> default key.
+rename_arrow_menu_static() {
+    local def="${1-}" timeout="${2:-0}"
+    shift 2
+    local item key label hint="" def_l=""
+    def_l="$(rename_choice "$def")"
+    for item in "$@"; do
+        key="${item%%|*}"
+        label="${item#*|}"
+        echo "  $(rename_menu_key_bracket "$key" "$def") ${label}"
+        [[ -n "$hint" ]] && hint+="/"
+        if [[ -n "$def_l" && "$(rename_choice "$key")" == "$def_l" ]]; then
+            hint+="${key^^}"
+        else
+            hint+="${key,,}"
+        fi
+    done
+    echo -n "$(user_prompt_ts_prefix)Choice [${hint}]: "
+    flush_stdin
+    read_single_key REPLY "$timeout"
+    echo
+    REPLY="$(rename_choice "$REPLY")"
+    [[ -n "$REPLY" ]] || REPLY="$def_l"
+    return 0
+}
+
+# rename_arrow_menu DEFAULT_KEY "key|label" ...  -> sets REPLY (lowercase key).
+# Up/Down + Enter via script_arrow_menu; typed letter keys still work. Labels wider than the terminal are
+# shortened (the menu redraws a fixed number of rows). RENAME_MENU_TIMEOUT (else PROMPT_WAIT_SECONDS) > 0 sets
+# TMOUT for the menu reads: an idle prompt accepts the highlighted default row; 0 waits forever.
+rename_arrow_menu() {
+    nonverbose_progress_dot_prepare_for_prompt
+    local def="${1-}"
+    shift
+    local timeout="${RENAME_MENU_TIMEOUT:-${PROMPT_WAIT_SECONDS:-0}}"
+    local -a items=()
+    local item key label cols max
+
+    cols="$(rename_terminal_column_count)"
+    max=$(( cols - 22 ))
+    (( max >= 20 )) || max=20
+    for item in "$@"; do
+        key="${item%%|*}"
+        label="${item#*|}"
+        if (( ${#label} > max )); then
+            label="${label:0:max-3}..."
+        fi
+        items+=("${key}|${label}")
+    done
+
+    [[ "$timeout" =~ ^[0-9]+$ ]] || timeout=0
+    if declare -F script_arrow_menu >/dev/null 2>&1; then
+        if (( timeout > 0 )); then
+            # TMOUT is the default timeout of every read inside script_arrow_menu; an idle read returns
+            # empty, which the menu treats like Enter on the highlighted (default) row.
+            TMOUT="$timeout" script_arrow_menu "$def" "${items[@]}"
+        else
+            script_arrow_menu "$def" "${items[@]}"
+        fi
+        return $?
+    fi
+    rename_arrow_menu_static "$def" "$timeout" "${items[@]}"
+    return 0
+}
+
+# Same as rename_arrow_menu but draws on stderr (prompts inside $(...) captures must not write menus to stdout).
+rename_arrow_menu_err() {
+    rename_arrow_menu "$@" >&2
+}
+
+# Shared [v] list-directory menu item (handle_prompt_directory_listing_choice re-shows the menu after the listing).
+RENAME_MENU_ITEM_V='v|List directory where this path exists (parent; mark OLD/NEW basenames when given)'
 
 # Shared [v] directory listing for interactive prompts (stdout menu line).
 # Optional indent (default two spaces). Pass four spaces under a "Keys:" block so [v] lines up with sibling keys.
@@ -2132,20 +2267,18 @@ confirm_db_hash_update_for_existing_entry() {
     echo "  computed: $(format_hash_for_display "$new_hash")"
     while true; do
         echo "$(user_prompt_ts_prefix)Replace stored hash with computed value?"
-        echo "  $(rename_menu_key_bracket Y Y) Yes (default)"
-        echo "  $(rename_menu_key_bracket N Y) No (keep existing DB hash)"
-        print_prompt_view_directory_menu_line
-        echo "  $(rename_menu_key_bracket Q Y) Quit"
-        echo -n "$(user_prompt_ts_prefix)Choice [Y/n/v/q]: "
-        flush_stdin
-        read_single_key answer "$PROMPT_WAIT_SECONDS"
-        echo
+        rename_arrow_menu y \
+            "y|Yes (default)" \
+            "n|No (keep existing DB hash)" \
+            "$RENAME_MENU_ITEM_V" \
+            "q|Quit"
+        answer="$(rename_choice "$REPLY")"
         if handle_prompt_directory_listing_choice "$answer" "$path"; then
             continue
         fi
         case "$answer" in
-            q|Q) return 2 ;;
-            n|N) return 1 ;;
+            q) return 2 ;;
+            n) return 1 ;;
             *) return 0 ;;
         esac
     done
@@ -2160,18 +2293,16 @@ prompt_resume_choice_early() {
     echo
     echo "Checkpoint found from an interrupted run: $RESUME_STATE_FILE"
     verbose_question_timestamp "Resume from checkpoint?"
-    echo "  $(rename_menu_key_bracket Y Y) Resume (default)"
-    echo "  $(rename_menu_key_bracket N Y) Start from the beginning"
-    echo "  $(rename_menu_key_bracket Q Y) Quit"
-    echo -n "$(user_prompt_ts_prefix)Choice [Y/n/q]: "
-    flush_stdin
-    read_single_key answer "$PROMPT_WAIT_SECONDS"
-    echo
+    rename_arrow_menu y \
+        "y|Resume (default)" \
+        "n|Start from the beginning" \
+        "q|Quit"
+    answer="$(rename_choice "$REPLY")"
 
-    if [[ "$answer" =~ [Qq] ]]; then
+    if [[ "$answer" == q ]]; then
         echo "Quitting."
         exit 0
-    elif [[ "$answer" =~ [Nn] ]]; then
+    elif [[ "$answer" == n ]]; then
         EARLY_RESUME_DECISION="fresh"
     else
         EARLY_RESUME_DECISION="resume"
@@ -2195,19 +2326,17 @@ prompt_use_existing_sqlite_cache_if_present() {
     echo "SQLite cache file found in the start directory:"
     echo "  $shown_db"
     verbose_question_timestamp "Use this SQLite cache for this run (same as --use-db)?"
-    echo "  $(rename_menu_key_bracket Y Y) Yes — enable SQLite cache (default)"
-    echo "  $(rename_menu_key_bracket N Y) No — run without the cache"
-    echo "  $(rename_menu_key_bracket Q Y) Quit"
-    echo -n "$(user_prompt_ts_prefix)Choice [Y/n/q]: "
-    flush_stdin
-    read_single_key answer "$PROMPT_WAIT_SECONDS"
-    echo
+    rename_arrow_menu y \
+        "y|Yes — enable SQLite cache (default)" \
+        "n|No — run without the cache" \
+        "q|Quit"
+    answer="$(rename_choice "$REPLY")"
 
-    if [[ "$answer" =~ [Qq] ]]; then
+    if [[ "$answer" == q ]]; then
         echo "Quitting."
         exit 0
     fi
-    if [[ "$answer" =~ [Nn] ]]; then
+    if [[ "$answer" == n ]]; then
         startup_progress "SQLite cache file present but not used for this run (user chose no)."
         return 0
     fi
@@ -3920,6 +4049,7 @@ db_flush_pending() {
 
 cleanup_on_exit() {
     local rc=$?
+    rename_arrow_menu_restore_tty || true
     rename_sh_window_title_restore || true
     if (( USE_DB == 1 )); then
         db_flush_pending || true
@@ -4300,12 +4430,15 @@ PY
         echo "  NEW ROOT: $root"
         echo "  Rows to convert: $legacy_count"
         echo "  Paths found under NEW ROOT: $mapped_existing / $legacy_count"
-        echo -n "Convert these paths to portable relative paths? [y/N/q]: "
-        read_single_key answer "$PROMPT_WAIT_SECONDS"
-        echo
+        echo "Convert these paths to portable relative paths?"
+        rename_arrow_menu n \
+            "y|Yes — convert stored paths to portable relative paths" \
+            "n|No (default) — decline; no maintenance or cache pruning" \
+            "q|Quit"
+        answer="$(rename_choice "$REPLY")"
         case "$answer" in
-            y|Y) ;;
-            q|Q)
+            y) ;;
+            q)
                 stopped_by_user=yes
                 rm -f -- "$current_file" "$legacy_file" "$sql_file"
                 return 2
@@ -5674,6 +5807,7 @@ print_db_maintenance_summary() {
 
 on_interrupt_db_maintenance() {
     trap '' INT
+    rename_arrow_menu_restore_tty || true
     _db_maintenance_hash_backfill_progress_finish || true
     nonverbose_progress_dot_endline_if_needed || true
     stopped_by_user=yes
@@ -5736,16 +5870,19 @@ db_prompt_warmup_shortfall() {
         return 0
     fi
 
-    echo -n "$(user_prompt_ts_prefix)SQLite warmup shortfall — [C]ontinue with loaded rows / [Q]uit: "
-    flush_stdin
+    echo "$(user_prompt_ts_prefix)SQLite warmup shortfall — continue with the rows that loaded, or quit?"
     if [[ -r /dev/tty ]]; then
-        read_single_key answer "$PROMPT_WAIT_SECONDS" </dev/tty || true
+        rename_arrow_menu c \
+            "c|Continue with loaded rows (default)" \
+            "q|Quit" </dev/tty || true
     else
-        read_single_key answer "$PROMPT_WAIT_SECONDS" || true
+        rename_arrow_menu c \
+            "c|Continue with loaded rows (default)" \
+            "q|Quit" || true
     fi
-    echo
+    answer="$(rename_choice "$REPLY")"
     case "$answer" in
-        q|Q)
+        q)
             echo "Stopped: SQLite warmup shortfall (loaded $warmed of $expected rows)." >&2
             exit 1
             ;;
@@ -6728,21 +6865,28 @@ if [[ -n "$CLI_COLORS" ]]; then
 else
     echo
     verbose_question_timestamp "Use colors?"
-    echo "  $(rename_menu_key_bracket Y Y) Yes (default)"
-    echo "  $(rename_menu_key_bracket N Y) No"
-    echo "  $(rename_menu_key_bracket Q Y) Quit"
-    echo -n "$(user_prompt_ts_prefix)Choice [Y/n/q]: "
+    rename_arrow_menu y \
+        "y|Yes (default)" \
+        "n|No" \
+        "q|Quit"
+    input="$(rename_choice "$REPLY")"
 
-    flush_stdin
-    read_single_key input "$PROMPT_WAIT_SECONDS"
-    echo
-
-    if [[ "$input" =~ [Qq] ]]; then
+    if [[ "$input" == q ]]; then
         echo "Quitting."
         exit 0
-    elif [[ "$input" =~ [Nn] ]]; then
+    elif [[ "$input" == n ]]; then
         use_colors=no
     fi
+fi
+
+# Keep shared script_arrow_menu highlight colors in sync with this script's own colors prompt.
+if [[ "$use_colors" == "yes" ]]; then
+    SCRIPT_USE_COLORS=1
+else
+    SCRIPT_USE_COLORS=0
+fi
+if declare -F script_colors_init >/dev/null 2>&1; then
+    script_colors_init || true
 fi
 
 if [[ "$use_colors" == "yes" ]]; then
@@ -7543,19 +7687,16 @@ if [[ -n "$CLI_MODE" ]]; then
 else
     echo
     verbose_question_timestamp "Select mode:"
-    echo "  $(rename_menu_key_bracket R R) Real rename (default)"
-    echo "  $(rename_menu_key_bracket D R) Dry-run"
-    echo "  $(rename_menu_key_bracket Q R) Quit"
-    echo -n "$(user_prompt_ts_prefix)Choice [R/d/q]: "
+    rename_arrow_menu r \
+        "r|Real rename (default)" \
+        "d|Dry-run" \
+        "q|Quit"
+    input="$(rename_choice "$REPLY")"
 
-    flush_stdin
-    read_single_key input "$PROMPT_WAIT_SECONDS"
-    echo
-
-    if [[ "$input" =~ [Qq] ]]; then
+    if [[ "$input" == q ]]; then
         echo "Quitting."
         exit 0
-    elif [[ "$input" =~ [Dd] ]]; then
+    elif [[ "$input" == d ]]; then
         mode="dry-run"
     fi
 fi
@@ -7725,24 +7866,21 @@ else
     while true; do
         echo
         verbose_question_timestamp "What should be processed?"
-        echo "  $(rename_menu_key_bracket S S) Also subdirectories (default) — whole tree under the start directory"
-        echo "  $(rename_menu_key_bracket C S) Current directory only — immediate children of the start directory"
-        echo "  $(rename_menu_key_bracket D S) Choose a subdirectory — recurse under it; DB/excludes stay at start dir"
-        echo "  $(rename_menu_key_bracket Q S) Quit"
-        echo -n "$(user_prompt_ts_prefix)Choice [S/c/d/q]: "
+        rename_arrow_menu s \
+            "s|Also subdirectories (default) — whole tree under the start directory" \
+            "c|Current directory only — immediate children of the start directory" \
+            "d|Choose a subdirectory — recurse under it; DB/excludes stay at start dir" \
+            "q|Quit"
+        input="$(rename_choice "$REPLY")"
 
-        flush_stdin
-        read_single_key input "$PROMPT_WAIT_SECONDS"
-        echo
-
-        if [[ "$input" =~ [Qq] ]]; then
+        if [[ "$input" == q ]]; then
             echo "Quitting."
             exit 0
-        elif [[ "$input" =~ [Cc] ]]; then
+        elif [[ "$input" == c ]]; then
             process_scope="current"
             SCOPE_SUBDIR=""
             break
-        elif [[ "$input" =~ [Dd] ]]; then
+        elif [[ "$input" == d ]]; then
             if prompt_choose_scope_subdirectory; then
                 process_scope="subdir"
                 break
@@ -7771,22 +7909,19 @@ if [[ -z "$CHECKSUM_VERIFY" ]]; then
         while true; do
             echo
             verbose_question_timestamp "Which checksum-listed files should be hashed to verify them?"
-            echo "  $(rename_menu_key_bracket C C) Changed (default) — only files being renamed or recovered; other lines checked as text"
-            echo "  $(rename_menu_key_bracket N C) None — never hash to verify; rewritten manifest lines checked as text"
-            echo "  $(rename_menu_key_bracket A C) All — hash every listed file, also in lists that need no rename (slow on big lists)"
-            echo "  $(rename_menu_key_bracket Q C) Quit"
-            echo -n "$(user_prompt_ts_prefix)Choice [C/n/a/q]: "
+            rename_arrow_menu c \
+                "c|Changed (default) — only files being renamed or recovered; other lines checked as text" \
+                "n|None — never hash to verify; rewritten manifest lines checked as text" \
+                "a|All — hash every listed file, also in lists that need no rename (slow on big lists)" \
+                "q|Quit"
+            input="$(rename_choice "$REPLY")"
 
-            flush_stdin
-            read_single_key input "$PROMPT_WAIT_SECONDS"
-            echo
-
-            if [[ "$input" =~ [Qq] ]]; then
+            if [[ "$input" == q ]]; then
                 echo "Quitting."
                 exit 0
-            elif [[ "$input" =~ [Nn] ]]; then
+            elif [[ "$input" == n ]]; then
                 CHECKSUM_VERIFY="none"
-            elif [[ "$input" =~ [Aa] ]]; then
+            elif [[ "$input" == a ]]; then
                 CHECKSUM_VERIFY="all"
             else
                 CHECKSUM_VERIFY="changed"
@@ -8199,16 +8334,14 @@ media_xmp_run_sidecar_reference_checks() {
                     echo "XMP sidecar media reference check: '$xmp_path'"
                     echo "  RawFileName inside XMP: '${cur:-<empty>}' -> '${want}' (paired media basename)."
                     while true; do
-                        echo "  Keys:"
-                        echo "    [Y] Yes / Enter - patch this .xmp only (default)"
-                        echo "    [d] Yes + auto-patch remaining media-XMP refs in this directory"
-                        echo "    [n] No"
-                        print_prompt_view_directory_menu_line "    "
-                        echo "    [q] Quit run"
-                        printf '%s' "$(user_prompt_ts_prefix)Update RawFileName in this .xmp? [Y/n/d/v/q]: "
-                        flush_stdin
-                        read_single_key ans "$PROMPT_WAIT_SECONDS"
-                        echo
+                        echo "$(user_prompt_ts_prefix)Update RawFileName in this .xmp?"
+                        rename_arrow_menu y \
+                            "y|Yes — patch this .xmp only (default)" \
+                            "d|Yes + auto-patch remaining media-XMP refs in this directory" \
+                            "n|No" \
+                            "$RENAME_MENU_ITEM_V" \
+                            "q|Quit run"
+                        ans="$(rename_choice "$REPLY")"
                         if handle_prompt_directory_listing_choice "$ans" "$xmp_path" "$media_path"; then
                             continue
                         fi
@@ -8250,16 +8383,14 @@ media_xmp_run_sidecar_reference_checks() {
     echo "XMP sidecar media reference check: '$xmp_path'"
     echo "  Literal media basename inside XMP: '${old_bn}' -> '${want}'."
     while true; do
-        echo "  Keys:"
-        echo "    [Y] Yes / Enter - patch this .xmp only (default)"
-        echo "    [d] Yes + auto-patch remaining media-XMP refs in this directory"
-        echo "    [n] No"
-        print_prompt_view_directory_menu_line "    "
-        echo "    [q] Quit run"
-        printf '%s' "$(user_prompt_ts_prefix)Update media basename inside this .xmp? [Y/n/d/v/q]: "
-        flush_stdin
-        read_single_key ans "$PROMPT_WAIT_SECONDS"
-        echo
+        echo "$(user_prompt_ts_prefix)Update media basename inside this .xmp?"
+        rename_arrow_menu y \
+            "y|Yes — patch this .xmp only (default)" \
+            "d|Yes + auto-patch remaining media-XMP refs in this directory" \
+            "n|No" \
+            "$RENAME_MENU_ITEM_V" \
+            "q|Quit run"
+        ans="$(rename_choice "$REPLY")"
         if handle_prompt_directory_listing_choice "$ans" "$xmp_path" "$media_path"; then
             continue
         fi
@@ -8679,21 +8810,19 @@ nef_xmp_verify_sidecar_raw_file_name_interactive() {
         return 0
     fi
     while true; do
-        echo "  Keys:"
-        echo "    [Y] Yes / Enter - patch this .xmp only (default)"
-        echo "    [d] Yes + auto-patch every RawFileName fix in this directory"
-        echo "    [n] No"
-        print_prompt_view_directory_menu_line "    "
-        echo "    [q] Quit run"
         if (( VERBOSE == 1 )); then
-            echo "[VERBOSE] [$(date '+%Y.%m.%d %H:%M:%S')] Write RawFileName into this .xmp on disk? (metadata only) [Y/n/d/v/q]:" >&2
+            echo "[VERBOSE] [$(date '+%Y.%m.%d %H:%M:%S')] Write RawFileName into this .xmp on disk? (metadata only)" >&2
         else
             nonverbose_progress_dot_endline_if_needed
         fi
-        printf '%s' "$(user_prompt_ts_prefix)Write RawFileName into this .xmp on disk? (metadata only) [Y/n/d/v/q]: "
-        flush_stdin
-        read_single_key ans "$PROMPT_WAIT_SECONDS"
-        echo
+        echo "$(user_prompt_ts_prefix)Write RawFileName into this .xmp on disk? (metadata only)"
+        rename_arrow_menu y \
+            "y|Yes — patch this .xmp only (default)" \
+            "d|Yes + auto-patch every RawFileName fix in this directory" \
+            "n|No" \
+            "$RENAME_MENU_ITEM_V" \
+            "q|Quit run"
+        ans="$(rename_choice "$REPLY")"
         if handle_prompt_directory_listing_choice "$ans" "$xmp_path" "$nef_path"; then
             continue
         fi
@@ -9775,12 +9904,13 @@ sum_bytes_of_existing_regular_files_checksum_refs() {
     printf '%d' "$total"
 }
 
-print_large_hash_check_prompt_menu() {
-    echo "  $(rename_menu_key_bracket y N) Yes — check this checksum list and continue"
-    echo "  $(rename_menu_key_bracket N N) No — skip checking this list (default)"
-    echo "  $(rename_menu_key_bracket H N) Yes, and check all remaining large checksum lists without asking (rest of this run)"
-    print_prompt_view_directory_menu_line
-    echo "  $(rename_menu_key_bracket q N) Quit — stop rename.sh"
+ask_large_hash_check_prompt_menu() {
+    rename_arrow_menu n \
+        "y|Yes — check this checksum list and continue" \
+        "n|No — skip checking this list (default)" \
+        "h|Yes, and check all remaining large checksum lists without asking (rest of this run)" \
+        "$RENAME_MENU_ITEM_V" \
+        "q|Quit — stop rename.sh"
 }
 
 # Return 0 when the large checksum-list warning should precede a group prompt (line count + on-disk size thresholds).
@@ -9842,12 +9972,9 @@ confirm_large_hash_check() {
         emit_wrap_labeled_stdout "${label} NOTICE: " "${YELLOW}${label} NOTICE:${RESET} " "'${sum_file}' contains ${line_count} checksum line(s)."
         echo "Checking it may take a long time."
         print_checksum_list_last_verify_for_prompt "$sum_file"
-        print_large_hash_check_prompt_menu
-        echo -n "$(user_prompt_ts_prefix)Check this file and continue? [y/N/H/v/q]: "
-
-        flush_stdin
-        read_single_key answer "$PROMPT_WAIT_SECONDS"
-        echo
+        echo "$(user_prompt_ts_prefix)Check this file and continue?"
+        ask_large_hash_check_prompt_menu
+        answer="$(rename_choice "$REPLY")"
 
         if handle_prompt_directory_listing_choice "$answer" "$sum_file"; then
             continue
@@ -9898,15 +10025,13 @@ prompt_current_scope_checksum_file_decision() {
         echo "  Checking it may follow paths into subdirectories and take a long time."
         emit_wrap_labeled_stdout "  File: " "  File: " "$sum_file"
         echo "  Type: ${label}  |  lines: ${line_count}"
-        echo "  Keys:"
-        echo "    $(rename_menu_key_bracket y N) Yes — process this checksum file (verify / recover / rename refs)"
-        echo "    $(rename_menu_key_bracket N N) No — ignore this checksum file for this run (default)"
-        print_prompt_view_directory_menu_line "    "
-        echo "    $(rename_menu_key_bracket q N) Quit"
-        printf '%s' "$(user_prompt_ts_prefix)Process this checksum file? [y/N/v/q] (${timeout_note}): "
-        flush_stdin
-        read_single_key answer "$timeout_s"
-        echo
+        echo "$(user_prompt_ts_prefix)Process this checksum file? (${timeout_note})"
+        RENAME_MENU_TIMEOUT="$timeout_s" rename_arrow_menu n \
+            "y|Yes — process this checksum file (verify / recover / rename refs)" \
+            "n|No — ignore this checksum file for this run (default)" \
+            "$RENAME_MENU_ITEM_V" \
+            "q|Quit"
+        answer="$(rename_choice "$REPLY")"
         if handle_prompt_directory_listing_choice "$answer" "$sum_file"; then
             continue
         fi
@@ -10052,7 +10177,7 @@ prompt_refresh_checksum_hash_after_mismatch() {
     local phase="$4"
     local default_key="${5:-Q}"
     local allow_skip="${6:-no}"
-    local label answer choice_hint
+    local label answer
 
     label="$(checksum_label "$sum_file")"
     default_key="${default_key:0:1}"
@@ -10067,31 +10192,18 @@ prompt_refresh_checksum_hash_after_mismatch() {
     suggest_checksum_mismatch_recovery "$sum_file" "$ref_in_file" "$path_on_disk" "$label" "$phase"
 
     while true; do
-        emit_wrap_labeled_stdout "  $(rename_menu_key_bracket U "$default_key") " "  ${GREEN}$(rename_menu_key_bracket U "$default_key")${RESET} " "Update stored ${label,,} hash from the file on disk, then re-verify"
-        emit_wrap_labeled_stdout "  $(rename_menu_key_bracket I "$default_key") " "  ${GREEN}$(rename_menu_key_bracket I "$default_key")${RESET} " "Ignore this mismatch and continue (checksum list unchanged; you fix it later)"
-        emit_wrap_labeled_stdout "  $(rename_menu_key_bracket H "$default_key") " "  ${GREEN}$(rename_menu_key_bracket H "$default_key")${RESET} " "Ignore this mismatch and all future checksum mismatches this run (lists unchanged)"
+        echo "$(user_prompt_ts_prefix)${label} mismatch — what should happen next?"
+        local -a mismatch_items=(
+            "u|Update stored ${label,,} hash from the file on disk, then re-verify"
+            "i|Ignore this mismatch and continue (checksum list unchanged; you fix it later)"
+            "h|Ignore this mismatch and all future checksum mismatches this run (lists unchanged)"
+        )
         if [[ "$allow_skip" == yes ]]; then
-            emit_wrap_labeled_stdout "  $(rename_menu_key_bracket s "$default_key") " "  ${GREEN}$(rename_menu_key_bracket s "$default_key")${RESET} " "Skip this rename — do not rename; leave checksum list unchanged for this file"
+            mismatch_items+=("s|Skip this rename — do not rename; leave checksum list unchanged for this file")
         fi
-        print_prompt_view_directory_menu_line
-        emit_wrap_labeled_stdout "  $(rename_menu_key_bracket Q "$default_key") " "  ${GREEN}$(rename_menu_key_bracket Q "$default_key")${RESET} " "Quit (abort script)"
-        if [[ "$allow_skip" == yes ]]; then
-            if [[ "$default_key" == I ]]; then
-                choice_hint="[U/i/H/s/v/Q]"
-            else
-                choice_hint="[u/i/h/s/v/Q]"
-            fi
-        else
-            if [[ "$default_key" == I ]]; then
-                choice_hint="[U/i/H/v/Q]"
-            else
-                choice_hint="[u/i/h/v/Q]"
-            fi
-        fi
-        echo -n "$(user_prompt_ts_prefix)Choice ${choice_hint}: "
-        flush_stdin
-        read_single_key answer "$PROMPT_WAIT_SECONDS"
-        echo
+        mismatch_items+=("$RENAME_MENU_ITEM_V" "q|Quit (abort script)")
+        rename_arrow_menu "${default_key,,}" "${mismatch_items[@]}"
+        answer="$(rename_choice "$REPLY")"
         if handle_prompt_directory_listing_choice "$answer" "$path_on_disk"; then
             continue
         fi
@@ -10180,18 +10292,16 @@ choose_r_acute_mapping_for_file() {
         echo "Filename contains ŕ:" >&2
         echo "  $path" >&2
         verbose_question_timestamp "Choose mapping for ŕ in this file:" 2
-        echo "  [1] c (default)" >&2
-        echo "  [2] s" >&2
-        echo "  [3] c and space" >&2
-        echo "  [4] s and space" >&2
-        echo "  [o] Other (type replacement, Enter)" >&2
-        echo "  [q] Quit" >&2
-        echo "  [m] Manually edit basename" >&2
-        print_prompt_view_directory_menu_line_stderr
-        echo -n "$(user_prompt_ts_prefix)Choice [1/2/3/4/o/q/m/v]: " >&2
-        flush_stdin
-        read_single_key answer "$PROMPT_WAIT_SECONDS"
-        echo >&2
+        rename_arrow_menu_err 1 \
+            "1|c (default)" \
+            "2|s" \
+            "3|c and space" \
+            "4|s and space" \
+            "o|Other (type replacement, Enter)" \
+            "q|Quit" \
+            "m|Manually edit basename" \
+            "$RENAME_MENU_ITEM_V"
+        answer="$(rename_choice "$REPLY")"
         if handle_prompt_directory_listing_choice "$answer" "$path"; then
             continue
         fi
@@ -10238,16 +10348,14 @@ choose_registered_mapping_for_file() {
         echo "Filename contains ®:" >&2
         echo "  $path" >&2
         verbose_question_timestamp "Choose mapping for ® in this file:" 2
-        echo "  [1] z (default)" >&2
-        echo "  [2] l" >&2
-        echo "  [o] Other (type replacement, Enter)" >&2
-        echo "  [q] Quit" >&2
-        echo "  [m] Manually edit basename" >&2
-        print_prompt_view_directory_menu_line_stderr
-        echo -n "$(user_prompt_ts_prefix)Choice [1/2/o/q/m/v]: " >&2
-        flush_stdin
-        read_single_key answer "$PROMPT_WAIT_SECONDS"
-        echo >&2
+        rename_arrow_menu_err 1 \
+            "1|z (default)" \
+            "2|l" \
+            "o|Other (type replacement, Enter)" \
+            "q|Quit" \
+            "m|Manually edit basename" \
+            "$RENAME_MENU_ITEM_V"
+        answer="$(rename_choice "$REPLY")"
         if handle_prompt_directory_listing_choice "$answer" "$path"; then
             continue
         fi
@@ -10292,16 +10400,14 @@ choose_at_sign_mapping_for_file() {
         echo "Filename contains @ (media file):" >&2
         echo "  $path" >&2
         verbose_question_timestamp "Choose mapping for @ in this file:" 2
-        echo "  [1] a (default)" >&2
-        echo "  [2] e" >&2
-        echo "  [o] Other (type replacement, Enter)" >&2
-        echo "  [q] Quit" >&2
-        echo "  [m] Manually edit basename" >&2
-        print_prompt_view_directory_menu_line_stderr
-        echo -n "$(user_prompt_ts_prefix)Choice [1/2/o/q/m/v]: " >&2
-        flush_stdin
-        read_single_key answer "$PROMPT_WAIT_SECONDS"
-        echo >&2
+        rename_arrow_menu_err 1 \
+            "1|a (default)" \
+            "2|e" \
+            "o|Other (type replacement, Enter)" \
+            "q|Quit" \
+            "m|Manually edit basename" \
+            "$RENAME_MENU_ITEM_V"
+        answer="$(rename_choice "$REPLY")"
         if handle_prompt_directory_listing_choice "$answer" "$path"; then
             continue
         fi
@@ -10346,16 +10452,14 @@ choose_r_grave_mapping_for_file() {
         echo "Filename contains Ŕ:" >&2
         echo "  $path" >&2
         verbose_question_timestamp "Choose mapping for Ŕ in this file:" 2
-        echo "  [1] c (default)" >&2
-        echo "  [2] s" >&2
-        echo "  [o] Other (type replacement, Enter)" >&2
-        echo "  [q] Quit" >&2
-        echo "  [m] Manually edit basename" >&2
-        print_prompt_view_directory_menu_line_stderr
-        echo -n "$(user_prompt_ts_prefix)Choice [1/2/o/q/m/v]: " >&2
-        flush_stdin
-        read_single_key answer "$PROMPT_WAIT_SECONDS"
-        echo >&2
+        rename_arrow_menu_err 1 \
+            "1|c (default)" \
+            "2|s" \
+            "o|Other (type replacement, Enter)" \
+            "q|Quit" \
+            "m|Manually edit basename" \
+            "$RENAME_MENU_ITEM_V"
+        answer="$(rename_choice "$REPLY")"
         if handle_prompt_directory_listing_choice "$answer" "$path"; then
             continue
         fi
@@ -11189,16 +11293,11 @@ prompt_gopro_exiftool_missing_action() {
         echo >&2
         echo -e "$(user_prompt_ts_prefix)${GREEN}exiftool is required to rename this GoPro/camera raw file:${RESET}" >&2
         echo "  $(format_path_for_log "$f")" >&2
-        echo "  $(rename_menu_key_bracket S S) Skip GoPro/camera raw files for the rest of this run (default)" >&2
-        print_prompt_view_directory_menu_line_stderr
-        echo "  $(rename_menu_key_bracket Q S) Quit" >&2
-        if (( VERBOSE == 1 )); then
-            echo "[VERBOSE] [$(date '+%Y.%m.%d %H:%M:%S')] Choice [S/v/q]:" >&2
-        fi
-        printf '%s' "$(user_prompt_ts_prefix)Choice [S/v/q]: " >&2
-        flush_stdin
-        read_single_key answer "$PROMPT_WAIT_SECONDS"
-        printf '\n' >&2
+        rename_arrow_menu_err s \
+            "s|Skip GoPro/camera raw files for the rest of this run (default)" \
+            "$RENAME_MENU_ITEM_V" \
+            "q|Quit"
+        answer="$(rename_choice "$REPLY")"
         if handle_prompt_directory_listing_choice "$answer" "$f"; then
             continue
         fi
@@ -12299,15 +12398,13 @@ gopro_wav_prompt_title_conflict() {
         echo "  WAV: $(basename -- "$wav")" >&2
         echo "       description: $title_wav" >&2
         verbose_question_timestamp "Which description should both files use?" 2
-        echo "  $(rename_menu_key_bracket M M) Keep MP4 description (default)" >&2
-        echo "  [w] Keep WAV description" >&2
-        echo "  [n] Skip this pair (leave both names as-is for now)" >&2
-        echo "  [q] Quit" >&2
-        print_prompt_view_directory_menu_line_stderr
-        echo -n "$(user_prompt_ts_prefix)Choice [M/w/n/q/v]: " >&2
-        flush_stdin
-        read_single_key answer "$PROMPT_WAIT_SECONDS"
-        echo >&2
+        rename_arrow_menu_err m \
+            "m|Keep MP4 description (default)" \
+            "w|Keep WAV description" \
+            "n|Skip this pair (leave both names as-is for now)" \
+            "q|Quit" \
+            "$RENAME_MENU_ITEM_V"
+        answer="$(rename_choice "$REPLY")"
         if handle_prompt_directory_listing_choice "$answer" "$mp4"; then
             continue
         fi
@@ -14554,19 +14651,14 @@ maybe_prompt_gopro_remove_lone_part_basename() {
         echo -e "$(user_prompt_ts_prefix)${GREEN}This GoPro name has _part_XX but the file is not part of a validated size-split chapter chain (~4 GB / ~12 GB clips with matching times):${RESET}" >&2
         echo "  OLD: $(format_path_for_log "$f")" >&2
         echo "  NEW: $(format_path_for_log "$(dirname -- "$f")/$stripped")" >&2
-        echo "  $(rename_menu_key_bracket Y Y) Remove _part_XX from this filename (default)" >&2
-        echo "  $(rename_menu_key_bracket D Y) Remove _part_XX for all lone-chapter files in this directory (rest of run)" >&2
-        echo "  $(rename_menu_key_bracket A Y) Remove _part_XX for all lone-chapter files in this run" >&2
-        echo "  $(rename_menu_key_bracket N Y) Keep the current name" >&2
-        print_prompt_view_directory_menu_line_stderr
-        echo "  $(rename_menu_key_bracket Q Y) Quit" >&2
-        if (( VERBOSE == 1 )); then
-            echo "[VERBOSE] [$(date '+%Y.%m.%d %H:%M:%S')] Choice [Y/n/d/a/v/q]:" >&2
-        fi
-        printf '%s' "$(user_prompt_ts_prefix)Choice [Y/n/d/a/v/q]: " >&2
-        flush_stdin
-        read_single_key answer "$PROMPT_WAIT_SECONDS"
-        printf '\n' >&2
+        rename_arrow_menu_err y \
+            "y|Remove _part_XX from this filename (default)" \
+            "d|Remove _part_XX for all lone-chapter files in this directory (rest of run)" \
+            "a|Remove _part_XX for all lone-chapter files in this run" \
+            "n|Keep the current name" \
+            "$RENAME_MENU_ITEM_V" \
+            "q|Quit"
+        answer="$(rename_choice "$REPLY")"
         if handle_prompt_directory_listing_choice "$answer" "$f" "$(dirname -- "$f")/$stripped"; then
             continue
         fi
@@ -14590,7 +14682,7 @@ maybe_prompt_gopro_remove_lone_part_basename() {
                 if (( VERBOSE == 1 )); then
                     echo "[VERBOSE] [$(date '+%Y.%m.%d %H:%M:%S')] Are you sure? [y/N/q]:" >&2
                 fi
-                printf '%s' "$(user_prompt_ts_prefix)Are you sure? [y/N/q]: " >&2
+                echo "$(user_prompt_ts_prefix)Are you sure?" >&2
                 read_yes_no_quit_confirm "$PROMPT_WAIT_SECONDS"
                 confirm_rc=$?
                 if (( confirm_rc == 2 )); then
@@ -16016,15 +16108,13 @@ prompt_strip_fastsum_checksum_comments() {
         emit_wrap_labeled_stdout "${label} NOTICE: " "${YELLOW}${label} NOTICE:${RESET} " "$sum_file"
         echo "  This checksum file has ${n} line(s) starting with ';' (typical FastSum / Windows headers)."
         echo "  GNU md5sum/sha512sum treat those as improperly formatted and are not Linux-compatible."
-        echo "  Keys:"
-        echo "    $(rename_menu_key_bracket Y Y) Yes — strip ';' comment lines now (keep hash entries; timestamps preserved)"
-        echo "    $(rename_menu_key_bracket n Y) No — leave comments on disk"
-        echo "    $(rename_menu_key_bracket a Y) Yes + strip on all remaining checksum files this run"
-        echo "    $(rename_menu_key_bracket q Y) Quit"
-        printf '%s' "$(user_prompt_ts_prefix)Strip FastSum ';' comments? [Y/n/a/q]: "
-        flush_stdin
-        read_single_key answer "$PROMPT_WAIT_SECONDS"
-        echo
+        echo "$(user_prompt_ts_prefix)Strip FastSum ';' comments?"
+        rename_arrow_menu y \
+            "y|Yes — strip ';' comment lines now (keep hash entries; timestamps preserved)" \
+            "n|No — leave comments on disk" \
+            "a|Yes + strip on all remaining checksum files this run" \
+            "q|Quit"
+        answer="$(rename_choice "$REPLY")"
         case "$answer" in
             q|Q)
                 stopped_by_user=yes
@@ -17090,29 +17180,26 @@ can_overwrite_collision_with_identical_md5() {
 
     while true; do
         verbose_question_timestamp "What should be done?"
-        echo "  $(rename_menu_key_bracket O S) Overwrite destination (delete destination file), then continue rename"
-        echo "  $(rename_menu_key_bracket C S) For this source directory only: overwrite destination for all further collisions (like [O])"
+        local -a collision_items=(
+            "o|Overwrite destination (delete destination file), then continue rename"
+            "c|For this source directory only: overwrite destination for all further collisions (like [o])"
+        )
         if collision_md5_pair_is_identical "$old_md5" "$new_md5"; then
-            echo "  $(rename_menu_key_bracket A S) For the rest of this run: overwrite destination when files are identical (same hash)"
+            collision_items+=("a|For the rest of this run: overwrite destination when files are identical (same hash)")
         fi
-        echo "  $(rename_menu_key_bracket R S) Rename source to alternate name (one _OTHER, or _OTHER_2, … if needed) -> $(basename -- "$old_other_path")"
-        echo "  $(rename_menu_key_bracket D S) For this source directory only: use _OTHER for all further collisions (like [R])"
-        echo "  $(rename_menu_key_bracket E S) For the rest of this run: use _OTHER for all further collisions (like [R])"
-        echo "  $(rename_menu_key_bracket P S) Delete source file only (keep destination; skip this rename)"
-        echo "  $(rename_menu_key_bracket S S) Skip (default)"
-        echo "  $(rename_menu_key_bracket V S) List directory (parent; mark SOURCE/DESTINATION basenames)"
-        echo "  $(rename_menu_key_bracket Q S) Quit"
-        if collision_md5_pair_is_identical "$old_md5" "$new_md5"; then
-            echo -n "$(user_prompt_ts_prefix)Choice [o/c/a/r/d/e/p/S/v/q]: "
-        else
-            echo -n "$(user_prompt_ts_prefix)Choice [o/c/r/d/e/p/S/v/q]: "
-        fi
+        collision_items+=(
+            "r|Rename source to alternate name (one _OTHER, or _OTHER_2, … if needed) -> $(basename -- "$old_other_path")"
+            "d|For this source directory only: use _OTHER for all further collisions (like [r])"
+            "e|For the rest of this run: use _OTHER for all further collisions (like [r])"
+            "p|Delete source file only (keep destination; skip this rename)"
+            "s|Skip (default)"
+            "v|List directory (parent; mark SOURCE/DESTINATION basenames)"
+            "q|Quit"
+        )
+        rename_arrow_menu s "${collision_items[@]}"
+        answer="$(rename_choice "$REPLY")"
 
-        flush_stdin
-        read_single_key answer "$PROMPT_WAIT_SECONDS"
-        echo
-
-        if [[ "$answer" =~ [Vv] ]]; then
+        if [[ "$answer" == v ]]; then
             print_rename_parent_directory_listing "$old" "$new"
             continue
         fi
@@ -17667,19 +17754,16 @@ prompt_plain_rename_hash_verify_decision() {
         emit_wrap_labeled_stdout "This file is referenced in hash file(s): " "${CYAN}This file is referenced in hash file(s):${RESET} " "$hash_list"
         echo "The path in those list(s) is always updated (the stored digest is not changed)."
         echo "Also check this file's content against the stored digest before the rename?"
-        echo "  $(rename_menu_key_bracket Y Y) Yes — verify this file's hash, then rename + update path(s) (default)"
-        echo "  $(rename_menu_key_bracket N Y) No — rename + update path(s) only; do not verify the digest"
-        echo "  $(rename_menu_key_bracket D Y) Like [Y] for all remaining files in this directory"
-        echo "  $(rename_menu_key_bracket E Y) Like [n] for all remaining files in this directory"
-        echo "  $(rename_menu_key_bracket A Y) Like [Y] for all remaining files this run"
-        echo "  $(rename_menu_key_bracket S Y) Like [n] for all remaining files this run"
-        print_prompt_view_directory_menu_line
-        echo "  $(rename_menu_key_bracket Q Y) Quit"
-        echo -n "$(user_prompt_ts_prefix)Choice [Y/n/d/e/a/s/v/q]: "
-
-        flush_stdin
-        read_single_key answer "$PROMPT_WAIT_SECONDS"
-        echo
+        rename_arrow_menu y \
+            "y|Yes — verify this file's hash, then rename + update path(s) (default)" \
+            "n|No — rename + update path(s) only; do not verify the digest" \
+            "d|Like [y] for all remaining files in this directory" \
+            "e|Like [n] for all remaining files in this directory" \
+            "a|Like [y] for all remaining files this run" \
+            "s|Like [n] for all remaining files this run" \
+            "$RENAME_MENU_ITEM_V" \
+            "q|Quit"
+        answer="$(rename_choice "$REPLY")"
 
         if handle_prompt_directory_listing_choice "$answer" "$target_old"; then
             continue
@@ -18522,21 +18606,22 @@ handle_lnk_file() {
         echo
         emit_wrap_labeled_stdout "LNK FILE: " "${YELLOW}LNK FILE:${RESET} " "$f"
         verbose_question_timestamp "Remove this .lnk file?"
-        print_prompt_view_directory_menu_line
-        echo -n "$(user_prompt_ts_prefix)Remove this .lnk file? [y/N/v/q]: "
-        flush_stdin
-        read_single_key answer "$PROMPT_WAIT_SECONDS"
-        echo
+        rename_arrow_menu n \
+            "y|Yes — remove this .lnk file" \
+            "n|No — keep it (default)" \
+            "$RENAME_MENU_ITEM_V" \
+            "q|Quit"
+        answer="$(rename_choice "$REPLY")"
 
         if handle_prompt_directory_listing_choice "$answer" "$f"; then
             continue
         fi
         case "$answer" in
-            q|Q)
+            q)
                 stopped_by_user=yes
                 return 1
                 ;;
-            y|Y)
+            y)
                 if [[ "$mode" == "dry-run" ]]; then
                     emit_wrap_labeled_stdout "[DRY-RUN] Would remove: " "${CYAN}[DRY-RUN] Would remove:${RESET} " "$f"
                 else
@@ -18908,17 +18993,15 @@ maybe_resume_from_checkpoint() {
                 echo
                 echo "Checkpoint found from an interrupted run: $RESUME_STATE_FILE"
                 verbose_question_timestamp "Resume from checkpoint?"
-                echo "  $(rename_menu_key_bracket Y Y) Resume (default)"
-                echo "  $(rename_menu_key_bracket N Y) Start from the beginning"
-                echo "  $(rename_menu_key_bracket Q Y) Quit"
-                echo -n "$(user_prompt_ts_prefix)Choice [Y/n/q]: "
-                flush_stdin
-                read_single_key answer "$PROMPT_WAIT_SECONDS"
-                echo
-                if [[ "$answer" =~ [Qq] ]]; then
+                rename_arrow_menu y \
+                    "y|Resume (default)" \
+                    "n|Start from the beginning" \
+                    "q|Quit"
+                answer="$(rename_choice "$REPLY")"
+                if [[ "$answer" == q ]]; then
                     echo "Quitting."
                     exit 0
-                elif [[ ! "$answer" =~ [Nn] ]]; then
+                elif [[ "$answer" != n ]]; then
                     load_resume_checkpoint || true
                 fi
             fi
@@ -19077,7 +19160,6 @@ print_rename_prompt_menu() {
     local path="${2-}"
     local suggested_new="${3-}"
     local menu_variant="${4-}"
-    local choice_hint="Choice [Y/n/m/a/d"
     local entry_kind="$kind_label"
 
     if [[ "$menu_variant" == thumbs-noop ]]; then
@@ -19095,67 +19177,57 @@ print_rename_prompt_menu() {
         fi
     fi
 
+    # Dynamic option list (optional s/g/l/u/t/k/o/f/b/v); sets REPLY via the shared Up/Down arrow menu.
+    local -a menu_items=()
     if [[ "$menu_variant" == thumbs-noop || "$menu_variant" == torrent-noop ]]; then
-        echo "  [Y] or Enter — Skip (default; no rename to apply)"
-        echo "  $(rename_menu_key_bracket N Y) Skip"
+        menu_items+=("y|Skip (default; no rename to apply)")
+        menu_items+=("n|Skip")
     else
-        echo "  $(rename_menu_key_bracket Y Y) Yes (default)"
-        echo "  $(rename_menu_key_bracket N Y) No"
+        menu_items+=("y|Yes (default)")
+        menu_items+=("n|No")
     fi
-    echo "  $(rename_menu_key_bracket M Y) Rename by editing target filename"
-    echo "  $(rename_menu_key_bracket A Y) All remaining"
-    echo "  $(rename_menu_key_bracket D Y) Yes for this directory"
+    menu_items+=("m|Rename by editing target filename")
+    menu_items+=("a|All remaining")
+    menu_items+=("d|Yes for this directory")
     if [[ -n "$path" && -f "$path" ]]; then
-        echo "  $(rename_menu_key_bracket S Y) Yes for similar names in this directory (all extensions here; leading _ only if this filename starts with _)"
-        choice_hint+=/s
+        menu_items+=("s|Yes for similar names in this directory (all extensions here; leading _ only if this filename starts with _)")
     fi
     if [[ "$menu_variant" != thumbs-noop && "$menu_variant" != torrent-noop ]]; then
-        echo "  $(rename_menu_key_bracket G Y) Yes, and auto-approve future Samsung, GoPro, Nikon, Canon, Panasonic, and Motorola camera make/model renames for the rest of this run"
-        choice_hint+=/g
+        menu_items+=("g|Yes, and auto-approve future Samsung, GoPro, Nikon, Canon, Panasonic, Motorola camera make/model renames this run")
         if [[ -z "$path" || -z "$suggested_new" ]] || ! rename_is_camera_make_model_change "$path" "$suggested_new"; then
             echo -e "  ${YELLOW}(This OLD/NEW pair is not a camera make/model change; [g] still turns on camera auto-approve for later files.)${RESET}"
         fi
     fi
     if [[ -n "$path" && -n "$suggested_new" ]] && rename_suggested_only_extension_case_change "$path" "$suggested_new" \
         && ! path_filesystem_skip_case_only_rename "$path"; then
-        echo "  $(rename_menu_key_bracket L Y) Yes, and auto-approve all extension case-only lowercasing for this run (no further prompts)"
-        choice_hint+=/l
+        menu_items+=("l|Yes, and auto-approve all extension case-only lowercasing for this run (no further prompts)")
         if eligible_for_media_office_extension_case_auto "$path"; then
-            echo "  $(rename_menu_key_bracket U Y) Yes, and auto-approve extension case-only lowercasing only for media + Microsoft Office files"
-            choice_hint+=/u
+            menu_items+=("u|Yes, and auto-approve extension case-only lowercasing only for media + Microsoft Office files")
         fi
     fi
     if [[ -n "$path" ]] && is_torrent_url_file "$path"; then
-        echo "  $(rename_menu_key_bracket T Y) Delete this torrent .URL shortcut"
-        choice_hint+=/t
+        menu_items+=("t|Delete this torrent .URL shortcut")
     fi
     if [[ -n "$path" ]] && is_thumbs_db_file "$path"; then
-        echo "  $(rename_menu_key_bracket K Y) Delete this thumbs.db file"
-        echo "  $(rename_menu_key_bracket O Y) Delete this thumbs.db and all other thumbs.db files for the rest of this run"
-        choice_hint+=/ko
+        menu_items+=("k|Delete this thumbs.db file")
+        menu_items+=("o|Delete this thumbs.db and all other thumbs.db files for the rest of this run")
     fi
     if [[ -n "$path" && ( -f "$path" || -d "$path" ) ]]; then
-        echo "  $(rename_menu_key_bracket F Y) Filename-only exception — skip this basename everywhere (any file or directory with this name)"
-        choice_hint+=/f
+        menu_items+=("f|Filename-only exception — skip this basename everywhere (any file or directory with this name)")
     fi
     if [[ -n "$path" && -f "$path" ]]; then
-        echo "  $(rename_menu_key_bracket B Y) Skip the directory where this file lives and everything under it (subtree exception)"
-        choice_hint+=/b
+        menu_items+=("b|Skip the directory where this file lives and everything under it (subtree exception)")
     elif [[ -n "$path" && -d "$path" ]]; then
-        echo "  $(rename_menu_key_bracket B Y) Skip this directory and everything under it (subtree exception)"
-        choice_hint+=/b
+        menu_items+=("b|Skip this directory and everything under it (subtree exception)")
     fi
     if [[ -n "$path" ]]; then
-        print_prompt_view_directory_menu_line
-        choice_hint+=/v
+        menu_items+=("$RENAME_MENU_ITEM_V")
     fi
-    echo "  $(rename_menu_key_bracket E Y) Add exception (skip this path and its subtree by filter match)"
-    echo "  $(rename_menu_key_bracket X Y) Exact exception (do not rename only this exact path; still check subtree)"
-    echo "  $(rename_menu_key_bracket C Y) Custom exclude pattern — type any filter line (FILE=, SUBTREE=, glob, etc.)"
-    choice_hint+=/c
-    echo "  $(rename_menu_key_bracket Q Y) Quit"
-    choice_hint+="/E/x/q]: "
-    echo -n "$(user_prompt_ts_prefix)$choice_hint"
+    menu_items+=("e|Add exception (skip this path and its subtree by filter match)")
+    menu_items+=("x|Exact exception (do not rename only this exact path; still check subtree)")
+    menu_items+=("c|Custom exclude pattern — type any filter line (FILE=, SUBTREE=, glob, etc.)")
+    menu_items+=("q|Quit")
+    rename_arrow_menu y "${menu_items[@]}"
 }
 
 maybe_prompt_flatten_single_child_dir() {
@@ -19225,54 +19297,50 @@ maybe_prompt_flatten_single_child_dir() {
         echo "Contains exactly one subdirectory with files:"
         echo "  $child_dir"
         echo -e "$(user_prompt_ts_prefix)${GREEN}Move child contents one level up and delete this subdirectory?${RESET}"
-        echo "  $(rename_menu_key_bracket Y N) Yes — flatten (move child contents up, remove subdirectory; then choose folder name)"
-        echo "  $(rename_menu_key_bracket N N) No (default) — keep current folder layout"
-        flatten_child_exception_menu_line "$child_base"
-        echo "  $(rename_menu_key_bracket E N) Add flatten exception — skip flatten prompts for this parent directory only"
-        echo "  $(rename_menu_key_bracket C N) Custom exclude pattern — type any filter line (FLATTEN_EXACT=, FLATTEN_CHILD=, SUBTREE=, glob, etc.)"
-        print_prompt_view_directory_menu_line
-        echo "  $(rename_menu_key_bracket Q N) Quit — stop the script"
-        echo -n "$(user_prompt_ts_prefix)Choice [y/N/a/e/c/v/q]: "
-        flush_stdin
-        read_single_key answer "$PROMPT_WAIT_SECONDS"
-        echo
+        rename_arrow_menu n \
+            "y|Yes — flatten (move child contents up, remove subdirectory; then choose folder name)" \
+            "n|No (default) — keep current folder layout" \
+            "a|Always skip flatten when the sole subdirectory is named: ${child_base} (anywhere; saved to exclude file)" \
+            "e|Add flatten exception — skip flatten prompts for this parent directory only" \
+            "c|Custom exclude pattern — type any filter line (FLATTEN_EXACT=, FLATTEN_CHILD=, SUBTREE=, glob, etc.)" \
+            "$RENAME_MENU_ITEM_V" \
+            "q|Quit — stop the script"
+        answer="$(rename_choice "$REPLY")"
 
         if handle_prompt_directory_listing_choice "$answer" "$parent_dir"; then
             continue
         fi
-        if [[ "$answer" =~ [Qq] ]]; then
+        if [[ "$answer" == q ]]; then
             stopped_by_user=yes
             return 2
         fi
-        if [[ "$answer" =~ [Aa] ]]; then
+        if [[ "$answer" == a ]]; then
             append_flatten_child_exception_to_exclude_filters_file "$child_base"
             return 0
         fi
-        if [[ "$answer" =~ [Ee] ]]; then
+        if [[ "$answer" == e ]]; then
             append_flatten_exception_to_exclude_filters_file "$parent_dir"
             return 0
         fi
-        if [[ "$answer" =~ [Cc] ]]; then
+        if [[ "$answer" == c ]]; then
             if prompt_custom_exclude_pattern_from_user flatten; then
                 return 0
             fi
             continue
         fi
-        [[ "$answer" =~ [Yy] ]] || return 0
+        [[ "$answer" == y ]] || return 0
         break
     done
 
     while true; do
         echo "$(user_prompt_ts_prefix)Which directory name should remain after flatten?"
-        echo "  $(rename_menu_key_bracket P P) Keep parent name: $parent_base (default)"
-        echo "  $(rename_menu_key_bracket C P) Keep child name:  $child_base"
-        echo "  $(rename_menu_key_bracket M P) Manually edit resulting basename"
-        print_prompt_view_directory_menu_line
-        echo "  $(rename_menu_key_bracket Q P) Quit"
-        echo -n "$(user_prompt_ts_prefix)Choice [P/c/m/v/q]: "
-        flush_stdin
-        read_single_key name_choice "$PROMPT_WAIT_SECONDS"
-        echo
+        rename_arrow_menu p \
+            "p|Keep parent name: $parent_base (default)" \
+            "c|Keep child name:  $child_base" \
+            "m|Manually edit resulting basename" \
+            "$RENAME_MENU_ITEM_V" \
+            "q|Quit"
+        name_choice="$(rename_choice "$REPLY")"
 
         if handle_prompt_directory_listing_choice "$name_choice" "$parent_dir"; then
             continue
@@ -19463,14 +19531,14 @@ recheck_apply_current_difference() {
 
 print_recheck_rename_menu() {
     echo "$(user_prompt_ts_prefix)Apply this updated naming rule?"
-    echo "  $(rename_menu_key_bracket Y Y) Yes (default)"
-    echo "  $(rename_menu_key_bracket N Y) No"
-    echo "  $(rename_menu_key_bracket M Y) Edit target filename"
-    echo "  $(rename_menu_key_bracket D Y) Yes, and apply remaining recheck differences in this directory"
-    echo "  $(rename_menu_key_bracket A Y) Yes, and apply all remaining recheck differences in this run"
-    echo "  $(rename_menu_key_bracket V Y) List the directory containing this path"
-    echo "  $(rename_menu_key_bracket Q Y) Quit"
-    echo -n "$(user_prompt_ts_prefix)Choice [Y/n/m/d/a/v/q]: "
+    rename_arrow_menu y \
+        "y|Yes (default)" \
+        "n|No" \
+        "m|Edit target filename" \
+        "d|Yes, and apply remaining recheck differences in this directory" \
+        "a|Yes, and apply all remaining recheck differences in this run" \
+        "v|List the directory containing this path" \
+        "q|Quit"
 }
 
 recheck_rename_reason_text() {
@@ -19529,9 +19597,7 @@ handle_recheck_rename_difference() {
         fi
         echo -e "${CYAN}===========================================================${RESET}"
         print_recheck_rename_menu
-        flush_stdin
-        read_single_key input "$PROMPT_WAIT_SECONDS"
-        echo
+        input="$(rename_choice "$REPLY")"
         if handle_prompt_directory_listing_choice "$input" "$f" "$new"; then
             continue
         fi
@@ -19588,7 +19654,7 @@ handle_recheck_rename_difference() {
             a|A)
                 echo
                 echo "$(user_prompt_ts_prefix)⚠️  Apply ALL remaining rename-recheck differences in this run?"
-                echo -n "$(user_prompt_ts_prefix)Are you sure? [y/N/q]: "
+                echo "$(user_prompt_ts_prefix)Are you sure?"
                 read_yes_no_quit_confirm "$PROMPT_WAIT_SECONDS"
                 confirm_rc=$?
                 if (( confirm_rc == 2 )); then
@@ -19623,18 +19689,18 @@ print_checksum_prompt_menu() {
     echo "    • Rename each referenced file where OLD referenced file → NEW referenced file was shown above"
     echo "    • Rename this ${label_upper} file only if OLD ${label_upper} → NEW ${label_upper} was shown above"
     echo "    • Rewrite path lines inside the ${label_upper} file, then verify checksums"
-    echo "  $(rename_menu_key_bracket Y Y) Yes — do all of the above (default)"
-    echo "  $(rename_menu_key_bracket N Y) No — skip this whole group"
-    echo "  $(rename_menu_key_bracket H Y) Yes, and apply to all remaining hash/checksum groups this run (same full treatment)"
-    echo "  $(rename_menu_key_bracket A Y) Session auto-yes — no more prompts until run ends (files, directories, and checksum groups)"
-    echo "  $(rename_menu_key_bracket D Y) Yes, and auto-apply checksum groups in this directory (rest of run)"
-    echo "  $(rename_menu_key_bracket E Y) Add exception (skip paths matching this hash file basename via exclude filter)"
-    echo "  $(rename_menu_key_bracket X Y) Exact exception (skip only this hash file path; still check other paths)"
-    echo "  $(rename_menu_key_bracket F Y) Filename-only exception (skip this hash file basename in every directory)"
-    echo "  $(rename_menu_key_bracket C Y) Custom exclude pattern — type any filter line (FILE=, SUBTREE=, glob, etc.)"
-    print_prompt_view_directory_menu_line
-    echo "  $(rename_menu_key_bracket Q Y) Quit"
-    echo -n "$(user_prompt_ts_prefix)Choice [Y/n/H/a/d/E/x/f/c/v/q]: "
+    rename_arrow_menu y \
+        "y|Yes — do all of the above (default)" \
+        "n|No — skip this whole group" \
+        "h|Yes, and apply to all remaining hash/checksum groups this run (same full treatment)" \
+        "a|Session auto-yes — no more prompts until run ends (files, directories, and checksum groups)" \
+        "d|Yes, and auto-apply checksum groups in this directory (rest of run)" \
+        "e|Add exception (skip paths matching this hash file basename via exclude filter)" \
+        "x|Exact exception (skip only this hash file path; still check other paths)" \
+        "f|Filename-only exception (skip this hash file basename in every directory)" \
+        "c|Custom exclude pattern — type any filter line (FILE=, SUBTREE=, glob, etc.)" \
+        "$RENAME_MENU_ITEM_V" \
+        "q|Quit"
 }
 
 # Unified checksum-group gate after preview: large-list NOTICE (when applicable) + apply menu in one prompt.
@@ -19669,13 +19735,11 @@ prompt_checksum_group_apply_decision() {
             print_checksum_list_last_verify_for_prompt "$sum_file"
         fi
         print_checksum_prompt_menu "${label,,}" "$sum_file"
-        flush_stdin
-        read_single_key input "$PROMPT_WAIT_SECONDS"
-        echo
+        input="$(rename_choice "$REPLY")"
         if handle_prompt_directory_listing_choice "$input" "$sum_file"; then
             continue
         fi
-        if [[ "$input" =~ [Cc] ]]; then
+        if [[ "$input" == c ]]; then
             if prompt_custom_exclude_pattern_from_user; then
                 input='C'
             else
@@ -19707,7 +19771,7 @@ prompt_checksum_group_apply_decision() {
             if (( VERBOSE == 1 )); then
                 echo "[VERBOSE] [$(date '+%Y.%m.%d %H:%M:%S')] Are you sure? [y/N/q]:" >&2
             fi
-            echo -n "$(user_prompt_ts_prefix)Are you sure? [y/N/q]: "
+            echo "$(user_prompt_ts_prefix)Are you sure?"
             read_yes_no_quit_confirm "$PROMPT_WAIT_SECONDS"
             confirm_rc=$?
             if (( confirm_rc == 2 )); then
@@ -19933,6 +19997,7 @@ print_summary() {
 # Single INT handler: rollback, save resume state, then summary. Ignore further SIGINT during cleanup so a second Ctrl-C cannot exit before print_summary.
 on_interrupt() {
     trap '' INT
+    rename_arrow_menu_restore_tty || true
     nonverbose_progress_dot_endline_if_needed || true
     printf '\n%s\n' "Interrupt received — rolling back in-flight work if needed, then saving checkpoint (large trees: writing JSON can still take several seconds)..." >&2
     rollback_current_operation || true
@@ -20433,14 +20498,12 @@ for f in "${ordered_paths[@]}"; do
             else
                 while true; do
                     verbose_question_timestamp "Remove missing thumbs.db reference(s) from this hash file?"
-                    echo "  $(rename_menu_key_bracket Y N) Yes - remove only the thumbs.db line(s) shown above"
-                    echo "  $(rename_menu_key_bracket N N) No - keep the hash file unchanged (default)"
-                    print_prompt_view_directory_menu_line
-                    echo "  $(rename_menu_key_bracket Q N) Quit"
-                    echo -n "$(user_prompt_ts_prefix)Choice [y/N/v/q]: "
-                    flush_stdin
-                    read_single_key input "$PROMPT_WAIT_SECONDS"
-                    echo
+                    rename_arrow_menu n \
+                        "y|Yes - remove only the thumbs.db line(s) shown above" \
+                        "n|No - keep the hash file unchanged (default)" \
+                        "$RENAME_MENU_ITEM_V" \
+                        "q|Quit"
+                    input="$(rename_choice "$REPLY")"
 
                     if handle_prompt_directory_listing_choice "$input" "$sum_file"; then
                         continue
@@ -21486,13 +21549,11 @@ for f in "${ordered_paths[@]}"; do
     [[ -n "$torrent_url_noop" ]] && _rename_menu_variant=torrent-noop
     while true; do
         print_rename_prompt_menu "entry" "$f" "$new" "$_rename_menu_variant"
-        flush_stdin
-        read_single_key input "$PROMPT_WAIT_SECONDS"
-        echo
+        input="$(rename_choice "$REPLY")"
         if handle_prompt_directory_listing_choice "$input" "$f" "$new"; then
             continue
         fi
-        if [[ "$input" =~ [Cc] ]]; then
+        if [[ "$input" == c ]]; then
             if prompt_custom_exclude_pattern_from_user; then
                 input='C'
             else
@@ -21610,7 +21671,7 @@ for f in "${ordered_paths[@]}"; do
             else
                 nonverbose_progress_dot_endline_if_needed
             fi
-            echo -n "$(user_prompt_ts_prefix)Are you sure? [y/N/q]: "
+            echo "$(user_prompt_ts_prefix)Are you sure?"
             read_yes_no_quit_confirm "$PROMPT_WAIT_SECONDS"
             confirm_rc=$?
 
