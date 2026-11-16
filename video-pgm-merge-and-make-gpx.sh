@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261116.073500 - group prompt: [e] edit inputs (subset / drop last) before merge
 # v. 20261116.071800 - Contour: bare/_NVenc_/Contour+2 all join by time; drop ~2 GB size band
 # v. 20261116.070800 - Contour: also group renamed Contour+2 by start+duration (no ~2 GB band)
 # v. 20261115.200000 - SUMMARY: Family-A chrome + Script/Version at top
@@ -98,6 +99,9 @@
 # v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
 # v. 20260805.154826 - after merge: copy GPS/dates from first chapter; FS times via touch -r
 
+# 2026.11.16 - v. 0.15.114 - group merge prompt: [e] Edit inputs when a group has 3+ files — pick a
+#   subset (e.g. 1-2 or 1,2) or [l] drop last; then re-show the trimmed group and ask again. Same on
+#   Contour suspect review. Dropped files stay on disk unmerged.
 # 2026.11.16 - v. 0.15.113 - Contour join ignores file size for bare / _NVenc_ / Contour+2 alike: any
 #   Contour-parseable clip ≥ 10 MiB chains by start+duration (confident ≤45s; suspect 46–100s review).
 #   Dropped the ~2 GB FAT size band — Contour chapters often differ a lot after re-encode.
@@ -384,8 +388,11 @@ Merge behaviour:
     The merged file and that .gpx get the first chapter's creation time and file time.
     If the merged file has no location, the first point of that .gpx is stored in it.
   - Shows each multi-part group (with file sizes) and asks whether to merge
-    (single-key Y/N/A/M/Q, no Enter — like rename.sh). [Y] merges this group
+    (single-key Y/N/A/M/E/Q, no Enter — like rename.sh). [Y] merges this group
     (default); [m] merges all remaining groups (asks output date/time for each first).
+    [e] (groups with 3+ files) edits the suggestion: keep a subset by number
+    (e.g. 1-2) or drop the last file, then asks again for the trimmed group.
+    Contour suspect review offers the same [e] (default remains Skip).
     Files in a group, and the groups themselves, are ordered oldest to newest
     (filename YYYYMMDD_HHMMSS when present, otherwise filesystem mtime) before that
     prompt. After the input and output lists, a boxed summary shows how many files
@@ -7771,7 +7778,144 @@ run_merge_group() {
   return "${rc}"
 }
 
-# Sets REPLY to: merge | redo | skip | skip_all | merge_all | delete_inputs | write_gpx | quit
+# Parse a merge-edit spec into 0-based indices (ascending, unique).
+# $1 = spec (e.g. 1-2 / 1,2 / l / drop-last); $2 = file count; $3 = nameref for indices array.
+# Returns 0 on success.
+pgm_parse_merge_edit_spec() {
+  local spec="$1" n="$2"
+  local -n _pgm_sel_idx=$3
+  local token a b i tmp
+  local -a raw=() parts=()
+  local -A seen=()
+
+  _pgm_sel_idx=()
+  spec="${spec#"${spec%%[![:space:]]*}"}"
+  spec="${spec%"${spec##*[![:space:]]}"}"
+  spec="${spec,,}"
+  spec="${spec// /}"
+  [[ -n "$spec" ]] || return 1
+  (( n >= 2 )) || return 1
+
+  if [[ "$spec" == "l" || "$spec" == "drop-last" || "$spec" == "droplast" ]]; then
+    (( n >= 3 )) || return 1
+    for (( i = 0; i < n - 1; i++ )); do
+      _pgm_sel_idx+=("$i")
+    done
+    return 0
+  fi
+
+  IFS=',' read -r -a parts <<< "$spec"
+  (( ${#parts[@]} > 0 )) || return 1
+  for token in "${parts[@]}"; do
+    [[ -n "$token" ]] || return 1
+    if [[ "$token" =~ ^([0-9]+)-([0-9]+)$ ]]; then
+      a="${BASH_REMATCH[1]}"
+      b="${BASH_REMATCH[2]}"
+      if (( a > b )); then
+        tmp=$a; a=$b; b=$tmp
+      fi
+      if (( a < 1 || b > n )); then
+        return 1
+      fi
+      for (( i = a; i <= b; i++ )); do
+        raw+=("$(( i - 1 ))")
+      done
+    elif [[ "$token" =~ ^([0-9]+)$ ]]; then
+      a="${BASH_REMATCH[1]}"
+      if (( a < 1 || a > n )); then
+        return 1
+      fi
+      raw+=("$(( a - 1 ))")
+    else
+      return 1
+    fi
+  done
+  (( ${#raw[@]} > 0 )) || return 1
+  for i in "${raw[@]}"; do
+    [[ -n "${seen[$i]:-}" ]] && continue
+    seen[$i]=1
+    _pgm_sel_idx+=("$i")
+  done
+  # Keep chapter order (ascending index), not the order typed.
+  local -a sorted_idx=()
+  mapfile -t sorted_idx < <(printf '%s\n' "${_pgm_sel_idx[@]}" | LC_ALL=C sort -n)
+  _pgm_sel_idx=("${sorted_idx[@]}")
+  (( ${#_pgm_sel_idx[@]} >= 1 )) || return 1
+  return 0
+}
+
+# Narrow the chapter list for this merge suggestion (nameref $1 = files array).
+# Returns 0 if the array was changed, 1 if cancelled (unchanged), 2 if quit.
+prompt_merge_group_edit_files() {
+  local -n _pgm_mf=$1
+  local n=${#_pgm_mf[@]}
+  local i j spec dropped_n kept_n keep
+  local -a sel_idx=() new_files=() dropped=()
+
+  if (( n < 3 )); then
+    echo "$(pgm_ts) Edit needs at least 3 files in the suggested group."
+    return 1
+  fi
+
+  echo
+  echo "  Edit merge inputs — keep a subset (order stays oldest→newest)."
+  echo "  Examples: 1-2   1,2   1-2,4   l (drop last file)"
+  echo "  Enter or [c] cancel — keep the full suggestion. [q] quit."
+  echo
+  for i in "${!_pgm_mf[@]}"; do
+    printf '  %2d) %s\n' "$(( i + 1 ))" "$(chapter_file_summary_line "${_pgm_mf[$i]}")"
+  done
+  echo
+  flush_stdin
+  printf '%s %s' "$(pgm_ts)" "Keep which files? "
+  IFS= read -r spec || spec=""
+  spec="${spec#"${spec%%[![:space:]]*}"}"
+  spec="${spec%"${spec##*[![:space:]]}"}"
+  if [[ -z "$spec" || "${spec,,}" == "c" || "${spec,,}" == "cancel" ]]; then
+    echo "$(pgm_ts) Edit cancelled — full group unchanged."
+    return 1
+  fi
+  if [[ "${spec,,}" == "q" || "${spec,,}" == "quit" ]]; then
+    return 2
+  fi
+  if ! pgm_parse_merge_edit_spec "$spec" "$n" sel_idx; then
+    echo "$(pgm_ts) I do not understand \"${spec}\". Use e.g. 1-2, 1,2, or l."
+    return 1
+  fi
+  if (( ${#sel_idx[@]} < 2 )); then
+    echo "$(pgm_ts) Need at least 2 files to merge. Leaving the full group unchanged."
+    return 1
+  fi
+  if (( ${#sel_idx[@]} == n )); then
+    echo "$(pgm_ts) That keeps every file — nothing to edit."
+    return 1
+  fi
+
+  new_files=()
+  dropped=()
+  for i in "${!_pgm_mf[@]}"; do
+    keep=0
+    for j in "${sel_idx[@]}"; do
+      if (( i == j )); then
+        keep=1
+        break
+      fi
+    done
+    if (( keep )); then
+      new_files+=("${_pgm_mf[$i]}")
+    else
+      dropped+=("${_pgm_mf[$i]##*/}")
+    fi
+  done
+  kept_n=${#new_files[@]}
+  dropped_n=${#dropped[@]}
+  _pgm_mf=("${new_files[@]}")
+  pgm_log_kv "Edited group" "${n} → ${kept_n} files (dropped: ${dropped[*]})"
+  echo "$(pgm_ts) Will merge ${kept_n} file(s); left out ${dropped_n}: ${dropped[*]}"
+  return 0
+}
+
+# Sets REPLY to: merge | redo | skip | skip_all | merge_all | delete_inputs | write_gpx | preview_seams | edit | quit
 # $3 = expected output file (may already exist). Remaining args are the chapter files.
 # A 70mai group is "already merged" only when the MP4 and a valid GPX are both there.
 prompt_merge_group_action() {
@@ -7943,31 +8087,51 @@ prompt_merge_group_action() {
       echo "$(pgm_ts) Contour suspect review (${suspect_note}). Not a confident chapter chain."
       echo "  [N] Skip — leave separate (default)"
       echo "  [m] Merge this suspected Contour group"
+      if (( ${#files[@]} >= 3 )); then
+        echo "  [e] Edit inputs — choose which files to merge (e.g. 1-2)"
+      fi
       echo "  [a] Skip all remaining groups"
       echo "  [q] Quit"
-      pgm_read_key_choice "Contour suspect — group ${group_num}/${group_total} [N/m/a/q]: " n "nmaq"
+      if (( ${#files[@]} >= 3 )); then
+        pgm_read_key_choice "Contour suspect — group ${group_num}/${group_total} [N/m/e/a/q]: " n "nmeaq"
+      else
+        pgm_read_key_choice "Contour suspect — group ${group_num}/${group_total} [N/m/a/q]: " n "nmaq"
+      fi
       choice="$REPLY"
       case "$choice" in
         n)  REPLY=skip; return 0 ;;
         m)  REPLY=merge; return 0 ;;
+        e)  REPLY=edit; return 0 ;;
         a)  REPLY=skip_all; return 0 ;;
         q)  REPLY=quit; return 0 ;;
       esac
     fi
     echo "  [Y] Merge this group (default)"
     echo "  [n] Skip this group"
+    if (( ${#files[@]} >= 3 )); then
+      echo "  [e] Edit inputs — choose which files to merge (e.g. 1-2)"
+    fi
     echo "  [a] Skip all remaining groups"
     echo "  [m] Merge all remaining groups (asks output date/time for each first)"
     echo "  [q] Quit"
-    if (( short_n )); then
-      pgm_read_key_choice "Short clip in this group. Merge anyway? [Y/n/a/m/q]: " y "ynamq"
+    if (( ${#files[@]} >= 3 )); then
+      if (( short_n )); then
+        pgm_read_key_choice "Short clip in this group. Merge anyway? [Y/n/e/a/m/q]: " y "yneamq"
+      else
+        pgm_read_key_choice "Choice for group ${group_num}/${group_total} [Y/n/e/a/m/q]: " y "yneamq"
+      fi
     else
-      pgm_read_key_choice "Choice for group ${group_num}/${group_total} [Y/n/a/m/q]: " y "ynamq"
+      if (( short_n )); then
+        pgm_read_key_choice "Short clip in this group. Merge anyway? [Y/n/a/m/q]: " y "ynamq"
+      else
+        pgm_read_key_choice "Choice for group ${group_num}/${group_total} [Y/n/a/m/q]: " y "ynamq"
+      fi
     fi
     choice="$REPLY"
     case "$choice" in
       y)  REPLY=merge; return 0 ;;
       n)  REPLY=skip; return 0 ;;
+      e)  REPLY=edit; return 0 ;;
       a)  REPLY=skip_all; return 0 ;;
       m)  REPLY=merge_all; return 0 ;;
       q)  REPLY=quit; return 0 ;;
@@ -8480,9 +8644,26 @@ do_merge() {
       PGM_MERGE_GROUP_IS_CONTOUR_SUSPECT=1
       PGM_MERGE_GROUP_CONTOUR_SUSPECT_NOTE="${mergeable_suspect_notes[$mi]}"
     fi
-    show_merge_group_detail "$group_num" "$mergeable_total" "${files[@]}"
-    prompt_merge_group_action "$group_num" "$mergeable_total" "$output_file" "${files[@]}"
-    action=$REPLY
+    while true; do
+      output_file=$(group_output_file "${files[@]}")
+      show_merge_group_detail "$group_num" "$mergeable_total" "${files[@]}"
+      prompt_merge_group_action "$group_num" "$mergeable_total" "$output_file" "${files[@]}"
+      action=$REPLY
+      if [[ "$action" == edit ]]; then
+        local edit_rc=0
+        prompt_merge_group_edit_files files
+        edit_rc=$?
+        if (( edit_rc == 2 )); then
+          PGM_MERGE_GROUP_IS_CONTOUR_SUSPECT=0
+          PGM_MERGE_GROUP_CONTOUR_SUSPECT_NOTE=""
+          echo "$(pgm_ts) Quit at group ${group_num}."
+          return 2
+        fi
+        # Re-show detail (edited or cancelled) and ask again.
+        continue
+      fi
+      break
+    done
     PGM_MERGE_GROUP_IS_CONTOUR_SUSPECT=0
     PGM_MERGE_GROUP_CONTOUR_SUSPECT_NOTE=""
     case "$action" in
