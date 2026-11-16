@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261116.221800 - join preview repeat: don't capture build in $(); keep DELETE_ME for replay
 # v. 20261116.215000 - output-times arrow menu: align label and date columns
 # v. 20261116.155200 - fix hybrid cache clear typo; Contour progress once per file; align i/n columns
 # v. 20261116.152500 - Contour suspect closed menu; self-update Continue drains leftover Enter
@@ -2294,7 +2295,7 @@ pgm_join_preview_cleanup_dir() {
   for f in "${leftovers[@]}"; do
     if rm -f -- "$f" 2>/dev/null; then
       removed=1
-      echo "$(pgm_ts) Removed leftover join preview: ${f##*/}"
+      echo "$(pgm_ts) Removed leftover join preview: ${f##*/}" >&2
     else
       echo "$(pgm_ts) Could not remove join preview: $f" >&2
     fi
@@ -2329,14 +2330,15 @@ pgm_join_preview_cleanup() {
 # Path for join-preview stitch beside the left chapter: .pgm_join_preview_NN_DELETE_ME.mp4
 pgm_join_preview_out_path() {
   local left="$1" join_num="$2"
-  local di
+  local dir
   dir=$(dirname -- "$left")
   [[ -n "$dir" ]] || dir="."
-  printf '%s/.pgm_join_preview_%02d_DELETE_ME.mp4\n' "$dir" "$join_num"
+  printf '%s/.pgm_join_preview_%02d_DELETE_ME.mp4' "$dir" "$join_num"
 }
 
 # Build one ~4s stitch (last BEFORE of left + first AFTER of right) via ffmpeg.
-# Sets PGM_JOIN_PREVIEW_FILE and prints the path. Reuses an existing file for the same join.
+# Sets PGM_JOIN_PREVIEW_FILE. Reuses an existing file for the same join number.
+# Must not be called inside $() — sets a global and must keep stdout clean for callers.
 # Returns 0 on success, 1 on failure (no leftover temps).
 build_pre_merge_join_preview_file() {
   local left="$1" right="$2" join_num="$3"
@@ -2349,14 +2351,16 @@ build_pre_merge_join_preview_file() {
   [[ "$before" =~ ^[0-9]+([.][0-9]+)?$ ]] || before=2
   [[ "$after" =~ ^[0-9]+([.][0-9]+)?$ ]] || after=2
 
-  out=$(pgm_join_preview_out_path "$left" "$join_num")
-  if [[ -n "${PGM_JOIN_PREVIEW_FILE:-}" && -f "${PGM_JOIN_PREVIEW_FILE}" \
-    && "${PGM_JOIN_PREVIEW_FILE}" == "$out" ]]; then
-    printf '%s\n' "$out"
+  out="$(pgm_join_preview_out_path "$left" "$join_num")"
+  # Same join already built (e.g. Repeat) — keep the file and reuse it.
+  if [[ -f "$out" ]]; then
+    PGM_JOIN_PREVIEW_FILE="$out"
     return 0
   fi
-  # Different join / stale file: drop previous stitch.
-  pgm_join_preview_cleanup
+  # Different join / stale other stitches: drop previous, then build this one.
+  if [[ -n "${PGM_JOIN_PREVIEW_FILE:-}" && "${PGM_JOIN_PREVIEW_FILE}" != "$out" ]]; then
+    pgm_join_preview_cleanup
+  fi
   [[ -e "$out" ]] && rm -f -- "$out"
 
   if ! command -v ffmpeg >/dev/null 2>&1; then
@@ -2409,7 +2413,7 @@ build_pre_merge_join_preview_file() {
   # Fallback: precise filter_complex re-encode (~4s, ultrafast).
   if (( rc != 0 )); then
     rm -f -- "$out"
-    echo "$(pgm_ts) Join preview copy-stitch failed — re-encoding a short preview…"
+    echo "$(pgm_ts) Join preview copy-stitch failed — re-encoding a short preview…" >&2
     if ffmpeg -y -hide_banner -loglevel error -stats \
         -ss "$left_start" -t "$left_len" -i "$left_abs" \
         -ss 0 -t "$right_len" -i "$right_abs" \
@@ -2438,7 +2442,6 @@ build_pre_merge_join_preview_file() {
     return 1
   fi
   PGM_JOIN_PREVIEW_FILE="$out"
-  printf '%s\n' "$out"
   return 0
 }
 
@@ -2476,7 +2479,14 @@ play_pre_merge_join_preview_once() {
   [[ -n "$gap_note" ]] && echo "  ${gap_note}"
   echo "  Last ${left_len}s of left + first ${right_len}s of right → …_DELETE_ME.mp4"
 
-  if ! preview=$(build_pre_merge_join_preview_file "$left" "$right" "$join_num"); then
+  # Do not use $() here — build sets PGM_JOIN_PREVIEW_FILE in this shell (and must not
+  # have cleanup messages captured into the path).
+  if ! build_pre_merge_join_preview_file "$left" "$right" "$join_num"; then
+    return 1
+  fi
+  preview="${PGM_JOIN_PREVIEW_FILE:-}"
+  if [[ -z "$preview" || ! -f "$preview" ]]; then
+    echo "$(pgm_ts) Join preview path missing after build." >&2
     return 1
   fi
   echo "  Built: ${preview}"
