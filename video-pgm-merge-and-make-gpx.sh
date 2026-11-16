@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261116.123900 - Contour: remux video-copy + AAC + unify time_base when tracks differ
 # v. 20261116.123600 - run summary: note groups skipped for incompatible tracks
 # v. 20261116.111200 - [1] join preview plays immediately (no second Y/n menu)
 # v. 20261116.084800 - [1] join preview: stitch ±2s into one …_DELETE_ME.mp4 then play; delete after
@@ -104,6 +105,9 @@
 # v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
 # v. 20260805.154826 - after merge: copy GPS/dates from first chapter; FS times via touch -r
 
+# 2026.11.16 - v. 0.15.120 - Contour groups whose picture matches (codec/size/fps) but audio and/or
+#   time_base differ: offer remux (video stream copy + AAC audio + unified video_track_timescale)
+#   then ffmpeg concat, instead of skipping as incompatible. -y / merge-all auto-accept remux.
 # 2026.11.16 - v. 0.15.119 - run summary lists groups that looked mergeable (time/name chain) but
 #   were skipped because video/audio tracks did not match (incompatible families).
 # 2026.11.16 - v. 0.15.118 - [1] join preview starts immediately (no second Build & play Y/n menu).
@@ -384,7 +388,9 @@ Merge behaviour:
     Skip). A shorter clip does not chain into one at least twice as long (short
     must not lead a much longer chapter). Merge INPUT lines show the gap to the
     next file on the same line. Contour groups merge with ffmpeg concat (-c copy),
-    not mp4_merge. Output: YYYYMMDD_HHMMSS_Contour_concat_parts_01-NN.mp4.
+    not mp4_merge. If picture matches but audio/time_base differ, offer remux
+    (video copy + AAC + unified time_base) then concat. Output:
+    YYYYMMDD_HHMMSS_Contour_concat_parts_01-NN.mp4.
   - Also groups 70mai-style clips NOYYYYMMDD-HHMMSS-NNNNNNX.MP4 and the same
     name starting with EV (same camera letter) into a continuous journey: ordered
     by filename time, sequence number increases by 1, and the filename start times
@@ -3472,6 +3478,46 @@ ffprobe_merge_fingerprint() {
   printf '%s|%s\n' "$v" "$a"
 }
 
+# Picture identity without time_base (codec,profile,w,h,pix,fps).
+merge_fp_video_core() {
+  local fp="$1" v vc vp vw vh pix fps tb
+  v="${fp%%|*}"
+  IFS=',' read -r vc vp vw vh pix fps tb <<<"$v"
+  printf '%s,%s,%s,%s,%s,%s' "${vc}" "${vp}" "${vw}" "${vh}" "${pix}" "${fps}"
+}
+
+# MP4 video_track_timescale from fingerprint time_base (e.g. 1/90000 → 90000).
+merge_fp_video_timescale() {
+  local fp="$1" v vc vp vw vh pix fps tb
+  v="${fp%%|*}"
+  IFS=',' read -r vc vp vw vh pix fps tb <<<"$v"
+  if [[ "$tb" =~ ^[0-9]+/([0-9]+)$ ]]; then
+    printf '%s\n' "${BASH_REMATCH[1]}"
+  elif [[ "$tb" =~ ^[0-9]+$ ]]; then
+    printf '%s\n' "$tb"
+  else
+    printf '90000\n'
+  fi
+}
+
+# Fill nameref array with fingerprints for each file. Returns 1 if any probe fails.
+merge_group_collect_fingerprints() {
+  local -n _fps_out=$1
+  shift
+  local -a files=("$@")
+  local f fp
+  _fps_out=()
+  (( ${#files[@]} >= 1 )) || return 1
+  for f in "${files[@]}"; do
+    if ! fp=$(ffprobe_merge_fingerprint "$f"); then
+      echo "$(pgm_ts) Cannot read tracks with ffprobe: ${f##*/}" >&2
+      return 1
+    fi
+    _fps_out+=("$fp")
+  done
+  return 0
+}
+
 # Human one-liner from a fingerprint (for the refusal table).
 merge_fingerprint_label() {
   local fp="$1" v a
@@ -3490,45 +3536,12 @@ merge_fingerprint_label() {
     "${ac:-?}" "${ap:-?}" "${ar:-?}" "${ach:-?}"
 }
 
-# 0 = all files match the first; 1 = mismatch or probe failure (prints a table).
-# Used before mp4_merge: refuse mixed families (e.g. mp3 vs aac, different time bases).
-merge_group_assert_codecs() {
+merge_group_print_fingerprint_table() {
   local -a files=("$@")
-  local f fp0 fp i
   local -a fps=()
-  local mismatch=0 probe_fail=0
-  local -a diff_notes=()
-
-  (( ${#files[@]} >= 2 )) || return 0
-  if ! command -v ffprobe >/dev/null 2>&1; then
-    echo "$(pgm_ts) ffprobe not found — cannot verify that tracks match before mp4_merge." >&2
-    return 0
-  fi
-
-  for f in "${files[@]}"; do
-    if ! fp=$(ffprobe_merge_fingerprint "$f"); then
-      echo "$(pgm_ts) Cannot read tracks with ffprobe: ${f##*/}" >&2
-      probe_fail=1
-      fps+=("")
-      continue
-    fi
-    fps+=("$fp")
-  done
-  if (( probe_fail )); then
-    echo "$(pgm_ts) Refusing merge: ffprobe could not read every input." >&2
-    return 1
-  fi
-
+  local f fp fp0 i
+  merge_group_collect_fingerprints fps "${files[@]}" || return 1
   fp0="${fps[0]}"
-  for i in "${!files[@]}"; do
-    [[ "${fps[i]}" == "$fp0" ]] && continue
-    mismatch=1
-    break
-  done
-  (( mismatch )) || return 0
-
-  echo "$(pgm_ts) Refusing merge: video/audio tracks do not match (mp4_merge needs the same codecs and layout)." >&2
-  echo >&2
   printf '  %-52s %s\n' "file" "tracks" >&2
   for i in "${!files[@]}"; do
     f="${files[i]}"
@@ -3539,8 +3552,169 @@ merge_group_assert_codecs() {
       printf '  %-52s %s  ← differs\n' "${f##*/}" "$(merge_fingerprint_label "$fp")" >&2
     fi
   done
-  echo >&2
-  echo "$(pgm_ts) Merge only matching families (e.g. all *_NVenc_* or all HandBrake). Mixed pairs need ffmpeg, not mp4_merge." >&2
+}
+
+# 0 = every fingerprint identical.
+merge_group_codecs_match() {
+  local -a files=("$@")
+  local -a fps=()
+  local fp0 i
+  (( ${#files[@]} >= 2 )) || return 0
+  merge_group_collect_fingerprints fps "${files[@]}" || return 1
+  fp0="${fps[0]}"
+  for i in "${!files[@]}"; do
+    [[ "${fps[i]}" == "$fp0" ]] || return 1
+  done
+  return 0
+}
+
+# 0 = same picture (codec/profile/size/pix/fps); audio and/or time_base may differ.
+merge_group_video_unifyable() {
+  local -a files=("$@")
+  local -a fps=()
+  local core0 core i
+  (( ${#files[@]} >= 2 )) || return 0
+  merge_group_collect_fingerprints fps "${files[@]}" || return 1
+  core0="$(merge_fp_video_core "${fps[0]}")"
+  [[ -n "$core0" ]] || return 1
+  for i in "${!files[@]}"; do
+    core="$(merge_fp_video_core "${fps[i]}")"
+    [[ "$core" == "$core0" ]] || return 1
+  done
+  # Not interesting if already an exact match.
+  merge_group_codecs_match "${files[@]}" && return 1
+  return 0
+}
+
+# 0 = all files match the first; 1 = mismatch or probe failure (prints a table).
+# Used before mp4_merge: refuse mixed families (e.g. mp3 vs aac, different time bases).
+merge_group_assert_codecs() {
+  local -a files=("$@")
+  local -a fps=()
+  local f fp0 fp i
+
+  (( ${#files[@]} >= 2 )) || return 0
+  if ! command -v ffprobe >/dev/null 2>&1; then
+    echo "$(pgm_ts) ffprobe not found — cannot verify that tracks match before mp4_merge." >&2
+    return 0
+  fi
+
+  if ! merge_group_collect_fingerprints fps "${files[@]}"; then
+    echo "$(pgm_ts) Refusing merge: ffprobe could not read every input." >&2
+    return 1
+  fi
+
+  fp0="${fps[0]}"
+  for i in "${!files[@]}"; do
+    [[ "${fps[i]}" == "$fp0" ]] && continue
+    echo "$(pgm_ts) Refusing merge: video/audio tracks do not match (mp4_merge needs the same codecs and layout)." >&2
+    echo >&2
+    merge_group_print_fingerprint_table "${files[@]}"
+    echo >&2
+    if group_prefers_ffmpeg_concat "${files[@]}" 2>/dev/null \
+      && merge_group_video_unifyable "${files[@]}" 2>/dev/null; then
+      echo "$(pgm_ts) Picture matches; Contour can remux (video copy + AAC + unify time_base) then concat." >&2
+    else
+      echo "$(pgm_ts) Merge only matching families (e.g. all *_NVenc_* or all HandBrake). Mixed pairs need ffmpeg, not mp4_merge." >&2
+    fi
+    return 1
+  done
+  return 0
+}
+
+# Remux each chapter: -c:v copy, AAC audio, shared video_track_timescale.
+# Fills nameref $1 with output paths. Sets PGM_NORMALIZE_WORK_DIR (caller removes).
+# Returns 0 on success.
+pgm_normalize_group_for_concat() {
+  local -n _norm_outs=$1
+  shift
+  local -a files=("$@")
+  local -a fps=()
+  local work timescale i f out abs has_audio
+  local bytes_est=0 sz
+
+  _norm_outs=()
+  PGM_NORMALIZE_WORK_DIR=""
+  (( ${#files[@]} >= 2 )) || return 1
+  command -v ffmpeg >/dev/null 2>&1 || {
+    echo "$(pgm_ts) ffmpeg not found — cannot remux for concat." >&2
+    return 1
+  }
+  merge_group_collect_fingerprints fps "${files[@]}" || return 1
+  timescale="$(merge_fp_video_timescale "${fps[0]}")"
+  [[ "$timescale" =~ ^[0-9]+$ ]] || timescale=90000
+
+  for f in "${files[@]}"; do
+    sz=$(file_size_bytes "$f")
+    bytes_est=$(( bytes_est + sz ))
+  done
+  echo "$(pgm_ts) Remuxing ${#files[@]} chapter(s): video copy + AAC, time_base → 1/${timescale}"
+  echo "$(pgm_ts) Temp space about $(format_bytes_human "$bytes_est") (deleted after concat)."
+
+  work=$(mktemp -d "${TMPDIR:-/tmp}/pgm_norm_concat.XXXXXX") || return 1
+  PGM_NORMALIZE_WORK_DIR="$work"
+
+  for i in "${!files[@]}"; do
+    f="${files[i]}"
+    abs=$(pgm_abs_path "$f" 2>/dev/null) || abs="$f"
+    printf -v out '%s/%02d_norm.mp4' "$work" "$(( i + 1 ))"
+    echo "$(pgm_ts)   ($(( i + 1 ))/${#files[@]}) ${f##*/}"
+    has_audio=0
+    if ffprobe -v error -select_streams a:0 -show_entries stream=codec_name \
+        -of default=nw=1:nk=1 -- "$abs" 2>/dev/null | grep -q .; then
+      has_audio=1
+    fi
+    if (( has_audio )); then
+      if ! ffmpeg -y -hide_banner -loglevel error -stats \
+          -i "$abs" -map 0:v:0 -map 0:a:0 \
+          -c:v copy \
+          -c:a aac -b:a 192k -ar 48000 -ac 2 \
+          -video_track_timescale "$timescale" \
+          -movflags +faststart \
+          "$out"; then
+        echo "$(pgm_ts) Remux failed: ${f##*/}" >&2
+        rm -rf -- "$work"
+        PGM_NORMALIZE_WORK_DIR=""
+        return 1
+      fi
+    else
+      if ! ffmpeg -y -hide_banner -loglevel error -stats \
+          -i "$abs" -map 0:v:0 -an \
+          -c:v copy \
+          -video_track_timescale "$timescale" \
+          -movflags +faststart \
+          "$out"; then
+        echo "$(pgm_ts) Remux failed: ${f##*/}" >&2
+        rm -rf -- "$work"
+        PGM_NORMALIZE_WORK_DIR=""
+        return 1
+      fi
+    fi
+    _norm_outs+=("$out")
+  done
+  return 0
+}
+
+# Ask before remux+concat. Returns 0 = proceed, 1 = skip group, 2 = quit.
+prompt_contour_normalize_merge() {
+  local -a files=("$@")
+  if (( DO_YES )) || (( MERGE_ALL_REMAINING )) || (( ! script_is_run_interactively )); then
+    echo "$(pgm_ts) Remux (video copy + AAC + unify time_base), then merge."
+    return 0
+  fi
+  echo
+  echo "$(pgm_ts) Picture matches; audio and/or time_base differ."
+  merge_group_print_fingerprint_table "${files[@]}" || true
+  echo
+  echo "  [Y] Remux chapters (video copy + AAC, unify time_base) then merge (default)"
+  echo "  [n] Skip this group"
+  echo "  [q] Quit"
+  pgm_read_key_choice "Remux then merge? [Y/n/q]: " y "ynq"
+  case "$REPLY" in
+    y) return 0 ;;
+    n) return 1 ;;
+    q) return 2 ;;
+  esac
   return 1
 }
 
@@ -8020,8 +8194,33 @@ run_merge_group() {
   local merger="$1" redo="${2:-0}"
   shift 2
   local -a files=("$@")
-  local output_file rc
-  merge_group_assert_codecs "${files[@]}" || return 1
+  local -a concat_files=()
+  local output_file rc needs_norm=0 norm_rc norm_dir=""
+
+  needs_norm=0
+  if [[ "${PGM_MERGE_GROUP_NEEDS_NORMALIZE:-0}" == 1 ]]; then
+    needs_norm=1
+  fi
+  PGM_NORMALIZE_WORK_DIR=""
+
+  if (( needs_norm )); then
+    if ! group_prefers_ffmpeg_concat "${files[@]}"; then
+      echo "$(pgm_ts) Remux+concat is only for Contour (ffmpeg) groups." >&2
+      return 1
+    fi
+    prompt_contour_normalize_merge "${files[@]}"
+    norm_rc=$?
+    if (( norm_rc == 2 )); then
+      return 2
+    fi
+    if (( norm_rc != 0 )); then
+      echo "$(pgm_ts) Skipped remux merge for this group."
+      return 0
+    fi
+  else
+    merge_group_assert_codecs "${files[@]}" || return 1
+  fi
+
   output_file=$(group_output_file "${files[@]}")
   if [[ -e "$output_file" ]]; then
     if (( ! redo )); then
@@ -8057,8 +8256,23 @@ run_merge_group() {
   fi
   trap video_merge_ctrl_c INT
   pgm_processing_begin
-  if group_prefers_ffmpeg_concat "${files[@]}"; then
-    pgm_ffmpeg_concat_copy_files "$write_path" "${files[@]}"
+  concat_files=("${files[@]}")
+  if (( needs_norm )); then
+    if ! pgm_normalize_group_for_concat concat_files "${files[@]}"; then
+      pgm_processing_end
+      [[ -n "${PGM_NORMALIZE_WORK_DIR:-}" ]] && rm -rf -- "${PGM_NORMALIZE_WORK_DIR}"
+      PGM_NORMALIZE_WORK_DIR=""
+      merge_clear_temp_work
+      trap ctrl_c INT
+      VIDEO_MERGE_OUT_FILE=""
+      pgm_clear_pending_output_times
+      echo "$(pgm_ts) Remux failed — merge aborted." >&2
+      return 1
+    fi
+    norm_dir="${PGM_NORMALIZE_WORK_DIR:-}"
+  fi
+  if group_prefers_ffmpeg_concat "${files[@]}" || (( needs_norm )); then
+    pgm_ffmpeg_concat_copy_files "$write_path" "${concat_files[@]}"
     rc=$?
   else
     if [[ "$merger" == "__ffmpeg_concat_only__" ]]; then
@@ -8069,6 +8283,10 @@ run_merge_group() {
       rc=$?
     fi
   fi
+  if [[ -n "$norm_dir" ]]; then
+    rm -rf -- "$norm_dir"
+  fi
+  PGM_NORMALIZE_WORK_DIR=""
   pgm_processing_end
   if (( rc == 0 )); then
     if [[ -n "$MERGE_TMP_DIR" ]]; then
@@ -8692,6 +8910,9 @@ show_merge_group_detail() {
   else
     echo "=== Merge group ${group_num} of ${group_total} (${#files[@]} parts) ==="
   fi
+  if [[ "${PGM_MERGE_GROUP_NEEDS_NORMALIZE:-0}" == 1 ]]; then
+    echo "  Note: audio/time_base differ — merge will remux (video copy + AAC, unify time_base) first."
+  fi
   print_merge_group_io_block "$output_file" "${files[@]}"
   if group_is_dashcam "${files[@]}"; then
     print_dashcam_gpx_suggestion "$output_file" '  '
@@ -8826,7 +9047,7 @@ dashcam_offer_gpx_only() {
 do_merge() {
   local merger rc=0 group_num=0 mergeable_total=0
   local blob action si
-  local -a files=() mergeable_blobs=() mergeable_suspect_notes=()
+  local -a files=() mergeable_blobs=() mergeable_suspect_notes=() mergeable_normalize=()
   merger=$(find_merger) || {
     # Contour-only folders can merge with ffmpeg; GoPro still needs mp4_merge.
     if command -v ffmpeg >/dev/null 2>&1; then
@@ -8904,10 +9125,21 @@ do_merge() {
         echo
         continue
       fi
-      if merge_group_assert_codecs "${files[@]}"; then
+      if merge_group_codecs_match "${files[@]}"; then
         mergeable_blobs+=("$blob")
         mergeable_suspect_notes+=("")
+        mergeable_normalize+=("0")
+      elif group_prefers_ffmpeg_concat "${files[@]}" \
+        && command -v ffmpeg >/dev/null 2>&1 \
+        && merge_group_video_unifyable "${files[@]}"; then
+        echo "$(pgm_ts) Contour group: picture matches; audio/time_base differ — remux+concat available."
+        merge_group_print_fingerprint_table "${files[@]}" || true
+        echo
+        mergeable_blobs+=("$blob")
+        mergeable_suspect_notes+=("")
+        mergeable_normalize+=("1")
       else
+        merge_group_assert_codecs "${files[@]}" || true
         (( codec_skip++ )) || true
         PGM_RUN_CODEC_SKIP_GROUPS=$(( ${PGM_RUN_CODEC_SKIP_GROUPS:-0} + 1 ))
         if (( FORCE_MERGE )); then
@@ -8933,10 +9165,19 @@ do_merge() {
       echo
       continue
     fi
-    if merge_group_assert_codecs "${files[@]}"; then
+    if merge_group_codecs_match "${files[@]}"; then
       mergeable_blobs+=("$blob")
       mergeable_suspect_notes+=("${CONTOUR_SUSPECT_NOTES[$si]:-suspect gap}")
+      mergeable_normalize+=("0")
+    elif merge_group_video_unifyable "${files[@]}"; then
+      echo "$(pgm_ts) Contour suspect: picture matches; audio/time_base differ — remux+concat available."
+      merge_group_print_fingerprint_table "${files[@]}" || true
+      echo
+      mergeable_blobs+=("$blob")
+      mergeable_suspect_notes+=("${CONTOUR_SUSPECT_NOTES[$si]:-suspect gap}")
+      mergeable_normalize+=("1")
     else
+      merge_group_assert_codecs "${files[@]}" || true
       (( codec_skip++ )) || true
       PGM_RUN_CODEC_SKIP_GROUPS=$(( ${PGM_RUN_CODEC_SKIP_GROUPS:-0} + 1 ))
       echo "$(pgm_ts) Skipping Contour suspect group (incompatible tracks)."
@@ -9005,9 +9246,13 @@ do_merge() {
     (( group_num++ )) || true
     PGM_MERGE_GROUP_IS_CONTOUR_SUSPECT=0
     PGM_MERGE_GROUP_CONTOUR_SUSPECT_NOTE=""
+    PGM_MERGE_GROUP_NEEDS_NORMALIZE=0
     if [[ -n "${mergeable_suspect_notes[$mi]:-}" ]]; then
       PGM_MERGE_GROUP_IS_CONTOUR_SUSPECT=1
       PGM_MERGE_GROUP_CONTOUR_SUSPECT_NOTE="${mergeable_suspect_notes[$mi]}"
+    fi
+    if [[ "${mergeable_normalize[$mi]:-0}" == 1 ]]; then
+      PGM_MERGE_GROUP_NEEDS_NORMALIZE=1
     fi
     while true; do
       output_file=$(group_output_file "${files[@]}")
@@ -9021,8 +9266,18 @@ do_merge() {
         if (( edit_rc == 2 )); then
           PGM_MERGE_GROUP_IS_CONTOUR_SUSPECT=0
           PGM_MERGE_GROUP_CONTOUR_SUSPECT_NOTE=""
+          PGM_MERGE_GROUP_NEEDS_NORMALIZE=0
           echo "$(pgm_ts) Quit at group ${group_num}."
           return 2
+        fi
+        # Re-evaluate remux need for the edited subset.
+        if merge_group_codecs_match "${files[@]}"; then
+          PGM_MERGE_GROUP_NEEDS_NORMALIZE=0
+        elif group_prefers_ffmpeg_concat "${files[@]}" \
+          && merge_group_video_unifyable "${files[@]}"; then
+          PGM_MERGE_GROUP_NEEDS_NORMALIZE=1
+        else
+          PGM_MERGE_GROUP_NEEDS_NORMALIZE=0
         fi
         # Re-show detail (edited or cancelled) and ask again.
         continue
@@ -9034,6 +9289,7 @@ do_merge() {
         if (( join_rc == 2 )); then
           PGM_MERGE_GROUP_IS_CONTOUR_SUSPECT=0
           PGM_MERGE_GROUP_CONTOUR_SUSPECT_NOTE=""
+          PGM_MERGE_GROUP_NEEDS_NORMALIZE=0
           echo "$(pgm_ts) Quit at group ${group_num}."
           return 2
         fi
@@ -9047,6 +9303,7 @@ do_merge() {
     case "$action" in
       merge)
         run_merge_group "$merger" 0 "${files[@]}" || rc=$?
+        PGM_MERGE_GROUP_NEEDS_NORMALIZE=0
         if (( rc == 2 )); then
           echo "$(pgm_ts) Quit at group ${group_num}."
           return "${rc}"
@@ -9054,6 +9311,7 @@ do_merge() {
         ;;
       redo)
         run_merge_group "$merger" 1 "${files[@]}" || rc=$?
+        PGM_MERGE_GROUP_NEEDS_NORMALIZE=0
         if (( rc == 2 )); then
           echo "$(pgm_ts) Quit at group ${group_num}."
           return "${rc}"
@@ -9133,6 +9391,7 @@ do_merge() {
           echo "$(pgm_ts) Keeping existing output for group ${group_num}."
         else
           run_merge_group "$merger" 0 "${files[@]}" || rc=$?
+          PGM_MERGE_GROUP_NEEDS_NORMALIZE=0
           if (( rc == 2 )); then
             echo "$(pgm_ts) Quit at group ${group_num}."
             return "${rc}"
@@ -9147,6 +9406,7 @@ do_merge() {
         return "${rc}"
         ;;
     esac
+    PGM_MERGE_GROUP_NEEDS_NORMALIZE=0
     echo
   done
 
