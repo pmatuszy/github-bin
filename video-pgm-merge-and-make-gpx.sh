@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261116.124700 - remux Contour: preview joins first (default [1]); then remux+merge
 # v. 20261116.124500 - seam/join preview: call play-terminal with --silent
 # v. 20261116.123900 - Contour: remux video-copy + AAC + unify time_base when tracks differ
 # v. 20261116.123600 - run summary: note groups skipped for incompatible tracks
@@ -106,6 +107,8 @@
 # v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
 # v. 20260805.154826 - after merge: copy GPS/dates from first chapter; FS times via touch -r
 
+# 2026.11.16 - v. 0.15.122 - Contour remux candidates: recommend [1] join preview before remuxing;
+#   group menu default is [1]; remux confirm also offers [1] first (default until previewed).
 # 2026.11.16 - v. 0.15.121 - seam and [1] join previews call video-pgm-play-terminal.sh with --silent
 #   (quieter mpv; no run-settings dump from the player during short previews).
 # 2026.11.16 - v. 0.15.120 - Contour groups whose picture matches (codec/size/fps) but audio and/or
@@ -3698,27 +3701,50 @@ pgm_normalize_group_for_concat() {
   return 0
 }
 
-# Ask before remux+concat. Returns 0 = proceed, 1 = skip group, 2 = quit.
+# Ask before remux+concat. Offer join preview first (cheap) before multi-GB remux.
+# Returns 0 = proceed, 1 = skip group, 2 = quit.
 prompt_contour_normalize_merge() {
   local -a files=("$@")
+  local previewed=0 choice join_rc
   if (( DO_YES )) || (( MERGE_ALL_REMAINING )) || (( ! script_is_run_interactively )); then
     echo "$(pgm_ts) Remux (video copy + AAC + unify time_base), then merge."
     return 0
   fi
+  [[ "${PGM_MERGE_GROUP_JOIN_PREVIEWED:-0}" == 1 ]] && previewed=1
   echo
   echo "$(pgm_ts) Picture matches; audio and/or time_base differ."
+  echo "$(pgm_ts) Preview the joins before remuxing — remux rewrites every chapter (large temps)."
   merge_group_print_fingerprint_table "${files[@]}" || true
-  echo
-  echo "  [Y] Remux chapters (video copy + AAC, unify time_base) then merge (default)"
-  echo "  [n] Skip this group"
-  echo "  [q] Quit"
-  pgm_read_key_choice "Remux then merge? [Y/n/q]: " y "ynq"
-  case "$REPLY" in
-    y) return 0 ;;
-    n) return 1 ;;
-    q) return 2 ;;
-  esac
-  return 1
+  while true; do
+    echo
+    echo "  [1] Preview joins first (recommended) — check the scene before remux"
+    if (( previewed )); then
+      echo "  [Y] Remux chapters (video copy + AAC, unify time_base) then merge (default)"
+    else
+      echo "  [Y] Remux chapters (video copy + AAC, unify time_base) then merge"
+    fi
+    echo "  [n] Skip this group"
+    echo "  [q] Quit"
+    if (( previewed )); then
+      pgm_read_key_choice "Preview or remux? [1/Y/n/q]: " y "1ynq"
+    else
+      pgm_read_key_choice "Preview or remux? [1/Y/n/q] (default 1 = preview): " 1 "1ynq"
+    fi
+    choice="$REPLY"
+    case "$choice" in
+      1)
+        prompt_pre_merge_join_previews "${files[@]}"
+        join_rc=$?
+        (( join_rc == 2 )) && return 2
+        previewed=1
+        PGM_MERGE_GROUP_JOIN_PREVIEWED=1
+        continue
+        ;;
+      y) return 0 ;;
+      n) return 1 ;;
+      q) return 2 ;;
+    esac
+  done
 }
 
 PGM_EXIFTOOL_DEFAULT="${PGM_EXIFTOOL_DEFAULT:-/mnt/luks-buffalo2/worek/_video-JEDYNE_KOPIE/_katalog_roboczy/scripts/Image-ExifTool-12.41/exiftool}"
@@ -8664,39 +8690,60 @@ prompt_merge_group_action() {
   else
     if (( contour_suspect )); then
       echo "$(pgm_ts) Contour suspect review (${suspect_note}). Not a confident chapter chain."
+      if [[ "${PGM_MERGE_GROUP_NEEDS_NORMALIZE:-0}" == 1 ]]; then
+        echo "$(pgm_ts) Also: audio/time_base differ — preview joins before remuxing."
+      fi
       echo "  [N] Skip — leave separate (default)"
-      echo "  [m] Merge this suspected Contour group"
-      echo "  [1] Preview joins — last ${PGM_JOIN_PREVIEW_BEFORE:-2}s + first ${PGM_JOIN_PREVIEW_AFTER:-2}s of next"
+      echo "  [1] Preview joins first (recommended) — last ${PGM_JOIN_PREVIEW_BEFORE:-2}s + first ${PGM_JOIN_PREVIEW_AFTER:-2}s"
+      if [[ "${PGM_MERGE_GROUP_NEEDS_NORMALIZE:-0}" == 1 ]]; then
+        echo "  [m] Remux (video copy + AAC) then merge this suspected group"
+      else
+        echo "  [m] Merge this suspected Contour group"
+      fi
       if (( ${#files[@]} >= 3 )); then
         echo "  [e] Edit inputs — choose which files to merge (e.g. 1-2)"
       fi
       echo "  [a] Skip all remaining groups"
       echo "  [q] Quit"
       if (( ${#files[@]} >= 3 )); then
-        pgm_read_key_choice "Contour suspect — group ${group_num}/${group_total} [N/m/1/e/a/q]: " n "nm1eaq"
+        pgm_read_key_choice "Contour suspect — group ${group_num}/${group_total} [N/1/m/e/a/q]: " n "n1meaq"
       else
-        pgm_read_key_choice "Contour suspect — group ${group_num}/${group_total} [N/m/1/a/q]: " n "nm1aq"
+        pgm_read_key_choice "Contour suspect — group ${group_num}/${group_total} [N/1/m/a/q]: " n "n1maq"
       fi
       choice="$REPLY"
       case "$choice" in
         n)  REPLY=skip; return 0 ;;
-        m)  REPLY=merge; return 0 ;;
         1)  REPLY=preview_joins; return 0 ;;
+        m)  REPLY=merge; return 0 ;;
         e)  REPLY=edit; return 0 ;;
         a)  REPLY=skip_all; return 0 ;;
         q)  REPLY=quit; return 0 ;;
       esac
     fi
-    echo "  [Y] Merge this group (default)"
+    local needs_norm=0
+    [[ "${PGM_MERGE_GROUP_NEEDS_NORMALIZE:-0}" == 1 ]] && needs_norm=1
+    if (( needs_norm )); then
+      echo "$(pgm_ts) Remux candidate — preview joins before rewriting chapters."
+      echo "  [1] Preview joins first (recommended, default) — last ${PGM_JOIN_PREVIEW_BEFORE:-2}s + first ${PGM_JOIN_PREVIEW_AFTER:-2}s"
+      echo "  [Y] Remux (video copy + AAC, unify time_base) then merge"
+    else
+      echo "  [Y] Merge this group (default)"
+      echo "  [1] Preview joins — last ${PGM_JOIN_PREVIEW_BEFORE:-2}s + first ${PGM_JOIN_PREVIEW_AFTER:-2}s of next"
+    fi
     echo "  [n] Skip this group"
-    echo "  [1] Preview joins — last ${PGM_JOIN_PREVIEW_BEFORE:-2}s + first ${PGM_JOIN_PREVIEW_AFTER:-2}s of next"
     if (( ${#files[@]} >= 3 )); then
       echo "  [e] Edit inputs — choose which files to merge (e.g. 1-2)"
     fi
     echo "  [a] Skip all remaining groups"
     echo "  [m] Merge all remaining groups (asks output date/time for each first)"
     echo "  [q] Quit"
-    if (( ${#files[@]} >= 3 )); then
+    if (( needs_norm )); then
+      if (( ${#files[@]} >= 3 )); then
+        pgm_read_key_choice "Choice for group ${group_num}/${group_total} [1/Y/n/e/a/m/q]: " 1 "1yneamq"
+      else
+        pgm_read_key_choice "Choice for group ${group_num}/${group_total} [1/Y/n/a/m/q]: " 1 "1ynamq"
+      fi
+    elif (( ${#files[@]} >= 3 )); then
       if (( short_n )); then
         pgm_read_key_choice "Short clip in this group. Merge anyway? [Y/n/1/e/a/m/q]: " y "yn1eamq"
       else
@@ -8914,7 +8961,8 @@ show_merge_group_detail() {
     echo "=== Merge group ${group_num} of ${group_total} (${#files[@]} parts) ==="
   fi
   if [[ "${PGM_MERGE_GROUP_NEEDS_NORMALIZE:-0}" == 1 ]]; then
-    echo "  Note: audio/time_base differ — merge will remux (video copy + AAC, unify time_base) first."
+    echo "  Note: audio/time_base differ — Contour remux candidate (video copy + AAC + unify time_base)."
+    echo "  Tip: press [1] to preview joins first; remux only if the scene looks continuous."
   fi
   print_merge_group_io_block "$output_file" "${files[@]}"
   if group_is_dashcam "${files[@]}"; then
@@ -9250,6 +9298,7 @@ do_merge() {
     PGM_MERGE_GROUP_IS_CONTOUR_SUSPECT=0
     PGM_MERGE_GROUP_CONTOUR_SUSPECT_NOTE=""
     PGM_MERGE_GROUP_NEEDS_NORMALIZE=0
+    PGM_MERGE_GROUP_JOIN_PREVIEWED=0
     if [[ -n "${mergeable_suspect_notes[$mi]:-}" ]]; then
       PGM_MERGE_GROUP_IS_CONTOUR_SUSPECT=1
       PGM_MERGE_GROUP_CONTOUR_SUSPECT_NOTE="${mergeable_suspect_notes[$mi]}"
@@ -9270,6 +9319,7 @@ do_merge() {
           PGM_MERGE_GROUP_IS_CONTOUR_SUSPECT=0
           PGM_MERGE_GROUP_CONTOUR_SUSPECT_NOTE=""
           PGM_MERGE_GROUP_NEEDS_NORMALIZE=0
+          PGM_MERGE_GROUP_JOIN_PREVIEWED=0
           echo "$(pgm_ts) Quit at group ${group_num}."
           return 2
         fi
@@ -9282,6 +9332,7 @@ do_merge() {
         else
           PGM_MERGE_GROUP_NEEDS_NORMALIZE=0
         fi
+        PGM_MERGE_GROUP_JOIN_PREVIEWED=0
         # Re-show detail (edited or cancelled) and ask again.
         continue
       fi
@@ -9293,9 +9344,11 @@ do_merge() {
           PGM_MERGE_GROUP_IS_CONTOUR_SUSPECT=0
           PGM_MERGE_GROUP_CONTOUR_SUSPECT_NOTE=""
           PGM_MERGE_GROUP_NEEDS_NORMALIZE=0
+          PGM_MERGE_GROUP_JOIN_PREVIEWED=0
           echo "$(pgm_ts) Quit at group ${group_num}."
           return 2
         fi
+        PGM_MERGE_GROUP_JOIN_PREVIEWED=1
         # Back to the merge menu after preview.
         continue
       fi
@@ -9307,6 +9360,7 @@ do_merge() {
       merge)
         run_merge_group "$merger" 0 "${files[@]}" || rc=$?
         PGM_MERGE_GROUP_NEEDS_NORMALIZE=0
+        PGM_MERGE_GROUP_JOIN_PREVIEWED=0
         if (( rc == 2 )); then
           echo "$(pgm_ts) Quit at group ${group_num}."
           return "${rc}"
@@ -9315,6 +9369,7 @@ do_merge() {
       redo)
         run_merge_group "$merger" 1 "${files[@]}" || rc=$?
         PGM_MERGE_GROUP_NEEDS_NORMALIZE=0
+        PGM_MERGE_GROUP_JOIN_PREVIEWED=0
         if (( rc == 2 )); then
           echo "$(pgm_ts) Quit at group ${group_num}."
           return "${rc}"
@@ -9410,6 +9465,7 @@ do_merge() {
         ;;
     esac
     PGM_MERGE_GROUP_NEEDS_NORMALIZE=0
+    PGM_MERGE_GROUP_JOIN_PREVIEWED=0
     echo
   done
 
