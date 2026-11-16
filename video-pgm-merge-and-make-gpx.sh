@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261116.141500 - join preview: remove leftover .pgm_join_preview_*_DELETE_ME.mp4 on start / Ctrl-C / exit
 # v. 20261116.135500 - ask Use colors? (default Y); green questions / white timestamps; 1=yes 2=no on yn prompts
 # v. 20261116.124700 - remux Contour: preview joins first (default [1]); then remux+merge
 # v. 20261116.124500 - seam/join preview: call play-terminal with --silent
@@ -108,6 +109,9 @@
 # v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
 # v. 20260805.154826 - after merge: copy GPS/dates from first chapter; FS times via touch -r
 
+# 2026.11.16 - v. 0.15.124 - Join-preview stitches (.pgm_join_preview_*_DELETE_ME.mp4) are swept at
+#   run start (cwd), at the start/end of [1] preview, and on Ctrl-C — leftovers from a killed or
+#   restarted run no longer stay beside the chapters.
 # 2026.11.16 - v. 0.15.123 - Ask Use colors? at startup (default Yes). Question text in green;
 #   [ timestamp ] stays white/normal. On simple y/n prompts (no digit menu keys), [1]=Yes and
 #   [2]=No alongside Y/N. Group/remux menus that already use [1] for preview are unchanged.
@@ -430,7 +434,9 @@ Merge behaviour:
     (default); [m] merges all remaining groups (asks output date/time for each first).
     [1] previews each join: ffmpeg stitches last 2s of clip N + first 2s of N+1
     into one .pgm_join_preview_NN_DELETE_ME.mp4 beside the inputs, plays that
-    single clip, then deletes it when you continue (kept for repeat). [e]
+    single clip, then deletes it when you continue (kept for repeat). Leftover
+    DELETE_ME files from a killed or restarted run are removed at the next start.
+    [e]
     (groups with 3+ files) edits the suggestion: keep a subset by number
     (e.g. 1-2) or drop the last file, then asks again for the trimmed group.
     Contour suspect review offers [1] and [e] (default remains Skip).
@@ -2175,14 +2181,48 @@ prompt_seam_terminal_previews() {
   return 0
 }
 
+# Remove every .pgm_join_preview_*_DELETE_ME.mp4 in a directory (restart / leftover sweep).
+pgm_join_preview_cleanup_dir() {
+  local dir="${1:-.}" f removed=0
+  local -a leftovers=()
+  [[ -d "$dir" ]] || return 0
+  shopt -s nullglob
+  leftovers=( "$dir"/.pgm_join_preview_*_DELETE_ME.mp4 )
+  shopt -u nullglob
+  (( ${#leftovers[@]} )) || return 0
+  for f in "${leftovers[@]}"; do
+    if rm -f -- "$f" 2>/dev/null; then
+      removed=1
+      echo "$(pgm_ts) Removed leftover join preview: ${f##*/}"
+    else
+      echo "$(pgm_ts) Could not remove join preview: $f" >&2
+    fi
+  done
+  if [[ -n "${PGM_JOIN_PREVIEW_FILE:-}" ]]; then
+    for f in "${leftovers[@]}"; do
+      if [[ "$f" == "$PGM_JOIN_PREVIEW_FILE" ]]; then
+        PGM_JOIN_PREVIEW_FILE=""
+        break
+      fi
+    done
+  fi
+  (( removed )) || true
+}
+
 # Remove a join-preview stitch (…_DELETE_ME.mp4). Clears PGM_JOIN_PREVIEW_FILE when it matches.
+# Also sweeps sibling …_DELETE_ME stitches in the same folder (prior joins / crashed run).
 pgm_join_preview_cleanup() {
   local f="${1:-${PGM_JOIN_PREVIEW_FILE:-}}"
-  [[ -n "$f" ]] || return 0
-  [[ -e "$f" ]] && rm -f -- "$f"
-  if [[ -n "${PGM_JOIN_PREVIEW_FILE:-}" && "$f" == "$PGM_JOIN_PREVIEW_FILE" ]]; then
-    PGM_JOIN_PREVIEW_FILE=""
+  local dir="."
+  if [[ -n "$f" ]]; then
+    dir=$(dirname -- "$f")
+    [[ -n "$dir" ]] || dir="."
+    [[ -e "$f" ]] && rm -f -- "$f"
+    if [[ -n "${PGM_JOIN_PREVIEW_FILE:-}" && "$f" == "$PGM_JOIN_PREVIEW_FILE" ]]; then
+      PGM_JOIN_PREVIEW_FILE=""
+    fi
   fi
+  pgm_join_preview_cleanup_dir "$dir"
 }
 
 # Path for join-preview stitch beside the left chapter: .pgm_join_preview_NN_DELETE_ME.mp4
@@ -2354,7 +2394,8 @@ play_pre_merge_join_preview_once() {
 prompt_pre_merge_join_previews() {
   local -a files=("$@")
   local player i choice join_num total_joins ord gap_note
-  local before after
+  local before after f d
+  local -A jp_dirs=()
 
   if (( JOIN_PREVIEW_SKIP_RUN )); then
     echo "$(pgm_ts) Join preview off for the rest of this run."
@@ -2380,6 +2421,17 @@ prompt_pre_merge_join_previews() {
   before="${PGM_JOIN_PREVIEW_BEFORE:-2}"
   after="${PGM_JOIN_PREVIEW_AFTER:-2}"
   total_joins=$(( ${#files[@]} - 1 ))
+  # Drop leftovers from a prior killed/restarted run in every chapter folder.
+  for f in "${files[@]}"; do
+    d=$(dirname -- "$f")
+    [[ -n "$d" ]] || d="."
+    jp_dirs["$d"]=1
+  done
+  for d in "${!jp_dirs[@]}"; do
+    pgm_join_preview_cleanup_dir "$d"
+  done
+  # Ctrl-C during play must drop DELETE_ME stitches (video_merge_ctrl_c sweeps them).
+  trap video_merge_ctrl_c INT
   echo
   echo "$(pgm_ts) Join preview: last ${before}s + first ${after}s → .pgm_join_preview_NN_DELETE_ME.mp4"
   echo
@@ -2408,6 +2460,7 @@ prompt_pre_merge_join_previews() {
     pgm_join_preview_cleanup
   done
   pgm_join_preview_cleanup
+  trap video_merge_ctrl_c INT
   echo
   return 0
 }
@@ -2768,6 +2821,8 @@ pgm_run_exiftool_rewrite_with_progress() {
 video_merge_ctrl_c() {
   local out="${VIDEO_MERGE_OUT_FILE:-}"
   pgm_exiftool_rewrite_kill_child
+  pgm_join_preview_cleanup
+  pgm_join_preview_cleanup_dir "$(pwd)"
   if [[ -n "$out" ]]; then
     # Merge and post-merge (exiftool) may leave a partial final name or sidecar temps.
     rm -f -- "$out" "${out}_exiftool_tmp" "${out}.meta.tmp."* 2>/dev/null || true
@@ -9234,8 +9289,11 @@ do_merge() {
   MERGE_TEMP_FOR_RUN=""
   MERGE_IN_PLACE_FOR_RUN=0
   SEAM_PREVIEW_SKIP_RUN=0
+  JOIN_PREVIEW_SKIP_RUN=0
   KEEP_INPUTS_FOR_RUN=0
   SKIP_MERGED_PROMPTS=0
+  # Leftover stitches from a killed/restarted run (…_DELETE_ME.mp4 beside chapters).
+  pgm_join_preview_cleanup_dir "$(pwd)"
 
   print_group_plan "${sorted_mp4[@]}"
 
