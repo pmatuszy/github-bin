@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261116.215000 - Fix dates menu: align label and date columns
 # v. 20261116.160500 - Fix dates menu uses shared script_arrow_menu (Up/Down + Enter)
 # v. 20261116.144500 - Ctrl-C during decide/prompts also prints SUMMARY (not only during apply)
 # v. 20261116.143700 - ask Use colors?; green questions / prompts; highlight (default)
@@ -52,6 +53,7 @@
 # 2026.11.15 - v. 0.1.17 - process in batches: ask all decisions for a batch first, then write; batch size
 #   default = all when ≤50 files, else 50 (--batch-size / MFD_BATCH_SIZE); Ctrl-C during a write stops
 #   exiftool and removes that file's *_exiftool_tmp
+# 2026.11.16 - v. 0.1.20 - Fix dates menu: pad source label + date so timestamps share one column.
 # 2026.11.16 - v. 0.1.19 - Fix dates per-file menu uses shared script_arrow_menu (Up/Down + Enter);
 #   Contour multi-line help stays above the menu; read_key fallback if header is old.
 # 2026.11.16 - v. 0.1.18 - Ctrl-C during decide/prompts prints SUMMARY (trap was only set while applying).
@@ -1517,9 +1519,11 @@ mfd_decide_file() {
         note="(${def_note})"
       fi
     fi
-    label="${MFD_LABELS[i]}  ${disp}"
+    # Pad label + date so timestamps share one column (same widths as the sources table).
     if [[ -n "$note" ]]; then
-      label+="  ${note}"
+      label="$(printf '%-18s %-19s  %s' "${MFD_LABELS[i]}" "$disp" "$note")"
+    else
+      label="$(printf '%-18s %-19s' "${MFD_LABELS[i]}" "$disp")"
     fi
     menu_opts+=("$((i + 1))|${label}")
     key_list+=("$((i + 1))")

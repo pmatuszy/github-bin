@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261116.215000 - output-times arrow menu: align label and date columns
 # v. 20261116.155200 - fix hybrid cache clear typo; Contour progress once per file; align i/n columns
 # v. 20261116.152500 - Contour suspect closed menu; self-update Continue drains leftover Enter
 # v. 20261116.151500 - shared script_arrow_menu for multi-choice prompts
@@ -5080,10 +5081,12 @@ pgm_decide_output_times() {
         note="(oldest - default)"
       fi
     fi
-    # ASCII-only date column so %-19s matches terminal columns (UTF-8 "—" broke alignment).
-    printf '  [%d] %-18s %-19s  %s\n' \
-      "$((i + 1))" "${labels[i]}" "$disp" "$note"
-    time_menu+=( "$((i + 1))|${labels[i]} — ${disp}  ${note}" )
+    # Pad label + date so timestamps share one column (ASCII only; UTF-8 "—" broke %-widths).
+    if [[ -n "$note" ]]; then
+      time_menu+=( "$(printf '%d|%-18s %-19s  %s' "$((i + 1))" "${labels[i]}" "$disp" "$note")" )
+    else
+      time_menu+=( "$(printf '%d|%-18s %-19s' "$((i + 1))" "${labels[i]}" "$disp")" )
+    fi
     keys+="$((i + 1))"
     (( i + 1 < n )) && keys+="/"
   done
