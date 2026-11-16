@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261116.142000 - after [p] seam preview on an already-merged group, return to that group's menu
 # v. 20261116.141500 - join preview: remove leftover .pgm_join_preview_*_DELETE_ME.mp4 on start / Ctrl-C / exit
 # v. 20261116.135500 - ask Use colors? (default Y); green questions / white timestamps; 1=yes 2=no on yn prompts
 # v. 20261116.124700 - remux Contour: preview joins first (default [1]); then remux+merge
@@ -109,6 +110,9 @@
 # v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
 # v. 20260805.154826 - after merge: copy GPS/dates from first chapter; FS times via touch -r
 
+# 2026.11.16 - v. 0.15.125 - After [p] Preview merge seams on an already-merged group, return to
+#   that group's menu (skip / delete inputs / redo / …) instead of advancing to the next group.
+#   Same pattern as [1] join preview already used.
 # 2026.11.16 - v. 0.15.124 - Join-preview stitches (.pgm_join_preview_*_DELETE_ME.mp4) are swept at
 #   run start (cwd), at the start/end of [1] preview, and on Ctrl-C — leftovers from a killed or
 #   restarted run no longer stay beside the chapters.
@@ -9493,6 +9497,26 @@ do_merge() {
         # Back to the merge menu after preview.
         continue
       fi
+      if [[ "$action" == preview_seams ]]; then
+        local seam_rc=0
+        if [[ -e "$output_file" ]]; then
+          dashcam_write_gpx_if_merged "$output_file" "${files[@]}"
+          print_merge_boundaries_report "$output_file" "${files[@]}"
+          prompt_seam_terminal_previews --force "$output_file" "${files[@]}" || seam_rc=$?
+          if (( seam_rc == 2 )); then
+            PGM_MERGE_GROUP_IS_CONTOUR_SUSPECT=0
+            PGM_MERGE_GROUP_CONTOUR_SUSPECT_NOTE=""
+            PGM_MERGE_GROUP_NEEDS_NORMALIZE=0
+            PGM_MERGE_GROUP_JOIN_PREVIEWED=0
+            echo "$(pgm_ts) Quit at group ${group_num}."
+            return 2
+          fi
+        else
+          echo "$(pgm_ts) No merged output for group ${group_num}; cannot preview seams." >&2
+        fi
+        # Back to this group's menu (e.g. delete inputs after checking seams).
+        continue
+      fi
       break
     done
     PGM_MERGE_GROUP_IS_CONTOUR_SUSPECT=0
@@ -9533,19 +9557,6 @@ do_merge() {
           print_merge_boundaries_report "$output_file" "${files[@]}"
         else
           echo "$(pgm_ts) Skipped group ${group_num}."
-        fi
-        ;;
-      preview_seams)
-        if [[ -e "$output_file" ]]; then
-          dashcam_write_gpx_if_merged "$output_file" "${files[@]}"
-          print_merge_boundaries_report "$output_file" "${files[@]}"
-          prompt_seam_terminal_previews --force "$output_file" "${files[@]}" || rc=$?
-          if (( rc == 2 )); then
-            echo "$(pgm_ts) Quit at group ${group_num}."
-            return "${rc}"
-          fi
-        else
-          echo "$(pgm_ts) No merged output for group ${group_num}; cannot preview seams." >&2
         fi
         ;;
       skip_all)
