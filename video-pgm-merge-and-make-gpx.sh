@@ -1,13 +1,14 @@
 #!/bin/bash
+# v. 20261116.142200 - with colors on, highlight (default) on menu option lines
 # v. 20261116.142000 - after [p] seam preview on an already-merged group, return to that group's menu
 # v. 20261116.141500 - join preview: remove leftover .pgm_join_preview_*_DELETE_ME.mp4 on start / Ctrl-C / exit
 # v. 20261116.135500 - ask Use colors? (default Y); green questions / white timestamps; 1=yes 2=no on yn prompts
 # v. 20261116.124700 - remux Contour: preview joins first (default [1]); then remux+merge
 # v. 20261116.124500 - seam/join preview: call play-terminal with --silent
-# v. 20261116.123900 - Contour: remux video-copy + AAC + unify time_base when tracks differ
+# v. 20261116.123900 - Contour: remux video-copy + AAC + unify time_base when tracks diffe
 # v. 20261116.123600 - run summary: note groups skipped for incompatible tracks
 # v. 20261116.111200 - [1] join preview plays immediately (no second Y/n menu)
-# v. 20261116.084800 - [1] join preview: stitch ±2s into one …_DELETE_ME.mp4 then play; delete after
+# v. 20261116.084800 - [1] join preview: stitch ±2s into one …_DELETE_ME.mp4 then play; delete afte
 # v. 20261116.083600 - group prompt: [1] preview joins (last 2s + first 2s of next) before merge
 # v. 20261116.083200 - Contour: confident ≤12s; suspect 13–45s; short must not lead long; gap on INPUT line
 # v. 20261116.073500 - group prompt: [e] edit inputs (subset / drop last) before merge
@@ -27,7 +28,7 @@
 # v. 20261023.121500 - [m] merge-all: ask output date/time for every remaining group before the first merge starts
 # v. 20261023.100500 - invalid prompt keys (e.g. #) are rejected; ask again on seam/delete/media prompts
 # v. 20261023.093500 - size-split session key ignores middle-label word order (S29_Migros vs Migros_S29)
-# v. 20261023.073200 - missing GoPro GPX helper / python3: boxed warning and wait for Enter
+# v. 20261023.073200 - missing GoPro GPX helper / python3: boxed warning and wait for Ente
 # v. 20261023.072730 - after GoPro merge, write .gpx via video-pgm-gopro-to-gpx.py (merged file, else chapters)
 # v. 20261023.071420 - ask output date/time before the merge; apply after (same metadata rewrite when possible)
 # v. 20261023.070920 - post-merge exiftool: one rewrite for tags+title; progress from *_exiftool_tmp size
@@ -45,11 +46,11 @@
 # v. 20261020.145000 - after merge, ask which date to use when name/FS/media disagree (oldest usable; ignore before 1990)
 # v. 20261020.102500 - print every seam time in the output again before asking to delete inputs
 # v. 20261020.101700 - refuse mp4_merge when video/audio tracks do not match (ffprobe table)
-# v. 20261020.095800 - FILE +N force-merges that file and the next N alphabetically in its folder
+# v. 20261020.095800 - FILE +N force-merges that file and the next N alphabetically in its folde
 # v. 20261020.093200 - seam prompts and the end summary show the join time as H:MM:SS
 # v. 20261020.091800 - files named on the command line are merged in that order (forced merge)
 # v. 20261014.193952 - the run summary has no clock on each line, and a short clip is marked at its end
-# v. 20261014.164220 - the GPS log line names a GPSData file when several logs are in the folder
+# v. 20261014.164220 - the GPS log line names a GPSData file when several logs are in the folde
 # v. 20261014.075855 - a short clip keeps only its real length in the GPX, and the merge asks before continuing
 # v. 20261013.102747 - every GPSData*.txt is read; the date in the name does not choose the log
 # v. 20261013.102039 - a merged file with no clips left can still get a GPX from the GPS log
@@ -57,7 +58,7 @@
 # v. 20261013.095703 - the script is video-pgm-merge-and-make-gpx.sh
 # v. 20261013.095124 - a GPS directory can be named, and no GPS log quits before the merge
 # v. 20261012.082500 - size-split chapters: next clip must start at prev time + duration (±2s)
-# v. 20261012.081800 - 12G chapter: full split ≥ ~9.8 GiB; wall-clock link only for a large remainder
+# v. 20261012.081800 - 12G chapter: full split ≥ ~9.8 GiB; wall-clock link only for a large remainde
 # v. 20261009.181600 - 12G chapter: size decides a full split (Mission 1 ~10 GB can be <<18 min); 8–13 GiB band
 # v. 20261009.180500 - size-split chapter link: wall-clock gap when duration end-time mismatch (Mission 1 two-chapter pairs)
 # v. 20261009.174500 - 12 GB chapter band min 10000 MiB (Mission 1 ~10–11 GB splits below old 11000 MiB floor)
@@ -72,7 +73,7 @@
 # v. 20261005.110800 - GPS logs are GPSData??????.txt here and up to three levels above
 # v. 20261005.110200 - merge-all asks once about the temp directory; clocks sit in brackets
 # v. 20261005.083400 - 70mai journeys follow filename time, not the sequence number alone
-# v. 20261005.082600 - 70mai merged names are matched to the NO* chapters still in the folder
+# v. 20261005.082600 - 70mai merged names are matched to the NO* chapters still in the folde
 # v. 20261005.081217 - every question starts with the date and time
 # v. 20261005.080400 - run summary sizes also show GB, GiB, and MiB
 # v. 20261005.074400 - run summary lists processed and deleted files and their sizes
@@ -84,7 +85,7 @@
 # v. 20261004.151844 - s turns seam preview off for the rest of the run
 # v. 20261004.144348 - ask to build a missing GPX instead of treating the merge as done
 # v. 20261004.143910 - GPX build works with mawk (no gawk asort/strftime)
-# v. 20261004.143006 - rest-of-run write-here hotkey is r
+# v. 20261004.143006 - rest-of-run write-here hotkey is 
 # v. 20261004.142834 - h writes later merges in this directory
 # v. 20261004.142643 - rest-of-run temp dir hotkey is d
 # v. 20261004.142415 - temp dir can be kept for the rest of the run
@@ -108,13 +109,15 @@
 # v. 20260930.180600 - 70mai journeys: write a .gpx beside the merged file
 # v. 20260916.133341 - print === Run settings === at startup, with Equivalent CLI
 # v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
-# v. 20260805.154826 - after merge: copy GPS/dates from first chapter; FS times via touch -r
+# v. 20260805.154826 - after merge: copy GPS/dates from first chapter; FS times via touch -
 
+# 2026.11.16 - v. 0.15.126 - When colors are on, menu lines highlight the "(default)" marker in
+#   green so the Enter choice stands out.
 # 2026.11.16 - v. 0.15.125 - After [p] Preview merge seams on an already-merged group, return to
 #   that group's menu (skip / delete inputs / redo / …) instead of advancing to the next group.
 #   Same pattern as [1] join preview already used.
 # 2026.11.16 - v. 0.15.124 - Join-preview stitches (.pgm_join_preview_*_DELETE_ME.mp4) are swept at
-#   run start (cwd), at the start/end of [1] preview, and on Ctrl-C — leftovers from a killed or
+#   run start (cwd), at the start/end of [1] preview, and on Ctrl-C — leftovers from a killed o
 #   restarted run no longer stay beside the chapters.
 # 2026.11.16 - v. 0.15.123 - Ask Use colors? at startup (default Yes). Question text in green;
 #   [ timestamp ] stays white/normal. On simple y/n prompts (no digit menu keys), [1]=Yes and
@@ -123,7 +126,7 @@
 #   group menu default is [1]; remux confirm also offers [1] first (default until previewed).
 # 2026.11.16 - v. 0.15.121 - seam and [1] join previews call video-pgm-play-terminal.sh with --silent
 #   (quieter mpv; no run-settings dump from the player during short previews).
-# 2026.11.16 - v. 0.15.120 - Contour groups whose picture matches (codec/size/fps) but audio and/or
+# 2026.11.16 - v. 0.15.120 - Contour groups whose picture matches (codec/size/fps) but audio and/o
 #   time_base differ: offer remux (video stream copy + AAC audio + unified video_track_timescale)
 #   then ffmpeg concat, instead of skipping as incompatible. -y / merge-all auto-accept remux.
 # 2026.11.16 - v. 0.15.119 - run summary lists groups that looked mergeable (time/name chain) but
@@ -160,7 +163,7 @@
 # 2026.10.27 - v. 0.15.105 - forced merge (FILE FILE …) accepts prior *_concat_parts_* / *_concat outputs so two half-merges can be joined; output name uses the first file's stem with the combined chapter range when every input parses (e.g. …_01-05 + …_06-09 → …_concat_parts_01-09.mp4), else strips an existing concat suffix before appending _concat_parts_01-N. FILE +N still skips other concat names when picking alphabetical neighbours
 # 2026.10.24 - v. 0.15.104 - size-split grouping also uses GoPro Media UID from exiftool (same UID across chapters of one recording, including bare …_GoPro_Hero10_Black.mp4 vs …_GX02…); batch-loaded with CreateDate; different UIDs refuse to merge even if filenames look related
 # 2026.10.24 - v. 0.15.103 - bare …_GoPro_Hero10_Black.mp4 (no GX) joins a size-split run of …_GX02nnnn… when GX01 is missing: empty recording-id in the session key is compatible with a GX recording id, then the run locks to that id so a later GX session that day does not glue on
-# 2026.10.23 - v. 0.15.102 - …_GoPro_Hero10_Black_GX013404.mp4: parse camera and GX chapter; size-split groups by GX recording number
+# 2026.10.23 - v. 0.15.102 - …_GoPro_Hero10_Black_GX013404.mp4: parse camera and GX chapter; size-split groups by GX recording numbe
 # 2026.10.23 - v. 0.15.101 - [m] Merge all remaining: ask output date/time for each remaining group up front (before any mp4_merge), then reuse those answers when each group runs — was only asking for the first group before the long merge
 # 2026.10.23 - v. 0.15.100 - seam preview / delete-inputs / temp-dir and other single-key media prompts reject keys outside the listed options (e.g. #) and ask again instead of treating them as the default
 # 2026.10.23 - v. 0.15.99 - size-split grouping uses order-independent session tokens (migros-odbior-paczki), not the raw middle string, so S29_-_Migros_… and Migros_-_S29_… chapters that chain by start+duration are merged
@@ -183,7 +186,7 @@
 # 2026.10.20 - v. 0.15.81 - before asking to delete input chapters, print every seam time in the merged file as H:MM:SS (also when deleting inputs for an already-merged group)
 # 2026.10.20 - v. 0.15.80 - before mp4_merge, ffprobe checks video/audio fingerprints; mismatched tracks are refused with a short table (forced/+N exits; scan mode skips that group). No automatic re-encode
 # 2026.10.20 - v. 0.15.79 - FILE +N force-merges that file and the next N MP4 names in alphabetical order in the same folder (e.g. clip.mp4 +2). The plan lists every filename. Explicit FILE FILE … still works
-# 2026.10.20 - v. 0.15.78 - when asking to play a seam, and in a short summary after the seams, show the join time as H:MM:SS so it is easy to seek to in another player
+# 2026.10.20 - v. 0.15.78 - when asking to play a seam, and in a short summary after the seams, show the join time as H:MM:SS so it is easy to seek to in another playe
 # 2026.10.20 - v. 0.15.77 - name two or more MP4 files on the command line to force a merge in that order (skip chapter detection). The usual merge prompts stay. Output is next to the first file as …_concat_parts_01-NN.mp4
 # 2026.10.14 - v. 0.15.76 - the run summary is plain lines, like the other scripts; a short clip's "look around" time is the end of that clip (start plus its length), where the picture jumps
 # 2026.10.14 - v. 0.15.75 - the group line names a GPSData file when several logs are in the folder; closing the pipe after the first name is not "no log"
@@ -197,7 +200,7 @@
 # 2026.10.07 - v. 0.15.67 - an EV clip (event) whose sequence number is the next one stays in the same 70mai journey as the NO clips, on the front camera and on the back camera, even when it starts closer than a minute to the clips around it
 # 2026.10.06 - v. 0.15.66 - a merged file with no location gets the first point of its .gpx stored in the video; a file that already has a fix is left as it is
 # 2026.10.06 - v. 0.15.65 - the merged file and the .gpx beside it get the first chapter's creation time and file time; on a Windows drive the creation time is copied as well as the file time
-# 2026.10.06 - v. 0.15.64 - "Merge via ... for the remaining groups?" on an SSD showed [y/n/q] and [n] No (default); now [y/N/q] and [N], so only the default key is a capital letter
+# 2026.10.06 - v. 0.15.64 - "Merge via ... for the remaining groups?" on an SSD showed [y/n/q] and [n] No (default); now [y/N/q] and [N], so only the default key is a capital lette
 # 2026.10.06 - v. 0.15.63 - 70mai journey name: YYYYMMDD_HHMMSS-YYYYMMDD_HHMMSS_-_-_70mai-A510_FrontCam_concat.mp4 and the same stem .gpx
 # 2026.10.05 - v. 0.15.62 - temp line uses plain text: not used, writing in this directory
 # 2026.10.05 - v. 0.15.61 - GPS logs are GPSData??????.txt in this directory and one or two levels above
@@ -227,10 +230,10 @@
 # 2026.10.04 - v. 0.15.37 - free-space check always calls /bin/df
 # 2026.10.04 - v. 0.15.36 - free-space check uses command df so a shell df function cannot hide the byte count
 # 2026.10.04 - v. 0.15.35 - when the temp dir cannot be used, say why and ask for another path
-# 2026.10.04 - v. 0.15.34 - --temp-dir; default the off-disk merge to yes when the source is not an SSD; copy back with a progress bar
+# 2026.10.04 - v. 0.15.34 - --temp-dir; default the off-disk merge to yes when the source is not an SSD; copy back with a progress ba
 # 2026.10.04 - v. 0.15.33 - when /tmp (or TMPDIR) is another disk with room, offer to merge there and move the file back
 # 2026.10.01 - v. 0.15.32 - ffmpeg startup probe keeps the real error instead of "version unknown"
-# 2026.10.01 - v. 0.15.31 - startup: print the ffmpeg version and whether this build has a GPU encoder
+# 2026.10.01 - v. 0.15.31 - startup: print the ffmpeg version and whether this build has a GPU encode
 # 2026.09.30 - v. 0.15.30 - drop --no_startup_delay; this script is interactive
 # 2026.09.30 - v. 0.15.29 - seam preview: [a] skips every remaining seam in this merged file
 # 2026.09.30 - v. 0.15.28 - merge INPUT: filename, size, and duration on one line when they fit the terminal (else name, then size)
@@ -264,7 +267,7 @@
 # 2026.06.13 - v. 0.13.4 - size-split: recognize ~12 GB chapters (in addition to ~4 GB); same tier per group
 # 2026.06.13 - v. 0.13.3 - size-split: group rename.sh-style names (same session label, different per-chapter timestamps)
 # 2026.06.02 - v. 0.13.2 - rename NO_STARTUP_DELAY to --no_startup_delay
-# 2026.06.01 - v. 0.13.1 - fix: _part_NN chapter grouping mixed proxy with normal parts; group by stem+variant (key-based) so originals and proxies never merge together
+# 2026.06.01 - v. 0.13.1 - fix: _part_NN chapter grouping mixed proxy with normal parts; group by stem+variant (key-based) so originals and proxies never merge togethe
 # 2026.05.31 - v. 0.13.0 - detect/group raw GoPro chapter files (GXccnnnn[_Proxy].MP4); merge originals & proxies separately
 # 2026.05.31 - v. 0.12.3 - -v/--version print a short version banner; also show the banner at startup
 # 2026.05.31 - v. 0.12.2 - merge mode: when mp4_merge is missing, show install info then offer to install it (Y/n/q)
@@ -283,7 +286,7 @@
 # 2026.05.27 - v. 0.11.0 - detect size-split GoPro clips (~4GB, ~8:30-9:00) without _part_XX names
 # 2026.05.27 - v. 0.10.9 - install mp4_merge to /usr/local/bin; remove PATH/cwd/script copies
 # 2026.05.27 - v. 0.10.8 - default mp4_merge install /usr/local/bin; prompt to move from cwd
-# 2026.05.27 - v. 0.10.7 - list *_concat outputs with no (or incomplete) input chapters in folder
+# 2026.05.27 - v. 0.10.7 - list *_concat outputs with no (or incomplete) input chapters in folde
 # 2026.05.27 - v. 0.10.6.1 - fix invalid "local blob action -a" in do_merge (bash nounset)
 # 2026.05.27 - v. 0.10.6 - INPUT block then OUTPUT block (stacked, not side by side)
 # 2026.05.27 - v. 0.10.5 - one line per chapter; align size columns at '|' (fixed-width bytes/kB/MB)
@@ -378,7 +381,7 @@ Merge behaviour:
     mp4_merge is not run on mixed families (e.g. HandBrake/mp3 with NVenc/aac).
   - With no FILE arguments: collects *.mp4 in the current working directory
     (case-insensitive), except existing *_concat.mp4 outputs.
-  - Detects GoPro-style chapter sequences (_part_01, _part_02, …). Same calendar
+  - Detects GoPro-style chapter sequences (_part_01, _part_02, …). Same calenda
     day + camera + session label groups together; within that, files are ordered by
     hybrid start time then part number. Start time is the filename stamp by default;
     if media CreateDate disagrees by more than 2 minutes (PGM_PART_CHAPTER_MEDIA_TIME_DISAGREE_SEC),
@@ -438,10 +441,10 @@ Merge behaviour:
     (default); [m] merges all remaining groups (asks output date/time for each first).
     [1] previews each join: ffmpeg stitches last 2s of clip N + first 2s of N+1
     into one .pgm_join_preview_NN_DELETE_ME.mp4 beside the inputs, plays that
-    single clip, then deletes it when you continue (kept for repeat). Leftover
+    single clip, then deletes it when you continue (kept for repeat). Leftove
     DELETE_ME files from a killed or restarted run are removed at the next start.
     [e]
-    (groups with 3+ files) edits the suggestion: keep a subset by number
+    (groups with 3+ files) edits the suggestion: keep a subset by numbe
     (e.g. 1-2) or drop the last file, then asks again for the trimmed group.
     Contour suspect review offers [1] and [e] (default remains Skip).
     Files in a group, and the groups themselves, are ordered oldest to newest
@@ -454,9 +457,9 @@ Merge behaviour:
     files there, and it has room for the output plus spare space, asks whether to
     write the merge there and move the finished file back here (progress bar).
     [Y] uses that directory for this file only. [d] keeps it for every later merge
-    in this run. [n] writes this file in this directory. [r] writes every later
+    in this run. [n] writes this file in this directory. [r] writes every late
     merge in this directory. Default is yes (this file only) only when the source
-    disk is a confirmed spinning HDD. Default is no when the source is an SSD or
+    disk is a confirmed spinning HDD. Default is no when the source is an SSD o
     when that cannot be checked (e.g. /mnt/*). [m] Merge all remaining groups asks
     this once before the first of those merges: yes uses that directory for every
     group still left and moves each finished file back; no writes those outputs in
@@ -475,7 +478,7 @@ Merge behaviour:
     times, size summary, optional per-seam terminal preview (asked one seam at a time;
     [a] skips the remaining seams in this file, [s] never plays seams again in this run),
     then every seam time in the output as H:MM:SS again, and optional deletion of the
-    source chapter files (single-key Y/N/K/Q). [k] keeps input files for every later
+    source chapter files (single-key Y/N/K/Q). [k] keeps input files for every late
     group in this run.
   - If the expected _concat output already exists: skip (default), redo merge [r],
     preview merge seams [p], or delete input chapters [d] (keeps merged output).
@@ -542,7 +545,7 @@ Environment:
                           Contour confident chain: next start vs prev start + duration
                           may be this many seconds early (default 30) or late (default 12).
   PGM_CONTOUR_TIME_SUSPECT_MAX_STOP_SEC
-                          Contour suspect review window upper bound in seconds after
+                          Contour suspect review window upper bound in seconds afte
                           expected chapter end (default 45). Gaps from
                           MAX_STOP+1 … this value are listed for manual check.
   PGM_CONTOUR_SHORT_LEAD_RATIO
@@ -561,7 +564,7 @@ Environment:
   PGM_DASHCAM_LABEL       Make and model in 70mai journey filenames (default: 70mai-A510).
                           Spaces become hyphens.
   PGM_MERGE_TEMP          Temp directory for an off-disk merge (same as --temp-dir).
-                          If unset: TMPDIR, then /tmp. Used only when it is another
+                          If unset: TMPDIR, then /tmp. Used only when it is anothe
                           disk, writable by you, and large enough for the output.
   TMPDIR                  Fallback temp directory when --temp-dir and PGM_MERGE_TEMP
                           are unset.
@@ -900,7 +903,7 @@ mp4_merge_install_dir_writable() {
 # Move or copy a local mp4_merge binary into MP4_MERGE_INSTALL_DIR (and symlink mp4_merge).
 mp4_merge_install_local_binary() {
   local src="$1"
-  local base dest dir
+  local base dest di
   base=$(basename "$src")
   dest="${MP4_MERGE_INSTALL_DIR}/${base}"
   dir="${MP4_MERGE_INSTALL_DIR}"
@@ -941,7 +944,7 @@ prompt_install_mp4_merge_now() {
 
   if (( ! DO_YES )) && (( script_is_run_interactively )); then
     echo
-    echo "  [Y] / [1] Yes — download and install mp4_merge to ${MP4_MERGE_INSTALL_DIR} (default)"
+    pgm_echo_option "  [Y] / [1] Yes — download and install mp4_merge to ${MP4_MERGE_INSTALL_DIR} (default)"
     echo "  [n] / [2] No — do not install"
     echo "  [q] Quit"
     pgm_read_key_choice "Install mp4_merge now? [Y/n/q or 1/2]: " y "ynq"
@@ -985,7 +988,7 @@ resolve_merger_path_for_merge() {
   if ! mp4_merge_install_dir_writable "${MP4_MERGE_INSTALL_DIR}"; then
     echo "  (${MP4_MERGE_INSTALL_DIR} is not writable — use sudo $(script_live_basename) -u)"
   fi
-  echo "  [Y] / [1] Install to ${MP4_MERGE_INSTALL_DIR} and remove other copies (default)"
+  pgm_echo_option "  [Y] / [1] Install to ${MP4_MERGE_INSTALL_DIR} and remove other copies (default)"
   echo "  [n] / [2] Keep using: ${merger}"
   echo "  [q] Quit"
   pgm_read_key_choice "Install mp4_merge to ${MP4_MERGE_INSTALL_DIR}? [Y/n/q or 1/2]: " y "ynq"
@@ -1035,25 +1038,25 @@ prompt_mp4_merge_update_action() {
   local choice
   case "$state" in
     missing)
-      echo "  [Y] / [1] Download and install to ${MP4_MERGE_INSTALL_DIR} (default)"
+      pgm_echo_option "  [Y] / [1] Download and install to ${MP4_MERGE_INSTALL_DIR} (default)"
       echo "  [n] / [2] Cancel"
       echo "  [q] Quit"
       pgm_read_key_choice "mp4_merge not installed — [Y/n/q or 1/2]: " y "ynq"
       ;;
     latest)
-      echo "  [N] / [2] Keep current install (default)"
+      pgm_echo_option "  [N] / [2] Keep current install (default)"
       echo "  [y] / [1] Re-download and replace anyway"
       echo "  [q] Quit"
       pgm_read_key_choice "Already on latest release — [N/y/q or 1/2]: " n "ynq"
       ;;
     outdated)
-      echo "  [Y] / [1] Replace with latest release (default)"
+      pgm_echo_option "  [Y] / [1] Replace with latest release (default)"
       echo "  [n] / [2] Keep current install"
       echo "  [q] Quit"
       pgm_read_key_choice "Update available — [Y/n/q or 1/2]: " y "ynq"
       ;;
     unknown)
-      echo "  [Y] / [1] Replace with latest release from GitHub (default)"
+      pgm_echo_option "  [Y] / [1] Replace with latest release from GitHub (default)"
       echo "  [n] / [2] Keep current file"
       echo "  [q] Quit"
       pgm_read_key_choice "Installed hash unknown on GitHub — [Y/n/q or 1/2]: " y "ynq"
@@ -1265,6 +1268,19 @@ pgm_print_question() {
   fi
 }
 
+# Menu option line; highlight "(default)" / ", default)" in green when colors are on.
+pgm_echo_option() {
+  local line="$*"
+  if (( PGM_USE_COLORS )); then
+    if [[ "$line" == *'(default)'* ]]; then
+      line="${line//(default)/${PGM_C_G}(default)${PGM_C_0}}"
+    elif [[ "$line" == *', default)'* ]]; then
+      line="${line//, default)/, ${PGM_C_G}default${PGM_C_0})}"
+    fi
+  fi
+  printf '%s\n' "$line"
+}
+
 # True when allowed keys include y and n but not digit 1 or 2 (so 1/2 can mean yes/no).
 pgm_yn_digit_aliases_ok() {
   local a="$1"
@@ -1287,7 +1303,7 @@ pgm_ask_colors() {
   pgm_init_colors
   echo
   pgm_print_question "Use colors in the terminal?"
-  echo "  [Y] / [1] Yes (default)"
+  pgm_echo_option "  [Y] / [1] Yes (default)"
   echo "  [n] / [2] No"
   echo "  [q] Quit"
   pgm_read_key_choice "Use colors? [Y/n/q or 1/2]: " y "ynq"
@@ -1369,7 +1385,7 @@ pgm_summary_kv() {
 
 # Command line that reproduces this run (flags given plus resolved seam-preview values).
 pgm_print_run_settings_equivalent_cli() {
-  local cmd="" out="" p q_dir
+  local cmd="" out="" p q_di
   local -a parts=()
 
   if declare -F script_live_basename >/dev/null 2>&1; then
@@ -1489,7 +1505,7 @@ pgm_print_run_settings() {
 # Draw lines in an ada box when boxes is installed, otherwise a plain frame.
 pgm_print_box_lines() {
   local -a lines=("$@")
-  local line width=0 bar
+  local line width=0 ba
   if (( ${#lines[@]} == 0 )); then
     return 0
   fi
@@ -2126,7 +2142,7 @@ prompt_seam_terminal_previews() {
 
     echo "--- ${ord} seam (${seam_num} of ${total_seams}) ---"
     echo "  ${boundary_left[$i]} | ${boundary_right[$i]}  at  ${clock}  (${pos})"
-    echo "  [Y] / [1] Play output at this seam (${PGM_SEAM_PREVIEW_BEFORE}s before join, ${clip_total}s clip) (default)"
+    pgm_echo_option "  [Y] / [1] Play output at this seam (${PGM_SEAM_PREVIEW_BEFORE}s before join, ${clip_total}s clip) (default)"
     echo "  [n] / [2] Skip this seam"
     echo "  [a] Skip all remaining seams"
     echo "  [s] Never play seams for the rest of this run"
@@ -2140,7 +2156,7 @@ prompt_seam_terminal_previews() {
             "${boundary_times[$i]}" "${boundary_left[$i]}" "${boundary_right[$i]}" \
             "$seam_num" "$total_seams" "$ord"
           echo "  [y] / [1] Repeat ${ord} seam preview (at ${clock})"
-          echo "  [N] / [2] Continue (default)"
+          pgm_echo_option "  [N] / [2] Continue (default)"
           echo "  [a] Skip all remaining seams"
           echo "  [s] Never play seams for the rest of this run"
           echo "  [q] Quit"
@@ -2232,7 +2248,7 @@ pgm_join_preview_cleanup() {
 # Path for join-preview stitch beside the left chapter: .pgm_join_preview_NN_DELETE_ME.mp4
 pgm_join_preview_out_path() {
   local left="$1" join_num="$2"
-  local dir
+  local di
   dir=$(dirname -- "$left")
   [[ -n "$dir" ]] || dir="."
   printf '%s/.pgm_join_preview_%02d_DELETE_ME.mp4\n' "$dir" "$join_num"
@@ -2453,7 +2469,7 @@ prompt_pre_merge_join_previews() {
       play_pre_merge_join_preview_once "$player" \
         "${files[i]}" "${files[i + 1]}" "$join_num" "$total_joins" "$ord" || true
       echo "  [y] / [1] Repeat"
-      echo "  [N] / [2] Continue (default)"
+      pgm_echo_option "  [N] / [2] Continue (default)"
       pgm_read_key_choice "Repeat ${ord} join preview? [y/N or 1/2]: " n "yn"
       choice="$REPLY"
       case "$choice" in
@@ -3861,7 +3877,7 @@ prompt_contour_normalize_merge() {
     echo
     echo "  [1] Preview joins first (recommended) — check the scene before remux"
     if (( previewed )); then
-      echo "  [Y] Remux chapters (video copy + AAC, unify time_base) then merge (default)"
+      pgm_echo_option "  [Y] Remux chapters (video copy + AAC, unify time_base) then merge (default)"
     else
       echo "  [Y] Remux chapters (video copy + AAC, unify time_base) then merge"
     fi
@@ -4078,7 +4094,7 @@ is_full_size_split_segment_at_tier() {
 
 # Full segment: auto-detect 12 GB band first, then 4 GB / GoPro7.
 is_full_size_split_segment() {
-  local f="$1" tier
+  local f="$1" tie
   tier=$(size_split_tier_for_file "$f") || return 1
   is_full_size_split_segment_at_tier "$f" "$tier"
 }
@@ -4124,7 +4140,7 @@ is_partial_size_split_segment() {
 
 size_split_run_valid() {
   local -a run=("$@")
-  local i n=${#run[@]} f tier next_tier
+  local i n=${#run[@]} f tier next_tie
   (( n >= 2 )) || return 1
   tier=$(size_split_tier_for_file "${run[0]}") || return 1
   for (( i = 0; i < n - 1; i++ )); do
@@ -4512,7 +4528,7 @@ pgm_normalize_gopro_media_uid() {
   raw="${raw#"${raw%%[![:space:]]*}"}"
   raw="${raw%"${raw##*[![:space:]]}"}"
   [[ -n "$raw" && "$raw" != "-" && "$raw" != "0" ]] || return 1
-  # All zeros / placeholder
+  # All zeros / placeholde
   [[ "$raw" =~ ^0+$ ]] && return 1
   printf '%s\n' "${raw,,}"
 }
@@ -5084,7 +5100,7 @@ letter_chapter_flush_run() {
 build_letter_chapter_groups() {
   local -a kept=() new_groups=() run=() keys_seen=()
   local -A by_key=()
-  local blob f base key letter
+  local blob f base key lette
   local -a files=() key_files=()
 
   for blob in "${GROUP_BLOBS[@]}"; do
@@ -5242,7 +5258,7 @@ build_size_split_groups() {
       elif [[ -n "$run_group_key" ]]; then
         next_key=$(gopro_size_split_session_key_from_basename "$base" 2>/dev/null) || next_key=""
         gopro_size_split_session_keys_compatible "$run_group_key" "$next_key" || break
-        # Lock empty (no-GX) run key to the first GX recording id so a later
+        # Lock empty (no-GX) run key to the first GX recording id so a late
         # session that day cannot keep matching via the empty-rec wildcard.
         if [[ "$run_group_key" =~ \|$ ]] && [[ "$next_key" =~ \|[0-9]+$ ]]; then
           run_group_key="$next_key"
@@ -5891,7 +5907,7 @@ part_chapter_gopro_parse_base() {
 # Group key: same calendar day + camera + middle + capture mode + proxy.
 # Leading HHMMSS may differ per part (rename.sh chapters). The day must be in the
 # key: a multi-day folder (e.g. 20210226 + 20210228) otherwise put every
-# GoPro_Hero7_Black_part_XX in one bucket, sort by part number only, and pair
+# GoPro_Hero7_Black_part_XX in one bucket, sort by part number only, and pai
 # day-B part_01 with day-A part_02 — splitting a real same-day 01…24 run.
 part_chapter_group_key_from_basename() {
   local base="$1" parse_base cam mid capture_mode="" day=""
@@ -6068,7 +6084,7 @@ part_chapter_split_key_into_runs() {
 # calendar day + camera + middle label + proxy variant (or full stem when not
 # GoPro-shaped), so originals (_part_NN) and proxies (_part_NN_Proxy) go into
 # separate groups and are NEVER mixed, and two days in one folder do not share a
-# part-number sequence. Within each key, consecutive part numbers are kept together
+# part-number sequence. Within each key, consecutive part numbers are kept togethe
 # only when filename times chain (start + duration, or wall-clock / timelapse gap).
 # Orphan tails (first part > 01) also need ~4 GB / ~12 GB full segments.
 # return via the array named in $1 (e.g. rest2 from build_chapter_groups).
@@ -6579,7 +6595,7 @@ dashcam_warn_no_gps() {
   echo
   printf '  %s --gps-dir /mnt/p/video/gps\n' "$(script_live_basename)"
   echo
-  echo "  [Q] Quit (default)"
+  pgm_echo_option "  [Q] Quit (default)"
   if (( DO_YES )) || (( ! script_is_run_interactively )); then
     echo "$(pgm_ts) Quit."
     return 1
@@ -6778,7 +6794,7 @@ dashcam_write_clip_windows_file() {
   local dest="$1"
   shift
   local -a files=("$@")
-  local f epoch dur
+  local f epoch du
   : > "$dest"
   for f in "${files[@]}"; do
     dashcam_parse_basename "${f##*/}" || continue
@@ -6856,7 +6872,7 @@ dashcam_write_gpx_span() {
         r = l + 1
         best = i
         if (l <= n && (num ? (a[l] + 0) > (a[best] + 0) : a[l] > a[best])) best = l
-        if (r <= n && (num ? (a[r] + 0) > (a[best] + 0) : a[r] > a[best])) best = r
+        if (r <= n && (num ? (a[r] + 0) > (a[best] + 0) : a[r] > a[best])) best = 
         if (best == i) return
         tmp = a[i]; a[i] = a[best]; a[best] = tmp
         i = best
@@ -6892,7 +6908,7 @@ dashcam_write_gpx_span() {
       H = substr(fn, 12, 2) + 0
       M = substr(fn, 14, 2) + 0
       S = substr(fn, 16, 2) + 0
-      file_epoch = civil_as_utc(y, mo, d, H, M, S) + tz_corr
+      file_epoch = civil_as_utc(y, mo, d, H, M, S) + tz_co
       delta = ts - file_epoch
       pts[ts] = lat SUBSEP lon
       deltas[++nd] = delta
@@ -7043,7 +7059,7 @@ dashcam_write_gpx_if_merged() {
 
 # Resolve video-pgm-gopro-to-gpx.py (same helper video-pgm-gopro-to-gpx.sh uses).
 find_video_pgm_gopro_to_gpx_py() {
-  local candidate dir
+  local candidate di
   if [[ -n "${VIDEO_PGM_GOPRO_TO_GPX_PY:-}" && -f "${VIDEO_PGM_GOPRO_TO_GPX_PY}" ]]; then
     printf '%s\n' "${VIDEO_PGM_GOPRO_TO_GPX_PY}"
     return 0
@@ -7136,7 +7152,7 @@ pgm_write_gopro_gpx_if_merged() {
   local output_file="$1"
   shift
   local -a files=("$@")
-  local py gpx info status line f tmpdir
+  local py gpx info status line f tmpdi
   local -a chapter_gpx=()
   local n_ok=0 n_none=0 n_nogopro=0 n_err=0
 
@@ -7334,7 +7350,7 @@ build_chapter_groups() {
   local n=${#sorted[@]}
 
   echo "$(pgm_ts) Building chapter plan (${n} file(s))…"
-  pgm_hybrid_start_cache_clear
+  pgm_hybrid_start_cache_clea
   PGM_FFPROBE_DUR_CACHE=()
   CONTOUR_SUSPECT_BLOBS=()
   CONTOUR_SUSPECT_NOTES=()
@@ -7838,7 +7854,7 @@ prompt_delete_merged_inputs() {
   done
   echo "  Choosing yes asks once more before anything is deleted."
   echo "  [y] / [1] Yes — go on to the confirmation"
-  echo "  [N] / [2] No — keep input files (default)"
+  pgm_echo_option "  [N] / [2] No — keep input files (default)"
   echo "  [k] Never delete input files for the rest of this run"
   echo "  [q] Quit"
   pgm_read_key_choice "Delete inputs? [y/N/k/q or 1/2]: " n "ynkq"
@@ -7887,7 +7903,7 @@ prompt_confirm_delete_inputs() {
     printf '    %s\n' "${f##*/}"
   done
   echo "  [y] / [1] Yes — delete these input files"
-  echo "  [N] / [2] No — keep input files (default)"
+  pgm_echo_option "  [N] / [2] No — keep input files (default)"
   echo "  [q] Quit"
   pgm_read_key_choice "Delete these input files? [y/N/q or 1/2]: " n "ynq"
   choice="$REPLY"
@@ -8141,7 +8157,7 @@ prompt_merge_all_temp_dir() {
     echo "$(pgm_ts) Input files: $(merge_inputs_dir "$first")"
     echo "$(pgm_ts) Not using ${tdir} for these merges: ${reason}."
     echo "  [p] Type another temp directory"
-    echo "  [N] Write the outputs in this directory (default)"
+    pgm_echo_option "  [N] Write the outputs in this directory (default)"
     echo "  [q] Quit"
     pgm_read_key_choice "Temp directory for the remaining groups? [p/N/q]: " n "pnq"
     case "$REPLY" in
@@ -8195,13 +8211,13 @@ prompt_merge_all_temp_dir() {
   if [[ "$SOURCE_DISK_KIND" == hdd ]]; then
     default_key=y
     prompt_key="Y/n/q or 1/2"
-    echo "  [Y] / [1] Yes — merge in ${tdir}, then move each finished file back here (default)"
+    pgm_echo_option "  [Y] / [1] Yes — merge in ${tdir}, then move each finished file back here (default)"
     echo "  [n] / [2] No — write the outputs in this directory"
   else
     default_key=n
     prompt_key="y/N/q or 1/2"
     echo "  [y] / [1] Yes — merge in ${tdir}, then move each finished file back here"
-    echo "  [N] / [2] No — write the outputs in this directory (default)"
+    pgm_echo_option "  [N] / [2] No — write the outputs in this directory (default)"
   fi
   echo "  [q] Quit"
   pgm_read_key_choice "Merge via ${tdir} for the remaining groups? [${prompt_key}]: " "$default_key" "ynq"
@@ -8274,7 +8290,7 @@ choose_merge_output_path() {
     echo "$(pgm_ts) Input files: $(merge_inputs_dir "${files[0]}")"
     echo "$(pgm_ts) Not using ${tdir} for this merge: ${reason}."
     echo "  [p] Type another temp directory"
-    echo "  [N] Write the output in this directory (default)"
+    pgm_echo_option "  [N] Write the output in this directory (default)"
     echo "  [r] Write in this directory for the rest of this run"
     echo "  [q] Quit"
     pgm_read_key_choice "Temp directory? [p/N/r/q]: " n "pnrq"
@@ -8323,7 +8339,7 @@ choose_merge_output_path() {
   if [[ "$SOURCE_DISK_KIND" == hdd ]]; then
     default_key=y
     prompt_key="Y/d/n/r/q or 1/2"
-    echo "  [Y] / [1] Yes — merge this file in ${tdir}, then move it back here (default)"
+    pgm_echo_option "  [Y] / [1] Yes — merge this file in ${tdir}, then move it back here (default)"
     echo "  [d] Yes — use ${tdir} for the rest of this run as well"
     echo "  [n] / [2] No — write the output in this directory"
     echo "  [r] No — write in this directory for the rest of this run as well"
@@ -8332,7 +8348,7 @@ choose_merge_output_path() {
     prompt_key="y/d/N/r/q or 1/2"
     echo "  [y] / [1] Yes — merge this file in ${tdir}, then move it back here"
     echo "  [d] Yes — use ${tdir} for the rest of this run as well"
-    echo "  [N] / [2] No — write the output in this directory (default)"
+    pgm_echo_option "  [N] / [2] No — write the output in this directory (default)"
     echo "  [r] No — write in this directory for the rest of this run as well"
   fi
   echo "  [q] Quit"
@@ -8758,7 +8774,7 @@ prompt_merge_group_action() {
     return 0
   fi
   if (( complete )); then
-    echo "  [N] Skip — keep output and input files (default)"
+    pgm_echo_option "  [N] Skip — keep output and input files (default)"
     echo "  [a] Already merged — don't ask again this run"
     echo "  [r] Redo merge — replace output file"
     echo "  [p] Preview merge seams in terminal"
@@ -8781,7 +8797,7 @@ prompt_merge_group_action() {
       q)  REPLY=quit; return 0 ;;
     esac
   elif (( output_exists && can_gpx )); then
-    echo "  [Y] / [1] Generate the GPX beside the merged file (default)"
+    pgm_echo_option "  [Y] / [1] Generate the GPX beside the merged file (default)"
     echo "  [n] / [2] Skip — leave the merged file without a GPX"
     echo "  [r] Redo merge — replace output file"
     echo "  [p] Preview merge seams in terminal"
@@ -8807,7 +8823,7 @@ prompt_merge_group_action() {
     if (( ! gpx_ok )); then
       echo "$(pgm_ts) Merged file is here, but the GPX is missing and there is no GPSData*.txt to build it."
     fi
-    echo "  [N] Skip — keep output and input files (default)"
+    pgm_echo_option "  [N] Skip — keep output and input files (default)"
     echo "  [a] Already merged — don't ask again this run"
     echo "  [r] Redo merge — replace output file"
     echo "  [p] Preview merge seams in terminal"
@@ -8835,7 +8851,7 @@ prompt_merge_group_action() {
       if [[ "${PGM_MERGE_GROUP_NEEDS_NORMALIZE:-0}" == 1 ]]; then
         echo "$(pgm_ts) Also: audio/time_base differ — preview joins before remuxing."
       fi
-      echo "  [N] Skip — leave separate (default)"
+      pgm_echo_option "  [N] Skip — leave separate (default)"
       echo "  [1] Preview joins first (recommended) — last ${PGM_JOIN_PREVIEW_BEFORE:-2}s + first ${PGM_JOIN_PREVIEW_AFTER:-2}s"
       if [[ "${PGM_MERGE_GROUP_NEEDS_NORMALIZE:-0}" == 1 ]]; then
         echo "  [m] Remux (video copy + AAC) then merge this suspected group"
@@ -8866,10 +8882,10 @@ prompt_merge_group_action() {
     [[ "${PGM_MERGE_GROUP_NEEDS_NORMALIZE:-0}" == 1 ]] && needs_norm=1
     if (( needs_norm )); then
       echo "$(pgm_ts) Remux candidate — preview joins before rewriting chapters."
-      echo "  [1] Preview joins first (recommended, default) — last ${PGM_JOIN_PREVIEW_BEFORE:-2}s + first ${PGM_JOIN_PREVIEW_AFTER:-2}s"
+      pgm_echo_option "  [1] Preview joins first (recommended, default) — last ${PGM_JOIN_PREVIEW_BEFORE:-2}s + first ${PGM_JOIN_PREVIEW_AFTER:-2}s"
       echo "  [Y] Remux (video copy + AAC, unify time_base) then merge"
     else
-      echo "  [Y] Merge this group (default)"
+      pgm_echo_option "  [Y] Merge this group (default)"
       echo "  [1] Preview joins — last ${PGM_JOIN_PREVIEW_BEFORE:-2}s + first ${PGM_JOIN_PREVIEW_AFTER:-2}s of next"
     fi
     echo "  [n] Skip this group"
@@ -9031,7 +9047,7 @@ print_merge_summary_box() {
   local title="$1"
   shift
   local -a rows=("$@")
-  local line width=0 pad title_line bar
+  local line width=0 pad title_line ba
   (( ${#rows[@]} > 0 )) || return 0
   for line in "$title" "${rows[@]}"; do
     (( ${#line} > width )) && width=${#line}
@@ -9172,7 +9188,7 @@ dashcam_offer_gpx_only() {
     printf '      %s\n' "${gpx##*/}"
   done
   echo
-  echo "  [G] Create only these GPX files (default)"
+  pgm_echo_option "  [G] Create only these GPX files (default)"
   echo "  [e] Ask about each file"
   echo "  [n] Skip these files"
   echo "  [q] Quit"
@@ -9200,7 +9216,7 @@ dashcam_offer_gpx_only() {
         fi
         echo
         printf '  %s\n' "${gpx_outs[$i]##*/}"
-        echo "  [Y] / [1] Create this GPX (default)"
+        pgm_echo_option "  [Y] / [1] Create this GPX (default)"
         echo "  [n] / [2] Skip this file"
         echo "  [q] Quit"
         pgm_read_key_choice "Create this GPX? [Y/n/q or 1/2]: " y "ynq"
@@ -9662,7 +9678,7 @@ while [[ $# -gt 0 ]]; do
       exit 0
       ;;
     -v|--version)
-      print_version_banner
+      print_version_banne
       exit 0
       ;;
     --history)
@@ -9801,7 +9817,7 @@ fi
 
 pgm_record_script_start
 
-print_version_banner
+print_version_banne
 
 pgm_ask_colors
 
