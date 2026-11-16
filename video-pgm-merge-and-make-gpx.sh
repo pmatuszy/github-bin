@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261116.111200 - [1] join preview plays immediately (no second Y/n menu)
 # v. 20261116.084800 - [1] join preview: stitch ±2s into one …_DELETE_ME.mp4 then play; delete after
 # v. 20261116.083600 - group prompt: [1] preview joins (last 2s + first 2s of next) before merge
 # v. 20261116.083200 - Contour: confident ≤12s; suspect 13–45s; short must not lead long; gap on INPUT line
@@ -102,6 +103,8 @@
 # v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
 # v. 20260805.154826 - after merge: copy GPS/dates from first chapter; FS times via touch -r
 
+# 2026.11.16 - v. 0.15.118 - [1] join preview starts immediately (no second Build & play Y/n menu).
+#   Stitch+play each join; after play only [y] repeat / [N] continue (default).
 # 2026.11.16 - v. 0.15.117 - [1] join preview builds one ~4s stitch (last 2s of N + first 2s of N+1)
 #   via ffmpeg into .pgm_join_preview_NN_DELETE_ME.mp4 beside the inputs, plays that single file,
 #   then deletes it when you continue / skip / quit (kept only for [y] repeat). Copy-concat first;
@@ -2242,11 +2245,12 @@ play_pre_merge_join_preview_once() {
   "${player}" "${player_args[@]}" "$preview" || true
 }
 
-# Pre-merge [1]: stitch+play each join; delete DELETE_ME unless repeating. Return 2 on quit.
+# Pre-merge [1]: stitch+play each join immediately (no second Y/n menu).
+# After each play: [y] repeat / [N] continue (default). Deletes DELETE_ME unless repeating.
 prompt_pre_merge_join_previews() {
   local -a files=("$@")
-  local player i choice join_num total_joins ord gap_note skip_rest=0
-  local before after keep_preview=0
+  local player i choice join_num total_joins ord gap_note
+  local before after
 
   if (( JOIN_PREVIEW_SKIP_RUN )); then
     echo "$(pgm_ts) Join preview off for the rest of this run."
@@ -2273,85 +2277,31 @@ prompt_pre_merge_join_previews() {
   after="${PGM_JOIN_PREVIEW_AFTER:-2}"
   total_joins=$(( ${#files[@]} - 1 ))
   echo
-  echo "Terminal join preview (before merge): stitch then play"
-  echo "Each join: last ${before}s of clip N + first ${after}s of N+1 → .pgm_join_preview_NN_DELETE_ME.mp4"
-  echo "Player: ${player}"
+  echo "$(pgm_ts) Join preview: last ${before}s + first ${after}s → .pgm_join_preview_NN_DELETE_ME.mp4"
   echo
 
   for (( i = 0; i < total_joins; i++ )); do
     join_num=$(( i + 1 ))
     ord="$(pgm_ordinal_seam_label "$join_num")"
     gap_note=$(pgm_format_gap_to_next_note "${files[i]}" "${files[i + 1]}" 2>/dev/null) || gap_note=""
-    keep_preview=0
 
     echo "--- ${ord} join (${join_num} of ${total_joins}) ---"
     echo "  ${files[i]##*/} | ${files[i + 1]##*/}"
     [[ -n "$gap_note" ]] && echo "  ${gap_note}"
-    echo "  [Y] Build & play this join (${before}s + ${after}s stitch) (default)"
-    echo "  [n] Skip this join"
-    echo "  [a] Skip all remaining joins"
-    echo "  [s] Never preview joins for the rest of this run"
-    echo "  [q] Quit"
-    pgm_read_key_choice "Play ${ord} join in terminal? [Y/n/a/s/q]: " y "ynasq"
-    choice="$REPLY"
-    case "$choice" in
-      y)
-        while true; do
-          keep_preview=0
-          play_pre_merge_join_preview_once "$player" \
-            "${files[i]}" "${files[i + 1]}" "$join_num" "$total_joins" "$ord" || true
-          echo "  [y] Repeat ${ord} join preview"
-          echo "  [N] Continue — delete DELETE_ME stitch (default)"
-          echo "  [a] Skip all remaining joins"
-          echo "  [s] Never preview joins for the rest of this run"
-          echo "  [q] Quit"
-          pgm_read_key_choice "Repeat ${ord} join preview? [y/N/a/s/q]: " n "ynasq"
-          choice="$REPLY"
-          case "$choice" in
-            y)
-              keep_preview=1
-              continue
-              ;;
-            n) break ;;
-            a)
-              echo "$(pgm_ts) Skipping remaining joins."
-              skip_rest=1
-              break
-              ;;
-            s)
-              JOIN_PREVIEW_SKIP_RUN=1
-              echo "$(pgm_ts) Join preview off for the rest of this run."
-              skip_rest=1
-              break
-              ;;
-            q)
-              pgm_join_preview_cleanup
-              return 2
-              ;;
-          esac
-        done
-        if (( ! keep_preview )); then
-          pgm_join_preview_cleanup
-        fi
-        ;;
-      n) ;;
-      a)
-        echo "$(pgm_ts) Skipping remaining joins."
-        skip_rest=1
-        ;;
-      s)
-        JOIN_PREVIEW_SKIP_RUN=1
-        echo "$(pgm_ts) Join preview off for the rest of this run."
-        skip_rest=1
-        ;;
-      q)
-        pgm_join_preview_cleanup
-        return 2
-        ;;
-    esac
-    # Leaving this join: always drop the stitch (repeat only keeps within the y-loop).
+
+    while true; do
+      play_pre_merge_join_preview_once "$player" \
+        "${files[i]}" "${files[i + 1]}" "$join_num" "$total_joins" "$ord" || true
+      echo "  [y] Repeat"
+      echo "  [N] Continue (default)"
+      pgm_read_key_choice "Repeat ${ord} join preview? [y/N]: " n "yn"
+      choice="$REPLY"
+      case "$choice" in
+        y) continue ;;
+        n) break ;;
+      esac
+    done
     pgm_join_preview_cleanup
-    (( skip_rest )) && break
   done
   pgm_join_preview_cleanup
   echo
