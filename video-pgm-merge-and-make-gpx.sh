@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261116.123600 - run summary: note groups skipped for incompatible tracks
 # v. 20261116.111200 - [1] join preview plays immediately (no second Y/n menu)
 # v. 20261116.084800 - [1] join preview: stitch ±2s into one …_DELETE_ME.mp4 then play; delete after
 # v. 20261116.083600 - group prompt: [1] preview joins (last 2s + first 2s of next) before merge
@@ -103,6 +104,8 @@
 # v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
 # v. 20260805.154826 - after merge: copy GPS/dates from first chapter; FS times via touch -r
 
+# 2026.11.16 - v. 0.15.119 - run summary lists groups that looked mergeable (time/name chain) but
+#   were skipped because video/audio tracks did not match (incompatible families).
 # 2026.11.16 - v. 0.15.118 - [1] join preview starts immediately (no second Build & play Y/n menu).
 #   Stitch+play each join; after play only [y] repeat / [N] continue (default).
 # 2026.11.16 - v. 0.15.117 - [1] join preview builds one ~4s stitch (last 2s of N + first 2s of N+1)
@@ -1533,6 +1536,8 @@ pgm_record_script_start() {
   PGM_RUN_INPUT_BYTES=0
   PGM_RUN_OUTPUT_BYTES=0
   PGM_RUN_DELETED=0
+  # Groups that chained by time/name but were not merged (mixed codecs / layout).
+  PGM_RUN_CODEC_SKIP_GROUPS=0
   PGM_SHORT_CLIP_NOTES=()
 }
 
@@ -1588,6 +1593,10 @@ print_pgm_timing_summary() {
   pgm_summary_kv "Deleted" "${PGM_RUN_DELETED:-0} input file(s)"
   pgm_summary_kv "Input size" "$(format_bytes_run_summary "${PGM_RUN_INPUT_BYTES:-0}")"
   pgm_summary_kv "Output size" "$(format_bytes_run_summary "${PGM_RUN_OUTPUT_BYTES:-0}")"
+  if (( ${PGM_RUN_CODEC_SKIP_GROUPS:-0} > 0 )); then
+    pgm_summary_kv "Not merged" \
+      "${PGM_RUN_CODEC_SKIP_GROUPS} group(s) looked mergeable but tracks did not match (skipped)"
+  fi
   echo
   dashcam_print_short_clip_run_summary
   echo "--- Timing ---"
@@ -8900,6 +8909,7 @@ do_merge() {
         mergeable_suspect_notes+=("")
       else
         (( codec_skip++ )) || true
+        PGM_RUN_CODEC_SKIP_GROUPS=$(( ${PGM_RUN_CODEC_SKIP_GROUPS:-0} + 1 ))
         if (( FORCE_MERGE )); then
           return 1
         fi
@@ -8928,6 +8938,7 @@ do_merge() {
       mergeable_suspect_notes+=("${CONTOUR_SUSPECT_NOTES[$si]:-suspect gap}")
     else
       (( codec_skip++ )) || true
+      PGM_RUN_CODEC_SKIP_GROUPS=$(( ${PGM_RUN_CODEC_SKIP_GROUPS:-0} + 1 ))
       echo "$(pgm_ts) Skipping Contour suspect group (incompatible tracks)."
       echo
     fi
@@ -8937,6 +8948,7 @@ do_merge() {
   if (( mergeable_total == 0 )); then
     if (( codec_skip > 0 )); then
       echo "$(pgm_ts) No mergeable groups left after the track-compatibility check (${codec_skip} skipped)."
+      echo "$(pgm_ts) Those group(s) looked mergeable by time/name but were not merged (incompatible tracks)."
       return 1
     fi
     if (( ! DASHCAM_OFFER_SAID )); then
