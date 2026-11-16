@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261116.154200 - fix progress ETA awk (missing printf arg broke left/at display)
 # v. 20261116.160000 - multi-choice prompts use shared script_arrow_menu (Up/Down)
 # v. 20261116.143700 - highlight (default) via shared script_echo_option; sync SCRIPT_USE_COLORS
 # v. 20261116.135500 - yn prompts: [1]=Yes [2]=No alongside Y/N; colors menu shows 1/2
@@ -3452,7 +3453,7 @@ loudness_progress_eta_phrase() {
   remain="$(awk -v e="$elapsed" -v t="$total" -v s="$spd" 'BEGIN {
     r = (t - e) / s
     if (r < 0) r = 0
-    printf "%.3f", 
+    printf "%.3f", r
   }')"
   printf 'left %s  %s' "$(loudness_progress_eta_left "$remain")" "$(loudness_progress_eta_arrival "$remain")"
 }

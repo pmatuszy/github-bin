@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261116.154200 - Pick files uses Up/Down; fix progress ETA awk (missing printf arg)
 # v. 20261116.154000 - remaining interactive menus use Up/Down arrows
 # v. 20261116.153500 - fix typo tl_require_encode→tl_require_encoder so auto encoder list loads
 # v. 20261116.151500 - use shared script_arrow_menu; more prompts use Up/Down
@@ -661,7 +662,7 @@ tl_eta_phrase() {
   remain="$(awk -v e="$elapsed" -v t="$total" -v s="$spd" 'BEGIN {
     r = (t - e) / s
     if (r < 0) r = 0
-    printf "%.3f", 
+    printf "%.3f", r
   }')"
   printf 'left %s  %s' "$(tl_eta_left "$remain")" "$(tl_eta_arrival "$remain")"
 }
@@ -2014,30 +2015,34 @@ tl_filter_inputs_by_kind() {
   TL_INPUTS=("${keep[@]}")
 }
 
-# Numbered toggle list. Marks start selected (1) or not (0).
+# Numbered toggle list (Up/Down). Marks start selected (1) or not (0).
 tl_pick_files_plain() {
-  local i n mark line answe
-  local -a marks=()
+  local i n mark answer def=d
+  local -a marks=() arrow_opts=() keep=()
   n=${#TL_INPUTS[@]}
   for (( i = 0; i < n; i++ )); do
     marks[i]=1
   done
   while true; do
-    echo
-    echo "$(tl_ts) Pick files (number toggles one; A=all, N=none, D=done):"
+    arrow_opts=()
     for (( i = 0; i < n; i++ )); do
       if (( marks[i] )); then mark='x'; else mark=' '; fi
-      printf '  %2d) [%s] %s\n' "$((i + 1))" "$mark" "${TL_INPUTS[i]##*/}"
+      arrow_opts+=("$((i + 1))|[${mark}] ${TL_INPUTS[i]##*/}")
     done
-    tl_read_line "Pick [1-${n}/A/N/D/q], Enter keeps D: " d
+    arrow_opts+=("a|All" "n|None" "d|Done — encode marked" "q|Quit")
+    echo
+    echo "$(tl_ts) Pick files (Enter toggles one; Done encodes the marked ones):"
+    tl_arrow_menu "$def" "${arrow_opts[@]}"
     answer="$(tl_choice "$REPLY")"
     case "$answer" in
       q) tl_quit_script ;;
       a)
         for (( i = 0; i < n; i++ )); do marks[i]=1; done
+        def=d
         ;;
       n)
         for (( i = 0; i < n; i++ )); do marks[i]=0; done
+        def=d
         ;;
       d|'')
         break
@@ -2046,13 +2051,14 @@ tl_pick_files_plain() {
         if [[ "$answer" =~ ^[0-9]+$ ]] && (( answer >= 1 && answer <= n )); then
           i=$((answer - 1))
           if (( marks[i] )); then marks[i]=0; else marks[i]=1; fi
+          def="$answer"
         else
           echo "$(tl_ts) Unknown choice: ${REPLY}."
         fi
         ;;
     esac
   done
-  local -a keep=()
+  keep=()
   for (( i = 0; i < n; i++ )); do
     (( marks[i] )) && keep+=("${TL_INPUTS[i]}")
   done
@@ -2204,7 +2210,7 @@ tl_prompt_input_files() {
         ;;
       o)
         (( other > 0 )) || { echo "$(tl_ts) No other videos."; return 1; }
-        tl_filter_inputs_by_kind othe
+        tl_filter_inputs_by_kind other
         ;;
       p) tl_pick_files_plain ;;
       q) tl_quit_script ;;
