@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261116.154800 - tighter arrow-menu spacing (fewer blank lines around prompts)
 # v. 20261116.154200 - Pick files uses Up/Down; fix progress ETA awk (missing printf arg)
 # v. 20261116.154000 - remaining interactive menus use Up/Down arrows
 # v. 20261116.153500 - fix typo tl_require_encode→tl_require_encoder so auto encoder list loads
@@ -911,7 +912,6 @@ tl_print_ffmpeg_version() {
     lines=("$ver" "$(tl_ffmpeg_gpu_encoder_line)")
   fi
   tl_print_box_lines "${lines[@]}"
-  echo
 }
 
 tl_load_encoders() {
@@ -1582,7 +1582,6 @@ tl_read_one_file_date_menu() {
   arrow_opts+=("a|Oldest usable" "k|Keep as written" "q|Quit")
 
   while true; do
-    echo
     tl_arrow_menu "$def" "${arrow_opts[@]}"
     choice="$(tl_choice "$REPLY")"
     case "$choice" in
@@ -1661,7 +1660,6 @@ tl_ask_output_dates_upfront() {
   echo "  After each encode the choice is applied; you will not be asked again between files."
   echo
   while true; do
-    echo
     tl_arrow_menu p \
       "p|Pick per file now" \
       "1|File name for every file" \
@@ -2191,7 +2189,6 @@ tl_prompt_input_files() {
     fi
     arrow_opts+=("p|Pick files...")
     arrow_opts+=("q|Quit")
-    echo
     tl_arrow_menu "$def" "${arrow_opts[@]}"
     choice="$(tl_choice "$REPLY")"
     case "$choice" in
@@ -2431,10 +2428,7 @@ tl_print_plan() {
   echo "Command"
   echo "  $(tl_equivalent_command)"
   echo
-  echo "Proceed with these choices? [Y/n/q]"
-  script_echo_option "  [Y] Encode (default)"
-  echo "  [n] Go through the questions again. Enter keeps each answer above."
-  echo "  [q] Quit"
+  echo "Proceed with these choices?"
 }
 
 tl_prepare_unattended() {
@@ -2478,7 +2472,6 @@ tl_prompt_speed() {
     custom_def="$cur"
   fi
   echo "How much faster?"
-  echo
   tl_arrow_menu "$def" \
     "1|2×" \
     "2|5×" \
@@ -2543,7 +2536,6 @@ tl_prompt_existing_output() {
   echo "This file was not encoded."
   echo "  Rename aside: ${aside##*/}"
   echo "  New name:     ${next##*/}"
-  echo
   tl_arrow_menu k \
     "k|Keep it and skip" \
     "r|Replace it with this encode" \
@@ -2598,7 +2590,6 @@ tl_prompt_before_files() {
   fi
   echo
   echo "Encode these files?"
-  echo
   tl_arrow_menu a \
     "a|Encode all ${total} files" \
     "y|Encode the first file, then ask again" \
@@ -2647,7 +2638,6 @@ tl_prompt_continue_after_file() {
   fi
   echo
   echo "Continue?"
-  echo
   tl_arrow_menu n \
     "n|Stop after this file" \
     "y|Encode the next file, then ask again" \
@@ -2711,7 +2701,6 @@ tl_prompt_file_action() {
   fi
   if [[ -e "$dest" && "$REDO" -eq 0 ]]; then
     echo "Already exists — file ${n}/${total}"
-    echo
     tl_arrow_menu n \
       "n|Skip — keep existing file" \
       "r|Redo — replace ${dest##*/}" \
@@ -2728,7 +2717,6 @@ tl_prompt_file_action() {
     return 0
   fi
   echo "File ${n}/${total}"
-  echo
   tl_arrow_menu y \
     "y|Encode this file" \
     "n|Skip this file" \
@@ -2895,7 +2883,6 @@ tl_prompt_out_fps() {
   echo
   echo "Output frames per second?"
   echo "  30 fps sits evenly on a 60 Hz screen; 60 is one refresh per picture; 25 matches this dashcam."
-  echo
   tl_arrow_menu "$fkey" \
     "3|30 fps" \
     "6|60 fps" \
@@ -2924,7 +2911,6 @@ tl_prompt_picture() {
   echo "Picture?"
   echo "  Plain = keep every Nth frame at 25 fps. Steady = setpts to a chosen fps."
   echo "  Soft = average neighbors, then the same steady fps."
-  echo
   tl_arrow_menu "$pkey" \
     "p|Plain — every Nth frame at 25 fps" \
     "t|Steady — timeline speed + chosen fps" \
@@ -2969,7 +2955,6 @@ tl_prompt_encoder_menu() {
   echo
   echo "Encoder?"
   echo "  Auto matches the source (HEVC → hevc_nvenc then libx265; H.264 → h264_nvenc then libx264)."
-  echo
   tl_arrow_menu "$ekey" \
     "a|Auto — follow source codec" \
     "n|hevc_nvenc — GPU only" \
@@ -3123,7 +3108,6 @@ tl_prompt_keyframe_span() {
   echo
   echo "How much of the file should be read for keyframes?"
   echo "  Packet headers only (pictures are not decoded)."
-  echo
   tl_arrow_menu "$def" \
     "2|First 2 minutes" \
     "m|Minutes — type how many from the start" \
@@ -3198,7 +3182,6 @@ tl_prompt_gop() {
   esac
   echo
   echo "Keyframe spacing?"
-  echo
   tl_arrow_menu "$gkey" \
     "s|Same as the source — measure from this file" \
     "d|Encoder default — often ~10s" \
@@ -3355,7 +3338,6 @@ tl_apply_scan_suggestion() {
     echo "Suggestion: steady 30 fps, keyframe ${gap_note}."
     echo "  30 fps is the rate that sits evenly on a 60 Hz screen."
   fi
-  echo
   tl_arrow_menu n \
     "n|Keep the choices you already made" \
     "y|Apply this suggestion" \
@@ -3398,7 +3380,6 @@ tl_prompt_scan() {
   echo
   echo "Scan the source before encoding?"
   echo "  A scan decodes a piece at the start to check frame timing."
-  echo
   tl_arrow_menu "$skey" \
     "n|Skip the scan — encode with the choices above" \
     "y|Read this file — decode a piece to check frame timing" \
@@ -3416,7 +3397,6 @@ tl_prompt_scan() {
   echo
   echo "How long a piece of pictures should be decoded?"
   echo "  Only the start of the file; keyframe spacing was already chosen."
-  echo
   tl_arrow_menu "$lkey" \
     "2|2 minutes" \
     "5|5 minutes" \
@@ -3451,7 +3431,6 @@ tl_prompt_test_clip() {
   skey="$(tl_test_start_key "${TL_TEST_PERCENT:-0}")"
   echo
   echo "Encode everything, or try a short piece first?"
-  echo
   tl_arrow_menu "$tkey" \
     "y|Everything — whole sped-up drive" \
     "n|A short try first — 1/2/5 min clip under its own name" \
@@ -3467,7 +3446,6 @@ tl_prompt_test_clip() {
   TL_TEST=1
   echo
   echo "How long should the result be?"
-  echo
   tl_arrow_menu "$lkey" \
     "1|1 minute of output" \
     "2|2 minutes of output" \
@@ -3485,7 +3463,6 @@ tl_prompt_test_clip() {
   esac
   echo
   echo "Where should the clip start?"
-  echo
   tl_arrow_menu "$skey" \
     "b|Beginning" \
     "1|10%" \
@@ -3530,7 +3507,6 @@ tl_prompt_advanced() {
   fi
   echo
   echo "More choices before encoding?"
-  echo
   tl_arrow_menu "$akey" \
     "n|Usual timelapse — every Nth frame at 25 fps, keyframe every 1s" \
     "y|Choose the details — picture, encoder, keyframes, scan, short try" \
@@ -3565,7 +3541,6 @@ tl_prompt_display() {
   fi
   echo
   echo "Encode display?"
-  echo
   tl_arrow_menu "$dkey" \
     "n|Normal — progress bar" \
     "v|Verbose — frame lines" \
@@ -4080,11 +4055,10 @@ if (( script_is_run_interactively )) && (( ! DO_YES )); then
   tl_prompt_advanced
   while true; do
     tl_print_plan
-    echo
-  tl_arrow_menu y \
-    "y|Yes — encode" \
-    "n|No — ask again" \
-    "q|Quit"
+    tl_arrow_menu y \
+      "y|Yes — encode" \
+      "n|No — ask again (keep answers as defaults)" \
+      "q|Quit"
     case "$(tl_choice "$REPLY")" in
       y)
         break

@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261116.154800 - script_arrow_menu: fewer blank lines (no gap before hint / after select)
 # v. 20261116.151500 - shared script_arrow_menu (Up/Down + Enter) for interactive prompts
 # v. 20261116.143700 - shared terminal colors: ask Use colors?, green questions, highlight (default)
 # v. 20261115.200000 - SUMMARY helpers: Script + Version identity; Family-A begin/end chrome
@@ -15,6 +16,7 @@
 # v. 20260716.173600 - print_version_banner uses CALLER_SCRIPT version fields
 # v. 20260716.163300 - versioning v. YYYYMMDD.HH24MISS; parse first # v. YYYYMMDD.HHMMSS line
 
+# 2026.11.16 - v. 1.69.154800 - script_arrow_menu: drop blank line before the hint and after select.
 # 2026.11.16 - v. 1.69.151500 - Shared script_arrow_menu: Up/Down highlight, Enter select;
 #                        letter keys still work; used by AV interactive prompts.
 # 2026.11.16 - v. 1.68.143700 - Shared interactive colors: SCRIPT_USE_COLORS, script_ask_colors,
@@ -767,7 +769,6 @@ script_arrow_menu() {
         fi
       fi
     done
-    echo
     if (( SCRIPT_USE_COLORS )); then
       printf '  %sUp/Down move · Enter select · or press a listed key%s\n' \
         "$SCRIPT_C_G" "$SCRIPT_C_0"
@@ -781,7 +782,7 @@ script_arrow_menu() {
   printf '\033[?25l'
   script_arrow_flush_stdin
   script_arrow_menu_draw
-  rows=$((n + 2))
+  rows=$((n + 1))
 
   while (( ! accepted )); do
     byte=""
@@ -841,7 +842,6 @@ script_arrow_menu() {
   done
 
   script_arrow_menu_restore_tty
-  echo
   return 0
 }
 
@@ -861,7 +861,6 @@ script_ask_colors() {
   script_colors_init
   echo
   script_print_question "Use colors in the terminal?"
-  echo
   script_arrow_menu y \
     "y|Yes" \
     "n|No" \
