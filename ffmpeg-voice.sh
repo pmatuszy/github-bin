@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# v. 20261116.224800 - no blank line between question/prompt and arrow menu
 # v. 20261116.160000 - startup and batch menus use shared script_arrow_menu (Up/Down)
 # v. 20261115.200000 - SUMMARY: Family-A chrome + Script/Version at top
 # v. 20261006.124500 - menus: only the default key is a capital letter, like the [Y/n/q] prompt lines
@@ -774,7 +775,6 @@ trap voice_finish_run EXIT
 # ============================================================
 echo
 print_question "Use colors?"
-echo
 SCRIPT_USE_COLORS=1
 if declare -F script_colors_init >/dev/null 2>&1; then script_colors_init; fi
 voice_arrow_menu y \
@@ -811,7 +811,6 @@ fi
 # ============================================================
 echo
 print_question "Select mode:"
-echo
 voice_arrow_menu r \
     "r|Real processing (default)" \
     "d|Dry-run" \
@@ -833,7 +832,6 @@ elif [[ -n "$CLI_SCOPE" ]]; then
 else
     echo
     print_question "What should be processed?"
-    echo
     voice_arrow_menu s \
         "s|Also subdirectories (default)" \
         "c|Current directory only" \
@@ -856,7 +854,6 @@ if [[ "$mode" == "real" ]]; then
 else
     print_question "Include transcription step in dry-run (ORG/OUTPUT x VAD/noVAD)?"
 fi
-echo
 voice_arrow_menu y \
     "y|Yes (default)" \
     "n|No" \
@@ -1075,7 +1072,6 @@ read_batch_choice() {
     BATCH_CHOICE_ACTION=""
 
     print_question "$prompt_line"
-    echo
     voice_arrow_menu y \
         "y|Yes (default)" \
         "n|No" \
@@ -1372,7 +1368,6 @@ ensure_transcribe_endpoint_ready() {
         echo -e "${YELLOW}TRANSCRIPTION SERVER DOWN:${RESET} ${host}:${port} (${label})"
         print_transcribe_endpoint_down_reason "$host" "$port"
         print_question "Transcription server down — what now?"
-        echo
         voice_arrow_menu w \
             "w|Wait until the server is back (default)" \
             "c|Continue without transcription" \

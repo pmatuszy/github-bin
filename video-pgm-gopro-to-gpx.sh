@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261116.224800 - no blank line between question/prompt and arrow menu
 # v. 20261116.160000 - multi-choice prompts use shared script_arrow_menu (Up/Down)
 # v. 20261020.200000 - when nothing new to write, skip "Write 0 tracks?" and ask only about existing .gpx
 # v. 20261012.150601 - the reading line says Reading file and leaves the file name off
@@ -322,7 +323,6 @@ gg_check_prereqs() {
   echo "  [Y] Yes, install with the command above, then continue (default)"
   echo "  [n] No, stop here"
   echo "  [q] Quit the script"
-  echo
   gg_arrow_menu y \
     "y|Yes, install and continue (default)" \
     "n|No — stop here" \
@@ -570,7 +570,6 @@ gg_prompt_old() {
   echo "      For example ..._old-20261006_210000.gpx beside the new file."
   echo "  [$(gg_k d "$key")] Delete it$(gg_cur_mark d "$key")"
   echo "  [q] Quit the script, write nothing more"
-  echo
   gg_arrow_menu "$key" \
     "k|Keep it, renamed with the date and time" \
     "d|Delete it" \
@@ -596,7 +595,6 @@ gg_prompt_existing() {
   echo "  [r] Write them again too"
   echo "      What happens to each old file is asked next."
   echo "  [q] Quit the script, write nothing"
-  echo
   gg_arrow_menu s \
     "s|Skip them (default)" \
     "r|Write them again too" \
@@ -639,7 +637,6 @@ gg_prompt_plan() {
   (( EXISTING > 0 && ! REDO )) && echo "      After that you are asked about the ${EXISTING} .gpx file(s) that are already there."
   echo "  [n] No, write nothing (also leave existing .gpx files alone)"
   echo "  [q] Quit the script"
-  echo
   gg_arrow_menu y \
     "y|Write ${TO_WRITE} new track(s) (default)" \
     "n|No — write nothing" \

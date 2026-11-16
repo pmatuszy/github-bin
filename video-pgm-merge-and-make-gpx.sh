@@ -1,4 +1,6 @@
 #!/bin/bash
+# v. 20261116.224800 - no blank line between question/prompt and arrow menu
+# v. 20261116.224500 - tighter blanks: one after merge box; none after question / Planned / Sources
 # v. 20261116.222100 - join preview Repeat menu: add Quit
 # v. 20261116.221800 - join preview repeat: don't capture build in $(); keep DELETE_ME for replay
 # v. 20261116.215000 - output-times arrow menu: align label and date columns
@@ -960,7 +962,6 @@ prompt_install_mp4_merge_now() {
   if (( ! DO_YES )) && (( script_is_run_interactively )); then
     echo
     pgm_print_question "Install mp4_merge now?"
-    echo
     pgm_arrow_menu y \
       "y|Yes — download and install mp4_merge to ${MP4_MERGE_INSTALL_DIR}" \
       "n|No — do not install" \
@@ -1007,7 +1008,6 @@ resolve_merger_path_for_merge() {
   fi
   echo
   pgm_print_question "Install mp4_merge to ${MP4_MERGE_INSTALL_DIR}?"
-  echo
   pgm_arrow_menu y \
     "y|Install to ${MP4_MERGE_INSTALL_DIR} and remove other copies" \
     "n|Keep using: ${merger}" \
@@ -1060,7 +1060,6 @@ prompt_mp4_merge_update_action() {
     missing)
       echo
       pgm_print_question "mp4_merge not installed"
-      echo
       pgm_arrow_menu y \
         "y|Download and install to ${MP4_MERGE_INSTALL_DIR}" \
         "n|Cancel" \
@@ -1069,7 +1068,6 @@ prompt_mp4_merge_update_action() {
     latest)
       echo
       pgm_print_question "Already on latest release"
-      echo
       pgm_arrow_menu n \
         "n|Keep current install" \
         "y|Re-download and replace anyway" \
@@ -1078,7 +1076,6 @@ prompt_mp4_merge_update_action() {
     outdated)
       echo
       pgm_print_question "Update available"
-      echo
       pgm_arrow_menu y \
         "y|Replace with latest release" \
         "n|Keep current install" \
@@ -1087,7 +1084,6 @@ prompt_mp4_merge_update_action() {
     unknown)
       echo
       pgm_print_question "Installed hash unknown on GitHub"
-      echo
       pgm_arrow_menu y \
         "y|Replace with latest release from GitHub" \
         "n|Keep current file" \
@@ -1339,7 +1335,6 @@ pgm_ask_colors() {
   pgm_init_colors
   echo
   pgm_print_question "Use colors in the terminal?"
-  echo
   pgm_arrow_menu y \
     "y|Yes" \
     "n|No" \
@@ -2221,7 +2216,6 @@ prompt_seam_terminal_previews() {
     echo "  ${boundary_left[$i]} | ${boundary_right[$i]}  at  ${clock}  (${pos})"
     echo
     pgm_print_question "Play ${ord} seam in terminal (at ${clock})?"
-    echo
     pgm_arrow_menu y \
       "y|Play output at this seam (${PGM_SEAM_PREVIEW_BEFORE}s before join, ${clip_total}s clip)" \
       "n|Skip this seam" \
@@ -2237,7 +2231,6 @@ prompt_seam_terminal_previews() {
             "$seam_num" "$total_seams" "$ord"
           echo
           pgm_print_question "Repeat ${ord} seam preview (at ${clock})?"
-          echo
           pgm_arrow_menu n \
             "y|Repeat ${ord} seam preview (at ${clock})" \
             "n|Continue" \
@@ -2562,7 +2555,6 @@ prompt_pre_merge_join_previews() {
         "${files[i]}" "${files[i + 1]}" "$join_num" "$total_joins" "$ord" || true
       echo
       pgm_print_question "Repeat ${ord} join preview?"
-      echo
       pgm_arrow_menu n \
         "y|Repeat" \
         "n|Continue" \
@@ -3984,7 +3976,6 @@ prompt_contour_normalize_merge() {
   while true; do
     echo
     pgm_print_question "Preview or remux?"
-    echo
     if (( previewed )); then
       pgm_arrow_menu y \
         "1|Preview joins first (recommended) — check the scene before remux" \
@@ -5080,9 +5071,7 @@ pgm_decide_output_times() {
   echo "$(pgm_ts) Choose now — this is applied after the merge (no second question)."
   echo
   printf '  Planned:  %s\n' "${planned_output##*/}"
-  echo
   echo "  Sources (oldest usable is the default; applying it sets media CreateDate and filesystem times):"
-  echo
   local -a time_menu=()
   keys=""
   for (( i = 0; i < n; i++ )); do
@@ -5111,9 +5100,7 @@ pgm_decide_output_times() {
   time_menu+=( "q|Quit" )
   keys+="/q"
   while true; do
-    echo
     pgm_print_question "Choose output times source"
-    echo
     pgm_arrow_menu "$def" "${time_menu[@]}"
     choice="$REPLY"
     case "$choice" in
@@ -6733,7 +6720,6 @@ dashcam_warn_no_gps() {
   fi
   echo
   pgm_print_question "No GPS log found — quit or continue without GPX?"
-  echo
   pgm_arrow_menu q \
     "q|Quit" \
     "c|Continue anyway. Merge the videos, and do not write a GPX"
@@ -7990,7 +7976,6 @@ prompt_delete_merged_inputs() {
   echo "  Choosing yes asks once more before anything is deleted."
   echo
   pgm_print_question "Delete merged input chapter file(s)?"
-  echo
   pgm_arrow_menu n \
     "y|Yes — go on to the confirmation" \
     "n|No — keep input files" \
@@ -8040,7 +8025,6 @@ prompt_confirm_delete_inputs() {
   for f in "${files[@]}"; do
     printf '    %s\n' "${f##*/}"
   done
-  echo
   pgm_arrow_menu n \
     "y|Yes — delete these input files" \
     "n|No — keep input files" \
@@ -8297,7 +8281,6 @@ prompt_merge_all_temp_dir() {
     echo "$(pgm_ts) Not using ${tdir} for these merges: ${reason}."
     echo
     pgm_print_question "Temp directory for the remaining groups?"
-    echo
     pgm_arrow_menu n \
       "p|Type another temp directory" \
       "n|Write the outputs in this directory" \
@@ -8352,7 +8335,6 @@ prompt_merge_all_temp_dir() {
   # Default Yes only for a confirmed spinning HDD; SSD and unknown → write here.
   echo
   pgm_print_question "Merge via ${tdir} for the remaining groups?"
-  echo
   if [[ "$SOURCE_DISK_KIND" == hdd ]]; then
     default_key=y
     pgm_arrow_menu y \
@@ -8436,7 +8418,6 @@ choose_merge_output_path() {
     echo "$(pgm_ts) Not using ${tdir} for this merge: ${reason}."
     echo
     pgm_print_question "Temp directory for this merge?"
-    echo
     pgm_arrow_menu n \
       "p|Type another temp directory" \
       "n|Write the output in this directory" \
@@ -8486,7 +8467,6 @@ choose_merge_output_path() {
   # Default Yes only for a confirmed spinning HDD; SSD and unknown → write here.
   echo
   pgm_print_question "Merge via ${tdir}?"
-  echo
   if [[ "$SOURCE_DISK_KIND" == hdd ]]; then
     default_key=y
     pgm_arrow_menu y \
@@ -8927,7 +8907,6 @@ prompt_merge_group_action() {
   if (( complete )); then
     echo
     pgm_print_question "Already merged — group ${group_num}/${group_total}"
-    echo
     pgm_arrow_menu n \
       "n|Skip — keep output and input files" \
       "a|Already merged — don't ask again this run" \
@@ -8957,7 +8936,6 @@ prompt_merge_group_action() {
     else
       pgm_print_question "No GPX beside the merged file — group ${group_num}/${group_total}"
     fi
-    echo
     pgm_arrow_menu y \
       "y|Generate the GPX beside the merged file" \
       "n|Skip — leave the merged file without a GPX" \
@@ -8982,7 +8960,6 @@ prompt_merge_group_action() {
     fi
     echo
     pgm_print_question "Already merged — group ${group_num}/${group_total}"
-    echo
     pgm_arrow_menu n \
       "n|Skip — keep output and input files" \
       "a|Already merged — don't ask again this run" \
@@ -9028,7 +9005,6 @@ prompt_merge_group_action() {
       while true; do
         echo
         pgm_print_question "Contour suspect — group ${group_num}/${group_total}"
-        echo
         pgm_arrow_menu n "${suspect_menu[@]}"
         choice="${REPLY,,}"
         case "$choice" in
@@ -9076,7 +9052,6 @@ prompt_merge_group_action() {
     else
       pgm_print_question "Choice for group ${group_num}/${group_total}"
     fi
-    echo
     pgm_arrow_menu "$merge_def" "${merge_menu[@]}"
     choice="${REPLY,,}"
     case "$choice" in
@@ -9295,7 +9270,6 @@ show_merge_group_detail() {
   if group_is_dashcam "${files[@]}"; then
     dashcam_print_short_clip_notice "${files[@]}"
   fi
-  echo
 }
 
 # When merged 70mai files have no GPX, offer to write only those GPX files.
@@ -9358,7 +9332,6 @@ dashcam_offer_gpx_only() {
   else
     echo
     pgm_print_question "Create GPX for merged files missing tracks?"
-    echo
     pgm_arrow_menu g \
       "g|Create only these GPX files" \
       "e|Ask about each file" \
@@ -9385,7 +9358,6 @@ dashcam_offer_gpx_only() {
         printf '  %s\n' "${gpx_outs[$i]##*/}"
         echo
         pgm_print_question "Create this GPX?"
-        echo
         pgm_arrow_menu y \
           "y|Create this GPX" \
           "n|Skip this file" \

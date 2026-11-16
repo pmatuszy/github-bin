@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261116.224800 - no blank line between question/prompt and arrow menu
 # v. 20261116.160000 - multi-choice prompts use shared script_arrow_menu (Up/Down)
 # v. 20261021.142200 - companion helper 0.5: detours + segment splits on huge gaps
 # v. 20261021.141800 - companion helper 0.4: jump filter no longer skips long time gaps
@@ -267,7 +268,6 @@ gc_check_prereqs() {
   fi
   echo
   printf '%sInstall them now?%s\n' "$C_B" "$C_0"
-  echo
   gc_arrow_menu y \
     "y|Yes, install and continue (default)" \
     "n|No — stop here" \
@@ -422,7 +422,6 @@ gc_prompt_params() {
   echo
   echo "Tweak the cleaning settings?"
   echo "  Defaults: max-jump ${MAX_JUMP} km/h, stop ${STOP_KMH} km/h / ${STOP_RADIUS} m, smooth ${SMOOTH} s"
-  echo
   gc_arrow_menu n \
     "y|Yes — set values one at a time" \
     "n|No — keep defaults (default)" \
@@ -605,7 +604,6 @@ gc_prompt_old() {
   echo
   echo "What should happen to the old cleaned .gpx when the new one is written?"
   echo "  The new file is written beside it first."
-  echo
   gc_arrow_menu "$key" \
     "k|Keep it, renamed with the date and time" \
     "d|Delete it" \
@@ -627,7 +625,6 @@ gc_prompt_existing() {
   (( skip == 0 )) && return 0
   echo
   printf '%s%d track(s) already have a cleaned .gpx.%s\n' "$C_B" "$skip" "$C_0"
-  echo
   gc_arrow_menu s \
     "s|Skip them (default)" \
     "r|Write them again too" \
@@ -668,7 +665,6 @@ gc_prompt_plan() {
 
   echo
   printf '%sWrite the cleaned tracks now?%s\n' "$C_B" "$C_0"
-  echo
   gc_arrow_menu y \
     "y|Write ${TO_WRITE} track(s) (default)" \
     "n|No — write nothing" \

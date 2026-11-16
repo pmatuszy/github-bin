@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261116.224800 - no blank line between question/prompt and arrow menu
 # v. 20261116.160000 - multi-choice prompts use shared script_arrow_menu (Up/Down)
 # v. 20261116.143700 - highlight (default) via shared script_echo_option; sync SCRIPT_USE_COLORS
 # v. 20261116.135500 - yn prompts: [1]=Yes [2]=No alongside Y/N; colors menu shows 1/2
@@ -318,7 +319,6 @@ un_ask_colors() {
   un_colors
   echo
   un_print_question "Use colors in the terminal?"
-  echo
   un_colors
   un_arrow_menu y \
     "y|Yes (default)" \
@@ -355,7 +355,6 @@ un_process_one() {
   if (( ! DO_YES )) && (( ! APPLY_REST )) && (( script_is_run_interactively )); then
     echo
     un_print_question "Roll back this file?"
-    echo
     un_colors
     un_arrow_menu y \
       "y|Yes (default) — put the original back as ${orig##*/}" \

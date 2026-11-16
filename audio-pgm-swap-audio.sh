@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261116.224800 - no blank line between question/prompt and arrow menu
 # v. 20261116.160000 - multi-choice prompts use shared script_arrow_menu (Up/Down)
 # v. 20261116.143700 - highlight (default) via shared script_echo_option; sync SCRIPT_USE_COLORS
 # v. 20261116.135500 - yn prompts: [1]=Yes [2]=No alongside Y/N; colors menu shows 1/2
@@ -1988,7 +1989,6 @@ sa_ask_colors() {
   sa_colors
   echo
   sa_print_question "Use colors in the terminal?"
-  echo
   sa_colors
   sa_arrow_menu y \
     "y|Yes (default)" \
@@ -2017,7 +2017,6 @@ sa_ask_keep_copy() {
   echo
   sa_print_question "Keep a copy of each original file?"
   echo "  If clip-backup.mp4 is already there, a dated copy is added and that file is left as it is"
-  echo
   sa_colors
   sa_arrow_menu y \
     "y|Yes (default) — original becomes clip-backup.mp4; swapped file keeps the original name" \
@@ -2057,7 +2056,6 @@ sa_ask_together() {
   fi
   echo
   sa_print_question "Ask about each file, or swap them all the same way?"
-  echo
   sa_colors
   sa_arrow_menu o \
     "o|One by one (default)" \
@@ -2088,7 +2086,6 @@ sa_ask_subtitles() {
   fi
   echo
   sa_print_question "Also swap subtitle tracks to the same languages as the audio?"
-  echo
   sa_colors
   sa_arrow_menu y \
     "y|Yes (default) — Italian audio with Italian subtitles, and so on" \
@@ -2214,7 +2211,6 @@ sa_ask_languages() {
   echo "  (audio and/or subtitles)."
   echo
   sa_print_question "Leave only English, Polish and German?"
-  echo
   sa_colors
   sa_arrow_menu y \
     "y|Yes (default) — drop ${extra_txt}" \
@@ -2637,7 +2633,6 @@ sa_process_one_work() {
     else
       sa_print_question "Swap the audio in this file?"
     fi
-    echo
     sa_colors
     if (( DEFAULT_SET )) && sa_slots_are_identity "$order" "$n"; then
       sa_arrow_menu y \

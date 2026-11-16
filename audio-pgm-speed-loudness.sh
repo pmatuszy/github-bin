@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# v. 20261116.224800 - no blank line between question/prompt and arrow menu
 # v. 20261116.160000 - proceed and episode zero-pad menus use script_arrow_menu
 # v. 20261116.143700 - ask Use colors?; green prompts; highlight (default)
 # v. 20261115.200000 - SUMMARY: Family-A chrome + Script/Version at top
@@ -514,7 +515,6 @@ prompt_proceed_process() {
   else
     echo "$(prompt_ts) Process these files now?"
   fi
-  echo
   sl_arrow_menu n \
     "y|Yes — convert" \
     "n|No — skip convert (default)" \
@@ -1159,7 +1159,6 @@ prompt_and_apply_trailing_episode_zero_pad() {
   else
     echo "$(prompt_ts) Zero-pad these episode number(s) now?"
   fi
-  echo
   sl_arrow_menu n \
     "y|Yes — rename" \
     "n|No — leave names (default)" \

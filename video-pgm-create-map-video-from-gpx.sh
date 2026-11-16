@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261116.224800 - no blank line between question/prompt and arrow menu
 # v. 20261116.160000 - multi-choice prompts use shared script_arrow_menu (Up/Down)
 # v. 20261014.093800 - a merged file's map clock follows each source clip
 # v. 20261007.143052 - video lengths in the plan are whole seconds
@@ -1082,7 +1083,6 @@ mv_yes_no() {
   local question="$1" cur="$2" yes_text="$3" no_text="$4" def=n
   (( cur )) && def=y
   echo "$question"
-  echo
   mv_arrow_menu "$def" \
     "y|Yes — ${yes_text}" \
     "n|No — ${no_text}" \
@@ -1129,7 +1129,6 @@ mv_prompt_more() {
   nkeys="$(mv_keys "$ddef" n t q)"
   echo "Map direction?"
   echo "  Track up renders about 4× slower (every frame is rotated)."
-  echo
   mv_arrow_menu "$ddef" \
     "n|North up — north at the top" \
     "t|Track up — road ahead always up" \
@@ -1188,7 +1187,6 @@ mv_prompt_smooth() {
   echo
   echo "Tweak the smoothing?"
   echo "  Current: $(mv_smooth_label | sed 's/^smoothed: //')."
-  echo
   mv_arrow_menu n \
     "y|Yes — set smoothing values one at a time" \
     "n|No — keep current smoothing (default)" \
@@ -1265,7 +1263,6 @@ mv_prompt_test() {
   echo
   echo "How much of each video should get its map?"
   echo "  A part is saved under its own -test-… name, so a full map video is kept."
-  echo
   mv_arrow_menu "$key" \
     "a|All of it, start to end" \
     "1|1 minute" \
@@ -1322,7 +1319,6 @@ mv_prompt_old() {
   echo
   echo "What should happen to the old map video when the new one is done?"
   echo "  The new video is written to a .partial file first."
-  echo
   mv_arrow_menu "$key" \
     "k|Keep it, renamed with the date and time" \
     "d|Delete it" \
@@ -1344,7 +1340,6 @@ mv_prompt_existing() {
   (( skip == 0 )) && return 0
   echo
   printf '%s%d video(s) already have a map video.%s\n' "$C_B" "$skip" "$C_0"
-  echo
   mv_arrow_menu s \
     "s|Skip them, keep the old files (default)" \
     "r|Render them again too" \
@@ -1362,7 +1357,6 @@ mv_prompt_plan() {
   while true; do
     echo
     printf '%sRender now?%s\n' "$C_B" "$C_0"
-    echo
     mv_arrow_menu y \
       "y|Download tiles and render ${TO_RENDER} map video(s) (default) — window: $(mv_window_label)" \
       "m|Change the map settings" \
@@ -1789,7 +1783,6 @@ mv_check_prereqs() {
   fi
   echo
   printf '%sInstall them now?%s\n' "$C_B" "$C_0"
-  echo
   mv_arrow_menu y \
     "y|Yes, install and continue (default)" \
     "n|No — install yourself and run again" \

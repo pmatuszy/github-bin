@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261116.224800 - no blank line between question/prompt and arrow menu
 # v. 20261116.160000 - multi-choice prompts use shared script_arrow_menu (Up/Down)
 # v. 20261008.220551 - a map matches the journey and speed, not the encode stamp; ask when real time and timelapse are both present
 # v. 20261007.143052 - summary times and video lengths are whole seconds
@@ -798,7 +799,6 @@ pip_prompt_speeds() {
     menu_opts+=("r|Real time only — $(pip_speed_count_label "${real[@]}")")
   fi
   menu_opts+=("q|Quit")
-  echo
   pip_arrow_menu t "${menu_opts[@]}"
   choice="$(pip_choice "$REPLY")"
   case "$choice" in
@@ -1056,7 +1056,6 @@ pip_prompt_old() {
   echo "What should happen to the old file when the new one is done?"
   echo "  The new video is written to a .partial file first; the old file is"
   echo "  only touched after the new one has finished without errors."
-  echo
   pip_arrow_menu "$key" \
     "k|Keep it, renamed with the date and time (e.g. ..._old-20261005_221400.mp4)" \
     "d|Delete it" \
@@ -1084,7 +1083,6 @@ pip_prompt_existing() {
   else
     echo "  Nothing would be rendered if you skip."
   fi
-  echo
   pip_arrow_menu s \
     "s|Skip them, keep the old files (default)" \
     "r|Render them again too — all $(( TO_RENDER + skip )) route(s)" \
@@ -1105,7 +1103,6 @@ pip_prompt_existing_route() {
   local ri="$1" total="$2" f="$3" out="${ROUTE_OUT[$3]}"
   echo
   printf '%sRoute %d of %d is already rendered (%s).%s\n' "$C_B" "$ri" "$total" "$(pip_existing_info "$out")" "$C_0"
-  echo
   pip_arrow_menu s \
     "s|Skip it, keep the old file (default)" \
     "r|Render it again" \
@@ -2211,7 +2208,6 @@ pip_yes_no() {
   local question="$1" cur="$2" yes_text="$3" no_text="$4" def=n
   (( cur )) && def=y
   echo "$question"
-  echo
   pip_arrow_menu "$def" \
     "y|Yes — ${yes_text}" \
     "n|No — ${no_text}" \
@@ -2254,7 +2250,6 @@ pip_prompt_more() {
   case "$CORNER" in tr) key=2 ;; ll) key=3 ;; lr) key=4 ;; *) key=1 ;; esac
   echo "Which corner of the frame should the inset sit in?"
   echo "  The margins asked next are measured from that corner's two edges."
-  echo
   pip_arrow_menu "$key" \
     "1|Top left" \
     "2|Top right" \
@@ -2385,7 +2380,6 @@ pip_prompt_more_first() {
   echo
   printf '%sMore choices?%s\n' "$C_B" "$C_0"
   echo "  Current: $(pip_size_label), $(pip_corner_label), map: $(pip_map_settings_label)."
-  echo
   pip_arrow_menu n \
     "n|Keep the current layout (default)" \
     "y|Change the layout first (more questions)" \
@@ -2412,7 +2406,6 @@ pip_prompt_map_choice() {
   printf '%sMap video: %d of %d route(s) have more than one map.%s\n' \
     "$C_B" "$MAP_MULTI" "${#MAP_ROUTES[@]}" "$C_0"
   [[ -n "$example" ]] && echo "  Newest map example: ${example}"
-  echo
   pip_arrow_menu "$key" \
     "n|The newest map of each route" \
     "p|Pick for each route" \
@@ -2510,7 +2503,6 @@ pip_prompt_more_map() {
   case "$MAP_CORNER" in tl) key=1 ;; ll) key=3 ;; lr) key=4 ;; *) key=2 ;; esac
   echo "Which corner should the map sit in?"
   echo "  If the rear inset is in that corner, the map takes the other corner on the same edge."
-  echo
   pip_arrow_menu "$key" \
     "1|Top left" \
     "2|Top right" \
@@ -2567,7 +2559,6 @@ pip_prompt_test() {
   echo
   echo "How much of each route should be rendered?"
   echo "  A part is saved under its own -test-… name, so a full render is kept."
-  echo
   pip_arrow_menu "$key" \
     "a|All of it, start to end" \
     "1|1 minute" \
@@ -2601,7 +2592,6 @@ pip_prompt_test() {
   case "$FROM_MODE" in end) key=e ;; middle) key=m ;; *) key=b ;; esac
   echo
   echo "Where should that part be taken from?"
-  echo
   pip_arrow_menu "$key" \
     "b|Counted from the beginning" \
     "e|Counted back from the end (last $(pip_clock "$LENGTH"))" \
@@ -2641,7 +2631,6 @@ pip_prompt_plan() {
   while true; do
     echo
     printf '%sRender now?%s\n' "$C_B" "$C_0"
-    echo
     pip_arrow_menu y \
       "y|Render (default) — ${TO_RENDER} route(s); part now: $(pip_part_label)" \
       "c|Choose route by route" \
@@ -3318,7 +3307,6 @@ for f in "${ROUTES[@]}"; do
     pip_print_route "$_ri" "${#ROUTES[@]}" "$f"
     echo
     printf '%sRender route %d of %d?%s  %s\n' "$C_B" "$_ri" "${#ROUTES[@]}" "$C_0" "$(basename -- "${ROUTE_OUT[$f]}")"
-    echo
     pip_arrow_menu y \
       "y|Yes, render this route now (default)" \
       "n|No, skip this route" \

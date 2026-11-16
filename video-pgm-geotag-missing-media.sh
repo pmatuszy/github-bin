@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261116.224800 - no blank line between question/prompt and arrow menu
 # v. 20261116.160000 - multi-choice prompts use shared script_arrow_menu (Up/Down)
 # v. 20261021.103947 - Equivalent / Usage show the live script name, not .deleteme.*.seal.*
 # v. 20261021.103731 - conf name from the live script path, not the .deleteme.*.seal.* copy; dedupe conf lookup dirs
@@ -702,7 +703,6 @@ gm_ask_internet() {
   fi
   echo
   echo "A track point or a typed latitude and longitude can be named from OpenStreetMap."
-  echo
   gm_arrow_menu y \
     "y|Yes, use the internet (default)" \
     "n|No" \
@@ -1209,7 +1209,6 @@ gm_ask_colors() {
   fi
   echo
   echo "Use colors?"
-  echo
   gm_arrow_menu y \
     "y|Yes (default)" \
     "n|No" \
@@ -1235,7 +1234,6 @@ gm_ask_verbose() {
   fi
   echo
   echo "The report can list every track, and every photo or video."
-  echo
   gm_arrow_menu n \
     "n|No, totals only (default)" \
     "v|Yes, list each file" \
@@ -1277,7 +1275,6 @@ gm_ask_scope() {
     echo "  [A] All subdirectories (default)"
     echo "  [c] Current directory only"
   fi
-  echo
   gm_arrow_menu a \
     "a|All subdirectories (default)" \
     "c|Current directory only" \
@@ -1325,7 +1322,6 @@ gm_ask_tz() {
   echo "GPX and TCX times are UTC. A GPSData*.txt time is the clip name plus the log number."
   echo "That clock is already on this offset. A camera time with no timezone is shifted by it too."
   echo "Polish summer time is +02:00. Use 0 when the camera clock is already UTC."
-  echo
   gm_arrow_menu 2 \
     "2|+02:00 (default)" \
     "0|Camera clock is UTC" \
@@ -1749,7 +1745,6 @@ gm_ask_track_years() {
     phrase="$(gm_year_phrase "${GUESS_YEARS[@]}")"
     echo "The photos and videos look like they are probably from ${phrase}, judging by the timestamps and file names."
     echo "Which tracks?"
-    echo
     gm_arrow_menu y \
       "y|${phrase} only (default)" \
       "t|Type a year" \
@@ -1766,7 +1761,6 @@ gm_ask_track_years() {
   else
     echo "No year in these file names."
     echo "Which tracks?"
-    echo
     gm_arrow_menu a \
       "a|All years (default)" \
       "t|Type a year" \
@@ -2676,7 +2670,6 @@ gm_ask_backup() {
       echo "      $(gm_backup_stored_name "$path" "$stamp")"
     done
   fi
-  echo
   gm_arrow_menu n \
     "n|No backup (default)" \
     "b|Yes — dated backup files" \
@@ -2695,8 +2688,6 @@ gm_ask_update() {
   if (( DO_YES )) || (( ! script_is_run_interactively )); then
     return 0
   fi
-  echo
-  echo
   gm_arrow_menu y \
     "y|Yes (default)" \
     "n|No" \

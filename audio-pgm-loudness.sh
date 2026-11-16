@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261116.224800 - no blank line between question/prompt and arrow menu
 # v. 20261116.154200 - fix progress ETA awk (missing printf arg broke left/at display)
 # v. 20261116.160000 - multi-choice prompts use shared script_arrow_menu (Up/Down)
 # v. 20261116.143700 - highlight (default) via shared script_echo_option; sync SCRIPT_USE_COLORS
@@ -808,7 +809,6 @@ prompt_use_colors() {
     loudness_init_colors
   fi
   loudness_print_question 'Use colors in the terminal?'
-  echo
   loudness_init_colors
   loudness_arrow_menu y \
     "y|Yes (default)" \
@@ -1636,7 +1636,6 @@ loudness_print_run_settings() {
 prompt_scan_scope() {
   (( PRINT_CLI_ONLY )) && loudness_print_cli_only_section 'Scan scope'
   loudness_print_question 'What should be scanned?'
-  echo
   loudness_init_colors
   loudness_arrow_menu s \
     "s|Also subdirectories (default)" \
@@ -3888,7 +3887,6 @@ resolve_backup_conflict() {
   if [[ ! -f "$file" ]]; then
     echo '    Only the backup remains — cannot normalize without the original file.'
     loudness_print_question 'Restore backup to original name and skip normalize?'
-    echo
     loudness_init_colors
     loudness_arrow_menu y \
       "y|Yes — restore backup; skip normalize (default)" \
@@ -3920,7 +3918,6 @@ resolve_backup_conflict() {
   fi
 
   loudness_print_question "Backup conflict for ${file}?"
-  echo
   loudness_init_colors
   loudness_arrow_menu s \
     "y|Remove old backup, move current file aside, then normalize (deletes previous .original-backup)" \
@@ -5351,7 +5348,6 @@ prompt_normalize_mode() {
     echo "No files available for normalization with selected classes."
   fi
   loudness_print_question 'Normalization mode?'
-  echo
   loudness_init_colors
   loudness_arrow_menu y \
     "s|Standard loudnorm" \
@@ -5466,7 +5462,6 @@ loudness_read_normalize_batch_choice() {
   if [[ "$status" == NO_PROCESS ]]; then
     echo "  NO_PROCESS (mean ${mean_disp} below ${LOUDNESS_MEAN_SKIP_DB} dB) — default [N] (CLI: --force with -y to include)."
   fi
-  echo
   loudness_init_colors
   if [[ "$default" == y ]]; then
     loudness_arrow_menu y \
